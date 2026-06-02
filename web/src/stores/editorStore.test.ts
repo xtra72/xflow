@@ -4,7 +4,7 @@
 // 액션으로, nodes/edges 를 교체하되 dirty 를 만들지 않아야 한다.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Edge, Node } from '@xyflow/react';
+import type { Edge, EdgeChange, Node, NodeChange } from '@xyflow/react';
 
 import { nextDuplicateLabel, useEditorStore } from './editorStore';
 
@@ -324,5 +324,51 @@ describe('editorStore - 저장/로딩 dirty 플래그', () => {
       useEditorStore.getState().resetEditor();
       expect(useEditorStore.getState().currentFlowId).toBeNull();
     });
+  });
+});
+
+describe('editorStore - onNodesChange/onEdgesChange dirty 처리', () => {
+  const oneNode: Node[] = [
+    { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
+  ];
+
+  beforeEach(() => {
+    useEditorStore.getState().resetEditor();
+  });
+
+  it("'dimensions'(측정) 변경은 isDirty 를 만들지 않는다 (로드 직후 수정됨 표시 버그 방지)", () => {
+    useEditorStore.getState().loadFlow(oneNode, []);
+    expect(useEditorStore.getState().isDirty).toBe(false);
+
+    useEditorStore.getState().onNodesChange([
+      { id: 'n1', type: 'dimensions', dimensions: { width: 120, height: 60 } } as NodeChange,
+    ]);
+    expect(useEditorStore.getState().isDirty).toBe(false);
+  });
+
+  it("'select'(선택) 변경은 isDirty 를 만들지 않는다", () => {
+    useEditorStore.getState().loadFlow(oneNode, []);
+    useEditorStore.getState().onNodesChange([
+      { id: 'n1', type: 'select', selected: true } as NodeChange,
+    ]);
+    expect(useEditorStore.getState().isDirty).toBe(false);
+  });
+
+  it("'position'(이동) 같은 실제 편집 변경은 isDirty 를 true 로 만든다", () => {
+    useEditorStore.getState().loadFlow(oneNode, []);
+    useEditorStore.getState().onNodesChange([
+      { id: 'n1', type: 'position', position: { x: 50, y: 50 }, dragging: false } as NodeChange,
+    ]);
+    expect(useEditorStore.getState().isDirty).toBe(true);
+  });
+
+  it("edge 'select' 변경은 isDirty 를 만들지 않는다", () => {
+    useEditorStore.getState().loadFlow(oneNode, [
+      { id: 'e1', source: 'n1', target: 'n1' },
+    ]);
+    useEditorStore.getState().onEdgesChange([
+      { id: 'e1', type: 'select', selected: true } as EdgeChange,
+    ]);
+    expect(useEditorStore.getState().isDirty).toBe(false);
   });
 });

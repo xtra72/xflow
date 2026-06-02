@@ -217,16 +217,29 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
     })),
 
   onNodesChange: (changes) =>
-    set((state) => ({
-      nodes: applyNodeChanges(changes, state.nodes),
-      isDirty: true,
-    })),
+    set((state) => {
+      // 'dimensions'(노드 측정) 와 'select'(선택) 변경은 사용자 편집이 아니므로
+      // isDirty 를 만들지 않는다. React Flow 는 마운트/렌더 시 노드를 측정하며
+      // 'dimensions' 변경을 emit 하는데, 이를 dirty 로 처리하면 플로우 로드 직후
+      // 편집 없이도 무조건 "수정됨" 으로 표시되는 버그가 발생한다(미저장 가드 오작동).
+      const meaningful = changes.some(
+        (c) => c.type !== 'dimensions' && c.type !== 'select',
+      );
+      return {
+        nodes: applyNodeChanges(changes, state.nodes),
+        isDirty: meaningful ? true : state.isDirty,
+      };
+    }),
 
   onEdgesChange: (changes) =>
-    set((state) => ({
-      edges: applyEdgeChanges(changes, state.edges),
-      isDirty: true,
-    })),
+    set((state) => {
+      // 'select'(선택) 변경은 사용자 편집이 아니므로 dirty 에서 제외한다.
+      const meaningful = changes.some((c) => c.type !== 'select');
+      return {
+        edges: applyEdgeChanges(changes, state.edges),
+        isDirty: meaningful ? true : state.isDirty,
+      };
+    }),
 
   onConnect: (connection) =>
     set((state) => {
