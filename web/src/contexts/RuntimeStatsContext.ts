@@ -3,11 +3,26 @@
 
 import { createContext, useContext } from 'react';
 
+/** 포트별 런타임 통계 (포트 이름 + 방향으로 식별). */
+export interface PortRuntimeStat {
+  name: string;
+  direction: string;
+  /** 노드가 이 포트로 생성(emit)한 메시지 누계. */
+  messages: number;
+  /** 연결된 와이어로 실제 전달된 메시지 누계 (output 포트에서 의미 있음). */
+  delivered: number;
+}
+
 /** 노드별 런타임 통계 */
 export interface NodeRuntimeStats {
   inMessages: number;
   outMessages: number;
   state: string;
+  /**
+   * 포트별 상세 통계. output 포트의 delivered / 큐 적체량(messages - delivered)
+   * 표시에 사용한다. 노드 카드는 포트 이름으로 조회한다.
+   */
+  ports: PortRuntimeStat[];
 }
 
 /**
