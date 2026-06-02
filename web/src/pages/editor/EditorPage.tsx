@@ -87,13 +87,26 @@ function EditorPageInner() {
     if (!runtimeNodes || !isFlowRunning) return {};
     const map: Record<string, NodeRuntimeStats> = {};
     for (const node of runtimeNodes) {
-      const inMessages = (node.ports ?? [])
+      const ports = node.ports ?? [];
+      const inMessages = ports
         .filter((p) => p.direction === 'input')
         .reduce((sum, p) => sum + p.messages, 0);
-      const outMessages = (node.ports ?? [])
+      const outMessages = ports
         .filter((p) => p.direction === 'output')
         .reduce((sum, p) => sum + p.messages, 0);
-      map[node.node_id] = { inMessages, outMessages, state: node.state };
+      // 포트별 상세 통계 — output 포트의 delivered / 큐 적체량 표시에 사용.
+      const portStats = ports.map((p) => ({
+        name: p.name,
+        direction: p.direction,
+        messages: p.messages,
+        delivered: p.delivered,
+      }));
+      map[node.node_id] = {
+        inMessages,
+        outMessages,
+        state: node.state,
+        ports: portStats,
+      };
     }
     return map;
   }, [runtimeNodes, isFlowRunning]);

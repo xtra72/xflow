@@ -256,13 +256,17 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       // 생성하는데, 이는 동일 source/target 재연결 시 충돌하고 가져오기
       // id 재생성과도 일관되지 않는다. id 를 명시하면 addEdge 가 이 값을 유지한다.
       // Edge 로 단언해 addEdge 의 제네릭이 Edge[] 로 해석되도록 한다(메타데이터는 추가 속성).
+      // 새 엣지 기본값: 큐(버퍼) 모드 + 용량 100.
+      // 무버퍼(bypass)는 송신 측이 수신 처리 속도에 동기로 묶여 백프레셔가
+      // 즉시 전파되므로, 기본은 가득 차면 대기하는 큐(buffer) 100 으로 둔다.
+      // 이후 엣지 속성 패널에서 용량/모드를 개별 조정할 수 있다.
       const edgeWithMeta = {
         ...connection,
         id: generateUUID(),
         name: wireName,
         wire_type: 'simple',
-        mode: 'bypass',
-        buffer_size: 0,
+        mode: 'buffer',
+        buffer_size: 100,
       } as Edge;
 
       return {

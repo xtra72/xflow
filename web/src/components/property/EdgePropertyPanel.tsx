@@ -7,10 +7,13 @@ import { X } from 'lucide-react';
 import { useEditorStore } from '@/stores/editorStore';
 
 const WIRE_MODE_OPTIONS = [
-  { value: 'bypass', label: 'Bypass (동기)' },
-  { value: 'buffer', label: 'Buffer (비동기)' },
-  { value: 'drop_oldest', label: 'Drop Oldest (오래된 메시지 드롭)' },
+  { value: 'buffer', label: '큐(가득 차면 대기)' },
+  { value: 'drop_oldest', label: '큐(가득 차면 오래된 것 드랍)' },
+  { value: 'bypass', label: '무버퍼(즉시 전달)' },
 ] as const;
+
+/** 새 엣지/큐 모드 전환 시 사용하는 기본 큐 용량. */
+const DEFAULT_BUFFER_SIZE = 100;
 
 interface EdgePropertyPanelProps {
   width?: number;
@@ -40,19 +43,19 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
     return (node?.data?.label as string) || node?.id || selectedEdge.target;
   }, [nodes, selectedEdge]);
 
-  const mode = (selectedEdge as Record<string, unknown> | undefined)?.mode as string ?? 'bypass';
-  const bufferSize = (selectedEdge as Record<string, unknown> | undefined)?.buffer_size as number ?? 0;
+  const mode = (selectedEdge as Record<string, unknown> | undefined)?.mode as string ?? 'buffer';
+  const bufferSize = (selectedEdge as Record<string, unknown> | undefined)?.buffer_size as number ?? DEFAULT_BUFFER_SIZE;
   const wireName = (selectedEdge as Record<string, unknown> | undefined)?.name as string ?? '';
 
   const handleModeChange = useCallback(
     (newMode: string) => {
       if (!selectedEdgeId) return;
       const updates: Record<string, unknown> = { mode: newMode };
-      // buffer/drop_oldest 로 전환 시 기본 buffer_size 설정
+      // 큐(buffer/drop_oldest) 로 전환하는데 용량이 0(무버퍼) 이면 기본 용량으로 채운다.
       if (newMode !== 'bypass' && bufferSize === 0) {
-        updates.buffer_size = 256;
+        updates.buffer_size = DEFAULT_BUFFER_SIZE;
       }
-      // bypass 로 전환 시 buffer_size 초기화
+      // 무버퍼(bypass) 로 전환 시 용량을 0 으로 초기화한다.
       if (newMode === 'bypass') {
         updates.buffer_size = 0;
       }
@@ -148,31 +151,31 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
           </select>
         </div>
 
-        {/* Buffer Size (bypass 가 아닐 때만) */}
-        {mode !== 'bypass' && (
-          <div>
-            <label
-              htmlFor="wire-buffer-size"
-              className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
-            >
-              버퍼 크기
-            </label>
-            <input
-              id="wire-buffer-size"
-              type="number"
-              min={1}
-              value={bufferSize}
-              onChange={(e) => handleBufferSizeChange(e.target.value)}
-              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5
-                text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <p className="mt-1 text-xs text-(--color-text-muted)">
-              {mode === 'buffer'
-                ? '버퍼가 가득 차면 송신 측이 대기합니다.'
-                : '버퍼가 가득 차면 가장 오래된 메시지가 삭제됩니다.'}
-            </p>
-          </div>
-        )}
+        {/* 큐 용량 (0 = 무버퍼/bypass) */}
+        <div>
+          <label
+            htmlFor="wire-buffer-size"
+            className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+          >
+            큐 용량
+          </label>
+          <input
+            id="wire-buffer-size"
+            type="number"
+            min={0}
+            value={bufferSize}
+            onChange={(e) => handleBufferSizeChange(e.target.value)}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5
+              text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-(--color-text-muted)">
+            {mode === 'bypass'
+              ? '무버퍼: 메시지를 큐에 쌓지 않고 즉시 전달합니다(0).'
+              : mode === 'buffer'
+                ? '큐가 가득 차면 송신 측이 대기합니다.'
+                : '큐가 가득 차면 가장 오래된 메시지가 삭제됩니다.'}
+          </p>
+        </div>
       </div>
     </aside>
   );

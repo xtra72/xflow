@@ -152,8 +152,8 @@ func TestCreateRuntimeWires_TTL(t *testing.T) {
 func TestRuntimeWire_Send(t *testing.T) {
 	// 정상적으로 메시지를 전송할 수 있는지 검증한다.
 	rw := &RuntimeWire{
-		ID:  "w1",
-		Ch:  make(chan message.Message, 1),
+		ID:   "w1",
+		Ch:   make(chan message.Message, 1),
 		Mode: flow.WireBuffer,
 	}
 
@@ -171,11 +171,73 @@ func TestRuntimeWire_Send(t *testing.T) {
 	}
 }
 
+// TestRuntimeWire_Send_BufferBlocksWhenFull 는 WireBuffer 모드에서 버퍼가 가득
+// 차면(cap 만큼 채워지면) 다음 Send 가 수신이 발생할 때까지 블록되고, 수신으로
+// 슬롯이 비면 풀려서 메시지 손실 없이 전달되는지 검증한다.
+func TestRuntimeWire_Send_BufferBlocksWhenFull(t *testing.T) {
+	rw := &RuntimeWire{
+		ID:   "w1",
+		Ch:   make(chan message.Message, 2), // cap=2
+		Mode: flow.WireBuffer,
+	}
+	ctx := context.Background()
+
+	msg1 := message.New()
+	msg2 := message.New()
+	msg3 := message.New()
+
+	// cap 까지 두 건은 즉시(non-blocking) 성공해야 한다.
+	if err := rw.Send(ctx, msg1); err != nil {
+		t.Fatalf("첫 번째 Send 실패: %v", err)
+	}
+	if err := rw.Send(ctx, msg2); err != nil {
+		t.Fatalf("두 번째 Send 실패: %v", err)
+	}
+
+	// 세 번째 Send 는 버퍼가 가득 차서 블록되어야 한다.
+	sendDone := make(chan error, 1)
+	go func() {
+		sendDone <- rw.Send(ctx, msg3)
+	}()
+
+	select {
+	case err := <-sendDone:
+		t.Fatalf("버퍼가 가득 찼는데 세 번째 Send 가 블록되지 않고 즉시 반환됨: err=%v", err)
+	case <-time.After(50 * time.Millisecond):
+		// 기대 동작: 아직 블록 중
+	}
+
+	// 한 건을 수신하여 슬롯을 비우면 블록된 Send 가 풀려야 한다.
+	got1 := <-rw.Ch
+	if got1.ID() != msg1.ID() {
+		t.Errorf("첫 수신 메시지 ID = %q, want %q", got1.ID(), msg1.ID())
+	}
+
+	select {
+	case err := <-sendDone:
+		if err != nil {
+			t.Fatalf("슬롯이 비었는데 세 번째 Send 가 에러 반환: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("슬롯이 비었는데 세 번째 Send 가 풀리지 않음")
+	}
+
+	// 손실 없이 msg2, msg3 가 순서대로 남아 있어야 한다.
+	got2 := <-rw.Ch
+	got3 := <-rw.Ch
+	if got2.ID() != msg2.ID() {
+		t.Errorf("두 번째 수신 메시지 ID = %q, want %q", got2.ID(), msg2.ID())
+	}
+	if got3.ID() != msg3.ID() {
+		t.Errorf("세 번째 수신 메시지 ID = %q, want %q", got3.ID(), msg3.ID())
+	}
+}
+
 func TestRuntimeWire_Send_ContextCancelled(t *testing.T) {
 	// 컨텍스트가 취소되면 전송이 실패해야 한다.
 	rw := &RuntimeWire{
-		ID:  "w1",
-		Ch:  make(chan message.Message), // unbuffered - 수신자가 없으면 블록
+		ID:   "w1",
+		Ch:   make(chan message.Message), // unbuffered - 수신자가 없으면 블록
 		Mode: flow.WireBypass,
 	}
 
@@ -192,8 +254,8 @@ func TestRuntimeWire_Send_ContextCancelled(t *testing.T) {
 func TestRuntimeWire_Send_ClosedChannel(t *testing.T) {
 	// 닫힌 채널에 전송하면 ErrChannelClosed를 반환해야 한다.
 	rw := &RuntimeWire{
-		ID:  "w1",
-		Ch:  make(chan message.Message, 1),
+		ID:   "w1",
+		Ch:   make(chan message.Message, 1),
 		Mode: flow.WireBuffer,
 	}
 	rw.Close()
