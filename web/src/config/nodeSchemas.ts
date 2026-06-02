@@ -239,6 +239,83 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  'select-field': {
+    description:
+      '메시지에서 지정한 필드만 남깁니다. payload / metadata / 메시지 레벨(id·type·timestamp) 그룹별로 화이트리스트를 지정하고, 누락 필드는 무시/드랍/채움 처리합니다.',
+    inputDesc: '모든 메시지. payload / metadata / 메시지 레벨 필드를 화이트리스트로 필터링',
+    outputDesc: '지정한 필드만 남긴 메시지 (on_missing=drop 이면 누락 시 메시지 전체 드랍)',
+    configSchema: {
+      fields: [
+        {
+          name: 'on_missing',
+          type: 'select',
+          label: '누락 필드 처리',
+          options: ['ignore', 'drop', 'fill'],
+          default: 'ignore',
+          description: 'ignore: 필드 생략 / drop: 메시지 전체 드랍 / fill: 지정한 기본값으로 채움',
+        },
+        // --- payload 필터링 ---
+        {
+          name: 'payload_filter',
+          type: 'boolean',
+          label: 'payload 필터링',
+          default: false,
+          description: 'payload 필드 화이트리스트 필터링 사용 여부',
+        },
+        {
+          name: 'payload_fields',
+          type: 'key_value_map',
+          label: 'payload 필드',
+          description:
+            '남길 payload 필드명(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
+          keyLabel: '필드명',
+          valueLabel: '채울 값 (fill 모드)',
+          valuePlaceholder: '예: 0',
+          visibleWhen: { field: 'payload_filter', value: true },
+        },
+        // --- metadata 필터링 ---
+        {
+          name: 'metadata_filter',
+          type: 'boolean',
+          label: 'metadata 필터링',
+          default: false,
+          description: 'metadata 키 화이트리스트 필터링 사용 여부',
+        },
+        {
+          name: 'metadata_fields',
+          type: 'key_value_map',
+          label: 'metadata 필드',
+          description:
+            '남길 metadata 키(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
+          keyLabel: '필드명',
+          valueLabel: '채울 값 (fill 모드)',
+          valuePlaceholder: '예: unknown',
+          visibleWhen: { field: 'metadata_filter', value: true },
+        },
+        // --- 메시지 레벨 필터링 (id / type / timestamp) ---
+        {
+          name: 'message_filter',
+          type: 'boolean',
+          label: '메시지 레벨 필터링',
+          default: false,
+          description: 'id / type / timestamp 등 메시지 레벨 필드 필터링 사용 여부',
+        },
+        {
+          name: 'message_fields',
+          type: 'string_list',
+          label: '메시지 레벨 필드',
+          description:
+            '남길 메시지 레벨 필드 (id, type, timestamp 중). 안내: id / timestamp 는 구조상 항상 유지되며 실질적으로 type 만 제거 가능합니다.',
+          visibleWhen: { field: 'message_filter', value: true },
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   framer: {
     description: '바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력합니다.',
     inputDesc: 'payload.raw ([]byte): 프레이밍할 바이트 스트림. metadata의 stream key로 다중 스트림 분리',
