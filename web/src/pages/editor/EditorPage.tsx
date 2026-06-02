@@ -1,7 +1,7 @@
 // React Flow 기반 플로우 에디터 페이지.
 // 노드 팔레트, 캔버스, 속성 패널로 구성된 3컬럼 레이아웃을 제공한다.
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import {
   ReactFlow,
@@ -22,6 +22,7 @@ import { CustomNode } from '@/components/flow/CustomNode';
 import { CustomEdge } from '@/components/flow/CustomEdge';
 import { DebugPanel } from '@/components/flow/DebugPanel';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
+import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
@@ -112,6 +113,7 @@ function EditorPageInner() {
   const loadFlow = useEditorStore((s) => s.loadFlow);
   const addNode = useEditorStore((s) => s.addNode);
   const removeNode = useEditorStore((s) => s.removeNode);
+  const duplicateNodes = useEditorStore((s) => s.duplicateNodes);
   const selectNode = useEditorStore((s) => s.selectNode);
   const selectEdge = useEditorStore((s) => s.selectEdge);
   const undo = useEditorStore((s) => s.undo);
@@ -119,6 +121,15 @@ function EditorPageInner() {
   const setDirty = useEditorStore((s) => s.setDirty);
   const setCurrentFlowId = useEditorStore((s) => s.setCurrentFlowId);
   const resetEditor = useEditorStore((s) => s.resetEditor);
+
+  // 노드 우클릭 컨텍스트 메뉴 상태 (위치 + 대상 노드 id).
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+  } | null>(null);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   // --- 플로우 데이터 로딩 ---
   // flowId 당 1회만 hydrate 한다. 저장 후 invalidateQueries 로 인한 백그라운드
@@ -194,15 +205,48 @@ function EditorPageInner() {
         return;
       }
 
+      // 입력 필드(INPUT/TEXTAREA/contentEditable) 위에서는 복사/붙여넣기를
+      // 네이티브 동작에 맡긴다.
+      const target = e.target as HTMLElement;
+      const inEditableField =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable;
+
+      // Ctrl/Cmd + C: 선택된 노드를 클립보드에 복사
+      if (isMod && e.key === 'c' && !inEditableField) {
+        const state = useEditorStore.getState();
+        // node.selected === true 인 노드 우선, 없으면 selectedNodeId fallback.
+        const selectedIds = state.nodes
+          .filter((n) => n.selected)
+          .map((n) => n.id);
+        const ids =
+          selectedIds.length > 0
+            ? selectedIds
+            : state.selectedNodeId
+              ? [state.selectedNodeId]
+              : [];
+        if (ids.length > 0) {
+          e.preventDefault();
+          state.copyToClipboard(ids);
+        }
+        return;
+      }
+
+      // Ctrl/Cmd + V: 클립보드 노드를 붙여넣기
+      if (isMod && e.key === 'v' && !inEditableField) {
+        const state = useEditorStore.getState();
+        if (state.clipboard.length > 0) {
+          e.preventDefault();
+          state.pasteClipboard();
+        }
+        return;
+      }
+
       // Delete/Backspace: 선택된 노드 또는 엣지 삭제
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        // 입력 필드에서는 동작하지 않도록 방지
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable
-        ) {
+        // 입력 필드에서는 동작하지 않도록 방지 (위에서 계산한 inEditableField 재사용)
+        if (inEditableField) {
           return;
         }
 
@@ -289,21 +333,58 @@ function EditorPageInner() {
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       selectNode(node.id);
+      closeContextMenu();
     },
-    [selectNode],
+    [selectNode, closeContextMenu],
   );
 
   const handleEdgeClick = useCallback(
     (_event: React.MouseEvent, edge: { id: string }) => {
       selectEdge(edge.id);
+      closeContextMenu();
     },
-    [selectEdge],
+    [selectEdge, closeContextMenu],
   );
 
   const handlePaneClick = useCallback(() => {
     selectNode(null);
     selectEdge(null);
-  }, [selectNode, selectEdge]);
+    closeContextMenu();
+  }, [selectNode, selectEdge, closeContextMenu]);
+
+  // --- 노드 우클릭 컨텍스트 메뉴 ---
+  const handleNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: Node) => {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
+    },
+    [],
+  );
+
+  // 컨텍스트 메뉴의 "복제" 실행.
+  // 우클릭한 노드가 현재 다중 선택에 포함되면 선택된 노드 전체를 복제하고,
+  // 아니면 해당 노드만 복제한다.
+  const handleDuplicateFromMenu = useCallback(() => {
+    if (!contextMenu) return;
+    const currentNodes = useEditorStore.getState().nodes;
+    const target = currentNodes.find((n) => n.id === contextMenu.nodeId);
+    const selectedIds = currentNodes.filter((n) => n.selected).map((n) => n.id);
+
+    const ids =
+      target?.selected && selectedIds.length > 0
+        ? selectedIds
+        : [contextMenu.nodeId];
+
+    duplicateNodes(ids);
+    closeContextMenu();
+  }, [contextMenu, duplicateNodes, closeContextMenu]);
+
+  // 컨텍스트 메뉴의 "삭제" 실행.
+  const handleDeleteFromMenu = useCallback(() => {
+    if (!contextMenu) return;
+    removeNode(contextMenu.nodeId);
+    closeContextMenu();
+  }, [contextMenu, removeNode, closeContextMenu]);
 
   // --- MiniMap 노드 색상 ---
   const miniMapNodeColor = useCallback(() => {
@@ -389,6 +470,7 @@ function EditorPageInner() {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={handleNodeClick}
+            onNodeContextMenu={handleNodeContextMenu}
             onEdgeClick={handleEdgeClick}
             onPaneClick={handlePaneClick}
             onDragOver={handleDragOver}
@@ -437,6 +519,17 @@ function EditorPageInner() {
 
       {/* 드래그 중 iframe/캔버스 위에서도 이벤트 캡처 */}
       {isDragging && <div className="fixed inset-0 z-50 cursor-col-resize" />}
+
+      {/* 노드 우클릭 컨텍스트 메뉴 */}
+      {contextMenu && (
+        <NodeContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onDuplicate={handleDuplicateFromMenu}
+          onDelete={handleDeleteFromMenu}
+          onClose={closeContextMenu}
+        />
+      )}
     </div>
   );
 }
