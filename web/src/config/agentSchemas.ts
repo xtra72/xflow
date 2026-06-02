@@ -13,11 +13,11 @@ export const AGENT_TYPES = [
   { value: 'http-sender', label: 'HTTP Sender' },
   { value: 'influxdb', label: 'InfluxDB' },
   { value: 'logger', label: 'Logger' },
-  { value: 'samsung-nasa', label: 'Samsung NASA' },
+  { value: 'samsung_hvacr01', label: 'Samsung HVACR-01' },
   { value: 'lgap', label: 'LG LGAP' },
-  { value: 'lgcp', label: 'LG LGCP Capture' },
-  { value: 'lgcnp', label: 'LG LGCNP-01 Capture' },
-  { value: 'century-hvac', label: 'Century HVAC (passive)' },
+  { value: 'lg_hvacr02', label: 'LG HVACR-02 Capture' },
+  { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
+  { value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' },
   { value: 'store', label: 'Store' },
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
@@ -29,8 +29,8 @@ export const AGENT_TYPES = [
 const MQTT_FIELDS: ConfigField[] = [
   { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883)' },
   { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성' },
-  { name: 'username', type: 'string', label: '사용자명' },
-  { name: 'password', type: 'string', label: '비밀번호' },
+  { name: 'username', type: 'string', label: '사용자명', sensitive: true },
+  { name: 'password', type: 'string', label: '비밀번호', sensitive: true },
   { name: 'topics', type: 'string', label: '구독 토픽', description: '쉼표로 구분 (예: sensor/+/data, device/#)' },
   { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1', description: '메시지 전달 보증 레벨' },
   { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },
@@ -80,7 +80,7 @@ const HTTP_SENDER_FIELDS: ConfigField[] = [
 
 const INFLUXDB_FIELDS: ConfigField[] = [
   { name: 'url', type: 'string', label: 'URL', required: true, default: 'http://localhost:8086', description: 'InfluxDB 서버 주소' },
-  { name: 'token', type: 'string', label: '인증 토큰', required: true },
+  { name: 'token', type: 'string', label: '인증 토큰', required: true, sensitive: true },
   { name: 'org', type: 'string', label: '조직', description: 'v2에서 필수, v3에서 선택' },
   { name: 'bucket', type: 'string', label: '버킷', required: true },
   { name: 'version', type: 'select', label: 'InfluxDB 버전', options: ['2', '3'], required: true },
@@ -107,29 +107,57 @@ const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
   { name: 'prefix', type: 'string', label: '접두어', default: '[logger]' },
 ];
 
-const SAMSUNG_NASA_FIELDS: ConfigField[] = [
-  // 연결 설정 (변경 시 재시작 필요)
-  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp'], required: true },
-  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: '예: /dev/ttyUSB0', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'baud_rate', type: 'number', label: '보 레이트', default: 9600, visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'even', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, description: '예: 192.168.1.100', visibleWhen: { field: 'transport_type', value: 'tcp' } },
-  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, default: 4196, description: '예: 4196', visibleWhen: { field: 'transport_type', value: 'tcp' } },
-  // 즉시 적용 설정
-  { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)' },
-  { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신' },
-  { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false },
-  { name: 'notify_on_change', type: 'boolean', label: '상태 변경 알람 전송', default: false },
-  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true },
-  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 통신 없음 → 오프라인 판정 시간 (예: 30s, 1m). 0=비활성' },
-  { name: 'include_raw_message_sets', type: 'boolean', label: 'Raw 메시지셋 포함', default: false, description: '상태 출력에 raw_message_sets(원본 NASA 메시지 전체)를 포함. 페이로드가 커지므로 디버깅 시에만 권장' },
-  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그 출력', default: false, description: '디코딩 실패 시 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 (trigger=report) 의 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
-  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴). 다중 디바이스 운영 시 absolute 권장' },
-  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
+// ──────────────────────────────────────────────────────────────────────────
+// Samsung HVACR-01 (NASA, SPEC-SAMSUNG-HVACR-01)
+// Samsung agent 는 device state 변경 시 항상 emit (master toggle 없음).
+//
+// 4-quadrant layout (refactor/hvacr-ui-rendering-fix):
+//   transport: 연결 방식, serial/TCP 파라미터, 타임아웃, 재연결
+//   protocol : status_query_*, poll_interval, buzzer_on_control
+//   operation: auto_discovery, offline_timeout, report_*, event_temp_threshold
+//   logging  : include_raw_hex, log_*
+//
+// Samsung backend 는 LG 와 달리 tcp_ prefix 없이 connect_timeout / read_timeout 만 가진다
+// (`internal/agent/samsung/config.go`). 일관성을 위해 UI 라벨은 "TCP" 로 노출하되 백엔드
+// 키 이름은 그대로 유지한다.
+// ──────────────────────────────────────────────────────────────────────────
+const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
+  // ── Transport ──
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: '통신 속도 (이 프로토콜 기본값: 9600bps)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'even', description: '패리티 검사 방식 (이 프로토콜 표준: even — 8E1)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100, EW11 등 RS-485 변환기), tcp-server: 바인드 주소 (0.0.0.0 = 모든 인터페이스)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, default: 4196, description: 'TCP 포트 번호 (시리얼-Ethernet 컨버터 기본값 예: 4196)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  // Samsung 백엔드는 tcp_ prefix 없이 connect_timeout / read_timeout 으로 파싱한다.
+  { name: 'connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'TCP 서버 연결 대기 시간 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '3s', description: 'TCP 소켓 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 초기 간격', default: '5s', description: '재연결 backoff 시작값 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: '재연결 최대 백오프 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  // ── Protocol-specific (Samsung NASA) ──
+  { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)', section: 'protocol' },
+  { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신', section: 'protocol' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: true, description: '실내기 능동 제어 (set_power / set_mode / target_temperature / set_fan_speed / set_multiple). false 면 제어 명령 거부', section: 'protocol' },
+  { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false, description: '제어 명령 시 실내기 부저 울림 (control_enabled=true 일 때만 의미 있음)', section: 'protocol' },
+  // ── Device discovery ──
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록', section: 'operation' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 통신 미수신 시 디바이스 오프라인 판정 (예: 30s, 1m)', section: 'operation' },
+  // ── State reporting ──
+  // Samsung agent 는 device state 변경 시 항상 emit (master toggle 없음).
+  // 따라서 emit_device_state 또는 notify_on_change 같은 토글이 없다.
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 간격 (0=비활성, 권장: ≥30s)', section: 'operation' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 이후 interval 경과 / absolute: wall-clock (crontab 패턴)', section: 'operation' },
+  // ── Output / logging (advanced) ──
+  // 순서: 운영 가시성 → 디버그/분석. 로그 레벨 셀렉터는 panel 이 logging 분면 최상단에 자동 inject.
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true, section: 'logging' },
+  // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
+  { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드 값 + payload hex 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
+  // ── Diagnostic (advanced) ──
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
 ];
 
 const LG_LGAP_FIELDS: ConfigField[] = [
@@ -143,111 +171,165 @@ const LG_LGAP_FIELDS: ConfigField[] = [
   { name: 'inter_command_delay', type: 'string', label: '명령 간 딜레이', default: '50ms', description: '명령 간 딜레이' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '재연결 기본 간격' },
   { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 백오프', default: '5m', description: '재연결 최대 백오프' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (예: 60s, 0=비활성). v0.6.0 통합 옵션' },
+  // 공통 옵션:
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성, 권장: ≥30s)' },
   { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
   { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
 ];
 
-const LG_LGCP_FIELDS: ConfigField[] = [
-  // 전송 방식 선택
-  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 (serial: RS-485, tcp-client: TCP 클라이언트, tcp-server: TCP 서버)' },
-  // 시리얼 설정 (transport_type=serial)
-  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: 'LGCP 기본값 9600bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, description: '데이터 비트 수 (기본: 8)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, description: '스톱 비트 수 (기본: 1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '500ms', description: '시리얼 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  // TCP 공통 설정 (transport_type=tcp-client 또는 tcp-server)
-  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100), tcp-server: 바인드 주소 (예: 0.0.0.0)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '500ms', description: 'TCP 소켓 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'tcp_write_timeout', type: 'string', label: 'TCP 쓰기 타임아웃', default: '1s', description: 'TCP 소켓 쓰기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'TCP 서버 연결 대기 시간 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
-  // 공통 LGCP 프로토콜 설정
-  { name: 'verify_crc', type: 'boolean', label: 'CRC 검증 활성화', default: true, description: 'CRC-16/XMODEM 무결성 검증' },
-  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
-  { name: 'devices', type: 'string', label: '사전 등록 디바이스', description: '설정 기반 디바이스 목록 (address, name)' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성). 이전 notify_interval, deprecation alias 유지' },
-  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
-  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: '메시지에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
-  { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격' },
-  { name: 'max_reconnect_backoff', type: 'string', label: '최대 재연결 대기', default: '5m', description: '재연결 백오프 상한' },
-  { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼' },
-  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '실내기 능동 제어 기능 (전원, 온도, 풍량, 모드)' },
-  { name: 'controller_address', type: 'string', label: '컨트롤러 주소', default: '44550000', description: '컨트롤러 SA 주소 (8자리 HEX). control_enabled 시 필수' },
-  { name: 'control_verify_timeout', type: 'string', label: '제어 검증 타임아웃', default: '3s', description: '제어 명령 후 상태 변경 확인 대기 시간' },
-  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 0 이하=비활성' },
+// ──────────────────────────────────────────────────────────────────────────
+// LG HVACR-02 (ICP-02, SPEC-LG-HVACR-002)
+// LG_HVACR01 과 동일한 4-quadrant 패턴 + 통일 로그 옵션 (2026-05-30).
+//
+// 4-quadrant layout:
+//   transport: 연결 방식, serial/TCP 파라미터, 타임아웃, 재연결, msg buffer
+//   protocol : verify_crc, control_enabled, controller_address, control_verify_timeout
+//   operation: auto_discovery, offline_timeout, report_*, event_temp_threshold
+//   logging  : include_raw_hex, log_decode_errors, log_drops, log_state_updates
+// ──────────────────────────────────────────────────────────────────────────
+const LG_HVACR02_FIELDS: ConfigField[] = [
+  // ── Transport ──
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: 'LG ICP-02 기본값 9600bps', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '500ms', description: '시리얼 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP, tcp-server: 바인드 주소 (0.0.0.0 = 모든 인터페이스)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'TCP 서버 연결 대기 시간 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '500ms', description: 'TCP 소켓 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_write_timeout', type: 'string', label: 'TCP 쓰기 타임아웃', default: '1s', description: 'TCP 소켓 쓰기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 초기 간격', default: '5s', description: '재연결 backoff 시작값 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: '재연결 최대 백오프 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼 (256 권장, 운영자 거의 안 만짐)', advanced: true, section: 'transport' },
+  // ── Protocol-specific (LG ICP-02) ──
+  { name: 'verify_crc', type: 'boolean', label: 'CRC 검증 활성화', default: true, description: 'CRC-16/XMODEM 무결성 검증', section: 'protocol' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '실내기 능동 제어 기능 (전원, 온도, 풍량, 모드). 활성화 시 controller_address 필수', section: 'protocol' },
+  { name: 'controller_address', type: 'string', label: '컨트롤러 주소', default: '44550000', description: '컨트롤러 SA 주소 (8자리 HEX). control_enabled 시 필수', section: 'protocol' },
+  { name: 'control_verify_timeout', type: 'string', label: '제어 검증 타임아웃', default: '3s', description: '제어 명령 후 상태 변경 확인 대기 시간', section: 'protocol' },
+  // ── Device discovery + State reporting ──
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록', section: 'operation' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 통신 미수신 시 디바이스 오프라인 판정 (예: 30s, 1m)', section: 'operation' },
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '', description: '주기적 상태보고 간격 (0 또는 빈 값=비활성, 권장: ≥30s)', section: 'operation' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 이후 interval 경과 / absolute: wall-clock (crontab 패턴)', section: 'operation' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
+  // ── Output / logging (advanced) ──
+  // 순서: 운영 가시성 → 디버그/분석. 로그 레벨 셀렉터는 panel 이 logging 분면 최상단에 자동 inject.
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '프레임 파싱 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그', advanced: true, section: 'logging' },
+  // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
+  { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 핵심 필드 (power/mode/fan/온도) 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
 ];
 
-const LG_LGCNP_FIELDS: ConfigField[] = [
-  // 전송 방식 선택
-  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 (serial: RS-485, tcp-client: TCP 클라이언트, tcp-server: TCP 서버)' },
-  // 시리얼 설정 (transport_type=serial)
-  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 1200, description: 'LGCNP-01 기본값 1200bps', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, description: '데이터 비트 수 (기본: 8)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, description: '스톱 비트 수 (기본: 1)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  // TCP 공통 설정 (transport_type=tcp-client 또는 tcp-server)
-  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP (예: 192.168.1.100), tcp-server: 바인드 주소 (예: 0.0.0.0)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  // 공통 LGCNP 프로토콜 설정
-  // v0.6.2: verify_redundancy 제거 (backend default true 로 운영 충분).
+// ──────────────────────────────────────────────────────────────────────────
+// LG HVACR-01 (ICP-01, SPEC-LG-HVACR-01)
+// LG agent 는 device state 변경 시 항상 emit (master toggle 없음).
+// dedupe_frames 는 동일 state 반복 emit 차단용으로 별도 운영.
+//
+// 4-quadrant layout (refactor/hvacr-ui-rendering-fix):
+//   transport: 연결 방식, serial/TCP 파라미터, 타임아웃, 재연결
+//   protocol : verify_redundancy, verify_odu_checksum, control_enabled
+//   operation: auto_discovery, offline_timeout, report_*, event_temp_threshold
+//   logging  : include_raw_hex, log_*
+//
+// Backend (`internal/agent/lg/lg_hvacr01_config.go`) 는 tcp_read_timeout,
+// tcp_write_timeout, tcp_connect_timeout, reconnect_interval, max_reconnect_backoff
+// 모두 파싱한다 — 따라서 UI 에 그대로 노출한다.
+// ──────────────────────────────────────────────────────────────────────────
+const LG_HVACR01_FIELDS: ConfigField[] = [
+  // ── Transport ──
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 1200, description: '통신 속도 (이 프로토콜 기본값: 1200bps)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식 (이 프로토콜 표준: none)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', description: 'tcp-client: 서버 IP, tcp-server: 바인드 주소 (0.0.0.0 = 모든 인터페이스)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 8899, description: 'TCP 포트 번호', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'TCP 서버 연결 대기 시간 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '500ms', description: 'TCP 소켓 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_write_timeout', type: 'string', label: 'TCP 쓰기 타임아웃', default: '1s', description: 'TCP 소켓 쓰기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 초기 간격', default: '5s', description: '재연결 backoff 시작값 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: '재연결 최대 백오프 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  // ── Protocol-specific (LG ICP-01) ──
   // v0.18.1: verify_odu_checksum — 일부 디바이스 변형이 SEQ=04 b[19] 를 fixed marker 로 사용해 표준 SUM checksum 불일치를 우회하기 위한 옵션.
-  { name: 'verify_redundancy', type: 'boolean', label: 'IDU 이중 기록 검증', default: true, description: 'TYPE-B (IDU) 40바이트 long frame 의 b[9]==b[29] / b[11]==b[31] / b[23]==b[36] 검증. 20바이트 short 변형 디바이스는 자동 우회됨 (v0.18.1).' },
-  { name: 'verify_odu_checksum', type: 'boolean', label: 'ODU 체크섬 검증', default: true, description: 'TYPE-A (ODU) frame 의 SEQ=01/04/05 체크섬 검증. 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — 이 경우 false 로 설정 (v0.18.1).' },
-  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록' },
-  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '디바이스 오프라인 판정 시간' },
-  // v0.6.0 공통 옵션 (5 agent 통일):
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '0s', description: '주기적 상태보고 간격 (0s=비활성). 이전 notify_interval, deprecation alias 유지' },
-  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
-  { name: 'include_raw_hex', type: 'boolean', label: 'raw_hex 포함', default: false, description: 'frame event 에 raw_hex (원시 바이트 hex) 포함 여부. 운영=false, RE/디버깅=true' },
-  // v0.6.2 LGCNP Web UI 정리:
-  // 제거: verify_redundancy (backend 기본값 true 로 운영 충분, 운영자가 거의 안 만짐)
-  // 제거: devices (사전 등록 디바이스 — 디바이스 탭에서 처리, NASA 패턴)
-  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)' },
-  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (DedupeFrames 게이트 이후 적용). 0 이하=비활성' },
+  { name: 'verify_redundancy', type: 'boolean', label: 'IDU 이중 기록 검증', default: true, description: 'TYPE-B (IDU) 40바이트 long frame 의 b[9]==b[29] / b[11]==b[31] / b[23]==b[36] 검증. 20바이트 short 변형 디바이스는 자동 우회됨 (v0.18.1).', section: 'protocol' },
+  { name: 'verify_odu_checksum', type: 'boolean', label: 'ODU 체크섬 검증', default: true, description: 'TYPE-A (ODU) frame 의 SEQ=01/04/05 체크섬 검증. 일부 디바이스 변형은 SEQ=04 b[19] 가 fixed 0x55 marker — 이 경우 false 로 설정 (v0.18.1).', section: 'protocol' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중)', section: 'protocol' },
+  // ── Device discovery ──
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록', section: 'operation' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 통신 미수신 시 디바이스 오프라인 판정 (예: 30s, 1m)', section: 'operation' },
+  // ── State reporting ──
+  // LG agent 는 device state 변경 시 항상 emit (master toggle 없음, Samsung 과 동일).
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 간격 (0=비활성, 권장: ≥30s)', section: 'operation' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 이후 interval 경과 / absolute: wall-clock (crontab 패턴)', section: 'operation' },
+  // ── Output / logging (advanced) ──
+  // 순서: 운영 가시성 → 디버그/분석. 로그 레벨 셀렉터는 panel 이 logging 분면 최상단에 자동 inject.
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true, section: 'logging' },
+  // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
+  { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드 값 + payload hex 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
+  // ── Diagnostic (advanced) ──
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
 ];
 
-// ---- Century HVAC (passive sniff) — SPEC-CENTURY-001 v0.2.0 ----
-const CENTURY_HVAC_FIELDS: ConfigField[] = [
-  // 전송 방식 선택 (v0.2.0: serial / tcp-client / tcp-server)
-  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결, tcp-client: 컨버터 IP에 접속, tcp-server: 컨버터 push 수신' },
-  // ── 시리얼 모드 필드 ──
-  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: '캡처 환경에 따라 사용자 측정 — 프로토콜 문서가 보레이트를 명시하지 않음', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' } },
-  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport_type', value: 'serial' } },
-  // ── TCP 모드 필드 (v0.2.0 신규) ──
-  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, default: '0.0.0.0', description: 'tcp-client: 컨버터 IP (필수). tcp-server: 바인드 주소 (0.0.0.0 = 모든 인터페이스)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, description: '1-65535 범위. 시리얼-Ethernet 컨버터 기본값 예: Moxa NPort 4001, USR-N520 4196', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'net.Dialer.Timeout (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
-  { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '3s', description: '매 Read 직전 SetReadDeadline 갱신. 초과 시 연결 종료 후 재연결', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] } },
-  { name: 'reconnect_initial', type: 'string', label: '재연결 초기 간격', default: '5s', description: 'Exponential backoff 시작값 (tcp-client 전용). 매 실패 시 2배 증가', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
-  { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: 'Exponential backoff 상한 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' } },
-  // ── Century 프로토콜 공통 필드 (v0.6.2 Web UI 정리) ──
+// ──────────────────────────────────────────────────────────────────────────
+// Century HVACR-01 (ICP-01, SPEC-CENTURY-HVACR-001 v0.2.0, passive sniff)
+// Century 는 3 HVACR 중 유일하게 emit_device_state master toggle 을 가진다
+// (false 시 전체 device state event 차단). Samsung/LG 와 의미가 다름.
+//
+// 4-quadrant layout (refactor/hvacr-ui-rendering-fix):
+//   transport: 연결 방식, serial/TCP 파라미터, 타임아웃, 재연결
+//   protocol : master_address, slave_address, sub_dev_id
+//   operation: auto_discovery, offline_timeout, emit_device_state, report_*,
+//              event_temp_threshold
+//   logging  : include_raw_hex, include_register_info, log_*
+// ──────────────────────────────────────────────────────────────────────────
+const CENTURY_HVACR01_FIELDS: ConfigField[] = [
+  // ── Transport ──
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: '통신 속도 (이 프로토콜 기본값: 9600bps — 캡처 환경에 따라 사용자 측정)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: '패리티 검사 방식 (이 프로토콜 표준: none)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, default: '0.0.0.0', description: 'tcp-client: 서버 IP, tcp-server: 바인드 주소 (0.0.0.0 = 모든 인터페이스)', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', required: true, description: '1-65535 범위. 시리얼-Ethernet 컨버터 기본값 예: Moxa NPort 4001, USR-N520 4196', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'tcp_connect_timeout', type: 'string', label: 'TCP 연결 타임아웃', default: '5s', description: 'net.Dialer.Timeout (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'tcp_read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '3s', description: '매 Read 직전 SetReadDeadline 갱신. 초과 시 연결 종료 후 재연결', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 초기 간격', default: '5s', description: 'Exponential backoff 시작값 (tcp-client 전용). 매 실패 시 2배 증가', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: 'Exponential backoff 상한 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  // ── Protocol-specific (Century ICP-01) ──
   // 제거: ring_buffer_size, cycle_idle_timeout, dedupe_writes (운영자가 거의 안 만짐 — backend 기본값으로 충분)
-  // 제거: devices (사전 등록 디바이스) — 디바이스 탭에서 처리 (NASA 패턴)
-  { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)' },
-  { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)' },
-  { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)' },
-  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '5s', description: '폴링 주기 약 512ms 의 약 10배 — 이 시간 동안 프레임 미수신 시 디바이스 오프라인 전이' },
-  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '회선상 관측된 sub_dev_id 를 디바이스로 자동 등록 (다중 IDU 지원)' },
-  // ── 상태 변경 알림 / 주기적 상태보고 ──
-  { name: 'emit_device_state', type: 'boolean', label: '상태 변경 알림', default: true, description: '통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도)를 변경 감지 시 emit' },
-  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 (trigger=report) 의 간격 (0=비활성). 너무 짧으면(<30s) cycle 주기와 상호작용으로 매 cycle emit 됨, 권장 ≥30s' },
-  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 으로부터 interval 경과 시. absolute: wall-clock 정렬 (crontab 패턴)' },
-  // ── 출력 옵션 (v0.6.2 정리 — 운영자 친화 라벨) ──
-  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)' },
-  { name: 'include_raw_hex', type: 'boolean', label: '원시 프레임', default: false, description: '출력에 raw_hex (원시 바이트 hex) 포함 (운영=false, RE/디버깅=true)' },
-  { name: 'log_decode_errors', type: 'boolean', label: '에러', default: false, description: 'per-error WARN 로그 (CRC 불일치, 페이로드 prefix 위반 등). 통계 카운터는 항상 증가' },
-  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: 'ring buffer 가득 참으로 인한 프레임 드롭 시 per-drop WARN 로그' },
-  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: 'v0.6.6: 실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고. 다른 필드(모드/전원/설정온도/풍량) 변경은 즉시 emit. 0 이하=비활성' },
+  // 제거: devices (사전 등록 디바이스) — 디바이스 탭에서 처리 (Samsung NASA 패턴)
+  { name: 'master_address', type: 'string', label: '마스터 주소', default: '0x0030', description: 'LE u16 마스터 주소 (hex/dec 입력 허용, 예: 0x0030 또는 48)', section: 'protocol' },
+  { name: 'slave_address', type: 'string', label: '슬레이브 주소', default: '0x0001', description: 'LE u16 슬레이브 주소 (hex/dec 입력 허용)', section: 'protocol' },
+  { name: 'sub_dev_id', type: 'string', label: 'Sub Device ID', default: '0x3B', description: 'payload prefix 의 sub_dev_id (indoor unit ID, 다중 IDU 자동 발견 시 키)', section: 'protocol' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '제어 기능 (현재 미지원 - 프로토콜 분석 진행 중, control 노드는 항상 not_supported)', section: 'protocol' },
+  // ── Device discovery ──
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '버스에서 새 디바이스 자동 등록 (회선상 관측된 sub_dev_id → 다중 IDU 지원)', section: 'operation' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 통신 미수신 시 디바이스 오프라인 판정 (예: 30s, 1m). 폴링 주기 약 512ms', section: 'operation' },
+  // ── State reporting ──
+  // Century 만의 master toggle: false 면 device state event 전체 차단 (Samsung/LG 에는 없는 옵션).
+  { name: 'emit_device_state', type: 'boolean', label: '상태 변경 알림', default: true, description: '통합 device state event (전원/모드/풍량/설정온도/현재온도 + 증발기 온도)를 변경 감지 시 emit. false 면 device state event 전체 차단 (Century 전용 master toggle)', section: 'operation' },
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '주기적 상태보고 간격 (0=비활성, 권장: ≥30s)', section: 'operation' },
+  { name: 'report_mode', type: 'select', label: '상태보고 정렬', options: ['relative', 'absolute'], default: 'relative', description: 'relative: 마지막 emit 이후 interval 경과 / absolute: wall-clock (crontab 패턴)', section: 'operation' },
+  // ── Output / logging (advanced) ──
+  // 순서: 운영 가시성 → 디버그/분석. 로그 레벨 셀렉터는 panel 이 logging 분면 최상단에 자동 inject.
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '디코드 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 프레임 드롭 시 WARN 로그', advanced: true, section: 'logging' },
+  { name: 'include_register_info', type: 'boolean', label: '레지스터 정보', default: false, description: '출력에 register 번호 + direction 등 register 메타 포함 (운영=false, 프로토콜 분석=true)', advanced: true, section: 'logging' },
+  // 디버깅/분석용 (출력 폭주 우려, 운영 환경 비활성 권장):
+  { name: 'include_raw_hex', type: 'boolean', label: 'Raw Frame(Hex 출력)', default: false, description: '출력에 원시 바이트 hex 포함 (운영: false, 디버깅: true)', advanced: true, section: 'logging' },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 디코드 값 + payload hex 를 INFO 로그로 출력 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
+  { name: 'log_state_changes_only', type: 'boolean', label: '변경 시에만 로그', default: false, description: '진단 분석 모드 — 상태 갱신 로그가 활성일 때만 동작. 직전 raw payload 와 byte-equal 비교하여 변화가 있을 때만 출력. 변경된 byte 위치 (data[2], data[7..8] 등) 가 changed_bytes 필드로 노출. 프로토콜 RE / fan 인코딩 탐색 용도', advanced: true, section: 'logging' },
+  // ── Diagnostic (advanced) ──
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
 ];
 
 const SERIAL_FIELDS: ConfigField[] = [
@@ -275,7 +357,7 @@ const SERIAL_FIELDS: ConfigField[] = [
   { name: 'length_size', type: 'select', label: '길이 필드 크기', options: ['1', '2'], default: '1', description: '길이 필드 바이트 수', visibleWhen: { field: 'framing', value: 'frame' } },
   { name: 'length_endian', type: 'select', label: '길이 필드 엔디안', options: ['big', 'little'], default: 'big', visibleWhen: { field: 'framing', value: 'frame' } },
   { name: 'length_includes_header', type: 'boolean', label: '길이에 헤더 포함', default: false, description: 'true: 길이 = 헤더+페이로드, false: 길이 = 페이로드만', visibleWhen: { field: 'framing', value: 'frame' } },
-  { name: 'length_adjustment', type: 'number', label: '길이 보정값', default: 0, description: '디코딩된 길이에 더할 보정값 (예: NASA 프로토콜은 -1)', visibleWhen: { field: 'framing', value: 'frame' } },
+  { name: 'length_adjustment', type: 'number', label: '길이 보정값', default: 0, description: '디코딩된 길이에 더할 보정값 (예: Samsung NASA 프로토콜은 -1)', visibleWhen: { field: 'framing', value: 'frame' } },
   { name: 'checksum', type: 'select', label: '체크섬', options: ['none', 'sum8', 'xor'], default: 'none', description: '프레임 끝 1바이트 체크섬 검증', visibleWhen: { field: 'framing', value: 'frame' } },
 ];
 
@@ -286,6 +368,24 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
   // 운영 설정
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 0, description: '0 = 무제한' },
+  { name: 'broadcast', type: 'boolean', label: '브로드캐스트', default: false, description: '활성화 시 송신 데이터를 연결된 모든 클라이언트에 전송 (특정 대상 무시). 한 소스를 여러 클라이언트가 동시에 수신할 때 사용.' },
+  { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  // 프레이밍 설정
+  { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
+  { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
+  { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
+];
+
+// TCP Client 에이전트 필드 정의 (백엔드 socket.ParseTCPClientConfig 키와 1:1 매핑).
+const TCP_CLIENT_FIELDS: ConfigField[] = [
+  // 연결 설정
+  { name: 'host', type: 'string', label: '호스트', required: true, description: '접속할 서버 IP (예: 192.168.1.100, 시리얼-Ethernet 컨버터)' },
+  { name: 'port', type: 'number', label: '포트', required: true, description: '접속할 서버 TCP 포트 (예: 4196, 8899)' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
+  // 재연결 설정
+  { name: 'connect_timeout', type: 'string', label: '연결 타임아웃', default: '5s', description: 'TCP 서버 연결 대기 시간 (예: 5s)' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격 (예: 5s)' },
+  { name: 'max_retries', type: 'number', label: '최대 재시도 횟수', default: 0, description: '0 = 무한 재시도' },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
@@ -358,6 +458,20 @@ export const STORE_OPERATION_FIELDS = new Set([
  */
 export const STORE_DATA_FIELDS = new Set(['registration_type']);
 
+/**
+ * 4-quadrant 레이아웃을 사용하는 HVACR 에이전트 타입 집합.
+ *
+ * Samsung / LG / Century HVACR-01 의 설정 폼은 transport / protocol / operation /
+ * logging 4분면 그리드로 렌더링된다 (refactor/hvacr-ui-rendering-fix).
+ * AgentDetailPanel 에서 분기 처리에 사용한다.
+ */
+export const HVACR_QUADRANT_AGENT_TYPES = new Set([
+  'samsung_hvacr01',
+  'lg_hvacr01',
+  'lg_hvacr02',
+  'century_hvacr01',
+]);
+
 /** 에이전트 타입별 설정 스키마 레지스트리 */
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'mqtt-client': MQTT_FIELDS,
@@ -367,13 +481,14 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'http-sender': HTTP_SENDER_FIELDS,
   'influxdb': INFLUXDB_FIELDS,
   'logger': CONSOLE_LOGGER_FIELDS,
-  'samsung-nasa': SAMSUNG_NASA_FIELDS,
+  'samsung_hvacr01': SAMSUNG_HVACR01_FIELDS,
   'lgap': LG_LGAP_FIELDS,
-  'lgcp': LG_LGCP_FIELDS,
-  'lgcnp': LG_LGCNP_FIELDS,
-  'century-hvac': CENTURY_HVAC_FIELDS,
+  'lg_hvacr02': LG_HVACR02_FIELDS,
+  'lg_hvacr01': LG_HVACR01_FIELDS,
+  'century_hvacr01': CENTURY_HVACR01_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
+  'tcp-client': TCP_CLIENT_FIELDS,
   'store': STORE_FIELDS,
 };
 

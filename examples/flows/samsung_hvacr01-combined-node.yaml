@@ -1,0 +1,206 @@
+# samsung_hvacr01-combined-node.yaml
+# Samsung HVACR-01 양방향 플로우 (samsung_hvacr01 복합 노드 사용)
+#
+# samsung_hvacr01 노드는 상태 수신과 제어를 단일 노드에서 모두 처리한다.
+# 입력 메시지의 페이로드를 분석하여 자동으로 모드를 판별한다:
+#   - 제어 키(power, mode, temperature 등)가 포함 → 제어 명령
+#   - 그 외 → 상태 조회
+# SourceNode 동작은 v0.18.26 부터 LG ICP-01 의 inactivity-fallback 모델로 통일됐다.
+# 에이전트의 FrameNotifyCh 신호로 새 frame 도착 시 즉시 emit 하고,
+# inactivity_timeout (기본 90s) 동안 신호가 없으면 request_state 명령을 발송한다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  [MQTT → Samsung HVACR-01 양방향]                                │
+# │    mqtt-cmd ──→ hvacr01-hub ──→ result-pub                      │
+# │                                                                  │
+# │  [자동 폴링 → MQTT]                                              │
+# │    hvacr01-hub(SourceNode) ──→ state-formatter ──→ state-pub    │
+# │                                                                  │
+# │  [에러 → 로깅]                                                   │
+# │    *:error ──→ error-logger                                      │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# samsung_hvacr01 노드 설정 (v0.18.26):
+#   agent_ref:          Samsung HVACR-01 에이전트 이름 (필수)
+#   inactivity_timeout: 무수신 fallback 임계 (선택, 기본값 "90s", 최소 5s)
+#   timeout:            Process 호출 타임아웃 (선택, 기본값 "5s")
+#   batch_size:         벌크 수신 수량 (선택, 기본 32)
+#   omit_state_when_off: power=false 시 신뢰 불가 필드 제거 (선택, 기본 false)
+# advanced (어드레싱):
+#   group_id:           NASA addr byte 1 (외기 인덱스 hex, "00"–"0F")
+#   unit_id:            NASA addr byte 2 ("00"–"3F" indoor) 또는 전체 주소 ("10.0F.00")
+#
+# 단일 디바이스 제어는 payload-level override 로 가능 (예: { "device_id": "living-room", ... }).
+#
+# 자동 판별 예시:
+#
+#   상태 조회 (제어 키 없음):
+#     입력: { "device_id": "living-room" }
+#     동작: get_state 명령 → 디바이스 상태 응답
+#
+#   제어 (제어 키 포함):
+#     입력: { "device_id": "living-room", "power": true, "mode": "cool" }
+#     동작: set_multiple 명령 자동 변환 → 제어 결과 응답
+#
+#   직접 명령:
+#     입력: { "command": "get_all_states" }
+#     동작: 명령 그대로 전달 → 전체 상태 응답
+#
+# 사용법:
+#   xflow agent import -f examples/agents/samsung_hvacr01-serial.yaml
+#   xflow agent import -f examples/agents/mqtt-broker.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow flow import -f examples/flows/samsung_hvacr01-combined-node.yaml
+#   xflow flow deploy samsung_hvacr01-combined-node
+#   xflow flow start samsung_hvacr01-combined-node
+
+name: "samsung_hvacr01-combined-node"
+description: "Samsung HVACR-01 양방향 제어 + 상태 폴링 - samsung_hvacr01 복합 노드 사용"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "hvac-control"
+
+required_agents:
+  - name: "samsung-hvacr01-agent"
+    type: "samsung_hvacr01"
+  - name: "mqtt-broker"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 핵심: Samsung HVACR-01 복합 노드
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── MQTT 명령 수신 ──
+  - name: "mqtt-cmd"
+    type: "bridge"
+    config:
+      topics:
+        - "hvac/control"
+        - "hvac/query"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "mqtt-broker"
+      direction: "in"
+
+  # ── Samsung HVACR-01 복합 노드 (v0.18.26 inactivity 모델) ──
+  # 하나의 노드가 상태 수신 + 제어 + 자동 fallback 을 모두 처리한다.
+  # Process: 입력 메시지 분석 → 제어 키 유무에 따라 자동 라우팅. payload-level
+  #   device_id / unit_id 로 단일 디바이스 제어 가능.
+  # SourceNode: 에이전트의 FrameNotifyCh 신호로 새 frame 즉시 emit. inactivity_timeout
+  #   동안 신호가 없으면 request_state 명령 발송.
+  - name: "hvacr01-hub"
+    type: "samsung_hvacr01"
+    config:
+      agent_ref: "samsung-hvacr01-agent"
+      inactivity_timeout: "90s"
+      timeout: "5s"
+      # 특정 디바이스만 처리하려면 advanced 어드레싱 사용 (선택):
+      # group_id: "00"
+      # unit_id:  "00"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 결과 처리
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 제어 결과 / 조회 결과 → MQTT 발행 ──
+  - name: "result-pub"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "mqtt-broker"
+      direction: "out"
+
+  # ── 자동 폴링 결과 → 상태 포맷팅 → MQTT 발행 ──
+  - name: "state-formatter"
+    type: "transform"
+    config:
+      strip_nulls: true
+      expression: |
+        {
+          device_id:    $.payload.device_id,
+          power:        $.payload.state.Power,
+          mode:         $.payload.state.Mode,
+          target_temp:  $.payload.state.TargetTemp,
+          current_temp: $.payload.state.CurrentTemp,
+          fan_speed:    $.payload.state.FanSpeed,
+          timestamp:    now()
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  - name: "state-pub"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "mqtt-broker"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 로깅
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # MQTT 명령 → Samsung HVACR-01 복합 노드 → 결과 발행
+  - source: "mqtt-cmd:out"
+    target: "hvacr01-hub:in"
+  - source: "hvacr01-hub:out"
+    target: "result-pub:in"
+
+  # 자동 폴링 결과 → 포맷 → MQTT 상태 발행
+  # SourceNode 채널 출력은 out 포트를 통해 동일 경로로 흐른다.
+  # 별도 폴링 전용 경로가 필요하면 switch 노드로 분기 가능:
+  #   metadata.node_source=poll → state-formatter, 그 외 → result-pub
+
+  # 에러 라우팅
+  - source: "mqtt-cmd:error"
+    target: "error-logger:in"
+  - source: "hvacr01-hub:error"
+    target: "error-logger:in"
+  - source: "state-formatter:error"
+    target: "error-logger:in"

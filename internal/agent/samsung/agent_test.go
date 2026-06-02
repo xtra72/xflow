@@ -15,7 +15,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// mockTransport 는 NASATransport 인터페이스의 테스트 구현체이다.
+// mockTransport 는 NasaTransport 인터페이스의 테스트 구현체이다.
 // ---------------------------------------------------------------------------
 
 type mockTransport struct {
@@ -111,28 +111,28 @@ func (m *mockTransport) setRecvErr(err error) {
 }
 
 // ---------------------------------------------------------------------------
-// mockProtocol 은 NASAProtocol 인터페이스의 테스트 구현체이다.
+// mockProtocol 은 NasaProtocol 인터페이스의 테스트 구현체이다.
 // ---------------------------------------------------------------------------
 
 type mockProtocol struct {
 	mu                    sync.Mutex
 	encodeResult          []byte
 	encodeErr             error
-	decodeResult          *NASAMessage
+	decodeResult          *NasaMessage
 	decodeErr             error
 	buildStatusResult     []byte
 	buildStatusErr        error
 	buildControlResult    []byte
 	buildControlErr       error
 	checksumResult        uint16
-	parseMessageResult    []NASAMessageSet
+	parseMessageResult    []NasaMessageSet
 	parseMessageErr       error
 	encodeMessageResult   []byte
 	buildControlCallCount int
 	buildStatusCallCount  int
 }
 
-func (m *mockProtocol) Encode(msg *NASAMessage) ([]byte, error) {
+func (m *mockProtocol) Encode(msg *NasaMessage) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.encodeErr != nil {
@@ -144,7 +144,7 @@ func (m *mockProtocol) Encode(msg *NASAMessage) ([]byte, error) {
 	return []byte{0x32, 0x00, 0x10, 0x34}, nil
 }
 
-func (m *mockProtocol) Decode(data []byte) (*NASAMessage, error) {
+func (m *mockProtocol) Decode(data []byte) (*NasaMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.decodeErr != nil {
@@ -153,7 +153,7 @@ func (m *mockProtocol) Decode(data []byte) (*NASAMessage, error) {
 	return m.decodeResult, nil
 }
 
-func (m *mockProtocol) BuildStatusQuery(addr NASAAddress, seqNum byte) ([]byte, error) {
+func (m *mockProtocol) BuildStatusQuery(addr NasaAddress, seqNum byte) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.buildStatusCallCount++
@@ -166,7 +166,7 @@ func (m *mockProtocol) BuildStatusQuery(addr NASAAddress, seqNum byte) ([]byte, 
 	return []byte{0x32, 0x00, 0x10, 0x34}, nil
 }
 
-func (m *mockProtocol) BuildControlCommand(addr NASAAddress, seqNum byte, sets []NASAMessageSet) ([]byte, error) {
+func (m *mockProtocol) BuildControlCommand(addr NasaAddress, seqNum byte, sets []NasaMessageSet) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.buildControlCallCount++
@@ -185,7 +185,7 @@ func (m *mockProtocol) CalculateChecksum(data []byte) uint16 {
 	return m.checksumResult
 }
 
-func (m *mockProtocol) ParseMessageSets(data []byte, count int) ([]NASAMessageSet, error) {
+func (m *mockProtocol) ParseMessageSets(data []byte, count int) ([]NasaMessageSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.parseMessageErr != nil {
@@ -194,7 +194,7 @@ func (m *mockProtocol) ParseMessageSets(data []byte, count int) ([]NASAMessageSe
 	return m.parseMessageResult, nil
 }
 
-func (m *mockProtocol) EncodeMessageSets(sets []NASAMessageSet) []byte {
+func (m *mockProtocol) EncodeMessageSets(sets []NasaMessageSet) []byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.encodeMessageResult != nil {
@@ -207,8 +207,8 @@ func (m *mockProtocol) EncodeMessageSets(sets []NASAMessageSet) []byte {
 // 테스트 헬퍼
 // ---------------------------------------------------------------------------
 
-// newTestAgent 는 mock 의존성이 주입된 테스트용 NASAAgent 를 생성한다.
-func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
+// newTestAgent 는 mock 의존성이 주입된 테스트용 Hvacr01Agent 를 생성한다.
+func newTestAgent(t *testing.T) (*Hvacr01Agent, *mockTransport, *mockProtocol) {
 	t.Helper()
 
 	mt := &mockTransport{available: true}
@@ -217,31 +217,32 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 		buildStatusResult:  []byte{0x32, 0x00, 0x10, 0x34},
 	}
 
-	a := &NASAAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("samsung-nasa")),
+	a := &Hvacr01Agent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("samsung_hvacr01")),
 		agentConfig: agent.AgentConfig{
 			ID:   "test-id",
-			Name: "test-nasa",
-			Type: "samsung-nasa",
+			Name: "test-samsung-hvacr01",
+			Type: "samsung_hvacr01",
 		},
-		nasaConfig: NASAConfig{
+		hvacr01Config: Hvacr01Config{
 			TransportType:       "serial",
 			SerialPort:          "/dev/ttyTest",
 			PollInterval:        30 * time.Second,
 			MsgChannelSize:      256,
 			ReconnectInterval:   10 * time.Millisecond,
 			MaxReconnectBackoff: 50 * time.Millisecond,
+			ControlEnabled:      true, // 테스트는 능동 제어 명령을 검증하므로 명시적으로 활성화
 		},
-		devices:       make(map[NASAAddress]*NASADevice),
-		deviceIDs:     make(map[string]NASAAddress),
+		devices:       make(map[NasaAddress]*NasaDevice),
+		deviceIDs:     make(map[string]NasaAddress),
 		transport:     mt,
 		protocol:      mp,
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, 256),
 		stats:         agent.NewAgentStats(),
 		logger:        testLogger(),
-		lastStates:    make(map[NASAAddress]NASADeviceState),
-		warnedUnknown: make(map[NASAAddress]bool),
+		lastStates:    make(map[NasaAddress]NasaDeviceState),
+		warnedUnknown: make(map[NasaAddress]bool),
 		disconnectCh:  make(chan struct{}),
 		createdAt:     time.Now(),
 	}
@@ -256,25 +257,25 @@ func newTestAgent(t *testing.T) (*NASAAgent, *mockTransport, *mockProtocol) {
 	a.startedAt = time.Now()
 
 	// 테스트 디바이스 등록
-	addr1, _ := ParseNASAAddress("200001")
-	addr2, _ := ParseNASAAddress("200002")
+	addr1, _ := ParseNasaAddress("200001")
+	addr2, _ := ParseNasaAddress("200002")
 
-	a.devices[addr1] = &NASADevice{
+	a.devices[addr1] = &NasaDevice{
 		Address:  addr1,
 		UnitID:   "living-room",
 		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
-		State:    &NASADeviceState{RawMessageSets: make(map[uint16][]byte)},
+		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
 		Source:   "config",
 	}
-	a.devices[addr2] = &NASADevice{
+	a.devices[addr2] = &NasaDevice{
 		Address:  addr2,
 		UnitID:   "bedroom",
 		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
-		State:    &NASADeviceState{RawMessageSets: make(map[uint16][]byte)},
+		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
 		Source:   "bridge",
 	}
 	a.deviceIDs["living-room"] = addr1
@@ -293,7 +294,7 @@ func testLogger() *slog.Logger {
 // ---------------------------------------------------------------------------
 
 // processJSON 은 JSON 요청을 생성하여 Process 에 전달하고 결과를 반환한다.
-func processJSON(t *testing.T, a *NASAAgent, req any) (map[string]any, error) {
+func processJSON(t *testing.T, a *Hvacr01Agent, req any) (map[string]any, error) {
 	t.Helper()
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -314,8 +315,8 @@ func processJSON(t *testing.T, a *NASAAgent, req any) (map[string]any, error) {
 // 테스트 케이스
 // ===========================================================================
 
-// TestNewNASAAgent_Success 는 올바른 설정으로 에이전트가 생성되는지 검증한다.
-func TestNewNASAAgent_Success(t *testing.T) {
+// TestNewHvacr01Agent_Success 는 올바른 설정으로 에이전트가 생성되는지 검증한다.
+func TestNewHvacr01Agent_Success(t *testing.T) {
 	// SerialOpener 를 mock 으로 설정
 	origOpener := SerialOpener
 	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
@@ -324,9 +325,9 @@ func TestNewNASAAgent_Success(t *testing.T) {
 	defer func() { SerialOpener = origOpener }()
 
 	config := agent.AgentConfig{
-		ID:   "nasa-1",
+		ID:   "samsung-hvacr01-1",
 		Name: "NASA HVAC",
-		Type: "samsung-nasa",
+		Type: "samsung_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -340,24 +341,24 @@ func TestNewNASAAgent_Success(t *testing.T) {
 		},
 	}
 
-	a, err := NewNASAAgent(config)
+	a, err := NewHvacr01Agent(config)
 	if err != nil {
-		t.Fatalf("NewNASAAgent: %v", err)
+		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
 	if a == nil {
 		t.Fatal("expected non-nil agent")
 	}
-	if a.Type() != "samsung-nasa" {
-		t.Errorf("Type() = %q, want %q", a.Type(), "samsung-nasa")
+	if a.Type() != "samsung_hvacr01" {
+		t.Errorf("Type() = %q, want %q", a.Type(), "samsung_hvacr01")
 	}
 }
 
-// TestNewNASAAgent_InvalidConfig 는 transport_type 누락 시 에러를 반환하는지 검증한다.
-func TestNewNASAAgent_InvalidConfig(t *testing.T) {
+// TestNewHvacr01Agent_InvalidConfig 는 transport_type 누락 시 에러를 반환하는지 검증한다.
+func TestNewHvacr01Agent_InvalidConfig(t *testing.T) {
 	config := agent.AgentConfig{
-		ID:   "nasa-1",
+		ID:   "samsung-hvacr01-1",
 		Name: "NASA HVAC",
-		Type: "samsung-nasa",
+		Type: "samsung_hvacr01",
 		Transport: agent.TransportConfig{
 			Options: map[string]any{
 				// transport_type 누락
@@ -368,22 +369,22 @@ func TestNewNASAAgent_InvalidConfig(t *testing.T) {
 		},
 	}
 
-	_, err := NewNASAAgent(config)
+	_, err := NewHvacr01Agent(config)
 	if err == nil {
 		t.Fatal("expected error for missing transport_type")
 	}
 }
 
-// TestNASAAgent_Init 은 Init 이 올바르게 Running 상태로 전이하는지 검증한다.
-func TestNASAAgent_Init(t *testing.T) {
+// TestHvacr01Agent_Init 은 Init 이 올바르게 Running 상태로 전이하는지 검증한다.
+func TestHvacr01Agent_Init(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	if a.CurrentState() != lifecycle.StateRunning {
 		t.Errorf("expected Running state, got %s", a.CurrentState())
 	}
 }
 
-// TestNASAAgent_Start_Stop 은 Start/Stop 라이프사이클을 검증한다.
-func TestNASAAgent_Start_Stop(t *testing.T) {
+// TestHvacr01Agent_Start_Stop 은 Start/Stop 라이프사이클을 검증한다.
+func TestHvacr01Agent_Start_Stop(t *testing.T) {
 	a, mt, _ := newTestAgent(t)
 
 	// Transport 를 미연결 상태로 변경하여 Start 에서 Open 이 호출되도록 한다.
@@ -416,8 +417,8 @@ func TestNASAAgent_Start_Stop(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Pause_Resume 은 Pause/Resume 동작을 검증한다.
-func TestNASAAgent_Pause_Resume(t *testing.T) {
+// TestHvacr01Agent_Pause_Resume 은 Pause/Resume 동작을 검증한다.
+func TestHvacr01Agent_Pause_Resume(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// Pause
@@ -451,8 +452,8 @@ func TestNASAAgent_Pause_Resume(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Health 는 상태에 따른 Health 를 검증한다.
-func TestNASAAgent_Health(t *testing.T) {
+// TestHvacr01Agent_Health 는 상태에 따른 Health 를 검증한다.
+func TestHvacr01Agent_Health(t *testing.T) {
 	tests := []struct {
 		name     string
 		state    lifecycle.State
@@ -476,34 +477,34 @@ func TestNASAAgent_Health(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Type 는 Type() 이 "samsung-nasa" 를 반환하는지 검증한다.
-func TestNASAAgent_Type(t *testing.T) {
+// TestHvacr01Agent_Type 는 Type() 이 "samsung_hvacr01" 를 반환하는지 검증한다.
+func TestHvacr01Agent_Type(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	if a.Type() != "samsung-nasa" {
-		t.Errorf("Type() = %q, want %q", a.Type(), "samsung-nasa")
+	if a.Type() != "samsung_hvacr01" {
+		t.Errorf("Type() = %q, want %q", a.Type(), "samsung_hvacr01")
 	}
 }
 
-// TestNASAAgent_Info 는 Info() 스냅샷을 검증한다.
-func TestNASAAgent_Info(t *testing.T) {
+// TestHvacr01Agent_Info 는 Info() 스냅샷을 검증한다.
+func TestHvacr01Agent_Info(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	info := a.Info()
 	if info.ID != "test-id" {
 		t.Errorf("Info().ID = %q, want %q", info.ID, "test-id")
 	}
-	if info.Name != "test-nasa" {
-		t.Errorf("Info().Name = %q, want %q", info.Name, "test-nasa")
+	if info.Name != "test-samsung-hvacr01" {
+		t.Errorf("Info().Name = %q, want %q", info.Name, "test-samsung-hvacr01")
 	}
-	if info.Type != "samsung-nasa" {
-		t.Errorf("Info().Type = %q, want %q", info.Type, "samsung-nasa")
+	if info.Type != "samsung_hvacr01" {
+		t.Errorf("Info().Type = %q, want %q", info.Type, "samsung_hvacr01")
 	}
 	if info.State != lifecycle.StateRunning {
 		t.Errorf("Info().State = %q, want %q", info.State, lifecycle.StateRunning)
 	}
 }
 
-// TestNASAAgent_Process_SetPower 는 set_power 명령을 검증한다.
-func TestNASAAgent_Process_SetPower(t *testing.T) {
+// TestHvacr01Agent_Process_SetPower 는 set_power 명령을 검증한다.
+func TestHvacr01Agent_Process_SetPower(t *testing.T) {
 	tests := []struct {
 		name      string
 		power     bool
@@ -535,8 +536,8 @@ func TestNASAAgent_Process_SetPower(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_SetMode 는 set_mode 명령을 검증한다 (유효 + 무효).
-func TestNASAAgent_Process_SetMode(t *testing.T) {
+// TestHvacr01Agent_Process_SetMode 는 set_mode 명령을 검증한다 (유효 + 무효).
+func TestHvacr01Agent_Process_SetMode(t *testing.T) {
 	tests := []struct {
 		name    string
 		mode    string
@@ -567,8 +568,8 @@ func TestNASAAgent_Process_SetMode(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_SetTemperature 는 target_temperature 명령을 검증한다.
-func TestNASAAgent_Process_SetTemperature(t *testing.T) {
+// TestHvacr01Agent_Process_SetTemperature 는 target_temperature 명령을 검증한다.
+func TestHvacr01Agent_Process_SetTemperature(t *testing.T) {
 	tests := []struct {
 		name    string
 		temp    float64
@@ -600,8 +601,8 @@ func TestNASAAgent_Process_SetTemperature(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_SetFanSpeed 는 set_fan_speed 명령을 검증한다.
-func TestNASAAgent_Process_SetFanSpeed(t *testing.T) {
+// TestHvacr01Agent_Process_SetFanSpeed 는 set_fan_speed 명령을 검증한다.
+func TestHvacr01Agent_Process_SetFanSpeed(t *testing.T) {
 	tests := []struct {
 		name    string
 		speed   string
@@ -631,8 +632,8 @@ func TestNASAAgent_Process_SetFanSpeed(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_SetMultiple 는 set_multiple 명령을 검증한다.
-func TestNASAAgent_Process_SetMultiple(t *testing.T) {
+// TestHvacr01Agent_Process_SetMultiple 는 set_multiple 명령을 검증한다.
+func TestHvacr01Agent_Process_SetMultiple(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	resp, err := processJSON(t, a, map[string]any{
 		"command":   "set_multiple",
@@ -659,8 +660,8 @@ func TestNASAAgent_Process_SetMultiple(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_GetState 는 get_state 명령을 검증한다.
-func TestNASAAgent_Process_GetState(t *testing.T) {
+// TestHvacr01Agent_Process_GetState 는 get_state 명령을 검증한다.
+func TestHvacr01Agent_Process_GetState(t *testing.T) {
 	t.Run("by device_id", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		resp, err := processJSON(t, a, map[string]any{
@@ -700,7 +701,7 @@ func TestNASAAgent_Process_GetState(t *testing.T) {
 // TestEffectiveDeviceID 는 device_id 가 비어 있을 때 주소 Hex 로 대체되고,
 // 지정되어 있으면 그대로 유지되는지 검증한다.
 func TestEffectiveDeviceID(t *testing.T) {
-	addr, _ := ParseNASAAddress("200000")
+	addr, _ := ParseNasaAddress("200000")
 
 	tests := []struct {
 		name     string
@@ -720,20 +721,20 @@ func TestEffectiveDeviceID(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_GetState_DeviceIDFallback 는 자동 발견 디바이스(빈 DeviceID)의
+// TestHvacr01Agent_Process_GetState_DeviceIDFallback 는 자동 발견 디바이스(빈 DeviceID)의
 // get_state 응답에서 device_id 가 주소 Hex 로 채워지는지 검증한다.
-func TestNASAAgent_Process_GetState_DeviceIDFallback(t *testing.T) {
+func TestHvacr01Agent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// DeviceID 가 비어 있는 자동 발견 디바이스 등록
-	addr, _ := ParseNASAAddress("200003")
-	a.devices[addr] = &NASADevice{
+	addr, _ := ParseNasaAddress("200003")
+	a.devices[addr] = &NasaDevice{
 		Address:  addr,
 		UnitID:   "", // 자동 발견 디바이스: 사용자 지정 ID 없음
 		Type:     "HVACR.IDU",
 		Online:   true,
 		LastSeen: time.Now(),
-		State:    &NASADeviceState{RawMessageSets: make(map[uint16][]byte)},
+		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
 		Source:   "auto",
 	}
 
@@ -761,8 +762,8 @@ func TestNASAAgent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_GetAllStates 는 get_all_states 명령을 검증한다.
-func TestNASAAgent_Process_GetAllStates(t *testing.T) {
+// TestHvacr01Agent_Process_GetAllStates 는 get_all_states 명령을 검증한다.
+func TestHvacr01Agent_Process_GetAllStates(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	resp, err := processJSON(t, a, map[string]any{
 		"command": "get_all_states",
@@ -782,8 +783,8 @@ func TestNASAAgent_Process_GetAllStates(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_AddDevice 는 add_device 명령을 검증한다.
-func TestNASAAgent_Process_AddDevice(t *testing.T) {
+// TestHvacr01Agent_Process_AddDevice 는 add_device 명령을 검증한다.
+func TestHvacr01Agent_Process_AddDevice(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		resp, err := processJSON(t, a, map[string]any{
@@ -800,7 +801,7 @@ func TestNASAAgent_Process_AddDevice(t *testing.T) {
 		}
 
 		// 등록 확인
-		addr, _ := ParseNASAAddress("200003")
+		addr, _ := ParseNasaAddress("200003")
 		a.mu.RLock()
 		_, exists := a.devices[addr]
 		a.mu.RUnlock()
@@ -833,8 +834,8 @@ func TestNASAAgent_Process_AddDevice(t *testing.T) {
 	})
 }
 
-// TestNASAAgent_Process_RemoveDevice 는 remove_device 명령을 검증한다.
-func TestNASAAgent_Process_RemoveDevice(t *testing.T) {
+// TestHvacr01Agent_Process_RemoveDevice 는 remove_device 명령을 검증한다.
+func TestHvacr01Agent_Process_RemoveDevice(t *testing.T) {
 	t.Run("success bridge device", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		resp, err := processJSON(t, a, map[string]any{
@@ -861,8 +862,8 @@ func TestNASAAgent_Process_RemoveDevice(t *testing.T) {
 	})
 }
 
-// TestNASAAgent_Process_ListDevices 는 list_devices 명령을 검증한다.
-func TestNASAAgent_Process_ListDevices(t *testing.T) {
+// TestHvacr01Agent_Process_ListDevices 는 list_devices 명령을 검증한다.
+func TestHvacr01Agent_Process_ListDevices(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	resp, err := processJSON(t, a, map[string]any{
 		"command": "list_devices",
@@ -882,8 +883,8 @@ func TestNASAAgent_Process_ListDevices(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_InvalidCommand 는 알 수 없는 명령에 대한 에러를 검증한다.
-func TestNASAAgent_Process_InvalidCommand(t *testing.T) {
+// TestHvacr01Agent_Process_InvalidCommand 는 알 수 없는 명령에 대한 에러를 검증한다.
+func TestHvacr01Agent_Process_InvalidCommand(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	data, _ := json.Marshal(map[string]any{
 		"command": "unknown_cmd",
@@ -894,8 +895,8 @@ func TestNASAAgent_Process_InvalidCommand(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_DeviceIDResolution 는 device_id 가 address 보다 우선하는지 검증한다.
-func TestNASAAgent_Process_DeviceIDResolution(t *testing.T) {
+// TestHvacr01Agent_Process_DeviceIDResolution 는 device_id 가 address 보다 우선하는지 검증한다.
+func TestHvacr01Agent_Process_DeviceIDResolution(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	// device_id 와 address 를 동시에 제공: device_id 가 우선
 	resp, err := processJSON(t, a, map[string]any{
@@ -912,12 +913,12 @@ func TestNASAAgent_Process_DeviceIDResolution(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_OfflineDevice 는 오프라인 디바이스에 제어 명령 시 에러를 검증한다.
-func TestNASAAgent_Process_OfflineDevice(t *testing.T) {
+// TestHvacr01Agent_Process_OfflineDevice 는 오프라인 디바이스에 제어 명령 시 에러를 검증한다.
+func TestHvacr01Agent_Process_OfflineDevice(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// 디바이스를 오프라인으로 설정
-	addr, _ := ParseNASAAddress("200001")
+	addr, _ := ParseNasaAddress("200001")
 	a.mu.Lock()
 	a.devices[addr].Online = false
 	a.mu.Unlock()
@@ -933,8 +934,8 @@ func TestNASAAgent_Process_OfflineDevice(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_ReceiveMessage 는 채널 수신과 컨텍스트 취소를 검증한다.
-func TestNASAAgent_ReceiveMessage(t *testing.T) {
+// TestHvacr01Agent_ReceiveMessage 는 채널 수신과 컨텍스트 취소를 검증한다.
+func TestHvacr01Agent_ReceiveMessage(t *testing.T) {
 	t.Run("receive from channel", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		expected := []byte(`{"type":"test"}`)
@@ -964,8 +965,8 @@ func TestNASAAgent_ReceiveMessage(t *testing.T) {
 	})
 }
 
-// TestNASAAgent_ListDevices 는 공개 메서드 ListDevices 를 검증한다.
-func TestNASAAgent_ListDevices(t *testing.T) {
+// TestHvacr01Agent_ListDevices 는 공개 메서드 ListDevices 를 검증한다.
+func TestHvacr01Agent_ListDevices(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	devices := a.ListDevices()
 	if len(devices) != 2 {
@@ -973,11 +974,11 @@ func TestNASAAgent_ListDevices(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_GetDeviceState 는 디바이스 상태 조회를 검증한다.
-func TestNASAAgent_GetDeviceState(t *testing.T) {
+// TestHvacr01Agent_GetDeviceState 는 디바이스 상태 조회를 검증한다.
+func TestHvacr01Agent_GetDeviceState(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
-		addr, _ := ParseNASAAddress("200001")
+		addr, _ := ParseNasaAddress("200001")
 		state, err := a.GetDeviceState(addr)
 		if err != nil {
 			t.Fatalf("GetDeviceState: %v", err)
@@ -989,7 +990,7 @@ func TestNASAAgent_GetDeviceState(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
-		addr, _ := ParseNASAAddress("2000FF")
+		addr, _ := ParseNasaAddress("2000FF")
 		_, err := a.GetDeviceState(addr)
 		if !errors.Is(err, ErrDeviceNotFound) {
 			t.Errorf("error = %v, want ErrDeviceNotFound", err)
@@ -997,8 +998,8 @@ func TestNASAAgent_GetDeviceState(t *testing.T) {
 	})
 }
 
-// TestNASAAgent_GetDeviceByID 는 device_id 로 디바이스 조회를 검증한다.
-func TestNASAAgent_GetDeviceByID(t *testing.T) {
+// TestHvacr01Agent_GetDeviceByID 는 device_id 로 디바이스 조회를 검증한다.
+func TestHvacr01Agent_GetDeviceByID(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
 		dev, err := a.GetDeviceByID("living-room")
@@ -1022,12 +1023,12 @@ func TestNASAAgent_GetDeviceByID(t *testing.T) {
 	})
 }
 
-// TestNASAAgent_DeviceIDConfig 는 devices 설정의 name 이 올바르게 매핑되는지 검증한다.
-func TestNASAAgent_DeviceIDConfig(t *testing.T) {
+// TestHvacr01Agent_DeviceIDConfig 는 devices 설정의 name 이 올바르게 매핑되는지 검증한다.
+func TestHvacr01Agent_DeviceIDConfig(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
-	addr1, _ := ParseNASAAddress("200001")
-	addr2, _ := ParseNASAAddress("200002")
+	addr1, _ := ParseNasaAddress("200001")
+	addr2, _ := ParseNasaAddress("200002")
 
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -1053,8 +1054,8 @@ func TestNASAAgent_DeviceIDConfig(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_SendTransportError 는 트랜스포트 전송 에러를 검증한다.
-func TestNASAAgent_Process_SendTransportError(t *testing.T) {
+// TestHvacr01Agent_Process_SendTransportError 는 트랜스포트 전송 에러를 검증한다.
+func TestHvacr01Agent_Process_SendTransportError(t *testing.T) {
 	a, mt, _ := newTestAgent(t)
 	mt.sendErr = errors.New("transport broken")
 
@@ -1069,8 +1070,8 @@ func TestNASAAgent_Process_SendTransportError(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_BuildControlError 는 프로토콜 빌드 에러를 검증한다.
-func TestNASAAgent_Process_BuildControlError(t *testing.T) {
+// TestHvacr01Agent_Process_BuildControlError 는 프로토콜 빌드 에러를 검증한다.
+func TestHvacr01Agent_Process_BuildControlError(t *testing.T) {
 	a, _, mp := newTestAgent(t)
 	mp.buildControlErr = errors.New("protocol error")
 
@@ -1085,8 +1086,8 @@ func TestNASAAgent_Process_BuildControlError(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_DeviceNotFound 는 존재하지 않는 디바이스에 대한 에러를 검증한다.
-func TestNASAAgent_Process_DeviceNotFound(t *testing.T) {
+// TestHvacr01Agent_Process_DeviceNotFound 는 존재하지 않는 디바이스에 대한 에러를 검증한다.
+func TestHvacr01Agent_Process_DeviceNotFound(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	data, _ := json.Marshal(map[string]any{
 		"command": "get_state",
@@ -1098,8 +1099,8 @@ func TestNASAAgent_Process_DeviceNotFound(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_DeviceIDNotFound 는 존재하지 않는 device_id 에 대한 에러를 검증한다.
-func TestNASAAgent_Process_DeviceIDNotFound(t *testing.T) {
+// TestHvacr01Agent_Process_DeviceIDNotFound 는 존재하지 않는 device_id 에 대한 에러를 검증한다.
+func TestHvacr01Agent_Process_DeviceIDNotFound(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	data, _ := json.Marshal(map[string]any{
 		"command":   "get_state",
@@ -1111,24 +1112,24 @@ func TestNASAAgent_Process_DeviceIDNotFound(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Configure 는 Configure 메서드를 검증한다.
-func TestNASAAgent_Configure(t *testing.T) {
+// TestHvacr01Agent_Configure 는 Configure 메서드를 검증한다.
+func TestHvacr01Agent_Configure(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	newConfig := agent.AgentConfig{
 		ID:   "test-id-2",
-		Name: "updated-nasa",
-		Type: "samsung-nasa",
+		Name: "updated-samsung-hvacr01",
+		Type: "samsung_hvacr01",
 	}
 	if err := a.Configure(newConfig); err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
-	if a.Name() != "updated-nasa" {
-		t.Errorf("Name() = %q, want %q", a.Name(), "updated-nasa")
+	if a.Name() != "updated-samsung-hvacr01" {
+		t.Errorf("Name() = %q, want %q", a.Name(), "updated-samsung-hvacr01")
 	}
 }
 
-// TestNASAAgent_Configure_TickerReset 은 Configure 시 poll/notify ticker가 재설정되는지 검증한다.
-func TestNASAAgent_Configure_TickerReset(t *testing.T) {
+// TestHvacr01Agent_Configure_TickerReset 은 Configure 시 poll/notify ticker가 재설정되는지 검증한다.
+func TestHvacr01Agent_Configure_TickerReset(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// 실행 중인 ticker 시뮬레이션
@@ -1147,14 +1148,14 @@ func TestNASAAgent_Configure_TickerReset(t *testing.T) {
 
 	newConfig := agent.AgentConfig{
 		ID:   "test-id",
-		Name: "test-nasa",
-		Type: "samsung-nasa",
+		Name: "test-samsung-hvacr01",
+		Type: "samsung_hvacr01",
 		Transport: agent.TransportConfig{
 			Options: map[string]any{
 				"transport_type":  "serial",
 				"serial_port":     "/dev/ttyUSB0",
 				"poll_interval":   "5s",
-				"notify_interval": "2s",
+				"report_interval": "2s",
 			},
 		},
 	}
@@ -1164,27 +1165,27 @@ func TestNASAAgent_Configure_TickerReset(t *testing.T) {
 
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if a.nasaConfig.PollInterval != 5*time.Second {
-		t.Errorf("PollInterval = %v, want 5s", a.nasaConfig.PollInterval)
+	if a.hvacr01Config.PollInterval != 5*time.Second {
+		t.Errorf("PollInterval = %v, want 5s", a.hvacr01Config.PollInterval)
 	}
-	if a.nasaConfig.NotifyInterval != 2*time.Second {
-		t.Errorf("NotifyInterval = %v, want 2s", a.nasaConfig.NotifyInterval)
+	if a.hvacr01Config.NotifyInterval != 2*time.Second {
+		t.Errorf("NotifyInterval = %v, want 2s", a.hvacr01Config.NotifyInterval)
 	}
 }
 
-// TestNASAAgent_ID_Name 은 ID/Name 메서드를 검증한다.
-func TestNASAAgent_ID_Name(t *testing.T) {
+// TestHvacr01Agent_ID_Name 은 ID/Name 메서드를 검증한다.
+func TestHvacr01Agent_ID_Name(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	if a.ID() != "test-id" {
 		t.Errorf("ID() = %q, want %q", a.ID(), "test-id")
 	}
-	if a.Name() != "test-nasa" {
-		t.Errorf("Name() = %q, want %q", a.Name(), "test-nasa")
+	if a.Name() != "test-samsung-hvacr01" {
+		t.Errorf("Name() = %q, want %q", a.Name(), "test-samsung-hvacr01")
 	}
 }
 
-// TestNASAAgent_Stats 는 Stats 스냅샷을 검증한다.
-func TestNASAAgent_Stats(t *testing.T) {
+// TestHvacr01Agent_Stats 는 Stats 스냅샷을 검증한다.
+func TestHvacr01Agent_Stats(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// 메시지 전송 후 stats 확인
@@ -1201,8 +1202,8 @@ func TestNASAAgent_Stats(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_InvalidJSON 은 유효하지 않은 JSON 입력을 검증한다.
-func TestNASAAgent_Process_InvalidJSON(t *testing.T) {
+// TestHvacr01Agent_Process_InvalidJSON 은 유효하지 않은 JSON 입력을 검증한다.
+func TestHvacr01Agent_Process_InvalidJSON(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	_, err := a.Process([]byte("not-json"))
 	if err == nil {
@@ -1210,8 +1211,8 @@ func TestNASAAgent_Process_InvalidJSON(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_Process_SetMultiple_EmptyParams 는 빈 params 에 대한 에러를 검증한다.
-func TestNASAAgent_Process_SetMultiple_EmptyParams(t *testing.T) {
+// TestHvacr01Agent_Process_SetMultiple_EmptyParams 는 빈 params 에 대한 에러를 검증한다.
+func TestHvacr01Agent_Process_SetMultiple_EmptyParams(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	data, _ := json.Marshal(map[string]any{
 		"command":   "set_multiple",
@@ -1224,8 +1225,8 @@ func TestNASAAgent_Process_SetMultiple_EmptyParams(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_NextSeqNum 은 시퀀스 번호 래핑을 검증한다.
-func TestNASAAgent_NextSeqNum(t *testing.T) {
+// TestHvacr01Agent_NextSeqNum 은 시퀀스 번호 래핑을 검증한다.
+func TestHvacr01Agent_NextSeqNum(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	a.mu.Lock()
@@ -1248,8 +1249,8 @@ func TestNASAAgent_NextSeqNum(t *testing.T) {
 	}
 }
 
-// TestNASAAgent_SendEvent_ChannelFull 은 msgCh 가 가득 찼을 때 드롭되는지 검증한다.
-func TestNASAAgent_SendEvent_ChannelFull(t *testing.T) {
+// TestHvacr01Agent_SendEvent_ChannelFull 은 msgCh 가 가득 찼을 때 드롭되는지 검증한다.
+func TestHvacr01Agent_SendEvent_ChannelFull(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 
 	// 채널을 가득 채운다
@@ -1265,8 +1266,8 @@ func TestNASAAgent_SendEvent_ChannelFull(t *testing.T) {
 	a.sendEvent("test_event", map[string]any{"key": "value"})
 }
 
-// TestNASAAgent_Process_NoAddressOrDeviceID 는 address/device_id 모두 없을 때 에러를 검증한다.
-func TestNASAAgent_Process_NoAddressOrDeviceID(t *testing.T) {
+// TestHvacr01Agent_Process_NoAddressOrDeviceID 는 address/device_id 모두 없을 때 에러를 검증한다.
+func TestHvacr01Agent_Process_NoAddressOrDeviceID(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	data, _ := json.Marshal(map[string]any{
 		"command": "get_state",
@@ -1281,20 +1282,20 @@ func TestNASAAgent_Process_NoAddressOrDeviceID(t *testing.T) {
 // handleMessage 테스트
 // ---------------------------------------------------------------------------
 
-func TestNASAAgent_HandleMessage_KnownDevice(t *testing.T) {
+func TestHvacr01Agent_HandleMessage_KnownDevice(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	addr, _ := ParseNASAAddress("200001")
+	addr, _ := ParseNasaAddress("200001")
 
 	// 디바이스를 오프라인으로 설정
 	a.mu.Lock()
 	a.devices[addr].Online = false
 	a.mu.Unlock()
 
-	msg := &NASAMessage{
+	msg := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
 			{Index: MsgMode, Value: []byte{0x01}},              // cool
 			{Index: MsgFanSpeed, Value: []byte{0x02}},          // medium
@@ -1328,16 +1329,16 @@ func TestNASAAgent_HandleMessage_KnownDevice(t *testing.T) {
 	drainAndFindEvent(t, a.msgCh, "device_online")
 }
 
-func TestNASAAgent_HandleMessage_AutoDiscovery(t *testing.T) {
+func TestHvacr01Agent_HandleMessage_AutoDiscovery(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	a.nasaConfig.AutoDiscovery = true
+	a.hvacr01Config.AutoDiscovery = true
 
-	unknownAddr, _ := ParseNASAAddress("200099")
-	msg := &NASAMessage{
+	unknownAddr, _ := ParseNasaAddress("200099")
+	msg := &NasaMessage{
 		SourceAddr:  unknownAddr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
 		},
 	}
@@ -1359,12 +1360,12 @@ func TestNASAAgent_HandleMessage_AutoDiscovery(t *testing.T) {
 	drainAndFindEvent(t, a.msgCh, "device_discovered")
 }
 
-func TestNASAAgent_HandleMessage_UnknownDevice_NoAutoDiscovery(t *testing.T) {
+func TestHvacr01Agent_HandleMessage_UnknownDevice_NoAutoDiscovery(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	a.nasaConfig.AutoDiscovery = false
+	a.hvacr01Config.AutoDiscovery = false
 
-	unknownAddr, _ := ParseNASAAddress("200099")
-	msg := &NASAMessage{
+	unknownAddr, _ := ParseNasaAddress("200099")
+	msg := &NasaMessage{
 		SourceAddr:  unknownAddr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
@@ -1380,16 +1381,16 @@ func TestNASAAgent_HandleMessage_UnknownDevice_NoAutoDiscovery(t *testing.T) {
 	}
 }
 
-func TestNASAAgent_HandleMessage_StateChanged(t *testing.T) {
+func TestHvacr01Agent_HandleMessage_StateChanged(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	addr, _ := ParseNASAAddress("200001")
+	addr, _ := ParseNasaAddress("200001")
 
 	// 초기 상태 설정 — 5 핵심 필드 모두 포함해야 AllCoreObserved gate 통과.
-	msg1 := &NASAMessage{
+	msg1 := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
 			{Index: MsgMode, Value: []byte{0x01}},              // cool
 			{Index: MsgFanSpeed, Value: []byte{0x02}},          // medium
@@ -1402,11 +1403,11 @@ func TestNASAAgent_HandleMessage_StateChanged(t *testing.T) {
 	drainEvents(a.msgCh)
 
 	// 온도 변경
-	msg2 := &NASAMessage{
+	msg2 := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
 		CommandCode: CmdNormalRequest,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgTargetTemp, Value: []byte{0x01, 0x04}}, // 26.0
 		},
 	}
@@ -1421,44 +1422,44 @@ func TestNASAAgent_HandleMessage_StateChanged(t *testing.T) {
 func TestStateChanged(t *testing.T) {
 	tests := []struct {
 		name    string
-		prev    NASADeviceState
-		current NASADeviceState
+		prev    NasaDeviceState
+		current NasaDeviceState
 		want    bool
 	}{
 		{
 			name:    "identical states",
-			prev:    NASADeviceState{Power: true, Mode: "cool", TargetTemp: 25.0, CurrentTemp: 24.0, FanSpeed: "auto"},
-			current: NASADeviceState{Power: true, Mode: "cool", TargetTemp: 25.0, CurrentTemp: 24.0, FanSpeed: "auto"},
+			prev:    NasaDeviceState{Power: true, Mode: "cool", TargetTemp: 25.0, CurrentTemp: 24.0, FanSpeed: "auto"},
+			current: NasaDeviceState{Power: true, Mode: "cool", TargetTemp: 25.0, CurrentTemp: 24.0, FanSpeed: "auto"},
 			want:    false,
 		},
 		{
 			name:    "power changed",
-			prev:    NASADeviceState{Power: false},
-			current: NASADeviceState{Power: true},
+			prev:    NasaDeviceState{Power: false},
+			current: NasaDeviceState{Power: true},
 			want:    true,
 		},
 		{
 			name:    "mode changed",
-			prev:    NASADeviceState{Mode: "cool"},
-			current: NASADeviceState{Mode: "heat"},
+			prev:    NasaDeviceState{Mode: "cool"},
+			current: NasaDeviceState{Mode: "heat"},
 			want:    true,
 		},
 		{
 			name:    "target temp changed",
-			prev:    NASADeviceState{TargetTemp: 25.0},
-			current: NASADeviceState{TargetTemp: 26.0},
+			prev:    NasaDeviceState{TargetTemp: 25.0},
+			current: NasaDeviceState{TargetTemp: 26.0},
 			want:    true,
 		},
 		{
 			name:    "current temp changed",
-			prev:    NASADeviceState{CurrentTemp: 24.0},
-			current: NASADeviceState{CurrentTemp: 25.0},
+			prev:    NasaDeviceState{CurrentTemp: 24.0},
+			current: NasaDeviceState{CurrentTemp: 25.0},
 			want:    true,
 		},
 		{
 			name:    "fan speed changed",
-			prev:    NASADeviceState{FanSpeed: "auto"},
-			current: NASADeviceState{FanSpeed: "high"},
+			prev:    NasaDeviceState{FanSpeed: "auto"},
+			current: NasaDeviceState{FanSpeed: "high"},
 			want:    true,
 		},
 	}
@@ -1513,14 +1514,14 @@ func TestFilterMessageSets(t *testing.T) {
 	tests := []struct {
 		name        string
 		unsupported map[uint16]bool
-		input       []NASAMessageSet
+		input       []NasaMessageSet
 		wantLen     int
 		wantIndices []uint16
 	}{
 		{
 			name:        "필터 없음 - 모두 통과",
 			unsupported: nil,
-			input: []NASAMessageSet{
+			input: []NasaMessageSet{
 				{Index: MsgPower, Value: []byte{0x01}},
 				{Index: MsgMode, Value: []byte{0x02}},
 			},
@@ -1530,7 +1531,7 @@ func TestFilterMessageSets(t *testing.T) {
 		{
 			name:        "빈 맵 - 모두 통과",
 			unsupported: map[uint16]bool{},
-			input: []NASAMessageSet{
+			input: []NasaMessageSet{
 				{Index: MsgPower, Value: []byte{0x01}},
 			},
 			wantLen:     1,
@@ -1539,7 +1540,7 @@ func TestFilterMessageSets(t *testing.T) {
 		{
 			name:        "일부 필터링",
 			unsupported: map[uint16]bool{0x4100: true, 0x4111: true},
-			input: []NASAMessageSet{
+			input: []NasaMessageSet{
 				{Index: MsgPower, Value: []byte{0x01}},
 				{Index: 0x4100, Value: []byte{0x00}},
 				{Index: MsgMode, Value: []byte{0x02}},
@@ -1551,7 +1552,7 @@ func TestFilterMessageSets(t *testing.T) {
 		{
 			name:        "전체 필터링",
 			unsupported: map[uint16]bool{0x4100: true, 0x4102: true},
-			input: []NASAMessageSet{
+			input: []NasaMessageSet{
 				{Index: 0x4100, Value: []byte{0x00}},
 				{Index: 0x4102, Value: []byte{0x00}},
 			},
@@ -1560,11 +1561,11 @@ func TestFilterMessageSets(t *testing.T) {
 		},
 	}
 
-	addr, _ := ParseNASAAddress("200001")
+	addr, _ := ParseNasaAddress("200001")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a.nasaConfig.UnsupportedMsgSets = tt.unsupported
+			a.hvacr01Config.UnsupportedMsgSets = tt.unsupported
 			result := a.filterMessageSets(tt.input, addr)
 
 			if len(result) != tt.wantLen {
@@ -1796,7 +1797,7 @@ eventDone:
 // TestPollLoop_DisconnectCh 는 disconnectCh 가 닫히면 pollLoop 가 종료되는지 테스트한다.
 func TestPollLoop_DisconnectCh(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	a.nasaConfig.PollInterval = 10 * time.Millisecond
+	a.hvacr01Config.PollInterval = 10 * time.Millisecond
 
 	done := make(chan struct{})
 	go func() {

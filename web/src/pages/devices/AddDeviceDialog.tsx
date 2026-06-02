@@ -1,5 +1,5 @@
 // 디바이스 추가 다이얼로그.
-// NASA, Modbus 에이전트에 대한 디바이스 추가 폼을 제공한다.
+// Samsung HVACR-01, Modbus 에이전트에 대한 디바이스 추가 폼을 제공한다.
 
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, X } from 'lucide-react';
@@ -30,10 +30,10 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
-  // 디바이스 추가 지원 에이전트 필터링 (samsung-nasa + modbus-tcp-server)
+  // 디바이스 추가 지원 에이전트 필터링 (samsung_hvacr01 + modbus-tcp-server)
   const supportedAgents = useMemo(() => {
     const agents = agentsData?.data ?? [];
-    return agents.filter((a) => a.type === 'samsung-nasa' || a.type === 'modbus-tcp-server');
+    return agents.filter((a) => a.type === 'samsung_hvacr01' || a.type === 'modbus-tcp-server');
   }, [agentsData]);
 
   const [selectedAgentId, setSelectedAgentId] = useState('');
@@ -44,10 +44,10 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
     return supportedAgents.find((a) => a.id === selectedAgentId)?.type ?? null;
   }, [selectedAgentId, supportedAgents]);
 
-  // --- NASA 폼 상태 ---
-  const [nasaAddress, setNasaAddress] = useState('');
-  const [nasaDeviceId, setNasaDeviceId] = useState('');
-  const [nasaDeviceType, setNasaDeviceType] = useState('');
+  // --- Samsung HVACR-01 폼 상태 ---
+  const [samsungHvacr01Address, setSamsungHvacr01Address] = useState('');
+  const [samsungHvacr01DeviceId, setSamsungHvacr01DeviceId] = useState('');
+  const [samsungHvacr01DeviceType, setSamsungHvacr01DeviceType] = useState('');
 
   // --- Modbus 폼 상태 ---
   const [modbusUnitId, setModbusUnitId] = useState('');
@@ -56,9 +56,9 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const [expandedAreas, setExpandedAreas] = useState<Record<string, boolean>>({});
 
   function resetForm() {
-    setNasaAddress('');
-    setNasaDeviceId('');
-    setNasaDeviceType('');
+    setSamsungHvacr01Address('');
+    setSamsungHvacr01DeviceId('');
+    setSamsungHvacr01DeviceType('');
     setModbusUnitId('');
     setModbusName('');
     setModbusRegAreas({
@@ -73,17 +73,17 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   function handleSubmit() {
     if (!selectedAgentId) return;
 
-    if (selectedAgentType === 'samsung-nasa') {
-      if (!nasaAddress.trim()) return;
+    if (selectedAgentType === 'samsung_hvacr01') {
+      if (!samsungHvacr01Address.trim()) return;
       execAgent.mutate(
         {
           id: selectedAgentId,
           req: {
             command: 'add_device',
             params: {
-              address: nasaAddress.trim(),
-              ...(nasaDeviceId.trim() && { device_id: nasaDeviceId.trim() }),
-              ...(nasaDeviceType && { device_type: nasaDeviceType }),
+              address: samsungHvacr01Address.trim(),
+              ...(samsungHvacr01DeviceId.trim() && { device_id: samsungHvacr01DeviceId.trim() }),
+              ...(samsungHvacr01DeviceType && { device_type: samsungHvacr01DeviceType }),
             },
           },
         },
@@ -152,7 +152,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   // 제출 버튼 활성화 조건
   const canSubmit = (() => {
     if (!selectedAgentId || execAgent.isPending) return false;
-    if (selectedAgentType === 'samsung-nasa') return !!nasaAddress.trim();
+    if (selectedAgentType === 'samsung_hvacr01') return !!samsungHvacr01Address.trim();
     if (selectedAgentType === 'modbus-tcp-server') return !!modbusUnitId.trim();
     return false;
   })();
@@ -193,7 +193,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             >
               <option value="">에이전트 선택...</option>
               {supportedAgents.map((a) => {
-                const typeLabel = a.type === 'modbus-tcp-server' ? 'Modbus' : 'NASA';
+                const typeLabel = a.type === 'modbus-tcp-server' ? 'Modbus' : 'Samsung HVACR-01';
                 return (
                   <option key={a.id} value={a.id}>
                     {a.name} [{typeLabel}] ({a.status === 'running' ? '실행 중' : '중지'})
@@ -206,8 +206,8 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             )}
           </div>
 
-          {/* ===== NASA 폼 ===== */}
-          {selectedAgentType === 'samsung-nasa' && (
+          {/* ===== Samsung HVACR-01 폼 ===== */}
+          {selectedAgentType === 'samsung_hvacr01' && (
             <>
               <div>
                 <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
@@ -216,8 +216,8 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 <input
                   type="text"
                   placeholder="예: 20.00.03"
-                  value={nasaAddress}
-                  onChange={(e) => setNasaAddress(e.target.value)}
+                  value={samsungHvacr01Address}
+                  onChange={(e) => setSamsungHvacr01Address(e.target.value)}
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                 />
               </div>
@@ -228,8 +228,8 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 <input
                   type="text"
                   placeholder="고유 식별자"
-                  value={nasaDeviceId}
-                  onChange={(e) => setNasaDeviceId(e.target.value)}
+                  value={samsungHvacr01DeviceId}
+                  onChange={(e) => setSamsungHvacr01DeviceId(e.target.value)}
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                 />
               </div>
@@ -238,8 +238,8 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   디바이스 타입
                 </label>
                 <select
-                  value={nasaDeviceType}
-                  onChange={(e) => setNasaDeviceType(e.target.value)}
+                  value={samsungHvacr01DeviceType}
+                  onChange={(e) => setSamsungHvacr01DeviceType(e.target.value)}
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                 >
                   <option value="">자동 감지</option>

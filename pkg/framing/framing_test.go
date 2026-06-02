@@ -927,16 +927,16 @@ func TestFrameFramer_Read(t *testing.T) {
 	}
 }
 
-// TestFrameFramer_LGCPSamples 는 실제 LGCP 프로토콜 샘플로 frameFramer 를
-// 검증한다. LGCP 프레임 구조:
+// TestFrameFramer_Icp02Samples 는 실제 LG ICP-02 프로토콜 샘플로 frameFramer 를
+// 검증한다. LG ICP-02 프레임 구조:
 //
 //	56 [LEN] 04 [DA 4B] 04 [SA 4B] [CMD 2B] [SEQ0] [PLEN] [PAYLOAD] [SEQ1] [CRC16]
 //
 // LEN 필드는 전체 프레임 길이(STX 포함)이므로
 // length_includes_header=true 와 length_adjustment=0 로 설정해야 한다.
-// 참조: references/protocols/LGCP_Protocol_Analysis.md §3
-func TestFrameFramer_LGCPSamples(t *testing.T) {
-	lgcpOpts := Options{
+// 참조: references/protocols/LG-ICP-02_Protocol_Analysis.md §3
+func TestFrameFramer_Icp02Samples(t *testing.T) {
+	icp02Opts := Options{
 		STX:                  []byte{0x56},
 		LengthOffset:         1,
 		LengthSize:           1,
@@ -947,7 +947,7 @@ func TestFrameFramer_LGCPSamples(t *testing.T) {
 		MaxMessageSize:       256,
 	}
 
-	// lgcp-valid.jsonl 에서 추출한 실제 샘플
+	// lg_icp02-valid.jsonl 에서 추출한 실제 샘플
 	samples := []struct {
 		name string
 		hex  string
@@ -981,7 +981,7 @@ func TestFrameFramer_LGCPSamples(t *testing.T) {
 				t.Fatalf("샘플 크기 불일치: 기대 %d, 실제 %d", s.size, len(raw))
 			}
 
-			f, err := New(ModeFrame, lgcpOpts)
+			f, err := New(ModeFrame, icp02Opts)
 			if err != nil {
 				t.Fatalf("framer 생성 실패: %v", err)
 			}
@@ -1007,7 +1007,7 @@ func TestFrameFramer_LGCPSamples(t *testing.T) {
 			expected = append(expected, raw)
 		}
 
-		f, err := New(ModeFrame, lgcpOpts)
+		f, err := New(ModeFrame, icp02Opts)
 		if err != nil {
 			t.Fatalf("framer 생성 실패: %v", err)
 		}
@@ -1029,7 +1029,7 @@ func TestFrameFramer_LGCPSamples(t *testing.T) {
 		}
 	})
 
-	// 현재 examples/agents/serial-lgcp-capture.yaml 의 이전 설정
+	// 현재 examples/agents/serial-lg_icp02-capture.yaml 의 이전 설정
 	// (length_includes_header=false, length_adjustment=-1) 이 잘못되었음을
 	// 회귀 방지 차원에서 명시적으로 검증한다. 이 설정으로 LEN=45 프레임을
 	// 읽으면 total 46 바이트를 읽으려 하여 다음 프레임의 첫 바이트를
@@ -1487,9 +1487,9 @@ func TestStreamFramer_Drain_EmptyBuffer(t *testing.T) {
 	}
 }
 
-func TestFrameFramer_Drain_LGCPSingle(t *testing.T) {
+func TestFrameFramer_Drain_Icp02Single(t *testing.T) {
 	t.Parallel()
-	lgcpOpts := Options{
+	icp02Opts := Options{
 		STX:                  []byte{0x56},
 		LengthOffset:         1,
 		LengthSize:           1,
@@ -1501,7 +1501,7 @@ func TestFrameFramer_Drain_LGCPSingle(t *testing.T) {
 	}
 	raw, _ := hex.DecodeString("561404ffffffff04445500000604000102a1b7ed")
 
-	f, _ := New(ModeFrame, lgcpOpts)
+	f, _ := New(ModeFrame, icp02Opts)
 	frames, rem, err := f.Drain(raw)
 	if err != nil {
 		t.Fatalf("예상치 못한 오류: %v", err)
@@ -1517,9 +1517,9 @@ func TestFrameFramer_Drain_LGCPSingle(t *testing.T) {
 	}
 }
 
-func TestFrameFramer_Drain_LGCPMultipleBackToBack(t *testing.T) {
+func TestFrameFramer_Drain_Icp02MultipleBackToBack(t *testing.T) {
 	t.Parallel()
-	lgcpOpts := Options{
+	icp02Opts := Options{
 		STX:                  []byte{0x56},
 		LengthOffset:         1,
 		LengthSize:           1,
@@ -1542,7 +1542,7 @@ func TestFrameFramer_Drain_LGCPMultipleBackToBack(t *testing.T) {
 		expected = append(expected, b)
 	}
 
-	f, _ := New(ModeFrame, lgcpOpts)
+	f, _ := New(ModeFrame, icp02Opts)
 	frames, rem, err := f.Drain(concatenated.Bytes())
 	if err != nil {
 		t.Fatalf("예상치 못한 오류: %v", err)
@@ -1642,7 +1642,7 @@ func TestFrameFramer_Drain_ETXMismatch(t *testing.T) {
 func TestDrain_MatchesRead(t *testing.T) {
 	t.Parallel()
 
-	lgcpOpts := Options{
+	icp02Opts := Options{
 		STX:                  []byte{0x56},
 		LengthOffset:         1,
 		LengthSize:           1,
@@ -1652,7 +1652,7 @@ func TestDrain_MatchesRead(t *testing.T) {
 		Checksum:             "none",
 		MaxMessageSize:       256,
 	}
-	lgcpRaw, _ := hex.DecodeString("561404ffffffff04445500000604000102a1b7ed")
+	icp02Raw, _ := hex.DecodeString("561404ffffffff04445500000604000102a1b7ed")
 
 	// length_prefix 테스트 데이터
 	var lpBuf bytes.Buffer
@@ -1694,10 +1694,10 @@ func TestDrain_MatchesRead(t *testing.T) {
 			input: []byte("abcdefghijkl"),
 		},
 		{
-			name:  "frame LGCP keep-alive",
+			name:  "frame lg_icp02 keep-alive",
 			mode:  ModeFrame,
-			opts:  lgcpOpts,
-			input: lgcpRaw,
+			opts:  icp02Opts,
+			input: icp02Raw,
 		},
 	}
 

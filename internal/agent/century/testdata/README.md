@@ -1,10 +1,10 @@
-# Century HVAC raw frame fixtures
+# Century HVACR-01 raw frame fixtures
 
-원시 프레임 바이너리 파일들. 모두 SPEC-CENTURY-001 의 골든 픽스처이다.
+원시 프레임 바이너리 파일들. 모두 SPEC-CENTURY-HVACR-001 의 골든 픽스처이다.
 
 ## 출처
 
-- **CAP-1** (2026-05-15 22:47, 꺼짐 상태) — `references/protocols/century_hvac_protocol_spec.md` v0.3 부록 B
+- **CAP-1** (2026-05-15 22:47, 꺼짐 상태) — `references/protocols/century_icp01_protocol_spec.md` v0.3 부록 B
 - **CAP-3** (2026-05-18 10:01, 냉방 시작 직후, ground truth: 냉방 / 25.0℃ / 바람 17) — 부록 A
 - **CAP-4** (2026-05-18 10:45, 냉방 정상상태, 약 44분 경과) — 부록 C
 - CRC 알고리즘: CRC-16/ARC, init **0x0000**, polynomial 0x8005 (reflected 0xA001), LE 저장
@@ -16,7 +16,7 @@
 | 파일 | 길이 | 내용 | 핵심 값 |
 |---|---|---|---|
 | `cap3_read_req_reg02.bin` | 13 B | 마스터 → 슬레이브 reg 0x02 read request | — |
-| `cap3_reg02_response.bin` | 30 B | 슬레이브 → 마스터 reg 0x02 read response (payload 20 B) | mode=cooling, fan=17, setpoint=25.0℃, live14=0x39 |
+| `cap3_reg02_response.bin` | 30 B | 슬레이브 → 마스터 reg 0x02 read response (payload 20 B) | mode=cooling, fan=17, setpoint=25.0℃, current_temp=25.0℃ (2026-05-29 정정), live14=0x39 |
 | `cap3_read_req_reg03.bin` | 13 B | 마스터 → 슬레이브 reg 0x03 read request | — |
 | `cap3_reg03_response.bin` | 29 B | 슬레이브 → 마스터 reg 0x03 read response (payload 19 B) | temp_evap_a=19.5℃, temp_evap_b=19.5℃ (과도) |
 | `cap3_read_req_reg04.bin` | 13 B | 마스터 → 슬레이브 reg 0x04 read request | — |
@@ -29,7 +29,7 @@
 
 | 파일 | 길이 | 내용 | 핵심 값 | 출처 라인 |
 |---|---|---|---|---|
-| `cap1_reg02_response.bin` | 30 B | reg 0x02 read response | mode=off, fan=0, setpoint=25.0℃ (유지) | 부록 B "Read Response reg 0x02" |
+| `cap1_reg02_response.bin` | 30 B | reg 0x02 read response | mode=off, fan=0, setpoint=0 (꺼짐, 2026-05-29 정정), reg02_word_7=25.0℃ (이전 cooling ceiling 유지) | 부록 B "Read Response reg 0x02" |
 | `cap1_reg03_response.bin` | 29 B | reg 0x03 read response | temp_evap_a=21.5℃, temp_evap_b=22.0℃ (실내 평형) | 부록 B "Read Response reg 0x03" |
 | `cap1_reg04_response.bin` | 27 B | reg 0x04 read response | status=0x63, op fields 모두 0 | 부록 B "Read Response reg 0x04" |
 | `cap1_write_reg04.bin` | 29 B | reg 0x04 write request | mode_cmd=off, data[14]=0xC4 | 부록 B "Write reg 0x04" |

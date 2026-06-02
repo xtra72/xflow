@@ -5,41 +5,41 @@ import (
 	"fmt"
 )
 
-// NASAProtocol 은 Samsung NASA HVAC 프로토콜의 인코딩/디코딩 인터페이스이다.
-type NASAProtocol interface {
-	// Encode 는 NASAMessage 를 바이트 프레임으로 인코딩한다.
-	Encode(msg *NASAMessage) ([]byte, error)
+// NasaProtocol 은 Samsung NASA HVAC 프로토콜의 인코딩/디코딩 인터페이스이다.
+type NasaProtocol interface {
+	// Encode 는 NasaMessage 를 바이트 프레임으로 인코딩한다.
+	Encode(msg *NasaMessage) ([]byte, error)
 
-	// Decode 는 바이트 프레임을 NASAMessage 로 디코딩한다.
-	Decode(data []byte) (*NASAMessage, error)
+	// Decode 는 바이트 프레임을 NasaMessage 로 디코딩한다.
+	Decode(data []byte) (*NasaMessage, error)
 
 	// BuildStatusQuery 는 지정된 주소로 C011 상태 쿼리 프레임을 생성한다.
-	BuildStatusQuery(addr NASAAddress, seqNum byte) ([]byte, error)
+	BuildStatusQuery(addr NasaAddress, seqNum byte) ([]byte, error)
 
 	// BuildControlCommand 는 지정된 주소로 C013 제어 명령 프레임을 생성한다.
-	BuildControlCommand(addr NASAAddress, seqNum byte, sets []NASAMessageSet) ([]byte, error)
+	BuildControlCommand(addr NasaAddress, seqNum byte, sets []NasaMessageSet) ([]byte, error)
 
 	// CalculateChecksum 은 데이터의 CRC16 체크섬을 계산한다.
 	CalculateChecksum(data []byte) uint16
 
 	// ParseMessageSets 는 바이트 데이터에서 count 개의 메시지 세트를 파싱한다.
-	ParseMessageSets(data []byte, count int) ([]NASAMessageSet, error)
+	ParseMessageSets(data []byte, count int) ([]NasaMessageSet, error)
 
 	// EncodeMessageSets 는 메시지 세트 목록을 바이트로 인코딩한다.
-	EncodeMessageSets(sets []NASAMessageSet) []byte
+	EncodeMessageSets(sets []NasaMessageSet) []byte
 }
 
-// nasaProtocol 은 NASAProtocol 인터페이스의 상태 없는 구현체이다.
+// nasaProtocol 은 NasaProtocol 인터페이스의 상태 없는 구현체이다.
 type nasaProtocol struct{}
 
-// NewNASAProtocol 은 NASAProtocol 인터페이스의 새 인스턴스를 반환한다.
-func NewNASAProtocol() NASAProtocol {
+// NewNasaProtocol 은 NasaProtocol 인터페이스의 새 인스턴스를 반환한다.
+func NewNasaProtocol() NasaProtocol {
 	return &nasaProtocol{}
 }
 
 // EncodeMessageSets 는 메시지 세트 목록을 바이트로 인코딩한다.
 // 각 세트는 Index(2바이트 BE) + Value 바이트로 구성된다.
-func (p *nasaProtocol) EncodeMessageSets(sets []NASAMessageSet) []byte {
+func (p *nasaProtocol) EncodeMessageSets(sets []NasaMessageSet) []byte {
 	// 필요한 총 바이트 수를 미리 계산하여 할당을 최소화한다.
 	totalSize := 0
 	for _, ms := range sets {
@@ -54,8 +54,8 @@ func (p *nasaProtocol) EncodeMessageSets(sets []NASAMessageSet) []byte {
 }
 
 // ParseMessageSets 는 바이트 데이터에서 count 개의 메시지 세트를 파싱한다.
-func (p *nasaProtocol) ParseMessageSets(data []byte, count int) ([]NASAMessageSet, error) {
-	sets := make([]NASAMessageSet, 0, count)
+func (p *nasaProtocol) ParseMessageSets(data []byte, count int) ([]NasaMessageSet, error) {
+	sets := make([]NasaMessageSet, 0, count)
 	offset := 0
 
 	for i := 0; i < count; i++ {
@@ -82,7 +82,7 @@ func (p *nasaProtocol) ParseMessageSets(data []byte, count int) ([]NASAMessageSe
 		copy(value, data[offset:offset+size])
 		offset += size
 
-		sets = append(sets, NASAMessageSet{Index: index, Value: value})
+		sets = append(sets, NasaMessageSet{Index: index, Value: value})
 	}
 
 	return sets, nil
@@ -93,12 +93,12 @@ func (p *nasaProtocol) CalculateChecksum(data []byte) uint16 {
 	return CalcCRC16(data)
 }
 
-// Encode 는 NASAMessage 를 NASA 프로토콜 프레임으로 인코딩한다.
+// Encode 는 NasaMessage 를 NASA 프로토콜 프레임으로 인코딩한다.
 //
 // 프레임 구조:
 //
 //	[STX=0x32][LEN(2 BE)][SA(3)][DA(3)][CMD(2)][SEQ#(1)][CNT(1)][MSGs...][CRC(2 BE)][ETX=0x34]
-func (p *nasaProtocol) Encode(msg *NASAMessage) ([]byte, error) {
+func (p *nasaProtocol) Encode(msg *NasaMessage) ([]byte, error) {
 	// 1. 메시지 세트 인코딩
 	msgBytes := p.EncodeMessageSets(msg.MessageSets)
 
@@ -142,8 +142,8 @@ func (p *nasaProtocol) Encode(msg *NASAMessage) ([]byte, error) {
 	return frame, nil
 }
 
-// Decode 는 NASA 프로토콜 프레임을 NASAMessage 로 디코딩한다.
-func (p *nasaProtocol) Decode(data []byte) (*NASAMessage, error) {
+// Decode 는 NASA 프로토콜 프레임을 NasaMessage 로 디코딩한다.
+func (p *nasaProtocol) Decode(data []byte) (*NasaMessage, error) {
 	// 프레임 내 고정 오프셋 상수
 	const (
 		offSTX    = 0  // STX 위치
@@ -183,7 +183,7 @@ func (p *nasaProtocol) Decode(data []byte) (*NASAMessage, error) {
 	}
 
 	// 5. 헤더 필드 추출
-	var sa, da NASAAddress
+	var sa, da NasaAddress
 	copy(sa[:], data[offSA:offSA+3])
 	copy(da[:], data[offDA:offDA+3])
 	cmd := binary.BigEndian.Uint16(data[offCMD : offCMD+2])
@@ -212,7 +212,7 @@ func (p *nasaProtocol) Decode(data []byte) (*NASAMessage, error) {
 	raw := make([]byte, len(data))
 	copy(raw, data)
 
-	return &NASAMessage{
+	return &NasaMessage{
 		SourceAddr:  sa,
 		DestAddr:    da,
 		CommandCode: cmd,
@@ -226,13 +226,13 @@ func (p *nasaProtocol) Decode(data []byte) (*NASAMessage, error) {
 // BuildStatusQuery 는 C011 상태 쿼리 프레임을 생성한다.
 // SA = AddrController, DA = addr, CMD = CmdNormalRequest.
 // 메시지 세트: MsgAddrInfo(0x0408) = [0xFF, 0xFF, 0xFF, 0xFF].
-func (p *nasaProtocol) BuildStatusQuery(addr NASAAddress, seqNum byte) ([]byte, error) {
-	msg := &NASAMessage{
+func (p *nasaProtocol) BuildStatusQuery(addr NasaAddress, seqNum byte) ([]byte, error) {
+	msg := &NasaMessage{
 		SourceAddr:  AddrController,
 		DestAddr:    addr,
 		CommandCode: CmdNormalRequest,
 		SequenceNum: seqNum,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgAddrInfo, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
 		},
 	}
@@ -241,8 +241,8 @@ func (p *nasaProtocol) BuildStatusQuery(addr NASAAddress, seqNum byte) ([]byte, 
 
 // BuildControlCommand 는 C013 제어 명령 프레임을 생성한다.
 // SA = AddrController, DA = addr, CMD = CmdNormalControl.
-func (p *nasaProtocol) BuildControlCommand(addr NASAAddress, seqNum byte, sets []NASAMessageSet) ([]byte, error) {
-	msg := &NASAMessage{
+func (p *nasaProtocol) BuildControlCommand(addr NasaAddress, seqNum byte, sets []NasaMessageSet) ([]byte, error) {
+	msg := &NasaMessage{
 		SourceAddr:  AddrController,
 		DestAddr:    addr,
 		CommandCode: CmdNormalControl,

@@ -20,12 +20,12 @@ func TestAgent_AccessorsAndMetadata(t *testing.T) {
 	if got := a.Name(); got != "century-test" {
 		t.Errorf("Name = %q, want century-test", got)
 	}
-	if got := a.Type(); got != "century-hvac" {
-		t.Errorf("Type = %q, want century-hvac", got)
+	if got := a.Type(); got != "century_hvacr01" {
+		t.Errorf("Type = %q, want century_hvacr01", got)
 	}
 
 	info := a.Info()
-	if info.ID != "century-test" || info.Type != "century-hvac" {
+	if info.ID != "century-test" || info.Type != "century_hvacr01" {
 		t.Errorf("Info ID/Type = %s/%s", info.ID, info.Type)
 	}
 
@@ -128,7 +128,7 @@ func TestAgent_Configure_UpdatesConfig(t *testing.T) {
 	newCfg := agent.AgentConfig{
 		ID:   "century-test",
 		Name: "century-test",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -155,7 +155,7 @@ func TestAgent_Configure_RejectsInvalid(t *testing.T) {
 	bad := agent.AgentConfig{
 		ID:   "century-test",
 		Name: "century-test",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type:    "serial",
 			Options: map[string]any{"transport_type": "tcp-client"},
@@ -176,7 +176,7 @@ func TestAgent_Configure_AcceptsTCPClient(t *testing.T) {
 	good := agent.AgentConfig{
 		ID:   "century-test",
 		Name: "century-test",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial", // Top-level transport.type is ignored when options.transport_type is set.
 			Options: map[string]any{
@@ -198,7 +198,7 @@ func TestAgent_Configure_AcceptsTCPClient(t *testing.T) {
 	}
 }
 
-// v0.2.0 (M6): NewCenturyAgent now wires a production transportProvider that
+// v0.2.0 (M6): NewHvacr01Agent now wires a production transportProvider that
 // dials/listens based on cfg.TransportType. Start fails at the OS layer when
 // the resource is unavailable (e.g. nonexistent serial device).
 func TestAgent_NewWithProductionProvider_FailsOnMissingSerial(t *testing.T) {
@@ -206,7 +206,7 @@ func TestAgent_NewWithProductionProvider_FailsOnMissingSerial(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:   "century-noprovider",
 		Name: "century-noprovider",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -214,11 +214,11 @@ func TestAgent_NewWithProductionProvider_FailsOnMissingSerial(t *testing.T) {
 			},
 		},
 	}
-	a, err := NewCenturyAgent(cfg)
+	a, err := NewHvacr01Agent(cfg)
 	if err != nil {
-		t.Fatalf("NewCenturyAgent: %v", err)
+		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
-	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
+	// NewHvacr01Agent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	// Start should fail because the serial port does not exist.
 	if err := a.Start(context.Background()); err == nil {
 		t.Fatalf("Start with nonexistent serial port returned nil err, want OS-level open failure")
@@ -242,9 +242,9 @@ func TestAgent_StatsExtraReflectsCounters(t *testing.T) {
 	}
 }
 
-func TestCenturyDevice_IncrementError(t *testing.T) {
+func TestIcp01Device_IncrementError(t *testing.T) {
 	t.Parallel()
-	d := NewCenturyDevice(0x3B, "auto", time.Now())
+	d := NewIcp01Device(0x3B, "auto", time.Now())
 	d.IncrementError()
 	d.IncrementError()
 	if d.ErrorCount != 2 {
@@ -339,21 +339,21 @@ func TestErrIsClosedOrCanceled(t *testing.T) {
 	}
 }
 
-// TestNewCenturyAgent_LifecycleRunningAfterFactory 는 회귀 테스트이다.
+// TestNewHvacr01Agent_LifecycleRunningAfterFactory 는 회귀 테스트이다.
 //
-// 회귀 시나리오: NewCenturyAgent 가 내부적으로 Init(config) 를 호출하지 않으면
+// 회귀 시나리오: NewHvacr01Agent 가 내부적으로 Init(config) 를 호출하지 않으면
 // lifecycle 이 StateUnknown 으로 남아 Web UI 의 agent 상태가 "stopped" 로 표시된다.
 // 사용자가 frame 수신 중에도 stopped 로 보고되는 버그를 보고했다.
 //
 // agent.DefaultManager 는 등록된 factory 의 경우 Init() 을 호출하지 않으므로
 // (manager.go: else 폴백 분기에서만 Init 호출) factory 가 책임진다.
-// samsung-nasa / lgcnp factory 가 모두 이 패턴을 따르며, century 도 동일해야 한다.
-func TestNewCenturyAgent_LifecycleRunningAfterFactory(t *testing.T) {
+// samsung_hvacr01 / lg_hvacr01 factory 가 모두 이 패턴을 따르며, century 도 동일해야 한다.
+func TestNewHvacr01Agent_LifecycleRunningAfterFactory(t *testing.T) {
 	t.Parallel()
 	cfg := agent.AgentConfig{
 		ID:   "century-lifecycle-regression",
 		Name: "century-lifecycle-regression",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -364,14 +364,14 @@ func TestNewCenturyAgent_LifecycleRunningAfterFactory(t *testing.T) {
 		},
 	}
 
-	a, err := NewCenturyAgent(cfg)
+	a, err := NewHvacr01Agent(cfg)
 	if err != nil {
-		t.Fatalf("NewCenturyAgent: %v", err)
+		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
 
-	ca, ok := a.(*CenturyAgent)
+	ca, ok := a.(*Hvacr01Agent)
 	if !ok {
-		t.Fatalf("agent type = %T; want *CenturyAgent", a)
+		t.Fatalf("agent type = %T; want *Hvacr01Agent", a)
 	}
 
 	// Factory 반환 직후 lifecycle 은 반드시 Running 이어야 한다.

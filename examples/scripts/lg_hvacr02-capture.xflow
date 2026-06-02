@@ -1,0 +1,20 @@
+agent import -f examples/agents/lg_hvacr02-capture.yaml --skip-existing
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+agent import -f examples/agents/lg_hvacr02-file-logger.yaml --skip-existing
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 에이전트 시작
+agent start stdout-logger
+agent start lg_hvacr02-file-logger
+agent start error-logger
+agent start lg_hvacr02-capture
+
+# 캡처 플로우 가져오기
+flow import -f examples/flows/lg_hvacr02-capture.yaml
+
+# 플로우 배포 및 시작
+flow deploy lg_hvacr02-capture
+flow start lg_hvacr02-capture
+
+# 상태 확인
+flow status lg_hvacr02-capture

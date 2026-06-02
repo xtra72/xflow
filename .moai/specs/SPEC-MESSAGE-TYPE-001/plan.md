@@ -34,9 +34,9 @@ priority: medium
 ### 1.1 그룹 T1: emit 사이트 일괄 전환 (우선순위 매우 높음)
 
 - **T1-1**: `internal/node/trigger.go` (line 482) — `WithMetadata("message_type", "event")` → `WithType("event")` 단일 라인 치환.
-- **T1-2**: `internal/agent/lg/lgcnp_agent.go` — `emitDeviceStateLocked` 시리즈에서 `WithMetadata("message_type", "device_state.<trigger>")` → `WithType("device_state.<trigger>")` 또는 `msg.SetType(...)`.
+- **T1-2**: `internal/agent/lg/lg_hvacr01_agent.go` — `emitDeviceStateLocked` 시리즈에서 `WithMetadata("message_type", "device_state.<trigger>")` → `WithType("device_state.<trigger>")` 또는 `msg.SetType(...)`.
   - `<trigger>` 값 확인: `change` / `poll` / `response` 등.
-- **T1-3**: `internal/agent/lg/lgcp_agent.go` — 동일 패턴 적용.
+- **T1-3**: `internal/agent/lg/lg_hvacr02_agent.go` — 동일 패턴 적용.
 - **T1-4**: `internal/agent/lg/agent.go` (LGAP) — 동일 패턴 적용.
 - **T1-5**: `internal/agent/samsung/agent.go` (NASA) — 동일 패턴 적용.
 - **T1-6**: `internal/agent/century/message.go` — 동일 패턴 적용.
@@ -47,7 +47,7 @@ priority: medium
 ### 1.2 그룹 T2: 다운스트림 분기 갱신 (우선순위 높음)
 
 - **T2-1**: `internal/node/transform.go` — metadata.message_type lookup 분기 → `msg.Type()` 기반 switch/case 갱신.
-- **T2-2**: `internal/node/nasa.go`, `lgcnp.go`, `lgcp.go`, `lgap.go`, `century.go` — 각 노드의 입력 메시지 분류 분기를 `msg.Type()` 기반으로 갱신.
+- **T2-2**: `internal/node/nasa.go`, `lg_hvacr01.go`, `lg_hvacr02.go`, `lgap.go`, `century.go` — 각 노드의 입력 메시지 분류 분기를 `msg.Type()` 기반으로 갱신.
 - **T2-3**: `internal/node/dedup_helper.go` — metadata.message_type 키 lookup 사용처 제거.
 - **T2-4**: `internal/node/script.go` (Lua bridge) — Lua 컨텍스트 매핑:
   - input path: `msg.Type()` 값을 Lua 의 `msg.type` 키로 노출.
@@ -70,7 +70,7 @@ priority: medium
 - **T5-1**: `internal/agent/century/message_test.go` — metadata.message_type 어서션 → `msg.Type()` 어서션.
 - **T5-2**: `internal/agent/century/agent_device_state_test.go` — 동일 갱신.
 - **T5-3**: `internal/node/transform_test.go` — 테스트 setup 의 `WithMetadata("message_type", ...)` → `WithType(...)`, 어서션도 갱신.
-- **T5-4**: `internal/node/lgcp_test.go` — 동일 갱신.
+- **T5-4**: `internal/node/lg_hvacr02_test.go` — 동일 갱신.
 - **T5-5**: `internal/node/mqtt_test.go` — 동일 갱신.
 - **T5-6**: `internal/node/nasa_test.go` — 동일 갱신.
 - **T5-7**: `internal/node/modbus_poller_test.go` — 동일 갱신.
@@ -104,7 +104,7 @@ priority: medium
 
 | 사이트 | 사유 |
 |--------|------|
-| HVAC 5 에이전트 emit (lgcnp_agent / lgcp_agent / LGAP agent.go / Samsung agent.go / century message.go) | 메시지 빈도 가장 높음, 분류 식별이 다운스트림 분기에 직접 영향 |
+| HVAC 5 에이전트 emit (lg_hvacr01_agent / lg_hvacr02_agent / LGAP agent.go / Samsung agent.go / century message.go) | 메시지 빈도 가장 높음, 분류 식별이 다운스트림 분기에 직접 영향 |
 | trigger 노드 emit (`internal/node/trigger.go`) | 이벤트 entry point, "event" 분류의 시작점 |
 | transform 노드 분기 (`internal/node/transform.go`) | 대부분의 다운스트림 분류 로직이 여기서 분기 |
 | script 노드 Lua bridge (`internal/node/script.go`) | 사용자 정의 스크립트와의 호환 인터페이스 |
@@ -115,7 +115,7 @@ priority: medium
 |--------|------|
 | inventory 노드 (`internal/node/inventory.go`) | type 미설정 결함 해소 (1급 빈 문자열 문제) |
 | debug / bridge / dedup 노드 | 보조 분류 사용, 영향 범위 한정적 |
-| HVAC 노드 (nasa.go / lgcnp.go / lgcp.go / lgap.go / century.go) | 입력 메시지 분류 분기 갱신 |
+| HVAC 노드 (nasa.go / lg_hvacr01.go / lg_hvacr02.go / lgap.go / century.go) | 입력 메시지 분류 분기 갱신 |
 
 ### 2.3 Low Priority
 
@@ -164,7 +164,7 @@ grep -rn 'SetType\|WithType(' internal/ pkg/ | wc -l
 ### 3.4 통합 시나리오 검증
 
 - **시나리오 1**: trigger 이벤트 → transform 노드 → debug 노드 — 분류가 모든 단계에서 `msg.Type() == "event"` 로 일관.
-- **시나리오 2**: HVAC LGCNP 디바이스 상태 변경 → lgcnp 노드 → bridge 노드 — 분류가 `msg.Type() == "device_state.change"` 로 일관.
+- **시나리오 2**: HVAC LG HVACR-01 디바이스 상태 변경 → lg_hvacr01 노드 → bridge 노드 — 분류가 `msg.Type() == "device_state.change"` 로 일관.
 - **시나리오 3**: inventory 노드 emit → JSON 직렬화 검증 — top-level `"type": "inventory.event"` 노출, metadata 에 message_type 키 부재.
 - **시나리오 4**: Lua 스크립트가 `msg.type` 읽기/쓰기 — 양방향 변환 정상.
 - **시나리오 5**: 빈 type 의 메시지가 다운스트림에 도달 — unclassified 분기로 graceful fall-through.

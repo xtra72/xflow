@@ -18,10 +18,10 @@ import (
 // transport_tcp_test.go.
 //
 // AC mapping:
-//   AC-G1 → TestCenturyAgent_TCPClient_DecodesCAP3Cycle
-//   AC-G3 → TestCenturyAgent_TCPClient_ReconnectAfterEOF
-//   AC-G5 → TestCenturyAgent_TCPServer_DecodesCAP3Cycle
-//   AC-G8 → TestCenturyAgent_TCPInvariant_NoWriteEver
+//   AC-G1 → TestHvacr01Agent_TCPClient_DecodesCAP3Cycle
+//   AC-G3 → TestHvacr01Agent_TCPClient_ReconnectAfterEOF
+//   AC-G5 → TestHvacr01Agent_TCPServer_DecodesCAP3Cycle
+//   AC-G8 → TestHvacr01Agent_TCPInvariant_NoWriteEver
 // ---------------------------------------------------------------------------
 
 // startServingListener returns a net.Listener that accepts ONE connection,
@@ -51,7 +51,7 @@ func startServingListener(t *testing.T, payload []byte) (net.Listener, chan stru
 }
 
 // AC-G1 (integration): tcp-client agent decodes a CAP-3 reg 0x02 frame end-to-end.
-func TestCenturyAgent_TCPClient_DecodesCAP3Frame(t *testing.T) {
+func TestHvacr01Agent_TCPClient_DecodesCAP3Frame(t *testing.T) {
 	t.Parallel()
 	ln, served := startServingListener(t, mustBuildReg02ResponseFrame(t, 0x3B))
 	defer ln.Close()
@@ -75,25 +75,25 @@ func TestCenturyAgent_TCPClient_DecodesCAP3Frame(t *testing.T) {
 		"tcp_port":            port,
 		"tcp_connect_timeout": "500ms",
 		"tcp_read_timeout":    "1s",
-		"reconnect_initial":   "100ms",
+		"reconnect_interval":  "100ms",
 	}
 	cfg := agent.AgentConfig{
 		ID:        "century-tcp-client",
 		Name:      "century-tcp-client",
-		Type:      "century-hvac",
+		Type:      "century_hvacr01",
 		Transport: agent.TransportConfig{Type: "serial", Options: opts},
 	}
-	a, err := NewCenturyAgent(cfg)
+	a, err := NewHvacr01Agent(cfg)
 	if err != nil {
-		t.Fatalf("NewCenturyAgent: %v", err)
+		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
-	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
+	// NewHvacr01Agent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer a.Stop(context.Background())
 
-	ca := a.(*CenturyAgent)
+	ca := a.(*Hvacr01Agent)
 	waitUntil(t, 2*time.Second, func() bool {
 		return ca.cStats.framesValid.Load() >= 1
 	}, "no frames decoded over tcp-client")
@@ -133,7 +133,7 @@ func TestReconnectBackoff_ProgressionDoubles(t *testing.T) {
 }
 
 // AC-G3 (integration): tcp-client agent reconnects after the remote closes the connection.
-func TestCenturyAgent_TCPClient_ReconnectAfterEOF(t *testing.T) {
+func TestHvacr01Agent_TCPClient_ReconnectAfterEOF(t *testing.T) {
 	t.Parallel()
 	// Run an accept-loop that serves the CAP-3 payload, closes immediately,
 	// and re-accepts. The agent should reconnect via backoff and resume capture.
@@ -179,26 +179,26 @@ func TestCenturyAgent_TCPClient_ReconnectAfterEOF(t *testing.T) {
 		"tcp_port":              port,
 		"tcp_connect_timeout":   "200ms",
 		"tcp_read_timeout":      "200ms",
-		"reconnect_initial":     "50ms",
+		"reconnect_interval":    "50ms",
 		"max_reconnect_backoff": "200ms",
 	}
 	cfg := agent.AgentConfig{
 		ID:        "century-tcp-reconnect",
 		Name:      "century-tcp-reconnect",
-		Type:      "century-hvac",
+		Type:      "century_hvacr01",
 		Transport: agent.TransportConfig{Type: "serial", Options: opts},
 	}
-	a, err := NewCenturyAgent(cfg)
+	a, err := NewHvacr01Agent(cfg)
 	if err != nil {
-		t.Fatalf("NewCenturyAgent: %v", err)
+		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
-	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
+	// NewHvacr01Agent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer a.Stop(context.Background())
 
-	ca := a.(*CenturyAgent)
+	ca := a.(*Hvacr01Agent)
 	// Expect at least 2 successful connections and 2 decoded frames within budget.
 	waitUntil(t, 5*time.Second, func() bool {
 		return ca.cStats.framesValid.Load() >= 2
@@ -210,7 +210,7 @@ func TestCenturyAgent_TCPClient_ReconnectAfterEOF(t *testing.T) {
 }
 
 // AC-G5 (integration): tcp-server agent accepts a client and decodes its frames.
-func TestCenturyAgent_TCPServer_DecodesCAP3Frame(t *testing.T) {
+func TestHvacr01Agent_TCPServer_DecodesCAP3Frame(t *testing.T) {
 	t.Parallel()
 	// Discover a free port.
 	tmp, err := net.Listen("tcp", "127.0.0.1:0")
@@ -229,14 +229,14 @@ func TestCenturyAgent_TCPServer_DecodesCAP3Frame(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:        "century-tcp-server",
 		Name:      "century-tcp-server",
-		Type:      "century-hvac",
+		Type:      "century_hvacr01",
 		Transport: agent.TransportConfig{Type: "serial", Options: opts},
 	}
-	a, err := NewCenturyAgent(cfg)
+	a, err := NewHvacr01Agent(cfg)
 	if err != nil {
-		t.Fatalf("NewCenturyAgent: %v", err)
+		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
-	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
+	// NewHvacr01Agent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestCenturyAgent_TCPServer_DecodesCAP3Frame(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}()
 
-	ca := a.(*CenturyAgent)
+	ca := a.(*Hvacr01Agent)
 	waitUntil(t, 3*time.Second, func() bool {
 		return ca.cStats.framesValid.Load() >= 1
 	}, "tcp-server did not decode any frames")
@@ -286,7 +286,7 @@ func portStr(port int) string {
 // AC-G8 (integration / type-level): the agent's transport wrapper enforces
 // no Write ever, regardless of how Process / get_stats / drain / control-flavored
 // commands flow through. This complements AC-B9 for serial.
-func TestCenturyAgent_TCPClient_AC_G8_NoWriteInvariant(t *testing.T) {
+func TestHvacr01Agent_TCPClient_AC_G8_NoWriteInvariant(t *testing.T) {
 	t.Parallel()
 	ln, served := startServingListener(t, mustBuildReg02ResponseFrame(t, 0x3B))
 	defer ln.Close()
@@ -313,20 +313,20 @@ func TestCenturyAgent_TCPClient_AC_G8_NoWriteInvariant(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:        "century-tcp-noWrite",
 		Name:      "century-tcp-noWrite",
-		Type:      "century-hvac",
+		Type:      "century_hvacr01",
 		Transport: agent.TransportConfig{Type: "serial", Options: opts},
 	}
-	a, err := NewCenturyAgent(cfg)
+	a, err := NewHvacr01Agent(cfg)
 	if err != nil {
-		t.Fatalf("NewCenturyAgent: %v", err)
+		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
-	// NewCenturyAgent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
+	// NewHvacr01Agent 가 내부에서 Init(cfg) 까지 처리하므로 명시적 Init 호출 불필요.
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer a.Stop(context.Background())
 
-	ca := a.(*CenturyAgent)
+	ca := a.(*Hvacr01Agent)
 	waitUntil(t, 2*time.Second, func() bool {
 		return ca.cStats.framesValid.Load() >= 1
 	}, "no frames decoded")

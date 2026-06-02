@@ -5,42 +5,42 @@ import (
 	"github.com/xtra/xflow/internal/device/adapter"
 )
 
-// NASADeviceProvider implements device.DeviceProvider for the NASA agent.
-// It converts NASADevice instances to the unified Device interface using adapters.
-type NASADeviceProvider struct {
-	agent *NASAAgent
+// Hvacr01DeviceProvider implements device.DeviceProvider for the NASA agent.
+// It converts NasaDevice instances to the unified Device interface using adapters.
+type Hvacr01DeviceProvider struct {
+	agent *Hvacr01Agent
 }
 
 // Compile-time interface check.
-var _ device.DeviceProvider = (*NASADeviceProvider)(nil)
+var _ device.DeviceProvider = (*Hvacr01DeviceProvider)(nil)
 
-// NewNASADeviceProvider creates a DeviceProvider wrapping a NASAAgent.
-func NewNASADeviceProvider(agent *NASAAgent) *NASADeviceProvider {
-	return &NASADeviceProvider{agent: agent}
+// NewHvacr01DeviceProvider creates a DeviceProvider wrapping a Hvacr01Agent.
+func NewHvacr01DeviceProvider(agent *Hvacr01Agent) *Hvacr01DeviceProvider {
+	return &Hvacr01DeviceProvider{agent: agent}
 }
 
 // Devices returns all devices managed by this agent as unified Device instances.
-func (p *NASADeviceProvider) Devices() []device.Device {
-	nasaDevices := p.agent.ListDevices()
-	result := make([]device.Device, 0, len(nasaDevices))
+func (p *Hvacr01DeviceProvider) Devices() []device.Device {
+	hvacr01Devices := p.agent.ListDevices()
+	result := make([]device.Device, 0, len(hvacr01Devices))
 	agentName := p.agent.Name()
 
-	for i := range nasaDevices {
-		dev := &nasaDevices[i]
-		info := nasaDeviceToInfo(dev)
+	for i := range hvacr01Devices {
+		dev := &hvacr01Devices[i]
+		info := hvacr01DeviceToInfo(dev)
 
 		if dev.Type == "HVACR.IDU" {
 			executor := p.createExecutor(dev.Address)
-			result = append(result, adapter.NewControllableNASADevice(agentName, info, executor))
+			result = append(result, adapter.NewControllableSamsungNasaDevice(agentName, info, executor))
 		} else {
-			result = append(result, adapter.NewNASADevice(agentName, info))
+			result = append(result, adapter.NewSamsungNasaDevice(agentName, info))
 		}
 	}
 	return result
 }
 
 // Device returns a specific device by its global ID ("agentName:address").
-func (p *NASADeviceProvider) Device(id string) (device.Device, error) {
+func (p *Hvacr01DeviceProvider) Device(id string) (device.Device, error) {
 	agentName := p.agent.Name()
 	prefix := agentName + ":"
 	if len(id) <= len(prefix) || id[:len(prefix)] != prefix {
@@ -48,31 +48,31 @@ func (p *NASADeviceProvider) Device(id string) (device.Device, error) {
 	}
 	addrStr := id[len(prefix):]
 
-	nasaDevices := p.agent.ListDevices()
-	for i := range nasaDevices {
-		dev := &nasaDevices[i]
+	hvacr01Devices := p.agent.ListDevices()
+	for i := range hvacr01Devices {
+		dev := &hvacr01Devices[i]
 		if dev.Address.String() == addrStr {
-			info := nasaDeviceToInfo(dev)
+			info := hvacr01DeviceToInfo(dev)
 			if dev.Type == "HVACR.IDU" {
 				executor := p.createExecutor(dev.Address)
-				return adapter.NewControllableNASADevice(agentName, info, executor), nil
+				return adapter.NewControllableSamsungNasaDevice(agentName, info, executor), nil
 			}
-			return adapter.NewNASADevice(agentName, info), nil
+			return adapter.NewSamsungNasaDevice(agentName, info), nil
 		}
 	}
 	return nil, device.ErrDeviceNotFound
 }
 
-// createExecutor creates a CommandExecutor that delegates to NASAAgent.Process.
-func (p *NASADeviceProvider) createExecutor(addr NASAAddress) adapter.CommandExecutor {
-	return newNASAExecutor(p.agent, addr)
+// createExecutor creates a CommandExecutor that delegates to Hvacr01Agent.Process.
+func (p *Hvacr01DeviceProvider) createExecutor(addr NasaAddress) adapter.CommandExecutor {
+	return newHvacr01Executor(p.agent, addr)
 }
 
-// nasaDeviceToInfo converts a NASADevice to adapter.NASADeviceInfo.
-func nasaDeviceToInfo(dev *NASADevice) adapter.NASADeviceInfo {
-	info := adapter.NASADeviceInfo{
+// hvacr01DeviceToInfo converts a NasaDevice to adapter.SamsungNasaDeviceInfo.
+func hvacr01DeviceToInfo(dev *NasaDevice) adapter.SamsungNasaDeviceInfo {
+	info := adapter.SamsungNasaDeviceInfo{
 		Address:      dev.Address.String(),
-		DeviceID:     dev.UnitID, // v0.18.7: NASADevice.UnitID 가 adapter NASADeviceInfo.DeviceID (사용자 식별자) 로 매핑
+		DeviceID:     dev.UnitID, // v0.18.7: NasaDevice.UnitID 가 adapter SamsungNasaDeviceInfo.DeviceID (사용자 식별자) 로 매핑
 		Name:         dev.Name,
 		DeviceType:   dev.Type,
 		Online:       dev.Online,

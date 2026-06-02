@@ -16,7 +16,7 @@ implementation_commit: 716e80e
 | 2026-02-13 | 1.0.0 | 초기 SPEC 작성 |
 | 2026-02-16 | 1.1.0 | P0 구현 완료 (Module 1,2,3,4,5,7), 문서 동기화 |
 | 2026-02-16 | 1.2.0 | P1 구현 완료 (Module 4 Backpressure 런타임 로직, Module 6 TTL Management), 전체 모듈 구현 완료 |
-| 2026-05-14 | 1.3.0 | **에이전트 생명주기 회복력 통합**. (1) Module 1 `DeployFlow` 동작 변경 — disabled/missing 에이전트 참조 검증 결과를 hard-fail 이 아닌 warning 로그로 처리하여 배포를 계속 진행 (REQ-ENGINE-001-01-03 amend, 신규 REQ-ENGINE-001-01-13). (2) Module 8 (Agent Reinitialization) 신규 — `AgentReinitializer` 인터페이스 + `Engine.ReinitNodesForAgent` + 에이전트 OnStart 콜백 연결. 에이전트 재시작/활성화 시 해당 에이전트를 참조하는 노드를 자동 재초기화·재연결 (커밋 `871b4dc`). 관련 SPEC: SPEC-AGENT-005 v1.1.0 (R5.7~R5.9), SPEC-SERIAL-001, SPEC-NASA-001 Init-tolerance 패턴. |
+| 2026-05-14 | 1.3.0 | **에이전트 생명주기 회복력 통합**. (1) Module 1 `DeployFlow` 동작 변경 — disabled/missing 에이전트 참조 검증 결과를 hard-fail 이 아닌 warning 로그로 처리하여 배포를 계속 진행 (REQ-ENGINE-001-01-03 amend, 신규 REQ-ENGINE-001-01-13). (2) Module 8 (Agent Reinitialization) 신규 — `AgentReinitializer` 인터페이스 + `Engine.ReinitNodesForAgent` + 에이전트 OnStart 콜백 연결. 에이전트 재시작/활성화 시 해당 에이전트를 참조하는 노드를 자동 재초기화·재연결 (커밋 `871b4dc`). 관련 SPEC: SPEC-AGENT-005 v1.1.0 (R5.7~R5.9), SPEC-SERIAL-001, SPEC-SAMSUNG-HVACR-001 Init-tolerance 패턴. |
 
 ---
 

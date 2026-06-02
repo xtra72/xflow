@@ -118,7 +118,7 @@ func TestTCPClientTransport_SendReceive(t *testing.T) {
 	defer transport.Close()
 
 	// Send
-	testData := []byte("hello lgcp")
+	testData := []byte("hello lg_hvacr02")
 	if err := transport.Send(testData); err != nil {
 		t.Fatalf("Send() error: %v", err)
 	}
@@ -129,8 +129,8 @@ func TestTCPClientTransport_SendReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Receive() error: %v", err)
 	}
-	if string(buf[:n]) != "hello lgcp" {
-		t.Errorf("Receive() = %q, want %q", string(buf[:n]), "hello lgcp")
+	if string(buf[:n]) != "hello lg_hvacr02" {
+		t.Errorf("Receive() = %q, want %q", string(buf[:n]), "hello lg_hvacr02")
 	}
 
 	wg.Wait()
@@ -284,7 +284,7 @@ func TestTCPClientTransport_ConnectionDrop(t *testing.T) {
 
 // TestTCPClientTransport_NewFactory 는 newLGAPTCPClientTransport 팩토리를 검증한다.
 func TestTCPClientTransport_NewFactory(t *testing.T) {
-	cfg := LGCPConfig{
+	cfg := Hvacr02Config{
 		TCPHost:           "192.168.1.100",
 		TCPPort:           5000,
 		TCPConnectTimeout: 10 * time.Second,
@@ -316,9 +316,9 @@ func TestTCPClientTransport_NewFactory(t *testing.T) {
 
 // TestTCPServerTransport_OpenClose 는 TCP 서버 리스너 시작 및 종료를 검증한다.
 func TestTCPServerTransport_OpenClose(t *testing.T) {
-	transport := newLGAPTCPServerTransport(LGCPConfig{
-		TCPHost:      "127.0.0.1",
-		TCPPort:      0, // OS 가 포트 할당
+	transport := newLGAPTCPServerTransport(Hvacr02Config{
+		TCPHost:         "127.0.0.1",
+		TCPPort:         0, // OS 가 포트 할당
 		TCPReadTimeout:  500 * time.Millisecond,
 		TCPWriteTimeout: 1 * time.Second,
 	})
@@ -568,7 +568,7 @@ func TestTCPServerTransport_ClientReconnect(t *testing.T) {
 
 // TestTCPServerTransport_NewFactory 는 newLGAPTCPServerTransport 팩토리를 검증한다.
 func TestTCPServerTransport_NewFactory(t *testing.T) {
-	cfg := LGCPConfig{
+	cfg := Hvacr02Config{
 		TCPHost:         "0.0.0.0",
 		TCPPort:         8080,
 		TCPReadTimeout:  2 * time.Second,
@@ -592,7 +592,7 @@ func TestTCPServerTransport_NewFactory(t *testing.T) {
 
 // TestTCPServerTransport_Open 은 Open 메서드로 리스너 시작 및 연결 수락을 검증한다.
 func TestTCPServerTransport_Open(t *testing.T) {
-	transport := newLGAPTCPServerTransport(LGCPConfig{
+	transport := newLGAPTCPServerTransport(Hvacr02Config{
 		TCPHost:         "127.0.0.1",
 		TCPPort:         0, // OS 가 포트 할당 — Open 에서 포트 0 사용
 		TCPReadTimeout:  500 * time.Millisecond,

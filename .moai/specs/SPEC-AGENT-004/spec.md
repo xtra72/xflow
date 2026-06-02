@@ -42,15 +42,15 @@ XFlow는 IoT 플로우 엔진으로, Agent가 외부 장치와의 통신을 담�
 - `MsgBufferPending` / `MsgBufferCapacity`: 메시지 버퍼 상태 (SPEC-AGENT-003에서 추가)
 - `Extra`: 에이전트별 추가 통계 (`map[string]any`)
 
-**LGCP 에이전트 메시지 전달 모델:**
+**LG HVACR-02 에이전트 메시지 전달 모델:**
 
-LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
+LG HVACR-02 에이전트는 두 가지 메시지 전달 경로를 가진다:
 
 1. **Bridge 경로 (Push)**: `ReceiveMessage()` → `msgCh` 채널 → I/O 노드 (serial_io, mqtt, tcp_io)
    - `bridgeActive` atomic guard로 소비자 없을 때 채널 적재 방지
    - `msgCh` 버퍼 오버플로우 시 oldest 메시지 드롭
 
-2. **Poll 경로 (Pull)**: `Process()` → `get_recent`/`drain` → 링 버퍼 → 폴링 노드 (lgcp-status, lgcp)
+2. **Poll 경로 (Pull)**: `Process()` → `get_recent`/`drain` → 링 버퍼 → 폴링 노드 (lg_hvacr02_status, lg_hvacr02)
    - `last_seq` 서버사이드 필터링으로 신규 프레임만 반환
    - 멀티 노드 독립 소비 지원 (각 노드가 자신의 `lastSeq` 관리)
 
@@ -59,7 +59,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 1. ~~외부 연결(트랜스포트)과 내부 연결(노드 참조) 메시지를 구분하지 않음~~ → **해결 (R1)**
 2. ~~드롭된 메시지, 로드 시간 등 운영 핵심 지표 부재~~ → **해결 (R2)**
 3. 에이전트 타입별 외부 연결 단위 통계 없음 (예: MQTT 토픽별, TCP 클라이언트별) → **미구현 (R3)**
-4. ~~노드 참조별 내부 통계 없음~~ → **해결 (R4, LGCP 에이전트)**
+4. ~~노드 참조별 내부 통계 없음~~ → **해결 (R4, LG HVACR-02 에이전트)**
 5. API 응답이 flat 구조로 상세 분석 불가 → **미구현 (R5)**
 
 ### 1.3 에이전트 타입별 외부 연결 단위
@@ -67,20 +67,20 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 | 에이전트 타입 | 연결 단위 | 식별자 |
 |--------------|----------|--------|
 | mqtt-client | 토픽 (Topic) | topic name |
-| samsung-nasa | 장치 (Device) | device address |
+| samsung_hvacr01 | 장치 (Device) | device address |
 | serial | 포트 (Port) | serial port path |
 | tcp-server | 클라이언트 (Client) | client remote address |
 | tcp-client | 서버 (Server) | server address |
 | modbus-tcp | 장치 (Device) | unit ID |
 | modbus-tcp-server | 클라이언트 (Client) | client remote address |
 | lgap | 실내기 (Indoor Unit) | unit address |
-| lgcp | 실내기 (Indoor Unit) | unit address |
+| lg_hvacr02 | 실내기 (Indoor Unit) | unit address |
 
 ### 1.4 내부 연결 구조
 
 노드는 `agent_ref` 또는 `AgentRef` 구조체를 통해 에이전트를 참조한다. 하나의 에이전트에 여러 노드가 연결될 수 있으며, 노드별 메시지 송수신 통계가 필요하다.
 
-**멀티 노드 연결 지원**: 동일 에이전트에 다수의 lgcp-status 노드가 연결될 수 있다. 각 노드는 독립적으로 메시지를 소비하며, `last_seq` 기반 서버사이드 필터링으로 중복 없이 신규 프레임만 수신한다.
+**멀티 노드 연결 지원**: 동일 에이전트에 다수의 lg_hvacr02_status 노드가 연결될 수 있다. 각 노드는 독립적으로 메시지를 소비하며, `last_seq` 기반 서버사이드 필터링으로 중복 없이 신규 프레임만 수신한다.
 
 ---
 
@@ -125,7 +125,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 **구현 노트:**
 - `SetStartedAt(time.Now())`를 `Start()`에서 호출
 - `RecordFirstMessage()`를 첫 프레임 캡처 시 호출 (이미 기록되었으면 무시)
-- LGCP의 `sendFrameEvent`에서 msgCh 오버플로우 시 `IncrDroppedMessages()` 호출
+- LG HVACR-02의 `sendFrameEvent`에서 msgCh 오버플로우 시 `IncrDroppedMessages()` 호출
 
 ### R3: 에이전트 타입별 외부 연결 통계 (ConnectionStats) — 미구현
 
@@ -139,7 +139,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 - `ConnectedAt`: 연결 시작 시각
 - `LastActivityAt`: 마지막 활동 시각
 
-### R4: 노드 참조별 내부 통계 (NodeRefStats) — ✅ 구현 완료 (LGCP)
+### R4: 노드 참조별 내부 통계 (NodeRefStats) — ✅ 구현 완료 (LG HVACR-02)
 
 **WHEN** 노드가 에이전트에 메시지를 전송할 때, **THEN** 시스템은 해당 노드 ID를 키로 `NodeRefStats`를 업데이트해야 한다.
 
@@ -152,7 +152,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 
 **구현 노트:**
 - `IncrNodeRefSent(nodeID, flowID)`: 노드가 에이전트로부터 프레임을 가져갈 때 호출
-- LGCP 노드는 `pollRecentBulk`에서 `node_id`와 `last_seq`를 요청에 포함
+- LG HVACR-02 노드는 `pollRecentBulk`에서 `node_id`와 `last_seq`를 요청에 포함
 - 에이전트의 `processGetRecent`에서 신규 프레임 반환 시 `IncrNodeRefSent` 호출
 
 ### R5: 향상된 통계 API 응답 구조 — 미구현
@@ -193,9 +193,9 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 - 연결 단위별 상세 통계 테이블 (connections)
 - 노드 참조별 통계 테이블 (node_refs)
 
-### R7: LGCP 멀티 노드 지원 — ✅ 구현 완료 (신규)
+### R7: LG HVACR-02 멀티 노드 지원 — ✅ 구현 완료 (신규)
 
-**WHEN** 동일 LGCP 에이전트에 다수의 lgcp-status 노드가 연결될 때, **THEN** 각 노드는 독립적으로 신규 프레임만 수신해야 한다.
+**WHEN** 동일 LG HVACR-02 에이전트에 다수의 lg_hvacr02_status 노드가 연결될 때, **THEN** 각 노드는 독립적으로 신규 프레임만 수신해야 한다.
 
 **구현 방식:**
 - 기본 `poll_command`를 `drain`에서 `get_recent`로 변경 (drain은 버퍼를 리셋하여 멀티 노드 비호환)
@@ -275,11 +275,11 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 - `NodeRefStats`는 `sync.RWMutex`로 읽기 병행성 확보
 - 통계 수집 오버헤드: 메시지 처리 경로에서 1ms 이내
 
-### S6: LGCP last_seq 서버사이드 필터링 — ✅ 완료 (신규)
+### S6: LG HVACR-02 last_seq 서버사이드 필터링 — ✅ 완료 (신규)
 
 **구조 변경:**
-- `lgcpFrameRecord`에 `Seq int64` 필드 추가 (링 버퍼에 seq 저장)
-- `lgcpProcessRequest`에 `LastSeq int64` 필드 추가
+- `hvacr02FrameRecord`에 `Seq int64` 필드 추가 (링 버퍼에 seq 저장)
+- `hvacr02ProcessRequest`에 `LastSeq int64` 필드 추가
 - `pushRecentFrame(eventJSON, ts, seq)`: seq를 링 버퍼에 저장
 - `processGetRecent(count, lastSeq, nodeID, flowID)`: `rec.Seq > lastSeq` 필터링
 - 노드의 `pollRecentBulk`에서 `last_seq: n.lastSeq` 전송
@@ -292,7 +292,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 
 ### S7: bridgeActive Guard — ✅ 완료 (신규)
 
-- `LGCPAgent` 구조체에 `bridgeActive atomic.Bool` 필드
+- `Hvacr02Agent` 구조체에 `bridgeActive atomic.Bool` 필드
 - `ReceiveMessage()` 최초 호출 시 `bridgeActive.Store(true)`
 - `handleCapturedFrame`: `bridgeActive.Load()` 체크 후 `sendFrameEvent` 호출
 - `sendStatusEvent`: `bridgeActive.Load()` 체크 후 조기 반환
@@ -303,14 +303,14 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 
 | 요구사항 | 명세 | 상태 | 주요 영향 파일 |
 |---------|------|------|--------------|
-| R1 (외부/내부 분리) | S1 | ✅ 완료 | `internal/agent/info.go`, `internal/agent/lg/lgcp_agent.go` |
-| R2 (신규 카운터) | S1 | ✅ 완료 | `internal/agent/info.go`, `internal/agent/lg/lgcp_agent.go` |
+| R1 (외부/내부 분리) | S1 | ✅ 완료 | `internal/agent/info.go`, `internal/agent/lg/lg_hvacr02_agent.go` |
+| R2 (신규 카운터) | S1 | ✅ 완료 | `internal/agent/info.go`, `internal/agent/lg/lg_hvacr02_agent.go` |
 | R3 (ConnectionStats) | S2 | 미구현 | `internal/agent/agent.go`, 에이전트 타입별 파일 |
-| R4 (NodeRefStats) | S3 | ✅ 완료 | `internal/agent/info.go`, `internal/agent/lg/lgcp_agent.go` |
+| R4 (NodeRefStats) | S3 | ✅ 완료 | `internal/agent/info.go`, `internal/agent/lg/lg_hvacr02_agent.go` |
 | R5 (API 응답) | S4 | 미구현 | `internal/api/handler/agent.go`, `internal/api/service/agent_adapter.go` |
 | R6 (프론트엔드) | - | 미구현 | `web/src/pages/agents/AgentDetailPanel.tsx` |
-| R7 (멀티 노드) | S6 | ✅ 완료 | `internal/agent/lg/lgcp_agent.go`, `internal/node/lgcp.go` |
-| R8 (Bridge Guard) | S7 | ✅ 완료 | `internal/agent/lg/lgcp_agent.go` |
+| R7 (멀티 노드) | S6 | ✅ 완료 | `internal/agent/lg/lg_hvacr02_agent.go`, `internal/node/lg_hvacr02.go` |
+| R8 (Bridge Guard) | S7 | ✅ 완료 | `internal/agent/lg/lg_hvacr02_agent.go` |
 
 ---
 
@@ -318,7 +318,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 
 ### v2.0.0 (2026-04-07)
 
-**LGCP 에이전트 통계 고도화 구현:**
+**LG HVACR-02 에이전트 통계 고도화 구현:**
 
 1. `AgentStats` 코어 확장 (R1, R2)
    - 외부/내부 메시지 카운터 분리 (`IncrExternal*`, `IncrInternal*`, `AddInternal*`)
@@ -329,7 +329,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
    - `IncrNodeRefSent(nodeID, flowID)` per-node 통계 추적
    - `processGetRecent`에서 신규 프레임 반환 시 호출
 
-3. LGCP 에이전트 통계 연동
+3. LG HVACR-02 에이전트 통계 연동
    - `captureLoop`: `IncrExternalMessagesReceived()`, `AddBytesRead()`, `UpdateLastActivity()`, `RecordFirstMessage()`
    - `sendFrame`: `IncrExternalMessagesSent()`, `AddBytesWritten()`
    - `processGetRecent`: `AddInternalMessagesSent(n)` (신규 프레임 수만)
@@ -338,12 +338,12 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
    - `processControlCommand`: `IncrInternalMessagesSent()` (제어 응답)
    - `sendFrameEvent` drop 시: `IncrDroppedMessages()`
    - `Process` 에러 시: `IncrMessagesErrored()`
-   - `Stats()`: `Extra` 필드에 LGCP 고유 통계 (frames_captured, frames_valid, frames_invalid, frames_dropped, bytes_received, transport_connected)
+   - `Stats()`: `Extra` 필드에 LG HVACR-02 고유 통계 (frames_captured, frames_valid, frames_invalid, frames_dropped, bytes_received, transport_connected)
 
 4. 멀티 노드 지원 (R7)
    - 기본 `poll_command`를 `drain` → `get_recent`로 변경
-   - `lgcpFrameRecord`에 `Seq` 필드 추가
-   - `lgcpProcessRequest`에 `LastSeq` 필드 추가
+   - `hvacr02FrameRecord`에 `Seq` 필드 추가
+   - `hvacr02ProcessRequest`에 `LastSeq` 필드 추가
    - `processGetRecent`에서 `seq > lastSeq` 서버사이드 필터링
    - 노드의 `pollRecentBulk`에서 `last_seq` 전송
 
@@ -353,7 +353,7 @@ LGCP 에이전트는 두 가지 메시지 전달 경로를 가진다:
 
 **수정된 파일:**
 - `internal/agent/info.go` — `AddMessagesSent`, `AddInternalMessagesSent` 메서드 추가
-- `internal/agent/lg/lgcp_agent.go` — 통계 연동, bridgeActive, last_seq 필터링, 멀티노드
-- `internal/agent/lg/lgcp_agent_test.go` — bridgeActive 테스트, 통계 검증, pushRecentFrame seq
-- `internal/node/lgcp.go` — 기본 poll_command 변경, last_seq/node_id 전송
-- `internal/node/lgcp_test.go` — 기본값 assertion 업데이트
+- `internal/agent/lg/lg_hvacr02_agent.go` — 통계 연동, bridgeActive, last_seq 필터링, 멀티노드
+- `internal/agent/lg/lg_hvacr02_agent_test.go` — bridgeActive 테스트, 통계 검증, pushRecentFrame seq
+- `internal/node/lg_hvacr02.go` — 기본 poll_command 변경, last_seq/node_id 전송
+- `internal/node/lg_hvacr02_test.go` — 기본값 assertion 업데이트

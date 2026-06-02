@@ -35,6 +35,9 @@ type mockNode struct {
 	processCalled  int
 	hasErrorPort   bool // 에러 포트 포함 여부
 	logger         observe.ComponentLogger
+	configureErr   error          // Configure 가 반환할 에러 (테스트용)
+	lastConfig     map[string]any // 마지막으로 Configure 에 전달된 설정 (라이브 재설정 검증용)
+	configureCalls int            // Configure 호출 횟수
 	mu             sync.Mutex
 }
 
@@ -78,7 +81,20 @@ func (m *mockNode) Shutdown(ctx context.Context) error {
 	return m.shutdownErr
 }
 
-func (m *mockNode) Configure(config map[string]any) error { return nil }
+func (m *mockNode) Configure(config map[string]any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.configureCalls++
+	m.lastConfig = config
+	return m.configureErr
+}
+
+// getLastConfig 는 동시성 안전하게 마지막 Configure 설정을 반환한다.
+func (m *mockNode) getLastConfig() map[string]any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastConfig
+}
 
 // Logger 는 설정된 ComponentLogger를 반환한다 (nodeWithLogger 인터페이스 충족).
 func (m *mockNode) Logger() observe.ComponentLogger { return m.logger }
@@ -118,14 +134,14 @@ func (f *mockNodeFactory) factory(def flow.NodeDef, opts ...node.NodeOption) (no
 // mockLogger 는 observe.ComponentLogger의 테스트용 mock 구현이다.
 type mockLogger struct{}
 
-func (m *mockLogger) Debug(msg string, args ...any)           {}
-func (m *mockLogger) Info(msg string, args ...any)            {}
-func (m *mockLogger) Warn(msg string, args ...any)            {}
-func (m *mockLogger) Error(msg string, args ...any)           {}
-func (m *mockLogger) With(args ...any) observe.ComponentLogger { return m }
+func (m *mockLogger) Debug(msg string, args ...any)                 {}
+func (m *mockLogger) Info(msg string, args ...any)                  {}
+func (m *mockLogger) Warn(msg string, args ...any)                  {}
+func (m *mockLogger) Error(msg string, args ...any)                 {}
+func (m *mockLogger) With(args ...any) observe.ComponentLogger      { return m }
 func (m *mockLogger) WithGroup(name string) observe.ComponentLogger { return m }
-func (m *mockLogger) Component() string                       { return "test" }
-func (m *mockLogger) Logger() *slog.Logger                    { return nil }
+func (m *mockLogger) Component() string                             { return "test" }
+func (m *mockLogger) Logger() *slog.Logger                          { return nil }
 
 // newTestEngine 은 테스트용 Engine을 생성하는 헬퍼이다.
 func newTestEngine(factory *mockNodeFactory) *Engine {
@@ -1932,13 +1948,13 @@ func (c *capturingLogger) Debug(msg string, args ...any) {
 	defer c.mu.Unlock()
 	c.debugCalls = append(c.debugCalls, capturedDebugCall{msg: msg, args: args})
 }
-func (c *capturingLogger) Info(msg string, args ...any)              {}
-func (c *capturingLogger) Warn(msg string, args ...any)              {}
-func (c *capturingLogger) Error(msg string, args ...any)             {}
-func (c *capturingLogger) With(args ...any) observe.ComponentLogger  { return c }
+func (c *capturingLogger) Info(msg string, args ...any)                  {}
+func (c *capturingLogger) Warn(msg string, args ...any)                  {}
+func (c *capturingLogger) Error(msg string, args ...any)                 {}
+func (c *capturingLogger) With(args ...any) observe.ComponentLogger      { return c }
 func (c *capturingLogger) WithGroup(name string) observe.ComponentLogger { return c }
-func (c *capturingLogger) Component() string                        { return "test.capture" }
-func (c *capturingLogger) Logger() *slog.Logger                     { return c.slogger }
+func (c *capturingLogger) Component() string                             { return "test.capture" }
+func (c *capturingLogger) Logger() *slog.Logger                          { return c.slogger }
 
 func (c *capturingLogger) getDebugCalls() []capturedDebugCall {
 	c.mu.Lock()
@@ -2251,6 +2267,100 @@ func TestGetFlowNode_미배포플로우에러(t *testing.T) {
 
 	_, err := e.GetFlowNode("nonexistent-flow", "any-node")
 	assert.ErrorIs(t, err, ErrFlowNotFound)
+}
+
+// ---------------------------------------------------------------------------
+// ReconfigureNode 테스트 (실행 중 노드 라이브 재설정)
+// ---------------------------------------------------------------------------
+
+func TestReconfigureNode_ID로성공(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, nodeDefs := newSimpleFlow()
+
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// 부분 설정(output_enabled 만)으로 실행 중 노드를 재설정한다.
+	err := e.ReconfigureNode(f.ID(), nodeDefs[0].ID, map[string]any{"output_enabled": false})
+	require.NoError(t, err)
+
+	// 노드의 Configure 가 전달된 부분 설정 그대로 호출되었는지 검증한다.
+	last := nodeA.getLastConfig()
+	require.NotNil(t, last)
+	assert.Equal(t, false, last["output_enabled"])
+}
+
+func TestReconfigureNode_이름으로성공(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, nodeDefs := newSimpleFlow()
+
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	factory.register(nodeA)
+	factory.register(nodeB)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// ID 가 아닌 노드 이름("B")으로도 검색되어 재설정된다.
+	err := e.ReconfigureNode(f.ID(), "B", map[string]any{"output_enabled": true})
+	require.NoError(t, err)
+
+	last := nodeB.getLastConfig()
+	require.NotNil(t, last)
+	assert.Equal(t, true, last["output_enabled"])
+}
+
+func TestReconfigureNode_미배포플로우에러(t *testing.T) {
+	e := newTestEngine(nil)
+
+	err := e.ReconfigureNode("nonexistent-flow", "any-node", map[string]any{"output_enabled": false})
+	assert.ErrorIs(t, err, ErrFlowNotFound)
+}
+
+func TestReconfigureNode_미존재노드에러(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, _ := newSimpleFlow()
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	err := e.ReconfigureNode(f.ID(), "nonexistent-node", map[string]any{"output_enabled": false})
+	assert.ErrorIs(t, err, ErrNodeNotFound)
+}
+
+func TestReconfigureNode_Configure에러전파(t *testing.T) {
+	factory := newMockNodeFactory()
+	f, nodeDefs := newSimpleFlow()
+
+	nodeA := newMockNode("", "A", "transform")
+	nodeB := newMockNode("", "B", "transform")
+	nodeA.id = nodeDefs[0].ID
+	nodeB.id = nodeDefs[1].ID
+	nodeA.configureErr = errors.New("configure boom")
+	factory.register(nodeA)
+	factory.register(nodeB)
+
+	e := newTestEngine(factory)
+	ctx := context.Background()
+	require.NoError(t, e.DeployFlow(ctx, f))
+
+	// 노드 Configure 가 에러를 반환하면 ReconfigureNode 도 에러를 반환한다.
+	err := e.ReconfigureNode(f.ID(), nodeDefs[0].ID, map[string]any{"output_enabled": false})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "configure boom")
 }
 
 func TestGetFlowNodes_시작후상태포함(t *testing.T) {

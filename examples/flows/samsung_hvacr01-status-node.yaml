@@ -1,0 +1,144 @@
+# samsung_hvacr01-status-node.yaml
+# Samsung HVACR-01 디바이스 상태 모니터링 플로우 (samsung_hvacr01_status 노드 사용)
+#
+# v0.18.26 (2026-05-28) 이후 노드는 LG ICP-01 의 inactivity-fallback 모델을 따른다.
+# 에이전트의 FrameNotifyCh 신호로 새 frame 도착 시 즉시 emit 하고,
+# inactivity_timeout (기본 90s) 동안 신호가 없으면 request_state 명령을 발송한다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  [상태 이벤트 경로]                                              │
+# │    hvacr01-status ──→ state-filter ──→ state-pub                │
+# │                                                                  │
+# │  [에러 → 로깅]                                                   │
+# │    *:error ──→ error-logger                                      │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# samsung_hvacr01_status 노드 설정 (v0.18.26):
+#   agent_ref:          Samsung HVACR-01 에이전트 이름 (필수)
+#   inactivity_timeout: 무수신 fallback 임계 (선택, 기본값 "90s", 최소 5s)
+#   timeout:            Process 호출 타임아웃 (선택, 기본값 "5s")
+#   batch_size:         벌크 수신 수량 (선택, 기본 32)
+#   omit_state_when_off: power=false 시 신뢰 불가 필드 제거 (선택, 기본 false)
+# advanced (어드레싱; 둘 다 비어있으면 모든 디바이스 + broadcast):
+#   group_id:           NASA addr byte 1 (외기 인덱스 hex, "00"–"0F")
+#   unit_id:            NASA addr byte 2 ("00"–"3F" indoor) 또는 전체 주소 ("10.0F.00")
+#
+# 출력 메시지 형식 (단일 frame 단위, 시스템 키 device_id 는 UUID 임):
+#   msg.type:  "device_state.<trigger>" (change/report/response 등)
+#   payload:   { "power": "on", "mode": "cool", "target_temperature": 24, "current_temperature": 25.5, ... }
+#   metadata:  { "device_id": "<UUID>", "node_source": "node", "node_type": "samsung_hvacr01_status" }
+#
+# 제어 명령은 별도의 samsung_hvacr01_control 노드에서 payload-level
+# device_id / unit_id override 로 단일 디바이스를 지정한다 (status 노드의 config
+# 에서는 v0.18.26 부터 device_id 가 제거됨).
+#
+# 사용법:
+#   xflow agent import -f examples/agents/samsung_hvacr01-serial.yaml
+#   xflow agent import -f examples/agents/mqtt-broker.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#   xflow flow import -f examples/flows/samsung_hvacr01-status-node.yaml
+#   xflow flow deploy samsung_hvacr01-status-node
+#   xflow flow start samsung_hvacr01-status-node
+
+name: "samsung_hvacr01-status-node"
+description: "Samsung HVACR-01 디바이스 상태 모니터링 - samsung_hvacr01_status 노드 사용"
+config:
+  track_history: true
+  max_history_size: 200
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "hvac-monitoring"
+
+required_agents:
+  - name: "samsung-hvacr01-agent"
+    type: "samsung_hvacr01"
+  - name: "mqtt-broker"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 상태 폴링 경로
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 1단계: Samsung HVACR-01 디바이스 상태 수신 (v0.18.26 inactivity 모델) ──
+  # samsung_hvacr01_status 노드가 에이전트의 FrameNotifyCh 신호로 새 frame 도착 시
+  # 즉시 emit. inactivity_timeout 동안 신호가 없으면 request_state 명령으로 강제
+  # 상태 확보. 어드레싱 (unit_id / group_id) 미설정 시 모든 디바이스 처리.
+  - name: "hvacr01-poller"
+    type: "samsung_hvacr01_status"
+    config:
+      agent_ref: "samsung-hvacr01-agent"
+      inactivity_timeout: "90s"
+      timeout: "5s"
+      # 특정 디바이스만 처리하려면 advanced 어드레싱 사용 (선택):
+      # group_id: "00"            # 외기 인덱스
+      # unit_id:  "00"            # 실내기 인덱스 (NASA addr byte 2)
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 2단계: 상태 변경 필터링 ──
+  # 온도 변화 또는 모드 변경이 있는 이벤트만 통과시킨다.
+  - name: "state-filter"
+    type: "filter"
+    config:
+      condition: "$.payload.state != nil"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 3단계: MQTT 상태 토픽으로 발행 ──
+  - name: "state-pub"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "mqtt-broker"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 로깅
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 상태 폴링 경로
+  - source: "hvacr01-poller:out"
+    target: "state-filter:in"
+  - source: "state-filter:out"
+    target: "state-pub:in"
+
+  # 에러 라우팅
+  - source: "hvacr01-poller:error"
+    target: "error-logger:in"
+  - source: "state-filter:error"
+    target: "error-logger:in"

@@ -272,7 +272,9 @@ func (a *TCPServerAgent) processSend(cmd processCommand) ([]byte, error) {
 		return nil, fmt.Errorf("tcp-server send: invalid base64 data: %w", err)
 	}
 
-	if cmd.Target == "" {
+	// Broadcast 옵션이 켜져 있으면 Target 지정과 무관하게 모든 연결로 전송한다.
+	// Target 이 비어 있을 때도 기존과 동일하게 모든 연결로 전송한다.
+	if a.config.Broadcast || cmd.Target == "" {
 		// Broadcast to all connections.
 		list := a.connections.List()
 		for i := range list {
@@ -316,12 +318,12 @@ func (a *TCPServerAgent) processListConnections() ([]byte, error) {
 	conns := make([]map[string]any, 0, len(list))
 	for i := range list {
 		conns = append(conns, map[string]any{
-			"remote_addr":       list[i].RemoteAddr,
-			"connected_at":      list[i].ConnectedAt.Format(time.RFC3339),
-			"bytes_sent":        list[i].BytesSent.Load(),
-			"bytes_received":    list[i].BytesReceived.Load(),
-			"packets_sent":      list[i].PacketsSent.Load(),
-			"packets_received":  list[i].PacketsReceived.Load(),
+			"remote_addr":      list[i].RemoteAddr,
+			"connected_at":     list[i].ConnectedAt.Format(time.RFC3339),
+			"bytes_sent":       list[i].BytesSent.Load(),
+			"bytes_received":   list[i].BytesReceived.Load(),
+			"packets_sent":     list[i].PacketsSent.Load(),
+			"packets_received": list[i].PacketsReceived.Load(),
 		})
 	}
 	return json.Marshal(map[string]any{"connections": conns})
@@ -425,12 +427,12 @@ func (a *TCPServerAgent) State() map[string]any {
 	conns := make([]map[string]any, 0, len(list))
 	for i := range list {
 		conns = append(conns, map[string]any{
-			"remote_addr":       list[i].RemoteAddr,
-			"connected_at":      list[i].ConnectedAt.Format(time.RFC3339),
-			"bytes_sent":        list[i].BytesSent.Load(),
-			"bytes_received":    list[i].BytesReceived.Load(),
-			"packets_sent":      list[i].PacketsSent.Load(),
-			"packets_received":  list[i].PacketsReceived.Load(),
+			"remote_addr":      list[i].RemoteAddr,
+			"connected_at":     list[i].ConnectedAt.Format(time.RFC3339),
+			"bytes_sent":       list[i].BytesSent.Load(),
+			"bytes_received":   list[i].BytesReceived.Load(),
+			"packets_sent":     list[i].PacketsSent.Load(),
+			"packets_received": list[i].PacketsReceived.Load(),
 		})
 	}
 

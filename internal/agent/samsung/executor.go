@@ -8,10 +8,10 @@ import (
 	"github.com/xtra/xflow/internal/device/adapter"
 )
 
-// newNASAExecutor creates a CommandExecutor that translates unified device
-// commands into NASAAgent.Process JSON requests.
-func newNASAExecutor(agent *NASAAgent, addr NASAAddress) adapter.CommandExecutor {
-	addrStr := addr.String() // "XX.XX.XX" format for ParseNASAAddress
+// newHvacr01Executor creates a CommandExecutor that translates unified device
+// commands into Hvacr01Agent.Process JSON requests.
+func newHvacr01Executor(agent *Hvacr01Agent, addr NasaAddress) adapter.CommandExecutor {
+	addrStr := addr.String() // "XX.XX.XX" format for ParseNasaAddress
 	return func(ctx context.Context, command string, params map[string]any) (map[string]any, error) {
 		req := processRequest{
 			Command: command,
@@ -21,7 +21,7 @@ func newNASAExecutor(agent *NASAAgent, addr NASAAddress) adapter.CommandExecutor
 
 		data, err := json.Marshal(req)
 		if err != nil {
-			return nil, fmt.Errorf("nasa executor: marshal request: %w", err)
+			return nil, fmt.Errorf("samsung_nasa executor: marshal request: %w", err)
 		}
 
 		resp, err := agent.Process(data)
@@ -35,7 +35,7 @@ func newNASAExecutor(agent *NASAAgent, addr NASAAddress) adapter.CommandExecutor
 
 		var result map[string]any
 		if err := json.Unmarshal(resp, &result); err != nil {
-			return nil, fmt.Errorf("nasa executor: unmarshal response: %w", err)
+			return nil, fmt.Errorf("samsung_nasa executor: unmarshal response: %w", err)
 		}
 
 		return result, nil

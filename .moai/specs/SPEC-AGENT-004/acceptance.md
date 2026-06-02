@@ -21,7 +21,7 @@ Then ExternalMessagesReceived가 1 증가한다
 And MessagesReceived가 1 증가한다 (합산 일관성)
 ```
 
-검증: `IncrExternalMessagesReceived()`가 두 카운터를 동시에 증가. LGCP `captureLoop`에서 호출.
+검증: `IncrExternalMessagesReceived()`가 두 카운터를 동시에 증가. LG HVACR-02 `captureLoop`에서 호출.
 
 ### AC-R1-02: 외부 메시지 송신 카운터 증가 ✅
 
@@ -32,7 +32,7 @@ Then ExternalMessagesSent가 1 증가한다
 And MessagesSent가 1 증가한다 (합산 일관성)
 ```
 
-검증: `IncrExternalMessagesSent()`가 두 카운터를 동시에 증가. LGCP `sendFrame`에서 호출.
+검증: `IncrExternalMessagesSent()`가 두 카운터를 동시에 증가. LG HVACR-02 `sendFrame`에서 호출.
 
 ### AC-R1-03: 외부 메시지 에러 카운터 증가 ✅
 
@@ -60,7 +60,7 @@ And MessagesSent가 전달 수만큼 증가한다 (합산 일관성)
 
 ```gherkin
 Given 에이전트가 외부 메시지 N건, 내부 메시지 M건을 처리했다
-Then MessagesReceived == ExternalMessagesReceived (LGCP는 내부 수신 없음)
+Then MessagesReceived == ExternalMessagesReceived (LG HVACR-02 는 내부 수신 없음)
 And MessagesSent == ExternalMessagesSent + InternalMessagesSent
 ```
 
@@ -91,7 +91,7 @@ Then 가장 오래된 메시지가 드롭되고 DroppedMessages가 1 증가한�
 ```
 
 검증: `sendFrameEvent` 에서 msgCh 풀 시 oldest 드롭 + `IncrDroppedMessages()` 호출.
-테스트: `TestLGCPAgent_MsgChDrop`.
+테스트: `TestHvacr02Agent_MsgChDrop`.
 
 ### AC-R2-02: LoadTime 기록 ✅
 
@@ -140,7 +140,7 @@ Then connections 필드는 빈 배열 []이다
 
 ---
 
-## AC-R4: NodeRefStats — ✅ 통과 (LGCP)
+## AC-R4: NodeRefStats — ✅ 통과 (LG HVACR-02)
 
 ### AC-R4-01: 노드별 송신 카운터 ✅
 
@@ -178,12 +178,12 @@ Then data race가 발생하지 않는다
 
 ---
 
-## AC-R7: LGCP 멀티 노드 지원 — ✅ 통과 (신규)
+## AC-R7: LG HVACR-02 멀티 노드 지원 — ✅ 통과 (신규)
 
 ### AC-R7-01: 독립 소비 ✅
 
 ```gherkin
-Given 동일 LGCP 에이전트에 lgcp-status 노드 2개가 연결되어 있다
+Given 동일 LG HVACR-02 에이전트에 lg_hvacr02_status 노드 2개가 연결되어 있다
 When 에이전트가 프레임 10건을 캡처한다
 Then 각 노드가 독립적으로 10건의 프레임을 수신할 수 있다
 And 한 노드의 소비가 다른 노드에 영향을 주지 않는다
@@ -226,7 +226,7 @@ Then msgCh에 메시지가 적재되지 않는다
 And recentFrames 링 버퍼에는 정상 저장된다
 ```
 
-검증: 테스트 `TestLGCPAgent_NoBridge_SkipsMsgCh`.
+검증: 테스트 `TestHvacr02Agent_NoBridge_SkipsMsgCh`.
 
 ### AC-R8-02: Bridge 소비자 활성화 후 정상 전달 ✅
 
@@ -236,7 +236,7 @@ When 에이전트가 프레임을 캡처한다
 Then msgCh에 메시지가 정상 적재된다
 ```
 
-검증: `TestLGCPAgent_CaptureLoop` 등 기존 테스트에서 `bridgeActive.Store(true)` 설정 후 검증.
+검증: `TestHvacr02Agent_CaptureLoop` 등 기존 테스트에서 `bridgeActive.Store(true)` 설정 후 검증.
 
 ### AC-R8-03: 상태 이벤트도 Bridge Guard 적용 ✅
 
@@ -278,7 +278,7 @@ Then 응답 시간은 5ms 이내이다
 
 - [x] `go test -race` 통과 (agent, node 패키지)
 - [x] 기존 테스트 회귀 없음
-- [x] 합산 일관성: ExternalReceived == MessagesReceived (LGCP)
+- [x] 합산 일관성: ExternalReceived == MessagesReceived (LG HVACR-02)
 - [x] 합산 일관성: ExternalSent + InternalSent == MessagesSent
 - [x] 이중 카운트 제거 검증
 - [ ] 전체 테스트 커버리지: 85% 이상 (미측정)

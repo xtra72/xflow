@@ -45,7 +45,7 @@ function sourceVariant(source: string): { label: string; manual: boolean } | nul
 
 /** 프로토콜 배지 색상 */
 const PROTOCOL_COLORS: Record<string, string> = {
-  nasa: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+  samsung_nasa: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
   lgap: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400',
   modbus: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
 };

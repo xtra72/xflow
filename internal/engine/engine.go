@@ -679,6 +679,53 @@ func (e *Engine) GetFlowNode(flowID, nodeIDOrName string) (*NodeInstanceInfo, er
 	return nil, ErrNodeNotFound
 }
 
+// ReconfigureNode 는 실행 중인 Flow 내 특정 노드 인스턴스에 부분 설정을 즉시 적용한다.
+// 저장/재배포 없이 동작 중인 노드의 Configure 를 호출하여 라이브로 설정을 반영한다.
+// nodeIDOrName 은 노드 ID(UUID) 또는 노드 이름으로 검색하며, ID 우선·이름 폴백이다.
+//
+// config 는 변경된 키만 담은 부분 설정이다. 노드의 Configure 구현은 자신이 아는 키만
+// 읽으므로(예: 출력 노드는 output_enabled 키만 읽고 나머지 상태는 건드리지 않는다)
+// 부분 설정을 전달해도 기존 상태가 유실되지 않는다.
+//
+// 동시성: 엔진 락(e.mu)은 노드 참조를 확보할 때까지만 보유하며, n.Configure 호출 전에
+// 반드시 해제한다. 노드 Configure 가 내부적으로 다른 엔진 경로를 호출하더라도
+// 재진입(deadlock)이 발생하지 않도록 보장한다.
+func (e *Engine) ReconfigureNode(flowID, nodeIDOrName string, config map[string]any) error {
+	e.mu.RLock()
+
+	rt, exists := e.flows[flowID]
+	if !exists {
+		e.mu.RUnlock()
+		return ErrFlowNotFound
+	}
+
+	// ID로 먼저 검색하고, 없으면 이름으로 폴백 검색한다 (GetFlowNode 와 동일한 로직).
+	var target node.Node
+	if n, ok := rt.nodes[nodeIDOrName]; ok {
+		target = n
+	} else {
+		for _, n := range rt.nodes {
+			if n.Name() == nodeIDOrName {
+				target = n
+				break
+			}
+		}
+	}
+
+	// 노드 참조를 확보했으므로 Configure 호출 전에 엔진 락을 해제한다.
+	e.mu.RUnlock()
+
+	if target == nil {
+		return ErrNodeNotFound
+	}
+
+	if err := target.Configure(config); err != nil {
+		return fmt.Errorf("engine: 노드 재설정 실패 (flow=%s, node=%s): %w", flowID, nodeIDOrName, err)
+	}
+
+	return nil
+}
+
 // ResolveNodeName 은 배포된 플로우 내 노드 ID로부터 노드 이름을 반환한다.
 // flowID가 빈 문자열이면 모든 배포된 플로우에서 nodeID를 검색한다.
 // 플로우나 노드를 찾을 수 없으면 false 를 반환한다.
@@ -1036,7 +1083,7 @@ func (e *Engine) autoStopAgents(_ context.Context, rt *flowRuntime) {
 
 // ReinitNodesForAgent 는 지정된 에이전트를 참조하는 모든 실행 중인 에이전트 백엔드
 // 노드를 재초기화한다. node.AgentReinitializer 인터페이스를 구현한 모든 노드
-// (BridgeNode, NASA*, LGCP*, LGCNP*, LGAP*, MQTT*, Modbus*, InfluxDB*, TSDB*,
+// (BridgeNode, NASA*, LGCP*, Hvacr01*, LGAP*, MQTT*, Modbus*, InfluxDB*, TSDB*,
 // Serial*, TCP* 등) 가 대상이다.
 //
 // 에이전트 lifecycle 이벤트 - Restart() 또는 Stop()+Start() - 후에 호출되어

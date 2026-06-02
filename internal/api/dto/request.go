@@ -47,6 +47,12 @@ type FlowCreateRequest struct {
 	Name        string         `json:"name" validate:"required,min=1,max=255"`
 	Description string         `json:"description,omitempty"`
 	Definition  map[string]any `json:"definition" validate:"required"`
+
+	// RegenerateIDs 가 true 이면 import 모드로 동작하여 노드/와이어 ID 를 모두
+	// 새 UUID 로 재생성하고 참조를 재작성한다(동일 플로우 다중 import 충돌 방지).
+	// 쿼리 파라미터 ?regenerate_ids=true 로도 활성화할 수 있다.
+	// (SPEC: flow-management requirement 2)
+	RegenerateIDs bool `json:"regenerate_ids,omitempty"`
 }
 
 // FlowUpdateRequest 는 플로우 업데이트를 위한 DTO이다.
@@ -73,6 +79,12 @@ type AgentUpdateRequest struct {
 
 // ConfigUpdateRequest 는 런타임 설정 업데이트를 위한 DTO이다.
 type ConfigUpdateRequest struct {
+	Config map[string]any `json:"config" validate:"required"`
+}
+
+// NodeConfigureRequest 는 실행 중인 노드의 라이브 재설정을 위한 DTO이다.
+// Config 는 변경된 키만 담은 부분 설정이다(예: {"output_enabled": false}).
+type NodeConfigureRequest struct {
 	Config map[string]any `json:"config" validate:"required"`
 }
 

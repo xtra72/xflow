@@ -246,7 +246,7 @@ Then 삭제 버튼이 비활성화(disabled) 상태이어야 한다
 ### AC-024: Samsung NASA Devices 탭 호환성
 
 ```gherkin
-Given samsung-nasa 타입 에이전트의 상세 패널이 열려 있을 때
+Given samsung_hvacr01 타입 에이전트의 상세 패널이 열려 있을 때
 When Devices 탭을 클릭하면
 Then 기존 NasaDevicesTab 컴포넌트가 렌더링되어야 한다
   And ModbusDevicesTab이 렌더링되지 않아야 한다

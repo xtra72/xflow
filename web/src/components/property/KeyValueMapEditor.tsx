@@ -21,7 +21,20 @@ interface KeyValueMapEditorProps {
   value: unknown;
   onChange: (value: unknown) => void;
   readOnly?: boolean;
+  /** "키" 컬럼 헤더 오버라이드. 미지정 시 "키". */
+  keyLabel?: string;
+  /** "값" 컬럼 헤더 오버라이드. 미지정 시 "값". */
+  valueLabel?: string;
+  /** 키 입력 placeholder 오버라이드. 미지정 시 "키". */
+  keyPlaceholder?: string;
+  /** 값 입력 placeholder 오버라이드. 미지정 시 "값". */
+  valuePlaceholder?: string;
+  /** true 이면 값 입력 위에 `$.` JSONPath 빠른 삽입 칩을 표시한다(readOnly 아닐 때만). */
+  pathHelper?: boolean;
 }
+
+// `$.` 빠른 삽입 칩 목록. influxdb-write 의 tag/field 값 JSONPath 참조 보조용.
+const PATH_HELPER_CHIPS = ['$.payload.', '$.metadata.', '$.type', '$.timestamp'] as const;
 
 // ---- 변환 유틸 ----
 
@@ -68,11 +81,30 @@ const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 // ---- 컴포넌트 ----
 
-export function KeyValueMapEditor({ value, onChange, readOnly }: KeyValueMapEditorProps) {
+export function KeyValueMapEditor({
+  value,
+  onChange,
+  readOnly,
+  keyLabel,
+  valueLabel,
+  keyPlaceholder,
+  valuePlaceholder,
+  pathHelper,
+}: KeyValueMapEditorProps) {
   // 내부 상태로 행을 관리하여 key 안정성을 보장한다.
   // 외부 value는 초기화 시에만 반영한다.
   const lastExternalRef = useRef<unknown>(undefined);
   const [rows, setRows] = useState<KvRow[]>(() => toRows(value));
+
+  // pathHelper 칩 삽입 대상: 마지막으로 포커스된 값 셀의 row key 와 그 input 엘리먼트.
+  const focusedValueKeyRef = useRef<string | null>(null);
+  const valueInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+
+  // 라벨/placeholder 기본값 (미지정 시 기존 "키"/"값" 유지).
+  const thKeyLabel = keyLabel ?? '키';
+  const thValueLabel = valueLabel ?? '값';
+  const phKey = keyPlaceholder ?? '키';
+  const phValue = valuePlaceholder ?? '값';
 
   // 외부 value가 완전히 다른 객체로 교체되면 내부 상태를 동기화한다.
   // (단, 자체 emit으로 인한 변경은 무시)
@@ -122,6 +154,55 @@ export function KeyValueMapEditor({ value, onChange, readOnly }: KeyValueMapEdit
     [rows, emit],
   );
 
+  // `$.` 빠른 삽입 칩 클릭 처리.
+  //
+  // 삽입 대상 우선순위:
+  //   1) 마지막으로 포커스된 값 셀 (caret 위치에 삽입, selectionStart 사용)
+  //   2) 행이 있으면 마지막 행의 값에 append
+  //   3) 행이 없으면 칩 텍스트를 값으로 갖는 새 행 추가
+  const handleChipInsert = useCallback(
+    (chip: string) => {
+      const focusedKey = focusedValueKeyRef.current;
+      const targetRow = focusedKey
+        ? rows.find((r) => r.key === focusedKey)
+        : rows.length > 0
+          ? rows[rows.length - 1]
+          : undefined;
+
+      // 행이 없으면 새 행을 만들어 칩 텍스트를 값으로 사용.
+      if (!targetRow) {
+        const newRow: KvRow = { key: nextKey(), mapKey: '', mapValue: chip };
+        emit([...rows, newRow]);
+        return;
+      }
+
+      // caret 위치 결정: 포커스된 셀이면 selectionStart, 아니면 끝(append).
+      const inputEl =
+        focusedKey === targetRow.key ? valueInputRefs.current.get(targetRow.key) : undefined;
+      const current = targetRow.mapValue;
+      const caret =
+        inputEl && inputEl.selectionStart != null ? inputEl.selectionStart : current.length;
+      const nextValue = current.slice(0, caret) + chip + current.slice(caret);
+
+      emit(rows.map((r) => (r.key === targetRow.key ? { ...r, mapValue: nextValue } : r)));
+
+      // 삽입 후 포커스/caret 을 삽입 끝으로 복원한다.
+      const restoreEl = valueInputRefs.current.get(targetRow.key);
+      if (restoreEl) {
+        const nextCaret = caret + chip.length;
+        requestAnimationFrame(() => {
+          restoreEl.focus();
+          try {
+            restoreEl.setSelectionRange(nextCaret, nextCaret);
+          } catch {
+            // setSelectionRange 미지원 환경(테스트 등)에서는 무시.
+          }
+        });
+      }
+    },
+    [rows, emit],
+  );
+
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
@@ -129,10 +210,10 @@ export function KeyValueMapEditor({ value, onChange, readOnly }: KeyValueMapEdit
           <thead>
             <tr className="bg-(--color-bg-primary)">
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                키
+                {thKeyLabel}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                값
+                {thValueLabel}
               </th>
               {!readOnly && (
                 <th className="w-10 px-2 py-1.5" />
@@ -161,7 +242,7 @@ export function KeyValueMapEditor({ value, onChange, readOnly }: KeyValueMapEdit
                     readOnly={readOnly}
                     onChange={(e) => handleChange(row.key, 'mapKey', e.target.value)}
                     className={cn(cellInput, readOnly && readOnlyInput)}
-                    placeholder="키"
+                    placeholder={phKey}
                   />
                 </td>
 
@@ -170,11 +251,20 @@ export function KeyValueMapEditor({ value, onChange, readOnly }: KeyValueMapEdit
                   <input
                     type="text"
                     value={row.mapValue}
+                    // pathHelper 칩 삽입 대상 추적을 위해 값 input 참조를 보관한다.
+                    ref={(el) => {
+                      if (el) valueInputRefs.current.set(row.key, el);
+                      else valueInputRefs.current.delete(row.key);
+                    }}
+                    // 마지막으로 포커스된 값 셀을 기록 — 칩 삽입 대상 결정에 사용.
+                    onFocus={() => {
+                      focusedValueKeyRef.current = row.key;
+                    }}
                     // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
                     readOnly={readOnly}
                     onChange={(e) => handleChange(row.key, 'mapValue', e.target.value)}
                     className={cn(cellInput, readOnly && readOnlyInput)}
-                    placeholder="값"
+                    placeholder={phValue}
                   />
                 </td>
 
@@ -196,6 +286,26 @@ export function KeyValueMapEditor({ value, onChange, readOnly }: KeyValueMapEdit
           </tbody>
         </table>
       </div>
+
+      {/* `$.` JSONPath 빠른 삽입 칩 (pathHelper 이고 읽기 전용이 아닐 때만) */}
+      {pathHelper && !readOnly && (
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="path-helper-chips">
+          <span className="text-xs text-(--color-text-muted)">빠른 삽입:</span>
+          {PATH_HELPER_CHIPS.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              // mousedown 에서 preventDefault — 클릭으로 인한 input blur 를 막아
+              // 포커스된 값 셀 정보를 유지한 채 삽입할 수 있게 한다.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleChipInsert(chip)}
+              className="rounded border border-(--color-border-default) px-1.5 py-0.5 font-mono text-xs text-(--color-text-secondary) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 추가 버튼 */}
       {!readOnly && (

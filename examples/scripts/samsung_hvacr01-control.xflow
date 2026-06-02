@@ -1,0 +1,63 @@
+# samsung_hvacr01-control.xflow
+# Samsung HVACR-01 에어컨 제어 Quick Start 스크립트 (Samsung NASA 프로토콜)
+#
+# MQTT 브로커를 통해 에어컨을 제어하고 상태를 모니터링하는
+# 양방향 스마트홈 연동 플로우를 배포한다.
+#
+# 사전 조건:
+#   - MQTT 브로커 실행 중 (mosquitto 등)
+#   - Samsung HVACR-01 장비 접근 가능 (시리얼 또는 TCP)
+#
+# 사용법:
+#   xflow script run examples/scripts/samsung_hvacr01-control.xflow
+
+# 1. 에이전트 등록
+agent import -f examples/agents/samsung_hvacr01-serial.yaml --skip-existing
+agent import -f examples/agents/mqtt-broker.yaml --skip-existing
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+
+# 2. 등록 확인
+agent list
+
+# 3. 에이전트 시작
+agent start samsung-hvacr01-agent
+agent start mqtt-broker
+agent start stdout-logger
+
+# 4. 제어 플로우 가져오기 및 배포
+flow import -f examples/flows/samsung_hvacr01-control.yaml --skip-existing
+flow deploy samsung_hvacr01-control
+flow start samsung_hvacr01-control
+
+# 5. 상태 확인
+flow status samsung_hvacr01-control
+
+# ─────────────────────────────────────────
+# MQTT 명령 테스트 예시 (별도 터미널에서 실행)
+# ─────────────────────────────────────────
+#
+# 전원 켜기:
+#   mosquitto_pub -t "hvac/control" \
+#     -m '{"device_id":"living-room","power":true}'
+#
+# 냉방 24도 설정:
+#   mosquitto_pub -t "hvac/control" \
+#     -m '{"device_id":"living-room","mode":"cool","temperature":24}'
+#
+# 복합 제어 (전원+모드+온도+팬):
+#   mosquitto_pub -t "hvac/control" \
+#     -m '{"device_id":"living-room","power":true,"mode":"cool","temperature":24,"fan_speed":"auto"}'
+#
+# 난방 28도 설정:
+#   mosquitto_pub -t "hvac/control" \
+#     -m '{"device_id":"bedroom","mode":"heat","temperature":28,"fan_speed":"low"}'
+#
+# 전원 끄기:
+#   mosquitto_pub -t "hvac/control" \
+#     -m '{"device_id":"living-room","power":false}'
+#
+# 상태 모니터링 (구독):
+#   mosquitto_sub -t "hvac/status/#" -v
+#
+# 제어 결과 모니터링 (구독):
+#   mosquitto_sub -t "hvac/result/#" -v

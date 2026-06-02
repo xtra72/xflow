@@ -63,7 +63,7 @@ return map[string]any{
 
 ### 5. 예제 YAML 업데이트
 
-`examples/agents/samsung-nasa-tcp.yaml`에 unsupported_msg_sets 예시 추가.
+`examples/agents/samsung_hvacr01-tcp.yaml`에 unsupported_msg_sets 예시 추가.
 
 ---
 
@@ -75,7 +75,7 @@ return map[string]any{
 | `internal/agent/samsung/agent.go` | filterMessageSets + handleMessage 필터링 + State 출력 |
 | `internal/agent/samsung/agent_test.go` | 필터링 테스트 |
 | `internal/agent/samsung/config_test.go` | 파싱 테스트 |
-| `examples/agents/samsung-nasa-tcp.yaml` | 설정 예시 |
+| `examples/agents/samsung_hvacr01-tcp.yaml` | 설정 예시 |
 
 ---
 

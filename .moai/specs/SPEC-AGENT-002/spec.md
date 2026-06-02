@@ -497,8 +497,8 @@ type StatefulAgent interface {
 ```json
 {
   "id": "abc-123",
-  "name": "nasa-hvac",
-  "type": "samsung-nasa",
+  "name": "samsung-hvacr01",
+  "type": "samsung_hvacr01",
   "status": "running",
   "config": {},
   "health": {"status": "healthy", "last_check": "2026-02-25T12:30:00Z"},
@@ -515,8 +515,8 @@ type StatefulAgent interface {
 ```json
 {
   "id": "abc-123",
-  "name": "nasa-hvac",
-  "type": "samsung-nasa",
+  "name": "samsung-hvacr01",
+  "type": "samsung_hvacr01",
   "status": "running",
   "config": {},
   "health": {"status": "healthy", "last_check": "2026-02-25T12:30:00Z"},
@@ -557,8 +557,8 @@ type StatefulAgent interface {
 
 ```
 ID:        abc-123
-Name:      nasa-hvac
-Type:      samsung-nasa
+Name:      samsung-hvacr01
+Type:      samsung_hvacr01
 Status:    running
 Health:    healthy
 Uptime:    2h30m15s

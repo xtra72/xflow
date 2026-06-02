@@ -3,9 +3,9 @@
 // 본 파일은 yaml 설정 파일에서 디바이스 참조 문자열을 정규화하기 위한 resolver
 // 를 제공한다. SPEC § M6 (Phase D 갱신) 규칙:
 //
-//   - "agent/name" 형식 (예: "lgcnp/indoor-1") 1급 (사람이 쓰기 편함).
+//   - "agent/name" 형식 (예: "lg_hvacr01/indoor-1") 1급 (사람이 쓰기 편함).
 //   - UUID v4 형식 (예: "a58ba668-5741-...") 1급 (자동 생성 yaml).
-//   - composite key (예: "lgcnp:81") — Phase D 부터 즉시 ErrInvalidDeviceReference.
+//   - composite key (예: "lg_icp01:81") — Phase D 부터 즉시 ErrInvalidDeviceReference.
 //     (Phase B 의 Deprecation 경고 단계는 greenfield 가정 하에 폐기됨).
 //   - 어떤 형식에도 매칭되지 않으면 ErrInvalidDeviceReference.
 //
@@ -39,7 +39,7 @@ var ErrInvalidDeviceReference = errors.New("config: invalid device reference (ex
 // 사용처 (예: flow.pinned, device 메타데이터 참조 등) 는 본 구조체의 Raw 와
 // Kind 를 이용하여 후속 lookup 처리를 분기한다.
 type DeviceRef struct {
-	// Raw 는 yaml 에 작성된 원본 참조 문자열이다 (예: "lgcnp/indoor-1").
+	// Raw 는 yaml 에 작성된 원본 참조 문자열이다 (예: "lg_hvacr01/indoor-1").
 	Raw string
 
 	// Kind 는 파싱으로 분류된 형식이다.

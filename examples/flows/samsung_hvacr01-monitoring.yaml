@@ -1,0 +1,35 @@
+# Samsung HVACR-01 상태 모니터링 플로우 (Samsung NASA 프로토콜)
+# Samsung HVACR-01 에이전트 → 콘솔 로거 파이프라인
+
+name: "samsung_hvacr01-monitoring"
+
+required_agents:
+  - name: "samsung-hvacr01-agent"
+    type: "samsung_hvacr01"
+  - name: "logger"
+    type: "logger"
+
+nodes:
+  - name: "hvacr01-source"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "samsung-hvacr01-agent"
+      direction: "in"
+
+  - name: "trace-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "logger"
+      direction: "out"
+
+edges:
+  - from: "hvacr01-source:out"
+    to: "trace-logger:in"

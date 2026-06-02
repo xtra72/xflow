@@ -27,8 +27,9 @@ const (
 	// DefaultTCPReadTimeout 는 TCP read 의 SetReadDeadline 기본값이다 (REQ-CENTURY-029).
 	DefaultTCPReadTimeout = 3 * time.Second
 
-	// DefaultReconnectInitial 은 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
-	DefaultReconnectInitial = 5 * time.Second
+	// DefaultReconnectInterval 은 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
+	// 2026-05-29: 이전 이름 DefaultReconnectInitial 에서 통일 (Samsung / LG 의 reconnect_interval 과 일치).
+	DefaultReconnectInterval = 5 * time.Second
 
 	// DefaultMaxReconnectBackoff 는 tcp-client backoff 의 상한이다 (REQ-CENTURY-031).
 	DefaultMaxReconnectBackoff = 5 * time.Minute
@@ -38,15 +39,15 @@ const (
 	DefaultReportInterval = 60 * time.Second
 )
 
-// CenturyConfig 는 Century HVAC 패시브 캡처 에이전트의 설정이다 (REQ-CENTURY-002, REQ-CENTURY-028).
+// Hvacr01Config 는 Century HVAC 패시브 캡처 에이전트의 설정이다 (REQ-CENTURY-002, REQ-CENTURY-028).
 //
-// 모든 필드는 AgentConfig.Transport.Options 맵에서 parseCenturyConfig 로 채워지며,
-// SPEC-CENTURY-001 §4 의 YAML 예시와 1:1 매핑된다.
+// 모든 필드는 AgentConfig.Transport.Options 맵에서 parseHvacr01Config 로 채워지며,
+// SPEC-CENTURY-HVACR-001 §4 의 YAML 예시와 1:1 매핑된다.
 //
 // v0.2.0 (M6): TCP transport 지원 — TransportType 이 "serial" / "tcp-client" / "tcp-server"
 // 중 하나를 가질 수 있으며, tcp-* 모드에서는 SerialPort 가 무시되고 TCPHost / TCPPort
 // 등이 사용된다.
-type CenturyConfig struct {
+type Hvacr01Config struct {
 	// TransportType 는 트랜스포트 종류이다.
 	// v0.1.x: "serial" 만 지원.
 	// v0.2.0+: "serial", "tcp-client", "tcp-server" 지원 (REQ-CENTURY-028).
@@ -81,9 +82,10 @@ type CenturyConfig struct {
 	// 기본값: DefaultTCPReadTimeout (3s).
 	TCPReadTimeout time.Duration
 
-	// ReconnectInitial 는 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
-	// 기본값: DefaultReconnectInitial (5s).
-	ReconnectInitial time.Duration
+	// ReconnectInterval 는 tcp-client 의 exponential backoff 초기 슬립이다 (REQ-CENTURY-031).
+	// 2026-05-29: 이전 이름 ReconnectInitial 에서 통일 (Samsung / LG 의 ReconnectInterval 과 일치).
+	// 기본값: DefaultReconnectInterval (5s).
+	ReconnectInterval time.Duration
 
 	// MaxReconnectBackoff 는 tcp-client backoff 상한이다 (REQ-CENTURY-031).
 	// 기본값: DefaultMaxReconnectBackoff (5m).
@@ -121,6 +123,18 @@ type CenturyConfig struct {
 	// LogUnconfirmedFields 는 미확정 필드의 새 관측값을 DEBUG 로그로 출력할지 여부이다.
 	LogUnconfirmedFields bool
 
+	// LogStateUpdates 는 디바이스 state 갱신마다 디코드된 값(setpoint, current_temp, mode, fan,
+	// evaporator temps 등)을 INFO 로그로 출력할지 여부이다. 운영 시 OFF, 진단 시 ON 권장.
+	LogStateUpdates bool
+
+	// LogStateChangesOnly 는 LogStateUpdates 와 함께 사용되는 진단 분석 모드 옵션이다 (v0.5).
+	// true 이면 (sub_dev_id, register, role) 별로 직전에 로그된 raw payload 와 byte-equal
+	// 비교하여 동일한 경우 로그 출력을 생략한다. 변경된 경우에는 변화한 byte 위치
+	// 리스트(예: "data[2]", "data[7..8]") 를 추가 필드로 함께 출력한다.
+	// 프로토콜 RE / fan 인코딩 탐색 등 byte 변화 탐지가 목적인 진단 작업에 유용.
+	// LogStateUpdates=false 일 때는 효과 없음.
+	LogStateChangesOnly bool
+
 	// Devices 는 설정 파일에서 사전 등록된 디바이스 목록이다.
 	// AutoDiscovery 가 false 여도 여기에 등재된 디바이스는 시작 시 등록된다.
 	Devices []agent.DeviceEntry
@@ -131,6 +145,11 @@ type CenturyConfig struct {
 	// v0.5.1 Breaking: register-decoded 별도 stream 이 제거되어 본 옵션이 사실상 항상 true.
 	// false 로 설정하면 어떠한 device 정보도 출력되지 않는다 — 운영에서 권장하지 않음.
 	EmitDeviceState bool
+
+	// ControlEnabled 는 능동 제어 활성 여부이다 (placeholder, 2026-05-29).
+	// 현재 Century 는 제어 미지원 (REQ-CENTURY-017) — control 노드는 항상 not_supported 반환.
+	// LG/Samsung 와 UI 일관성 위해 config 필드만 노출. 항상 false.
+	ControlEnabled bool
 
 	// ReportInterval 은 device_state 의 fallback emit 주기이다 (REQ-CENTURY-035).
 	// 변경 감지 없이 이 시간 경과 시 `trigger="keepalive"` emit. 0 이면 비활성 (change-only).
@@ -160,7 +179,7 @@ type CenturyConfig struct {
 	IncludeUnknownFields bool
 
 	// IncludeInferredFields 는 register-decoded 메시지 페이로드에 confirmation_status="inferred"
-	// 필드 (op_val_1, op_val_2, status_bits, temp_A_c, reg04_const_*, reg02_live_*, reg02_word_11
+	// 필드 (op_val_1, op_val_2, status_bits, reg04_word_10, reg04_const_*, reg02_live_*
 	// 등 추정 의미 필드) 를 포함할지 여부이다.
 	//
 	// v0.3.3 기본값: false — 운영 환경에서는 추정값이 잡음으로 작용하여 trace 가독성을
@@ -196,7 +215,7 @@ type CenturyConfig struct {
 	EventTempThreshold float64
 }
 
-// parseCenturyConfig 는 AgentConfig.Transport.Options 맵에서 CenturyConfig 를 파싱한다.
+// parseHvacr01Config 는 AgentConfig.Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
 //
 // 모든 필드는 선택적이며, 누락된 값은 SPEC §4 의 기본값으로 채워진다.
 // transport_type 에 따라 필수 필드가 달라진다:
@@ -208,23 +227,35 @@ type CenturyConfig struct {
 //
 // v0.2.0 (REQ-CENTURY-032): cycle_idle_timeout 의 default 는 transport-aware —
 // serial=100ms, tcp-*=200ms. 사용자가 명시하면 transport 와 무관하게 그 값 사용.
-func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
-	cfg := CenturyConfig{
-		TransportType:       "serial",
-		BaudRate:            9600,
-		DataBits:            8,
-		StopBits:            1,
-		Parity:              "none",
-		MasterAddress:       0x0030,
-		SlaveAddress:        0x0001,
-		SubDevID:            0x3B,
-		RingBufferSize:      128,
-		OfflineTimeout:      5 * time.Second,
+func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
+	// Reject deprecated alias keys with clear errors (2026-05-29 breaking).
+	if _, ok := opts["reconnect_initial"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("century_hvacr01: deprecated option 'reconnect_initial' is removed; use 'reconnect_interval' instead")
+	}
+	if _, ok := opts["keepalive_interval"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("century_hvacr01: deprecated option 'keepalive_interval' is removed; use 'report_interval' instead")
+	}
+	if _, ok := opts["keepalive_mode"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("century_hvacr01: deprecated option 'keepalive_mode' is removed; use 'report_mode' instead")
+	}
+
+	cfg := Hvacr01Config{
+		TransportType:  "serial",
+		BaudRate:       9600,
+		DataBits:       8,
+		StopBits:       1,
+		Parity:         "none",
+		MasterAddress:  0x0030,
+		SlaveAddress:   0x0001,
+		SubDevID:       0x3B,
+		RingBufferSize: 128,
+		// 2026-05-29: offline_timeout 기본 5s → 30s (LG / Samsung 통일).
+		OfflineTimeout:      30 * time.Second,
 		AutoDiscovery:       true,
 		DedupeWrites:        true,
 		TCPConnectTimeout:   DefaultTCPConnectTimeout,
 		TCPReadTimeout:      DefaultTCPReadTimeout,
-		ReconnectInitial:    DefaultReconnectInitial,
+		ReconnectInterval:   DefaultReconnectInterval,
 		MaxReconnectBackoff: DefaultMaxReconnectBackoff,
 		// v0.5.1 통합 schema: device_state 단일 출력 (register-decoded 제거됨).
 		EmitDeviceState:       true,
@@ -242,7 +273,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["transport_type"]; ok {
 		s, sok := v.(string)
 		if !sok {
-			return CenturyConfig{}, fmt.Errorf("%w: transport_type must be a string", ErrUnknownTransportType)
+			return Hvacr01Config{}, fmt.Errorf("%w: transport_type must be a string", ErrUnknownTransportType)
 		}
 		cfg.TransportType = s
 	}
@@ -250,7 +281,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	case "serial", "tcp-client", "tcp-server":
 		// valid transports (REQ-CENTURY-028)
 	default:
-		return CenturyConfig{}, fmt.Errorf("%w: got %q", ErrUnknownTransportType, cfg.TransportType)
+		return Hvacr01Config{}, fmt.Errorf("%w: got %q", ErrUnknownTransportType, cfg.TransportType)
 	}
 
 	if v, ok := opts["serial_port"]; ok {
@@ -260,7 +291,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	}
 	// serial_port is only required for serial transport (REQ-CENTURY-028).
 	if cfg.TransportType == "serial" && cfg.SerialPort == "" {
-		return CenturyConfig{}, ErrSerialPortRequired
+		return Hvacr01Config{}, ErrSerialPortRequired
 	}
 
 	// --- TCP fields (REQ-CENTURY-028) ---
@@ -277,51 +308,51 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 		cfg.TCPHost = "0.0.0.0"
 	}
 	if cfg.TransportType == "tcp-client" && cfg.TCPHost == "" {
-		return CenturyConfig{}, ErrCenturyTCPHostRequired
+		return Hvacr01Config{}, ErrHvacr01TCPHostRequired
 	}
 	if cfg.TransportType == "tcp-client" || cfg.TransportType == "tcp-server" {
 		if cfg.TCPPort < 1 || cfg.TCPPort > 65535 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %d", ErrCenturyTCPPortRequired, cfg.TCPPort)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrHvacr01TCPPortRequired, cfg.TCPPort)
 		}
 	}
 
 	if v, ok := opts["tcp_connect_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid tcp_connect_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid tcp_connect_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: tcp_connect_timeout must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: tcp_connect_timeout must be > 0, got %s", d)
 		}
 		cfg.TCPConnectTimeout = d
 	}
 	if v, ok := opts["tcp_read_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid tcp_read_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid tcp_read_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: tcp_read_timeout must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: tcp_read_timeout must be > 0, got %s", d)
 		}
 		cfg.TCPReadTimeout = d
 	}
-	if v, ok := opts["reconnect_initial"]; ok {
+	if v, ok := opts["reconnect_interval"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid reconnect_initial: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid reconnect_interval: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: reconnect_initial must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: reconnect_interval must be > 0, got %s", d)
 		}
-		cfg.ReconnectInitial = d
+		cfg.ReconnectInterval = d
 	}
 	if v, ok := opts["max_reconnect_backoff"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid max_reconnect_backoff: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid max_reconnect_backoff: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("century: max_reconnect_backoff must be > 0, got %s", d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: max_reconnect_backoff must be > 0, got %s", d)
 		}
 		cfg.MaxReconnectBackoff = d
 	}
@@ -329,7 +360,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["baud_rate"]; ok {
 		br := toInt(v)
 		if br < 300 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %d", ErrInvalidBaudRate, br)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrInvalidBaudRate, br)
 		}
 		cfg.BaudRate = br
 	}
@@ -348,21 +379,21 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["master_address"]; ok {
 		n, err := parseHexOrInt(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("%w: master_address: %v", ErrInvalidAddress, err)
+			return Hvacr01Config{}, fmt.Errorf("%w: master_address: %v", ErrInvalidAddress, err)
 		}
 		cfg.MasterAddress = uint16(n)
 	}
 	if v, ok := opts["slave_address"]; ok {
 		n, err := parseHexOrInt(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("%w: slave_address: %v", ErrInvalidAddress, err)
+			return Hvacr01Config{}, fmt.Errorf("%w: slave_address: %v", ErrInvalidAddress, err)
 		}
 		cfg.SlaveAddress = uint16(n)
 	}
 	if v, ok := opts["sub_dev_id"]; ok {
 		n, err := parseHexOrInt(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("%w: sub_dev_id: %v", ErrInvalidAddress, err)
+			return Hvacr01Config{}, fmt.Errorf("%w: sub_dev_id: %v", ErrInvalidAddress, err)
 		}
 		cfg.SubDevID = byte(n)
 	}
@@ -370,7 +401,7 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["ring_buffer_size"]; ok {
 		n := toInt(v)
 		if n < 16 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %d", ErrInvalidRingBufferSize, n)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrInvalidRingBufferSize, n)
 		}
 		cfg.RingBufferSize = n
 	}
@@ -378,10 +409,10 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["offline_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid offline_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid offline_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %s", ErrInvalidOfflineTimeout, d)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %s", ErrInvalidOfflineTimeout, d)
 		}
 		cfg.OfflineTimeout = d
 	}
@@ -392,10 +423,10 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["cycle_idle_timeout"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid cycle_idle_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid cycle_idle_timeout: %w", err)
 		}
 		if d <= 0 {
-			return CenturyConfig{}, fmt.Errorf("%w: got %s", ErrInvalidCycleIdleTimeout, d)
+			return Hvacr01Config{}, fmt.Errorf("%w: got %s", ErrInvalidCycleIdleTimeout, d)
 		}
 		cfg.CycleIdleTimeout = d
 		cycleIdleExplicit = true
@@ -435,6 +466,16 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 			cfg.LogUnconfirmedFields = b
 		}
 	}
+	if v, ok := opts["log_state_updates"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.LogStateUpdates = b
+		}
+	}
+	if v, ok := opts["log_state_changes_only"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.LogStateChangesOnly = b
+		}
+	}
 
 	cfg.Devices = agent.ParseDevices(opts)
 
@@ -444,23 +485,24 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 			cfg.EmitDeviceState = b
 		}
 	}
+	// control_enabled placeholder (2026-05-29) — Century 미지원이지만 UI 일관성 위해 파서 노출.
+	if v, ok := opts["control_enabled"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.ControlEnabled = b
+		}
+	}
 	// v0.5.1: emit_register_decoded 옵션 제거 — register-decoded stream 폐기.
 	// 기존 옵션이 들어와도 silent ignore (deprecation grace).
 	//
-	// v0.6.0: report_interval (이전: keepalive_interval) — 상태보고 주기.
-	//   keepalive_interval 은 deprecation grace 로 alias 유지 (warn 없이 수용).
+	// v0.6.0: report_interval — 상태보고 주기. 2026-05-29 단일화 (keepalive_interval alias 제거).
 	//   "keepalive" 라는 명칭은 향후 세션 연결 관리 (TCP keepalive 등) 에 사용 예약.
-	for _, key := range []string{"report_interval", "keepalive_interval"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
-		}
+	if v, ok := opts["report_interval"]; ok {
 		d, err := parseDurationValue(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid %s: %w", key, err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid report_interval: %w", err)
 		}
 		if d < 0 {
-			return CenturyConfig{}, fmt.Errorf("century: %s must be >= 0 (0=disabled), got %s", key, d)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: report_interval must be >= 0 (0=disabled), got %s", d)
 		}
 		cfg.ReportInterval = d
 	}
@@ -488,34 +530,27 @@ func parseCenturyConfig(opts map[string]any) (CenturyConfig, error) {
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
 		if err != nil {
-			return CenturyConfig{}, fmt.Errorf("century: invalid event_temp_threshold: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
 	}
-	// v0.6.0: report_mode (이전: keepalive_mode) — 상태보고 시점 정책.
-	// keepalive_mode 는 deprecation alias.
-	for _, key := range []string{"report_mode", "keepalive_mode"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
-		}
-		s, sok := v.(string)
-		if !sok {
-			continue
-		}
-		switch s {
-		case "relative", "absolute":
-			cfg.ReportMode = s
-		case "":
-			// 빈 string 이면 default "relative" 유지
-		default:
-			return CenturyConfig{}, fmt.Errorf("century: invalid %s %q (must be 'relative' or 'absolute')", key, s)
+	// v0.6.0: report_mode — 상태보고 시점 정책. 2026-05-29 단일화 (keepalive_mode alias 제거).
+	if v, ok := opts["report_mode"]; ok {
+		if s, sok := v.(string); sok {
+			switch s {
+			case "relative", "absolute":
+				cfg.ReportMode = s
+			case "":
+				// 빈 string 이면 default "relative" 유지
+			default:
+				return Hvacr01Config{}, fmt.Errorf("century_hvacr01: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+			}
 		}
 	}
 
 	// Validation: device_state stream 이 enabled 여야 한다 (v0.5.1 — 유일한 emit stream).
 	if !cfg.EmitDeviceState {
-		return CenturyConfig{}, ErrCenturyNoOutputEnabled
+		return Hvacr01Config{}, ErrHvacr01NoOutputEnabled
 	}
 
 	return cfg, nil

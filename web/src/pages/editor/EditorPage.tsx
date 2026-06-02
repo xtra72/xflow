@@ -1,7 +1,7 @@
 // React Flow 기반 플로우 에디터 페이지.
 // 노드 팔레트, 캔버스, 속성 패널로 구성된 3컬럼 레이아웃을 제공한다.
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'react-router';
 import {
   ReactFlow,
@@ -36,6 +36,7 @@ import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { NodeTypeInfo } from '@/types/node';
 import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
+import { generateUUID } from '@/lib/utils/uuid';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
 const nodeTypes = { custom: CustomNode };
@@ -108,8 +109,7 @@ function EditorPageInner() {
   const onNodesChange = useEditorStore((s) => s.onNodesChange);
   const onEdgesChange = useEditorStore((s) => s.onEdgesChange);
   const onConnect = useEditorStore((s) => s.onConnect);
-  const setNodes = useEditorStore((s) => s.setNodes);
-  const setEdges = useEditorStore((s) => s.setEdges);
+  const loadFlow = useEditorStore((s) => s.loadFlow);
   const addNode = useEditorStore((s) => s.addNode);
   const removeNode = useEditorStore((s) => s.removeNode);
   const selectNode = useEditorStore((s) => s.selectNode);
@@ -117,11 +117,18 @@ function EditorPageInner() {
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
+  const setCurrentFlowId = useEditorStore((s) => s.setCurrentFlowId);
   const resetEditor = useEditorStore((s) => s.resetEditor);
 
   // --- 플로우 데이터 로딩 ---
+  // flowId 당 1회만 hydrate 한다. 저장 후 invalidateQueries 로 인한 백그라운드
+  // 재조회가 에디터 상태를 덮어쓰거나 isDirty 를 되살려 저장 버튼 빨간점이
+  // 사라지지 않는 문제를 막는다.
+  const hydratedFlowIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!flowData) return;
+    if (hydratedFlowIdRef.current === flowId) return;
 
     // config 또는 definition에서 노드/엣지 파싱
     const source =
@@ -129,15 +136,22 @@ function EditorPageInner() {
     const rawNodes = (source.nodes as Node[]) ?? [];
     const rawEdges = (source.edges as Edge[]) ?? [];
 
-    setNodes(rawNodes);
-    setEdges(rawEdges);
-    setDirty(false);
+    // 서버 로딩 전용 액션: nodes/edges 교체 + isDirty=false + 히스토리 초기화
+    loadFlow(rawNodes, rawEdges);
+    // 노드 카드 라이브 제어(output ON/OFF 등) 가 현재 플로우를 식별하도록
+    // 편집 중인 flowId 를 스토어에 보관한다 (dirty/undo 에 영향 없음).
+    setCurrentFlowId(flowId ?? null);
+    hydratedFlowIdRef.current = flowId ?? null;
+  }, [flowId, flowData, loadFlow, setCurrentFlowId]);
 
-    // flowId 변경 시 에디터 초기화 후 다시 로드
+  // flowId 변경(또는 언마운트) 시 에디터를 초기화해 다음 flowId 가 다시
+  // hydrate 되도록 한다.
+  useEffect(() => {
     return () => {
+      hydratedFlowIdRef.current = null;
       resetEditor();
     };
-  }, [flowId, flowData, setNodes, setEdges, setDirty, resetEditor]);
+  }, [flowId, resetEditor]);
 
   // --- 저장 핸들러 ---
   const handleSave = useCallback(() => {
@@ -252,8 +266,8 @@ function EditorPageInner() {
 
       const newNode: Node = {
         // v0.18.12: 노드 id 를 UUID v4 로 생성 (이전: `${type}-${Date.now()}`).
-        // crypto.randomUUID 는 모던 브라우저 / Node 표준.
-        id: crypto.randomUUID(),
+        // generateUUID 는 secure context 외부 (HTTP 환경) 에서도 안전한 fallback 보유.
+        id: generateUUID(),
         type: 'custom',
         position,
         data: {

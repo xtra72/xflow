@@ -20,7 +20,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Century HVAC 패시브 캡처 에이전트 (REQ-CENTURY-001 ~ REQ-CENTURY-027)
+// Century HVACR-01 패시브 캡처 에이전트 (REQ-CENTURY-001 ~ REQ-CENTURY-027)
 //
 // 본 에이전트는 RS-485 회선에 RX-only 로 부착되어 마스터와 슬레이브 간 통신을
 // 패시브하게 캡처한다. 디코딩한 reg 0x02/0x03/0x04 응답 + reg 0x04 WRITE +
@@ -71,12 +71,12 @@ type agentStats struct {
 	deviceStateDropped atomic.Uint64 // msgCh full drops for device_state messages
 }
 
-// CenturyAgent 는 Century HVAC 패시브 캡처 에이전트이다 (REQ-CENTURY-001).
-type CenturyAgent struct {
+// Hvacr01Agent 는 Century HVAC 패시브 캡처 에이전트이다 (REQ-CENTURY-001).
+type Hvacr01Agent struct {
 	*lifecycle.BaseLifecycle
 
 	agentConfig   agent.AgentConfig
-	centuryConfig CenturyConfig
+	centuryConfig Hvacr01Config
 
 	transport io.ReadWriteCloser // RX-only 사용; Write 는 절대 호출하지 않음
 	// transportProvider 는 (re-)Open 가능한 transport 를 생성한다.
@@ -87,7 +87,7 @@ type CenturyAgent struct {
 
 	// 디바이스 관리 (다중 IDU 지원 — REQ-CENTURY-013)
 	devicesMu sync.RWMutex
-	devices   map[byte]*CenturyDevice
+	devices   map[byte]*Icp01Device
 
 	// ring buffer (REQ-CENTURY-012)
 	ringBuffer *FrameRingBuffer
@@ -129,7 +129,7 @@ type CenturyAgent struct {
 	// lastReportTime 의 동시 접근을 직렬화한다
 	// (captureLoop 의 change-detect path 와 keepalive ticker 가 동시 접근).
 	emitMu         sync.Mutex
-	lastEmitState  map[byte]CenturyDeviceStateSnapshot
+	lastEmitState  map[byte]Icp01DeviceStateSnapshot
 	lastEmitTime   map[byte]time.Time
 	lastEmitOnline map[byte]bool
 	lastEmitSeen   map[byte]bool // tracks whether a first emit has happened for this device
@@ -145,6 +145,12 @@ type CenturyAgent struct {
 	// (dev_id, register) 별 최근 emit 한 transformed JSON 을 보관하여 동일 state 반복
 	// emit 을 방지한다. captureLoop 단일 goroutine 에서 접근하므로 별도 mutex 불필요.
 	lastRegisterEmit map[registerEmitKey][]byte
+
+	// v0.5: log_state_changes_only 진단 모드용 캐시.
+	// (sub_dev_id, register, role) 별로 직전에 로그된 raw payload bytes 를 보관한다.
+	// register 는 Reg04 read/write 구분을 위해 Reg04WriteDecoded 시 0x80 OR (0x84) 로 표기.
+	// logDecodedState 단일 goroutine (captureLoop) 에서만 접근하므로 별도 mutex 불필요.
+	lastLoggedPayload map[registerEmitKey][]byte
 
 	// v0.3.11: polling-friendly device_state buffer (NASA recentSnapshots 패턴).
 	//
@@ -167,14 +173,14 @@ type registerEmitKey struct {
 }
 
 // Compile-time interface checks.
-var _ agent.Agent = (*CenturyAgent)(nil)
-var _ agent.MessageReceiver = (*CenturyAgent)(nil)
-var _ agent.StatefulAgent = (*CenturyAgent)(nil)
-var _ agent.TransportChecker = (*CenturyAgent)(nil)
-var _ agent.FrameNotifier = (*CenturyAgent)(nil)
-var _ agent.BufferInfoProvider = (*CenturyAgent)(nil)
+var _ agent.Agent = (*Hvacr01Agent)(nil)
+var _ agent.MessageReceiver = (*Hvacr01Agent)(nil)
+var _ agent.StatefulAgent = (*Hvacr01Agent)(nil)
+var _ agent.TransportChecker = (*Hvacr01Agent)(nil)
+var _ agent.FrameNotifier = (*Hvacr01Agent)(nil)
+var _ agent.BufferInfoProvider = (*Hvacr01Agent)(nil)
 
-// NewCenturyAgent 는 Century HVAC 에이전트를 생성한다 (REQ-CENTURY-001, REQ-CENTURY-029, REQ-CENTURY-030).
+// NewHvacr01Agent 는 Century HVAC 에이전트를 생성한다 (REQ-CENTURY-001, REQ-CENTURY-029, REQ-CENTURY-030).
 //
 // production 경로에서 transportProvider 는 cfg.TransportType 에 따라 serial / tcp-client /
 // tcp-server 트랜스포트를 dial 또는 listen 한다. 모든 트랜스포트는 RX-only 로 사용되며
@@ -182,12 +188,12 @@ var _ agent.BufferInfoProvider = (*CenturyAgent)(nil)
 //
 // v0.2.0 (M6): tcp-client 와 tcp-server 모드 신규. transport-aware cycle_idle_timeout
 // default 가 cfg 단계에서 이미 적용되어 있다 (REQ-CENTURY-032).
-func NewCenturyAgent(config agent.AgentConfig) (agent.Agent, error) {
-	centuryCfg, err := parseCenturyConfig(config.Transport.Options)
+func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
+	centuryCfg, err := parseHvacr01Config(config.Transport.Options)
 	if err != nil {
 		return nil, fmt.Errorf("century agent: %w", err)
 	}
-	a := newCenturyAgentWithConfig(config, centuryCfg)
+	a := newHvacr01AgentWithConfig(config, centuryCfg)
 	a.transportProvider = func() (io.ReadWriteCloser, error) {
 		// snapshotConfig 를 사용하여 Configure() 와의 race 를 피한다.
 		cfg := a.snapshotConfig()
@@ -198,16 +204,16 @@ func NewCenturyAgent(config agent.AgentConfig) (agent.Agent, error) {
 	// Lifecycle 을 StateUnknown → StateInitializing → StateRunning 으로 전이시킨다.
 	// agent.DefaultManager 는 등록된 factory 의 경우 Init() 을 명시적으로 호출하지 않으므로
 	// (manager.go: else 폴백 분기에서만 Init 호출) factory 가 책임진다.
-	// samsung-nasa, lgcnp 와 동일한 패턴 — 이를 누락하면 Health/Info/State 가 stopped 로 보고된다.
+	// samsung_hvacr01, lg_hvacr01 와 동일한 패턴 — 이를 누락하면 Health/Info/State 가 stopped 로 보고된다.
 	if err := a.Init(config); err != nil {
 		return nil, fmt.Errorf("century agent: %w", err)
 	}
 	return a, nil
 }
 
-// newCenturyAgentForTest 는 테스트 전용 생성자이다. transport 는 이미 "열린" 상태로 주입된다.
-func newCenturyAgentForTest(config agent.AgentConfig, centuryCfg CenturyConfig, transport io.ReadWriteCloser) *CenturyAgent {
-	a := newCenturyAgentWithConfig(config, centuryCfg)
+// newHvacr01AgentForTest 는 테스트 전용 생성자이다. transport 는 이미 "열린" 상태로 주입된다.
+func newHvacr01AgentForTest(config agent.AgentConfig, centuryCfg Hvacr01Config, transport io.ReadWriteCloser) *Hvacr01Agent {
+	a := newHvacr01AgentWithConfig(config, centuryCfg)
 	a.transport = transport
 	a.transportProvider = func() (io.ReadWriteCloser, error) {
 		return transport, nil
@@ -215,29 +221,30 @@ func newCenturyAgentForTest(config agent.AgentConfig, centuryCfg CenturyConfig, 
 	return a
 }
 
-func newCenturyAgentWithConfig(config agent.AgentConfig, centuryCfg CenturyConfig) *CenturyAgent {
-	return &CenturyAgent{
-		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
-		agentConfig:      config,
-		centuryConfig:    centuryCfg,
-		devices:          make(map[byte]*CenturyDevice),
-		ringBuffer:       NewFrameRingBuffer(centuryCfg.RingBufferSize),
-		cycleTracker:     NewCycleTracker(centuryCfg.CycleIdleTimeout),
-		writeDeduper:     NewWriteDeduplicator(),
-		stats:            agent.NewAgentStats(),
-		logger:           agent.ResolveLogger(config),
-		msgCh:            make(chan []byte, 256),
-		frameNotify:      make(chan struct{}, 1),
-		stopCh:           make(chan struct{}),
-		doneCh:           make(chan struct{}),
-		createdAt:        time.Now(),
-		lastEmitState:    make(map[byte]CenturyDeviceStateSnapshot),
-		lastEmitTime:     make(map[byte]time.Time),
-		lastEmitOnline:   make(map[byte]bool),
-		lastEmitSeen:     make(map[byte]bool),
-		lastReportTime:   make(map[byte]time.Time),
-		reportStopCh:     make(chan struct{}),
-		lastRegisterEmit: make(map[registerEmitKey][]byte),
+func newHvacr01AgentWithConfig(config agent.AgentConfig, centuryCfg Hvacr01Config) *Hvacr01Agent {
+	return &Hvacr01Agent{
+		BaseLifecycle:     lifecycle.NewBaseLifecycle(lifecycle.WithName("century")),
+		agentConfig:       config,
+		centuryConfig:     centuryCfg,
+		devices:           make(map[byte]*Icp01Device),
+		ringBuffer:        NewFrameRingBuffer(centuryCfg.RingBufferSize),
+		cycleTracker:      NewCycleTracker(centuryCfg.CycleIdleTimeout),
+		writeDeduper:      NewWriteDeduplicator(),
+		stats:             agent.NewAgentStats(),
+		logger:            agent.ResolveLogger(config),
+		msgCh:             make(chan []byte, 256),
+		frameNotify:       make(chan struct{}, 1),
+		stopCh:            make(chan struct{}),
+		doneCh:            make(chan struct{}),
+		createdAt:         time.Now(),
+		lastEmitState:     make(map[byte]Icp01DeviceStateSnapshot),
+		lastEmitTime:      make(map[byte]time.Time),
+		lastEmitOnline:    make(map[byte]bool),
+		lastEmitSeen:      make(map[byte]bool),
+		lastReportTime:    make(map[byte]time.Time),
+		reportStopCh:      make(chan struct{}),
+		lastRegisterEmit:  make(map[registerEmitKey][]byte),
+		lastLoggedPayload: make(map[registerEmitKey][]byte),
 		// v0.3.11: device_state polling buffer. 기본 capacity = ringBuffer 의 절반
 		// (예: 128 → 64). 너무 작으면 polling 간격 사이에 drop, 너무 크면 메모리 낭비.
 		deviceStateBufMax: centuryCfg.RingBufferSize / 2,
@@ -306,7 +313,7 @@ func extractComparablePayload(transformed []byte) []byte {
 // 비교 후 남은 의미 payload 가 없으면 (모든 옵션 그룹 비활성 + register-info=false 인
 // Reg04Read 처럼 빈 메시지) emit 안 함. captureLoop 단일 goroutine 에서 호출하므로
 // mutex 불필요.
-func (a *CenturyAgent) shouldEmitRegisterChange(devID, register byte, transformed []byte) bool {
+func (a *Hvacr01Agent) shouldEmitRegisterChange(devID, register byte, transformed []byte) bool {
 	payload := extractComparablePayload(transformed)
 	if payload == nil {
 		// 의미 데이터가 없는 메시지 (state / inferred / unknown 그룹 모두 비어있고 메타도
@@ -325,17 +332,17 @@ func (a *CenturyAgent) shouldEmitRegisterChange(devID, register byte, transforme
 }
 
 // now returns the agent's clock (test-injectable via nowFunc).
-func (a *CenturyAgent) now() time.Time {
+func (a *Hvacr01Agent) now() time.Time {
 	if a.nowFunc != nil {
 		return a.nowFunc()
 	}
 	return time.Now()
 }
 
-// snapshotConfig returns a read-only snapshot of the current CenturyConfig.
+// snapshotConfig returns a read-only snapshot of the current Hvacr01Config.
 // Always use this from goroutines (captureLoop / offlineWatchLoop) to avoid
 // races with Configure() which mutates centuryConfig under a.mu.
-func (a *CenturyAgent) snapshotConfig() CenturyConfig {
+func (a *Hvacr01Agent) snapshotConfig() Hvacr01Config {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.centuryConfig
@@ -346,7 +353,7 @@ func (a *CenturyAgent) snapshotConfig() CenturyConfig {
 // ---------------------------------------------------------------------------
 
 // Init 은 에이전트를 초기화한다 (AC-D2: serial_port 누락 시 ErrSerialPortRequired).
-func (a *CenturyAgent) Init(config agent.AgentConfig) error {
+func (a *Hvacr01Agent) Init(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("century init: %w", err)
 	}
@@ -368,7 +375,7 @@ func (a *CenturyAgent) Init(config agent.AgentConfig) error {
 	a.mu.Lock()
 	a.startedAt = a.now()
 	a.mu.Unlock()
-	a.logger.Info("century: 에이전트 초기화 완료",
+	a.logger.Info("century_hvacr01: 에이전트 초기화 완료",
 		"serial_port", a.centuryConfig.SerialPort,
 		"baud_rate", a.centuryConfig.BaudRate,
 		"sub_dev_id", fmt.Sprintf("0x%02X", a.centuryConfig.SubDevID),
@@ -381,7 +388,7 @@ func (a *CenturyAgent) Init(config agent.AgentConfig) error {
 // Start 는 transport 를 열고 captureLoop 를 시작한다.
 //
 // (REQ-CENTURY-013, REQ-CENTURY-014 — capture loop + offline watch loop 동시 시작)
-func (a *CenturyAgent) Start(_ context.Context) error {
+func (a *Hvacr01Agent) Start(_ context.Context) error {
 	if a.transport == nil {
 		if a.transportProvider == nil {
 			return fmt.Errorf("century start: %w", ErrTransportNotOpen)
@@ -429,12 +436,12 @@ func (a *CenturyAgent) Start(_ context.Context) error {
 	// so it's safe to spawn unconditionally.
 	go a.reportLoop()
 	a.stats.SetStartedAt(a.now())
-	a.logger.Info("century: 에이전트 시작 완료")
+	a.logger.Info("century_hvacr01: 에이전트 시작 완료")
 	return nil
 }
 
 // Stop 은 capture loop 와 transport 를 종료한다.
-func (a *CenturyAgent) Stop(_ context.Context) error {
+func (a *Hvacr01Agent) Stop(_ context.Context) error {
 	if a.CurrentState() == lifecycle.StateStopped {
 		return nil
 	}
@@ -462,12 +469,12 @@ func (a *CenturyAgent) Stop(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
 		return fmt.Errorf("century stop: %w", err)
 	}
-	a.logger.Info("century: 에이전트 정지")
+	a.logger.Info("century_hvacr01: 에이전트 정지")
 	return nil
 }
 
 // Pause 는 capture loop 를 일시 정지시킨다.
-func (a *CenturyAgent) Pause(_ context.Context) error {
+func (a *Hvacr01Agent) Pause(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StatePaused); err != nil {
 		return fmt.Errorf("century pause: %w", err)
 	}
@@ -478,7 +485,7 @@ func (a *CenturyAgent) Pause(_ context.Context) error {
 }
 
 // Resume 는 일시정지된 capture loop 를 재개한다.
-func (a *CenturyAgent) Resume(_ context.Context) error {
+func (a *Hvacr01Agent) Resume(_ context.Context) error {
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
 		return fmt.Errorf("century resume: %w", err)
 	}
@@ -489,7 +496,7 @@ func (a *CenturyAgent) Resume(_ context.Context) error {
 }
 
 // Health 는 에이전트 건강 상태를 반환한다.
-func (a *CenturyAgent) Health() agent.HealthStatus {
+func (a *Hvacr01Agent) Health() agent.HealthStatus {
 	now := a.now()
 	state := a.CurrentState()
 	switch state {
@@ -523,7 +530,7 @@ type centuryProcessRequest struct {
 //
 // v0.6.3: 내부간 송수신 통계 (Internal Messages Received/Sent + NodeRef) 갱신.
 // NASA 와 동일 패턴 — 노드별 호출 횟수가 Web UI 의 노드 통계에 표시되도록.
-func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
+func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 	var req centuryProcessRequest
 	if err := json.Unmarshal(data, &req); err != nil {
 		// Invalid JSON 도 통계상 received 1건 + errored 1건으로 카운트.
@@ -567,6 +574,12 @@ func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 		// v0.3.11: polling 노드가 device_state (change/keepalive) 이벤트를
 		// 가져오기 위한 비파괴 drain. msgCh 와 독립적인 buffer 를 비운다.
 		return a.processDrainDeviceState()
+	case "request_state":
+		// v0.18.26 (2026-05-28): 노드의 inactivity-fallback 요청.
+		// 등록된 모든 디바이스의 마지막 캐시된 상태를 trigger="response" 로
+		// emit 한다. unit_id / group_id 어드레싱 파라미터는 forward-compat 차원에서
+		// 수용 (현재 인스턴스에서는 broadcast). 노드 측 필터에서 매칭 적용된다.
+		return a.processRequestState(&req)
 	default:
 		// not_supported 응답 (REQ-CENTURY-017). Process 에서 ErrControlNotSupported 를 반환하여
 		// node 가 이를 status response 로 wrap 할 수 있게 한다.
@@ -581,7 +594,7 @@ func (a *CenturyAgent) Process(data []byte) ([]byte, error) {
 }
 
 // processGetStats 는 통계 JSON 을 반환한다 (AC-B6).
-func (a *CenturyAgent) processGetStats() ([]byte, error) {
+func (a *Hvacr01Agent) processGetStats() ([]byte, error) {
 	stats := map[string]any{
 		"frames_captured":                a.cStats.framesCaptured.Load(),
 		"frames_valid":                   a.cStats.framesValid.Load(),
@@ -664,7 +677,7 @@ func frameToEvent(c CapturedFrame, includeInferredFields, includeUnknownFields, 
 }
 
 // processGetRecent 는 ring buffer 의 최근 count 프레임을 lastSeq 이후만 필터링하여 반환한다 (AC-B7, 비파괴).
-func (a *CenturyAgent) processGetRecent(count int, lastSeq uint64) ([]byte, error) {
+func (a *Hvacr01Agent) processGetRecent(count int, lastSeq uint64) ([]byte, error) {
 	cfg := a.snapshotConfig()
 	recs := a.ringBuffer.GetRecent(count)
 	out := make([]capturedFrameEvent, 0, len(recs))
@@ -680,7 +693,7 @@ func (a *CenturyAgent) processGetRecent(count int, lastSeq uint64) ([]byte, erro
 }
 
 // processDrain 은 ring buffer 의 모든 프레임을 반환하고 버퍼를 비운다 (AC-B8).
-func (a *CenturyAgent) processDrain() ([]byte, error) {
+func (a *Hvacr01Agent) processDrain() ([]byte, error) {
 	cfg := a.snapshotConfig()
 	recs := a.ringBuffer.Drain()
 	out := make([]capturedFrameEvent, 0, len(recs))
@@ -697,7 +710,7 @@ func (a *CenturyAgent) processDrain() ([]byte, error) {
 // dev_id 입력 (둘 중 하나 필수):
 //   - "device_id": "0x3B" / "0x3b" / "0X3b" / "59" 등 hex 또는 십진 문자열
 //   - "sub_dev_id": 정수 (예: 59)
-func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, error) {
+func (a *Hvacr01Agent) processGetState(req *centuryProcessRequest) ([]byte, error) {
 	var target byte
 	resolved := false
 	if req.SubDevID != nil {
@@ -748,7 +761,7 @@ func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	if snap.Label != "" {
 		d["label"] = snap.Label
 	}
-	if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
+	if snap.State != nil && snap.State.Reg02 != nil {
 		// v0.7.5: hvac 통일 ID 출력을 위해 Inner 변환 사용.
 		d["state"] = DeviceStateInnerFromSnapshot(BuildDeviceStateSnapshot(snap.State, snap.Online))
 	}
@@ -761,9 +774,42 @@ func (a *CenturyAgent) processGetState(req *centuryProcessRequest) ([]byte, erro
 	})
 }
 
+// processRequestState 는 모든 등록된 디바이스의 마지막 캐시된 상태를
+// trigger="response" 로 push 경로에 emit 한다 (v0.18.26).
+//
+// 노드의 inactivity-fallback 모델 지원:
+//   - 노드가 inactivity_timeout 동안 frame 신호를 받지 못하면 request_state 발송
+//   - 에이전트가 캐시된 상태를 maybeEmitDeviceState 로 forced emit → 노드가
+//     drain_device_state 로 흡수
+//
+// 현재 구현은 broadcast (모든 디바이스). req.DevID / SubDevID 의 어드레싱
+// 파라미터는 forward-compat 차원에서 수용만 하고 적용하지 않는다 (노드 측 필터에서
+// unit_id 매칭이 적용된다).
+func (a *Hvacr01Agent) processRequestState(req *centuryProcessRequest) ([]byte, error) {
+	_ = req
+	now := time.Now()
+	a.devicesMu.RLock()
+	subDevIDs := make([]byte, 0, len(a.devices))
+	for sd := range a.devices {
+		subDevIDs = append(subDevIDs, sd)
+	}
+	a.devicesMu.RUnlock()
+
+	emitted := 0
+	for _, sd := range subDevIDs {
+		a.maybeEmitDeviceState(sd, now, "response")
+		emitted++
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"emitted": emitted,
+	})
+}
+
 // processGetAll 은 모든 device 의 즉시 snapshot 을 반환한다 (v0.7.2).
 // 5개 HVAC 노드 통일 명령 — NASA / LGAP 의 get_all 패턴 차용.
-func (a *CenturyAgent) processGetAll() ([]byte, error) {
+func (a *Hvacr01Agent) processGetAll() ([]byte, error) {
 	a.devicesMu.RLock()
 	defer a.devicesMu.RUnlock()
 
@@ -781,7 +827,7 @@ func (a *CenturyAgent) processGetAll() ([]byte, error) {
 		if snap.Label != "" {
 			d["label"] = snap.Label
 		}
-		if snap.State != nil && snap.State.Reg02 != nil && snap.State.Reg04Read != nil {
+		if snap.State != nil && snap.State.Reg02 != nil {
 			// v0.7.5: hvac 통일 ID 출력.
 			d["state"] = DeviceStateInnerFromSnapshot(BuildDeviceStateSnapshot(snap.State, snap.Online))
 		}
@@ -806,7 +852,7 @@ func (a *CenturyAgent) processGetAll() ([]byte, error) {
 //   - state / inferred / unknown / register-meta 가 이전과 동일한 frame 은 skip.
 //   - 빈 의미 메시지 (extractComparablePayload 가 nil 반환) 도 skip.
 //   - decode 실패 frame 은 변화 비교 불가하므로 그대로 emit (trace 가치 있음).
-func (a *CenturyAgent) frameToEventIfChanged(c CapturedFrame, cfg CenturyConfig) (capturedFrameEvent, bool) {
+func (a *Hvacr01Agent) frameToEventIfChanged(c CapturedFrame, cfg Hvacr01Config) (capturedFrameEvent, bool) {
 	if c.Decoded != nil {
 		if _, isACK := c.Decoded.(*ACKDecoded); isACK {
 			return capturedFrameEvent{}, false
@@ -828,12 +874,12 @@ func (a *CenturyAgent) frameToEventIfChanged(c CapturedFrame, cfg CenturyConfig)
 }
 
 // Configure 는 에이전트 설정을 동적으로 업데이트한다.
-func (a *CenturyAgent) Configure(config agent.AgentConfig) error {
+func (a *Hvacr01Agent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("century configure: %w", err)
 	}
 	if len(config.Transport.Options) > 0 {
-		newCfg, err := parseCenturyConfig(config.Transport.Options)
+		newCfg, err := parseHvacr01Config(config.Transport.Options)
 		if err != nil {
 			return fmt.Errorf("century configure: %w", err)
 		}
@@ -850,24 +896,24 @@ func (a *CenturyAgent) Configure(config agent.AgentConfig) error {
 }
 
 // ID 는 에이전트 ID 를 반환한다.
-func (a *CenturyAgent) ID() string {
+func (a *Hvacr01Agent) ID() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.ID
 }
 
 // Name 은 에이전트 이름을 반환한다.
-func (a *CenturyAgent) Name() string {
+func (a *Hvacr01Agent) Name() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.agentConfig.Name
 }
 
 // Type 은 에이전트 타입을 반환한다 (REQ-CENTURY-001).
-func (a *CenturyAgent) Type() string { return "century-hvac" }
+func (a *Hvacr01Agent) Type() string { return "century_hvacr01" }
 
 // Info 는 에이전트 정보 스냅샷을 반환한다.
-func (a *CenturyAgent) Info() agent.AgentInfo {
+func (a *Hvacr01Agent) Info() agent.AgentInfo {
 	a.mu.RLock()
 	cfg := a.agentConfig
 	startedAt := a.startedAt
@@ -893,7 +939,7 @@ func (a *CenturyAgent) Info() agent.AgentInfo {
 }
 
 // Stats 는 통계 스냅샷을 반환한다.
-func (a *CenturyAgent) Stats() agent.StatsSnapshot {
+func (a *Hvacr01Agent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	pending, capV := a.BufferInfo()
 	s.MsgBufferPending = pending
@@ -915,8 +961,8 @@ func (a *CenturyAgent) Stats() agent.StatsSnapshot {
 // ReceiveMessage 는 msgCh 에서 다음 디코딩된 이벤트를 읽어 반환한다.
 //
 // v0.6.3: msgCh 에서 한 건을 꺼내 bridge 컨슈머에게 전달한 것은 "에이전트 →
-// 노드 internal sent" 1 건으로 카운트된다 (NASA / LGCNP 패턴).
-func (a *CenturyAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+// 노드 internal sent" 1 건으로 카운트된다 (NASA / LG ICP-01 패턴).
+func (a *Hvacr01Agent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	a.bridgeActive.Store(true)
 	select {
 	case data, ok := <-a.msgCh:
@@ -933,7 +979,7 @@ func (a *CenturyAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 }
 
 // State 는 에이전트 상태 스냅샷을 반환한다 (StatefulAgent).
-func (a *CenturyAgent) State() map[string]any {
+func (a *Hvacr01Agent) State() map[string]any {
 	out := map[string]any{
 		"frames_captured":    a.cStats.framesCaptured.Load(),
 		"frames_valid":       a.cStats.framesValid.Load(),
@@ -947,7 +993,7 @@ func (a *CenturyAgent) State() map[string]any {
 }
 
 // listDevicesForState 는 State() 에 임베드되는 디바이스 요약 리스트를 반환한다.
-func (a *CenturyAgent) listDevicesForState() []map[string]any {
+func (a *Hvacr01Agent) listDevicesForState() []map[string]any {
 	a.devicesMu.RLock()
 	defer a.devicesMu.RUnlock()
 	out := make([]map[string]any, 0, len(a.devices))
@@ -968,7 +1014,7 @@ func (a *CenturyAgent) listDevicesForState() []map[string]any {
 //
 // reconnectWithBackoff 가 a.transport 를 nil 로 잠시 비웠다가 새 객체로 교체할 수 있으므로
 // a.mu 로 동기화한다.
-func (a *CenturyAgent) TransportConnected() bool {
+func (a *Hvacr01Agent) TransportConnected() bool {
 	a.mu.RLock()
 	hasT := a.transport != nil
 	a.mu.RUnlock()
@@ -976,31 +1022,31 @@ func (a *CenturyAgent) TransportConnected() bool {
 }
 
 // FrameNotifyCh 는 새 프레임 도착 알림 채널을 반환한다 (AC-C8 의 즉시 반응 용).
-func (a *CenturyAgent) FrameNotifyCh() <-chan struct{} {
+func (a *Hvacr01Agent) FrameNotifyCh() <-chan struct{} {
 	return a.frameNotify
 }
 
 // BufferInfo 는 msgCh 의 사용량을 반환한다.
-func (a *CenturyAgent) BufferInfo() (int, int) {
+func (a *Hvacr01Agent) BufferInfo() (int, int) {
 	return len(a.msgCh), cap(a.msgCh)
 }
 
 // DeviceProvider 는 이 에이전트의 디바이스를 unified device.DeviceProvider 로
 // 노출한다. cmd/xflowd/main.go 의 deviceRegistry 가 이 메서드를 type assertion
 // 으로 감지하여 시스템-wide device list 에 century 디바이스를 등록한다.
-// NASA / LGCNP 와 동일한 패턴이며, 이 메서드가 누락되면 web UI 의 device list
+// NASA / LG ICP-01 과 동일한 패턴이며, 이 메서드가 누락되면 web UI 의 device list
 // 에서 century 디바이스가 표시되지 않는다.
-func (a *CenturyAgent) DeviceProvider() device.DeviceProvider {
-	return NewCenturyDeviceProvider(a)
+func (a *Hvacr01Agent) DeviceProvider() device.DeviceProvider {
+	return NewHvacr01DeviceProvider(a)
 }
 
-// ListDevices 는 등록된 모든 CenturyDevice 의 스냅샷을 반환한다.
+// ListDevices 는 등록된 모든 Icp01Device 의 스냅샷을 반환한다.
 //
 // (REQ-CENTURY-015 의 DeviceProvider 어댑터를 위한 helper. provider.go 에서 사용 예정 — M4)
-func (a *CenturyAgent) ListDevices() []CenturyDeviceSnapshot {
+func (a *Hvacr01Agent) ListDevices() []Icp01DeviceSnapshot {
 	a.devicesMu.RLock()
 	defer a.devicesMu.RUnlock()
-	out := make([]CenturyDeviceSnapshot, 0, len(a.devices))
+	out := make([]Icp01DeviceSnapshot, 0, len(a.devices))
 	for _, d := range a.devices {
 		out = append(out, d.Snapshot())
 	}
@@ -1011,7 +1057,7 @@ func (a *CenturyAgent) ListDevices() []CenturyDeviceSnapshot {
 // (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
 //
 // SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
-func (a *CenturyAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+func (a *Hvacr01Agent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.onDeviceStateChangeV2 = fn
@@ -1027,7 +1073,7 @@ func (a *CenturyAgent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChange
 //
 // v0.2.0 (M6): tcp-client 모드에서 transport read 실패 시 exponential backoff 로
 // 재연결한다 (REQ-CENTURY-031). serial 과 tcp-server 모드는 기존처럼 한 번에 종료한다.
-func (a *CenturyAgent) captureLoop() {
+func (a *Hvacr01Agent) captureLoop() {
 	defer close(a.doneCh)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1091,7 +1137,7 @@ func (a *CenturyAgent) captureLoop() {
 		rawCopy = reconstructRawFrame(f)
 		a.cStats.bytesReceived.Add(uint64(len(rawCopy)))
 		// Standard agent.AgentStats — UI 통계 카운터 (messages_in / bytes_read / last_activity).
-		// NASA/LGCNP 와 동일 패턴. 본 호출이 없으면 Web UI 의 메시지 수신 / 바이트 / 최근 활동
+		// NASA/LG ICP-01 과 동일 패턴. 본 호출이 없으면 Web UI 의 메시지 수신 / 바이트 / 최근 활동
 		// 시각이 영구 0 으로 표시된다 (사용자 보고).
 		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(rawCopy)))
@@ -1108,7 +1154,7 @@ func (a *CenturyAgent) captureLoop() {
 			// 에러 카운터 갱신.
 			a.stats.IncrExternalMessagesErrored()
 			if cfg.LogDecodeErrors {
-				a.logger.Warn("century: 디코드 실패", "error", decodeErr)
+				a.logger.Warn("century_hvacr01: 디코드 실패", "error", decodeErr)
 			}
 		} else {
 			a.cStats.framesValid.Add(1)
@@ -1124,7 +1170,7 @@ func (a *CenturyAgent) captureLoop() {
 				emitDecoded = false
 				a.cStats.writesDeduped.Add(1)
 				if cfg.LogDrops {
-					a.logger.Debug("century: WRITE dedup", "cycle", cycleID, "sub_dev_id", fmt.Sprintf("0x%02X", f.Payload[0]))
+					a.logger.Debug("century_hvacr01: WRITE dedup", "cycle", cycleID, "sub_dev_id", fmt.Sprintf("0x%02X", f.Payload[0]))
 				}
 			}
 		}
@@ -1167,7 +1213,7 @@ func (a *CenturyAgent) captureLoop() {
 			// v0.6.3: 표준 AgentStats 의 DroppedMessages 도 증가 — Web UI 운영 통계 갱신.
 			a.stats.IncrDroppedMessages()
 			if cfg.LogDrops {
-				a.logger.Warn("century: 에이전트 메시지 버퍼 가득 참, 드롭",
+				a.logger.Warn("century_hvacr01: 에이전트 메시지 버퍼 가득 참, 드롭",
 					"total_dropped", a.cStats.framesDropped.Load(),
 					"ring_capacity", a.ringBuffer.Capacity(),
 				)
@@ -1205,9 +1251,10 @@ func (a *CenturyAgent) captureLoop() {
 // 적용 위치: transformDecodedPayload 가 confirmed/inferred/unknown 그룹을 빌드할 때.
 // register-level raw 필드명 (SPEC §6 의 setpoint_c 등) → device-level 통일 명 (target_temp 등).
 var centuryFieldAliases = map[string]string{
-	"setpoint_c": "target_temperature",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
-	"temp_A_c":   "current_temperature", // Reg04 실내온도 (NASA CurrentTemp 와 통일)
-	"fan":        "fan_speed",           // Reg02 풍량 (NASA FanSpeed 와 통일)
+	"setpoint_c":     "target_temperature",  // Reg02 설정온도 (NASA TargetTemp 와 통일)
+	"current_temp_c": "current_temperature", // Reg02 실내온도 (2026-05-29 위치 정정: 이전 Reg04 temp_A_c → Reg02 current_temp_c)
+	"fan":            "fan_speed",           // Reg02 풍량 (NASA FanSpeed 와 통일)
+	// reg04_word_10 (이전 temp_A_c) 은 alias 없음 — 실제 의미 미확정 (operational parameter 추정)
 	// mode 는 이미 통일됨
 	// evaporator_temperature_a / _b 는 device-level state 가 아니므로 alias 없음 (그대로 노출, v0.18.5 풀네임)
 }
@@ -1251,7 +1298,7 @@ var registerMetaTopLevelKeys = map[string]struct{}{
 // 규칙:
 //   - confirmed 필드는 value 만 추출하여 state 그룹으로 평탄화 (raw/status 메타데이터 제거)
 //   - centuryFieldAliases 로 register-level 필드명을 device-level 통일명으로 매핑
-//     (setpoint_c→target_temp, temp_A_c→current_temp, fan→fan_speed)
+//     (setpoint_c→target_temp, current_temp_c→current_temp, fan→fan_speed)
 //   - inferred 필드는 includeInferred=true 일 때만 별도 inferred 그룹으로 (alias 미적용)
 //   - unknown 필드는 includeUnknown=true 일 때만 별도 unknown 그룹으로 (alias 미적용)
 //   - 비-nested 필드 (register, sub_dev_id, raw_hex, seq, timestamp_ms, direction) 는 top-level 유지
@@ -1359,7 +1406,7 @@ func transformDecodedPayload(payload []byte, includeInferred, includeUnknown, in
 // emitToMsgCh sends payload bytes to msgCh with drop-oldest semantics on full.
 // dropCounter (if non-nil) is incremented on drop. Used by both register-decoded
 // and device_state emit paths to share the same channel discipline.
-func (a *CenturyAgent) emitToMsgCh(b []byte, dropCounter *atomic.Uint64) {
+func (a *Hvacr01Agent) emitToMsgCh(b []byte, dropCounter *atomic.Uint64) {
 	select {
 	case a.msgCh <- b:
 		return
@@ -1396,11 +1443,15 @@ func (a *CenturyAgent) emitToMsgCh(b []byte, dropCounter *atomic.Uint64) {
 // "초기값이 없으며, 값이 설정되지 않으면 반환하지 않음" 에 부합하도록 5 핵심 필드
 // 의 모든 원천 register (Reg02 + Reg04Read) 가 적어도 한 번 관측된 후에만 emit.
 //
-// 정상 시나리오: master 의 cycle (~512ms) 안에 Reg02/Reg03/Reg04 가 모두 polling
-// 되므로 첫 emit 까지 최대 ~512ms 대기. 매우 드문 케이스 (예: master 가 Reg02 만
-// polling) 에서는 emit 이 영구 지연될 수 있으나, 그 경우 5 핵심 중 current_temp
-// 가 미정의이므로 emit 보류가 의미 보존에 더 부합한다.
-func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, triggerOverride string) {
+// v0.4.3 (2026-05-29): current_temp 의 원천이 Reg04Read → Reg02 로 정정됨.
+// Reg02 단독 gate 로 충분 (5 핵심 필드 모두 Reg02 에서 공급:
+// mode/fan/setpoint/current_temp). Reg04Read 요건 제거.
+//
+// 정상 시나리오: master 의 cycle (~512ms) 안에 Reg02 가 polling 되므로 첫 emit
+// 까지 최대 ~512ms 대기. master 가 Reg02 를 polling 하지 않으면 emit 이 영구
+// 지연되지만, 그 경우 5 핵심 필드 자체가 미정의이므로 emit 보류가 의미 보존에
+// 더 부합한다.
+func (a *Hvacr01Agent) maybeEmitDeviceState(subDevID byte, now time.Time, triggerOverride string) {
 	a.devicesMu.RLock()
 	dev, ok := a.devices[subDevID]
 	a.devicesMu.RUnlock()
@@ -1408,10 +1459,10 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 		return
 	}
 	devSnap := dev.Snapshot()
-	// v0.4.1/v0.4.2: Reg02 + Reg04Read 모두 수신된 후에만 emit.
+	// v0.4.3: Reg02 단독 gate (5 핵심 필드 모두 Reg02 에서 공급).
 	// 그 전에는 5 핵심 중 일부가 0/fallback 으로 노출되어 운영자가 오해할 위험이 있음.
 	// keepalive emit 도 lastEmitSeen 가드로 함께 차단됨.
-	if devSnap.State == nil || devSnap.State.Reg02 == nil || devSnap.State.Reg04Read == nil {
+	if devSnap.State == nil || devSnap.State.Reg02 == nil {
 		return
 	}
 	snap := BuildDeviceStateSnapshot(devSnap.State, devSnap.Online)
@@ -1500,7 +1551,7 @@ func (a *CenturyAgent) maybeEmitDeviceState(subDevID byte, now time.Time, trigge
 // pushDeviceStateBuf 는 polling-friendly buffer 에 device_state JSON 을 추가한다 (v0.3.11).
 // 버퍼가 가득 차면 가장 오래된 항목부터 drop 한다 (drop-oldest semantics).
 // deviceStateBufMax <= 0 이면 push 자체를 무시한다 (no-op).
-func (a *CenturyAgent) pushDeviceStateBuf(b []byte) {
+func (a *Hvacr01Agent) pushDeviceStateBuf(b []byte) {
 	if a.deviceStateBufMax <= 0 {
 		return
 	}
@@ -1525,7 +1576,7 @@ func (a *CenturyAgent) pushDeviceStateBuf(b []byte) {
 //	{"count": N, "events": [event1_json, event2_json, ...]}
 //
 // 각 event 는 device_state JSON 원본 (NewDeviceStateEvent marshal 결과).
-func (a *CenturyAgent) processDrainDeviceState() ([]byte, error) {
+func (a *Hvacr01Agent) processDrainDeviceState() ([]byte, error) {
 	a.deviceStateBufMu.Lock()
 	events := a.deviceStateBuf
 	a.deviceStateBuf = nil
@@ -1547,7 +1598,7 @@ func (a *CenturyAgent) processDrainDeviceState() ([]byte, error) {
 // (min 25ms) to keep tests with sub-second intervals responsive without spinning.
 //
 // Disabled when EmitDeviceState=false or ReportInterval<=0.
-func (a *CenturyAgent) reportLoop() {
+func (a *Hvacr01Agent) reportLoop() {
 	cfg := a.snapshotConfig()
 	if !cfg.EmitDeviceState || cfg.ReportInterval <= 0 {
 		return
@@ -1583,7 +1634,7 @@ func (a *CenturyAgent) reportLoop() {
 //
 // Devices that have never had a first emit (lastEmitSeen=false) are skipped —
 // they will receive a change emit on the first frame.
-func (a *CenturyAgent) checkReportEmits() {
+func (a *Hvacr01Agent) checkReportEmits() {
 	cfg := a.snapshotConfig()
 	if !cfg.EmitDeviceState || cfg.ReportInterval <= 0 {
 		return
@@ -1657,7 +1708,7 @@ func reconstructRawFrame(f *Frame) []byte {
 }
 
 // bumpDecodeCounter 는 디코딩된 메시지 타입별 카운터를 증가시킨다.
-func (a *CenturyAgent) bumpDecodeCounter(decoded any) {
+func (a *Hvacr01Agent) bumpDecodeCounter(decoded any) {
 	switch decoded.(type) {
 	case *Reg02Decoded:
 		a.cStats.reg02ResponseCount.Add(1)
@@ -1676,7 +1727,7 @@ func (a *CenturyAgent) bumpDecodeCounter(decoded any) {
 // 해당 device 의 state 와 LastSeen 을 갱신한다 (REQ-CENTURY-013, REQ-CENTURY-014).
 //
 // autoDiscovery 는 호출자가 snapshotConfig() 로 미리 안전하게 추출해 전달한다.
-func (a *CenturyAgent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Time, autoDiscovery bool) {
+func (a *Hvacr01Agent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Time, autoDiscovery bool) {
 	subDevID, ok := subDevIDFromDecoded(decoded)
 	if !ok {
 		// ACK 등 sub_dev_id 가 없는 메시지는 device touch 대상 외.
@@ -1690,10 +1741,10 @@ func (a *CenturyAgent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Ti
 			a.devicesMu.Unlock()
 			return
 		}
-		dev = NewCenturyDevice(subDevID, "auto", now)
+		dev = NewIcp01Device(subDevID, "auto", now)
 		a.devices[subDevID] = dev
 		a.cStats.devicesDiscovered.Add(1)
-		a.logger.Info("century: 디바이스 자동 발견", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
+		a.logger.Info("century_hvacr01: 디바이스 자동 발견", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
 		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
 		// agent.SetDeviceInfo 는 별도 mutex 사용 — devicesMu 와 데드락 없음.
 		agent.SetDeviceInfo(a.agentConfig.ID, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
@@ -1705,7 +1756,134 @@ func (a *CenturyAgent) touchDeviceFromDecoded(decoded any, f *Frame, now time.Ti
 
 	dev.Touch(now)
 	dev.Update(decoded, now)
+
+	// LogStateUpdates: 진단용 — 디코드된 raw + value 를 INFO 로 출력하여
+	// 비정상 값(6000°C / 0°C / 잘못된 setpoint vs current 등) 추적.
+	if a.snapshotConfig().LogStateUpdates {
+		a.logDecodedState(decoded, f, subDevID)
+	}
+
 	_ = f
+}
+
+// logDecodedState 는 디코드된 register 메시지의 핵심 필드를 INFO 로그로 출력한다.
+// LogStateUpdates=true 일 때만 호출된다. raw + value 를 함께 출력하여 디코딩 결과
+// 와 원시 바이트의 매핑을 확인할 수 있다.
+//
+// v0.5: LogStateChangesOnly=true 면 (sub_dev_id, register, role) 별로 직전 raw payload
+// 와 byte-equal 비교하여 동일 시 로그 생략. 변경 시 변화한 byte 위치 리스트를
+// "changed_bytes" 추가 필드로 함께 출력한다 (프로토콜 분석 모드).
+func (a *Hvacr01Agent) logDecodedState(decoded any, f *Frame, subDevID byte) {
+	subDevHex := fmt.Sprintf("0x%02X", subDevID)
+	payloadHex := ""
+	if f != nil && len(f.Payload) > 0 {
+		payloadHex = fmt.Sprintf("%X", f.Payload)
+	}
+
+	// v0.5: 변경 감지 모드 dedup + diff 계산.
+	changedBytes := ""
+	if a.snapshotConfig().LogStateChangesOnly && f != nil && len(f.Payload) > 0 {
+		regCode := registerCodeFromDecoded(decoded)
+		key := registerEmitKey{DevID: subDevID, Register: regCode}
+		prev, seen := a.lastLoggedPayload[key]
+		if seen && bytes.Equal(prev, f.Payload) {
+			return // 변화 없음 → 로그 생략
+		}
+		if seen {
+			changedBytes = diffPayloadBytePositions(prev, f.Payload)
+		} else {
+			changedBytes = "(initial)"
+		}
+		dup := make([]byte, len(f.Payload))
+		copy(dup, f.Payload)
+		a.lastLoggedPayload[key] = dup
+	}
+
+	// %.1f 로 포맷: ÷10 인코딩이므로 소수점 1자리가 충분.
+	// float32 binary 표현 한계 (예: 25.2 → 25.200000762939453) 를 가린다.
+	switch m := decoded.(type) {
+	case *Reg02Decoded:
+		attrs := []any{
+			"sub_dev_id", subDevHex,
+			"mode_raw", fmt.Sprintf("0x%02X", m.Mode.Raw),
+			"mode", m.Mode.Value,
+			"fan", m.Fan.Value,
+			"current_temp_raw", fmt.Sprintf("0x%04X", m.CurrentTempC.Raw),
+			"current_temp_c", fmt.Sprintf("%.1f", m.CurrentTempC.Value),
+			"setpoint_raw", fmt.Sprintf("0x%04X", m.SetpointC.Raw),
+			"setpoint_c", fmt.Sprintf("%.1f", m.SetpointC.Value),
+			"payload_hex", payloadHex,
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg02)", attrs...)
+	case *Reg03Decoded:
+		attrs := []any{
+			"sub_dev_id", subDevHex,
+			"evap_a_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureA.Raw),
+			"evap_a_c", fmt.Sprintf("%.1f", m.EvaporatorTemperatureA.Value),
+			"evap_b_raw", fmt.Sprintf("0x%04X", m.EvaporatorTemperatureB.Raw),
+			"evap_b_c", fmt.Sprintf("%.1f", m.EvaporatorTemperatureB.Value),
+			"payload_hex", payloadHex,
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg03)", attrs...)
+	case *Reg04ReadDecoded:
+		attrs := []any{
+			"sub_dev_id", subDevHex,
+			"status_bits", fmt.Sprintf("0x%02X", m.StatusBits.Value),
+			"reg04_word_10_raw", fmt.Sprintf("0x%04X", m.Reg04Word10.Raw),
+			"reg04_word_10_c", fmt.Sprintf("%.1f", m.Reg04Word10.Value),
+			"payload_hex", payloadHex,
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg04 read)", attrs...)
+	case *Reg04WriteDecoded:
+		attrs := []any{
+			"sub_dev_id", subDevHex,
+			"payload_hex", payloadHex,
+		}
+		if changedBytes != "" {
+			attrs = append(attrs, "changed_bytes", changedBytes)
+		}
+		a.logger.Info("century_hvacr01: state update (reg04 write observed)", attrs...)
+	}
+}
+
+// diffPayloadBytePositions 는 prev 와 cur payload 의 byte 차이 위치 리스트를
+// 사람이 읽기 좋은 문자열로 반환한다. payload offset 0..2 (sub_dev_id, reserved,
+// register) 는 prefix 영역이므로 "p[N]" 으로, 그 이후는 data[N] = payload[3+N]
+// 로 "data[N]" 으로 표기한다. 길이가 다르면 짧은 쪽 끝 이후를 "len(prev→cur)"
+// 형태로 추가한다. (sub_dev_id, reserved, register) 는 사실상 변하지 않으므로
+// 실전 출력은 거의 대부분 "data[N], data[M]" 형태가 된다.
+func diffPayloadBytePositions(prev, cur []byte) string {
+	var positions []string
+	minLen := len(prev)
+	if len(cur) < minLen {
+		minLen = len(cur)
+	}
+	for i := 0; i < minLen; i++ {
+		if prev[i] != cur[i] {
+			if i < 3 {
+				positions = append(positions, fmt.Sprintf("p[%d]", i))
+			} else {
+				positions = append(positions, fmt.Sprintf("data[%d]", i-3))
+			}
+		}
+	}
+	if len(prev) != len(cur) {
+		positions = append(positions, fmt.Sprintf("len(%d→%d)", len(prev), len(cur)))
+	}
+	if len(positions) == 0 {
+		// byte-equal 임에도 호출되면 안 되지만 안전망.
+		return "(none)"
+	}
+	return strings.Join(positions, ",")
 }
 
 // subDevIDFromDecoded 는 디코딩된 메시지에서 sub_dev_id 를 추출한다. ACK 는 (0, false) 반환.
@@ -1737,7 +1915,7 @@ func subDevIDFromFrame(f *Frame) (byte, bool) {
 // touchDeviceFromSubDevID 는 sub_dev_id 만으로 device 자동 발견을 수행한다 (state update 없음).
 // decode 실패 frame 의 fallback 경로에서 사용된다 — Reg*Decoded 가 없으므로 Update 는 호출하지 않고
 // LastSeen 만 갱신한다.
-func (a *CenturyAgent) touchDeviceFromSubDevID(subDevID byte, now time.Time, autoDiscovery bool) {
+func (a *Hvacr01Agent) touchDeviceFromSubDevID(subDevID byte, now time.Time, autoDiscovery bool) {
 	a.devicesMu.Lock()
 	dev, exists := a.devices[subDevID]
 	if !exists {
@@ -1745,10 +1923,10 @@ func (a *CenturyAgent) touchDeviceFromSubDevID(subDevID byte, now time.Time, aut
 			a.devicesMu.Unlock()
 			return
 		}
-		dev = NewCenturyDevice(subDevID, "auto", now)
+		dev = NewIcp01Device(subDevID, "auto", now)
 		a.devices[subDevID] = dev
 		a.cStats.devicesDiscovered.Add(1)
-		a.logger.Info("century: 디바이스 자동 발견 (frame prefix)", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
+		a.logger.Info("century_hvacr01: 디바이스 자동 발견 (frame prefix)", "sub_dev_id", fmt.Sprintf("0x%02X", subDevID))
 		// v0.18.7: register-decoded emit 경로에서도 metadata.device_type/label 노출 보장.
 		agent.SetDeviceInfo(a.agentConfig.ID, fmt.Sprintf("0x%02X", subDevID), agent.DeviceInfo{
 			DeviceType: "HVACR.IDU",
@@ -1760,7 +1938,7 @@ func (a *CenturyAgent) touchDeviceFromSubDevID(subDevID byte, now time.Time, aut
 }
 
 // registerConfigDevices 는 설정에 사전 등록된 device 들을 추가한다 (REQ-CENTURY-013, Source="config").
-func (a *CenturyAgent) registerConfigDevices() {
+func (a *Hvacr01Agent) registerConfigDevices() {
 	now := a.now()
 	cfg := a.snapshotConfig()
 	a.devicesMu.Lock()
@@ -1772,14 +1950,14 @@ func (a *CenturyAgent) registerConfigDevices() {
 		// address can be "0x3B" or "59" — parse with parseHexOrInt.
 		n, err := parseHexOrInt(entry.Address)
 		if err != nil {
-			a.logger.Warn("century: invalid device address", "address", entry.Address, "error", err)
+			a.logger.Warn("century_hvacr01: invalid device address", "address", entry.Address, "error", err)
 			continue
 		}
 		sub := byte(n)
 		if _, exists := a.devices[sub]; exists {
 			continue
 		}
-		dev := NewCenturyDevice(sub, "config", now)
+		dev := NewIcp01Device(sub, "config", now)
 		dev.Online = false // not yet seen on the wire
 		if entry.Name != "" {
 			dev.Label = entry.Name
@@ -1794,7 +1972,7 @@ func (a *CenturyAgent) registerConfigDevices() {
 }
 
 // offlineWatchLoop 는 1초 ticker 로 stale device 를 offline 으로 전이시킨다 (REQ-CENTURY-014).
-func (a *CenturyAgent) offlineWatchLoop() {
+func (a *Hvacr01Agent) offlineWatchLoop() {
 	cfg := a.snapshotConfig()
 	interval := 1 * time.Second
 	if cfg.OfflineTimeout < interval {
@@ -1820,12 +1998,12 @@ func (a *CenturyAgent) offlineWatchLoop() {
 //
 // v0.3.0 (REQ-CENTURY-035): online → false 전이 시 emit_device_state=true 이면 즉시
 // `trigger="change"` 로 device_state 를 emit 한다 (downstream 에 offline 알림).
-func (a *CenturyAgent) checkDeviceTimeouts() {
+func (a *Hvacr01Agent) checkDeviceTimeouts() {
 	cfg := a.snapshotConfig()
 	now := a.now()
 	timeout := cfg.OfflineTimeout
 	a.devicesMu.RLock()
-	devicesSnapshot := make([]*CenturyDevice, 0, len(a.devices))
+	devicesSnapshot := make([]*Icp01Device, 0, len(a.devices))
 	for _, d := range a.devices {
 		devicesSnapshot = append(devicesSnapshot, d)
 	}
@@ -1841,7 +2019,7 @@ func (a *CenturyAgent) checkDeviceTimeouts() {
 			subDevID := d.SubDevID
 			d.mu.Unlock()
 			if transitionedToOffline {
-				a.logger.Info("century: 디바이스 오프라인",
+				a.logger.Info("century_hvacr01: 디바이스 오프라인",
 					"sub_dev_id", fmt.Sprintf("0x%02X", subDevID),
 				)
 				// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출.
@@ -1867,12 +2045,12 @@ func (a *CenturyAgent) checkDeviceTimeouts() {
 //
 // 동작:
 //   - 기존 transport 를 close.
-//   - cfg.ReconnectInitial 부터 시작하여 매 실패마다 2배씩 증가, cfg.MaxReconnectBackoff 가 상한.
+//   - cfg.ReconnectInterval 부터 시작하여 매 실패마다 2배씩 증가, cfg.MaxReconnectBackoff 가 상한.
 //   - backoff 동안 ctx cancel 이 발생하면 즉시 false 반환.
 //   - 재연결 성공 시 a.transport 와 a.scanner 가 새 객체로 교체되고 true 반환 (backoff 리셋).
 //
 // AC-B9 invariant: 재연결로 새로 열린 transport 도 RX-only — wrapper 의 Write 가 차단된다.
-func (a *CenturyAgent) reconnectWithBackoff(ctx context.Context, cfg CenturyConfig) bool {
+func (a *Hvacr01Agent) reconnectWithBackoff(ctx context.Context, cfg Hvacr01Config) bool {
 	if a.transportProvider == nil {
 		return false
 	}
@@ -1885,9 +2063,9 @@ func (a *CenturyAgent) reconnectWithBackoff(ctx context.Context, cfg CenturyConf
 		_ = oldTransport.Close()
 	}
 
-	backoff := cfg.ReconnectInitial
+	backoff := cfg.ReconnectInterval
 	if backoff <= 0 {
-		backoff = DefaultReconnectInitial
+		backoff = DefaultReconnectInterval
 	}
 	maxBackoff := cfg.MaxReconnectBackoff
 	if maxBackoff <= 0 {
@@ -1896,7 +2074,7 @@ func (a *CenturyAgent) reconnectWithBackoff(ctx context.Context, cfg CenturyConf
 
 	for {
 		// Sleep first (current backoff). On the very first iteration this
-		// matches the SPEC: "fail → wait reconnect_initial → try" (AC-G2).
+		// matches the SPEC: "fail → wait reconnect_interval → try" (AC-G2).
 		select {
 		case <-ctx.Done():
 			return false
@@ -1907,7 +2085,7 @@ func (a *CenturyAgent) reconnectWithBackoff(ctx context.Context, cfg CenturyConf
 
 		t, err := a.transportProvider()
 		if err != nil {
-			a.logger.Warn("century: TCP-client reconnect failed", "error", err, "next_backoff", backoff)
+			a.logger.Warn("century_hvacr01: TCP-client reconnect failed", "error", err, "next_backoff", backoff)
 			// Double the backoff, capped at max.
 			backoff *= 2
 			if backoff > maxBackoff {
@@ -1920,7 +2098,7 @@ func (a *CenturyAgent) reconnectWithBackoff(ctx context.Context, cfg CenturyConf
 		a.transport = t
 		a.scanner = NewFrameScanner(t)
 		a.mu.Unlock()
-		a.logger.Info("century: TCP-client reconnected")
+		a.logger.Info("century_hvacr01: TCP-client reconnected")
 		return true
 	}
 }

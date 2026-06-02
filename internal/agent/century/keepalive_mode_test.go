@@ -150,9 +150,9 @@ func TestShouldKeepaliveFire(t *testing.T) {
 	}
 }
 
-// TestParseCenturyConfig_ReportMode 는 v0.3.9 keepalive_mode 옵션 파싱이
+// TestParseHvacr01Config_ReportMode 는 v0.3.9 keepalive_mode 옵션 파싱이
 // 올바른 default 부여, 허용값 통과, 거부값 에러 반환을 수행하는지 검증한다.
-func TestParseCenturyConfig_ReportMode(t *testing.T) {
+func TestParseHvacr01Config_ReportMode(t *testing.T) {
 	baseOpts := func() map[string]any {
 		return map[string]any{
 			"serial_port": "/dev/ttyUSB-test",
@@ -160,7 +160,7 @@ func TestParseCenturyConfig_ReportMode(t *testing.T) {
 	}
 
 	t.Run("default is relative", func(t *testing.T) {
-		cfg, err := parseCenturyConfig(baseOpts())
+		cfg, err := parseHvacr01Config(baseOpts())
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
@@ -171,8 +171,8 @@ func TestParseCenturyConfig_ReportMode(t *testing.T) {
 
 	t.Run("explicit relative accepted", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = "relative"
-		cfg, err := parseCenturyConfig(opts)
+		opts["report_mode"] = "relative"
+		cfg, err := parseHvacr01Config(opts)
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
@@ -183,8 +183,8 @@ func TestParseCenturyConfig_ReportMode(t *testing.T) {
 
 	t.Run("explicit absolute accepted", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = "absolute"
-		cfg, err := parseCenturyConfig(opts)
+		opts["report_mode"] = "absolute"
+		cfg, err := parseHvacr01Config(opts)
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
@@ -195,8 +195,8 @@ func TestParseCenturyConfig_ReportMode(t *testing.T) {
 
 	t.Run("empty string keeps default", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = ""
-		cfg, err := parseCenturyConfig(opts)
+		opts["report_mode"] = ""
+		cfg, err := parseHvacr01Config(opts)
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
@@ -207,10 +207,10 @@ func TestParseCenturyConfig_ReportMode(t *testing.T) {
 
 	t.Run("invalid mode rejected", func(t *testing.T) {
 		opts := baseOpts()
-		opts["keepalive_mode"] = "crontab"
-		_, err := parseCenturyConfig(opts)
+		opts["report_mode"] = "crontab"
+		_, err := parseHvacr01Config(opts)
 		if err == nil {
-			t.Fatal("expected error for invalid keepalive_mode, got nil")
+			t.Fatal("expected error for invalid report_mode, got nil")
 		}
 	})
 }

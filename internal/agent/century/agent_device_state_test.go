@@ -24,7 +24,7 @@ import (
 // drainMsgCh collects all currently-available payloads from a.msgCh until the
 // deadline elapses. It does not subscribe via ReceiveMessage, since msgCh emit
 // is bridgeActive-gated; we set bridgeActive=true manually via subscribeOnce.
-func drainMsgCh(t *testing.T, a *CenturyAgent, deadline time.Duration) []map[string]any {
+func drainMsgCh(t *testing.T, a *Hvacr01Agent, deadline time.Duration) []map[string]any {
 	t.Helper()
 	a.bridgeActive.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
@@ -57,7 +57,7 @@ func drainMsgCh(t *testing.T, a *CenturyAgent, deadline time.Duration) []map[str
 
 // waitForMsgCount polls until the cumulative collected list reaches `want` or
 // deadline elapses. Returns the collected payloads.
-func waitForMsgCount(t *testing.T, a *CenturyAgent, want int, deadline time.Duration) []map[string]any {
+func waitForMsgCount(t *testing.T, a *Hvacr01Agent, want int, deadline time.Duration) []map[string]any {
 	t.Helper()
 	a.bridgeActive.Store(true)
 	end := time.Now().Add(deadline)
@@ -196,9 +196,10 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := st["target_temperature"].(float64); got != 25.0 {
 		t.Errorf("state.target_temp = %v, want 25.0", got)
 	}
-	// v0.4.2: Reg04 도 수신했으므로 current_temp 가 정상값으로 나와야 한다.
-	if got, _ := st["current_temperature"].(float64); got != 25.2 {
-		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
+	// 2026-05-29 (v0.4.3): current_temp 는 Reg02 의 CurrentTempC 에서 옴
+	// (CAP-3 fixture data[7..8] = 0x00FA = 25.0°C).
+	if got, _ := st["current_temperature"].(float64); got != 25.0 {
+		t.Errorf("state.current_temp = %v, want 25.0 (Reg02 CurrentTempC)", got)
 	}
 	// v0.3.1: evap 필드는 device state schema 에서 제거됨 (register-decoded 로 이동).
 	if _, exists := st["evap_temp_a_c"]; exists {
@@ -241,9 +242,10 @@ func TestAgent_AC_H3_Reg04UpdatesCurrentTemp(t *testing.T) {
 	}
 	first := msgs[0]
 	firstSt := deviceStateGroup(first)
-	// 5 핵심 모두 정상값.
-	if got, _ := firstSt["current_temperature"].(float64); got != 25.2 {
-		t.Errorf("state.current_temp = %v, want 25.2 (Reg04 정상값)", got)
+	// 5 핵심 모두 정상값. 2026-05-29: current_temp 는 Reg02 의 CurrentTempC
+	// (CAP-3 fixture data[7..8] = 0x00FA = 25.0°C).
+	if got, _ := firstSt["current_temperature"].(float64); got != 25.0 {
+		t.Errorf("state.current_temp = %v, want 25.0 (Reg02 CurrentTempC)", got)
 	}
 	if got, _ := firstSt["mode"].(float64); got != 1 {
 		t.Errorf("state.mode = %v, want 1 (cool)", got)
@@ -276,7 +278,7 @@ func TestAgent_AC_H4_UnchangedFramesDoNotReemit(t *testing.T) {
 
 	// Use a very long keepalive_interval so the test window doesn't trigger one.
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 
@@ -322,7 +324,7 @@ func TestAgent_AC_H5_ModeTransitionEmitsPowerChange(t *testing.T) {
 	batch = append(batch, onFrame...)
 
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 
@@ -363,7 +365,7 @@ func TestAgent_AC_H6_KeepaliveAfterInterval(t *testing.T) {
 	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
 	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "200ms",
+		"report_interval": "200ms",
 	}, batch)
 	defer cleanup()
 
@@ -408,8 +410,8 @@ func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 	batch := append([]byte{}, mustBuildReg02ResponseFrame(t, 0x3B)...)
 	batch = append(batch, mustBuildReg04ResponseFrame(t, 0x3B)...)
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"offline_timeout":    "120ms",
-		"keepalive_interval": "10m",
+		"offline_timeout": "120ms",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 
@@ -444,15 +446,15 @@ func TestAgent_AC_H7_OfflineTransitionEmitsChange(t *testing.T) {
 // 이전 시나리오 ("emit_device_state=false + emit_register_decoded=true → only
 // register-decoded") 는 v0.5.1 에서 의미가 사라졌다 (register-decoded 자체 emit 안 됨).
 
-// AC-H9 (v0.5.1 갱신): emit_device_state=false → ErrCenturyNoOutputEnabled.
+// AC-H9 (v0.5.1 갱신): emit_device_state=false → ErrHvacr01NoOutputEnabled.
 // v0.5.1: register-decoded 옵션 제거. EmitDeviceState 가 유일한 emit stream 이므로
 // false 로 설정 시 즉시 에러.
-func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrCenturyNoOutputEnabled(t *testing.T) {
+func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrHvacr01NoOutputEnabled(t *testing.T) {
 	t.Parallel()
 	cfg := agent.AgentConfig{
 		ID:   "century-no-output",
 		Name: "century-no-output",
-		Type: "century-hvac",
+		Type: "century_hvacr01",
 		Transport: agent.TransportConfig{
 			Type: "serial",
 			Options: map[string]any{
@@ -461,9 +463,9 @@ func TestAgent_AC_H9_EmitDeviceStateOffReturnsErrCenturyNoOutputEnabled(t *testi
 			},
 		},
 	}
-	_, err := NewCenturyAgent(cfg)
-	if !errors.Is(err, ErrCenturyNoOutputEnabled) {
-		t.Fatalf("NewCenturyAgent err = %v, want ErrCenturyNoOutputEnabled", err)
+	_, err := NewHvacr01Agent(cfg)
+	if !errors.Is(err, ErrHvacr01NoOutputEnabled) {
+		t.Fatalf("NewHvacr01Agent err = %v, want ErrHvacr01NoOutputEnabled", err)
 	}
 }
 
@@ -481,7 +483,7 @@ func TestAgent_AC_H10_MultiSubDevIDIndependent(t *testing.T) {
 	batch = append(batch, mustBuildReg02ResponseFrame(t, 0x3B)...) // duplicate of 3B
 
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, batch)
 	defer cleanup()
 
@@ -573,9 +575,10 @@ func TestTransformDecodedPayload_Defaults(t *testing.T) {
 // inferred 필드들이 별도 "inferred" 그룹으로 출력됨을 검증한다.
 func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 	t.Parallel()
+	// 2026-05-29: temp_A_c → reg04_word_10 (Reg04 data[10..11] 의미 미확정).
 	input := []byte(`{
 		"register": 4,
-		"temp_A_c": {"status":"inferred","value":25.2,"raw":252},
+		"reg04_word_10": {"status":"inferred","value":25.2,"raw":252},
 		"op_val_1": {"status":"inferred","value":996},
 		"status_bits": {"status":"inferred","value":54},
 		"mode": {"status":"confirmed","value":"cool","raw":1}
@@ -596,8 +599,8 @@ func TestTransformDecodedPayload_IncludeInferred(t *testing.T) {
 	if !ok {
 		t.Fatalf("inferred group missing")
 	}
-	if inferred["temp_A_c"] != 25.2 {
-		t.Errorf("inferred.temp_A_c = %v, want 25.2", inferred["temp_A_c"])
+	if inferred["reg04_word_10"] != 25.2 {
+		t.Errorf("inferred.reg04_word_10 = %v, want 25.2", inferred["reg04_word_10"])
 	}
 	if inferred["op_val_1"] != float64(996) {
 		t.Errorf("inferred.op_val_1 = %v, want 996", inferred["op_val_1"])

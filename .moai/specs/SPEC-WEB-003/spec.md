@@ -53,7 +53,7 @@ XFlow 플랫폼의 모든 에이전트가 `slog.Default()`를 직접 사용하�
 |---|---|---|
 | modbus-tcp | `internal/agent/modbus/agent.go` | `slog.Default()` |
 | modbus-tcp-server | `internal/agent/modbusserver/agent.go` | `slog.Default()` |
-| samsung-nasa | `internal/agent/samsung/agent.go` | `slog.Default()` |
+| samsung_hvacr01 | `internal/agent/samsung/agent.go` | `slog.Default()` |
 | mqtt-subscriber | `internal/agent/system/mqtt_subscriber.go` | `slog.Default()` |
 | console-logger | `internal/agent/system/console_logger.go` | `slog.Default()` |
 | influxdb-write | `internal/agent/system/influxdb_agent.go` | `slog.Default()` |
@@ -150,7 +150,7 @@ nodeOpts = append(nodeOpts, node.WithLogger(nodeLogger))
 다음 에이전트 타입의 팩토리 함수는 **항상** `config.Logger` 우선 사용 패턴을 적용해야 한다:
 - `modbus-tcp` (`internal/agent/modbus/agent.go`)
 - `modbus-tcp-server` (`internal/agent/modbusserver/agent.go`)
-- `samsung-nasa` (`internal/agent/samsung/agent.go`)
+- `samsung_hvacr01` (`internal/agent/samsung/agent.go`)
 - `mqtt-subscriber` (`internal/agent/system/mqtt_subscriber.go`)
 - `console-logger` (`internal/agent/system/console_logger.go`)
 - `influxdb-write` (`internal/agent/system/influxdb_agent.go`)
@@ -175,7 +175,7 @@ nodeOpts = append(nodeOpts, node.WithLogger(nodeLogger))
 #### REQ-WEB-003-03-04 (Ubiquitous)
 에이전트 컴포넌트 이름은 **항상** `agent.{type}.{name}` 형식을 따라야 한다.
 - 예: `agent.modbus-tcp.modbus-reader`
-- 예: `agent.samsung-nasa.hvac-controller`
+- 예: `agent.samsung_hvacr01.hvac-controller`
 - 예: `agent.mqtt-subscriber.sensor-data`
 
 ---
@@ -203,7 +203,7 @@ nodeOpts = append(nodeOpts, node.WithLogger(nodeLogger))
 ```
 "agent.{config.Type}.{config.Name}"
 ```
-예시: `agent.modbus-tcp.modbus-reader`, `agent.samsung-nasa.hvac-1`
+예시: `agent.modbus-tcp.modbus-reader`, `agent.samsung_hvacr01.hvac-1`
 
 **Create() 메서드 로거 주입 로직**:
 ```

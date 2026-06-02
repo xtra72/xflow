@@ -44,7 +44,7 @@ priority: high
 | 2026-03-30 | 1.26.0 | Module 36 추가: 실외기/제어기 모니터링 패널(OutdoorControlPanel, 압축기 주파수/용량 표시, 운전 모드 뱃지, 4종 상태 인디케이터 LED 그리드, 모니터링 전용 읽기 패널). Store 히스토리 버그 수정(API 응답 경로 수정 + 카운터/리스트 수 동기화). store-write/store-read 노드 UI 스키마 확장(nodeSchemas.ts + nodeTypeMeta.ts) |
 | 2026-03-30 | 1.28.0 | Module 38 추가: 디바이스 제어 UI 통일. NASA 디바이스 그리드 패널 전환(NasaIndoorRemoteControl 제거→GenericPropertiesGrid), 제어 순서 통일(전원→운전 모드→온도→풍량→고정 설치, PROPERTY_ORDER/COMMAND_ORDER/LGAP 리모컨), 전원 슬라이드 스위치(OFF 상태 커맨드 버퍼링, ON 시 일괄 적용), Bool 컨트롤 슬라이드 스위치 통일, 스피너 thumb 오버레이(레이아웃 시프트 방지) |
 | 2026-04-16 | 1.29.0 | **Module 39 추가: 필수 필드 검증 & 노드 경고 뱃지 시스템**. (1) `getRequiredFieldErrors(nodeType, data, agentType?)` 헬퍼 신규 (nodeSchemas.ts) — visibleWhen 을 고려한 필수 필드 검증, 빈 문자열/null/빈 배열/빈 객체를 "값 없음"으로 판정. (2) `PropertyPanel` 에 호박색 경고 배너 + Apply 버튼 비활성화 (`disabled={hasMissingRequired}`) — 필수 항목 누락 시 저장 자체를 차단. (3) `CustomNode` 캔버스 카드에 실시간 경고 뱃지 — 좌측 상단 AlertTriangle 아이콘, 호박색 테두리 강조, tooltip 으로 누락 필드 목록 표시. 잘못 설정된 노드가 배포되기 전에 시각적으로 인지 가능. **Module 40 추가: Trigger 노드 전용 스케줄 에디터**. `trigger` 노드 스키마 신규 등록, `TriggerScheduleEditor` 컴포넌트 (interval/cron/once/times 4종 전용 위젯 + 프리셋 칩 + 실시간 인라인 검증), `ConfigField.type='trigger_schedules'` 신규 타입, `ConfigField.advanced` 플래그 + `DynamicForm` 접을 수 있는 "고급 설정" 섹션 인프라 (source_ch_size 기본 접힘), `payload_mode` UI 전용 가상 필드 (PropertyPanel payload/payload_template 자동 토글 + 저장 시 비활성 키 정리). 관련 SPEC: SPEC-NODE-004 v1.1.0 |
-| 2026-04-16 | 1.30.0 | **Module 41 수정: AcControlPanel mode 컨벤션 정렬 (회귀 수정)**. AcControlPanel의 `AcMode` 타입과 `MODE_CONFIG` 키를 `'cooling'/'heating'/'dehumidify'` 에서 백엔드 통일 컨벤션 `'cool'/'heat'/'dry'` 로 정렬. 이전엔 백엔드(LGCNP/LGCP/NASA/LGAP)가 보낸 `mode: "cool"` 을 프론트엔드가 매칭 실패하여 대시보드에서 운전 모드가 **아예 표시되지 않던 버그** 수정. `fan` / `auto` 는 기존과 동일. `deviceLabels.ENUM_LABELS` 는 양쪽 표기 모두 지원 중이라 한국어 표시에는 영향 없음. 관련 SPEC: SPEC-LGCNP-001 v1.2 REQ-M3-04a |
+| 2026-04-16 | 1.30.0 | **Module 41 수정: AcControlPanel mode 컨벤션 정렬 (회귀 수정)**. AcControlPanel의 `AcMode` 타입과 `MODE_CONFIG` 키를 `'cooling'/'heating'/'dehumidify'` 에서 백엔드 통일 컨벤션 `'cool'/'heat'/'dry'` 로 정렬. 이전엔 백엔드(LGCNP/LGCP/NASA/LGAP)가 보낸 `mode: "cool"` 을 프론트엔드가 매칭 실패하여 대시보드에서 운전 모드가 **아예 표시되지 않던 버그** 수정. `fan` / `auto` 는 기존과 동일. `deviceLabels.ENUM_LABELS` 는 양쪽 표기 모두 지원 중이라 한국어 표시에는 영향 없음. 관련 SPEC: SPEC-LG-HVACR-001 v1.2 REQ-M3-04a |
 | 2026-05-14 | 1.31.0 | **Module 13 수정: 플로우 Import/Export round-trip 무결성 hotfix**. xagent04 실배포 검증에서 발견된 데이터 손실 결함 3종 수정. (1) **export `required_agents` 누락 수정** — `extractAgentNames` 입력이 React Flow 형식인데 XFlow 형식을 기대하던 불일치 해결 + 대소문자 무시 매칭 (커밋 `e5443c4`). (2) **import 노드-agent 자동 매핑** — import 시 `agent_id` 를 새 시스템 기준으로 재해결, export 에서 `agent_id` 제거, UI `agent_ref` 필드 채움 (커밋 `16d91ae`). (3) **CLI/import 이중 wrapping 데이터 손실** — CLI 가 export 파일(`{name, definition}`)을 다시 `definition` 으로 이중 래핑하던 버그 + export config 중첩 + NodeDef 관대 unmarshal + wires 변환 무조건 적용 (커밋 `4a85fa3`, hotfix Z+Y+W). 신규 요구사항 REQ-WEB-001-13-15~18 추가, REQ-WEB-001-13-13(CLI 호환) 보강. 관련 SPEC: SPEC-CLI-001, SPEC-FLOW-001 (`required_agents`/`agent_ref`). |
 
 ---
@@ -211,7 +211,7 @@ XFlow 플랫폼의 Web Dashboard에서 에이전트 관련 두 가지 이슈를 
 | PropertiesGridPanel | 디바이스 속성을 그리드 레이아웃으로 표시하는 대시보드 패널. visibleProperties 설정으로 표시할 컬럼을 제어하며 패널별 디바이스 바인딩을 지원 |
 | panelDefaultSize | 패널 타입별 기본 그리드 크기(w, h) 매핑. 패널 추가 시 타입에 맞는 적절한 기본 크기를 자동 할당 |
 | LGAP 에이전트 스키마 | agentSchemas.ts에 정의된 LG LGAP 에이전트의 14개 설정 필드. 시리얼 포트, 보드레이트, 폴링 간격, 디바이스 목록, 타임아웃, 백오프 등을 포함 |
-| LGCP 에이전트 스키마 | agentSchemas.ts에 정의된 LG LGCP Capture 에이전트의 12개 설정 필드. 시리얼 설정, CRC 검증, 자동 디스커버리, 상태 리포팅, 백오프 등을 포함 |
+| LG HVACR-02 에이전트 스키마 | agentSchemas.ts에 정의된 LG HVACR-02 Capture 에이전트의 12개 설정 필드. 시리얼 설정, CRC 검증, 자동 디스커버리, 상태 리포팅, 백오프 등을 포함 |
 
 ---
 
@@ -1077,12 +1077,12 @@ WHEN 사용자가 이미 활성화된 상태 필터 뱃지를 재클릭할 때, 
 #### M38-1: NASA 디바이스 GenericPropertiesGrid 전환
 
 #### REQ-WEB-001-38-01 (Ubiquitous)
-시스템은 NASA indoor 디바이스의 상태 속성을 `GenericPropertiesGrid` 컴포넌트로 표시해야 한다. 기존 `NasaIndoorRemoteControl` 전용 컴포넌트를 제거하고 LGCP와 동일한 그리드 패턴을 사용한다.
+시스템은 NASA indoor 디바이스의 상태 속성을 `GenericPropertiesGrid` 컴포넌트로 표시해야 한다. 기존 `NasaIndoorRemoteControl` 전용 컴포넌트를 제거하고 LG HVACR-02 와 동일한 그리드 패턴을 사용한다.
 
 #### M38-2: 속성 표시 순서 통일
 
 #### REQ-WEB-001-38-02 (Ubiquitous)
-시스템은 모든 프로토콜(NASA, LGCP, LGAP)의 상태 속성을 다음 순서로 표시해야 한다: 전원(power) → 운전 모드(mode) → 설정 온도(target_temp) → 현재 온도(current_temp) → 풍량(fan_speed) → 고정 설치(swing_vertical, swing_auto, locked, plasma, filter_alarm) → 센서/배관 → 컨트롤러/실외기 → 에러 코드. `PROPERTY_ORDER` 배열에 정의된 순서를 따르며, 목록에 없는 키는 맨 뒤에 원래 순서대로 표시한다.
+시스템은 모든 프로토콜(NASA, LG ICP-02, LGAP)의 상태 속성을 다음 순서로 표시해야 한다: 전원(power) → 운전 모드(mode) → 설정 온도(target_temp) → 현재 온도(current_temp) → 풍량(fan_speed) → 고정 설치(swing_vertical, swing_auto, locked, plasma, filter_alarm) → 센서/배관 → 컨트롤러/실외기 → 에러 코드. `PROPERTY_ORDER` 배열에 정의된 순서를 따르며, 목록에 없는 키는 맨 뒤에 원래 순서대로 표시한다.
 
 #### M38-3: 커맨드 표시 순서 통일
 
@@ -2604,7 +2604,7 @@ PanelSettingsDialog 모달 컴포넌트를 신규 생성하여 대시보드 패�
 
 - **신규 컴포넌트**: `web/src/pages/devices/AddDeviceDialog.tsx`
 - **기존 DeviceListPage에서 추출**: NASA 디바이스 추가 폼(주소/디바이스 ID/타입)과 Modbus 디바이스 추가 폼(유닛 ID/이름/레지스터 맵 멀티 블록) 분리
-- **에이전트 필터**: useAgents 훅으로 samsung-nasa, modbus-tcp-server 타입 에이전트만 표시
+- **에이전트 필터**: useAgents 훅으로 samsung_hvacr01, modbus-tcp-server 타입 에이전트만 표시
 
 #### 5.32.4 변경 파일
 
@@ -2738,7 +2738,7 @@ boolean 타입 필드의 렌더링을 변경: 상단 라벨 숨김(중복 방지
 | P1 (중요) | Module 31: 디바이스 페이지 테이블 전환 | 그리드 카드→테이블 리스트 전환으로 AgentListPage 패턴 통일, 검색/필터/정렬/페이지네이션으로 디바이스 관리 효율화 |
 | P1 (중요) | Module 32: DeviceDetailPanel 좌우 분할 | 상태/제어 영역 분리로 정보 가독성 향상, 메타데이터 키/값 테이블로 공간 효율화 |
 | P1 (중요) | Module 33: NASA Agent 설정 UI 개선 | 설정 2열 레이아웃으로 가독성 향상, 라벨 명확화, 체크박스 UX 통일, Makefile 빌드 시스템 |
-| P1 (중요) | Module 38: 디바이스 제어 UI 통일 | NASA/LGCP/LGAP 제어 순서 통일, 전원 슬라이드 스위치 + OFF 상태 버퍼링, Bool 스위치 통일, 스피너 레이아웃 안정화 |
+| P1 (중요) | Module 38: 디바이스 제어 UI 통일 | NASA / LG HVACR-02 / LGAP 제어 순서 통일, 전원 슬라이드 스위치 + OFF 상태 버퍼링, Bool 스위치 통일, 스피너 레이아웃 안정화 |
 
 ---
 

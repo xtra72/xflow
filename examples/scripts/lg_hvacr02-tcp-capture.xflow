@@ -1,0 +1,29 @@
+# lg_hvacr02-tcp-capture.xflow
+# TCP 경유 LG ICP-02 패킷 캡처 스크립트
+#
+# RS485-to-TCP 컨버터를 통해 원격 LG ICP-02 패킷을 캡처한다.
+# lg_hvacr02-tcp-client.yaml의 tcp_host/tcp_port를 환경에 맞게 수정할 것.
+#
+# 사용법:
+#   xflow script -f examples/scripts/lg_hvacr02-tcp-capture.xflow
+
+agent import -f examples/agents/lg_hvacr02-tcp-client.yaml --skip-existing
+agent import -f examples/agents/stdout-logger.yaml --skip-existing
+agent import -f examples/agents/lg_hvacr02-file-logger.yaml --skip-existing
+agent import -f examples/agents/error-logger.yaml --skip-existing
+
+# 에이전트 시작
+agent start stdout-logger
+agent start lg_hvacr02-file-logger
+agent start error-logger
+agent start lg_hvacr02-tcp-capture
+
+# TCP 캡처 플로우 가져오기
+flow import -f examples/flows/lg_hvacr02-tcp-capture.yaml
+
+# 플로우 배포 및 시작
+flow deploy lg_hvacr02-tcp-capture
+flow start lg_hvacr02-tcp-capture
+
+# 상태 확인
+flow status lg_hvacr02-tcp-capture

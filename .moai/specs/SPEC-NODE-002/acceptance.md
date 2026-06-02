@@ -92,13 +92,13 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 **Then** 길이 2 의 메시지 배열을 반환해야 한다 (`bb`, `ccc`)
 **And** 두 번째 호출에서 반환된 첫 번째 프레임의 `frame.index` 는 1 이어야 한다
 
-### AC2.4: LGCP 샘플 - frame 모드
+### AC2.4: LG ICP-02 샘플 - frame 모드
 
-**Given** framer 노드 (`framing=frame`, LGCP 옵션), 페이로드가 LGCP 샘플 3개를 이어붙인 바이트 배열
+**Given** framer 노드 (`framing=frame`, LG ICP-02 옵션), 페이로드가 LG ICP-02 샘플 3개를 이어붙인 바이트 배열
 **When** `Process` 를 호출하면
 **Then**:
 - 길이 3 의 메시지 배열을 반환해야 한다
-- 각 메시지의 `raw` 는 원본 LGCP 프레임과 일치해야 한다
+- 각 메시지의 `raw` 는 원본 LG ICP-02 프레임과 일치해야 한다
 - 순서가 보존되어야 한다
 
 ### AC2.5: length_prefix 빅엔디안 2프레임
@@ -166,13 +166,13 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 - `New(mode string, opts Options) (Framer, error)` 함수가 존재해야 한다
 - 모드 상수 `ModeRaw`, `ModeNewline`, `ModeLengthPrefix`, `ModeFixedSize`, `ModeStream`, `ModeFrame` 가 존재해야 한다
 
-### AC3.2: LGCP 회귀 테스트 통과
+### AC3.2: LG ICP-02 회귀 테스트 통과
 
 **Given** Phase 0 리팩토링 완료 후 상태
-**When** `TestFrameFramer_LGCPSamples` (위치: `pkg/framing/framing_test.go` 또는 `internal/agent/serial/framing_test.go`) 를 실행하면
+**When** `TestFrameFramer_Icp02Samples` (위치: `pkg/framing/framing_test.go` 또는 `internal/agent/serial/framing_test.go`) 를 실행하면
 **Then**:
 - 테스트가 통과해야 한다
-- 모든 LGCP 샘플이 정확히 동일한 프레임으로 조립되어야 한다
+- 모든 LG ICP-02 샘플이 정확히 동일한 프레임으로 조립되어야 한다
 
 ### AC3.3: SerialConnReader 테스트 보존
 
@@ -185,7 +185,7 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 
 **Given** 리팩토링 완료 후 상태
 **And** 시리얼 에이전트가 `framing=frame` 옵션으로 동작 중
-**When** LGCP 샘플 바이트 스트림이 입력으로 주어지면
+**When** LG ICP-02 샘플 바이트 스트림이 입력으로 주어지면
 **Then**:
 - 에이전트가 생성하는 프레임 시퀀스는 리팩토링 이전과 동일해야 한다 (characterization test 기준)
 
@@ -284,9 +284,9 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 
 ## 5. M5: Parity (시리얼 에이전트 vs Framer 노드)
 
-### AC5.1: LGCP 샘플 parity
+### AC5.1: LG ICP-02 샘플 parity
 
-**Given** LGCP 샘플 바이트 스트림 (기존 `TestFrameFramer_LGCPSamples` 와 동일한 입력)
+**Given** LG ICP-02 샘플 바이트 스트림 (기존 `TestFrameFramer_Icp02Samples` 와 동일한 입력)
 **When** 다음 두 경로로 프레임 시퀀스를 생성하면:
 - 경로 A: `pkg/framing.New(ModeFrame, opts)` 로 framer 직접 생성 후 `Read` 반복 호출
 - 경로 B: framer 노드 (`framing=frame`, 동일 opts) 의 `Process` 를 호출 (단일 Process 호출로 전체 바이트 주입)
@@ -321,7 +321,7 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 ### AC5.5: 시리얼 에이전트 기존 프레이밍 경로 불변
 
 **Given** 리팩토링 완료 후 상태
-**When** 시리얼 에이전트를 `framing=frame` 으로 설정하고 LGCP 장비와 통신 (또는 mock 포트 대체) 하면
+**When** 시리얼 에이전트를 `framing=frame` 으로 설정하고 LG ICP-02 장비와 통신 (또는 mock 포트 대체) 하면
 **Then**:
 - 에이전트가 방출하는 메시지의 `raw`, `data` 필드와 메타데이터가 리팩토링 이전과 관측 가능한 범위에서 동일해야 한다
 
@@ -483,7 +483,7 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 **When** `go test ./internal/agent/serial/...` 및 `go test ./pkg/framing/...` 을 실행하면
 **Then**:
 - 모든 테스트가 통과해야 한다
-- 특히 `TestFrameFramer_LGCPSamples` 가 통과해야 한다
+- 특히 `TestFrameFramer_Icp02Samples` 가 통과해야 한다
 
 ### AC10.2: 시리얼 에이전트 framing=frame 플로우 불변
 
@@ -511,13 +511,13 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 
 **Given** 플로우 정의:
 - 노드 1: `serial-in` (에이전트 `framing=raw`)
-- 노드 2: `framer` (`framing=frame`, LGCP STX/ETX)
+- 노드 2: `framer` (`framing=frame`, LG ICP-02 STX/ETX)
 - 노드 3: `output` (예: debug node)
 - 엣지: 1 → 2 → 3
-**And** 에이전트가 LGCP 샘플 바이트 스트림을 생성 (mock)
+**And** 에이전트가 LG ICP-02 샘플 바이트 스트림을 생성 (mock)
 **When** 플로우를 실행하면
 **Then**:
-- output 노드가 LGCP 프레임 단위의 메시지를 수신해야 한다
+- output 노드가 LG ICP-02 프레임 단위의 메시지를 수신해야 한다
 - 메시지 메타에 `frame.index`, `frame.framer_type=frame` 이 포함되어야 한다
 
 ### AC11.2: tcp-in (client) → framer → output 파이프라인
@@ -566,7 +566,7 @@ related_spec: SPEC-NODE-001, SPEC-SERIAL-001, SPEC-SOCKET-001, SPEC-AGENT-006, S
 
 - [ ] AC1.x ~ AC12.x 의 모든 시나리오가 자동화된 Go 테스트로 구현되었다
 - [ ] 모든 테스트가 `go test -race ./...` 에서 통과한다
-- [ ] `TestFrameFramer_LGCPSamples` 가 통과한다 (pkg/framing 으로 이동 후에도)
+- [ ] `TestFrameFramer_Icp02Samples` 가 통과한다 (pkg/framing 으로 이동 후에도)
 - [x] `rawFramer` 버퍼 aliasing 방지 검증 (AC3.6, R3.8, v1.1.0)
 - [ ] `SerialConnReader` 관련 기존 테스트가 통과한다
 - [ ] Parity 테스트 (AC5.1 ~ AC5.5) 가 통과한다

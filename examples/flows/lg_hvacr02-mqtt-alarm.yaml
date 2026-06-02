@@ -1,0 +1,211 @@
+# lg_hvacr02-mqtt-alarm.yaml
+# LG ICP-02 디바이스 상태 변경 감지 → MQTT 알람 전송 플로우
+#
+# LG HVACR-02 에이전트가 캡처한 패킷에서 디바이스 상태 변경을 감지하고,
+# 변경된 상태를 MQTT 토픽으로 발행한다.
+#
+# 전송 모드:
+#   이 플로우는 시리얼(lg_hvacr02-capture) 에이전트를 사용한다.
+#   TCP 전송을 사용하려면 required_agents 및 agent_ref를 변경:
+#     - lg_hvacr02-capture → lg_hvacr02-tcp-capture (TCP Client, lg_hvacr02-tcp-client.yaml)
+#     - lg_hvacr02-capture → lg_hvacr02-tcp-server  (TCP Server, lg_hvacr02-tcp-server.yaml)
+#
+# 감지 대상:
+#   - 전원 ON/OFF 변경
+#   - 설정 온도 변경
+#   - 풍속/운전모드 변경
+#   - 압축기 상태 변경
+#   - 실내 온도 보고
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                  │
+# │  [LG ICP-02 캡처 → 디코딩 필터 → 알람 변환 → MQTT 발행]         │
+# │                                                                  │
+# │   lg_hvacr02-capture ──→ decoded-filter ──→ alarm-transform      │
+# │    (lg_hvacr02_status)   (CRC유효 +          (상태 추출)         │
+# │                           decoded 존재)          │               │
+# │                                                  ├──→ mqtt-pub   │
+# │                                                  │  (알람 발행)  │
+# │                                                  └──→ console-out│
+# │                                                       (모니터링) │
+# │                                                                  │
+# │  [에러 → 로깅]                                                   │
+# │    *:error ──→ error-logger                                      │
+# │                                                                  │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# MQTT 발행 토픽:
+#   xflow/lg_hvacr02/alarm/{sa_label}   (예: xflow/lg_hvacr02/alarm/indoor-3)
+#
+# MQTT 알람 메시지 예시:
+#   토픽: xflow/lg_hvacr02/alarm/44550067
+#   페이로드:
+#   {
+#     "timestamp": "2026-03-25T14:30:45+09:00",
+#     "source": "indoor-3",
+#     "source_addr": "44550067",
+#     "dest": "controller",
+#     "cmd": "control",
+#     "decoded": {
+#       "power": "ON",
+#       "set_temp_c": 25,
+#       "fan_speed": "mid",
+#       "mode": "heat",
+#       "compressor_cap": 8
+#     }
+#   }
+#   (decoded 내 null 필드는 자동 제거됨)
+#
+# 사전 준비:
+#   xflow agent import -f examples/agents/lg_hvacr02-capture.yaml
+#   xflow agent import -f examples/agents/mqtt-broker.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow agent import -f examples/agents/error-logger.yaml
+#
+# 사용법:
+#   xflow flow import -f examples/flows/lg_hvacr02-mqtt-alarm.yaml
+#   xflow flow deploy lg_hvacr02-mqtt-alarm
+#   xflow flow start lg_hvacr02-mqtt-alarm
+
+name: "lg_hvacr02-mqtt-alarm"
+description: "LG ICP-02 디바이스 상태 변경 감지 → MQTT 알람 전송 플로우"
+config:
+  track_history: true
+  max_history_size: 500
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "hvac-monitoring"
+
+required_agents:
+  - name: "lg_hvacr02-capture"
+    type: "lg_hvacr02"
+  - name: "mqtt-broker"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+  - name: "error-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # LG ICP-02 캡처 → 필터 → 변환 → MQTT 발행
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 1단계: LG ICP-02 패킷 캡처 (패시브 리스닝) ──
+  - name: "lg_hvacr02-receiver"
+    type: "lg_hvacr02_status"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    agent_ref:
+      agent_name: "lg_hvacr02-capture"
+      direction: "in"
+
+  # ── 2단계: 디코딩 가능 프레임 필터 ──
+  # CRC 유효 + parsed.decoded 존재 (상태 정보가 있는 프레임만 통과)
+  - name: "decoded-filter"
+    type: "filter"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+    config:
+      condition: "$.payload.crc_valid == true && $.payload.parsed != null && $.payload.parsed.decoded != null"
+
+  # ── 3단계: 알람 메시지 변환 ──
+  # 디코딩된 상태 정보를 추출한다.
+  # decoded 객체를 직접 전달하여 Go omitempty로 null 필드를 자동 제거한다.
+  - name: "alarm-transform"
+    type: "transform"
+    config:
+      expression: |
+        {
+          timestamp: $.payload.timestamp,
+          source: $.payload.parsed.sa_label,
+          source_addr: $.payload.parsed.sa,
+          dest: $.payload.parsed.da_label,
+          cmd: $.payload.parsed.cmd_name,
+          decoded: $.payload.parsed.decoded
+        }
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 4단계: MQTT 알람 발행 ──
+  # publish_topic 템플릿으로 소스 디바이스별 토픽을 동적 설정한다.
+  # 예: xflow/lg_hvacr02/alarm/44550000 (source_addr 기반)
+  - name: "mqtt-pub"
+    type: "mqtt-publisher"
+    config:
+      agent_ref: "mqtt-broker"
+      publish_topic: "xflow/lg_hvacr02/alarm/{source_addr}"
+      default_qos: 1
+      default_retained: false
+      payload_format: "json"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 콘솔 출력 (실시간 모니터링) ──
+  - name: "console-output"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 에러 로깅
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "error-handler"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "error-logger"
+      direction: "out"
+
+wires:
+  # 캡처 → 디코딩 필터
+  - source: "lg_hvacr02-receiver:out"
+    target: "decoded-filter:in"
+
+  # 필터 통과 → 알람 변환
+  - source: "decoded-filter:out"
+    target: "alarm-transform:in"
+
+  # 알람 → MQTT 발행 + 콘솔 출력 (팬아웃)
+  - source: "alarm-transform:out"
+    target: "mqtt-pub:in"
+  - source: "alarm-transform:out"
+    target: "console-output:in"
+
+  # 에러 라우팅
+  - source: "lg_hvacr02-receiver:error"
+    target: "error-handler:in"
+  - source: "decoded-filter:error"
+    target: "error-handler:in"
+  - source: "alarm-transform:error"
+    target: "error-handler:in"
+  - source: "mqtt-pub:error"
+    target: "error-handler:in"

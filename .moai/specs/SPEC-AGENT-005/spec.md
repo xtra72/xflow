@@ -184,7 +184,7 @@ tags: [agent, lifecycle, configuration]
 
 **R5.4 (Ubiquitous)**: `internal/engine/errors.go` 는 항상 sentinel error `ErrAgentDisabled` 를 export 해야 한다 (경고 메시지 분류 및 `errors.Is` 비교 용도로 유지).
 
-**R5.5 (Unwanted)** — ⚠️ **SUPERSEDED by R5.7 (v1.1.0)**: ~~시스템은 disabled 에이전트를 참조하는 플로우를 배포해서는 안 된다.~~ — v1.1.0 부터 배포를 허용한다. 런타임 시점의 nil agent 참조 방어는 노드 Init-tolerance 패턴과 `ReinitNodesForAgent` 자동 재연결로 대체한다 (SPEC-ENGINE-001, SPEC-SERIAL-001, SPEC-NASA-001 등 참조).
+**R5.5 (Unwanted)** — ⚠️ **SUPERSEDED by R5.7 (v1.1.0)**: ~~시스템은 disabled 에이전트를 참조하는 플로우를 배포해서는 안 된다.~~ — v1.1.0 부터 배포를 허용한다. 런타임 시점의 nil agent 참조 방어는 노드 Init-tolerance 패턴과 `ReinitNodesForAgent` 자동 재연결로 대체한다 (SPEC-ENGINE-001, SPEC-SERIAL-001, SPEC-SAMSUNG-HVACR-001 등 참조).
 
 **R5.6 (Optional)**: WHERE 가능한 경우, 검증 결과는 disabled/missing 에이전트가 여러 개일 때 모두 한 번에 보고해야 한다 (조기 반환 대신 모든 검증 누적).
 

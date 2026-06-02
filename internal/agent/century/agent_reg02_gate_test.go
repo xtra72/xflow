@@ -22,7 +22,7 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 
 	// Step 1: Reg04 만 먼저 주입.
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m", // keepalive 가 테스트 도중 fire 하지 않도록.
+		"report_interval": "10m", // keepalive 가 테스트 도중 fire 하지 않도록.
 	}, mustBuildReg04ResponseFrame(t, 0x3B))
 	defer cleanup()
 
@@ -79,9 +79,10 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	if got, _ := st["target_temperature"].(float64); got != 25.0 {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)
 	}
-	// current_temp 는 Reg04 가 이미 도착했으므로 25.2 여야 한다.
-	if got, _ := st["current_temperature"].(float64); got != 25.2 {
-		t.Errorf("first.state.current_temp = %v, want 25.2 (Reg04 이미 수신)", got)
+	// current_temp 는 Reg02 (CAP-3 fixture 의 data[7..8] = 0x00FA = 25.0°C) 에서 옴.
+	// 2026-05-29: current_temp 의 원천이 Reg04 TempAC → Reg02 CurrentTempC 로 정정됨.
+	if got, _ := st["current_temperature"].(float64); got != 25.0 {
+		t.Errorf("first.state.current_temp = %v, want 25.0 (Reg02 CurrentTempC)", got)
 	}
 
 	// AC-B9 invariant.
@@ -90,57 +91,37 @@ func TestAgent_DeviceStateGatedByReg02(t *testing.T) {
 	}
 }
 
-// TestAgent_DeviceStateGatedByReg04 는 v0.4.2 의 대칭 시나리오 회귀 테스트이다.
+// TestAgent_DeviceStateReg02Sufficient 는 v0.4.3 의 회귀 테스트이다.
 //
-// 사용자 보고 v0.4.1 후속: Reg02 만 먼저 도착하면 첫 emit 이 current_temp=0
-// (Reg04 미수신 fallback) 으로 나타나 그 직후 정상값으로 정정되는 결함.
+// 2026-05-29: current_temp 의 원천이 Reg04Read TempAC → Reg02 CurrentTempC 로 정정됨.
+// 5 핵심 필드 (power/mode/fan/target_temp/current_temp) 모두 Reg02 에서 공급되므로
+// Reg02 단독 gate 로 충분 (이전 v0.4.2 는 Reg02 + Reg04 모두 요구했음).
 //
-// v0.4.2 수정으로 Reg02 도 단독으로는 emit 안 됨; Reg04 도 함께 와야 첫 emit.
-func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
+// 본 테스트는 Reg02 만 단독으로 도착해도 첫 emit 이 정상 5 핵심 값으로 발생하는지
+// 검증한다.
+func TestAgent_DeviceStateReg02Sufficient(t *testing.T) {
 	t.Parallel()
 
-	// Step 1: Reg02 만 먼저 주입.
+	// Reg02 단독 주입 — Reg04 없이도 첫 emit 발생해야 함 (v0.4.3).
 	a, rt, cleanup := makeTestAgent(t, map[string]any{
-		"keepalive_interval": "10m",
+		"report_interval": "10m",
 	}, mustBuildReg02ResponseFrame(t, 0x3B))
 	defer cleanup()
 
-	waitUntil(t, 500*time.Millisecond, func() bool {
-		return a.cStats.framesCaptured.Load() >= 1
-	}, "reg02 frame not captured")
-
-	// device_state emit 은 0개여야 한다 (Reg04 미수신으로 gate).
-	msgs := drainMsgCh(t, a, 200*time.Millisecond)
-	deviceStateCount := 0
-	for _, m := range msgs {
-		// v0.9.0: device_state 는 type 필드가 없음 — dev_id 존재 로 식별.
-		if _, hasUnitID := m["unit_id"]; hasUnitID {
-			deviceStateCount++
-		}
-	}
-	if deviceStateCount != 0 {
-		t.Errorf("v0.4.2: device_state emitted %d times before Reg04 (want 0). msgs=%v",
-			deviceStateCount, msgs)
-	}
-
-	// Step 2: Reg04 주입 → 첫 device_state emit 발생.
-	rt.deliver(mustBuildReg04ResponseFrame(t, 0x3B))
-
-	more := waitForMsgCount(t, a, 1, 2*time.Second)
+	msgs := waitForMsgCount(t, a, 1, 2*time.Second)
 	var deviceStateMsgs []map[string]any
-	for _, m := range more {
-		// v0.18.6: device_state 의 프로토콜 식별자는 unit_id (이전 device_id).
+	for _, m := range msgs {
 		if _, hasUnitID := m["unit_id"]; hasUnitID {
 			deviceStateMsgs = append(deviceStateMsgs, m)
 		}
 	}
 	if len(deviceStateMsgs) < 1 {
-		t.Fatalf("v0.4.2: no device_state emit observed after Reg04; got %d total msgs", len(more))
+		t.Fatalf("v0.4.3: no device_state emit observed after Reg02 (Reg04 없이도 emit 되어야 함); got %d total msgs", len(msgs))
 	}
 
 	first := deviceStateMsgs[0]
 	st := deviceStateGroup(first)
-	// 첫 emit 부터 5 핵심 모두 정상값 (Reg02+Reg04 통합 결과).
+	// 첫 emit 부터 5 핵심 모두 정상값 (Reg02 단독 결과).
 	if got, _ := st["mode"].(float64); got != 1 {
 		t.Errorf("first.state.mode = %v, want 1 (cool)", got)
 	}
@@ -150,9 +131,9 @@ func TestAgent_DeviceStateGatedByReg04(t *testing.T) {
 	if got, _ := st["target_temperature"].(float64); got != 25.0 {
 		t.Errorf("first.state.target_temp = %v, want 25.0", got)
 	}
-	// 핵심 invariant: Reg04 fallback 0 이 아닌 25.2 가 첫 emit 부터 나와야 한다.
-	if got, _ := st["current_temperature"].(float64); got != 25.2 {
-		t.Errorf("v0.4.2 regression: first.state.current_temp = %v, want 25.2 (Reg04 fallback 0 노출 금지)", got)
+	// current_temp 는 Reg02 의 CurrentTempC (CAP-3 fixture data[7..8] = 0x00FA = 25.0°C).
+	if got, _ := st["current_temperature"].(float64); got != 25.0 {
+		t.Errorf("v0.4.3: first.state.current_temp = %v, want 25.0 (Reg02 CurrentTempC)", got)
 	}
 
 	if rt.WriteCount() != 0 {

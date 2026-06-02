@@ -86,7 +86,7 @@ func TestNewTCPServerAgent_ValidConfig(t *testing.T) {
 		"host":            "127.0.0.1",
 		"port":            9999,
 		"framing":         "raw",
-		"max_connections":  10,
+		"max_connections": 10,
 	})
 	a, err := NewTCPServerAgent(cfg)
 	if err != nil {
@@ -723,6 +723,151 @@ func TestTCPServerAgent_ProcessSendBroadcast(t *testing.T) {
 		if string(buf[:n]) != string(payload) {
 			t.Errorf("conn[%d] received %q, want %q", i, buf[:n], payload)
 		}
+	}
+}
+
+// TestTCPServerAgent_BroadcastOption_ForcesAllClients 는 broadcast=true 일 때
+// 특정 Target 을 지정한 send 명령도 모든 연결 클라이언트로 전송됨을 검증한다 (RED).
+// broadcast 옵션이 없으면 targeted send 는 단 1개 클라이언트에만 도달하므로 실패한다.
+func TestTCPServerAgent_BroadcastOption_ForcesAllClients(t *testing.T) {
+	a, addr := startTestServer(t, map[string]any{"framing": "raw", "broadcast": true})
+	defer func() { _ = a.Stop(context.Background()) }()
+
+	conn1 := dialTestServer(t, addr)
+	defer conn1.Close()
+	conn2 := dialTestServer(t, addr)
+	defer conn2.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// 한 연결의 remote_addr 를 Target 으로 지정한다.
+	sa := a.(agent.StatefulAgent)
+	state := sa.State()
+	conns := state["connections"].([]map[string]any)
+	if len(conns) != 2 {
+		t.Fatalf("expected 2 connections, got %d", len(conns))
+	}
+	targetAddr := conns[0]["remote_addr"].(string)
+
+	// Target 을 명시했지만 broadcast=true 이므로 모든 클라이언트가 받아야 한다.
+	payload := []byte("forced broadcast")
+	cmd := map[string]any{
+		"command": "send",
+		"target":  targetAddr,
+		"data":    base64.StdEncoding.EncodeToString(payload),
+	}
+	cmdBytes, _ := json.Marshal(cmd)
+	resp, err := a.Process(cmdBytes)
+	if err != nil {
+		t.Fatalf("Process send (broadcast forced): %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if result["status"] != "broadcast_sent" {
+		t.Errorf("status = %q, want %q", result["status"], "broadcast_sent")
+	}
+
+	// 두 클라이언트 모두 payload 를 받아야 한다.
+	for i, c := range []net.Conn{conn1, conn2} {
+		buf := make([]byte, 1024)
+		c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, err := c.Read(buf)
+		if err != nil {
+			t.Fatalf("conn[%d] Read (broadcast forced): %v", i, err)
+		}
+		if string(buf[:n]) != string(payload) {
+			t.Errorf("conn[%d] received %q, want %q", i, buf[:n], payload)
+		}
+	}
+}
+
+// TestTCPServerAgent_BroadcastDisabled_TargetedUnicast 는 broadcast=false (기본값) 일 때
+// Target 지정 send 가 해당 클라이언트에만 도달하고 다른 클라이언트에는 가지 않음을 검증한다 (회귀).
+func TestTCPServerAgent_BroadcastDisabled_TargetedUnicast(t *testing.T) {
+	a, addr := startTestServer(t, map[string]any{"framing": "raw", "broadcast": false})
+	defer func() { _ = a.Stop(context.Background()) }()
+
+	conn1 := dialTestServer(t, addr)
+	defer conn1.Close()
+	conn2 := dialTestServer(t, addr)
+	defer conn2.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	sa := a.(agent.StatefulAgent)
+	state := sa.State()
+	conns := state["connections"].([]map[string]any)
+	if len(conns) != 2 {
+		t.Fatalf("expected 2 connections, got %d", len(conns))
+	}
+
+	// conn1 의 로컬 주소를 서버측 remote_addr 로 식별한다.
+	addr1 := conn1.LocalAddr().String()
+	addr2 := conn2.LocalAddr().String()
+	targetAddr := addr1
+
+	payload := []byte("unicast only")
+	cmd := map[string]any{
+		"command": "send",
+		"target":  targetAddr,
+		"data":    base64.StdEncoding.EncodeToString(payload),
+	}
+	cmdBytes, _ := json.Marshal(cmd)
+	resp, err := a.Process(cmdBytes)
+	if err != nil {
+		t.Fatalf("Process send (unicast): %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp, &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if result["status"] != "sent" {
+		t.Errorf("status = %q, want %q", result["status"], "sent")
+	}
+
+	// 대상 클라이언트(conn1)는 받아야 한다.
+	buf := make([]byte, 1024)
+	conn1.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := conn1.Read(buf)
+	if err != nil {
+		t.Fatalf("target conn1 Read: %v", err)
+	}
+	if string(buf[:n]) != string(payload) {
+		t.Errorf("conn1 received %q, want %q", buf[:n], payload)
+	}
+
+	// 비대상 클라이언트(conn2)는 받지 않아야 한다 (read timeout 기대).
+	conn2.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	if _, err := conn2.Read(buf); err == nil {
+		t.Errorf("conn2 (addr=%s) unexpectedly received data on unicast to %s", addr2, targetAddr)
+	}
+}
+
+// TestParseTCPServerConfig_Broadcast 는 broadcast 옵션 파싱을 검증한다.
+func TestParseTCPServerConfig_Broadcast(t *testing.T) {
+	tests := []struct {
+		name string
+		opts map[string]any
+		want bool
+	}{
+		{"absent defaults false", map[string]any{"port": 9000}, false},
+		{"bool true", map[string]any{"port": 9000, "broadcast": true}, true},
+		{"bool false", map[string]any{"port": 9000, "broadcast": false}, false},
+		{"string true", map[string]any{"port": 9000, "broadcast": "true"}, true},
+		{"string false", map[string]any{"port": 9000, "broadcast": "false"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseTCPServerConfig(tt.opts)
+			if err != nil {
+				t.Fatalf("ParseTCPServerConfig: %v", err)
+			}
+			if cfg.Broadcast != tt.want {
+				t.Errorf("Broadcast = %v, want %v", cfg.Broadcast, tt.want)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,411 @@
+# SPEC-LG-HVACR-001: LG ICP-01 프로토콜 / LG HVACR-01 에이전트 및 플로우 노드 구현
+
+> **SPEC ID**: SPEC-LG-HVACR-001
+> **제목**: LG ICP-01 (LG CN-485 Protocol) 프로토콜 / LG HVACR-01 에이전트 및 플로우 노드
+> **생성일**: 2026-04-12
+> **수정일**: 2026-05-29
+> **상태**: Implemented (v1.18.27 — 3종 HVACR-01 에이전트 config 통일, additive only for LG)
+> **우선순위**: High
+> **추적성**: LG ICP-01 프로토콜 분석 보고서 (`references/protocols/LG-ICP-01_Protocol_Analysis.md`)
+
+> **명명 규약 (v1.0 rename, 2026-05-27 이후)**:
+> - 프로토콜 코드 식별자: `lg_icp01` — 와이어 포맷 "LG ICP-01"
+> - 에이전트 타입 식별자: `lg_hvacr01` — 에이전트 표시명 "LG HVACR-01"
+> - 노드 타입 식별자: `lg_hvacr01`, `lg_hvacr01_status`, `lg_hvacr01_control`
+> - Composite device id 예: `lg_icp01:81` (legacy `lgcnp:81` 마이그레이션 자동)
+> - 본 SPEC 의 변경 이력 (Change History) 의 v1.x 항목들은 rename 이전 (LGCNP-01 / lgcnp / SPEC-LGCNP-001) 시점의 기록을 보존한다.
+
+---
+
+## 변경 이력 (Change History)
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2026-05-29 | v1.18.27 | **3종 HVACR-01 에이전트 config 통일 — LG 기준 (additive only)**. LG 명세가 3종 통일의 표준이 되어, LG 측 변화는 신규 로그 옵션 3종 노출에 한정된다. (1) **신규 로그 옵션 3종 (additive)** — `log_decode_errors`, `log_drops`, `log_state_updates` (boolean, default false). 의미: per-error WARN 로그 토글 (CRC 불일치, 검증 실패 등) + msgCh / ring buffer 가득 참 drop per-message WARN + device state 변경/report/keepalive emit DEBUG 로그. 통계 카운터 (`framesInvalid`, `framesDropped` 등) 는 옵션 값과 무관하게 항상 증가 (Samsung `log_decode_errors` 패턴 동일). (2) **`report_interval` 기본값 명시 — 60s** (이전부터 `parseLGCNPConfig` 가 string "1m" 형식으로 60s default 처리하던 동작을 명시화). (3) **deprecated alias 미수용 — `notify_interval`** — v1.6.0 (2026-05-19) 부터 `report_interval` 로 통일하면서 alias 만 silent accept 했으나, 본 변경에서 backend 가 명시적으로 parse error 로 거부한다. config 에 `notify_interval` 존재 시 부팅 즉시 실패. 이전엔 v1.6.0 의 deprecation alias 가 운영자 인지 없이 누적되던 문제를 해소. (4) **본 SPEC 자체의 REQ 항목 변경 없음** — emit 동작 / device schema / status 노드 행동은 모두 v1.18.26 시점과 동일하다. 관련: SPEC-SAMSUNG-HVACR-001 v1.18.0, SPEC-CENTURY-HVACR-001 v0.5.0, `docs/migration/hvacr-config-unification.md`, CHANGELOG.md [Unreleased]. |
+| 2026-05-28 | v1.18.26 | **status 노드 3종 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. 본 SPEC 의 LG ICP-01 노드는 v0.18.24 부터 이미 inactivity-fallback 모델을 사용 중이므로 동작 변경은 없으며, 다음의 additive / cleanup 만 적용됐다. (1) **신규 advanced 필드 `unit_id`** — 선택적 STX byte hex 필터 (`"58"` ODU / `"81"`–`"BF"` IDU 64 units). 빈 값이면 모든 프레임 처리. `cfg.UnitID` 가 설정된 경우 `drainNewFrames` 의 `lgHvacr01MatchAddressing` 필터로 비매칭 프레임 무시 + `requestStateRefresh` 의 `unit_id` 동봉. (2) **`group_id` 필드 (미사용, schema parity)** — Samsung NASA 의 group/bus 식별자와 schema 통일을 위해 LG 노드 config 에도 추가하지만 동작에는 사용되지 않는다. (3) **출력 metadata 의 `unit_id` / `slot_num` 제거 (Breaking)** — 프로토콜 해석 단계에서만 의미가 있던 내부 표현이라 downstream consumer 에게 불필요. `MetadataEmitOptions.UnitID` / `SlotNum` 필드 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. `device_id` (UUID) 와 노드 어드레싱 필드로 대체. (4) **deprecated 옵션 호환 유지** — `poll_interval` / `poll_command` / `recent_count` 는 v0.18.24 부터 이미 deprecation alias (no-op) 였으며, 본 변경에서도 제거되지 않고 호환을 위해 계속 수용된다 (Samsung / Century 는 동일 필드들이 제거됨). |
+| 2026-05-25 | v1.18.22 | **ODU SEQ=01 b[13]^0x1D marker variant 자동 감지**. 사용자 실측: 일부 디바이스가 SEQ=01 에서 표준 XOR 체크섬 미사용, 대신 `b[19] = b[13] ^ 0x1D` marker 패턴 사용. 4개 프레임 (b[13]=0x96→b[19]=0x8B 2건, b[13]=0x00→b[19]=0x1D 2건) 브루트포스 분석 결과 — 다른 XOR/SUM 범위 + 상수 / CRC-8 모두 불일치, 단 b[13]^0x1D 만 모두 일치. v0.18.10 의 SEQ=04 0x55 marker fallback 패턴 동일 구조로 lgcnpVerifyODUChecksum SEQ=01 분기에 fallback 추가: 표준 XOR 실패 시 b[13]^0x1D==b[19] 면 유효 처리. 표준 XOR 디바이스 동작 무영향. 테스트: 4개 실측 프레임 fixture + 변조 frame 거부 회귀. |
+| 2026-05-25 | v1.18.21 | **중복 keepalive 옵션 제거 + notifyLoop emit 형식 v0.18.12 정정**. 사용자 보고: Web UI 에 "상태보고 주기" 필드 2개 노출, 두번째 (state_report_interval) 가 빈 값으로 첫번째 (report_interval, "1m" 설정) 덮어쓰는 것처럼 보임. 분석 결과 v0.6.0 부터 이미 존재하던 `report_interval` (NotifyInterval, 별도 notifyLoop goroutine) 이 정상 keepalive 메커니즘. v0.18.18 의 `state_report_interval` (StateReportInterval, shouldEmit 의 keepaliveDue) 는 완전 중복. (1) v0.18.18~v0.18.20 의 LGCNPConfig.StateReportInterval 필드 / parseLGCNPConfig 의 state_report_interval 파싱 / shouldEmitODU/IDU 의 keepaliveDue 로직 / LGCNPAgent.lastODUEmitAt/lastIDUEmitAt 캐시 / 관련 테스트 (lgcnp_keepalive_test.go, lgcnp_state_report_interval_test.go) 일괄 제거. Web UI agentSchemas 의 중복 state_report_interval 필드 제거. captureLoop/Configure 로그도 notify_interval 로 정정. (2) emitIDUDeviceState / emitODUDeviceState (notifyLoop 이 호출) 의 DevID/DeviceID 가 v0.18.6 구형식 ("idu-N" / "odu") + DeviceID 누락 상태였음 → v0.18.12 표준 (unit_id="1"~"5"/"0" + DeviceID=UUID) 로 정정. 이제 trigger="report" emit 이 trigger="change" emit 과 동일 metadata 시그니처. |
+| 2026-05-25 | v1.18.20 | **state_report_interval 입력 관용 처리 + Configure 변경 로그**. 사용자 보고: Web UI 에서 설정했는데 keepalive 동작 안함. 가능 원인 — Web UI form serializer 가 string 외 형식 (number, 단위 없는 숫자 등) 으로 전송. (1) `parseLGCNPConfig` 가 string ("30s"/"1m"/"30") + int/int64/float64 (초 단위) 모두 수용. 단위 없는 숫자는 초로 해석. (2) `Configure()` 가 변경 적용 시 INFO 로그 emit — `dedupe_frames` / `event_temp_threshold` / `state_report_interval` / `verify_redundancy` 값 노출. 운영자가 Web UI 변경 반영 여부 즉시 확인 가능 (재기동 없이도). 테스트 11종 추가 (string/number 형식 + missing/invalid). |
+| 2026-05-24 | v1.18.19 | **keepalive 동작 가시성 보강**. 사용자 보고 "지정된 시간이 지났는데도 상태보고 안됨" — 옵션 로드 / keepalive 발생 여부 추적 불가. (1) `shouldEmitODU` / `shouldEmitIDU` 가 keepalive emit 시 `reason="keepalive"` 반환 (이전엔 빈 문자열). (2) caller (handleODUFrame / emitIDUEventLocked) 에서 `reason=="keepalive"` 일 때 DEBUG 로그 emit (`"lgcnp: ODU/IDU 프레임 keepalive emit"` + unit_id + interval). (3) captureLoop 시작 INFO 로그에 `dedupe_frames` / `event_temp_threshold` / `state_report_interval` 노출 — 옵션이 실제로 로드되었는지 즉시 확인 가능. 참고: keepalive 는 incoming frame 에 piggyback — bus 가 silent 면 발생 안 함. |
+| 2026-05-24 | v1.18.18 | **state_report_interval keepalive 옵션 신설**. 동일 상태가 지속되어 dedup 차단된 경우에도 주기적으로 emit 강제. `LGCNPConfig.StateReportInterval` (time.Duration, default 0 = 비활성) 추가, config 키 `state_report_interval` ("30s" / "1m" 등). `shouldEmitODU` / `shouldEmitIDU` 에 keepalive 로직 통합 — 마지막 emit 시각 (`lastODUEmitAt` / `lastIDUEmitAt`) 캐시 후 interval 경과 시 dedup 무시. downstream consumer 의 state freshness 확보 + offline 감지 보조 용도. Web UI agentSchemas 에 옵션 노출. 테스트 3종 추가 (IDU / ODU keepalive + interval=0 regression). |
+| 2026-05-24 | v1.18.17 | **drop 메시지 DEBUG 가시성 강화**. v0.18.14 의 silent discard 가시성 작업이 ParseError 경로만 다뤘으므로 dedup drop / msgCh full drop 는 여전히 silent (msgCh full 의 WARN 만 10초 간격). 해결: (1) dedup drop 2 사이트 (ODU SEQ=02 / IDU) 에 DEBUG 로그 추가 (`"lgcnp: ODU 프레임 dedup — skip"` / `"lgcnp: IDU 프레임 dedup — skip"`) + unit_id. (2) msgCh full drop 에 매 회 DEBUG 로그 추가 (rate-limited WARN 과 별도). 이제 DEBUG 모드에서 모든 drop 경로 추적 가능 — checksum / validation / dedup / msgCh full / unknown STX / parse error / idle timeout (별도 카운터). |
+| 2026-05-24 | v1.18.16 | **i/o timeout 로그 spam 제거 + idle_timeouts 통계 분리**. v0.18.14 에서 silent discard 가시성을 위해 모든 parse error 를 DEBUG 로 노출했으나, TCP 트랜스포트의 read deadline 만료 (i/o timeout) 는 idle bus 의 정상 상태이므로 4~5 초 마다 로그 spam 발생. 해결: `isLGAPTimeoutError(err)` 헬퍼 신설 (transport.go), captureLoop 가 timeout 을 별도 분기 처리 — `idleTimeouts` atomic 카운터만 증가, 로그 emit 하지 않음. get_stats 응답에 `idle_timeouts` 노출 (운영자가 idle 빈도 모니터링 가능). |
+| 2026-05-24 | v1.18.15 | **IDU short frame 사이 padding 1~3B 자동 소비**. 사용자 실측 (2026-05-24): 일부 디바이스 / Serial-to-TCP 브릿지가 short frame (20B) 사이에 0x00 padding 1~3 byte 를 삽입해 송신. 이전 v0.18.1 의 Peek(1) 은 padding 을 보고 long variant 로 오인 → 40B 를 단일 frame 으로 묶어 redundancy 검증 실패 (사용자 로그: "IDU 프레임 검증 실패 — 폐기", raw 가 IDU#1+IDU#2 두 프레임 결합). 해결: Peek(3) 으로 확장, 우선순위 판단: (1) 첫 byte 가 STX → short, no padding. (2) 첫 byte 가 IDU_INDEX (0x01~0x05) → 표준 long. (3) 그 외 + 1~2 byte 내 STX → short + padding `reader.Discard(i)` 로 소비. 표준 long frame regression 없음 (b[20]=IDU_INDEX 검사로 보호). |
+| 2026-05-24 | v1.18.14 | **수신/폐기 패킷 디버그 가시성 강화**. 이전엔 silent 하게 폐기되던 두 경로에 DEBUG 로그 추가. (1) `LGCNPFrameParser.ReadFrame` 의 STX 동기화 복구로 skip 된 byte 를 `LastSkippedCount` / `LastSkippedSample` 로 노출 (호출자 추적 가능). captureLoop 가 ReadFrame 성공 시 skip 발생 여부 확인해 DEBUG 로그 emit (`lgcnp: STX 동기화 — 알 수 없는 byte 폐기`, skipped + hex sample + total_skipped). (2) parser 가 EOF / connection error 외 에러 반환 시 이전엔 silent `continue` 였으나 v0.18.14 부터 DEBUG 로그 emit (`lgcnp: 프레임 파싱 에러 — skip`). (3) `bytesSkipped` / `parseErrors` atomic 카운터 신설, get_stats 응답에 노출 (운영자가 누적 폐기량 모니터링 가능). |
+| 2026-05-24 | v1.18.13 | **DEV_TYPE 안정화 — b[3] upper nibble 만 채택**. 실측 결과 동일 IDU 에서 b[3] 의 lower nibble 이 frame 마다 변화 (0x72/0x73/0x75 = upper 0x7 고정, lower 가변). frame parser 에서 `DevType: raw[3] & 0xF0` 으로 마스킹해 안정값 확보. lower nibble 은 frame counter 또는 status 추정 — 현재 사용처 없음. 영향: `LGCNPIDUFrame.DevType` 값이 0x91 / 0x7C / 0x70 등 0x?0 형식으로 통일. 디버그 로그 / metadata 의 device_type 값이 더 이상 frame 마다 변하지 않음. |
+| 2026-05-24 | v1.18.12 | **BREAKING — unit_id 체계 단순화 + node_id/unit_id 옵션화**. (1) LGCNP unit_id 형식 변경: ODU `"odu"` → `"0"`, IDU `"idu-N"` → `"N"` (정수 ID 통일). `lgcnpODUUnitID` 상수 + `lgcnpIDUUnitID(iduNum)` 헬퍼 신설. processGetState 는 새 형식 + legacy 형식 모두 input 수용 (호환). processGetAll / emit 경로의 unit_id 출력은 새 형식 통일. (2) `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수였으나 옵션화. Web UI 에 `emit_unit_id` / `emit_node_id` boolean 추가. promoteDevIDToMetadata 시그니처에 `emitUnitID bool` 추가. (3) Web UI 노드 id 생성을 `crypto.randomUUID()` 로 변경 (이전: `\${type}-\${Date.now()}`). 다운스트림 마이그레이션: `unit_id == "odu"` → `"0"`, `unit_id == "idu-3"` → `"3"`. |
+| 2026-05-24 | v1.18.11 | **fan_byte=0x30 범용 미풍 매핑**. v1.18.10 의 DEV_TYPE=0x72 전용 매핑을 범용으로 승격 — `lgcnpFanByteToID` 가 `0x30 / 0x54 → quiet`, `0x14 / 0x50 → low` 로 매핑. 사용자 실측 DEV_TYPE=0x73 도 동일 패턴 확인. `devType` 파라미터는 시그니처에 유지 (향후 장치-특이 override 대비). |
+| 2026-05-24 | v1.18.10 | **ODU SEQ=04 fixed 0x55 marker 자동 감지 + fan_byte=0x30 (DEV_TYPE=0x72) 매핑**. (1) `lgcnpVerifyODUChecksum` (SEQ=04): SUM 검증 실패 시 `b[19]==0x55` 이면 fixed marker variant 로 자동 인식해 유효 처리. 사용자가 `verify_odu_checksum=false` 옵션 수동 설정 불필요. 표준 SUM 디바이스 동작 무영향. (2) `lgcnpFanByteToID(raw, devType)` 시그니처 확장 — DEV_TYPE=0x72 의 `0x30=quiet` 매핑 추가. `lgcnpIsKnownFanByte` 헬퍼로 알려진 조합의 디버그 로그 suppress. |
+| 2026-05-24 | v1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `lgcnp-status` / `lgcnp-control` / `lgcnp` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata` / `promoteDevIDWithUUID` 에 `opts MetadataEmitOptions` 파라미터 추가. Web UI nodeSchemas 에 4개 boolean 필드 (advanced) 노출. |
+| 2026-05-24 | v1.18.7 | **register-decoded 경로 UUID 자동 주입 + DeviceInfoRepository + AgentID 키 통일**. (1) `promoteDevIDWithUUID(msg, payload, agentName, opts)` 헬퍼 — `payload.unit_id` 로 글로벌 UUID 를 resolve 해 `device_id` 주입. (2) `internal/agent/device_info_repo.go` 의 `DeviceInfoRepository` 싱글턴 신설 — agent 가 device 등록 시 `{device_type, label}` publish, 노드가 promote 시 조회. (3) ResolveDeviceID / SetDeviceInfo 호출 키를 agent의 `Name()` → `ID()` 로 통일해 노드 (`cfg.AgentRef` = AgentID) 와 일치, 단일 device 가 단일 UUID 발급. |
+| 2026-05-23 | v1.18.6 | **BREAKING — `device_id` → `unit_id` 분리 + 글로벌 UUID `device_id`**. LGCNPIDUFrameEvent / LGCNPODUFrameEvent / processGetState / processGetAll 의 emit `device_id` ("idu-N" / "odu") 를 `unit_id` 로 변경. 신규 `device_id` 는 (agentName, unitID) 영속 UUID. |
+| 2026-05-23 | v1.18.3 | **BREAKING — `device_type` 값 카테고리 prefix**. `"indoor"` → `"HVACR.IDU"`, `"outdoor"` → `"HVACR.ODU"`. LGCNP agent 의 `LGCNPFrameMetadata.DeviceType`, `LGCNPDevice.Type` 필드 값 + processGetState/processGetAll emit 값 변경. `Label` 필드는 `"indoor-N"`/`"outdoor"` 그대로 유지 (인간 가독). |
+| 2026-05-23 | v1.18.1 | **IDU 프레임 길이 자동 감지 (20B short / 40B long) + ODU 체크섬 검증 토글**. (1) 일부 디바이스 / Serial-to-TCP 브릿지 환경에서 IDU 프레임이 표준 40바이트가 아닌 20바이트 short 형식 (b[0..19] 만, redundancy 절반 부재) 으로 도착하는 문제 해결. `LGCNPFrameParser` 를 `bufio.Reader` 로 wrap 하여 STX 이후 19바이트만 먼저 읽고 다음 byte 를 Peek — LGCNP STX (0x58 / 0x81~0x85) 또는 EOF 이면 short 변형 (b[20..39] zero-pad, `IsShort=true`), 그 외엔 표준 long. Short 는 `Power` / `Mode` (b[10]) / `SetTemp` (b[11]) / `SlotNum` (b[9]) 만 유효, `CurrentTemp` / `InletTemp` / `OutletTemp` / `FanByte` 는 부재. `RedundancyValid` / `StructureValid` 는 trivially true. (2) ODU `verify_odu_checksum` (boolean, default true) 옵션 추가. 일부 디바이스 변형의 SEQ=04 b[19]=0x55 fixed marker (표준 SUM checksum 미사용) 처리 — false 로 설정 시 체크섬 mismatch 에도 frame 폐기하지 않고 진행. Web `agentSchemas.ts` 에 `verify_redundancy` + `verify_odu_checksum` 옵션 노출 (v1.6.2 에서 제거됐던 `verify_redundancy` 복원). |
+| 2026-05-22 | v1.18.0 | **status 노드 OFF 상태 필드 제거 옵션**. `lgcnp-status` / `lgcnp` 노드에 `omit_state_when_off` (boolean, default false) 옵션 추가. 활성화하고 `payload.power == false` 이면 `current_temperature` / `mode` / `fan_speed` 를 emit/response 메시지에서 제거. `target_temperature`, `online` 등 OFF 에서도 의미있는 필드는 보존. |
+| 2026-05-22 | v1.14.0 | **BREAKING — 메시지 필드명 정리**. `dev_id` → `device_id`, `dev_type` → `device_type`, `current_temp` → `current_temperature`, `inlet_temp` → `inlet_temperature`, `outlet_temp` → `outlet_temperature`, `comp_discharge_temp` → `compressor_discharge_temperature`, `comp_suction_temp` → `compressor_suction_temperature`, `condenser_temp_a` → `condenser_temperature_a`, `condenser_temp_b` → `condenser_temperature_b`. LGCNP agent IDU/ODU struct json tag 일괄 변경. |
+| 2026-05-21 | v1.13.0 | **BREAKING — payload.state wrapper 평탄화**. msg.Type="device_state.X" 가 schema 명시이므로 state wrapper 는 중복. flattenStateToPayload 헬퍼로 state 의 키들을 payload 루트로 hoist. 다운스트림: `$.payload.state.<field>` → `$.payload.<field>`. |
+| 2026-05-21 | v1.12.0 | **BREAKING — Message schema 정리**: `metadata.message_type` → `msg.Type()`, `payload.dev_id` → `metadata.dev_id`, `payload.last_seen_ms` → `msg.Timestamp()`. LGCNPODUFrameEvent/IDUFrameEvent 의 emit 후 노드 단에서 promotion. 다운스트림: `$.metadata.message_type` → `$.type`, `$.payload.dev_id` → `$.metadata.dev_id`, `$.payload.last_seen_ms` → `$.timestamp`. |
+| 2026-05-21 | v1.11.0 | **BREAKING — protocol-prefixed metadata 키 제거**. `lgcnp_node_id` → `node_id`, `lgcnp_source` → `node_source`. 모든 노드 통일 prefix-less 표준 (HVAC + mqtt + modbus). 다운스트림: `$.metadata.lgcnp_*` 참조를 통일 키로 마이그레이션. |
+| 2026-05-21 | v1.10.0 | **BREAKING — `lgcnp_source="request"` 제거**. message_type="device_state.response" 와 중복. Process 응답에서 lgcnp_source 라인 삭제. lgcnp_source="poll" / "poll_bulk" 는 유지. 다운스트림: `lgcnp_source == "request"` → `message_type == "device_state.response"`. |
+| 2026-05-21 | v1.9.0 | **BREAKING — payload.type 제거**. v0.8.0 message_type 계층형 분류로 인해 payload.type="device_state" 가 prefix 의 중복이 됨. `LGCNPODUFrameEvent.Type` / `LGCNPIDUFrameEvent.Type` 필드 삭제. 노드 단의 message_type 이 단일 schema 식별자 역할 담당. 다운스트림: `$.payload.type` 검사 → `$.metadata.message_type` prefix 검사. |
+| 2026-05-21 | v1.8.0 | **BREAKING — metadata.message_type 계층형 분류 + payload.trigger 제거**. 직교 분류 (`trigger` + `message_type="event\|response"`) 가 종속 관계라는 사용자 지적에 따라 단일 진실원천 통합. `applyDeviceStateMessageType(msg, payload, defaultSubType)` 헬퍼로 payload.trigger → `metadata.message_type="device_state.<trigger>"` 변환 + payload 에서 trigger 제거. 값 체계: `device_state.change` / `.report` / `.keepalive` / `.init` / `.poll` (자발 emit) + `device_state.response` (Process 응답). LGCNP 노드의 pollSingle / pollRecentBulk / Process 모든 emit 사이트 적용. 다운스트림 필터 변경 필요. |
+| 2026-05-21 | v1.7.14 | **HVAC status payload 의 nested metadata 를 message metadata 로 promote**. `promotePayloadMetadata` 헬퍼 신설. LGCNP-Status/LGCNP 의 pollSingle/pollRecentBulk emit 사이트 적용. |
+| 2026-05-21 | v1.7.8 | **5 HVAC 통합 v0.7.x — 노드 폴링 명령 통일 + 통일 schema + 통일 ID**. (1) v0.7.0: 출력 schema 단일화 `type:"device_state"`, lgcnpIDUSnapshot wrapper 캐시 제거, LGCNPDevice 에 IDUNum/SlotNum 추가. (2) v0.7.1: 폴링 명령 `drain` → `get_recent + count=0` 통합. (3) v0.7.2: `processGetAll` 추가 (IDU + ODU 즉시 snapshot). (4) v0.7.3: `processGetState` 추가 (dev_id "odu" / "idu-N"). `processGetStats` 는 LGCNP 가 이미 보유. (5) v0.7.5: LGCNPIDUParsed.Mode/FanSpeed → int 통일 ID (`internal/agent/hvac/codes.go`). `lgcnpOpModeToHVACID` / `lgcnpFanSpeedToHVACID` 변환기. (6) v0.7.6: Manager.Restart lock 단축 (Restart 영향). (7) v0.7.7~v0.7.8: 노드 pollSingle byte-equal dedup + normalizeForDedup (last_seen_ms 제외). |
+| 2026-05-20 | v1.6.8 | **정기 보고 `trigger=report` 실제 구현 + LGCNP type 통일**. notifyLoop stub 을 실제 `emitPeriodicReport` 로 구현 — lastIDUParsed/lastODUParsed 캐시 기반으로 trigger="report" frame event emit. type 필드 `lgcnp_idu_frame` / `lgcnp_odu_frame` → 단일 `device_state` 로 통일. metadata.device_type ("indoor"/"outdoor") 추가. shouldEmitIDU 시그니처에 slot byte 추가 (v0.7.0 에서 다시 단순화). |
+| 2026-05-20 | v1.6.7 | **온도 게이트 범위 확장**. v1.6.6 의 CurrentTemp 만 검사 → InletTemp/OutletTemp 0.5℃ 변경 시 새어나가는 결함. `nonTempFieldsChangedLGCNPIDU` + `maxTempDeltaLGCNPIDU` helper 로 분리 (CurrentTemp + InletTemp + OutletTemp 의 max\|Δ\| 기반). LGCNP ODU 도 동일 게이트 (OutdoorTemp + CompSuction + CompDischarge + CondenserA/B). |
+| 2026-05-20 | v1.6.6 | **이벤트 보고 실내온도 임계값 `event_temp_threshold`**. config 옵션 추가 (default 1.0℃, 0 이하 비활성). shouldEmitIDU 의 byte-equal dedup 통과 후 parsed state 비교로 게이트 적용. lastIDUParsed cache 도입. |
+| 2026-05-19 | v1.6.5 | **lgcnp-status 노드 수신 누락 fix (last_seq 응답)**. v0.5.0 schema 슬림화 시 frame JSON 에서 `seq` 필드 제거 → 노드측 pollRecentBulk 의 프레임별 seq 필터링 모두 거짓 → sourceCh emit 0. 에이전트 processGetRecent/processDrain 응답에 `last_seq` 필드 추가 (반환 프레임의 최대 Seq), 노드는 응답의 last_seq 로 커서 갱신. |
+| 2026-05-19 | v1.6.4 | **LGCNP 통계 정정 (130x inflation fix)**. Process 1 호출당 internal-send 카운트 1 회로 정정 (이전 `AddInternalMessagesSent(N)` 으로 frame 수만큼 누적 → 130x inflated). NASA / LGCNP / Century 패턴 통일. |
+| 2026-05-19 | v1.6.0 | **옵션 명칭 통일 (notify→report)**. `notify_interval` → `report_interval`, `notify_mode` → `report_mode`. trigger 값 `keepalive` → `report`. 이전 명칭은 deprecation alias. |
+| 2026-05-19 | v1.5.0 | **JSON schema 슬림화 (Breaking)**. timestamp_ms / seq / raw_hex / confirmation_status 메타 필드 제거. 통합 schema = `{type, dev_id, trigger, last_seen_ms, state, metadata}`. LGCNP IDU/ODU frame event 도 동일. |
+| 2026-05-14 | v1.3 | **노드 Init-tolerance 패턴 적용** (REQ-M4 노드 동작 보강). `lgcnp`/`lgcnp-status`/`lgcnp-control` 노드가 Init 시점에 `agent_ref` 에이전트를 resolve 하지 못하면(disabled 또는 미등록) hard-fail 하지 않고 경고 로그 + Running 전이(deferred connection) 후, 에이전트 활성화 시 SPEC-ENGINE-001 `ReinitNodesForAgent` 로 자동 재연결한다. resolver 미설정(구성 오류) 및 에이전트 타입 불일치는 회복 불가능하므로 hard-fail 유지. 본 SPEC 의 EARS 요구사항 자체는 변경 없으며 노드 Init 동작만 LGCP-003 v1.1.0 / LGAP-001 v1.2.0 / SERIAL-001 v2.2.0 / NASA-001 v1.9.0 과 동일 패턴으로 정렬. 관련: SPEC-AGENT-005 v1.1.0, SPEC-ENGINE-001 v1.3.0 Module 8. |
+
+---
+
+## 1. Environment (환경)
+
+### 1.1 프로젝트 컨텍스트
+
+- **프로젝트**: xflow (Go 모듈: `github.com/xtra/xflow`)
+- **대상 장비**: LG 시스템 에어컨 실내기 **LRD-N837T** + 실외기
+- **프로토콜**: LG ICP-01 (LG CN-485 Protocol Version 1) — 프로토콜 코드 `lg_icp01`
+- **에이전트**: LG HVACR-01 — 에이전트 타입 `lg_hvacr01`
+- **물리 계층**: RS-485, **1200 bps**, 8N1 (반이중)
+- **기존 유사 구현**: LG HVACR-02 에이전트 (`internal/agent/lg/lg_hvacr02_*.go` / `lg_icp02_*.go`, 이전 `lgcp_*.go`), LG HVACR-02 노드 (`internal/node/lg_hvacr02.go`, 이전 `lgcp.go`)
+
+### 1.2 기술 스택
+
+- **언어**: Go 1.23+
+- **시리얼 통신**: 기존 `LGAPTransport` 인터페이스 재사용
+- **라이프사이클**: `pkg/lifecycle.BaseLifecycle`
+- **메시지 시스템**: `pkg/message.Message`
+- **에이전트 프레임워크**: `internal/agent.Agent` 인터페이스
+- **노드 프레임워크**: `internal/node.Node`, `internal/node.SourceNode` 인터페이스
+- **디바이스 관리**: `internal/device.DeviceProvider` 인터페이스
+- **Web UI**: React + TypeScript (`web/src/config/`)
+
+### 1.3 LG ICP-02 와의 핵심 차이점
+
+| 항목 | LG ICP-02 | LG ICP-01 |
+|------|------|----------|
+| 보레이트 | 9600 bps | **1200 bps** |
+| 프레임 유형 | 단일 (STX=0x56) | **이중**: TYPE-A (0x58, 20B ODU) + TYPE-B (0x81~0x85, 40B IDU) |
+| CRC | CRC-16/XMODEM | **없음** -- 이중 기록 기반 무결성 |
+| 무결성 보장 | CRC 체크섬 | **6계층 신뢰성 모델** |
+| 주소 체계 | 가변 길이 (DLEN/SLEN) | **고정**: TYPE-A 주소 없음, TYPE-B는 IDU_ADDR (0x81~0x85) |
+| 레지스터 | MSB 기반 가변 길이 | **고정 오프셋** (패킷 유형별) |
+| 온도 변환 | 원시 레지스터 값 | **전용 공식**: 실내/흡입/토출=((b[n]-0x40)/2.0). b[9]는 슬롯번호(설정온도 아님) |
+| IDU 수 | 자동 탐색 | **고정 0x81~0x85** (최대 5대) |
+| 프레임 감지 | STX+LEN+ETX | **STX 패턴 기반**: 0x58 (ODU) 또는 0x81~0x85 (IDU), 고정 길이 |
+
+---
+
+## 2. Assumptions (가정)
+
+### 2.1 프로토콜 가정
+
+- [A-01] LG ICP-01 프로토콜은 **읽기 전용(패시브 캡처)**이다. 현재 알려진 쓰기 명령은 없다.
+- [A-02] IDU 주소 범위는 0x81~0x85 (5대)로 고정되며, 실제 연결된 IDU만 패킷을 발생시킨다.
+- [A-03] ODU(TYPE-A)는 항상 STX=0x58로 시작하며, SEQ=01~05의 5개 서브패킷으로 한 사이클을 구성한다.
+- [A-04] TYPE-B(IDU) 패킷의 b[38], b[39]는 센서 파생값이며 체크섬이 아니다 (분석 보고서 확정).
+- [A-05] **1200 bps**에서 20바이트 전송은 약 167ms, 40바이트 전송은 약 333ms 소요된다.
+- [A-06] 한 사이클(SEQ=01~05 + IDU#1~#5)은 약 4~6초이다.
+
+### 2.2 구현 가정
+
+- [A-07] 기존 `LGAPTransport` 인터페이스(시리얼/TCP)를 보레이트 1200으로 재사용할 수 있다.
+- [A-08] LG HVACR-02 에이전트의 아키텍처 패턴(캡처 루프, 링 버퍼, 디바이스 관리)을 따른다.
+- [A-09] 디바이스 상태 속성명은 NASA / LG HVACR-02 와 통일한다 (`power`, `target_temp`, `current_temp`, `mode`, `fan_speed`).
+- [A-10] 제어 노드는 플레이스홀더로 구현하며, `control_enabled` 플래그로 비활성화 상태를 유지한다.
+
+---
+
+## 3. Requirements (요구사항) -- EARS 형식
+
+### M1: LG ICP-01 프레임 파서
+
+**[REQ-M1-01]** 시스템은 **항상** RS-485 버스에서 수신된 바이트 스트림을 TYPE-A(20바이트, STX=0x58)와 TYPE-B(40바이트, STX=0x81~0x85) 두 유형의 프레임으로 분류해야 한다.
+
+**[REQ-M1-02]** **WHEN** 바이트 0x58이 수신되면 **THEN** 이후 19바이트를 추가 수신하여 20바이트 TYPE-A 프레임으로 조립해야 한다.
+
+**[REQ-M1-03]** **WHEN** 바이트 0x81~0x85가 수신되면 **THEN** 이후 19바이트를 먼저 수신한 뒤 다음 바이트를 Peek 하여 IDU 프레임 길이를 자동 감지해야 한다 (v1.18.1):
+- 다음 바이트가 LG ICP-01 STX (0x58 또는 0x81~0x85) 이거나 EOF 이면 → 20바이트 short 변형으로 처리 (b[20..39] zero-pad, `IsShort=true`, `RedundancyValid`/`StructureValid` trivially true).
+- 그 외 → 추가 20바이트를 수신하여 표준 40바이트 long 형식으로 조립.
+
+**[REQ-M1-04]** **WHEN** TYPE-A 프레임에서 SEQ=01 또는 SEQ=05이면 **THEN** `XOR(pkt[0:19]) == pkt[19]` 체크섬을 검증해야 한다.
+
+**[REQ-M1-05]** **WHEN** TYPE-A 프레임에서 SEQ=04이면 **THEN** `SUM(pkt[0:19]) & 0xFF == pkt[19]` 체크섬을 검증해야 한다. v1.18.1: `verify_odu_checksum=false` 옵션이 설정되면 mismatch 에도 프레임을 폐기하지 않는다 (일부 디바이스 변형의 SEQ=04 b[19]=0x55 fixed marker 호환).
+
+**[REQ-M1-06]** **WHEN** TYPE-A 프레임에서 SEQ=02 또는 SEQ=03이면 **THEN** 체크섬 검증을 수행하지 않아야 한다 (b[18], b[19]는 센서 데이터).
+
+**[REQ-M1-07]** **WHEN** TYPE-B 프레임이 long 형식이면 (`IsShort=false`) **THEN** 이중 기록 검증(`b[9]==b[29]`, `b[23]==b[36]`)을 수행해야 한다. Short 형식 (`IsShort=true`) 은 b[20..39] 가 zero-pad 이므로 trivially 통과.
+
+**[REQ-M1-08]** **WHEN** TYPE-B long 프레임에서 이중 기록이 불일치하면 **THEN** 해당 프레임을 폐기하고 무효 카운터를 증가시켜야 한다 (`verify_redundancy=true` 시).
+
+**[REQ-M1-09]** **WHEN** TYPE-B 프레임이 수신되면 **THEN** 고정 바이트 구조를 검증해야 한다:
+- `pkt[1]`이 비트 마스크 `0x4F` (bit6|bit3|bit2|bit1|bit0) 범위 내여야 한다. 허용 비트 외(bit7,bit5,bit4)가 설정되면 무효 처리한다. 허용 CMD: 0x00~0x03, 0x06, 0x08~0x09, 0x41, 0x43, 0x47, 0x49
+- `pkt[20]`이 IDU 번호(`pkt[0] - 0x81 + 1`)와 일치해야 한다 (IDU_INDEX)
+
+**[REQ-M1-09a]** **WHEN** TYPE-B 프레임이 파싱되면 **THEN** CMD 바이트에서 다음 비트 플래그를 추출해야 한다:
+- bit6 (0x40): A/B 사이클 마커 (0=A, 1=B)
+- bit3 (0x08): 그룹 B 식별
+- bit2 (0x04): 설정 미변경 IDU 마커
+- bit0 (0x01): 활성 운전 상태
+- b[18] bit7: 활성 운전 플래그 (베이스=0, 활성/전이=1)
+
+**[REQ-M1-10]** **WHEN** TYPE-B 프레임에서 온도값이 추출되면 **THEN** 물리적 범위를 검증해야 한다:
+- 실내온도: 0~50도C
+- 흡입온도: 0~70도C
+- 토출온도: 0~70도C
+
+**[REQ-M1-11]** **IF** 온도값이 물리적 범위를 벗어나면 **THEN** 경고를 로그에 기록하되 프레임을 완전히 폐기하지는 않아야 한다.
+
+**[REQ-M1-12]** **가능하면** 변화율 검증을 제공한다 -- 이전 사이클 대비 온도 변화가 2.0도C 이상이면 경고를 발생시킨다 (설정온도 제외).
+
+### M2: LG HVACR-01 에이전트
+
+**[REQ-M2-01]** 시스템은 **항상** `agent.Agent` 인터페이스를 구현하는 `Hvacr01Agent` (에이전트 타입 `lg_hvacr01`) 를 제공해야 한다.
+
+**[REQ-M2-02]** `Hvacr01Agent`는 **항상** LG HVACR-02 에이전트와 동일한 라이프사이클(Init/Start/Stop/Pause/Resume)을 따라야 한다.
+
+**[REQ-M2-03]** **WHEN** 에이전트가 시작되면 **THEN** `LGAPTransport`를 1200 bps 8N1로 열고 캡처 루프를 시작해야 한다.
+
+**[REQ-M2-04]** **WHEN** 캡처 루프에서 유효한 TYPE-A 프레임이 수신되면 **THEN** ODU 상태 이벤트를 생성하여 링 버퍼에 저장해야 한다.
+
+**[REQ-M2-05]** **WHEN** 캡처 루프에서 유효한 TYPE-B 프레임이 수신되면 **THEN** IDU 상태 이벤트를 생성하고 온도값, 운전 모드, 풍량을 변환하여 링 버퍼에 저장해야 한다.
+
+**[REQ-M2-06]** 시스템은 **항상** 다음 온도 변환 공식을 적용해야 한다:
+- 설정온도(도C) = `b[11] + 15`
+- 실내온도(도C) = `(b[23] - 0x40) / 2.0`
+- 흡입온도(도C) = `(b[24] - 0x40) / 2.0`
+- 토출온도(도C) = `(b[25] - 0x40) / 2.0`
+
+**[REQ-M2-06a]** 시스템은 **항상** 다음 운전 모드 디코딩을 적용해야 한다:
+- 설정온도: `b[11] + 15` (°C, 범위 18~30)
+- 운전 모드: `b[10] & 0x0F` (하위 니블 = LGAP 모드 코드: 0=냉방, 1=제습, 2=송풍, 3=자동, 4=난방)
+- 풍량: `b[30]` → 통일 풍량 ID (0x54→1=quiet, 0x14/0x50→2=low, 기타→0=auto). DEV_TYPE에 따라 인코딩이 다름
+- 전원: `b[10] & 0x20` — bit5=0이면 ON, bit5=1이면 OFF. OFF 시 mode/fan_speed 미표시
+
+**[REQ-M2-06b]** **WHEN** CMD=0x02이고 SUB_CMD=0x00인 프레임에서 설정온도가 추출되면 **THEN** 해당 값을 디바이스 상태에 반영하지 않아야 한다 (비신뢰 프레임). 다른 CMD 프레임의 값만 사용한다.
+
+**[REQ-M2-07]** **WHEN** TYPE-A SEQ=02 프레임이 수신되면 **THEN** 냉동 사이클 데이터를 추출해야 한다:
+- 외기온도(도C) = `(b[6] - 0x40) / 2.0`
+- 압축기 흡입온도(도C) = `(b[8] - 0x40) / 2.0`
+- 압축기 토출온도(도C) = `(b[11] - 0x40) / 2.0`
+- 응축측 온도A(도C) = `(b[14] - 0x40) / 2.0`
+- 응축측 온도B(도C) = `(b[15] - 0x40) / 2.0`
+
+**[REQ-M2-07a]** **WHEN** TYPE-A SEQ=04 프레임이 수신되면 **THEN** 운전 평균 온도를 추출해야 한다:
+- 운전 평균 온도(도C) = `(b[10] - 0x40) / 2.0`
+
+**[REQ-M2-08]** 시스템은 **항상** `agent.MessageReceiver`, `agent.StatefulAgent`, `agent.BufferInfoProvider`, `agent.TransportChecker` 인터페이스를 구현해야 한다.
+
+**[REQ-M2-09]** 시스템은 **항상** Process 메서드에서 `get_stats`, `get_recent`, `drain` 커맨드를 지원해야 한다.
+
+**[REQ-M2-10]** **WHEN** 트랜스포트 연결이 끊어지면 **THEN** 지수 백오프로 재연결을 시도해야 한다.
+
+**[REQ-M2-11]** 시스템은 **항상** 캡처 통계를 원자적(atomic)으로 추적해야 한다: `framesCaptured`, `framesValid`, `framesInvalid`, `framesDropped`, `bytesReceived`.
+
+**[REQ-M2-12]** **WHEN** b[30] 풍속 바이트가 알려진 값(0x14, 0x50, 0x54) 외의 값이면 **THEN** debug 레벨로 `idu_num`, `fan_byte`, `dev_type`을 로깅해야 한다 — DEV_TYPE별 풍속 인코딩 학습 및 미확정 매핑 식별용.
+
+### M3: 디바이스 관리
+
+**[REQ-M3-01]** **WHEN** TYPE-B 패킷의 IDU_ADDR(0x81~0x85)에서 새로운 주소가 발견되면 **THEN** 해당 IDU를 자동으로 디바이스로 등록해야 한다.
+
+**[REQ-M3-02]** **WHEN** TYPE-A 패킷이 수신되면 **THEN** ODU를 단일 디바이스로 등록해야 한다.
+
+**[REQ-M3-03]** 시스템은 **항상** `device.DeviceProvider` 인터페이스를 구현하여 디바이스 목록을 노출해야 한다.
+
+**[REQ-M3-04]** **WHEN** 유효한 TYPE-B 프레임이 수신되면 **THEN** 해당 IDU 디바이스의 상태를 갱신해야 한다:
+- `power`: 전원 ON/OFF (b[10] bit5=0→ON, bit5=1→OFF)
+- `mode`: 운전 모드 문자열 (b[10] 하위 니블: cool/dry/fan/auto/heat — 전 프로토콜 통일)
+- `fan_speed`: 풍량 문자열 (b[30] → 통일 ID → 문자열: auto/quiet/low/medium/high/turbo)
+- `target_temp`: 설정온도 (b[11] + 15)
+- `current_temp`: 실내온도
+- `inlet_temp`: 흡입온도
+- `outlet_temp`: 토출온도
+
+**[REQ-M3-04a]** 속성명과 값 문자열은 **대시보드 UI 컴포넌트(AcControlPanel)와 동일한 컨벤션을 사용**해야 한다.
+특히 mode는 `cool`/`heat`/`dry`/`fan`/`auto` 그대로 (⚠ `cooling`/`heating`/`dehumidify` 금지).
+대시보드가 이 컨벤션을 준수하지 않으면 mode 필드가 표시되지 않는다 (2026-04-16 회귀 수정).
+
+**[REQ-M3-05]** **WHEN** 디바이스에서 `OfflineTimeout` 기간 동안 패킷이 수신되지 않으면 **THEN** 해당 디바이스를 오프라인으로 전환해야 한다.
+
+**[REQ-M3-06]** **WHEN** 디바이스 상태가 변경되면 **THEN** 등록된 콜백(onDeviceStateChange)을 호출하여 UI에 알려야 한다.
+
+### M4: 플로우 노드
+
+**[REQ-M4-01]** 시스템은 **항상** `lg_hvacr01_status` 노드 타입을 제공해야 한다 (SourceNode 인터페이스, **inactivity-fallback 모델** — v0.18.24 이후).
+
+**[REQ-M4-02]** `lg_hvacr01_status` 노드는 **항상** `agent_ref` 설정으로 LG HVACR-01 에이전트를 참조해야 한다.
+
+**[REQ-M4-03]** **WHEN** `lg_hvacr01_status` 노드가 활성화되면 **THEN** 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리하고, `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 회선 silent 상태에서도 주기적 상태 확보를 수행해야 한다 (v0.18.24+).
+
+**[REQ-M4-03-01]** **WHEN** `lg_hvacr01_status` / `lg_hvacr01` 노드의 advanced config 에 `unit_id` (STX byte hex — `"58"` ODU 또는 `"81"`–`"BF"` IDU) 가 설정되면 **THEN** 해당 STX 와 매칭되는 frame 만 emit 하고, `request_state` 의 target 으로도 사용해야 한다. 빈 값이면 모든 frame 처리 + broadcast (v0.18.26+).
+
+**[REQ-M4-03-02]** 시스템은 **항상** `group_id` 필드를 schema parity 위해 노드 config 에 노출해야 한다 (LG ICP-01 에서는 미사용; Samsung NASA 와의 통일된 스키마 유지) (v0.18.26+).
+
+**[REQ-M4-04]** 시스템은 **항상** `lg_hvacr01_control` 노드 타입을 제공해야 한다 (플레이스홀더).
+
+**[REQ-M4-05]** `lg_hvacr01_control` 노드는 시스템은 **항상** `control_enabled: false` 기본값으로 비활성화 상태를 유지해야 한다.
+
+**[REQ-M4-06]** 시스템은 **항상** `lg_hvacr01` 통합 노드 타입을 제공해야 한다 (상태 + 제어 통합).
+
+**[REQ-M4-07]** **WHEN** `lg_hvacr01` 통합 노드에 제어 키(power, mode, temperature, fan_speed)가 포함된 메시지가 입력되면 **THEN** "제어 미지원" 응답을 반환해야 한다.
+
+**[REQ-M4-08]** 시스템은 **항상** 출력 메시지 metadata 에서 `unit_id` / `slot_num` 키를 제거해야 한다 (v0.18.26+ Breaking). 프로토콜 해석 단계에서만 의미가 있던 내부 표현으로, `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체된다. 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션도 함께 제거된다.
+
+### M5: Web UI 스키마
+
+**[REQ-M5-01]** 시스템은 **항상** `agentSchemas.ts`에 `lg_hvacr01` 에이전트 타입을 등록해야 한다 (보레이트 기본값 1200).
+
+**[REQ-M5-02]** 시스템은 **항상** `nodeSchemas.ts`에 `lg_hvacr01_status`, `lg_hvacr01_control`, `lg_hvacr01` 노드 스키마를 등록해야 한다.
+
+**[REQ-M5-03]** 시스템은 **항상** 에이전트 스키마에서 `agent_select` 옵션에 `lg_hvacr01`를 포함해야 한다.
+
+### M6: 타입 등록
+
+**[REQ-M6-01]** 시스템은 **항상** `agent.DefaultManager`에 `"lg_hvacr01"` 에이전트 타입을 등록해야 한다.
+
+**[REQ-M6-02]** 시스템은 **항상** 노드 레지스트리에 `"lg_hvacr01_status"`, `"lg_hvacr01_control"`, `"lg_hvacr01"` 노드 타입을 등록해야 한다.
+
+---
+
+## 4. Specifications (명세)
+
+### 4.1 패킷 구조
+
+#### TYPE-A (ODU, 20바이트)
+
+```
+[STX=0x58][SEQ 01~05][DATA 17B][CHK 또는 DATA]
+  byte 0      1        2..18          19
+```
+
+- SEQ=01: ODU 정적 상태, XOR 체크섬
+- SEQ=02: ODU 실시간 센서 (외기온도A/B), 체크섬 없음
+- SEQ=03: ODU 부가 상태, 체크섬 없음
+- SEQ=04: ODU 파라미터, SUM 체크섬
+- SEQ=05: ODU 상태2, XOR 체크섬
+
+#### TYPE-B (IDU, 40바이트)
+
+```
+[IDU_ADDR][CMD][SUB_CMD][DEV_TYPE][...][SLOT_NUM][OP_MODE][SET_TEMP]...[ROOM_TEMP][INLET][OUTLET]...[FAN_SPEED]...
+  0x81~85   1     2        3       4~8    9       10       11         23        24     25        30
+```
+
+- 이중 기록: b[9]==b[29] (슬롯번호), b[11]==b[31] (설정온도), b[23]==b[36] (실내온도)
+- CMD 비트 구조: bit6=A/B사이클, bit3=그룹B, bit2=미변경, bit1=베이스, bit0=활성. 11종 CMD 관측 (프로토콜 분석 §6.8)
+- b[10] OP_MODE: bit5=전원(0=ON,1=OFF), 하위 니블=모드 (0=cool, 1=dry, 2=fan, 3=auto, 4=heat). 냉방(0) 실측 확인
+- b[11] SET_TEMP_RAW: 설정온도 = b[11] + 15 (°C), b[31]과 이중 기록. CMD=(02,00)에서는 비신뢰 (프로토콜 분석 §6.10)
+- b[18] bit7: 활성 운전 플래그 (베이스=0, 활성/전이=1)
+- b[30] FAN_SPEED: 0x54=quiet(1), 0x14/0x50=low(2), 기타=auto(0) — DEV_TYPE별 인코딩 차이
+- b[38], b[39]: 센서 파생값 (체크섬 아님)
+
+### 4.2 6계층 신뢰성 모델
+
+| 계층 | 검증 내용 | 적용 대상 |
+|------|----------|----------|
+| 1. UART Framing | 하드웨어 자동 (Stop bit) | 모든 패킷 |
+| 2. 이중 기록 | b[9]=b[29], b[23]=b[36] | TYPE-B |
+| 3. 고정 바이트 | CMD 범위, IDU_INDEX 일치 | TYPE-B; XOR/SUM CHK: TYPE-A SEQ=01,04,05 |
+| 4. 물리 범위 | 온도 유효 범위 | TYPE-A SEQ=02, TYPE-B |
+| 5. 변화율 | 사이클 간 2도C 이내 | TYPE-A SEQ=02, TYPE-B |
+| 6. SEQ 순서 | 01->02->03->04->05 연속 | TYPE-A |
+
+### 4.3 파일 구조 (신규)
+
+```
+internal/agent/lg/
+  lg_hvacr01_agent.go    -- Hvacr01Agent 구조체, 라이프사이클, 캡처 루프
+  lg_icp01_frame.go      -- LG ICP-01 프레임 파서 (TYPE-A/TYPE-B)
+  lg_hvacr01_config.go   -- Hvacr01Config 파싱
+  lg_icp01_device.go     -- LG ICP-01 디바이스 모델, 상태 관리
+  lg_hvacr01_register.go -- 에이전트 타입 등록
+
+internal/node/
+  lg_hvacr01.go          -- lg_hvacr01_status, lg_hvacr01_control, lg_hvacr01 노드
+
+web/src/config/
+  agentSchemas.ts        -- lg_hvacr01 에이전트 UI 스키마 추가
+  nodeSchemas.ts         -- lg_hvacr01 노드 UI 스키마 추가
+```
+
+### 4.4 이벤트 JSON 구조
+
+#### TYPE-A 이벤트
+
+```json
+{
+  "type": "lgcnp_odu_frame",
+  "timestamp": "2026-04-12T10:00:00.000Z",
+  "seq": 123,
+  "raw_hex": "580200...",
+  "odu_seq": 2,
+  "checksum_valid": true,
+  "parsed": {
+    "outdoor_temp": 34.0,
+    "comp_suction_temp": 21.5,
+    "comp_discharge_temp": 38.5,
+    "condenser_temp_a": 21.5,
+    "condenser_temp_b": 14.0
+  }
+}
+```
+
+#### TYPE-B 이벤트
+
+```json
+{
+  "type": "lgcnp_idu_frame",
+  "timestamp": "2026-04-12T10:00:00.000Z",
+  "seq": 124,
+  "raw_hex": "810200...",
+  "idu_addr": 129,
+  "idu_num": 1,
+  "cmd_raw": 2,
+  "cmd_cycle": "A",
+  "active_state": false,
+  "set_temp_reliable": true,
+  "redundancy_valid": true,
+  "parsed": {
+    "slot_num": 81,
+    "room_temp": 22.5,
+    "inlet_temp": 26.5,
+    "outlet_temp": 27.5,
+    "fan_speed": 2,
+    "op_mode": 0,
+    "set_temp": 25.0,
+    "power": true
+  }
+}
+```
+
+- `cmd_raw`: CMD 바이트 원시값 (비트 분석용)
+- `active_state`: b[18] bit7 — 활성 운전 상태 여부
+- `set_temp_reliable`: 이 프레임의 설정온도가 신뢰 가능한지 ((02,00)=false, 기타=true)
+
+---
+
+## 5. Traceability (추적성)
+
+| 요구사항 ID | 프로토콜 분석 섹션 | 구현 파일 |
+|------------|-----------------|----------|
+| REQ-M1-01~03 | 섹션 4 (패킷 유형 개요) | lg_icp01_frame.go |
+| REQ-M1-04~06 | 섹션 3 (체크섬 정책) | lg_icp01_frame.go |
+| REQ-M1-07~08 | 섹션 6.2 (이중 기록) | lg_icp01_frame.go |
+| REQ-M1-09 | 섹션 7.2 계층 3, §6.8 CMD 비트 구조 | lg_icp01_frame.go |
+| REQ-M1-09a | §6.8 CMD 비트 구조 | lg_icp01_frame.go |
+| REQ-M1-10~11 | 섹션 7.2 계층 4 | lg_icp01_frame.go |
+| REQ-M1-12 | 섹션 7.2 계층 5 | lg_hvacr01_agent.go |
+| REQ-M2-01~11 | 전체 | lg_hvacr01_agent.go |
+| REQ-M2-06 | 섹션 6.5 (온도 변환) | lg_hvacr01_agent.go |
+| REQ-M2-06b | §6.10 SET_TEMP 신뢰성 | lg_hvacr01_agent.go, lg_icp01_frame.go |
+| REQ-M2-07 | 섹션 5.3 (SEQ=02) | lg_hvacr01_agent.go |
+| REQ-M3-01~06 | 섹션 6.3 (IDU 주소) | lg_icp01_device.go |
+| REQ-M3-04a | — | web/src/pages/dashboard/panels/AcControlPanel.tsx |
+| REQ-M2-12 | §6.11 풍속 인코딩 | lg_hvacr01_agent.go |
+| REQ-M4-01~07 | -- | lg_hvacr01.go (node) |
+| REQ-M5-01~03 | -- | agentSchemas.ts, nodeSchemas.ts |
+| REQ-M6-01~02 | -- | lg_hvacr01_register.go, registry.go |

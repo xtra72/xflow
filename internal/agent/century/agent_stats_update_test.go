@@ -6,14 +6,14 @@ import (
 )
 
 // TestAgent_StatsCounters_UpdateOnFrameCapture 는 사용자 보고
-// "Century-HVAC 통계정보 업데이트 안됨" 의 회귀 테스트이다.
+// "Century HVACR-01 통계정보 업데이트 안됨" 의 회귀 테스트이다.
 //
 // 원인: captureLoop 에서 cStats (granular counters) 만 증가시키고 a.stats
 // (Web UI 가 읽는 표준 agent.AgentStats) 는 갱신하지 않아 messages_in /
 // bytes_read / last_activity 가 영구 0 으로 표시됨.
 //
 // 수정: captureLoop 의 frame 수신 직후 a.stats.IncrExternalMessagesReceived,
-// AddBytesRead, UpdateLastActivity 호출 — NASA / LGCNP 와 동일 패턴.
+// AddBytesRead, UpdateLastActivity 호출 — NASA / LG ICP-01 과 동일 패턴.
 //
 // 본 테스트는 Reg02 + Reg04 frame 주입 후 표준 stats 가 0 이 아님을 검증한다.
 func TestAgent_StatsCounters_UpdateOnFrameCapture(t *testing.T) {

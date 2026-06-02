@@ -1,0 +1,21 @@
+agent import -f examples/agents/samsung_hvacr01-serial.yaml
+agent import -f examples/agents/stdout-logger.yaml
+agent import -f examples/agents/error-logger.yaml
+
+# 5. 에이전트 등록 확인
+agent list
+
+# 6. 에이전트 시작
+agent start samsung-hvacr01-agent
+agent start stdout-logger
+agent start error-logger
+
+# 7. 메트릭 플로우 가져오기
+flow import -f examples/flows/samsung_hvacr01-monitoring.yaml
+
+# 8. 플로우 배포 및 시작
+flow deploy samsung_hvacr01-monitoring
+flow start samsung_hvacr01-monitoring
+
+# 9. 상태 확인
+flow status samsung_hvacr01-monitoring

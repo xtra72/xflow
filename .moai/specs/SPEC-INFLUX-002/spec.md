@@ -33,7 +33,7 @@
   - InfluxDB 에이전트: `internal/agent/system/influxdb_agent.go` (v2/v3, Write/Query/Health)
   - InfluxDB 클라이언트: `internal/agent/system/influxdb_client.go` (InfluxClient 인터페이스)
   - TSDB 노드 패턴: `internal/node/tsdb_write.go`, `tsdb_query.go` (인메모리 TSDB용)
-  - LGCNP 노드 패턴: `internal/node/lgcnp.go` (SourceNode 폴링 패턴)
+  - LG HVACR-01 노드 패턴: `internal/node/lg_hvacr01.go` (SourceNode 폴링 패턴)
 - **현재 상황**: InfluxDB 에이전트는 존재하나 전용 플로우 노드가 없어, 사용자가 bridge 노드를 통해 간접적으로 상호작용해야 하는 불편이 있음
 
 ### 1.2 기술 스택
@@ -101,7 +101,7 @@ type WriteData struct {
 
 - [A-05] 기존 TSDB 노드의 `AgentResolver` + `AgentAccessor` 패턴을 재사용한다.
 - [A-06] InfluxDB 에이전트에 대한 타입 단언은 `influxdbAgent` 로컬 인터페이스를 통해 수행한다.
-- [A-07] influxdb-read 노드는 기존 `lgcnp-status` 노드의 SourceNode 폴링 패턴을 따른다.
+- [A-07] influxdb-read 노드는 기존 `lg_hvacr01_status` 노드의 SourceNode 폴링 패턴을 따른다.
 - [A-08] influxdb-query 노드는 입력 메시지 payload에서 쿼리를 구성하거나 고정 설정 쿼리를 사용한다.
 - [A-09] 쿼리 언어는 InfluxDB 버전에 따라 다르다: v2=flux/influxql, v3=sql/influxql.
 

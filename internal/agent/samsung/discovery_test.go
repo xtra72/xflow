@@ -54,10 +54,10 @@ func (m *mockDiscoveryTransport) Receive(buf []byte) (int, error) {
 }
 
 // encodeTestResponse 는 테스트용 NASA 응답 프레임을 생성하는 헬퍼이다.
-func encodeTestResponse(t *testing.T, src, dst NASAAddress, cmd uint16, seq byte, sets []NASAMessageSet) []byte {
+func encodeTestResponse(t *testing.T, src, dst NasaAddress, cmd uint16, seq byte, sets []NasaMessageSet) []byte {
 	t.Helper()
-	proto := NewNASAProtocol()
-	msg := &NASAMessage{
+	proto := NewNasaProtocol()
+	msg := &NasaMessage{
 		SourceAddr:  src,
 		DestAddr:    dst,
 		CommandCode: cmd,
@@ -122,7 +122,7 @@ func TestReadResponses_Timeout(t *testing.T) {
 	transport := &mockDiscoveryTransport{
 		responses: nil, // 응답 없음
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 
 	messages, err := readResponses(transport, proto, 50*time.Millisecond)
 	if err != nil {
@@ -136,20 +136,20 @@ func TestReadResponses_Timeout(t *testing.T) {
 func TestReadResponses_CollectsMessages(t *testing.T) {
 	// 두 개의 유효한 응답 프레임을 반환하는 mock
 	resp1 := encodeTestResponse(t,
-		NASAAddress{0x10, 0x00, 0x00}, AddrController,
+		NasaAddress{0x10, 0x00, 0x00}, AddrController,
 		CmdStandbyResponse, 0x01,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
 	)
 	resp2 := encodeTestResponse(t,
-		NASAAddress{0x10, 0x01, 0x00}, AddrController,
+		NasaAddress{0x10, 0x01, 0x00}, AddrController,
 		CmdStandbyResponse, 0x02,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x01, 0x00, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x01, 0x00, 0x00}}},
 	)
 
 	transport := &mockDiscoveryTransport{
 		responses: [][]byte{resp1, resp2},
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 
 	messages, err := readResponses(transport, proto, 100*time.Millisecond)
 	if err != nil {
@@ -164,15 +164,15 @@ func TestReadResponses_SkipsMalformedFrames(t *testing.T) {
 	// 잘못된 프레임 + 유효한 프레임
 	malformed := []byte{0xFF, 0x00, 0x01, 0x02} // 유효하지 않은 데이터
 	valid := encodeTestResponse(t,
-		NASAAddress{0x20, 0x00, 0x01}, AddrController,
+		NasaAddress{0x20, 0x00, 0x01}, AddrController,
 		CmdNormalRequest, 0x01,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
 	)
 
 	transport := &mockDiscoveryTransport{
 		responses: [][]byte{malformed, valid},
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 
 	messages, err := readResponses(transport, proto, 100*time.Millisecond)
 	if err != nil {
@@ -191,15 +191,15 @@ func TestReadResponses_SkipsMalformedFrames(t *testing.T) {
 func TestDiscoverOutdoors_Success(t *testing.T) {
 	// 실외기 1대가 C001 응답을 보내는 시나리오
 	resp := encodeTestResponse(t,
-		NASAAddress{0x10, 0x00, 0x00}, AddrController,
+		NasaAddress{0x10, 0x00, 0x00}, AddrController,
 		CmdStandbyResponse, 0x01,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
 	)
 
 	transport := &mockDiscoveryTransport{
 		responses: [][]byte{resp},
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	results, err := DiscoverOutdoors(transport, proto, &seqNum, 100*time.Millisecond)
@@ -211,7 +211,7 @@ func TestDiscoverOutdoors_Success(t *testing.T) {
 	}
 
 	r := results[0]
-	if r.Address != (NASAAddress{0x10, 0x00, 0x00}) {
+	if r.Address != (NasaAddress{0x10, 0x00, 0x00}) {
 		t.Errorf("결과 주소 = %v, want 10 00 00", r.Address)
 	}
 	if r.DeviceType != "HVACR.ODU" {
@@ -239,7 +239,7 @@ func TestDiscoverOutdoors_Success(t *testing.T) {
 	if sentMsg.CommandCode != CmdStandbyRequest {
 		t.Errorf("전송된 CMD = 0x%04X, want 0x%04X (CmdStandbyRequest)", sentMsg.CommandCode, CmdStandbyRequest)
 	}
-	if sentMsg.DestAddr != (NASAAddress{0xB0, 0xFF, 0x10}) {
+	if sentMsg.DestAddr != (NasaAddress{0xB0, 0xFF, 0x10}) {
 		t.Errorf("전송된 DA = %v, want B0 FF 10", sentMsg.DestAddr)
 	}
 }
@@ -249,7 +249,7 @@ func TestDiscoverOutdoors_NoResponse(t *testing.T) {
 	transport := &mockDiscoveryTransport{
 		responses: nil,
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	results, err := DiscoverOutdoors(transport, proto, &seqNum, 50*time.Millisecond)
@@ -271,7 +271,7 @@ func TestDiscoverOutdoors_TransportError(t *testing.T) {
 	transport := &mockDiscoveryTransport{
 		sendErr: errors.New("transport send failed"),
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	_, err := DiscoverOutdoors(transport, proto, &seqNum, 50*time.Millisecond)
@@ -283,20 +283,20 @@ func TestDiscoverOutdoors_TransportError(t *testing.T) {
 func TestDiscoverOutdoors_FiltersNonOutdoorResponses(t *testing.T) {
 	// 실외기와 실내기 응답이 섞인 시나리오 - 실외기만 반환해야 함
 	outdoorResp := encodeTestResponse(t,
-		NASAAddress{0x10, 0x00, 0x00}, AddrController,
+		NasaAddress{0x10, 0x00, 0x00}, AddrController,
 		CmdStandbyResponse, 0x01,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
 	)
 	indoorResp := encodeTestResponse(t,
-		NASAAddress{0x20, 0x00, 0x01}, AddrController,
+		NasaAddress{0x20, 0x00, 0x01}, AddrController,
 		CmdStandbyResponse, 0x02,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
 	)
 
 	transport := &mockDiscoveryTransport{
 		responses: [][]byte{outdoorResp, indoorResp},
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	results, err := DiscoverOutdoors(transport, proto, &seqNum, 100*time.Millisecond)
@@ -318,15 +318,15 @@ func TestDiscoverOutdoors_FiltersNonOutdoorResponses(t *testing.T) {
 func TestDiscoverIndoors_Success(t *testing.T) {
 	// 실내기 1대가 C011 응답을 보내는 시나리오
 	resp := encodeTestResponse(t,
-		NASAAddress{0x20, 0x00, 0x01}, AddrController,
+		NasaAddress{0x20, 0x00, 0x01}, AddrController,
 		CmdNormalRequest, 0x01,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
 	)
 
 	transport := &mockDiscoveryTransport{
 		responses: [][]byte{resp},
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	results, err := DiscoverIndoors(transport, proto, &seqNum, 100*time.Millisecond)
@@ -338,7 +338,7 @@ func TestDiscoverIndoors_Success(t *testing.T) {
 	}
 
 	r := results[0]
-	if r.Address != (NASAAddress{0x20, 0x00, 0x01}) {
+	if r.Address != (NasaAddress{0x20, 0x00, 0x01}) {
 		t.Errorf("결과 주소 = %v, want 20 00 01", r.Address)
 	}
 	if r.DeviceType != "HVACR.IDU" {
@@ -371,7 +371,7 @@ func TestDiscoverIndoors_NoResponse(t *testing.T) {
 	transport := &mockDiscoveryTransport{
 		responses: nil,
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	results, err := DiscoverIndoors(transport, proto, &seqNum, 50*time.Millisecond)
@@ -386,25 +386,25 @@ func TestDiscoverIndoors_NoResponse(t *testing.T) {
 func TestDiscoverIndoors_MultipleUnits(t *testing.T) {
 	// 여러 실내기가 응답하는 시나리오
 	resp1 := encodeTestResponse(t,
-		NASAAddress{0x20, 0x00, 0x01}, AddrController,
+		NasaAddress{0x20, 0x00, 0x01}, AddrController,
 		CmdNormalRequest, 0x01,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
 	)
 	resp2 := encodeTestResponse(t,
-		NASAAddress{0x20, 0x00, 0x02}, AddrController,
+		NasaAddress{0x20, 0x00, 0x02}, AddrController,
 		CmdNormalRequest, 0x02,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x02, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x02, 0x00}}},
 	)
 	resp3 := encodeTestResponse(t,
-		NASAAddress{0x20, 0x01, 0x01}, AddrController,
+		NasaAddress{0x20, 0x01, 0x01}, AddrController,
 		CmdNormalRequest, 0x03,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x01, 0x01, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x01, 0x01, 0x00}}},
 	)
 
 	transport := &mockDiscoveryTransport{
 		responses: [][]byte{resp1, resp2, resp3},
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	results, err := DiscoverIndoors(transport, proto, &seqNum, 100*time.Millisecond)
@@ -416,7 +416,7 @@ func TestDiscoverIndoors_MultipleUnits(t *testing.T) {
 	}
 
 	// 각 결과의 주소 확인
-	expectedAddrs := []NASAAddress{
+	expectedAddrs := []NasaAddress{
 		{0x20, 0x00, 0x01},
 		{0x20, 0x00, 0x02},
 		{0x20, 0x01, 0x01},
@@ -436,7 +436,7 @@ func TestDiscoverIndoors_TransportError(t *testing.T) {
 	transport := &mockDiscoveryTransport{
 		sendErr: errors.New("transport send failed"),
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	_, err := DiscoverIndoors(transport, proto, &seqNum, 50*time.Millisecond)
@@ -448,20 +448,20 @@ func TestDiscoverIndoors_TransportError(t *testing.T) {
 func TestDiscoverIndoors_FiltersNonIndoorResponses(t *testing.T) {
 	// 실내기와 실외기 응답이 섞인 시나리오 - 실내기만 반환해야 함
 	indoorResp := encodeTestResponse(t,
-		NASAAddress{0x20, 0x00, 0x01}, AddrController,
+		NasaAddress{0x20, 0x00, 0x01}, AddrController,
 		CmdNormalRequest, 0x01,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x20, 0x00, 0x01, 0x00}}},
 	)
 	outdoorResp := encodeTestResponse(t,
-		NASAAddress{0x10, 0x00, 0x00}, AddrController,
+		NasaAddress{0x10, 0x00, 0x00}, AddrController,
 		CmdStandbyResponse, 0x02,
-		[]NASAMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
+		[]NasaMessageSet{{Index: MsgAddrInfo, Value: []byte{0x10, 0x00, 0x00, 0x00}}},
 	)
 
 	transport := &mockDiscoveryTransport{
 		responses: [][]byte{indoorResp, outdoorResp},
 	}
-	proto := NewNASAProtocol()
+	proto := NewNasaProtocol()
 	var seqNum byte = 0x01
 
 	results, err := DiscoverIndoors(transport, proto, &seqNum, 100*time.Millisecond)
@@ -483,12 +483,12 @@ func TestDiscoverIndoors_FiltersNonIndoorResponses(t *testing.T) {
 func TestDiscoveryResult_Fields(t *testing.T) {
 	// DiscoveryResult 구조체의 필드가 올바르게 설정되는지 확인
 	r := DiscoveryResult{
-		Address:    NASAAddress{0x10, 0x00, 0x00},
+		Address:    NasaAddress{0x10, 0x00, 0x00},
 		DeviceType: "HVACR.ODU",
 		Ready:      true,
 	}
 
-	if r.Address != (NASAAddress{0x10, 0x00, 0x00}) {
+	if r.Address != (NasaAddress{0x10, 0x00, 0x00}) {
 		t.Errorf("Address = %v, want 10 00 00", r.Address)
 	}
 	if r.DeviceType != "HVACR.ODU" {
@@ -521,9 +521,9 @@ func TestDiscoveryCallbacks_Interface(t *testing.T) {
 	var _ DiscoveryCallbacks = &mockCallbacks{}
 
 	cb := &mockCallbacks{}
-	cb.OnDeviceDiscovered(DiscoveryResult{Address: NASAAddress{0x10, 0x00, 0x00}, DeviceType: "HVACR.ODU"})
+	cb.OnDeviceDiscovered(DiscoveryResult{Address: NasaAddress{0x10, 0x00, 0x00}, DeviceType: "HVACR.ODU"})
 	cb.OnDiscoveryError(errors.New("test error"))
-	cb.OnDiscoveryComplete([]DiscoveryResult{{Address: NASAAddress{0x10, 0x00, 0x00}}})
+	cb.OnDiscoveryComplete([]DiscoveryResult{{Address: NasaAddress{0x10, 0x00, 0x00}}})
 
 	if len(cb.discovered) != 1 {
 		t.Errorf("discovered 수 = %d, want 1", len(cb.discovered))

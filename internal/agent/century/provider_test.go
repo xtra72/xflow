@@ -11,32 +11,32 @@ import (
 	"github.com/xtra/xflow/internal/device"
 )
 
-// makeProviderAgent 는 provider 테스트용 CenturyAgent 를 생성한다.
+// makeProviderAgent 는 provider 테스트용 Hvacr01Agent 를 생성한다.
 //
 // Init/Start 는 호출하지 않는다 — provider 는 agent.Name() 과 ListDevices() 만
 // 사용하므로 lifecycle 진입 없이도 동작한다 (lifecycle race 회피).
-func makeProviderAgent(t *testing.T, name string) *CenturyAgent {
+func makeProviderAgent(t *testing.T, name string) *Hvacr01Agent {
 	t.Helper()
 	rt := newRecordingTransport(nil)
 	t.Cleanup(func() { _ = rt.Close() })
 	opts := map[string]any{"serial_port": "/dev/ttyTEST"}
-	centuryCfg, err := parseCenturyConfig(opts)
+	centuryCfg, err := parseHvacr01Config(opts)
 	if err != nil {
-		t.Fatalf("parseCenturyConfig: %v", err)
+		t.Fatalf("parseHvacr01Config: %v", err)
 	}
 	cfg := agent.AgentConfig{
 		ID:        name,
 		Name:      name,
-		Type:      "century-hvac",
+		Type:      "century_hvacr01",
 		Transport: agent.TransportConfig{Type: "serial", Options: opts},
 	}
-	return newCenturyAgentForTest(cfg, centuryCfg, rt)
+	return newHvacr01AgentForTest(cfg, centuryCfg, rt)
 }
 
 // addProviderDevice 는 agent.devices 맵에 직접 device 를 등록한다 (테스트 헬퍼).
-func addProviderDevice(a *CenturyAgent, subDevID byte, source string, online bool, st *CenturyDeviceState) {
+func addProviderDevice(a *Hvacr01Agent, subDevID byte, source string, online bool, st *Icp01DeviceState) {
 	now := time.Now()
-	dev := NewCenturyDevice(subDevID, source, now)
+	dev := NewIcp01Device(subDevID, source, now)
 	dev.Online = online
 	if st != nil {
 		dev.State = st
@@ -46,43 +46,43 @@ func addProviderDevice(a *CenturyAgent, subDevID byte, source string, online boo
 	a.devicesMu.Unlock()
 }
 
-func TestCenturyDeviceProvider_NewPanicsOnNil(t *testing.T) {
+func TestHvacr01DeviceProvider_NewPanicsOnNil(t *testing.T) {
 	t.Parallel()
-	assert.Panics(t, func() { _ = NewCenturyDeviceProvider(nil) })
+	assert.Panics(t, func() { _ = NewHvacr01DeviceProvider(nil) })
 }
 
-func TestCenturyDeviceProvider_DevicesEmpty(t *testing.T) {
+func TestHvacr01DeviceProvider_DevicesEmpty(t *testing.T) {
 	t.Parallel()
 	a := makeProviderAgent(t, "ct-empty")
-	p := NewCenturyDeviceProvider(a)
+	p := NewHvacr01DeviceProvider(a)
 	assert.Empty(t, p.Devices())
 }
 
-// TestCenturyDeviceProvider_DevicesReturnsAllRegistered verifies enumeration
+// TestHvacr01DeviceProvider_DevicesReturnsAllRegistered verifies enumeration
 // returns all registered devices. Per Phase D (D-T1) Device.ID() returns UUID,
 // so the test indexes devices by their (sub_dev_id) via cast-back to inspect.
-func TestCenturyDeviceProvider_DevicesReturnsAllRegistered(t *testing.T) {
+func TestHvacr01DeviceProvider_DevicesReturnsAllRegistered(t *testing.T) {
 	t.Parallel()
 	a := makeProviderAgent(t, "ct-multi")
-	addProviderDevice(a, 0x3B, "auto", true, &CenturyDeviceState{})
-	addProviderDevice(a, 0x3C, "config", false, &CenturyDeviceState{})
+	addProviderDevice(a, 0x3B, "auto", true, &Icp01DeviceState{})
+	addProviderDevice(a, 0x3C, "config", false, &Icp01DeviceState{})
 
-	p := NewCenturyDeviceProvider(a)
+	p := NewHvacr01DeviceProvider(a)
 	devs := p.Devices()
 	require.Len(t, devs, 2)
 
 	// 디바이스를 SubDevID 로 색인 (D-T1: ID() 는 UUID 라 사용 불가).
 	bySub := make(map[byte]device.Device, len(devs))
 	for _, d := range devs {
-		ad, ok := d.(*centuryDeviceAdapter)
-		require.True(t, ok, "expected *centuryDeviceAdapter")
+		ad, ok := d.(*hvacr01DeviceAdapter)
+		require.True(t, ok, "expected *hvacr01DeviceAdapter")
 		bySub[ad.snap.SubDevID] = d
 	}
 	d3b, ok := bySub[0x3B]
 	require.True(t, ok, "device 0x3B must be present")
 	assert.True(t, d3b.Online())
 	assert.Equal(t, "auto", d3b.Source())
-	assert.Equal(t, "century-hvac", d3b.Protocol())
+	assert.Equal(t, "century_icp01", d3b.Protocol())
 	assert.Equal(t, "ct-multi", d3b.AgentName())
 	assert.Equal(t, device.DeviceTypeIndoor, d3b.Type())
 
@@ -92,36 +92,36 @@ func TestCenturyDeviceProvider_DevicesReturnsAllRegistered(t *testing.T) {
 	assert.Equal(t, "config", d3c.Source())
 }
 
-// TestCenturyDeviceProvider_DeviceByID verifies the provider's composite-id
+// TestHvacr01DeviceProvider_DeviceByID verifies the provider's composite-id
 // lookup contract is preserved. Provider.Device(compositeID) is an internal
 // resolver invoked by DeviceRegistry.Get(id); per SPEC-DEVICE-IDENTITY-001
 // Phase D (D-T2) the public REST/yaml path rejects composite at the registry
 // layer, but the provider itself still resolves composite as a hex-suffix
 // matcher (no UUID involved).
-func TestCenturyDeviceProvider_DeviceByID(t *testing.T) {
+func TestHvacr01DeviceProvider_DeviceByID(t *testing.T) {
 	t.Parallel()
 	a := makeProviderAgent(t, "ct-byid")
-	addProviderDevice(a, 0x3B, "auto", true, &CenturyDeviceState{})
-	p := NewCenturyDeviceProvider(a)
+	addProviderDevice(a, 0x3B, "auto", true, &Icp01DeviceState{})
+	p := NewHvacr01DeviceProvider(a)
 
 	t.Run("hit hex lower", func(t *testing.T) {
 		d, err := p.Device("ct-byid:3b")
 		require.NoError(t, err)
-		ad, ok := d.(*centuryDeviceAdapter)
+		ad, ok := d.(*hvacr01DeviceAdapter)
 		require.True(t, ok)
 		assert.Equal(t, byte(0x3B), ad.snap.SubDevID)
 	})
 	t.Run("hit hex upper", func(t *testing.T) {
 		d, err := p.Device("ct-byid:3B")
 		require.NoError(t, err)
-		ad, ok := d.(*centuryDeviceAdapter)
+		ad, ok := d.(*hvacr01DeviceAdapter)
 		require.True(t, ok)
 		assert.Equal(t, byte(0x3B), ad.snap.SubDevID)
 	})
 	t.Run("hit hex 0x prefix", func(t *testing.T) {
 		d, err := p.Device("ct-byid:0x3b")
 		require.NoError(t, err)
-		ad, ok := d.(*centuryDeviceAdapter)
+		ad, ok := d.(*hvacr01DeviceAdapter)
 		require.True(t, ok)
 		assert.Equal(t, byte(0x3B), ad.snap.SubDevID)
 	})
@@ -143,9 +143,9 @@ func TestCenturyDeviceProvider_DeviceByID(t *testing.T) {
 	})
 }
 
-func TestCenturyDeviceAdapter_StateProperties_Reg02(t *testing.T) {
+func TestIcp01DeviceAdapter_StateProperties_Reg02(t *testing.T) {
 	t.Parallel()
-	st := &CenturyDeviceState{
+	st := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{
 			Mode:      ModeField{Value: "cooling"},
 			Fan:       FieldU8{Value: 17},
@@ -155,7 +155,7 @@ func TestCenturyDeviceAdapter_StateProperties_Reg02(t *testing.T) {
 	a := makeProviderAgent(t, "ct-st")
 	addProviderDevice(a, 0x3B, "auto", true, st)
 
-	p := NewCenturyDeviceProvider(a)
+	p := NewHvacr01DeviceProvider(a)
 	d, err := p.Device("ct-st:3b")
 	require.NoError(t, err)
 
@@ -169,9 +169,9 @@ func TestCenturyDeviceAdapter_StateProperties_Reg02(t *testing.T) {
 	assert.InDelta(t, 25.0, props["target_temperature"].(float64), 0.001)
 }
 
-func TestCenturyDeviceAdapter_PowerOff_WhenModeOff(t *testing.T) {
+func TestIcp01DeviceAdapter_PowerOff_WhenModeOff(t *testing.T) {
 	t.Parallel()
-	st := &CenturyDeviceState{
+	st := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{
 			Mode: ModeField{Value: "off"},
 		},
@@ -179,35 +179,36 @@ func TestCenturyDeviceAdapter_PowerOff_WhenModeOff(t *testing.T) {
 	a := makeProviderAgent(t, "ct-off")
 	addProviderDevice(a, 0x3B, "auto", true, st)
 
-	p := NewCenturyDeviceProvider(a)
+	p := NewHvacr01DeviceProvider(a)
 	d, err := p.Device("ct-off:3b")
 	require.NoError(t, err)
 	assert.Equal(t, false, d.State().Properties["power"])
 }
 
-func TestCenturyDeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
+func TestIcp01DeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
 	t.Parallel()
-	st := &CenturyDeviceState{
+	st := &Icp01DeviceState{
 		Reg02: &Reg02Decoded{
-			Mode:      ModeField{Value: "cooling"},
-			Fan:       FieldU8{Value: 17},
-			SetpointC: FieldFloat32{Value: 25.0},
+			Mode:         ModeField{Value: "cooling"},
+			Fan:          FieldU8{Value: 17},
+			SetpointC:    FieldFloat32{Value: 25.0},
+			CurrentTempC: FieldFloat32{Value: 25.2}, // 2026-05-29: current_temp now from Reg02
 		},
 		Reg03: &Reg03Decoded{
 			EvaporatorTemperatureA: FieldFloat32{Value: 9.0},
 			EvaporatorTemperatureB: FieldFloat32{Value: 8.5},
 		},
 		Reg04Read: &Reg04ReadDecoded{
-			StatusBits: FieldU8{Value: 0x39},
-			OpVal1:     FieldU16{Value: 996},
-			TempAC:     FieldFloat32{Value: 25.2},
-			OpVal2:     FieldU16{Value: 1248},
+			StatusBits:  FieldU8{Value: 0x39},
+			OpVal1:      FieldU16{Value: 996},
+			Reg04Word10: FieldFloat32{Value: 25.2}, // 의미 미확정 (operational parameter)
+			OpVal2:      FieldU16{Value: 1248},
 		},
 	}
 	a := makeProviderAgent(t, "ct-full")
 	addProviderDevice(a, 0x3B, "auto", true, st)
 
-	p := NewCenturyDeviceProvider(a)
+	p := NewHvacr01DeviceProvider(a)
 	d, err := p.Device("ct-full:3b")
 	require.NoError(t, err)
 	props := d.State().Properties
@@ -226,11 +227,11 @@ func TestCenturyDeviceAdapter_AllRegisters_PopulatesAllProps(t *testing.T) {
 	assert.Equal(t, uint8(0x39), props["status_bits"])
 }
 
-func TestCenturyDeviceAdapter_Execute_NotControllable(t *testing.T) {
+func TestIcp01DeviceAdapter_Execute_NotControllable(t *testing.T) {
 	t.Parallel()
 	a := makeProviderAgent(t, "ct-exec")
-	addProviderDevice(a, 0x3B, "auto", true, &CenturyDeviceState{})
-	p := NewCenturyDeviceProvider(a)
+	addProviderDevice(a, 0x3B, "auto", true, &Icp01DeviceState{})
+	p := NewHvacr01DeviceProvider(a)
 	d, err := p.Device("ct-exec:3b")
 	require.NoError(t, err)
 
@@ -239,22 +240,22 @@ func TestCenturyDeviceAdapter_Execute_NotControllable(t *testing.T) {
 
 	// Execute 는 ControllableDevice 인터페이스에 있다. 어댑터가 해당 인터페이스를
 	// 구현하더라도 (REQ-CENTURY-017) 항상 ErrNotControllable 을 반환해야 한다.
-	adapter, ok := d.(*centuryDeviceAdapter)
-	require.True(t, ok, "expected *centuryDeviceAdapter")
+	adapter, ok := d.(*hvacr01DeviceAdapter)
+	require.True(t, ok, "expected *hvacr01DeviceAdapter")
 	_, execErr := adapter.Execute(context.Background(), "set_power", map[string]any{"power": true})
 	assert.ErrorIs(t, execErr, device.ErrNotControllable)
 }
 
-func TestCenturyDeviceAdapter_Name_FallbackWhenLabelEmpty(t *testing.T) {
+func TestIcp01DeviceAdapter_Name_FallbackWhenLabelEmpty(t *testing.T) {
 	t.Parallel()
 	a := makeProviderAgent(t, "ct-name")
 	now := time.Now()
-	dev := &CenturyDevice{SubDevID: 0x3B, Source: "auto", Online: true, LastSeen: now, State: &CenturyDeviceState{}}
+	dev := &Icp01Device{SubDevID: 0x3B, Source: "auto", Online: true, LastSeen: now, State: &Icp01DeviceState{}}
 	a.devicesMu.Lock()
 	a.devices[0x3B] = dev
 	a.devicesMu.Unlock()
 
-	p := NewCenturyDeviceProvider(a)
+	p := NewHvacr01DeviceProvider(a)
 	d, err := p.Device("ct-name:3b")
 	require.NoError(t, err)
 	assert.Equal(t, "Century indoor 0x3B", d.Name())

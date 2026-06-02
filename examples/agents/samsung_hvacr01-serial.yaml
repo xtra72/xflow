@@ -1,0 +1,74 @@
+# Samsung HVACR-01 에이전트 — Serial 모드 (Samsung NASA 프로토콜)
+# RS-485 시리얼 포트를 통해 Samsung NASA 실내기/실외기와 직접 통신
+#
+# 사용법:
+#   xflow agent import -f examples/agents/samsung_hvacr01-serial.yaml
+
+name: "samsung-hvacr01-agent"
+type: "samsung_hvacr01"
+
+config:
+  # 트랜스포트 타입 (필수): serial 또는 tcp
+  transport_type: "serial"
+
+  # RS-485 시리얼 포트 설정
+  serial_port: "/dev/tty.usbserial-111310"
+  baud_rate: 9600
+  data_bits: 8
+  stop_bits: 1
+  parity: "even"
+
+  # 타임아웃 설정
+  read_timeout: "3s"
+
+  # 폴링 간격 (디바이스 상태 조회 주기)
+  poll_interval: "30s"
+
+  # 디바이스 목록 (주소 + 이름)
+  # 실외기: 10.xx.00, 실내기: 20.xx.yy
+  devices:
+    - address: "20.00.00"
+      name: "living-room"
+    - address: "20.00.01"
+      name: "bedroom"
+    - address: "20.00.02"
+      name: "office"
+    - address: "10.00.00"
+      name: "outdoor-unit-1"
+
+  # 자동 디스커버리 (버스에서 응답하는 미등록 장치 자동 추가)
+  # 기본값: true — 명시는 선택이며 비활성화하려면 false 로 설정.
+  auto_discovery: true
+
+  # 오프라인 판정 임계값 (연속 N회 응답 실패 시 오프라인)
+  offline_threshold: 3
+
+  # 메시지 채널 버퍼 크기
+  msg_channel_size: 256
+
+  # 지원하지 않는 메시지 셋 인덱스 (수신 시 필터링)
+  unsupported_msg_sets:
+    - 0x0608
+    - 0x060C
+    - 0x8601
+    - 0x860C
+    - 0x860D
+    - 0x8601
+
+  # 필터링된 메시지 셋 로그 출력 여부 (기본값: false)
+  log_unsupported_msg_sets: false
+
+  # 상태 조회 시 RawMessageSets 포함 여부 (기본값: true)
+  # false로 설정하면 get_state/get_all_states 응답에서 RawMessageSets 제외
+  # (v1.19.0+: 3종 HVACR-01 에이전트 통일을 위해 include_raw_message_sets → include_raw_hex 로 rename.
+  # 이전 키 include_raw_message_sets 는 더 이상 인식되지 않으며 parse error 로 거부된다.)
+  include_raw_hex: false
+
+  # 정기 keepalive emit 주기 (기본값: "60s", 0=비활성)
+  # v1.19.0+ 부터 기본값이 "0s" → "60s" 로 변경. 변경 감지만 원하면 "0s" 명시.
+  report_interval: "60s"
+
+  # 로그 옵션 (3종 HVACR-01 에이전트 통일, default false)
+  log_decode_errors: false
+  log_drops: false
+  log_state_updates: false

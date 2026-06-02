@@ -53,7 +53,7 @@ LG LGAP (LG Air-conditioner Protocol) 에이전트를 구현한다. RS-485 기�
 - **동기 폴링 모델**: NASA(비동기 수신)과 달리 pollMu Mutex 로 시리얼 직렬 접근
 - **NASA 어댑터 재사용**: `adapter.NASADeviceInfo` / `adapter.NewControllableNASADevice` 필드 호환으로 재사용
 - **InterCommandDelay**: 연속 시리얼 명령 간 50ms 대기
-- **Agent type**: `"lgap"` (벤더-프로토콜 패턴: samsung-nasa 와 동일)
+- **Agent type**: `"lgap"` (벤더-프로토콜 패턴: samsung_hvacr01 과 동일)
 
 ## 2. Requirements
 

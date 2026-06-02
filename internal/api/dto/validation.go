@@ -88,3 +88,21 @@ func ValidateConfigUpdate(req *ConfigUpdateRequest) ValidationErrors {
 	}
 	return errs
 }
+
+// ValidateNodeConfigure 는 NodeConfigureRequest를 검증한다.
+func ValidateNodeConfigure(req *NodeConfigureRequest) ValidationErrors {
+	if req == nil {
+		return ValidationErrors{{Field: "request", Message: "is required"}}
+	}
+
+	var errs ValidationErrors
+
+	if req.Config == nil {
+		errs = append(errs, FieldError{Field: "config", Message: "is required"})
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs
+}

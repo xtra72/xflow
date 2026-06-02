@@ -81,10 +81,10 @@ func assertFramesParity(t *testing.T, label string, a, b [][]byte) {
 // Test 1: LGCP samples — direct Drain vs FramerNode Process
 // =============================================================================
 
-func TestParity_LGCPSamples_DirectFramerVsFramerNode(t *testing.T) {
+func TestParity_Icp02Samples_DirectFramerVsFramerNode(t *testing.T) {
 	t.Parallel()
 
-	lgcpOpts := framing.Options{
+	icp02Opts := framing.Options{
 		STX:                  []byte{0x56},
 		LengthOffset:         1,
 		LengthSize:           1,
@@ -95,7 +95,7 @@ func TestParity_LGCPSamples_DirectFramerVsFramerNode(t *testing.T) {
 		MaxMessageSize:       256,
 	}
 
-	// Same LGCP samples used in TestFrameFramer_LGCPSamples.
+	// Same LGCP samples used in TestFrameFramer_Icp02Samples.
 	samples := []struct {
 		name string
 		hex  string
@@ -122,8 +122,8 @@ func TestParity_LGCPSamples_DirectFramerVsFramerNode(t *testing.T) {
 			raw, err := hex.DecodeString(s.hex)
 			require.NoError(t, err)
 
-			directFrames := drainDirect(t, framing.ModeFrame, lgcpOpts, raw)
-			nodeFrames := processNodeSingle(t, framing.ModeFrame, lgcpOpts, raw)
+			directFrames := drainDirect(t, framing.ModeFrame, icp02Opts, raw)
+			nodeFrames := processNodeSingle(t, framing.ModeFrame, icp02Opts, raw)
 			assertFramesParity(t, s.name, directFrames, nodeFrames)
 		})
 	}
@@ -136,9 +136,9 @@ func TestParity_LGCPSamples_DirectFramerVsFramerNode(t *testing.T) {
 			raw, _ := hex.DecodeString(s.hex)
 			stream = append(stream, raw...)
 		}
-		directFrames := drainDirect(t, framing.ModeFrame, lgcpOpts, stream)
-		nodeFrames := processNodeSingle(t, framing.ModeFrame, lgcpOpts, stream)
-		assertFramesParity(t, "concatenated LGCP", directFrames, nodeFrames)
+		directFrames := drainDirect(t, framing.ModeFrame, icp02Opts, stream)
+		nodeFrames := processNodeSingle(t, framing.ModeFrame, icp02Opts, stream)
+		assertFramesParity(t, "concatenated lg_icp02", directFrames, nodeFrames)
 		require.Equal(t, len(samples), len(directFrames), "should extract exactly %d frames", len(samples))
 	})
 }
@@ -382,13 +382,13 @@ func TestParity_RawMode(t *testing.T) {
 }
 
 // =============================================================================
-// Bonus: LGCP concatenated — chunked at arbitrary boundaries
+// Bonus: lg_icp02 concatenated — chunked at arbitrary boundaries
 // =============================================================================
 
-func TestParity_LGCPSamples_ChunkedAtArbitraryBoundaries(t *testing.T) {
+func TestParity_Icp02Samples_ChunkedAtArbitraryBoundaries(t *testing.T) {
 	t.Parallel()
 
-	lgcpOpts := framing.Options{
+	icp02Opts := framing.Options{
 		STX:                  []byte{0x56},
 		LengthOffset:         1,
 		LengthSize:           1,
@@ -411,7 +411,7 @@ func TestParity_LGCPSamples_ChunkedAtArbitraryBoundaries(t *testing.T) {
 	}
 
 	// Direct: whole.
-	directFrames := drainDirect(t, framing.ModeFrame, lgcpOpts, stream)
+	directFrames := drainDirect(t, framing.ModeFrame, icp02Opts, stream)
 	require.Equal(t, 3, len(directFrames))
 
 	// Node: chunked at various sizes (table-driven).
@@ -428,7 +428,7 @@ func TestParity_LGCPSamples_ChunkedAtArbitraryBoundaries(t *testing.T) {
 				}
 				chunks = append(chunks, stream[i:end])
 			}
-			nodeFrames := processNode(t, framing.ModeFrame, lgcpOpts, chunks)
+			nodeFrames := processNode(t, framing.ModeFrame, icp02Opts, chunks)
 			assertFramesParity(t, formatChunkLabel(cs), directFrames, nodeFrames)
 		})
 	}

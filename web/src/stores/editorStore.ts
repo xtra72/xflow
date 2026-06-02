@@ -12,6 +12,8 @@ import {
   type NodeChange,
 } from '@xyflow/react';
 
+import { generateUUID } from '@/lib/utils/uuid';
+
 const MAX_HISTORY = 50;
 
 interface HistoryEntry {
@@ -27,9 +29,18 @@ interface EditorState {
   isDirty: boolean;
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
+  /**
+   * 현재 에디터가 편집 중인 플로우 ID.
+   * 노드 카드의 라이브 제어(예: output ON/OFF) 가 실행 중 플로우에 즉시
+   * 적용되도록 configureNode 호출 시 사용한다. 편집 이력(undo/redo) 이나
+   * 저장 변경 상태(isDirty) 와 무관한 식별자이므로 pushUndo / dirty 로직에
+   * 절대 포함하지 않는다.
+   */
+  currentFlowId: string | null;
 }
 
 interface EditorActions {
+  loadFlow: (nodes: Node[], edges: Edge[]) => void;
   setNodes: (nodes: Node[]) => void;
   setEdges: (edges: Edge[]) => void;
   onNodesChange: (changes: NodeChange[]) => void;
@@ -45,6 +56,8 @@ interface EditorActions {
   redo: () => void;
   clearHistory: () => void;
   setDirty: (dirty: boolean) => void;
+  /** 현재 편집 중인 플로우 ID 설정 (hydration 시). dirty/undo 에 영향 없음. */
+  setCurrentFlowId: (flowId: string | null) => void;
   resetEditor: () => void;
 }
 
@@ -73,8 +86,22 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   isDirty: false,
   undoStack: [],
   redoStack: [],
+  currentFlowId: null,
 
   // Actions
+
+  // Server-load only: replace nodes/edges WITHOUT marking the editor dirty
+  // and reset history. Use this when hydrating from server data (initial load
+  // or post-save refetch) so the unsaved indicator does not turn back on.
+  loadFlow: (nodes, edges) =>
+    set({
+      nodes,
+      edges,
+      isDirty: false,
+      undoStack: [],
+      redoStack: [],
+    }),
+
   setNodes: (nodes) =>
     set((state) => ({
       ...pushUndo(state),
@@ -111,13 +138,19 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       const tgtPort = connection.targetHandle || 'default';
       const wireName = `${srcNodeName}.${srcPort}_to_${tgtNodeName}.${tgtPort}`;
 
+      // 새 엣지 id 는 UUID 로 부여한다. addEdge 가 id 없는 connection 에는
+      // `xy-edge__<source><sourceHandle>-<target>...` 형태의 파생 id 를
+      // 생성하는데, 이는 동일 source/target 재연결 시 충돌하고 가져오기
+      // id 재생성과도 일관되지 않는다. id 를 명시하면 addEdge 가 이 값을 유지한다.
+      // Edge 로 단언해 addEdge 의 제네릭이 Edge[] 로 해석되도록 한다(메타데이터는 추가 속성).
       const edgeWithMeta = {
         ...connection,
+        id: generateUUID(),
         name: wireName,
         wire_type: 'simple',
         mode: 'bypass',
         buffer_size: 0,
-      };
+      } as Edge;
 
       return {
         ...pushUndo(state),
@@ -226,6 +259,10 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   setDirty: (dirty) =>
     set({ isDirty: dirty }),
 
+  // currentFlowId 는 식별자일 뿐이므로 dirty 나 undo 스택을 건드리지 않는다.
+  setCurrentFlowId: (flowId) =>
+    set({ currentFlowId: flowId }),
+
   resetEditor: () =>
     set({
       nodes: [],
@@ -235,5 +272,6 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       isDirty: false,
       undoStack: [],
       redoStack: [],
+      currentFlowId: null,
     }),
 }));

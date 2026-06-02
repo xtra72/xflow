@@ -125,7 +125,7 @@ const (
 )
 
 // String 은 ModeCode 의 사람이 읽을 수 있는 표현을 반환한다.
-// v0.3.1: NASA / LGCNP 와 어휘 통일 — "cool" / "heat" / "dry" / "fan" / "auto" 이며
+// v0.3.1: NASA / LG ICP-01 과 어휘 통일 — "cool" / "heat" / "dry" / "fan" / "auto" 이며
 // 미확정 코드(0x02 이상) 는 "mode_unknown_<hex>" 형식으로 노출되어 downstream
 // 컨슈머가 raw 값으로도 분기할 수 있게 한다 (REQ-CENTURY-021).
 func (m ModeCode) String() string {
@@ -221,10 +221,12 @@ type Reg02Decoded struct {
 	Mode ModeField `json:"mode"`
 	// data[2] fan 세기 (Confirmed, CAP-3 17 관측)
 	Fan FieldU8 `json:"fan"`
-	// data[7..8] 설정 온도 LE u16 ÷10 (Confirmed)
+	// data[11..12] 설정 온도 LE u16 ÷10 (Confirmed, 2026-05-29 실측 검증).
+	// 사용자 6-point 실험 (18/20/22/24/26/28°C) 으로 부호화 위치가 data[11..12] 임이 확정됨.
 	SetpointC FieldFloat32 `json:"setpoint_c"`
-	// data[11..12] 두 번째 25.0℃ 슬롯 (Inferred — setpoint 복제 또는 모드별 슬롯)
-	Reg02Word11 FieldFloat32 `json:"reg02_word_11"`
+	// data[7..8] 현재 실내 온도 LE u16 ÷ 10 (Confirmed, 2026-05-29 실측 검증).
+	// 사용자 OFF↔ON 캡처로 ambient=26°C 와 정확히 일치 확인.
+	CurrentTempC FieldFloat32 `json:"current_temp_c"`
 	// data[13] 운전 중 채워지는 live byte (Inferred)
 	Reg02Live13 FieldU8 `json:"reg02_live_13"`
 	// data[14] 0x39↔0x38 미세 변동 (Inferred)
@@ -287,8 +289,10 @@ type Reg04ReadDecoded struct {
 	Reg04Const7 FieldU8 `json:"reg04_const_7"`
 	// data[8..9] op_val_1 LE u16 (Inferred, CAP-4 996)
 	OpVal1 FieldU16 `json:"op_val_1"`
-	// data[10..11] temp_A LE u16 ÷10 (Inferred, CAP-3/4 25.2℃)
-	TempAC FieldFloat32 `json:"temp_A_c"`
+	// data[10..11] LE u16 (Inferred — 이전엔 current_temp 로 가정했으나 2026-05-29 실측
+	// 검증으로 ambient 아님이 확인됨. 실제 의미 TBD — 운전 변수 추정). 현재 온도는
+	// Reg02 CurrentTempC 사용.
+	Reg04Word10 FieldFloat32 `json:"reg04_word_10"`
 	// data[12..13] op_val_2 LE u16 (Inferred, CAP-4 1248)
 	OpVal2 FieldU16 `json:"op_val_2"`
 	// data[3..6] 4 캡처 모두 0x00 (Unknown)
@@ -344,7 +348,7 @@ type ACKDecoded struct {
 	Direction   string `json:"direction"`
 }
 
-// v0.9.0: EventTypeDeviceState 상수 제거. CenturyDeviceStateEvent 의 Type 필드
+// v0.9.0: EventTypeDeviceState 상수 제거. Icp01DeviceStateEvent 의 Type 필드
 // 자체가 제거되었으므로 더 이상 필요 없음. downstream 식별은 metadata.message_type
 // ("device_state.<trigger>") 으로 수행.
 
@@ -369,22 +373,22 @@ const (
 	TriggerReport = "report"
 )
 
-// CenturyDeviceStateInner 는 device_state 이벤트의 nested state 그룹 페이로드이다 (v0.4.0).
+// Icp01DeviceStateInner 는 device_state 이벤트의 nested state 그룹 페이로드이다 (v0.4.0).
 //
-// 5 핵심 필드 + online 을 묶어 LGCNP / register-decoded 와 동일한 state-grouped 패턴을
-// 따른다. 외부 wrapper 인 CenturyDeviceStateEvent 가 top-level metadata (dev_id, label,
+// 5 핵심 필드 + online 을 묶어 LG ICP-01 / register-decoded 와 동일한 state-grouped 패턴을
+// 따른다. 외부 wrapper 인 Icp01DeviceStateEvent 가 top-level metadata (dev_id, label,
 // timestamp_ms, last_seen_ms, trigger, type) 를 노출한다.
 //
 // v0.5.1: Reg03 증발기 온도(temp_evap_a_c / temp_evap_b_c) 를 state 에 통합 (이전엔
 // register-decoded 메시지에서만 노출). Reg03 미수신 시 omitempty 로 자동 제외하도록
 // pointer 사용.
-type CenturyDeviceStateInner struct {
+type Icp01DeviceStateInner struct {
 	Online      bool    `json:"online"`
 	Power       bool    `json:"power"`
 	Mode        int     `json:"mode"`                // v0.7.5: hvac 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
 	FanSpeed    int     `json:"fan_speed"`           // v0.7.5: hvac 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
-	TargetTemp  float32 `json:"target_temperature"`  // °C — NASA/LGCNP 통일 (이전 "set_temp_c")
-	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LGCNP 통일 (이전 "current_temp_c")
+	TargetTemp  float32 `json:"target_temperature"`  // °C — NASA/LG ICP-01 통일 (이전 "set_temp_c")
+	CurrentTemp float32 `json:"current_temperature"` // °C — NASA/LG ICP-01 통일 (이전 "current_temp_c")
 
 	// v0.5.1: Reg03 증발기 온도. 미수신 시 nil → omitempty 로 출력 제외.
 	// v0.18.5: temp_evap_a_c / temp_evap_b_c → evaporator_temperature_a / _b (풀네임).
@@ -392,17 +396,17 @@ type CenturyDeviceStateInner struct {
 	EvaporatorTemperatureB *float32 `json:"evaporator_temperature_b,omitempty"`
 }
 
-// CenturyDeviceStateMetadata 는 device_state 이벤트의 metadata 그룹이다 (v0.5.0).
+// Icp01DeviceStateMetadata 는 device_state 이벤트의 metadata 그룹이다 (v0.5.0).
 //
 // label 등 식별/표시용 메타데이터를 묶는다. omitempty 로 미설정 필드는 자동 제외.
 // 사용자 요구 "metadata => slot_num, label" — Century 는 slot_num 미지원이므로
 // label 만 노출. 추후 슬롯 개념이 도입되면 SlotNum 필드 추가.
-type CenturyDeviceStateMetadata struct {
+type Icp01DeviceStateMetadata struct {
 	Label      string `json:"label,omitempty"`
 	DeviceType string `json:"device_type,omitempty"` // v0.6.4: 디바이스 타입 (Century 는 항상 "HVACR.IDU", v0.18.3)
 }
 
-// CenturyDeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
+// Icp01DeviceStateEvent 는 v0.3.0 기본 emit 인 device-centric 통합 상태 이벤트이다 (REQ-CENTURY-033).
 //
 // 단일 메시지에 register 0x02 (mode/fan/setpoint) + register 0x04 read (현재 온도)
 // 의 종합을 노출한다. v0.4.2 부터는 Reg02 + Reg04 모두 수신 후 emit 한다 (A14 갱신).
@@ -417,20 +421,20 @@ type CenturyDeviceStateMetadata struct {
 //   - raw_hex 옵션 추가 (include_raw_hex=true 시에만 노출)
 //
 // JSON snake_case + epoch ms timestamp 컨벤션을 따른다 (A9).
-type CenturyDeviceStateEvent struct {
+type Icp01DeviceStateEvent struct {
 	// v0.9.0: Type 필드 제거. metadata.message_type ("device_state.<trigger>") 가
 	// 노드 단에서 schema 식별 역할 담당.
 	// v0.18.6: unit_id (프로토콜 sub_dev_id, e.g. "0x3B") + device_id (UUID).
-	SubDevID   string                     `json:"unit_id"`             // 프로토콜 식별자 (Century sub_dev_id)
-	DeviceID   string                     `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
-	Trigger    string                     `json:"trigger"`
-	LastSeenMs int64                      `json:"last_seen_ms"`
-	RawHex     string                     `json:"raw_hex,omitempty"` // v0.5.0: include_raw_hex=true 시에만 노출
-	State      CenturyDeviceStateInner    `json:"state"`
-	Metadata   CenturyDeviceStateMetadata `json:"metadata,omitempty"`
+	SubDevID   string                   `json:"unit_id"`             // 프로토콜 식별자 (Century sub_dev_id)
+	DeviceID   string                   `json:"device_id,omitempty"` // v0.18.6: 글로벌 UUID
+	Trigger    string                   `json:"trigger"`
+	LastSeenMs int64                    `json:"last_seen_ms"`
+	RawHex     string                   `json:"raw_hex,omitempty"` // v0.5.0: include_raw_hex=true 시에만 노출
+	State      Icp01DeviceStateInner    `json:"state"`
+	Metadata   Icp01DeviceStateMetadata `json:"metadata,omitempty"`
 }
 
-// CenturyDeviceStateSnapshot 은 변경 감지용 5 핵심 + online + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
+// Icp01DeviceStateSnapshot 은 변경 감지용 5 핵심 + online + ModeRaw 스냅샷이다 (REQ-CENTURY-035).
 //
 // Equals 는 5 핵심 필드 + 증발기 온도 (v0.5.1) 를 비교한다.
 // Online 전이는 별도 필드로 관리되어 captureLoop 와 offlineWatchLoop 에서 직접 비교한다.
@@ -438,18 +442,19 @@ type CenturyDeviceStateEvent struct {
 // v0.5.1: 증발기 온도(Reg03 의 temp_evap_a_c / temp_evap_b_c) 를 다시 snapshot 에
 // 포함 — state 그룹의 일부로 출력되므로 change detection 도 함께 수행. omitempty 를
 // 위해 pointer 사용 (nil = Reg03 미수신).
-type CenturyDeviceStateSnapshot struct {
+type Icp01DeviceStateSnapshot struct {
 	// Power 는 mode != ModeOff 여부이다.
 	Power bool
-	// Mode 는 ModeCode.String() 결과 ("off" / "cool" / "mode_unknown_<hex>") 이다. NASA/LGCNP 통일.
+	// Mode 는 ModeCode.String() 결과 ("off" / "cool" / "mode_unknown_<hex>") 이다. NASA/LG ICP-01 통일.
 	Mode string
 	// ModeRaw 는 raw 바이트 (Reg02 미수신 시 0) — change 비교 시 보조 정확도 확보용.
 	ModeRaw byte
-	// FanSpeed 는 reg 0x02 data[2] 의 raw uint8. NASA/LGCNP 통일 (이전 "Fan").
+	// FanSpeed 는 reg 0x02 data[2] 의 raw uint8. NASA/LG ICP-01 통일 (이전 "Fan").
 	FanSpeed uint8
-	// TargetTemp 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0). NASA/LGCNP 통일 (이전 "SetTempC").
+	// TargetTemp 는 reg 0x02 setpoint (LE u16 ÷ 10.0, 미수신 시 0.0). NASA/LG ICP-01 통일 (이전 "SetTempC").
 	TargetTemp float32
-	// CurrentTemp 는 reg 0x04 read response 의 temp_A_c (미수신 시 0.0). NASA/LGCNP 통일 (이전 "CurrentTempC").
+	// CurrentTemp 는 reg 0x02 의 CurrentTempC (data[7..8]) — 2026-05-29 위치 정정
+	// (이전엔 Reg04 의 TempAC 였음). 미수신 시 0.0. NASA/LG ICP-01 통일 (이전 "CurrentTempC").
 	CurrentTemp float32
 	// Online 은 디바이스의 현재 online 상태.
 	Online bool
@@ -462,7 +467,7 @@ type CenturyDeviceStateSnapshot struct {
 //
 // 5 핵심 + 증발기 온도 중 하나라도 다르면 false. online 은 비교하지 않는다 (별도 비교).
 // pointer 값 비교는 둘 다 nil 이거나 둘 다 non-nil 이면서 같은 값일 때만 같음.
-func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) bool {
+func (s Icp01DeviceStateSnapshot) Equals(other Icp01DeviceStateSnapshot) bool {
 	if s.Power != other.Power ||
 		s.ModeRaw != other.ModeRaw ||
 		s.FanSpeed != other.FanSpeed ||
@@ -482,14 +487,14 @@ func (s CenturyDeviceStateSnapshot) Equals(other CenturyDeviceStateSnapshot) boo
 // DeviceStateInnerFromSnapshot 은 snapshot 으로부터 JSON 출력용 inner state 를
 // 빌드한다 (v0.7.5). Mode/FanSpeed 는 hvac 통일 ID 로 변환된다.
 // processGetAll / processGetState 응답에서 사용.
-func DeviceStateInnerFromSnapshot(snap CenturyDeviceStateSnapshot) CenturyDeviceStateInner {
+func DeviceStateInnerFromSnapshot(snap Icp01DeviceStateSnapshot) Icp01DeviceStateInner {
 	mode := centuryModeToHVACID(snap.Mode)
 	fan := centuryFanSpeedToHVACID(snap.FanSpeed)
 	if !snap.Power {
 		mode = hvac.ModeOffOrAuto
 		fan = hvac.FanOff
 	}
-	return CenturyDeviceStateInner{
+	return Icp01DeviceStateInner{
 		Online:                 snap.Online,
 		Power:                  snap.Power,
 		Mode:                   mode,
@@ -521,7 +526,7 @@ func centuryModeToHVACID(mode string) int {
 // 하나라도 변경되었는지 검사한다 (v0.6.7).
 // TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리로 분류한다.
 // event_temp_threshold gate 에서 "온도 외 필드 변경 없음" 케이스 판별에 사용.
-func (s CenturyDeviceStateSnapshot) NonTempFieldsChanged(other CenturyDeviceStateSnapshot) bool {
+func (s Icp01DeviceStateSnapshot) NonTempFieldsChanged(other Icp01DeviceStateSnapshot) bool {
 	return s.Power != other.Power ||
 		s.ModeRaw != other.ModeRaw ||
 		s.FanSpeed != other.FanSpeed ||
@@ -530,7 +535,7 @@ func (s CenturyDeviceStateSnapshot) NonTempFieldsChanged(other CenturyDeviceStat
 
 // MaxTempDelta 는 온도 센서값들 (CurrentTemp + EvaporatorTemperatureA + EvaporatorTemperatureB) 의
 // 최대 |Δ| 를 반환한다 (v0.6.7). pointer 한쪽만 nil 이면 큰 값 반환 (게이트 우회).
-func (s CenturyDeviceStateSnapshot) MaxTempDelta(other CenturyDeviceStateSnapshot) float64 {
+func (s Icp01DeviceStateSnapshot) MaxTempDelta(other Icp01DeviceStateSnapshot) float64 {
 	delta := absDelta32(s.CurrentTemp, other.CurrentTemp)
 	if d := absDeltaPtr32(s.EvaporatorTemperatureA, other.EvaporatorTemperatureA); d > delta {
 		delta = d
@@ -573,13 +578,13 @@ func floatPtrEqual(a, b *float32) bool {
 	return *a == *b
 }
 
-// BuildDeviceStateSnapshot 은 CenturyDeviceState 로부터 변경 감지용 snapshot 을 빌드한다 (REQ-CENTURY-033).
+// BuildDeviceStateSnapshot 은 Icp01DeviceState 로부터 변경 감지용 snapshot 을 빌드한다 (REQ-CENTURY-033).
 //
 // 미수신 register 는 0.0 / 0 / false 로 채워진다 (A14). Mode/ModeRaw 는 Reg02 미수신 시 "off" / 0x00.
 // v0.5.1: Reg03 미수신 시 EvaporatorTemperatureA / EvaporatorTemperatureB 는 nil → state 출력에서 omitempty 자동 제외.
 // 호출자는 state 가 dereference 가능한지 (nil 아님) 확인해야 한다.
-func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDeviceStateSnapshot {
-	s := CenturyDeviceStateSnapshot{Online: online}
+func BuildDeviceStateSnapshot(state *Icp01DeviceState, online bool) Icp01DeviceStateSnapshot {
+	s := Icp01DeviceStateSnapshot{Online: online}
 	if state == nil {
 		// Reg02 nil → mode=off, power=false
 		s.Mode = ModeOff.String()
@@ -591,12 +596,12 @@ func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDev
 		s.Power = s.ModeRaw != byte(ModeOff)
 		s.FanSpeed = state.Reg02.Fan.Value
 		s.TargetTemp = state.Reg02.SetpointC.Value
+		s.CurrentTemp = state.Reg02.CurrentTempC.Value
 	} else {
 		s.Mode = ModeOff.String()
 	}
-	if state.Reg04Read != nil {
-		s.CurrentTemp = state.Reg04Read.TempAC.Value
-	}
+	// state.Reg04Read 는 더 이상 current_temp 의 원천이 아니다.
+	// reg04_word_10 (이전 temp_A_c) 의 실제 의미 미확정.
 	if state.Reg03 != nil {
 		evapA := state.Reg03.EvaporatorTemperatureA.Value
 		evapB := state.Reg03.EvaporatorTemperatureB.Value
@@ -617,14 +622,14 @@ func BuildDeviceStateSnapshot(state *CenturyDeviceState, online bool) CenturyDev
 //
 // v0.18.6: deviceID 매개변수 추가 (글로벌 UUID, 빈 문자열이면 emit 시 omitempty 로 제외).
 func NewDeviceStateEvent(
-	snap CenturyDeviceStateSnapshot,
+	snap Icp01DeviceStateSnapshot,
 	subDevID byte,
 	label string,
 	lastSeenMs int64,
 	trigger string,
 	rawHex string,
 	deviceID string,
-) *CenturyDeviceStateEvent {
+) *Icp01DeviceStateEvent {
 	modeID := centuryModeToHVACID(snap.Mode)
 	fanID := centuryFanSpeedToHVACID(snap.FanSpeed)
 	// v0.7.5: Power=false 면 mode/fan_speed 모두 0 으로 강제 (5 에이전트 통일 규칙).
@@ -632,13 +637,13 @@ func NewDeviceStateEvent(
 		modeID = hvac.ModeOffOrAuto
 		fanID = hvac.FanOff
 	}
-	return &CenturyDeviceStateEvent{
+	return &Icp01DeviceStateEvent{
 		SubDevID:   fmt.Sprintf("0x%02X", subDevID),
 		DeviceID:   deviceID,
 		Trigger:    trigger,
 		LastSeenMs: lastSeenMs,
 		RawHex:     rawHex,
-		State: CenturyDeviceStateInner{
+		State: Icp01DeviceStateInner{
 			Online:                 snap.Online,
 			Power:                  snap.Power,
 			Mode:                   modeID,
@@ -648,7 +653,7 @@ func NewDeviceStateEvent(
 			EvaporatorTemperatureA: snap.EvaporatorTemperatureA,
 			EvaporatorTemperatureB: snap.EvaporatorTemperatureB,
 		},
-		Metadata: CenturyDeviceStateMetadata{
+		Metadata: Icp01DeviceStateMetadata{
 			Label:      label,
 			DeviceType: "HVACR.IDU", // v0.6.4: Century 는 IDU 만 처리 (Reg02/03/04 모두 indoor unit). v0.18.3 값 체계 변경.
 		},

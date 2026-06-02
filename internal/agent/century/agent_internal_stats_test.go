@@ -10,7 +10,7 @@ import (
 //
 // 사용자 보고: "내부간 송수신(에이전트와 노드간) 통계, 운영 통계 누락".
 // Process() 호출 시 표준 agent.AgentStats 의 InternalMessagesReceived /
-// InternalMessagesSent 가 증가해야 한다 (NASA / LGCNP 패턴).
+// InternalMessagesSent 가 증가해야 한다 (NASA / LG ICP-01 패턴).
 func TestAgent_InternalStats_OnProcess(t *testing.T) {
 	t.Parallel()
 	a, _, cleanup := makeTestAgent(t, nil, nil)

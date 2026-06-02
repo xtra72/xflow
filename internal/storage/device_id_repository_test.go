@@ -17,7 +17,7 @@ func TestDeviceIDFileRepository_GetOrCreate_NewKey(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	id, err := r.GetOrCreate(context.Background(), "lgcnp-bus1", "idu-1")
+	id, err := r.GetOrCreate(context.Background(), "lg_hvacr01-bus1", "idu-1")
 	require.NoError(t, err)
 	assert.Len(t, id, 36, "UUID v4 길이 36")
 
@@ -33,10 +33,10 @@ func TestDeviceIDFileRepository_GetOrCreate_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	id1, err := r.GetOrCreate(context.Background(), "century-hvac", "0x3B")
+	id1, err := r.GetOrCreate(context.Background(), "century_hvacr01", "0x3B")
 	require.NoError(t, err)
 
-	id2, err := r.GetOrCreate(context.Background(), "century-hvac", "0x3B")
+	id2, err := r.GetOrCreate(context.Background(), "century_hvacr01", "0x3B")
 	require.NoError(t, err)
 
 	assert.Equal(t, id1, id2, "동일 키 재호출은 같은 UUID")
@@ -49,9 +49,9 @@ func TestDeviceIDFileRepository_DifferentKeys(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	id1, _ := r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
-	id2, _ := r.GetOrCreate(context.Background(), "lgcnp", "idu-2")
-	id3, _ := r.GetOrCreate(context.Background(), "lgcp", "idu-1")
+	id1, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
+	id2, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-2")
+	id3, _ := r.GetOrCreate(context.Background(), "lg_hvacr02", "idu-1")
 
 	assert.NotEqual(t, id1, id2, "같은 agent / 다른 unit_id")
 	assert.NotEqual(t, id1, id3, "다른 agent / 같은 unit_id")
@@ -65,7 +65,7 @@ func TestDeviceIDFileRepository_PersistenceAcrossInstances(t *testing.T) {
 	// 첫 인스턴스: UUID 생성.
 	r1, err := NewDeviceIDFileRepository(dir)
 	require.NoError(t, err)
-	id1, err := r1.GetOrCreate(context.Background(), "nasa", "20.01.00")
+	id1, err := r1.GetOrCreate(context.Background(), "samsung_nasa", "20.01.00")
 	require.NoError(t, err)
 	require.NoError(t, r1.Close())
 
@@ -74,7 +74,7 @@ func TestDeviceIDFileRepository_PersistenceAcrossInstances(t *testing.T) {
 	require.NoError(t, err)
 	defer r2.Close()
 
-	id2, err := r2.GetOrCreate(context.Background(), "nasa", "20.01.00")
+	id2, err := r2.GetOrCreate(context.Background(), "samsung_nasa", "20.01.00")
 	require.NoError(t, err)
 	assert.Equal(t, id1, id2, "재오픈 후에도 같은 UUID 유지")
 }
@@ -98,10 +98,10 @@ func TestDeviceIDFileRepository_Delete(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Close()
 
-	_, _ = r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
-	require.NoError(t, r.Delete(context.Background(), "lgcnp", "idu-1"))
+	_, _ = r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
+	require.NoError(t, r.Delete(context.Background(), "lg_hvacr01", "idu-1"))
 
-	id, _ := r.Get(context.Background(), "lgcnp", "idu-1")
+	id, _ := r.Get(context.Background(), "lg_hvacr01", "idu-1")
 	assert.Equal(t, "", id)
 }
 
@@ -115,7 +115,7 @@ func TestDeviceIDFileRepository_EmptyArgs(t *testing.T) {
 	_, err = r.GetOrCreate(context.Background(), "", "idu-1")
 	assert.Error(t, err)
 
-	_, err = r.GetOrCreate(context.Background(), "lgcnp", "")
+	_, err = r.GetOrCreate(context.Background(), "lg_hvacr01", "")
 	assert.Error(t, err)
 }
 
@@ -124,14 +124,14 @@ func TestDeviceIDMemoryRepository_Basic(t *testing.T) {
 	r := NewDeviceIDMemoryRepository()
 	defer r.Close()
 
-	id1, err := r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
+	id1, err := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
 	require.NoError(t, err)
 	assert.Len(t, id1, 36)
 
-	id2, _ := r.GetOrCreate(context.Background(), "lgcnp", "idu-1")
+	id2, _ := r.GetOrCreate(context.Background(), "lg_hvacr01", "idu-1")
 	assert.Equal(t, id1, id2)
 
 	list, _ := r.List(context.Background())
 	assert.Len(t, list, 1)
-	assert.Equal(t, id1, list["lgcnp:idu-1"])
+	assert.Equal(t, id1, list["lg_hvacr01:idu-1"])
 }

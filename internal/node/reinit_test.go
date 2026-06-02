@@ -15,19 +15,19 @@ func TestAgentReinitializer_InterfaceCompliance(t *testing.T) {
 	var _ AgentReinitializer = (*BridgeNode)(nil)
 
 	// NASA 계열
-	var _ AgentReinitializer = (*NASAStatusNode)(nil)
-	var _ AgentReinitializer = (*NASAControlNode)(nil)
-	var _ AgentReinitializer = (*NASANode)(nil)
+	var _ AgentReinitializer = (*SamsungHvacr01StatusNode)(nil)
+	var _ AgentReinitializer = (*SamsungHvacr01ControlNode)(nil)
+	var _ AgentReinitializer = (*SamsungHvacr01Node)(nil)
 
-	// LGCP 계열
-	var _ AgentReinitializer = (*LGCPStatusNode)(nil)
-	var _ AgentReinitializer = (*LGCPControlNode)(nil)
-	var _ AgentReinitializer = (*LGCPNode)(nil)
+	// LG HVACR-02 (LG ICP-02) 계열
+	var _ AgentReinitializer = (*LGHvacr02StatusNode)(nil)
+	var _ AgentReinitializer = (*LGHvacr02ControlNode)(nil)
+	var _ AgentReinitializer = (*LGHvacr02Node)(nil)
 
-	// LGCNP 계열
-	var _ AgentReinitializer = (*LGCNPStatusNode)(nil)
-	var _ AgentReinitializer = (*LGCNPControlNode)(nil)
-	var _ AgentReinitializer = (*LGCNPNode)(nil)
+	// lg_hvacr01 (LG HVACR-01) 계열
+	var _ AgentReinitializer = (*LGHvacr01StatusNode)(nil)
+	var _ AgentReinitializer = (*LGHvacr01ControlNode)(nil)
+	var _ AgentReinitializer = (*LGHvacr01Node)(nil)
 
 	// LGAP 계열
 	var _ AgentReinitializer = (*LGAPStatusNode)(nil)

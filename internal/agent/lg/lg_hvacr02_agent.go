@@ -1,0 +1,2122 @@
+package lg
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/pkg/lifecycle"
+)
+
+// ---------------------------------------------------------------------------
+// LG HVACR-02 패시브 패킷 캡처 에이전트
+// ---------------------------------------------------------------------------
+
+// Hvacr02Agent 는 LG 내부 제어 프로토콜(LG ICP-02) 패킷을 패시브하게 캡처하는 에이전트이다.
+// 시리얼 버스를 리스닝만 하며, 절대로 데이터를 전송하지 않는다.
+// agent.Agent, agent.MessageReceiver, agent.StatefulAgent,
+// agent.BufferInfoProvider, agent.TransportChecker 인터페이스를 구현한다.
+type Hvacr02Agent struct {
+	*lifecycle.BaseLifecycle
+	agentConfig   agent.AgentConfig
+	hvacr02Config Hvacr02Config
+	transport     LGAPTransport // 기존 시리얼 트랜스포트 재사용
+	stopCh        chan struct{}
+	msgCh         chan []byte // Bridge 메시지 (ReceiveMessage)
+	stats         *agent.AgentStats
+	logger        *slog.Logger
+	mu            sync.RWMutex
+	startedAt     time.Time
+	createdAt     time.Time
+	paused        bool
+
+	// 재연결 상태
+	reconnectMu       sync.Mutex
+	isReconnecting    bool
+	reconnectAttempts int
+
+	// 캡처 통계 (atomic)
+	framesCaptured atomic.Int64
+	framesValid    atomic.Int64
+	framesInvalid  atomic.Int64
+	framesDropped  atomic.Int64
+	bytesReceived  atomic.Int64
+
+	// 최근 프레임 링 버퍼 (get_recent 명령용)
+	recentMu     sync.RWMutex
+	recentFrames []icp02FrameRecord
+	recentIdx    int
+	recentFull   bool
+	recentNotify chan struct{} // 새 프레임 도착 알림 (폴링 노드용)
+
+	// Bridge 소비자 활성 여부 (ReceiveMessage 호출 시 true)
+	bridgeActive atomic.Bool
+
+	// 드롭 로그 rate-limit
+	lastDropLog atomic.Int64 // UnixNano
+
+	// 디바이스 관리
+	devices      map[string]*Icp02Device     // 주소(hex) → 디바이스
+	lastStates   map[string]Icp02DeviceState // 주소(hex) → 이전 상태 (변경 감지용)
+	notifyTicker *time.Ticker                // 주기적 상태 보고 타이머
+
+	// V2 콜백 (Phase D 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
+	// Phase D (xflowd v1.0) 부터 V1 시그니처 (onDeviceStateChange) 는 완전 제거됨.
+	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
+
+	// 제어 기능 (SPEC-LG-HVACR-002)
+	writeMu        sync.Mutex
+	frameBuilder   *Icp02FrameBuilder
+	seqManager     *Icp02SequenceManager // Controller→Unit 방향 SEQ 추적
+	unitSeqManager *Icp02SequenceManager // Unit→Controller 방향 SEQ 추적 (서모스탯 사칭용)
+	lastSentFrame  []byte
+	lastSentTime   time.Time
+	lastRecvTime   atomic.Int64 // UnixNano — 마지막 프레임 수신 시각 (버스 충돌 방지)
+}
+
+// icp02FrameRecord 는 링 버퍼에 저장되는 프레임 레코드이다.
+type icp02FrameRecord struct {
+	Event     json.RawMessage `json:"event"`
+	Timestamp time.Time       `json:"timestamp"`
+	Seq       int64           `json:"seq"` // 캡처 시퀀스 (last_seq 필터링용)
+}
+
+// hvacr02RecentBufferSize 는 최근 프레임 링 버퍼의 크기이다.
+const hvacr02RecentBufferSize = 64
+
+// 컴파일 타임 인터페이스 체크
+var _ agent.Agent = (*Hvacr02Agent)(nil)
+var _ agent.MessageReceiver = (*Hvacr02Agent)(nil)
+var _ agent.StatefulAgent = (*Hvacr02Agent)(nil)
+var _ agent.BufferInfoProvider = (*Hvacr02Agent)(nil)
+var _ agent.TransportChecker = (*Hvacr02Agent)(nil)
+var _ agent.FrameNotifier = (*Hvacr02Agent)(nil)
+
+// ---------------------------------------------------------------------------
+// Icp02FrameEvent / ParsedHeader: JSON 이벤트 구조체
+// ---------------------------------------------------------------------------
+
+// Icp02FrameEvent 는 캡처된 프레임의 JSON 이벤트 구조체이다.
+//
+// v0.x: 5종 에이전트 schema 통일 — Timestamp 가 RFC3339 문자열에서 epoch
+// milliseconds (int64) 로 변경.
+//
+// 2026-05-30: LG HVACR-01 v0.9.0 패턴 통일 — 잔존 `Type` 필드 ("lgcp_frame" /
+// "lgcp_partial_frame") 제거. schema 식별은 노드/메시지 wrapper 의 msg.Type
+// ("device_state.<trigger>") 가 담당한다. partial frame 은 `Error` 필드 유무로
+// 구별 가능하므로 별도 type 식별자 불필요.
+type Icp02FrameEvent struct {
+	TimestampMs int64         `json:"timestamp_ms"`     // epoch ms (이전: timestamp 문자열)
+	Seq         int64         `json:"seq"`              // 캡처 시퀀스 번호
+	RawHex      string        `json:"raw_hex"`          // 원시 바이트 (hex)
+	Length      int           `json:"length"`           // 프레임 길이
+	CRCValid    bool          `json:"crc_valid"`        // CRC 검증 결과
+	Parsed      *ParsedHeader `json:"parsed,omitempty"` // 파싱된 헤더 (정상 프레임만)
+	Error       *string       `json:"error,omitempty"`  // 파싱 에러 메시지 (있으면 partial frame)
+}
+
+// ParsedHeader 는 파싱된 LGCP 프레임 헤더이다.
+type ParsedHeader struct {
+	DA         string               `json:"da"`                 // 목적지 주소 (hex)
+	DALabel    string               `json:"da_label,omitempty"` // 목적지 주소 라벨
+	SA         string               `json:"sa"`                 // 소스 주소 (hex)
+	SALabel    string               `json:"sa_label,omitempty"` // 소스 주소 라벨
+	CMD        string               `json:"cmd"`                // 명령 코드 (hex)
+	CMDName    string               `json:"cmd_name,omitempty"` // 명령 타입 이름
+	SEQ0       int                  `json:"seq0"`               // 명령 시퀀스 번호
+	PLEN       int                  `json:"plen"`               // 페이로드 길이
+	PayloadHex string               `json:"payload_hex"`        // 페이로드 (hex)
+	SEQ1       int                  `json:"seq1"`               // 프레임 시퀀스 번호
+	Decoded    *Icp02DecodedPayload `json:"state,omitempty"`    // 해석된 필드 (v0.x: NASA/Century 와 통일하여 "state" 키)
+	Pairs      []Icp02RegPairJSON   `json:"pairs,omitempty"`    // 레지스터-속성 쌍 원본 (프로토콜 분석용)
+}
+
+// hvacr02CMDNames 는 알려진 LGCP 명령 코드와 이름의 매핑이다.
+var hvacr02CMDNames = map[string]string{
+	"0204": "status",    // 상태 조회/보고
+	"0201": "control",   // 제어 명령
+	"0604": "keepalive", // Keep-alive
+	"021D": "special",   // 특수 명령
+}
+
+// defaultHvacr02Label 은 주소에 대한 기본 라벨을 반환한다.
+// 설정에서 지정되지 않은 디바이스에 자동 부여된다.
+func defaultHvacr02Label(addrHex string) string {
+	switch addrHex {
+	case "ffffffff":
+		return "broadcast"
+	case "44550000":
+		return "controller"
+	default:
+		return "indoor-" + addrHex
+	}
+}
+
+// deviceLabel 은 주소에 대한 라벨을 반환한다.
+// 등록된 디바이스의 라벨을 우선 사용하고, 없으면 defaultHvacr02Label 로 폴백한다.
+// mu.RLock() 을 잡은 상태에서 호출해야 한다.
+func (a *Hvacr02Agent) deviceLabel(addrHex string) string {
+	if dev, ok := a.devices[addrHex]; ok && dev.Label != "" {
+		return dev.Label
+	}
+	return defaultHvacr02Label(addrHex)
+}
+
+// ---------------------------------------------------------------------------
+// transportReader: LGAPTransport.Receive() → io.Reader 어댑터
+// ---------------------------------------------------------------------------
+
+// transportReader 는 LGAPTransport.Receive() 를 io.Reader 로 래핑하는 어댑터이다.
+// Icp02FrameParser 는 io.Reader 를 요구하지만, LGAPTransport.Receive() 는
+// 별도 시그니처를 가지므로 이 어댑터가 필요하다.
+type transportReader struct {
+	transport LGAPTransport
+}
+
+// Read 는 io.Reader 를 구현한다.
+func (r *transportReader) Read(p []byte) (int, error) {
+	return r.transport.Receive(p)
+}
+
+// ---------------------------------------------------------------------------
+// 팩토리 함수
+// ---------------------------------------------------------------------------
+
+// NewHvacr02Agent 는 LGCP 패시브 캡처 에이전트를 생성한다.
+func NewHvacr02Agent(config agent.AgentConfig) (agent.Agent, error) {
+	hvacr02Config, err := parseHvacr02Config(config.Transport.Options)
+	if err != nil {
+		return nil, fmt.Errorf("lg_hvacr02 agent: %w", err)
+	}
+
+	transport, err := newHvacr02Transport(hvacr02Config)
+	if err != nil {
+		return nil, fmt.Errorf("lg_hvacr02 agent: %w", err)
+	}
+
+	a := &Hvacr02Agent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lg_hvacr02")),
+		hvacr02Config: hvacr02Config,
+		transport:     transport,
+		stopCh:        make(chan struct{}),
+		msgCh:         make(chan []byte, hvacr02Config.MsgChannelSize),
+		stats:         agent.NewAgentStats(),
+		logger:        agent.ResolveLogger(config),
+		createdAt:     time.Now(),
+		recentFrames:  make([]icp02FrameRecord, hvacr02RecentBufferSize),
+		recentNotify:  make(chan struct{}, 1),
+		devices:       make(map[string]*Icp02Device),
+		lastStates:    make(map[string]Icp02DeviceState),
+	}
+
+	if err := a.Init(config); err != nil {
+		return nil, err
+	}
+
+	return a, nil
+}
+
+// newHvacr02Transport 는 Hvacr02Config.TransportType 에 따라 적절한 트랜스포트를 생성한다.
+func newHvacr02Transport(cfg Hvacr02Config) (LGAPTransport, error) {
+	switch cfg.TransportType {
+	case "serial":
+		return newLGAPSerialTransport(hvacr02SerialConfigFromConfig(cfg)), nil
+	case "tcp-client":
+		return newLGAPTCPClientTransport(cfg), nil
+	case "tcp-server":
+		return newLGAPTCPServerTransport(cfg), nil
+	default:
+		return nil, ErrHvacr02UnknownTransportType
+	}
+}
+
+// hvacr02SerialConfigFromConfig 는 Hvacr02Config 에서 LGAPConfig 호환 값을 생성한다.
+// newLGAPSerialTransport 에 전달하기 위한 최소 설정만 포함한다.
+func hvacr02SerialConfigFromConfig(cfg Hvacr02Config) LGAPConfig {
+	return LGAPConfig{
+		SerialPort:  cfg.SerialPort,
+		BaudRate:    cfg.BaudRate,
+		DataBits:    cfg.DataBits,
+		StopBits:    cfg.StopBits,
+		Parity:      cfg.Parity,
+		ReadTimeout: cfg.ReadTimeout,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// agent.Agent 인터페이스 구현
+// ---------------------------------------------------------------------------
+
+// Init 은 에이전트를 초기화한다.
+func (a *Hvacr02Agent) Init(config agent.AgentConfig) error {
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("lg_hvacr02 init: %w", err)
+	}
+
+	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return fmt.Errorf("lg_hvacr02 init: %w", err)
+	}
+
+	a.mu.Lock()
+	a.agentConfig = config
+	a.mu.Unlock()
+
+	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
+		return fmt.Errorf("lg_hvacr02 init: %w", err)
+	}
+
+	a.mu.Lock()
+	a.startedAt = time.Now()
+	a.mu.Unlock()
+
+	a.logger.Info("lg_hvacr02: 에이전트 초기화 완료",
+		"serial_port", a.hvacr02Config.SerialPort,
+	)
+
+	return nil
+}
+
+// Start 는 트랜스포트를 열고 캡처 루프를 시작한다.
+func (a *Hvacr02Agent) Start(_ context.Context) error {
+	if a.CurrentState() == lifecycle.StateRunning && a.transport.Available() {
+		return nil // 이미 실행 중이면 no-op
+	}
+
+	// 재시작 시 stopCh 재생성 (이전 Stop 에서 close 됨)
+	a.stopCh = make(chan struct{})
+
+	// 설정에 정의된 디바이스 주소 등록
+	a.registerConfigDevices()
+
+	if err := a.transport.Open(); err != nil {
+		// 연결 실패 시 에러 반환 대신 재연결 루프 시작
+		a.logger.Warn("lg_hvacr02: 트랜스포트 연결 실패, 재연결 대기", "error", err)
+		go a.reconnectLoop()
+	} else {
+		// 연결 성공 시 캡처 루프 시작
+		go a.captureLoop()
+	}
+
+	// 주기적 상태 보고 타이머
+	if a.hvacr02Config.NotifyInterval > 0 {
+		go a.notifyLoop()
+	}
+
+	// 통신 없음 오프라인 감시
+	go a.offlineWatchLoop()
+
+	a.stats.SetStartedAt(time.Now())
+	a.logger.Info("lg_hvacr02: 에이전트 시작 완료")
+	return nil
+}
+
+// Stop 은 에이전트를 정지한다.
+func (a *Hvacr02Agent) Stop(_ context.Context) error {
+	if a.CurrentState() == lifecycle.StateStopped {
+		return nil
+	}
+	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
+		return fmt.Errorf("lg_hvacr02 stop: %w", err)
+	}
+
+	// notifyTicker 정지
+	a.mu.Lock()
+	if a.notifyTicker != nil {
+		a.notifyTicker.Stop()
+	}
+	a.mu.Unlock()
+
+	// goroutine 들에게 종료 시그널
+	close(a.stopCh)
+
+	// 트랜스포트 닫기
+	if err := a.transport.Close(); err != nil {
+		a.logger.Warn("lg_hvacr02: transport close error", "error", err)
+	}
+
+	// msgCh 드레인
+	for {
+		select {
+		case <-a.msgCh:
+		default:
+			goto drained
+		}
+	}
+drained:
+
+	if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
+		return fmt.Errorf("lg_hvacr02 stop: %w", err)
+	}
+
+	return nil
+}
+
+// Pause 는 Running -> Paused 로 전환한다.
+func (a *Hvacr02Agent) Pause(_ context.Context) error {
+	if err := a.TransitionTo(lifecycle.StatePaused); err != nil {
+		return fmt.Errorf("lg_hvacr02 pause: %w", err)
+	}
+	a.mu.Lock()
+	a.paused = true
+	a.mu.Unlock()
+	return nil
+}
+
+// Resume 은 Paused -> Running 으로 전환한다.
+func (a *Hvacr02Agent) Resume(_ context.Context) error {
+	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
+		return fmt.Errorf("lg_hvacr02 resume: %w", err)
+	}
+	a.mu.Lock()
+	a.paused = false
+	a.mu.Unlock()
+	return nil
+}
+
+// Health 는 에이전트의 건강 상태를 반환한다.
+func (a *Hvacr02Agent) Health() agent.HealthStatus {
+	now := time.Now()
+	state := a.CurrentState()
+
+	switch state {
+	case lifecycle.StateRunning:
+		return agent.HealthStatus{
+			Status:    agent.HealthHealthy,
+			LastCheck: now,
+			Message:   "lg_hvacr02 agent is running",
+		}
+	case lifecycle.StatePaused:
+		return agent.HealthStatus{
+			Status:    agent.HealthDegraded,
+			LastCheck: now,
+			Message:   "lg_hvacr02 agent is paused",
+		}
+	default:
+		return agent.HealthStatus{
+			Status:    agent.HealthUnhealthy,
+			LastCheck: now,
+			Message:   fmt.Sprintf("lg_hvacr02 agent is in %s state", state),
+		}
+	}
+}
+
+// hvacr02ProcessRequest 는 Process 메서드의 JSON 요청 구조체이다.
+type hvacr02ProcessRequest struct {
+	Command string         `json:"command"`
+	Count   int            `json:"count,omitempty"`    // get_recent 에서 사용
+	Address string         `json:"address,omitempty"`  // 제어 대상 실내기 주소 (hex)
+	Params  map[string]any `json:"params,omitempty"`   // 제어 파라미터
+	NodeID  string         `json:"node_id,omitempty"`  // 호출 노드 식별자 (노드별 통계용)
+	FlowID  string         `json:"flow_id,omitempty"`  // 호출 플로우 식별자 (노드별 통계용)
+	LastSeq int64          `json:"last_seq,omitempty"` // 노드가 마지막으로 수신한 seq (중복 필터링)
+}
+
+// Process 는 JSON 명령을 처리한다.
+// 지원 명령: get_stats, get_recent, drain, set_power, target_temperature, set_fan_speed, set_mode, set_multiple
+func (a *Hvacr02Agent) Process(data []byte) ([]byte, error) {
+	var req hvacr02ProcessRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		a.stats.IncrMessagesErrored()
+		return nil, fmt.Errorf("lg_hvacr02 process: invalid request: %w", err)
+	}
+
+	var result []byte
+	var err error
+
+	switch req.Command {
+	case "get_stats":
+		result, err = a.processGetStats()
+	case "get_recent":
+		// v0.7.1: count 의미 통일 (5개 HVAC 노드 공통)
+		//   count > 0: 최근 count 개 frame (lastSeq 이후, 비파괴)
+		//   count == 0: drain — 전체 frame 반환 후 버퍼 비움 (destructive)
+		count := req.Count
+		if count == 0 {
+			result, err = a.processDrain(hvacr02RecentBufferSize, req.NodeID, req.FlowID)
+		} else {
+			if count < 0 {
+				count = 10
+			}
+			result, err = a.processGetRecent(count, req.LastSeq, req.NodeID, req.FlowID)
+		}
+	case "drain":
+		// v0.7.1 deprecated: use "get_recent" with count=0.
+		count := req.Count
+		if count <= 0 {
+			count = hvacr02RecentBufferSize
+		}
+		result, err = a.processDrain(count, req.NodeID, req.FlowID)
+	case "get_all":
+		// v0.7.2: 5개 HVAC 노드 통일 명령. 모든 device 의 즉시 snapshot 반환.
+		result, err = a.processGetAll()
+	case "request_state":
+		// 2026-05-30: LG01 v0.18.24 패턴 통일 — 노드의 inactivity-fallback 요청.
+		// 각 디바이스의 마지막 상태를 trigger="response" 로 push 경로 (ring +
+		// msgCh) 에 emit 한다. 노드는 FrameNotifyCh 신호를 받아 drain 으로 수신.
+		emitted := a.emitAllDeviceStates("response")
+		result, err = json.Marshal(map[string]any{
+			"status":  "ok",
+			"emitted": emitted,
+		})
+	case "get_state":
+		// v0.7.3: 단일 device 조회 (address hex, 예: "44550067").
+		result, err = a.processGetState(&req)
+	case "set_power":
+		result, err = a.processControlCommand(req)
+	case "target_temperature":
+		result, err = a.processControlCommand(req)
+	case "set_fan_speed":
+		result, err = a.processControlCommand(req)
+	case "set_mode":
+		result, err = a.processControlCommand(req)
+	case "set_multiple":
+		result, err = a.processControlCommand(req)
+	default:
+		a.stats.IncrMessagesErrored()
+		return nil, fmt.Errorf("lg_hvacr02: unsupported command %q", req.Command)
+	}
+
+	if err != nil {
+		a.stats.IncrMessagesErrored()
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// processControlCommand 는 제어 명령을 서모스탯 사칭 모드로 처리한다.
+//
+// 서모스탯 사칭 모드: 컨트롤러(44550000)가 실내기 상태를 주기적으로 덮어쓰므로,
+// 직접 실내기에 명령을 보내도 무효화된다. 대신 서모스탯(실내기)을 사칭하여
+// 컨트롤러에 "설정 변경 보고"를 보내면 컨트롤러가 내부 상태를 갱신한다.
+//
+// 프레임 방향: SA=실내기(사칭), DA=컨트롤러
+// 레지스터: Unit→Controller 형식 (0x60+ 레지스터)
+// SEQ0: Unit→Controller 방향의 관찰된 시퀀스 사용
+func (a *Hvacr02Agent) processControlCommand(req hvacr02ProcessRequest) ([]byte, error) {
+	a.logger.Info("lg_hvacr02: 제어 명령 수신 (서모스탯 사칭 모드)",
+		"command", req.Command, "address", req.Address, "params", req.Params)
+
+	if !a.hvacr02Config.ControlEnabled {
+		a.logger.Warn("lg_hvacr02: 제어 비활성화 상태")
+		return nil, ErrHvacr02ControlNotEnabled
+	}
+
+	if req.Address == "" {
+		return nil, fmt.Errorf("%w: address", ErrHvacr02MissingParam)
+	}
+
+	// 주소 파싱
+	unitAddr, err := ParseHexAddress(req.Address)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrHvacr02InvalidAddress, req.Address)
+	}
+	ctrlAddr, err := ParseHexAddress(a.hvacr02Config.ControllerAddress)
+	if err != nil {
+		return nil, fmt.Errorf("lg_hvacr02: invalid controller address: %w", err)
+	}
+
+	// 서모스탯 레지스터 형식으로 페이로드 생성 (Unit→Controller 방향)
+	thermoPayload, err := a.buildThermostatPayloadForCommand(req)
+	if err != nil {
+		a.logger.Error("lg_hvacr02: 서모스탯 페이로드 생성 실패", "error", err)
+		return nil, err
+	}
+
+	// 프레임 빌드 준비
+	if a.frameBuilder == nil {
+		a.frameBuilder = NewIcp02FrameBuilder()
+	}
+	if a.unitSeqManager == nil {
+		a.unitSeqManager = NewIcp02SequenceManager()
+	}
+	// seqManager: SEQ1 할당에 사용 (전역 프레임 카운터)
+	if a.seqManager == nil {
+		a.seqManager = NewIcp02SequenceManager()
+	}
+
+	cmd := [2]byte{0x02, 0x01}
+
+	// 컨트롤러 사칭용 페이로드 생성 (Controller→Unit 방향)
+	ctrlPayload := a.buildControllerPayloadForCommand(req)
+
+	currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
+	currentTempC := a.getCurrentTempC(req.Address)
+	a.logger.Info("lg_hvacr02: 양방향 제어 시작 (타이밍 분리)",
+		"unit_seq_synced", a.unitSeqManager.Synced(),
+		"ctrl_seq_synced", a.seqManager.Synced(),
+		"current_fan_code", currentFanCode,
+		"current_mode_code", currentModeCode,
+		"current_temp_c", currentTempC,
+		"thermo_payload", hex.EncodeToString(thermoPayload),
+		"ctrl_payload", hex.EncodeToString(ctrlPayload))
+
+	// 양방향 전송 (타이밍 분리):
+	// 전략: 양방향 연속 전송으로 유닛의 안전 인터록 해제 시도.
+	// 유닛 팬이 90Hz로 반응 → 우리 ctrl→unit 프레임을 실제 수신 중.
+	// 컨트롤러는 power:ON과 outdoor_active:true를 분리 전송하므로,
+	// 우리 ctrl→unit(둘 다 포함)이 유닛에 직접 전달되어야 함.
+	// 유닛은 안전 인터록으로 수 사이클 유지 후 전환할 수 있으므로 길게 유지.
+	const rounds = 30
+	const roundInterval = 2 * time.Second    // 빠른 갱신 (폴링 사이클당 ~5회)
+	const ctrlDelay = 500 * time.Millisecond // 서모스탯 직후 빠르게 전송
+
+	for i := 0; i < rounds; i++ {
+		if i > 0 {
+			time.Sleep(roundInterval)
+		}
+
+		// (A) 서모스탯 사칭: Unit→Controller (outdoor_active:true 트리거)
+		seq0 := a.unitSeqManager.AllocSEQ0(cmd)
+		seq1 := a.seqManager.AllocSEQ1()
+		tPayload := appendPayloadCRC(cmd, seq0, thermoPayload)
+		tFrame := a.frameBuilder.Build(ctrlAddr, unitAddr, cmd, seq0, tPayload, seq1)
+
+		if err := a.sendFrame(tFrame); err != nil {
+			a.logger.Error("lg_hvacr02: 서모스탯 프레임 전송 실패", "round", i+1, "error", err)
+			if i == 0 {
+				return nil, fmt.Errorf("%w: %v", ErrHvacr02SerialWriteFailed, err)
+			}
+			break
+		}
+		a.logger.Info("lg_hvacr02: 서모스탯 사칭 전송",
+			"round", fmt.Sprintf("%d/%d", i+1, rounds),
+			"direction", "unit→ctrl",
+			"seq0", fmt.Sprintf("0x%02X", seq0))
+
+		// (B) 컨트롤러 사칭: Controller→Unit (전 라운드)
+		// ctrl→unit에 outdoor_active:true + power:ON 동시 포함.
+		// 컨트롤러가 분리 전송하는 문제를 우리가 직접 보완.
+		if ctrlPayload != nil {
+			time.Sleep(ctrlDelay)
+
+			cSeq0 := a.seqManager.AllocSEQ0(cmd)
+			cSeq1 := a.seqManager.AllocSEQ1()
+			cPayload := appendPayloadCRC(cmd, cSeq0, ctrlPayload)
+			cFrame := a.frameBuilder.Build(unitAddr, ctrlAddr, cmd, cSeq0, cPayload, cSeq1)
+
+			if err := a.sendFrame(cFrame); err != nil {
+				a.logger.Warn("lg_hvacr02: 컨트롤러 사칭 프레임 전송 실패", "round", i+1, "error", err)
+			} else {
+				a.logger.Info("lg_hvacr02: 컨트롤러 사칭 전송",
+					"round", fmt.Sprintf("%d/%d", i+1, rounds),
+					"direction", "ctrl→unit",
+					"seq0", fmt.Sprintf("0x%02X", cSeq0))
+			}
+		}
+	}
+
+	a.logger.Info("lg_hvacr02: 양방향 제어 완료", "total_rounds", rounds)
+
+	// 비동기 상태 확인
+	verified := a.waitForStateChange(req.Address, a.hvacr02Config.ControlVerifyTimeout)
+
+	resp := map[string]any{
+		"status":   "ok",
+		"command":  req.Command,
+		"address":  req.Address,
+		"mode":     "dual_timed",
+		"verified": verified,
+	}
+	if !verified {
+		resp["message"] = "thermostat command sent, verification timeout"
+	}
+
+	a.stats.IncrInternalMessagesSent()
+	return json.Marshal(resp)
+}
+
+// buildControllerPayloadForCommand 는 컨트롤러 사칭용 페이로드를 생성한다.
+// Controller→Unit 방향의 레지스터 형식 (0x10-0x29 네임스페이스)을 사용한다.
+// 에러 시 nil 을 반환하며 (서모스탯 페이로드가 메인이므로 실패해도 계속).
+func (a *Hvacr02Agent) buildControllerPayloadForCommand(req hvacr02ProcessRequest) []byte {
+	params := req.Params
+	if params == nil {
+		return nil
+	}
+
+	switch req.Command {
+	case "set_power":
+		power, ok := params["power"]
+		if !ok {
+			return nil
+		}
+		on, _ := power.(bool)
+		// ctrl→unit 페이로드: 0x13 레지스터 제외 (관찰 전용 레지스터, 포함 시 유닛 거부)
+		// compCap=9: 실제 컨트롤러는 4를 사용하나, 9가 더 강한 팬 반응을 유발
+		if on {
+			return []byte{0x10, 0xC1, 0x18, 0x41, 0x18, 0x89, 0x29, 0xC0}
+		}
+		return []byte{0x10, 0xC0, 0x18, 0x40, 0x18, 0x80, 0x29, 0xC0}
+
+	case "target_temperature":
+		temp, ok := params["target_temperature"]
+		if !ok {
+			return nil
+		}
+		var tempC float64
+		switch t := temp.(type) {
+		case float64:
+			tempC = t
+		case int:
+			tempC = float64(t)
+		}
+		p, err := encodeTemperaturePayload(tempC)
+		if err != nil {
+			return nil
+		}
+		return p
+
+	case "set_fan_speed":
+		fs, ok := params["fan_speed"]
+		if !ok {
+			return nil
+		}
+		fanStr, _ := fs.(string)
+		fanCode, err := lookupFanSpeedCode(fanStr)
+		if err != nil {
+			return nil
+		}
+		_, currentModeCode := a.getCurrentFanModeCode(req.Address)
+		return encodeFanModePayload(fanCode, currentModeCode)
+
+	case "set_mode":
+		m, ok := params["mode"]
+		if !ok {
+			return nil
+		}
+		modeStr, _ := m.(string)
+		modeCode, err := lookupModeCode(modeStr)
+		if err != nil {
+			return nil
+		}
+		currentFanCode, _ := a.getCurrentFanModeCode(req.Address)
+		return encodeFanModePayload(currentFanCode, modeCode)
+
+	case "set_multiple":
+		currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
+		p, _ := buildControlPayload(params, currentFanCode, currentModeCode)
+		return p
+	}
+	return nil
+}
+
+// buildThermostatPayloadForCommand 는 서모스탯 사칭용 페이로드를 생성한다.
+// Unit→Controller 방향의 레지스터 형식 (0x60+ 네임스페이스)을 사용한다.
+func (a *Hvacr02Agent) buildThermostatPayloadForCommand(req hvacr02ProcessRequest) ([]byte, error) {
+	params := req.Params
+	if params == nil {
+		params = make(map[string]any)
+	}
+
+	// 현재 디바이스 상태에서 기본값 조회
+	currentFanCode, currentModeCode := a.getCurrentFanModeCode(req.Address)
+	currentTempC := a.getCurrentTempC(req.Address)
+
+	switch req.Command {
+	case "set_power":
+		power, ok := params["power"]
+		if !ok {
+			return nil, fmt.Errorf("%w: power", ErrHvacr02MissingParam)
+		}
+		on, _ := power.(bool)
+		// 서모스탯 형식: 62,41(ON)/62,40(OFF) + 64,50,XY + 64,8V
+		return encodeThermostatPowerPayload(on, currentFanCode, currentModeCode, currentTempC), nil
+
+	case "target_temperature":
+		temp, ok := params["target_temperature"]
+		if !ok {
+			return nil, fmt.Errorf("%w: target_temp", ErrHvacr02MissingParam)
+		}
+		var tempC float64
+		switch t := temp.(type) {
+		case float64:
+			tempC = t
+		case int:
+			tempC = float64(t)
+		}
+		// 서모스탯 형식: 64,8V (온도만)
+		return encodeThermostatTempPayload(tempC)
+
+	case "set_fan_speed":
+		fs, ok := params["fan_speed"]
+		if !ok {
+			return nil, fmt.Errorf("%w: fan_speed", ErrHvacr02MissingParam)
+		}
+		fanStr, _ := fs.(string)
+		fanCode, err := lookupFanSpeedCode(fanStr)
+		if err != nil {
+			return nil, err
+		}
+		// 서모스탯 형식: 64,50,XY
+		return encodeThermostatFanModePayload(fanCode, currentModeCode), nil
+
+	case "set_mode":
+		m, ok := params["mode"]
+		if !ok {
+			return nil, fmt.Errorf("%w: mode", ErrHvacr02MissingParam)
+		}
+		modeStr, _ := m.(string)
+		modeCode, err := lookupModeCode(modeStr)
+		if err != nil {
+			return nil, err
+		}
+		// 서모스탯 형식: 64,50,XY
+		return encodeThermostatFanModePayload(currentFanCode, modeCode), nil
+
+	case "set_multiple":
+		return buildThermostatPayload(params, currentFanCode, currentModeCode, currentTempC)
+
+	default:
+		return nil, fmt.Errorf("lg_hvacr02: unknown control command %q", req.Command)
+	}
+}
+
+// getCurrentFanModeCode 는 디바이스의 현재 풍량/모드 코드를 반환한다.
+// 대상 디바이스에 mode/fan 정보가 없으면 동일 컨트롤러의 다른 디바이스에서 조회한다.
+// 모든 디바이스에 정보가 없으면 기본값을 반환한다.
+func (a *Hvacr02Agent) getCurrentFanModeCode(address string) (fanCode, modeCode int) {
+	fanCode = hvacr02DefaultFanCode
+	modeCode = hvacr02DefaultModeCode
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	fanFound, modeFound := false, false
+
+	// 1차: 대상 디바이스에서 조회
+	if dev, ok := a.devices[address]; ok && dev.State != nil {
+		if dev.State.FanSpeed != nil {
+			if code, ok := hvacr02FanSpeedCodes[*dev.State.FanSpeed]; ok {
+				fanCode = code
+				fanFound = true
+			}
+		}
+		if dev.State.Mode != nil {
+			if code, ok := hvacr02ModeCodes[*dev.State.Mode]; ok {
+				modeCode = code
+				modeFound = true
+			}
+		}
+	}
+
+	// 2차: 미확인 항목이 있으면 동일 컨트롤러의 다른 디바이스에서 폴백
+	if !fanFound || !modeFound {
+		for addr, dev := range a.devices {
+			if addr == address || dev.State == nil {
+				continue
+			}
+			if !fanFound && dev.State.FanSpeed != nil {
+				if code, ok := hvacr02FanSpeedCodes[*dev.State.FanSpeed]; ok {
+					fanCode = code
+					fanFound = true
+				}
+			}
+			if !modeFound && dev.State.Mode != nil {
+				if code, ok := hvacr02ModeCodes[*dev.State.Mode]; ok {
+					modeCode = code
+					modeFound = true
+				}
+			}
+			if fanFound && modeFound {
+				break
+			}
+		}
+	}
+
+	return
+}
+
+// getCurrentTempC 는 디바이스의 현재 설정 온도를 반환한다.
+// 상태 미확인 시 기본값 24.0 을 반환한다.
+func (a *Hvacr02Agent) getCurrentTempC(address string) float64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	dev, ok := a.devices[address]
+	if !ok || dev.State == nil || dev.State.SetTempC == nil {
+		return 24.0
+	}
+	return *dev.State.SetTempC
+}
+
+// sendFrame 은 제어 프레임을 시리얼 포트로 전송하고 에코 필터용 정보를 기록한다.
+// RS-485 버스 충돌을 방지하기 위해 전송 전에 버스가 조용해질 때까지 대기한다.
+func (a *Hvacr02Agent) sendFrame(frame []byte) error {
+	// 버스 quiet 대기: 마지막 수신 후 최소 50ms 경과 대기
+	a.waitForBusQuiet(50 * time.Millisecond)
+
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+
+	a.lastSentFrame = make([]byte, len(frame))
+	copy(a.lastSentFrame, frame)
+	a.lastSentTime = time.Now()
+
+	_, err := a.transport.Write(frame)
+	if err == nil {
+		a.stats.IncrExternalMessagesSent()
+		a.stats.AddBytesWritten(int64(len(frame)))
+		a.stats.UpdateLastActivity()
+	}
+	return err
+}
+
+// waitForBusQuiet 는 RS-485 버스에서 마지막 프레임 수신 후 minQuiet 이상
+// 경과할 때까지 대기한다. 최대 2초 대기 후 타임아웃한다.
+func (a *Hvacr02Agent) waitForBusQuiet(minQuiet time.Duration) {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		lastNano := a.lastRecvTime.Load()
+		if lastNano == 0 {
+			return // 아직 수신 없음 — 바로 전송
+		}
+		elapsed := time.Since(time.Unix(0, lastNano))
+		if elapsed >= minQuiet {
+			return
+		}
+		time.Sleep(minQuiet - elapsed)
+	}
+	a.logger.Warn("lg_hvacr02: 버스 quiet 대기 타임아웃 (2초), 강제 전송")
+}
+
+// isEcho 는 수신된 프레임이 자신이 전송한 에코인지 판별한다.
+// 에코 윈도우 내에 전송 프레임과 동일한 바이트인 경우 에코로 판정한다.
+func (a *Hvacr02Agent) isEcho(frameRaw []byte) bool {
+	a.writeMu.Lock()
+	sent := a.lastSentFrame
+	sentTime := a.lastSentTime
+	a.writeMu.Unlock()
+
+	if sent == nil {
+		return false
+	}
+
+	// 에코 윈도우: 프레임 크기 기반 (보레이트 9600bps 기준, 여유 계수 3x)
+	// 바이트당 ~1ms @9600bps, 프레임 크기 * 3ms
+	echoWindow := time.Duration(len(sent)*3) * time.Millisecond
+	if echoWindow < 50*time.Millisecond {
+		echoWindow = 50 * time.Millisecond // 최소 50ms
+	}
+
+	if time.Since(sentTime) > echoWindow {
+		return false
+	}
+
+	if len(frameRaw) != len(sent) {
+		return false
+	}
+
+	for i := range frameRaw {
+		if frameRaw[i] != sent[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// waitForStateChange 는 제어 전송 후 상태 변경을 대기한다.
+// 캡처 루프가 업데이트하는 디바이스 상태를 polling 으로 확인한다.
+func (a *Hvacr02Agent) waitForStateChange(address string, timeout time.Duration) bool {
+	if timeout <= 0 {
+		return false
+	}
+
+	// 전송 직전 상태 스냅샷
+	a.mu.RLock()
+	prevState, hasPrev := a.lastStates[address]
+	a.mu.RUnlock()
+
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			return false
+		case <-ticker.C:
+			a.mu.RLock()
+			currentState, hasCurrent := a.lastStates[address]
+			a.mu.RUnlock()
+
+			if !hasPrev && hasCurrent {
+				return true // 새 상태 등장
+			}
+			if hasPrev && hasCurrent && currentState != prevState {
+				return true // 상태 변경 감지
+			}
+		}
+	}
+}
+
+// processGetState 는 단일 device 의 즉시 snapshot 을 반환한다 (v0.7.3).
+//
+// address 는 8자리 hex 문자열 (예: "44550067").
+func (a *Hvacr02Agent) processGetState(req *hvacr02ProcessRequest) ([]byte, error) {
+	if req.Address == "" {
+		return json.Marshal(map[string]any{
+			"status": "error",
+			"error":  "missing address",
+		})
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	dev, ok := a.devices[req.Address]
+	if !ok {
+		return json.Marshal(map[string]any{
+			"status":  "not_found",
+			"address": req.Address,
+		})
+	}
+	d := map[string]any{
+		"unit_id":     dev.Address,
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
+		"label":       dev.Label,
+		"device_type": dev.Type,
+		"online":      dev.Online,
+	}
+	if dev.State != nil {
+		d["state"] = dev.State.toProperties(dev.Type)
+	}
+	if !dev.LastSeen.IsZero() {
+		d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+	return json.Marshal(map[string]any{
+		"status": "ok",
+		"device": d,
+	})
+}
+
+// processGetAll 은 모든 등록된 device 의 즉시 snapshot 을 반환한다 (v0.7.2).
+// 5개 HVAC 노드 통일 명령 — NASA 의 processGetAllStates 패턴 차용.
+func (a *Hvacr02Agent) processGetAll() ([]byte, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	devices := make([]map[string]any, 0, len(a.devices))
+	for _, dev := range a.devices {
+		d := map[string]any{
+			"unit_id":     dev.Address,
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
+			"label":       dev.Label,
+			"device_type": dev.Type,
+			"online":      dev.Online,
+		}
+		if dev.State != nil {
+			d["state"] = dev.State.toProperties(dev.Type)
+		}
+		if !dev.LastSeen.IsZero() {
+			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
+		}
+		devices = append(devices, d)
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"devices": devices,
+	})
+}
+
+// processGetStats 는 캡처 통계를 반환한다.
+func (a *Hvacr02Agent) processGetStats() ([]byte, error) {
+	stats := map[string]any{
+		"frames_captured":     a.framesCaptured.Load(),
+		"frames_valid":        a.framesValid.Load(),
+		"frames_invalid":      a.framesInvalid.Load(),
+		"frames_dropped":      a.framesDropped.Load(),
+		"bytes_received":      a.bytesReceived.Load(),
+		"transport_connected": a.transport.Available(),
+	}
+
+	a.reconnectMu.Lock()
+	stats["reconnecting"] = a.isReconnecting
+	stats["reconnect_attempts"] = a.reconnectAttempts
+	a.reconnectMu.Unlock()
+
+	return json.Marshal(stats)
+}
+
+// processGetRecent 는 최근 프레임 중 lastSeq 이후의 새 프레임만 반환한다.
+// lastSeq가 0이면 최근 count개를 반환한다 (하위 호환).
+func (a *Hvacr02Agent) processGetRecent(count int, lastSeq int64, nodeID, flowID string) ([]byte, error) {
+	a.recentMu.RLock()
+	defer a.recentMu.RUnlock()
+
+	// 링 버퍼에서 유효한 항목 수 계산
+	total := hvacr02RecentBufferSize
+	if !a.recentFull {
+		total = a.recentIdx
+	}
+
+	if count > total {
+		count = total
+	}
+
+	// 최신 항목부터 역순으로 추출, lastSeq 필터링
+	result := make([]json.RawMessage, 0, count)
+	for i := 0; i < count; i++ {
+		idx := (a.recentIdx - 1 - i + hvacr02RecentBufferSize) % hvacr02RecentBufferSize
+		rec := a.recentFrames[idx]
+		if lastSeq > 0 && rec.Seq <= lastSeq {
+			break // seq는 단조 증가하므로 이 이후는 전부 이전 프레임
+		}
+		result = append(result, rec.Event)
+	}
+
+	// 실제 신규 프레임 수만 카운트 (lastSeq 필터 통과분)
+	if n := int64(len(result)); n > 0 {
+		a.stats.AddInternalMessagesSent(n)
+		if nodeID != "" {
+			a.stats.IncrNodeRefSent(nodeID, flowID)
+		}
+	}
+
+	return json.Marshal(map[string]any{
+		"count":  len(result),
+		"frames": result,
+	})
+}
+
+// processDrain 은 링 버퍼에서 최대 count 개 프레임을 반환하고 버퍼를 리셋한다.
+// get_recent와 달리 읽은 프레임을 소비(consume)하여 에이전트에 남지 않는다.
+// 반환 순서는 최신→오래된 순서이다 (get_recent와 동일).
+func (a *Hvacr02Agent) processDrain(count int, nodeID, flowID string) ([]byte, error) {
+	a.recentMu.Lock()
+	defer a.recentMu.Unlock()
+
+	// 링 버퍼에서 유효한 항목 수 계산
+	total := hvacr02RecentBufferSize
+	if !a.recentFull {
+		total = a.recentIdx
+	}
+
+	if count > total {
+		count = total
+	}
+
+	// 최신 항목부터 역순으로 추출
+	result := make([]json.RawMessage, 0, count)
+	for i := 0; i < count; i++ {
+		idx := (a.recentIdx - 1 - i + hvacr02RecentBufferSize) % hvacr02RecentBufferSize
+		result = append(result, a.recentFrames[idx].Event)
+	}
+
+	// 버퍼 리셋
+	a.recentIdx = 0
+	a.recentFull = false
+
+	// 프레임이 있을 때만 내부 송신 카운트 + 노드별 통계
+	if n := int64(len(result)); n > 0 {
+		a.stats.AddInternalMessagesSent(n)
+		if nodeID != "" {
+			for range result {
+				a.stats.IncrNodeRefSent(nodeID, flowID)
+			}
+		}
+	}
+
+	return json.Marshal(map[string]any{
+		"count":  len(result),
+		"frames": result,
+	})
+}
+
+// Configure 는 에이전트 설정을 업데이트한다.
+func (a *Hvacr02Agent) Configure(config agent.AgentConfig) error {
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("lg_hvacr02 configure: %w", err)
+	}
+
+	if len(config.Transport.Options) > 0 {
+		hvacr02Cfg, err := parseHvacr02Config(config.Transport.Options)
+		if err != nil {
+			return fmt.Errorf("lg_hvacr02 configure: re-parse config: %w", err)
+		}
+		a.mu.Lock()
+		a.hvacr02Config = hvacr02Cfg
+		a.agentConfig = config
+		a.mu.Unlock()
+	} else {
+		a.mu.Lock()
+		a.agentConfig = config
+		a.mu.Unlock()
+	}
+
+	return nil
+}
+
+// ID 는 에이전트 ID 를 반환한다.
+func (a *Hvacr02Agent) ID() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.agentConfig.ID
+}
+
+// Name 은 에이전트 이름을 반환한다.
+func (a *Hvacr02Agent) Name() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.agentConfig.Name
+}
+
+// Type 은 에이전트 타입을 반환한다.
+func (a *Hvacr02Agent) Type() string {
+	return "lg_hvacr02"
+}
+
+// Info 는 에이전트 정보의 스냅샷을 반환한다.
+func (a *Hvacr02Agent) Info() agent.AgentInfo {
+	a.mu.RLock()
+	cfg := a.agentConfig
+	startedAt := a.startedAt
+	createdAt := a.createdAt
+	a.mu.RUnlock()
+
+	state := a.CurrentState()
+	var uptime time.Duration
+	if state == lifecycle.StateRunning && !startedAt.IsZero() {
+		uptime = time.Since(startedAt)
+	}
+
+	return agent.AgentInfo{
+		ID:        cfg.ID,
+		Name:      cfg.Name,
+		Type:      "lg_hvacr02",
+		State:     state,
+		Health:    a.Health(),
+		Config:    cfg,
+		Stats:     a.stats.Snapshot(),
+		StartedAt: startedAt,
+		Uptime:    uptime,
+		CreatedAt: createdAt,
+	}
+}
+
+// Stats 는 통계 스냅샷을 반환한다.
+func (a *Hvacr02Agent) Stats() agent.StatsSnapshot {
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	s.Extra = map[string]any{
+		"frames_captured":     a.framesCaptured.Load(),
+		"frames_valid":        a.framesValid.Load(),
+		"frames_invalid":      a.framesInvalid.Load(),
+		"frames_dropped":      a.framesDropped.Load(),
+		"bytes_received":      a.bytesReceived.Load(),
+		"transport_connected": a.transport.Available(),
+	}
+	return s
+}
+
+// ---------------------------------------------------------------------------
+// agent.MessageReceiver 인터페이스 구현
+// ---------------------------------------------------------------------------
+
+// ReceiveMessage 는 msgCh 에서 메시지를 수신한다.
+func (a *Hvacr02Agent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+	a.bridgeActive.Store(true)
+	select {
+	case data := <-a.msgCh:
+		a.stats.IncrInternalMessagesSent()
+		a.logger.Debug("lg_hvacr02: ReceiveMessage 전달",
+			"bytes", len(data),
+		)
+		return data, nil
+	case <-a.stopCh:
+		return nil, fmt.Errorf("lg_hvacr02: stopped")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// agent.StatefulAgent 인터페이스 구현
+// ---------------------------------------------------------------------------
+
+// State 는 캡처 상태를 반환한다.
+func (a *Hvacr02Agent) State() map[string]any {
+	result := map[string]any{
+		"frames_captured": a.framesCaptured.Load(),
+		"frames_valid":    a.framesValid.Load(),
+		"frames_invalid":  a.framesInvalid.Load(),
+		"frames_dropped":  a.framesDropped.Load(),
+		"bytes_received":  a.bytesReceived.Load(),
+	}
+
+	result["transport_connected"] = a.transport.Available()
+	a.reconnectMu.Lock()
+	result["reconnecting"] = a.isReconnecting
+	result["reconnect_attempts"] = a.reconnectAttempts
+	a.reconnectMu.Unlock()
+
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// agent.BufferInfoProvider 인터페이스 구현
+// ---------------------------------------------------------------------------
+
+// BufferInfo 는 메시지 버퍼의 현재 사용량과 용량을 반환한다.
+func (a *Hvacr02Agent) BufferInfo() (int, int) {
+	return len(a.msgCh), cap(a.msgCh)
+}
+
+// FrameNotifyCh 는 새 프레임 도착 시 신호를 보내는 채널을 반환한다.
+// 폴링 노드가 타이머 대기 없이 즉시 새 프레임을 수신할 수 있도록 한다.
+func (a *Hvacr02Agent) FrameNotifyCh() <-chan struct{} {
+	return a.recentNotify
+}
+
+// ---------------------------------------------------------------------------
+// device.DeviceProvider 인터페이스 구현
+// ---------------------------------------------------------------------------
+
+// DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
+func (a *Hvacr02Agent) DeviceProvider() device.DeviceProvider {
+	return NewHvacr02DeviceProvider(a)
+}
+
+// ---------------------------------------------------------------------------
+// agent.TransportChecker 인터페이스 구현
+// ---------------------------------------------------------------------------
+
+// TransportConnected 는 시리얼 트랜스포트의 실제 연결 상태를 반환한다.
+func (a *Hvacr02Agent) TransportConnected() bool {
+	return a.transport.Available()
+}
+
+// ---------------------------------------------------------------------------
+// 캡처 루프 (패시브 리스닝)
+// ---------------------------------------------------------------------------
+
+// captureLoop 는 시리얼 버스에서 LGCP 프레임을 패시브하게 캡처한다.
+// io.Reader 어댑터를 통해 Icp02FrameParser 로 프레임을 읽고,
+// JSON 이벤트로 변환하여 msgCh 로 전송한다.
+func (a *Hvacr02Agent) captureLoop() {
+	reader := &transportReader{transport: a.transport}
+	parser := NewIcp02FrameParser(reader, a.hvacr02Config.VerifyCRC)
+
+	a.logger.Info("lg_hvacr02: 캡처 루프 시작",
+		"verify_crc", a.hvacr02Config.VerifyCRC,
+	)
+
+	for {
+		select {
+		case <-a.stopCh:
+			a.logger.Info("lg_hvacr02: 캡처 루프 종료 (stopCh)")
+			return
+		default:
+		}
+
+		// Paused 상태이면 잠시 대기
+		a.mu.RLock()
+		paused := a.paused
+		a.mu.RUnlock()
+		if paused {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		// 프레임 읽기
+		frame, err := parser.ReadFrame()
+		if err != nil {
+			if err == io.EOF {
+				a.logger.Info("lg_hvacr02: 트랜스포트 EOF, 재연결 시도")
+				go a.reconnectLoop()
+				return
+			}
+			// 연결 에러 감지
+			if isLGAPConnectionError(err) {
+				a.logger.Warn("lg_hvacr02: 트랜스포트 연결 에러, 재연결 시도", "error", err)
+				go a.reconnectLoop()
+				return
+			}
+			// 2026-05-30: log_decode_errors=true 면 WARN 로그 (LG01 / Century 통일).
+			// 읽기 타임아웃 등 io 에러는 계속 리스닝.
+			if a.hvacr02Config.LogDecodeErrors {
+				a.logger.Warn("lg_hvacr02: 프레임 파싱 에러 — skip", "error", err)
+			} else {
+				a.logger.Debug("lg_hvacr02: 프레임 파싱 에러 — skip", "error", err)
+			}
+			continue
+		}
+
+		if frame == nil {
+			continue
+		}
+
+		// RS-485 버스 활동 추적 (제어 프레임 전송 타이밍용)
+		a.lastRecvTime.Store(time.Now().UnixNano())
+
+		// RS-485 에코 필터링: 자신이 전송한 프레임이면 건너뜀
+		if a.isEcho(frame.Raw) {
+			a.logger.Debug("lg_hvacr02: 에코 프레임 무시", "len", len(frame.Raw))
+			continue
+		}
+
+		// 통계 업데이트
+		a.framesCaptured.Add(1)
+		a.bytesReceived.Add(int64(len(frame.Raw)))
+		a.stats.IncrExternalMessagesReceived()
+		a.stats.AddBytesRead(int64(len(frame.Raw)))
+		a.stats.UpdateLastActivity()
+		a.stats.RecordFirstMessage()
+
+		// 프레임 이벤트 생성 및 전송
+		a.handleCapturedFrame(frame)
+	}
+}
+
+// handleCapturedFrame 은 캡처된 프레임을 JSON 이벤트로 변환하여 msgCh 로 전송한다.
+func (a *Hvacr02Agent) handleCapturedFrame(frame *Icp02Frame) {
+	seq := a.framesCaptured.Load()
+
+	evt := Icp02FrameEvent{
+		TimestampMs: frame.Timestamp.UnixMilli(),
+		Seq:         seq,
+		RawHex:      hex.EncodeToString(frame.Raw),
+		Length:      frame.Length,
+		CRCValid:    frame.CRCValid,
+	}
+
+	if frame.ParseErr != nil {
+		// 파싱 에러가 있는 프레임 (부분 프레임) — Error 필드 유무로 구별됨.
+		errMsg := frame.ParseErr.Error()
+		evt.Error = &errMsg
+		a.framesInvalid.Add(1)
+	} else {
+		// 정상 프레임
+		daHex := hex.EncodeToString(frame.DA)
+		saHex := hex.EncodeToString(frame.SA)
+		cmdHex := fmt.Sprintf("%02X%02X", frame.CMD[0], frame.CMD[1])
+		decoded := DecodePayload(frame.Payload)
+		var pairs []Icp02RegPairJSON
+		if decoded != nil {
+			pairs = decoded.Pairs
+			decoded.Pairs = nil // decoded에서 pairs 제거 (parsed.pairs로 이동)
+		}
+		a.mu.RLock()
+		daLabel := a.deviceLabel(daHex)
+		saLabel := a.deviceLabel(saHex)
+		a.mu.RUnlock()
+		evt.Parsed = &ParsedHeader{
+			DA:         daHex,
+			DALabel:    daLabel,
+			SA:         saHex,
+			SALabel:    saLabel,
+			CMD:        cmdHex,
+			CMDName:    hvacr02CMDNames[cmdHex],
+			SEQ0:       int(frame.SEQ0),
+			PLEN:       len(frame.Payload),
+			PayloadHex: hex.EncodeToString(frame.Payload),
+			SEQ1:       int(frame.SEQ1),
+			Decoded:    decoded,
+			Pairs:      pairs,
+		}
+
+		if frame.CRCValid {
+			a.framesValid.Add(1)
+
+			// 컨트롤러 발신 프레임의 SEQ0/SEQ1 추적 (제어 시퀀스 동기화)
+			if a.hvacr02Config.ControlEnabled && saHex == a.hvacr02Config.ControllerAddress {
+				if a.seqManager == nil {
+					a.seqManager = NewIcp02SequenceManager()
+				}
+				a.seqManager.ObserveFrame(frame.CMD, frame.SEQ0, frame.SEQ1)
+			}
+
+			// Unit→Controller 방향 프레임의 SEQ0/SEQ1 추적 (서모스탯 사칭용)
+			if a.hvacr02Config.ControlEnabled && daHex == a.hvacr02Config.ControllerAddress && saHex != a.hvacr02Config.ControllerAddress {
+				if a.unitSeqManager == nil {
+					a.unitSeqManager = NewIcp02SequenceManager()
+				}
+				a.unitSeqManager.ObserveFrame(frame.CMD, frame.SEQ0, frame.SEQ1)
+			}
+
+			if a.hvacr02Config.AutoDiscovery {
+				// CRC 유효 프레임의 SA/DA 디바이스를 발견/등록
+				a.ensureDevices(saHex, daHex, frame.Timestamp)
+
+				// 디코딩 결과가 있으면 상태도 갱신
+				if decoded != nil {
+					a.updateDeviceState(saHex, daHex, cmdHex, decoded, frame.Timestamp)
+				}
+			}
+		} else {
+			a.framesInvalid.Add(1)
+		}
+	}
+
+	// 2026-05-30: LG01 통일 — raw Icp02FrameEvent 는 더 이상 ring buffer 또는
+	// msgCh 로 emit 하지 않는다. status node 는 emitDeviceStateLocked 가 push 하는
+	// device_state schema 만 수신한다. Icp02FrameEvent 는 통계 카운터 갱신 +
+	// updateDeviceState (decoded payload 처리) 의 입력 용도로만 사용된다.
+	//
+	// 참고: 본 함수의 frame 통계 (framesCaptured / framesInvalid) 는 위에서 이미
+	// 갱신됨. evt 변수는 미래의 raw frame node 또는 debug 옵션을 위해 보존하되,
+	// 현재 외부 노출 경로는 device_state 단일 schema.
+	_ = evt
+	_ = seq
+}
+
+// pushRecentFrame 은 프레임 이벤트를 링 버퍼에 추가한다.
+func (a *Hvacr02Agent) pushRecentFrame(eventJSON []byte, ts time.Time, seq int64) {
+	a.recentMu.Lock()
+	defer a.recentMu.Unlock()
+
+	a.recentFrames[a.recentIdx] = icp02FrameRecord{
+		Event:     json.RawMessage(eventJSON),
+		Timestamp: ts,
+		Seq:       seq,
+	}
+	a.recentIdx = (a.recentIdx + 1) % hvacr02RecentBufferSize
+	if a.recentIdx == 0 {
+		a.recentFull = true
+	}
+
+	// 폴링 노드에 새 프레임 도착 알림 (non-blocking)
+	select {
+	case a.recentNotify <- struct{}{}:
+	default:
+	}
+}
+
+// sendFrameEvent 는 프레임 이벤트를 msgCh 로 전송한다.
+// 버퍼가 가득 차면 가장 오래된 메시지를 드롭하고 최신 메시지를 삽입한다 (ring buffer 전략).
+// 이를 통해 항상 최신 데이터가 보존된다.
+func (a *Hvacr02Agent) sendFrameEvent(data []byte) {
+	select {
+	case a.msgCh <- data:
+		return
+	default:
+	}
+
+	// 버퍼 풀 — 가장 오래된 메시지를 드레인하여 공간 확보
+	select {
+	case <-a.msgCh:
+	default:
+	}
+
+	dropped := a.framesDropped.Add(1)
+	a.stats.IncrDroppedMessages()
+	now := time.Now().UnixNano()
+	last := a.lastDropLog.Load()
+	if now-last > 10_000_000_000 && a.lastDropLog.CompareAndSwap(last, now) {
+		a.logger.Warn("lg_hvacr02: msgCh full, dropping oldest frame (rate-limited)",
+			"total_dropped", dropped,
+			"ch_cap", cap(a.msgCh),
+		)
+	}
+	// 2026-05-30: log_drops=true 면 매 drop 마다 추가 WARN 로그 (LG01 / Century 통일).
+	if a.hvacr02Config.LogDrops {
+		a.logger.Warn("lg_hvacr02: msgCh full, dropping oldest frame (per-drop)",
+			"total_dropped", dropped,
+			"ch_cap", cap(a.msgCh),
+		)
+	}
+
+	// 새 메시지 삽입 시도 (드레인 후에도 경합으로 실패할 수 있으므로 non-blocking)
+	select {
+	case a.msgCh <- data:
+	default:
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 재연결 루프 (지수 백오프)
+// ---------------------------------------------------------------------------
+
+// reconnectLoop 는 트랜스포트 연결이 끊어졌을 때 지수 백오프로 재연결을 시도한다.
+func (a *Hvacr02Agent) reconnectLoop() {
+	a.reconnectMu.Lock()
+	if a.isReconnecting {
+		a.reconnectMu.Unlock()
+		return
+	}
+	a.isReconnecting = true
+	a.reconnectAttempts = 0
+	a.reconnectMu.Unlock()
+
+	defer func() {
+		a.reconnectMu.Lock()
+		a.isReconnecting = false
+		a.reconnectAttempts = 0
+		a.reconnectMu.Unlock()
+	}()
+
+	// 통신 끊김 → 모든 디바이스 오프라인 전환
+	a.setAllDevicesOffline()
+
+	// 재연결 시작 이벤트
+	a.sendStatusEvent("transport_reconnecting", map[string]any{
+		"timestamp_ms": time.Now().UnixMilli(),
+	})
+
+	baseInterval := a.hvacr02Config.ReconnectInterval
+	maxBackoff := a.hvacr02Config.MaxReconnectBackoff
+	attempt := 0
+	disconnectedAt := time.Now()
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		default:
+		}
+
+		// 이전 연결 정리 후 재연결 시도
+		_ = a.transport.Close()
+		err := a.transport.Open()
+
+		if err == nil {
+			// 재연결 성공
+			a.logger.Info("lg_hvacr02: 트랜스포트 재연결 성공",
+				"attempts", attempt+1,
+				"downtime", time.Since(disconnectedAt).Round(time.Second).String(),
+			)
+			a.sendStatusEvent("transport_reconnected", map[string]any{
+				"attempt_count":    attempt + 1,
+				"downtime_seconds": int(time.Since(disconnectedAt).Seconds()),
+				"timestamp_ms":     time.Now().UnixMilli(),
+			})
+
+			// 캡처 루프 재시작
+			go a.captureLoop()
+			return
+		}
+
+		// 재연결 실패
+		a.reconnectMu.Lock()
+		a.reconnectAttempts = attempt + 1
+		a.reconnectMu.Unlock()
+
+		if attempt == 0 {
+			a.logger.Warn("lg_hvacr02: 트랜스포트 재연결 시도 중", "error", err)
+		} else {
+			a.logger.Debug("lg_hvacr02: 트랜스포트 재연결 시도", "attempt", attempt+1, "error", err)
+		}
+
+		// 지수 백오프 계산
+		backoff := baseInterval
+		for i := 0; i < attempt; i++ {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+				break
+			}
+		}
+
+		attempt++
+
+		// 백오프 대기 (stopCh 로 취소 가능)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-a.stopCh:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 상태 이벤트 전송 헬퍼
+// ---------------------------------------------------------------------------
+
+// sendStatusEvent 는 상태 이벤트를 msgCh 로 전송한다.
+// bridge 소비자가 없으면 전송을 건너뛴다.
+//
+// v0.9.0: eventType == "" 면 type 필드 주입 skip (device_state 의 경우
+// 노드의 message_type="device_state.<trigger>" 가 schema 식별 역할 담당).
+func (a *Hvacr02Agent) sendStatusEvent(eventType string, data map[string]any) {
+	if !a.bridgeActive.Load() {
+		return
+	}
+	var evt map[string]any
+	if eventType == "" {
+		evt = data
+	} else {
+		evt = map[string]any{"type": eventType}
+		for k, v := range data {
+			evt[k] = v
+		}
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		a.logger.Warn("lg_hvacr02: status event marshal failed", "error", err)
+		return
+	}
+	// ring buffer 전략: 버퍼 풀이면 가장 오래된 메시지를 드롭
+	select {
+	case a.msgCh <- b:
+		a.logger.Debug("lg_hvacr02: 상태 이벤트 전송 성공", "type", eventType)
+		return
+	default:
+	}
+
+	select {
+	case <-a.msgCh:
+	default:
+	}
+	a.logger.Warn("lg_hvacr02: msgCh full, dropping oldest for status event", "type", eventType)
+
+	select {
+	case a.msgCh <- b:
+	default:
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 디바이스 관리
+// ---------------------------------------------------------------------------
+
+// registerConfigDevices 는 설정에 정의된 디바이스를 사전 등록한다.
+func (a *Hvacr02Agent) registerConfigDevices() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	for _, entry := range a.hvacr02Config.Devices {
+		a.registerOneConfigDevice(entry.Address, entry.Name, now)
+	}
+}
+
+// RegisterPinnedDevices 는 메타데이터에서 고정 설치로 표시된 디바이스를 등록한다.
+// agent.Start() 이후에 호출된다.
+func (a *Hvacr02Agent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	for _, entry := range entries {
+		if _, exists := a.devices[entry.Address]; exists {
+			continue // 이미 등록됨 (config 디바이스 등)
+		}
+		label := entry.Name
+		if label == "" {
+			label = defaultHvacr02Label(entry.Address)
+		}
+		dev := &Icp02Device{
+			Address:  entry.Address,
+			Label:    label,
+			Type:     detectIcp02DeviceType(entry.Address),
+			Online:   false,
+			LastSeen: now,
+			Source:   "pinned",
+			State:    &Icp02DeviceState{},
+		}
+		a.devices[entry.Address] = dev
+		a.logger.Info("lg_hvacr02: 고정 설치 디바이스 등록",
+			"address", entry.Address, "label", dev.Label, "type", dev.Type)
+	}
+}
+
+// registerOneConfigDevice 는 하나의 설정 디바이스를 등록한다.
+// mu.Lock() 을 잡은 상태에서 호출해야 한다.
+func (a *Hvacr02Agent) registerOneConfigDevice(addrHex, label string, ts time.Time) {
+	if _, exists := a.devices[addrHex]; exists {
+		return // 이미 등록됨
+	}
+	if label == "" {
+		label = defaultHvacr02Label(addrHex)
+	}
+	dev := &Icp02Device{
+		Address:  addrHex,
+		Label:    label,
+		Type:     detectIcp02DeviceType(addrHex),
+		Online:   false, // 아직 프레임을 수신하지 않았으므로 오프라인
+		LastSeen: ts,
+		Source:   "config",
+		State:    &Icp02DeviceState{},
+	}
+	a.devices[addrHex] = dev
+	a.logger.Info("lg_hvacr02: 설정 디바이스 등록",
+		"address", addrHex, "label", dev.Label, "type", dev.Type)
+}
+
+// ensureDevices 는 SA/DA 주소의 디바이스를 발견/등록한다 (lock 포함).
+// CRC 유효한 프레임에서 호출되어 디코딩 여부와 무관하게 디바이스를 등록한다.
+// 새 디바이스가 발견되면 WebSocket 이벤트를 발행하여 UI 에 알린다.
+func (a *Hvacr02Agent) ensureDevices(saHex, daHex string, ts time.Time) {
+	a.mu.Lock()
+	prevLen := len(a.devices)
+	a.ensureDevice(saHex, ts)
+	a.ensureDevice(daHex, ts)
+	added := len(a.devices) > prevLen
+	v2 := a.onDeviceStateChangeV2
+	agentName := a.agentConfig.Name
+	a.mu.Unlock()
+
+	// 새 디바이스가 추가되었으면 UI 에 알림 (lock 밖에서).
+	// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출 (V1 제거).
+	if added {
+		for _, addr := range []string{saHex, daHex} {
+			if addr == "ffffffff" {
+				continue
+			}
+			if v2 != nil {
+				globalID := fmt.Sprintf("%s:%s", agentName, addr)
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addr)
+				go v2(agentName, deviceUID, globalID)
+			}
+		}
+	}
+}
+
+// ensureDevice 는 주소에 대한 디바이스가 없으면 생성한다.
+// mu.Lock() 을 잡은 상태에서 호출해야 한다.
+func (a *Hvacr02Agent) ensureDevice(addrHex string, ts time.Time) *Icp02Device {
+	if addrHex == "ffffffff" {
+		return nil // 브로드캐스트 주소는 디바이스로 등록하지 않음
+	}
+	dev, ok := a.devices[addrHex]
+	if !ok {
+		dev = &Icp02Device{
+			Address:  addrHex,
+			Label:    defaultHvacr02Label(addrHex),
+			Type:     detectIcp02DeviceType(addrHex),
+			Online:   true,
+			LastSeen: ts,
+			Source:   "auto",
+			State:    &Icp02DeviceState{},
+		}
+		a.devices[addrHex] = dev
+		a.logger.Info("lg_hvacr02: 디바이스 발견",
+			"address", addrHex, "label", dev.Label, "type", dev.Type)
+	}
+	return dev
+}
+
+// updateDeviceState 는 캡처된 프레임에서 디바이스 상태를 갱신하고 변경을 감지한다.
+//
+// 제어 명령 (cmd=0201, 실외기→실내기): DA 디바이스에 제어 필드 병합
+// 상태 응답 (cmd=0204 등, 실내기→실외기): SA 디바이스에 응답 필드 병합
+func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex string, decoded *Icp02DecodedPayload, ts time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// SA 디바이스 갱신 (프레임을 보낸 디바이스)
+	if saDev := a.ensureDevice(saHex, ts); saDev != nil {
+		saDev.Online = true
+		saDev.LastSeen = ts
+	}
+
+	// DA 디바이스 갱신 (프레임을 받는 디바이스)
+	if daHex != "ffffffff" {
+		if daDev := a.ensureDevice(daHex, ts); daDev != nil {
+			daDev.LastSeen = ts
+		}
+	}
+
+	// 상태 병합 대상 결정:
+	// - 제어 명령 (0201): DA가 제어 대상 → DA 디바이스에 제어 필드만 병합
+	// - 상태 응답 (0204 등): SA가 보고 → SA 디바이스에 전체 병합
+	var targetAddr string
+	controlOnly := false
+	switch cmdHex {
+	case "0201":
+		targetAddr = daHex
+		controlOnly = true
+	default:
+		targetAddr = saHex
+	}
+
+	if targetAddr == "ffffffff" {
+		return
+	}
+
+	dev := a.devices[targetAddr]
+	if dev == nil || dev.State == nil {
+		return
+	}
+
+	prev := dev.State.snapshot()
+	if controlOnly {
+		dev.State.mergeControlFields(decoded)
+	} else {
+		dev.State.mergeDecoded(decoded)
+	}
+	curr := dev.State.snapshot()
+
+	if stateChanged(prev, curr) {
+		// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 온도 센서값
+		// (IndoorTempC + PipeTemp1C + PipeTemp2C) 만 변경된 경우 max|Δ| < threshold
+		// 면 emit suppress. (v0.6.6: IndoorTempC 만 검사 → Pipe 온도 변경 시
+		// 새어나가는 결함 fix). lastStates 갱신 안 함 → 다음 frame 에서 누적 감지.
+		if a.hvacr02Config.EventTempThreshold > 0 && !nonTempFieldsChangedIcp02(prev, curr) {
+			if maxTempDeltaIcp02(prev, curr) < a.hvacr02Config.EventTempThreshold {
+				return
+			}
+		}
+
+		a.lastStates[targetAddr] = curr
+
+		a.logger.Debug("lg_hvacr02: 디바이스 상태 변경",
+			"address", targetAddr, "label", dev.Label)
+
+		// LogStateUpdates: 진단용 — 디코드된 핵심 필드 + cmd 를 INFO 로그로 출력
+		// (LG01 / Century 의 logDecodedState 패턴과 통일, 2026-05-30).
+		if a.hvacr02Config.LogStateUpdates {
+			a.logStateUpdate(dev.Label, targetAddr, cmdHex, curr)
+		}
+
+		// v0.7.0: 통합 schema (type="device_state") 로 change emit. 이전엔 emit
+		// 없이 콜백만 호출했으나, 다른 4개 HVAC 에이전트와 동일 패턴으로 통일.
+		a.emitDeviceStateLocked(dev, "change")
+
+		// 변경 이벤트 발행 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
+		if v2 := a.onDeviceStateChangeV2; v2 != nil {
+			agentName := a.agentConfig.Name
+			globalID := fmt.Sprintf("%s:%s", agentName, targetAddr)
+			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, targetAddr)
+			go v2(agentName, deviceUID, globalID)
+		}
+	}
+}
+
+// logStateUpdate 는 디바이스 state 변경 시 핵심 필드를 INFO 로그로 출력한다.
+// LogStateUpdates=true 일 때만 호출된다. LG01 / Century 의 logDecodedState 패턴.
+// 호출 전제: a.mu 락 보유 (curr 는 caller 가 이미 snapshot 한 값).
+func (a *Hvacr02Agent) logStateUpdate(label, address, cmdHex string, curr Icp02DeviceState) {
+	args := []any{
+		"address", address,
+		"label", label,
+		"cmd", cmdHex,
+	}
+	if curr.PowerState != nil {
+		args = append(args, "power_state", *curr.PowerState)
+	}
+	if curr.Power != nil {
+		args = append(args, "power", *curr.Power)
+	}
+	if curr.Mode != nil {
+		args = append(args, "mode", *curr.Mode)
+	}
+	if curr.FanSpeed != nil {
+		args = append(args, "fan_speed", *curr.FanSpeed)
+	}
+	if curr.IndoorTempC != nil {
+		args = append(args, "current_temperature", fmt.Sprintf("%.1f", *curr.IndoorTempC))
+	}
+	if curr.SetTempC != nil {
+		args = append(args, "target_temperature", fmt.Sprintf("%.1f", *curr.SetTempC))
+	}
+	if curr.PipeTemp1C != nil {
+		args = append(args, "pipe_temperature1_c", fmt.Sprintf("%.1f", *curr.PipeTemp1C))
+	}
+	if curr.PipeTemp2C != nil {
+		args = append(args, "pipe_temperature2_c", fmt.Sprintf("%.1f", *curr.PipeTemp2C))
+	}
+	a.logger.Info("lg_hvacr02: state update", args...)
+}
+
+// emitDeviceStateLocked 는 디바이스 상태를 5개 HVAC 에이전트 통합 schema 로
+// emit 한다 (v0.7.0). 호출 전제: a.mu 락 보유.
+//
+// 출력 schema: {type:"device_state", dev_id, trigger, last_seen_ms, state, metadata}
+//   - trigger: "change" | "report"
+//   - state: Icp02DeviceState.toProperties(dev.Type)
+//   - metadata: label / address / device_type
+func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
+	if dev == nil || dev.State == nil {
+		return
+	}
+	metadata := map[string]any{
+		"label":       dev.Label,
+		"address":     dev.Address,
+		"device_type": dev.Type,
+	}
+	// v0.18.6: unit_id (프로토콜 주소) + device_id (UUID) 분리.
+	// FIX: a.Name() 호출 금지 — caller 가 a.mu 쓰기 락 보유 중. a.Name() 은
+	// 같은 mutex 의 RLock 을 시도하여 자기 deadlock 을 일으킨다 (Go RWMutex 는
+	// 재귀 락 금지). agentConfig.Name 직접 접근으로 대체.
+	payload := map[string]any{
+		"unit_id":   dev.Address,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
+		"trigger":   trigger,
+		"state":     dev.State.toProperties(dev.Type),
+		"metadata":  metadata,
+	}
+	if !dev.LastSeen.IsZero() {
+		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	}
+
+	// 2026-05-30: LG01 통일 — device_state schema 를 ring buffer + msgCh (bridge 활성 시)
+	// 양쪽에 push 한다. status node 의 drainNewFrames 가 ring buffer 에서 device_state
+	// schema 를 직접 수신하여 emit 한다. 이전엔 sendStatusEvent (msgCh 만) 로 보내고
+	// ring buffer 에는 raw Icp02FrameEvent 가 들어가 status node 와 schema 불일치 발생.
+	b, err := json.Marshal(payload)
+	if err != nil {
+		a.logger.Warn("lg_hvacr02: device_state event marshal failed", "error", err)
+		return
+	}
+	seq := a.framesCaptured.Add(1)
+	now := dev.LastSeen
+	if now.IsZero() {
+		now = time.Now()
+	}
+	a.pushRecentFrame(b, now, seq)
+	if a.bridgeActive.Load() {
+		a.sendFrameEvent(b)
+	}
+}
+
+// notifyLoop 은 주기적으로 모든 디바이스 상태를 이벤트로 보고한다.
+func (a *Hvacr02Agent) notifyLoop() {
+	ticker := time.NewTicker(a.hvacr02Config.NotifyInterval)
+	a.mu.Lock()
+	a.notifyTicker = ticker
+	a.mu.Unlock()
+
+	for {
+		select {
+		case <-a.stopCh:
+			ticker.Stop()
+			return
+		case <-ticker.C:
+			a.sendDeviceNotifications()
+		}
+	}
+}
+
+// sendDeviceNotifications 은 모든 온라인 디바이스의 현재 상태를 trigger="report"
+// 로 emit 한다 (v0.7.0: 통합 schema device_state 로 통일).
+func (a *Hvacr02Agent) sendDeviceNotifications() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, dev := range a.devices {
+		if dev.Online && dev.State != nil {
+			a.emitDeviceStateLocked(dev, "report")
+		}
+	}
+}
+
+// emitAllDeviceStates 는 모든 온라인 디바이스의 현재 상태를 주어진 trigger 로
+// emit 하고 emit 된 디바이스 수를 반환한다 (2026-05-30: LG01 통일 패턴).
+// processRequestState (노드의 inactivity-fallback 요청 핸들러) 에서 호출.
+func (a *Hvacr02Agent) emitAllDeviceStates(trigger string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	count := 0
+	for _, dev := range a.devices {
+		if dev.Online && dev.State != nil {
+			a.emitDeviceStateLocked(dev, trigger)
+			count++
+		}
+	}
+	return count
+}
+
+// setAllDevicesOffline 은 모든 디바이스를 오프라인으로 전환한다.
+// 트랜스포트 연결이 끊어졌을 때 호출된다.
+func (a *Hvacr02Agent) setAllDevicesOffline() {
+	a.mu.Lock()
+	var offlined []string
+	for addr, dev := range a.devices {
+		if dev.Online {
+			dev.Online = false
+			offlined = append(offlined, addr)
+		}
+	}
+	v2 := a.onDeviceStateChangeV2
+	agentName := a.agentConfig.Name
+	a.mu.Unlock()
+
+	if len(offlined) > 0 {
+		a.logger.Info("lg_hvacr02: 통신 끊김, 디바이스 오프라인 전환", "count", len(offlined))
+		// UI 에 오프라인 상태 알림 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
+		if v2 != nil {
+			for _, addr := range offlined {
+				globalID := fmt.Sprintf("%s:%s", agentName, addr)
+				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addr)
+				go v2(agentName, deviceUID, globalID)
+			}
+		}
+	}
+}
+
+// offlineWatchLoop 은 주기적으로 디바이스의 LastSeen 을 확인하여
+// OfflineTimeout 이상 통신이 없으면 오프라인으로 전환한다.
+func (a *Hvacr02Agent) offlineWatchLoop() {
+	interval := a.hvacr02Config.OfflineTimeout / 2
+	if interval < 5*time.Second {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ticker.C:
+			a.checkDeviceTimeouts()
+		}
+	}
+}
+
+// checkDeviceTimeouts 은 LastSeen 기반으로 개별 디바이스 오프라인 전환을 수행한다.
+func (a *Hvacr02Agent) checkDeviceTimeouts() {
+	now := time.Now()
+	timeout := a.hvacr02Config.OfflineTimeout
+
+	a.mu.Lock()
+	var offlined []string
+	for addr, dev := range a.devices {
+		if dev.Online && now.Sub(dev.LastSeen) > timeout {
+			dev.Online = false
+			offlined = append(offlined, addr)
+		}
+	}
+	v2 := a.onDeviceStateChangeV2
+	agentName := a.agentConfig.Name
+	a.mu.Unlock()
+
+	// SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일 호출.
+	if v2 != nil {
+		for _, addr := range offlined {
+			globalID := fmt.Sprintf("%s:%s", agentName, addr)
+			deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addr)
+			go v2(agentName, deviceUID, globalID)
+		}
+	}
+	for _, addr := range offlined {
+		a.logger.Info("lg_hvacr02: 통신 타임아웃, 디바이스 오프라인", "address", addr, "timeout", timeout)
+	}
+}
+
+// SetDeviceStateChangeCallbackV2 는 1급 V2 콜백을 등록한다.
+// (agentName, deviceUID, deviceCompositeID) 인자. UUID 가 1급.
+//
+// SPEC-DEVICE-IDENTITY-001 § M3 (Phase D — V1 setter 제거).
+func (a *Hvacr02Agent) SetDeviceStateChangeCallbackV2(fn agent.DeviceStateChangeCallbackV2) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onDeviceStateChangeV2 = fn
+}
+
+// ListDevices 는 현재 관리 중인 모든 디바이스의 스냅샷을 반환한다.
+func (a *Hvacr02Agent) ListDevices() []Icp02Device {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	result := make([]Icp02Device, 0, len(a.devices))
+	for _, dev := range a.devices {
+		cp := *dev
+		if dev.State != nil {
+			s := dev.State.snapshot()
+			cp.State = &s
+		}
+		result = append(result, cp)
+	}
+	return result
+}

@@ -106,9 +106,9 @@
 
 ### AC-7: 타입 레지스트리 선행 등록 (REQ-7)
 
-**Given** 저장소에 `type: "samsung-nasa"` 에이전트가 영속화된 상태에서
+**Given** 저장소에 `type: "samsung_hvacr01"` 에이전트가 영속화된 상태에서
 **When** 서버가 시작되면
-**Then** Samsung NASA 타입이 먼저 등록된 후 에이전트가 로드되어 정상 복원된다:
+**Then** Samsung HVACR-01 타입이 먼저 등록된 후 에이전트가 로드되어 정상 복원된다:
 - 타입이 등록되지 않은 상태에서 로드를 시도하면 해당 에이전트만 건너뛴다
 - 타입 등록 순서: HTTP -> ConsoleLogger -> MQTT -> InfluxDB -> Samsung NASA -> 에이전트 로드
 
@@ -179,7 +179,7 @@
 
 ### 검증 5: 타입 에이전트 복원
 
-1. Samsung NASA 타입 에이전트 생성 (`examples/agents/samsung-nasa-serial.yaml` 참조)
+1. Samsung HVACR-01 타입 에이전트 생성 (`examples/agents/samsung_hvacr01-serial.yaml` 참조)
 2. 서버 재시작
 3. 에이전트가 올바른 타입으로 복원되는지 확인
 4. 에이전트 시작 가능 여부 확인

@@ -29,7 +29,7 @@ describe('mapStoreError', () => {
     });
 
     it('ErrTypeMismatch 식별자를 포함한 메시지도 매핑한다', () => {
-      const err = new Error('lgcp/store.ErrTypeMismatch occurred');
+      const err = new Error('lg_hvacr02/store.ErrTypeMismatch occurred');
       const result = mapStoreError(err);
       expect(result.kind).toBe('type_mismatch');
     });
@@ -92,7 +92,7 @@ describe('mapStoreError', () => {
     });
 
     it('ErrInvalidDataType 식별자도 매핑한다', () => {
-      const err = new Error('lgcp.ErrInvalidDataType: missing data_type field');
+      const err = new Error('lg_hvacr02.ErrInvalidDataType: missing data_type field');
       const result = mapStoreError(err);
       expect(result.kind).toBe('invalid_data_type');
     });

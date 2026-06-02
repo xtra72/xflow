@@ -7,8 +7,8 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 )
 
-// NASAConfig 는 Samsung NASA HVAC 에이전트의 설정을 나타낸다.
-type NASAConfig struct {
+// Hvacr01Config 는 Samsung NASA HVAC 에이전트의 설정을 나타낸다.
+type Hvacr01Config struct {
 	TransportType         string
 	SerialPort            string
 	BaudRate              int
@@ -21,11 +21,11 @@ type NASAConfig struct {
 	ReadTimeout           time.Duration
 	PollInterval          time.Duration
 	StatusQueryEnabled    bool          // v0.6.1: 주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (기본 true)
-	NotifyInterval        time.Duration // v0.6.0: report_interval 의 backing field. 옵션 명칭은 report_interval 권장.
+	NotifyInterval        time.Duration // v0.6.0: report_interval 의 backing field. 옵션 명칭은 report_interval. 2026-05-29: 기본 60s (LG 통일)
 	ReportMode            string        // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock 정렬). Century 와 통일.
 	Devices               []agent.DeviceEntry
 	ProtocolFile          string
-	AutoDiscovery         bool
+	AutoDiscovery         bool // 2026-05-29: 기본 true (LG / Century 통일)
 	RegistryPath          string
 	OfflineThreshold      int
 	OfflineTimeout        time.Duration // v0.6.2: 디바이스 통신 없음 → 오프라인 판정 시간 (기본 30s). 0 = 비활성
@@ -33,12 +33,15 @@ type NASAConfig struct {
 	UnsupportedMsgSets    map[uint16]bool // 필터링할 메시지 셋 인덱스
 	LogUnsupportedMsgSets bool            // 필터링 시 로그 출력 여부
 	LogDecodeErrors       bool            // 일반 decode error 로그 출력 여부 (기본값 false — 운영 환경 noise 억제)
-	IncludeRawMessageSets bool            // 상태 조회 시 RawMessageSets 포함 여부
+	LogDrops              bool            // 2026-05-29: msgCh full 로 인한 event drop 을 WARN 로그로 출력 (기본 false, Century / LG 통일).
+	LogStateUpdates       bool            // 2026-05-29: 디바이스 state 갱신마다 핵심 필드 + raw payload INFO 로그 (Century logDecodedState 패턴).
+	IncludeRawHex         bool            // 2026-05-29: 이전 IncludeRawMessageSets — RawMessageSets (원본 NASA 메시지 전체) 포함 여부 (기본 false, opt-in). LG IncludeRawHex 와 명칭 통일.
 	ReconnectInterval     time.Duration   // 재연결 기본 간격 (기본값 5s)
 	MaxReconnectBackoff   time.Duration   // 재연결 최대 백오프 (기본값 5m)
 	StatusQueryDelay      time.Duration   // 제어 후 상태 조회 간격 (기본값 3s)
 	StatusQueryRetries    int             // 제어 후 상태 조회 횟수 (기본값 3)
 	BuzzerOnControl       bool            // 제어 명령 시 실내기 부저 울림 (기본값 false)
+	ControlEnabled        bool            // 능동 제어 (set_multiple) 활성 여부 (기본값 true). false 면 제어 명령 거부.
 
 	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
 	//
@@ -51,9 +54,22 @@ type NASAConfig struct {
 	EventTempThreshold float64
 }
 
-// parseNASAConfig 는 Transport.Options 맵에서 NASAConfig 를 파싱한다.
-func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
-	cfg := NASAConfig{
+// parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
+//
+// 2026-05-29 breaking changes (3종 HVACR 에이전트 통일):
+//   - notify_interval / include_raw_message_sets alias 제거 → report_interval / include_raw_hex 만 허용.
+//   - report_interval 기본값 0 → 60s (LG 통일).
+//   - auto_discovery 기본값 false → true (LG / Century 통일).
+func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
+	// Reject deprecated alias keys with clear errors (2026-05-29 breaking).
+	if _, ok := opts["notify_interval"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: deprecated option 'notify_interval' is removed; use 'report_interval' instead")
+	}
+	if _, ok := opts["include_raw_message_sets"]; ok {
+		return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: deprecated option 'include_raw_message_sets' is removed; use 'include_raw_hex' instead")
+	}
+
+	cfg := Hvacr01Config{
 		BaudRate:            9600,
 		DataBits:            8,
 		StopBits:            1,
@@ -61,8 +77,10 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		ConnectTimeout:      5 * time.Second,
 		ReadTimeout:         3 * time.Second,
 		PollInterval:        30 * time.Second,
-		StatusQueryEnabled:  true, // v0.6.1: 주기적 상태 확인 요청 기본 활성 (기존 동작 보존)
-		NotifyInterval:      0,
+		StatusQueryEnabled:  true,             // v0.6.1: 주기적 상태 확인 요청 기본 활성 (기존 동작 보존)
+		NotifyInterval:      60 * time.Second, // 2026-05-29: 기본 60s (LG 통일).
+		ReportMode:          "relative",
+		AutoDiscovery:       true,             // 2026-05-29: 기본 true (LG / Century 통일).
 		OfflineTimeout:      30 * time.Second, // v0.6.2: 디바이스 오프라인 판정 시간 default
 		OfflineThreshold:    3,
 		MsgChannelSize:      256,
@@ -70,15 +88,33 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		MaxReconnectBackoff: 5 * time.Minute,
 		StatusQueryDelay:    3 * time.Second,
 		StatusQueryRetries:  3,
+		ControlEnabled:      true, // 2026-05-29: 능동 제어 (set_multiple) 기본 활성 (기존 동작 보존)
 		EventTempThreshold:  1.0,
 	}
 
 	// transport_type (필수)
+	//
+	// 2026-05-29 breaking changes (LG/Century 통일):
+	//   - 유효 값: "serial", "tcp-client", "tcp-server".
+	//   - 이전의 단일 "tcp" 값은 거부되며, 사용자는 "tcp-client" 로 명시적으로 마이그레이션해야 한다.
 	if v, ok := opts["transport_type"]; ok {
-		cfg.TransportType = v.(string)
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: transport_type must be a string")
+		}
+		cfg.TransportType = s
 	}
 	if cfg.TransportType == "" {
-		return NASAConfig{}, fmt.Errorf("samsung-nasa: transport_type is required")
+		return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: transport_type is required")
+	}
+	switch cfg.TransportType {
+	case "serial", "tcp-client", "tcp-server":
+		// valid transport types
+	case "tcp":
+		// 2026-05-29 breaking: explicit migration error pointing user to new value.
+		return Hvacr01Config{}, ErrDeprecatedTCPTransport
+	default:
+		return Hvacr01Config{}, fmt.Errorf("%w: got %q", ErrInvalidTransportType, cfg.TransportType)
 	}
 
 	// serial_port
@@ -106,7 +142,11 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.Parity = v.(string)
 	}
 
-	// tcp_host (LGCNP/LGCP 패턴과 통일)
+	// tcp_host (LG ICP-01/LGCP 패턴과 통일)
+	//
+	// 2026-05-29 (tcp-server 추가):
+	//   - tcp-client: 원격 서버 IP — 필수.
+	//   - tcp-server: 바인드 주소 — 미지정 시 "0.0.0.0" (모든 인터페이스).
 	if v, ok := opts["tcp_host"]; ok {
 		if s, ok := v.(string); ok {
 			cfg.TCPHost = s
@@ -118,11 +158,29 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		cfg.TCPPort = toInt(v)
 	}
 
+	// TCP 모드별 필드 검증 (2026-05-29 추가):
+	//   - tcp-server: tcp_host 기본값 "0.0.0.0" 적용.
+	//   - tcp-client: tcp_host 필수 (서버 IP 지정 필수).
+	//   - 양쪽 모두: tcp_port 필수 (1-65535).
+	// 실제 transport 생성 시점에도 검증되지만, parse 단계에서 명시적 에러를 반환하여
+	// agent 생성 실패 메시지를 더 명확하게 한다.
+	if cfg.TransportType == "tcp-server" && cfg.TCPHost == "" {
+		cfg.TCPHost = "0.0.0.0"
+	}
+	if cfg.TransportType == "tcp-client" && cfg.TCPHost == "" {
+		return Hvacr01Config{}, ErrTCPHostRequired
+	}
+	if cfg.TransportType == "tcp-client" || cfg.TransportType == "tcp-server" {
+		if cfg.TCPPort < 1 || cfg.TCPPort > 65535 {
+			return Hvacr01Config{}, fmt.Errorf("%w: got %d", ErrTCPPortRequired, cfg.TCPPort)
+		}
+	}
+
 	// connect_timeout
 	if v, ok := opts["connect_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid connect_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid connect_timeout: %w", err)
 		}
 		cfg.ConnectTimeout = d
 	}
@@ -131,7 +189,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["read_timeout"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid read_timeout: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid read_timeout: %w", err)
 		}
 		cfg.ReadTimeout = d
 	}
@@ -140,7 +198,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["poll_interval"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid poll_interval: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid poll_interval: %w", err)
 		}
 		cfg.PollInterval = d
 	}
@@ -151,10 +209,10 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		if sok {
 			d, err := time.ParseDuration(s)
 			if err != nil {
-				return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid offline_timeout: %w", err)
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid offline_timeout: %w", err)
 			}
 			if d < 0 {
-				return NASAConfig{}, fmt.Errorf("samsung-nasa: offline_timeout must be >= 0, got %s", d)
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: offline_timeout must be >= 0, got %s", d)
 			}
 			cfg.OfflineTimeout = d
 		}
@@ -169,22 +227,16 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		}
 	}
 
-	// report_interval (이전: notify_interval) — 주기적 상태보고 간격. v0.6.0 통합 명칭.
-	// notify_interval 은 deprecation alias 로 silent accept.
-	for _, key := range []string{"report_interval", "notify_interval"} {
-		v, ok := opts[key]
-		if !ok {
-			continue
-		}
+	// report_interval — 주기적 상태보고 간격. v0.6.0 통합 명칭, 2026-05-29 단일화.
+	if v, ok := opts["report_interval"]; ok {
 		s, sok := v.(string)
-		if !sok {
-			continue
+		if sok {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid report_interval: %w", err)
+			}
+			cfg.NotifyInterval = d
 		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid %s: %w", key, err)
-		}
-		cfg.NotifyInterval = d
 	}
 
 	// report_mode — 상태보고 시점 정책. "relative" (기본) 또는 "absolute" (wall-clock 정렬).
@@ -195,7 +247,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 			case "relative", "absolute", "":
 				cfg.ReportMode = s
 			default:
-				return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid report_mode %q (must be 'relative' or 'absolute')", s)
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid report_mode %q (must be 'relative' or 'absolute')", s)
 			}
 		}
 	}
@@ -259,13 +311,29 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 		}
 	}
 
-	// include_raw_message_sets (기본값: false)
-	// RawMessageSets(원본 NASA 메시지 전체)는 페이로드 크기를 크게 늘리므로
-	// 기본적으로 출력에서 제외하고, 디버깅 시에만 opt-in 으로 활성화한다.
-	cfg.IncludeRawMessageSets = false
-	if v, ok := opts["include_raw_message_sets"]; ok {
+	// include_raw_hex (이전: include_raw_message_sets, 2026-05-29 rename — LG 통일).
+	// 기본값 false. RawMessageSets (원본 NASA 메시지 전체) 는 페이로드 크기를 크게
+	// 늘리므로 기본적으로 출력에서 제외하고, 디버깅 시에만 opt-in 으로 활성화한다.
+	if v, ok := opts["include_raw_hex"]; ok {
 		if b, ok := v.(bool); ok {
-			cfg.IncludeRawMessageSets = b
+			cfg.IncludeRawHex = b
+		}
+	}
+
+	// log_drops (기본값: false) — msgCh full 로 인한 event drop 을 WARN 로그로 출력.
+	// 2026-05-29: Century / LG 와 통일.
+	if v, ok := opts["log_drops"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogDrops = b
+		}
+	}
+
+	// log_state_updates (기본값: false) — 디바이스 state 갱신마다 핵심 필드 +
+	// raw payload hex 를 INFO 로그로 출력 (Century logDecodedState 패턴).
+	// 진단용 — 비정상 값 추적 시 opt-in.
+	if v, ok := opts["log_state_updates"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogStateUpdates = b
 		}
 	}
 
@@ -273,7 +341,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["reconnect_interval"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid reconnect_interval: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid reconnect_interval: %w", err)
 		}
 		cfg.ReconnectInterval = d
 	}
@@ -282,7 +350,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["max_reconnect_backoff"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid max_reconnect_backoff: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid max_reconnect_backoff: %w", err)
 		}
 		cfg.MaxReconnectBackoff = d
 	}
@@ -291,7 +359,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["status_query_delay"]; ok {
 		d, err := time.ParseDuration(v.(string))
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid status_query_delay: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid status_query_delay: %w", err)
 		}
 		cfg.StatusQueryDelay = d
 	}
@@ -299,6 +367,13 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	// status_query_retries
 	if v, ok := opts["status_query_retries"]; ok {
 		cfg.StatusQueryRetries = toInt(v)
+	}
+
+	// control_enabled (선택, 기본값 true)
+	// 2026-05-29: 능동 제어 (set_multiple) 활성/비활성 토글.
+	// false 면 set_multiple 명령이 거부된다. UI 일관성 위해 LG/Century 와 동일하게 노출.
+	if v, ok := opts["control_enabled"]; ok {
+		cfg.ControlEnabled = toBool(v)
 	}
 
 	// buzzer_on_control (선택, 기본값 false)
@@ -310,7 +385,7 @@ func parseNASAConfig(opts map[string]any) (NASAConfig, error) {
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
 		if err != nil {
-			return NASAConfig{}, fmt.Errorf("samsung-nasa: invalid event_temp_threshold: %w", err)
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid event_temp_threshold: %w", err)
 		}
 		cfg.EventTempThreshold = f
 	}

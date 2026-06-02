@@ -183,3 +183,46 @@ describe('FormField readOnly visibility', () => {
     expect(select.disabled).toBe(true);
   });
 });
+
+// field.placeholder opt-in 회귀 테스트.
+//
+// influxdb-write 의 measurement_key 처럼 placeholder 로 $. JSONPath 예시를
+// 보여줘야 하는 string 필드를 위해 field.placeholder 를 추가했다.
+// 미지정 시에는 기존 동작(default 값을 placeholder 로 표시)을 유지해야 한다.
+describe('FormField string placeholder', () => {
+  it('field.placeholder 지정 시 input placeholder 에 적용된다', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'measurement_key', type: 'string', label: 'Measurement 키', placeholder: '$.payload.metric_name' }}
+        value=""
+        onChange={vi.fn()}
+      />,
+    );
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement;
+    expect(input.placeholder).toBe('$.payload.metric_name');
+  });
+
+  it('field.placeholder 미지정 시 default 값을 placeholder 로 사용한다(기존 동작)', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'time_range', type: 'string', label: '시간 범위', default: '1h' }}
+        value=""
+        onChange={vi.fn()}
+      />,
+    );
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement;
+    expect(input.placeholder).toBe('1h');
+  });
+
+  it('placeholder 와 default 둘 다 없으면 placeholder 가 비어있다', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'measurement', type: 'string', label: 'Measurement' }}
+        value=""
+        onChange={vi.fn()}
+      />,
+    );
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement;
+    expect(input.placeholder).toBe('');
+  });
+});

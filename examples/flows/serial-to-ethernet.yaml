@@ -1,12 +1,12 @@
 # serial-to-ethernet.yaml
 # RS-485 시리얼 → 이더넷(MQTT) 게이트웨이 플로우
 #
-# LGCP 에이전트가 RS-485 시리얼 버��에서 캡처한 HVAC 디바이스 상태를
+# LG HVACR-02 에이전트가 RS-485 시리얼 버스에서 캡처한 HVAC 디바이스 상태를
 # MQTT 브로커로 발행하고, Store에 최신 상태를 캐싱하는 게이트웨이이다.
 #
 # TCP 전송 대안:
-#   RS485-to-TCP 컨버터를 사용하는 경우, lgcp-capture 에이전트 대신
-#   lgcp-tcp-client 에이전트(lgcp-tcp-client.yaml)를 사용할 수 있다.
+#   RS485-to-TCP 컨버터를 사용하는 경우, lg_hvacr02-capture 에이전트 대신
+#   lg_hvacr02-tcp-client 에이전트(lg_hvacr02-tcp-client.yaml)를 사용할 수 있다.
 #   플로우 구조는 동일하며, required_agents의 에이전트 이름만 변경하면 된다.
 #
 # ┌──────────────────────────────────────────────────────────────────┐
@@ -16,19 +16,19 @@
 # │  RS-485 시리얼                          이더넷 (TCP/IP)          │
 # │  ─────────────                          ──────────────           │
 # │                                                                  │
-# │  [LGCP 캡처] → [CRC 필터] → [상태 변환] → [MQTT 발행]           │
-# │   (bridge-in)   (유효만)    (플랫 구조)    (토픽별 발행)         │
-# │                                    │                             │
-# │                                    └──→ [Store 저장]             │
-# │                                          (최신 상태 캐시)        │
+# │  [LG ICP-02 캡처] → [CRC 필터] → [상태 변환] → [MQTT 발행]      │
+# │   (bridge-in)       (유효만)     (플랫 구조)    (토픽별 발행)    │
+# │                                       │                          │
+# │                                       └──→ [Store 저장]          │
+# │                                             (최신 상태 캐시)     │
 # │                                                                  │
 # │  에러 → [에러 로깅]                                              │
 # │                                                                  │
 # └──────────────────────────────────────────────────────────────────┘
 #
-# 시리얼 입력 (LGCP 프레임):
+# 시리얼 입력 (LG ICP-02 프레임):
 #   {
-#     "type": "lgcp_frame",
+#     "type": "lg_hvacr02_frame",
 #     "timestamp": "2026-03-30T10:30:45+09:00",
 #     "crc_valid": true,
 #     "parsed": {
@@ -68,7 +68,7 @@
 #   xflow script -f examples/scripts/serial-to-ethernet.xflow
 
 name: "serial-to-ethernet"
-description: "RS-485 시리얼 LGCP 캡처 → MQTT 이더넷 게이트웨이 (Store 캐시 포함)"
+description: "RS-485 시리얼 LG ICP-02 캡처 → MQTT 이더넷 게이트웨이 (Store 캐시 포함)"
 config:
   track_history: true
   max_history_size: 500
@@ -80,8 +80,8 @@ metadata:
   domain: "serial-gateway"
 
 required_agents:
-  - name: "lgcp-capture"
-    type: "lgcp"
+  - name: "lg_hvacr02-capture"
+    type: "lg_hvacr02"
   - name: "mqtt-broker"
     type: "mqtt-client"
   - name: "store-engine"
@@ -96,8 +96,8 @@ nodes:
   # 시리얼 입력 (RS-485)
   # ═══════════════════════════════════════════════════════════════
 
-  # ── 1단계: LGCP 패킷 캡처 (패시브 리스닝) ──
-  # RS-485 버스에서 LGCP 프레임을 수신한다.
+  # ── 1단계: LG ICP-02 패킷 캡처 (패시브 리스닝) ──
+  # RS-485 버스에서 LG ICP-02 프레임을 수신한다.
   - name: "serial-receiver"
     type: "bridge"
     inputs:
@@ -107,7 +107,7 @@ nodes:
     errors:
       - "error"
     agent_ref:
-      agent_name: "lgcp-capture"
+      agent_name: "lg_hvacr02-capture"
       direction: "in"
 
   # ── 2단계: CRC 유효 + 디코딩 가능 프레임 필터 ──
@@ -128,7 +128,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
 
   # ── 3단계: 상태 메시지 변환 ──
-  # LGCP 중첩 구조를 이더넷 전송에 적합한 플랫 구조로 변환한다.
+  # LG ICP-02 중첩 구조를 이더넷 전송에 적합한 플랫 구조로 변환한다.
   - name: "status-transform"
     type: "transform"
     config:

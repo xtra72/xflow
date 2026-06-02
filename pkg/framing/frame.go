@@ -124,7 +124,7 @@ func (f *frameFramer) Write(w io.Writer, data []byte) error {
 }
 
 // Drain 은 버퍼에서 STX/길이/ETX/체크섬 기반 프레임을 모두 추출한다.
-// Read 와 동일한 파싱 알고리즘을 사용하며, LGCP 샘플 등 결정적 입력에
+// Read 와 동일한 파싱 알고리즘을 사용하며, LG ICP-02 샘플 등 결정적 입력에
 // 대해 Read 와 동일한 프레임 시퀀스를 생성한다.
 //
 // 복구 정책:

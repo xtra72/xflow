@@ -30,6 +30,10 @@ type FlowManager interface {
 	ListFlowNodes(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
 	GetFlowNode(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
 
+	// ReconfigureFlowNode 는 실행 중인 플로우 내 특정 노드에 부분 설정을 즉시 적용한다.
+	// 플로우가 배포/실행 중이 아니거나 노드를 찾지 못하면 404 로 매핑되는 에러를 반환한다.
+	ReconfigureFlowNode(ctx context.Context, flowID, nodeID string, config map[string]any) error
+
 	// RenameAgentInFlows 는 저장된 모든 플로우에서 oldName 에이전트 참조를 newName 으로 변경한다.
 	// 업데이트된 플로우 수를 반환한다.
 	RenameAgentInFlows(ctx context.Context, oldName, newName string) (int, error)
@@ -166,6 +170,7 @@ func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/flows/{id}/status", h.Status)
 	g.GET("/flows/{id}/nodes", h.ListNodes)
 	g.GET("/flows/{id}/nodes/{nodeID}", h.GetNode)
+	g.POST("/flows/{id}/nodes/{nodeID}/configure", h.ConfigureNode)
 }
 
 // List 는 페이지네이션을 적용하여 플로우 목록을 반환한다.
@@ -203,6 +208,13 @@ func (h *FlowHandler) Create(ctx api.Context) error {
 	var req dto.FlowCreateRequest
 	if err := ctx.Bind(&req); err != nil {
 		return err
+	}
+
+	// 쿼리 파라미터 ?regenerate_ids=true 로도 import 모드를 활성화할 수 있다.
+	// body 의 regenerate_ids 와 OR 결합한다(둘 중 하나라도 true 면 재생성).
+	// (SPEC: flow-management requirement 2 — import 모드 ID 재생성)
+	if ctx.Query("regenerate_ids") == "true" {
+		req.RegenerateIDs = true
 	}
 
 	// import 된 definition 의 노드 agent_ref.agent_id 를 현재 시스템 기준으로 재해결한다.
@@ -811,6 +823,11 @@ func extractAgentNames(definition map[string]any) []string {
 }
 
 // resolveAgentExports 는 에이전트 이름 목록으로 내보내기용 데이터를 생성한다.
+//
+// 보안: 에이전트 config 에 포함된 민감 키(password/token/username 등)는 export
+// 결과물에서 제거한다. 대신 어떤 민감 키가 제거되었는지를 sensitive_fields 배열로
+// 기록하여 import 다이얼로그가 해당 비밀값을 다시 입력받을 수 있도록 한다.
+// 비밀 "값" 은 절대 포함하지 않는다. (SPEC: flow-management requirement 1)
 func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) []map[string]any {
 	agents, _, err := h.agents.ListAgents(ctx, dto.ListOptions{
 		PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
@@ -822,7 +839,7 @@ func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) [
 
 	// agent_id 는 디바이스 재프로비저닝 시 변하므로 환경 간 이식성이 없다.
 	// 매칭은 (name, type) 으로만 수행하되, name 비교는 대소문자 무시로 한다
-	// (예: 등록된 "LGCNP" 와 flow 가 참조하는 "lgcnp" 가 동일하게 취급되어야 한다).
+	// (예: 등록된 "LG_HVACR01" 과 flow 가 참조하는 "lg_hvacr01" 이 동일하게 취급되어야 한다).
 	// Lowercase 키 충돌 발생 시 마지막 entry 가 우선한다 — 운영상 의도된 동작.
 	agentByName := make(map[string]*AgentInfo, len(agents))
 	for i := range agents {
@@ -837,12 +854,50 @@ func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) [
 		if ag, ok := agentByName[strings.ToLower(name)]; ok {
 			entry["type"] = ag.Type
 			if ag.Config != nil {
-				entry["config"] = ag.Config
+				// 먼저 제거될 민감 키를 수집한 뒤(원본 불변), 리댁션된 복사본을 넣는다.
+				if sensitive := CollectSensitiveKeys(ag.Config); len(sensitive) > 0 {
+					entry["sensitive_fields"] = sensitive
+				}
+				entry["config"] = RedactSensitiveConfig(ag.Config)
 			}
 		}
 		result = append(result, entry)
 	}
 	return result
+}
+
+// redactDefinitionNodeConfigs 는 변환된 definition 의 각 노드 config 에서 민감
+// 키를 제거하고, 제거된 키 목록을 노드의 "sensitive_fields" 로 기록한다.
+//
+// 입력 definition 은 separateLayoutFields 가 만든 복사본이므로 in-place 로
+// 변경해도 라이브 플로우에 영향이 없다. 다만 노드 config 맵은 원본을 참조할 수
+// 있으므로 RedactSensitiveConfig 의 복사본으로 교체하여 안전을 보장한다.
+//
+// SPEC: flow-management requirement 1 (export 시 노드 config 비밀값 제거)
+func redactDefinitionNodeConfigs(def map[string]any) {
+	nodes := toSliceOfMaps(def["nodes"])
+	if len(nodes) == 0 {
+		return
+	}
+	for _, node := range nodes {
+		cfg, ok := node["config"].(map[string]any)
+		if !ok || cfg == nil {
+			continue
+		}
+		if sensitive := CollectSensitiveKeys(cfg); len(sensitive) > 0 {
+			node["sensitive_fields"] = sensitive
+		}
+		// 민감 키가 없어도 복사본으로 교체하지 않는다(불필요한 할당 회피).
+		// 단, 민감 키가 있으면 반드시 리댁션된 복사본으로 교체한다.
+		if IsAnySensitive(cfg) {
+			node["config"] = RedactSensitiveConfig(cfg)
+		}
+	}
+}
+
+// IsAnySensitive 는 cfg(및 중첩) 에 민감 키가 하나라도 존재하는지 반환한다.
+func IsAnySensitive(cfg map[string]any) bool {
+	return len(CollectSensitiveKeys(cfg)) > 0
 }
 
 // Export 는 단일 플로우를 내보내기용 데이터로 반환한다.
@@ -872,6 +927,10 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 		// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
 		// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
 		converted := separateLayoutFields(info.Config)
+
+		// 노드 config 의 민감 키를 제거하고 sensitive_fields 를 기록한다.
+		// (SPEC: flow-management requirement 1)
+		redactDefinitionNodeConfigs(converted)
 		exported["definition"] = converted
 
 		// 플로우가 참조하는 에이전트 정보를 포함한다
@@ -879,12 +938,37 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 			if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
 				if requiredAgents := h.resolveAgentExports(ctx.Context(), agentNames); len(requiredAgents) > 0 {
 					exported["required_agents"] = requiredAgents
+					// 최상위 required_secrets 요약을 추가한다(프론트 import 다이얼로그용).
+					if summary := summarizeRequiredSecrets(requiredAgents); len(summary) > 0 {
+						exported["required_secrets"] = summary
+					}
 				}
 			}
 		}
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(exported))
+}
+
+// summarizeRequiredSecrets 는 required_agents 항목에서 sensitive_fields 를 모아
+// {agentName: [keys...]} 형태의 최상위 요약을 만든다. import 다이얼로그가 어떤
+// 에이전트에 대해 어떤 비밀값을 입력받아야 하는지 한눈에 파악할 수 있게 한다.
+// 비밀 값은 포함하지 않는다. 민감 키가 전혀 없으면 nil 을 반환한다.
+func summarizeRequiredSecrets(requiredAgents []map[string]any) map[string]any {
+	summary := make(map[string]any)
+	for _, entry := range requiredAgents {
+		name, _ := entry["name"].(string)
+		if name == "" {
+			continue
+		}
+		if fields, ok := entry["sensitive_fields"].([]string); ok && len(fields) > 0 {
+			summary[name] = fields
+		}
+	}
+	if len(summary) == 0 {
+		return nil
+	}
+	return summary
 }
 
 // ExportAll 은 모든 플로우를 내보내기용 데이터 배열로 반환한다.
@@ -932,7 +1016,12 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 			// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
 			// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
 			converted := separateLayoutFields(full.Config)
+
+			// 노드 config 의 민감 키를 제거하고 sensitive_fields 를 기록한다.
+			// (SPEC: flow-management requirement 1)
+			redactDefinitionNodeConfigs(converted)
 			item["definition"] = converted
+
 			// 플로우가 참조하는 에이전트 정보를 포함한다
 			if agentByName != nil {
 				if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
@@ -942,13 +1031,20 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 						if ag, ok := agentByName[name]; ok {
 							entry["type"] = ag.Type
 							if ag.Config != nil {
-								entry["config"] = ag.Config
+								// 비밀값 제거 + 제거된 키 기록 (값은 포함하지 않음).
+								if sensitive := CollectSensitiveKeys(ag.Config); len(sensitive) > 0 {
+									entry["sensitive_fields"] = sensitive
+								}
+								entry["config"] = RedactSensitiveConfig(ag.Config)
 							}
 						}
 						requiredAgents = append(requiredAgents, entry)
 					}
 					if len(requiredAgents) > 0 {
 						item["required_agents"] = requiredAgents
+						if summary := summarizeRequiredSecrets(requiredAgents); len(summary) > 0 {
+							item["required_secrets"] = summary
+						}
 					}
 				}
 			}
@@ -993,6 +1089,43 @@ func (h *FlowHandler) GetNode(ctx api.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
+}
+
+// ConfigureNode 는 실행 중인 플로우 내 특정 노드에 부분 설정을 즉시 적용한다.
+// 저장/재배포 없이 동작 중인 노드 인스턴스의 Configure 를 호출하여 라이브로 반영한다.
+// POST /flows/{id}/nodes/{nodeID}/configure
+// 요청 본문: { "config": { "output_enabled": false } }
+//
+// 플로우가 배포/실행 중이 아니거나 노드를 찾지 못하면 404 를 반환한다.
+// (프론트엔드는 404 를 "실행 중 아님 — 에디터 상태만 변경" 으로 처리한다.)
+func (h *FlowHandler) ConfigureNode(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+	nodeID := ctx.Param("nodeID")
+	if nodeID == "" {
+		return api.ErrBadRequest.WithMessage("node id is required")
+	}
+
+	var req dto.NodeConfigureRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+
+	if errs := dto.ValidateNodeConfigure(&req); errs != nil {
+		return api.ErrValidationFailed.WithDetails(errs)
+	}
+
+	if err := h.flows.ReconfigureFlowNode(ctx.Context(), id, nodeID, req.Config); err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
+		"id":      id,
+		"node_id": nodeID,
+		"status":  "configured",
+	}))
 }
 
 // parsePagination 은 쿼리 파라미터에서 페이지네이션 정보를 추출한다.

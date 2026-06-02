@@ -357,20 +357,20 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := system.RegisterInfluxDBTypes(agentMgr); err != nil {
 		return fmt.Errorf("InfluxDB agent type registration failed: %w", err)
 	}
-	if err := samsung.RegisterSamsungNASATypes(agentMgr); err != nil {
+	if err := samsung.RegisterSamsungHvacr01Types(agentMgr); err != nil {
 		return fmt.Errorf("Samsung NASA agent type registration failed: %w", err)
 	}
 	if err := lg.RegisterLGLGAPTypes(agentMgr); err != nil {
 		return fmt.Errorf("LG LGAP agent type registration failed: %w", err)
 	}
-	if err := lg.RegisterLGLGCPTypes(agentMgr); err != nil {
-		return fmt.Errorf("LG LGCP agent type registration failed: %w", err)
+	if err := lg.RegisterLGHvacr02Types(agentMgr); err != nil {
+		return fmt.Errorf("LG HVACR-02 agent type registration failed: %w", err)
 	}
-	if err := lg.RegisterLGCNPTypes(agentMgr); err != nil {
-		logger.Error("LGCNP 에이전트 타입 등록 실패", "error", err)
+	if err := lg.RegisterHvacr01Types(agentMgr); err != nil {
+		logger.Error("lg_hvacr01 에이전트 타입 등록 실패", "error", err)
 	}
-	if err := century.RegisterCenturyTypes(agentMgr); err != nil {
-		return fmt.Errorf("Century HVAC agent type registration failed: %w", err)
+	if err := century.RegisterHvacr01Types(agentMgr); err != nil {
+		return fmt.Errorf("Century HVACR-01 agent type registration failed: %w", err)
 	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)

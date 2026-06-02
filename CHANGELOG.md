@@ -6,6 +6,231 @@
 
 ## [Unreleased]
 
+### 추가 — Century `log_state_changes_only` 진단 분석 모드 옵션
+
+- **Century HVACR-01 에이전트에 byte-equal dedup 기반 진단 로그 모드 추가 (Non-breaking)**
+
+  프로토콜 RE / fan 인코딩 탐색 등 byte 단위 변화 탐지가 목적인 작업에서, 매 polling cycle (~512ms) 마다 동일한 reg02/reg03/reg04 frame 이 로그를 폭주시키는 문제를 해결한다. `log_state_updates=true` 와 함께 활성화하면 변화가 있을 때만 로그가 출력되어 분석이 용이.
+
+  - **신규 옵션**: `log_state_changes_only` (bool, default false). `log_state_updates=true` 와 조합하여 사용.
+  - **동작**: `logDecodedState` 가 (sub_dev_id, register, role) 별로 직전 raw payload 와 **byte-equal 비교**. 동일하면 로그 출력 생략, 다르면 출력.
+  - **diff 정보**: 변경된 byte 위치 리스트를 `changed_bytes` 추가 field 로 노출 (예: `data[2],data[7]`). payload offset 0..2 (prefix) 는 `p[0]/p[1]/p[2]`, 그 이후는 `data[N]` 로 표기. 길이 차이는 `len(prev→cur)` 형식.
+  - **첫 관측**: `changed_bytes="(initial)"` 로 표기하여 cold start 와 변화 케이스를 구분.
+  - **Reg04 read/write 분리**: 같은 register 0x04 라도 read response (0x04) 와 write request (0x84) 가 별도 cache key 로 dedup 되어 양쪽 모두 진단 가능.
+  - **동시성**: 캐시는 captureLoop 단일 goroutine 에서만 접근되므로 mutex 불필요. `lastRegisterEmit` (v0.3.6) 와 동일 패턴.
+  - **회귀 위험 없음**: 기본값 false, 옵션을 켜지 않는 한 v0.21.x 와 완전 동일 동작.
+  - **사용 예**: 운영 yaml 의 transport.options 에 `log_state_updates: true` + `log_state_changes_only: true` 임시 추가 → 분석 종료 후 둘 다 false 로 복원.
+  - **관련**: SPEC-CENTURY-HVACR-001 v0.22.0.
+
+### 수정 (BREAKING) — Century current_temp 소스 정정 (Reg04 → Reg02 data[7..8], 실측 검증)
+
+- **Century ICP-01 프로토콜 spec 의 current_temp 소스 정정 (Breaking — emit 값 / 필드명 변경)**
+
+  사용자 OFF↔ON 캡처 (동일 ambient 26°C 환경) 결과 `data[7..8]` LE u16 ÷ 10 이 OFF/ON 양쪽 모두 `0x0104` (=260 → 26.0°C) 로 실측 ambient 와 일치함이 확정됨. v0.20.0 의 "cooling capacity ceiling / max compressor speed" 가설 (`reg02_word_7`) 은 폐기 — 6-point setpoint 실험 (18~28°C) 당시 관측된 240~250 값들은 cooling ceiling 이 아니라 그 시점의 ambient 온도였음.
+
+  - **byte source 변경**: DeviceStateEvent 의 `current_temp` source 가 register 0x04 read response data[10..11] (`temp_A_c` inferred) → **register 0x02 data[7..8]** (`current_temp_c` confirmed) 로 변경. 디코더에서 `Reg02Word7` (inferred) → `CurrentTempC` (confirmed) 로 리네이밍. Reg04 `TempAC` (inferred 25.2°C 추정) 는 의미 미확정으로 격하되어 `Reg04Word10` (inferred) 로 리네이밍 — 운전 중에만 채워지는 값이지만 indoor temp 가설은 폐기.
+  - **strict gate 완화 (v0.4.2 → v0.5)**: `maybeEmitDeviceState` 가 이전엔 `Reg02 != nil && Reg04Read != nil` 둘 다 요구했으나, 이제 5 핵심 필드 모두 Reg02 단일 register 에서 공급되므로 **`Reg02 != nil` 단독** 으로 축소. emit latency 가 더 짧아짐 (master polling cycle 의 첫 Reg02 도착 시점).
+  - **다운스트림 영향**: emit 메시지의 `current_temperature` 값이 이제 실제 ambient 와 일치 (이전엔 운전 중인 경우에만 25.2°C 안정값, 꺼짐 시 0). Reg04 register-decoded 메시지의 `temp_A_c` 필드명이 `reg04_word_10` 으로 rename — `$.payload.fields.temp_A_c` 참조 코드 갱신 필요. Reg02 register-decoded 메시지에 `current_temp_c` (confirmed) 신규 노출 (이전엔 `reg02_word_7` inferred).
+  - **회귀 위험**: CAP-1/3/4 fixture 의 두 byte 위치가 모두 25°C 였기에 swap 전후 fixture 값은 영향 없음 (Confirmed status 로 격상되었을 뿐 값은 동일). 사용자 환경의 `current_temperature` 값은 변경됨 — 운전 중이라면 큰 차이 없으나 (둘 다 ~25°C), 꺼짐 상태에서 이제 실내 ambient 가 노출됨 (이전엔 Reg04 미수신으로 emit 보류 또는 0).
+  - **관련**: `references/protocols/century_icp01_protocol_spec.md` v0.5, SPEC-CENTURY-HVACR-001 v0.21.0.
+
+### 변경 (BREAKING) — `lgcp` 식별자 rename 으로 LG ICP-02 프로토콜 / LG HVACR-02 에이전트 분리
+
+- **`lgcp` 식별자를 protocol / agent / node 3 가지 역할별로 분리 (Breaking)**
+
+  기존 `lgcp` 단일 식별자가 protocol code, agent type, node type 3 가지 의미로 동시에 쓰이던 모호함을 해소. 동일 패턴의 lgcnp → lg_icp01/lg_hvacr01 (v1.x 이전 적용) 의 후속 작업.
+
+  - **프로토콜 코드**: `lgcp` → `lg_icp02` (LG ICP-02 wire protocol)
+  - **에이전트 타입**: `lgcp` → `lg_hvacr02` (LG HVACR-02 agent)
+  - **노드 타입**: `lgcp` / `lgcp-status` / `lgcp-control` → `lg_hvacr02` / `lg_hvacr02_status` / `lg_hvacr02_control`
+  - **복합 디바이스 ID**: `lgcp:<addr>` → `lg_icp02:<addr>`
+  - **SPEC 디렉토리**: `SPEC-LGCP-001/002/003` → `SPEC-LG-HVACR-002-001/002/003`
+  - **프로토콜 분석 문서**: `references/protocols/LGCP_Protocol_Analysis.md` → `LG-ICP-02_Protocol_Analysis.md`
+  - **Go identifiers (B-3 convention)**: Agent side `LGCP*` → `Hvacr02*`, Protocol side `LGCP*` → `Icp02*`, Node side (vendor prefix) `LGCP*Node` → `LGHvacr02*Node`, Adapter `LGCP*` → `LGIcp02*`
+  - 기존 yaml / flow 가 deprecated alias 를 사용했다면 부팅 실패 (parse error). 운영자 마이그레이션: examples 폴더의 새 형식 파일 참조.
+  - 관련 commits: backend (bc700c9), frontend (b803ffe).
+
+### 수정 (BREAKING) — Century reg 0x02 setpoint byte 위치 정정 (실측 검증)
+
+- **Century ICP-01 프로토콜 spec 의 setpoint byte 위치 정정 (Breaking — emit 값 변경)**
+
+  사용자 AC remote 6-point 실험 (18 / 20 / 22 / 24 / 26 / 28°C 순차 설정) 결과 setpoint 의 부호화 위치가 `data[7..8]` 이 아닌 **`data[11..12]`** 임이 실측으로 확정. 관측값 `data[11..12] ÷ 10` = 180/200/220/240/260/280 → 18~28°C 와 **완벽 linear 일치**.
+
+  - **byte 위치 swap**: `setpoint_c` 의 source 가 `data[7..8] LE u16 ÷ 10` 에서 `data[11..12] LE u16 ÷ 10` 으로 변경. `data[7..8]` 은 별개 운전 파라미터로 재분류되어 새 필드 `reg02_word_7` (inferred) 로 노출 — ≤25°C 설정 시 250 고정, 26°C → 245, 28°C → 240 으로 5 씩 감소 (cooling capacity ceiling / max compressor speed 등 추정).
+  - **이전 가정 미검증의 원인**: CAP-3/4 fixture 가 우연히 두 byte 쌍 모두 `0x00FA` = 250 (25.0°C) 이라 디코더 byte position 이 잘못되어도 fixture 테스트가 통과해왔음. 단일 setpoint 만 가진 fixture 의 검증 한계.
+  - **CAP-1 (꺼짐) 재해석**: 이전 spec 의 "꺼짐 상태에서도 setpoint 25°C 유지" 관찰은 실제로 `data[7..8]` (현 `reg02_word_7`) 이 유지된 것이며 setpoint 그 자체가 아님. 꺼짐 상태에서 `data[11..12]=0` (active cooling target 없음) 이 자연스러운 해석.
+  - **다운스트림 영향**: Go 필드 `Reg02Word11` + JSON key `reg02_word_11` → `Reg02Word7` / `reg02_word_7` 로 rename. `setpoint_c` 필드 이름은 유지. emit 메시지의 `target_temperature` 값이 이제 사용자 실제 설정과 일치 (이전엔 잘못된 byte 로 인해 일치하지 않을 수 있었음).
+  - **회귀 위험**: CAP-3/4 fixture 테스트는 두 byte 쌍 모두 250 이라 swap 후에도 통과. CAP-1 (꺼짐) 테스트 어서션은 갱신 필요 (이미 적용). 25°C 단일 설정으로만 운영해왔다면 사용자 영향 없음, 다양한 setpoint 사용 시 이제 정확한 값 표출.
+  - **관련**: `references/protocols/century_icp01_protocol_spec.md` v0.4, SPEC-CENTURY-HVACR-001 v0.20.0.
+
+### 변경 (BREAKING) — Samsung HVACR-01 transport_type tcp-client/tcp-server 분리 지원
+
+- **Samsung HVACR-01 의 `transport_type` 옵션이 LG / Century 와 동일한 3-모드 (`serial` / `tcp-client` / `tcp-server`) 로 통일 (Breaking)**
+
+  이전엔 Samsung 만 `serial` / `tcp` 2-모드만 지원하여 TCP 서버 모드 (시리얼-Ethernet 컨버터의 push 연결) 가 불가능했다. LG / Century 와 동일한 패턴으로 `NasaTCPServerTransport` 를 추가하고 `transport_type` validation 을 확장한다. 기존 `tcp` 값은 더 이상 인식되지 않고 parse error 로 거부되며, 사용자는 `tcp-client` 로 명시적으로 마이그레이션해야 한다.
+
+  - **신규**: `NasaTCPServerTransport` — LG `lgapTCPServerTransport` 패턴을 따르며, bind 주소 (`tcp_host`, 기본 `0.0.0.0`) 에서 단일 활성 연결 정책으로 동작한다. 새 연결이 들어오면 기존 활성 연결을 close 하고 교체한다.
+  - **검증 변경**:
+    - `transport_type`: `serial` / `tcp-client` / `tcp-server` 만 허용. `tcp` 입력 시 parse error.
+    - `tcp_host`: `tcp-server` 는 기본값 `0.0.0.0` (모든 인터페이스), `tcp-client` 는 필수 (서버 IP 명시 필요).
+    - `tcp_port`: 두 TCP 모드 모두 필수.
+  - **마이그레이션**:
+    - 기존 `transport_type: "tcp"` 설정은 `transport_type: "tcp-client"` 로 변경.
+    - 예제 파일 rename: `examples/agents/samsung_hvacr01-tcp.yaml` → `samsung_hvacr01-tcp-client.yaml`.
+    - 프론트엔드 schema (agentSchemas.ts, agentTypeMeta.ts) 도 3-모드 옵션 노출.
+
+### 변경 (BREAKING) — 3종 HVACR-01 에이전트 (LG / Samsung / Century) config 필드·기본값·로그 옵션 통일 (LG 명세 기준)
+
+- **3종 HVACR-01 에이전트 (LG / Samsung / Century) 의 에이전트 config 필드, 기본값, 로그 옵션을 LG 명세 기준으로 통일 (Breaking)**
+
+  세 에이전트가 서로 다른 필드명·alias·기본값·로그 옵션을 사용하던 비대칭을 제거하고, 운영자가 어느 벤더 에이전트를 사용하더라도 동일한 멘탈 모델로 동작을 예측할 수 있도록 정렬한다. 본 변경은 backend 가 alias 를 silent accept 하지 않고 **명시적 parse error 로 거부**하므로, 부팅 즉시 실패 (fail loud) 한다.
+
+  - **기본값 통일**:
+    - Samsung `report_interval`: `0` → `"60s"` (기본 keepalive 활성화. 이전엔 변경 감지만 동작)
+    - Samsung `auto_discovery`: `false` → `true` (LG / Century 와 동일하게 자동 탐색을 기본 활성)
+    - Century `offline_timeout`: `"5s"` → `"30s"` (LG / Samsung 과 동일하게 30s 로 통일. 폴링 cycle 의 약 60배)
+
+  - **필드 rename (alias 미수용, breaking)**:
+    - Century `reconnect_initial` → `reconnect_interval` (Samsung 의 동명 필드와 정렬)
+    - Samsung `include_raw_message_sets` → `include_raw_hex` (LG / Century 의 동명 필드와 정렬. 의미는 동일 — register-decoded / state response 에 원시 바이트 hex 포함 여부)
+    - 3개 에이전트 모두: `notify_interval` deprecation alias **완전 제거** (이전엔 v1.6.0 / v0.6.0 부터 `report_interval` 로 통일하면서 alias 만 유지). 이제 `notify_interval` 키는 parse error.
+    - Century: `keepalive_interval` / `keepalive_mode` **완전 제거** (이전 v0.3.x 의 device_state fallback emit 옵션). `report_interval` / `report_mode` 만 인식되며, 의미·동작 (relative / absolute crontab 패턴) 은 보존된다.
+
+  - **로그 옵션 상향 통일 — 3개 에이전트 모두 동일 keys 노출**:
+    - LG 신규 추가: `log_decode_errors`, `log_drops`, `log_state_updates`
+    - Samsung 신규 추가: `log_drops`, `log_state_updates` (`log_decode_errors` 는 v1.9.0 부터 보유)
+    - Century: 변경 없음 (이미 3개 모두 보유 — `log_decode_errors`, `log_drops`, `log_state_updates`)
+
+  - **backend 거부 동작 (breaking — fail loud)**:
+    - 다음 키가 config 에 존재하면 에이전트 init 시점에 parse error 로 즉시 부팅 실패: `notify_interval`, `include_raw_message_sets`, `reconnect_initial`, `keepalive_interval`, `keepalive_mode`.
+    - 이전 v1.6.0 / v0.6.0 의 silent accept 방식이 운영자가 deprecation 사실을 인지하지 못한 채 alias 를 누적하던 문제 (구버전 yaml 이 작동하는 것처럼 보이지만 default 값이 적용됨) 를 해소한다.
+
+  **운영자 마이그레이션**:
+  - greenfield 환경: 별도 조치 불필요.
+  - brownfield 환경: yaml 의 deprecated 필드를 신규 필드로 일괄 치환 후 부팅. 자세한 절차는 `docs/migration/hvacr-config-unification.md` 참조.
+    - `notify_interval` → `report_interval`
+    - `keepalive_interval` → `report_interval`
+    - `keepalive_mode` → `report_mode`
+    - `reconnect_initial` → `reconnect_interval`
+    - `include_raw_message_sets` → `include_raw_hex`
+    - Samsung `auto_discovery: true` 를 명시했던 기존 yaml: 생략 가능 (default 가 true)
+    - Samsung `report_interval` 미설정 환경: 60s keepalive emit 이 시작됨. 변경 감지만 원하는 경우 `report_interval: "0s"` 명시.
+
+### Removed
+
+- **3종 HVACR-01 에이전트 (LG / Samsung / Century) deprecated config alias 5종 완전 제거 (breaking)** — `notify_interval`, `keepalive_interval`, `keepalive_mode`, `reconnect_initial`, `include_raw_message_sets`. config 에 존재 시 silent accept 되지 않고 parse error 로 거부된다. 이전엔 v1.6.0 / v0.6.0 부터 deprecation alias 로 일부만 수용되었으나, 본 변경에서 backend 가 명시적으로 거부하도록 통일했다.
+- **LGAP / LGCP 에이전트의 `notify_interval` alias 완전 제거 (breaking)** — HVACR-01 3종에 이은 후속 정리. 두 에이전트가 마지막까지 `notify_interval` deprecation alias 를 silent accept 하던 비대칭을 해소. config 에 `notify_interval` 키가 존재하면 parse error 로 거부되며, `report_interval` 만 허용된다. 프론트엔드 schema 의 alias 안내 텍스트 (`이전 notify_interval, deprecation alias 유지`, `v0.6.0 통합 옵션`) 도 함께 제거.
+
+### 변경 (BREAKING) — status 노드 3종 통일 (LG inactivity 모델) + 어드레싱 + 메타데이터 정리
+
+- **`*_hvacr01_status` 노드 3종 (LG / Samsung / Century) config 구조를 LG inactivity 모델로 통일 (Breaking)**
+
+  세 가지 status 노드가 서로 다른 모델 (LG = inactivity-fallback, Samsung/Century = ticker 기반 polling) 을 사용하던 비대칭을 제거하고, LG ICP-01 의 inactivity-fallback 모델을 표준으로 채택해 통일한다. 신규 어드레싱 필드 (`group_id`, `unit_id`) 를 도입하고, 의미가 모호하던 출력 metadata (`unit_id`, `slot_num`) 는 제거한다.
+
+  - **동작 통일 — inactivity-fallback 모델**:
+    - 노드는 에이전트의 `FrameNotifyCh` 신호를 수신하면서 frame 도착 시 즉시 처리한다.
+    - `inactivity_timeout` (기본 `"90s"`) 동안 frame 신호가 수신되지 않으면 에이전트에 `request_state` 명령을 전송한다 (회선 silent 상태에서도 주기적 상태 확보).
+    - 어드레싱 필드가 설정된 경우 매칭 frame 만 emit + `request_state` 의 target 으로 사용.
+
+  - **신규 어드레싱 필드 (3종 status + 3종 combined 노드, advanced)**:
+    - `unit_id` (string, hex): 프로토콜 디바이스 식별자.
+      - LG: STX byte (`"58"` ODU, `"81"`–`"BF"` IDU, 64 units)
+      - Samsung: NASA addr byte 2 (`"00"`–`"3F"` indoor; outdoor 는 group_id 와 동일)
+      - Century: `sub_dev_id` (`"3B"` 등)
+    - `group_id` (string, hex, Samsung 전용): NASA addr byte 1 / 외기 인덱스 (`"00"`–`"0F"`). LG / Century 는 schema parity 위해 필드 유지하나 미사용.
+    - 두 필드 모두 빈 값일 때 모든 디바이스 처리 / broadcast `request_state`.
+
+  - **Samsung status / combined 노드 변경**:
+    - 제거: `device_id` (input config), `poll_command`, `poll_interval`, `device_address`
+    - 추가: `inactivity_timeout`, `group_id`, `unit_id`
+    - 단일 디바이스 조회는 노드 input 메시지 payload 의 `device_id` / `unit_id` override 로 가능 (제어 노드 / 통합 노드의 payload-level 지정은 유지).
+
+  - **Century status / combined 노드 변경**:
+    - 제거: `poll_command`, `poll_interval`, `recent_count`
+    - 추가: `inactivity_timeout`, `group_id` (미사용), `unit_id`
+    - 유지: `emit_raw_frames` (직전 raw-frame 통합 옵션)
+
+  - **LG status / combined 노드 변경 (additive)**:
+    - 추가: `group_id` (미사용, schema parity), `unit_id` (선택적 STX 필터)
+    - 기존 `poll_interval` / `poll_command` / `recent_count` 는 deprecation alias 로 계속 수용 (no-op). LG 는 이미 inactivity 모델 — 동작 변경 없음.
+
+- **출력 메시지 metadata 정리 — `unit_id` / `slot_num` 제거 (Breaking, 전 노드)**
+
+  출력 metadata 의 `unit_id` 와 `slot_num` 은 프로토콜 해석 단계에서만 의미가 있는 내부 표현 (LGCNP `"0"`/`"1"`–`"5"`, NASA addr 분해 등) 으로, downstream consumer 가 알 필요가 없는 artifact 였다. 동일 정보가 필요한 경우 `metadata.device_id` (UUID) → DeviceRegistry 조회 또는 노드의 어드레싱 필드 (`unit_id`, `group_id`) 로 일대일 대응 가능하다.
+
+  - `MetadataEmitOptions.UnitID` / `MetadataEmitOptions.SlotNum` 필드 제거
+  - 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거 (전 노드 — LG / Samsung / Century status·control·combined)
+  - `dedup_helper` 의 `promoteDevIDToMetadata` / `promoteDevIDWithUUID` 에서 `unit_id` metadata emit 경로 삭제. payload 의 `unit_id` 는 항상 삭제되며 metadata 에는 노출되지 않는다.
+  - 다운스트림 마이그레이션: `$.metadata.unit_id` / `$.metadata.slot_num` 참조 제거. 대신 `$.metadata.device_id` (UUID) 사용.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경:
+    - Samsung flow yaml 의 status 노드 config 에서 `device_id` / `poll_interval` / `poll_command` / `device_address` 필드 제거 (필요 시 payload-level override 로 대체).
+    - Century flow yaml 의 status 노드 config 에서 `poll_interval` / `poll_command` / `recent_count` 필드 제거. `emit_raw_frames` 는 유지.
+    - 어드레싱이 필요한 경우 (단일 디바이스 만 처리) `unit_id` (Samsung 은 `group_id` 도) 를 advanced 필드로 설정.
+    - downstream 의 `metadata.unit_id` / `metadata.slot_num` 필터 / 조인 키를 `metadata.device_id` 로 마이그레이션.
+
+### 변경 (BREAKING) — `century-hvac` 식별자 rename 으로 Century ICP-01 프로토콜 / Century HVACR-01 에이전트 분리
+
+- **Century `century-hvac` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**
+
+  세 가지 별개 도메인을 단일 식별자 `century-hvac` 가 표현하던 혼동을 제거하기 위해 코드베이스 전반의 식별자를 분리·rename 한다 (`lgcnp` / `samsung-nasa` rename 과 동일 패턴).
+
+  - **프로토콜 코드**: `century-hvac` → `century_icp01` (Century ICP-01 와이어 프로토콜)
+  - **에이전트 타입**: `century-hvac` → `century_hvacr01` (Century HVACR-01 에이전트)
+  - **노드 타입**: `century` / `century-status` / `century-control` → `century_hvacr01` / `century_hvacr01_status` / `century_hvacr01_control`
+  - Composite device ID 예: `century:3b` → `century_icp01:3b` (legacy ID 는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 기존 마이그레이션 경로로 자동 이전)
+  - SPEC 디렉터리: `SPEC-CENTURY-001` → `SPEC-CENTURY-HVACR-001`
+  - 프로토콜 분석 문서: `references/protocols/century_hvac_protocol_spec.md` → `references/protocols/century_icp01_protocol_spec.md`
+  - 예제 에이전트: `examples/agents/century-hvac*.yaml` → `examples/agents/century_hvacr01*.yaml`, 예제 플로우: `examples/flows/century-status-flow.yaml` → `examples/flows/century_hvacr01-status-flow.yaml`
+  - Backend (`internal/agent/century/`, `internal/node/century_hvacr01.go`, 노드 레지스트리) 및 frontend (`web/src/config/agentSchemas.ts` / `nodeSchemas.ts` 의 타입 ID) 일괄 rename 완료. 본 CHANGELOG 항목은 문서 정합화를 마무리한다.
+
+### 제거 (BREAKING) — `century-raw-frame` 노드 통합
+
+- `century-raw-frame` 노드 타입이 제거되었다. 회선상 관측된 모든 raw frame (CRC 불일치 / payload prefix 위반 프레임 포함) 의 비파괴 emit 은 `century_hvacr01_status` 노드의 `emit_raw_frames: true` 옵션으로 흡수되었다 (ring buffer drain + raw frame 메시지 emit, dedupe_writes 와 무관). 동일한 raw frame payload schema 가 status 노드의 `out` 포트로 emit 되며, decoded 메시지 (`type=="century_reg02_response"` 등) 와 raw frame 메시지 (`type=="century_raw_frame"`) 는 `type` 필드로 구분한다. SPEC-CENTURY-HVACR-001 의 REQ-CENTURY-019 는 추적성 보존을 위해 REMOVED / CONSOLIDATED 노트로 유지된다.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경: 기존 device_metadata / TSDB tag / yaml `pinned` 의 `century:XX` 또는 `century/...` 참조는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 의 기존 마이그레이션 경로로 자동 이전된다. flow yaml 에서 `century`, `century-status`, `century-control` 노드 타입 또는 `century-hvac` 에이전트 타입을 직접 참조하는 경우 `century_hvacr01`, `century_hvacr01_status`, `century_hvacr01_control` 로 갱신 필요. `century-raw-frame` 노드를 사용하던 flow 는 `century_hvacr01_status` + `emit_raw_frames: true` 옵션 조합으로 마이그레이션 필요.
+
+### 변경 (BREAKING) — `nasa` / `samsung-nasa` 식별자 rename 으로 Samsung NASA 프로토콜 / Samsung HVACR-01 에이전트 분리
+
+- **Samsung `nasa` / `samsung-nasa` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**
+
+  세 가지 별개 도메인을 단일 식별자 `nasa` / `samsung-nasa` 가 표현하던 혼동을 제거하기 위해 코드베이스 전반의 식별자를 분리·rename 한다.
+
+  - **프로토콜 코드**: `nasa` → `samsung_nasa` (Samsung NASA 와이어 프로토콜)
+  - **에이전트 타입**: `samsung-nasa` → `samsung_hvacr01` (Samsung HVACR-01 에이전트)
+  - **노드 타입**: `nasa` / `nasa-status` / `nasa-control` → `samsung_hvacr01` / `samsung_hvacr01_status` / `samsung_hvacr01_control`
+  - Composite device ID 예: `nasa:0x12` → `samsung_nasa:0x12` (legacy ID 는 `internal/migrate/tsdbtags` 기존 마이그레이션 경로로 자동 이전)
+  - SPEC 디렉터리: `SPEC-NASA-001` → `SPEC-SAMSUNG-HVACR-001`
+  - 예제 플로우: `examples/flows/nasa-*.yaml` → `examples/flows/samsung_hvacr01-*.yaml`, 예제 에이전트: `examples/agents/samsung-nasa-*.yaml` → `examples/agents/samsung_hvacr01-*.yaml`, 예제 스크립트: `examples/scripts/nasa-*.xflow` → `examples/scripts/samsung_hvacr01-*.xflow`
+  - LG 노드 Go 타입은 본 rename 의 선행 작업으로 `internal/node/lg_hvacr01.go` 에서 `LG` prefix 적용 완료 (Samsung 노드 타입과 충돌 회피).
+  - Backend (`internal/agent/samsung/`, `internal/node/adapter/samsung_nasa.go`, 노드 레지스트리) 및 frontend (`web/src/config/agentSchemas.ts` / `nodeSchemas.ts` 의 타입 ID) 일괄 rename 완료. 본 CHANGELOG 항목은 문서 정합화를 마무리한다.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경: 기존 device_metadata / TSDB tag / yaml `pinned` 의 `nasa:XX` 또는 `nasa/...` 참조는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 의 기존 마이그레이션 경로로 자동 이전된다. flow yaml 에서 `nasa`, `nasa-status`, `nasa-control` 노드 타입 또는 `samsung-nasa` 에이전트 타입을 직접 참조하는 경우 `samsung_hvacr01`, `samsung_hvacr01_status`, `samsung_hvacr01_control` 로 갱신 필요.
+
+### 변경 (BREAKING) — `lgcnp` 식별자 rename 으로 LG ICP-01 프로토콜 / LG HVACR-01 에이전트 분리
+
+- **LG `lgcnp` 식별자 rename — 프로토콜·에이전트·노드 명명 일관화 (Breaking)**
+
+  세 가지 별개 도메인을 단일 식별자 `lgcnp` 가 표현하던 혼동을 제거하기 위해 코드베이스 전반의 식별자를 분리·rename 한다.
+
+  - **프로토콜 코드**: `lgcnp` → `lg_icp01` (LG ICP-01 와이어 프로토콜)
+  - **에이전트 타입**: `lgcnp` → `lg_hvacr01` (LG HVACR-01 에이전트)
+  - **노드 타입**: `lgcnp` / `lgcnp-status` / `lgcnp-control` → `lg_hvacr01` / `lg_hvacr01_status` / `lg_hvacr01_control`
+  - Composite device ID 예: `lgcnp:81` → `lg_icp01:81` (legacy ID 는 `internal/migrate/tsdbtags` 기존 마이그레이션 경로로 자동 이전)
+  - SPEC 디렉터리: `SPEC-LGCNP-001` → `SPEC-LG-HVACR-001`
+  - 프로토콜 분석 문서: `references/protocols/LGCNP-01_Protocol_Analysis.md` → `references/protocols/LG-ICP-01_Protocol_Analysis.md`
+  - Backend (`internal/agent/lg/lgcnp_*.go` → `lg_hvacr01_*.go` / `lg_icp01_*.go`, `internal/node/lgcnp.go` → `lg_hvacr01.go`) 및 frontend (`web/src/config/agentSchemas.ts` / `nodeSchemas.ts` 의 타입 ID) 일괄 rename 완료. 본 CHANGELOG 항목은 문서 정합화를 마무리한다.
+
+  **운영자 가이드**:
+  - greenfield 환경: 자동 동작 — 별도 조치 불필요.
+  - brownfield 환경: 기존 device_metadata / TSDB tag / yaml `pinned` 의 `lgcnp:NN` 또는 `lgcnp/...` 참조는 `internal/migrate/tsdbtags` / `internal/migrate/deviceids` 의 기존 마이그레이션 경로로 자동 이전된다. flow yaml 에서 `lgcnp`, `lgcnp-status`, `lgcnp-control` 노드 타입을 직접 참조하는 경우 `lg_hvacr01`, `lg_hvacr01_status`, `lg_hvacr01_control` 로 갱신 필요.
+
 ### 변경 (BREAKING) — xflowd v1.0 진입 준비
 
 - **SPEC-DEVICE-IDENTITY-001 Phase D — xflowd v1.0 메이저 (Breaking)**

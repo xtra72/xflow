@@ -69,7 +69,7 @@ export interface DeviceInfo {
   name: string;
   /** Device type: indoor, outdoor, sensor, etc. */
   type: string;
-  /** Communication protocol: nasa, modbus */
+  /** Communication protocol: samsung_nasa, modbus */
   protocol: string;
   agent_name: string;
   /** Device origin: "config", "auto", "pinned", "bridge" */

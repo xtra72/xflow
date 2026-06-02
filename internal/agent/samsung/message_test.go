@@ -160,15 +160,15 @@ func TestMessageIndexConstants(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestNASAMessageStruct 는 NASAMessage 구조체의 필드가 올바르게 설정되는지 검증한다.
+// TestNasaMessageStruct 는 NasaMessage 구조체의 필드가 올바르게 설정되는지 검증한다.
 // ---------------------------------------------------------------------------
-func TestNASAMessageStruct(t *testing.T) {
-	msg := NASAMessage{
-		SourceAddr:  NASAAddress{0x20, 0x00, 0x00},
-		DestAddr:    NASAAddress{0x6A, 0xEE, 0xFF},
+func TestNasaMessageStruct(t *testing.T) {
+	msg := NasaMessage{
+		SourceAddr:  NasaAddress{0x20, 0x00, 0x00},
+		DestAddr:    NasaAddress{0x6A, 0xEE, 0xFF},
 		CommandCode: CmdNormalControl,
 		SequenceNum: 0xA8,
-		MessageSets: []NASAMessageSet{
+		MessageSets: []NasaMessageSet{
 			{Index: MsgPower, Value: []byte{0x01}},
 			{Index: MsgTargetTemp, Value: []byte{0x01, 0x18}},
 		},
@@ -176,11 +176,11 @@ func TestNASAMessageStruct(t *testing.T) {
 		Raw:      []byte{0x32, 0x34},
 	}
 
-	if msg.SourceAddr != (NASAAddress{0x20, 0x00, 0x00}) {
-		t.Errorf("SourceAddr = %v, want %v", msg.SourceAddr, NASAAddress{0x20, 0x00, 0x00})
+	if msg.SourceAddr != (NasaAddress{0x20, 0x00, 0x00}) {
+		t.Errorf("SourceAddr = %v, want %v", msg.SourceAddr, NasaAddress{0x20, 0x00, 0x00})
 	}
-	if msg.DestAddr != (NASAAddress{0x6A, 0xEE, 0xFF}) {
-		t.Errorf("DestAddr = %v, want %v", msg.DestAddr, NASAAddress{0x6A, 0xEE, 0xFF})
+	if msg.DestAddr != (NasaAddress{0x6A, 0xEE, 0xFF}) {
+		t.Errorf("DestAddr = %v, want %v", msg.DestAddr, NasaAddress{0x6A, 0xEE, 0xFF})
 	}
 	if msg.CommandCode != CmdNormalControl {
 		t.Errorf("CommandCode = 0x%04X, want 0x%04X", msg.CommandCode, CmdNormalControl)
@@ -212,36 +212,36 @@ func TestNASAMessageStruct(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestNASAMessageSetStruct 는 NASAMessageSet 구조체의 필드가 올바르게 설정되는지 검증한다.
+// TestNasaMessageSetStruct 는 NasaMessageSet 구조체의 필드가 올바르게 설정되는지 검증한다.
 // ---------------------------------------------------------------------------
-func TestNASAMessageSetStruct(t *testing.T) {
+func TestNasaMessageSetStruct(t *testing.T) {
 	tests := []struct {
 		name      string
-		set       NASAMessageSet
+		set       NasaMessageSet
 		wantIndex uint16
 		wantValue []byte
 	}{
 		{
 			name:      "power on (1바이트 값)",
-			set:       NASAMessageSet{Index: MsgPower, Value: []byte{0x01}},
+			set:       NasaMessageSet{Index: MsgPower, Value: []byte{0x01}},
 			wantIndex: 0x4000,
 			wantValue: []byte{0x01},
 		},
 		{
 			name:      "target temp 24.0C (2바이트 값)",
-			set:       NASAMessageSet{Index: MsgTargetTemp, Value: []byte{0x01, 0x18}},
+			set:       NasaMessageSet{Index: MsgTargetTemp, Value: []byte{0x01, 0x18}},
 			wantIndex: 0x4201,
 			wantValue: []byte{0x01, 0x18},
 		},
 		{
 			name:      "remote limit (4바이트 값)",
-			set:       NASAMessageSet{Index: MsgRemoteLimit, Value: []byte{0x00, 0x00, 0x00, 0x01}},
+			set:       NasaMessageSet{Index: MsgRemoteLimit, Value: []byte{0x00, 0x00, 0x00, 0x01}},
 			wantIndex: 0x0409,
 			wantValue: []byte{0x00, 0x00, 0x00, 0x01},
 		},
 		{
 			name:      "nil value",
-			set:       NASAMessageSet{Index: MsgPower, Value: nil},
+			set:       NasaMessageSet{Index: MsgPower, Value: nil},
 			wantIndex: 0x4000,
 			wantValue: nil,
 		},

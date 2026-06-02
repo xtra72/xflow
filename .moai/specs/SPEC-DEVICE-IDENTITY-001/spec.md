@@ -34,7 +34,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
   xflowd v1.0 통합 메이저 진입 준비. 본 SPEC 의 모든 Phase (A + B + C + D)
   구현이 완료되어 status 가 `completed` 로 전환된다. 본 릴리즈는 Breaking 변경:
   - **D-T1**: `Device.ID()` 시맨틱 변경 — composite (`agent_name:local_id`) 대신
-    UUID v4 반환 (UID() 와 동일 값). 5 어댑터 (NASA/LGCNP/LGCP/Century/Modbus)
+    UUID v4 반환 (UID() 와 동일 값). 5 어댑터 (NASA/LG HVACR-01/LG HVACR-02/Century/Modbus)
     모두 일관 적용. 호출 사이트는 사람이 읽는 식별이 필요하면 AgentName() +
     Name() 또는 agent/name REST 라우트 사용.
   - **D-T2**: `ClassifyDeviceRef` 가 composite 패턴을 `DeviceRefUnknown` 으로
@@ -81,7 +81,7 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
   환경별 분기로 재정의한다. xflow 자체 사용자 그룹은 즉시 xflowd v1.0 메이저 진행.
 - **0.1.0** (2026-05-25): 최초 작성 — 디바이스 ID 이중 체계(composite key `"agent:local_id"` vs UUID `device_id`) 문제 정의, Kubernetes 식 `uid + name + reference` 모델 채택, 10개 EARS 모듈(M1~M10)과 4 Phase 단계적 진화 전략(A: UUID 1급 격상 → B: 내부 전환 → C: 영속 데이터 마이그레이션 → D: composite 제거 Breaking) 수립.
 - **0.1.0 / Phase A 구현 완료** (2026-05-26): Phase A (비파괴 추가) 4 커밋 머지.
-  `Device` 인터페이스에 `UID() string` 메서드 1급 추가 (`991e793`), 5개 어댑터(NASA/LGCNP/LGCP/Century/Modbus)
+  `Device` 인터페이스에 `UID() string` 메서드 1급 추가 (`991e793`), 5개 어댑터(NASA/LG HVACR-01/LG HVACR-02/Century/Modbus)
   에 UUID 보유 및 `UID()` 구현, REST `GET /api/v1/devices` 응답에 `uid` 필드 노출 (`be86904`, omitempty graceful degradation),
   `DeviceIDRepository` 미설정 시 1회 경고 로그 (`bc67561`), `xflowd_device_uid_missing_total` Prometheus 메트릭 정의,
   inventory 노드의 UUID 발급 경로를 `Device.UID()` 로 정렬 (`510fc4b`, Century localID 형식 불일치 잠재 결함 동시 수정).
@@ -141,8 +141,8 @@ related_spec: SPEC-DEVICE-001, SPEC-AGENT-001, SPEC-INVENTORY-001
 
 xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**가 공존하는 비대칭 상태에 있다:
 
-1. **Composite key** (`Device.ID()` → `"agent_name:local_id"`, 예: `"lgcnp:81"`): 초기 설계, 사람이 읽을 수 있고 yaml/REST/로그에 직접 노출. 에이전트 rename 시 모든 외부 참조와 시계열 데이터가 끊긴다.
-2. **UUID** (`device_id`, v0.18.6 도입): `internal/agent/device_id_repo.go` 의 `ResolveDeviceID(ctx, agentName, localID)` 가 `DeviceIDRepository` 로부터 영속 UUID 를 발급. 현재 HVAC 7종(LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 emit 메시지에만 부분적으로 적용되어 있다.
+1. **Composite key** (`Device.ID()` → `"agent_name:local_id"`, 예: `"lg_icp01:81"`): 초기 설계, 사람이 읽을 수 있고 yaml/REST/로그에 직접 노출. 에이전트 rename 시 모든 외부 참조와 시계열 데이터가 끊긴다.
+2. **UUID** (`device_id`, v0.18.6 도입): `internal/agent/device_id_repo.go` 의 `ResolveDeviceID(ctx, agentName, localID)` 가 `DeviceIDRepository` 로부터 영속 UUID 를 발급. 현재 HVAC 7종(LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) 의 emit 메시지에만 부분적으로 적용되어 있다.
 
 본 SPEC 은 두 체계를 **Kubernetes 의 `uid` + `name` + `reference` 모델**로 단일화하며, 시스템 전반의 cascading 영향을 고려해 **4 Phase 단계적 진화** 전략을 수립한다.
 
@@ -155,12 +155,12 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 ### 2.1 이중 ID 체계의 역사적 원인
 
 **Phase 0 (initial)** — xflow 초기 설계는 디바이스를 에이전트의 종속 객체로 간주했다. `agent_name:local_id` 형태의 composite key 는 다음 장점을 제공했다:
-- 사람이 읽기 쉽다 (`lgcnp:81` 은 "lgcnp 에이전트의 81번 유닛").
-- yaml 설정의 `pinned:` 목록이나 REST URL (`/api/v1/devices/lgcnp:81`) 에 직접 사용 가능.
+- 사람이 읽기 쉽다 (`lg_icp01:81` 은 "lg_icp01 프로토콜의 81번 슬롯").
+- yaml 설정의 `pinned:` 목록이나 REST URL (`/api/v1/devices/lg_icp01:81`) 에 직접 사용 가능.
 - 외부 의존성 없이 즉시 생성.
 
 **Phase 1 (v0.18.6 — UUID 도입)** — 실제 운영에서 다음 문제가 드러나며 UUID 가 도입되었다:
-- **Rename 단절**: 에이전트 이름을 변경하면 (`lgcnp` → `lgcnp_main`) composite key 가 전부 바뀌어 시계열 DB tag, MQTT topic 구독자, 외부 클라이언트의 캐시가 모두 끊긴다.
+- **Rename 단절**: 에이전트 이름을 변경하면 (`lg_hvacr01` → `lg_hvacr01_main`) composite key 가 전부 바뀌어 시계열 DB tag, MQTT topic 구독자, 외부 클라이언트의 캐시가 모두 끊긴다.
 - **재배치 단절**: 같은 물리 디바이스를 다른 에이전트로 옮기면(예: 마이그레이션) 추적 안정성 상실.
 - **글로벌 유일성 보장 어려움**: composite 의 `:` 구분 규칙은 도메인 컨벤션일 뿐 강제되지 않는다.
 
@@ -178,7 +178,7 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 | 시계열 DB tag | composite | 가장 큰 안정성 리스크 |
 | `device_metadata` 영속 파일 | composite key | rename 시 메타데이터 고아화 |
 | WebSocket event | composite | 프론트엔드가 composite 에 결합 |
-| 프론트엔드 표시 | composite | 사용자에게 노이즈 (`lgcnp:81`) |
+| 프론트엔드 표시 | composite | 사용자에게 노이즈 (`lg_icp01:81`) |
 
 ### 2.3 비대칭이 만드는 비용
 
@@ -205,7 +205,7 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 3. `Device.ID()` 의 시맨틱은 **Phase D 에서 UUID 로 변경**되며, 그 전까지는 composite 를 유지하되 `Deprecated` 마킹.
 4. composite key 는 단계적 제거 대상이다 (alias 호환 → 완전 제거).
 5. REST URL 은 `/api/v1/devices/{uid}` 로 표준화. 사람이 직접 입력하지 않으므로 UUID 도 수용 가능.
-6. 로그 표시는 `agent/name` 결합 형식: `device "lgcnp/indoor-1" went offline`.
+6. 로그 표시는 `agent/name` 결합 형식: `device "lg_hvacr01/indoor-1" went offline`.
 7. yaml 의 디바이스 참조는 `agent/name` 또는 UUID 두 형식 모두 허용한다 (운영자 편의).
 
 ### 3.2 Kubernetes 와의 의도적 유사성
@@ -225,7 +225,7 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 | `internal/device/` | `Device.UID()` 추가, `Device.ID()` 시맨틱 변경 (Phase D), Registry 키 UUID 화, 이름 인덱스 추가 | 높음 |
 | `internal/agent/` | 모든 callback 시그니처 (`SetDeviceStateChangeCallback(func(agentName, deviceUID string))` 등) | 중간 |
 | `internal/api/handler/device.go` | REST URL UUID 우선, name 기반 resolver 별도 엔드포인트 | 중간 |
-| HVAC 7종 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) | 모든 emit 메시지 일관성 (uid 1급 필드) | 높음 |
+| HVAC 7종 에이전트 (LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) | 모든 emit 메시지 일관성 (uid 1급 필드) | 높음 |
 | `internal/storage/device_metadata/` | 영속 파일 키 composite → UUID 마이그레이션 도구 | **매우 높음** |
 | `internal/api/ws/` | WebSocket event payload 의 deviceID UUID 통일 | 중간 |
 | `web/src/` (프론트엔드) | API 응답 ID 의미 변경, URL params, 표시는 name | 중간 |
@@ -289,19 +289,19 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 - **Event-driven**: WHEN `{ref}` 가 `agent/name` 형식이면 (Phase B 신규), THEN 시스템은 `(agent, name)` 쌍으로 조회한다.
 - **Event-driven**: WHEN `{ref}` 가 v0.x 의 composite (`agent:local_id`) 형식이면, THEN 시스템은 호환 alias resolver 로 변환 후 조회하며 응답 헤더 `Deprecation: true` 와 `Sunset` 헤더를 포함한다.
 - **State-driven**: IF `{ref}` 가 어떤 형식에도 매칭되지 않으면, THEN HTTP 404 와 함께 명시적 에러 메시지 (`"device reference {ref} not found; expected UUID, agent/name, or legacy agent:local_id"`) 를 반환한다.
-- **Optional**: WHERE 별도 name-based resolver 엔드포인트 (`GET /api/v1/devices:resolve?agent=lgcnp&name=indoor-1`) 가 필요하면, Phase B 에서 추가한다.
+- **Optional**: WHERE 별도 name-based resolver 엔드포인트 (`GET /api/v1/devices:resolve?agent=lg_hvacr01&name=indoor-1`) 가 필요하면, Phase B 에서 추가한다.
 
 ### M5: 로그 형식 `agent/name` 표시 (Phase B)
 
-- **Ubiquitous**: 디바이스 관련 로그 라인은 **항상** `agent/name` 결합 형식을 사용해야 한다 (예: `device "lgcnp/indoor-1" offline`).
+- **Ubiquitous**: 디바이스 관련 로그 라인은 **항상** `agent/name` 결합 형식을 사용해야 한다 (예: `device "lg_hvacr01/indoor-1" offline`).
 - **Ubiquitous**: 로그 라인에 UUID 가 필요한 경우 (디버깅·연관성 추적) 별도 키 (`device_uid=<uuid>`) 로 구조화 로깅에 포함한다.
 - **State-driven**: IF `Device.Name()` 이 빈 문자열인 경우 (fallback 미설정), THEN 로그는 `agent/<local_id>` 또는 `agent/<short_uid>` 로 fallback 한다.
-- **Unwanted**: 로그 라인에서 raw composite key (`lgcnp:81`) 의 표시는 Phase B 이후 점진적으로 제거한다 (Phase D 에서 완전 금지).
+- **Unwanted**: 로그 라인에서 raw composite key (`lg_icp01:81`) 의 표시는 Phase B 이후 점진적으로 제거한다 (Phase D 에서 완전 금지).
 
 ### M6: yaml 설정 참조 표기법 (Phase B)
 
 - **Ubiquitous**: yaml 설정 파일의 디바이스 참조 (예: `pinned: [...]`) 는 **항상** 두 형식을 허용해야 한다:
-  - `agent/name` 형식 (예: `"lgcnp/indoor-1"`) — 사람이 작성하기 편함.
+  - `agent/name` 형식 (예: `"lg_hvacr01/indoor-1"`) — 사람이 작성하기 편함.
   - UUID 형식 (예: `"a58ba668-5741-..."`) — 자동 생성된 yaml.
 - **Event-driven**: WHEN yaml 파싱 시 두 형식이 혼재하면, THEN 시스템은 각각의 resolver 를 사용하여 UUID 로 정규화해야 한다.
 - **Unwanted**: WHEN yaml 의 디바이스 참조가 어떤 형식에도 매칭되지 않으면, THEN 설정 로드를 실패시키고 `ErrInvalidDeviceReference` 를 반환해야 한다.
@@ -338,7 +338,7 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 ### M9: composite 제거 + Soft Deprecation 인프라 cleanup 및 Breaking 시맨틱 변경 (Phase D, v0.2.0 확장)
 
 - **Ubiquitous**: Phase D 에서 `Device.ID()` 의 시맨틱은 **UUID 반환** 으로 변경된다 (Breaking Change).
-- **Ubiquitous**: REST URL 의 composite alias (`/api/v1/devices/lgcnp:81`) 는 Phase D 에서 **제거**되며, 호출 시 HTTP 404 를 반환한다.
+- **Ubiquitous**: REST URL 의 composite alias (`/api/v1/devices/lg_icp01:81`) 는 Phase D 에서 **제거**되며, 호출 시 HTTP 404 를 반환한다.
 - **Ubiquitous**: emit 메시지에서 deprecated `id` (composite) 필드는 Phase D 에서 **제거**되며, `uid` 만 노출된다.
 - **Ubiquitous**: 시계열 DB 의 composite tag 는 Phase D 시작 시점부터 새로 기록되지 않으며, 기존 데이터는 `xflowd migrate tsdb-drop-composite` 도구로 정리 가능하다.
 - **Unwanted**: WHEN yaml 설정에 composite (`agent:local_id`) 가 발견되면 (Phase D), THEN 시스템은 부팅을 실패시키고 즉시 `ErrInvalidDeviceReference` 를 반환해야 한다 (v0.2.0: greenfield 환경에는 Deprecation 경고 단계 없이 즉시 부팅 실패).
@@ -348,7 +348,7 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
   - yaml resolver 의 composite (`agent:local_id`) 형식 parse 경로 제거
   - inventory 노드의 `device_uuid` alias 제거 (`uid` 만 emit)
   - logger device_format 의 composite fallback 제거
-  - 5 HVAC 에이전트 (LGCNP/LGAP/LGCP/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter 제거
+  - 5 HVAC 에이전트 (LG HVACR-01/LGAP/LG HVACR-02/NASA/Century/Modbus/Samsung) 의 `onDeviceStateChange` v1 필드 + setter 제거
 - **Ubiquitous** (v0.2.0 갱신): Phase D 적용 시점은 환경에 따라 분기한다:
   - greenfield (xflow 자체 사용자 그룹): Phase B/C 완료 후 즉시 진행 가능 (xflowd v1.0 단일 메이저 릴리즈)
   - brownfield (다른 운영자 채택): Phase B/C 완료 시점부터 **최소 6개월의 호환 기간** 확보 권장
@@ -369,8 +369,8 @@ xflow 시스템은 디바이스를 식별하기 위해 **두 가지 ID 체계**�
 
 - **Ubiquitous**: web/src/ 의 모든 디바이스 참조는 `uid` (UUID) 1급 사용을 원칙으로 해야 한다.
 - **Ubiquitous**: WS 메시지 핸들러는 payload 의 `uid` 키를 사용하며, `device_id` (composite) 참조는 제거되어야 한다.
-- **Ubiquitous**: REST 호출은 `/api/v1/devices/{uid}` UUID 형식 또는 `/api/v1/devices:resolve?agent=X&name=Y` 명시 resolver 형식을 사용해야 한다. composite URL (`/api/v1/devices/lgcnp:81`) 호출은 제거되어야 한다.
-- **Ubiquitous**: 디바이스 표시 라벨은 `agent/name` (사람이 읽음) 또는 UUID (내부 ID) 두 형식 중 선택하며, 절대로 composite (`lgcnp:81`) 형식을 사용자에게 노출해서는 안 된다.
+- **Ubiquitous**: REST 호출은 `/api/v1/devices/{uid}` UUID 형식 또는 `/api/v1/devices:resolve?agent=X&name=Y` 명시 resolver 형식을 사용해야 한다. composite URL (`/api/v1/devices/lg_icp01:81`) 호출은 제거되어야 한다.
+- **Ubiquitous**: 디바이스 표시 라벨은 `agent/name` (사람이 읽음) 또는 UUID (내부 ID) 두 형식 중 선택하며, 절대로 composite (`lg_icp01:81`) 형식을 사용자에게 노출해서는 안 된다.
 - **Ubiquitous**: inventory 노드의 output desc / 사용 예시 / 타입 정의는 `device_uuid` 가 아닌 `uid` 키 기준으로 갱신되어야 한다.
 - **Unwanted**: WHEN frontend (web/src/) 코드 어디든 `device_id` 식별자 또는 composite 형식이 사용자에게 노출되는 경로가 잔존하면, THEN v1.0 출시는 차단되어야 한다.
 - **State-driven**: IF `useDevices` / `useDevice` hook 의 반환 객체에 `id` (composite) 키가 남아있으면, THEN 해당 키는 `uid` 로 치환되거나 제거되어야 한다.
@@ -439,8 +439,8 @@ type Device interface {
 
 ```json
 {
-  "agent": "lgcnp",
-  "id": "lgcnp:81",
+  "agent": "lg_hvacr01",
+  "id": "lg_icp01:81",
   "uid": "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
   "name": "indoor-1",
   "online": true,
@@ -452,9 +452,9 @@ type Device interface {
 
 ```json
 {
-  "agent": "lgcnp",
+  "agent": "lg_hvacr01",
   "uid": "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
-  "id": "lgcnp:81",
+  "id": "lg_icp01:81",
   "_deprecated": ["id"],
   "name": "indoor-1",
   "online": true,
@@ -466,7 +466,7 @@ type Device interface {
 
 ```json
 {
-  "agent": "lgcnp",
+  "agent": "lg_hvacr01",
   "uid": "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
   "name": "indoor-1",
   "online": true,
@@ -478,13 +478,13 @@ type Device interface {
 
 | Phase | URL 패턴 | 동작 |
 |---|---|---|
-| A | `/api/v1/devices/lgcnp:81` | composite resolver (현재 동작 유지) |
+| A | `/api/v1/devices/lg_icp01:81` | composite resolver (현재 동작 유지) |
 | A | `/api/v1/devices/{uuid}` | UUID resolver (신규) |
-| B | `/api/v1/devices/lgcnp/indoor-1` | `agent/name` resolver (신규) |
-| B | `/api/v1/devices/lgcnp:81` | composite alias (Deprecation 헤더 포함) |
-| B | `/api/v1/devices:resolve?agent=lgcnp&name=indoor-1` | name 기반 명시 resolver (신규) |
+| B | `/api/v1/devices/lg_hvacr01/indoor-1` | `agent/name` resolver (신규) |
+| B | `/api/v1/devices/lg_icp01:81` | composite alias (Deprecation 헤더 포함) |
+| B | `/api/v1/devices:resolve?agent=lg_hvacr01&name=indoor-1` | name 기반 명시 resolver (신규) |
 | D | `/api/v1/devices/{uuid}` | UUID only (composite alias 제거) |
-| D | `/api/v1/devices/lgcnp/indoor-1` | `agent/name` resolver (유지) |
+| D | `/api/v1/devices/lg_hvacr01/indoor-1` | `agent/name` resolver (유지) |
 
 ### 6.4 yaml 설정 진화
 
@@ -493,7 +493,7 @@ type Device interface {
 ```yaml
 flow:
   pinned:
-    - "lgcnp:81"
+    - "lg_icp01:81"
 ```
 
 **Phase B (두 형식 허용):**
@@ -501,9 +501,9 @@ flow:
 ```yaml
 flow:
   pinned:
-    - "lgcnp/indoor-1"                        # agent/name (권장)
+    - "lg_hvacr01/indoor-1"                        # agent/name (권장)
     - "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d" # UUID
-    - "lgcnp:81"                              # composite (deprecated, 경고)
+    - "lg_icp01:81"                              # composite (deprecated, 경고)
 ```
 
 **Phase D (composite 제거):**
@@ -511,22 +511,22 @@ flow:
 ```yaml
 flow:
   pinned:
-    - "lgcnp/indoor-1"
+    - "lg_hvacr01/indoor-1"
     - "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d"
-  # "lgcnp:81" 형식은 부팅 실패
+  # "lg_icp01:81" 형식은 부팅 실패
 ```
 
 ### 6.5 로그 형식 진화
 
 ```
 # Phase A (현재)
-INFO  agent=lgcnp device_id=lgcnp:81 online=false
+INFO  agent=lg_hvacr01 device_id=lg_icp01:81 online=false
 
 # Phase B
-INFO  device "lgcnp/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d
+INFO  device "lg_hvacr01/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d
 
 # Phase D (composite 표시 금지)
-INFO  device "lgcnp/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d
+INFO  device "lg_hvacr01/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d
 ```
 
 ### 6.6 에러 모델 (신규)
@@ -675,7 +675,7 @@ INFO  device "lgcnp/indoor-1" went offline device_uid=a58ba668-5741-4b3c-9d2e-7f
 - Production 코드 (8 파일):
   - `internal/device/device.go` — `Device` 인터페이스에 `UID() string` 추가 (+22 LOC)
   - `internal/device/adapter/uid.go` — 공통 UID 헬퍼 신규 (+61 LOC)
-  - `internal/device/adapter/{nasa,lgcnp,lgcp,modbus}.go` — UID() 구현 (+50 LOC)
+  - `internal/device/adapter/{nasa,lg_hvacr01,lg_hvacr02,modbus}.go` — UID() 구현 (+50 LOC)
   - `internal/agent/century/provider.go` — Century 어댑터 UID() 구현 (+15 LOC)
   - `internal/agent/device_id_repo.go` — 미설정 1회 경고 로그 (+22 LOC)
   - `internal/api/handler/device.go` — 응답에 `uid` 필드 (omitempty, +12 LOC)

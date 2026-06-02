@@ -1,20 +1,25 @@
-// metadata_opts.go (v0.18.8, v0.18.12) 는 HVAC 노드의 metadata 필드 emit
-// 정책을 정의한다.
+// metadata_opts.go (v0.18.26) 는 HVAC 노드의 metadata 옵션 emit 정책을 정의한다.
+//
+// 출력 metadata 정책:
 //
 // 필수 필드 (항상 emit):
-//   - device_id  — 글로벌 고유 UUID
+//   - device_id  — 글로벌 고유 UUID (프로토콜 식별자 unit_id 와는 별개)
 //
 // 옵션 필드 (default OFF, 노드 config 에서 토글):
-//   - unit_id    — 프로토콜 식별자 (sub_dev_id / NASA address / lg dev_id 등) [v0.18.12]
-//   - node_id    — 메시지를 emit 한 노드 UUID [v0.18.12]
+//   - node_id    — 메시지를 emit 한 노드 UUID
 //   - device_type — "HVACR.IDU" / "HVACR.ODU"
 //   - label       — 사용자 라벨 (없으면 자동 생성된 기본명)
 //   - node_source — emit 경로 식별 ("poll_bulk", "device_state", "poll" 등)
-//   - slot_num    — Samsung NASA / LGCNP 의 슬롯 번호 (선택 필드)
+//
+// 제거된 필드 (v0.18.26):
+//   - unit_id   — 프로토콜 해석 시에만 의미 있는 식별자. 출력 metadata 에는
+//     포함하지 않는다. 프로토콜 타깃 지정용 어드레싱은 노드 config 의
+//     group_id / unit_id 입력 필드로 처리한다.
+//   - slot_num  — Samsung NASA / LG ICP-01 의 슬롯 번호. 의미가 모호하고
+//     사실상 unit_id 의 부분 표현이라 emit 하지 않는다.
 //
 // 기본값 정책: minimal — device_id 만 emit, 그 외 OFF. 사용자가 Web UI 에서
-// 명시적으로 활성화한 경우에만 추가 emit. v0.18.12 부터 unit_id / node_id 도
-// 옵션화 (이전엔 unit_id 필수 + node_id 항상 emit).
+// 명시적으로 활성화한 경우에만 추가 emit.
 
 package node
 
@@ -24,31 +29,34 @@ import "fmt"
 //
 // JSON 직렬화 시 snake_case 사용. 모든 필드는 기본 false — 즉 default 동작은
 // device_id 만 emit 하는 minimal mode.
+//
+// v0.18.26 (2026-05-28): UnitID / SlotNum 필드 삭제. 두 키는 프로토콜 해석
+// 단계에서만 의미가 있고 출력 metadata 로 노출할 가치가 없다고 판정. 어드레싱
+// (프로토콜 타깃 지정) 은 노드 config 의 group_id / unit_id 입력 필드로 분리.
 type MetadataEmitOptions struct {
-	UnitID     bool `json:"unit_id"` // v0.18.12: 프로토콜 식별자 토글
-	NodeID     bool `json:"node_id"` // v0.18.12: 노드 UUID 토글
+	NodeID     bool `json:"node_id"`
 	DeviceType bool `json:"device_type"`
 	Label      bool `json:"label"`
 	NodeSource bool `json:"node_source"`
-	SlotNum    bool `json:"slot_num"`
 }
 
 // IsAllowed 는 주어진 metadata key 가 현재 옵션에서 허용되는지 반환한다.
 // device_id 는 필수 시스템 키로 항상 허용 (true).
-// unit_id / node_id / device_type / label / slot_num 는 해당 옵션 플래그에
-// 따라 결정. 그 외 key 는 forward-compat 차원에서 기본 허용 (true).
+// node_id / device_type / label / node_source 는 해당 옵션 플래그에 따라 결정.
+// unit_id / slot_num 는 항상 거부 (v0.18.26 부터 출력 metadata 에서 제거).
+// 그 외 key 는 forward-compat 차원에서 기본 허용 (true).
 func (o MetadataEmitOptions) IsAllowed(key string) bool {
 	switch key {
-	case "unit_id":
-		return o.UnitID
+	case "unit_id", "slot_num":
+		return false
 	case "node_id":
 		return o.NodeID
 	case "device_type":
 		return o.DeviceType
 	case "label":
 		return o.Label
-	case "slot_num":
-		return o.SlotNum
+	case "node_source":
+		return o.NodeSource
 	}
 	return true
 }
@@ -82,12 +90,12 @@ func (o MetadataEmitOptions) SetIfAllowed(setter func(string, string), key strin
 //
 // Web UI 호환을 위해 평탄 형식도 수용 — form serializer 가 중첩 객체를
 // 자연스럽게 표현하지 못하는 경우 fallback.
+//
+// v0.18.26: emit_unit_id / emit_slot_num 키는 silently 무시 (forward-compat).
+// 기존 설정 파일에서 해당 키가 남아 있어도 에러 없이 진행한다.
 func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 	if raw, ok := config["emit_metadata"]; ok {
 		if m, ok := raw.(map[string]any); ok {
-			if v, ok := m["unit_id"].(bool); ok {
-				out.UnitID = v
-			}
 			if v, ok := m["node_id"].(bool); ok {
 				out.NodeID = v
 			}
@@ -100,13 +108,7 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 			if v, ok := m["node_source"].(bool); ok {
 				out.NodeSource = v
 			}
-			if v, ok := m["slot_num"].(bool); ok {
-				out.SlotNum = v
-			}
 		}
-	}
-	if v, ok := config["emit_unit_id"].(bool); ok {
-		out.UnitID = v
 	}
 	if v, ok := config["emit_node_id"].(bool); ok {
 		out.NodeID = v
@@ -119,8 +121,5 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 	}
 	if v, ok := config["emit_node_source"].(bool); ok {
 		out.NodeSource = v
-	}
-	if v, ok := config["emit_slot_num"].(bool); ok {
-		out.SlotNum = v
 	}
 }

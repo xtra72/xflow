@@ -52,25 +52,25 @@ func TestFormatDevice(t *testing.T) {
 		},
 		{
 			name: "happy path agent/name",
-			d:    &fakeDevice{agentName: "lgcnp", name: "indoor-1", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lgcnp:81"},
-			want: "lgcnp/indoor-1",
+			d:    &fakeDevice{agentName: "lg_hvacr01", name: "indoor-1", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lg_icp01:81"},
+			want: "lg_hvacr01/indoor-1",
 		},
 		{
 			name: "fallback to short uid when name empty",
-			d:    &fakeDevice{agentName: "lgcnp", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lgcnp:81"},
-			want: "lgcnp/a58ba668",
+			d:    &fakeDevice{agentName: "lg_hvacr01", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lg_icp01:81"},
+			want: "lg_hvacr01/a58ba668",
 		},
 		{
 			// Phase D § D-T14: composite raw 표시 금지 — agent 접두사 제거된 local_id 만 표시.
 			name: "composite id fallback strips agent prefix",
-			d:    &fakeDevice{agentName: "lgcnp", id: "lgcnp:81"},
-			want: "lgcnp/81",
+			d:    &fakeDevice{agentName: "lg_hvacr01", id: "lg_icp01:81"},
+			want: "lg_hvacr01/81",
 		},
 		{
 			// Phase D: 첫 콜론만 stripping — 다중 콜론 composite (century 등) 의 잔여부.
 			name: "multi-colon composite id strips only first prefix",
-			d:    &fakeDevice{agentName: "century", id: "century:bus0:3b"},
-			want: "century/bus0:3b",
+			d:    &fakeDevice{agentName: "century_icp01", id: "century_icp01:bus0:3b"},
+			want: "century_icp01/bus0:3b",
 		},
 		{
 			name: "no agent uses uid",
@@ -80,7 +80,7 @@ func TestFormatDevice(t *testing.T) {
 		{
 			// Phase D: agent 부재 + composite id only 시에도 raw composite 노출 금지.
 			name: "no agent composite id strips prefix",
-			d:    &fakeDevice{id: "lgcnp:81"},
+			d:    &fakeDevice{id: "lg_icp01:81"},
 			want: "81",
 		},
 		{
@@ -95,8 +95,8 @@ func TestFormatDevice(t *testing.T) {
 		},
 		{
 			name: "uid shorter than 8 chars not truncated",
-			d:    &fakeDevice{agentName: "lgcnp", uid: "abc123"},
-			want: "lgcnp/abc123",
+			d:    &fakeDevice{agentName: "lg_hvacr01", uid: "abc123"},
+			want: "lg_hvacr01/abc123",
 		},
 	}
 
@@ -116,10 +116,10 @@ func TestFormatDevice_NeverEmitsRawComposite(t *testing.T) {
 	t.Parallel()
 
 	cases := []*fakeDevice{
-		{agentName: "lgcnp", id: "lgcnp:81"},
-		{agentName: "century", id: "century:bus0:3b"},
+		{agentName: "lg_hvacr01", id: "lg_icp01:81"},
+		{agentName: "century_icp01", id: "century_icp01:bus0:3b"},
 		{id: "samsung:0x14"},
-		{agentName: "lgcnp", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lgcnp:81"},
+		{agentName: "lg_hvacr01", uid: "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d", id: "lg_icp01:81"},
 	}
 
 	for _, d := range cases {
@@ -170,20 +170,20 @@ func TestDeviceAttrs(t *testing.T) {
 	t.Run("full device", func(t *testing.T) {
 		t.Parallel()
 		d := &fakeDevice{
-			agentName: "lgcnp",
+			agentName: "lg_hvacr01",
 			name:      "indoor-1",
 			uid:       "a58ba668-5741-4b3c-9d2e-7f3c8a1b2c3d",
 		}
 		attrs := DeviceAttrs(d)
 		got := attrsToMap(attrs)
-		if got["device"] != "lgcnp/indoor-1" {
-			t.Errorf("device = %q, want %q", got["device"], "lgcnp/indoor-1")
+		if got["device"] != "lg_hvacr01/indoor-1" {
+			t.Errorf("device = %q, want %q", got["device"], "lg_hvacr01/indoor-1")
 		}
 		if got["device_uid"] != d.uid {
 			t.Errorf("device_uid = %q, want %q", got["device_uid"], d.uid)
 		}
-		if got["device_agent"] != "lgcnp" {
-			t.Errorf("device_agent = %q, want %q", got["device_agent"], "lgcnp")
+		if got["device_agent"] != "lg_hvacr01" {
+			t.Errorf("device_agent = %q, want %q", got["device_agent"], "lg_hvacr01")
 		}
 		if got["device_name"] != "indoor-1" {
 			t.Errorf("device_name = %q, want %q", got["device_name"], "indoor-1")
@@ -192,7 +192,7 @@ func TestDeviceAttrs(t *testing.T) {
 
 	t.Run("missing uid omits device_uid", func(t *testing.T) {
 		t.Parallel()
-		d := &fakeDevice{agentName: "lgcnp", name: "indoor-1"}
+		d := &fakeDevice{agentName: "lg_hvacr01", name: "indoor-1"}
 		attrs := DeviceAttrs(d)
 		got := attrsToMap(attrs)
 		if _, ok := got["device_uid"]; ok {

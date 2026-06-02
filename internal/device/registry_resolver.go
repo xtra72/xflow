@@ -49,11 +49,11 @@ const (
 	// SPEC-DEVICE-IDENTITY-001 Phase B 의 1급 식별자.
 	DeviceRefUUID
 
-	// DeviceRefAgentName 은 "agent/name" 형식 ("lgcnp/indoor-1") 이다.
+	// DeviceRefAgentName 은 "agent/name" 형식 ("lg_hvacr01/indoor-1") 이다.
 	// Phase B 에서 신규 도입된 사람이 읽기 좋은 식별자.
 	DeviceRefAgentName
 
-	// DeviceRefComposite 은 v0.x 의 composite key ("agent:local_id" — "lgcnp:81") 이다.
+	// DeviceRefComposite 은 v0.x 의 composite key ("agent:local_id" — "lg_icp01:81") 이다.
 	//
 	// Deprecated: SPEC-DEVICE-IDENTITY-001 Phase D (xflowd v1.0 — D-T2) 부터
 	// 본 enum 값은 더 이상 ClassifyDeviceRef 에서 반환되지 않는다 (composite 형식의
@@ -107,7 +107,7 @@ func ClassifyDeviceRef(ref string) DeviceRefKind {
 // SplitAgentName 은 "agent/name" 형식의 참조를 (agent, name) 으로 분리한다.
 //
 // 슬래시가 없거나 어느 한 쪽이 비어 있으면 (agent="", name="", ok=false) 를 반환한다.
-// 슬래시가 여러 개 있는 경우 (예: "lgcnp/zone/indoor-1") 첫 번째 슬래시를 기준으로
+// 슬래시가 여러 개 있는 경우 (예: "lg_hvacr01/zone/indoor-1") 첫 번째 슬래시를 기준으로
 // 분리한다 (agent 는 슬래시를 허용하지 않으나 name 은 허용 가능).
 func SplitAgentName(ref string) (agentName, name string, ok bool) {
 	idx := strings.Index(ref, "/")
@@ -120,7 +120,7 @@ func SplitAgentName(ref string) (agentName, name string, ok bool) {
 // SplitComposite 는 v0.x composite key ("agent:local_id") 를 (agent, localID) 로
 // 분리한다. 콜론이 없거나 어느 한 쪽이 비어 있으면 (agent="", localID="", ok=false).
 //
-// 콜론이 여러 개 있는 경우 (예: "lgcnp:zone:81") 첫 번째 콜론을 기준으로 분리한다
+// 콜론이 여러 개 있는 경우 (예: "lg_icp01:zone:81") 첫 번째 콜론을 기준으로 분리한다
 // (Century / Modbus 등 일부 어댑터에서 localID 가 콜론을 포함할 수 있음).
 func SplitComposite(ref string) (agentName, localID string, ok bool) {
 	idx := strings.Index(ref, ":")

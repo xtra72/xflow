@@ -100,10 +100,10 @@ func TestLGAPConfig_EventTempThreshold_Custom(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LGCP: nonTempFieldsChangedLGCP + maxTempDeltaLGCP
+// LG ICP-02: nonTempFieldsChangedIcp02 + maxTempDeltaIcp02
 // ---------------------------------------------------------------------------
 
-func TestNonTempFieldsChangedLGCP(t *testing.T) {
+func TestNonTempFieldsChangedIcp02(t *testing.T) {
 	t.Parallel()
 	powerOn := "on"
 	modeCool := "cooling"
@@ -111,7 +111,7 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 	target := 25.0
 	indoor := 23.5
 
-	base := LGCPDeviceState{
+	base := Icp02DeviceState{
 		PowerState:  &powerOn,
 		Power:       &powerOn,
 		Mode:        &modeCool,
@@ -124,7 +124,7 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 		newTemp := 24.0
 		curr := base
 		curr.IndoorTempC = &newTemp
-		if nonTempFieldsChangedLGCP(base, curr) {
+		if nonTempFieldsChangedIcp02(base, curr) {
 			t.Error("IndoorTempC diff must not count")
 		}
 	})
@@ -133,7 +133,7 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 		heat := "heating"
 		curr := base
 		curr.Mode = &heat
-		if !nonTempFieldsChangedLGCP(base, curr) {
+		if !nonTempFieldsChangedIcp02(base, curr) {
 			t.Error("Mode diff must register")
 		}
 	})
@@ -142,25 +142,25 @@ func TestNonTempFieldsChangedLGCP(t *testing.T) {
 		newTarget := 26.0
 		curr := base
 		curr.SetTempC = &newTarget
-		if !nonTempFieldsChangedLGCP(base, curr) {
+		if !nonTempFieldsChangedIcp02(base, curr) {
 			t.Error("SetTempC diff must register")
 		}
 	})
 }
 
-func TestMaxTempDeltaLGCP(t *testing.T) {
+func TestMaxTempDeltaIcp02(t *testing.T) {
 	t.Parallel()
 	indoor := 23.5
 	pipe1 := 20.0
 	pipe2 := 18.0
-	prev := LGCPDeviceState{
+	prev := Icp02DeviceState{
 		IndoorTempC: &indoor,
 		PipeTemp1C:  &pipe1,
 		PipeTemp2C:  &pipe2,
 	}
 
 	t.Run("identical returns 0", func(t *testing.T) {
-		if got := maxTempDeltaLGCP(prev, prev); got != 0 {
+		if got := maxTempDeltaIcp02(prev, prev); got != 0 {
 			t.Errorf("= %v, want 0", got)
 		}
 	})
@@ -171,7 +171,7 @@ func TestMaxTempDeltaLGCP(t *testing.T) {
 		curr := prev
 		curr.IndoorTempC = &newIndoor // 0.1
 		curr.PipeTemp1C = &newPipe1   // 2.0
-		got := maxTempDeltaLGCP(prev, curr)
+		got := maxTempDeltaIcp02(prev, curr)
 		if got < 1.99 || got > 2.01 {
 			t.Errorf("= %v, want ≈2.0", got)
 		}
@@ -181,21 +181,21 @@ func TestMaxTempDeltaLGCP(t *testing.T) {
 		newPipe2 := 18.5
 		curr := prev
 		curr.PipeTemp2C = &newPipe2
-		got := maxTempDeltaLGCP(prev, curr)
+		got := maxTempDeltaIcp02(prev, curr)
 		if got < 0.49 || got > 0.51 {
 			t.Errorf("= %v, want ≈0.5", got)
 		}
 	})
 }
 
-func TestLGCPConfig_EventTempThreshold_Default(t *testing.T) {
+func TestHvacr02Config_EventTempThreshold_Default(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseLGCPConfig(map[string]any{
+	cfg, err := parseHvacr02Config(map[string]any{
 		"transport_type": "serial",
 		"serial_port":    "/dev/ttyTEST",
 	})
 	if err != nil {
-		t.Fatalf("parseLGCPConfig: %v", err)
+		t.Fatalf("parseHvacr02Config: %v", err)
 	}
 	if cfg.EventTempThreshold != 1.0 {
 		t.Errorf("default = %v, want 1.0", cfg.EventTempThreshold)
@@ -203,12 +203,12 @@ func TestLGCPConfig_EventTempThreshold_Default(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LGCNP IDU: nonTempFieldsChangedLGCNPIDU + maxTempDeltaLGCNPIDU
+// HVACR-01 IDU: nonTempFieldsChangedHvacr01IDU + maxTempDeltaHvacr01IDU
 // ---------------------------------------------------------------------------
 
-func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
+func TestNonTempFieldsChangedHvacr01IDU(t *testing.T) {
 	t.Parallel()
-	base := LGCNPIDUParsed{
+	base := Hvacr01IDUParsed{
 		Power:       true,
 		TargetTemp:  25.0,
 		CurrentTemp: 23.5,
@@ -221,7 +221,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 	t.Run("CurrentTemp diff returns false", func(t *testing.T) {
 		curr := base
 		curr.CurrentTemp = 24.0
-		if nonTempFieldsChangedLGCNPIDU(base, curr) {
+		if nonTempFieldsChangedHvacr01IDU(base, curr) {
 			t.Error("CurrentTemp diff must not count")
 		}
 	})
@@ -229,7 +229,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 	t.Run("InletTemp diff returns false (temp sensor)", func(t *testing.T) {
 		curr := base
 		curr.InletTemp = 22.0
-		if nonTempFieldsChangedLGCNPIDU(base, curr) {
+		if nonTempFieldsChangedHvacr01IDU(base, curr) {
 			t.Error("InletTemp diff must not count as non-temp")
 		}
 	})
@@ -237,7 +237,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 	t.Run("OutletTemp diff returns false (temp sensor)", func(t *testing.T) {
 		curr := base
 		curr.OutletTemp = 19.0
-		if nonTempFieldsChangedLGCNPIDU(base, curr) {
+		if nonTempFieldsChangedHvacr01IDU(base, curr) {
 			t.Error("OutletTemp diff must not count as non-temp")
 		}
 	})
@@ -245,7 +245,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 	t.Run("Power diff returns true", func(t *testing.T) {
 		curr := base
 		curr.Power = false
-		if !nonTempFieldsChangedLGCNPIDU(base, curr) {
+		if !nonTempFieldsChangedHvacr01IDU(base, curr) {
 			t.Error("Power diff must register")
 		}
 	})
@@ -253,7 +253,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 	t.Run("Mode diff returns true", func(t *testing.T) {
 		curr := base
 		curr.Mode = 4 // hvac.ModeFan
-		if !nonTempFieldsChangedLGCNPIDU(base, curr) {
+		if !nonTempFieldsChangedHvacr01IDU(base, curr) {
 			t.Error("Mode diff must register")
 		}
 	})
@@ -261,7 +261,7 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 	t.Run("FanSpeed diff returns true", func(t *testing.T) {
 		curr := base
 		curr.FanSpeed = 6 // hvac.FanTurbo
-		if !nonTempFieldsChangedLGCNPIDU(base, curr) {
+		if !nonTempFieldsChangedHvacr01IDU(base, curr) {
 			t.Error("FanSpeed diff must register")
 		}
 	})
@@ -269,18 +269,18 @@ func TestNonTempFieldsChangedLGCNPIDU(t *testing.T) {
 	t.Run("TargetTemp diff returns true", func(t *testing.T) {
 		curr := base
 		curr.TargetTemp = 26.0
-		if !nonTempFieldsChangedLGCNPIDU(base, curr) {
+		if !nonTempFieldsChangedHvacr01IDU(base, curr) {
 			t.Error("TargetTemp diff must register")
 		}
 	})
 }
 
-func TestMaxTempDeltaLGCNPIDU(t *testing.T) {
+func TestMaxTempDeltaHvacr01IDU(t *testing.T) {
 	t.Parallel()
-	prev := LGCNPIDUParsed{CurrentTemp: 23.5, InletTemp: 20.0, OutletTemp: 18.0}
+	prev := Hvacr01IDUParsed{CurrentTemp: 23.5, InletTemp: 20.0, OutletTemp: 18.0}
 
 	t.Run("identical returns 0", func(t *testing.T) {
-		if got := maxTempDeltaLGCNPIDU(prev, prev); got != 0 {
+		if got := maxTempDeltaHvacr01IDU(prev, prev); got != 0 {
 			t.Errorf("= %v, want 0", got)
 		}
 	})
@@ -288,7 +288,7 @@ func TestMaxTempDeltaLGCNPIDU(t *testing.T) {
 	t.Run("InletTemp 0.5 diff (CurrentTemp same)", func(t *testing.T) {
 		curr := prev
 		curr.InletTemp = 20.5
-		got := maxTempDeltaLGCNPIDU(prev, curr)
+		got := maxTempDeltaHvacr01IDU(prev, curr)
 		if got < 0.49 || got > 0.51 {
 			t.Errorf("= %v, want ≈0.5 (reproduces user-reported bug)", got)
 		}
@@ -298,36 +298,36 @@ func TestMaxTempDeltaLGCNPIDU(t *testing.T) {
 		curr := prev
 		curr.CurrentTemp = 23.6 // 0.1
 		curr.OutletTemp = 19.5  // 1.5
-		got := maxTempDeltaLGCNPIDU(prev, curr)
+		got := maxTempDeltaHvacr01IDU(prev, curr)
 		if got < 1.49 || got > 1.51 {
 			t.Errorf("= %v, want ≈1.5", got)
 		}
 	})
 }
 
-func TestLGCNPConfig_EventTempThreshold_Default(t *testing.T) {
+func TestHvacr01Config_EventTempThreshold_Default(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseLGCNPConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"transport_type": "serial",
 		"serial_port":    "/dev/ttyTEST",
 	})
 	if err != nil {
-		t.Fatalf("parseLGCNPConfig: %v", err)
+		t.Fatalf("parseHvacr01Config: %v", err)
 	}
 	if cfg.EventTempThreshold != 1.0 {
 		t.Errorf("default = %v, want 1.0", cfg.EventTempThreshold)
 	}
 }
 
-func TestLGCNPConfig_EventTempThreshold_Custom(t *testing.T) {
+func TestHvacr01Config_EventTempThreshold_Custom(t *testing.T) {
 	t.Parallel()
-	cfg, err := parseLGCNPConfig(map[string]any{
+	cfg, err := parseHvacr01Config(map[string]any{
 		"transport_type":       "serial",
 		"serial_port":          "/dev/ttyTEST",
 		"event_temp_threshold": 0.5,
 	})
 	if err != nil {
-		t.Fatalf("parseLGCNPConfig: %v", err)
+		t.Fatalf("parseHvacr01Config: %v", err)
 	}
 	if cfg.EventTempThreshold != 0.5 {
 		t.Errorf("= %v, want 0.5", cfg.EventTempThreshold)
@@ -335,17 +335,17 @@ func TestLGCNPConfig_EventTempThreshold_Custom(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LGCNP ODU: maxTempDeltaLGCNPODU
+// HVACR-01 ODU: maxTempDeltaHvacr01ODU
 // ---------------------------------------------------------------------------
 
-func TestMaxTempDeltaLGCNPODU(t *testing.T) {
+func TestMaxTempDeltaHvacr01ODU(t *testing.T) {
 	t.Parallel()
 	out := 30.0
 	suc := 15.0
 	dis := 60.0
 	condA := 40.0
 	condB := 41.0
-	prev := LGCNPODUParsed{
+	prev := Hvacr01ODUParsed{
 		OutdoorTemp:       &out,
 		CompSuctionTemp:   &suc,
 		CompDischargeTemp: &dis,
@@ -354,7 +354,7 @@ func TestMaxTempDeltaLGCNPODU(t *testing.T) {
 	}
 
 	t.Run("identical returns 0", func(t *testing.T) {
-		if got := maxTempDeltaLGCNPODU(prev, prev); got != 0 {
+		if got := maxTempDeltaHvacr01ODU(prev, prev); got != 0 {
 			t.Errorf("= %v, want 0", got)
 		}
 	})
@@ -365,7 +365,7 @@ func TestMaxTempDeltaLGCNPODU(t *testing.T) {
 		curr := prev
 		curr.OutdoorTemp = &newOut       // 0.1
 		curr.CompDischargeTemp = &newDis // 5.0
-		got := maxTempDeltaLGCNPODU(prev, curr)
+		got := maxTempDeltaHvacr01ODU(prev, curr)
 		if got < 4.99 || got > 5.01 {
 			t.Errorf("= %v, want ≈5.0", got)
 		}
@@ -374,16 +374,16 @@ func TestMaxTempDeltaLGCNPODU(t *testing.T) {
 	t.Run("nil-to-non-nil returns large value", func(t *testing.T) {
 		curr := prev
 		curr.OutdoorTemp = nil
-		got := maxTempDeltaLGCNPODU(prev, curr)
+		got := maxTempDeltaHvacr01ODU(prev, curr)
 		if got < 1e6 {
 			t.Errorf("= %v, want ≥ 1e6 (gate bypass)", got)
 		}
 	})
 
 	t.Run("both nil returns 0", func(t *testing.T) {
-		a := LGCNPODUParsed{}
-		b := LGCNPODUParsed{}
-		if got := maxTempDeltaLGCNPODU(a, b); got != 0 {
+		a := Hvacr01ODUParsed{}
+		b := Hvacr01ODUParsed{}
+		if got := maxTempDeltaHvacr01ODU(a, b); got != 0 {
 			t.Errorf("= %v, want 0", got)
 		}
 	})

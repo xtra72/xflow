@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 import type { DashboardScope, DashboardSnapshot } from '@/types/dashboard';
+import { generateUUID } from '@/lib/utils/uuid';
 
 export interface Notification {
   id: string;
@@ -383,6 +384,23 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
 /** 테마 모드: system(OS 설정 따름) | day(라이트) | night(다크) | custom(사용자 정의) */
 export type ThemeMode = 'system' | 'day' | 'night' | 'custom';
 
+/**
+ * 2026-05-31: 플로우 단위 표시 설정.
+ * 플로우 에디터에서 노드의 포트 옆에 통계/이름을 표시할지 토글.
+ */
+export interface FlowDisplaySettings {
+  /** 포트별 메시지 통계를 핸들 옆에 작은 수치로 표시 */
+  showPortStats: boolean;
+  /** 포트 이름을 핸들 옆에 텍스트로 표시 */
+  showPortNames: boolean;
+}
+
+/** 새 플로우의 기본 표시 설정 */
+export const DEFAULT_FLOW_DISPLAY_SETTINGS: FlowDisplaySettings = {
+  showPortStats: false,
+  showPortNames: false,
+};
+
 // ---- Store ----
 
 interface UIState {
@@ -410,6 +428,12 @@ interface UIState {
   editorSnapToGrid: boolean;
   /** 플로우 에디터: 스냅 그리드 간격 (px). Background dots gap 과 일치 (영속) */
   editorSnapGridSize: number;
+  /**
+   * 2026-05-31: 플로우 에디터 표시 설정 (per-flow-id, 영속).
+   * 각 플로우 단위로 포트별 통계 / 포트 이름 표시 토글.
+   * 키 = flow id, 값 = { showPortStats, showPortNames }.
+   */
+  flowDisplaySettings: Record<string, FlowDisplaySettings>;
   notifications: Notification[];
 
   // ---- SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 슬롯 ----
@@ -462,6 +486,8 @@ interface UIActions {
   setEditorSnapToGrid: (on: boolean) => void;
   toggleEditorSnapToGrid: () => void;
   setEditorSnapGridSize: (size: number) => void;
+  /** 2026-05-31: 플로우 표시 설정 갱신 (per-flow-id, partial merge). */
+  setFlowDisplaySettings: (flowId: string, patch: Partial<FlowDisplaySettings>) => void;
 
   // 알림
   addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
@@ -618,6 +644,7 @@ export const useUIStore = create<UIState & UIActions>()(
       deviceGridEditMode: false,
       editorSnapToGrid: true,
       editorSnapGridSize: 16,
+      flowDisplaySettings: {},
       notifications: [],
 
       // v0.2.0: snapshot 슬롯 — sessionStorage 우선, 없으면 'shared' 기본.
@@ -666,7 +693,7 @@ export const useUIStore = create<UIState & UIActions>()(
       addDashboardPage: (name) =>
         set((state) => {
           const newPage: DashboardPageConfig = {
-            id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36),
+            id: generateUUID(),
             name,
             isDefault: false,
             panels: [],
@@ -732,7 +759,7 @@ export const useUIStore = create<UIState & UIActions>()(
 
       addPanel: (type) =>
         set((state) => {
-          const panelId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
+          const panelId = generateUUID();
           const defaults = createDefaultPanel(type);
           const newPanel: PanelConfig = { id: panelId, ...defaults };
           const size = panelDefaultSize(type);
@@ -752,7 +779,7 @@ export const useUIStore = create<UIState & UIActions>()(
 
       addPanelWithConfig: (type, config, title) =>
         set((state) => {
-          const panelId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
+          const panelId = generateUUID();
           const defaults = createDefaultPanel(type);
           const newPanel: PanelConfig = {
             id: panelId,
@@ -844,6 +871,19 @@ export const useUIStore = create<UIState & UIActions>()(
 
       setEditorSnapGridSize: (size) =>
         set({ editorSnapGridSize: Math.max(4, Math.min(128, size)) }),
+
+      // 2026-05-31: 플로우 표시 설정 (per-flow-id) 갱신
+      setFlowDisplaySettings: (flowId, patch) =>
+        set((state) => ({
+          flowDisplaySettings: {
+            ...state.flowDisplaySettings,
+            [flowId]: {
+              ...DEFAULT_FLOW_DISPLAY_SETTINGS,
+              ...state.flowDisplaySettings[flowId],
+              ...patch,
+            },
+          },
+        })),
 
       // 알림
       addNotification: (notification) =>
@@ -1006,6 +1046,7 @@ export const useUIStore = create<UIState & UIActions>()(
         customThemeTokens: state.customThemeTokens,
         editorSnapToGrid: state.editorSnapToGrid,
         editorSnapGridSize: state.editorSnapGridSize,
+        flowDisplaySettings: state.flowDisplaySettings,
       }),
     },
   ),
