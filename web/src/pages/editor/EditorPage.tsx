@@ -404,7 +404,7 @@ function EditorPageInner() {
               maskColor="rgba(0, 0, 0, 0.1)"
               className="!bg-white dark:!bg-gray-900 !border-gray-200 dark:!border-gray-700"
             />
-            <Controls className="!border-gray-200 !bg-white !shadow-sm dark:!border-gray-700 dark:!bg-gray-900" />
+            <Controls className="!border-(--color-border-default) !bg-(--color-bg-elevated) !shadow-sm" />
             <Background
               variant={BackgroundVariant.Dots}
               gap={editorSnapGridSize}
