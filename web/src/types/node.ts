@@ -52,6 +52,21 @@ export interface ConfigField {
    *  플로우 내보내기 시 백엔드에서 값이 제거된다(sensitive_fields 힌트로 노출).
    *  가져오기 시 사용자에게 재입력을 유도하는 데 사용된다. */
   sensitive?: boolean;
+  /** 일반 문자열(string) 입력의 placeholder 오버라이드.
+   *  미지정 시 기존 동작(default 값을 placeholder 로 표시)을 그대로 유지한다. */
+  placeholder?: string;
+  /** key_value_map 의 "키" 컬럼 헤더 오버라이드. 미지정 시 "키". */
+  keyLabel?: string;
+  /** key_value_map 의 "값" 컬럼 헤더 오버라이드. 미지정 시 "값". */
+  valueLabel?: string;
+  /** key_value_map 키 입력의 placeholder 오버라이드. 미지정 시 "키". */
+  keyPlaceholder?: string;
+  /** key_value_map 값 입력의 placeholder 오버라이드. 미지정 시 "값". */
+  valuePlaceholder?: string;
+  /** true 이면 key_value_map 의 값 입력 위에 `$.` JSONPath 빠른 삽입 칩을 표시한다.
+   *  influxdb-write 등 값에 JSONPath 를 받는 노드에서 opt-in 으로 사용한다.
+   *  미지정/false 면 칩을 표시하지 않아 다른 노드의 동작은 변하지 않는다. */
+  pathHelper?: boolean;
 }
 
 /**

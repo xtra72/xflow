@@ -91,7 +91,8 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           id={id}
           value={(value as string) ?? ''}
           onChange={onChange}
-          placeholder={field.default != null ? String(field.default) : undefined}
+          // field.placeholder 우선, 없으면 기존 동작(default 값 표시) 유지.
+          placeholder={field.placeholder ?? (field.default != null ? String(field.default) : undefined)}
           error={error}
           readOnly={readOnly}
           ariaProps={ariaProps}
@@ -105,7 +106,8 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           type="text"
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={field.default != null ? String(field.default) : undefined}
+          // field.placeholder 우선, 없으면 기존 동작(default 값 표시) 유지.
+          placeholder={field.placeholder ?? (field.default != null ? String(field.default) : undefined)}
           // readOnly attr 를 사용 — disabled 는 브라우저가 텍스트를
           // 흐리게 렌더링해 다크모드에서 값이 보이지 않게 만든다.
           readOnly={readOnly}
@@ -260,6 +262,11 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           value={value}
           onChange={onChange}
           readOnly={readOnly}
+          keyLabel={field.keyLabel}
+          valueLabel={field.valueLabel}
+          keyPlaceholder={field.keyPlaceholder}
+          valuePlaceholder={field.valuePlaceholder}
+          pathHelper={field.pathHelper}
         />
       )}
 

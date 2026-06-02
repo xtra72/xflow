@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
@@ -235,7 +236,8 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 	measurement := n.measurement
 	if measurement == "" && n.measurementKey != "" {
 		if v, err := resolveTemplateExpr(n.measurementKey, msg); err == nil {
-			measurement = fmt.Sprintf("%v", v)
+			// 추출값이 오브젝트면 JSON 문자열로 변환한다.
+			measurement = influxToString(v)
 		}
 	}
 	if measurement == "" {
@@ -246,8 +248,17 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 	// 비어있으면 모든 metadata 를 tags 로 (이름 동일).
 	tags := make(map[string]string)
 	if len(n.tagMappings) > 0 {
-		for tagName, metaKey := range n.tagMappings {
-			if v, ok := msg.Metadata().Get(metaKey); ok {
+		for tagName, mapping := range n.tagMappings {
+			// 값이 $. prefix 면 JSONPath 로 메시지 내 임의 키를 참조한다
+			// ($.payload.X, $.metadata.X, $.type, $.timestamp). 오브젝트는 문자열로
+			// 변환한다. 그 외(legacy)는 metadata 키 직접 참조로 하위 호환을 유지한다.
+			if strings.HasPrefix(mapping, "$.") {
+				if v, err := resolveTemplateExpr(mapping, msg); err == nil {
+					tags[tagName] = influxToString(v)
+				}
+				continue
+			}
+			if v, ok := msg.Metadata().Get(mapping); ok {
 				tags[tagName] = v
 			}
 		}
@@ -264,12 +275,17 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 		fields = make(map[string]any, len(n.fieldMappings))
 		for fieldName, expr := range n.fieldMappings {
 			if v, err := resolveTemplateExpr(expr, msg); err == nil {
-				fields[fieldName] = v
+				// 오브젝트 값은 InfluxDB 필드로 쓸 수 없으므로 JSON 문자열로 변환한다.
+				fields[fieldName] = influxFieldValue(v)
 			}
 		}
 	} else {
-		// field_mappings가 없으면 전체 payload를 fields로 사용
+		// field_mappings가 없으면 전체 payload를 fields로 사용.
+		// 중첩 오브젝트 값은 문자열로 변환한다.
 		fields = msg.Payload().ToMap()
+		for k, v := range fields {
+			fields[k] = influxFieldValue(v)
+		}
 	}
 
 	// bool → int 변환
@@ -329,4 +345,43 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 
 	// pass-through: 원본 메시지를 그대로 반환
 	return []message.Message{msg}, nil
+}
+
+// influxIsObject 는 값이 InfluxDB 스칼라 필드/태그로 쓸 수 없는 오브젝트
+// (map / slice 등 구조형) 인지 보고한다. 스칼라(string/number/bool/nil)는 false.
+func influxIsObject(v any) bool {
+	switch v.(type) {
+	case nil, bool, string,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return false
+	default:
+		// map[string]any, []any, 구조체 등 → 오브젝트.
+		return true
+	}
+}
+
+// influxToString 은 값을 문자열로 변환한다(태그/ measurement 용 — 항상 문자열).
+// 오브젝트는 JSON 으로, 스칼라는 fmt 로 변환한다. nil 은 빈 문자열.
+func influxToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if influxIsObject(v) {
+		if b, err := json.Marshal(v); err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// influxFieldValue 는 필드 값으로 사용할 값을 반환한다. 스칼라는 타입을 보존하고
+// (InfluxDB 가 int/float/bool/string 필드 타입을 구분하므로), 오브젝트는 InfluxDB
+// 필드로 쓸 수 없으므로 JSON 문자열로 변환한다.
+func influxFieldValue(v any) any {
+	if influxIsObject(v) {
+		return influxToString(v)
+	}
+	return v
 }
