@@ -481,11 +481,11 @@ func TestSelectFieldNode_Configure_빈설정_무필터(t *testing.T) {
 	assert.Equal(t, "t", out[0].Type())
 }
 
-// --- drop_to_port 테스트 (drop 결정 시 "dropped" 포트로 emit) ---
+// --- drop_to_port 테스트 (drop 결정 시 "drop" 포트로 emit) ---
 
 // TestSelectFieldNode_DropToPort_True_누락시Dropped포트로emit 은
 // on_missing=drop + drop_to_port=true + 누락 필드가 있을 때
-// 메시지가 폐기되지 않고 "dropped" 포트로 (원본 그대로) emit 되는지 확인한다.
+// 메시지가 폐기되지 않고 "drop" 포트로 (원본 그대로) emit 되는지 확인한다.
 func TestSelectFieldNode_DropToPort_True_누락시Dropped포트로emit(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
@@ -508,10 +508,10 @@ func TestSelectFieldNode_DropToPort_True_누락시Dropped포트로emit(t *testin
 	require.NoError(t, err)
 	require.Len(t, out, 1, "drop_to_port=true: 메시지가 1개 emit 되어야 한다")
 
-	// "dropped" 포트로 라우팅 표시되어야 한다.
+	// "drop" 포트로 라우팅 표시되어야 한다.
 	tp, ok := out[0].Metadata().Get("_target_port")
 	assert.True(t, ok, "_target_port 메타데이터가 설정되어야 한다")
-	assert.Equal(t, "dropped", tp, "_target_port 는 \"dropped\" 여야 한다")
+	assert.Equal(t, "drop", tp, "_target_port 는 \"drop\" 여야 한다")
 
 	// payload 는 원본 그대로 (변형되지 않음) — extra 도 보존되어야 한다.
 	p := out[0].Payload().ToMap()
@@ -632,7 +632,7 @@ func TestSelectFieldNode_DropToPort_StringTrue_lenient(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1, "문자열 \"true\" → drop_to_port 활성화")
 	tp, _ := out[0].Metadata().Get("_target_port")
-	assert.Equal(t, "dropped", tp)
+	assert.Equal(t, "drop", tp)
 }
 
 // --- 레지스트리 등록 테스트 ---
