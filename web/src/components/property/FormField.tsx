@@ -13,6 +13,7 @@ import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
 import { StringListEditor } from './StringListEditor';
 import { TriggerScheduleEditor } from './TriggerScheduleEditor';
+import { FieldHelp } from './FieldHelp';
 import { CompareFieldsEditor } from './CompareFieldsEditor';
 
 interface FormFieldProps {
@@ -69,19 +70,24 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
 
   return (
     <div className="space-y-1">
-      {/* 레이블 (boolean은 체크박스 옆에 표시) */}
+      {/* 레이블 (boolean은 체크박스 옆에 표시) — 설명은 라벨 뒤 ? 아이콘 클릭 시 표시 */}
       {field.type !== 'boolean' && (
-      <label
-        htmlFor={id}
-        className="block text-xs font-medium text-(--color-text-secondary)"
-      >
-        {field.label}
-        {field.required && (
-          <span className="ml-0.5 text-red-500" aria-hidden="true">
-            *
-          </span>
+      <div className="flex items-center gap-1">
+        <label
+          htmlFor={id}
+          className="block text-xs font-medium text-(--color-text-secondary)"
+        >
+          {field.label}
+          {field.required && (
+            <span className="ml-0.5 text-red-500" aria-hidden="true">
+              *
+            </span>
+          )}
+        </label>
+        {field.description && (
+          <FieldHelp text={field.description} describedById={descriptionId} />
         )}
-      </label>
+      </div>
       )}
 
       {/* 타입별 입력 위젯 */}
@@ -154,6 +160,7 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
       )}
 
       {field.type === 'boolean' && (
+        <div className="flex items-center gap-1">
         <label className="flex items-center gap-2" htmlFor={id}>
           <input
             id={id}
@@ -180,6 +187,10 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
             {field.label}
           </span>
         </label>
+        {field.description && (
+          <FieldHelp text={field.description} describedById={descriptionId} />
+        )}
+        </div>
       )}
 
       {field.type === 'select' && (
@@ -303,15 +314,8 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
         />
       )}
 
-      {/* 설명 텍스트 */}
-      {field.description && (
-        <p
-          id={descriptionId}
-          className="text-xs text-(--color-text-muted)"
-        >
-          {field.description}
-        </p>
-      )}
+      {/* 설명은 라벨 뒤 ? 아이콘(FieldHelp) 클릭 시 표시한다.
+          (sr-only 설명은 FieldHelp 내부에 descriptionId 로 유지하여 접근성 보존) */}
 
       {/* 에러 메시지 */}
       {error && (
