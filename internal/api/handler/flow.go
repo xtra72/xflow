@@ -89,7 +89,8 @@ type PortInfo struct {
 	Name       string `json:"name"`
 	Direction  string `json:"direction"`
 	Connected  bool   `json:"connected"`
-	Messages   int64  `json:"messages"`
+	Messages   int64  `json:"messages"`   // 노드가 이 포트로 생산(emit)한 메시지 수
+	Delivered  int64  `json:"delivered"`  // 연결된 와이어로 실제 전달된 메시지 수
 	Throughput string `json:"throughput"` // "12.300" msg/sec (소수점 3자리)
 	ActiveFor  string `json:"active_for"` // "1m30s" (비활성이면 빈 문자열)
 }

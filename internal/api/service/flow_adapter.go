@@ -584,6 +584,7 @@ func engineNodeToFlowNodeInfo(n engine.NodeInstanceInfo) handler.FlowNodeInfo {
 			Direction:  p.Direction,
 			Connected:  p.Connected,
 			Messages:   p.Messages,
+			Delivered:  p.Delivered,
 			Throughput: fmt.Sprintf("%.3f", p.Throughput),
 		}
 		if p.ActiveFor > 0 {
@@ -880,11 +881,36 @@ func convertReactFlowEdgesToWires(def map[string]any) {
 		if wt, ok := edge["wire_type"].(string); ok {
 			converted["type"] = wt
 		}
-		if modeStr, ok := edge["mode"].(string); ok && modeStr != "" {
-			converted["mode"] = modeStr
-		}
-		if bufSize, ok := edge["buffer_size"].(float64); ok {
-			converted["buffer_size"] = int(bufSize)
+		// 출력 큐 기본 정책(SPEC-OUTPUT-QUEUE):
+		// 1) buffer_size 키가 전혀 없으면 → 기본 큐(buffer_size=100, mode="buffer").
+		// 2) buffer_size==0 → bypass opt-out (mode 강제 안 함; 명시 mode 만 보존).
+		// 3) buffer_size>0 이고 mode 미지정 → mode="buffer" 자동 설정.
+		// 4) 명시적 mode 는 항상 우선(예: "drop_oldest").
+		explicitMode, hasMode := edge["mode"].(string)
+		hasMode = hasMode && explicitMode != ""
+
+		bufRaw, hasBuf := edge["buffer_size"].(float64)
+		if !hasBuf {
+			// 1) buffer_size 키 없음 → 기본 큐.
+			converted["buffer_size"] = 100
+			if hasMode {
+				converted["mode"] = explicitMode // 명시 mode 우선
+			} else {
+				converted["mode"] = "buffer"
+			}
+		} else {
+			bufSize := int(bufRaw)
+			converted["buffer_size"] = bufSize
+			switch {
+			case hasMode:
+				// 4) 명시적 mode 우선 (drop_oldest, bypass 등 모두 보존).
+				converted["mode"] = explicitMode
+			case bufSize > 0:
+				// 3) buffer_size>0, mode 미지정 → buffer.
+				converted["mode"] = "buffer"
+			default:
+				// 2) buffer_size==0, mode 미지정 → bypass opt-out (mode 미설정).
+			}
 		}
 
 		convertedWires = append(convertedWires, converted)

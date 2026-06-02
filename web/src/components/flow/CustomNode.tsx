@@ -82,6 +82,19 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const inMessages = stats?.inMessages;
   const outMessages = stats?.outMessages;
 
+  // 포트 이름 → 포트별 런타임 통계 조회 맵 (방향까지 키에 포함).
+  // output 포트의 delivered / 큐 적체량(messages - delivered) 표시에 사용한다.
+  const portStatByKey = useMemo(() => {
+    const map = new Map<string, { messages: number; delivered: number }>();
+    for (const p of stats?.ports ?? []) {
+      map.set(`${p.direction}:${p.name}`, {
+        messages: p.messages,
+        delivered: p.delivered,
+      });
+    }
+    return map;
+  }, [stats]);
+
   // v0.18.9: output 노드 전용 — 출력 ON/OFF 토글. 패널을 펼치지 않아도
   // 노드 카드에서 직접 토글 가능.
   const isOutputNode = nodeData.nodeType === 'output';
@@ -264,12 +277,25 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                             <span className="font-medium">{inPort.name}</span>
                           )}
                           {displaySettings.showPortStats &&
-                            rowIdx === 0 &&
-                            inMessages !== undefined && (
-                              <span className="tabular-nums">
-                                {inMessages.toLocaleString()}
-                              </span>
-                            )}
+                            (() => {
+                              // 포트별 통계가 있으면 해당 포트의 messages,
+                              // 없으면 첫 행에 한해 노드 단위 inMessages 합산값으로 폴백.
+                              const portStat = portStatByKey.get(
+                                `input:${inPort.name}`,
+                              );
+                              const count =
+                                portStat?.messages ??
+                                (rowIdx === 0 ? inMessages : undefined);
+                              if (count === undefined) return null;
+                              return (
+                                <span
+                                  className="tabular-nums"
+                                  title={`입력 ${count.toLocaleString()}건`}
+                                >
+                                  {count.toLocaleString()}
+                                </span>
+                              );
+                            })()}
                         </span>
                       </>
                     )}
@@ -288,12 +314,51 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                         >
                           {!isErrorRow &&
                             displaySettings.showPortStats &&
-                            rowIdx === 0 &&
-                            outMessages !== undefined && (
-                              <span className="tabular-nums">
-                                {outMessages.toLocaleString()}
-                              </span>
-                            )}
+                            (() => {
+                              // output 포트: 실제 전달(delivered)을 주 카운트로 표시하고,
+                              // 큐 적체량(messages - delivered)이 있으면 "+N" 뱃지로 노출.
+                              // 포트별 통계가 없으면 첫 행에 한해 노드 단위 outMessages
+                              // 합산값으로 폴백(delivered 정보 없음 → emit 기준 표시).
+                              const portStat = portStatByKey.get(
+                                `output:${rightPort.name}`,
+                              );
+                              if (portStat) {
+                                const pending = Math.max(
+                                  0,
+                                  portStat.messages - portStat.delivered,
+                                );
+                                return (
+                                  <span
+                                    className="inline-flex items-center gap-0.5"
+                                    title={`전달 ${portStat.delivered.toLocaleString()}건 / 생성 ${portStat.messages.toLocaleString()}건${
+                                      pending > 0
+                                        ? ` (큐 적체 ${pending.toLocaleString()}건)`
+                                        : ''
+                                    }`}
+                                  >
+                                    <span className="tabular-nums">
+                                      {portStat.delivered.toLocaleString()}
+                                    </span>
+                                    {pending > 0 && (
+                                      <span className="rounded-sm bg-amber-100 px-0.5 font-medium tabular-nums text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                                        +{pending.toLocaleString()}
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              }
+                              if (rowIdx === 0 && outMessages !== undefined) {
+                                return (
+                                  <span
+                                    className="tabular-nums"
+                                    title={`출력 ${outMessages.toLocaleString()}건`}
+                                  >
+                                    {outMessages.toLocaleString()}
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
                           {displaySettings.showPortNames && (
                             <span className="font-medium">{rightPort.name}</span>
                           )}
