@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+### 추가 — Switch 노드 완성 (문자열 조건 라우팅 / first·all / default_port·드롭 / 동적 포트)
+
+- **Switch 노드를 에디터에서 사용 가능하도록 완성 (Non-breaking)**
+
+  기존 `switch` 노드는 `routes` 가 Go 함수 클로저(`func(msg) bool`)만 받아들여 에디터/yaml 에서 사실상 사용할 수 없었다. 이제 문자열 조건 표현식을 받아 `compileCondition` 표현식 엔진으로 컴파일하므로 에디터에서 정의·저장·실행이 가능하다. filter 노드와 동일한 표현식 엔진을 공유한다.
+
+  - **문자열 조건 라우트**: `routes: [{name, condition}]` 형식 (배열 순서 보존). 각 `condition` 은 `compileCondition` 으로 컴파일된다. `name` 이 곧 출력 포트 이름이자 와이어 `_target_port` 규약이 된다. 기존 `[]SwitchRoute` (Go 클로저) 형식도 그대로 허용되어 하위 호환.
+  - **`match_mode`** (string, 기본 `first`): `first` 는 순차 평가하여 첫 매칭 라우트로만 라우팅, `all` 은 매칭되는 모든 라우트로 메시지를 Clone 팬아웃. 미설정·미인식 값은 `first` 로 폴백.
+  - **`default_port`** (string): 매칭이 하나도 없을 때 라우팅할 포트 이름. 비어 있으면 메시지를 **드롭**(빈 슬라이스 반환). 출력 포트 이름은 고정 `"default"` 가 아니라 `default_port` 값 그 자체이다.
+  - **동적 포트**: `Ports()` 가 라우트 `name` 목록(중복 제거, 순서 보존) + `default_port` 값으로부터 출력 포트를 파생한다. `routes` 가 비면 `[in, out, _error]` 정적 포트로 폴백하여 기존 플로우 동작을 보존한다.
+  - **원자적 설정 적용**: `routes` 파싱 중 조건 컴파일 에러가 발생하면 실패한 라우트(인덱스·name)를 식별하는 에러를 반환하고 기존 설정을 변경하지 않는다(부분 적용 금지).
+  - **프론트엔드**: 순서가 있는 조건+포트 행을 편집하는 `RoutesEditor`(신규 `routes_editor` ConfigField 타입) 추가, `switch` 스키마 갱신. `computePortsForNode` 가 라우트 name + `default_port` 값으로 출력 포트를 파생.
+  - **조건 표현식**: `$.payload.x`, `$.metadata.k` 경로, 연산자 `== != > < >= <=` / `&& || !`, `exists()`, 리터럴 지원.
+  - **회귀 위험 없음**: `routes` 가 빈 기존 플로우는 `[in, out]` 포트를 그대로 유지하며 동작 변화 없음.
+  - **사용 예**: `routes: [{name: 'hot', condition: '$.payload.temp >= 30'}, {name: 'cold', condition: '$.payload.temp < 10'}]`, `match_mode: 'first'`, `default_port: 'normal'` → temp ≥ 30 이면 `hot`, temp < 10 이면 `cold`, 둘 다 아니면 `normal` 포트로 라우팅.
+  - **관련**: SPEC-SWITCH-001.
+
 ### 추가 — Century `log_state_changes_only` 진단 분석 모드 옵션
 
 - **Century HVACR-01 에이전트에 byte-equal dedup 기반 진단 로그 모드 추가 (Non-breaking)**
