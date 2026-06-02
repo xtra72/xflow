@@ -47,6 +47,11 @@ export interface ConfigField {
   /** HVACR 4-quadrant 레이아웃에서 어느 분면에 속하는지를 지정한다.
    *  HVACR 외 에이전트는 미설정으로 둘 수 있다. */
   section?: ConfigSection;
+  /** 비밀 값(비밀번호/토큰 등) 필드 여부.
+   *  true 이면 입력 위젯이 password 타입으로 렌더링되고(값 마스킹),
+   *  플로우 내보내기 시 백엔드에서 값이 제거된다(sensitive_fields 힌트로 노출).
+   *  가져오기 시 사용자에게 재입력을 유도하는 데 사용된다. */
+  sensitive?: boolean;
 }
 
 /**

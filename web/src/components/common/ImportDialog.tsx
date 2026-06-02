@@ -3,8 +3,8 @@
 // 미리보기 후 플로우 또는 에이전트를 일괄 생성한다.
 // 플로우 가져오기 시 참조된 에이전트가 서버에 없으면 자동 생성 옵션을 제공한다.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, AlertTriangle, Check, FileJson, Loader2, Upload, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, AlertTriangle, Check, FileJson, KeyRound, Loader2, Upload, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import {
@@ -12,13 +12,28 @@ import {
   validateFlowImport,
   validateAgentImport,
   remapAgentNames,
+  regenerateDefinitionIds,
+  collectSecretFieldNames,
+  REGENERATE_IDS_FLAG,
   type ImportItem,
   type RequiredAgent,
   type AgentResolutionState,
   type ExistingAgentOption,
 } from '@/lib/utils/importParser';
+import { getAgentConfigSchema } from '@/config/agentSchemas';
+import { FormField } from '@/components/property/FormField';
+import { useUIStore } from '@/stores/uiStore';
+import type { ConfigField } from '@/types/node';
 import { createFlow } from '@/services/api/flowService';
 import { createAgent, getAgents } from '@/services/api/agentService';
+
+/** 에이전트 타입의 스키마에서 sensitive:true 로 표시된 필드 이름 목록을 반환한다. */
+function schemaSensitiveFieldNames(agentType: string | undefined): string[] {
+  if (!agentType) return [];
+  const schema = getAgentConfigSchema(agentType);
+  if (!schema) return [];
+  return schema.fields.filter((f) => f.sensitive).map((f) => f.name);
+}
 
 interface ImportDialogProps {
   open: boolean;
@@ -49,6 +64,12 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
   const [sameTypeAgents, setSameTypeAgents] = useState<Map<number, ExistingAgentOption[]>>(new Map());
   const [isAgentDragOver, setIsAgentDragOver] = useState(false);
 
+  // 비밀 값 입력 상태 (플로우 가져오기 전용).
+  // 키 = 에이전트 이름, 값 = { 필드 이름 -> 입력 값 }.
+  const [secretInputs, setSecretInputs] = useState<Map<string, Record<string, string>>>(new Map());
+
+  const addNotification = useUIStore((s) => s.addNotification);
+
   const typeLabel = type === 'flow' ? '플로우' : '에이전트';
 
   // 모달이 열릴 때 상태 초기화
@@ -64,6 +85,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
       setAgentResolutions(new Map());
       setSameTypeAgents(new Map());
       setIsAgentDragOver(false);
+      setSecretInputs(new Map());
     }
   }, [open]);
 
@@ -94,6 +116,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     setMissingAgents([]);
     setAgentResolutions(new Map());
     setSameTypeAgents(new Map());
+    setSecretInputs(new Map());
 
     try {
       const data = await parseImportFile(file);
@@ -213,6 +236,38 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     });
   };
 
+  /**
+   * 생성 예정(resolution === 'create')인 누락 에이전트별로 사용자 재입력이
+   * 필요한 비밀 필드 목록을 계산한다. 대체/건너뛰기로 해결되는 에이전트는
+   * 새로 생성하지 않으므로 비밀 입력 대상에서 제외된다.
+   */
+  const secretPrompts = useMemo(() => {
+    if (type !== 'flow') return [];
+    const prompts: { agentIndex: number; agent: RequiredAgent; fields: string[] }[] = [];
+    for (let idx = 0; idx < missingAgents.length; idx++) {
+      const agent = missingAgents[idx]!;
+      const state = agentResolutions.get(idx);
+      // 생성될 에이전트만 대상 (타입 정보 필수).
+      if (state?.resolution !== 'create' || !agent.type) continue;
+      const fields = collectSecretFieldNames(agent, schemaSensitiveFieldNames(agent.type));
+      if (fields.length > 0) {
+        prompts.push({ agentIndex: idx, agent, fields });
+      }
+    }
+    return prompts;
+  }, [type, missingAgents, agentResolutions]);
+
+  /** 비밀 필드 입력 값 변경 핸들러 (agentName + fieldName). */
+  const handleSecretChange = (agentName: string, fieldName: string, value: string) => {
+    setSecretInputs((prev) => {
+      const next = new Map(prev);
+      const cur = { ...(next.get(agentName) ?? {}) };
+      cur[fieldName] = value;
+      next.set(agentName, cur);
+      return next;
+    });
+  };
+
   /** 에이전트 파일로 누락 에이전트 보완 */
   const processAgentFiles = async (files: FileList) => {
     // 파싱 결과 수집
@@ -267,6 +322,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     try {
       // 1단계: 누락 에이전트 해결 (생성 또는 대체 테이블 구성)
       const remapTable: Record<string, string> = {};
+      // 비밀 값을 비워둔 채 생성된 에이전트 이름 (가져오기 후 경고용).
+      const agentsMissingSecrets: string[] = [];
 
       if (type === 'flow' && missingAgents.length > 0) {
         for (const [index, state] of agentResolutions) {
@@ -274,10 +331,32 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
           if (!agent) continue;
 
           if (state.resolution === 'create' && agent.type) {
+            // 사용자가 입력한 비밀 값을 config 에 병합한다(빈 값은 무시).
+            const required = collectSecretFieldNames(
+              agent,
+              schemaSensitiveFieldNames(agent.type),
+            );
+            const entered = secretInputs.get(agent.name) ?? {};
+            const mergedConfig: Record<string, unknown> = { ...(agent.config ?? {}) };
+            for (const fieldName of required) {
+              const v = entered[fieldName];
+              if (v != null && v !== '') {
+                mergedConfig[fieldName] = v;
+              }
+            }
+            // 입력되지 않은 비밀 필드가 남아 있으면 경고 대상에 추가.
+            const stillMissing = required.some((f) => {
+              const v = mergedConfig[f];
+              return v === undefined || v === null || v === '';
+            });
+            if (stillMissing) {
+              agentsMissingSecrets.push(agent.name);
+            }
+
             await createAgent({
               name: agent.name,
               type: agent.type,
-              config: agent.config,
+              config: Object.keys(mergedConfig).length > 0 ? mergedConfig : undefined,
             });
           } else if (state.resolution === 'substitute' && state.substituteAgentName) {
             remapTable[agent.name] = state.substituteAgentName;
@@ -291,8 +370,11 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
         const name = item.editedName.trim() || item.name;
 
         if (type === 'flow') {
-          // 대체 테이블이 있으면 플로우 정의 내 에이전트 이름을 치환
           let definition = (item.definition as Record<string, unknown>) ?? {};
+          // 노드/엣지 id 를 새 UUID 로 재생성 — 같은 플로우를 여러 번 가져와도
+          // 에디터/미리보기 안에서 id 가 충돌하지 않게 한다.
+          definition = regenerateDefinitionIds(definition);
+          // 대체 테이블이 있으면 플로우 정의 내 에이전트 이름을 치환
           if (Object.keys(remapTable).length > 0) {
             definition = remapAgentNames(definition, remapTable);
           }
@@ -300,6 +382,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             name,
             description: item.description,
             definition,
+            // belt-and-suspenders: 백엔드에도 id 재생성을 요청한다("둘 다").
+            [REGENERATE_IDS_FLAG]: true,
           });
         } else {
           await createAgent({
@@ -308,6 +392,14 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             config: item.config,
           });
         }
+      }
+
+      // 비밀 값을 비워둔 에이전트가 있으면 경고 알림으로 안내(가져오기는 계속 진행).
+      if (agentsMissingSecrets.length > 0) {
+        addNotification({
+          type: 'warning',
+          message: `비밀 값이 입력되지 않은 에이전트가 있습니다: ${agentsMissingSecrets.join(', ')}. 에이전트 설정에서 값을 입력해 주세요.`,
+        });
       }
 
       onImportSuccess();
@@ -564,6 +656,58 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                   }}
                   className="hidden"
                 />
+              </div>
+            </div>
+          )}
+
+          {/* 비밀 값 입력 (플로우 가져오기 전용).
+              생성 예정 에이전트 중 비밀 필드(비밀번호/토큰 등) 가 제거되었거나
+              누락된 경우, 생성 전에 사용자에게 값을 재입력받는다. */}
+          {type === 'flow' && secretPrompts.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <KeyRound className="h-4 w-4 text-blue-500" />
+                <p className="text-sm font-medium text-(--color-text-primary)">
+                  비밀 값 입력 ({secretPrompts.length}건)
+                </p>
+              </div>
+              <p className="text-xs text-(--color-text-muted)">
+                내보내기 시 비밀번호/토큰 등의 값이 제거되었습니다. 생성 전에 값을 입력하세요.
+                비워두면 에이전트는 비밀 값 없이 생성됩니다.
+              </p>
+              <div className="max-h-56 space-y-2 overflow-y-auto">
+                {secretPrompts.map(({ agent, fields }) => (
+                  <div
+                    key={agent.name}
+                    className="space-y-2 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-3"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium text-(--color-text-primary)">
+                        {agent.name}
+                      </span>
+                      <span className="text-xs text-(--color-text-muted)">
+                        ({agent.type})
+                      </span>
+                    </div>
+                    {fields.map((fieldName) => {
+                      // FormField 의 password 렌더링을 재사용하기 위해 sensitive 필드를 합성한다.
+                      const secretField: ConfigField = {
+                        name: fieldName,
+                        type: 'string',
+                        label: fieldName,
+                        sensitive: true,
+                      };
+                      return (
+                        <FormField
+                          key={fieldName}
+                          field={secretField}
+                          value={secretInputs.get(agent.name)?.[fieldName] ?? ''}
+                          onChange={(v) => handleSecretChange(agent.name, fieldName, String(v ?? ''))}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             </div>
           )}

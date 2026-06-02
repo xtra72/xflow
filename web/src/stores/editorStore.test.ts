@@ -91,4 +91,29 @@ describe('editorStore - 저장/로딩 dirty 플래그', () => {
       expect(useEditorStore.getState().isDirty).toBe(true);
     });
   });
+
+  describe('onConnect (엣지 생성)', () => {
+    it('새 엣지 id 는 UUID 로 부여된다 (xy-edge 파생 id 미사용)', () => {
+      const twoNodes: Node[] = [
+        { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
+        { id: 'n2', type: 'custom', position: { x: 200, y: 0 }, data: { label: 'B' } },
+      ];
+      useEditorStore.getState().loadFlow(twoNodes, []);
+      useEditorStore.getState().onConnect({
+        source: 'n1',
+        target: 'n2',
+        sourceHandle: 'out',
+        targetHandle: 'in',
+      });
+      const edges = useEditorStore.getState().edges;
+      expect(edges).toHaveLength(1);
+      const edge = edges[0];
+      if (!edge) throw new Error('엣지가 생성되지 않았습니다');
+      // UUID v4 형식이며 React Flow 파생 'xy-edge__' 형식이 아니어야 한다.
+      expect(edge.id.startsWith('xy-edge__')).toBe(false);
+      expect(edge.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      // 메타데이터 보존 확인.
+      expect((edge as Record<string, unknown>).wire_type).toBe('simple');
+    });
+  });
 });

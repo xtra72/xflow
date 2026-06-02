@@ -84,6 +84,9 @@ export interface FlowCreateRequest {
   name: string;
   description?: string;
   definition: Record<string, unknown>;
+  /** true 이면 백엔드가 가져오기 시 노드 id 를 재생성한다(가져오기 전용).
+   *  프런트엔드도 별도로 id 를 재생성하므로 belt-and-suspenders 동작이다. */
+  regenerate_ids?: boolean;
 }
 
 /**

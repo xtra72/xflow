@@ -205,6 +205,13 @@ func (h *FlowHandler) Create(ctx api.Context) error {
 		return err
 	}
 
+	// 쿼리 파라미터 ?regenerate_ids=true 로도 import 모드를 활성화할 수 있다.
+	// body 의 regenerate_ids 와 OR 결합한다(둘 중 하나라도 true 면 재생성).
+	// (SPEC: flow-management requirement 2 — import 모드 ID 재생성)
+	if ctx.Query("regenerate_ids") == "true" {
+		req.RegenerateIDs = true
+	}
+
 	// import 된 definition 의 노드 agent_ref.agent_id 를 현재 시스템 기준으로 재해결한다.
 	// (SPEC: flow import agent_id rebinding hotfix — 2026-05-13)
 	h.resolveAgentIDsInDefinition(ctx.Context(), req.Definition)
@@ -811,6 +818,11 @@ func extractAgentNames(definition map[string]any) []string {
 }
 
 // resolveAgentExports 는 에이전트 이름 목록으로 내보내기용 데이터를 생성한다.
+//
+// 보안: 에이전트 config 에 포함된 민감 키(password/token/username 등)는 export
+// 결과물에서 제거한다. 대신 어떤 민감 키가 제거되었는지를 sensitive_fields 배열로
+// 기록하여 import 다이얼로그가 해당 비밀값을 다시 입력받을 수 있도록 한다.
+// 비밀 "값" 은 절대 포함하지 않는다. (SPEC: flow-management requirement 1)
 func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) []map[string]any {
 	agents, _, err := h.agents.ListAgents(ctx, dto.ListOptions{
 		PaginationParams: dto.PaginationParams{Page: 1, Size: 100},
@@ -837,12 +849,50 @@ func (h *FlowHandler) resolveAgentExports(ctx context.Context, names []string) [
 		if ag, ok := agentByName[strings.ToLower(name)]; ok {
 			entry["type"] = ag.Type
 			if ag.Config != nil {
-				entry["config"] = ag.Config
+				// 먼저 제거될 민감 키를 수집한 뒤(원본 불변), 리댁션된 복사본을 넣는다.
+				if sensitive := CollectSensitiveKeys(ag.Config); len(sensitive) > 0 {
+					entry["sensitive_fields"] = sensitive
+				}
+				entry["config"] = RedactSensitiveConfig(ag.Config)
 			}
 		}
 		result = append(result, entry)
 	}
 	return result
+}
+
+// redactDefinitionNodeConfigs 는 변환된 definition 의 각 노드 config 에서 민감
+// 키를 제거하고, 제거된 키 목록을 노드의 "sensitive_fields" 로 기록한다.
+//
+// 입력 definition 은 separateLayoutFields 가 만든 복사본이므로 in-place 로
+// 변경해도 라이브 플로우에 영향이 없다. 다만 노드 config 맵은 원본을 참조할 수
+// 있으므로 RedactSensitiveConfig 의 복사본으로 교체하여 안전을 보장한다.
+//
+// SPEC: flow-management requirement 1 (export 시 노드 config 비밀값 제거)
+func redactDefinitionNodeConfigs(def map[string]any) {
+	nodes := toSliceOfMaps(def["nodes"])
+	if len(nodes) == 0 {
+		return
+	}
+	for _, node := range nodes {
+		cfg, ok := node["config"].(map[string]any)
+		if !ok || cfg == nil {
+			continue
+		}
+		if sensitive := CollectSensitiveKeys(cfg); len(sensitive) > 0 {
+			node["sensitive_fields"] = sensitive
+		}
+		// 민감 키가 없어도 복사본으로 교체하지 않는다(불필요한 할당 회피).
+		// 단, 민감 키가 있으면 반드시 리댁션된 복사본으로 교체한다.
+		if IsAnySensitive(cfg) {
+			node["config"] = RedactSensitiveConfig(cfg)
+		}
+	}
+}
+
+// IsAnySensitive 는 cfg(및 중첩) 에 민감 키가 하나라도 존재하는지 반환한다.
+func IsAnySensitive(cfg map[string]any) bool {
+	return len(CollectSensitiveKeys(cfg)) > 0
 }
 
 // Export 는 단일 플로우를 내보내기용 데이터로 반환한다.
@@ -872,6 +922,10 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 		// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
 		// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
 		converted := separateLayoutFields(info.Config)
+
+		// 노드 config 의 민감 키를 제거하고 sensitive_fields 를 기록한다.
+		// (SPEC: flow-management requirement 1)
+		redactDefinitionNodeConfigs(converted)
 		exported["definition"] = converted
 
 		// 플로우가 참조하는 에이전트 정보를 포함한다
@@ -879,12 +933,37 @@ func (h *FlowHandler) Export(ctx api.Context) error {
 			if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
 				if requiredAgents := h.resolveAgentExports(ctx.Context(), agentNames); len(requiredAgents) > 0 {
 					exported["required_agents"] = requiredAgents
+					// 최상위 required_secrets 요약을 추가한다(프론트 import 다이얼로그용).
+					if summary := summarizeRequiredSecrets(requiredAgents); len(summary) > 0 {
+						exported["required_secrets"] = summary
+					}
 				}
 			}
 		}
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(exported))
+}
+
+// summarizeRequiredSecrets 는 required_agents 항목에서 sensitive_fields 를 모아
+// {agentName: [keys...]} 형태의 최상위 요약을 만든다. import 다이얼로그가 어떤
+// 에이전트에 대해 어떤 비밀값을 입력받아야 하는지 한눈에 파악할 수 있게 한다.
+// 비밀 값은 포함하지 않는다. 민감 키가 전혀 없으면 nil 을 반환한다.
+func summarizeRequiredSecrets(requiredAgents []map[string]any) map[string]any {
+	summary := make(map[string]any)
+	for _, entry := range requiredAgents {
+		name, _ := entry["name"].(string)
+		if name == "" {
+			continue
+		}
+		if fields, ok := entry["sensitive_fields"].([]string); ok && len(fields) > 0 {
+			summary[name] = fields
+		}
+	}
+	if len(summary) == 0 {
+		return nil
+	}
+	return summary
 }
 
 // ExportAll 은 모든 플로우를 내보내기용 데이터 배열로 반환한다.
@@ -932,7 +1011,12 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 			// 변환 후 노드는 최상위 agent_ref 중첩 객체를 가지므로 extractAgentNames 가
 			// 올바르게 동작한다. (SPEC: flow export required_agents hotfix — 2026-05-13)
 			converted := separateLayoutFields(full.Config)
+
+			// 노드 config 의 민감 키를 제거하고 sensitive_fields 를 기록한다.
+			// (SPEC: flow-management requirement 1)
+			redactDefinitionNodeConfigs(converted)
 			item["definition"] = converted
+
 			// 플로우가 참조하는 에이전트 정보를 포함한다
 			if agentByName != nil {
 				if agentNames := extractAgentNames(converted); len(agentNames) > 0 {
@@ -942,13 +1026,20 @@ func (h *FlowHandler) ExportAll(ctx api.Context) error {
 						if ag, ok := agentByName[name]; ok {
 							entry["type"] = ag.Type
 							if ag.Config != nil {
-								entry["config"] = ag.Config
+								// 비밀값 제거 + 제거된 키 기록 (값은 포함하지 않음).
+								if sensitive := CollectSensitiveKeys(ag.Config); len(sensitive) > 0 {
+									entry["sensitive_fields"] = sensitive
+								}
+								entry["config"] = RedactSensitiveConfig(ag.Config)
 							}
 						}
 						requiredAgents = append(requiredAgents, entry)
 					}
 					if len(requiredAgents) > 0 {
 						item["required_agents"] = requiredAgents
+						if summary := summarizeRequiredSecrets(requiredAgents); len(summary) > 0 {
+							item["required_secrets"] = summary
+						}
 					}
 				}
 			}
