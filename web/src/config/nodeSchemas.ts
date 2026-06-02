@@ -243,7 +243,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     description:
       '메시지에서 지정한 필드만 남깁니다. payload / metadata / 메시지 레벨(id·type·timestamp) 그룹별로 화이트리스트를 지정하고, 누락 필드는 무시/드랍/채움 처리합니다.',
     inputDesc: '모든 메시지. payload / metadata / 메시지 레벨 필드를 화이트리스트로 필터링',
-    outputDesc: '지정한 필드만 남긴 메시지 (on_missing=drop 이면 누락 시 메시지 전체 드랍)',
+    outputDesc:
+      '지정한 필드만 남긴 메시지(out). on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 dropped 포트로.',
     configSchema: {
       fields: [
         {
@@ -253,6 +254,15 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           options: ['ignore', 'drop', 'fill'],
           default: 'ignore',
           description: 'ignore: 필드 생략 / drop: 메시지 전체 드랍 / fill: 지정한 기본값으로 채움',
+        },
+        {
+          name: 'drop_to_port',
+          type: 'boolean',
+          label: 'drop 시 dropped 포트로 전송',
+          default: false,
+          description:
+            'on_missing=drop 으로 메시지가 드랍될 때, 버리지 않고 dropped 출력 포트로 전송합니다. 끄면 메시지를 폐기합니다.',
+          visibleWhen: { field: 'on_missing', value: 'drop' },
         },
         // --- payload 필터링 ---
         {
@@ -313,6 +323,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     defaultPorts: [
       { name: 'in', direction: 'input' },
       { name: 'out', direction: 'output' },
+      { name: 'dropped', direction: 'output' },
     ],
   },
 

@@ -481,6 +481,160 @@ func TestSelectFieldNode_Configure_빈설정_무필터(t *testing.T) {
 	assert.Equal(t, "t", out[0].Type())
 }
 
+// --- drop_to_port 테스트 (drop 결정 시 "dropped" 포트로 emit) ---
+
+// TestSelectFieldNode_DropToPort_True_누락시Dropped포트로emit 은
+// on_missing=drop + drop_to_port=true + 누락 필드가 있을 때
+// 메시지가 폐기되지 않고 "dropped" 포트로 (원본 그대로) emit 되는지 확인한다.
+func TestSelectFieldNode_DropToPort_True_누락시Dropped포트로emit(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_missing":     "drop",
+		"drop_to_port":   true,
+		"payload_filter": true,
+		"payload_fields": map[string]any{
+			"present": "",
+			"absent":  "DEFAULT", // 누락 → drop 트리거
+		},
+	})
+
+	msg := newTestMessage(
+		map[string]any{"present": "P", "extra": "E"},
+		map[string]string{"m1": "v1"},
+		"orig.type",
+	)
+
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1, "drop_to_port=true: 메시지가 1개 emit 되어야 한다")
+
+	// "dropped" 포트로 라우팅 표시되어야 한다.
+	tp, ok := out[0].Metadata().Get("_target_port")
+	assert.True(t, ok, "_target_port 메타데이터가 설정되어야 한다")
+	assert.Equal(t, "dropped", tp, "_target_port 는 \"dropped\" 여야 한다")
+
+	// payload 는 원본 그대로 (변형되지 않음) — extra 도 보존되어야 한다.
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, "P", p["present"], "원본 present 보존")
+	assert.Equal(t, "E", p["extra"], "원본 extra 보존 (화이트리스트 적용 전 원본)")
+	_, hasAbsent := p["absent"]
+	assert.False(t, hasAbsent, "누락 키는 원본에도 없으므로 채워지지 않아야 한다")
+
+	// metadata 는 _target_port 외에는 원본 그대로여야 한다.
+	v1, ok := out[0].Metadata().Get("m1")
+	assert.True(t, ok)
+	assert.Equal(t, "v1", v1, "원본 metadata 보존")
+
+	// type 도 원본 그대로여야 한다.
+	assert.Equal(t, "orig.type", out[0].Type(), "원본 type 보존")
+}
+
+// TestSelectFieldNode_DropToPort_False_기본폐기 는
+// on_missing=drop + drop_to_port=false(기본값) + 누락 필드가 있을 때
+// 기존 동작(메시지 폐기)이 보존되는지 확인한다.
+func TestSelectFieldNode_DropToPort_False_기본폐기(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_missing":     "drop",
+		"payload_filter": true,
+		"payload_fields": map[string]any{
+			"absent": "", // 누락 → drop 트리거
+		},
+		// drop_to_port 미설정 → 기본 false
+	})
+
+	msg := newTestMessage(map[string]any{"present": "P"}, nil, "")
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Empty(t, out, "drop_to_port=false(기본): 메시지 폐기 (기존 동작 보존)")
+}
+
+// TestSelectFieldNode_DropToPort_True_누락없으면정상out 은
+// on_missing=drop + drop_to_port=true 이지만 누락 필드가 없을 때
+// 정상적으로 "out" 경로(_target_port 미설정 + 정상 변형)로 통과하는지 확인한다.
+func TestSelectFieldNode_DropToPort_True_누락없으면정상out(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_missing":     "drop",
+		"drop_to_port":   true,
+		"payload_filter": true,
+		"payload_fields": map[string]any{
+			"keep_a": "",
+			"keep_b": "",
+		},
+	})
+
+	msg := newTestMessage(map[string]any{
+		"keep_a": "A",
+		"keep_b": "B",
+		"drop_c": "C",
+	}, nil, "")
+
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+
+	// 정상 out 경로: _target_port 가 설정되어선 안 된다.
+	_, hasTargetPort := out[0].Metadata().Get("_target_port")
+	assert.False(t, hasTargetPort, "정상 out 경로: _target_port 미설정")
+
+	// payload 는 정상 변형 (화이트리스트 적용) 되어야 한다.
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, "A", p["keep_a"])
+	assert.Equal(t, "B", p["keep_b"])
+	_, hasC := p["drop_c"]
+	assert.False(t, hasC, "정상 변형: 화이트리스트에 없는 키 제거")
+}
+
+// TestSelectFieldNode_DropToPort_무시됨_OnMissingIgnore 는
+// drop_to_port=true 라도 on_missing=ignore 이면 옵션이 무시되고
+// 정상 ignore 동작(메시지 유지, _target_port 미설정)을 하는지 확인한다.
+func TestSelectFieldNode_DropToPort_무시됨_OnMissingIgnore(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_missing":     "ignore",
+		"drop_to_port":   true, // ignore 모드에서는 무의미
+		"payload_filter": true,
+		"payload_fields": map[string]any{
+			"present": "",
+			"absent":  "X", // 누락이지만 ignore → 건너뜀
+		},
+	})
+
+	msg := newTestMessage(map[string]any{"present": "P"}, nil, "")
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1, "ignore 정책: 메시지 유지")
+
+	// drop_to_port 가 적용되지 않아야 한다.
+	_, hasTargetPort := out[0].Metadata().Get("_target_port")
+	assert.False(t, hasTargetPort, "ignore 모드: drop_to_port 무시 → _target_port 미설정")
+
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, "P", p["present"])
+	_, hasAbsent := p["absent"]
+	assert.False(t, hasAbsent, "ignore: 누락 키 건너뜀")
+}
+
+// TestSelectFieldNode_DropToPort_StringTrue_lenient 는 drop_to_port 가
+// 문자열 "true" 로 전달되어도 관대하게 파싱되는지 확인한다 (Web UI 호환).
+func TestSelectFieldNode_DropToPort_StringTrue_lenient(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_missing":     "drop",
+		"drop_to_port":   "true", // 문자열 형식
+		"payload_filter": true,
+		"payload_fields": map[string]any{"absent": ""},
+	})
+
+	msg := newTestMessage(map[string]any{"present": "P"}, nil, "")
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1, "문자열 \"true\" → drop_to_port 활성화")
+	tp, _ := out[0].Metadata().Get("_target_port")
+	assert.Equal(t, "dropped", tp)
+}
+
 // --- 레지스트리 등록 테스트 ---
 
 // TestRegistry_SelectField등록 은 select-field 가 빌트인으로 등록되어 있는지 확인한다.

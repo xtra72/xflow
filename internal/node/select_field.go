@@ -36,6 +36,10 @@ type SelectFieldNode struct {
 
 	onMissing onMissingMode
 
+	// dropToPort 가 true 면 drop 결정 시 메시지를 폐기하지 않고 "dropped" 포트로 emit 한다.
+	// on_missing == drop 일 때만 의미가 있다 (ignore/fill 에서는 드랍이 없어 무시됨).
+	dropToPort bool
+
 	payloadFilter bool
 	payloadFields map[string]string // 유지할 payload 키 → fill 기본값 (fill 모드에서만 사용)
 
@@ -104,6 +108,9 @@ func (n *SelectFieldNode) Configure(config map[string]any) error {
 	metadataFilter, _ := config["metadata_filter"].(bool)
 	messageFilter, _ := config["message_filter"].(bool)
 
+	// drop_to_port: bool / "true"|"false" 문자열 모두 허용 (configBool, Web UI 호환). 기본 false.
+	dropToPort, _ := configBool(config, "drop_to_port")
+
 	payloadFields := parseStringMap(config["payload_fields"])
 	metadataFields := parseStringMap(config["metadata_fields"])
 	messageFields := parseStringSet(config["message_fields"])
@@ -111,6 +118,7 @@ func (n *SelectFieldNode) Configure(config map[string]any) error {
 	// 원자적 설정 적용
 	n.mu.Lock()
 	n.onMissing = onMissing
+	n.dropToPort = dropToPort
 	n.payloadFilter = payloadFilter
 	n.payloadFields = payloadFields
 	n.metadataFilter = metadataFilter
@@ -134,10 +142,12 @@ func (n *SelectFieldNode) Configure(config map[string]any) error {
 //   - message-level: message_filter 가 true 이고 type 이 message_fields 에 없으면
 //     출력 type 을 ""(빈 문자열)로 비운다. 그 외에는 원본 type 을 유지한다.
 //   - on_missing == drop 이고 활성화된 필터 그룹의 화이트리스트 필드가 하나라도
-//     누락되면 (nil, nil) 을 반환하여 메시지를 드랍한다 (emit 없음).
+//     누락되면 메시지를 드랍한다. drop_to_port 가 false 면 (nil, nil) 로 폐기하고,
+//     true 면 원본(미변형) 메시지를 "dropped" 포트로 emit 한다 (emitDrop 참고).
 func (n *SelectFieldNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	n.mu.RLock()
 	onMissing := n.onMissing
+	dropToPort := n.dropToPort
 	payloadFilter := n.payloadFilter
 	payloadFields := n.payloadFields
 	metadataFilter := n.metadataFilter
@@ -148,13 +158,14 @@ func (n *SelectFieldNode) Process(_ context.Context, msg message.Message) ([]mes
 
 	// --- 드랍 판정 (drop 정책) ---
 	// 새 페이로드/메타데이터를 적용하기 전에 누락 여부를 먼저 확인하여,
-	// drop 이면 부분 변형 없이 즉시 (nil, nil) 을 반환한다.
+	// drop 이면 부분 변형 없이 즉시 처리한다. drop_to_port 가 켜져 있으면
+	// 원본(미변형) 메시지를 "dropped" 포트로 emit 하고, 아니면 폐기한다.
 	if onMissing == onMissingDrop {
 		if payloadFilter && hasMissing(msg.Payload().ToMap(), payloadFields) {
-			return nil, nil
+			return n.emitDrop(msg, dropToPort)
 		}
 		if metadataFilter && hasMissing(metadataToAnyMap(msg), metadataFields) {
-			return nil, nil
+			return n.emitDrop(msg, dropToPort)
 		}
 	}
 
@@ -199,6 +210,21 @@ func (n *SelectFieldNode) Process(_ context.Context, msg message.Message) ([]mes
 	}
 
 	return []message.Message{msg}, nil
+}
+
+// emitDrop 은 drop 결정 시의 출력을 결정한다.
+//   - dropToPort 가 true 면 원본(미변형) 메시지의 Clone 에 _target_port="dropped" 를
+//     설정하여 "dropped" 포트로 emit 한다 (filter.go 의 reject 포트 패턴 미러링).
+//   - false 면 (nil, nil) 을 반환하여 메시지를 폐기한다 (기존 동작).
+//
+// 호출 시점이 페이로드/메타데이터 변형 이전이므로, Clone 된 메시지는 원본 그대로이다.
+func (n *SelectFieldNode) emitDrop(msg message.Message, dropToPort bool) ([]message.Message, error) {
+	if !dropToPort {
+		return nil, nil
+	}
+	out := msg.Clone()
+	out.Metadata().Set("_target_port", "dropped")
+	return []message.Message{out}, nil
 }
 
 // hasMissing 은 fields 화이트리스트 중 src 에 존재하지 않는 키가 하나라도 있으면 true 를 반환한다.
