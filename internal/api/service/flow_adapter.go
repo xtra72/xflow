@@ -213,9 +213,7 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 	}
 
 	if req.Name != nil {
-		// Flow 인터페이스에는 SetName 이 없으므로 재생성이 필요하다.
-		// 여기서는 description 변경만 지원한다.
-		_ = req.Name // 향후 확장 시 사용
+		f.SetName(*req.Name)
 	}
 	if req.Description != nil {
 		f.SetDescription(*req.Description)
@@ -267,8 +265,8 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		}
 	}
 
-	// description 또는 auto_start 변경 시 저장
-	if req.Description != nil || req.AutoStart != nil {
+	// name / description / auto_start 변경 시 저장
+	if req.Name != nil || req.Description != nil || req.AutoStart != nil {
 		if err := a.repo.Save(ctx, f); err != nil {
 			return nil, fmt.Errorf("flow update: save: %w", err)
 		}
