@@ -12,6 +12,8 @@ import {
   type NodeChange,
 } from '@xyflow/react';
 
+import { generateUUID } from '@/lib/utils/uuid';
+
 const MAX_HISTORY = 50;
 
 interface HistoryEntry {
@@ -125,13 +127,19 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       const tgtPort = connection.targetHandle || 'default';
       const wireName = `${srcNodeName}.${srcPort}_to_${tgtNodeName}.${tgtPort}`;
 
+      // 새 엣지 id 는 UUID 로 부여한다. addEdge 가 id 없는 connection 에는
+      // `xy-edge__<source><sourceHandle>-<target>...` 형태의 파생 id 를
+      // 생성하는데, 이는 동일 source/target 재연결 시 충돌하고 가져오기
+      // id 재생성과도 일관되지 않는다. id 를 명시하면 addEdge 가 이 값을 유지한다.
+      // Edge 로 단언해 addEdge 의 제네릭이 Edge[] 로 해석되도록 한다(메타데이터는 추가 속성).
       const edgeWithMeta = {
         ...connection,
+        id: generateUUID(),
         name: wireName,
         wire_type: 'simple',
         mode: 'bypass',
         buffer_size: 0,
-      };
+      } as Edge;
 
       return {
         ...pushUndo(state),

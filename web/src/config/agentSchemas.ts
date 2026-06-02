@@ -29,8 +29,8 @@ export const AGENT_TYPES = [
 const MQTT_FIELDS: ConfigField[] = [
   { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883)' },
   { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성' },
-  { name: 'username', type: 'string', label: '사용자명' },
-  { name: 'password', type: 'string', label: '비밀번호' },
+  { name: 'username', type: 'string', label: '사용자명', sensitive: true },
+  { name: 'password', type: 'string', label: '비밀번호', sensitive: true },
   { name: 'topics', type: 'string', label: '구독 토픽', description: '쉼표로 구분 (예: sensor/+/data, device/#)' },
   { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1', description: '메시지 전달 보증 레벨' },
   { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },
@@ -80,7 +80,7 @@ const HTTP_SENDER_FIELDS: ConfigField[] = [
 
 const INFLUXDB_FIELDS: ConfigField[] = [
   { name: 'url', type: 'string', label: 'URL', required: true, default: 'http://localhost:8086', description: 'InfluxDB 서버 주소' },
-  { name: 'token', type: 'string', label: '인증 토큰', required: true },
+  { name: 'token', type: 'string', label: '인증 토큰', required: true, sensitive: true },
   { name: 'org', type: 'string', label: '조직', description: 'v2에서 필수, v3에서 선택' },
   { name: 'bucket', type: 'string', label: '버킷', required: true },
   { name: 'version', type: 'select', label: 'InfluxDB 버전', options: ['2', '3'], required: true },

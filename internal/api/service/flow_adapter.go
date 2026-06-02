@@ -62,8 +62,17 @@ func NewFlowServiceAdapter(eng *engine.Engine, repo storage.FlowRepository, logg
 // CreateFlow 는 정의(Definition)를 파싱하여 Flow 를 생성하고 저장소에 보관한다.
 // 동일 이름의 플로우가 이미 존재하면 기존 플로우를 삭제하고 새로 저장한다 (upsert by name).
 func (a *FlowServiceAdapter) CreateFlow(ctx context.Context, req *dto.FlowCreateRequest) (*handler.FlowInfo, error) {
+	// import 모드: 노드/와이어 ID 를 모두 재생성하여 동일 플로우 다중 import 시
+	// ID 충돌을 방지한다. 일반 생성/저장 경로에는 영향이 없다(플래그 미설정 시).
+	// (SPEC: flow-management requirement 2)
+	definition := req.Definition
+	if req.RegenerateIDs {
+		definition = RegenerateDefinitionIDs(req.Definition)
+		a.logger.Info("flow create: import 모드 ID 재생성", "flowName", req.Name)
+	}
+
 	// definition 을 JSON 으로 변환하여 Flow 객체 생성
-	f, err := a.flowFromDefinition(req.Name, req.Description, req.Definition)
+	f, err := a.flowFromDefinition(req.Name, req.Description, definition)
 	if err != nil {
 		return nil, fmt.Errorf("flow create: %w", err)
 	}

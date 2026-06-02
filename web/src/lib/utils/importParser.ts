@@ -1,5 +1,7 @@
 import yaml from 'js-yaml';
 
+import { generateUUID } from '@/lib/utils/uuid';
+
 /**
  * 가져오기 대상 항목 하나를 나타낸다.
  */
@@ -38,6 +40,9 @@ export interface RequiredAgent {
   name: string;
   type?: string;
   config?: Record<string, unknown>;
+  /** 내보내기 시 백엔드가 제거한 비밀 필드 이름 목록 (export 힌트).
+   *  가져오기 시 이 필드들의 값을 사용자에게 재입력받는다. */
+  sensitiveFields?: string[];
 }
 
 /** 에이전트 해결 방식 */
@@ -243,6 +248,10 @@ export function extractRequiredAgents(flowData: Record<string, unknown>): Requir
           typeof a.config === 'object' && a.config !== null
             ? (a.config as Record<string, unknown>)
             : undefined,
+        // export 힌트: 백엔드가 제거한 비밀 필드 이름 목록.
+        sensitiveFields: Array.isArray(a.sensitive_fields)
+          ? a.sensitive_fields.filter((f): f is string => typeof f === 'string')
+          : undefined,
       }));
   }
 
@@ -272,6 +281,123 @@ export function extractRequiredAgents(flowData: Record<string, unknown>): Requir
         seen.add(agentRef.agent_name);
         result.push({ name: agentRef.agent_name });
       }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 백엔드 create flow 요청에서 노드 id 재생성을 트리거하는 플래그 이름.
+ *
+ * 가져오기 시 프런트엔드가 이미 id 를 재생성하지만(에디터/미리보기 충돌 방지),
+ * 백엔드에도 동일 동작을 요청해 belt-and-suspenders 로 동작하게 한다("둘 다" 결정).
+ * 백엔드 계약이 다른 키를 쓰면 이 상수만 변경하면 된다.
+ */
+export const REGENERATE_IDS_FLAG = 'regenerate_ids';
+
+/**
+ * 가져온 플로우 정의의 모든 노드 id 와 엣지 id 를 새 UUID 로 재생성한다.
+ *
+ * 목적: 같은 플로우를 여러 번 가져오더라도 에디터/미리보기 안에서 노드/엣지
+ * id 가 충돌하지 않도록 신선한 id 를 부여한다.
+ *
+ * 동작:
+ *  1. 정의를 깊은 복사한 뒤 nodes 각각에 새 UUID 를 부여하고 oldId→newId 맵을 만든다.
+ *  2. 엣지(`wires` 우선, 없으면 `edges`) 의 source/target 을 맵으로 재작성한다.
+ *  3. 각 엣지 id 도 새 UUID 로 교체한다(파생된 `xy-edge__...` id 를 유지하지 않음).
+ *     sourceHandle/targetHandle(포트 이름) 은 그대로 둔다.
+ *  4. 노드 내부의 노드 id 참조: 본 스키마에는 노드가 다른 노드 id 를 참조하는
+ *     필드가 없다(에이전트는 agent_ref.agent_name 으로 이름 참조). 따라서 추가
+ *     재작성 대상이 없으며, agent_ref 등 에이전트 바인딩 정보는 건드리지 않는다.
+ *
+ * 입력 정의는 변경하지 않고 새 객체를 반환한다(순수 함수).
+ */
+export function regenerateDefinitionIds(
+  definition: Record<string, unknown>,
+): Record<string, unknown> {
+  const cloned = structuredClone(definition) as Record<string, unknown>;
+
+  const nodes = cloned.nodes;
+  if (!Array.isArray(nodes)) {
+    // 노드가 없으면 재생성할 대상이 없다.
+    return cloned;
+  }
+
+  // 1. 노드 id 재생성 + oldId→newId 맵 구성.
+  const idMap = new Map<string, string>();
+  for (const node of nodes) {
+    if (node == null || typeof node !== 'object') continue;
+    const n = node as Record<string, unknown>;
+    const oldId = typeof n.id === 'string' ? n.id : undefined;
+    const newId = generateUUID();
+    if (oldId != null) idMap.set(oldId, newId);
+    n.id = newId;
+  }
+
+  // 2~3. 엣지 source/target 재작성 + 엣지 id 재생성.
+  //  내부 직렬화 키는 `edges`(에디터 저장) 또는 `wires`(export) 두 가지가 있다.
+  const edgeKey = Array.isArray(cloned.wires)
+    ? 'wires'
+    : Array.isArray(cloned.edges)
+      ? 'edges'
+      : undefined;
+
+  if (edgeKey) {
+    const edges = cloned[edgeKey] as unknown[];
+    for (const edge of edges) {
+      if (edge == null || typeof edge !== 'object') continue;
+      const e = edge as Record<string, unknown>;
+      if (typeof e.source === 'string' && idMap.has(e.source)) {
+        e.source = idMap.get(e.source);
+      }
+      if (typeof e.target === 'string' && idMap.has(e.target)) {
+        e.target = idMap.get(e.target);
+      }
+      // 파생된 xy-edge__ id 를 유지하지 않고 새 UUID 부여.
+      // sourceHandle/targetHandle(포트 이름) 은 변경하지 않는다.
+      e.id = generateUUID();
+    }
+  }
+
+  return cloned;
+}
+
+/**
+ * 생성 예정인 누락 에이전트에 대해 사용자 재입력이 필요한 비밀 필드 이름 목록을 계산한다.
+ *
+ * 비밀 필드는 두 출처의 합집합이다:
+ *  - export 힌트(`agent.sensitiveFields`): 내보내기 시 백엔드가 제거한 키.
+ *  - 스키마(`schemaSensitiveFieldNames`): sensitive:true 로 표시된 필드 중,
+ *    가져온 config 에 값이 비어 있는(누락/빈 문자열) 키.
+ *
+ * 반환 순서는 안정적이며 중복은 제거된다.
+ */
+export function collectSecretFieldNames(
+  agent: RequiredAgent,
+  schemaSensitiveFieldNames: string[],
+): string[] {
+  const config = agent.config ?? {};
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (name: string): void => {
+    if (!seen.has(name)) {
+      seen.add(name);
+      result.push(name);
+    }
+  };
+
+  // 1. export 힌트로 제거된 필드는 항상 재입력 대상.
+  for (const name of agent.sensitiveFields ?? []) {
+    add(name);
+  }
+
+  // 2. 스키마 sensitive 필드 중 값이 비어 있는 것.
+  for (const name of schemaSensitiveFieldNames) {
+    const v = config[name];
+    if (v === undefined || v === null || v === '') {
+      add(name);
     }
   }
 

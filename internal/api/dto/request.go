@@ -47,6 +47,12 @@ type FlowCreateRequest struct {
 	Name        string         `json:"name" validate:"required,min=1,max=255"`
 	Description string         `json:"description,omitempty"`
 	Definition  map[string]any `json:"definition" validate:"required"`
+
+	// RegenerateIDs 가 true 이면 import 모드로 동작하여 노드/와이어 ID 를 모두
+	// 새 UUID 로 재생성하고 참조를 재작성한다(동일 플로우 다중 import 충돌 방지).
+	// 쿼리 파라미터 ?regenerate_ids=true 로도 활성화할 수 있다.
+	// (SPEC: flow-management requirement 2)
+	RegenerateIDs bool `json:"regenerate_ids,omitempty"`
 }
 
 // FlowUpdateRequest 는 플로우 업데이트를 위한 DTO이다.

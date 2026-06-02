@@ -1,7 +1,8 @@
 // 타입별 폼 필드 렌더러 컴포넌트.
 // ConfigField.type에 따라 적절한 입력 위젯을 렌더링한다.
 
-import { useId, useMemo } from 'react';
+import { useId, useMemo, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
 import type { ConfigField } from '@/types/node';
@@ -84,7 +85,21 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
       )}
 
       {/* 타입별 입력 위젯 */}
-      {field.type === 'string' && (
+      {/* 비밀(sensitive) 문자열 필드: password 입력 + 표시/숨김 토글 */}
+      {field.type === 'string' && field.sensitive && (
+        <SensitiveStringInput
+          id={id}
+          value={(value as string) ?? ''}
+          onChange={onChange}
+          placeholder={field.default != null ? String(field.default) : undefined}
+          error={error}
+          readOnly={readOnly}
+          ariaProps={ariaProps}
+        />
+      )}
+
+      {/* 일반 문자열 필드 */}
+      {field.type === 'string' && !field.sensitive && (
         <input
           id={id}
           type="text"
@@ -296,6 +311,66 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
         <p id={errorId} className="text-xs text-red-500 dark:text-red-400">
           {error}
         </p>
+      )}
+    </div>
+  );
+}
+
+// 비밀(sensitive) 문자열 입력 컴포넌트.
+// 비밀번호/토큰 등의 값을 password 타입으로 마스킹하고, 우측의 눈 아이콘
+// 버튼으로 표시/숨김을 토글한다. readOnly 모드에서는 토글 버튼을 숨긴다.
+function SensitiveStringInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  error,
+  readOnly,
+  ariaProps,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: unknown) => void;
+  placeholder?: string;
+  error?: string;
+  readOnly?: boolean;
+  ariaProps: Record<string, unknown>;
+}) {
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <div className="relative">
+      <input
+        id={id}
+        type={revealed ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        readOnly={readOnly}
+        autoComplete="off"
+        // 우측 토글 버튼과 겹치지 않도록 padding-right 확보.
+        className={cn(
+          inputClass,
+          'pr-9',
+          error && errorInputClass,
+          readOnly && readOnlyClass,
+        )}
+        {...ariaProps}
+      />
+      {!readOnly && (
+        <button
+          type="button"
+          onClick={() => setRevealed((v) => !v)}
+          tabIndex={-1}
+          aria-label={revealed ? '값 숨기기' : '값 표시'}
+          className={cn(
+            'absolute inset-y-0 right-0 flex items-center px-2.5',
+            'text-(--color-text-muted) hover:text-(--color-text-primary)',
+            'transition-colors',
+          )}
+        >
+          {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
       )}
     </div>
   );
