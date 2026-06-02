@@ -167,9 +167,9 @@ func (m *mockTimer) isCancelled(id string) bool {
 // newTriggerDef 는 테스트용 NodeDef를 생성한다.
 func newTriggerDef(config map[string]any) flow.NodeDef {
 	return flow.NodeDef{
-		ID:   "trigger-1",
-		Name: "test-trigger",
-		Type: "trigger",
+		ID:     "trigger-1",
+		Name:   "test-trigger",
+		Type:   "trigger",
 		Config: config,
 		Outputs: []flow.Port{
 			{ID: "out", Name: "out", Direction: flow.PortOutput},
@@ -464,8 +464,8 @@ func TestTriggerNode_InvalidScheduleType_Error(t *testing.T) {
 func TestTriggerNode_InvalidScheduleValue_Error(t *testing.T) {
 	// REQ-02-08: 유효하지 않은 스케줄 값
 	tests := []struct {
-		name   string
-		sched  map[string]any
+		name  string
+		sched map[string]any
 	}{
 		{
 			name:  "잘못된 interval 값",
@@ -577,8 +577,8 @@ func TestTriggerNode_StaticPayload(t *testing.T) {
 			defer node.Shutdown(context.Background())
 
 			// 핸들러를 수동으로 트리거
-			timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-				TimerID:   "test-trigger-interval-0",
+			timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+				TimerID:   "trigger-1-interval-0",
 				TriggerAt: time.Now(),
 				TickCount: 1,
 			})
@@ -602,8 +602,8 @@ func TestTriggerNode_DefaultPayload(t *testing.T) {
 	defer node.Shutdown(context.Background())
 
 	now := time.Now()
-	timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-		TimerID:   "test-trigger-interval-0",
+	timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+		TimerID:   "trigger-1-interval-0",
 		TriggerAt: now,
 		TickCount: 1,
 	})
@@ -637,8 +637,8 @@ func TestTriggerNode_TemplatePayload(t *testing.T) {
 	defer node.Shutdown(context.Background())
 
 	triggerTime := time.Now()
-	timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-		TimerID:    "test-trigger-interval-0",
+	timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+		TimerID:    "trigger-1-interval-0",
 		TriggerAt:  triggerTime,
 		TickCount:  5,
 		ScheduleID: "sched-001",
@@ -686,8 +686,8 @@ func TestTriggerNode_MessageMetadata(t *testing.T) {
 	defer node.Shutdown(context.Background())
 
 	triggerTime := time.Now()
-	timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-		TimerID:   "test-trigger-interval-0",
+	timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+		TimerID:   "trigger-1-interval-0",
 		TriggerAt: triggerTime,
 		TickCount: 3,
 	})
@@ -705,7 +705,7 @@ func TestTriggerNode_MessageMetadata(t *testing.T) {
 	// trigger.schedule_id
 	v, ok = meta.Get("trigger.schedule_id")
 	assert.True(t, ok)
-	assert.Equal(t, "test-trigger-interval-0", v)
+	assert.Equal(t, "trigger-1-interval-0", v)
 
 	// trigger.tick_count
 	v, ok = meta.Get("trigger.tick_count")
@@ -760,7 +760,7 @@ func TestTriggerNode_Init_FailureRollback(t *testing.T) {
 	assert.Error(t, err)
 
 	// 첫 번째 타이머가 취소되었는지 확인
-	assert.True(t, timer.isCancelled("test-trigger-interval-0"),
+	assert.True(t, timer.isCancelled("trigger-1-interval-0"),
 		"Init 실패 시 이미 등록된 타이머는 취소되어야 한다")
 
 	// StateError로 전이
@@ -782,8 +782,8 @@ func TestTriggerNode_Shutdown(t *testing.T) {
 	assert.NoError(t, err)
 
 	// 모든 타이머가 취소되었는지 확인
-	assert.True(t, timer.isCancelled("test-trigger-interval-0"))
-	assert.True(t, timer.isCancelled("test-trigger-cron-1"))
+	assert.True(t, timer.isCancelled("trigger-1-interval-0"))
+	assert.True(t, timer.isCancelled("trigger-1-cron-1"))
 
 	// sourceCh가 닫혔는지 확인
 	srcNode := node.(SourceNode)
@@ -812,8 +812,8 @@ func TestTriggerNode_PauseResume(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Pause 중 트리거 → 메시지가 생성되지 않아야 한다
-	timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-		TimerID:   "test-trigger-interval-0",
+	timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+		TimerID:   "trigger-1-interval-0",
 		TriggerAt: time.Now(),
 		TickCount: 1,
 	})
@@ -825,8 +825,8 @@ func TestTriggerNode_PauseResume(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Resume 후 트리거 → 메시지가 생성되어야 한다
-	timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-		TimerID:   "test-trigger-interval-0",
+	timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+		TimerID:   "trigger-1-interval-0",
 		TriggerAt: time.Now(),
 		TickCount: 2,
 	})
@@ -884,8 +884,8 @@ func TestTriggerNode_SourceChFull_DropMessage(t *testing.T) {
 
 	// 버퍼 크기보다 많은 메시지를 전송
 	for i := 0; i < 5; i++ {
-		timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-			TimerID:   "test-trigger-interval-0",
+		timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+			TimerID:   "trigger-1-interval-0",
 			TriggerAt: time.Now(),
 			TickCount: int64(i + 1),
 		})
@@ -910,8 +910,8 @@ func TestTriggerNode_TemplatePayload_Error(t *testing.T) {
 	node, timer := initTriggerWithMock(t, config, timer)
 	defer node.Shutdown(context.Background())
 
-	timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-		TimerID:   "test-trigger-interval-0",
+	timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+		TimerID:   "trigger-1-interval-0",
 		TriggerAt: time.Now(),
 		TickCount: 1,
 	})
@@ -942,15 +942,15 @@ func TestTriggerNode_MultiSchedule_MessageGeneration(t *testing.T) {
 	defer node.Shutdown(context.Background())
 
 	// interval 스케줄 트리거
-	timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-		TimerID:   "test-trigger-interval-0",
+	timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+		TimerID:   "trigger-1-interval-0",
 		TriggerAt: time.Now(),
 		TickCount: 1,
 	})
 
 	// cron 스케줄 트리거
-	timer.triggerHandler("test-trigger-cron-1", system.TimerTrigger{
-		TimerID:   "test-trigger-cron-1",
+	timer.triggerHandler("trigger-1-cron-1", system.TimerTrigger{
+		TimerID:   "trigger-1-cron-1",
 		TriggerAt: time.Now(),
 		TickCount: 1,
 	})
@@ -985,8 +985,8 @@ func TestTriggerNode_ConcurrentTriggers(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			timer.triggerHandler("test-trigger-interval-0", system.TimerTrigger{
-				TimerID:   "test-trigger-interval-0",
+			timer.triggerHandler("trigger-1-interval-0", system.TimerTrigger{
+				TimerID:   "trigger-1-interval-0",
 				TriggerAt: time.Now(),
 				TickCount: int64(idx),
 			})
@@ -998,6 +998,51 @@ func TestTriggerNode_ConcurrentTriggers(t *testing.T) {
 
 	msgs := drainSourceCh(node, 200*time.Millisecond)
 	assert.NotEmpty(t, msgs, "동시 트리거로 메시지가 생성되어야 한다")
+}
+
+// TestTriggerNode_SameName_DifferentID_NoTimerCollision 는 동일한 이름의 trigger
+// 노드를 가진 두 플로우(예: Capture 를 export 후 import 한 Capture2)를 동시에
+// 실행해도 timer ID 가 충돌하지 않음을 검증한다. timer ID 는 노드 이름이 아닌
+// 고유 노드 ID(import 시 재발급되는 UUID) 기반이므로, 이름이 같아도 ID 가 다르면
+// 전역 timer agent 에서 ErrDuplicateTimerID 가 발생하지 않는다.
+func TestTriggerNode_SameName_DifferentID_NoTimerCollision(t *testing.T) {
+	// 두 플로우가 공유하는 단일 실제 timer agent (런타임과 동일 구조).
+	timerAgent := system.NewTimerAgent()
+	require.NoError(t, timerAgent.Init(context.Background()))
+	defer timerAgent.Stop(context.Background())
+
+	newTriggerWithID := func(id string) Node {
+		config := map[string]any{
+			"schedules": []any{
+				map[string]any{"type": "interval", "value": "1s"},
+			},
+			"_timer_agent": timerAgent,
+		}
+		def := flow.NodeDef{
+			ID:      id,
+			Name:    "trigger", // 두 노드가 동일한 이름을 가진다 (import 시 이름은 유지됨)
+			Type:    "trigger",
+			Config:  config,
+			Outputs: []flow.Port{{ID: "out", Name: "out", Direction: flow.PortOutput}},
+		}
+		node, err := NewTriggerNode(def)
+		require.NoError(t, err)
+		require.NoError(t, node.Configure(config))
+		return node
+	}
+
+	// 첫 번째 플로우(Capture)의 trigger.
+	nodeA := newTriggerWithID("flow-capture-trigger")
+	require.NoError(t, nodeA.Init(context.Background()), "첫 번째 trigger 는 Init 성공해야 한다")
+	defer nodeA.Shutdown(context.Background())
+
+	// 두 번째 플로우(import 한 Capture2)의 trigger — 이름은 같고 ID 만 다르다.
+	// 수정 전에는 timer ID 가 "trigger-interval-0" 으로 동일해 ErrDuplicateTimerID
+	// 로 Init 이 실패했다. 수정 후에는 ID 기반이라 충돌하지 않는다.
+	nodeB := newTriggerWithID("flow-capture2-trigger")
+	require.NoError(t, nodeB.Init(context.Background()),
+		"동일 이름·다른 ID 의 두 번째 trigger 도 timer 충돌 없이 Init 성공해야 한다")
+	defer nodeB.Shutdown(context.Background())
 }
 
 func TestTriggerNode_TimerSetError_RollbackOnInit(t *testing.T) {

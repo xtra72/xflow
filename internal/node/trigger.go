@@ -316,7 +316,11 @@ func (n *TriggerNode) registerInterval(index int, sched TriggerSchedule, entry *
 		return nil, fmt.Errorf("%w: %v", ErrTriggerInvalidScheduleValue, err)
 	}
 
-	timerID := fmt.Sprintf("%s-interval-%d", n.Name(), index)
+	// 타이머 ID 는 노드 고유 ID(UUID) 기반으로 만든다. 노드 이름은 import/복제 시
+	// 동일하게 유지되어, 같은 이름의 trigger 노드를 가진 두 플로우를 동시 실행하면
+	// 전역 timer agent 에서 "duplicate timer ID" 충돌이 발생한다. 노드 ID 는 생성·
+	// import 재발급 시 항상 고유하므로 플로우 간 충돌을 방지한다.
+	timerID := fmt.Sprintf("%s-interval-%d", n.ID(), index)
 	id, err := n.timer.SetInterval(timerID, duration, n.makeHandler(entry, string(sched.Type), timerID))
 	if err != nil {
 		return nil, fmt.Errorf("trigger: SetInterval failed: %w", err)
@@ -332,7 +336,7 @@ func (n *TriggerNode) registerCron(index int, sched TriggerSchedule, entry *trig
 		return nil, fmt.Errorf("%w: cron value must be a string", ErrTriggerInvalidScheduleValue)
 	}
 
-	timerID := fmt.Sprintf("%s-cron-%d", n.Name(), index)
+	timerID := fmt.Sprintf("%s-cron-%d", n.ID(), index)
 	id, err := n.timer.SetCron(timerID, cronExpr, n.makeHandler(entry, string(sched.Type), timerID))
 	if err != nil {
 		return nil, fmt.Errorf("trigger: SetCron failed: %w", err)
@@ -358,7 +362,7 @@ func (n *TriggerNode) registerOnce(index int, sched TriggerSchedule, entry *trig
 		return nil, fmt.Errorf("%w: once target time is in the past", ErrTriggerInvalidScheduleValue)
 	}
 
-	timerID := fmt.Sprintf("%s-once-%d", n.Name(), index)
+	timerID := fmt.Sprintf("%s-once-%d", n.ID(), index)
 	id, err := n.timer.SetTimeout(timerID, delay, n.makeHandler(entry, string(sched.Type), timerID))
 	if err != nil {
 		return nil, fmt.Errorf("trigger: SetTimeout failed: %w", err)
@@ -395,7 +399,7 @@ func (n *TriggerNode) registerTimes(index int, sched TriggerSchedule, entry *tri
 		}
 
 		cronExpr := fmt.Sprintf("%d %d * * *", minute, hour)
-		timerID := fmt.Sprintf("%s-times-%d-%d", n.Name(), index, i)
+		timerID := fmt.Sprintf("%s-times-%d-%d", n.ID(), index, i)
 
 		currentEntry := entry
 		if i > 0 {
