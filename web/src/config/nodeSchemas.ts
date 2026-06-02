@@ -1374,21 +1374,31 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   switch: {
     description: '조건에 따라 메시지를 다른 출력 포트로 라우팅합니다.',
     inputDesc: '모든 메시지. 라우팅 규칙에서 $.payload.* 경로로 필드 참조',
-    outputDesc: '조건에 매칭된 포트로 메시지 전달 (원본 그대로). 미매칭 시 기본 포트',
+    outputDesc: '조건에 매칭된 포트로 메시지 전달 (원본 Clone). 미매칭 시 기본 포트(설정 시) 또는 드랍',
     configSchema: {
       fields: [
         {
           name: 'routes',
-          type: 'object',
+          type: 'routes_editor',
           label: '라우팅 규칙',
-          description: '조건식과 출력 포트를 매핑하는 규칙 배열 (JSON)',
+          description:
+            '위에서부터 순서대로 평가됩니다. 각 행은 (조건식, 출력 포트명) 쌍입니다. 조건식은 $.payload.* / $.metadata.* 경로와 == != > < >= <=, && || !, exists(path) 를 지원합니다.',
+        },
+        {
+          name: 'match_mode',
+          type: 'select',
+          label: '매칭 모드',
+          options: ['first', 'all'],
+          default: 'first',
+          description:
+            '첫 매칭(first): 처음 일치하는 라우트 1개로만 전달. 모두 매칭(all): 일치하는 모든 라우트로 팬아웃.',
         },
         {
           name: 'default_port',
           type: 'string',
-          label: '기본 포트',
-          default: 'out',
-          description: '일치하는 조건이 없을 때 사용할 출력 포트',
+          label: '기본 포트(미매칭)',
+          placeholder: '예: other',
+          description: '일치하는 조건이 없을 때 사용할 출력 포트명. 비우면 미매칭 메시지를 드랍합니다.',
         },
       ],
     },
@@ -2403,15 +2413,43 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
   }
 
   if (nodeType === 'switch') {
-    const routes = config?.routes as Array<{ name: string }> | undefined;
+    // 백엔드 SwitchNode.Ports() 와 정렬되는 동적 출력 포트 파생(SPEC-SWITCH-001 §5.3):
+    //   입력: 항상 'in'.
+    //   출력: routes 가 비면 'out'(폴백);
+    //         아니면 각 route.name(빈 이름 제외, 중복 제거)
+    //         + default_port 가 비어있지 않으면 그 값(중복 제거).
+    // 'default' 고정 이름이 아니라 실제 default_port 값을 포트명으로 사용한다.
+    const routes = config?.routes as Array<{ name?: unknown }> | undefined;
+    const defaultPort =
+      typeof config?.default_port === 'string' ? config.default_port.trim() : '';
     const ports: PortDef[] = [{ name: 'in', direction: 'input' }];
-    if (routes && routes.length > 0) {
+
+    const outputNames: string[] = [];
+    const seen = new Set<string>();
+    const pushOutput = (name: string) => {
+      if (name === '' || seen.has(name)) return;
+      seen.add(name);
+      outputNames.push(name);
+    };
+
+    if (Array.isArray(routes)) {
       for (const r of routes) {
-        ports.push({ name: r.name, direction: 'output' });
+        const name = typeof r?.name === 'string' ? r.name.trim() : '';
+        pushOutput(name);
       }
-      ports.push({ name: 'default', direction: 'output' });
-    } else {
+    }
+
+    if (outputNames.length === 0) {
+      // routes 가 비었거나 유효한 이름이 없으면 폴백.
       ports.push({ name: 'out', direction: 'output' });
+      return ports;
+    }
+
+    // default_port 는 설정된 경우에만 출력 포트로 포함(중복 제거).
+    pushOutput(defaultPort);
+
+    for (const name of outputNames) {
+      ports.push({ name, direction: 'output' });
     }
     return ports;
   }
