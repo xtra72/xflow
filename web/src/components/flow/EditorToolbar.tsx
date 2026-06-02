@@ -2,7 +2,10 @@
 // 저장, 배포, 실행 제어, 실행 취소/다시 실행 버튼과 플로우 상태 배지를 제공한다.
 
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import {
+  Check,
+  ChevronDown,
   Grid3x3,
   Pencil,
   Play,
@@ -18,6 +21,7 @@ import {
 import { cn } from '@/lib/utils/cn';
 import {
   useFlow,
+  useFlows,
   useFlowStatus,
   useUpdateFlow,
   useDeployFlow,
@@ -168,8 +172,11 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
 
   return (
     <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-      {/* 플로우 이름 (클릭하여 인라인 편집) */}
-      <FlowNameEditor flowId={flowId} />
+      {/* 플로우 이름 (클릭하여 인라인 편집) + 다른 플로우로 전환하는 선택기 */}
+      <div className="flex items-center gap-0.5">
+        <FlowNameEditor flowId={flowId} />
+        <FlowSwitcher flowId={flowId} />
+      </div>
 
       <Separator />
 
@@ -369,6 +376,126 @@ function FlowNameEditor({ flowId }: FlowNameEditorProps) {
       <span className="truncate">{name || '이름 없음'}</span>
       <Pencil className="h-3 w-3 shrink-0 text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100" />
     </button>
+  );
+}
+
+interface FlowSwitcherProps {
+  /** 현재 편집 중인 플로우 ID */
+  flowId: string;
+}
+
+/**
+ * 플로우 전환 선택기.
+ *
+ * - chevron 버튼을 클릭하면 전체 플로우 목록이 드롭다운으로 열린다.
+ * - 현재 플로우는 체크 표시로 구분된다.
+ * - 다른 플로우를 선택하면 `/editor/{id}` 로 이동한다. 이동 차단(미저장 변경
+ *   경고)은 EditorPage 의 useBlocker 가 중앙에서 처리하므로 여기서는 단순히
+ *   navigate 만 호출한다.
+ * - 바깥 클릭 / Escape / 선택 시 메뉴를 닫는다.
+ */
+function FlowSwitcher({ flowId }: FlowSwitcherProps) {
+  const navigate = useNavigate();
+  const { data: flowsResult } = useFlows();
+  const flows = flowsResult?.data ?? [];
+
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭 / Escape 로 메뉴 닫기.
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  // 다른 플로우 선택 시 이동. 같은 플로우면 메뉴만 닫는다.
+  const handleSelect = (id: string) => {
+    setOpen(false);
+    if (id !== flowId) {
+      navigate(`/editor/${id}`);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="다른 플로우로 전환"
+        aria-label="다른 플로우로 전환"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={cn(
+          'inline-flex items-center justify-center rounded-md p-1',
+          'text-(--color-text-muted) transition-colors',
+          'hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)',
+        )}
+      >
+        <ChevronDown
+          className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
+        />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label="플로우 목록"
+          className={cn(
+            'absolute left-0 top-full z-50 mt-1 max-h-72 w-60 overflow-y-auto',
+            'rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) py-1 shadow-lg',
+          )}
+        >
+          {flows.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-(--color-text-muted)">
+              플로우가 없습니다
+            </div>
+          ) : (
+            flows.map((flow) => {
+              const isCurrent = flow.id === flowId;
+              return (
+                <button
+                  key={flow.id}
+                  type="button"
+                  role="option"
+                  aria-selected={isCurrent}
+                  onClick={() => handleSelect(flow.id)}
+                  className={cn(
+                    'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors',
+                    'hover:bg-(--color-bg-surface)',
+                    isCurrent
+                      ? 'font-semibold text-(--color-text-primary)'
+                      : 'text-(--color-text-secondary)',
+                  )}
+                >
+                  <Check
+                    className={cn(
+                      'h-3.5 w-3.5 shrink-0',
+                      isCurrent ? 'text-blue-500' : 'opacity-0',
+                    )}
+                  />
+                  <span className="truncate">{flow.name || '이름 없음'}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

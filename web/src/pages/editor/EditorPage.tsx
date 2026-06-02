@@ -2,7 +2,7 @@
 // 노드 팔레트, 캔버스, 속성 패널로 구성된 3컬럼 레이아웃을 제공한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router';
+import { useBlocker, useParams } from 'react-router';
 import {
   ReactFlow,
   MiniMap,
@@ -24,6 +24,7 @@ import { DebugPanel } from '@/components/flow/DebugPanel';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
 import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
 import { NodePalette } from '@/components/palette/NodePalette';
+import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
 import {
@@ -270,17 +271,30 @@ function EditorPageInner() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave, undo, redo, removeNode, selectEdge, reactFlowInstance]);
 
-  // --- 브라우저 이탈 경고 (변경 사항이 있을 때) ---
+  // --- 브라우저 이탈 경고 (새로고침/탭 닫기/창 닫기) ---
+  // 변경 사항이 있을 때만 브라우저 기본 이탈 확인 대화상자를 띄운다.
   useEffect(() => {
     if (!isDirty) return;
 
-    function handleBeforeUnload(e: BeforeUnloadEvent) {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
-    }
+      e.returnValue = '';
+    };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
+
+  // --- 라우터 이탈 차단 (미저장 변경 시) ---
+  // 플로우 전환 선택기 / 사이드바 / 뒤로 가기 등으로 다른 경로로 이동하려 할 때,
+  // 변경 사항이 있으면 useBlocker 로 이동을 막고 확인 다이얼로그를 띄운다.
+  //
+  // - isDirty 가 false 면(저장 직후 또는 변경 없음) 차단하지 않는다.
+  // - 같은 경로(같은 flowId 재진입 등)면 pathname 이 변하지 않으므로 차단하지 않는다.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      isDirty && currentLocation.pathname !== nextLocation.pathname,
+  );
 
   // --- 드래그 앤 드롭 핸들러 ---
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -530,6 +544,20 @@ function EditorPageInner() {
           onClose={closeContextMenu}
         />
       )}
+
+      {/* 미저장 변경 시 이탈 경고 다이얼로그.
+          - 확인("이동") → blocker.proceed() 로 이동 진행.
+          - 취소/닫기 → blocker.reset() 로 현재 페이지 유지. */}
+      <ConfirmDialog
+        isOpen={blocker.state === 'blocked'}
+        onClose={() => blocker.reset?.()}
+        onConfirm={() => blocker.proceed?.()}
+        title="저장하지 않은 변경사항"
+        message="저장하지 않은 변경사항이 있습니다. 저장하지 않고 이동하시겠습니까?"
+        confirmLabel="이동"
+        cancelLabel="취소"
+        variant="danger"
+      />
     </div>
   );
 }
