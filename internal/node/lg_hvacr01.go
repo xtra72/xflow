@@ -74,7 +74,7 @@ type LGHvacr01NodeConfig struct {
 	UnitID  string `json:"unit_id,omitempty"`
 
 	// EmitMetadata 는 metadata 옵션 필드의 emit 정책을 제어한다 (v0.18.8, v0.18.26).
-	// device_id 는 항상 emit (필수), 나머지 (node_id / device_type / label /
+	// device_id 는 항상 emit (필수), 나머지 (node_id / device_type / name /
 	// node_source) 는 default OFF. v0.18.26 부터 unit_id / slot_num 은 출력
 	// metadata 에서 제거됨.
 	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`

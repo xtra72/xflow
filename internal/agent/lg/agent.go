@@ -258,7 +258,7 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 		label = fmt.Sprintf("zone-%02X", zone)
 	}
 	metadata := map[string]any{
-		"label":       label,
+		"name":        label,
 		"zone":        fmt.Sprintf("0x%02X", zone),
 		"device_type": "HVACR.IDU",
 	}
