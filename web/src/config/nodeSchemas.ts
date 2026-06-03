@@ -1394,6 +1394,15 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
             '첫 매칭(first): 처음 일치하는 라우트 1개로만 전달. 모두 매칭(all): 일치하는 모든 라우트로 팬아웃.',
         },
         {
+          name: 'pass_mode',
+          type: 'select',
+          label: '조건 일치 시 전송 방식',
+          options: ['copy', 'original'],
+          default: 'copy',
+          description:
+            'copy: 복사본 전송(메시지 id 새로 부여) / original: 원본 전송(메시지 id 유지). all 모드에서 한 메시지가 2개 이상 포트로 가는 경우는 복사본이 강제됩니다.',
+        },
+        {
           name: 'default_port',
           type: 'string',
           label: '기본 포트(미매칭)',

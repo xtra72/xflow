@@ -732,6 +732,235 @@ func TestSwitchNode_Ports_재Configure반영(t *testing.T) {
 	assert.Equal(t, map[string]bool{"a": true, "b": true}, portNames(node.Ports(), flow.PortOutput))
 }
 
+// =============================================================================
+// SPEC-SWITCH-002: pass_mode (copy | original) — 메시지 ID/식별성 보존 옵션
+// =============================================================================
+//
+// 판별자(discriminator): message.Clone() 은 ID를 새로 생성하므로(uuid.New),
+// 다음과 같이 ID 비교로 copy/original 을 구분한다.
+//   - original 모드: 방출 메시지 .ID() == 입력 .ID() (동일 객체, 식별성 보존)
+//   - copy 모드:     방출 메시지 .ID() != 입력 .ID() (Clone, 새 ID)
+
+// --- AC-SWITCH-040: pass_mode copy(기본) — first 매칭 시 Clone ---
+
+// TestSwitchNode_PassMode_copy기본_first매칭_Clone 은 pass_mode 미설정/copy 에서
+// first 매칭이 Clone(ID 상이)되고 원본은 _target_port 로 오염되지 않는지 확인한다.
+func TestSwitchNode_PassMode_copy기본_first매칭_Clone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		passMode any // nil = 미설정
+	}{
+		{"pass_mode 미설정 (기본 copy)", nil},
+		{"pass_mode copy 명시", "copy"},
+		{"pass_mode 미인식 값 (copy 폴백)", "bogus"},
+		{"pass_mode 빈 문자열 (copy 폴백)", ""},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := map[string]any{
+				"routes": []any{
+					map[string]any{"name": "hot", "condition": "$.payload.temp >= 30"},
+				},
+			}
+			if tt.passMode != nil {
+				cfg["pass_mode"] = tt.passMode
+			}
+
+			def := flow.NewNodeDef("switch-copy-first", "switch")
+			node, _ := NewSwitchNode(def)
+			require.NoError(t, node.Configure(cfg))
+
+			src := tempMsg(35)
+			results, err := node.Process(context.Background(), src)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+
+			// Clone 이므로 ID 가 원본과 다르다.
+			assert.NotEqual(t, src.ID(), results[0].ID())
+			assert.Equal(t, "hot", targetPort(t, results[0]))
+
+			// 원본은 _target_port 로 오염되지 않아야 한다.
+			_, polluted := src.Metadata().Get("_target_port")
+			assert.False(t, polluted, "copy 모드에서 원본은 _target_port 가 설정되면 안 된다")
+		})
+	}
+}
+
+// --- AC-SWITCH-041: pass_mode original — first 매칭 시 원본 그대로 ---
+
+// TestSwitchNode_PassMode_original_first매칭_원본 은 pass_mode=original 에서
+// first 매칭이 동일 메시지(ID 동일)로 방출되고 _target_port 가 설정되는지 확인한다.
+func TestSwitchNode_PassMode_original_first매칭_원본(t *testing.T) {
+	t.Parallel()
+
+	def := flow.NewNodeDef("switch-orig-first", "switch")
+	node, _ := NewSwitchNode(def)
+	require.NoError(t, node.Configure(map[string]any{
+		"pass_mode": "original",
+		"routes": []any{
+			map[string]any{"name": "hot", "condition": "$.payload.temp >= 30"},
+		},
+	}))
+
+	src := tempMsg(35)
+	results, err := node.Process(context.Background(), src)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 동일 메시지(ID 동일).
+	assert.Equal(t, src.ID(), results[0].ID())
+	assert.Equal(t, "hot", targetPort(t, results[0]))
+}
+
+// --- AC-SWITCH-042: pass_mode original — all 모드 단일 매칭 시 원본 그대로 ---
+
+// TestSwitchNode_PassMode_original_all단일매칭_원본 은 original + all 모드에서
+// 매칭 라우트가 정확히 1개면 원본(ID 동일)을 방출하는지 확인한다.
+func TestSwitchNode_PassMode_original_all단일매칭_원본(t *testing.T) {
+	t.Parallel()
+
+	def := flow.NewNodeDef("switch-orig-all-single", "switch")
+	node, _ := NewSwitchNode(def)
+	require.NoError(t, node.Configure(map[string]any{
+		"pass_mode":  "original",
+		"match_mode": "all",
+		"routes": []any{
+			map[string]any{"name": "warm", "condition": "$.payload.temp >= 20"},
+			map[string]any{"name": "hot", "condition": "$.payload.temp >= 30"},
+		},
+	}))
+
+	// temp=25 → warm 만 매칭(단일).
+	src := tempMsg(25)
+	results, err := node.Process(context.Background(), src)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// 단일 매칭이므로 원본(ID 동일).
+	assert.Equal(t, src.ID(), results[0].ID())
+	assert.Equal(t, "warm", targetPort(t, results[0]))
+}
+
+// --- AC-SWITCH-043: pass_mode original — all 모드 다중 매칭 시 강제 Clone ---
+
+// TestSwitchNode_PassMode_original_all다중매칭_강제Clone 은 original + all 모드라도
+// 매칭 라우트가 2개 이상이면 강제로 Clone(ID 상이)하는지 확인한다.
+// 단일 객체가 서로 다른 포트의 _target_port 를 동시에 가질 수 없기 때문이다.
+func TestSwitchNode_PassMode_original_all다중매칭_강제Clone(t *testing.T) {
+	t.Parallel()
+
+	def := flow.NewNodeDef("switch-orig-all-multi", "switch")
+	node, _ := NewSwitchNode(def)
+	require.NoError(t, node.Configure(map[string]any{
+		"pass_mode":  "original",
+		"match_mode": "all",
+		"routes": []any{
+			map[string]any{"name": "warm", "condition": "$.payload.temp >= 20"},
+			map[string]any{"name": "hot", "condition": "$.payload.temp >= 30"},
+		},
+	}))
+
+	// temp=35 → warm, hot 둘 다 매칭(다중).
+	src := tempMsg(35)
+	results, err := node.Process(context.Background(), src)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	// 다중 매칭 → 강제 Clone (각 출력 ID 가 원본과 다르다).
+	for _, r := range results {
+		assert.NotEqual(t, src.ID(), r.ID(), "다중 매칭은 강제 Clone 되어야 한다")
+	}
+	// 순서 보존 + 각 _target_port 정확.
+	assert.Equal(t, "warm", targetPort(t, results[0]))
+	assert.Equal(t, "hot", targetPort(t, results[1]))
+}
+
+// --- AC-SWITCH-044: pass_mode original — 미매칭 + default_port 시 원본 그대로 ---
+
+// TestSwitchNode_PassMode_original_default_원본 은 original 모드에서 미매칭 시
+// default_port 방출이 원본(ID 동일)인지 확인한다.
+func TestSwitchNode_PassMode_original_default_원본(t *testing.T) {
+	t.Parallel()
+
+	def := flow.NewNodeDef("switch-orig-default", "switch")
+	node, _ := NewSwitchNode(def)
+	require.NoError(t, node.Configure(map[string]any{
+		"pass_mode":    "original",
+		"default_port": "other",
+		"routes": []any{
+			map[string]any{"name": "hot", "condition": "$.payload.temp >= 30"},
+		},
+	}))
+
+	src := tempMsg(5) // 미매칭
+	results, err := node.Process(context.Background(), src)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// default 방출이 원본(ID 동일).
+	assert.Equal(t, src.ID(), results[0].ID())
+	assert.Equal(t, "other", targetPort(t, results[0]))
+}
+
+// --- AC-SWITCH-045: pass_mode copy — default_port 시 Clone ---
+
+// TestSwitchNode_PassMode_copy_default_Clone 은 copy 모드에서 default_port 방출이
+// Clone(ID 상이)이고 원본이 오염되지 않는지 확인한다.
+func TestSwitchNode_PassMode_copy_default_Clone(t *testing.T) {
+	t.Parallel()
+
+	def := flow.NewNodeDef("switch-copy-default", "switch")
+	node, _ := NewSwitchNode(def)
+	require.NoError(t, node.Configure(map[string]any{
+		"default_port": "other",
+		"routes": []any{
+			map[string]any{"name": "hot", "condition": "$.payload.temp >= 30"},
+		},
+	}))
+
+	src := tempMsg(5) // 미매칭
+	results, err := node.Process(context.Background(), src)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	assert.NotEqual(t, src.ID(), results[0].ID())
+	assert.Equal(t, "other", targetPort(t, results[0]))
+	_, polluted := src.Metadata().Get("_target_port")
+	assert.False(t, polluted)
+}
+
+// --- AC-SWITCH-046: pass_mode copy — all 단일 매칭도 Clone ---
+
+// TestSwitchNode_PassMode_copy_all단일매칭_Clone 은 copy 모드에서는 all 단일 매칭도
+// Clone(ID 상이)되는지 확인한다(original 과 대비).
+func TestSwitchNode_PassMode_copy_all단일매칭_Clone(t *testing.T) {
+	t.Parallel()
+
+	def := flow.NewNodeDef("switch-copy-all-single", "switch")
+	node, _ := NewSwitchNode(def)
+	require.NoError(t, node.Configure(map[string]any{
+		"match_mode": "all",
+		"routes": []any{
+			map[string]any{"name": "warm", "condition": "$.payload.temp >= 20"},
+			map[string]any{"name": "hot", "condition": "$.payload.temp >= 30"},
+		},
+	}))
+
+	src := tempMsg(25) // warm 만 매칭(단일)
+	results, err := node.Process(context.Background(), src)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	assert.NotEqual(t, src.ID(), results[0].ID())
+	assert.Equal(t, "warm", targetPort(t, results[0]))
+}
+
 // --- 동시성: Process + Configure + Ports 동시 호출 ---
 
 // TestSwitchNode_동시성안전_Configure_Process_Ports 는 Configure/Process/Ports를
