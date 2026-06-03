@@ -13,6 +13,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
 import { edgeLinkName, isVirtualEdge } from '@/lib/flow/virtualLinks';
+import { isEdgeConnectedToNode } from '@/lib/flow/connectionFocus';
 
 /**
  * 커스텀 엣지 컴포넌트.
@@ -42,14 +43,36 @@ export function CustomEdge({
   const edge = useEditorStore((s) => s.edges.find((e) => e.id === id));
   const highlightedLinkName = useEditorStore((s) => s.highlightedLinkName);
 
+  // Feature 1: 가상 와이어 표시 토글. 켜면 가상 엣지도 일반 연결선처럼 그린다.
+  const showVirtualWires = useEditorStore((s) => s.showVirtualWires);
+
+  // Feature 2: 연결 포커스. 토글이 켜지고 단일 노드가 선택되면, 이 엣지가 선택
+  // 노드에 닿는지에 따라 강조/흐림을 결정한다.
+  const focusOn = useEditorStore((s) => s.focusConnectionsOnSelect);
+  const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
+
   const virtual = edge ? isVirtualEdge(edge) : false;
   const linkName = edge ? edgeLinkName(edge) : '';
   // 가상 링크가 하이라이트 대상인지: 같은 이름 그룹이 활성화된 경우(빈 이름 제외).
   const groupHighlighted =
     virtual && linkName !== '' && highlightedLinkName === linkName;
   // 가상 엣지를 화면에 그릴지 여부: 비가상은 항상 그린다(하위 호환, REQ-LINK-025).
-  // 가상은 선택되었거나 같은 이름 그룹이 하이라이트된 경우에만 그린다.
-  const showPath = !virtual || selected === true || groupHighlighted;
+  // 가상은 (a) 가상 와이어 표시 토글이 켜졌거나, (b) 선택되었거나,
+  // (c) 같은 이름 그룹이 하이라이트된 경우에 그린다.
+  const showPath =
+    !virtual || showVirtualWires || selected === true || groupHighlighted;
+
+  // 연결 포커스 활성 여부: 토글 ON + 단일 노드 선택 시에만 흐림/강조를 적용한다.
+  const focusActive = focusOn && selectedNodeId !== null;
+  // 이 엣지가 선택 노드에 닿는지(연결 엣지인지).
+  const touchesSelected =
+    focusActive && edge !== undefined
+      ? isEdgeConnectedToNode(edge, selectedNodeId)
+      : false;
+  // 포커스 모드에서 선택 노드에 닿지 않는 엣지는 흐리게 처리한다.
+  const focusDimmed = focusActive && !touchesSelected;
+  // 포커스 모드에서 선택 노드에 닿는 엣지는 강조한다.
+  const focusEmphasized = focusActive && touchesSelected;
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -85,6 +108,11 @@ export function CustomEdge({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={handleClick}
+      // Feature 2: 포커스 모드에서 선택 노드에 닿지 않는 엣지는 흐리게 처리한다.
+      className={cn(
+        'transition-opacity duration-150',
+        focusDimmed && 'opacity-20',
+      )}
     >
       {/* 엣지 경로. 가상 링크가 하이라이트로 일시 표시될 때는 점선으로 강조한다. */}
       <BaseEdge
@@ -93,14 +121,20 @@ export function CustomEdge({
         markerEnd={markerEnd}
         className={cn(
           'transition-all duration-150',
-          selected || groupHighlighted
+          // 선택/그룹 하이라이트/포커스 강조 시 파란색으로 표시한다.
+          selected || groupHighlighted || focusEmphasized
             ? '!stroke-blue-500'
             : '!stroke-zinc-300 dark:!stroke-zinc-600',
         )}
         style={{
-          strokeWidth: selected || groupHighlighted ? 2.5 : 1.5,
+          strokeWidth:
+            selected || groupHighlighted || focusEmphasized ? 2.5 : 1.5,
           // 가상 링크를 일시 표시할 때는 점선으로 "원래 숨겨진 선"임을 구분한다.
-          strokeDasharray: groupHighlighted && !selected ? '6 4' : undefined,
+          // 단, 가상 와이어 표시 토글로 항상 표시 중일 때는 실선으로 둔다.
+          strokeDasharray:
+            groupHighlighted && !selected && !showVirtualWires
+              ? '6 4'
+              : undefined,
         }}
       />
 

@@ -6,6 +6,9 @@ import { useNavigate } from 'react-router';
 import {
   Check,
   ChevronDown,
+  Eye,
+  EyeOff,
+  Focus,
   Grid3x3,
   Pencil,
   Play,
@@ -79,6 +82,14 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
   // 에디터 그리드 스냅 (v0.18.4)
   const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
   const toggleEditorSnapToGrid = useUIStore((s) => s.toggleEditorSnapToGrid);
+
+  // 뷰 전용 표시 토글 (가상 와이어 표시 / 연결 포커스)
+  const showVirtualWires = useEditorStore((s) => s.showVirtualWires);
+  const toggleShowVirtualWires = useEditorStore((s) => s.toggleShowVirtualWires);
+  const focusConnectionsOnSelect = useEditorStore(
+    (s) => s.focusConnectionsOnSelect,
+  );
+  const toggleFocusConnections = useEditorStore((s) => s.toggleFocusConnections);
 
   // 플로우 상태 조회 (5초 간격 폴링)
   const { data: statusInfo } = useFlowStatus(flowId);
@@ -243,6 +254,22 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         label={editorSnapToGrid ? '그리드 스냅 끄기' : '그리드 스냅 켜기'}
         onClick={toggleEditorSnapToGrid}
         active={editorSnapToGrid}
+      />
+
+      {/* 가상 와이어 표시 토글 — 켜면 가상 와이어 선을 일반 연결선처럼 그린다. */}
+      <ToolbarButton
+        icon={showVirtualWires ? Eye : EyeOff}
+        label={showVirtualWires ? '가상 와이어 숨김' : '가상 와이어 표시'}
+        onClick={toggleShowVirtualWires}
+        active={showVirtualWires}
+      />
+
+      {/* 연결 포커스 토글 — 켜고 노드를 선택하면 직접 연결만 강조하고 나머지를 흐리게. */}
+      <ToolbarButton
+        icon={Focus}
+        label="연결 포커스"
+        onClick={toggleFocusConnections}
+        active={focusConnectionsOnSelect}
       />
 
       {/* 2026-05-31: 플로우 표시 설정 모달 */}

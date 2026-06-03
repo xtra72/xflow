@@ -131,6 +131,28 @@ interface EditorState {
    * pushUndo / dirty 로직에 절대 포함하지 않는다.
    */
   clipboard: Node[];
+  /**
+   * 가상 와이어 표시 토글(뷰 전용).
+   *
+   * - false(기본): 가상 와이어 선을 숨기고 포트별 컴팩트 링크 인디케이터를 보인다(기존 동작).
+   * - true: 가상 와이어를 일반 연결선처럼 그리고, 중복되는 컴팩트 인디케이터는 숨긴다.
+   *
+   * 라우팅/저장 데이터/엔진 동작에 전혀 영향을 주지 않는 순수 표시 상태이므로
+   * pushUndo / isDirty 로직에 절대 포함하지 않으며, 플로우 로드/리셋 시에도
+   * 유지한다(뷰 설정은 플로우와 무관하게 사용자 선호로 본다).
+   */
+  showVirtualWires: boolean;
+  /**
+   * 연결 포커스 토글(뷰 전용).
+   *
+   * - true 이고 정확히 한 노드가 선택되면, 선택 노드와 1-hop 연결된 노드/엣지만
+   *   강조하고 그 외는 흐리게(opacity) 렌더한다.
+   * - false 이거나 선택 노드가 없으면(또는 다중 선택) 일반 렌더(흐림 없음).
+   *
+   * showVirtualWires 와 동일하게 순수 표시 상태이므로 pushUndo / isDirty 에
+   * 포함하지 않고, 플로우 로드/리셋 시에도 유지한다.
+   */
+  focusConnectionsOnSelect: boolean;
 }
 
 interface EditorActions {
@@ -169,6 +191,10 @@ interface EditorActions {
   setDirty: (dirty: boolean) => void;
   /** 현재 편집 중인 플로우 ID 설정 (hydration 시). dirty/undo 에 영향 없음. */
   setCurrentFlowId: (flowId: string | null) => void;
+  /** 가상 와이어 표시 토글 (뷰 전용, dirty/undo 무관). */
+  toggleShowVirtualWires: () => void;
+  /** 연결 포커스 토글 (뷰 전용, dirty/undo 무관). */
+  toggleFocusConnections: () => void;
   resetEditor: () => void;
 }
 
@@ -200,6 +226,9 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   redoStack: [],
   currentFlowId: null,
   clipboard: [],
+  // 뷰 전용 표시 토글 — 기본값 false(기존 동작과 100% 동일하게 렌더).
+  showVirtualWires: false,
+  focusConnectionsOnSelect: false,
 
   // Actions
 
@@ -457,6 +486,15 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   // currentFlowId 는 식별자일 뿐이므로 dirty 나 undo 스택을 건드리지 않는다.
   setCurrentFlowId: (flowId) =>
     set({ currentFlowId: flowId }),
+
+  // 뷰 전용 토글 — 표시 상태만 뒤집고 dirty/undo 스택을 건드리지 않는다.
+  toggleShowVirtualWires: () =>
+    set((state) => ({ showVirtualWires: !state.showVirtualWires })),
+
+  toggleFocusConnections: () =>
+    set((state) => ({
+      focusConnectionsOnSelect: !state.focusConnectionsOnSelect,
+    })),
 
   resetEditor: () =>
     set({

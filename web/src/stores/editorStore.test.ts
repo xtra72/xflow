@@ -512,3 +512,62 @@ describe('editorStore - onNodesChange/onEdgesChange dirty 처리', () => {
     expect(useEditorStore.getState().isDirty).toBe(false);
   });
 });
+
+describe('editorStore - 뷰 전용 표시 토글 (showVirtualWires / focusConnectionsOnSelect)', () => {
+  const oneNode: Node[] = [
+    { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
+  ];
+
+  beforeEach(() => {
+    useEditorStore.getState().resetEditor();
+    // resetEditor 는 뷰 토글을 의도적으로 보존하므로(플로우 무관 선호),
+    // 테스트 간 격리를 위해 명시적으로 false 로 되돌린다.
+    useEditorStore.setState({
+      showVirtualWires: false,
+      focusConnectionsOnSelect: false,
+    });
+  });
+
+  it('두 토글의 초기값은 false 이다 (기존 동작 유지)', () => {
+    const state = useEditorStore.getState();
+    expect(state.showVirtualWires).toBe(false);
+    expect(state.focusConnectionsOnSelect).toBe(false);
+  });
+
+  it('toggleShowVirtualWires 는 값을 뒤집는다', () => {
+    useEditorStore.getState().toggleShowVirtualWires();
+    expect(useEditorStore.getState().showVirtualWires).toBe(true);
+    useEditorStore.getState().toggleShowVirtualWires();
+    expect(useEditorStore.getState().showVirtualWires).toBe(false);
+  });
+
+  it('toggleFocusConnections 는 값을 뒤집는다', () => {
+    useEditorStore.getState().toggleFocusConnections();
+    expect(useEditorStore.getState().focusConnectionsOnSelect).toBe(true);
+    useEditorStore.getState().toggleFocusConnections();
+    expect(useEditorStore.getState().focusConnectionsOnSelect).toBe(false);
+  });
+
+  it('토글은 isDirty / undo / redo 스택에 영향을 주지 않는다 (뷰 전용)', () => {
+    useEditorStore.getState().setDirty(false);
+
+    useEditorStore.getState().toggleShowVirtualWires();
+    useEditorStore.getState().toggleFocusConnections();
+
+    const state = useEditorStore.getState();
+    expect(state.isDirty).toBe(false);
+    expect(state.undoStack).toHaveLength(0);
+    expect(state.redoStack).toHaveLength(0);
+  });
+
+  it('loadFlow 는 뷰 토글을 초기화하지 않는다 (플로우와 무관한 사용자 선호)', () => {
+    useEditorStore.getState().toggleShowVirtualWires();
+    useEditorStore.getState().toggleFocusConnections();
+
+    useEditorStore.getState().loadFlow(oneNode, []);
+
+    const state = useEditorStore.getState();
+    expect(state.showVirtualWires).toBe(true);
+    expect(state.focusConnectionsOnSelect).toBe(true);
+  });
+});
