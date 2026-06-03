@@ -20,14 +20,14 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 		},
 		"metadata": map[string]any{
 			"device_type": "rac",
-			"label":       "Living Room",
+			"name":        "Living Room",
 			"slot_num":    1,
 		},
 	}
 
 	// v0.18.26: UnitID / SlotNum 필드 삭제. 남은 옵션 (NodeID / DeviceType /
-	// Label / NodeSource) 만 ON.
-	promotePayloadMetadata(msg, payload, MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true})
+	// Name / NodeSource) 만 ON.
+	promotePayloadMetadata(msg, payload, MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true})
 
 	if _, exists := payload["metadata"]; exists {
 		t.Fatalf("payload['metadata'] 가 제거되어야 하지만 남아 있음: %v", payload["metadata"])
@@ -36,7 +36,7 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 	// v0.18.26: slot_num 은 출력 metadata 에서 제거.
 	cases := map[string]string{
 		"device_type": "rac",
-		"label":       "Living Room",
+		"name":        "Living Room",
 	}
 	for k, want := range cases {
 		got, ok := msg.Metadata().Get(k)

@@ -58,13 +58,16 @@ func promoteDevIDToMetadata(msg message.Message, payload map[string]any) {
 // payload["unit_id"] 를 키로
 //
 //  1. 글로벌 UUID 를 조회해 payload["device_id"] 에 주입 (v0.18.7)
-//  2. 등록된 DeviceInfo (device_type / label) 가 있으면 opts 가 허용한 필드만
+//  2. 등록된 DeviceInfo (device_type / name) 가 있으면 opts 가 허용한 필드만
 //     metadata 에 직접 주입 (v0.18.7, v0.18.8 에서 opts 도입)
 //
 // 한 뒤 device_id 를 metadata 로 promote 하고 unit_id 는 payload 에서 제거한다.
 //
-// opts: MetadataEmitOptions — DeviceType / Label 등 옵션 필드 토글.
-// zero-value 시 device_type / label 은 emit 되지 않음 (default minimal).
+// opts: MetadataEmitOptions — DeviceType / Name 등 옵션 필드 토글.
+// zero-value 시 device_type / name 은 emit 되지 않음 (default minimal).
+//
+// 주의: name metadata 의 값 소스는 DeviceInfo.Label (디바이스 라벨 값) 이며,
+// 출력 metadata 키 이름만 "name" 으로 노출한다.
 //
 // v0.18.26: unit_id 출력 토글 제거. unit_id 는 항상 payload 에서 제거되고
 // metadata 에는 노출되지 않는다.
@@ -75,13 +78,13 @@ func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName
 			if uuid := agent.ResolveDeviceID(context.Background(), agentName, unitIDStr); uuid != "" {
 				payload["device_id"] = uuid
 			}
-			if opts.DeviceType || opts.Label {
+			if opts.DeviceType || opts.Name {
 				if info, ok := agent.GetDeviceInfo(agentName, unitIDStr); ok {
 					if opts.DeviceType && info.DeviceType != "" {
 						msg.Metadata().Set("device_type", info.DeviceType)
 					}
-					if opts.Label && info.Label != "" {
-						msg.Metadata().Set("label", info.Label)
+					if opts.Name && info.Label != "" {
+						msg.Metadata().Set("name", info.Label)
 					}
 				}
 			}
