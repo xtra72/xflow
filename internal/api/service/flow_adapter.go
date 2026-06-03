@@ -881,6 +881,12 @@ func convertReactFlowEdgesToWires(def map[string]any) {
 		if wt, ok := edge["wire_type"].(string); ok {
 			converted["type"] = wt
 		}
+		// 가상(네임드) 링크 플래그 통과(SPEC-LINK-001, REQ-LINK-002).
+		// virtual 은 표시 전용 플래그이며 라우팅에 영향을 주지 않는다.
+		// 키가 없으면 기본 false 로 해석되므로 명시 통과만 한다.
+		if v, ok := edge["virtual"].(bool); ok {
+			converted["virtual"] = v
+		}
 		// 출력 큐 기본 정책(SPEC-OUTPUT-QUEUE):
 		// 1) buffer_size 키가 전혀 없으면 → 기본 큐(buffer_size=100, mode="buffer").
 		// 2) buffer_size==0 → bypass opt-out (mode 강제 안 함; 명시 mode 만 보존).
@@ -1086,6 +1092,9 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 			"wire_type":    string(w.Type),
 			"mode":         string(w.Mode),
 			"buffer_size":  w.BufferSize,
+			// 가상(네임드) 링크 플래그를 프론트로 반환한다(SPEC-LINK-001).
+			// 저장-로드 라운드트립에서 virtual/name 이 보존되도록 한다.
+			"virtual": w.Virtual,
 		}
 		reactEdges = append(reactEdges, reactEdge)
 	}

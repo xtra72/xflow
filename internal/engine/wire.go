@@ -29,6 +29,11 @@ type RuntimeWire struct {
 
 // CreateRuntimeWires 는 flow.Wire 슬라이스로부터 RuntimeWire 슬라이스를 생성한다.
 // WireBypass 모드는 unbuffered 채널, WireBuffer 모드는 buffered 채널(최소 1)을 생성한다.
+//
+// 참고: flow.Wire.Virtual 은 웹 에디터 표시 전용 플래그(SPEC-LINK-001)이므로
+// 런타임 와이어로 복사하지 않으며 라우팅/큐/채널 생성에 전혀 관여하지 않는다.
+// virtual=true 와이어와 virtual=false 와이어는 동일한 RuntimeWire 를 만들고
+// 완전히 동일하게 메시지를 라우팅한다(REQ-LINK-005, REQ-LINK-006).
 func CreateRuntimeWires(wires []flow.Wire) ([]*RuntimeWire, error) {
 	result := make([]*RuntimeWire, 0, len(wires))
 

@@ -437,3 +437,112 @@ func TestCreateRuntimeWires_NameAndType(t *testing.T) {
 		t.Errorf("expected Type %q, got %q", flow.WireSimple, rw.Type)
 	}
 }
+
+// TestCreateRuntimeWires_VirtualIgnored 는 flow.Wire.Virtual 플래그가 RuntimeWire
+// 생성(채널 종류/버퍼/모드)에 어떠한 영향도 주지 않음을 검증한다.
+// virtual=true 와이어와 virtual=false 와이어는 완전히 동일한 RuntimeWire 를
+// 만들어야 한다 (SPEC-LINK-001 REQ-LINK-005/006, AC-B3: display-only).
+func TestCreateRuntimeWires_VirtualIgnored(t *testing.T) {
+	base := func(virtual bool) flow.Wire {
+		return flow.Wire{
+			ID:           "w1",
+			Name:         "sensor",
+			Type:         flow.WireSimple,
+			SourceNodeID: "n1",
+			SourcePort:   "out",
+			TargetNodeID: "n2",
+			TargetPort:   "in",
+			Mode:         flow.WireBuffer,
+			BufferSize:   8,
+			Virtual:      virtual,
+		}
+	}
+
+	plain, err := CreateRuntimeWires([]flow.Wire{base(false)})
+	if err != nil {
+		t.Fatalf("virtual=false 변환 실패: %v", err)
+	}
+	virt, err := CreateRuntimeWires([]flow.Wire{base(true)})
+	if err != nil {
+		t.Fatalf("virtual=true 변환 실패: %v", err)
+	}
+
+	pw, vw := plain[0], virt[0]
+
+	// 라우팅에 영향을 주는 모든 필드가 동일해야 한다.
+	if pw.Mode != vw.Mode {
+		t.Errorf("Mode 불일치: virtual=false %q, virtual=true %q", pw.Mode, vw.Mode)
+	}
+	if pw.BufferSize != vw.BufferSize {
+		t.Errorf("BufferSize 불일치: %d vs %d", pw.BufferSize, vw.BufferSize)
+	}
+	if cap(pw.Ch) != cap(vw.Ch) {
+		t.Errorf("채널 용량 불일치: virtual 이 채널 종류에 영향을 줌 (%d vs %d)", cap(pw.Ch), cap(vw.Ch))
+	}
+	if pw.Type != vw.Type || pw.SourceNodeID != vw.SourceNodeID || pw.TargetNodeID != vw.TargetNodeID ||
+		pw.SourcePort != vw.SourcePort || pw.TargetPort != vw.TargetPort {
+		t.Error("토폴로지 필드가 virtual 에 따라 달라짐")
+	}
+}
+
+// TestRuntimeWire_VirtualMessageDeliveryIdentical 는 virtual 여부와 무관하게
+// 메시지 전달 동작(전달/순서)이 동일함을 직접 입증한다 (REQ-LINK-005, AC-B3).
+// virtual=true 토폴로지와 virtual=false 토폴로지에서 동일 메시지를 흘려보내면
+// 수신 메시지 ID 순서가 완전히 같아야 한다.
+func TestRuntimeWire_VirtualMessageDeliveryIdentical(t *testing.T) {
+	// deliver 는 와이어로 송신한 메시지 ID 와 수신한 메시지 ID 슬라이스를 반환한다.
+	// 수신 순서가 송신 순서와 동일한지(순서 불변) 외부에서 비교할 수 있게 한다.
+	deliver := func(virtual bool) (sent, received []string) {
+		wires := []flow.Wire{
+			{
+				ID:           "w1",
+				SourceNodeID: "n1",
+				SourcePort:   "out",
+				TargetNodeID: "n2",
+				TargetPort:   "in",
+				Mode:         flow.WireBuffer,
+				BufferSize:   4,
+				Virtual:      virtual,
+			},
+		}
+		rws, err := CreateRuntimeWires(wires)
+		if err != nil {
+			t.Fatalf("CreateRuntimeWires 실패(virtual=%v): %v", virtual, err)
+		}
+		rw := rws[0]
+		ctx := context.Background()
+
+		msgs := []message.Message{message.New(), message.New(), message.New()}
+		for _, m := range msgs {
+			if err := rw.Send(ctx, m); err != nil {
+				t.Fatalf("Send 실패(virtual=%v): %v", virtual, err)
+			}
+			sent = append(sent, m.ID())
+		}
+
+		for range msgs {
+			received = append(received, (<-rw.Ch).ID())
+		}
+		return sent, received
+	}
+
+	plainSent, plainRecv := deliver(false)
+	virtSent, virtRecv := deliver(true)
+
+	// 1) 두 경우 모두 송신 순서와 수신 순서가 완전히 동일해야 한다(순서/전달 불변).
+	for i := range plainSent {
+		if plainSent[i] != plainRecv[i] {
+			t.Errorf("virtual=false 순서 불변 위반: idx %d 송신 %q != 수신 %q", i, plainSent[i], plainRecv[i])
+		}
+	}
+	for i := range virtSent {
+		if virtSent[i] != virtRecv[i] {
+			t.Errorf("virtual=true 순서 불변 위반: idx %d 송신 %q != 수신 %q", i, virtSent[i], virtRecv[i])
+		}
+	}
+
+	// 2) 전달된 메시지 개수가 virtual 여부와 무관하게 동일해야 한다.
+	if len(plainRecv) != len(virtRecv) {
+		t.Fatalf("수신 개수가 virtual 에 따라 달라짐: %d vs %d", len(plainRecv), len(virtRecv))
+	}
+}
