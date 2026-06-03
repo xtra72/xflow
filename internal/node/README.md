@@ -99,7 +99,7 @@ type ScriptEngine interface {
 |-----------|--------|------|
 | `filter` | `FilterNode` | 조건 기반 메시지 필터링 (조건 불일치 시 폐기) |
 | `transform` | `TransformNode` | 메시지 Payload 변환 (필드 추가/삭제/변환) |
-| `switch` | `SwitchNode` | 조건별 출력 포트 라우팅 (First-Match, 기본 라우트) |
+| `switch` | `SwitchNode` | 문자열 조건 기반 출력 포트 라우팅 (first/all 모드, default_port/드롭, 동적 포트) |
 | `bridge` | `BridgeNode` | Agent-Flow 간 브릿지 (In/Out/InOut/RequestReply 4모드) |
 | `script` | `ScriptNode` | ScriptEngine 기반 스크립트 메시지 처리 |
 | `catch` | `CatchNode` | 에러 포트 메시지 수신 및 심각도/범주 기반 필터링 |
@@ -212,6 +212,19 @@ n, err := registry.Create(bridgeDef,
 ```
 
 ## P2 노드 상세
+
+### SwitchNode (스위치 노드)
+
+문자열 조건을 평가하여 메시지를 출력 포트로 라우팅하는 노드이다. FilterNode와 동일한 `compileCondition` 표현식 엔진을 공유한다.
+
+- **라우트 정의**: `routes` 는 `{name, condition}` 객체 배열(배열 순서 보존)이다. `name` 이 곧 출력 포트 이름이자 와이어 `_target_port` 규약이 되며, `condition` 은 `compileCondition` 으로 컴파일되는 문자열 표현식이다. 기존 `[]SwitchRoute` (Go 클로저) 형식도 그대로 허용되어 하위 호환.
+- **매칭 모드** (`match_mode`): `first` (기본값) 는 순차 평가하여 첫 매칭 라우트로만 메시지(Clone) 1건 라우팅, `all` 은 매칭되는 모든 라우트의 포트로 각각 Clone 팬아웃. 미설정·미인식 값은 `first` 로 폴백.
+- **기본 포트/드롭** (`default_port`): 매칭이 하나도 없을 때 라우팅할 포트 이름. 비어 있으면 메시지를 드롭한다(빈 슬라이스 반환). 기본 출력 포트 이름은 고정값이 아니라 `default_port` 값 그 자체이다.
+- **동적 포트**: `Ports()` 가 라우트 `name` 목록(중복 제거, 순서 보존) + `default_port` 값으로부터 출력 포트를 파생한다. `routes` 가 비면 `[in, out, _error]` 정적 포트로 폴백하여 기존 플로우 동작을 보존한다.
+- **원자적 설정 적용**: `routes` 파싱 중 조건 컴파일 에러 발생 시 실패한 라우트(인덱스·name)를 식별하는 에러를 반환하고 기존 설정을 변경하지 않는다(부분 적용 금지).
+- **조건 표현식**: `$.payload.x`, `$.metadata.k` 경로, 연산자 `== != > < >= <=` / `&& || !`, `exists()`, 리터럴 지원.
+- **설정 키**: `routes` (`[{name, condition}]`), `match_mode` (`first`/`all`), `default_port`
+- **관련**: SPEC-SWITCH-001
 
 ### AggregateNode (집계 노드)
 

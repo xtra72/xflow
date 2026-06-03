@@ -33,7 +33,7 @@ export type ConfigSection = 'transport' | 'protocol' | 'operation' | 'logging';
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'string_list' | 'agent_select' | 'register_map' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields';
+  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'string_list' | 'agent_select' | 'register_map' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor';
   label: string;
   required?: boolean;
   default?: unknown;

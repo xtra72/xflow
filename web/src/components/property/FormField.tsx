@@ -15,6 +15,7 @@ import { StringListEditor } from './StringListEditor';
 import { TriggerScheduleEditor } from './TriggerScheduleEditor';
 import { FieldHelp } from './FieldHelp';
 import { CompareFieldsEditor } from './CompareFieldsEditor';
+import { RoutesEditor } from './RoutesEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -308,6 +309,14 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
 
       {field.type === 'compare_fields' && (
         <CompareFieldsEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'routes_editor' && (
+        <RoutesEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}
