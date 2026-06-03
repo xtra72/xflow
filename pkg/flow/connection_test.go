@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,5 +139,99 @@ func TestNewWire_UniqueIDs(t *testing.T) {
 
 	if wire1.ID == wire2.ID {
 		t.Errorf("두 와이어의 ID가 동일하다: %q", wire1.ID)
+	}
+}
+
+// TestNewWire_VirtualDefaultFalse 는 NewWire 기본 Virtual 값이 false 인지 검증한다 (REQ-LINK-001).
+func TestNewWire_VirtualDefaultFalse(t *testing.T) {
+	wire := NewWire("a", "out", "b", "in")
+
+	if wire.Virtual {
+		t.Errorf("기본 Virtual = %v, 기대값 false", wire.Virtual)
+	}
+}
+
+// TestNewWire_WithWireVirtual 은 WithWireVirtual 옵션이 Virtual 플래그를 설정하는지 검증한다 (REQ-LINK-001).
+func TestNewWire_WithWireVirtual(t *testing.T) {
+	tests := []struct {
+		name    string
+		virtual bool
+	}{
+		{name: "virtual true", virtual: true},
+		{name: "virtual false", virtual: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wire := NewWire("a", "out", "b", "in", WithWireVirtual(tt.virtual))
+			if wire.Virtual != tt.virtual {
+				t.Errorf("Virtual = %v, 기대값 %v", wire.Virtual, tt.virtual)
+			}
+		})
+	}
+}
+
+// TestWire_JSONRoundTrip_VirtualAndName 은 Wire 직렬화/역직렬화에서 virtual/name 이
+// JSON 키 그대로 보존되는지 검증한다 (REQ-LINK-001, AC-B1).
+func TestWire_JSONRoundTrip_VirtualAndName(t *testing.T) {
+	tests := []struct {
+		name    string
+		virtual bool
+	}{
+		{name: "virtual true", virtual: true},
+		{name: "virtual false", virtual: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := NewWire("node-a", "out", "node-b", "in",
+				WithWireVirtual(tt.virtual),
+			)
+			orig.Name = "sensor"
+
+			data, err := json.Marshal(orig)
+			if err != nil {
+				t.Fatalf("Marshal 실패: %v", err)
+			}
+
+			// JSON 키가 virtual / name 으로 직렬화되어야 한다.
+			if !strings.Contains(string(data), `"virtual"`) {
+				t.Errorf("직렬화 JSON 에 \"virtual\" 키가 없다: %s", data)
+			}
+			if !strings.Contains(string(data), `"name"`) {
+				t.Errorf("직렬화 JSON 에 \"name\" 키가 없다: %s", data)
+			}
+
+			var got Wire
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("Unmarshal 실패: %v", err)
+			}
+
+			if got.Virtual != tt.virtual {
+				t.Errorf("라운드트립 Virtual = %v, 기대값 %v", got.Virtual, tt.virtual)
+			}
+			if got.Name != "sensor" {
+				t.Errorf("라운드트립 Name = %q, 기대값 %q", got.Name, "sensor")
+			}
+		})
+	}
+}
+
+// TestWire_JSONUnmarshal_MissingVirtualDefaultsFalse 는 virtual 필드가 없는
+// 기존 플로우 정의가 기본 false 로 역직렬화되는지 검증한다 (REQ-LINK-031, AC-05).
+func TestWire_JSONUnmarshal_MissingVirtualDefaultsFalse(t *testing.T) {
+	// virtual 키가 전혀 없는 레거시 JSON.
+	legacy := `{"id":"w1","name":"legacy","source_node_id":"a","source_port":"out","target_node_id":"b","target_port":"in"}`
+
+	var got Wire
+	if err := json.Unmarshal([]byte(legacy), &got); err != nil {
+		t.Fatalf("Unmarshal 실패: %v", err)
+	}
+
+	if got.Virtual {
+		t.Errorf("virtual 키 없는 레거시 와이어 Virtual = %v, 기대값 false", got.Virtual)
+	}
+	if got.Name != "legacy" {
+		t.Errorf("Name = %q, 기대값 %q", got.Name, "legacy")
 	}
 }

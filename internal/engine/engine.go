@@ -37,6 +37,10 @@ type Engine struct {
 	config          map[string]any
 	onAgentStart    func(agent.Agent) // 에이전트 자동 시작 후 콜백
 	agentManager    agent.Manager     // 플로우 배포 시 에이전트 참조 검증용 (선택)
+
+	// unconnectedWarned 는 portCounter 가 없는 경로(주로 테스트)에서 미연결 포트
+	// 경고를 (nodeID, portName)당 1회로 제한하기 위한 폴백 dedupe 맵이다.
+	unconnectedWarned sync.Map
 }
 
 // NewEngine 은 지정된 옵션으로 새로운 Engine을 생성한다.
@@ -826,6 +830,7 @@ func buildNodeInstanceInfo(n node.Node, nc *nodeCounter) NodeInstanceInfo {
 			if pc != nil {
 				snap := pc.Snapshot()
 				pi.Messages = snap.Messages
+				pi.Delivered = snap.Delivered
 				pi.Throughput = snap.Throughput
 				pi.ActiveFor = snap.ActiveFor
 			}
@@ -1199,7 +1204,12 @@ func debugPortLog(ctx context.Context, logger observe.ComponentLogger, direction
 
 // sendToWires 는 메시지를 와이어 목록으로 fan-out 전송한다.
 // 마지막 와이어에는 원본을, 나머지에는 Clone을 전송한다.
-func (e *Engine) sendToWires(ctx context.Context, msg message.Message, wires []*RuntimeWire, nodeID string) {
+// sendToWires 는 메시지를 매칭된 와이어들로 전송(fan-out)하고,
+// 성공적으로 전달된 와이어 수를 반환한다.
+// 반환값 > 0 이면 해당 포트의 메시지가 최소 1개 이상의 와이어로 전달되었음을 의미하며,
+// 호출 측에서 이를 기반으로 포트의 delivered 카운터를 증가시킨다.
+func (e *Engine) sendToWires(ctx context.Context, msg message.Message, wires []*RuntimeWire, nodeID string) int {
+	delivered := 0
 	for i, w := range wires {
 		var msgToSend message.Message
 		if i == len(wires)-1 {
@@ -1215,8 +1225,38 @@ func (e *Engine) sendToWires(ctx context.Context, msg message.Message, wires []*
 					"error", err,
 				)
 			}
+			continue
+		}
+		delivered++
+	}
+	return delivered
+}
+
+// warnUnconnectedPort 는 메시지가 생산되었으나 연결된 와이어가 없는 포트에 대해
+// 경고를 로깅한다. pc.warnedUnconnected 가드를 통해 (nodeID, portName) 조합당
+// 단 한 번만 로깅되어 로그 스팸을 방지한다. pc 가 nil 이면(테스트 등) 가드 없이
+// 매번 로깅하지 않도록 별도 dedupe 맵을 사용한다.
+func (e *Engine) warnUnconnectedPort(nodeID, nodeName, portName string, pc *portCounter) {
+	if e.logger == nil {
+		return
+	}
+	if pc != nil {
+		// portCounter 기반 1회 가드 (정상 경로).
+		if !pc.warnedUnconnected.CompareAndSwap(false, true) {
+			return // 이미 경고함
+		}
+	} else {
+		// pc 가 없는 경우(주로 단위 테스트): (nodeID, portName) 키 기반 가드.
+		key := nodeID + "\x00" + portName
+		if _, loaded := e.unconnectedWarned.LoadOrStore(key, true); loaded {
+			return // 이미 경고함
 		}
 	}
+	e.logger.Warn("engine: 출력 포트에 연결된 와이어 없음 — 메시지 폐기",
+		"nodeID", nodeID,
+		"nodeName", nodeName,
+		"port", portName,
+	)
 }
 
 // sendErrorToWires 는 에러가 발생한 원본 메시지에 에러 메타데이터를 추가하여 에러 와이어로 전송한다.
@@ -1344,13 +1384,18 @@ func (e *Engine) runNode(
 									}
 								}
 								rt.messageCount.Add(1)
+								var pc *portCounter
 								if nc := rt.nodeCounters[n.ID()]; nc != nil {
 									nc.processed.Add(1)
-									if pc := nc.portCounters[portName]; pc != nil {
-										pc.Record()
+									if pc = nc.portCounters[portName]; pc != nil {
+										pc.Record() // emitted (생산)
 									}
 								}
-								e.sendToWires(ctx, msg, wires, n.ID())
+								// 이 고루틴은 len(wires) > 0 인 포트에 대해서만 시작되므로
+								// 항상 연결된 와이어가 존재한다.
+								if e.sendToWires(ctx, msg, wires, n.ID()) > 0 && pc != nil {
+									pc.RecordDelivered() // delivered (실제 전달)
+								}
 							}
 						}
 					}(pn, pch, targetWires)
@@ -1385,10 +1430,11 @@ func (e *Engine) runNode(
 						}
 					}
 					rt.messageCount.Add(1)
+					var pc *portCounter
 					if nc := rt.nodeCounters[n.ID()]; nc != nil {
 						nc.processed.Add(1)
-						if pc := nc.portCounters["out"]; pc != nil {
-							pc.Record()
+						if pc = nc.portCounters["out"]; pc != nil {
+							pc.Record() // emitted (생산)
 						}
 					}
 					if e.logger != nil && nodeLogger != nil && nodeLogger.Logger().Enabled(ctx, slog.LevelDebug) {
@@ -1401,7 +1447,11 @@ func (e *Engine) runNode(
 						)
 					}
 					debugPortLog(ctx, nodeLogger, "source", n.ID(), msg)
-					e.sendToWires(ctx, msg, outWires, n.ID())
+					if len(outWires) == 0 {
+						e.warnUnconnectedPort(n.ID(), n.Name(), "out", pc)
+					} else if e.sendToWires(ctx, msg, outWires, n.ID()) > 0 && pc != nil {
+						pc.RecordDelivered() // delivered (실제 전달)
+					}
 				}
 			}
 		}
@@ -1510,12 +1560,18 @@ func (e *Engine) runNode(
 					portName = "out"
 				}
 				debugPortLog(ctx, nodeLogger, "output", n.ID(), result)
+				var pc *portCounter
 				if nc := rt.nodeCounters[n.ID()]; nc != nil {
-					if pc := nc.portCounters[portName]; pc != nil {
-						pc.Record()
+					if pc = nc.portCounters[portName]; pc != nil {
+						pc.Record() // emitted (생산)
 					}
 				}
-				e.sendToWires(ctx, result, targetWires, n.ID())
+				// 연결된 와이어가 없으면 경고(포트당 1회) 후 폐기, 있으면 전달 후 delivered 기록.
+				if len(targetWires) == 0 {
+					e.warnUnconnectedPort(n.ID(), n.Name(), portName, pc)
+				} else if e.sendToWires(ctx, result, targetWires, n.ID()) > 0 && pc != nil {
+					pc.RecordDelivered() // delivered (실제 전달)
+				}
 			}
 		}
 	}

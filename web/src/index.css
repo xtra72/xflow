@@ -175,3 +175,27 @@
     @apply bg-gray-600;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * React Flow 컨트롤 패널 (zoom in/out 등) — 앱 테마 변수로 day/night/custom 대응.
+ *
+ * React Flow 기본 컨트롤 버튼은 colorMode(기본 light) 기준 흰 배경/inherit 색이라
+ * 나이트 모드에서 흰 박스 + 안 보이는 아이콘으로 렌더링되었다. 버튼은 color 와
+ * svg fill:currentColor 를 사용하므로, 앱 테마 변수로 background/color/border 를
+ * 덮어쓰면 아이콘까지 함께 테마에 맞게 보인다.
+ * (.react-flow 접두로 특정성을 높여 @xyflow 기본 스타일을 확실히 덮는다.)
+ * --------------------------------------------------------------------------- */
+.react-flow .react-flow__controls-button {
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border-default);
+  color: var(--color-text-primary);
+}
+
+.react-flow .react-flow__controls-button:hover {
+  background: var(--color-bg-sunken);
+}
+
+.react-flow .react-flow__controls-button:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}

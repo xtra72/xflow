@@ -170,14 +170,14 @@ func TestAgent_AC_H2_FirstEmitAfterReg02AndReg04(t *testing.T) {
 	if got, _ := m["unit_id"].(string); got != "0x3B" {
 		t.Errorf("unit_id = %q, want 0x3B", got)
 	}
-	// v0.5.0: label 은 metadata 그룹 안으로 이동.
+	// v0.5.0: 라벨 값은 metadata 그룹 안으로 이동 (키 이름은 "name").
 	if meta, ok := m["metadata"].(map[string]any); !ok {
 		t.Errorf("metadata group missing in %v", m)
-	} else if got, _ := meta["label"].(string); got != "indoor-3b" {
-		t.Errorf("metadata.label = %q, want indoor-3b", got)
+	} else if got, _ := meta["name"].(string); got != "indoor-3b" {
+		t.Errorf("metadata.name = %q, want indoor-3b", got)
 	}
-	if _, exists := m["label"]; exists {
-		t.Errorf("v0.5.0: label must NOT be at top-level (moved to metadata.label)")
+	if _, exists := m["name"]; exists {
+		t.Errorf("v0.5.0: name must NOT be at top-level (moved to metadata.name)")
 	}
 	// v0.4.0: 5 핵심 + online 은 nested "state" 그룹으로 이동.
 	st := deviceStateGroup(m)

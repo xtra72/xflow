@@ -213,9 +213,7 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 	}
 
 	if req.Name != nil {
-		// Flow 인터페이스에는 SetName 이 없으므로 재생성이 필요하다.
-		// 여기서는 description 변경만 지원한다.
-		_ = req.Name // 향후 확장 시 사용
+		f.SetName(*req.Name)
 	}
 	if req.Description != nil {
 		f.SetDescription(*req.Description)
@@ -267,8 +265,8 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		}
 	}
 
-	// description 또는 auto_start 변경 시 저장
-	if req.Description != nil || req.AutoStart != nil {
+	// name / description / auto_start 변경 시 저장
+	if req.Name != nil || req.Description != nil || req.AutoStart != nil {
 		if err := a.repo.Save(ctx, f); err != nil {
 			return nil, fmt.Errorf("flow update: save: %w", err)
 		}
@@ -586,6 +584,7 @@ func engineNodeToFlowNodeInfo(n engine.NodeInstanceInfo) handler.FlowNodeInfo {
 			Direction:  p.Direction,
 			Connected:  p.Connected,
 			Messages:   p.Messages,
+			Delivered:  p.Delivered,
 			Throughput: fmt.Sprintf("%.3f", p.Throughput),
 		}
 		if p.ActiveFor > 0 {
@@ -882,11 +881,42 @@ func convertReactFlowEdgesToWires(def map[string]any) {
 		if wt, ok := edge["wire_type"].(string); ok {
 			converted["type"] = wt
 		}
-		if modeStr, ok := edge["mode"].(string); ok && modeStr != "" {
-			converted["mode"] = modeStr
+		// 가상(네임드) 링크 플래그 통과(SPEC-LINK-001, REQ-LINK-002).
+		// virtual 은 표시 전용 플래그이며 라우팅에 영향을 주지 않는다.
+		// 키가 없으면 기본 false 로 해석되므로 명시 통과만 한다.
+		if v, ok := edge["virtual"].(bool); ok {
+			converted["virtual"] = v
 		}
-		if bufSize, ok := edge["buffer_size"].(float64); ok {
-			converted["buffer_size"] = int(bufSize)
+		// 출력 큐 기본 정책(SPEC-OUTPUT-QUEUE):
+		// 1) buffer_size 키가 전혀 없으면 → 기본 큐(buffer_size=100, mode="buffer").
+		// 2) buffer_size==0 → bypass opt-out (mode 강제 안 함; 명시 mode 만 보존).
+		// 3) buffer_size>0 이고 mode 미지정 → mode="buffer" 자동 설정.
+		// 4) 명시적 mode 는 항상 우선(예: "drop_oldest").
+		explicitMode, hasMode := edge["mode"].(string)
+		hasMode = hasMode && explicitMode != ""
+
+		bufRaw, hasBuf := edge["buffer_size"].(float64)
+		if !hasBuf {
+			// 1) buffer_size 키 없음 → 기본 큐.
+			converted["buffer_size"] = 100
+			if hasMode {
+				converted["mode"] = explicitMode // 명시 mode 우선
+			} else {
+				converted["mode"] = "buffer"
+			}
+		} else {
+			bufSize := int(bufRaw)
+			converted["buffer_size"] = bufSize
+			switch {
+			case hasMode:
+				// 4) 명시적 mode 우선 (drop_oldest, bypass 등 모두 보존).
+				converted["mode"] = explicitMode
+			case bufSize > 0:
+				// 3) buffer_size>0, mode 미지정 → buffer.
+				converted["mode"] = "buffer"
+			default:
+				// 2) buffer_size==0, mode 미지정 → bypass opt-out (mode 미설정).
+			}
 		}
 
 		convertedWires = append(convertedWires, converted)
@@ -1062,6 +1092,9 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 			"wire_type":    string(w.Type),
 			"mode":         string(w.Mode),
 			"buffer_size":  w.BufferSize,
+			// 가상(네임드) 링크 플래그를 프론트로 반환한다(SPEC-LINK-001).
+			// 저장-로드 라운드트립에서 virtual/name 이 보존되도록 한다.
+			"virtual": w.Virtual,
 		}
 		reactEdges = append(reactEdges, reactEdge)
 	}

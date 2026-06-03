@@ -981,7 +981,7 @@ func (a *Hvacr02Agent) processGetState(req *hvacr02ProcessRequest) ([]byte, erro
 	d := map[string]any{
 		"unit_id":     dev.Address,
 		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
-		"label":       dev.Label,
+		"name":        dev.Label,
 		"device_type": dev.Type,
 		"online":      dev.Online,
 	}
@@ -1008,7 +1008,7 @@ func (a *Hvacr02Agent) processGetAll() ([]byte, error) {
 		d := map[string]any{
 			"unit_id":     dev.Address,
 			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
-			"label":       dev.Label,
+			"name":        dev.Label,
 			"device_type": dev.Type,
 			"online":      dev.Online,
 		}
@@ -1931,7 +1931,7 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 		return
 	}
 	metadata := map[string]any{
-		"label":       dev.Label,
+		"name":        dev.Label,
 		"address":     dev.Address,
 		"device_type": dev.Type,
 	}

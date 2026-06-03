@@ -1,8 +1,8 @@
 // React Flow 기반 플로우 에디터 페이지.
 // 노드 팔레트, 캔버스, 속성 패널로 구성된 3컬럼 레이아웃을 제공한다.
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useParams } from 'react-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBlocker, useParams } from 'react-router';
 import {
   ReactFlow,
   MiniMap,
@@ -22,7 +22,9 @@ import { CustomNode } from '@/components/flow/CustomNode';
 import { CustomEdge } from '@/components/flow/CustomEdge';
 import { DebugPanel } from '@/components/flow/DebugPanel';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
+import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
 import { NodePalette } from '@/components/palette/NodePalette';
+import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
 import {
@@ -85,13 +87,26 @@ function EditorPageInner() {
     if (!runtimeNodes || !isFlowRunning) return {};
     const map: Record<string, NodeRuntimeStats> = {};
     for (const node of runtimeNodes) {
-      const inMessages = (node.ports ?? [])
+      const ports = node.ports ?? [];
+      const inMessages = ports
         .filter((p) => p.direction === 'input')
         .reduce((sum, p) => sum + p.messages, 0);
-      const outMessages = (node.ports ?? [])
+      const outMessages = ports
         .filter((p) => p.direction === 'output')
         .reduce((sum, p) => sum + p.messages, 0);
-      map[node.node_id] = { inMessages, outMessages, state: node.state };
+      // 포트별 상세 통계 — output 포트의 delivered / 큐 적체량 표시에 사용.
+      const portStats = ports.map((p) => ({
+        name: p.name,
+        direction: p.direction,
+        messages: p.messages,
+        delivered: p.delivered,
+      }));
+      map[node.node_id] = {
+        inMessages,
+        outMessages,
+        state: node.state,
+        ports: portStats,
+      };
     }
     return map;
   }, [runtimeNodes, isFlowRunning]);
@@ -112,13 +127,24 @@ function EditorPageInner() {
   const loadFlow = useEditorStore((s) => s.loadFlow);
   const addNode = useEditorStore((s) => s.addNode);
   const removeNode = useEditorStore((s) => s.removeNode);
+  const duplicateNodes = useEditorStore((s) => s.duplicateNodes);
   const selectNode = useEditorStore((s) => s.selectNode);
   const selectEdge = useEditorStore((s) => s.selectEdge);
+  const setHighlightedLinkName = useEditorStore((s) => s.setHighlightedLinkName);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
   const setCurrentFlowId = useEditorStore((s) => s.setCurrentFlowId);
   const resetEditor = useEditorStore((s) => s.resetEditor);
+
+  // 노드 우클릭 컨텍스트 메뉴 상태 (위치 + 대상 노드 id).
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+  } | null>(null);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   // --- 플로우 데이터 로딩 ---
   // flowId 당 1회만 hydrate 한다. 저장 후 invalidateQueries 로 인한 백그라운드
@@ -194,15 +220,48 @@ function EditorPageInner() {
         return;
       }
 
+      // 입력 필드(INPUT/TEXTAREA/contentEditable) 위에서는 복사/붙여넣기를
+      // 네이티브 동작에 맡긴다.
+      const target = e.target as HTMLElement;
+      const inEditableField =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable;
+
+      // Ctrl/Cmd + C: 선택된 노드를 클립보드에 복사
+      if (isMod && e.key === 'c' && !inEditableField) {
+        const state = useEditorStore.getState();
+        // node.selected === true 인 노드 우선, 없으면 selectedNodeId fallback.
+        const selectedIds = state.nodes
+          .filter((n) => n.selected)
+          .map((n) => n.id);
+        const ids =
+          selectedIds.length > 0
+            ? selectedIds
+            : state.selectedNodeId
+              ? [state.selectedNodeId]
+              : [];
+        if (ids.length > 0) {
+          e.preventDefault();
+          state.copyToClipboard(ids);
+        }
+        return;
+      }
+
+      // Ctrl/Cmd + V: 클립보드 노드를 붙여넣기
+      if (isMod && e.key === 'v' && !inEditableField) {
+        const state = useEditorStore.getState();
+        if (state.clipboard.length > 0) {
+          e.preventDefault();
+          state.pasteClipboard();
+        }
+        return;
+      }
+
       // Delete/Backspace: 선택된 노드 또는 엣지 삭제
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        // 입력 필드에서는 동작하지 않도록 방지
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable
-        ) {
+        // 입력 필드에서는 동작하지 않도록 방지 (위에서 계산한 inEditableField 재사용)
+        if (inEditableField) {
           return;
         }
 
@@ -226,17 +285,30 @@ function EditorPageInner() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave, undo, redo, removeNode, selectEdge, reactFlowInstance]);
 
-  // --- 브라우저 이탈 경고 (변경 사항이 있을 때) ---
+  // --- 브라우저 이탈 경고 (새로고침/탭 닫기/창 닫기) ---
+  // 변경 사항이 있을 때만 브라우저 기본 이탈 확인 대화상자를 띄운다.
   useEffect(() => {
     if (!isDirty) return;
 
-    function handleBeforeUnload(e: BeforeUnloadEvent) {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
-    }
+      e.returnValue = '';
+    };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
+
+  // --- 라우터 이탈 차단 (미저장 변경 시) ---
+  // 플로우 전환 선택기 / 사이드바 / 뒤로 가기 등으로 다른 경로로 이동하려 할 때,
+  // 변경 사항이 있으면 useBlocker 로 이동을 막고 확인 다이얼로그를 띄운다.
+  //
+  // - isDirty 가 false 면(저장 직후 또는 변경 없음) 차단하지 않는다.
+  // - 같은 경로(같은 flowId 재진입 등)면 pathname 이 변하지 않으므로 차단하지 않는다.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      isDirty && currentLocation.pathname !== nextLocation.pathname,
+  );
 
   // --- 드래그 앤 드롭 핸들러 ---
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -289,21 +361,60 @@ function EditorPageInner() {
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       selectNode(node.id);
+      closeContextMenu();
     },
-    [selectNode],
+    [selectNode, closeContextMenu],
   );
 
   const handleEdgeClick = useCallback(
     (_event: React.MouseEvent, edge: { id: string }) => {
       selectEdge(edge.id);
+      closeContextMenu();
     },
-    [selectEdge],
+    [selectEdge, closeContextMenu],
   );
 
   const handlePaneClick = useCallback(() => {
     selectNode(null);
     selectEdge(null);
-  }, [selectNode, selectEdge]);
+    // SPEC-LINK-001: 빈 캔버스 클릭 시 가상 링크 하이라이트도 해제한다.
+    setHighlightedLinkName(null);
+    closeContextMenu();
+  }, [selectNode, selectEdge, setHighlightedLinkName, closeContextMenu]);
+
+  // --- 노드 우클릭 컨텍스트 메뉴 ---
+  const handleNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: Node) => {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
+    },
+    [],
+  );
+
+  // 컨텍스트 메뉴의 "복제" 실행.
+  // 우클릭한 노드가 현재 다중 선택에 포함되면 선택된 노드 전체를 복제하고,
+  // 아니면 해당 노드만 복제한다.
+  const handleDuplicateFromMenu = useCallback(() => {
+    if (!contextMenu) return;
+    const currentNodes = useEditorStore.getState().nodes;
+    const target = currentNodes.find((n) => n.id === contextMenu.nodeId);
+    const selectedIds = currentNodes.filter((n) => n.selected).map((n) => n.id);
+
+    const ids =
+      target?.selected && selectedIds.length > 0
+        ? selectedIds
+        : [contextMenu.nodeId];
+
+    duplicateNodes(ids);
+    closeContextMenu();
+  }, [contextMenu, duplicateNodes, closeContextMenu]);
+
+  // 컨텍스트 메뉴의 "삭제" 실행.
+  const handleDeleteFromMenu = useCallback(() => {
+    if (!contextMenu) return;
+    removeNode(contextMenu.nodeId);
+    closeContextMenu();
+  }, [contextMenu, removeNode, closeContextMenu]);
 
   // --- MiniMap 노드 색상 ---
   const miniMapNodeColor = useCallback(() => {
@@ -389,6 +500,7 @@ function EditorPageInner() {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={handleNodeClick}
+            onNodeContextMenu={handleNodeContextMenu}
             onEdgeClick={handleEdgeClick}
             onPaneClick={handlePaneClick}
             onDragOver={handleDragOver}
@@ -397,6 +509,8 @@ function EditorPageInner() {
             deleteKeyCode={null}
             snapToGrid={editorSnapToGrid}
             snapGrid={[editorSnapGridSize, editorSnapGridSize]}
+            // 우측 하단 "React Flow" attribution 링크 숨김 (xyflow MIT — 제거 허용).
+            proOptions={{ hideAttribution: true }}
             className="bg-gray-50 dark:bg-gray-950"
           >
             <MiniMap
@@ -404,7 +518,7 @@ function EditorPageInner() {
               maskColor="rgba(0, 0, 0, 0.1)"
               className="!bg-white dark:!bg-gray-900 !border-gray-200 dark:!border-gray-700"
             />
-            <Controls className="!border-gray-200 !bg-white !shadow-sm dark:!border-gray-700 dark:!bg-gray-900" />
+            <Controls className="!border-(--color-border-default) !bg-(--color-bg-elevated) !shadow-sm" />
             <Background
               variant={BackgroundVariant.Dots}
               gap={editorSnapGridSize}
@@ -437,6 +551,31 @@ function EditorPageInner() {
 
       {/* 드래그 중 iframe/캔버스 위에서도 이벤트 캡처 */}
       {isDragging && <div className="fixed inset-0 z-50 cursor-col-resize" />}
+
+      {/* 노드 우클릭 컨텍스트 메뉴 */}
+      {contextMenu && (
+        <NodeContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onDuplicate={handleDuplicateFromMenu}
+          onDelete={handleDeleteFromMenu}
+          onClose={closeContextMenu}
+        />
+      )}
+
+      {/* 미저장 변경 시 이탈 경고 다이얼로그.
+          - 확인("이동") → blocker.proceed() 로 이동 진행.
+          - 취소/닫기 → blocker.reset() 로 현재 페이지 유지. */}
+      <ConfirmDialog
+        isOpen={blocker.state === 'blocked'}
+        onClose={() => blocker.reset?.()}
+        onConfirm={() => blocker.proceed?.()}
+        title="저장하지 않은 변경사항"
+        message="저장하지 않은 변경사항이 있습니다. 저장하지 않고 이동하시겠습니까?"
+        confirmLabel="이동"
+        cancelLabel="취소"
+        variant="danger"
+      />
     </div>
   );
 }

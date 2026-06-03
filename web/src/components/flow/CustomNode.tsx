@@ -2,8 +2,8 @@
 // 노드 유형에 따른 아이콘, 상태 표시 점, 입출력 핸들을 렌더링한다.
 // 필수 설정이 누락된 노드는 좌측 상단에 경고 뱃지를 표시한다.
 
-import { memo, useCallback, useMemo } from 'react';
-import { Position, type NodeProps } from '@xyflow/react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Position, type Align, type NodeProps } from '@xyflow/react';
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -29,6 +29,10 @@ import { configureNode } from '@/services/api/nodeService';
 import { useEditorStore } from '@/stores/editorStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
+import { computeLinkList, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
+import { getConnectedElements } from '@/lib/flow/connectionFocus';
+import { LinkIndicator } from './LinkIndicator';
+import { LinkListPopover } from './LinkListPopover';
 import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
@@ -81,6 +85,19 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   );
   const inMessages = stats?.inMessages;
   const outMessages = stats?.outMessages;
+
+  // 포트 이름 → 포트별 런타임 통계 조회 맵 (방향까지 키에 포함).
+  // output 포트의 delivered / 큐 적체량(messages - delivered) 표시에 사용한다.
+  const portStatByKey = useMemo(() => {
+    const map = new Map<string, { messages: number; delivered: number }>();
+    for (const p of stats?.ports ?? []) {
+      map.set(`${p.direction}:${p.name}`, {
+        messages: p.messages,
+        delivered: p.delivered,
+      });
+    }
+    return map;
+  }, [stats]);
 
   // v0.18.9: output 노드 전용 — 출력 ON/OFF 토글. 패널을 펼치지 않아도
   // 노드 카드에서 직접 토글 가능.
@@ -140,6 +157,136 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   // 오른쪽 면에 배치되는 전체 포트 수 (출력 + 에러)
   const rightPorts = [...outputPorts, ...errorPorts];
 
+  // SPEC-LINK-001: 이 노드에 닿는 가상 와이어를 포트별 링크 목록으로 계산한다.
+  // 스토어의 edges 를 구독해 가상화 토글/이름 편집/삭제에 즉시 반응한다.
+  // 같은 (포트, 이름) 의 가상 와이어 N개는 목록 항목 1개로 합쳐진다(decision #1).
+  const edges = useEditorStore((s) => s.edges);
+  const nodes = useEditorStore((s) => s.nodes);
+
+  // Feature 1: 가상 와이어 표시 토글. 켜지면 가상 와이어 선이 직접 그려지므로
+  // 중복되는 포트별 컴팩트 링크 인디케이터는 숨긴다.
+  const showVirtualWires = useEditorStore((s) => s.showVirtualWires);
+
+  // Feature 2: 연결 포커스. 토글이 켜지고 단일 노드가 선택되면, 선택 노드로부터
+  // focusDepth hop 이내로 연결된 노드 집합을 계산해 그 외 노드를 흐리게 처리한다.
+  const focusOn = useEditorStore((s) => s.focusConnectionsOnSelect);
+  const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
+  const focusDepth = useEditorStore((s) => s.focusDepth);
+  const focusActive = focusOn && selectedNodeId !== null;
+  // 방향성 연결 집합(상류/하류). 노드 흐림 판정에는 nodeIds 만 사용한다.
+  const connectedNodeIds = useMemo(
+    () =>
+      focusActive
+        ? getConnectedElements(edges, selectedNodeId, focusDepth).nodeIds
+        : null,
+    [focusActive, edges, selectedNodeId, focusDepth],
+  );
+  // 이 노드가 포커스 대상(선택 노드 + depth hop 이내 상류/하류 노드)에 들지
+  // 않으면 흐리게 처리한다(형제 관계로만 연결된 노드는 제외 → 흐려진다).
+  const focusDimmed =
+    connectedNodeIds !== null && !connectedNodeIds.has(id);
+  // 상대 노드 라벨 조회 맵(id → label). 라벨이 없으면 id 로 폴백한다.
+  const nodeLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const n of nodes) {
+      const label = typeof n.data?.label === 'string' ? n.data.label : n.id;
+      map.set(n.id, label);
+    }
+    return map;
+  }, [nodes]);
+  const getNodeLabel = useCallback(
+    (nid: string) => nodeLabelById.get(nid) ?? nid,
+    [nodeLabelById],
+  );
+  const linkList = useMemo(
+    () => computeLinkList(edges, id, getNodeLabel),
+    [edges, id, getNodeLabel],
+  );
+  // 포트 이름 → 해당 포트의 출력/입력 링크 목록 항목 조회 맵.
+  const outEntriesByPort = useMemo(() => {
+    const map = new Map<string, typeof linkList.outputs>();
+    for (const e of linkList.outputs) {
+      const list = map.get(e.port) ?? [];
+      list.push(e);
+      map.set(e.port, list);
+    }
+    return map;
+  }, [linkList]);
+  const inEntriesByPort = useMemo(() => {
+    const map = new Map<string, typeof linkList.inputs>();
+    for (const e of linkList.inputs) {
+      const list = map.get(e.port) ?? [];
+      list.push(e);
+      map.set(e.port, list);
+    }
+    return map;
+  }, [linkList]);
+
+  // SPEC-LINK-001: 현재 열린 가상 링크 팝오버({방향, 포트}). null 이면 닫힘.
+  // 인디케이터 클릭으로 토글하며, 바깥 클릭/Escape 로 닫는다.
+  const [openLink, setOpenLink] = useState<{
+    direction: 'output' | 'input';
+    port: string;
+    align: Align;
+  } | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭/Escape 로 팝오버를 닫는다(항목 선택 시에는 onClose 로 닫힘).
+  useEffect(() => {
+    if (!openLink) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // 팝오버 내부 클릭 또는 링크 인디케이터 클릭은 닫지 않는다.
+      if (popoverRef.current?.contains(target)) return;
+      if (target.closest('[data-link-indicator]')) return;
+      setOpenLink(null);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenLink(null);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [openLink]);
+
+  // 클릭한 포트의 row 위치로 팝오버 세로 정렬(start/center/end) 을 근사한다.
+  const totalRows = Math.max(inputPorts.length, rightPorts.length);
+  const alignForRow = useCallback(
+    (rowIdx: number): Align => {
+      if (totalRows <= 1) return 'center';
+      if (rowIdx <= 0) return 'start';
+      if (rowIdx >= totalRows - 1) return 'end';
+      return 'center';
+    },
+    [totalRows],
+  );
+
+  // 인디케이터 클릭 → 같은 포트면 토글 닫기, 아니면 해당 포트로 연다.
+  const toggleLinkPopover = useCallback(
+    (direction: 'output' | 'input', port: string, rowIdx: number) =>
+      (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setOpenLink((prev) =>
+          prev && prev.direction === direction && prev.port === port
+            ? null
+            : { direction, port, align: alignForRow(rowIdx) },
+        );
+      },
+    [alignForRow],
+  );
+
+  // 현재 열린 팝오버의 항목 목록을 계산한다(방향/포트 기준).
+  const openEntries = useMemo(() => {
+    if (!openLink) return [];
+    const byPort =
+      openLink.direction === 'output' ? outEntriesByPort : inEntriesByPort;
+    return byPort.get(openLink.port) ?? [];
+  }, [openLink, outEntriesByPort, inEntriesByPort]);
+
   return (
     <div
       className={cn(
@@ -155,6 +302,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         // 필수 설정이 누락된 경우 호박색 테두리로 시각화 (선택 상태가 우선)
         !selected && hasValidationError && 'border-amber-400 dark:border-amber-600',
         disabled && 'opacity-45',
+        // Feature 2: 연결 포커스 모드에서 비연결 노드는 흐리게 처리한다.
+        focusDimmed && 'opacity-25',
       )}
     >
       {/* 2026-05-31: 우측 상단 상태 표시 점 제거 — 노드 border 색상이 동등 역할 담당. */}
@@ -264,13 +413,62 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                             <span className="font-medium">{inPort.name}</span>
                           )}
                           {displaySettings.showPortStats &&
-                            rowIdx === 0 &&
-                            inMessages !== undefined && (
-                              <span className="tabular-nums">
-                                {inMessages.toLocaleString()}
-                              </span>
-                            )}
+                            (() => {
+                              // 포트별 통계가 있으면 해당 포트의 messages,
+                              // 없으면 첫 행에 한해 노드 단위 inMessages 합산값으로 폴백.
+                              const portStat = portStatByKey.get(
+                                `input:${inPort.name}`,
+                              );
+                              const count =
+                                portStat?.messages ??
+                                (rowIdx === 0 ? inMessages : undefined);
+                              if (count === undefined) return null;
+                              return (
+                                <span
+                                  className="tabular-nums"
+                                  title={`입력 ${count.toLocaleString()}건`}
+                                >
+                                  {count.toLocaleString()}
+                                </span>
+                              );
+                            })()}
                         </span>
+                        {/* SPEC-LINK-001: 이 입력 포트의 가상 링크 컴팩트 인디케이터.
+                            핸들 id 없는(레거시) 와이어는 DEFAULT_PORT 로 분류되며,
+                            입력 포트가 하나뿐일 때만 그 포트에 인디케이터를 붙인다.
+                            클릭 시 노드 왼쪽에 팝오버 목록이 뜬다(인라인 이름 미표시 →
+                            노드 폭에 영향 없음). */}
+                        {(() => {
+                          // Feature 1: 가상 와이어를 직접 선으로 그리는 동안에는
+                          // 중복되는 컴팩트 인디케이터를 숨긴다.
+                          if (showVirtualWires) return null;
+                          const entries = [
+                            ...(inEntriesByPort.get(inPort.name) ?? []),
+                            ...(inputPorts.length === 1
+                              ? (inEntriesByPort.get(DEFAULT_PORT) ?? [])
+                              : []),
+                          ];
+                          if (entries.length === 0) return null;
+                          const count = entries.reduce(
+                            (acc, e) => acc + e.edgeIds.length,
+                            0,
+                          );
+                          const active =
+                            openLink?.direction === 'input' &&
+                            openLink.port === inPort.name;
+                          return (
+                            <LinkIndicator
+                              direction="input"
+                              count={count}
+                              active={active}
+                              onClick={toggleLinkPopover(
+                                'input',
+                                inPort.name,
+                                rowIdx,
+                              )}
+                            />
+                          );
+                        })()}
                       </>
                     )}
                   </div>
@@ -288,16 +486,90 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                         >
                           {!isErrorRow &&
                             displaySettings.showPortStats &&
-                            rowIdx === 0 &&
-                            outMessages !== undefined && (
-                              <span className="tabular-nums">
-                                {outMessages.toLocaleString()}
-                              </span>
-                            )}
+                            (() => {
+                              // output 포트: 실제 전달(delivered)을 주 카운트로 표시하고,
+                              // 큐 적체량(messages - delivered)이 있으면 "+N" 뱃지로 노출.
+                              // 포트별 통계가 없으면 첫 행에 한해 노드 단위 outMessages
+                              // 합산값으로 폴백(delivered 정보 없음 → emit 기준 표시).
+                              const portStat = portStatByKey.get(
+                                `output:${rightPort.name}`,
+                              );
+                              if (portStat) {
+                                const pending = Math.max(
+                                  0,
+                                  portStat.messages - portStat.delivered,
+                                );
+                                return (
+                                  <span
+                                    className="inline-flex items-center gap-0.5"
+                                    title={`전달 ${portStat.delivered.toLocaleString()}건 / 생성 ${portStat.messages.toLocaleString()}건${
+                                      pending > 0
+                                        ? ` (큐 적체 ${pending.toLocaleString()}건)`
+                                        : ''
+                                    }`}
+                                  >
+                                    <span className="tabular-nums">
+                                      {portStat.delivered.toLocaleString()}
+                                    </span>
+                                    {pending > 0 && (
+                                      <span className="rounded-sm bg-amber-100 px-0.5 font-medium tabular-nums text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                                        +{pending.toLocaleString()}
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              }
+                              if (rowIdx === 0 && outMessages !== undefined) {
+                                return (
+                                  <span
+                                    className="tabular-nums"
+                                    title={`출력 ${outMessages.toLocaleString()}건`}
+                                  >
+                                    {outMessages.toLocaleString()}
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
                           {displaySettings.showPortNames && (
                             <span className="font-medium">{rightPort.name}</span>
                           )}
                         </span>
+                        {/* SPEC-LINK-001: 이 출력 포트의 가상 링크 컴팩트 인디케이터.
+                            에러 포트는 출력 와이어의 소스가 아니므로 제외한다.
+                            클릭 시 노드 오른쪽에 팝오버 목록이 뜬다. */}
+                        {!isErrorRow &&
+                          (() => {
+                            // Feature 1: 가상 와이어 직접 표시 중에는 컴팩트
+                            // 인디케이터를 숨긴다(선이 이미 연결을 보여줌).
+                            if (showVirtualWires) return null;
+                            const entries = [
+                              ...(outEntriesByPort.get(rightPort.name) ?? []),
+                              ...(outputPorts.length === 1
+                                ? (outEntriesByPort.get(DEFAULT_PORT) ?? [])
+                                : []),
+                            ];
+                            if (entries.length === 0) return null;
+                            const count = entries.reduce(
+                              (acc, e) => acc + e.edgeIds.length,
+                              0,
+                            );
+                            const active =
+                              openLink?.direction === 'output' &&
+                              openLink.port === rightPort.name;
+                            return (
+                              <LinkIndicator
+                                direction="output"
+                                count={count}
+                                active={active}
+                                onClick={toggleLinkPopover(
+                                  'output',
+                                  rightPort.name,
+                                  rowIdx,
+                                )}
+                              />
+                            );
+                          })()}
                         <NodeHandle
                           type="source"
                           position={Position.Right}
@@ -313,6 +585,20 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
             })}
           </div>
         </div>
+      )}
+
+      {/* SPEC-LINK-001: 가상 링크 팝오버 목록(노드 바깥, 출력=오른쪽/입력=왼쪽).
+          openLink 가 있고 표시할 항목이 있을 때만 NodeToolbar 로 렌더한다. */}
+      {openLink && openEntries.length > 0 && (
+        <LinkListPopover
+          ref={popoverRef}
+          nodeId={id}
+          direction={openLink.direction}
+          port={openLink.port}
+          align={openLink.align}
+          entries={openEntries}
+          onClose={() => setOpenLink(null)}
+        />
       )}
     </div>
   );

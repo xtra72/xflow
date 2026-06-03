@@ -149,6 +149,63 @@ func TestNodeCounterWithPortCounters(t *testing.T) {
 	}
 }
 
+// TestPortCounterRecordDelivered 는 RecordDelivered 가 delivered 카운터를
+// 증가시키고, emitted(messages)와 독립적으로 동작하는지 검증한다.
+func TestPortCounterRecordDelivered(t *testing.T) {
+	pc := &portCounter{}
+
+	// 초기 상태: delivered == 0
+	if got := pc.delivered.Load(); got != 0 {
+		t.Errorf("초기 delivered = %d, want 0", got)
+	}
+
+	// emitted(Record)만 호출하면 delivered 는 그대로 0 이어야 한다 (연결 안된 포트 진단).
+	pc.Record()
+	pc.Record()
+	if got := pc.messages.Load(); got != 2 {
+		t.Errorf("Record 2회 후 messages(emitted) = %d, want 2", got)
+	}
+	if got := pc.delivered.Load(); got != 0 {
+		t.Errorf("RecordDelivered 미호출 시 delivered = %d, want 0", got)
+	}
+
+	// RecordDelivered 호출 시 delivered 만 증가하고 messages 는 불변이어야 한다.
+	pc.RecordDelivered()
+	if got := pc.delivered.Load(); got != 1 {
+		t.Errorf("RecordDelivered 1회 후 delivered = %d, want 1", got)
+	}
+	if got := pc.messages.Load(); got != 2 {
+		t.Errorf("RecordDelivered 호출이 messages 를 변경함: %d, want 2", got)
+	}
+
+	snap := pc.Snapshot()
+	if snap.Messages != 2 {
+		t.Errorf("Snapshot.Messages = %d, want 2", snap.Messages)
+	}
+	if snap.Delivered != 1 {
+		t.Errorf("Snapshot.Delivered = %d, want 1", snap.Delivered)
+	}
+}
+
+// TestPortCounterEmittedWithoutDelivered 는 연결된 와이어가 없는 포트에서
+// emitted > 0 이지만 delivered == 0 이 되는 핵심 진단 시나리오를 검증한다.
+func TestPortCounterEmittedWithoutDelivered(t *testing.T) {
+	pc := &portCounter{}
+
+	// 와이어 없는 포트: 노드가 메시지를 생산할 때마다 Record 만 호출됨.
+	for i := 0; i < 5; i++ {
+		pc.Record()
+	}
+
+	snap := pc.Snapshot()
+	if snap.Messages == 0 {
+		t.Errorf("emitted = %d, want > 0", snap.Messages)
+	}
+	if snap.Delivered != 0 {
+		t.Errorf("연결 와이어 없는 포트의 delivered = %d, want 0", snap.Delivered)
+	}
+}
+
 // TestPortStatsSnapshotFields 는 PortStatsSnapshot 의 필드가 올바르게 설정되는지 검증한다.
 func TestPortStatsSnapshotFields(t *testing.T) {
 	pc := &portCounter{}

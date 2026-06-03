@@ -41,6 +41,13 @@ type Wire struct {
 	Mode         WireMode      `json:"mode"`
 	BufferSize   int           `json:"buffer_size"`
 	TTL          time.Duration `json:"ttl"`
+
+	// Virtual 은 화면 표시 전용 플래그이다(기본 false).
+	// true 이면 웹 에디터가 긴 연결선을 숨기고 양 끝을 네임드 링크 배지로
+	// 분해 표시한다. 엔진 라우팅/큐/카운터/브로드캐스트/메시지 순서에는
+	// 어떠한 영향도 주지 않는다(REQ-LINK-005, A2: display-only).
+	// 그룹 식별용 이름은 기존 Name 필드를 재사용한다.
+	Virtual bool `json:"virtual"`
 }
 
 // WireOption 은 NewWire 팩토리 함수에 전달되는 옵션 함수 타입이다.
@@ -87,5 +94,13 @@ func WithBufferSize(size int) WireOption {
 func WithTTL(ttl time.Duration) WireOption {
 	return func(w *Wire) {
 		w.TTL = ttl
+	}
+}
+
+// WithWireVirtual 은 와이어의 가상화(표시 전용) 플래그를 설정하는 WireOption이다.
+// Virtual 은 라우팅과 무관한 화면 표시 전용 값이다(REQ-LINK-001).
+func WithWireVirtual(virtual bool) WireOption {
+	return func(w *Wire) {
+		w.Virtual = virtual
 	}
 }

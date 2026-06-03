@@ -133,14 +133,17 @@ var _ agent.TransportChecker = (*Hvacr01Agent)(nil)
 
 // Hvacr01FrameMetadata 는 HVACR-01 frame event 의 metadata 그룹이다 (v0.5.0 통합 schema).
 //
-// 사용자 요구 "metadata => slot_num, label". IDU 의 slot_num 은 state 에서 분리해 본
-// 그룹으로 이동. label 은 device-level 식별자 (idu/odu 명칭).
+// 사용자 요구 "metadata => slot_num, name". IDU 의 slot_num 은 state 에서 분리해 본
+// 그룹으로 이동. name 은 device-level 식별자 (idu/odu 명칭).
 //
 // v0.6.8: device_type 추가. v0.18.3: 값 체계 변경 "indoor"→"HVACR.IDU",
 // "outdoor"→"HVACR.ODU" — 카테고리 prefix 도입 (HVACR = HVAC+Refrigerant).
 // type 필드가 "device_state" 로 통일됨에 따라 운영자가 IDU/ODU 를 구별할 수 있도록 한다.
+//
+// 주의: Go 필드명은 Label (디바이스 라벨 값 소스) 이지만, 출력 metadata 키는
+// "name" 으로 노출한다 (값 소스는 그대로, 키 이름만 변경).
 type Hvacr01FrameMetadata struct {
-	Label      string `json:"label,omitempty"`
+	Label      string `json:"name,omitempty"`
 	SlotNum    int    `json:"slot_num,omitempty"`
 	DeviceType string `json:"device_type,omitempty"` // "HVACR.IDU" / "HVACR.ODU"
 }
@@ -550,7 +553,7 @@ func (a *Hvacr01Agent) processGetState(req *hvacr01ProcessRequest) ([]byte, erro
 		d := map[string]any{
 			"unit_id":     hvacr01ODUUnitID,
 			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), hvacr01ODUUnitID),
-			"label":       "outdoor",
+			"name":        "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
 			"state":       oduSnap.toProperties(),
@@ -582,7 +585,7 @@ func (a *Hvacr01Agent) processGetState(req *hvacr01ProcessRequest) ([]byte, erro
 		d := map[string]any{
 			"unit_id":     unitID,
 			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
-			"label":       dev.Label,
+			"name":        dev.Label,
 			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
 		}
@@ -617,7 +620,7 @@ func (a *Hvacr01Agent) processGetAll() ([]byte, error) {
 		d := map[string]any{
 			"unit_id":     unitID,
 			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), unitID),
-			"label":       dev.Label,
+			"name":        dev.Label,
 			"device_type": "HVACR.IDU",
 			"online":      dev.Online,
 		}
@@ -636,7 +639,7 @@ func (a *Hvacr01Agent) processGetAll() ([]byte, error) {
 		d := map[string]any{
 			"unit_id":     hvacr01ODUUnitID,
 			"device_id":   agent.ResolveDeviceID(context.Background(), a.ID(), hvacr01ODUUnitID),
-			"label":       "outdoor",
+			"name":        "outdoor",
 			"device_type": "HVACR.ODU",
 			"online":      true,
 			"state":       oduSnap.toProperties(),

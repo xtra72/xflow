@@ -384,7 +384,7 @@ export default function Header() {
 
 /**
  * 라우트 경로에서 페이지 제목을 추출한다.
- * 에디터 경로(/editor/:flowId)의 경우 번역된 '에디터'를 반환한다.
+ * 에디터 경로(/editor/:flowId)의 경우 번역된 '플로우'(nav.editor)를 반환한다.
  */
 function derivePageTitle(pathname: string, t: (key: string) => string): string {
   // 정적 경로 매핑에서 확인
