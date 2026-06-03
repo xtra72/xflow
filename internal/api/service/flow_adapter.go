@@ -1099,10 +1099,33 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 		reactEdges = append(reactEdges, reactEdge)
 	}
 
+	// 플로우 레벨 포트(정의 최상위 inputs/outputs)를 방출한다.
+	// 노드 포트(data.ports)와 별개의 플로우 레벨 엔티티이며, 저장→로드 및
+	// export→import round-trip 에서 보존되어야 한다(SPEC-SUBFLOW-001 REQ-SUBFLOW-A05/A06/A07).
+	flowInputs := flowPortsToMaps(f.Inputs())
+	flowOutputs := flowPortsToMaps(f.Outputs())
+
 	return map[string]any{
-		"nodes": reactNodes,
-		"edges": reactEdges,
+		"nodes":   reactNodes,
+		"edges":   reactEdges,
+		"inputs":  flowInputs,
+		"outputs": flowOutputs,
 	}
+}
+
+// flowPortsToMaps 는 플로우 레벨 포트 목록을 정의 최상위 직렬화용 맵 슬라이스로 변환한다.
+// 항상 비-nil 슬라이스를 반환하여 inputs/outputs 키가 누락되지 않도록 한다.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A07)
+func flowPortsToMaps(ports []flow.Port) []map[string]any {
+	out := make([]map[string]any, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, map[string]any{
+			"id":        p.ID,
+			"name":      p.Name,
+			"direction": string(p.Direction),
+		})
+	}
+	return out
 }
 
 // computeAutoLayout 은 Wire 연결 그래프를 기반으로 노드의 위치를 자동 계산한다.

@@ -59,6 +59,16 @@ type Flow interface {
 	Wires() []Wire
 	// Wire 는 ID로 와이어를 조회한다.
 	Wire(id string) (Wire, bool)
+	// Inputs 는 플로우 레벨 입력 포트 목록의 방어적 복사본을 반환한다.
+	// 플로우 레벨 포트는 노드 포트(NodeDef.Inputs)와 구분되는 플로우 레벨 엔티티이며,
+	// 노드와 동일한 Port 타입({ID, Name, Direction})을 재사용하되 정의 최상위에 저장된다.
+	// 입력 포트는 항상 Direction == PortInput 이다.
+	// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01)
+	Inputs() []Port
+	// Outputs 는 플로우 레벨 출력 포트 목록의 방어적 복사본을 반환한다.
+	// 출력 포트는 항상 Direction == PortOutput 이다.
+	// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01)
+	Outputs() []Port
 	// Config 는 현재 FlowConfig를 반환한다.
 	Config() FlowConfig
 	// Metadata 는 메타데이터의 방어적 복사본을 반환한다.
@@ -93,6 +103,25 @@ type Flow interface {
 	// SetState 는 Flow의 상태를 변경한다.
 	// 유효하지 않은 전이이면 ErrInvalidStateTransition을 반환한다.
 	SetState(state FlowState) error
+
+	// SetInputs 는 플로우 레벨 입력 포트 목록을 전체 교체한다.
+	// 각 포트의 Direction 은 PortInput 으로 강제된다.
+	// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01/A02/A03)
+	SetInputs(ports []Port)
+	// SetOutputs 는 플로우 레벨 출력 포트 목록을 전체 교체한다.
+	// 각 포트의 Direction 은 PortOutput 으로 강제된다.
+	// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01/A02/A03)
+	SetOutputs(ports []Port)
+	// AddInput 은 플로우 레벨 입력 포트를 하나 추가한다(Direction=PortInput 강제).
+	AddInput(port Port)
+	// AddOutput 은 플로우 레벨 출력 포트를 하나 추가한다(Direction=PortOutput 강제).
+	AddOutput(port Port)
+	// RemoveInput 은 id 로 입력 포트를 제거한다. 제거에 성공하면 true, 없으면 false.
+	// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A04)
+	RemoveInput(id string) bool
+	// RemoveOutput 은 id 로 출력 포트를 제거한다. 제거에 성공하면 true, 없으면 false.
+	// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A04)
+	RemoveOutput(id string) bool
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +140,11 @@ type defaultFlow struct {
 	metadata    map[string]string
 	createdAt   time.Time
 	updatedAt   time.Time
+	// inputs/outputs 는 플로우 레벨 입출력 포트 목록이다(노드 포트와 별개).
+	// 정의 최상위 inputs/outputs 배열로 영속되며, 방향은 소속 목록으로 강제된다.
+	// (SPEC-SUBFLOW-001 그룹 A)
+	inputs  []Port
+	outputs []Port
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +158,8 @@ type flowConfig struct {
 	metadata    map[string]string
 	nodes       []NodeDef
 	wires       []Wire
+	inputs      []Port
+	outputs     []Port
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +203,25 @@ func NewFlow(name string, opts ...FlowOption) Flow {
 		metadata:    cfg.metadata,
 		createdAt:   now,
 		updatedAt:   now,
+		inputs:      normalizeFlowPortDirection(cfg.inputs, PortInput),
+		outputs:     normalizeFlowPortDirection(cfg.outputs, PortOutput),
 	}
+}
+
+// normalizeFlowPortDirection 은 플로우 레벨 포트 목록의 방향을 소속 목록에 맞게
+// 강제하여 새 슬라이스로 반환한다. nil 입력은 nil 을 반환한다(저장 시 빈 슬라이스 처리는
+// 읽기 메서드에서 수행).
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01 — 방향은 소속 목록으로 결정)
+func normalizeFlowPortDirection(ports []Port, dir PortDirection) []Port {
+	if ports == nil {
+		return nil
+	}
+	copied := make([]Port, len(ports))
+	copy(copied, ports)
+	for i := range copied {
+		copied[i].Direction = dir
+	}
+	return copied
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +263,25 @@ func WithNodes(nodes ...NodeDef) FlowOption {
 func WithWires(wires ...Wire) FlowOption {
 	return func(c *flowConfig) {
 		c.wires = append(c.wires, wires...)
+	}
+}
+
+// WithFlowInputPorts 는 플로우 레벨 입력 포트 목록을 설정하는 FlowOption이다.
+// 노드 레벨 WithInputPorts(node.go) 와의 이름 충돌을 피하기 위해 WithFlow 접두사를 쓴다.
+// 방향은 PortInput 으로 강제된다.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01)
+func WithFlowInputPorts(ports ...Port) FlowOption {
+	return func(c *flowConfig) {
+		c.inputs = append(c.inputs, ports...)
+	}
+}
+
+// WithFlowOutputPorts 는 플로우 레벨 출력 포트 목록을 설정하는 FlowOption이다.
+// 방향은 PortOutput 으로 강제된다.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01)
+func WithFlowOutputPorts(ports ...Port) FlowOption {
+	return func(c *flowConfig) {
+		c.outputs = append(c.outputs, ports...)
 	}
 }
 
@@ -267,6 +340,29 @@ func (f *defaultFlow) Wire(id string) (Wire, bool) {
 		}
 	}
 	return Wire{}, false
+}
+
+// Inputs 는 플로우 레벨 입력 포트의 방어적 복사본을 반환한다.
+// nil 인 경우 빈 슬라이스를 반환한다(Nodes()/Wires() 와 동일한 관례).
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01)
+func (f *defaultFlow) Inputs() []Port {
+	if f.inputs == nil {
+		return []Port{}
+	}
+	copied := make([]Port, len(f.inputs))
+	copy(copied, f.inputs)
+	return copied
+}
+
+// Outputs 는 플로우 레벨 출력 포트의 방어적 복사본을 반환한다.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01)
+func (f *defaultFlow) Outputs() []Port {
+	if f.outputs == nil {
+		return []Port{}
+	}
+	copied := make([]Port, len(f.outputs))
+	copy(copied, f.outputs)
+	return copied
 }
 
 // Config 는 현재 FlowConfig를 반환한다.
@@ -446,6 +542,62 @@ func (f *defaultFlow) SetState(state FlowState) error {
 	f.state = state
 	f.updatedAt = time.Now()
 	return nil
+}
+
+// SetInputs 는 플로우 레벨 입력 포트 목록을 전체 교체한다.
+// 방향은 PortInput 으로 강제된다.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01/A02/A03)
+func (f *defaultFlow) SetInputs(ports []Port) {
+	f.inputs = normalizeFlowPortDirection(ports, PortInput)
+	f.updatedAt = time.Now()
+}
+
+// SetOutputs 는 플로우 레벨 출력 포트 목록을 전체 교체한다.
+// 방향은 PortOutput 으로 강제된다.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A01/A02/A03)
+func (f *defaultFlow) SetOutputs(ports []Port) {
+	f.outputs = normalizeFlowPortDirection(ports, PortOutput)
+	f.updatedAt = time.Now()
+}
+
+// AddInput 은 플로우 레벨 입력 포트를 하나 추가한다(Direction=PortInput 강제).
+func (f *defaultFlow) AddInput(port Port) {
+	port.Direction = PortInput
+	f.inputs = append(f.inputs, port)
+	f.updatedAt = time.Now()
+}
+
+// AddOutput 은 플로우 레벨 출력 포트를 하나 추가한다(Direction=PortOutput 강제).
+func (f *defaultFlow) AddOutput(port Port) {
+	port.Direction = PortOutput
+	f.outputs = append(f.outputs, port)
+	f.updatedAt = time.Now()
+}
+
+// RemoveInput 은 id 로 입력 포트를 제거한다. 성공 시 true, 없으면 false.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A04)
+func (f *defaultFlow) RemoveInput(id string) bool {
+	for i, p := range f.inputs {
+		if p.ID == id {
+			f.inputs = append(f.inputs[:i], f.inputs[i+1:]...)
+			f.updatedAt = time.Now()
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveOutput 은 id 로 출력 포트를 제거한다. 성공 시 true, 없으면 false.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A04)
+func (f *defaultFlow) RemoveOutput(id string) bool {
+	for i, p := range f.outputs {
+		if p.ID == id {
+			f.outputs = append(f.outputs[:i], f.outputs[i+1:]...)
+			f.updatedAt = time.Now()
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
