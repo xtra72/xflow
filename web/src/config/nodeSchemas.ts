@@ -239,6 +239,94 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  'select-field': {
+    description:
+      '메시지에서 지정한 필드만 남깁니다. payload / metadata / 메시지 레벨(id·type·timestamp) 그룹별로 화이트리스트를 지정하고, 누락 필드는 무시/드랍/채움 처리합니다.',
+    inputDesc: '모든 메시지. payload / metadata / 메시지 레벨 필드를 화이트리스트로 필터링',
+    outputDesc:
+      '지정한 필드만 남긴 메시지(out). on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 drop 포트로.',
+    configSchema: {
+      fields: [
+        {
+          name: 'on_missing',
+          type: 'select',
+          label: '누락 필드 처리',
+          options: ['ignore', 'drop', 'fill'],
+          default: 'ignore',
+          description: 'ignore: 필드 생략 / drop: 메시지 전체 드랍 / fill: 지정한 기본값으로 채움',
+        },
+        {
+          name: 'drop_to_port',
+          type: 'boolean',
+          label: '드랍 메시지를 drop 포트로 전송',
+          default: false,
+          description:
+            'on_missing=drop 으로 메시지가 드랍될 때, 버리지 않고 drop 출력 포트로 전송합니다. 끄면 메시지를 폐기합니다.',
+          visibleWhen: { field: 'on_missing', value: 'drop' },
+        },
+        // --- payload 필터링 ---
+        {
+          name: 'payload_filter',
+          type: 'boolean',
+          label: 'payload 필터링',
+          default: false,
+          description: 'payload 필드 화이트리스트 필터링 사용 여부',
+        },
+        {
+          name: 'payload_fields',
+          type: 'key_value_map',
+          label: 'payload 필드',
+          description:
+            '남길 payload 필드명(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
+          keyLabel: '필드명',
+          valueLabel: '채울 값 (fill 모드)',
+          valuePlaceholder: '예: 0',
+          visibleWhen: { field: 'payload_filter', value: true },
+        },
+        // --- metadata 필터링 ---
+        {
+          name: 'metadata_filter',
+          type: 'boolean',
+          label: 'metadata 필터링',
+          default: false,
+          description: 'metadata 키 화이트리스트 필터링 사용 여부',
+        },
+        {
+          name: 'metadata_fields',
+          type: 'key_value_map',
+          label: 'metadata 필드',
+          description:
+            '남길 metadata 키(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
+          keyLabel: '필드명',
+          valueLabel: '채울 값 (fill 모드)',
+          valuePlaceholder: '예: unknown',
+          visibleWhen: { field: 'metadata_filter', value: true },
+        },
+        // --- 메시지 레벨 필터링 (id / type / timestamp) ---
+        {
+          name: 'message_filter',
+          type: 'boolean',
+          label: '메시지 레벨 필터링',
+          default: false,
+          description: 'id / type / timestamp 등 메시지 레벨 필드 필터링 사용 여부',
+        },
+        {
+          name: 'message_fields',
+          type: 'string_list',
+          label: '메시지 레벨 필드',
+          description:
+            '남길 메시지 레벨 필드 (id, type, timestamp 중). 안내: id / timestamp 는 구조상 항상 유지되며 실질적으로 type 만 제거 가능합니다.',
+          visibleWhen: { field: 'message_filter', value: true },
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+      { name: 'drop', direction: 'output' },
+    ],
+  },
+
   framer: {
     description: '바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력합니다.',
     inputDesc: 'payload.raw ([]byte): 프레이밍할 바이트 스트림. metadata의 stream key로 다중 스트림 분리',
@@ -496,7 +584,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
@@ -545,7 +633,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
     },
@@ -616,7 +704,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
@@ -681,7 +769,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
     },
@@ -730,7 +818,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
     },
@@ -786,7 +874,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
     },
@@ -851,7 +939,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (push / inactivity_request 등) 포함', advanced: true },
       ],
     },
@@ -900,7 +988,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
     },
@@ -971,7 +1059,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
     },
@@ -1036,7 +1124,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
@@ -1076,7 +1164,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
@@ -1141,7 +1229,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
         // 디버그/분석 (Century 전용 — 출력 폭주 우려, 운영 환경 비활성 권장):
         {
@@ -1191,7 +1279,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
-        { name: 'emit_label', type: 'boolean', label: '메타데이터: label', default: false, description: '메시지 metadata 에 사용자 라벨 포함', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
     },
@@ -1286,21 +1374,40 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   switch: {
     description: '조건에 따라 메시지를 다른 출력 포트로 라우팅합니다.',
     inputDesc: '모든 메시지. 라우팅 규칙에서 $.payload.* 경로로 필드 참조',
-    outputDesc: '조건에 매칭된 포트로 메시지 전달 (원본 그대로). 미매칭 시 기본 포트',
+    outputDesc: '조건에 매칭된 포트로 메시지 전달 (원본 Clone). 미매칭 시 기본 포트(설정 시) 또는 드랍',
     configSchema: {
       fields: [
         {
           name: 'routes',
-          type: 'object',
+          type: 'routes_editor',
           label: '라우팅 규칙',
-          description: '조건식과 출력 포트를 매핑하는 규칙 배열 (JSON)',
+          description:
+            '위에서부터 순서대로 평가됩니다. 각 행은 (조건식, 출력 포트명) 쌍입니다. 조건식은 $.payload.* / $.metadata.* 경로와 == != > < >= <=, && || !, exists(path) 를 지원합니다.',
+        },
+        {
+          name: 'match_mode',
+          type: 'select',
+          label: '매칭 모드',
+          options: ['first', 'all'],
+          default: 'first',
+          description:
+            '첫 매칭(first): 처음 일치하는 라우트 1개로만 전달. 모두 매칭(all): 일치하는 모든 라우트로 팬아웃.',
+        },
+        {
+          name: 'pass_mode',
+          type: 'select',
+          label: '조건 일치 시 전송 방식',
+          options: ['copy', 'original'],
+          default: 'copy',
+          description:
+            'copy: 복사본 전송(메시지 id 새로 부여) / original: 원본 전송(메시지 id 유지). all 모드에서 한 메시지가 2개 이상 포트로 가는 경우는 복사본이 강제됩니다.',
         },
         {
           name: 'default_port',
           type: 'string',
-          label: '기본 포트',
-          default: 'out',
-          description: '일치하는 조건이 없을 때 사용할 출력 포트',
+          label: '기본 포트(미매칭)',
+          placeholder: '예: other',
+          description: '일치하는 조건이 없을 때 사용할 출력 포트명. 비우면 미매칭 메시지를 드랍합니다.',
         },
       ],
     },
@@ -2315,15 +2422,43 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
   }
 
   if (nodeType === 'switch') {
-    const routes = config?.routes as Array<{ name: string }> | undefined;
+    // 백엔드 SwitchNode.Ports() 와 정렬되는 동적 출력 포트 파생(SPEC-SWITCH-001 §5.3):
+    //   입력: 항상 'in'.
+    //   출력: routes 가 비면 'out'(폴백);
+    //         아니면 각 route.name(빈 이름 제외, 중복 제거)
+    //         + default_port 가 비어있지 않으면 그 값(중복 제거).
+    // 'default' 고정 이름이 아니라 실제 default_port 값을 포트명으로 사용한다.
+    const routes = config?.routes as Array<{ name?: unknown }> | undefined;
+    const defaultPort =
+      typeof config?.default_port === 'string' ? config.default_port.trim() : '';
     const ports: PortDef[] = [{ name: 'in', direction: 'input' }];
-    if (routes && routes.length > 0) {
+
+    const outputNames: string[] = [];
+    const seen = new Set<string>();
+    const pushOutput = (name: string) => {
+      if (name === '' || seen.has(name)) return;
+      seen.add(name);
+      outputNames.push(name);
+    };
+
+    if (Array.isArray(routes)) {
       for (const r of routes) {
-        ports.push({ name: r.name, direction: 'output' });
+        const name = typeof r?.name === 'string' ? r.name.trim() : '';
+        pushOutput(name);
       }
-      ports.push({ name: 'default', direction: 'output' });
-    } else {
+    }
+
+    if (outputNames.length === 0) {
+      // routes 가 비었거나 유효한 이름이 없으면 폴백.
       ports.push({ name: 'out', direction: 'output' });
+      return ports;
+    }
+
+    // default_port 는 설정된 경우에만 출력 포트로 포함(중복 제거).
+    pushOutput(defaultPort);
+
+    for (const name of outputNames) {
+      ports.push({ name, direction: 'output' });
     }
     return ports;
   }

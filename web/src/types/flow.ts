@@ -57,7 +57,14 @@ export interface PortInfo {
   name: string;
   direction: string;
   connected: boolean;
+  /** 노드가 이 포트로 생성(emit)한 메시지 누계. */
   messages: number;
+  /**
+   * 연결된 와이어로 실제 전달(delivered)된 메시지 누계.
+   * 연결되지 않은 포트는 messages 가 증가해도 delivered 는 0 으로 유지된다.
+   * messages - delivered = 큐에 적체(pending)된 수.
+   */
+  delivered: number;
   throughput: string;
   active_for: string;
 }

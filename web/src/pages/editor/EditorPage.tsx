@@ -87,13 +87,26 @@ function EditorPageInner() {
     if (!runtimeNodes || !isFlowRunning) return {};
     const map: Record<string, NodeRuntimeStats> = {};
     for (const node of runtimeNodes) {
-      const inMessages = (node.ports ?? [])
+      const ports = node.ports ?? [];
+      const inMessages = ports
         .filter((p) => p.direction === 'input')
         .reduce((sum, p) => sum + p.messages, 0);
-      const outMessages = (node.ports ?? [])
+      const outMessages = ports
         .filter((p) => p.direction === 'output')
         .reduce((sum, p) => sum + p.messages, 0);
-      map[node.node_id] = { inMessages, outMessages, state: node.state };
+      // 포트별 상세 통계 — output 포트의 delivered / 큐 적체량 표시에 사용.
+      const portStats = ports.map((p) => ({
+        name: p.name,
+        direction: p.direction,
+        messages: p.messages,
+        delivered: p.delivered,
+      }));
+      map[node.node_id] = {
+        inMessages,
+        outMessages,
+        state: node.state,
+        ports: portStats,
+      };
     }
     return map;
   }, [runtimeNodes, isFlowRunning]);
@@ -117,6 +130,7 @@ function EditorPageInner() {
   const duplicateNodes = useEditorStore((s) => s.duplicateNodes);
   const selectNode = useEditorStore((s) => s.selectNode);
   const selectEdge = useEditorStore((s) => s.selectEdge);
+  const setHighlightedLinkName = useEditorStore((s) => s.setHighlightedLinkName);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
@@ -363,8 +377,10 @@ function EditorPageInner() {
   const handlePaneClick = useCallback(() => {
     selectNode(null);
     selectEdge(null);
+    // SPEC-LINK-001: 빈 캔버스 클릭 시 가상 링크 하이라이트도 해제한다.
+    setHighlightedLinkName(null);
     closeContextMenu();
-  }, [selectNode, selectEdge, closeContextMenu]);
+  }, [selectNode, selectEdge, setHighlightedLinkName, closeContextMenu]);
 
   // --- 노드 우클릭 컨텍스트 메뉴 ---
   const handleNodeContextMenu = useCallback(
@@ -493,6 +509,8 @@ function EditorPageInner() {
             deleteKeyCode={null}
             snapToGrid={editorSnapToGrid}
             snapGrid={[editorSnapGridSize, editorSnapGridSize]}
+            // 우측 하단 "React Flow" attribution 링크 숨김 (xyflow MIT — 제거 허용).
+            proOptions={{ hideAttribution: true }}
             className="bg-gray-50 dark:bg-gray-950"
           >
             <MiniMap
@@ -500,7 +518,7 @@ function EditorPageInner() {
               maskColor="rgba(0, 0, 0, 0.1)"
               className="!bg-white dark:!bg-gray-900 !border-gray-200 dark:!border-gray-700"
             />
-            <Controls className="!border-gray-200 !bg-white !shadow-sm dark:!border-gray-700 dark:!bg-gray-900" />
+            <Controls className="!border-(--color-border-default) !bg-(--color-bg-elevated) !shadow-sm" />
             <Background
               variant={BackgroundVariant.Dots}
               gap={editorSnapGridSize}

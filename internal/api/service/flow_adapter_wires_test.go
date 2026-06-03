@@ -153,6 +153,123 @@ func TestNormalizeReactFlowDefinition_CanonicalWires_Idempotent(t *testing.T) {
 	assert.False(t, hasSH, "sourceHandle 키가 추가되면 안 된다")
 }
 
+// TestConvertReactFlowEdges_DefaultBufferQueue 는 edge 에 buffer_size 키가 전혀
+// 없을 때 기본 큐(buffer_size=100, mode="buffer")가 적용되는지 검증한다.
+func TestConvertReactFlowEdges_DefaultBufferQueue(t *testing.T) {
+	def := map[string]any{
+		"edges": []any{
+			map[string]any{
+				"id":           "e1",
+				"source":       "a",
+				"target":       "b",
+				"sourceHandle": "out",
+				"targetHandle": "in",
+			},
+		},
+	}
+
+	convertReactFlowEdgesToWires(def)
+	w0 := def["wires"].([]any)[0].(map[string]any)
+
+	assert.Equal(t, 100, w0["buffer_size"], "buffer_size 키가 없으면 기본 100 으로 채워져야 한다")
+	assert.Equal(t, "buffer", w0["mode"], "buffer_size 기본값과 함께 mode=buffer 가 설정되어야 한다")
+}
+
+// TestConvertReactFlowEdges_ExplicitBypassPreserved 는 buffer_size=0, mode="bypass"
+// 가 명시된 기존 플로우가 그대로 bypass 로 보존되는지 검증한다.
+func TestConvertReactFlowEdges_ExplicitBypassPreserved(t *testing.T) {
+	def := map[string]any{
+		"edges": []any{
+			map[string]any{
+				"id":           "e1",
+				"source":       "a",
+				"target":       "b",
+				"sourceHandle": "out",
+				"targetHandle": "in",
+				"buffer_size":  float64(0),
+				"mode":         "bypass",
+			},
+		},
+	}
+
+	convertReactFlowEdgesToWires(def)
+	w0 := def["wires"].([]any)[0].(map[string]any)
+
+	assert.Equal(t, 0, w0["buffer_size"], "명시된 buffer_size=0 이 보존되어야 한다")
+	assert.Equal(t, "bypass", w0["mode"], "명시된 mode=bypass 가 보존되어야 한다")
+}
+
+// TestConvertReactFlowEdges_ZeroBufferNoMode_StaysBypass 는 buffer_size=0 만 있고
+// mode 가 없을 때 강제로 buffer 모드를 씌우지 않고 bypass 로 남는지(opt-out) 검증한다.
+func TestConvertReactFlowEdges_ZeroBufferNoMode_StaysBypass(t *testing.T) {
+	def := map[string]any{
+		"edges": []any{
+			map[string]any{
+				"id":           "e1",
+				"source":       "a",
+				"target":       "b",
+				"sourceHandle": "out",
+				"targetHandle": "in",
+				"buffer_size":  float64(0),
+			},
+		},
+	}
+
+	convertReactFlowEdgesToWires(def)
+	w0 := def["wires"].([]any)[0].(map[string]any)
+
+	assert.Equal(t, 0, w0["buffer_size"], "buffer_size=0 이 유지되어야 한다")
+	_, hasMode := w0["mode"]
+	assert.False(t, hasMode, "buffer_size=0 opt-out 시 mode 를 강제 설정하면 안 된다")
+}
+
+// TestConvertReactFlowEdges_PositiveBufferNoMode_SetsBuffer 는 buffer_size>0 이고
+// mode 가 없을 때 mode=buffer 가 자동 설정되는지 검증한다.
+func TestConvertReactFlowEdges_PositiveBufferNoMode_SetsBuffer(t *testing.T) {
+	def := map[string]any{
+		"edges": []any{
+			map[string]any{
+				"id":           "e1",
+				"source":       "a",
+				"target":       "b",
+				"sourceHandle": "out",
+				"targetHandle": "in",
+				"buffer_size":  float64(50),
+			},
+		},
+	}
+
+	convertReactFlowEdgesToWires(def)
+	w0 := def["wires"].([]any)[0].(map[string]any)
+
+	assert.Equal(t, 50, w0["buffer_size"], "명시된 buffer_size=50 이 보존되어야 한다")
+	assert.Equal(t, "buffer", w0["mode"], "buffer_size>0 이고 mode 미지정 시 mode=buffer 가 설정되어야 한다")
+}
+
+// TestConvertReactFlowEdges_ExplicitModeWins 는 명시적 mode 가 항상 우선하는지
+// (예: drop_oldest 가 buffer 자동설정을 덮어쓰지 않고 보존됨) 검증한다.
+func TestConvertReactFlowEdges_ExplicitModeWins(t *testing.T) {
+	def := map[string]any{
+		"edges": []any{
+			map[string]any{
+				"id":           "e1",
+				"source":       "a",
+				"target":       "b",
+				"sourceHandle": "out",
+				"targetHandle": "in",
+				"buffer_size":  float64(50),
+				"mode":         "drop_oldest",
+			},
+		},
+	}
+
+	convertReactFlowEdgesToWires(def)
+	w0 := def["wires"].([]any)[0].(map[string]any)
+
+	assert.Equal(t, 50, w0["buffer_size"])
+	assert.Equal(t, "drop_oldest", w0["mode"], "명시적 mode=drop_oldest 가 보존되어야 한다")
+}
+
 // TestNormalizeReactFlowDefinition_NoEdgesNoWires_NoOp 는 edges/wires 가 모두
 // 없는 입력에서 함수가 무동작(no-op)으로 동작하는지 확인한다.
 func TestNormalizeReactFlowDefinition_NoEdgesNoWires_NoOp(t *testing.T) {

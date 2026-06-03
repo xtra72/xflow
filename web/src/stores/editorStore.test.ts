@@ -115,6 +115,146 @@ describe('editorStore - 저장/로딩 dirty 플래그', () => {
       // 메타데이터 보존 확인.
       expect((edge as Record<string, unknown>).wire_type).toBe('simple');
     });
+
+    it('새 엣지 기본값은 큐(buffer) 모드 + 용량 100 이다', () => {
+      const twoNodes: Node[] = [
+        { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
+        { id: 'n2', type: 'custom', position: { x: 200, y: 0 }, data: { label: 'B' } },
+      ];
+      useEditorStore.getState().loadFlow(twoNodes, []);
+      useEditorStore.getState().onConnect({
+        source: 'n1',
+        target: 'n2',
+        sourceHandle: 'out',
+        targetHandle: 'in',
+      });
+      const edge = useEditorStore.getState().edges[0];
+      if (!edge) throw new Error('엣지가 생성되지 않았습니다');
+      expect((edge as Record<string, unknown>).mode).toBe('buffer');
+      expect((edge as Record<string, unknown>).buffer_size).toBe(100);
+    });
+  });
+
+  describe('updateEdgeData (엣지 큐 설정 편집)', () => {
+    function seedSingleEdge(): string {
+      const twoNodes: Node[] = [
+        { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
+        { id: 'n2', type: 'custom', position: { x: 200, y: 0 }, data: { label: 'B' } },
+      ];
+      useEditorStore.getState().loadFlow(twoNodes, []);
+      useEditorStore.getState().onConnect({
+        source: 'n1',
+        target: 'n2',
+        sourceHandle: 'out',
+        targetHandle: 'in',
+      });
+      const edge = useEditorStore.getState().edges[0];
+      if (!edge) throw new Error('엣지가 생성되지 않았습니다');
+      return edge.id;
+    }
+
+    it('mode/buffer_size 를 갱신하고 dirty 로 표시한다', () => {
+      const edgeId = seedSingleEdge();
+      // loadFlow 직후 dirty=false 상태에서 onConnect 가 dirty 를 만들므로 먼저 초기화.
+      useEditorStore.getState().setDirty(false);
+
+      useEditorStore.getState().updateEdgeData(edgeId, {
+        mode: 'drop_oldest',
+        buffer_size: 50,
+      });
+
+      const edge = useEditorStore.getState().edges[0]!;
+      expect((edge as Record<string, unknown>).mode).toBe('drop_oldest');
+      expect((edge as Record<string, unknown>).buffer_size).toBe(50);
+      // 다른 엣지 메타데이터(name/wire_type)는 보존된다.
+      expect((edge as Record<string, unknown>).wire_type).toBe('simple');
+      expect(useEditorStore.getState().isDirty).toBe(true);
+    });
+
+    it('무버퍼(bypass) 로 전환 시 buffer_size 0 을 반영한다', () => {
+      const edgeId = seedSingleEdge();
+      useEditorStore.getState().updateEdgeData(edgeId, {
+        mode: 'bypass',
+        buffer_size: 0,
+      });
+      const edge = useEditorStore.getState().edges[0]!;
+      expect((edge as Record<string, unknown>).mode).toBe('bypass');
+      expect((edge as Record<string, unknown>).buffer_size).toBe(0);
+    });
+  });
+
+  describe('SPEC-LINK-001 가상 링크', () => {
+    function seedSingleEdge(): string {
+      const twoNodes: Node[] = [
+        { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
+        { id: 'n2', type: 'custom', position: { x: 200, y: 0 }, data: { label: 'B' } },
+      ];
+      useEditorStore.getState().loadFlow(twoNodes, []);
+      useEditorStore.getState().onConnect({
+        source: 'n1',
+        target: 'n2',
+        sourceHandle: 'out',
+        targetHandle: 'in',
+      });
+      const edge = useEditorStore.getState().edges[0];
+      if (!edge) throw new Error('엣지가 생성되지 않았습니다');
+      return edge.id;
+    }
+
+    it('onConnect 로 생성한 새 엣지는 virtual=false 기본값을 가진다', () => {
+      seedSingleEdge();
+      const edge = useEditorStore.getState().edges[0]!;
+      expect((edge as Record<string, unknown>).virtual).toBe(false);
+    });
+
+    it('updateEdgeData 로 virtual 을 토글하고 dirty 로 표시한다', () => {
+      const edgeId = seedSingleEdge();
+      useEditorStore.getState().setDirty(false);
+
+      useEditorStore.getState().updateEdgeData(edgeId, { virtual: true });
+
+      const edge = useEditorStore.getState().edges[0]!;
+      expect((edge as Record<string, unknown>).virtual).toBe(true);
+      // 다른 메타데이터는 보존된다.
+      expect((edge as Record<string, unknown>).mode).toBe('buffer');
+      expect(useEditorStore.getState().isDirty).toBe(true);
+    });
+
+    it('updateEdgeData 로 링크 이름(name)을 편집하고 dirty 로 표시한다', () => {
+      const edgeId = seedSingleEdge();
+      useEditorStore.getState().setDirty(false);
+
+      useEditorStore.getState().updateEdgeData(edgeId, { name: 'sensor' });
+
+      const edge = useEditorStore.getState().edges[0]!;
+      expect((edge as Record<string, unknown>).name).toBe('sensor');
+      expect(useEditorStore.getState().isDirty).toBe(true);
+    });
+
+    it('setHighlightedLinkName 은 이름을 설정하고 dirty 를 만들지 않는다', () => {
+      seedSingleEdge();
+      useEditorStore.getState().setDirty(false);
+
+      useEditorStore.getState().setHighlightedLinkName('sensor');
+
+      expect(useEditorStore.getState().highlightedLinkName).toBe('sensor');
+      // 하이라이트는 표시 전용이므로 dirty 가 되지 않는다.
+      expect(useEditorStore.getState().isDirty).toBe(false);
+    });
+
+    it('setHighlightedLinkName 에 같은 이름을 다시 주면 토글 해제(null)된다', () => {
+      seedSingleEdge();
+      useEditorStore.getState().setHighlightedLinkName('sensor');
+      useEditorStore.getState().setHighlightedLinkName('sensor');
+      expect(useEditorStore.getState().highlightedLinkName).toBeNull();
+    });
+
+    it('loadFlow 는 하이라이트를 초기화한다', () => {
+      seedSingleEdge();
+      useEditorStore.getState().setHighlightedLinkName('sensor');
+      useEditorStore.getState().loadFlow(sampleNodes, sampleEdges);
+      expect(useEditorStore.getState().highlightedLinkName).toBeNull();
+    });
   });
 
   describe('nextDuplicateLabel (복제 라벨 계산 헬퍼)', () => {

@@ -540,7 +540,7 @@ func TestLGHvacr02StatusNode_Process(t *testing.T) {
 				DefaultAddress: tt.address,
 				PollCommand:    tt.pollCommand,
 				RecentCount:    recentCount,
-				EmitMetadata:   MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true},
+				EmitMetadata:   MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true},
 			}
 			n.mu.Unlock()
 
@@ -574,7 +574,7 @@ func TestLGHvacr02StatusNode_Process(t *testing.T) {
 // TestLGHvacr02StatusNode_Process_AgentNil_에러 는 agent가 nil일 때 에러를 반환하는지 확인한다.
 func TestLGHvacr02StatusNode_Process_AgentNil_에러(t *testing.T) {
 	n := newTestLGHvacr02StatusNode(nil)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -586,7 +586,7 @@ func TestLGHvacr02StatusNode_Process_AgentNil_에러(t *testing.T) {
 func TestLGHvacr02StatusNode_Process_유효하지않은응답_에러(t *testing.T) {
 	mockAgent := &mockLGHvacr02Agent{processResp: []byte("invalid json")}
 	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -599,7 +599,7 @@ func TestLGHvacr02StatusNode_Process_유효하지않은응답_에러(t *testing.
 func TestLGHvacr02StatusNode_Process_AgentError_에러(t *testing.T) {
 	mockAgent := &mockLGHvacr02Agent{processErr: assert.AnError}
 	n := newTestLGHvacr02StatusNode(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -831,7 +831,7 @@ func TestLGHvacr02ControlNode_Process(t *testing.T) {
 				DefaultAddress: tt.defaultAddress,
 				PollCommand:    lgHvacr02CmdGetStats,
 				RecentCount:    10,
-				EmitMetadata:   MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true},
+				EmitMetadata:   MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true},
 			}
 			n.mu.Unlock()
 
@@ -1029,7 +1029,7 @@ func TestLGHvacr02Node_SourceNode_폴링(t *testing.T) {
 	mockAgent := &mockLGHvacr02Agent{processResp: respBytes}
 
 	n := newTestLGHvacr02Node(mockAgent)
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true}}
 	n.pollInterval = 50 * time.Millisecond
 
 	go n.pollLoop()
@@ -1381,7 +1381,7 @@ func TestLGHvacr02StatusNode_Process_타임아웃(t *testing.T) {
 	slow := &slowLGHvacr02Agent{delay: 2 * time.Second}
 	n := newTestLGHvacr02StatusNode(slow)
 	n.timeout = 100 * time.Millisecond
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true}}
 
 	msg := message.New()
 	_, err := n.Process(context.Background(), msg)
@@ -1558,7 +1558,7 @@ func TestLGHvacr02StatusNode_Process_SetsMessageTypeDeviceStateResponse(t *testi
 	n := newTestLGHvacr02StatusNode(mockAgent)
 
 	n.mu.Lock()
-	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Label: true, NodeSource: true}}
+	n.lgHvacr02Cfg = LGHvacr02NodeConfig{AgentRef: "test-agent", PollCommand: lgHvacr02CmdGetStats, RecentCount: 10, EmitMetadata: MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true}}
 	n.mu.Unlock()
 
 	results, err := n.Process(context.Background(), message.New())

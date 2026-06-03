@@ -759,7 +759,7 @@ func (a *Hvacr01Agent) processGetState(req *centuryProcessRequest) ([]byte, erro
 		"online":      snap.Online,
 	}
 	if snap.Label != "" {
-		d["label"] = snap.Label
+		d["name"] = snap.Label
 	}
 	if snap.State != nil && snap.State.Reg02 != nil {
 		// v0.7.5: hvac 통일 ID 출력을 위해 Inner 변환 사용.
@@ -825,7 +825,7 @@ func (a *Hvacr01Agent) processGetAll() ([]byte, error) {
 			"online":      snap.Online,
 		}
 		if snap.Label != "" {
-			d["label"] = snap.Label
+			d["name"] = snap.Label
 		}
 		if snap.State != nil && snap.State.Reg02 != nil {
 			// v0.7.5: hvac 통일 ID 출력.
@@ -1001,7 +1001,7 @@ func (a *Hvacr01Agent) listDevicesForState() []map[string]any {
 		snap := d.Snapshot()
 		out = append(out, map[string]any{
 			"sub_dev_id": fmt.Sprintf("0x%02X", snap.SubDevID),
-			"label":      snap.Label,
+			"name":       snap.Label,
 			"source":     snap.Source,
 			"online":     snap.Online,
 			"last_seen":  snap.LastSeen.UnixMilli(),

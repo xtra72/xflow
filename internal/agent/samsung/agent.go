@@ -838,7 +838,7 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 		label = addr.String()
 	}
 	if label != "" {
-		metadata["label"] = label
+		metadata["name"] = label
 	}
 	if dev.Type != "" {
 		metadata["device_type"] = dev.Type

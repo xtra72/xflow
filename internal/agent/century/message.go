@@ -398,11 +398,14 @@ type Icp01DeviceStateInner struct {
 
 // Icp01DeviceStateMetadata 는 device_state 이벤트의 metadata 그룹이다 (v0.5.0).
 //
-// label 등 식별/표시용 메타데이터를 묶는다. omitempty 로 미설정 필드는 자동 제외.
-// 사용자 요구 "metadata => slot_num, label" — Century 는 slot_num 미지원이므로
-// label 만 노출. 추후 슬롯 개념이 도입되면 SlotNum 필드 추가.
+// name 등 식별/표시용 메타데이터를 묶는다. omitempty 로 미설정 필드는 자동 제외.
+// 사용자 요구 "metadata => slot_num, name" — Century 는 slot_num 미지원이므로
+// name 만 노출. 추후 슬롯 개념이 도입되면 SlotNum 필드 추가.
+//
+// 주의: Go 필드명은 Label (디바이스 라벨 값 소스) 이지만, 출력 metadata 키는
+// "name" 으로 노출한다 (값 소스는 그대로, 키 이름만 변경).
 type Icp01DeviceStateMetadata struct {
-	Label      string `json:"label,omitempty"`
+	Label      string `json:"name,omitempty"`
 	DeviceType string `json:"device_type,omitempty"` // v0.6.4: 디바이스 타입 (Century 는 항상 "HVACR.IDU", v0.18.3)
 }
 
