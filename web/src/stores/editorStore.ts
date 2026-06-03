@@ -131,6 +131,75 @@ interface EditorState {
    * pushUndo / dirty 로직에 절대 포함하지 않는다.
    */
   clipboard: Node[];
+  /**
+   * 가상 와이어 표시 토글(뷰 전용).
+   *
+   * - false(기본): 가상 와이어 선을 숨기고 포트별 컴팩트 링크 인디케이터를 보인다(기존 동작).
+   * - true: 가상 와이어를 일반 연결선처럼 그리고, 중복되는 컴팩트 인디케이터는 숨긴다.
+   *
+   * 라우팅/저장 데이터/엔진 동작에 전혀 영향을 주지 않는 순수 표시 상태이므로
+   * pushUndo / isDirty 로직에 절대 포함하지 않으며, 플로우 로드/리셋 시에도
+   * 유지한다(뷰 설정은 플로우와 무관하게 사용자 선호로 본다).
+   */
+  showVirtualWires: boolean;
+  /**
+   * 연결 포커스 토글(뷰 전용).
+   *
+   * - true 이고 정확히 한 노드가 선택되면, 선택 노드와 1-hop 연결된 노드/엣지만
+   *   강조하고 그 외는 흐리게(opacity) 렌더한다.
+   * - false 이거나 선택 노드가 없으면(또는 다중 선택) 일반 렌더(흐림 없음).
+   *
+   * showVirtualWires 와 동일하게 순수 표시 상태이므로 pushUndo / isDirty 에
+   * 포함하지 않고, 플로우 로드/리셋 시에도 유지한다.
+   */
+  focusConnectionsOnSelect: boolean;
+  /**
+   * 연결 포커스 단계(depth, 뷰 전용).
+   *
+   * 포커스 모드에서 선택 노드로부터 몇 hop 까지 강조할지 결정한다.
+   * - 1(기본): 선택 노드 + 직접 이웃(기존 동작).
+   * - 2~FOCUS_DEPTH_MAX: 이웃의 이웃까지 단계적으로 확장.
+   * - FOCUS_DEPTH_ALL(=Infinity): 선택 노드의 전체 방향성 연결 체인을 강조(무제한 hop).
+   * - 유한 값은 [FOCUS_DEPTH_MIN, FOCUS_DEPTH_MAX] 범위로 클램프하며,
+   *   FOCUS_DEPTH_ALL 은 그대로 유지한다.
+   *
+   * showVirtualWires / focusConnectionsOnSelect 와 동일하게 순수 표시 상태이므로
+   * pushUndo / isDirty 에 포함하지 않고, 플로우 로드/리셋 시에도 유지한다.
+   */
+  focusDepth: number;
+}
+
+/** 연결 포커스 단계의 최소/최대(유한) 한계. */
+export const FOCUS_DEPTH_MIN = 1;
+export const FOCUS_DEPTH_MAX = 5;
+
+/**
+ * 연결 포커스 단계의 "전체(무제한)" 센티넬.
+ *
+ * focusDepth 가 이 값이면 선택 노드로부터 도달 가능한 전체 방향성 연결 체인을
+ * 강조한다(hop 수 제한 없음). getConnectedElements 의 BFS 는 frontier 가 빌
+ * 때까지 진행하며, 방문 집합이 사이클을 막는다. 유한 단계(1~FOCUS_DEPTH_MAX)
+ * 와 구별하기 위해 Infinity 를 센티넬로 사용한다.
+ */
+export const FOCUS_DEPTH_ALL = Number.POSITIVE_INFINITY;
+
+/**
+ * 연결 포커스 단계를 유효한 값으로 클램프한다.
+ *
+ * - FOCUS_DEPTH_ALL(=+Infinity) 은 "전체" 센티넬이므로 그대로 통과시킨다
+ *   (상한 5 로 내리지 않는다).
+ * - NaN 은 안전하게 하한(MIN) 으로 처리한다.
+ * - -Infinity 는 하한(MIN) 으로 처리한다.
+ * - 그 외 유한 값은 [MIN, MAX] 범위로 클램프하고, 비정수는 내림한다(예: 2.9 → 2).
+ */
+export function clampFocusDepth(n: number): number {
+  // "전체" 센티넬은 클램프 없이 그대로 유지한다.
+  if (n === FOCUS_DEPTH_ALL) return FOCUS_DEPTH_ALL;
+  if (Number.isNaN(n)) return FOCUS_DEPTH_MIN;
+  if (n >= FOCUS_DEPTH_MAX) return FOCUS_DEPTH_MAX;
+  if (n <= FOCUS_DEPTH_MIN) return FOCUS_DEPTH_MIN;
+  // 유한한 중간값만 남으므로 내림으로 정수화한다(예: 2.9 → 2).
+  return Math.floor(n);
 }
 
 interface EditorActions {
@@ -169,6 +238,15 @@ interface EditorActions {
   setDirty: (dirty: boolean) => void;
   /** 현재 편집 중인 플로우 ID 설정 (hydration 시). dirty/undo 에 영향 없음. */
   setCurrentFlowId: (flowId: string | null) => void;
+  /** 가상 와이어 표시 토글 (뷰 전용, dirty/undo 무관). */
+  toggleShowVirtualWires: () => void;
+  /** 연결 포커스 토글 (뷰 전용, dirty/undo 무관). */
+  toggleFocusConnections: () => void;
+  /**
+   * 연결 포커스 단계 설정 (뷰 전용, dirty/undo 무관).
+   * 유한 값은 [1, FOCUS_DEPTH_MAX] 로 클램프하고, FOCUS_DEPTH_ALL(전체) 은 그대로 둔다.
+   */
+  setFocusDepth: (depth: number) => void;
   resetEditor: () => void;
 }
 
@@ -200,6 +278,11 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   redoStack: [],
   currentFlowId: null,
   clipboard: [],
+  // 뷰 전용 표시 토글 — 기본값 false(기존 동작과 100% 동일하게 렌더).
+  showVirtualWires: false,
+  focusConnectionsOnSelect: false,
+  // 연결 포커스 단계 — 기본 1(직접 이웃만, 기존 동작과 동일).
+  focusDepth: FOCUS_DEPTH_MIN,
 
   // Actions
 
@@ -457,6 +540,20 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   // currentFlowId 는 식별자일 뿐이므로 dirty 나 undo 스택을 건드리지 않는다.
   setCurrentFlowId: (flowId) =>
     set({ currentFlowId: flowId }),
+
+  // 뷰 전용 토글 — 표시 상태만 뒤집고 dirty/undo 스택을 건드리지 않는다.
+  toggleShowVirtualWires: () =>
+    set((state) => ({ showVirtualWires: !state.showVirtualWires })),
+
+  toggleFocusConnections: () =>
+    set((state) => ({
+      focusConnectionsOnSelect: !state.focusConnectionsOnSelect,
+    })),
+
+  // 뷰 전용 — 유한 값은 [1, FOCUS_DEPTH_MAX] 로 클램프하고 FOCUS_DEPTH_ALL(전체) 은
+  // 그대로 둔다. dirty/undo 를 건드리지 않는다.
+  setFocusDepth: (depth) =>
+    set({ focusDepth: clampFocusDepth(depth) }),
 
   resetEditor: () =>
     set({

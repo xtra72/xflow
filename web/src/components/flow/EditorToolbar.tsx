@@ -6,8 +6,14 @@ import { useNavigate } from 'react-router';
 import {
   Check,
   ChevronDown,
+  Eye,
+  EyeOff,
+  Focus,
   Grid3x3,
+  Layers,
+  Minus,
   Pencil,
+  Plus,
   Play,
   Redo2,
   RotateCcw,
@@ -29,7 +35,12 @@ import {
   useStopFlow,
   useRestartFlow,
 } from '@/hooks/useFlow';
-import { useEditorStore } from '@/stores/editorStore';
+import {
+  FOCUS_DEPTH_ALL,
+  FOCUS_DEPTH_MAX,
+  FOCUS_DEPTH_MIN,
+  useEditorStore,
+} from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { FlowStatus } from '@/types/flow';
 import { FlowSettingsDialog } from './FlowSettingsDialog';
@@ -79,6 +90,16 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
   // 에디터 그리드 스냅 (v0.18.4)
   const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
   const toggleEditorSnapToGrid = useUIStore((s) => s.toggleEditorSnapToGrid);
+
+  // 뷰 전용 표시 토글 (가상 와이어 표시 / 연결 포커스)
+  const showVirtualWires = useEditorStore((s) => s.showVirtualWires);
+  const toggleShowVirtualWires = useEditorStore((s) => s.toggleShowVirtualWires);
+  const focusConnectionsOnSelect = useEditorStore(
+    (s) => s.focusConnectionsOnSelect,
+  );
+  const toggleFocusConnections = useEditorStore((s) => s.toggleFocusConnections);
+  const focusDepth = useEditorStore((s) => s.focusDepth);
+  const setFocusDepth = useEditorStore((s) => s.setFocusDepth);
 
   // 플로우 상태 조회 (5초 간격 폴링)
   const { data: statusInfo } = useFlowStatus(flowId);
@@ -243,6 +264,30 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         label={editorSnapToGrid ? '그리드 스냅 끄기' : '그리드 스냅 켜기'}
         onClick={toggleEditorSnapToGrid}
         active={editorSnapToGrid}
+      />
+
+      {/* 가상 와이어 표시 토글 — 켜면 가상 와이어 선을 일반 연결선처럼 그린다. */}
+      <ToolbarButton
+        icon={showVirtualWires ? Eye : EyeOff}
+        label={showVirtualWires ? '가상 와이어 숨김' : '가상 와이어 표시'}
+        onClick={toggleShowVirtualWires}
+        active={showVirtualWires}
+      />
+
+      {/* 연결 포커스 토글 — 켜고 노드를 선택하면 연결만 강조하고 나머지를 흐리게. */}
+      <ToolbarButton
+        icon={Focus}
+        label="연결 포커스"
+        onClick={toggleFocusConnections}
+        active={focusConnectionsOnSelect}
+      />
+
+      {/* 연결 단계(depth) 컴팩트 스테퍼 — 포커스가 켜졌을 때만 활성화한다.
+          선택 노드로부터 몇 hop 까지 강조할지 1~5 또는 전체(무제한) 로 조절한다. */}
+      <FocusDepthStepper
+        depth={focusDepth}
+        onChange={setFocusDepth}
+        enabled={focusConnectionsOnSelect}
       />
 
       {/* 2026-05-31: 플로우 표시 설정 모달 */}
@@ -495,6 +540,95 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+interface FocusDepthStepperProps {
+  /** 현재 연결 단계(1~FOCUS_DEPTH_MAX 또는 FOCUS_DEPTH_ALL=전체). */
+  depth: number;
+  /** 단계 변경 콜백(스토어에서 클램프됨). */
+  onChange: (depth: number) => void;
+  /** 포커스 토글이 켜져 있어 컨트롤을 활성화할지 여부. */
+  enabled: boolean;
+}
+
+/**
+ * 연결 단계(depth) 컴팩트 스테퍼.
+ *
+ * - "표시 단계" 레이어 아이콘 + 현재 값 + 증감 버튼으로 구성한다.
+ * - 단계 순서는 1, 2, 3, 4, 5, 전체(FOCUS_DEPTH_ALL=Infinity) 이다.
+ *   `+` 가 5 에서 한 번 더 눌리면 전체로, `-` 가 전체에서 눌리면 5 로 돌아간다.
+ * - 전체일 때는 숫자 대신 "전체" 라벨을 보이고, `+` 버튼을 비활성화한다.
+ * - enabled(포커스 ON) 일 때만 상호작용 가능하며, OFF 면 흐리게 비활성화한다.
+ * - 하한(1) 에서는 `-`, 상한(전체) 에서는 `+` 가 비활성화된다.
+ *   (실제 클램프/센티넬 처리는 스토어 setFocusDepth 가 보장한다.)
+ */
+function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps) {
+  const isAll = depth === FOCUS_DEPTH_ALL;
+  const atMin = depth <= FOCUS_DEPTH_MIN;
+  const atMax = isAll;
+
+  // `-`: 전체면 유한 상한(5) 으로, 그 외에는 한 단계 줄인다.
+  const decrement = () => onChange(isAll ? FOCUS_DEPTH_MAX : depth - 1);
+  // `+`: 유한 상한(5) 에서는 전체로, 그 외에는 한 단계 늘린다.
+  const increment = () =>
+    onChange(depth >= FOCUS_DEPTH_MAX ? FOCUS_DEPTH_ALL : depth + 1);
+
+  const label = isAll ? '전체' : String(depth);
+  const title = isAll
+    ? '연결 단계: 전체 (선택 노드의 전체 연결 체인 강조)'
+    : `연결 단계: ${depth}단계 (선택 노드로부터 ${depth} hop 이내 강조)`;
+
+  return (
+    <div
+      title={title}
+      aria-label={title}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded-md border px-1 py-0.5',
+        'border-zinc-200 dark:border-zinc-700',
+        enabled
+          ? 'text-zinc-600 dark:text-zinc-300'
+          : 'pointer-events-none opacity-40',
+      )}
+    >
+      <Layers className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+      <button
+        type="button"
+        onClick={decrement}
+        disabled={!enabled || atMin}
+        aria-label="연결 단계 줄이기"
+        className={cn(
+          'inline-flex h-4 w-4 items-center justify-center rounded',
+          'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+          'disabled:pointer-events-none disabled:opacity-30',
+        )}
+      >
+        <Minus className="h-3 w-3" />
+      </button>
+      <span
+        className={cn(
+          'text-center text-xs font-medium tabular-nums',
+          // "전체" 라벨이 들어갈 너비를 확보한다.
+          isAll ? 'min-w-[1.75rem]' : 'min-w-[0.75rem]',
+        )}
+        aria-live="polite"
+      >
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={increment}
+        disabled={!enabled || atMax}
+        aria-label="연결 단계 늘리기"
+        className={cn(
+          'inline-flex h-4 w-4 items-center justify-center rounded',
+          'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+          'disabled:pointer-events-none disabled:opacity-30',
+        )}
+      >
+        <Plus className="h-3 w-3" />
+      </button>
     </div>
   );
 }

@@ -30,6 +30,7 @@ import { useEditorStore } from '@/stores/editorStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
 import { computeLinkList, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
+import { getConnectedElements } from '@/lib/flow/connectionFocus';
 import { LinkIndicator } from './LinkIndicator';
 import { LinkListPopover } from './LinkListPopover';
 import { NodeHandle } from './NodeHandle';
@@ -161,6 +162,29 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   // 같은 (포트, 이름) 의 가상 와이어 N개는 목록 항목 1개로 합쳐진다(decision #1).
   const edges = useEditorStore((s) => s.edges);
   const nodes = useEditorStore((s) => s.nodes);
+
+  // Feature 1: 가상 와이어 표시 토글. 켜지면 가상 와이어 선이 직접 그려지므로
+  // 중복되는 포트별 컴팩트 링크 인디케이터는 숨긴다.
+  const showVirtualWires = useEditorStore((s) => s.showVirtualWires);
+
+  // Feature 2: 연결 포커스. 토글이 켜지고 단일 노드가 선택되면, 선택 노드로부터
+  // focusDepth hop 이내로 연결된 노드 집합을 계산해 그 외 노드를 흐리게 처리한다.
+  const focusOn = useEditorStore((s) => s.focusConnectionsOnSelect);
+  const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
+  const focusDepth = useEditorStore((s) => s.focusDepth);
+  const focusActive = focusOn && selectedNodeId !== null;
+  // 방향성 연결 집합(상류/하류). 노드 흐림 판정에는 nodeIds 만 사용한다.
+  const connectedNodeIds = useMemo(
+    () =>
+      focusActive
+        ? getConnectedElements(edges, selectedNodeId, focusDepth).nodeIds
+        : null,
+    [focusActive, edges, selectedNodeId, focusDepth],
+  );
+  // 이 노드가 포커스 대상(선택 노드 + depth hop 이내 상류/하류 노드)에 들지
+  // 않으면 흐리게 처리한다(형제 관계로만 연결된 노드는 제외 → 흐려진다).
+  const focusDimmed =
+    connectedNodeIds !== null && !connectedNodeIds.has(id);
   // 상대 노드 라벨 조회 맵(id → label). 라벨이 없으면 id 로 폴백한다.
   const nodeLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -278,6 +302,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         // 필수 설정이 누락된 경우 호박색 테두리로 시각화 (선택 상태가 우선)
         !selected && hasValidationError && 'border-amber-400 dark:border-amber-600',
         disabled && 'opacity-45',
+        // Feature 2: 연결 포커스 모드에서 비연결 노드는 흐리게 처리한다.
+        focusDimmed && 'opacity-25',
       )}
     >
       {/* 2026-05-31: 우측 상단 상태 표시 점 제거 — 노드 border 색상이 동등 역할 담당. */}
@@ -413,6 +439,9 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                             클릭 시 노드 왼쪽에 팝오버 목록이 뜬다(인라인 이름 미표시 →
                             노드 폭에 영향 없음). */}
                         {(() => {
+                          // Feature 1: 가상 와이어를 직접 선으로 그리는 동안에는
+                          // 중복되는 컴팩트 인디케이터를 숨긴다.
+                          if (showVirtualWires) return null;
                           const entries = [
                             ...(inEntriesByPort.get(inPort.name) ?? []),
                             ...(inputPorts.length === 1
@@ -511,6 +540,9 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                             클릭 시 노드 오른쪽에 팝오버 목록이 뜬다. */}
                         {!isErrorRow &&
                           (() => {
+                            // Feature 1: 가상 와이어 직접 표시 중에는 컴팩트
+                            // 인디케이터를 숨긴다(선이 이미 연결을 보여줌).
+                            if (showVirtualWires) return null;
                             const entries = [
                               ...(outEntriesByPort.get(rightPort.name) ?? []),
                               ...(outputPorts.length === 1

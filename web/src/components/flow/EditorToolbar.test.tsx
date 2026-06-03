@@ -45,6 +45,7 @@ vi.mock('./FlowSettingsDialog', () => ({
 }));
 
 import { EditorToolbar } from './EditorToolbar';
+import { FOCUS_DEPTH_ALL, useEditorStore } from '@/stores/editorStore';
 
 describe('EditorToolbar - 플로우 전환 선택기', () => {
   beforeEach(() => {
@@ -106,5 +107,63 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '플로우 이름 (클릭하여 변경)' }));
     expect(screen.getByLabelText('플로우 이름')).toBeInTheDocument();
+  });
+});
+
+describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
+  // 스테퍼는 실제 editorStore 와 연결되므로 매 테스트마다 포커스를 켜고
+  // depth 를 초기화한다(스테퍼는 focusConnectionsOnSelect 가 true 일 때만 활성).
+  beforeEach(() => {
+    useEditorStore.setState({ focusConnectionsOnSelect: true, focusDepth: 1 });
+  });
+
+  const inc = () => screen.getByRole('button', { name: '연결 단계 늘리기' });
+  const dec = () => screen.getByRole('button', { name: '연결 단계 줄이기' });
+
+  it('초기 1 단계에서는 "1" 을 표시하고 줄이기 버튼이 비활성화된다', () => {
+    render(<EditorToolbar flowId="flow-1" />);
+    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(dec()).toBeDisabled();
+    expect(inc()).not.toBeDisabled();
+  });
+
+  it('늘리기를 5 까지 올린 뒤 한 번 더 누르면 전체(Infinity) 로 전환된다', () => {
+    render(<EditorToolbar flowId="flow-1" />);
+
+    // 1 → 5 까지 4회 증가.
+    for (let i = 0; i < 4; i += 1) fireEvent.click(inc());
+    expect(useEditorStore.getState().focusDepth).toBe(5);
+    expect(screen.getByText('5')).toBeInTheDocument();
+
+    // 5 에서 한 번 더 → 전체.
+    fireEvent.click(inc());
+    expect(useEditorStore.getState().focusDepth).toBe(FOCUS_DEPTH_ALL);
+    expect(screen.getByText('전체')).toBeInTheDocument();
+  });
+
+  it('전체에서는 "전체" 라벨을 보이고 늘리기 버튼이 비활성화된다', () => {
+    useEditorStore.setState({ focusDepth: FOCUS_DEPTH_ALL });
+    render(<EditorToolbar flowId="flow-1" />);
+
+    expect(screen.getByText('전체')).toBeInTheDocument();
+    expect(inc()).toBeDisabled();
+    expect(dec()).not.toBeDisabled();
+  });
+
+  it('전체에서 줄이기를 누르면 유한 상한(5) 으로 돌아간다', () => {
+    useEditorStore.setState({ focusDepth: FOCUS_DEPTH_ALL });
+    render(<EditorToolbar flowId="flow-1" />);
+
+    fireEvent.click(dec());
+    expect(useEditorStore.getState().focusDepth).toBe(5);
+    expect(screen.getByText('5')).toBeInTheDocument();
+  });
+
+  it('포커스가 꺼져 있으면 두 버튼 모두 비활성화된다', () => {
+    useEditorStore.setState({ focusConnectionsOnSelect: false });
+    render(<EditorToolbar flowId="flow-1" />);
+
+    expect(inc()).toBeDisabled();
+    expect(dec()).toBeDisabled();
   });
 });
