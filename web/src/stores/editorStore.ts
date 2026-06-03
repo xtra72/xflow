@@ -158,8 +158,10 @@ interface EditorState {
    *
    * 포커스 모드에서 선택 노드로부터 몇 hop 까지 강조할지 결정한다.
    * - 1(기본): 선택 노드 + 직접 이웃(기존 동작).
-   * - 2 이상: 이웃의 이웃까지 단계적으로 확장.
-   * - 1~FOCUS_DEPTH_MAX 범위로 클램프한다.
+   * - 2~FOCUS_DEPTH_MAX: 이웃의 이웃까지 단계적으로 확장.
+   * - FOCUS_DEPTH_ALL(=Infinity): 선택 노드의 전체 방향성 연결 체인을 강조(무제한 hop).
+   * - 유한 값은 [FOCUS_DEPTH_MIN, FOCUS_DEPTH_MAX] 범위로 클램프하며,
+   *   FOCUS_DEPTH_ALL 은 그대로 유지한다.
    *
    * showVirtualWires / focusConnectionsOnSelect 와 동일하게 순수 표시 상태이므로
    * pushUndo / isDirty 에 포함하지 않고, 플로우 로드/리셋 시에도 유지한다.
@@ -167,18 +169,32 @@ interface EditorState {
   focusDepth: number;
 }
 
-/** 연결 포커스 단계의 최소/최대 한계. */
+/** 연결 포커스 단계의 최소/최대(유한) 한계. */
 export const FOCUS_DEPTH_MIN = 1;
 export const FOCUS_DEPTH_MAX = 5;
 
 /**
- * 연결 포커스 단계를 [MIN, MAX] 정수 범위로 클램프한다.
+ * 연결 포커스 단계의 "전체(무제한)" 센티넬.
  *
+ * focusDepth 가 이 값이면 선택 노드로부터 도달 가능한 전체 방향성 연결 체인을
+ * 강조한다(hop 수 제한 없음). getConnectedElements 의 BFS 는 frontier 가 빌
+ * 때까지 진행하며, 방문 집합이 사이클을 막는다. 유한 단계(1~FOCUS_DEPTH_MAX)
+ * 와 구별하기 위해 Infinity 를 센티넬로 사용한다.
+ */
+export const FOCUS_DEPTH_ALL = Number.POSITIVE_INFINITY;
+
+/**
+ * 연결 포커스 단계를 유효한 값으로 클램프한다.
+ *
+ * - FOCUS_DEPTH_ALL(=+Infinity) 은 "전체" 센티넬이므로 그대로 통과시킨다
+ *   (상한 5 로 내리지 않는다).
  * - NaN 은 안전하게 하한(MIN) 으로 처리한다.
- * - +Infinity 는 상한(MAX), -Infinity 는 하한(MIN) 으로 처리한다.
- * - 그 외 비정수는 내림 후 범위로 클램프한다.
+ * - -Infinity 는 하한(MIN) 으로 처리한다.
+ * - 그 외 유한 값은 [MIN, MAX] 범위로 클램프하고, 비정수는 내림한다(예: 2.9 → 2).
  */
 export function clampFocusDepth(n: number): number {
+  // "전체" 센티넬은 클램프 없이 그대로 유지한다.
+  if (n === FOCUS_DEPTH_ALL) return FOCUS_DEPTH_ALL;
   if (Number.isNaN(n)) return FOCUS_DEPTH_MIN;
   if (n >= FOCUS_DEPTH_MAX) return FOCUS_DEPTH_MAX;
   if (n <= FOCUS_DEPTH_MIN) return FOCUS_DEPTH_MIN;
@@ -226,7 +242,10 @@ interface EditorActions {
   toggleShowVirtualWires: () => void;
   /** 연결 포커스 토글 (뷰 전용, dirty/undo 무관). */
   toggleFocusConnections: () => void;
-  /** 연결 포커스 단계 설정 (뷰 전용, [1, FOCUS_DEPTH_MAX] 클램프, dirty/undo 무관). */
+  /**
+   * 연결 포커스 단계 설정 (뷰 전용, dirty/undo 무관).
+   * 유한 값은 [1, FOCUS_DEPTH_MAX] 로 클램프하고, FOCUS_DEPTH_ALL(전체) 은 그대로 둔다.
+   */
   setFocusDepth: (depth: number) => void;
   resetEditor: () => void;
 }
@@ -531,7 +550,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       focusConnectionsOnSelect: !state.focusConnectionsOnSelect,
     })),
 
-  // 뷰 전용 — [1, FOCUS_DEPTH_MAX] 범위로 클램프하고 dirty/undo 를 건드리지 않는다.
+  // 뷰 전용 — 유한 값은 [1, FOCUS_DEPTH_MAX] 로 클램프하고 FOCUS_DEPTH_ALL(전체) 은
+  // 그대로 둔다. dirty/undo 를 건드리지 않는다.
   setFocusDepth: (depth) =>
     set({ focusDepth: clampFocusDepth(depth) }),
 

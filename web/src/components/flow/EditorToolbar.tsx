@@ -36,6 +36,7 @@ import {
   useRestartFlow,
 } from '@/hooks/useFlow';
 import {
+  FOCUS_DEPTH_ALL,
   FOCUS_DEPTH_MAX,
   FOCUS_DEPTH_MIN,
   useEditorStore,
@@ -282,7 +283,7 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
       />
 
       {/* 연결 단계(depth) 컴팩트 스테퍼 — 포커스가 켜졌을 때만 활성화한다.
-          선택 노드로부터 몇 hop 까지 강조할지 1~5 범위로 조절한다. */}
+          선택 노드로부터 몇 hop 까지 강조할지 1~5 또는 전체(무제한) 로 조절한다. */}
       <FocusDepthStepper
         depth={focusDepth}
         onChange={setFocusDepth}
@@ -544,7 +545,7 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
 }
 
 interface FocusDepthStepperProps {
-  /** 현재 연결 단계(1~FOCUS_DEPTH_MAX). */
+  /** 현재 연결 단계(1~FOCUS_DEPTH_MAX 또는 FOCUS_DEPTH_ALL=전체). */
   depth: number;
   /** 단계 변경 콜백(스토어에서 클램프됨). */
   onChange: (depth: number) => void;
@@ -556,14 +557,28 @@ interface FocusDepthStepperProps {
  * 연결 단계(depth) 컴팩트 스테퍼.
  *
  * - "표시 단계" 레이어 아이콘 + 현재 값 + 증감 버튼으로 구성한다.
+ * - 단계 순서는 1, 2, 3, 4, 5, 전체(FOCUS_DEPTH_ALL=Infinity) 이다.
+ *   `+` 가 5 에서 한 번 더 눌리면 전체로, `-` 가 전체에서 눌리면 5 로 돌아간다.
+ * - 전체일 때는 숫자 대신 "전체" 라벨을 보이고, `+` 버튼을 비활성화한다.
  * - enabled(포커스 ON) 일 때만 상호작용 가능하며, OFF 면 흐리게 비활성화한다.
- * - 1~FOCUS_DEPTH_MAX 범위 밖으로는 버튼이 비활성화되어 더 이상 변하지 않는다.
- *   (실제 클램프는 스토어 setFocusDepth 가 보장한다.)
+ * - 하한(1) 에서는 `-`, 상한(전체) 에서는 `+` 가 비활성화된다.
+ *   (실제 클램프/센티넬 처리는 스토어 setFocusDepth 가 보장한다.)
  */
 function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps) {
+  const isAll = depth === FOCUS_DEPTH_ALL;
   const atMin = depth <= FOCUS_DEPTH_MIN;
-  const atMax = depth >= FOCUS_DEPTH_MAX;
-  const title = `연결 단계: ${depth}단계 (선택 노드로부터 ${depth} hop 이내 강조)`;
+  const atMax = isAll;
+
+  // `-`: 전체면 유한 상한(5) 으로, 그 외에는 한 단계 줄인다.
+  const decrement = () => onChange(isAll ? FOCUS_DEPTH_MAX : depth - 1);
+  // `+`: 유한 상한(5) 에서는 전체로, 그 외에는 한 단계 늘린다.
+  const increment = () =>
+    onChange(depth >= FOCUS_DEPTH_MAX ? FOCUS_DEPTH_ALL : depth + 1);
+
+  const label = isAll ? '전체' : String(depth);
+  const title = isAll
+    ? '연결 단계: 전체 (선택 노드의 전체 연결 체인 강조)'
+    : `연결 단계: ${depth}단계 (선택 노드로부터 ${depth} hop 이내 강조)`;
 
   return (
     <div
@@ -580,7 +595,7 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
       <Layers className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
       <button
         type="button"
-        onClick={() => onChange(depth - 1)}
+        onClick={decrement}
         disabled={!enabled || atMin}
         aria-label="연결 단계 줄이기"
         className={cn(
@@ -592,14 +607,18 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
         <Minus className="h-3 w-3" />
       </button>
       <span
-        className="min-w-[0.75rem] text-center text-xs font-medium tabular-nums"
+        className={cn(
+          'text-center text-xs font-medium tabular-nums',
+          // "전체" 라벨이 들어갈 너비를 확보한다.
+          isAll ? 'min-w-[1.75rem]' : 'min-w-[0.75rem]',
+        )}
         aria-live="polite"
       >
-        {depth}
+        {label}
       </span>
       <button
         type="button"
-        onClick={() => onChange(depth + 1)}
+        onClick={increment}
         disabled={!enabled || atMax}
         aria-label="연결 단계 늘리기"
         className={cn(

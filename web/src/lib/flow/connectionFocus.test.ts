@@ -247,6 +247,65 @@ describe('getConnectedElements — depth 다중 hop', () => {
   });
 });
 
+describe('getConnectedElements — depth=Infinity(전체)', () => {
+  // A → B → C → D 직선 체인.
+  const chain = [
+    makeEdge({ id: 'e1', source: 'A', target: 'B' }),
+    makeEdge({ id: 'e2', source: 'B', target: 'C' }),
+    makeEdge({ id: 'e3', source: 'C', target: 'D' }),
+  ];
+
+  it('체인 시작 A 를 depth=Infinity 로 선택하면 하류 전체 {A,B,C,D} 를 담는다', () => {
+    const { nodeIds, edgeIds } = getConnectedElements(
+      chain,
+      'A',
+      Number.POSITIVE_INFINITY,
+    );
+    expect(sorted(nodeIds)).toEqual(['A', 'B', 'C', 'D']);
+    expect(sorted(edgeIds)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  it('중간 노드 B 를 depth=Infinity 로 선택하면 상류/하류 전체 체인을 담는다', () => {
+    const { nodeIds, edgeIds } = getConnectedElements(
+      chain,
+      'B',
+      Number.POSITIVE_INFINITY,
+    );
+    expect(sorted(nodeIds)).toEqual(['A', 'B', 'C', 'D']);
+    expect(sorted(edgeIds)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  it('depth=Infinity 도 형제(다른 컴포넌트) 는 포함하지 않는다', () => {
+    const edges = [
+      ...chain,
+      makeEdge({ id: 'x1', source: 'X', target: 'Y' }),
+    ];
+    const { nodeIds } = getConnectedElements(
+      edges,
+      'A',
+      Number.POSITIVE_INFINITY,
+    );
+    expect(sorted(nodeIds)).toEqual(['A', 'B', 'C', 'D']);
+    expect(nodeIds.has('X')).toBe(false);
+    expect(nodeIds.has('Y')).toBe(false);
+  });
+
+  it('depth=Infinity 도 사이클에서 무한 루프 없이 종료한다', () => {
+    const cycle = [
+      makeEdge({ id: 'e1', source: 'A', target: 'B' }),
+      makeEdge({ id: 'e2', source: 'B', target: 'C' }),
+      makeEdge({ id: 'e3', source: 'C', target: 'A' }),
+    ];
+    const { nodeIds, edgeIds } = getConnectedElements(
+      cycle,
+      'A',
+      Number.POSITIVE_INFINITY,
+    );
+    expect(sorted(nodeIds)).toEqual(['A', 'B', 'C']);
+    expect(sorted(edgeIds)).toEqual(['e1', 'e2', 'e3']);
+  });
+});
+
 describe('getConnectedElements — 사이클', () => {
   it('하류 사이클이 있어도 무한 루프 없이 종료한다', () => {
     // 삼각형 A→B→C→A.

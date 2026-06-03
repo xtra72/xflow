@@ -6,7 +6,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Edge, EdgeChange, Node, NodeChange } from '@xyflow/react';
 
-import { nextDuplicateLabel, useEditorStore } from './editorStore';
+import {
+  FOCUS_DEPTH_ALL,
+  clampFocusDepth,
+  nextDuplicateLabel,
+  useEditorStore,
+} from './editorStore';
 
 const sampleNodes: Node[] = [
   { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
@@ -601,10 +606,27 @@ describe('editorStore - 뷰 전용 표시 토글 (showVirtualWires / focusConnec
       expect(useEditorStore.getState().focusDepth).toBe(2);
     });
 
-    it('NaN/Infinity 는 안전하게 하한(1) 으로 처리한다', () => {
+    it('NaN 은 안전하게 하한(1) 으로 처리한다', () => {
       useEditorStore.getState().setFocusDepth(Number.NaN);
       expect(useEditorStore.getState().focusDepth).toBe(1);
-      useEditorStore.getState().setFocusDepth(Number.POSITIVE_INFINITY);
+    });
+
+    it('-Infinity 는 하한(1) 으로 클램프한다', () => {
+      useEditorStore.getState().setFocusDepth(Number.NEGATIVE_INFINITY);
+      expect(useEditorStore.getState().focusDepth).toBe(1);
+    });
+
+    it('FOCUS_DEPTH_ALL(=+Infinity) 은 전체 센티넬로 그대로 유지한다', () => {
+      useEditorStore.getState().setFocusDepth(FOCUS_DEPTH_ALL);
+      expect(useEditorStore.getState().focusDepth).toBe(FOCUS_DEPTH_ALL);
+      expect(useEditorStore.getState().focusDepth).toBe(
+        Number.POSITIVE_INFINITY,
+      );
+    });
+
+    it('전체에서 다시 유한 값으로 되돌릴 수 있다', () => {
+      useEditorStore.getState().setFocusDepth(FOCUS_DEPTH_ALL);
+      useEditorStore.getState().setFocusDepth(5);
       expect(useEditorStore.getState().focusDepth).toBe(5);
     });
 
@@ -625,6 +647,38 @@ describe('editorStore - 뷰 전용 표시 토글 (showVirtualWires / focusConnec
       useEditorStore.getState().loadFlow(oneNode, []);
 
       expect(useEditorStore.getState().focusDepth).toBe(3);
+    });
+  });
+
+  describe('clampFocusDepth (순수 함수)', () => {
+    it('유한 값은 [1, 5] 로 클램프한다', () => {
+      expect(clampFocusDepth(0)).toBe(1);
+      expect(clampFocusDepth(-5)).toBe(1);
+      expect(clampFocusDepth(1)).toBe(1);
+      expect(clampFocusDepth(3)).toBe(3);
+      expect(clampFocusDepth(5)).toBe(5);
+      expect(clampFocusDepth(6)).toBe(5);
+      expect(clampFocusDepth(99)).toBe(5);
+    });
+
+    it('유한 비정수는 내림 후 클램프한다', () => {
+      expect(clampFocusDepth(2.9)).toBe(2);
+      expect(clampFocusDepth(4.1)).toBe(4);
+    });
+
+    it('NaN 은 하한(1) 으로 처리한다', () => {
+      expect(clampFocusDepth(Number.NaN)).toBe(1);
+    });
+
+    it('-Infinity 는 하한(1) 으로 처리한다', () => {
+      expect(clampFocusDepth(Number.NEGATIVE_INFINITY)).toBe(1);
+    });
+
+    it('FOCUS_DEPTH_ALL(=+Infinity) 은 5 로 내리지 않고 그대로 통과시킨다', () => {
+      expect(clampFocusDepth(FOCUS_DEPTH_ALL)).toBe(FOCUS_DEPTH_ALL);
+      expect(clampFocusDepth(Number.POSITIVE_INFINITY)).toBe(
+        Number.POSITIVE_INFINITY,
+      );
     });
   });
 });

@@ -22,8 +22,9 @@
 //
 // 단계(depth) 는 선택 노드로부터의 hop 수다. depth=1 이면 선택 노드 + 직접
 // 상류/하류 이웃, depth=2 면 각 방향으로 한 hop 씩 더 확장한다. depth<=0 이면
-// 선택 노드 자신만 담고 따라간 엣지는 없다. 사이클은 방문 집합으로 종료하며,
-// 자기 자신으로의 루프 엣지는 건너뛴다.
+// 선택 노드 자신만 담고 따라간 엣지는 없다. depth=Infinity(전체) 면 각 방향의
+// 도달 가능한 전체 체인을 frontier 가 빌 때까지 확장한다(무제한 hop). 사이클은
+// 방문 집합으로 종료하며, 자기 자신으로의 루프 엣지는 건너뛴다.
 
 import type { Edge } from '@xyflow/react';
 
@@ -52,7 +53,8 @@ export interface ConnectedElements {
  *
  * @param edges        전체 엣지 목록.
  * @param start        탐색 시작 노드(선택 노드).
- * @param maxDepth     최대 hop 수(>=1 보장은 호출부 책임).
+ * @param maxDepth     최대 hop 수(>=1 보장은 호출부 책임). Infinity 면 frontier 가
+ *                     빌 때까지(전체 도달 체인) 진행한다.
  * @param forward      true 면 하류(source→target), false 면 상류(target→source).
  * @param nodeIds      도달 노드를 누적하는 집합(start 는 이미 포함된 상태로 전달).
  * @param edgeIds      따라간 엣지를 누적하는 집합.
@@ -82,6 +84,9 @@ function traverseDirection(
   }
 
   // 방향별 방문 집합(선택 노드 기준 독립 탐색). 시작 노드는 방문 처리한다.
+  // 루프 조건이 `hop < maxDepth` 이므로 maxDepth=Infinity 면 frontier 가 빌
+  // 때까지(= 더 이상 새 노드가 없을 때까지) 진행해 전체 체인을 강조한다.
+  // 방문 집합이 사이클을 막으므로 무한 루프는 발생하지 않는다.
   const visited = new Set<string>([start]);
   let frontier: string[] = [start];
   for (let hop = 0; hop < maxDepth && frontier.length > 0; hop += 1) {
@@ -115,11 +120,13 @@ function traverseDirection(
  * - selectedNodeId 가 null 이면 빈 집합들을 반환한다(포커스 대상 없음).
  * - depth=1 은 선택 노드 + 직접 상류/하류 이웃.
  * - depth<=0 이면 선택 노드 자신만 담고 edgeIds 는 비어 있다.
+ * - depth=Infinity 면 각 방향의 도달 가능한 전체 체인을 담는다(무제한 hop).
  * - 사이클이 있어도 방문 집합으로 중복 없이 종료한다.
  *
  * @param edges          스토어의 전체 엣지 목록.
  * @param selectedNodeId 현재 단일 선택된 노드 id(없으면 null).
- * @param depth          포함할 최대 hop 수(기본 1). 정수가 아니면 내림한다.
+ * @param depth          포함할 최대 hop 수(기본 1). 유한 비정수는 내림하고,
+ *                       Infinity 면 전체 체인을 따라간다.
  */
 export function getConnectedElements(
   edges: Edge[],
@@ -134,6 +141,8 @@ export function getConnectedElements(
   nodeIds.add(selectedNodeId);
 
   // depth<=0 이면 이웃 탐색 없이 선택 노드만 반환한다(따라간 엣지 없음).
+  // Infinity 는 그대로 두어 BFS 가 frontier 가 빌 때까지 전체 체인을 따라가게
+  // 한다(Math.floor(Infinity) === Infinity 이므로 안전하다).
   const maxDepth = Math.floor(depth);
   if (maxDepth <= 0) return { nodeIds, edgeIds };
 
