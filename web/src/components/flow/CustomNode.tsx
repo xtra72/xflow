@@ -2,8 +2,8 @@
 // 노드 유형에 따른 아이콘, 상태 표시 점, 입출력 핸들을 렌더링한다.
 // 필수 설정이 누락된 노드는 좌측 상단에 경고 뱃지를 표시한다.
 
-import { memo, useCallback, useMemo } from 'react';
-import { Position, type NodeProps } from '@xyflow/react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Position, type Align, type NodeProps } from '@xyflow/react';
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -29,8 +29,9 @@ import { configureNode } from '@/services/api/nodeService';
 import { useEditorStore } from '@/stores/editorStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
-import { computeLinkBadges, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
-import { LinkBadge } from './LinkBadge';
+import { computeLinkList, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
+import { LinkIndicator } from './LinkIndicator';
+import { LinkListPopover } from './LinkListPopover';
 import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
@@ -155,30 +156,112 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   // 오른쪽 면에 배치되는 전체 포트 수 (출력 + 에러)
   const rightPorts = [...outputPorts, ...errorPorts];
 
-  // SPEC-LINK-001: 이 노드에 닿는 가상 와이어를 포트별 링크 배지로 계산한다.
+  // SPEC-LINK-001: 이 노드에 닿는 가상 와이어를 포트별 링크 목록으로 계산한다.
   // 스토어의 edges 를 구독해 가상화 토글/이름 편집/삭제에 즉시 반응한다.
-  // 같은 (포트, 이름) 의 가상 와이어 N개는 배지 1개로 합쳐진다(decision #1).
+  // 같은 (포트, 이름) 의 가상 와이어 N개는 목록 항목 1개로 합쳐진다(decision #1).
   const edges = useEditorStore((s) => s.edges);
-  const linkBadges = useMemo(() => computeLinkBadges(edges, id), [edges, id]);
-  // 포트 이름 → 해당 포트의 출력/입력 링크 배지 목록 조회 맵.
-  const outBadgesByPort = useMemo(() => {
-    const map = new Map<string, typeof linkBadges.outputs>();
-    for (const b of linkBadges.outputs) {
-      const list = map.get(b.port) ?? [];
-      list.push(b);
-      map.set(b.port, list);
+  const nodes = useEditorStore((s) => s.nodes);
+  // 상대 노드 라벨 조회 맵(id → label). 라벨이 없으면 id 로 폴백한다.
+  const nodeLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const n of nodes) {
+      const label = typeof n.data?.label === 'string' ? n.data.label : n.id;
+      map.set(n.id, label);
     }
     return map;
-  }, [linkBadges]);
-  const inBadgesByPort = useMemo(() => {
-    const map = new Map<string, typeof linkBadges.inputs>();
-    for (const b of linkBadges.inputs) {
-      const list = map.get(b.port) ?? [];
-      list.push(b);
-      map.set(b.port, list);
+  }, [nodes]);
+  const getNodeLabel = useCallback(
+    (nid: string) => nodeLabelById.get(nid) ?? nid,
+    [nodeLabelById],
+  );
+  const linkList = useMemo(
+    () => computeLinkList(edges, id, getNodeLabel),
+    [edges, id, getNodeLabel],
+  );
+  // 포트 이름 → 해당 포트의 출력/입력 링크 목록 항목 조회 맵.
+  const outEntriesByPort = useMemo(() => {
+    const map = new Map<string, typeof linkList.outputs>();
+    for (const e of linkList.outputs) {
+      const list = map.get(e.port) ?? [];
+      list.push(e);
+      map.set(e.port, list);
     }
     return map;
-  }, [linkBadges]);
+  }, [linkList]);
+  const inEntriesByPort = useMemo(() => {
+    const map = new Map<string, typeof linkList.inputs>();
+    for (const e of linkList.inputs) {
+      const list = map.get(e.port) ?? [];
+      list.push(e);
+      map.set(e.port, list);
+    }
+    return map;
+  }, [linkList]);
+
+  // SPEC-LINK-001: 현재 열린 가상 링크 팝오버({방향, 포트}). null 이면 닫힘.
+  // 인디케이터 클릭으로 토글하며, 바깥 클릭/Escape 로 닫는다.
+  const [openLink, setOpenLink] = useState<{
+    direction: 'output' | 'input';
+    port: string;
+    align: Align;
+  } | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭/Escape 로 팝오버를 닫는다(항목 선택 시에는 onClose 로 닫힘).
+  useEffect(() => {
+    if (!openLink) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // 팝오버 내부 클릭 또는 링크 인디케이터 클릭은 닫지 않는다.
+      if (popoverRef.current?.contains(target)) return;
+      if (target.closest('[data-link-indicator]')) return;
+      setOpenLink(null);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenLink(null);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [openLink]);
+
+  // 클릭한 포트의 row 위치로 팝오버 세로 정렬(start/center/end) 을 근사한다.
+  const totalRows = Math.max(inputPorts.length, rightPorts.length);
+  const alignForRow = useCallback(
+    (rowIdx: number): Align => {
+      if (totalRows <= 1) return 'center';
+      if (rowIdx <= 0) return 'start';
+      if (rowIdx >= totalRows - 1) return 'end';
+      return 'center';
+    },
+    [totalRows],
+  );
+
+  // 인디케이터 클릭 → 같은 포트면 토글 닫기, 아니면 해당 포트로 연다.
+  const toggleLinkPopover = useCallback(
+    (direction: 'output' | 'input', port: string, rowIdx: number) =>
+      (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setOpenLink((prev) =>
+          prev && prev.direction === direction && prev.port === port
+            ? null
+            : { direction, port, align: alignForRow(rowIdx) },
+        );
+      },
+    [alignForRow],
+  );
+
+  // 현재 열린 팝오버의 항목 목록을 계산한다(방향/포트 기준).
+  const openEntries = useMemo(() => {
+    if (!openLink) return [];
+    const byPort =
+      openLink.direction === 'output' ? outEntriesByPort : inEntriesByPort;
+    return byPort.get(openLink.port) ?? [];
+  }, [openLink, outEntriesByPort, inEntriesByPort]);
 
   return (
     <div
@@ -324,21 +407,39 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                               );
                             })()}
                         </span>
-                        {/* SPEC-LINK-001: 이 입력 포트에 닿는 가상 링크 배지.
+                        {/* SPEC-LINK-001: 이 입력 포트의 가상 링크 컴팩트 인디케이터.
                             핸들 id 없는(레거시) 와이어는 DEFAULT_PORT 로 분류되며,
-                            입력 포트가 하나뿐일 때만 그 포트에 배지를 붙인다. */}
-                        {[
-                          ...(inBadgesByPort.get(inPort.name) ?? []),
-                          ...(inputPorts.length === 1
-                            ? (inBadgesByPort.get(DEFAULT_PORT) ?? [])
-                            : []),
-                        ].map((b) => (
-                          <LinkBadge
-                            key={`in-${b.port}-${b.name}`}
-                            direction="input"
-                            name={b.name}
-                          />
-                        ))}
+                            입력 포트가 하나뿐일 때만 그 포트에 인디케이터를 붙인다.
+                            클릭 시 노드 왼쪽에 팝오버 목록이 뜬다(인라인 이름 미표시 →
+                            노드 폭에 영향 없음). */}
+                        {(() => {
+                          const entries = [
+                            ...(inEntriesByPort.get(inPort.name) ?? []),
+                            ...(inputPorts.length === 1
+                              ? (inEntriesByPort.get(DEFAULT_PORT) ?? [])
+                              : []),
+                          ];
+                          if (entries.length === 0) return null;
+                          const count = entries.reduce(
+                            (acc, e) => acc + e.edgeIds.length,
+                            0,
+                          );
+                          const active =
+                            openLink?.direction === 'input' &&
+                            openLink.port === inPort.name;
+                          return (
+                            <LinkIndicator
+                              direction="input"
+                              count={count}
+                              active={active}
+                              onClick={toggleLinkPopover(
+                                'input',
+                                inPort.name,
+                                rowIdx,
+                              )}
+                            />
+                          );
+                        })()}
                       </>
                     )}
                   </div>
@@ -405,21 +506,38 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                             <span className="font-medium">{rightPort.name}</span>
                           )}
                         </span>
-                        {/* SPEC-LINK-001: 이 출력 포트에 닿는 가상 링크 배지.
-                            에러 포트는 출력 와이어의 소스가 아니므로 제외한다. */}
+                        {/* SPEC-LINK-001: 이 출력 포트의 가상 링크 컴팩트 인디케이터.
+                            에러 포트는 출력 와이어의 소스가 아니므로 제외한다.
+                            클릭 시 노드 오른쪽에 팝오버 목록이 뜬다. */}
                         {!isErrorRow &&
-                          [
-                            ...(outBadgesByPort.get(rightPort.name) ?? []),
-                            ...(outputPorts.length === 1
-                              ? (outBadgesByPort.get(DEFAULT_PORT) ?? [])
-                              : []),
-                          ].map((b) => (
-                            <LinkBadge
-                              key={`out-${b.port}-${b.name}`}
-                              direction="output"
-                              name={b.name}
-                            />
-                          ))}
+                          (() => {
+                            const entries = [
+                              ...(outEntriesByPort.get(rightPort.name) ?? []),
+                              ...(outputPorts.length === 1
+                                ? (outEntriesByPort.get(DEFAULT_PORT) ?? [])
+                                : []),
+                            ];
+                            if (entries.length === 0) return null;
+                            const count = entries.reduce(
+                              (acc, e) => acc + e.edgeIds.length,
+                              0,
+                            );
+                            const active =
+                              openLink?.direction === 'output' &&
+                              openLink.port === rightPort.name;
+                            return (
+                              <LinkIndicator
+                                direction="output"
+                                count={count}
+                                active={active}
+                                onClick={toggleLinkPopover(
+                                  'output',
+                                  rightPort.name,
+                                  rowIdx,
+                                )}
+                              />
+                            );
+                          })()}
                         <NodeHandle
                           type="source"
                           position={Position.Right}
@@ -435,6 +553,20 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
             })}
           </div>
         </div>
+      )}
+
+      {/* SPEC-LINK-001: 가상 링크 팝오버 목록(노드 바깥, 출력=오른쪽/입력=왼쪽).
+          openLink 가 있고 표시할 항목이 있을 때만 NodeToolbar 로 렌더한다. */}
+      {openLink && openEntries.length > 0 && (
+        <LinkListPopover
+          ref={popoverRef}
+          nodeId={id}
+          direction={openLink.direction}
+          port={openLink.port}
+          align={openLink.align}
+          entries={openEntries}
+          onClose={() => setOpenLink(null)}
+        />
       )}
     </div>
   );

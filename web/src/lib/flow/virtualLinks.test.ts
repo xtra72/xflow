@@ -6,6 +6,7 @@ import type { Edge } from '@xyflow/react';
 
 import {
   computeLinkBadges,
+  computeLinkList,
   DEFAULT_PORT,
   edgeLinkName,
   isVirtualEdge,
@@ -162,5 +163,159 @@ describe('computeLinkBadges', () => {
     const a = computeLinkBadges(edges, 'A');
     expect(a.outputs).toHaveLength(1);
     expect(a.inputs).toHaveLength(1);
+  });
+});
+
+describe('computeLinkList', () => {
+  /** 노드 id → 라벨 매핑 헬퍼(테스트용). 없는 id 는 id 그대로 폴백. */
+  const labels: Record<string, string> = { A: '센서', B: '필터', C: '저장소' };
+  const getLabel = (id: string) => labels[id] ?? id;
+
+  it('출력 항목은 상대(타겟) 노드 라벨 + 포트를 counterpart 로 담는다', () => {
+    const edges = [
+      makeEdge({
+        id: 'e1',
+        source: 'A',
+        target: 'B',
+        sourceHandle: 'out',
+        targetHandle: 'in',
+        virtual: true,
+        name: 'sensor',
+      }),
+    ];
+    const a = computeLinkList(edges, 'A', getLabel);
+    expect(a.outputs).toEqual([
+      {
+        port: 'out',
+        name: 'sensor',
+        edgeIds: ['e1'],
+        counterparts: [{ nodeLabel: '필터', port: 'in', edgeId: 'e1' }],
+      },
+    ]);
+    expect(a.inputs).toEqual([]);
+  });
+
+  it('입력 항목은 상대(소스) 노드 라벨 + 포트를 counterpart 로 담는다', () => {
+    const edges = [
+      makeEdge({
+        id: 'e1',
+        source: 'A',
+        target: 'B',
+        sourceHandle: 'out',
+        targetHandle: 'in',
+        virtual: true,
+        name: 'sensor',
+      }),
+    ];
+    const b = computeLinkList(edges, 'B', getLabel);
+    expect(b.inputs).toEqual([
+      {
+        port: 'in',
+        name: 'sensor',
+        edgeIds: ['e1'],
+        counterparts: [{ nodeLabel: '센서', port: 'out', edgeId: 'e1' }],
+      },
+    ]);
+    expect(b.outputs).toEqual([]);
+  });
+
+  it('같은 (포트, 이름) 이 여러 상대로 연결되면 counterparts 에 모두 담는다', () => {
+    const edges = [
+      makeEdge({
+        id: 'e1',
+        source: 'A',
+        target: 'B',
+        sourceHandle: 'out',
+        targetHandle: 'in',
+        virtual: true,
+        name: 'sensor',
+      }),
+      makeEdge({
+        id: 'e2',
+        source: 'A',
+        target: 'C',
+        sourceHandle: 'out',
+        targetHandle: 'in2',
+        virtual: true,
+        name: 'sensor',
+      }),
+    ];
+    const a = computeLinkList(edges, 'A', getLabel);
+    expect(a.outputs).toHaveLength(1);
+    expect(a.outputs[0]?.edgeIds).toEqual(['e1', 'e2']);
+    expect(a.outputs[0]?.counterparts).toEqual([
+      { nodeLabel: '필터', port: 'in', edgeId: 'e1' },
+      { nodeLabel: '저장소', port: 'in2', edgeId: 'e2' },
+    ]);
+  });
+
+  it('같은 포트라도 이름이 다르면 항목을 분리한다(이름 정렬)', () => {
+    const edges = [
+      makeEdge({
+        id: 'e1',
+        source: 'A',
+        target: 'B',
+        sourceHandle: 'out',
+        virtual: true,
+        name: 'sensor',
+      }),
+      makeEdge({
+        id: 'e2',
+        source: 'A',
+        target: 'C',
+        sourceHandle: 'out',
+        virtual: true,
+        name: 'alarm',
+      }),
+    ];
+    const a = computeLinkList(edges, 'A', getLabel);
+    expect(a.outputs.map((e) => e.name)).toEqual(['alarm', 'sensor']);
+  });
+
+  it('핸들 id 가 없으면 양쪽 포트를 DEFAULT_PORT 로 분류한다', () => {
+    const edges = [
+      makeEdge({
+        id: 'e1',
+        source: 'A',
+        target: 'B',
+        virtual: true,
+        name: 'sensor',
+      }),
+    ];
+    const a = computeLinkList(edges, 'A', getLabel);
+    expect(a.outputs[0]?.port).toBe(DEFAULT_PORT);
+    expect(a.outputs[0]?.counterparts[0]?.port).toBe(DEFAULT_PORT);
+  });
+
+  it('상대 노드 라벨이 없으면 노드 id 로 폴백한다', () => {
+    const edges = [
+      makeEdge({
+        id: 'e1',
+        source: 'A',
+        target: 'Z', // labels 에 없는 id
+        sourceHandle: 'out',
+        targetHandle: 'in',
+        virtual: true,
+        name: 'sensor',
+      }),
+    ];
+    const a = computeLinkList(edges, 'A', getLabel);
+    expect(a.outputs[0]?.counterparts[0]?.nodeLabel).toBe('Z');
+  });
+
+  it('비가상 와이어는 목록 대상에서 제외한다', () => {
+    const edges = [
+      makeEdge({
+        id: 'e1',
+        source: 'A',
+        target: 'B',
+        sourceHandle: 'out',
+        virtual: false,
+        name: 'sensor',
+      }),
+    ];
+    const a = computeLinkList(edges, 'A', getLabel);
+    expect(a.outputs).toEqual([]);
+    expect(a.inputs).toEqual([]);
   });
 });

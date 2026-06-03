@@ -113,3 +113,141 @@ function finalizeBadges(map: Map<string, LinkBadge>): LinkBadge[] {
     .map((b) => ({ ...b, edgeIds: [...b.edgeIds].sort() }))
     .sort((a, b) => a.port.localeCompare(b.port) || a.name.localeCompare(b.name));
 }
+
+// ---------------------------------------------------------------------------
+// 팝오버 목록용 — 포트별 가상 링크를 "상대 연결 정보"까지 포함해 계산한다.
+//
+// CustomNode 의 포트 옆 컴팩트 인디케이터를 클릭하면 노드 바깥에 뜨는 팝오버
+// 목록의 데이터 소스다. 인라인 배지(노드 폭을 넓히던 원인) 를 대체한다.
+// 순수 함수이므로 렌더링/스토어 의존성이 없고 단위 테스트로 보장한다.
+// ---------------------------------------------------------------------------
+
+/**
+ * 가상 링크 1개의 상대(counterpart) 끝점 정보.
+ *
+ * - 출력 포트 항목의 상대 = 와이어의 타겟(노드 라벨 + targetHandle 포트).
+ * - 입력 포트 항목의 상대 = 와이어의 소스(노드 라벨 + sourceHandle 포트).
+ */
+export interface LinkCounterpart {
+  /** 상대 노드의 라벨(없으면 노드 id 로 폴백). */
+  nodeLabel: string;
+  /** 상대 쪽 포트 이름(핸들 id 없으면 DEFAULT_PORT). */
+  port: string;
+  /** 이 상대 끝점에 대응하는 가상 와이어의 edge id. */
+  edgeId: string;
+}
+
+/**
+ * 한 포트의 한 이름 그룹에 대한 팝오버 목록 항목.
+ *
+ * `(port, name)` 1개당 항목 1개로 묶이며(decision #1), 같은 이름이 여러 상대로
+ * 연결되면 `counterparts` 에 모두 담는다(목록에서 다중 표시).
+ */
+export interface LinkListEntry {
+  /** 이 노드 쪽 포트 이름(sourceHandle/targetHandle, 없으면 DEFAULT_PORT). */
+  port: string;
+  /** 링크 이름(그룹 식별자). 빈 문자열일 수 있다. */
+  name: string;
+  /** 이 항목으로 합쳐진 가상 와이어들의 edge id 목록(정렬됨, 중복 없음). */
+  edgeIds: string[];
+  /** 이름 그룹이 연결된 상대 끝점 목록(edgeId 기준 정렬). */
+  counterparts: LinkCounterpart[];
+}
+
+/** 한 노드의 입력/출력 팝오버 목록 묶음. */
+export interface NodeLinkList {
+  /** source 포트(출력) 의 링크 목록 항목들. */
+  outputs: LinkListEntry[];
+  /** target 포트(입력) 의 링크 목록 항목들. */
+  inputs: LinkListEntry[];
+}
+
+/** 그룹 맵에 항목을 누적할 때 사용하는 내부 가변 구조. */
+interface MutableEntry {
+  port: string;
+  name: string;
+  edgeIds: string[];
+  counterparts: LinkCounterpart[];
+}
+
+/** (포트, 이름) 그룹 맵에 edge id 와 상대 끝점을 누적한다. */
+function addToListGroup(
+  map: Map<string, MutableEntry>,
+  port: string,
+  name: string,
+  edgeId: string,
+  counterpart: LinkCounterpart,
+): void {
+  const key = groupKey(port, name);
+  const existing = map.get(key);
+  if (existing) {
+    if (!existing.edgeIds.includes(edgeId)) {
+      existing.edgeIds.push(edgeId);
+      existing.counterparts.push(counterpart);
+    }
+  } else {
+    map.set(key, { port, name, edgeIds: [edgeId], counterparts: [counterpart] });
+  }
+}
+
+/** 그룹 맵을 정렬된 목록 항목 배열로 변환한다(결정론적 순서). */
+function finalizeEntries(map: Map<string, MutableEntry>): LinkListEntry[] {
+  return Array.from(map.values())
+    .map((e) => ({
+      port: e.port,
+      name: e.name,
+      edgeIds: [...e.edgeIds].sort(),
+      counterparts: [...e.counterparts].sort((a, b) =>
+        a.edgeId.localeCompare(b.edgeId),
+      ),
+    }))
+    .sort((a, b) => a.port.localeCompare(b.port) || a.name.localeCompare(b.name));
+}
+
+/**
+ * 특정 노드의 가상 링크를 팝오버 목록용으로 계산하는 순수 헬퍼.
+ *
+ * `computeLinkBadges` 와 동일한 그룹핑 규칙(포트+이름 1항목, decision #1) 을
+ * 쓰되, 각 항목에 상대 끝점 정보(상대 노드 라벨 + 포트) 를 추가로 담는다.
+ *
+ * @param edges        스토어의 전체 엣지 목록.
+ * @param nodeId       기준 노드 id.
+ * @param getNodeLabel 노드 id → 라벨 조회 함수(없으면 id 를 그대로 반환하도록 폴백).
+ */
+export function computeLinkList(
+  edges: Edge[],
+  nodeId: string,
+  getNodeLabel: (id: string) => string,
+): NodeLinkList {
+  const outMap = new Map<string, MutableEntry>();
+  const inMap = new Map<string, MutableEntry>();
+
+  for (const edge of edges) {
+    if (!isVirtualEdge(edge)) continue;
+    const name = edgeLinkName(edge);
+
+    if (edge.source === nodeId) {
+      // 출력 항목: 상대 = 타겟 노드/포트.
+      const port = edge.sourceHandle ?? DEFAULT_PORT;
+      addToListGroup(outMap, port, name, edge.id, {
+        nodeLabel: getNodeLabel(edge.target),
+        port: edge.targetHandle ?? DEFAULT_PORT,
+        edgeId: edge.id,
+      });
+    }
+    if (edge.target === nodeId) {
+      // 입력 항목: 상대 = 소스 노드/포트.
+      const port = edge.targetHandle ?? DEFAULT_PORT;
+      addToListGroup(inMap, port, name, edge.id, {
+        nodeLabel: getNodeLabel(edge.source),
+        port: edge.sourceHandle ?? DEFAULT_PORT,
+        edgeId: edge.id,
+      });
+    }
+  }
+
+  return {
+    outputs: finalizeEntries(outMap),
+    inputs: finalizeEntries(inMap),
+  };
+}
