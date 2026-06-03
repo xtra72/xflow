@@ -13,17 +13,25 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
 import { edgeLinkName, isVirtualEdge } from '@/lib/flow/virtualLinks';
-import { getConnectedNodeIds } from '@/lib/flow/connectionFocus';
+import { getConnectedElements } from '@/lib/flow/connectionFocus';
 
 /**
  * 커스텀 엣지 컴포넌트.
  * 선택된 엣지는 파란색으로 두껍게 표시하고, 호버 시 중간점에 삭제 버튼을 렌더링한다.
  *
- * SPEC-LINK-001 / Feature 1(개선): `virtual=true` 인 엣지는 더 이상 완전히
- * 숨기지 않는다. 가상 와이어 표시 토글이 꺼져 있어도(숨김 모드) 연결을 희미하게
- * 추적할 수 있도록 항상 옅은 점선으로 그린다. 토글이 켜지면 일반 연결선(실선)
- * 으로 그린다. 선택/그룹 하이라이트/포커스 강조 시에는 옅은 점선보다 더 또렷한
- * 파란 선으로 강조해 항상 표시되는 옅은 점선들 사이에서도 두드러지게 한다.
+ * SPEC-LINK-001 / 가상 와이어 표시 규칙:
+ *  - 숨김 모드(showVirtualWires=false): 가상 와이어 선을 완전히 그리지 않는다.
+ *    연결은 노드 카드의 컴팩트 LinkIndicator 로만 표시된다.
+ *  - 표시 모드(showVirtualWires=true): 가상 와이어를 점선(dotted) 으로 그려
+ *    일반 실선 연결과 시각적으로 구분한다.
+ *  - 클릭/그룹 하이라이트(groupHighlighted) 또는 엣지 선택(selected) 시에는
+ *    두 모드 모두에서 가상 와이어를 또렷한 파란 dashed 로 드러내 강조한다
+ *    (클릭으로 연결 확인하는 동작 유지).
+ *
+ * 연결 포커스는 "이미 보이는" 엣지에 대해서만 동작한다. 숨김 모드에서 가상
+ * 엣지는 보이지 않으므로 포커스가 강조/흐림 대상으로 삼지 않는다. 표시 모드의
+ * 가상 엣지는 점선 상태에서 포커스가 강조(파랑, 따라간 엣지)/흐림(opacity) 한다.
+ * 비가상 엣지는 항상 실선이며 표시 규칙에 영향을 받지 않는다.
  */
 export function CustomEdge({
   id,
@@ -64,35 +72,36 @@ export function CustomEdge({
 
   // 연결 포커스 활성 여부: 토글 ON + 단일 노드 선택 시에만 흐림/강조를 적용한다.
   const focusActive = focusOn && selectedNodeId !== null;
-  // focusDepth hop 이내 연결 노드 집합(포커스 비활성 시 null).
-  const connectedNodeIds = useMemo(
+  // focusDepth hop 이내 방향성 연결 집합(포커스 비활성 시 null).
+  // 엣지 강조는 "따라간 엣지(edgeIds) 멤버십" 으로 판정한다 — 형제 엣지를 잘못
+  // 강조하던 "양 끝이 집합에 듦" 규칙을 대체한다.
+  const connected = useMemo(
     () =>
-      focusActive ? getConnectedNodeIds(edges, selectedNodeId, focusDepth) : null,
+      focusActive ? getConnectedElements(edges, selectedNodeId, focusDepth) : null,
     [focusActive, edges, selectedNodeId, focusDepth],
   );
-  // 이 엣지의 양 끝이 모두 연결 집합 안에 있으면 강조 대상이다(다중 hop 일반화).
-  // depth=1 에서도 선택↔이웃 엣지를 그대로 강조한다.
-  const bothEndpointsInSet =
-    connectedNodeIds !== null &&
-    edge !== undefined &&
-    connectedNodeIds.has(edge.source) &&
-    connectedNodeIds.has(edge.target);
-  // 포커스 모드에서 양 끝이 모두 집합에 들지 않는 엣지는 흐리게 처리한다.
-  const focusDimmed = focusActive && !bothEndpointsInSet;
-  // 포커스 모드에서 양 끝이 모두 집합에 드는 엣지는 강조한다.
-  const focusEmphasized = focusActive && bothEndpointsInSet;
+  // 이 엣지가 상류/하류 탐색에서 실제로 따라간(traversed) 엣지면 강조 대상이다.
+  const edgeTraversed = connected !== null && connected.edgeIds.has(id);
+  // 포커스 모드에서 따라가지 않은 엣지는 흐리게 처리한다(강조 엣지는 흐리지 않음).
+  const focusEmphasized = focusActive && edgeTraversed;
 
-  // ---- 선 강조/스타일 결정 (Feature 1 개선) ----
+  // ---- 선 강조/표시 규칙 ----
+  // 클릭으로 연결 확인: 그룹 하이라이트 또는 엣지 선택 시 가상 와이어를 드러낸다.
+  const revealedByClick = selected === true || groupHighlighted;
   // 강조(파란 선): 선택 / 그룹 하이라이트 / 포커스 강조 중 하나라도 해당하면 true.
-  const emphasized = selected === true || groupHighlighted || focusEmphasized;
-  // 옅은 점선(숨김 모드의 가상 와이어): 가상이고, 표시 토글이 꺼져 있고,
-  // 강조 상태가 아닐 때. 사용자가 연결을 희미하게 추적할 수 있게 한다.
-  const faintDotted = virtual && !showVirtualWires && !emphasized;
-  // 강조된 가상 와이어는 점선으로 표시해 "원래 숨겨진 선"임을 구분한다.
-  // 단, 가상 와이어 표시 토글로 항상 실선 표시 중이거나 명시적으로 선택된
-  // 경우(엣지 선택)에는 실선으로 둔다.
-  const emphasizedVirtualDashed =
-    emphasized && virtual && !showVirtualWires && selected !== true;
+  const emphasized = revealedByClick || focusEmphasized;
+  // 포커스 모드에서 강조되지 않은 엣지는 흐리게 처리한다(클릭 강조 엣지는 제외).
+  const focusDimmed = focusActive && !emphasized;
+
+  // 숨김 모드의 가상 와이어는 클릭 강조가 없으면 선을 아예 그리지 않는다.
+  const hiddenVirtual = virtual && !showVirtualWires && !revealedByClick;
+
+  // 점선/대시 스타일 분류(렌더되는 선에 한함):
+  //  - 클릭 강조된 가상 와이어: 또렷한 파란 dashed 로 드러낸다.
+  //  - 표시 모드의 가상 와이어(클릭 강조 아님): dotted 로 실선과 구분한다.
+  //  - 그 외(비가상): 실선.
+  const virtualRevealedDashed = virtual && revealedByClick;
+  const virtualShownDotted = virtual && showVirtualWires && !revealedByClick;
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -117,8 +126,10 @@ export function CustomEdge({
     selectEdge(id);
   }, [id, selectEdge]);
 
-  // Feature 1(개선): 가상 엣지도 더 이상 완전히 숨기지 않는다 — 숨김 모드에서는
-  // 옅은 점선으로 항상 렌더해 연결을 희미하게 추적할 수 있게 한다(early return 제거).
+  // 숨김 모드의 가상 와이어는 클릭 강조가 없으면 선을 그리지 않는다(완전 숨김).
+  // 연결은 노드 카드의 LinkIndicator 로만 표시된다. 포커스 모드여도 보이지 않는
+  // 엣지는 강조/흐림 대상이 아니므로 그대로 렌더하지 않는다.
+  if (hiddenVirtual) return null;
 
   return (
     <g
@@ -127,40 +138,36 @@ export function CustomEdge({
       onClick={handleClick}
       className={cn(
         'transition-opacity duration-150',
-        // Feature 2: 포커스 모드에서 양 끝이 집합에 들지 않는 엣지는 흐리게 처리한다.
+        // 포커스 모드에서 따라가지 않은(강조 아님) 엣지는 흐리게 처리한다.
         focusDimmed && 'opacity-20',
-        // Feature 1(개선): 숨김 모드의 가상 와이어는 옅은 점선으로 de-emphasize 한다.
-        // (포커스 흐림과 동시 적용 시 더 흐려지지만 의도된 동작이다.)
-        faintDotted && 'opacity-40',
       )}
     >
       {/* 엣지 경로.
           - 강조(선택/그룹 하이라이트/포커스): 또렷한 파란 선.
-          - 숨김 모드의 가상 와이어(faintDotted): 옅은(muted) 점선.
-          - 그 외(비가상/표시 토글 ON): 기존 회색 실선. */}
+          - 클릭 강조된 가상 와이어: 파란 dashed 로 드러낸다.
+          - 표시 모드의 가상 와이어: dotted 로 실선과 구분(포커스 시 파랑/흐림).
+          - 그 외(비가상): 기존 회색 실선. */}
       <BaseEdge
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
         className={cn(
           'transition-all duration-150',
-          // 강조 시 파란색. 숨김 모드 가상 와이어는 더 옅은 muted 색으로 둔다.
+          // 강조 시 파란색, 그 외 회색.
           emphasized
             ? '!stroke-blue-500'
-            : faintDotted
-              ? '!stroke-zinc-300 dark:!stroke-zinc-700'
-              : '!stroke-zinc-300 dark:!stroke-zinc-600',
+            : '!stroke-zinc-300 dark:!stroke-zinc-600',
         )}
         style={{
-          strokeWidth: emphasized ? 2.5 : faintDotted ? 1 : 1.5,
-          // 점선 처리:
-          //  - 숨김 모드 가상 와이어(faintDotted): 촘촘한 dotted 로 약하게 표시.
-          //  - 강조된 가상 와이어: 더 또렷한 dashed 로 "숨겨진 선" 임을 구분.
-          //  - 그 외: 실선.
-          strokeDasharray: faintDotted
-            ? '2 4'
-            : emphasizedVirtualDashed
-              ? '6 4'
+          strokeWidth: emphasized ? 2.5 : virtualShownDotted ? 1.25 : 1.5,
+          // 대시 처리:
+          //  - 클릭 강조된 가상 와이어: 또렷한 dashed("6 4") 로 드러낸다.
+          //  - 표시 모드의 가상 와이어: dotted("2 4") 로 실선과 구분한다.
+          //  - 그 외: 실선(undefined).
+          strokeDasharray: virtualRevealedDashed
+            ? '6 4'
+            : virtualShownDotted
+              ? '2 4'
               : undefined,
         }}
       />

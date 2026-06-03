@@ -30,7 +30,7 @@ import { useEditorStore } from '@/stores/editorStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
 import { computeLinkList, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
-import { getConnectedNodeIds } from '@/lib/flow/connectionFocus';
+import { getConnectedElements } from '@/lib/flow/connectionFocus';
 import { LinkIndicator } from './LinkIndicator';
 import { LinkListPopover } from './LinkListPopover';
 import { NodeHandle } from './NodeHandle';
@@ -173,12 +173,16 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
   const focusDepth = useEditorStore((s) => s.focusDepth);
   const focusActive = focusOn && selectedNodeId !== null;
+  // 방향성 연결 집합(상류/하류). 노드 흐림 판정에는 nodeIds 만 사용한다.
   const connectedNodeIds = useMemo(
     () =>
-      focusActive ? getConnectedNodeIds(edges, selectedNodeId, focusDepth) : null,
+      focusActive
+        ? getConnectedElements(edges, selectedNodeId, focusDepth).nodeIds
+        : null,
     [focusActive, edges, selectedNodeId, focusDepth],
   );
-  // 이 노드가 포커스 대상(선택 노드 + depth hop 이내 연결 노드)에 들지 않으면 흐리게.
+  // 이 노드가 포커스 대상(선택 노드 + depth hop 이내 상류/하류 노드)에 들지
+  // 않으면 흐리게 처리한다(형제 관계로만 연결된 노드는 제외 → 흐려진다).
   const focusDimmed =
     connectedNodeIds !== null && !connectedNodeIds.has(id);
   // 상대 노드 라벨 조회 맵(id → label). 라벨이 없으면 id 로 폴백한다.
