@@ -520,11 +520,12 @@ describe('editorStore - 뷰 전용 표시 토글 (showVirtualWires / focusConnec
 
   beforeEach(() => {
     useEditorStore.getState().resetEditor();
-    // resetEditor 는 뷰 토글을 의도적으로 보존하므로(플로우 무관 선호),
-    // 테스트 간 격리를 위해 명시적으로 false 로 되돌린다.
+    // resetEditor 는 뷰 토글/단계를 의도적으로 보존하므로(플로우 무관 선호),
+    // 테스트 간 격리를 위해 명시적으로 기본값으로 되돌린다.
     useEditorStore.setState({
       showVirtualWires: false,
       focusConnectionsOnSelect: false,
+      focusDepth: 1,
     });
   });
 
@@ -569,5 +570,61 @@ describe('editorStore - 뷰 전용 표시 토글 (showVirtualWires / focusConnec
     const state = useEditorStore.getState();
     expect(state.showVirtualWires).toBe(true);
     expect(state.focusConnectionsOnSelect).toBe(true);
+  });
+
+  describe('focusDepth (연결 단계, 뷰 전용)', () => {
+    it('초기값은 1 이다 (기존 1-hop 동작)', () => {
+      expect(useEditorStore.getState().focusDepth).toBe(1);
+    });
+
+    it('setFocusDepth 는 값을 설정한다', () => {
+      useEditorStore.getState().setFocusDepth(3);
+      expect(useEditorStore.getState().focusDepth).toBe(3);
+    });
+
+    it('하한(1) 미만은 1 로 클램프한다', () => {
+      useEditorStore.getState().setFocusDepth(0);
+      expect(useEditorStore.getState().focusDepth).toBe(1);
+      useEditorStore.getState().setFocusDepth(-5);
+      expect(useEditorStore.getState().focusDepth).toBe(1);
+    });
+
+    it('상한(5) 초과는 5 로 클램프한다', () => {
+      useEditorStore.getState().setFocusDepth(6);
+      expect(useEditorStore.getState().focusDepth).toBe(5);
+      useEditorStore.getState().setFocusDepth(99);
+      expect(useEditorStore.getState().focusDepth).toBe(5);
+    });
+
+    it('비정수는 내림 후 클램프한다', () => {
+      useEditorStore.getState().setFocusDepth(2.9);
+      expect(useEditorStore.getState().focusDepth).toBe(2);
+    });
+
+    it('NaN/Infinity 는 안전하게 하한(1) 으로 처리한다', () => {
+      useEditorStore.getState().setFocusDepth(Number.NaN);
+      expect(useEditorStore.getState().focusDepth).toBe(1);
+      useEditorStore.getState().setFocusDepth(Number.POSITIVE_INFINITY);
+      expect(useEditorStore.getState().focusDepth).toBe(5);
+    });
+
+    it('setFocusDepth 는 isDirty / undo / redo 에 영향을 주지 않는다 (뷰 전용)', () => {
+      useEditorStore.getState().setDirty(false);
+
+      useEditorStore.getState().setFocusDepth(4);
+
+      const state = useEditorStore.getState();
+      expect(state.isDirty).toBe(false);
+      expect(state.undoStack).toHaveLength(0);
+      expect(state.redoStack).toHaveLength(0);
+    });
+
+    it('loadFlow 는 focusDepth 를 초기화하지 않는다 (플로우와 무관한 사용자 선호)', () => {
+      useEditorStore.getState().setFocusDepth(3);
+
+      useEditorStore.getState().loadFlow(oneNode, []);
+
+      expect(useEditorStore.getState().focusDepth).toBe(3);
+    });
   });
 });

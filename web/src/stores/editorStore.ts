@@ -153,6 +153,37 @@ interface EditorState {
    * 포함하지 않고, 플로우 로드/리셋 시에도 유지한다.
    */
   focusConnectionsOnSelect: boolean;
+  /**
+   * 연결 포커스 단계(depth, 뷰 전용).
+   *
+   * 포커스 모드에서 선택 노드로부터 몇 hop 까지 강조할지 결정한다.
+   * - 1(기본): 선택 노드 + 직접 이웃(기존 동작).
+   * - 2 이상: 이웃의 이웃까지 단계적으로 확장.
+   * - 1~FOCUS_DEPTH_MAX 범위로 클램프한다.
+   *
+   * showVirtualWires / focusConnectionsOnSelect 와 동일하게 순수 표시 상태이므로
+   * pushUndo / isDirty 에 포함하지 않고, 플로우 로드/리셋 시에도 유지한다.
+   */
+  focusDepth: number;
+}
+
+/** 연결 포커스 단계의 최소/최대 한계. */
+export const FOCUS_DEPTH_MIN = 1;
+export const FOCUS_DEPTH_MAX = 5;
+
+/**
+ * 연결 포커스 단계를 [MIN, MAX] 정수 범위로 클램프한다.
+ *
+ * - NaN 은 안전하게 하한(MIN) 으로 처리한다.
+ * - +Infinity 는 상한(MAX), -Infinity 는 하한(MIN) 으로 처리한다.
+ * - 그 외 비정수는 내림 후 범위로 클램프한다.
+ */
+export function clampFocusDepth(n: number): number {
+  if (Number.isNaN(n)) return FOCUS_DEPTH_MIN;
+  if (n >= FOCUS_DEPTH_MAX) return FOCUS_DEPTH_MAX;
+  if (n <= FOCUS_DEPTH_MIN) return FOCUS_DEPTH_MIN;
+  // 유한한 중간값만 남으므로 내림으로 정수화한다(예: 2.9 → 2).
+  return Math.floor(n);
 }
 
 interface EditorActions {
@@ -195,6 +226,8 @@ interface EditorActions {
   toggleShowVirtualWires: () => void;
   /** 연결 포커스 토글 (뷰 전용, dirty/undo 무관). */
   toggleFocusConnections: () => void;
+  /** 연결 포커스 단계 설정 (뷰 전용, [1, FOCUS_DEPTH_MAX] 클램프, dirty/undo 무관). */
+  setFocusDepth: (depth: number) => void;
   resetEditor: () => void;
 }
 
@@ -229,6 +262,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   // 뷰 전용 표시 토글 — 기본값 false(기존 동작과 100% 동일하게 렌더).
   showVirtualWires: false,
   focusConnectionsOnSelect: false,
+  // 연결 포커스 단계 — 기본 1(직접 이웃만, 기존 동작과 동일).
+  focusDepth: FOCUS_DEPTH_MIN,
 
   // Actions
 
@@ -495,6 +530,10 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
     set((state) => ({
       focusConnectionsOnSelect: !state.focusConnectionsOnSelect,
     })),
+
+  // 뷰 전용 — [1, FOCUS_DEPTH_MAX] 범위로 클램프하고 dirty/undo 를 건드리지 않는다.
+  setFocusDepth: (depth) =>
+    set({ focusDepth: clampFocusDepth(depth) }),
 
   resetEditor: () =>
     set({

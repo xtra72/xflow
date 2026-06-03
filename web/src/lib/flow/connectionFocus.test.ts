@@ -100,4 +100,134 @@ describe('getConnectedNodeIds', () => {
     const result = getConnectedNodeIds(edges, 'A');
     expect([...result].sort()).toEqual(['A', 'B']);
   });
+
+  it('depth 기본값(미지정) 은 1-hop 과 동일하다', () => {
+    const edges = [
+      makeEdge({ id: 'e1', source: 'A', target: 'B' }),
+      makeEdge({ id: 'e2', source: 'B', target: 'C' }), // 2-hop
+    ];
+    const withDefault = getConnectedNodeIds(edges, 'A');
+    const withOne = getConnectedNodeIds(edges, 'A', 1);
+    expect([...withDefault].sort()).toEqual(['A', 'B']);
+    expect([...withOne].sort()).toEqual([...withDefault].sort());
+  });
+});
+
+describe('getConnectedNodeIds — depth(BFS 다중 hop)', () => {
+  // A - B - C - D 직선 체인.
+  const chain = [
+    makeEdge({ id: 'e1', source: 'A', target: 'B' }),
+    makeEdge({ id: 'e2', source: 'B', target: 'C' }),
+    makeEdge({ id: 'e3', source: 'C', target: 'D' }),
+  ];
+
+  it('depth=1 은 선택 노드 + 직접 이웃만 담는다', () => {
+    const result = getConnectedNodeIds(chain, 'A', 1);
+    expect([...result].sort()).toEqual(['A', 'B']);
+  });
+
+  it('depth=2 는 2-hop 이웃까지 담는다', () => {
+    const result = getConnectedNodeIds(chain, 'A', 2);
+    expect([...result].sort()).toEqual(['A', 'B', 'C']);
+    expect(result.has('D')).toBe(false);
+  });
+
+  it('depth=3 은 3-hop 이웃까지 담는다(체인 끝)', () => {
+    const result = getConnectedNodeIds(chain, 'A', 3);
+    expect([...result].sort()).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('역방향(B→A) 엣지도 무방향으로 따라가며 다중 hop 탐색한다', () => {
+    const edges = [
+      makeEdge({ id: 'e1', source: 'B', target: 'A' }), // A 의 이웃 B
+      makeEdge({ id: 'e2', source: 'C', target: 'B' }), // B 의 이웃 C
+    ];
+    expect([...getConnectedNodeIds(edges, 'A', 1)].sort()).toEqual(['A', 'B']);
+    expect([...getConnectedNodeIds(edges, 'A', 2)].sort()).toEqual([
+      'A',
+      'B',
+      'C',
+    ]);
+  });
+
+  it('depth 가 충분히 크면 같은 연결 컴포넌트 전체를 담는다', () => {
+    const result = getConnectedNodeIds(chain, 'A', 99);
+    expect([...result].sort()).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('다른 컴포넌트의 노드는 depth 가 커도 포함하지 않는다', () => {
+    const edges = [
+      ...chain,
+      makeEdge({ id: 'x1', source: 'X', target: 'Y' }), // 분리된 컴포넌트
+    ];
+    const result = getConnectedNodeIds(edges, 'A', 99);
+    expect(result.has('X')).toBe(false);
+    expect(result.has('Y')).toBe(false);
+  });
+
+  it('depth=0 이면 선택 노드 자신만 담는다(이웃 미포함)', () => {
+    const result = getConnectedNodeIds(chain, 'A', 0);
+    expect([...result]).toEqual(['A']);
+  });
+
+  it('음수 depth 도 선택 노드 자신만 담는다', () => {
+    const result = getConnectedNodeIds(chain, 'A', -3);
+    expect([...result]).toEqual(['A']);
+  });
+
+  it('사이클이 있어도 무한 루프 없이 종료하고 중복 없이 담는다', () => {
+    // 삼각형 사이클 A-B-C-A.
+    const cycle = [
+      makeEdge({ id: 'e1', source: 'A', target: 'B' }),
+      makeEdge({ id: 'e2', source: 'B', target: 'C' }),
+      makeEdge({ id: 'e3', source: 'C', target: 'A' }),
+    ];
+    const result = getConnectedNodeIds(cycle, 'A', 99);
+    expect([...result].sort()).toEqual(['A', 'B', 'C']);
+    expect(result.size).toBe(3);
+  });
+
+  it('사이클을 통한 짧은 경로(2 hop)도 정확히 반영한다', () => {
+    // 사각형 A-B-C-D-A: A 에서 D 는 1 hop(직접) 으로도 닿는다.
+    const square = [
+      makeEdge({ id: 'e1', source: 'A', target: 'B' }),
+      makeEdge({ id: 'e2', source: 'B', target: 'C' }),
+      makeEdge({ id: 'e3', source: 'C', target: 'D' }),
+      makeEdge({ id: 'e4', source: 'D', target: 'A' }),
+    ];
+    // depth=1: A 의 직접 이웃은 B, D.
+    expect([...getConnectedNodeIds(square, 'A', 1)].sort()).toEqual([
+      'A',
+      'B',
+      'D',
+    ]);
+    // depth=2: C 까지 전체 포함.
+    expect([...getConnectedNodeIds(square, 'A', 2)].sort()).toEqual([
+      'A',
+      'B',
+      'C',
+      'D',
+    ]);
+  });
+
+  it('비정수 depth 는 내림 처리한다(2.9 → 2 hop)', () => {
+    const result = getConnectedNodeIds(chain, 'A', 2.9);
+    expect([...result].sort()).toEqual(['A', 'B', 'C']);
+  });
+
+  it('가상 엣지를 통한 다중 hop 도 따라간다', () => {
+    const edges = [
+      makeEdge({ id: 'e1', source: 'A', target: 'B', virtual: true }),
+      makeEdge({ id: 'e2', source: 'B', target: 'C', virtual: true }),
+    ];
+    expect([...getConnectedNodeIds(edges, 'A', 2)].sort()).toEqual([
+      'A',
+      'B',
+      'C',
+    ]);
+  });
+
+  it('selectedNodeId 가 null 이면 depth 와 무관하게 빈 집합', () => {
+    expect(getConnectedNodeIds(chain, null, 5).size).toBe(0);
+  });
 });

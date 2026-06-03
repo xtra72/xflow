@@ -167,16 +167,18 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   // 중복되는 포트별 컴팩트 링크 인디케이터는 숨긴다.
   const showVirtualWires = useEditorStore((s) => s.showVirtualWires);
 
-  // Feature 2: 연결 포커스. 토글이 켜지고 단일 노드가 선택되면, 선택 노드와
-  // 1-hop 연결된 노드 집합을 계산해 그 외 노드를 흐리게 처리한다.
+  // Feature 2: 연결 포커스. 토글이 켜지고 단일 노드가 선택되면, 선택 노드로부터
+  // focusDepth hop 이내로 연결된 노드 집합을 계산해 그 외 노드를 흐리게 처리한다.
   const focusOn = useEditorStore((s) => s.focusConnectionsOnSelect);
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
+  const focusDepth = useEditorStore((s) => s.focusDepth);
   const focusActive = focusOn && selectedNodeId !== null;
   const connectedNodeIds = useMemo(
-    () => (focusActive ? getConnectedNodeIds(edges, selectedNodeId) : null),
-    [focusActive, edges, selectedNodeId],
+    () =>
+      focusActive ? getConnectedNodeIds(edges, selectedNodeId, focusDepth) : null,
+    [focusActive, edges, selectedNodeId, focusDepth],
   );
-  // 이 노드가 포커스 대상(선택 노드 + 직접 연결 노드)에 포함되지 않으면 흐리게.
+  // 이 노드가 포커스 대상(선택 노드 + depth hop 이내 연결 노드)에 들지 않으면 흐리게.
   const focusDimmed =
     connectedNodeIds !== null && !connectedNodeIds.has(id);
   // 상대 노드 라벨 조회 맵(id → label). 라벨이 없으면 id 로 폴백한다.

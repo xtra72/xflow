@@ -10,7 +10,10 @@ import {
   EyeOff,
   Focus,
   Grid3x3,
+  Layers,
+  Minus,
   Pencil,
+  Plus,
   Play,
   Redo2,
   RotateCcw,
@@ -32,7 +35,11 @@ import {
   useStopFlow,
   useRestartFlow,
 } from '@/hooks/useFlow';
-import { useEditorStore } from '@/stores/editorStore';
+import {
+  FOCUS_DEPTH_MAX,
+  FOCUS_DEPTH_MIN,
+  useEditorStore,
+} from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { FlowStatus } from '@/types/flow';
 import { FlowSettingsDialog } from './FlowSettingsDialog';
@@ -90,6 +97,8 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
     (s) => s.focusConnectionsOnSelect,
   );
   const toggleFocusConnections = useEditorStore((s) => s.toggleFocusConnections);
+  const focusDepth = useEditorStore((s) => s.focusDepth);
+  const setFocusDepth = useEditorStore((s) => s.setFocusDepth);
 
   // 플로우 상태 조회 (5초 간격 폴링)
   const { data: statusInfo } = useFlowStatus(flowId);
@@ -264,12 +273,20 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         active={showVirtualWires}
       />
 
-      {/* 연결 포커스 토글 — 켜고 노드를 선택하면 직접 연결만 강조하고 나머지를 흐리게. */}
+      {/* 연결 포커스 토글 — 켜고 노드를 선택하면 연결만 강조하고 나머지를 흐리게. */}
       <ToolbarButton
         icon={Focus}
         label="연결 포커스"
         onClick={toggleFocusConnections}
         active={focusConnectionsOnSelect}
+      />
+
+      {/* 연결 단계(depth) 컴팩트 스테퍼 — 포커스가 켜졌을 때만 활성화한다.
+          선택 노드로부터 몇 hop 까지 강조할지 1~5 범위로 조절한다. */}
+      <FocusDepthStepper
+        depth={focusDepth}
+        onChange={setFocusDepth}
+        enabled={focusConnectionsOnSelect}
       />
 
       {/* 2026-05-31: 플로우 표시 설정 모달 */}
@@ -522,6 +539,77 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+interface FocusDepthStepperProps {
+  /** 현재 연결 단계(1~FOCUS_DEPTH_MAX). */
+  depth: number;
+  /** 단계 변경 콜백(스토어에서 클램프됨). */
+  onChange: (depth: number) => void;
+  /** 포커스 토글이 켜져 있어 컨트롤을 활성화할지 여부. */
+  enabled: boolean;
+}
+
+/**
+ * 연결 단계(depth) 컴팩트 스테퍼.
+ *
+ * - "표시 단계" 레이어 아이콘 + 현재 값 + 증감 버튼으로 구성한다.
+ * - enabled(포커스 ON) 일 때만 상호작용 가능하며, OFF 면 흐리게 비활성화한다.
+ * - 1~FOCUS_DEPTH_MAX 범위 밖으로는 버튼이 비활성화되어 더 이상 변하지 않는다.
+ *   (실제 클램프는 스토어 setFocusDepth 가 보장한다.)
+ */
+function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps) {
+  const atMin = depth <= FOCUS_DEPTH_MIN;
+  const atMax = depth >= FOCUS_DEPTH_MAX;
+  const title = `연결 단계: ${depth}단계 (선택 노드로부터 ${depth} hop 이내 강조)`;
+
+  return (
+    <div
+      title={title}
+      aria-label={title}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded-md border px-1 py-0.5',
+        'border-zinc-200 dark:border-zinc-700',
+        enabled
+          ? 'text-zinc-600 dark:text-zinc-300'
+          : 'pointer-events-none opacity-40',
+      )}
+    >
+      <Layers className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+      <button
+        type="button"
+        onClick={() => onChange(depth - 1)}
+        disabled={!enabled || atMin}
+        aria-label="연결 단계 줄이기"
+        className={cn(
+          'inline-flex h-4 w-4 items-center justify-center rounded',
+          'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+          'disabled:pointer-events-none disabled:opacity-30',
+        )}
+      >
+        <Minus className="h-3 w-3" />
+      </button>
+      <span
+        className="min-w-[0.75rem] text-center text-xs font-medium tabular-nums"
+        aria-live="polite"
+      >
+        {depth}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(depth + 1)}
+        disabled={!enabled || atMax}
+        aria-label="연결 단계 늘리기"
+        className={cn(
+          'inline-flex h-4 w-4 items-center justify-center rounded',
+          'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+          'disabled:pointer-events-none disabled:opacity-30',
+        )}
+      >
+        <Plus className="h-3 w-3" />
+      </button>
     </div>
   );
 }
