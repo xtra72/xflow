@@ -130,6 +130,7 @@ function EditorPageInner() {
   const duplicateNodes = useEditorStore((s) => s.duplicateNodes);
   const selectNode = useEditorStore((s) => s.selectNode);
   const selectEdge = useEditorStore((s) => s.selectEdge);
+  const setHighlightedLinkName = useEditorStore((s) => s.setHighlightedLinkName);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
@@ -376,8 +377,10 @@ function EditorPageInner() {
   const handlePaneClick = useCallback(() => {
     selectNode(null);
     selectEdge(null);
+    // SPEC-LINK-001: 빈 캔버스 클릭 시 가상 링크 하이라이트도 해제한다.
+    setHighlightedLinkName(null);
     closeContextMenu();
-  }, [selectNode, selectEdge, closeContextMenu]);
+  }, [selectNode, selectEdge, setHighlightedLinkName, closeContextMenu]);
 
   // --- 노드 우클릭 컨텍스트 메뉴 ---
   const handleNodeContextMenu = useCallback(

@@ -29,6 +29,8 @@ import { configureNode } from '@/services/api/nodeService';
 import { useEditorStore } from '@/stores/editorStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
+import { computeLinkBadges, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
+import { LinkBadge } from './LinkBadge';
 import { NodeHandle } from './NodeHandle';
 
 /** 카테고리별 아이콘 매핑 */
@@ -152,6 +154,31 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const errorPorts = nodeData.ports?.filter((p) => p.direction === 'error') ?? [];
   // 오른쪽 면에 배치되는 전체 포트 수 (출력 + 에러)
   const rightPorts = [...outputPorts, ...errorPorts];
+
+  // SPEC-LINK-001: 이 노드에 닿는 가상 와이어를 포트별 링크 배지로 계산한다.
+  // 스토어의 edges 를 구독해 가상화 토글/이름 편집/삭제에 즉시 반응한다.
+  // 같은 (포트, 이름) 의 가상 와이어 N개는 배지 1개로 합쳐진다(decision #1).
+  const edges = useEditorStore((s) => s.edges);
+  const linkBadges = useMemo(() => computeLinkBadges(edges, id), [edges, id]);
+  // 포트 이름 → 해당 포트의 출력/입력 링크 배지 목록 조회 맵.
+  const outBadgesByPort = useMemo(() => {
+    const map = new Map<string, typeof linkBadges.outputs>();
+    for (const b of linkBadges.outputs) {
+      const list = map.get(b.port) ?? [];
+      list.push(b);
+      map.set(b.port, list);
+    }
+    return map;
+  }, [linkBadges]);
+  const inBadgesByPort = useMemo(() => {
+    const map = new Map<string, typeof linkBadges.inputs>();
+    for (const b of linkBadges.inputs) {
+      const list = map.get(b.port) ?? [];
+      list.push(b);
+      map.set(b.port, list);
+    }
+    return map;
+  }, [linkBadges]);
 
   return (
     <div
@@ -297,6 +324,21 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                               );
                             })()}
                         </span>
+                        {/* SPEC-LINK-001: 이 입력 포트에 닿는 가상 링크 배지.
+                            핸들 id 없는(레거시) 와이어는 DEFAULT_PORT 로 분류되며,
+                            입력 포트가 하나뿐일 때만 그 포트에 배지를 붙인다. */}
+                        {[
+                          ...(inBadgesByPort.get(inPort.name) ?? []),
+                          ...(inputPorts.length === 1
+                            ? (inBadgesByPort.get(DEFAULT_PORT) ?? [])
+                            : []),
+                        ].map((b) => (
+                          <LinkBadge
+                            key={`in-${b.port}-${b.name}`}
+                            direction="input"
+                            name={b.name}
+                          />
+                        ))}
                       </>
                     )}
                   </div>
@@ -363,6 +405,21 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                             <span className="font-medium">{rightPort.name}</span>
                           )}
                         </span>
+                        {/* SPEC-LINK-001: 이 출력 포트에 닿는 가상 링크 배지.
+                            에러 포트는 출력 와이어의 소스가 아니므로 제외한다. */}
+                        {!isErrorRow &&
+                          [
+                            ...(outBadgesByPort.get(rightPort.name) ?? []),
+                            ...(outputPorts.length === 1
+                              ? (outBadgesByPort.get(DEFAULT_PORT) ?? [])
+                              : []),
+                          ].map((b) => (
+                            <LinkBadge
+                              key={`out-${b.port}-${b.name}`}
+                              direction="output"
+                              name={b.name}
+                            />
+                          ))}
                         <NodeHandle
                           type="source"
                           position={Position.Right}

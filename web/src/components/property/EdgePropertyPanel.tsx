@@ -46,6 +46,26 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
   const mode = (selectedEdge as Record<string, unknown> | undefined)?.mode as string ?? 'buffer';
   const bufferSize = (selectedEdge as Record<string, unknown> | undefined)?.buffer_size as number ?? DEFAULT_BUFFER_SIZE;
   const wireName = (selectedEdge as Record<string, unknown> | undefined)?.name as string ?? '';
+  // SPEC-LINK-001: 가상 링크 여부(최상위 `virtual` 속성, 기본 false).
+  const isVirtual = (selectedEdge as Record<string, unknown> | undefined)?.virtual === true;
+
+  // 가상 링크 토글: 표시 전환일 뿐 라우팅은 불변. 실제 편집이므로 dirty 가 된다.
+  const handleVirtualToggle = useCallback(
+    (next: boolean) => {
+      if (!selectedEdgeId) return;
+      updateEdgeData(selectedEdgeId, { virtual: next });
+    },
+    [selectedEdgeId, updateEdgeData],
+  );
+
+  // 링크 이름 편집: 같은 이름의 가상 와이어들은 같은 링크 그룹으로 표시된다.
+  const handleNameChange = useCallback(
+    (value: string) => {
+      if (!selectedEdgeId) return;
+      updateEdgeData(selectedEdgeId, { name: value });
+    },
+    [selectedEdgeId, updateEdgeData],
+  );
 
   const handleModeChange = useCallback(
     (newMode: string) => {
@@ -106,15 +126,45 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Wire 이름 (읽기 전용) */}
-        {wireName && (
-          <div>
-            <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
-              이름
-            </label>
-            <p className="text-xs text-(--color-text-primary) break-all">{wireName}</p>
-          </div>
-        )}
+        {/* SPEC-LINK-001: 링크 이름 (편집 가능) — 같은 이름은 같은 링크 그룹 */}
+        <div>
+          <label
+            htmlFor="wire-name"
+            className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+          >
+            링크 이름
+          </label>
+          <input
+            id="wire-name"
+            type="text"
+            value={wireName}
+            onChange={(e) => handleNameChange(e.target.value)}
+            placeholder="링크 이름"
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5
+              text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+
+        {/* SPEC-LINK-001: 가상 링크 토글 — 켜면 연결선을 숨기고 양 끝 포트에
+            "출력/입력 링크" 배지로 분해 표시한다. 라우팅은 변하지 않는다. */}
+        <div>
+          <label className="flex cursor-pointer items-center justify-between gap-2">
+            <span className="text-xs font-medium text-(--color-text-secondary)">
+              가상 링크
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={isVirtual}
+              onChange={(e) => handleVirtualToggle(e.target.checked)}
+              aria-label="가상 링크"
+              className="h-4 w-4 cursor-pointer accent-blue-500"
+            />
+          </label>
+          <p className="mt-1 text-xs text-(--color-text-muted)">
+            켜면 연결선을 숨기고 양 끝 포트에 링크 배지로 표시합니다(라우팅 불변).
+          </p>
+        </div>
 
         {/* Source -> Target (읽기 전용) */}
         <div>

@@ -107,6 +107,13 @@ interface EditorState {
   edges: Edge[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
+  /**
+   * SPEC-LINK-001: 현재 하이라이트된 가상 링크 이름(그룹 식별자).
+   * 사용자가 가상 링크 배지를 클릭하면 같은 이름 그룹의 숨겨진 와이어 선을
+   * 일시적으로 표시하고 상대 배지를 강조한다. UI 표시 전용 상태이므로
+   * pushUndo / isDirty 로직에 절대 포함하지 않는다.
+   */
+  highlightedLinkName: string | null;
   isDirty: boolean;
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
@@ -151,6 +158,11 @@ interface EditorActions {
   updateEdgeData: (edgeId: string, data: Record<string, unknown>) => void;
   selectNode: (nodeId: string | null) => void;
   selectEdge: (edgeId: string | null) => void;
+  /**
+   * SPEC-LINK-001: 가상 링크 하이라이트 그룹 설정.
+   * 같은 이름을 다시 설정하면 토글 해제(null)된다. dirty/undo 영향 없음.
+   */
+  setHighlightedLinkName: (name: string | null) => void;
   undo: () => void;
   redo: () => void;
   clearHistory: () => void;
@@ -182,6 +194,7 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   edges: [],
   selectedNodeId: null,
   selectedEdgeId: null,
+  highlightedLinkName: null,
   isDirty: false,
   undoStack: [],
   redoStack: [],
@@ -200,6 +213,7 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       isDirty: false,
       undoStack: [],
       redoStack: [],
+      highlightedLinkName: null,
     }),
 
   setNodes: (nodes) =>
@@ -260,6 +274,9 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       // 무버퍼(bypass)는 송신 측이 수신 처리 속도에 동기로 묶여 백프레셔가
       // 즉시 전파되므로, 기본은 가득 차면 대기하는 큐(buffer) 100 으로 둔다.
       // 이후 엣지 속성 패널에서 용량/모드를 개별 조정할 수 있다.
+      // SPEC-LINK-001: 새 엣지는 기본 비가상(`virtual: false`) 으로 생성한다.
+      // 가상화는 표시 전용 플래그이며 엔진 라우팅에 영향을 주지 않는다. 사용자가
+      // 속성 패널에서 토글하기 전까지는 기존과 동일한 연결선으로 렌더된다.
       const edgeWithMeta = {
         ...connection,
         id: generateUUID(),
@@ -267,6 +284,7 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
         wire_type: 'simple',
         mode: 'buffer',
         buffer_size: 100,
+        virtual: false,
       } as Edge;
 
       return {
@@ -372,6 +390,12 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   selectEdge: (edgeId) =>
     set({ selectedEdgeId: edgeId, selectedNodeId: null }),
 
+  // 같은 이름을 다시 설정하면 토글 해제한다. 표시 전용이므로 dirty/undo 무관.
+  setHighlightedLinkName: (name) =>
+    set((state) => ({
+      highlightedLinkName: state.highlightedLinkName === name ? null : name,
+    })),
+
   undo: () =>
     set((state) => {
       if (state.undoStack.length === 0) return state;
@@ -440,6 +464,7 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       edges: [],
       selectedNodeId: null,
       selectedEdgeId: null,
+      highlightedLinkName: null,
       isDirty: false,
       undoStack: [],
       redoStack: [],
