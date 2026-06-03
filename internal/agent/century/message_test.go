@@ -191,7 +191,7 @@ func TestIcp01DeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	got := string(b)
-	// v0.5.0 통합 schema — timestamp_ms 제거, label 은 metadata.label 로 이동.
+	// v0.5.0 통합 schema — timestamp_ms 제거, label 은 metadata.name 으로 이동.
 	// v0.5.1 — evaporator_temperature_a / _b 도 state 그룹 안에 포함 (Reg03 수신 시). v0.18.5: 풀네임.
 	// v0.9.0 — payload.type 제거 (metadata.message_type 이 schema 식별 역할).
 	// v0.18.6: 프로토콜 식별자는 unit_id (이전 device_id), 글로벌 UUID 는 device_id (omitempty 라 빈 값이면 부재).
@@ -207,7 +207,7 @@ func TestIcp01DeviceStateEvent_JSONSnakeCase(t *testing.T) {
 		`"evaporator_temperature_a":8.5`,
 		`"evaporator_temperature_b":8`,
 		`"trigger":"change"`,
-		`"metadata":{"label":"indoor-3b","device_type":"HVACR.IDU"}`,
+		`"metadata":{"name":"indoor-3b","device_type":"HVACR.IDU"}`,
 	} {
 		if !contains([]byte(got), key) {
 			t.Errorf("JSON missing key %q in %s", key, got)
@@ -217,9 +217,9 @@ func TestIcp01DeviceStateEvent_JSONSnakeCase(t *testing.T) {
 	if contains([]byte(got), `"timestamp_ms"`) {
 		t.Errorf("v0.5.0: timestamp_ms 가 출력에 남아있음: %s", got)
 	}
-	// label 은 top-level 이 아닌 metadata 안에 있어야 한다.
-	if contains([]byte(got), `"label":"indoor-3b","timestamp`) || contains([]byte(got), `"label":"indoor-3b","last_seen`) {
-		t.Errorf("v0.5.0: label 이 top-level 로 남아있음: %s", got)
+	// name(라벨 값) 은 top-level 이 아닌 metadata 안에 있어야 한다.
+	if contains([]byte(got), `"name":"indoor-3b","timestamp`) || contains([]byte(got), `"name":"indoor-3b","last_seen`) {
+		t.Errorf("v0.5.0: name 이 top-level 로 남아있음: %s", got)
 	}
 }
 

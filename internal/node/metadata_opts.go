@@ -8,7 +8,7 @@
 // 옵션 필드 (default OFF, 노드 config 에서 토글):
 //   - node_id    — 메시지를 emit 한 노드 UUID
 //   - device_type — "HVACR.IDU" / "HVACR.ODU"
-//   - label       — 사용자 라벨 (없으면 자동 생성된 기본명)
+//   - name        — 사용자 라벨 (없으면 자동 생성된 기본명)
 //   - node_source — emit 경로 식별 ("poll_bulk", "device_state", "poll" 등)
 //
 // 제거된 필드 (v0.18.26):
@@ -36,13 +36,13 @@ import "fmt"
 type MetadataEmitOptions struct {
 	NodeID     bool `json:"node_id"`
 	DeviceType bool `json:"device_type"`
-	Label      bool `json:"label"`
+	Name       bool `json:"name"`
 	NodeSource bool `json:"node_source"`
 }
 
 // IsAllowed 는 주어진 metadata key 가 현재 옵션에서 허용되는지 반환한다.
 // device_id 는 필수 시스템 키로 항상 허용 (true).
-// node_id / device_type / label / node_source 는 해당 옵션 플래그에 따라 결정.
+// node_id / device_type / name / node_source 는 해당 옵션 플래그에 따라 결정.
 // unit_id / slot_num 는 항상 거부 (v0.18.26 부터 출력 metadata 에서 제거).
 // 그 외 key 는 forward-compat 차원에서 기본 허용 (true).
 func (o MetadataEmitOptions) IsAllowed(key string) bool {
@@ -53,8 +53,8 @@ func (o MetadataEmitOptions) IsAllowed(key string) bool {
 		return o.NodeID
 	case "device_type":
 		return o.DeviceType
-	case "label":
-		return o.Label
+	case "name":
+		return o.Name
 	case "node_source":
 		return o.NodeSource
 	}
@@ -83,7 +83,7 @@ func (o MetadataEmitOptions) SetIfAllowed(setter func(string, string), key strin
 // parseEmitMetadata 는 노드 config map 에서 옵션을 파싱한다 (두 형식 모두 지원).
 //
 // 1) 중첩 형식: config["emit_metadata"] = map[string]any{"device_type": true, ...}
-// 2) 평탄 형식: config["emit_device_type"] = true, config["emit_label"] = true, ...
+// 2) 평탄 형식: config["emit_device_type"] = true, config["emit_name"] = true, ...
 //
 // 두 형식 모두 동일 옵션에 매핑되며, 중첩이 우선 적용 후 평탄이 덮어쓴다.
 // 누락된 키는 변경되지 않음 (out 의 기존 값 보존).
@@ -102,8 +102,8 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 			if v, ok := m["device_type"].(bool); ok {
 				out.DeviceType = v
 			}
-			if v, ok := m["label"].(bool); ok {
-				out.Label = v
+			if v, ok := m["name"].(bool); ok {
+				out.Name = v
 			}
 			if v, ok := m["node_source"].(bool); ok {
 				out.NodeSource = v
@@ -116,8 +116,8 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 	if v, ok := config["emit_device_type"].(bool); ok {
 		out.DeviceType = v
 	}
-	if v, ok := config["emit_label"].(bool); ok {
-		out.Label = v
+	if v, ok := config["emit_name"].(bool); ok {
+		out.Name = v
 	}
 	if v, ok := config["emit_node_source"].(bool); ok {
 		out.NodeSource = v
