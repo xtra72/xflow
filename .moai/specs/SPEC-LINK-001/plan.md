@@ -1,7 +1,11 @@
 # SPEC-LINK-001 구현 계획 (Plan)
 
 > 가상(네임드) 링크 — 와이어 가상화 표시로 캔버스 연결 간소화
-> PLAN 단계 산출물. 코드 미구현. 개발 방법론: Hybrid (신규=TDD, 기존 변경=동작 보존 DDD).
+> PLAN 단계 산출물. 개발 방법론: Hybrid (신규=TDD, 기존 변경=동작 보존 DDD).
+
+> **구현 반영 (v1.1.0, 2026-06-04)**: UI가 진화했고 뷰 전용 표시 컨트롤이 추가되었다.
+> - **인라인 이름 배지 → 컴팩트 인디케이터 + 측면 팝오버**: 포트에 이름 배지를 직접 붙이던 안은 노드 카드 폭을 넓혀, 포트 옆 최소 폭 `LinkIndicator`(아이콘+개수) + 클릭 시 노드 바깥 `LinkListPopover`(출력=오른쪽/입력=왼쪽) 로 구현했다. 순수 헬퍼는 `lib/flow/virtualLinks.ts`.
+> - **뷰 전용 프론트엔드 추가 (엔진/데이터 불변)**: 전역 툴바에 (1) 가상 와이어 표시 토글(`showVirtualWires` — 숨김/점선), (2) 방향성 연결 포커스(`focusConnectionsOnSelect` + `focusDepth` 1..5/전체). 모두 **표시 전용**이며 라우팅·데이터·dirty·undo·저장에 영향을 주지 않는다. 백엔드 모델(`Wire.virtual`/`name`)과 엔진 라우팅은 그대로다. 관련 파일: `lib/flow/connectionFocus.ts`, `components/flow/EditorToolbar.tsx`, `CustomEdge.tsx`, `CustomNode.tsx`.
 
 ## 1. 기술 접근
 
@@ -17,8 +21,9 @@
 2. 백엔드: `flow_adapter.go convertReactFlowEdgesToWires` 에 `virtual` 통과(이미 `name` 통과 중).
 3. 프론트: `editorStore.onConnect` edge 메타에 `virtual: false` 기본값 + 편집 액션.
 4. 프론트: `EdgePropertyPanel` 에 virtual 토글 + name 편집 입력.
-5. 프론트: `CustomEdge` 에서 `data.virtual` 시 선 숨김 + 엔드포인트 배지 렌더.
-6. 프론트: 포트 옆 배지 배치(`CustomNode`/`NodeHandle`) + 이름 그룹 하이라이트(선택 상태).
+5. 프론트: `CustomEdge` 에서 가상 와이어 선 숨김/점선(`showVirtualWires`) + 클릭·선택 시 파란 dashed + 연결 포커스 강조/흐림.
+6. 프론트: 포트 옆 컴팩트 `LinkIndicator` + 측면 `LinkListPopover` + 이름 그룹 하이라이트(선택 상태). 순수 헬퍼 `lib/flow/virtualLinks.ts`.
+7. 프론트(뷰 전용): `EditorToolbar` 가상 와이어 표시/연결 포커스/depth 토글, `lib/flow/connectionFocus.ts` 방향성 BFS.
 
 ## 2. 마일스톤 (우선순위 기반, 시간 추정 없음)
 
@@ -42,10 +47,19 @@
 - M10. 배지 클릭 시 같은 이름 그룹/상대 엔드포인트 하이라이트.
 - M11. dirty 정책 검증: 선택만으로 dirty 금지, `virtual`/`name` 편집만 dirty.
 
+### View-Only Goal (구현 반영 — 프론트엔드 전용, 엔진/데이터 불변)
+
+> 아래는 모두 **표시(뷰) 전용**이며 라우팅/데이터/dirty/undo/저장에 영향이 없다(순수 표시 상태).
+
+- M14. 인라인 배지 폐기 → 포트 옆 컴팩트 `LinkIndicator`(아이콘+개수). 순수 헬퍼 `virtualLinks.computeLinkBadges`.
+- M15. 측면 `LinkListPopover`(NodeToolbar, 출력=오른쪽/입력=왼쪽) + 이름 그룹별 상대 끝점. 순수 헬퍼 `virtualLinks.computeLinkList`.
+- M16. 가상 와이어 표시 토글 `showVirtualWires`(숨김/점선) + 클릭·선택·그룹 하이라이트 시 파란 dashed 일시 표시(두 모드 공통). `CustomEdge.tsx`.
+- M17. 방향성 연결 포커스 `focusConnectionsOnSelect` + `focusDepth`(1..5/전체). 상/하류 BFS, 형제 제외, 노드+엣지 강조/흐림. `connectionFocus.ts`, `EditorToolbar.tsx`, `CustomEdge.tsx`, `CustomNode.tsx`.
+
 ### Optional Goal (우선순위: 낮음)
 
 - M12. `WithVirtual` WireOption 추가(백엔드 생성 편의).
-- M13. 배지 합치기 규칙/하이라이트 방식 OPEN QUESTION 확정 및 문서화.
+- M13. 배지 합치기 규칙/하이라이트 방식 OPEN QUESTION 확정 및 문서화 (RESOLVED — Section 5.5 spec 참조).
 
 ## 3. 아키텍처 설계 방향
 
