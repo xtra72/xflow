@@ -1172,4 +1172,57 @@ describe('editorStore - 경계/영역 동적 배치 (SPEC-SUBFLOW-001 M4)', () =
       expect(outputBoundaryExists).toBe(true); // *** 이것이 false 면 버그 2 ***
     });
   });
+
+  // 합성 노드 측정으로 인한 무한 리렌더 루프 방지(경계 포트 연결 불가의 근본 원인).
+  describe('경계 노드 무한 리렌더 방지', () => {
+    beforeEach(() => {
+      useEditorStore.getState().resetEditor();
+    });
+
+    const loadWithInputPort = () => {
+      const s = useEditorStore.getState();
+      s.loadFlow(
+        [{ id: 'n1', type: 'custom', position: { x: 100, y: 100 }, data: {} }],
+        [],
+      );
+      s.addFlowInput();
+    };
+
+    it('합성 노드의 dimensions 변경은 경계 노드를 재빌드하지 않는다(위치 불변)', () => {
+      loadWithInputPort();
+      const before = useEditorStore
+        .getState()
+        .nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID);
+      // React Flow 가 경계 노드를 측정하며 emit 하는 dimensions 변경을 흉내낸다.
+      const change = {
+        id: FLOW_INPUT_BOUNDARY_ID,
+        type: 'dimensions',
+        dimensions: { width: 140, height: 999 },
+        resizing: false,
+      } as unknown as NodeChange;
+      useEditorStore.getState().onNodesChange([change]);
+      const after = useEditorStore
+        .getState()
+        .nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID);
+      // 재빌드 미발생 → 위치가 재계산되지 않아야 한다.
+      expect(after?.position).toEqual(before?.position);
+    });
+
+    it('실제 노드의 position 변경은 경계 노드를 재배치한다(정상 동작 보존)', () => {
+      loadWithInputPort();
+      const before = useEditorStore
+        .getState()
+        .nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID)?.position;
+      const change = {
+        id: 'n1',
+        type: 'position',
+        position: { x: 600, y: 100 },
+      } as NodeChange;
+      useEditorStore.getState().onNodesChange([change]);
+      const after = useEditorStore
+        .getState()
+        .nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID)?.position;
+      expect(after).not.toEqual(before);
+    });
+  });
 });

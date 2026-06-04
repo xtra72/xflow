@@ -517,15 +517,26 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
 
       // SPEC-SUBFLOW-001 M4: 실제 노드의 위치(position)·크기(dimensions)·삭제(remove)가
       // 바뀌면 경계 노드/영역 노드를 현재 실제 노드 바운딩 박스에서 다시 파생한다
-      // (노드를 옮기면 경계 포트와 영역 사각형이 함께 따라온다). 합성 노드는 실제
-      // 노드 바운딩 박스에서만 파생되고 자신은 박스에서 제외되므로 피드백 루프가 없다.
-      const geometryChanged = filtered.some(
-        (c) =>
+      // (노드를 옮기면 경계 포트와 영역 사각형이 함께 따라온다).
+      //
+      // [중요] 합성 노드(경계 2종 + 영역) 자신의 변경은 트리거에서 제외한다.
+      // React Flow 는 합성 노드를 렌더한 직후 측정하며 'dimensions' 변경을 emit 하는데,
+      // 이를 재빌드 트리거로 삼으면 (측정 → 재빌드(새 객체) → 재측정 → ...) 무한 리렌더
+      // 루프가 발생한다. 이 루프는 경계 노드를 끊임없이 새 객체로 교체하므로 React Flow
+      // 가 핸들에서 연결을 안정적으로 시작하지 못해 "플로우 포트 연결 불가" 의 원인이 된다.
+      const geometryChanged = filtered.some((c) => {
+        if (c.type === 'add') {
+          return !isSyntheticNodeId((c.item as { id?: string } | undefined)?.id);
+        }
+        if (
           c.type === 'position' ||
           c.type === 'dimensions' ||
-          c.type === 'remove' ||
-          c.type === 'add',
-      );
+          c.type === 'remove'
+        ) {
+          return !isSyntheticNodeId(c.id);
+        }
+        return false;
+      });
       const nextNodes = geometryChanged
         ? withBoundaryNodes(
             realNodesOnly(applied),
