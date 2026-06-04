@@ -28,13 +28,6 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
   const { direction, ports } = data as FlowBoundaryNodeData;
   const isInput = direction === 'input';
 
-  // [subflow-debug] 임시: 렌더 시 isConnectable 값/포트 확인(추후 제거).
-  console.log('[subflow-debug] FlowBoundaryNode render', {
-    direction,
-    isConnectable,
-    ports,
-  });
-
   // 입력 경계: 우측 source 핸들(내부 노드로 보냄).
   // 출력 경계: 좌측 target 핸들(내부 노드에서 받음).
   const handleType = isInput ? 'source' : 'target';
@@ -78,14 +71,6 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
           {ports.map((portName) => (
             <div
               key={portName}
-              // [subflow-debug] 임시: 포트 row(핸들 포함)에 마우스다운이 도달하는지
-              // 확인. 이 로그가 뜨면 포인터는 도달하는 것(연결 미시작은 다른 원인).
-              onMouseDownCapture={() =>
-                console.log('[subflow-debug] FBN port mousedown', portName, {
-                  direction,
-                  isConnectable,
-                })
-              }
               className={cn(
                 'relative flex items-center rounded px-1.5 py-1 text-xs',
                 'bg-zinc-50 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200',

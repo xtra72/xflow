@@ -545,18 +545,6 @@ function EditorPageInner() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            // [subflow-debug] 임시 진단 로그(연결 안 됨 원인 추적용 — 추후 제거).
-            // 경계 포트 핸들에서 드래그 시 onConnectStart 가 찍히는지로 핸들이
-            // 연결을 "시작"하는지 확인하고, isValidConnection/onConnectEnd 로
-            // 어디서 끊기는지 파악한다.
-            onConnectStart={(_, params) =>
-              console.log('[subflow-debug] onConnectStart', params)
-            }
-            isValidConnection={(conn) => {
-              console.log('[subflow-debug] isValidConnection', conn);
-              return true;
-            }}
-            onConnectEnd={() => console.log('[subflow-debug] onConnectEnd')}
             onNodeClick={handleNodeClick}
             onNodeContextMenu={handleNodeContextMenu}
             onEdgeClick={handleEdgeClick}
