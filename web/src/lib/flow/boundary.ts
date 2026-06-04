@@ -47,6 +47,15 @@ export const FLOW_AREA_NODE_TYPE = 'flow-area';
  */
 const BOUNDARY_GAP_X = 80;
 
+/**
+ * 경계 노드의 너비(px). makeBoundaryNode 의 node.width 와 동일해야 한다.
+ *
+ * 입력 경계 노드는 핸들이 오른쪽 면에 붙으므로, x 를 좌측으로 이 너비만큼 더
+ * 밀어야(minX - GAP - WIDTH) 노드의 오른쪽 면이 minX 에서 GAP 만큼 떨어진다.
+ * 두 값이 어긋나면 입력 경계가 가장 왼쪽 노드와 겹치므로 같은 상수를 공유한다.
+ */
+const BOUNDARY_WIDTH = 140;
+
 /** 영역(바운딩 박스) 사각형이 실제 노드를 감쌀 때의 여백(padding). */
 const AREA_PADDING = 24;
 
@@ -57,8 +66,13 @@ const DEFAULT_NODE_HEIGHT = 80;
 /** 경계 노드 높이 측정값이 없을 때 사용하는 기본 높이(px, 수직 중앙 정렬 보정용). */
 const DEFAULT_BOUNDARY_HEIGHT = 80;
 
-/** 실제 노드가 없을 때 경계 노드를 두는 폴백 좌표/간격. */
-const DEFAULT_INPUT_X = -260;
+/**
+ * 실제 노드가 없을 때 경계 노드를 두는 폴백 좌표/간격.
+ *
+ * 입력 폴백은 경계 노드 너비만큼 좌측으로 더 민 값으로, 박스 기반 배치
+ * (minX - GAP - WIDTH) 와 동일한 "오른쪽 면이 GAP 떨어진다" 규칙을 따른다.
+ */
+const DEFAULT_INPUT_X = -260 - BOUNDARY_WIDTH;
 const DEFAULT_OUTPUT_X = 400;
 const DEFAULT_Y = 0;
 
@@ -250,7 +264,10 @@ export function computeNodesBoundingBox(nodes: Node[]): NodesBoundingBox | null 
 /**
  * 바운딩 박스로부터 두 경계 노드 배치 좌표를 도출한다(항상 파생, 수동 배치 아님).
  *
- * - 입력 경계: x = minX - GAP (좌측 바깥), 출력 경계: x = maxX + GAP (우측 바깥).
+ * - 입력 경계: x = minX - GAP - WIDTH (좌측 바깥). 입력 경계 노드는 핸들이 오른쪽
+ *   면에 붙으므로 노드 너비만큼 더 좌측으로 밀어야 오른쪽 면이 minX 에서 GAP 만큼
+ *   떨어진다(가장 왼쪽 노드와 겹치지 않게). 출력 경계: x = maxX + GAP (우측 바깥,
+ *   핸들이 왼쪽 면에 붙으므로 왼쪽 면이 maxX 에서 GAP 떨어져 겹치지 않음).
  * - y 는 박스의 수직 중앙(centerY)에서 경계 노드 높이의 절반을 빼 시각적으로 중앙 정렬.
  *   경계 노드 높이 측정값(prevHeights)이 있으면 사용하고, 없으면 기본 높이로 보정.
  * - 박스가 null(실제 노드 없음)이면 고정 폴백 좌표를 사용한다(빈 플로우에서도 표시).
@@ -271,7 +288,10 @@ export function computeBoundaryPositions(
   const inputH = prevHeights.input ?? DEFAULT_BOUNDARY_HEIGHT;
   const outputH = prevHeights.output ?? DEFAULT_BOUNDARY_HEIGHT;
   return {
-    input: { x: bbox.minX - BOUNDARY_GAP_X, y: bbox.centerY - inputH / 2 },
+    input: {
+      x: bbox.minX - BOUNDARY_GAP_X - BOUNDARY_WIDTH,
+      y: bbox.centerY - inputH / 2,
+    },
     output: { x: bbox.maxX + BOUNDARY_GAP_X, y: bbox.centerY - outputH / 2 },
   };
 }
@@ -290,7 +310,9 @@ function makeBoundaryNode(
     // FIX: fitView 타이밍 이슈 — 경계 노드의 width/height 를 명시해 fitView 가
     // 측정 전에 정확한 바운딩 박스를 계산하도록 한다(오프스크린 배치 방지).
     // 실제 렌더 크기는 component 에서 결정되지만, fitView 는 이 값을 사용한다.
-    width: 140,  // min-w-[120px] + padding 으로 추정
+    // computeBoundaryPositions 의 입력 경계 좌측 시프트와 어긋나지 않도록
+    // 동일한 BOUNDARY_WIDTH 상수를 공유한다(min-w-[120px] + padding 추정값).
+    width: BOUNDARY_WIDTH,
     height: ports.length === 0 ? 60 : 60 + ports.length * 40,  // 포트 개수에 따라 높이 조정
     // 경계 노드는 고정·비선택·비삭제 — 일반 노드 편집/삭제 대상에서 제외한다.
     draggable: false,
@@ -319,6 +341,13 @@ export function buildAreaNode(
     id: FLOW_AREA_NODE_ID,
     type: FLOW_AREA_NODE_TYPE,
     position: { x: bbox.minX - AREA_PADDING, y: bbox.minY - AREA_PADDING },
+    // FIX: 영역 노드는 node-level width/height 가 반드시 있어야 한다. data 에만
+    // 크기를 두면 React Flow 가 노드 래퍼 크기를 잡지 못해 점선 사각형이 렌더되지
+    // 않는다(경계 노드가 width/height 추가 전까지 보이지 않던 것과 동일한 원인).
+    // style 에도 동일 크기를 넣어 측정 전에도 래퍼가 정확한 크기를 갖게 한다.
+    width,
+    height,
+    style: { width, height },
     // 영역 노드는 항상 nodes 배열 맨 앞에 위치하므로(렌더 순서상 아래) 음수 z 없이도
     // 다른 노드 아래에 깔린다. 음수 zIndex 는 React Flow 에서 스택 컨텍스트 클리핑으로
     // 보이지 않게 될 수 있어 0 으로 둔다.

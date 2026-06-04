@@ -187,8 +187,10 @@ describe('boundary - 경계 노드 생성', () => {
       [node],
       prev,
     );
-    // bbox: minX=50, maxX=150, centerY=80. GAP=80, 기본 경계 높이 80 → y=80-40=40.
-    expect(inputNode.position).toEqual({ x: 50 - 80, y: 80 - 40 });
+    // bbox: minX=50, maxX=150, centerY=80. GAP=80, 경계 너비 140, 기본 경계 높이 80.
+    // 입력은 핸들이 오른쪽 면이므로 minX-GAP-WIDTH=50-80-140=-170, y=80-40=40.
+    // 출력은 maxX+GAP=150+80=230.
+    expect(inputNode.position).toEqual({ x: 50 - 80 - 140, y: 80 - 40 });
     expect(outputNode.position).toEqual({ x: 150 + 80, y: 80 - 40 });
   });
 
@@ -217,6 +219,19 @@ describe('boundary - 경계 노드 생성', () => {
       FLOW_INPUT_BOUNDARY_ID,
       FLOW_OUTPUT_BOUNDARY_ID,
     ]);
+  });
+
+  it('withBoundaryNodes 의 영역 노드는 node-level width/height 로 크기를 가진다', () => {
+    const result = withBoundaryNodes(
+      [sizedNode('n1', 0, 0, 100, 60)],
+      inputs,
+      outputs,
+    );
+    const area = result.find((n) => n.id === FLOW_AREA_NODE_ID)!;
+    // padding 24 → size (100+48, 60+48) = 148 x 108. data 와 node-level 이 일치한다.
+    expect(area.width).toBe(148);
+    expect(area.height).toBe(108);
+    expect(area.data as FlowAreaNodeData).toEqual({ width: 148, height: 108 });
   });
 
   it('withBoundaryNodes 는 입력으로 들어온 합성 노드를 중복 추가하지 않는다', () => {
@@ -313,8 +328,9 @@ describe('boundary - 경계 위치 파생(computeBoundaryPositions)', () => {
   it('입력은 좌측(minX-GAP), 출력은 우측(maxX+GAP), 둘 다 수직 중앙 정렬', () => {
     const box = computeNodesBoundingBox([sizedNode('n1', 100, 0, 100, 100)])!;
     const pos = computeBoundaryPositions(box);
-    // minX=100, maxX=200, centerY=50, GAP=80, 기본 경계 높이 80 → y=50-40=10.
-    expect(pos.input).toEqual({ x: 100 - 80, y: 10 });
+    // minX=100, maxX=200, centerY=50, GAP=80, 경계 너비 140, 기본 경계 높이 80 → y=50-40=10.
+    // 입력은 핸들이 오른쪽 면이므로 minX-GAP-WIDTH=100-80-140=-120.
+    expect(pos.input).toEqual({ x: 100 - 80 - 140, y: 10 });
     expect(pos.output).toEqual({ x: 200 + 80, y: 10 });
   });
 
@@ -328,7 +344,8 @@ describe('boundary - 경계 위치 파생(computeBoundaryPositions)', () => {
 
   it('박스가 null(실제 노드 없음)이면 고정 폴백 좌표를 사용한다', () => {
     const pos = computeBoundaryPositions(null);
-    expect(pos.input).toEqual({ x: -260, y: 0 });
+    // 입력 폴백도 경계 너비(140)만큼 좌측으로 더 민다(오른쪽 면 기준 정렬).
+    expect(pos.input).toEqual({ x: -260 - 140, y: 0 });
     expect(pos.output).toEqual({ x: 400, y: 0 });
   });
 });
@@ -342,6 +359,11 @@ describe('boundary - 영역 노드 생성(buildAreaNode)', () => {
     // padding 24 → position (-24,-24), size (100+48, 60+48).
     expect(area.position).toEqual({ x: -24, y: -24 });
     expect(area.data as FlowAreaNodeData).toEqual({ width: 148, height: 108 });
+    // FIX: data 뿐 아니라 node-level width/height(+ style) 가 있어야 React Flow 가
+    // 노드 래퍼 크기를 잡아 점선 사각형을 렌더한다.
+    expect(area.width).toBe(148);
+    expect(area.height).toBe(108);
+    expect(area.style).toMatchObject({ width: 148, height: 108 });
     expect(area.selectable).toBe(false);
     expect(area.deletable).toBe(false);
     expect(area.draggable).toBe(false);

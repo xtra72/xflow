@@ -47,6 +47,22 @@ vi.mock('./FlowSettingsDialog', () => ({
 import { EditorToolbar } from './EditorToolbar';
 import { FOCUS_DEPTH_ALL, useEditorStore } from '@/stores/editorStore';
 
+// SPEC-SUBFLOW-001 M4: EditorToolbar 는 플로우 포트 패널 토글 props 를 요구한다.
+// 대부분의 테스트는 이 토글과 무관하므로 기본값을 주입하는 헬퍼를 사용한다.
+const togglePortPanelMock = vi.fn();
+const renderToolbar = (props?: {
+  flowId?: string;
+  showPortPanel?: boolean;
+  onTogglePortPanel?: () => void;
+}) =>
+  render(
+    <EditorToolbar
+      flowId={props?.flowId ?? 'flow-1'}
+      showPortPanel={props?.showPortPanel ?? false}
+      onTogglePortPanel={props?.onTogglePortPanel ?? togglePortPanelMock}
+    />,
+  );
+
 describe('EditorToolbar - 플로우 전환 선택기', () => {
   beforeEach(() => {
     navigateMock.mockClear();
@@ -54,12 +70,12 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
   });
 
   it('현재 플로우 이름을 렌더링한다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
     expect(screen.getByText('플로우 하나')).toBeInTheDocument();
   });
 
   it('전환 버튼 클릭 시 전체 플로우 목록을 표시한다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     // 초기에는 다른 플로우 항목이 보이지 않는다.
     expect(screen.queryByText('플로우 둘')).not.toBeInTheDocument();
@@ -74,7 +90,7 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
   });
 
   it('다른 플로우 선택 시 해당 에디터로 이동한다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     fireEvent.click(screen.getByRole('button', { name: '다른 플로우로 전환' }));
     fireEvent.click(screen.getByRole('option', { name: /플로우 둘/ }));
@@ -84,7 +100,7 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
   });
 
   it('현재 플로우를 다시 선택하면 이동하지 않는다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     fireEvent.click(screen.getByRole('button', { name: '다른 플로우로 전환' }));
     fireEvent.click(screen.getByRole('option', { name: /플로우 하나/ }));
@@ -93,7 +109,7 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
   });
 
   it('Escape 키로 목록을 닫는다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     fireEvent.click(screen.getByRole('button', { name: '다른 플로우로 전환' }));
     expect(screen.getByRole('listbox', { name: '플로우 목록' })).toBeInTheDocument();
@@ -103,10 +119,37 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
   });
 
   it('인라인 이름 편집을 위해 이름 클릭 시 input 으로 전환한다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     fireEvent.click(screen.getByRole('button', { name: '플로우 이름 (클릭하여 변경)' }));
     expect(screen.getByLabelText('플로우 이름')).toBeInTheDocument();
+  });
+});
+
+describe('EditorToolbar - 플로우 포트 패널 토글 (제어판 통합)', () => {
+  beforeEach(() => {
+    togglePortPanelMock.mockClear();
+  });
+
+  it('제어판에 "플로우 포트" 토글 버튼을 렌더링한다', () => {
+    renderToolbar();
+    expect(
+      screen.getByRole('button', { name: '플로우 포트' }),
+    ).toBeInTheDocument();
+  });
+
+  it('토글 버튼 클릭 시 onTogglePortPanel 을 호출한다', () => {
+    renderToolbar();
+    fireEvent.click(screen.getByRole('button', { name: '플로우 포트' }));
+    expect(togglePortPanelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('showPortPanel=true 이면 토글 버튼이 눌림(active) 상태로 표시된다', () => {
+    renderToolbar({ showPortPanel: true });
+    expect(screen.getByRole('button', { name: '플로우 포트' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 });
 
@@ -121,14 +164,14 @@ describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
   const dec = () => screen.getByRole('button', { name: '연결 단계 줄이기' });
 
   it('초기 1 단계에서는 "1" 을 표시하고 줄이기 버튼이 비활성화된다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(dec()).toBeDisabled();
     expect(inc()).not.toBeDisabled();
   });
 
   it('늘리기를 5 까지 올린 뒤 한 번 더 누르면 전체(Infinity) 로 전환된다', () => {
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     // 1 → 5 까지 4회 증가.
     for (let i = 0; i < 4; i += 1) fireEvent.click(inc());
@@ -143,7 +186,7 @@ describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
 
   it('전체에서는 "전체" 라벨을 보이고 늘리기 버튼이 비활성화된다', () => {
     useEditorStore.setState({ focusDepth: FOCUS_DEPTH_ALL });
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     expect(screen.getByText('전체')).toBeInTheDocument();
     expect(inc()).toBeDisabled();
@@ -152,7 +195,7 @@ describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
 
   it('전체에서 줄이기를 누르면 유한 상한(5) 으로 돌아간다', () => {
     useEditorStore.setState({ focusDepth: FOCUS_DEPTH_ALL });
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     fireEvent.click(dec());
     expect(useEditorStore.getState().focusDepth).toBe(5);
@@ -161,7 +204,7 @@ describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
 
   it('포커스가 꺼져 있으면 두 버튼 모두 비활성화된다', () => {
     useEditorStore.setState({ focusConnectionsOnSelect: false });
-    render(<EditorToolbar flowId="flow-1" />);
+    renderToolbar();
 
     expect(inc()).toBeDisabled();
     expect(dec()).toBeDisabled();

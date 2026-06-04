@@ -14,6 +14,7 @@ import {
   Grid3x3,
   Layers,
   Minus,
+  PanelLeft,
   Pencil,
   Plus,
   Play,
@@ -69,13 +70,24 @@ const STATUS_LABELS: Record<FlowStatus, string> = {
 interface EditorToolbarProps {
   /** 현재 편집 중인 플로우 ID */
   flowId: string;
+  /**
+   * SPEC-SUBFLOW-001 M4: 플로우 포트 관리 패널이 열려 있는지 여부(뷰 전용).
+   * 패널 자체는 EditorPage 가 오버레이로 렌더하고, 토글 트리거만 제어판(툴바)에 둔다.
+   */
+  showPortPanel: boolean;
+  /** 플로우 포트 패널 열림/닫힘 토글 콜백. */
+  onTogglePortPanel: () => void;
 }
 
 /**
  * 에디터 툴바 컴포넌트.
  * 플로우의 저장, 배포, 실행 제어와 실행 취소/다시 실행 기능을 제공한다.
  */
-export function EditorToolbar({ flowId }: EditorToolbarProps) {
+export function EditorToolbar({
+  flowId,
+  showPortPanel,
+  onTogglePortPanel,
+}: EditorToolbarProps) {
   const addNotification = useUIStore((s) => s.addNotification);
   // 2026-05-31: 플로우 표시 설정 모달 상태
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -285,6 +297,16 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         icon={ArrowLeftToLine}
         label="출력 포트 추가"
         onClick={addFlowOutput}
+      />
+
+      {/* SPEC-SUBFLOW-001 M4: 플로우 포트 관리 패널 토글 — 기존 좌상단 떠 있는
+          버튼을 제거하고 모든 플로우 포트 진입점을 제어판(툴바)으로 통합한다.
+          패널 자체는 EditorPage 가 오버레이로 렌더한다(뷰 전용 토글 상태). */}
+      <ToolbarButton
+        icon={PanelLeft}
+        label="플로우 포트"
+        onClick={onTogglePortPanel}
+        active={showPortPanel}
       />
 
       <Separator />

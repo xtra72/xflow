@@ -516,31 +516,24 @@ function EditorPageInner() {
         {/* 상단 툴바 */}
         {flowId && (
           <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
-            <EditorToolbar flowId={flowId} />
+            <EditorToolbar
+              flowId={flowId}
+              showPortPanel={showPortPanel}
+              onTogglePortPanel={() => setShowPortPanel((v) => !v)}
+            />
           </div>
         )}
 
         {/* React Flow 캔버스 */}
         <div className="relative flex-1">
-          {/* SPEC-SUBFLOW-001: 플로우 포트 관리 패널 토글 + 패널(캔버스 좌상단 오버레이) */}
-          <div className="absolute left-3 top-3 z-10 flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => setShowPortPanel((v) => !v)}
-              title="플로우 포트 관리"
-              aria-label="플로우 포트 관리"
-              aria-pressed={showPortPanel}
-              className={`inline-flex w-fit items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium shadow-sm transition-colors
-                ${showPortPanel
-                  ? 'border-blue-300 bg-blue-100 text-blue-700 dark:border-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
-                  : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'}`}
-            >
-              플로우 포트
-            </button>
-            {showPortPanel && (
+          {/* SPEC-SUBFLOW-001 M4: 플로우 포트 관리 패널(캔버스 좌상단 오버레이).
+              떠 있는 토글 버튼은 제거하고, 토글 트리거는 제어판(EditorToolbar)으로
+              이동했다. 패널 자체는 토글이 켜졌을 때만 오버레이로 렌더한다. */}
+          {showPortPanel && (
+            <div className="absolute left-3 top-3 z-10">
               <FlowPortPanel onClose={() => setShowPortPanel(false)} />
-            )}
-          </div>
+            </div>
+          )}
 
           <RuntimeStatsContext.Provider value={runtimeStatsMap}>
           <ReactFlow
