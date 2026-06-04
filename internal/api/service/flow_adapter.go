@@ -77,6 +77,12 @@ func (a *FlowServiceAdapter) CreateFlow(ctx context.Context, req *dto.FlowCreate
 		return nil, fmt.Errorf("flow create: %w", err)
 	}
 
+	// 저장 전 순환/자기참조 검출(REQ-SUBFLOW-E01/E02/E04).
+	// 순환이 있는 정의는 영속하지 않는다.
+	if cycErr := DetectFlowReferenceCycle(ctx, f.ID(), f, a.repo); cycErr != nil {
+		return nil, fmt.Errorf("flow create: %w", cycErr)
+	}
+
 	// 동일 이름의 기존 플로우가 있으면 삭제한다 (중복 방지).
 	if existing, existingID := a.findFlowByName(ctx, f.Name()); existing {
 		if delErr := a.repo.Delete(ctx, existingID); delErr != nil {
@@ -234,6 +240,11 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		if err != nil {
 			return nil, fmt.Errorf("flow update: %w", err)
 		}
+		// 저장 전 순환/자기참조 검출(REQ-SUBFLOW-E01/E02/E04).
+		// 저장 후 참조 대상이 바뀌어 순환이 생기는 경우를 갱신 시점에 차단한다.
+		if cycErr := DetectFlowReferenceCycle(ctx, newF.ID(), newF, a.repo); cycErr != nil {
+			return nil, fmt.Errorf("flow update: %w", cycErr)
+		}
 		// auto_start 메타데이터 이전
 		if req.AutoStart != nil {
 			if *req.AutoStart {
@@ -341,6 +352,19 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 		// 저장소에도 동기화하여 이후 재시작 시 사용할 수 있도록 한다.
 		_ = a.repo.Save(ctx, f)
 	}
+
+	// 배포 전 순환/자기참조 검출(REQ-SUBFLOW-E03/E04 — 배포 시점 방어선).
+	// 저장 후 참조 대상이 바뀌어 순환이 생긴 구성을 배포 시점에 재검출하여
+	// 무한 서브그래프 확장을 원천 차단한다.
+	if cycErr := DetectFlowReferenceCycle(ctx, f.ID(), f, a.repo); cycErr != nil {
+		return fmt.Errorf("flow deploy: %w", cycErr)
+	}
+
+	// 단독 배포(top-level standalone) 전처리: 플로우 포트 경계(센티넬) 와이어를 제거한다.
+	// 단독 배포 시 경계 와이어는 외부 카운터파트가 없으므로 엔진에 전달하면 dangling/블로킹을
+	// 유발한다(REQ-SUBFLOW-F01). 서브플로우 확장 경로에서는 제거 대신 재배선되므로,
+	// 제거는 단독 배포 경로에만 적용한다(다음 마일스톤의 확장 로직과 격리).
+	f = flow.StripBoundaryWires(f)
 
 	return a.engine.DeployFlow(ctx, f)
 }
