@@ -1060,4 +1060,47 @@ describe('editorStore - 경계/영역 동적 배치 (SPEC-SUBFLOW-001 M4)', () =
     expect(nodes.some((n) => n.id === FLOW_AREA_NODE_ID)).toBe(true);
     expect(realNodesOnly(nodes).map((n) => n.id)).toEqual(['n1']);
   });
+
+  // REGRESSION TEST: 포트 추가 후 경계/영역 노드가 렌더용 nodes 에 포함되어야 한다
+  describe('addFlowInput/addFlowOutput 후 경계 노드 및 영역 노드 렌더링 (Issue: 포트 추가 후 노드 사라짐)', () => {
+    it('addFlowInput 후 렌더용 nodes 에 영역(__flow_area__) + 입력 경계(__flow_input__) 노드가 포함되어야 한다', () => {
+      // 초기: 실제 노드만 로드 (포트 없음 → 경계 노드 없음)
+      useEditorStore.getState().loadFlow([sized('n1', 0, 0)], []);
+      expect(useEditorStore.getState().nodes).toHaveLength(1);
+      expect(useEditorStore.getState().flowInputs).toHaveLength(0);
+
+      // 입력 포트 추가
+      useEditorStore.getState().addFlowInput();
+
+      // 확인: nodes 에 경계 + 영역 노드 포함?
+      const { nodes, flowInputs } = useEditorStore.getState();
+      expect(flowInputs).toHaveLength(1);
+      expect(flowInputs[0]?.name).toBe('in1');
+
+      // 버그: 다음 두 조건 모두 참이어야 함
+      const areaNodeExists = nodes.some((n) => n.id === FLOW_AREA_NODE_ID);
+      expect(areaNodeExists).toBe(true); // *** 이것이 false 면 버그 1: 영역 노드 미렌더링 ***
+
+      const inputBoundaryExists = nodes.some((n) => n.id === FLOW_INPUT_BOUNDARY_ID);
+      expect(inputBoundaryExists).toBe(true); // *** 이것이 false 면 버그 2: 경계 포트 미렌더링 ***
+
+      // 실제 노드는 여전히 present
+      const realNodeExists = nodes.some((n) => n.id === 'n1');
+      expect(realNodeExists).toBe(true);
+    });
+
+    it('addFlowOutput 후 렌더용 nodes 에 영역(__flow_area__) + 출력 경계(__flow_output__) 노드가 포함되어야 한다', () => {
+      useEditorStore.getState().loadFlow([sized('n1', 0, 0)], []);
+      useEditorStore.getState().addFlowOutput();
+
+      const { nodes, flowOutputs } = useEditorStore.getState();
+      expect(flowOutputs).toHaveLength(1);
+
+      const areaNodeExists = nodes.some((n) => n.id === FLOW_AREA_NODE_ID);
+      expect(areaNodeExists).toBe(true); // *** 이것이 false 면 버그 1 ***
+
+      const outputBoundaryExists = nodes.some((n) => n.id === FLOW_OUTPUT_BOUNDARY_ID);
+      expect(outputBoundaryExists).toBe(true); // *** 이것이 false 면 버그 2 ***
+    });
+  });
 });

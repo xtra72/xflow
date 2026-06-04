@@ -334,7 +334,7 @@ describe('boundary - 경계 위치 파생(computeBoundaryPositions)', () => {
 });
 
 describe('boundary - 영역 노드 생성(buildAreaNode)', () => {
-  it('박스를 여백만큼 키운 영역 노드를 만들고 비선택/비삭제/z<0 이다', () => {
+  it('박스를 여백만큼 키운 영역 노드를 만들고 비선택/비삭제/z=0 이다', () => {
     const box = computeNodesBoundingBox([sizedNode('n1', 0, 0, 100, 60)])!;
     const area = buildAreaNode(box)!;
     expect(area.id).toBe(FLOW_AREA_NODE_ID);
@@ -345,7 +345,9 @@ describe('boundary - 영역 노드 생성(buildAreaNode)', () => {
     expect(area.selectable).toBe(false);
     expect(area.deletable).toBe(false);
     expect(area.draggable).toBe(false);
-    expect(area.zIndex).toBeLessThan(0);
+    // 영역 노드는 nodes 배열 맨 앞(렌더 순서상 아래)에 두어 다른 노드 아래에 깔리며,
+    // 음수 zIndex 는 React Flow 스택 컨텍스트 클리핑으로 안 보일 수 있어 0 으로 둔다.
+    expect(area.zIndex).toBe(0);
   });
 
   it('박스가 null 이면 영역 노드를 만들지 않는다(null)', () => {

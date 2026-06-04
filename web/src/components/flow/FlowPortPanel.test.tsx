@@ -2,10 +2,10 @@
 //
 // 검증 대상:
 //   - 입력/출력 포트 섹션 렌더
-//   - "추가" 클릭 → 포트 추가(스토어 반영)
 //   - 인라인 이름 변경 → renameFlowPort
 //   - "삭제" → removeFlowPort
 //   - 닫기 버튼 → onClose
+// 포트 추가는 에디터 툴바의 빠른 추가 버튼에서 수행되므로 패널 테스트에서 제거됨.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -26,27 +26,6 @@ describe('FlowPortPanel', () => {
     render(<FlowPortPanel onClose={vi.fn()} />);
     expect(screen.getByText('입력 포트')).toBeInTheDocument();
     expect(screen.getByText('출력 포트')).toBeInTheDocument();
-  });
-
-  it('입력 포트 추가 버튼이 스토어에 포트를 추가하고 렌더한다', () => {
-    render(<FlowPortPanel onClose={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole('button', { name: '입력 포트 추가' }));
-
-    expect(useEditorStore.getState().flowInputs.map((p) => p.name)).toEqual([
-      'in1',
-    ]);
-    expect(screen.getByText('in1')).toBeInTheDocument();
-  });
-
-  it('출력 포트 추가 버튼이 출력 포트를 추가한다', () => {
-    render(<FlowPortPanel onClose={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole('button', { name: '출력 포트 추가' }));
-
-    expect(useEditorStore.getState().flowOutputs.map((p) => p.name)).toEqual([
-      'out1',
-    ]);
   });
 
   it('포트 이름을 인라인 편집하면 renameFlowPort 가 반영된다', () => {

@@ -6,7 +6,7 @@
 // 쓰던 경계 와이어도 함께 정리된다(스토어 removeFlowPort, REQ-SUBFLOW-A04).
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeftToLine, ArrowRightToLine, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeftToLine, ArrowRightToLine, Pencil, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
@@ -25,8 +25,7 @@ interface FlowPortPanelProps {
 export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
   const flowInputs = useEditorStore((s) => s.flowInputs);
   const flowOutputs = useEditorStore((s) => s.flowOutputs);
-  const addFlowInput = useEditorStore((s) => s.addFlowInput);
-  const addFlowOutput = useEditorStore((s) => s.addFlowOutput);
+  // 포트 추가는 에디터 툴바의 빠른 추가 버튼을 사용하므로 여기서는 제거됨
   const renameFlowPort = useEditorStore((s) => s.renameFlowPort);
   const removeFlowPort = useEditorStore((s) => s.removeFlowPort);
 
@@ -61,7 +60,6 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
           icon={ArrowRightToLine}
           accent="input"
           ports={flowInputs}
-          onAdd={addFlowInput}
           onRename={(id, name) => renameFlowPort('input', id, name)}
           onRemove={(id) => removeFlowPort('input', id)}
         />
@@ -70,7 +68,6 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
           icon={ArrowLeftToLine}
           accent="output"
           ports={flowOutputs}
-          onAdd={addFlowOutput}
           onRename={(id, name) => renameFlowPort('output', id, name)}
           onRemove={(id) => removeFlowPort('output', id)}
         />
@@ -84,7 +81,6 @@ interface PortSectionProps {
   icon: React.ComponentType<{ className?: string }>;
   accent: 'input' | 'output';
   ports: FlowPortDef[];
-  onAdd: () => void;
   onRename: (id: string, name: string) => void;
   onRemove: (id: string) => void;
 }
@@ -95,7 +91,6 @@ function PortSection({
   icon: Icon,
   accent,
   ports,
-  onAdd,
   onRename,
   onRemove,
 }: PortSectionProps) {
@@ -116,19 +111,7 @@ function PortSection({
           <Icon className="h-3 w-3 shrink-0" />
           {title}
         </span>
-        <button
-          type="button"
-          onClick={onAdd}
-          title="포트 추가"
-          aria-label={`${title} 추가`}
-          className={cn(
-            'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs',
-            'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800',
-          )}
-        >
-          <Plus className="h-3 w-3" />
-          추가
-        </button>
+        {/* 포트 추가 버튼은 제거됨 — 에디터 툴바의 빠른 추가 버튼으로 통합됨 */}
       </div>
 
       {ports.length === 0 ? (

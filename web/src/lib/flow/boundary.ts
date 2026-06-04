@@ -287,6 +287,11 @@ function makeBoundaryNode(
     id,
     type: FLOW_BOUNDARY_NODE_TYPE,
     position,
+    // FIX: fitView 타이밍 이슈 — 경계 노드의 width/height 를 명시해 fitView 가
+    // 측정 전에 정확한 바운딩 박스를 계산하도록 한다(오프스크린 배치 방지).
+    // 실제 렌더 크기는 component 에서 결정되지만, fitView 는 이 값을 사용한다.
+    width: 140,  // min-w-[120px] + padding 으로 추정
+    height: ports.length === 0 ? 60 : 60 + ports.length * 40,  // 포트 개수에 따라 높이 조정
     // 경계 노드는 고정·비선택·비삭제 — 일반 노드 편집/삭제 대상에서 제외한다.
     draggable: false,
     selectable: false,
@@ -314,8 +319,10 @@ export function buildAreaNode(
     id: FLOW_AREA_NODE_ID,
     type: FLOW_AREA_NODE_TYPE,
     position: { x: bbox.minX - AREA_PADDING, y: bbox.minY - AREA_PADDING },
-    // 다른 노드/경계 아래에 깔리도록 음수 z. 비선택·비삭제·비드래그.
-    zIndex: -1,
+    // 영역 노드는 항상 nodes 배열 맨 앞에 위치하므로(렌더 순서상 아래) 음수 z 없이도
+    // 다른 노드 아래에 깔린다. 음수 zIndex 는 React Flow 에서 스택 컨텍스트 클리핑으로
+    // 보이지 않게 될 수 있어 0 으로 둔다.
+    zIndex: 0,
     draggable: false,
     selectable: false,
     deletable: false,
