@@ -360,10 +360,21 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 		return fmt.Errorf("flow deploy: %w", cycErr)
 	}
 
+	// 서브플로우 확장(인스턴스화): flow-node 를 참조 플로우의 네임스페이스 인스턴스로
+	// 치환한 평탄화 플로우를 만든다(REQ-SUBFLOW-D01~D06). 항상 최신 참조 정의를 반영하며
+	// (결정 2), 결과 플로우에는 flow-node 가 남지 않아 엔진이 그대로 인스턴스화할 수 있다.
+	// 순환 검출 이후에 수행하여 무한 확장을 원천 차단한다(REQ-SUBFLOW-E03).
+	expanded, expErr := ExpandSubflows(ctx, f, a.repo)
+	if expErr != nil {
+		return fmt.Errorf("flow deploy: subflow expand: %w", expErr)
+	}
+	f = expanded
+
 	// 단독 배포(top-level standalone) 전처리: 플로우 포트 경계(센티넬) 와이어를 제거한다.
 	// 단독 배포 시 경계 와이어는 외부 카운터파트가 없으므로 엔진에 전달하면 dangling/블로킹을
-	// 유발한다(REQ-SUBFLOW-F01). 서브플로우 확장 경로에서는 제거 대신 재배선되므로,
-	// 제거는 단독 배포 경로에만 적용한다(다음 마일스톤의 확장 로직과 격리).
+	// 유발한다(REQ-SUBFLOW-F01). 서브플로우 확장에서 소비된 경계 와이어는 이미 재배선되었고,
+	// 여기서는 이 플로우 자신의 top-level 플로우 포트 경계 와이어(외부 미연결)만 제거한다.
+	// 반드시 확장 이후에 수행해야 한다(확장이 자식 경계를 재배선할 기회를 보존).
 	f = flow.StripBoundaryWires(f)
 
 	return a.engine.DeployFlow(ctx, f)

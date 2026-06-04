@@ -64,6 +64,50 @@ func StripBoundaryWires(f Flow) Flow {
 	return f
 }
 
+// RebuildFlow 는 base 플로우의 정체성(id/name/description/state/config/metadata/
+// 입출력 포트)을 그대로 보존하면서, 노드와 와이어 슬라이스만 주어진 값으로 교체한
+// 새 Flow 를 반환한다.
+//
+// 서브플로우 확장(인스턴스화)은 서비스 레이어(internal/api/service)에서 수행되지만,
+// 확장 결과를 "부모의 id 를 유지한 단일 평탄화 플로우"로 조립하려면 부모의 ID 와 설정을
+// 보존한 채 노드/와이어만 교체할 수 있어야 한다. NewFlow 는 항상 새 UUID 를 발급하고
+// FlowFromJSON 은 이름→ID 재해석으로 네임스페이스 ID 를 훼손할 수 있으므로,
+// 이 동일 패키지 헬퍼로 *defaultFlow 를 직접 재구성한다.
+//
+// 입력 슬라이스는 방어적으로 복사하여 호출자와의 별칭(aliasing)을 방지한다.
+// base 가 *defaultFlow 가 아니면(테스트 더블 등) 인터페이스 메서드로 정체성을 복원한다.
+// (SPEC-SUBFLOW-001 그룹 D — 서브그래프 확장 결과 조립)
+func RebuildFlow(base Flow, nodes []NodeDef, wires []Wire) Flow {
+	copiedNodes := make([]NodeDef, len(nodes))
+	copy(copiedNodes, nodes)
+	copiedWires := make([]Wire, len(wires))
+	copy(copiedWires, wires)
+
+	if df, ok := base.(*defaultFlow); ok {
+		clone := df.cloneWithoutBoundaryWires()
+		clone.nodes = copiedNodes
+		clone.wires = copiedWires
+		return clone
+	}
+
+	// 폴백: 인터페이스만으로 정체성을 복원한다(프로덕션 경로는 항상 *defaultFlow).
+	rebuilt := &defaultFlow{
+		id:          base.ID(),
+		name:        base.Name(),
+		description: base.Description(),
+		state:       base.State(),
+		nodes:       copiedNodes,
+		wires:       copiedWires,
+		config:      base.Config(),
+		metadata:    base.Metadata(),
+		createdAt:   base.CreatedAt(),
+		updatedAt:   base.UpdatedAt(),
+		inputs:      base.Inputs(),
+		outputs:     base.Outputs(),
+	}
+	return rebuilt
+}
+
 // cloneWithoutBoundaryWires 는 defaultFlow 의 얕은 복제본을 만들되 경계 와이어를 제외한다.
 // 슬라이스/맵은 방어적으로 복사하여 원본과의 별칭(aliasing)을 방지한다.
 func (f *defaultFlow) cloneWithoutBoundaryWires() *defaultFlow {

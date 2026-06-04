@@ -208,6 +208,19 @@ func NewFlow(name string, opts ...FlowOption) Flow {
 	}
 }
 
+// NewFlowWithID 는 지정된 id 와 이름으로 새로운 Flow 를 생성한다.
+// NewFlow 와 동일하되 UUID 자동 발급 대신 호출자가 안정적 id 를 지정한다.
+// 서브플로우 확장 결과 조립이나 "항상 최신" 재저장처럼 부모/참조의 id 를 보존해야 하는
+// 경로에서 사용한다. id 가 빈 문자열이면 UUID 를 발급한다.
+// (SPEC-SUBFLOW-001 결정 2 — 동일 id 로 재저장하여 최신 정의 반영)
+func NewFlowWithID(id, name string, opts ...FlowOption) Flow {
+	f := NewFlow(name, opts...).(*defaultFlow)
+	if id != "" {
+		f.id = id
+	}
+	return f
+}
+
 // normalizeFlowPortDirection 은 플로우 레벨 포트 목록의 방향을 소속 목록에 맞게
 // 강제하여 새 슬라이스로 반환한다. nil 입력은 nil 을 반환한다(저장 시 빈 슬라이스 처리는
 // 읽기 메서드에서 수행).
