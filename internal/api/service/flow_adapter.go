@@ -121,8 +121,12 @@ func (a *FlowServiceAdapter) GetFlow(ctx context.Context, id string) (*handler.F
 	status, err := a.engine.GetFlowStatus(id)
 	if err == nil {
 		info := flowStatusToInfo(status)
-		// 저장소에서 플로우 정의를 가져와 React Flow config 와 auto_start 메타데이터를 채운다
+		// 저장소에서 플로우 정의를 가져와 React Flow config 와 auto_start 메타데이터를 채운다.
+		// 이름/설명은 저장소가 source of truth 이므로(실행 중 rename 도 즉시 반영) 저장소 값으로 덮어쓴다.
+		// 런타임 필드(status, uptime, node_count 등)는 flowStatusToInfo 가 채운 값을 그대로 둔다.
 		if f, repoErr := a.repo.Get(ctx, id); repoErr == nil {
+			info.Name = f.Name()
+			info.Description = f.Description()
 			info.Config = a.flowToReactFlowConfig(f)
 			info.AutoStart = f.Metadata()["auto_start"] == "true"
 		}
@@ -156,8 +160,11 @@ func (a *FlowServiceAdapter) ListFlows(ctx context.Context, opts dto.ListOptions
 	deployedIDs := make(map[string]bool)
 	for _, s := range a.engine.ListFlows() {
 		info := flowStatusToInfo(s)
-		// 저장소에서 auto_start 메타데이터 확인
+		// 저장소가 이름/설명/auto_start 의 source of truth 이므로 저장소 값으로 덮어쓴다.
+		// 실행 중 rename 이 목록/스위처에도 즉시 반영되도록 한다. 런타임 필드는 유지.
 		if sf, ok := storedMap[s.FlowID]; ok {
+			info.Name = sf.Name()
+			info.Description = sf.Description()
 			info.AutoStart = sf.Metadata()["auto_start"] == "true"
 		}
 		if opts.Status == "" || info.Status == opts.Status {
