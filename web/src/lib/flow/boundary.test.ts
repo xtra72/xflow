@@ -178,6 +178,19 @@ describe('boundary - 경계 노드 생성', () => {
     expect(outputNode.connectable).toBe(true);
   });
 
+  it('경계 노드는 style.pointerEvents:all 로 래퍼 포인터를 살린다(핸들 연결 불가 회귀 가드)', () => {
+    // React Flow v12 NodeWrapper 는 selectable/draggable 이 모두 false 면 노드 래퍼에
+    // pointer-events:none 을 적용해 핸들을 죽인다(connectable 은 이 계산에 미포함).
+    // ...node.style 이 계산된 pointerEvents '뒤'에 펼쳐지므로, node-level
+    // style.pointerEvents:'all' 이 'none' 을 덮어써 선택을 켜지 않고도 핸들을 되살린다.
+    // 입력/출력 경계 모두에 적용되어야 양방향 연결이 가능하다.
+    const [inputNode, outputNode] = buildBoundaryNodes(inputs, outputs, []);
+    expect(inputNode.selectable).toBe(false);
+    expect(inputNode.style).toMatchObject({ pointerEvents: 'all' });
+    expect(outputNode.selectable).toBe(false);
+    expect(outputNode.style).toMatchObject({ pointerEvents: 'all' });
+  });
+
   it('경계 노드 위치는 항상 실제 노드 바운딩 박스에서 파생한다(수동 배치 보존 아님)', () => {
     // 이전 경계 노드 위치가 있어도 보존하지 않고 박스에서 다시 계산한다.
     const prev: Node[] = [

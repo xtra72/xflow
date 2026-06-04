@@ -22,7 +22,7 @@ import type { FlowBoundaryNodeData } from '@/lib/flow/boundary';
  * data.direction 으로 좌/우 및 핸들 유형(source/target)을 결정하고,
  * data.ports(포트 이름 배열)로 핸들을 1개씩 그린다.
  */
-export function FlowBoundaryNode({ data }: NodeProps) {
+export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
   const { direction, ports } = data as FlowBoundaryNodeData;
   const isInput = direction === 'input';
 
@@ -84,6 +84,9 @@ export function FlowBoundaryNode({ data }: NodeProps) {
                 position={handlePosition}
                 id={portName}
                 title={portName}
+                // 래퍼 pointer-events 복구(boundary.ts style)에 더해, 핸들 자체도
+                // 노드의 isConnectable 을 그대로 전달해 항상 연결 가능하게 한다.
+                isConnectable={isConnectable}
                 className={cn(
                   '!h-3 !w-3 !rounded-full !border-2 !border-white dark:!border-zinc-800',
                   isInput

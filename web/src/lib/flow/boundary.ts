@@ -318,9 +318,21 @@ function makeBoundaryNode(
     draggable: false,
     selectable: false,
     deletable: false,
-    // FIX(연결 차단 결함): selectable:false 등 비-상호작용 플래그가 연결 동작에
-    // 간섭하지 않도록 connectable 을 명시적으로 true 로 둔다(React Flow 기본값과
-    // 동일하지만, 경계 핸들이 항상 연결을 시작/수신할 수 있음을 보장한다).
+    // FIX(핸들 연결 불가 결함, React Flow v12 검증): 핸들이 잡히지 않아 어느 방향으로도
+    // 연결선이 시작되지 않던 결함의 실제 원인은 노드 래퍼(.react-flow__node)의
+    // pointer-events 였다. React Flow v12.10.1 NodeWrapper 의 계산:
+    //   hasPointerEvents = isSelectable || isDraggable || onClick
+    //                      || onMouseEnter || onMouseMove || onMouseLeave
+    //   style: { ..., pointerEvents: hasPointerEvents ? 'all' : 'none', ...node.style }
+    // 경계 노드는 selectable:false + draggable:false + 마우스 핸들러 없음 이므로
+    // hasPointerEvents=false → 래퍼가 pointer-events:none 을 받아 핸들이 죽는다.
+    // isConnectable 은 이 계산에 포함되지 않으므로 connectable:true 만으로는 복구되지
+    // 않는다(이전 connectable 수정이 효과 없던 이유). 다만 ...node.style 이 계산된
+    // pointerEvents '뒤에' 펼쳐지므로, node-level style.pointerEvents:'all' 이 'none' 을
+    // 덮어쓴다. 따라서 selectable 을 켜지 않고도(선택 부작용 없이) 래퍼 포인터를 되살린다.
+    // width 는 fitView 가 측정 전에 정확한 박스를 잡도록 node-level width 와 동일하게 유지.
+    style: { width: BOUNDARY_WIDTH, pointerEvents: 'all' },
+    // connectable 은 명시적으로 true 로 유지한다(핸들이 연결을 시작/수신할 수 있음 보장).
     connectable: true,
     data: {
       direction,
