@@ -450,8 +450,19 @@ function EditorPageInner() {
   }, [contextMenu, removeNode, closeContextMenu]);
 
   // --- MiniMap 노드 색상 ---
-  const miniMapNodeColor = useCallback(() => {
+  // SPEC-SUBFLOW-001: 영역 표시 노드(__flow_area__)는 실제 노드 전체를 덮는 큰
+  // 사각형이라, 미니맵에서 채우면 실제 노드들이 가려진다. 영역은 투명, 경계 포트는
+  // 옅은 파랑으로 구분해 실제 노드(회색)가 미니맵에 보이도록 한다.
+  const miniMapNodeColor = useCallback((node: Node) => {
+    if (node.type === FLOW_AREA_NODE_TYPE) return 'transparent';
+    if (node.type === FLOW_BOUNDARY_NODE_TYPE) return '#93c5fd';
     return '#6b7280';
+  }, []);
+
+  // 영역 표시 노드는 미니맵에서 테두리도 투명 처리해 완전히 가려지지 않게 한다.
+  const miniMapNodeStrokeColor = useCallback((node: Node) => {
+    if (node.type === FLOW_AREA_NODE_TYPE) return 'transparent';
+    return 'transparent';
   }, []);
 
   // --- 선택된 노드 또는 엣지가 있으면 속성 패널 표시 ---
@@ -561,6 +572,7 @@ function EditorPageInner() {
           >
             <MiniMap
               nodeColor={miniMapNodeColor}
+              nodeStrokeColor={miniMapNodeStrokeColor}
               maskColor="rgba(0, 0, 0, 0.1)"
               className="!bg-white dark:!bg-gray-900 !border-gray-200 dark:!border-gray-700"
             />
