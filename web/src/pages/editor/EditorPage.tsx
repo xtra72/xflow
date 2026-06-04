@@ -22,6 +22,8 @@ import { CustomNode } from '@/components/flow/CustomNode';
 import { CustomEdge } from '@/components/flow/CustomEdge';
 import { DebugPanel } from '@/components/flow/DebugPanel';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
+import { FlowBoundaryNode } from '@/components/flow/FlowBoundaryNode';
+import { FlowPortPanel } from '@/components/flow/FlowPortPanel';
 import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
@@ -39,9 +41,18 @@ import { useUIStore } from '@/stores/uiStore';
 import type { NodeTypeInfo } from '@/types/node';
 import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
 import { generateUUID } from '@/lib/utils/uuid';
+import {
+  FLOW_BOUNDARY_NODE_TYPE,
+  parseFlowPortsFromConfig,
+  serializeFlowDefinition,
+} from '@/lib/flow/boundary';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
-const nodeTypes = { custom: CustomNode };
+const nodeTypes = {
+  custom: CustomNode,
+  // SPEC-SUBFLOW-001: 플로우 레벨 경계 포트 합성 노드(좌 입력 / 우 출력).
+  [FLOW_BOUNDARY_NODE_TYPE]: FlowBoundaryNode,
+};
 
 /** React Flow에 등록할 커스텀 엣지 타입 맵 */
 const edgeTypes = { custom: CustomEdge };
@@ -118,6 +129,8 @@ function EditorPageInner() {
   // 에디터 스토어
   const nodes = useEditorStore((s) => s.nodes);
   const edges = useEditorStore((s) => s.edges);
+  const flowInputs = useEditorStore((s) => s.flowInputs);
+  const flowOutputs = useEditorStore((s) => s.flowOutputs);
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
   const selectedEdgeId = useEditorStore((s) => s.selectedEdgeId);
   const isDirty = useEditorStore((s) => s.isDirty);
@@ -146,6 +159,9 @@ function EditorPageInner() {
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
+  // SPEC-SUBFLOW-001: 플로우 포트 관리 패널 표시 토글(뷰 전용 로컬 상태).
+  const [showPortPanel, setShowPortPanel] = useState(false);
+
   // --- 플로우 데이터 로딩 ---
   // flowId 당 1회만 hydrate 한다. 저장 후 invalidateQueries 로 인한 백그라운드
   // 재조회가 에디터 상태를 덮어쓰거나 isDirty 를 되살려 저장 버튼 빨간점이
@@ -161,9 +177,14 @@ function EditorPageInner() {
       (flowData.config as Record<string, unknown>) ?? {};
     const rawNodes = (source.nodes as Node[]) ?? [];
     const rawEdges = (source.edges as Edge[]) ?? [];
+    // SPEC-SUBFLOW-001: 정의 최상위 inputs/outputs(플로우 레벨 포트)를 파싱한다.
+    // 백엔드는 이를 config.inputs / config.outputs 로 방출한다(REQ-SUBFLOW-A07).
+    // loadFlow 가 이 포트들로부터 합성 경계 노드를 만들어 렌더한다.
+    const { flowInputs: loadedInputs, flowOutputs: loadedOutputs } =
+      parseFlowPortsFromConfig(source);
 
-    // 서버 로딩 전용 액션: nodes/edges 교체 + isDirty=false + 히스토리 초기화
-    loadFlow(rawNodes, rawEdges);
+    // 서버 로딩 전용 액션: nodes/edges/플로우 포트 교체 + isDirty=false + 히스토리 초기화
+    loadFlow(rawNodes, rawEdges, loadedInputs, loadedOutputs);
     // 노드 카드 라이브 제어(output ON/OFF 등) 가 현재 플로우를 식별하도록
     // 편집 중인 flowId 를 스토어에 보관한다 (dirty/undo 에 영향 없음).
     setCurrentFlowId(flowId ?? null);
@@ -187,12 +208,20 @@ function EditorPageInner() {
       {
         id: flowId,
         req: {
-          definition: { nodes, edges } as Record<string, unknown>,
+          // SPEC-SUBFLOW-001: 합성 경계 노드를 nodes 에서 제외하고(REQ-SUBFLOW-B04),
+          // 센티넬 경계 와이어를 포함한 모든 엣지를 보존하며, 플로우 레벨 포트를
+          // 정의 최상위 inputs/outputs 로 기록한다(REQ-SUBFLOW-A07).
+          definition: serializeFlowDefinition(
+            nodes,
+            edges,
+            flowInputs,
+            flowOutputs,
+          ),
         },
       },
       { onSuccess: () => setDirty(false) },
     );
-  }, [flowId, isDirty, nodes, edges, updateFlow, setDirty]);
+  }, [flowId, isDirty, nodes, edges, flowInputs, flowOutputs, updateFlow, setDirty]);
 
   // --- 키보드 단축키 ---
   useEffect(() => {
@@ -488,7 +517,27 @@ function EditorPageInner() {
         )}
 
         {/* React Flow 캔버스 */}
-        <div className="flex-1">
+        <div className="relative flex-1">
+          {/* SPEC-SUBFLOW-001: 플로우 포트 관리 패널 토글 + 패널(캔버스 좌상단 오버레이) */}
+          <div className="absolute left-3 top-3 z-10 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPortPanel((v) => !v)}
+              title="플로우 포트 관리"
+              aria-label="플로우 포트 관리"
+              aria-pressed={showPortPanel}
+              className={`inline-flex w-fit items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium shadow-sm transition-colors
+                ${showPortPanel
+                  ? 'border-blue-300 bg-blue-100 text-blue-700 dark:border-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                  : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'}`}
+            >
+              플로우 포트
+            </button>
+            {showPortPanel && (
+              <FlowPortPanel onClose={() => setShowPortPanel(false)} />
+            )}
+          </div>
+
           <RuntimeStatsContext.Provider value={runtimeStatsMap}>
           <ReactFlow
             nodes={nodes}

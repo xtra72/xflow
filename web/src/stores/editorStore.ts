@@ -13,6 +13,14 @@ import {
 } from '@xyflow/react';
 
 import { generateUUID } from '@/lib/utils/uuid';
+import {
+  edgeUsesBoundaryPort,
+  isBoundaryNodeId,
+  nextFlowPortName,
+  realNodesOnly,
+  withBoundaryNodes,
+  type FlowPortDef,
+} from '@/lib/flow/boundary';
 
 const MAX_HISTORY = 50;
 
@@ -100,11 +108,26 @@ function buildDuplicateNodes(
 interface HistoryEntry {
   nodes: Node[];
   edges: Edge[];
+  // SPEC-SUBFLOW-001: 플로우 레벨 포트도 편집 이력에 포함한다(포트 추가/이름/삭제 undo).
+  flowInputs: FlowPortDef[];
+  flowOutputs: FlowPortDef[];
 }
 
 interface EditorState {
   nodes: Node[];
   edges: Edge[];
+  /**
+   * SPEC-SUBFLOW-001 그룹 A/B: 플로우 레벨 입력/출력 포트(노드가 아닌 플로우 레벨 엔티티).
+   *
+   * 이 두 배열이 플로우 포트의 단일 진실 공급원(source of truth)이며, 캔버스의 두
+   * 합성 경계 노드(__flow_input__ / __flow_output__)는 이 값으로부터 파생되어
+   * `nodes` 배열에 함께 렌더된다(withBoundaryNodes). 저장 시에는 경계 노드를
+   * `nodes` 에서 제외하고 이 포트 목록을 정의 최상위 inputs/outputs 로 기록한다.
+   *
+   * 포트의 실제 편집(추가/이름/삭제)만 dirty + pushUndo 로 처리한다(REQ-SUBFLOW-B05).
+   */
+  flowInputs: FlowPortDef[];
+  flowOutputs: FlowPortDef[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
   /**
@@ -203,7 +226,35 @@ export function clampFocusDepth(n: number): number {
 }
 
 interface EditorActions {
-  loadFlow: (nodes: Node[], edges: Edge[]) => void;
+  /**
+   * 서버 로딩 전용: nodes/edges/플로우 포트를 교체하고 dirty=false, 히스토리 초기화.
+   * flowInputs/flowOutputs 로부터 합성 경계 노드를 만들어 nodes 에 함께 넣는다.
+   * (flowInputs/flowOutputs 미지정 시 빈 배열 — 기존 호출부 호환)
+   */
+  loadFlow: (
+    nodes: Node[],
+    edges: Edge[],
+    flowInputs?: FlowPortDef[],
+    flowOutputs?: FlowPortDef[],
+  ) => void;
+  /** SPEC-SUBFLOW-001: 플로우 입력 포트를 추가한다(고유 id + 기본 이름, dirty+undo). */
+  addFlowInput: () => void;
+  /** SPEC-SUBFLOW-001: 플로우 출력 포트를 추가한다(고유 id + 기본 이름, dirty+undo). */
+  addFlowOutput: () => void;
+  /**
+   * SPEC-SUBFLOW-001: 플로우 포트 이름을 변경한다(id 불변 → 와이어 연속성 보존, dirty+undo).
+   * 경계 와이어의 핸들 id(=포트 이름) 도 함께 갱신해 연결을 유지한다.
+   */
+  renameFlowPort: (
+    direction: 'input' | 'output',
+    id: string,
+    name: string,
+  ) => void;
+  /**
+   * SPEC-SUBFLOW-001: 플로우 포트를 삭제한다(dirty+undo).
+   * 해당 포트를 엔드포인트로 쓰던 경계 와이어(센티넬 엣지)도 함께 제거한다.
+   */
+  removeFlowPort: (direction: 'input' | 'output', id: string) => void;
   setNodes: (nodes: Node[]) => void;
   setEdges: (edges: Edge[]) => void;
   onNodesChange: (changes: NodeChange[]) => void;
@@ -258,6 +309,8 @@ function pushUndo(state: EditorState): Pick<EditorState, 'undoStack' | 'redoStac
   const entry: HistoryEntry = {
     nodes: state.nodes,
     edges: state.edges,
+    flowInputs: state.flowInputs,
+    flowOutputs: state.flowOutputs,
   };
   const stack = [...state.undoStack, entry];
   if (stack.length > MAX_HISTORY) {
@@ -266,10 +319,30 @@ function pushUndo(state: EditorState): Pick<EditorState, 'undoStack' | 'redoStac
   return { undoStack: stack, redoStack: [] };
 }
 
+/**
+ * 현재 state.nodes(실제 노드 + 경계 노드) 와 플로우 포트로부터 렌더용 노드 배열을
+ * 재구성한다. 실제 노드는 보존하고 경계 노드만 포트 기준으로 다시 만든다(이전
+ * 경계 노드 위치는 보존). 플로우 포트 편집 시 경계 노드 핸들을 갱신하는 데 사용한다.
+ */
+function rebuildRenderedNodes(
+  state: Pick<EditorState, 'nodes' | 'flowInputs' | 'flowOutputs'>,
+  flowInputs: FlowPortDef[],
+  flowOutputs: FlowPortDef[],
+): Node[] {
+  return withBoundaryNodes(
+    realNodesOnly(state.nodes),
+    flowInputs,
+    flowOutputs,
+    state.nodes,
+  );
+}
+
 export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   // State
   nodes: [],
   edges: [],
+  flowInputs: [],
+  flowOutputs: [],
   selectedNodeId: null,
   selectedEdgeId: null,
   highlightedLinkName: null,
@@ -289,14 +362,115 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   // Server-load only: replace nodes/edges WITHOUT marking the editor dirty
   // and reset history. Use this when hydrating from server data (initial load
   // or post-save refetch) so the unsaved indicator does not turn back on.
-  loadFlow: (nodes, edges) =>
+  loadFlow: (nodes, edges, flowInputs = [], flowOutputs = []) =>
     set({
-      nodes,
+      // 서버 nodes 는 경계 노드를 포함하지 않으므로(저장 시 제외됨), 플로우 포트로부터
+      // 합성 경계 노드를 만들어 렌더용 nodes 에 함께 넣는다(REQ-SUBFLOW-B01).
+      nodes: withBoundaryNodes(realNodesOnly(nodes), flowInputs, flowOutputs),
       edges,
+      flowInputs,
+      flowOutputs,
       isDirty: false,
       undoStack: [],
       redoStack: [],
       highlightedLinkName: null,
+    }),
+
+  // 플로우 포트 추가/이름/삭제는 실제 편집이므로 dirty + pushUndo 로 처리한다
+  // (노드 편집과 동일, REQ-SUBFLOW-A02/B05). 편집 후 경계 노드 핸들을 재구성한다.
+  addFlowInput: () =>
+    set((state) => {
+      const existing = new Set(state.flowInputs.map((p) => p.name));
+      const name = nextFlowPortName('input', existing);
+      const flowInputs = [...state.flowInputs, { id: generateUUID(), name }];
+      return {
+        ...pushUndo(state),
+        flowInputs,
+        nodes: rebuildRenderedNodes(state, flowInputs, state.flowOutputs),
+        isDirty: true,
+      };
+    }),
+
+  addFlowOutput: () =>
+    set((state) => {
+      const existing = new Set(state.flowOutputs.map((p) => p.name));
+      const name = nextFlowPortName('output', existing);
+      const flowOutputs = [...state.flowOutputs, { id: generateUUID(), name }];
+      return {
+        ...pushUndo(state),
+        flowOutputs,
+        nodes: rebuildRenderedNodes(state, state.flowInputs, flowOutputs),
+        isDirty: true,
+      };
+    }),
+
+  renameFlowPort: (direction, id, name) =>
+    set((state) => {
+      const trimmed = name.trim();
+      if (trimmed === '') return state;
+
+      const list = direction === 'input' ? state.flowInputs : state.flowOutputs;
+      const target = list.find((p) => p.id === id);
+      // 대상이 없거나 이름이 그대로면 dirty 를 만들지 않는다.
+      if (!target || target.name === trimmed) return state;
+      const oldName = target.name;
+
+      const updated = list.map((p) =>
+        p.id === id ? { ...p, name: trimmed } : p,
+      );
+      const flowInputs = direction === 'input' ? updated : state.flowInputs;
+      const flowOutputs = direction === 'output' ? updated : state.flowOutputs;
+
+      // 핸들 id(=포트 이름) 가 바뀌므로 경계 와이어의 sourceHandle/targetHandle 도
+      // 갱신해 연결 연속성을 보존한다(REQ-SUBFLOW-A03).
+      const edges = state.edges.map((e) => {
+        if (direction === 'input' && edgeUsesBoundaryPort(e, 'input', oldName)) {
+          return { ...e, sourceHandle: trimmed };
+        }
+        if (
+          direction === 'output' &&
+          edgeUsesBoundaryPort(e, 'output', oldName)
+        ) {
+          return { ...e, targetHandle: trimmed };
+        }
+        return e;
+      });
+
+      return {
+        ...pushUndo(state),
+        flowInputs,
+        flowOutputs,
+        edges,
+        nodes: rebuildRenderedNodes(state, flowInputs, flowOutputs),
+        isDirty: true,
+      };
+    }),
+
+  removeFlowPort: (direction, id) =>
+    set((state) => {
+      const list = direction === 'input' ? state.flowInputs : state.flowOutputs;
+      const target = list.find((p) => p.id === id);
+      if (!target) return state;
+      const portName = target.name;
+
+      const updated = list.filter((p) => p.id !== id);
+      const flowInputs = direction === 'input' ? updated : state.flowInputs;
+      const flowOutputs = direction === 'output' ? updated : state.flowOutputs;
+
+      // 삭제된 포트를 엔드포인트로 쓰던 경계 와이어(센티넬 엣지)를 제거한다
+      // (REQ-SUBFLOW-A04 — 기존 포트 제거 시 dangling 와이어 정리).
+      const edges = state.edges.filter(
+        (e) => !edgeUsesBoundaryPort(e, direction, portName),
+      );
+
+      return {
+        ...pushUndo(state),
+        flowInputs,
+        flowOutputs,
+        edges,
+        nodes: rebuildRenderedNodes(state, flowInputs, flowOutputs),
+        isDirty: true,
+      };
     }),
 
   setNodes: (nodes) =>
@@ -315,15 +489,21 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
 
   onNodesChange: (changes) =>
     set((state) => {
+      // 합성 경계 노드(__flow_input__/__flow_output__)는 비-노드 엔티티이므로
+      // 일반 노드 삭제(remove) 대상에서 제외한다(REQ-SUBFLOW-B04). 경계 노드는
+      // draggable/selectable=false 이지만, 방어적으로 remove 변경도 걸러낸다.
+      const filtered = changes.filter(
+        (c) => !(c.type === 'remove' && isBoundaryNodeId(c.id)),
+      );
       // 'dimensions'(노드 측정) 와 'select'(선택) 변경은 사용자 편집이 아니므로
       // isDirty 를 만들지 않는다. React Flow 는 마운트/렌더 시 노드를 측정하며
       // 'dimensions' 변경을 emit 하는데, 이를 dirty 로 처리하면 플로우 로드 직후
       // 편집 없이도 무조건 "수정됨" 으로 표시되는 버그가 발생한다(미저장 가드 오작동).
-      const meaningful = changes.some(
+      const meaningful = filtered.some(
         (c) => c.type !== 'dimensions' && c.type !== 'select',
       );
       return {
-        nodes: applyNodeChanges(changes, state.nodes),
+        nodes: applyNodeChanges(filtered, state.nodes),
         isDirty: meaningful ? true : state.isDirty,
       };
     }),
@@ -385,15 +565,21 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
     })),
 
   removeNode: (nodeId) =>
-    set((state) => ({
-      ...pushUndo(state),
-      nodes: state.nodes.filter((n) => n.id !== nodeId),
-      edges: state.edges.filter(
-        (e) => e.source !== nodeId && e.target !== nodeId,
-      ),
-      selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
-      isDirty: true,
-    })),
+    set((state) => {
+      // 합성 경계 노드는 일반 노드 삭제로 제거할 수 없다(REQ-SUBFLOW-B04).
+      // 포트는 포트 관리 패널의 removeFlowPort 로만 제거한다.
+      if (isBoundaryNodeId(nodeId)) return state;
+      return {
+        ...pushUndo(state),
+        nodes: state.nodes.filter((n) => n.id !== nodeId),
+        edges: state.edges.filter(
+          (e) => e.source !== nodeId && e.target !== nodeId,
+        ),
+        selectedNodeId:
+          state.selectedNodeId === nodeId ? null : state.selectedNodeId,
+        isDirty: true,
+      };
+    }),
 
   duplicateNodes: (nodeIds) =>
     set((state) => {
@@ -490,6 +676,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       const redoEntry: HistoryEntry = {
         nodes: state.nodes,
         edges: state.edges,
+        flowInputs: state.flowInputs,
+        flowOutputs: state.flowOutputs,
       };
       const redoStack = [...state.redoStack, redoEntry];
       if (redoStack.length > MAX_HISTORY) {
@@ -499,6 +687,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       return {
         nodes: entry.nodes,
         edges: entry.edges,
+        flowInputs: entry.flowInputs,
+        flowOutputs: entry.flowOutputs,
         undoStack,
         redoStack,
         isDirty: true,
@@ -516,6 +706,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       const undoEntry: HistoryEntry = {
         nodes: state.nodes,
         edges: state.edges,
+        flowInputs: state.flowInputs,
+        flowOutputs: state.flowOutputs,
       };
       const undoStack = [...state.undoStack, undoEntry];
       if (undoStack.length > MAX_HISTORY) {
@@ -525,6 +717,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       return {
         nodes: entry.nodes,
         edges: entry.edges,
+        flowInputs: entry.flowInputs,
+        flowOutputs: entry.flowOutputs,
         undoStack,
         redoStack,
         isDirty: true,
@@ -559,6 +753,8 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
     set({
       nodes: [],
       edges: [],
+      flowInputs: [],
+      flowOutputs: [],
       selectedNodeId: null,
       selectedEdgeId: null,
       highlightedLinkName: null,

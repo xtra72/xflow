@@ -42,6 +42,7 @@ import {
   useEditorStore,
 } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
+import { serializeFlowDefinition } from '@/lib/flow/boundary';
 import type { FlowStatus } from '@/types/flow';
 import { FlowSettingsDialog } from './FlowSettingsDialog';
 
@@ -80,6 +81,8 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
   // 에디터 상태
   const nodes = useEditorStore((s) => s.nodes);
   const edges = useEditorStore((s) => s.edges);
+  const flowInputs = useEditorStore((s) => s.flowInputs);
+  const flowOutputs = useEditorStore((s) => s.flowOutputs);
   const isDirty = useEditorStore((s) => s.isDirty);
   const undoStack = useEditorStore((s) => s.undoStack);
   const redoStack = useEditorStore((s) => s.redoStack);
@@ -137,7 +140,14 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
       {
         id: flowId,
         req: {
-          definition: { nodes, edges } as Record<string, unknown>,
+          // SPEC-SUBFLOW-001: 합성 경계 노드 제외 + 플로우 레벨 inputs/outputs 기록
+          // + 센티넬 경계 와이어 보존(EditorPage.handleSave 와 동일 직렬화 경로).
+          definition: serializeFlowDefinition(
+            nodes,
+            edges,
+            flowInputs,
+            flowOutputs,
+          ),
         },
       },
       {

@@ -12,6 +12,12 @@ import {
   nextDuplicateLabel,
   useEditorStore,
 } from './editorStore';
+import {
+  FLOW_INPUT_BOUNDARY_ID,
+  FLOW_OUTPUT_BOUNDARY_ID,
+  isBoundaryNode,
+  realNodesOnly,
+} from '@/lib/flow/boundary';
 
 const sampleNodes: Node[] = [
   { id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: { label: 'A' } },
@@ -679,6 +685,268 @@ describe('editorStore - 뷰 전용 표시 토글 (showVirtualWires / focusConnec
       expect(clampFocusDepth(Number.POSITIVE_INFINITY)).toBe(
         Number.POSITIVE_INFINITY,
       );
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-SUBFLOW-001 그룹 A/B: 플로우 레벨 포트 액션 + 경계 노드 합성
+// ---------------------------------------------------------------------------
+
+describe('editorStore - 플로우 레벨 포트(SPEC-SUBFLOW-001)', () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  describe('포트 추가/이름/삭제 (dirty + undo)', () => {
+    it('addFlowInput / addFlowOutput 는 고유 id + 기본 이름 포트를 추가하고 dirty 로 만든다', () => {
+      const s = useEditorStore.getState();
+      s.addFlowInput();
+      s.addFlowInput();
+      s.addFlowOutput();
+
+      const state = useEditorStore.getState();
+      expect(state.flowInputs.map((p) => p.name)).toEqual(['in1', 'in2']);
+      expect(state.flowOutputs.map((p) => p.name)).toEqual(['out1']);
+      // id 는 고유해야 한다.
+      const ids = state.flowInputs.map((p) => p.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(state.isDirty).toBe(true);
+    });
+
+    it('포트 추가는 undo 스택에 쌓이고 undo 로 되돌릴 수 있다', () => {
+      const s = useEditorStore.getState();
+      s.addFlowInput();
+      expect(useEditorStore.getState().undoStack.length).toBeGreaterThan(0);
+
+      useEditorStore.getState().undo();
+      expect(useEditorStore.getState().flowInputs).toHaveLength(0);
+
+      useEditorStore.getState().redo();
+      expect(useEditorStore.getState().flowInputs).toHaveLength(1);
+    });
+
+    it('renameFlowPort 는 id 를 유지한 채 이름만 갱신한다', () => {
+      const s = useEditorStore.getState();
+      s.addFlowInput();
+      const portId = useEditorStore.getState().flowInputs[0]!.id;
+
+      useEditorStore.getState().renameFlowPort('input', portId, '센서입력');
+
+      const port = useEditorStore.getState().flowInputs[0]!;
+      expect(port.id).toBe(portId);
+      expect(port.name).toBe('센서입력');
+    });
+
+    it('renameFlowPort 는 빈 이름/동일 이름이면 dirty 를 만들지 않는다', () => {
+      const s = useEditorStore.getState();
+      s.addFlowInput();
+      const portId = useEditorStore.getState().flowInputs[0]!.id;
+      // 로드처럼 dirty 를 끈 뒤 무의미 rename 을 시도한다.
+      useEditorStore.getState().setDirty(false);
+
+      useEditorStore.getState().renameFlowPort('input', portId, '   ');
+      expect(useEditorStore.getState().isDirty).toBe(false);
+
+      useEditorStore.getState().renameFlowPort('input', portId, 'in1');
+      expect(useEditorStore.getState().isDirty).toBe(false);
+    });
+
+    it('removeFlowPort 는 포트를 제거하고 dirty 로 만든다', () => {
+      const s = useEditorStore.getState();
+      s.addFlowOutput();
+      const portId = useEditorStore.getState().flowOutputs[0]!.id;
+      useEditorStore.getState().setDirty(false);
+
+      useEditorStore.getState().removeFlowPort('output', portId);
+      expect(useEditorStore.getState().flowOutputs).toHaveLength(0);
+      expect(useEditorStore.getState().isDirty).toBe(true);
+    });
+  });
+
+  describe('loadFlow 가 포트로부터 경계 노드를 만든다', () => {
+    it('flowInputs/flowOutputs 로부터 두 경계 노드를 렌더용 nodes 에 넣는다', () => {
+      useEditorStore.getState().loadFlow(
+        [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+        [],
+        [{ id: 'i1', name: 'in1' }],
+        [{ id: 'o1', name: 'out1' }],
+      );
+
+      const state = useEditorStore.getState();
+      const ids = state.nodes.map((n) => n.id);
+      expect(ids).toContain(FLOW_INPUT_BOUNDARY_ID);
+      expect(ids).toContain(FLOW_OUTPUT_BOUNDARY_ID);
+      expect(ids).toContain('n1');
+      expect(state.isDirty).toBe(false);
+
+      const inputBoundary = state.nodes.find(
+        (n) => n.id === FLOW_INPUT_BOUNDARY_ID,
+      )!;
+      expect((inputBoundary.data as { ports: string[] }).ports).toEqual(['in1']);
+    });
+
+    it('loadFlow 를 2-인자로 호출하면(기존 호출부) 포트가 없으므로 경계 노드도 없다', () => {
+      useEditorStore.getState().loadFlow(
+        [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+        [],
+      );
+      const state = useEditorStore.getState();
+      expect(state.flowInputs).toEqual([]);
+      expect(state.flowOutputs).toEqual([]);
+      // 포트가 없으면 경계 노드를 추가하지 않아 기존 노드 수 의미를 보존한다.
+      const boundary = state.nodes.filter(isBoundaryNode);
+      expect(boundary).toHaveLength(0);
+      expect(state.nodes).toHaveLength(1);
+    });
+
+    it('포트 편집 시 경계 노드 핸들이 재구성된다', () => {
+      useEditorStore.getState().loadFlow([], [], [], []);
+      useEditorStore.getState().addFlowInput();
+
+      const inputBoundary = useEditorStore
+        .getState()
+        .nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID)!;
+      expect((inputBoundary.data as { ports: string[] }).ports).toEqual(['in1']);
+    });
+  });
+
+  describe('경계 노드 비-노드 불변식 (REQ-SUBFLOW-B04)', () => {
+    it('removeNode 는 경계 노드를 삭제하지 않는다', () => {
+      useEditorStore
+        .getState()
+        .loadFlow([], [], [{ id: 'i1', name: 'in1' }], []);
+
+      useEditorStore.getState().removeNode(FLOW_INPUT_BOUNDARY_ID);
+
+      const ids = useEditorStore.getState().nodes.map((n) => n.id);
+      expect(ids).toContain(FLOW_INPUT_BOUNDARY_ID);
+    });
+
+    it('onNodesChange 의 remove 변경에서 경계 노드를 걸러낸다', () => {
+      useEditorStore
+        .getState()
+        .loadFlow(
+          [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+          [],
+          [{ id: 'i1', name: 'in1' }],
+          [],
+        );
+
+      useEditorStore.getState().onNodesChange([
+        { type: 'remove', id: FLOW_INPUT_BOUNDARY_ID },
+        { type: 'remove', id: 'n1' },
+      ]);
+
+      const ids = useEditorStore.getState().nodes.map((n) => n.id);
+      expect(ids).toContain(FLOW_INPUT_BOUNDARY_ID);
+      expect(ids).not.toContain('n1');
+    });
+  });
+
+  describe('포트 삭제 시 센티넬 와이어 정리 (REQ-SUBFLOW-A04)', () => {
+    it('삭제된 입력 포트를 쓰던 경계 와이어를 함께 제거한다', () => {
+      useEditorStore.getState().loadFlow(
+        [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+        [
+          {
+            id: 'e1',
+            source: FLOW_INPUT_BOUNDARY_ID,
+            sourceHandle: 'in1',
+            target: 'n1',
+            targetHandle: 'in',
+          },
+          { id: 'e2', source: 'n1', target: 'n1', sourceHandle: 'out' },
+        ],
+        [{ id: 'i1', name: 'in1' }],
+        [],
+      );
+
+      const portId = useEditorStore.getState().flowInputs[0]!.id;
+      useEditorStore.getState().removeFlowPort('input', portId);
+
+      const edgeIds = useEditorStore.getState().edges.map((e) => e.id);
+      expect(edgeIds).not.toContain('e1'); // 경계 와이어 제거됨
+      expect(edgeIds).toContain('e2'); // 일반 와이어 보존
+    });
+
+    it('renameFlowPort 는 경계 와이어의 sourceHandle 을 새 이름으로 갱신한다', () => {
+      useEditorStore.getState().loadFlow(
+        [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+        [
+          {
+            id: 'e1',
+            source: FLOW_INPUT_BOUNDARY_ID,
+            sourceHandle: 'in1',
+            target: 'n1',
+            targetHandle: 'in',
+          },
+        ],
+        [{ id: 'i1', name: 'in1' }],
+        [],
+      );
+
+      const portId = useEditorStore.getState().flowInputs[0]!.id;
+      useEditorStore.getState().renameFlowPort('input', portId, 'sensor');
+
+      const edge = useEditorStore.getState().edges[0]!;
+      expect(edge.sourceHandle).toBe('sensor');
+    });
+  });
+
+  describe('onConnect 센티넬 엣지 정확성 (REQ-SUBFLOW-D02 / 그룹 B)', () => {
+    it('경계 노드로 연결하면 센티넬 source + 포트 이름 핸들 엣지를 만든다', () => {
+      useEditorStore
+        .getState()
+        .loadFlow(
+          [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+          [],
+          [{ id: 'i1', name: 'in1' }],
+          [],
+        );
+
+      // __flow_input__.in1 → n1.in 연결(사용자가 경계 노드에서 내부 노드로 와이어).
+      useEditorStore.getState().onConnect({
+        source: FLOW_INPUT_BOUNDARY_ID,
+        sourceHandle: 'in1',
+        target: 'n1',
+        targetHandle: 'in',
+      });
+
+      const edge = useEditorStore
+        .getState()
+        .edges.find((e) => e.source === FLOW_INPUT_BOUNDARY_ID)!;
+      expect(edge).toBeDefined();
+      expect(edge.sourceHandle).toBe('in1');
+      expect(edge.target).toBe('n1');
+      expect(edge.targetHandle).toBe('in');
+    });
+  });
+
+  describe('직렬화: 저장은 경계 노드 제외 + inputs/outputs 기록 + 센티넬 엣지 보존', () => {
+    it('realNodesOnly 로 경계 노드를 거른 결과만 저장 대상이 된다', () => {
+      useEditorStore.getState().loadFlow(
+        [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+        [],
+        [{ id: 'i1', name: 'in1' }],
+        [{ id: 'o1', name: 'out1' }],
+      );
+
+      const { nodes } = useEditorStore.getState();
+      expect(realNodesOnly(nodes).map((n) => n.id)).toEqual(['n1']);
+    });
+  });
+
+  describe('resetEditor 는 플로우 포트를 비운다', () => {
+    it('포트가 있어도 reset 후 비어 있다', () => {
+      const s = useEditorStore.getState();
+      s.addFlowInput();
+      s.addFlowOutput();
+      useEditorStore.getState().resetEditor();
+
+      const state = useEditorStore.getState();
+      expect(state.flowInputs).toEqual([]);
+      expect(state.flowOutputs).toEqual([]);
     });
   });
 });
