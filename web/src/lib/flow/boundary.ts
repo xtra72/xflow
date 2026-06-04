@@ -318,6 +318,10 @@ function makeBoundaryNode(
     draggable: false,
     selectable: false,
     deletable: false,
+    // FIX(연결 차단 결함): selectable:false 등 비-상호작용 플래그가 연결 동작에
+    // 간섭하지 않도록 connectable 을 명시적으로 true 로 둔다(React Flow 기본값과
+    // 동일하지만, 경계 핸들이 항상 연결을 시작/수신할 수 있음을 보장한다).
+    connectable: true,
     data: {
       direction,
       ports: ports.map((p) => p.name),
@@ -347,7 +351,13 @@ export function buildAreaNode(
     // style 에도 동일 크기를 넣어 측정 전에도 래퍼가 정확한 크기를 갖게 한다.
     width,
     height,
-    style: { width, height },
+    // FIX(연결 차단 결함): 영역 노드는 실제 노드 전체를 덮는 거대한 사각형이므로,
+    // 노드 래퍼(.react-flow__node)가 그 영역 위에서 포인터 이벤트를 가로채면
+    // 경계 포트 ↔ 내부 노드 사이의 연결 드래그가 시작/종료되지 못한다.
+    // 내부 div 의 pointerEvents:'none' 만으로는 래퍼가 여전히 이벤트를 잡으므로,
+    // node-level style 에 pointerEvents:'none' 을 넣어 React Flow 가 이를 래퍼에
+    // 직접 적용하게 한다(래퍼·내부 모두 투명 — belt and suspenders).
+    style: { width, height, pointerEvents: 'none' },
     // 영역 노드는 항상 nodes 배열 맨 앞에 위치하므로(렌더 순서상 아래) 음수 z 없이도
     // 다른 노드 아래에 깔린다. 음수 zIndex 는 React Flow 에서 스택 컨텍스트 클리핑으로
     // 보이지 않게 될 수 있어 0 으로 둔다.
@@ -355,6 +365,8 @@ export function buildAreaNode(
     draggable: false,
     selectable: false,
     deletable: false,
+    // 영역 노드는 어떤 연결에도 절대 참여하지 않는다(핸들 없음 + 명시적 비연결).
+    connectable: false,
     data: { width, height },
   };
 }

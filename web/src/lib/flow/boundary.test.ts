@@ -170,6 +170,14 @@ describe('boundary - 경계 노드 생성', () => {
     expect(inputNode.deletable).toBe(false);
   });
 
+  it('경계 노드는 명시적으로 connectable 이다(연결 차단 결함 회귀 가드)', () => {
+    // selectable:false 등 비-상호작용 플래그가 연결 동작을 막지 않도록
+    // 경계 노드(입력/출력 모두)는 connectable:true 를 명시한다.
+    const [inputNode, outputNode] = buildBoundaryNodes(inputs, outputs, []);
+    expect(inputNode.connectable).toBe(true);
+    expect(outputNode.connectable).toBe(true);
+  });
+
   it('경계 노드 위치는 항상 실제 노드 바운딩 박스에서 파생한다(수동 배치 보존 아님)', () => {
     // 이전 경계 노드 위치가 있어도 보존하지 않고 박스에서 다시 계산한다.
     const prev: Node[] = [
@@ -367,6 +375,12 @@ describe('boundary - 영역 노드 생성(buildAreaNode)', () => {
     expect(area.selectable).toBe(false);
     expect(area.deletable).toBe(false);
     expect(area.draggable).toBe(false);
+    // FIX(연결 차단 결함 회귀 가드): 영역 노드 래퍼(.react-flow__node)가 포인터
+    // 이벤트를 가로채 경계 포트 ↔ 내부 노드 연결 드래그를 막던 결함을 방지한다.
+    // node-level style.pointerEvents 가 'none' 이어야 래퍼까지 포인터 투명해진다.
+    expect(area.style).toMatchObject({ pointerEvents: 'none' });
+    // 영역 노드는 어떤 연결에도 참여하지 않는다(명시적 비연결).
+    expect(area.connectable).toBe(false);
     // 영역 노드는 nodes 배열 맨 앞(렌더 순서상 아래)에 두어 다른 노드 아래에 깔리며,
     // 음수 zIndex 는 React Flow 스택 컨텍스트 클리핑으로 안 보일 수 있어 0 으로 둔다.
     expect(area.zIndex).toBe(0);

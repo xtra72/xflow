@@ -922,6 +922,33 @@ describe('editorStore - 플로우 레벨 포트(SPEC-SUBFLOW-001)', () => {
       expect(edge.target).toBe('n1');
       expect(edge.targetHandle).toBe('in');
     });
+
+    it('내부 노드 출력 → 출력 경계로 연결하면 센티넬 target + 포트 이름 핸들 엣지를 만든다', () => {
+      useEditorStore
+        .getState()
+        .loadFlow(
+          [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+          [],
+          [],
+          [{ id: 'o1', name: 'out1' }],
+        );
+
+      // n1.out → __flow_output__.out1 연결(내부 노드에서 출력 경계로 와이어).
+      useEditorStore.getState().onConnect({
+        source: 'n1',
+        sourceHandle: 'out',
+        target: FLOW_OUTPUT_BOUNDARY_ID,
+        targetHandle: 'out1',
+      });
+
+      const edge = useEditorStore
+        .getState()
+        .edges.find((e) => e.target === FLOW_OUTPUT_BOUNDARY_ID)!;
+      expect(edge).toBeDefined();
+      expect(edge.source).toBe('n1');
+      expect(edge.sourceHandle).toBe('out');
+      expect(edge.targetHandle).toBe('out1');
+    });
   });
 
   describe('직렬화: 저장은 경계 노드 제외 + inputs/outputs 기록 + 센티넬 엣지 보존', () => {
