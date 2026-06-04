@@ -117,3 +117,74 @@ describe('computePortsForNode — switch 동적 포트 (SPEC-SWITCH-001)', () =>
     expect(outputNames(ports)).toEqual(['hot', 'other']);
   });
 });
+
+// computePortsForNode 의 flow-node 동적 포트 파생 테스트 (SPEC-SUBFLOW-001 그룹 C).
+//   핸들 = 참조 플로우의 플로우 레벨 포트 (input_ports → 입력 핸들, output_ports → 출력 핸들).
+//   값들은 flow_id 선택 시 참조 플로우 정의에서 비정규화된 에디터 표시 전용 캐시이다.
+
+/** 입력 포트 이름 집합(순서 유지)을 추출한다. */
+function inputNames(ports: PortDef[]): string[] {
+  return ports.filter((p) => p.direction === 'input').map((p) => p.name);
+}
+
+describe('computePortsForNode — flow-node 동적 포트 (SPEC-SUBFLOW-001)', () => {
+  it('input_ports → 입력 핸들, output_ports → 출력 핸들로 파생한다 (REQ-SUBFLOW-C02)', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'flow-abc',
+      input_ports: ['in1', 'in2'],
+      output_ports: ['out1'],
+    });
+    expect(inputNames(ports)).toEqual(['in1', 'in2']);
+    expect(outputNames(ports)).toEqual(['out1']);
+    expect(ports).toContainEqual({ name: 'in1', direction: 'input' });
+    expect(ports).toContainEqual({ name: 'out1', direction: 'output' });
+  });
+
+  it('flow_id 미선택(미해결)이면 핸들 없이 빈 배열을 반환한다 (기본값)', () => {
+    expect(computePortsForNode('flow-node')).toEqual([]);
+    expect(computePortsForNode('flow-node', {})).toEqual([]);
+    expect(computePortsForNode('flow-node', { flow_id: 'flow-abc' })).toEqual([]);
+  });
+
+  it('포트가 0개로 해결되면 핸들 없이 빈 배열을 반환한다', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'flow-abc',
+      input_ports: [],
+      output_ports: [],
+    });
+    expect(ports).toEqual([]);
+  });
+
+  it('입력만/출력만 있는 참조 플로우도 처리한다', () => {
+    const inOnly = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      input_ports: ['trigger'],
+    });
+    expect(inOnly).toEqual([{ name: 'trigger', direction: 'input' }]);
+
+    const outOnly = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      output_ports: ['result'],
+    });
+    expect(outOnly).toEqual([{ name: 'result', direction: 'output' }]);
+  });
+
+  it('빈 문자열/공백/중복/비문자열 포트 이름은 안전하게 걸러낸다', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      input_ports: ['in1', '', '  ', 'in1', '  in2  ', 42, null],
+      output_ports: ['out1', 'out1'],
+    });
+    expect(inputNames(ports)).toEqual(['in1', 'in2']);
+    expect(outputNames(ports)).toEqual(['out1']);
+  });
+
+  it('input_ports / output_ports 가 배열이 아니면 무시한다', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      input_ports: 'in1' as unknown as string[],
+      output_ports: { a: 1 } as unknown as string[],
+    });
+    expect(ports).toEqual([]);
+  });
+});

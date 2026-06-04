@@ -18,16 +18,21 @@ import (
 
 // flowJSON 은 Flow를 JSON으로 직렬화/역직렬화하기 위한 비공개 중간 구조체이다.
 type flowJSON struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	State       string            `json:"state"`
-	Config      FlowConfig        `json:"config"`
-	Nodes       []NodeDef         `json:"nodes"`
-	Wires       []Wire            `json:"wires"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	State       string     `json:"state"`
+	Config      FlowConfig `json:"config"`
+	Nodes       []NodeDef  `json:"nodes"`
+	Wires       []Wire     `json:"wires"`
+	// Inputs/Outputs 는 플로우 레벨 입출력 포트이다(노드 포트와 별개, 정의 최상위).
+	// 항상 직렬화되도록 omitempty 를 두지 않는다(빈 배열로 round-trip 보존).
+	// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A05/A07)
+	Inputs    []Port            `json:"inputs"`
+	Outputs   []Port            `json:"outputs"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +50,8 @@ func (f *defaultFlow) MarshalJSON() ([]byte, error) {
 		Config:      f.config,
 		Nodes:       f.nodes,
 		Wires:       f.wires,
+		Inputs:      f.inputs,
+		Outputs:     f.outputs,
 		Metadata:    f.metadata,
 		CreatedAt:   f.createdAt,
 		UpdatedAt:   f.updatedAt,
@@ -55,6 +62,14 @@ func (f *defaultFlow) MarshalJSON() ([]byte, error) {
 	}
 	if fj.Wires == nil {
 		fj.Wires = []Wire{}
+	}
+	// 플로우 레벨 포트는 nil 도 빈 배열로 직렬화하여 최상위 inputs/outputs 키를
+	// 항상 노출한다(round-trip 일관성, REQ-SUBFLOW-A07).
+	if fj.Inputs == nil {
+		fj.Inputs = []Port{}
+	}
+	if fj.Outputs == nil {
+		fj.Outputs = []Port{}
 	}
 
 	return json.Marshal(fj)
@@ -186,6 +201,8 @@ func SaveFlowToFile(f Flow, path string) error {
 			Config:      df.config,
 			Nodes:       df.nodes,
 			Wires:       df.wires,
+			Inputs:      df.inputs,
+			Outputs:     df.outputs,
 			Metadata:    df.metadata,
 			CreatedAt:   df.createdAt,
 			UpdatedAt:   df.updatedAt,
@@ -195,6 +212,12 @@ func SaveFlowToFile(f Flow, path string) error {
 		}
 		if fj.Wires == nil {
 			fj.Wires = []Wire{}
+		}
+		if fj.Inputs == nil {
+			fj.Inputs = []Port{}
+		}
+		if fj.Outputs == nil {
+			fj.Outputs = []Port{}
 		}
 
 		data, err := json.MarshalIndent(fj, "", "  ")
@@ -276,6 +299,12 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 		fj.Metadata = make(map[string]string)
 	}
 
+	// 플로우 레벨 포트 기본값/방향 정규화:
+	//   - id 가 비어 있으면 UUID 를 생성한다(안정 식별자 보장, REQ-SUBFLOW-A01).
+	//   - 방향은 소속 목록(input/output)으로 강제한다.
+	normalizeFlowPortIDs(fj.Inputs, PortInput)
+	normalizeFlowPortIDs(fj.Outputs, PortOutput)
+
 	// 노드/포트 ID 기본값 생성
 	nameToID := normalizeNodeDefaults(fj.Nodes)
 
@@ -309,7 +338,23 @@ func buildFlowFromIntermediate(fj flowJSON) (Flow, error) {
 		metadata:    fj.Metadata,
 		createdAt:   createdAt,
 		updatedAt:   updatedAt,
+		inputs:      fj.Inputs,
+		outputs:     fj.Outputs,
 	}, nil
+}
+
+// normalizeFlowPortIDs 는 플로우 레벨 포트 목록의 id/방향 기본값을 in-place 로 설정한다.
+//   - id 가 비어 있으면 UUID 를 생성한다(이름 변경에도 불변인 안정 식별자).
+//   - 방향은 소속 목록에 맞게 강제한다(REQ-SUBFLOW-A01).
+//
+// (SPEC-SUBFLOW-001 그룹 A)
+func normalizeFlowPortIDs(ports []Port, dir PortDirection) {
+	for i := range ports {
+		if ports[i].ID == "" {
+			ports[i].ID = uuid.New().String()
+		}
+		ports[i].Direction = dir
+	}
 }
 
 // normalizeNodeDefaults 는 노드와 포트의 기본값을 생성한다.

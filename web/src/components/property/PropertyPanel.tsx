@@ -270,8 +270,9 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
 
     const nodeType = (draft.nodeType as string) ?? '';
 
-    // bridge/switch 노드: 설정 변경 시 포트 재계산
-    if (nodeType === 'bridge' || nodeType === 'switch') {
+    // bridge/switch/flow-node 노드: 설정 변경 시 포트 재계산.
+    // flow-node 는 참조 플로우 포트(input_ports/output_ports)로부터 핸들을 파생한다.
+    if (nodeType === 'bridge' || nodeType === 'switch' || nodeType === 'flow-node') {
       const newPorts = computePortsForNode(nodeType, draft);
       const updatedDraft = { ...draft, ports: newPorts };
       updateNodeData(selectedNodeId, updatedDraft);

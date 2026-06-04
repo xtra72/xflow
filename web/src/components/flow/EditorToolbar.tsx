@@ -4,6 +4,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Check,
   ChevronDown,
   Eye,
@@ -12,6 +14,7 @@ import {
   Grid3x3,
   Layers,
   Minus,
+  PanelLeft,
   Pencil,
   Plus,
   Play,
@@ -42,6 +45,7 @@ import {
   useEditorStore,
 } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
+import { serializeFlowDefinition } from '@/lib/flow/boundary';
 import type { FlowStatus } from '@/types/flow';
 import { FlowSettingsDialog } from './FlowSettingsDialog';
 
@@ -66,13 +70,24 @@ const STATUS_LABELS: Record<FlowStatus, string> = {
 interface EditorToolbarProps {
   /** 현재 편집 중인 플로우 ID */
   flowId: string;
+  /**
+   * SPEC-SUBFLOW-001 M4: 플로우 포트 관리 패널이 열려 있는지 여부(뷰 전용).
+   * 패널 자체는 EditorPage 가 오버레이로 렌더하고, 토글 트리거만 제어판(툴바)에 둔다.
+   */
+  showPortPanel: boolean;
+  /** 플로우 포트 패널 열림/닫힘 토글 콜백. */
+  onTogglePortPanel: () => void;
 }
 
 /**
  * 에디터 툴바 컴포넌트.
  * 플로우의 저장, 배포, 실행 제어와 실행 취소/다시 실행 기능을 제공한다.
  */
-export function EditorToolbar({ flowId }: EditorToolbarProps) {
+export function EditorToolbar({
+  flowId,
+  showPortPanel,
+  onTogglePortPanel,
+}: EditorToolbarProps) {
   const addNotification = useUIStore((s) => s.addNotification);
   // 2026-05-31: 플로우 표시 설정 모달 상태
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -80,12 +95,17 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
   // 에디터 상태
   const nodes = useEditorStore((s) => s.nodes);
   const edges = useEditorStore((s) => s.edges);
+  const flowInputs = useEditorStore((s) => s.flowInputs);
+  const flowOutputs = useEditorStore((s) => s.flowOutputs);
   const isDirty = useEditorStore((s) => s.isDirty);
   const undoStack = useEditorStore((s) => s.undoStack);
   const redoStack = useEditorStore((s) => s.redoStack);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
+  // SPEC-SUBFLOW-001 M4: 패널을 열지 않고도 제어판에서 바로 플로우 포트를 추가한다.
+  const addFlowInput = useEditorStore((s) => s.addFlowInput);
+  const addFlowOutput = useEditorStore((s) => s.addFlowOutput);
 
   // 에디터 그리드 스냅 (v0.18.4)
   const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
@@ -137,7 +157,14 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
       {
         id: flowId,
         req: {
-          definition: { nodes, edges } as Record<string, unknown>,
+          // SPEC-SUBFLOW-001: 합성 경계 노드 제외 + 플로우 레벨 inputs/outputs 기록
+          // + 센티넬 경계 와이어 보존(EditorPage.handleSave 와 동일 직렬화 경로).
+          definition: serializeFlowDefinition(
+            nodes,
+            edges,
+            flowInputs,
+            flowOutputs,
+          ),
         },
       },
       {
@@ -254,6 +281,32 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         label="다시 실행"
         onClick={redo}
         disabled={redoStack.length === 0}
+      />
+
+      <Separator />
+
+      {/* SPEC-SUBFLOW-001 M4: 플로우 포트 빠른 추가 — 패널을 열지 않고도
+          제어판에서 입력/출력 포트를 바로 추가한다. 이름 변경·삭제는 플로우 포트
+          패널에서 계속 처리한다. */}
+      <ToolbarButton
+        icon={ArrowRightToLine}
+        label="입력 포트 추가"
+        onClick={addFlowInput}
+      />
+      <ToolbarButton
+        icon={ArrowLeftToLine}
+        label="출력 포트 추가"
+        onClick={addFlowOutput}
+      />
+
+      {/* SPEC-SUBFLOW-001 M4: 플로우 포트 관리 패널 토글 — 기존 좌상단 떠 있는
+          버튼을 제거하고 모든 플로우 포트 진입점을 제어판(툴바)으로 통합한다.
+          패널 자체는 EditorPage 가 오버레이로 렌더한다(뷰 전용 토글 상태). */}
+      <ToolbarButton
+        icon={PanelLeft}
+        label="플로우 포트"
+        onClick={onTogglePortPanel}
+        active={showPortPanel}
       />
 
       <Separator />

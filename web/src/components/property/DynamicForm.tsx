@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { resolveFlowNodePorts } from '@/lib/flow/subflowPorts';
 import type { ConfigSchema } from '@/types/node';
 
 import { FormField } from './FormField';
@@ -29,6 +30,38 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
     setErrors({});
   }, [nodeId, data]);
 
+  /**
+   * flow-node (flow_picker) 의 참조 플로우 포트를 비정규화하여 병합한다.
+   * 참조 플로우 정의를 조회해 input_ports / output_ports / flow_name 을 채운다.
+   * 이 값들은 핸들 렌더링(computePortsForNode) 에만 쓰이는 에디터 표시 전용 캐시이며,
+   * 백엔드는 배포 시점에 참조 플로우 정의에서 포트를 재해석한다(SPEC-SUBFLOW-001).
+   */
+  const denormalizeFlowNodePorts = useCallback(
+    async (flowId: string, base: Record<string, unknown>) => {
+      if (!flowId) return;
+      try {
+        const resolved = await resolveFlowNodePorts(flowId);
+        // 조회 도중 다른 플로우로 선택이 바뀌었으면 무시한다(stale 방지).
+        setLocalData((prev) => {
+          if ((prev.flow_id as string) !== flowId) return prev;
+          const merged = { ...prev, ...resolved };
+          onChange(merged);
+          return merged;
+        });
+      } catch {
+        // 조회 실패(삭제/네트워크 등) 시 포트 캐시를 비워 dangling 으로 둔다.
+        setLocalData((prev) => {
+          if ((prev.flow_id as string) !== flowId) return prev;
+          const merged = { ...prev, input_ports: [], output_ports: [] };
+          onChange(merged);
+          return merged;
+        });
+      }
+      void base;
+    },
+    [onChange],
+  );
+
   /** 필드 값 변경 핸들러 */
   const handleFieldChange = useCallback(
     (fieldName: string, value: unknown) => {
@@ -50,6 +83,36 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
           agent_name: compound.agent_name ?? '',
           agent_type: compound.agent_type ?? '',
         };
+      } else if (
+        field?.type === 'flow_picker' &&
+        typeof value === 'object' &&
+        value !== null
+      ) {
+        // flow_picker 는 { flow_id, flow_name } 복합 객체를 반환한다.
+        // flow_id 를 저장하고, 이전 포트 캐시는 즉시 비워(핸들 깜빡임 방지) 후
+        // 비동기로 참조 플로우 포트를 비정규화한다.
+        const compound = value as Record<string, unknown>;
+        const flowId = (compound.flow_id as string) ?? '';
+        updated = {
+          ...localData,
+          [fieldName]: flowId,
+          flow_name: (compound.flow_name as string) ?? '',
+          input_ports: [],
+          output_ports: [],
+        };
+        setLocalData(updated);
+        onChange(updated);
+        if (field.required && flowId === '') {
+          setErrors((prev) => ({ ...prev, [fieldName]: '필수 항목입니다' }));
+        } else {
+          setErrors((prev) => {
+            const next = { ...prev };
+            delete next[fieldName];
+            return next;
+          });
+        }
+        void denormalizeFlowNodePorts(flowId, updated);
+        return;
       } else {
         updated = { ...localData, [fieldName]: value };
       }
@@ -81,8 +144,14 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
       onChange(updated);
     },
-    [localData, onChange, schema],
+    [localData, onChange, schema, denormalizeFlowNodePorts],
   );
+
+  /** flow_picker "포트 갱신": 현재 flow_id 로 참조 플로우 포트를 재조회한다. */
+  const handleFlowPortsRefresh = useCallback(() => {
+    const flowId = (localData.flow_id as string) ?? '';
+    void denormalizeFlowNodePorts(flowId, localData);
+  }, [localData, denormalizeFlowNodePorts]);
 
   // 스키마가 있는 경우: 스키마 필드 기반 렌더링
   if (schema && schema.fields.length > 0) {
@@ -108,6 +177,8 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         field={field}
         value={localData[field.name]}
         agentName={field.type === 'agent_select' ? (localData['agent_name'] as string) : undefined}
+        flowName={field.type === 'flow_picker' ? (localData['flow_name'] as string) : undefined}
+        onFlowPortsRefresh={field.type === 'flow_picker' ? handleFlowPortsRefresh : undefined}
         onChange={(v) => handleFieldChange(field.name, v)}
         error={errors[field.name]}
         readOnly={readOnly}

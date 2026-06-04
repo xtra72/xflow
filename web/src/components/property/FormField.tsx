@@ -2,9 +2,11 @@
 // ConfigField.type에 따라 적절한 입력 위젯을 렌더링한다.
 
 import { useId, useMemo, useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
+import { useFlows } from '@/hooks/useFlow';
+import { useEditorStore } from '@/stores/editorStore';
 import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
@@ -24,6 +26,10 @@ interface FormFieldProps {
   error?: string;
   /** agent_select 타입 필드에서 ID 미설정 시 이름 기반 매칭에 사용 */
   agentName?: string;
+  /** flow_picker 타입 필드: 노드 카드 표시용 참조 플로우 이름 (denormalize). */
+  flowName?: string;
+  /** flow_picker 타입 필드: "포트 갱신" 클릭 시 참조 플로우 포트를 재조회한다. */
+  onFlowPortsRefresh?: () => void;
   /** 읽기 전용 모드 */
   readOnly?: boolean;
 }
@@ -55,7 +61,7 @@ const errorInputClass = cn(
  * `disabled={readOnly}` 를 그대로 사용한다. */
 const readOnlyClass = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
-export function FormField({ field, value, onChange, error, agentName, readOnly }: FormFieldProps) {
+export function FormField({ field, value, onChange, error, agentName, flowName, onFlowPortsRefresh, readOnly }: FormFieldProps) {
   const id = useId();
   const descriptionId = `${id}-desc`;
   const errorId = `${id}-error`;
@@ -219,6 +225,19 @@ export function FormField({ field, value, onChange, error, agentName, readOnly }
           agentName={agentName}
           agentTypes={field.options}
           onChange={onChange}
+          className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
+          ariaProps={ariaProps}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'flow_picker' && (
+        <FlowPickerInput
+          id={id}
+          value={(value as string) ?? ''}
+          flowName={flowName}
+          onChange={onChange}
+          onRefresh={onFlowPortsRefresh}
           className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           ariaProps={ariaProps}
           readOnly={readOnly}
@@ -460,5 +479,105 @@ function AgentSelectInput({
         </option>
       ))}
     </select>
+  );
+}
+
+// 참조 플로우를 선택하는 드롭다운 컴포넌트 (SPEC-SUBFLOW-001 그룹 C, flow-node 전용).
+// - getFlows 로 플로우 목록을 채우고, 이름으로 표시한다.
+// - 현재 편집 중인 플로우(currentFlowId)는 자기참조 방지를 위해 후보에서 제외한다
+//   (REQ-SUBFLOW-C04). 백엔드도 순환을 거부하지만 명백한 자기 선택은 UI 에서 막는다.
+// - 선택 시 { flow_id, flow_name } 복합 객체를 반환한다(DynamicForm 이 포트 비정규화 수행).
+// - 우측 "포트 갱신" 버튼으로 참조 플로우 포트를 재조회한다(REQ-SUBFLOW-C03 항상 최신).
+function FlowPickerInput({
+  id,
+  value,
+  flowName,
+  onChange,
+  onRefresh,
+  className,
+  ariaProps,
+  readOnly,
+}: {
+  id: string;
+  value: string;
+  flowName?: string;
+  onChange: (value: unknown) => void;
+  onRefresh?: () => void;
+  className: string;
+  ariaProps: Record<string, unknown>;
+  readOnly?: boolean;
+}) {
+  const { data: flowsResult, isLoading } = useFlows();
+  const currentFlowId = useEditorStore((s) => s.currentFlowId);
+
+  // 자기참조 방지: 현재 편집 중인 플로우를 후보에서 제외한다 (REQ-SUBFLOW-C04).
+  const flows = useMemo(
+    () => (flowsResult?.data ?? []).filter((f) => f.id !== currentFlowId),
+    [flowsResult?.data, currentFlowId],
+  );
+
+  // 참조 플로우가 목록에 없으면(삭제됨/접근 불가) 끊어진 참조로 안내한다.
+  const isDangling = value !== '' && !flows.some((f) => f.id === value);
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5">
+        <select
+          id={id}
+          value={value}
+          disabled={readOnly}
+          onChange={(e) => {
+            const selected = flows.find((f) => f.id === e.target.value);
+            if (selected) {
+              onChange({ flow_id: selected.id, flow_name: selected.name });
+            } else {
+              onChange({ flow_id: '', flow_name: '' });
+            }
+          }}
+          className={cn(className, 'flex-1')}
+          {...ariaProps}
+        >
+          <option value="">
+            {isLoading ? '로딩 중...' : '플로우 선택...'}
+          </option>
+          {/* 끊어진 참조도 현재 값을 유지해 사용자가 인지할 수 있게 표시한다. */}
+          {isDangling && (
+            <option value={value}>
+              {flowName ? `${flowName} (참조 끊김)` : `${value} (참조 끊김)`}
+            </option>
+          )}
+          {flows.map((flow) => (
+            <option key={flow.id} value={flow.id}>
+              {flow.name}
+            </option>
+          ))}
+        </select>
+        {/* 포트 갱신: 참조 플로우 정의를 재조회하여 핸들을 최신화한다.
+            (항상-최신은 배포 시점에 강제되며, 에디터 뷰는 캐시 스냅샷이다.) */}
+        {!readOnly && onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={value === ''}
+            title="참조 플로우의 포트를 다시 불러옵니다"
+            aria-label="포트 갱신"
+            className={cn(
+              'flex shrink-0 items-center justify-center rounded-md border px-2 py-1.5',
+              'border-(--color-border-default) bg-(--color-bg-surface)',
+              'text-(--color-text-secondary) transition-colors',
+              'hover:bg-gray-50 dark:hover:bg-gray-700',
+              value === '' && 'cursor-not-allowed opacity-50',
+            )}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {isDangling && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          참조 플로우를 찾을 수 없습니다. 삭제되었거나 접근할 수 없습니다.
+        </p>
+      )}
+    </div>
   );
 }

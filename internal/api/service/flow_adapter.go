@@ -77,6 +77,12 @@ func (a *FlowServiceAdapter) CreateFlow(ctx context.Context, req *dto.FlowCreate
 		return nil, fmt.Errorf("flow create: %w", err)
 	}
 
+	// 저장 전 순환/자기참조 검출(REQ-SUBFLOW-E01/E02/E04).
+	// 순환이 있는 정의는 영속하지 않는다.
+	if cycErr := DetectFlowReferenceCycle(ctx, f.ID(), f, a.repo); cycErr != nil {
+		return nil, fmt.Errorf("flow create: %w", cycErr)
+	}
+
 	// 동일 이름의 기존 플로우가 있으면 삭제한다 (중복 방지).
 	if existing, existingID := a.findFlowByName(ctx, f.Name()); existing {
 		if delErr := a.repo.Delete(ctx, existingID); delErr != nil {
@@ -234,6 +240,11 @@ func (a *FlowServiceAdapter) UpdateFlow(ctx context.Context, id string, req *dto
 		if err != nil {
 			return nil, fmt.Errorf("flow update: %w", err)
 		}
+		// 저장 전 순환/자기참조 검출(REQ-SUBFLOW-E01/E02/E04).
+		// 저장 후 참조 대상이 바뀌어 순환이 생기는 경우를 갱신 시점에 차단한다.
+		if cycErr := DetectFlowReferenceCycle(ctx, newF.ID(), newF, a.repo); cycErr != nil {
+			return nil, fmt.Errorf("flow update: %w", cycErr)
+		}
 		// auto_start 메타데이터 이전
 		if req.AutoStart != nil {
 			if *req.AutoStart {
@@ -341,6 +352,30 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 		// 저장소에도 동기화하여 이후 재시작 시 사용할 수 있도록 한다.
 		_ = a.repo.Save(ctx, f)
 	}
+
+	// 배포 전 순환/자기참조 검출(REQ-SUBFLOW-E03/E04 — 배포 시점 방어선).
+	// 저장 후 참조 대상이 바뀌어 순환이 생긴 구성을 배포 시점에 재검출하여
+	// 무한 서브그래프 확장을 원천 차단한다.
+	if cycErr := DetectFlowReferenceCycle(ctx, f.ID(), f, a.repo); cycErr != nil {
+		return fmt.Errorf("flow deploy: %w", cycErr)
+	}
+
+	// 서브플로우 확장(인스턴스화): flow-node 를 참조 플로우의 네임스페이스 인스턴스로
+	// 치환한 평탄화 플로우를 만든다(REQ-SUBFLOW-D01~D06). 항상 최신 참조 정의를 반영하며
+	// (결정 2), 결과 플로우에는 flow-node 가 남지 않아 엔진이 그대로 인스턴스화할 수 있다.
+	// 순환 검출 이후에 수행하여 무한 확장을 원천 차단한다(REQ-SUBFLOW-E03).
+	expanded, expErr := ExpandSubflows(ctx, f, a.repo)
+	if expErr != nil {
+		return fmt.Errorf("flow deploy: subflow expand: %w", expErr)
+	}
+	f = expanded
+
+	// 단독 배포(top-level standalone) 전처리: 플로우 포트 경계(센티넬) 와이어를 제거한다.
+	// 단독 배포 시 경계 와이어는 외부 카운터파트가 없으므로 엔진에 전달하면 dangling/블로킹을
+	// 유발한다(REQ-SUBFLOW-F01). 서브플로우 확장에서 소비된 경계 와이어는 이미 재배선되었고,
+	// 여기서는 이 플로우 자신의 top-level 플로우 포트 경계 와이어(외부 미연결)만 제거한다.
+	// 반드시 확장 이후에 수행해야 한다(확장이 자식 경계를 재배선할 기회를 보존).
+	f = flow.StripBoundaryWires(f)
 
 	return a.engine.DeployFlow(ctx, f)
 }
@@ -1099,10 +1134,33 @@ func (a *FlowServiceAdapter) flowToReactFlowConfig(f flow.Flow) map[string]any {
 		reactEdges = append(reactEdges, reactEdge)
 	}
 
+	// 플로우 레벨 포트(정의 최상위 inputs/outputs)를 방출한다.
+	// 노드 포트(data.ports)와 별개의 플로우 레벨 엔티티이며, 저장→로드 및
+	// export→import round-trip 에서 보존되어야 한다(SPEC-SUBFLOW-001 REQ-SUBFLOW-A05/A06/A07).
+	flowInputs := flowPortsToMaps(f.Inputs())
+	flowOutputs := flowPortsToMaps(f.Outputs())
+
 	return map[string]any{
-		"nodes": reactNodes,
-		"edges": reactEdges,
+		"nodes":   reactNodes,
+		"edges":   reactEdges,
+		"inputs":  flowInputs,
+		"outputs": flowOutputs,
 	}
+}
+
+// flowPortsToMaps 는 플로우 레벨 포트 목록을 정의 최상위 직렬화용 맵 슬라이스로 변환한다.
+// 항상 비-nil 슬라이스를 반환하여 inputs/outputs 키가 누락되지 않도록 한다.
+// (SPEC-SUBFLOW-001 REQ-SUBFLOW-A07)
+func flowPortsToMaps(ports []flow.Port) []map[string]any {
+	out := make([]map[string]any, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, map[string]any{
+			"id":        p.ID,
+			"name":      p.Name,
+			"direction": string(p.Direction),
+		})
+	}
+	return out
 }
 
 // computeAutoLayout 은 Wire 연결 그래프를 기반으로 노드의 위치를 자동 계산한다.
