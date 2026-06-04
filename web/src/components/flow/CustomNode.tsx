@@ -150,6 +150,13 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
     ? `설정 필요:\n${missingRequired.map((e) => `• ${e.label}`).join('\n')}`
     : undefined;
 
+  // SPEC-SUBFLOW-001 그룹 C: flow-node 는 참조하는 플로우 이름을 카드에 표시한다.
+  // flow_name 은 flow_id 선택 시 비정규화된 표시 전용 캐시이며, 없으면 flow_id 로 폴백한다.
+  const isFlowNode = nodeData.nodeType === 'flow-node';
+  const referencedFlowLabel = isFlowNode
+    ? ((nodeData.flow_name as string) || (nodeData.flow_id as string) || '')
+    : '';
+
   // 입력/출력/에러 포트 분리
   const inputPorts = nodeData.ports?.filter((p) => p.direction === 'input') ?? [];
   const outputPorts = nodeData.ports?.filter((p) => p.direction === 'output') ?? [];
@@ -335,6 +342,23 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           <p className="truncate text-[10px] text-zinc-400">
             {nodeData.nodeType}
           </p>
+          {/* flow-node: 참조 플로우 이름 표시 (없으면 안내 문구). */}
+          {isFlowNode && (
+            <p
+              className={cn(
+                'mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded px-1 py-0.5 text-[9px] font-medium',
+                referencedFlowLabel
+                  ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300'
+                  : 'bg-amber-50 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300',
+              )}
+              title={referencedFlowLabel ? `참조 플로우: ${referencedFlowLabel}` : '참조 플로우 미지정'}
+            >
+              <GitBranch className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">
+                {referencedFlowLabel || '플로우 미지정'}
+              </span>
+            </p>
+          )}
         </div>
         {/* v0.18.9: output 노드 ON/OFF 토글 버튼 */}
         {isOutputNode && (

@@ -2366,7 +2366,57 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'in', direction: 'input' as const },
     ],
   },
+
+  // --- Composition: flow-node (SPEC-SUBFLOW-001 그룹 C) ---
+  // 다른 플로우를 참조하여 합성하는 특수 노드.
+  // - flow_id: 참조 플로우 id (flow_picker 로 선택, 현재 편집 중 플로우는 후보에서 제외).
+  // - flow_name: 참조 플로우 표시 이름 (denormalize, 노드 카드 표시 전용).
+  // - input_ports / output_ports: 참조 플로우의 플로우 레벨 포트 이름 배열.
+  //   flow_id 선택 시 참조 플로우 정의를 조회하여 비정규화(denormalize)한 값으로,
+  //   핸들 렌더링(computePortsForNode) 에만 사용되는 에디터 표시 전용 캐시이다.
+  //   백엔드는 배포 시점에 참조 플로우의 실제 정의에서 포트를 재해석하므로
+  //   config 의 input_ports / output_ports 는 무시한다(REQ-SUBFLOW-C03/D04).
+  'flow-node': {
+    description:
+      '다른 플로우를 참조하여 서브플로우로 합성합니다. 참조 플로우의 입출력 포트가 이 노드의 핸들로 표시됩니다. 핸들은 배포 시점에 참조 플로우의 현재 정의로 항상 최신화됩니다.',
+    inputDesc: '참조 플로우의 입력 포트로 라우팅됩니다.',
+    outputDesc: '참조 플로우의 출력 포트에서 나옵니다.',
+    configSchema: {
+      fields: [
+        {
+          name: 'flow_id',
+          type: 'flow_picker',
+          label: '참조 플로우',
+          required: true,
+          description:
+            '서브플로우로 참조할 플로우를 선택합니다. 현재 편집 중인 플로우는 자기참조 방지를 위해 후보에서 제외됩니다. 선택하면 참조 플로우의 입출력 포트가 이 노드의 핸들로 표시됩니다.',
+        },
+      ],
+    },
+    // 초기(미해결) 기본 포트는 없음 — flow_id 선택 후 참조 플로우 포트로 채워진다.
+    defaultPorts: [],
+  },
 };
+
+/**
+ * 비정규화된 참조 플로우 포트 이름 배열을 PortDef 로 변환한다.
+ * 문자열 배열 안의 비문자열/빈 문자열/중복은 안전하게 걸러낸다.
+ */
+function flowNodePortDefs(
+  names: unknown,
+  direction: 'input' | 'output',
+): PortDef[] {
+  if (!Array.isArray(names)) return [];
+  const seen = new Set<string>();
+  const ports: PortDef[] = [];
+  for (const raw of names) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (name === '' || seen.has(name)) continue;
+    seen.add(name);
+    ports.push({ name, direction });
+  }
+  return ports;
+}
 
 /**
  * 노드 타입에 해당하는 설정 스키마를 반환한다.
@@ -2461,6 +2511,19 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
       ports.push({ name, direction: 'output' });
     }
     return ports;
+  }
+
+  if (nodeType === 'flow-node') {
+    // SPEC-SUBFLOW-001 REQ-SUBFLOW-C02: flow-node 핸들 = 참조 플로우의 플로우 레벨 포트.
+    //   입력 핸들 ← 참조 플로우 inputs, 출력 핸들 ← 참조 플로우 outputs.
+    // computePortsForNode 는 동기(sync) 이고 노드 config 만 가지므로, flow_id 선택 시점에
+    // 참조 플로우 정의를 조회해 input_ports / output_ports (string[]) 로 비정규화해 둔다.
+    // 이 값들은 에디터 표시 전용 캐시이며, 백엔드는 배포 시점에 참조 플로우의 실제
+    // 정의에서 포트를 재해석하므로 config 의 input_ports / output_ports 를 무시한다.
+    const inputPorts = flowNodePortDefs(config?.input_ports, 'input');
+    const outputPorts = flowNodePortDefs(config?.output_ports, 'output');
+    // 아직 미해결(flow_id 미선택 또는 포트 0개)이면 핸들 없이 둔다(REQ-SUBFLOW-C05 dangling 방지).
+    return [...inputPorts, ...outputPorts];
   }
 
   return getDefaultPorts(nodeType);
