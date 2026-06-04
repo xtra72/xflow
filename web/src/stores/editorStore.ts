@@ -15,7 +15,7 @@ import {
 import { generateUUID } from '@/lib/utils/uuid';
 import {
   edgeUsesBoundaryPort,
-  isBoundaryNodeId,
+  isSyntheticNodeId,
   nextFlowPortName,
   realNodesOnly,
   withBoundaryNodes,
@@ -489,11 +489,11 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
 
   onNodesChange: (changes) =>
     set((state) => {
-      // 합성 경계 노드(__flow_input__/__flow_output__)는 비-노드 엔티티이므로
-      // 일반 노드 삭제(remove) 대상에서 제외한다(REQ-SUBFLOW-B04). 경계 노드는
-      // draggable/selectable=false 이지만, 방어적으로 remove 변경도 걸러낸다.
+      // 합성 노드(경계 2종 + 영역)는 비-노드 엔티티이므로 일반 노드 삭제(remove)
+      // 대상에서 제외한다(REQ-SUBFLOW-B04). 합성 노드는 draggable/selectable=false
+      // 이지만, 방어적으로 remove 변경도 걸러낸다.
       const filtered = changes.filter(
-        (c) => !(c.type === 'remove' && isBoundaryNodeId(c.id)),
+        (c) => !(c.type === 'remove' && isSyntheticNodeId(c.id)),
       );
       // 'dimensions'(노드 측정) 와 'select'(선택) 변경은 사용자 편집이 아니므로
       // isDirty 를 만들지 않는다. React Flow 는 마운트/렌더 시 노드를 측정하며
@@ -502,8 +502,31 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
       const meaningful = filtered.some(
         (c) => c.type !== 'dimensions' && c.type !== 'select',
       );
+
+      const applied = applyNodeChanges(filtered, state.nodes);
+
+      // SPEC-SUBFLOW-001 M4: 실제 노드의 위치(position)·크기(dimensions)·삭제(remove)가
+      // 바뀌면 경계 노드/영역 노드를 현재 실제 노드 바운딩 박스에서 다시 파생한다
+      // (노드를 옮기면 경계 포트와 영역 사각형이 함께 따라온다). 합성 노드는 실제
+      // 노드 바운딩 박스에서만 파생되고 자신은 박스에서 제외되므로 피드백 루프가 없다.
+      const geometryChanged = filtered.some(
+        (c) =>
+          c.type === 'position' ||
+          c.type === 'dimensions' ||
+          c.type === 'remove' ||
+          c.type === 'add',
+      );
+      const nextNodes = geometryChanged
+        ? withBoundaryNodes(
+            realNodesOnly(applied),
+            state.flowInputs,
+            state.flowOutputs,
+            applied,
+          )
+        : applied;
+
       return {
-        nodes: applyNodeChanges(filtered, state.nodes),
+        nodes: nextNodes,
         isDirty: meaningful ? true : state.isDirty,
       };
     }),
@@ -566,9 +589,9 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
 
   removeNode: (nodeId) =>
     set((state) => {
-      // 합성 경계 노드는 일반 노드 삭제로 제거할 수 없다(REQ-SUBFLOW-B04).
+      // 합성 노드(경계 2종 + 영역)는 일반 노드 삭제로 제거할 수 없다(REQ-SUBFLOW-B04).
       // 포트는 포트 관리 패널의 removeFlowPort 로만 제거한다.
-      if (isBoundaryNodeId(nodeId)) return state;
+      if (isSyntheticNodeId(nodeId)) return state;
       return {
         ...pushUndo(state),
         nodes: state.nodes.filter((n) => n.id !== nodeId),

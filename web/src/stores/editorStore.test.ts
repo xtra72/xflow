@@ -13,6 +13,7 @@ import {
   useEditorStore,
 } from './editorStore';
 import {
+  FLOW_AREA_NODE_ID,
   FLOW_INPUT_BOUNDARY_ID,
   FLOW_OUTPUT_BOUNDARY_ID,
   isBoundaryNode,
@@ -948,5 +949,115 @@ describe('editorStore - 플로우 레벨 포트(SPEC-SUBFLOW-001)', () => {
       expect(state.flowInputs).toEqual([]);
       expect(state.flowOutputs).toEqual([]);
     });
+  });
+});
+
+describe('editorStore - 경계/영역 동적 배치 (SPEC-SUBFLOW-001 M4)', () => {
+  beforeEach(() => {
+    useEditorStore.getState().resetEditor();
+  });
+
+  /** 측정 크기를 가진 실제 노드 헬퍼. */
+  const sized = (id: string, x: number, y: number): Node => ({
+    id,
+    type: 'custom',
+    position: { x, y },
+    width: 100,
+    height: 60,
+    data: { label: id },
+  });
+
+  it('포트가 있으면 실제 노드 바운딩 박스로부터 영역 노드가 생성된다', () => {
+    useEditorStore.getState().loadFlow(
+      [sized('n1', 0, 0), sized('n2', 300, 0)],
+      [],
+      [{ id: 'i1', name: 'in1' }],
+      [],
+    );
+    const area = useEditorStore
+      .getState()
+      .nodes.find((n) => n.id === FLOW_AREA_NODE_ID);
+    expect(area).toBeDefined();
+  });
+
+  it('포트가 없으면 영역 노드를 만들지 않는다(합성 노드 없음 불변식)', () => {
+    useEditorStore.getState().loadFlow([sized('n1', 0, 0)], []);
+    const ids = useEditorStore.getState().nodes.map((n) => n.id);
+    expect(ids).not.toContain(FLOW_AREA_NODE_ID);
+    expect(ids).toEqual(['n1']);
+  });
+
+  it('노드를 옮기면 경계 노드 위치가 새 바운딩 박스에서 다시 파생된다', () => {
+    useEditorStore.getState().loadFlow(
+      [sized('n1', 0, 0)],
+      [],
+      [{ id: 'i1', name: 'in1' }],
+      [{ id: 'o1', name: 'out1' }],
+    );
+
+    const before = useEditorStore.getState();
+    const inputBefore = before.nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID)!;
+    const outputBefore = before.nodes.find(
+      (n) => n.id === FLOW_OUTPUT_BOUNDARY_ID,
+    )!;
+
+    // n1 을 오른쪽으로 크게 이동 → maxX 증가 → 출력 경계 x 가 커져야 한다.
+    useEditorStore.getState().onNodesChange([
+      {
+        id: 'n1',
+        type: 'position',
+        position: { x: 500, y: 0 },
+        dragging: false,
+      } as NodeChange,
+    ]);
+
+    const after = useEditorStore.getState();
+    const inputAfter = after.nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID)!;
+    const outputAfter = after.nodes.find(
+      (n) => n.id === FLOW_OUTPUT_BOUNDARY_ID,
+    )!;
+
+    expect(inputAfter.position.x).toBeGreaterThan(inputBefore.position.x);
+    expect(outputAfter.position.x).toBeGreaterThan(outputBefore.position.x);
+  });
+
+  it('영역 노드는 실제 노드 이동 시 함께 갱신된다', () => {
+    useEditorStore.getState().loadFlow(
+      [sized('n1', 0, 0)],
+      [],
+      [{ id: 'i1', name: 'in1' }],
+      [],
+    );
+    const areaBefore = useEditorStore
+      .getState()
+      .nodes.find((n) => n.id === FLOW_AREA_NODE_ID)!;
+
+    useEditorStore.getState().onNodesChange([
+      {
+        id: 'n1',
+        type: 'position',
+        position: { x: 400, y: 200 },
+        dragging: false,
+      } as NodeChange,
+    ]);
+
+    const areaAfter = useEditorStore
+      .getState()
+      .nodes.find((n) => n.id === FLOW_AREA_NODE_ID)!;
+    expect(areaAfter.position.x).toBeGreaterThan(areaBefore.position.x);
+    expect(areaAfter.position.y).toBeGreaterThan(areaBefore.position.y);
+  });
+
+  it('합성 노드는 저장 직렬화에서 제외된다(영역 노드 포함)', () => {
+    useEditorStore.getState().loadFlow(
+      [sized('n1', 0, 0)],
+      [],
+      [{ id: 'i1', name: 'in1' }],
+      [],
+    );
+    const { nodes } = useEditorStore.getState();
+    // 영역 노드가 렌더 nodes 에는 있지만 realNodesOnly 로 거른 결과에는 없다.
+    expect(nodes.some((n) => n.id === FLOW_AREA_NODE_ID)).toBe(true);
+    expect(realNodesOnly(nodes).map((n) => n.id)).toEqual(['n1']);
   });
 });

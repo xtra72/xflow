@@ -4,6 +4,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Check,
   ChevronDown,
   Eye,
@@ -89,6 +91,9 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setDirty = useEditorStore((s) => s.setDirty);
+  // SPEC-SUBFLOW-001 M4: 패널을 열지 않고도 제어판에서 바로 플로우 포트를 추가한다.
+  const addFlowInput = useEditorStore((s) => s.addFlowInput);
+  const addFlowOutput = useEditorStore((s) => s.addFlowOutput);
 
   // 에디터 그리드 스냅 (v0.18.4)
   const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
@@ -264,6 +269,22 @@ export function EditorToolbar({ flowId }: EditorToolbarProps) {
         label="다시 실행"
         onClick={redo}
         disabled={redoStack.length === 0}
+      />
+
+      <Separator />
+
+      {/* SPEC-SUBFLOW-001 M4: 플로우 포트 빠른 추가 — 패널을 열지 않고도
+          제어판에서 입력/출력 포트를 바로 추가한다. 이름 변경·삭제는 플로우 포트
+          패널에서 계속 처리한다. */}
+      <ToolbarButton
+        icon={ArrowRightToLine}
+        label="입력 포트 추가"
+        onClick={addFlowInput}
+      />
+      <ToolbarButton
+        icon={ArrowLeftToLine}
+        label="출력 포트 추가"
+        onClick={addFlowOutput}
       />
 
       <Separator />

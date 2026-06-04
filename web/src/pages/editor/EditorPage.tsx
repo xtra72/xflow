@@ -22,6 +22,7 @@ import { CustomNode } from '@/components/flow/CustomNode';
 import { CustomEdge } from '@/components/flow/CustomEdge';
 import { DebugPanel } from '@/components/flow/DebugPanel';
 import { EditorToolbar } from '@/components/flow/EditorToolbar';
+import { FlowAreaNode } from '@/components/flow/FlowAreaNode';
 import { FlowBoundaryNode } from '@/components/flow/FlowBoundaryNode';
 import { FlowPortPanel } from '@/components/flow/FlowPortPanel';
 import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
@@ -42,6 +43,7 @@ import type { NodeTypeInfo } from '@/types/node';
 import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
 import { generateUUID } from '@/lib/utils/uuid';
 import {
+  FLOW_AREA_NODE_TYPE,
   FLOW_BOUNDARY_NODE_TYPE,
   parseFlowPortsFromConfig,
   serializeFlowDefinition,
@@ -52,6 +54,8 @@ const nodeTypes = {
   custom: CustomNode,
   // SPEC-SUBFLOW-001: 플로우 레벨 경계 포트 합성 노드(좌 입력 / 우 출력).
   [FLOW_BOUNDARY_NODE_TYPE]: FlowBoundaryNode,
+  // SPEC-SUBFLOW-001 M4: 실제 노드를 감싸는 영역(바운딩 박스) 배경 표시 노드.
+  [FLOW_AREA_NODE_TYPE]: FlowAreaNode,
 };
 
 /** React Flow에 등록할 커스텀 엣지 타입 맵 */
