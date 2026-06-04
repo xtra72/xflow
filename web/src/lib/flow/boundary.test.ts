@@ -163,31 +163,41 @@ describe('boundary - 경계 노드 생성', () => {
     });
   });
 
-  it('경계 노드는 비-드래그/비-선택/비-삭제이다', () => {
-    const [inputNode] = buildBoundaryNodes(inputs, outputs, []);
+  it('경계 노드는 비-드래그/비-삭제이며 selectable:true(핸들 연결용 native pointer-events)이다', () => {
+    // selectable:true 는 React Flow v12 가 노드 래퍼에 native pointer-events:'all' 을
+    // 부여하게 해 핸들 연결을 살리는 1차 수정이다(isSelectable→hasPointerEvents).
+    // 드래그/삭제는 여전히 금지(위치는 바운딩 박스에서 재파생, 포트는 포트 패널 관리).
+    // 실제 "선택 상태"(node.selected) 는 onNodesChange 의 'select' 필터로 차단된다.
+    const [inputNode, outputNode] = buildBoundaryNodes(inputs, outputs, []);
     expect(inputNode.draggable).toBe(false);
-    expect(inputNode.selectable).toBe(false);
+    expect(inputNode.selectable).toBe(true);
     expect(inputNode.deletable).toBe(false);
+    expect(outputNode.draggable).toBe(false);
+    expect(outputNode.selectable).toBe(true);
+    expect(outputNode.deletable).toBe(false);
   });
 
   it('경계 노드는 명시적으로 connectable 이다(연결 차단 결함 회귀 가드)', () => {
-    // selectable:false 등 비-상호작용 플래그가 연결 동작을 막지 않도록
-    // 경계 노드(입력/출력 모두)는 connectable:true 를 명시한다.
+    // 핸들이 연결을 시작/수신할 수 있도록 경계 노드(입력/출력 모두)는
+    // connectable:true 를 명시한다(selectable:true 와 함께 양방향 연결을 보장).
     const [inputNode, outputNode] = buildBoundaryNodes(inputs, outputs, []);
     expect(inputNode.connectable).toBe(true);
     expect(outputNode.connectable).toBe(true);
   });
 
-  it('경계 노드는 style.pointerEvents:all 로 래퍼 포인터를 살린다(핸들 연결 불가 회귀 가드)', () => {
-    // React Flow v12 NodeWrapper 는 selectable/draggable 이 모두 false 면 노드 래퍼에
-    // pointer-events:none 을 적용해 핸들을 죽인다(connectable 은 이 계산에 미포함).
-    // ...node.style 이 계산된 pointerEvents '뒤'에 펼쳐지므로, node-level
-    // style.pointerEvents:'all' 이 'none' 을 덮어써 선택을 켜지 않고도 핸들을 되살린다.
+  it('경계 노드는 selectable:true + style.pointerEvents:all 로 래퍼 포인터를 살린다(핸들 연결 불가 회귀 가드)', () => {
+    // React Flow v12.10.1 NodeWrapper(index.mjs:2135):
+    //   hasPointerEvents = isSelectable || isDraggable || onClick || onMouse*
+    // isSelectable(2114) = !!(node.selectable || ...). 따라서 selectable:true 면
+    // hasPointerEvents=true 가 되어 React Flow 가 래퍼에 native pointer-events:'all' 을
+    // 직접 부여한다(스타일 핵에 의존하지 않는 신뢰할 수 있는 NATIVE 경로). connectable 은
+    // 이 계산에 미포함이므로 connectable:true 만으로는 복구되지 않는다(이전 결함의 원인).
+    // style.pointerEvents:'all' 은 무해한 belt-and-suspenders 로 함께 유지한다.
     // 입력/출력 경계 모두에 적용되어야 양방향 연결이 가능하다.
     const [inputNode, outputNode] = buildBoundaryNodes(inputs, outputs, []);
-    expect(inputNode.selectable).toBe(false);
+    expect(inputNode.selectable).toBe(true);
     expect(inputNode.style).toMatchObject({ pointerEvents: 'all' });
-    expect(outputNode.selectable).toBe(false);
+    expect(outputNode.selectable).toBe(true);
     expect(outputNode.style).toMatchObject({ pointerEvents: 'all' });
   });
 

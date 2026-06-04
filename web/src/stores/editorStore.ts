@@ -490,10 +490,20 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
   onNodesChange: (changes) =>
     set((state) => {
       // 합성 노드(경계 2종 + 영역)는 비-노드 엔티티이므로 일반 노드 삭제(remove)
-      // 대상에서 제외한다(REQ-SUBFLOW-B04). 합성 노드는 draggable/selectable=false
-      // 이지만, 방어적으로 remove 변경도 걸러낸다.
+      // 대상에서 제외한다(REQ-SUBFLOW-B04).
+      //
+      // SPEC-SUBFLOW-001(연결 활성화): 경계 노드는 핸들 연결을 위해 selectable:true
+      // 가 필요하다(React Flow native pointer-events). 하지만 selectable:true 면
+      // 클릭 시 React Flow 가 'select' 변경을 emit 해 node.selected=true 로 만들고,
+      // 이는 node.selected 를 읽는 복사/복제(다중 선택) 로직에 합성 노드가 섞이게 한다.
+      // 따라서 합성 노드의 'remove' 와 'select' 변경을 모두 걸러내 선택 상태가
+      // 절대 켜지지 않게 한다(불활성 선택 — 핸들 연결만 가능, 선택 부작용 없음).
       const filtered = changes.filter(
-        (c) => !(c.type === 'remove' && isSyntheticNodeId(c.id)),
+        (c) =>
+          !(
+            (c.type === 'remove' || c.type === 'select') &&
+            isSyntheticNodeId(c.id)
+          ),
       );
       // 'dimensions'(노드 측정) 와 'select'(선택) 변경은 사용자 편집이 아니므로
       // isDirty 를 만들지 않는다. React Flow 는 마운트/렌더 시 노드를 측정하며
@@ -677,7 +687,16 @@ export const useEditorStore = create<EditorState & EditorActions>()((set) => ({
     })),
 
   selectNode: (nodeId) =>
-    set({ selectedNodeId: nodeId, selectedEdgeId: null }),
+    // SPEC-SUBFLOW-001: 합성 노드(경계 2종 + 영역)는 비-노드 엔티티이므로 편집 가능한
+    // 선택 대상이 아니다. 경계 노드는 핸들 연결을 위해 native pointer-events
+    // (selectable:true) 가 필요해 클릭이 handleNodeClick 으로 전달되지만, 여기서
+    // selectedNodeId 로 승격하지 않아 PropertyPanel 이 열리거나 연결 포커스/가상 링크
+    // 같은 선택 구동 UI 가 오작동하지 않게 한다(불활성 선택). 합성 노드 클릭은 기존
+    // 실제 노드 선택을 해제하는 "빈 선택"처럼 동작한다.
+    set({
+      selectedNodeId: isSyntheticNodeId(nodeId) ? null : nodeId,
+      selectedEdgeId: null,
+    }),
 
   selectEdge: (edgeId) =>
     set({ selectedEdgeId: edgeId, selectedNodeId: null }),

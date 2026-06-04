@@ -314,22 +314,25 @@ function makeBoundaryNode(
     // 동일한 BOUNDARY_WIDTH 상수를 공유한다(min-w-[120px] + padding 추정값).
     width: BOUNDARY_WIDTH,
     height: ports.length === 0 ? 60 : 60 + ports.length * 40,  // 포트 개수에 따라 높이 조정
-    // 경계 노드는 고정·비선택·비삭제 — 일반 노드 편집/삭제 대상에서 제외한다.
-    draggable: false,
-    selectable: false,
-    deletable: false,
-    // FIX(핸들 연결 불가 결함, React Flow v12 검증): 핸들이 잡히지 않아 어느 방향으로도
-    // 연결선이 시작되지 않던 결함의 실제 원인은 노드 래퍼(.react-flow__node)의
-    // pointer-events 였다. React Flow v12.10.1 NodeWrapper 의 계산:
+    // FIX(핸들 연결 불가 결함, React Flow v12.10.1 소스 검증 — NATIVE 경로):
+    // 핸들에서 와이어를 시작할 수도, 핸들로 와이어를 드롭할 수도 없던 결함의 실제
+    // 원인은 노드 래퍼(.react-flow__node)의 pointer-events 였다. React Flow v12.10.1
+    // NodeWrapper(index.mjs:2114/2135/2231) 의 계산:
+    //   isSelectable     = !!(node.selectable || (elementsSelectable && undefined))
     //   hasPointerEvents = isSelectable || isDraggable || onClick
     //                      || onMouseEnter || onMouseMove || onMouseLeave
     //   style: { ..., pointerEvents: hasPointerEvents ? 'all' : 'none', ...node.style }
-    // 경계 노드는 selectable:false + draggable:false + 마우스 핸들러 없음 이므로
-    // hasPointerEvents=false → 래퍼가 pointer-events:none 을 받아 핸들이 죽는다.
-    // isConnectable 은 이 계산에 포함되지 않으므로 connectable:true 만으로는 복구되지
-    // 않는다(이전 connectable 수정이 효과 없던 이유). 다만 ...node.style 이 계산된
-    // pointerEvents '뒤에' 펼쳐지므로, node-level style.pointerEvents:'all' 이 'none' 을
-    // 덮어쓴다. 따라서 selectable 을 켜지 않고도(선택 부작용 없이) 래퍼 포인터를 되살린다.
+    // 이전 수정은 node-level style.pointerEvents:'all'(...node.style)로 'none' 을
+    // 덮어쓰려 했으나 실전에서 적용되지 않았다(외부 래퍼/클래스 등으로 인라인 override 가
+    // 이기지 못함). 대신 NATIVE 플래그를 사용한다: selectable:true 면 isSelectable=true →
+    // hasPointerEvents=true 가 되어 React Flow 가 래퍼에 직접 pointer-events:'all' 을
+    // 부여한다(스타일 핵 불필요, 항상 우선). 이것이 핸들을 살리는 1차 수정이다.
+    selectable: true,
+    // 위치는 onNodesChange 에서 항상 실제 노드 바운딩 박스로부터 재파생되므로 드래그
+    // 금지여도 무방하다(선택해도 움직이지 않음). 삭제도 금지(포트는 포트 패널에서만 관리).
+    draggable: false,
+    deletable: false,
+    // belt-and-suspenders: 래퍼 인라인 pointerEvents 도 유지한다(무해, native 가 주효).
     // width 는 fitView 가 측정 전에 정확한 박스를 잡도록 node-level width 와 동일하게 유지.
     style: { width: BOUNDARY_WIDTH, pointerEvents: 'all' },
     // connectable 은 명시적으로 true 로 유지한다(핸들이 연결을 시작/수신할 수 있음 보장).

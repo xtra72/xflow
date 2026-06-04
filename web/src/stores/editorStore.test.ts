@@ -843,6 +843,48 @@ describe('editorStore - 플로우 레벨 포트(SPEC-SUBFLOW-001)', () => {
       expect(ids).toContain(FLOW_INPUT_BOUNDARY_ID);
       expect(ids).not.toContain('n1');
     });
+
+    it('selectNode 는 합성 노드를 편집 선택으로 승격하지 않는다(불활성 선택)', () => {
+      // 경계 노드는 핸들 연결을 위해 selectable:true 이지만, 클릭이
+      // handleNodeClick → selectNode 로 전달되어도 selectedNodeId 로 승격되지
+      // 않아야 PropertyPanel 이 열리거나 선택 구동 UI 가 오작동하지 않는다.
+      useEditorStore
+        .getState()
+        .loadFlow([], [], [{ id: 'i1', name: 'in1' }], []);
+
+      // 먼저 실제 선택을 만든 뒤, 합성 노드 선택이 이를 "빈 선택"처럼 해제하는지 확인.
+      useEditorStore.getState().selectEdge('e-real');
+      useEditorStore.getState().selectNode(FLOW_INPUT_BOUNDARY_ID);
+
+      expect(useEditorStore.getState().selectedNodeId).toBeNull();
+      expect(useEditorStore.getState().selectedEdgeId).toBeNull();
+    });
+
+    it('onNodesChange 의 select 변경에서 합성 노드를 걸러낸다(node.selected 미설정)', () => {
+      // selectable:true 면 React Flow 가 클릭 시 select 변경을 emit 하지만,
+      // 합성 노드의 select 변경을 걸러내 node.selected 가 절대 true 가 되지 않게 한다
+      // (node.selected 를 읽는 복사/복제 로직에 합성 노드가 섞이지 않도록).
+      useEditorStore
+        .getState()
+        .loadFlow(
+          [{ id: 'n1', type: 'custom', position: { x: 0, y: 0 }, data: {} }],
+          [],
+          [{ id: 'i1', name: 'in1' }],
+          [],
+        );
+
+      useEditorStore.getState().onNodesChange([
+        { type: 'select', id: FLOW_INPUT_BOUNDARY_ID, selected: true },
+        { type: 'select', id: 'n1', selected: true },
+      ]);
+
+      const nodes = useEditorStore.getState().nodes;
+      const boundary = nodes.find((n) => n.id === FLOW_INPUT_BOUNDARY_ID)!;
+      const real = nodes.find((n) => n.id === 'n1')!;
+      // 합성 노드는 선택되지 않고, 실제 노드의 선택은 정상 적용된다.
+      expect(boundary.selected).not.toBe(true);
+      expect(real.selected).toBe(true);
+    });
   });
 
   describe('포트 삭제 시 센티넬 와이어 정리 (REQ-SUBFLOW-A04)', () => {

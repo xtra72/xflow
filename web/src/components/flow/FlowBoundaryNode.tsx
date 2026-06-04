@@ -8,8 +8,10 @@
 //   - 출력 경계(__flow_output__): target 핸들(좌측). 내부 노드에서 여기로 와이어.
 //
 // 경계 노드는 비-노드 엔티티이므로(REQ-SUBFLOW-B04) 설정 패널이 없고, 일반 노드
-// 삭제 대상에서 제외된다(스토어 guard + selectable/deletable=false). 포트 추가/이름/
-// 삭제는 포트 관리 패널(FlowPortPanel)에서 수행한다.
+// 삭제 대상에서 제외된다(스토어 guard + draggable/deletable=false). 핸들 연결을 위해
+// selectable:true(native pointer-events)이지만, selectNode 가드와 onNodesChange 의
+// select 필터로 "선택 상태"는 차단되어 PropertyPanel 이 열리지 않는다(불활성 선택).
+// 포트 추가/이름/삭제는 포트 관리 패널(FlowPortPanel)에서 수행한다.
 
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { ArrowRightToLine, ArrowLeftToLine } from 'lucide-react';
