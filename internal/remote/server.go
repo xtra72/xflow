@@ -125,6 +125,12 @@ type ServerConfig struct {
 	// DefaultCommandTimeout 을 사용한다.
 	CommandTimeout time.Duration
 
+	// Audit 는 원격 변경 감사 로그 저장소이다(M6, REQ-F05). nil 이면 감사는 구조화
+	// 로그로만 남고 영속화되지 않는다(하위 호환). 명령 디스패치 결과(성공/실패/타임
+	// 아웃)를 누가/언제/어느 노드/도메인·액션/결과로 기록한다. 시크릿은 기록하지
+	// 않는다(REQ-F06).
+	Audit storage.RemoteAuditRepository
+
 	// Logger 는 선택적 로거이다. nil 이면 slog.Default() 를 사용한다.
 	Logger *slog.Logger
 }
@@ -142,6 +148,7 @@ type Server struct {
 	repo   storage.ManagedNodeRepository
 	mirror storage.MirrorRepository
 	tokens TokenIssuer
+	audit  storage.RemoteAuditRepository
 	logger *slog.Logger
 
 	mu    sync.RWMutex
@@ -176,6 +183,7 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 		repo:       cfg.Repo,
 		mirror:     cfg.Mirror,
 		tokens:     cfg.TokenIssuer,
+		audit:      cfg.Audit,
 		logger:     logger,
 		nodes:      make(map[string]*NodeState),
 		conns:      make(map[string]*nodeConn),

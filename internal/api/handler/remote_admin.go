@@ -20,6 +20,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -78,6 +80,7 @@ type rejectRequest struct {
 // RemoteAdminHandler 는 관리 노드 승인/거부/폐기/목록 엔드포인트를 처리한다.
 type RemoteAdminHandler struct {
 	svc    NodeAdminService
+	audit  storage.RemoteAuditRepository
 	logger *slog.Logger
 }
 
@@ -87,6 +90,34 @@ func NewRemoteAdminHandler(svc NodeAdminService, logger *slog.Logger) *RemoteAdm
 		logger = slog.Default()
 	}
 	return &RemoteAdminHandler{svc: svc, logger: logger}
+}
+
+// WithAudit 는 원격 변경 감사 저장소를 연결한다(M6, REQ-F05). 설정되면 승인/거부/
+// 폐기 mutation 을 actor 와 함께 영속 감사 레코드로 기록하고, GET /remote/audit 로
+// 조회할 수 있게 한다. nil 이면 감사는 구조화 로그로만 남는다(하위 호환).
+func (h *RemoteAdminHandler) WithAudit(audit storage.RemoteAuditRepository) *RemoteAdminHandler {
+	h.audit = audit
+	return h
+}
+
+// recordAudit 는 mutation 감사 레코드를 기록한다(REQ-F05). audit 미구성이면 no-op.
+// 시크릿은 기록하지 않는다(REQ-F06 — action/result/reason 만).
+func (h *RemoteAdminHandler) recordAudit(ctx api.Context, instanceID, action, result, reason string) {
+	if h.audit == nil {
+		return
+	}
+	rec := storage.RemoteAuditRecord{
+		InstanceID: instanceID,
+		Actor:      ctx.UserID(),
+		Action:     action,
+		Result:     result,
+		Reason:     reason,
+		Timestamp:  time.Now().UnixMilli(),
+	}
+	if err := h.audit.Append(ctx.Context(), rec); err != nil {
+		h.logger.Warn("감사 레코드 기록 실패",
+			"instance_id", instanceID, "action", action, "error", err)
+	}
 }
 
 // RegisterRoutes 는 관리 노드 admin 라우트를 그룹에 등록한다.
@@ -105,6 +136,10 @@ func (h *RemoteAdminHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/remote/flows", h.AllFlows)
 	g.GET("/remote/agents", h.AllAgents)
 	g.GET("/remote/devices", h.AllDevices)
+
+	// 원격 변경 감사 로그 조회(M6, REQ-F05). admin-gated, 선택적 instance_id 필터 +
+	// limit/offset 페이지네이션. 감사 영속 관측성을 제공한다.
+	g.GET("/remote/audit", h.Audit)
 }
 
 // requireAdmin 은 admin 권한을 강제한다. node/viewer/editor 등은 403(REQ-F04).
@@ -152,9 +187,11 @@ func (h *RemoteAdminHandler) Approve(ctx api.Context) error {
 	}
 	id := ctx.Param("instance_id")
 	if err := h.svc.Approve(ctx.Context(), id); err != nil {
+		h.recordAudit(ctx, id, storage.AuditActionApprove, storage.AuditResultError, "")
 		return mapRemoteAdminError(err)
 	}
-	// M6 seam: 여기에 감사 로그(누가/언제/어느 노드/approve)를 기록한다(REQ-F05).
+	// 원격 변경 감사(REQ-F05): 누가/언제/어느 노드/approve/result 를 영속 기록한다.
+	h.recordAudit(ctx, id, storage.AuditActionApprove, storage.AuditResultOK, "")
 	h.logger.Info("관리 노드 승인", "instance_id", id, "actor", ctx.UserID())
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
 		"instance_id": id,
@@ -172,9 +209,11 @@ func (h *RemoteAdminHandler) Reject(ctx api.Context) error {
 	_ = ctx.Bind(&req) // 본문은 선택적(사유 없음 허용).
 
 	if err := h.svc.Reject(ctx.Context(), id, req.Reason); err != nil {
+		h.recordAudit(ctx, id, storage.AuditActionReject, storage.AuditResultError, req.Reason)
 		return mapRemoteAdminError(err)
 	}
-	// M6 seam: 감사 로그(REQ-F05).
+	// 원격 변경 감사(REQ-F05). 거부 사유는 비밀이 아니므로 reason 에 기록한다.
+	h.recordAudit(ctx, id, storage.AuditActionReject, storage.AuditResultOK, req.Reason)
 	h.logger.Info("관리 노드 거부", "instance_id", id, "actor", ctx.UserID())
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
 		"instance_id": id,
@@ -189,9 +228,11 @@ func (h *RemoteAdminHandler) Revoke(ctx api.Context) error {
 	}
 	id := ctx.Param("instance_id")
 	if err := h.svc.Revoke(ctx.Context(), id); err != nil {
+		h.recordAudit(ctx, id, storage.AuditActionRevoke, storage.AuditResultError, "")
 		return mapRemoteAdminError(err)
 	}
-	// M6 seam: 감사 로그(REQ-F05).
+	// 원격 변경 감사(REQ-F05/F07).
+	h.recordAudit(ctx, id, storage.AuditActionRevoke, storage.AuditResultOK, "")
 	h.logger.Info("관리 노드 폐기", "instance_id", id, "actor", ctx.UserID())
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]string{
 		"instance_id": id,
@@ -218,12 +259,16 @@ func (h *RemoteAdminHandler) Command(ctx api.Context) error {
 	}
 
 	// 감사(F05): 명령 발행 — args 는 시크릿 가능성으로 로깅 제외(REQ-F06).
-	// M6 seam: 감사 저장소 — 영속 감사 레코드(actor/ts/target/domain/action) 기록.
 	h.logger.Info("원격 명령 발행",
 		"instance_id", id, "domain", req.Domain, "action", req.Action,
 		"actor", ctx.UserID())
 
-	result, err := h.svc.Dispatch(ctx.Context(), id, req.Domain, req.Action, req.Args)
+	// actor(관리자 username)를 컨텍스트에 실어 Dispatch 로 전달한다. 서버(dispatch.go)
+	// 가 명령 터미널 결과 시 actor 와 함께 영속 감사 레코드를 1행 기록한다(REQ-F05 —
+	// 중복 방지: 명령 감사는 서버 측 1곳에서만 기록). 미러 편집→명령(E08) 경로에서도
+	// 동일하게 actor 가 전파된다.
+	dispatchCtx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
+	result, err := h.svc.Dispatch(dispatchCtx, id, req.Domain, req.Action, req.Args)
 	if err != nil {
 		return mapRemoteCommandError(err)
 	}
@@ -233,6 +278,74 @@ func (h *RemoteAdminHandler) Command(ctx api.Context) error {
 		"action":      req.Action,
 		"result":      result,
 	}))
+}
+
+// RemoteAuditDTO 는 감사 레코드 응답 표현이다(M6, REQ-F05). 시크릿은 포함하지
+// 않는다(REQ-F06 — action/domain/result 만).
+type RemoteAuditDTO struct {
+	ID            int64  `json:"id"`
+	InstanceID    string `json:"instance_id"`
+	Actor         string `json:"actor"`
+	Action        string `json:"action"`
+	Domain        string `json:"domain,omitempty"`
+	CommandAction string `json:"command_action,omitempty"`
+	Result        string `json:"result"`
+	Reason        string `json:"reason,omitempty"`
+	Timestamp     int64  `json:"timestamp"` // epoch ms
+}
+
+// Audit 는 원격 변경 감사 로그를 반환한다(M6, REQ-F05). GET /remote/audit
+//
+// admin 권한만 조회할 수 있다(REQ-F04). 선택적 ?instance_id= 필터, ?limit=/?offset=
+// 페이지네이션을 지원한다(기본 limit=100). audit 미구성이면 빈 목록을 반환한다.
+func (h *RemoteAdminHandler) Audit(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	if h.audit == nil {
+		return ctx.JSON(http.StatusOK, dto.NewSuccessResponse([]RemoteAuditDTO{}))
+	}
+	instanceID := ctx.Query("instance_id")
+	limit := parsePositiveInt(ctx.Query("limit"), 100)
+	offset := parsePositiveInt(ctx.Query("offset"), 0)
+
+	records, err := h.audit.List(ctx.Context(), instanceID, limit, offset)
+	if err != nil {
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toRemoteAuditDTOs(records)))
+}
+
+// parsePositiveInt 는 쿼리 문자열을 음이 아닌 정수로 파싱한다. 빈 값/오류/음수는
+// fallback 을 반환한다.
+func parsePositiveInt(s string, fallback int) int {
+	if s == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
+}
+
+// toRemoteAuditDTOs 는 감사 레코드를 응답 DTO 로 변환한다.
+func toRemoteAuditDTOs(records []storage.RemoteAuditRecord) []RemoteAuditDTO {
+	out := make([]RemoteAuditDTO, 0, len(records))
+	for _, r := range records {
+		out = append(out, RemoteAuditDTO{
+			ID:            r.ID,
+			InstanceID:    r.InstanceID,
+			Actor:         r.Actor,
+			Action:        r.Action,
+			Domain:        r.Domain,
+			CommandAction: r.CommandAction,
+			Result:        r.Result,
+			Reason:        r.Reason,
+			Timestamp:     r.Timestamp,
+		})
+	}
+	return out
 }
 
 // MirroredResourceDTO 는 미러 자원 목록 응답 표현이다(M4, REQ-E04/E05/E06).

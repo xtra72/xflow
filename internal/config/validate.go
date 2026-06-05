@@ -209,9 +209,29 @@ func validateRemoteManagement(v *viper.Viper, ve *ValidationErrors) {
 		return
 	}
 
+	serverURL := v.GetString("remote_management.server_url")
 	if mode == "client" {
-		if v.GetString("remote_management.server_url") == "" {
+		if serverURL == "" {
 			ve.Add(fmt.Errorf("%w: remote_management.server_url (client 모드에서 필수)", ErrRequiredField))
+		}
+	}
+
+	// 보안 전송 강제(M6, REQ-F01): require_secure=true 이고 non-dev 이면 평문 전송을
+	// 거부한다. development 모드에서는 강제하지 않는다(로컬 개발 편의 — "non-dev" 한정).
+	if v.GetBool("remote_management.require_secure") && v.GetString("server.mode") != "development" {
+		switch mode {
+		case "client":
+			// 평문 ws:// (또는 비-wss 스킴)는 거부한다.
+			if serverURL != "" && !strings.HasPrefix(strings.ToLower(serverURL), "wss://") {
+				ve.Add(fmt.Errorf("%w: remote_management.server_url=%q (require_secure 시 wss:// 필수)",
+					ErrInsecureTransport, serverURL))
+			}
+		case "server":
+			// 관리 서버는 TLS 가 활성화되어야 한다(평문 ws 수락 금지).
+			if !v.GetBool("remote_management.tls.enabled") {
+				ve.Add(fmt.Errorf("%w: remote_management.tls.enabled=false (require_secure 시 server 모드 TLS 필수)",
+					ErrInsecureTransport))
+			}
 		}
 	}
 

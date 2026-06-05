@@ -33,12 +33,21 @@ var ErrNoRepo = errors.New("remote: managed node repository not configured")
 type TokenIssuer interface {
 	// Issue 는 subject(=instance_id) + role 로 노드 토큰을 발급한다.
 	Issue(subject, role string) (token string, err error)
+	// IssueWithID 는 노드 토큰과 그 jti(토큰 식별자)를 함께 발급한다(M6, REQ-F02/F07).
+	// 서버는 원본 토큰이 아닌 jti 만 저장하여, DB 유출 시에도 사용 가능한 토큰이
+	// 노출되지 않게 한다(노드 토큰 하드닝). 폐기는 RevokeID(jti)로 수행한다.
+	IssueWithID(subject, role string) (token, jti string, err error)
 	// Validate 는 토큰을 검증하고 subject/role 을 반환한다. blacklist/무효 시 에러.
 	Validate(token string) (subject, role string, err error)
 	// Revoke 는 토큰을 즉시 무효화한다(blacklist, REQ-F07).
 	Revoke(token string)
 	// IsRevoked 는 토큰이 폐기되었는지 확인한다.
 	IsRevoked(token string) bool
+	// RevokeID 는 jti(토큰 식별자)만으로 토큰을 즉시 무효화한다(M6, REQ-F07).
+	// 서버 DB 가 jti 만 보유한 채 폐기를 수행할 수 있다(원본 토큰 불필요).
+	RevokeID(jti string)
+	// IsIDRevoked 는 jti 가 폐기되었는지 확인한다.
+	IsIDRevoked(jti string) bool
 }
 
 // IsManaged 는 instance_id 가 관리 대상(approved + online)인지 반환한다(REQ-C06).
@@ -328,9 +337,10 @@ func (s *Server) Revoke(ctx context.Context, instanceID string) error {
 		return err
 	}
 
-	// 토큰 즉시 무효화(REQ-F07).
+	// 토큰 즉시 무효화(REQ-F07). token_id 에는 jti 가 저장되어 있으므로(M6 하드닝),
+	// 원본 토큰 없이 jti 만으로 폐기한다(DB-안전 폐기).
 	if node.TokenID != "" && s.tokens != nil {
-		s.tokens.Revoke(node.TokenID)
+		s.tokens.RevokeID(node.TokenID)
 	}
 
 	if err := s.repo.UpdateStatus(ctx, instanceID, RegStatusRevoked); err != nil {
@@ -348,16 +358,20 @@ func (s *Server) Revoke(ctx context.Context, instanceID string) error {
 }
 
 // issueAndStoreToken 은 instance_id 용 노드 토큰을 발급하고 token_id 를 저장한다.
-// 토큰 문자열 자체를 token_id 로 저장하여 폐기(blacklist) 매핑에 사용한다.
+//
+// M6 하드닝(REQ-F02/F07): 원본 토큰이 아닌 jti(토큰 식별자)를 token_id 로 저장한다.
+// 이로써 DB 가 유출되어도 사용 가능한 베어러 토큰이 노출되지 않으며, 폐기는 jti 로
+// 수행된다(RevokeID). 원본 토큰은 register_ack 로 노드에만 전달되고 서버에 남지 않는다.
 func (s *Server) issueAndStoreToken(ctx context.Context, instanceID string) (string, error) {
 	if s.tokens == nil {
 		return "", errors.New("remote: token issuer not configured")
 	}
-	token, err := s.tokens.Issue(instanceID, "node")
+	token, jti, err := s.tokens.IssueWithID(instanceID, "node")
 	if err != nil {
 		return "", err
 	}
-	if err := s.repo.SetToken(ctx, instanceID, token); err != nil {
+	// 원본 토큰이 아닌 jti 만 저장한다(DB-안전 — M6).
+	if err := s.repo.SetToken(ctx, instanceID, jti); err != nil {
 		return "", err
 	}
 	return token, nil

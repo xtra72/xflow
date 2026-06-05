@@ -87,4 +87,6 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("remote_management.tls.enabled", false)
 	v.SetDefault("remote_management.tls.cert_file", "")
 	v.SetDefault("remote_management.tls.key_file", "")
+	// require_secure 기본 false — 기존 동작 보존(REQ-N03). M6 보안 전송 강제 옵션.
+	v.SetDefault("remote_management.require_secure", false)
 }

@@ -49,9 +49,14 @@ type stubIssuer struct{}
 func newStubIssuer() remote.TokenIssuer { return stubIssuer{} }
 
 func (stubIssuer) Issue(subject, _ string) (string, error) { return subject + "-tok", nil }
+func (stubIssuer) IssueWithID(subject, _ string) (string, string, error) {
+	return subject + "-tok", subject + "-jti", nil
+}
 func (stubIssuer) Validate(string) (string, string, error) { return "", "", errors.New("n/a") }
 func (stubIssuer) Revoke(string)                           {}
 func (stubIssuer) IsRevoked(string) bool                   { return false }
+func (stubIssuer) RevokeID(string)                         {}
+func (stubIssuer) IsIDRevoked(string) bool                 { return false }
 
 // TestRemoteHandler_ValidTokenRestoresSession 는 유효 노드 토큰으로 접속한 승인
 // 노드의 세션이 복원되는지(managed online) 검증한다(REQ-C05/F02).

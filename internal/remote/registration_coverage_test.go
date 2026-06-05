@@ -20,11 +20,16 @@ type failingTokenIssuer struct{}
 func (failingTokenIssuer) Issue(string, string) (string, error) {
 	return "", errors.New("issue failed")
 }
+func (failingTokenIssuer) IssueWithID(string, string) (string, string, error) {
+	return "", "", errors.New("issue failed")
+}
 func (failingTokenIssuer) Validate(string) (string, string, error) {
 	return "", "", errors.New("invalid")
 }
-func (failingTokenIssuer) Revoke(string)         {}
-func (failingTokenIssuer) IsRevoked(string) bool { return false }
+func (failingTokenIssuer) Revoke(string)           {}
+func (failingTokenIssuer) IsRevoked(string) bool   { return false }
+func (failingTokenIssuer) RevokeID(string)         {}
+func (failingTokenIssuer) IsIDRevoked(string) bool { return false }
 
 // TestServer_ListNodes_NoRepo 는 repo 미구성 시 빈 목록을 반환하는지 검증한다.
 func TestServer_ListNodes_NoRepo(t *testing.T) {
@@ -103,15 +108,16 @@ func TestServer_Approve_TokenIssueFails(t *testing.T) {
 func TestServer_Revoke_DisconnectedNode(t *testing.T) {
 	repo := newMemManagedNodeRepo()
 	issuer := newFakeTokenIssuer()
-	token, _ := issuer.Issue("n", "node")
+	// M6 하드닝: token_id 에는 jti 가 저장된다(원본 토큰 미저장). 폐기는 jti 로 수행.
+	_, jti, _ := issuer.IssueWithID("n", "node")
 	require.NoError(t, repo.Upsert(context.Background(), storage.ManagedNode{
-		InstanceID: "n", Status: RegStatusApproved, TokenID: token,
+		InstanceID: "n", Status: RegStatusApproved, TokenID: jti,
 	}))
 	srv := newM2Server(repo, issuer)
 
 	// 연결 없이 폐기.
 	require.NoError(t, srv.Revoke(context.Background(), "n"))
-	assert.True(t, issuer.IsRevoked(token))
+	assert.True(t, issuer.IsIDRevoked(jti))
 
 	got, _ := repo.Get(context.Background(), "n")
 	assert.Equal(t, RegStatusRevoked, got.Status)

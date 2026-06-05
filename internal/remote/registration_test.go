@@ -110,34 +110,46 @@ func (m *memManagedNodeRepo) Delete(_ context.Context, instanceID string) error 
 
 func (m *memManagedNodeRepo) Close() error { return nil }
 
-// fakeTokenIssuer 는 TokenIssuer 의 테스트 구현이다. subject→token 매핑을 단순화한다.
+// fakeTokenIssuer 는 TokenIssuer 의 테스트 구현이다. subject→token 매핑을 단순화하고,
+// M6 jti 하드닝을 모사한다(token→jti 매핑, jti 기반 폐기).
 type fakeTokenIssuer struct {
-	mu        sync.Mutex
-	issued    map[string]string // token -> subject
-	revoked   map[string]bool
-	nextToken int
+	mu         sync.Mutex
+	issued     map[string]string // token -> subject
+	tokenJTI   map[string]string // token -> jti
+	revoked    map[string]bool   // 원본 토큰 기반 폐기
+	revokedJTI map[string]bool   // jti 기반 폐기(M6)
+	nextToken  int
 }
 
 func newFakeTokenIssuer() *fakeTokenIssuer {
 	return &fakeTokenIssuer{
-		issued:  make(map[string]string),
-		revoked: make(map[string]bool),
+		issued:     make(map[string]string),
+		tokenJTI:   make(map[string]string),
+		revoked:    make(map[string]bool),
+		revokedJTI: make(map[string]bool),
 	}
 }
 
-func (f *fakeTokenIssuer) Issue(subject, _ string) (string, error) {
+func (f *fakeTokenIssuer) Issue(subject, role string) (string, error) {
+	token, _, err := f.IssueWithID(subject, role)
+	return token, err
+}
+
+func (f *fakeTokenIssuer) IssueWithID(subject, _ string) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.nextToken++
 	token := subject + "-token-" + string(rune('a'+f.nextToken))
+	jti := subject + "-jti-" + string(rune('a'+f.nextToken))
 	f.issued[token] = subject
-	return token, nil
+	f.tokenJTI[token] = jti
+	return token, jti, nil
 }
 
 func (f *fakeTokenIssuer) Validate(token string) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.revoked[token] {
+	if f.revoked[token] || f.revokedJTI[f.tokenJTI[token]] {
 		return "", "", errors.New("revoked")
 	}
 	subject, ok := f.issued[token]
@@ -157,6 +169,18 @@ func (f *fakeTokenIssuer) IsRevoked(token string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.revoked[token]
+}
+
+func (f *fakeTokenIssuer) RevokeID(jti string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.revokedJTI[jti] = true
+}
+
+func (f *fakeTokenIssuer) IsIDRevoked(jti string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.revokedJTI[jti]
 }
 
 // newM2Server 는 repo + tokenIssuer 가 주입된 서버를 생성한다.
@@ -319,8 +343,9 @@ func TestRevoke_BlacklistsAndDisconnects(t *testing.T) {
 	srv := newM2Server(repo, issuer)
 
 	require.NoError(t, repo.Upsert(context.Background(), storage.ManagedNode{InstanceID: "node-5", Status: RegStatusApproved}))
-	token, _ := issuer.Issue("node-5", "node")
-	require.NoError(t, repo.SetToken(context.Background(), "node-5", token))
+	// M6 하드닝: 서버는 원본 토큰이 아닌 jti 만 저장한다(DB-안전). 폐기는 jti 로 수행된다.
+	token, jti, _ := issuer.IssueWithID("node-5", "node")
+	require.NoError(t, repo.SetToken(context.Background(), "node-5", jti))
 
 	conn := newFakeConn()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -339,8 +364,8 @@ func TestRevoke_BlacklistsAndDisconnects(t *testing.T) {
 	// 관리자 폐기.
 	require.NoError(t, srv.Revoke(ctx, "node-5"))
 
-	// 토큰이 blacklist 되어야 한다(REQ-F07).
-	assert.True(t, issuer.IsRevoked(token))
+	// jti 가 blacklist 되어야 한다(REQ-F07 — M6 jti 기반 폐기).
+	assert.True(t, issuer.IsIDRevoked(jti))
 
 	// 연결이 종료되어야 한다.
 	select {

@@ -12,9 +12,10 @@
 //
 // 동시 다수 명령은 CommandID 로 구분되어 각자의 결과 채널로 라우팅된다(REQ-D07).
 //
-// 감사(F05): 디스패치 시작·결과 시 구조화 로그를 남긴다(누가/언제/대상/도메인·액션/
-// ok·err). 영속 감사 저장소는 M6 에서 연결한다(아래 M6 seam 주석 참조). Args 는
-// 시크릿을 포함할 수 있으므로 verbatim 로깅하지 않는다(REQ-F06).
+// 감사(F05): 디스패치 시작 시 구조화 로그를, 결과(성공/실패/타임아웃) 시 영속 감사
+// 레코드를 남긴다(누가[ctx actor]/언제/대상/도메인·액션/ok·err — M6 recordCommandAudit).
+// Args 와 클라이언트 오류 사유는 시크릿을 포함할 수 있으므로 verbatim 로깅·기록하지
+// 않는다(REQ-F06 — 감사에는 분류만).
 package remote
 
 import (
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 // ErrNodeNotManaged 는 대상 노드가 승인+온라인이 아닐 때(미승인/오프라인) 반환된다
@@ -84,9 +86,9 @@ func (s *Server) Dispatch(ctx context.Context, instanceID, domain, action string
 		return nil, fmt.Errorf("remote: encode command: %w", err)
 	}
 
-	// 감사(F05): 디스패치 시작. Args 는 시크릿 가능성으로 로깅 제외(REQ-F06).
-	// M6 seam: 감사 저장소 — 여기서 영속 감사 레코드(actor/ts/target/domain/action)를
-	// 기록한다(현재는 구조화 로그만; 영속화는 M6).
+	// 감사(F05): 디스패치 시작 구조화 로그. Args 는 시크릿 가능성으로 로깅 제외(REQ-F06).
+	// 영속 감사 레코드는 터미널 결과(성공/실패/타임아웃) 시 recordCommandAudit 로 1행
+	// 기록한다(아래 select). actor 는 ctx(ContextWithActor)에서 읽는다.
 	s.logger.Info("원격 명령 디스패치",
 		"command_id", commandID, "instance_id", instanceID,
 		"domain", domain, "action", action)
@@ -99,27 +101,34 @@ func (s *Server) Dispatch(ctx context.Context, instanceID, domain, action string
 	select {
 	case res := <-resultCh:
 		if !res.OK {
-			// 감사(F05): 적용 실패.
-			// M6 seam: 감사 저장소 — 실패 결과 영속화.
+			// 감사(F05): 적용 실패를 영속화한다(result=error). 클라이언트 오류 사유는
+			// 시크릿일 수 있으므로 감사 reason 에는 분류만 남기고 verbatim 은 제외한다
+			// (REQ-F06 — 시크릿 echo 금지). 구조화 로그도 사유를 남기지 않는다.
 			s.logger.Warn("원격 명령 실패",
 				"command_id", commandID, "instance_id", instanceID,
-				"domain", domain, "action", action, "error", res.Error)
+				"domain", domain, "action", action)
+			s.recordCommandAudit(ctx, instanceID, domain, action,
+				storage.AuditResultError, "node reported apply failure")
 			return nil, fmt.Errorf("%w: %s", ErrCommandFailed, res.Error)
 		}
-		// 감사(F05): 적용 성공.
-		// M6 seam: 감사 저장소 — 성공 결과 영속화.
+		// 감사(F05): 적용 성공을 영속화한다(result=ok).
 		s.logger.Info("원격 명령 성공",
 			"command_id", commandID, "instance_id", instanceID,
 			"domain", domain, "action", action)
+		s.recordCommandAudit(ctx, instanceID, domain, action, storage.AuditResultOK, "")
 		return res.Result, nil
 
 	case <-time.After(s.commandTimeout()):
 		s.logger.Warn("원격 명령 타임아웃 — 미적용 처리",
 			"command_id", commandID, "instance_id", instanceID,
 			"domain", domain, "action", action)
+		s.recordCommandAudit(ctx, instanceID, domain, action,
+			storage.AuditResultError, "command timeout (not applied)")
 		return nil, ErrCommandTimeout
 
 	case <-ctx.Done():
+		s.recordCommandAudit(ctx, instanceID, domain, action,
+			storage.AuditResultError, "context canceled")
 		return nil, ctx.Err()
 	}
 }

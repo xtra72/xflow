@@ -149,6 +149,12 @@ type RemoteManagementConfig struct {
 
 	// TLS 는 wss 용 TLS 설정 (기존 TLSConfig 재사용, REQ-F01).
 	TLS TLSConfig
+
+	// RequireSecure 는 보안 전송(wss/TLS)을 강제할지 결정한다 (M6, REQ-F01).
+	// true 이고 non-dev(server.mode != "development")이면, client 모드의 평문 ws://
+	// server_url 과 server 모드의 TLS 미설정을 거부한다. 기본 false(기존 동작 보존,
+	// REQ-N03). development 모드에서는 강제하지 않는다(로컬 개발 편의).
+	RequireSecure bool
 }
 
 // ExposureConfig - 노출(exposure) 범위 설정 (REQ-REMOTE-A04, spec §5.3)

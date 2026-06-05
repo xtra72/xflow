@@ -33,6 +33,16 @@ func (j *jwtTokenIssuer) Issue(subject, role string) (string, error) {
 	return accessToken, nil
 }
 
+// IssueWithID 는 노드 토큰과 그 jti 를 함께 발급한다(M6, REQ-F02/F07). 서버는
+// jti 만 저장하여 폐기에 사용한다(원본 토큰 미저장 — DB 안전).
+func (j *jwtTokenIssuer) IssueWithID(subject, role string) (string, string, error) {
+	accessToken, _, jti, _, err := j.svc.GenerateTokensWithID(subject, role)
+	if err != nil {
+		return "", "", err
+	}
+	return accessToken, jti, nil
+}
+
 // Validate 는 토큰을 검증하고 subject(username)/role 을 반환한다. blacklist 토큰은
 // 거부한다(REQ-F07).
 func (j *jwtTokenIssuer) Validate(token string) (string, string, error) {
@@ -54,4 +64,15 @@ func (j *jwtTokenIssuer) Revoke(token string) {
 // IsRevoked 는 토큰이 blacklist 되었는지 확인한다.
 func (j *jwtTokenIssuer) IsRevoked(token string) bool {
 	return j.svc.IsBlacklisted(token)
+}
+
+// RevokeID 는 jti(토큰 식별자)만으로 토큰을 즉시 무효화한다(M6, REQ-F07). 서버
+// DB 가 jti 만 보유한 채 폐기를 수행한다(원본 토큰 불필요).
+func (j *jwtTokenIssuer) RevokeID(jti string) {
+	j.svc.BlacklistJTI(jti)
+}
+
+// IsIDRevoked 는 jti 가 폐기되었는지 확인한다.
+func (j *jwtTokenIssuer) IsIDRevoked(jti string) bool {
+	return j.svc.IsJTIBlacklisted(jti)
 }

@@ -414,6 +414,7 @@ func (c *viperConfig) RemoteManagement() RemoteManagementConfig {
 			CertFile: c.v.GetString("remote_management.tls.cert_file"),
 			KeyFile:  c.v.GetString("remote_management.tls.key_file"),
 		},
+		RequireSecure: c.v.GetBool("remote_management.require_secure"),
 	}
 }
 

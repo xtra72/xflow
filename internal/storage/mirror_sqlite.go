@@ -43,14 +43,14 @@ func NewMirrorSQLiteRepository(ctx context.Context, dbPath string) (*MirrorSQLit
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	// DSN 에 pragma 를 실어 모든 풀 연결에 WAL + busy_timeout 이 적용되게 한다.
+	// 다수 노드가 동시에 미러를 push 하면 쓰기가 경합하므로(SQLITE_BUSY), 즉시 실패
+	// 대신 대기·재시도하게 한다(@SPEC:SPEC-REMOTE-001 M6, REQ-N01 — 다중 노드 확장성).
+	// PRAGMA 를 ExecContext 로 한 번만 실행하면 풀의 한 연결에만 적용되어 경합 시
+	// SQLITE_BUSY 가 재발하므로, DSN(_pragma) 방식으로 연결마다 적용한다.
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-
-	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
 	if err := migrateMirrorSchema(ctx, db); err != nil {

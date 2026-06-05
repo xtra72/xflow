@@ -35,14 +35,11 @@ func NewManagedNodeSQLiteRepository(ctx context.Context, dbPath string) (*Manage
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	// DSN 에 WAL + busy_timeout pragma 를 실어 모든 풀 연결에 적용한다(다수 노드
+	// online/last_seen 갱신 경합 흡수 — @SPEC:SPEC-REMOTE-001 M6, REQ-N01).
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-
-	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
 	if err := migrateManagedNodesSchema(ctx, db); err != nil {

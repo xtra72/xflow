@@ -721,6 +721,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		remoteAdminHandler *handler.RemoteAdminHandler
 		managedNodeRepo    storage.ManagedNodeRepository
 		mirrorRepo         storage.MirrorRepository
+		remoteAuditRepo    storage.RemoteAuditRepository
 	)
 	switch rmCfg.Mode {
 	case "server":
@@ -740,6 +741,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		mirrorRepo = mrRepo
 		defer mirrorRepo.Close()
 
+		// 원격 변경 감사 로그(M6, REQ-F05) — 동일 SQLite DB 에 remote_audit 테이블을
+		// 멱등 추가. 명령/승인/거부/폐기 mutation 을 누가/언제/어느 노드/결과로 기록한다.
+		auRepo, auErr := storage.NewRemoteAuditRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if auErr != nil {
+			return fmt.Errorf("원격 감사 저장소 초기화 실패: %w", auErr)
+		}
+		remoteAuditRepo = auRepo
+		defer remoteAuditRepo.Close()
+
 		// 노드 토큰은 기존 JWTService 를 재사용한다(REQ-C04/C05/C07/F02/F07).
 		tokenIssuer := remote.NewJWTTokenIssuer(server.JWTService())
 
@@ -748,6 +758,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			Repo:             managedNodeRepo,
 			Mirror:           mirrorRepo,
 			TokenIssuer:      tokenIssuer,
+			Audit:            remoteAuditRepo,
 			BootstrapSecret:  rmCfg.BootstrapSecret,
 			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
 		}, nil)
@@ -759,8 +770,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		server.RegisterRawHandler(handler.RemoteWSPattern, remoteWSHandler.HandleUpgrade)
 
 		// 관리자 승인/거부/폐기/목록 REST API (admin 권한 강제 — REQ-C03/C07/F04).
+		// 감사 저장소를 연결해 mutation 을 영속 기록하고 GET /remote/audit 로 관측한다(M6).
 		remoteAdminHandler = handler.NewRemoteAdminHandler(remoteServer,
-			obs.Loggers.NewLogger("api.handler.remote_admin").Logger())
+			obs.Loggers.NewLogger("api.handler.remote_admin").Logger()).
+			WithAudit(remoteAuditRepo)
 
 		logger.Info("원격 관리 서버 모드 활성화",
 			"endpoint", handler.RemoteWSPattern)
