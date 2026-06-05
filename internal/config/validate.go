@@ -24,6 +24,7 @@ func Validate(v *viper.Viper) error {
 	validateProductionJWT(v, &ve)
 	validatePostgresDSN(v, &ve)
 	validateWebUI(v, &ve)
+	validateRemoteManagement(v, &ve)
 
 	if ve.HasErrors() {
 		return &ve
@@ -187,5 +188,41 @@ func validateWebUI(v *viper.Viper, ve *ValidationErrors) {
 	dir := v.GetString("server.web_ui.dir")
 	if dir == "" {
 		ve.Add(fmt.Errorf("%w: server.web_ui.dir (web_ui 활성화 시 필수)", ErrRequiredField))
+	}
+}
+
+// validateRemoteManagement - 원격 관리 설정 검증 (@SPEC:SPEC-REMOTE-001 M1).
+//
+// 검증 항목:
+//   - mode: server|client|disabled 만 허용 (REQ-A01).
+//   - client 모드: server_url 필수 (REQ-A02).
+//   - TLS 활성화 시: cert/key 파일 존재 (REQ-F01).
+//
+// disabled 모드(기본)는 추가 검증 없이 통과한다(회귀 안전 — REQ-N03).
+func validateRemoteManagement(v *viper.Viper, ve *ValidationErrors) {
+	mode := v.GetString("remote_management.mode")
+	switch mode {
+	case "disabled", "server", "client":
+		// 유효한 모드.
+	default:
+		ve.Add(fmt.Errorf("%w: remote_management.mode=%q", ErrInvalidRemoteMode, mode))
+		return
+	}
+
+	if mode == "client" {
+		if v.GetString("remote_management.server_url") == "" {
+			ve.Add(fmt.Errorf("%w: remote_management.server_url (client 모드에서 필수)", ErrRequiredField))
+		}
+	}
+
+	if v.GetBool("remote_management.tls.enabled") {
+		certFile := v.GetString("remote_management.tls.cert_file")
+		if _, err := os.Stat(certFile); os.IsNotExist(err) {
+			ve.Add(fmt.Errorf("%w: remote_management.tls.cert_file=%q", ErrFileNotFound, certFile))
+		}
+		keyFile := v.GetString("remote_management.tls.key_file")
+		if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+			ve.Add(fmt.Errorf("%w: remote_management.tls.key_file=%q", ErrFileNotFound, keyFile))
+		}
 	}
 }

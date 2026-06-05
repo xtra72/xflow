@@ -50,7 +50,8 @@ type Config interface {
 	Observe() ObserveConfig
 	Script() ScriptConfig
 	Plugin() PluginConfig
-	Update() UpdateSettings // @SPEC:SPEC-UPDATE-001 v0.1.0
+	Update() UpdateSettings                   // @SPEC:SPEC-UPDATE-001 v0.1.0
+	RemoteManagement() RemoteManagementConfig // @SPEC:SPEC-REMOTE-001 M1
 
 	// 범용 접근
 	Get(key string) any
@@ -99,13 +100,13 @@ type viperConfig struct {
 
 // loadConfig - Load 함수의 설정 옵션 집합
 type loadConfig struct {
-	configFile  string               // 사용자 지정 설정 파일 경로
-	configName  string               // 확장자 없는 설정 파일명 (예: "xflowd")
-	configPaths []string             // 기본 설정 파일 검색 경로
-	envPrefix   string               // 환경 변수 접두사 (기본: "XFLOW")
-	flags       *pflag.FlagSet       // CLI 플래그 셋
-	defaultsFn  func(*viper.Viper)   // 커스텀 기본값 함수
-	logger      *slog.Logger         // 선택적 로거
+	configFile  string             // 사용자 지정 설정 파일 경로
+	configName  string             // 확장자 없는 설정 파일명 (예: "xflowd")
+	configPaths []string           // 기본 설정 파일 검색 경로
+	envPrefix   string             // 환경 변수 접두사 (기본: "XFLOW")
+	flags       *pflag.FlagSet     // CLI 플래그 셋
+	defaultsFn  func(*viper.Viper) // 커스텀 기본값 함수
+	logger      *slog.Logger       // 선택적 로거
 }
 
 // LoadOption - Load 함수에 전달하는 옵션 함수 타입
@@ -383,6 +384,39 @@ func (c *viperConfig) Update() UpdateSettings {
 	}
 }
 
+// RemoteManagement - 원격 관리 설정 반환 (@SPEC:SPEC-REMOTE-001 M1).
+//
+// HeartbeatInterval 은 viper.GetDuration 으로 yaml 의 "30s" 형식과 정수형(ns)
+// 입력을 모두 수용하며, 0/미설정 시 안전 기본값(30s)으로 대체한다(REQ-A05).
+func (c *viperConfig) RemoteManagement() RemoteManagementConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	heartbeat := c.v.GetDuration("remote_management.heartbeat_interval")
+	if heartbeat <= 0 {
+		heartbeat = 30 * time.Second
+	}
+
+	return RemoteManagementConfig{
+		Mode:              c.v.GetString("remote_management.mode"),
+		ServerURL:         c.v.GetString("remote_management.server_url"),
+		InstanceID:        c.v.GetString("remote_management.instance_id"),
+		AutoRegister:      c.v.GetBool("remote_management.auto_register"),
+		HeartbeatInterval: heartbeat,
+		BootstrapSecret:   c.v.GetString("remote_management.bootstrap_secret"),
+		Exposure: ExposureConfig{
+			Flows:   c.v.GetString("remote_management.exposure.flows"),
+			Agents:  c.v.GetString("remote_management.exposure.agents"),
+			Devices: c.v.GetString("remote_management.exposure.devices"),
+		},
+		TLS: TLSConfig{
+			Enabled:  c.v.GetBool("remote_management.tls.enabled"),
+			CertFile: c.v.GetString("remote_management.tls.cert_file"),
+			KeyFile:  c.v.GetString("remote_management.tls.key_file"),
+		},
+	}
+}
+
 // --- 범용 접근 메서드 ---
 
 // Get - 키에 대응하는 값 반환
@@ -610,6 +644,18 @@ func validateKeyValue(key string, value any) error {
 		}
 		if _, err := time.ParseDuration(s); err != nil {
 			return fmt.Errorf("%w: %s=%q", ErrInvalidDuration, key, s)
+		}
+
+	case "remote_management.mode":
+		s, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("%w: remote_management.mode는 문자열이어야 합니다", ErrInvalidRemoteMode)
+		}
+		switch s {
+		case "disabled", "server", "client":
+			return nil
+		default:
+			return fmt.Errorf("%w: remote_management.mode=%q", ErrInvalidRemoteMode, s)
 		}
 	}
 	return nil

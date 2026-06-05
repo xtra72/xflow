@@ -32,6 +32,7 @@ import (
 	"github.com/xtra/xflow/internal/node"
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
+	"github.com/xtra/xflow/internal/remote"
 	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/internal/updater"
@@ -709,6 +710,31 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("api.handler.chart_ws").Logger())
 	server.RegisterRawHandler("GET /ws/chart/{channel}", chartWSHandler.HandleUpgrade)
 
+	// 9.5b. 원격 관리 (@SPEC:SPEC-REMOTE-001 M1) — mode 분기.
+	// server 모드는 관리 WS 핸들러를 등록하고(별도 엔드포인트 /api/remote/ws —
+	// REQ-N02), online/offline 추적 sweeper 는 ctx 생성 후(아래 10절) 시작한다.
+	// disabled(기본)는 어떤 관리 연결도 생성/수락하지 않는다(REQ-N03 회귀 안전).
+	rmCfg := cfg.RemoteManagement()
+	var remoteServer *remote.Server
+	switch rmCfg.Mode {
+	case "server":
+		remoteServer = remote.NewServer(remote.ServerConfig{
+			HeartbeatTimeout: 3 * rmCfg.HeartbeatInterval,
+			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
+		}, remote.NewBootstrapAuthenticator(rmCfg.BootstrapSecret))
+		remoteHandler := handler.NewRemoteHandler(remoteServer,
+			obs.Loggers.NewLogger("api.handler.remote").Logger())
+		server.RegisterRawHandler(handler.RemoteWSPattern, remoteHandler.HandleUpgrade)
+		logger.Info("원격 관리 서버 모드 활성화",
+			"endpoint", handler.RemoteWSPattern)
+	case "client":
+		// 클라이언트 dialer 는 ctx 생성 후(아래 10절) 시작한다.
+		logger.Info("원격 관리 클라이언트 모드 활성화",
+			"server_url", rmCfg.ServerURL)
+	default:
+		// disabled — 아무 것도 하지 않는다(회귀 0).
+	}
+
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
 	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, obs.Loggers.NewLogger("api.ws.broadcaster").Logger(), ws.WithStreamRouter(obs.Streams))
 
@@ -726,6 +752,38 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 모니터링 브로드캐스터 시작 (ctx 생성 후)
 	broadcaster.Start(ctx)
 	defer broadcaster.Stop()
+
+	// 10.1. 원격 관리 라이프사이클 시작 (@SPEC:SPEC-REMOTE-001 M1).
+	// ctx 취소(종료 시그널) 시 sweeper/client 고루틴이 정리된다.
+	switch rmCfg.Mode {
+	case "server":
+		if remoteServer != nil {
+			remoteServer.StartSweeper(ctx)
+			logger.Info("원격 관리 online/offline 추적 시작")
+		}
+	case "client":
+		// 영속 instance_id 해석(config override 우선, 없으면 데이터 디렉토리에
+		// 생성·영속 — REQ-A03). 데이터 디렉토리는 SQLite 경로의 부모를 재사용한다.
+		dataDir := filepath.Dir(storageCfg.SQLitePath)
+		instanceID, idErr := remote.ResolveInstanceID(rmCfg.InstanceID, dataDir)
+		if idErr != nil {
+			logger.Error("instance_id 해석 실패 — 원격 클라이언트 미시작", "error", idErr)
+			break
+		}
+		hostname, _ := os.Hostname()
+		remoteClient := remote.NewClient(remote.ClientConfig{
+			ServerURL:         rmCfg.ServerURL,
+			InstanceID:        instanceID,
+			Hostname:          hostname,
+			Version:           Version,
+			HeartbeatInterval: rmCfg.HeartbeatInterval,
+			Logger:            obs.Loggers.NewLogger("remote.client").Logger(),
+		}, nil)
+		remoteClient.Start(ctx)
+		defer remoteClient.Stop()
+		logger.Info("원격 관리 클라이언트 시작",
+			"instance_id", instanceID, "server_url", rmCfg.ServerURL)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
