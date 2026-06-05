@@ -14,6 +14,9 @@
     "agentTypes": "Agent Types",
     "reference": "Reference",
     "editor": "Flow",
+    "remote": "Remote",
+    "remoteNodes": "Managed Nodes",
+    "remoteResources": "Remote Resources",
     "sidebarNav": "Sidebar Navigation",
     "expandSidebar": "Expand Sidebar",
     "collapseSidebar": "Collapse Sidebar"
@@ -318,5 +321,80 @@
     "somethingWentWrong": "Something went wrong",
     "unknownError": "Unknown error",
     "reload": "Reload Page"
+  },
+  "remote": {
+    "title": "Managed Nodes",
+    "subtitle": "Review remote xflowd node registration status and approve, reject, or revoke them.",
+    "resourcesTitle": "Remote Resources",
+    "resourcesSubtitle": "Browse mirrored flows, agents, and devices of managed nodes and issue commands.",
+    "online": "Online",
+    "offline": "Offline",
+    "lastKnown": "last known",
+    "loadError": "Failed to load remote data.",
+    "noNodes": "No managed nodes registered.",
+    "noResources": "No resources to display.",
+    "noApprovedNodes": "No approved nodes available.",
+    "selectNode": "Select node",
+    "nodesTableLabel": "Managed nodes list",
+    "resourcesTableLabel": "Remote resources list",
+    "viewModeLabel": "View mode",
+    "kindTabsLabel": "Resource kind",
+    "mode": {
+      "aggregated": "Aggregated",
+      "perNode": "Per node"
+    },
+    "kind": {
+      "flows": "Flows",
+      "agents": "Agents",
+      "devices": "Devices"
+    },
+    "status": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "revoked": "Revoked"
+    },
+    "col": {
+      "hostname": "Hostname",
+      "instanceId": "Instance ID",
+      "version": "Version",
+      "online": "Connection",
+      "status": "Status",
+      "lastSeen": "Last Seen",
+      "actions": "Actions",
+      "name": "Name",
+      "resourceStatus": "Status",
+      "sourceNode": "Source Node",
+      "updatedAt": "Updated"
+    },
+    "action": {
+      "approve": "Approve",
+      "reject": "Reject",
+      "revoke": "Revoke"
+    },
+    "confirm": {
+      "rejectTitle": "Reject this node?",
+      "rejectDesc": "This rejects the registration request from {node}. This action cannot be undone.",
+      "revokeTitle": "Revoke this node?",
+      "revokeDesc": "This revokes approval for {node}. The node will no longer receive commands. This action cannot be undone."
+    },
+    "toast": {
+      "approved": "Node approved.",
+      "rejected": "Node rejected.",
+      "revoked": "Node revoked.",
+      "actionFailed": "Failed to complete the action."
+    },
+    "command": {
+      "deploy": "Deploy",
+      "start": "Start",
+      "stop": "Stop",
+      "actionsLabel": "Remote commands",
+      "offlineHint": "Cannot issue commands to an offline node.",
+      "success": "Command applied.",
+      "errorUnavailable": "Node is offline or not approved; command cannot be applied.",
+      "errorTimeout": "No response received for the command (timeout).",
+      "errorFailed": "The node failed to apply the command.",
+      "errorGeneric": "Failed to issue the command."
+    }
   }
 }

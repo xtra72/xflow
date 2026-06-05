@@ -31,6 +31,9 @@ const SystemStatusPage = lazy(() =>
     default: m.SystemStatusPage,
   })),
 );
+// SPEC-REMOTE-001 M5: admin 전용 원격 관리 페이지.
+const RemoteNodesPage = lazy(() => import('@/pages/remote/RemoteNodesPage'));
+const RemoteResourcesPage = lazy(() => import('@/pages/remote/RemoteResourcesPage'));
 
 /** Suspense 래퍼 - 지연 로딩 중 로딩 스피너를 표시한다 */
 function SuspenseWrapper({ children }: { children: React.ReactNode }) {
@@ -140,6 +143,23 @@ const router = createBrowserRouter([
                 element: (
                   <SuspenseWrapper>
                     <SystemStatusPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // SPEC-REMOTE-001 M5: 원격 관리 (관리 노드 + 미러 자원).
+              {
+                path: 'remote',
+                element: (
+                  <SuspenseWrapper>
+                    <RemoteNodesPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              {
+                path: 'remote/resources',
+                element: (
+                  <SuspenseWrapper>
+                    <RemoteResourcesPage />
                   </SuspenseWrapper>
                 ),
               },
