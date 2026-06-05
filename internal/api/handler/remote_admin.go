@@ -16,17 +16,20 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/remote"
 	"github.com/xtra/xflow/internal/storage"
 )
 
-// NodeAdminService 는 관리 노드 상태 머신 작업을 추상화한다(*remote.Server 가 만족).
-// 핸들러 테스트에서 fake 로 대체 가능하도록 인터페이스로 분리한다.
+// NodeAdminService 는 관리 노드 상태 머신 작업과 명령 디스패치를 추상화한다
+// (*remote.Server 가 만족). 핸들러 테스트에서 fake 로 대체 가능하도록 인터페이스로
+// 분리한다.
 type NodeAdminService interface {
 	// ListNodes 는 모든 관리 노드를 반환한다.
 	ListNodes(ctx context.Context) ([]storage.ManagedNode, error)
@@ -36,6 +39,16 @@ type NodeAdminService interface {
 	Reject(ctx context.Context, instanceID, reason string) error
 	// Revoke 는 노드를 폐기한다(REQ-C07). 미존재 시 storage.ErrManagedNodeNotFound.
 	Revoke(ctx context.Context, instanceID string) error
+	// Dispatch 는 승인+온라인 노드에 원격 명령을 디스패치하고 결과를 기다린다(M3,
+	// REQ-D01/D05/D06/D07/D08). 미승인/오프라인 시 remote.ErrNodeNotManaged.
+	Dispatch(ctx context.Context, instanceID, domain, action string, args json.RawMessage) (json.RawMessage, error)
+}
+
+// commandRequest 는 원격 명령 발행 요청 본문이다(POST /remote/nodes/{id}/command).
+type commandRequest struct {
+	Domain string          `json:"domain"`
+	Action string          `json:"action"`
+	Args   json.RawMessage `json:"args,omitempty"`
 }
 
 // ManagedNodeDTO 는 관리 노드 응답 표현이다(시크릿 토큰은 노출하지 않음 — REQ-F06).
@@ -74,6 +87,7 @@ func (h *RemoteAdminHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/remote/nodes/{instance_id}/approve", h.Approve)
 	g.POST("/remote/nodes/{instance_id}/reject", h.Reject)
 	g.POST("/remote/nodes/{instance_id}/revoke", h.Revoke)
+	g.POST("/remote/nodes/{instance_id}/command", h.Command)
 }
 
 // requireAdmin 은 admin 권한을 강제한다. node/viewer/editor 등은 403(REQ-F04).
@@ -168,6 +182,42 @@ func (h *RemoteAdminHandler) Revoke(ctx api.Context) error {
 	}))
 }
 
+// Command 는 승인+온라인 노드에 원격 명령을 발행한다(M3, REQ-D01/D08, F04).
+// POST /remote/nodes/{instance_id}/command  본문: {domain, action, args}
+//
+// admin 권한만 명령을 발행할 수 있다(REQ-F04). 대상이 미승인/오프라인이면 503,
+// 명령 타임아웃이면 504, 노드 적용 실패이면 502 로 매핑한다.
+func (h *RemoteAdminHandler) Command(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	id := ctx.Param("instance_id")
+	var req commandRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+	if req.Domain == "" || req.Action == "" {
+		return api.ErrBadRequest.WithMessage("domain 과 action 은 필수입니다")
+	}
+
+	// 감사(F05): 명령 발행 — args 는 시크릿 가능성으로 로깅 제외(REQ-F06).
+	// M6 seam: 감사 저장소 — 영속 감사 레코드(actor/ts/target/domain/action) 기록.
+	h.logger.Info("원격 명령 발행",
+		"instance_id", id, "domain", req.Domain, "action", req.Action,
+		"actor", ctx.UserID())
+
+	result, err := h.svc.Dispatch(ctx.Context(), id, req.Domain, req.Action, req.Args)
+	if err != nil {
+		return mapRemoteCommandError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"instance_id": id,
+		"domain":      req.Domain,
+		"action":      req.Action,
+		"result":      result,
+	}))
+}
+
 // toManagedNodeDTOs 는 저장소 모델을 응답 DTO 로 변환한다(토큰 식별자 제외 — REQ-F06).
 func toManagedNodeDTOs(nodes []storage.ManagedNode) []ManagedNodeDTO {
 	out := make([]ManagedNodeDTO, 0, len(nodes))
@@ -195,4 +245,25 @@ func mapRemoteAdminError(err error) error {
 		return api.ErrNotFound.WithMessage(err.Error())
 	}
 	return api.ErrInternalServer.WithMessage(err.Error())
+}
+
+// mapRemoteCommandError 는 디스패치 도메인 에러를 APIError 로 매핑한다(M3).
+//   - remote.ErrNodeNotManaged → 503 (미승인/오프라인 — 적용 불가, REQ-D08/B07)
+//   - remote.ErrCommandTimeout → 504 (결과 미수신 — 미적용, REQ-D06)
+//   - remote.ErrCommandFailed  → 502 (노드 적용 실패, REQ-D09)
+//   - remote.ErrNoConn         → 503 (라이브 연결 부재)
+//   - context.Canceled 등 그 외 → 500
+func mapRemoteCommandError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, remote.ErrNodeNotManaged), errors.Is(err, remote.ErrNoConn):
+		return api.ErrServiceUnavailable.WithMessage(err.Error())
+	case errors.Is(err, remote.ErrCommandTimeout):
+		return &api.APIError{HTTPCode: http.StatusGatewayTimeout, Code: "COMMAND_TIMEOUT", Message: err.Error()}
+	case errors.Is(err, remote.ErrCommandFailed):
+		return &api.APIError{HTTPCode: http.StatusBadGateway, Code: "COMMAND_FAILED", Message: err.Error()}
+	default:
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
 }

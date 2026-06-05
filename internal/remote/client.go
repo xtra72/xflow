@@ -23,6 +23,7 @@ import (
 	"math"
 	"math/rand"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,11 @@ type ClientConfig struct {
 	// DataDir 은 노드 토큰 영속 디렉토리이다(REQ-C04/C05). 비어 있으면 토큰
 	// 영속/로드를 건너뛴다(in-memory only).
 	DataDir string
+
+	// Applier 는 수신한 원격 명령을 로컬 어댑터로 적용하는 구현이다(M3, REQ-D02/D03/
+	// D04). nil 이면 command 는 거부된다(미구성 노드 보호). cmd/xflowd 가 구체
+	// 어댑터(FlowServiceAdapter 등)를 바인딩한 Applier 를 주입한다.
+	Applier CommandApplier
 
 	// Logger 는 선택적 로거이다.
 	Logger *slog.Logger
@@ -271,7 +277,7 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 	var wg sync.WaitGroup
 
 	// 읽기 루프: 서버 메시지 수신. 연결 종료를 감지해 세션을 종료한다.
-	// M3 seam: command 수신 → 로컬 어댑터 적용 → command_result 반환.
+	// command 수신 → 로컬 어댑터 적용 → command_result 반환(M3).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -281,7 +287,7 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 			if err != nil {
 				return
 			}
-			c.handleServerMessage(data)
+			c.handleServerMessage(sessionCtx, conn, &wg, data)
 		}
 	}()
 
@@ -315,8 +321,14 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 }
 
 // handleServerMessage 는 서버가 보낸 메시지를 처리한다.
-// M1 은 수신만 하고(연결 생존성 확인), command/register_ack 처리는 M2/M3 seam.
-func (c *Client) handleServerMessage(data []byte) {
+//
+//   - heartbeat: 무시(생존성은 연결 자체로 확인).
+//   - register_ack: 등록 응답 처리(REQ-C03/C04/C05).
+//   - command: 출처/승인 검증 후 로컬 어댑터로 적용하고 command_result 반환(M3,
+//     REQ-D02/D03/D04/D05/D08). 적용은 별도 고루틴에서 수행하여 읽기 루프를 막지
+//     않으며, 동시 다수 명령을 병렬 처리한다(REQ-D07). 세션 WaitGroup 으로 추적하여
+//     연결 종료/취소 시 고루틴 누수를 방지한다.
+func (c *Client) handleServerMessage(ctx context.Context, conn Conn, wg *sync.WaitGroup, data []byte) {
 	msg, err := DecodeMessage(data)
 	if err != nil {
 		c.logger.Debug("remote client 메시지 디코드 실패", "error", err)
@@ -327,9 +339,118 @@ func (c *Client) handleServerMessage(data []byte) {
 		// 서버 heartbeat — 무시(생존성은 연결 자체로 확인).
 	case TypeRegisterAck:
 		c.handleRegisterAck(msg.Payload)
+	case TypeCommand:
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.handleCommand(ctx, conn, msg.Payload)
+		}()
 	default:
-		// M3 seam: command 처리 진입점.
-		c.logger.Debug("미처리 서버 메시지 타입(M3 seam)", "type", msg.Type)
+		// M4 seam: inventory 등 처리 진입점.
+		c.logger.Debug("미처리 서버 메시지 타입(M4 seam)", "type", msg.Type)
+	}
+}
+
+// handleCommand 는 수신한 command 를 적용하고 command_result 를 같은 연결로 반환한다
+// (spec §5.7 클라이언트 적용 경로).
+//
+//  1. 출처/승인 검증(REQ-D08): 명령은 인증된 서버 연결로만 도착하며(클라이언트는
+//     자신이 dial 한 서버 연결로만 수신), 노드가 승인 상태(노드 토큰 보유)여야 한다.
+//     미승인(토큰 미보유)이면 거부한다.
+//  2. domain/action 에 따라 applier 로 적용(REQ-D02/D03/D04). applier 미구성이면 거부.
+//  3. 결과를 command_result(ok+result | error)로 같은 연결에 반환한다(REQ-D05/D09).
+func (c *Client) handleCommand(ctx context.Context, conn Conn, payload []byte) {
+	// 신뢰 경계 panic 복구 가드: Applier.Apply 또는 디코드 과정의 panic 이 명령
+	// 고루틴/데몬을 죽이지 않도록 복구하고, panic 을 command_result{ok:false} 로
+	// 변환해 같은 연결로 반환한다(REQ-D09 정신 — 부분 적용 없이 실패 보고).
+	//
+	// 보안(REQ-F06): panic 값/스택은 시크릿을 담을 수 있으므로 외부 응답에는
+	// 일반화된 메시지만 노출하고, 상세(값+스택)는 내부 error 로그로만 기록한다.
+	//
+	// commandID 는 클로저로 캡처하여, 디코드 이후 panic 이면 해당 command_id 로,
+	// 디코드 전 panic 이면 빈 값으로 결과를 반환한다(상관 불가 시 서버는 타임아웃 처리).
+	commandID := ""
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("원격 명령 적용 중 panic 복구",
+				"command_id", commandID,
+				"panic", r,
+				"stack", string(debug.Stack()))
+			c.sendCommandResult(conn, CommandResultPayload{
+				CommandID: commandID,
+				OK:        false,
+				Error:     "internal error while applying command",
+			})
+		}
+	}()
+
+	var cmd CommandPayload
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		c.logger.Debug("command 디코드 실패", "error", err)
+		return
+	}
+	if cmd.CommandID == "" {
+		c.logger.Warn("command 에 command_id 누락 — 무시")
+		return
+	}
+	commandID = cmd.CommandID
+
+	// 출처/승인 검증(REQ-D08): 승인되지 않은 노드는 명령을 거부한다. 명령은 클라이언트가
+	// 자신의 설정된 서버로 맺은 인증 연결로만 도착하므로(비-서버 출처 불가), 승인 여부는
+	// 노드 토큰 보유로 판정한다(승인 시 register_ack 로 토큰 수신 — REQ-C04).
+	if !c.hasToken() {
+		c.logger.Warn("미승인 노드 — 원격 명령 거부",
+			"command_id", cmd.CommandID, "domain", cmd.Domain, "action", cmd.Action)
+		c.sendCommandResult(conn, CommandResultPayload{
+			CommandID: cmd.CommandID,
+			OK:        false,
+			Error:     "node not approved",
+		})
+		return
+	}
+
+	if c.cfg.Applier == nil {
+		c.logger.Warn("applier 미구성 — 원격 명령 거부", "command_id", cmd.CommandID)
+		c.sendCommandResult(conn, CommandResultPayload{
+			CommandID: cmd.CommandID,
+			OK:        false,
+			Error:     "command applier not configured",
+		})
+		return
+	}
+
+	// 적용(로컬 어댑터 — A5). Args 는 시크릿 가능성으로 로깅 제외(REQ-F06).
+	result, applyErr := c.cfg.Applier.Apply(ctx, cmd.Domain, cmd.Action, cmd.Args)
+	if applyErr != nil {
+		// 적용 실패 — 부분 적용 없이 오류 보고(REQ-D09).
+		c.logger.Warn("원격 명령 적용 실패",
+			"command_id", cmd.CommandID, "domain", cmd.Domain,
+			"action", cmd.Action, "error", applyErr)
+		c.sendCommandResult(conn, CommandResultPayload{
+			CommandID: cmd.CommandID,
+			OK:        false,
+			Error:     applyErr.Error(),
+		})
+		return
+	}
+
+	c.sendCommandResult(conn, CommandResultPayload{
+		CommandID: cmd.CommandID,
+		OK:        true,
+		Result:    result,
+	})
+}
+
+// sendCommandResult 는 command_result 를 연결로 전송한다(REQ-D05). 전송 실패는
+// 로깅만 한다(연결 종료 시).
+func (c *Client) sendCommandResult(conn Conn, res CommandResultPayload) {
+	msg, err := NewCommandResultMessage(res)
+	if err != nil {
+		c.logger.Error("command_result 인코딩 실패", "error", err)
+		return
+	}
+	if err := writeEnvelope(conn, msg); err != nil {
+		c.logger.Debug("command_result 전송 실패", "command_id", res.CommandID, "error", err)
 	}
 }
 

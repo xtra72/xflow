@@ -33,6 +33,10 @@ import (
 // 기본 임계 시간이다. heartbeat 주기보다 충분히 길어야 한다.
 const DefaultHeartbeatTimeout = 90 * time.Second
 
+// DefaultCommandTimeout 은 디스패치된 명령의 결과 대기 기본 제한 시간이다(REQ-D06).
+// 결과가 이 시간 내 도착하지 않으면 명령은 타임아웃 처리되고 미적용으로 간주된다.
+const DefaultCommandTimeout = 30 * time.Second
+
 // Conn 은 관리 채널의 메시지 단위 양방향 연결 추상화이다.
 // gorilla/websocket 연결을 래핑하거나, 테스트에서 인메모리로 구현한다.
 type Conn interface {
@@ -112,6 +116,10 @@ type ServerConfig struct {
 	// pending 큐잉된다.
 	BootstrapSecret string
 
+	// CommandTimeout 은 디스패치된 명령의 결과 대기 제한 시간이다(REQ-D06). 0 이면
+	// DefaultCommandTimeout 을 사용한다.
+	CommandTimeout time.Duration
+
 	// Logger 는 선택적 로거이다. nil 이면 slog.Default() 를 사용한다.
 	Logger *slog.Logger
 }
@@ -133,6 +141,10 @@ type Server struct {
 	mu    sync.RWMutex
 	nodes map[string]*NodeState
 	conns map[string]*nodeConn // instance_id -> 라이브 연결(M2)
+
+	cmdTimeout time.Duration
+	pendingMu  sync.Mutex
+	pending    map[string]chan CommandResultPayload // command_id -> 결과 채널(M3)
 }
 
 // NewServer 는 Server 를 생성한다. auth 가 nil 이면 부트스트랩 authenticator(빈
@@ -142,6 +154,9 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 	if cfg.HeartbeatTimeout <= 0 {
 		cfg.HeartbeatTimeout = DefaultHeartbeatTimeout
 	}
+	if cfg.CommandTimeout <= 0 {
+		cfg.CommandTimeout = DefaultCommandTimeout
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -150,13 +165,15 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 		auth = NewBootstrapAuthenticator("")
 	}
 	return &Server{
-		cfg:    cfg,
-		auth:   auth,
-		repo:   cfg.Repo,
-		tokens: cfg.TokenIssuer,
-		logger: logger,
-		nodes:  make(map[string]*NodeState),
-		conns:  make(map[string]*nodeConn),
+		cfg:        cfg,
+		auth:       auth,
+		repo:       cfg.Repo,
+		tokens:     cfg.TokenIssuer,
+		logger:     logger,
+		nodes:      make(map[string]*NodeState),
+		conns:      make(map[string]*nodeConn),
+		cmdTimeout: cfg.CommandTimeout,
+		pending:    make(map[string]chan CommandResultPayload),
 	}
 }
 
@@ -245,13 +262,18 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 			continue
 		}
 
-		// 식별 후: heartbeat/status 로 생존성 갱신.
+		// 식별 후: heartbeat/status 로 생존성 갱신, command_result 로 명령 상관.
 		switch msg.Type {
 		case TypeHeartbeat, TypeStatus:
 			s.touch(instanceID)
+		case TypeCommandResult:
+			// 명령 결과를 대기 중인 Dispatch 호출로 라우팅한다(REQ-D05/D07).
+			// 생존성도 함께 갱신한다(결과 수신 = 노드 활성).
+			s.touch(instanceID)
+			s.routeCommandResult(msg.Payload)
 		default:
-			// command/inventory 등은 후속 마일스톤(M3/M4)에서 처리.
-			s.logger.Debug("미처리 관리 메시지 타입(M3/M4 seam)",
+			// inventory 등은 후속 마일스톤(M4)에서 처리.
+			s.logger.Debug("미처리 관리 메시지 타입(M4 seam)",
 				"type", msg.Type, "instance_id", instanceID)
 		}
 	}

@@ -13,6 +13,7 @@
 package remote
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/xtra/xflow/internal/api/ws"
@@ -44,6 +45,16 @@ const (
 	TypeHeartbeat = "heartbeat"
 	// TypeStatus 는 상태 텔레메트리이다(client→server, REQ-B05 보조).
 	TypeStatus = "status"
+)
+
+// 원격 명령 도메인 상수 (spec §5.1 command.domain, REQ-D02/D03/D04).
+const (
+	// DomainFlow 는 플로우 명령 도메인이다(FlowServiceAdapter 적용, REQ-D02).
+	DomainFlow = "flow"
+	// DomainAgent 는 에이전트 명령 도메인이다(AgentServiceAdapter 적용, REQ-D03).
+	DomainAgent = "agent"
+	// DomainDevice 는 IoT 디바이스 메타데이터 명령 도메인이다(device 서비스 적용, REQ-D04).
+	DomainDevice = "device"
 )
 
 // 등록 상태 문자열 상수 (spec §5.6 상태 머신, managed_nodes.status).
@@ -102,6 +113,36 @@ type RegisterAckPayload struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+// CommandPayload 는 원격 명령 페이로드이다(server→client, REQ-D01/D07, spec §5.1).
+//
+// CommandID 로 요청-결과를 1:1 상관(correlation)한다(REQ-D07). TargetInstanceID 는
+// 명령 대상 노드이며, 서버는 대상이 승인+온라인일 때만 디스패치한다(REQ-D01/D08).
+// Domain(flow|agent|device) + Action 으로 클라이언트의 로컬 어댑터 메서드에
+// 라우팅하며, Args 는 도메인/액션별 인코딩된 인자이다(REQ-D02/D03/D04).
+//
+// Args 는 시크릿(에이전트/디바이스 자격증명 등)을 포함할 수 있으므로 verbatim
+// 로깅 금지이다(REQ-F06). 감사 로그는 domain/action/command_id 만 남긴다.
+type CommandPayload struct {
+	CommandID        string          `json:"command_id"`
+	TargetInstanceID string          `json:"target_instance_id"`
+	Domain           string          `json:"domain"`
+	Action           string          `json:"action"`
+	Args             json.RawMessage `json:"args,omitempty"`
+}
+
+// CommandResultPayload 는 명령 결과/ack 페이로드이다(client→server, REQ-D05/D09,
+// spec §5.1).
+//
+// CommandID 로 원본 명령과 상관된다(REQ-D07). OK 가 true 이면 Result 에 적용 결과가
+// 담기고, false 이면 Error 에 실패 사유가 담긴다. 적용 실패는 부분 적용 없이 보고
+// 된다(REQ-D09).
+type CommandResultPayload struct {
+	CommandID string          `json:"command_id"`
+	OK        bool            `json:"ok"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
 // HeartbeatPayload 는 heartbeat 페이로드이다(REQ-B03).
 // TS 는 epoch milliseconds(int64) 이다.
 type HeartbeatPayload struct {
@@ -146,6 +187,17 @@ func NewRegisterMessage(p RegisterPayload) (*ws.Message, error) {
 // (REQ-C03/C04).
 func NewRegisterAckMessage(p RegisterAckPayload) (*ws.Message, error) {
 	return ws.NewMessage(TypeRegisterAck, p)
+}
+
+// NewCommandMessage 는 CommandPayload 를 ws.Message 봉투로 인코딩한다(REQ-D01).
+func NewCommandMessage(p CommandPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeCommand, p)
+}
+
+// NewCommandResultMessage 는 CommandResultPayload 를 ws.Message 봉투로 인코딩한다
+// (REQ-D05).
+func NewCommandResultMessage(p CommandResultPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeCommandResult, p)
 }
 
 // DecodeMessage 는 ws.DecodeMessage 의 패키지-로컬 별칭이다(테스트/호출 편의).

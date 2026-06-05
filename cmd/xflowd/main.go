@@ -807,6 +807,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			break
 		}
 		hostname, _ := os.Hostname()
+		// 원격 명령 적용기(M3, REQ-D02/D03/D04): 로컬 API 와 동일한 어댑터 인스턴스를
+		// 재사용하여 원격 변경과 로컬 변경이 동일 상태에 반영되도록 한다(A5 — 원격 우회
+		// 없음). domain → DomainCommander 라우팅은 remote.Applier 가 담당한다.
+		commandApplier := remote.NewApplier(
+			&flowCommander{adapter: flowSvc},
+			&agentCommander{adapter: agentSvc},
+			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo},
+		)
+
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
 		// Exposure 요약은 register 에 운반된다(REQ-C01/A04; 실제 미러링은 M4).
 		remoteClient := remote.NewClient(remote.ClientConfig{
@@ -822,7 +831,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 				Agents:  rmCfg.Exposure.Agents,
 				Devices: rmCfg.Exposure.Devices,
 			},
-			Logger: obs.Loggers.NewLogger("remote.client").Logger(),
+			Applier: commandApplier,
+			Logger:  obs.Loggers.NewLogger("remote.client").Logger(),
 		}, nil)
 		remoteClient.Start(ctx)
 		defer remoteClient.Stop()
