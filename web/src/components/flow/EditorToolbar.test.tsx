@@ -1,11 +1,11 @@
-// EditorToolbar 의 플로우 전환 선택기(FlowSwitcher) 테스트.
+// EditorToolbar 의 플로우 타이틀(읽기 전용) + 전환 선택기(FlowSwitcher) 테스트.
 //
 // 검증 대상:
-//   - 현재 플로우 이름 렌더링 (FlowNameEditor)
+//   - 현재 플로우 이름 렌더링 (읽기 전용 FlowTitle, 인라인 편집 제거)
+//   - 설명(description)이 있으면 이름 뒤 도움말(?) 아이콘 표시, 없으면 숨김
 //   - chevron 버튼 클릭 시 전체 플로우 목록 드롭다운 표시
 //   - 다른 플로우 선택 시 navigate('/editor/{id}') 호출
 //   - 같은(현재) 플로우 선택 시 navigate 미호출
-//   - 인라인 이름 편집(FlowNameEditor) 동작 유지 — 클릭 시 input 으로 전환
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -18,10 +18,17 @@ vi.mock('react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 
-// 플로우 훅 모킹. 전환 선택기와 이름 편집에 필요한 최소 동작만 제공한다.
+// 플로우 훅 모킹. 전환 선택기와 타이틀 표시에 필요한 최소 동작만 제공한다.
+// flow-1 은 설명이 있고, flow-2 / flow-3 은 설명이 없다.
 const updateMutate = vi.fn();
 const flowsList: FlowInfo[] = [
-  { id: 'flow-1', name: '플로우 하나', status: 'stored', node_count: 0 },
+  {
+    id: 'flow-1',
+    name: '플로우 하나',
+    description: '첫 번째 플로우 설명',
+    status: 'stored',
+    node_count: 0,
+  },
   { id: 'flow-2', name: '플로우 둘', status: 'stored', node_count: 0 },
   { id: 'flow-3', name: '플로우 셋', status: 'stored', node_count: 0 },
 ];
@@ -63,7 +70,7 @@ const renderToolbar = (props?: {
     />,
   );
 
-describe('EditorToolbar - 플로우 전환 선택기', () => {
+describe('EditorToolbar - 플로우 타이틀 / 전환 선택기', () => {
   beforeEach(() => {
     navigateMock.mockClear();
     updateMutate.mockClear();
@@ -72,6 +79,42 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
   it('현재 플로우 이름을 렌더링한다', () => {
     renderToolbar();
     expect(screen.getByText('플로우 하나')).toBeInTheDocument();
+  });
+
+  it('이름은 읽기 전용으로 표시되며 클릭해도 input 으로 전환되지 않는다', () => {
+    renderToolbar();
+
+    // 인라인 편집이 제거되어 "플로우 이름" input 이 존재하지 않는다.
+    expect(screen.queryByLabelText('플로우 이름')).not.toBeInstanceOf(
+      HTMLInputElement,
+    );
+
+    // 이름 텍스트를 클릭해도 input 이 나타나지 않는다.
+    fireEvent.click(screen.getByText('플로우 하나'));
+    expect(
+      screen.queryByRole('textbox', { name: '플로우 이름' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('설명이 있으면 이름 뒤에 도움말(?) 아이콘을 표시한다', () => {
+    renderToolbar({ flowId: 'flow-1' });
+    expect(
+      screen.getByRole('button', { name: '설명 보기' }),
+    ).toBeInTheDocument();
+  });
+
+  it('도움말(?) 클릭 시 설명 팝오버를 보여준다', () => {
+    renderToolbar({ flowId: 'flow-1' });
+
+    fireEvent.click(screen.getByRole('button', { name: '설명 보기' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('첫 번째 플로우 설명');
+  });
+
+  it('설명이 없으면 도움말(?) 아이콘을 표시하지 않는다', () => {
+    renderToolbar({ flowId: 'flow-2' });
+    expect(
+      screen.queryByRole('button', { name: '설명 보기' }),
+    ).not.toBeInTheDocument();
   });
 
   it('전환 버튼 클릭 시 전체 플로우 목록을 표시한다', () => {
@@ -116,13 +159,6 @@ describe('EditorToolbar - 플로우 전환 선택기', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('listbox', { name: '플로우 목록' })).not.toBeInTheDocument();
-  });
-
-  it('인라인 이름 편집을 위해 이름 클릭 시 input 으로 전환한다', () => {
-    renderToolbar();
-
-    fireEvent.click(screen.getByRole('button', { name: '플로우 이름 (클릭하여 변경)' }));
-    expect(screen.getByLabelText('플로우 이름')).toBeInTheDocument();
   });
 });
 

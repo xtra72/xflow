@@ -15,7 +15,6 @@ import {
   Layers,
   Minus,
   PanelLeft,
-  Pencil,
   Plus,
   Play,
   Redo2,
@@ -47,6 +46,7 @@ import {
 import { useUIStore } from '@/stores/uiStore';
 import { serializeFlowDefinition } from '@/lib/flow/boundary';
 import type { FlowStatus } from '@/types/flow';
+import { FieldHelp } from '@/components/property/FieldHelp';
 import { FlowSettingsDialog } from './FlowSettingsDialog';
 
 /** 상태별 배지 스타일 매핑 */
@@ -89,7 +89,7 @@ export function EditorToolbar({
   onTogglePortPanel,
 }: EditorToolbarProps) {
   const addNotification = useUIStore((s) => s.addNotification);
-  // 2026-05-31: 플로우 표시 설정 모달 상태
+  // 2026-05-31: 플로우 설정 모달 상태(이름·설명 편집 + 표시 토글)
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 에디터 상태
@@ -220,9 +220,10 @@ export function EditorToolbar({
 
   return (
     <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-      {/* 플로우 이름 (클릭하여 인라인 편집) + 다른 플로우로 전환하는 선택기 */}
+      {/* 플로우 이름(읽기 전용) + 설명 도움말(?) + 다른 플로우로 전환하는 선택기.
+          이름·설명 변경은 "플로우 설정" 모달에서만 처리한다. */}
       <div className="flex items-center gap-0.5">
-        <FlowNameEditor flowId={flowId} />
+        <FlowTitle flowId={flowId} />
         <FlowSwitcher flowId={flowId} />
       </div>
 
@@ -343,10 +344,10 @@ export function EditorToolbar({
         enabled={focusConnectionsOnSelect}
       />
 
-      {/* 2026-05-31: 플로우 표시 설정 모달 */}
+      {/* 2026-05-31: 플로우 설정 모달(이름·설명 편집 + 표시 토글) */}
       <ToolbarButton
         icon={Settings}
-        label="플로우 표시 설정"
+        label="플로우 설정"
         onClick={() => setSettingsOpen(true)}
       />
 
@@ -373,107 +374,40 @@ export function EditorToolbar({
 
 // ---- 내부 컴포넌트 ----
 
-interface FlowNameEditorProps {
+interface FlowTitleProps {
   /** 현재 편집 중인 플로우 ID */
   flowId: string;
 }
 
 /**
- * 플로우 이름 인라인 편집 컴포넌트.
+ * 플로우 이름(읽기 전용) + 설명 도움말(?) 표시 컴포넌트.
  *
- * - 기본은 텍스트로 이름을 표시하고, 클릭하면 input 으로 전환된다.
- * - Enter / blur 시 trim 후 저장(useUpdateFlow). 빈 값은 무시하고 원래 이름 복원.
- * - Escape 는 저장 없이 취소.
- * - 편집 중에는 keydown 전파를 막아 에디터 단축키(Delete/Ctrl+Z 등) 가
- *   실행되지 않게 한다.
+ * - 이름은 더 이상 인라인 편집하지 않는다. 이름·설명 변경은 "플로우 설정"
+ *   모달(FlowSettingsDialog)에서만 처리한다.
+ * - 설명(description)이 있으면 이름 뒤에 FieldHelp(?) 아이콘을 표시하고,
+ *   클릭하면 설명 팝오버를 보여준다. 설명이 없으면 아이콘을 숨긴다.
  */
-function FlowNameEditor({ flowId }: FlowNameEditorProps) {
+function FlowTitle({ flowId }: FlowTitleProps) {
   const { data: flowData } = useFlow(flowId);
-  const updateFlow = useUpdateFlow();
   const name = flowData?.name ?? '';
-
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  // blur 와 Enter / Escape 가 중복 저장되지 않도록 커밋 여부를 추적한다.
-  const committedRef = useRef(false);
-
-  // 편집 진입 시 input 에 포커스하고 전체 선택한다.
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [editing]);
-
-  const startEditing = () => {
-    setDraft(name);
-    committedRef.current = false;
-    setEditing(true);
-  };
-
-  const commit = () => {
-    if (committedRef.current) return;
-    committedRef.current = true;
-
-    const trimmed = draft.trim();
-    // 빈 값이거나 변경이 없으면 저장하지 않고 원래 이름으로 되돌린다.
-    if (trimmed && trimmed !== name) {
-      updateFlow.mutate({ id: flowId, req: { name: trimmed } });
-    }
-    setEditing(false);
-  };
-
-  const cancel = () => {
-    committedRef.current = true;
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        type="text"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        // 에디터 전역 단축키가 발동하지 않도록 keydown 전파를 차단한다.
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit();
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            cancel();
-          }
-        }}
-        aria-label="플로우 이름"
-        className={cn(
-          'max-w-[220px] rounded-md border border-blue-400 bg-white px-2 py-0.5',
-          'text-sm font-semibold text-zinc-900 outline-none',
-          'focus:ring-1 focus:ring-blue-400',
-          'dark:bg-zinc-800 dark:text-zinc-100',
-        )}
-      />
-    );
-  }
+  const description = flowData?.description?.trim() ?? '';
 
   return (
-    <button
-      type="button"
-      onClick={startEditing}
-      title="플로우 이름 (클릭하여 변경)"
-      aria-label="플로우 이름 (클릭하여 변경)"
-      className={cn(
-        'group inline-flex items-center gap-1 rounded-md px-2 py-0.5',
-        'max-w-[220px] text-sm font-semibold transition-colors',
-        'text-zinc-800 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-800',
+    <span className="inline-flex items-center gap-1">
+      <span
+        title={name || '이름 없음'}
+        aria-label="플로우 이름"
+        className={cn(
+          'max-w-[220px] truncate px-2 py-0.5 text-sm font-semibold',
+          'text-zinc-800 dark:text-zinc-100',
+        )}
+      >
+        {name || '이름 없음'}
+      </span>
+      {description && (
+        <FieldHelp text={description} describedById={`flow-desc-${flowId}`} />
       )}
-    >
-      <span className="truncate">{name || '이름 없음'}</span>
-      <Pencil className="h-3 w-3 shrink-0 text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100" />
-    </button>
+    </span>
   );
 }
 
