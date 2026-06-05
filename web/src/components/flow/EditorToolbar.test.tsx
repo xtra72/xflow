@@ -12,10 +12,21 @@ import { fireEvent, render, screen } from '@testing-library/react';
 
 import type { FlowInfo } from '@/types/flow';
 
-// react-router 의 useNavigate 만 모킹한다.
+// react-router 의 useNavigate / useLocation 를 모킹한다.
+// useLocation 은 서브플로우 "돌아가기" 버튼(SubflowBackButton)이 백 스택을
+// 읽는 데 사용한다. 기본 location.state 는 null 이라 백 스택이 비어 돌아가기
+// 버튼은 숨겨지며, 필요한 테스트에서 locationStateMock 으로 주입한다.
 const navigateMock = vi.fn();
+let locationStateMock: unknown = null;
 vi.mock('react-router', () => ({
   useNavigate: () => navigateMock,
+  useLocation: () => ({
+    pathname: '/editor/flow-1',
+    search: '',
+    hash: '',
+    state: locationStateMock,
+    key: 'test',
+  }),
 }));
 
 // 플로우 훅 모킹. 전환 선택기와 타이틀 표시에 필요한 최소 동작만 제공한다.
@@ -74,6 +85,8 @@ describe('EditorToolbar - 플로우 타이틀 / 전환 선택기', () => {
   beforeEach(() => {
     navigateMock.mockClear();
     updateMutate.mockClear();
+    // 기본적으로 백 스택은 비어 있어(들어가기로 진입하지 않은 상태) 돌아가기 숨김.
+    locationStateMock = null;
   });
 
   it('현재 플로우 이름을 렌더링한다', () => {
@@ -244,5 +257,53 @@ describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
 
     expect(inc()).toBeDisabled();
     expect(dec()).toBeDisabled();
+  });
+});
+
+describe('EditorToolbar - 서브플로우 돌아가기', () => {
+  beforeEach(() => {
+    navigateMock.mockClear();
+    locationStateMock = null;
+  });
+
+  it('백 스택이 비어 있으면 "돌아가기" 버튼을 숨긴다', () => {
+    locationStateMock = null;
+    renderToolbar({ flowId: 'flow-1' });
+    expect(
+      screen.queryByRole('button', { name: '돌아가기' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('백 스택이 있으면 "돌아가기" 버튼을 표시한다', () => {
+    locationStateMock = { subflowBack: ['flow-1'] };
+    renderToolbar({ flowId: 'flow-2' });
+    expect(
+      screen.getByRole('button', { name: '돌아가기' }),
+    ).toBeInTheDocument();
+  });
+
+  it('"돌아가기" 클릭 시 직전 플로우로 이동하고 남은 스택을 넘긴다(중첩)', () => {
+    // A(flow-1) → B(flow-2) → C(flow-3) 로 들어간 상태(C 에서 스택 [A, B]).
+    locationStateMock = { subflowBack: ['flow-1', 'flow-2'] };
+    renderToolbar({ flowId: 'flow-3' });
+
+    fireEvent.click(screen.getByRole('button', { name: '돌아가기' }));
+
+    // 직전 플로우 B(flow-2) 로 이동하며 남은 스택 [A] 를 location.state 로 넘긴다.
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/editor/flow-2', {
+      state: { subflowBack: ['flow-1'] },
+    });
+  });
+
+  it('백 스택 마지막 단계에서 돌아가면 빈 스택을 넘긴다', () => {
+    locationStateMock = { subflowBack: ['flow-1'] };
+    renderToolbar({ flowId: 'flow-2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '돌아가기' }));
+
+    expect(navigateMock).toHaveBeenCalledWith('/editor/flow-1', {
+      state: { subflowBack: [] },
+    });
   });
 });

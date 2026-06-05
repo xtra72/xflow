@@ -2,12 +2,13 @@
 // 저장, 배포, 실행 제어, 실행 취소/다시 실행 버튼과 플로우 상태 배지를 제공한다.
 
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
   Check,
   ChevronDown,
+  CornerUpLeft,
   Eye,
   EyeOff,
   Focus,
@@ -45,6 +46,11 @@ import {
 } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 import { serializeFlowDefinition } from '@/lib/flow/boundary';
+import {
+  popBackStack,
+  readBackStack,
+  SUBFLOW_BACK_STATE_KEY,
+} from '@/lib/flow/subflowNav';
 import type { FlowStatus } from '@/types/flow';
 import { FieldHelp } from '@/components/property/FieldHelp';
 import { FlowSettingsDialog } from './FlowSettingsDialog';
@@ -220,6 +226,10 @@ export function EditorToolbar({
 
   return (
     <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+      {/* 서브플로우 "돌아가기" — 들어가기로 진입한 플로우에서만(백 스택 비어있지 않을 때)
+          표시되며, 직전(부모) 플로우로 되돌아간다. 중첩(A→B→C) 을 지원한다. */}
+      <SubflowBackButton />
+
       {/* 플로우 이름(읽기 전용) + 설명 도움말(?) + 다른 플로우로 전환하는 선택기.
           이름·설명 변경은 "플로우 설정" 모달에서만 처리한다. */}
       <div className="flex items-center gap-0.5">
@@ -528,6 +538,40 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 서브플로우 "돌아가기" 버튼.
+ *
+ * - 백 스택(location.state.subflowBack)이 비어 있지 않을 때만(들어가기로 진입한
+ *   플로우에서만) 표시된다. 비어 있으면 아무것도 렌더하지 않는다.
+ * - 클릭하면 직전(부모) 플로우 id 를 pop 하여 `/editor/{prev}` 로 이동하고,
+ *   남은 스택을 새 location.state 로 넘겨 중첩(A→B→C) 복원을 유지한다.
+ * - 미저장 변경 시 이동 차단은 EditorPage 의 useBlocker 가 중앙에서 처리하므로
+ *   여기서는 navigate 만 호출한다.
+ */
+function SubflowBackButton() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const backStack = readBackStack(location.state);
+
+  // 들어가기로 진입하지 않았으면(스택 비어있음) 버튼을 숨긴다.
+  if (backStack.length === 0) return null;
+
+  const handleBack = () => {
+    const { prev, rest } = popBackStack(backStack);
+    if (!prev) return;
+    navigate(`/editor/${prev}`, {
+      state: { [SUBFLOW_BACK_STATE_KEY]: rest },
+    });
+  };
+
+  return (
+    <>
+      <ToolbarButton icon={CornerUpLeft} label="돌아가기" onClick={handleBack} />
+      <Separator />
+    </>
   );
 }
 

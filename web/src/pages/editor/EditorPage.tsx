@@ -2,7 +2,7 @@
 // 노드 팔레트, 캔버스, 속성 패널로 구성된 3컬럼 레이아웃을 제공한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBlocker, useParams } from 'react-router';
+import { useBlocker, useLocation, useNavigate, useParams } from 'react-router';
 import {
   ReactFlow,
   MiniMap,
@@ -48,6 +48,11 @@ import {
   parseFlowPortsFromConfig,
   serializeFlowDefinition,
 } from '@/lib/flow/boundary';
+import {
+  pushBackStack,
+  readBackStack,
+  SUBFLOW_BACK_STATE_KEY,
+} from '@/lib/flow/subflowNav';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
 const nodeTypes = {
@@ -80,6 +85,10 @@ export default function EditorPage() {
 function EditorPageInner() {
   const { flowId } = useParams<{ flowId: string }>();
   const reactFlowInstance = useReactFlow();
+  // 서브플로우 네비게이션(들어가기) 용 라우터 훅.
+  // 백 스택은 location.state.subflowBack(string[]) 으로만 운반한다.
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // 플로우 데이터 조회
   const { data: flowData, isLoading, error } = useFlow(flowId ?? '');
@@ -193,7 +202,16 @@ function EditorPageInner() {
     // 편집 중인 flowId 를 스토어에 보관한다 (dirty/undo 에 영향 없음).
     setCurrentFlowId(flowId ?? null);
     hydratedFlowIdRef.current = flowId ?? null;
-  }, [flowId, flowData, loadFlow, setCurrentFlowId]);
+
+    // flowId 변경(들어가기/돌아가기/플로우 전환) 시 새 플로우를 전체보기로 맞춘다.
+    // <ReactFlow fitView> 는 최초 마운트에만 동작하므로, 재하이드레이션 시에는
+    // 이전 플로우의 뷰포트(확대 상태)가 남아 일부만 확대돼 보인다. loadFlow 로
+    // 교체된 노드가 측정된 뒤 fitView 하도록 약간의 지연을 둔다.
+    const fitTimer = setTimeout(() => {
+      reactFlowInstance.fitView({ padding: 0.15, duration: 200 });
+    }, 150);
+    return () => clearTimeout(fitTimer);
+  }, [flowId, flowData, loadFlow, setCurrentFlowId, reactFlowInstance]);
 
   // flowId 변경(또는 언마운트) 시 에디터를 초기화해 다음 flowId 가 다시
   // hydrate 되도록 한다.
@@ -449,6 +467,35 @@ function EditorPageInner() {
     closeContextMenu();
   }, [contextMenu, removeNode, closeContextMenu]);
 
+  // 컨텍스트 메뉴의 "들어가기" 실행 — 참조 플로우를 에디터에서 연다.
+  // 현재(부모) 플로우 id 를 백 스택에 쌓아 돌아가기에서 복원할 수 있게 한다.
+  // 미저장 변경 시 이동 차단은 useBlocker 가 중앙에서 처리하므로 여기서는
+  // navigate 만 호출한다(blocker 가 pathname 변경을 감지해 확인 다이얼로그를 띄움).
+  const handleEnterSubflow = useCallback(
+    (refFlowId: string) => {
+      const currentStack = readBackStack(location.state);
+      navigate(`/editor/${refFlowId}`, {
+        state: {
+          [SUBFLOW_BACK_STATE_KEY]: pushBackStack(currentStack, flowId ?? ''),
+        },
+      });
+      closeContextMenu();
+    },
+    [location.state, navigate, flowId, closeContextMenu],
+  );
+
+  // 우클릭 대상 노드가 참조 플로우가 지정된 flow-node 면 들어갈 참조 플로우 id 를,
+  // 아니면 null 을 돌려준다. null 이면 컨텍스트 메뉴에서 "들어가기" 를 숨긴다.
+  const contextMenuRefFlowId = useMemo<string | null>(() => {
+    if (!contextMenu) return null;
+    const target = nodes.find((n) => n.id === contextMenu.nodeId);
+    if (!target) return null;
+    const data = target.data as Record<string, unknown>;
+    if (data.nodeType !== 'flow-node') return null;
+    const refFlowId = data.flow_id;
+    return typeof refFlowId === 'string' && refFlowId !== '' ? refFlowId : null;
+  }, [contextMenu, nodes]);
+
   // --- MiniMap 노드 색상 ---
   // SPEC-SUBFLOW-001: 영역 표시 노드(__flow_area__)는 실제 노드 전체를 덮는 큰
   // 사각형이라, 미니맵에서 채우면 실제 노드들이 가려진다. 영역은 투명, 경계 포트는
@@ -615,6 +662,12 @@ function EditorPageInner() {
         <NodeContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          // 참조 플로우가 지정된 flow-node 에서만 "들어가기" 를 노출한다.
+          onEnter={
+            contextMenuRefFlowId
+              ? () => handleEnterSubflow(contextMenuRefFlowId)
+              : undefined
+          }
           onDuplicate={handleDuplicateFromMenu}
           onDelete={handleDeleteFromMenu}
           onClose={closeContextMenu}
