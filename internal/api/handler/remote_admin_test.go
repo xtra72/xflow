@@ -30,10 +30,11 @@ type fakeNodeAdmin struct {
 	dispatched     []string // domain/action 기록
 	dispatchResult json.RawMessage
 	dispatchErr    error
+	mirror         *mirrorStore // M4 미러 목록(노드 push 로만 변경 — E08)
 }
 
 func newFakeNodeAdmin() *fakeNodeAdmin {
-	return &fakeNodeAdmin{nodes: make(map[string]storage.ManagedNode)}
+	return &fakeNodeAdmin{nodes: make(map[string]storage.ManagedNode), mirror: newMirrorStore()}
 }
 
 func (f *fakeNodeAdmin) ListNodes(_ context.Context) ([]storage.ManagedNode, error) {
@@ -228,6 +229,30 @@ func (erroringAdmin) Approve(context.Context, string) error        { return erro
 func (erroringAdmin) Reject(context.Context, string, string) error { return errors.New("boom") }
 func (erroringAdmin) Revoke(context.Context, string) error         { return errors.New("boom") }
 func (erroringAdmin) Dispatch(context.Context, string, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errors.New("boom")
+}
+
+func (erroringAdmin) ListMirroredFlows(context.Context, string) ([]remote.MirroredResourceView, error) {
+	return nil, errors.New("boom")
+}
+
+func (erroringAdmin) ListMirroredAgents(context.Context, string) ([]remote.MirroredResourceView, error) {
+	return nil, errors.New("boom")
+}
+
+func (erroringAdmin) ListMirroredDevices(context.Context, string) ([]remote.MirroredResourceView, error) {
+	return nil, errors.New("boom")
+}
+
+func (erroringAdmin) ListAllMirroredFlows(context.Context) ([]remote.MirroredResourceView, error) {
+	return nil, errors.New("boom")
+}
+
+func (erroringAdmin) ListAllMirroredAgents(context.Context) ([]remote.MirroredResourceView, error) {
+	return nil, errors.New("boom")
+}
+
+func (erroringAdmin) ListAllMirroredDevices(context.Context) ([]remote.MirroredResourceView, error) {
 	return nil, errors.New("boom")
 }
 

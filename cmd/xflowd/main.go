@@ -720,6 +720,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		remoteServer       *remote.Server
 		remoteAdminHandler *handler.RemoteAdminHandler
 		managedNodeRepo    storage.ManagedNodeRepository
+		mirrorRepo         storage.MirrorRepository
 	)
 	switch rmCfg.Mode {
 	case "server":
@@ -731,12 +732,21 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		managedNodeRepo = mnRepo
 		defer managedNodeRepo.Close()
 
+		// 인벤토리 미러 캐시(M4, §5.4) — 동일 SQLite DB 에 미러 테이블을 멱등 추가.
+		mrRepo, mrErr := storage.NewMirrorRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if mrErr != nil {
+			return fmt.Errorf("인벤토리 미러 저장소 초기화 실패: %w", mrErr)
+		}
+		mirrorRepo = mrRepo
+		defer mirrorRepo.Close()
+
 		// 노드 토큰은 기존 JWTService 를 재사용한다(REQ-C04/C05/C07/F02/F07).
 		tokenIssuer := remote.NewJWTTokenIssuer(server.JWTService())
 
 		remoteServer = remote.NewServer(remote.ServerConfig{
 			HeartbeatTimeout: 3 * rmCfg.HeartbeatInterval,
 			Repo:             managedNodeRepo,
+			Mirror:           mirrorRepo,
 			TokenIssuer:      tokenIssuer,
 			BootstrapSecret:  rmCfg.BootstrapSecret,
 			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
@@ -816,8 +826,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo},
 		)
 
+		// 인벤토리 소스(M4, REQ-E01): 로컬 API 와 동일한 어댑터 인스턴스를 재사용하여
+		// 미러가 로컬 상태와 일치하도록 한다. redaction(F06)은 소스 어댑터가 수행한다.
+		inventorySource := newRemoteInventorySource(flowSvc, agentSvc, deviceRegistry)
+
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
-		// Exposure 요약은 register 에 운반된다(REQ-C01/A04; 실제 미러링은 M4).
+		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
 		remoteClient := remote.NewClient(remote.ClientConfig{
 			ServerURL:         rmCfg.ServerURL,
 			InstanceID:        instanceID,
@@ -831,11 +845,31 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 				Agents:  rmCfg.Exposure.Agents,
 				Devices: rmCfg.Exposure.Devices,
 			},
-			Applier: commandApplier,
-			Logger:  obs.Loggers.NewLogger("remote.client").Logger(),
+			Applier:   commandApplier,
+			Inventory: inventorySource,
+			Logger:    obs.Loggers.NewLogger("remote.client").Logger(),
 		}, nil)
 		remoteClient.Start(ctx)
 		defer remoteClient.Stop()
+
+		// 노출 설정 핫리로드(A07/A06): exposure 키 변경 시 새 범위로 재미러링한다.
+		// 노출 해제된 자원은 remove 델타로 서버 캐시에서 제거된다(client_mirror.go).
+		for _, key := range []string{
+			"remote_management.exposure.flows",
+			"remote_management.exposure.agents",
+			"remote_management.exposure.devices",
+		} {
+			cfg.OnChange(key, func(_ config.ChangeEvent) {
+				rm := cfg.RemoteManagement()
+				remoteClient.UpdateExposure(remote.ExposureSummary{
+					Flows:   rm.Exposure.Flows,
+					Agents:  rm.Exposure.Agents,
+					Devices: rm.Exposure.Devices,
+				})
+				logger.Info("노출 설정 변경 — 재미러링 신호", "instance_id", instanceID)
+			})
+		}
+
 		logger.Info("원격 관리 클라이언트 시작",
 			"instance_id", instanceID, "server_url", rmCfg.ServerURL)
 	}

@@ -42,6 +42,15 @@ type NodeAdminService interface {
 	// Dispatch 는 승인+온라인 노드에 원격 명령을 디스패치하고 결과를 기다린다(M3,
 	// REQ-D01/D05/D06/D07/D08). 미승인/오프라인 시 remote.ErrNodeNotManaged.
 	Dispatch(ctx context.Context, instanceID, domain, action string, args json.RawMessage) (json.RawMessage, error)
+
+	// 인벤토리 미러 목록(M4, REQ-E05/E06). 노드별/통합 조회를 출처 노드 + online
+	// 태그와 함께 반환한다. 알 수 없는 노드 조회는 storage.ErrManagedNodeNotFound.
+	ListMirroredFlows(ctx context.Context, instanceID string) ([]remote.MirroredResourceView, error)
+	ListMirroredAgents(ctx context.Context, instanceID string) ([]remote.MirroredResourceView, error)
+	ListMirroredDevices(ctx context.Context, instanceID string) ([]remote.MirroredResourceView, error)
+	ListAllMirroredFlows(ctx context.Context) ([]remote.MirroredResourceView, error)
+	ListAllMirroredAgents(ctx context.Context) ([]remote.MirroredResourceView, error)
+	ListAllMirroredDevices(ctx context.Context) ([]remote.MirroredResourceView, error)
 }
 
 // commandRequest 는 원격 명령 발행 요청 본문이다(POST /remote/nodes/{id}/command).
@@ -88,6 +97,14 @@ func (h *RemoteAdminHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/remote/nodes/{instance_id}/reject", h.Reject)
 	g.POST("/remote/nodes/{instance_id}/revoke", h.Revoke)
 	g.POST("/remote/nodes/{instance_id}/command", h.Command)
+
+	// 인벤토리 미러 목록(M4, REQ-E05/E06). 노드별 + 통합(전 노드) 엔드포인트.
+	g.GET("/remote/nodes/{instance_id}/flows", h.NodeFlows)
+	g.GET("/remote/nodes/{instance_id}/agents", h.NodeAgents)
+	g.GET("/remote/nodes/{instance_id}/devices", h.NodeDevices)
+	g.GET("/remote/flows", h.AllFlows)
+	g.GET("/remote/agents", h.AllAgents)
+	g.GET("/remote/devices", h.AllDevices)
 }
 
 // requireAdmin 은 admin 권한을 강제한다. node/viewer/editor 등은 403(REQ-F04).
@@ -216,6 +233,101 @@ func (h *RemoteAdminHandler) Command(ctx api.Context) error {
 		"action":      req.Action,
 		"result":      result,
 	}))
+}
+
+// MirroredResourceDTO 는 미러 자원 목록 응답 표현이다(M4, REQ-E04/E05/E06).
+//
+// SourceInstanceID 로 출처 노드를 태깅하고(REQ-E04/E05), Online 으로 출처 노드의
+// 라이브 연결 상태를 표시한다(Online=false 는 last-known/offline 표식 — REQ-E06).
+// Definition 은 노드가 redaction(F06)한 정의이므로 시크릿이 포함되지 않는다.
+type MirroredResourceDTO struct {
+	ID               string `json:"id"`
+	SourceInstanceID string `json:"source_instance_id"`
+	Name             string `json:"name"`
+	Kind             string `json:"kind"`
+	Status           string `json:"status,omitempty"`
+	Definition       string `json:"definition,omitempty"`
+	UpdatedAt        int64  `json:"updated_at"` // epoch ms
+	Online           bool   `json:"online"`     // 출처 노드 라이브 상태(false=last-known)
+}
+
+// mirrorLister 는 노드별/통합 미러 조회 함수 시그니처이다.
+type (
+	nodeMirrorFn func(ctx context.Context, instanceID string) ([]remote.MirroredResourceView, error)
+	allMirrorFn  func(ctx context.Context) ([]remote.MirroredResourceView, error)
+)
+
+// NodeFlows 는 한 노드의 flow 미러를 반환한다. GET /remote/nodes/{instance_id}/flows
+func (h *RemoteAdminHandler) NodeFlows(ctx api.Context) error {
+	return h.serveNodeMirror(ctx, h.svc.ListMirroredFlows)
+}
+
+// NodeAgents 는 한 노드의 agent 미러를 반환한다. GET /remote/nodes/{instance_id}/agents
+func (h *RemoteAdminHandler) NodeAgents(ctx api.Context) error {
+	return h.serveNodeMirror(ctx, h.svc.ListMirroredAgents)
+}
+
+// NodeDevices 는 한 노드의 device 미러를 반환한다. GET /remote/nodes/{instance_id}/devices
+func (h *RemoteAdminHandler) NodeDevices(ctx api.Context) error {
+	return h.serveNodeMirror(ctx, h.svc.ListMirroredDevices)
+}
+
+// AllFlows 는 전 노드의 flow 미러를 출처 태그와 함께 반환한다. GET /remote/flows
+func (h *RemoteAdminHandler) AllFlows(ctx api.Context) error {
+	return h.serveAllMirror(ctx, h.svc.ListAllMirroredFlows)
+}
+
+// AllAgents 는 전 노드의 agent 미러를 반환한다. GET /remote/agents
+func (h *RemoteAdminHandler) AllAgents(ctx api.Context) error {
+	return h.serveAllMirror(ctx, h.svc.ListAllMirroredAgents)
+}
+
+// AllDevices 는 전 노드의 device 미러를 반환한다. GET /remote/devices
+func (h *RemoteAdminHandler) AllDevices(ctx api.Context) error {
+	return h.serveAllMirror(ctx, h.svc.ListAllMirroredDevices)
+}
+
+// serveNodeMirror 는 노드별 미러 조회를 admin 게이트 후 응답한다(알 수 없는 노드 404).
+func (h *RemoteAdminHandler) serveNodeMirror(ctx api.Context, list nodeMirrorFn) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	id := ctx.Param("instance_id")
+	views, err := list(ctx.Context(), id)
+	if err != nil {
+		return mapRemoteAdminError(err) // ErrManagedNodeNotFound → 404.
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toMirroredDTOs(views)))
+}
+
+// serveAllMirror 는 통합 미러 조회를 admin 게이트 후 응답한다(REQ-E05).
+func (h *RemoteAdminHandler) serveAllMirror(ctx api.Context, list allMirrorFn) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	views, err := list(ctx.Context())
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toMirroredDTOs(views)))
+}
+
+// toMirroredDTOs 는 미러 뷰를 응답 DTO 로 변환한다(출처/online 태깅 — REQ-E04/E06).
+func toMirroredDTOs(views []remote.MirroredResourceView) []MirroredResourceDTO {
+	out := make([]MirroredResourceDTO, 0, len(views))
+	for _, v := range views {
+		out = append(out, MirroredResourceDTO{
+			ID:               v.ID,
+			SourceInstanceID: v.SourceInstanceID,
+			Name:             v.Name,
+			Kind:             v.Kind,
+			Status:           v.Status,
+			Definition:       v.Definition,
+			UpdatedAt:        v.UpdatedAt,
+			Online:           v.Online,
+		})
+	}
+	return out
 }
 
 // toManagedNodeDTOs 는 저장소 모델을 응답 DTO 로 변환한다(토큰 식별자 제외 — REQ-F06).

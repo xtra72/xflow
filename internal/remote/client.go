@@ -40,6 +40,11 @@ const (
 
 	// DefaultReconnectMax 는 재연결 백오프의 상한이다(폭주 방지 — 위험표 "재연결 폭주").
 	DefaultReconnectMax = 60 * time.Second
+
+	// DefaultInventoryPollInterval 은 인벤토리 poll+diff 델타 소스의 기본 주기이다
+	// (M4, REQ-E02). 데몬에 구독 가능한 변경 이벤트 소스가 없어 poll 기반으로 델타를
+	// 도출한다(inventory.go 델타 소스 결정 주석 참조).
+	DefaultInventoryPollInterval = 30 * time.Second
 )
 
 // Dialer 는 server_url 로 관리 WS 연결을 수립하는 추상화이다(테스트 주입용).
@@ -116,6 +121,16 @@ type ClientConfig struct {
 	// 어댑터(FlowServiceAdapter 등)를 바인딩한 Applier 를 주입한다.
 	Applier CommandApplier
 
+	// Inventory 는 노드의 로컬 자원 인벤토리 소스이다(M4, REQ-E01/E02). nil 이면
+	// 인벤토리 미러링이 비활성화된다(snapshot/delta 미송신). cmd/xflowd 가 어댑터를
+	// 바인딩한 InventorySource 를 주입한다(redaction 은 소스가 수행 — F06).
+	Inventory InventorySource
+
+	// InventoryPollInterval 은 poll 기반 델타 소스의 주기이다(M4, REQ-E02). 0 이면
+	// DefaultInventoryPollInterval. 데몬에 구독 가능한 변경 이벤트 소스가 없어
+	// poll+diff 로 델타를 도출하므로(inventory.go 주석), 이 주기로 변경을 감지한다.
+	InventoryPollInterval time.Duration
+
 	// Logger 는 선택적 로거이다.
 	Logger *slog.Logger
 }
@@ -134,6 +149,11 @@ type Client struct {
 	conn      Conn
 	nodeToken string // 영속/메모리의 현재 노드 토큰(REQ-C04/C05). 미승인 시 빈 값.
 	rejected  bool   // rejected ack 수신 시 true → 재연결 중단(REQ-C03).
+	exposure  ExposureSummary
+
+	// remirror 는 노출 설정 변경 시 재미러링을 신호하는 채널이다(REQ-A07). 버퍼 1 로
+	// non-blocking; 활성 미러 루프가 없으면 신호는 다음 세션 시작 스냅샷으로 흡수된다.
+	remirror chan struct{}
 }
 
 // NewClient 는 Client 를 생성한다. dialer 가 nil 이면 gorilla dialer 를 사용한다.
@@ -147,6 +167,9 @@ func NewClient(cfg ClientConfig, dialer Dialer) *Client {
 	if cfg.ReconnectMax <= 0 {
 		cfg.ReconnectMax = DefaultReconnectMax
 	}
+	if cfg.InventoryPollInterval <= 0 {
+		cfg.InventoryPollInterval = DefaultInventoryPollInterval
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -155,9 +178,11 @@ func NewClient(cfg ClientConfig, dialer Dialer) *Client {
 		dialer = NewGorillaDialer()
 	}
 	c := &Client{
-		cfg:    cfg,
-		dialer: dialer,
-		logger: logger,
+		cfg:      cfg,
+		dialer:   dialer,
+		logger:   logger,
+		exposure: cfg.Exposure,
+		remirror: make(chan struct{}, 1),
 	}
 	// 영속된 노드 토큰을 로드한다(REQ-C05 — 재접속 인증).
 	if cfg.DataDir != "" {
@@ -310,6 +335,17 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 			}
 		}
 	}()
+
+	// 인벤토리 미러 루프(M4): 승인(토큰 보유)되고 Inventory 소스가 구성된 경우에만
+	// 동작한다(미승인 노드는 미러링하지 않음 — REQ-C06/F03 정신). 세션 종료/취소 시
+	// sessionCtx 로 정리된다(goroutine leak 방지).
+	if c.cfg.Inventory != nil && c.hasToken() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.runMirror(sessionCtx, conn)
+		}()
+	}
 
 	// ctx 취소 시 연결을 닫아 읽기 블로킹을 해제한다.
 	go func() {

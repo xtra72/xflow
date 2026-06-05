@@ -107,6 +107,11 @@ type ServerConfig struct {
 	// 비활성화되고 M1 의 in-memory online/offline 추적만 동작한다(하위 호환).
 	Repo storage.ManagedNodeRepository
 
+	// Mirror 는 인벤토리 미러 캐시 저장소이다(M4, REQ-E03). nil 이면 inventory_snapshot/
+	// inventory_delta 수신은 무시된다(미러링 비활성). 노드가 push 한 snapshot/delta
+	// 로만 변경되며, 서버 admin 편집은 본 저장소를 직접 쓰지 않는다(REQ-E08/A4).
+	Mirror storage.MirrorRepository
+
 	// TokenIssuer 는 노드 토큰 발급/검증/폐기를 담당한다(M2, REQ-C04/C05/C07/F07).
 	// Repo 와 함께 주입되어야 등록/승인 흐름이 완전 동작한다.
 	TokenIssuer TokenIssuer
@@ -135,6 +140,7 @@ type Server struct {
 	cfg    ServerConfig
 	auth   Authenticator
 	repo   storage.ManagedNodeRepository
+	mirror storage.MirrorRepository
 	tokens TokenIssuer
 	logger *slog.Logger
 
@@ -168,6 +174,7 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 		cfg:        cfg,
 		auth:       auth,
 		repo:       cfg.Repo,
+		mirror:     cfg.Mirror,
 		tokens:     cfg.TokenIssuer,
 		logger:     logger,
 		nodes:      make(map[string]*NodeState),
@@ -271,9 +278,17 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 			// 생존성도 함께 갱신한다(결과 수신 = 노드 활성).
 			s.touch(instanceID)
 			s.routeCommandResult(msg.Payload)
+		case TypeInventorySnapshot:
+			// 접속 시 전체 인벤토리 — 노드별 미러를 종류별로 교체한다(REQ-E01/E03).
+			s.touch(instanceID)
+			s.handleInventorySnapshot(connCtx, instanceID, msg.Payload)
+		case TypeInventoryDelta:
+			// 변경 델타 — add/update/remove 를 미러에 적용한다(REQ-E02/E03).
+			s.touch(instanceID)
+			s.handleInventoryDelta(connCtx, instanceID, msg.Payload)
 		default:
-			// inventory 등은 후속 마일스톤(M4)에서 처리.
-			s.logger.Debug("미처리 관리 메시지 타입(M4 seam)",
+			// M5 seam: 추가 텔레메트리 등 향후 메시지 타입 처리 진입점.
+			s.logger.Debug("미처리 관리 메시지 타입(M5 seam)",
 				"type", msg.Type, "instance_id", instanceID)
 		}
 	}

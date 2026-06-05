@@ -57,6 +57,27 @@ const (
 	DomainDevice = "device"
 )
 
+// 인벤토리 델타 연산 상수 (spec §5.1 inventory_delta.op, REQ-E02).
+const (
+	// OpAdd 는 노출 자원 추가이다(REQ-E02).
+	OpAdd = "add"
+	// OpUpdate 는 노출 자원 변경이다(REQ-E02).
+	OpUpdate = "update"
+	// OpRemove 는 노출 자원 제거(또는 노출 해제)이다(REQ-E02/A07).
+	OpRemove = "remove"
+)
+
+// 인벤토리 자원 종류 상수. command 도메인 상수와 동일 문자열을 재사용한다
+// (DomainFlow/DomainAgent/DomainDevice == "flow"/"agent"/"device").
+const (
+	// KindFlow 는 플로우 자원 종류이다.
+	KindFlow = DomainFlow
+	// KindAgent 는 에이전트 자원 종류이다.
+	KindAgent = DomainAgent
+	// KindDevice 는 IoT 디바이스 자원 종류이다.
+	KindDevice = DomainDevice
+)
+
 // 등록 상태 문자열 상수 (spec §5.6 상태 머신, managed_nodes.status).
 const (
 	// RegStatusPending 은 등록 요청이 접수되어 관리자 결정을 대기 중인 상태이다(REQ-C02).
@@ -143,6 +164,47 @@ type CommandResultPayload struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// InventoryItem 은 미러링되는 단일 자원(플로우/에이전트/디바이스)의 중립 표현이다
+// (REQ-E01/E02/E04, spec §5.1/§5.4).
+//
+// Definition 은 자원 정의/설정의 JSON 이며, 노드를 떠나기 전 반드시 redaction
+// 정책(F06)으로 시크릿이 제거된 상태여야 한다. remote 패키지는 redaction 을 직접
+// 수행하지 않고(handler 패키지 import cycle 회피), cmd/xflowd 의 InventorySource
+// 어댑터가 redaction 을 적용한 Definition 을 채운다(spec §5.5 어댑터 브리지).
+//
+// UpdatedAt 은 epoch milliseconds(int64) 이다(프로젝트 규약).
+type InventoryItem struct {
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Kind       string          `json:"kind"` // flow | agent | device
+	Status     string          `json:"status,omitempty"`
+	Definition json.RawMessage `json:"definition,omitempty"` // redacted (F06)
+	UpdatedAt  int64           `json:"updated_at,omitempty"` // epoch ms
+}
+
+// InventorySnapshotPayload 는 접속 시 전체 인벤토리 스냅샷이다(client→server,
+// REQ-E01, spec §5.1).
+//
+// 노출 범위(REQ-E07/A04)로 필터되고 redaction(F06)된 자원만 포함된다. 서버는
+// 수신 시 해당 노드의 미러 행을 종류별로 교체한다(REQ-E03).
+type InventorySnapshotPayload struct {
+	InstanceID string          `json:"instance_id"`
+	Flows      []InventoryItem `json:"flows,omitempty"`
+	Agents     []InventoryItem `json:"agents,omitempty"`
+	Devices    []InventoryItem `json:"devices,omitempty"`
+}
+
+// InventoryDeltaPayload 는 노출 자원 변경 델타이다(client→server, REQ-E02, spec §5.1).
+//
+// Op 는 add|update|remove 중 하나이며, Kind 는 flow|agent|device 이다. remove 의
+// 경우 Item 은 ID 만 채워질 수 있다(정의 불필요). 노출 해제(A07)도 remove 로 신호한다.
+type InventoryDeltaPayload struct {
+	InstanceID string        `json:"instance_id"`
+	Op         string        `json:"op"`   // add | update | remove
+	Kind       string        `json:"kind"` // flow | agent | device
+	Item       InventoryItem `json:"item"`
+}
+
 // HeartbeatPayload 는 heartbeat 페이로드이다(REQ-B03).
 // TS 는 epoch milliseconds(int64) 이다.
 type HeartbeatPayload struct {
@@ -198,6 +260,18 @@ func NewCommandMessage(p CommandPayload) (*ws.Message, error) {
 // (REQ-D05).
 func NewCommandResultMessage(p CommandResultPayload) (*ws.Message, error) {
 	return ws.NewMessage(TypeCommandResult, p)
+}
+
+// NewInventorySnapshotMessage 는 InventorySnapshotPayload 를 ws.Message 봉투로
+// 인코딩한다(REQ-E01).
+func NewInventorySnapshotMessage(p InventorySnapshotPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeInventorySnapshot, p)
+}
+
+// NewInventoryDeltaMessage 는 InventoryDeltaPayload 를 ws.Message 봉투로
+// 인코딩한다(REQ-E02).
+func NewInventoryDeltaMessage(p InventoryDeltaPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeInventoryDelta, p)
 }
 
 // DecodeMessage 는 ws.DecodeMessage 의 패키지-로컬 별칭이다(테스트/호출 편의).
