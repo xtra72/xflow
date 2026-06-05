@@ -111,12 +111,17 @@
 - 의존: 마일스톤 2·3·4(API/데이터 계약).
 - 매핑: REQ-G01~G04.
 
-### 마일스톤 6 — 우선순위 Low(최종 목표): 보안·감사·통합·회귀
-- TLS(wss) 강제 옵션, 원격 변경 감사 로그, 시크릿 redaction 검증.
-- disabled 회귀(기존 동작 불변), 다중 노드 부하·확장성, end-to-end(등록→승인→명령→미러).
-- 검증: security_test, audit_test, 회귀 스위트, 부하 테스트.
+### 마일스톤 6 — 우선순위 Low(최종 목표): 보안·감사·통합·회귀 ✅ 완료(2026-06-05)
+- TLS(wss) 강제 옵션(remote_management.require_secure + 검증), 원격 변경 감사 로그
+  (remote_audit 테이블 + GET /api/remote/audit), 시크릿 redaction 검증.
+- 토큰 하드닝: JWT jti 클레임 + jti 블랙리스트 → managed_nodes.token_id 에 원본 토큰
+  대신 jti 저장(DB-안전 폐기). 웹 어드민 토큰 하위 호환(jti 없는 레거시 토큰 유효).
+- disabled 회귀(기존 동작 불변), 다중 노드 확장성(N 동시 연결 -race + SQLite busy_timeout),
+  end-to-end(등록→승인→명령→적용→결과→미러, 폐기→재인증 거부).
+- 검증: jwt_jti_test, jwt_issuer_jti_test, remote_audit_sqlite_test, audit_test,
+  remote_admin_audit_test, remote_secure_test, integration_m6_test, regression_m6_test.
 - 의존: 전 마일스톤.
-- 매핑: REQ-F01/F05, N01/N03.
+- 매핑: REQ-F01/F05/F06/F07, N01/N03.
 
 ## 3. 위험 및 대응
 
