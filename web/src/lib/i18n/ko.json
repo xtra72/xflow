@@ -334,6 +334,8 @@
     "noNodes": "등록된 관리 노드가 없습니다.",
     "noResources": "표시할 자원이 없습니다.",
     "noApprovedNodes": "승인된 노드가 없습니다.",
+    "notServerTitle": "원격 관리 서버 모드가 아닙니다",
+    "notServerDesc": "이 인스턴스는 원격 관리 서버 모드가 아닙니다. remote_management.mode: server 로 설정 후 재시작하세요.",
     "selectNode": "노드 선택",
     "nodesTableLabel": "관리 노드 목록",
     "resourcesTableLabel": "원격 자원 목록",

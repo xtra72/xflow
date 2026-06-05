@@ -13,12 +13,14 @@ import type { ManagedNode } from '@/types/remote';
 
 // ---- useRemote mock ----
 const useManagedNodesMock = vi.hoisted(() => vi.fn());
+const useRemoteModeMock = vi.hoisted(() => vi.fn());
 const approveMutateMock = vi.hoisted(() => vi.fn());
 const rejectMutateMock = vi.hoisted(() => vi.fn());
 const revokeMutateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useRemote', () => ({
   useManagedNodes: useManagedNodesMock,
+  useRemoteMode: useRemoteModeMock,
   useApproveNode: () => ({ mutate: approveMutateMock, isPending: false, variables: undefined }),
   useRejectNode: () => ({ mutate: rejectMutateMock, isPending: false, variables: undefined }),
   useRevokeNode: () => ({ mutate: revokeMutateMock, isPending: false, variables: undefined }),
@@ -57,10 +59,13 @@ function makeNode(overrides: Partial<ManagedNode> = {}): ManagedNode {
 
 beforeEach(() => {
   useManagedNodesMock.mockReset();
+  useRemoteModeMock.mockReset();
   approveMutateMock.mockReset();
   rejectMutateMock.mockReset();
   revokeMutateMock.mockReset();
   addNotificationMock.mockReset();
+  // 기본: server 모드 (M5 동작과 동일).
+  useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
   useManagedNodesMock.mockReturnValue({
     data: [],
     isLoading: false,
@@ -135,6 +140,44 @@ describe('RemoteNodesPage — G01 목록', () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: /다시 시도/ }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 모드 게이팅 — server 모드가 아니면 안내 표시 + 노드 쿼리 비활성
+describe('RemoteNodesPage — 모드 게이팅', () => {
+  it.each(['disabled', 'client'] as const)(
+    'mode=%s 이면 안내를 표시하고 노드 쿼리를 비활성화한다',
+    (mode) => {
+      useRemoteModeMock.mockReturnValue({ data: { mode } });
+      useManagedNodesMock.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      });
+      renderPage();
+
+      // 안내 패널이 표시된다.
+      expect(screen.getByTestId('remote-not-server')).toBeInTheDocument();
+      // 노드 목록 테이블/빈 상태는 렌더되지 않는다.
+      expect(screen.queryByTestId('remote-nodes-empty')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('remote-node-row')).not.toBeInTheDocument();
+      // 노드 쿼리는 enabled=false 로 호출되어 발행되지 않는다.
+      const lastCall = useManagedNodesMock.mock.calls.at(-1)!;
+      expect(lastCall[1]).toBe(false);
+    },
+  );
+
+  it('mode 미확정(로딩) 중에는 스켈레톤을 표시한다', () => {
+    useRemoteModeMock.mockReturnValue({ data: undefined });
+    useManagedNodesMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    expect(screen.getByTestId('remote-nodes-loading')).toBeInTheDocument();
   });
 });
 

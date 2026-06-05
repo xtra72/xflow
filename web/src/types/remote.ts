@@ -30,6 +30,26 @@ export const REGISTRATION_STATUSES: readonly RegistrationStatus[] = [
 export type MirroredResourceKind = 'flow' | 'agent' | 'device';
 
 /**
+ * 인스턴스의 원격 관리 동작 모드.
+ * Go `remote_management.mode` 설정과 1:1 매핑된다.
+ *   - server   : 다른 노드를 관리하는 서버 (admin `/remote/*` 엔드포인트 활성)
+ *   - client   : 서버에 등록되는 피관리 노드
+ *   - disabled : 원격 관리 비활성
+ *
+ * server 모드가 아니면 `/remote/nodes` 등 admin 엔드포인트는 404 를 반환하므로,
+ * UI 는 이 값을 보고 해당 쿼리 발행을 차단한다.
+ */
+export type RemoteMode = 'server' | 'client' | 'disabled';
+
+/**
+ * `GET /remote/mode` 응답 표현.
+ * 표준 인증이 적용되며 모든 모드에서 사용 가능하다.
+ */
+export interface RemoteModeResponse {
+  mode: RemoteMode;
+}
+
+/**
  * 관리 노드 응답 표현.
  * Go `ManagedNodeDTO` 와 1:1 매핑된다 (시크릿 토큰은 노출하지 않음 — REQ-F06).
  */

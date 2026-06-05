@@ -22,6 +22,15 @@ beforeEach(() => {
   postMock.mockReset();
 });
 
+describe('remoteService — 동작 모드', () => {
+  it('getRemoteMode 는 GET /remote/mode 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce({ mode: 'server' });
+    const res = await remoteService.getRemoteMode();
+    expect(getMock).toHaveBeenCalledWith('/remote/mode');
+    expect(res).toEqual({ mode: 'server' });
+  });
+});
+
 describe('remoteService — 목록 조회', () => {
   it('listNodes 는 GET /remote/nodes 를 호출한다', async () => {
     getMock.mockResolvedValueOnce([]);

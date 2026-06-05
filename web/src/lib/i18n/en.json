@@ -334,6 +334,8 @@
     "noNodes": "No managed nodes registered.",
     "noResources": "No resources to display.",
     "noApprovedNodes": "No approved nodes available.",
+    "notServerTitle": "Not in remote management server mode",
+    "notServerDesc": "This instance is not running in remote management server mode. Set remote_management.mode: server and restart.",
     "selectNode": "Select node",
     "nodesTableLabel": "Managed nodes list",
     "resourcesTableLabel": "Remote resources list",

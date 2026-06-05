@@ -20,6 +20,7 @@ import type {
   CommandResult,
   ManagedNode,
   MirroredResource,
+  RemoteModeResponse,
 } from '@/types/remote';
 
 import { get, post } from './client';
@@ -27,6 +28,18 @@ import { get, post } from './client';
 /** instance_id 를 URL 경로에 안전하게 인코딩한다. */
 function encodeId(instanceID: string): string {
   return encodeURIComponent(instanceID);
+}
+
+// ---- 동작 모드 조회 ----
+
+/**
+ * 인스턴스의 원격 관리 동작 모드를 조회한다. GET /remote/mode
+ *
+ * 표준 인증이 적용되며 server/client/disabled 모든 모드에서 200 을 반환한다.
+ * UI 는 이 값으로 admin `/remote/*` 쿼리(server 전용) 발행 여부를 결정한다.
+ */
+export async function getRemoteMode(): Promise<RemoteModeResponse> {
+  return get<RemoteModeResponse>('/remote/mode');
 }
 
 // ---- 노드 목록 조회 (G01/G02) ----

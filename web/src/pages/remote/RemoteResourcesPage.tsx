@@ -13,7 +13,13 @@ import { useMemo, useState } from 'react';
 import { Boxes } from 'lucide-react';
 
 import { MirrorResourceTable } from '@/components/remote/MirrorResourceTable';
-import { useAllMirror, useManagedNodes, useNodeMirror } from '@/hooks/useRemote';
+import { RemoteNotServerNotice } from '@/components/remote/RemoteNotServerNotice';
+import {
+  useAllMirror,
+  useManagedNodes,
+  useNodeMirror,
+  useRemoteMode,
+} from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import type { MirroredResourceKind } from '@/types/remote';
@@ -34,7 +40,11 @@ export default function RemoteResourcesPage(): React.JSX.Element {
   const [kind, setKind] = useState<MirroredResourceKind>('flow');
   const [selectedNode, setSelectedNode] = useState<string>('');
 
-  const { data: nodes } = useManagedNodes();
+  // server 모드가 아니면 모든 미러/노드 쿼리를 막아 404 노이즈를 방지한다.
+  const { data: remoteMode } = useRemoteMode();
+  const isServer = remoteMode?.mode === 'server';
+
+  const { data: nodes } = useManagedNodes(undefined, isServer);
 
   // 노드별 뷰에서 선택 가능한 노드는 승인된(approved) 노드로 제한한다.
   const approvedNodes = useMemo(
@@ -47,24 +57,31 @@ export default function RemoteResourcesPage(): React.JSX.Element {
     selectedNode || (approvedNodes.length > 0 ? approvedNodes[0]!.instance_id : '');
 
   // 통합/노드별 쿼리. 활성 모드의 쿼리만 의미 있는 데이터를 가진다.
-  const aggregated = useAllMirror(kind);
-  const perNode = useNodeMirror(mode === 'per-node' ? effectiveNode : '', kind);
+  const aggregated = useAllMirror(kind, isServer);
+  const perNode = useNodeMirror(
+    mode === 'per-node' ? effectiveNode : '',
+    kind,
+    isServer,
+  );
 
   const activeQuery = mode === 'aggregated' ? aggregated : perNode;
   const resources = activeQuery.data ?? [];
   const isLoading = activeQuery.isLoading;
   const error = activeQuery.error;
 
+  // 비-server 모드: 안내만 표시하고 미러 쿼리는 발행하지 않는다.
+  if (remoteMode && !isServer) {
+    return (
+      <div className="space-y-6">
+        <ResourcesHeader />
+        <RemoteNotServerNotice />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <header data-testid="remote-resources-header">
-        <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-          {t('remote.resourcesTitle')}
-        </h1>
-        <p className="mt-1 text-sm text-(--color-text-muted)">
-          {t('remote.resourcesSubtitle')}
-        </p>
-      </header>
+      <ResourcesHeader />
 
       {/* 뷰 모드 토글 */}
       <div
@@ -162,6 +179,22 @@ export default function RemoteResourcesPage(): React.JSX.Element {
         />
       </ResourceBody>
     </div>
+  );
+}
+
+// ---- 페이지 헤더 ----
+
+function ResourcesHeader(): React.JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <header data-testid="remote-resources-header">
+      <h1 className="text-2xl font-semibold text-(--color-text-primary)">
+        {t('remote.resourcesTitle')}
+      </h1>
+      <p className="mt-1 text-sm text-(--color-text-muted)">
+        {t('remote.resourcesSubtitle')}
+      </p>
+    </header>
   );
 }
 

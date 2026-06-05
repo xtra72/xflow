@@ -794,6 +794,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		})
 	}
 
+	// 9.5d. 원격 관리 모드 조회 API 등록 (@SPEC:SPEC-REMOTE-001).
+	// admin 라우트와 달리 모든 모드(server/client/disabled)에서 무조건 등록한다.
+	// 모드 문자열만 필요하므로 remoteServer 가 nil 인 client/disabled 에서도 동작하며,
+	// Web UI 가 server 전용 엔드포인트 호출 여부를 사전에 판단할 수 있게 한다.
+	remoteModeHandler := handler.NewRemoteModeHandler(rmCfg.Mode)
+	server.RegisterRoutes(func(g *api.RouteGroup) {
+		remoteModeHandler.RegisterRoutes(g)
+	})
+
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
 	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, obs.Loggers.NewLogger("api.ws.broadcaster").Logger(), ws.WithStreamRouter(obs.Streams))
 

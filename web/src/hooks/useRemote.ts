@@ -18,6 +18,27 @@ import * as remoteService from '@/services/api/remoteService';
 const NODES_REFETCH_MS = 5000;
 // 미러 목록은 상대적으로 덜 빈번하게 변하므로 더 긴 주기를 둔다.
 const MIRROR_REFETCH_MS = 10000;
+// 동작 모드는 재시작 전에는 바뀌지 않으므로 길게 캐시한다.
+const MODE_STALE_MS = 5 * 60 * 1000;
+
+// ---- 동작 모드 쿼리 ----
+
+/**
+ * 인스턴스의 원격 관리 동작 모드 쿼리.
+ *
+ * 모드는 재시작 전에는 변하지 않으므로 staleTime 을 길게 두고 폴링하지 않는다.
+ * 페이지/사이드바는 `data?.mode === 'server'` 로 admin 쿼리/메뉴 노출을 결정한다.
+ * server 모드가 아닐 때 admin `/remote/*` 쿼리를 막아 404 노이즈를 방지한다.
+ */
+export function useRemoteMode() {
+  return useQuery({
+    queryKey: ['remote', 'mode'],
+    queryFn: () => remoteService.getRemoteMode(),
+    staleTime: MODE_STALE_MS,
+    gcTime: MODE_STALE_MS,
+    refetchOnWindowFocus: false,
+  });
+}
 
 // ---- 쿼리 ----
 
@@ -25,23 +46,35 @@ const MIRROR_REFETCH_MS = 10000;
  * 전체 관리 노드 목록 쿼리 (G01). online/offline 신선도를 위해 5초 폴링.
  *
  * @param refetchInterval - 폴링 주기(ms) 오버라이드. 미지정 시 기본 5초.
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
  */
-export function useManagedNodes(refetchInterval: number = NODES_REFETCH_MS) {
+export function useManagedNodes(
+  refetchInterval: number = NODES_REFETCH_MS,
+  enabled = true,
+) {
   return useQuery({
     queryKey: ['remote', 'nodes'],
     queryFn: () => remoteService.listNodes(),
     refetchInterval,
+    enabled,
   });
 }
 
 /**
  * 승인 대기(pending) 노드 큐 쿼리 (G02). 5초 폴링.
+ *
+ * @param refetchInterval - 폴링 주기(ms) 오버라이드. 미지정 시 기본 5초.
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
  */
-export function usePendingNodes(refetchInterval: number = NODES_REFETCH_MS) {
+export function usePendingNodes(
+  refetchInterval: number = NODES_REFETCH_MS,
+  enabled = true,
+) {
   return useQuery({
     queryKey: ['remote', 'nodes', 'pending'],
     queryFn: () => remoteService.listPendingNodes(),
     refetchInterval,
+    enabled,
   });
 }
 
@@ -71,12 +104,17 @@ const ALL_MIRROR_KEY: Record<MirroredResourceKind, string> = {
  *
  * @param instanceID - 출처 노드 식별자. 비어 있으면 쿼리 비활성.
  * @param kind - 미러 종류 (flow/agent/device).
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
  */
-export function useNodeMirror(instanceID: string, kind: MirroredResourceKind) {
+export function useNodeMirror(
+  instanceID: string,
+  kind: MirroredResourceKind,
+  enabled = true,
+) {
   return useQuery({
     queryKey: ['remote', 'nodes', instanceID, ALL_MIRROR_KEY[kind]],
     queryFn: () => NODE_MIRROR_FN[kind](instanceID),
-    enabled: !!instanceID,
+    enabled: enabled && !!instanceID,
     refetchInterval: MIRROR_REFETCH_MS,
   });
 }
@@ -86,12 +124,14 @@ export function useNodeMirror(instanceID: string, kind: MirroredResourceKind) {
  * 각 행은 source_instance_id 와 online 으로 태깅된다.
  *
  * @param kind - 미러 종류 (flow/agent/device).
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
  */
-export function useAllMirror(kind: MirroredResourceKind) {
+export function useAllMirror(kind: MirroredResourceKind, enabled = true) {
   return useQuery({
     queryKey: ['remote', ALL_MIRROR_KEY[kind]],
     queryFn: () => ALL_MIRROR_FN[kind](),
     refetchInterval: MIRROR_REFETCH_MS,
+    enabled,
   });
 }
 

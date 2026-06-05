@@ -15,12 +15,14 @@ import type { ManagedNode, MirroredResource } from '@/types/remote';
 
 // ---- useRemote mock ----
 const useManagedNodesMock = vi.hoisted(() => vi.fn());
+const useRemoteModeMock = vi.hoisted(() => vi.fn());
 const useAllMirrorMock = vi.hoisted(() => vi.fn());
 const useNodeMirrorMock = vi.hoisted(() => vi.fn());
 const sendCommandMutateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useRemote', () => ({
   useManagedNodes: useManagedNodesMock,
+  useRemoteMode: useRemoteModeMock,
   useAllMirror: useAllMirrorMock,
   useNodeMirror: useNodeMirrorMock,
   useSendCommand: () => ({
@@ -76,11 +78,14 @@ function makeResource(overrides: Partial<MirroredResource> = {}): MirroredResour
 
 beforeEach(() => {
   useManagedNodesMock.mockReset();
+  useRemoteModeMock.mockReset();
   useAllMirrorMock.mockReset();
   useNodeMirrorMock.mockReset();
   sendCommandMutateMock.mockReset();
   addNotificationMock.mockReset();
 
+  // 기본: server 모드 (M5 동작과 동일).
+  useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
   useManagedNodesMock.mockReturnValue({ data: [makeNode()] });
   useAllMirrorMock.mockReturnValue({
     data: [],
@@ -94,6 +99,26 @@ beforeEach(() => {
     error: null,
     refetch: vi.fn(),
   });
+});
+
+// 모드 게이팅 — server 모드가 아니면 안내 표시 + 미러 쿼리 비활성
+describe('RemoteResourcesPage — 모드 게이팅', () => {
+  it.each(['disabled', 'client'] as const)(
+    'mode=%s 이면 안내를 표시하고 미러 쿼리를 비활성화한다',
+    (mode) => {
+      useRemoteModeMock.mockReturnValue({ data: { mode } });
+      renderPage();
+
+      // 안내 패널이 표시된다.
+      expect(screen.getByTestId('remote-not-server')).toBeInTheDocument();
+      // 자원 테이블/탭/빈 상태는 렌더되지 않는다.
+      expect(screen.queryByTestId('remote-resources-empty')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('remote-mode-aggregated')).not.toBeInTheDocument();
+      // 미러/노드 쿼리는 enabled=false 로 호출된다 (발행되지 않음).
+      expect(useAllMirrorMock.mock.calls.at(-1)![1]).toBe(false);
+      expect(useManagedNodesMock.mock.calls.at(-1)![1]).toBe(false);
+    },
+  );
 });
 
 // G03 — 통합 뷰 + 출처 태그

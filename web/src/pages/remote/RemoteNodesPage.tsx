@@ -17,10 +17,12 @@ import { CheckCircle2, Network, XCircle } from 'lucide-react';
 import { ConfirmDialog } from '@/components/remote/ConfirmDialog';
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
 import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
+import { RemoteNotServerNotice } from '@/components/remote/RemoteNotServerNotice';
 import {
   useApproveNode,
   useManagedNodes,
   useRejectNode,
+  useRemoteMode,
   useRevokeNode,
 } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
@@ -36,7 +38,15 @@ interface PendingConfirm {
 
 export default function RemoteNodesPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const { data: nodes, isLoading, error, refetch } = useManagedNodes();
+  // server 모드가 아니면 노드 쿼리를 막아 404 노이즈를 방지하고 안내를 표시한다.
+  const { data: remoteMode } = useRemoteMode();
+  const isServer = remoteMode?.mode === 'server';
+  const {
+    data: nodes,
+    isLoading,
+    error,
+    refetch,
+  } = useManagedNodes(undefined, isServer);
   const addNotification = useUIStore((s) => s.addNotification);
 
   const approve = useApproveNode();
@@ -82,8 +92,18 @@ export default function RemoteNodesPage(): React.JSX.Element {
 
   const confirmPending = reject.isPending || revoke.isPending;
 
-  // --- 로딩 상태 ---
-  if (isLoading && !nodes) {
+  // --- 비-server 모드: 안내만 표시하고 쿼리는 발행하지 않는다 ---
+  if (remoteMode && !isServer) {
+    return (
+      <div className="space-y-6">
+        <PageHeader />
+        <RemoteNotServerNotice />
+      </div>
+    );
+  }
+
+  // --- 로딩 상태 (모드 미확정 또는 노드 로딩 중) ---
+  if (!remoteMode || (isLoading && !nodes)) {
     return (
       <div className="space-y-6" data-testid="remote-nodes-loading">
         <PageHeader />

@@ -21,6 +21,7 @@ import {
 import { NavLink, useLocation } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
+import { useRemoteMode } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
@@ -133,9 +134,15 @@ const NAV_ENTRIES: NavEntry[] = [
  * 앱 사이드바 네비게이션.
  * 접기/펼치기 토글, 활성 메뉴 하이라이트, RBAC 필터링, 그룹 메뉴를 지원한다.
  */
+/** 원격 관리 그룹 식별용 라벨 키 (server 모드에서만 노출). */
+const REMOTE_GROUP_LABEL_KEY = 'nav.remote';
+
 export default function Sidebar() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  // 원격 관리 그룹은 server 모드에서만 노출한다. 로딩 중/비 server 모드면 숨긴다.
+  const { data: remoteMode } = useRemoteMode();
+  const isRemoteServer = remoteMode?.mode === 'server';
   const location = useLocation();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -171,6 +178,10 @@ export default function Sidebar() {
   // 사용자 역할에 따른 메뉴 필터링
   const filteredEntries = NAV_ENTRIES.filter((entry) => {
     if (!hasAccess(entry.roles)) return false;
+    // 원격 관리 그룹은 admin 권한 + server 모드를 모두 충족할 때만 노출한다.
+    if (isNavGroup(entry) && entry.labelKey === REMOTE_GROUP_LABEL_KEY && !isRemoteServer) {
+      return false;
+    }
     // 그룹의 경우 접근 가능한 하위 항목이 하나라도 있으면 표시
     if (isNavGroup(entry)) {
       return entry.children.some((child) => hasAccess(child.roles));
