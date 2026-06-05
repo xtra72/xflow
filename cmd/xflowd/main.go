@@ -710,21 +710,48 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("api.handler.chart_ws").Logger())
 	server.RegisterRawHandler("GET /ws/chart/{channel}", chartWSHandler.HandleUpgrade)
 
-	// 9.5b. 원격 관리 (@SPEC:SPEC-REMOTE-001 M1) — mode 분기.
-	// server 모드는 관리 WS 핸들러를 등록하고(별도 엔드포인트 /api/remote/ws —
-	// REQ-N02), online/offline 추적 sweeper 는 ctx 생성 후(아래 10절) 시작한다.
-	// disabled(기본)는 어떤 관리 연결도 생성/수락하지 않는다(REQ-N03 회귀 안전).
+	// 9.5b. 원격 관리 (@SPEC:SPEC-REMOTE-001 M2) — mode 분기.
+	// server 모드는 등록/승인 상태 머신(managed_nodes 영속 + JWT 노드 토큰)을 구성
+	// 하고, 관리 WS 핸들러(별도 엔드포인트 /api/remote/ws — REQ-N02) + 관리자 승인
+	// REST API 를 등록한다. online/offline 추적 sweeper 는 ctx 생성 후(아래 10절)
+	// 시작한다. disabled(기본)는 어떤 관리 연결도 생성/수락하지 않는다(REQ-N03 회귀).
 	rmCfg := cfg.RemoteManagement()
-	var remoteServer *remote.Server
+	var (
+		remoteServer       *remote.Server
+		remoteAdminHandler *handler.RemoteAdminHandler
+		managedNodeRepo    storage.ManagedNodeRepository
+	)
 	switch rmCfg.Mode {
 	case "server":
+		// managed_nodes 영속(서버 캐시) — 공유 SQLite DB 경로를 재사용한다(§5.4).
+		mnRepo, mnErr := storage.NewManagedNodeRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if mnErr != nil {
+			return fmt.Errorf("관리 노드 저장소 초기화 실패: %w", mnErr)
+		}
+		managedNodeRepo = mnRepo
+		defer managedNodeRepo.Close()
+
+		// 노드 토큰은 기존 JWTService 를 재사용한다(REQ-C04/C05/C07/F02/F07).
+		tokenIssuer := remote.NewJWTTokenIssuer(server.JWTService())
+
 		remoteServer = remote.NewServer(remote.ServerConfig{
 			HeartbeatTimeout: 3 * rmCfg.HeartbeatInterval,
+			Repo:             managedNodeRepo,
+			TokenIssuer:      tokenIssuer,
+			BootstrapSecret:  rmCfg.BootstrapSecret,
 			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
-		}, remote.NewBootstrapAuthenticator(rmCfg.BootstrapSecret))
-		remoteHandler := handler.NewRemoteHandler(remoteServer,
-			obs.Loggers.NewLogger("api.handler.remote").Logger())
-		server.RegisterRawHandler(handler.RemoteWSPattern, remoteHandler.HandleUpgrade)
+		}, nil)
+
+		// 관리 WS 핸들러: 노드 토큰 핸드셰이크 검증 활성화(재접속 세션 복원 — REQ-C05).
+		remoteWSHandler := handler.NewRemoteHandler(remoteServer,
+			obs.Loggers.NewLogger("api.handler.remote").Logger()).
+			WithTokenValidator(tokenIssuer)
+		server.RegisterRawHandler(handler.RemoteWSPattern, remoteWSHandler.HandleUpgrade)
+
+		// 관리자 승인/거부/폐기/목록 REST API (admin 권한 강제 — REQ-C03/C07/F04).
+		remoteAdminHandler = handler.NewRemoteAdminHandler(remoteServer,
+			obs.Loggers.NewLogger("api.handler.remote_admin").Logger())
+
 		logger.Info("원격 관리 서버 모드 활성화",
 			"endpoint", handler.RemoteWSPattern)
 	case "client":
@@ -733,6 +760,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			"server_url", rmCfg.ServerURL)
 	default:
 		// disabled — 아무 것도 하지 않는다(회귀 0).
+	}
+
+	// 9.5c. 관리자 승인 REST API 등록 (@SPEC:SPEC-REMOTE-001 M2).
+	// server 모드에서만 등록한다. RegisterRoutes 는 동일 /api/v1 그룹에 추가
+	// 등록하므로 위 9.4 의 핸들러들과 공존한다(별도 호출 안전).
+	if remoteAdminHandler != nil {
+		server.RegisterRoutes(func(g *api.RouteGroup) {
+			remoteAdminHandler.RegisterRoutes(g)
+		})
 	}
 
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
@@ -771,13 +807,22 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			break
 		}
 		hostname, _ := os.Hostname()
+		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
+		// Exposure 요약은 register 에 운반된다(REQ-C01/A04; 실제 미러링은 M4).
 		remoteClient := remote.NewClient(remote.ClientConfig{
 			ServerURL:         rmCfg.ServerURL,
 			InstanceID:        instanceID,
 			Hostname:          hostname,
 			Version:           Version,
 			HeartbeatInterval: rmCfg.HeartbeatInterval,
-			Logger:            obs.Loggers.NewLogger("remote.client").Logger(),
+			BootstrapSecret:   rmCfg.BootstrapSecret,
+			DataDir:           dataDir,
+			Exposure: remote.ExposureSummary{
+				Flows:   rmCfg.Exposure.Flows,
+				Agents:  rmCfg.Exposure.Agents,
+				Devices: rmCfg.Exposure.Devices,
+			},
+			Logger: obs.Loggers.NewLogger("remote.client").Logger(),
 		}, nil)
 		remoteClient.Start(ctx)
 		defer remoteClient.Stop()

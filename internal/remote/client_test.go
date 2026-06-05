@@ -59,9 +59,13 @@ func (c *clientFakeConn) Close() error {
 	return nil
 }
 
-// TestClient_DialAndHello 는 클라이언트가 dial 후 hello 를 보내는지 검증한다
-// (REQ-REMOTE-B01).
-func TestClient_DialAndHello(t *testing.T) {
+// TestClient_DialAndRegister 는 토큰이 없는 클라이언트가 dial 후 register 를
+// 보내는지 검증한다(REQ-REMOTE-B01/C01).
+//
+// M2 변경: M1 에서는 token 개념이 없어 항상 hello 를 보냈으나, M2 에서는 미등록
+// (토큰 미보유) 노드가 register 를 보낸다. 토큰 보유 재접속 경로는 hello 를 보낸다
+// (TestClient_PresentsTokenOnReconnect / TestClient_HelloWithPersistedToken).
+func TestClient_DialAndRegister(t *testing.T) {
 	conn := newClientFakeConn()
 	var dialCount atomic.Int32
 
@@ -83,16 +87,45 @@ func TestClient_DialAndHello(t *testing.T) {
 	cli.Start(ctx)
 	defer cli.Stop()
 
-	// 첫 송신 메시지는 hello 여야 한다.
+	// 토큰 미보유 → 첫 송신 메시지는 register 여야 한다.
 	msg := readClientMessage(t, conn)
-	assert.Equal(t, TypeHello, msg.Type)
+	assert.Equal(t, TypeRegister, msg.Type)
 
-	var hello HelloPayload
-	require.NoError(t, json.Unmarshal(msg.Payload, &hello))
-	assert.Equal(t, "node-c1", hello.InstanceID)
-	assert.Equal(t, "host-c1", hello.Hostname)
-	assert.Equal(t, "1.0.0", hello.Version)
+	var reg RegisterPayload
+	require.NoError(t, json.Unmarshal(msg.Payload, &reg))
+	assert.Equal(t, "node-c1", reg.InstanceID)
+	assert.Equal(t, "host-c1", reg.Hostname)
+	assert.Equal(t, "1.0.0", reg.Version)
 	assert.GreaterOrEqual(t, dialCount.Load(), int32(1))
+}
+
+// TestClient_HelloWithPersistedToken 는 영속 토큰이 있으면 첫 메시지가 hello 인지
+// 검증한다(REQ-C05 — 재접속 세션 복원 경로).
+func TestClient_HelloWithPersistedToken(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, SaveNodeToken(dir, "existing-token"))
+
+	conn := newClientFakeConn()
+	dialer := DialerFunc(func(_ context.Context, _ string) (Conn, error) {
+		return conn, nil
+	})
+
+	cli := NewClient(ClientConfig{
+		ServerURL:         "wss://example",
+		InstanceID:        "node-c1b",
+		Hostname:          "host-c1b",
+		Version:           "1.0.0",
+		HeartbeatInterval: time.Hour,
+		DataDir:           dir,
+	}, dialer)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cli.Start(ctx)
+	defer cli.Stop()
+
+	msg := readClientMessage(t, conn)
+	assert.Equal(t, TypeHello, msg.Type, "토큰 보유 시 첫 메시지는 hello 여야 함")
 }
 
 // TestClient_HeartbeatCadence 는 클라이언트가 HeartbeatInterval 주기로 heartbeat
@@ -114,9 +147,9 @@ func TestClient_HeartbeatCadence(t *testing.T) {
 	cli.Start(ctx)
 	defer cli.Stop()
 
-	// hello 소비.
-	hello := readClientMessage(t, conn)
-	require.Equal(t, TypeHello, hello.Type)
+	// register 소비(토큰 미보유 — M2 등록 경로).
+	reg := readClientMessage(t, conn)
+	require.Equal(t, TypeRegister, reg.Type)
 
 	// 최소 2개의 heartbeat 를 관찰한다.
 	heartbeats := 0
@@ -207,19 +240,19 @@ func TestClient_ReconnectAfterDisconnect(t *testing.T) {
 	cli.Start(ctx)
 	defer cli.Stop()
 
-	// 첫 연결 + hello.
+	// 첫 연결 + register(토큰 미보유).
 	c1 := <-conns
-	hello1 := readClientMessage(t, c1)
-	assert.Equal(t, TypeHello, hello1.Type)
+	reg1 := readClientMessage(t, c1)
+	assert.Equal(t, TypeRegister, reg1.Type)
 
 	// 연결 강제 종료 → 재연결 트리거.
 	c1.Close()
 
-	// 두 번째 연결 + hello 재전송.
+	// 두 번째 연결 + register 재전송(토큰 미발급 상태 유지).
 	select {
 	case c2 := <-conns:
-		hello2 := readClientMessage(t, c2)
-		assert.Equal(t, TypeHello, hello2.Type)
+		reg2 := readClientMessage(t, c2)
+		assert.Equal(t, TypeRegister, reg2.Type)
 	case <-time.After(2 * time.Second):
 		t.Fatal("재연결이 발생하지 않음")
 	}
@@ -301,9 +334,9 @@ func TestClient_HandlesServerMessages(t *testing.T) {
 	cli.Start(ctx)
 	defer cli.Stop()
 
-	// hello 소비.
-	hello := readClientMessage(t, conn)
-	require.Equal(t, TypeHello, hello.Type)
+	// register 소비(토큰 미보유 — M2 등록 경로).
+	reg := readClientMessage(t, conn)
+	require.Equal(t, TypeRegister, reg.Type)
 
 	// 서버 → 클라이언트: heartbeat (무시 경로).
 	shb, _ := NewHeartbeatMessage("server")

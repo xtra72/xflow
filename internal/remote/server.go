@@ -24,6 +24,9 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/xtra/xflow/internal/api/ws"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 // DefaultHeartbeatTimeout 은 heartbeat 미수신 시 노드를 offline 으로 간주하기까지의
@@ -85,6 +88,9 @@ type NodeState struct {
 	Version    string
 	Online     bool
 	LastSeen   time.Time
+	// Status 는 등록 상태(pending/approved/rejected/revoked)이다(M2). repo 가
+	// 주입되지 않은 M1 모드에서는 빈 문자열일 수 있다.
+	Status string
 }
 
 // ServerConfig 는 관리 서버의 동작 파라미터이다.
@@ -93,22 +99,45 @@ type ServerConfig struct {
 	// 0 이면 DefaultHeartbeatTimeout 을 사용한다.
 	HeartbeatTimeout time.Duration
 
+	// Repo 는 관리 노드 영속 저장소이다(M2). nil 이면 등록/승인 상태 머신은
+	// 비활성화되고 M1 의 in-memory online/offline 추적만 동작한다(하위 호환).
+	Repo storage.ManagedNodeRepository
+
+	// TokenIssuer 는 노드 토큰 발급/검증/폐기를 담당한다(M2, REQ-C04/C05/C07/F07).
+	// Repo 와 함께 주입되어야 등록/승인 흐름이 완전 동작한다.
+	TokenIssuer TokenIssuer
+
+	// BootstrapSecret 은 (선택) enrollment 사전 공유 시크릿이다(REQ-C08). 비어
+	// 있으면 순수 관리자 승인 흐름이다. 설정 시 register 요청의 시크릿과 일치해야
+	// pending 큐잉된다.
+	BootstrapSecret string
+
 	// Logger 는 선택적 로거이다. nil 이면 slog.Default() 를 사용한다.
 	Logger *slog.Logger
 }
 
-// Server 는 관리 서버 측 노드 연결/상태 추적을 담당한다.
+// nodeConn 은 라이브 노드 연결을 추적한다(approve 시 ack push, revoke 시 종료).
+type nodeConn struct {
+	conn   Conn
+	cancel context.CancelFunc
+}
+
+// Server 는 관리 서버 측 노드 연결/상태 추적 + 등록/승인 상태 머신을 담당한다.
 type Server struct {
 	cfg    ServerConfig
 	auth   Authenticator
+	repo   storage.ManagedNodeRepository
+	tokens TokenIssuer
 	logger *slog.Logger
 
 	mu    sync.RWMutex
 	nodes map[string]*NodeState
+	conns map[string]*nodeConn // instance_id -> 라이브 연결(M2)
 }
 
 // NewServer 는 Server 를 생성한다. auth 가 nil 이면 부트스트랩 authenticator(빈
-// 시크릿 — 전부 수락 stub)를 사용한다.
+// 시크릿 — 전부 수락 stub)를 사용한다. cfg.Repo/cfg.TokenIssuer 가 주입되면 M2
+// 등록/승인 상태 머신이 활성화된다.
 func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 	if cfg.HeartbeatTimeout <= 0 {
 		cfg.HeartbeatTimeout = DefaultHeartbeatTimeout
@@ -123,28 +152,48 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 	return &Server{
 		cfg:    cfg,
 		auth:   auth,
+		repo:   cfg.Repo,
+		tokens: cfg.TokenIssuer,
 		logger: logger,
 		nodes:  make(map[string]*NodeState),
+		conns:  make(map[string]*nodeConn),
 	}
 }
 
 // HandleConnection 은 단일 노드 연결의 읽기 루프를 실행한다(블로킹).
 //
+// 핸드셰이크에 노드 토큰이 없는 경로(등록/재등록)이다. 핸들러가 토큰을 검증한
+// 재접속 경로는 HandleConnectionAuth 를 사용한다.
+//
 // 흐름:
-//  1. 첫 메시지로 hello 를 기대한다(instance_id 식별). hello 외 메시지는 식별
-//     전까지 무시한다.
-//  2. Authenticator 로 검증한다. 실패 시 연결을 닫고 반환한다(노드 미등록).
-//  3. 노드를 online 으로 등록한다.
+//  1. 첫 메시지로 hello 또는 register 를 기대한다(instance_id 식별).
+//  2. hello → M1 호환 online 추적(repo 없으면 in-memory 만). register → M2 등록
+//     상태 머신(pending 큐잉 + register_ack).
+//  3. Authenticator 로 hello 를 검증한다. 실패 시 연결을 닫고 반환한다.
 //  4. 이후 heartbeat/status 로 last_seen 을 갱신한다.
 //  5. ctx 취소 또는 읽기 에러(연결 종료) 시 노드를 offline 으로 표시하고 반환한다
 //     (last-known 보존 — REQ-B06).
 func (s *Server) HandleConnection(ctx context.Context, conn Conn) error {
-	// ctx 취소 시 읽기 블로킹을 해제하기 위해 conn 을 닫는다.
+	return s.handleConnection(ctx, conn, "")
+}
+
+// HandleConnectionAuth 는 핸드셰이크에서 노드 토큰이 검증된 재접속 연결을 처리한다
+// (REQ-C05/F02). authedInstanceID 가 비어 있지 않으면, 노드가 승인 상태인 경우
+// register 없이 관리 세션을 복원한다.
+func (s *Server) HandleConnectionAuth(ctx context.Context, conn Conn, authedInstanceID string) error {
+	return s.handleConnection(ctx, conn, authedInstanceID)
+}
+
+func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstanceID string) error {
+	connCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// connCtx 취소(또는 부모 ctx 취소, 또는 revoke) 시 읽기 블로킹을 해제한다.
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
 		select {
-		case <-ctx.Done():
+		case <-connCtx.Done():
 			_ = conn.Close()
 		case <-stop:
 		}
@@ -153,16 +202,27 @@ func (s *Server) HandleConnection(ctx context.Context, conn Conn) error {
 	instanceID := ""
 	defer func() {
 		if instanceID != "" {
+			s.unregisterConn(instanceID)
 			s.markOffline(instanceID)
 		}
 	}()
+
+	// 재접속 경로: 토큰이 검증된 노드를 곧바로 세션 복원한다(REQ-C05).
+	if authedInstanceID != "" {
+		if restored := s.restoreSession(connCtx, conn, cancel, authedInstanceID); restored {
+			instanceID = authedInstanceID
+		} else {
+			// 승인 상태가 아니면(거부/폐기/미존재) 세션을 복원하지 않고 종료한다.
+			_ = conn.Close()
+			return nil
+		}
+	}
 
 	for {
 		data, err := conn.ReadMessage()
 		if err != nil {
 			if instanceID == "" {
-				// 식별 전 종료 — 조용히 반환.
-				return nil
+				return nil // 식별 전 종료 — 조용히 반환.
 			}
 			s.logger.Debug("관리 노드 연결 종료", "instance_id", instanceID, "error", err)
 			return nil
@@ -175,29 +235,13 @@ func (s *Server) HandleConnection(ctx context.Context, conn Conn) error {
 		}
 
 		if instanceID == "" {
-			// 식별 전: hello 만 처리한다.
-			if msg.Type != TypeHello {
-				continue
+			id, handled := s.handleHandshakeMessage(connCtx, conn, cancel, msg)
+			if handled && id != "" {
+				instanceID = id
+			} else if handled {
+				// 인증/검증 실패로 연결을 닫아야 하는 경우(hello authenticator 거부).
+				return nil
 			}
-			var hello HelloPayload
-			if err := json.Unmarshal(msg.Payload, &hello); err != nil {
-				s.logger.Debug("hello 페이로드 디코드 실패", "error", err)
-				continue
-			}
-			if hello.InstanceID == "" {
-				s.logger.Warn("hello 에 instance_id 누락 — 무시")
-				continue
-			}
-			if authErr := s.auth.Authenticate(hello); authErr != nil {
-				s.logger.Warn("관리 노드 인증 거부",
-					"instance_id", hello.InstanceID, "error", authErr)
-				_ = conn.Close()
-				return authErr
-			}
-			instanceID = hello.InstanceID
-			s.markOnline(hello)
-			s.logger.Info("관리 노드 online", "instance_id", instanceID,
-				"hostname", hello.Hostname, "version", hello.Version)
 			continue
 		}
 
@@ -206,10 +250,46 @@ func (s *Server) HandleConnection(ctx context.Context, conn Conn) error {
 		case TypeHeartbeat, TypeStatus:
 			s.touch(instanceID)
 		default:
-			// 그 외 타입(register/command/inventory 등)은 후속 마일스톤에서 처리.
-			s.logger.Debug("M1 미처리 관리 메시지 타입",
+			// command/inventory 등은 후속 마일스톤(M3/M4)에서 처리.
+			s.logger.Debug("미처리 관리 메시지 타입(M3/M4 seam)",
 				"type", msg.Type, "instance_id", instanceID)
 		}
+	}
+}
+
+// handleHandshakeMessage 는 식별 전 첫 메시지(hello 또는 register)를 처리한다.
+// 반환: (instanceID, handled). handled=true 이고 instanceID="" 이면 연결을 닫아야
+// 한다(인증/검증 실패).
+func (s *Server) handleHandshakeMessage(ctx context.Context, conn Conn, cancel context.CancelFunc, msg *ws.Message) (string, bool) {
+	switch msg.Type {
+	case TypeHello:
+		var hello HelloPayload
+		if err := json.Unmarshal(msg.Payload, &hello); err != nil {
+			s.logger.Debug("hello 페이로드 디코드 실패", "error", err)
+			return "", false
+		}
+		if hello.InstanceID == "" {
+			s.logger.Warn("hello 에 instance_id 누락 — 무시")
+			return "", false
+		}
+		if authErr := s.auth.Authenticate(hello); authErr != nil {
+			s.logger.Warn("관리 노드 인증 거부",
+				"instance_id", hello.InstanceID, "error", authErr)
+			_ = conn.Close()
+			return "", true
+		}
+		s.markOnline(hello)
+		s.registerConn(hello.InstanceID, conn, cancel)
+		s.logger.Info("관리 노드 online", "instance_id", hello.InstanceID,
+			"hostname", hello.Hostname, "version", hello.Version)
+		return hello.InstanceID, true
+
+	case TypeRegister:
+		return s.handleRegister(ctx, conn, cancel, msg)
+
+	default:
+		// 식별 전 다른 타입은 무시한다.
+		return "", false
 	}
 }
 
@@ -217,7 +297,6 @@ func (s *Server) HandleConnection(ctx context.Context, conn Conn) error {
 func (s *Server) markOnline(hello HelloPayload) {
 	now := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	st, ok := s.nodes[hello.InstanceID]
 	if !ok {
 		st = &NodeState{InstanceID: hello.InstanceID}
@@ -227,6 +306,27 @@ func (s *Server) markOnline(hello HelloPayload) {
 	st.Version = hello.Version
 	st.Online = true
 	st.LastSeen = now
+	s.mu.Unlock()
+
+	// 저장된 등록 상태가 있으면 in-memory 상태에 반영한다(repo 가 권위 — M2).
+	s.syncStatusFromRepo(hello.InstanceID)
+	s.persistOnline(hello.InstanceID, true, now)
+}
+
+// setNodeState 는 노드의 in-memory 상태를 직접 설정/갱신한다(재접속 복원용).
+func (s *Server) setNodeState(instanceID, status string, online bool, lastSeen time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.nodes[instanceID]
+	if !ok {
+		st = &NodeState{InstanceID: instanceID}
+		s.nodes[instanceID] = st
+	}
+	if status != "" {
+		st.Status = status
+	}
+	st.Online = online
+	st.LastSeen = lastSeen
 }
 
 // touch 는 노드의 last_seen 을 현재 시각으로 갱신하고 online 으로 유지한다.
@@ -244,10 +344,15 @@ func (s *Server) touch(instanceID string) {
 // last-known 보존, REQ-B06).
 func (s *Server) markOffline(instanceID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	wasOnline := false
 	if st, ok := s.nodes[instanceID]; ok && st.Online {
 		st.Online = false
+		wasOnline = true
+	}
+	s.mu.Unlock()
+	if wasOnline {
 		s.logger.Info("관리 노드 offline", "instance_id", instanceID)
+		s.persistOnline(instanceID, false, time.Now())
 	}
 }
 

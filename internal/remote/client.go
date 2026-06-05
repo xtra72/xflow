@@ -18,9 +18,12 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"math"
 	"math/rand"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -94,6 +97,19 @@ type ClientConfig struct {
 	ReconnectInitial time.Duration
 	ReconnectMax     time.Duration
 
+	// Exposure 는 register 요청에 실리는 노출 범위 요약이다(REQ-C01/A04). 실제
+	// 미러링 평가는 M4 이며, M2 는 등록 요약 운반 용도로만 사용한다.
+	Exposure ExposureSummary
+
+	// BootstrapSecret 은 (선택) enrollment 사전 공유 시크릿이다(REQ-C08). 서버에
+	// 동일 시크릿이 구성된 경우 register 의 1차 신뢰 검증에 사용된다. 시크릿이므로
+	// 로깅/커밋 대상이 아니다(REQ-F06).
+	BootstrapSecret string
+
+	// DataDir 은 노드 토큰 영속 디렉토리이다(REQ-C04/C05). 비어 있으면 토큰
+	// 영속/로드를 건너뛴다(in-memory only).
+	DataDir string
+
 	// Logger 는 선택적 로거이다.
 	Logger *slog.Logger
 }
@@ -108,8 +124,10 @@ type Client struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 
-	mu   sync.Mutex
-	conn Conn
+	mu        sync.Mutex
+	conn      Conn
+	nodeToken string // 영속/메모리의 현재 노드 토큰(REQ-C04/C05). 미승인 시 빈 값.
+	rejected  bool   // rejected ack 수신 시 true → 재연결 중단(REQ-C03).
 }
 
 // NewClient 는 Client 를 생성한다. dialer 가 nil 이면 gorilla dialer 를 사용한다.
@@ -130,11 +148,27 @@ func NewClient(cfg ClientConfig, dialer Dialer) *Client {
 	if dialer == nil {
 		dialer = NewGorillaDialer()
 	}
-	return &Client{
+	c := &Client{
 		cfg:    cfg,
 		dialer: dialer,
 		logger: logger,
 	}
+	// 영속된 노드 토큰을 로드한다(REQ-C05 — 재접속 인증).
+	if cfg.DataDir != "" {
+		if tok, ok, err := LoadNodeToken(cfg.DataDir); err != nil {
+			logger.Warn("노드 토큰 로드 실패", "error", err)
+		} else if ok {
+			c.nodeToken = tok
+		}
+	}
+	return c
+}
+
+// Stopped 는 클라이언트가 정지(rejected 또는 Stop 호출)되었는지 반환한다.
+func (c *Client) Stopped() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rejected
 }
 
 // Start 는 연결 라이프사이클 고루틴을 시작한다(비블로킹).
@@ -176,6 +210,12 @@ func (c *Client) runLoop(ctx context.Context) {
 		default:
 		}
 
+		// rejected ack 를 받았으면 재연결을 멈춘다(REQ-C03 — 거부 시 정지).
+		if c.isRejected() {
+			c.logger.Error("원격 등록 거부됨 — 재연결 중단", "instance_id", c.cfg.InstanceID)
+			return
+		}
+
 		if attempt > 0 {
 			backoff := c.calculateBackoff(attempt)
 			c.logger.Debug("remote client 재연결 대기",
@@ -187,7 +227,7 @@ func (c *Client) runLoop(ctx context.Context) {
 			}
 		}
 
-		conn, err := c.dialer.Dial(ctx, c.cfg.ServerURL)
+		conn, err := c.dialer.Dial(ctx, c.dialURL())
 		if err != nil {
 			attempt++
 			c.logger.Warn("remote client dial 실패",
@@ -221,9 +261,10 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// hello 송신(연결 식별 + M4 인벤토리 재동기화 seam).
-	if err := c.sendHello(conn); err != nil {
-		c.logger.Warn("remote client hello 송신 실패", "error", err)
+	// 핸드셰이크 송신: 노드 토큰이 있으면 hello(세션 복원, 토큰은 dial URL 로 검증
+	// 완료 — REQ-C05), 없으면 register(등록 요청 — REQ-C01).
+	if err := c.sendHandshake(conn); err != nil {
+		c.logger.Warn("remote client 핸드셰이크 송신 실패", "error", err)
 		return
 	}
 
@@ -284,18 +325,81 @@ func (c *Client) handleServerMessage(data []byte) {
 	switch msg.Type {
 	case TypeHeartbeat:
 		// 서버 heartbeat — 무시(생존성은 연결 자체로 확인).
+	case TypeRegisterAck:
+		c.handleRegisterAck(msg.Payload)
 	default:
-		// M2/M3 seam: register_ack / command 처리 진입점.
-		c.logger.Debug("M1 미처리 서버 메시지 타입", "type", msg.Type)
+		// M3 seam: command 처리 진입점.
+		c.logger.Debug("미처리 서버 메시지 타입(M3 seam)", "type", msg.Type)
 	}
 }
 
-// sendHello 는 hello 메시지를 송신한다(REQ-B01).
+// handleRegisterAck 는 register_ack 를 처리한다(REQ-C03/C04/C05).
+//
+//   - approved: node_token 을 영속하고 메모리에 보관(이후 재접속 인증).
+//   - pending:  대기(별도 동작 없음; 재연결 시 재시도/heartbeat 유지).
+//   - rejected: 정지 플래그를 세워 재연결을 멈추고 토큰을 정리한다.
+func (c *Client) handleRegisterAck(payload []byte) {
+	var ack RegisterAckPayload
+	if err := json.Unmarshal(payload, &ack); err != nil {
+		c.logger.Debug("register_ack 디코드 실패", "error", err)
+		return
+	}
+	switch ack.Status {
+	case RegStatusApproved:
+		c.mu.Lock()
+		c.nodeToken = ack.NodeToken
+		c.rejected = false
+		c.mu.Unlock()
+		if c.cfg.DataDir != "" && ack.NodeToken != "" {
+			if err := SaveNodeToken(c.cfg.DataDir, ack.NodeToken); err != nil {
+				c.logger.Error("노드 토큰 영속 실패", "error", err)
+			}
+		}
+		// 토큰 값은 로깅하지 않는다(REQ-F06).
+		c.logger.Info("원격 등록 승인됨 — 노드 토큰 수신", "instance_id", c.cfg.InstanceID)
+	case RegStatusPending:
+		c.logger.Info("원격 등록 대기 중(pending) — 관리자 승인 대기", "instance_id", c.cfg.InstanceID)
+	case RegStatusRejected:
+		c.setRejected()
+		if c.cfg.DataDir != "" {
+			_ = ClearNodeToken(c.cfg.DataDir)
+		}
+		c.logger.Error("원격 등록 거부됨", "instance_id", c.cfg.InstanceID, "reason", ack.Reason)
+	default:
+		c.logger.Warn("알 수 없는 register_ack 상태", "status", ack.Status)
+	}
+}
+
+// sendHandshake 는 첫 핸드셰이크 메시지를 송신한다. 토큰 보유 시 hello(세션 복원),
+// 미보유 시 register(등록 요청).
+func (c *Client) sendHandshake(conn Conn) error {
+	if c.hasToken() {
+		return c.sendHello(conn)
+	}
+	return c.sendRegister(conn)
+}
+
+// sendHello 는 hello 메시지를 송신한다(REQ-B01, 토큰 보유 재접속 경로).
 func (c *Client) sendHello(conn Conn) error {
 	msg, err := NewHelloMessage(HelloPayload{
 		InstanceID: c.cfg.InstanceID,
 		Hostname:   c.cfg.Hostname,
 		Version:    c.cfg.Version,
+	})
+	if err != nil {
+		return err
+	}
+	return writeEnvelope(conn, msg)
+}
+
+// sendRegister 는 register 메시지를 송신한다(REQ-C01, 토큰 미보유 등록 경로).
+func (c *Client) sendRegister(conn Conn) error {
+	msg, err := NewRegisterMessage(RegisterPayload{
+		InstanceID:      c.cfg.InstanceID,
+		Hostname:        c.cfg.Hostname,
+		Version:         c.cfg.Version,
+		Exposure:        c.cfg.Exposure,
+		BootstrapSecret: c.cfg.BootstrapSecret,
 	})
 	if err != nil {
 		return err
@@ -331,6 +435,47 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 		backoff = time.Millisecond
 	}
 	return backoff
+}
+
+// hasToken 은 노드 토큰을 보유 중인지 반환한다.
+func (c *Client) hasToken() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.nodeToken != ""
+}
+
+// isRejected 는 rejected ack 로 정지되었는지 반환한다.
+func (c *Client) isRejected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rejected
+}
+
+// setRejected 는 정지 플래그를 세우고 진행 중 세션을 종료한다(재연결 중단).
+func (c *Client) setRejected() {
+	c.mu.Lock()
+	c.rejected = true
+	c.mu.Unlock()
+	if c.cancel != nil {
+		c.cancel()
+	}
+}
+
+// dialURL 은 dial 에 사용할 URL 을 구성한다. 노드 토큰이 있으면 ?token= 쿼리
+// 파라미터로 제시한다(REQ-C05, websocket.go 의 ?token= 패턴 준용). 토큰 값은
+// 로깅하지 않는다(REQ-F06).
+func (c *Client) dialURL() string {
+	c.mu.Lock()
+	token := c.nodeToken
+	c.mu.Unlock()
+	if token == "" {
+		return c.cfg.ServerURL
+	}
+	sep := "?"
+	if strings.Contains(c.cfg.ServerURL, "?") {
+		sep = "&"
+	}
+	return c.cfg.ServerURL + sep + "token=" + url.QueryEscape(token)
 }
 
 func (c *Client) setConn(conn Conn) {

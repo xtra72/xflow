@@ -46,12 +46,60 @@ const (
 	TypeStatus = "status"
 )
 
+// 등록 상태 문자열 상수 (spec §5.6 상태 머신, managed_nodes.status).
+const (
+	// RegStatusPending 은 등록 요청이 접수되어 관리자 결정을 대기 중인 상태이다(REQ-C02).
+	RegStatusPending = "pending"
+	// RegStatusApproved 는 승인되어 노드 토큰을 받은 상태이다(REQ-C03/C04).
+	RegStatusApproved = "approved"
+	// RegStatusRejected 는 관리자가 거부한 상태이다(REQ-C03).
+	RegStatusRejected = "rejected"
+	// RegStatusRevoked 는 승인 후 폐기된 상태이다. 토큰은 blacklist 되고 재인증이
+	// 거부된다(REQ-C07/F07).
+	RegStatusRevoked = "revoked"
+)
+
 // HelloPayload 는 최소 connect/hello 페이로드이다(M1 식별용).
 // instance_id + hostname + version 으로 노드를 식별한다.
 type HelloPayload struct {
 	InstanceID string `json:"instance_id"`
 	Hostname   string `json:"hostname"`
 	Version    string `json:"version"`
+}
+
+// ExposureSummary 는 register 요청에 실리는 노출 범위 요약이다(REQ-C01, REQ-A04).
+// 각 필드는 노출 정책 문자열("all" | "none" | 목록)이며, 실제 미러링 평가는 M4 에서
+// 수행한다. M2 는 등록 요청에 요약을 운반하는 용도로만 사용한다.
+type ExposureSummary struct {
+	Flows   string `json:"flows,omitempty"`
+	Agents  string `json:"agents,omitempty"`
+	Devices string `json:"devices,omitempty"`
+}
+
+// RegisterPayload 는 등록 요청 페이로드이다(client→server, REQ-C01, spec §5.1).
+//
+// 미등록(또는 pending) 노드가 자신을 등록하기 위해 보낸다. instance_id 로 노드를
+// 식별하고, hostname/version/exposure 요약을 운반한다. BootstrapSecret 은 선택적
+// 사전 공유 시크릿으로, 서버에 bootstrap_secret 이 구성된 경우 1차 신뢰 검증에
+// 사용된다(REQ-C08). 시크릿이므로 로깅/커밋 대상이 아니다(REQ-F06).
+type RegisterPayload struct {
+	InstanceID      string          `json:"instance_id"`
+	Hostname        string          `json:"hostname,omitempty"`
+	Version         string          `json:"version,omitempty"`
+	Exposure        ExposureSummary `json:"exposure,omitempty"`
+	BootstrapSecret string          `json:"bootstrap_secret,omitempty"`
+}
+
+// RegisterAckPayload 는 등록 응답 페이로드이다(server→client, REQ-C03/C04, spec §5.1).
+//
+// Status 는 pending|approved|rejected 중 하나이다. 승인 시 NodeToken(JWT)이
+// 포함되며, 클라이언트는 이를 영속하여 이후 재접속 인증에 사용한다(REQ-C04/C05).
+// 거부 시 Reason 으로 사유를 전달할 수 있다(REQ-C03). NodeToken 은 시크릿이므로
+// 로깅 대상이 아니다(REQ-F06).
+type RegisterAckPayload struct {
+	Status    string `json:"status"`
+	NodeToken string `json:"node_token,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // HeartbeatPayload 는 heartbeat 페이로드이다(REQ-B03).
@@ -87,6 +135,17 @@ func NewHeartbeatMessage(instanceID string) (*ws.Message, error) {
 // NewStatusMessage 는 StatusPayload 를 ws.Message 봉투로 인코딩한다.
 func NewStatusMessage(p StatusPayload) (*ws.Message, error) {
 	return ws.NewMessage(TypeStatus, p)
+}
+
+// NewRegisterMessage 는 RegisterPayload 를 ws.Message 봉투로 인코딩한다(REQ-C01).
+func NewRegisterMessage(p RegisterPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeRegister, p)
+}
+
+// NewRegisterAckMessage 는 RegisterAckPayload 를 ws.Message 봉투로 인코딩한다
+// (REQ-C03/C04).
+func NewRegisterAckMessage(p RegisterAckPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeRegisterAck, p)
 }
 
 // DecodeMessage 는 ws.DecodeMessage 의 패키지-로컬 별칭이다(테스트/호출 편의).
