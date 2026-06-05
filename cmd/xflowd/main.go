@@ -32,6 +32,7 @@ import (
 	"github.com/xtra/xflow/internal/node"
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
+	"github.com/xtra/xflow/internal/remote"
 	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/internal/updater"
@@ -709,6 +710,90 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("api.handler.chart_ws").Logger())
 	server.RegisterRawHandler("GET /ws/chart/{channel}", chartWSHandler.HandleUpgrade)
 
+	// 9.5b. 원격 관리 (@SPEC:SPEC-REMOTE-001 M2) — mode 분기.
+	// server 모드는 등록/승인 상태 머신(managed_nodes 영속 + JWT 노드 토큰)을 구성
+	// 하고, 관리 WS 핸들러(별도 엔드포인트 /api/remote/ws — REQ-N02) + 관리자 승인
+	// REST API 를 등록한다. online/offline 추적 sweeper 는 ctx 생성 후(아래 10절)
+	// 시작한다. disabled(기본)는 어떤 관리 연결도 생성/수락하지 않는다(REQ-N03 회귀).
+	rmCfg := cfg.RemoteManagement()
+	var (
+		remoteServer       *remote.Server
+		remoteAdminHandler *handler.RemoteAdminHandler
+		managedNodeRepo    storage.ManagedNodeRepository
+		mirrorRepo         storage.MirrorRepository
+		remoteAuditRepo    storage.RemoteAuditRepository
+	)
+	switch rmCfg.Mode {
+	case "server":
+		// managed_nodes 영속(서버 캐시) — 공유 SQLite DB 경로를 재사용한다(§5.4).
+		mnRepo, mnErr := storage.NewManagedNodeRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if mnErr != nil {
+			return fmt.Errorf("관리 노드 저장소 초기화 실패: %w", mnErr)
+		}
+		managedNodeRepo = mnRepo
+		defer managedNodeRepo.Close()
+
+		// 인벤토리 미러 캐시(M4, §5.4) — 동일 SQLite DB 에 미러 테이블을 멱등 추가.
+		mrRepo, mrErr := storage.NewMirrorRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if mrErr != nil {
+			return fmt.Errorf("인벤토리 미러 저장소 초기화 실패: %w", mrErr)
+		}
+		mirrorRepo = mrRepo
+		defer mirrorRepo.Close()
+
+		// 원격 변경 감사 로그(M6, REQ-F05) — 동일 SQLite DB 에 remote_audit 테이블을
+		// 멱등 추가. 명령/승인/거부/폐기 mutation 을 누가/언제/어느 노드/결과로 기록한다.
+		auRepo, auErr := storage.NewRemoteAuditRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if auErr != nil {
+			return fmt.Errorf("원격 감사 저장소 초기화 실패: %w", auErr)
+		}
+		remoteAuditRepo = auRepo
+		defer remoteAuditRepo.Close()
+
+		// 노드 토큰은 기존 JWTService 를 재사용한다(REQ-C04/C05/C07/F02/F07).
+		tokenIssuer := remote.NewJWTTokenIssuer(server.JWTService())
+
+		remoteServer = remote.NewServer(remote.ServerConfig{
+			HeartbeatTimeout: 3 * rmCfg.HeartbeatInterval,
+			Repo:             managedNodeRepo,
+			Mirror:           mirrorRepo,
+			TokenIssuer:      tokenIssuer,
+			Audit:            remoteAuditRepo,
+			BootstrapSecret:  rmCfg.BootstrapSecret,
+			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
+		}, nil)
+
+		// 관리 WS 핸들러: 노드 토큰 핸드셰이크 검증 활성화(재접속 세션 복원 — REQ-C05).
+		remoteWSHandler := handler.NewRemoteHandler(remoteServer,
+			obs.Loggers.NewLogger("api.handler.remote").Logger()).
+			WithTokenValidator(tokenIssuer)
+		server.RegisterRawHandler(handler.RemoteWSPattern, remoteWSHandler.HandleUpgrade)
+
+		// 관리자 승인/거부/폐기/목록 REST API (admin 권한 강제 — REQ-C03/C07/F04).
+		// 감사 저장소를 연결해 mutation 을 영속 기록하고 GET /remote/audit 로 관측한다(M6).
+		remoteAdminHandler = handler.NewRemoteAdminHandler(remoteServer,
+			obs.Loggers.NewLogger("api.handler.remote_admin").Logger()).
+			WithAudit(remoteAuditRepo)
+
+		logger.Info("원격 관리 서버 모드 활성화",
+			"endpoint", handler.RemoteWSPattern)
+	case "client":
+		// 클라이언트 dialer 는 ctx 생성 후(아래 10절) 시작한다.
+		logger.Info("원격 관리 클라이언트 모드 활성화",
+			"server_url", rmCfg.ServerURL)
+	default:
+		// disabled — 아무 것도 하지 않는다(회귀 0).
+	}
+
+	// 9.5c. 관리자 승인 REST API 등록 (@SPEC:SPEC-REMOTE-001 M2).
+	// server 모드에서만 등록한다. RegisterRoutes 는 동일 /api/v1 그룹에 추가
+	// 등록하므로 위 9.4 의 핸들러들과 공존한다(별도 호출 안전).
+	if remoteAdminHandler != nil {
+		server.RegisterRoutes(func(g *api.RouteGroup) {
+			remoteAdminHandler.RegisterRoutes(g)
+		})
+	}
+
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
 	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, obs.Loggers.NewLogger("api.ws.broadcaster").Logger(), ws.WithStreamRouter(obs.Streams))
 
@@ -726,6 +811,81 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 모니터링 브로드캐스터 시작 (ctx 생성 후)
 	broadcaster.Start(ctx)
 	defer broadcaster.Stop()
+
+	// 10.1. 원격 관리 라이프사이클 시작 (@SPEC:SPEC-REMOTE-001 M1).
+	// ctx 취소(종료 시그널) 시 sweeper/client 고루틴이 정리된다.
+	switch rmCfg.Mode {
+	case "server":
+		if remoteServer != nil {
+			remoteServer.StartSweeper(ctx)
+			logger.Info("원격 관리 online/offline 추적 시작")
+		}
+	case "client":
+		// 영속 instance_id 해석(config override 우선, 없으면 데이터 디렉토리에
+		// 생성·영속 — REQ-A03). 데이터 디렉토리는 SQLite 경로의 부모를 재사용한다.
+		dataDir := filepath.Dir(storageCfg.SQLitePath)
+		instanceID, idErr := remote.ResolveInstanceID(rmCfg.InstanceID, dataDir)
+		if idErr != nil {
+			logger.Error("instance_id 해석 실패 — 원격 클라이언트 미시작", "error", idErr)
+			break
+		}
+		hostname, _ := os.Hostname()
+		// 원격 명령 적용기(M3, REQ-D02/D03/D04): 로컬 API 와 동일한 어댑터 인스턴스를
+		// 재사용하여 원격 변경과 로컬 변경이 동일 상태에 반영되도록 한다(A5 — 원격 우회
+		// 없음). domain → DomainCommander 라우팅은 remote.Applier 가 담당한다.
+		commandApplier := remote.NewApplier(
+			&flowCommander{adapter: flowSvc},
+			&agentCommander{adapter: agentSvc},
+			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo},
+		)
+
+		// 인벤토리 소스(M4, REQ-E01): 로컬 API 와 동일한 어댑터 인스턴스를 재사용하여
+		// 미러가 로컬 상태와 일치하도록 한다. redaction(F06)은 소스 어댑터가 수행한다.
+		inventorySource := newRemoteInventorySource(flowSvc, agentSvc, deviceRegistry)
+
+		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
+		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
+		remoteClient := remote.NewClient(remote.ClientConfig{
+			ServerURL:         rmCfg.ServerURL,
+			InstanceID:        instanceID,
+			Hostname:          hostname,
+			Version:           Version,
+			HeartbeatInterval: rmCfg.HeartbeatInterval,
+			BootstrapSecret:   rmCfg.BootstrapSecret,
+			DataDir:           dataDir,
+			Exposure: remote.ExposureSummary{
+				Flows:   rmCfg.Exposure.Flows,
+				Agents:  rmCfg.Exposure.Agents,
+				Devices: rmCfg.Exposure.Devices,
+			},
+			Applier:   commandApplier,
+			Inventory: inventorySource,
+			Logger:    obs.Loggers.NewLogger("remote.client").Logger(),
+		}, nil)
+		remoteClient.Start(ctx)
+		defer remoteClient.Stop()
+
+		// 노출 설정 핫리로드(A07/A06): exposure 키 변경 시 새 범위로 재미러링한다.
+		// 노출 해제된 자원은 remove 델타로 서버 캐시에서 제거된다(client_mirror.go).
+		for _, key := range []string{
+			"remote_management.exposure.flows",
+			"remote_management.exposure.agents",
+			"remote_management.exposure.devices",
+		} {
+			cfg.OnChange(key, func(_ config.ChangeEvent) {
+				rm := cfg.RemoteManagement()
+				remoteClient.UpdateExposure(remote.ExposureSummary{
+					Flows:   rm.Exposure.Flows,
+					Agents:  rm.Exposure.Agents,
+					Devices: rm.Exposure.Devices,
+				})
+				logger.Info("노출 설정 변경 — 재미러링 신호", "instance_id", instanceID)
+			})
+		}
+
+		logger.Info("원격 관리 클라이언트 시작",
+			"instance_id", instanceID, "server_url", rmCfg.ServerURL)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

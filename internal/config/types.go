@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // ServerConfig - 서버 설정
 type ServerConfig struct {
 	Port      int
@@ -115,4 +117,52 @@ type PluginConfig struct {
 	Directory   string
 	WASMEnabled bool
 	GoEnabled   bool
+}
+
+// RemoteManagementConfig - 원격 관리 서버/클라이언트 설정 (@SPEC:SPEC-REMOTE-001 M1)
+//
+// remote_management 섹션을 표현한다(spec §5.3). Mode 로 역할(server|client|
+// disabled)을 결정하며, 기본 disabled 는 기존 동작을 회귀 없이 유지한다
+// (REQ-REMOTE-N03). TLS 는 기존 TLSConfig 를 재사용한다(wss, REQ-F01).
+type RemoteManagementConfig struct {
+	// Mode 는 "server" | "client" | "disabled" (기본 disabled, REQ-A01).
+	Mode string
+
+	// ServerURL 은 client 모드의 접속 wss URL (REQ-A02).
+	ServerURL string
+
+	// InstanceID 는 노드 식별 UUID override (빈 값이면 자동 생성·영속, REQ-A03).
+	InstanceID string
+
+	// AutoRegister 는 미등록 시 자동 등록 요청 여부 (기본 true, REQ-C01).
+	AutoRegister bool
+
+	// HeartbeatInterval 은 heartbeat 주기 (안전 기본값, REQ-A05).
+	HeartbeatInterval time.Duration
+
+	// BootstrapSecret 은 (선택) enrollment 사전 공유 시크릿 (REQ-C08).
+	// 시크릿이므로 redaction·비커밋 대상 (REQ-F06).
+	BootstrapSecret string
+
+	// Exposure 는 서버에 노출할 자원 범위 (opt-in, REQ-A04).
+	Exposure ExposureConfig
+
+	// TLS 는 wss 용 TLS 설정 (기존 TLSConfig 재사용, REQ-F01).
+	TLS TLSConfig
+
+	// RequireSecure 는 보안 전송(wss/TLS)을 강제할지 결정한다 (M6, REQ-F01).
+	// true 이고 non-dev(server.mode != "development")이면, client 모드의 평문 ws://
+	// server_url 과 server 모드의 TLS 미설정을 거부한다. 기본 false(기존 동작 보존,
+	// REQ-N03). development 모드에서는 강제하지 않는다(로컬 개발 편의).
+	RequireSecure bool
+}
+
+// ExposureConfig - 노출(exposure) 범위 설정 (REQ-REMOTE-A04, spec §5.3)
+//
+// 각 필드는 노출 범위를 표현하는 정책 문자열이다(기본: "all" | "none" | 명시
+// 목록, OPEN Q5). M1 은 문자열로만 보관하고, 실제 미러링 평가는 M4 에서 수행한다.
+type ExposureConfig struct {
+	Flows   string
+	Agents  string
+	Devices string
 }

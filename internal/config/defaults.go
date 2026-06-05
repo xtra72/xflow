@@ -72,4 +72,21 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("update.drain_timeout", "30s")
 	v.SetDefault("update.health_check_timeout", "5s")
 	v.SetDefault("update.insecure_skip_verify", false)
+
+	// 원격 관리 기본값 (@SPEC:SPEC-REMOTE-001 M1)
+	// 보안/회귀 기본값: mode=disabled (기존 동작 불변 — REQ-N03).
+	v.SetDefault("remote_management.mode", "disabled")
+	v.SetDefault("remote_management.server_url", "")
+	v.SetDefault("remote_management.instance_id", "")
+	v.SetDefault("remote_management.auto_register", true)
+	v.SetDefault("remote_management.heartbeat_interval", "30s")
+	v.SetDefault("remote_management.bootstrap_secret", "")
+	v.SetDefault("remote_management.exposure.flows", "none")
+	v.SetDefault("remote_management.exposure.agents", "none")
+	v.SetDefault("remote_management.exposure.devices", "none")
+	v.SetDefault("remote_management.tls.enabled", false)
+	v.SetDefault("remote_management.tls.cert_file", "")
+	v.SetDefault("remote_management.tls.key_file", "")
+	// require_secure 기본 false — 기존 동작 보존(REQ-N03). M6 보안 전송 강제 옵션.
+	v.SetDefault("remote_management.require_secure", false)
 }

@@ -10,9 +10,11 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Boxes,
   HardDrive,
   LayoutDashboard,
   Monitor,
+  Network,
   Settings,
   Workflow,
 } from 'lucide-react';
@@ -96,6 +98,26 @@ const NAV_ENTRIES: NavEntry[] = [
         labelKey: 'nav.agentTypes',
         path: '/agent-types',
         icon: Bot,
+      },
+    ],
+  },
+  // SPEC-REMOTE-001 M5: admin 전용 원격 관리 그룹.
+  {
+    labelKey: 'nav.remote',
+    icon: Network,
+    roles: ['admin'],
+    children: [
+      {
+        labelKey: 'nav.remoteNodes',
+        path: '/admin/remote',
+        icon: Network,
+        roles: ['admin'],
+      },
+      {
+        labelKey: 'nav.remoteResources',
+        path: '/admin/remote/resources',
+        icon: Boxes,
+        roles: ['admin'],
       },
     ],
   },
