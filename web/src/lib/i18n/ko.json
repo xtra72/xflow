@@ -16,7 +16,6 @@
     "editor": "플로우",
     "remote": "원격 관리",
     "remoteNodes": "관리 노드",
-    "remoteResources": "원격 자원",
     "remoteControl": "원격 노드 제어",
     "sidebarNav": "사이드바 네비게이션",
     "expandSidebar": "사이드바 펼치기",
@@ -326,8 +325,6 @@
   "remote": {
     "title": "관리 노드",
     "subtitle": "원격 xflowd 노드의 등록 상태를 확인하고 승인·거부·폐기합니다.",
-    "resourcesTitle": "원격 자원 개요",
-    "resourcesSubtitle": "전체 관리 노드의 플로우·에이전트·디바이스를 한눈에 조회합니다. 빠른 명령(배포·시작·중지)을 발행하거나 ‘이 노드에서 제어’로 단일 노드 화면에 진입하세요.",
     "target": {
       "viewing": "원격 노드 보기:",
       "backToLocal": "로컬로 돌아가기",
@@ -346,27 +343,13 @@
     },
     "online": "온라인",
     "offline": "오프라인",
-    "lastKnown": "마지막 정보",
     "loadError": "원격 데이터를 불러오는 중 오류가 발생했습니다.",
     "noNodes": "등록된 관리 노드가 없습니다.",
-    "noResources": "표시할 자원이 없습니다.",
     "noApprovedNodes": "승인된 노드가 없습니다.",
     "notServerTitle": "원격 관리 서버 모드가 아닙니다",
     "notServerDesc": "이 인스턴스는 원격 관리 서버 모드가 아닙니다. remote_management.mode: server 로 설정 후 재시작하세요.",
     "selectNode": "노드 선택",
     "nodesTableLabel": "관리 노드 목록",
-    "resourcesTableLabel": "원격 자원 목록",
-    "viewModeLabel": "뷰 모드",
-    "kindTabsLabel": "자원 종류",
-    "mode": {
-      "aggregated": "통합 보기",
-      "perNode": "노드별 보기"
-    },
-    "kind": {
-      "flows": "플로우",
-      "agents": "에이전트",
-      "devices": "디바이스"
-    },
     "status": {
       "pending": "승인 대기",
       "approved": "승인됨",
@@ -380,19 +363,13 @@
       "online": "연결",
       "status": "상태",
       "lastSeen": "마지막 수신",
-      "actions": "액션",
-      "name": "이름",
-      "resourceStatus": "상태",
-      "sourceNode": "출처 노드",
-      "updatedAt": "갱신 시각"
+      "actions": "액션"
     },
     "action": {
       "approve": "승인",
       "reject": "거부",
       "revoke": "폐기",
-      "delete": "삭제",
-      "edit": "편집",
-      "controlOnNode": "이 노드에서 제어"
+      "delete": "삭제"
     },
     "confirm": {
       "rejectTitle": "노드를 거부하시겠습니까?",
@@ -486,24 +463,14 @@
         "actionFailed": "작업을 처리하지 못했습니다."
       }
     },
-    "command": {
-      "deploy": "배포",
-      "start": "시작",
-      "stop": "중지",
-      "actionsLabel": "원격 명령",
-      "offlineHint": "오프라인 노드에는 명령을 발행할 수 없습니다.",
-      "success": "명령을 적용했습니다.",
-      "errorUnavailable": "노드가 오프라인이거나 승인되지 않아 명령을 적용할 수 없습니다.",
-      "errorTimeout": "명령 응답을 받지 못했습니다 (타임아웃).",
-      "errorFailed": "노드에서 명령 적용에 실패했습니다.",
-      "errorGeneric": "명령을 발행하지 못했습니다."
-    },
     "edit": {
       "createFlow": "플로우 생성",
       "createAgent": "에이전트 생성",
       "createGateHint": "대상 노드가 승인·온라인 상태여야 생성할 수 있습니다.",
       "gateHint": "승인·온라인 노드의 노출 자원만 편집할 수 있습니다.",
       "saveSuccess": "변경 사항을 노드에 적용했습니다.",
+      "actionGateHint": "대상 노드가 승인·온라인 상태이고 자원이 온라인일 때만 제어할 수 있습니다.",
+      "unsupportedOnRemote": "이 동작은 원격 노드에서 지원되지 않습니다.",
       "deleteSuccess": "자원을 삭제했습니다.",
       "deleteTitle": "자원을 삭제하시겠습니까?",
       "deleteDesc": "{name} 자원을 대상 노드에서 삭제합니다. 이 작업은 되돌릴 수 없습니다.",

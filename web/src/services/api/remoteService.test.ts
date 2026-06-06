@@ -358,23 +358,3 @@ describe('remoteService — 라이브 스트림 URL (M8, REQ-J08)', () => {
     ).toBe('/api/v1/remote/nodes/n%2F1/devices/d%201/state/stream?token=jwt.a%2Fb');
   });
 });
-
-describe('remoteService — 통합 미러', () => {
-  it('listAllFlows 는 GET /remote/flows 를 호출한다', async () => {
-    getMock.mockResolvedValueOnce([]);
-    await remoteService.listAllFlows();
-    expect(getMock).toHaveBeenCalledWith('/remote/flows');
-  });
-
-  it('listAllAgents 는 GET /remote/agents 를 호출한다', async () => {
-    getMock.mockResolvedValueOnce([]);
-    await remoteService.listAllAgents();
-    expect(getMock).toHaveBeenCalledWith('/remote/agents');
-  });
-
-  it('listAllDevices 는 GET /remote/devices 를 호출한다', async () => {
-    getMock.mockResolvedValueOnce([]);
-    await remoteService.listAllDevices();
-    expect(getMock).toHaveBeenCalledWith('/remote/devices');
-  });
-});

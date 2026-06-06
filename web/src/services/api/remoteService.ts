@@ -471,26 +471,3 @@ export function remoteStreamUrl(
   )}/${kind.action}/stream`;
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
-
-// ---- 통합(전 노드) 미러 조회 (G03, REQ-E05) ----
-
-/**
- * 전 노드의 flow 미러를 출처 태그와 함께 조회한다. GET /remote/flows
- */
-export async function listAllFlows(): Promise<MirroredResource[]> {
-  return get<MirroredResource[]>('/remote/flows');
-}
-
-/**
- * 전 노드의 agent 미러를 조회한다. GET /remote/agents
- */
-export async function listAllAgents(): Promise<MirroredResource[]> {
-  return get<MirroredResource[]>('/remote/agents');
-}
-
-/**
- * 전 노드의 device 미러를 조회한다. GET /remote/devices
- */
-export async function listAllDevices(): Promise<MirroredResource[]> {
-  return get<MirroredResource[]>('/remote/devices');
-}

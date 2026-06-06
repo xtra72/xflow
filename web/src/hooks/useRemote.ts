@@ -94,14 +94,7 @@ const NODE_MIRROR_FN = {
   device: remoteService.listNodeDevices,
 } as const;
 
-/** 종류별 통합 미러 조회 함수 매핑. */
-const ALL_MIRROR_FN = {
-  flow: remoteService.listAllFlows,
-  agent: remoteService.listAllAgents,
-  device: remoteService.listAllDevices,
-} as const;
-
-/** 종류 → 통합 미러 쿼리 키 세그먼트 (복수형). */
+/** 종류 → 미러 쿼리 키 세그먼트 (복수형). */
 const ALL_MIRROR_KEY: Record<MirroredResourceKind, string> = {
   flow: 'flows',
   agent: 'agents',
@@ -125,22 +118,6 @@ export function useNodeMirror(
     queryFn: () => NODE_MIRROR_FN[kind](instanceID),
     enabled: enabled && !!instanceID,
     refetchInterval: MIRROR_REFETCH_MS,
-  });
-}
-
-/**
- * 전 노드의 종류별 통합 미러 목록 쿼리 (G03, REQ-E05).
- * 각 행은 source_instance_id 와 online 으로 태깅된다.
- *
- * @param kind - 미러 종류 (flow/agent/device).
- * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
- */
-export function useAllMirror(kind: MirroredResourceKind, enabled = true) {
-  return useQuery({
-    queryKey: ['remote', ALL_MIRROR_KEY[kind]],
-    queryFn: () => ALL_MIRROR_FN[kind](),
-    refetchInterval: MIRROR_REFETCH_MS,
-    enabled,
   });
 }
 
