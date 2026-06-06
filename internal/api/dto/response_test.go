@@ -2,11 +2,60 @@ package dto
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// sampleItem 은 목록 직렬화 회귀 테스트용 더미 타입이다.
+type sampleItem struct {
+	ID string `json:"id"`
+}
+
+// TestNewSuccessResponse_EmptySlice_IncludesDataKey 는 빈 슬라이스 목록 응답이
+// 직렬화될 때 반드시 "data":[] 형태를 포함해야 함을 검증한다 (회귀 방지).
+//
+// 버그 재현: Data 필드에 omitempty 가 있으면 len==0 슬라이스(nil 또는 non-nil)는
+// JSON 에서 통째로 누락되어 {"success":true} 만 출력된다. 그 결과 프런트엔드 axios
+// 인터셉터가 body.data 를 undefined 로 언래핑하고 React Query 가 에러를 던진다.
+func TestNewSuccessResponse_EmptySlice_IncludesDataKey(t *testing.T) {
+	t.Run("non-nil empty slice serializes data as empty array", func(t *testing.T) {
+		resp := NewSuccessResponse([]sampleItem{})
+
+		data, err := json.Marshal(resp)
+		require.NoError(t, err)
+
+		// data 키가 반드시 존재하고 빈 배열로 직렬화되어야 한다.
+		assert.Contains(t, string(data), `"data":[]`,
+			"empty list success response must serialize data as []")
+		assert.True(t, strings.Contains(string(data), `"data"`),
+			"data key must always be present on success responses")
+
+		// 구조적으로도 data 키가 존재함을 확인한다.
+		var parsed map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &parsed))
+		raw, hasData := parsed["data"]
+		assert.True(t, hasData, "data key must be present in serialized envelope")
+		assert.Equal(t, "[]", string(raw))
+	})
+
+	t.Run("nil slice serializes data as empty array", func(t *testing.T) {
+		var nilSlice []sampleItem // nil slice
+		resp := NewSuccessResponse(nilSlice)
+
+		data, err := json.Marshal(resp)
+		require.NoError(t, err)
+
+		// nil 슬라이스도 data 키를 포함해야 한다. encoding/json 은 nil 슬라이스를
+		// null 로 직렬화하지만, 핵심은 data 키가 항상 존재하는 것이다.
+		var parsed map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &parsed))
+		_, hasData := parsed["data"]
+		assert.True(t, hasData, "data key must be present even for nil slice")
+	})
+}
 
 func TestNewSuccessResponse(t *testing.T) {
 	tests := []struct {
@@ -106,12 +155,12 @@ func TestNewErrorResponse(t *testing.T) {
 
 func TestNewPaginatedResponse(t *testing.T) {
 	tests := []struct {
-		name           string
-		data           []string
-		page           int
-		size           int
-		total          int64
-		expectedPages  int
+		name          string
+		data          []string
+		page          int
+		size          int
+		total         int64
+		expectedPages int
 	}{
 		{
 			name:          "first page",
