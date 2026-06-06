@@ -25,8 +25,11 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { useDeviceRealtime, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
+import { useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { normalizeAcMode, normalizeFanSpeed } from '@/pages/dashboard/panels/acControlTypes';
@@ -41,7 +44,11 @@ interface DeviceDetailPanelProps {
 
 /** 디바이스 행 확장 시 표시되는 상세 패널 */
 export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode }: DeviceDetailPanelProps) {
-  const { data: device, isLoading, error } = useDeviceRealtime(deviceId);
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃에 따라 상세/실시간 상태 소스를 전환한다.
+  // 로컬은 useDeviceRealtime 위임(회귀 없음), 원격은 get(정적)+state(SSE/폴백).
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const { data: device, isLoading, error } = useDeviceDetailTarget(target, deviceId);
 
   // 패널 레벨 편집 상태 관리 (훅은 조기 리턴 전에 호출해야 한다)
   const [editing, setEditing] = useState(initialEditMode ?? false);
@@ -83,7 +90,9 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
         <h3 className="text-sm font-semibold text-(--color-text-primary)">
           {getDeviceDisplayName(device)}
         </h3>
-        {!editing && (
+        {/* 원격 타깃은 READ-ONLY(REQ-J03) — 편집/명령은 디바이스 페이지의 그룹 D
+            경로에서만 수행하므로 편집 버튼을 숨긴다. */}
+        {!editing && !remote && (
           <button
             type="button"
             onClick={() => setEditing(true)}
@@ -96,21 +105,21 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* 좌측: 상태 속성 */}
+        {/* 좌측: 상태 속성. 원격은 deviceId 미전달로 비대화형(읽기 전용)으로 만든다. */}
         <div>
           {hasState && (
             <StatePropertiesSection
               properties={device.state!.properties}
               protocol={device.protocol}
               type={device.type}
-              deviceId={deviceId}
+              deviceId={remote ? undefined : deviceId}
             />
           )}
         </div>
 
-        {/* 우측: 제어 + 메타데이터 */}
+        {/* 우측: 제어 + 메타데이터. 원격은 명령 섹션을 숨기고 메타데이터는 읽기 전용. */}
         <div className="space-y-6">
-          {hasCommands && (
+          {hasCommands && !remote && (
             <CommandsSection deviceId={deviceId} commands={device.commands!} powerState={device.state?.properties?.['power'] as boolean | undefined} />
           )}
           <MetadataSection
@@ -124,8 +133,9 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
               labels: device.metadata?.labels ?? {},
               pinned: device.metadata?.pinned,
             }}
-            editing={editing}
+            editing={editing && !remote}
             onEditChange={setEditing}
+            readOnly={remote}
           />
         </div>
       </div>
@@ -1036,12 +1046,17 @@ interface MetadataSectionProps {
     labels: Record<string, string>;
     pinned?: boolean;
   };
-  /** 부모에서 제어하는 편집 상태 */
+  /** 부모에서 제어하는 편집 상태. 원격 타깃에서는 부모가 항상 false 를 전달한다. */
   editing: boolean;
   onEditChange: (editing: boolean) => void;
+  /**
+   * READ-ONLY(원격 타깃) 표식. 읽기 모드 고정은 부모가 editing=false 로 보장하며,
+   * 본 플래그는 읽기 전용 안내 표시 등 향후 확장을 위해 받는다.
+   */
+  readOnly?: boolean;
 }
 
-function MetadataSection({ deviceId, source, name, metadata, editing, onEditChange }: MetadataSectionProps) {
+function MetadataSection({ deviceId, source, name, metadata, editing, onEditChange, readOnly: _readOnly }: MetadataSectionProps) {
   // config 소스 디바이스는 기본 고정 설치 (체크 해제 → 재시작시 삭제)
   const effectivePinned = metadata.pinned ?? (source === 'config' || source === 'pinned');
   const [form, setForm] = useState({

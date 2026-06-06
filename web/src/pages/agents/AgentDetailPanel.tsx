@@ -11,8 +11,11 @@ import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, Hard
 
 import { useQueryClient } from '@tanstack/react-query';
 
-import { useAgent, useAgentStats, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
+import { useAgent, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
+import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
 import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { isRemoteTarget } from '@/lib/remote/target';
 import {
   useSeriesDataSource,
   type SeriesDataSourceKind,
@@ -170,6 +173,10 @@ function SeriesTab({
 
   // 데이터 소스를 에이전트 타입에 맞춰 생성.
   // Store 인 경우 agentName 이 필요하며, 미전달 시 useSeriesDataSource 가 에러를 던진다.
+  // SPEC-REMOTE-001 M8 (그룹 J): 시리즈 데이터 뷰어는 local TSDB/store 서비스
+  // 기반이라 원격 READ 프록시 매핑이 없다. 원격 타깃은 안내만 표시한다.
+  const seriesTarget = useTargetContext();
+  const seriesRemote = isRemoteTarget(seriesTarget);
   const kind: SeriesDataSourceKind = agentType === 'store' ? 'store' : 'tsdb';
   const dataSource = useSeriesDataSource({ kind, agentName, agentId });
 
@@ -185,6 +192,15 @@ function SeriesTab({
   const handleClose = useCallback(() => {
     setModalOpen(false);
   }, []);
+
+  if (seriesRemote) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+        <LineChart className="h-8 w-8 opacity-40" aria-hidden="true" />
+        <p className="text-sm">원격 노드에서는 시리즈 뷰어를 제공하지 않습니다.</p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -241,7 +257,10 @@ function formatStatsBytes(n: number | undefined | null): string {
 }
 
 function StatsTab({ agentId }: { agentId: string }) {
-  const { data: stats, isLoading } = useAgentStats(agentId);
+  // SPEC-REMOTE-001 M8 (그룹 J): 라이브 통계는 타깃에 따라 로컬 폴링 또는 원격
+  // SSE 스트림(+폴백 폴링)으로 취득한다.
+  const target = useTargetContext();
+  const { data: stats, isLoading } = useAgentStatsTarget(target, agentId);
 
   if (isLoading) {
     return (
@@ -810,7 +829,12 @@ function StoreConfigEditor({
 // ---- 설정 탭 ----
 
 function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string }) {
-  const { data: agent, isLoading } = useAgent(agentId);
+  // SPEC-REMOTE-001 M8 (그룹 J): 설정 읽기는 타깃에 따라 전환한다. 원격 타깃은
+  // READ-ONLY(REQ-J03) — 편집/저장/로그레벨 변경은 그룹 I(M7) CRUD 경로(원격 자원
+  // 페이지)에서 수행하므로 본 인라인 편집은 비활성한다.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const { data: agent, isLoading } = useAgentDetailTarget(target, agentId);
   const configureAgent = useConfigureAgent();
   const addNotification = useUIStore((s) => s.addNotification);
   const [editing, setEditing] = useState(false);
@@ -927,7 +951,8 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
 
   return (
     <div className="p-4">
-      {/* 액션 버튼 */}
+      {/* 액션 버튼 (원격 타깃은 READ-ONLY — 편집은 원격 자원 페이지의 그룹 I 경로) */}
+      {!remote && (
       <div className="mb-3 flex items-center justify-end gap-2">
         {editing ? (
           <>
@@ -967,6 +992,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
           </button>
         )}
       </div>
+      )}
 
       {/* 에러 메시지 */}
       {configureAgent.isError && (
@@ -1011,12 +1037,16 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
           onChange={setDraft}
           readOnly={!editing}
           agentType={agentType}
-          logLevel={{
-            agentId,
-            value: componentLogLevel,
-            updating: isLogLevelUpdating,
-            onChangeLevel: handleLogLevelChange,
-          }}
+          logLevel={
+            remote
+              ? undefined
+              : {
+                  agentId,
+                  value: componentLogLevel,
+                  updating: isLogLevelUpdating,
+                  onChangeLevel: handleLogLevelChange,
+                }
+          }
         />
       ) : agentType in TWO_COL_CONFIG && schema ? (
         <TwoColumnConfigLayout
@@ -1026,12 +1056,16 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
           onChange={setDraft}
           readOnly={!editing}
           agentType={agentType}
-          logLevel={{
-            agentId,
-            value: componentLogLevel,
-            updating: isLogLevelUpdating,
-            onChangeLevel: handleLogLevelChange,
-          }}
+          logLevel={
+            remote
+              ? undefined
+              : {
+                  agentId,
+                  value: componentLogLevel,
+                  updating: isLogLevelUpdating,
+                  onChangeLevel: handleLogLevelChange,
+                }
+          }
         />
       ) : (
         <DynamicForm
@@ -1043,8 +1077,9 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
         />
       )}
 
-      {/* 로그 레벨 설정 (HVACR 4-분면 + 2열 레이아웃은 자체적으로 로그 레벨을 포함) */}
-      {!(agentType in TWO_COL_CONFIG) && !HVACR_QUADRANT_AGENT_TYPES.has(agentType) && <div className="mt-4 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+      {/* 로그 레벨 설정 (HVACR 4-분면 + 2열 레이아웃은 자체적으로 로그 레벨을 포함).
+          원격 타깃은 로그 레벨 변경(local monitorService)에 대응 백엔드가 없어 숨긴다. */}
+      {!remote && !(agentType in TWO_COL_CONFIG) && !HVACR_QUADRANT_AGENT_TYPES.has(agentType) && <div className="mt-4 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
         <label
           htmlFor={`agent-log-level-${agentId}`}
           className="mb-1 block text-xs font-medium text-(--color-text-muted)"
@@ -1852,8 +1887,9 @@ interface SubscribedTopicEntry {
 }
 
 function TopicsTab({ agentId }: { agentId: string }) {
-  const { data: agent, isLoading: agentLoading } = useAgent(agentId, 'full');
-  const { data: stats } = useAgentStats(agentId);
+  const target = useTargetContext();
+  const { data: agent, isLoading: agentLoading } = useAgentDetailTarget(target, agentId, 'full');
+  const { data: stats } = useAgentStatsTarget(target, agentId);
 
   const state = agent?.state as {
     subscribed_topics?: SubscribedTopicEntry[];
@@ -2209,12 +2245,15 @@ function StoreEntryRow({
   isStatic,
   onPromote,
   onReset,
+  readOnly = false,
 }: {
   entry: Record<string, unknown>;
   maxHistorySize: number;
   agentId: string;
   /** 태그 컬럼을 렌더링할지 여부. 어떤 엔트리도 태그를 갖지 않으면 부모가 false 전달. */
   showTagsColumn: boolean;
+  /** READ-ONLY(원격 타깃): 변환/초기화/히스토리(exec) 어포던스를 숨긴다. */
+  readOnly?: boolean;
   /**
    * 이 엔트리의 키가 정적(설정의 keys 배열에 등록됨)인지 여부.
    * @spec SPEC-STORE-003
@@ -2248,7 +2287,8 @@ function StoreEntryRow({
 
   const stateHistoryCount = (entry.history_count as number) || 0;
   const historyCount = historyData !== null ? historyData.length : stateHistoryCount;
-  const hasHistory = maxHistorySize > 0;
+  // 히스토리 토글은 exec(get_history) 에 의존하므로 원격 READ-ONLY 에서는 비활성.
+  const hasHistory = maxHistorySize > 0 && !readOnly;
 
   const handleRowClick = useCallback(() => {
     if (!hasHistory) return;
@@ -2398,7 +2438,7 @@ function StoreEntryRow({
             정적 키: [초기화] */}
         <td className="px-3 py-2 text-right text-xs">
           <span className="inline-flex items-center gap-1">
-            {!isStatic && (
+            {!readOnly && !isStatic && (
               <button
                 type="button"
                 onClick={handlePromoteClick}
@@ -2409,15 +2449,18 @@ function StoreEntryRow({
                 <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             )}
-            <button
-              type="button"
-              onClick={handleResetClick}
-              className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              title={isStatic ? '히스토리 초기화' : '항목 삭제'}
-              aria-label={`${entry.key as string} 키 초기화`}
-            >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={handleResetClick}
+                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                title={isStatic ? '히스토리 초기화' : '항목 삭제'}
+                aria-label={`${entry.key as string} 키 초기화`}
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
+            {readOnly && <span className="text-(--color-text-muted)">-</span>}
           </span>
         </td>
       </tr>
@@ -2470,7 +2513,12 @@ type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
  */
 function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string }) {
   const queryClient = useQueryClient();
-  const { data: agent, isLoading } = useAgent(agentId, 'full');
+  // SPEC-REMOTE-001 M8 (그룹 J): 저장소 엔트리 읽기는 타깃 전환. 원격 타깃은
+  // READ-ONLY(REQ-J03) — 변환/초기화/데이터뷰어(local store 서비스 기반)는
+  // 대응 백엔드가 없어 숨긴다(노드 측 store 쓰기는 그룹 D/I 경로에서만).
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const { data: agent, isLoading } = useAgentDetailTarget(target, agentId, 'full');
   const configureAgent = useConfigureAgent();
   const addNotification = useUIStore((s) => s.addNotification);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -2824,7 +2872,8 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   }
 
   // agentName 이 전달되지 않은 경우 데이터 뷰어를 표시하지 않는다 (방어적 처리).
-  const canOpenViewer = Boolean(agentName);
+  // 원격 타깃은 local store 서비스(데이터 뷰어/전체 초기화) 백엔드가 없어 비활성.
+  const canOpenViewer = Boolean(agentName) && !remote;
 
   return (
     <div className="p-4 space-y-3">
@@ -2942,6 +2991,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                     isStatic={staticKeyNames.has(entry.key as string)}
                     onPromote={handleOpenPromote}
                     onReset={handleOpenReset}
+                    readOnly={remote}
                   />
                 ))}
               </tbody>
@@ -3084,11 +3134,19 @@ function formatDuration(connectedAt: string): string {
 }
 
 function SessionsTab({ agentId }: { agentId: string }) {
+  // SPEC-REMOTE-001 M8 (그룹 J): 세션 목록은 exec(list_connections) 기반이라
+  // 원격 READ 프록시 매핑이 없다. 원격 타깃에서는 안내만 표시한다(graceful).
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
   const [sessions, setSessions] = useState<ConnectionSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    if (remote) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
 
     const fetchSessions = async () => {
@@ -3114,7 +3172,16 @@ function SessionsTab({ agentId }: { agentId: string }) {
     void fetchSessions();
     const timer = setInterval(() => void fetchSessions(), 5000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [agentId, refreshKey]);
+  }, [agentId, refreshKey, remote]);
+
+  if (remote) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+        <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
+        <p className="text-sm">원격 노드에서는 세션 정보를 제공하지 않습니다.</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -3220,7 +3287,11 @@ function sourceVariant(source: string): { label: string; manual: boolean } | nul
 }
 
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
-  const { data: agent } = useAgent(agentId);
+  // SPEC-REMOTE-001 M8 (그룹 J): 디바이스 탭은 exec(list_devices/add/remove)
+  // 기반이라 원격 READ 프록시 매핑이 제한적이다. 원격 타깃은 안내만 표시한다.
+  const detailTarget = useTargetContext();
+  const detailRemote = isRemoteTarget(detailTarget);
+  const { data: agent } = useAgent(detailRemote ? '' : agentId);
   // 에이전트 이름 로드 전에는 fetch skip — undefined 를 넘기면 useDevices 가
   // 전체 디바이스를 반환하여 다른 에이전트의 디바이스가 잠깐 노출되었다 사라지는
   // flash 발생. 빈 sentinel agent 이름으로 backend 가 빈 결과를 반환하게 함.
@@ -3282,6 +3353,17 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // LGAP 전용
   const [newZone, setNewZone] = useState('');
   const [newLgapDeviceId, setNewLgapDeviceId] = useState('');
+
+  // 원격 타깃: 디바이스 관리(exec 기반)는 그룹 D 명령 경로로만 가능하므로 안내만
+  // 표시한다(REQ-J03/J12). 디바이스 자체 제어는 디바이스 페이지에서 수행한다.
+  if (detailRemote) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+        <HardDrive className="h-8 w-8 opacity-40" aria-hidden="true" />
+        <p className="text-sm">원격 노드의 디바이스는 디바이스 페이지에서 제어합니다.</p>
+      </div>
+    );
+  }
 
   // Modbus TCP Server: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
   if (agentType === 'modbus-tcp-server') {

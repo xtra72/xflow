@@ -281,6 +281,197 @@ export async function deleteRemoteAgent(
   await del(`/remote/nodes/${encodeId(instanceID)}/agents/${encodeId(agentID)}`);
 }
 
+// ---- 원격 READ/QUERY 프록시 (M8, 그룹 J, REQ-J01/J04/J07/J11) ----
+//
+// 로컬 디테일 API 와 동형의 자원-타깃 READ 데이터를 노드 경유로 프록시한다.
+// 백엔드(remote_query.go)는 노드가 redaction(J06)한 본문을 그대로 통과시키므로,
+// 응답 형태는 매칭되는 로컬 디테일 API 와 동일하다(타깃 추상화가 base path 만
+// 교체하면 된다 — REQ-J11). 모든 경로 접두사는 /remote/nodes/{instance_id}/... .
+//
+// 실패 의미(REQ-J07, 백엔드 mapRemoteQueryError → APIError 전파):
+//   503=오프라인/미관리, 504=타임아웃, 502=노드 질의 실패, 404=노출 범위 밖,
+//   403=비-admin.
+//
+// 라이브 action(agent.stats / agent.series / device.state)은 SSE 스트림(아래
+// remoteStreamUrl)이 1차 소스이며, 본 GET 들은 폴백 폴링 경로로 쓰인다.
+
+/** 한 노드의 원격 자원 디테일 base path 를 구성한다. */
+function nodeResourcePath(
+  instanceID: string,
+  kindPlural: 'flows' | 'agents' | 'devices',
+  resourceID: string,
+): string {
+  return `/remote/nodes/${encodeId(instanceID)}/${kindPlural}/${encodeId(resourceID)}`;
+}
+
+// --- flow READ 프록시 ---
+
+/** 원격 플로우 상세(정의)를 조회한다. GET .../flows/{id} → flow/get */
+export async function getRemoteFlow<T = unknown>(
+  instanceID: string,
+  flowID: string,
+): Promise<T> {
+  return get<T>(nodeResourcePath(instanceID, 'flows', flowID));
+}
+
+/** 원격 플로우 상태를 조회한다. GET .../flows/{id}/status → flow/status */
+export async function getRemoteFlowStatus<T = unknown>(
+  instanceID: string,
+  flowID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'flows', flowID)}/status`);
+}
+
+/** 원격 플로우 노드 목록을 조회한다. GET .../flows/{id}/nodes → flow/nodes */
+export async function getRemoteFlowNodes<T = unknown>(
+  instanceID: string,
+  flowID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'flows', flowID)}/nodes`);
+}
+
+/** 원격 단일 플로우 노드 런타임을 조회한다. GET .../flows/{id}/nodes/{nodeId} → flow/node */
+export async function getRemoteFlowNode<T = unknown>(
+  instanceID: string,
+  flowID: string,
+  nodeID: string,
+): Promise<T> {
+  return get<T>(
+    `${nodeResourcePath(instanceID, 'flows', flowID)}/nodes/${encodeId(nodeID)}`,
+  );
+}
+
+// --- agent READ 프록시 ---
+
+/** 원격 에이전트 상세(detail=full)를 조회한다. GET .../agents/{id} → agent/get */
+export async function getRemoteAgent<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(nodeResourcePath(instanceID, 'agents', agentID));
+}
+
+/** 원격 에이전트 라이브 통계를 조회한다(폴백 폴링). GET .../agents/{id}/stats → agent/stats */
+export async function getRemoteAgentStats<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'agents', agentID)}/stats`);
+}
+
+/** 원격 에이전트 설정을 조회한다. GET .../agents/{id}/config → agent/config */
+export async function getRemoteAgentConfig<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'agents', agentID)}/config`);
+}
+
+/** 원격 에이전트 연결 디바이스를 조회한다. GET .../agents/{id}/devices → agent/devices */
+export async function getRemoteAgentDevices<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'agents', agentID)}/devices`);
+}
+
+/** 원격 에이전트 토픽을 조회한다. GET .../agents/{id}/topics → agent/topics */
+export async function getRemoteAgentTopics<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'agents', agentID)}/topics`);
+}
+
+/** 원격 에이전트 store 를 조회한다. GET .../agents/{id}/store → agent/store */
+export async function getRemoteAgentStore<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'agents', agentID)}/store`);
+}
+
+/** 원격 에이전트 세션을 조회한다. GET .../agents/{id}/sessions → agent/sessions */
+export async function getRemoteAgentSessions<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'agents', agentID)}/sessions`);
+}
+
+/** 원격 에이전트 시리즈를 조회한다(폴백 폴링). GET .../agents/{id}/series → agent/series */
+export async function getRemoteAgentSeries<T = unknown>(
+  instanceID: string,
+  agentID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'agents', agentID)}/series`);
+}
+
+// --- device READ 프록시 ---
+
+/** 원격 디바이스 상세를 조회한다. GET .../devices/{id} → device/get */
+export async function getRemoteDevice<T = unknown>(
+  instanceID: string,
+  deviceID: string,
+): Promise<T> {
+  return get<T>(nodeResourcePath(instanceID, 'devices', deviceID));
+}
+
+/** 원격 디바이스 실시간 상태를 조회한다(폴백 폴링). GET .../devices/{id}/state → device/state */
+export async function getRemoteDeviceState<T = unknown>(
+  instanceID: string,
+  deviceID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'devices', deviceID)}/state`);
+}
+
+/** 원격 디바이스 명령 스펙을 조회한다. GET .../devices/{id}/commands → device/commands */
+export async function getRemoteDeviceCommands<T = unknown>(
+  instanceID: string,
+  deviceID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'devices', deviceID)}/commands`);
+}
+
+/** 원격 디바이스 메타데이터를 조회한다. GET .../devices/{id}/metadata → device/metadata */
+export async function getRemoteDeviceMetadata<T = unknown>(
+  instanceID: string,
+  deviceID: string,
+): Promise<T> {
+  return get<T>(`${nodeResourcePath(instanceID, 'devices', deviceID)}/metadata`);
+}
+
+// ---- 원격 라이브 스트림 URL (M8, 그룹 J, REQ-J08) ----
+//
+// SSE 엔드포인트(remote_stream.go)는 EventSource 로 소비한다. EventSource 는
+// Authorization 헤더를 설정할 수 없으므로 JWT 를 `?token=` 쿼리로 운반한다
+// (백엔드 bearerOrQueryToken 이 Bearer/쿼리 양쪽을 수용). client baseURL(/api/v1)을
+// 앞에 붙여 절대 경로를 만든다(EventSource 는 axios 인스턴스를 거치지 않음).
+
+/** 스트림 가능한 라이브 action. */
+export type RemoteStreamKind =
+  | { domain: 'device'; action: 'state' }
+  | { domain: 'agent'; action: 'stats' }
+  | { domain: 'agent'; action: 'series' };
+
+/**
+ * 원격 라이브 스트림 SSE URL 을 구성한다(REQ-J08). token 이 주어지면 `?token=`
+ * 쿼리로 부착한다(EventSource 헤더 제약 우회). 경로는 remote_stream.go 의
+ * streamRoutes 와 일치한다.
+ */
+export function remoteStreamUrl(
+  instanceID: string,
+  kind: RemoteStreamKind,
+  resourceID: string,
+  token?: string,
+): string {
+  const plural = kind.domain === 'device' ? 'devices' : 'agents';
+  const base = `/api/v1/remote/nodes/${encodeId(instanceID)}/${plural}/${encodeId(
+    resourceID,
+  )}/${kind.action}/stream`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
 // ---- 통합(전 노드) 미러 조회 (G03, REQ-E05) ----
 
 /**

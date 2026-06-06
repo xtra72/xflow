@@ -17,6 +17,7 @@
     "remote": "Remote",
     "remoteNodes": "Managed Nodes",
     "remoteResources": "Remote Resources",
+    "remoteControl": "Remote Node Control",
     "sidebarNav": "Sidebar Navigation",
     "expandSidebar": "Expand Sidebar",
     "collapseSidebar": "Collapse Sidebar"
@@ -325,8 +326,24 @@
   "remote": {
     "title": "Managed Nodes",
     "subtitle": "Review remote xflowd node registration status and approve, reject, or revoke them.",
-    "resourcesTitle": "Remote Resources",
-    "resourcesSubtitle": "Browse mirrored flows, agents, and devices of managed nodes and issue commands.",
+    "resourcesTitle": "Remote Resources Overview",
+    "resourcesSubtitle": "A cross-node overview of flows, agents, and devices across all managed nodes. Issue quick commands (deploy, start, stop) or use \"Control on this node\" to open a single-node screen.",
+    "target": {
+      "viewing": "Viewing remote node:",
+      "backToLocal": "Back to local",
+      "controlDisabled": "node offline — control disabled",
+      "logsUnavailable": "Logs are not available for remote nodes."
+    },
+    "selector": {
+      "title": "Remote Node Control",
+      "subtitle": "Pick a remote node to control it through the same screens (flows, agents, devices) used for local resources.",
+      "openFlows": "Flows",
+      "openAgents": "Agents",
+      "openDevices": "Devices",
+      "controlNode": "Control this node",
+      "nodeOffline": "Offline",
+      "empty": "No approved remote nodes. Register and approve a node first."
+    },
     "online": "Online",
     "offline": "Offline",
     "lastKnown": "last known",
@@ -374,7 +391,8 @@
       "reject": "Reject",
       "revoke": "Revoke",
       "delete": "Delete",
-      "edit": "Edit"
+      "edit": "Edit",
+      "controlOnNode": "Control on this node"
     },
     "confirm": {
       "rejectTitle": "Reject this node?",

@@ -13,7 +13,12 @@ import {
 } from 'lucide-react';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
-import { useDevicesRealtime } from '@/hooks/useDevice';
+import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
+import { useDevicesTarget } from '@/hooks/useResourceTargets';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTargetParam } from '@/hooks/useTargetParam';
+import { TargetProvider } from '@/lib/remote/TargetContext';
+import { isRemoteTarget } from '@/lib/remote/target';
 import { getDeviceTypeLabel, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
 import type { DeviceInfo, DeviceListParams } from '@/types/device';
@@ -81,7 +86,13 @@ export default function DeviceListPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const { data, isLoading, error, refetch } = useDevicesRealtime(filters);
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃에 따라 데이터 소스를 전환한다(로컬은 기존
+  // useDevicesRealtime(filters) 동작과 동일 — 회귀 없음).
+  const target = useTargetParam();
+  const remote = isRemoteTarget(target);
+  const { data, isLoading, error, refetch } = useDevicesTarget(target, filters);
+  const gating = useTargetGating(target);
+  const showLocalWrites = !remote;
 
   // 정렬 상태
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
@@ -273,8 +284,19 @@ export default function DeviceListPage() {
   }
 
   return (
+    <TargetProvider target={target}>
     <div className="space-y-6">
-      {/* 액션 버튼 */}
+      {/* 원격 타깃 배너(로컬이면 null) */}
+      <RemoteTargetBanner
+        target={target}
+        nodeLabel={gating.nodeLabel}
+        nodeReady={gating.nodeReady}
+        localHref="/devices"
+      />
+
+      {/* 액션 버튼 (원격 타깃에서는 로컬 추가 어포던스 숨김 — 디바이스 추가는
+          그룹 D 명령 경로) */}
+      {showLocalWrites && (
       <div className="flex items-center justify-end">
         <button
           type="button"
@@ -285,6 +307,7 @@ export default function DeviceListPage() {
           디바이스 추가
         </button>
       </div>
+      )}
 
       {/* 검색 및 필터 */}
       <DeviceSearchFilter
@@ -307,7 +330,7 @@ export default function DeviceListPage() {
               ? '등록된 디바이스가 없습니다. 에이전트를 시작하면 디바이스가 자동으로 검색됩니다.'
               : '검색 결과가 없습니다.'}
           </p>
-          {devices.length === 0 && (
+          {devices.length === 0 && showLocalWrites && (
             <button
               type="button"
               onClick={() => setShowAddDialog(true)}
@@ -401,11 +424,12 @@ export default function DeviceListPage() {
         </>
       )}
 
-      {/* 디바이스 추가 다이얼로그 */}
-      {showAddDialog && (
+      {/* 디바이스 추가 다이얼로그 (로컬 전용) */}
+      {showLocalWrites && showAddDialog && (
         <AddDeviceDialog onClose={() => setShowAddDialog(false)} />
       )}
     </div>
+    </TargetProvider>
   );
 }
 

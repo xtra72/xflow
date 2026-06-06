@@ -16,6 +16,7 @@ import {
   Monitor,
   Network,
   Settings,
+  SlidersHorizontal,
   Workflow,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router';
@@ -112,6 +113,13 @@ const NAV_ENTRIES: NavEntry[] = [
         labelKey: 'nav.remoteNodes',
         path: '/admin/remote',
         icon: Network,
+        roles: ['admin'],
+      },
+      // SPEC-REMOTE-001 M8 (그룹 J): 원격 노드 제어 진입점(로컬 페이지 재사용).
+      {
+        labelKey: 'nav.remoteControl',
+        path: '/admin/remote/control',
+        icon: SlidersHorizontal,
         roles: ['admin'],
       },
       {

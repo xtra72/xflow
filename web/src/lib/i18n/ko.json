@@ -17,6 +17,7 @@
     "remote": "원격 관리",
     "remoteNodes": "관리 노드",
     "remoteResources": "원격 자원",
+    "remoteControl": "원격 노드 제어",
     "sidebarNav": "사이드바 네비게이션",
     "expandSidebar": "사이드바 펼치기",
     "collapseSidebar": "사이드바 접기"
@@ -325,8 +326,24 @@
   "remote": {
     "title": "관리 노드",
     "subtitle": "원격 xflowd 노드의 등록 상태를 확인하고 승인·거부·폐기합니다.",
-    "resourcesTitle": "원격 자원",
-    "resourcesSubtitle": "관리 노드의 플로우·에이전트·디바이스 미러를 조회하고 명령을 발행합니다.",
+    "resourcesTitle": "원격 자원 개요",
+    "resourcesSubtitle": "전체 관리 노드의 플로우·에이전트·디바이스를 한눈에 조회합니다. 빠른 명령(배포·시작·중지)을 발행하거나 ‘이 노드에서 제어’로 단일 노드 화면에 진입하세요.",
+    "target": {
+      "viewing": "원격 노드 보기:",
+      "backToLocal": "로컬로 돌아가기",
+      "controlDisabled": "노드 오프라인 — 제어 비활성",
+      "logsUnavailable": "원격 노드는 로그를 제공하지 않습니다."
+    },
+    "selector": {
+      "title": "원격 노드 제어",
+      "subtitle": "원격 노드를 선택하면 로컬과 동일한 화면(플로우·에이전트·디바이스)으로 제어합니다.",
+      "openFlows": "플로우",
+      "openAgents": "에이전트",
+      "openDevices": "디바이스",
+      "controlNode": "이 노드 제어",
+      "nodeOffline": "오프라인",
+      "empty": "승인된 원격 노드가 없습니다. 노드를 등록·승인하세요."
+    },
     "online": "온라인",
     "offline": "오프라인",
     "lastKnown": "마지막 정보",
@@ -374,7 +391,8 @@
       "reject": "거부",
       "revoke": "폐기",
       "delete": "삭제",
-      "edit": "편집"
+      "edit": "편집",
+      "controlOnNode": "이 노드에서 제어"
     },
     "confirm": {
       "rejectTitle": "노드를 거부하시겠습니까?",

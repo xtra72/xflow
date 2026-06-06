@@ -4,7 +4,7 @@
 // 태그(SourceNodeTag)를 함께 노출하며, 오프라인 출처 노드는 last-known 표식을
 // 보인다 (REQ-E06). 각 행에는 종류별 원격 명령 버튼(RemoteCommandButtons)을 둔다.
 
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, SlidersHorizontal, Trash2 } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
 import { formatDate } from '@/lib/utils/format';
@@ -33,6 +33,11 @@ interface MirrorResourceTableProps {
    * 노출 자원) 반환한다. 미지정 시 res.online 만으로 판정한다.
    */
   canEdit?: (resource: MirroredResource) => boolean;
+  /**
+   * "이 노드에서 제어" 콜백 (REQ-J14). 지정 시 각 행에 출처 노드의 통합 로컬
+   * 페이지로 진입하는 제어 액션을 노출한다(교차 노드 개요 → 단일 노드 깊은 제어).
+   */
+  onControl?: (resource: MirroredResource) => void;
 }
 
 /**
@@ -45,6 +50,7 @@ export function MirrorResourceTable({
   onEdit,
   onDelete,
   canEdit,
+  onControl,
 }: MirrorResourceTableProps): React.JSX.Element {
   const { t } = useTranslation();
 
@@ -119,6 +125,20 @@ export function MirrorResourceTable({
                     <NodeOnlineIndicator online={res.online} showLabel={false} />
                   )}
                   <RemoteCommandButtons resource={res} />
+                  {/* REQ-J14: "이 노드에서 제어" — 통합 로컬 페이지로 진입. */}
+                  {onControl && (
+                    <button
+                      type="button"
+                      onClick={() => onControl(res)}
+                      data-testid="mirror-resource-control"
+                      aria-label={t('remote.action.controlOnNode')}
+                      title={t('remote.action.controlOnNode')}
+                      className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2 py-1 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('remote.action.controlOnNode')}
+                    </button>
+                  )}
                   {/* M7: 편집/삭제 액션 (REQ-I10). device 는 편집 대상 아님. */}
                   {showEditActions && res.kind !== 'device' && (
                     <>

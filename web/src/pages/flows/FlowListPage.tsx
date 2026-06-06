@@ -22,7 +22,12 @@ import {
 
 import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
-import { useFlows } from '@/hooks';
+import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
+import { useFlowsTarget } from '@/hooks/useResourceTargets';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTargetParam } from '@/hooks/useTargetParam';
+import { TargetProvider } from '@/lib/remote/TargetContext';
+import { isRemoteTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllFlows, updateFlow } from '@/services/api/flowService';
 import type { FlowInfo } from '@/types/flow';
@@ -71,7 +76,16 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 export default function FlowListPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: flowsData, isLoading, error, refetch } = useFlows();
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃(로컬 | 원격 노드)에 따라 데이터 소스를
+  // 전환한다. 로컬이면 기존 useFlows 동작과 동일하다(회귀 없음).
+  const target = useTargetParam();
+  const remote = isRemoteTarget(target);
+  const { data: flowsData, isLoading, error, refetch } = useFlowsTarget(target);
+  const gating = useTargetGating(target);
+  // 원격 타깃은 변경(생성/가져오기/자동시작/액션)을 그룹 D/M7 경로에서 다루므로
+  // 본 목록 페이지의 로컬 쓰기 어포던스는 숨긴다(REQ-J03/J12). 노드 셀렉터·
+  // RemoteResourcesPage 가 생성/삭제를 담당한다.
+  const showLocalWrites = !remote;
 
   // 모달 상태
   const [modalOpen, setModalOpen] = useState(false);
@@ -268,8 +282,18 @@ export default function FlowListPage() {
   }
 
   return (
+    <TargetProvider target={target}>
     <div className="space-y-6">
-      {/* 액션 버튼 */}
+      {/* 원격 타깃 배너(로컬이면 null) */}
+      <RemoteTargetBanner
+        target={target}
+        nodeLabel={gating.nodeLabel}
+        nodeReady={gating.nodeReady}
+        localHref="/flows"
+      />
+
+      {/* 액션 버튼 (원격 타깃에서는 로컬 쓰기 어포던스 숨김) */}
+      {showLocalWrites && (
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
           <button
@@ -298,6 +322,7 @@ export default function FlowListPage() {
           </button>
         </div>
       </div>
+      )}
 
       {/* 검색 및 필터 */}
       <FlowSearchFilter
@@ -316,7 +341,7 @@ export default function FlowListPage() {
               ? '등록된 플로우가 없습니다. 새 플로우를 만들어 보세요.'
               : '검색 결과가 없습니다.'}
           </p>
-          {allFlows.length === 0 && (
+          {allFlows.length === 0 && showLocalWrites && (
             <button
               type="button"
               onClick={() => setModalOpen(true)}
@@ -412,9 +437,16 @@ export default function FlowListPage() {
                       flow={flow}
                       isExpanded={isExpanded}
                       onToggle={() => setExpandedId((prev) => (prev === flow.id ? null : flow.id))}
-                      onNavigate={() => navigate(`/editor/${flow.id}`)}
+                      onNavigate={() =>
+                        navigate(
+                          remote && isRemoteTarget(target)
+                            ? `/admin/remote/nodes/${target.instanceId}/flows/${flow.id}/edit`
+                            : `/editor/${flow.id}`,
+                        )
+                      }
                       formatDate={formatDate}
                       onAutoStartToggle={handleAutoStartToggle}
+                      showLocalWrites={showLocalWrites}
                     />
                   );
                 })}
@@ -424,17 +456,22 @@ export default function FlowListPage() {
         </>
       )}
 
-      {/* 플로우 생성 모달 */}
-      <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      {/* 플로우 생성 모달 (로컬 전용) */}
+      {showLocalWrites && (
+        <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      )}
 
-      {/* 가져오기 대화 상자 */}
-      <ImportDialog
-        open={importDialogOpen}
-        onClose={() => setImportDialogOpen(false)}
-        type="flow"
-        onImportSuccess={handleImportSuccess}
-      />
+      {/* 가져오기 대화 상자 (로컬 전용) */}
+      {showLocalWrites && (
+        <ImportDialog
+          open={importDialogOpen}
+          onClose={() => setImportDialogOpen(false)}
+          type="flow"
+          onImportSuccess={handleImportSuccess}
+        />
+      )}
     </div>
+    </TargetProvider>
   );
 }
 
@@ -447,10 +484,12 @@ interface FlowRowProps {
   onNavigate: () => void;
   formatDate: (dateStr?: string) => string;
   onAutoStartToggle: (flow: FlowInfo) => void;
+  /** 로컬 쓰기 어포던스(자동시작 토글·액션 메뉴) 표시 여부(원격은 숨김). */
+  showLocalWrites: boolean;
 }
 
 /** 플로우 테이블 행 (확장 가능) */
-function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoStartToggle }: FlowRowProps) {
+function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoStartToggle, showLocalWrites }: FlowRowProps) {
   return (
     <>
       <tr
@@ -510,25 +549,31 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoSta
           {flow.status === 'running' && flow.uptime ? flow.uptime : '-'}
         </td>
         <td className="whitespace-nowrap px-4 py-3">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAutoStartToggle(flow);
-            }}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              flow.auto_start ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
-            }`}
-          >
-            <span
-              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                flow.auto_start ? 'translate-x-4.5' : 'translate-x-0.5'
+          {showLocalWrites ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAutoStartToggle(flow);
+              }}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                flow.auto_start ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
               }`}
-            />
-          </button>
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  flow.auto_start ? 'translate-x-4.5' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          ) : (
+            <span className="text-xs text-(--color-text-muted)">
+              {flow.auto_start ? 'ON' : 'OFF'}
+            </span>
+          )}
         </td>
         <td className="whitespace-nowrap px-4 py-3 text-right">
-          <FlowActionMenu flow={flow} />
+          {showLocalWrites && <FlowActionMenu flow={flow} />}
         </td>
       </tr>
 

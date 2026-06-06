@@ -34,6 +34,8 @@ const SystemStatusPage = lazy(() =>
 // SPEC-REMOTE-001 M5: admin 전용 원격 관리 페이지.
 const RemoteNodesPage = lazy(() => import('@/pages/remote/RemoteNodesPage'));
 const RemoteResourcesPage = lazy(() => import('@/pages/remote/RemoteResourcesPage'));
+// SPEC-REMOTE-001 M8 (그룹 J): 원격 노드 제어 셀렉터 — 로컬 페이지를 재사용한다.
+const RemoteControlPage = lazy(() => import('@/pages/remote/RemoteControlPage'));
 
 /** Suspense 래퍼 - 지연 로딩 중 로딩 스피너를 표시한다 */
 function SuspenseWrapper({ children }: { children: React.ReactNode }) {
@@ -160,6 +162,16 @@ const router = createBrowserRouter([
                 element: (
                   <SuspenseWrapper>
                     <RemoteResourcesPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // SPEC-REMOTE-001 M8 (그룹 J, REQ-J13/J14): 원격 노드 제어 셀렉터.
+              //   노드 선택 → /flows|agents|devices?target=remote:{id} 로 라우팅.
+              {
+                path: 'remote/control',
+                element: (
+                  <SuspenseWrapper>
+                    <RemoteControlPage />
                   </SuspenseWrapper>
                 ),
               },
