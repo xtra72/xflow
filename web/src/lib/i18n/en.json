@@ -372,19 +372,101 @@
     "action": {
       "approve": "Approve",
       "reject": "Reject",
-      "revoke": "Revoke"
+      "revoke": "Revoke",
+      "delete": "Delete",
+      "edit": "Edit"
     },
     "confirm": {
       "rejectTitle": "Reject this node?",
       "rejectDesc": "This rejects the registration request from {node}. This action cannot be undone.",
       "revokeTitle": "Revoke this node?",
-      "revokeDesc": "This revokes approval for {node}. The node will no longer receive commands. This action cannot be undone."
+      "revokeDesc": "This revokes approval for {node}. The node will no longer receive commands. This action cannot be undone.",
+      "deleteTitle": "Delete this node?",
+      "deleteDesc": "This permanently removes {node} from the list. This action cannot be undone."
     },
     "toast": {
       "approved": "Node approved.",
       "rejected": "Node rejected.",
       "revoked": "Node revoked.",
+      "deleted": "Node deleted.",
+      "preRegistered": "Node registered.",
       "actionFailed": "Failed to complete the action."
+    },
+    "preRegister": {
+      "button": "Add node (pre-register)",
+      "title": "Pre-register node",
+      "desc": "Register a node directly on the server by its instance ID. The node is added in approved state.",
+      "instanceIdLabel": "Instance ID",
+      "instanceIdPlaceholder": "e.g. edge-node-01",
+      "instanceIdRequired": "Please enter an instance ID.",
+      "nameLabel": "Display name (optional)",
+      "namePlaceholder": "e.g. Floor 1 gateway",
+      "submit": "Register",
+      "submitting": "Registering...",
+      "errorDuplicate": "A node with this instance ID already exists.",
+      "errorGeneric": "Failed to register the node."
+    },
+    "enrollment": {
+      "title": "Enrollment Tokens",
+      "subtitle": "Issue and manage tokens that managed nodes use for self-enrollment.",
+      "tableLabel": "Enrollment tokens list",
+      "createButton": "Issue token",
+      "noTokens": "No tokens issued.",
+      "loadError": "Failed to load tokens.",
+      "create": {
+        "title": "Issue enrollment token",
+        "desc": "Issue a new enrollment token. The token is shown only once.",
+        "labelLabel": "Label (optional)",
+        "labelPlaceholder": "e.g. Floor 1 nodes",
+        "expiresLabel": "Expiration",
+        "maxUsesLabel": "Max uses (optional)",
+        "maxUsesPlaceholder": "e.g. 5",
+        "submit": "Issue",
+        "submitting": "Issuing...",
+        "errorGeneric": "Failed to issue the token."
+      },
+      "expires": {
+        "none": "Never",
+        "1h": "1 hour",
+        "24h": "24 hours",
+        "7d": "7 days",
+        "30d": "30 days"
+      },
+      "created": {
+        "title": "Token issued",
+        "warning": "This token will not be shown again. Copy it somewhere safe now.",
+        "tokenLabel": "Token",
+        "copy": "Copy token",
+        "copied": "Copied",
+        "snippetLabel": "Sample client config",
+        "copySnippet": "Copy config",
+        "done": "Done"
+      },
+      "col": {
+        "id": "ID",
+        "label": "Label",
+        "createdAt": "Created",
+        "expiresAt": "Expires",
+        "maxUses": "Max uses",
+        "uses": "Uses",
+        "state": "State",
+        "actions": "Actions"
+      },
+      "state": {
+        "active": "Active",
+        "revoked": "Revoked",
+        "expired": "Expired"
+      },
+      "unlimited": "Unlimited",
+      "never": "Never",
+      "confirm": {
+        "revokeTitle": "Revoke this token?",
+        "revokeDesc": "This revokes the token {label}. It can no longer enroll nodes. This action cannot be undone."
+      },
+      "toast": {
+        "revoked": "Token revoked.",
+        "actionFailed": "Failed to complete the action."
+      }
     },
     "command": {
       "deploy": "Deploy",
@@ -397,6 +479,49 @@
       "errorTimeout": "No response received for the command (timeout).",
       "errorFailed": "The node failed to apply the command.",
       "errorGeneric": "Failed to issue the command."
+    },
+    "edit": {
+      "createFlow": "Create flow",
+      "createAgent": "Create agent",
+      "createGateHint": "The target node must be approved and online to create resources.",
+      "gateHint": "Only exposed resources on an approved, online node can be edited.",
+      "saveSuccess": "Changes applied to the node.",
+      "deleteSuccess": "Resource deleted.",
+      "deleteTitle": "Delete this resource?",
+      "deleteDesc": "This deletes {name} from the target node. This action cannot be undone.",
+      "errorUnavailable": "The target node is offline or not approved; the edit cannot be applied.",
+      "errorTimeout": "No response received from the node (timeout). The change was not applied.",
+      "errorFailed": "The node failed to apply the edit.",
+      "errorNotExposed": "The target resource is not in the node’s exposure scope or does not exist.",
+      "errorGeneric": "Failed to apply the edit."
+    },
+    "editor": {
+      "targetNode": "Remote edit target node",
+      "newFlow": "New flow",
+      "untitled": "Untitled",
+      "save": "Save",
+      "undo": "Undo",
+      "redo": "Redo",
+      "addInputPort": "Add input port",
+      "addOutputPort": "Add output port",
+      "portPanel": "Flow ports",
+      "snapGrid": "Snap to grid",
+      "virtualWires": "Show virtual wires",
+      "focusConnections": "Focus connections"
+    },
+    "agentEdit": {
+      "createTitle": "Create agent",
+      "updateTitle": "Edit agent settings",
+      "desc": "Create or modify an agent on the remote node. Saving propagates a command to the target node.",
+      "nameLabel": "Name",
+      "nameRequired": "Please enter an agent name.",
+      "typeLabel": "Type",
+      "typeRequired": "Please enter an agent type.",
+      "typePlaceholder": "e.g. mqtt-client",
+      "configLabel": "Config (JSON)",
+      "configHint": "Leave secret fields (passwords, tokens, etc.) blank to keep the node’s existing values.",
+      "configInvalid": "The config JSON is not valid.",
+      "save": "Save"
     }
   }
 }

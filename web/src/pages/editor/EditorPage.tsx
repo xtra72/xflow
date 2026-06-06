@@ -26,6 +26,7 @@ import { FlowAreaNode } from '@/components/flow/FlowAreaNode';
 import { FlowBoundaryNode } from '@/components/flow/FlowBoundaryNode';
 import { FlowPortPanel } from '@/components/flow/FlowPortPanel';
 import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
+import { RemoteEditorToolbar } from '@/components/flow/RemoteEditorToolbar';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
@@ -34,8 +35,11 @@ import {
   RuntimeStatsContext,
   type NodeRuntimeStats,
 } from '@/contexts/RuntimeStatsContext';
-import { useFlow, useFlowStatus, useUpdateFlow } from '@/hooks/useFlow';
+import { useFlowStatus } from '@/hooks/useFlow';
+import { useEditorFlowTarget } from '@/hooks/useEditorFlowTarget';
 import { useResizable } from '@/hooks/useResizable';
+import { useTranslation } from '@/lib/i18n';
+import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { getFlowNodes } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -83,26 +87,46 @@ export default function EditorPage() {
  * React Flow 캔버스, 드래그 앤 드롭, 키보드 단축키, 플로우 로딩을 처리한다.
  */
 function EditorPageInner() {
-  const { flowId } = useParams<{ flowId: string }>();
+  // 로컬 편집: /editor/:flowId. 원격 편집(SPEC-REMOTE-001 M7, REQ-I08):
+  //   /admin/remote/nodes/:instanceId/flows/:flowId/edit (기존 수정)
+  //   /admin/remote/nodes/:instanceId/flows/new          (신규 생성)
+  const { flowId, instanceId } = useParams<{
+    flowId: string;
+    instanceId: string;
+  }>();
   const reactFlowInstance = useReactFlow();
   // 서브플로우 네비게이션(들어가기) 용 라우터 훅.
   // 백 스택은 location.state.subflowBack(string[]) 으로만 운반한다.
   const navigate = useNavigate();
   const location = useLocation();
 
-  // 플로우 데이터 조회
-  const { data: flowData, isLoading, error } = useFlow(flowId ?? '');
-  const updateFlow = useUpdateFlow();
+  // 원격 신규 생성 모드: 라우트가 .../flows/new 이면 flowId 가 'new' 또는 부재.
+  const isRemote = !!instanceId;
+  const isNewRemoteFlow = isRemote && (flowId === undefined || flowId === 'new');
+  // 'new' 플레이스홀더는 실제 자원 id 가 아니므로 하이드레이션/저장에서 제외한다.
+  const effectiveFlowId = isNewRemoteFlow ? undefined : flowId;
 
-  // 플로우 런타임 상태 (5초 간격 폴링)
-  const { data: flowStatus } = useFlowStatus(flowId ?? '');
-  const isFlowRunning = flowStatus?.status === 'running';
+  // 플로우 데이터 소스/저장 대상(로컬 PUT vs 원격 PATCH/POST 구분).
+  const flowTarget = useEditorFlowTarget({
+    flowId: effectiveFlowId,
+    instanceId,
+    isNew: isNewRemoteFlow,
+  });
+  const flowData = flowTarget.flowData;
+  const isLoading = flowTarget.isLoading;
+  const error = flowTarget.error;
 
-  // 런타임 노드 정보 폴링 (플로우 실행 중일 때만, 3초 간격)
+  // 플로우 런타임 상태 (5초 간격 폴링) — 로컬 편집에만 해당한다.
+  // 원격 편집은 노드 측 상태이며 서버에 로컬 /flows/{id}/status 가 없으므로
+  // 빈 id 로 호출해 쿼리를 비활성화한다(원격 편집기에는 런타임 통계 미표시).
+  const { data: flowStatus } = useFlowStatus(isRemote ? '' : (flowId ?? ''));
+  const isFlowRunning = !isRemote && flowStatus?.status === 'running';
+
+  // 런타임 노드 정보 폴링 (플로우 실행 중일 때만, 3초 간격) — 로컬 전용.
   const { data: runtimeNodes } = useQuery({
     queryKey: ['flows', flowId, 'nodes'],
     queryFn: () => getFlowNodes(flowId!),
-    enabled: !!flowId && isFlowRunning,
+    enabled: !isRemote && !!flowId && isFlowRunning,
     refetchInterval: 3000,
   });
 
@@ -138,6 +162,9 @@ function EditorPageInner() {
   // 에디터 그리드 스냅 설정 (v0.18.4)
   const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
   const editorSnapGridSize = useUIStore((s) => s.editorSnapGridSize);
+  // 원격 편집 저장 피드백(토스트) 용.
+  const addNotification = useUIStore((s) => s.addNotification);
+  const { t } = useTranslation();
 
   // 에디터 스토어
   const nodes = useEditorStore((s) => s.nodes);
@@ -176,14 +203,17 @@ function EditorPageInner() {
   const [showPortPanel, setShowPortPanel] = useState(false);
 
   // --- 플로우 데이터 로딩 ---
-  // flowId 당 1회만 hydrate 한다. 저장 후 invalidateQueries 로 인한 백그라운드
+  // hydrationKey 당 1회만 hydrate 한다. 저장 후 invalidateQueries 로 인한 백그라운드
   // 재조회가 에디터 상태를 덮어쓰거나 isDirty 를 되살려 저장 버튼 빨간점이
-  // 사라지지 않는 문제를 막는다.
+  // 사라지지 않는 문제를 막는다. 원격 편집은 노드/플로우 조합으로 키를 구성한다.
+  const hydrationKey = isRemote
+    ? `remote:${instanceId}:${isNewRemoteFlow ? 'new' : (effectiveFlowId ?? '')}`
+    : (flowId ?? '');
   const hydratedFlowIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!flowData) return;
-    if (hydratedFlowIdRef.current === flowId) return;
+    if (hydratedFlowIdRef.current === hydrationKey) return;
 
     // config 또는 definition에서 노드/엣지 파싱
     const source =
@@ -200,8 +230,9 @@ function EditorPageInner() {
     loadFlow(rawNodes, rawEdges, loadedInputs, loadedOutputs);
     // 노드 카드 라이브 제어(output ON/OFF 등) 가 현재 플로우를 식별하도록
     // 편집 중인 flowId 를 스토어에 보관한다 (dirty/undo 에 영향 없음).
-    setCurrentFlowId(flowId ?? null);
-    hydratedFlowIdRef.current = flowId ?? null;
+    // 원격 편집은 라이브 제어 대상이 아니므로 null 로 둔다.
+    setCurrentFlowId(isRemote ? null : (flowId ?? null));
+    hydratedFlowIdRef.current = hydrationKey;
 
     // flowId 변경(들어가기/돌아가기/플로우 전환) 시 새 플로우를 전체보기로 맞춘다.
     // <ReactFlow fitView> 는 최초 마운트에만 동작하므로, 재하이드레이션 시에는
@@ -211,39 +242,81 @@ function EditorPageInner() {
       reactFlowInstance.fitView({ padding: 0.15, duration: 200 });
     }, 150);
     return () => clearTimeout(fitTimer);
-  }, [flowId, flowData, loadFlow, setCurrentFlowId, reactFlowInstance]);
+  }, [
+    flowId,
+    isRemote,
+    hydrationKey,
+    flowData,
+    loadFlow,
+    setCurrentFlowId,
+    reactFlowInstance,
+  ]);
 
-  // flowId 변경(또는 언마운트) 시 에디터를 초기화해 다음 flowId 가 다시
+  // hydrationKey 변경(또는 언마운트) 시 에디터를 초기화해 다음 대상이 다시
   // hydrate 되도록 한다.
   useEffect(() => {
     return () => {
       hydratedFlowIdRef.current = null;
       resetEditor();
     };
-  }, [flowId, resetEditor]);
+  }, [hydrationKey, resetEditor]);
 
   // --- 저장 핸들러 ---
+  // 로컬: PUT /flows/{id}. 원격: PATCH(기존)/POST(신규) → 노드 명령 경유(REQ-I08).
+  // 신규 원격 플로우는 저장 성공 후 노드 채번 id 로 edit 라우트로 이동한다.
+  const { save: saveFlow, isRemote: isRemoteTarget } = flowTarget;
   const handleSave = useCallback(() => {
-    if (!flowId || !isDirty) return;
+    // 로컬은 flowId 가 있어야 하고, 원격 신규는 flowId 없이도 저장(생성)한다.
+    if (!isDirty) return;
+    if (!isRemoteTarget && !flowId) return;
 
-    updateFlow.mutate(
-      {
-        id: flowId,
-        req: {
-          // SPEC-SUBFLOW-001: 합성 경계 노드를 nodes 에서 제외하고(REQ-SUBFLOW-B04),
-          // 센티넬 경계 와이어를 포함한 모든 엣지를 보존하며, 플로우 레벨 포트를
-          // 정의 최상위 inputs/outputs 로 기록한다(REQ-SUBFLOW-A07).
-          definition: serializeFlowDefinition(
-            nodes,
-            edges,
-            flowInputs,
-            flowOutputs,
-          ),
-        },
-      },
-      { onSuccess: () => setDirty(false) },
-    );
-  }, [flowId, isDirty, nodes, edges, flowInputs, flowOutputs, updateFlow, setDirty]);
+    // SPEC-SUBFLOW-001: 합성 경계 노드를 nodes 에서 제외하고(REQ-SUBFLOW-B04),
+    // 센티넬 경계 와이어를 포함한 모든 엣지를 보존하며, 플로우 레벨 포트를
+    // 정의 최상위 inputs/outputs 로 기록한다(REQ-SUBFLOW-A07).
+    const definition = serializeFlowDefinition(nodes, edges, flowInputs, flowOutputs);
+    const flowName = flowData?.name ?? '';
+
+    void saveFlow(definition, flowName)
+      .then((res) => {
+        setDirty(false);
+        // 원격 편집은 명령 전파 결과이므로 성공 토스트로 피드백한다(REQ-I10).
+        if (isRemoteTarget) {
+          addNotification({ type: 'success', message: t('remote.edit.saveSuccess') });
+        }
+        // 원격 신규 생성: 노드 채번 id 로 edit 라우트로 교체 이동한다.
+        if (isRemoteTarget && isNewRemoteFlow && res.id) {
+          navigate(`/admin/remote/nodes/${instanceId}/flows/${res.id}/edit`, {
+            replace: true,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        // 실패 시 dirty 를 유지해 사용자가 재시도할 수 있게 한다.
+        // 원격 편집 실패는 503/504/502/404 의미별 메시지로 토스트한다(REQ-I11).
+        if (isRemoteTarget) {
+          addNotification({
+            type: 'error',
+            message: remoteEditErrorMessage(err, t),
+          });
+        }
+      });
+  }, [
+    isDirty,
+    isRemoteTarget,
+    isNewRemoteFlow,
+    flowId,
+    instanceId,
+    nodes,
+    edges,
+    flowInputs,
+    flowOutputs,
+    flowData,
+    saveFlow,
+    setDirty,
+    navigate,
+    addNotification,
+    t,
+  ]);
 
   // --- 키보드 단축키 ---
   useEffect(() => {
@@ -571,15 +644,30 @@ function EditorPageInner() {
 
       {/* 가운데: 툴바 + 캔버스 */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* 상단 툴바 */}
-        {flowId && (
+        {/* 상단 툴바 — 로컬은 EditorToolbar(라이프사이클 포함), 원격은
+            RemoteEditorToolbar(저장/편집만, 명령 전파 — REQ-I08). */}
+        {isRemote ? (
           <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
-            <EditorToolbar
-              flowId={flowId}
+            <RemoteEditorToolbar
+              nodeLabel={instanceId ?? ''}
+              flowName={flowData?.name ?? ''}
+              isNew={isNewRemoteFlow}
+              isSaving={flowTarget.isSaving}
+              onSave={handleSave}
               showPortPanel={showPortPanel}
               onTogglePortPanel={() => setShowPortPanel((v) => !v)}
             />
           </div>
+        ) : (
+          flowId && (
+            <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
+              <EditorToolbar
+                flowId={flowId}
+                showPortPanel={showPortPanel}
+                onTogglePortPanel={() => setShowPortPanel((v) => !v)}
+              />
+            </div>
+          )
         )}
 
         {/* React Flow 캔버스 */}

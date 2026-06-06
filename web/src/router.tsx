@@ -163,6 +163,26 @@ const router = createBrowserRouter([
                   </SuspenseWrapper>
                 ),
               },
+              // SPEC-REMOTE-001 M7 (그룹 I, REQ-I08): 원격 플로우를 기존 시각
+              // 편집기(EditorPage)로 열어 대상 노드에 저장(PATCH/POST 명령 전파).
+              //   .../flows/new       → 신규 생성(POST, 노드 채번 id)
+              //   .../flows/:flowId/edit → 기존 수정(PATCH)
+              {
+                path: 'remote/nodes/:instanceId/flows/new',
+                element: (
+                  <SuspenseWrapper>
+                    <EditorPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              {
+                path: 'remote/nodes/:instanceId/flows/:flowId/edit',
+                element: (
+                  <SuspenseWrapper>
+                    <EditorPage />
+                  </SuspenseWrapper>
+                ),
+              },
             ],
           },
         ],

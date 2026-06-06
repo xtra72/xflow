@@ -372,19 +372,101 @@
     "action": {
       "approve": "승인",
       "reject": "거부",
-      "revoke": "폐기"
+      "revoke": "폐기",
+      "delete": "삭제",
+      "edit": "편집"
     },
     "confirm": {
       "rejectTitle": "노드를 거부하시겠습니까?",
       "rejectDesc": "{node} 노드의 등록 요청을 거부합니다. 이 작업은 되돌릴 수 없습니다.",
       "revokeTitle": "노드를 폐기하시겠습니까?",
-      "revokeDesc": "{node} 노드의 승인을 폐기합니다. 해당 노드는 더 이상 명령을 받을 수 없으며, 이 작업은 되돌릴 수 없습니다."
+      "revokeDesc": "{node} 노드의 승인을 폐기합니다. 해당 노드는 더 이상 명령을 받을 수 없으며, 이 작업은 되돌릴 수 없습니다.",
+      "deleteTitle": "노드를 삭제하시겠습니까?",
+      "deleteDesc": "{node} 노드를 목록에서 완전히 제거합니다. 이 작업은 되돌릴 수 없습니다."
     },
     "toast": {
       "approved": "노드를 승인했습니다.",
       "rejected": "노드를 거부했습니다.",
       "revoked": "노드를 폐기했습니다.",
+      "deleted": "노드를 삭제했습니다.",
+      "preRegistered": "노드를 등록했습니다.",
       "actionFailed": "작업을 처리하지 못했습니다."
+    },
+    "preRegister": {
+      "button": "노드 추가(사전 등록)",
+      "title": "노드 사전 등록",
+      "desc": "노드의 인스턴스 ID 를 입력하여 서버에서 직접 등록합니다. 등록된 노드는 승인됨 상태로 추가됩니다.",
+      "instanceIdLabel": "인스턴스 ID",
+      "instanceIdPlaceholder": "예: edge-node-01",
+      "instanceIdRequired": "인스턴스 ID 를 입력해주세요.",
+      "nameLabel": "표시명 (선택)",
+      "namePlaceholder": "예: 1층 게이트웨이",
+      "submit": "등록",
+      "submitting": "등록 중...",
+      "errorDuplicate": "이미 존재하는 인스턴스 ID 입니다.",
+      "errorGeneric": "노드를 등록하지 못했습니다."
+    },
+    "enrollment": {
+      "title": "Enrollment 토큰",
+      "subtitle": "피관리 노드가 자동 등록에 사용하는 토큰을 발급·관리합니다.",
+      "tableLabel": "Enrollment 토큰 목록",
+      "createButton": "토큰 발급",
+      "noTokens": "발급된 토큰이 없습니다.",
+      "loadError": "토큰 목록을 불러오는 중 오류가 발생했습니다.",
+      "create": {
+        "title": "Enrollment 토큰 발급",
+        "desc": "새 enrollment 토큰을 발급합니다. 발급된 토큰은 한 번만 표시됩니다.",
+        "labelLabel": "라벨 (선택)",
+        "labelPlaceholder": "예: 1층 노드용",
+        "expiresLabel": "만료 기간",
+        "maxUsesLabel": "최대 사용 횟수 (선택)",
+        "maxUsesPlaceholder": "예: 5",
+        "submit": "발급",
+        "submitting": "발급 중...",
+        "errorGeneric": "토큰을 발급하지 못했습니다."
+      },
+      "expires": {
+        "none": "미사용",
+        "1h": "1시간",
+        "24h": "24시간",
+        "7d": "7일",
+        "30d": "30일"
+      },
+      "created": {
+        "title": "토큰이 발급되었습니다",
+        "warning": "이 토큰은 다시 표시되지 않습니다. 지금 안전한 곳에 복사해 두세요.",
+        "tokenLabel": "토큰",
+        "copy": "토큰 복사",
+        "copied": "복사됨",
+        "snippetLabel": "클라이언트 설정 예시",
+        "copySnippet": "설정 복사",
+        "done": "완료"
+      },
+      "col": {
+        "id": "ID",
+        "label": "라벨",
+        "createdAt": "생성 시각",
+        "expiresAt": "만료 시각",
+        "maxUses": "최대 사용",
+        "uses": "사용 횟수",
+        "state": "상태",
+        "actions": "액션"
+      },
+      "state": {
+        "active": "활성",
+        "revoked": "폐기됨",
+        "expired": "만료됨"
+      },
+      "unlimited": "무제한",
+      "never": "없음",
+      "confirm": {
+        "revokeTitle": "토큰을 폐기하시겠습니까?",
+        "revokeDesc": "{label} 토큰을 폐기합니다. 폐기된 토큰으로는 더 이상 노드를 등록할 수 없으며, 이 작업은 되돌릴 수 없습니다."
+      },
+      "toast": {
+        "revoked": "토큰을 폐기했습니다.",
+        "actionFailed": "작업을 처리하지 못했습니다."
+      }
     },
     "command": {
       "deploy": "배포",
@@ -397,6 +479,49 @@
       "errorTimeout": "명령 응답을 받지 못했습니다 (타임아웃).",
       "errorFailed": "노드에서 명령 적용에 실패했습니다.",
       "errorGeneric": "명령을 발행하지 못했습니다."
+    },
+    "edit": {
+      "createFlow": "플로우 생성",
+      "createAgent": "에이전트 생성",
+      "createGateHint": "대상 노드가 승인·온라인 상태여야 생성할 수 있습니다.",
+      "gateHint": "승인·온라인 노드의 노출 자원만 편집할 수 있습니다.",
+      "saveSuccess": "변경 사항을 노드에 적용했습니다.",
+      "deleteSuccess": "자원을 삭제했습니다.",
+      "deleteTitle": "자원을 삭제하시겠습니까?",
+      "deleteDesc": "{name} 자원을 대상 노드에서 삭제합니다. 이 작업은 되돌릴 수 없습니다.",
+      "errorUnavailable": "대상 노드가 오프라인이거나 승인되지 않아 편집을 적용할 수 없습니다.",
+      "errorTimeout": "노드 응답을 받지 못했습니다 (타임아웃). 변경이 적용되지 않았습니다.",
+      "errorFailed": "노드에서 편집 적용에 실패했습니다.",
+      "errorNotExposed": "대상 자원이 노드의 노출 범위에 없거나 존재하지 않습니다.",
+      "errorGeneric": "편집을 적용하지 못했습니다."
+    },
+    "editor": {
+      "targetNode": "원격 편집 대상 노드",
+      "newFlow": "새 플로우",
+      "untitled": "이름 없음",
+      "save": "저장",
+      "undo": "실행 취소",
+      "redo": "다시 실행",
+      "addInputPort": "입력 포트 추가",
+      "addOutputPort": "출력 포트 추가",
+      "portPanel": "플로우 포트",
+      "snapGrid": "그리드 스냅",
+      "virtualWires": "가상 와이어 표시",
+      "focusConnections": "연결 포커스"
+    },
+    "agentEdit": {
+      "createTitle": "에이전트 생성",
+      "updateTitle": "에이전트 설정 편집",
+      "desc": "원격 노드의 에이전트를 생성·수정합니다. 저장 시 대상 노드로 명령이 전파됩니다.",
+      "nameLabel": "이름",
+      "nameRequired": "에이전트 이름을 입력해주세요.",
+      "typeLabel": "종류",
+      "typeRequired": "에이전트 종류를 입력해주세요.",
+      "typePlaceholder": "예: mqtt-client",
+      "configLabel": "설정 (JSON)",
+      "configHint": "비밀 필드(비밀번호·토큰 등)는 비워 두면 노드의 기존 값이 유지됩니다.",
+      "configInvalid": "설정 JSON 형식이 올바르지 않습니다.",
+      "save": "저장"
     }
   }
 }

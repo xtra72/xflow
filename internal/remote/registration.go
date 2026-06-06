@@ -183,6 +183,15 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 	existing, err := s.repo.Get(ctx, p.InstanceID)
 	switch {
 	case errors.Is(err, storage.ErrManagedNodeNotFound):
+		// 경로 B(enrollment 토큰): 유효한 토큰을 운반하면 신규 노드를 즉시 자동 승인한다
+		// (REQ-H05). bootstrap_secret 게이트(위)를 이미 통과한 뒤이므로 두 게이트가
+		// 조합된다. 무효/만료/폐기/소진 토큰은 handled=false 로 pending 폴백한다.
+		if s.tryEnrollmentAutoApprove(ctx, conn, p) {
+			s.setNodeState(p.InstanceID, RegStatusApproved, true, time.Now())
+			s.registerConn(p.InstanceID, conn, cancel)
+			return p.InstanceID, true
+		}
+
 		// 신규 노드 → pending 큐잉(REQ-C02).
 		node := storage.ManagedNode{
 			InstanceID: p.InstanceID,
@@ -208,8 +217,6 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 
 	default:
 		// 기존 노드 → 현재 상태에 따라 응답(자동 상태 변경 없음 — REQ-C06).
-		// approved 면 토큰을 재발급할 수도 있으나, M2 는 재접속 경로(토큰 핸드셰이크)
-		// 를 우선하므로 여기서는 현재 상태 ack 만 보낸다.
 		s.updateNodeMeta(ctx, p)
 		s.setNodeState(p.InstanceID, existing.Status, true, time.Now())
 		s.registerConn(p.InstanceID, conn, cancel)
@@ -218,6 +225,14 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 			// 토큰 없이 재접속한 approved 노드 → 새 토큰을 발급해 전달(REQ-C04/C05).
 			if tok, isErr := s.issueAndStoreToken(ctx, p.InstanceID); isErr == nil {
 				ack.NodeToken = tok
+				// 경로 A(사전 등록 자동 승인, REQ-H02): approved 이지만 토큰이 미발급이던
+				// 노드(관리자가 사전 생성)가 처음 접속해 토큰을 받은 경우다. 정상 재접속
+				// (이미 token_id 보유)과 구분해 자동 승인 1건만 감사 기록한다.
+				if existing.TokenID == "" {
+					s.recordPreApprovedAudit(ctx, p.InstanceID)
+					s.logger.Info("사전 등록 노드 접속 — 자동 승인",
+						"instance_id", p.InstanceID)
+				}
 			}
 		}
 		s.sendRegisterAck(conn, ack)

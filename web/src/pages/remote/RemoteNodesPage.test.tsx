@@ -17,6 +17,8 @@ const useRemoteModeMock = vi.hoisted(() => vi.fn());
 const approveMutateMock = vi.hoisted(() => vi.fn());
 const rejectMutateMock = vi.hoisted(() => vi.fn());
 const revokeMutateMock = vi.hoisted(() => vi.fn());
+const deleteMutateMock = vi.hoisted(() => vi.fn());
+const preRegisterMutateAsyncMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useRemote', () => ({
   useManagedNodes: useManagedNodesMock,
@@ -24,6 +26,16 @@ vi.mock('@/hooks/useRemote', () => ({
   useApproveNode: () => ({ mutate: approveMutateMock, isPending: false, variables: undefined }),
   useRejectNode: () => ({ mutate: rejectMutateMock, isPending: false, variables: undefined }),
   useRevokeNode: () => ({ mutate: revokeMutateMock, isPending: false, variables: undefined }),
+  useDeleteNode: () => ({ mutate: deleteMutateMock, isPending: false, variables: undefined }),
+  usePreRegisterNode: () => ({
+    mutateAsync: preRegisterMutateAsyncMock,
+    isPending: false,
+  }),
+}));
+
+// EnrollmentTokenSection 은 자체 훅을 사용하므로 스텁으로 격리한다 (별도 테스트로 검증).
+vi.mock('@/components/remote/EnrollmentTokenSection', () => ({
+  EnrollmentTokenSection: () => null,
 }));
 
 // ---- uiStore mock (toast 캡처) ----
@@ -63,6 +75,8 @@ beforeEach(() => {
   approveMutateMock.mockReset();
   rejectMutateMock.mockReset();
   revokeMutateMock.mockReset();
+  deleteMutateMock.mockReset();
+  preRegisterMutateAsyncMock.mockReset();
   addNotificationMock.mockReset();
   // 기본: server 모드 (M5 동작과 동일).
   useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
@@ -256,5 +270,94 @@ describe('RemoteNodesPage — G02 액션', () => {
     fireEvent.click(screen.getByRole('button', { name: /취소/ }));
     expect(revokeMutateMock).not.toHaveBeenCalled();
     expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
+  });
+});
+
+// 노드 삭제 — 확인 다이얼로그 → delete mutation
+describe('RemoteNodesPage — 노드 삭제', () => {
+  it('삭제 버튼은 확인 후 delete mutation 을 호출한다 (폐기와 구별)', () => {
+    deleteMutateMock.mockImplementation(
+      (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
+    );
+    useManagedNodesMock.mockReturnValue({
+      data: [makeNode({ instance_id: 'd-1', status: 'rejected' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('node-delete-button'));
+    expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm'));
+    expect(deleteMutateMock).toHaveBeenCalledTimes(1);
+    expect(deleteMutateMock.mock.calls[0]![0]).toBe('d-1');
+    expect(revokeMutateMock).not.toHaveBeenCalled();
+    expect(addNotificationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'success' }),
+    );
+  });
+});
+
+// 노드 사전 등록 — 모달 → preRegister mutation + 토스트
+describe('RemoteNodesPage — 사전 등록', () => {
+  it('사전 등록 버튼은 모달을 열고, 제출 시 preRegister 를 호출하고 토스트를 띄운다', async () => {
+    preRegisterMutateAsyncMock.mockResolvedValue({
+      instance_id: 'new-1',
+      hostname: '',
+      version: '',
+      status: 'approved',
+      online: false,
+      last_seen: 0,
+    });
+    renderPage();
+
+    expect(screen.queryByTestId('pre-register-dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('node-pre-register-button'));
+    expect(screen.getByTestId('pre-register-dialog')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('pre-register-instance-id'), {
+      target: { value: 'new-1' },
+    });
+    fireEvent.click(screen.getByTestId('pre-register-submit'));
+
+    await vi.waitFor(() => {
+      expect(preRegisterMutateAsyncMock).toHaveBeenCalledWith({ instance_id: 'new-1' });
+    });
+    await vi.waitFor(() => {
+      expect(addNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'success' }),
+      );
+    });
+  });
+
+  it('instance_id 미입력 시 검증 에러를 표시하고 mutation 을 호출하지 않는다', () => {
+    renderPage();
+    fireEvent.click(screen.getByTestId('node-pre-register-button'));
+    fireEvent.click(screen.getByTestId('pre-register-submit'));
+
+    expect(screen.getByTestId('pre-register-error')).toBeInTheDocument();
+    expect(preRegisterMutateAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('409 중복 에러는 명확한 한글 메시지로 표시된다', async () => {
+    const { APIError } = await import('@/types/api');
+    preRegisterMutateAsyncMock.mockRejectedValue(
+      new APIError('CONFLICT', 'duplicate', 409),
+    );
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('node-pre-register-button'));
+    fireEvent.change(screen.getByTestId('pre-register-instance-id'), {
+      target: { value: 'dup-1' },
+    });
+    fireEvent.click(screen.getByTestId('pre-register-submit'));
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('pre-register-error')).toHaveTextContent('이미 존재');
+    });
+    // 모달은 닫히지 않고 에러를 표시한 채 유지된다.
+    expect(screen.getByTestId('pre-register-dialog')).toBeInTheDocument();
   });
 });

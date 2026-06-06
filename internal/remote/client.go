@@ -112,6 +112,11 @@ type ClientConfig struct {
 	// 로깅/커밋 대상이 아니다(REQ-F06).
 	BootstrapSecret string
 
+	// EnrollmentToken 은 (선택) 가입 토큰이다(v1.1 그룹 H, REQ-REMOTE-H05). 설정 시
+	// 토큰 미보유 register 에 실어 보내, 서버가 유효성을 검증해 관리자 수동 승인 없이
+	// 노드를 자동 승인하도록 한다. 시크릿이므로 로깅 대상이 아니다(REQ-F06/H06).
+	EnrollmentToken string
+
 	// DataDir 은 노드 토큰 영속 디렉토리이다(REQ-C04/C05). 비어 있으면 토큰
 	// 영속/로드를 건너뛴다(in-memory only).
 	DataDir string
@@ -130,6 +135,20 @@ type ClientConfig struct {
 	// DefaultInventoryPollInterval. 데몬에 구독 가능한 변경 이벤트 소스가 없어
 	// poll+diff 로 델타를 도출하므로(inventory.go 주석), 이 주기로 변경을 감지한다.
 	InventoryPollInterval time.Duration
+
+	// QuerySource 는 수신한 query 를 노드의 로컬 read 핸들러로 매핑하는 구현이다(M8,
+	// REQ-J01/J04). nil 이면 query 는 거부된다(미구성 노드 보호). cmd/xflowd 가 read
+	// 어댑터(FlowStatus/AgentStats/device State 등)를 바인딩한 QuerySource 를 주입한다.
+	QuerySource QuerySource
+
+	// StreamSource 는 subscribe 를 노드의 실시간 소스로 매핑하는 구현이다(M8, REQ-J08).
+	// nil 이면 subscribe 는 거부된다. cmd/xflowd 가 디바이스 상태/에이전트 통계 폴러를
+	// 바인딩한 StreamSource 를 주입한다.
+	StreamSource StreamSource
+
+	// QueryRedactor 는 query/stream 응답을 전송 전 마스킹한다(M8, REQ-J06). nil 이면
+	// pass-through 한다. cmd/xflowd 가 secret_fields SoT 로 구성한다(노드 측 redaction).
+	QueryRedactor QueryRedactor
 
 	// Logger 는 선택적 로거이다.
 	Logger *slog.Logger
@@ -154,6 +173,27 @@ type Client struct {
 	// remirror 는 노출 설정 변경 시 재미러링을 신호하는 채널이다(REQ-A07). 버퍼 1 로
 	// non-blocking; 활성 미러 루프가 없으면 신호는 다음 세션 시작 스냅샷으로 흡수된다.
 	remirror chan struct{}
+
+	// approved 는 "현재 세션 도중 노드가 승인됨(register_ack approved → node_token)"을
+	// 신호하는 세션별 채널이다(REQ-E01 첫 enrollment 세션 미러 시작). runSession 이
+	// 세션마다 새로 만들고(c.mu 보호), 세션 종료 시 nil 로 비운다(cross-session 누수
+	// 방지). handleRegisterAck(approved)가 버퍼 1 + non-blocking send 로 정확히 한 번
+	// 신호한다(double-close/패닉 없음, remirror 와 동일 관용구). 세션이 이미 끝나
+	// nil 이면 신호는 무시된다(미러는 다음 세션 토큰 보유 경로로 시작).
+	approved chan struct{}
+
+	// streams 는 현재 세션의 활성 스트림 구독 레지스트리이다(M8, REQ-J08b). subscription_id
+	// → 구독 핸들 매핑으로 unsubscribe 시 대상 구독을 찾고, 세션 종료 시 전 구독을
+	// teardown 한다(누수 없음). runSession 이 세션마다 새로 만들고(c.mu 보호), 세션
+	// 종료 시 모두 정리한 뒤 nil 로 비운다(approved 와 동일 라이프사이클).
+	streams map[string]*streamSub
+}
+
+// streamSub 는 단일 활성 스트림 구독의 client 측 핸들이다(M8). cancel 로 펌프
+// 고루틴을 종료하고, source.Close()는 펌프 defer 에서 호출된다(teardown).
+type streamSub struct {
+	cancel context.CancelFunc
+	source StreamSubscription
 }
 
 // NewClient 는 Client 를 생성한다. dialer 가 nil 이면 gorilla dialer 를 사용한다.
@@ -292,6 +332,32 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// 세션별 승인 신호 채널을 새로 만든다(REQ-E01). 세션 종료 시 nil 로 비워
+	// cross-session 신호 누수/유효하지 않은 채널로의 송신을 방지한다. 미러 고루틴은
+	// 이 로컬 참조(approvedCh)를 캡처하므로, 세션 종료 후 c.approved 가 nil 이 되어도
+	// nil 채널 select 위험이 없다.
+	approvedCh := make(chan struct{}, 1)
+	c.mu.Lock()
+	c.approved = approvedCh
+	// 세션별 스트림 구독 레지스트리를 초기화한다(M8, REQ-J08b). 세션 종료 시 전 구독을
+	// teardown 한다(아래 defer).
+	c.streams = make(map[string]*streamSub)
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.approved = nil
+		// 세션 종료 — 모든 활성 스트림 구독을 teardown 한다(노드 오프라인/연결 종료 시
+		// 전 구독 정리, 누수 없음 — REQ-J08b). cancel 이 펌프 고루틴을 종료하고, 펌프
+		// defer 가 source.Close()를 호출한다. 펌프는 세션 wg 로 추적되어 wg.Wait()가
+		// 완료를 보장한다.
+		subs := c.streams
+		c.streams = nil
+		c.mu.Unlock()
+		for _, s := range subs {
+			s.cancel()
+		}
+	}()
+
 	// 핸드셰이크 송신: 노드 토큰이 있으면 hello(세션 복원, 토큰은 dial URL 로 검증
 	// 완료 — REQ-C05), 없으면 register(등록 요청 — REQ-C01).
 	if err := c.sendHandshake(conn); err != nil {
@@ -336,14 +402,30 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 		}
 	}()
 
-	// 인벤토리 미러 루프(M4): 승인(토큰 보유)되고 Inventory 소스가 구성된 경우에만
-	// 동작한다(미승인 노드는 미러링하지 않음 — REQ-C06/F03 정신). 세션 종료/취소 시
-	// sessionCtx 로 정리된다(goroutine leak 방지).
-	if c.cfg.Inventory != nil && c.hasToken() {
+	// 인벤토리 미러 루프(M4): Inventory 소스가 구성된 경우에만 동작한다. 미승인 노드는
+	// 미러링하지 않는다(REQ-C06/F03 정신).
+	//
+	//   - 세션 시작 시 이미 토큰 보유(재접속/hello 경로) → 즉시 미러 시작.
+	//   - 토큰 미보유(첫 enrollment 경로) → 같은 세션의 register_ack(approved)로 토큰이
+	//     도착할 때까지 대기했다가 미러를 시작한다(REQ-E01). 끝내 승인되지 않으면
+	//     sessionCtx 취소로 깨끗이 종료한다(goroutine leak 방지).
+	//
+	// 어느 경로든 wg 로 추적되어 세션 종료/취소 시 sessionCtx 로 정리된다.
+	if c.cfg.Inventory != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.runMirror(sessionCtx, conn)
+			if c.hasToken() {
+				c.runMirror(sessionCtx, conn)
+				return
+			}
+			// 미승인 — 같은 세션에서 승인될 때까지 대기. 세션이 먼저 끝나면 no-op.
+			select {
+			case <-sessionCtx.Done():
+				return
+			case <-approvedCh:
+				c.runMirror(sessionCtx, conn)
+			}
 		}()
 	}
 
@@ -381,9 +463,23 @@ func (c *Client) handleServerMessage(ctx context.Context, conn Conn, wg *sync.Wa
 			defer wg.Done()
 			c.handleCommand(ctx, conn, msg.Payload)
 		}()
+	case TypeQuery:
+		// M8: READ 질의 → 로컬 read 매핑 → redaction → query_result. 적용은 별도
+		// 고루틴에서 수행하여 읽기 루프를 막지 않으며, 세션 wg 로 추적한다(REQ-J02).
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.handleQuery(ctx, conn, msg.Payload)
+		}()
+	case TypeSubscribe:
+		// M8: 실시간 스트림 구독 시작 → 펌프 고루틴 spawn(세션 wg 추적, REQ-J08/J08b).
+		c.handleSubscribe(ctx, conn, wg, msg.Payload)
+	case TypeUnsubscribe:
+		// M8: 스트림 구독 해제·teardown(REQ-J08b).
+		c.handleUnsubscribe(msg.Payload)
 	default:
-		// M4 seam: inventory 등 처리 진입점.
-		c.logger.Debug("미처리 서버 메시지 타입(M4 seam)", "type", msg.Type)
+		// inventory 수신 등은 서버 측 책임이므로 클라이언트는 무시한다.
+		c.logger.Debug("미처리 서버 메시지 타입", "type", msg.Type)
 	}
 }
 
@@ -506,7 +602,12 @@ func (c *Client) handleRegisterAck(payload []byte) {
 		c.mu.Lock()
 		c.nodeToken = ack.NodeToken
 		c.rejected = false
+		// 현재 세션의 승인 신호를 정확히 한 번, non-blocking 으로 발사한다(REQ-E01).
+		// 버퍼 1 + default 로 double-send/패닉이 없고, 세션이 이미 끝나 c.approved 가
+		// nil 이면(또는 이미 신호됨) 안전하게 무시된다(remirror 와 동일 관용구).
+		approvedCh := c.approved
 		c.mu.Unlock()
+		c.signalApproved(approvedCh)
 		if c.cfg.DataDir != "" && ack.NodeToken != "" {
 			if err := SaveNodeToken(c.cfg.DataDir, ack.NodeToken); err != nil {
 				c.logger.Error("노드 토큰 영속 실패", "error", err)
@@ -557,6 +658,7 @@ func (c *Client) sendRegister(conn Conn) error {
 		Version:         c.cfg.Version,
 		Exposure:        c.cfg.Exposure,
 		BootstrapSecret: c.cfg.BootstrapSecret,
+		EnrollmentToken: c.cfg.EnrollmentToken,
 	})
 	if err != nil {
 		return err
@@ -592,6 +694,20 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 		backoff = time.Millisecond
 	}
 	return backoff
+}
+
+// signalApproved 는 세션별 승인 채널에 non-blocking 으로 한 번 신호한다(REQ-E01).
+// ch 가 nil(세션 종료) 이거나 이미 보류 신호가 있으면(coalesce) 안전하게 무시한다.
+// 호출 측은 c.mu 밖에서 호출하여 락 보유 중 채널 송신을 피한다.
+func (c *Client) signalApproved(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+		// 이미 신호됨/대기 중 → 추가 신호 불필요.
+	}
 }
 
 // hasToken 은 노드 토큰을 보유 중인지 반환한다.

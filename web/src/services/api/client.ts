@@ -112,6 +112,18 @@ export async function put<T>(
 }
 
 /**
+ * PATCH request returning typed data.
+ */
+export async function patch<T>(
+  url: string,
+  data?: unknown,
+  config?: AxiosRequestConfig,
+): Promise<T> {
+  const response = await apiClient.patch<T>(url, data, config);
+  return response.data;
+}
+
+/**
  * DELETE request returning void.
  */
 export async function del(url: string, config?: AxiosRequestConfig): Promise<void> {

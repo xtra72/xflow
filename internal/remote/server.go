@@ -125,11 +125,25 @@ type ServerConfig struct {
 	// DefaultCommandTimeout 을 사용한다.
 	CommandTimeout time.Duration
 
+	// QueryTimeout 은 디스패치된 READ 질의의 결과 대기 제한 시간이다(M8, REQ-J07). 0 이면
+	// DefaultQueryTimeout 을 사용한다. 타임아웃 시 질의는 미응답으로 간주되어 504 로
+	// 매핑된다(mapRemoteQueryError).
+	QueryTimeout time.Duration
+
+	// QueryCacheTTL 은 READ 응답 단기 캐시 TTL 이다(M8, REQ-J16). 0 이면 DefaultQueryCacheTTL.
+	// 라이브 action(IsStreamableAction)은 캐시를 우회한다.
+	QueryCacheTTL time.Duration
+
 	// Audit 는 원격 변경 감사 로그 저장소이다(M6, REQ-F05). nil 이면 감사는 구조화
 	// 로그로만 남고 영속화되지 않는다(하위 호환). 명령 디스패치 결과(성공/실패/타임
 	// 아웃)를 누가/언제/어느 노드/도메인·액션/결과로 기록한다. 시크릿은 기록하지
 	// 않는다(REQ-F06).
 	Audit storage.RemoteAuditRepository
+
+	// Enrollment 는 enrollment 토큰 저장소이다(v1.1 그룹 H, REQ-REMOTE-H05). nil 이면
+	// enrollment 토큰 기반 자동 승인은 비활성화되고(register 의 enrollment_token 무시)
+	// 기존 pending 흐름만 동작한다(하위 호환). 토큰은 SHA-256 해시로만 저장된다(REQ-H06).
+	Enrollment storage.EnrollmentTokenRepository
 
 	// Logger 는 선택적 로거이다. nil 이면 slog.Default() 를 사용한다.
 	Logger *slog.Logger
@@ -149,6 +163,7 @@ type Server struct {
 	mirror storage.MirrorRepository
 	tokens TokenIssuer
 	audit  storage.RemoteAuditRepository
+	enroll storage.EnrollmentTokenRepository
 	logger *slog.Logger
 
 	mu    sync.RWMutex
@@ -158,6 +173,13 @@ type Server struct {
 	cmdTimeout time.Duration
 	pendingMu  sync.Mutex
 	pending    map[string]chan CommandResultPayload // command_id -> 결과 채널(M3)
+
+	// M8(그룹 J) READ/QUERY 프록시 상태.
+	queryTimeout  time.Duration
+	pendingQMu    sync.Mutex
+	pendingQuery  map[string]chan QueryResultPayload // query_id -> 결과 채널(M8)
+	queryCache    *queryCache                        // 단기 TTL READ 캐시(REQ-J16)
+	streamManager *streamManager                     // 브라우저-노드 스트림 팬아웃(REQ-J08)
 }
 
 // NewServer 는 Server 를 생성한다. auth 가 nil 이면 부트스트랩 authenticator(빈
@@ -170,6 +192,9 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 	if cfg.CommandTimeout <= 0 {
 		cfg.CommandTimeout = DefaultCommandTimeout
 	}
+	if cfg.QueryTimeout <= 0 {
+		cfg.QueryTimeout = DefaultQueryTimeout
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -177,19 +202,25 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 	if auth == nil {
 		auth = NewBootstrapAuthenticator("")
 	}
-	return &Server{
-		cfg:        cfg,
-		auth:       auth,
-		repo:       cfg.Repo,
-		mirror:     cfg.Mirror,
-		tokens:     cfg.TokenIssuer,
-		audit:      cfg.Audit,
-		logger:     logger,
-		nodes:      make(map[string]*NodeState),
-		conns:      make(map[string]*nodeConn),
-		cmdTimeout: cfg.CommandTimeout,
-		pending:    make(map[string]chan CommandResultPayload),
+	s := &Server{
+		cfg:          cfg,
+		auth:         auth,
+		repo:         cfg.Repo,
+		mirror:       cfg.Mirror,
+		tokens:       cfg.TokenIssuer,
+		audit:        cfg.Audit,
+		enroll:       cfg.Enrollment,
+		logger:       logger,
+		nodes:        make(map[string]*NodeState),
+		conns:        make(map[string]*nodeConn),
+		cmdTimeout:   cfg.CommandTimeout,
+		pending:      make(map[string]chan CommandResultPayload),
+		queryTimeout: cfg.QueryTimeout,
+		pendingQuery: make(map[string]chan QueryResultPayload),
+		queryCache:   newQueryCache(cfg.QueryCacheTTL, DefaultQueryCacheMaxEntries),
 	}
+	s.streamManager = newStreamManager(s)
+	return s
 }
 
 // HandleConnection 은 단일 노드 연결의 읽기 루프를 실행한다(블로킹).
@@ -234,6 +265,9 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 	instanceID := ""
 	defer func() {
 		if instanceID != "" {
+			// M8(REQ-J08b): 세션 종료 시 이 노드의 모든 브라우저 스트림을 teardown 한다
+			// (노드 오프라인/연결 종료 → 해당 노드 스트림 전부 종료, 누수 없음).
+			s.teardownNodeStreams(instanceID)
 			s.unregisterConn(instanceID)
 			s.markOffline(instanceID)
 		}
@@ -286,6 +320,14 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 			// 생존성도 함께 갱신한다(결과 수신 = 노드 활성).
 			s.touch(instanceID)
 			s.routeCommandResult(msg.Payload)
+		case TypeQueryResult:
+			// READ 질의 결과를 대기 중인 DispatchQuery 호출로 라우팅한다(M8, REQ-J02).
+			s.touch(instanceID)
+			s.routeQueryResult(msg.Payload)
+		case TypeStreamData:
+			// 스트림 갱신/터미널 오류 프레임을 브라우저 소비자로 팬아웃한다(M8, REQ-J08).
+			s.touch(instanceID)
+			s.routeStreamData(msg.Payload)
 		case TypeInventorySnapshot:
 			// 접속 시 전체 인벤토리 — 노드별 미러를 종류별로 교체한다(REQ-E01/E03).
 			s.touch(instanceID)

@@ -100,6 +100,11 @@ func (r *Router) PUT(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	r.addRoute("PUT", path, handler, mw...)
 }
 
+// PATCH 는 PATCH 라우트를 등록한다(부분 갱신 — @SPEC:SPEC-REMOTE-001 M7 원격 자원 수정).
+func (r *Router) PATCH(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	r.addRoute("PATCH", path, handler, mw...)
+}
+
 // DELETE 는 DELETE 라우트를 등록한다.
 func (r *Router) DELETE(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	r.addRoute("DELETE", path, handler, mw...)
@@ -176,6 +181,11 @@ func (g *RouteGroup) POST(path string, handler HandlerFunc, mw ...MiddlewareFunc
 // PUT 는 PUT 라우트를 그룹에 등록한다.
 func (g *RouteGroup) PUT(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	g.addRoute("PUT", path, handler, mw...)
+}
+
+// PATCH 는 PATCH 라우트를 그룹에 등록한다(부분 갱신 — @SPEC:SPEC-REMOTE-001 M7).
+func (g *RouteGroup) PATCH(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	g.addRoute("PATCH", path, handler, mw...)
 }
 
 // DELETE 는 DELETE 라우트를 그룹에 등록한다.

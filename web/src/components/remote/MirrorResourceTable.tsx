@@ -4,6 +4,8 @@
 // 태그(SourceNodeTag)를 함께 노출하며, 오프라인 출처 노드는 last-known 표식을
 // 보인다 (REQ-E06). 각 행에는 종류별 원격 명령 버튼(RemoteCommandButtons)을 둔다.
 
+import { Pencil, Trash2 } from 'lucide-react';
+
 import { useTranslation } from '@/lib/i18n';
 import { formatDate } from '@/lib/utils/format';
 import type { ManagedNode, MirroredResource } from '@/types/remote';
@@ -19,6 +21,18 @@ interface MirrorResourceTableProps {
   showSource: boolean;
   /** 출처 노드 표시명 조회용 노드 목록 (hostname fallback). */
   nodes?: ManagedNode[];
+  /**
+   * 자원 수정 콜백 (M7, REQ-I10). 지정 시 편집 액션을 노출한다. flow 는 시각
+   * 편집기로, agent 는 설정 다이얼로그로 라우팅하는 책임은 부모가 갖는다.
+   */
+  onEdit?: (resource: MirroredResource) => void;
+  /** 자원 삭제 콜백 (M7, REQ-I03/I04). 지정 시 삭제 액션을 노출한다. */
+  onDelete?: (resource: MirroredResource) => void;
+  /**
+   * 편집/삭제 게이팅 (M7, REQ-I05/I10). 자원이 편집 가능한지(승인+온라인 노드의
+   * 노출 자원) 반환한다. 미지정 시 res.online 만으로 판정한다.
+   */
+  canEdit?: (resource: MirroredResource) => boolean;
 }
 
 /**
@@ -28,6 +42,9 @@ export function MirrorResourceTable({
   resources,
   showSource,
   nodes,
+  onEdit,
+  onDelete,
+  canEdit,
 }: MirrorResourceTableProps): React.JSX.Element {
   const { t } = useTranslation();
 
@@ -35,6 +52,12 @@ export function MirrorResourceTable({
   const hostnameById = new Map<string, string>(
     (nodes ?? []).map((n) => [n.instance_id, n.hostname]),
   );
+
+  // 편집 액션 노출 여부 — 콜백이 하나라도 있으면 편집 컬럼을 활성화한다.
+  const showEditActions = !!onEdit || !!onDelete;
+  // 자원별 편집 가능 여부 판정 (기본: online).
+  const editable = (res: MirroredResource): boolean =>
+    canEdit ? canEdit(res) : res.online;
 
   return (
     <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
@@ -96,6 +119,46 @@ export function MirrorResourceTable({
                     <NodeOnlineIndicator online={res.online} showLabel={false} />
                   )}
                   <RemoteCommandButtons resource={res} />
+                  {/* M7: 편집/삭제 액션 (REQ-I10). device 는 편집 대상 아님. */}
+                  {showEditActions && res.kind !== 'device' && (
+                    <>
+                      {onEdit && (
+                        <button
+                          type="button"
+                          onClick={() => onEdit(res)}
+                          disabled={!editable(res)}
+                          data-testid="mirror-resource-edit"
+                          aria-label={t('remote.action.edit')}
+                          title={
+                            editable(res)
+                              ? t('remote.action.edit')
+                              : t('remote.edit.gateHint')
+                          }
+                          className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2 py-1 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t('remote.action.edit')}
+                        </button>
+                      )}
+                      {onDelete && (
+                        <button
+                          type="button"
+                          onClick={() => onDelete(res)}
+                          disabled={!editable(res)}
+                          data-testid="mirror-resource-delete"
+                          aria-label={t('remote.action.delete')}
+                          title={
+                            editable(res)
+                              ? t('remote.action.delete')
+                              : t('remote.edit.gateHint')
+                          }
+                          className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               </td>
             </tr>

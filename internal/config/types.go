@@ -144,6 +144,12 @@ type RemoteManagementConfig struct {
 	// 시크릿이므로 redaction·비커밋 대상 (REQ-F06).
 	BootstrapSecret string
 
+	// EnrollmentToken 은 (선택) 가입 토큰이다 (v1.1 그룹 H, REQ-REMOTE-H05).
+	// client 모드에서 설정되면 register 에 실어 보내, 서버가 유효성을 검증해 관리자
+	// 수동 승인 없이 노드를 자동 승인하도록 한다. 시크릿이므로 redaction·비커밋·비로깅
+	// 대상이다 (REQ-F06/H06).
+	EnrollmentToken string
+
 	// Exposure 는 서버에 노출할 자원 범위 (opt-in, REQ-A04).
 	Exposure ExposureConfig
 

@@ -45,7 +45,139 @@ const (
 	TypeHeartbeat = "heartbeat"
 	// TypeStatus 는 상태 텔레메트리이다(client→server, REQ-B05 보조).
 	TypeStatus = "status"
+
+	// --- M8 그룹 J: READ/QUERY 프록시 + 스트리밍 프록시 (READ-ONLY) ---
+
+	// TypeQuery 는 per-domain query-action READ 질의이다(server→client, REQ-J01/J02).
+	TypeQuery = "query"
+	// TypeQueryResult 는 질의 응답/ack 이다(client→server, REQ-J01/J06/J07).
+	TypeQueryResult = "query_result"
+	// TypeSubscribe 는 실시간 스트림 구독 시작이다(server→client, REQ-J08).
+	TypeSubscribe = "subscribe"
+	// TypeStreamData 는 구독 소스 갱신 push 이다(client→server, REQ-J08).
+	TypeStreamData = "stream_data"
+	// TypeUnsubscribe 는 스트림 구독 해제·teardown 이다(both, REQ-J08b).
+	TypeUnsubscribe = "unsubscribe"
 )
+
+// M8(그룹 J) per-domain query-action 상수 (spec §5.10.1 매핑 표, REQ-J04 — FULL
+// 커버리지). 동일 문자열이 여러 도메인에 걸쳐 재사용된다(예: list/get 은 모든 도메인).
+// allowlist 는 IsAllowedQueryAction 이 도메인별로 강제한다(미열거·변경 의미 action 거부).
+//
+// 변경 의미 action(create/update/delete/execute/start/stop 등)은 본 집합에 포함되지
+// 않으며(READ-ONLY — REQ-J03), 변경은 그룹 D 명령 / 그룹 I CRUD 경로로만 수행된다.
+const (
+	// QueryActionList 는 목록 질의이다(flow/agent/device). 그룹 E 미러 우선, 라이브 보강.
+	QueryActionList = "list"
+	// QueryActionGet 은 상세 정의 질의이다(flow/agent/device).
+	QueryActionGet = "get"
+	// QueryActionStatus 는 플로우 상태 질의이다(flow).
+	QueryActionStatus = "status"
+	// QueryActionNodes 는 플로우 노드 목록 질의이다(flow).
+	QueryActionNodes = "nodes"
+	// QueryActionNode 는 단일 플로우 노드 런타임 질의이다(flow).
+	QueryActionNode = "node"
+	// QueryActionLogs 는 플로우/노드 로그 질의이다(flow).
+	QueryActionLogs = "logs"
+	// QueryActionStats 는 에이전트 통계 질의이다(agent, 스트림 가능 — 라이브).
+	QueryActionStats = "stats"
+	// QueryActionConfig 는 에이전트 설정 질의이다(agent).
+	QueryActionConfig = "config"
+	// QueryActionDevices 는 에이전트 연결 디바이스 질의이다(agent).
+	QueryActionDevices = "devices"
+	// QueryActionTopics 는 에이전트 토픽 질의이다(agent).
+	QueryActionTopics = "topics"
+	// QueryActionStore 는 에이전트 store 질의이다(agent).
+	QueryActionStore = "store"
+	// QueryActionSessions 는 에이전트 세션 질의이다(agent).
+	QueryActionSessions = "sessions"
+	// QueryActionSeries 는 에이전트 시리즈/TSDB 질의이다(agent, 스트림 가능 — 라이브).
+	QueryActionSeries = "series"
+	// QueryActionState 는 디바이스 실시간 상태 질의이다(device, 스트림 가능 — 라이브).
+	QueryActionState = "state"
+	// QueryActionCommands 는 디바이스 명령 스펙 질의이다(device).
+	QueryActionCommands = "commands"
+	// QueryActionMetadata 는 디바이스 메타데이터(읽기) 질의이다(device).
+	QueryActionMetadata = "metadata"
+)
+
+// M8 스트림 action 상수 (spec §5.10.2, REQ-J08). 스트림 가능한 라이브 action 만
+// 열거한다. query-action 상수와 동일 문자열을 재사용한다(state/stats/series).
+const (
+	// StreamActionState 는 디바이스 실시간 상태 스트림이다(device.state).
+	StreamActionState = QueryActionState
+	// StreamActionStats 는 에이전트 라이브 통계 스트림이다(agent.stats).
+	StreamActionStats = QueryActionStats
+	// StreamActionSeries 는 에이전트 라이브 시리즈 스트림이다(agent.series).
+	StreamActionSeries = QueryActionSeries
+)
+
+// allowedQueryActions 는 도메인별 허용 read query-action 집합이다(REQ-J04 — FULL
+// 커버리지). 본 맵에 없는 (domain, action) 조합은 거부된다(미열거·변경 의미 차단 —
+// REQ-J03).
+var allowedQueryActions = map[string]map[string]struct{}{
+	DomainFlow: {
+		QueryActionList:   {},
+		QueryActionGet:    {},
+		QueryActionStatus: {},
+		QueryActionNodes:  {},
+		QueryActionNode:   {},
+		QueryActionLogs:   {},
+	},
+	DomainAgent: {
+		QueryActionList:     {},
+		QueryActionGet:      {},
+		QueryActionStats:    {},
+		QueryActionConfig:   {},
+		QueryActionDevices:  {},
+		QueryActionTopics:   {},
+		QueryActionStore:    {},
+		QueryActionSessions: {},
+		QueryActionSeries:   {},
+	},
+	DomainDevice: {
+		QueryActionList:     {},
+		QueryActionGet:      {},
+		QueryActionState:    {},
+		QueryActionCommands: {},
+		QueryActionMetadata: {},
+	},
+}
+
+// streamableActions 는 도메인별 스트림 가능한 라이브 action 집합이다(REQ-J08).
+// 캐시 우회·서버 경유 중계 대상이다(REQ-J16). 그 외 action 은 스트림 불가(폴링 폴백).
+var streamableActions = map[string]map[string]struct{}{
+	DomainDevice: {
+		StreamActionState: {},
+	},
+	DomainAgent: {
+		StreamActionStats:  {},
+		StreamActionSeries: {},
+	},
+}
+
+// IsAllowedQueryAction 은 (domain, queryAction)이 허용된 read query-action 인지
+// 반환한다(REQ-J04 allowlist). 미열거 도메인·미열거/변경 의미 action 은 false 이다
+// (READ-ONLY 강제 — REQ-J03).
+func IsAllowedQueryAction(domain, queryAction string) bool {
+	actions, ok := allowedQueryActions[domain]
+	if !ok {
+		return false
+	}
+	_, ok = actions[queryAction]
+	return ok
+}
+
+// IsStreamableAction 은 (domain, streamAction)이 스트림 가능한 라이브 action 인지
+// 반환한다(REQ-J08). 비스트림 action 은 폴링 폴백 대상이다.
+func IsStreamableAction(domain, streamAction string) bool {
+	actions, ok := streamableActions[domain]
+	if !ok {
+		return false
+	}
+	_, ok = actions[streamAction]
+	return ok
+}
 
 // 원격 명령 도메인 상수 (spec §5.1 command.domain, REQ-D02/D03/D04).
 const (
@@ -55,6 +187,36 @@ const (
 	DomainAgent = "agent"
 	// DomainDevice 는 IoT 디바이스 메타데이터 명령 도메인이다(device 서비스 적용, REQ-D04).
 	DomainDevice = "device"
+)
+
+// 원격 명령 action 상수 (spec §5.1 command.action, v1.2 그룹 I — REQ-I01~I06).
+//
+// flow/agent 도메인의 FULL CRUD 편집을 위한 action 의미를 고정한다. 기존 command/
+// command_result 메시지를 그대로 재사용하며(신규 메시지 타입 없음), 클라이언트는 각
+// action 을 해당 어댑터 메서드(FlowServiceAdapter/AgentServiceAdapter 의 Create/Update/
+// Delete)로 라우팅한다(REQ-I06, A5 — 로컬 API 와 동일 검증).
+//
+// 시크릿 생략 라운드트립 규약(REQ-I07, spec §5.9 OPEN QUESTION 6 RESOLVED —
+// "필드 부재 + 노드 backfill"):
+//
+//   - ActionCreate: args 는 신규 자원 정의 JSON 이다. 노드 어댑터 Create 가 ID 를
+//     부여·반환하고(node-assigned ID — OPEN QUESTION 8), 서버는 반환된 ID 를 응답에
+//     사용한다. 신규 자원은 자동 노출되지 않는다(opt-in 보존 — OPEN QUESTION 9).
+//   - ActionUpdate: args 는 {"id": "...", ...갱신 정의 JSON} 이다. 갱신 정의에서
+//     마스킹/미변경 시크릿 필드는 와이어에서 완전히 생략된다(sentinel/자리표시자 금지).
+//     노드는 어댑터 호출 전 기존 자원 정의를 로드하여 부재한 시크릿 필드를 기존값으로
+//     backfill 한 뒤 적용한다(병합은 client/apply 측 책임 — secret_fields SoT 재사용).
+//   - ActionDelete: args 는 {"id": "..."} 이다. 노드 어댑터 Delete 를 호출한다.
+//
+// 본 상수 값은 기존 cmd/xflowd 어댑터 라우팅의 문자열 리터럴("create"/"update"/
+// "delete")과 동일하므로 와이어 호환을 유지한다.
+const (
+	// ActionCreate 는 flow/agent 신규 생성 action 이다(REQ-I01/I04, node-assigned ID).
+	ActionCreate = "create"
+	// ActionUpdate 는 flow/agent 기존 자원 수정 action 이다(REQ-I02/I04, 시크릿 backfill).
+	ActionUpdate = "update"
+	// ActionDelete 는 flow/agent 자원 삭제 action 이다(REQ-I03/I04).
+	ActionDelete = "delete"
 )
 
 // 인벤토리 델타 연산 상수 (spec §5.1 inventory_delta.op, REQ-E02).
@@ -114,12 +276,17 @@ type ExposureSummary struct {
 // 식별하고, hostname/version/exposure 요약을 운반한다. BootstrapSecret 은 선택적
 // 사전 공유 시크릿으로, 서버에 bootstrap_secret 이 구성된 경우 1차 신뢰 검증에
 // 사용된다(REQ-C08). 시크릿이므로 로깅/커밋 대상이 아니다(REQ-F06).
+//
+// EnrollmentToken 은 선택적 가입 토큰이다(v1.1 그룹 H, REQ-REMOTE-H05). 설정 시
+// 서버는 토큰을 검증하여 관리자 수동 승인 없이 노드를 자동 승인한다(유효한 경우).
+// 시크릿이므로 로깅 대상이 아니다(REQ-F06/H06).
 type RegisterPayload struct {
 	InstanceID      string          `json:"instance_id"`
 	Hostname        string          `json:"hostname,omitempty"`
 	Version         string          `json:"version,omitempty"`
 	Exposure        ExposureSummary `json:"exposure,omitempty"`
 	BootstrapSecret string          `json:"bootstrap_secret,omitempty"`
+	EnrollmentToken string          `json:"enrollment_token,omitempty"`
 }
 
 // RegisterAckPayload 는 등록 응답 페이로드이다(server→client, REQ-C03/C04, spec §5.1).
@@ -272,6 +439,95 @@ func NewInventorySnapshotMessage(p InventorySnapshotPayload) (*ws.Message, error
 // 인코딩한다(REQ-E02).
 func NewInventoryDeltaMessage(p InventoryDeltaPayload) (*ws.Message, error) {
 	return ws.NewMessage(TypeInventoryDelta, p)
+}
+
+// --- M8 그룹 J: query/stream 페이로드 구조 + 생성자 (READ-ONLY 프록시) ---
+
+// QueryPayload 는 per-domain query-action READ 질의 페이로드이다(server→client,
+// REQ-J01/J02, spec §5.1/§5.10).
+//
+// QueryID 로 요청-응답을 1:1 상관(correlation)한다(REQ-J02 — D07 패턴 준용).
+// TargetInstanceID 는 질의 대상 노드이며, 서버는 대상이 승인+온라인+노출 범위일 때만
+// 전달한다(REQ-J05). Domain(flow|agent|device) + QueryAction(열거 allowlist —
+// REQ-J04)으로 노드의 로컬 read 핸들러를 지정하고, Args 는 도메인/action 별 인자
+// (예: {"id": "..."})이다.
+//
+// READ-ONLY(REQ-J03): QueryAction 은 read 의미만 허용된다(IsAllowedQueryAction 강제).
+// 변경 의미 action 은 노드 측에서 거부된다.
+type QueryPayload struct {
+	QueryID          string          `json:"query_id"`
+	TargetInstanceID string          `json:"target_instance_id,omitempty"`
+	Domain           string          `json:"domain"`
+	QueryAction      string          `json:"query_action"`
+	Args             json.RawMessage `json:"args,omitempty"`
+}
+
+// QueryResultPayload 는 질의 응답/ack 페이로드이다(client→server, REQ-J02/J06/J07,
+// spec §5.1).
+//
+// QueryID 로 원본 질의와 상관된다. OK 가 true 이면 Data 에 redacted JSON 본문이
+// 담기고(REQ-J06 — 노드가 전송 전 마스킹), false 이면 Error 에 사유가 담긴다. 서버는
+// 본 ok/error 를 502(node-error) 매핑에 사용한다(REQ-J07).
+type QueryResultPayload struct {
+	QueryID string          `json:"query_id"`
+	OK      bool            `json:"ok"`
+	Data    json.RawMessage `json:"data,omitempty"` // redacted (REQ-J06)
+	Error   string          `json:"error,omitempty"`
+}
+
+// SubscribePayload 는 실시간 스트림 구독 시작 페이로드이다(server→client, REQ-J08,
+// spec §5.10.2).
+//
+// SubscriptionID 로 다중 구독을 구분한다(REQ-J08b). Domain + StreamAction(스트림
+// 가능 action — IsStreamableAction)으로 노드의 실시간 소스를 지정한다. Args 는 대상
+// 식별 인자(예: {"id": "..."})이다. READ-ONLY(REQ-J03).
+type SubscribePayload struct {
+	SubscriptionID   string          `json:"subscription_id"`
+	TargetInstanceID string          `json:"target_instance_id,omitempty"`
+	Domain           string          `json:"domain"`
+	StreamAction     string          `json:"stream_action"`
+	Args             json.RawMessage `json:"args,omitempty"`
+}
+
+// StreamDataPayload 는 구독 소스 갱신 push 페이로드이다(client→server, REQ-J08).
+//
+// SubscriptionID 로 구독과 상관된다. Payload 는 redacted JSON 갱신 본문이다(REQ-J06).
+// Error 가 비어 있지 않으면 구독 실패/종료를 의미하며(게이팅 위반·비스트림 action·
+// 소스 오류), 서버는 해당 구독을 종료해야 한다(터미널 프레임).
+type StreamDataPayload struct {
+	SubscriptionID string          `json:"subscription_id"`
+	Payload        json.RawMessage `json:"payload,omitempty"` // redacted (REQ-J06)
+	Error          string          `json:"error,omitempty"`
+}
+
+// UnsubscribePayload 는 스트림 구독 해제·teardown 페이로드이다(both, REQ-J08b).
+type UnsubscribePayload struct {
+	SubscriptionID string `json:"subscription_id"`
+}
+
+// NewQueryMessage 는 QueryPayload 를 ws.Message 봉투로 인코딩한다(REQ-J01).
+func NewQueryMessage(p QueryPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeQuery, p)
+}
+
+// NewQueryResultMessage 는 QueryResultPayload 를 ws.Message 봉투로 인코딩한다(REQ-J02).
+func NewQueryResultMessage(p QueryResultPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeQueryResult, p)
+}
+
+// NewSubscribeMessage 는 SubscribePayload 를 ws.Message 봉투로 인코딩한다(REQ-J08).
+func NewSubscribeMessage(p SubscribePayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeSubscribe, p)
+}
+
+// NewStreamDataMessage 는 StreamDataPayload 를 ws.Message 봉투로 인코딩한다(REQ-J08).
+func NewStreamDataMessage(p StreamDataPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeStreamData, p)
+}
+
+// NewUnsubscribeMessage 는 UnsubscribePayload 를 ws.Message 봉투로 인코딩한다(REQ-J08b).
+func NewUnsubscribeMessage(p UnsubscribePayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeUnsubscribe, p)
 }
 
 // DecodeMessage 는 ws.DecodeMessage 의 패키지-로컬 별칭이다(테스트/호출 편의).

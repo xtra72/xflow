@@ -12,15 +12,19 @@
 // 권한: admin 전용 (라우트 가드 + 백엔드 검증). 본 페이지는 UI 레벨 보조이다.
 
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Network, XCircle } from 'lucide-react';
+import { CheckCircle2, Network, Plus, Trash2, XCircle } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/remote/ConfirmDialog';
+import { EnrollmentTokenSection } from '@/components/remote/EnrollmentTokenSection';
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
 import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
+import { PreRegisterNodeDialog } from '@/components/remote/PreRegisterNodeDialog';
 import { RemoteNotServerNotice } from '@/components/remote/RemoteNotServerNotice';
 import {
   useApproveNode,
+  useDeleteNode,
   useManagedNodes,
+  usePreRegisterNode,
   useRejectNode,
   useRemoteMode,
   useRevokeNode,
@@ -33,7 +37,7 @@ import type { ManagedNode } from '@/types/remote';
 /** 확인 다이얼로그 대상 상태. */
 interface PendingConfirm {
   node: ManagedNode;
-  kind: 'reject' | 'revoke';
+  kind: 'reject' | 'revoke' | 'delete';
 }
 
 export default function RemoteNodesPage(): React.JSX.Element {
@@ -52,8 +56,11 @@ export default function RemoteNodesPage(): React.JSX.Element {
   const approve = useApproveNode();
   const reject = useRejectNode();
   const revoke = useRevokeNode();
+  const deleteNode = useDeleteNode();
+  const preRegister = usePreRegisterNode();
 
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
+  const [preRegisterOpen, setPreRegisterOpen] = useState(false);
 
   const allNodes = useMemo<ManagedNode[]>(() => nodes ?? [], [nodes]);
 
@@ -71,11 +78,13 @@ export default function RemoteNodesPage(): React.JSX.Element {
   const handleConfirm = (): void => {
     if (!confirm) return;
     const { node, kind } = confirm;
+    const successMessage: Record<PendingConfirm['kind'], string> = {
+      reject: t('remote.toast.rejected'),
+      revoke: t('remote.toast.revoked'),
+      delete: t('remote.toast.deleted'),
+    };
     const onSuccess = (): void => {
-      addNotification({
-        type: 'success',
-        message: kind === 'reject' ? t('remote.toast.rejected') : t('remote.toast.revoked'),
-      });
+      addNotification({ type: 'success', message: successMessage[kind] });
       setConfirm(null);
     };
     const onError = (): void => {
@@ -85,12 +94,24 @@ export default function RemoteNodesPage(): React.JSX.Element {
 
     if (kind === 'reject') {
       reject.mutate({ instanceID: node.instance_id }, { onSuccess, onError });
-    } else {
+    } else if (kind === 'revoke') {
       revoke.mutate(node.instance_id, { onSuccess, onError });
+    } else {
+      deleteNode.mutate(node.instance_id, { onSuccess, onError });
     }
   };
 
-  const confirmPending = reject.isPending || revoke.isPending;
+  // 사전 등록 제출 핸들러. 실패 시 모달이 에러를 표시할 수 있도록 에러를 전파한다.
+  const handlePreRegister = async (instanceId: string, name: string): Promise<void> => {
+    await preRegister.mutateAsync({
+      instance_id: instanceId,
+      ...(name ? { name } : {}),
+    });
+    addNotification({ type: 'success', message: t('remote.toast.preRegistered') });
+    setPreRegisterOpen(false);
+  };
+
+  const confirmPending = reject.isPending || revoke.isPending || deleteNode.isPending;
 
   // --- 비-server 모드: 안내만 표시하고 쿼리는 발행하지 않는다 ---
   if (remoteMode && !isServer) {
@@ -145,7 +166,7 @@ export default function RemoteNodesPage(): React.JSX.Element {
 
   return (
     <div className="space-y-6">
-      <PageHeader />
+      <PageHeader onPreRegister={() => setPreRegisterOpen(true)} />
 
       {allNodes.length === 0 ? (
         <div
@@ -184,6 +205,7 @@ export default function RemoteNodesPage(): React.JSX.Element {
                   onApprove={() => handleApprove(node)}
                   onReject={() => setConfirm({ node, kind: 'reject' })}
                   onRevoke={() => setConfirm({ node, kind: 'revoke' })}
+                  onDelete={() => setConfirm({ node, kind: 'delete' })}
                   approvePending={
                     approve.isPending && approve.variables === node.instance_id
                   }
@@ -194,25 +216,34 @@ export default function RemoteNodesPage(): React.JSX.Element {
         </div>
       )}
 
+      {/* Enrollment 토큰 관리 섹션 */}
+      <div className="border-t border-(--color-border-default) pt-6">
+        <EnrollmentTokenSection enabled={isServer} />
+      </div>
+
+      {/* 노드 사전 등록 모달 */}
+      <PreRegisterNodeDialog
+        open={preRegisterOpen}
+        pending={preRegister.isPending}
+        onSubmit={handlePreRegister}
+        onCancel={() => {
+          if (!preRegister.isPending) setPreRegisterOpen(false);
+        }}
+      />
+
       {/* 파괴적 작업 확인 다이얼로그 */}
       <ConfirmDialog
         open={confirm !== null}
-        title={
-          confirm?.kind === 'reject'
-            ? t('remote.confirm.rejectTitle')
-            : t('remote.confirm.revokeTitle')
-        }
+        title={confirm ? t(CONFIRM_TITLE_KEY[confirm.kind]) : ''}
         description={
           confirm
-            ? (confirm.kind === 'reject'
-                ? t('remote.confirm.rejectDesc')
-                : t('remote.confirm.revokeDesc')
-              ).replace('{node}', confirm.node.hostname || confirm.node.instance_id)
+            ? t(CONFIRM_DESC_KEY[confirm.kind]).replace(
+                '{node}',
+                confirm.node.hostname || confirm.node.instance_id,
+              )
             : ''
         }
-        confirmLabel={
-          confirm?.kind === 'reject' ? t('remote.action.reject') : t('remote.action.revoke')
-        }
+        confirmLabel={confirm ? t(CONFIRM_ACTION_KEY[confirm.kind]) : ''}
         pending={confirmPending}
         onConfirm={handleConfirm}
         onCancel={() => {
@@ -223,16 +254,57 @@ export default function RemoteNodesPage(): React.JSX.Element {
   );
 }
 
+// ---- 확인 다이얼로그 i18n 키 매핑 ----
+
+const CONFIRM_TITLE_KEY: Record<PendingConfirm['kind'], string> = {
+  reject: 'remote.confirm.rejectTitle',
+  revoke: 'remote.confirm.revokeTitle',
+  delete: 'remote.confirm.deleteTitle',
+};
+
+const CONFIRM_DESC_KEY: Record<PendingConfirm['kind'], string> = {
+  reject: 'remote.confirm.rejectDesc',
+  revoke: 'remote.confirm.revokeDesc',
+  delete: 'remote.confirm.deleteDesc',
+};
+
+const CONFIRM_ACTION_KEY: Record<PendingConfirm['kind'], string> = {
+  reject: 'remote.action.reject',
+  revoke: 'remote.action.revoke',
+  delete: 'remote.action.delete',
+};
+
 // ---- 페이지 헤더 ----
 
-function PageHeader(): React.JSX.Element {
+interface PageHeaderProps {
+  /** 헤더 우측 액션 영역 (사전 등록 버튼 등). server 모드에서만 노출. */
+  onPreRegister?: () => void;
+}
+
+function PageHeader({ onPreRegister }: PageHeaderProps): React.JSX.Element {
   const { t } = useTranslation();
   return (
-    <header data-testid="remote-nodes-header">
-      <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-        {t('remote.title')}
-      </h1>
-      <p className="mt-1 text-sm text-(--color-text-muted)">{t('remote.subtitle')}</p>
+    <header
+      data-testid="remote-nodes-header"
+      className="flex items-start justify-between gap-4"
+    >
+      <div>
+        <h1 className="text-2xl font-semibold text-(--color-text-primary)">
+          {t('remote.title')}
+        </h1>
+        <p className="mt-1 text-sm text-(--color-text-muted)">{t('remote.subtitle')}</p>
+      </div>
+      {onPreRegister && (
+        <button
+          type="button"
+          onClick={onPreRegister}
+          data-testid="node-pre-register-button"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          {t('remote.preRegister.button')}
+        </button>
+      )}
     </header>
   );
 }
@@ -257,6 +329,7 @@ interface NodeRowProps {
   onApprove: () => void;
   onReject: () => void;
   onRevoke: () => void;
+  onDelete: () => void;
   approvePending: boolean;
 }
 
@@ -266,6 +339,7 @@ function NodeRow({
   onApprove,
   onReject,
   onRevoke,
+  onDelete,
   approvePending,
 }: NodeRowProps): React.JSX.Element {
   const { t } = useTranslation();
@@ -327,9 +401,17 @@ function NodeRow({
               {t('remote.action.revoke')}
             </button>
           )}
-          {(node.status === 'rejected' || node.status === 'revoked') && (
-            <span className="text-xs text-(--color-text-muted)">—</span>
-          )}
+          {/* 삭제는 폐기와 달리 항목 자체를 제거한다 — 모든 상태에서 제공. */}
+          <button
+            type="button"
+            onClick={onDelete}
+            data-testid="node-delete-button"
+            aria-label={t('remote.action.delete')}
+            title={t('remote.action.delete')}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
         </div>
       </td>
     </tr>

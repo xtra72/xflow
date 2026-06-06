@@ -404,6 +404,7 @@ func (c *viperConfig) RemoteManagement() RemoteManagementConfig {
 		AutoRegister:      c.v.GetBool("remote_management.auto_register"),
 		HeartbeatInterval: heartbeat,
 		BootstrapSecret:   c.v.GetString("remote_management.bootstrap_secret"),
+		EnrollmentToken:   c.v.GetString("remote_management.enrollment_token"),
 		Exposure: ExposureConfig{
 			Flows:   c.v.GetString("remote_management.exposure.flows"),
 			Agents:  c.v.GetString("remote_management.exposure.agents"),
