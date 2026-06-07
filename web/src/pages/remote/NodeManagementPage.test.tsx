@@ -7,6 +7,7 @@
 //   - 비-server 모드 게이팅.
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ManagedNode, NodeGroup } from '@/types/remote';
@@ -62,8 +63,22 @@ function node(o: Partial<ManagedNode> = {}): ManagedNode {
   };
 }
 
-function renderPage() {
-  return render(<NodeManagementPage />);
+// 현재 URL(경로 + 쿼리)을 노출하는 프로브 — `?node=`/`?tab=` 동기화를 검증한다.
+let currentSearch = '';
+function LocationProbe(): null {
+  const location = useLocation();
+  currentSearch = location.search;
+  return null;
+}
+
+function renderPage(initialEntry = '/admin/remote') {
+  currentSearch = '';
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <NodeManagementPage />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
 }
 
 beforeEach(() => {
@@ -116,7 +131,7 @@ describe('NodeManagementPage — 디렉토리', () => {
     );
   });
 
-  it('노드를 선택하면 대시보드를 표시한다', () => {
+  it('노드를 선택하면 대시보드를 표시하고 URL `?node=` 를 갱신한다', () => {
     useManagedNodesMock.mockReturnValue({
       data: [node({ instance_id: 'a' })],
       isLoading: false,
@@ -132,6 +147,69 @@ describe('NodeManagementPage — 디렉토리', () => {
 
     const dash = screen.getByTestId('node-dashboard-stub');
     expect(dash).toHaveAttribute('data-instance-id', 'a');
+    // 선택은 URL `?node=` 로 동기화된다(딥링크/뒤로가기 지원).
+    expect(new URLSearchParams(currentSearch).get('node')).toBe('a');
+  });
+});
+
+describe('NodeManagementPage — URL 선택 동기화(`?node=`)', () => {
+  it('`?node={id}` 가 있으면 마운트 시 해당 노드를 선택 복원한다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [node({ instance_id: 'a' }), node({ instance_id: 'b', hostname: 'gw-2' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage('/admin/remote?node=b');
+
+    // 선택 안내 없이 곧장 대시보드가 표시되며, 대상은 ?node 가 가리키는 노드다.
+    expect(screen.queryByTestId('node-management-no-selection')).not.toBeInTheDocument();
+    expect(screen.getByTestId('node-dashboard-stub')).toHaveAttribute(
+      'data-instance-id',
+      'b',
+    );
+  });
+
+  it('`?node={id}` 가 목록에 없으면 선택 없음(기본 안내)으로 둔다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [node({ instance_id: 'a' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage('/admin/remote?node=missing');
+
+    expect(screen.getByTestId('node-management-no-selection')).toBeInTheDocument();
+    expect(screen.queryByTestId('node-dashboard-stub')).not.toBeInTheDocument();
+  });
+
+  it('파라미터가 없으면 기본(선택 없음)으로 렌더한다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [node({ instance_id: 'a' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    expect(screen.getByTestId('node-management-no-selection')).toBeInTheDocument();
+  });
+
+  it('`?node` 와 함께 온 `?tab` 은 보존되어 대시보드 딥링크가 유지된다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [node({ instance_id: 'a' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage('/admin/remote?node=a&tab=flows');
+
+    expect(screen.getByTestId('node-dashboard-stub')).toHaveAttribute(
+      'data-instance-id',
+      'a',
+    );
+    const params = new URLSearchParams(currentSearch);
+    expect(params.get('node')).toBe('a');
+    expect(params.get('tab')).toBe('flows');
   });
 });
 

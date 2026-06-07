@@ -276,6 +276,7 @@ export function EditorToolbar({
           배지(호스트명) + 플로우 이름(원격은 로컬 useFlow 를 쓰지 않음). */}
       {remote ? (
         <RemoteTitleBlock
+          instanceId={isRemoteTarget(target) ? target.instanceId : ''}
           nodeLabel={nodeLabel ?? ''}
           nodeTitle={nodeTitle}
           flowName={flowName ?? ''}
@@ -796,6 +797,8 @@ function Separator() {
 // (로컬 동작/테스트 불변). 부모 EditorToolbar 는 remote 일 때만 이들을 렌더한다.
 
 interface RemoteTitleBlockProps {
+  /** 대상 노드 instanceId(노드로 돌아가기 딥링크 구성에 사용). */
+  instanceId: string;
   /** 대상 노드 표시명(호스트명 — 배지 본문). */
   nodeLabel: string;
   /** 원본 instanceId(배지 툴팁에만 노출). */
@@ -804,8 +807,18 @@ interface RemoteTitleBlockProps {
   flowName: string;
 }
 
-/** 원격 편집기에서 "노드로 돌아가기" 가 향하는 노드 관리 화면 경로. */
-const REMOTE_BACK_HREF = '/admin/remote';
+/**
+ * 원격 편집기에서 "노드로 돌아가기" 가 향하는 노드 관리 화면 딥링크를 만든다.
+ *
+ * 단순히 `/admin/remote` 로 가면 노드 관리 페이지가 선택/탭을 잃고 새로 마운트돼
+ * 사용자가 노드와 플로우 탭을 다시 골라야 한다. 대신 직전 단계(선택된 노드 +
+ * 플로우 탭)를 정확히 복원하도록 `?node={instanceId}&tab=flows` 로 이동한다.
+ * 사용자는 플로우를 편집 중이었으므로 flows 탭으로 되돌린다.
+ */
+function remoteBackHref(instanceId: string): string {
+  if (!instanceId) return '/admin/remote';
+  return `/admin/remote?node=${encodeURIComponent(instanceId)}&tab=flows`;
+}
 
 /**
  * 원격 제목 블록 — 노드로 돌아가기 링크 + 대상 노드 배지(호스트명) + 플로우 이름.
@@ -815,17 +828,18 @@ const REMOTE_BACK_HREF = '/admin/remote';
  *
  * "노드로 돌아가기"(ArrowLeft) 링크는 과거 RemoteEditorBanner 가 제공하던 유일한
  * 유용 요소로, 중복 배너를 제거하면서 이 제어판으로 이관했다. 노드 배지 왼쪽에
- * 컴팩트한 링크 형태로 배치하며, 노드 관리 화면(REMOTE_BACK_HREF)으로 이동한다.
+ * 컴팩트한 링크 형태로 배치하며, 선택 노드 + 플로우 탭을 복원하는 노드 관리
+ * 딥링크(remoteBackHref)로 이동한다(직전 단계로 정확히 복귀).
  * 로컬 편집기에는 RemoteTitleBlock 자체가 렌더되지 않으므로 영향이 없다.
  */
-function RemoteTitleBlock({ nodeLabel, nodeTitle, flowName }: RemoteTitleBlockProps) {
+function RemoteTitleBlock({ instanceId, nodeLabel, nodeTitle, flowName }: RemoteTitleBlockProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   return (
     <div className="flex min-w-0 items-center gap-1">
       <button
         type="button"
-        onClick={() => navigate(REMOTE_BACK_HREF)}
+        onClick={() => navigate(remoteBackHref(instanceId))}
         title={t('remote.editor.backToNode')}
         aria-label={t('remote.editor.backToNode')}
         data-testid="remote-editor-back"

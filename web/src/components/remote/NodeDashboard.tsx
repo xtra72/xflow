@@ -13,7 +13,8 @@
 // 서브탭에 임베드한다. 로컬 라우트(`/flows` 등)는 prop 없이 렌더되므로 URL 의
 // `?target=` 를 읽어 기존과 동일하게 동작한다(회귀 없음).
 
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
+import { useSearchParams } from 'react-router';
 import { Bot, Cpu, HardDrive, LayoutDashboard, Workflow } from 'lucide-react';
 
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
@@ -32,6 +33,21 @@ const DeviceListPage = lazy(() => import('@/pages/devices/DeviceListPage'));
 /** 대시보드 서브탭 식별자. */
 type DashboardTab = 'overview' | 'flows' | 'agents' | 'devices';
 
+/** 유효한 서브탭 식별자 집합(URL 파라미터 검증용). */
+const DASHBOARD_TABS: readonly DashboardTab[] = [
+  'overview',
+  'flows',
+  'agents',
+  'devices',
+];
+
+/** URL `?tab=` 원시 값을 DashboardTab 으로 파싱한다(미지정/무효 → overview). */
+function parseDashboardTab(raw: string | null): DashboardTab {
+  return DASHBOARD_TABS.includes(raw as DashboardTab)
+    ? (raw as DashboardTab)
+    : 'overview';
+}
+
 interface NodeDashboardProps {
   /** 대시보드 대상 노드 식별자. */
   instanceId: string;
@@ -47,7 +63,26 @@ export function NodeDashboard({
   enabled,
 }: NodeDashboardProps): React.JSX.Element {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<DashboardTab>('overview');
+
+  // 활성 서브탭을 URL `?tab=` 에 동기화한다(SPEC-REMOTE-001: 에디터 "노드로
+  // 돌아가기"가 직전 서브탭을 정확히 복원하도록 — 딥링크/뒤로가기 지원). 미지정/
+  // 무효 값은 overview 로 폴백한다(기존 기본 동작 불변). `?node=` 등 다른
+  // 파라미터는 보존한다.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseDashboardTab(searchParams.get('tab'));
+
+  const setTab = (next: DashboardTab): void => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        // overview(기본)는 URL 을 깔끔히 유지하기 위해 파라미터를 제거한다.
+        if (next === 'overview') params.delete('tab');
+        else params.set('tab', next);
+        return params;
+      },
+      { replace: true },
+    );
+  };
 
   // 원격 타깃(서브탭이 통합 페이지에 주입). instanceId 가 바뀔 때만 새 객체 생성.
   const target = useMemo<ResourceTarget>(

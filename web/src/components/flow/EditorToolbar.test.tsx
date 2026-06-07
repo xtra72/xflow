@@ -400,11 +400,13 @@ describe('EditorToolbar - 원격 타깃(통합 툴바)', () => {
     expect(back).not.toHaveTextContent('inst-uuid-1234');
   });
 
-  it('"노드로 돌아가기" 클릭 시 노드 관리 화면(/admin/remote)으로 이동한다', () => {
+  it('"노드로 돌아가기" 클릭 시 선택 노드 + 플로우 탭을 복원하는 딥링크로 이동한다', () => {
     renderRemote();
     fireEvent.click(screen.getByTestId('remote-editor-back'));
+    // 단순 /admin/remote 가 아니라 직전 단계(선택 노드 + 플로우 탭)를 복원하는
+    // 딥링크로 이동한다(instanceId 는 target 에서 가져온다).
     expect(navigateMock).toHaveBeenCalledTimes(1);
-    expect(navigateMock).toHaveBeenCalledWith('/admin/remote');
+    expect(navigateMock).toHaveBeenCalledWith('/admin/remote?node=inst-1&tab=flows');
   });
 
   it('로컬과 동일한 라이프사이클 메뉴(시작/중지/배포/재시작 + 저장)를 렌더한다', () => {

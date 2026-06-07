@@ -13,6 +13,7 @@
 // 권한/모드: admin 전용 라우트 + server 모드에서만 쿼리를 발행한다.
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { ChevronDown, ChevronRight, FolderOpen, Network } from 'lucide-react';
 
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
@@ -48,7 +49,27 @@ export default function NodeManagementPage(): React.JSX.Element {
   const { data: groups } = useRemoteGroups(isServer);
   const { data: nodes, isLoading, error, refetch } = useManagedNodes(undefined, isServer);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 선택된 노드를 URL `?node={instanceId}` 에 동기화한다(SPEC-REMOTE-001: 에디터
+  // "노드로 돌아가기"가 선택 노드를 정확히 복원하도록 — 딥링크/뒤로가기 지원).
+  // 파라미터 미지정이면 선택 없음(기존 기본 동작 불변). 선택 시 push 하여
+  // 브라우저 뒤로가기가 자연스럽게 직전 상태(선택 해제)로 돌아가게 한다. `?tab=`
+  // 등 다른 파라미터(NodeDashboard 가 사용)는 보존한다.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedId = searchParams.get('node');
+
+  const setSelectedId = (instanceId: string | null): void => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (instanceId) {
+        params.set('node', instanceId);
+      } else {
+        // 선택 해제 시 노드/탭 파라미터를 함께 비운다(다른 노드의 탭 잔존 방지).
+        params.delete('node');
+        params.delete('tab');
+      }
+      return params;
+    });
+  };
 
   // group_name → 노드 배열 매핑(빈 라벨 = "전체" 버킷).
   const nodesByGroup = useMemo<Map<string, ManagedNode[]>>(() => {

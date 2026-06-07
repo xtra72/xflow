@@ -6,6 +6,7 @@
 //   - Flow/Agent/Device 서브탭이 M8 통합 페이지를 target=remote:{id} 로 재사용.
 
 import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NodeDetail } from '@/types/remote';
@@ -91,8 +92,22 @@ function detail(o: Partial<NodeDetail> = {}): NodeDetail {
   };
 }
 
-function renderDashboard() {
-  return render(<NodeDashboard instanceId="node-a" enabled />);
+// 현재 URL 쿼리를 노출하는 프로브 — `?tab=` 동기화를 검증한다.
+let currentSearch = '';
+function LocationProbe(): null {
+  const location = useLocation();
+  currentSearch = location.search;
+  return null;
+}
+
+function renderDashboard(initialEntry = '/admin/remote?node=node-a') {
+  currentSearch = '';
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <NodeDashboard instanceId="node-a" enabled />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
 }
 
 beforeEach(() => {
@@ -172,4 +187,45 @@ describe('NodeDashboard — 서브탭(M8 통합 제어 재사용)', () => {
       expect(screen.queryByTestId('remote-target-banner')).not.toBeInTheDocument();
     },
   );
+});
+
+describe('NodeDashboard — 활성 탭 URL 동기화(`?tab=`)', () => {
+  it('파라미터가 없으면 기본 탭(overview)을 표시한다', () => {
+    renderDashboard('/admin/remote?node=node-a');
+    expect(screen.getByTestId('node-overview')).toBeInTheDocument();
+    // overview 는 기본값이므로 URL 에 tab 파라미터를 추가하지 않는다.
+    expect(new URLSearchParams(currentSearch).get('tab')).toBeNull();
+  });
+
+  it('`?tab=flows` 가 있으면 마운트 시 flows 탭을 복원한다', async () => {
+    renderDashboard('/admin/remote?node=node-a&tab=flows');
+    // overview 가 아니라 flows 서브탭(통합 페이지 스텁)이 곧장 렌더된다.
+    expect(await screen.findByTestId('flow-list-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('node-overview')).not.toBeInTheDocument();
+  });
+
+  it('무효한 `?tab` 값은 overview 로 폴백한다', () => {
+    renderDashboard('/admin/remote?node=node-a&tab=bogus');
+    expect(screen.getByTestId('node-overview')).toBeInTheDocument();
+  });
+
+  it('탭을 전환하면 URL `?tab=` 을 갱신하고 `?node=` 는 보존한다', async () => {
+    renderDashboard('/admin/remote?node=node-a');
+    fireEvent.click(screen.getByTestId('node-dashboard-tab-agents'));
+
+    expect(await screen.findByTestId('agent-list-stub')).toBeInTheDocument();
+    const params = new URLSearchParams(currentSearch);
+    expect(params.get('tab')).toBe('agents');
+    // 노드 선택(다른 파라미터)은 보존된다(딥링크 일관).
+    expect(params.get('node')).toBe('node-a');
+  });
+
+  it('overview 로 되돌리면 `?tab` 파라미터를 제거한다(URL 청결 유지)', () => {
+    renderDashboard('/admin/remote?node=node-a&tab=devices');
+    fireEvent.click(screen.getByTestId('node-dashboard-tab-overview'));
+
+    const params = new URLSearchParams(currentSearch);
+    expect(params.get('tab')).toBeNull();
+    expect(params.get('node')).toBe('node-a');
+  });
 });
