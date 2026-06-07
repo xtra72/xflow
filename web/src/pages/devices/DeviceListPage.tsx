@@ -88,9 +88,19 @@ interface DeviceListPageProps {
    * URL `?target=` 를 읽으므로 로컬 사용은 회귀 없이 동일하게 동작한다.
    */
   target?: ResourceTarget;
+  /**
+   * 원격 타깃 배너 숨김 여부 (SPEC-REMOTE-001 M9, 그룹 K). 노드 대시보드가
+   * 서브탭에 임베드할 때 true 로 주입한다(디렉토리+대시보드 헤더가 이미 선택
+   * 노드를 표시 → 배너 중복, "로컬로 돌아가기" 무의미). 미지정/false 면 기존처럼
+   * 배너를 렌더한다(단독 `?target=` 딥링크 회귀 없음, 로컬은 null).
+   */
+  hideRemoteBanner?: boolean;
 }
 
-export default function DeviceListPage({ target: targetProp }: DeviceListPageProps = {}) {
+export default function DeviceListPage({
+  target: targetProp,
+  hideRemoteBanner = false,
+}: DeviceListPageProps = {}) {
   // 필터 상태
   const [filters, setFilters] = useState<DeviceListParams>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -298,13 +308,15 @@ export default function DeviceListPage({ target: targetProp }: DeviceListPagePro
   return (
     <TargetProvider target={target}>
     <div className="space-y-6">
-      {/* 원격 타깃 배너(로컬이면 null) */}
-      <RemoteTargetBanner
-        target={target}
-        nodeLabel={gating.nodeLabel}
-        nodeReady={gating.nodeReady}
-        localHref="/devices"
-      />
+      {/* 원격 타깃 배너(로컬이면 null). 대시보드 임베드 시 중복이므로 숨김. */}
+      {!hideRemoteBanner && (
+        <RemoteTargetBanner
+          target={target}
+          nodeLabel={gating.nodeLabel}
+          nodeReady={gating.nodeReady}
+          localHref="/devices"
+        />
+      )}
 
       {/* 액션 버튼 (원격 타깃에서는 로컬 추가 어포던스 숨김 — 디바이스 추가는
           그룹 D 명령 경로) */}

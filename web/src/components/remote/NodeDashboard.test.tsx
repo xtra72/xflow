@@ -16,20 +16,38 @@ vi.mock('@/hooks/useRemote', () => ({
   useRemoteNodeDetail: useRemoteNodeDetailMock,
 }));
 
-// 통합 페이지는 target prop 을 캡처하는 스텁으로 대체한다(라우팅 검증 격리).
+// 통합 페이지는 target/hideRemoteBanner prop 을 캡처하는 스텁으로 대체한다
+// (라우팅·배너 위임 검증 격리). 스텁은 hideRemoteBanner 가 true 인 동안 실제
+// 페이지가 배너를 렌더하지 않음을 표현하기 위해 배너 자체는 그리지 않는다.
+type StubProps = {
+  target?: { type: string; instanceId?: string };
+  hideRemoteBanner?: boolean;
+};
 vi.mock('@/pages/flows/FlowListPage', () => ({
-  default: ({ target }: { target?: { type: string; instanceId?: string } }) => (
-    <div data-testid="flow-list-stub" data-target={JSON.stringify(target)} />
+  default: ({ target, hideRemoteBanner }: StubProps) => (
+    <div
+      data-testid="flow-list-stub"
+      data-target={JSON.stringify(target)}
+      data-hide-remote-banner={String(hideRemoteBanner ?? false)}
+    />
   ),
 }));
 vi.mock('@/pages/agents/AgentListPage', () => ({
-  default: ({ target }: { target?: { type: string; instanceId?: string } }) => (
-    <div data-testid="agent-list-stub" data-target={JSON.stringify(target)} />
+  default: ({ target, hideRemoteBanner }: StubProps) => (
+    <div
+      data-testid="agent-list-stub"
+      data-target={JSON.stringify(target)}
+      data-hide-remote-banner={String(hideRemoteBanner ?? false)}
+    />
   ),
 }));
 vi.mock('@/pages/devices/DeviceListPage', () => ({
-  default: ({ target }: { target?: { type: string; instanceId?: string } }) => (
-    <div data-testid="device-list-stub" data-target={JSON.stringify(target)} />
+  default: ({ target, hideRemoteBanner }: StubProps) => (
+    <div
+      data-testid="device-list-stub"
+      data-target={JSON.stringify(target)}
+      data-hide-remote-banner={String(hideRemoteBanner ?? false)}
+    />
   ),
 }));
 
@@ -136,4 +154,22 @@ describe('NodeDashboard — 서브탭(M8 통합 제어 재사용)', () => {
       instanceId: 'node-a',
     });
   });
+
+  it.each([
+    ['flows', 'flow-list-stub'],
+    ['agents', 'agent-list-stub'],
+    ['devices', 'device-list-stub'],
+  ])(
+    '%s 서브탭은 통합 페이지에 hideRemoteBanner 를 주입하고 원격 배너를 렌더하지 않는다',
+    async (tab, stub) => {
+      renderDashboard();
+      fireEvent.click(screen.getByTestId(`node-dashboard-tab-${tab}`));
+
+      const el = await screen.findByTestId(stub);
+      // 대시보드는 임베드 컨텍스트에서 배너를 숨기도록 위임한다(REQ-K14).
+      expect(el).toHaveAttribute('data-hide-remote-banner', 'true');
+      // 임베드 컨텍스트에 중복 원격 배너가 존재하지 않는다.
+      expect(screen.queryByTestId('remote-target-banner')).not.toBeInTheDocument();
+    },
+  );
 });

@@ -79,13 +79,24 @@ interface FlowListPageProps {
    * `?target=` 를 읽으므로 로컬 사용은 회귀 없이 동일하게 동작한다.
    */
   target?: ResourceTarget;
+  /**
+   * 원격 타깃 배너 숨김 여부 (SPEC-REMOTE-001 M9, 그룹 K). 노드 대시보드가
+   * 페이지를 서브탭에 임베드할 때 true 로 주입한다. 디렉토리+대시보드 헤더가
+   * 이미 선택 노드를 표시하므로 임베드 컨텍스트에서 배너는 중복이며,
+   * "로컬로 돌아가기" 도 무의미하다. 미지정/false 면 기존처럼 배너를 렌더한다
+   * (단독 `?target=` 딥링크는 회귀 없음, 로컬은 null).
+   */
+  hideRemoteBanner?: boolean;
 }
 
 /**
  * 플로우 목록 페이지.
  * 테이블 형태로 플로우를 표시하며 검색, 필터, 페이지네이션을 지원한다.
  */
-export default function FlowListPage({ target: targetProp }: FlowListPageProps = {}) {
+export default function FlowListPage({
+  target: targetProp,
+  hideRemoteBanner = false,
+}: FlowListPageProps = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -299,13 +310,15 @@ export default function FlowListPage({ target: targetProp }: FlowListPageProps =
   return (
     <TargetProvider target={target}>
     <div className="space-y-6">
-      {/* 원격 타깃 배너(로컬이면 null) */}
-      <RemoteTargetBanner
-        target={target}
-        nodeLabel={gating.nodeLabel}
-        nodeReady={gating.nodeReady}
-        localHref="/flows"
-      />
+      {/* 원격 타깃 배너(로컬이면 null). 대시보드 임베드 시 중복이므로 숨김. */}
+      {!hideRemoteBanner && (
+        <RemoteTargetBanner
+          target={target}
+          nodeLabel={gating.nodeLabel}
+          nodeReady={gating.nodeReady}
+          localHref="/flows"
+        />
+      )}
 
       {/* 액션 버튼. 가져오기/전체 내보내기는 로컬 전용, 생성은 타깃 인지. */}
       <div className="flex items-center justify-end">

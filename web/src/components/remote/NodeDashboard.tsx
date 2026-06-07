@@ -103,9 +103,11 @@ export function NodeDashboard({
             />
           }
         >
-          {tab === 'flows' && <FlowListPage target={target} />}
-          {tab === 'agents' && <AgentListPage target={target} />}
-          {tab === 'devices' && <DeviceListPage target={target} />}
+          {/* hideRemoteBanner: 디렉토리+대시보드 헤더가 이미 선택 노드를 표시하므로
+              임베드 컨텍스트에서 원격 배너는 중복이다(REQ-K14). */}
+          {tab === 'flows' && <FlowListPage target={target} hideRemoteBanner />}
+          {tab === 'agents' && <AgentListPage target={target} hideRemoteBanner />}
+          {tab === 'devices' && <DeviceListPage target={target} hideRemoteBanner />}
         </Suspense>
       )}
     </div>
