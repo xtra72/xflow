@@ -27,7 +27,6 @@ import { FlowBoundaryNode } from '@/components/flow/FlowBoundaryNode';
 import { FlowPortPanel } from '@/components/flow/FlowPortPanel';
 import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
 import { RemoteEditorBanner } from '@/components/flow/RemoteEditorBanner';
-import { RemoteEditorToolbar } from '@/components/flow/RemoteEditorToolbar';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
@@ -44,6 +43,7 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
+import { LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { getFlowNodes } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -122,6 +122,13 @@ function EditorPageInner() {
   const remoteHostname = resolveRemoteNodeLabel(
     remoteNodeDetail?.hostname,
     instanceId,
+  );
+
+  // 통합 툴바(EditorToolbar)에 넘길 자원 타깃. 원격이면 노드 instanceId 를 담은
+  // 원격 타깃, 아니면 로컬 싱글턴(참조 안정). 라이프사이클/상태/저장 라우팅에 사용.
+  const toolbarTarget = useMemo<ResourceTarget>(
+    () => (isRemote && instanceId ? { type: 'remote', instanceId } : LOCAL_TARGET),
+    [isRemote, instanceId],
   );
 
   // 플로우 데이터 소스/저장 대상(로컬 PUT vs 원격 PATCH/POST 구분).
@@ -662,10 +669,11 @@ function EditorPageInner() {
 
       {/* 가운데: 툴바 + 캔버스 */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* 상단 툴바 — 로컬은 EditorToolbar(라이프사이클 포함), 원격은
-            RemoteEditorBanner(원격 식별 배너) + RemoteEditorToolbar(저장/편집만,
-            명령 전파 — REQ-I08). 배너는 로컬 편집기에는 전혀 렌더되지 않아
-            원격 편집임을 한눈에 구분하게 한다. */}
+        {/* 상단 툴바 — 로컬/원격 모두 동일한 통합 EditorToolbar 를 사용한다
+            (SPEC-REMOTE-001 M8). 원격은 추가로 RemoteEditorBanner(노드 식별 배너)를
+            위에 두고, 툴바에 target 을 넘겨 라이프사이클(시작/중지/배포)을 그룹 D
+            명령으로 라우팅한다(재시작은 노드 미지원 → 비활성+툴팁). 배너는 로컬
+            편집기에는 렌더되지 않아 원격 편집임을 한눈에 구분하게 한다. */}
         {isRemote ? (
           <>
             <RemoteEditorBanner
@@ -676,13 +684,14 @@ function EditorPageInner() {
               backHref="/admin/remote"
             />
             <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
-              <RemoteEditorToolbar
+              <EditorToolbar
+                flowId={effectiveFlowId ?? ''}
+                target={toolbarTarget}
                 nodeLabel={remoteHostname}
                 nodeTitle={instanceId ?? ''}
                 flowName={flowData?.name ?? ''}
-                isNew={isNewRemoteFlow}
-                isSaving={flowTarget.isSaving}
                 onSave={handleSave}
+                isSaving={flowTarget.isSaving}
                 showPortPanel={showPortPanel}
                 onTogglePortPanel={() => setShowPortPanel((v) => !v)}
               />

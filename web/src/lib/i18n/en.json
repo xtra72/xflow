@@ -327,6 +327,9 @@
   "remote": {
     "title": "Managed Nodes",
     "subtitle": "Review remote xflowd node registration status and approve, reject, or revoke them.",
+    "header": {
+      "titlePrefix": "Remote"
+    },
     "target": {
       "viewing": "Viewing remote node:",
       "backToLocal": "Back to local",

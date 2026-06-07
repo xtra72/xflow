@@ -327,6 +327,9 @@
   "remote": {
     "title": "관리 노드",
     "subtitle": "원격 xflowd 노드의 등록 상태를 확인하고 승인·거부·폐기합니다.",
+    "header": {
+      "titlePrefix": "원격"
+    },
     "target": {
       "viewing": "원격 노드 보기:",
       "backToLocal": "로컬로 돌아가기",
