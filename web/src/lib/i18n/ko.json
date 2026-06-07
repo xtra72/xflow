@@ -484,6 +484,8 @@
     },
     "editor": {
       "targetNode": "원격 편집 대상 노드",
+      "bannerTitle": "원격 노드 편집 ·",
+      "backToNode": "노드로 돌아가기",
       "newFlow": "새 플로우",
       "untitled": "이름 없음",
       "save": "저장",

@@ -484,6 +484,8 @@
     },
     "editor": {
       "targetNode": "Remote edit target node",
+      "bannerTitle": "Editing remote node ·",
+      "backToNode": "Back to nodes",
       "newFlow": "New flow",
       "untitled": "Untitled",
       "save": "Save",

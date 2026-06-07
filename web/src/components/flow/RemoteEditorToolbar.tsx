@@ -31,8 +31,10 @@ import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 
 interface RemoteEditorToolbarProps {
-  /** 원격 편집 대상 노드 표시명(또는 instance_id). */
+  /** 원격 편집 대상 노드 표시명(호스트명 — 원시 UUID 가 아님). */
   nodeLabel: string;
+  /** 원본 instanceId(배지 툴팁에만 노출, 본문에는 표시하지 않음). */
+  nodeTitle?: string;
   /** 편집 중인 플로우 이름(신규는 빈 문자열). */
   flowName: string;
   /** 신규 생성 모드 여부(저장 시 POST). */
@@ -52,6 +54,7 @@ interface RemoteEditorToolbarProps {
  */
 export function RemoteEditorToolbar({
   nodeLabel,
+  nodeTitle,
   flowName,
   isNew,
   isSaving,
@@ -81,10 +84,11 @@ export function RemoteEditorToolbar({
       className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
       data-testid="remote-editor-toolbar"
     >
-      {/* 원격 편집 대상 노드 배지(로컬 vs 원격 구분 — REQ-I08). */}
+      {/* 원격 편집 대상 노드 배지(로컬 vs 원격 구분 — REQ-I08). 본문은 호스트명을
+          표시하고, 원본 instanceId(UUID)는 툴팁에만 노출한다. */}
       <span
         className="inline-flex items-center gap-1 rounded-md bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-        title={t('remote.editor.targetNode')}
+        title={nodeTitle ? `${t('remote.editor.targetNode')} (${nodeTitle})` : t('remote.editor.targetNode')}
         data-testid="remote-editor-node-badge"
       >
         <Server className="h-3 w-3" aria-hidden="true" />

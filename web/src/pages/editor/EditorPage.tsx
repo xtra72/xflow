@@ -26,6 +26,7 @@ import { FlowAreaNode } from '@/components/flow/FlowAreaNode';
 import { FlowBoundaryNode } from '@/components/flow/FlowBoundaryNode';
 import { FlowPortPanel } from '@/components/flow/FlowPortPanel';
 import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
+import { RemoteEditorBanner } from '@/components/flow/RemoteEditorBanner';
 import { RemoteEditorToolbar } from '@/components/flow/RemoteEditorToolbar';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
@@ -36,10 +37,13 @@ import {
   type NodeRuntimeStats,
 } from '@/contexts/RuntimeStatsContext';
 import { useFlowStatus } from '@/hooks/useFlow';
+import { useRemoteNodeDetail } from '@/hooks/useRemote';
 import { useEditorFlowTarget } from '@/hooks/useEditorFlowTarget';
 import { useResizable } from '@/hooks/useResizable';
 import { useTranslation } from '@/lib/i18n';
+import { cn } from '@/lib/utils/cn';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
+import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { getFlowNodes } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -105,6 +109,20 @@ function EditorPageInner() {
   const isNewRemoteFlow = isRemote && (flowId === undefined || flowId === 'new');
   // 'new' 플레이스홀더는 실제 자원 id 가 아니므로 하이드레이션/저장에서 제외한다.
   const effectiveFlowId = isNewRemoteFlow ? undefined : flowId;
+
+  // 원격 편집 대상 노드의 사람이 읽을 수 있는 호스트명 해석(REQ: 원격 편집기
+  // 시각 구분). 원격 모드일 때만 노드 상세를 조회하며, 조회 실패/지연이 편집을
+  // 막지 않도록 폴백(단축 instanceId)을 둔다 — 호스트명은 표시 전용이다.
+  const { data: remoteNodeDetail } = useRemoteNodeDetail(
+    instanceId ?? '',
+    isRemote,
+  );
+  // 호스트명 우선, 없으면 단축 instanceId(앞 8자 + 생략부호)로 폴백한다.
+  // 원시 UUID 전체는 본문에 노출하지 않는다(툴팁/접근성에만 노출).
+  const remoteHostname = resolveRemoteNodeLabel(
+    remoteNodeDetail?.hostname,
+    instanceId,
+  );
 
   // 플로우 데이터 소스/저장 대상(로컬 PUT vs 원격 PATCH/POST 구분).
   const flowTarget = useEditorFlowTarget({
@@ -645,19 +663,31 @@ function EditorPageInner() {
       {/* 가운데: 툴바 + 캔버스 */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* 상단 툴바 — 로컬은 EditorToolbar(라이프사이클 포함), 원격은
-            RemoteEditorToolbar(저장/편집만, 명령 전파 — REQ-I08). */}
+            RemoteEditorBanner(원격 식별 배너) + RemoteEditorToolbar(저장/편집만,
+            명령 전파 — REQ-I08). 배너는 로컬 편집기에는 전혀 렌더되지 않아
+            원격 편집임을 한눈에 구분하게 한다. */}
         {isRemote ? (
-          <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
-            <RemoteEditorToolbar
-              nodeLabel={instanceId ?? ''}
+          <>
+            <RemoteEditorBanner
+              hostname={remoteHostname}
+              instanceId={instanceId ?? ''}
               flowName={flowData?.name ?? ''}
               isNew={isNewRemoteFlow}
-              isSaving={flowTarget.isSaving}
-              onSave={handleSave}
-              showPortPanel={showPortPanel}
-              onTogglePortPanel={() => setShowPortPanel((v) => !v)}
+              backHref="/admin/remote"
             />
-          </div>
+            <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
+              <RemoteEditorToolbar
+                nodeLabel={remoteHostname}
+                nodeTitle={instanceId ?? ''}
+                flowName={flowData?.name ?? ''}
+                isNew={isNewRemoteFlow}
+                isSaving={flowTarget.isSaving}
+                onSave={handleSave}
+                showPortPanel={showPortPanel}
+                onTogglePortPanel={() => setShowPortPanel((v) => !v)}
+              />
+            </div>
+          </>
         ) : (
           flowId && (
             <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
@@ -670,8 +700,17 @@ function EditorPageInner() {
           )
         )}
 
-        {/* React Flow 캔버스 */}
-        <div className="relative flex-1">
+        {/* React Flow 캔버스.
+            원격 모드에서는 캔버스 영역 전체에 옅은 violet 인셋 링을 더해
+            "원격 노드를 편집 중"임이 표면 전체에서 읽히게 한다(로컬은 적용 안 함). */}
+        <div
+          className={cn(
+            'relative flex-1',
+            isRemote &&
+              'ring-1 ring-inset ring-violet-300/60 dark:ring-violet-700/50',
+          )}
+          data-testid={isRemote ? 'remote-editor-canvas' : undefined}
+        >
           {/* SPEC-SUBFLOW-001 M4: 플로우 포트 관리 패널(캔버스 좌상단 오버레이).
               떠 있는 토글 버튼은 제거하고, 토글 트리거는 제어판(EditorToolbar)으로
               이동했다. 패널 자체는 토글이 켜졌을 때만 오버레이로 렌더한다. */}
