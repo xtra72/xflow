@@ -90,6 +90,15 @@ func (c *flowCommander) Do(ctx context.Context, action string, args json.RawMess
 		if uerr := json.Unmarshal(rest, &req); uerr != nil {
 			return nil, fmt.Errorf("flow update args: %w", uerr)
 		}
+		// 시크릿 backfill(REQ-I07): 원격 갱신 정의는 마스킹/미변경 시크릿 필드를
+		// 생략한다(필드 부재). 어댑터 적용 전 기존 플로우 정의를 로드하여 부재한 시크릿
+		// 필드를 기존값으로 backfill 한다(마스킹 자리표시자 영속 방지 — "노드 backfill").
+		// Definition 이 없는 부분 갱신은 병합 불필요.
+		if req.Definition != nil {
+			if existing, gerr := c.adapter.GetFlow(ctx, id); gerr == nil && existing != nil {
+				req.Definition = mergeSecrets(existing.Config, req.Definition)
+			}
+		}
 		info, err := c.adapter.UpdateFlow(ctx, id, &req)
 		if err != nil {
 			return nil, err
@@ -174,6 +183,14 @@ func (c *agentCommander) Do(ctx context.Context, action string, args json.RawMes
 		var req dto.AgentUpdateRequest
 		if uerr := json.Unmarshal(rest, &req); uerr != nil {
 			return nil, fmt.Errorf("agent update args: %w", uerr)
+		}
+		// 시크릿 backfill(REQ-I07): agent Config 는 자격증명(password/token 등)을 보유할
+		// 수 있다. 갱신 Config 에서 생략된(마스킹) 시크릿을 기존 config 의 값으로
+		// backfill 한다. Config 미포함 부분 갱신은 병합 불필요.
+		if req.Config != nil {
+			if existing, gerr := c.adapter.GetAgent(ctx, id, ""); gerr == nil && existing != nil {
+				req.Config = mergeSecrets(existing.Config, req.Config)
+			}
 		}
 		info, err := c.adapter.UpdateAgent(ctx, id, &req)
 		if err != nil {
@@ -285,6 +302,44 @@ func (c *deviceCommander) Do(ctx context.Context, action string, args json.RawMe
 	default:
 		return nil, fmt.Errorf("device: 알 수 없는 액션 %q", action)
 	}
+}
+
+// mergeSecrets 는 원격 갱신 정의(incoming)에서 생략된 시크릿 필드를 기존 정의
+// (existing)의 값으로 backfill 한다(REQ-I07 — "필드 부재 + 노드 backfill").
+//
+// 규칙:
+//   - 시크릿 키(handler.IsSensitiveConfigKey 의 SoT 기준)가 existing 에 있고 incoming
+//     에 부재하면, existing 값을 incoming 에 채운다(backfill). 마스킹되어 생략된
+//     시크릿이 기존값으로 복원된다.
+//   - 시크릿 키가 incoming 에 존재하면(사용자가 변경) 그대로 둔다(새 값 적용).
+//   - 비시크릿 필드는 incoming 이 권위이다(backfill 하지 않음 — 들어온 정의가 최신).
+//   - 중첩 map[string]any 에 대해 재귀적으로 동작한다(redaction 이 재귀적이므로 — F06
+//     일관). incoming 에 없던 중첩 키는 비시크릿이므로 채우지 않는다(시크릿 backfill
+//     에만 한정).
+//
+// incoming 을 in-place 변형하여 반환한다. existing/incoming 중 하나가 nil 이면 incoming
+// 을 그대로 반환한다(병합 대상 없음).
+func mergeSecrets(existing, incoming map[string]any) map[string]any {
+	if existing == nil || incoming == nil {
+		return incoming
+	}
+	for k, ev := range existing {
+		if handler.IsSensitiveConfigKey(k) {
+			// 시크릿 키: incoming 에 부재하면 기존값으로 backfill.
+			if _, present := incoming[k]; !present {
+				incoming[k] = ev
+			}
+			continue
+		}
+		// 비시크릿 키: 양쪽 모두 중첩 맵이면 재귀 병합(중첩 시크릿 backfill).
+		em, eok := ev.(map[string]any)
+		iv, ipresent := incoming[k]
+		im, iok := iv.(map[string]any)
+		if eok && ipresent && iok {
+			incoming[k] = mergeSecrets(em, im)
+		}
+	}
+	return incoming
 }
 
 // idArgs 는 ID 기반 액션의 공통 인자 형태이다.

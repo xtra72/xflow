@@ -1,9 +1,18 @@
 // 플로우 에디터 상단 툴바 컴포넌트.
 // 저장, 배포, 실행 제어, 실행 취소/다시 실행 버튼과 플로우 상태 배지를 제공한다.
+//
+// 로컬/원격 통합(SPEC-REMOTE-001 M8): `target` 프롭이 없거나 로컬이면 기존
+// 동작과 바이트 단위로 동일하다. 원격 타깃이면 동일한 메뉴 형태(저장/배포/시작/
+// 중지/재시작 + 상태 배지)를 그대로 노출하되, 라이프사이클은 그룹 D 명령으로
+// 라우팅하고(useFlowActionsTarget), 노드 미지원 액션(재시작)은 숨기지 않고
+// 비활성+툴팁으로 둔다(메뉴 형태 일치). 상태 배지는 원격 쿼리 프록시
+// (useFlowStatusTarget)에서 가져온다. 저장은 EditorPage 가 소유하므로 onSave 로
+// 위임한다. 원격 라이프사이클은 노드 승인+온라인일 때만 활성화한다(useTargetGating).
 
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
+  ArrowLeft,
   ArrowLeftToLine,
   ArrowRightToLine,
   Check,
@@ -22,6 +31,7 @@ import {
   RotateCcw,
   Rocket,
   Save,
+  Server,
   Settings,
   Square,
   Undo2,
@@ -38,6 +48,12 @@ import {
   useStopFlow,
   useRestartFlow,
 } from '@/hooks/useFlow';
+import { useFlowStatusTarget } from '@/hooks/useDetailTargets';
+import { useFlowActionsTarget, type FlowAction } from '@/hooks/useResourceActions';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTranslation } from '@/lib/i18n';
+import { remoteEditErrorMessage } from '@/lib/remote/editError';
+import { LOCAL_TARGET, isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import {
   FOCUS_DEPTH_ALL,
   FOCUS_DEPTH_MAX,
@@ -74,7 +90,7 @@ const STATUS_LABELS: Record<FlowStatus, string> = {
 };
 
 interface EditorToolbarProps {
-  /** 현재 편집 중인 플로우 ID */
+  /** 현재 편집 중인 플로우 ID (원격 신규 생성 시 빈 문자열 가능). */
   flowId: string;
   /**
    * SPEC-SUBFLOW-001 M4: 플로우 포트 관리 패널이 열려 있는지 여부(뷰 전용).
@@ -83,6 +99,24 @@ interface EditorToolbarProps {
   showPortPanel: boolean;
   /** 플로우 포트 패널 열림/닫힘 토글 콜백. */
   onTogglePortPanel: () => void;
+  /**
+   * 자원 타깃(SPEC-REMOTE-001 M8). 미지정/로컬이면 기존 동작과 동일하다.
+   * 원격이면 라이프사이클/상태/저장을 타깃 인지 경로로 라우팅한다.
+   */
+  target?: ResourceTarget;
+  /** 원격 대상 노드 표시명(호스트명 — 배지 본문). 로컬은 미사용. */
+  nodeLabel?: string;
+  /** 원격 대상 노드 원본 instanceId(배지 툴팁에만 노출). 로컬은 미사용. */
+  nodeTitle?: string;
+  /** 원격 편집 중인 플로우 이름(원격은 useFlow 를 쓰지 않음). 로컬은 미사용. */
+  flowName?: string;
+  /**
+   * 저장 콜백. 원격 편집은 EditorPage 가 PATCH/POST 명령 전파를 소유하므로
+   * 반드시 주입한다. 로컬은 미지정 시 내부 PUT 저장 핸들러를 사용한다(불변).
+   */
+  onSave?: () => void;
+  /** 외부 저장 진행 상태(원격). 로컬은 미사용. */
+  isSaving?: boolean;
 }
 
 /**
@@ -93,7 +127,14 @@ export function EditorToolbar({
   flowId,
   showPortPanel,
   onTogglePortPanel,
+  target = LOCAL_TARGET,
+  nodeLabel,
+  nodeTitle,
+  flowName,
+  onSave,
+  isSaving,
 }: EditorToolbarProps) {
+  const remote = isRemoteTarget(target);
   const addNotification = useUIStore((s) => s.addNotification);
   // 2026-05-31: 플로우 설정 모달 상태(이름·설명 편집 + 표시 토글)
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -127,11 +168,12 @@ export function EditorToolbar({
   const focusDepth = useEditorStore((s) => s.focusDepth);
   const setFocusDepth = useEditorStore((s) => s.setFocusDepth);
 
-  // 플로우 상태 조회 (5초 간격 폴링)
-  const { data: statusInfo } = useFlowStatus(flowId);
+  // 플로우 상태 조회 (5초 간격 폴링) — 로컬 전용. 원격은 빈 id 로 비활성화하고
+  // 상태/라이프사이클을 RemoteFlowControls 가 타깃 인지 경로로 처리한다.
+  const { data: statusInfo } = useFlowStatus(remote ? '' : flowId);
   const currentStatus = (statusInfo?.status as FlowStatus) ?? 'stored';
 
-  // 뮤테이션 훅
+  // 뮤테이션 훅 (로컬 전용 — 원격은 RemoteFlowControls 로 위임).
   const updateFlow = useUpdateFlow();
   const deployFlow = useDeployFlow();
   const startFlow = useStartFlow();
@@ -230,53 +272,77 @@ export function EditorToolbar({
           표시되며, 직전(부모) 플로우로 되돌아간다. 중첩(A→B→C) 을 지원한다. */}
       <SubflowBackButton />
 
-      {/* 플로우 이름(읽기 전용) + 설명 도움말(?) + 다른 플로우로 전환하는 선택기.
-          이름·설명 변경은 "플로우 설정" 모달에서만 처리한다. */}
-      <div className="flex items-center gap-0.5">
-        <FlowTitle flowId={flowId} />
-        <FlowSwitcher flowId={flowId} />
-      </div>
+      {/* 제목 블록 — 로컬: 플로우 이름(읽기 전용) + 전환 선택기. 원격: 대상 노드
+          배지(호스트명) + 플로우 이름(원격은 로컬 useFlow 를 쓰지 않음). */}
+      {remote ? (
+        <RemoteTitleBlock
+          instanceId={isRemoteTarget(target) ? target.instanceId : ''}
+          nodeLabel={nodeLabel ?? ''}
+          nodeTitle={nodeTitle}
+          flowName={flowName ?? ''}
+        />
+      ) : (
+        <div className="flex items-center gap-0.5">
+          <FlowTitle flowId={flowId} />
+          <FlowSwitcher flowId={flowId} />
+        </div>
+      )}
 
       <Separator />
 
-      {/* 저장 */}
-      <ToolbarButton
-        icon={Save}
-        label="저장"
-        onClick={handleSave}
-        disabled={!isDirty || isMutating}
-        badge={isDirty}
-      />
+      {/* 저장 + 배포 + 실행 제어(시작/중지/재시작) — 로컬/원격 모두 동일한 메뉴
+          형태를 유지한다. 원격은 명령 경로로 라우팅하며 노드 미지원 액션(재시작)은
+          숨기지 않고 비활성+툴팁으로 둔다. */}
+      {remote ? (
+        <RemoteFlowControls
+          target={target}
+          flowId={flowId}
+          isDirty={isDirty}
+          isSaving={isSaving ?? false}
+          onSave={onSave}
+        />
+      ) : (
+        <>
+          {/* 저장 */}
+          <ToolbarButton
+            icon={Save}
+            label="저장"
+            onClick={onSave ?? handleSave}
+            disabled={!isDirty || isMutating}
+            badge={isDirty}
+          />
 
-      {/* 배포 */}
-      <ToolbarButton
-        icon={Rocket}
-        label="배포"
-        onClick={handleDeploy}
-        disabled={isRunning || isMutating}
-      />
+          {/* 배포 */}
+          <ToolbarButton
+            icon={Rocket}
+            label="배포"
+            onClick={handleDeploy}
+            disabled={isRunning || isMutating}
+          />
 
-      <Separator />
+          <Separator />
 
-      {/* 실행 제어 */}
-      <ToolbarButton
-        icon={Play}
-        label="시작"
-        onClick={handleStart}
-        disabled={isRunning || isMutating}
-      />
-      <ToolbarButton
-        icon={Square}
-        label="중지"
-        onClick={handleStop}
-        disabled={!isRunning || isMutating}
-      />
-      <ToolbarButton
-        icon={RotateCcw}
-        label="재시작"
-        onClick={handleRestart}
-        disabled={!isRunning || isMutating}
-      />
+          {/* 실행 제어 */}
+          <ToolbarButton
+            icon={Play}
+            label="시작"
+            onClick={handleStart}
+            disabled={isRunning || isMutating}
+          />
+          <ToolbarButton
+            icon={Square}
+            label="중지"
+            onClick={handleStop}
+            disabled={!isRunning || isMutating}
+          />
+          <ToolbarButton
+            icon={RotateCcw}
+            label="재시작"
+            onClick={handleRestart}
+            disabled={!isRunning || isMutating}
+          />
+        </>
+      )}
 
       <Separator />
 
@@ -354,30 +420,42 @@ export function EditorToolbar({
         enabled={focusConnectionsOnSelect}
       />
 
-      {/* 2026-05-31: 플로우 설정 모달(이름·설명 편집 + 표시 토글) */}
-      <ToolbarButton
-        icon={Settings}
-        label="플로우 설정"
-        onClick={() => setSettingsOpen(true)}
-      />
+      {/* 2026-05-31: 플로우 설정 모달(이름·설명 편집 + 표시 토글) — 이름·설명
+          편집은 명령 경로 밖이라 원격 편집에서는 노출하지 않는다(로컬 전용). */}
+      {!remote && (
+        <ToolbarButton
+          icon={Settings}
+          label="플로우 설정"
+          onClick={() => setSettingsOpen(true)}
+        />
+      )}
 
       <Separator />
 
-      {/* 플로우 상태 배지 */}
-      <span
-        className={cn(
-          'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium',
-          STATUS_BADGE_STYLES[currentStatus],
-        )}
-      >
-        {STATUS_LABELS[currentStatus]}
-      </span>
+      {/* 플로우 상태 배지 — 로컬은 로컬 폴링 상태, 원격은 쿼리 프록시 상태를
+          소스로 한다(메뉴 형태 유지를 위해 항상 배지를 렌더). */}
+      {remote ? (
+        <RemoteStatusBadge target={target} flowId={flowId} />
+      ) : (
+        <span
+          className={cn(
+            'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium',
+            STATUS_BADGE_STYLES[currentStatus],
+          )}
+        >
+          {STATUS_LABELS[currentStatus]}
+        </span>
+      )}
 
-      <FlowSettingsDialog
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        flowId={flowId}
-      />
+      {/* 플로우 설정 모달은 로컬 편집에만 의미가 있다(원격은 이름·표시 토글이
+          명령 경로 밖). 원격에서는 설정 버튼도 렌더하지 않으므로 모달도 생략한다. */}
+      {!remote && (
+        <FlowSettingsDialog
+          isOpen={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          flowId={flowId}
+        />
+      )}
     </div>
   );
 }
@@ -673,17 +751,23 @@ interface ToolbarButtonProps {
   badge?: boolean;
   /** 토글 활성화 상태 (v0.18.4) */
   active?: boolean;
+  /** 툴팁 오버라이드(미지정 시 label). 원격 미지원/게이트 안내에 사용. */
+  title?: string;
+  /** 테스트 식별자(선택). */
+  testId?: string;
 }
 
 /** 툴바 버튼 내부 컴포넌트 */
-function ToolbarButton({ icon: Icon, label, onClick, disabled, badge, active }: ToolbarButtonProps) {
+function ToolbarButton({ icon: Icon, label, onClick, disabled, badge, active, title, testId }: ToolbarButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      title={label}
+      title={title ?? label}
+      aria-label={label}
       aria-pressed={active}
+      data-testid={testId}
       className={cn(
         'relative inline-flex items-center justify-center rounded-md p-1.5',
         'transition-colors duration-100',
@@ -704,4 +788,233 @@ function ToolbarButton({ icon: Icon, label, onClick, disabled, badge, active }: 
 /** 수직 구분선 */
 function Separator() {
   return <div className="mx-0.5 h-5 w-px bg-zinc-200 dark:bg-zinc-700" />;
+}
+
+// ---- 원격 타깃 전용 서브컴포넌트 ----
+//
+// 원격 전용 훅(useFlowActionsTarget/useTargetGating/useFlowStatusTarget)을 이
+// 서브컴포넌트로 스코프해, 로컬 편집기는 원격 훅을 전혀 마운트하지 않게 한다
+// (로컬 동작/테스트 불변). 부모 EditorToolbar 는 remote 일 때만 이들을 렌더한다.
+
+interface RemoteTitleBlockProps {
+  /** 대상 노드 instanceId(노드로 돌아가기 딥링크 구성에 사용). */
+  instanceId: string;
+  /** 대상 노드 표시명(호스트명 — 배지 본문). */
+  nodeLabel: string;
+  /** 원본 instanceId(배지 툴팁에만 노출). */
+  nodeTitle?: string;
+  /** 편집 중인 플로우 이름. */
+  flowName: string;
+}
+
+/**
+ * 원격 편집기에서 "노드로 돌아가기" 가 향하는 노드 관리 화면 딥링크를 만든다.
+ *
+ * 단순히 `/admin/remote` 로 가면 노드 관리 페이지가 선택/탭을 잃고 새로 마운트돼
+ * 사용자가 노드와 플로우 탭을 다시 골라야 한다. 대신 직전 단계(선택된 노드 +
+ * 플로우 탭)를 정확히 복원하도록 `?node={instanceId}&tab=flows` 로 이동한다.
+ * 사용자는 플로우를 편집 중이었으므로 flows 탭으로 되돌린다.
+ */
+function remoteBackHref(instanceId: string): string {
+  if (!instanceId) return '/admin/remote';
+  return `/admin/remote?node=${encodeURIComponent(instanceId)}&tab=flows`;
+}
+
+/**
+ * 원격 제목 블록 — 노드로 돌아가기 링크 + 대상 노드 배지(호스트명) + 플로우 이름.
+ *
+ * RemoteEditorToolbar 의 노드 배지 시각 언어(violet + Server 아이콘)를 계승한다.
+ * 원시 instanceId(UUID)는 본문이 아닌 title(툴팁)로만 노출한다.
+ *
+ * "노드로 돌아가기"(ArrowLeft) 링크는 과거 RemoteEditorBanner 가 제공하던 유일한
+ * 유용 요소로, 중복 배너를 제거하면서 이 제어판으로 이관했다. 노드 배지 왼쪽에
+ * 컴팩트한 링크 형태로 배치하며, 선택 노드 + 플로우 탭을 복원하는 노드 관리
+ * 딥링크(remoteBackHref)로 이동한다(직전 단계로 정확히 복귀).
+ * 로컬 편집기에는 RemoteTitleBlock 자체가 렌더되지 않으므로 영향이 없다.
+ */
+function RemoteTitleBlock({ instanceId, nodeLabel, nodeTitle, flowName }: RemoteTitleBlockProps) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <button
+        type="button"
+        onClick={() => navigate(remoteBackHref(instanceId))}
+        title={t('remote.editor.backToNode')}
+        aria-label={t('remote.editor.backToNode')}
+        data-testid="remote-editor-back"
+        className={cn(
+          'inline-flex shrink-0 items-center justify-center rounded-md p-1.5',
+          'text-violet-600 transition-colors duration-100',
+          'hover:bg-violet-100 hover:text-violet-800',
+          'dark:text-violet-300 dark:hover:bg-violet-900/40 dark:hover:text-violet-100',
+        )}
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+      </button>
+      <span
+        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+        title={nodeTitle ? `${t('remote.editor.targetNode')} (${nodeTitle})` : t('remote.editor.targetNode')}
+        data-testid="remote-editor-node-badge"
+      >
+        <Server className="h-3 w-3" aria-hidden="true" />
+        {nodeLabel}
+      </span>
+      <span
+        className="max-w-[200px] truncate px-1 text-sm font-semibold text-zinc-800 dark:text-zinc-100"
+        title={flowName || t('remote.editor.untitled')}
+      >
+        {flowName || t('remote.editor.untitled')}
+      </span>
+    </div>
+  );
+}
+
+interface RemoteFlowControlsProps {
+  /** 원격 타깃(노드 instanceId 포함). */
+  target: ResourceTarget;
+  /** 편집 중인 플로우 ID(원격 신규는 빈 문자열). */
+  flowId: string;
+  /** 미저장 변경 여부(저장 버튼 활성). */
+  isDirty: boolean;
+  /** 저장 진행 여부(저장 버튼 비활성). */
+  isSaving: boolean;
+  /** 저장 콜백(EditorPage 의 PATCH/POST 명령 전파 위임). */
+  onSave?: () => void;
+}
+
+/**
+ * 원격 저장 + 배포 + 실행 제어(시작/중지/재시작).
+ *
+ * 로컬 EditorToolbar 의 메뉴 형태를 그대로 유지하되 라이프사이클을 그룹 D 명령
+ * (useFlowActionsTarget)으로 라우팅한다. 노드 미지원 액션(재시작)은 숨기지 않고
+ * 비활성+미지원 툴팁으로 둔다. 노드가 승인+온라인이 아니면 게이트 안내와 함께
+ * 비활성화한다(useTargetGating). 신규(빈 flowId)는 라이프사이클을 모두 비활성화한다.
+ */
+function RemoteFlowControls({
+  target,
+  flowId,
+  isDirty,
+  isSaving,
+  onSave,
+}: RemoteFlowControlsProps) {
+  const { t } = useTranslation();
+  const actions = useFlowActionsTarget(target);
+  const gating = useTargetGating(target);
+  const status = useFlowStatusTarget(target, flowId);
+  const addNotification = useUIStore((s) => s.addNotification);
+
+  const currentStatus = (status.data?.status as FlowStatus | undefined) ?? 'stored';
+  const nodeControllable = gating.canControl();
+  // 신규(아직 채번 전) 플로우는 라이프사이클 대상 id 가 없으므로 모두 비활성화한다.
+  const hasId = flowId !== '';
+
+  const canStart =
+    hasId && (currentStatus === 'stored' || currentStatus === 'loaded' || currentStatus === 'stopped');
+  const canStop = hasId && currentStatus === 'running';
+  const canDeploy = hasId && currentStatus === 'stored';
+
+  // 액션 버튼의 disabled/툴팁을 계산한다(FlowActionMenu 와 동일 정책).
+  //  - 미지원 액션(재시작): 항상 비활성 + 미지원 안내.
+  //  - 노드 미제어(오프라인/미승인): 비활성 + 게이트 안내.
+  const stateFor = (action: FlowAction, baseTitle: string): { disabled: boolean; title: string } => {
+    if (!actions.supports(action)) {
+      return { disabled: true, title: t('remote.edit.unsupportedOnRemote') };
+    }
+    if (!nodeControllable) {
+      return { disabled: true, title: t('remote.edit.actionGateHint') };
+    }
+    return { disabled: false, title: baseTitle };
+  };
+
+  const run = async (action: FlowAction) => {
+    try {
+      await actions.perform(action, flowId);
+    } catch (err) {
+      addNotification({ type: 'error', message: remoteEditErrorMessage(err, t) });
+    }
+  };
+
+  const deploy = stateFor('deploy', '배포');
+  const start = stateFor('start', '시작');
+  const stop = stateFor('stop', '중지');
+  const restart = stateFor('restart', '재시작');
+
+  return (
+    <>
+      {/* 저장 — 원격은 PATCH(기존)/POST(신규) 명령 전파(EditorPage 소유). */}
+      <ToolbarButton
+        icon={Save}
+        label="저장"
+        onClick={() => onSave?.()}
+        disabled={!isDirty || isSaving}
+        badge={isDirty}
+        testId="remote-editor-save"
+      />
+
+      {/* 배포 */}
+      <ToolbarButton
+        icon={Rocket}
+        label="배포"
+        title={deploy.title}
+        onClick={() => void run('deploy')}
+        disabled={!canDeploy || deploy.disabled || (actions.pending.deploy ?? false)}
+      />
+
+      <Separator />
+
+      {/* 실행 제어 */}
+      <ToolbarButton
+        icon={Play}
+        label="시작"
+        title={start.title}
+        onClick={() => void run('start')}
+        disabled={!canStart || start.disabled || (actions.pending.start ?? false)}
+      />
+      <ToolbarButton
+        icon={Square}
+        label="중지"
+        title={stop.title}
+        onClick={() => void run('stop')}
+        disabled={!canStop || stop.disabled || (actions.pending.stop ?? false)}
+      />
+      {/* 재시작 — 원격 노드 미지원: 숨기지 않고 비활성+툴팁으로 메뉴 형태 일치. */}
+      <ToolbarButton
+        icon={RotateCcw}
+        label="재시작"
+        title={restart.title}
+        onClick={() => void run('restart')}
+        disabled
+      />
+    </>
+  );
+}
+
+interface RemoteStatusBadgeProps {
+  /** 원격 타깃. */
+  target: ResourceTarget;
+  /** 플로우 ID(빈 문자열이면 상태 미조회 → 중립 표시). */
+  flowId: string;
+}
+
+/**
+ * 원격 플로우 상태 배지 — 쿼리 프록시(useFlowStatusTarget)에서 상태를 가져온다.
+ *
+ * 로컬 /flows/{id}/status 를 호출하지 않는다(원격은 404). 상태 미확정/미조회 시
+ * 'stored'(저장됨) 로 중립 표시해 배지 레이아웃을 항상 유지한다.
+ */
+function RemoteStatusBadge({ target, flowId }: RemoteStatusBadgeProps) {
+  const status = useFlowStatusTarget(target, flowId);
+  const currentStatus = (status.data?.status as FlowStatus | undefined) ?? 'stored';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium',
+        STATUS_BADGE_STYLES[currentStatus],
+      )}
+      data-testid="remote-editor-status-badge"
+    >
+      {STATUS_LABELS[currentStatus]}
+    </span>
+  );
 }

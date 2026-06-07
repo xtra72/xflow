@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/xtra/xflow/internal/api/dto"
@@ -23,8 +24,14 @@ import (
 )
 
 // inventoryFlowLister 는 인벤토리에 필요한 FlowServiceAdapter 의 좁은 인터페이스이다.
+//
+// ListFlows 는 목록 엔드포인트(요약)로 ID/메타데이터 열거에 사용한다. 이 경로는
+// flowStatusToInfo 가 빈 React Flow 정의(nodes/edges)를 하드코딩하므로 미러 정의로는
+// 사용할 수 없다. 전체 정의(nodes/edges)는 단건 엔드포인트 GetFlow 가 채우는
+// flowToReactFlowConfig 결과에서만 얻을 수 있으므로 미러는 GetFlow 를 사용한다.
 type inventoryFlowLister interface {
 	ListFlows(ctx context.Context, opts dto.ListOptions) ([]handler.FlowInfo, int64, error)
+	GetFlow(ctx context.Context, id string) (*handler.FlowInfo, error)
 }
 
 // inventoryAgentLister 는 인벤토리에 필요한 AgentServiceAdapter 의 좁은 인터페이스이다.
@@ -44,13 +51,14 @@ type remoteInventorySource struct {
 	flows   inventoryFlowLister
 	agents  inventoryAgentLister
 	devices inventoryDeviceLister
+	logger  *slog.Logger
 }
 
 var _ remote.InventorySource = (*remoteInventorySource)(nil)
 
 // newRemoteInventorySource 는 어댑터 인스턴스를 바인딩한 인벤토리 소스를 생성한다.
 func newRemoteInventorySource(flows inventoryFlowLister, agents inventoryAgentLister, devices inventoryDeviceLister) *remoteInventorySource {
-	return &remoteInventorySource{flows: flows, agents: agents, devices: devices}
+	return &remoteInventorySource{flows: flows, agents: agents, devices: devices, logger: slog.Default()}
 }
 
 // inventoryPageSize 는 미러 전체 조회 시 페이지 크기이다(ListOptions.Normalize 가
@@ -82,9 +90,22 @@ func (s *remoteInventorySource) ListFlows(ctx context.Context) ([]remote.Invento
 	}
 	out := make([]remote.InventoryItem, 0, len(flows))
 	for _, f := range flows {
+		// 목록 요약(f.Config)은 flowStatusToInfo 가 빈 nodes/edges 를 하드코딩하므로
+		// 미러 정의로 사용할 수 없다. 단건 조회로 전체 React Flow 정의를 가져온다.
+		// 단건 조회 실패 시에는 전체 스냅샷을 중단하지 않고 목록 요약 메타데이터로
+		// 폴백하여 해당 플로우를 포함한다(부분 실패 격리).
+		cfg := f.Config
+		if full, err := s.flows.GetFlow(ctx, f.ID); err != nil {
+			if s.logger != nil {
+				s.logger.Warn("inventory: 플로우 전체 정의 조회 실패, 요약으로 폴백",
+					"flowID", f.ID, "error", err)
+			}
+		} else if full != nil {
+			cfg = full.Config
+		}
 		// 시크릿 제거(F06): Config 는 React Flow 정의이며 노드 설정에 시크릿이 있을 수
 		// 있으므로 redaction 한다.
-		def := marshalDefinition(handler.RedactSensitiveConfig(f.Config))
+		def := marshalDefinition(handler.RedactSensitiveConfig(cfg))
 		out = append(out, remote.InventoryItem{
 			ID:         f.ID,
 			Name:       f.Name,

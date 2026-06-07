@@ -4,7 +4,7 @@ package dto
 // 모든 API 응답은 반드시 이 형식으로 래핑되어야 한다.
 type APIResponse[T any] struct {
 	Success bool         `json:"success"`
-	Data    T            `json:"data,omitempty"`
+	Data    T            `json:"data"`
 	Error   *ErrorDetail `json:"error,omitempty"`
 	Meta    *Meta        `json:"meta,omitempty"`
 }

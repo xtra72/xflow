@@ -7,10 +7,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
+const patchMock = vi.hoisted(() => vi.fn());
+const putMock = vi.hoisted(() => vi.fn());
+const delMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./client', () => ({
   get: getMock,
   post: postMock,
+  patch: patchMock,
+  put: putMock,
+  del: delMock,
 }));
 
 import { APIError } from '@/types/api';
@@ -20,6 +26,9 @@ import * as remoteService from './remoteService';
 beforeEach(() => {
   getMock.mockReset();
   postMock.mockReset();
+  patchMock.mockReset();
+  putMock.mockReset();
+  delMock.mockReset();
 });
 
 describe('remoteService — 동작 모드', () => {
@@ -42,6 +51,112 @@ describe('remoteService — 목록 조회', () => {
     getMock.mockResolvedValueOnce([]);
     await remoteService.listPendingNodes();
     expect(getMock).toHaveBeenCalledWith('/remote/nodes/pending');
+  });
+});
+
+describe('remoteService — 수동 등록 / 삭제', () => {
+  it('preRegisterNode 는 POST /remote/nodes 를 본문과 함께 호출한다', async () => {
+    postMock.mockResolvedValueOnce({
+      instance_id: 'n-1',
+      hostname: '',
+      version: '',
+      status: 'approved',
+      online: false,
+      last_seen: 0,
+    });
+    await remoteService.preRegisterNode({ instance_id: 'n-1', name: '게이트웨이' });
+    expect(postMock).toHaveBeenCalledWith('/remote/nodes', {
+      instance_id: 'n-1',
+      name: '게이트웨이',
+    });
+  });
+
+  it('preRegisterNode 의 409 에러는 호출자로 전파된다', async () => {
+    postMock.mockRejectedValueOnce(new APIError('CONFLICT', 'duplicate', 409));
+    await expect(
+      remoteService.preRegisterNode({ instance_id: 'dup' }),
+    ).rejects.toBeInstanceOf(APIError);
+  });
+
+  it('deleteNode 는 DELETE /remote/nodes/{id} 를 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.deleteNode('n-1');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/n-1');
+  });
+
+  it('deleteNode 는 instance_id 를 URL 인코딩한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.deleteNode('a/b c');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/a%2Fb%20c');
+  });
+});
+
+describe('remoteService — 노드 그룹핑 + 상세 (M9, 그룹 K)', () => {
+  it('listRemoteGroups 는 GET /remote/groups 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce([{ group_name: '', node_count: 2 }]);
+    const res = await remoteService.listRemoteGroups();
+    expect(getMock).toHaveBeenCalledWith('/remote/groups');
+    expect(res).toEqual([{ group_name: '', node_count: 2 }]);
+  });
+
+  it('getRemoteNodeDetail 는 GET /remote/nodes/{id} 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce({ instance_id: 'n-1', uptime: null });
+    await remoteService.getRemoteNodeDetail('n-1');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/n-1');
+  });
+
+  it('getRemoteNodeDetail 는 instance_id 를 URL 인코딩한다', async () => {
+    getMock.mockResolvedValueOnce({});
+    await remoteService.getRemoteNodeDetail('a/b');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/a%2Fb');
+  });
+
+  it('setRemoteNodeGroup 는 PUT .../group 을 group_name 본문과 함께 호출한다', async () => {
+    putMock.mockResolvedValueOnce(undefined);
+    await remoteService.setRemoteNodeGroup('n-1', 'prod');
+    expect(putMock).toHaveBeenCalledWith('/remote/nodes/n-1/group', {
+      group_name: 'prod',
+    });
+  });
+
+  it('clearRemoteNodeGroup 는 DELETE .../group 을 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.clearRemoteNodeGroup('n-1');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/n-1/group');
+  });
+
+  it('getRemoteNodeDetail 의 404 에러는 호출자로 전파된다', async () => {
+    getMock.mockRejectedValueOnce(new APIError('NOT_FOUND', 'missing', 404));
+    await expect(remoteService.getRemoteNodeDetail('x')).rejects.toBeInstanceOf(
+      APIError,
+    );
+  });
+});
+
+describe('remoteService — Enrollment 토큰', () => {
+  it('createEnrollmentToken 는 POST /remote/enrollment-tokens 를 본문과 함께 호출한다', async () => {
+    postMock.mockResolvedValueOnce({ id: 't-1', token: 'raw-token' });
+    const req = { label: '1층', expires_in: '24h', max_uses: 5 };
+    await remoteService.createEnrollmentToken(req);
+    expect(postMock).toHaveBeenCalledWith('/remote/enrollment-tokens', req);
+  });
+
+  it('listEnrollmentTokens 는 GET /remote/enrollment-tokens 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce([]);
+    await remoteService.listEnrollmentTokens();
+    expect(getMock).toHaveBeenCalledWith('/remote/enrollment-tokens');
+  });
+
+  it('revokeEnrollmentToken 는 DELETE /remote/enrollment-tokens/{id} 를 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.revokeEnrollmentToken('t-1');
+    expect(delMock).toHaveBeenCalledWith('/remote/enrollment-tokens/t-1');
+  });
+
+  it('revokeEnrollmentToken 는 id 를 URL 인코딩한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.revokeEnrollmentToken('a/b');
+    expect(delMock).toHaveBeenCalledWith('/remote/enrollment-tokens/a%2Fb');
   });
 });
 
@@ -120,22 +235,171 @@ describe('remoteService — 노드별 미러', () => {
   });
 });
 
-describe('remoteService — 통합 미러', () => {
-  it('listAllFlows 는 GET /remote/flows 를 호출한다', async () => {
-    getMock.mockResolvedValueOnce([]);
-    await remoteService.listAllFlows();
-    expect(getMock).toHaveBeenCalledWith('/remote/flows');
+describe('remoteService — 원격 자원 편집 (M7, 그룹 I)', () => {
+  it('createRemoteFlow 는 POST /remote/nodes/{id}/flows 를 { name, definition } 으로 호출한다', async () => {
+    postMock.mockResolvedValueOnce({ id: 'f-new', name: 'flow', status: '' });
+    const req = { name: 'flow', definition: { nodes: [], wires: [] } };
+    const res = await remoteService.createRemoteFlow('node-1', req);
+    expect(postMock).toHaveBeenCalledWith('/remote/nodes/node-1/flows', req);
+    expect(res).toEqual({ id: 'f-new', name: 'flow', status: '' });
   });
 
-  it('listAllAgents 는 GET /remote/agents 를 호출한다', async () => {
-    getMock.mockResolvedValueOnce([]);
-    await remoteService.listAllAgents();
-    expect(getMock).toHaveBeenCalledWith('/remote/agents');
+  it('updateRemoteFlow 는 PATCH /remote/nodes/{id}/flows/{flowId} 를 호출한다', async () => {
+    patchMock.mockResolvedValueOnce({ id: 'f1', name: 'flow', status: '' });
+    const req = { definition: { nodes: [] } };
+    await remoteService.updateRemoteFlow('node-1', 'f1', req);
+    expect(patchMock).toHaveBeenCalledWith('/remote/nodes/node-1/flows/f1', req);
   });
 
-  it('listAllDevices 는 GET /remote/devices 를 호출한다', async () => {
-    getMock.mockResolvedValueOnce([]);
-    await remoteService.listAllDevices();
-    expect(getMock).toHaveBeenCalledWith('/remote/devices');
+  it('updateRemoteFlow 는 instance_id 와 flow_id 를 URL 인코딩한다', async () => {
+    patchMock.mockResolvedValueOnce({ id: 'a/b', name: '', status: '' });
+    await remoteService.updateRemoteFlow('n/1', 'a/b', { definition: {} });
+    expect(patchMock).toHaveBeenCalledWith(
+      '/remote/nodes/n%2F1/flows/a%2Fb',
+      { definition: {} },
+    );
+  });
+
+  it('deleteRemoteFlow 는 DELETE /remote/nodes/{id}/flows/{flowId} 를 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.deleteRemoteFlow('node-1', 'f1');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/node-1/flows/f1');
+  });
+
+  it('createRemoteAgent 는 POST /remote/nodes/{id}/agents 를 { name, type, config } 으로 호출한다', async () => {
+    postMock.mockResolvedValueOnce({ id: 'a-new', name: 'a', status: '' });
+    const req = { name: 'a', type: 'mqtt', config: { host: 'h' } };
+    await remoteService.createRemoteAgent('node-1', req);
+    expect(postMock).toHaveBeenCalledWith('/remote/nodes/node-1/agents', req);
+  });
+
+  it('updateRemoteAgent 는 PATCH /remote/nodes/{id}/agents/{agentId} 를 호출한다', async () => {
+    patchMock.mockResolvedValueOnce({ id: 'a1', name: 'a', status: '' });
+    const req = { config: { host: 'h' } };
+    await remoteService.updateRemoteAgent('node-1', 'a1', req);
+    expect(patchMock).toHaveBeenCalledWith('/remote/nodes/node-1/agents/a1', req);
+  });
+
+  it('deleteRemoteAgent 는 DELETE /remote/nodes/{id}/agents/{agentId} 를 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.deleteRemoteAgent('node-1', 'a1');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/node-1/agents/a1');
+  });
+
+  it('편집 함수의 502/503/504/404 에러는 호출자로 전파된다', async () => {
+    patchMock.mockRejectedValueOnce(new APIError('BAD_GATEWAY', 'apply fail', 502));
+    await expect(
+      remoteService.updateRemoteFlow('node-1', 'f1', { definition: {} }),
+    ).rejects.toBeInstanceOf(APIError);
+
+    postMock.mockRejectedValueOnce(
+      new APIError('SERVICE_UNAVAILABLE', 'offline', 503),
+    );
+    await expect(
+      remoteService.createRemoteFlow('node-1', { name: 'x', definition: {} }),
+    ).rejects.toBeInstanceOf(APIError);
+  });
+});
+
+describe('remoteService — READ/QUERY 프록시 (M8, 그룹 J)', () => {
+  it('getRemoteFlow 는 GET .../flows/{id} 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce({ id: 'f1' });
+    await remoteService.getRemoteFlow('node-1', 'f1');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node-1/flows/f1');
+  });
+
+  it('getRemoteFlowStatus / getRemoteFlowNodes 는 하위 경로를 호출한다', async () => {
+    getMock.mockResolvedValue({});
+    await remoteService.getRemoteFlowStatus('node-1', 'f1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/flows/f1/status');
+    await remoteService.getRemoteFlowNodes('node-1', 'f1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/flows/f1/nodes');
+  });
+
+  it('getRemoteFlowNode 는 node_id 를 인코딩해 호출한다', async () => {
+    getMock.mockResolvedValueOnce({});
+    await remoteService.getRemoteFlowNode('n/1', 'f/1', 'nd 1');
+    expect(getMock).toHaveBeenCalledWith(
+      '/remote/nodes/n%2F1/flows/f%2F1/nodes/nd%201',
+    );
+  });
+
+  it('agent READ 프록시는 각 하위 경로를 호출한다', async () => {
+    getMock.mockResolvedValue({});
+    await remoteService.getRemoteAgent('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1');
+    await remoteService.getRemoteAgentStats('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1/stats');
+    await remoteService.getRemoteAgentConfig('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1/config');
+    await remoteService.getRemoteAgentDevices('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1/devices');
+    await remoteService.getRemoteAgentTopics('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1/topics');
+    await remoteService.getRemoteAgentStore('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1/store');
+    await remoteService.getRemoteAgentSessions('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1/sessions');
+    await remoteService.getRemoteAgentSeries('node-1', 'a1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/agents/a1/series');
+  });
+
+  it('device READ 프록시는 각 하위 경로를 호출한다', async () => {
+    getMock.mockResolvedValue({});
+    await remoteService.getRemoteDevice('node-1', 'd1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/devices/d1');
+    await remoteService.getRemoteDeviceState('node-1', 'd1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/devices/d1/state');
+    await remoteService.getRemoteDeviceCommands('node-1', 'd1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/devices/d1/commands');
+    await remoteService.getRemoteDeviceMetadata('node-1', 'd1');
+    expect(getMock).toHaveBeenLastCalledWith('/remote/nodes/node-1/devices/d1/metadata');
+  });
+
+  it('프록시 GET 의 502/503/504/404 에러는 호출자로 전파된다', async () => {
+    getMock.mockRejectedValueOnce(new APIError('SERVICE_UNAVAILABLE', 'offline', 503));
+    await expect(
+      remoteService.getRemoteDeviceState('node-1', 'd1'),
+    ).rejects.toBeInstanceOf(APIError);
+    getMock.mockRejectedValueOnce(new APIError('QUERY_TIMEOUT', 'timeout', 504));
+    await expect(
+      remoteService.getRemoteAgentStats('node-1', 'a1'),
+    ).rejects.toBeInstanceOf(APIError);
+    getMock.mockRejectedValueOnce(new APIError('QUERY_FAILED', 'node error', 502));
+    await expect(
+      remoteService.getRemoteFlow('node-1', 'f1'),
+    ).rejects.toBeInstanceOf(APIError);
+    getMock.mockRejectedValueOnce(new APIError('NOT_FOUND', 'out of scope', 404));
+    await expect(
+      remoteService.getRemoteAgent('node-1', 'a1'),
+    ).rejects.toBeInstanceOf(APIError);
+  });
+});
+
+describe('remoteService — 라이브 스트림 URL (M8, REQ-J08)', () => {
+  it('device.state SSE URL 을 구성한다', () => {
+    expect(
+      remoteService.remoteStreamUrl('node-1', { domain: 'device', action: 'state' }, 'd1'),
+    ).toBe('/api/v1/remote/nodes/node-1/devices/d1/state/stream');
+  });
+
+  it('agent.stats / agent.series SSE URL 을 구성한다', () => {
+    expect(
+      remoteService.remoteStreamUrl('node-1', { domain: 'agent', action: 'stats' }, 'a1'),
+    ).toBe('/api/v1/remote/nodes/node-1/agents/a1/stats/stream');
+    expect(
+      remoteService.remoteStreamUrl('node-1', { domain: 'agent', action: 'series' }, 'a1'),
+    ).toBe('/api/v1/remote/nodes/node-1/agents/a1/series/stream');
+  });
+
+  it('token 이 주어지면 ?token= 쿼리로 부착하고 인코딩한다', () => {
+    expect(
+      remoteService.remoteStreamUrl(
+        'n/1',
+        { domain: 'device', action: 'state' },
+        'd 1',
+        'jwt.a/b',
+      ),
+    ).toBe('/api/v1/remote/nodes/n%2F1/devices/d%201/state/stream?token=jwt.a%2Fb');
   });
 });

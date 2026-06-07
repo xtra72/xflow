@@ -81,6 +81,8 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("remote_management.auto_register", true)
 	v.SetDefault("remote_management.heartbeat_interval", "30s")
 	v.SetDefault("remote_management.bootstrap_secret", "")
+	// enrollment_token 기본 빈 값 — 설정 시 client register 가 가입 토큰을 운반한다(v1.1 H).
+	v.SetDefault("remote_management.enrollment_token", "")
 	v.SetDefault("remote_management.exposure.flows", "none")
 	v.SetDefault("remote_management.exposure.agents", "none")
 	v.SetDefault("remote_management.exposure.devices", "none")

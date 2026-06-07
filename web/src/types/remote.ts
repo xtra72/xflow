@@ -64,8 +64,86 @@ export interface ManagedNode {
   status: string;
   /** 출처 노드의 현재 라이브 연결 상태. */
   online: boolean;
+  /**
+   * 단일 그룹 라벨 (v1.4 M9, 그룹 K, REQ-K01/K04). 빈 문자열/미지정은 가상
+   * "전체"(All) 버킷을 의미한다. 구버전 백엔드 응답에는 없을 수 있으므로 선택적.
+   */
+  group_name?: string;
   /** 마지막 수신 시각 (epoch ms, 0 = 미수신). */
   last_seen: number;
+}
+
+// ---- 노드 그룹핑 + 시스템 정보 + 운영 요약 (v1.4 M9, 그룹 K, REQ-K01~K10) ----
+
+/**
+ * distinct 그룹 + 노드 수 (REQ-K03).
+ * Go `NodeGroupDTO` (internal/api/handler/remote_grouping.go) 와 1:1 매핑된다.
+ *
+ * `group_name === ''` 은 그룹 미지정 노드를 묶는 가상 "전체"(All) 버킷이다
+ * (예약 라벨 비영속 — OQ-K5). UI 는 빈 라벨을 "전체"로 표시한다.
+ */
+export interface NodeGroup {
+  /** 그룹 라벨 (빈 문자열 = "전체" 가상 버킷). */
+  group_name: string;
+  /** 해당 그룹에 속한 노드 수. */
+  node_count: number;
+}
+
+/**
+ * 노드별 운영 요약 (미러 파생 — REQ-K10).
+ * Go `NodeSummaryDTO` 와 1:1 매핑된다. 오프라인 시에도 last-known 으로 제공된다.
+ */
+export interface NodeOperationalSummary {
+  /** 플로우 요약 (카운트 + running/stopped 분해). */
+  flows: { total: number; running: number; stopped: number };
+  /** 에이전트 요약 (카운트 + connected 분해). */
+  agents: { total: number; connected: number };
+  /** 디바이스 요약 (카운트 + online 분해). */
+  devices: { total: number; online: number };
+}
+
+/**
+ * 노드 상세 응답 (메타 + BASIC 시스템 정보 + uptime + 운영 요약, REQ-K08/K10).
+ * Go `NodeDetailDTO` (internal/api/handler/remote_grouping.go) 와 1:1 매핑된다.
+ *
+ * - `uptime` 은 `started_at > 0` 일 때만 채워지며(서버 파생 = now − started_at),
+ *   미보고(구버전) 노드는 `uptime: null` + `started_at: 0` 으로 표현된다. UI 는
+ *   이 경우 uptime 을 "미보고"로 표시한다(하위 호환 — REQ-K09).
+ * - 시크릿(토큰 식별자 등)은 포함되지 않는다(REQ-F06).
+ */
+export interface NodeDetail {
+  /** 노드 인스턴스 식별자. */
+  instance_id: string;
+  /** 호스트명. */
+  hostname: string;
+  /** xflowd 버전 문자열. */
+  version: string;
+  /** 등록 상태. */
+  status: string;
+  /** 라이브 연결 상태. */
+  online: boolean;
+  /** 단일 그룹 라벨 (빈 문자열 = "전체"). */
+  group_name: string;
+  /** OS (runtime.GOOS). 미보고 시 빈 문자열. */
+  os: string;
+  /** 아키텍처 (runtime.GOARCH). 미보고 시 빈 문자열. */
+  arch: string;
+  /** 프로세스 시작 시각 (epoch ms, 0 = 미보고). */
+  started_at: number;
+  /** uptime (ms). started_at > 0 일 때만, 미보고 시 null. */
+  uptime: number | null;
+  /** 마지막 수신 시각 (epoch ms). */
+  last_seen: number;
+  /** 운영 요약 (미러 파생). */
+  summary: NodeOperationalSummary;
+}
+
+/**
+ * 노드 그룹 배정 요청 본문 (REQ-K02). PUT /remote/nodes/{id}/group.
+ */
+export interface SetNodeGroupRequest {
+  /** 배정할 그룹 라벨. 빈 문자열은 해제("전체" 환원)와 동일하다(REQ-K05). */
+  group_name: string;
 }
 
 /**
@@ -97,6 +175,79 @@ export interface MirroredResource {
 }
 
 /**
+ * 노드 사전 등록(수동 등록) 요청 본문.
+ * Go 핸들러 (POST /remote/nodes) 와 1:1 매핑된다.
+ *
+ * `instance_id` 는 필수이며 글로벌 유일해야 한다. `name` 은 선택적 표시명이다.
+ * 성공 시 status="approved", online=false 인 신규 노드가 생성된다.
+ */
+export interface PreRegisterRequest {
+  /** 사전 등록할 노드 인스턴스 식별자 (필수, 글로벌 유일). */
+  instance_id: string;
+  /** 노드 표시명 (선택적). */
+  name?: string;
+}
+
+/**
+ * Enrollment 토큰 메타데이터.
+ * Go 핸들러 (GET /remote/enrollment-tokens) 응답과 1:1 매핑된다.
+ *
+ * 보안상 raw 토큰 값(`token`)은 절대 포함하지 않는다 — 발급(POST) 응답에서만
+ * 1회 노출된다 (`EnrollmentTokenCreated` 참조).
+ */
+export interface EnrollmentToken {
+  /** 토큰 식별자. */
+  id: string;
+  /** 토큰 라벨 (선택적). */
+  label?: string;
+  /** 생성 시각 (epoch ms). */
+  created_at: number;
+  /** 만료 시각 (epoch ms). 미지정 시 만료 없음. */
+  expires_at?: number;
+  /** 최대 사용 횟수. 미지정 시 무제한. */
+  max_uses?: number;
+  /** 현재까지 사용된 횟수. */
+  uses: number;
+  /** 폐기 여부. */
+  revoked: boolean;
+}
+
+/**
+ * Enrollment 토큰 발급 요청 본문.
+ * Go 핸들러 (POST /remote/enrollment-tokens) 와 1:1 매핑된다.
+ *
+ * `expires_in` 은 Go duration 문자열이다 (예: "24h", "168h"). 모두 선택적이다.
+ */
+export interface EnrollmentTokenCreateRequest {
+  /** 토큰 라벨 (선택적). */
+  label?: string;
+  /** 만료 기간 (Go duration 문자열, 예: "24h"). 빈 값/미지정 시 만료 없음. */
+  expires_in?: string;
+  /** 최대 사용 횟수 (선택적). 미지정 시 무제한. */
+  max_uses?: number;
+}
+
+/**
+ * Enrollment 토큰 발급 결과.
+ * Go 핸들러 (POST /remote/enrollment-tokens) 의 201 응답과 1:1 매핑된다.
+ *
+ * `token` 은 raw 토큰으로 발급 시 1회만 노출된다 (목록 조회에는 포함되지 않음).
+ * UI 는 이 값을 복사 가능한 필드로 1회 표시한 뒤 다시 보여주지 않는다.
+ */
+export interface EnrollmentTokenCreated {
+  /** 토큰 식별자. */
+  id: string;
+  /** raw 토큰 값 (1회만 노출). */
+  token: string;
+  /** 토큰 라벨 (선택적). */
+  label?: string;
+  /** 만료 시각 (epoch ms, 선택적). */
+  expires_at?: number;
+  /** 최대 사용 횟수 (선택적). */
+  max_uses?: number;
+}
+
+/**
  * 원격 명령 발행 요청 본문.
  * Go `commandRequest` 와 1:1 매핑된다 (POST /remote/nodes/{id}/command).
  */
@@ -122,4 +273,86 @@ export interface CommandResult {
   action: string;
   /** 노드가 반환한 결과 (도메인/액션별 임의 페이로드). null 가능. */
   result: unknown;
+}
+
+// ---- 원격 자원 편집 (M7, 그룹 I, REQ-I01~I06/I08~I11) ----
+
+/**
+ * 노드 어댑터가 반환하는 자원 결과 표현.
+ * Go `nodeResult` (internal/api/handler/remote_editing.go) 와 1:1 매핑된다.
+ *
+ * create 응답에서 `id` 는 노드가 채번한 식별자이다(node-assigned — §5.9-8).
+ * `config` 는 노드가 redaction(F06)한 정의이므로 시크릿이 없다.
+ */
+export interface RemoteResourceResult {
+  /** 노드가 채번/확정한 자원 식별자. */
+  id: string;
+  /** 자원 이름. */
+  name: string;
+  /** 자원 상태 (running/stopped 등). */
+  status: string;
+  /** redaction 된 config/definition. 선택적. */
+  config?: Record<string, unknown>;
+}
+
+/**
+ * 원격 플로우 생성 요청 본문 (REQ-I01).
+ * Go `dto.FlowCreateRequest` 와 1:1 매핑된다
+ * (POST /remote/nodes/{instance_id}/flows → command{domain:flow, action:create}).
+ */
+export interface RemoteFlowCreateRequest {
+  /** 플로우 이름 (필수). */
+  name: string;
+  /** 플로우 정의 (nodes/wires 등 JSON, 필수). */
+  definition: Record<string, unknown>;
+  /** 플로우 설명 (선택적). */
+  description?: string;
+}
+
+/**
+ * 원격 플로우 수정 요청 본문 (REQ-I02).
+ * Go `dto.FlowUpdateRequest` 와 1:1 매핑된다
+ * (PATCH /remote/nodes/{instance_id}/flows/{flow_id}).
+ *
+ * `definition` 의 마스킹/미변경 시크릿 필드는 호출자가 생략해야 하며(REQ-I07),
+ * 노드가 기존값으로 backfill 한다. 마스킹 자리표시자를 그대로 전송하면 안 된다.
+ */
+export interface RemoteFlowUpdateRequest {
+  /** 갱신 플로우 정의 (시크릿 생략됨). */
+  definition: Record<string, unknown>;
+  /** 플로우 이름 (선택적). */
+  name?: string;
+  /** 플로우 설명 (선택적). */
+  description?: string;
+}
+
+/**
+ * 원격 에이전트 생성 요청 본문 (REQ-I04).
+ * Go `dto.AgentCreateRequest` 와 1:1 매핑된다
+ * (POST /remote/nodes/{instance_id}/agents → command{domain:agent, action:create}).
+ */
+export interface RemoteAgentCreateRequest {
+  /** 에이전트 이름 (필수). */
+  name: string;
+  /** 에이전트 종류 (필수, 예: mqtt/socket/hvac). */
+  type: string;
+  /** 에이전트 설정 (시크릿 포함 가능, 선택적). */
+  config?: Record<string, unknown>;
+}
+
+/**
+ * 원격 에이전트 수정 요청 본문 (REQ-I04).
+ * Go `dto.AgentUpdateRequest` 와 1:1 매핑된다
+ * (PATCH /remote/nodes/{instance_id}/agents/{agent_id}).
+ *
+ * `config` 의 마스킹/미변경 시크릿 필드는 호출자가 생략해야 하며(REQ-I07),
+ * 노드가 기존값으로 backfill 한다.
+ */
+export interface RemoteAgentUpdateRequest {
+  /** 갱신 에이전트 설정 (시크릿 생략됨). 선택적. */
+  config?: Record<string, unknown>;
+  /** 에이전트 이름 (선택적). */
+  name?: string;
+  /** 로그 레벨 (선택적, debug/info/warn/error). */
+  log_level?: string;
 }

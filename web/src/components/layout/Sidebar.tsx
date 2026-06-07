@@ -10,12 +10,13 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Boxes,
   HardDrive,
   LayoutDashboard,
   Monitor,
   Network,
   Settings,
+  SlidersHorizontal,
+  UserPlus,
   Workflow,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router';
@@ -102,22 +103,23 @@ const NAV_ENTRIES: NavEntry[] = [
       },
     ],
   },
-  // SPEC-REMOTE-001 M5: admin 전용 원격 관리 그룹.
+  // SPEC-REMOTE-001 M9 (그룹 K, REQ-K11): admin 전용 원격 관리 그룹.
+  //   노드 관리(운영) + 등록 관리(온보딩) — 기존 관리 노드 + 원격 노드 제어 대체.
   {
     labelKey: 'nav.remote',
     icon: Network,
     roles: ['admin'],
     children: [
       {
-        labelKey: 'nav.remoteNodes',
+        labelKey: 'nav.nodeManagement',
         path: '/admin/remote',
-        icon: Network,
+        icon: SlidersHorizontal,
         roles: ['admin'],
       },
       {
-        labelKey: 'nav.remoteResources',
-        path: '/admin/remote/resources',
-        icon: Boxes,
+        labelKey: 'nav.enrollmentManagement',
+        path: '/admin/remote/enrollment',
+        icon: UserPlus,
         roles: ['admin'],
       },
     ],

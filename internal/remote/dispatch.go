@@ -116,6 +116,10 @@ func (s *Server) Dispatch(ctx context.Context, instanceID, domain, action string
 			"command_id", commandID, "instance_id", instanceID,
 			"domain", domain, "action", action)
 		s.recordCommandAudit(ctx, instanceID, domain, action, storage.AuditResultOK, "")
+		// M8(REQ-J16): 변경 성공 → 해당 노드의 READ 캐시를 무효화한다(stale 방지).
+		// 노드 단위 무효화는 보수적이지만 안전하다(변경 args 에서 자원 단위 키를 항상
+		// 신뢰 추출할 수 없으므로 — node-scoped 가 최소 안전 보장).
+		s.invalidateQueryCacheNode(instanceID)
 		return res.Result, nil
 
 	case <-time.After(s.commandTimeout()):

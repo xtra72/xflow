@@ -11,13 +11,25 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { CommandRequest, MirroredResourceKind } from '@/types/remote';
+import type {
+  CommandRequest,
+  EnrollmentTokenCreateRequest,
+  MirroredResourceKind,
+  PreRegisterRequest,
+  RemoteAgentCreateRequest,
+  RemoteAgentUpdateRequest,
+  RemoteFlowCreateRequest,
+  RemoteFlowUpdateRequest,
+} from '@/types/remote';
+import type { NodeDetail, NodeGroup } from '@/types/remote';
 import * as remoteService from '@/services/api/remoteService';
 
 // 노드 라이브 상태(online/offline)는 빠르게 변하므로 짧은 폴링 주기를 둔다.
 const NODES_REFETCH_MS = 5000;
 // 미러 목록은 상대적으로 덜 빈번하게 변하므로 더 긴 주기를 둔다.
 const MIRROR_REFETCH_MS = 10000;
+// 노드 상세(시스템 정보+운영 요약)는 uptime 갱신을 위해 적당한 주기로 폴링한다.
+const NODE_DETAIL_REFETCH_MS = 5000;
 // 동작 모드는 재시작 전에는 바뀌지 않으므로 길게 캐시한다.
 const MODE_STALE_MS = 5 * 60 * 1000;
 
@@ -78,6 +90,40 @@ export function usePendingNodes(
   });
 }
 
+// ---- 노드 그룹핑 + 상세 쿼리 (v1.4 M9, 그룹 K, REQ-K03/K08/K10) ----
+
+/** distinct 그룹 목록 쿼리 키. */
+const GROUPS_KEY = ['remote', 'groups'] as const;
+
+/**
+ * distinct 그룹 + 노드 수 쿼리 (REQ-K03). "전체" 가상 버킷을 항상 포함한다.
+ *
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
+ */
+export function useRemoteGroups(enabled = true) {
+  return useQuery<NodeGroup[]>({
+    queryKey: GROUPS_KEY,
+    queryFn: () => remoteService.listRemoteGroups(),
+    refetchInterval: NODES_REFETCH_MS,
+    enabled,
+  });
+}
+
+/**
+ * 노드 상세(메타 + BASIC 시스템 정보 + uptime + 운영 요약) 쿼리 (REQ-K08/K10).
+ *
+ * @param instanceID - 노드 식별자. 비어 있으면 쿼리 비활성.
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
+ */
+export function useRemoteNodeDetail(instanceID: string, enabled = true) {
+  return useQuery<NodeDetail>({
+    queryKey: ['remote', 'nodes', instanceID, 'detail'],
+    queryFn: () => remoteService.getRemoteNodeDetail(instanceID),
+    enabled: enabled && !!instanceID,
+    refetchInterval: NODE_DETAIL_REFETCH_MS,
+  });
+}
+
 /** 종류별 노드별 미러 조회 함수 매핑. */
 const NODE_MIRROR_FN = {
   flow: remoteService.listNodeFlows,
@@ -85,14 +131,7 @@ const NODE_MIRROR_FN = {
   device: remoteService.listNodeDevices,
 } as const;
 
-/** 종류별 통합 미러 조회 함수 매핑. */
-const ALL_MIRROR_FN = {
-  flow: remoteService.listAllFlows,
-  agent: remoteService.listAllAgents,
-  device: remoteService.listAllDevices,
-} as const;
-
-/** 종류 → 통합 미러 쿼리 키 세그먼트 (복수형). */
+/** 종류 → 미러 쿼리 키 세그먼트 (복수형). */
 const ALL_MIRROR_KEY: Record<MirroredResourceKind, string> = {
   flow: 'flows',
   agent: 'agents',
@@ -119,22 +158,6 @@ export function useNodeMirror(
   });
 }
 
-/**
- * 전 노드의 종류별 통합 미러 목록 쿼리 (G03, REQ-E05).
- * 각 행은 source_instance_id 와 online 으로 태깅된다.
- *
- * @param kind - 미러 종류 (flow/agent/device).
- * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
- */
-export function useAllMirror(kind: MirroredResourceKind, enabled = true) {
-  return useQuery({
-    queryKey: ['remote', ALL_MIRROR_KEY[kind]],
-    queryFn: () => ALL_MIRROR_FN[kind](),
-    refetchInterval: MIRROR_REFETCH_MS,
-    enabled,
-  });
-}
-
 // ---- 뮤테이션 ----
 
 /** 노드 관련 쿼리 전체를 무효화한다 (목록 + pending). */
@@ -142,6 +165,129 @@ function invalidateNodeQueries(
   queryClient: ReturnType<typeof useQueryClient>,
 ): void {
   queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+}
+
+/**
+ * 노드 사전 등록(수동 등록) 뮤테이션. 성공 시 노드 쿼리 무효화.
+ *
+ * 성공하면 status="approved", online=false 인 신규 노드가 목록에 나타난다.
+ * 중복(409)/누락(400) 등 에러는 APIError 로 호출자에게 전파된다.
+ */
+export function usePreRegisterNode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: PreRegisterRequest) => remoteService.preRegisterNode(req),
+    onSuccess: () => invalidateNodeQueries(queryClient),
+  });
+}
+
+/**
+ * 노드 삭제 뮤테이션. 성공 시 노드 쿼리 무효화.
+ *
+ * 폐기(revoke)와 달리 항목 자체를 제거한다. 미존재(404)는 APIError 로 전파된다.
+ */
+export function useDeleteNode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (instanceID: string) => remoteService.deleteNode(instanceID),
+    onSuccess: () => invalidateNodeQueries(queryClient),
+  });
+}
+
+// ---- 노드 그룹 배정/해제 뮤테이션 (v1.4 M9, 그룹 K, REQ-K02/K05) ----
+
+/**
+ * 그룹 변경 후 노드 목록 + 그룹 목록 쿼리를 무효화한다.
+ *
+ * 노드의 group_name 과 distinct 그룹 집계가 함께 바뀌므로 둘 다 무효화한다.
+ */
+function invalidateGroupQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+  queryClient.invalidateQueries({ queryKey: GROUPS_KEY });
+}
+
+/**
+ * 노드 그룹 배정/변경 뮤테이션 (REQ-K02). 성공 시 노드/그룹 쿼리 무효화.
+ *
+ * 빈 group_name 은 해제("전체" 환원)와 동일 의미이다(REQ-K05). 미존재(404) 등
+ * 에러는 APIError 로 호출자에게 전파된다.
+ */
+export function useSetNodeGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      groupName,
+    }: {
+      instanceID: string;
+      groupName: string;
+    }) => remoteService.setRemoteNodeGroup(instanceID, groupName),
+    onSuccess: () => invalidateGroupQueries(queryClient),
+  });
+}
+
+/**
+ * 노드 그룹 해제 뮤테이션 ("전체" 환원, REQ-K02/K05). 성공 시 노드/그룹 쿼리 무효화.
+ */
+export function useClearNodeGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (instanceID: string) =>
+      remoteService.clearRemoteNodeGroup(instanceID),
+    onSuccess: () => invalidateGroupQueries(queryClient),
+  });
+}
+
+// ---- Enrollment 토큰 쿼리/뮤테이션 ----
+
+/** enrollment 토큰 목록 쿼리 키. */
+const ENROLLMENT_TOKENS_KEY = ['remote', 'enrollment-tokens'] as const;
+
+/** enrollment 토큰 목록 쿼리를 무효화한다. */
+function invalidateEnrollmentTokens(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  queryClient.invalidateQueries({ queryKey: ENROLLMENT_TOKENS_KEY });
+}
+
+/**
+ * Enrollment 토큰 메타데이터 목록 쿼리.
+ *
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
+ */
+export function useEnrollmentTokens(enabled = true) {
+  return useQuery({
+    queryKey: ENROLLMENT_TOKENS_KEY,
+    queryFn: () => remoteService.listEnrollmentTokens(),
+    enabled,
+  });
+}
+
+/**
+ * Enrollment 토큰 발급 뮤테이션. 성공 시 토큰 목록 무효화.
+ *
+ * 응답의 raw `token` 은 호출자가 1회 표시 후 폐기해야 한다.
+ */
+export function useCreateEnrollmentToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: EnrollmentTokenCreateRequest) =>
+      remoteService.createEnrollmentToken(req),
+    onSuccess: () => invalidateEnrollmentTokens(queryClient),
+  });
+}
+
+/**
+ * Enrollment 토큰 폐기 뮤테이션. 성공 시 토큰 목록 무효화.
+ */
+export function useRevokeEnrollmentToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => remoteService.revokeEnrollmentToken(id),
+    onSuccess: () => invalidateEnrollmentTokens(queryClient),
+  });
 }
 
 /**
@@ -198,5 +344,132 @@ export function useSendCommand() {
       queryClient.invalidateQueries({ queryKey: ['remote', 'agents'] });
       queryClient.invalidateQueries({ queryKey: ['remote', 'devices'] });
     },
+  });
+}
+
+// ---- 원격 자원 편집 뮤테이션 (M7, 그룹 I, REQ-I01~I04/I08~I11) ----
+
+/**
+ * 편집 성공 후 대상 노드 미러 + 통합 미러 쿼리를 무효화한다.
+ *
+ * 미러 캐시는 명령 결과 수신 후에만 서버에서 갱신되므로(REQ-E08), 무효화하면
+ * 다음 폴링/refetch 에서 최신 상태가 반영된다.
+ */
+function invalidateMirrorQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  instanceID: string,
+  kind: 'flows' | 'agents',
+): void {
+  queryClient.invalidateQueries({ queryKey: ['remote', 'nodes', instanceID] });
+  queryClient.invalidateQueries({ queryKey: ['remote', kind] });
+}
+
+/**
+ * 원격 플로우 생성 뮤테이션 (REQ-I01). 성공 시 미러 쿼리 무효화.
+ *
+ * 응답의 `id` 는 노드가 채번한 식별자이다(node-assigned). 신규 자원은 자동
+ * 노출되지 않으므로(opt-in 보존), 즉시 미러 목록에 나타나지 않을 수 있다.
+ * 503/504/502 등 실패는 APIError 로 호출자에게 전파된다.
+ */
+export function useCreateRemoteFlow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      req,
+    }: {
+      instanceID: string;
+      req: RemoteFlowCreateRequest;
+    }) => remoteService.createRemoteFlow(instanceID, req),
+    onSuccess: (_data, variables) =>
+      invalidateMirrorQueries(queryClient, variables.instanceID, 'flows'),
+  });
+}
+
+/**
+ * 원격 플로우 수정 뮤테이션 (REQ-I02). 성공 시 미러 쿼리 무효화.
+ *
+ * 본문 definition 의 마스킹/미변경 시크릿 필드는 호출 전 생략되어야 한다(REQ-I07).
+ */
+export function useUpdateRemoteFlow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      flowID,
+      req,
+    }: {
+      instanceID: string;
+      flowID: string;
+      req: RemoteFlowUpdateRequest;
+    }) => remoteService.updateRemoteFlow(instanceID, flowID, req),
+    onSuccess: (_data, variables) =>
+      invalidateMirrorQueries(queryClient, variables.instanceID, 'flows'),
+  });
+}
+
+/**
+ * 원격 플로우 삭제 뮤테이션 (REQ-I03). 성공 시 미러 쿼리 무효화.
+ */
+export function useDeleteRemoteFlow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ instanceID, flowID }: { instanceID: string; flowID: string }) =>
+      remoteService.deleteRemoteFlow(instanceID, flowID),
+    onSuccess: (_data, variables) =>
+      invalidateMirrorQueries(queryClient, variables.instanceID, 'flows'),
+  });
+}
+
+/**
+ * 원격 에이전트 생성 뮤테이션 (REQ-I04). 성공 시 미러 쿼리 무효화.
+ */
+export function useCreateRemoteAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      req,
+    }: {
+      instanceID: string;
+      req: RemoteAgentCreateRequest;
+    }) => remoteService.createRemoteAgent(instanceID, req),
+    onSuccess: (_data, variables) =>
+      invalidateMirrorQueries(queryClient, variables.instanceID, 'agents'),
+  });
+}
+
+/**
+ * 원격 에이전트 수정 뮤테이션 (REQ-I04). 성공 시 미러 쿼리 무효화.
+ *
+ * 본문 config 의 마스킹/미변경 시크릿 필드는 호출 전 생략되어야 한다(REQ-I07).
+ */
+export function useUpdateRemoteAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      agentID,
+      req,
+    }: {
+      instanceID: string;
+      agentID: string;
+      req: RemoteAgentUpdateRequest;
+    }) => remoteService.updateRemoteAgent(instanceID, agentID, req),
+    onSuccess: (_data, variables) =>
+      invalidateMirrorQueries(queryClient, variables.instanceID, 'agents'),
+  });
+}
+
+/**
+ * 원격 에이전트 삭제 뮤테이션 (REQ-I04). 성공 시 미러 쿼리 무효화.
+ */
+export function useDeleteRemoteAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ instanceID, agentID }: { instanceID: string; agentID: string }) =>
+      remoteService.deleteRemoteAgent(instanceID, agentID),
+    onSuccess: (_data, variables) =>
+      invalidateMirrorQueries(queryClient, variables.instanceID, 'agents'),
   });
 }
