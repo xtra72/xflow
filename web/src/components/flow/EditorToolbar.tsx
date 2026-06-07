@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
+  ArrowLeft,
   ArrowLeftToLine,
   ArrowRightToLine,
   Check,
@@ -803,16 +804,40 @@ interface RemoteTitleBlockProps {
   flowName: string;
 }
 
+/** 원격 편집기에서 "노드로 돌아가기" 가 향하는 노드 관리 화면 경로. */
+const REMOTE_BACK_HREF = '/admin/remote';
+
 /**
- * 원격 제목 블록 — 대상 노드 배지(호스트명) + 플로우 이름.
+ * 원격 제목 블록 — 노드로 돌아가기 링크 + 대상 노드 배지(호스트명) + 플로우 이름.
  *
  * RemoteEditorToolbar 의 노드 배지 시각 언어(violet + Server 아이콘)를 계승한다.
  * 원시 instanceId(UUID)는 본문이 아닌 title(툴팁)로만 노출한다.
+ *
+ * "노드로 돌아가기"(ArrowLeft) 링크는 과거 RemoteEditorBanner 가 제공하던 유일한
+ * 유용 요소로, 중복 배너를 제거하면서 이 제어판으로 이관했다. 노드 배지 왼쪽에
+ * 컴팩트한 링크 형태로 배치하며, 노드 관리 화면(REMOTE_BACK_HREF)으로 이동한다.
+ * 로컬 편집기에는 RemoteTitleBlock 자체가 렌더되지 않으므로 영향이 없다.
  */
 function RemoteTitleBlock({ nodeLabel, nodeTitle, flowName }: RemoteTitleBlockProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   return (
     <div className="flex min-w-0 items-center gap-1">
+      <button
+        type="button"
+        onClick={() => navigate(REMOTE_BACK_HREF)}
+        title={t('remote.editor.backToNode')}
+        aria-label={t('remote.editor.backToNode')}
+        data-testid="remote-editor-back"
+        className={cn(
+          'inline-flex shrink-0 items-center justify-center rounded-md p-1.5',
+          'text-violet-600 transition-colors duration-100',
+          'hover:bg-violet-100 hover:text-violet-800',
+          'dark:text-violet-300 dark:hover:bg-violet-900/40 dark:hover:text-violet-100',
+        )}
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+      </button>
       <span
         className="inline-flex shrink-0 items-center gap-1 rounded-md bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
         title={nodeTitle ? `${t('remote.editor.targetNode')} (${nodeTitle})` : t('remote.editor.targetNode')}

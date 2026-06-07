@@ -374,6 +374,7 @@ describe('EditorToolbar - 원격 타깃(통합 툴바)', () => {
     );
 
   beforeEach(() => {
+    navigateMock.mockClear();
     performMock.mockClear();
     supportsMock = (action) => action !== 'restart'; // 원격은 재시작 미지원.
     canControlMock = () => true; // 노드 승인+온라인.
@@ -388,6 +389,22 @@ describe('EditorToolbar - 원격 타깃(통합 툴바)', () => {
     expect(badge).toHaveTextContent('gw-1');
     expect(badge).not.toHaveTextContent('inst-uuid-1234');
     expect(badge.getAttribute('title')).toContain('inst-uuid-1234');
+  });
+
+  it('"노드로 돌아가기" 링크를 노드 배지 옆에 렌더한다(원격 전용)', () => {
+    renderRemote();
+    const back = screen.getByTestId('remote-editor-back');
+    expect(back).toBeInTheDocument();
+    // 접근성 라벨/툴팁은 backToNode i18n 키를 사용한다(원시 UUID 미노출).
+    expect(back).toHaveAttribute('aria-label', 'remote.editor.backToNode');
+    expect(back).not.toHaveTextContent('inst-uuid-1234');
+  });
+
+  it('"노드로 돌아가기" 클릭 시 노드 관리 화면(/admin/remote)으로 이동한다', () => {
+    renderRemote();
+    fireEvent.click(screen.getByTestId('remote-editor-back'));
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/admin/remote');
   });
 
   it('로컬과 동일한 라이프사이클 메뉴(시작/중지/배포/재시작 + 저장)를 렌더한다', () => {

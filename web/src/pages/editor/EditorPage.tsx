@@ -26,7 +26,6 @@ import { FlowAreaNode } from '@/components/flow/FlowAreaNode';
 import { FlowBoundaryNode } from '@/components/flow/FlowBoundaryNode';
 import { FlowPortPanel } from '@/components/flow/FlowPortPanel';
 import { NodeContextMenu } from '@/components/flow/NodeContextMenu';
-import { RemoteEditorBanner } from '@/components/flow/RemoteEditorBanner';
 import { NodePalette } from '@/components/palette/NodePalette';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
@@ -670,33 +669,25 @@ function EditorPageInner() {
       {/* 가운데: 툴바 + 캔버스 */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* 상단 툴바 — 로컬/원격 모두 동일한 통합 EditorToolbar 를 사용한다
-            (SPEC-REMOTE-001 M8). 원격은 추가로 RemoteEditorBanner(노드 식별 배너)를
-            위에 두고, 툴바에 target 을 넘겨 라이프사이클(시작/중지/배포)을 그룹 D
-            명령으로 라우팅한다(재시작은 노드 미지원 → 비활성+툴팁). 배너는 로컬
-            편집기에는 렌더되지 않아 원격 편집임을 한눈에 구분하게 한다. */}
+            (SPEC-REMOTE-001 M8). 원격은 툴바에 target 을 넘겨 라이프사이클(시작/중지/
+            배포)을 그룹 D 명령으로 라우팅하고(재시작은 노드 미지원 → 비활성+툴팁),
+            노드 식별(호스트명 배지) + "노드로 돌아가기" 링크를 툴바 내부
+            (RemoteTitleBlock)에 통합한다. 과거의 별도 RemoteEditorBanner 는 헤더
+            ("원격 · {hostname}")·툴바 배지·캔버스 액센트 링과 중복되어 제거했다. */}
         {isRemote ? (
-          <>
-            <RemoteEditorBanner
-              hostname={remoteHostname}
-              instanceId={instanceId ?? ''}
+          <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
+            <EditorToolbar
+              flowId={effectiveFlowId ?? ''}
+              target={toolbarTarget}
+              nodeLabel={remoteHostname}
+              nodeTitle={instanceId ?? ''}
               flowName={flowData?.name ?? ''}
-              isNew={isNewRemoteFlow}
-              backHref="/admin/remote"
+              onSave={handleSave}
+              isSaving={flowTarget.isSaving}
+              showPortPanel={showPortPanel}
+              onTogglePortPanel={() => setShowPortPanel((v) => !v)}
             />
-            <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
-              <EditorToolbar
-                flowId={effectiveFlowId ?? ''}
-                target={toolbarTarget}
-                nodeLabel={remoteHostname}
-                nodeTitle={instanceId ?? ''}
-                flowName={flowData?.name ?? ''}
-                onSave={handleSave}
-                isSaving={flowTarget.isSaving}
-                showPortPanel={showPortPanel}
-                onTogglePortPanel={() => setShowPortPanel((v) => !v)}
-              />
-            </div>
-          </>
+          </div>
         ) : (
           flowId && (
             <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
