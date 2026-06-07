@@ -19,7 +19,9 @@
     "remoteControl": "Remote Node Control",
     "sidebarNav": "Sidebar Navigation",
     "expandSidebar": "Expand Sidebar",
-    "collapseSidebar": "Collapse Sidebar"
+    "collapseSidebar": "Collapse Sidebar",
+    "nodeManagement": "Node Management",
+    "enrollmentManagement": "Enrollment"
   },
   "auth": {
     "login": "Login",
@@ -507,6 +509,54 @@
       "configHint": "Leave secret fields (passwords, tokens, etc.) blank to keep the node’s existing values.",
       "configInvalid": "The config JSON is not valid.",
       "save": "Save"
+    },
+    "nodeManagement": {
+      "title": "Node Management",
+      "subtitle": "Browse managed nodes by group, then select a node to view system info, operational summary, and control its flows, agents, and devices."
+    },
+    "enrollmentManagement": {
+      "title": "Enrollment",
+      "subtitle": "Approve, reject, or revoke node enrollment requests and issue enrollment tokens.",
+      "nodesHeading": "Node Enrollment"
+    },
+    "directory": {
+      "label": "Node directory",
+      "selectNodeHint": "Select a node to view its dashboard.",
+      "emptyGroup": "No nodes in this group."
+    },
+    "group": {
+      "all": "All",
+      "label": "Group",
+      "menuLabel": "Change group",
+      "moveTo": "Move to group",
+      "newLabel": "New group name",
+      "newPlaceholder": "New group name…",
+      "create": "Create group",
+      "toast": {
+        "assigned": "Node group updated.",
+        "cleared": "Node returned to All.",
+        "failed": "Failed to update group."
+      }
+    },
+    "dashboard": {
+      "tabsLabel": "Node dashboard tabs",
+      "tab": {
+        "overview": "Overview",
+        "flows": "Flows",
+        "agents": "Agents",
+        "devices": "Devices"
+      },
+      "systemInfo": "System Info",
+      "summary": "Operational Summary",
+      "hostname": "Hostname",
+      "os": "OS",
+      "arch": "Arch",
+      "version": "Version",
+      "uptime": "Uptime",
+      "uptimeUnreported": "Unreported",
+      "running": "Running",
+      "stopped": "Stopped",
+      "connected": "Connected"
     }
   }
 }

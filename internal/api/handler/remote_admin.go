@@ -63,13 +63,18 @@ type commandRequest struct {
 }
 
 // ManagedNodeDTO 는 관리 노드 응답 표현이다(시크릿 토큰은 노출하지 않음 — REQ-F06).
+//
+// GroupName 은 v1.4(M9, 그룹 K)의 단일 그룹 라벨이다(빈값="전체" 가상 버킷 —
+// REQ-K01/K04). 프론트엔드 디렉토리 뷰가 단일 `/remote/nodes` 응답으로 그룹별
+// 노드를 묶을 수 있도록 목록 항목에 포함한다(N+1 그룹별 조회 회피).
 type ManagedNodeDTO struct {
 	InstanceID string `json:"instance_id"`
 	Hostname   string `json:"hostname"`
 	Version    string `json:"version"`
 	Status     string `json:"status"`
 	Online     bool   `json:"online"`
-	LastSeen   int64  `json:"last_seen"` // epoch ms
+	GroupName  string `json:"group_name"` // 단일 그룹 라벨(빈값=전체 — REQ-K01/K04)
+	LastSeen   int64  `json:"last_seen"`  // epoch ms
 }
 
 // rejectRequest 는 거부 사유를 담는 선택적 요청 본문이다.
@@ -453,6 +458,7 @@ func toManagedNodeDTOs(nodes []storage.ManagedNode) []ManagedNodeDTO {
 			Version:    n.Version,
 			Status:     n.Status,
 			Online:     n.Online,
+			GroupName:  n.GroupName,
 			LastSeen:   n.LastSeen,
 		})
 	}

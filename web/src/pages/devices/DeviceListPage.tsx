@@ -18,7 +18,7 @@ import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
 import { TargetProvider } from '@/lib/remote/TargetContext';
-import { isRemoteTarget } from '@/lib/remote/target';
+import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { getDeviceTypeLabel, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
 import type { DeviceInfo, DeviceListParams } from '@/types/device';
@@ -80,15 +80,27 @@ function formatRelativeTime(dateStr: string): string {
   return `${days}일 전`;
 }
 
-export default function DeviceListPage() {
+/** 디바이스 목록 페이지 props. */
+interface DeviceListPageProps {
+  /**
+   * 자원 타깃 오버라이드 (SPEC-REMOTE-001 M9, 그룹 K). 주어지면 URL `?target=`
+   * 대신 이 값을 사용한다(노드 대시보드 서브탭 임베드용). 미지정 시 기존처럼
+   * URL `?target=` 를 읽으므로 로컬 사용은 회귀 없이 동일하게 동작한다.
+   */
+  target?: ResourceTarget;
+}
+
+export default function DeviceListPage({ target: targetProp }: DeviceListPageProps = {}) {
   // 필터 상태
   const [filters, setFilters] = useState<DeviceListParams>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
   // SPEC-REMOTE-001 M8 (그룹 J): 타깃에 따라 데이터 소스를 전환한다(로컬은 기존
-  // useDevicesRealtime(filters) 동작과 동일 — 회귀 없음).
-  const target = useTargetParam();
+  // useDevicesRealtime(filters) 동작과 동일 — 회귀 없음). M9(그룹 K)에서 노드
+  // 대시보드가 targetProp 로 원격 타깃을 주입할 수 있다(URL 대신 prop 우선).
+  const paramTarget = useTargetParam();
+  const target = targetProp ?? paramTarget;
   const remote = isRemoteTarget(target);
   const { data, isLoading, error, refetch } = useDevicesTarget(target, filters);
   const gating = useTargetGating(target);

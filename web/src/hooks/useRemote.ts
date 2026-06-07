@@ -21,12 +21,15 @@ import type {
   RemoteFlowCreateRequest,
   RemoteFlowUpdateRequest,
 } from '@/types/remote';
+import type { NodeDetail, NodeGroup } from '@/types/remote';
 import * as remoteService from '@/services/api/remoteService';
 
 // 노드 라이브 상태(online/offline)는 빠르게 변하므로 짧은 폴링 주기를 둔다.
 const NODES_REFETCH_MS = 5000;
 // 미러 목록은 상대적으로 덜 빈번하게 변하므로 더 긴 주기를 둔다.
 const MIRROR_REFETCH_MS = 10000;
+// 노드 상세(시스템 정보+운영 요약)는 uptime 갱신을 위해 적당한 주기로 폴링한다.
+const NODE_DETAIL_REFETCH_MS = 5000;
 // 동작 모드는 재시작 전에는 바뀌지 않으므로 길게 캐시한다.
 const MODE_STALE_MS = 5 * 60 * 1000;
 
@@ -84,6 +87,40 @@ export function usePendingNodes(
     queryFn: () => remoteService.listPendingNodes(),
     refetchInterval,
     enabled,
+  });
+}
+
+// ---- 노드 그룹핑 + 상세 쿼리 (v1.4 M9, 그룹 K, REQ-K03/K08/K10) ----
+
+/** distinct 그룹 목록 쿼리 키. */
+const GROUPS_KEY = ['remote', 'groups'] as const;
+
+/**
+ * distinct 그룹 + 노드 수 쿼리 (REQ-K03). "전체" 가상 버킷을 항상 포함한다.
+ *
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
+ */
+export function useRemoteGroups(enabled = true) {
+  return useQuery<NodeGroup[]>({
+    queryKey: GROUPS_KEY,
+    queryFn: () => remoteService.listRemoteGroups(),
+    refetchInterval: NODES_REFETCH_MS,
+    enabled,
+  });
+}
+
+/**
+ * 노드 상세(메타 + BASIC 시스템 정보 + uptime + 운영 요약) 쿼리 (REQ-K08/K10).
+ *
+ * @param instanceID - 노드 식별자. 비어 있으면 쿼리 비활성.
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
+ */
+export function useRemoteNodeDetail(instanceID: string, enabled = true) {
+  return useQuery<NodeDetail>({
+    queryKey: ['remote', 'nodes', instanceID, 'detail'],
+    queryFn: () => remoteService.getRemoteNodeDetail(instanceID),
+    enabled: enabled && !!instanceID,
+    refetchInterval: NODE_DETAIL_REFETCH_MS,
   });
 }
 
@@ -154,6 +191,52 @@ export function useDeleteNode() {
   return useMutation({
     mutationFn: (instanceID: string) => remoteService.deleteNode(instanceID),
     onSuccess: () => invalidateNodeQueries(queryClient),
+  });
+}
+
+// ---- 노드 그룹 배정/해제 뮤테이션 (v1.4 M9, 그룹 K, REQ-K02/K05) ----
+
+/**
+ * 그룹 변경 후 노드 목록 + 그룹 목록 쿼리를 무효화한다.
+ *
+ * 노드의 group_name 과 distinct 그룹 집계가 함께 바뀌므로 둘 다 무효화한다.
+ */
+function invalidateGroupQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+  queryClient.invalidateQueries({ queryKey: GROUPS_KEY });
+}
+
+/**
+ * 노드 그룹 배정/변경 뮤테이션 (REQ-K02). 성공 시 노드/그룹 쿼리 무효화.
+ *
+ * 빈 group_name 은 해제("전체" 환원)와 동일 의미이다(REQ-K05). 미존재(404) 등
+ * 에러는 APIError 로 호출자에게 전파된다.
+ */
+export function useSetNodeGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      groupName,
+    }: {
+      instanceID: string;
+      groupName: string;
+    }) => remoteService.setRemoteNodeGroup(instanceID, groupName),
+    onSuccess: () => invalidateGroupQueries(queryClient),
+  });
+}
+
+/**
+ * 노드 그룹 해제 뮤테이션 ("전체" 환원, REQ-K02/K05). 성공 시 노드/그룹 쿼리 무효화.
+ */
+export function useClearNodeGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (instanceID: string) =>
+      remoteService.clearRemoteNodeGroup(instanceID),
+    onSuccess: () => invalidateGroupQueries(queryClient),
   });
 }
 

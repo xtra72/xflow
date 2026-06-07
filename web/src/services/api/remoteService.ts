@@ -23,6 +23,8 @@ import type {
   EnrollmentTokenCreateRequest,
   ManagedNode,
   MirroredResource,
+  NodeDetail,
+  NodeGroup,
   PreRegisterRequest,
   RemoteAgentCreateRequest,
   RemoteAgentUpdateRequest,
@@ -32,7 +34,7 @@ import type {
   RemoteResourceResult,
 } from '@/types/remote';
 
-import { del, get, patch, post } from './client';
+import { del, get, patch, post, put } from './client';
 
 /** instance_id 를 URL 경로에 안전하게 인코딩한다. */
 function encodeId(instanceID: string): string {
@@ -65,6 +67,54 @@ export async function listNodes(): Promise<ManagedNode[]> {
  */
 export async function listPendingNodes(): Promise<ManagedNode[]> {
   return get<ManagedNode[]>('/remote/nodes/pending');
+}
+
+// ---- 노드 그룹핑 + 상세 (v1.4 M9, 그룹 K, REQ-K02~K06/K08/K10) ----
+//
+// 그룹은 서버 운영 메타데이터이므로(A13) 배정/해제는 managed_nodes.group_name
+// 갱신만 수행하고 노드로 명령을 전파하지 않는다. 모든 엔드포인트는 admin 전용이다.
+
+/**
+ * distinct 그룹 + 노드 수 목록을 조회한다. GET /remote/groups (REQ-K03)
+ *
+ * 응답은 항상 "전체"(group_name="") 가상 버킷을 포함한다(그룹 미지정 노드 묶음).
+ */
+export async function listRemoteGroups(): Promise<NodeGroup[]> {
+  return get<NodeGroup[]>('/remote/groups');
+}
+
+/**
+ * 노드 상세(메타 + BASIC 시스템 정보 + uptime + 운영 요약)를 조회한다.
+ * GET /remote/nodes/{instance_id} (REQ-K08/K10)
+ *
+ * uptime 은 started_at>0 일 때만 채워지며 미보고 노드는 null 이다(하위 호환).
+ * 미존재 노드는 404 로 매핑되어 APIError 로 전파된다.
+ */
+export async function getRemoteNodeDetail(instanceID: string): Promise<NodeDetail> {
+  return get<NodeDetail>(`/remote/nodes/${encodeId(instanceID)}`);
+}
+
+/**
+ * 노드의 그룹을 배정/변경한다. PUT /remote/nodes/{instance_id}/group (REQ-K02)
+ *
+ * 본문 `{ group_name }`. 빈 문자열은 해제("전체" 환원)와 동일 의미이다(REQ-K05).
+ * 미존재 노드는 404 로 매핑된다.
+ */
+export async function setRemoteNodeGroup(
+  instanceID: string,
+  groupName: string,
+): Promise<void> {
+  await put<unknown>(`/remote/nodes/${encodeId(instanceID)}/group`, {
+    group_name: groupName,
+  });
+}
+
+/**
+ * 노드의 그룹을 해제하여 "전체"로 환원한다.
+ * DELETE /remote/nodes/{instance_id}/group → 204 (REQ-K02/K05)
+ */
+export async function clearRemoteNodeGroup(instanceID: string): Promise<void> {
+  await del(`/remote/nodes/${encodeId(instanceID)}/group`);
 }
 
 // ---- 노드 수동 등록 / 삭제 (수동 enrollment) ----

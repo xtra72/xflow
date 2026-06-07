@@ -64,8 +64,86 @@ export interface ManagedNode {
   status: string;
   /** 출처 노드의 현재 라이브 연결 상태. */
   online: boolean;
+  /**
+   * 단일 그룹 라벨 (v1.4 M9, 그룹 K, REQ-K01/K04). 빈 문자열/미지정은 가상
+   * "전체"(All) 버킷을 의미한다. 구버전 백엔드 응답에는 없을 수 있으므로 선택적.
+   */
+  group_name?: string;
   /** 마지막 수신 시각 (epoch ms, 0 = 미수신). */
   last_seen: number;
+}
+
+// ---- 노드 그룹핑 + 시스템 정보 + 운영 요약 (v1.4 M9, 그룹 K, REQ-K01~K10) ----
+
+/**
+ * distinct 그룹 + 노드 수 (REQ-K03).
+ * Go `NodeGroupDTO` (internal/api/handler/remote_grouping.go) 와 1:1 매핑된다.
+ *
+ * `group_name === ''` 은 그룹 미지정 노드를 묶는 가상 "전체"(All) 버킷이다
+ * (예약 라벨 비영속 — OQ-K5). UI 는 빈 라벨을 "전체"로 표시한다.
+ */
+export interface NodeGroup {
+  /** 그룹 라벨 (빈 문자열 = "전체" 가상 버킷). */
+  group_name: string;
+  /** 해당 그룹에 속한 노드 수. */
+  node_count: number;
+}
+
+/**
+ * 노드별 운영 요약 (미러 파생 — REQ-K10).
+ * Go `NodeSummaryDTO` 와 1:1 매핑된다. 오프라인 시에도 last-known 으로 제공된다.
+ */
+export interface NodeOperationalSummary {
+  /** 플로우 요약 (카운트 + running/stopped 분해). */
+  flows: { total: number; running: number; stopped: number };
+  /** 에이전트 요약 (카운트 + connected 분해). */
+  agents: { total: number; connected: number };
+  /** 디바이스 요약 (카운트 + online 분해). */
+  devices: { total: number; online: number };
+}
+
+/**
+ * 노드 상세 응답 (메타 + BASIC 시스템 정보 + uptime + 운영 요약, REQ-K08/K10).
+ * Go `NodeDetailDTO` (internal/api/handler/remote_grouping.go) 와 1:1 매핑된다.
+ *
+ * - `uptime` 은 `started_at > 0` 일 때만 채워지며(서버 파생 = now − started_at),
+ *   미보고(구버전) 노드는 `uptime: null` + `started_at: 0` 으로 표현된다. UI 는
+ *   이 경우 uptime 을 "미보고"로 표시한다(하위 호환 — REQ-K09).
+ * - 시크릿(토큰 식별자 등)은 포함되지 않는다(REQ-F06).
+ */
+export interface NodeDetail {
+  /** 노드 인스턴스 식별자. */
+  instance_id: string;
+  /** 호스트명. */
+  hostname: string;
+  /** xflowd 버전 문자열. */
+  version: string;
+  /** 등록 상태. */
+  status: string;
+  /** 라이브 연결 상태. */
+  online: boolean;
+  /** 단일 그룹 라벨 (빈 문자열 = "전체"). */
+  group_name: string;
+  /** OS (runtime.GOOS). 미보고 시 빈 문자열. */
+  os: string;
+  /** 아키텍처 (runtime.GOARCH). 미보고 시 빈 문자열. */
+  arch: string;
+  /** 프로세스 시작 시각 (epoch ms, 0 = 미보고). */
+  started_at: number;
+  /** uptime (ms). started_at > 0 일 때만, 미보고 시 null. */
+  uptime: number | null;
+  /** 마지막 수신 시각 (epoch ms). */
+  last_seen: number;
+  /** 운영 요약 (미러 파생). */
+  summary: NodeOperationalSummary;
+}
+
+/**
+ * 노드 그룹 배정 요청 본문 (REQ-K02). PUT /remote/nodes/{id}/group.
+ */
+export interface SetNodeGroupRequest {
+  /** 배정할 그룹 라벨. 빈 문자열은 해제("전체" 환원)와 동일하다(REQ-K05). */
+  group_name: string;
 }
 
 /**

@@ -19,7 +19,9 @@
     "remoteControl": "원격 노드 제어",
     "sidebarNav": "사이드바 네비게이션",
     "expandSidebar": "사이드바 펼치기",
-    "collapseSidebar": "사이드바 접기"
+    "collapseSidebar": "사이드바 접기",
+    "nodeManagement": "노드 관리",
+    "enrollmentManagement": "등록 관리"
   },
   "auth": {
     "login": "로그인",
@@ -507,6 +509,54 @@
       "configHint": "비밀 필드(비밀번호·토큰 등)는 비워 두면 노드의 기존 값이 유지됩니다.",
       "configInvalid": "설정 JSON 형식이 올바르지 않습니다.",
       "save": "저장"
+    },
+    "nodeManagement": {
+      "title": "노드 관리",
+      "subtitle": "관리 노드를 그룹별로 탐색하고, 노드를 선택해 시스템 정보·운영 요약과 플로우·에이전트·디바이스를 제어합니다."
+    },
+    "enrollmentManagement": {
+      "title": "등록 관리",
+      "subtitle": "노드 등록 요청을 승인·거부·폐기하고, enrollment 토큰을 발급·관리합니다.",
+      "nodesHeading": "노드 등록 관리"
+    },
+    "directory": {
+      "label": "노드 디렉토리",
+      "selectNodeHint": "노드를 선택하면 대시보드가 표시됩니다.",
+      "emptyGroup": "이 그룹에 노드가 없습니다."
+    },
+    "group": {
+      "all": "전체",
+      "label": "그룹",
+      "menuLabel": "그룹 변경",
+      "moveTo": "그룹 이동",
+      "newLabel": "새 그룹 이름",
+      "newPlaceholder": "새 그룹 이름…",
+      "create": "그룹 생성",
+      "toast": {
+        "assigned": "노드 그룹을 변경했습니다.",
+        "cleared": "노드를 전체로 환원했습니다.",
+        "failed": "그룹 변경을 처리하지 못했습니다."
+      }
+    },
+    "dashboard": {
+      "tabsLabel": "노드 대시보드 탭",
+      "tab": {
+        "overview": "개요",
+        "flows": "플로우",
+        "agents": "에이전트",
+        "devices": "디바이스"
+      },
+      "systemInfo": "시스템 정보",
+      "summary": "운영 요약",
+      "hostname": "호스트명",
+      "os": "운영체제",
+      "arch": "아키텍처",
+      "version": "버전",
+      "uptime": "업타임",
+      "uptimeUnreported": "미보고",
+      "running": "실행 중",
+      "stopped": "중지됨",
+      "connected": "연결됨"
     }
   }
 }

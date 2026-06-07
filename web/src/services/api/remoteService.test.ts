@@ -8,12 +8,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
 const patchMock = vi.hoisted(() => vi.fn());
+const putMock = vi.hoisted(() => vi.fn());
 const delMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./client', () => ({
   get: getMock,
   post: postMock,
   patch: patchMock,
+  put: putMock,
   del: delMock,
 }));
 
@@ -25,6 +27,7 @@ beforeEach(() => {
   getMock.mockReset();
   postMock.mockReset();
   patchMock.mockReset();
+  putMock.mockReset();
   delMock.mockReset();
 });
 
@@ -85,6 +88,48 @@ describe('remoteService — 수동 등록 / 삭제', () => {
     delMock.mockResolvedValueOnce(undefined);
     await remoteService.deleteNode('a/b c');
     expect(delMock).toHaveBeenCalledWith('/remote/nodes/a%2Fb%20c');
+  });
+});
+
+describe('remoteService — 노드 그룹핑 + 상세 (M9, 그룹 K)', () => {
+  it('listRemoteGroups 는 GET /remote/groups 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce([{ group_name: '', node_count: 2 }]);
+    const res = await remoteService.listRemoteGroups();
+    expect(getMock).toHaveBeenCalledWith('/remote/groups');
+    expect(res).toEqual([{ group_name: '', node_count: 2 }]);
+  });
+
+  it('getRemoteNodeDetail 는 GET /remote/nodes/{id} 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce({ instance_id: 'n-1', uptime: null });
+    await remoteService.getRemoteNodeDetail('n-1');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/n-1');
+  });
+
+  it('getRemoteNodeDetail 는 instance_id 를 URL 인코딩한다', async () => {
+    getMock.mockResolvedValueOnce({});
+    await remoteService.getRemoteNodeDetail('a/b');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/a%2Fb');
+  });
+
+  it('setRemoteNodeGroup 는 PUT .../group 을 group_name 본문과 함께 호출한다', async () => {
+    putMock.mockResolvedValueOnce(undefined);
+    await remoteService.setRemoteNodeGroup('n-1', 'prod');
+    expect(putMock).toHaveBeenCalledWith('/remote/nodes/n-1/group', {
+      group_name: 'prod',
+    });
+  });
+
+  it('clearRemoteNodeGroup 는 DELETE .../group 을 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.clearRemoteNodeGroup('n-1');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/n-1/group');
+  });
+
+  it('getRemoteNodeDetail 의 404 에러는 호출자로 전파된다', async () => {
+    getMock.mockRejectedValueOnce(new APIError('NOT_FOUND', 'missing', 404));
+    await expect(remoteService.getRemoteNodeDetail('x')).rejects.toBeInstanceOf(
+      APIError,
+    );
   });
 });
 

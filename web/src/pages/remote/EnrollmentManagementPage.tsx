@@ -1,18 +1,16 @@
-// 원격 관리 — 관리 노드 목록 페이지 (SPEC-REMOTE-001 M5, G01 + G02).
+// 등록 관리 페이지 (SPEC-REMOTE-001 M9, 그룹 K, REQ-K15).
 //
-// 책임:
-//   - 전체 관리 노드를 테이블로 표시 (instance_id, hostname, version,
-//     online/offline, 등록 상태 배지, last_seen).
-//   - 상태별 행 액션:
-//       pending  → 승인 / 거부
-//       approved → 폐기
-//   - 거부/폐기는 파괴적이므로 확인 다이얼로그를 거친다.
-//   - 승인/거부/폐기 결과는 토스트로 피드백한다.
+// 사이드바 `원격 관리`의 온보딩 진입점이다. 기존 RemoteNodesPage(M5/H)의 노드
+// 등록/승인 UI 와 Enrollment 토큰 관리를 한 페이지에 모은다(OQ-K6 흡수):
+//   (a) 노드 등록 관리 — 승인 큐(승인/거부) + 승인됨 노드 폐기 + 삭제 + 사전 등록
+//       (PreRegisterNodeDialog). 노드 LIST/제어는 `노드 관리`로 이관되었으므로,
+//       본 페이지는 온보딩(등록/승인) 표면만 담당한다.
+//   (b) 토큰 관리 — EnrollmentTokenSection(발급/목록/폐기).
 //
-// 권한: admin 전용 (라우트 가드 + 백엔드 검증). 본 페이지는 UI 레벨 보조이다.
+// 권한/모드: admin 전용 라우트 + server 모드에서만 쿼리를 발행한다.
 
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Network, Plus, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, Plus, Trash2, UserCheck, XCircle } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/remote/ConfirmDialog';
 import { EnrollmentTokenSection } from '@/components/remote/EnrollmentTokenSection';
@@ -40,17 +38,30 @@ interface PendingConfirm {
   kind: 'reject' | 'revoke' | 'delete';
 }
 
-export default function RemoteNodesPage(): React.JSX.Element {
+const CONFIRM_TITLE_KEY: Record<PendingConfirm['kind'], string> = {
+  reject: 'remote.confirm.rejectTitle',
+  revoke: 'remote.confirm.revokeTitle',
+  delete: 'remote.confirm.deleteTitle',
+};
+
+const CONFIRM_DESC_KEY: Record<PendingConfirm['kind'], string> = {
+  reject: 'remote.confirm.rejectDesc',
+  revoke: 'remote.confirm.revokeDesc',
+  delete: 'remote.confirm.deleteDesc',
+};
+
+const CONFIRM_ACTION_KEY: Record<PendingConfirm['kind'], string> = {
+  reject: 'remote.action.reject',
+  revoke: 'remote.action.revoke',
+  delete: 'remote.action.delete',
+};
+
+export default function EnrollmentManagementPage(): React.JSX.Element {
   const { t } = useTranslation();
-  // server 모드가 아니면 노드 쿼리를 막아 404 노이즈를 방지하고 안내를 표시한다.
   const { data: remoteMode } = useRemoteMode();
   const isServer = remoteMode?.mode === 'server';
-  const {
-    data: nodes,
-    isLoading,
-    error,
-    refetch,
-  } = useManagedNodes(undefined, isServer);
+
+  const { data: nodes, isLoading, error, refetch } = useManagedNodes(undefined, isServer);
   const addNotification = useUIStore((s) => s.addNotification);
 
   const approve = useApproveNode();
@@ -64,17 +75,13 @@ export default function RemoteNodesPage(): React.JSX.Element {
 
   const allNodes = useMemo<ManagedNode[]>(() => nodes ?? [], [nodes]);
 
-  // 승인 핸들러 (확인 불필요).
   const handleApprove = (node: ManagedNode): void => {
     approve.mutate(node.instance_id, {
-      onSuccess: () =>
-        addNotification({ type: 'success', message: t('remote.toast.approved') }),
-      onError: () =>
-        addNotification({ type: 'error', message: t('remote.toast.actionFailed') }),
+      onSuccess: () => addNotification({ type: 'success', message: t('remote.toast.approved') }),
+      onError: () => addNotification({ type: 'error', message: t('remote.toast.actionFailed') }),
     });
   };
 
-  // 확인 다이얼로그 확정 핸들러.
   const handleConfirm = (): void => {
     if (!confirm) return;
     const { node, kind } = confirm;
@@ -101,7 +108,6 @@ export default function RemoteNodesPage(): React.JSX.Element {
     }
   };
 
-  // 사전 등록 제출 핸들러. 실패 시 모달이 에러를 표시할 수 있도록 에러를 전파한다.
   const handlePreRegister = async (instanceId: string, name: string): Promise<void> => {
     await preRegister.mutateAsync({
       instance_id: instanceId,
@@ -113,7 +119,7 @@ export default function RemoteNodesPage(): React.JSX.Element {
 
   const confirmPending = reject.isPending || revoke.isPending || deleteNode.isPending;
 
-  // --- 비-server 모드: 안내만 표시하고 쿼리는 발행하지 않는다 ---
+  // --- 비-server 모드 ---
   if (remoteMode && !isServer) {
     return (
       <div className="space-y-6">
@@ -123,35 +129,30 @@ export default function RemoteNodesPage(): React.JSX.Element {
     );
   }
 
-  // --- 로딩 상태 (모드 미확정 또는 노드 로딩 중) ---
+  // --- 로딩 ---
   if (!remoteMode || (isLoading && !nodes)) {
     return (
-      <div className="space-y-6" data-testid="remote-nodes-loading">
+      <div className="space-y-6" data-testid="enrollment-management-loading">
         <PageHeader />
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-14 animate-pulse rounded bg-(--color-bg-elevated)"
-            />
+            <div key={i} className="h-14 animate-pulse rounded bg-(--color-bg-elevated)" />
           ))}
         </div>
       </div>
     );
   }
 
-  // --- 에러 상태 ---
+  // --- 에러 ---
   if (error) {
     return (
       <div className="space-y-6">
         <PageHeader />
         <div
+          data-testid="enrollment-management-error"
           className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20"
-          data-testid="remote-nodes-error"
         >
-          <p className="text-sm text-red-700 dark:text-red-400">
-            {t('remote.loadError')}
-          </p>
+          <p className="text-sm text-red-700 dark:text-red-400">{t('remote.loadError')}</p>
           <button
             type="button"
             onClick={() => refetch()}
@@ -168,53 +169,61 @@ export default function RemoteNodesPage(): React.JSX.Element {
     <div className="space-y-6">
       <PageHeader onPreRegister={() => setPreRegisterOpen(true)} />
 
-      {allNodes.length === 0 ? (
-        <div
-          className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-16 text-center"
-          data-testid="remote-nodes-empty"
+      {/* 노드 등록 관리 (승인 큐 + 폐기/삭제) */}
+      <section aria-labelledby="enrollment-nodes-heading" className="space-y-3">
+        <h2
+          id="enrollment-nodes-heading"
+          className="text-sm font-semibold text-(--color-text-primary)"
         >
-          <Network className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" aria-hidden="true" />
-          <p className="mt-4 text-sm text-(--color-text-muted)">
-            {t('remote.noNodes')}
-          </p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
-          <table
-            className="min-w-full divide-y divide-(--color-border-default)"
-            aria-label={t('remote.nodesTableLabel')}
+          {t('remote.enrollmentManagement.nodesHeading')}
+        </h2>
+
+        {allNodes.length === 0 ? (
+          <div
+            data-testid="enrollment-nodes-empty"
+            className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-12 text-center"
           >
-            <thead className="bg-(--color-bg-primary)">
-              <tr>
-                <Th>{t('remote.col.hostname')}</Th>
-                <Th>{t('remote.col.instanceId')}</Th>
-                <Th>{t('remote.col.version')}</Th>
-                <Th>{t('remote.col.online')}</Th>
-                <Th>{t('remote.col.status')}</Th>
-                <Th>{t('remote.col.lastSeen')}</Th>
-                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)" scope="col">
-                  {t('remote.col.actions')}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
-              {allNodes.map((node) => (
-                <NodeRow
-                  key={node.instance_id}
-                  node={node}
-                  onApprove={() => handleApprove(node)}
-                  onReject={() => setConfirm({ node, kind: 'reject' })}
-                  onRevoke={() => setConfirm({ node, kind: 'revoke' })}
-                  onDelete={() => setConfirm({ node, kind: 'delete' })}
-                  approvePending={
-                    approve.isPending && approve.variables === node.instance_id
-                  }
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            <UserCheck className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+            <p className="mt-3 text-sm text-(--color-text-muted)">{t('remote.noNodes')}</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+            <table
+              className="min-w-full divide-y divide-(--color-border-default)"
+              aria-label={t('remote.nodesTableLabel')}
+            >
+              <thead className="bg-(--color-bg-primary)">
+                <tr>
+                  <Th>{t('remote.col.hostname')}</Th>
+                  <Th>{t('remote.col.instanceId')}</Th>
+                  <Th>{t('remote.col.online')}</Th>
+                  <Th>{t('remote.col.status')}</Th>
+                  <Th>{t('remote.col.lastSeen')}</Th>
+                  <th
+                    scope="col"
+                    className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                  >
+                    {t('remote.col.actions')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+                {allNodes.map((node) => (
+                  <NodeRow
+                    key={node.instance_id}
+                    node={node}
+                    onApprove={() => handleApprove(node)}
+                    onReject={() => setConfirm({ node, kind: 'reject' })}
+                    onRevoke={() => setConfirm({ node, kind: 'revoke' })}
+                    onDelete={() => setConfirm({ node, kind: 'delete' })}
+                    approvePending={approve.isPending && approve.variables === node.instance_id}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Enrollment 토큰 관리 섹션 */}
       <div className="border-t border-(--color-border-default) pt-6">
@@ -254,30 +263,10 @@ export default function RemoteNodesPage(): React.JSX.Element {
   );
 }
 
-// ---- 확인 다이얼로그 i18n 키 매핑 ----
-
-const CONFIRM_TITLE_KEY: Record<PendingConfirm['kind'], string> = {
-  reject: 'remote.confirm.rejectTitle',
-  revoke: 'remote.confirm.revokeTitle',
-  delete: 'remote.confirm.deleteTitle',
-};
-
-const CONFIRM_DESC_KEY: Record<PendingConfirm['kind'], string> = {
-  reject: 'remote.confirm.rejectDesc',
-  revoke: 'remote.confirm.revokeDesc',
-  delete: 'remote.confirm.deleteDesc',
-};
-
-const CONFIRM_ACTION_KEY: Record<PendingConfirm['kind'], string> = {
-  reject: 'remote.action.reject',
-  revoke: 'remote.action.revoke',
-  delete: 'remote.action.delete',
-};
-
 // ---- 페이지 헤더 ----
 
 interface PageHeaderProps {
-  /** 헤더 우측 액션 영역 (사전 등록 버튼 등). server 모드에서만 노출. */
+  /** 사전 등록 버튼 핸들러. server 모드에서만 노출. */
   onPreRegister?: () => void;
 }
 
@@ -285,14 +274,16 @@ function PageHeader({ onPreRegister }: PageHeaderProps): React.JSX.Element {
   const { t } = useTranslation();
   return (
     <header
-      data-testid="remote-nodes-header"
+      data-testid="enrollment-management-header"
       className="flex items-start justify-between gap-4"
     >
       <div>
         <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-          {t('remote.title')}
+          {t('remote.enrollmentManagement.title')}
         </h1>
-        <p className="mt-1 text-sm text-(--color-text-muted)">{t('remote.subtitle')}</p>
+        <p className="mt-1 text-sm text-(--color-text-muted)">
+          {t('remote.enrollmentManagement.subtitle')}
+        </p>
       </div>
       {onPreRegister && (
         <button
@@ -308,8 +299,6 @@ function PageHeader({ onPreRegister }: PageHeaderProps): React.JSX.Element {
     </header>
   );
 }
-
-// ---- 테이블 헤더 셀 ----
 
 function Th({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -333,7 +322,6 @@ interface NodeRowProps {
   approvePending: boolean;
 }
 
-/** 단일 노드 테이블 행 + 상태별 액션. */
 function NodeRow({
   node,
   onApprove,
@@ -343,8 +331,7 @@ function NodeRow({
   approvePending,
 }: NodeRowProps): React.JSX.Element {
   const { t } = useTranslation();
-  const lastSeen =
-    node.last_seen > 0 ? formatDate(new Date(node.last_seen), 'long') : '-';
+  const lastSeen = node.last_seen > 0 ? formatDate(new Date(node.last_seen), 'long') : '-';
 
   return (
     <tr data-testid="remote-node-row" data-instance-id={node.instance_id}>
@@ -354,18 +341,13 @@ function NodeRow({
       <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-(--color-text-muted)">
         {node.instance_id}
       </td>
-      <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-        {node.version || '-'}
-      </td>
       <td className="whitespace-nowrap px-4 py-3">
         <NodeOnlineIndicator online={node.online} />
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <NodeStatusBadge status={node.status} />
       </td>
-      <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-        {lastSeen}
-      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">{lastSeen}</td>
       <td className="whitespace-nowrap px-4 py-3 text-right">
         <div className="inline-flex items-center justify-end gap-2">
           {node.status === 'pending' && (
@@ -401,7 +383,6 @@ function NodeRow({
               {t('remote.action.revoke')}
             </button>
           )}
-          {/* 삭제는 폐기와 달리 항목 자체를 제거한다 — 모든 상태에서 제공. */}
           <button
             type="button"
             onClick={onDelete}
