@@ -58,8 +58,43 @@ type MirrorRepository interface {
 	// 삭제 시 orphan 정리). 행이 없어도 에러가 아니다(멱등).
 	DeleteByNode(ctx context.Context, instanceID string) error
 
+	// NodeSummary 는 한 노드의 운영 요약을 미러 데이터에서 파생해 반환한다(v1.4 M9,
+	// REQ-K10/A15). 플로우(카운트+running/stopped), 에이전트(카운트+connected), 디바이스
+	// (카운트+online)를 미러 행 status 로 집계한다. 노드가 오프라인이어도 미러 행이
+	// 보존되므로 last-known 요약을 제공한다(REQ-E06 일관). 신규 노드 왕복 질의 없음.
+	NodeSummary(ctx context.Context, instanceID string) (NodeOperationalSummary, error)
+
 	// Close 는 저장소 리소스를 정리한다.
 	Close() error
+}
+
+// NodeOperationalSummary 는 한 노드의 미러 파생 운영 요약이다(v1.4 M9, REQ-K10).
+//
+// 모든 수치는 기존 미러(그룹 E) 행 집계에서 파생된다(신규 노드 왕복 없음 — A15).
+// 오프라인 노드도 last-known 미러로 요약이 제공된다(REQ-E06).
+type NodeOperationalSummary struct {
+	Flows   FlowSummary   `json:"flows"`
+	Agents  AgentSummary  `json:"agents"`
+	Devices DeviceSummary `json:"devices"`
+}
+
+// FlowSummary 는 플로우 카운트 + 상태 분해이다(running/stopped — REQ-K10).
+type FlowSummary struct {
+	Total   int `json:"total"`
+	Running int `json:"running"`
+	Stopped int `json:"stopped"`
+}
+
+// AgentSummary 는 에이전트 카운트 + 상태 분해이다(connected — REQ-K10).
+type AgentSummary struct {
+	Total     int `json:"total"`
+	Connected int `json:"connected"`
+}
+
+// DeviceSummary 는 디바이스 카운트 + 상태 분해이다(online — REQ-K10).
+type DeviceSummary struct {
+	Total  int `json:"total"`
+	Online int `json:"online"`
 }
 
 // NewMirrorRepository 는 storage type 에 따라 MirrorRepository 구현을 생성한다.

@@ -250,6 +250,77 @@ func (r *MirrorSQLiteRepository) ListAllDevices(ctx context.Context) ([]Mirrored
 	return r.listAll(ctx, "mirrored_devices", "device")
 }
 
+// NodeSummary 는 한 노드의 운영 요약을 미러 데이터에서 파생해 반환한다(v1.4 M9,
+// REQ-K10/A15). 세 미러 테이블의 status 별 카운트를 GROUP BY 로 집계한다. 미러 행은
+// 노드 오프라인 시에도 보존되므로 last-known 요약을 제공한다(REQ-E06). 빈 노드는
+// 모든 카운트가 0 인 요약을 반환한다(에러 아님).
+func (r *MirrorSQLiteRepository) NodeSummary(ctx context.Context, instanceID string) (NodeOperationalSummary, error) {
+	flowCounts, err := r.statusCounts(ctx, "mirrored_flows", instanceID)
+	if err != nil {
+		return NodeOperationalSummary{}, err
+	}
+	agentCounts, err := r.statusCounts(ctx, "mirrored_agents", instanceID)
+	if err != nil {
+		return NodeOperationalSummary{}, err
+	}
+	deviceCounts, err := r.statusCounts(ctx, "mirrored_devices", instanceID)
+	if err != nil {
+		return NodeOperationalSummary{}, err
+	}
+
+	return NodeOperationalSummary{
+		Flows: FlowSummary{
+			Total:   sumCounts(flowCounts),
+			Running: flowCounts["running"],
+			Stopped: flowCounts["stopped"],
+		},
+		Agents: AgentSummary{
+			Total:     sumCounts(agentCounts),
+			Connected: agentCounts["connected"],
+		},
+		Devices: DeviceSummary{
+			Total:  sumCounts(deviceCounts),
+			Online: deviceCounts["online"],
+		},
+	}, nil
+}
+
+// statusCounts 는 한 노드의 kind 테이블에서 status 별 행 수를 집계해 반환한다(REQ-K10).
+func (r *MirrorSQLiteRepository) statusCounts(ctx context.Context, table, instanceID string) (map[string]int, error) {
+	rows, err := r.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT status, COUNT(*) FROM %s WHERE source_instance_id = ? GROUP BY status`, table),
+		instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("status counts %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var (
+			status string
+			count  int
+		)
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("scan status count %s: %w", table, err)
+		}
+		out[status] += count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate status counts %s: %w", table, err)
+	}
+	return out, nil
+}
+
+// sumCounts 는 status 카운트 맵의 총합(노드별 자원 총 수)을 반환한다.
+func sumCounts(counts map[string]int) int {
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+	return total
+}
+
 // DeleteByNode 는 한 노드의 모든 미러 행을 삭제한다(노드 삭제 시 orphan 정리). 멱등.
 func (r *MirrorSQLiteRepository) DeleteByNode(ctx context.Context, instanceID string) error {
 	for _, table := range []string{"mirrored_flows", "mirrored_agents", "mirrored_devices"} {

@@ -192,7 +192,9 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 			return p.InstanceID, true
 		}
 
-		// 신규 노드 → pending 큐잉(REQ-C02).
+		// 신규 노드 → pending 큐잉(REQ-C02). 최초 register 의 BASIC 시스템 정보
+		// (os/arch/started_at)를 함께 저장한다(v1.4 M9, REQ-K07/K08). 구버전 노드가
+		// 미보고하면 빈값/0 으로 저장되어 회귀가 없다(REQ-K09).
 		node := storage.ManagedNode{
 			InstanceID: p.InstanceID,
 			Hostname:   p.Hostname,
@@ -200,6 +202,9 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 			Status:     RegStatusPending,
 			Online:     true,
 			LastSeen:   time.Now().UnixMilli(),
+			OS:         p.OS,
+			Arch:       p.Arch,
+			StartedAt:  p.StartedAt,
 		}
 		if upErr := s.repo.Upsert(ctx, node); upErr != nil {
 			s.logger.Error("등록 pending 저장 실패", "instance_id", p.InstanceID, "error", upErr)
@@ -241,7 +246,11 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 	}
 }
 
-// updateNodeMeta 는 register 시 hostname/version 메타를 갱신한다(상태는 보존).
+// updateNodeMeta 는 register 시 hostname/version 메타를 갱신한다(상태·group_name 보존).
+//
+// v1.4(M9): BASIC 시스템 정보(os/arch/started_at)는 SetSystemInfo 로 제공된 필드만
+// 갱신한다(REQ-K08). Upsert 는 group_name/os/arch/started_at 을 ON CONFLICT 에서 보존
+// 하므로(관리자/시스템 소유), 시스템 정보 갱신은 별도 경로(SetSystemInfo)로 수행한다.
 func (s *Server) updateNodeMeta(ctx context.Context, p RegisterPayload) {
 	node, err := s.repo.Get(ctx, p.InstanceID)
 	if err != nil {
@@ -253,6 +262,23 @@ func (s *Server) updateNodeMeta(ctx context.Context, p RegisterPayload) {
 	node.LastSeen = time.Now().UnixMilli()
 	if upErr := s.repo.Upsert(ctx, node); upErr != nil {
 		s.logger.Debug("노드 메타 갱신 실패", "instance_id", p.InstanceID, "error", upErr)
+	}
+	// 재기동 register 의 시스템 정보(started_at 등)를 제공 시에만 갱신한다(REQ-K08/K09).
+	s.storeSystemInfo(ctx, p.InstanceID, p.OS, p.Arch, p.StartedAt)
+}
+
+// storeSystemInfo 는 노드가 보고한 BASIC 시스템 정보를 저장한다(v1.4 M9, REQ-K08).
+// 모든 필드가 비어 있으면(구버전 노드 — 미보고) no-op 으로 회귀를 피한다(REQ-K09).
+// repo 미구성(M1 모드)에서도 안전하게 무시된다.
+func (s *Server) storeSystemInfo(ctx context.Context, instanceID, osName, arch string, startedAtMs int64) {
+	if s.repo == nil {
+		return
+	}
+	if osName == "" && arch == "" && startedAtMs == 0 {
+		return // 미보고(구버전 노드) — 보존, 회귀 0.
+	}
+	if err := s.repo.SetSystemInfo(ctx, instanceID, osName, arch, startedAtMs); err != nil {
+		s.logger.Debug("시스템 정보 저장 생략", "instance_id", instanceID, "error", err)
 	}
 }
 

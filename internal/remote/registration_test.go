@@ -108,6 +108,58 @@ func (m *memManagedNodeRepo) Delete(_ context.Context, instanceID string) error 
 	return nil
 }
 
+// SetNodeGroup 은 노드의 그룹 라벨을 설정한다(v1.4 M9, REQ-K02).
+func (m *memManagedNodeRepo) SetNodeGroup(_ context.Context, instanceID, groupName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nodes[instanceID]
+	if !ok {
+		return storage.ErrManagedNodeNotFound
+	}
+	n.GroupName = groupName
+	m.nodes[instanceID] = n
+	return nil
+}
+
+// ListGroups 는 distinct 그룹 라벨 + 카운트를 반환한다(항상 "전체" 포함 — REQ-K03).
+func (m *memManagedNodeRepo) ListGroups(_ context.Context) ([]storage.NodeGroupCount, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	counts := map[string]int{}
+	for _, n := range m.nodes {
+		counts[n.GroupName]++
+	}
+	out := []storage.NodeGroupCount{{GroupName: "", NodeCount: counts[""]}}
+	for g, c := range counts {
+		if g == "" {
+			continue
+		}
+		out = append(out, storage.NodeGroupCount{GroupName: g, NodeCount: c})
+	}
+	return out, nil
+}
+
+// SetSystemInfo 는 제공된 BASIC 시스템 정보 필드만 갱신한다(미제공은 보존 — REQ-K08/K09).
+func (m *memManagedNodeRepo) SetSystemInfo(_ context.Context, instanceID, osName, arch string, startedAtMs int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nodes[instanceID]
+	if !ok {
+		return storage.ErrManagedNodeNotFound
+	}
+	if osName != "" {
+		n.OS = osName
+	}
+	if arch != "" {
+		n.Arch = arch
+	}
+	if startedAtMs != 0 {
+		n.StartedAt = startedAtMs
+	}
+	m.nodes[instanceID] = n
+	return nil
+}
+
 func (m *memManagedNodeRepo) Close() error { return nil }
 
 // fakeTokenIssuer 는 TokenIssuer 의 테스트 구현이다. subject→token 매핑을 단순화하고,

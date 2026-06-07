@@ -317,9 +317,69 @@
 - When: (a) 노드가 오프라인이 되거나 연결이 종료되고, (b) 브라우저가 세션 종료 또는 `unsubscribe` 하며, (c) 소비자가 느려 갱신이 쌓인다.
 - Then: (a) 해당 노드의 모든 구독이 자동 teardown 되고, (b) unsubscribe 가 노드로 전파되어 노드 측 소스 구독이 해제되며, (c) 백프레셔(최신값 우선 coalesce/drop 또는 속도 제한)로 메모리 폭증이 방지된다. 구독 누수가 없다.
 
+### AC-51: 노드 단일 그룹 배정·해제 (REQ-K01, K02)
+
+- Given: 승인된 관리 노드가 있고, 그룹이 미지정(빈 라벨="전체")이다.
+- When: 관리자가 `PUT /api/v1/remote/nodes/{instance_id}/group {group_name:"공장A"}` 로 그룹을 배정한 뒤, 다시 `DELETE .../group`(또는 빈 문자열)로 해제한다.
+- Then: 배정 후 노드의 `group_name` 이 "공장A" 가 되어 해당 그룹에 나타나고(노드당 최대 1 그룹), 해제 후 빈 라벨로 환원되어 "전체" 버킷에 다시 표시된다. 어느 경우에도 노드로 명령이 전파되지 않는다(서버 운영 메타데이터 — A13).
+
+### AC-52: distinct 그룹 목록 + "전체" 항상 포함 (REQ-K03)
+
+- Given: 일부 노드는 "공장A"/"공장B" 그룹에, 일부는 미지정이다.
+- When: 관리자가 `GET /api/v1/remote/groups` 를 호출한다.
+- Then: distinct 그룹 목록("공장A", "공장B")과 기본 버킷 **"전체"** 가 항상 포함되어 반환되며, 각 그룹의 노드 수가 함께 제공된다(별도 그룹 엔티티 없이 group_name distinct 집계).
+
+### AC-53: 그룹별 노드 목록 — 미지정은 "전체" (REQ-K04)
+
+- Given: 여러 노드가 서로 다른 그룹/미지정 상태로 존재한다.
+- When: 관리자가 그룹별 노드 목록(`GET /api/v1/remote/nodes?group_by=group`)을 조회한다.
+- Then: 노드가 그룹별로 묶여 반환되고, 그룹 미지정(빈 라벨) 노드는 **"전체"** 버킷에 모이며, 각 노드 항목은 online/status·시스템 정보 요약을 포함한다.
+
+### AC-54: 그룹 이름 변경·삭제 의미 — 재라벨링·환원 (REQ-K05)
+
+- Given: "공장A" 그룹에 노드 2개가 속해 있다.
+- When: (a) "공장A" 를 "공장A-1" 로 이름 변경하거나, (b) "공장A" 그룹을 비운다(삭제).
+- Then: (a) 두 노드의 `group_name` 이 "공장A-1" 로 재라벨링되고(그룹 엔티티가 아니라 구성원 라벨 변경), (b) 두 노드가 빈 라벨로 환원되어 "전체"로 이동하며 빈 "공장A" 는 distinct 목록에서 자동 소멸한다.
+
+### AC-55: 그룹 작업 admin 게이팅 (REQ-K06, F04)
+
+- Given: 비-관리자 사용자 또는 비-server 모드 인스턴스이다.
+- When: 그룹 배정/해제/목록 엔드포인트에 접근을 시도한다.
+- Then: 기존 `/remote/*` admin 인증으로 거부된다(관리자·server 모드에서만 허용).
+
+### AC-56: 노드 시스템 정보 보고(BASIC) + 하위 호환 (REQ-K07, K09, N03)
+
+- Given: (a) 시스템 정보를 보고하는 신규 노드와 (b) 보고하지 않는 구버전 노드가 있다.
+- When: 각 노드가 `register`(및 이후 `heartbeat`)로 접속한다.
+- Then: (a) 노드의 `os`/`arch`/`version`/`started_at`(epoch ms)이 서버에 저장되고(자원 메트릭 CPU/메모리/디스크는 보고/저장되지 않음), (b) 구버전 노드는 해당 필드 없이도 등록·관리가 정상 동작하며 미보고 필드는 빈값/미표시로 처리된다(회귀 0).
+
+### AC-57: 시스템 정보 저장·노출 + uptime 파생 (REQ-K08)
+
+- Given: 노드가 `started_at` 을 보고했다.
+- When: 관리자가 노드 상세/목록 API 를 조회한다.
+- Then: hostname/OS/arch/version/online/last_seen/status 와 함께 **uptime 이 `started_at` 과 서버 현재 시각의 차로 산출**되어 노출된다(별도 uptime 필드 저장 없음).
+
+### AC-58: 노드별 운영 요약 — 미러 파생 (REQ-K10, A15, E06)
+
+- Given: 노드가 플로우/에이전트/디바이스를 미러링한 상태이며, 일부는 running/connected/online 이다.
+- When: 관리자가 노드 상세(운영 요약)를 조회한다(노드 온라인 또는 오프라인 상태에서).
+- Then: 플로우(카운트+running/stopped), 에이전트(카운트+connected), 디바이스(카운트+online) 요약이 **기존 미러(그룹 E) 집계로 파생**되어 반환된다. 신규 노드 왕복 질의 없이 계산되며, 노드 오프라인 시에도 last-known 미러로 요약이 제공된다.
+
+### AC-59: 사이드바 IA 재편 + 노드 대시보드 (REQ-K11, K12, K13, K14)
+
+- Given: server 모드 + admin 인 관리자가 사이드바를 본다.
+- When: `원격 관리` 그룹을 열고 `노드 관리` 에서 그룹 트리의 노드를 선택한다.
+- Then: 사이드바에 `노드 관리` + `등록 관리` 두 진입점이 표시되고(기존 `관리 노드`/`원격 노드 제어` 대체), `노드 관리` 는 단일 레벨 그룹 트리("전체" 기본)를 보이며, 노드 선택 시 **노드 대시보드**(시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭)가 표시된다. 서브탭은 별도 화면 없이 **M8 통합 제어**(`target=remote:{instanceId}`)를 재사용하고, 변경은 그룹 D/I 경로로만 수행된다.
+
+### AC-60: 등록 관리 통합 + IA 마이그레이션·딥링크 보존 (REQ-K15, K16)
+
+- Given: server 모드 + admin 관리자가 `등록 관리` 를 연다.
+- When: 토큰 발급/목록/폐기와 pending 노드 승인/거부/폐기·사전 등록을 수행하고, 기존 `/admin/remote/control` 딥링크로 접근한다.
+- Then: `등록 관리` 가 토큰 관리(`EnrollmentTokenSection`)와 노드 등록 관리(승인 큐·승인/거부/폐기·`PreRegisterNodeDialog`)를 한 페이지에 제공하고, 기존 `/admin/remote/control` 은 `노드 관리` 로 도달(리다이렉트)되며, M8 통합 제어·원격 편집기 라우트는 노드 대시보드 서브탭에서 도달 가능하다(로컬/원격 UX 비분기).
+
 ## 2. 품질 게이트 (Definition of Done)
 
-- [ ] 모든 EARS 요구사항(REQ-REMOTE-A01~J16, N01~N04)에 대응 인수 시나리오 통과.
+- [ ] 모든 EARS 요구사항(REQ-REMOTE-A01~J16, K01~K16, N01~N04)에 대응 인수 시나리오 통과.
 - [ ] 백엔드: 신규 코드(`internal/remote/*`, `managed_node_*`, remote 핸들러, instance_id) TDD, 커버리지 85%+.
 - [ ] 백엔드: 기존 변경(config types/defaults/validate, 어댑터 명령 진입, main.go 배선) 동작 보존 — 기존 회귀 스위트 100% 통과.
 - [ ] ws/auth/adapter 인프라 재사용 — 기존 ws/auth/adapter 테스트 전부 통과(회귀 0).
@@ -335,6 +395,9 @@
 - [ ] 원격 편집(프론트, 추후): 시각 편집기 원격 재사용·에이전트 설정 surface·생성/삭제·피드백·게이팅 Vitest 통과.
 - [ ] 원격 제어 패리티(그룹 J, 백엔드): per-domain query-action allowlist(FULL 커버리지)·게이팅(승인·온라인·노출)·redaction·상관/타임아웃·실패 의미(503/504/502)·READ-ONLY 거부, 스트리밍 프록시(subscribe/stream_data/unsubscribe·teardown·백프레셔), 단기 TTL 캐시(무효화·라이브 우회) 검증.
 - [ ] 원격 제어 패리티(그룹 J, 프론트, 추후): 타깃 추상화(useFlowsTarget/useAgentsTarget/useDevicesTarget)·로컬 페이지/상세 패널 원격 재사용·FULL 패리티(상세/통계/상태/시리즈/노드 레벨)·스트림 구독 소비·노드 셀렉터·target 라우팅·폴링 폴백 Vitest 통과.
+- [ ] 노드 그룹핑(그룹 K, 백엔드): 단일 그룹 배정/해제·distinct 그룹("전체" 포함)·그룹별 노드·재라벨링/환원·admin 게이팅 검증.
+- [ ] 시스템 정보+운영 요약(그룹 K, 백엔드): register/heartbeat BASIC 시스템 정보 보고·하위 호환(미보고 빈값)·uptime started_at 파생·운영 요약 미러 파생(오프라인 last-known) 검증. 자원 메트릭(CPU/메모리/디스크) 비보고 확인.
+- [ ] UI 재편(그룹 K, 프론트, 추후): 사이드바 노드 관리+등록 관리(기존 진입점 대체·게이팅)·디렉토리 뷰(그룹 트리·"전체"·그룹 배정)·노드 대시보드(시스템+운영+M8 서브탭 재사용)·등록 관리(토큰+승인/사전 등록 이관)·딥링크 보존 Vitest 통과.
 - [ ] LSP 품질 게이트(run): error/type-error/lint-error 0.
 
 ## 3. 검증 방법·도구
@@ -347,6 +410,8 @@
 | 보안 | TLS(wss) 검증, jwt 인증/blacklist, redaction(secret_fields), 감사 로그 | F 그룹 |
 | 프론트 단위(추후) | Vitest + Testing Library | 관리 노드 목록/승인/자원 태깅/상태 피드백, 타깃 추상화·로컬 페이지 원격 재사용·노드 셀렉터·스트림 구독 소비·폴링 폴백(그룹 J) |
 | 프록시(그룹 J) | `go test` + testify | per-domain query-action allowlist(FULL 커버리지)·게이팅(승인·온라인·노출)·redaction·상관/타임아웃·실패 의미(503/504/502)·READ-ONLY 거부, 스트리밍(fan-out·teardown·백프레셔), 단기 TTL 캐시(무효화·라이브 우회) |
+| 그룹핑/시스템정보(그룹 K) | `go test` + testify | 단일 그룹 배정/해제·distinct("전체" 포함)·그룹별 노드·재라벨링/환원·admin 게이팅, register/heartbeat BASIC 시스템 정보 보고·하위 호환·uptime started_at 파생·운영 요약 미러 파생(오프라인 last-known) |
+| UI 재편(그룹 K, 추후) | Vitest + Testing Library | 사이드바 노드 관리+등록 관리(대체·게이팅)·디렉토리 뷰(그룹 트리·"전체"·배정)·노드 대시보드(시스템+운영+M8 서브탭)·등록 관리(토큰+승인/사전 등록)·딥링크 보존 |
 | 통합/회귀 | 기존 ws/auth/adapter 회귀 + end-to-end | 등록→승인→명령→미러, 원격 상세 query-action 패리티(상세/통계/노드 레벨)·실시간 스트림(상태/시리즈), 재연결, disabled 회귀 |
 | 품질 | TRUST 5, LSP 게이트 | run 단계 zero-error |
 
@@ -404,4 +469,14 @@
 | AC-48 | J12, J03 |
 | AC-49 | J16 |
 | AC-50 | J08b |
-| (전반) | A05, B05, F02, N01, J15 |
+| AC-51 | K01, K02 |
+| AC-52 | K03 |
+| AC-53 | K04 |
+| AC-54 | K05 |
+| AC-55 | K06, F04 |
+| AC-56 | K07, K09, N03 |
+| AC-57 | K08 |
+| AC-58 | K10, E06 |
+| AC-59 | K11, K12, K13, K14 |
+| AC-60 | K15, K16 |
+| (전반) | A05, B05, F02, N01, J15, A13, A14, A15 |

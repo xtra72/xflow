@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
@@ -100,6 +101,11 @@ func newVersionCmd() *cobra.Command {
 }
 
 func runServer(configFile, host string, port int, logLevel, logOutput string) error {
+	// 데몬 프로세스 시작 시각을 1회 캡처한다(epoch ms). 원격 관리 클라이언트의 BASIC
+	// 시스템 정보(started_at)로 보고되어 서버가 uptime 을 파생한다(v1.4 M9, REQ-K07/K08).
+	// protocol 내부가 아니라 여기서 1회 캡처해 ClientConfig 로 주입한다(시작 시각 안정성).
+	daemonStartedAtMs := time.Now().UnixMilli()
+
 	// 1. 설정 로딩
 	var loadOpts []config.LoadOption
 	if configFile != "" {
@@ -723,6 +729,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		remoteEditHandler       *handler.RemoteEditHandler
 		remoteQueryHandler      *handler.RemoteQueryHandler
 		remoteStreamHandler     *handler.RemoteStreamHandler
+		remoteGroupingHandler   *handler.RemoteGroupingHandler
 		managedNodeRepo         storage.ManagedNodeRepository
 		mirrorRepo              storage.MirrorRepository
 		remoteAuditRepo         storage.RemoteAuditRepository
@@ -820,6 +827,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		remoteStreamHandler = handler.NewRemoteStreamHandler(remoteServer, server.JWTService()).
 			WithLogger(obs.Loggers.NewLogger("api.handler.remote_stream").Logger())
 
+		// 노드 그룹핑 + 노드 상세 API(v1.4 그룹 K, M9): 노드 그룹 배정/해제·distinct 그룹
+		// 목록·노드 상세(BASIC 시스템 정보 + uptime + 미러 파생 운영 요약). 그룹은 서버
+		// 운영 메타데이터이므로 노드로 명령을 전파하지 않는다(A13). admin 게이팅(REQ-K06/F04).
+		// *remote.Server 가 NodeGroupingService 를 만족한다.
+		remoteGroupingHandler = handler.NewRemoteGroupingHandler(remoteServer)
+
 		logger.Info("원격 관리 서버 모드 활성화",
 			"endpoint", handler.RemoteWSPattern)
 	case "client":
@@ -867,6 +880,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 등록한다. SSE 는 http.Flusher 직접 접근이 필요하므로 raw 핸들러로 등록한다(WS 패턴 준용).
 	if remoteStreamHandler != nil {
 		remoteStreamHandler.RegisterRawHandlers(server.RegisterRawHandler)
+	}
+
+	// 9.5b'''''. 노드 그룹핑 + 노드 상세 API 등록(v1.4 그룹 K, M9). server 모드에서만 등록한다.
+	// GET /remote/nodes/{instance_id} 는 단일 세그먼트 패턴이므로 remote_admin 의 GET
+	// /remote/nodes·/pending(리터럴) 및 .../flows 등(더 긴 path)과 충돌하지 않는다.
+	if remoteGroupingHandler != nil {
+		server.RegisterRoutes(func(g *api.RouteGroup) {
+			remoteGroupingHandler.RegisterRoutes(g)
+		})
 	}
 
 	// 9.5d. 원격 관리 모드 조회 API 등록 (@SPEC:SPEC-REMOTE-001).
@@ -944,10 +966,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
 		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
 		remoteClient := remote.NewClient(remote.ClientConfig{
-			ServerURL:         rmCfg.ServerURL,
-			InstanceID:        instanceID,
-			Hostname:          hostname,
-			Version:           Version,
+			ServerURL:  rmCfg.ServerURL,
+			InstanceID: instanceID,
+			Hostname:   hostname,
+			Version:    Version,
+			// BASIC 시스템 정보(v1.4 M9, REQ-K07): runtime.GOOS/GOARCH + 데몬 시작 시각.
+			// register/heartbeat 로 보고되어 서버가 저장·uptime 파생한다(자원 메트릭 제외).
+			OS:                runtime.GOOS,
+			Arch:              runtime.GOARCH,
+			StartedAt:         daemonStartedAtMs,
 			HeartbeatInterval: rmCfg.HeartbeatInterval,
 			BootstrapSecret:   rmCfg.BootstrapSecret,
 			EnrollmentToken:   rmCfg.EnrollmentToken,

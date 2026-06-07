@@ -95,6 +95,15 @@ type ClientConfig struct {
 	Hostname string
 	Version  string
 
+	// OS / Arch / StartedAt 는 BASIC 시스템 정보이다(v1.4 M9, REQ-K07). cmd/xflowd 가
+	// runtime.GOOS / runtime.GOARCH / 데몬 시작 시각(epoch ms)을 1회 수집해 주입한다
+	// (started_at 은 protocol 내부에서 Date.now 류로 산출하지 말 것 — 호출 측 주입).
+	// register/heartbeat 에 운반되어 서버가 managed_nodes 에 저장한다(REQ-K08). 자원
+	// 메트릭(CPU/메모리/디스크)은 보고하지 않는다(본 마일스톤 제외).
+	OS        string
+	Arch      string
+	StartedAt int64
+
 	// HeartbeatInterval 은 heartbeat 주기이다(REQ-A05). 0 이면 기본값.
 	HeartbeatInterval time.Duration
 
@@ -638,11 +647,15 @@ func (c *Client) sendHandshake(conn Conn) error {
 }
 
 // sendHello 는 hello 메시지를 송신한다(REQ-B01, 토큰 보유 재접속 경로).
+// BASIC 시스템 정보(os/arch/started_at)를 함께 운반한다(v1.4 M9, REQ-K07).
 func (c *Client) sendHello(conn Conn) error {
 	msg, err := NewHelloMessage(HelloPayload{
 		InstanceID: c.cfg.InstanceID,
 		Hostname:   c.cfg.Hostname,
 		Version:    c.cfg.Version,
+		OS:         c.cfg.OS,
+		Arch:       c.cfg.Arch,
+		StartedAt:  c.cfg.StartedAt,
 	})
 	if err != nil {
 		return err
@@ -651,6 +664,7 @@ func (c *Client) sendHello(conn Conn) error {
 }
 
 // sendRegister 는 register 메시지를 송신한다(REQ-C01, 토큰 미보유 등록 경로).
+// BASIC 시스템 정보(os/arch/started_at)를 함께 보고한다(v1.4 M9, REQ-K07).
 func (c *Client) sendRegister(conn Conn) error {
 	msg, err := NewRegisterMessage(RegisterPayload{
 		InstanceID:      c.cfg.InstanceID,
@@ -659,6 +673,9 @@ func (c *Client) sendRegister(conn Conn) error {
 		Exposure:        c.cfg.Exposure,
 		BootstrapSecret: c.cfg.BootstrapSecret,
 		EnrollmentToken: c.cfg.EnrollmentToken,
+		OS:              c.cfg.OS,
+		Arch:            c.cfg.Arch,
+		StartedAt:       c.cfg.StartedAt,
 	})
 	if err != nil {
 		return err
@@ -666,9 +683,11 @@ func (c *Client) sendRegister(conn Conn) error {
 	return writeEnvelope(conn, msg)
 }
 
-// sendHeartbeat 는 heartbeat 메시지를 송신한다(REQ-B03).
+// sendHeartbeat 는 heartbeat 메시지를 송신한다(REQ-B03). BASIC 시스템 정보 갱신
+// (os/arch/version/started_at)을 함께 운반한다(v1.4 M9, REQ-K07).
 func (c *Client) sendHeartbeat(conn Conn) error {
-	msg, err := NewHeartbeatMessage(c.cfg.InstanceID)
+	msg, err := NewHeartbeatMessageWithInfo(
+		c.cfg.InstanceID, c.cfg.OS, c.cfg.Arch, c.cfg.Version, c.cfg.StartedAt)
 	if err != nil {
 		return err
 	}

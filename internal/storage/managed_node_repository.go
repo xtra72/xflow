@@ -18,8 +18,16 @@ var ErrManagedNodeNotFound = errors.New("managed node not found")
 
 // ManagedNode 는 managed_nodes 테이블의 단일 행을 표현한다(spec §5.4).
 //
-// LastSeen/CreatedAt/UpdatedAt 은 epoch milliseconds(int64) 이다(프로젝트 규약).
+// LastSeen/CreatedAt/UpdatedAt/StartedAt 은 epoch milliseconds(int64) 이다(프로젝트 규약).
 // TokenID 는 발급된 노드 토큰의 식별자(폐기 매핑용)이다(REQ-C04/C07).
+//
+// v1.4(M9, 그룹 K):
+//   - GroupName: 단일 그룹 라벨(서버 운영 메타데이터, 관리자 배정 전용 — A13/REQ-K01).
+//     빈값은 가상 "전체"(All) 버킷을 의미하며 예약 라벨로 영속하지 않는다(OQ-K5).
+//   - OS/Arch/StartedAt: 노드가 register/heartbeat 로 보고하는 BASIC 시스템 정보
+//     (REQ-K07/K08). 자원 메트릭(CPU/메모리/디스크)은 보고하지 않는다(본 마일스톤 제외).
+//     uptime 은 StartedAt 과 서버 현재 시각의 차로 파생하며 저장하지 않는다(REQ-K08).
+//     하위 호환: 미보고 노드는 빈값/0(REQ-K09).
 type ManagedNode struct {
 	InstanceID string // PK — 노드(xflow 설치본) 식별 UUID
 	Hostname   string
@@ -28,8 +36,21 @@ type ManagedNode struct {
 	TokenID    string // 발급된 노드 토큰 식별자(폐기 매핑). 미발급 시 빈 값.
 	LastSeen   int64  // 마지막 생존 신호 시각(epoch ms)
 	Online     bool   // 현재 연결 여부(오프라인 시에도 행은 보존 — REQ-E06)
+	GroupName  string // 단일 그룹 라벨(빈값=전체, 관리자 전용 — REQ-K01/K02)
+	OS         string // 노드 OS(runtime.GOOS, BASIC 시스템 정보 — REQ-K07)
+	Arch       string // 노드 arch(runtime.GOARCH, BASIC 시스템 정보 — REQ-K07)
+	StartedAt  int64  // 노드 프로세스 시작 시각(epoch ms, uptime 산출용 — REQ-K07/K08)
 	CreatedAt  int64  // 최초 등록 시각(epoch ms)
 	UpdatedAt  int64  // 마지막 갱신 시각(epoch ms)
+}
+
+// NodeGroupCount 는 distinct 그룹 라벨과 그 노드 수이다(REQ-K03).
+//
+// GroupName 이 빈 문자열이면 가상 "전체"(All) 버킷(그룹 미지정 노드)을 의미한다.
+// UI/API 는 빈 라벨을 "전체"로 표시한다(OQ-K5 — 예약 라벨 비영속).
+type NodeGroupCount struct {
+	GroupName string // 그룹 라벨(빈값=전체 버킷)
+	NodeCount int    // 해당 그룹의 노드 수
 }
 
 // ManagedNodeRepository 는 관리 노드의 영속 저장소 인터페이스이다(spec §5.4).
@@ -49,6 +70,24 @@ type ManagedNodeRepository interface {
 	// SetOnline 은 online 상태와 last_seen 을 갱신한다(행 삭제 없음 — REQ-E06).
 	// 없으면 ErrManagedNodeNotFound.
 	SetOnline(ctx context.Context, instanceID string, online bool, lastSeenMs int64) error
+
+	// --- v1.4(M9, 그룹 K): 노드 그룹핑 + BASIC 시스템 정보 ---
+
+	// SetNodeGroup 은 노드의 단일 그룹 라벨을 배정/변경/해제한다(REQ-K02). groupName
+	// 이 빈 문자열이면 그룹을 해제하여 "전체" 버킷으로 환원한다(REQ-K05). 그룹은 서버
+	// 운영 메타데이터이므로 노드로 명령을 전파하지 않는다(A13). 없으면 ErrManagedNodeNotFound.
+	SetNodeGroup(ctx context.Context, instanceID, groupName string) error
+	// ListGroups 는 현재 사용 중인 distinct 그룹 라벨과 노드 수를 반환한다(REQ-K03).
+	// 응답은 항상 가상 "전체" 버킷(GroupName="")의 노드 수를 포함하며(그룹 미지정 노드),
+	// 빈 그룹(구성원 0)은 자동으로 목록에서 사라진다(REQ-K05). 정렬: "전체" 먼저, 그
+	// 다음 그룹명 오름차순.
+	ListGroups(ctx context.Context) ([]NodeGroupCount, error)
+	// SetSystemInfo 는 노드가 보고한 BASIC 시스템 정보(os/arch/started_at)를 저장한다
+	// (REQ-K08). 제공된 필드만 갱신하고 미제공(빈 문자열/0) 필드는 기존값을 보존한다
+	// (하위 호환 — heartbeat 가 일부만 보내거나 구버전 노드가 생략 — REQ-K09). group_name
+	// 은 절대 건드리지 않는다(관리자 전용). 없으면 ErrManagedNodeNotFound.
+	SetSystemInfo(ctx context.Context, instanceID, os, arch string, startedAtMs int64) error
+
 	// Delete 는 instance_id 로 노드를 삭제한다. 없으면 ErrManagedNodeNotFound.
 	Delete(ctx context.Context, instanceID string) error
 	// Close 는 저장소 리소스를 정리한다.

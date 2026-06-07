@@ -1,7 +1,7 @@
 ---
 id: SPEC-REMOTE-001
 title: "원격 관리 서버/클라이언트 — xflow 인스턴스 fleet 등록·승인·원격 제어·인벤토리 미러링"
-version: "1.3.0"
+version: "1.4.0"
 status: planned
 created: "2026-06-05"
 updated: "2026-06-06"
@@ -32,6 +32,9 @@ tags:
   - query-proxy
   - unified-ui
   - full-parity
+  - node-grouping
+  - node-dashboard
+  - information-architecture
 ---
 
 | 버전 | 날짜 | 작성자 | 변경 내용 |
@@ -39,6 +42,7 @@ tags:
 | 1.0.0 | 2026-06-05 | xtra | 초기 SPEC 작성 — 원격 관리 서버/클라이언트(fleet 관리). 전송=클라이언트가 서버로 dial 하는 영속 WebSocket, 제어=라이브 연결 위 RPC 명령(로컬 어댑터 적용), 인벤토리=클라이언트 미러링+서버 DB 캐시, 노출 제어=클라이언트 config opt-in. 신규 xflow 인스턴스 식별자(instance_id) 도입. M1~M5 마일스톤 정의 |
 | 1.1.0 | 2026-06-06 | xtra | v1.1 확장 — 수동 enrollment(그룹 H). (A) 사전 등록(instance_id allow-list): 접속 전 approved 노드 사전 생성 + 접속 시 자동 승인. (B) enrollment 토큰: 관리자가 발급한 1회성/횟수·기간 제한 가입 토큰을 register 에 운반해 관리자 수동 승인 없이 자동 승인. 토큰은 SHA-256 해시로만 저장(원본 1회 노출), 즉시 폐기 가능. 모든 신규 REST 엔드포인트 admin-gated, 자동 승인 감사 기록 |
 | 1.2.0 | 2026-06-06 | xtra | v1.2 확장 — 원격 자원 편집(그룹 I). 관리자가 서버 웹 UI 에서 승인·온라인 노드의 플로우/에이전트를 FULL CRUD(생성·수정·삭제). 기존 시각 편집기(EditorPage.tsx React Flow) 재사용. 모든 편집은 그룹 D 명령 경유 → 노드 어댑터 로컬 적용 → 결과 수신 후에만 미러 캐시 갱신(서버 단독 영속 금지 — A4/E08). 시크릿 redaction 라운드트립 보존(마스킹 필드 생략·노드 측 병합), 실패 의미(offline=503/timeout=504/apply-fail=502). §1.5 비목표의 "서버 측 직접 영속 편집" 항목 대체. 마일스톤 M7 추가. (2026-06-06 RESOLVED §5.9-6~9: 시크릿=필드 부재+노드 backfill, 동시성=노드 권위+비차단 경고(잠금 없음), 신규 ID=노드 채번, 신규 생성 자원=수동 노출(opt-in 보존)) |
+| 1.4.0 | 2026-06-07 | xtra | v1.4 확장 — 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드(그룹 K). 사이드바 `원격 관리` 그룹을 **두 개의 최상위 진입점**(`노드 관리`(운영) + `등록 관리`(온보딩))으로 재편하여 기존 `관리 노드`(RemoteNodesPage) + `원격 노드 제어`(RemoteControlPage) 를 **대체**한다. (A) 노드 그룹핑: `managed_nodes` 에 **단일 그룹 라벨**(group_name, 기본 빈값→"전체"(All) 기본 버킷) 추가 — 한 노드는 **최대 하나의 그룹**에만 속하고, 그룹은 자유 입력 단일 레벨 라벨이며, 그룹 배정/해제·distinct 그룹 목록·그룹별 노드 목록(전체 기본 버킷 포함) API + admin-gated 영속. 그룹 이름 변경=노드 재라벨링, 그룹 비움/삭제=노드를 "전체"로 환원. (B) 노드 시스템 정보 보고(BASIC): 노드가 OS+arch+version+started_at(epoch ms, uptime 산출용)을 register/heartbeat 페이로드로 보고(자원 메트릭 CPU/메모리/디스크 **제외**), 서버가 managed_nodes 에 저장·노드 상세/목록 API 로 노출(하위 호환 — 미보고 노드는 필드 빈값). (C) 노드별 운영 요약: 기존 미러(그룹 E)에서 플로우/에이전트/디바이스 카운트+상태 분해를 **파생**(신규 쿼리 우선이 아니라 미러 데이터 우선). (D) UI 재구성: `노드 관리`=디렉토리 뷰(단일 레벨 그룹 트리, "전체" 기본)+노드 선택→**노드 대시보드**(시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭이 기존 M8 통합 제어(`target=remote:{instanceId}`) 재사용); `등록 관리`=토큰 관리(EnrollmentTokenSection)+노드 등록 관리(pending 승인 큐·승인/거부/폐기·사전 등록). 마일스톤 M9 추가. (OQ-K1~K7 ✅ RESOLVED 2026-06-07 — 사용자 권고안대로 확정: 서버 전용 그룹 / register+heartbeat 시스템 정보 / 미러 파생 운영 요약 / started_at 서버 파생 uptime / 빈 라벨=가상 "전체" 버킷 / 사전 등록·승인 UI 등록 관리 흡수 / /admin/remote/control 리다이렉트) |
 | 1.3.0 | 2026-06-06 | xtra | v1.3 확장 — 원격 노드 FULL 제어 패리티(그룹 J). 원격 노드의 플로우/에이전트/디바이스를 **별도 원격 페이지가 아니라 로컬과 동일한 웹 UI**(FlowListPage/AgentListPage/DeviceListPage + 상세 패널)로 제어한다. 목록·라이프사이클을 넘어 **상세 패널까지 FULL 패리티**(에이전트 통계/설정/디바이스/토픽/store/세션/시리즈, 디바이스 실시간 상태+명령+메타데이터, 플로우 노드 레벨 런타임/로그). 이를 위해 미러(그룹 E)·명령(그룹 D)과 구분되는 **신규 READ/QUERY 프록시**를 신설: 그룹 D 명령과 **대칭되는 per-domain query-action**(`{domain, query_action, args}`)을 `query`/`query_result` 로 운반하고 노드가 각 action 을 로컬 read 핸들러로 매핑해 라이브 JSON 반환(READ-ONLY — 변경은 그룹 D/M7 유지). 실시간 데이터(디바이스 상태·에이전트 라이브 통계/시리즈)는 **스트리밍 프록시**(subscribe/stream_data/unsubscribe, 서버 경유 중계, teardown·백프레셔)로 제공(폴링은 폴백). 서버는 query-action 응답을 **단기 TTL 캐시**(스트리밍/라이브 action 캐시 우회, 변경 시 무효화). UI 는 `useEditorFlowTarget` 의 target 추상화를 목록/제어 페이지로 확장(useFlowsTarget/useAgentsTarget/useDevicesTarget), `?target=remote:{instanceId}` 쿼리 파라미터 + 노드 셀렉터로 동일 페이지 재사용. 기존 RemoteResourcesPage 는 노드 셀렉터로 재용도화/폐기. 마일스톤 M8 추가. (OQ-J1~J7 RESOLVED: per-domain query-action / FULL 커버리지 / 스트리밍 포함 / 디바이스 쓰기=그룹 D / 최소 감사 / 단기 TTL 캐시 / 서버 admin 게이팅) |
 
 > **상태(Status)** — `planned`. 본 SPEC 은 PLAN 단계 산출물이며 구현 코드를 포함하지 않는다. `/moai run SPEC-REMOTE-001` 로 마일스톤 단위 증분 구현한다.
@@ -104,6 +108,10 @@ tags:
 | 노드 토큰 / 디바이스 크레덴셜 | node token / device credential | 승인된 노드가 재접속 인증에 쓰는 JWT. `JWTService` 로 발급. |
 | 자원 타깃 | resource target | (v1.3) 웹 UI 가 자원을 조회·제어할 대상. `local`(서버 자신) 또는 `remote:{instance_id}`(원격 노드). 로컬 페이지를 동일 코드로 양쪽에 파라미터화하는 추상화(예: `useFlowsTarget`/`useAgentsTarget`/`useDevicesTarget`, `useEditorFlowTarget` 패턴 확장). |
 | READ/QUERY 프록시 | query proxy | (v1.3) 서버가 노드의 화이트리스트된 로컬 read 엔드포인트를 WS 세션 위로 프록시해 노드의 라이브 JSON 을 반환하는 READ-ONLY RPC. 미러(그룹 E)·명령(그룹 D)과 별개. |
+| 노드 그룹 | node group | (v1.4) 관리 노드를 조직화하는 **단일 레벨 자유 입력 라벨**. 한 노드는 **최대 하나의 그룹**에 속한다(다중 소속 없음). 그룹 미지정 노드는 기본 버킷 **"전체"(All)** 에 표시된다. 그룹은 별도 엔티티가 아니라 `managed_nodes.group_name` 컬럼의 distinct 값 집합이다(그룹 이름 변경=구성원 재라벨링, 그룹 비움=구성원이 "전체"로 환원). |
+| 노드 대시보드 | node dashboard | (v1.4) `노드 관리`에서 노드를 선택하면 표시되는 노드 단위 종합 화면. **시스템 정보(BASIC)** + **운영 요약** + **Flow/Agent/Device 서브탭**(M8 통합 제어 `target=remote:{instanceId}` 재사용)으로 구성된다. |
+| 시스템 정보(BASIC) | system info (basic) | (v1.4) 노드가 보고하는 기본 시스템 메타: hostname, OS, arch, version, started_at(uptime 산출), online/last_seen, status. **자원 메트릭(CPU/메모리/디스크)은 본 마일스톤 제외.** |
+| 운영 요약 | operational summary | (v1.4) 노드의 플로우/에이전트/디바이스 카운트 + 상태 분해(플로우 running/stopped, 에이전트 connected, 디바이스 online)를 **기존 미러(그룹 E)에서 파생**한 요약. |
 
 > "device" 라는 단어는 **IoT 디바이스** 에만 사용한다. xflow 설치본은 항상 "managed node / 노드" 로 부른다. 명령군에서 "디바이스 메타데이터 제어"는 IoT 디바이스를 의미한다.
 
@@ -119,6 +127,7 @@ tags:
 - 서버 웹 UI: 관리 노드 목록, pending 승인 뷰, 노드별 자원 목록(디바이스 태그), 명령/상태 피드백(구현은 추후 expert-frontend).
 - 원격 자원 편집(v1.2, 그룹 I): 관리자가 서버 웹 UI 에서 승인·온라인 노드의 플로우/에이전트를 생성·수정·삭제. 기존 시각 편집기 재사용, 명령 디스패치 경유 적용, 시크릿 redaction 라운드트립 보존, 편집 게이팅·실패 의미.
 - 원격 노드 FULL 제어 패리티(v1.3, 그룹 J): 원격 노드의 플로우/에이전트/디바이스를 **로컬과 동일한 웹 UI**(로컬 목록 페이지 + 상세 패널 재사용)로 제어. (a) 신규 READ/QUERY 프록시 — 그룹 D command 와 대칭되는 **per-domain query-action**(열거 allowlist, FULL 커버리지)으로 노드의 라이브 데이터(상세/통계/노드 레벨 런타임·로그 등)를 온디맨드 취득(READ-ONLY), 서버 **단기 TTL 캐시**. (b) **스트리밍 프록시** — 디바이스 실시간 상태·에이전트 라이브 통계/시리즈를 서버 경유로 브라우저에 중계(subscribe/stream_data/unsubscribe, teardown·백프레셔; 폴링은 폴백). (c) 통합 UI — `target`(local | remote:{instanceId}) 추상화로 로컬 페이지를 원격에 파라미터화, 노드 셀렉터 + `?target=` 라우팅.
+- 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드(v1.4, 그룹 K): (a) **노드 그룹핑** — `managed_nodes` 에 단일 그룹 라벨(`group_name`, 기본 빈값→"전체") 추가, 그룹 배정/해제·distinct 그룹 목록·그룹별 노드 목록 API + admin-gated 영속(단일 레벨, 노드당 최대 1 그룹). (b) **노드 시스템 정보 보고(BASIC)** — 노드가 OS+arch+version+started_at(epoch ms)을 register/heartbeat 페이로드로 보고(자원 메트릭 제외), 서버가 저장·상세/목록 API 로 노출, uptime 은 started_at 파생, 하위 호환(미보고 노드 빈값). (c) **노드별 운영 요약** — 기존 미러(그룹 E)에서 플로우/에이전트/디바이스 카운트+상태 분해를 파생. (d) **UI 재구성** — 사이드바 `원격 관리` 그룹을 `노드 관리`(디렉토리 뷰 + 노드 대시보드: 시스템 정보 + 운영 요약 + M8 통합 제어 재사용 Flow/Agent/Device 서브탭) + `등록 관리`(토큰 관리 + 노드 등록 관리)로 재편하여 기존 `관리 노드`/`원격 노드 제어` 진입점을 대체. M8 통합 제어 페이지·편집기 라우트는 새 `노드 관리`에서 도달 가능.
 
 **제외(Non-goals):**
 - 역터널/리버스 프록시, 노드 간 직접 P2P, 공유 데이터베이스(명시적 금지 — RPC over 라이브 연결만).
@@ -130,6 +139,8 @@ tags:
 - **임의 노드 read 표면 프록시**: 원격 노드의 read 접근은 **열거된 per-domain query-action allowlist**(REQ-J04) 와 열거된 스트림 action(REQ-J08)만 허용한다. allowlist 밖 임의 action·raw HTTP path 프록시·서버 관리 자체 자원(설정/시스템/감사 등)의 노드 프록시 노출은 제외한다.
 - **프록시 경유 변경**: read 프록시(query/스트림)는 **READ-ONLY** 이며, 모든 변경(디바이스 명령·메타데이터·라이프사이클·CRUD)은 그룹 D 명령 / 그룹 I(M7) CRUD 경로로만 수행한다(프록시 경유 변경 금지 — REQ-J03).
 > 참고: v1.3 은 실시간 데이터를 **스트리밍 프록시**(REQ-J08, OQ-J3 RESOLVED)로 제공한다(폴링은 폴백). 이전 초안의 "스트리밍 연기" 비목표는 **철회**되었다.
+- **노드 자원 메트릭(v1.4 그룹 K 제외)**: 노드 시스템 정보는 **BASIC(hostname/OS/arch/version/uptime/online/last_seen/status)** 만 보고·표시한다. **CPU/메모리/디스크 등 자원 사용률 메트릭은 본 마일스톤 제외**(향후 SPEC). 시스템 정보는 register/heartbeat 페이로드 경유 보고이며, 별도 메트릭 폴링/시계열은 신설하지 않는다.
+- **다중 그룹 소속(v1.4 그룹 K 제외)**: 노드 그룹은 **단일 레벨·노드당 최대 1 그룹**이다. 계층형(중첩) 그룹, 한 노드의 다중 그룹 소속, 태그 기반 다중 분류, 그룹 단위 일괄 정책/배포 오케스트레이션은 제외한다(향후 SPEC).
 
 ## 2. 환경
 
@@ -158,6 +169,9 @@ tags:
 - **A10**(v1.3): 노드는 자신의 로컬 read 핸들러(플로우/에이전트/디바이스 상세·통계·상태·시리즈·노드 레벨 런타임)를 이미 보유한다. READ/QUERY 프록시는 이 **기존 로컬 핸들러를 노드 내부에서 재실행**해 결과 JSON 을 반환하는 것이며, 서버는 그 결과를 가공 없이(또는 최소 가공으로) 전달한다(권위는 노드 — A4 일관).
 - **A11**(v1.3): READ/QUERY 프록시는 미러(그룹 E)·명령(그룹 D)과 **독립된 별개 RPC** 이다. 미러는 요약 정의만(id/name/status/online/definition/updated_at), 프록시는 라이브 리치 런타임 데이터를 운반한다. 프록시는 **READ-ONLY**, 명령/CRUD 는 변경 전용으로 역할이 분리된다.
 - **A12**(v1.3): 로컬 상세 패널은 폴링(`useDeviceRealtime`/`refetchInterval`)·온디맨드 fetch 로 동작한다. 원격 패리티에서 정적/온디맨드 데이터는 per-domain query-action(REQ-J04, 서버 단기 TTL 캐시 REQ-J16) 으로, 실시간 데이터는 **스트리밍 프록시**(REQ-J08, 서버 경유 중계)로 취득한다(폴링은 폴백). 노드는 query-action·스트림 action 을 자신의 기존 로컬 read/실시간 소스에 매핑한다(권위는 노드 — A4/A10).
+- **A13**(v1.4): 노드 그룹은 **서버 측 속성**이다. 그룹 배정은 관리자가 서버에서 수행하며 `managed_nodes.group_name` 으로 영속된다. 그룹은 노드의 권위 정의(A4)와 무관한 **서버 운영 메타데이터**이므로, 그룹 변경은 노드로 명령을 전파하지 않는다(그룹 D 비경유 — 미러/자원 정의에 영향 없음). 그룹은 단일 레벨 자유 입력 라벨이며, 별도 그룹 엔티티 테이블을 신설하지 않고 `group_name` distinct 값으로 표현한다.
+- **A14**(v1.4): 노드 시스템 정보(OS/arch/version/started_at)는 노드가 **register(필수) 및/또는 heartbeat(갱신)** 페이로드로 보고하는 BASIC 메타이다. 서버는 이를 `managed_nodes` 에 저장하고 상세/목록 API 로 노출한다. uptime 은 `started_at` 과 서버 현재 시각의 차로 산출(서버 시계 신뢰). **하위 호환**: 이전 버전 노드가 이 필드를 보내지 않아도 등록/관리는 정상 동작하며, 미보고 필드는 빈값/미표시로 처리된다(REQ-N03 회귀 0 유지).
+- **A15**(v1.4): 노드별 운영 요약(플로우/에이전트/디바이스 카운트+상태 분해)은 **기존 미러(그룹 E) 데이터에서 파생**한다. 서버는 이미 노드별 미러 행(`mirrored_flows`/`mirrored_agents`/`mirrored_devices`, online/status 포함)을 보유하므로, 요약은 신규 노드 왕복 질의 없이 미러 집계로 계산된다(노드 오프라인 시에도 last-known 미러로 요약 제공 — REQ-E06 일관). 라이브 정밀 요약이 필요하면 그룹 J query-action 으로 보강할 수 있으나 기본 출처는 미러이다.
 
 ## 4. 요구사항 (EARS)
 
@@ -468,6 +482,66 @@ tags:
 > - **무효화**: 동일 노드/자원에 대한 관련 변경(그룹 D 명령 / 그룹 I CRUD)이 성공하면 해당 캐시 항목을 **무효화**하여 stale 데이터를 방지한다.
 > - redaction 된 본문만 캐시하며(REQ-J06 일관), 게이팅(REQ-J05)은 캐시 적중 시에도 매 요청 평가된다.
 
+### 4.7e 그룹 K — 원격 관리 UI 재편 + 노드 그룹핑 + 노드 대시보드 (UI IA + Node Grouping + Node Dashboard) — v1.4 확장
+
+> **범위(v1.4)** — 본 그룹은 (A) 노드 그룹핑(백엔드+API+UI), (B) 노드 시스템 정보 보고(BASIC), (C) 노드별 운영 요약, (D) 사이드바 정보 구조(IA) 재편을 추가한다. 사이드바 `원격 관리` 그룹을 **두 최상위 진입점**으로 재편한다: **`노드 관리`(운영)** = 디렉토리 뷰(단일 레벨 그룹 트리, "전체" 기본) + 노드 선택 시 **노드 대시보드**(시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭이 M8 통합 제어 `target=remote:{instanceId}` 재사용); **`등록 관리`(온보딩)** = 토큰 관리(EnrollmentTokenSection) + 노드 등록 관리(pending 승인 큐·승인/거부/폐기·사전 등록). 이 재편은 기존 `관리 노드`(RemoteNodesPage) + `원격 노드 제어`(RemoteControlPage) 진입점을 **대체**한다. 그룹핑은 **서버 측 운영 메타데이터**(A13)이며 노드 권위 정의(A4)·미러(그룹 E)·명령(그룹 D)과 무관하다. 시스템 정보는 **BASIC** 만(자원 메트릭 제외), 운영 요약은 **미러 파생**(A15)이다.
+
+#### K-a. 노드 그룹핑 (백엔드 + API)
+
+**REQ-REMOTE-K01**: 단일 그룹 라벨 영속
+시스템은 **항상** 각 관리 노드에 대해 **단일 그룹 라벨**(`managed_nodes.group_name`, 자유 입력 문자열, 기본 빈값)을 영속해야 한다. 한 노드는 **최대 하나의 그룹**에만 속하며(다중 소속 없음), 그룹 라벨이 빈값인 노드는 기본 버킷 **"전체"(All)** 에 속하는 것으로 간주된다. 그룹은 단일 레벨(계층 없음)이다.
+
+**REQ-REMOTE-K02**: 그룹 배정/해제
+시스템은 **항상** 관리자가 노드의 그룹을 배정·변경·해제할 수 있도록(`PUT /api/v1/remote/nodes/{instance_id}/group`, 본문 `{group_name}`; 빈 문자열 또는 `DELETE` 는 그룹 해제="전체"로 환원) 제공해야 한다. 배정은 `managed_nodes.group_name` 갱신으로 즉시 반영되어야 하며, 노드로 명령을 전파하지 않아야 한다(서버 운영 메타데이터 — A13, 그룹 D 비경유).
+
+**REQ-REMOTE-K03**: distinct 그룹 목록
+시스템은 **항상** 현재 사용 중인 distinct 그룹 라벨 목록(`GET /api/v1/remote/groups`)을 제공해야 하며, 응답은 항상 기본 버킷 **"전체"** 를 포함하고 각 그룹의 노드 수를 함께 제공할 수 있어야 한다(별도 그룹 엔티티 없이 `group_name` distinct 집계).
+
+**REQ-REMOTE-K04**: 그룹별 노드 목록 (전체 기본 버킷)
+시스템은 **항상** 노드를 그룹별로 묶은 목록(`GET /api/v1/remote/nodes?group_by=group` 또는 그룹화 응답)을 제공해야 한다. 그룹 미지정(빈 라벨) 노드는 **"전체"** 버킷에 모이고, 각 노드 항목은 online/status/시스템 정보 요약을 포함해야 한다.
+
+**REQ-REMOTE-K05**: 그룹 이름 변경·삭제 의미 (재라벨링·환원)
+시스템은 **항상** 그룹 이름 변경을 해당 그룹에 속한 노드들의 `group_name` **재라벨링**으로 처리해야 한다(별도 그룹 엔티티가 없으므로 그룹 자체를 수정하지 않음). 그룹 비우기/삭제는 해당 그룹 노드들의 `group_name` 을 빈값으로 되돌려 **"전체"로 환원**해야 한다. 빈 그룹(구성원 0)은 자동으로 distinct 목록에서 사라진다.
+
+**REQ-REMOTE-K06**: 그룹 작업 admin 게이팅
+시스템은 **항상** 모든 그룹 배정/해제/목록 엔드포인트를 기존 `/remote/*` admin 인증으로 게이팅해야 한다(REQ-F04 일관). 비-관리자 접근은 거부되어야 한다.
+
+#### K-b. 노드 시스템 정보 보고 (BASIC)
+
+**REQ-REMOTE-K07**: 시스템 정보 보고 페이로드 확장 (BASIC)
+시스템은 **항상** 노드가 자신의 BASIC 시스템 정보(`os`, `arch`, `version`, `started_at`(epoch ms))를 서버에 보고하도록, `register`(RegisterPayload/HelloPayload) **및/또는** `heartbeat`(HeartbeatPayload) 페이로드를 확장해야 한다. 자원 메트릭(CPU/메모리/디스크)은 보고하지 않아야 한다(본 마일스톤 제외).
+
+**REQ-REMOTE-K08**: 시스템 정보 저장·노출
+시스템은 **항상** 보고된 시스템 정보를 `managed_nodes`(`os`, `arch`, `started_at` 컬럼; `hostname`/`version` 은 기존 컬럼 재사용)에 저장하고, 노드 상세/목록 API 로 노출해야 한다. **uptime** 은 `started_at` 과 서버 현재 시각의 차로 산출하여 제공해야 한다(별도 uptime 필드 저장 불필요). online/last_seen/status 는 기존 추적값(REQ-B05/E06)을 재사용한다.
+
+**REQ-REMOTE-K09**: 시스템 정보 하위 호환
+시스템은 **항상** 시스템 정보 필드를 보내지 않는(구버전) 노드도 등록·관리가 정상 동작하도록 보장해야 한다. 미보고 필드는 빈값/미표시로 처리되며, 기존 동작에 회귀를 일으키지 않아야 한다(REQ-N03 일관 — 필드 선택적).
+
+#### K-c. 노드별 운영 요약 (미러 파생)
+
+**REQ-REMOTE-K10**: 노드 운영 요약 파생·노출
+시스템은 **항상** 노드별 운영 요약(플로우 카운트 + running/stopped 분해, 에이전트 카운트 + connected 분해, 디바이스 카운트 + online 분해)을 **기존 미러(그룹 E) 데이터에서 파생**하여 제공해야 한다(`GET /api/v1/remote/nodes/{instance_id}` 상세 응답에 포함 또는 `.../summary`). 신규 노드 왕복 질의보다 미러 집계를 우선해야 하며(A15), 노드 오프라인 시에도 last-known 미러로 요약을 제공해야 한다(REQ-E06 일관).
+
+#### K-d. UI 재구성 (프론트엔드)
+
+**REQ-REMOTE-K11**: 사이드바 IA 재편 (노드 관리 + 등록 관리)
+시스템은 **항상** 사이드바 `원격 관리` 그룹을 **두 최상위 진입점** — **`노드 관리`(운영)** 와 **`등록 관리`(온보딩)** — 로 구성하여, 기존 `관리 노드`(RemoteNodesPage) + `원격 노드 제어`(RemoteControlPage) 진입점을 **대체**해야 한다. 두 진입점은 기존 admin 권한 + server 모드 게이팅(현행 사이드바 게이팅)을 유지해야 한다.
+
+**REQ-REMOTE-K12**: 노드 관리 — 디렉토리 뷰 (단일 레벨 그룹 트리)
+시스템은 **항상** `노드 관리` 페이지에서 **단일 레벨 디렉토리 뷰**(그룹 → 노드)를 제공해야 한다. 그룹은 단일 레벨로 표시되고, 그룹 미지정 노드는 기본 **"전체"** 그룹 아래 표시되며, 각 노드 항목은 online/last-seen·status 표식을 보여야 한다. 디렉토리 뷰에서 노드의 그룹 배정/해제(단일 그룹) affordance 를 제공해야 한다(REQ-K02 소비).
+
+**REQ-REMOTE-K13**: 노드 관리 — 노드 대시보드 (시스템 + 운영 + 서브탭)
+시스템은 **항상** 디렉토리 뷰에서 노드를 선택하면 **노드 대시보드**를 표시해야 한다. 대시보드는 (a) **시스템 정보(BASIC)** — hostname, OS, arch, version, uptime(started_at 파생), online/last-seen, status, (b) **운영 요약** — 플로우 요약(카운트+running/stopped), 에이전트 요약(카운트+connected), 디바이스 요약(카운트+online)(REQ-K10 소비), (c) **Flow/Agent/Device 서브탭** — 기존 **M8 통합 제어 페이지**(`target=remote:{instanceId}`, 그룹 J FULL 패리티)를 재사용 — 을 포함해야 한다.
+
+**REQ-REMOTE-K14**: 노드 대시보드 서브탭 = M8 통합 제어 재사용
+시스템은 **항상** 노드 대시보드의 Flow/Agent/Device 서브탭이 별도 원격 전용 화면을 신설하지 않고 **기존 M8 통합 제어**(로컬 `FlowListPage`/`AgentListPage`/`DeviceListPage` + 상세 패널을 `target=remote:{instanceId}` 로 재사용, REQ-J09~J14)로 라우팅·렌더링되도록 해야 한다. 변경은 여전히 그룹 D 명령 / 그룹 I CRUD 경로로만 수행된다(REQ-J03/J12 일관).
+
+**REQ-REMOTE-K15**: 등록 관리 — 토큰 관리 + 노드 등록 관리
+시스템은 **항상** `등록 관리` 페이지에서 (a) **토큰 관리** — enrollment 토큰 발급/목록/폐기(기존 `EnrollmentTokenSection`, REQ-H03/H04 소비) 와 (b) **노드 등록 관리** — pending 승인 큐 + 승인/거부/폐기 + 사전 등록(기존 RemoteNodesPage 의 승인 UI·`PreRegisterNodeDialog`, REQ-C02/C03/C07/H01 소비) 을 제공해야 한다.
+
+**REQ-REMOTE-K16**: IA 마이그레이션 (기존 진입점 대체, 딥링크 보존)
+시스템은 **항상** 기존 `관리 노드`(`/admin/remote`) + `원격 노드 제어`(`/admin/remote/control`) 진입점을 새 `노드 관리`/`등록 관리`로 **마이그레이션(대체)** 하되, 기존 M8 통합 제어 페이지(`/flows|agents|devices?target=remote:{id}`)와 원격 편집기 라우트(`/admin/remote/nodes/{id}/flows/...`)는 새 `노드 관리`(노드 대시보드 서브탭)에서 **도달 가능**하게 유지해야 한다. 로컬/원격 제어 UX 가 분기되지 않아야 한다(REQ-J14 일관).
+
 ### 4.8 비기능 요구사항
 
 **REQ-REMOTE-N01**: 다중 노드 확장성
@@ -490,7 +564,7 @@ tags:
 
 | Type | 방향 | 페이로드(요지) | 의미 |
 |------|------|----------------|------|
-| `register` | client→server | instance_id, hostname, version, exposure 요약, (선택)부트스트랩 시크릿 | 등록 요청(REQ-C01) |
+| `register` | client→server | instance_id, hostname, version, exposure 요약, (선택)부트스트랩 시크릿, (v1.4 선택) os, arch, started_at(epoch ms) | 등록 요청(REQ-C01) + BASIC 시스템 정보 보고(REQ-K07) |
 | `register_ack` | server→client | status(pending/approved/rejected), (승인 시) node_token | 등록 응답·토큰 발급(REQ-C03/C04) |
 | `command` | server→client | command_id, target instance_id, domain(flow/agent/device), action, args | 원격 명령(REQ-D01) |
 | `command_result` | client→server | command_id, ok, result \| error | 명령 결과/ack(REQ-D05) |
@@ -501,12 +575,13 @@ tags:
 | `unsubscribe` | both | subscription_id | 스트림 구독 해제·teardown(REQ-J08b) |
 | `inventory_snapshot` | client→server | instance_id, flows[], agents[], devices[] (노출 범위, redacted) | 접속 시 전체 인벤토리(REQ-E01) |
 | `inventory_delta` | client→server | instance_id, op(add/update/remove), kind, item | 변경 델타(REQ-E02) |
-| `heartbeat` | both | instance_id, ts | 생존성(REQ-B03) |
+| `heartbeat` | both | instance_id, ts, (v1.4 선택) os, arch, version, started_at(epoch ms) | 생존성(REQ-B03) + BASIC 시스템 정보 갱신(REQ-K07) |
 | `status` | client→server | instance_id, online/health 메타 | 상태 텔레메트리(REQ-B05 보조) |
 
 - 상관: `command`/`command_result` 는 `command_id` 로 1:1 매칭(REQ-D07).
 - 봉투의 `Timestamp` 는 RFC3339(기존 `NewMessage` 규약)이며, 페이로드 내부 디바이스 타임스탬프는 프로젝트 규약(epoch ms, int64)을 따른다.
 - v1.2(그룹 I): `command` 의 `action` 은 flow/agent 도메인에서 `create`/`update`/`delete` 를 포함하며(임의 domain/action 지원 인프라 재사용), 클라이언트는 이를 각 어댑터의 `Create`/`Update`/`Delete` 로 라우팅한다(REQ-I06). `update`/`create` 의 `args` 정의 JSON 은 마스킹/미변경 시크릿 필드를 **완전히 생략(필드 부재, sentinel 미전송)** 하며, 노드가 어댑터 호출 전 기존 정의를 로드해 부재 시크릿을 기존값으로 backfill 한 뒤 적용한다(REQ-I07, §5.9-6 RESOLVED).
+- v1.4(그룹 K): `register`/`heartbeat` 페이로드는 BASIC 시스템 정보(`os`, `arch`, `started_at`(epoch ms))를 **선택 필드**로 운반한다(REQ-K07). 신규 메시지 타입은 신설하지 않으며 기존 봉투/타입을 재사용한다(REQ-N04 유지). 필드 미존재(구버전 노드)는 빈값으로 처리(REQ-K09, 하위 호환). 노드 그룹(`group_name`)은 **서버 측 속성**이므로 와이어 프로토콜로 운반되지 않는다(A13 — 그룹 배정은 서버 REST 전용, 노드 비경유).
 - v1.3(그룹 J): `query`/`query_result`(온디맨드 읽기)와 `subscribe`/`stream_data`/`unsubscribe`(실시간 스트림)는 모두 **READ-ONLY** 프록시 전용이다(REQ-J01/J03/J08). `query` 페이로드는 **그룹 D 명령과 대칭되는 per-domain query-action**(`{domain, query_action, args}`, raw GET path 아님 — OQ-J1 RESOLVED)으로 노드의 로컬 read 핸들러를 지정하며, 노드가 실행 후 **redaction(REQ-J06)** 된 본문을 `query_result{query_id, status, body|error}` 로 반환한다. 스트림은 `subscribe{subscription_id, domain, stream_action, args}` 로 시작해 `stream_data{subscription_id, payload}` 로 갱신을 push 하고, `unsubscribe` 또는 노드 오프라인 시 teardown 된다(REQ-J08b). 서버는 query-action 응답을 단기 TTL 로 캐시하되 스트리밍/라이브 action 은 캐시 우회한다(REQ-J16). `command`/`command_result`(변경)와 read 프록시(읽기)는 역할이 분리되며, 봉투/상관/타임아웃 패턴은 공유한다(REQ-D06/D07 준용 — REQ-J02). 변경 의미 action 은 프록시에서 거부된다(REQ-J03).
 
 ### 5.2 신규 — xflow 인스턴스 식별자(instance_id)
@@ -542,7 +617,7 @@ tags:
 
 | 테이블 | 핵심 컬럼(요지) | 의미 |
 |--------|------------------|------|
-| `managed_nodes` | instance_id(PK), hostname, version, status(pending/approved/rejected), token_id, last_seen, online | 등록·상태·식별 |
+| `managed_nodes` | instance_id(PK), hostname, version, status(pending/approved/rejected), token_id, last_seen, online, (v1.4) group_name(기본 빈값→"전체"), os, arch, started_at(epoch ms) | 등록·상태·식별 + (v1.4) 단일 그룹 라벨·BASIC 시스템 정보(REQ-K01/K08) |
 | `mirrored_flows` | id, source_instance_id(FK), name, definition(redacted), updated_at | 노드별 플로우 미러(태그=source_instance_id) |
 | `mirrored_agents` | id, source_instance_id(FK), name, kind, config(redacted), updated_at | 노드별 에이전트 미러 |
 | `mirrored_devices` | id, source_instance_id(FK), node_assoc, name, meta, updated_at | 노드별 IoT 디바이스 미러 |
@@ -550,6 +625,7 @@ tags:
 - 출처 태깅: 모든 미러 행은 `source_instance_id` 를 보유(REQ-E04/E05).
 - last-known: 오프라인 시 행을 삭제하지 않고 `online=false`·`last_seen` 만 갱신(REQ-E06).
 - redaction: 정의/설정 저장 시 시크릿 마스킹(REQ-F06).
+- (v1.4) 그룹·시스템 정보: `managed_nodes` 에 `group_name`(단일 그룹 라벨, 기본 빈값→"전체"; REQ-K01), `os`/`arch`/`started_at`(BASIC 시스템 정보; REQ-K08) 컬럼을 추가한다. 그룹은 별도 엔티티 테이블 없이 `group_name` distinct 값으로 표현하며(REQ-K03/K05), 운영 요약은 미러 테이블 집계로 파생한다(저장 컬럼 불필요 — REQ-K10/A15). uptime 은 `started_at` 파생값으로 저장하지 않는다(REQ-K08).
 
 ### 5.5 서버/클라이언트 컴포넌트 (신규 `internal/remote`)
 
@@ -614,6 +690,18 @@ tags:
 | `web/src/pages/{flows,agents,devices}/*ListPage.tsx`·`*DetailPanel.tsx` | target 입력 수용·원격 동일 렌더링·query-action(상세/통계/노드 레벨)·스트림 구독(실시간 상태/시리즈)(REQ-J10/J11) (그룹 J) | 수정(추후) |
 | `web/src/services/api/remoteService.ts` (프록시/스트림 클라이언트) | query-action 호출(TTL 캐시 소비)·스트림 구독/해제(REQ-J08)·폴링 폴백 (그룹 J) | 수정(추후) |
 | `web/src/pages/remote/RemoteResourcesPage.tsx` (노드 셀렉터 재용도화) | 노드 셀렉터로 재용도화/폐기, `?target=remote:{id}` 라우팅·네비게이션(REQ-J13/J14) (그룹 J) | 수정(추후) |
+| `internal/storage/managed_node_sqlite.go` (group/system-info) | `managed_nodes` 에 group_name/os/arch/started_at 컬럼·마이그레이션, 그룹 배정/distinct 그룹/그룹별 노드 쿼리(REQ-K01~K05/K08) (그룹 K) | 수정 |
+| `internal/storage/managed_node_repository.go` (group/summary 인터페이스) | SetNodeGroup/ListGroups/ListNodesByGroup·시스템 정보 저장·운영 요약 파생 메서드(REQ-K02/K03/K04/K10) (그룹 K) | 수정 |
+| `internal/remote/protocol.go` (system-info 필드) | RegisterPayload/HelloPayload/HeartbeatPayload 에 os/arch/started_at 선택 필드(REQ-K07, 하위 호환) (그룹 K) | 수정 |
+| `internal/remote/client.go` (system-info 보고) | register/heartbeat 송신 시 os/arch/version/started_at 채움(런타임 수집)(REQ-K07) (그룹 K) | 수정 |
+| `internal/remote/server.go`/`registration.go` (system-info 수신·저장) | register/heartbeat 수신 시 시스템 정보 저장, uptime 파생 노출(REQ-K08/K09) (그룹 K) | 수정 |
+| `internal/api/handler/remote.go` (group/summary REST) | `PUT/DELETE /remote/nodes/{id}/group`·`GET /remote/groups`·그룹별 노드 목록·노드 상세(시스템 정보+운영 요약) admin-gated(REQ-K02~K06/K10) (그룹 K) | 수정 |
+| `web/src/components/layout/Sidebar.tsx` (IA 재편) | `원격 관리` 그룹 = `노드 관리`+`등록 관리`(기존 `관리 노드`+`원격 노드 제어` 대체), admin+server 게이팅 유지(REQ-K11/K16) (그룹 K) | 수정(추후) |
+| `web/src/pages/remote/NodeManagementPage.tsx` (노드 관리) | 디렉토리 뷰(단일 레벨 그룹 트리, "전체" 기본)+그룹 배정/해제+노드 선택→노드 대시보드(REQ-K12/K13) (그룹 K) | 신규(추후) |
+| `web/src/components/remote/NodeDashboard.tsx` (노드 대시보드) | 시스템 정보(BASIC)+운영 요약+Flow/Agent/Device 서브탭(M8 통합 제어 `target=remote:{id}` 재사용)(REQ-K13/K14) (그룹 K) | 신규(추후) |
+| `web/src/pages/remote/EnrollmentManagementPage.tsx` (등록 관리) | 토큰 관리(EnrollmentTokenSection)+노드 등록 관리(pending 승인·승인/거부/폐기·사전 등록, RemoteNodesPage 승인부 이관)(REQ-K15) (그룹 K) | 신규(추후) |
+| `web/src/services/api/remoteService.ts`·`web/src/hooks/useRemote.ts` (group/summary 클라이언트) | 그룹 배정/해제·distinct 그룹·그룹별 노드·노드 시스템 정보+운영 요약 API 소비(REQ-K02~K05/K10) (그룹 K) | 수정(추후) |
+| `web/src/router.tsx` (라우트 재편) | `/admin/remote`→`노드 관리`(디렉토리/대시보드)·`등록 관리` 라우트, M8/편집기 딥링크 보존(REQ-K16) (그룹 K) | 수정(추후) |
 
 ### 5.9 OPEN QUESTIONS (구현 단계에서 결정)
 
@@ -638,6 +726,22 @@ tags:
 - **OQ-J5 ✅ RESOLVED → "최소 감사"**: 일반 read 는 **미감사**, **노출 위반·오류 접근만** 로깅(REQ-J15). 변경(그룹 D/I)은 기존 감사 유지.
 - **OQ-J6 ✅ RESOLVED → "단기 TTL 캐시(처음부터)"**(이전 초안 "v1 pass-through"를 **변경**): 서버는 query-action 응답을 **처음부터 단기 TTL 로 캐시**해 반복 폴 부하를 줄인다. per-action 캐시 가능성(스트리밍/라이브 action 캐시 우회), 관련 변경 시 무효화(REQ-J16).
 - **OQ-J7 ✅ RESOLVED → "서버 admin 게이팅 + 노드 세션 권위"**: 프록시 질의는 서버 admin 게이팅(REQ-F04)되고 노드는 인증된 WS 세션 권위로 로컬 핸들러를 실행한다. **사용자 단위 인가 매핑은 v1.3 비도입.**
+
+> **그룹 K(v1.4) OPEN QUESTIONS — ✅ 전부 RESOLVED (2026-06-07, 사용자 확정 — 권고안대로)** — 아래 7개는 사용자에 의해 권고안대로 확정되었으며 구현 시 고정 제약이다.
+
+- **OQ-K1 ✅ RESOLVED → "서버 전용(server-assigned only)"**: 그룹은 서버 관리자만 배정하며 **서버 측 운영 메타데이터**(A13)로만 둔다. 노드 config 기반 그룹 제안은 v1.4 에 **도입하지 않는다**(단순성·권위 분리). 향후 노드 제안 그룹이 필요하면 별도 확장(노드가 register 에 `suggested_group` 운반, 서버 승인)으로 추가.
+
+- **OQ-K2 ✅ RESOLVED → "register(최초) + heartbeat(갱신), query-action 비사용"**: BASIC 시스템 정보는 register 로 최초 보고(필수 필드 채움)하고, 변경 가능 필드(version/started_at 재기동 반영)는 heartbeat 로 갱신한다. 정적 BASIC 메타이므로 그룹 J query-action(라이브 read 프록시)을 신설하지 **않는다**. (started_at 은 재기동 시 변하므로 재접속 register 가 자연 갱신.)
+
+- **OQ-K3 ✅ RESOLVED → "미러 파생 우선(mirror-derived)"**: 운영 요약의 1차 출처는 미러(그룹 E) 집계로 **고정**한다(A15 — 신규 왕복 없음, 오프라인 last-known 제공). 대시보드가 더 정밀한 라이브 수치를 원하면 그룹 J query-action(flow.status/agent.stats 등)으로 **보강(opt-in)** 하되, 라이브 query 는 선택적 보강일 뿐 기본 출처는 미러다.
+
+- **OQ-K4 ✅ RESOLVED → "서버 파생(started_at 기반)"**: 노드는 `started_at`(epoch ms, 프로젝트 타임스탬프 규약 일관)만 보고하고, 서버가 `now - started_at` 으로 uptime 을 산출한다(노드는 uptime 을 직접 보고하지 **않는다**). 노드별 단조 시계 차이를 피하고 표시 시점 기준 일관성을 확보한다.
+
+- **OQ-K5 ✅ RESOLVED → "빈 라벨 = 가상 '전체' 버킷(예약 라벨 비영속)"**: `group_name=""` 을 미지정으로 두고 UI/API 응답에서 가상 "전체" 버킷으로 묶는다. "전체"를 실제 라벨로 영속하지 **않아**(예약어 충돌·재라벨링 복잡성 회피) REQ-K05 환원이 단순해진다.
+
+- **OQ-K6 ✅ RESOLVED → "흡수(이관)"**: `PreRegisterNodeDialog`·승인/거부/폐기 UI 를 `등록 관리`의 "노드 등록 관리" 섹션으로 이관하고, 토큰 관리(`EnrollmentTokenSection`)와 한 페이지에 둔다. 기존 컴포넌트는 재사용(재작성 없음). RemoteNodesPage 는 폐기한다.
+
+- **OQ-K7 ✅ RESOLVED → "노드 관리로 통합, /admin/remote/control 은 리다이렉트"**: 노드 셀렉터·제어 진입을 `노드 관리` 디렉토리/대시보드로 일원화하고, 기존 `/admin/remote/control` 경로는 `노드 관리`로 **리다이렉트**(북마크 보존). M8 통합 제어 페이지(`/flows|agents|devices?target=remote:{id}`)·편집기 라우트는 대시보드 서브탭에서 도달 가능하게 유지한다(REQ-K16).
 
 ### 5.10 그룹 J(v1.3) 명세 — READ/QUERY 프록시(query-action + 스트리밍) & 통합 UI
 
@@ -690,6 +794,33 @@ tags:
 3. **상세 패리티**: 에이전트 통계/설정/디바이스/토픽/store/세션/시리즈, 디바이스 실시간 상태/명령 스펙/메타데이터, 플로우 상태/노드 레벨 런타임·로그 → 정적/온디맨드는 per-domain query-action(REQ-J04, 서버 TTL 캐시 REQ-J16), 실시간(디바이스 상태·에이전트 라이브 통계/시리즈)은 스트리밍 구독(REQ-J08) → 동일 상세 패널 렌더(REQ-J11).
 4. **네비게이션**: 노드 셀렉터 + `?target=remote:{instanceId}` 라우팅(미지정=local), 사이드바 현재 타깃 표시(REQ-J13). `RemoteResourcesPage` 는 노드 셀렉터로 재용도화/폐기(REQ-J14).
 
+### 5.11 그룹 K(v1.4) 명세 — 노드 그룹핑 + 시스템 정보 + 운영 요약 + UI 재편
+
+#### 5.11.1 노드 그룹핑 (REQ-K01~K06)
+
+- **모델**: `managed_nodes.group_name`(자유 입력 문자열, 기본 빈값). 노드당 최대 1 그룹, 단일 레벨(계층 없음). 별도 그룹 엔티티 테이블 없음 — distinct `group_name` 집합이 곧 그룹 목록.
+- **"전체" 기본 버킷(OQ-K5 RESOLVED)**: `group_name=""` = 미지정 = 가상 "전체" 버킷(예약 라벨 비영속). UI/API 가 빈 라벨 노드를 "전체"로 묶어 표시.
+- **REST(admin-gated, REQ-K06)**:
+  - 배정/해제: `PUT /api/v1/remote/nodes/{id}/group {group_name}` · `DELETE /api/v1/remote/nodes/{id}/group`(또는 빈 문자열 PUT) → "전체"로 환원.
+  - 목록: `GET /api/v1/remote/groups`(distinct + 노드 수, 항상 "전체" 포함) · `GET /api/v1/remote/nodes?group_by=group`(그룹별 노드).
+- **이름 변경·삭제 의미(REQ-K05)**: 그룹 이름 변경 = 구성원 `group_name` 재라벨링. 그룹 비우기 = 구성원 빈값 환원. 구성원 0 그룹은 distinct 목록에서 자동 소멸.
+- **권위(A13)**: 그룹은 **서버 운영 메타데이터** — 노드로 명령 전파 없음(그룹 D 비경유), 미러/노드 정의 무관.
+
+#### 5.11.2 노드 시스템 정보(BASIC) + 운영 요약 (REQ-K07~K10)
+
+- **시스템 정보 보고(OQ-K2 RESOLVED)**: 노드가 `register`(최초) + `heartbeat`(갱신)로 `os`/`arch`/`version`/`started_at`(epoch ms) 보고. 자원 메트릭(CPU/메모리/디스크) **제외**. 신규 메시지 타입 없이 기존 페이로드 확장(REQ-N04). 하위 호환 — 미보고 필드 빈값(REQ-K09).
+- **저장·노출(REQ-K08)**: `managed_nodes`(os/arch/started_at + 기존 hostname/version/online/last_seen/status). **uptime = now − started_at** 서버 파생(OQ-K4 RESOLVED, 저장 안 함).
+- **운영 요약(REQ-K10, A15)**: 미러(그룹 E) 집계 파생 — 플로우(카운트+running/stopped), 에이전트(카운트+connected), 디바이스(카운트+online). 오프라인 시 last-known 미러로 제공. 라이브 정밀 수치는 그룹 J query-action 보강 가능(OQ-K3 RESOLVED = 미러 우선).
+
+#### 5.11.3 UI 정보 구조 재편 (REQ-K11~K16)
+
+- **사이드바 `원격 관리`(server 모드+admin 게이팅 유지)**:
+  - **`노드 관리`(운영)**: 디렉토리 뷰(단일 레벨 그룹 트리, "전체" 기본; 노드 online/status·그룹 배정/해제) → 노드 선택 → **노드 대시보드**(시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭=M8 통합 제어 `target=remote:{instanceId}` 재사용).
+  - **`등록 관리`(온보딩)**: 토큰 관리(`EnrollmentTokenSection`) + 노드 등록 관리(pending 승인 큐·승인/거부/폐기·사전 등록 — 기존 RemoteNodesPage 승인부·`PreRegisterNodeDialog` 이관).
+- **대체(REQ-K11/K16)**: 기존 `관리 노드`(RemoteNodesPage, `/admin/remote`) + `원격 노드 제어`(RemoteControlPage, `/admin/remote/control`)를 위 둘로 대체. `RemoteControlPage` 셀렉터 개념은 `노드 관리` 디렉토리 안으로 흡수, RemoteNodesPage 승인/등록부는 `등록 관리`로 이관.
+- **딥링크 보존(OQ-K7 RESOLVED)**: `/admin/remote/control` → `노드 관리` 리다이렉트. M8 통합 제어(`/flows|agents|devices?target=remote:{id}`)·원격 편집기 라우트는 대시보드 서브탭에서 도달 가능.
+- **변경 경로 불변**: 대시보드 서브탭의 모든 변경은 그룹 D 명령 / 그룹 I CRUD 로만(REQ-J03/J12/K14 일관 — 신규 변경 경로 미신설).
+
 ## 6. 추적성
 
 | 요구사항 ID | 구현 위치(예정) | 검증 |
@@ -705,4 +836,7 @@ tags:
 | REQ-REMOTE-I01 ~ I12 (v1.2) | `internal/api/handler/remote.go`(원격 flow/agent CRUD REST → command 전파), `internal/remote/protocol.go`(create/update/delete action 의미), `internal/remote/client.go`(어댑터 create/update/delete 바인딩 + 시크릿 병합), `internal/remote/server.go`(편집 게이팅·실패 의미 502/503/504·결과 후 캐시 갱신), `web/src/pages/editor/EditorPage.tsx`(원격 편집 재사용)·원격 자원 페이지(생성/삭제·피드백·게이팅), audit | remote_edit_handler_test, command_action_test, adapter_bind_test, secret_roundtrip_test, edit_gating_test, EditorPage 원격 통합 Vitest |
 | REQ-REMOTE-J01 ~ J08b, J16 (v1.3, 프록시/스트림/캐시) | `internal/remote/protocol.go`(query-action·스트림 메시지), `internal/remote/query_proxy.go`(query-action allowlist·게이팅·상관/타임아웃·502/503/504·TTL 캐시), `internal/remote/stream_proxy.go`(subscribe/stream_data/unsubscribe·teardown·백프레셔), `internal/remote/client.go`(query-action 매핑·redaction·스트림 소스 구독), `internal/api/handler/remote.go`(query REST + 브라우저 스트림 엔드포인트) | query_action_test(allowlist·게이팅·실패 의미), query_redaction_test, query_correlation_test, read_only_reject_test, ttl_cache_test(캐시·무효화·라이브 우회), stream_proxy_test(fan-out·teardown·백프레셔) |
 | REQ-REMOTE-J09 ~ J15 (v1.3, 통합 UI) | `web/src/hooks/useFlowsTarget.ts`·`useAgentsTarget.ts`·`useDevicesTarget.ts`(타깃 추상화), `web/src/pages/{flows,agents,devices}/*ListPage.tsx`·`*DetailPanel.tsx`(target 재사용·상세 패리티·스트림 소비), `web/src/services/api/remoteService.ts`(query-action 호출·스트림 구독·폴링 폴백), `web/src/pages/remote/RemoteResourcesPage.tsx`(노드 셀렉터·라우팅) | useFlowsTarget/useAgentsTarget/useDevicesTarget Vitest, ListPage/DetailPanel 원격 타깃·스트림 소비 Vitest, 노드 셀렉터·target 라우팅 Vitest |
+| REQ-REMOTE-K01 ~ K06 (v1.4, 그룹핑) | `internal/storage/managed_node_sqlite.go`/`managed_node_repository.go`(group_name 컬럼·마이그레이션·SetNodeGroup/ListGroups/ListNodesByGroup), `internal/api/handler/remote.go`(PUT/DELETE group·GET groups·그룹별 노드 REST, admin-gated) | managed_node_group_test(배정/해제/distinct/그룹별/재라벨링/환원), remote_group_handler_test(admin 게이팅) |
+| REQ-REMOTE-K07 ~ K10 (v1.4, 시스템 정보+운영 요약) | `internal/remote/protocol.go`(register/heartbeat os/arch/started_at 선택 필드), `internal/remote/client.go`(보고), `internal/remote/server.go`/`registration.go`(수신·저장·uptime 파생), `internal/storage/managed_node_*`(os/arch/started_at 저장·운영 요약 미러 파생), `internal/api/handler/remote.go`(노드 상세=시스템 정보+운영 요약) | system_info_report_test(register/heartbeat 보고·하위 호환 빈값), node_summary_test(미러 파생 카운트/상태 분해·오프라인 last-known), uptime_derive_test |
+| REQ-REMOTE-K11 ~ K16 (v1.4, UI 재편) | `web/src/components/layout/Sidebar.tsx`(노드 관리+등록 관리 재편), `web/src/pages/remote/NodeManagementPage.tsx`(디렉토리/대시보드)·`EnrollmentManagementPage.tsx`(토큰+등록), `web/src/components/remote/NodeDashboard.tsx`(시스템+운영+M8 서브탭), `web/src/services/api/remoteService.ts`/`useRemote.ts`(group/summary), `web/src/router.tsx`(라우트 재편·딥링크 보존) | Sidebar IA Vitest(노드 관리/등록 관리·게이팅), NodeManagementPage Vitest(디렉토리/그룹 배정/대시보드), NodeDashboard Vitest(시스템/운영/서브탭 M8 재사용), EnrollmentManagementPage Vitest, router 리다이렉트/딥링크 Vitest |
 | REQ-REMOTE-N01 ~ N04 | server 연결 관리, 엔드포인트 분리, disabled 회귀, Message 봉투 | 부하/회귀 + ws 호환 |

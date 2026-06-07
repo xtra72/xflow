@@ -255,10 +255,17 @@ const (
 
 // HelloPayload 는 최소 connect/hello 페이로드이다(M1 식별용).
 // instance_id + hostname + version 으로 노드를 식별한다.
+//
+// v1.4(M9, 그룹 K): OS/Arch/StartedAt 는 선택적 BASIC 시스템 정보이다(REQ-K07). 토큰
+// 보유 재접속(hello) 경로에서도 시스템 정보를 갱신할 수 있도록 운반한다. 미존재(구버전
+// 노드)는 빈값으로 처리된다(하위 호환 — REQ-K09). 자원 메트릭(CPU/메모리/디스크)은 제외.
 type HelloPayload struct {
 	InstanceID string `json:"instance_id"`
 	Hostname   string `json:"hostname"`
 	Version    string `json:"version"`
+	OS         string `json:"os,omitempty"`         // runtime.GOOS (REQ-K07)
+	Arch       string `json:"arch,omitempty"`       // runtime.GOARCH (REQ-K07)
+	StartedAt  int64  `json:"started_at,omitempty"` // 프로세스 시작 시각(epoch ms, REQ-K07)
 }
 
 // ExposureSummary 는 register 요청에 실리는 노출 범위 요약이다(REQ-C01, REQ-A04).
@@ -280,6 +287,10 @@ type ExposureSummary struct {
 // EnrollmentToken 은 선택적 가입 토큰이다(v1.1 그룹 H, REQ-REMOTE-H05). 설정 시
 // 서버는 토큰을 검증하여 관리자 수동 승인 없이 노드를 자동 승인한다(유효한 경우).
 // 시크릿이므로 로깅 대상이 아니다(REQ-F06/H06).
+// v1.4(M9, 그룹 K): OS/Arch/StartedAt 는 선택적 BASIC 시스템 정보이다(REQ-K07). 노드는
+// 최초 register 에 이를 채워 보고하고, 서버는 managed_nodes 에 저장한다(REQ-K08). 미존재
+// (구버전 노드)는 빈값으로 처리되어 등록/관리가 정상 동작한다(하위 호환 — REQ-K09).
+// 자원 메트릭(CPU/메모리/디스크)은 보고하지 않는다(본 마일스톤 제외).
 type RegisterPayload struct {
 	InstanceID      string          `json:"instance_id"`
 	Hostname        string          `json:"hostname,omitempty"`
@@ -287,6 +298,9 @@ type RegisterPayload struct {
 	Exposure        ExposureSummary `json:"exposure,omitempty"`
 	BootstrapSecret string          `json:"bootstrap_secret,omitempty"`
 	EnrollmentToken string          `json:"enrollment_token,omitempty"`
+	OS              string          `json:"os,omitempty"`         // runtime.GOOS (REQ-K07)
+	Arch            string          `json:"arch,omitempty"`       // runtime.GOARCH (REQ-K07)
+	StartedAt       int64           `json:"started_at,omitempty"` // 프로세스 시작 시각(epoch ms, REQ-K07)
 }
 
 // RegisterAckPayload 는 등록 응답 페이로드이다(server→client, REQ-C03/C04, spec §5.1).
@@ -374,9 +388,17 @@ type InventoryDeltaPayload struct {
 
 // HeartbeatPayload 는 heartbeat 페이로드이다(REQ-B03).
 // TS 는 epoch milliseconds(int64) 이다.
+//
+// v1.4(M9, 그룹 K): OS/Arch/Version/StartedAt 는 선택적 BASIC 시스템 정보 갱신이다
+// (REQ-K07). 주기 heartbeat 로 변경 가능 필드(version/started_at 재기동 반영)를 갱신
+// 한다. 미존재(구버전 노드)는 빈값으로 처리되며 서버는 기존값을 보존한다(REQ-K08/K09).
 type HeartbeatPayload struct {
 	InstanceID string `json:"instance_id"`
 	TS         int64  `json:"ts"`
+	OS         string `json:"os,omitempty"`         // runtime.GOOS (REQ-K07)
+	Arch       string `json:"arch,omitempty"`       // runtime.GOARCH (REQ-K07)
+	Version    string `json:"version,omitempty"`    // 노드 버전(REQ-K07)
+	StartedAt  int64  `json:"started_at,omitempty"` // 프로세스 시작 시각(epoch ms, REQ-K07)
 }
 
 // StatusPayload 는 status 텔레메트리 페이로드이다(REQ-B05 보조).
@@ -399,6 +421,20 @@ func NewHeartbeatMessage(instanceID string) (*ws.Message, error) {
 	return ws.NewMessage(TypeHeartbeat, HeartbeatPayload{
 		InstanceID: instanceID,
 		TS:         time.Now().UnixMilli(),
+	})
+}
+
+// NewHeartbeatMessageWithInfo 는 BASIC 시스템 정보를 실은 heartbeat 메시지를 생성한다
+// (v1.4 M9, REQ-K07). ts 는 현재 시각의 epoch ms 이고, os/arch/version/startedAt 은
+// 노드가 런타임에서 수집한 값이다(빈값/0 은 omitempty 로 와이어에서 생략 — 하위 호환).
+func NewHeartbeatMessageWithInfo(instanceID, osName, arch, version string, startedAtMs int64) (*ws.Message, error) {
+	return ws.NewMessage(TypeHeartbeat, HeartbeatPayload{
+		InstanceID: instanceID,
+		TS:         time.Now().UnixMilli(),
+		OS:         osName,
+		Arch:       arch,
+		Version:    version,
+		StartedAt:  startedAtMs,
 	})
 }
 

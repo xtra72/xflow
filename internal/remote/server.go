@@ -313,7 +313,12 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 
 		// 식별 후: heartbeat/status 로 생존성 갱신, command_result 로 명령 상관.
 		switch msg.Type {
-		case TypeHeartbeat, TypeStatus:
+		case TypeHeartbeat:
+			// 생존성 갱신 + BASIC 시스템 정보 갱신(v1.4 M9, REQ-K07/K08). 시스템 정보는
+			// 제공된 필드만 갱신하고 미제공은 보존한다(구버전 노드 하위 호환 — REQ-K09).
+			s.touch(instanceID)
+			s.handleHeartbeat(connCtx, instanceID, msg.Payload)
+		case TypeStatus:
 			s.touch(instanceID)
 		case TypeCommandResult:
 			// 명령 결과를 대기 중인 Dispatch 호출로 라우팅한다(REQ-D05/D07).

@@ -92,6 +92,9 @@ func (m *fakeMirror) DeleteByNode(_ context.Context, instanceID string) error {
 	}
 	return nil
 }
+func (m *fakeMirror) NodeSummary(_ context.Context, _ string) (storage.NodeOperationalSummary, error) {
+	return storage.NodeOperationalSummary{}, nil
+}
 func (m *fakeMirror) Close() error { return nil }
 
 func filterByNode(src map[string]storage.MirroredResource, instanceID string) []storage.MirroredResource {
