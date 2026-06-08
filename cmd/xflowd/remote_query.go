@@ -175,7 +175,12 @@ func (s *remoteQuerySource) queryDashboard(ctx context.Context, action string, a
 		}
 		return nil, err
 	}
-	return marshalQuery(snap)
+	// RAW storage 구조체(capitalized 키, Payload=base64 문자열) 대신 로컬 GET
+	// /dashboards/{shared,mine} 와 IDENTICAL 한 DTO 형상으로 직렬화한다(REQ-L01 —
+	// 프런트 data.payload(소문자, object) 호환). global 시 owner=null, payload 는
+	// raw JSON object 로 직렬화된다. redaction 은 client 가 전송 전 적용한다(REQ-J06).
+	d := handler.DashboardSnapshotToDTO(snap)
+	return json.Marshal(d)
 }
 
 // queryMonitor 는 M10(그룹 L) monitor.metrics 를 노드-로컬 시스템 메트릭 스냅샷

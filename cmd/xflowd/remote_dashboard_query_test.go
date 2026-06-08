@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/remote"
 	"github.com/xtra/xflow/internal/storage"
@@ -68,11 +69,78 @@ func TestQuerySource_DashboardGetShared(t *testing.T) {
 	data, err := src.Query(context.Background(), remote.DomainDashboard, remote.QueryActionGetShared, nil)
 	require.NoError(t, err)
 
-	var snap storage.DashboardSnapshot
+	// 응답은 로컬 GET /dashboards/shared 와 IDENTICAL 한 dto.DashboardSnapshot 형상이다
+	// (소문자 키, payload=raw JSON object). global 스코프이므로 owner 는 null.
+	var snap dto.DashboardSnapshot
 	require.NoError(t, json.Unmarshal(data, &snap))
 	assert.Equal(t, "global", snap.Scope)
+	assert.Nil(t, snap.Owner, "global 스코프의 owner 는 null 이어야 함")
 	assert.Equal(t, int64(3), snap.Version)
 	assert.JSONEq(t, `{"dashboardPages":[{"id":"p1"}]}`, string(snap.Payload))
+}
+
+// TestQuerySource_DashboardSharedDTOShape 는 dashboard.get_shared 프록시 응답이 로컬
+// GET /dashboards/shared 와 IDENTICAL 한 DTO 형상을 갖는지 검증한다(REQ-L01 — 프런트
+// 호환). 핵심: 응답은 RAW storage 구조체가 아니라 dto.DashboardSnapshot 형상이어야 한다.
+//
+//   - 소문자 "scope"/"version"/"updatedAt"/"payload"/"owner" 키.
+//   - "payload" 는 base64 문자열이 아니라 raw JSON OBJECT (dashboardPages 등 포함).
+//   - global 스코프의 "owner" 는 JSON null.
+//
+// 회귀 방어: 과거 marshalQuery(snap) 은 capitalized "Payload" 를 base64 문자열로
+// 직렬화하여 프런트의 data.payload(소문자, object) 가 undefined → 빈 대시보드였다.
+func TestQuerySource_DashboardSharedDTOShape(t *testing.T) {
+	dash := &fakeDashboardReader{snaps: map[string]*storage.DashboardSnapshot{
+		"global|": {Scope: "global", Owner: "", Version: 3, UpdatedAt: 1700000000000, Payload: []byte(`{"dashboardPages":[{"id":"p1"}]}`)},
+	}}
+	src := newDashboardTestSource(dash, nil)
+
+	data, err := src.Query(context.Background(), remote.DomainDashboard, remote.QueryActionGetShared, nil)
+	require.NoError(t, err)
+
+	// 원시 JSON 맵으로 디코드하여 키 대소문자/타입을 직접 검증한다.
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	// 소문자 키 존재 + capitalized RAW 키 부재(회귀 방어).
+	require.Contains(t, raw, "scope", "소문자 scope 키가 있어야 함")
+	require.Contains(t, raw, "version", "소문자 version 키가 있어야 함")
+	require.Contains(t, raw, "updatedAt", "소문자 updatedAt 키가 있어야 함")
+	require.Contains(t, raw, "owner", "owner 키가 있어야 함")
+	require.Contains(t, raw, "payload", "소문자 payload 키가 있어야 함")
+	assert.NotContains(t, raw, "Payload", "capitalized Payload(base64) 키는 없어야 함")
+	assert.NotContains(t, raw, "Scope", "capitalized Scope 키는 없어야 함")
+
+	// payload 는 base64 문자열이 아니라 raw JSON OBJECT 이어야 한다.
+	assert.JSONEq(t, `{"dashboardPages":[{"id":"p1"}]}`, string(raw["payload"]),
+		"payload 는 dashboardPages 를 포함한 raw JSON 객체여야 함(base64 문자열 금지)")
+
+	// global 스코프의 owner 는 JSON null.
+	assert.JSONEq(t, `null`, string(raw["owner"]), "global 스코프의 owner 는 null 이어야 함")
+	assert.JSONEq(t, `"global"`, string(raw["scope"]))
+	assert.JSONEq(t, `3`, string(raw["version"]))
+}
+
+// TestQuerySource_DashboardMineDTOShape 는 dashboard.get_mine 프록시 응답의 owner 가
+// user 스코프에서 username 문자열로 직렬화되는지 검증한다(로컬 DTO 와 IDENTICAL).
+func TestQuerySource_DashboardMineDTOShape(t *testing.T) {
+	dash := &fakeDashboardReader{snaps: map[string]*storage.DashboardSnapshot{
+		"user|admin": {Scope: "user", Owner: "admin", Version: 1, UpdatedAt: 1700000000001, Payload: []byte(`{"activeDashboardId":"d1"}`)},
+	}}
+	src := newDashboardTestSource(dash, nil)
+
+	args := json.RawMessage(`{"owner":"admin"}`)
+	data, err := src.Query(context.Background(), remote.DomainDashboard, remote.QueryActionGetMine, args)
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	assert.NotContains(t, raw, "Payload", "capitalized Payload(base64) 키는 없어야 함")
+	assert.JSONEq(t, `"admin"`, string(raw["owner"]), "user 스코프의 owner 는 username 문자열이어야 함")
+	assert.JSONEq(t, `{"activeDashboardId":"d1"}`, string(raw["payload"]),
+		"payload 는 raw JSON 객체여야 함")
+	assert.JSONEq(t, `"user"`, string(raw["scope"]))
 }
 
 // TestQuerySource_DashboardGetMine 는 dashboard.get_mine 가 args.owner 로 노드-로컬
@@ -87,10 +155,12 @@ func TestQuerySource_DashboardGetMine(t *testing.T) {
 	data, err := src.Query(context.Background(), remote.DomainDashboard, remote.QueryActionGetMine, args)
 	require.NoError(t, err)
 
-	var snap storage.DashboardSnapshot
+	// user 스코프이므로 owner 는 username 문자열(*string)로 직렬화된다.
+	var snap dto.DashboardSnapshot
 	require.NoError(t, json.Unmarshal(data, &snap))
 	assert.Equal(t, "user", snap.Scope)
-	assert.Equal(t, "admin", snap.Owner)
+	require.NotNil(t, snap.Owner, "user 스코프의 owner 는 non-null 이어야 함")
+	assert.Equal(t, "admin", *snap.Owner)
 }
 
 // TestQuerySource_DashboardSharedNotConfigured 는 공유(global) 대시보드 config 미설정

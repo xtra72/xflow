@@ -392,3 +392,13 @@ func toDTO(s *storage.DashboardSnapshot) dto.DashboardSnapshot {
 		Payload:   s.Payload,
 	}
 }
+
+// DashboardSnapshotToDTO 는 toDTO 의 exported 래퍼이다.
+//
+// 원격 관리 query 프록시(cmd/xflowd)가 노드-로컬 GET /dashboards/{shared,mine} 와
+// IDENTICAL 한 응답 형상(소문자 키, payload=raw JSON object, global 시 owner=null)을
+// 재사용하도록 변환을 공개한다(SPEC-REMOTE-001 그룹 L — 프런트 호환). 로컬 핸들러는
+// 계속 toDTO 를 직접 사용한다(SoT 동일).
+func DashboardSnapshotToDTO(s *storage.DashboardSnapshot) dto.DashboardSnapshot {
+	return toDTO(s)
+}
