@@ -45,6 +45,18 @@ type FlowServiceAdapter struct {
 	engine *engine.Engine
 	repo   storage.FlowRepository
 	logger *slog.Logger
+	// remoteFetcher 는 배포 시 원격 서브플로우 참조(remote://...)를 해석한다
+	// (SPEC-SUBFLOW-001 v1.2 그룹 R). 서버 모드에서만 주입되며, nil 이면 원격 참조는
+	// 배포 거부된다(REQ-SUBFLOW-R07). 비-서버 모드에서는 nil 로 유지된다.
+	remoteFetcher RemoteFlowFetcher
+}
+
+// SetRemoteFlowFetcher 는 배포 시 원격 서브플로우 해석에 사용할 fetcher 를 주입한다
+// (SPEC-SUBFLOW-001 v1.2 그룹 R, REQ-SUBFLOW-R07). 서버 모드 와이어링(cmd/xflowd)에서
+// *remote.Server 위에 구현한 fetcher 를 주입한다. 미호출(비-서버 모드) 시 원격 참조는
+// 배포 시 거부된다.
+func (a *FlowServiceAdapter) SetRemoteFlowFetcher(fetcher RemoteFlowFetcher) {
+	a.remoteFetcher = fetcher
 }
 
 // NewFlowServiceAdapter 는 새 FlowServiceAdapter 를 생성한다.
@@ -371,7 +383,9 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 	// 치환한 평탄화 플로우를 만든다(REQ-SUBFLOW-D01~D06). 항상 최신 참조 정의를 반영하며
 	// (결정 2), 결과 플로우에는 flow-node 가 남지 않아 엔진이 그대로 인스턴스화할 수 있다.
 	// 순환 검출 이후에 수행하여 무한 확장을 원천 차단한다(REQ-SUBFLOW-E03).
-	expanded, expErr := ExpandSubflows(ctx, f, a.repo)
+	// 원격 서브플로우 참조(remote://...)는 a.remoteFetcher 로 해석한다(그룹 R). 서버 모드가
+	// 아니거나 fetcher 가 미주입(nil)이면 원격 참조는 배포 거부된다(REQ-SUBFLOW-R07).
+	expanded, expErr := ExpandSubflowsWithFetcher(ctx, f, a.repo, a.remoteFetcher)
 	if expErr != nil {
 		return fmt.Errorf("flow deploy: subflow expand: %w", expErr)
 	}

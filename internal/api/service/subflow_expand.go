@@ -92,12 +92,28 @@ type flowNodeBoundary struct {
 //
 // 깊이/노드 수 상한 초과 시 에러를 반환한다(REQ-SUBFLOW-N01).
 // 참조 플로우가 저장소에 없으면 에러를 반환한다(REQ-SUBFLOW-F03).
+//
+// 원격 참조(remote://...) flow-node 는 해석하지 않는다(fetcher 부재) — 원격 참조가
+// 존재하면 배포를 거부한다(REQ-SUBFLOW-R07). 원격 참조를 해석하려면
+// ExpandSubflowsWithFetcher 를 사용한다.
 func ExpandSubflows(ctx context.Context, f flow.Flow, repo storage.FlowRepository) (flow.Flow, error) {
-	return expandSubflowsRec(ctx, f, repo, 0, nil)
+	return expandSubflowsRec(ctx, f, repo, nil, 0, nil)
+}
+
+// ExpandSubflowsWithFetcher 는 ExpandSubflows 와 동일하나, 원격 참조(remote://...)
+// flow-node 를 fetcher 로 해석하여 인라인 확장한다(SPEC-SUBFLOW-001 v1.2 그룹 R).
+//
+//   - fetcher: 원격 플로우 정의 해석기(매니저 서버 모드에서 주입). nil 이면 원격 참조는
+//     배포 거부(REQ-SUBFLOW-R07). LOCAL bare id 참조는 fetcher 와 무관하게 repo.Get 으로 해석.
+//
+// 원격 분기는 fetch(항상 최신) → 역직렬화 → 중첩 flow-node 거부(R08) → 인라인 확장
+// 순으로 처리된다(§5.11). 실패 시 배포를 거부하며 stale/empty 정의를 사용하지 않는다(R06).
+func ExpandSubflowsWithFetcher(ctx context.Context, f flow.Flow, repo storage.FlowRepository, fetcher RemoteFlowFetcher) (flow.Flow, error) {
+	return expandSubflowsRec(ctx, f, repo, fetcher, 0, nil)
 }
 
 // expandSubflowsRec 는 ExpandSubflows 의 재귀 본체이다.
-func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowRepository, depth int, logger *slog.Logger) (flow.Flow, error) {
+func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowRepository, fetcher RemoteFlowFetcher, depth int, logger *slog.Logger) (flow.Flow, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -146,16 +162,49 @@ func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowReposi
 			return nil, fmt.Errorf("flow-node %q: flow_id 가 비어 있습니다", n.ID)
 		}
 
-		// 참조 플로우 조회(항상 최신).
-		ref, err := repo.Get(ctx, flowID)
-		if err != nil {
-			return nil, fmt.Errorf("flow-node %q: 참조 플로우 조회 실패(flow_id=%q): %w", n.ID, flowID, err)
+		// 원격/로컬 판별(REQ-SUBFLOW-R01).
+		instanceID, remoteFlowID, isRemote, parseErr := parseRemoteFlowRef(flowID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("flow-node %q: %w", n.ID, parseErr)
 		}
 
-		// 중첩 해소: 참조 플로우 내부의 flow-node 를 먼저 평탄화한다(누적 접두사 처리).
-		expandedRef, err := expandSubflowsRec(ctx, ref, repo, depth+1, logger)
-		if err != nil {
-			return nil, err
+		var expandedRef flow.Flow
+		if isRemote {
+			// --- 원격 참조 해석(그룹 R) ---
+			// 해석기 부재(비-서버 모드/미주입) → 배포 거부(REQ-SUBFLOW-R07).
+			if fetcher == nil {
+				return nil, fmt.Errorf("flow-node %q: 원격 서브플로우 해석 불가(서버 모드 아님/해석기 미구성): flow_id=%q (instance=%q)", n.ID, flowID, instanceID)
+			}
+			// 매 배포 fetch(항상 최신, REQ-SUBFLOW-R03). 실패 시 배포 거부(REQ-SUBFLOW-R06,
+			// stale/empty 무음 사용 금지). 어느 노드/어느 instance/flow_id 인지 식별.
+			defBytes, fetchErr := fetcher.FetchRemoteFlow(ctx, instanceID, remoteFlowID)
+			if fetchErr != nil {
+				return nil, fmt.Errorf("flow-node %q: 원격 플로우 fetch 실패(instance=%q, flow_id=%q): %w", n.ID, instanceID, remoteFlowID, fetchErr)
+			}
+			ref, dErr := deserializeRemoteFlow(defBytes, instanceID, remoteFlowID)
+			if dErr != nil {
+				return nil, fmt.Errorf("flow-node %q: %w", n.ID, dErr)
+			}
+			// 중첩 원격/로컬 flow-node 거부(REQ-SUBFLOW-R08, self-contained 경계).
+			// 매니저가 원격 그래프를 완전 순회 불가 → 분산 순환 검출 회피. 원격 경계 너머로
+			// 확장하지 않으므로(REQ-SUBFLOW-R09), ref 는 재귀 확장하지 않는다.
+			if flowContainsFlowNode(ref) {
+				return nil, fmt.Errorf("flow-node %q: 원격 서브플로우는 중첩 서브플로우를 포함할 수 없습니다(instance=%q, flow_id=%q)", n.ID, instanceID, remoteFlowID)
+			}
+			expandedRef = ref
+		} else {
+			// --- 로컬 참조(bare id) — 기존 동작(하위 호환) ---
+			// 참조 플로우 조회(항상 최신).
+			ref, err := repo.Get(ctx, flowID)
+			if err != nil {
+				return nil, fmt.Errorf("flow-node %q: 참조 플로우 조회 실패(flow_id=%q): %w", n.ID, flowID, err)
+			}
+
+			// 중첩 해소: 참조 플로우 내부의 flow-node 를 먼저 평탄화한다(누적 접두사 처리).
+			expandedRef, err = expandSubflowsRec(ctx, ref, repo, fetcher, depth+1, logger)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		nsNodes, nsWires, boundary := instantiateSubflow(n.ID, expandedRef, &wireSeq)

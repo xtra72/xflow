@@ -1,10 +1,10 @@
 ---
 id: SPEC-SUBFLOW-001
 title: "플로우 노드 — 플로우 합성(서브플로우) 및 플로우 레벨 입출력 포트"
-version: "1.1.0"
+version: "1.2.0"
 status: implemented
 created: "2026-06-04"
-updated: "2026-06-05"
+updated: "2026-06-09"
 author: "xtra"
 priority: high
 related_specs:
@@ -14,6 +14,7 @@ related_specs:
   - SPEC-ENGINE-001
   - SPEC-WEB-001
   - SPEC-AGENT-NODE-001
+  - SPEC-REMOTE-001
 tags:
   - subflow
   - flow-node
@@ -23,12 +24,17 @@ tags:
   - cycle-detection
   - editor
   - engine
+  - remote-subflow
+  - remote-reference
+  - deploy-time-resolution
+  - query-proxy
 ---
 
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 1.0.0 | 2026-06-04 | xtra | 초기 SPEC 작성 |
 | 1.1.0 | 2026-06-05 | xtra | 구현 완료 동기화 — OPEN QUESTIONS 1~5 확정, 최종 아키텍처 반영(센티넬 경계 와이어 규약·직접 재배선·합성 경계/영역 노드 UI), 구현 상태(M1~M4 완료) 기록 |
+| 1.2.0 | 2026-06-09 | xtra | v1.2 확장 — **원격 서브플로우 참조(그룹 R/RU/RC)**. LOCAL 플로우의 flow-node 가 **원격 관리 노드(SPEC-REMOTE-001 managed node)의 플로우**를 참조하고, **배포 시점에 항상 최신**으로 해석한다. 채택 = **배포 시 원격 참조(deploy-time remote reference)**: ExpandSubflows 가 원격 참조를 감지하면 매니저의 **SPEC-REMOTE-001 query 프록시(`flow`/`get`, REQ-J04)** 로 원격 플로우 정의를 fetch 하여 로컬 서브플로우처럼 인라인 확장(네임스페이스·평탄화·순환검출)한다. 확장된 서브그래프는 **배포 인스턴스(매니저/서버)에서 실행**(정의 임베딩이며 분산 실행이 아님 — 원격 노드는 라이브 실행 피어가 아니다). 데이터 모델 = `flow_id` 의 `remote://{instance_id}/{flow_id}` 정규형(bare id = LOCAL, 하위 호환). 실패 의미 = 노드 오프라인/원격 플로우 없음 → **배포 실패(명확한 에러, stale/empty 무음 사용 금지)**. **제약/비목표(반드시 명시)**: (1) fetch 된 원격 정의는 **redacted**(노드-로컬 시크릿 마스킹, REMOTE F06) → 매니저에서 실행 시 시크릿 의존 노드 미동작, (2) 원격 노드의 agent/device 참조는 매니저 환경에서 해석 → 원격-전용 자원 참조 실패, (3) self-contained/비시크릿 로직 플로우에서만 동작. 마일스톤 M8~M10 추가. OPEN QUESTIONS OQ-R1~R5 제기 → **✅ 전부 RESOLVED(2026-06-09, 사용자 권고안대로 확정: URI 형식 / 라이브 프록시 전용·미러 폴백 없음 / 오프라인 하드 실패 / 중첩 원격 참조 v1 거부 / 시크릿·agent·device 한계 배포 시 경고+정적 스캔)**. 기존 REQ-SUBFLOW-A01~F03/N01~N02 보존 — 추가만 |
 
 > **구현 상태(Implementation Status)** — 2026-06-05, 브랜치 `feature/subflow-node`.
 > 본 기능은 백엔드·프론트 전 마일스톤이 구현 완료되었다.
@@ -38,6 +44,9 @@ tags:
 > - **M4 — 경계 포트 UI**: 구현됨. `web/src/lib/flow/boundary.ts`(합성 경계/영역 노드, 센티넬, 포트 영속), `FlowBoundaryNode.tsx`, `FlowAreaNode.tsx`, `FlowPortPanel.tsx`, `web/src/stores/editorStore.ts`.
 >
 > 본문 요구사항/인수 기준은 보존하되, 구현으로 충족된 항목은 "구현됨"으로 주석한다. 신규 요구사항은 추가하지 않는다.
+
+> **v1.2 확장 상태(2026-06-09, 브랜치 `feature/subflow-node`)** — **계획(planned)**. v1.2 는 v1.1 의 로컬 서브플로우 모델을 **원격 노드 플로우 참조**로 확장한다(그룹 R/RU/RC, §4.8~4.10·§5.10~§5.12). 본 확장 요구사항은 아직 미구현이며 `/moai run SPEC-SUBFLOW-001` 으로 마일스톤 M8~M10 증분 구현한다. **OPEN QUESTIONS OQ-R1~R5(§5.13) ✅ 전부 RESOLVED(2026-06-09, 사용자 권고안대로 확정) — 구현 시 고정 제약이며 Run 진입 가능.**
+> - 형제 변경(별건)으로 flow-node 피커가 **target-aware** 화되어, **원격 노드의 플로우를 편집할 때 그 노드의 플로우 목록**을 보이게 했다(same-node 서브플로우). v1.2 는 이와 구분되는 **cross-node** 케이스다 — **LOCAL 플로우가 원격 노드의 플로우를 참조**한다.
 
 # SPEC-SUBFLOW-001: 플로우 노드 — 플로우 합성(서브플로우) 및 플로우 레벨 입출력 포트
 
@@ -94,11 +103,22 @@ flow-node는 매 배포 시점의 참조 플로우 **현재 정의**를 반영�
 - 백엔드: `pkg/flow` 에 플로우 레벨 입출력 포트 모델(`Inputs()/Outputs()` 또는 동등) 추가. 어댑터 양방향 변환(정의 최상위 `inputs`/`outputs`). flow-node 빌트인 등록. 배포 시 서브그래프 확장(네임스페이스 복제 + boundary 브리지). 순환/자기참조 검출.
 - 프론트: 캔버스 경계 포트 UI(좌 입력/우 출력) + 포트 관리 패널, flow-node 노드(참조 플로우 포트로 핸들 동적 계산), 플로우 피커 모달(자기 플로우 제외), editorStore 플로우 포트 상태.
 
+**포함(v1.2 — 원격 서브플로우 참조):**
+- 백엔드: flow-node `flow_id` 의 **원격 참조 정규형**(`remote://{instance_id}/{flow_id}`, bare id = LOCAL 하위 호환) 파싱/포맷. 배포 시 ExpandSubflows 가 원격 참조를 감지하여 **SPEC-REMOTE-001 query 프록시(`flow`/`get`, REQ-J04 = `Server.DispatchQuery(ctx, instanceID, "flow", "get", ...)`)** 로 원격 플로우 정의를 fetch(항상 최신) → 로컬 서브플로우와 동일 규칙으로 인라인 확장(네임스페이스·평탄화·직접 재배선·상한). 실패 의미(노드 오프라인/원격 플로우 없음 → 배포 실패). 중첩 원격 참조 v1 거부.
+- 프론트: flow-node 피커에 **원격 노드 선택기**(기본 LOCAL) + 그 노드의 플로우 목록(SPEC-REMOTE-001 원격 플로우 목록/`useFlowsTarget` 재사용) + **원격 배지** + 원격 참조 핸들 계산(query 프록시 `flow`/`get` 으로 원격 플로우 inputs/outputs READ-ONLY 취득).
+
 **제외:**
 - 라이브(런타임) 플로우 간 메시지 버스 (명시적 금지 — 인스턴스화 모델만 사용).
 - 참조 스냅샷 고정/버전 핀 (항상 최신 정책).
 - 서브플로우 인스턴스별 파라미터/환경 변수 오버라이드 (향후 SPEC, OPEN QUESTION).
 - 중첩 깊이 제한 정책의 정밀 튜닝(기본 안전 상한만 — Section 5 참조).
+
+**제외(v1.2 — 원격 서브플로우 비목표/제약):**
+- **분산 실행(distributed execution)**: 원격 참조는 **정의 임베딩**이다. 확장된 서브그래프는 **배포 인스턴스(매니저/서버)에서 실행**되며, 원격 노드는 **라이브 실행 피어가 아니다**(REQ-SUBFLOW-RC03). 원격 노드에서 서브그래프를 실행하고 결과만 받는 RPC 패스스루는 본 SPEC 제외(향후 SPEC).
+- **시크릿 의존 원격 노드 동작**: query 프록시가 반환하는 원격 정의는 **redacted**(노드-로컬 시크릿 마스킹 — SPEC-REMOTE-001 REQ-F06/J06). 확장 서브그래프가 매니저에서 실행될 때 실제 시크릿이 없으므로 **시크릿이 필요한 원격 노드는 동작하지 않는다**(REQ-SUBFLOW-RC01). self-contained/비시크릿 로직 플로우에서만 동작.
+- **원격 전용 agent/device 참조 해석**: 원격 플로우 노드가 참조하는 agent/device 는 **원격 노드**에 존재한다. 확장 서브그래프는 이를 **매니저 환경**에서 해석하므로, 원격-전용 자원 참조는 **실패**한다(REQ-SUBFLOW-RC02). self-contained 플로우에서만 동작.
+- **중첩 원격 참조(v1 거부)**: fetch 된 원격 플로우 정의가 **그 자체로 flow-node(로컬/원격 불문)를 포함**하면 v1 은 거부한다(REQ-SUBFLOW-R08). 분산 순환 검출을 회피하기 위한 self-contained 경계. allow 는 향후 SPEC(OQ-R4 ✅ RESOLVED = v1 거부 확정).
+- **원격 노드로의 양방향 미러/역참조**: 원격 노드의 플로우가 매니저의 LOCAL 플로우를 참조하는 역방향은 본 SPEC 제외.
 
 ## 2. 환경
 
@@ -120,6 +140,14 @@ flow-node는 매 배포 시점의 참조 플로우 **현재 정의**를 반영�
 - **A5**: 순환 검출은 flow-node가 만드는 "플로우→플로우" 참조 그래프에 대해 수행한다. 이 그래프는 리포지토리의 플로우 정의들(각 flow-node의 `flow_id`)로 구성된다.
 - **A6**: 확장은 배포 시점에만 일어나며 저장된 부모 정의 자체는 flow-node를 그대로 보존한다(확장 결과를 영속화하지 않는다 — 결정 2 "항상 최신" 보장).
 - **A7**: 참조 플로우 포트와 flow-node 핸들의 동기화는 매 편집/로드 시 `getFlows`/참조 플로우 정의 조회로 갱신한다. 참조 포트가 사라지면 해당 핸들에 걸린 부모 와이어는 dangling 으로 처리한다(경고/정리).
+
+### 3.1 가정 (v1.2 — 원격 서브플로우 참조)
+
+- **A8**(v1.2): 본 확장은 **SPEC-REMOTE-001 의 매니저(서버 모드) 인프라 위에서만** 동작한다. 매니저는 `*remote.Server` 를 보유하며, 원격 노드의 플로우 정의를 **query 프록시 `flow`/`get`**(REQ-J04, `Server.DispatchQuery(ctx, instanceID, "flow", "get", args)`)로 READ-ONLY 취득할 수 있다. server 모드가 아니거나 원격 해석기(fetcher)가 주입되지 않으면 원격 참조는 배포 시 명확한 에러로 거부된다(REQ-SUBFLOW-R07).
+- **A9**(v1.2): query 프록시 `flow`/`get` 응답은 **redacted**(노드-로컬 시크릿 마스킹 — SPEC-REMOTE-001 REQ-F06/J06)이며 **승인(approved)∧온라인(online)∧노출(exposure) 범위** 게이팅(REQ-J05)을 통과한 자원만 반환된다. 따라서 원격 서브플로우는 그 게이팅·redaction 을 그대로 상속한다. 게이팅 실패/오프라인/누락은 `DispatchQuery` 의 기존 실패 의미(미관리/오프라인→503·타임아웃→504·노드오류→502)로 표면화된다.
+- **A10**(v1.2): 원격 참조 해석은 **배포 시점에만** 일어나며(A6 일관), fetch 된 정의는 **영속화하지 않는다**(항상 최신 — 결정 2). 저장된 부모 정의에는 원격 참조 형식의 `flow_id` 만 보존된다.
+- **A11**(v1.2): fetch 된 원격 플로우 정의는 기존 직렬화 경로(`pkg/flow/serialize.go` 역직렬화)로 `flow.Flow` 로 파싱되어, 로컬 서브플로우와 **동일한 확장 규칙**(네임스페이스 §5.3·직접 재배선 §5.4·센티넬 경계 §5.1.1·상한 §5.5)으로 처리된다. 원격이라는 사실은 **fetch 출처만 다를 뿐** 확장 알고리즘은 분기하지 않는다.
+- **A12**(v1.2): 원격 노드는 **라이브 실행 피어가 아니다**. 확장 서브그래프는 부모를 배포하는 **매니저/서버 인스턴스에서 실행**된다(정의 임베딩). 시크릿·agent/device 참조는 **매니저 환경** 기준으로 해석되며, 원격-전용 의존(시크릿/원격 자원)은 동작하지 않는다(REQ-SUBFLOW-RC01~RC03 — self-contained/비시크릿 로직에서만 동작).
 
 ## 4. 요구사항 (EARS)
 
@@ -232,6 +260,69 @@ flow-node는 매 배포 시점의 참조 플로우 **현재 정의**를 반영�
 
 **REQ-SUBFLOW-N02**: 라우팅 동작 보존
 시스템은 **항상** 확장된 서브그래프 내부 노드/와이어가 일반 플로우와 동일한 라우팅·큐·카운터 의미로 동작하도록 해야 한다(서브그래프 내부도 일반 와이어와 동일).
+
+### 4.8 그룹 R — 원격 서브플로우 참조 (Remote Subflow Reference) — v1.2 확장 (backend)
+
+> **범위(v1.2)** — 본 그룹은 LOCAL 플로우의 flow-node 가 **원격 관리 노드(SPEC-REMOTE-001 managed node)의 플로우**를 참조하고, **배포 시점에 항상 최신**으로 해석·확장하는 기능을 추가한다. 채택 = **배포 시 원격 참조(deploy-time remote reference)** — 스냅샷/import 가 아니다. 기존 로컬 서브플로우 모델(그룹 A~F·N)은 **전부 보존**되며, 원격 참조는 **fetch 출처만 원격 query 프록시로 다를 뿐** 동일한 확장 알고리즘(네임스페이스·평탄화·직접 재배선·상한·순환검출)을 재사용한다. **OPEN QUESTIONS OQ-R1~R5(§5.13) ✅ 전부 RESOLVED(2026-06-09, 사용자 권고안대로 확정) — 아래 요구사항의 결정은 고정 제약이다.**
+
+**REQ-SUBFLOW-R01**: 원격 참조 데이터 모델 (`remote://` 정규형, 하위 호환)
+시스템은 **항상** flow-node 의 `flow_id` 가 **원격 참조 정규형 `remote://{instance_id}/{flow_id}`**(OQ-R1 ✅ RESOLVED = URI 확정)을 운반할 수 있어야 하며, 이 형식이 원격 노드 `instance_id` 와 그 노드의 플로우 id 를 식별하도록 해야 한다. **WHERE** `flow_id` 가 정규형이 아닌 bare id 이면, 시스템은 이를 **LOCAL 참조**로 해석해야 한다(기존 동작 하위 호환, REQ-SUBFLOW-C01 보존). 형식 판별은 결정적이고 모호하지 않아야 한다(`remote://` 스킴 유무로 판별). 구조화 config `{remote_instance_id, flow_id}` 대안은 미채택(§5.13).
+
+**REQ-SUBFLOW-R02**: 배포 시 원격 정의 해석 (query 프록시 `flow`/`get`)
+**WHEN** 원격 참조를 가진 flow-node 를 포함한 부모 플로우를 배포하면, **THEN** 시스템은 `ExpandSubflows` 에서 원격 참조를 감지하고, 매니저의 **SPEC-REMOTE-001 query 프록시 `flow`/`get`**(REQ-J04, `Server.DispatchQuery(ctx, instance_id, "flow", "get", {flow_id})`)으로 원격 플로우 정의를 fetch 하여 해석해야 한다. fetch 된 정의는 기존 직렬화 경로로 `flow.Flow` 로 파싱되어야 한다(A11).
+
+**REQ-SUBFLOW-R03**: 항상 최신 (매 배포 fetch, 스냅샷 없음)
+시스템은 **항상** 원격 참조를 **매 배포 시점마다 fetch**하여 원격 플로우의 현재 정의를 반영해야 한다(결정 2 "항상 최신" 일관). fetch 결과를 부모 정의에 영속화하거나 스냅샷으로 고정하지 않아야 한다(A10). 원격 플로우가 수정된 뒤 부모를 재배포하면 최신 정의가 확장되어야 한다.
+
+**REQ-SUBFLOW-R04**: 인라인 확장 (로컬 서브플로우와 동일 규칙)
+시스템은 **항상** fetch 된 원격 플로우 정의를 로컬 서브플로우와 **동일한 규칙**으로 인라인 확장해야 한다: 네임스페이스 접두사 복제(§5.3, flow-node ID 포함 인스턴스 격리), 평탄화, boundary 직접 재배선(§5.4, flow-node 핸들 ↔ 원격 플로우 입출력 포트), 깊이/노드 안전 상한(§5.5), dangling 와이어 정리. 확장 서브그래프는 일반 노드/와이어로 평탄화되어 엔진에 전달되어야 한다(엔진 비침습 — 어댑터 사전 확장, 옵션 1 일관).
+
+**REQ-SUBFLOW-R05**: 원격 게이팅 상속 (승인∧온라인∧노출)
+시스템은 **항상** 원격 참조 해석을 query 프록시의 게이팅(승인 ∧ 온라인 ∧ 노출 범위 — SPEC-REMOTE-001 REQ-J05)에 종속시켜야 한다. 미승인/오프라인/노출 범위 밖 원격 플로우는 fetch 되지 않으며, 그 결과로 배포가 실패해야 한다(무음 통과 금지).
+
+**REQ-SUBFLOW-R06**: 실패 의미 — 오프라인/누락 시 배포 실패 (stale/empty 무음 금지)
+**IF** 원격 참조 해석이 실패하면(노드 오프라인 → `DispatchQuery` 503, 타임아웃 → 504, 원격 플로우 미존재/노드 오류 → 502), **THEN** 시스템은 **배포를 거부하고 명확하고 실행 가능한 에러**(어느 노드/어느 flow_id/어떤 실패)를 반환해야 한다. 시스템은 **stale/empty 정의를 무음으로 사용하지 않아야** 한다(REQ-SUBFLOW-F03 의 로컬 누락 엄격 처리와 일관). **확정(OQ-R2/R3 ✅ RESOLVED)**: 정의 출처 = **라이브 query 프록시 `flow`/`get` 전용(미러 폴백 없음)**, 오프라인 = **하드 실패**(last-mirror 사용 금지).
+
+**REQ-SUBFLOW-R07**: 해석기 부재 처리 (비-서버 모드)
+**IF** 부모를 배포하는 인스턴스가 server 모드가 아니거나 원격 해석기(`RemoteFlowFetcher`)가 주입되지 않았는데 원격 참조가 존재하면, **THEN** 시스템은 배포를 거부하고 "원격 서브플로우 해석 불가(서버 모드 아님/해석기 미구성)" 에러를 명확히 반환해야 한다.
+
+**REQ-SUBFLOW-R08**: 중첩 원격 참조 거부 (v1, self-contained 경계)
+**IF** fetch 된 원격 플로우 정의가 **그 자체로 flow-node(로컬/원격 불문)를 포함**하면, **THEN** 시스템은 v1 에서 이를 거부하고 명확한 에러("원격 서브플로우는 중첩 서브플로우를 포함할 수 없음")를 반환해야 한다. 이는 매니저가 원격 노드 그래프를 완전 순회할 수 없어 분산 순환 검출이 불가하므로 채택한 self-contained 경계이다(OQ-R4 ✅ RESOLVED = v1 거부 확정, allow 는 향후 SPEC).
+
+**REQ-SUBFLOW-R09**: 순환/무한 확장 방지 (원격 참조)
+시스템은 **항상** 원격 참조 확장에도 깊이/노드 안전 상한(§5.5, 깊이 8/노드 5000)을 적용해야 하며, REQ-SUBFLOW-R08 의 중첩 거부와 결합하여 무한/순환 확장을 원천 차단해야 한다. 매니저 LOCAL 그래프의 순환 검출(REQ-SUBFLOW-E01~E04)은 보존되며, 원격 경계 너머로 확장하지 않는다.
+
+### 4.9 그룹 RU — 원격 서브플로우 피커 UI (Remote Subflow Picker) — v1.2 확장 (web)
+
+> **범위(v1.2)** — LOCAL 플로우 편집에서 flow-node 가 **원격 노드의 플로우**를 선택할 수 있게 한다. 기본은 LOCAL 선택(REQ-SUBFLOW-C04 보존)이며, 원격 선택은 SPEC-REMOTE-001 의 원격 플로우 목록 접근(`useFlowsTarget`/원격 자원 목록)을 재사용한다.
+
+**REQ-SUBFLOW-RU01**: 원격 노드 선택기
+**WHEN** 사용자가 LOCAL 플로우에서 flow-node 의 참조 대상을 선택하면, **THEN** 시스템은 (a) LOCAL 플로우(기본) 또는 (b) **원격 노드**를 선택하는 노드 선택기를 제공해야 한다. 원격 노드 후보는 승인∧온라인 노드(SPEC-REMOTE-001 노드 목록)로 제한한다.
+
+**REQ-SUBFLOW-RU02**: 원격 노드 플로우 목록
+**WHEN** 사용자가 원격 노드를 선택하면, **THEN** 시스템은 그 노드의 플로우 목록을 **SPEC-REMOTE-001 원격 플로우 목록 접근**(`useFlowsTarget`/`?target=remote:{instanceId}` 또는 미러 목록 — REQ-J09~J10)으로 표시하고, 그중 하나를 서브플로우 참조로 선택할 수 있어야 한다. 별도 원격 전용 목록 데이터 경로를 신설하지 않고 재사용해야 한다.
+
+**REQ-SUBFLOW-RU03**: 원격 참조 영속 (정규형 저장)
+**WHEN** 사용자가 원격 노드의 플로우를 선택하면, **THEN** 시스템은 flow-node config 의 `flow_id` 에 **원격 참조 정규형**(REQ-SUBFLOW-R01, `remote://{instance_id}/{flow_id}`)을 저장해야 한다. LOCAL 선택은 기존대로 bare id 를 저장해야 한다(하위 호환).
+
+**REQ-SUBFLOW-RU04**: 원격 선택 배지 표시
+시스템은 **항상** flow-node 가 원격 플로우를 참조할 때 이를 **원격 배지(remote badge)** 와 출처 노드 식별(노드 이름/instance_id)로 명확히 표시해야 한다(로컬 참조와 시각적으로 구분).
+
+**REQ-SUBFLOW-RU05**: 원격 참조 핸들 계산 (원격 포트, READ-ONLY)
+시스템은 **항상** 원격 참조 flow-node 의 입출력 핸들을 **원격 플로우의 입출력 포트**로 표시해야 한다. 원격 플로우의 `inputs`/`outputs` 는 query 프록시 `flow`/`get`(READ-ONLY, REQ-J04)으로 취득하여 핸들을 동적 계산하며(REQ-SUBFLOW-C02/C03 의 "항상 최신" 일관), 미해결(노드 오프라인/미선택)이면 핸들 없이 둔다(dangling 사전 억제, REQ-SUBFLOW-C05 일관).
+
+### 4.10 그룹 RC — 제약 & 비목표 (Caveats & Constraints) — v1.2 확장
+
+> **중요** — 본 그룹의 제약은 원격 서브플로우 기능의 적용 범위를 **실질적으로 한정**한다. 이 제약들은 묻혀서는 안 되며, 배포/피커 UX 에서 운영자에게 명시적으로 표면화되어야 한다(OQ-R5 ✅ RESOLVED = **배포 시 비차단 경고 + best-effort 정적 스캔** 확정). 본 기능은 **self-contained / 비시크릿 로직 플로우**에 적합하다.
+
+**REQ-SUBFLOW-RC01**: 시크릿 마스킹 제약 (redacted 정의)
+시스템은 **항상** 원격 플로우 정의가 query 프록시를 통해 **redacted**(노드-로컬 시크릿 마스킹 — SPEC-REMOTE-001 REQ-F06/J06)된 채 fetch 됨을 전제해야 한다. 확장 서브그래프는 매니저에서 실행되며 **실제 시크릿을 보유하지 않으므로**, **시크릿이 필요한 원격 노드는 동작하지 않는다**. 시스템은 이 한계를 운영자에게 표면화해야 한다(OQ-R5 ✅ RESOLVED = 배포 시 비차단 경고 + best-effort 정적 스캔으로 시크릿 보유 노드 나열).
+
+**REQ-SUBFLOW-RC02**: agent/device 참조 제약 (매니저 환경 해석)
+시스템은 **항상** 원격 플로우 노드가 참조하는 agent/device 가 **원격 노드**에 존재함을 전제해야 한다. 확장 서브그래프는 이 참조를 **매니저 환경**에서 해석하므로, **매니저에 존재하지 않는 원격-전용 agent/device 참조는 실패**한다. 시스템은 이 한계를 표면화해야 한다(OQ-R5 ✅ RESOLVED = 배포 시 best-effort 정적 스캔으로 미해결 agent/device 참조 나열 + 비차단 경고).
+
+**REQ-SUBFLOW-RC03**: 실행 지역성 (정의 임베딩, 분산 실행 아님)
+시스템은 **항상** 원격 서브플로우가 **정의 임베딩(definition-embedding)** 임을 보장해야 한다: 원격 플로우의 **정의/로직만 매니저에 임베드되어 매니저에서 실행**되며, **원격 노드는 라이브 실행 피어가 아니다**. 분산 실행(원격 노드에서 실행 후 결과 중계)은 본 SPEC 제외이다(향후 SPEC).
 
 ## 5. 명세
 
@@ -389,6 +480,82 @@ subflow_<flowNodeID>_<originalNodeID>
 - **인스턴스 파라미터 오버라이드**: 서브플로우 인스턴스별 config 오버라이드(환경/이름)는 본 SPEC 제외 — 향후 SPEC 분리.
 - **단독 배포 시 포트 외부 노출 승격**: 현재는 dangling(엔드포인트 비활성) 처리(REQ-SUBFLOW-F01). 단독 배포 시 포트를 외부 노출 엔드포인트(HTTP/WS)로 승격하는 것은 향후 과제.
 
+### 5.10 데이터 계약 — 원격 참조 (v1.2)
+
+flow-node 의 `flow_id` 는 두 형식을 가진다(REQ-SUBFLOW-R01):
+
+| 형식 | 예 | 해석 |
+|------|----|------|
+| bare id | `flow-abc123` | **LOCAL 참조**(기존 동작, 하위 호환). `repo.Get(ctx, flowID)` 로 매니저 로컬 저장소에서 조회. |
+| 원격 정규형(권고) | `remote://node-7f3a/flow-abc123` | **원격 참조**. `instance_id=node-7f3a`, 원격 flow id=`flow-abc123`. query 프록시로 fetch. |
+
+- 판별 규칙: `flow_id` 가 `remote://` 스킴이면 원격, 아니면 로컬(결정적·모호성 없음).
+- 대안(OQ-R1): 구조화 config `{remote_instance_id, flow_id}`. 분리된 두 필드로 모호성을 더 줄이나 직렬화/피커/파서 변경 폭이 크다. **✅ RESOLVED — `remote://` URI 채택**(flow_id 단일 문자열 필드 재사용, 최소 침습). 구조화 대안은 미채택.
+- 파싱/포맷 유틸은 백엔드(`subflow_expand.go` 의 원격 분기)와 프론트(피커 저장/표시) 양쪽에서 공유 규약을 따른다.
+
+### 5.11 배포 시 원격 해석 메커니즘 (v1.2)
+
+원격 참조 해석은 **어댑터 사전 확장(옵션 1)** 경로(§5.5)를 그대로 확장한다 — 엔진 비침습 유지.
+
+**해석기 인터페이스(권고):**
+
+```
+// 매니저 서버가 보유한 *remote.Server 위에서 구현.
+type RemoteFlowFetcher interface {
+    FetchRemoteFlow(ctx, instanceID, flowID string) (definitionJSON []byte, err error)
+}
+```
+
+- 구현체는 `Server.DispatchQuery(ctx, instanceID, "flow", "get", {flow_id})`(SPEC-REMOTE-001 REQ-J01/J04)을 호출하여 **redacted** 정의 JSON 을 반환한다.
+- `FlowServiceAdapter`(또는 `ExpandSubflows`)에 `RemoteFlowFetcher` 를 주입한다. 미주입/비-서버 모드이면 원격 참조는 배포 에러(REQ-SUBFLOW-R07).
+
+**`ExpandSubflows` 원격 분기(배포 시):**
+
+1. flow-node 의 `flow_id` 판별 — 원격이면 (instanceID, remoteFlowID) 파싱(§5.10).
+2. `RemoteFlowFetcher.FetchRemoteFlow(ctx, instanceID, remoteFlowID)` 로 정의 JSON fetch(항상 최신, REQ-SUBFLOW-R03).
+3. 실패(503/504/502) → 배포 에러(REQ-SUBFLOW-R06, stale/empty 무음 금지).
+4. fetch 된 JSON 을 `flow.Flow` 로 역직렬화(`serialize.go` 재사용, A11).
+5. **중첩 원격/로컬 flow-node 포함 검사** → 포함 시 거부(REQ-SUBFLOW-R08).
+6. 로컬 서브플로우와 동일하게 인라인 확장: 네임스페이스(§5.3) + 직접 재배선(§5.4) + 센티넬 경계(§5.1.1) + 상한(§5.5).
+
+**실패 매핑(SPEC-REMOTE-001 `DispatchQuery` → 배포 에러):**
+
+| 원인 | DispatchQuery 결과 | 배포 처리 |
+|------|---------------------|-----------|
+| 노드 미관리/오프라인 | `ErrNodeNotManaged`/`ErrNoConn` (503) | 배포 거부 + "원격 노드 오프라인/미관리" |
+| 타임아웃 | `ErrQueryTimeout` (504) | 배포 거부 + "원격 플로우 fetch 타임아웃" |
+| 원격 플로우 없음/노드 오류 | `ErrQueryFailed` (502) | 배포 거부 + "원격 플로우 없음/노드 오류" |
+| 게이팅 실패(노출 범위 밖) | 노드 측 거부 (REQ-J05) | 배포 거부 + "원격 플로우 미노출/미승인" |
+
+### 5.12 프론트 — 원격 피커 흐름 (v1.2)
+
+| 단계 | 위치(예정) | 변경 |
+|------|------------|------|
+| 노드 선택기 | flow-node `flow_picker` 필드 확장(`nodeSchemas.ts`) | LOCAL(기본) / 원격 노드 선택 토글 + 노드 선택기(승인∧온라인 노드, SPEC-REMOTE-001 노드 목록). |
+| 원격 플로우 목록 | `useFlowsTarget`/`?target=remote:{instanceId}`(SPEC-REMOTE-001 REQ-J09~J10) 재사용 | 원격 노드의 플로우 목록 표시·선택. |
+| 원격 참조 저장 | 피커 onChange | `flow_id = remote://{instance_id}/{flow_id}`(REQ-SUBFLOW-RU03). |
+| 원격 배지 | flow-node 렌더(`CustomNode`/배지) | 원격 표식 + 출처 노드 식별(REQ-SUBFLOW-RU04). |
+| 핸들 계산 | `computePortsForNode` `case 'flow-node'` 확장 + `subflowPorts.ts` | 원격 참조 시 query 프록시 `flow`/`get` 으로 원격 inputs/outputs 취득 → 핸들 동적 계산(READ-ONLY, 항상 최신, REQ-SUBFLOW-RU05). 미해결 시 핸들 없음. |
+| 제약 표면화 | 배포/피커 경고(확정) | 시크릿/agent/device 한계 경고(REQ-SUBFLOW-RC01~RC03, OQ-R5 ✅ RESOLVED = 배포 시 비차단 경고 + best-effort 정적 스캔). |
+
+### 5.13 OPEN QUESTIONS → DECIDED (v1.2 — ✅ 전부 RESOLVED 2026-06-09, 사용자 권고안대로 확정)
+
+> **OQ-R1~R5 ✅ 전부 RESOLVED(2026-06-09)** — 사용자가 권고안대로 확정했다. 구현 시 **고정 제약**이며 재논의하지 않는다. `/moai run SPEC-SUBFLOW-001` 진입 가능.
+
+| ID | 질문 | 결정 (✅ RESOLVED) | 근거 |
+|----|------|--------------------|------|
+| **OQ-R1** | `flow_id` 원격 참조 형식 | ✅ **(a) `remote://{instance_id}/{flow_id}` URI**. bare id = LOCAL(하위 호환). 구조화 config `{remote_instance_id, flow_id}` 는 미채택. | flow_id 단일 문자열 필드 재사용 → 직렬화/피커/파서 최소 침습, bare id 하위 호환 유지. |
+| **OQ-R2** | 배포 시 정의 출처 | ✅ **(a) 라이브 query 프록시 `flow`/`get`**. **미러 폴백 없음**(프록시-우선-미러-폴백 (c) 미채택). | "항상 최신"(결정 2) 보장. 미러 폴백은 stale·redaction/노출 정합 위험과 충돌하므로 배제. |
+| **OQ-R3** | 배포 시 노드 오프라인 동작 | ✅ **(a) 하드 실패(배포 거부 + 명확한 에러)**. last-mirror 정의 사용 (b) 미채택. | REQ-SUBFLOW-F03/R06 의 누락 엄격 처리와 일관, stale 정의 무음 사용 금지. |
+| **OQ-R4** | 중첩 원격 참조 | ✅ **(a) v1 거부(self-contained 경계)**. 허용(재귀 fetch + 분산 순환 검출) (b) 는 향후 SPEC. | 매니저가 원격 그래프를 완전 순회 불가 → 분산 순환 검출 회피. |
+| **OQ-R5** | 시크릿/agent/device 한계 표면화 | ✅ **(b) 배포 시 비차단 경고 + best-effort 정적 스캔**(시크릿 보유 노드·미해결 agent/device 참조 나열). 문서-only (a) 미채택. | 제약이 기능 적용 범위를 실질적으로 한정하므로 운영자에게 명시적 표면화 필요. |
+
+#### 향후 SPEC 으로 분리 (본 SPEC 범위 외 — 미채택 대안)
+
+- **구조화 원격 참조 config**(OQ-R1 (b)): `flow_id` URI 대신 분리 필드 `{remote_instance_id, flow_id}`. v1 비채택 — 필요 시 향후 마이그레이션.
+- **미러 캐시 폴백**(OQ-R2 (b)/(c)): 오프라인/프록시 실패 시 last-known 미러 정의로 확장. v1 비채택(stale 위험) — 향후 "오프라인 관용 배포" SPEC.
+- **중첩 원격 참조 허용**(OQ-R4 (b)): 재귀 원격 fetch + 분산 순환 검출. v1 비채택 — 향후 SPEC.
+
 ## 6. 추적성
 
 | 요구사항 ID | 구현 위치(예정) | 검증 |
@@ -400,3 +567,6 @@ subflow_<flowNodeID>_<originalNodeID>
 | REQ-SUBFLOW-E01 ~ E04 | `subflow_cycle.go`, `flow_adapter.go`(save line 82/245 + deploy line 359) | subflow_cycle_test ✅ |
 | REQ-SUBFLOW-F01 ~ F03 | `boundary.go`(`StripBoundaryWires`), 어댑터(엄격 누락 처리), 엔진(불변) | 회귀 + 로드 호환 ✅ |
 | REQ-SUBFLOW-N01 ~ N02 | `subflow_expand.go`(깊이 8/노드 5000 상한), `subflow_cycle.go`(깊이 8), 엔진(불변) | subflow_expand_test, 엔진 회귀 ✅ |
+| REQ-SUBFLOW-R01 ~ R09 (v1.2) | `subflow_expand.go`(원격 분기·`remote://` 파싱·중첩 거부), `RemoteFlowFetcher`(over `remote.Server.DispatchQuery` `flow`/`get`), `flow_adapter.go`(fetcher 주입) | 예정 — subflow_remote_expand_test (원격 fetch/오프라인 실패/누락/중첩 거부/상한) ⏳ |
+| REQ-SUBFLOW-RU01 ~ RU05 (v1.2) | `nodeSchemas.ts`(`flow_picker` 원격 노드 선택기), `useFlowsTarget` 재사용, `subflowPorts.ts`(원격 핸들 계산), 원격 배지 | 예정 — 피커 원격 선택/배지/핸들 Vitest ⏳ |
+| REQ-SUBFLOW-RC01 ~ RC03 (v1.2) | 배포 경고/검증(OQ-R5 ✅ RESOLVED = 비차단 경고 + best-effort 정적 스캔), 문서 — 시크릿 마스킹·agent/device 매니저 해석·실행 지역성 제약 | 예정 — 제약 표면화/문서 ⏳ |

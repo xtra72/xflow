@@ -785,6 +785,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
 		}, nil)
 
+		// 원격 서브플로우 참조 해석기 주입(SPEC-SUBFLOW-001 v1.2 그룹 R). 서버 모드에서만
+		// 주입되며, 배포 시 flow-node 의 remote://{instance_id}/{flow_id} 참조를 query 프록시
+		// flow/get 으로 항상 최신 fetch 하여 인라인 확장한다(REQ-SUBFLOW-R02). 비-서버 모드에서는
+		// 미주입(nil)이므로 원격 참조가 있는 플로우의 배포는 거부된다(REQ-SUBFLOW-R07).
+		flowSvc.SetRemoteFlowFetcher(newRemoteSubflowFetcher(remoteServer))
+
 		// 관리 WS 핸들러: 노드 토큰 핸드셰이크 검증 활성화(재접속 세션 복원 — REQ-C05).
 		remoteWSHandler := handler.NewRemoteHandler(remoteServer,
 			obs.Loggers.NewLogger("api.handler.remote").Logger()).
