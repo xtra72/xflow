@@ -93,16 +93,50 @@ func TestQuerySource_DashboardGetMine(t *testing.T) {
 	assert.Equal(t, "admin", snap.Owner)
 }
 
-// TestQuerySource_DashboardNotConfigured 는 config 미설정 노드에서 명확한 오류를
-// 반환하는지 검증한다(REQ-L02 — 404/빈 config). 패닉 금지.
-func TestQuerySource_DashboardNotConfigured(t *testing.T) {
+// TestQuerySource_DashboardSharedNotConfigured 는 공유(global) 대시보드 config 미설정
+// 노드에서 not-found 가 오류가 아니라 EMPTY 정상 상태로 처리되는지 검증한다(REQ-L02).
+//
+// 로컬 GET /dashboards/shared 가 404 → UI 기본값을 쓰는 것과 동형으로, 원격 프록시도
+// ErrDashboardNotFound 를 502 오류로 전파하지 않고 (nil, nil) 성공 EMPTY 결과로 환원한다.
+// 노드는 query_result{ok:true, data:null} 을 전송하고 서버는 200 {data:null} 로 응답한다.
+func TestQuerySource_DashboardSharedNotConfigured(t *testing.T) {
 	dash := &fakeDashboardReader{snaps: map[string]*storage.DashboardSnapshot{}}
 	src := newDashboardTestSource(dash, nil)
 
-	_, err := src.Query(context.Background(), remote.DomainDashboard, remote.QueryActionGetShared, nil)
-	require.Error(t, err)
-	// 서버는 노드 오류를 502 로 매핑한다(REQ-L02). not-found 분류 유지.
-	assert.True(t, errors.Is(err, storage.ErrDashboardNotFound) || err != nil)
+	data, err := src.Query(context.Background(), remote.DomainDashboard, remote.QueryActionGetShared, nil)
+	require.NoError(t, err, "dashboard not-found 는 오류가 아니라 EMPTY 정상 상태여야 함")
+	assert.Empty(t, data, "not-found 는 null/빈 data 로 응답해야 함(ok:true, data:null)")
+}
+
+// TestQuerySource_DashboardMineNotConfigured 는 개인(user) 대시보드 config 미설정 시
+// not-found 가 오류가 아니라 EMPTY 정상 상태로 처리되는지 검증한다(REQ-L02).
+//
+// viewing admin 에게 개인(mine) 대시보드가 없는 것은 정상 빈 상태이므로 502 가 아니라
+// 200 {data:null} 로 응답해야 한다(프런트는 기본/빈 대시보드를 렌더).
+func TestQuerySource_DashboardMineNotConfigured(t *testing.T) {
+	dash := &fakeDashboardReader{snaps: map[string]*storage.DashboardSnapshot{}}
+	src := newDashboardTestSource(dash, nil)
+
+	args := json.RawMessage(`{"owner":"admin"}`)
+	data, err := src.Query(context.Background(), remote.DomainDashboard, remote.QueryActionGetMine, args)
+	require.NoError(t, err, "개인 대시보드 not-found 는 오류가 아니라 EMPTY 정상 상태여야 함")
+	assert.Empty(t, data, "not-found 는 null/빈 data 로 응답해야 함(ok:true, data:null)")
+}
+
+// TestQuerySource_DashboardRealErrorPropagates 는 not-found 가 아닌 실제 리더 오류는
+// 그대로 전파되어 서버가 502 로 매핑하도록 보장한다(정상 실패와 빈 상태를 구분).
+func TestQuerySource_DashboardRealErrorPropagates(t *testing.T) {
+	readerErr := errors.New("dashboard store unavailable")
+	for _, action := range []string{remote.QueryActionGetShared, remote.QueryActionGetMine} {
+		dash := &fakeDashboardReader{err: readerErr}
+		src := newDashboardTestSource(dash, nil)
+
+		_, err := src.Query(context.Background(), remote.DomainDashboard, action, json.RawMessage(`{"owner":"admin"}`))
+		require.Errorf(t, err, "dashboard/%s 의 실제 리더 오류는 전파되어야 함", action)
+		assert.ErrorIsf(t, err, readerErr, "dashboard/%s 는 원본 리더 오류를 전파해야 함", action)
+		assert.Falsef(t, errors.Is(err, storage.ErrDashboardNotFound),
+			"dashboard/%s 실제 오류는 not-found 가 아님", action)
+	}
 }
 
 // TestQuerySource_DashboardMissingReader 는 dashboard 소스 미바인딩 시 미지원 오류를

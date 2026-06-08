@@ -15,7 +15,7 @@
 
 import { useState } from 'react';
 import GridLayout from 'react-grid-layout';
-import { Network, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Network, RefreshCw } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -23,7 +23,11 @@ import 'react-resizable/css/styles.css';
 import { useDashboardConfigTarget } from '@/hooks/useDashboardConfigTarget';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTranslation } from '@/lib/i18n';
-import { remoteEditErrorMessage } from '@/lib/remote/editError';
+import {
+  extractMessage,
+  extractStatus,
+  remoteEditErrorMessage,
+} from '@/lib/remote/editError';
 import type { ResourceTarget } from '@/lib/remote/target';
 import { TargetProvider } from '@/lib/remote/TargetContext';
 import type { RemoteDashboardScope } from '@/services/api/remoteService';
@@ -41,6 +45,20 @@ const NOOP_HANDLERS = (): PanelChangeHandlers => ({
   onConfigChange: () => {},
   onTitleChange: () => {},
 });
+
+/**
+ * 에러가 "대시보드 미설정"을 의미하는지 판별한다(방어적).
+ *
+ * 주 경로는 백엔드가 200 + data:null 로 응답해 payload 가 undefined 인 정상 빈
+ * 상태이다. 다만 일부 경로에서 미설정이 여전히 에러(404, 또는 not-found 메시지)
+ * 로 표면화될 수 있으므로, 이를 하드 에러가 아닌 빈 상태로 취급한다(REQ-L11).
+ */
+function isDashboardNotFound(err: unknown): boolean {
+  if (extractStatus(err) === 404) return true;
+  const msg = extractMessage(err)?.toLowerCase();
+  if (!msg) return false;
+  return msg.includes('not found') || msg.includes('no dashboard');
+}
 
 interface RemoteDashboardViewProps {
   /** 원격 노드 타깃. */
@@ -188,9 +206,9 @@ function RemoteDashboardBody({
     );
   }
 
-  // 에러: 503/504/502/404(미설정) → editError 매핑(REQ-L11). 404 는 빈 대시보드로
-  // 간주할 수도 있으나, 메시지로 명확히 안내한다(미설정 노드).
-  if (error) {
+  // 에러: 503/504/502 등 실질 실패만 빨간 에러 UI 로 표시한다(REQ-L11).
+  // "미설정"(404/not-found 메시지)은 하드 에러가 아니라 빈 상태로 떨어뜨린다.
+  if (error && !isDashboardNotFound(error)) {
     return (
       <div
         data-testid="remote-dashboard-error"
@@ -210,13 +228,25 @@ function RemoteDashboardBody({
     );
   }
 
+  // 빈 상태: payload 가 없거나(200 + data:null), 미설정이 에러로 표면화된 경우.
+  // 에러 화면이 아니라 친절한 안내(아이콘 + 제목 + 힌트)를 보여준다. 상단의
+  // 스코프 탭/새로고침은 항상 렌더되므로 사용자는 스코프를 전환할 수 있다.
   if (!payload) {
     return (
       <div
         data-testid="remote-dashboard-empty"
-        className="m-6 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-6 text-center text-sm text-(--color-text-muted)"
+        className="m-6 flex flex-col items-center justify-center gap-3 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-10 text-center"
       >
-        {t('remote.remoteDashboard.empty')}
+        <LayoutDashboard
+          className="h-10 w-10 text-(--color-text-muted)"
+          aria-hidden="true"
+        />
+        <p className="text-sm font-medium text-(--color-text-primary)">
+          {t('remote.remoteDashboard.empty')}
+        </p>
+        <p className="max-w-sm text-xs text-(--color-text-muted)">
+          {t('remote.remoteDashboard.emptyHint')}
+        </p>
       </div>
     );
   }

@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/xtra/xflow/internal/api/handler"
@@ -142,7 +143,12 @@ func (s *remoteQuerySource) Query(ctx context.Context, domain, action string, ar
 //
 // 변경 의미 action(put/delete 등)은 client allowlist 가 먼저 거부하나, 본 브리지도
 // 미열거 action 을 ErrQueryActionUnsupported 로 거부해 변경을 수행하지 않는다(REQ-J03/L12).
-// config 미설정(ErrDashboardNotFound)은 그대로 전파되어 서버가 404/502 로 매핑한다(REQ-L02).
+//
+// config 미설정(ErrDashboardNotFound)은 오류가 아니라 정상 EMPTY 상태로 환원한다
+// (REQ-L02). 로컬 GET /dashboards/{shared,mine} 이 404 → UI 기본값을 쓰는 것과 동형으로,
+// 원격 프록시도 not-found 를 502 로 전파하지 않고 (nil, nil) 성공 결과를 반환한다. 노드는
+// query_result{ok:true, data:null} 을 전송하고 서버는 200 {data:null} 로 응답하여 프런트가
+// 빈/기본 대시보드를 렌더한다. 그 외 실제 리더 오류는 그대로 전파된다(서버가 502 로 매핑).
 func (s *remoteQuerySource) queryDashboard(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
 	if s.dashboard == nil {
 		return nil, fmt.Errorf("%w: dashboard reader 미바인딩", remote.ErrQueryActionUnsupported)
@@ -162,6 +168,11 @@ func (s *remoteQuerySource) queryDashboard(ctx context.Context, action string, a
 	}
 	snap, err := s.dashboard.Get(ctx, scope, owner)
 	if err != nil {
+		// not-found 는 "대시보드 미설정" 정상 빈 상태 — EMPTY 성공으로 환원(REQ-L02).
+		// 그 외 오류는 전파해 서버가 502 로 매핑하도록 한다.
+		if errors.Is(err, storage.ErrDashboardNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return marshalQuery(snap)

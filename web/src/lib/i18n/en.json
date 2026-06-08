@@ -571,7 +571,8 @@
       "shared": "Shared",
       "mine": "My Dashboard",
       "readOnly": "Read-only",
-      "empty": "No dashboard configured for this node.",
+      "empty": "No dashboard configured for this node",
+      "emptyHint": "Select another scope, or configure a dashboard on the node and refresh.",
       "nodeNotReady": "The node is not approved/online, so the dashboard cannot be displayed."
     }
   }
