@@ -27,6 +27,7 @@ import (
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/remote"
+	"github.com/xtra/xflow/internal/storage"
 )
 
 // queryFlowReader 는 flow read query-action 에 필요한 FlowServiceAdapter 의 좁은
@@ -76,13 +77,35 @@ type querySeriesReader interface {
 	SeriesList(ctx context.Context, agentName string) ([]string, error)
 }
 
+// dashboardReader 는 M10(그룹 L) dashboard.get_shared/get_mine query-action 에 필요한
+// 노드-로컬 대시보드 config read 인터페이스이다(REQ-L01 — GET /dashboards/{shared,mine}
+// 와 동일 소스, storage.DashboardRepository.Get 을 만족). config 는 노드 권위이며
+// (A17) 서버는 READ-ONLY 로만 취득한다(변경은 v1.5 비목표 — REQ-L12).
+type dashboardReader interface {
+	Get(ctx context.Context, scope, owner string) (*storage.DashboardSnapshot, error)
+}
+
+// metricsReader 는 M10(그룹 L) monitor.metrics query-action 에 필요한 노드-로컬 시스템
+// 메트릭 read 인터페이스이다(REQ-L05 — GET /monitor/metrics 와 동일 소스,
+// handler.MonitorManager.GetMetrics 를 만족). 완만 변동이므로 서버는 단기 TTL 캐시한다
+// (REQ-J16). 장기 시계열/상시 폴링은 신설하지 않는다(그룹 K BASIC 비목표 일관).
+type metricsReader interface {
+	GetMetrics(ctx context.Context) (*handler.MetricsResponse, error)
+}
+
 // remoteQuerySource 는 로컬 read 어댑터를 remote.QuerySource 로 어댑트한다(REQ-J01/J04).
+//
+// M10(그룹 L): dashboard/metrics 필드는 노드-로컬 대시보드 config·시스템 메트릭 read
+// 소스이다(REQ-L01/L05). 미바인딩(nil)이면 해당 도메인 질의는 ErrQueryActionUnsupported
+// 를 반환한다(서버가 502 node-error 로 매핑 — REQ-L02).
 type remoteQuerySource struct {
-	flows   queryFlowReader
-	agents  queryAgentReader
-	devices queryDeviceReader
-	store   queryStoreReader
-	series  querySeriesReader
+	flows     queryFlowReader
+	agents    queryAgentReader
+	devices   queryDeviceReader
+	store     queryStoreReader
+	series    querySeriesReader
+	dashboard dashboardReader // M10: dashboard.get_shared/get_mine (REQ-L01)
+	metrics   metricsReader   // M10: monitor.metrics (REQ-L05)
 }
 
 var _ remote.QuerySource = (*remoteQuerySource)(nil)
@@ -102,9 +125,79 @@ func (s *remoteQuerySource) Query(ctx context.Context, domain, action string, ar
 		return s.queryAgent(ctx, action, args)
 	case remote.DomainDevice:
 		return s.queryDevice(ctx, action, args)
+	case remote.DomainDashboard:
+		return s.queryDashboard(ctx, action, args)
+	case remote.DomainMonitor:
+		return s.queryMonitor(ctx, action)
 	default:
 		return nil, fmt.Errorf("%w: domain %q", remote.ErrQueryActionUnsupported, domain)
 	}
+}
+
+// queryDashboard 는 M10(그룹 L) dashboard.get_shared/get_mine 를 노드-로컬 대시보드
+// config read(storage.DashboardRepository.Get)로 매핑한다(REQ-L01, READ-ONLY).
+//
+//   - get_shared → scope=global, owner="" (GET /dashboards/shared).
+//   - get_mine   → scope=user,   owner=args.owner (GET /dashboards/mine, 노드-로컬 사용자).
+//
+// 변경 의미 action(put/delete 등)은 client allowlist 가 먼저 거부하나, 본 브리지도
+// 미열거 action 을 ErrQueryActionUnsupported 로 거부해 변경을 수행하지 않는다(REQ-J03/L12).
+// config 미설정(ErrDashboardNotFound)은 그대로 전파되어 서버가 404/502 로 매핑한다(REQ-L02).
+func (s *remoteQuerySource) queryDashboard(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	if s.dashboard == nil {
+		return nil, fmt.Errorf("%w: dashboard reader 미바인딩", remote.ErrQueryActionUnsupported)
+	}
+	var scope, owner string
+	switch action {
+	case remote.QueryActionGetShared:
+		scope, owner = "global", ""
+	case remote.QueryActionGetMine:
+		// 노드-로컬 사용자 대시보드: args.owner 로 그 노드의 사용자 스코프를 지정한다
+		// (A17 — config 는 노드 권위, deviceId 는 그 노드 기준 해석). owner 누락 시 빈값.
+		scope = "user"
+		owner = dashboardOwner(args)
+	default:
+		// 변경 의미/미열거 action 거부(READ-ONLY — REQ-J03/L01).
+		return nil, fmt.Errorf("%w: dashboard/%s", remote.ErrQueryActionUnsupported, action)
+	}
+	snap, err := s.dashboard.Get(ctx, scope, owner)
+	if err != nil {
+		return nil, err
+	}
+	return marshalQuery(snap)
+}
+
+// queryMonitor 는 M10(그룹 L) monitor.metrics 를 노드-로컬 시스템 메트릭 스냅샷
+// (handler.MonitorManager.GetMetrics)으로 매핑한다(REQ-L05, GET /monitor/metrics 동형).
+func (s *remoteQuerySource) queryMonitor(ctx context.Context, action string) (json.RawMessage, error) {
+	if s.metrics == nil {
+		return nil, fmt.Errorf("%w: metrics reader 미바인딩", remote.ErrQueryActionUnsupported)
+	}
+	switch action {
+	case remote.QueryActionMetrics:
+		m, err := s.metrics.GetMetrics(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(m)
+	default:
+		return nil, fmt.Errorf("%w: monitor/%s", remote.ErrQueryActionUnsupported, action)
+	}
+}
+
+// dashboardOwner 는 dashboard.get_mine args 에서 owner 를 추출한다(노드-로컬 사용자
+// 스코프 지정). 누락/디코드 불가는 빈 문자열로 처리한다(graceful).
+func dashboardOwner(args json.RawMessage) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var p struct {
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return ""
+	}
+	return p.Owner
 }
 
 func (s *remoteQuerySource) queryFlow(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {

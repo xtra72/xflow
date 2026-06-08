@@ -377,9 +377,69 @@
 - When: 토큰 발급/목록/폐기와 pending 노드 승인/거부/폐기·사전 등록을 수행하고, 기존 `/admin/remote/control` 딥링크로 접근한다.
 - Then: `등록 관리` 가 토큰 관리(`EnrollmentTokenSection`)와 노드 등록 관리(승인 큐·승인/거부/폐기·`PreRegisterNodeDialog`)를 한 페이지에 제공하고, 기존 `/admin/remote/control` 은 `노드 관리` 로 도달(리다이렉트)되며, M8 통합 제어·원격 편집기 라우트는 노드 대시보드 서브탭에서 도달 가능하다(로컬/원격 UX 비분기).
 
+### AC-61: 대시보드 config 읽기 프록시 — READ-ONLY 노드-로컬 (REQ-L01, L03)
+
+- Given: 승인·온라인 노드가 자신의 대시보드 config(`dashboardPages[]`/`activeDashboardId`/grid/refresh/`deviceGridLayout`)를 보유한다.
+- When: 관리자가 그 노드의 대시보드를 열어 서버가 `query{domain:dashboard, query_action:get_shared}`(및 `get_mine`)를 노드에 전달한다.
+- Then: 노드가 자신의 `/dashboards/{shared,mine}` read 핸들러로 매핑·실행한 config JSON 을 `query_result{body(redacted)}` 로 반환하고, 서버는 이를 노드-로컬 config 로 취득한다(서버 미러/영속 비대상 — 노드 권위 A4). config 내부 `deviceId` 는 **그 노드 기준**으로 해석된다(서버 디바이스와 혼동 없음). 변경 의미 action(`put`/`delete`)은 거부된다(READ-ONLY — 원격 config 편집 비목표).
+
+### AC-62: 대시보드 config 게이팅·redaction·실패·미설정 404 (REQ-L02)
+
+- Given: (a) 미승인/오프라인/범위 밖 노드, (b) 시크릿 포함 config, (c) config 미설정 노드 중 하나의 조건이다.
+- When: 관리자가 대시보드 config query-action 을 시도한다.
+- Then: (a) 승인 ∧ 온라인 ∧ 노출 게이팅(REQ-J05)으로 거부되고 503(오프라인)/404(범위 밖) 등 명확한 오류가, (b) 노드가 전송 전 시크릿을 redaction(REQ-J06)하여 평문 비노출이, (c) config 미설정 시 404(또는 빈 config)가 반환된다. timeout→504, node-error→502(REQ-J07). config 는 단기 TTL 캐시 대상이다(REQ-J16).
+
+### AC-63: 자원 메트릭 패널 원격 query-action (REQ-L05)
+
+- Given: 원격 노드 대시보드에 resource 위젯이 있다.
+- When: 위젯이 원격 메트릭을 요청하여 서버가 `query{domain:monitor, query_action:metrics}` 를 전달한다.
+- Then: 노드가 자신의 `/monitor/metrics` read 핸들러로 매핑한 메트릭 스냅샷 JSON 을 반환하고, 서버는 단기 TTL 캐시·게이팅·실패 의미를 적용한다. 장기 시계열/상시 폴링은 신설되지 않으며(온디맨드 read 만), 그룹 K BASIC 자원 메트릭 비목표와 일관된다.
+
+### AC-64: 로그 패널 원격 스트림 (REQ-L06)
+
+- Given: 원격 노드 대시보드에 logs 패널이 열려 있다.
+- When: 패널이 `subscribe{domain:monitor, stream_action:logs}` 로 노드 로그 스트림을 구독한다.
+- Then: 노드가 자신의 로그 스트림 소스를 구독해 `stream_data` 로 push 하고, 서버가 브라우저 세션으로 fan-out 하여 로그가 라이브로 표시된다. 로그는 캐시를 우회하며(REQ-J16), teardown·백프레셔(REQ-J08b)가 적용되고, 스트림 미지원/실패 시 query-action 폴백으로 대체된다(REQ-J08).
+
+### AC-65: 차트 패널 원격 스트림 — M8 스트림 프록시 chart-action (REQ-L07, A18)
+
+- Given: 원격 노드 대시보드에 line/stat/bar/pie/table 차트 패널이 있고, 노드가 `/ws/chart/{channelName}` 라이브 소스를 보유한다.
+- When: 패널이 `subscribe{domain:chart, stream_action:chart, args:{channelName}}` 로 구독한다(별도 WS 프록시 경로 미신설 — M8 스트림 프록시 `chart` stream-action 재사용).
+- Then: 노드가 자신의 `/ws/chart/{channel}` 소스를 구독해 backfill/append 이벤트를 `stream_data` 로 중계하고, 서버가 fan-out 하여 차트가 라이브로 갱신된다. `useChartChannel` 의 `wsBaseUrl`/`createClient` 주입점으로 스트림 프록시(SSE) 어댑터가 주입되어 **동일 차트 패널 코드**가 동작한다. teardown·백프레셔·redaction·캐시 우회가 동일 적용되고, 스트림 미지원/실패 시 스냅샷 query-action 폴백된다.
+
+### AC-66: control 패널 원격 명령 라우팅 — 그룹 D (REQ-L08, J03, J12)
+
+- Given: 원격 노드 대시보드에 ac/hvac/outdoor-control 패널이 있고, config 에 bare `deviceId` 가 있다.
+- When: 관리자가 control 패널에서 디바이스 명령(상태 변경)을 실행한다.
+- Then: 실시간 상태 read 는 `device.state`(useDeviceDetailTarget 재사용)로, 명령 쓰기는 **그룹 D 명령**(REQ-D04)으로 그 노드에 디스패치된다. 디바이스 쓰기는 프록시(query/스트림)를 경유하지 않으며(READ-ONLY 강제 — J03), config 의 bare `deviceId` 는 원격 target 하 **그 노드의 디바이스**로 해석된다(REQ-L03).
+
+### AC-67: 패널 target 전파 + 로컬 바이트 동일 (REQ-L09, A16)
+
+- Given: `DashboardPage`/`renderPanel` 이 dashboard 레벨 target 을 받는다.
+- When: (a) target 미지정/`local` 로 대시보드를 렌더하고, (b) `target=remote:{instanceId}` 로 렌더한다.
+- Then: (a) 패널 렌더가 **로컬과 바이트 동일**(회귀 0)하고, (b) 각 패널이 TargetProvider(context) 또는 prop 으로 target 을 받아 데이터 소스를 원격(프록시)으로 해석한다. 패널 UI/레이아웃 코드는 분기되지 않는다(데이터 소스만 target-aware).
+
+### AC-68: 노드 대시보드 — 대시보드 서브탭 / DashboardPage 원격 target (REQ-L10, OQ-L5)
+
+- Given: server 모드 + admin 관리자가 노드 대시보드(M9 `NodeDashboard`)를 연다.
+- When: 대시보드 서브탭을 선택한다(Flow/Agent/Device 서브탭과 나란히).
+- Then: 별도 원격 대시보드 화면 없이 **로컬 `DashboardPage`** 가 `target=remote:{instanceId}` 로 재사용되어 원격 노드의 대시보드가 표시된다. 대시보드 config 는 `dashboard.get_shared`/`get_mine` query-action 으로 노드-로컬 취득된다.
+
+### AC-69: 원격 대시보드 게이팅·실패 의미·원격 컨텍스트 (REQ-L11)
+
+- Given: (a) 미승인/오프라인/범위 밖 노드, (b) 정상 원격 노드 중 하나의 조건이다.
+- When: 관리자가 원격 대시보드를 연다.
+- Then: (a) 승인 ∧ 온라인 ∧ 노출 게이팅(`useTargetGating` 재사용)으로 차단되고 노드 오프라인→503·타임아웃→504·노드 오류→502·config 미설정→404(또는 빈 대시보드)가 구분 표시되며, (b) 정상 시 현재 원격 노드 컨텍스트(노드 이름·원격 표식)가 다른 원격 뷰(M8/M9)와 일관되게 표시된다.
+
+### AC-70: read-only-by-default + 변경 경로 불변 + 최소 감사 (REQ-L12, L13, J03, J12)
+
+- Given: 관리자가 원격 노드 대시보드를 본다.
+- When: (a) 대시보드 config 편집/저장/생성/삭제를 시도하고, (b) 패널 자원에 대한 제어 액션(플로우 라이프사이클·에이전트 start/stop·디바이스 명령)을 실행하며, (c) 일반 read(config·패널 query/스트림)가 발생한다.
+- Then: (a) 원격 config 편집은 비활성/숨김(v1.5 비목표)이고, (b) 자원 제어는 기존 그룹 D 명령 / 그룹 I CRUD 경로로만 수행되며(프록시 경유 변경 금지·신규 변경 경로 미신설), (c) 일반 read 는 감사되지 않고 노출 위반·오류 접근만 로깅된다(시크릿 비포함). control 패널 명령은 그룹 D 라우팅(REQ-L08)을 따른다.
+
 ## 2. 품질 게이트 (Definition of Done)
 
-- [ ] 모든 EARS 요구사항(REQ-REMOTE-A01~J16, K01~K16, N01~N04)에 대응 인수 시나리오 통과.
+- [ ] 모든 EARS 요구사항(REQ-REMOTE-A01~J16, K01~K16, L01~L13, N01~N04)에 대응 인수 시나리오 통과.
 - [ ] 백엔드: 신규 코드(`internal/remote/*`, `managed_node_*`, remote 핸들러, instance_id) TDD, 커버리지 85%+.
 - [ ] 백엔드: 기존 변경(config types/defaults/validate, 어댑터 명령 진입, main.go 배선) 동작 보존 — 기존 회귀 스위트 100% 통과.
 - [ ] ws/auth/adapter 인프라 재사용 — 기존 ws/auth/adapter 테스트 전부 통과(회귀 0).
@@ -398,6 +458,8 @@
 - [ ] 노드 그룹핑(그룹 K, 백엔드): 단일 그룹 배정/해제·distinct 그룹("전체" 포함)·그룹별 노드·재라벨링/환원·admin 게이팅 검증.
 - [ ] 시스템 정보+운영 요약(그룹 K, 백엔드): register/heartbeat BASIC 시스템 정보 보고·하위 호환(미보고 빈값)·uptime started_at 파생·운영 요약 미러 파생(오프라인 last-known) 검증. 자원 메트릭(CPU/메모리/디스크) 비보고 확인.
 - [ ] UI 재편(그룹 K, 프론트, 추후): 사이드바 노드 관리+등록 관리(기존 진입점 대체·게이팅)·디렉토리 뷰(그룹 트리·"전체"·그룹 배정)·노드 대시보드(시스템+운영+M8 서브탭 재사용)·등록 관리(토큰+승인/사전 등록 이관)·딥링크 보존 Vitest 통과.
+- [ ] 원격 대시보드 패리티(그룹 L, 백엔드): dashboard config query-action(get_shared/get_mine, READ-ONLY·변경 action 배제)·게이팅·redaction·실패 의미(503/504/502/404)·노드-로컬 권위, monitor.metrics query-action(TTL 캐시), chart/monitor.logs 스트림 action(중계·teardown·백프레셔·캐시 우회·폴백) 검증.
+- [ ] 원격 대시보드 패리티(그룹 L, 프론트, 추후): 패널 target 전파(로컬 바이트 동일·원격 분기)·flows/agents/devices/single-device 기존 target 훅 재사용·resource(metrics)·logs(스트림)·chart(스트림 어댑터 주입·폴백)·control 그룹 D 라우팅·노드 대시보드 대시보드 서브탭(로컬 DashboardPage 재사용)·게이팅·원격 컨텍스트·read-only-by-default Vitest 통과.
 - [ ] LSP 품질 게이트(run): error/type-error/lint-error 0.
 
 ## 3. 검증 방법·도구
@@ -412,7 +474,9 @@
 | 프록시(그룹 J) | `go test` + testify | per-domain query-action allowlist(FULL 커버리지)·게이팅(승인·온라인·노출)·redaction·상관/타임아웃·실패 의미(503/504/502)·READ-ONLY 거부, 스트리밍(fan-out·teardown·백프레셔), 단기 TTL 캐시(무효화·라이브 우회) |
 | 그룹핑/시스템정보(그룹 K) | `go test` + testify | 단일 그룹 배정/해제·distinct("전체" 포함)·그룹별 노드·재라벨링/환원·admin 게이팅, register/heartbeat BASIC 시스템 정보 보고·하위 호환·uptime started_at 파생·운영 요약 미러 파생(오프라인 last-known) |
 | UI 재편(그룹 K, 추후) | Vitest + Testing Library | 사이드바 노드 관리+등록 관리(대체·게이팅)·디렉토리 뷰(그룹 트리·"전체"·배정)·노드 대시보드(시스템+운영+M8 서브탭)·등록 관리(토큰+승인/사전 등록)·딥링크 보존 |
-| 통합/회귀 | 기존 ws/auth/adapter 회귀 + end-to-end | 등록→승인→명령→미러, 원격 상세 query-action 패리티(상세/통계/노드 레벨)·실시간 스트림(상태/시리즈), 재연결, disabled 회귀 |
+| 대시보드 패리티(그룹 L, 백엔드) | `go test` + testify | dashboard config query-action(get_shared/get_mine·변경 action 거부·노드-로컬 권위)·게이팅·redaction·503/504/502/404·TTL 캐시, monitor.metrics query-action, chart/monitor.logs 스트림 중계(backfill/append·teardown·백프레셔·캐시 우회·폴백) |
+| 대시보드 패리티(그룹 L, 추후) | Vitest + Testing Library | 패널 target 전파(로컬 바이트 동일·원격 분기)·기존 target 훅 재사용·resource(metrics)·logs/chart 스트림 소비·useChartChannel 원격 어댑터·control 그룹 D 라우팅·노드 대시보드 대시보드 서브탭(DashboardPage 재사용)·게이팅·원격 컨텍스트·read-only |
+| 통합/회귀 | 기존 ws/auth/adapter 회귀 + end-to-end | 등록→승인→명령→미러, 원격 상세 query-action 패리티(상세/통계/노드 레벨)·실시간 스트림(상태/시리즈), 원격 대시보드(config 취득→패널 target-aware 렌더→차트/로그 스트림 라이브→control 그룹 D 명령), 재연결, disabled 회귀 |
 | 품질 | TRUST 5, LSP 게이트 | run 단계 zero-error |
 
 ## 4. 추적성 매핑
@@ -479,4 +543,14 @@
 | AC-58 | K10, E06 |
 | AC-59 | K11, K12, K13, K14 |
 | AC-60 | K15, K16 |
-| (전반) | A05, B05, F02, N01, J15, A13, A14, A15 |
+| AC-61 | L01, L03 |
+| AC-62 | L02, J05, J06, J07, J16 |
+| AC-63 | L05 |
+| AC-64 | L06, J08, J08b, J16 |
+| AC-65 | L07, J08, J08b, A18 |
+| AC-66 | L08, D04, J03, J12, L03 |
+| AC-67 | L09, A16 |
+| AC-68 | L10 |
+| AC-69 | L11, J05, J07 |
+| AC-70 | L12, L13, J03, J12, J15 |
+| (전반) | A05, B05, F02, N01, J15, A13, A14, A15, A16, A17, A18 |

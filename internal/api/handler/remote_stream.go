@@ -45,20 +45,44 @@ type RemoteStreamService interface {
 	SubscribeStream(instanceID, domain, streamAction string, args json.RawMessage) (remote.StreamHandle, error)
 }
 
+// streamScope 는 SSE 라우트의 자원 스코프를 구분한다(게이팅 분기 — REQ-J05/L11).
+type streamScope int
+
+const (
+	// scopeResource 는 per-resource 자원 스코프이다(노출 범위 게이트 — REQ-J05).
+	scopeResource streamScope = iota
+	// scopeChannel 은 채널-레벨 스코프이다(차트 channelName — 노출 범위 미평가, REQ-L07).
+	scopeChannel
+	// scopeNode 는 노드-레벨 스코프이다(로그 — 자원 식별자 없음, 노출 범위 미평가, REQ-L06).
+	scopeNode
+)
+
 // streamRoute 는 SSE 라우트 → (domain, stream_action, 자원 path 파라미터) 매핑이다.
+//
+// M10(그룹 L): scope 로 게이팅 분기를 결정한다. chart(scopeChannel)/logs(scopeNode)는
+// per-resource 노출 범위가 없으므로 IsManaged 만 게이트한다(REQ-L03/L11). idParam 은
+// scopeResource 의 자원 id / scopeChannel 의 channel path 변수 이름이다(scopeNode 는 빈값).
 type streamRoute struct {
 	pattern      string
 	domain       string
 	streamAction string
 	idParam      string
+	scope        streamScope
 }
 
 // streamRoutes 는 스트림 가능한 라이브 action 의 SSE 라우트 표이다(REQ-J08).
+//
+// M10(그룹 L): chart(channelName) + logs(노드-레벨)를 추가한다(REQ-L06/L07). 별도 WS
+// 경로를 신설하지 않고 기존 SSE 패턴을 재사용한다(REQ-L07 — 제2 WS 핸들러 미신설).
 func streamRoutes() []streamRoute {
 	return []streamRoute{
-		{"/api/v1/remote/nodes/{instance_id}/devices/{device_id}/state/stream", remote.DomainDevice, remote.StreamActionState, "device_id"},
-		{"/api/v1/remote/nodes/{instance_id}/agents/{agent_id}/stats/stream", remote.DomainAgent, remote.StreamActionStats, "agent_id"},
-		{"/api/v1/remote/nodes/{instance_id}/agents/{agent_id}/series/stream", remote.DomainAgent, remote.StreamActionSeries, "agent_id"},
+		{"/api/v1/remote/nodes/{instance_id}/devices/{device_id}/state/stream", remote.DomainDevice, remote.StreamActionState, "device_id", scopeResource},
+		{"/api/v1/remote/nodes/{instance_id}/agents/{agent_id}/stats/stream", remote.DomainAgent, remote.StreamActionStats, "agent_id", scopeResource},
+		{"/api/v1/remote/nodes/{instance_id}/agents/{agent_id}/series/stream", remote.DomainAgent, remote.StreamActionSeries, "agent_id", scopeResource},
+		// M10: 차트 채널 라이브 스트림(channelName — 노드-레벨, 노출 범위 미평가).
+		{"/api/v1/remote/nodes/{instance_id}/charts/{channel}/stream", remote.DomainChart, remote.StreamActionChart, "channel", scopeChannel},
+		// M10: 로그 라이브 스트림(노드-레벨, 자원 식별자 없음).
+		{"/api/v1/remote/nodes/{instance_id}/logs/stream", remote.DomainMonitor, remote.StreamActionLogs, "", scopeNode},
 	}
 }
 
@@ -115,6 +139,23 @@ func (h *RemoteStreamHandler) resolveRoute(r *http.Request) (streamRoute, string
 		if !routeMatchesPath(rt, r.URL.Path) {
 			continue
 		}
+
+		// M10: 노드-레벨 로그 스트림은 자원 id 가 없다(scopeNode). instance 만 필요.
+		if rt.scope == scopeNode {
+			if instanceID == "" {
+				pInstance, ok := parseNodeStreamPath(r.URL.Path)
+				if !ok {
+					continue
+				}
+				instanceID = pInstance
+			}
+			if instanceID != "" {
+				return rt, instanceID, "", true
+			}
+			continue
+		}
+
+		// scopeResource/scopeChannel — path 변수(자원 id 또는 channelName) 추출.
 		id := r.PathValue(rt.idParam)
 		if id == "" || instanceID == "" {
 			// 직접 호출(PathValue 미설정) — 세그먼트 파싱 폴백.
@@ -139,19 +180,45 @@ func (h *RemoteStreamHandler) resolveRoute(r *http.Request) (streamRoute, string
 // routeMatchesPath 는 라우트 패턴의 고정 suffix(예: /state/stream)가 요청 path 에 있는지
 // 확인한다(agent stats/series 구분, kind 세그먼트도 함께 확인).
 func routeMatchesPath(rt streamRoute, path string) bool {
-	suffix := "/" + rt.streamAction + "/stream"
-	if len(path) < len(suffix) || path[len(path)-len(suffix):] != suffix {
-		return false
+	switch rt.scope {
+	case scopeNode:
+		// M10: 로그(scopeNode)는 .../logs/stream suffix 로 매칭한다(자원 세그먼트 없음).
+		suffix := "/" + rt.streamAction + "/stream"
+		return len(path) >= len(suffix) && path[len(path)-len(suffix):] == suffix
+	case scopeChannel:
+		// M10: 차트(scopeChannel)는 .../charts/{channel}/stream 형태이다. action(chart)이
+		// kind 세그먼트(charts)와 동일하므로 action suffix 가 아니라 /stream suffix +
+		// /charts/ 세그먼트 포함으로 매칭한다(REQ-L07).
+		if len(path) < len("/stream") || path[len(path)-len("/stream"):] != "/stream" {
+			return false
+		}
+		return containsSegment(path, "/"+pluralKind(rt.domain)+"/")
+	default:
+		suffix := "/" + rt.streamAction + "/stream"
+		if len(path) < len(suffix) || path[len(path)-len(suffix):] != suffix {
+			return false
+		}
+		// kind 세그먼트(devices/agents)도 확인하여 동일 action 의 도메인 혼동을 막는다.
+		kindSeg := "/" + pluralKind(rt.domain) + "/"
+		return containsSegment(path, kindSeg)
 	}
-	// kind 세그먼트(devices/agents)도 확인하여 동일 action 의 도메인 혼동을 막는다.
-	kindSeg := "/" + pluralKind(rt.domain) + "/"
-	return containsSegment(path, kindSeg)
 }
 
-// parseStreamPath 는 .../nodes/{instance}/{kind}/{id}/{action}/stream 형태에서
-// instance 와 id 를 추출한다(직접 호출 폴백).
+// parseStreamPath 는 .../nodes/{instance}/{kind}/{id|channel}/{action}/stream 또는
+// (차트의 경우) .../nodes/{instance}/charts/{channel}/stream 형태에서 instance 와
+// id/channelName 을 추출한다(직접 호출 폴백).
 func parseStreamPath(path string, rt streamRoute) (instanceID, resourceID string, ok bool) {
 	segs := splitNonEmpty(path)
+	if rt.scope == scopeChannel {
+		// 기대: [api v1 remote nodes <instance> charts <channel> stream]
+		for i := 0; i+4 < len(segs); i++ {
+			if segs[i] == "nodes" && segs[i+2] == pluralKind(rt.domain) &&
+				segs[i+4] == "stream" {
+				return segs[i+1], segs[i+3], true
+			}
+		}
+		return "", "", false
+	}
 	// 기대: [api v1 remote nodes <instance> <kind> <id> <action> stream]
 	for i := 0; i+4 < len(segs); i++ {
 		if segs[i] == "nodes" && segs[i+2] == pluralKind(rt.domain) &&
@@ -160,6 +227,19 @@ func parseStreamPath(path string, rt streamRoute) (instanceID, resourceID string
 		}
 	}
 	return "", "", false
+}
+
+// parseNodeStreamPath 는 .../nodes/{instance}/logs/stream 형태에서 instance 를
+// 추출한다(scopeNode 직접 호출 폴백 — 자원 id 없음).
+func parseNodeStreamPath(path string) (instanceID string, ok bool) {
+	segs := splitNonEmpty(path)
+	// 기대: [api v1 remote nodes <instance> logs stream]
+	for i := 0; i+2 < len(segs); i++ {
+		if segs[i] == "nodes" && segs[i+2] == "logs" {
+			return segs[i+1], true
+		}
+	}
+	return "", false
 }
 
 // pluralKind 는 도메인을 URL 의 복수형 세그먼트로 매핑한다.
@@ -171,6 +251,8 @@ func pluralKind(domain string) string {
 		return "agents"
 	case remote.DomainDevice:
 		return "devices"
+	case remote.DomainChart:
+		return "charts"
 	default:
 		return domain
 	}
@@ -221,19 +303,23 @@ func (h *RemoteStreamHandler) HandleStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 2) 게이팅(REQ-J05): 미관리 → 503, 노출 범위 밖 → 404.
+	// 2) 게이팅(REQ-J05/L11): 미관리 → 503. per-resource 스코프만 노출 범위 평가(404).
 	if !h.svc.IsManaged(instanceID) {
 		http.Error(w, "노드가 관리 대상이 아닙니다(미승인/오프라인)", http.StatusServiceUnavailable)
 		return
 	}
-	exposed, err := h.svc.IsResourceExposed(r.Context(), instanceID, kindFor(rt.domain), resourceID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if !exposed {
-		http.Error(w, "대상 자원이 노드의 노출 범위에 없습니다", http.StatusNotFound)
-		return
+	// M10: 차트(channel)/로그(node)는 노드-레벨 자원이므로 노출 범위를 평가하지 않는다
+	// (REQ-L03/L06/L07). per-resource(device.state/agent.stats/series)만 노출 범위 게이트.
+	if rt.scope == scopeResource {
+		exposed, err := h.svc.IsResourceExposed(r.Context(), instanceID, kindFor(rt.domain), resourceID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !exposed {
+			http.Error(w, "대상 자원이 노드의 노출 범위에 없습니다", http.StatusNotFound)
+			return
+		}
 	}
 
 	// 3) SSE 준비(Flusher 필수).
@@ -249,8 +335,11 @@ func (h *RemoteStreamHandler) HandleStream(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	// 4) 구독(REQ-J08). args = {"id": resourceID}.
-	args, _ := json.Marshal(map[string]string{"id": resourceID})
+	// 4) 구독(REQ-J08). args 는 스코프별로 다르다:
+	//    - scopeResource: {"id": resourceID}        (device.state/agent.stats/series)
+	//    - scopeChannel:  {"channelName": resourceID} (chart — REQ-L07)
+	//    - scopeNode:     nil                          (logs — 자원 식별자 없음, REQ-L06)
+	args := streamArgs(rt.scope, resourceID)
 	handle, err := h.svc.SubscribeStream(instanceID, rt.domain, rt.streamAction, args)
 	if err != nil {
 		// 헤더는 이미 200 으로 전송됐으므로 SSE 이벤트로 오류를 통지하고 종료한다.
@@ -309,6 +398,24 @@ func bearerOrQueryToken(r *http.Request) string {
 		return authHeader[7:]
 	}
 	return r.URL.Query().Get("token")
+}
+
+// streamArgs 는 스코프별 구독 args 를 구성한다(REQ-J08/L06/L07).
+//
+//   - scopeResource: {"id": resourceID}          (노드 QuerySource 가 id 로 자원 식별)
+//   - scopeChannel:  {"channelName": resourceID}  (차트 — 노드가 channelName 으로 채널 식별)
+//   - scopeNode:     nil                            (로그 — 자원 식별자 없음)
+func streamArgs(scope streamScope, resourceID string) json.RawMessage {
+	switch scope {
+	case scopeChannel:
+		args, _ := json.Marshal(map[string]string{"channelName": resourceID})
+		return args
+	case scopeNode:
+		return nil
+	default:
+		args, _ := json.Marshal(map[string]string{"id": resourceID})
+		return args
+	}
 }
 
 // writeSSEData 는 redacted 본문을 data: 이벤트로 전송하고 flush 한다.

@@ -22,12 +22,17 @@ import (
 )
 
 // fakeQuerySvc 는 RemoteQueryService 의 테스트 구현이다.
+//
+// M10(그룹 L): managed/lastOwner 는 노드-레벨 query(dashboard/metrics) 게이팅·owner
+// 전달 검증용이다(REQ-L01/L02). 기본 managed=false 이며, 노드-레벨 테스트는 명시 설정한다.
 type fakeQuerySvc struct {
 	data       json.RawMessage
 	err        error
 	exposed    map[string]bool // key = kind+"/"+id
 	dispatched []string        // "domain/action/id"
 	scope      []string        // "kind/id"
+	managed    bool            // M10: IsManaged 반환값(노드-레벨 게이팅).
+	lastOwner  string          // M10: dashboard.get_mine args.owner 기록.
 }
 
 func newFakeQuerySvc() *fakeQuerySvc {
@@ -41,6 +46,9 @@ func (f *fakeQuerySvc) DispatchQuery(_ context.Context, _ string, domain, action
 		if v, ok := m["id"].(string); ok {
 			id = v
 		}
+		if v, ok := m["owner"].(string); ok {
+			f.lastOwner = v
+		}
 	}
 	f.dispatched = append(f.dispatched, domain+"/"+action+"/"+id)
 	if f.err != nil {
@@ -48,6 +56,9 @@ func (f *fakeQuerySvc) DispatchQuery(_ context.Context, _ string, domain, action
 	}
 	return f.data, nil
 }
+
+// IsManaged 는 노드가 승인+온라인인지 반환한다(M10 노드-레벨 게이팅 — REQ-L02/J05).
+func (f *fakeQuerySvc) IsManaged(string) bool { return f.managed }
 
 func (f *fakeQuerySvc) IsResourceExposed(_ context.Context, _ string, kind, id string) (bool, error) {
 	f.scope = append(f.scope, kind+"/"+id)

@@ -3,7 +3,7 @@
 > 원격 관리 서버/클라이언트 — xflow 인스턴스 fleet 등록·승인·원격 제어·인벤토리 미러링
 > 본 문서는 PLAN 단계 산출물이다. 코드는 포함하지 않으며 기술 접근/마일스톤/위험을 정의한다.
 
-> **상태(2026-06-07)**: 4개 확정 아키텍처 결정(영속 WS dial / 라이브 RPC over 연결 / 인벤토리 미러+서버 DB 캐시 / 클라이언트 노출 opt-in)을 고정 제약으로 둔다. 마일스톤 M1~M6·H·M7 백엔드 완료, M7 웹(7.4)·M8(그룹 J, v1.3)·M9(그룹 K, v1.4) 계획 단계. M8 은 원격 노드 FULL 제어 패리티(READ/QUERY 프록시 + 통합 UI), M9 는 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드를 증분 구현한다. **M9 의 OQ-K1~K7 은 ✅ 전부 RESOLVED(2026-06-07, 사용자 권고안대로 확정) — 구현 시 고정 제약이다.**
+> **상태(2026-06-08)**: 4개 확정 아키텍처 결정(영속 WS dial / 라이브 RPC over 연결 / 인벤토리 미러+서버 DB 캐시 / 클라이언트 노출 opt-in)을 고정 제약으로 둔다. 마일스톤 M1~M6·H·M7 백엔드 완료, M7 웹(7.4)·M8(그룹 J, v1.3)·M9(그룹 K, v1.4)·M10(그룹 L, v1.5) 계획 단계. M8 은 원격 노드 FULL 제어 패리티(READ/QUERY 프록시 + 통합 UI), M9 는 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드, **M10 은 원격 노드 대시보드 패리티(로컬 DashboardPage 재사용 + 대시보드 config 읽기 프록시 + 패널 target-aware + 차트 스트림 프록시)** 를 증분 구현한다. **M9 의 OQ-K1~K7 은 ✅ 전부 RESOLVED(2026-06-07). M10 의 OQ-L1~L6 은 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 구현 시 고정 제약.**
 
 ## 1. 기술 접근
 
@@ -107,6 +107,21 @@
 - **노드별 운영 요약(REQ-K10)**: 기존 미러(그룹 E) 집계 파생(OQ-K3 RESOLVED = 미러 우선) — 플로우(카운트+running/stopped)·에이전트(카운트+connected)·디바이스(카운트+online). 신규 왕복 없음, 오프라인 last-known 제공(A15/E06). 노드 상세 응답에 포함.
 - **UI 재구성(REQ-K11~K16)**: 사이드바 `원격 관리`(server 모드+admin 게이팅 유지) = `노드 관리`(디렉토리 뷰 단일 레벨 그룹 트리·"전체" 기본·그룹 배정/해제 → 노드 선택 → **노드 대시보드**: 시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭=**M8 통합 제어**(`target=remote:{instanceId}`) 재사용) + `등록 관리`(토큰 관리 `EnrollmentTokenSection` + 노드 등록 관리: pending 승인·승인/거부/폐기·`PreRegisterNodeDialog` 이관). 기존 `관리 노드`/`원격 노드 제어` 대체, `RemoteControlPage` 셀렉터 개념은 `노드 관리` 디렉토리로 흡수, RemoteNodesPage 승인부는 `등록 관리`로 이관. 딥링크 `/admin/remote/control` → `노드 관리` 리다이렉트(OQ-K7 RESOLVED), M8 통합 제어·편집기 라우트는 대시보드 서브탭에서 도달 가능. 변경은 여전히 그룹 D/I 경로(프록시/신규 변경 경로 미신설 — REQ-J03/J12/K14).
 - **재사용(재발명 금지)**: M8 통합 제어(그룹 J), `EnrollmentTokenSection`/`PreRegisterNodeDialog`/승인 UI(그룹 H/C), 미러 데이터(그룹 E), register/heartbeat 프로토콜(그룹 B/C)을 재사용. 신규는 (1) `group_name`/시스템 정보 컬럼·그룹 REST, (2) 시스템 정보 페이로드 필드, (3) 운영 요약 미러 집계, (4) IA 재편 웹 페이지(노드 관리/등록 관리/노드 대시보드)뿐이다.
+
+### 1.13 원격 노드 대시보드 패리티 (v1.5, 그룹 L)
+
+> **OQ-L1~L6 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정)**. 아래는 확정 설계다.
+
+- **목표**: 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 `DashboardPage`**(`web/src/pages/dashboard/DashboardPage.tsx`, ~948 LOC)로 `target=remote:{instanceId}` 파라미터화하여 보고 제어한다. **그룹 J(M8) query/스트림 프록시 + target 추상화**(`useResourceTargets`/`useDetailTargets`/`useTargetParam`/`useTargetGating`/`useRemoteStream`)를 재사용하며, 신규 데이터 경로를 최소화한다.
+- **대시보드 config 읽기 프록시(REQ-L01~L03, OQ-L1/L3 RESOLVED)**: 그룹 J query-action allowlist 에 **`dashboard` 도메인**(`get_shared`/`get_mine` — READ-ONLY) 추가. 노드 매핑 = `GET /dashboards/{shared,mine}`(SPEC-DASHBOARD-001). config(`dashboardPages[]`/`activeDashboardId`/grid/refresh/`deviceGridLayout`)는 **노드-로컬**(노드 권위 A4, 서버 미러·영속 비대상, 단기 TTL 캐시만). config 내부 deviceId 는 그 노드 기준 해석(REQ-L03). 변경 의미 action(`put`/`delete`) 명시 배제 — 원격 config 편집은 v1.5 비목표(OQ-L3 RESOLVED). 게이팅·redaction·503/504/502/404 는 그룹 J 재사용(REQ-L02).
+- **패널 데이터 소스 target-aware(REQ-L04~L09, OQ-L6 RESOLVED)**: 약 10종 패널 데이터 바인딩을 로컬 vs 원격으로 해석. flows/agents/devices/single-device = **기존 target 훅 재사용**(REQ-L04). 신규:
+  - **메트릭(REQ-L05, OQ-L6 RESOLVED=query-action)**: query-action allowlist 에 `monitor.metrics` 추가 → 노드 `/monitor/metrics` 매핑, 스냅샷 read, 단기 TTL 캐시. 장기 시계열/상시 폴링 미신설(K BASIC 비목표 일관).
+  - **로그(REQ-L06, OQ-L6 RESOLVED=스트림)**: 스트림 action allowlist 에 `monitor.logs` 추가 → 노드 로그 스트림 구독→`stream_data` push→fan-out, 캐시 우회, teardown·백프레셔 재사용, 폴링 폴백.
+  - **차트(REQ-L07, OQ-L2 RESOLVED=M8 스트림 프록시 chart-action 확장)**: 스트림 action allowlist 에 `chart`(args=channelName) 추가 → 노드 `/ws/chart/{channel}` 소스 구독→backfill/append 를 `stream_data` 중계→fan-out. **별도 WS 경로 미신설**. `useChartChannel` 의 `wsBaseUrl`/`createClient` 주입점으로 원격 target 에서 스트림 프록시(SSE) 어댑터 주입 → 동일 차트 패널 코드 동작. 폴링 폴백(스냅샷 query-action).
+  - **control 패널(REQ-L08, OQ-L4 RESOLVED=그룹 D 재사용)**: read=`useDeviceDetailTarget`(`device.state`), 쓰기=**그룹 D 명령**(REQ-D04). 디바이스 쓰기 프록시 비경유(J03). config bare `deviceId` 는 그 노드 디바이스로 해석(REQ-L03).
+  - **target 전파(REQ-L09)**: `DashboardPage`/`renderPanel`(현재 패널에 target 미전달)을 확장해 dashboard 레벨 target 을 TargetProvider(context)/패널 prop 으로 전파. **target 미지정/`local` 시 로컬 렌더 바이트 동일**(회귀 0 — A16). 패널 UI/레이아웃 코드 비분기(데이터 소스만 target-aware).
+- **UI 통합(REQ-L10~L13, OQ-L5 RESOLVED=서브탭)**: 노드 대시보드(M9 `NodeDashboard`)에 **대시보드 서브탭** 추가(Flow/Agent/Device 서브탭과 나란히), 로컬 `DashboardPage` 를 `target=remote:{id}` 로 재사용(별도 화면 미신설 — A16). 게이팅(승인∧온라인∧노출, `useTargetGating` 재사용)·503/504/502/404·원격 컨텍스트 표시(M8/M9 IA 일관, REQ-L11). **read-only-by-default**(원격 config 편집 비활성/숨김, REQ-L12) — 자원 제어 액션은 그룹 D/I 로만(신규 변경 경로·프록시 변경 금지 — J03/J12). 최소 감사(노출 위반·오류만, REQ-L13).
+- **재사용(재발명 금지)**: 그룹 J query/스트림 프록시·target 추상화·`useRemoteStream`·`mapRemoteCommandError`·`secret_fields` redactor·그룹 D 명령·M9 노드 대시보드·로컬 `DashboardPage`/패널 컴포넌트를 재사용. 신규는 (1) query/stream allowlist 확장(`dashboard`/`monitor` + `chart`/`logs`), (2) 노드 측 read/스트림 소스 바인딩, (3) 차트 스트림 어댑터 주입, (4) 패널 target 전파, (5) 노드 대시보드 대시보드 서브탭뿐이다.
 
 ## 2. 마일스톤 (우선순위 기반, 시간 추정 없음)
 
@@ -231,6 +246,20 @@
 - 의존: M2(승인 상태 머신·노드 메타), M4(미러 — 운영 요약 파생), M6(감사·시크릿 redaction — 그룹 작업/시스템 정보 비시크릿), M8(그룹 J 통합 제어 — 노드 대시보드 서브탭 재사용), H(EnrollmentTokenSection/사전 등록 UI 이관). M8 웹(8.4)이 노드 대시보드 서브탭의 전제이므로 **M9 웹(9.4)은 M8 웹(8.4) 이후** 진행한다(백엔드 9.1~9.3 은 M8 과 독립 병행 가능).
 - 매핑: REQ-K01~K16, REQ-A13/A14/A15, REQ-B05/E06/F04/N03/N04 일관.
 
+### 마일스톤 10 — v1.5 확장: 원격 노드 대시보드 패리티 (그룹 L) 🔲 계획
+> 그룹 L. 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 `DashboardPage`**(`target=remote:{instanceId}`)로 보고 제어한다. 핵심은 (1) **대시보드 config 읽기 프록시**(그룹 J `dashboard` 도메인 query-action, READ-ONLY·노드-로컬), (2) **패널 데이터 소스 target-aware**(메트릭 query-action·로그 스트림·**차트 M8 스트림 프록시 chart-action**·control 그룹 D), (3) **패널 target 전파 + 노드 대시보드 대시보드 서브탭**이다. **변경은 여전히 그룹 D/I**(프록시 경유 변경 금지). 원격 config 편집은 **v1.5 비목표**. **OQ-L1~L6 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 고정 제약.** 4단계(config 읽기 프록시 → 차트 스트림 + 메트릭/로그 query/스트림 → 웹 패널 target-aware + DashboardPage target → control 명령 라우팅)로 분할한다.
+
+- **단계 10.1 — 대시보드 config 읽기 프록시(프로토콜/서버/클라이언트)** 🔲: `internal/remote/protocol.go`(수정) allowedQueryActions 에 `dashboard` 도메인(`get_shared`/`get_mine`, READ-ONLY·변경 action 배제) 추가. `internal/remote/query.go`/`client_query.go`(수정) QuerySource 가 `dashboard.get_shared/get_mine`→노드 `/dashboards/{shared,mine}` read 핸들러 매핑·redaction(REQ-L01). `cmd/xflowd/*`(수정) 노드 대시보드 read 소스를 QuerySource 에 바인딩. `internal/api/handler/remote.go`(수정) dashboard query REST·게이팅(REQ-J05)·503/504/502/404(REQ-L02, `mapRemoteCommandError` 재사용)·단기 TTL 캐시(config 캐시 대상). 노드-로컬 권위(서버 미러·영속 비대상 — REQ-L03/A17).
+  - 검증: dashboard_query_test(allowlist·변경 action 거부·게이팅·redaction·503/504/502/404·노드-로컬 권위), dashboard_cache_test(TTL·무효화).
+- **단계 10.2 — 차트 스트림(M8 chart-action) + 메트릭/로그 query·스트림** 🔲: `internal/remote/protocol.go`(수정) allowedQueryActions 에 `monitor.metrics`, streamableActions 에 `chart`·`monitor.logs` 추가(REQ-L05/L06/L07). `internal/remote/query.go`/`client_query.go`(수정) `monitor.metrics`→노드 `/monitor/metrics` 매핑(스냅샷·TTL 캐시). `internal/remote/client_stream.go`(수정) StreamSource 가 `chart`(args=channelName)→`/ws/chart/{channel}` 소스 구독·backfill/append 중계, `monitor.logs`→로그 스트림 소스 구독, teardown·백프레셔·캐시 우회(REQ-J08b/J16 재사용). `cmd/xflowd/*`(수정) 차트/로그/메트릭 소스 어댑터 바인딩(secret_fields redactor 주입). `internal/api/handler/remote.go`(수정) chart/logs 브라우저 스트림 엔드포인트(SSE, `useRemoteStream` 소비) + metrics query REST.
+  - 검증: metrics_query_test(매핑·캐시), chart_stream_test(backfill/append 중계·teardown·백프레셔·폴백·redaction), logs_stream_test(라이브 tail·캐시 우회·teardown), 별도 WS 경로 미신설 확인.
+- **단계 10.3 — 웹 패널 target-aware + DashboardPage target + 노드 대시보드 서브탭(추후 expert-frontend)** 🔲: `web/src/pages/dashboard/DashboardPage.tsx`(수정) `renderPanel` 이 dashboard 레벨 target 을 TargetProvider(context)/패널 prop 으로 전파(REQ-L09), target 미지정 시 로컬 바이트 동일(A16). `web/src/pages/dashboard/panels/*`(수정) flows/agents/devices/single-device 기존 target 훅 재사용, resource(monitor.metrics), logs(monitor.logs 스트림), gauge/properties-grid 디바이스 target 훅(REQ-L04/L05/L06). `web/src/pages/dashboard/panels/charts/useChartChannel.ts`·`useChartChannels.ts`(수정) 원격 target 에서 `wsBaseUrl`/`createClient` 주입점으로 스트림 프록시(SSE) 어댑터 주입·폴링 폴백(REQ-L07). `web/src/services/api/remoteService.ts`/`web/src/hooks/*`(수정) dashboard config·metrics query-action·logs/chart 스트림 구독 클라이언트. `web/src/components/remote/NodeDashboard.tsx`(수정) **대시보드 서브탭** 추가 → 로컬 DashboardPage `target=remote:{id}` 재사용·게이팅(`useTargetGating`)·원격 컨텍스트·503/504/502/404 표시·read-only-by-default(REQ-L10/L11/L12).
+  - 검증: panel_target Vitest(로컬 바이트 동일·원격 분기·기존 target 훅 재사용), useChartChannel 원격 어댑터 Vitest(스트림 주입·폴백), resource/logs 원격 Vitest, NodeDashboard 대시보드 서브탭 Vitest(DashboardPage 재사용·게이팅·원격 컨텍스트·read-only·503/504/502/404).
+- **단계 10.4 — control 패널 원격 명령 라우팅(추후 expert-frontend)** 🔲: `web/src/pages/dashboard/panels/{AcControl,HvacControl,OutdoorControl}Panel.tsx`(수정) read=`useDeviceDetailTarget`(`device.state`), 쓰기=**그룹 D 명령**(REQ-D04, `useExecuteCommand` 의 target-aware 라우팅 — 프록시 비경유 J03). config bare `deviceId` 는 원격 target 하 그 노드 디바이스로 해석(REQ-L03/L08). 최소 감사(REQ-L13).
+  - 검증: control 패널 원격 그룹 D 라우팅 Vitest(상태 read 프록시·명령 그룹 D·deviceId 네임스페이싱·프록시 변경 비경유).
+- 의존: M3(명령 디스패치 — control 쓰기), M4(노출 범위·미러), M6(감사·redaction), M8(그룹 J query/스트림 프록시·target 추상화·`useRemoteStream` — 필수 전제), M9(노드 대시보드 — 대시보드 서브탭 부착·M8 통합 제어 서브탭과 나란히), SPEC-DASHBOARD-001(로컬 DashboardPage/패널·`/dashboards` 핸들러)·SPEC-CHART-001(차트 채널). **M10 은 M8(query/스트림 프록시) 완료 후, 웹 단계(10.3/10.4)는 M9 웹(9.4) 이후** 진행한다(백엔드 10.1~10.2 는 M8 백엔드 완료 시 병행 가능).
+- 매핑: REQ-L01~L13, REQ-J03/J05/J06/J07/J08/J08b/J16/J12/J15·D04·E07/A06/F04/F06/N04·A16/A17/A18 일관.
+
 ## 3. 위험 및 대응
 
 | 위험 | 영향 | 대응 |
@@ -272,12 +301,20 @@
 | IA 재편으로 딥링크/기능 유실 | 사용자 워크플로 단절 | 기존 진입점 대체하되 M8 통합 제어·편집기 라우트 도달 보존(K16), /admin/remote/control 리다이렉트(OQ-K7 RESOLVED), 기존 컴포넌트 이관(재작성 없음) |
 | 노드 대시보드 서브탭이 프록시 우회 변경 시도 | READ-ONLY/변경 경로 원칙 위반 | 서브탭=M8 통합 제어 재사용(K14), 변경은 그룹 D/I 로만(J03/J12), 신규 변경 경로 미신설 |
 | OQ-K1~K7 설계 결정 | 잘못된 설계 고정 | ✅ 전부 RESOLVED(2026-06-07, 사용자 권고안대로 확정) — 서버 전용 그룹/register+heartbeat 시스템 정보/미러 파생 요약/started_at 파생 uptime/빈 라벨="전체"/등록 관리 흡수//admin/remote/control 리다이렉트로 고정 제약화 |
+| 패널 리팩터 표면적 광범위(약 10종·DashboardPage ~948 LOC) | 회귀·유지보수 부담 | 패널 UI 비분기·데이터 소스만 target-aware(L04~L09), target 미지정 시 로컬 바이트 동일(A16), 기존 target 훅 재사용(L04), panel_target_test(로컬 동일 보장) |
+| 차트 스트리밍 신규 경로 복잡 | WS 경로 중복·teardown 누락 | M8 스트림 프록시 chart-action 확장(OQ-L2 RESOLVED — 별도 WS 경로 미신설), teardown·백프레셔·redaction·캐시 정책 재사용(J08b/J16), useChartChannel 주입점 활용·폴링 폴백 |
+| 대시보드 config 위치 불일치(노드-로컬 vs 중앙) | deviceId 혼동·잘못된 노드 참조 | 노드-로컬 read-only(OQ-L1 RESOLVED/A17/L03), config 내부 deviceId=그 노드 기준, 서버 미러·영속 비대상, 중앙 cross-node 는 향후 SPEC |
+| 원격 config 편집 범위 누수 | READ-ONLY 원칙·노드 권위 위반 | v1.5 READ-ONLY(OQ-L3 RESOLVED/L12), 변경 action(dashboard.put/delete) allowlist 배제(J03), config 편집 UI 비활성/숨김, 편집은 차기 단계 |
+| control 패널 쓰기 프록시 경유 시도 | READ-ONLY 위반 | 디바이스 쓰기=그룹 D 명령만(OQ-L4 RESOLVED/L08/D04), 프록시 비경유(J03/J12), 신규 변경 경로 미신설 |
+| 메트릭/로그 상시 폴링 노드 부하 | 노드/서버 부하 | 메트릭=온디맨드 query-action+TTL 캐시(L05/OQ-L6 RESOLVED), 로그=라이브 스트림+캐시 우회·백프레셔(L06), 장기 시계열/상시 폴링 미신설(K BASIC 비목표 일관) |
+| 노드 대시보드 서브탭이 프록시 우회 변경 시도 | READ-ONLY/변경 경로 원칙 위반 | 서브탭=로컬 DashboardPage 재사용(L10), 변경은 그룹 D/I 로만(L12/J03/J12), read-only-by-default·config 편집 비활성 |
+| OQ-L1~L6 설계 결정 | 잘못된 설계 고정 | ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 노드-로컬 read-only config/M8 chart-action 확장/v1.5 read-only/control 그룹 D 재사용/대시보드 서브탭(노드 대시보드)/메트릭=query·로그=스트림으로 고정 제약화 |
 
 ## 4. 개발 방법론
 
 - **Hybrid** (`.moai/config/sections/quality.yaml` development_mode=hybrid):
-  - 신규 코드(`internal/remote/*`, `managed_node_*`, remote 핸들러, instance_id, `query_proxy.go`, `stream_proxy.go`, 그룹/시스템 정보 신규 메서드) = **TDD**(RED-GREEN-REFACTOR, 신규 커버리지 85%+).
-  - 기존 변경(config types/defaults/validate, 어댑터 명령 진입, main.go 배선, `managed_node_sqlite.go` 컬럼/마이그레이션, register/heartbeat 페이로드 확장) = **동작 보존 DDD**(ANALYZE-PRESERVE-IMPROVE, 회귀 0 — 특히 시스템 정보 필드 하위 호환).
+  - 신규 코드(`internal/remote/*`, `managed_node_*`, remote 핸들러, instance_id, `query_proxy.go`, `stream_proxy.go`, 그룹/시스템 정보 신규 메서드, dashboard/monitor query·chart/logs stream 소스 바인딩) = **TDD**(RED-GREEN-REFACTOR, 신규 커버리지 85%+).
+  - 기존 변경(config types/defaults/validate, 어댑터 명령 진입, main.go 배선, `managed_node_sqlite.go` 컬럼/마이그레이션, register/heartbeat 페이로드 확장, query/stream allowlist 확장, `DashboardPage`/패널/`useChartChannel` target 전파·어댑터 주입) = **동작 보존 DDD**(ANALYZE-PRESERVE-IMPROVE, 회귀 0 — 특히 시스템 정보 필드 하위 호환 및 **대시보드 패널 로컬 렌더 바이트 동일** — A16).
 - 기존 ws/auth/adapter 인프라는 재사용(재발명 금지) → 기존 회귀 스위트로 보호.
 
 ## 5. 검증 전략 요약
@@ -288,6 +325,7 @@
 - 원격 편집(그룹 I): flow/agent CRUD REST→command 전파, 게이팅(승인·온라인·노출), 실패 의미(503/504/502), 시크릿 redaction 라운드트립(생략·병합), 결과 후 캐시 갱신, 원격 편집 감사.
 - 원격 제어 패리티(그룹 J): per-domain query-action allowlist(FULL 커버리지)·게이팅(승인·온라인·노출)·redaction·상관/타임아웃·실패 의미(503/504/502)·READ-ONLY 거부; 스트리밍 프록시(subscribe/stream_data/unsubscribe·teardown·백프레셔); 단기 TTL 캐시(무효화·라이브 우회); 통합 UI 타깃 추상화·로컬 페이지/상세 패널 원격 재사용·FULL 패리티·스트림 소비·노드 셀렉터·target 라우팅·폴링 폴백(Vitest, 추후).
 - 노드 그룹핑/시스템 정보/운영 요약(그룹 K): 단일 그룹 배정/해제·distinct("전체" 포함)·그룹별 노드·재라벨링/환원·admin 게이팅; register/heartbeat BASIC 시스템 정보 보고·하위 호환(미보고 빈값)·uptime started_at 파생·자원 메트릭 비포함; 운영 요약 미러 파생(오프라인 last-known); 웹 IA 재편(노드 관리/등록 관리 대체·디렉토리·노드 대시보드·M8 서브탭 재사용·딥링크 보존, Vitest 추후).
+- 원격 대시보드 패리티(그룹 L): dashboard config query-action(get_shared/get_mine·READ-ONLY·변경 action 배제·노드-로컬 권위)·게이팅·redaction·실패 의미(503/504/502/404)·TTL 캐시; monitor.metrics query-action(온디맨드·캐시); chart/monitor.logs 스트림 action(중계·teardown·백프레셔·캐시 우회·폴백·별도 WS 경로 미신설); 웹 패널 target 전파(로컬 바이트 동일·원격 분기)·기존 target 훅 재사용·useChartChannel 원격 어댑터 주입·control 그룹 D 라우팅·노드 대시보드 대시보드 서브탭(로컬 DashboardPage 재사용)·read-only-by-default(Vitest 추후).
 - 통합/회귀: 등록→승인→명령→미러 end-to-end, 원격 편집(생성·수정·삭제→전파→적용→결과→캐시), 원격 상세 query-action 패리티(상세/통계/노드 레벨) + 실시간 스트림(상태/시리즈 라이브), 그룹 배정→그룹별 목록→대시보드 시스템+운영 요약 표시→서브탭 M8 제어, 재연결, disabled 회귀, 기존 ws/auth/adapter 불변.
 - 보안: TLS(wss), 토큰 인증/폐기, 승인 게이팅, 명령 권한, OWASP API Security 참조.
 - 품질 게이트: TRUST 5, LSP zero-error(run), golangci-lint zero, gofmt/goimports 클린.

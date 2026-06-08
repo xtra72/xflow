@@ -1,10 +1,10 @@
 ---
 id: SPEC-REMOTE-001
 title: "원격 관리 서버/클라이언트 — xflow 인스턴스 fleet 등록·승인·원격 제어·인벤토리 미러링"
-version: "1.4.0"
+version: "1.5.0"
 status: planned
 created: "2026-06-05"
-updated: "2026-06-06"
+updated: "2026-06-08"
 author: "xtra"
 priority: high
 related_specs:
@@ -18,6 +18,8 @@ related_specs:
   - SPEC-CFG-001
   - SPEC-SOCKET-001
   - SPEC-MQTT-003
+  - SPEC-DASHBOARD-001
+  - SPEC-CHART-001
 tags:
   - remote-management
   - fleet
@@ -35,6 +37,10 @@ tags:
   - node-grouping
   - node-dashboard
   - information-architecture
+  - remote-dashboard
+  - dashboard-parity
+  - chart-stream-proxy
+  - panel-target-awareness
 ---
 
 | 버전 | 날짜 | 작성자 | 변경 내용 |
@@ -42,6 +48,7 @@ tags:
 | 1.0.0 | 2026-06-05 | xtra | 초기 SPEC 작성 — 원격 관리 서버/클라이언트(fleet 관리). 전송=클라이언트가 서버로 dial 하는 영속 WebSocket, 제어=라이브 연결 위 RPC 명령(로컬 어댑터 적용), 인벤토리=클라이언트 미러링+서버 DB 캐시, 노출 제어=클라이언트 config opt-in. 신규 xflow 인스턴스 식별자(instance_id) 도입. M1~M5 마일스톤 정의 |
 | 1.1.0 | 2026-06-06 | xtra | v1.1 확장 — 수동 enrollment(그룹 H). (A) 사전 등록(instance_id allow-list): 접속 전 approved 노드 사전 생성 + 접속 시 자동 승인. (B) enrollment 토큰: 관리자가 발급한 1회성/횟수·기간 제한 가입 토큰을 register 에 운반해 관리자 수동 승인 없이 자동 승인. 토큰은 SHA-256 해시로만 저장(원본 1회 노출), 즉시 폐기 가능. 모든 신규 REST 엔드포인트 admin-gated, 자동 승인 감사 기록 |
 | 1.2.0 | 2026-06-06 | xtra | v1.2 확장 — 원격 자원 편집(그룹 I). 관리자가 서버 웹 UI 에서 승인·온라인 노드의 플로우/에이전트를 FULL CRUD(생성·수정·삭제). 기존 시각 편집기(EditorPage.tsx React Flow) 재사용. 모든 편집은 그룹 D 명령 경유 → 노드 어댑터 로컬 적용 → 결과 수신 후에만 미러 캐시 갱신(서버 단독 영속 금지 — A4/E08). 시크릿 redaction 라운드트립 보존(마스킹 필드 생략·노드 측 병합), 실패 의미(offline=503/timeout=504/apply-fail=502). §1.5 비목표의 "서버 측 직접 영속 편집" 항목 대체. 마일스톤 M7 추가. (2026-06-06 RESOLVED §5.9-6~9: 시크릿=필드 부재+노드 backfill, 동시성=노드 권위+비차단 경고(잠금 없음), 신규 ID=노드 채번, 신규 생성 자원=수동 노출(opt-in 보존)) |
+| 1.5.0 | 2026-06-08 | xtra | v1.5 확장 — 원격 노드 대시보드 패리티(그룹 L). 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 DashboardPage**(`target=remote:{instanceId}`)로 보고 제어한다(M8 query/스트림 프록시 + target 추상화 재사용). (A) **대시보드 CONFIG 읽기 프록시** — 노드의 대시보드 설정(dashboardPages[]/activeDashboardId/grid/refresh/deviceGridLayout, SPEC-DASHBOARD-001 `GET /dashboards/{shared,mine}`)을 그룹 J query-action(`dashboard` 도메인 `get_shared`/`get_mine`)으로 **READ-ONLY** 취득(원격 config **편집은 v1.5 비목표**, 차기 위임). (B) **패널 데이터 소스 target-aware** — flows/agents/devices/single-device 패널은 기존 target 훅(useResourceTargets/useDetailTargets) 재사용, resource(메트릭)·logs·CHART 를 신규 query-action/스트림으로 원격화: 신규 `monitor/metrics` query-action, 신규 `monitor/logs` 스트림 action, **CHART 는 M8 스트림 프록시에 `chart` stream-action(subscribe/stream_data) 추가**(`/ws/chart/{channel}` 직결 대신 서버 경유 중계, 폴링 폴백·teardown·백프레셔 J08/J08b 재사용). control 패널(ac/hvac/outdoor)은 useDeviceDetailTarget + **그룹 D 명령**으로 디바이스 쓰기. 패널은 dashboard 레벨 TargetProvider/prop 으로 target 수신(target 없으면 로컬 렌더 바이트 동일). (C) **디바이스/자원 ref 네임스페이싱** — 원격 target 하에서 패널 device ref 는 **그 노드 기준** 해석(대시보드 config 는 **노드-로컬**: 노드별 fetch, deviceId 는 그 노드의 것 — 중앙 cross-node config 대신 v1 단순성 채택). (D) **UI** — `노드 대시보드`(NodeDashboard, M9)에 **대시보드 서브탭** 추가 및/또는 DashboardPage `target=remote:{id}` 지원, 게이팅(승인+온라인+노출)·redaction·실패 의미(503/504/502/404)·read-only-by-default·원격 컨텍스트 표시. 마일스톤 M10 추가. (OQ-L1~L6 ✅ RESOLVED 2026-06-08 — 사용자 권고안대로 확정: 노드-로컬 read-only config / CHART=M8 스트림 프록시 chart-action 확장 / 원격 config READ-ONLY(편집 차기) / control 쓰기=그룹 D 재사용 / 대시보드 서브탭(노드 대시보드) / 메트릭=query-action·로그=스트림) |
 | 1.4.0 | 2026-06-07 | xtra | v1.4 확장 — 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드(그룹 K). 사이드바 `원격 관리` 그룹을 **두 개의 최상위 진입점**(`노드 관리`(운영) + `등록 관리`(온보딩))으로 재편하여 기존 `관리 노드`(RemoteNodesPage) + `원격 노드 제어`(RemoteControlPage) 를 **대체**한다. (A) 노드 그룹핑: `managed_nodes` 에 **단일 그룹 라벨**(group_name, 기본 빈값→"전체"(All) 기본 버킷) 추가 — 한 노드는 **최대 하나의 그룹**에만 속하고, 그룹은 자유 입력 단일 레벨 라벨이며, 그룹 배정/해제·distinct 그룹 목록·그룹별 노드 목록(전체 기본 버킷 포함) API + admin-gated 영속. 그룹 이름 변경=노드 재라벨링, 그룹 비움/삭제=노드를 "전체"로 환원. (B) 노드 시스템 정보 보고(BASIC): 노드가 OS+arch+version+started_at(epoch ms, uptime 산출용)을 register/heartbeat 페이로드로 보고(자원 메트릭 CPU/메모리/디스크 **제외**), 서버가 managed_nodes 에 저장·노드 상세/목록 API 로 노출(하위 호환 — 미보고 노드는 필드 빈값). (C) 노드별 운영 요약: 기존 미러(그룹 E)에서 플로우/에이전트/디바이스 카운트+상태 분해를 **파생**(신규 쿼리 우선이 아니라 미러 데이터 우선). (D) UI 재구성: `노드 관리`=디렉토리 뷰(단일 레벨 그룹 트리, "전체" 기본)+노드 선택→**노드 대시보드**(시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭이 기존 M8 통합 제어(`target=remote:{instanceId}`) 재사용); `등록 관리`=토큰 관리(EnrollmentTokenSection)+노드 등록 관리(pending 승인 큐·승인/거부/폐기·사전 등록). 마일스톤 M9 추가. (OQ-K1~K7 ✅ RESOLVED 2026-06-07 — 사용자 권고안대로 확정: 서버 전용 그룹 / register+heartbeat 시스템 정보 / 미러 파생 운영 요약 / started_at 서버 파생 uptime / 빈 라벨=가상 "전체" 버킷 / 사전 등록·승인 UI 등록 관리 흡수 / /admin/remote/control 리다이렉트) |
 | 1.3.0 | 2026-06-06 | xtra | v1.3 확장 — 원격 노드 FULL 제어 패리티(그룹 J). 원격 노드의 플로우/에이전트/디바이스를 **별도 원격 페이지가 아니라 로컬과 동일한 웹 UI**(FlowListPage/AgentListPage/DeviceListPage + 상세 패널)로 제어한다. 목록·라이프사이클을 넘어 **상세 패널까지 FULL 패리티**(에이전트 통계/설정/디바이스/토픽/store/세션/시리즈, 디바이스 실시간 상태+명령+메타데이터, 플로우 노드 레벨 런타임/로그). 이를 위해 미러(그룹 E)·명령(그룹 D)과 구분되는 **신규 READ/QUERY 프록시**를 신설: 그룹 D 명령과 **대칭되는 per-domain query-action**(`{domain, query_action, args}`)을 `query`/`query_result` 로 운반하고 노드가 각 action 을 로컬 read 핸들러로 매핑해 라이브 JSON 반환(READ-ONLY — 변경은 그룹 D/M7 유지). 실시간 데이터(디바이스 상태·에이전트 라이브 통계/시리즈)는 **스트리밍 프록시**(subscribe/stream_data/unsubscribe, 서버 경유 중계, teardown·백프레셔)로 제공(폴링은 폴백). 서버는 query-action 응답을 **단기 TTL 캐시**(스트리밍/라이브 action 캐시 우회, 변경 시 무효화). UI 는 `useEditorFlowTarget` 의 target 추상화를 목록/제어 페이지로 확장(useFlowsTarget/useAgentsTarget/useDevicesTarget), `?target=remote:{instanceId}` 쿼리 파라미터 + 노드 셀렉터로 동일 페이지 재사용. 기존 RemoteResourcesPage 는 노드 셀렉터로 재용도화/폐기. 마일스톤 M8 추가. (OQ-J1~J7 RESOLVED: per-domain query-action / FULL 커버리지 / 스트리밍 포함 / 디바이스 쓰기=그룹 D / 최소 감사 / 단기 TTL 캐시 / 서버 admin 게이팅) |
 
@@ -112,6 +119,10 @@ tags:
 | 노드 대시보드 | node dashboard | (v1.4) `노드 관리`에서 노드를 선택하면 표시되는 노드 단위 종합 화면. **시스템 정보(BASIC)** + **운영 요약** + **Flow/Agent/Device 서브탭**(M8 통합 제어 `target=remote:{instanceId}` 재사용)으로 구성된다. |
 | 시스템 정보(BASIC) | system info (basic) | (v1.4) 노드가 보고하는 기본 시스템 메타: hostname, OS, arch, version, started_at(uptime 산출), online/last_seen, status. **자원 메트릭(CPU/메모리/디스크)은 본 마일스톤 제외.** |
 | 운영 요약 | operational summary | (v1.4) 노드의 플로우/에이전트/디바이스 카운트 + 상태 분해(플로우 running/stopped, 에이전트 connected, 디바이스 online)를 **기존 미러(그룹 E)에서 파생**한 요약. |
+| 원격 대시보드 | remote dashboard | (v1.5) 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 `DashboardPage`** 로 `target=remote:{instanceId}` 파라미터화하여 보고 제어하는 화면. M8 query/스트림 프록시 + target 추상화를 재사용한다. v1.5 는 **READ-ONLY**(원격 대시보드 config 편집은 비목표). |
+| 대시보드 config | dashboard config | (v1.5) SPEC-DASHBOARD-001 의 인스턴스별 서버 영속 대시보드 설정(`dashboardPages[]`, `activeDashboardId`, grid cols, refresh interval, `deviceGridLayout`). `GET/PUT/DELETE /dashboards/{shared,mine}`(global+user 스코프). v1.5 원격 패리티는 노드의 대시보드 config 를 **노드-로컬**(노드별 fetch)로 READ-ONLY 취득하며, 그 안의 deviceId 는 해당 노드 기준으로 해석한다. |
+| 패널 target 인식 | panel target-awareness | (v1.5) 대시보드 패널이 dashboard 레벨 `target`(local | remote:{instanceId})을 입력으로 받아 각 데이터 소스(디바이스 상태/명령, 에이전트/플로우, 자원 메트릭, 로그, 차트 스트림)를 로컬 vs 원격(프록시)으로 해석하는 추상화. `target` 미지정 시 로컬 렌더는 바이트 동일. |
+| 차트 스트림 프록시 | chart stream proxy | (v1.5) 노드의 `/ws/chart/{channel}` 라이브 차트 데이터를 **별도 WS 경로 신설 없이** M8 스트림 프록시에 `chart` stream-action(subscribe/stream_data/unsubscribe)을 추가하여 서버 경유로 브라우저에 중계하는 메커니즘. teardown·백프레셔(J08b)·폴링 폴백을 재사용한다. |
 
 > "device" 라는 단어는 **IoT 디바이스** 에만 사용한다. xflow 설치본은 항상 "managed node / 노드" 로 부른다. 명령군에서 "디바이스 메타데이터 제어"는 IoT 디바이스를 의미한다.
 
@@ -127,6 +138,7 @@ tags:
 - 서버 웹 UI: 관리 노드 목록, pending 승인 뷰, 노드별 자원 목록(디바이스 태그), 명령/상태 피드백(구현은 추후 expert-frontend).
 - 원격 자원 편집(v1.2, 그룹 I): 관리자가 서버 웹 UI 에서 승인·온라인 노드의 플로우/에이전트를 생성·수정·삭제. 기존 시각 편집기 재사용, 명령 디스패치 경유 적용, 시크릿 redaction 라운드트립 보존, 편집 게이팅·실패 의미.
 - 원격 노드 FULL 제어 패리티(v1.3, 그룹 J): 원격 노드의 플로우/에이전트/디바이스를 **로컬과 동일한 웹 UI**(로컬 목록 페이지 + 상세 패널 재사용)로 제어. (a) 신규 READ/QUERY 프록시 — 그룹 D command 와 대칭되는 **per-domain query-action**(열거 allowlist, FULL 커버리지)으로 노드의 라이브 데이터(상세/통계/노드 레벨 런타임·로그 등)를 온디맨드 취득(READ-ONLY), 서버 **단기 TTL 캐시**. (b) **스트리밍 프록시** — 디바이스 실시간 상태·에이전트 라이브 통계/시리즈를 서버 경유로 브라우저에 중계(subscribe/stream_data/unsubscribe, teardown·백프레셔; 폴링은 폴백). (c) 통합 UI — `target`(local | remote:{instanceId}) 추상화로 로컬 페이지를 원격에 파라미터화, 노드 셀렉터 + `?target=` 라우팅.
+- 원격 노드 대시보드 패리티(v1.5, 그룹 L): 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 `DashboardPage`**(`target=remote:{instanceId}`)로 보고 제어. (a) **대시보드 config 읽기 프록시** — 노드의 대시보드 설정(`dashboardPages[]`/`activeDashboardId`/grid/refresh/`deviceGridLayout`, SPEC-DASHBOARD-001)을 그룹 J query-action(`dashboard` 도메인 `get_shared`/`get_mine`)으로 **READ-ONLY** 취득(원격 config 편집은 v1.5 비목표). (b) **패널 데이터 소스 target-aware** — flows/agents/devices/single-device 패널은 기존 target 훅 재사용, 자원 메트릭(신규 `monitor/metrics` query-action)·로그(신규 `monitor/logs` 스트림 action)·CHART(M8 스트림 프록시에 `chart` stream-action 추가, `/ws/chart/{channel}` 직결 대신 서버 경유 중계)·control 패널(useDeviceDetailTarget + 그룹 D 명령으로 디바이스 쓰기)을 원격화. 패널은 dashboard 레벨 TargetProvider/prop 으로 target 수신(target 없으면 로컬 렌더 바이트 동일). (c) **디바이스/자원 ref 네임스페이싱** — 원격 target 하에서 패널 device ref 는 그 노드 기준 해석(대시보드 config 는 **노드-로컬** — 노드별 fetch, deviceId 는 그 노드의 것; 중앙 cross-node config 비채택). (d) **UI** — 노드 대시보드(M9)에 **대시보드 서브탭** 추가 및/또는 `DashboardPage target=remote:{id}` 지원, 게이팅(승인+온라인+노출)·redaction·실패 의미·read-only-by-default·원격 컨텍스트 표시.
 - 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드(v1.4, 그룹 K): (a) **노드 그룹핑** — `managed_nodes` 에 단일 그룹 라벨(`group_name`, 기본 빈값→"전체") 추가, 그룹 배정/해제·distinct 그룹 목록·그룹별 노드 목록 API + admin-gated 영속(단일 레벨, 노드당 최대 1 그룹). (b) **노드 시스템 정보 보고(BASIC)** — 노드가 OS+arch+version+started_at(epoch ms)을 register/heartbeat 페이로드로 보고(자원 메트릭 제외), 서버가 저장·상세/목록 API 로 노출, uptime 은 started_at 파생, 하위 호환(미보고 노드 빈값). (c) **노드별 운영 요약** — 기존 미러(그룹 E)에서 플로우/에이전트/디바이스 카운트+상태 분해를 파생. (d) **UI 재구성** — 사이드바 `원격 관리` 그룹을 `노드 관리`(디렉토리 뷰 + 노드 대시보드: 시스템 정보 + 운영 요약 + M8 통합 제어 재사용 Flow/Agent/Device 서브탭) + `등록 관리`(토큰 관리 + 노드 등록 관리)로 재편하여 기존 `관리 노드`/`원격 노드 제어` 진입점을 대체. M8 통합 제어 페이지·편집기 라우트는 새 `노드 관리`에서 도달 가능.
 
 **제외(Non-goals):**
@@ -141,6 +153,10 @@ tags:
 > 참고: v1.3 은 실시간 데이터를 **스트리밍 프록시**(REQ-J08, OQ-J3 RESOLVED)로 제공한다(폴링은 폴백). 이전 초안의 "스트리밍 연기" 비목표는 **철회**되었다.
 - **노드 자원 메트릭(v1.4 그룹 K 제외)**: 노드 시스템 정보는 **BASIC(hostname/OS/arch/version/uptime/online/last_seen/status)** 만 보고·표시한다. **CPU/메모리/디스크 등 자원 사용률 메트릭은 본 마일스톤 제외**(향후 SPEC). 시스템 정보는 register/heartbeat 페이로드 경유 보고이며, 별도 메트릭 폴링/시계열은 신설하지 않는다.
 - **다중 그룹 소속(v1.4 그룹 K 제외)**: 노드 그룹은 **단일 레벨·노드당 최대 1 그룹**이다. 계층형(중첩) 그룹, 한 노드의 다중 그룹 소속, 태그 기반 다중 분류, 그룹 단위 일괄 정책/배포 오케스트레이션은 제외한다(향후 SPEC).
+- **원격 대시보드 config 편집(v1.5 그룹 L 제외)**: v1.5 원격 대시보드 패리티는 **READ-ONLY** 이다. 서버에서 원격 노드의 대시보드 config(`dashboardPages[]`/패널 레이아웃/`deviceGridLayout` 등, SPEC-DASHBOARD-001 `PUT/DELETE /dashboards/{shared,mine}`)를 **편집·생성·삭제·저장하는 기능은 제외**한다(차기 단계 위임 — OQ-L3 RESOLVED). 단, 대시보드 **패널이 표시하는 자원에 대한 제어 액션**(플로우 라이프사이클, 에이전트 start/stop, 디바이스 명령·메타데이터)은 v1.5 에 포함되며 **기존 그룹 D 명령 / 그룹 I CRUD 경로**로만 수행된다(신규 변경 경로 미신설, 프록시 경유 변경 금지 — REQ-J03/J12 일관).
+- **중앙 cross-node 대시보드 config(v1.5 그룹 L 제외)**: 대시보드 config 는 **노드-로컬**(노드별 fetch, deviceId 는 그 노드 기준)로 둔다(OQ-L1 RESOLVED). 여러 노드의 패널을 한 대시보드 config 에 `{nodeId, deviceId}` 로 혼합 참조하는 **중앙 cross-node 대시보드**는 제외한다(향후 SPEC).
+- **차트용 별도 WS 프록시 경로 신설(v1.5 그룹 L 제외)**: 원격 차트 스트리밍은 M8 스트림 프록시에 `chart` stream-action 을 **추가**해 재사용하며(OQ-L2 RESOLVED), `/ws/chart/{channel}` 를 그대로 프록시하는 별도 WS 경로(제2 WS 핸들러)는 신설하지 않는다.
+- **노드 자원 메트릭 시계열/대시보드 풀(v1.5 그룹 L 부분 제외)**: resource 위젯은 노드의 `/monitor/metrics` 스냅샷을 신규 `monitor/metrics` query-action(단기 TTL 캐시 J16)으로 온디맨드 취득한다. 노드 메트릭의 **장기 시계열 수집/서버측 영속/그룹 K BASIC 외 자원 메트릭(CPU/메모리/디스크) 상시 폴링**은 제외한다(K 그룹 비목표 일관 — 대시보드 패널 표시 목적의 온디맨드 read 만 허용).
 
 ## 2. 환경
 
@@ -172,6 +188,12 @@ tags:
 - **A13**(v1.4): 노드 그룹은 **서버 측 속성**이다. 그룹 배정은 관리자가 서버에서 수행하며 `managed_nodes.group_name` 으로 영속된다. 그룹은 노드의 권위 정의(A4)와 무관한 **서버 운영 메타데이터**이므로, 그룹 변경은 노드로 명령을 전파하지 않는다(그룹 D 비경유 — 미러/자원 정의에 영향 없음). 그룹은 단일 레벨 자유 입력 라벨이며, 별도 그룹 엔티티 테이블을 신설하지 않고 `group_name` distinct 값으로 표현한다.
 - **A14**(v1.4): 노드 시스템 정보(OS/arch/version/started_at)는 노드가 **register(필수) 및/또는 heartbeat(갱신)** 페이로드로 보고하는 BASIC 메타이다. 서버는 이를 `managed_nodes` 에 저장하고 상세/목록 API 로 노출한다. uptime 은 `started_at` 과 서버 현재 시각의 차로 산출(서버 시계 신뢰). **하위 호환**: 이전 버전 노드가 이 필드를 보내지 않아도 등록/관리는 정상 동작하며, 미보고 필드는 빈값/미표시로 처리된다(REQ-N03 회귀 0 유지).
 - **A15**(v1.4): 노드별 운영 요약(플로우/에이전트/디바이스 카운트+상태 분해)은 **기존 미러(그룹 E) 데이터에서 파생**한다. 서버는 이미 노드별 미러 행(`mirrored_flows`/`mirrored_agents`/`mirrored_devices`, online/status 포함)을 보유하므로, 요약은 신규 노드 왕복 질의 없이 미러 집계로 계산된다(노드 오프라인 시에도 last-known 미러로 요약 제공 — REQ-E06 일관). 라이브 정밀 요약이 필요하면 그룹 J query-action 으로 보강할 수 있으나 기본 출처는 미러이다.
+
+- **A16**(v1.5): 원격 대시보드는 **로컬 `DashboardPage` 를 재사용**하며(별도 원격 대시보드 화면 미신설), 그룹 L 은 그룹 J 의 target 추상화(`useResourceTargets`/`useDetailTargets`/`useTargetParam`/`useTargetGating`)·query 프록시·스트림 프록시·`useRemoteStream` 을 **재사용**한다. 패널이 `target` 을 받지 않거나 `target=local` 이면 렌더는 **로컬과 바이트 동일**(회귀 0)해야 한다. 대시보드 패널의 데이터 소스만 target-aware 화하며, 패널 UI/레이아웃 코드는 분기하지 않는다.
+
+- **A17**(v1.5): 원격 대시보드 config 는 **노드-로컬**이다. 노드가 자신의 대시보드 config(SPEC-DASHBOARD-001 `dashboardPages[]` 등)의 **권위 소유자**이며(A4 일관), 서버는 그룹 J `dashboard` 도메인 query-action(`get_shared`/`get_mine`)으로 **READ-ONLY** 취득한다. config 내부의 `deviceId`/패널 자원 참조는 **그 노드 기준**으로 해석되고(서버 자신의 디바이스와 혼동 금지), 노드의 redaction 정책이 config 응답에도 적용된다. v1.5 는 원격 config 를 편집/저장하지 않는다(비목표).
+
+- **A18**(v1.5): 차트 패널의 라이브 스트리밍은 노드의 `/ws/chart/{channel}` 소스를 **노드 내부에서 구독**하여 그룹 J 스트림 프록시(`chart` stream-action)로 서버 경유 중계한다(A10 일관 — 노드가 기존 로컬 실시간 소스 재실행). `useChartChannel` 은 이미 `wsBaseUrl`/`createClient` 주입점을 보유하므로, 원격 target 에서는 직접 WS 직결 대신 스트림 프록시(SSE) 어댑터를 주입하여 동일 패널 코드가 동작한다. 스트림 미지원/실패 시 차트는 query-action 폴링(스냅샷)으로 폴백된다(J08 폴백 일관).
 
 ## 4. 요구사항 (EARS)
 
@@ -542,6 +564,55 @@ tags:
 **REQ-REMOTE-K16**: IA 마이그레이션 (기존 진입점 대체, 딥링크 보존)
 시스템은 **항상** 기존 `관리 노드`(`/admin/remote`) + `원격 노드 제어`(`/admin/remote/control`) 진입점을 새 `노드 관리`/`등록 관리`로 **마이그레이션(대체)** 하되, 기존 M8 통합 제어 페이지(`/flows|agents|devices?target=remote:{id}`)와 원격 편집기 라우트(`/admin/remote/nodes/{id}/flows/...`)는 새 `노드 관리`(노드 대시보드 서브탭)에서 **도달 가능**하게 유지해야 한다. 로컬/원격 제어 UX 가 분기되지 않아야 한다(REQ-J14 일관).
 
+### 4.7f 그룹 L — 원격 노드 대시보드 패리티 (Remote Node Dashboard Parity) — v1.5 확장
+
+> **범위(v1.5)** — 본 그룹은 관리자가 서버에서 승인·온라인 원격 노드의 **대시보드를 로컬과 동일한 `DashboardPage`**(`web/src/pages/dashboard/DashboardPage.tsx`)로 `target=remote:{instanceId}` 파라미터화하여 보고 제어하는 패리티를 추가한다. 이는 가장 무거운 원격 영역으로, **그룹 J(M8) query/스트림 프록시 + target 추상화**(`useResourceTargets`/`useDetailTargets`/`useTargetParam`/`useTargetGating`/`useRemoteStream`)를 **재사용**한다. 구성: (L-a) **대시보드 config 읽기 프록시** — 노드의 대시보드 config(SPEC-DASHBOARD-001 `dashboardPages[]`/`activeDashboardId`/grid/refresh/`deviceGridLayout`)를 그룹 J `dashboard` 도메인 query-action(`get_shared`/`get_mine`)으로 **READ-ONLY** 취득. (L-b) **패널 데이터 소스 target-aware** — 약 10종 패널의 데이터 바인딩을 로컬 vs 원격으로 해석: flows/agents/devices/single-device(기존 target 훅 재사용), 자원 메트릭(신규 `monitor/metrics` query-action), 로그(신규 `monitor/logs` 스트림 action), **차트(M8 스트림 프록시 `chart` stream-action 추가)**, control 패널(useDeviceDetailTarget + 그룹 D 명령). (L-c) **디바이스/자원 ref 네임스페이싱** — 원격 target 하 패널 device ref 는 그 노드 기준 해석(config 노드-로컬). (L-d) **UI** — 노드 대시보드(M9)에 대시보드 서브탭 및/또는 `DashboardPage target=remote:{id}`. **변경 경로 불변**: 모든 변경(플로우 라이프사이클·에이전트 start/stop·디바이스 명령/메타데이터)은 그룹 D 명령 / 그룹 I CRUD 로만(프록시 경유 변경 금지 — REQ-J03/J12 일관). 원격 대시보드 config 편집은 **v1.5 비목표**(OQ-L3). **OQ-L1~L6 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 구현 시 고정 제약이다.**
+
+#### L-a. 대시보드 config 읽기 프록시 (서버↔노드)
+
+**REQ-REMOTE-L01**: 대시보드 config query-action 추가 (READ-ONLY)
+시스템은 **항상** 그룹 J query-action allowlist(REQ-J04)에 **`dashboard` 도메인**과 read query-action(`get_shared`, `get_mine`)을 추가하여, 노드의 대시보드 config(SPEC-DASHBOARD-001 `GET /dashboards/shared` · `GET /dashboards/mine`)를 **READ-ONLY** 로 취득할 수 있어야 한다. 노드는 각 query-action 을 자신의 로컬 대시보드 read 핸들러로 매핑하여 config JSON(`dashboardPages[]`, `activeDashboardId`, grid cols, refresh interval, `deviceGridLayout`)을 반환해야 한다. 변경 의미 action(`put`/`delete`)은 allowlist 에서 **명시 배제**된다(REQ-J03 — 원격 config 편집 비목표).
+
+**REQ-REMOTE-L02**: 대시보드 config 게이팅·redaction·실패 의미
+시스템은 **항상** 대시보드 config query-action 에 그룹 J 의 게이팅(승인 ∧ 온라인 ∧ 노출 범위, REQ-J05)·redaction(노드가 전송 전 마스킹, REQ-J06)·실패 의미(offline→503, timeout→504, node-error→502, REQ-J07)·단기 TTL 캐시(REQ-J16, config 는 완만 변동이므로 캐시 대상)를 동일하게 적용해야 한다. 대시보드 config 가 노드에 존재하지 않으면(미설정) **404** 또는 빈 config 로 명확히 응답해야 한다.
+
+**REQ-REMOTE-L03**: 대시보드 config 노드-로컬 권위·deviceId 네임스페이싱
+시스템은 **항상** 원격 대시보드 config 와 그 내부 자원 참조(`deviceId`, 패널 config)를 **해당 노드 기준**으로 해석해야 한다(A17). 서버는 config 의 권위 소유자가 아니며(노드 권위 — A4), config 를 서버 측에 영속 저장하지 않고(미러 비대상) 프록시 취득·단기 캐시만 한다. config 내부 deviceId 는 서버 자신의 디바이스가 아니라 **그 노드의 IoT 디바이스**를 가리킨다(혼동 금지 — §1.4).
+
+#### L-b. 패널 데이터 소스 target-aware
+
+**REQ-REMOTE-L04**: 자원/플로우/에이전트/디바이스 패널 target-aware
+시스템은 **항상** flows/agents/devices/single-device 패널(`FlowPanel`/`AgentPanel`/`DevicePanel`/`SingleDevicePanel`)이 dashboard 레벨 `target` 을 받아 **기존 그룹 J target 추상화**(`useResourceTargets`/`useDetailTargets`)로 로컬 vs 원격(query-action/스트림)을 해석하도록 해야 한다. 신규 데이터 경로를 만들지 않고 M8 자산을 재사용해야 한다.
+
+**REQ-REMOTE-L05**: 자원 메트릭(resource 위젯) 원격 query-action
+시스템은 **항상** resource 위젯(`ResourceWidget`, 로컬 `GET /monitor/metrics`)의 원격 데이터를 그룹 J query-action 으로 취득하도록, query-action allowlist 에 **`monitor` 도메인 `metrics`**(read)를 추가해야 한다. 노드는 이를 자신의 `/monitor/metrics` read 핸들러로 매핑해 메트릭 스냅샷 JSON 을 반환하고, 서버는 단기 TTL 캐시(REQ-J16)·게이팅(REQ-J05)·실패 의미(REQ-J07)를 적용해야 한다. 자원 메트릭의 **장기 시계열/상시 폴링은 신설하지 않는다**(대시보드 패널 표시 목적의 온디맨드 read 만 — 그룹 K BASIC 비목표 일관).
+
+**REQ-REMOTE-L06**: 로그 패널 원격 스트림 action
+시스템은 **항상** logs 패널(`LogPanel`, 로컬 로그 WS 스트림)의 원격 데이터를 그룹 J **스트림 프록시**로 중계하도록, 스트림 action allowlist 에 **`monitor` 도메인 `logs`**(stream)를 추가해야 한다. 노드는 자신의 로그 스트림 소스를 구독하여 `stream_data` 로 push 하고, 서버가 브라우저 세션으로 fan-out(teardown·백프레셔 — REQ-J08b)해야 한다. 로그는 라이브 스트림이므로 캐시를 우회한다(REQ-J16). 스트림 미지원/실패 시 query-action 폴백을 따른다(REQ-J08).
+
+**REQ-REMOTE-L07**: 차트 패널 원격 스트림 — M8 스트림 프록시 chart-action 확장
+시스템은 **항상** 차트 패널(line/stat/bar/pie/table, `useChartChannel`/`useChartChannels`, 로컬 `/ws/chart/{channelName}`)의 라이브 데이터를 **별도 WS 프록시 경로 신설 없이** 그룹 J 스트림 프록시에 **`chart` stream-action**(subscribe/stream_data/unsubscribe, args=`{channelName}`)을 추가하여 서버 경유로 중계해야 한다(OQ-L2 RESOLVED). 노드는 자신의 `/ws/chart/{channel}` 소스를 구독해 backfill/append 이벤트를 `stream_data` 로 push 하고, 서버가 fan-out 해야 한다. teardown·백프레셔(REQ-J08b)·redaction(REQ-J06)·캐시 우회(REQ-J16)를 동일 적용하며, 스트림 미지원/실패 시 폴링 폴백(스냅샷 query-action)을 따른다(REQ-J08). `useChartChannel` 의 `wsBaseUrl`/`createClient` 주입점을 이용해 원격 target 에서 스트림 프록시(SSE) 어댑터를 주입하여 동일 차트 패널 코드가 동작해야 한다.
+
+**REQ-REMOTE-L08**: control 패널 원격 명령 라우팅 (그룹 D)
+시스템은 **항상** control 패널(`AcControlPanel`/`HvacControlPanel`/`OutdoorControlPanel`, 로컬 `useDeviceRealtime` + `useExecuteCommand`)의 원격 동작을 (a) 실시간 상태 read 는 그룹 J `device.state`(useDeviceDetailTarget 재사용), (b) 명령 쓰기는 **그룹 D 명령**(REQ-D04 디바이스 명령 경로)으로 라우팅해야 한다. 디바이스 쓰기를 프록시(query/스트림) 경유로 수행해서는 안 된다(READ-ONLY 강제 — REQ-J03/J12). control 패널 config 의 bare `deviceId` 는 원격 target 하에서 **그 노드의 디바이스**로 해석되어 그 노드로 명령이 디스패치되어야 한다(REQ-L03 네임스페이싱).
+
+**REQ-REMOTE-L09**: 패널 target 전파 (TargetProvider/prop)
+시스템은 **항상** `DashboardPage`/`renderPanel` 이 dashboard 레벨 `target`(local | remote:{instanceId})을 **TargetProvider(context) 또는 패널 prop** 으로 각 패널에 전파하도록 해야 한다. `renderPanel` 은 현재 패널에 target 을 넘기지 않으므로 이를 확장하되, **target 미지정/`local` 시 패널 렌더는 로컬과 바이트 동일**(회귀 0 — A16)해야 한다. control 패널 config 의 bare `deviceId` 등 자원 참조는 target 컨텍스트로 노드 네임스페이스를 해석한다(REQ-L03).
+
+#### L-c. UI 통합 & 게이팅
+
+**REQ-REMOTE-L10**: 노드 대시보드 — 대시보드 서브탭 / DashboardPage 원격 target
+시스템은 **항상** 노드 대시보드(M9 `NodeDashboard`)에 **대시보드 서브탭**을 추가하거나(OQ-L5 RESOLVED — 서브탭 1차 진입) `DashboardPage` 를 `target=remote:{instanceId}` 로 라우팅하여, 관리자가 원격 노드의 대시보드를 로컬과 동일한 `DashboardPage` 로 열 수 있도록 해야 한다. 서브탭은 별도 원격 대시보드 화면을 신설하지 않고 **로컬 `DashboardPage` 를 재사용**해야 한다(A16). 대시보드 config 는 REQ-L01 의 `dashboard` query-action 으로 노드-로컬 취득한다.
+
+**REQ-REMOTE-L11**: 원격 대시보드 게이팅·실패 의미·원격 컨텍스트 표시
+시스템은 **항상** 원격 대시보드를 **승인 ∧ 온라인 ∧ 노출 범위** 노드에 대해서만 표시·동작시켜야 하며(REQ-J05 일관, `useTargetGating` 재사용), 실패를 구분된 의미로 처리해야 한다: 노드 오프라인→503, 프록시/스트림 타임아웃→504, 노드 측 오류→502, 대시보드 config 미설정→404(또는 빈 대시보드). UI 는 **현재 원격 노드 컨텍스트**(노드 이름·원격 표식)를 다른 원격 뷰(M8/M9)와 일관되게 표시해야 한다(최근 IA — 노드 디렉토리 + 대시보드 서브탭).
+
+**REQ-REMOTE-L12**: read-only-by-default + 변경 경로 불변
+시스템은 **항상** 원격 대시보드를 **기본 READ-ONLY** 로 동작시켜야 한다: 원격 노드의 **대시보드 config 편집/저장/생성/삭제는 비활성/숨김**(v1.5 비목표 — OQ-L3). 다만 패널이 표시하는 **자원에 대한 제어 액션**(플로우 라이프사이클, 에이전트 start/stop/restart, 디바이스 명령·메타데이터)은 **기존 그룹 D 명령 / 그룹 I CRUD 경로로만** 수행되어야 하며(신규 변경 경로·프록시 경유 변경 금지 — REQ-J03/J12), control 패널 명령은 REQ-L08 의 그룹 D 라우팅을 따른다.
+
+**REQ-REMOTE-L13**: 원격 대시보드 접근 최소 감사
+시스템은 **항상** 원격 대시보드의 일반 read(config 취득·패널 query/스트림)는 **감사하지 않아야** 하며(정상 읽기 미기록 — REQ-J15 일관), 노출 위반·오류 접근만 로깅해야 한다. control 패널 등에서 발생하는 변경(그룹 D/I)은 기존 감사를 유지하고(REQ-F05/J15), 어떤 로그/감사에도 시크릿 값을 포함하지 않아야 한다(REQ-F06).
+
 ### 4.8 비기능 요구사항
 
 **REQ-REMOTE-N01**: 다중 노드 확장성
@@ -568,9 +639,9 @@ tags:
 | `register_ack` | server→client | status(pending/approved/rejected), (승인 시) node_token | 등록 응답·토큰 발급(REQ-C03/C04) |
 | `command` | server→client | command_id, target instance_id, domain(flow/agent/device), action, args | 원격 명령(REQ-D01) |
 | `command_result` | client→server | command_id, ok, result \| error | 명령 결과/ack(REQ-D05) |
-| `query` | server→client | query_id, domain(flow/agent/device), query_action(열거 allowlist, REQ-J04), args | READ-ONLY per-domain 질의 프록시(REQ-J01/J02) |
+| `query` | server→client | query_id, domain(flow/agent/device, **(v1.5) dashboard/monitor**), query_action(열거 allowlist, REQ-J04/L01/L05), args | READ-ONLY per-domain 질의 프록시(REQ-J01/J02) |
 | `query_result` | client→server | query_id, status, body(JSON, redacted) \| error | 질의 응답/ack(REQ-J01/J06/J07) |
-| `subscribe` | server→client | subscription_id, domain, stream_action(state/stats/series 등), args | 실시간 스트림 구독 시작(REQ-J08) |
+| `subscribe` | server→client | subscription_id, domain, stream_action(state/stats/series, **(v1.5) chart/logs**), args | 실시간 스트림 구독 시작(REQ-J08/L06/L07) |
 | `stream_data` | client→server | subscription_id, payload(JSON, redacted) | 구독 소스 갱신 push(REQ-J08) |
 | `unsubscribe` | both | subscription_id | 스트림 구독 해제·teardown(REQ-J08b) |
 | `inventory_snapshot` | client→server | instance_id, flows[], agents[], devices[] (노출 범위, redacted) | 접속 시 전체 인벤토리(REQ-E01) |
@@ -582,6 +653,7 @@ tags:
 - 봉투의 `Timestamp` 는 RFC3339(기존 `NewMessage` 규약)이며, 페이로드 내부 디바이스 타임스탬프는 프로젝트 규약(epoch ms, int64)을 따른다.
 - v1.2(그룹 I): `command` 의 `action` 은 flow/agent 도메인에서 `create`/`update`/`delete` 를 포함하며(임의 domain/action 지원 인프라 재사용), 클라이언트는 이를 각 어댑터의 `Create`/`Update`/`Delete` 로 라우팅한다(REQ-I06). `update`/`create` 의 `args` 정의 JSON 은 마스킹/미변경 시크릿 필드를 **완전히 생략(필드 부재, sentinel 미전송)** 하며, 노드가 어댑터 호출 전 기존 정의를 로드해 부재 시크릿을 기존값으로 backfill 한 뒤 적용한다(REQ-I07, §5.9-6 RESOLVED).
 - v1.4(그룹 K): `register`/`heartbeat` 페이로드는 BASIC 시스템 정보(`os`, `arch`, `started_at`(epoch ms))를 **선택 필드**로 운반한다(REQ-K07). 신규 메시지 타입은 신설하지 않으며 기존 봉투/타입을 재사용한다(REQ-N04 유지). 필드 미존재(구버전 노드)는 빈값으로 처리(REQ-K09, 하위 호환). 노드 그룹(`group_name`)은 **서버 측 속성**이므로 와이어 프로토콜로 운반되지 않는다(A13 — 그룹 배정은 서버 REST 전용, 노드 비경유).
+- v1.5(그룹 L): 그룹 J 프록시 인프라를 **재사용**하여 대시보드 패리티를 제공한다. query-action allowlist 에 **`dashboard` 도메인**(`get_shared`/`get_mine` — READ-ONLY, REQ-L01)과 **`monitor` 도메인**(`metrics` query-action, REQ-L05)을 추가하고, 스트림 action allowlist 에 **`chart`**(REQ-L07, M8 스트림 프록시 chart-action — `/ws/chart/{channel}` 별도 경로 미신설)와 **`monitor` 도메인 `logs`**(REQ-L06)를 추가한다. 변경 의미 action(`dashboard.put`/`delete` 등)은 명시 배제(READ-ONLY — REQ-J03, 원격 config 편집 비목표). 신규 메시지 타입은 신설하지 않으며 기존 `query`/`subscribe` 봉투를 재사용한다(REQ-N04). 대시보드 config·메트릭은 완만 변동이므로 단기 TTL 캐시 대상, 차트/로그는 라이브이므로 캐시 우회(REQ-J16).
 - v1.3(그룹 J): `query`/`query_result`(온디맨드 읽기)와 `subscribe`/`stream_data`/`unsubscribe`(실시간 스트림)는 모두 **READ-ONLY** 프록시 전용이다(REQ-J01/J03/J08). `query` 페이로드는 **그룹 D 명령과 대칭되는 per-domain query-action**(`{domain, query_action, args}`, raw GET path 아님 — OQ-J1 RESOLVED)으로 노드의 로컬 read 핸들러를 지정하며, 노드가 실행 후 **redaction(REQ-J06)** 된 본문을 `query_result{query_id, status, body|error}` 로 반환한다. 스트림은 `subscribe{subscription_id, domain, stream_action, args}` 로 시작해 `stream_data{subscription_id, payload}` 로 갱신을 push 하고, `unsubscribe` 또는 노드 오프라인 시 teardown 된다(REQ-J08b). 서버는 query-action 응답을 단기 TTL 로 캐시하되 스트리밍/라이브 action 은 캐시 우회한다(REQ-J16). `command`/`command_result`(변경)와 read 프록시(읽기)는 역할이 분리되며, 봉투/상관/타임아웃 패턴은 공유한다(REQ-D06/D07 준용 — REQ-J02). 변경 의미 action 은 프록시에서 거부된다(REQ-J03).
 
 ### 5.2 신규 — xflow 인스턴스 식별자(instance_id)
@@ -702,6 +774,16 @@ tags:
 | `web/src/pages/remote/EnrollmentManagementPage.tsx` (등록 관리) | 토큰 관리(EnrollmentTokenSection)+노드 등록 관리(pending 승인·승인/거부/폐기·사전 등록, RemoteNodesPage 승인부 이관)(REQ-K15) (그룹 K) | 신규(추후) |
 | `web/src/services/api/remoteService.ts`·`web/src/hooks/useRemote.ts` (group/summary 클라이언트) | 그룹 배정/해제·distinct 그룹·그룹별 노드·노드 시스템 정보+운영 요약 API 소비(REQ-K02~K05/K10) (그룹 K) | 수정(추후) |
 | `web/src/router.tsx` (라우트 재편) | `/admin/remote`→`노드 관리`(디렉토리/대시보드)·`등록 관리` 라우트, M8/편집기 딥링크 보존(REQ-K16) (그룹 K) | 수정(추후) |
+| `internal/remote/protocol.go` (dashboard/monitor query·chart/logs stream allowlist) | allowedQueryActions 에 `dashboard`(get_shared/get_mine)·`monitor`(metrics), streamableActions 에 `chart`·`monitor`(logs) 추가(REQ-L01/L05/L06/L07, READ-ONLY) (그룹 L) | 수정 |
+| `internal/remote/query.go`/`client_query.go` (dashboard/metrics query 매핑) | QuerySource 가 `dashboard.get_shared/get_mine`→`/dashboards/{shared,mine}`, `monitor.metrics`→`/monitor/metrics` 로컬 read 핸들러 매핑·redaction(REQ-L01/L05) (그룹 L) | 수정 |
+| `internal/remote/client_stream.go` (chart/logs stream 소스 바인딩) | StreamSource 가 `chart`(args=channelName)→`/ws/chart/{channel}` 소스, `monitor.logs`→로그 스트림 소스 구독·`stream_data` push·teardown(REQ-L06/L07/J08b) (그룹 L) | 수정 |
+| `cmd/xflowd/*` (노드 측 dashboard/monitor/chart 소스 어댑터 바인딩) | 노드의 대시보드 read·`/monitor/metrics`·로그 스트림·`/ws/chart/{channel}` 소스를 QuerySource/StreamSource 에 바인딩(secret_fields redactor 주입)(REQ-L01/L05/L06/L07) (그룹 L) | 수정 |
+| `internal/api/handler/remote.go` (dashboard/monitor query REST + chart/logs 스트림 엔드포인트) | 서버 측 dashboard/monitor query-action REST 진입 + 브라우저↔서버 chart/logs 스트림 엔드포인트(SSE) → query/스트림 전파·게이팅·502/503/504/404(REQ-L02/L11) (그룹 L) | 수정 |
+| `web/src/pages/dashboard/DashboardPage.tsx` (target 전파) | `renderPanel` 이 dashboard 레벨 target(local | remote:{id})을 TargetProvider/패널 prop 으로 전파, target 미지정 시 로컬 바이트 동일(REQ-L09, A16) (그룹 L) | 수정(추후) |
+| `web/src/pages/dashboard/panels/*` (패널 target-aware) | flows/agents/devices/single-device(기존 target 훅 재사용), resource(monitor.metrics), logs(monitor.logs 스트림), control(useDeviceDetailTarget+그룹 D)(REQ-L04/L05/L06/L08) (그룹 L) | 수정(추후) |
+| `web/src/pages/dashboard/panels/charts/useChartChannel.ts`·`useChartChannels.ts` (원격 스트림 어댑터 주입) | 원격 target 에서 `wsBaseUrl`/`createClient` 주입점으로 스트림 프록시(SSE) 어댑터 주입(WS 직결 대신), 폴링 폴백(REQ-L07, A18) (그룹 L) | 수정(추후) |
+| `web/src/hooks/*`·`web/src/services/api/remoteService.ts` (dashboard config·metrics·logs·chart 프록시 클라이언트) | dashboard config query-action·metrics query-action·logs/chart 스트림 구독 클라이언트·폴링 폴백(REQ-L01/L05/L06/L07) (그룹 L) | 수정(추후) |
+| `web/src/components/remote/NodeDashboard.tsx` (대시보드 서브탭) | 노드 대시보드에 대시보드 서브탭 추가 → 로컬 DashboardPage `target=remote:{id}` 재사용·게이팅·원격 컨텍스트·read-only(REQ-L10/L11/L12) (그룹 L) | 수정(추후) |
 
 ### 5.9 OPEN QUESTIONS (구현 단계에서 결정)
 
@@ -742,6 +824,20 @@ tags:
 - **OQ-K6 ✅ RESOLVED → "흡수(이관)"**: `PreRegisterNodeDialog`·승인/거부/폐기 UI 를 `등록 관리`의 "노드 등록 관리" 섹션으로 이관하고, 토큰 관리(`EnrollmentTokenSection`)와 한 페이지에 둔다. 기존 컴포넌트는 재사용(재작성 없음). RemoteNodesPage 는 폐기한다.
 
 - **OQ-K7 ✅ RESOLVED → "노드 관리로 통합, /admin/remote/control 은 리다이렉트"**: 노드 셀렉터·제어 진입을 `노드 관리` 디렉토리/대시보드로 일원화하고, 기존 `/admin/remote/control` 경로는 `노드 관리`로 **리다이렉트**(북마크 보존). M8 통합 제어 페이지(`/flows|agents|devices?target=remote:{id}`)·편집기 라우트는 대시보드 서브탭에서 도달 가능하게 유지한다(REQ-K16).
+
+> **그룹 L(v1.5) OPEN QUESTIONS — ✅ 전부 RESOLVED (2026-06-08, 사용자 권고안대로 확정)** — 아래 6개는 사용자에 의해 권고안대로 확정되었으며 구현 시 고정 제약이다.
+
+- **OQ-L1 ✅ RESOLVED → "노드-로컬 read-only config"**: 원격 대시보드 config 공유 모델은 **노드-로컬**(노드별 fetch, config 의 deviceId 는 그 노드 기준)로 확정한다(A17/REQ-L03). 서버가 `{nodeId, deviceId}` 참조로 여러 노드 패널을 혼합하는 중앙 cross-node config 는 **도입하지 않는다** — v1 단순성, 노드 권위(A4) 일관, deviceId 혼동 회피. 중앙 cross-node 대시보드는 향후 SPEC.
+
+- **OQ-L2 ✅ RESOLVED → "M8 스트림 프록시 chart-action 확장"**: 차트 스트리밍은 **M8 스트림 프록시에 `chart` stream-action 추가**(기존 subscribe/stream_data/teardown/백프레셔/폴백 재사용)로 확정한다(REQ-L07). `/ws/chart/{channel}` 를 그대로 프록시하는 **별도 WS 프록시 경로(제2 WS 핸들러)는 신설하지 않는다** — 인프라 단일화, teardown·백프레셔·redaction·캐시 정책 재사용, WS 경로 중복 회피.
+
+- **OQ-L3 ✅ RESOLVED → "v1.5 READ-ONLY, 편집은 차기"**: 원격 대시보드 config 는 **v1.5 READ-ONLY**(보기·자원 제어만)로 확정한다(REQ-L12, §1.5 비목표). v1.5 에서 원격 config 편집(`PUT/DELETE /dashboards/{shared,mine}` 프록시 변경 경로)은 **도입하지 않는다** — config 편집은 변경 의미라 READ-ONLY 원칙(J03)·노드 권위·redaction 라운드트립(I07 유사) 추가 설계가 필요하므로 차기 단계로 분리.
+
+- **OQ-L4 ✅ RESOLVED → "control 쓰기 = 그룹 D 재사용"**: control 패널(ac/hvac/outdoor) 명령 쓰기는 **기존 그룹 D 명령**(REQ-D04 디바이스 명령)으로 확정한다(REQ-L08). 대시보드 전용 신규 쓰기 경로는 **신설하지 않는다** — 디바이스 쓰기는 이미 그룹 D 로 일원화(OQ-J4 일관), 프록시 경유 변경 금지(J03).
+
+- **OQ-L5 ✅ RESOLVED → "노드 대시보드 서브탭"**: 원격 대시보드 진입은 **노드 대시보드(M9 `NodeDashboard`)의 대시보드 서브탭**으로 확정한다(REQ-L10). M9 IA(노드 디렉토리 + 대시보드 서브탭) 일관, Flow/Agent/Device 서브탭과 나란히 배치, 노드 컨텍스트 표시 일원화. 독립 `DashboardPage target=remote:{id}` 라우트는 보조로 둘 수 있으나 **1차 진입은 서브탭**이다.
+
+- **OQ-L6 ✅ RESOLVED → "메트릭=query-action, 로그=스트림"**: 프록시 방식은 **메트릭=query-action**(REQ-L05, `monitor.metrics`, `/monitor/metrics` 스냅샷·완만 변동·단기 TTL 캐시 적합) + **로그=스트림**(REQ-L06, `monitor.logs`, 라이브 tail·캐시 우회·teardown/백프레셔 적합)으로 확정한다. 각각 폴링 폴백을 보유한다.
 
 ### 5.10 그룹 J(v1.3) 명세 — READ/QUERY 프록시(query-action + 스트리밍) & 통합 UI
 
@@ -821,6 +917,49 @@ tags:
 - **딥링크 보존(OQ-K7 RESOLVED)**: `/admin/remote/control` → `노드 관리` 리다이렉트. M8 통합 제어(`/flows|agents|devices?target=remote:{id}`)·원격 편집기 라우트는 대시보드 서브탭에서 도달 가능.
 - **변경 경로 불변**: 대시보드 서브탭의 모든 변경은 그룹 D 명령 / 그룹 I CRUD 로만(REQ-J03/J12/K14 일관 — 신규 변경 경로 미신설).
 
+### 5.12 그룹 L(v1.5) 명세 — 원격 노드 대시보드 패리티
+
+> 그룹 J(M8) query/스트림 프록시 + target 추상화를 **재사용**한다(재발명 금지). 신규는 (1) query/stream allowlist 확장(`dashboard`/`monitor` 도메인 + `chart`/`logs` stream-action), (2) 노드 측 read/스트림 소스 바인딩, (3) 차트용 스트림 어댑터 주입, (4) 패널 target 전파(TargetProvider/prop), (5) 노드 대시보드 대시보드 서브탭뿐이다.
+
+#### 5.12.1 대시보드 config 읽기 프록시 (REQ-L01~L03)
+
+- **query-action 추가(REQ-L01)**: 그룹 J allowlist 에 `dashboard` 도메인 + `get_shared`/`get_mine`(READ-ONLY) 추가. 노드 매핑:
+> | domain | query_action | 노드 로컬 read 핸들러 매핑 |
+> |--------|--------------|---------------------------|
+> | dashboard | `get_shared` | `GET /dashboards/shared` (global 스코프 config) |
+> | dashboard | `get_mine` | `GET /dashboards/mine` (인증 사용자 스코프 config) |
+> 변경 의미 action(`put`/`delete`)은 **명시 배제**(REQ-J03 — 원격 config 편집 비목표).
+- **게이팅·redaction·실패·캐시(REQ-L02)**: 승인 ∧ 온라인 ∧ 노출(REQ-J05), 노드 전송 전 redaction(REQ-J06), offline→503/timeout→504/node-error→502(REQ-J07), config 미설정→404(또는 빈 config). config 는 완만 변동이므로 단기 TTL 캐시 대상(REQ-J16).
+- **노드-로컬 권위·네임스페이싱(REQ-L03, A17)**: config 는 노드 권위(A4) — 서버 미러 비대상·미영속, 프록시 취득·단기 캐시만. config 내부 `deviceId`/패널 자원 참조는 **그 노드 기준**(서버 디바이스와 혼동 금지 — §1.4).
+
+#### 5.12.2 패널 데이터 소스 target-aware (REQ-L04~L09)
+
+- **패널별 데이터 소스 매핑**(약 10종, `renderPanel` 에서 target 전파 — REQ-L09):
+> | 패널 | 로컬 소스 | 원격(v1.5) 경로 |
+> |------|-----------|------------------|
+> | flows | `useFlows` | 그룹 J target 훅(`useResourceTargets`) — query-action `flow.list/status` (재사용) |
+> | agents | `useAgents` | 그룹 J target 훅 — `agent.list/get/stats` (재사용) |
+> | devices | `useDevicesRealtime` | 그룹 J target 훅(`useDevicesTarget`) — `device.list/state` (재사용) |
+> | device(single) | `useDeviceRealtime` | `useDeviceDetailTarget` — `device.get/state` (재사용) |
+> | resource(metrics) | `getMetrics`(`/monitor/metrics`) | **신규 query-action `monitor.metrics`**(REQ-L05, 온디맨드+TTL 캐시) |
+> | logs | 로그 WS 스트림 | **신규 스트림 action `monitor.logs`**(REQ-L06, 라이브·캐시 우회) |
+> | charts(line/stat/bar/pie/table) | `useChartChannel`(`/ws/chart/{channel}`) | **M8 스트림 프록시 `chart` stream-action**(REQ-L07, args=channelName) |
+> | ac/hvac/outdoor-control | `useDeviceRealtime`+`useExecuteCommand` | read=`useDeviceDetailTarget`(`device.state`), 쓰기=**그룹 D 명령**(REQ-L08, 프록시 비경유) |
+> | gauge/properties-grid | 디바이스/속성 read | 해당 디바이스 target 훅 재사용 |
+> | text/custom-control | 정적 | target 무관(로컬 동일) |
+- **메트릭(REQ-L05)**: `monitor.metrics` query-action — 노드 `/monitor/metrics` 매핑, 스냅샷 read, 단기 TTL 캐시, 장기 시계열/상시 폴링 미신설(K BASIC 비목표 일관).
+- **로그(REQ-L06)**: `monitor.logs` stream-action — 노드 로그 스트림 구독→`stream_data` push→서버 fan-out, teardown·백프레셔(J08b), 캐시 우회, 폴링 폴백.
+- **차트(REQ-L07, A18)**: `chart` stream-action — 노드 `/ws/chart/{channel}` 소스를 노드 내부 구독→backfill/append 이벤트를 `stream_data` 로 중계→서버 fan-out. **별도 WS 경로 미신설**. `useChartChannel` 의 `wsBaseUrl`/`createClient` 주입점으로 원격 target 에서 스트림 프록시(SSE) 어댑터 주입 → 동일 차트 패널 코드 동작. 스트림 미지원/실패 시 스냅샷 query-action 폴백.
+- **control 쓰기(REQ-L08, OQ-L4)**: 디바이스 명령은 그룹 D(REQ-D04)로만. config 의 bare `deviceId` 는 원격 target 하 그 노드 디바이스로 해석(REQ-L03).
+- **target 전파(REQ-L09)**: `DashboardPage`/`renderPanel` 이 dashboard 레벨 target 을 TargetProvider(context) 또는 패널 prop 으로 전파. **target 미지정/`local` 시 로컬 렌더 바이트 동일**(회귀 0 — A16). 현 `renderPanel` 은 target 미전달이므로 이를 확장.
+
+#### 5.12.3 UI 통합 & 게이팅 (REQ-L10~L13)
+
+- **진입(REQ-L10, OQ-L5)**: 노드 대시보드(M9 `NodeDashboard`)에 **대시보드 서브탭** 추가(Flow/Agent/Device 서브탭과 나란히), 로컬 `DashboardPage` 를 `target=remote:{instanceId}` 로 재사용. config 는 `dashboard.get_shared`/`get_mine` query-action 으로 노드-로컬 취득.
+- **게이팅·실패·컨텍스트(REQ-L11)**: 승인 ∧ 온라인 ∧ 노출(`useTargetGating` 재사용), 503/504/502/404 구분, 원격 노드 컨텍스트(노드 이름·원격 표식) 일관 표시(M8/M9 IA 일관).
+- **read-only-by-default(REQ-L12, OQ-L3)**: 원격 대시보드 config 편집/저장/생성/삭제 비활성·숨김(비목표). 자원 제어 액션(플로우 라이프사이클·에이전트 start/stop·디바이스 명령/메타데이터)은 그룹 D/I 로만(신규 변경 경로·프록시 변경 금지 — J03/J12).
+- **최소 감사(REQ-L13)**: 일반 read(config·query·스트림) 미감사, 노출 위반·오류만 로깅(J15 일관). 변경(그룹 D/I)은 기존 감사 유지, 시크릿 비포함(F06).
+
 ## 6. 추적성
 
 | 요구사항 ID | 구현 위치(예정) | 검증 |
@@ -839,4 +978,7 @@ tags:
 | REQ-REMOTE-K01 ~ K06 (v1.4, 그룹핑) | `internal/storage/managed_node_sqlite.go`/`managed_node_repository.go`(group_name 컬럼·마이그레이션·SetNodeGroup/ListGroups/ListNodesByGroup), `internal/api/handler/remote.go`(PUT/DELETE group·GET groups·그룹별 노드 REST, admin-gated) | managed_node_group_test(배정/해제/distinct/그룹별/재라벨링/환원), remote_group_handler_test(admin 게이팅) |
 | REQ-REMOTE-K07 ~ K10 (v1.4, 시스템 정보+운영 요약) | `internal/remote/protocol.go`(register/heartbeat os/arch/started_at 선택 필드), `internal/remote/client.go`(보고), `internal/remote/server.go`/`registration.go`(수신·저장·uptime 파생), `internal/storage/managed_node_*`(os/arch/started_at 저장·운영 요약 미러 파생), `internal/api/handler/remote.go`(노드 상세=시스템 정보+운영 요약) | system_info_report_test(register/heartbeat 보고·하위 호환 빈값), node_summary_test(미러 파생 카운트/상태 분해·오프라인 last-known), uptime_derive_test |
 | REQ-REMOTE-K11 ~ K16 (v1.4, UI 재편) | `web/src/components/layout/Sidebar.tsx`(노드 관리+등록 관리 재편), `web/src/pages/remote/NodeManagementPage.tsx`(디렉토리/대시보드)·`EnrollmentManagementPage.tsx`(토큰+등록), `web/src/components/remote/NodeDashboard.tsx`(시스템+운영+M8 서브탭), `web/src/services/api/remoteService.ts`/`useRemote.ts`(group/summary), `web/src/router.tsx`(라우트 재편·딥링크 보존) | Sidebar IA Vitest(노드 관리/등록 관리·게이팅), NodeManagementPage Vitest(디렉토리/그룹 배정/대시보드), NodeDashboard Vitest(시스템/운영/서브탭 M8 재사용), EnrollmentManagementPage Vitest, router 리다이렉트/딥링크 Vitest |
+| REQ-REMOTE-L01 ~ L03 (v1.5, config 프록시) | `internal/remote/protocol.go`(dashboard query allowlist get_shared/get_mine·변경 action 배제), `internal/remote/query.go`/`client_query.go`(dashboard read 매핑·redaction), `cmd/xflowd/*`(노드 대시보드 read 소스 바인딩), `internal/api/handler/remote.go`(dashboard query REST·게이팅·503/504/502/404·TTL 캐시) | dashboard_query_test(allowlist·게이팅·redaction·실패 의미·404·노드-로컬 권위·변경 action 거부), dashboard_cache_test |
+| REQ-REMOTE-L04 ~ L09 (v1.5, 패널 target-aware) | `internal/remote/protocol.go`(monitor.metrics query·chart/monitor.logs stream allowlist), `internal/remote/query.go`/`client_query.go`(monitor.metrics 매핑), `internal/remote/client_stream.go`(chart/logs 스트림 소스·teardown·백프레셔), `cmd/xflowd/*`(소스 어댑터 바인딩), `web/src/pages/dashboard/DashboardPage.tsx`(target 전파)·`panels/*`(target-aware)·`charts/useChartChannel.ts`(스트림 어댑터 주입) | metrics_query_test, chart_stream_test(backfill/append 중계·teardown·폴백), logs_stream_test, panel_target_test(로컬 바이트 동일·원격 분기 Vitest), useChartChannel 원격 어댑터 Vitest, control 패널 그룹 D 라우팅 Vitest |
+| REQ-REMOTE-L10 ~ L13 (v1.5, UI 통합·게이팅) | `web/src/components/remote/NodeDashboard.tsx`(대시보드 서브탭·로컬 DashboardPage 재사용), `web/src/hooks/useTargetGating.ts`(재사용), `web/src/services/api/remoteService.ts`(config/metrics/logs/chart 클라이언트), audit(최소) | NodeDashboard 대시보드 서브탭 Vitest(게이팅·원격 컨텍스트·read-only·서브탭 진입), 503/504/502/404 실패 표시 Vitest, 최소 감사(노출 위반/오류만) 검증 |
 | REQ-REMOTE-N01 ~ N04 | server 연결 관리, 엔드포인트 분리, disabled 회귀, Message 봉투 | 부하/회귀 + ws 호환 |

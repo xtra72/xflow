@@ -33,6 +33,8 @@ type fakeStreamSvc struct {
 
 	subscribed []string // "domain/action/id"
 	subErr     error
+
+	lastChannelName string // M10: chart 구독 args.channelName 기록(REQ-L07).
 }
 
 func newFakeStreamSvc() *fakeStreamSvc {
@@ -56,6 +58,9 @@ func (f *fakeStreamSvc) SubscribeStream(_ string, domain, streamAction string, a
 	if json.Unmarshal(args, &m) == nil {
 		if v, ok := m["id"].(string); ok {
 			id = v
+		}
+		if v, ok := m["channelName"].(string); ok {
+			f.lastChannelName = v
 		}
 	}
 	f.subscribed = append(f.subscribed, domain+"/"+streamAction+"/"+id)
