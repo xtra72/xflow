@@ -303,12 +303,22 @@ func TestAgentCommander_ErrorAndUnknown(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// fakeDeviceRegistry 는 deviceRegistrySetter 의 테스트 구현이다.
+// fakeDeviceRegistry 는 deviceRegistrySetter + deviceExecutor 의 테스트 구현이다.
+// 메타데이터 설정과 실행(execute) 양쪽을 기록하여 deviceCommander 의 라우팅을
+// 검증한다(로컬 registry 와 동일 인스턴스가 두 인터페이스를 모두 만족함을 모사).
 type fakeDeviceRegistry struct {
 	lastID   string
 	lastMeta device.DeviceMetadata
 	err      error
 	calls    int
+
+	// execute 경로 기록.
+	execID      string
+	execCommand string
+	execParams  map[string]any
+	execCalls   int
+	execResult  map[string]any
+	execErr     error
 }
 
 func (f *fakeDeviceRegistry) SetMetadata(id string, meta device.DeviceMetadata) error {
@@ -316,6 +326,17 @@ func (f *fakeDeviceRegistry) SetMetadata(id string, meta device.DeviceMetadata) 
 	f.lastID = id
 	f.lastMeta = meta
 	return f.err
+}
+
+func (f *fakeDeviceRegistry) Execute(_ context.Context, id, command string, params map[string]any) (map[string]any, error) {
+	f.execCalls++
+	f.execID = id
+	f.execCommand = command
+	f.execParams = params
+	if f.execErr != nil {
+		return nil, f.execErr
+	}
+	return f.execResult, nil
 }
 
 // fakeMetaRepo 는 deviceMetadataRepo 의 테스트 구현이다.
@@ -375,6 +396,82 @@ func TestDeviceCommander_DeleteMetadata(t *testing.T) {
 	assert.Nil(t, res)
 	assert.Equal(t, device.DeviceMetadata{}, reg.lastMeta, "레지스트리 메타가 초기화되어야 함")
 	assert.Equal(t, []string{"dev-2"}, repo.deleted)
+}
+
+// TestDeviceCommander_Execute 는 execute 가 로컬 device Execute 서비스(registry)로
+// {id, command, params} 를 그대로 전달하고 그 결과를 반환하는지 검증한다.
+// 프런트엔드 그룹 D 페이로드({domain:'device', action:'execute',
+// args:{id, command, params}})와 동일한 인자 모양을 소비해야 한다(REQ-D04, OQ-L4).
+func TestDeviceCommander_Execute(t *testing.T) {
+	reg := &fakeDeviceRegistry{execResult: map[string]any{"status": "ok", "power": true}}
+	repo := newFakeMetaRepo()
+	c := &deviceCommander{registry: reg, repo: repo, executor: reg}
+
+	args := json.RawMessage(`{"id":"dev-1","command":"set_power","params":{"power":true,"mode":"cool"}}`)
+	res, err := c.Do(context.Background(), "execute", args)
+	require.NoError(t, err)
+
+	// 로컬 Execute 서비스(POST /devices/{id}/execute 와 동일 경로)로 라우팅되었는지.
+	assert.Equal(t, 1, reg.execCalls, "execute 는 device Execute 서비스를 1회 호출해야 함")
+	assert.Equal(t, "dev-1", reg.execID)
+	assert.Equal(t, "set_power", reg.execCommand)
+	assert.Equal(t, map[string]any{"power": true, "mode": "cool"}, reg.execParams)
+
+	// 메타데이터 경로는 건드리지 않아야 함(execute 는 쓰기 제어, 메타 무관).
+	assert.Equal(t, 0, reg.calls, "execute 는 SetMetadata 를 호출하지 않아야 함")
+	assert.Empty(t, repo.saved)
+
+	// 서비스 결과가 그대로 직렬화되어 반환되어야 함.
+	assert.Contains(t, string(res), `"status":"ok"`)
+	assert.Contains(t, string(res), `"power":true`)
+}
+
+// TestDeviceCommander_ExecuteNilParams 는 params 생략 시에도 동작하는지 검증한다.
+func TestDeviceCommander_ExecuteNilParams(t *testing.T) {
+	reg := &fakeDeviceRegistry{execResult: map[string]any{"ok": true}}
+	c := &deviceCommander{registry: reg, repo: newFakeMetaRepo(), executor: reg}
+
+	_, err := c.Do(context.Background(), "execute", json.RawMessage(`{"id":"dev-9","command":"toggle"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "dev-9", reg.execID)
+	assert.Equal(t, "toggle", reg.execCommand)
+	assert.Nil(t, reg.execParams)
+}
+
+// TestDeviceCommander_ExecuteMissingID 는 id 누락 시 오류(부분 적용 방지)를 검증한다.
+func TestDeviceCommander_ExecuteMissingID(t *testing.T) {
+	reg := &fakeDeviceRegistry{}
+	c := &deviceCommander{registry: reg, repo: newFakeMetaRepo(), executor: reg}
+	_, err := c.Do(context.Background(), "execute", json.RawMessage(`{"command":"x"}`))
+	assert.Error(t, err)
+	assert.Equal(t, 0, reg.execCalls, "id 누락 시 서비스 호출 없이 거부되어야 함")
+}
+
+// TestDeviceCommander_ExecuteMissingCommand 는 command 누락 시 오류를 검증한다
+// (로컬 핸들러의 "command is required" 검증과 동일 의미).
+func TestDeviceCommander_ExecuteMissingCommand(t *testing.T) {
+	reg := &fakeDeviceRegistry{}
+	c := &deviceCommander{registry: reg, repo: newFakeMetaRepo(), executor: reg}
+	_, err := c.Do(context.Background(), "execute", json.RawMessage(`{"id":"dev-1"}`))
+	assert.Error(t, err)
+	assert.Equal(t, 0, reg.execCalls)
+}
+
+// TestDeviceCommander_ExecuteNotControllable 는 device.ErrNotControllable 가 명령
+// 오류로 그대로 전파되는지 검증한다(서버가 502 로 매핑 → UI 노출 — OQ-L4).
+func TestDeviceCommander_ExecuteNotControllable(t *testing.T) {
+	reg := &fakeDeviceRegistry{execErr: device.ErrNotControllable}
+	c := &deviceCommander{registry: reg, repo: newFakeMetaRepo(), executor: reg}
+	_, err := c.Do(context.Background(), "execute", json.RawMessage(`{"id":"dev-1","command":"set_power"}`))
+	assert.ErrorIs(t, err, device.ErrNotControllable, "not-controllable 의미가 보존되어야 함")
+}
+
+// TestDeviceCommander_ExecuteNotFound 는 device.ErrDeviceNotFound 전파를 검증한다.
+func TestDeviceCommander_ExecuteNotFound(t *testing.T) {
+	reg := &fakeDeviceRegistry{execErr: device.ErrDeviceNotFound}
+	c := &deviceCommander{registry: reg, repo: newFakeMetaRepo(), executor: reg}
+	_, err := c.Do(context.Background(), "execute", json.RawMessage(`{"id":"ghost","command":"set_power"}`))
+	assert.ErrorIs(t, err, device.ErrDeviceNotFound, "not-found 의미가 보존되어야 함")
 }
 
 // TestDeviceCommander_MissingID 는 id 누락 시 오류(부분 적용 방지)를 검증한다.

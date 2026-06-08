@@ -3,7 +3,10 @@
 
 import { Activity, HardDrive, Moon } from 'lucide-react';
 
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useDeviceRealtime } from '@/hooks/useDevice';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, sortProperties, formatPropertyValue } from '@/lib/utils/deviceLabels';
 
@@ -28,7 +31,14 @@ export default function PropertiesGridPanel({
   const panelColor = config.panelColor as string | undefined;
   const accentElements = config.accentElements as Record<string, string | boolean> | undefined;
 
-  const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 device.state(그룹 J)로
+  // 그 노드 디바이스의 속성을 읽는다(REQ-L03). 로컬은 기존 useDeviceRealtime 그대로.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const localDevice = useDeviceRealtime(remote ? '' : deviceId ?? '');
+  const remoteDevice = useDeviceDetailTarget(target, deviceId ?? '');
+  const device = remote ? remoteDevice.data : localDevice.data;
+  const isLoading = remote ? remoteDevice.isLoading : localDevice.isLoading;
 
   const acColor = (group: string): string | undefined => {
     if (!accentElements) return panelColor;

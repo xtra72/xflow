@@ -13,8 +13,15 @@ import {
   Clock,
 } from 'lucide-react';
 
-import { useDeviceRealtime, useExecuteCommand } from '@/hooks/useDevice';
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
+import { useDeviceRealtime } from '@/hooks/useDevice';
+import { useDeviceCommandTarget } from '@/hooks/useDeviceCommandTarget';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTranslation } from '@/lib/i18n';
+import { remoteEditErrorMessage } from '@/lib/remote/editError';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 
 interface HvacControlPanelProps {
@@ -106,11 +113,21 @@ export default function HvacControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: HvacControlPanelProps) {
+  const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
-  const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
 
-  // 디바이스 제어 명령
-  const executeMutation = useExecuteCommand();
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L08): 원격이면 device.state(그룹 J)로
+  // 상태를 읽고, 명령 쓰기는 그룹 D(execute)로 라우팅한다(REQ-D04/J03). 로컬은 불변.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const gating = useTargetGating(target);
+  const localDevice = useDeviceRealtime(remote ? '' : deviceId ?? '');
+  const remoteDevice = useDeviceDetailTarget(target, deviceId ?? '');
+  const device = remote ? remoteDevice.data : localDevice.data;
+  const isLoading = remote ? remoteDevice.isLoading : localDevice.isLoading;
+
+  // 디바이스 제어 명령(로컬: /execute, 원격: 그룹 D execute).
+  const commandTarget = useDeviceCommandTarget(target);
 
   // 제어 상태 (디바이스 속성에서 읽기)
   const props = device?.state?.properties ?? {};
@@ -120,9 +137,10 @@ export default function HvacControlPanel({
   const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
     useOptimisticToggle(serverPower);
 
+  const remoteBlocked = remote && !gating.canControl();
   const execute = (command: string, params: Record<string, unknown>) => {
-    if (!deviceId) return;
-    executeMutation.mutate({ id: deviceId, req: { command, params } });
+    if (!deviceId || remoteBlocked) return;
+    commandTarget.execute(deviceId, command, params);
   };
 
   // 디바이스 미설정 상태
@@ -156,7 +174,7 @@ export default function HvacControlPanel({
   const co2 = (props.co2 as number) ?? 850;
   const powerUsage = (props.power_usage as number) ?? 3.2;
 
-  const isPending = executeMutation.isPending || isPendingConfirmation;
+  const isPending = commandTarget.isPending || isPendingConfirmation || remoteBlocked;
   const powerOn = power ?? false;
   const targetTemp = (props['target_temperature'] as number) ?? 24;
   const targetHumidity = (props['target_humidity'] as number) ?? 50;
@@ -185,9 +203,9 @@ export default function HvacControlPanel({
             type="button"
             disabled={isPending}
             onClick={() => {
-              const target = !powerOn;
-              setOptimisticPower(target);
-              execute('set_power', { power: target });
+              const nextPower = !powerOn;
+              setOptimisticPower(nextPower);
+              execute('set_power', { power: nextPower });
             }}
             className={cn(
               'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
@@ -278,6 +296,15 @@ export default function HvacControlPanel({
           <Settings className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      {/* 에러 표시 — 원격은 503/504/502/404 를 editError 로 매핑(REQ-L11). */}
+      {commandTarget.error ? (
+        <div className="shrink-0 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
+          {remote
+            ? remoteEditErrorMessage(commandTarget.error, t)
+            : String((commandTarget.error as Error)?.message ?? commandTarget.error)}
+        </div>
+      ) : null}
     </div>
   );
 }

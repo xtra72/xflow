@@ -62,6 +62,10 @@ type RemoteQueryService interface {
 	// IsResourceExposed 는 kind(flow|agent|device) 자원 id 가 노드의 노출 범위 내(미러
 	// 존재)인지 반환한다(REQ-J05/E07).
 	IsResourceExposed(ctx context.Context, instanceID, kind, id string) (bool, error)
+	// IsManaged 는 노드가 승인+온라인인지 반환한다(M10 노드-레벨 query 게이팅 — REQ-L02).
+	// dashboard config·metrics 는 per-resource 노출 범위가 없는 노드-레벨 자원이므로
+	// (REQ-L03), 노출 범위 평가 없이 IsManaged 만 게이트한다.
+	IsManaged(instanceID string) bool
 }
 
 // RemoteQueryHandler 는 원격 READ 프록시 엔드포인트를 처리한다.
@@ -109,6 +113,13 @@ func (h *RemoteQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/remote/nodes/{instance_id}/devices/{device_id}/state", h.deviceState)
 	g.GET("/remote/nodes/{instance_id}/devices/{device_id}/commands", h.deviceCommands)
 	g.GET("/remote/nodes/{instance_id}/devices/{device_id}/metadata", h.deviceMetadata)
+
+	// M10 그룹 L: 노드-레벨 READ(대시보드 config + 시스템 메트릭). per-resource 노출
+	// 범위가 없으므로(REQ-L03) IsManaged 만 게이트한다(노출 범위 미평가). 라우트는
+	// 자원-타깃 경로(.../flows/{id} 등)보다 path 세그먼트가 짧거나 리터럴이므로 충돌 없음.
+	g.GET("/remote/nodes/{instance_id}/dashboards/shared", h.dashboardShared)
+	g.GET("/remote/nodes/{instance_id}/dashboards/mine", h.dashboardMine)
+	g.GET("/remote/nodes/{instance_id}/metrics", h.monitorMetrics)
 }
 
 // --- flow -------------------------------------------------------------------
@@ -170,6 +181,56 @@ func (h *RemoteQueryHandler) deviceCommands(ctx api.Context) error {
 }
 func (h *RemoteQueryHandler) deviceMetadata(ctx api.Context) error {
 	return h.query(ctx, remote.DomainDevice, remote.QueryActionMetadata, ctx.Param("device_id"), nil)
+}
+
+// --- M10 그룹 L: 노드-레벨 READ(대시보드 config + 메트릭) ----------------------
+
+// dashboardShared 는 노드의 공유(global) 대시보드 config 를 프록시한다(REQ-L01,
+// dashboard/get_shared). 노드-레벨 자원이므로 노출 범위 게이트 없이 IsManaged 만 평가.
+func (h *RemoteQueryHandler) dashboardShared(ctx api.Context) error {
+	return h.nodeQuery(ctx, remote.DomainDashboard, remote.QueryActionGetShared, nil)
+}
+
+// dashboardMine 은 노드의 개인(user) 대시보드 config 를 프록시한다(REQ-L01/A17,
+// dashboard/get_mine). owner 는 viewing admin(ctx.UserID())로 전달하여 그 노드의
+// 동일 사용자 스코프 config 를 노드-로컬로 취득한다(deviceId 네임스페이싱 — REQ-L03).
+func (h *RemoteQueryHandler) dashboardMine(ctx api.Context) error {
+	args, _ := json.Marshal(map[string]string{"owner": ctx.UserID()})
+	return h.nodeQuery(ctx, remote.DomainDashboard, remote.QueryActionGetMine, args)
+}
+
+// monitorMetrics 는 노드의 시스템 메트릭 스냅샷을 프록시한다(REQ-L05, monitor/metrics).
+// 완만 변동이므로 서버는 단기 TTL 캐시한다(REQ-J16 — DispatchQuery 가 처리).
+func (h *RemoteQueryHandler) monitorMetrics(ctx api.Context) error {
+	return h.nodeQuery(ctx, remote.DomainMonitor, remote.QueryActionMetrics, nil)
+}
+
+// nodeQuery 는 노드-레벨 READ(per-resource 노출 범위 없음 — REQ-L03)의 오케스트레이션
+// 이다: admin 게이트 → IsManaged 게이트(503) → DispatchQuery → redacted 본문 통과.
+//
+// query() 와 달리 IsResourceExposed 를 호출하지 않는다(대시보드 config·메트릭은 노드
+// 단위 자원이므로 노출 범위 개념이 없음 — REQ-L02/L03). 실패 의미는 그룹 J 와 동일
+// (503/504/502 — mapRemoteQueryError 재사용). 일반 read 는 감사하지 않으며(REQ-L13),
+// 오류 접근만 감사한다(REQ-J15 일관).
+func (h *RemoteQueryHandler) nodeQuery(ctx api.Context, domain, queryAction string, args json.RawMessage) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	instanceID := ctx.Param("instance_id")
+
+	// 노드-레벨 게이팅(REQ-L02/J05): 미관리(미승인/오프라인) → 503. 노출 범위는 미평가.
+	if !h.svc.IsManaged(instanceID) {
+		return api.ErrServiceUnavailable.WithMessage("노드가 관리 대상이 아닙니다(미승인/오프라인)")
+	}
+
+	data, qErr := h.svc.DispatchQuery(ctx.Context(), instanceID, domain, queryAction, args)
+	if qErr != nil {
+		// 오류 접근 감사(REQ-L13/J15) — 일반 read 성공은 감사하지 않는다.
+		h.recordError(ctx, instanceID, domain, queryAction, "", qErr)
+		return mapRemoteQueryError(qErr)
+	}
+	// 노드가 redaction 한 본문을 그대로 통과시킨다(REQ-J06/L02).
+	return h.writeRaw(ctx, data)
 }
 
 // --- 공통 오케스트레이션 -------------------------------------------------------

@@ -5,6 +5,10 @@ import { useEffect, useRef } from 'react';
 import { AlertTriangle, Cpu, HardDrive, Zap } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer } from 'recharts';
 
+import { useMetricsTarget } from '@/hooks/useMetricsTarget';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { useUIStore } from '@/stores/uiStore';
 import {
   type MetricKey,
   type PanelConfig,
@@ -87,7 +91,16 @@ function MetricCard({
 }
 
 /** 프로세스 리소스 개요를 표시하는 대시보드 위젯 */
-export default function ResourceWidget({ metrics, panelConfig }: ResourceWidgetProps) {
+export default function ResourceWidget({ metrics: localMetrics, panelConfig }: ResourceWidgetProps) {
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L05): 원격이면 노드의 메트릭
+  // 스냅샷을 monitor/metrics query-action 으로 취득한다. 로컬은 prop 의 metrics 를
+  // 그대로 사용해 회귀 없이 동일 렌더한다.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
+  const remoteMetrics = useMetricsTarget(target, refreshMs, remote);
+  const metrics = remote ? remoteMetrics.metrics : localMetrics;
+
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
   const title = panelConfig?.title ?? '프로세스 리소스';
   const visibleMetrics = (panelConfig?.config?.visibleMetrics as MetricKey[]) ?? ['cpu', 'memory', 'throughput', 'errorRate'];

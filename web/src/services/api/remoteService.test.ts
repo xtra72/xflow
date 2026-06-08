@@ -403,3 +403,53 @@ describe('remoteService — 라이브 스트림 URL (M8, REQ-J08)', () => {
     ).toBe('/api/v1/remote/nodes/n%2F1/devices/d%201/state/stream?token=jwt.a%2Fb');
   });
 });
+
+describe('remoteService — 원격 대시보드 패리티 (M10, 그룹 L)', () => {
+  it('getRemoteDashboard(shared) 는 GET .../dashboards/shared 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce({ payload: {} });
+    await remoteService.getRemoteDashboard('node-1', 'shared');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node-1/dashboards/shared');
+  });
+
+  it('getRemoteDashboard(mine) 는 GET .../dashboards/mine 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce({ payload: {} });
+    await remoteService.getRemoteDashboard('node-1', 'mine');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node-1/dashboards/mine');
+  });
+
+  it('getRemoteDashboard 의 instance_id 를 URL 인코딩한다', async () => {
+    getMock.mockResolvedValueOnce({ payload: {} });
+    await remoteService.getRemoteDashboard('n/1', 'shared');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/n%2F1/dashboards/shared');
+  });
+
+  it('getRemoteMetrics 는 GET .../metrics 를 호출한다', async () => {
+    getMock.mockResolvedValueOnce({ cpu: 1 });
+    await remoteService.getRemoteMetrics('node-1');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node-1/metrics');
+  });
+
+  it('remoteChartStreamUrl 은 .../charts/{channel}/stream SSE URL 을 구성한다', () => {
+    expect(remoteService.remoteChartStreamUrl('node-1', 'temp')).toBe(
+      '/api/v1/remote/nodes/node-1/charts/temp/stream',
+    );
+  });
+
+  it('remoteChartStreamUrl 은 token 을 ?token= 쿼리로 부착·인코딩한다', () => {
+    expect(remoteService.remoteChartStreamUrl('n/1', 'c h', 'jwt/x')).toBe(
+      '/api/v1/remote/nodes/n%2F1/charts/c%20h/stream?token=jwt%2Fx',
+    );
+  });
+
+  it('remoteLogsStreamUrl 은 .../logs/stream SSE URL 을 구성한다', () => {
+    expect(remoteService.remoteLogsStreamUrl('node-1')).toBe(
+      '/api/v1/remote/nodes/node-1/logs/stream',
+    );
+  });
+
+  it('remoteLogsStreamUrl 은 token 을 부착한다', () => {
+    expect(remoteService.remoteLogsStreamUrl('node-1', 'tok')).toBe(
+      '/api/v1/remote/nodes/node-1/logs/stream?token=tok',
+    );
+  });
+});

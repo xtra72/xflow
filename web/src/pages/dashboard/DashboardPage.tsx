@@ -25,14 +25,6 @@ import {
   Check,
   Grid3X3,
   ChevronUp,
-  BarChart3,
-  PieChart,
-  LineChart,
-  Gauge,
-  Type,
-  Table,
-  Gamepad2,
-  Hash,
 } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
@@ -40,51 +32,45 @@ import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
 import { useDashboardSync } from '@/hooks/useDashboardSync';
+import { isRemoteTarget, LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { getMetrics } from '@/services/api/monitorService';
 import { useAuthStore } from '@/stores/authStore';
 import {
   useUIStore,
   type DashboardLayoutItem,
   type PanelConfig,
-  type PanelType,
   type ThemeMode,
 } from '@/stores/uiStore';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
-import AgentPanel from './panels/AgentPanel';
-import DevicePanel from './panels/DevicePanel';
-import FlowPanel from './panels/FlowPanel';
-import LogPanel from './panels/LogPanel';
-import SingleDevicePanel from './panels/SingleDevicePanel';
-import AcControlPanel from './panels/AcControlPanel';
-import GaugePanel from './panels/GaugePanel';
-import PropertiesGridPanel from './panels/PropertiesGridPanel';
-import HvacControlPanel from './panels/HvacControlPanel';
-import OutdoorControlPanel from './panels/OutdoorControlPanel';
-import StatPanel from './panels/charts/StatPanel';
-import LineChartPanel from './panels/charts/LineChartPanel';
-import BarChartPanel from './panels/charts/BarChartPanel';
-import PieChartPanel from './panels/charts/PieChartPanel';
-import TablePanel from './panels/charts/TablePanel';
-import ResourceWidget from './widgets/ResourceWidget';
+import { renderDashboardPanel } from './renderDashboardPanel';
+import RemoteDashboardView from './RemoteDashboardView';
 import AddPanelDialog from './AddPanelDialog';
 import PanelSettingsDialog from './PanelSettingsDialog';
 
 /** 그리드 설정 */
 const GRID_MARGIN: [number, number] = [16, 16];
 
-/** 패널 타입별 아이콘 매핑 */
-const PANEL_TYPE_ICONS: Partial<Record<PanelType, React.ReactNode>> = {
-  stat: <Hash className="h-6 w-6 text-(--color-text-muted)" />,
-  gauge: <Gauge className="h-6 w-6 text-(--color-text-muted)" />,
-  'line-chart': <LineChart className="h-6 w-6 text-(--color-text-muted)" />,
-  'bar-chart': <BarChart3 className="h-6 w-6 text-(--color-text-muted)" />,
-  'pie-chart': <PieChart className="h-6 w-6 text-(--color-text-muted)" />,
-  text: <Type className="h-6 w-6 text-(--color-text-muted)" />,
-  table: <Table className="h-6 w-6 text-(--color-text-muted)" />,
-  'custom-control': <Gamepad2 className="h-6 w-6 text-(--color-text-muted)" />,
-};
+/**
+ * 대시보드 페이지 — 로컬/원격 디스패처 (SPEC-REMOTE-001 M10, 그룹 L, REQ-L09/L10).
+ *
+ * target 이 원격이면 읽기 전용 RemoteDashboardView 로, 로컬(미지정)이면 기존
+ * LocalDashboardView 로 라우팅한다. 디스패처 자체는 훅을 호출하지 않으므로 두 뷰는
+ * 각자 독립된 훅 트리를 가진다(Rules of Hooks 안전). 로컬 경로는 회귀 없이 동일하다.
+ */
+export default function DashboardPage({
+  target = LOCAL_TARGET,
+}: {
+  /** 자원 타깃(미지정=로컬). 노드 대시보드가 remote 타깃을 주입한다(REQ-L10). */
+  target?: ResourceTarget;
+}): React.JSX.Element {
+  return isRemoteTarget(target) ? (
+    <RemoteDashboardView target={target} />
+  ) : (
+    <LocalDashboardView />
+  );
+}
 
 /** 테마 모드 라벨 (Pencil 디자인 매칭) */
 const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string; icon: React.ReactNode; iconColor: string }[] = [
@@ -94,8 +80,8 @@ const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string; icon: Reac
   { value: 'custom', label: '커스텀', desc: '사용자 정의 색상 테마', icon: <Paintbrush className="h-4 w-4" />, iconColor: 'text-violet-500' },
 ];
 
-/** 대시보드 페이지 컴포넌트 */
-export default function DashboardPage() {
+/** 로컬 대시보드 뷰 — 기존 DashboardPage 본문(편집/sync 포함). 회귀 없이 동일하다. */
+function LocalDashboardView() {
   const queryClient = useQueryClient();
 
   // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 훅.
@@ -304,128 +290,12 @@ export default function DashboardPage() {
     setEditingName('');
   };
 
-  /** 패널 타입에 따라 적절한 위젯 컴포넌트를 렌더링 */
-  const renderPanel = (panel: PanelConfig, flowsList: FlowInfo[], metricsData: typeof metrics) => {
-    const onCfg = configChangeFor(panel.id);
-    const onTitle = titleChangeFor(panel.id);
-
-    switch (panel.type) {
-      case 'flows':
-        return <FlowPanel flows={flowsList} panelConfig={panel} />;
-      case 'agents':
-        return <AgentPanel panelConfig={panel} />;
-      case 'resource':
-        return <ResourceWidget metrics={metricsData} panelConfig={panel} />;
-      case 'devices':
-        return (
-          <DevicePanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            refreshMs={refreshMs}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'device':
-        return (
-          <SingleDevicePanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'logs':
-        return (
-          <LogPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'ac-control':
-        return (
-          <AcControlPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'hvac-control':
-        return (
-          <HvacControlPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'outdoor-control':
-        return (
-          <OutdoorControlPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'gauge':
-        return (
-          <GaugePanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'properties-grid':
-        return (
-          <PropertiesGridPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      // SPEC-CHART-001 M4: 5종 차트 패널
-      case 'stat':
-        return <StatPanel panelId={panel.id} config={panel.config} />;
-      case 'line-chart':
-        return <LineChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
-      case 'bar-chart':
-        return <BarChartPanel panelId={panel.id} config={panel.config} />;
-      case 'pie-chart':
-        return <PieChartPanel panelId={panel.id} config={panel.config} />;
-      case 'table':
-        return <TablePanel panelId={panel.id} config={panel.config} />;
-      // 잔여 플레이스홀더 패널 타입들 (text, custom-control)
-      case 'text':
-      case 'custom-control':
-        return (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg bg-(--color-bg-surface) p-6 shadow">
-            {PANEL_TYPE_ICONS[panel.type] ?? null}
-            <span className="text-sm font-medium text-(--color-text-primary)">{panel.title}</span>
-            <span className="text-xs text-(--color-text-muted)">{panel.type}</span>
-          </div>
-        );
-      default:
-        return (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg bg-(--color-bg-surface) p-6 shadow">
-            <span className="text-sm text-(--color-text-muted)">{panel.title}</span>
-          </div>
-        );
-    }
-  };
+  /** 패널 타입에 따라 적절한 위젯 컴포넌트를 렌더링(공유 렌더러 재사용 — REQ-L09). */
+  const renderPanel = (panel: PanelConfig, flowsList: FlowInfo[], metricsData: typeof metrics) =>
+    renderDashboardPanel(panel, flowsList, metricsData, refreshMs, (panelId) => ({
+      onConfigChange: configChangeFor(panelId),
+      onTitleChange: titleChangeFor(panelId),
+    }));
 
   const hasError = flowsError;
 

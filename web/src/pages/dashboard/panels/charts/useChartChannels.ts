@@ -3,12 +3,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { remoteChartStreamUrl } from '@/services/api/remoteService';
 import {
   ChartChannelClient,
   type ChartChannelClientOptions,
   type ChartConnectionStatus,
   type ChartServerMessage,
 } from '@/services/ws/chartChannel';
+import { RemoteChartChannelClient } from '@/services/ws/remoteChartChannel';
 import type { ChartEntry } from './chartChannelTypes';
 import type { ChartChannelClientLike } from './useChartChannel';
 
@@ -70,6 +74,11 @@ export function useChartChannels(
   refs: ChannelRef[],
   options: UseChartChannelsOptions = {},
 ): UseChartChannelsResult {
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L07): 원격이면 SSE 스트림 프록시로
+  // 채널을 구독한다(별도 WS 경로 미신설). 로컬은 기존 WS 직결 그대로.
+  const target = useTargetContext();
+  const remoteInstanceId = isRemoteTarget(target) ? target.instanceId : '';
+
   const [channels, setChannels] = useState<Map<string, ChannelState>>(
     () => new Map(),
   );
@@ -84,7 +93,8 @@ export function useChartChannels(
   const validNames = refs
     .map((r) => r.name?.trim())
     .filter((n): n is string => !!n);
-  const namesKey = validNames.join('\u0001');
+  // remoteInstanceId 가 바뀌면(로컬↔원격 전환) 전체 재구독을 유도한다.
+  const namesKey = remoteInstanceId + '|' + validNames.join('\u0001');
 
   useEffect(() => {
     const next = new Set(validNames);
@@ -159,9 +169,18 @@ export function useChartChannels(
       });
 
       const clientOpts: ChartChannelClientOptions = { url, onMessage, onStatus };
-      const client = optionsRef.current.createClient
-        ? optionsRef.current.createClient(clientOpts)
-        : (new ChartChannelClient(clientOpts) as ChartChannelClientLike);
+      // 우선순위: 명시 createClient(테스트 주입) > 원격 SSE > 로컬 WS.
+      let client: ChartChannelClientLike;
+      if (optionsRef.current.createClient) {
+        client = optionsRef.current.createClient(clientOpts);
+      } else if (remoteInstanceId) {
+        client = new RemoteChartChannelClient(
+          clientOpts,
+          remoteChartStreamUrl(remoteInstanceId, name),
+        ) as ChartChannelClientLike;
+      } else {
+        client = new ChartChannelClient(clientOpts) as ChartChannelClientLike;
+      }
       current.set(name, client);
       client.connect();
     }

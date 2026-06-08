@@ -901,7 +901,17 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	})
 
 	// 9.6. 모니터링 브로드캐스터 (WebSocket 을 통한 실시간 메트릭 전송)
-	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng, obs.Loggers.NewLogger("api.ws.broadcaster").Logger(), ws.WithStreamRouter(obs.Streams))
+	// M10(그룹 L, REQ-L06): client 모드에서 원격 monitor.logs 스트림이 노드의 로그
+	// 파이프라인을 in-process 로 탭하도록, 로그 hub 를 브로드캐스터의 추가 로그 writer 로
+	// 합류시킨다(A18 — 자가 WS dial 없음). server/disabled 모드에서는 nil(미합류).
+	var remoteLogHub *logStreamHub
+	if rmCfg.Mode == "client" {
+		remoteLogHub = newLogStreamHub()
+	}
+	broadcaster := ws.NewMonitoringBroadcaster(wsHub, eng,
+		obs.Loggers.NewLogger("api.ws.broadcaster").Logger(),
+		ws.WithStreamRouter(obs.Streams),
+		ws.WithExtraLogWriter(logHubWriter(remoteLogHub)))
 
 	// 9.8. Web UI 정적 파일 서빙 (모든 라우트 등록 후 마지막에 설정)
 	if serverCfg.WebUI.Enabled {
@@ -942,7 +952,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		commandApplier := remote.NewApplier(
 			&flowCommander{adapter: flowSvc},
 			&agentCommander{adapter: agentSvc},
-			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo},
+			// executor 는 로컬 DeviceHandler.Execute(POST /devices/{id}/execute)가
+			// 호출하는 바로 그 deviceRegistry 인스턴스이다 — 원격 런타임 제어(execute)가
+			// 로컬 제어와 동일한 경로/검증/오류 의미를 갖도록 동일 레지스트리를 재사용한다
+			// (A5 — 원격 우회 없음, OQ-L4 — 제어 쓰기는 그룹 D 재사용).
+			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo, executor: deviceRegistry},
 		)
 
 		// 인벤토리 소스(M4, REQ-E01): 로컬 API 와 동일한 어댑터 인스턴스를 재사용하여
@@ -960,7 +974,17 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		storeReader := newAgentManagerStoreReader(agentMgr)
 		seriesReader := newAgentManagerSeriesReader(agentMgr)
 		querySource := newRemoteQuerySource(flowSvc, agentSvc, deviceRegistry, storeReader, seriesReader)
+		// M10(그룹 L): 대시보드 config(get_shared/get_mine) + 시스템 메트릭(monitor.metrics)
+		// read 소스를 바인딩한다(REQ-L01/L05). 로컬 /dashboards·/monitor/metrics 와 동일
+		// 인스턴스를 재사용하여 노드-로컬 권위(A17)·동형 응답을 보장한다. READ-ONLY(REQ-J03).
+		querySource.dashboard = dashboardRepo
+		querySource.metrics = monitorMgr
 		streamSource := newRemoteStreamSource(agentSvc, deviceRegistry, seriesReader, 0)
+		// M10(그룹 L): 차트(chart.chart)는 in-process 차트 채널 레지스트리를 직접 탭하고
+		// (REQ-L07 — /ws/chart 자가 dial 금지), 로그(monitor.logs)는 위 9.6 의 로그 hub 를
+		// 탭한다(REQ-L06). 둘 다 라이브 스트림(캐시 우회 — REQ-J16).
+		streamSource.charts = chartChannelRegistry
+		streamSource.logs = remoteLogHub
 		queryRedactor := newQueryRedactor()
 
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).

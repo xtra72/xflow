@@ -99,6 +99,19 @@ const (
 	QueryActionCommands = "commands"
 	// QueryActionMetadata 는 디바이스 메타데이터(읽기) 질의이다(device).
 	QueryActionMetadata = "metadata"
+
+	// --- M10 그룹 L: 대시보드 config + 메트릭 read query-action (READ-ONLY) ---
+
+	// QueryActionGetShared 는 노드의 공유(global) 대시보드 config 질의이다
+	// (dashboard, REQ-L01 — GET /dashboards/shared 매핑).
+	QueryActionGetShared = "get_shared"
+	// QueryActionGetMine 은 노드의 개인(user) 대시보드 config 질의이다
+	// (dashboard, REQ-L01 — GET /dashboards/mine 매핑). args.owner 로 노드-로컬
+	// 사용자를 지정한다(노드 권위 — A17).
+	QueryActionGetMine = "get_mine"
+	// QueryActionMetrics 는 노드의 시스템 메트릭 스냅샷 질의이다(monitor, REQ-L05 —
+	// GET /monitor/metrics 매핑). 완만 변동이므로 단기 TTL 캐시 대상이다(REQ-J16).
+	QueryActionMetrics = "metrics"
 )
 
 // M8 스트림 action 상수 (spec §5.10.2, REQ-J08). 스트림 가능한 라이브 action 만
@@ -110,6 +123,30 @@ const (
 	StreamActionStats = QueryActionStats
 	// StreamActionSeries 는 에이전트 라이브 시리즈 스트림이다(agent.series).
 	StreamActionSeries = QueryActionSeries
+
+	// --- M10 그룹 L: 차트 + 로그 라이브 스트림 action (READ-ONLY, 캐시 우회) ---
+
+	// StreamActionChart 는 노드의 차트 채널 라이브 스트림이다(chart.chart, REQ-L07).
+	// args 는 {"channelName": "..."} 이며, 노드는 자신의 in-process 차트 채널 hub
+	// (/ws/chart/{channel} 직결 대신)를 구독해 backfill/append 프레임을 중계한다.
+	StreamActionChart = "chart"
+	// StreamActionLogs 는 노드의 로그 라이브 스트림이다(monitor.logs, REQ-L06).
+	// 노드는 자신의 로그 스트림 소스를 구독해 stream_data 로 push 한다(캐시 우회).
+	StreamActionLogs = "logs"
+)
+
+// 원격 query/stream 도메인 상수 (M10 그룹 L, spec §5.1/§5.10 — dashboard/monitor/chart).
+//
+// 기존 command 도메인(DomainFlow/DomainAgent/DomainDevice)과 달리, 이들은 read 프록시
+// 전용 도메인이다(READ-ONLY — REQ-J03). 변경 경로(그룹 D 명령)는 본 도메인을 사용하지
+// 않는다(대시보드 config 편집·메트릭/로그/차트 mutation 은 v1.5 비목표 — REQ-L12).
+const (
+	// DomainDashboard 는 노드의 대시보드 config read 도메인이다(REQ-L01, READ-ONLY).
+	DomainDashboard = "dashboard"
+	// DomainMonitor 는 노드의 시스템 메트릭(query)·로그(stream) read 도메인이다(REQ-L05/L06).
+	DomainMonitor = "monitor"
+	// DomainChart 는 노드의 차트 채널 라이브 스트림 도메인이다(REQ-L07, stream 전용).
+	DomainChart = "chart"
 )
 
 // allowedQueryActions 는 도메인별 허용 read query-action 집합이다(REQ-J04 — FULL
@@ -142,6 +179,17 @@ var allowedQueryActions = map[string]map[string]struct{}{
 		QueryActionCommands: {},
 		QueryActionMetadata: {},
 	},
+	// M10 그룹 L: 대시보드 config read(READ-ONLY — REQ-L01). put/delete 등 변경 의미
+	// action 은 본 집합에 없으므로 거부된다(원격 config 편집 비목표 — REQ-J03/L12).
+	DomainDashboard: {
+		QueryActionGetShared: {},
+		QueryActionGetMine:   {},
+	},
+	// M10 그룹 L: 시스템 메트릭 스냅샷 read(REQ-L05, 단기 TTL 캐시 대상). logs 는
+	// 스트림 action 이므로 query allowlist 에 포함하지 않는다(REQ-L06).
+	DomainMonitor: {
+		QueryActionMetrics: {},
+	},
 }
 
 // streamableActions 는 도메인별 스트림 가능한 라이브 action 집합이다(REQ-J08).
@@ -153,6 +201,16 @@ var streamableActions = map[string]map[string]struct{}{
 	DomainAgent: {
 		StreamActionStats:  {},
 		StreamActionSeries: {},
+	},
+	// M10 그룹 L: 차트 채널 라이브 스트림(REQ-L07). args=channelName. 노드 in-process
+	// 차트 hub 구독 → backfill/append 중계(별도 WS 경로 미신설). 캐시 우회(라이브).
+	DomainChart: {
+		StreamActionChart: {},
+	},
+	// M10 그룹 L: 로그 라이브 스트림(REQ-L06). 노드 로그 스트림 소스 구독 → tail push.
+	// 캐시 우회(라이브). monitor.metrics 는 query-action 이므로 스트림 집합에 없다.
+	DomainMonitor: {
+		StreamActionLogs: {},
 	},
 }
 
