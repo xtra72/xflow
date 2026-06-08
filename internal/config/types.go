@@ -153,6 +153,13 @@ type RemoteManagementConfig struct {
 	// Exposure 는 서버에 노출할 자원 범위 (opt-in, REQ-A04).
 	Exposure ExposureConfig
 
+	// Display 는 노드 장비 모니터 해상도이다 (v1.6 M11, 그룹 M, REQ-M01).
+	// xflowd 는 헤드리스 데몬이므로 런타임 자동 감지 대상이 없어, 운영자가 config
+	// 로 선언한 값(resolution "WxH" 또는 width+height)을 1차 출처로 한다(A20). 파싱된
+	// Width/Height 는 register/heartbeat 시스템 정보 페이로드로 운반되어 서버가
+	// managed_nodes 에 저장한다(REQ-M02). 미설정/무효 → 0(미보고, REQ-M03 하위 호환).
+	Display DisplayConfig
+
 	// TLS 는 wss 용 TLS 설정 (기존 TLSConfig 재사용, REQ-F01).
 	TLS TLSConfig
 
@@ -161,6 +168,17 @@ type RemoteManagementConfig struct {
 	// server_url 과 server 모드의 TLS 미설정을 거부한다. 기본 false(기존 동작 보존,
 	// REQ-N03). development 모드에서는 강제하지 않는다(로컬 개발 편의).
 	RequireSecure bool
+}
+
+// DisplayConfig - 노드 장비 모니터 해상도 설정 (v1.6 M11, 그룹 M, REQ-M01/M03, spec §5.13.1)
+//
+// Width/Height 는 px 정수이며, 0 은 미보고(폴백 — REQ-M03)를 의미한다. accessor
+// (RemoteManagement)가 config 의 resolution("WxH") 또는 width+height 를 파싱·해석해
+// 채운다: 유효한 resolution 이 width/height 보다 우선하며(REQ-M01), 무효/음수/0 은 0
+// 으로 안전 처리된다(REQ-M03). 노드는 이 값을 시스템 정보 페이로드로 운반한다(REQ-M01).
+type DisplayConfig struct {
+	Width  int // 장비 화면 가로 px (0=미보고)
+	Height int // 장비 화면 세로 px (0=미보고)
 }
 
 // ExposureConfig - 노출(exposure) 범위 설정 (REQ-REMOTE-A04, spec §5.3)

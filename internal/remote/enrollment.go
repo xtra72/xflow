@@ -146,18 +146,21 @@ func (s *Server) tryEnrollmentAutoApprove(ctx context.Context, conn Conn, p Regi
 	}
 
 	// 신규 노드를 approved 로 생성(또는 갱신)한다. 최초 register 의 BASIC 시스템 정보
-	// (os/arch/started_at)를 함께 저장한다(v1.4 M9, REQ-K07/K08, 미보고 시 빈값 — K09).
+	// (os/arch/started_at) + 노드 해상도(display_*)를 함께 저장한다(v1.4 M9 / v1.6 M11,
+	// REQ-K07/K08/M01/M02, 미보고 시 빈값/0 — K09/M03).
 	now := time.Now().UnixMilli()
 	node := storage.ManagedNode{
-		InstanceID: p.InstanceID,
-		Hostname:   p.Hostname,
-		Version:    p.Version,
-		Status:     RegStatusApproved,
-		Online:     true,
-		LastSeen:   now,
-		OS:         p.OS,
-		Arch:       p.Arch,
-		StartedAt:  p.StartedAt,
+		InstanceID:    p.InstanceID,
+		Hostname:      p.Hostname,
+		Version:       p.Version,
+		Status:        RegStatusApproved,
+		Online:        true,
+		LastSeen:      now,
+		OS:            p.OS,
+		Arch:          p.Arch,
+		StartedAt:     p.StartedAt,
+		DisplayWidth:  p.DisplayWidth,
+		DisplayHeight: p.DisplayHeight,
 	}
 	if upErr := s.repo.Upsert(ctx, node); upErr != nil {
 		s.logger.Error("enrollment 자동 승인 저장 실패",

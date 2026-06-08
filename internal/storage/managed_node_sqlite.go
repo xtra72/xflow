@@ -100,6 +100,9 @@ func addManagedNodeColumns(ctx context.Context, db *sql.DB) error {
 		{"os", "os TEXT NOT NULL DEFAULT ''"},
 		{"arch", "arch TEXT NOT NULL DEFAULT ''"},
 		{"started_at", "started_at INTEGER NOT NULL DEFAULT 0"},
+		// v1.6(M11, 그룹 M) 노드 해상도 컬럼(REQ-M01/M02). 기존 행은 0(미보고 — REQ-M03).
+		{"display_width", "display_width INTEGER NOT NULL DEFAULT 0"},
+		{"display_height", "display_height INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, col := range additions {
 		if _, ok := existing[col.name]; ok {
@@ -167,8 +170,8 @@ func (r *ManagedNodeSQLiteRepository) Upsert(ctx context.Context, node ManagedNo
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO managed_nodes (instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO managed_nodes (instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(instance_id) DO UPDATE SET
 			hostname   = excluded.hostname,
 			version    = excluded.version,
@@ -178,7 +181,8 @@ func (r *ManagedNodeSQLiteRepository) Upsert(ctx context.Context, node ManagedNo
 			online     = excluded.online,
 			updated_at = excluded.updated_at
 	`, node.InstanceID, node.Hostname, node.Version, status, node.TokenID,
-		node.LastSeen, online, node.GroupName, node.OS, node.Arch, node.StartedAt, createdAt, now)
+		node.LastSeen, online, node.GroupName, node.OS, node.Arch, node.StartedAt,
+		node.DisplayWidth, node.DisplayHeight, createdAt, now)
 	if err != nil {
 		return fmt.Errorf("upsert managed node: %w", err)
 	}
@@ -192,11 +196,11 @@ func (r *ManagedNodeSQLiteRepository) Get(ctx context.Context, instanceID string
 		online int
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, created_at, updated_at
+		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, created_at, updated_at
 		FROM managed_nodes WHERE instance_id = ?
 	`, instanceID).Scan(&node.InstanceID, &node.Hostname, &node.Version, &node.Status,
 		&node.TokenID, &node.LastSeen, &online, &node.GroupName, &node.OS, &node.Arch,
-		&node.StartedAt, &node.CreatedAt, &node.UpdatedAt)
+		&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight, &node.CreatedAt, &node.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ManagedNode{}, ErrManagedNodeNotFound
 	}
@@ -210,7 +214,7 @@ func (r *ManagedNodeSQLiteRepository) Get(ctx context.Context, instanceID string
 // List 는 모든 관리 노드를 created_at 순서로 반환한다.
 func (r *ManagedNodeSQLiteRepository) List(ctx context.Context) ([]ManagedNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, created_at, updated_at
+		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, created_at, updated_at
 		FROM managed_nodes ORDER BY created_at
 	`)
 	if err != nil {
@@ -226,7 +230,7 @@ func (r *ManagedNodeSQLiteRepository) List(ctx context.Context) ([]ManagedNode, 
 		)
 		if err := rows.Scan(&node.InstanceID, &node.Hostname, &node.Version, &node.Status,
 			&node.TokenID, &node.LastSeen, &online, &node.GroupName, &node.OS, &node.Arch,
-			&node.StartedAt, &node.CreatedAt, &node.UpdatedAt); err != nil {
+			&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight, &node.CreatedAt, &node.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan managed node row: %w", err)
 		}
 		node.Online = online != 0
@@ -317,22 +321,25 @@ func (r *ManagedNodeSQLiteRepository) ListGroups(ctx context.Context) ([]NodeGro
 	return out, nil
 }
 
-// SetSystemInfo 는 노드가 보고한 BASIC 시스템 정보(os/arch/started_at)를 저장한다(REQ-K08).
+// SetSystemInfo 는 노드가 보고한 BASIC 시스템 정보(os/arch/started_at) + 노드 해상도
+// (display_width/display_height)를 저장한다(REQ-K08/M01/M02).
 //
-// 제공된 필드만 갱신하고 미제공(빈 문자열/0) 필드는 기존값을 보존한다(REQ-K09 하위 호환
-// — heartbeat 가 일부만 보내거나 구버전 노드가 생략). COALESCE/NULLIF 로 제공 시에만
+// 제공된 필드만 갱신하고 미제공(빈 문자열/0) 필드는 기존값을 보존한다(REQ-K09/M03 하위
+// 호환 — heartbeat 가 일부만 보내거나 구버전 노드가 생략). COALESCE/NULLIF 로 제공 시에만
 // 덮어쓴다. group_name 은 절대 건드리지 않는다(관리자 전용). 없으면 ErrManagedNodeNotFound.
-func (r *ManagedNodeSQLiteRepository) SetSystemInfo(ctx context.Context, instanceID, osName, arch string, startedAtMs int64) error {
+func (r *ManagedNodeSQLiteRepository) SetSystemInfo(ctx context.Context, instanceID, osName, arch string, startedAtMs int64, displayWidth, displayHeight int) error {
 	// NULLIF(?, '') 가 빈 문자열을 NULL 로 만들고, COALESCE 가 NULL 일 때 기존값을 유지한다.
-	// started_at 은 0 을 미제공으로 간주한다(NULLIF(?, 0)).
+	// started_at/display_* 는 0 을 미제공으로 간주한다(NULLIF(?, 0)) — preserve-on-omit.
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE managed_nodes SET
-			os         = COALESCE(NULLIF(?, ''), os),
-			arch       = COALESCE(NULLIF(?, ''), arch),
-			started_at = COALESCE(NULLIF(?, 0), started_at),
-			updated_at = ?
+			os             = COALESCE(NULLIF(?, ''), os),
+			arch           = COALESCE(NULLIF(?, ''), arch),
+			started_at     = COALESCE(NULLIF(?, 0), started_at),
+			display_width  = COALESCE(NULLIF(?, 0), display_width),
+			display_height = COALESCE(NULLIF(?, 0), display_height),
+			updated_at     = ?
 		WHERE instance_id = ?
-	`, osName, arch, startedAtMs, time.Now().UnixMilli(), instanceID)
+	`, osName, arch, startedAtMs, displayWidth, displayHeight, time.Now().UnixMilli(), instanceID)
 	return checkAffected(res, err, "set managed node system info")
 }
 

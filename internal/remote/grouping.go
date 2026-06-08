@@ -36,7 +36,8 @@ func (s *Server) handleHeartbeat(ctx context.Context, connInstanceID string, pay
 		return
 	}
 	// 출처는 연결의 인증된 instanceID 를 권위로 삼는다(노드 스푸핑 방지 — server_mirror 일관).
-	s.storeSystemInfo(ctx, connInstanceID, p.OS, p.Arch, p.StartedAt)
+	// 노드 해상도(display_*)도 함께 갱신하며, 미제공(0)은 기존값을 보존한다(v1.6 M11, REQ-M01/M03).
+	s.storeSystemInfo(ctx, connInstanceID, p.OS, p.Arch, p.StartedAt, p.DisplayWidth, p.DisplayHeight)
 }
 
 // SetNodeGroup 은 노드의 단일 그룹 라벨을 배정/변경한다(REQ-K02). 그룹은 서버 운영

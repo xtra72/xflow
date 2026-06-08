@@ -3,7 +3,7 @@
 > 원격 관리 서버/클라이언트 — xflow 인스턴스 fleet 등록·승인·원격 제어·인벤토리 미러링
 > 본 문서는 PLAN 단계 산출물이다. 코드는 포함하지 않으며 기술 접근/마일스톤/위험을 정의한다.
 
-> **상태(2026-06-08)**: 4개 확정 아키텍처 결정(영속 WS dial / 라이브 RPC over 연결 / 인벤토리 미러+서버 DB 캐시 / 클라이언트 노출 opt-in)을 고정 제약으로 둔다. 마일스톤 M1~M6·H·M7 백엔드 완료, M7 웹(7.4)·M8(그룹 J, v1.3)·M9(그룹 K, v1.4)·M10(그룹 L, v1.5) 계획 단계. M8 은 원격 노드 FULL 제어 패리티(READ/QUERY 프록시 + 통합 UI), M9 는 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드, **M10 은 원격 노드 대시보드 패리티(로컬 DashboardPage 재사용 + 대시보드 config 읽기 프록시 + 패널 target-aware + 차트 스트림 프록시)** 를 증분 구현한다. **M9 의 OQ-K1~K7 은 ✅ 전부 RESOLVED(2026-06-07). M10 의 OQ-L1~L6 은 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 구현 시 고정 제약.**
+> **상태(2026-06-08)**: 4개 확정 아키텍처 결정(영속 WS dial / 라이브 RPC over 연결 / 인벤토리 미러+서버 DB 캐시 / 클라이언트 노출 opt-in)을 고정 제약으로 둔다. 마일스톤 M1~M6·H·M7 백엔드 완료, M7 웹(7.4)·M8(그룹 J, v1.3)·M9(그룹 K, v1.4)·M10(그룹 L, v1.5)·**M11(그룹 M, v1.6)** 계획 단계. M8 은 원격 노드 FULL 제어 패리티(READ/QUERY 프록시 + 통합 UI), M9 는 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드, M10 은 원격 노드 대시보드 패리티(로컬 DashboardPage 재사용 + 대시보드 config 읽기 프록시 + 패널 target-aware + 차트 스트림 프록시), **M11 은 관리자 뷰(상단 바 풀폭 레이아웃) + 노드 해상도 보고 + 대시보드 고정 캔버스 충실 재현** 을 증분 구현한다. **M9 의 OQ-K1~K7 / M10 의 OQ-L1~L6 / M11 의 OQ-M1~M5 은 ✅ 전부 RESOLVED(M11 은 2026-06-08 사용자 권고안대로 확정 — 구현 시 고정 제약). M11 은 M9 의 좌측 디렉토리 `NodeManagementPage` 레이아웃을 대체(supersede)한다(기능 보존, 레이아웃만 진화).**
 
 ## 1. 기술 접근
 
@@ -122,6 +122,17 @@
   - **target 전파(REQ-L09)**: `DashboardPage`/`renderPanel`(현재 패널에 target 미전달)을 확장해 dashboard 레벨 target 을 TargetProvider(context)/패널 prop 으로 전파. **target 미지정/`local` 시 로컬 렌더 바이트 동일**(회귀 0 — A16). 패널 UI/레이아웃 코드 비분기(데이터 소스만 target-aware).
 - **UI 통합(REQ-L10~L13, OQ-L5 RESOLVED=서브탭)**: 노드 대시보드(M9 `NodeDashboard`)에 **대시보드 서브탭** 추가(Flow/Agent/Device 서브탭과 나란히), 로컬 `DashboardPage` 를 `target=remote:{id}` 로 재사용(별도 화면 미신설 — A16). 게이팅(승인∧온라인∧노출, `useTargetGating` 재사용)·503/504/502/404·원격 컨텍스트 표시(M8/M9 IA 일관, REQ-L11). **read-only-by-default**(원격 config 편집 비활성/숨김, REQ-L12) — 자원 제어 액션은 그룹 D/I 로만(신규 변경 경로·프록시 변경 금지 — J03/J12). 최소 감사(노출 위반·오류만, REQ-L13).
 - **재사용(재발명 금지)**: 그룹 J query/스트림 프록시·target 추상화·`useRemoteStream`·`mapRemoteCommandError`·`secret_fields` redactor·그룹 D 명령·M9 노드 대시보드·로컬 `DashboardPage`/패널 컴포넌트를 재사용. 신규는 (1) query/stream allowlist 확장(`dashboard`/`monitor` + `chart`/`logs`), (2) 노드 측 read/스트림 소스 바인딩, (3) 차트 스트림 어댑터 주입, (4) 패널 target 전파, (5) 노드 대시보드 대시보드 서브탭뿐이다.
+
+### 1.14 관리자 뷰 + 노드 해상도 보고 + 대시보드 고정 캔버스 충실 재현 (v1.6, 그룹 M)
+
+> **OQ-M1~M5 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정)**. 아래는 확정 설계이며 구현 시 고정 제약이다.
+
+- **목표**: 원격 관리 UI 를 노드 화면을 충실히 재현하는 **전용 관리자 뷰**로 재구성한다 — 관리 크롬을 **상단 수평 바**로, 노드 화면을 **전체 너비**로, 대시보드를 노드 해상도 **고정 캔버스 + 레터박스**로. **xflowd 서버 모드 구조 유지**(별도 앱/바이너리/백엔드 분리/별도 SPA 없음 — A19), M7~M10 백엔드·컴포넌트 전부 재사용. **변경 경로 불변**(그룹 D/I).
+- **노드 해상도 보고(REQ-M01~M03)**: 노드 config(`display.resolution` 또는 `display.width`+`display.height`, A20/OQ-M1 ✅ RESOLVED)를 M9 시스템 정보 페이로드(register/heartbeat)에 `display_width`/`display_height`(px) 선택 필드로 확장. 서버 `managed_nodes` 저장(0=미보고) + NodeDetail 노출. 헤드리스 데몬이라 런타임 자동 감지 미신설. 하위 호환(미보고/0/잘못된 형식 → 관리자 뷰 폴백, REQ-M03). 신규 메시지 타입 없이 기존 페이로드 확장(REQ-N04). M9 시스템 정보 보고 경로(9.2)와 동형 — 필드만 추가.
+- **관리자 뷰 레이아웃(REQ-M04~M06, OQ-M3/M5 ✅ RESOLVED)**: M9 `NodeManagementPage`(`lg:grid-cols-[20rem_1fr]` 좌 디렉토리 + 우 대시보드)를 **상단 바 + 풀폭**으로 **제자리 진화**(OQ-M5 ✅ RESOLVED — 신규 라우트 병존 아님). 상단 바 = 노드 피커(그룹 묶음 드롭다운, M9 `nodesByGroup`/`sortedGroups`/`/remote/groups` 재사용 — OQ-M3 ✅ RESOLVED) + 서브탭 네비(M9 `NodeDashboard` 서브탭 호이스팅: 개요/플로우/에이전트/디바이스/대시보드) + 관리 액션(그룹 배정/해제 `NodeGroupMenu` 재배치) + 나가기. 노드 화면이 상단 바 아래 풀폭. 진입 시 전역 `Sidebar` 숨김/접힘(`uiStore.setSidebarCollapsed(true)` 또는 라우트 레벨 미렌더), 나가기 시 복원. 딥링크 `?node=`/`?tab=`(M9) 보존.
+- **대시보드 고정 캔버스 충실 재현(REQ-M07~M09, OQ-M2/M4 ✅ RESOLVED)**: 대시보드 서브탭(M10 RemoteDashboardView)을 노드 해상도 고정 픽셀 캔버스(`width=display_width`, `height=display_height`)에 렌더(내부 그리드 리플로우 없음 — REQ-M07), 가용 영역에 `scale=min(availW/W, availH/H)` transform + 레터박스 여백으로 종횡비 보존 스케일-투-핏(REQ-M08, OQ-M4 ✅ RESOLVED — stretch/crop 금지). 신규 `FixedCanvasScaler` 래퍼가 RemoteDashboardView 를 감싸며 **패널 컴포넌트 코드는 비분기**(스케일은 바깥 래퍼 — A21/A16 일관). 해상도 미보고 → 폴백 크기(REQ-M03). **충실 재현 범위 = 대시보드만**(플로우/에이전트/디바이스 서브탭은 풀폭 반응형 유지 — OQ-M2 ✅ RESOLVED). 패널 데이터·게이팅·실패·redaction·read-only 는 그룹 L 그대로(REQ-M09 — 신규 데이터/변경 경로 미신설).
+- **마이그레이션(REQ-M10)**: M9 좌측 디렉토리 master/detail → 상단 바 관리자 뷰, M9 기능 전부 보존(그룹핑·배정·개요·서브탭·딥링크). `등록 관리` 불변. 라우트(`/admin/remote`)·게이팅·M8/편집기 딥링크·`/admin/remote/control` 리다이렉트(REQ-K16) 보존. **본 마일스톤은 M9(9.4) 좌측 디렉토리 레이아웃을 대체한다.**
+- **재사용(재발명 금지)**: M9 NodeManagementPage 디렉토리/그룹 로직·`NodeDashboard`·`NodeGroupMenu`·`/remote/groups`·`/remote/nodes`·M8 통합 제어·M10 RemoteDashboardView/DashboardPage/패널·그룹 L 프록시·그룹 D 명령·M9 시스템 정보 보고 경로·`uiStore` 사이드바 토글을 재사용. 신규는 (1) 해상도 보고 필드·저장·노출, (2) 상단 바 셸(`ManagerViewTopBar`)·노드 피커(`NodePicker`)·전역 사이드바 숨김, (3) 고정 캔버스 스케일 래퍼(`FixedCanvasScaler`)뿐이다.
 
 ## 2. 마일스톤 (우선순위 기반, 시간 추정 없음)
 
@@ -260,6 +271,18 @@
 - 의존: M3(명령 디스패치 — control 쓰기), M4(노출 범위·미러), M6(감사·redaction), M8(그룹 J query/스트림 프록시·target 추상화·`useRemoteStream` — 필수 전제), M9(노드 대시보드 — 대시보드 서브탭 부착·M8 통합 제어 서브탭과 나란히), SPEC-DASHBOARD-001(로컬 DashboardPage/패널·`/dashboards` 핸들러)·SPEC-CHART-001(차트 채널). **M10 은 M8(query/스트림 프록시) 완료 후, 웹 단계(10.3/10.4)는 M9 웹(9.4) 이후** 진행한다(백엔드 10.1~10.2 는 M8 백엔드 완료 시 병행 가능).
 - 매핑: REQ-L01~L13, REQ-J03/J05/J06/J07/J08/J08b/J16/J12/J15·D04·E07/A06/F04/F06/N04·A16/A17/A18 일관.
 
+### 마일스톤 11 — v1.6 확장: 관리자 뷰 + 노드 해상도 보고 + 대시보드 고정 캔버스 충실 재현 (그룹 M) 🔲 계획
+> 그룹 M. 원격 관리 UI 를 노드 화면을 충실히 재현하는 **전용 관리자 뷰**로 재구성한다. 핵심은 (1) **노드 해상도 보고**(장비 모니터 해상도를 M9 시스템 정보 페이로드로 운반·저장·노출), (2) **상단 바 관리자 뷰 레이아웃**(관리 크롬=상단 수평 바·노드 화면=풀폭·전역 사이드바 숨김 → 좌우 폭 축소/왜곡 방지), (3) **대시보드 고정 캔버스 충실 재현**(노드 해상도 고정 캔버스 + 종횡비 보존 레터박스 스케일)이다. **xflowd 서버 모드 유지**(별도 앱/바이너리/백엔드 분리/별도 SPA 없음 — A19), M7~M10 백엔드·컴포넌트 재사용. **변경 경로 불변**(그룹 D/I). **이 마일스톤은 M9(9.4) 좌측 디렉토리 `NodeManagementPage` 레이아웃을 대체(supersede)한다**(기능 보존, 레이아웃만 진화). **OQ-M1~M5 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 고정 제약.** 3단계(해상도 보고 백엔드 → 관리자 뷰 셸·상단 바·사이드바 숨김·노드 피커 → 고정 캔버스 대시보드 렌더)로 분할한다.
+
+- **단계 11.1 — 노드 해상도 보고(백엔드)** 🔲: `internal/config/types.go`/`defaults.go`(수정) `remote_management.display.resolution`(`"WxH"`)·`display.width`/`height` 키 + 파싱. `internal/remote/protocol.go`(수정) RegisterPayload/HelloPayload/HeartbeatPayload 에 `display_width`/`display_height`(px) **선택 필드**(REQ-M01, M9 시스템 정보 필드와 동형 추가). `internal/remote/client.go`(수정) config→페이로드 채움(register 최초·heartbeat 갱신). `internal/remote/server.go`/`registration.go`(수정) 수신·저장. `internal/storage/managed_node_sqlite.go`/`managed_node_repository.go`(수정) `display_width`/`display_height` 컬럼 + 마이그레이션(기본 0), NodeDetail 파생. `internal/api/handler/remote.go`(수정) NodeDetail 응답에 해상도 포함. `web/src/types/remote.ts`(수정) NodeDetail `display_width`/`display_height` 필드. 하위 호환(미보고 0, REQ-M03 — 회귀 0).
+  - 검증: resolution_report_test(config 선언→register/heartbeat 보고·저장·NodeDetail 노출·미보고 0 하위 호환·잘못된 형식 안전 파싱), NodeDetail 직렬화.
+- **단계 11.2 — 관리자 뷰 셸 + 상단 바 + 노드 피커 + 전역 사이드바 숨김(추후 expert-frontend)** 🔲: `web/src/pages/remote/NodeManagementPage.tsx`(수정 — 좌측 디렉토리 master/detail → 상단 바 + 풀폭 노드 화면 **제자리 진화**, OQ-M5 ✅ RESOLVED; M9 `nodesByGroup`/`sortedGroups`/딥링크 `?node=`/`?tab=` 보존, REQ-M04/M10). `web/src/components/remote/ManagerViewTopBar.tsx`(신규 — 노드 피커+서브탭 네비+관리 액션+나가기). `web/src/components/remote/NodePicker.tsx`(신규 — 그룹 묶음 드롭다운, `/remote/groups`+`/remote/nodes` 재사용, REQ-M05/OQ-M3 ✅ RESOLVED). `web/src/components/remote/NodeDashboard.tsx`(수정 — 서브탭 네비를 상단 바로 호이스팅, 개요/플로우/에이전트/디바이스/대시보드, REQ-M06). `web/src/stores/uiStore.ts`·`web/src/components/layout/Sidebar.tsx`/`AppLayout.tsx`(수정 — 관리자 뷰 진입 시 전역 사이드바 숨김/접힘 `setSidebarCollapsed(true)`/라우트 레벨 미렌더, 나가기 시 복원, REQ-M06). `NodeGroupMenu`(재배치 — 피커/관리 액션). 다른 화면 회귀 0.
+  - 검증: ManagerView 레이아웃 Vitest(상단 바·풀폭·좌측 크롬 제거·왜곡 방지), NodePicker Vitest(그룹 묶음·노드 전환·M9 그룹 보존), 사이드바 숨김/복원 Vitest, 서브탭 호이스팅·딥링크 보존 Vitest, 등록 관리/타 화면 회귀 0.
+- **단계 11.3 — 대시보드 고정 캔버스 충실 재현(추후 expert-frontend)** 🔲: `web/src/components/remote/FixedCanvasScaler.tsx`(신규 — 노드 해상도 고정 픽셀 캔버스 + `scale=min(availW/W, availH/H)` transform + 레터박스 여백, ResizeObserver 로 가용 영역 추적, REQ-M07/M08/OQ-M4). `web/src/components/remote/NodeDashboard.tsx`(또는 RemoteDashboardView, 수정 — 대시보드 서브탭을 FixedCanvasScaler 로 감싸기). `web/src/hooks/useRemote.ts`(수정 — NodeDetail `display_width`/`display_height` 소비, 미보고 폴백 1920×1080/컨테이너). 패널 데이터·게이팅·READ-ONLY 는 그룹 L 그대로(REQ-M09 — 패널 코드 비분기, A21/A16). 충실 재현 범위=대시보드만(플로우/에이전트/디바이스 풀폭 반응형 — OQ-M2).
+  - 검증: FixedCanvasScaler Vitest(캔버스 크기=노드 해상도·레터박스 종횡비 보존·stretch/crop 금지·가용 영역 변경 재스케일·미보고 폴백), 대시보드 패널 그룹 L 경로/게이팅/READ-ONLY 불변 Vitest, 패널 로컬 렌더 바이트 동일 회귀.
+- 의존: M9(노드 그룹핑·시스템 정보 보고 경로·NodeManagementPage·NodeDashboard — 진화 대상이자 재사용), M10(RemoteDashboardView/DashboardPage/패널 target-aware — 고정 캔버스 감싸기 대상), M8(통합 제어 서브탭), M4(시스템 정보 저장 경로). **백엔드 11.1 은 M9 백엔드 완료 시 병행 가능, 웹 단계(11.2/11.3)는 M9 웹(9.4)·M10 웹(10.3) 이후** 진행한다(진화/감싸기 대상이 그 산출물이므로).
+- 매핑: REQ-M01~M10, REQ-K07/K08/K09/K11~K14·L01~L13·J03/J05/J06/J07/J12·D04·N03/N04·A16/A19/A20/A21 일관.
+
 ## 3. 위험 및 대응
 
 | 위험 | 영향 | 대응 |
@@ -309,12 +332,20 @@
 | 메트릭/로그 상시 폴링 노드 부하 | 노드/서버 부하 | 메트릭=온디맨드 query-action+TTL 캐시(L05/OQ-L6 RESOLVED), 로그=라이브 스트림+캐시 우회·백프레셔(L06), 장기 시계열/상시 폴링 미신설(K BASIC 비목표 일관) |
 | 노드 대시보드 서브탭이 프록시 우회 변경 시도 | READ-ONLY/변경 경로 원칙 위반 | 서브탭=로컬 DashboardPage 재사용(L10), 변경은 그룹 D/I 로만(L12/J03/J12), read-only-by-default·config 편집 비활성 |
 | OQ-L1~L6 설계 결정 | 잘못된 설계 고정 | ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 노드-로컬 read-only config/M8 chart-action 확장/v1.5 read-only/control 그룹 D 재사용/대시보드 서브탭(노드 대시보드)/메트릭=query·로그=스트림으로 고정 제약화 |
+| 좌측 디렉토리→상단 바 레이아웃 회귀(M9 기능 유실) | 그룹핑/딥링크/서브탭 단절 | NodeManagementPage 제자리 진화(OQ-M5 ✅ RESOLVED), M9 기능 전부 보존(REQ-M10 — 그룹핑/배정/개요/서브탭/딥링크 `?node=`/`?tab=`), 등록 관리 불변, 마이그레이션 Vitest |
+| 노드 화면 스케일/레터박스 부정확(왜곡/crop) | 충실 재현 실패 | 종횡비 보존 fit/레터박스만(OQ-M4 ✅ RESOLVED, REQ-M08), stretch/crop 금지, 고정 캔버스 리플로우 없음(REQ-M07), FixedCanvasScaler Vitest(종횡비·여백·재스케일) |
+| 노드 해상도 출처 모호(자동 감지 불가) | 잘못된 캔버스 크기 | config 선언 1차(OQ-M1 ✅ RESOLVED/A20), 헤드리스 런타임 감지 미신설, 미보고/0/잘못된 형식 → 폴백(1920×1080/컨테이너, REQ-M03), 하위 호환 0(K09 일관) |
+| 전역 사이드바 숨김이 타 화면에 누수 | 다른 화면 사이드바 사라짐 회귀 | 관리자 뷰 진입/나가기 스코프 토글(REQ-M06), 나가기 시 이전 상태 복원, 라우트 레벨 적용, 타 화면 회귀 0 Vitest |
+| 충실 재현이 패널 데이터/변경 경로 변형 | READ-ONLY/변경 경로·로컬 바이트 동일 위반 | 충실 재현=렌더 레이아웃만(REQ-M09), 데이터·변경·감사=그룹 L/D/I 그대로(신규 경로 미신설), 패널 코드 비분기(스케일=바깥 래퍼 — A21/A16), read-only-by-default(L12) |
+| 별도 앱/백엔드 분리로 오해("기능 이전") | 범위 폭증·M7~M10 재작성 | "기능 이전"=UI 재구성(A19, LOCKED), 별도 앱/바이너리/백엔드 분리/별도 SPA 비목표(§1.5), M7~M10 백엔드·컴포넌트 전부 재사용(재발명 금지) |
+| 충실 재현 범위 과확장(모든 노드 화면) | 통합 제어 UX 저하 | 고정 캔버스=대시보드만(OQ-M2 ✅ RESOLVED, REQ-M07), 플로우/에이전트/디바이스 서브탭=풀폭 반응형(관리 도구 화면), 픽셀 스트리밍/원격 데스크톱 비목표 |
+| OQ-M1~M5 설계 결정 | 잘못된 설계 고정 | ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — config 선언 해상도(폴백=기본값/컨테이너)/대시보드 전용 고정 캔버스/그룹 묶음 드롭다운/fit·레터박스(수동 줌 차기)/NodeManagementPage 제자리 진화로 고정 제약화 |
 
 ## 4. 개발 방법론
 
 - **Hybrid** (`.moai/config/sections/quality.yaml` development_mode=hybrid):
-  - 신규 코드(`internal/remote/*`, `managed_node_*`, remote 핸들러, instance_id, `query_proxy.go`, `stream_proxy.go`, 그룹/시스템 정보 신규 메서드, dashboard/monitor query·chart/logs stream 소스 바인딩) = **TDD**(RED-GREEN-REFACTOR, 신규 커버리지 85%+).
-  - 기존 변경(config types/defaults/validate, 어댑터 명령 진입, main.go 배선, `managed_node_sqlite.go` 컬럼/마이그레이션, register/heartbeat 페이로드 확장, query/stream allowlist 확장, `DashboardPage`/패널/`useChartChannel` target 전파·어댑터 주입) = **동작 보존 DDD**(ANALYZE-PRESERVE-IMPROVE, 회귀 0 — 특히 시스템 정보 필드 하위 호환 및 **대시보드 패널 로컬 렌더 바이트 동일** — A16).
+  - 신규 코드(`internal/remote/*`, `managed_node_*`, remote 핸들러, instance_id, `query_proxy.go`, `stream_proxy.go`, 그룹/시스템 정보 신규 메서드, dashboard/monitor query·chart/logs stream 소스 바인딩, **해상도 보고 필드/파싱·`FixedCanvasScaler`·`ManagerViewTopBar`/`NodePicker`**) = **TDD**(RED-GREEN-REFACTOR, 신규 커버리지 85%+).
+  - 기존 변경(config types/defaults/validate, 어댑터 명령 진입, main.go 배선, `managed_node_sqlite.go` 컬럼/마이그레이션, register/heartbeat 페이로드 확장, query/stream allowlist 확장, `DashboardPage`/패널/`useChartChannel` target 전파·어댑터 주입, **`NodeManagementPage` 상단 바 진화·`NodeDashboard` 서브탭 호이스팅·전역 사이드바 숨김**) = **동작 보존 DDD**(ANALYZE-PRESERVE-IMPROVE, 회귀 0 — 특히 시스템 정보/해상도 필드 하위 호환, **대시보드 패널 로컬 렌더 바이트 동일**(A16), **M9 기능 보존**(그룹핑/딥링크/서브탭·REQ-M10), 타 화면 사이드바 회귀 0).
 - 기존 ws/auth/adapter 인프라는 재사용(재발명 금지) → 기존 회귀 스위트로 보호.
 
 ## 5. 검증 전략 요약
@@ -326,6 +357,7 @@
 - 원격 제어 패리티(그룹 J): per-domain query-action allowlist(FULL 커버리지)·게이팅(승인·온라인·노출)·redaction·상관/타임아웃·실패 의미(503/504/502)·READ-ONLY 거부; 스트리밍 프록시(subscribe/stream_data/unsubscribe·teardown·백프레셔); 단기 TTL 캐시(무효화·라이브 우회); 통합 UI 타깃 추상화·로컬 페이지/상세 패널 원격 재사용·FULL 패리티·스트림 소비·노드 셀렉터·target 라우팅·폴링 폴백(Vitest, 추후).
 - 노드 그룹핑/시스템 정보/운영 요약(그룹 K): 단일 그룹 배정/해제·distinct("전체" 포함)·그룹별 노드·재라벨링/환원·admin 게이팅; register/heartbeat BASIC 시스템 정보 보고·하위 호환(미보고 빈값)·uptime started_at 파생·자원 메트릭 비포함; 운영 요약 미러 파생(오프라인 last-known); 웹 IA 재편(노드 관리/등록 관리 대체·디렉토리·노드 대시보드·M8 서브탭 재사용·딥링크 보존, Vitest 추후).
 - 원격 대시보드 패리티(그룹 L): dashboard config query-action(get_shared/get_mine·READ-ONLY·변경 action 배제·노드-로컬 권위)·게이팅·redaction·실패 의미(503/504/502/404)·TTL 캐시; monitor.metrics query-action(온디맨드·캐시); chart/monitor.logs 스트림 action(중계·teardown·백프레셔·캐시 우회·폴백·별도 WS 경로 미신설); 웹 패널 target 전파(로컬 바이트 동일·원격 분기)·기존 target 훅 재사용·useChartChannel 원격 어댑터 주입·control 그룹 D 라우팅·노드 대시보드 대시보드 서브탭(로컬 DashboardPage 재사용)·read-only-by-default(Vitest 추후).
+- 관리자 뷰 + 충실 재현(그룹 M): 노드 해상도 보고(config 선언→register/heartbeat 보고·저장·NodeDetail 노출·미보고 0 하위 호환·잘못된 형식 폴백); 관리자 뷰 레이아웃(상단 바 관리 크롬·풀폭 노드 화면·좌측 크롬 제거·전역 사이드바 숨김/복원·노드 피커 그룹 묶음·서브탭 호이스팅·딥링크 보존·M9 기능 보존); 대시보드 고정 캔버스(노드 해상도 캔버스·종횡비 보존 레터박스·stretch/crop 금지·리플로우 없음·가용 영역 재스케일·미보고 폴백·패널 데이터/게이팅/READ-ONLY 불변)(Go: resolution_report_test; Vitest 추후: ManagerView/NodePicker/사이드바 숨김/FixedCanvasScaler/마이그레이션).
 - 통합/회귀: 등록→승인→명령→미러 end-to-end, 원격 편집(생성·수정·삭제→전파→적용→결과→캐시), 원격 상세 query-action 패리티(상세/통계/노드 레벨) + 실시간 스트림(상태/시리즈 라이브), 그룹 배정→그룹별 목록→대시보드 시스템+운영 요약 표시→서브탭 M8 제어, 재연결, disabled 회귀, 기존 ws/auth/adapter 불변.
 - 보안: TLS(wss), 토큰 인증/폐기, 승인 게이팅, 명령 권한, OWASP API Security 참조.
 - 품질 게이트: TRUST 5, LSP zero-error(run), golangci-lint zero, gofmt/goimports 클린.

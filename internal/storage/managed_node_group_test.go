@@ -172,7 +172,7 @@ func TestManagedNode_SystemInfoStoredAndPreserved(t *testing.T) {
 	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "n", Status: "approved"}))
 
 	// 최초 보고(register): os/arch/started_at 저장.
-	require.NoError(t, repo.SetSystemInfo(ctx, "n", "linux", "arm64", 5000))
+	require.NoError(t, repo.SetSystemInfo(ctx, "n", "linux", "arm64", 5000, 0, 0))
 	got, err := repo.Get(ctx, "n")
 	require.NoError(t, err)
 	assert.Equal(t, "linux", got.OS)
@@ -180,14 +180,14 @@ func TestManagedNode_SystemInfoStoredAndPreserved(t *testing.T) {
 	assert.Equal(t, int64(5000), got.StartedAt)
 
 	// heartbeat 가 일부 필드 생략(빈값/0) → 기존값 보존(REQ-K09).
-	require.NoError(t, repo.SetSystemInfo(ctx, "n", "", "", 0))
+	require.NoError(t, repo.SetSystemInfo(ctx, "n", "", "", 0, 0, 0))
 	got, _ = repo.Get(ctx, "n")
 	assert.Equal(t, "linux", got.OS, "미제공 os 는 기존값 보존")
 	assert.Equal(t, "arm64", got.Arch, "미제공 arch 는 기존값 보존")
 	assert.Equal(t, int64(5000), got.StartedAt, "미제공 started_at 은 기존값 보존")
 
 	// 재기동 register → started_at 갱신(제공 시 덮어씀).
-	require.NoError(t, repo.SetSystemInfo(ctx, "n", "linux", "arm64", 9000))
+	require.NoError(t, repo.SetSystemInfo(ctx, "n", "linux", "arm64", 9000, 0, 0))
 	got, _ = repo.Get(ctx, "n")
 	assert.Equal(t, int64(9000), got.StartedAt, "제공된 started_at 은 갱신되어야 함")
 }
@@ -196,7 +196,7 @@ func TestManagedNode_SystemInfoStoredAndPreserved(t *testing.T) {
 // 반환하는지 검증한다.
 func TestManagedNode_SetSystemInfoNotFound(t *testing.T) {
 	repo := newTestManagedNodeRepo(t)
-	err := repo.SetSystemInfo(context.Background(), "missing", "linux", "amd64", 1)
+	err := repo.SetSystemInfo(context.Background(), "missing", "linux", "amd64", 1, 0, 0)
 	assert.ErrorIs(t, err, ErrManagedNodeNotFound)
 }
 
@@ -208,7 +208,7 @@ func TestManagedNode_SystemInfoDoesNotClobberGroup(t *testing.T) {
 	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "n", Status: "approved"}))
 	require.NoError(t, repo.SetNodeGroup(ctx, "n", "prod"))
 
-	require.NoError(t, repo.SetSystemInfo(ctx, "n", "darwin", "arm64", 1234))
+	require.NoError(t, repo.SetSystemInfo(ctx, "n", "darwin", "arm64", 1234, 0, 0))
 	got, err := repo.Get(ctx, "n")
 	require.NoError(t, err)
 	assert.Equal(t, "prod", got.GroupName, "시스템 정보 갱신은 group_name 을 건드리지 않아야 함")
@@ -225,7 +225,7 @@ func TestManagedNode_GroupMethodsAfterClose(t *testing.T) {
 
 	ctx := context.Background()
 	assert.Error(t, repo.SetNodeGroup(ctx, "x", "g"))
-	assert.Error(t, repo.SetSystemInfo(ctx, "x", "linux", "amd64", 1))
+	assert.Error(t, repo.SetSystemInfo(ctx, "x", "linux", "amd64", 1, 0, 0))
 	_, listErr := repo.ListGroups(ctx)
 	assert.Error(t, listErr)
 }

@@ -40,8 +40,15 @@ type ManagedNode struct {
 	OS         string // 노드 OS(runtime.GOOS, BASIC 시스템 정보 — REQ-K07)
 	Arch       string // 노드 arch(runtime.GOARCH, BASIC 시스템 정보 — REQ-K07)
 	StartedAt  int64  // 노드 프로세스 시작 시각(epoch ms, uptime 산출용 — REQ-K07/K08)
-	CreatedAt  int64  // 최초 등록 시각(epoch ms)
-	UpdatedAt  int64  // 마지막 갱신 시각(epoch ms)
+	// DisplayWidth/DisplayHeight 는 노드 장비 모니터(키오스크/터치스크린) 해상도이다
+	// (px, v1.6 M11, 그룹 M, REQ-M01/M02). 노드가 register/heartbeat 로 보고하며(config
+	// 파생 — 헤드리스 데몬), 0 은 미보고를 의미한다(관리자 뷰가 폴백 — REQ-M03). 시스템
+	// 정보(os/arch/started_at)와 동일하게 SetSystemInfo 가 제공된 값만 갱신하고 미제공(0)
+	// 은 기존값을 보존한다(하위 호환 — REQ-M03).
+	DisplayWidth  int   // 노드 장비 화면 가로 px(0=미보고 — REQ-M01/M03)
+	DisplayHeight int   // 노드 장비 화면 세로 px(0=미보고 — REQ-M01/M03)
+	CreatedAt     int64 // 최초 등록 시각(epoch ms)
+	UpdatedAt     int64 // 마지막 갱신 시각(epoch ms)
 }
 
 // NodeGroupCount 는 distinct 그룹 라벨과 그 노드 수이다(REQ-K03).
@@ -82,11 +89,12 @@ type ManagedNodeRepository interface {
 	// 빈 그룹(구성원 0)은 자동으로 목록에서 사라진다(REQ-K05). 정렬: "전체" 먼저, 그
 	// 다음 그룹명 오름차순.
 	ListGroups(ctx context.Context) ([]NodeGroupCount, error)
-	// SetSystemInfo 는 노드가 보고한 BASIC 시스템 정보(os/arch/started_at)를 저장한다
-	// (REQ-K08). 제공된 필드만 갱신하고 미제공(빈 문자열/0) 필드는 기존값을 보존한다
-	// (하위 호환 — heartbeat 가 일부만 보내거나 구버전 노드가 생략 — REQ-K09). group_name
-	// 은 절대 건드리지 않는다(관리자 전용). 없으면 ErrManagedNodeNotFound.
-	SetSystemInfo(ctx context.Context, instanceID, os, arch string, startedAtMs int64) error
+	// SetSystemInfo 는 노드가 보고한 BASIC 시스템 정보(os/arch/started_at) + 노드 해상도
+	// (displayWidth/displayHeight)를 저장한다(REQ-K08/M01/M02). 제공된 필드만 갱신하고
+	// 미제공(빈 문자열/0) 필드는 기존값을 보존한다(하위 호환 — heartbeat 가 일부만 보내거나
+	// 구버전 노드가 생략 — REQ-K09/M03). group_name 은 절대 건드리지 않는다(관리자 전용).
+	// 없으면 ErrManagedNodeNotFound.
+	SetSystemInfo(ctx context.Context, instanceID, os, arch string, startedAtMs int64, displayWidth, displayHeight int) error
 
 	// Delete 는 instance_id 로 노드를 삭제한다. 없으면 ErrManagedNodeNotFound.
 	Delete(ctx context.Context, instanceID string) error

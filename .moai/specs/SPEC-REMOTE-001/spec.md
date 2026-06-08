@@ -1,7 +1,7 @@
 ---
 id: SPEC-REMOTE-001
 title: "원격 관리 서버/클라이언트 — xflow 인스턴스 fleet 등록·승인·원격 제어·인벤토리 미러링"
-version: "1.5.0"
+version: "1.6.0"
 status: planned
 created: "2026-06-05"
 updated: "2026-06-08"
@@ -41,6 +41,11 @@ tags:
   - dashboard-parity
   - chart-stream-proxy
   - panel-target-awareness
+  - manager-view
+  - node-resolution
+  - top-bar-layout
+  - fixed-canvas
+  - letterbox-scaling
 ---
 
 | 버전 | 날짜 | 작성자 | 변경 내용 |
@@ -49,6 +54,7 @@ tags:
 | 1.1.0 | 2026-06-06 | xtra | v1.1 확장 — 수동 enrollment(그룹 H). (A) 사전 등록(instance_id allow-list): 접속 전 approved 노드 사전 생성 + 접속 시 자동 승인. (B) enrollment 토큰: 관리자가 발급한 1회성/횟수·기간 제한 가입 토큰을 register 에 운반해 관리자 수동 승인 없이 자동 승인. 토큰은 SHA-256 해시로만 저장(원본 1회 노출), 즉시 폐기 가능. 모든 신규 REST 엔드포인트 admin-gated, 자동 승인 감사 기록 |
 | 1.2.0 | 2026-06-06 | xtra | v1.2 확장 — 원격 자원 편집(그룹 I). 관리자가 서버 웹 UI 에서 승인·온라인 노드의 플로우/에이전트를 FULL CRUD(생성·수정·삭제). 기존 시각 편집기(EditorPage.tsx React Flow) 재사용. 모든 편집은 그룹 D 명령 경유 → 노드 어댑터 로컬 적용 → 결과 수신 후에만 미러 캐시 갱신(서버 단독 영속 금지 — A4/E08). 시크릿 redaction 라운드트립 보존(마스킹 필드 생략·노드 측 병합), 실패 의미(offline=503/timeout=504/apply-fail=502). §1.5 비목표의 "서버 측 직접 영속 편집" 항목 대체. 마일스톤 M7 추가. (2026-06-06 RESOLVED §5.9-6~9: 시크릿=필드 부재+노드 backfill, 동시성=노드 권위+비차단 경고(잠금 없음), 신규 ID=노드 채번, 신규 생성 자원=수동 노출(opt-in 보존)) |
 | 1.5.0 | 2026-06-08 | xtra | v1.5 확장 — 원격 노드 대시보드 패리티(그룹 L). 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 DashboardPage**(`target=remote:{instanceId}`)로 보고 제어한다(M8 query/스트림 프록시 + target 추상화 재사용). (A) **대시보드 CONFIG 읽기 프록시** — 노드의 대시보드 설정(dashboardPages[]/activeDashboardId/grid/refresh/deviceGridLayout, SPEC-DASHBOARD-001 `GET /dashboards/{shared,mine}`)을 그룹 J query-action(`dashboard` 도메인 `get_shared`/`get_mine`)으로 **READ-ONLY** 취득(원격 config **편집은 v1.5 비목표**, 차기 위임). (B) **패널 데이터 소스 target-aware** — flows/agents/devices/single-device 패널은 기존 target 훅(useResourceTargets/useDetailTargets) 재사용, resource(메트릭)·logs·CHART 를 신규 query-action/스트림으로 원격화: 신규 `monitor/metrics` query-action, 신규 `monitor/logs` 스트림 action, **CHART 는 M8 스트림 프록시에 `chart` stream-action(subscribe/stream_data) 추가**(`/ws/chart/{channel}` 직결 대신 서버 경유 중계, 폴링 폴백·teardown·백프레셔 J08/J08b 재사용). control 패널(ac/hvac/outdoor)은 useDeviceDetailTarget + **그룹 D 명령**으로 디바이스 쓰기. 패널은 dashboard 레벨 TargetProvider/prop 으로 target 수신(target 없으면 로컬 렌더 바이트 동일). (C) **디바이스/자원 ref 네임스페이싱** — 원격 target 하에서 패널 device ref 는 **그 노드 기준** 해석(대시보드 config 는 **노드-로컬**: 노드별 fetch, deviceId 는 그 노드의 것 — 중앙 cross-node config 대신 v1 단순성 채택). (D) **UI** — `노드 대시보드`(NodeDashboard, M9)에 **대시보드 서브탭** 추가 및/또는 DashboardPage `target=remote:{id}` 지원, 게이팅(승인+온라인+노출)·redaction·실패 의미(503/504/502/404)·read-only-by-default·원격 컨텍스트 표시. 마일스톤 M10 추가. (OQ-L1~L6 ✅ RESOLVED 2026-06-08 — 사용자 권고안대로 확정: 노드-로컬 read-only config / CHART=M8 스트림 프록시 chart-action 확장 / 원격 config READ-ONLY(편집 차기) / control 쓰기=그룹 D 재사용 / 대시보드 서브탭(노드 대시보드) / 메트릭=query-action·로그=스트림) |
+| 1.6.0 | 2026-06-08 | xtra | v1.6 확장 — 관리자 뷰(Manager View)·노드 화면 충실 재현(그룹 M). xflowd 서버 모드 구조는 **유지**하되(별도 관리자 앱/바이너리/백엔드 분리/별도 SPA 없음 — M7~M10 백엔드·컴포넌트 전부 재사용), 원격 관리 UI 를 노드 화면을 충실히 재현하는 **전용 관리자 뷰**로 재구성한다. (A) **노드 해상도 보고** — 노드가 자신의 장비 모니터(키오스크/터치스크린) 해상도(width×height)를 보고(기본: 노드 config `display.resolution`/`display.width`+`display.height` — xflowd 는 헤드리스 데몬이므로 운영자가 장비 화면 해상도를 선언, M9 register/heartbeat 시스템 정보 페이로드로 운반, 하위 호환 — 미보고 시 관리자 뷰가 합리적 기본값/컨테이너 크기로 폴백), 서버가 `managed_nodes` 에 저장·노드 상세에 노출, 관리자 뷰가 소비. (B) **관리자 뷰 레이아웃** — 노드 선택 시 관리 크롬(노드 선택기=좌측 디렉토리를 대체하는 노드 피커 드롭다운(M9 그룹 구조 유지)·서브탭 네비 개요/플로우/에이전트/디바이스/대시보드·관리 액션·나가기)을 **상단 수평 바**로 옮기고, 노드 화면이 그 아래 **전체 너비/높이**를 점유한다(좌우 폭 축소/왜곡 방지). 전역 좌측 사이드바는 이 뷰에서 숨김/접힘. M9 NodeManagementPage(좌측 디렉토리) → 상단 바 관리자 뷰로 **진화**(디렉토리/그룹 선택은 상단 노드 피커로 이전, 서브탭은 상단 바로 이전). 등록 관리는 그대로. (C) **해상도 충실 대시보드 렌더** — RemoteDashboardView(그룹 L) 가 노드 보고 해상도에 맞춘 **고정 캔버스**에 렌더 후 가용 영역에 종횡비 보존 스케일-투-핏(레터박스, 패널 리플로우 없음) → 노드 장비에서 보이는 그대로의 왜곡 없는 복제. **변경 경로 불변**(그룹 D/I). 마일스톤 M11 추가. (OQ-M1~M5 ✅ 전부 RESOLVED 2026-06-08 — 사용자 권고안대로 확정: 노드 config 선언 해상도(폴백=기본값/컨테이너) / 대시보드 전용 고정 캔버스 / 그룹 묶음 드롭다운 노드 피커 / fit·레터박스 스케일(수동 줌 차기) / NodeManagementPage 제자리 진화) |
 | 1.4.0 | 2026-06-07 | xtra | v1.4 확장 — 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드(그룹 K). 사이드바 `원격 관리` 그룹을 **두 개의 최상위 진입점**(`노드 관리`(운영) + `등록 관리`(온보딩))으로 재편하여 기존 `관리 노드`(RemoteNodesPage) + `원격 노드 제어`(RemoteControlPage) 를 **대체**한다. (A) 노드 그룹핑: `managed_nodes` 에 **단일 그룹 라벨**(group_name, 기본 빈값→"전체"(All) 기본 버킷) 추가 — 한 노드는 **최대 하나의 그룹**에만 속하고, 그룹은 자유 입력 단일 레벨 라벨이며, 그룹 배정/해제·distinct 그룹 목록·그룹별 노드 목록(전체 기본 버킷 포함) API + admin-gated 영속. 그룹 이름 변경=노드 재라벨링, 그룹 비움/삭제=노드를 "전체"로 환원. (B) 노드 시스템 정보 보고(BASIC): 노드가 OS+arch+version+started_at(epoch ms, uptime 산출용)을 register/heartbeat 페이로드로 보고(자원 메트릭 CPU/메모리/디스크 **제외**), 서버가 managed_nodes 에 저장·노드 상세/목록 API 로 노출(하위 호환 — 미보고 노드는 필드 빈값). (C) 노드별 운영 요약: 기존 미러(그룹 E)에서 플로우/에이전트/디바이스 카운트+상태 분해를 **파생**(신규 쿼리 우선이 아니라 미러 데이터 우선). (D) UI 재구성: `노드 관리`=디렉토리 뷰(단일 레벨 그룹 트리, "전체" 기본)+노드 선택→**노드 대시보드**(시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭이 기존 M8 통합 제어(`target=remote:{instanceId}`) 재사용); `등록 관리`=토큰 관리(EnrollmentTokenSection)+노드 등록 관리(pending 승인 큐·승인/거부/폐기·사전 등록). 마일스톤 M9 추가. (OQ-K1~K7 ✅ RESOLVED 2026-06-07 — 사용자 권고안대로 확정: 서버 전용 그룹 / register+heartbeat 시스템 정보 / 미러 파생 운영 요약 / started_at 서버 파생 uptime / 빈 라벨=가상 "전체" 버킷 / 사전 등록·승인 UI 등록 관리 흡수 / /admin/remote/control 리다이렉트) |
 | 1.3.0 | 2026-06-06 | xtra | v1.3 확장 — 원격 노드 FULL 제어 패리티(그룹 J). 원격 노드의 플로우/에이전트/디바이스를 **별도 원격 페이지가 아니라 로컬과 동일한 웹 UI**(FlowListPage/AgentListPage/DeviceListPage + 상세 패널)로 제어한다. 목록·라이프사이클을 넘어 **상세 패널까지 FULL 패리티**(에이전트 통계/설정/디바이스/토픽/store/세션/시리즈, 디바이스 실시간 상태+명령+메타데이터, 플로우 노드 레벨 런타임/로그). 이를 위해 미러(그룹 E)·명령(그룹 D)과 구분되는 **신규 READ/QUERY 프록시**를 신설: 그룹 D 명령과 **대칭되는 per-domain query-action**(`{domain, query_action, args}`)을 `query`/`query_result` 로 운반하고 노드가 각 action 을 로컬 read 핸들러로 매핑해 라이브 JSON 반환(READ-ONLY — 변경은 그룹 D/M7 유지). 실시간 데이터(디바이스 상태·에이전트 라이브 통계/시리즈)는 **스트리밍 프록시**(subscribe/stream_data/unsubscribe, 서버 경유 중계, teardown·백프레셔)로 제공(폴링은 폴백). 서버는 query-action 응답을 **단기 TTL 캐시**(스트리밍/라이브 action 캐시 우회, 변경 시 무효화). UI 는 `useEditorFlowTarget` 의 target 추상화를 목록/제어 페이지로 확장(useFlowsTarget/useAgentsTarget/useDevicesTarget), `?target=remote:{instanceId}` 쿼리 파라미터 + 노드 셀렉터로 동일 페이지 재사용. 기존 RemoteResourcesPage 는 노드 셀렉터로 재용도화/폐기. 마일스톤 M8 추가. (OQ-J1~J7 RESOLVED: per-domain query-action / FULL 커버리지 / 스트리밍 포함 / 디바이스 쓰기=그룹 D / 최소 감사 / 단기 TTL 캐시 / 서버 admin 게이팅) |
 
@@ -123,6 +129,10 @@ tags:
 | 대시보드 config | dashboard config | (v1.5) SPEC-DASHBOARD-001 의 인스턴스별 서버 영속 대시보드 설정(`dashboardPages[]`, `activeDashboardId`, grid cols, refresh interval, `deviceGridLayout`). `GET/PUT/DELETE /dashboards/{shared,mine}`(global+user 스코프). v1.5 원격 패리티는 노드의 대시보드 config 를 **노드-로컬**(노드별 fetch)로 READ-ONLY 취득하며, 그 안의 deviceId 는 해당 노드 기준으로 해석한다. |
 | 패널 target 인식 | panel target-awareness | (v1.5) 대시보드 패널이 dashboard 레벨 `target`(local | remote:{instanceId})을 입력으로 받아 각 데이터 소스(디바이스 상태/명령, 에이전트/플로우, 자원 메트릭, 로그, 차트 스트림)를 로컬 vs 원격(프록시)으로 해석하는 추상화. `target` 미지정 시 로컬 렌더는 바이트 동일. |
 | 차트 스트림 프록시 | chart stream proxy | (v1.5) 노드의 `/ws/chart/{channel}` 라이브 차트 데이터를 **별도 WS 경로 신설 없이** M8 스트림 프록시에 `chart` stream-action(subscribe/stream_data/unsubscribe)을 추가하여 서버 경유로 브라우저에 중계하는 메커니즘. teardown·백프레셔(J08b)·폴링 폴백을 재사용한다. |
+| 관리자 뷰 | manager view | (v1.6) 원격 노드의 화면을 **충실히 재현**하기 위해 재구성된 전용 원격 관리 화면. 노드 선택 시 관리 크롬(노드 피커·서브탭 네비·관리 액션·나가기)은 **상단 수평 바**에, 선택 노드의 화면은 그 아래 **전체 너비/높이**에 배치하며, 전역 좌측 사이드바는 숨김/접힘된다. **별도 관리자 앱/바이너리/백엔드 분리/별도 SPA 가 아니라**, xflowd 서버 모드 안에서 M7~M10 백엔드·컴포넌트를 재사용해 기존 `노드 관리`(NodeManagementPage, M9)를 **상단 바 레이아웃으로 진화**시킨 것이다. |
+| 노드 해상도 | node resolution | (v1.6) 노드의 **장비 모니터(키오스크/터치스크린) 디스플레이 해상도**(width×height, px). xflowd 는 헤드리스 데몬이므로 런타임 자동 감지 대상이 없어, 운영자가 노드 config 로 선언한 장비 화면 해상도를 1차 출처로 한다(`display.resolution` 또는 `display.width`+`display.height`). M9 시스템 정보 페이로드로 register/heartbeat 시 운반되며, 서버가 저장·노드 상세로 노출한다. 미보고 시 관리자 뷰가 합리적 기본값/컨테이너 크기로 폴백한다(하위 호환). 노드의 IoT 디바이스 해상도와 무관하다. |
+| 노드 피커 | node picker | (v1.6) 관리자 뷰 **상단 바**에서 관리 대상 노드를 선택하는 컨트롤. M9 좌측 디렉토리(그룹 트리)를 대체하되 **그룹 구조(REQ-K01~K05)는 보존**한다(권고: 그룹별로 묶인 드롭다운). 노드 선택 시 화면이 선택 노드로 전환된다. |
+| 고정 캔버스 | fixed canvas | (v1.6) 원격 노드의 대시보드를 노드 보고 해상도(width×height)와 동일한 **고정 픽셀 크기 컨테이너**에 렌더하고, 가용 영역에 **종횡비 보존 스케일-투-핏(레터박스)** 으로 맞추는 렌더 방식. 패널이 반응형으로 리플로우되지 않아(고정 그리드) 노드 장비에서 보이는 레이아웃을 왜곡 없이 복제한다. CSS transform scale + 레터박스 여백으로 구현하며, 패널 컴포넌트 코드는 분기하지 않는다(REQ-L09/A16 일관). |
 
 > "device" 라는 단어는 **IoT 디바이스** 에만 사용한다. xflow 설치본은 항상 "managed node / 노드" 로 부른다. 명령군에서 "디바이스 메타데이터 제어"는 IoT 디바이스를 의미한다.
 
@@ -140,6 +150,7 @@ tags:
 - 원격 노드 FULL 제어 패리티(v1.3, 그룹 J): 원격 노드의 플로우/에이전트/디바이스를 **로컬과 동일한 웹 UI**(로컬 목록 페이지 + 상세 패널 재사용)로 제어. (a) 신규 READ/QUERY 프록시 — 그룹 D command 와 대칭되는 **per-domain query-action**(열거 allowlist, FULL 커버리지)으로 노드의 라이브 데이터(상세/통계/노드 레벨 런타임·로그 등)를 온디맨드 취득(READ-ONLY), 서버 **단기 TTL 캐시**. (b) **스트리밍 프록시** — 디바이스 실시간 상태·에이전트 라이브 통계/시리즈를 서버 경유로 브라우저에 중계(subscribe/stream_data/unsubscribe, teardown·백프레셔; 폴링은 폴백). (c) 통합 UI — `target`(local | remote:{instanceId}) 추상화로 로컬 페이지를 원격에 파라미터화, 노드 셀렉터 + `?target=` 라우팅.
 - 원격 노드 대시보드 패리티(v1.5, 그룹 L): 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 `DashboardPage`**(`target=remote:{instanceId}`)로 보고 제어. (a) **대시보드 config 읽기 프록시** — 노드의 대시보드 설정(`dashboardPages[]`/`activeDashboardId`/grid/refresh/`deviceGridLayout`, SPEC-DASHBOARD-001)을 그룹 J query-action(`dashboard` 도메인 `get_shared`/`get_mine`)으로 **READ-ONLY** 취득(원격 config 편집은 v1.5 비목표). (b) **패널 데이터 소스 target-aware** — flows/agents/devices/single-device 패널은 기존 target 훅 재사용, 자원 메트릭(신규 `monitor/metrics` query-action)·로그(신규 `monitor/logs` 스트림 action)·CHART(M8 스트림 프록시에 `chart` stream-action 추가, `/ws/chart/{channel}` 직결 대신 서버 경유 중계)·control 패널(useDeviceDetailTarget + 그룹 D 명령으로 디바이스 쓰기)을 원격화. 패널은 dashboard 레벨 TargetProvider/prop 으로 target 수신(target 없으면 로컬 렌더 바이트 동일). (c) **디바이스/자원 ref 네임스페이싱** — 원격 target 하에서 패널 device ref 는 그 노드 기준 해석(대시보드 config 는 **노드-로컬** — 노드별 fetch, deviceId 는 그 노드의 것; 중앙 cross-node config 비채택). (d) **UI** — 노드 대시보드(M9)에 **대시보드 서브탭** 추가 및/또는 `DashboardPage target=remote:{id}` 지원, 게이팅(승인+온라인+노출)·redaction·실패 의미·read-only-by-default·원격 컨텍스트 표시.
 - 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드(v1.4, 그룹 K): (a) **노드 그룹핑** — `managed_nodes` 에 단일 그룹 라벨(`group_name`, 기본 빈값→"전체") 추가, 그룹 배정/해제·distinct 그룹 목록·그룹별 노드 목록 API + admin-gated 영속(단일 레벨, 노드당 최대 1 그룹). (b) **노드 시스템 정보 보고(BASIC)** — 노드가 OS+arch+version+started_at(epoch ms)을 register/heartbeat 페이로드로 보고(자원 메트릭 제외), 서버가 저장·상세/목록 API 로 노출, uptime 은 started_at 파생, 하위 호환(미보고 노드 빈값). (c) **노드별 운영 요약** — 기존 미러(그룹 E)에서 플로우/에이전트/디바이스 카운트+상태 분해를 파생. (d) **UI 재구성** — 사이드바 `원격 관리` 그룹을 `노드 관리`(디렉토리 뷰 + 노드 대시보드: 시스템 정보 + 운영 요약 + M8 통합 제어 재사용 Flow/Agent/Device 서브탭) + `등록 관리`(토큰 관리 + 노드 등록 관리)로 재편하여 기존 `관리 노드`/`원격 노드 제어` 진입점을 대체. M8 통합 제어 페이지·편집기 라우트는 새 `노드 관리`에서 도달 가능.
+- 관리자 뷰 + 노드 화면 충실 재현(v1.6, 그룹 M): xflowd 서버 모드 구조를 **유지**한 채(별도 관리자 앱/바이너리/백엔드 분리/별도 SPA 없음 — M7~M10 백엔드·컴포넌트 전부 재사용) 원격 관리 UI 를 노드 화면을 충실히 재현하는 **전용 관리자 뷰**로 재구성. (a) **노드 해상도 보고** — 노드가 장비 모니터 해상도(width×height)를 M9 시스템 정보 페이로드로 보고(1차 출처=노드 config `display.resolution`/`display.width`+`display.height`, 헤드리스 데몬 특성상 운영자 선언), 서버가 `managed_nodes` 저장·노드 상세 노출, 하위 호환(미보고 시 폴백). (b) **관리자 뷰 레이아웃** — 노드 선택 시 관리 크롬(노드 피커=좌측 디렉토리 대체·M9 그룹 보존, 서브탭 네비 개요/플로우/에이전트/디바이스/대시보드, 관리 액션, 나가기)을 **상단 수평 바**로 옮기고 노드 화면이 **전체 너비/높이**를 점유, 전역 좌측 사이드바 숨김/접힘(좌우 폭 축소·왜곡 방지). M9 NodeManagementPage(좌측 디렉토리) → 상단 바 관리자 뷰로 **진화**(디렉토리/그룹 선택→상단 노드 피커, 서브탭→상단 바). 등록 관리는 그대로. (c) **해상도 충실 대시보드 렌더** — RemoteDashboardView(그룹 L)가 노드 보고 해상도 **고정 캔버스**에 렌더 후 종횡비 보존 스케일-투-핏(레터박스, 패널 리플로우 없음) → 노드 장비 화면의 왜곡 없는 복제, 패널(M10) 은 이 캔버스 안에 렌더. **변경 경로 불변**(그룹 D/I — 프록시 경유 변경 금지, REQ-J03/J12 일관).
 
 **제외(Non-goals):**
 - 역터널/리버스 프록시, 노드 간 직접 P2P, 공유 데이터베이스(명시적 금지 — RPC over 라이브 연결만).
@@ -157,6 +168,11 @@ tags:
 - **중앙 cross-node 대시보드 config(v1.5 그룹 L 제외)**: 대시보드 config 는 **노드-로컬**(노드별 fetch, deviceId 는 그 노드 기준)로 둔다(OQ-L1 RESOLVED). 여러 노드의 패널을 한 대시보드 config 에 `{nodeId, deviceId}` 로 혼합 참조하는 **중앙 cross-node 대시보드**는 제외한다(향후 SPEC).
 - **차트용 별도 WS 프록시 경로 신설(v1.5 그룹 L 제외)**: 원격 차트 스트리밍은 M8 스트림 프록시에 `chart` stream-action 을 **추가**해 재사용하며(OQ-L2 RESOLVED), `/ws/chart/{channel}` 를 그대로 프록시하는 별도 WS 경로(제2 WS 핸들러)는 신설하지 않는다.
 - **노드 자원 메트릭 시계열/대시보드 풀(v1.5 그룹 L 부분 제외)**: resource 위젯은 노드의 `/monitor/metrics` 스냅샷을 신규 `monitor/metrics` query-action(단기 TTL 캐시 J16)으로 온디맨드 취득한다. 노드 메트릭의 **장기 시계열 수집/서버측 영속/그룹 K BASIC 외 자원 메트릭(CPU/메모리/디스크) 상시 폴링**은 제외한다(K 그룹 비목표 일관 — 대시보드 패널 표시 목적의 온디맨드 read 만 허용).
+- **별도 관리자 앱/바이너리/백엔드 분리/별도 SPA(v1.6 그룹 M 제외)**: 관리자 뷰는 **xflowd 서버 모드 안의 UI 재구성**이다. 별도 관리자 전용 바이너리·프로세스, 백엔드 모듈 분리(server/client 외 신규 역할), 별도 SPA/프론트엔드 번들, 관리 기능의 별도 서비스 이전("기능 이전"=앱 분리)은 제외한다. M7~M10 의 백엔드(프록시·명령·미러·그룹·해상도 보고)·React 컴포넌트(통합 제어·노드 대시보드·DashboardPage·패널)를 전부 **재사용**한다(재발명/재작성 금지).
+- **노드 화면 픽셀 스트리밍/원격 데스크톱(v1.6 그룹 M 제외)**: 충실 재현은 노드의 **대시보드 config + 데이터를 재구성**(그룹 L 데이터 경로 + 고정 캔버스 스케일)하는 것이며, 노드 화면을 비트맵/비디오로 캡처·인코딩·스트리밍하는 VNC/RDP 류 원격 데스크톱, 프레임버퍼 미러링은 제외한다(향후 SPEC).
+- **런타임 해상도 자동 감지(v1.6 그룹 M 제외)**: xflowd 는 헤드리스 데몬이므로 OS/디스플레이 서버로부터 모니터 해상도를 런타임 자동 감지하지 않는다. 노드 해상도는 **운영자 config 선언**(`display.resolution` 등)을 1차 출처로 하며, 자동 감지(연결 디스플레이 enumerate)는 제외한다(OQ-M1).
+- **대시보드 외 노드 화면 고정 캔버스 충실 재현(v1.6 그룹 M 부분 제외)**: 고정 캔버스(레터박스) 충실 재현은 **대시보드 서브탭**에 적용한다(OQ-M2). 플로우/에이전트/디바이스 통합 제어 서브탭은 상단 바 아래 **전체 너비 반응형**으로 두며(관리 도구 화면 — 노드 장비 화면 복제 대상 아님) 고정 캔버스 스케일을 적용하지 않는다.
+- **수동 줌/팬 등 대화형 스케일 컨트롤(v1.6 그룹 M 제외)**: 1차 스케일 모드는 종횡비 보존 fit/레터박스(자동)이다(OQ-M4). 사용자 수동 줌 슬라이더·팬·1:1 픽셀 토글 등 대화형 스케일 컨트롤은 차기 단계로 분리한다.
 
 ## 2. 환경
 
@@ -194,6 +210,12 @@ tags:
 - **A17**(v1.5): 원격 대시보드 config 는 **노드-로컬**이다. 노드가 자신의 대시보드 config(SPEC-DASHBOARD-001 `dashboardPages[]` 등)의 **권위 소유자**이며(A4 일관), 서버는 그룹 J `dashboard` 도메인 query-action(`get_shared`/`get_mine`)으로 **READ-ONLY** 취득한다. config 내부의 `deviceId`/패널 자원 참조는 **그 노드 기준**으로 해석되고(서버 자신의 디바이스와 혼동 금지), 노드의 redaction 정책이 config 응답에도 적용된다. v1.5 는 원격 config 를 편집/저장하지 않는다(비목표).
 
 - **A18**(v1.5): 차트 패널의 라이브 스트리밍은 노드의 `/ws/chart/{channel}` 소스를 **노드 내부에서 구독**하여 그룹 J 스트림 프록시(`chart` stream-action)로 서버 경유 중계한다(A10 일관 — 노드가 기존 로컬 실시간 소스 재실행). `useChartChannel` 은 이미 `wsBaseUrl`/`createClient` 주입점을 보유하므로, 원격 target 에서는 직접 WS 직결 대신 스트림 프록시(SSE) 어댑터를 주입하여 동일 패널 코드가 동작한다. 스트림 미지원/실패 시 차트는 query-action 폴링(스냅샷)으로 폴백된다(J08 폴백 일관).
+
+- **A19**(v1.6): 관리자 뷰는 **xflowd 서버 모드 내부의 UI 재구성**이며 별도 앱/바이너리/백엔드 분리/별도 SPA 가 아니다. 그룹 M 은 M7~M10 의 백엔드(query/스트림 프록시·그룹 D 명령·미러·노드 그룹·시스템 정보 보고)와 React 컴포넌트(통합 제어 페이지·`NodeDashboard`·`DashboardPage`·패널·`RemoteDashboardView`)를 **재사용**하며, 신규는 (1) 노드 해상도 보고 필드·저장·노출, (2) 상단 바 관리자 뷰 셸 + 노드 피커 + 전역 사이드바 숨김, (3) 대시보드 고정 캔버스 스케일 래퍼뿐이다. **변경 경로는 불변**(그룹 D/I — 프록시 경유 변경 금지, REQ-J03/J12 일관).
+
+- **A20**(v1.6): 노드 해상도는 노드의 **장비 모니터(키오스크/터치스크린) 디스플레이 해상도**(width×height, px)를 의미한다. xflowd 는 헤드리스 데몬이므로 OS 디스플레이로부터 런타임 자동 감지하지 않고, 운영자가 노드 config(`display.resolution` 또는 `display.width`+`display.height`)로 **선언**한 값을 1차 출처로 한다(OQ-M1 ✅ RESOLVED — config 선언). 노드는 이 값을 M9 시스템 정보 페이로드(register 필수·heartbeat 갱신)로 운반하고 서버는 `managed_nodes` 에 저장한다. **하위 호환**: 미보고/미설정 노드는 빈값으로 처리되며(REQ-N03/K09 일관, 회귀 0), 관리자 뷰는 합리적 기본값(예: 1920×1080) 또는 가용 컨테이너 크기로 폴백한다. 이 해상도는 그룹 L 의 IoT 디바이스/대시보드 deviceId 네임스페이싱과 무관한 **노드(설치본) 표시 메타**이다.
+
+- **A21**(v1.6): 대시보드 충실 재현은 노드 장비 화면을 **비트맵/비디오로 스트리밍하지 않고**, 그룹 L 의 노드-로컬 대시보드 config(REQ-L01) + 패널 데이터(REQ-L04~L08)를 **재구성**한 뒤 노드 보고 해상도와 동일한 고정 캔버스에 렌더하여 종횡비 보존 스케일-투-핏(레터박스)한다. 패널 컴포넌트는 **target 미지정 시 로컬 바이트 동일**(A16) 원칙을 유지하며 고정 캔버스는 그 바깥의 래퍼(스케일 컨테이너)로 적용된다(패널 UI/레이아웃 코드 비분기). 노드 측에 해상도에 따른 렌더 변형은 없다(노드 권위 config 그대로 — A4/A17).
 
 ## 4. 요구사항 (EARS)
 
@@ -613,6 +635,48 @@ tags:
 **REQ-REMOTE-L13**: 원격 대시보드 접근 최소 감사
 시스템은 **항상** 원격 대시보드의 일반 read(config 취득·패널 query/스트림)는 **감사하지 않아야** 하며(정상 읽기 미기록 — REQ-J15 일관), 노출 위반·오류 접근만 로깅해야 한다. control 패널 등에서 발생하는 변경(그룹 D/I)은 기존 감사를 유지하고(REQ-F05/J15), 어떤 로그/감사에도 시크릿 값을 포함하지 않아야 한다(REQ-F06).
 
+### 4.7g 그룹 M — 관리자 뷰 & 노드 화면 충실 재현 (Manager View & Faithful Node Screen Reproduction) — v1.6 확장
+
+> **범위(v1.6)** — 본 그룹은 원격 관리 UI 를 노드의 화면을 **충실히 재현**하는 전용 **관리자 뷰**로 재구성한다. xflowd 서버 모드 구조는 **유지**하며(별도 관리자 앱/바이너리/백엔드 분리/별도 SPA 없음 — A19), M7~M10 의 백엔드·React 컴포넌트를 전부 **재사용**한다. 구성: (M-a) **노드 해상도 보고** — 노드가 장비 모니터 해상도(width×height)를 M9 시스템 정보 페이로드로 보고하고 서버가 저장·노출한다. (M-b) **관리자 뷰 레이아웃** — 노드 선택 시 관리 크롬을 **상단 수평 바**(노드 피커·서브탭 네비·관리 액션·나가기)로 옮기고 노드 화면이 **전체 너비/높이**를 점유하며, 전역 좌측 사이드바를 숨김/접힘하여 좌우 폭 축소·왜곡을 방지한다. 이는 M9 `NodeManagementPage`(좌측 디렉토리) 를 상단 바 관리자 뷰로 **진화**시킨다. (M-c) **해상도 충실 대시보드 렌더** — `RemoteDashboardView`(그룹 L) 를 노드 보고 해상도 **고정 캔버스**에 렌더 후 종횡비 보존 스케일-투-핏(레터박스, 패널 리플로우 없음)한다. **변경 경로는 불변**(그룹 D/I — 프록시 경유 변경 금지, REQ-J03/J12 일관). **본 그룹은 M9 의 좌측 디렉토리 `NodeManagementPage` 레이아웃을 대체(supersede)한다**(그룹 K 의 디렉토리/노드 대시보드 기능은 보존하되 좌측 master/detail 배치 → 상단 바 풀폭 배치로 진화). **OQ-M1~M5 ✅ 전부 RESOLVED(2026-06-08, 사용자 권고안대로 확정) — 구현 시 고정 제약이다.**
+
+#### M-a. 노드 해상도 보고 (백엔드)
+
+**REQ-REMOTE-M01**: 노드 해상도 보고 (시스템 정보 확장)
+시스템은 **항상** 노드가 자신의 **장비 모니터(키오스크/터치스크린) 디스플레이 해상도**(`display_width`, `display_height` — px 정수)를 서버에 보고하도록, M9 시스템 정보 페이로드(`register`(RegisterPayload/HelloPayload) 및/또는 `heartbeat`(HeartbeatPayload), REQ-K07)를 확장해야 한다. 해상도의 **1차 출처는 노드 config**(`display.resolution` 형식 `"WIDTHxHEIGHT"` 또는 `display.width`+`display.height`)이며(xflowd 는 헤드리스 데몬 — 런타임 자동 감지 비대상, A20/OQ-M1), 노드는 config 값을 페이로드로 운반한다. 자원 메트릭(CPU/메모리/디스크)은 본 그룹에서도 보고하지 않는다(그룹 K 비목표 일관).
+
+**REQ-REMOTE-M02**: 해상도 저장·노출
+시스템은 **항상** 보고된 노드 해상도를 `managed_nodes`(`display_width`/`display_height` 컬럼)에 저장하고, 노드 상세 API(`GET /api/v1/remote/nodes/{instance_id}`, NodeDetail)로 노출해야 한다(REQ-K08 시스템 정보 노출과 일관). 관리자 뷰는 이 값을 소비해 고정 캔버스 크기를 결정한다(REQ-M07).
+
+**REQ-REMOTE-M03**: 해상도 하위 호환·폴백
+시스템은 **항상** 해상도 필드를 보내지 않는(구버전/미설정) 노드도 등록·관리·관리자 뷰 표시가 정상 동작하도록 보장해야 한다. 미보고 시 해상도 필드는 빈값/0 으로 처리되고, 관리자 뷰는 **합리적 기본 해상도**(예: 1920×1080) 또는 **가용 컨테이너 크기**로 폴백해야 한다(REQ-N03/K09 일관 — 회귀 0). 잘못된 형식(음수/0/비정수)도 폴백으로 안전 처리해야 한다.
+
+#### M-b. 관리자 뷰 레이아웃 (프론트엔드)
+
+**REQ-REMOTE-M04**: 상단 바 관리 크롬 + 전체 너비 노드 화면
+시스템은 **항상** 관리자 뷰에서 노드가 선택되면 관리 크롬(노드 피커·서브탭 네비·관리 액션·나가기)을 **상단 수평 바**에 배치하고, 그 아래 노드 화면이 **남은 전체 너비/높이**를 점유하도록 해야 한다. 좌측 디렉토리/사이드바를 노드 화면 영역에서 제거하여 노드 화면의 **좌우 폭 축소(왜곡 유발)를 방지**해야 한다. 이는 M9 `NodeManagementPage` 의 좌측(디렉토리 20rem)+우측(대시보드) master/detail 배치를 상단 바 + 풀폭 배치로 진화시킨다(REQ-M10 대체).
+
+**REQ-REMOTE-M05**: 노드 피커 (M9 그룹 구조 보존)
+시스템은 **항상** 상단 바에 좌측 디렉토리를 대체하는 **노드 피커**(드롭다운/수평 선택기)를 제공해야 하며, M9 노드 그룹핑(REQ-K01~K05, 단일 레벨 그룹·"전체" 기본 버킷)을 **보존**하여 노드를 그룹별로 묶어 선택 가능하게 해야 한다(그룹별 묶음 드롭다운 — OQ-M3 ✅ RESOLVED). 피커에서 노드를 전환하면 상단 바 컨텍스트(노드 이름·online/status)와 하단 노드 화면이 즉시 전환되어야 한다. 노드 그룹 배정/해제 affordance(REQ-K02)는 보존하되 관리자 뷰 컨텍스트에 맞는 위치(피커 메뉴 또는 관리 액션)로 재배치할 수 있다.
+
+**REQ-REMOTE-M06**: 상단 서브탭 네비 + 전역 사이드바 숨김
+시스템은 **항상** M9 노드 대시보드의 서브탭(개요/플로우/에이전트/디바이스/대시보드, REQ-K13)을 **상단 바**에 배치해야 하며, 관리자 뷰에서 앱의 **전역 좌측 사이드바(`Sidebar`)를 숨김/접힘**하여 노드 화면이 가로막히지 않게 해야 한다. 관리자 뷰를 나가면(나가기 액션) 전역 사이드바가 이전 상태로 복원되어야 한다(다른 화면 회귀 0). 서브탭 전환·딥링크(`?node=`/`?tab=`, M9 동작)는 보존되어야 한다.
+
+#### M-c. 해상도 충실 대시보드 렌더 (프론트엔드)
+
+**REQ-REMOTE-M07**: 고정 캔버스 (노드 해상도)
+시스템은 **항상** 원격 대시보드(`RemoteDashboardView`/대시보드 서브탭, 그룹 L)를 노드 보고 해상도(REQ-M02 `display_width`×`display_height`)와 **동일한 고정 픽셀 크기 캔버스**에 렌더해야 한다. 캔버스 내부의 대시보드 그리드/패널은 **반응형 리플로우 없이**(고정 컬럼·고정 레이아웃) 노드 장비에서의 배치를 그대로 유지해야 한다(패널 re-flow 금지). 해상도 미보고 시 REQ-M03 폴백 크기를 캔버스 크기로 사용한다.
+
+**REQ-REMOTE-M08**: 레터박스 스케일-투-핏 (종횡비 보존)
+시스템은 **항상** 고정 캔버스(REQ-M07)를 관리자 뷰의 가용 콘텐츠 영역에 **종횡비 보존 스케일-투-핏(레터박스)** 으로 맞춰야 한다. 가용 영역과 캔버스 종횡비가 다르면 남는 축에 레터박스 여백(letterbox/pillarbox)을 두고, 패널을 늘이거나(stretch) 잘라내지(crop) 않아야 한다. 스케일은 CSS transform(또는 동등) 으로 적용하여 패널 내부 폰트/요소가 비례 축소·확대되도록 하고, 패널 컴포넌트 코드는 분기하지 않아야 한다(A21/REQ-L09·A16 일관 — target 미지정 로컬 렌더 바이트 동일). 1차 스케일 모드는 fit/레터박스(자동)이다(OQ-M4 ✅ RESOLVED — 수동 줌은 차기).
+
+**REQ-REMOTE-M09**: 패널 데이터·게이팅·READ-ONLY 불변
+시스템은 **항상** 고정 캔버스 안에 렌더되는 대시보드 패널(약 10종, M10/REQ-L04~L08)이 그룹 L 의 데이터 경로(대시보드 config `dashboard.get_shared`/`get_mine`·메트릭 query-action·로그/차트 스트림·control 그룹 D)·게이팅(승인∧온라인∧노출, REQ-J05/L11)·실패 의미(503/504/502/404)·redaction(REQ-J06)·**read-only-by-default**(원격 config 편집 비활성, REQ-L12)를 **변경 없이 그대로** 따르도록 해야 한다. 충실 재현은 **렌더 레이아웃(고정 캔버스+스케일)** 에만 관여하며, 데이터·변경·감사 경로는 그룹 L/D/I 를 재사용한다(신규 데이터/변경 경로 미신설 — 프록시 경유 변경 금지 REQ-J03/J12).
+
+#### M-d. 마이그레이션 (M9 레이아웃 대체)
+
+**REQ-REMOTE-M10**: M9 좌측 디렉토리 레이아웃 대체 (기능 보존·딥링크 보존)
+시스템은 **항상** M9 `NodeManagementPage` 의 좌측 디렉토리(20rem) + 우측 노드 대시보드 master/detail 레이아웃을 **상단 바 관리자 뷰**로 대체(supersede)하되, M9 의 모든 **기능**(노드 그룹핑·그룹 배정/해제·노드 대시보드 개요(시스템 정보+운영 요약)·Flow/Agent/Device 서브탭·대시보드 서브탭·딥링크 `?node=`/`?tab=`)을 보존해야 한다. 디렉토리/그룹 선택은 상단 노드 피커(REQ-M05)로, 서브탭은 상단 바(REQ-M06)로 이전된다. `등록 관리`(EnrollmentManagementPage)는 **변경 없이 그대로** 유지된다. 기존 라우트(`/admin/remote`, M8/편집기 딥링크, `/admin/remote/control` 리다이렉트 — REQ-K16)는 관리자 뷰에서 도달 가능하게 유지되어야 한다(워크플로 단절 금지).
+
 ### 4.8 비기능 요구사항
 
 **REQ-REMOTE-N01**: 다중 노드 확장성
@@ -635,7 +699,7 @@ tags:
 
 | Type | 방향 | 페이로드(요지) | 의미 |
 |------|------|----------------|------|
-| `register` | client→server | instance_id, hostname, version, exposure 요약, (선택)부트스트랩 시크릿, (v1.4 선택) os, arch, started_at(epoch ms) | 등록 요청(REQ-C01) + BASIC 시스템 정보 보고(REQ-K07) |
+| `register` | client→server | instance_id, hostname, version, exposure 요약, (선택)부트스트랩 시크릿, (v1.4 선택) os, arch, started_at(epoch ms), **(v1.6 선택) display_width, display_height(px)** | 등록 요청(REQ-C01) + BASIC 시스템 정보 보고(REQ-K07) + 노드 해상도 보고(REQ-M01) |
 | `register_ack` | server→client | status(pending/approved/rejected), (승인 시) node_token | 등록 응답·토큰 발급(REQ-C03/C04) |
 | `command` | server→client | command_id, target instance_id, domain(flow/agent/device), action, args | 원격 명령(REQ-D01) |
 | `command_result` | client→server | command_id, ok, result \| error | 명령 결과/ack(REQ-D05) |
@@ -646,13 +710,14 @@ tags:
 | `unsubscribe` | both | subscription_id | 스트림 구독 해제·teardown(REQ-J08b) |
 | `inventory_snapshot` | client→server | instance_id, flows[], agents[], devices[] (노출 범위, redacted) | 접속 시 전체 인벤토리(REQ-E01) |
 | `inventory_delta` | client→server | instance_id, op(add/update/remove), kind, item | 변경 델타(REQ-E02) |
-| `heartbeat` | both | instance_id, ts, (v1.4 선택) os, arch, version, started_at(epoch ms) | 생존성(REQ-B03) + BASIC 시스템 정보 갱신(REQ-K07) |
+| `heartbeat` | both | instance_id, ts, (v1.4 선택) os, arch, version, started_at(epoch ms), **(v1.6 선택) display_width, display_height(px)** | 생존성(REQ-B03) + BASIC 시스템 정보 갱신(REQ-K07) + 노드 해상도 갱신(REQ-M01) |
 | `status` | client→server | instance_id, online/health 메타 | 상태 텔레메트리(REQ-B05 보조) |
 
 - 상관: `command`/`command_result` 는 `command_id` 로 1:1 매칭(REQ-D07).
 - 봉투의 `Timestamp` 는 RFC3339(기존 `NewMessage` 규약)이며, 페이로드 내부 디바이스 타임스탬프는 프로젝트 규약(epoch ms, int64)을 따른다.
 - v1.2(그룹 I): `command` 의 `action` 은 flow/agent 도메인에서 `create`/`update`/`delete` 를 포함하며(임의 domain/action 지원 인프라 재사용), 클라이언트는 이를 각 어댑터의 `Create`/`Update`/`Delete` 로 라우팅한다(REQ-I06). `update`/`create` 의 `args` 정의 JSON 은 마스킹/미변경 시크릿 필드를 **완전히 생략(필드 부재, sentinel 미전송)** 하며, 노드가 어댑터 호출 전 기존 정의를 로드해 부재 시크릿을 기존값으로 backfill 한 뒤 적용한다(REQ-I07, §5.9-6 RESOLVED).
 - v1.4(그룹 K): `register`/`heartbeat` 페이로드는 BASIC 시스템 정보(`os`, `arch`, `started_at`(epoch ms))를 **선택 필드**로 운반한다(REQ-K07). 신규 메시지 타입은 신설하지 않으며 기존 봉투/타입을 재사용한다(REQ-N04 유지). 필드 미존재(구버전 노드)는 빈값으로 처리(REQ-K09, 하위 호환). 노드 그룹(`group_name`)은 **서버 측 속성**이므로 와이어 프로토콜로 운반되지 않는다(A13 — 그룹 배정은 서버 REST 전용, 노드 비경유).
+- v1.6(그룹 M): `register`/`heartbeat` 페이로드는 노드 해상도(`display_width`, `display_height`, px 정수)를 **선택 필드**로 운반한다(REQ-M01). M9 시스템 정보 필드(os/arch/started_at)와 동일하게 기존 봉투/타입을 재사용하며 신규 메시지 타입을 신설하지 않는다(REQ-N04 유지). 필드 미존재(구버전/미설정 노드)는 빈값/0 으로 처리(REQ-M03, 하위 호환). 해상도는 노드 config 선언값(A20)이며 와이어로는 시스템 정보의 일부로 운반된다. 관리자 뷰 레이아웃·고정 캔버스 스케일은 **순수 프론트엔드** 변경으로 신규 와이어 메시지가 없다(데이터는 그룹 L 재사용).
 - v1.5(그룹 L): 그룹 J 프록시 인프라를 **재사용**하여 대시보드 패리티를 제공한다. query-action allowlist 에 **`dashboard` 도메인**(`get_shared`/`get_mine` — READ-ONLY, REQ-L01)과 **`monitor` 도메인**(`metrics` query-action, REQ-L05)을 추가하고, 스트림 action allowlist 에 **`chart`**(REQ-L07, M8 스트림 프록시 chart-action — `/ws/chart/{channel}` 별도 경로 미신설)와 **`monitor` 도메인 `logs`**(REQ-L06)를 추가한다. 변경 의미 action(`dashboard.put`/`delete` 등)은 명시 배제(READ-ONLY — REQ-J03, 원격 config 편집 비목표). 신규 메시지 타입은 신설하지 않으며 기존 `query`/`subscribe` 봉투를 재사용한다(REQ-N04). 대시보드 config·메트릭은 완만 변동이므로 단기 TTL 캐시 대상, 차트/로그는 라이브이므로 캐시 우회(REQ-J16).
 - v1.3(그룹 J): `query`/`query_result`(온디맨드 읽기)와 `subscribe`/`stream_data`/`unsubscribe`(실시간 스트림)는 모두 **READ-ONLY** 프록시 전용이다(REQ-J01/J03/J08). `query` 페이로드는 **그룹 D 명령과 대칭되는 per-domain query-action**(`{domain, query_action, args}`, raw GET path 아님 — OQ-J1 RESOLVED)으로 노드의 로컬 read 핸들러를 지정하며, 노드가 실행 후 **redaction(REQ-J06)** 된 본문을 `query_result{query_id, status, body|error}` 로 반환한다. 스트림은 `subscribe{subscription_id, domain, stream_action, args}` 로 시작해 `stream_data{subscription_id, payload}` 로 갱신을 push 하고, `unsubscribe` 또는 노드 오프라인 시 teardown 된다(REQ-J08b). 서버는 query-action 응답을 단기 TTL 로 캐시하되 스트리밍/라이브 action 은 캐시 우회한다(REQ-J16). `command`/`command_result`(변경)와 read 프록시(읽기)는 역할이 분리되며, 봉투/상관/타임아웃 패턴은 공유한다(REQ-D06/D07 준용 — REQ-J02). 변경 의미 action 은 프록시에서 거부된다(REQ-J03).
 
@@ -689,7 +754,7 @@ tags:
 
 | 테이블 | 핵심 컬럼(요지) | 의미 |
 |--------|------------------|------|
-| `managed_nodes` | instance_id(PK), hostname, version, status(pending/approved/rejected), token_id, last_seen, online, (v1.4) group_name(기본 빈값→"전체"), os, arch, started_at(epoch ms) | 등록·상태·식별 + (v1.4) 단일 그룹 라벨·BASIC 시스템 정보(REQ-K01/K08) |
+| `managed_nodes` | instance_id(PK), hostname, version, status(pending/approved/rejected), token_id, last_seen, online, (v1.4) group_name(기본 빈값→"전체"), os, arch, started_at(epoch ms), **(v1.6) display_width, display_height(px, 0=미보고)** | 등록·상태·식별 + (v1.4) 단일 그룹 라벨·BASIC 시스템 정보(REQ-K01/K08) + (v1.6) 노드 해상도(REQ-M01/M02) |
 | `mirrored_flows` | id, source_instance_id(FK), name, definition(redacted), updated_at | 노드별 플로우 미러(태그=source_instance_id) |
 | `mirrored_agents` | id, source_instance_id(FK), name, kind, config(redacted), updated_at | 노드별 에이전트 미러 |
 | `mirrored_devices` | id, source_instance_id(FK), node_assoc, name, meta, updated_at | 노드별 IoT 디바이스 미러 |
@@ -697,6 +762,7 @@ tags:
 - 출처 태깅: 모든 미러 행은 `source_instance_id` 를 보유(REQ-E04/E05).
 - last-known: 오프라인 시 행을 삭제하지 않고 `online=false`·`last_seen` 만 갱신(REQ-E06).
 - redaction: 정의/설정 저장 시 시크릿 마스킹(REQ-F06).
+- (v1.6) 노드 해상도: `managed_nodes` 에 `display_width`/`display_height`(px 정수, 0=미보고) 컬럼을 추가한다(REQ-M01/M02). 미보고/잘못된 값은 0 으로 저장되며 관리자 뷰가 폴백 처리한다(REQ-M03). 노드 상세(NodeDetail)로 노출된다. 관리자 뷰 레이아웃/고정 캔버스는 서버 저장 불필요(순수 프론트 — A19/A21).
 - (v1.4) 그룹·시스템 정보: `managed_nodes` 에 `group_name`(단일 그룹 라벨, 기본 빈값→"전체"; REQ-K01), `os`/`arch`/`started_at`(BASIC 시스템 정보; REQ-K08) 컬럼을 추가한다. 그룹은 별도 엔티티 테이블 없이 `group_name` distinct 값으로 표현하며(REQ-K03/K05), 운영 요약은 미러 테이블 집계로 파생한다(저장 컬럼 불필요 — REQ-K10/A15). uptime 은 `started_at` 파생값으로 저장하지 않는다(REQ-K08).
 
 ### 5.5 서버/클라이언트 컴포넌트 (신규 `internal/remote`)
@@ -839,6 +905,18 @@ tags:
 
 - **OQ-L6 ✅ RESOLVED → "메트릭=query-action, 로그=스트림"**: 프록시 방식은 **메트릭=query-action**(REQ-L05, `monitor.metrics`, `/monitor/metrics` 스냅샷·완만 변동·단기 TTL 캐시 적합) + **로그=스트림**(REQ-L06, `monitor.logs`, 라이브 tail·캐시 우회·teardown/백프레셔 적합)으로 확정한다. 각각 폴링 폴백을 보유한다.
 
+> **그룹 M(v1.6) OPEN QUESTIONS — ✅ 전부 RESOLVED (2026-06-08, 사용자 권고안대로 확정)** — 아래 5개는 사용자에 의해 권고안대로 확정되었으며 구현 시 고정 제약이다.
+
+- **OQ-M1 ✅ RESOLVED → "노드 config 선언(config-declared), 폴백=관리자 뷰 기본값/컨테이너"**: 노드 장비 모니터 해상도는 **노드 config 선언**(`display.resolution` 또는 `display.width`+`display.height` — 운영자가 장비 화면 해상도 명시)을 1차 출처로 확정한다. 런타임 자동 감지(연결 디스플레이 enumerate)는 **도입하지 않는다**(xflowd 는 헤드리스 데몬이라 디스플레이 서버 감지 대상이 없을 수 있고, "장비 모니터"는 키오스크/터치스크린이라 배포 시 운영자가 가장 정확히 안다). 미보고/미설정 시 관리자 뷰가 **기본값(1920×1080)/컨테이너 크기**로 폴백한다. 서버 측 노드별 수동 설정(override)은 보조로 추후 추가 가능. → A20/REQ-M01/REQ-M03 에 반영(고정 제약).
+
+- **OQ-M2 ✅ RESOLVED → "대시보드 전용 고정 캔버스; 플로우/에이전트/디바이스는 전체 너비 반응형"**: 고정 캔버스(레터박스) 충실 재현은 **대시보드 서브탭에만** 적용하기로 확정한다. 플로우/에이전트/디바이스 통합 제어 서브탭은 상단 바 아래 **전체 너비 반응형**으로 유지한다(고정 캔버스 스케일 미적용). 근거: 대시보드는 노드 장비에 실제 표시되는 운영 화면(키오스크)이라 충실 재현 가치가 크고, 통합 제어 페이지는 관리 도구 화면(노드 장비 화면이 아님)이라 관리자 화면 크기 반응형이 더 유용. → §1.5 비목표·REQ-M07·REQ-M09 에 반영(고정 제약).
+
+- **OQ-M3 ✅ RESOLVED → "그룹 묶음 드롭다운(grouped dropdown)"**: 상단 바 노드 선택 컨트롤은 **그룹별로 묶인 드롭다운**(상단 단일 드롭다운, 그룹 헤더 아래 노드)으로 확정한다. M9 노드 그룹핑(REQ-K01~K05) 구조를 보존하며 공간 절약·다수 노드 확장성 이점을 가진다. 노드 수가 많아지면 검색 보강(콤보박스)을 추후 추가 가능. → REQ-M05 에 반영(고정 제약).
+
+- **OQ-M4 ✅ RESOLVED → "fit/레터박스(종횡비 보존); 수동 줌은 차기"**: 고정 캔버스 스케일 모드는 **fit/레터박스**(종횡비 보존, 남는 축 여백)로 확정한다. fill(영역 채움 — 종횡비 깨짐/crop)은 **채택하지 않는다**(충실 재현의 핵심은 왜곡 없는 비례 유지). 수동 줌(슬라이더·팬·1:1 토글)은 가치 있으나 1차 범위 밖으로 **차기 대화형 컨트롤로 분리**한다. → §1.5 비목표·REQ-M08 에 반영(고정 제약).
+
+- **OQ-M5 ✅ RESOLVED → "NodeManagementPage 제자리 진화(evolve in place)"**: 상단 바 관리자 뷰는 기존 **`NodeManagementPage`(`/admin/remote`)를 제자리에서 진화**(좌측 디렉토리 → 상단 바 풀폭)시키는 것으로 확정한다. 신규 라우트/모드 병존(`/admin/remote/manager` 등, 기존 디렉토리 뷰 병존)은 **도입하지 않는다**(두 레이아웃 유지보수 부담·UX 이원화 회피). 라우트·딥링크·게이팅·`등록 관리` 분리는 보존하고 M9 기능을 전부 보존한다(REQ-M10). 사용자 결정(LOCKED: "기능 이전"=UI 재구성, 별도 앱/바이너리/백엔드 분리/별도 SPA 없음)과 일관. → REQ-M10/§5.13.4 마이그레이션에 반영(고정 제약).
+
 ### 5.10 그룹 J(v1.3) 명세 — READ/QUERY 프록시(query-action + 스트리밍) & 통합 UI
 
 #### 5.10.1 아키텍처 — per-domain query-action 프록시 (OQ-J1/J2 RESOLVED)
@@ -960,6 +1038,47 @@ tags:
 - **read-only-by-default(REQ-L12, OQ-L3)**: 원격 대시보드 config 편집/저장/생성/삭제 비활성·숨김(비목표). 자원 제어 액션(플로우 라이프사이클·에이전트 start/stop·디바이스 명령/메타데이터)은 그룹 D/I 로만(신규 변경 경로·프록시 변경 금지 — J03/J12).
 - **최소 감사(REQ-L13)**: 일반 read(config·query·스트림) 미감사, 노출 위반·오류만 로깅(J15 일관). 변경(그룹 D/I)은 기존 감사 유지, 시크릿 비포함(F06).
 
+### 5.13 그룹 M(v1.6) 명세 — 관리자 뷰 & 노드 화면 충실 재현
+
+> M7~M10 의 백엔드·React 컴포넌트를 **재사용**한다(재발명/재작성 금지 — A19). 신규는 (1) 노드 해상도 보고 필드·저장·노출, (2) 상단 바 관리자 뷰 셸 + 노드 피커 + 전역 사이드바 숨김, (3) 대시보드 고정 캔버스 스케일 래퍼뿐이다. 데이터·변경·감사 경로는 그룹 L/D/I 불변.
+
+#### 5.13.1 노드 해상도 보고 (REQ-M01~M03)
+
+- **출처(A20/OQ-M1 ✅ RESOLVED)**: 노드 config `display.resolution`(`"1920x1080"`) 또는 `display.width`+`display.height`. xflowd 헤드리스 → 런타임 자동 감지 비대상. 노드는 config 값을 시스템 정보 페이로드(register 필수·heartbeat 갱신)로 운반(REQ-M01). 신규 메시지 타입 없이 M9 페이로드 확장(REQ-N04 유지).
+- **저장·노출(REQ-M02)**: `managed_nodes.display_width`/`display_height`(px 정수, 0=미보고). 노드 상세 NodeDetail 로 노출. 서버 파생 불필요(원시 width/height 그대로).
+- **하위 호환·폴백(REQ-M03)**: 미보고/0/잘못된 형식 → 관리자 뷰가 기본 해상도(예: 1920×1080) 또는 가용 컨테이너 크기로 폴백. 등록/관리 회귀 0(REQ-N03/K09 일관).
+- **신규 config 키(예)**:
+> | 키 | 타입 | 기본값 | 의미 |
+> |----|------|--------|------|
+> | `remote_management.display.resolution` | string | `""` | `"WIDTHxHEIGHT"`(예: `"1920x1080"`). 설정 시 width/height 로 파싱 |
+> | `remote_management.display.width` | int | `0` | 장비 화면 가로 px(resolution 미설정 시) |
+> | `remote_management.display.height` | int | `0` | 장비 화면 세로 px(resolution 미설정 시) |
+
+#### 5.13.2 관리자 뷰 레이아웃 (REQ-M04~M06)
+
+- **셸 구조**: 노드 선택 시 — 상단 **수평 바**(노드 피커 + 서브탭 네비 개요/플로우/에이전트/디바이스/대시보드 + 관리 액션 + 나가기) / 그 아래 **풀폭 노드 화면 영역**. M9 의 `lg:grid-cols-[20rem_1fr]`(좌 디렉토리 + 우 대시보드) → 상단 바 + 풀폭으로 진화(REQ-M04/M10).
+- **노드 피커(REQ-M05, OQ-M3 ✅ RESOLVED)**: 그룹별 묶음 드롭다운. M9 그룹핑(REQ-K01~K05) 보존 — `GET /remote/groups`(전체 포함) + `GET /remote/nodes` 클라이언트 묶기 재사용(NodeManagementPage 의 `nodesByGroup`/`sortedGroups` 로직 재사용). 노드 전환 시 상단 컨텍스트 + 하단 화면 즉시 전환. 그룹 배정/해제(REQ-K02, `NodeGroupMenu`)는 피커 메뉴/관리 액션으로 재배치.
+- **상단 서브탭 + 사이드바 숨김(REQ-M06)**: M9 `NodeDashboard` 서브탭 네비를 상단 바로 호이스팅(개요=시스템 정보+운영 요약, 플로우/에이전트/디바이스=M8 통합 제어, 대시보드=M10 RemoteDashboardView). 진입 시 전역 `Sidebar` 숨김/접힘(`uiStore.setSidebarCollapsed(true)` 또는 라우트 레벨 사이드바 미렌더), 나가기 시 복원. 딥링크 `?node=`/`?tab=` 보존.
+
+#### 5.13.3 해상도 충실 대시보드 렌더 (REQ-M07~M09)
+
+- **고정 캔버스(REQ-M07)**: 대시보드 서브탭(RemoteDashboardView)을 `width=display_width`, `height=display_height` 의 고정 픽셀 컨테이너에 렌더. 내부 그리드/패널은 고정 컬럼·고정 레이아웃(리플로우 없음). 해상도 미보고 → REQ-M03 폴백 크기.
+- **레터박스 스케일(REQ-M08, OQ-M4 ✅ RESOLVED)**: `scale = min(availW/canvasW, availH/canvasH)` → `transform: scale(scale)` + 중앙 정렬 + 남는 축 레터박스 여백. stretch/crop 금지(종횡비 보존). 패널 폰트/요소 비례 축소. 패널 컴포넌트 코드 비분기(스케일은 바깥 래퍼 — A21/A16).
+- **데이터·게이팅·READ-ONLY 불변(REQ-M09)**: 캔버스 내부 패널은 그룹 L 데이터 경로(config `dashboard.get_shared`/`get_mine`·`monitor.metrics` query·`monitor.logs`/`chart` 스트림·control 그룹 D)·게이팅(REQ-J05/L11)·실패(503/504/502/404)·redaction(J06)·read-only-by-default(L12)를 그대로 따름. 충실 재현은 렌더 레이아웃에만 관여(신규 데이터/변경 경로 미신설).
+- **재사용/신규**:
+> | 항목 | 처리 |
+> |------|------|
+> | 노드 해상도 보고/저장/노출 | M9 시스템 정보 경로 확장(REQ-M01~M03) — 신규 필드 |
+> | 상단 바 셸·노드 피커·사이드바 숨김 | 신규 프론트(NodeManagementPage 진화 + uiStore 사이드바 토글) |
+> | 고정 캔버스 + 레터박스 스케일 | 신규 프론트 래퍼(RemoteDashboardView 감싸기) |
+> | 그룹핑·노드 대시보드·통합 제어·패널·DashboardPage·프록시·명령·미러 | **전부 재사용(M7~M10)** |
+
+#### 5.13.4 마이그레이션 (REQ-M10)
+
+- M9 `NodeManagementPage` 좌측 디렉토리 master/detail → 상단 바 관리자 뷰 **제자리 진화**(OQ-M5 ✅ RESOLVED — 신규 라우트 병존 아님). 기능 전부 보존: 그룹핑·그룹 배정/해제·개요(시스템+운영)·Flow/Agent/Device 서브탭·대시보드 서브탭·딥링크.
+- `등록 관리`(EnrollmentManagementPage) **불변**. 라우트(`/admin/remote`)·게이팅(admin+server)·M8/편집기 딥링크·`/admin/remote/control` 리다이렉트(REQ-K16) 보존.
+- **본 그룹은 §5.11.3 의 좌측 디렉토리 master/detail 배치를 대체한다**(그룹 K 기능 보존, 레이아웃만 진화).
+
 ## 6. 추적성
 
 | 요구사항 ID | 구현 위치(예정) | 검증 |
@@ -981,4 +1100,8 @@ tags:
 | REQ-REMOTE-L01 ~ L03 (v1.5, config 프록시) | `internal/remote/protocol.go`(dashboard query allowlist get_shared/get_mine·변경 action 배제), `internal/remote/query.go`/`client_query.go`(dashboard read 매핑·redaction), `cmd/xflowd/*`(노드 대시보드 read 소스 바인딩), `internal/api/handler/remote.go`(dashboard query REST·게이팅·503/504/502/404·TTL 캐시) | dashboard_query_test(allowlist·게이팅·redaction·실패 의미·404·노드-로컬 권위·변경 action 거부), dashboard_cache_test |
 | REQ-REMOTE-L04 ~ L09 (v1.5, 패널 target-aware) | `internal/remote/protocol.go`(monitor.metrics query·chart/monitor.logs stream allowlist), `internal/remote/query.go`/`client_query.go`(monitor.metrics 매핑), `internal/remote/client_stream.go`(chart/logs 스트림 소스·teardown·백프레셔), `cmd/xflowd/*`(소스 어댑터 바인딩), `web/src/pages/dashboard/DashboardPage.tsx`(target 전파)·`panels/*`(target-aware)·`charts/useChartChannel.ts`(스트림 어댑터 주입) | metrics_query_test, chart_stream_test(backfill/append 중계·teardown·폴백), logs_stream_test, panel_target_test(로컬 바이트 동일·원격 분기 Vitest), useChartChannel 원격 어댑터 Vitest, control 패널 그룹 D 라우팅 Vitest |
 | REQ-REMOTE-L10 ~ L13 (v1.5, UI 통합·게이팅) | `web/src/components/remote/NodeDashboard.tsx`(대시보드 서브탭·로컬 DashboardPage 재사용), `web/src/hooks/useTargetGating.ts`(재사용), `web/src/services/api/remoteService.ts`(config/metrics/logs/chart 클라이언트), audit(최소) | NodeDashboard 대시보드 서브탭 Vitest(게이팅·원격 컨텍스트·read-only·서브탭 진입), 503/504/502/404 실패 표시 Vitest, 최소 감사(노출 위반/오류만) 검증 |
+| REQ-REMOTE-M01 ~ M03 (v1.6, 해상도 보고) | `internal/remote/protocol.go`(register/heartbeat display_width/height 선택 필드), `internal/config/types.go`/`defaults.go`(`display.resolution`/`width`/`height` 키), `internal/remote/client.go`(config→페이로드 보고), `internal/remote/server.go`/`registration.go`(수신·저장), `internal/storage/managed_node_*`(display_width/height 컬럼·마이그레이션), `internal/api/handler/remote.go`(NodeDetail 노출), `web/src/types/remote.ts`(NodeDetail 필드) | resolution_report_test(register/heartbeat 보고·저장·하위 호환 0/미보고·잘못된 형식 폴백), NodeDetail 노출 |
+| REQ-REMOTE-M04 ~ M06 (v1.6, 관리자 뷰 레이아웃, 프론트) | `web/src/pages/remote/NodeManagementPage.tsx`(좌측 디렉토리 → 상단 바 셸 진화), `web/src/components/remote/NodePicker.tsx`(신규 — 그룹 묶음 드롭다운, M9 그룹핑 재사용), `web/src/components/remote/ManagerViewTopBar.tsx`(신규 — 노드 피커+서브탭 네비+관리 액션+나가기), `web/src/components/remote/NodeDashboard.tsx`(서브탭 네비 상단 바로 호이스팅), `web/src/components/layout/Sidebar.tsx`/`AppLayout.tsx`·`web/src/stores/uiStore.ts`(관리자 뷰 진입 시 전역 사이드바 숨김/복원) | ManagerView 레이아웃 Vitest(상단 바·풀폭 노드 화면·좌측 크롬 제거), NodePicker Vitest(그룹 묶음·전환), 전역 사이드바 숨김/복원 Vitest, 딥링크 보존 Vitest |
+| REQ-REMOTE-M07 ~ M09 (v1.6, 고정 캔버스 충실 재현, 프론트) | `web/src/components/remote/FixedCanvasScaler.tsx`(신규 — 노드 해상도 고정 캔버스 + 레터박스 transform scale), `web/src/components/remote/RemoteDashboardView.tsx`(또는 NodeDashboard 대시보드 서브탭, FixedCanvasScaler 로 감싸기), `web/src/hooks/useRemote.ts`(NodeDetail display_width/height 소비) | FixedCanvasScaler Vitest(고정 캔버스 크기=노드 해상도·레터박스 종횡비 보존·stretch/crop 금지·미보고 폴백), 패널 데이터/게이팅/READ-ONLY 불변 Vitest(그룹 L 경로 재사용) |
+| REQ-REMOTE-M10 (v1.6, 마이그레이션) | `web/src/pages/remote/NodeManagementPage.tsx`(제자리 진화·M9 기능 보존), `web/src/router.tsx`(라우트·딥링크·리다이렉트 보존), EnrollmentManagementPage 불변 | 마이그레이션 Vitest(M9 기능 보존: 그룹핑/그룹 배정/개요/서브탭/딥링크), 등록 관리 회귀 0, 라우트/리다이렉트 보존 |
 | REQ-REMOTE-N01 ~ N04 | server 연결 관리, 엔드포인트 분리, disabled 회귀, Message 봉투 | 부하/회귀 + ws 호환 |

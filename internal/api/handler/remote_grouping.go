@@ -77,18 +77,22 @@ type NodeSummaryDTO struct {
 // 이면 Uptime=null, StartedAt=0 으로 표현된다(프론트엔드가 uptime 미표시 — 하위 호환).
 // 토큰 식별자 등 시크릿은 노출하지 않는다(REQ-F06).
 type NodeDetailDTO struct {
-	InstanceID string         `json:"instance_id"`
-	Hostname   string         `json:"hostname"`
-	Version    string         `json:"version"`
-	Status     string         `json:"status"`
-	Online     bool           `json:"online"`
-	GroupName  string         `json:"group_name"`
-	OS         string         `json:"os"`
-	Arch       string         `json:"arch"`
-	StartedAt  int64          `json:"started_at"` // epoch ms (0=미보고)
-	Uptime     *int64         `json:"uptime"`     // ms (started_at>0 일 때만, 아니면 null)
-	LastSeen   int64          `json:"last_seen"`  // epoch ms
-	Summary    NodeSummaryDTO `json:"summary"`    // 운영 요약(미러 파생)
+	InstanceID string `json:"instance_id"`
+	Hostname   string `json:"hostname"`
+	Version    string `json:"version"`
+	Status     string `json:"status"`
+	Online     bool   `json:"online"`
+	GroupName  string `json:"group_name"`
+	OS         string `json:"os"`
+	Arch       string `json:"arch"`
+	StartedAt  int64  `json:"started_at"` // epoch ms (0=미보고)
+	Uptime     *int64 `json:"uptime"`     // ms (started_at>0 일 때만, 아니면 null)
+	// DisplayWidth/DisplayHeight 는 노드 장비 모니터 해상도이다(px, v1.6 M11, REQ-M02).
+	// 0 은 미보고이며, 관리자 뷰가 합리적 기본 해상도/컨테이너 크기로 폴백한다(REQ-M03).
+	DisplayWidth  int            `json:"display_width"`  // 장비 화면 가로 px (0=미보고)
+	DisplayHeight int            `json:"display_height"` // 장비 화면 세로 px (0=미보고)
+	LastSeen      int64          `json:"last_seen"`      // epoch ms
+	Summary       NodeSummaryDTO `json:"summary"`        // 운영 요약(미러 파생)
 }
 
 // RemoteGroupingHandler 는 노드 그룹핑 + 상세 엔드포인트를 처리한다.
@@ -184,16 +188,18 @@ func toNodeGroupDTOs(groups []storage.NodeGroupCount) []NodeGroupDTO {
 // uptime 은 HasUptime 일 때만 채우고(started_at>0), 아니면 null(미표시 — REQ-K08).
 func toNodeDetailDTO(d remote.NodeDetail) NodeDetailDTO {
 	dto := NodeDetailDTO{
-		InstanceID: d.Node.InstanceID,
-		Hostname:   d.Node.Hostname,
-		Version:    d.Node.Version,
-		Status:     d.Node.Status,
-		Online:     d.Online,
-		GroupName:  d.Node.GroupName,
-		OS:         d.Node.OS,
-		Arch:       d.Node.Arch,
-		StartedAt:  d.Node.StartedAt,
-		LastSeen:   d.Node.LastSeen,
+		InstanceID:    d.Node.InstanceID,
+		Hostname:      d.Node.Hostname,
+		Version:       d.Node.Version,
+		Status:        d.Node.Status,
+		Online:        d.Online,
+		GroupName:     d.Node.GroupName,
+		OS:            d.Node.OS,
+		Arch:          d.Node.Arch,
+		StartedAt:     d.Node.StartedAt,
+		DisplayWidth:  d.Node.DisplayWidth,
+		DisplayHeight: d.Node.DisplayHeight,
+		LastSeen:      d.Node.LastSeen,
 	}
 	if d.HasUptime {
 		up := d.UptimeMs

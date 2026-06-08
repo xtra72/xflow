@@ -324,6 +324,11 @@ type HelloPayload struct {
 	OS         string `json:"os,omitempty"`         // runtime.GOOS (REQ-K07)
 	Arch       string `json:"arch,omitempty"`       // runtime.GOARCH (REQ-K07)
 	StartedAt  int64  `json:"started_at,omitempty"` // 프로세스 시작 시각(epoch ms, REQ-K07)
+	// DisplayWidth/DisplayHeight 는 노드 장비 모니터 해상도이다(px, v1.6 M11, REQ-M01).
+	// 노드 config(display.resolution/width+height)에서 파생되며, 미설정(구버전/헤드리스)
+	// 노드는 0 으로 생략된다(하위 호환 — REQ-M03).
+	DisplayWidth  int `json:"display_width,omitempty"`  // 장비 화면 가로 px (REQ-M01)
+	DisplayHeight int `json:"display_height,omitempty"` // 장비 화면 세로 px (REQ-M01)
 }
 
 // ExposureSummary 는 register 요청에 실리는 노출 범위 요약이다(REQ-C01, REQ-A04).
@@ -359,6 +364,11 @@ type RegisterPayload struct {
 	OS              string          `json:"os,omitempty"`         // runtime.GOOS (REQ-K07)
 	Arch            string          `json:"arch,omitempty"`       // runtime.GOARCH (REQ-K07)
 	StartedAt       int64           `json:"started_at,omitempty"` // 프로세스 시작 시각(epoch ms, REQ-K07)
+	// DisplayWidth/DisplayHeight 는 노드 장비 모니터 해상도이다(px, v1.6 M11, REQ-M01).
+	// 노드는 최초 register 에 config 파생 해상도를 운반하고 서버는 managed_nodes 에
+	// 저장한다(REQ-M02). 미보고(구버전/미설정)는 0 으로 생략된다(하위 호환 — REQ-M03).
+	DisplayWidth  int `json:"display_width,omitempty"`  // 장비 화면 가로 px (REQ-M01)
+	DisplayHeight int `json:"display_height,omitempty"` // 장비 화면 세로 px (REQ-M01)
 }
 
 // RegisterAckPayload 는 등록 응답 페이로드이다(server→client, REQ-C03/C04, spec §5.1).
@@ -457,6 +467,11 @@ type HeartbeatPayload struct {
 	Arch       string `json:"arch,omitempty"`       // runtime.GOARCH (REQ-K07)
 	Version    string `json:"version,omitempty"`    // 노드 버전(REQ-K07)
 	StartedAt  int64  `json:"started_at,omitempty"` // 프로세스 시작 시각(epoch ms, REQ-K07)
+	// DisplayWidth/DisplayHeight 는 노드 장비 모니터 해상도 갱신이다(px, v1.6 M11,
+	// REQ-M01). 운영자가 config 해상도를 변경·재기동하면 heartbeat 로 갱신된다. 미보고
+	// (구버전 노드/생략)는 0 이며 서버는 기존값을 보존한다(REQ-M03 preserve-on-omit).
+	DisplayWidth  int `json:"display_width,omitempty"`  // 장비 화면 가로 px (REQ-M01)
+	DisplayHeight int `json:"display_height,omitempty"` // 장비 화면 세로 px (REQ-M01)
 }
 
 // StatusPayload 는 status 텔레메트리 페이로드이다(REQ-B05 보조).
@@ -482,17 +497,21 @@ func NewHeartbeatMessage(instanceID string) (*ws.Message, error) {
 	})
 }
 
-// NewHeartbeatMessageWithInfo 는 BASIC 시스템 정보를 실은 heartbeat 메시지를 생성한다
-// (v1.4 M9, REQ-K07). ts 는 현재 시각의 epoch ms 이고, os/arch/version/startedAt 은
-// 노드가 런타임에서 수집한 값이다(빈값/0 은 omitempty 로 와이어에서 생략 — 하위 호환).
-func NewHeartbeatMessageWithInfo(instanceID, osName, arch, version string, startedAtMs int64) (*ws.Message, error) {
+// NewHeartbeatMessageWithInfo 는 BASIC 시스템 정보 + 노드 해상도를 실은 heartbeat
+// 메시지를 생성한다(v1.4 M9 / v1.6 M11, REQ-K07/M01). ts 는 현재 시각의 epoch ms 이고,
+// os/arch/version/startedAt 은 노드가 런타임에서 수집한 값, displayWidth/displayHeight 는
+// 노드 config 에서 파생한 장비 모니터 해상도이다(빈값/0 은 omitempty 로 와이어에서 생략 —
+// 하위 호환, 서버는 미보고 필드를 보존한다 — REQ-K09/M03).
+func NewHeartbeatMessageWithInfo(instanceID, osName, arch, version string, startedAtMs int64, displayWidth, displayHeight int) (*ws.Message, error) {
 	return ws.NewMessage(TypeHeartbeat, HeartbeatPayload{
-		InstanceID: instanceID,
-		TS:         time.Now().UnixMilli(),
-		OS:         osName,
-		Arch:       arch,
-		Version:    version,
-		StartedAt:  startedAtMs,
+		InstanceID:    instanceID,
+		TS:            time.Now().UnixMilli(),
+		OS:            osName,
+		Arch:          arch,
+		Version:       version,
+		StartedAt:     startedAtMs,
+		DisplayWidth:  displayWidth,
+		DisplayHeight: displayHeight,
 	})
 }
 

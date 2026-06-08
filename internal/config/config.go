@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -384,6 +385,47 @@ func (c *viperConfig) Update() UpdateSettings {
 	}
 }
 
+// ParseResolution 은 "WIDTHxHEIGHT" 형식 문자열을 (width, height) 정수로 파싱한다
+// (@SPEC:SPEC-REMOTE-001 M11, REQ-M01). 구분자는 대소문자 'x'/'X' 이며 주변 공백을
+// 허용한다(예: "1920x1080", " 1280 X 720 ").
+//
+// 무효/빈값/음수/0/비정수/부동소수/추가 토큰은 모두 (0, 0)을 반환한다(미보고 폴백 —
+// REQ-M03 안전 처리). 양수 width·height 둘 다 유효할 때만 (w, h)를 반환한다.
+func ParseResolution(s string) (int, int) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0
+	}
+	// 'x' 또는 'X' 로 분할. 정확히 두 토큰이어야 한다(추가 토큰은 무효).
+	var parts []string
+	if strings.ContainsAny(s, "xX") {
+		parts = strings.FieldsFunc(s, func(r rune) bool { return r == 'x' || r == 'X' })
+	}
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	w, errW := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errW != nil || errH != nil || w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	return w, h
+}
+
+// resolveDisplay 는 config 의 display.resolution / display.width / display.height 를
+// 해석해 효과적인 (width, height)를 반환한다(REQ-M01). 유효한 resolution("WxH")이
+// width/height 보다 우선하며, resolution 이 무효/미설정이면 명시적 width/height 로
+// 폴백한다. 음수/0 width·height 는 0(미보고)으로 안전 처리된다(REQ-M03).
+func resolveDisplay(resolution string, width, height int) (int, int) {
+	if w, h := ParseResolution(resolution); w > 0 && h > 0 {
+		return w, h
+	}
+	if width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	return width, height
+}
+
 // RemoteManagement - 원격 관리 설정 반환 (@SPEC:SPEC-REMOTE-001 M1).
 //
 // HeartbeatInterval 은 viper.GetDuration 으로 yaml 의 "30s" 형식과 정수형(ns)
@@ -397,6 +439,13 @@ func (c *viperConfig) RemoteManagement() RemoteManagementConfig {
 		heartbeat = 30 * time.Second
 	}
 
+	// 노드 해상도(v1.6 M11): resolution("WxH") 우선, 미설정/무효 시 width/height 폴백.
+	dispW, dispH := resolveDisplay(
+		c.v.GetString("remote_management.display.resolution"),
+		c.v.GetInt("remote_management.display.width"),
+		c.v.GetInt("remote_management.display.height"),
+	)
+
 	return RemoteManagementConfig{
 		Mode:              c.v.GetString("remote_management.mode"),
 		ServerURL:         c.v.GetString("remote_management.server_url"),
@@ -409,6 +458,10 @@ func (c *viperConfig) RemoteManagement() RemoteManagementConfig {
 			Flows:   c.v.GetString("remote_management.exposure.flows"),
 			Agents:  c.v.GetString("remote_management.exposure.agents"),
 			Devices: c.v.GetString("remote_management.exposure.devices"),
+		},
+		Display: DisplayConfig{
+			Width:  dispW,
+			Height: dispH,
 		},
 		TLS: TLSConfig{
 			Enabled:  c.v.GetBool("remote_management.tls.enabled"),

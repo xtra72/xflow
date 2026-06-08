@@ -104,6 +104,14 @@ type ClientConfig struct {
 	Arch      string
 	StartedAt int64
 
+	// DisplayWidth / DisplayHeight 는 노드 장비 모니터 해상도이다(px, v1.6 M11, REQ-M01).
+	// cmd/xflowd 가 config(remote_management.display.resolution 또는 width+height)에서
+	// 파싱한 값을 주입한다(헤드리스 데몬 — 런타임 감지 비대상, A20). register/heartbeat 로
+	// 운반되어 서버가 managed_nodes 에 저장한다(REQ-M02). 0 은 미보고이며 서버는 0 을
+	// 보존(preserve-on-omit)하고 관리자 뷰가 폴백한다(하위 호환 — REQ-M03).
+	DisplayWidth  int
+	DisplayHeight int
+
 	// HeartbeatInterval 은 heartbeat 주기이다(REQ-A05). 0 이면 기본값.
 	HeartbeatInterval time.Duration
 
@@ -650,12 +658,14 @@ func (c *Client) sendHandshake(conn Conn) error {
 // BASIC 시스템 정보(os/arch/started_at)를 함께 운반한다(v1.4 M9, REQ-K07).
 func (c *Client) sendHello(conn Conn) error {
 	msg, err := NewHelloMessage(HelloPayload{
-		InstanceID: c.cfg.InstanceID,
-		Hostname:   c.cfg.Hostname,
-		Version:    c.cfg.Version,
-		OS:         c.cfg.OS,
-		Arch:       c.cfg.Arch,
-		StartedAt:  c.cfg.StartedAt,
+		InstanceID:    c.cfg.InstanceID,
+		Hostname:      c.cfg.Hostname,
+		Version:       c.cfg.Version,
+		OS:            c.cfg.OS,
+		Arch:          c.cfg.Arch,
+		StartedAt:     c.cfg.StartedAt,
+		DisplayWidth:  c.cfg.DisplayWidth,
+		DisplayHeight: c.cfg.DisplayHeight,
 	})
 	if err != nil {
 		return err
@@ -676,6 +686,8 @@ func (c *Client) sendRegister(conn Conn) error {
 		OS:              c.cfg.OS,
 		Arch:            c.cfg.Arch,
 		StartedAt:       c.cfg.StartedAt,
+		DisplayWidth:    c.cfg.DisplayWidth,
+		DisplayHeight:   c.cfg.DisplayHeight,
 	})
 	if err != nil {
 		return err
@@ -687,7 +699,8 @@ func (c *Client) sendRegister(conn Conn) error {
 // (os/arch/version/started_at)을 함께 운반한다(v1.4 M9, REQ-K07).
 func (c *Client) sendHeartbeat(conn Conn) error {
 	msg, err := NewHeartbeatMessageWithInfo(
-		c.cfg.InstanceID, c.cfg.OS, c.cfg.Arch, c.cfg.Version, c.cfg.StartedAt)
+		c.cfg.InstanceID, c.cfg.OS, c.cfg.Arch, c.cfg.Version, c.cfg.StartedAt,
+		c.cfg.DisplayWidth, c.cfg.DisplayHeight)
 	if err != nil {
 		return err
 	}

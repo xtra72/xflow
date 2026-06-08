@@ -196,15 +196,17 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 		// (os/arch/started_at)를 함께 저장한다(v1.4 M9, REQ-K07/K08). 구버전 노드가
 		// 미보고하면 빈값/0 으로 저장되어 회귀가 없다(REQ-K09).
 		node := storage.ManagedNode{
-			InstanceID: p.InstanceID,
-			Hostname:   p.Hostname,
-			Version:    p.Version,
-			Status:     RegStatusPending,
-			Online:     true,
-			LastSeen:   time.Now().UnixMilli(),
-			OS:         p.OS,
-			Arch:       p.Arch,
-			StartedAt:  p.StartedAt,
+			InstanceID:    p.InstanceID,
+			Hostname:      p.Hostname,
+			Version:       p.Version,
+			Status:        RegStatusPending,
+			Online:        true,
+			LastSeen:      time.Now().UnixMilli(),
+			OS:            p.OS,
+			Arch:          p.Arch,
+			StartedAt:     p.StartedAt,
+			DisplayWidth:  p.DisplayWidth,
+			DisplayHeight: p.DisplayHeight,
 		}
 		if upErr := s.repo.Upsert(ctx, node); upErr != nil {
 			s.logger.Error("등록 pending 저장 실패", "instance_id", p.InstanceID, "error", upErr)
@@ -263,21 +265,23 @@ func (s *Server) updateNodeMeta(ctx context.Context, p RegisterPayload) {
 	if upErr := s.repo.Upsert(ctx, node); upErr != nil {
 		s.logger.Debug("노드 메타 갱신 실패", "instance_id", p.InstanceID, "error", upErr)
 	}
-	// 재기동 register 의 시스템 정보(started_at 등)를 제공 시에만 갱신한다(REQ-K08/K09).
-	s.storeSystemInfo(ctx, p.InstanceID, p.OS, p.Arch, p.StartedAt)
+	// 재기동 register 의 시스템 정보(started_at 등) + 노드 해상도를 제공 시에만 갱신한다
+	// (REQ-K08/K09/M01/M03). 미제공 필드는 SetSystemInfo 가 기존값을 보존한다(preserve-on-omit).
+	s.storeSystemInfo(ctx, p.InstanceID, p.OS, p.Arch, p.StartedAt, p.DisplayWidth, p.DisplayHeight)
 }
 
-// storeSystemInfo 는 노드가 보고한 BASIC 시스템 정보를 저장한다(v1.4 M9, REQ-K08).
-// 모든 필드가 비어 있으면(구버전 노드 — 미보고) no-op 으로 회귀를 피한다(REQ-K09).
-// repo 미구성(M1 모드)에서도 안전하게 무시된다.
-func (s *Server) storeSystemInfo(ctx context.Context, instanceID, osName, arch string, startedAtMs int64) {
+// storeSystemInfo 는 노드가 보고한 BASIC 시스템 정보 + 노드 해상도를 저장한다(v1.4 M9
+// / v1.6 M11, REQ-K08/M01/M02). 모든 필드가 비어 있으면(구버전 노드 — 미보고) no-op 으로
+// 회귀를 피한다(REQ-K09/M03). repo 미구성(M1 모드)에서도 안전하게 무시된다. 제공된 필드만
+// 갱신하고 미제공(빈값/0)은 기존값을 보존한다(preserve-on-omit — SetSystemInfo).
+func (s *Server) storeSystemInfo(ctx context.Context, instanceID, osName, arch string, startedAtMs int64, displayWidth, displayHeight int) {
 	if s.repo == nil {
 		return
 	}
-	if osName == "" && arch == "" && startedAtMs == 0 {
+	if osName == "" && arch == "" && startedAtMs == 0 && displayWidth == 0 && displayHeight == 0 {
 		return // 미보고(구버전 노드) — 보존, 회귀 0.
 	}
-	if err := s.repo.SetSystemInfo(ctx, instanceID, osName, arch, startedAtMs); err != nil {
+	if err := s.repo.SetSystemInfo(ctx, instanceID, osName, arch, startedAtMs, displayWidth, displayHeight); err != nil {
 		s.logger.Debug("시스템 정보 저장 생략", "instance_id", instanceID, "error", err)
 	}
 }

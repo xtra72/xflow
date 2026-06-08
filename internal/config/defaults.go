@@ -86,6 +86,13 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("remote_management.exposure.flows", "none")
 	v.SetDefault("remote_management.exposure.agents", "none")
 	v.SetDefault("remote_management.exposure.devices", "none")
+	// 노드 장비 모니터 해상도 (v1.6 M11, 그룹 M, REQ-M01/M03). xflowd 는 헤드리스
+	// 데몬이라 런타임 감지 대상이 없어 운영자가 선언한다(A20). resolution("WIDTHxHEIGHT",
+	// 예: "1920x1080")이 유효하면 width/height 보다 우선하고, 미설정/무효 시 width+height
+	// 로 폴백한다. 기본 빈값/0 → 미보고(폴백 — 관리자 뷰가 기본 해상도/컨테이너 크기 사용).
+	v.SetDefault("remote_management.display.resolution", "")
+	v.SetDefault("remote_management.display.width", 0)
+	v.SetDefault("remote_management.display.height", 0)
 	v.SetDefault("remote_management.tls.enabled", false)
 	v.SetDefault("remote_management.tls.cert_file", "")
 	v.SetDefault("remote_management.tls.key_file", "")

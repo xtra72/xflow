@@ -139,8 +139,9 @@ func (m *memManagedNodeRepo) ListGroups(_ context.Context) ([]storage.NodeGroupC
 	return out, nil
 }
 
-// SetSystemInfo 는 제공된 BASIC 시스템 정보 필드만 갱신한다(미제공은 보존 — REQ-K08/K09).
-func (m *memManagedNodeRepo) SetSystemInfo(_ context.Context, instanceID, osName, arch string, startedAtMs int64) error {
+// SetSystemInfo 는 제공된 BASIC 시스템 정보 + 노드 해상도 필드만 갱신한다(미제공은
+// 보존 — REQ-K08/K09/M01/M03 preserve-on-omit).
+func (m *memManagedNodeRepo) SetSystemInfo(_ context.Context, instanceID, osName, arch string, startedAtMs int64, displayWidth, displayHeight int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n, ok := m.nodes[instanceID]
@@ -155,6 +156,12 @@ func (m *memManagedNodeRepo) SetSystemInfo(_ context.Context, instanceID, osName
 	}
 	if startedAtMs != 0 {
 		n.StartedAt = startedAtMs
+	}
+	if displayWidth != 0 {
+		n.DisplayWidth = displayWidth
+	}
+	if displayHeight != 0 {
+		n.DisplayHeight = displayHeight
 	}
 	m.nodes[instanceID] = n
 	return nil

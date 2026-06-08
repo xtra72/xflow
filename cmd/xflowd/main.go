@@ -996,9 +996,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			Version:    Version,
 			// BASIC 시스템 정보(v1.4 M9, REQ-K07): runtime.GOOS/GOARCH + 데몬 시작 시각.
 			// register/heartbeat 로 보고되어 서버가 저장·uptime 파생한다(자원 메트릭 제외).
-			OS:                runtime.GOOS,
-			Arch:              runtime.GOARCH,
-			StartedAt:         daemonStartedAtMs,
+			OS:        runtime.GOOS,
+			Arch:      runtime.GOARCH,
+			StartedAt: daemonStartedAtMs,
+			// 노드 장비 모니터 해상도(v1.6 M11, REQ-M01): config(display.resolution 또는
+			// width+height)에서 파싱된 값. 헤드리스 데몬이라 운영자 선언이 1차 출처(A20).
+			// 0(미설정)은 미보고이며 관리자 뷰가 폴백한다(REQ-M03).
+			DisplayWidth:      rmCfg.Display.Width,
+			DisplayHeight:     rmCfg.Display.Height,
 			HeartbeatInterval: rmCfg.HeartbeatInterval,
 			BootstrapSecret:   rmCfg.BootstrapSecret,
 			EnrollmentToken:   rmCfg.EnrollmentToken,

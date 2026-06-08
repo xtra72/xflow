@@ -123,7 +123,7 @@ func TestServer_HeartbeatUpdatesSystemInfoPreservesOmitted(t *testing.T) {
 	go func() { _ = srv.HandleConnectionAuth(connCtx, conn, "n") }()
 
 	// 첫 heartbeat: 전체 시스템 정보.
-	hb1, _ := NewHeartbeatMessageWithInfo("n", "linux", "amd64", "1.0.0", 7000)
+	hb1, _ := NewHeartbeatMessageWithInfo("n", "linux", "amd64", "1.0.0", 7000, 0, 0)
 	conn.inject(t, hb1)
 	require.Eventually(t, func() bool {
 		got, err := repo.Get(ctx, "n")
@@ -237,7 +237,7 @@ func TestServer_NodeSummaryOfflineLastKnown(t *testing.T) {
 func TestServer_HandleHeartbeatNoRepo(t *testing.T) {
 	srv := NewServer(ServerConfig{}, nil)
 	// repo 미구성 — 디코드 가능한 payload 라도 저장 경로는 no-op.
-	hb, _ := NewHeartbeatMessageWithInfo("n", "linux", "amd64", "1.0", 100)
+	hb, _ := NewHeartbeatMessageWithInfo("n", "linux", "amd64", "1.0", 100, 0, 0)
 	srv.handleHeartbeat(context.Background(), "n", hb.Payload)
 }
 
@@ -258,7 +258,7 @@ func TestServer_StoreSystemInfoAllEmptyNoOp(t *testing.T) {
 	}))
 
 	// 빈 보고 → 기존값 보존(no-op).
-	srv.storeSystemInfo(ctx, "n", "", "", 0)
+	srv.storeSystemInfo(ctx, "n", "", "", 0, 0, 0)
 	got, _ := repo.Get(ctx, "n")
 	assert.Equal(t, "linux", got.OS)
 	assert.Equal(t, int64(1000), got.StartedAt)
