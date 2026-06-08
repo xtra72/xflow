@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/remote"
@@ -24,6 +25,10 @@ type fakeQueryFlowReader struct {
 	node      *handler.FlowNodeInfo
 	getInfo   *handler.FlowInfo
 	statusErr error
+
+	// list 는 ListFlows 가 반환할 페이지(들)이다. listErr 가 설정되면 오류를 반환한다.
+	list    []handler.FlowInfo
+	listErr error
 }
 
 func (f *fakeQueryFlowReader) FlowStatus(_ context.Context, _ string) (*handler.FlowStatusInfo, error) {
@@ -42,11 +47,26 @@ func (f *fakeQueryFlowReader) GetFlow(_ context.Context, _ string) (*handler.Flo
 	return f.getInfo, nil
 }
 
+// ListFlows 는 단일 페이지에 전체 목록을 반환한다(total == len → 1 페이지로 종료).
+func (f *fakeQueryFlowReader) ListFlows(_ context.Context, opts dto.ListOptions) ([]handler.FlowInfo, int64, error) {
+	if f.listErr != nil {
+		return nil, 0, f.listErr
+	}
+	if opts.Page > 1 {
+		return []handler.FlowInfo{}, int64(len(f.list)), nil
+	}
+	return f.list, int64(len(f.list)), nil
+}
+
 type fakeQueryAgentReader struct {
 	stats    *handler.AgentStatsInfo
 	getInfo  *handler.AgentInfo
 	execData json.RawMessage // ExecAgent 가 반환할 raw JSON (sessions 등).
 	execErr  error
+
+	// list 는 ListAgents 가 반환할 페이지(들)이다. listErr 가 설정되면 오류를 반환한다.
+	list    []handler.AgentInfo
+	listErr error
 }
 
 func (f *fakeQueryAgentReader) AgentStats(_ context.Context, _ string) (*handler.AgentStatsInfo, error) {
@@ -60,6 +80,17 @@ func (f *fakeQueryAgentReader) ExecAgent(_ context.Context, _ string, _ []byte) 
 		return nil, f.execErr
 	}
 	return f.execData, nil
+}
+
+// ListAgents 는 단일 페이지에 전체 목록을 반환한다(total == len → 1 페이지로 종료).
+func (f *fakeQueryAgentReader) ListAgents(_ context.Context, opts dto.ListOptions) ([]handler.AgentInfo, int64, error) {
+	if f.listErr != nil {
+		return nil, 0, f.listErr
+	}
+	if opts.Page > 1 {
+		return []handler.AgentInfo{}, int64(len(f.list)), nil
+	}
+	return f.list, int64(len(f.list)), nil
 }
 
 type fakeQueryDeviceReader struct {
@@ -241,6 +272,93 @@ func TestQueryBridge_AgentSeries(t *testing.T) {
 	assert.Contains(t, string(data), `"series"`)
 	assert.Contains(t, string(data), "cpu")
 	assert.Contains(t, string(data), `"count":2`)
+}
+
+// --- M8 보강: agent/flow/device list query-action (라이브 목록 — REQ-J04) ---
+
+// TestQueryBridge_AgentList 는 agent.list query-action 이 ListAgents 의 전체 목록을
+// runtime 필드(connected/uptime/stats)와 함께 {data:[…]} 로 반환하는지 검증한다.
+// 미러 요약과 달리 노드의 라이브 로컬 목록을 그대로 반환한다(REQ-J04 보강).
+func TestQueryBridge_AgentList(t *testing.T) {
+	connected := true
+	agents := &fakeQueryAgentReader{list: []handler.AgentInfo{
+		{
+			ID: "a1", Name: "mqtt1", Type: "mqtt", Status: "running", Enabled: true,
+			Connected: &connected,
+			Uptime:    "1m30s",
+			Stats:     &handler.AgentStatsResponse{MessagesIn: 10, MessagesOut: 5},
+		},
+	}}
+	bridge := newTestQuerySource(&fakeQueryFlowReader{}, agents, &fakeQueryDeviceReader{})
+
+	data, err := bridge.Query(context.Background(), remote.DomainAgent, remote.QueryActionList, nil)
+	require.NoError(t, err)
+	s := string(data)
+	assert.Contains(t, s, `"data"`)
+	assert.Contains(t, s, "mqtt1")
+	assert.Contains(t, s, `"connected":true`, "라이브 connected 필드 포함")
+	assert.Contains(t, s, "1m30s", "라이브 uptime 필드 포함")
+	assert.Contains(t, s, `"messages_in":10`, "라이브 stats 필드 포함")
+}
+
+// TestQueryBridge_AgentListRedaction 는 agent.list 결과의 시크릿 config 가 리댁터로
+// 마스킹되는지 검증한다(REQ-J06 — config 가 시크릿을 운반할 수 있음).
+func TestQueryBridge_AgentListRedaction(t *testing.T) {
+	agents := &fakeQueryAgentReader{list: []handler.AgentInfo{
+		{ID: "a1", Name: "mqtt1", Config: map[string]any{"host": "h", "password": "hunter2"}},
+	}}
+	bridge := newTestQuerySource(&fakeQueryFlowReader{}, agents, &fakeQueryDeviceReader{})
+
+	data, err := bridge.Query(context.Background(), remote.DomainAgent, remote.QueryActionList, nil)
+	require.NoError(t, err)
+	// 브리지는 raw 를 반환하고 리댁터가 전송 전 마스킹한다(REQ-J06).
+	out := newQueryRedactor().Redact(data)
+	assert.NotContains(t, string(out), "hunter2")
+	assert.NotContains(t, string(out), "password")
+	assert.Contains(t, string(out), "mqtt1")
+}
+
+// TestQueryBridge_FlowList 는 flow.list query-action 이 ListFlows 목록을 {data:[…]} 로
+// 반환하는지 검증한다(status/node_count/uptime 요약 필드 포함 — REQ-J04 보강).
+func TestQueryBridge_FlowList(t *testing.T) {
+	flows := &fakeQueryFlowReader{list: []handler.FlowInfo{
+		{ID: "f1", Name: "flow-one", Status: "running", NodeCount: 3, Uptime: "2m"},
+	}}
+	bridge := newTestQuerySource(flows, &fakeQueryAgentReader{}, &fakeQueryDeviceReader{})
+
+	data, err := bridge.Query(context.Background(), remote.DomainFlow, remote.QueryActionList, nil)
+	require.NoError(t, err)
+	s := string(data)
+	assert.Contains(t, s, `"data"`)
+	assert.Contains(t, s, "flow-one")
+	assert.Contains(t, s, `"status":"running"`)
+	assert.Contains(t, s, `"node_count":3`)
+	assert.Contains(t, s, "2m")
+}
+
+// TestQueryBridge_DeviceList 는 device.list query-action 이 레지스트리 List 전체를
+// {data:[…]} 로 반환하는지 검증한다(REQ-J04 보강).
+func TestQueryBridge_DeviceList(t *testing.T) {
+	dev := &queryMockDevice{id: "d1", state: device.DeviceState{Online: true}}
+	devices := &fakeQueryDeviceReader{list: []device.Device{dev}}
+	bridge := newTestQuerySource(&fakeQueryFlowReader{}, &fakeQueryAgentReader{}, devices)
+
+	data, err := bridge.Query(context.Background(), remote.DomainDevice, remote.QueryActionList, nil)
+	require.NoError(t, err)
+	s := string(data)
+	assert.Contains(t, s, `"data"`)
+	assert.Contains(t, s, "dev-d1")
+	assert.Contains(t, s, `"online":true`)
+}
+
+// TestQueryBridge_ListError 는 목록 소스 오류가 패닉 없이 전파되는지 검증한다(REQ-J07).
+func TestQueryBridge_ListError(t *testing.T) {
+	agents := &fakeQueryAgentReader{listErr: errors.New("list boom")}
+	bridge := newTestQuerySource(&fakeQueryFlowReader{}, agents, &fakeQueryDeviceReader{})
+
+	_, err := bridge.Query(context.Background(), remote.DomainAgent, remote.QueryActionList, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
 }
 
 // TestQueryBridge_AgentStoreRedaction 는 store 응답에 섞인 시크릿이 리댁터로 마스킹

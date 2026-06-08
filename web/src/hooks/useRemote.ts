@@ -11,6 +11,9 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import type { AgentInfo } from '@/types/agent';
+import type { DeviceInfo } from '@/types/device';
+import type { FlowInfo } from '@/types/flow';
 import type {
   CommandRequest,
   EnrollmentTokenCreateRequest,
@@ -155,6 +158,61 @@ export function useNodeMirror(
     queryFn: () => NODE_MIRROR_FN[kind](instanceID),
     enabled: enabled && !!instanceID,
     refetchInterval: MIRROR_REFETCH_MS,
+  });
+}
+
+// ---- 노드별 라이브 목록 쿼리 (M8 보강, 그룹 J, REQ-J04) ----
+//
+// 미러 요약(useNodeMirror)이 결여하는 connected/uptime/stats 등 런타임 필드를 노드의
+// FULL 로컬 목록(로컬 GET /agents|/flows|/devices 와 동형)으로 운반한다. 서비스
+// 함수가 이중 중첩 본문의 `.data` 를 언래핑하므로 본 훅은 타입 배열을 그대로 반환한다.
+//
+// 쿼리 키는 미러 키(['remote','nodes',id,'agents'])와 충돌하지 않도록 'live' 세그먼트를
+// 덧붙인다(['remote','nodes',id,'agents','live']). 편집 뮤테이션이 노드 prefix
+// (['remote','nodes',id])로 무효화하므로 편집 후 라이브 목록도 함께 갱신된다.
+
+/** 종류 → 라이브 목록 아이템 타입 매핑. */
+interface NodeLiveItemMap {
+  flow: FlowInfo;
+  agent: AgentInfo;
+  device: DeviceInfo;
+}
+
+/** 종류별 라이브 목록 조회 함수 매핑(각 종류의 타입 배열을 반환). */
+const NODE_LIVE_FN: {
+  [K in MirroredResourceKind]: (instanceID: string) => Promise<NodeLiveItemMap[K][]>;
+} = {
+  flow: remoteService.getRemoteFlowsLive,
+  agent: remoteService.getRemoteAgentsLive,
+  device: remoteService.getRemoteDevicesLive,
+};
+
+/**
+ * 한 노드의 종류별 라이브 목록 쿼리(런타임 필드 포함, M8 보강).
+ *
+ * 미러 요약(useNodeMirror)이 결여하는 connected/uptime/stats 등 런타임 필드를 노드의
+ * FULL 로컬 목록(로컬 GET /agents|/flows|/devices 와 동형)으로 운반한다. 반환 타입은
+ * kind 에 따라 FlowInfo[]/AgentInfo[]/DeviceInfo[] 로 좁혀진다.
+ *
+ * @param instanceID - 출처 노드 식별자. 비어 있으면 쿼리 비활성.
+ * @param kind - 목록 종류 (flow/agent/device).
+ * @param enabled - 쿼리 활성 여부. remote ∧ nodeReady 일 때만 발행하도록 호출자가
+ *   게이트한다(미관리/오프라인 노드의 503 노이즈 방지). 미지원(구버전 노드)/실패 시
+ *   호출자가 에러를 잡아 미러 매핑으로 폴백한다(graceful degradation).
+ */
+export function useNodeLiveList<K extends MirroredResourceKind>(
+  instanceID: string,
+  kind: K,
+  enabled = true,
+) {
+  const fn = NODE_LIVE_FN[kind];
+  return useQuery<NodeLiveItemMap[K][]>({
+    queryKey: ['remote', 'nodes', instanceID, ALL_MIRROR_KEY[kind], 'live'],
+    queryFn: () => fn(instanceID),
+    enabled: enabled && !!instanceID,
+    refetchInterval: MIRROR_REFETCH_MS,
+    // 구버전 노드(엔드포인트 부재)는 즉시 미러로 폴백하므로 재시도하지 않는다.
+    retry: false,
   });
 }
 

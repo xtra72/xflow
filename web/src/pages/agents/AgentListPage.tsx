@@ -127,6 +127,10 @@ export default function AgentListPage({
     setRemoteCreateOpen(false);
   };
 
+  // 원격 에이전트 설정 수정은 행 액션 다이얼로그가 아니라 상세 패널의 설정(config)
+  // 탭에서 인라인으로 수행한다(로컬과 동형 UX). AgentDetailPanel.ConfigTab 이
+  // useUpdateRemoteAgent 로 저장을 처리한다(REQ-I04/I07).
+
   // 검색 및 필터 상태
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -469,7 +473,8 @@ export default function AgentListPage({
         />
       )}
 
-      {/* 원격 에이전트 생성 다이얼로그 (원격 전용 — REQ-I04/I09) */}
+      {/* 원격 에이전트 생성 다이얼로그 (원격 전용 — REQ-I04/I09).
+          설정 수정은 상세 패널의 설정 탭에서 인라인으로 수행한다(create 만 다이얼로그). */}
       {remote && (
         <RemoteAgentEditDialog
           open={remoteCreateOpen}
@@ -495,7 +500,12 @@ interface AgentRowProps {
 }
 
 /** 에이전트 테이블 행 (확장 가능) */
-function AgentRow({ agent, isExpanded, onToggle, showLocalWrites }: AgentRowProps) {
+function AgentRow({
+  agent,
+  isExpanded,
+  onToggle,
+  showLocalWrites,
+}: AgentRowProps) {
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(agent.name);
   const updateAgent = useUpdateAgent();
@@ -627,9 +637,12 @@ function AgentRow({ agent, isExpanded, onToggle, showLocalWrites }: AgentRowProp
             : '-'}
         </td>
 
-        {/* 액션 버튼은 타깃 인지(원격은 그룹 D 명령/M7 경로). 이름 편집만 로컬 전용. */}
+        {/* 액션 버튼은 타깃 인지(원격은 그룹 D 명령/M7 경로). 이름 편집만 로컬 전용.
+            원격 설정 편집은 상세 패널의 설정 탭에서 인라인으로 수행한다(로컬과 동형). */}
         <td className="whitespace-nowrap px-4 py-3 text-right">
-          <AgentActionButtons agent={agent} />
+          <div className="flex items-center justify-end gap-1">
+            <AgentActionButtons agent={agent} />
+          </div>
         </td>
       </tr>
 

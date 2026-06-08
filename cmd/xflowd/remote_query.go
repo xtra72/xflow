@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/remote"
@@ -38,6 +39,9 @@ type queryFlowReader interface {
 	ListFlowNodes(ctx context.Context, flowID string) ([]handler.FlowNodeInfo, error)
 	GetFlowNode(ctx context.Context, flowID, nodeID string) (*handler.FlowNodeInfo, error)
 	GetFlow(ctx context.Context, id string) (*handler.FlowInfo, error)
+	// ListFlows 는 flow/list query-action 의 라이브 목록 소스이다(GET /flows 와 동일
+	// 소스 — status/node_count/uptime 요약 운반). 페이지네이션으로 전체를 수집한다.
+	ListFlows(ctx context.Context, opts dto.ListOptions) ([]handler.FlowInfo, int64, error)
 }
 
 // queryAgentReader 는 agent read query-action 에 필요한 AgentServiceAdapter 의 좁은
@@ -51,6 +55,9 @@ type queryAgentReader interface {
 	AgentStats(ctx context.Context, id string) (*handler.AgentStatsInfo, error)
 	GetAgent(ctx context.Context, id string, detail string) (*handler.AgentInfo, error)
 	ExecAgent(ctx context.Context, id string, data []byte) (json.RawMessage, error)
+	// ListAgents 는 agent/list query-action 의 라이브 목록 소스이다(GET /agents 와 동일
+	// 소스 — connected/uptime/stats runtime 필드 운반). 페이지네이션으로 전체를 수집한다.
+	ListAgents(ctx context.Context, opts dto.ListOptions) ([]handler.AgentInfo, int64, error)
 }
 
 // queryDeviceReader 는 device read query-action 에 필요한 레지스트리의 좁은
@@ -261,12 +268,37 @@ func (s *remoteQuerySource) queryFlow(ctx context.Context, action string, args j
 			return nil, err
 		}
 		return marshalQuery(info)
-	case remote.QueryActionList, remote.QueryActionLogs:
-		// list 는 그룹 E 미러 우선(서버 측), logs 는 어댑터로 노출되지 않음 → 미지원.
+	case remote.QueryActionList:
+		return s.queryFlowList(ctx)
+	case remote.QueryActionLogs:
+		// logs 는 어댑터로 노출되지 않음 → 미지원(monitor.go 는 로그 레벨 관리만 제공).
 		return nil, fmt.Errorf("%w: flow/%s", remote.ErrQueryActionUnsupported, action)
 	default:
 		return nil, fmt.Errorf("%w: flow/%s", remote.ErrQueryActionUnsupported, action)
 	}
+}
+
+// queryFlowList 는 flow/list 를 노드의 라이브 로컬 목록(GET /flows 와 동일 소스 —
+// FlowServiceAdapter.ListFlows)으로 매핑한다(REQ-J04 보강). FlowInfo 요약(status/
+// node_count/uptime)을 {data:[…]} 로 반환한다(목록 뷰에는 요약으로 충분 — 단건 전체
+// 정의는 flow/get 이 담당). 페이지네이션으로 전체를 수집한다. redaction 은 client 가
+// 전송 전 적용한다(REQ-J06).
+func (s *remoteQuerySource) queryFlowList(ctx context.Context) (json.RawMessage, error) {
+	var flows []handler.FlowInfo
+	for page := 1; ; page++ {
+		batch, total, err := s.flows.ListFlows(ctx, queryListPageOpts(page))
+		if err != nil {
+			return nil, err
+		}
+		flows = append(flows, batch...)
+		if len(batch) == 0 || int64(len(flows)) >= total {
+			break
+		}
+	}
+	if flows == nil {
+		flows = []handler.FlowInfo{}
+	}
+	return marshalQuery(map[string]any{"data": flows})
 }
 
 func (s *remoteQuerySource) queryAgent(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
@@ -305,11 +337,34 @@ func (s *remoteQuerySource) queryAgent(ctx context.Context, action string, args 
 	case remote.QueryActionSeries:
 		return s.queryAgentSeries(ctx, args)
 	case remote.QueryActionList:
-		// list 는 그룹 E 미러 우선(서버 측). 라이브 보강이 필요해지면 추가한다(seam).
-		return nil, fmt.Errorf("%w: agent/list(미러 우선)", remote.ErrQueryActionUnsupported)
+		return s.queryAgentList(ctx)
 	default:
 		return nil, fmt.Errorf("%w: agent/%s", remote.ErrQueryActionUnsupported, action)
 	}
+}
+
+// queryAgentList 는 agent/list 를 노드의 라이브 로컬 목록(GET /agents 와 동일 소스 —
+// AgentServiceAdapter.ListAgents)으로 매핑한다(REQ-J04 보강). 미러 요약과 달리
+// connected/uptime/stats 런타임 필드를 포함한 FULL AgentInfo 목록을 {data:[…]} 로
+// 반환한다(로컬 useAgents 가 소비하는 envelope 과 동형). 페이지네이션으로 전체를
+// 수집한다(인벤토리 소스와 동일 — 대규모 목록 대응). redaction 은 client 가 전송 전
+// 적용한다(REQ-J06 — config 가 시크릿 운반 가능).
+func (s *remoteQuerySource) queryAgentList(ctx context.Context) (json.RawMessage, error) {
+	var agents []handler.AgentInfo
+	for page := 1; ; page++ {
+		batch, total, err := s.agents.ListAgents(ctx, queryListPageOpts(page))
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, batch...)
+		if len(batch) == 0 || int64(len(agents)) >= total {
+			break
+		}
+	}
+	if agents == nil {
+		agents = []handler.AgentInfo{}
+	}
+	return marshalQuery(map[string]any{"data": agents})
 }
 
 // queryAgentDevices 는 agent/devices 를 디바이스 레지스트리 List(AgentName) 로 매핑한다
@@ -411,6 +466,10 @@ func deviceListItem(d device.Device) map[string]any {
 }
 
 func (s *remoteQuerySource) queryDevice(_ context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	// list 는 자원 id 가 없으므로 id 추출 전에 처리한다(전체 레지스트리 열거).
+	if action == remote.QueryActionList {
+		return s.queryDeviceList()
+	}
 	id, err := queryID(args)
 	if err != nil {
 		return nil, err
@@ -441,11 +500,37 @@ func (s *remoteQuerySource) queryDevice(_ context.Context, action string, args j
 			return marshalQuery(map[string]any{"commands": cd.Commands()})
 		}
 		return marshalQuery(map[string]any{"commands": []any{}})
-	case remote.QueryActionList:
-		return nil, fmt.Errorf("%w: device/list(미러 우선)", remote.ErrQueryActionUnsupported)
 	default:
 		return nil, fmt.Errorf("%w: device/%s", remote.ErrQueryActionUnsupported, action)
 	}
+}
+
+// queryDeviceList 는 device/list 를 노드의 라이브 디바이스 레지스트리 전체 열거(GET
+// /devices 와 동일 소스 — Registry.List)로 매핑한다(REQ-J04 보강). agent/devices 와
+// 동일한 deviceListItem 형상으로 {data:[…]} 를 반환한다(로컬 useDevices 와 동형).
+// 필터 없이 전체를 반환한다(노출 범위 게이팅은 서버 핸들러가 수행 — 본 노드는 권위).
+// redaction 은 client 가 전송 전 적용한다(REQ-J06).
+func (s *remoteQuerySource) queryDeviceList() (json.RawMessage, error) {
+	devs := s.devices.List(device.DeviceFilter{})
+	items := make([]map[string]any, 0, len(devs))
+	for _, d := range devs {
+		items = append(items, deviceListItem(d))
+	}
+	return marshalQuery(map[string]any{"data": items})
+}
+
+// queryListPageSize 는 list query-action 의 페이지 크기이다(dto.ListOptions.Normalize
+// 가 maxSize 로 클램프하므로 페이지네이션으로 전체를 수집한다 — 대규모 목록 대응).
+const queryListPageSize = 100
+
+// queryListPageOpts 는 page 번호로 list query-action 의 조회 옵션을 만든다(필터 없음,
+// 기본 detail — connected/uptime/stats 등 runtime 필드 포함). 인벤토리 소스와 동일 패턴.
+func queryListPageOpts(page int) dto.ListOptions {
+	opts := dto.ListOptions{}
+	opts.Page = page
+	opts.Size = queryListPageSize
+	opts.Normalize()
+	return opts
 }
 
 // flowNodeArgs 는 flow.node query-action 의 인자({id, node_id})이다.

@@ -119,6 +119,84 @@ func TestQuery_FlowNodesHappyPath(t *testing.T) {
 	assert.Equal(t, []string{"flow/nodes/f1"}, svc.dispatched)
 }
 
+// --- M8 보강: 라이브 목록 프록시(.../agents/live, .../flows/live, .../devices/live) ---
+//
+// 라이브 목록은 노드-레벨 READ(per-resource 노출 범위 없음 — 목록 자체가 노출 필터된
+// 자원만 운반)이므로 IsManaged 만 게이트한다(nodeQuery 오케스트레이션 재사용).
+
+// TestQuery_AgentsLiveHappyPath 는 .../agents/live 가 agent/list 로 매핑되고 redacted
+// 라이브 목록 본문을 통과시키는지 검증한다(REQ-J04 보강).
+func TestQuery_AgentsLiveHappyPath(t *testing.T) {
+	svc := newFakeQuerySvc()
+	svc.managed = true
+	svc.data = json.RawMessage(`{"data":[{"id":"a1","connected":true,"uptime":"1m"}]}`)
+
+	rec := doQuery(t, svc, "admin", "/api/v1/remote/nodes/n1/agents/live")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"connected":true`)
+	assert.Equal(t, []string{"agent/list/"}, svc.dispatched)
+	assert.Empty(t, svc.scope, "라이브 목록은 per-resource 노출 범위를 평가하지 않음")
+}
+
+// TestQuery_FlowsLiveHappyPath 는 .../flows/live 가 flow/list 로 매핑되는지 검증한다.
+func TestQuery_FlowsLiveHappyPath(t *testing.T) {
+	svc := newFakeQuerySvc()
+	svc.managed = true
+	svc.data = json.RawMessage(`{"data":[{"id":"f1","status":"running"}]}`)
+
+	rec := doQuery(t, svc, "admin", "/api/v1/remote/nodes/n1/flows/live")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"flow/list/"}, svc.dispatched)
+}
+
+// TestQuery_DevicesLiveHappyPath 는 .../devices/live 가 device/list 로 매핑되는지 검증한다.
+func TestQuery_DevicesLiveHappyPath(t *testing.T) {
+	svc := newFakeQuerySvc()
+	svc.managed = true
+	svc.data = json.RawMessage(`{"data":[{"id":"d1","online":true}]}`)
+
+	rec := doQuery(t, svc, "admin", "/api/v1/remote/nodes/n1/devices/live")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"device/list/"}, svc.dispatched)
+}
+
+// TestQuery_AgentsLiveRequiresAdmin 은 node-role 이 거부(403)되는지 검증한다(REQ-F04).
+func TestQuery_AgentsLiveRequiresAdmin(t *testing.T) {
+	svc := newFakeQuerySvc()
+	svc.managed = true
+	rec := doQuery(t, svc, "node", "/api/v1/remote/nodes/n1/agents/live")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Empty(t, svc.dispatched)
+}
+
+// TestQuery_AgentsLiveNotManaged503 은 미관리(미승인/오프라인) 노드가 503 으로
+// 매핑되는지 검증한다(REQ-J07/L02).
+func TestQuery_AgentsLiveNotManaged503(t *testing.T) {
+	svc := newFakeQuerySvc()
+	svc.managed = false
+	rec := doQuery(t, svc, "admin", "/api/v1/remote/nodes/n1/agents/live")
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.Empty(t, svc.dispatched, "미관리면 디스패치하지 않아야 함")
+}
+
+// TestQuery_AgentsLiveTimeout504 는 타임아웃이 504 로 매핑되는지 검증한다(REQ-J07).
+func TestQuery_AgentsLiveTimeout504(t *testing.T) {
+	svc := newFakeQuerySvc()
+	svc.managed = true
+	svc.err = remote.ErrQueryTimeout
+	rec := doQuery(t, svc, "admin", "/api/v1/remote/nodes/n1/agents/live")
+	assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+}
+
+// TestQuery_DevicesLiveNodeError502 는 노드 질의 실패가 502 로 매핑되는지 검증한다(REQ-J07).
+func TestQuery_DevicesLiveNodeError502(t *testing.T) {
+	svc := newFakeQuerySvc()
+	svc.managed = true
+	svc.err = remote.ErrQueryFailed
+	rec := doQuery(t, svc, "admin", "/api/v1/remote/nodes/n1/devices/live")
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
+}
+
 // TestQuery_NotExposed404 은 노출 범위 밖 자원이 404 로 거부되는지 검증한다(REQ-J05).
 func TestQuery_NotExposed404(t *testing.T) {
 	svc := newFakeQuerySvc()
