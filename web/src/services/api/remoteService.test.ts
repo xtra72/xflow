@@ -272,6 +272,51 @@ describe('remoteService — 노드별 미러', () => {
   });
 });
 
+describe('remoteService — 노드별 라이브 목록 (M8, 그룹 J, REQ-J04)', () => {
+  it('getRemoteAgentsLive 는 GET .../agents/live 를 호출하고 내부 .data 를 언래핑한다', async () => {
+    // 이중 중첩 본문: axios 인터셉터가 바깥 envelope 을 벗긴 뒤 호출자에게 노드
+    // 본문 { data: [...] } 가 도달한다. 서비스 함수는 내부 .data 를 언래핑한다.
+    getMock.mockResolvedValueOnce({
+      data: [{ id: 'a1', name: 'A1', type: 'mqtt', status: 'running', connected: true }],
+    });
+    const res = await remoteService.getRemoteAgentsLive('node-1');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node-1/agents/live');
+    expect(res).toHaveLength(1);
+    expect(res[0]!.id).toBe('a1');
+    expect(res[0]!.connected).toBe(true);
+  });
+
+  it('getRemoteFlowsLive 는 GET .../flows/live 를 호출하고 내부 .data 를 언래핑한다', async () => {
+    getMock.mockResolvedValueOnce({
+      data: [{ id: 'f1', name: 'F1', status: 'running', node_count: 2 }],
+    });
+    const res = await remoteService.getRemoteFlowsLive('node-1');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node-1/flows/live');
+    expect(res[0]!.node_count).toBe(2);
+  });
+
+  it('getRemoteDevicesLive 는 GET .../devices/live 를 호출하고 내부 .data 를 언래핑한다', async () => {
+    getMock.mockResolvedValueOnce({
+      data: [{ id: 'd1', name: 'D1', online: true }],
+    });
+    const res = await remoteService.getRemoteDevicesLive('node-1');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node-1/devices/live');
+    expect(res[0]!.online).toBe(true);
+  });
+
+  it('내부 data 가 누락되면 빈 배열로 폴백한다(방어적)', async () => {
+    getMock.mockResolvedValueOnce({});
+    const res = await remoteService.getRemoteAgentsLive('node-1');
+    expect(res).toEqual([]);
+  });
+
+  it('instance_id 를 URL 인코딩한다', async () => {
+    getMock.mockResolvedValueOnce({ data: [] });
+    await remoteService.getRemoteAgentsLive('node/with space');
+    expect(getMock).toHaveBeenCalledWith('/remote/nodes/node%2Fwith%20space/agents/live');
+  });
+});
+
 describe('remoteService — 원격 자원 편집 (M7, 그룹 I)', () => {
   it('createRemoteFlow 는 POST /remote/nodes/{id}/flows 를 { name, definition } 으로 호출한다', async () => {
     postMock.mockResolvedValueOnce({ id: 'f-new', name: 'flow', status: '' });

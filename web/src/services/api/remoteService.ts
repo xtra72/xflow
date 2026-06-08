@@ -15,7 +15,10 @@
 //   GET  /remote/nodes/{instance_id}/flows|agents|devices
 //   GET  /remote/flows|agents|devices
 
+import type { AgentInfo } from '@/types/agent';
 import type { DashboardSnapshot } from '@/types/dashboard';
+import type { DeviceInfo } from '@/types/device';
+import type { FlowInfo } from '@/types/flow';
 import type {
   CommandRequest,
   CommandResult,
@@ -274,6 +277,59 @@ export async function listNodeAgents(instanceID: string): Promise<MirroredResour
  */
 export async function listNodeDevices(instanceID: string): Promise<MirroredResource[]> {
   return get<MirroredResource[]>(`/remote/nodes/${encodeId(instanceID)}/devices`);
+}
+
+// ---- 노드별 라이브 목록 (M8 보강, 그룹 J, REQ-J04) ----
+//
+// 미러 요약(위 listNode*)이 connected/uptime/stats 등 런타임 필드를 결여하는 반면,
+// 라이브 목록은 노드의 FULL 로컬 목록(로컬 GET /agents|/flows|/devices 와 동형)을
+// M8 query 프록시로 프록시한다. 백엔드(remote_query.go agentsLive/flowsLive/
+// devicesLive)는 노드의 list query-action 결과 `{ data: [...] }` 를 표준 성공
+// envelope 으로 한 번 더 감싼다. axios 인터셉터가 바깥 envelope 을 벗기므로 호출자에게
+// 도달하는 본문은 노드 본문 `{ data: [...] }` 이며, 실제 배열은 `.data` 에 있다
+// (DOUBLE-NEST — agent/devices 등 다른 list query-action 과 동일 형상).
+//
+// 실패 의미(REQ-J07, mapRemoteQueryError → APIError): 503=오프라인/미관리,
+// 504=타임아웃, 502=노드 질의 실패, 404=라우트 미지원(구버전 노드/엔드포인트 부재).
+// 호출 측(useResourceTargets)은 이 실패를 잡아 미러 매핑으로 폴백한다.
+
+/**
+ * 한 노드의 라이브 에이전트 목록을 조회한다(런타임 필드 포함).
+ * GET /remote/nodes/{instance_id}/agents/live → AgentInfo[]
+ *
+ * 본문은 `{ data: AgentInfo[] }` 로 이중 중첩되므로 내부 `.data` 를 언래핑한다.
+ */
+export async function getRemoteAgentsLive(instanceID: string): Promise<AgentInfo[]> {
+  const body = await get<{ data: AgentInfo[] }>(
+    `/remote/nodes/${encodeId(instanceID)}/agents/live`,
+  );
+  return body.data ?? [];
+}
+
+/**
+ * 한 노드의 라이브 플로우 목록을 조회한다(status/node_count/uptime 포함).
+ * GET /remote/nodes/{instance_id}/flows/live → FlowInfo[]
+ *
+ * 본문은 `{ data: FlowInfo[] }` 로 이중 중첩되므로 내부 `.data` 를 언래핑한다.
+ */
+export async function getRemoteFlowsLive(instanceID: string): Promise<FlowInfo[]> {
+  const body = await get<{ data: FlowInfo[] }>(
+    `/remote/nodes/${encodeId(instanceID)}/flows/live`,
+  );
+  return body.data ?? [];
+}
+
+/**
+ * 한 노드의 라이브 디바이스 목록을 조회한다(online/last_seen 등 포함).
+ * GET /remote/nodes/{instance_id}/devices/live → DeviceInfo[]
+ *
+ * 본문은 `{ data: DeviceInfo[] }` 로 이중 중첩되므로 내부 `.data` 를 언래핑한다.
+ */
+export async function getRemoteDevicesLive(instanceID: string): Promise<DeviceInfo[]> {
+  const body = await get<{ data: DeviceInfo[] }>(
+    `/remote/nodes/${encodeId(instanceID)}/devices/live`,
+  );
+  return body.data ?? [];
 }
 
 // ---- 원격 자원 편집 (M7, 그룹 I, REQ-I01~I04/I08~I11) ----

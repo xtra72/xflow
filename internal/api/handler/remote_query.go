@@ -93,6 +93,16 @@ func (h *RemoteQueryHandler) WithAudit(audit storage.RemoteAuditRepository) *Rem
 // RegisterRoutes 는 원격 READ 프록시 라우트를 그룹에 등록한다(목록은 remote_admin.go 의
 // 미러 엔드포인트 사용 — 여기서는 자원-타깃 디테일/라이브 READ 만).
 func (h *RemoteQueryHandler) RegisterRoutes(g *api.RouteGroup) {
+	// 라이브 목록(M8 보강): 노드의 FULL 로컬 목록(runtime 필드 포함)을 프록시한다
+	// (agent/flow/device list query-action). 미러 요약(remote_admin.go)과 달리
+	// connected/uptime/stats 등 라이브 필드를 운반한다. 노드-레벨 READ(per-resource
+	// 노출 범위 없음 — 목록 자체가 노출 필터된 자원만 운반)이므로 IsManaged 만 게이트한다.
+	// 리터럴 "/live" 세그먼트는 ".../flows/{flow_id}" 같은 자원-타깃 경로보다 우선
+	// 매칭되어야 하므로 자원 라우트보다 먼저 등록한다(라우터 우선순위).
+	g.GET("/remote/nodes/{instance_id}/agents/live", h.agentsLive)
+	g.GET("/remote/nodes/{instance_id}/flows/live", h.flowsLive)
+	g.GET("/remote/nodes/{instance_id}/devices/live", h.devicesLive)
+
 	// flow
 	g.GET("/remote/nodes/{instance_id}/flows/{flow_id}", h.flowGet)
 	g.GET("/remote/nodes/{instance_id}/flows/{flow_id}/status", h.flowStatus)
@@ -120,6 +130,35 @@ func (h *RemoteQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/remote/nodes/{instance_id}/dashboards/shared", h.dashboardShared)
 	g.GET("/remote/nodes/{instance_id}/dashboards/mine", h.dashboardMine)
 	g.GET("/remote/nodes/{instance_id}/metrics", h.monitorMetrics)
+}
+
+// --- 라이브 목록(M8 보강) ------------------------------------------------------
+//
+// 노드의 FULL 로컬 목록(runtime 필드 포함)을 list query-action 으로 프록시한다. 미러
+// 요약(remote_admin.go 의 GET /remote/nodes/{id}/agents 등)이 connected/uptime/stats
+// 를 결여하는 반면, 본 경로는 노드의 라이브 목록을 그대로 반환한다.
+//
+// 노드-레벨 READ 로 취급한다: 목록은 노출 범위로 필터된 자원만 운반하므로 per-resource
+// 노출 범위 게이트가 불필요하며(자원 id 가 없음), nodeQuery 오케스트레이션(IsManaged
+// 게이트만)을 재사용한다. 실패 매핑은 그룹 J 와 동일(503/504/502). 일반 read 는 감사
+// 하지 않으며(REQ-J15), redaction 은 노드가 전송 전 수행한다(REQ-J06).
+
+// agentsLive 는 노드의 라이브 에이전트 목록을 프록시한다(agent/list — connected/uptime/
+// stats 포함). 프런트는 본문 data 를 AgentInfo[] 로 소비한다(로컬 GET /agents 와 동형).
+func (h *RemoteQueryHandler) agentsLive(ctx api.Context) error {
+	return h.nodeQuery(ctx, remote.DomainAgent, remote.QueryActionList, nil)
+}
+
+// flowsLive 는 노드의 라이브 플로우 목록을 프록시한다(flow/list — status/node_count/
+// uptime 요약). 프런트는 본문 data 를 FlowInfo[] 로 소비한다(로컬 GET /flows 와 동형).
+func (h *RemoteQueryHandler) flowsLive(ctx api.Context) error {
+	return h.nodeQuery(ctx, remote.DomainFlow, remote.QueryActionList, nil)
+}
+
+// devicesLive 는 노드의 라이브 디바이스 목록을 프록시한다(device/list). 프런트는 본문
+// data 를 device 목록으로 소비한다(로컬 GET /devices 와 동형).
+func (h *RemoteQueryHandler) devicesLive(ctx api.Context) error {
+	return h.nodeQuery(ctx, remote.DomainDevice, remote.QueryActionList, nil)
 }
 
 // --- flow -------------------------------------------------------------------
