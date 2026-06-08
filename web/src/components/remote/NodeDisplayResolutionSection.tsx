@@ -39,6 +39,7 @@ type ResolutionSource = 'override' | 'reported' | 'fallback';
 
 /** 흔히 쓰는 키오스크/터치스크린 프리셋 (REQ-M12). value 는 "WxH" 토큰. */
 const PRESETS: ReadonlyArray<{ value: string; width: number; height: number }> = [
+  { value: '2560x1440', width: 2560, height: 1440 },
   { value: '1920x1080', width: 1920, height: 1080 },
   { value: '1280x1024', width: 1280, height: 1024 },
   { value: '1280x720', width: 1280, height: 720 },
