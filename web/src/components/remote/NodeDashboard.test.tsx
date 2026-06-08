@@ -9,6 +9,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useUIStore } from '@/stores/uiStore';
 import type { NodeDetail } from '@/types/remote';
 
 const useRemoteNodeDetailMock = vi.hoisted(() => vi.fn());
@@ -138,6 +139,8 @@ beforeEach(() => {
     error: null,
     refetch: vi.fn(),
   });
+  // 렌더 모드는 영속 store 싱글톤이므로 각 테스트 전에 기본값(반응형)으로 초기화한다.
+  useUIStore.getState().setRemoteDashboardRenderMode('responsive');
 });
 
 describe('NodeDashboard — 개요', () => {
@@ -233,7 +236,26 @@ describe('NodeDashboard — 대시보드 서브탭(M10, 그룹 L)', () => {
     expect(screen.queryByTestId('node-overview')).not.toBeInTheDocument();
   });
 
-  it('대시보드 탭만 고정 캔버스로 감싸고 노드 해상도를 적용한다(REQ-M07/M08)', async () => {
+  it('플로우/에이전트/디바이스 서브탭은 고정 캔버스를 적용하지 않는다(풀폭 반응형 — OQ-M2)', async () => {
+    renderDashboard('/admin/remote?node=node-a&tab=flows');
+    expect(await screen.findByTestId('flow-list-stub')).toBeInTheDocument();
+    // 대시보드 전용 고정 캔버스가 다른 서브탭에는 존재하지 않는다.
+    expect(screen.queryByTestId('fixed-canvas')).not.toBeInTheDocument();
+  });
+});
+
+describe('NodeDashboard — 렌더 모드(반응형/고정, M11.4)', () => {
+  it('기본(반응형)에서는 고정 캔버스 없이 DashboardPage 를 직접 렌더한다', async () => {
+    // 기본 모드는 반응형(beforeEach 에서 초기화).
+    renderDashboard('/admin/remote?node=node-a&tab=dashboard');
+    expect(await screen.findByTestId('dashboard-page-stub')).toBeInTheDocument();
+    // 반응형: 고정 캔버스/스케일러로 감싸지 않는다(그리드가 컨테이너를 채움).
+    expect(screen.queryByTestId('fixed-canvas')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('fixed-canvas-scaler')).not.toBeInTheDocument();
+  });
+
+  it('고정 모드에서는 노드 해상도 고정 캔버스로 감싼다(REQ-M07/M08)', async () => {
+    useUIStore.getState().setRemoteDashboardRenderMode('fixed');
     renderDashboard('/admin/remote?node=node-a&tab=dashboard');
     const canvas = await screen.findByTestId('fixed-canvas');
     // 노드 보고 해상도(1920×1080)가 고정 캔버스 크기로 적용된다.
@@ -243,7 +265,8 @@ describe('NodeDashboard — 대시보드 서브탭(M10, 그룹 L)', () => {
     expect(within(canvas).getByTestId('dashboard-page-stub')).toBeInTheDocument();
   });
 
-  it('해상도 미보고(0) 시 폴백 1920×1080 을 사용한다(REQ-M03)', async () => {
+  it('고정 모드 + 해상도 미보고(0) 시 폴백 1920×1080 을 사용한다(REQ-M03)', async () => {
+    useUIStore.getState().setRemoteDashboardRenderMode('fixed');
     useRemoteNodeDetailMock.mockReturnValue({
       data: detail({ display_width: 0, display_height: 0 }),
       isLoading: false,
@@ -256,11 +279,16 @@ describe('NodeDashboard — 대시보드 서브탭(M10, 그룹 L)', () => {
     expect(canvas).toHaveAttribute('data-canvas-height', '1080');
   });
 
-  it('플로우/에이전트/디바이스 서브탭은 고정 캔버스를 적용하지 않는다(풀폭 반응형 — OQ-M2)', async () => {
-    renderDashboard('/admin/remote?node=node-a&tab=flows');
-    expect(await screen.findByTestId('flow-list-stub')).toBeInTheDocument();
-    // 대시보드 전용 고정 캔버스가 다른 서브탭에는 존재하지 않는다.
-    expect(screen.queryByTestId('fixed-canvas')).not.toBeInTheDocument();
+  it('렌더 모드는 uiStore 에 영속되어 재마운트 후에도 유지된다', async () => {
+    useUIStore.getState().setRemoteDashboardRenderMode('fixed');
+    const { unmount } = renderDashboard('/admin/remote?node=node-a&tab=dashboard');
+    expect(await screen.findByTestId('fixed-canvas')).toBeInTheDocument();
+    unmount();
+
+    // 새 마운트(다른 노드여도 모드는 뷰 전역) — 여전히 고정 모드.
+    renderDashboard('/admin/remote?node=node-a&tab=dashboard');
+    expect(await screen.findByTestId('fixed-canvas')).toBeInTheDocument();
+    expect(useUIStore.getState().remoteDashboardRenderMode).toBe('fixed');
   });
 });
 

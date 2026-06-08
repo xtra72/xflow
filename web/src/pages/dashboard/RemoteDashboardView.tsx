@@ -15,7 +15,7 @@
 
 import { useState } from 'react';
 import GridLayout from 'react-grid-layout';
-import { LayoutDashboard, Network, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Maximize2, Monitor, Network, RefreshCw } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -31,7 +31,12 @@ import {
 import type { ResourceTarget } from '@/lib/remote/target';
 import { TargetProvider } from '@/lib/remote/TargetContext';
 import type { RemoteDashboardScope } from '@/services/api/remoteService';
-import type { DashboardLayoutItem, PanelConfig } from '@/stores/uiStore';
+import {
+  useUIStore,
+  type DashboardLayoutItem,
+  type PanelConfig,
+  type RemoteDashboardRenderMode,
+} from '@/stores/uiStore';
 import type { DashboardPayload } from '@/types/dashboard';
 import type { FlowInfo } from '@/types/flow';
 
@@ -78,6 +83,12 @@ export default function RemoteDashboardView({
   // 스코프(공유/내 대시보드). 로컬 탭과 동일 의미이나 원격은 READ-ONLY.
   const [scope, setScope] = useState<RemoteDashboardScope>('shared');
 
+  // 렌더 모드(반응형/고정, SPEC-REMOTE-001 M11.4). uiStore 에 영속되는 뷰 전역
+  // 환경설정이다 — DashboardCanvas(NodeDashboard)가 같은 값을 읽어 고정 캔버스
+  // 래핑 여부를 결정한다. 기본값 'responsive'.
+  const renderMode = useUIStore((s) => s.remoteDashboardRenderMode);
+  const setRenderMode = useUIStore((s) => s.setRemoteDashboardRenderMode);
+
   const { payload, isLoading, error, refetch } = useDashboardConfigTarget(
     target,
     scope,
@@ -94,9 +105,13 @@ export default function RemoteDashboardView({
       >
         <ScopeTab active={scope === 'shared'} label={t('remote.remoteDashboard.shared')} onClick={() => setScope('shared')} />
         <ScopeTab active={scope === 'mine'} label={t('remote.remoteDashboard.mine')} onClick={() => setScope('mine')} />
-        <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-(--color-text-muted)">
-          {t('remote.remoteDashboard.readOnly')}
-        </span>
+        <div className="ml-auto flex items-center gap-3">
+          {/* 렌더 모드 토글(반응형/고정) — 원격 대시보드 탭 전용 (M11.4) */}
+          <RenderModeToggle mode={renderMode} onChange={setRenderMode} />
+          <span className="inline-flex items-center gap-1 text-[11px] text-(--color-text-muted)">
+            {t('remote.remoteDashboard.readOnly')}
+          </span>
+        </div>
       </div>
 
       {/* 원격 컨텍스트 헤더(노드 이름 + 새로고침) */}
@@ -158,6 +173,84 @@ function ScopeTab({
           : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
       }`}
     >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * 렌더 모드 세그먼티드 토글(반응형 ↔ 고정, SPEC-REMOTE-001 M11.4).
+ *
+ * "화면 맞춤(반응형)" 은 그리드가 관리자 영역을 채우는 해상도 독립 모드,
+ * "노드 해상도(고정)" 는 노드 해상도 고정 캔버스(픽셀 충실 재현) 모드이다.
+ * 변경 시 uiStore 에 영속되어 세션/노드 간 유지된다.
+ */
+function RenderModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: RemoteDashboardRenderMode;
+  onChange: (mode: RemoteDashboardRenderMode) => void;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="radiogroup"
+      aria-label={t('remote.remoteDashboard.renderMode.label')}
+      data-testid="render-mode-toggle"
+      className="inline-flex items-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-0.5"
+    >
+      <RenderModeOption
+        active={mode === 'responsive'}
+        label={t('remote.remoteDashboard.renderMode.responsive')}
+        title={t('remote.remoteDashboard.renderMode.responsiveHint')}
+        testId="render-mode-responsive"
+        onClick={() => onChange('responsive')}
+        icon={<Maximize2 className="h-3 w-3" aria-hidden="true" />}
+      />
+      <RenderModeOption
+        active={mode === 'fixed'}
+        label={t('remote.remoteDashboard.renderMode.fixed')}
+        title={t('remote.remoteDashboard.renderMode.fixedHint')}
+        testId="render-mode-fixed"
+        onClick={() => onChange('fixed')}
+        icon={<Monitor className="h-3 w-3" aria-hidden="true" />}
+      />
+    </div>
+  );
+}
+
+/** 렌더 모드 토글의 단일 옵션 버튼. */
+function RenderModeOption({
+  active,
+  label,
+  title,
+  testId,
+  onClick,
+  icon,
+}: {
+  active: boolean;
+  label: string;
+  title: string;
+  testId: string;
+  onClick: () => void;
+  icon: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      title={title}
+      data-testid={testId}
+      onClick={onClick}
+      className={`inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors ${
+        active
+          ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+          : 'text-(--color-text-muted) hover:text-(--color-text-secondary)'
+      }`}
+    >
+      {icon}
       {label}
     </button>
   );

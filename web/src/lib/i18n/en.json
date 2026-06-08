@@ -587,6 +587,7 @@
       "save": "Save",
       "clear": "Clear override",
       "hint": "Forces the resolution from the manager view without editing node config or restarting. Clearing reverts to the node-reported value.",
+      "fixedModeNote": "This resolution is only used in the dashboard's \"Node resolution (fixed)\" mode.",
       "errorInvalid": "Width and height must be positive integers.",
       "toast": {
         "set": "Display resolution override applied.",
@@ -601,7 +602,14 @@
       "readOnly": "Read-only",
       "empty": "No dashboard configured for this node",
       "emptyHint": "Select another scope, or configure a dashboard on the node and refresh.",
-      "nodeNotReady": "The node is not approved/online, so the dashboard cannot be displayed."
+      "nodeNotReady": "The node is not approved/online, so the dashboard cannot be displayed.",
+      "renderMode": {
+        "label": "Render mode",
+        "responsive": "Fit to screen",
+        "responsiveHint": "The grid fills the manager content area (resolution-independent). Layout is preserved.",
+        "fixed": "Node resolution",
+        "fixedHint": "Pixel-exact replica on a fixed node-resolution canvas. The resolution setting is only used in this mode."
+      }
     }
   }
 }

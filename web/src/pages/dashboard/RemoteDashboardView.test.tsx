@@ -34,6 +34,8 @@ vi.mock('./renderDashboardPanel', () => ({
   ),
 }));
 
+import { useUIStore } from '@/stores/uiStore';
+
 import RemoteDashboardView from './RemoteDashboardView';
 
 const TARGET = { type: 'remote' as const, instanceId: 'node-1' };
@@ -50,6 +52,8 @@ function gating(nodeReady: boolean) {
 beforeEach(() => {
   useDashboardConfigTargetMock.mockReset();
   useTargetGatingMock.mockReset();
+  // 렌더 모드는 영속 store 싱글톤 — 각 테스트 전에 기본값(반응형)으로 초기화.
+  useUIStore.getState().setRemoteDashboardRenderMode('responsive');
 });
 
 describe('RemoteDashboardView', () => {
@@ -200,5 +204,49 @@ describe('RemoteDashboardView', () => {
     expect(useDashboardConfigTargetMock).toHaveBeenCalledWith(TARGET, 'mine', true);
     expect(screen.queryByTestId('panel-flows-1')).not.toBeInTheDocument();
     expect(screen.getByTestId('remote-dashboard-empty')).toBeInTheDocument();
+  });
+});
+
+describe('RemoteDashboardView — 렌더 모드 토글(M11.4)', () => {
+  beforeEach(() => {
+    useTargetGatingMock.mockReturnValue(gating(true));
+    useDashboardConfigTargetMock.mockReturnValue({
+      payload: undefined,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  it('헤더에 렌더 모드 토글을 렌더하고 기본은 반응형(checked)이다', () => {
+    render(<RemoteDashboardView target={TARGET} />);
+    expect(screen.getByTestId('render-mode-toggle')).toBeInTheDocument();
+    expect(screen.getByTestId('render-mode-responsive')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByTestId('render-mode-fixed')).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('고정으로 전환하면 uiStore 모드를 갱신하고 aria-checked 가 따라간다', () => {
+    render(<RemoteDashboardView target={TARGET} />);
+    fireEvent.click(screen.getByTestId('render-mode-fixed'));
+
+    expect(useUIStore.getState().remoteDashboardRenderMode).toBe('fixed');
+    expect(screen.getByTestId('render-mode-fixed')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByTestId('render-mode-responsive')).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('다시 반응형으로 전환하면 모드가 되돌아간다', () => {
+    useUIStore.getState().setRemoteDashboardRenderMode('fixed');
+    render(<RemoteDashboardView target={TARGET} />);
+    expect(screen.getByTestId('render-mode-fixed')).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(screen.getByTestId('render-mode-responsive'));
+    expect(useUIStore.getState().remoteDashboardRenderMode).toBe('responsive');
+    expect(screen.getByTestId('render-mode-responsive')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('초기 store 모드가 고정이면 토글도 고정으로 표시된다(영속 반영)', () => {
+    useUIStore.getState().setRemoteDashboardRenderMode('fixed');
+    render(<RemoteDashboardView target={TARGET} />);
+    expect(screen.getByTestId('render-mode-fixed')).toHaveAttribute('aria-checked', 'true');
   });
 });

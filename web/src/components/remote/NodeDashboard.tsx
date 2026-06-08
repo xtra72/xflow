@@ -24,6 +24,7 @@ import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
 import { useRemoteNodeDetail } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import type { ResourceTarget } from '@/lib/remote/target';
+import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils/cn';
 import { formatDate, formatDuration } from '@/lib/utils/format';
 
@@ -176,9 +177,11 @@ export function NodeDashboard({
             {tab === 'agents' && <AgentListPage target={target} hideRemoteBanner />}
             {tab === 'devices' && <DeviceListPage target={target} hideRemoteBanner />}
             {/* 대시보드 서브탭: 로컬 DashboardPage 를 원격 target 으로 재사용한다(REQ-L10).
-                노드 해상도 고정 캔버스(FixedCanvasScaler)로 감싸 충실 재현한다 —
-                대시보드 탭에만 적용(REQ-M07/M08, OQ-M2). 패널 코드/데이터/게이팅은
-                불변이며 스케일은 바깥 래퍼가 담당한다(A21/A16, REQ-M09). */}
+                렌더 모드(M11.4): 반응형(기본) → DashboardPage 직접 렌더(그리드가
+                관리자 영역을 채움, 해상도 독립); 고정 → 노드 해상도 고정 캔버스
+                (FixedCanvasScaler)로 충실 재현. 토글은 RemoteDashboardView 헤더에
+                있으며 모드는 uiStore 에 영속된다. 패널 코드/데이터/게이팅은 어느
+                모드에서도 불변이다(A21/A16, REQ-M09). */}
             {tab === 'dashboard' && (
               <DashboardCanvas instanceId={instanceId} enabled={enabled} target={target} />
             )}
@@ -189,7 +192,7 @@ export function NodeDashboard({
   );
 }
 
-// ---- 대시보드 고정 캔버스 래퍼 (SPEC-REMOTE-001 M11, 그룹 M, REQ-M07~M09) ----
+// ---- 대시보드 캔버스 래퍼 (SPEC-REMOTE-001 M11/M11.4, 그룹 M, REQ-M07~M09) ----
 
 interface DashboardCanvasProps {
   instanceId: string;
@@ -198,21 +201,33 @@ interface DashboardCanvasProps {
 }
 
 /**
- * 대시보드 서브탭을 노드 해상도 고정 캔버스에 렌더한다.
+ * 대시보드 서브탭을 렌더 모드에 따라 렌더한다(SPEC-REMOTE-001 M11.4).
  *
- * 노드 해상도(`display_width`/`display_height`)는 useRemoteNodeDetail 로 읽는다
- * (React Query 캐시로 NodeOverview 와 중복 요청 없이 공유). 미보고/0/잘못된 값은
- * 폴백 1920×1080 을 사용한다(REQ-M03/OQ-M1). 캔버스 내부 패널/데이터/게이팅은
- * 그룹 L(RemoteDashboardView via DashboardPage) 그대로다(REQ-M09).
+ * - 반응형(기본): DashboardPage 를 직접 렌더한다 → RemoteDashboardView 가 관리자
+ *   콘텐츠 영역의 폭을 측정해 그리드를 채운다(해상도 독립 — display_width/height
+ *   불필요, FixedCanvasScaler 미사용). M11.3 이전 동작과 동일하다.
+ * - 고정: 노드 해상도(`display_width`/`display_height`) 고정 캔버스에 렌더한 뒤
+ *   레터박스 스케일-투-핏 한다(M11.3 픽셀 충실 재현). 해상도는 useRemoteNodeDetail
+ *   로 읽으며(React Query 캐시로 NodeOverview 와 공유) 미보고/0/음수는 폴백
+ *   1920×1080 을 사용한다(REQ-M03/OQ-M1).
+ *
+ * 어느 모드에서도 캔버스 내부 패널/데이터/게이팅은 그룹 L(RemoteDashboardView via
+ * DashboardPage) 그대로이며 모드만 바깥 래퍼를 바꾼다(REQ-M09).
  */
 function DashboardCanvas({
   instanceId,
   enabled,
   target,
 }: DashboardCanvasProps): React.JSX.Element {
+  const renderMode = useUIStore((s) => s.remoteDashboardRenderMode);
   const { data: detail } = useRemoteNodeDetail(instanceId, enabled);
 
-  // 미보고(0/absent/음수) → 폴백. 양수 보고값만 노드 해상도로 사용한다.
+  // 반응형(기본): 고정 캔버스 없이 직접 렌더 → 컨테이너 폭을 채운다(해상도 독립).
+  if (renderMode === 'responsive') {
+    return <DashboardPage target={target} />;
+  }
+
+  // 고정: 미보고(0/absent/음수) → 폴백. 양수 보고값만 노드 해상도로 사용한다.
   const width =
     detail && detail.display_width > 0 ? detail.display_width : FALLBACK_DISPLAY_WIDTH;
   const height =

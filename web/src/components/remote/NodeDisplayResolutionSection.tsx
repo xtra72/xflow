@@ -218,6 +218,11 @@ export function NodeDisplayResolutionSection({
         </div>
       </dl>
 
+      {/* 이 해상도가 대시보드 "노드 해상도(고정)" 모드에서만 쓰임을 안내 (M11.4). */}
+      <p className="mt-3 text-xs text-(--color-text-muted)" data-testid="display-fixed-mode-note">
+        {t('remote.display.fixedModeNote')}
+      </p>
+
       {/* admin 컨트롤: 오버라이드 SET (프리셋/직접 입력) + CLEAR */}
       {isAdmin && (
         <div
