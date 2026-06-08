@@ -514,8 +514,7 @@
       "configLabel": "Config (JSON)",
       "configHint": "Leave secret fields (passwords, tokens, etc.) blank to keep the node’s existing values.",
       "configInvalid": "The config JSON is not valid.",
-      "save": "Save",
-      "editButton": "Edit settings"
+      "save": "Save"
     },
     "nodeManagement": {
       "title": "Node Management",

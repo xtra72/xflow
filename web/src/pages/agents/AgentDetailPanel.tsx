@@ -14,6 +14,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAgent, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
 import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useUpdateRemoteAgent } from '@/hooks/useRemote';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTranslation } from '@/lib/i18n';
+import { remoteEditErrorMessage } from '@/lib/remote/editError';
+import { omitMaskedSecrets } from '@/lib/remote/secretOmission';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import {
@@ -829,14 +834,21 @@ function StoreConfigEditor({
 // ---- 설정 탭 ----
 
 function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string }) {
-  // SPEC-REMOTE-001 M8 (그룹 J): 설정 읽기는 타깃에 따라 전환한다. 원격 타깃은
-  // READ-ONLY(REQ-J03) — 편집/저장/로그레벨 변경은 그룹 I(M7) CRUD 경로(원격 자원
-  // 페이지)에서 수행하므로 본 인라인 편집은 비활성한다.
+  // SPEC-REMOTE-001 review: 설정 읽기는 타깃에 따라 전환한다. 편집/저장은
+  // 로컬·원격 모두 본 인라인 폼에서 수행한다(로컬과 동형 UX). 로컬은
+  // useConfigureAgent, 원격은 useUpdateRemoteAgent(그룹 I, REQ-I04/I07) 로 분기한다.
+  // 로그레벨 변경(local monitorService)은 원격 대응 백엔드가 없어 원격에서는 숨긴다.
+  const { t } = useTranslation();
   const target = useTargetContext();
   const remote = isRemoteTarget(target);
+  const gating = useTargetGating(target);
   const { data: agent, isLoading } = useAgentDetailTarget(target, agentId);
   const configureAgent = useConfigureAgent();
+  const updateRemoteAgent = useUpdateRemoteAgent();
   const addNotification = useUIStore((s) => s.addNotification);
+  // 저장 진행 상태(로컬/원격 통합) 및 편집 게이팅(원격은 노드 승인+온라인 필요).
+  const isSaving = remote ? updateRemoteAgent.isPending : configureAgent.isPending;
+  const editGated = remote && !gating.nodeReady;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   // v0.7.0 (M13): Store 에이전트의 keys 행 검증 상태.
@@ -914,6 +926,26 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   }, [config]);
 
   const handleSave = useCallback(async () => {
+    // 원격 타깃: 그룹 I(M7) 와 동일한 update 명령 경로로 분기한다(REQ-I04/I07).
+    // 마스킹/미입력 시크릿 필드는 omitMaskedSecrets 로 생략(노드 backfill).
+    // 종류(type)는 수정 대상이 아니며, 이름은 행 인라인 편집 경로에서 별도 처리하므로
+    // 여기서는 config 만 전송한다. 에러는 토스트(remoteEditErrorMessage)로 안내한다.
+    if (remote && isRemoteTarget(target)) {
+      try {
+        await updateRemoteAgent.mutateAsync({
+          instanceID: target.instanceId,
+          agentID: agentId,
+          req: { config: omitMaskedSecrets(draft) },
+        });
+        setEditing(false);
+        addNotification({ type: 'success', message: t('remote.edit.saveSuccess') });
+      } catch (err) {
+        addNotification({ type: 'error', message: remoteEditErrorMessage(err, t) });
+      }
+      return;
+    }
+
+    // 로컬 타깃: 기존 useConfigureAgent 경로(불변).
     try {
       await configureAgent.mutateAsync({ id: agentId, config: draft });
       setEditing(false);
@@ -929,7 +961,17 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
     } catch {
       // 에러는 mutation 상태에서 표시
     }
-  }, [agentId, draft, config, configureAgent, addNotification]);
+  }, [
+    remote,
+    target,
+    updateRemoteAgent,
+    t,
+    agentId,
+    draft,
+    config,
+    configureAgent,
+    addNotification,
+  ]);
 
   if (isLoading) {
     return (
@@ -951,15 +993,15 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
 
   return (
     <div className="p-4">
-      {/* 액션 버튼 (원격 타깃은 READ-ONLY — 편집은 원격 자원 페이지의 그룹 I 경로) */}
-      {!remote && (
+      {/* 액션 버튼 — 로컬·원격 동형 인라인 편집(편집 → 폼 수정 → 저장).
+          원격은 노드 승인+온라인(gating.nodeReady)일 때만 편집/저장 가능(REQ-J05). */}
       <div className="mb-3 flex items-center justify-end gap-2">
         {editing ? (
           <>
             <button
               type="button"
               onClick={handleCancel}
-              disabled={configureAgent.isPending}
+              disabled={isSaving}
               className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             >
               <X className="h-3.5 w-3.5" />
@@ -969,33 +1011,39 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
               type="button"
               onClick={handleSave}
               // v0.7.0 (M13): Store keys 검증 실패 시 저장 차단.
-              disabled={configureAgent.isPending || !storeKeysValid}
+              // 원격은 노드 미-ready 시에도 저장 차단(REQ-J05 게이팅).
+              disabled={isSaving || !storeKeysValid || editGated}
+              data-testid="agent-config-save-button"
               className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
               title={
-                !storeKeysValid
+                editGated
+                  ? t('remote.edit.actionGateHint')
+                  : !storeKeysValid
                   ? '정적 키 설정에 오류가 있습니다 (data_type / metric_type 확인)'
                   : undefined
               }
             >
               <Save className="h-3.5 w-3.5" />
-              {configureAgent.isPending ? '저장 중...' : '저장'}
+              {isSaving ? '저장 중...' : '저장'}
             </button>
           </>
         ) : (
           <button
             type="button"
             onClick={handleEdit}
-            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+            disabled={editGated}
+            data-testid="agent-config-edit-button"
+            title={editGated ? t('remote.edit.actionGateHint') : undefined}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Pencil className="h-3.5 w-3.5" />
             편집
           </button>
         )}
       </div>
-      )}
 
-      {/* 에러 메시지 */}
-      {configureAgent.isError && (
+      {/* 에러 메시지(로컬 저장 실패). 원격은 토스트로 안내하므로 표시하지 않는다. */}
+      {!remote && configureAgent.isError && (
         <p className="mb-3 text-xs text-red-500 dark:text-red-400">
           설정 저장에 실패했습니다. 다시 시도해주세요.
         </p>

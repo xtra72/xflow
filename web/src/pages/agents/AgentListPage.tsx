@@ -25,12 +25,11 @@ import SortableHeader, { type SortState } from '@/components/common/SortableHead
 import { RemoteAgentEditDialog } from '@/components/remote/RemoteAgentEditDialog';
 import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
 import { useUpdateAgent } from '@/hooks/useAgent';
-import { useCreateRemoteAgent, useUpdateRemoteAgent } from '@/hooks/useRemote';
+import { useCreateRemoteAgent } from '@/hooks/useRemote';
 import { useAgentsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
 import { useTranslation } from '@/lib/i18n';
-import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { omitMaskedSecrets } from '@/lib/remote/secretOmission';
 import { TargetProvider } from '@/lib/remote/TargetContext';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
@@ -87,12 +86,9 @@ export default function AgentListPage({
   const [modalOpen, setModalOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [remoteCreateOpen, setRemoteCreateOpen] = useState(false);
-  // 원격 에이전트 설정 편집 대상(REQ-I04). null 이면 편집 다이얼로그가 닫힌 상태이다.
-  const [editingAgent, setEditingAgent] = useState<AgentInfo | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const createRemoteAgent = useCreateRemoteAgent();
-  const updateRemoteAgent = useUpdateRemoteAgent();
 
   /** 전체 내보내기 핸들러 */
   const handleExportAll = async () => {
@@ -131,36 +127,9 @@ export default function AgentListPage({
     setRemoteCreateOpen(false);
   };
 
-  /**
-   * 원격 에이전트 설정 수정 제출 (REQ-I04/I07). 대상 노드로 update 명령이 전파된다.
-   *
-   * 종류(type)는 수정 대상이 아니므로 전송하지 않는다(다이얼로그가 읽기 전용 표시).
-   * config 의 마스킹/미변경 시크릿 필드는 omitMaskedSecrets 로 생략하며(M7 동일),
-   * 노드가 기존값으로 backfill 한다. 성공 시 토스트 + 닫기, 실패는 다이얼로그가
-   * 표시하도록 reject 를 전파한다(추가로 토스트도 노출).
-   */
-  const handleRemoteUpdate = async (value: {
-    name: string;
-    type: string;
-    config: Record<string, unknown>;
-  }): Promise<void> => {
-    if (!isRemoteTarget(target) || !editingAgent) return;
-    try {
-      await updateRemoteAgent.mutateAsync({
-        instanceID: target.instanceId,
-        agentID: editingAgent.id,
-        req: {
-          name: value.name,
-          config: omitMaskedSecrets(value.config),
-        },
-      });
-    } catch (err) {
-      addNotification({ type: 'error', message: remoteEditErrorMessage(err, t) });
-      throw err;
-    }
-    addNotification({ type: 'success', message: t('remote.edit.saveSuccess') });
-    setEditingAgent(null);
-  };
+  // 원격 에이전트 설정 수정은 행 액션 다이얼로그가 아니라 상세 패널의 설정(config)
+  // 탭에서 인라인으로 수행한다(로컬과 동형 UX). AgentDetailPanel.ConfigTab 이
+  // useUpdateRemoteAgent 로 저장을 처리한다(REQ-I04/I07).
 
   // 검색 및 필터 상태
   const [search, setSearch] = useState('');
@@ -480,10 +449,6 @@ export default function AgentListPage({
                       isExpanded={isExpanded}
                       onToggle={() => toggleExpand(agent.id)}
                       showLocalWrites={showLocalWrites}
-                      // 원격 타깃에서만 설정 편집 버튼을 노출하고, 노드가 승인+온라인일
-                      // 때만 활성화한다(REQ-I04/J05). 로컬은 undefined → 버튼 미표시.
-                      onEdit={remote ? () => setEditingAgent(agent) : undefined}
-                      editEnabled={gating.nodeReady}
                     />
                   );
                 })}
@@ -508,7 +473,8 @@ export default function AgentListPage({
         />
       )}
 
-      {/* 원격 에이전트 생성 다이얼로그 (원격 전용 — REQ-I04/I09) */}
+      {/* 원격 에이전트 생성 다이얼로그 (원격 전용 — REQ-I04/I09).
+          설정 수정은 상세 패널의 설정 탭에서 인라인으로 수행한다(create 만 다이얼로그). */}
       {remote && (
         <RemoteAgentEditDialog
           open={remoteCreateOpen}
@@ -516,22 +482,6 @@ export default function AgentListPage({
           pending={createRemoteAgent.isPending}
           onSubmit={handleRemoteCreate}
           onCancel={() => setRemoteCreateOpen(false)}
-        />
-      )}
-
-      {/* 원격 에이전트 설정 편집 다이얼로그 (원격 전용 — REQ-I04/I07/I09). 종류는
-          읽기 전용으로 표시되고, config 는 현재 정의로 프리필된다(시크릿은 redaction
-          되어 부재 → 저장 시 노드 backfill). 플로우 편집과 동형의 어포던스이다. */}
-      {remote && editingAgent && (
-        <RemoteAgentEditDialog
-          open
-          mode="update"
-          pending={updateRemoteAgent.isPending}
-          initialName={editingAgent.name}
-          initialType={editingAgent.type}
-          initialConfig={editingAgent.config ?? {}}
-          onSubmit={handleRemoteUpdate}
-          onCancel={() => setEditingAgent(null)}
         />
       )}
     </div>
@@ -547,13 +497,6 @@ interface AgentRowProps {
   onToggle: () => void;
   /** 로컬 쓰기 어포던스(이름 편집·라이프사이클 버튼) 표시 여부(원격은 숨김). */
   showLocalWrites: boolean;
-  /**
-   * 원격 설정 편집 버튼 클릭 핸들러(원격 전용). 주어지면 액션 영역에 편집 버튼을
-   * 노출한다. 로컬은 undefined → 버튼 미표시(인라인 이름 편집만 제공).
-   */
-  onEdit?: () => void;
-  /** 원격 편집 버튼 활성 여부(노드 승인+온라인일 때만 true). 기본 true. */
-  editEnabled?: boolean;
 }
 
 /** 에이전트 테이블 행 (확장 가능) */
@@ -562,10 +505,7 @@ function AgentRow({
   isExpanded,
   onToggle,
   showLocalWrites,
-  onEdit,
-  editEnabled = true,
 }: AgentRowProps) {
-  const { t } = useTranslation();
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(agent.name);
   const updateAgent = useUpdateAgent();
@@ -698,29 +638,9 @@ function AgentRow({
         </td>
 
         {/* 액션 버튼은 타깃 인지(원격은 그룹 D 명령/M7 경로). 이름 편집만 로컬 전용.
-            원격 설정 편집(onEdit)은 라이프사이클 버튼 앞에 배치한다(플로우 편집과 동형). */}
+            원격 설정 편집은 상세 패널의 설정 탭에서 인라인으로 수행한다(로컬과 동형). */}
         <td className="whitespace-nowrap px-4 py-3 text-right">
           <div className="flex items-center justify-end gap-1">
-            {onEdit && (
-              <button
-                type="button"
-                disabled={!editEnabled}
-                title={
-                  editEnabled
-                    ? t('remote.agentEdit.editButton')
-                    : t('remote.edit.actionGateHint')
-                }
-                aria-label={t('remote.agentEdit.editButton')}
-                data-testid="remote-agent-edit-button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit();
-                }}
-                className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-blue-50 hover:text-(--color-text-secondary) disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-blue-900/20"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
-            )}
             <AgentActionButtons agent={agent} />
           </div>
         </td>

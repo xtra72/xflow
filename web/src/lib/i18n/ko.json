@@ -514,8 +514,7 @@
       "configLabel": "설정 (JSON)",
       "configHint": "비밀 필드(비밀번호·토큰 등)는 비워 두면 노드의 기존 값이 유지됩니다.",
       "configInvalid": "설정 JSON 형식이 올바르지 않습니다.",
-      "save": "저장",
-      "editButton": "설정 편집"
+      "save": "저장"
     },
     "nodeManagement": {
       "title": "노드 관리",

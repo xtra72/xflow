@@ -526,21 +526,28 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 		Connected: &connected,
 	}
 
+	// Uptime 과 Stats 는 detail 수준과 무관하게 항상 채운다.
+	// 목록 엔드포인트(GET /agents)와 원격 agent/list 는 기본 detail("")로 호출되므로,
+	// 이 두 필드를 detail 게이트에 묶으면 web 의 Uptime/Messages 컬럼이 항상 '-' 로 표시된다.
+	// Stats(in-memory) 조회는 저렴하며, 정지 상태에서도 누적 메시지 카운트를 노출한다.
+	result.Stats = &handler.AgentStatsResponse{
+		MessagesIn:     info.Stats.MessagesReceived,
+		MessagesOut:    info.Stats.MessagesSent,
+		Errors:         info.Stats.MessagesErrored,
+		BufferPending:  info.Stats.MsgBufferPending,
+		BufferCapacity: info.Stats.MsgBufferCapacity,
+	}
+	// Uptime 은 실행 중일 때만 채운다(미실행 시 빈 문자열 → web 에서 '-' 표시).
+	// AgentStats 상세 통계와 동일한 파생/포맷(now − started)을 사용해 일관성을 유지한다.
+	if connected && info.Uptime > 0 {
+		result.Uptime = info.Uptime.Truncate(time.Second).String()
+	}
+
 	// summary 또는 full 이면 상세 정보 추가
 	if detail == "summary" || detail == "full" {
 		result.Health = &handler.AgentHealthInfo{
 			Status:    string(info.Health.Status),
 			LastCheck: info.Health.LastCheck,
-		}
-		result.Stats = &handler.AgentStatsResponse{
-			MessagesIn:     info.Stats.MessagesReceived,
-			MessagesOut:    info.Stats.MessagesSent,
-			Errors:         info.Stats.MessagesErrored,
-			BufferPending:  info.Stats.MsgBufferPending,
-			BufferCapacity: info.Stats.MsgBufferCapacity,
-		}
-		if connected && info.Uptime > 0 {
-			result.Uptime = info.Uptime.Truncate(time.Second).String()
 		}
 		if !info.StartedAt.IsZero() {
 			t := info.StartedAt
