@@ -5,7 +5,8 @@ import { useId, useMemo, useState } from 'react';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
-import { useFlows } from '@/hooks/useFlow';
+import { useFlowsTarget } from '@/hooks/useResourceTargets';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { useEditorStore } from '@/stores/editorStore';
 import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
@@ -483,7 +484,11 @@ function AgentSelectInput({
 }
 
 // 참조 플로우를 선택하는 드롭다운 컴포넌트 (SPEC-SUBFLOW-001 그룹 C, flow-node 전용).
-// - getFlows 로 플로우 목록을 채우고, 이름으로 표시한다.
+// - 타깃 인지(target-aware) 플로우 목록으로 후보를 채운다(SPEC-REMOTE-001):
+//   로컬 편집이면 매니저 로컬 플로우(useFlows 동형), 원격 노드 플로우 편집이면 그
+//   노드의 플로우 목록(live + mirror 폴백)을 나열한다. 따라서 원격 편집 시 서브플로우
+//   picker 는 매니저가 아닌 "그 노드"의 플로우를 보여주며, 선택된 flow_id 는 그 노드에
+//   존재하는 플로우를 가리켜 배포 시 노드에서 네이티브로 해석된다.
 // - 현재 편집 중인 플로우(currentFlowId)는 자기참조 방지를 위해 후보에서 제외한다
 //   (REQ-SUBFLOW-C04). 백엔드도 순환을 거부하지만 명백한 자기 선택은 UI 에서 막는다.
 // - 선택 시 { flow_id, flow_name } 복합 객체를 반환한다(DynamicForm 이 포트 비정규화 수행).
@@ -507,10 +512,16 @@ function FlowPickerInput({
   ariaProps: Record<string, unknown>;
   readOnly?: boolean;
 }) {
-  const { data: flowsResult, isLoading } = useFlows();
+  // 타깃 인지 플로우 목록: 로컬이면 매니저 로컬 플로우, 원격이면 그 노드의 플로우.
+  // useTargetContext 는 Provider 미설정 시 로컬을 기본값으로 돌려주므로, 로컬 편집
+  // 콜사이트(Provider 없음/로컬 타깃)는 useFlows 위임과 동일하게 회귀 없이 동작한다.
+  const target = useTargetContext();
+  const { data: flowsResult, isLoading } = useFlowsTarget(target);
   const currentFlowId = useEditorStore((s) => s.currentFlowId);
 
   // 자기참조 방지: 현재 편집 중인 플로우를 후보에서 제외한다 (REQ-SUBFLOW-C04).
+  // 원격 편집은 currentFlowId 가 null 이므로(라이브 제어 비대상) 제외가 무효지만,
+  // 원격 picker 는 그 노드의 다른 플로우만 나열하면 충분하다.
   const flows = useMemo(
     () => (flowsResult?.data ?? []).filter((f) => f.id !== currentFlowId),
     [flowsResult?.data, currentFlowId],

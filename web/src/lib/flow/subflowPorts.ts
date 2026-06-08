@@ -11,6 +11,7 @@
 // (REQ-SUBFLOW-C03 항상 최신 / REQ-SUBFLOW-D04 배포 시 재해석).
 
 import { getFlow } from '@/services/api/flowService';
+import { getRemoteFlow } from '@/services/api/remoteService';
 import type { FlowInfo } from '@/types/flow';
 
 /** 참조 플로우에서 비정규화한 flow-node 표시용 포트 정보. */
@@ -73,5 +74,23 @@ export async function resolveFlowNodePorts(
   flowId: string,
 ): Promise<ResolvedFlowNodePorts> {
   const flow = await getFlow(flowId);
+  return extractFlowNodePorts(flow);
+}
+
+/**
+ * 원격 노드의 참조 플로우(flowId)의 정의를 조회하여 flow-node 표시용 포트 정보를
+ * 비정규화한다 (SPEC-REMOTE-001 — 타깃 인지 서브플로우 picker / "포트 갱신").
+ *
+ * 원격 노드의 플로우를 서브플로우로 참조할 때, 포트 갱신은 로컬 매니저의 GET
+ * /flows/:id 가 아니라 대상 노드의 flow READ 프록시(getRemoteFlow → flow/get)에서
+ * 정의를 가져와야 한다. 그렇지 않으면 매니저 로컬 저장소의 플로우(또는 404)를
+ * 잘못 해석하게 된다. 반환 정의의 config 최상위 inputs/outputs 가 포트 소스다
+ * (로컬 getFlow 와 동형).
+ */
+export async function resolveRemoteFlowNodePorts(
+  instanceId: string,
+  flowId: string,
+): Promise<ResolvedFlowNodePorts> {
+  const flow = await getRemoteFlow<FlowInfo>(instanceId, flowId);
   return extractFlowNodePorts(flow);
 }

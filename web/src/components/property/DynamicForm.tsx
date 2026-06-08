@@ -6,7 +6,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
-import { resolveFlowNodePorts } from '@/lib/flow/subflowPorts';
+import {
+  resolveFlowNodePorts,
+  resolveRemoteFlowNodePorts,
+} from '@/lib/flow/subflowPorts';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import type { ConfigSchema } from '@/types/node';
 
 import { FormField } from './FormField';
@@ -24,6 +29,11 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
   const [localData, setLocalData] = useState<Record<string, unknown>>(data);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // 타깃 인지 포트 비정규화 소스(SPEC-REMOTE-001): 원격 노드 플로우 편집 시 참조
+  // 플로우 포트는 그 노드의 flow READ 프록시에서 가져와야 한다(매니저 로컬 GET 아님).
+  // Provider 미설정 시 로컬 기본값이므로 로컬 편집은 기존 동작 그대로다.
+  const target = useTargetContext();
+
   // 노드 변경 또는 취소(원본 복원) 시 로컬 상태 동기화
   useEffect(() => {
     setLocalData(data);
@@ -40,7 +50,11 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
     async (flowId: string, base: Record<string, unknown>) => {
       if (!flowId) return;
       try {
-        const resolved = await resolveFlowNodePorts(flowId);
+        // 원격 편집이면 대상 노드의 플로우 정의에서, 로컬이면 매니저 로컬 플로우
+        // 정의에서 포트를 해석한다. 둘 다 config 최상위 inputs/outputs 가 소스다.
+        const resolved = isRemoteTarget(target)
+          ? await resolveRemoteFlowNodePorts(target.instanceId, flowId)
+          : await resolveFlowNodePorts(flowId);
         // 조회 도중 다른 플로우로 선택이 바뀌었으면 무시한다(stale 방지).
         setLocalData((prev) => {
           if ((prev.flow_id as string) !== flowId) return prev;
@@ -59,7 +73,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
       }
       void base;
     },
-    [onChange],
+    [onChange, target],
   );
 
   /** 필드 값 변경 핸들러 */
