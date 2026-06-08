@@ -5,7 +5,7 @@
 //   - uptime null(미보고) → "미보고" 표시(하위 호환).
 //   - Flow/Agent/Device 서브탭이 M8 통합 페이지를 target=remote:{id} 로 재사용.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -89,6 +89,8 @@ function detail(o: Partial<NodeDetail> = {}): NodeDetail {
     started_at: 1_700_000_000_000,
     uptime: 3_600_000,
     last_seen: 1_700_000_100_000,
+    display_width: 1920,
+    display_height: 1080,
     summary: {
       flows: { total: 3, running: 2, stopped: 1 },
       agents: { total: 2, connected: 1 },
@@ -216,6 +218,36 @@ describe('NodeDashboard — 대시보드 서브탭(M10, 그룹 L)', () => {
     renderDashboard('/admin/remote?node=node-a&tab=dashboard');
     expect(await screen.findByTestId('dashboard-page-stub')).toBeInTheDocument();
     expect(screen.queryByTestId('node-overview')).not.toBeInTheDocument();
+  });
+
+  it('대시보드 탭만 고정 캔버스로 감싸고 노드 해상도를 적용한다(REQ-M07/M08)', async () => {
+    renderDashboard('/admin/remote?node=node-a&tab=dashboard');
+    const canvas = await screen.findByTestId('fixed-canvas');
+    // 노드 보고 해상도(1920×1080)가 고정 캔버스 크기로 적용된다.
+    expect(canvas).toHaveAttribute('data-canvas-width', '1920');
+    expect(canvas).toHaveAttribute('data-canvas-height', '1080');
+    // DashboardPage 가 캔버스 내부에 렌더된다.
+    expect(within(canvas).getByTestId('dashboard-page-stub')).toBeInTheDocument();
+  });
+
+  it('해상도 미보고(0) 시 폴백 1920×1080 을 사용한다(REQ-M03)', async () => {
+    useRemoteNodeDetailMock.mockReturnValue({
+      data: detail({ display_width: 0, display_height: 0 }),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderDashboard('/admin/remote?node=node-a&tab=dashboard');
+    const canvas = await screen.findByTestId('fixed-canvas');
+    expect(canvas).toHaveAttribute('data-canvas-width', '1920');
+    expect(canvas).toHaveAttribute('data-canvas-height', '1080');
+  });
+
+  it('플로우/에이전트/디바이스 서브탭은 고정 캔버스를 적용하지 않는다(풀폭 반응형 — OQ-M2)', async () => {
+    renderDashboard('/admin/remote?node=node-a&tab=flows');
+    expect(await screen.findByTestId('flow-list-stub')).toBeInTheDocument();
+    // 대시보드 전용 고정 캔버스가 다른 서브탭에는 존재하지 않는다.
+    expect(screen.queryByTestId('fixed-canvas')).not.toBeInTheDocument();
   });
 });
 

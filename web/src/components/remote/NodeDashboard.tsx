@@ -17,6 +17,7 @@ import { lazy, Suspense, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 import { Bot, Cpu, Gauge, HardDrive, LayoutDashboard, Workflow } from 'lucide-react';
 
+import { FixedCanvasScaler } from '@/components/remote/FixedCanvasScaler';
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
 import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
 import { useRemoteNodeDetail } from '@/hooks/useRemote';
@@ -24,6 +25,10 @@ import { useTranslation } from '@/lib/i18n';
 import type { ResourceTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
 import { formatDate, formatDuration } from '@/lib/utils/format';
+
+// 노드 해상도 미보고(0/absent) 시 고정 캔버스 폴백 크기(REQ-M03, OQ-M1).
+const FALLBACK_DISPLAY_WIDTH = 1920;
+const FALLBACK_DISPLAY_HEIGHT = 1080;
 
 // 통합 제어 페이지는 지연 로딩한다(서브탭 활성 시에만 로드 → 초기 비용 절감).
 const FlowListPage = lazy(() => import('@/pages/flows/FlowListPage'));
@@ -57,14 +62,24 @@ interface NodeDashboardProps {
   instanceId: string;
   /** 쿼리 활성 여부(server 모드에서만 true). */
   enabled: boolean;
+  /**
+   * 내부 서브탭 네비를 숨길지 여부(SPEC-REMOTE-001 M11, 그룹 M, REQ-M06).
+   *
+   * 관리자 뷰(상단 바)에서는 서브탭 네비가 상단 바(ManagerViewTopBar)로
+   * 호이스팅되므로 NodeDashboard 자체 네비를 숨긴다. 미지정(기본 false)이면
+   * 기존 standalone 동작대로 자체 네비를 렌더한다(회귀 없음). 어느 경우든
+   * 활성 탭의 단일 출처는 URL(`?tab=`)이다.
+   */
+  hideTabNav?: boolean;
 }
 
 /**
- * 노드 대시보드 — 개요(시스템 정보 + 운영 요약) + Flow/Agent/Device 서브탭.
+ * 노드 대시보드 — 개요(시스템 정보 + 운영 요약) + Flow/Agent/Device/대시보드 서브탭.
  */
 export function NodeDashboard({
   instanceId,
   enabled,
+  hideTabNav = false,
 }: NodeDashboardProps): React.JSX.Element {
   const { t } = useTranslation();
 
@@ -102,58 +117,110 @@ export function NodeDashboard({
     { id: 'devices', labelKey: 'remote.dashboard.tab.devices', Icon: HardDrive },
   ];
 
+  // 관리자 뷰(상단 바)에서는 콘텐츠가 풀폭/풀하이트 영역을 채워야 하므로
+  // space-y 컨테이너 대신 flex 컬럼으로 렌더한다. standalone(자체 네비)에서는
+  // 기존 space-y-4 배치를 유지한다(회귀 없음).
   return (
-    <div className="space-y-4" data-testid="node-dashboard" data-instance-id={instanceId}>
-      {/* 서브탭 헤더 */}
-      <div
-        role="tablist"
-        aria-label={t('remote.dashboard.tabsLabel')}
-        className="flex items-center gap-1 border-b border-(--color-border-default)"
-      >
-        {tabs.map(({ id, labelKey, Icon }) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            data-testid={`node-dashboard-tab-${id}`}
-            onClick={() => setTab(id)}
-            className={cn(
-              'inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-              tab === id
-                ? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-400'
-                : 'border-transparent text-(--color-text-muted) hover:text-(--color-text-secondary)',
-            )}
-          >
-            <Icon className="h-4 w-4" aria-hidden="true" />
-            {t(labelKey)}
-          </button>
-        ))}
-      </div>
+    <div
+      className={hideTabNav ? 'flex h-full min-h-0 flex-col' : 'space-y-4'}
+      data-testid="node-dashboard"
+      data-instance-id={instanceId}
+    >
+      {/* 서브탭 헤더(standalone 전용 — 관리자 뷰에서는 상단 바로 호이스팅됨, REQ-M06) */}
+      {!hideTabNav && (
+        <div
+          role="tablist"
+          aria-label={t('remote.dashboard.tabsLabel')}
+          className="flex items-center gap-1 border-b border-(--color-border-default)"
+        >
+          {tabs.map(({ id, labelKey, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              data-testid={`node-dashboard-tab-${id}`}
+              onClick={() => setTab(id)}
+              className={cn(
+                'inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+                tab === id
+                  ? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-400'
+                  : 'border-transparent text-(--color-text-muted) hover:text-(--color-text-secondary)',
+              )}
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              {t(labelKey)}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 탭 본문 */}
       {tab === 'overview' ? (
         <NodeOverview instanceId={instanceId} enabled={enabled} />
       ) : (
-        <Suspense
-          fallback={
-            <div
-              data-testid="node-dashboard-subtab-loading"
-              className="h-40 animate-pulse rounded bg-(--color-bg-elevated)"
-            />
-          }
-        >
-          {/* hideRemoteBanner: 디렉토리+대시보드 헤더가 이미 선택 노드를 표시하므로
-              임베드 컨텍스트에서 원격 배너는 중복이다(REQ-K14). */}
-          {tab === 'flows' && <FlowListPage target={target} hideRemoteBanner />}
-          {tab === 'agents' && <AgentListPage target={target} hideRemoteBanner />}
-          {tab === 'devices' && <DeviceListPage target={target} hideRemoteBanner />}
-          {/* 대시보드 서브탭: 로컬 DashboardPage 를 원격 target 으로 재사용한다(REQ-L10).
-              READ-ONLY(원격 config 편집 비목표 — REQ-L12)는 DashboardPage 가 처리한다. */}
-          {tab === 'dashboard' && <DashboardPage target={target} />}
-        </Suspense>
+        <div className={hideTabNav ? 'min-h-0 flex-1' : undefined}>
+          <Suspense
+            fallback={
+              <div
+                data-testid="node-dashboard-subtab-loading"
+                className="h-40 animate-pulse rounded bg-(--color-bg-elevated)"
+              />
+            }
+          >
+            {/* hideRemoteBanner: 디렉토리+대시보드 헤더가 이미 선택 노드를 표시하므로
+                임베드 컨텍스트에서 원격 배너는 중복이다(REQ-K14). 플로우/에이전트/
+                디바이스 서브탭은 풀폭 반응형을 유지한다(고정 캔버스 미적용 — OQ-M2). */}
+            {tab === 'flows' && <FlowListPage target={target} hideRemoteBanner />}
+            {tab === 'agents' && <AgentListPage target={target} hideRemoteBanner />}
+            {tab === 'devices' && <DeviceListPage target={target} hideRemoteBanner />}
+            {/* 대시보드 서브탭: 로컬 DashboardPage 를 원격 target 으로 재사용한다(REQ-L10).
+                노드 해상도 고정 캔버스(FixedCanvasScaler)로 감싸 충실 재현한다 —
+                대시보드 탭에만 적용(REQ-M07/M08, OQ-M2). 패널 코드/데이터/게이팅은
+                불변이며 스케일은 바깥 래퍼가 담당한다(A21/A16, REQ-M09). */}
+            {tab === 'dashboard' && (
+              <DashboardCanvas instanceId={instanceId} enabled={enabled} target={target} />
+            )}
+          </Suspense>
+        </div>
       )}
     </div>
+  );
+}
+
+// ---- 대시보드 고정 캔버스 래퍼 (SPEC-REMOTE-001 M11, 그룹 M, REQ-M07~M09) ----
+
+interface DashboardCanvasProps {
+  instanceId: string;
+  enabled: boolean;
+  target: ResourceTarget;
+}
+
+/**
+ * 대시보드 서브탭을 노드 해상도 고정 캔버스에 렌더한다.
+ *
+ * 노드 해상도(`display_width`/`display_height`)는 useRemoteNodeDetail 로 읽는다
+ * (React Query 캐시로 NodeOverview 와 중복 요청 없이 공유). 미보고/0/잘못된 값은
+ * 폴백 1920×1080 을 사용한다(REQ-M03/OQ-M1). 캔버스 내부 패널/데이터/게이팅은
+ * 그룹 L(RemoteDashboardView via DashboardPage) 그대로다(REQ-M09).
+ */
+function DashboardCanvas({
+  instanceId,
+  enabled,
+  target,
+}: DashboardCanvasProps): React.JSX.Element {
+  const { data: detail } = useRemoteNodeDetail(instanceId, enabled);
+
+  // 미보고(0/absent/음수) → 폴백. 양수 보고값만 노드 해상도로 사용한다.
+  const width =
+    detail && detail.display_width > 0 ? detail.display_width : FALLBACK_DISPLAY_WIDTH;
+  const height =
+    detail && detail.display_height > 0 ? detail.display_height : FALLBACK_DISPLAY_HEIGHT;
+
+  return (
+    <FixedCanvasScaler width={width} height={height}>
+      <DashboardPage target={target} />
+    </FixedCanvasScaler>
   );
 }
 

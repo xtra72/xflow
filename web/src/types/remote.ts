@@ -134,6 +134,16 @@ export interface NodeDetail {
   uptime: number | null;
   /** 마지막 수신 시각 (epoch ms). */
   last_seen: number;
+  /**
+   * 노드 장비 모니터(키오스크/터치스크린) 가로 해상도 (px, v1.6 M11, REQ-M01/M02).
+   * 노드 config(`display.resolution`/`display.width`) 선언값을 시스템 정보 페이로드로
+   * 보고한 값이다. 0 = 미보고/미설정 — 관리자 뷰가 폴백 크기를 사용한다(REQ-M03).
+   */
+  display_width: number;
+  /**
+   * 노드 장비 모니터 세로 해상도 (px, v1.6 M11, REQ-M01/M02). 0 = 미보고/미설정.
+   */
+  display_height: number;
   /** 운영 요약 (미러 파생). */
   summary: NodeOperationalSummary;
 }

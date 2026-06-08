@@ -520,6 +520,12 @@
       "title": "Node Management",
       "subtitle": "Browse managed nodes by group, then select a node to view system info, operational summary, and control its flows, agents, and devices."
     },
+    "managerView": {
+      "nodePickerLabel": "Select node",
+      "pickNode": "Select a node",
+      "selectNodeHint": "Select a node from the picker above to view its screen.",
+      "exit": "Exit"
+    },
     "enrollmentManagement": {
       "title": "Enrollment",
       "subtitle": "Approve, reject, or revoke node enrollment requests and issue enrollment tokens.",

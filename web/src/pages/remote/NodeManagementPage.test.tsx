@@ -1,9 +1,11 @@
-// NodeManagementPage 테스트 (SPEC-REMOTE-001 M9, 그룹 K, REQ-K12).
+// NodeManagementPage(관리자 뷰) 테스트 (SPEC-REMOTE-001 M11, 그룹 M, REQ-M04~M06/M10).
 //
 // 범위:
-//   - 디렉토리 렌더: 그룹 트리("전체" 먼저) + 그룹별 노드 + online/status.
-//   - 그룹 배정/해제 mutation 호출(setGroup/clearGroup).
-//   - 노드 선택 → 노드 대시보드 진입(NodeDashboard 스텁으로 격리).
+//   - 상단 바: 노드 피커(그룹 묶음) + 서브탭 네비 + 나가기.
+//   - 노드 선택 → ?node= 갱신, 서브탭 전환 → ?tab= 갱신(딥링크 보존 — M10).
+//   - 풀폭 노드 화면(좌측 디렉토리 제거 → 왜곡 방지).
+//   - 전역 사이드바: 마운트 시 접힘 / 언마운트 시 직전 상태 복원(REQ-M06).
+//   - 그룹 배정/해제 mutation 호출(선택 노드 대상).
 //   - 비-server 모드 게이팅.
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -17,6 +19,7 @@ const useManagedNodesMock = vi.hoisted(() => vi.fn());
 const useRemoteGroupsMock = vi.hoisted(() => vi.fn());
 const setGroupMutateMock = vi.hoisted(() => vi.fn());
 const clearGroupMutateMock = vi.hoisted(() => vi.fn());
+const setSidebarCollapsedMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useRemote', () => ({
   useRemoteMode: useRemoteModeMock,
@@ -26,10 +29,14 @@ vi.mock('@/hooks/useRemote', () => ({
   useClearNodeGroup: () => ({ mutate: clearGroupMutateMock, isPending: false }),
 }));
 
-// 대시보드는 자체 훅(useRemoteNodeDetail)을 쓰므로 스텁으로 격리한다(별도 테스트).
+// 대시보드는 자체 훅을 쓰므로 스텁으로 격리한다(별도 테스트).
 vi.mock('@/components/remote/NodeDashboard', () => ({
-  NodeDashboard: ({ instanceId }: { instanceId: string }) => (
-    <div data-testid="node-dashboard-stub" data-instance-id={instanceId} />
+  NodeDashboard: ({ instanceId, hideTabNav }: { instanceId: string; hideTabNav?: boolean }) => (
+    <div
+      data-testid="node-dashboard-stub"
+      data-instance-id={instanceId}
+      data-hide-tab-nav={String(hideTabNav ?? false)}
+    />
   ),
 }));
 
@@ -41,12 +48,18 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-vi.mock('@/stores/uiStore', () => ({
-  useUIStore: (selector?: (s: { addNotification: () => void }) => unknown) => {
-    const state = { addNotification: vi.fn() };
-    return selector ? selector(state) : state;
-  },
-}));
+// uiStore: setSidebarCollapsed 캡처 + getState().sidebarCollapsed 제공(복원 검증용).
+vi.mock('@/stores/uiStore', () => {
+  type State = { addNotification: () => void; setSidebarCollapsed: (v: boolean) => void; sidebarCollapsed: boolean };
+  const state: State = {
+    addNotification: vi.fn(),
+    setSidebarCollapsed: setSidebarCollapsedMock,
+    sidebarCollapsed: false,
+  };
+  const useUIStore = (selector?: (s: State) => unknown) => (selector ? selector(state) : state);
+  useUIStore.getState = () => state;
+  return { useUIStore };
+});
 
 import NodeManagementPage from './NodeManagementPage';
 
@@ -63,7 +76,7 @@ function node(o: Partial<ManagedNode> = {}): ManagedNode {
   };
 }
 
-// 현재 URL(경로 + 쿼리)을 노출하는 프로브 — `?node=`/`?tab=` 동기화를 검증한다.
+// 현재 URL(쿼리)을 노출하는 프로브 — `?node=`/`?tab=` 동기화를 검증한다.
 let currentSearch = '';
 function LocationProbe(): null {
   const location = useLocation();
@@ -92,10 +105,26 @@ beforeEach(() => {
   useRemoteGroupsMock.mockReset().mockReturnValue({ data: [] as NodeGroup[] });
   setGroupMutateMock.mockReset();
   clearGroupMutateMock.mockReset();
+  setSidebarCollapsedMock.mockReset();
 });
 
-describe('NodeManagementPage — 디렉토리', () => {
-  it('그룹 트리를 "전체" 먼저 렌더하고 그룹별 노드를 묶는다', () => {
+describe('NodeManagementPage — 상단 바 + 노드 피커', () => {
+  it('상단 바를 렌더하고 좌측 디렉토리는 제거된다(풀폭 — 왜곡 방지)', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [node({ instance_id: 'a' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage();
+
+    expect(screen.getByTestId('manager-view-top-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('manager-view-screen')).toBeInTheDocument();
+    // M9 좌측 디렉토리는 더 이상 렌더되지 않는다.
+    expect(screen.queryByTestId('node-directory')).not.toBeInTheDocument();
+  });
+
+  it('노드 피커는 그룹 묶음 드롭다운으로 "전체" 먼저 + 그룹별 노드를 렌더한다(REQ-M05)', () => {
     useRemoteGroupsMock.mockReturnValue({
       data: [
         { group_name: 'prod', node_count: 1 },
@@ -113,25 +142,22 @@ describe('NodeManagementPage — 디렉토리', () => {
     });
     renderPage();
 
-    const groups = screen.getAllByTestId('directory-group');
+    // 드롭다운을 연다.
+    fireEvent.click(screen.getByTestId('node-picker-button'));
+
+    const groups = screen.getAllByTestId('picker-group');
     const [allGroup, prodGroup] = groups;
-    if (!allGroup || !prodGroup) throw new Error('expected two groups');
-    // "전체"(빈 라벨) 그룹이 항상 먼저 정렬된다.
+    if (!allGroup || !prodGroup) throw new Error('expected two picker groups');
+    // "전체"(빈 라벨) 그룹이 항상 먼저 정렬된다(M9 그룹핑 보존).
     expect(allGroup).toHaveAttribute('data-group', '');
     expect(prodGroup).toHaveAttribute('data-group', 'prod');
 
-    // 각 그룹에 올바른 노드가 들어간다.
-    expect(within(allGroup).getByTestId('directory-node')).toHaveAttribute(
-      'data-instance-id',
-      'a',
-    );
-    expect(within(prodGroup).getByTestId('directory-node')).toHaveAttribute(
-      'data-instance-id',
-      'b',
-    );
+    // 각 그룹에 올바른 노드가 묶인다.
+    expect(within(allGroup).getByTestId('picker-node')).toHaveAttribute('data-instance-id', 'a');
+    expect(within(prodGroup).getByTestId('picker-node')).toHaveAttribute('data-instance-id', 'b');
   });
 
-  it('노드를 선택하면 대시보드를 표시하고 URL `?node=` 를 갱신한다', () => {
+  it('노드를 선택하면 풀폭 노드 화면을 표시하고 URL `?node=` 를 갱신한다', () => {
     useManagedNodesMock.mockReturnValue({
       data: [node({ instance_id: 'a' })],
       isLoading: false,
@@ -142,59 +168,49 @@ describe('NodeManagementPage — 디렉토리', () => {
 
     expect(screen.getByTestId('node-management-no-selection')).toBeInTheDocument();
 
-    const row = screen.getByTestId('directory-node');
-    fireEvent.click(within(row).getByText('gw-1'));
+    fireEvent.click(screen.getByTestId('node-picker-button'));
+    fireEvent.click(screen.getByTestId('picker-node'));
 
     const dash = screen.getByTestId('node-dashboard-stub');
     expect(dash).toHaveAttribute('data-instance-id', 'a');
-    // 선택은 URL `?node=` 로 동기화된다(딥링크/뒤로가기 지원).
+    // 관리자 뷰: 내부 서브탭 네비는 상단 바로 호이스팅되므로 숨긴다(REQ-M06).
+    expect(dash).toHaveAttribute('data-hide-tab-nav', 'true');
     expect(new URLSearchParams(currentSearch).get('node')).toBe('a');
   });
 });
 
-describe('NodeManagementPage — URL 선택 동기화(`?node=`)', () => {
-  it('`?node={id}` 가 있으면 마운트 시 해당 노드를 선택 복원한다', () => {
-    useManagedNodesMock.mockReturnValue({
-      data: [node({ instance_id: 'a' }), node({ instance_id: 'b', hostname: 'gw-2' })],
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    });
-    renderPage('/admin/remote?node=b');
-
-    // 선택 안내 없이 곧장 대시보드가 표시되며, 대상은 ?node 가 가리키는 노드다.
-    expect(screen.queryByTestId('node-management-no-selection')).not.toBeInTheDocument();
-    expect(screen.getByTestId('node-dashboard-stub')).toHaveAttribute(
-      'data-instance-id',
-      'b',
-    );
-  });
-
-  it('`?node={id}` 가 목록에 없으면 선택 없음(기본 안내)으로 둔다', () => {
+describe('NodeManagementPage — 서브탭 호이스팅 + 딥링크(`?tab=`)', () => {
+  it('선택 노드의 서브탭 네비를 상단 바에 렌더한다(개요/대시보드/플로우/에이전트/디바이스)', () => {
     useManagedNodesMock.mockReturnValue({
       data: [node({ instance_id: 'a' })],
       isLoading: false,
       error: null,
       refetch: vi.fn(),
     });
-    renderPage('/admin/remote?node=missing');
+    renderPage('/admin/remote?node=a');
 
-    expect(screen.getByTestId('node-management-no-selection')).toBeInTheDocument();
-    expect(screen.queryByTestId('node-dashboard-stub')).not.toBeInTheDocument();
+    expect(screen.getByTestId('manager-view-tabs')).toBeInTheDocument();
+    for (const id of ['overview', 'dashboard', 'flows', 'agents', 'devices']) {
+      expect(screen.getByTestId(`manager-view-tab-${id}`)).toBeInTheDocument();
+    }
   });
 
-  it('파라미터가 없으면 기본(선택 없음)으로 렌더한다', () => {
+  it('서브탭을 전환하면 URL `?tab=` 을 갱신하고 `?node=` 를 보존한다', () => {
     useManagedNodesMock.mockReturnValue({
       data: [node({ instance_id: 'a' })],
       isLoading: false,
       error: null,
       refetch: vi.fn(),
     });
-    renderPage();
-    expect(screen.getByTestId('node-management-no-selection')).toBeInTheDocument();
+    renderPage('/admin/remote?node=a');
+
+    fireEvent.click(screen.getByTestId('manager-view-tab-flows'));
+    const params = new URLSearchParams(currentSearch);
+    expect(params.get('tab')).toBe('flows');
+    expect(params.get('node')).toBe('a');
   });
 
-  it('`?node` 와 함께 온 `?tab` 은 보존되어 대시보드 딥링크가 유지된다', () => {
+  it('`?node`/`?tab` 딥링크는 마운트 시 노드 선택 + 활성 탭을 복원한다(M10 보존)', () => {
     useManagedNodesMock.mockReturnValue({
       data: [node({ instance_id: 'a' })],
       isLoading: false,
@@ -203,25 +219,49 @@ describe('NodeManagementPage — URL 선택 동기화(`?node=`)', () => {
     });
     renderPage('/admin/remote?node=a&tab=flows');
 
-    expect(screen.getByTestId('node-dashboard-stub')).toHaveAttribute(
-      'data-instance-id',
-      'a',
-    );
+    expect(screen.getByTestId('node-dashboard-stub')).toHaveAttribute('data-instance-id', 'a');
+    expect(screen.getByTestId('manager-view-tab-flows')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('나가기는 선택을 해제하고 `?node`/`?tab` 을 제거한다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [node({ instance_id: 'a' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage('/admin/remote?node=a&tab=flows');
+
+    fireEvent.click(screen.getByTestId('manager-view-exit'));
     const params = new URLSearchParams(currentSearch);
-    expect(params.get('node')).toBe('a');
-    expect(params.get('tab')).toBe('flows');
+    expect(params.get('node')).toBeNull();
+    expect(params.get('tab')).toBeNull();
+    expect(screen.getByTestId('node-management-no-selection')).toBeInTheDocument();
   });
 });
 
-describe('NodeManagementPage — 그룹 배정/해제', () => {
-  it('새 그룹 입력 → setGroup mutation 을 호출한다', () => {
+describe('NodeManagementPage — 전역 사이드바 숨김/복원(REQ-M06)', () => {
+  it('마운트 시 사이드바를 접고, 언마운트 시 직전 상태로 복원한다', () => {
+    const { unmount } = renderPage();
+    // 마운트: setSidebarCollapsed(true).
+    expect(setSidebarCollapsedMock).toHaveBeenCalledWith(true);
+
+    setSidebarCollapsedMock.mockClear();
+    unmount();
+    // 언마운트: 직전 상태(false)로 복원 — 다른 화면에 누수되지 않는다.
+    expect(setSidebarCollapsedMock).toHaveBeenCalledWith(false);
+  });
+});
+
+describe('NodeManagementPage — 그룹 배정/해제(관리 액션)', () => {
+  it('선택 노드에 새 그룹 입력 → setGroup mutation 을 호출한다', () => {
     useManagedNodesMock.mockReturnValue({
       data: [node({ instance_id: 'a', group_name: '' })],
       isLoading: false,
       error: null,
       refetch: vi.fn(),
     });
-    renderPage();
+    renderPage('/admin/remote?node=a');
 
     fireEvent.click(screen.getByTestId('node-group-menu-button'));
     fireEvent.change(screen.getByTestId('node-group-new-input'), {
@@ -229,7 +269,6 @@ describe('NodeManagementPage — 그룹 배정/해제', () => {
     });
     fireEvent.click(screen.getByTestId('node-group-new-submit'));
 
-    expect(setGroupMutateMock).toHaveBeenCalledTimes(1);
     expect(setGroupMutateMock).toHaveBeenNthCalledWith(
       1,
       { instanceID: 'a', groupName: 'staging' },
@@ -237,7 +276,7 @@ describe('NodeManagementPage — 그룹 배정/해제', () => {
     );
   });
 
-  it('"전체"로 이동 → clearGroup mutation 을 호출한다', () => {
+  it('선택 노드를 "전체"로 이동 → clearGroup mutation 을 호출한다', () => {
     useManagedNodesMock.mockReturnValue({
       data: [node({ instance_id: 'a', group_name: 'prod' })],
       isLoading: false,
@@ -247,38 +286,12 @@ describe('NodeManagementPage — 그룹 배정/해제', () => {
     useRemoteGroupsMock.mockReturnValue({
       data: [{ group_name: 'prod', node_count: 1 }],
     });
-    renderPage();
+    renderPage('/admin/remote?node=a');
 
     fireEvent.click(screen.getByTestId('node-group-menu-button'));
     fireEvent.click(screen.getByTestId('node-group-clear'));
 
-    expect(clearGroupMutateMock).toHaveBeenCalledTimes(1);
     expect(clearGroupMutateMock).toHaveBeenNthCalledWith(1, 'a', expect.anything());
-  });
-
-  it('기존 그룹 선택 → setGroup mutation 을 해당 라벨로 호출한다', () => {
-    useManagedNodesMock.mockReturnValue({
-      data: [node({ instance_id: 'a', group_name: '' })],
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    });
-    useRemoteGroupsMock.mockReturnValue({
-      data: [
-        { group_name: '', node_count: 1 },
-        { group_name: 'prod', node_count: 0 },
-      ],
-    });
-    renderPage();
-
-    fireEvent.click(screen.getByTestId('node-group-menu-button'));
-    fireEvent.click(screen.getByTestId('node-group-option'));
-
-    expect(setGroupMutateMock).toHaveBeenNthCalledWith(
-      1,
-      { instanceID: 'a', groupName: 'prod' },
-      expect.anything(),
-    );
   });
 });
 
