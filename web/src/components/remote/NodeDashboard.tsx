@@ -15,7 +15,7 @@
 
 import { lazy, Suspense, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
-import { Bot, Cpu, HardDrive, LayoutDashboard, Workflow } from 'lucide-react';
+import { Bot, Cpu, Gauge, HardDrive, LayoutDashboard, Workflow } from 'lucide-react';
 
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
 import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
@@ -29,9 +29,12 @@ import { formatDate, formatDuration } from '@/lib/utils/format';
 const FlowListPage = lazy(() => import('@/pages/flows/FlowListPage'));
 const AgentListPage = lazy(() => import('@/pages/agents/AgentListPage'));
 const DeviceListPage = lazy(() => import('@/pages/devices/DeviceListPage'));
+// 대시보드 서브탭(SPEC-REMOTE-001 M10, 그룹 L, REQ-L10): 로컬 DashboardPage 를
+// target=remote:{id} 로 재사용한다(별도 원격 대시보드 화면 미신설 — A16).
+const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 
 /** 대시보드 서브탭 식별자. */
-type DashboardTab = 'overview' | 'flows' | 'agents' | 'devices';
+type DashboardTab = 'overview' | 'flows' | 'agents' | 'devices' | 'dashboard';
 
 /** 유효한 서브탭 식별자 집합(URL 파라미터 검증용). */
 const DASHBOARD_TABS: readonly DashboardTab[] = [
@@ -39,6 +42,7 @@ const DASHBOARD_TABS: readonly DashboardTab[] = [
   'flows',
   'agents',
   'devices',
+  'dashboard',
 ];
 
 /** URL `?tab=` 원시 값을 DashboardTab 으로 파싱한다(미지정/무효 → overview). */
@@ -92,6 +96,7 @@ export function NodeDashboard({
 
   const tabs: { id: DashboardTab; labelKey: string; Icon: typeof Workflow }[] = [
     { id: 'overview', labelKey: 'remote.dashboard.tab.overview', Icon: LayoutDashboard },
+    { id: 'dashboard', labelKey: 'remote.dashboard.tab.dashboard', Icon: Gauge },
     { id: 'flows', labelKey: 'remote.dashboard.tab.flows', Icon: Workflow },
     { id: 'agents', labelKey: 'remote.dashboard.tab.agents', Icon: Bot },
     { id: 'devices', labelKey: 'remote.dashboard.tab.devices', Icon: HardDrive },
@@ -143,6 +148,9 @@ export function NodeDashboard({
           {tab === 'flows' && <FlowListPage target={target} hideRemoteBanner />}
           {tab === 'agents' && <AgentListPage target={target} hideRemoteBanner />}
           {tab === 'devices' && <DeviceListPage target={target} hideRemoteBanner />}
+          {/* 대시보드 서브탭: 로컬 DashboardPage 를 원격 target 으로 재사용한다(REQ-L10).
+              READ-ONLY(원격 config 편집 비목표 — REQ-L12)는 DashboardPage 가 처리한다. */}
+          {tab === 'dashboard' && <DashboardPage target={target} />}
         </Suspense>
       )}
     </div>

@@ -261,6 +261,7 @@
     "loading": "Loading...",
     "error": "An error occurred",
     "retry": "Retry",
+    "refresh": "Refresh",
     "close": "Close",
     "save": "Save",
     "cancel": "Cancel",
@@ -547,6 +548,7 @@
       "tabsLabel": "Node dashboard tabs",
       "tab": {
         "overview": "Overview",
+        "dashboard": "Dashboard",
         "flows": "Flows",
         "agents": "Agents",
         "devices": "Devices"
@@ -562,6 +564,15 @@
       "running": "Running",
       "stopped": "Stopped",
       "connected": "Connected"
+    },
+    "remoteDashboard": {
+      "title": "Remote Dashboard",
+      "scopeLabel": "Remote dashboard scope",
+      "shared": "Shared",
+      "mine": "My Dashboard",
+      "readOnly": "Read-only",
+      "empty": "No dashboard configured for this node.",
+      "nodeNotReady": "The node is not approved/online, so the dashboard cannot be displayed."
     }
   }
 }

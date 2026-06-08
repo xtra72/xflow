@@ -15,6 +15,7 @@
 //   GET  /remote/nodes/{instance_id}/flows|agents|devices
 //   GET  /remote/flows|agents|devices
 
+import type { DashboardSnapshot } from '@/types/dashboard';
 import type {
   CommandRequest,
   CommandResult,
@@ -519,5 +520,74 @@ export function remoteStreamUrl(
   const base = `/api/v1/remote/nodes/${encodeId(instanceID)}/${plural}/${encodeId(
     resourceID,
   )}/${kind.action}/stream`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+// ---- 원격 대시보드 패리티 (M10, 그룹 L, REQ-L01/L05/L06/L07) ----
+//
+// 대시보드 config(읽기 프록시) + 시스템 메트릭(query-action)은 노드-레벨 READ
+// 자원이므로 per-resource 노출 범위가 없다(REQ-L03). 백엔드(remote_query.go)는
+// 노드가 redaction(J06)한 본문을 그대로 통과시키므로 응답 형태는 로컬과 동일하다:
+//   GET .../dashboards/shared → DashboardSnapshot (dashboard/get_shared)
+//   GET .../dashboards/mine   → DashboardSnapshot (dashboard/get_mine, owner=JWT)
+//   GET .../metrics           → 메트릭 스냅샷 (monitor/metrics)
+// 실패 의미는 그룹 J 와 동일(503/504/502, 미설정 404 — mapRemoteQueryError).
+
+/** 대시보드 config 스코프(로컬 탭과 동일 의미). */
+export type RemoteDashboardScope = 'shared' | 'mine';
+
+/**
+ * 원격 노드의 대시보드 config(스코프별)를 READ-ONLY 로 조회한다(REQ-L01).
+ * GET /remote/nodes/{id}/dashboards/{shared|mine}
+ *
+ * 노드-로컬 권위(A17): config 내부 deviceId 는 그 노드 기준으로 해석된다(REQ-L03).
+ * 미설정 노드는 404 로 매핑되어 APIError 로 전파된다(빈 대시보드 처리는 호출자).
+ */
+export async function getRemoteDashboard(
+  instanceID: string,
+  scope: RemoteDashboardScope,
+): Promise<DashboardSnapshot> {
+  return get<DashboardSnapshot>(
+    `/remote/nodes/${encodeId(instanceID)}/dashboards/${scope}`,
+  );
+}
+
+/**
+ * 원격 노드의 시스템 메트릭 스냅샷을 조회한다(REQ-L05, monitor/metrics).
+ * GET /remote/nodes/{id}/metrics
+ *
+ * 로컬 `/monitor/metrics` 와 동형(필드명 동일)이므로 ResourceWidget 이 그대로
+ * 소비한다. 서버는 단기 TTL 캐시(REQ-J16)·게이팅(REQ-J05)을 적용한다.
+ */
+export async function getRemoteMetrics(
+  instanceID: string,
+): Promise<Record<string, unknown>> {
+  return get<Record<string, unknown>>(`/remote/nodes/${encodeId(instanceID)}/metrics`);
+}
+
+/**
+ * 원격 차트 채널 라이브 스트림 SSE URL 을 구성한다(REQ-L07). 별도 WS 경로를
+ * 신설하지 않고 M8 스트림 프록시에 추가된 `chart` stream-action 을 사용한다. 프레임은
+ * 로컬 `/ws/chart/{channel}` 와 동일한 chart.backfill/chart.append 형태이다.
+ * 경로는 remote_stream.go 의 charts/{channel}/stream 라우트와 일치한다.
+ */
+export function remoteChartStreamUrl(
+  instanceID: string,
+  channelName: string,
+  token?: string,
+): string {
+  const base = `/api/v1/remote/nodes/${encodeId(instanceID)}/charts/${encodeId(
+    channelName,
+  )}/stream`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+/**
+ * 원격 로그 라이브 스트림 SSE URL 을 구성한다(REQ-L06, monitor/logs). 노드-레벨
+ * 스트림(자원 식별자 없음)이며 프레임은 로컬 log.entry 형태이다. 경로는
+ * remote_stream.go 의 logs/stream 라우트와 일치한다.
+ */
+export function remoteLogsStreamUrl(instanceID: string, token?: string): string {
+  const base = `/api/v1/remote/nodes/${encodeId(instanceID)}/logs/stream`;
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }

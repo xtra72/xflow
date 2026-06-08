@@ -51,6 +51,12 @@ vi.mock('@/pages/devices/DeviceListPage', () => ({
     />
   ),
 }));
+// 대시보드 서브탭(M10, 그룹 L): 로컬 DashboardPage 를 target 으로 재사용한다.
+vi.mock('@/pages/dashboard/DashboardPage', () => ({
+  default: ({ target }: StubProps) => (
+    <div data-testid="dashboard-page-stub" data-target={JSON.stringify(target)} />
+  ),
+}));
 
 vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
@@ -187,6 +193,30 @@ describe('NodeDashboard — 서브탭(M8 통합 제어 재사용)', () => {
       expect(screen.queryByTestId('remote-target-banner')).not.toBeInTheDocument();
     },
   );
+});
+
+describe('NodeDashboard — 대시보드 서브탭(M10, 그룹 L)', () => {
+  it('대시보드 탭이 존재한다', () => {
+    renderDashboard();
+    expect(screen.getByTestId('node-dashboard-tab-dashboard')).toBeInTheDocument();
+  });
+
+  it('대시보드 서브탭은 로컬 DashboardPage 를 target=remote:node-a 로 렌더한다', async () => {
+    renderDashboard();
+    fireEvent.click(screen.getByTestId('node-dashboard-tab-dashboard'));
+
+    const el = await screen.findByTestId('dashboard-page-stub');
+    expect(JSON.parse(el.getAttribute('data-target') ?? 'null')).toEqual({
+      type: 'remote',
+      instanceId: 'node-a',
+    });
+  });
+
+  it('`?tab=dashboard` 딥링크는 마운트 시 대시보드 탭을 복원한다', async () => {
+    renderDashboard('/admin/remote?node=node-a&tab=dashboard');
+    expect(await screen.findByTestId('dashboard-page-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('node-overview')).not.toBeInTheDocument();
+  });
 });
 
 describe('NodeDashboard — 활성 탭 URL 동기화(`?tab=`)', () => {

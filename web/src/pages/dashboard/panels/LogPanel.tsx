@@ -7,6 +7,10 @@ import { FileText, Palette, Settings, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 import { useWebSocket } from '@/hooks';
+import { useRemoteStream } from '@/hooks/useRemoteStream';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { remoteLogsStreamUrl } from '@/services/api/remoteService';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { LogLevel } from '@/pages/monitoring/LogViewer';
 
@@ -19,6 +23,16 @@ interface LogEntry {
   level: LogLevel;
   message: string;
   source?: string;
+}
+
+/** 원격 로그 스트림 프레임(노드 log.entry 형태, REQ-L06). 로컬 WS 와 동형이다. */
+interface RemoteLogFrame {
+  level?: string;
+  message?: string;
+  timestamp?: string;
+  source?: string;
+  componentKind?: string;
+  componentName?: string;
 }
 
 /** 레벨별 뱃지 스타일 */
@@ -75,6 +89,13 @@ export default function LogPanel({
   };
   const { client } = useWebSocket();
 
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L06): 원격이면 노드의 로그 스트림을
+  // SSE 스트림 프록시로 구독한다(monitor/logs). 로컬은 기존 WS LOG_ENTRY 그대로.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const remoteLogsUrl = remote ? remoteLogsStreamUrl(target.instanceId) : undefined;
+  const remoteStream = useRemoteStream<RemoteLogFrame>(remoteLogsUrl, { enabled: remote });
+
   // 로그 상태
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
@@ -106,39 +127,44 @@ export default function LogPanel({
     setDraftMaxLines(String(maxLines));
   }, [maxLines]);
 
-  // WebSocket 로그 수신 핸들러
-  const handleLog = useCallback((data: unknown) => {
-    const d = data as {
-      level?: string;
-      message?: string;
-      timestamp?: string;
-      source?: string;
-    };
-
+  // 로그 프레임 → LogEntry 누적(로컬 WS·원격 SSE 공통).
+  const appendLog = useCallback((d: RemoteLogFrame) => {
     const entry: LogEntry = {
       id: nextLogId(),
       timestamp: d.timestamp ? formatTime(d.timestamp) : formatTime(new Date()),
       level: (d.level?.toUpperCase() as LogLevel) ?? 'INFO',
       message: d.message ?? '',
-      source: d.source ?? '',
+      source: d.source ?? d.componentName ?? '',
     };
-
     setLogs((prev) => {
       const next = [...prev, entry];
-      // maxLines 제한 적용
       return next.length > maxLines ? next.slice(next.length - maxLines) : next;
     });
   }, [maxLines]);
 
-  // WebSocket 핸들러 등록/해제
+  // WebSocket 로그 수신 핸들러(로컬).
+  const handleLog = useCallback((data: unknown) => {
+    appendLog(data as RemoteLogFrame);
+  }, [appendLog]);
+
+  // WebSocket 핸들러 등록/해제 — 로컬 타깃에서만. 원격은 SSE 로 수신한다(아래).
   useEffect(() => {
-    if (!client) return;
+    if (remote || !client) return;
 
     client.on(WS_MESSAGE_TYPES.LOG_ENTRY, handleLog);
     return () => {
       client.off(WS_MESSAGE_TYPES.LOG_ENTRY, handleLog);
     };
-  }, [client, handleLog]);
+  }, [remote, client, handleLog]);
+
+  // 원격 로그 SSE 수신(REQ-L06). 새 프레임이 도착할 때마다 누적한다. useRemoteStream
+  // 은 최신 프레임만 노출하므로 data 변경 시 1회 append 한다(중복 없음).
+  useEffect(() => {
+    if (!remote || !remoteStream.data) return;
+    appendLog(remoteStream.data);
+    // remoteStream.data 가 바뀔 때만 append(동일 참조면 미실행).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote, remoteStream.data]);
 
   // 새 로그 수신 시 자동 스크롤
   useEffect(() => {

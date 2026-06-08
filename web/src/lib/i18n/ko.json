@@ -261,6 +261,7 @@
     "loading": "로딩 중...",
     "error": "오류가 발생했습니다",
     "retry": "다시 시도",
+    "refresh": "새로고침",
     "close": "닫기",
     "save": "저장",
     "cancel": "취소",
@@ -547,6 +548,7 @@
       "tabsLabel": "노드 대시보드 탭",
       "tab": {
         "overview": "개요",
+        "dashboard": "대시보드",
         "flows": "플로우",
         "agents": "에이전트",
         "devices": "디바이스"
@@ -562,6 +564,15 @@
       "running": "실행 중",
       "stopped": "중지됨",
       "connected": "연결됨"
+    },
+    "remoteDashboard": {
+      "title": "원격 대시보드",
+      "scopeLabel": "원격 대시보드 스코프",
+      "shared": "공유",
+      "mine": "내 대시보드",
+      "readOnly": "읽기 전용",
+      "empty": "이 노드에 설정된 대시보드가 없습니다.",
+      "nodeNotReady": "노드가 승인·온라인 상태가 아니어서 대시보드를 표시할 수 없습니다."
     }
   }
 }

@@ -12,6 +12,9 @@ import { Link } from 'react-router';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useDevicesTarget } from '@/hooks/useResourceTargets';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import { type DeviceColumnKey, ALL_DEVICE_COLUMNS } from '@/stores/uiStore';
 
@@ -60,8 +63,17 @@ export default function DevicePanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: DevicePanelProps) {
-  const { data, isLoading } = useDevicesRealtime();
-  const devices = data?.data ?? [];
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
+  // 소스로 쓴다(useDevicesTarget). 로컬은 기존 useDevicesRealtime 그대로(회귀 없음).
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const localQuery = useDevicesRealtime();
+  const remoteQuery = useDevicesTarget(target);
+  const devices = useMemo(
+    () => (remote ? (remoteQuery.data?.data ?? []) : (localQuery.data?.data ?? [])),
+    [remote, remoteQuery.data, localQuery.data],
+  );
+  const isLoading = remote ? remoteQuery.isLoading : localQuery.isLoading;
 
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
@@ -306,8 +318,8 @@ export default function DevicePanel({
                 </table>
               </div>
 
-              {/* 더 보기 링크 */}
-              {devices.length > 10 && (
+              {/* 더 보기 링크 — 원격은 로컬 `/devices` 로 이탈하므로 숨긴다. */}
+              {!remote && devices.length > 10 && (
                 <div className="mt-4 text-right">
                   <Link
                     to="/devices"
