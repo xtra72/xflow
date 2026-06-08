@@ -257,12 +257,24 @@ type deviceMetadataRepo interface {
 	Delete(ctx context.Context, deviceID string) error
 }
 
-// deviceCommander 는 device 메타데이터 명령을 레지스트리 + 영속 저장소로 적용한다
-// (REQ-D04). HTTP api.Context 를 위조하지 않고, device 핸들러와 동일한 clean 메서드
-// (SetMetadata + Save/Delete)를 직접 호출하여 로컬 검증을 보존한다.
+// deviceExecutor 는 device 런타임 명령(execute) 실행에 필요한 최소 인터페이스이다.
+// device.DeviceRegistry.Execute 와 동일 시그니처로, 로컬 DeviceHandler.Execute
+// (POST /devices/{id}/execute)가 호출하는 바로 그 registry 인스턴스를 주입한다 —
+// 원격 실행이 로컬 제어와 완전히 동일한 경로/검증을 통과하도록 보장한다(REQ-D04,
+// OQ-L4: 제어 쓰기는 그룹 D 를 재사용). device.ErrNotControllable /
+// ErrDeviceNotFound 등 오류 의미는 그대로 전파된다.
+type deviceExecutor interface {
+	Execute(ctx context.Context, id string, command string, params map[string]any) (map[string]any, error)
+}
+
+// deviceCommander 는 device 메타데이터 명령을 레지스트리 + 영속 저장소로 적용하고,
+// device 런타임 명령(execute)을 로컬 Execute 서비스로 적용한다(REQ-D04). HTTP
+// api.Context 를 위조하지 않고, device 핸들러와 동일한 clean 메서드(SetMetadata +
+// Save/Delete, Execute)를 직접 호출하여 로컬 검증을 보존한다.
 type deviceCommander struct {
 	registry deviceRegistrySetter
 	repo     deviceMetadataRepo
+	executor deviceExecutor
 }
 
 // deviceMetadataArgs 는 device 메타데이터 명령 인자이다.
@@ -271,9 +283,29 @@ type deviceMetadataArgs struct {
 	Metadata device.DeviceMetadata `json:"metadata"`
 }
 
-// Do 는 update(메타데이터 설정+영속) / delete_metadata(메타데이터 제거+영속 삭제)를
-// 적용한다. device 핸들러 UpdateMetadata/DeleteMetadata 와 동일한 순서/검증이다.
+// deviceExecuteArgs 는 device 런타임 명령(execute) 인자이다. 프런트엔드 그룹 D
+// 페이로드({domain:'device', action:'execute', args:{id, command, params}})와
+// 동일한 모양을 소비한다(REQ-D04). handler.ExecuteRequest(command/params) +
+// id 를 합친 형태이다.
+type deviceExecuteArgs struct {
+	ID      string         `json:"id"`
+	Command string         `json:"command"`
+	Params  map[string]any `json:"params,omitempty"`
+}
+
+// Do 는 update(메타데이터 설정+영속) / delete_metadata(메타데이터 제거+영속 삭제) /
+// execute(런타임 명령 실행)를 적용한다. update/delete_metadata 는 device 핸들러
+// UpdateMetadata/DeleteMetadata 와 동일한 순서/검증이고, execute 는 로컬
+// DeviceHandler.Execute(POST /devices/{id}/execute)와 동일한 Execute 서비스를 호출한다.
 func (c *deviceCommander) Do(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	// execute 는 메타데이터와 인자 모양이 다르므로 먼저 분기한다(런타임 제어 쓰기 —
+	// OQ-L4: 제어 쓰기는 그룹 D 를 재사용). 의도된 WRITE 이므로 read-only 안전장치는
+	// 적용하지 않으며, device.ErrNotControllable / ErrDeviceNotFound 등 오류는 그대로
+	// 명령 오류로 전파된다(서버가 502 로 매핑 → UI 노출).
+	if action == "execute" {
+		return c.execute(ctx, args)
+	}
+
 	var p deviceMetadataArgs
 	if err := json.Unmarshal(args, &p); err != nil {
 		return nil, fmt.Errorf("device args: %w", err)
@@ -302,6 +334,34 @@ func (c *deviceCommander) Do(ctx context.Context, action string, args json.RawMe
 	default:
 		return nil, fmt.Errorf("device: 알 수 없는 액션 %q", action)
 	}
+}
+
+// execute 는 device 런타임 명령을 로컬 Execute 서비스로 적용한다. 인자는 프런트엔드
+// 그룹 D 페이로드(args:{id, command, params})와 동일하게 디코드하며, 로컬
+// DeviceHandler.Execute 와 동일한 필수값 검증(id, command)을 적용한 뒤 동일한 registry
+// Execute 메서드를 호출한다 — 원격 실행이 로컬 POST /devices/{id}/execute 와 동일한
+// 경로/검증/오류 의미를 갖도록 보장한다. 실행 결과(map)는 그대로 직렬화하여 반환하고,
+// device.ErrNotControllable / ErrDeviceNotFound 등 오류는 그대로 전파한다(부분 적용
+// 없음 — REQ-D09).
+func (c *deviceCommander) execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+	var p deviceExecuteArgs
+	if err := json.Unmarshal(args, &p); err != nil {
+		return nil, fmt.Errorf("device execute args: %w", err)
+	}
+	if p.ID == "" {
+		return nil, fmt.Errorf("device: id 는 필수입니다")
+	}
+	if p.Command == "" {
+		return nil, fmt.Errorf("device: command 는 필수입니다")
+	}
+	if c.executor == nil {
+		return nil, fmt.Errorf("device: execute 서비스가 구성되지 않았습니다")
+	}
+	result, err := c.executor.Execute(ctx, p.ID, p.Command, p.Params)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(result)
 }
 
 // mergeSecrets 는 원격 갱신 정의(incoming)에서 생략된 시크릿 필드를 기존 정의

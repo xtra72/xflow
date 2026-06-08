@@ -952,7 +952,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		commandApplier := remote.NewApplier(
 			&flowCommander{adapter: flowSvc},
 			&agentCommander{adapter: agentSvc},
-			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo},
+			// executor 는 로컬 DeviceHandler.Execute(POST /devices/{id}/execute)가
+			// 호출하는 바로 그 deviceRegistry 인스턴스이다 — 원격 런타임 제어(execute)가
+			// 로컬 제어와 동일한 경로/검증/오류 의미를 갖도록 동일 레지스트리를 재사용한다
+			// (A5 — 원격 우회 없음, OQ-L4 — 제어 쓰기는 그룹 D 재사용).
+			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo, executor: deviceRegistry},
 		)
 
 		// 인벤토리 소스(M4, REQ-E01): 로컬 API 와 동일한 어댑터 인스턴스를 재사용하여
