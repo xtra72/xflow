@@ -14,9 +14,14 @@
     "agentTypes": "에이전트 타입",
     "reference": "참고",
     "editor": "플로우",
+    "remote": "원격 관리",
+    "remoteNodes": "관리 노드",
+    "remoteControl": "원격 노드 제어",
     "sidebarNav": "사이드바 네비게이션",
     "expandSidebar": "사이드바 펼치기",
-    "collapseSidebar": "사이드바 접기"
+    "collapseSidebar": "사이드바 접기",
+    "nodeManagement": "노드 관리",
+    "enrollmentManagement": "등록 관리"
   },
   "auth": {
     "login": "로그인",
@@ -256,6 +261,7 @@
     "loading": "로딩 중...",
     "error": "오류가 발생했습니다",
     "retry": "다시 시도",
+    "refresh": "새로고침",
     "close": "닫기",
     "save": "저장",
     "cancel": "취소",
@@ -318,5 +324,292 @@
     "somethingWentWrong": "문제가 발생했습니다",
     "unknownError": "알 수 없는 오류",
     "reload": "페이지 새로고침"
+  },
+  "remote": {
+    "title": "관리 노드",
+    "subtitle": "원격 xflowd 노드의 등록 상태를 확인하고 승인·거부·폐기합니다.",
+    "header": {
+      "titlePrefix": "원격"
+    },
+    "target": {
+      "viewing": "원격 노드 보기:",
+      "backToLocal": "로컬로 돌아가기",
+      "controlDisabled": "노드 오프라인 — 제어 비활성",
+      "logsUnavailable": "원격 노드는 로그를 제공하지 않습니다."
+    },
+    "selector": {
+      "title": "원격 노드 제어",
+      "subtitle": "원격 노드를 선택하면 로컬과 동일한 화면(플로우·에이전트·디바이스)으로 제어합니다.",
+      "openFlows": "플로우",
+      "openAgents": "에이전트",
+      "openDevices": "디바이스",
+      "controlNode": "이 노드 제어",
+      "nodeOffline": "오프라인",
+      "empty": "승인된 원격 노드가 없습니다. 노드를 등록·승인하세요."
+    },
+    "online": "온라인",
+    "offline": "오프라인",
+    "loadError": "원격 데이터를 불러오는 중 오류가 발생했습니다.",
+    "noNodes": "등록된 관리 노드가 없습니다.",
+    "noApprovedNodes": "승인된 노드가 없습니다.",
+    "notServerTitle": "원격 관리 서버 모드가 아닙니다",
+    "notServerDesc": "이 인스턴스는 원격 관리 서버 모드가 아닙니다. remote_management.mode: server 로 설정 후 재시작하세요.",
+    "selectNode": "노드 선택",
+    "nodesTableLabel": "관리 노드 목록",
+    "status": {
+      "pending": "승인 대기",
+      "approved": "승인됨",
+      "rejected": "거부됨",
+      "revoked": "폐기됨"
+    },
+    "col": {
+      "hostname": "호스트명",
+      "instanceId": "인스턴스 ID",
+      "version": "버전",
+      "online": "연결",
+      "status": "상태",
+      "lastSeen": "마지막 수신",
+      "actions": "액션"
+    },
+    "action": {
+      "approve": "승인",
+      "reject": "거부",
+      "revoke": "폐기",
+      "delete": "삭제"
+    },
+    "confirm": {
+      "rejectTitle": "노드를 거부하시겠습니까?",
+      "rejectDesc": "{node} 노드의 등록 요청을 거부합니다. 이 작업은 되돌릴 수 없습니다.",
+      "revokeTitle": "노드를 폐기하시겠습니까?",
+      "revokeDesc": "{node} 노드의 승인을 폐기합니다. 해당 노드는 더 이상 명령을 받을 수 없으며, 이 작업은 되돌릴 수 없습니다.",
+      "deleteTitle": "노드를 삭제하시겠습니까?",
+      "deleteDesc": "{node} 노드를 목록에서 완전히 제거합니다. 이 작업은 되돌릴 수 없습니다."
+    },
+    "toast": {
+      "approved": "노드를 승인했습니다.",
+      "rejected": "노드를 거부했습니다.",
+      "revoked": "노드를 폐기했습니다.",
+      "deleted": "노드를 삭제했습니다.",
+      "preRegistered": "노드를 등록했습니다.",
+      "actionFailed": "작업을 처리하지 못했습니다."
+    },
+    "preRegister": {
+      "button": "노드 추가(사전 등록)",
+      "title": "노드 사전 등록",
+      "desc": "노드의 인스턴스 ID 를 입력하여 서버에서 직접 등록합니다. 등록된 노드는 승인됨 상태로 추가됩니다.",
+      "instanceIdLabel": "인스턴스 ID",
+      "instanceIdPlaceholder": "예: edge-node-01",
+      "instanceIdRequired": "인스턴스 ID 를 입력해주세요.",
+      "nameLabel": "표시명 (선택)",
+      "namePlaceholder": "예: 1층 게이트웨이",
+      "submit": "등록",
+      "submitting": "등록 중...",
+      "errorDuplicate": "이미 존재하는 인스턴스 ID 입니다.",
+      "errorGeneric": "노드를 등록하지 못했습니다."
+    },
+    "enrollment": {
+      "title": "Enrollment 토큰",
+      "subtitle": "피관리 노드가 자동 등록에 사용하는 토큰을 발급·관리합니다.",
+      "tableLabel": "Enrollment 토큰 목록",
+      "createButton": "토큰 발급",
+      "noTokens": "발급된 토큰이 없습니다.",
+      "loadError": "토큰 목록을 불러오는 중 오류가 발생했습니다.",
+      "create": {
+        "title": "Enrollment 토큰 발급",
+        "desc": "새 enrollment 토큰을 발급합니다. 발급된 토큰은 한 번만 표시됩니다.",
+        "labelLabel": "라벨 (선택)",
+        "labelPlaceholder": "예: 1층 노드용",
+        "expiresLabel": "만료 기간",
+        "maxUsesLabel": "최대 사용 횟수 (선택)",
+        "maxUsesPlaceholder": "예: 5",
+        "submit": "발급",
+        "submitting": "발급 중...",
+        "errorGeneric": "토큰을 발급하지 못했습니다."
+      },
+      "expires": {
+        "none": "미사용",
+        "1h": "1시간",
+        "24h": "24시간",
+        "7d": "7일",
+        "30d": "30일"
+      },
+      "created": {
+        "title": "토큰이 발급되었습니다",
+        "warning": "이 토큰은 다시 표시되지 않습니다. 지금 안전한 곳에 복사해 두세요.",
+        "tokenLabel": "토큰",
+        "copy": "토큰 복사",
+        "copied": "복사됨",
+        "snippetLabel": "클라이언트 설정 예시",
+        "copySnippet": "설정 복사",
+        "done": "완료"
+      },
+      "col": {
+        "id": "ID",
+        "label": "라벨",
+        "createdAt": "생성 시각",
+        "expiresAt": "만료 시각",
+        "maxUses": "최대 사용",
+        "uses": "사용 횟수",
+        "state": "상태",
+        "actions": "액션"
+      },
+      "state": {
+        "active": "활성",
+        "revoked": "폐기됨",
+        "expired": "만료됨"
+      },
+      "unlimited": "무제한",
+      "never": "없음",
+      "confirm": {
+        "revokeTitle": "토큰을 폐기하시겠습니까?",
+        "revokeDesc": "{label} 토큰을 폐기합니다. 폐기된 토큰으로는 더 이상 노드를 등록할 수 없으며, 이 작업은 되돌릴 수 없습니다."
+      },
+      "toast": {
+        "revoked": "토큰을 폐기했습니다.",
+        "actionFailed": "작업을 처리하지 못했습니다."
+      }
+    },
+    "edit": {
+      "createFlow": "플로우 생성",
+      "createAgent": "에이전트 생성",
+      "createGateHint": "대상 노드가 승인·온라인 상태여야 생성할 수 있습니다.",
+      "gateHint": "승인·온라인 노드의 노출 자원만 편집할 수 있습니다.",
+      "saveSuccess": "변경 사항을 노드에 적용했습니다.",
+      "actionGateHint": "대상 노드가 승인·온라인 상태이고 자원이 온라인일 때만 제어할 수 있습니다.",
+      "unsupportedOnRemote": "이 동작은 원격 노드에서 지원되지 않습니다.",
+      "deleteSuccess": "자원을 삭제했습니다.",
+      "deleteTitle": "자원을 삭제하시겠습니까?",
+      "deleteDesc": "{name} 자원을 대상 노드에서 삭제합니다. 이 작업은 되돌릴 수 없습니다.",
+      "errorUnavailable": "대상 노드가 오프라인이거나 승인되지 않아 편집을 적용할 수 없습니다.",
+      "errorTimeout": "노드 응답을 받지 못했습니다 (타임아웃). 변경이 적용되지 않았습니다.",
+      "errorFailed": "노드에서 편집 적용에 실패했습니다.",
+      "errorNotExposed": "대상 자원이 노드의 노출 범위에 없거나 존재하지 않습니다.",
+      "errorGeneric": "편집을 적용하지 못했습니다."
+    },
+    "editor": {
+      "targetNode": "원격 편집 대상 노드",
+      "bannerTitle": "원격 노드 편집 ·",
+      "backToNode": "노드로 돌아가기",
+      "newFlow": "새 플로우",
+      "untitled": "이름 없음",
+      "save": "저장",
+      "undo": "실행 취소",
+      "redo": "다시 실행",
+      "addInputPort": "입력 포트 추가",
+      "addOutputPort": "출력 포트 추가",
+      "portPanel": "플로우 포트",
+      "snapGrid": "그리드 스냅",
+      "virtualWires": "가상 와이어 표시",
+      "focusConnections": "연결 포커스"
+    },
+    "agentEdit": {
+      "createTitle": "에이전트 생성",
+      "updateTitle": "에이전트 설정 편집",
+      "desc": "원격 노드의 에이전트를 생성·수정합니다. 저장 시 대상 노드로 명령이 전파됩니다.",
+      "nameLabel": "이름",
+      "nameRequired": "에이전트 이름을 입력해주세요.",
+      "typeLabel": "종류",
+      "typeRequired": "에이전트 종류를 입력해주세요.",
+      "typePlaceholder": "예: mqtt-client",
+      "configLabel": "설정 (JSON)",
+      "configHint": "비밀 필드(비밀번호·토큰 등)는 비워 두면 노드의 기존 값이 유지됩니다.",
+      "configInvalid": "설정 JSON 형식이 올바르지 않습니다.",
+      "save": "저장"
+    },
+    "nodeManagement": {
+      "title": "노드 관리",
+      "subtitle": "관리 노드를 그룹별로 탐색하고, 노드를 선택해 시스템 정보·운영 요약과 플로우·에이전트·디바이스를 제어합니다."
+    },
+    "managerView": {
+      "nodePickerLabel": "노드 선택",
+      "pickNode": "노드를 선택하세요",
+      "selectNodeHint": "상단 노드 피커에서 노드를 선택하면 노드 화면이 표시됩니다.",
+      "exit": "나가기"
+    },
+    "enrollmentManagement": {
+      "title": "등록 관리",
+      "subtitle": "노드 등록 요청을 승인·거부·폐기하고, enrollment 토큰을 발급·관리합니다.",
+      "nodesHeading": "노드 등록 관리"
+    },
+    "directory": {
+      "label": "노드 디렉토리",
+      "selectNodeHint": "노드를 선택하면 대시보드가 표시됩니다.",
+      "emptyGroup": "이 그룹에 노드가 없습니다."
+    },
+    "group": {
+      "all": "전체",
+      "label": "그룹",
+      "menuLabel": "그룹 변경",
+      "moveTo": "그룹 이동",
+      "newLabel": "새 그룹 이름",
+      "newPlaceholder": "새 그룹 이름…",
+      "create": "그룹 생성",
+      "toast": {
+        "assigned": "노드 그룹을 변경했습니다.",
+        "cleared": "노드를 전체로 환원했습니다.",
+        "failed": "그룹 변경을 처리하지 못했습니다."
+      }
+    },
+    "dashboard": {
+      "tabsLabel": "노드 대시보드 탭",
+      "tab": {
+        "overview": "개요",
+        "dashboard": "대시보드",
+        "flows": "플로우",
+        "agents": "에이전트",
+        "devices": "디바이스"
+      },
+      "systemInfo": "시스템 정보",
+      "summary": "운영 요약",
+      "hostname": "호스트명",
+      "os": "운영체제",
+      "arch": "아키텍처",
+      "version": "버전",
+      "uptime": "업타임",
+      "uptimeUnreported": "미보고",
+      "running": "실행 중",
+      "stopped": "중지됨",
+      "connected": "연결됨"
+    },
+    "display": {
+      "title": "디스플레이 해상도",
+      "effective": "현재 적용",
+      "sourceLabel": "출처",
+      "source": {
+        "override": "오버라이드",
+        "reported": "노드 보고",
+        "fallback": "기본값(1920×1080)"
+      },
+      "presetLabel": "해상도",
+      "presetCustom": "직접 입력",
+      "width": "가로",
+      "height": "세로",
+      "save": "저장",
+      "clear": "오버라이드 해제",
+      "hint": "노드 설정 편집이나 재시작 없이 관리자 화면에서 해상도를 강제합니다. 해제하면 노드가 보고한 값으로 되돌아갑니다.",
+      "fixedModeNote": "이 해상도는 대시보드의 \"노드 해상도(고정)\" 모드에서만 사용됩니다.",
+      "errorInvalid": "가로·세로는 1 이상의 정수여야 합니다.",
+      "toast": {
+        "set": "디스플레이 해상도 오버라이드를 적용했습니다.",
+        "cleared": "디스플레이 해상도 오버라이드를 해제했습니다."
+      }
+    },
+    "remoteDashboard": {
+      "title": "원격 대시보드",
+      "scopeLabel": "원격 대시보드 스코프",
+      "shared": "공유",
+      "mine": "내 대시보드",
+      "readOnly": "읽기 전용",
+      "empty": "이 노드에 구성된 대시보드가 없습니다",
+      "emptyHint": "다른 스코프를 선택하거나 노드에서 대시보드를 구성한 뒤 새로고침하세요.",
+      "nodeNotReady": "노드가 승인·온라인 상태가 아니어서 대시보드를 표시할 수 없습니다.",
+      "renderMode": {
+        "label": "렌더 모드",
+        "responsive": "화면 맞춤",
+        "responsiveHint": "그리드가 관리자 화면 영역을 채웁니다(해상도 독립). 레이아웃은 유지됩니다.",
+        "fixed": "노드 해상도",
+        "fixedHint": "노드 해상도 고정 캔버스로 픽셀 그대로 재현합니다. 해상도 설정은 이 모드에서만 사용됩니다."
+      }
+    }
   }
 }

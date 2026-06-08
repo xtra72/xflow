@@ -89,3 +89,24 @@ plugin:
     enabled: true
   go:
     enabled: true
+
+# --- 원격 관리 설정 (SPEC-REMOTE-001) ---
+# mode: server | client | disabled(기본)
+#   server  : 다른 xflow(클라이언트)를 등록·승인·원격 제어하는 관리 서버.
+#             관리 WS(/api/remote/ws) + admin REST(/api/v1/remote/*) 활성화.
+#   client  : 아래 server_url 로 dial 하여 등록 요청하는 관리 대상 장비.
+#   disabled: 원격 관리 비활성(기존 동작과 동일).
+remote_management:
+  mode: server
+  # bootstrap_secret: ""          # (선택) 사전 공유 시크릿. 설정 시 클라이언트도 동일 값이어야 등록 1차 통과.
+  # require_secure: false         # true 면 평문 ws 거절(wss 강제).
+
+  # --- client 모드일 때만 사용하는 항목 ---
+  # server_url: "ws://127.0.0.1:8081/api/remote/ws"   # 운영은 wss:// 권장
+  # instance_id: ""               # 비우면 최초 기동 시 자동 생성·영속(노드 고유 식별자)
+  # auto_register: true           # 미등록 시 자동으로 등록 요청 전송
+  # heartbeat_interval: "30s"     # 연결 생존성 heartbeat 주기
+  # exposure:                     # 서버에 노출(미러링)할 자원 범위: all | none | [이름 목록]
+  #   flows: all
+  #   agents: all
+  #   devices: all 

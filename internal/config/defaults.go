@@ -72,4 +72,30 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("update.drain_timeout", "30s")
 	v.SetDefault("update.health_check_timeout", "5s")
 	v.SetDefault("update.insecure_skip_verify", false)
+
+	// 원격 관리 기본값 (@SPEC:SPEC-REMOTE-001 M1)
+	// 보안/회귀 기본값: mode=disabled (기존 동작 불변 — REQ-N03).
+	v.SetDefault("remote_management.mode", "disabled")
+	v.SetDefault("remote_management.server_url", "")
+	v.SetDefault("remote_management.instance_id", "")
+	v.SetDefault("remote_management.auto_register", true)
+	v.SetDefault("remote_management.heartbeat_interval", "30s")
+	v.SetDefault("remote_management.bootstrap_secret", "")
+	// enrollment_token 기본 빈 값 — 설정 시 client register 가 가입 토큰을 운반한다(v1.1 H).
+	v.SetDefault("remote_management.enrollment_token", "")
+	v.SetDefault("remote_management.exposure.flows", "none")
+	v.SetDefault("remote_management.exposure.agents", "none")
+	v.SetDefault("remote_management.exposure.devices", "none")
+	// 노드 장비 모니터 해상도 (v1.6 M11, 그룹 M, REQ-M01/M03). xflowd 는 헤드리스
+	// 데몬이라 런타임 감지 대상이 없어 운영자가 선언한다(A20). resolution("WIDTHxHEIGHT",
+	// 예: "1920x1080")이 유효하면 width/height 보다 우선하고, 미설정/무효 시 width+height
+	// 로 폴백한다. 기본 빈값/0 → 미보고(폴백 — 관리자 뷰가 기본 해상도/컨테이너 크기 사용).
+	v.SetDefault("remote_management.display.resolution", "")
+	v.SetDefault("remote_management.display.width", 0)
+	v.SetDefault("remote_management.display.height", 0)
+	v.SetDefault("remote_management.tls.enabled", false)
+	v.SetDefault("remote_management.tls.cert_file", "")
+	v.SetDefault("remote_management.tls.key_file", "")
+	// require_secure 기본 false — 기존 동작 보존(REQ-N03). M6 보안 전송 강제 옵션.
+	v.SetDefault("remote_management.require_secure", false)
 }

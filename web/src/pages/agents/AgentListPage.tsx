@@ -22,7 +22,17 @@ import {
 
 import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
-import { useAgents, useUpdateAgent } from '@/hooks/useAgent';
+import { RemoteAgentEditDialog } from '@/components/remote/RemoteAgentEditDialog';
+import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
+import { useUpdateAgent } from '@/hooks/useAgent';
+import { useCreateRemoteAgent } from '@/hooks/useRemote';
+import { useAgentsTarget } from '@/hooks/useResourceTargets';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTargetParam } from '@/hooks/useTargetParam';
+import { useTranslation } from '@/lib/i18n';
+import { omitMaskedSecrets } from '@/lib/remote/secretOmission';
+import { TargetProvider } from '@/lib/remote/TargetContext';
+import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllAgents } from '@/services/api/agentService';
 import { useUIStore } from '@/stores/uiStore';
@@ -37,13 +47,48 @@ import CreateAgentModal from './CreateAgentModal';
 /** 페이지 크기 옵션 */
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
-export default function AgentListPage() {
+/** 에이전트 목록 페이지 props. */
+interface AgentListPageProps {
+  /**
+   * 자원 타깃 오버라이드 (SPEC-REMOTE-001 M9, 그룹 K). 주어지면 URL `?target=`
+   * 대신 이 값을 사용한다(노드 대시보드 서브탭 임베드용). 미지정 시 기존처럼
+   * URL `?target=` 를 읽으므로 로컬 사용은 회귀 없이 동일하게 동작한다.
+   */
+  target?: ResourceTarget;
+  /**
+   * 원격 타깃 배너 숨김 여부 (SPEC-REMOTE-001 M9, 그룹 K). 노드 대시보드가
+   * 서브탭에 임베드할 때 true 로 주입한다(디렉토리+대시보드 헤더가 이미 선택
+   * 노드를 표시 → 배너 중복, "로컬로 돌아가기" 무의미). 미지정/false 면 기존처럼
+   * 배너를 렌더한다(단독 `?target=` 딥링크 회귀 없음, 로컬은 null).
+   */
+  hideRemoteBanner?: boolean;
+}
+
+export default function AgentListPage({
+  target: targetProp,
+  hideRemoteBanner = false,
+}: AgentListPageProps = {}) {
   const queryClient = useQueryClient();
-  const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
-  const { data, isLoading, error, refetch } = useAgents(undefined, refreshMs);
+  const { t } = useTranslation();
+  const addNotification = useUIStore((s) => s.addNotification);
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃에 따라 데이터 소스를 전환한다(로컬은 기존
+  // useAgents 동작과 동일). M9(그룹 K)에서 노드 대시보드가 targetProp 로 원격
+  // 타깃을 주입할 수 있다(URL 대신 prop 우선).
+  useUIStore((s) => s.dashboardRefreshInterval);
+  const paramTarget = useTargetParam();
+  const target = targetProp ?? paramTarget;
+  const remote = isRemoteTarget(target);
+  const { data, isLoading, error, refetch } = useAgentsTarget(target);
+  const gating = useTargetGating(target);
+  // 가져오기/전체 내보내기/이름 인라인 편집은 로컬 전용 어포던스이다. 라이프사이클
+  // 액션과 생성은 원격에서도 제공한다(REQ-J03/J12, M8 확장).
+  const showLocalWrites = !remote;
   const [modalOpen, setModalOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [remoteCreateOpen, setRemoteCreateOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const createRemoteAgent = useCreateRemoteAgent();
 
   /** 전체 내보내기 핸들러 */
   const handleExportAll = async () => {
@@ -59,6 +104,32 @@ export default function AgentListPage() {
   const handleImportSuccess = () => {
     queryClient.invalidateQueries({ queryKey: ['agents'] });
   };
+
+  /**
+   * 원격 에이전트 생성 제출 (REQ-I04). 대상 노드로 create 명령이 전파된다.
+   * 실패는 다이얼로그가 표시하도록 reject 를 전파한다. 시크릿(미입력)은 생략한다.
+   */
+  const handleRemoteCreate = async (value: {
+    name: string;
+    type: string;
+    config: Record<string, unknown>;
+  }): Promise<void> => {
+    if (!isRemoteTarget(target)) return;
+    await createRemoteAgent.mutateAsync({
+      instanceID: target.instanceId,
+      req: {
+        name: value.name,
+        type: value.type,
+        config: omitMaskedSecrets(value.config),
+      },
+    });
+    addNotification({ type: 'success', message: t('remote.edit.saveSuccess') });
+    setRemoteCreateOpen(false);
+  };
+
+  // 원격 에이전트 설정 수정은 행 액션 다이얼로그가 아니라 상세 패널의 설정(config)
+  // 탭에서 인라인으로 수행한다(로컬과 동형 UX). AgentDetailPanel.ConfigTab 이
+  // useUpdateRemoteAgent 로 저장을 처리한다(REQ-I04/I07).
 
   // 검색 및 필터 상태
   const [search, setSearch] = useState('');
@@ -219,30 +290,48 @@ export default function AgentListPage() {
   }
 
   return (
+    <TargetProvider target={target}>
     <div className="space-y-6">
-      {/* 액션 버튼 */}
+      {/* 원격 타깃 배너(로컬이면 null). 대시보드 임베드 시 중복이므로 숨김. */}
+      {!hideRemoteBanner && (
+        <RemoteTargetBanner
+          target={target}
+          nodeLabel={gating.nodeLabel}
+          nodeReady={gating.nodeReady}
+          localHref="/agents"
+        />
+      )}
+
+      {/* 액션 버튼. 가져오기/전체 내보내기는 로컬 전용, 생성은 타깃 인지. */}
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
+          {showLocalWrites && (
+            <>
+              <button
+                type="button"
+                onClick={() => setImportDialogOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+              >
+                <Upload className="h-4 w-4" />
+                가져오기
+              </button>
+              <button
+                type="button"
+                onClick={handleExportAll}
+                className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+              >
+                <Download className="h-4 w-4" />
+                전체 내보내기
+              </button>
+            </>
+          )}
+          {/* 생성: 로컬은 모달, 원격은 원격 에이전트 편집 다이얼로그(create 명령). */}
           <button
             type="button"
-            onClick={() => setImportDialogOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
-          >
-            <Upload className="h-4 w-4" />
-            가져오기
-          </button>
-          <button
-            type="button"
-            onClick={handleExportAll}
-            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
-          >
-            <Download className="h-4 w-4" />
-            전체 내보내기
-          </button>
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+            disabled={remote && !gating.nodeReady}
+            title={remote && !gating.nodeReady ? t('remote.edit.createGateHint') : undefined}
+            onClick={() => (remote ? setRemoteCreateOpen(true) : setModalOpen(true))}
+            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             <Plus className="h-4 w-4" />
             새 에이전트
@@ -267,10 +356,10 @@ export default function AgentListPage() {
               ? '등록된 에이전트가 없습니다. 새 에이전트를 만들어 보세요.'
               : '검색 결과가 없습니다.'}
           </p>
-          {allAgents.length === 0 && (
+          {allAgents.length === 0 && (showLocalWrites || gating.nodeReady) && (
             <button
               type="button"
-              onClick={() => setModalOpen(true)}
+              onClick={() => (remote ? setRemoteCreateOpen(true) : setModalOpen(true))}
               className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
@@ -359,6 +448,7 @@ export default function AgentListPage() {
                       agent={agent}
                       isExpanded={isExpanded}
                       onToggle={() => toggleExpand(agent.id)}
+                      showLocalWrites={showLocalWrites}
                     />
                   );
                 })}
@@ -368,17 +458,34 @@ export default function AgentListPage() {
         </>
       )}
 
-      {/* 에이전트 생성 모달 */}
-      <CreateAgentModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      {/* 에이전트 생성 모달 (로컬 전용) */}
+      {showLocalWrites && (
+        <CreateAgentModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      )}
 
-      {/* 가져오기 대화 상자 */}
-      <ImportDialog
-        open={importDialogOpen}
-        onClose={() => setImportDialogOpen(false)}
-        type="agent"
-        onImportSuccess={handleImportSuccess}
-      />
+      {/* 가져오기 대화 상자 (로컬 전용) */}
+      {showLocalWrites && (
+        <ImportDialog
+          open={importDialogOpen}
+          onClose={() => setImportDialogOpen(false)}
+          type="agent"
+          onImportSuccess={handleImportSuccess}
+        />
+      )}
+
+      {/* 원격 에이전트 생성 다이얼로그 (원격 전용 — REQ-I04/I09).
+          설정 수정은 상세 패널의 설정 탭에서 인라인으로 수행한다(create 만 다이얼로그). */}
+      {remote && (
+        <RemoteAgentEditDialog
+          open={remoteCreateOpen}
+          mode="create"
+          pending={createRemoteAgent.isPending}
+          onSubmit={handleRemoteCreate}
+          onCancel={() => setRemoteCreateOpen(false)}
+        />
+      )}
     </div>
+    </TargetProvider>
   );
 }
 
@@ -388,10 +495,17 @@ interface AgentRowProps {
   agent: AgentInfo;
   isExpanded: boolean;
   onToggle: () => void;
+  /** 로컬 쓰기 어포던스(이름 편집·라이프사이클 버튼) 표시 여부(원격은 숨김). */
+  showLocalWrites: boolean;
 }
 
 /** 에이전트 테이블 행 (확장 가능) */
-function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
+function AgentRow({
+  agent,
+  isExpanded,
+  onToggle,
+  showLocalWrites,
+}: AgentRowProps) {
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(agent.name);
   const updateAgent = useUpdateAgent();
@@ -467,17 +581,19 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
             <span className="group inline-flex items-center gap-1.5">
               {agent.name}
               <AgentEnabledBadge enabled={agent.enabled} />
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setNameValue(agent.name);
-                  setEditingName(true);
-                }}
-                className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-(--color-bg-elevated)"
-                title="이름 편집"
-              >
-                <Pencil className="h-3 w-3 text-(--color-text-muted)" />
-              </button>
+              {showLocalWrites && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNameValue(agent.name);
+                    setEditingName(true);
+                  }}
+                  className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-(--color-bg-elevated)"
+                  title="이름 편집"
+                >
+                  <Pencil className="h-3 w-3 text-(--color-text-muted)" />
+                </button>
+              )}
             </span>
           )}
         </td>
@@ -521,9 +637,12 @@ function AgentRow({ agent, isExpanded, onToggle }: AgentRowProps) {
             : '-'}
         </td>
 
-        {/* 액션 버튼 */}
+        {/* 액션 버튼은 타깃 인지(원격은 그룹 D 명령/M7 경로). 이름 편집만 로컬 전용.
+            원격 설정 편집은 상세 패널의 설정 탭에서 인라인으로 수행한다(로컬과 동형). */}
         <td className="whitespace-nowrap px-4 py-3 text-right">
-          <AgentActionButtons agent={agent} />
+          <div className="flex items-center justify-end gap-1">
+            <AgentActionButtons agent={agent} />
+          </div>
         </td>
       </tr>
 

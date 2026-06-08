@@ -4,7 +4,10 @@
 
 import { Activity, Cpu, Eye, Gauge, HardDrive, Moon } from 'lucide-react';
 
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useDeviceRealtime } from '@/hooks/useDevice';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 
 // ---- 타입 정의 ----
@@ -68,7 +71,15 @@ export default function OutdoorControlPanel({
   // 현재 값 (압축기 주파수 / 토출 온도) 표시 색상 — 패널 설정에서 지정 가능.
   // 미지정 시 text-primary (라이트/다크모드 자동 대응).
   const currentValueColor = config.currentValueColor as string | undefined;
-  const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
+
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L08): 모니터링 전용 패널이므로
+  // device.state read 만 target-aware 하다(명령 쓰기 없음). 로컬은 불변.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const localDevice = useDeviceRealtime(remote ? '' : deviceId ?? '');
+  const remoteDevice = useDeviceDetailTarget(target, deviceId ?? '');
+  const device = remote ? remoteDevice.data : localDevice.data;
+  const isLoading = remote ? remoteDevice.isLoading : localDevice.isLoading;
 
   // ---- 디바이스 미설정 ----
   if (!deviceId) {

@@ -37,6 +37,11 @@ type MonitoringBroadcaster struct {
 	// 로그 스트리밍 (nil 이면 비활성화)
 	streams   observe.StreamRouter
 	logWriter *wsLogWriter
+
+	// extraLogWriter 는 기본 writer 체인에 합류시킬 추가 로그 writer 이다(M10, REQ-L06).
+	// 원격 monitor.logs 스트림이 노드의 로그 파이프라인을 in-process 로 탭하는 데
+	// 사용된다(A18 — 자가 WS dial 없음). nil 이면 합류하지 않는다.
+	extraLogWriter io.Writer
 }
 
 // BroadcasterOption 은 MonitoringBroadcaster 생성 시 설정을 변경하는 함수 옵션이다.
@@ -58,6 +63,18 @@ func WithBroadcastInterval(d time.Duration) BroadcasterOption {
 func WithStreamRouter(sr observe.StreamRouter) BroadcasterOption {
 	return func(b *MonitoringBroadcaster) {
 		b.streams = sr
+	}
+}
+
+// WithExtraLogWriter 는 기본 로그 writer 체인에 합류시킬 추가 writer 를 설정한다
+// (M10, REQ-L06). 원격 monitor.logs 스트림이 노드의 로그 hub 를 in-process 로 탭하는
+// 데 사용된다. Start() 에서 SetDefaultWriter(MultiWriter(stdout, wsLogWriter, extra))로
+// 합류하며, nil 은 무시한다(하위 호환 — 기존 동작 회귀 없음).
+func WithExtraLogWriter(w io.Writer) BroadcasterOption {
+	return func(b *MonitoringBroadcaster) {
+		if w != nil {
+			b.extraLogWriter = w
+		}
 	}
 }
 
@@ -97,7 +114,12 @@ func (b *MonitoringBroadcaster) Start(parent context.Context) {
 	// SetDefaultWriter(io.MultiWriter) 로 모든 로그를 캡처한다.
 	if b.streams != nil {
 		b.logWriter = newWsLogWriter(b.hub, slog.LevelDebug)
-		b.streams.SetDefaultWriter(io.MultiWriter(os.Stdout, b.logWriter))
+		// M10(REQ-L06): 추가 로그 writer(원격 monitor.logs hub)가 있으면 함께 합류한다.
+		writers := []io.Writer{os.Stdout, b.logWriter}
+		if b.extraLogWriter != nil {
+			writers = append(writers, b.extraLogWriter)
+		}
+		b.streams.SetDefaultWriter(io.MultiWriter(writers...))
 		b.logger.Info("로그 스트리밍 활성화")
 	}
 
@@ -205,7 +227,7 @@ func (b *MonitoringBroadcaster) tick() {
 	payload := map[string]float64{
 		"cpu":        cpu,
 		"memory":     memory,
-		"throughput":  throughput,
+		"throughput": throughput,
 		"error_rate": errorRate,
 	}
 

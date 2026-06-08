@@ -6,7 +6,9 @@ import { ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 
-import { useFlowNodes, useFlowStatus } from '@/hooks/useFlow';
+import { useFlowNodesTarget, useFlowStatusTarget } from '@/hooks/useDetailTargets';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
 import {
   getLogLevels,
@@ -126,9 +128,13 @@ function PortStats({ node }: { node: FlowNodeInfo }) {
 }
 
 export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
-  const { data: flowStatus } = useFlowStatus(flowId);
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃에 따라 상태/노드 소스를 전환한다(로컬은
+  // 기존 useFlowStatus/useFlowNodes 위임 — 회귀 없음). 원격은 READ 프록시.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const { data: flowStatus } = useFlowStatusTarget(target, flowId);
   const isRunning = flowStatus?.status === 'running';
-  const { data: nodes, isLoading } = useFlowNodes(flowId, isRunning ? 3000 : undefined);
+  const { data: nodes, isLoading } = useFlowNodesTarget(target, flowId, isRunning ? 3000 : undefined);
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
   // 정렬된 노드 목록
@@ -192,9 +198,11 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
               <th className="px-3 py-2 text-right text-xs font-medium text-(--color-text-muted)">
                 In / Out
               </th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-(--color-text-muted)">
-                로그 레벨
-              </th>
+              {!remote && (
+                <th className="px-3 py-2 text-right text-xs font-medium text-(--color-text-muted)">
+                  로그 레벨
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
@@ -212,9 +220,11 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
                 <td className="whitespace-nowrap px-3 py-2 text-right">
                   <PortStats node={node} />
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
-                  <NodeLogLevelSelect nodeName={node.name} />
-                </td>
+                {!remote && (
+                  <td className="whitespace-nowrap px-3 py-2 text-right">
+                    <NodeLogLevelSelect nodeName={node.name} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

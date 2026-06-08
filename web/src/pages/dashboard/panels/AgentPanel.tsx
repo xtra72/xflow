@@ -17,6 +17,11 @@ import { Link } from 'react-router';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useAgents } from '@/hooks';
+import { useAgentActionsTarget } from '@/hooks/useResourceActions';
+import { useAgentsTarget } from '@/hooks/useResourceTargets';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import {
   useUIStore,
   type AgentColumnKey,
@@ -36,8 +41,18 @@ interface AgentPanelProps {
 export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const queryClient = useQueryClient();
   const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
-  const { data, isLoading } = useAgents(undefined, refreshMs);
-  const agents = data?.data ?? [];
+
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
+  // 소스로 쓴다(useAgentsTarget). 로컬은 기존 useAgents 그대로(회귀 없음).
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const localQuery = useAgents(undefined, refreshMs);
+  const remoteQuery = useAgentsTarget(target);
+  const agents = useMemo(
+    () => (remote ? (remoteQuery.data?.data ?? []) : (localQuery.data?.data ?? [])),
+    [remote, remoteQuery.data, localQuery.data],
+  );
+  const isLoading = remote ? remoteQuery.isLoading : localQuery.isLoading;
 
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
@@ -112,7 +127,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
     }));
   };
 
-  // 에이전트 액션 뮤테이션
+  // 에이전트 액션 뮤테이션(로컬). 원격은 그룹 D 명령으로 라우팅한다(REQ-L12/J12).
   const startMutation = useMutation({
     mutationFn: startAgent,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agents'] }),
@@ -128,11 +143,42 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agents'] }),
   });
 
+  // 원격 라이프사이클: 그룹 D 명령(REQ-L12, start/stop/restart 지원). 게이팅 적용.
+  const remoteActions = useAgentActionsTarget(target);
+  const gating = useTargetGating(target);
+
   /** 에이전트 상태에 따른 액션 버튼 렌더링 */
   const renderActionButton = (agent: (typeof agents)[number]) => {
+    const isConnected = agent.connected === true;
+
+    // 원격: 그룹 D 명령 + 게이팅. 로컬은 기존 동작 불변.
+    if (remote) {
+      const action =
+        agent.status === 'error' ? 'restart' : isConnected ? 'stop' : 'start';
+      const Icon = action === 'restart' ? RotateCcw : action === 'stop' ? Pause : Play;
+      const labelSuffix = action === 'restart' ? '재시작' : action === 'stop' ? '중지' : '시작';
+      const disabled =
+        !remoteActions.supports(action) ||
+        !gating.canControl() ||
+        remoteActions.pending[action] === true;
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void remoteActions.perform(action, agent.id).catch(() => {});
+          }}
+          disabled={disabled}
+          className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
+          aria-label={`${agent.name} ${labelSuffix}`}
+        >
+          <Icon className="h-4 w-4" />
+        </button>
+      );
+    }
+
     const isPending =
       startMutation.isPending || stopMutation.isPending || restartMutation.isPending;
-    const isConnected = agent.connected === true;
 
     if (agent.status === 'error') {
       return (
@@ -352,8 +398,8 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                 </table>
               </div>
 
-              {/* 더 보기 링크 */}
-              {agents.length > 10 && (
+              {/* 더 보기 링크 — 원격은 로컬 `/agents` 로 이탈하므로 숨긴다. */}
+              {!remote && agents.length > 10 && (
                 <div className="mt-4 text-right">
                   <Link
                     to="/agents"

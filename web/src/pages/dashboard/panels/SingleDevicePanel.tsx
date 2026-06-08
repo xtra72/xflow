@@ -3,7 +3,10 @@
 
 import { Activity, HardDrive, Moon } from 'lucide-react';
 
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useDeviceRealtime } from '@/hooks/useDevice';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 
 import { StatePropertiesSection } from '@/pages/devices/DeviceDetailPanel';
@@ -27,7 +30,16 @@ export default function SingleDevicePanel({
   const deviceId = config.deviceId as string | undefined;
   const panelColor = config.panelColor as string | undefined;
   const accentElements = config.accentElements as Record<string, string | boolean> | undefined;
-  const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
+
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04/L03): 원격이면 device ref 를
+  // 그 노드 기준으로 해석해 device.state(그룹 J SSE+폴백)로 실시간 상태를 취득한다.
+  // 로컬은 기존 useDeviceRealtime 그대로(회귀 없음).
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const localQuery = useDeviceRealtime(remote ? '' : deviceId ?? '');
+  const remoteQuery = useDeviceDetailTarget(target, deviceId ?? '');
+  const device = remote ? remoteQuery.data : localQuery.data;
+  const isLoading = remote ? remoteQuery.isLoading : localQuery.isLoading;
 
   if (!deviceId) {
     return (

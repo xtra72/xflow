@@ -384,6 +384,21 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
 /** 테마 모드: system(OS 설정 따름) | day(라이트) | night(다크) | custom(사용자 정의) */
 export type ThemeMode = 'system' | 'day' | 'night' | 'custom';
 
+// ---- 원격 대시보드 렌더 모드 타입 (SPEC-REMOTE-001 M11.4) ----
+
+/**
+ * 원격 노드 대시보드의 렌더 모드.
+ *
+ * - 'responsive'(기본): 그리드가 관리자 콘텐츠 영역을 채운다(해상도 독립 —
+ *   display_width/height 불필요). RemoteDashboardView 가 컨테이너 폭을 측정해
+ *   그리드를 채우는 M11.3 이전 동작이다.
+ * - 'fixed': 노드 해상도(display_width/height, 폴백 1920×1080) 고정 캔버스에
+ *   렌더한 뒤 레터박스 스케일-투-핏 한다(M11.3 픽셀 충실 재현 — FixedCanvasScaler).
+ *
+ * 뷰 전역(노드별 아님) 환경설정이며 세션 간 영속된다.
+ */
+export type RemoteDashboardRenderMode = 'responsive' | 'fixed';
+
 /**
  * 2026-05-31: 플로우 단위 표시 설정.
  * 플로우 에디터에서 노드의 포트 옆에 통계/이름을 표시할지 토글.
@@ -410,6 +425,11 @@ interface UIState {
   customThemeTokens: Record<string, string>;
   /** 대시보드 자동 갱신 주기 (초 단위). 기본값 10. */
   dashboardRefreshInterval: number;
+  /**
+   * 원격 노드 대시보드 렌더 모드 (뷰 전역, 영속). 기본값 'responsive'
+   * (SPEC-REMOTE-001 M11.4). 'fixed' 는 노드 해상도 고정 캔버스를 사용한다.
+   */
+  remoteDashboardRenderMode: RemoteDashboardRenderMode;
   /** 멀티-대시보드 페이지 목록 — 활성 스코프 snapshot.payload 와 동기. */
   dashboardPages: DashboardPageConfig[];
   /** 현재 활성 대시보드 페이지 ID — 활성 스코프 snapshot.payload 와 동기. */
@@ -456,6 +476,8 @@ interface UIActions {
   // 대시보드 전역 설정
   setDashboardRefreshInterval: (seconds: number) => void;
   setDashboardEditMode: (on: boolean) => void;
+  /** 원격 대시보드 렌더 모드 설정 (SPEC-REMOTE-001 M11.4, 영속). */
+  setRemoteDashboardRenderMode: (mode: RemoteDashboardRenderMode) => void;
   setDashboardGridCols: (cols: number) => void;
   setDashboardShowGridLines: (show: boolean) => void;
 
@@ -635,6 +657,7 @@ export const useUIStore = create<UIState & UIActions>()(
       theme: 'system',
       customThemeTokens: {},
       dashboardRefreshInterval: 10,
+      remoteDashboardRenderMode: 'responsive',
       dashboardPages: [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }],
       activeDashboardId: 'default',
       dashboardEditMode: false,
@@ -677,6 +700,9 @@ export const useUIStore = create<UIState & UIActions>()(
 
       setDashboardEditMode: (on) =>
         set({ dashboardEditMode: on }),
+
+      setRemoteDashboardRenderMode: (mode) =>
+        set({ remoteDashboardRenderMode: mode }),
 
       setDashboardGridCols: (cols) =>
         set((state) =>
@@ -1047,6 +1073,9 @@ export const useUIStore = create<UIState & UIActions>()(
         editorSnapToGrid: state.editorSnapToGrid,
         editorSnapGridSize: state.editorSnapGridSize,
         flowDisplaySettings: state.flowDisplaySettings,
+        // SPEC-REMOTE-001 M11.4: 원격 대시보드 렌더 모드(뷰 전역 환경설정)는
+        // 기기별로 영속한다(노드 snapshot 과 무관 — 서버 동기 대상 아님).
+        remoteDashboardRenderMode: state.remoteDashboardRenderMode,
       }),
     },
   ),

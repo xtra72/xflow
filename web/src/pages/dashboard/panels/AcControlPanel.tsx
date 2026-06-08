@@ -20,8 +20,15 @@ import {
   Moon,
 } from 'lucide-react';
 
-import { useDeviceRealtime, useExecuteCommand } from '@/hooks/useDevice';
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
+import { useDeviceRealtime } from '@/hooks/useDevice';
+import { useDeviceCommandTarget } from '@/hooks/useDeviceCommandTarget';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTranslation } from '@/lib/i18n';
+import { remoteEditErrorMessage } from '@/lib/remote/editError';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 import {
   readControlButtonColorConfig,
@@ -111,6 +118,7 @@ export default function AcControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: AcControlPanelProps) {
+  const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 레거시: 단일 currentValueColor 만 지정하던 시절의 호환 경로.
   // 신규: valueColor (default + ranges) 로 값 범위별 컬러 지정.
@@ -119,21 +127,26 @@ export default function AcControlPanel({
   const valueColorConfig = readValueColorConfig(config);
   const controlButtonColorConfig = readControlButtonColorConfig(config);
   const fanLevelColorConfig = readFanLevelColorConfig(config);
-  const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
 
-  // 디바이스 제어 명령 실행
-  const executeMutation = useExecuteCommand();
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L08): 원격이면 device.state(그룹 J)
+  // 로 실시간 상태를 읽고, 명령 쓰기는 그룹 D(execute)로 라우팅한다(REQ-D04/J03).
+  // config 의 bare deviceId 는 그 노드 디바이스로 해석된다(REQ-L03). 로컬은 불변.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const gating = useTargetGating(target);
+  const localDevice = useDeviceRealtime(remote ? '' : deviceId ?? '');
+  const remoteDevice = useDeviceDetailTarget(target, deviceId ?? '');
+  const device = remote ? remoteDevice.data : localDevice.data;
+  const isLoading = remote ? remoteDevice.isLoading : localDevice.isLoading;
+
+  // 디바이스 제어 명령 실행(로컬: /execute, 원격: 그룹 D execute).
+  const commandTarget = useDeviceCommandTarget(target);
 
   const execute = (command: string, params: Record<string, unknown>) => {
     if (!deviceId) return;
-    executeMutation.mutate(
-      { id: deviceId, req: { command, params } },
-      {
-        onError: (err) => {
-          console.error('[AcControl] execute failed:', command, params, err);
-        },
-      },
-    );
+    // 원격: 노드 미승인/오프라인이면 명령을 막는다(게이팅 — REQ-L11).
+    if (remote && !gating.canControl()) return;
+    commandTarget.execute(deviceId, command, params);
   };
 
   // 디바이스 상태에서 읽기 (백엔드에서 속성명 통일됨)
@@ -146,10 +159,11 @@ export default function AcControlPanel({
   const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
     useOptimisticToggle(serverPower);
 
-  const isPending = executeMutation.isPending || isPendingConfirmation;
+  const isPending = commandTarget.isPending || isPendingConfirmation;
 
-  // passive-monitor 디바이스는 제어 불가
-  const controlDisabled = isPassive || !power || isPending;
+  // passive-monitor 디바이스는 제어 불가. 원격은 노드 ready(승인∧온라인) 아닐 때도 비활성.
+  const remoteBlocked = remote && !gating.canControl();
+  const controlDisabled = isPassive || !power || isPending || remoteBlocked;
 
   // TODO: swing 속성이 디바이스에 없을 경우 로컬 상태로 유지
   const [swing, setSwing] = useState(false);
@@ -221,11 +235,11 @@ export default function AcControlPanel({
             <button
               type="button"
               onClick={() => {
-                const target = !power;
-                setOptimisticPower(target);
-                execute('set_power', { power: target });
+                const nextPower = !power;
+                setOptimisticPower(nextPower);
+                execute('set_power', { power: nextPower });
               }}
-              disabled={isPending}
+              disabled={isPending || remoteBlocked}
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
                 power
@@ -383,12 +397,14 @@ export default function AcControlPanel({
       </>
       )}
 
-      {/* ---- 에러 표시 ---- */}
-      {executeMutation.error && (
+      {/* ---- 에러 표시 ---- 원격은 503/504/502/404 를 editError 로 매핑(REQ-L11). ---- */}
+      {commandTarget.error ? (
         <div className="shrink-0 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
-          {String((executeMutation.error as Error)?.message ?? executeMutation.error)}
+          {remote
+            ? remoteEditErrorMessage(commandTarget.error, t)
+            : String((commandTarget.error as Error)?.message ?? commandTarget.error)}
         </div>
-      )}
+      ) : null}
 
       {/* ---- 하단: 스윙 + 필터 (ON 시에만) ---- */}
       {power !== false && (

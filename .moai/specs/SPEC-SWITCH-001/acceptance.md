@@ -12,6 +12,7 @@ priority: high
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 1.0.0 | 2026-06-03 | xtra | 초기 인수 기준 작성 (PLAN 단계) |
+| 1.1.0 | 2026-06-04 | xtra | 구현 반영 — `pass_mode`(copy/original) 인수 기준 추가 (AC-SWITCH-060..063) |
 
 # SPEC-SWITCH-001: 인수 기준 (Acceptance Criteria)
 
@@ -219,6 +220,72 @@ Then match_mode(first/all 선택)와 default_port(문자열) 입력이 한국어
 Given 기존 switch 노드가 routes 없이 저장되어 있다
 When 플로우를 로드하고 메시지를 Process하면
 Then 노드는 [in, out] 포트로 동작하며 회귀가 없다 (기존 동작 유지)
+```
+
+## 6-b. 전달 모드 (pass_mode)
+
+### AC-SWITCH-060: 기본 모드 copy + 미인식 값 폴백 (REQ-SWITCH-060)
+
+```gherkin
+Given pass_mode가 config에 없다
+When Configure 후 라우팅 동작을 확인하면
+Then copy 모드로 동작한다 (라우팅 시 Clone, 새 ID)
+
+Given pass_mode = "weird"   # 미인식 값
+When Configure를 호출하면
+Then copy 모드로 폴백한다 (에러 없음)
+```
+
+### AC-SWITCH-061: copy 모드 — 방출 메시지 ID 변경 (REQ-SWITCH-061)
+
+```gherkin
+Given pass_mode = "copy"
+  And routes = [{name: "hot", condition: "$.payload.temp >= 30"}]
+When payload.temp = 35 인 메시지(원본 ID = X)를 Process하면
+Then 출력 1건이 반환되고 _target_port == "hot" 이다
+  And 방출 메시지의 ID는 X 와 다르다 (Clone — 새 ID)
+```
+
+### AC-SWITCH-062: original 모드 — 단일 매칭 시 원본 ID 보존 (REQ-SWITCH-062)
+
+```gherkin
+Given pass_mode = "original"
+  And match_mode = "first"
+  And routes = [{name: "hot", condition: "$.payload.temp >= 30"}]
+When payload.temp = 35 인 메시지(원본 ID = X)를 Process하면
+Then 출력 1건이 반환되고 _target_port == "hot" 이다
+  And 방출 메시지의 ID == X 이다 (원본 그대로, Clone 없음)
+
+Given pass_mode = "original"
+  And match_mode = "all"
+  And routes = [{name: "hot", condition: "$.payload.temp >= 30"}]
+When payload.temp = 35 인 (정확히 1건 매칭) 메시지(원본 ID = X)를 Process하면
+Then 출력 1건이 반환되고 _target_port == "hot" 이며 ID == X 이다 (원본 보존)
+```
+
+### AC-SWITCH-063: original 모드 — default_port 경로 원본 보존 (REQ-SWITCH-062)
+
+```gherkin
+Given pass_mode = "original"
+  And routes = [{name: "hot", condition: "$.payload.temp >= 30"}]
+  And default_port = "other"
+When payload.temp = 5 인 (미매칭) 메시지(원본 ID = X)를 Process하면
+Then 출력 1건이 반환되고 _target_port == "other" 이며 ID == X 이다 (원본 보존)
+```
+
+### AC-SWITCH-064: original 모드 — all 다중 매칭은 Clone 강제 (REQ-SWITCH-063)
+
+```gherkin
+Given pass_mode = "original"
+  And match_mode = "all"
+  And routes = [
+        {name: "warm", condition: "$.payload.temp >= 20"},
+        {name: "hot",  condition: "$.payload.temp >= 30"}
+      ]
+When payload.temp = 35 인 (2건 매칭) 메시지(원본 ID = X)를 Process하면
+Then 출력은 2건이고 _target_port 집합 == {"warm", "hot"} 이다
+  And 각 출력은 원본의 Clone 이며 ID 가 X 와 다르다
+      (단일 객체가 서로 다른 _target_port 를 동시에 가질 수 없으므로 Clone 강제)
 ```
 
 ## 7. 품질 게이트

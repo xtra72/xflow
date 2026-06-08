@@ -9,7 +9,7 @@
 // @spec SPEC-WEB-006 v0.1.0 (M1, M11)
 
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 
 import AppLayout from '@/components/layout/AppLayout';
 import AuthGuard from '@/components/layout/AuthGuard';
@@ -30,6 +30,13 @@ const SystemStatusPage = lazy(() =>
   import('@/pages/system/SystemStatusPage').then((m) => ({
     default: m.SystemStatusPage,
   })),
+);
+// SPEC-REMOTE-001 M9 (그룹 K): 원격 관리 IA 재편.
+//   노드 관리(운영, 디렉토리+대시보드) + 등록 관리(온보딩, 토큰+승인).
+//   기존 RemoteNodesPage(관리 노드) + RemoteControlPage(원격 노드 제어)를 대체한다.
+const NodeManagementPage = lazy(() => import('@/pages/remote/NodeManagementPage'));
+const EnrollmentManagementPage = lazy(
+  () => import('@/pages/remote/EnrollmentManagementPage'),
 );
 
 /** Suspense 래퍼 - 지연 로딩 중 로딩 스피너를 표시한다 */
@@ -140,6 +147,53 @@ const router = createBrowserRouter([
                 element: (
                   <SuspenseWrapper>
                     <SystemStatusPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // SPEC-REMOTE-001 M9 (그룹 K, REQ-K11/K12): 노드 관리(운영).
+              //   디렉토리 뷰(그룹 트리 + 그룹 배정) + 노드 대시보드(시스템 정보 +
+              //   운영 요약 + Flow/Agent/Device 서브탭 = M8 통합 제어 재사용).
+              {
+                path: 'remote',
+                element: (
+                  <SuspenseWrapper>
+                    <NodeManagementPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // SPEC-REMOTE-001 M9 (그룹 K, REQ-K15): 등록 관리(온보딩).
+              //   토큰 관리 + 노드 등록 관리(승인 큐/사전 등록).
+              {
+                path: 'remote/enrollment',
+                element: (
+                  <SuspenseWrapper>
+                    <EnrollmentManagementPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // SPEC-REMOTE-001 M9 (그룹 K, REQ-K16, OQ-K7): 구 제어 셀렉터 딥링크
+              //   보존 — /admin/remote/control → 노드 관리로 리다이렉트(북마크 보존).
+              {
+                path: 'remote/control',
+                element: <Navigate to="/admin/remote" replace />,
+              },
+              // SPEC-REMOTE-001 M7 (그룹 I, REQ-I08): 원격 플로우를 기존 시각
+              // 편집기(EditorPage)로 열어 대상 노드에 저장(PATCH/POST 명령 전파).
+              //   .../flows/new       → 신규 생성(POST, 노드 채번 id)
+              //   .../flows/:flowId/edit → 기존 수정(PATCH)
+              {
+                path: 'remote/nodes/:instanceId/flows/new',
+                element: (
+                  <SuspenseWrapper>
+                    <EditorPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              {
+                path: 'remote/nodes/:instanceId/flows/:flowId/edit',
+                element: (
+                  <SuspenseWrapper>
+                    <EditorPage />
                   </SuspenseWrapper>
                 ),
               },

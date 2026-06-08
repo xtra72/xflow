@@ -24,6 +24,7 @@ func Validate(v *viper.Viper) error {
 	validateProductionJWT(v, &ve)
 	validatePostgresDSN(v, &ve)
 	validateWebUI(v, &ve)
+	validateRemoteManagement(v, &ve)
 
 	if ve.HasErrors() {
 		return &ve
@@ -187,5 +188,61 @@ func validateWebUI(v *viper.Viper, ve *ValidationErrors) {
 	dir := v.GetString("server.web_ui.dir")
 	if dir == "" {
 		ve.Add(fmt.Errorf("%w: server.web_ui.dir (web_ui 활성화 시 필수)", ErrRequiredField))
+	}
+}
+
+// validateRemoteManagement - 원격 관리 설정 검증 (@SPEC:SPEC-REMOTE-001 M1).
+//
+// 검증 항목:
+//   - mode: server|client|disabled 만 허용 (REQ-A01).
+//   - client 모드: server_url 필수 (REQ-A02).
+//   - TLS 활성화 시: cert/key 파일 존재 (REQ-F01).
+//
+// disabled 모드(기본)는 추가 검증 없이 통과한다(회귀 안전 — REQ-N03).
+func validateRemoteManagement(v *viper.Viper, ve *ValidationErrors) {
+	mode := v.GetString("remote_management.mode")
+	switch mode {
+	case "disabled", "server", "client":
+		// 유효한 모드.
+	default:
+		ve.Add(fmt.Errorf("%w: remote_management.mode=%q", ErrInvalidRemoteMode, mode))
+		return
+	}
+
+	serverURL := v.GetString("remote_management.server_url")
+	if mode == "client" {
+		if serverURL == "" {
+			ve.Add(fmt.Errorf("%w: remote_management.server_url (client 모드에서 필수)", ErrRequiredField))
+		}
+	}
+
+	// 보안 전송 강제(M6, REQ-F01): require_secure=true 이고 non-dev 이면 평문 전송을
+	// 거부한다. development 모드에서는 강제하지 않는다(로컬 개발 편의 — "non-dev" 한정).
+	if v.GetBool("remote_management.require_secure") && v.GetString("server.mode") != "development" {
+		switch mode {
+		case "client":
+			// 평문 ws:// (또는 비-wss 스킴)는 거부한다.
+			if serverURL != "" && !strings.HasPrefix(strings.ToLower(serverURL), "wss://") {
+				ve.Add(fmt.Errorf("%w: remote_management.server_url=%q (require_secure 시 wss:// 필수)",
+					ErrInsecureTransport, serverURL))
+			}
+		case "server":
+			// 관리 서버는 TLS 가 활성화되어야 한다(평문 ws 수락 금지).
+			if !v.GetBool("remote_management.tls.enabled") {
+				ve.Add(fmt.Errorf("%w: remote_management.tls.enabled=false (require_secure 시 server 모드 TLS 필수)",
+					ErrInsecureTransport))
+			}
+		}
+	}
+
+	if v.GetBool("remote_management.tls.enabled") {
+		certFile := v.GetString("remote_management.tls.cert_file")
+		if _, err := os.Stat(certFile); os.IsNotExist(err) {
+			ve.Add(fmt.Errorf("%w: remote_management.tls.cert_file=%q", ErrFileNotFound, certFile))
+		}
+		keyFile := v.GetString("remote_management.tls.key_file")
+		if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+			ve.Add(fmt.Errorf("%w: remote_management.tls.key_file=%q", ErrFileNotFound, keyFile))
+		}
 	}
 }

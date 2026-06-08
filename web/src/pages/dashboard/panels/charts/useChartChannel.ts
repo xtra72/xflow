@@ -3,12 +3,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { remoteChartStreamUrl } from '@/services/api/remoteService';
 import {
   ChartChannelClient,
   type ChartChannelClientOptions,
   type ChartConnectionStatus,
   type ChartServerMessage,
 } from '@/services/ws/chartChannel';
+import { RemoteChartChannelClient } from '@/services/ws/remoteChartChannel';
 import type { ChartEntry } from './chartChannelTypes';
 
 /** 훅 결과 */
@@ -65,6 +69,11 @@ export function useChartChannel(
 ): UseChartChannelResult {
   const maxPoints = options.maxPoints ?? DEFAULT_MAX_POINTS;
 
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L07): 원격이면 노드의 차트 채널을
+  // SSE 스트림 프록시로 구독한다(별도 WS 경로 미신설). 로컬은 기존 WS 직결 그대로.
+  const target = useTargetContext();
+  const remoteInstanceId = isRemoteTarget(target) ? target.instanceId : '';
+
   const [entries, setEntries] = useState<ChartEntry[]>([]);
   const [status, setStatus] = useState<ChartConnectionStatus>('idle');
   const [closedReason, setClosedReason] = useState<string | undefined>(undefined);
@@ -120,9 +129,18 @@ export function useChartChannel(
       onStatus,
     };
 
-    const client = options.createClient
-      ? options.createClient(clientOpts)
-      : (new ChartChannelClient(clientOpts) as ChartChannelClientLike);
+    // 우선순위: 명시 createClient(테스트 주입) > 원격 SSE > 로컬 WS.
+    let client: ChartChannelClientLike;
+    if (options.createClient) {
+      client = options.createClient(clientOpts);
+    } else if (remoteInstanceId) {
+      client = new RemoteChartChannelClient(
+        clientOpts,
+        remoteChartStreamUrl(remoteInstanceId, channelName),
+      ) as ChartChannelClientLike;
+    } else {
+      client = new ChartChannelClient(clientOpts) as ChartChannelClientLike;
+    }
 
     client.connect();
 
@@ -130,9 +148,9 @@ export function useChartChannel(
       client.disconnect();
     };
     // options.createClient / wsBaseUrl 은 참조 안정 가정 (패널이 리렌더 시 재생성하지 않음)
-    // channelName 변경 시에만 재구독
+    // channelName / remoteInstanceId 변경 시에만 재구독
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelName]);
+  }, [channelName, remoteInstanceId]);
 
   return { entries, status, closedReason, errorReason };
 }
