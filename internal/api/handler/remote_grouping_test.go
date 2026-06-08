@@ -24,13 +24,14 @@ import (
 // fakeGrouping 은 NodeGroupingService 의 테스트 구현이다.
 type fakeGrouping struct {
 	groups    map[string]string // instance_id -> group_name
+	overrides map[string][2]int // instance_id -> [width, height] 해상도 오버라이드(M11 확장)
 	detail    remote.NodeDetail
 	detailErr error
 	setErr    error
 }
 
 func newFakeGrouping() *fakeGrouping {
-	return &fakeGrouping{groups: make(map[string]string)}
+	return &fakeGrouping{groups: make(map[string]string), overrides: make(map[string][2]int)}
 }
 
 func (f *fakeGrouping) SetNodeGroup(_ context.Context, instanceID, groupName string) error {
@@ -68,6 +69,28 @@ func (f *fakeGrouping) NodeDetail(_ context.Context, _ string) (remote.NodeDetai
 		return remote.NodeDetail{}, f.detailErr
 	}
 	return f.detail, nil
+}
+
+// SetNodeDisplayOverride 는 해상도 오버라이드를 설정/해제한다(M11 확장). width<=0 또는
+// height<=0 이면 0,0 으로 해제한다(저장소 계약 일관). 미존재 노드는 ErrManagedNodeNotFound.
+func (f *fakeGrouping) SetNodeDisplayOverride(_ context.Context, instanceID string, width, height int) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	if _, ok := f.groups[instanceID]; !ok {
+		return storage.ErrManagedNodeNotFound
+	}
+	if width <= 0 || height <= 0 {
+		f.overrides[instanceID] = [2]int{0, 0}
+		return nil
+	}
+	f.overrides[instanceID] = [2]int{width, height}
+	return nil
+}
+
+// ClearNodeDisplayOverride 는 해상도 오버라이드를 해제한다(0,0 환원).
+func (f *fakeGrouping) ClearNodeDisplayOverride(ctx context.Context, instanceID string) error {
+	return f.SetNodeDisplayOverride(ctx, instanceID, 0, 0)
 }
 
 // doGrouping 은 지정 역할로 그룹핑 라우트에 요청한다.
@@ -289,4 +312,10 @@ func (erroringGrouping) ListGroups(context.Context) ([]storage.NodeGroupCount, e
 }
 func (erroringGrouping) NodeDetail(context.Context, string) (remote.NodeDetail, error) {
 	return remote.NodeDetail{}, errors.New("boom")
+}
+func (erroringGrouping) SetNodeDisplayOverride(context.Context, string, int, int) error {
+	return errors.New("boom")
+}
+func (erroringGrouping) ClearNodeDisplayOverride(context.Context, string) error {
+	return errors.New("boom")
 }

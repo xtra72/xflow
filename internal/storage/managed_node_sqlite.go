@@ -103,6 +103,10 @@ func addManagedNodeColumns(ctx context.Context, db *sql.DB) error {
 		// v1.6(M11, 그룹 M) 노드 해상도 컬럼(REQ-M01/M02). 기존 행은 0(미보고 — REQ-M03).
 		{"display_width", "display_width INTEGER NOT NULL DEFAULT 0"},
 		{"display_height", "display_height INTEGER NOT NULL DEFAULT 0"},
+		// v1.6(M11 확장) 노드 해상도 서버-측 오버라이드 컬럼(관리자 전용). 기존 행은 0
+		// (오버라이드 없음 → effective=노드 보고값). group_name 과 동일하게 admin-owned.
+		{"display_override_width", "display_override_width INTEGER NOT NULL DEFAULT 0"},
+		{"display_override_height", "display_override_height INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, col := range additions {
 		if _, ok := existing[col.name]; ok {
@@ -154,6 +158,11 @@ func managedNodeColumns(ctx context.Context, db *sql.DB) (map[string]struct{}, e
 // clobber 하지 않으며(REQ-K02), 시스템 정보는 SetSystemInfo 가 제공된 필드만 갱신한다
 // (REQ-K08). 신규 INSERT 시에는 struct 의 group_name/os/arch/started_at 값을 그대로
 // 기록한다(첫 register 가 시스템 정보를 운반하는 경우 반영).
+//
+// v1.6(M11 확장) 해상도 오버라이드 보존: display_override_width/display_override_height
+// (관리자 전용)도 ON CONFLICT 갱신 집합에서 제외되어 register/heartbeat upsert 가 이를
+// clobber 하지 않는다(group_name 패턴 일관). 오버라이드는 SetNodeDisplayOverride 로만
+// 변경한다. 신규 INSERT 시에는 struct 의 오버라이드 값을 그대로 기록한다.
 func (r *ManagedNodeSQLiteRepository) Upsert(ctx context.Context, node ManagedNode) error {
 	now := time.Now().UnixMilli()
 	createdAt := node.CreatedAt
@@ -170,8 +179,8 @@ func (r *ManagedNodeSQLiteRepository) Upsert(ctx context.Context, node ManagedNo
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO managed_nodes (instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO managed_nodes (instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(instance_id) DO UPDATE SET
 			hostname   = excluded.hostname,
 			version    = excluded.version,
@@ -182,7 +191,8 @@ func (r *ManagedNodeSQLiteRepository) Upsert(ctx context.Context, node ManagedNo
 			updated_at = excluded.updated_at
 	`, node.InstanceID, node.Hostname, node.Version, status, node.TokenID,
 		node.LastSeen, online, node.GroupName, node.OS, node.Arch, node.StartedAt,
-		node.DisplayWidth, node.DisplayHeight, createdAt, now)
+		node.DisplayWidth, node.DisplayHeight, node.DisplayOverrideWidth, node.DisplayOverrideHeight,
+		createdAt, now)
 	if err != nil {
 		return fmt.Errorf("upsert managed node: %w", err)
 	}
@@ -196,11 +206,12 @@ func (r *ManagedNodeSQLiteRepository) Get(ctx context.Context, instanceID string
 		online int
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, created_at, updated_at
+		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, created_at, updated_at
 		FROM managed_nodes WHERE instance_id = ?
 	`, instanceID).Scan(&node.InstanceID, &node.Hostname, &node.Version, &node.Status,
 		&node.TokenID, &node.LastSeen, &online, &node.GroupName, &node.OS, &node.Arch,
-		&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight, &node.CreatedAt, &node.UpdatedAt)
+		&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight,
+		&node.DisplayOverrideWidth, &node.DisplayOverrideHeight, &node.CreatedAt, &node.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ManagedNode{}, ErrManagedNodeNotFound
 	}
@@ -214,7 +225,7 @@ func (r *ManagedNodeSQLiteRepository) Get(ctx context.Context, instanceID string
 // List 는 모든 관리 노드를 created_at 순서로 반환한다.
 func (r *ManagedNodeSQLiteRepository) List(ctx context.Context) ([]ManagedNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, created_at, updated_at
+		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, created_at, updated_at
 		FROM managed_nodes ORDER BY created_at
 	`)
 	if err != nil {
@@ -230,7 +241,8 @@ func (r *ManagedNodeSQLiteRepository) List(ctx context.Context) ([]ManagedNode, 
 		)
 		if err := rows.Scan(&node.InstanceID, &node.Hostname, &node.Version, &node.Status,
 			&node.TokenID, &node.LastSeen, &online, &node.GroupName, &node.OS, &node.Arch,
-			&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight, &node.CreatedAt, &node.UpdatedAt); err != nil {
+			&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight,
+			&node.DisplayOverrideWidth, &node.DisplayOverrideHeight, &node.CreatedAt, &node.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan managed node row: %w", err)
 		}
 		node.Online = online != 0
@@ -341,6 +353,29 @@ func (r *ManagedNodeSQLiteRepository) SetSystemInfo(ctx context.Context, instanc
 		WHERE instance_id = ?
 	`, osName, arch, startedAtMs, displayWidth, displayHeight, time.Now().UnixMilli(), instanceID)
 	return checkAffected(res, err, "set managed node system info")
+}
+
+// SetNodeDisplayOverride 는 관리자가 서버에서 노드 해상도를 강제하는 오버라이드를
+// 설정/해제한다(v1.6 M11 확장, OQ-M1 보조 override). group_name 과 동일하게 관리자 전용
+// 메타데이터이며 노드로 명령을 전파하지 않는다(A13 일관 — DB 갱신만).
+//
+// width<=0 또는 height<=0 이면 오버라이드를 0,0 으로 해제한다(effective 해상도가 노드
+// 보고값으로 폴백). 둘 다 양수일 때만 그 값을 저장한다(부분 오버라이드는 의미가 없으므로
+// 검증 단계에서 막거나 여기서 해제로 정규화). 노드 보고 해상도(display_width/height)·
+// group_name 은 절대 건드리지 않는다. 없으면 ErrManagedNodeNotFound.
+func (r *ManagedNodeSQLiteRepository) SetNodeDisplayOverride(ctx context.Context, instanceID string, width, height int) error {
+	if width <= 0 || height <= 0 {
+		// 비양수 → 해제(0,0). 부분값(한쪽만 양수)도 무효 오버라이드이므로 함께 해제한다.
+		width, height = 0, 0
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE managed_nodes SET
+			display_override_width  = ?,
+			display_override_height = ?,
+			updated_at              = ?
+		WHERE instance_id = ?
+	`, width, height, time.Now().UnixMilli(), instanceID)
+	return checkAffected(res, err, "set managed node display override")
 }
 
 // Delete 는 instance_id 로 노드를 삭제한다. 없으면 ErrManagedNodeNotFound.

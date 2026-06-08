@@ -167,6 +167,24 @@ func (m *memManagedNodeRepo) SetSystemInfo(_ context.Context, instanceID, osName
 	return nil
 }
 
+// SetNodeDisplayOverride 는 관리자 해상도 오버라이드를 설정/해제한다(v1.6 M11 확장).
+// width<=0 또는 height<=0 이면 0,0 으로 해제한다(저장소 계약 일관).
+func (m *memManagedNodeRepo) SetNodeDisplayOverride(_ context.Context, instanceID string, width, height int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nodes[instanceID]
+	if !ok {
+		return storage.ErrManagedNodeNotFound
+	}
+	if width <= 0 || height <= 0 {
+		width, height = 0, 0
+	}
+	n.DisplayOverrideWidth = width
+	n.DisplayOverrideHeight = height
+	m.nodes[instanceID] = n
+	return nil
+}
+
 func (m *memManagedNodeRepo) Close() error { return nil }
 
 // fakeTokenIssuer 는 TokenIssuer 의 테스트 구현이다. subject→token 매핑을 단순화하고,

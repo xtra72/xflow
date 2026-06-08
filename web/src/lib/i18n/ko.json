@@ -571,6 +571,28 @@
       "stopped": "중지됨",
       "connected": "연결됨"
     },
+    "display": {
+      "title": "디스플레이 해상도",
+      "effective": "현재 적용",
+      "sourceLabel": "출처",
+      "source": {
+        "override": "오버라이드",
+        "reported": "노드 보고",
+        "fallback": "기본값(1920×1080)"
+      },
+      "presetLabel": "해상도",
+      "presetCustom": "직접 입력",
+      "width": "가로",
+      "height": "세로",
+      "save": "저장",
+      "clear": "오버라이드 해제",
+      "hint": "노드 설정 편집이나 재시작 없이 관리자 화면에서 해상도를 강제합니다. 해제하면 노드가 보고한 값으로 되돌아갑니다.",
+      "errorInvalid": "가로·세로는 1 이상의 정수여야 합니다.",
+      "toast": {
+        "set": "디스플레이 해상도 오버라이드를 적용했습니다.",
+        "cleared": "디스플레이 해상도 오버라이드를 해제했습니다."
+      }
+    },
     "remoteDashboard": {
       "title": "원격 대시보드",
       "scopeLabel": "원격 대시보드 스코프",

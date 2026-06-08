@@ -135,15 +135,34 @@ export interface NodeDetail {
   /** 마지막 수신 시각 (epoch ms). */
   last_seen: number;
   /**
-   * 노드 장비 모니터(키오스크/터치스크린) 가로 해상도 (px, v1.6 M11, REQ-M01/M02).
-   * 노드 config(`display.resolution`/`display.width`) 선언값을 시스템 정보 페이로드로
-   * 보고한 값이다. 0 = 미보고/미설정 — 관리자 뷰가 폴백 크기를 사용한다(REQ-M03).
+   * EFFECTIVE 가로 해상도 (px, v1.6 M11/M12, REQ-M01/M02). 관리자 오버라이드가
+   * 설정되어 있으면 그 값, 아니면 노드 보고값이다(둘 다 없으면 0 = 미보고/미설정).
+   * 고정 캔버스(FixedCanvasScaler)는 이 EFFECTIVE 값을 사용하므로, 오버라이드를
+   * 설정/해제하면 노드-상세 쿼리 무효화 → 캔버스가 새 해상도로 재렌더된다(REQ-M03).
    */
   display_width: number;
   /**
-   * 노드 장비 모니터 세로 해상도 (px, v1.6 M11, REQ-M01/M02). 0 = 미보고/미설정.
+   * EFFECTIVE 세로 해상도 (px, v1.6 M11/M12). 0 = 미보고/미설정.
    */
   display_height: number;
+  /**
+   * 관리자 오버라이드 가로 해상도 (px, v1.6 M12). 0 = 오버라이드 없음.
+   * 설정되면 EFFECTIVE 해상도의 출처가 "오버라이드"가 된다.
+   */
+  display_override_width: number;
+  /**
+   * 관리자 오버라이드 세로 해상도 (px, v1.6 M12). 0 = 오버라이드 없음.
+   */
+  display_override_height: number;
+  /**
+   * 노드가 보고한 가로 해상도 (px, v1.6 M12). 0 = 미보고.
+   * 오버라이드가 없을 때 EFFECTIVE 해상도의 출처가 "노드 보고"가 된다.
+   */
+  display_reported_width: number;
+  /**
+   * 노드가 보고한 세로 해상도 (px, v1.6 M12). 0 = 미보고.
+   */
+  display_reported_height: number;
   /** 운영 요약 (미러 파생). */
   summary: NodeOperationalSummary;
 }
@@ -154,6 +173,21 @@ export interface NodeDetail {
 export interface SetNodeGroupRequest {
   /** 배정할 그룹 라벨. 빈 문자열은 해제("전체" 환원)와 동일하다(REQ-K05). */
   group_name: string;
+}
+
+/**
+ * 노드 디스플레이 해상도 오버라이드 설정 요청 본문 (v1.6 M12).
+ * PUT /remote/nodes/{instance_id}/display.
+ *
+ * width/height 는 양의 정수여야 하며, 비양수 값은 백엔드가 400 으로 거부한다.
+ * 설정 시 EFFECTIVE 해상도가 이 값으로 고정되어 고정 캔버스가 새 크기로 재렌더된다.
+ * 노드 config 편집/재시작 없이 서버 메타데이터만 갱신한다(노드로 명령 전파 없음).
+ */
+export interface SetNodeDisplayRequest {
+  /** 오버라이드 가로 해상도 (px, 양의 정수). */
+  width: number;
+  /** 오버라이드 세로 해상도 (px, 양의 정수). */
+  height: number;
 }
 
 /**

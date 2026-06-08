@@ -125,6 +125,43 @@ describe('remoteService — 노드 그룹핑 + 상세 (M9, 그룹 K)', () => {
     expect(delMock).toHaveBeenCalledWith('/remote/nodes/n-1/group');
   });
 
+  it('setRemoteNodeDisplay 는 PUT .../display 를 width/height 본문과 함께 호출한다', async () => {
+    putMock.mockResolvedValueOnce(undefined);
+    await remoteService.setRemoteNodeDisplay('n-1', 1920, 1080);
+    expect(putMock).toHaveBeenCalledWith('/remote/nodes/n-1/display', {
+      width: 1920,
+      height: 1080,
+    });
+  });
+
+  it('setRemoteNodeDisplay 는 instance_id 를 URL 인코딩한다', async () => {
+    putMock.mockResolvedValueOnce(undefined);
+    await remoteService.setRemoteNodeDisplay('a/b', 800, 480);
+    expect(putMock).toHaveBeenCalledWith('/remote/nodes/a%2Fb/display', {
+      width: 800,
+      height: 480,
+    });
+  });
+
+  it('setRemoteNodeDisplay 의 400 에러는 호출자로 전파된다', async () => {
+    putMock.mockRejectedValueOnce(new APIError('BAD_REQUEST', 'non-positive', 400));
+    await expect(
+      remoteService.setRemoteNodeDisplay('n-1', 0, 0),
+    ).rejects.toBeInstanceOf(APIError);
+  });
+
+  it('clearRemoteNodeDisplay 는 DELETE .../display 를 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.clearRemoteNodeDisplay('n-1');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/n-1/display');
+  });
+
+  it('clearRemoteNodeDisplay 는 instance_id 를 URL 인코딩한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.clearRemoteNodeDisplay('a/b');
+    expect(delMock).toHaveBeenCalledWith('/remote/nodes/a%2Fb/display');
+  });
+
   it('getRemoteNodeDetail 의 404 에러는 호출자로 전파된다', async () => {
     getMock.mockRejectedValueOnce(new APIError('NOT_FOUND', 'missing', 404));
     await expect(remoteService.getRemoteNodeDetail('x')).rejects.toBeInstanceOf(

@@ -45,10 +45,17 @@ type ManagedNode struct {
 	// 파생 — 헤드리스 데몬), 0 은 미보고를 의미한다(관리자 뷰가 폴백 — REQ-M03). 시스템
 	// 정보(os/arch/started_at)와 동일하게 SetSystemInfo 가 제공된 값만 갱신하고 미제공(0)
 	// 은 기존값을 보존한다(하위 호환 — REQ-M03).
-	DisplayWidth  int   // 노드 장비 화면 가로 px(0=미보고 — REQ-M01/M03)
-	DisplayHeight int   // 노드 장비 화면 세로 px(0=미보고 — REQ-M01/M03)
-	CreatedAt     int64 // 최초 등록 시각(epoch ms)
-	UpdatedAt     int64 // 마지막 갱신 시각(epoch ms)
+	DisplayWidth  int // 노드 장비 화면 가로 px(0=미보고 — REQ-M01/M03)
+	DisplayHeight int // 노드 장비 화면 세로 px(0=미보고 — REQ-M01/M03)
+	// DisplayOverrideWidth/DisplayOverrideHeight 는 관리자가 서버에서 노드 config/재시작
+	// 없이 강제한 노드 해상도 오버라이드이다(px, v1.6 M11 확장, OQ-M1 보조 override).
+	// group_name 과 동일하게 관리자 소유(admin-owned)이므로 register/heartbeat upsert·
+	// SetSystemInfo(노드 보고)가 절대 덮어쓰지 않으며, SetNodeDisplayOverride 로만 변경한다.
+	// 0,0 은 오버라이드 없음을 의미하며, 이때 effective 해상도는 노드 보고값으로 폴백한다.
+	DisplayOverrideWidth  int   // 관리자 강제 가로 px(0=오버라이드 없음 — effective 폴백)
+	DisplayOverrideHeight int   // 관리자 강제 세로 px(0=오버라이드 없음 — effective 폴백)
+	CreatedAt             int64 // 최초 등록 시각(epoch ms)
+	UpdatedAt             int64 // 마지막 갱신 시각(epoch ms)
 }
 
 // NodeGroupCount 는 distinct 그룹 라벨과 그 노드 수이다(REQ-K03).
@@ -95,6 +102,16 @@ type ManagedNodeRepository interface {
 	// 구버전 노드가 생략 — REQ-K09/M03). group_name 은 절대 건드리지 않는다(관리자 전용).
 	// 없으면 ErrManagedNodeNotFound.
 	SetSystemInfo(ctx context.Context, instanceID, os, arch string, startedAtMs int64, displayWidth, displayHeight int) error
+
+	// --- v1.6(M11 확장): 노드 해상도 서버-측 오버라이드(관리자 전용) ---
+
+	// SetNodeDisplayOverride 는 관리자가 서버에서 노드 해상도를 강제하는 오버라이드를
+	// 설정/해제한다(OQ-M1 보조 override). width<=0 또는 height<=0 이면 오버라이드를
+	// 0,0 으로 해제하여 effective 해상도가 노드 보고값으로 폴백하도록 한다. 그룹 배정과
+	// 동일하게 노드로 명령을 전파하지 않는 서버 운영 메타데이터이다(A13 일관). group_name·
+	// 노드 보고 해상도(display_width/height)는 절대 건드리지 않는다(관리자/노드 소유 분리).
+	// 없으면 ErrManagedNodeNotFound.
+	SetNodeDisplayOverride(ctx context.Context, instanceID string, width, height int) error
 
 	// Delete 는 instance_id 로 노드를 삭제한다. 없으면 ErrManagedNodeNotFound.
 	Delete(ctx context.Context, instanceID string) error

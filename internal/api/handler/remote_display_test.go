@@ -1,5 +1,10 @@
 // remote_display_test.go 는 v1.6(M11, 그룹 M) NodeDetail 의 노드 해상도
 // (display_width/display_height) 노출을 검증한다(@SPEC:SPEC-REMOTE-001 M11, REQ-M02/M03).
+//
+// v1.6 M11 확장(서버 오버라이드): DTO 의 display_width/height 는 이제 EFFECTIVE 해상도
+// (오버라이드>보고값)를 의미하며 remote.NodeDetail.EffectiveWidth/Height 로부터 매핑된다.
+// 본 파일의 fake 는 오버라이드가 없는 경우 effective=보고값이 되도록 EffectiveWidth/Height
+// 를 노드 보고값과 동일하게 설정한다(실서버 remote.Server.NodeDetail 파생과 일관).
 package handler
 
 import (
@@ -22,7 +27,10 @@ func TestRemoteGrouping_NodeDetailExposesDisplayResolution(t *testing.T) {
 			InstanceID: "n1", Hostname: "host", Status: "approved",
 			DisplayWidth: 1920, DisplayHeight: 1080,
 		},
-		Online: true,
+		// 오버라이드 없음 → effective=보고값(실서버 파생 일관).
+		EffectiveWidth:  1920,
+		EffectiveHeight: 1080,
+		Online:          true,
 	}
 
 	rec := doGrouping(t, svc, "admin", http.MethodGet, "/api/v1/remote/nodes/n1", "")

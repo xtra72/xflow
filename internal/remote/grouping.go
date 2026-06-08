@@ -92,7 +92,14 @@ type NodeDetail struct {
 	Online    bool  // 라이브 연결 상태(REQ-B05, repo 의 online 보다 우선)
 	UptimeMs  int64 // now - started_at (started_at>0 일 때만, 아니면 -1 — REQ-K08)
 	HasUptime bool  // started_at>0 여부(uptime 표시 가능)
-	Summary   storage.NodeOperationalSummary
+	// EffectiveWidth/EffectiveHeight 는 프론트엔드(고정 캔버스 스케일러)가 사용할
+	// 최종 노드 해상도이다(v1.6 M11 확장). 우선순위: 오버라이드(둘 다 양수) > 노드 보고값.
+	// 둘 다 없으면 0,0 이며 프론트엔드가 기본값(1920×1080)/컨테이너 크기로 폴백한다(REQ-M03).
+	// 오버라이드/보고값은 Node 필드(DisplayOverride*/Display*)로 별도 노출되어 UI 가 소스를
+	// 표시할 수 있다.
+	EffectiveWidth  int // effective 가로 px(오버라이드 우선, 아니면 노드 보고값, 둘 다 없으면 0)
+	EffectiveHeight int // effective 세로 px(오버라이드 우선, 아니면 노드 보고값, 둘 다 없으면 0)
+	Summary         storage.NodeOperationalSummary
 }
 
 // NodeDetail 은 instance_id 의 종합 상세를 반환한다(REQ-K08/K10). repo 미구성 시 ErrNoRepo.
@@ -114,6 +121,8 @@ func (s *Server) NodeDetail(ctx context.Context, instanceID string) (NodeDetail,
 
 	detail := NodeDetail{Node: node, Online: online}
 	detail.UptimeMs, detail.HasUptime = deriveUptime(node.StartedAt, time.Now().UnixMilli())
+	// effective 해상도 파생(v1.6 M11 확장): 오버라이드(둘 다 양수) 우선, 아니면 노드 보고값.
+	detail.EffectiveWidth, detail.EffectiveHeight = effectiveDisplay(node)
 
 	// 운영 요약(미러 파생 — REQ-K10). mirror 미구성 시 0 요약.
 	if s.mirror != nil {
@@ -139,4 +148,36 @@ func deriveUptime(startedAtMs, nowMs int64) (int64, bool) {
 		up = 0
 	}
 	return up, true
+}
+
+// effectiveDisplay 는 노드의 effective 해상도를 파생한다(v1.6 M11 확장). 관리자 오버라이드
+// (DisplayOverrideWidth/Height 가 둘 다 양수)가 있으면 그 값을, 아니면 노드 보고값
+// (DisplayWidth/Height)을 사용한다. 둘 다 없으면 0,0 을 반환하며 프론트엔드가 폴백한다
+// (REQ-M03 — 기본값/컨테이너 크기). 부분 오버라이드(한쪽만 양수)는 무효로 간주해 보고값으로
+// 폴백한다(저장소가 부분값을 0,0 으로 정규화하므로 정상 경로에서는 발생하지 않음).
+func effectiveDisplay(node storage.ManagedNode) (int, int) {
+	if node.DisplayOverrideWidth > 0 && node.DisplayOverrideHeight > 0 {
+		return node.DisplayOverrideWidth, node.DisplayOverrideHeight
+	}
+	return node.DisplayWidth, node.DisplayHeight
+}
+
+// SetNodeDisplayOverride 는 관리자가 노드 해상도 오버라이드를 설정한다(v1.6 M11 확장).
+// 그룹 배정과 동일하게 서버 운영 메타데이터이므로 노드로 명령을 전파하지 않는다(A13).
+// width<=0 또는 height<=0 은 저장소에서 0,0 으로 해제된다. repo 미구성 시 ErrNoRepo.
+func (s *Server) SetNodeDisplayOverride(ctx context.Context, instanceID string, width, height int) error {
+	if s.repo == nil {
+		return ErrNoRepo
+	}
+	if err := s.repo.SetNodeDisplayOverride(ctx, instanceID, width, height); err != nil {
+		return err // ErrManagedNodeNotFound 포함.
+	}
+	s.logger.Info("관리 노드 해상도 오버라이드 설정", "instance_id", instanceID, "width", width, "height", height)
+	return nil
+}
+
+// ClearNodeDisplayOverride 는 노드 해상도 오버라이드를 해제한다(effective=노드 보고값으로
+// 폴백). SetNodeDisplayOverride(0,0)과 동일하다. repo 미구성 시 ErrNoRepo.
+func (s *Server) ClearNodeDisplayOverride(ctx context.Context, instanceID string) error {
+	return s.SetNodeDisplayOverride(ctx, instanceID, 0, 0)
 }

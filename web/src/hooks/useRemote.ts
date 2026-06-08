@@ -240,6 +240,62 @@ export function useClearNodeGroup() {
   });
 }
 
+// ---- 노드 디스플레이 해상도 오버라이드 뮤테이션 (v1.6 M12) ----
+
+/**
+ * 디스플레이 오버라이드 변경 후 해당 노드의 상세 쿼리 + 노드 목록을 무효화한다.
+ *
+ * 노드-상세(EFFECTIVE 해상도 포함)와 목록을 갱신한다. 상세 쿼리 무효화는 같은
+ * 캐시를 공유하는 고정 캔버스(DashboardCanvas)가 새 해상도로 재렌더되도록 한다
+ * (캔버스 코드 변경 없이 — REQ-M03). 부분 일치를 위해 prefix 키로 무효화한다.
+ */
+function invalidateNodeDisplayQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  instanceID: string,
+): void {
+  // 노드-상세 쿼리(['remote','nodes',id,'detail'])는 노드 prefix 로 함께 무효화된다.
+  queryClient.invalidateQueries({ queryKey: ['remote', 'nodes', instanceID] });
+  queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+}
+
+/**
+ * 노드 디스플레이 해상도 오버라이드 설정/변경 뮤테이션 (v1.6 M12).
+ * 성공 시 노드-상세 + 목록 쿼리 무효화 → 고정 캔버스가 새 해상도로 재렌더된다.
+ *
+ * width/height 는 양의 정수여야 한다(비양수는 400). 미존재(404)/비-admin(403)/
+ * 미관리(503) 등 에러는 APIError 로 호출자에게 전파된다(editError 로 매핑 표시).
+ */
+export function useSetNodeDisplay() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      width,
+      height,
+    }: {
+      instanceID: string;
+      width: number;
+      height: number;
+    }) => remoteService.setRemoteNodeDisplay(instanceID, width, height),
+    onSuccess: (_data, variables) =>
+      invalidateNodeDisplayQueries(queryClient, variables.instanceID),
+  });
+}
+
+/**
+ * 노드 디스플레이 해상도 오버라이드 해제 뮤테이션 (v1.6 M12).
+ * 성공 시 노드-상세 + 목록 쿼리 무효화 → EFFECTIVE 해상도가 노드 보고값/폴백으로 환원.
+ */
+export function useClearNodeDisplay() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (instanceID: string) =>
+      remoteService.clearRemoteNodeDisplay(instanceID),
+    onSuccess: (_data, instanceID) =>
+      invalidateNodeDisplayQueries(queryClient, instanceID),
+  });
+}
+
 // ---- Enrollment 토큰 쿼리/뮤테이션 ----
 
 /** enrollment 토큰 목록 쿼리 키. */

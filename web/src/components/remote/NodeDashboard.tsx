@@ -18,6 +18,7 @@ import { useSearchParams } from 'react-router';
 import { Bot, Cpu, Gauge, HardDrive, LayoutDashboard, Workflow } from 'lucide-react';
 
 import { FixedCanvasScaler } from '@/components/remote/FixedCanvasScaler';
+import { NodeDisplayResolutionSection } from '@/components/remote/NodeDisplayResolutionSection';
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
 import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
 import { useRemoteNodeDetail } from '@/hooks/useRemote';
@@ -317,6 +318,9 @@ function NodeOverview({ instanceId, enabled }: NodeOverviewProps): React.JSX.Ele
           <InfoItem label={t('remote.col.lastSeen')} value={lastSeenLabel} />
         </dl>
       </section>
+
+      {/* 디스플레이 해상도(EFFECTIVE + 출처 + admin 오버라이드 SET/CLEAR, M12) */}
+      <NodeDisplayResolutionSection instanceId={instanceId} detail={detail} />
 
       {/* 운영 요약(미러 파생) */}
       <section

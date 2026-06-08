@@ -17,6 +17,15 @@ vi.mock('@/hooks/useRemote', () => ({
   useRemoteNodeDetail: useRemoteNodeDetailMock,
 }));
 
+// 개요 탭에 임베드되는 디스플레이 해상도 섹션은 별도 테스트가 검증하므로
+// (NodeDisplayResolutionSection.test.tsx), 여기서는 가벼운 스텁으로 대체해
+// NodeDashboard 의 탭/캔버스/시스템정보 검증을 격리한다.
+vi.mock('@/components/remote/NodeDisplayResolutionSection', () => ({
+  NodeDisplayResolutionSection: ({ instanceId }: { instanceId: string }) => (
+    <div data-testid="node-display-section-stub" data-instance-id={instanceId} />
+  ),
+}));
+
 // 통합 페이지는 target/hideRemoteBanner prop 을 캡처하는 스텁으로 대체한다
 // (라우팅·배너 위임 검증 격리). 스텁은 hideRemoteBanner 가 true 인 동안 실제
 // 페이지가 배너를 렌더하지 않음을 표현하기 위해 배너 자체는 그리지 않는다.
@@ -91,6 +100,10 @@ function detail(o: Partial<NodeDetail> = {}): NodeDetail {
     last_seen: 1_700_000_100_000,
     display_width: 1920,
     display_height: 1080,
+    display_override_width: 0,
+    display_override_height: 0,
+    display_reported_width: 1920,
+    display_reported_height: 1080,
     summary: {
       flows: { total: 3, running: 2, stopped: 1 },
       agents: { total: 2, connected: 1 },

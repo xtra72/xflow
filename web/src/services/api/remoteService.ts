@@ -118,6 +118,43 @@ export async function clearRemoteNodeGroup(instanceID: string): Promise<void> {
   await del(`/remote/nodes/${encodeId(instanceID)}/group`);
 }
 
+// ---- 노드 디스플레이 해상도 오버라이드 (v1.6 M12) ----
+//
+// 그룹과 동일하게 서버 운영 메타데이터이므로 오버라이드 설정/해제는
+// managed_nodes 의 override 필드 갱신만 수행하고 노드로 명령을 전파하지 않는다.
+// EFFECTIVE 해상도(NodeDetail.display_width/height)는 오버라이드가 있으면 그 값,
+// 없으면 노드 보고값으로 백엔드가 계산한다. admin 전용이다.
+
+/**
+ * 노드의 디스플레이 해상도 오버라이드를 설정/변경한다 (v1.6 M12).
+ * PUT /remote/nodes/{instance_id}/display  본문: { width, height }
+ *
+ * width/height 는 양의 정수여야 한다. 비양수는 400 으로 매핑되어 APIError 로
+ * 전파된다. 성공하면 EFFECTIVE 해상도가 오버라이드 값으로 바뀐다(고정 캔버스 재렌더).
+ * 미존재 노드는 404 로 매핑된다.
+ */
+export async function setRemoteNodeDisplay(
+  instanceID: string,
+  width: number,
+  height: number,
+): Promise<void> {
+  await put<unknown>(`/remote/nodes/${encodeId(instanceID)}/display`, {
+    width,
+    height,
+  });
+}
+
+/**
+ * 노드의 디스플레이 해상도 오버라이드를 해제한다 (v1.6 M12).
+ * DELETE /remote/nodes/{instance_id}/display → 204
+ *
+ * 해제하면 EFFECTIVE 해상도가 노드 보고값(없으면 폴백)으로 환원된다. 미존재
+ * 노드는 404 로 매핑된다.
+ */
+export async function clearRemoteNodeDisplay(instanceID: string): Promise<void> {
+  await del(`/remote/nodes/${encodeId(instanceID)}/display`);
+}
+
 // ---- 노드 수동 등록 / 삭제 (수동 enrollment) ----
 
 /**

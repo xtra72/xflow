@@ -571,6 +571,28 @@
       "stopped": "Stopped",
       "connected": "Connected"
     },
+    "display": {
+      "title": "Display Resolution",
+      "effective": "Effective",
+      "sourceLabel": "Source",
+      "source": {
+        "override": "Override",
+        "reported": "Node-reported",
+        "fallback": "Default (1920×1080)"
+      },
+      "presetLabel": "Resolution",
+      "presetCustom": "Custom",
+      "width": "Width",
+      "height": "Height",
+      "save": "Save",
+      "clear": "Clear override",
+      "hint": "Forces the resolution from the manager view without editing node config or restarting. Clearing reverts to the node-reported value.",
+      "errorInvalid": "Width and height must be positive integers.",
+      "toast": {
+        "set": "Display resolution override applied.",
+        "cleared": "Display resolution override cleared."
+      }
+    },
     "remoteDashboard": {
       "title": "Remote Dashboard",
       "scopeLabel": "Remote dashboard scope",
