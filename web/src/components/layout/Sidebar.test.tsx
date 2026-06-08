@@ -20,6 +20,7 @@ const useRemoteModeMock = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/useRemote', () => ({ useRemoteMode: useRemoteModeMock }));
 
 // ---- uiStore mock (사이드바 접힘 상태) ----
+const sidebarCollapsedMock = vi.hoisted(() => ({ value: false }));
 vi.mock('@/stores/uiStore', () => ({
   useUIStore: (
     selector?: (s: {
@@ -27,7 +28,10 @@ vi.mock('@/stores/uiStore', () => ({
       toggleSidebar: () => void;
     }) => unknown,
   ) => {
-    const state = { sidebarCollapsed: false, toggleSidebar: vi.fn() };
+    const state = {
+      sidebarCollapsed: sidebarCollapsedMock.value,
+      toggleSidebar: vi.fn(),
+    };
     return selector ? selector(state) : state;
   },
 }));
@@ -51,8 +55,18 @@ function renderSidebar() {
 beforeEach(() => {
   useAuthMock.mockReset();
   useRemoteModeMock.mockReset();
+  sidebarCollapsedMock.value = false;
   useAuthMock.mockReturnValue({ user: makeUser('admin') });
   useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
+});
+
+describe('Sidebar — 접힘 상태 그룹 하위 항목', () => {
+  it('접힘 시 원격 그룹의 노드 관리/등록 관리를 개별 아이콘으로 모두 노출한다', () => {
+    sidebarCollapsedMock.value = true;
+    renderSidebar();
+    expect(screen.getByTitle('노드 관리')).toBeInTheDocument();
+    expect(screen.getByTitle('등록 관리')).toBeInTheDocument();
+  });
 });
 
 describe('Sidebar — 원격 관리 그룹 게이팅', () => {

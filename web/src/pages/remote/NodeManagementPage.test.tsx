@@ -4,7 +4,7 @@
 //   - 상단 바: 노드 피커(그룹 묶음) + 서브탭 네비 + 나가기.
 //   - 노드 선택 → ?node= 갱신, 서브탭 전환 → ?tab= 갱신(딥링크 보존 — M10).
 //   - 풀폭 노드 화면(좌측 디렉토리 제거 → 왜곡 방지).
-//   - 전역 사이드바: 마운트 시 접힘 / 언마운트 시 직전 상태 복원(REQ-M06).
+//   - 전역 사이드바: 진입 시 자동으로 접지 않는다(사용자 제어).
 //   - 그룹 배정/해제 mutation 호출(선택 노드 대상).
 //   - 비-server 모드 게이팅.
 
@@ -240,16 +240,11 @@ describe('NodeManagementPage — 서브탭 호이스팅 + 딥링크(`?tab=`)', (
   });
 });
 
-describe('NodeManagementPage — 전역 사이드바 숨김/복원(REQ-M06)', () => {
-  it('마운트 시 사이드바를 접고, 언마운트 시 직전 상태로 복원한다', () => {
-    const { unmount } = renderPage();
-    // 마운트: setSidebarCollapsed(true).
-    expect(setSidebarCollapsedMock).toHaveBeenCalledWith(true);
-
-    setSidebarCollapsedMock.mockClear();
-    unmount();
-    // 언마운트: 직전 상태(false)로 복원 — 다른 화면에 누수되지 않는다.
-    expect(setSidebarCollapsedMock).toHaveBeenCalledWith(false);
+describe('NodeManagementPage — 전역 사이드바 비간섭', () => {
+  it('진입 시 전역 사이드바를 자동으로 접지 않는다(사용자 제어)', () => {
+    renderPage();
+    // 노드 관리 진입이 사이드바 접힘 상태를 강제로 바꾸지 않는다.
+    expect(setSidebarCollapsedMock).not.toHaveBeenCalled();
   });
 });
 

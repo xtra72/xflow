@@ -301,27 +301,35 @@ function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGr
     return userRole ? child.roles.includes(userRole) : false;
   });
 
-  // 사이드바가 접힌 상태에서는 첫 번째 하위 항목 경로로 직접 이동
+  // 사이드바가 접힌 상태에서는 그룹의 각 하위 항목을 개별 아이콘으로 렌더한다
+  // (접힘에서도 모든 항목 접근 가능 — 예: 노드 관리/등록 관리).
   if (collapsed) {
-    const firstChild = visibleChildren[0];
-    if (!firstChild) return null;
+    if (visibleChildren.length === 0) return null;
 
     return (
-      <NavLink
-        to={firstChild.path}
-        className={({ isActive }) =>
-          cn(
-            'flex items-center justify-center rounded-md px-2 py-2 text-sm font-medium transition-colors',
-            'hover:bg-(--color-bg-elevated)',
-            isActive
-              ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'text-(--color-text-secondary)',
-          )
-        }
-        title={t(group.labelKey)}
-      >
-        <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
-      </NavLink>
+      <>
+        {visibleChildren.map((child) => {
+          const ChildIcon = child.icon;
+          return (
+            <NavLink
+              key={child.path}
+              to={child.path}
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center justify-center rounded-md px-2 py-2 text-sm font-medium transition-colors',
+                  'hover:bg-(--color-bg-elevated)',
+                  isActive
+                    ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'text-(--color-text-secondary)',
+                )
+              }
+              title={t(child.labelKey)}
+            >
+              <ChildIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
+            </NavLink>
+          );
+        })}
+      </>
     );
   }
 

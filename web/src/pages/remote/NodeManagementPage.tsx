@@ -6,9 +6,8 @@
 //     (ManagerViewTopBar)로 옮긴다(REQ-M04).
 //   - 선택 노드의 화면이 상단 바 아래 **전체 너비/높이**를 점유한다 → 좌우 폭
 //     축소(왜곡)를 방지한다(REQ-M04).
-//   - 진입 시 전역 좌측 Sidebar 를 접어(`setSidebarCollapsed(true)`) 화면을 더
-//     넓게 쓰고, 페이지를 떠날 때 직전 상태로 복원한다(REQ-M06). 다른 화면에는
-//     누수되지 않는다(라우트 스코프).
+//   - 전역 좌측 Sidebar 는 사용자가 직접 접고 펼친다(자동 접기 안 함). 접힌
+//     상태에서도 노드 관리/등록 관리 항목은 사이드바에서 개별 접근 가능하다.
 //
 // M9 기능은 전부 보존한다(REQ-M10): 노드 그룹핑·그룹 배정/해제·노드 대시보드
 // 개요(시스템 정보+운영 요약)·Flow/Agent/Device/대시보드 서브탭·딥링크
@@ -17,7 +16,7 @@
 //
 // 권한/모드: admin 전용 라우트 + server 모드에서만 쿼리를 발행한다.
 
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 import { Network } from 'lucide-react';
 
@@ -47,25 +46,6 @@ function compareGroups(a: NodeGroup, b: NodeGroup): number {
   return a.group_name.localeCompare(b.group_name);
 }
 
-/**
- * 관리자 뷰 진입 시 전역 사이드바를 접고, 떠날 때 직전 상태로 복원한다(REQ-M06).
- *
- * 마운트 시점의 사이드바 접힘 상태를 ref 에 보관해 언마운트 시 그대로 되돌린다 →
- * 다른 화면(로컬/에디터/등록 관리)에 사이드바 숨김이 누수되지 않는다.
- */
-function useCollapseSidebarWhileMounted(): void {
-  const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
-
-  useEffect(() => {
-    // 마운트 시점의 직전 상태를 캡처(복원용). store 를 구독하지 않고 1회 읽는다.
-    const previous = useUIStore.getState().sidebarCollapsed;
-    setSidebarCollapsed(true);
-    return () => {
-      setSidebarCollapsed(previous);
-    };
-  }, [setSidebarCollapsed]);
-}
-
 export default function NodeManagementPage(): React.JSX.Element {
   const { t } = useTranslation();
   const { data: remoteMode } = useRemoteMode();
@@ -73,9 +53,6 @@ export default function NodeManagementPage(): React.JSX.Element {
 
   const { data: groups } = useRemoteGroups(isServer);
   const { data: nodes, isLoading, error, refetch } = useManagedNodes(undefined, isServer);
-
-  // 관리자 뷰 동안 전역 사이드바를 접고 떠날 때 복원한다(REQ-M06).
-  useCollapseSidebarWhileMounted();
 
   // 선택 노드와 활성 서브탭을 URL(`?node=`/`?tab=`)에 동기화한다(딥링크/뒤로가기
   // 지원, M9 보존 — REQ-M10). 상단 바와 NodeDashboard 콘텐츠가 각자 이 파라미터를
