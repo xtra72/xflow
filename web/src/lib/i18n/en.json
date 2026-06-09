@@ -502,6 +502,20 @@
       "virtualWires": "Show virtual wires",
       "focusConnections": "Focus connections"
     },
+    "bridge": {
+      "label": "Remote bridge",
+      "nodeLabel": "Node: {node}",
+      "tooltip": "This flow node live-bridges a flow on a remote node ({node}). On deploy, the remote node runs the referenced flow and relays its messages.",
+      "statusTooltip": "Remote bridge ({node}) · status: {status}",
+      "liveStatusUnavailable": "Live bridge status is shown only while the flow is running.",
+      "status": {
+        "running": "Running",
+        "connected": "Connected",
+        "offline": "Offline",
+        "error": "Error",
+        "unknown": "Unknown"
+      }
+    },
     "agentEdit": {
       "createTitle": "Create agent",
       "updateTitle": "Edit agent settings",

@@ -502,6 +502,20 @@
       "virtualWires": "가상 와이어 표시",
       "focusConnections": "연결 포커스"
     },
+    "bridge": {
+      "label": "원격 브릿지",
+      "nodeLabel": "노드: {node}",
+      "tooltip": "이 플로우 노드는 원격 노드({node})의 플로우를 라이브로 브릿지합니다. 배포 시 원격 노드가 참조 플로우를 실행하고 메시지를 중계합니다.",
+      "statusTooltip": "원격 브릿지({node}) · 상태: {status}",
+      "liveStatusUnavailable": "라이브 브릿지 상태는 플로우 실행 중에만 표시됩니다.",
+      "status": {
+        "running": "실행 중",
+        "connected": "연결됨",
+        "offline": "오프라인",
+        "error": "오류",
+        "unknown": "알 수 없음"
+      }
+    },
     "agentEdit": {
       "createTitle": "에이전트 생성",
       "updateTitle": "에이전트 설정 편집",

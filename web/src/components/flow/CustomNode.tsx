@@ -15,6 +15,7 @@ import {
   GitBranch,
   Power,
   PowerOff,
+  Radio,
   ShieldAlert,
   Sparkles,
   type LucideIcon,
@@ -24,6 +25,14 @@ import { useParams } from 'react-router';
 
 import { getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
+import { useTranslation } from '@/lib/i18n';
+import { parseRemoteFlowRef } from '@/lib/flow/subflowPorts';
+import {
+  BRIDGE_STATUS_DOT_CLASS,
+  BRIDGE_STATUS_I18N_KEY,
+  mapRuntimeStateToBridgeStatus,
+} from '@/lib/flow/remoteBridgeStatus';
+import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { cn } from '@/lib/utils/cn';
 import { configureNode } from '@/services/api/nodeService';
 import { useEditorStore } from '@/stores/editorStore';
@@ -74,6 +83,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const disabled = nodeData.enabled === false;
   const stats = useNodeRuntimeStats(id);
   const Icon = CATEGORY_ICONS[nodeData.category] ?? Cog;
+  const { t } = useTranslation();
 
   // 2026-05-31: 플로우 단위 표시 설정 (showPortStats / showPortNames).
   // 노드 단위 inMessages / outMessages 만 backend 가 제공하므로, input 핸들에
@@ -153,9 +163,43 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   // SPEC-SUBFLOW-001 그룹 C: flow-node 는 참조하는 플로우 이름을 카드에 표시한다.
   // flow_name 은 flow_id 선택 시 비정규화된 표시 전용 캐시이며, 없으면 flow_id 로 폴백한다.
   const isFlowNode = nodeData.nodeType === 'flow-node';
-  const referencedFlowLabel = isFlowNode
-    ? ((nodeData.flow_name as string) || (nodeData.flow_id as string) || '')
+
+  // SPEC-SUBFLOW-001 v1.3 (REQ-RU06): flow_id 가 `remote://{instanceId}/{flowId}` 면
+  // 이 flow-node 는 LIVE BRIDGE 다 — 캔버스에서 한눈에 구분되도록 정적 원격 브릿지
+  // 인디케이터를 항상 표시한다. 평문(bare) flow_id 인 로컬 서브플로우는 그대로 둔다.
+  const flowIdValue = isFlowNode ? String(nodeData.flow_id ?? '') : '';
+  const remoteRef = isFlowNode ? parseRemoteFlowRef(flowIdValue) : null;
+  const isRemoteBridge = remoteRef !== null;
+  // 원격 노드 표시명: 호스트명 미보유이므로 단축 instanceId 로 폴백(resolveRemoteNodeLabel).
+  const remoteNodeLabel = remoteRef
+    ? resolveRemoteNodeLabel(undefined, remoteRef.instanceId)
     : '';
+
+  // 참조 플로우 표시명(로컬·원격 공통). flow_name 캐시 → flow_id 폴백.
+  // 원격 브릿지는 정규화 참조 전체 대신 노드-로컬 flowId 로 폴백(가독성).
+  const referencedFlowLabel = isFlowNode
+    ? ((nodeData.flow_name as string) ||
+        (remoteRef ? remoteRef.flowId : (nodeData.flow_id as string)) ||
+        '')
+    : '';
+
+  // 라이브 브릿지 상태(REQ-RU06): 캔버스에 이미 도달한 노드 런타임 state 를
+  // 매핑한다(플로우 미실행 시 state 없음 → 'unknown' → 상태 점 미표시).
+  // 백엔드 status 엔드포인트는 추가하지 않는다.
+  const bridgeStatus = isRemoteBridge
+    ? mapRuntimeStateToBridgeStatus(stats?.state)
+    : 'unknown';
+  const showBridgeStatusDot = isRemoteBridge && bridgeStatus !== 'unknown';
+  const bridgeStatusTerm = t(BRIDGE_STATUS_I18N_KEY[bridgeStatus]);
+  const remoteBridgeTooltip = t('remote.bridge.tooltip').replace(
+    '{node}',
+    remoteNodeLabel,
+  );
+  const remoteBridgeStatusTooltip = showBridgeStatusDot
+    ? t('remote.bridge.statusTooltip')
+        .replace('{node}', remoteNodeLabel)
+        .replace('{status}', bridgeStatusTerm)
+    : remoteBridgeTooltip;
 
   // 입력/출력/에러 포트 분리
   const inputPorts = nodeData.ports?.filter((p) => p.direction === 'input') ?? [];
@@ -342,8 +386,43 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           <p className="truncate text-[10px] text-zinc-400">
             {nodeData.nodeType}
           </p>
-          {/* flow-node: 참조 플로우 이름 표시 (없으면 안내 문구). */}
-          {isFlowNode && (
+          {/* flow-node 원격 브릿지(REQ-RU06): 정적 인디케이터(항상 표시) + 라이브 상태 점.
+              로컬 서브플로우(평문 flow_id)와 시각적으로 구분되도록 sky 계열 배지 + Radio
+              아이콘 + 노드 라벨을 노출하고, 실행 중이면 상태 색상 점을 덧붙인다. */}
+          {isFlowNode && isRemoteBridge && (
+            <p
+              data-remote-bridge="true"
+              className={cn(
+                'mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded px-1 py-0.5 text-[9px] font-medium',
+                'bg-sky-50 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
+              )}
+              title={remoteBridgeStatusTooltip}
+              aria-label={remoteBridgeStatusTooltip}
+            >
+              {showBridgeStatusDot ? (
+                <span
+                  data-bridge-status={bridgeStatus}
+                  className={cn(
+                    'h-1.5 w-1.5 shrink-0 rounded-full',
+                    BRIDGE_STATUS_DOT_CLASS[bridgeStatus],
+                  )}
+                  aria-hidden="true"
+                />
+              ) : (
+                <Radio className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+              )}
+              <span className="shrink-0">{t('remote.bridge.label')}</span>
+              <span className="truncate text-sky-500 dark:text-sky-400">
+                {remoteNodeLabel
+                  ? `· ${remoteNodeLabel}`
+                  : referencedFlowLabel
+                    ? `· ${referencedFlowLabel}`
+                    : ''}
+              </span>
+            </p>
+          )}
+          {/* flow-node 로컬 서브플로우: 참조 플로우 이름 표시 (없으면 안내 문구). 변경 없음. */}
+          {isFlowNode && !isRemoteBridge && (
             <p
               className={cn(
                 'mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded px-1 py-0.5 text-[9px] font-medium',

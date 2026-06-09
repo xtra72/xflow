@@ -15,6 +15,11 @@ vi.mock('@/services/api/nodeService', () => ({
 }));
 
 import { APIError } from '@/types/api';
+import { I18nProvider } from '@/lib/i18n';
+import {
+  RuntimeStatsContext,
+  type NodeRuntimeStats,
+} from '@/contexts/RuntimeStatsContext';
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
 import { CustomNode } from './CustomNode';
@@ -53,7 +58,60 @@ function renderOutputNode(outputEnabled: boolean) {
 
   return render(
     <MemoryRouter>
-      <CustomNode {...props} />
+      <I18nProvider>
+        <CustomNode {...props} />
+      </I18nProvider>
+    </MemoryRouter>,
+  );
+}
+
+/** flow-node 를 (선택적 런타임 state 와 함께) 렌더한다 — 원격 브릿지 인디케이터 검증용. */
+function renderFlowNode(
+  flowId: string,
+  opts: { flowName?: string; runtimeState?: string } = {},
+) {
+  const data = {
+    label: 'sub',
+    nodeType: 'flow-node',
+    category: 'special',
+    flow_id: flowId,
+    ...(opts.flowName ? { flow_name: opts.flowName } : {}),
+  };
+  useEditorStore.setState({
+    nodes: [
+      {
+        id: NODE_ID,
+        type: 'custom',
+        position: { x: 0, y: 0 },
+        data,
+      },
+    ],
+  });
+  const props = {
+    id: NODE_ID,
+    data,
+    selected: false,
+  } as unknown as React.ComponentProps<typeof CustomNode>;
+
+  const statsMap: Record<string, NodeRuntimeStats> =
+    opts.runtimeState !== undefined
+      ? {
+          [NODE_ID]: {
+            inMessages: 0,
+            outMessages: 0,
+            state: opts.runtimeState,
+            ports: [],
+          },
+        }
+      : {};
+
+  return render(
+    <MemoryRouter>
+      <I18nProvider>
+        <RuntimeStatsContext.Provider value={statsMap}>
+          <CustomNode {...props} />
+        </RuntimeStatsContext.Provider>
+      </I18nProvider>
     </MemoryRouter>,
   );
 }
@@ -130,5 +188,59 @@ describe('CustomNode output ON/OFF 라이브 제어', () => {
       expect(useUIStore.getState().notifications).toHaveLength(1);
     });
     expect(useUIStore.getState().notifications[0]?.type).toBe('warning');
+  });
+});
+
+// SPEC-SUBFLOW-001 v1.3 (REQ-RU06): flow-node 원격 브릿지 인디케이터.
+describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
+  beforeEach(() => {
+    useEditorStore.getState().resetEditor();
+    useUIStore.getState().clearNotifications();
+  });
+
+  it('remote:// flow_id 면 원격 브릿지 인디케이터(라벨 + 단축 노드 id)를 표시한다', () => {
+    renderFlowNode('remote://inst-uuid-1234/flow-9');
+
+    const indicator = screen.getByText('원격 브릿지').closest('[data-remote-bridge]');
+    expect(indicator).not.toBeNull();
+    // 노드 라벨: 호스트명 미보유 → 단축 instanceId(앞 8자 + 생략부호).
+    expect(screen.getByText('· inst-uui…')).toBeInTheDocument();
+  });
+
+  it('평문(local) flow_id 면 원격 브릿지 인디케이터를 표시하지 않는다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우' });
+
+    expect(screen.queryByText('원격 브릿지')).toBeNull();
+    expect(
+      document.querySelector('[data-remote-bridge]'),
+    ).toBeNull();
+    // 로컬 서브플로우 표시(참조 플로우 이름)는 그대로 유지된다.
+    expect(screen.getByText('로컬 서브플로우')).toBeInTheDocument();
+  });
+
+  it('런타임 state 가 없으면(플로우 미실행) 상태 점 없이 정적 인디케이터만 표시한다', () => {
+    renderFlowNode('remote://inst-uuid-1234/flow-9');
+
+    expect(screen.getByText('원격 브릿지')).toBeInTheDocument();
+    expect(document.querySelector('[data-bridge-status]')).toBeNull();
+  });
+
+  it('런타임 state=running 이면 running 상태 점을 반영한다', () => {
+    renderFlowNode('remote://inst-uuid-1234/flow-9', {
+      runtimeState: 'running',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot).not.toBeNull();
+    expect(dot?.getAttribute('data-bridge-status')).toBe('running');
+  });
+
+  it('런타임 state=error 이면 error 상태 점을 반영한다', () => {
+    renderFlowNode('remote://inst-uuid-1234/flow-9', {
+      runtimeState: 'error',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot?.getAttribute('data-bridge-status')).toBe('error');
   });
 });
