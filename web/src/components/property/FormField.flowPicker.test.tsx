@@ -40,8 +40,22 @@ vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({ data: { data: [] }, isLoading: false }),
 }));
 
+// --- 모킹: 원격 훅(그룹 RU 노드 선택기 의존성) ---
+// 본 파일은 "동일노드 원격 편집" + "로컬 회귀(노드 선택기 미노출)" 시나리오만 다루므로
+// 기본값으로 노드 선택기가 노출되지 않도록(비-server / 노드 없음) 둔다. 그룹 RU 의
+// 로컬→원격 노드 선택 자체는 FlowPickerInput.test.tsx 에서 별도 검증한다.
+const useManagedNodesMock = vi.hoisted(() => vi.fn());
+const useRemoteModeMock = vi.hoisted(() => vi.fn());
+const useNodeLiveListMock = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useRemote', () => ({
+  useManagedNodes: (...a: unknown[]) => useManagedNodesMock(...a),
+  useRemoteMode: () => useRemoteModeMock(),
+  useNodeLiveList: (...a: unknown[]) => useNodeLiveListMock(...a),
+}));
+
 // TargetProvider/useTargetContext 는 실제 구현을 사용한다(컨텍스트 전파 검증 목적).
 import { FormField } from './FormField';
+import { I18nProvider } from '@/lib/i18n';
 import { TargetProvider } from '@/lib/remote/TargetContext';
 
 const REMOTE_TARGET: ResourceTarget = { type: 'remote', instanceId: 'node-a' };
@@ -66,7 +80,16 @@ function listResult(flows: FlowInfo[]) {
 beforeEach(() => {
   useFlowsTargetMock.mockReset();
   currentFlowIdValue = null;
+  // 기본: 노드 선택기 미노출(로컬 회귀/동일노드 원격 편집 시나리오).
+  useManagedNodesMock.mockReset().mockReturnValue({ data: [] });
+  useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'disabled' } });
+  useNodeLiveListMock.mockReset().mockReturnValue({ data: [], isLoading: false });
 });
+
+/** I18nProvider 로 감싸 렌더한다(FlowPickerInput 이 useTranslation 사용). */
+function renderWithI18n(ui: React.ReactElement) {
+  return render(<I18nProvider>{ui}</I18nProvider>);
+}
 
 describe('FormField flow_picker — 원격 타깃', () => {
   it('원격 TargetProvider 컨텍스트에서 picker 는 원격 노드의 플로우를 나열한다', () => {
@@ -78,7 +101,7 @@ describe('FormField flow_picker — 원격 타깃', () => {
         : listResult([flow('local-x', '로컬 플로우 X')]),
     );
 
-    render(
+    renderWithI18n(
       <TargetProvider target={REMOTE_TARGET}>
         <FormField field={flowPickerField} value="" onChange={vi.fn()} />
       </TargetProvider>,
@@ -97,7 +120,7 @@ describe('FormField flow_picker — 원격 타깃', () => {
     const remoteFlows = [flow('rf-1', '자기 자신'), flow('rf-2', '다른 노드 플로우')];
     useFlowsTargetMock.mockReturnValue(listResult(remoteFlows));
 
-    render(
+    renderWithI18n(
       <TargetProvider target={REMOTE_TARGET}>
         <FormField field={flowPickerField} value="" onChange={vi.fn()} />
       </TargetProvider>,
@@ -113,7 +136,7 @@ describe('FormField flow_picker — 원격 타깃', () => {
     const remoteFlows = [flow('rf-2', '노드 플로우 B')];
     useFlowsTargetMock.mockReturnValue(listResult(remoteFlows));
 
-    render(
+    renderWithI18n(
       <TargetProvider target={REMOTE_TARGET}>
         <FormField field={flowPickerField} value="" onChange={onChange} />
       </TargetProvider>,
@@ -132,7 +155,7 @@ describe('FormField flow_picker — 로컬 타깃(회귀)', () => {
       target.type === 'local' ? listResult(localFlows) : listResult([]),
     );
 
-    render(<FormField field={flowPickerField} value="" onChange={vi.fn()} />);
+    renderWithI18n(<FormField field={flowPickerField} value="" onChange={vi.fn()} />);
 
     const select = screen.getByRole('combobox');
     expect(within(select).getByRole('option', { name: '로컬 플로우 1' })).toBeTruthy();
@@ -144,7 +167,7 @@ describe('FormField flow_picker — 로컬 타깃(회귀)', () => {
     const localFlows = [flow('local-1', '편집 중 플로우'), flow('local-2', '로컬 플로우 2')];
     useFlowsTargetMock.mockReturnValue(listResult(localFlows));
 
-    render(<FormField field={flowPickerField} value="" onChange={vi.fn()} />);
+    renderWithI18n(<FormField field={flowPickerField} value="" onChange={vi.fn()} />);
 
     const select = screen.getByRole('combobox');
     expect(within(select).queryByRole('option', { name: '편집 중 플로우' })).toBeNull();

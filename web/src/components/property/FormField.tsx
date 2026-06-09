@@ -1,13 +1,22 @@
 // 타입별 폼 필드 렌더러 컴포넌트.
 // ConfigField.type에 따라 적절한 입력 위젯을 렌더링한다.
 
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useFlowsTarget } from '@/hooks/useResourceTargets';
+import { useManagedNodes, useNodeLiveList, useRemoteMode } from '@/hooks/useRemote';
+import { useTranslation } from '@/lib/i18n';
+import {
+  buildRemoteFlowRef,
+  parseRemoteFlowRef,
+} from '@/lib/flow/subflowPorts';
+import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
+import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { useEditorStore } from '@/stores/editorStore';
+import type { ManagedNode } from '@/types/remote';
 import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
@@ -483,6 +492,9 @@ function AgentSelectInput({
   );
 }
 
+// 로컬 편집 전용 노드 선택값: 'local' 또는 원격 노드 instance_id.
+const LOCAL_NODE_OPTION = 'local';
+
 // 참조 플로우를 선택하는 드롭다운 컴포넌트 (SPEC-SUBFLOW-001 그룹 C, flow-node 전용).
 // - 타깃 인지(target-aware) 플로우 목록으로 후보를 채운다(SPEC-REMOTE-001):
 //   로컬 편집이면 매니저 로컬 플로우(useFlows 동형), 원격 노드 플로우 편집이면 그
@@ -493,6 +505,14 @@ function AgentSelectInput({
 //   (REQ-SUBFLOW-C04). 백엔드도 순환을 거부하지만 명백한 자기 선택은 UI 에서 막는다.
 // - 선택 시 { flow_id, flow_name } 복합 객체를 반환한다(DynamicForm 이 포트 비정규화 수행).
 // - 우측 "포트 갱신" 버튼으로 참조 플로우 포트를 재조회한다(REQ-SUBFLOW-C03 항상 최신).
+//
+// 그룹 RU (SPEC-SUBFLOW-001 v1.2): 로컬 편집(target=local)일 때, 로컬 플로우뿐 아니라
+// 승인+온라인 원격 노드의 플로우도 고를 수 있도록 노드 선택 드롭다운을 추가한다.
+// 원격 노드의 플로우를 고르면 flow_id 를 `remote://{instanceId}/{flowId}` 로 정규화
+// 저장하며(배포 시 백엔드가 인라인 확장), 선택값/목록에 "원격" 배지와 노드 라벨을
+// 표시한다. 원격 관리 비활성(non-server)/원격 노드 없음 환경에서는 노드 선택이
+// "로컬"만 제공하거나 숨겨져 기존 동작과 동일하게 회귀 없이 동작한다.
+// 동일 노드 원격 편집(target=remote)은 이전 동작(그 노드 플로우, bare id) 그대로다.
 function FlowPickerInput({
   id,
   value,
@@ -512,52 +532,169 @@ function FlowPickerInput({
   ariaProps: Record<string, unknown>;
   readOnly?: boolean;
 }) {
+  const { t } = useTranslation();
+
   // 타깃 인지 플로우 목록: 로컬이면 매니저 로컬 플로우, 원격이면 그 노드의 플로우.
   // useTargetContext 는 Provider 미설정 시 로컬을 기본값으로 돌려주므로, 로컬 편집
   // 콜사이트(Provider 없음/로컬 타깃)는 useFlows 위임과 동일하게 회귀 없이 동작한다.
   const target = useTargetContext();
+  const editorIsRemote = isRemoteTarget(target);
   const { data: flowsResult, isLoading } = useFlowsTarget(target);
   const currentFlowId = useEditorStore((s) => s.currentFlowId);
 
-  // 자기참조 방지: 현재 편집 중인 플로우를 후보에서 제외한다 (REQ-SUBFLOW-C04).
-  // 원격 편집은 currentFlowId 가 null 이므로(라이브 제어 비대상) 제외가 무효지만,
-  // 원격 picker 는 그 노드의 다른 플로우만 나열하면 충분하다.
+  // 현재 값이 `remote://{instanceId}/{flowId}` 정규화 참조면 파싱한다(로컬 편집에서
+  // 원격 노드 플로우를 참조한 경우). 평문 id 면 null(로컬/동일노드 참조).
+  const remoteRef = useMemo(() => parseRemoteFlowRef(value), [value]);
+
+  // --- 노드 선택 후보 (로컬 편집 전용, 그룹 RU) ---
+  // server 모드가 아니면 admin /remote/* 쿼리를 막아 404 노이즈를 방지한다.
+  // 동일노드 원격 편집(editorIsRemote)에서는 노드 선택을 노출하지 않으므로 쿼리도 끈다.
+  const { data: remoteMode } = useRemoteMode();
+  const isServer = remoteMode?.mode === 'server';
+  const nodeSelectorEnabled = !editorIsRemote && isServer;
+  const { data: managedNodes } = useManagedNodes(undefined, nodeSelectorEnabled);
+
+  // 승인 + 온라인 노드만 후보로 제공한다(오프라인/미승인은 플로우 프록시 불가).
+  const remoteNodes = useMemo<ManagedNode[]>(
+    () =>
+      (managedNodes ?? []).filter(
+        (n) => n.status === 'approved' && n.online,
+      ),
+    [managedNodes],
+  );
+
+  // 선택된 노드: 현재 값이 원격 참조면 그 노드, 아니면 'local' 기본값.
+  // 사용자가 노드 드롭다운을 바꾸면 selectedNode 가 갱신된다.
+  const [selectedNode, setSelectedNode] = useState<string>(
+    remoteRef ? remoteRef.instanceId : LOCAL_NODE_OPTION,
+  );
+
+  // 값(remote ref)이 외부에서 바뀌면 선택 노드를 동기화한다(노드 사전 선택 — 그룹 RU).
+  useEffect(() => {
+    setSelectedNode(remoteRef ? remoteRef.instanceId : LOCAL_NODE_OPTION);
+  }, [remoteRef]);
+
+  // 원격 노드가 선택되었는지(로컬 편집에서만 의미). 동일노드 원격 편집은 항상 false.
+  const remoteNodeSelected =
+    !editorIsRemote && selectedNode !== LOCAL_NODE_OPTION;
+
+  // 원격 노드 플로우 목록: 원격 노드가 선택된 경우에만 라이브 조회한다(Rules of Hooks
+  // 를 위해 훅은 항상 호출하되 enabled 로 무력화). getRemoteFlowsLive → FlowInfo[].
+  const remoteListInstance = remoteNodeSelected ? selectedNode : '';
+  const { data: remoteFlows, isLoading: remoteLoading } = useNodeLiveList(
+    remoteListInstance,
+    'flow',
+    remoteNodeSelected,
+  );
+
+  // 노드 라벨(원격 배지 옆 표시). 호스트명 우선, 없으면 단축 instanceId.
+  // 후보 목록(remoteNodes)에 없으면(오프라인/비-server) instanceId 단축형으로 폴백한다.
+  const selectedNodeLabel = useMemo(() => {
+    if (!remoteNodeSelected) return '';
+    const node = remoteNodes.find((n) => n.instance_id === selectedNode);
+    return resolveRemoteNodeLabel(node?.hostname, selectedNode);
+  }, [remoteNodeSelected, remoteNodes, selectedNode]);
+
+  // 노드 선택 드롭다운 노출 여부(로컬 편집 + server 모드 + 원격 노드 존재).
+  const showNodeSelector = nodeSelectorEnabled && remoteNodes.length > 0;
+
+  // 자기참조 방지: 현재 편집 중인 플로우를 로컬 후보에서 제외한다 (REQ-SUBFLOW-C04).
+  // 원격 노드의 플로우는 다른 스코프이므로 currentFlowId 로 제외하지 않는다(그룹 RU).
   const flows = useMemo(
     () => (flowsResult?.data ?? []).filter((f) => f.id !== currentFlowId),
     [flowsResult?.data, currentFlowId],
   );
 
+  // --- 활성 옵션(로컬 vs 원격) ---
+  // 원격 노드 선택 시: 원격 노드 플로우 목록 + 현재 select 값은 원격 flowId(bare).
+  // 로컬/동일노드 편집 시: 로컬(또는 그 노드) 플로우 목록 + 현재 값 그대로.
+  const optionFlows = remoteNodeSelected ? (remoteFlows ?? []) : flows;
+  const optionsLoading = remoteNodeSelected ? remoteLoading : isLoading;
+
+  // select 의 현재 값: 원격 참조면 ref 의 flowId(bare), 아니면 value 그대로.
+  const selectValue = remoteNodeSelected
+    ? remoteRef && remoteRef.instanceId === selectedNode
+      ? remoteRef.flowId
+      : ''
+    : value;
+
   // 참조 플로우가 목록에 없으면(삭제됨/접근 불가) 끊어진 참조로 안내한다.
-  const isDangling = value !== '' && !flows.some((f) => f.id === value);
+  const isDangling =
+    selectValue !== '' && !optionFlows.some((f) => f.id === selectValue);
+
+  // 노드 선택 변경 핸들러: 노드를 바꾸면 현재 선택을 초기화한다(플로우 미선택 상태).
+  const handleNodeChange = (node: string) => {
+    setSelectedNode(node);
+    onChange({ flow_id: '', flow_name: '' });
+  };
+
+  // 플로우 선택 변경 핸들러: 원격 노드면 remote:// 정규화 저장, 로컬이면 bare id.
+  const handleFlowChange = (flowId: string) => {
+    const selected = optionFlows.find((f) => f.id === flowId);
+    if (!selected) {
+      onChange({ flow_id: '', flow_name: '' });
+      return;
+    }
+    if (remoteNodeSelected) {
+      onChange({
+        flow_id: buildRemoteFlowRef(selectedNode, selected.id),
+        flow_name: selected.name,
+      });
+    } else {
+      onChange({ flow_id: selected.id, flow_name: selected.name });
+    }
+  };
 
   return (
     <div className="space-y-1">
+      {/* 노드 선택 드롭다운(로컬 편집 + server 모드 + 원격 노드 존재 시에만 노출).
+          원격 노드가 없으면 표시하지 않아 기존 로컬 UX 와 동일하게 동작한다. */}
+      {showNodeSelector && (
+        <div className="flex items-center gap-1.5">
+          <select
+            aria-label={t('flowPicker.nodeSelectorLabel')}
+            value={selectedNode}
+            disabled={readOnly}
+            onChange={(e) => handleNodeChange(e.target.value)}
+            className={cn(className, 'flex-1')}
+          >
+            <option value={LOCAL_NODE_OPTION}>{t('flowPicker.local')}</option>
+            {remoteNodes.map((n) => (
+              <option key={n.instance_id} value={n.instance_id}>
+                {resolveRemoteNodeLabel(n.hostname, n.instance_id)}
+              </option>
+            ))}
+          </select>
+          {/* 선택된 노드가 원격이면 배지로 명확히 표시한다(RU04). */}
+          {remoteNodeSelected && <RemoteBadge label={selectedNodeLabel} />}
+        </div>
+      )}
+
       <div className="flex items-center gap-1.5">
         <select
           id={id}
-          value={value}
+          value={selectValue}
           disabled={readOnly}
-          onChange={(e) => {
-            const selected = flows.find((f) => f.id === e.target.value);
-            if (selected) {
-              onChange({ flow_id: selected.id, flow_name: selected.name });
-            } else {
-              onChange({ flow_id: '', flow_name: '' });
-            }
-          }}
+          onChange={(e) => handleFlowChange(e.target.value)}
           className={cn(className, 'flex-1')}
           {...ariaProps}
         >
           <option value="">
-            {isLoading ? '로딩 중...' : '플로우 선택...'}
+            {optionsLoading
+              ? '로딩 중...'
+              : remoteNodeSelected
+                ? t('flowPicker.remoteFlowSelect')
+                : '플로우 선택...'}
           </option>
           {/* 끊어진 참조도 현재 값을 유지해 사용자가 인지할 수 있게 표시한다. */}
           {isDangling && (
-            <option value={value}>
-              {flowName ? `${flowName} (참조 끊김)` : `${value} (참조 끊김)`}
+            <option value={selectValue}>
+              {flowName
+                ? `${flowName} (참조 끊김)`
+                : `${selectValue} (참조 끊김)`}
             </option>
           )}
-          {flows.map((flow) => (
+          {optionFlows.map((flow) => (
             <option key={flow.id} value={flow.id}>
               {flow.name}
             </option>
@@ -583,12 +720,39 @@ function FlowPickerInput({
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
         )}
+        {/* 노드 선택기가 숨겨졌더라도(비-server / 후보 없음) 기존 remote:// 값은
+            배지로 명확히 표시한다(RU04 — 기존 값 렌더링 보장). */}
+        {!showNodeSelector && remoteNodeSelected && (
+          <RemoteBadge label={selectedNodeLabel} />
+        )}
       </div>
       {isDangling && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          참조 플로우를 찾을 수 없습니다. 삭제되었거나 접근할 수 없습니다.
+          {remoteNodeSelected
+            ? t('flowPicker.remoteFlowMissing')
+            : '참조 플로우를 찾을 수 없습니다. 삭제되었거나 접근할 수 없습니다.'}
         </p>
       )}
     </div>
+  );
+}
+
+// 원격 노드의 플로우가 선택되었음을 알리는 컴팩트 배지(RU04). 노드 라벨을 함께
+// 표시하여 어느 노드의 플로우인지 사용자가 인지할 수 있게 한다.
+function RemoteBadge({ label }: { label: string }) {
+  const { t } = useTranslation();
+  return (
+    <span
+      title={t('flowPicker.remoteBadgeTitle')}
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5',
+        'text-[10px] font-medium',
+        'bg-indigo-100 text-indigo-700',
+        'dark:bg-indigo-900/40 dark:text-indigo-300',
+      )}
+    >
+      <span>{t('flowPicker.remoteBadge')}</span>
+      {label && <span className="opacity-80">· {label}</span>}
+    </span>
   );
 }

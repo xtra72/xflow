@@ -18,8 +18,10 @@ vi.mock('@/services/api/remoteService', () => ({
 }));
 
 import {
+  buildRemoteFlowRef,
   extractFlowNodePorts,
   extractPortNames,
+  parseRemoteFlowRef,
   resolveFlowNodePorts,
   resolveRemoteFlowNodePorts,
 } from './subflowPorts';
@@ -102,6 +104,43 @@ describe('extractFlowNodePorts — 플로우 상세 → flow-node 표시 포트'
     );
     expect(resolved.input_ports).toEqual([]);
     expect(resolved.output_ports).toEqual([]);
+  });
+});
+
+describe('buildRemoteFlowRef / parseRemoteFlowRef — remote:// 정규화 참조 (그룹 RU)', () => {
+  it('buildRemoteFlowRef 는 remote://{instanceId}/{flowId} 를 만든다 (백엔드 규약 동형)', () => {
+    expect(buildRemoteFlowRef('node-a', 'flow-1')).toBe('remote://node-a/flow-1');
+  });
+
+  it('parseRemoteFlowRef 는 정규화 참조를 첫 / 에서 분할해 파싱한다', () => {
+    expect(parseRemoteFlowRef('remote://node-a/flow-1')).toEqual({
+      instanceId: 'node-a',
+      flowId: 'flow-1',
+    });
+  });
+
+  it('build → parse 라운드트립이 동일 값을 보존한다', () => {
+    const ref = parseRemoteFlowRef(buildRemoteFlowRef('edge-01', 'abc-123'));
+    expect(ref).toEqual({ instanceId: 'edge-01', flowId: 'abc-123' });
+  });
+
+  it('flowId 에 / 가 포함되면 첫 구분자 기준으로만 분할한다(나머지는 flowId)', () => {
+    expect(parseRemoteFlowRef('remote://node-a/grp/flow-1')).toEqual({
+      instanceId: 'node-a',
+      flowId: 'grp/flow-1',
+    });
+  });
+
+  it('스킴이 없는 평문 id 는 null(로컬 참조로 처리)', () => {
+    expect(parseRemoteFlowRef('flow-1')).toBeNull();
+    expect(parseRemoteFlowRef('')).toBeNull();
+  });
+
+  it('instanceId 또는 flowId 가 비면 null', () => {
+    expect(parseRemoteFlowRef('remote://node-a/')).toBeNull();
+    expect(parseRemoteFlowRef('remote:///flow-1')).toBeNull();
+    expect(parseRemoteFlowRef('remote://node-a')).toBeNull();
+    expect(parseRemoteFlowRef('remote://')).toBeNull();
   });
 });
 

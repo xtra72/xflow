@@ -611,5 +611,14 @@
         "fixedHint": "Pixel-exact replica on a fixed node-resolution canvas. The resolution setting is only used in this mode."
       }
     }
+  },
+  "flowPicker": {
+    "nodeSelectorLabel": "Flow location",
+    "local": "Local",
+    "remoteBadge": "Remote",
+    "remoteBadgeTitle": "Flow on a remote node (inlined at deploy time)",
+    "loadingNodes": "Loading nodes...",
+    "remoteFlowSelect": "Select remote flow...",
+    "remoteFlowMissing": "Remote flow not found."
   }
 }

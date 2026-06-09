@@ -611,5 +611,14 @@
         "fixedHint": "노드 해상도 고정 캔버스로 픽셀 그대로 재현합니다. 해상도 설정은 이 모드에서만 사용됩니다."
       }
     }
+  },
+  "flowPicker": {
+    "nodeSelectorLabel": "플로우 위치",
+    "local": "로컬",
+    "remoteBadge": "원격",
+    "remoteBadgeTitle": "원격 노드의 플로우 (배포 시 인라인 확장)",
+    "loadingNodes": "노드 로딩 중...",
+    "remoteFlowSelect": "원격 플로우 선택...",
+    "remoteFlowMissing": "원격 플로우를 찾을 수 없습니다."
   }
 }
