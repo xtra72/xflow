@@ -450,6 +450,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	)
 	engineRef = eng
 
+	// 라이브 브리지 경계 tap 노드 타입을 등록한다(SPEC-SUBFLOW-001 P2, REQ-SUBFLOW-RB07).
+	// 원격 참조 flow-node 의 노드 측 브리지가 참조 플로우를 실행할 때, 경계 와이어를 이
+	// tap 노드로 재배선하여 입력 주입/출력 중계를 수행한다(엔진 불변 — 일반 노드 타입 추가).
+	// 등록 실패는 치명적이지 않으므로(브리지 미구성과 동일 — 일반 플로우엔 영향 없음) 경고만.
+	if regErr := service.RegisterBridgeTapNodes(registry); regErr != nil {
+		obs.Loggers.NewLogger("remote.bridge").Warn("브리지 tap 노드 등록 실패", "error", regErr)
+	}
+
 	// 6.5. 플로우 저장소 초기화
 	storageCfg := cfg.Storage()
 	storageLogger := obs.Loggers.NewLogger("storage")
@@ -993,6 +1001,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		streamSource.logs = remoteLogHub
 		queryRedactor := newQueryRedactor()
 
+		// 라이브 브리지 실행 어댑터(SPEC-SUBFLOW-001 P2, REQ-SUBFLOW-RB05/RB07): 원격
+		// 참조 flow-node 의 bridge_open 수신 시 참조 플로우를 노드에서 실행하고 경계
+		// 포트를 tap 한다(입력 주입/출력 중계). 로컬 API 와 동일한 flowSvc/eng 인스턴스를
+		// 재사용하여 노드 실행이 로컬 배포와 동일 경로/검증/시크릿/디바이스를 갖게 한다
+		// (RC01~RC03 해소). tap 노드 타입은 위 service.RegisterBridgeTapNodes 로 등록됨.
+		bridgeRunner := service.NewBridgeFlowRunnerAdapter(flowSvc, eng,
+			obs.Loggers.NewLogger("remote.bridge").Logger())
+
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
 		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
 		remoteClient := remote.NewClient(remote.ClientConfig{
@@ -1024,7 +1040,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			QuerySource:   querySource,
 			StreamSource:  streamSource,
 			QueryRedactor: queryRedactor,
-			Logger:        obs.Loggers.NewLogger("remote.client").Logger(),
+			// 라이브 브리지 실행기(P2): bridge_open 시 참조 플로우 실행 + 경계 tap.
+			// BridgeAudit 은 nil(구조화 로그만 — 노드-로컬 감사 저장소 미사용). client 가
+			// open/close/input 을 시크릿 페이로드 제외로 로깅한다(REQ-SUBFLOW-RB06/RB11).
+			BridgeRunner: bridgeRunner,
+			Logger:       obs.Loggers.NewLogger("remote.client").Logger(),
 		}, nil)
 		remoteClient.Start(ctx)
 		defer remoteClient.Stop()
