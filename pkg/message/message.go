@@ -36,6 +36,7 @@ type Message interface {
 
 // config 는 메시지 생성 옵션을 담는 내부 설정 구조체이다.
 type config struct {
+	id             string // WithID 옵션용 ("" 이면 uuid 자동 생성)
 	historyEnabled bool
 	maxHistory     int
 	metadata       map[string]string
@@ -46,6 +47,15 @@ type config struct {
 
 // Option 은 메시지 생성 시 적용할 옵션 함수 타입이다.
 type Option func(*config)
+
+// WithID 는 메시지 생성 시 ID 를 명시적으로 설정한다.
+// 라이브 브리지 등 메시지를 재구성하는 경로가 원본 ID 를 보존할 때 사용한다.
+// 빈 문자열("")이면 New() 가 uuid 를 자동 생성한다(기본 동작 유지).
+func WithID(id string) Option {
+	return func(c *config) {
+		c.id = id
+	}
+}
 
 // WithHistory 는 변경 이력 기록 활성화 여부를 설정한다.
 func WithHistory(enabled bool) Option {
@@ -125,8 +135,15 @@ func New(opts ...Option) Message {
 	if cfg.timestamp != nil {
 		ts = *cfg.timestamp
 	}
+
+	// WithID 옵션이 있으면(비어있지 않으면) 사용, 없으면 uuid 자동 생성.
+	id := cfg.id
+	if id == "" {
+		id = uuid.New().String()
+	}
+
 	msg := &defaultMessage{
-		id:             uuid.New().String(),
+		id:             id,
 		msgType:        cfg.msgType, // v0.14.0: WithType 옵션
 		timestamp:      ts,
 		historyEnabled: cfg.historyEnabled,

@@ -165,7 +165,19 @@ type ClientConfig struct {
 
 	// QueryRedactor 는 query/stream 응답을 전송 전 마스킹한다(M8, REQ-J06). nil 이면
 	// pass-through 한다. cmd/xflowd 가 secret_fields SoT 로 구성한다(노드 측 redaction).
+	// 브리지 출력(bridge_output)도 동일 redactor 로 마스킹한다(SPEC-SUBFLOW-001 §5.14).
 	QueryRedactor QueryRedactor
+
+	// BridgeRunner 는 bridge_open 수신 시 참조 플로우를 라이브 실행(deploy+start, 재사용)
+	// 하고 입출력 경계 포트를 tap 하는 구현이다(P2, REQ-SUBFLOW-RB05/RB07). nil 이면
+	// bridge_open 은 거부된다(미구성 노드 보호). cmd/xflowd 가 엔진/서비스 위에 구현한
+	// 어댑터를 주입한다(import cycle 회피 — bridge.go 인터페이스).
+	BridgeRunner BridgeFlowRunner
+
+	// BridgeAudit 는 브리지 open/close + 입력 주입 감사 싱크이다(P2, REQ-SUBFLOW-RB06/
+	// RB11). nil 이면 client 는 구조화 로그로만 감사한다(노드-로컬 audit 저장소 없는 배포
+	// 허용). 시크릿 페이로드 값은 절대 기록하지 않는다(REQ-SUBFLOW-RB06).
+	BridgeAudit BridgeAuditSink
 
 	// Logger 는 선택적 로거이다.
 	Logger *slog.Logger
@@ -204,6 +216,12 @@ type Client struct {
 	// teardown 한다(누수 없음). runSession 이 세션마다 새로 만들고(c.mu 보호), 세션
 	// 종료 시 모두 정리한 뒤 nil 로 비운다(approved 와 동일 라이프사이클).
 	streams map[string]*streamSub
+
+	// bridges 는 현재 세션의 활성 라이브 브리지 레지스트리이다(P2, REQ-SUBFLOW-RB12).
+	// bridge_id → 브리지 핸들 매핑으로 bridge_input 주입 대상·bridge_close teardown 대상을
+	// 찾고, 세션 종료 시 전 브리지를 teardown 한다(누수 없음 — RB09). streams 와 동일
+	// 라이프사이클(세션마다 새로 만들고 종료 시 정리 후 nil).
+	bridges map[string]*bridgeSession
 }
 
 // streamSub 는 단일 활성 스트림 구독의 client 측 핸들이다(M8). cancel 로 펌프
@@ -359,6 +377,9 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 	// 세션별 스트림 구독 레지스트리를 초기화한다(M8, REQ-J08b). 세션 종료 시 전 구독을
 	// teardown 한다(아래 defer).
 	c.streams = make(map[string]*streamSub)
+	// 세션별 라이브 브리지 레지스트리를 초기화한다(P2, REQ-SUBFLOW-RB09/RB12). 세션 종료
+	// 시 전 브리지를 teardown 한다(아래 defer).
+	c.bridges = make(map[string]*bridgeSession)
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
@@ -369,9 +390,17 @@ func (c *Client) runSession(ctx context.Context, conn Conn) {
 		// 완료를 보장한다.
 		subs := c.streams
 		c.streams = nil
+		// 세션 종료 — 모든 활성 브리지를 teardown 한다(노드 오프라인/연결 종료 시 전 브리지
+		// 정리, 누수 없음 — REQ-SUBFLOW-RB09). cancel 이 출력 펌프를 종료하고, teardown 이
+		// handle.Close()로 참조 플로우 정지(자동 시작분)를 위임한다.
+		brs := c.bridges
+		c.bridges = nil
 		c.mu.Unlock()
 		for _, s := range subs {
 			s.cancel()
+		}
+		for _, b := range brs {
+			b.teardown(context.Background(), "session end")
 		}
 	}()
 
@@ -494,6 +523,21 @@ func (c *Client) handleServerMessage(ctx context.Context, conn Conn, wg *sync.Wa
 	case TypeUnsubscribe:
 		// M8: 스트림 구독 해제·teardown(REQ-J08b).
 		c.handleUnsubscribe(msg.Payload)
+	case TypeBridgeOpen:
+		// P2: 라이브 브리지 개설 — 게이팅 + 자동배포 + 경계 tap + ack. 별도 고루틴에서
+		// 수행하여 읽기 루프를 막지 않으며(자동배포가 deploy/start 로 지연될 수 있음),
+		// 세션 wg 로 추적한다(REQ-SUBFLOW-RB05).
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.handleBridgeOpen(ctx, conn, wg, msg.Payload)
+		}()
+	case TypeBridgeInput:
+		// P2: 원격 입력 경계 포트로 메시지 주입(WRITE — REQ-SUBFLOW-RB07).
+		c.handleBridgeInput(ctx, msg.Payload)
+	case TypeBridgeClose:
+		// P2: 브리지 teardown(REQ-SUBFLOW-RB09).
+		c.handleBridgeClose(msg.Payload)
 	default:
 		// inventory 수신 등은 서버 측 책임이므로 클라이언트는 무시한다.
 		c.logger.Debug("미처리 서버 메시지 타입", "type", msg.Type)

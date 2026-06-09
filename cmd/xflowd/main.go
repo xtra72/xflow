@@ -450,6 +450,22 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	)
 	engineRef = eng
 
+	// 라이브 브리지 경계 tap 노드 타입을 등록한다(SPEC-SUBFLOW-001 P2, REQ-SUBFLOW-RB07).
+	// 원격 참조 flow-node 의 노드 측 브리지가 참조 플로우를 실행할 때, 경계 와이어를 이
+	// tap 노드로 재배선하여 입력 주입/출력 중계를 수행한다(엔진 불변 — 일반 노드 타입 추가).
+	// 등록 실패는 치명적이지 않으므로(브리지 미구성과 동일 — 일반 플로우엔 영향 없음) 경고만.
+	if regErr := service.RegisterBridgeTapNodes(registry); regErr != nil {
+		obs.Loggers.NewLogger("remote.bridge").Warn("브리지 tap 노드 등록 실패", "error", regErr)
+	}
+
+	// SPEC-SUBFLOW-001 P3(그룹 RB): 매니저 측 라이브 브리지 엔드포인트 노드(입력 forwarder/
+	// 출력 emitter)를 등록한다. 살아남은 remote:// flow-node 가 server 모드 배포 시 이 두
+	// 노드로 재배선되어 원격 노드와 입출력을 브리지한다(엔진 불변 — 일반 노드 타입 추가).
+	// 비-server 모드에선 인스턴스화되지 않으며(opener 미주입 → 재배선 거부), 등록만 무해하다.
+	if regErr := service.RegisterRemoteBridgeNodes(registry); regErr != nil {
+		obs.Loggers.NewLogger("remote.bridge").Warn("매니저 브리지 노드 등록 실패", "error", regErr)
+	}
+
 	// 6.5. 플로우 저장소 초기화
 	storageCfg := cfg.Storage()
 	storageLogger := obs.Loggers.NewLogger("storage")
@@ -620,26 +636,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	agentSvc.SetNameResolver(eng)
 	nodeSvc := service.NewNodeServiceAdapter(registry, obs.Loggers.NewLogger("api.service.node").Logger())
 
-	// 9.1a. 자동 시작 플로우 복원
-	{
-		autoStartLogger := obs.Loggers.NewLogger("flow.autostart").Logger()
-		if storedFlows, flErr := repo.List(context.Background()); flErr == nil {
-			autoStartCount := 0
-			for _, f := range storedFlows {
-				if f.Metadata()["auto_start"] == "true" {
-					if err := flowSvc.StartFlow(context.Background(), f.ID()); err != nil {
-						autoStartLogger.Warn("플로우 자동 시작 실패", "flowID", f.ID(), "flowName", f.Name(), "error", err)
-					} else {
-						autoStartLogger.Info("플로우 자동 시작 완료", "flowID", f.ID(), "flowName", f.Name())
-						autoStartCount++
-					}
-				}
-			}
-			if autoStartCount > 0 {
-				autoStartLogger.Info("플로우 자동 시작 완료", "count", autoStartCount)
-			}
-		}
-	}
+	// 9.1a. 자동 시작 플로우 복원은 원격 관리 와이어링 완료 이후(아래 10.2절)로 미뤄진다.
+	// remote:// flow-node 를 가진 플로우는 server 모드의 SetRemoteBridgeOpener / client 모드의
+	// SetBridgeTapSource 가 flowSvc 에 주입된 뒤에야 배포(재배선)할 수 있기 때문이다. 여기서
+	// 자동 시작하면 opener/tap source 미주입 상태라 remote:// flow-node 가 ErrRemoteBridge
+	// Unavailable 로 배포 실패한다(부팅 auto-start 회귀). 이 블록 이후의 핸들러/인벤토리/쿼리
+	// 소스는 flowSvc 인스턴스만 참조하고 "이미 시작된 플로우"에 의존하지 않으므로 이동이 안전하다.
 
 	flowHandler := handler.NewFlowHandler(flowSvc, obs.Loggers.NewLogger("api.handler.flow").Logger(), handler.WithEventPublisher(eventPub), handler.WithAgentManager(agentSvc))
 	agentHandler := handler.NewAgentHandler(agentSvc, obs.Loggers.NewLogger("api.handler.agent").Logger(), handler.WithFlowManager(flowSvc))
@@ -784,6 +786,19 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			BootstrapSecret:  rmCfg.BootstrapSecret,
 			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
 		}, nil)
+
+		// SPEC-SUBFLOW-001 v1.3(그룹 RB): 원격 참조 flow-node 는 라이브 브리지로 동작한다.
+		// v1.2 의 배포 시 원격 정의 fetch+인라인 확장(SetRemoteFlowFetcher / newRemoteSubflowFetcher)
+		// 은 device/secret 무동작 한계로 폐기되었다(§1.2 결정 5). 매니저는 원격 정의를
+		// fetch·확장하지 않으며, 원격 참조 flow-node 는 ExpandSubflows 에서 라이브 노드로 남아
+		// P3 의 매니저 측 브리지 통합(FlowBridgeOpener 구현 주입)에서 처리된다.
+
+		// P3 라이브 브리지 opener 주입(REQ-SUBFLOW-RB05): server 모드에서만 살아남은 remote://
+		// flow-node 가 라이브 브리지로 실행된다. flowSvc.DeployFlow 가 재배선 시 이 opener 로
+		// remote.Server 위에 bridge_open 을 전송한다(노드 권위 경계 포트 — RB06). 비-server
+		// 모드는 opener 미주입이므로 remote:// flow-node 배포가 명확한 오류로 거부된다.
+		flowSvc.SetRemoteBridgeOpener(service.NewServerBridgeOpener(
+			remoteServer, obs.Loggers.NewLogger("remote.bridge.opener").Logger()))
 
 		// 관리 WS 핸들러: 노드 토큰 핸드셰이크 검증 활성화(재접속 세션 복원 — REQ-C05).
 		remoteWSHandler := handler.NewRemoteHandler(remoteServer,
@@ -987,6 +1002,21 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		streamSource.logs = remoteLogHub
 		queryRedactor := newQueryRedactor()
 
+		// 라이브 브리지 실행 어댑터(SPEC-SUBFLOW-001 P2, REQ-SUBFLOW-RB05/RB07): 원격
+		// 참조 flow-node 의 bridge_open 수신 시 참조 플로우를 노드에서 실행하고 경계
+		// 포트를 tap 한다(입력 주입/출력 중계). 로컬 API 와 동일한 flowSvc/eng 인스턴스를
+		// 재사용하여 노드 실행이 로컬 배포와 동일 경로/검증/시크릿/디바이스를 갖게 한다
+		// (RC01~RC03 해소). tap 노드 타입은 위 service.RegisterBridgeTapNodes 로 등록됨.
+		bridgeRunner := service.NewBridgeFlowRunnerAdapter(flowSvc, eng,
+			obs.Loggers.NewLogger("remote.bridge").Logger())
+
+		// 노드 측 tap 소스 주입(참조 플로우 재시작 투명성): flowSvc.DeployFlow 가 활성 노드
+		// 측 브리지 tap 컨트롤러가 있는 참조 플로우를 동일 tapID 로 경계 재배선하여 배포하도록
+		// 한다. 이로써 사용자가 노드에서 참조 플로우를 재시작(Stop→Undeploy→Deploy→Start)해도
+		// 매니저 측 브리지가 끊기지 않고 출력/입력이 재시작 너머로 보존된다(매니저 측
+		// SetRemoteBridgeOpener 와 대칭 와이어링). client 모드에서만 설정된다.
+		flowSvc.SetBridgeTapSource(bridgeRunner)
+
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
 		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
 		remoteClient := remote.NewClient(remote.ClientConfig{
@@ -1018,7 +1048,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			QuerySource:   querySource,
 			StreamSource:  streamSource,
 			QueryRedactor: queryRedactor,
-			Logger:        obs.Loggers.NewLogger("remote.client").Logger(),
+			// 라이브 브리지 실행기(P2): bridge_open 시 참조 플로우 실행 + 경계 tap.
+			// BridgeAudit 은 nil(구조화 로그만 — 노드-로컬 감사 저장소 미사용). client 가
+			// open/close/input 을 시크릿 페이로드 제외로 로깅한다(REQ-SUBFLOW-RB06/RB11).
+			BridgeRunner: bridgeRunner,
+			Logger:       obs.Loggers.NewLogger("remote.client").Logger(),
 		}, nil)
 		remoteClient.Start(ctx)
 		defer remoteClient.Stop()
@@ -1043,6 +1077,33 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		logger.Info("원격 관리 클라이언트 시작",
 			"instance_id", instanceID, "server_url", rmCfg.ServerURL)
+	}
+
+	// 10.2. 자동 시작 플로우 복원 (원격 관리 와이어링 완료 후).
+	// 9.5b(SetRemoteBridgeOpener — server) 및 10.1 client(SetBridgeTapSource) 의 두 모드
+	// switch 가 모두 완료된 뒤 실행한다. 이로써 remote:// flow-node 를 가진 플로우의 배포
+	// (재배선)가 opener(server) / tap source(client) 주입 이후에 일어나 ErrRemoteBridge
+	// Unavailable 없이 성공한다(부팅 auto-start 회귀 수정). server.Start(ctx) 직전에 두어
+	// 노드의 WS dial-in 보다 먼저 매니저 측 브리지 컨트롤러를 오프라인 시작시킨다(노드 도착
+	// 시 자동 연결 — remote_bridge_node.go 의 offline-at-boot 허용과 짝).
+	{
+		autoStartLogger := obs.Loggers.NewLogger("flow.autostart").Logger()
+		if storedFlows, flErr := repo.List(context.Background()); flErr == nil {
+			autoStartCount := 0
+			for _, f := range storedFlows {
+				if f.Metadata()["auto_start"] == "true" {
+					if err := flowSvc.StartFlow(context.Background(), f.ID()); err != nil {
+						autoStartLogger.Warn("플로우 자동 시작 실패", "flowID", f.ID(), "flowName", f.Name(), "error", err)
+					} else {
+						autoStartLogger.Info("플로우 자동 시작 완료", "flowID", f.ID(), "flowName", f.Name())
+						autoStartCount++
+					}
+				}
+			}
+			if autoStartCount > 0 {
+				autoStartLogger.Info("플로우 자동 시작 완료", "count", autoStartCount)
+			}
+		}
 	}
 
 	sigCh := make(chan os.Signal, 1)

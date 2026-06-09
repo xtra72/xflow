@@ -43,6 +43,7 @@ import { cn } from '@/lib/utils/cn';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
+import { TargetProvider } from '@/lib/remote/TargetContext';
 import { getFlowNodes } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -662,6 +663,11 @@ function EditorPageInner() {
   }
 
   return (
+    // 타깃 인지 공급(SPEC-REMOTE-001): 속성 패널/폼(서브플로우 flow_picker, "포트
+    // 갱신")이 prop-drilling 없이 현재 편집 타깃(로컬 | 원격 노드)을 읽도록 에디터
+    // 콘텐츠 전체를 감싼다. 로컬 편집은 LOCAL_TARGET 이라 useTargetContext 기본값과
+    // 동일 — 기존 로컬 동작은 회귀하지 않는다.
+    <TargetProvider target={toolbarTarget}>
     <div className="flex h-full">
       {/* 왼쪽: 노드 팔레트 (240px 고정) */}
       <NodePalette />
@@ -815,5 +821,6 @@ function EditorPageInner() {
         variant="danger"
       />
     </div>
+    </TargetProvider>
   );
 }

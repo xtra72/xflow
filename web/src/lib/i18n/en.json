@@ -502,6 +502,20 @@
       "virtualWires": "Show virtual wires",
       "focusConnections": "Focus connections"
     },
+    "bridge": {
+      "label": "Remote bridge",
+      "nodeLabel": "Node: {node}",
+      "tooltip": "This flow node live-bridges a flow on a remote node ({node}). On deploy, the remote node runs the referenced flow and relays its messages.",
+      "statusTooltip": "Remote bridge ({node}) · status: {status}",
+      "liveStatusUnavailable": "Live bridge status is shown only while the flow is running.",
+      "status": {
+        "running": "Running",
+        "connected": "Connected",
+        "offline": "Offline",
+        "error": "Error",
+        "unknown": "Unknown"
+      }
+    },
     "agentEdit": {
       "createTitle": "Create agent",
       "updateTitle": "Edit agent settings",
@@ -611,5 +625,14 @@
         "fixedHint": "Pixel-exact replica on a fixed node-resolution canvas. The resolution setting is only used in this mode."
       }
     }
+  },
+  "flowPicker": {
+    "nodeSelectorLabel": "Flow location",
+    "local": "Local",
+    "remoteBadge": "Remote",
+    "remoteBadgeTitle": "Flow on a remote node (inlined at deploy time)",
+    "loadingNodes": "Loading nodes...",
+    "remoteFlowSelect": "Select remote flow...",
+    "remoteFlowMissing": "Remote flow not found."
   }
 }

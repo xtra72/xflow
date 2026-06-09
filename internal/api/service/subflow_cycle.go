@@ -138,6 +138,13 @@ func referencedFlowIDsFromFlow(f flow.Flow) []string {
 		if !ok || flowID == "" {
 			continue
 		}
+		// REMOTE(remote://) 참조는 LOCAL 저장소의 플로우가 아니라 라이브 브리지 엔드포인트
+		// 이므로(SUBFLOW v1.3 그룹 RB), 로컬 순환 그래프에서 제외한다. repo.Get 으로 조회
+		// 하면 "referenced flow not found" 가 되어 배포가 잘못 거부된다. 형식 오류는 배포
+		// 시 ExpandSubflows/rewireRemoteBridges 가 별도로 거부한다(REQ-SUBFLOW-R01).
+		if _, _, isRemote, _ := parseRemoteFlowRef(flowID); isRemote {
+			continue
+		}
 		if seen[flowID] {
 			continue
 		}
