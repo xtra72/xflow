@@ -99,17 +99,37 @@ func (s *Server) ListNodes(ctx context.Context) ([]storage.ManagedNode, error) {
 }
 
 // registerConn 은 라이브 연결을 추적한다(approve ack push / revoke 종료용).
-func (s *Server) registerConn(instanceID string, conn Conn, cancel context.CancelFunc) {
+//
+// 반환값은 이번에 저장된 *nodeConn(세대 핸들)이다. 호출 goroutine 은 이 포인터를
+// 보관해 두었다가 연결 종료 시 unregisterConn 으로 소유권을 비교한다. 노드 프로그램
+// 재기동으로 같은 instance_id 의 새 연결이 들어와 s.conns[id] 를 교체하면, 이전
+// goroutine 이 보관한 핸들은 더 이상 현재 등록과 일치하지 않으므로(포인터 비교) 이전
+// teardown 이 새 세션을 무너뜨리지 않게 된다(connection-identity 인지 teardown).
+func (s *Server) registerConn(instanceID string, conn Conn, cancel context.CancelFunc) *nodeConn {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.conns[instanceID] = &nodeConn{conn: conn, cancel: cancel}
+	nc := &nodeConn{conn: conn, cancel: cancel}
+	s.conns[instanceID] = nc
+	return nc
 }
 
-// unregisterConn 은 라이브 연결 추적을 해제한다(동일 연결인 경우에만).
-func (s *Server) unregisterConn(instanceID string) {
+// unregisterConn 은 라이브 연결 추적을 해제한다(동일 연결인 경우에만 — compare-and-delete).
+//
+// owned 는 이 goroutine 이 registerConn 으로 저장했던 세대 핸들이다. 현재 등록이
+// 여전히 owned 와 동일할 때에만 delete 하고 true 를 반환한다. 새 연결이 이미 교체한
+// 경우(superseded)에는 아무것도 하지 않고 false 를 반환한다. 호출자는 이 반환값으로
+// markOffline/teardown 수행 여부를 gate 한다(살아 있는 새 세션 보호).
+//
+// 락 순서: s.mu 안에서는 비교/삭제만 수행하고, markOffline/teardownNodeStreams/
+// teardownNodeBridges 는 각자 내부에서 락을 잡으므로 반드시 락 밖에서 호출한다(데드락 방지).
+func (s *Server) unregisterConn(instanceID string, owned *nodeConn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.conns, instanceID)
+	if cur, ok := s.conns[instanceID]; ok && cur == owned {
+		delete(s.conns, instanceID)
+		return true
+	}
+	return false
 }
 
 // connFor 는 instance_id 의 현재 라이브 연결을 반환한다.
@@ -149,24 +169,25 @@ func (s *Server) persistOnline(instanceID string, online bool, at time.Time) {
 
 // handleRegister 는 register 메시지를 처리한다(REQ-C01/C02/C08, spec §5.6).
 //
-// 반환: (instanceID, handled). 정상 등록 시 instanceID 가 채워진다. 부트스트랩
-// 시크릿 불일치 등 거부 시 instanceID="" 이지만 연결은 유지(rejected ack 전송 후
-// 클라이언트가 종료하도록).
-func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.CancelFunc, msg *ws.Message) (string, bool) {
+// 반환: (instanceID, owned, handled). 정상 등록 시 instanceID 와 owned(이번 연결의
+// 세대 핸들 — 소유권 추적용)가 채워진다. 부트스트랩 시크릿 불일치 등 거부 시
+// instanceID="" / owned=nil 이지만 연결은 유지(rejected ack 전송 후 클라이언트가
+// 종료하도록).
+func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.CancelFunc, msg *ws.Message) (string, *nodeConn, bool) {
 	var p RegisterPayload
 	if err := json.Unmarshal(msg.Payload, &p); err != nil {
 		s.logger.Debug("register 페이로드 디코드 실패", "error", err)
-		return "", false
+		return "", nil, false
 	}
 	if p.InstanceID == "" {
 		s.logger.Warn("register 에 instance_id 누락 — 무시")
-		return "", false
+		return "", nil, false
 	}
 
 	// repo 미구성(M1 모드)에서는 등록을 처리할 수 없다 — hello 경로만 지원.
 	if s.repo == nil {
 		s.logger.Warn("repo 미구성 — register 무시(M1 모드)", "instance_id", p.InstanceID)
-		return "", false
+		return "", nil, false
 	}
 
 	// 부트스트랩 시크릿 1차 신뢰 검증(REQ-C08). 구성된 경우에만 강제한다.
@@ -176,7 +197,7 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 			Status: RegStatusRejected,
 			Reason: "bootstrap secret mismatch",
 		})
-		return "", true
+		return "", nil, true
 	}
 
 	// 기존 등록 상태 확인.
@@ -188,8 +209,8 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 		// 조합된다. 무효/만료/폐기/소진 토큰은 handled=false 로 pending 폴백한다.
 		if s.tryEnrollmentAutoApprove(ctx, conn, p) {
 			s.setNodeState(p.InstanceID, RegStatusApproved, true, time.Now())
-			s.registerConn(p.InstanceID, conn, cancel)
-			return p.InstanceID, true
+			owned := s.registerConn(p.InstanceID, conn, cancel)
+			return p.InstanceID, owned, true
 		}
 
 		// 신규 노드 → pending 큐잉(REQ-C02). 최초 register 의 BASIC 시스템 정보
@@ -210,23 +231,23 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 		}
 		if upErr := s.repo.Upsert(ctx, node); upErr != nil {
 			s.logger.Error("등록 pending 저장 실패", "instance_id", p.InstanceID, "error", upErr)
-			return "", false
+			return "", nil, false
 		}
 		s.setNodeState(p.InstanceID, RegStatusPending, true, time.Now())
-		s.registerConn(p.InstanceID, conn, cancel)
+		owned := s.registerConn(p.InstanceID, conn, cancel)
 		s.sendRegisterAck(conn, RegisterAckPayload{Status: RegStatusPending})
 		s.logger.Info("관리 노드 등록 요청 → pending", "instance_id", p.InstanceID)
-		return p.InstanceID, true
+		return p.InstanceID, owned, true
 
 	case err != nil:
 		s.logger.Error("등록 상태 조회 실패", "instance_id", p.InstanceID, "error", err)
-		return "", false
+		return "", nil, false
 
 	default:
 		// 기존 노드 → 현재 상태에 따라 응답(자동 상태 변경 없음 — REQ-C06).
 		s.updateNodeMeta(ctx, p)
 		s.setNodeState(p.InstanceID, existing.Status, true, time.Now())
-		s.registerConn(p.InstanceID, conn, cancel)
+		owned := s.registerConn(p.InstanceID, conn, cancel)
 		ack := RegisterAckPayload{Status: existing.Status}
 		if existing.Status == RegStatusApproved {
 			// 토큰 없이 재접속한 approved 노드 → 새 토큰을 발급해 전달(REQ-C04/C05).
@@ -244,7 +265,7 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 		}
 		s.sendRegisterAck(conn, ack)
 		s.logger.Info("관리 노드 재등록 요청", "instance_id", p.InstanceID, "status", existing.Status)
-		return p.InstanceID, true
+		return p.InstanceID, owned, true
 	}
 }
 
@@ -287,26 +308,28 @@ func (s *Server) storeSystemInfo(ctx context.Context, instanceID, osName, arch s
 }
 
 // restoreSession 은 토큰이 검증된 재접속 노드의 관리 세션을 복원한다(REQ-C05).
-// repo 상태가 approved 인 경우에만 true 를 반환한다.
-func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.CancelFunc, instanceID string) bool {
+// repo 상태가 approved 인 경우에만 복원하며, 복원 시 이번 연결의 세대 핸들
+// (*nodeConn)을 반환한다(소유권 추적용 — 호출 goroutine 의 teardown 이 비교에 사용).
+// 복원하지 않으면 (nil, false) 를 반환한다.
+func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.CancelFunc, instanceID string) (*nodeConn, bool) {
 	if s.repo == nil {
-		return false
+		return nil, false
 	}
 	node, err := s.repo.Get(context.Background(), instanceID)
 	if err != nil {
 		s.logger.Warn("재접속 노드 미등록 — 세션 복원 거부", "instance_id", instanceID)
-		return false
+		return nil, false
 	}
 	if node.Status != RegStatusApproved {
 		s.logger.Warn("재접속 노드 비승인 — 세션 복원 거부",
 			"instance_id", instanceID, "status", node.Status)
-		return false
+		return nil, false
 	}
 	now := time.Now()
 	// 라이브 연결을 먼저 등록한 뒤 managed(approved+online) 상태로 전이한다. 이 순서는
 	// "IsManaged==true ⇒ connFor 성공" 불변을 보장하여, 디스패치/스트림/브리지 호출자가
 	// IsManaged 통과 후 connFor 가 비어 있는 경합(no live connection)을 보지 않게 한다.
-	s.registerConn(instanceID, conn, cancel)
+	owned := s.registerConn(instanceID, conn, cancel)
 	s.setNodeState(instanceID, RegStatusApproved, true, now)
 	s.mu.Lock()
 	if st := s.nodes[instanceID]; st != nil {
@@ -316,7 +339,7 @@ func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.Can
 	s.mu.Unlock()
 	s.persistOnline(instanceID, true, now)
 	s.logger.Info("승인 노드 재접속 — 세션 복원", "instance_id", instanceID)
-	return true
+	return owned, true
 }
 
 // Approve 는 pending 노드를 승인한다(REQ-C03/C04). approved 전이 + 노드 토큰 발급

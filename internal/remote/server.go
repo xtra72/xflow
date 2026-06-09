@@ -280,23 +280,39 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 	}()
 
 	instanceID := ""
+	// ownedConn 은 이 goroutine 이 등록한 라이브 연결의 세대 핸들이다(restoreSession/
+	// handleHandshakeMessage → registerConn 가 반환). 연결 종료 시 teardown defer 는
+	// 현재 등록이 여전히 이 핸들과 동일할 때에만(=superseded 되지 않았을 때) 자원을
+	// 정리한다. 노드 프로그램 재기동으로 새 연결이 s.conns[id] 를 교체했다면 이 이전
+	// goroutine 은 teardown 을 전부 건너뛴다(살아 있는 새 세션 보호 — connection-identity
+	// 인지 teardown, "동일 연결인 경우에만").
+	var ownedConn *nodeConn
 	defer func() {
-		if instanceID != "" {
-			// M8(REQ-J08b): 세션 종료 시 이 노드의 모든 브라우저 스트림을 teardown 한다
-			// (노드 오프라인/연결 종료 → 해당 노드 스트림 전부 종료, 누수 없음).
-			s.teardownNodeStreams(instanceID)
-			// P3(SUBFLOW RB09): 세션 종료 시 이 노드의 모든 라이브 브리지를 teardown 한다
-			// (최종 offline status 방출 + 채널 close — 매니저 엔진 노드가 무출력으로 전이).
-			s.teardownNodeBridges(instanceID)
-			s.unregisterConn(instanceID)
-			s.markOffline(instanceID)
+		if instanceID == "" || ownedConn == nil {
+			return
 		}
+		// compare-and-delete: 현재 등록이 이 goroutine 의 핸들과 동일할 때에만 소유권을
+		// 인정한다. s.mu 안에서는 비교/삭제만 하고, teardown/markOffline 은 락 밖에서
+		// 호출한다(각자 내부에서 s.mu 를 잡으므로 데드락 방지).
+		if !s.unregisterConn(instanceID, ownedConn) {
+			// superseded: 새 연결이 이미 conns/streams/bridges/online 을 소유한다 —
+			// 아무것도 정리하지 않는다(새 세션을 무너뜨리지 않음).
+			return
+		}
+		// M8(REQ-J08b): 세션 종료 시 이 노드의 모든 브라우저 스트림을 teardown 한다
+		// (노드 오프라인/연결 종료 → 해당 노드 스트림 전부 종료, 누수 없음).
+		s.teardownNodeStreams(instanceID)
+		// P3(SUBFLOW RB09): 세션 종료 시 이 노드의 모든 라이브 브리지를 teardown 한다
+		// (최종 offline status 방출 + 채널 close — 매니저 엔진 노드가 무출력으로 전이).
+		s.teardownNodeBridges(instanceID)
+		s.markOffline(instanceID)
 	}()
 
 	// 재접속 경로: 토큰이 검증된 노드를 곧바로 세션 복원한다(REQ-C05).
 	if authedInstanceID != "" {
-		if restored := s.restoreSession(connCtx, conn, cancel, authedInstanceID); restored {
+		if owned, restored := s.restoreSession(connCtx, conn, cancel, authedInstanceID); restored {
 			instanceID = authedInstanceID
+			ownedConn = owned
 		} else {
 			// 승인 상태가 아니면(거부/폐기/미존재) 세션을 복원하지 않고 종료한다.
 			_ = conn.Close()
@@ -321,9 +337,10 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 		}
 
 		if instanceID == "" {
-			id, handled := s.handleHandshakeMessage(connCtx, conn, cancel, msg)
+			id, owned, handled := s.handleHandshakeMessage(connCtx, conn, cancel, msg)
 			if handled && id != "" {
 				instanceID = id
+				ownedConn = owned
 			} else if handled {
 				// 인증/검증 실패로 연결을 닫아야 하는 경우(hello authenticator 거부).
 				return nil
@@ -382,38 +399,39 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 }
 
 // handleHandshakeMessage 는 식별 전 첫 메시지(hello 또는 register)를 처리한다.
-// 반환: (instanceID, handled). handled=true 이고 instanceID="" 이면 연결을 닫아야
-// 한다(인증/검증 실패).
-func (s *Server) handleHandshakeMessage(ctx context.Context, conn Conn, cancel context.CancelFunc, msg *ws.Message) (string, bool) {
+// 반환: (instanceID, owned, handled). owned 는 이번 연결이 등록한 라이브 연결의 세대
+// 핸들이다(소유권 추적용 — teardown defer 가 비교에 사용). handled=true 이고
+// instanceID="" 이면 연결을 닫아야 한다(인증/검증 실패).
+func (s *Server) handleHandshakeMessage(ctx context.Context, conn Conn, cancel context.CancelFunc, msg *ws.Message) (string, *nodeConn, bool) {
 	switch msg.Type {
 	case TypeHello:
 		var hello HelloPayload
 		if err := json.Unmarshal(msg.Payload, &hello); err != nil {
 			s.logger.Debug("hello 페이로드 디코드 실패", "error", err)
-			return "", false
+			return "", nil, false
 		}
 		if hello.InstanceID == "" {
 			s.logger.Warn("hello 에 instance_id 누락 — 무시")
-			return "", false
+			return "", nil, false
 		}
 		if authErr := s.auth.Authenticate(hello); authErr != nil {
 			s.logger.Warn("관리 노드 인증 거부",
 				"instance_id", hello.InstanceID, "error", authErr)
 			_ = conn.Close()
-			return "", true
+			return "", nil, true
 		}
 		s.markOnline(hello)
-		s.registerConn(hello.InstanceID, conn, cancel)
+		owned := s.registerConn(hello.InstanceID, conn, cancel)
 		s.logger.Info("관리 노드 online", "instance_id", hello.InstanceID,
 			"hostname", hello.Hostname, "version", hello.Version)
-		return hello.InstanceID, true
+		return hello.InstanceID, owned, true
 
 	case TypeRegister:
 		return s.handleRegister(ctx, conn, cancel, msg)
 
 	default:
 		// 식별 전 다른 타입은 무시한다.
-		return "", false
+		return "", nil, false
 	}
 }
 
