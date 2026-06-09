@@ -353,7 +353,7 @@ func TestSerialInNode_ReceiveLoop_정상(t *testing.T) {
 		assert.Equal(t, "48454c4c4f5f53455249414c5f44415441", data) // HELLO_SERIAL_DATA의 hex
 
 		// 메타데이터 확인
-		nodeID, ok := msg.Metadata().Get("serial.node_id")
+		nodeID, ok := msg.Metadata().Get("node_id")
 		assert.True(t, ok)
 		assert.NotEmpty(t, nodeID)
 
@@ -473,7 +473,7 @@ func TestSerialOutNode_Process_Raw바이트(t *testing.T) {
 	assert.Equal(t, []byte{0x01, 0x02, 0x03, 0xFF}, mockAgent.processData)
 
 	// 출력 메시지 메타데이터 확인
-	nodeID, ok := results[0].Metadata().Get("serial.node_id")
+	nodeID, ok := results[0].Metadata().Get("node_id")
 	assert.True(t, ok)
 	assert.NotEmpty(t, nodeID)
 }
@@ -796,7 +796,7 @@ func TestSerialInNode_RawReceiveLoop(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, []byte{0x02, 0x05, 0x01, 0x02, 0x03, 0x03}, raw)
 
-		port, ok := msg.Metadata().Get("serial.port")
+		port, ok := msg.Metadata().Get("port")
 		assert.True(t, ok)
 		assert.Equal(t, "raw_out", port)
 

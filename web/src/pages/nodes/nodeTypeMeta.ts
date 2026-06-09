@@ -1279,11 +1279,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           raw: '[]byte (바이너리 원본)',
           data: '562d04445500670445500000204...',
         },
-        metadata: { 'serial.node_id': 'node-abc-123', 'serial.agent_type': 'serial' },
+        metadata: { node_id: 'node-abc-123', agent_type: 'serial' },
       },
       raw_out: {
         payload: { raw: '[]byte (프레이밍 이전 원본)' },
-        metadata: { 'serial.node_id': 'node-abc-123', 'serial.port': 'raw_out' },
+        metadata: { node_id: 'node-abc-123', port: 'raw_out' },
       },
     },
   },
@@ -1314,7 +1314,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
       out: {
         payload: { raw: '[56 2d 04 44 55 ...]', data: 'V-\\u0004DU...' },
-        metadata: { 'serial.node_id': 'node-abc-123' },
+        metadata: { node_id: 'node-abc-123' },
       },
     },
   },

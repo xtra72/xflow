@@ -2006,7 +2006,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'serial-out': {
     description: '시리얼 포트로 데이터를 전송합니다. payload의 raw 또는 data 필드를 바이트로 전송합니다.',
     inputDesc: 'payload.raw ([]byte, 우선) 또는 payload.data (string). 없으면 payload 전체 JSON 전송',
-    outputDesc: '원본 메시지 clone 패스스루. metadata: serial.node_id 추가',
+    outputDesc: '원본 메시지 clone 패스스루. metadata: node_id 추가',
     configSchema: {
       fields: [
         {
