@@ -53,23 +53,24 @@ func emitAgentGroup(msg message.Message, a agent.Agent, opts MetadataEmitOptions
 	opts.SetAgentGroupIfAllowed(msg.Metadata().SetGroup, a.Type(), a.ID(), a.Name())
 }
 
-// mergeDeviceGroup 는 device 그룹에 (type, id) 중 비어있지 않은 필드를 누적 병합한다 (P3).
+// mergeDeviceGroup 는 device 그룹에 (type, id, name) 중 비어있지 않은 필드를 누적
+// 병합한다 (P3).
 //
-// device 의 type 과 id 는 서로 다른 소스(payload.metadata.device_type / 등록 DeviceInfo /
-// payload.device_id 해석 UUID)에서 따로 들어오므로, SetGroup 의 전체 치환으로 인한
-// clobber 를 막기 위해 기존 그룹을 읽어 빈 필드만 갱신한다.
+// device 의 type / id / name 은 서로 다른 소스(payload.metadata.device_type|name /
+// 등록 DeviceInfo / payload.device_id 해석 UUID)에서 따로 들어오므로, SetGroup 의
+// 전체 치환으로 인한 clobber 를 막기 위해 기존 그룹을 읽어 비어있지 않은 필드만 갱신한다.
 //
-// opts.Device 가 OFF 면 no-op. type/id 둘 다 비어있어도 no-op.
-func mergeDeviceGroup(msg message.Message, opts MetadataEmitOptions, deviceType, deviceID string) {
+// opts.Device 가 OFF 면 no-op. type/id/name 모두 비어있어도 no-op.
+func mergeDeviceGroup(msg message.Message, opts MetadataEmitOptions, deviceType, deviceID, deviceName string) {
 	if !opts.Device {
 		return
 	}
-	if deviceType == "" && deviceID == "" {
+	if deviceType == "" && deviceID == "" && deviceName == "" {
 		return
 	}
 	fields, _ := msg.Metadata().GetGroup("device")
 	if fields == nil {
-		fields = make(map[string]string, 2)
+		fields = make(map[string]string, 3)
 	}
 	if deviceType != "" {
 		fields["type"] = deviceType
@@ -77,32 +78,36 @@ func mergeDeviceGroup(msg message.Message, opts MetadataEmitOptions, deviceType,
 	if deviceID != "" {
 		fields["id"] = deviceID
 	}
+	if deviceName != "" {
+		fields["name"] = deviceName
+	}
 	msg.Metadata().SetGroup("device", fields)
 }
 
-// promoteDevIDToMetadata 는 payload 의 device_id 키를 metadata 로 이동한다 (v0.18.26, P3).
+// promoteDevIDToMetadata 는 payload 의 device_id 키를 device 그룹의 id 로 이동한다 (P3).
 //
 // 동작:
 //   - payload["unit_id"] (프로토콜 식별자) 가 있으면 항상 payload 에서 제거.
 //     v0.18.26 부터 unit_id 는 출력 metadata 로 노출하지 않는다 (의미가 프로토콜
 //     해석에 한정되며, 어드레싱은 노드 config 의 input 필드로 분리).
 //   - payload["device_id"] (글로벌 UUID) 를:
-//     1. flat metadata.device_id 로 promote (P3: MQTT 토픽 템플릿
-//     $.metadata.device_id 소비자가 flat 키를 사용하므로 보존).
-//     2. device:{...} 그룹의 id 로도 병합 (opts.Device ON 일 때).
+//     1. payload 에서 제거 (기존 동작 보존).
+//     2. device:{...} 그룹의 id 로 병합 (opts.Device ON 일 때).
 //   - device_id 가 없으면 device_id 에 한해 no-op.
 //
-// P3 보존 근거: resolveTemplateExpr (store_write.go) 는 nested metadata path 를
-// 지원하지 않아 ($.metadata.device.id 불가) flat device_id 가 필요하다.
+// 변경(그룹 전용): flat metadata.device_id 는 더 이상 쓰지 않는다. device id 는
+// device 그룹의 id 로만 노출하며, MQTT 토픽 템플릿은 nested path
+// ($.metadata.device.id) 로 접근한다 (resolveTemplateExpr 가 nested metadata
+// path 를 지원하도록 확장됨).
 func promoteDevIDToMetadata(msg message.Message, payload map[string]any, opts MetadataEmitOptions) {
 	if _, ok := payload["unit_id"]; ok {
 		delete(payload, "unit_id")
 	}
 	deviceID := stringifyPayloadKey(payload, "device_id")
-	// flat 보존 (기존 동작 + MQTT 템플릿 호환).
-	promotePayloadKeyToMetadata(msg, payload, "device_id")
-	// device 그룹의 id 로도 병합.
-	mergeDeviceGroup(msg, opts, "", deviceID)
+	// payload 에서는 제거하되 flat metadata 로는 쓰지 않는다 (그룹 전용).
+	delete(payload, "device_id")
+	// device 그룹의 id 로 병합.
+	mergeDeviceGroup(msg, opts, "", deviceID, "")
 }
 
 // stringifyPayloadKey 는 payload[key] 를 string 으로 (제거 없이) 읽어 반환한다.
@@ -122,16 +127,21 @@ func stringifyPayloadKey(payload map[string]any, key string) string {
 // payload["unit_id"] 를 키로
 //
 //  1. 글로벌 UUID 를 조회해 payload["device_id"] 에 주입 (v0.18.7)
-//  2. 등록된 DeviceInfo (device_type / name) 가 있으면 opts 가 허용한 필드만
-//     metadata 에 직접 주입 (v0.18.7, v0.18.8 에서 opts 도입)
+//  2. 등록된 DeviceInfo (device_type / name) 가 있으면 device 그룹의 type / name
+//     으로 병합 (opts.Device ON 일 때)
 //
-// 한 뒤 device_id 를 metadata 로 promote 하고 unit_id 는 payload 에서 제거한다.
+// 한 뒤 device_id 를 device 그룹의 id 로 promote 하고 unit_id 는 payload 에서 제거한다.
 //
-// opts: MetadataEmitOptions — DeviceType / Name 등 옵션 필드 토글.
-// zero-value 시 device_type / name 은 emit 되지 않음 (default minimal).
+// opts: MetadataEmitOptions — Device 토글로 device 그룹 emit 여부를 제어한다.
 //
-// 주의: name metadata 의 값 소스는 DeviceInfo.Label (디바이스 라벨 값) 이며,
-// 출력 metadata 키 이름만 "name" 으로 노출한다.
+// 그룹 전용 정책: device_type / id / name 은 모두 device:{type,id,name} 그룹으로만
+// 노출한다. flat metadata.device_type / device_id / name 은 더 이상 쓰지 않는다.
+// name 의 값 소스는 DeviceInfo.Label (디바이스 라벨 값) 이며 그룹의 name 필드로 노출한다.
+// MQTT 토픽/값 템플릿은 nested path ($.metadata.device.type|id|name) 로 접근한다.
+//
+// 참고: opts.DeviceType / opts.Name 플래그는 더 이상 device metadata 를 flat 으로
+// 만들지 않는다 (그룹화로 대체). 설정 파싱(emit_device_type / emit_name)은 호환을
+// 위해 유지되지만 출력에는 영향이 없다.
 //
 // v0.18.26: unit_id 출력 토글 제거. unit_id 는 항상 payload 에서 제거되고
 // metadata 에는 노출되지 않는다.
@@ -142,39 +152,22 @@ func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName
 			if uuid := agent.ResolveDeviceID(context.Background(), agentName, unitIDStr); uuid != "" {
 				payload["device_id"] = uuid
 			}
-			if opts.DeviceType || opts.Name || opts.Device {
+			if opts.Device {
 				if info, ok := agent.GetDeviceInfo(agentName, unitIDStr); ok {
-					// P3: device_type 은 device 그룹의 type 으로 병합 (opts.Device).
-					// flat device_type 도 보존 (opts.DeviceType, MQTT 템플릿 호환).
+					// device_type / name(디바이스 라벨) 은 device 그룹의 type / name
+					// 으로만 병합한다 (그룹 전용). flat metadata 는 더 이상 쓰지 않으며,
+					// MQTT 템플릿은 nested path ($.metadata.device.type|name) 로 접근한다.
 					if info.DeviceType != "" {
-						if opts.DeviceType {
-							msg.Metadata().Set("device_type", info.DeviceType)
-						}
-						mergeDeviceGroup(msg, opts, info.DeviceType, "")
+						mergeDeviceGroup(msg, opts, info.DeviceType, "", "")
 					}
-					// name(디바이스 라벨) 은 flat 으로만 유지 (그룹 스펙 외, 기존 동작).
-					if opts.Name && info.Label != "" {
-						msg.Metadata().Set("name", info.Label)
+					if info.Label != "" {
+						mergeDeviceGroup(msg, opts, "", "", info.Label)
 					}
 				}
 			}
 		}
 	}
 	promoteDevIDToMetadata(msg, payload, opts)
-}
-
-// promotePayloadKeyToMetadata 는 payload[key] 를 metadata[key] 로 옮긴다 (string 변환 포함).
-func promotePayloadKeyToMetadata(msg message.Message, payload map[string]any, key string) {
-	raw, ok := payload[key]
-	if !ok {
-		return
-	}
-	if s, ok := raw.(string); ok {
-		msg.Metadata().Set(key, s)
-	} else {
-		msg.Metadata().Set(key, fmt.Sprintf("%v", raw))
-	}
-	delete(payload, key)
 }
 
 // applyPowerOffFilter 는 power=false 일 때 신뢰할 수 없는 상태 필드
@@ -284,11 +277,17 @@ func promotePayloadMetadata(msg message.Message, payload map[string]any, opts Me
 	}
 	for k, v := range m {
 		sv := fmt.Sprintf("%v", v)
-		// P3: device_type 은 device 그룹의 type 으로도 병합한다 (opts.Device).
-		// flat device_type 은 기존대로 opts.DeviceType 토글에 따라 유지 (MQTT 템플릿
-		// $.metadata.device_type 호환). 그룹/플랫은 각각 독립 토글.
-		if k == "device_type" {
-			mergeDeviceGroup(msg, opts, sv, "")
+		// 그룹 전용 정책: device_type / name 은 device 그룹의 type / name 으로만
+		// 병합하고 flat metadata 로는 쓰지 않는다 (MQTT 템플릿은 nested path
+		// $.metadata.device.type|name 로 접근). 그 외 키는 forward-compat 차원에서
+		// 기존대로 opts.IsAllowed 에 따라 flat 으로 promote 한다.
+		switch k {
+		case "device_type":
+			mergeDeviceGroup(msg, opts, sv, "", "")
+			continue
+		case "name":
+			mergeDeviceGroup(msg, opts, "", "", sv)
+			continue
 		}
 		if !opts.IsAllowed(k) {
 			continue

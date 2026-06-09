@@ -129,22 +129,30 @@ func (o MetadataEmitOptions) SetAgentGroupIfAllowed(setGroup func(string, map[st
 
 // SetDeviceGroupIfAllowed 는 Device 옵션이 ON 일 때 device 그룹을 설정한다.
 //
-// 그룹 형태: device: {type, id}. type, id 가 둘 다 비어있으면 그룹을 만들지 않는다.
+// 그룹 형태: device: {type, id, name}. 각 필드는 비어있지 않을 때만 포함한다.
+// type, id, name 이 모두 비어있으면 그룹을 만들지 않는다 (의미 없는 빈 그룹 방지).
 //
-// 주의: SetGroup 은 전체 치환이므로, 호출 측이 type / id 를 따로(다른 소스에서)
-// 알게 되는 HVACR promote 경로에서는 mergeDeviceGroup 헬퍼로 누적 병합한다.
-// 이 메서드는 type / id 를 한 번에 알고 있는 단순 케이스용이다.
-func (o MetadataEmitOptions) SetDeviceGroupIfAllowed(setGroup func(string, map[string]string), deviceType, deviceID string) {
+// 주의: SetGroup 은 전체 치환이므로, 호출 측이 type / id / name 을 따로(다른
+// 소스에서) 알게 되는 HVACR promote 경로에서는 mergeDeviceGroup 헬퍼로 누적
+// 병합한다. 이 메서드는 모든 필드를 한 번에 알고 있는 단순 케이스용이다.
+func (o MetadataEmitOptions) SetDeviceGroupIfAllowed(setGroup func(string, map[string]string), deviceType, deviceID, deviceName string) {
 	if !o.Device {
 		return
 	}
-	if deviceType == "" && deviceID == "" {
+	if deviceType == "" && deviceID == "" && deviceName == "" {
 		return
 	}
-	setGroup("device", map[string]string{
-		"type": deviceType,
-		"id":   deviceID,
-	})
+	fields := make(map[string]string, 3)
+	if deviceType != "" {
+		fields["type"] = deviceType
+	}
+	if deviceID != "" {
+		fields["id"] = deviceID
+	}
+	if deviceName != "" {
+		fields["name"] = deviceName
+	}
+	setGroup("device", fields)
 }
 
 // parseEmitMetadata 는 노드 config map 에서 옵션을 파싱한다 (두 형식 모두 지원).

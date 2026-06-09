@@ -157,11 +157,11 @@ func TestSetAgentGroupIfAllowed_SkipWhenTypeAndIDEmpty(t *testing.T) {
 }
 
 // TestSetDeviceGroupIfAllowed_EmitsGroup 는 Device=true 일 때 device 그룹이
-// {type, id} 로 설정되는지 검증한다.
+// {type, id, name} 으로 설정되는지 검증한다.
 func TestSetDeviceGroupIfAllowed_EmitsGroup(t *testing.T) {
 	msg := message.New()
 	o := MetadataEmitOptions{Device: true}
-	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "HVACR.IDU", "uuid-abc")
+	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "HVACR.IDU", "uuid-abc", "controller")
 
 	g, ok := msg.Metadata().GetGroup("device")
 	if !ok {
@@ -173,28 +173,71 @@ func TestSetDeviceGroupIfAllowed_EmitsGroup(t *testing.T) {
 	if g["id"] != "uuid-abc" {
 		t.Errorf("device.id = %q; want %q", g["id"], "uuid-abc")
 	}
+	if g["name"] != "controller" {
+		t.Errorf("device.name = %q; want %q", g["name"], "controller")
+	}
+}
+
+// TestSetDeviceGroupIfAllowed_OmitEmptyName 는 name 이 빈 문자열이면 name 필드를
+// 포함하지 않는지 검증한다.
+func TestSetDeviceGroupIfAllowed_OmitEmptyName(t *testing.T) {
+	msg := message.New()
+	o := MetadataEmitOptions{Device: true}
+	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "HVACR.IDU", "uuid-abc", "")
+
+	g, ok := msg.Metadata().GetGroup("device")
+	if !ok {
+		t.Fatalf("device 그룹이 설정되어야 함")
+	}
+	if _, has := g["name"]; has {
+		t.Errorf("name 이 비어있으면 name 필드를 포함하지 않아야 함: %+v", g)
+	}
+	if g["type"] != "HVACR.IDU" || g["id"] != "uuid-abc" {
+		t.Errorf("type/id 는 설정되어야 함: %+v", g)
+	}
 }
 
 // TestSetDeviceGroupIfAllowed_DisabledNoEmit 는 Device=false 면 그룹을 emit 하지 않는지 검증한다.
 func TestSetDeviceGroupIfAllowed_DisabledNoEmit(t *testing.T) {
 	msg := message.New()
 	o := MetadataEmitOptions{Device: false}
-	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "HVACR.IDU", "uuid-abc")
+	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "HVACR.IDU", "uuid-abc", "controller")
 
 	if _, ok := msg.Metadata().GetGroup("device"); ok {
 		t.Errorf("Device=false 이면 device 그룹을 emit 하지 않아야 함")
 	}
 }
 
-// TestSetDeviceGroupIfAllowed_SkipWhenBothEmpty 는 type, id 둘 다 비어있으면
+// TestSetDeviceGroupIfAllowed_SkipWhenAllEmpty 는 type, id, name 모두 비어있으면
 // 그룹을 만들지 않는지 검증한다.
-func TestSetDeviceGroupIfAllowed_SkipWhenBothEmpty(t *testing.T) {
+func TestSetDeviceGroupIfAllowed_SkipWhenAllEmpty(t *testing.T) {
 	msg := message.New()
 	o := MetadataEmitOptions{Device: true}
-	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "", "")
+	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "", "", "")
 
 	if _, ok := msg.Metadata().GetGroup("device"); ok {
-		t.Errorf("type/id 모두 비어있으면 device 그룹을 만들지 않아야 함")
+		t.Errorf("type/id/name 모두 비어있으면 device 그룹을 만들지 않아야 함")
+	}
+}
+
+// TestSetDeviceGroupIfAllowed_OnlyName 는 name 만 있어도 그룹을 만드는지 검증한다.
+func TestSetDeviceGroupIfAllowed_OnlyName(t *testing.T) {
+	msg := message.New()
+	o := MetadataEmitOptions{Device: true}
+	o.SetDeviceGroupIfAllowed(msg.Metadata().SetGroup, "", "", "controller")
+
+	g, ok := msg.Metadata().GetGroup("device")
+	if !ok {
+		t.Fatalf("name 만 있어도 device 그룹이 설정되어야 함")
+	}
+	if g["name"] != "controller" {
+		t.Errorf("device.name = %q; want %q", g["name"], "controller")
+	}
+	if _, has := g["type"]; has {
+		t.Errorf("type 이 비어있으면 type 필드를 포함하지 않아야 함: %+v", g)
+	}
+	if _, has := g["id"]; has {
+		t.Errorf("id 가 비어있으면 id 필드를 포함하지 않아야 함: %+v", g)
 	}
 }
 
@@ -247,9 +290,10 @@ func TestEmitAgentGroup_DisabledNoOp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPromoteDevIDWithUUID_EmitsDeviceGroup 는 promoteDevIDWithUUID 가 device 그룹
-// {id} 를 emit 하면서 동시에 flat device_id 를 보존하는지 검증한다.
+// {id} 를 emit 하면서 flat device_id 는 더 이상 쓰지 않는지 검증한다.
 //
-// 보존 근거: MQTT 토픽 템플릿 ($.metadata.device_id) 이 flat 키를 소비한다.
+// 변경 근거: id 는 device 그룹의 id 로만 노출한다. nested metadata path
+// ($.metadata.device.id) 를 store_write 가 지원하므로 flat device_id 는 불필요.
 func TestPromoteDevIDWithUUID_EmitsDeviceGroup(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{
@@ -268,19 +312,19 @@ func TestPromoteDevIDWithUUID_EmitsDeviceGroup(t *testing.T) {
 		t.Errorf("device.id = %q; want %q", g["id"], "uuid-xyz")
 	}
 
-	// flat device_id 도 보존되어야 함 (MQTT 템플릿 소비자).
-	if v, ok := msg.Metadata().Get("device_id"); !ok || v != "uuid-xyz" {
-		t.Errorf("flat device_id 가 보존되어야 함 (MQTT 템플릿 호환): got %q, ok=%v", v, ok)
+	// flat device_id 는 더 이상 쓰지 않는다 (그룹 전용).
+	if v, ok := msg.Metadata().Get("device_id"); ok {
+		t.Errorf("flat device_id 는 제거되어야 함: got %q", v)
 	}
 
-	// payload 에서 device_id 는 제거되어야 함.
+	// payload 에서 device_id 는 제거되어야 함 (기존 동작 보존).
 	if _, exists := payload["device_id"]; exists {
 		t.Errorf("payload.device_id 는 promote 후 제거되어야 함")
 	}
 }
 
 // TestPromoteDevIDWithUUID_DeviceDisabledNoGroup 는 Device=false 면 device 그룹을
-// emit 하지 않지만 flat device_id 는 여전히 보존되는지 검증한다.
+// emit 하지 않고 flat device_id 도 쓰지 않으며 payload 에서만 제거하는지 검증한다.
 func TestPromoteDevIDWithUUID_DeviceDisabledNoGroup(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{"device_id": "uuid-xyz"}
@@ -289,35 +333,63 @@ func TestPromoteDevIDWithUUID_DeviceDisabledNoGroup(t *testing.T) {
 	if _, ok := msg.Metadata().GetGroup("device"); ok {
 		t.Errorf("Device=false 이면 device 그룹을 emit 하지 않아야 함")
 	}
-	// flat device_id 는 여전히 보존 (기존 동작 + MQTT 호환).
-	if v, ok := msg.Metadata().Get("device_id"); !ok || v != "uuid-xyz" {
-		t.Errorf("flat device_id 는 보존되어야 함: got %q, ok=%v", v, ok)
+	// flat device_id 는 더 이상 쓰지 않는다.
+	if v, ok := msg.Metadata().Get("device_id"); ok {
+		t.Errorf("flat device_id 는 제거되어야 함: got %q", v)
+	}
+	// payload 에서는 여전히 제거되어야 함.
+	if _, exists := payload["device_id"]; exists {
+		t.Errorf("payload.device_id 는 promote 후 제거되어야 함")
 	}
 }
 
-// TestPromotePayloadMetadata_DeviceTypeToGroupAndFlat 는 payload.metadata.device_type
-// 가 device 그룹의 type 으로도 들어가면서 flat device_type 도 보존되는지 검증한다.
-func TestPromotePayloadMetadata_DeviceTypeToGroupAndFlat(t *testing.T) {
+// TestPromotePayloadMetadata_DeviceTypeToGroupOnly 는 payload.metadata.device_type
+// 가 device 그룹의 type 으로만 들어가고 flat device_type 은 쓰지 않는지 검증한다.
+func TestPromotePayloadMetadata_DeviceTypeToGroupOnly(t *testing.T) {
 	msg := message.New()
 	payload := map[string]any{
 		"metadata": map[string]any{
 			"device_type": "HVACR.IDU",
 		},
 	}
-	// DeviceType=true 로 flat device_type 유지, Device=true 로 그룹 emit.
 	promotePayloadMetadata(msg, payload, MetadataEmitOptions{DeviceType: true, Device: true})
 
-	// flat device_type 보존 (MQTT 템플릿 $.metadata.device_type 소비자).
-	if v, ok := msg.Metadata().Get("device_type"); !ok || v != "HVACR.IDU" {
-		t.Errorf("flat device_type 보존되어야 함: got %q, ok=%v", v, ok)
+	// flat device_type 은 더 이상 쓰지 않는다 (그룹 전용).
+	if v, ok := msg.Metadata().Get("device_type"); ok {
+		t.Errorf("flat device_type 은 제거되어야 함: got %q", v)
 	}
-	// device 그룹의 type 으로도 들어가야 함.
+	// device 그룹의 type 으로 들어가야 함.
 	g, ok := msg.Metadata().GetGroup("device")
 	if !ok {
 		t.Fatalf("device 그룹이 emit 되어야 함")
 	}
 	if g["type"] != "HVACR.IDU" {
 		t.Errorf("device.type = %q; want %q", g["type"], "HVACR.IDU")
+	}
+}
+
+// TestPromotePayloadMetadata_NameToGroupOnly 는 payload.metadata.name 이
+// device 그룹의 name 으로만 들어가고 flat name 은 쓰지 않는지 검증한다.
+func TestPromotePayloadMetadata_NameToGroupOnly(t *testing.T) {
+	msg := message.New()
+	payload := map[string]any{
+		"metadata": map[string]any{
+			"name": "controller",
+		},
+	}
+	promotePayloadMetadata(msg, payload, MetadataEmitOptions{Name: true, Device: true})
+
+	// flat name 은 더 이상 쓰지 않는다 (그룹 전용).
+	if v, ok := msg.Metadata().Get("name"); ok {
+		t.Errorf("flat name 은 제거되어야 함: got %q", v)
+	}
+	// device 그룹의 name 으로 들어가야 함.
+	g, ok := msg.Metadata().GetGroup("device")
+	if !ok {
+		t.Fatalf("device 그룹이 emit 되어야 함")
+	}
+	if g["name"] != "controller" {
+		t.Errorf("device.name = %q; want %q", g["name"], "controller")
 	}
 }
 
@@ -344,6 +416,12 @@ func TestPromote_DeviceGroupMergeTypeAndID(t *testing.T) {
 	}
 	if g["id"] != "uuid-merged" {
 		t.Errorf("device.id = %q; want %q (병합 시 id 추가)", g["id"], "uuid-merged")
+	}
+	// flat device_id / device_type 은 더 이상 쓰지 않는다 (그룹 전용).
+	for _, k := range []string{"device_id", "device_type"} {
+		if v, ok := msg.Metadata().Get(k); ok {
+			t.Errorf("flat metadata %q 는 제거되어야 함: got %q", k, v)
+		}
 	}
 }
 
@@ -382,10 +460,11 @@ func TestLGHvacr02Node_DeviceStateEmitsDeviceAndAgentGroups(t *testing.T) {
 		"power":     "on",
 		"metadata": map[string]any{
 			"device_type": "HVACR.IDU",
+			"name":        "controller",
 		},
 	}, DefaultEmitOptions())
 
-	// device 그룹: {type, id}
+	// device 그룹: {type, id, name}
 	dg, ok := out.Metadata().GetGroup("device")
 	if !ok {
 		t.Fatalf("device 그룹이 emit 되어야 함; metadata=%v", out.Metadata().Raw())
@@ -395,6 +474,9 @@ func TestLGHvacr02Node_DeviceStateEmitsDeviceAndAgentGroups(t *testing.T) {
 	}
 	if dg["id"] != "uuid-idu-1" {
 		t.Errorf("device.id = %q; want %q", dg["id"], "uuid-idu-1")
+	}
+	if dg["name"] != "controller" {
+		t.Errorf("device.name = %q; want %q", dg["name"], "controller")
 	}
 
 	// agent 그룹: {type, id} (mockLGHvacr02Agent)
@@ -409,9 +491,11 @@ func TestLGHvacr02Node_DeviceStateEmitsDeviceAndAgentGroups(t *testing.T) {
 		t.Errorf("agent.id = %q; want %q", ag["id"], "mock-lg_hvacr02")
 	}
 
-	// flat device_id 보존 (MQTT 템플릿 소비자).
-	if v, ok := out.Metadata().Get("device_id"); !ok || v != "uuid-idu-1" {
-		t.Errorf("flat device_id 보존되어야 함: got %q, ok=%v", v, ok)
+	// flat device_id / device_type / name 은 모두 제거되어야 함 (그룹 전용).
+	for _, k := range []string{"device_id", "device_type", "name"} {
+		if v, ok := out.Metadata().Get(k); ok {
+			t.Errorf("flat metadata %q 는 제거되어야 함: got %q", k, v)
+		}
 	}
 }
 
@@ -434,7 +518,7 @@ func TestLGHvacr02Node_EmitAgentFalseDisablesAgentGroup(t *testing.T) {
 }
 
 // TestLGHvacr02Node_EmitDeviceFalseDisablesDeviceGroup 는 emit_device:false 가 device 그룹을
-// 비활성화하지만 agent 그룹은 유지하는지 검증한다. flat device_id 는 여전히 보존.
+// 비활성화하지만 agent 그룹은 유지하는지 검증한다. flat device_id 도 더 이상 쓰지 않는다.
 func TestLGHvacr02Node_EmitDeviceFalseDisablesDeviceGroup(t *testing.T) {
 	opts := DefaultEmitOptions()
 	opts.Device = false // emit_device:false 동등
@@ -449,9 +533,9 @@ func TestLGHvacr02Node_EmitDeviceFalseDisablesDeviceGroup(t *testing.T) {
 	if _, ok := out.Metadata().GetGroup("agent"); !ok {
 		t.Errorf("agent 그룹은 여전히 emit 되어야 함")
 	}
-	// flat device_id 는 보존.
-	if v, ok := out.Metadata().Get("device_id"); !ok || v != "uuid-idu-3" {
-		t.Errorf("flat device_id 보존되어야 함: got %q, ok=%v", v, ok)
+	// flat device_id 도 더 이상 쓰지 않는다 (그룹 전용 정책).
+	if v, ok := out.Metadata().Get("device_id"); ok {
+		t.Errorf("flat device_id 는 제거되어야 함: got %q", v)
 	}
 }
 

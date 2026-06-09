@@ -1674,7 +1674,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'default_topic',
           type: 'string',
           label: '기본 토픽',
-          description: '기본 발행 토픽. {expr} 형식으로 메시지 필드 보간 지원 — JSONPath ($.payload.X, $.metadata.X, $.type, $.timestamp) 또는 페이로드 직접 키. 예: `xflow/{$.metadata.device_type}/{$.metadata.device_id}/status`. 메시지의 metadata.mqtt.topic 으로 오버라이드 가능.',
+          description: '기본 발행 토픽. {expr} 형식으로 메시지 필드 보간 지원 — JSONPath ($.payload.X, $.metadata.X, 그룹 중첩 $.metadata.device.X, $.type, $.timestamp) 또는 페이로드 직접 키. 예: `xflow/{$.metadata.device.type}/{$.metadata.device.id}/status`. 메시지의 metadata.mqtt.topic 으로 오버라이드 가능.',
         },
         {
           name: 'default_qos',
