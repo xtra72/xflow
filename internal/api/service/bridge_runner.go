@@ -42,6 +42,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/remote"
@@ -487,30 +488,136 @@ func newTapID() string {
 	return fmt.Sprintf("tap-%d", tapIDCounter.Add(1))
 }
 
-// messageFromJSON 는 JSON 페이로드로부터 메시지를 구성한다(입력 주입). 객체가 아니면
-// {"value": <raw>} 로 감싸 흐름이 깨지지 않게 한다(graceful).
+// messageFromJSON 는 JSON 으로부터 메시지를 구성한다(입력 주입 / 출력 역직렬화).
+//
+// 봉투(envelope) 형태 — 최상위 객체가 "payload" 키 AND 형제 봉투 키
+// {id,type,metadata,timestamp} 중 하나 이상을 가지면 — 는 id/type/timestamp/metadata/
+// payload 를 모두 복원한다(출력/디버그 노드 buildMessageMap 와 동일 코어 형태이므로 브리지
+// 통과 메시지가 로컬 메시지와 구분 불가하게 됨 — RB06 회귀 수정). messageToJSON 은 항상
+// 다섯 키를 모두 방출하므로 이 판별식은 안전하다.
+//
+// 봉투가 아니면(형제 봉투 키 없는 객체/비객체/스칼라/배열) 기존 graceful 동작을 유지한다:
+//   - 객체이면 그 객체를 payload 로 사용(예: 원시 주입 {"payload": {...}} 는 payload 키만
+//     있고 형제 봉투 키가 없으므로 봉투가 아닌 원시 페이로드로 취급)
+//   - 비객체(스칼라/배열)이면 {"value": <raw>} 로 감싼다
+//   - 빈 입력이면 빈 페이로드 메시지
 func messageFromJSON(data json.RawMessage) (message.Message, error) {
-	var m map[string]any
 	if len(data) == 0 {
 		return message.New(message.WithPayload(message.NewPayload())), nil
 	}
+
+	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
-		// 비-객체 페이로드: value 로 감싼다.
+		// 비-객체 페이로드(스칼라/배열): value 로 감싼다(graceful).
 		var raw any
 		if err2 := json.Unmarshal(data, &raw); err2 != nil {
 			return nil, err
 		}
-		m = map[string]any{"value": raw}
+		return message.New(message.WithPayload(message.NewPayload(map[string]any{"value": raw}))), nil
 	}
+
+	// 봉투 감지(강화): "payload" 키 AND 형제 봉투 키 1개 이상.
+	if pv, ok := m["payload"]; ok && hasEnvelopeSiblingKey(m) {
+		return messageFromEnvelope(m, pv), nil
+	}
+
+	// 봉투가 아닌 일반 객체: 객체 전체를 payload 로 사용(기존 동작 유지).
 	return message.New(message.WithPayload(message.NewPayload(m))), nil
 }
 
-// messageToJSON 는 메시지 페이로드를 JSON 으로 직렬화한다(출력 전송). redaction 은 호출
-// 측 client 가 수행한다(노드 측 — §5.14).
-func messageToJSON(msg message.Message) json.RawMessage {
-	data, err := msg.Payload().ToJSON()
-	if err != nil {
-		return json.RawMessage(`{}`)
+// hasEnvelopeSiblingKey 는 맵에 봉투 형제 키(id/type/metadata/timestamp) 가 하나 이상
+// 존재하는지 반환한다. payload 키만 단독으로 있는 원시 주입을 봉투로 오인하지 않게 한다.
+func hasEnvelopeSiblingKey(m map[string]any) bool {
+	for _, k := range []string{"id", "type", "metadata", "timestamp"} {
+		if _, ok := m[k]; ok {
+			return true
+		}
 	}
-	return data
+	return false
+}
+
+// messageFromEnvelope 는 봉투 맵(m)과 그 payload 값(pv)으로부터 메시지를 완전 복원한다.
+// id/type 은 비어있지 않으면 복원하고, timestamp 는 epoch ms(float64/int64 허용),
+// metadata 는 문자열 값만 채택한다(비문자열 값은 무시 — 메타데이터 계약).
+func messageFromEnvelope(m map[string]any, pv any) message.Message {
+	opts := make([]message.Option, 0, 6)
+
+	// payload: 객체이면 그대로, 아니면 value 로 감싼다(봉투 안에서도 graceful).
+	if pm, ok := pv.(map[string]any); ok {
+		opts = append(opts, message.WithPayload(message.NewPayload(pm)))
+	} else {
+		opts = append(opts, message.WithPayload(message.NewPayload(map[string]any{"value": pv})))
+	}
+
+	// id: 비어있지 않으면 복원(빈/누락 시 New() 가 uuid 생성).
+	if id, ok := m["id"].(string); ok && id != "" {
+		opts = append(opts, message.WithID(id))
+	}
+
+	// type: 비어있지 않으면 복원.
+	if typ, ok := m["type"].(string); ok && typ != "" {
+		opts = append(opts, message.WithType(typ))
+	}
+
+	// timestamp: epoch ms. JSON 디코드는 float64, 직접 주입은 int64 일 수 있다.
+	if ts, ok := envelopeEpochMillis(m["timestamp"]); ok {
+		opts = append(opts, message.WithTimestamp(time.UnixMilli(ts)))
+	}
+
+	// metadata: map 의 문자열 값만 복원(점 표기 키 포함).
+	if md, ok := m["metadata"].(map[string]any); ok {
+		for k, v := range md {
+			if sv, ok := v.(string); ok {
+				opts = append(opts, message.WithMetadata(k, sv))
+			}
+		}
+	}
+
+	return message.New(opts...)
+}
+
+// envelopeEpochMillis 는 봉투의 timestamp 값을 epoch ms(int64)로 정규화한다.
+// JSON 숫자(float64), 직접 주입(int64/int), 문자열 숫자 등을 허용한다.
+func envelopeEpochMillis(v any) (int64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return int64(t), true
+	case int64:
+		return t, true
+	case int:
+		return int64(t), true
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// messageToJSON 는 메시지를 봉투(envelope) JSON 으로 직렬화한다(출력 전송 / 입력 직렬화).
+//
+// 형태는 출력/디버그 노드(buildMessageMap)의 코어 필드와 정확히 일치한다:
+//
+//	{"id":..,"type":..,"timestamp":<epoch ms>,"payload":{..},"metadata":{..}}
+//
+// 이로써 브리지를 통과한 메시지가 로컬 출력과 구분 불가하게 된다(RB06).
+// 마샬 실패 시 기존 payload-only(Payload().ToJSON())로, 그것마저 실패하면 {} 로 폴백한다.
+// redaction 은 호출 측 client 가 수행한다(노드 측 — §5.14). 리댁터는 봉투의 payload 내
+// 중첩 시크릿도 재귀 제거하므로 봉투 도입으로 redaction 이 약화되지 않는다(RB06).
+func messageToJSON(msg message.Message) json.RawMessage {
+	env := map[string]any{
+		"id":        msg.ID(),
+		"type":      msg.Type(),
+		"timestamp": msg.Timestamp().UnixMilli(),
+		"payload":   msg.Payload().ToMap(),
+		"metadata":  msg.Metadata().All(),
+	}
+	if data, err := json.Marshal(env); err == nil {
+		return data
+	}
+	// 폴백: payload-only(기존 동작).
+	if data, err := msg.Payload().ToJSON(); err == nil {
+		return data
+	}
+	return json.RawMessage(`{}`)
 }

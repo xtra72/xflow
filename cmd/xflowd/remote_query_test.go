@@ -385,6 +385,25 @@ func TestQueryRedactor_MasksSecrets(t *testing.T) {
 	assert.Contains(t, string(out), "h", "비시크릿 값은 보존")
 }
 
+// TestQueryRedactor_MasksSecretsInsideEnvelope 는 브리지 봉투(envelope)의 payload 안에
+// 중첩된 시크릿이 봉투 redaction 으로도 제거됨을 검증한다(RB06 — 봉투 직렬화 도입 후에도
+// payload 내 시크릿 비노출 보장).
+func TestQueryRedactor_MasksSecretsInsideEnvelope(t *testing.T) {
+	redactor := newQueryRedactor()
+	// messageToJSON 봉투 형태: {id,type,timestamp,payload,metadata}
+	in := json.RawMessage(`{"id":"x","type":"event","timestamp":1780980196676,` +
+		`"payload":{"data":"d","password":"hunter2","config":{"api_key":"sk-123"}},` +
+		`"metadata":{"k":"v"}}`)
+	out := redactor.Redact(in)
+
+	assert.NotContains(t, string(out), "hunter2", "payload 내 시크릿 값은 봉투에서도 제거")
+	assert.NotContains(t, string(out), "password", "payload 내 시크릿 키 제거")
+	assert.NotContains(t, string(out), "sk-123", "payload.config 내 중첩 시크릿 값 제거")
+	assert.NotContains(t, string(out), "api_key", "payload.config 내 중첩 시크릿 키 제거")
+	assert.Contains(t, string(out), "\"data\":\"d\"", "비시크릿 payload 필드 보존")
+	assert.Contains(t, string(out), "\"type\":\"event\"", "봉투 코어 필드 보존")
+}
+
 // TestQueryRedactor_NonObjectPassThrough 는 비-객체 JSON(배열/스칼라)이 그대로
 // 통과하는지 검증한다(graceful).
 func TestQueryRedactor_NonObjectPassThrough(t *testing.T) {
