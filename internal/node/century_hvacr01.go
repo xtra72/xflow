@@ -287,6 +287,7 @@ func (nb *centuryHvacr01NodeBase) drainDeviceStateEvents(nodeID string, sourceCh
 		if cfg.EmitMetadata.NodeID {
 			msg.Metadata().Set("node_id", nodeID)
 		}
+		emitAgentGroup(msg, nb.agent, cfg.EmitMetadata)
 		select {
 		case sourceCh <- msg:
 		default:
@@ -549,6 +550,7 @@ func (n *CenturyHvacr01StatusNode) drainRawFrames(cfg CenturyHvacr01NodeConfig) 
 		if !ok {
 			continue
 		}
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 		select {
 		case n.sourceCh <- msg:
 		default:
@@ -590,6 +592,7 @@ func (n *CenturyHvacr01StatusNode) Process(ctx context.Context, msg message.Mess
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 	return []message.Message{out}, nil
 }
@@ -824,6 +827,7 @@ func (n *CenturyHvacr01Node) drainNewFrames(cfg CenturyHvacr01NodeConfig) {
 			if !mok {
 				continue
 			}
+			emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 			select {
 			case n.sourceCh <- msg:
 			default:
@@ -881,6 +885,7 @@ func (n *CenturyHvacr01Node) Process(ctx context.Context, msg message.Message) (
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 	return []message.Message{out}, nil
 }

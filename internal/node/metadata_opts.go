@@ -33,11 +33,35 @@ import "fmt"
 // v0.18.26 (2026-05-28): UnitID / SlotNum 필드 삭제. 두 키는 프로토콜 해석
 // 단계에서만 의미가 있고 출력 metadata 로 노출할 가치가 없다고 판정. 어드레싱
 // (프로토콜 타깃 지정) 은 노드 config 의 group_id / unit_id 입력 필드로 분리.
+//
+// v0.19.0 (P3, 2026-06-09): Agent / Device 그룹 emit 플래그 추가.
+//   - Agent: 모든 에이전트 생성 메시지에 agent:{type,id,[name]} 그룹 emit.
+//   - Device: HVACR 계열 디바이스 노드의 device:{type,id} 그룹 emit.
+//
+// 중요: Agent / Device 는 기타 flat 필드(NodeID 등 default OFF)와 달리 기본값이
+// ON 이다. 사용자가 그룹 메타데이터를 기본으로 원하기 때문. zero-value 의 bool 은
+// false 이므로 기본 ON 은 PARSE 시점에서 처리한다 (parseEmitMetadata / DefaultEmitOptions
+// 가 명시 비활성화 없으면 true 로 설정). 구조체 zero-value 를 직접 쓰는 단위 테스트는
+// 필요 시 Agent/Device 를 명시한다.
 type MetadataEmitOptions struct {
 	NodeID     bool `json:"node_id"`
 	DeviceType bool `json:"device_type"`
 	Name       bool `json:"name"`
 	NodeSource bool `json:"node_source"`
+	// Agent 는 agent:{type,id,[name]} 그룹 emit 여부. 기본 ON (parse 시 default true).
+	Agent bool `json:"agent"`
+	// Device 는 device:{type,id} 그룹 emit 여부. 기본 ON (parse 시 default true).
+	Device bool `json:"device"`
+}
+
+// DefaultEmitOptions 는 P3 기본 emit 정책을 반환한다: Agent / Device 그룹은 ON,
+// 그 외 flat 옵션(NodeID/DeviceType/Name/NodeSource)은 OFF.
+//
+// 사용처: emit-options 를 별도 config 로 파싱하지 않는 노드(serial_io / mqtt /
+// modbus / tcp_io 등)가 그룹 emit 기본값을 얻기 위해 사용. parseEmitMetadata 도
+// 동일한 기본값을 적용한다.
+func DefaultEmitOptions() MetadataEmitOptions {
+	return MetadataEmitOptions{Agent: true, Device: true}
 }
 
 // IsAllowed 는 주어진 metadata key 가 현재 옵션에서 허용되는지 반환한다.
@@ -80,6 +104,49 @@ func (o MetadataEmitOptions) SetIfAllowed(setter func(string, string), key strin
 	setter(key, fmt.Sprintf("%v", value))
 }
 
+// SetAgentGroupIfAllowed 는 Agent 옵션이 ON 일 때 agent 그룹을 설정한다.
+//
+// 그룹 형태: agent: {type, id, [name]}. name 은 비어있지 않을 때만 포함한다.
+// type, id 가 둘 다 비어있으면 그룹을 만들지 않는다 (의미 없는 빈 그룹 방지).
+//
+// setGroup 은 message.Metadata().SetGroup 시그니처: func(key string, fields map[string]string).
+func (o MetadataEmitOptions) SetAgentGroupIfAllowed(setGroup func(string, map[string]string), agentType, agentID, agentName string) {
+	if !o.Agent {
+		return
+	}
+	if agentType == "" && agentID == "" {
+		return
+	}
+	fields := map[string]string{
+		"type": agentType,
+		"id":   agentID,
+	}
+	if agentName != "" {
+		fields["name"] = agentName
+	}
+	setGroup("agent", fields)
+}
+
+// SetDeviceGroupIfAllowed 는 Device 옵션이 ON 일 때 device 그룹을 설정한다.
+//
+// 그룹 형태: device: {type, id}. type, id 가 둘 다 비어있으면 그룹을 만들지 않는다.
+//
+// 주의: SetGroup 은 전체 치환이므로, 호출 측이 type / id 를 따로(다른 소스에서)
+// 알게 되는 HVACR promote 경로에서는 mergeDeviceGroup 헬퍼로 누적 병합한다.
+// 이 메서드는 type / id 를 한 번에 알고 있는 단순 케이스용이다.
+func (o MetadataEmitOptions) SetDeviceGroupIfAllowed(setGroup func(string, map[string]string), deviceType, deviceID string) {
+	if !o.Device {
+		return
+	}
+	if deviceType == "" && deviceID == "" {
+		return
+	}
+	setGroup("device", map[string]string{
+		"type": deviceType,
+		"id":   deviceID,
+	})
+}
+
 // parseEmitMetadata 는 노드 config map 에서 옵션을 파싱한다 (두 형식 모두 지원).
 //
 // 1) 중첩 형식: config["emit_metadata"] = map[string]any{"device_type": true, ...}
@@ -94,6 +161,12 @@ func (o MetadataEmitOptions) SetIfAllowed(setter func(string, string), key strin
 // v0.18.26: emit_unit_id / emit_slot_num 키는 silently 무시 (forward-compat).
 // 기존 설정 파일에서 해당 키가 남아 있어도 에러 없이 진행한다.
 func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
+	// P3: Agent / Device 그룹은 기본 ON. 명시 비활성화(false) 가 없으면 true.
+	// bool zero-value 가 false 이므로 여기서 기본값을 강제한다. 기존 flat 옵션
+	// (NodeID/DeviceType/Name/NodeSource) 은 default OFF 정책 유지 — 손대지 않는다.
+	out.Agent = true
+	out.Device = true
+
 	if raw, ok := config["emit_metadata"]; ok {
 		if m, ok := raw.(map[string]any); ok {
 			if v, ok := m["node_id"].(bool); ok {
@@ -108,6 +181,12 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 			if v, ok := m["node_source"].(bool); ok {
 				out.NodeSource = v
 			}
+			if v, ok := m["agent"].(bool); ok {
+				out.Agent = v
+			}
+			if v, ok := m["device"].(bool); ok {
+				out.Device = v
+			}
 		}
 	}
 	if v, ok := config["emit_node_id"].(bool); ok {
@@ -121,5 +200,11 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 	}
 	if v, ok := config["emit_node_source"].(bool); ok {
 		out.NodeSource = v
+	}
+	if v, ok := config["emit_agent"].(bool); ok {
+		out.Agent = v
+	}
+	if v, ok := config["emit_device"].(bool); ok {
+		out.Device = v
 	}
 }

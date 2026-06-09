@@ -510,6 +510,7 @@ func (n *LGHvacr01StatusNode) drainNewFrames(cfg LGHvacr01NodeConfig) {
 		if cfg.EmitMetadata.NodeID {
 			msg.Metadata().Set("node_id", n.ID())
 		}
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -582,6 +583,7 @@ func (n *LGHvacr01StatusNode) Process(ctx context.Context, msg message.Message) 
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	// v0.10.0: lgcnp_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
@@ -898,6 +900,7 @@ func (n *LGHvacr01Node) drainNewFrames(cfg LGHvacr01NodeConfig) {
 		if cfg.EmitMetadata.NodeID {
 			msg.Metadata().Set("node_id", n.ID())
 		}
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -968,6 +971,7 @@ func (n *LGHvacr01Node) Process(ctx context.Context, msg message.Message) ([]mes
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
