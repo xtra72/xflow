@@ -66,6 +66,9 @@ const (
 var (
 	_ remote.BridgeFlowRunner = (*BridgeFlowRunnerAdapter)(nil)
 	_ remote.BridgeHandle     = (*BridgeFlowHandle)(nil)
+	// BridgeFlowRunnerAdapter 는 노드 측 라이브 브리지 tap 소스로서 FlowServiceAdapter 의
+	// (재)배포가 활성 tap 을 재바인딩하도록 한다(참조 플로우 재시작 투명성).
+	_ bridgeTapSource = (*BridgeFlowRunnerAdapter)(nil)
 )
 
 // BridgeFlowRunnerAdapter 는 참조 플로우를 경계 포트 tap 과 함께 실행하는 어댑터이다.
@@ -120,6 +123,69 @@ func (r *BridgeFlowRunnerAdapter) OpenBridge(ctx context.Context, flowID string,
 		inPorts: ctrl.inputPorts,
 		outPort: ctrl.outputPorts,
 	}, nil
+}
+
+// RetapDeployedBoundaries 는 flowID 에 대한 활성(비종료) 노드 측 브리지 tap 컨트롤러가
+// 있으면 expanded 플로우의 경계 와이어를 동일 tapID 로 tap 노드에 재배선한 새 플로우와
+// true 를 반환한다(없거나 종료된 컨트롤러면 expanded, false). 컨트롤러는 그대로
+// controllers/bridgeTapTable 에 남겨, 재배포된 플로우의 새 tap 노드가 Init 에서 동일 LIVE
+// 컨트롤러(출력 subscriber + 입력 채널 보존)에 재바인딩되도록 한다(참조 플로우 재시작 투명성).
+//
+// r.mu 를 전 구간 보유하여 closeSubscriber(컨트롤러 제거 + shutdown + tapID unregister 를
+// r.mu 보유 중 수행)와의 경합을 차단한다. 따라서 closed 판정과 tap 재배선/재등록이 원자적이다.
+// bridgeTapSource 인터페이스 구현(flow_adapter.go).
+func (r *BridgeFlowRunnerAdapter) RetapDeployedBoundaries(flowID string, expanded flow.Flow) (flow.Flow, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	ctrl, ok := r.controllers[flowID]
+	if !ok {
+		return expanded, false // 활성 노드 측 브리지 없음 — 무변경.
+	}
+	// 컨트롤러 종료 여부를 동일 r.mu 보유 하에 확인한다(closeSubscriber 가 r.mu 보유 중
+	// shutdown 하므로 원자적). 종료되었으면 채널이 닫혔으므로 재바인딩하지 않는다.
+	ctrl.mu.Lock()
+	closed := ctrl.closed
+	ctrl.mu.Unlock()
+	if closed {
+		return expanded, false
+	}
+
+	tapID := ctrl.tapID
+	// 동일 tapID 재등록(멱등). closeSubscriber 가 아직 unregister 하지 않았다면 no-op 이고,
+	// 어떤 경우든 새 tap 노드 Init 이 tapID 로 LIVE 컨트롤러를 찾도록 보장한다.
+	bridgeTapTable.register(tapID, ctrl)
+
+	tapped, inPorts, outPorts := rewireBoundariesToTap(expanded, tapID)
+
+	// 엣지 케이스: 재시작 중 경계 포트가 바뀌면 매니저의 이름 매핑 핸들과 어긋날 수 있다.
+	// 재배선은 현재 존재하는 포트로 그대로 수행하고 경고만 남긴다(over-engineering 금지).
+	if !stringSetsEqual(inPorts, ctrl.inputPorts) || !stringSetsEqual(outPorts, ctrl.outputPorts) {
+		r.logger.Warn("브리지 재배포: 참조 플로우 경계 포트 변경 감지 — 매니저 핸들과 어긋날 수 있음",
+			"flow_id", flowID,
+			"old_inputs", ctrl.inputPorts, "new_inputs", inPorts,
+			"old_outputs", ctrl.outputPorts, "new_outputs", outPorts)
+	}
+
+	return tapped, true
+}
+
+// stringSetsEqual 은 두 문자열 슬라이스가 같은 집합인지 반환한다(순서 무시, 경계 포트는
+// 정렬·중복 없음이므로 길이+원소 비교로 충분).
+func stringSetsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		m[s] = struct{}{}
+	}
+	for _, s := range b {
+		if _, ok := m[s]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // closeSubscriber 는 BridgeHandle.Close 경로에서 호출되어 subscriber 를 제거하고, 마지막

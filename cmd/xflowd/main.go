@@ -1024,6 +1024,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		bridgeRunner := service.NewBridgeFlowRunnerAdapter(flowSvc, eng,
 			obs.Loggers.NewLogger("remote.bridge").Logger())
 
+		// 노드 측 tap 소스 주입(참조 플로우 재시작 투명성): flowSvc.DeployFlow 가 활성 노드
+		// 측 브리지 tap 컨트롤러가 있는 참조 플로우를 동일 tapID 로 경계 재배선하여 배포하도록
+		// 한다. 이로써 사용자가 노드에서 참조 플로우를 재시작(Stop→Undeploy→Deploy→Start)해도
+		// 매니저 측 브리지가 끊기지 않고 출력/입력이 재시작 너머로 보존된다(매니저 측
+		// SetRemoteBridgeOpener 와 대칭 와이어링). client 모드에서만 설정된다.
+		flowSvc.SetBridgeTapSource(bridgeRunner)
+
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
 		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
 		remoteClient := remote.NewClient(remote.ClientConfig{

@@ -51,11 +51,27 @@ type FlowServiceAdapter struct {
 	// 위한 FlowBridgeOpener 이다(P3, SUBFLOW RB05). nil 이면(비-server 모드) remote://
 	// flow-node 배포는 명확한 오류로 거부된다(ErrRemoteBridgeUnavailable).
 	bridgeOpener FlowBridgeOpener
+	// tapSource 는 client 모드에서 노드 측 라이브 브리지 tap 컨트롤러의 소스이다(재배포 시
+	// 재바인딩). 설정 시 DeployFlow 는 활성 tap 컨트롤러가 있는 flow 를 동일 tapID 로 경계
+	// 재배선하여 배포하므로, 참조 플로우 재시작이 매니저 측 브리지에 투명해진다(출력/입력
+	// 보존). nil 이면(비-client 모드, 또는 runner 미구성) 동작은 변경되지 않는다.
+	tapSource bridgeTapSource
 	// bridgeMu 는 flowBridges 접근을 보호한다.
 	bridgeMu sync.Mutex
 	// flowBridges 는 flow id → 해당 배포에서 등록한 매니저 브리지 컨트롤러 목록이다(재배포/
 	// undeploy 시 globalManagerBridgeTable 에서 정리 — 누수 방지, RB12).
 	flowBridges map[string][]*managerBridgeController
+}
+
+// bridgeTapSource 는 노드 측 라이브 브리지 tap 컨트롤러의 조회·재바인딩 소스이다
+// (BridgeFlowRunnerAdapter 가 구현). DeployFlow 가 (재)배포 시 활성 tap 을 재적용하는 데
+// 사용한다.
+type bridgeTapSource interface {
+	// RetapDeployedBoundaries 는 flowID 에 대한 활성(비종료) 노드 측 브리지 tap 컨트롤러가
+	// 있으면 expanded 플로우의 경계 와이어를 동일 tapID 로 tap 노드에 재배선한 새 플로우와
+	// true 를, 없으면 expanded 와 false 를 반환한다(활성 컨트롤러가 없으면 무변경). 컨트롤러
+	// 등록(tapID)은 그대로 유지되어 새 배포의 tap 노드가 동일 LIVE 컨트롤러에 재바인딩된다.
+	RetapDeployedBoundaries(flowID string, expanded flow.Flow) (flow.Flow, bool)
 }
 
 // NewFlowServiceAdapter 는 새 FlowServiceAdapter 를 생성한다.
@@ -76,6 +92,14 @@ func NewFlowServiceAdapter(eng *engine.Engine, repo storage.FlowRepository, logg
 // 배포가 ErrRemoteBridgeUnavailable 로 거부된다(비-server 모드 명확한 거부).
 func (a *FlowServiceAdapter) SetRemoteBridgeOpener(opener FlowBridgeOpener) {
 	a.bridgeOpener = opener
+}
+
+// SetBridgeTapSource 는 client 모드 와이어링(cmd/xflowd)이 노드 측 라이브 브리지 tap 소스를
+// 주입한다(SetRemoteBridgeOpener 와 대칭). 설정 시 DeployFlow 가 활성 tap 컨트롤러가 있는
+// 참조 플로우를 동일 tapID 로 경계 재배선하여 배포하므로, 사용자가 참조 플로우를 재시작해도
+// 매니저 측 브리지가 끊기지 않는다(출력/입력 재시작 너머 보존). 미설정 시 동작 무변경.
+func (a *FlowServiceAdapter) SetBridgeTapSource(src bridgeTapSource) {
+	a.tapSource = src
 }
 
 // clearFlowBridges 는 이전 배포에서 등록한 이 flow 의 브리지 컨트롤러를 테이블에서 제거한다
@@ -428,6 +452,21 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 		a.bridgeMu.Lock()
 		a.flowBridges[id] = ctrls
 		a.bridgeMu.Unlock()
+	}
+
+	// 노드 측 라이브 브리지 tap 재적용(참조 플로우 재시작 투명성): 이 flow 에 대한 활성
+	// 노드 측 tap 컨트롤러가 있으면(매니저가 remote:// 로 라이브 브리지를 열어둔 참조 플로우),
+	// 경계 와이어를 동일 tapID 의 tap 노드로 재배선하여 배포한다. 새 배포의 tap 노드가 동일
+	// LIVE 컨트롤러(출력 subscriber + 입력 채널 보존)에 재바인딩되므로, 사용자가 노드에서
+	// 참조 플로우를 재시작해도 매니저 측 브리지가 끊기지 않는다(매니저 측 rewireRemoteBridges
+	// 와 대칭이며, 별도 테이블 — bridgeTapTable vs globalManagerBridgeTable — 이므로 독립적).
+	// tapSource 미설정(비-client) 또는 활성 컨트롤러 없음이면 무변경. 반드시 확장 이후·경계
+	// 제거 이전에 수행한다(tap 재배선이 경계 와이어를 소비하므로 이후 StripBoundaryWires 는
+	// tapped 플로우에 대해 no-op 이 된다 — 두 변환은 와이어별로 상호 배타적).
+	if a.tapSource != nil {
+		if tapped, retapped := a.tapSource.RetapDeployedBoundaries(id, f); retapped {
+			f = tapped
+		}
 	}
 
 	// 단독 배포(top-level standalone) 전처리: 플로우 포트 경계(센티넬) 와이어를 제거한다.
