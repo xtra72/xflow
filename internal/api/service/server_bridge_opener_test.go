@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,10 @@ import (
 // sendinput → outputs → status → close 매핑 + 매니저 측 포트별 버퍼링을 검증한다.
 
 // fakeServerBridge 는 serverBridgeHandle 계약을 만족하는 테스트 더블이다.
+//
+// 실제 remote.ServerBridge 처럼 채널 close 는 멱등이다(closeOnce). 노드 드롭은
+// teardownNodeBridges 가 채널을 닫는 것으로 모사하므로, 이후 Close() 가 다시 호출되어도
+// 이중 close panic 이 나지 않아야 한다(실제 ServerBridge.teardown 의 closeOnce 미러).
 type fakeServerBridge struct {
 	id      string
 	inPorts []string
@@ -28,9 +33,19 @@ type fakeServerBridge struct {
 		port string
 		data json.RawMessage
 	}
-	outputs chan remote.BridgeOutputPayload
-	status  chan remote.BridgeStatusPayload
-	closed  bool
+	outputs   chan remote.BridgeOutputPayload
+	status    chan remote.BridgeStatusPayload
+	closed    bool
+	closeOnce sync.Once
+}
+
+// dropNode 는 노드 세션 드롭(teardownNodeBridges)을 모사한다: Close() 호출 없이 채널만
+// 닫는다(멱등). 실제 운영에서 노드가 사라질 때의 경로다.
+func (b *fakeServerBridge) dropNode() {
+	b.closeOnce.Do(func() {
+		close(b.outputs)
+		close(b.status)
+	})
 }
 
 func newFakeServerBridge(id string, in, out []string) *fakeServerBridge {
@@ -57,8 +72,10 @@ func (b *fakeServerBridge) Outputs() <-chan remote.BridgeOutputPayload { return 
 func (b *fakeServerBridge) Status() <-chan remote.BridgeStatusPayload  { return b.status }
 func (b *fakeServerBridge) Close() error {
 	b.closed = true
-	close(b.outputs)
-	close(b.status)
+	b.closeOnce.Do(func() { // 멱등 — 노드 드롭(dropNode)이 먼저 닫았어도 안전(실제 ServerBridge 미러).
+		close(b.outputs)
+		close(b.status)
+	})
 	return nil
 }
 
