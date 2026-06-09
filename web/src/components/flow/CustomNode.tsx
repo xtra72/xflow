@@ -25,6 +25,7 @@ import { useParams } from 'react-router';
 
 import { getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
+import { useManagedNodes, useRemoteMode } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { parseRemoteFlowRef } from '@/lib/flow/subflowPorts';
 import {
@@ -32,7 +33,7 @@ import {
   BRIDGE_STATUS_I18N_KEY,
   mapRuntimeStateToBridgeStatus,
 } from '@/lib/flow/remoteBridgeStatus';
-import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
+import { resolveRemoteNodeLabel, shortenInstanceId } from '@/lib/remote/nodeLabel';
 import { cn } from '@/lib/utils/cn';
 import { configureNode } from '@/services/api/nodeService';
 import { useEditorStore } from '@/stores/editorStore';
@@ -170,15 +171,47 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const flowIdValue = isFlowNode ? String(nodeData.flow_id ?? '') : '';
   const remoteRef = isFlowNode ? parseRemoteFlowRef(flowIdValue) : null;
   const isRemoteBridge = remoteRef !== null;
-  // 원격 노드 표시명: 호스트명 미보유이므로 단축 instanceId 로 폴백(resolveRemoteNodeLabel).
+
+  // REQ-RU06 가독성 개선: 원격 브릿지 표시명을 단축 instanceId 대신
+  // `{hostname}.{flowName}` (예: xagent04.HVACR Control) 로 해석한다.
+  //
+  // hostname 은 관리 노드 목록(useManagedNodes)에서 instance_id 로 조회한다.
+  // 비-원격 에디터/클라이언트 모드에서 불필요한 폴링을 막기 위해 isRemoteBridge
+  // (∧ server 모드) 로 쿼리를 게이트한다. React Query 는 queryKey 로 dedupe 하므로
+  // 노드마다 구독해도 단일 쿼리로 합쳐진다.
+  const { data: remoteMode } = useRemoteMode();
+  const isServerMode = remoteMode?.mode === 'server';
+  const { data: managedNodes } = useManagedNodes(
+    undefined,
+    isRemoteBridge && isServerMode,
+  );
+
+  // hostname: 관리 노드 매칭 → hostname, 없으면 단축 instanceId 로 폴백.
+  const remoteHostname = remoteRef
+    ? (managedNodes ?? []).find((n) => n.instance_id === remoteRef.instanceId)
+        ?.hostname || ''
+    : '';
+  const remoteHostLabel = remoteRef
+    ? resolveRemoteNodeLabel(remoteHostname, remoteRef.instanceId)
+    : '';
+
+  // flowName: config 의 flow_name 캐시(픽커 선택 시 비정규화) → 단축 flowId 폴백.
+  const cachedFlowName =
+    typeof nodeData.flow_name === 'string' ? nodeData.flow_name : '';
+  const remoteFlowLabel = remoteRef
+    ? cachedFlowName || shortenInstanceId(remoteRef.flowId)
+    : '';
+
+  // 원격 노드 표시명: `{hostname}.{flowName}`. 둘 다 폴백이면
+  // `{단축 instanceId}.{단축 flowId}` 가 되며 허용된다.
   const remoteNodeLabel = remoteRef
-    ? resolveRemoteNodeLabel(undefined, remoteRef.instanceId)
+    ? `${remoteHostLabel}.${remoteFlowLabel}`
     : '';
 
   // 참조 플로우 표시명(로컬·원격 공통). flow_name 캐시 → flow_id 폴백.
   // 원격 브릿지는 정규화 참조 전체 대신 노드-로컬 flowId 로 폴백(가독성).
   const referencedFlowLabel = isFlowNode
-    ? ((nodeData.flow_name as string) ||
+    ? (cachedFlowName ||
         (remoteRef ? remoteRef.flowId : (nodeData.flow_id as string)) ||
         '')
     : '';
