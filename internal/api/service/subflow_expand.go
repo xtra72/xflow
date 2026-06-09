@@ -79,41 +79,41 @@ type flowNodeBoundary struct {
 	outMap map[string][]endpoint
 }
 
-// ExpandSubflows 는 f 의 모든 flow-node 를 참조 플로우의 네임스페이스 인스턴스로 확장한
-// 새 플로우를 반환한다(원본 f 는 변경하지 않는다).
+// ExpandSubflows 는 f 의 LOCAL(bare id) flow-node 를 참조 플로우의 네임스페이스
+// 인스턴스로 확장한 새 플로우를 반환한다(원본 f 는 변경하지 않는다).
 //
 //   - ctx: 취소 컨텍스트.
 //   - f:   확장 대상 플로우(부모).
 //   - repo: 참조 플로우 정의 조회용 저장소(항상 최신 — 결정 2).
 //
-// 결과 플로우에는 flow-node 타입 노드가 없고, flow-node 를 소비한 경계 센티넬 와이어도 없다.
-// (자기 자신의 top-level 플로우 포트 경계 와이어는 남아 있으며, 단독 배포 전처리
-// StripBoundaryWires 가 별도로 처리한다.)
+// 참조 종류별 분기(reference-kind branch — SPEC-SUBFLOW-001 v1.3 그룹 RB, REQ-SUBFLOW-RB01):
+//
+//   - LOCAL 참조(bare id, 예 "flow-abc"): 결정 1 의 인스턴스화(배포 시 서브그래프 임베딩)
+//     를 그대로 적용한다(불변, regression-0). 참조 플로우를 네임스페이스 복제·직접
+//     재배선하여 인라인 확장하며, 결과에는 flow-node 가 남지 않는다.
+//   - REMOTE 참조(remote://{instance_id}/{flow_id}): 확장하지 않는다. flow-node 를
+//     LIVE NODE 로 그대로 남겨, P3 매니저 엔진이 이를 브리지 엔드포인트로 실행하도록
+//     한다(REQ-SUBFLOW-RB07). flow_id(remote:// 참조)와 입출력 포트가 보존되어,
+//     instance_id/remote_flow_id 분해와 이름 기반 경계 포트 매핑(RB06)에 사용된다.
+//
+// 결과 플로우에는 LOCAL flow-node 가 남지 않으며(확장 소비), REMOTE flow-node 는 그대로
+// 살아남는다. 자기 자신의 top-level 플로우 포트 경계 와이어는 남아 있으며, 단독 배포
+// 전처리 StripBoundaryWires 가 별도로 처리한다.
 //
 // 깊이/노드 수 상한 초과 시 에러를 반환한다(REQ-SUBFLOW-N01).
-// 참조 플로우가 저장소에 없으면 에러를 반환한다(REQ-SUBFLOW-F03).
+// LOCAL 참조 플로우가 저장소에 없으면 에러를 반환한다(REQ-SUBFLOW-F03).
+// REMOTE 참조의 형식 오류(remote:// 구분자 누락 등)는 배포를 거부한다(REQ-SUBFLOW-R01).
 //
-// 원격 참조(remote://...) flow-node 는 해석하지 않는다(fetcher 부재) — 원격 참조가
-// 존재하면 배포를 거부한다(REQ-SUBFLOW-R07). 원격 참조를 해석하려면
-// ExpandSubflowsWithFetcher 를 사용한다.
+// v1.2 SUPERSEDE: 원격 참조의 "배포 시 fetch + 매니저 인라인 확장"(RemoteFlowFetcher /
+// ExpandSubflowsWithFetcher)은 v1.3 에서 폐기되었다(device/secret 무동작 한계 — §1.2
+// 결정 5). 원격 참조는 이제 라이브 브리지(그룹 RB)로 동작하며 매니저는 정의를 확장하지
+// 않는다.
 func ExpandSubflows(ctx context.Context, f flow.Flow, repo storage.FlowRepository) (flow.Flow, error) {
-	return expandSubflowsRec(ctx, f, repo, nil, 0, nil)
-}
-
-// ExpandSubflowsWithFetcher 는 ExpandSubflows 와 동일하나, 원격 참조(remote://...)
-// flow-node 를 fetcher 로 해석하여 인라인 확장한다(SPEC-SUBFLOW-001 v1.2 그룹 R).
-//
-//   - fetcher: 원격 플로우 정의 해석기(매니저 서버 모드에서 주입). nil 이면 원격 참조는
-//     배포 거부(REQ-SUBFLOW-R07). LOCAL bare id 참조는 fetcher 와 무관하게 repo.Get 으로 해석.
-//
-// 원격 분기는 fetch(항상 최신) → 역직렬화 → 중첩 flow-node 거부(R08) → 인라인 확장
-// 순으로 처리된다(§5.11). 실패 시 배포를 거부하며 stale/empty 정의를 사용하지 않는다(R06).
-func ExpandSubflowsWithFetcher(ctx context.Context, f flow.Flow, repo storage.FlowRepository, fetcher RemoteFlowFetcher) (flow.Flow, error) {
-	return expandSubflowsRec(ctx, f, repo, fetcher, 0, nil)
+	return expandSubflowsRec(ctx, f, repo, 0, nil)
 }
 
 // expandSubflowsRec 는 ExpandSubflows 의 재귀 본체이다.
-func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowRepository, fetcher RemoteFlowFetcher, depth int, logger *slog.Logger) (flow.Flow, error) {
+func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowRepository, depth int, logger *slog.Logger) (flow.Flow, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -139,72 +139,60 @@ func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowReposi
 	resultNodes := make([]flow.NodeDef, 0, len(srcNodes))
 	resultWires := make([]flow.Wire, 0, len(srcWires))
 
-	// flow-node 집합 수집. 비-flow-node 는 결과에 그대로 보존한다.
-	flowNodeIDs := make(map[string]bool)
-	for _, n := range srcNodes {
-		if n.Type == flowNodeType {
-			flowNodeIDs[n.ID] = true
-			continue
-		}
-		resultNodes = append(resultNodes, n)
-	}
-
-	wireSeq := 0 // 네임스페이스/재배선 와이어 ID 유일성 보장용 시퀀스
-
-	// 각 flow-node 를 인스턴스화하여 내부 노드/와이어를 누적하고, 경계 매핑을 기록한다.
-	boundaries := make(map[string]flowNodeBoundary, len(flowNodeIDs))
+	// flow-node 를 참조 종류로 분류한다(REQ-SUBFLOW-RB01 — reference-kind branch).
+	//
+	//   - 비-flow-node: 결과에 그대로 보존한다.
+	//   - LOCAL(bare id) flow-node: localFlowNodeIDs 에 등록한다(인스턴스화 대상). 와이어
+	//     재배선 시 flow-node 핸들 → 내부 엔드포인트로 전개된다.
+	//   - REMOTE(remote://) flow-node: 결과에 LIVE NODE 로 그대로 보존한다(미확장 —
+	//     REQ-SUBFLOW-RB07). flowNodeIDs 에 등록하지 않으므로, 부모 와이어는 살아남은
+	//     flow-node 핸들을 그대로 가리킨다(재배선 없음). flow_id 의 remote:// 참조와
+	//     입출력 포트가 보존되어 P3 엔진이 브리지 엔드포인트로 실행한다.
+	//
+	// 형식 오류 remote:// 참조(구분자 누락 등)는 배포를 거부한다(REQ-SUBFLOW-R01).
+	localFlowNodeIDs := make(map[string]bool)
 	for _, n := range srcNodes {
 		if n.Type != flowNodeType {
+			resultNodes = append(resultNodes, n)
 			continue
 		}
 		flowID, _ := n.Config[flowNodeFlowIDKey].(string)
 		if flowID == "" {
 			return nil, fmt.Errorf("flow-node %q: flow_id 가 비어 있습니다", n.ID)
 		}
-
-		// 원격/로컬 판별(REQ-SUBFLOW-R01).
-		instanceID, remoteFlowID, isRemote, parseErr := parseRemoteFlowRef(flowID)
+		_, _, isRemote, parseErr := parseRemoteFlowRef(flowID)
 		if parseErr != nil {
 			return nil, fmt.Errorf("flow-node %q: %w", n.ID, parseErr)
 		}
-
-		var expandedRef flow.Flow
 		if isRemote {
-			// --- 원격 참조 해석(그룹 R) ---
-			// 해석기 부재(비-서버 모드/미주입) → 배포 거부(REQ-SUBFLOW-R07).
-			if fetcher == nil {
-				return nil, fmt.Errorf("flow-node %q: 원격 서브플로우 해석 불가(서버 모드 아님/해석기 미구성): flow_id=%q (instance=%q)", n.ID, flowID, instanceID)
-			}
-			// 매 배포 fetch(항상 최신, REQ-SUBFLOW-R03). 실패 시 배포 거부(REQ-SUBFLOW-R06,
-			// stale/empty 무음 사용 금지). 어느 노드/어느 instance/flow_id 인지 식별.
-			defBytes, fetchErr := fetcher.FetchRemoteFlow(ctx, instanceID, remoteFlowID)
-			if fetchErr != nil {
-				return nil, fmt.Errorf("flow-node %q: 원격 플로우 fetch 실패(instance=%q, flow_id=%q): %w", n.ID, instanceID, remoteFlowID, fetchErr)
-			}
-			ref, dErr := deserializeRemoteFlow(defBytes, instanceID, remoteFlowID)
-			if dErr != nil {
-				return nil, fmt.Errorf("flow-node %q: %w", n.ID, dErr)
-			}
-			// 중첩 원격/로컬 flow-node 거부(REQ-SUBFLOW-R08, self-contained 경계).
-			// 매니저가 원격 그래프를 완전 순회 불가 → 분산 순환 검출 회피. 원격 경계 너머로
-			// 확장하지 않으므로(REQ-SUBFLOW-R09), ref 는 재귀 확장하지 않는다.
-			if flowContainsFlowNode(ref) {
-				return nil, fmt.Errorf("flow-node %q: 원격 서브플로우는 중첩 서브플로우를 포함할 수 없습니다(instance=%q, flow_id=%q)", n.ID, instanceID, remoteFlowID)
-			}
-			expandedRef = ref
-		} else {
-			// --- 로컬 참조(bare id) — 기존 동작(하위 호환) ---
-			// 참조 플로우 조회(항상 최신).
-			ref, err := repo.Get(ctx, flowID)
-			if err != nil {
-				return nil, fmt.Errorf("flow-node %q: 참조 플로우 조회 실패(flow_id=%q): %w", n.ID, flowID, err)
-			}
+			// 원격 참조 = 라이브 브리지(미확장). flow-node 를 그대로 남긴다.
+			resultNodes = append(resultNodes, n)
+			continue
+		}
+		// 로컬 참조 = 인스턴스화 대상.
+		localFlowNodeIDs[n.ID] = true
+	}
 
-			// 중첩 해소: 참조 플로우 내부의 flow-node 를 먼저 평탄화한다(누적 접두사 처리).
-			expandedRef, err = expandSubflowsRec(ctx, ref, repo, fetcher, depth+1, logger)
-			if err != nil {
-				return nil, err
-			}
+	wireSeq := 0 // 네임스페이스/재배선 와이어 ID 유일성 보장용 시퀀스
+
+	// 각 LOCAL flow-node 를 인스턴스화하여 내부 노드/와이어를 누적하고, 경계 매핑을 기록한다.
+	boundaries := make(map[string]flowNodeBoundary, len(localFlowNodeIDs))
+	for _, n := range srcNodes {
+		if n.Type != flowNodeType || !localFlowNodeIDs[n.ID] {
+			continue
+		}
+		flowID, _ := n.Config[flowNodeFlowIDKey].(string)
+
+		// 로컬 참조(bare id) — 기존 동작(하위 호환). 참조 플로우 조회(항상 최신).
+		ref, err := repo.Get(ctx, flowID)
+		if err != nil {
+			return nil, fmt.Errorf("flow-node %q: 참조 플로우 조회 실패(flow_id=%q): %w", n.ID, flowID, err)
+		}
+
+		// 중첩 해소: 참조 플로우 내부의 flow-node 를 먼저 평탄화한다(누적 접두사 처리).
+		expandedRef, err := expandSubflowsRec(ctx, ref, repo, depth+1, logger)
+		if err != nil {
+			return nil, err
 		}
 
 		nsNodes, nsWires, boundary := instantiateSubflow(n.ID, expandedRef, &wireSeq)
@@ -220,7 +208,7 @@ func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowReposi
 		// 내부 엔드포인트로 전개하여, 재귀적으로 평탄화될 때 자식 flow-node 의 경계가 부모의
 		// 플로우 포트와 올바르게 이어지도록 한다. (중첩 평탄화 핵심.)
 		if flow.IsBoundaryWire(w) {
-			rewritten, dangling := resolveBoundaryWire(w, flowNodeIDs, boundaries, &wireSeq)
+			rewritten, dangling := resolveBoundaryWire(w, localFlowNodeIDs, boundaries, &wireSeq)
 			if dangling != nil {
 				logDangling(logger, *dangling)
 				continue
@@ -229,8 +217,10 @@ func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowReposi
 			continue
 		}
 
-		sources, srcDangling := resolveSourceEndpoints(w, flowNodeIDs, boundaries)
-		targets, tgtDangling := resolveTargetEndpoints(w, flowNodeIDs, boundaries)
+		// REMOTE flow-node 는 localFlowNodeIDs 에 없으므로 일반 노드로 취급되어, 와이어
+		// 엔드포인트가 살아남은 flow-node 핸들을 그대로 가리킨다(재배선 없음 — RB07).
+		sources, srcDangling := resolveSourceEndpoints(w, localFlowNodeIDs, boundaries)
+		targets, tgtDangling := resolveTargetEndpoints(w, localFlowNodeIDs, boundaries)
 
 		// dangling 경고(C05): 한쪽 끝이라도 flow-node 핸들 매칭에 실패하면 드롭.
 		if srcDangling != nil {

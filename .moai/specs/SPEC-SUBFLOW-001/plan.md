@@ -5,6 +5,8 @@
 
 > **구현 상태(2026-06-05, 브랜치 `feature/subflow-node`)**: M1(포트 모델)·M2(flow-node 등록/핸들)·M3(순환 검출)·M4(배포 인스턴스화) **구현 완료**. M5·M6(프론트 포트 UI/flow-node·피커)는 합성 노드 방식으로 구현 완료. 본문 마일스톤 표기는 spec 의 M1~M4(포트 모델/엔진 확장·순환검출/flow-node 프론트/경계 포트 UI) 그룹화와 매핑된다. 아래 § 1.3·§ 1.5 의 두 옵션은 **옵션 1(어댑터 사전 확장) + 직접 재배선** 으로 확정되었다.
 
+> **v1.3 상태(2026-06-09)**: 원격 참조 실행 의미를 **임베딩(v1.2 M8~M10) → 라이브 브리지(v1.3 P1~P4)** 로 **SUPERSEDE**. v1.2 마일스톤 M8~M10(배포 시 fetch+인라인 확장)은 미구현 폐기되고, §2-bis 의 P1~P4(브리지 프로토콜/노드 측/매니저+엔진/web 상태)로 대체된다. 데이터 모델·피커(R01·RU01~RU05)는 보존. **OQ-RB1~RB6(spec §5.17) ✅ 전부 RESOLVED(2026-06-09, 사용자 권고안대로 확정) — Run 진입 가능**.
+
 ## 1. 기술 접근
 
 ### 1.1 백엔드 — 플로우 레벨 포트 모델 (`pkg/flow`)
@@ -108,30 +110,38 @@
 - 검증: 통합 테스트 + 기존 엔진/어댑터 회귀 스위트.
 - 의존: 전 마일스톤.
 
-## 2-bis. 마일스톤 (v1.2 — 원격 서브플로우 참조)
+## 2-bis. 마일스톤 (v1.3 — 원격 참조 = 라이브 브리지)
 
-> v1.2 는 v1.1 의 로컬 서브플로우 모델 위에 **원격 노드 플로우 참조**를 얹는다. 데이터 모델·피커(web) → 배포 시 원격 해석(backend) → 실패/순환/중첩 + 제약 표면화 순으로 분할한다. **SPEC-REMOTE-001 의 query 프록시(M8, `flow`/`get`)·미러(그룹 E)·게이팅(REQ-J05)에 의존**한다. **OQ-R1~R5 확정 후 Run 진입**.
+> **v1.2(임베딩, M8~M10) SUPERSEDED → v1.3(브리지, P1~P4)**. v1.2 의 "배포 시 fetch+인라인 확장(M9)" 은 device/secret 무동작 한계로 폐기되었다. v1.3 은 원격 플로우를 **원격 노드에서 실행**하고 출력을 로컬로 **라이브 중계**한다. 분할: 브리지 프로토콜(remote 프로토콜) → 노드 측 브리지(실행+탭+전송) → 매니저 측 브리지+엔진 통합+라이프사이클 → web(상태 표시기). **SPEC-REMOTE-001 의 WS 세션(그룹 B)·command(그룹 D)·stream 패턴(그룹 J)·게이팅(REQ-J05)에 의존**한다. **OQ-RB1~RB6(§5.17) ✅ 전부 RESOLVED(2026-06-09) — Run 진입 가능**.
+>
+> **데이터 모델/피커(v1.2 보존)**: `remote://` 파서(R01)·피커 원격 노드 선택기·원격 배지·핸들 계산(RU01~RU05)은 그대로 사용한다(P1 에서 재확인/연결). 핸들 계산용 query 프록시 `flow`/`get`(READ-ONLY) 만 사용하며, 임베딩 fetch 는 하지 않는다.
 
-### 마일스톤 8 — 우선순위 High(P1): 원격 참조 데이터 모델 + 피커 [web] — ⏳ 예정
-- `remote://{instance_id}/{flow_id}` 파싱/포맷 공유 규약(백·프론트).
-- flow-node 피커 `flow_picker` 확장: LOCAL(기본)/원격 노드 선택기(승인∧온라인 노드) + 원격 플로우 목록(`useFlowsTarget` 재사용) + 원격 배지.
-- `computePortsForNode`/`subflowPorts.ts` 원격 핸들 계산(query 프록시 `flow`/`get` READ-ONLY, 항상 최신).
-- 검증: 피커 원격 선택/저장/배지 Vitest, 파서 단위(백·프론트).
-- 의존: SPEC-REMOTE-001 M8(query 프록시·노드 목록). REQ-SUBFLOW-R01, RU01~RU05.
+### 마일스톤 P1 — 우선순위 High: 브리지 프로토콜 [remote protocol] — ⏳ 예정
+- `internal/remote/protocol.go` 에 flow-bridge 메시지 타입 추가: `bridge_open`/`bridge_open_ack`/`bridge_input`/`bridge_output`/`bridge_status`/`bridge_close`(§5.14). `bridge_id` 상관(REQ-D07 패턴).
+- `internal/remote/server.go`·`client.go` 브리지 메시지 라우팅(기존 WS 세션 재사용, 신규 서버/포트/인증 없음 — RB02).
+- 참조 종류 분기(LOCAL=임베딩 유지 / REMOTE=브리지 — RB01): `remote://` 파서 공유 규약(백·프론트, R01 보존 연결).
+- 검증: bridge_protocol_test(메시지 직렬화 라운드트립·상관 매칭·다중 브리지 구분·분기 판별).
+- 의존: SPEC-REMOTE-001 그룹 B/D/J(WS 세션·메시지 프레임). REQ-SUBFLOW-RB01~RB04, R01(보존).
 
-### 마일스톤 9 — 우선순위 High(P2): 배포 시 원격 해석 [backend] + 원격 fetch 배선 — ⏳ 예정
-- `RemoteFlowFetcher` 인터페이스 + `remote.Server.DispatchQuery("flow","get",…)` 위 구현체, `FlowServiceAdapter` 주입(미주입/비-서버 모드 → 배포 에러).
-- `ExpandSubflows` 원격 분기: `remote://` 판별 → fetch → 역직렬화 → 인라인 확장(네임스페이스·직접 재배선·상한 재사용).
-- 항상 최신(매 배포 fetch, 영속화 안 함).
-- 검증: subflow_remote_expand_test(원격 fetch 성공/단일·다중 인스턴스 격리/네임스페이스), fake fetcher 주입.
-- 의존: 마일스톤 8, SPEC-REMOTE-001 M8(DispatchQuery). REQ-SUBFLOW-R02~R05, R07.
+### 마일스톤 P2 — 우선순위 High: 노드 측 브리지 [node] — ⏳ 예정
+- 노드가 `bridge_open` 수신 시 참조 플로우를 **실행**(소유 모델 = **OQ-RB1/RB5 ✅ RESOLVED 매니저 관리형 자동 배포** — 실행 중이면 재사용)하고 `bridge_open_ack` 반환.
+- 참조 플로우의 입출력 **경계 포트 tap**: `bridge_input` → 입력 경계 포트(`__flow_input__`) 주입, 출력 경계 포트(`__flow_output__`) → `bridge_output` 전송(§5.15·§5.16).
+- 게이팅(승인∧온라인∧노출 — RB08), 쓰기 authz·미승인/범위 밖 입력 거부(RB11), 페이로드 redaction 준용(§5.14).
+- 검증: 노드 측 브리지 단위(실행 시작/포트 tap/입력 주입/출력 전송/거부), fake WS 주입.
+- 의존: P1, SPEC-REMOTE-001 게이팅(REQ-J05)·노출(E07). REQ-SUBFLOW-RB05·RB06·RB08·RB11.
 
-### 마일스톤 10 — 우선순위 Medium(P3): 실패/순환/중첩 처리 + 제약 표면화 — ⏳ 예정
-- 실패 의미: 오프라인→503·타임아웃→504·누락/노드오류→502 → 배포 거부(stale/empty 무음 금지).
-- 중첩 원격 참조 거부(fetch 정의에 flow-node 포함 시 에러), 깊이/노드 상한 적용.
-- 제약 표면화(OQ-R5 확정 시): 배포 시 비차단 경고 + best-effort 정적 스캔(시크릿 보유 노드·미해결 agent/device 참조 나열).
-- 검증: 오프라인/타임아웃/누락/중첩-거부/상한 케이스, 제약 경고 검증.
-- 의존: 마일스톤 9. REQ-SUBFLOW-R06, R08, R09, RC01~RC03.
+### 마일스톤 P3 — 우선순위 High: 매니저 측 브리지 + 엔진 통합 + 라이프사이클 [manager/engine] — ⏳ 예정
+- 매니저 측 브리지 엔드포인트: flow-node 가 **원격 모드**로 동작(로컬 미확장 — RB07). `ExpandSubflows` 는 원격 참조를 만나면 확장하지 않고 엔드포인트로 남김.
+- 엔진 통합: flow-node 입력 핸들 수신 → `bridge_input` 전송, `bridge_output` 수신 → 출력 핸들 하류 emit(RB07).
+- 라이프사이클(§5.15): 로컬 배포 → bridge_open, undeploy → bridge_close, 노드 오프라인 → teardown+무출력+상태, 재접속 → 재open(그룹 B 재사용 — RB09). 백프레셔/순서(OQ-RB3 — RB10).
+- 검증: 라이프사이클/실패 매핑 테스트(open/실행/메시지 라우팅 end-to-end with fake node, 오프라인 무출력, 재접속 재open, 백프레셔), LOCAL bare-id 임베딩 회귀 0.
+- 의존: P1·P2. REQ-SUBFLOW-RB05·RB07·RB09·RB10·RB12, RC01~RC04(노드 실행 → 시크릿/device 정상 + 잔존 한계).
+
+### 마일스톤 P4 — 우선순위 Medium: web 브리지 상태 표시기 — ⏳ 예정
+- flow-node **브리지 상태 표시기**(미연결/연결됨·실행중/오프라인/오류 — RU06), 원격 배지(RU04 보존)와 통합.
+- 상태 소스: 원격 노드 online/offline(그룹 B/G) + 브리지 라이프사이클(RB03) 이벤트.
+- 검증: 브리지 상태 표시/오프라인 무출력 표시 Vitest.
+- 의존: P3, 그룹 RU(보존). REQ-SUBFLOW-RU06, RC04.
 
 ## 3. 위험 및 대응
 
@@ -146,18 +156,21 @@
 | 엔진 침습(옵션 2 선택 시) 회귀 | 기존 배포 경로 영향 | **해소: 옵션 1(어댑터 사전 확장) 채택 — 엔진/options.go 불변** |
 | 패키지 내 옵션 이름 충돌 | 노드용/플로우용 `WithInputPorts` 혼동 | 플로우 레벨은 `WithFlowInputPorts` 등 구분 네이밍 |
 
-### 3-bis. 위험 및 대응 (v1.2 — 원격 서브플로우 참조)
+### 3-bis. 위험 및 대응 (v1.3 — 원격 라이브 브리지)
+
+> v1.2 임베딩 위험(redacted/agent·device 무동작/분산 순환/stale fetch)은 **브리지로 대부분 해소**된다(노드 실행). 아래는 v1.3 브리지 고유 위험이다.
 
 | 위험 | 영향 | 대응 |
 |------|------|------|
-| 원격 정의 redacted(시크릿 마스킹) | 시크릿 의존 원격 노드 매니저 실행 시 무동작 → "동작하는 듯 실패" | **제약 명시(REQ-SUBFLOW-RC01)** + 배포 시 경고/정적 스캔(OQ-R5). self-contained/비시크릿 로직 한정 권고 |
-| agent/device 참조가 원격-전용 | 매니저 환경 해석 실패 | **제약 명시(REQ-SUBFLOW-RC02)** + 배포 시 미해결 참조 경고. self-contained 한정 |
-| 분산 순환(매니저↔원격 상호 참조) | 매니저가 원격 그래프 미순회 → 순환 미검출 위험 | **중첩 원격 참조 v1 거부(REQ-SUBFLOW-R08)** + 깊이/노드 상한(R09). self-contained 경계로 분산 순환 원천 차단 |
-| 배포 시 노드 오프라인/누락 | 무음 stale/empty 사용 시 잘못된 배포 | **하드 실패(REQ-SUBFLOW-R06, OQ-R3 권고)** — 명확한 에러, F03 일관 |
-| 비-서버 모드/해석기 미주입 | 원격 참조 무해석 배포 | **해석기 부재 배포 거부(REQ-SUBFLOW-R07)** |
-| SPEC-REMOTE-001 query 프록시 의존 | M8 미구현/계약 변경 시 차단 | 의존 명시(M8 `flow`/`get` `DispatchQuery`). `RemoteFlowFetcher` 인터페이스로 결합 격리(테스트 fake 주입) |
-| 매 배포 fetch 비용/지연 | 대형 원격 플로우 fetch 지연 | 단기 TTL 캐시(REMOTE REQ-J16)는 프록시 측에 존재. 항상 최신(OQ-R2 라이브) 우선, 캐시는 프록시 레이어가 처리 |
-| `remote://` 형식 모호성 | 로컬/원격 오판 | 결정적 스킴 판별(REQ-SUBFLOW-R01). bare id = 항상 로컬(하위 호환) |
+| 노드 오프라인 중 무출력 | flow-node 가 조용히 데이터 패싱 중단 → "왜 출력이 없지" 혼란 | **무출력 + 상태 표면화(RB09, RU06)**. stale 출력 무음 생성 금지. 재접속 시 자동 재open(그룹 B) |
+| 쓰기 채널 오남용(브리지가 노드 플로우에 데이터 주입) | 미승인/범위 밖 데이터 주입, 노드 측 부작용 | **쓰기 authz(RB11, OQ-RB6)** — 승인∧온라인∧노출 + 브리지 open/close·입력 감사. 노드가 미승인/범위 밖 주입 거부(REQ-D08 패턴) |
+| 백프레셔(느린 소비자) | 매니저/노드 메모리 폭증 | **포트별 경계 버퍼 + oldest-drop/coalesce(RB10, OQ-RB3)**, SPEC-REMOTE-001 J08b 재사용. FIFO 보존 |
+| 브리지 누수(teardown 누락) | 좀비 구독·원격 run 잔존 | 라이프사이클 엄격 관리(§5.15) — undeploy/오프라인/unsubscribe 시 teardown. flow-node 별 독립 brige_id(RB12) |
+| 원격 run 소유 모호(자동 배포 vs 상시) | 중복 실행/미실행 | **OQ-RB1/RB5 ✅ RESOLVED = 매니저 관리형 자동 배포**. 이미 실행 중이면 재사용 |
+| 입력 방향 v1 포함 부담 | 양방향 구현 복잡·authz 리스크 | **OQ-RB4 ✅ RESOLVED = 양방향 v1 포함**. authz 는 RB11/OQ-RB6 으로 통제(output-only 폴백 미채택) |
+| SPEC-REMOTE-001 WS 세션 의존 | 그룹 B/D 계약 변경 시 차단 | 기존 세션·프레임 재사용(RB02). 브리지 메시지는 프로토콜 상수 추가로 격리. fake WS 주입 테스트 |
+| `remote://` 형식 모호성 | 로컬/원격 오판 | 결정적 스킴 판별(REQ-SUBFLOW-R01 보존). bare id = 항상 로컬(하위 호환) |
+| LOCAL 임베딩 회귀 | bare-id 서브플로우 동작 변경 | 참조 종류 분기(RB01)로 LOCAL 경로 불변 보장 + 기존 회귀 스위트 100% |
 
 ## 4. 개발 방법론
 
@@ -173,10 +186,11 @@
 - 통합/회귀: 단독+합성 배포, 메시지 라우팅 end-to-end, 기존 플로우 불변.
 - 품질 게이트: TRUST 5, LSP zero-error(run), Go `go test -race ./...` + golangci-lint, 프론트 Vitest.
 
-### 5-bis. 검증 전략 (v1.2 — 원격 서브플로우 참조)
+### 5-bis. 검증 전략 (v1.3 — 원격 라이브 브리지)
 
-- **백엔드 단위(신규=TDD)**: `remote://` 파서, `RemoteFlowFetcher` fake 주입 기반 `ExpandSubflows` 원격 분기(원격 fetch 성공 → 인라인 확장, 네임스페이스 격리), 실패 매핑(오프라인 503/타임아웃 504/누락 502 → 배포 거부), 중첩 원격 참조 거부, 비-서버 모드 거부, 상한.
-- **프론트 단위(신규=TDD)**: 피커 원격 노드 선택기·원격 플로우 목록(`useFlowsTarget` 재사용)·`remote://` 저장·원격 배지·원격 핸들 계산(query 프록시 모킹).
-- **통합/회귀**: LOCAL 플로우 + 원격 참조 flow-node 배포 → 매니저에서 원격 정의 fetch·확장·실행 end-to-end(승인∧온라인 노드). bare id 로컬 참조 회귀 0(기존 동작 불변). SPEC-REMOTE-001 query 프록시 계약(`flow`/`get`) 연동.
-- **제약 검증**: 시크릿 보유/agent·device 원격-전용 참조 플로우에서 경고 표면화(OQ-R5 확정 시), 실행 지역성(원격 노드 비-피어) 동작 확인.
-- **의존 전제**: SPEC-REMOTE-001 M8(`DispatchQuery` `flow`/`get`)·게이팅(REQ-J05)·미러(그룹 E) 가용.
+- **백엔드 단위(신규=TDD)**: `remote://` 파서, flow-bridge 메시지 직렬화 라운드트립·`bridge_id` 상관·참조 종류 분기(RB01), 노드 측 브리지(참조 플로우 실행·경계 포트 tap·입력 주입·출력 전송·미승인/범위 밖 입력 거부), 매니저 측 엔진 통합(입력→bridge_input·bridge_output→하류 emit), 라이프사이클(open/close/teardown/재open), 백프레셔.
+- **프론트 단위(신규=TDD)**: 피커 원격 노드 선택기·원격 플로우 목록·`remote://` 저장·원격 배지·원격 핸들 계산(query 프록시 모킹 — RU01~RU05 보존), **브리지 상태 표시기**(RU06: 미연결/실행중/오프라인/오류).
+- **통합/회귀**: LOCAL 플로우 + 원격 참조 flow-node 배포 → **원격 노드(fake)에서 참조 플로우 실행 → 출력 bridge_output → 로컬 flow-node 출력 핸들 → 하류 로컬 노드 수신** end-to-end. 양방향 입력 포워딩(로컬 소스 → bridge_input → 원격 입력 경계 포트). 노드 오프라인 → flow-node 무출력 + 상태. bare id 로컬 임베딩 회귀 0(기존 동작 불변).
+- **device/secret 해소 검증**: 노드-로컬 시크릿/디바이스 의존 참조 플로우가 **노드 실행으로 정상 출력**함을 확인(RC01/RC02 반전). 실행 지역성(노드=라이브 실행 피어, RC03) 확인.
+- **의존 전제**: SPEC-REMOTE-001 그룹 B(WS 세션·재접속)·그룹 D(메시지 프레임/상관 패턴)·게이팅(REQ-J05)·노출(E07) 가용. 피커 핸들 계산용 query 프록시 `flow`/`get`(READ-ONLY).
+- **OQ 전제**: OQ-RB1~RB6 ✅ 전부 RESOLVED(2026-06-09). 백프레셔(포트별 경계 버퍼+oldest-drop/coalesce)·입력 방향(양방향)·소유 모델(매니저 관리형 자동 배포)·쓰기 authz(승인∧온라인∧노출+감사) 확정값에 맞춰 테스트.
