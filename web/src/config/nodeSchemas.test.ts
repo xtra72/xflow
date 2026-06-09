@@ -5,7 +5,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { computePortsForNode, type PortDef } from './nodeSchemas';
+import { computePortsForNode, getConfigSchema, type PortDef } from './nodeSchemas';
+import type { ConfigField } from '@/types/node';
+
+/** nodeType 의 config 필드 중 name 으로 하나를 찾는다. */
+function findField(nodeType: string, name: string): ConfigField | undefined {
+  return getConfigSchema(nodeType)?.fields.find((f) => f.name === name);
+}
 
 /** 출력 포트 이름 집합(순서 무시)을 추출한다. */
 function outputNames(ports: PortDef[]): string[] {
@@ -186,5 +192,85 @@ describe('computePortsForNode — flow-node 동적 포트 (SPEC-SUBFLOW-001)', (
       output_ports: { a: 1 } as unknown as string[],
     });
     expect(ports).toEqual([]);
+  });
+});
+
+// 중첩 메타데이터 그룹 emit 토글 (P4 / SPEC nested-metadata-group).
+//   - agent / device 그룹은 기본 ON: 스키마 default=true 로 직렬화 시 OFF 만 false 를 보낸다.
+//   - HVACR/디바이스 노드는 emit_agent + emit_device 둘 다, 그 외 에이전트 노드(serial/tcp/mqtt/modbus)는 emit_agent 만.
+describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
+  // emit_agent 가 default ON 으로 노출되는 노드 — HVACR(디바이스) + 그 외 에이전트 IO 노드.
+  const AGENT_TOGGLE_NODES = [
+    'samsung_hvacr01_status',
+    'samsung_hvacr01_control',
+    'samsung_hvacr01',
+    'lgap',
+    'lg_hvacr02_status',
+    'lg_hvacr02_control',
+    'lg_hvacr02',
+    'lg_hvacr01_status',
+    'lg_hvacr01',
+    'century_hvacr01_status',
+    'century_hvacr01',
+    'modbus',
+    'modbus-writer',
+    'mqtt-subscriber',
+    'mqtt-publisher',
+    'serial-in',
+    'serial-out',
+    'tcp-in',
+    'tcp-out',
+  ] as const;
+
+  // emit_device 까지 노출되는 노드 — HVACR/디바이스 그룹만.
+  const DEVICE_TOGGLE_NODES = [
+    'samsung_hvacr01_status',
+    'samsung_hvacr01_control',
+    'samsung_hvacr01',
+    'lgap',
+    'lg_hvacr02_status',
+    'lg_hvacr02_control',
+    'lg_hvacr02',
+    'lg_hvacr01_status',
+    'lg_hvacr01',
+    'century_hvacr01_status',
+    'century_hvacr01',
+  ] as const;
+
+  // emit_agent 만 노출하고 emit_device 는 노출하지 않는 노드(디바이스 아님).
+  const AGENT_ONLY_NODES = [
+    'modbus',
+    'modbus-writer',
+    'mqtt-subscriber',
+    'mqtt-publisher',
+    'serial-in',
+    'serial-out',
+    'tcp-in',
+    'tcp-out',
+  ] as const;
+
+  it.each(AGENT_TOGGLE_NODES)('%s 는 emit_agent 토글을 default=true / advanced 로 노출한다', (nodeType) => {
+    const field = findField(nodeType, 'emit_agent');
+    expect(field, `${nodeType} 에 emit_agent 필드가 있어야 함`).toBeDefined();
+    expect(field?.type).toBe('boolean');
+    // 기본 ON: default=true 여야 폼이 미변경 시 아무것도 보내지 않고(absent=ON), OFF 시에만 false 직렬화.
+    expect(field?.default).toBe(true);
+    expect(field?.advanced).toBe(true);
+  });
+
+  it.each(DEVICE_TOGGLE_NODES)('%s 는 emit_device 토글을 default=true / advanced 로 노출한다', (nodeType) => {
+    const field = findField(nodeType, 'emit_device');
+    expect(field, `${nodeType} 에 emit_device 필드가 있어야 함`).toBeDefined();
+    expect(field?.type).toBe('boolean');
+    expect(field?.default).toBe(true);
+    expect(field?.advanced).toBe(true);
+  });
+
+  it.each(AGENT_ONLY_NODES)('%s 는 emit_device 토글을 노출하지 않는다 (디바이스 노드 아님)', (nodeType) => {
+    expect(findField(nodeType, 'emit_device')).toBeUndefined();
+  });
+
+  it('modbus-poller 는 agent 그룹을 emit 하지 않으므로 emit_agent 토글이 없다', () => {
+    expect(findField('modbus-poller', 'emit_agent')).toBeUndefined();
   });
 });

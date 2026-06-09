@@ -1279,11 +1279,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           raw: '[]byte (바이너리 원본)',
           data: '562d04445500670445500000204...',
         },
-        metadata: { node_id: 'node-abc-123', agent_type: 'serial' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123' },
       },
       raw_out: {
         payload: { raw: '[]byte (프레이밍 이전 원본)' },
-        metadata: { node_id: 'node-abc-123', port: 'raw_out' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123', port: 'raw_out' },
       },
     },
   },
@@ -1314,7 +1314,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
       out: {
         payload: { raw: '[56 2d 04 44 55 ...]', data: 'V-\\u0004DU...' },
-        metadata: { node_id: 'node-abc-123' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123' },
       },
     },
   },
@@ -1343,14 +1343,14 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           raw: '[]byte (바이너리 원본)',
           data: '48656c6c6f2066726f6d20636c69656e74',
         },
-        metadata: { 'tcp.remote_addr': '192.168.1.100:5678', 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-server' },
+        metadata: { agent: { type: 'tcp-server', id: 'agent-1' }, 'tcp.remote_addr': '192.168.1.100:5678', 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-server' },
       },
       'out (tcp-client)': {
         payload: {
           raw: '[]byte (바이너리 원본)',
           data: '48656c6c6f2066726f6d20736572766572',
         },
-        metadata: { 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-client' },
+        metadata: { agent: { type: 'tcp-client', id: 'agent-1' }, 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-client' },
       },
     },
   },
@@ -1382,7 +1382,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
       out: {
         payload: { raw: '[4f 4b]', data: 'OK' },
-        metadata: { 'tcp.node_id': 'node-abc', 'tcp.remote_addr': '192.168.1.100:5678' },
+        metadata: { agent: { type: 'tcp-server', id: 'agent-1' }, 'tcp.node_id': 'node-abc', 'tcp.remote_addr': '192.168.1.100:5678' },
       },
     },
   },
