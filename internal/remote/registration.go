@@ -303,6 +303,10 @@ func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.Can
 		return false
 	}
 	now := time.Now()
+	// 라이브 연결을 먼저 등록한 뒤 managed(approved+online) 상태로 전이한다. 이 순서는
+	// "IsManaged==true ⇒ connFor 성공" 불변을 보장하여, 디스패치/스트림/브리지 호출자가
+	// IsManaged 통과 후 connFor 가 비어 있는 경합(no live connection)을 보지 않게 한다.
+	s.registerConn(instanceID, conn, cancel)
 	s.setNodeState(instanceID, RegStatusApproved, true, now)
 	s.mu.Lock()
 	if st := s.nodes[instanceID]; st != nil {
@@ -310,7 +314,6 @@ func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.Can
 		st.Version = node.Version
 	}
 	s.mu.Unlock()
-	s.registerConn(instanceID, conn, cancel)
 	s.persistOnline(instanceID, true, now)
 	s.logger.Info("승인 노드 재접속 — 세션 복원", "instance_id", instanceID)
 	return true

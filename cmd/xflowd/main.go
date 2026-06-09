@@ -458,6 +458,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("remote.bridge").Warn("브리지 tap 노드 등록 실패", "error", regErr)
 	}
 
+	// SPEC-SUBFLOW-001 P3(그룹 RB): 매니저 측 라이브 브리지 엔드포인트 노드(입력 forwarder/
+	// 출력 emitter)를 등록한다. 살아남은 remote:// flow-node 가 server 모드 배포 시 이 두
+	// 노드로 재배선되어 원격 노드와 입출력을 브리지한다(엔진 불변 — 일반 노드 타입 추가).
+	// 비-server 모드에선 인스턴스화되지 않으며(opener 미주입 → 재배선 거부), 등록만 무해하다.
+	if regErr := service.RegisterRemoteBridgeNodes(registry); regErr != nil {
+		obs.Loggers.NewLogger("remote.bridge").Warn("매니저 브리지 노드 등록 실패", "error", regErr)
+	}
+
 	// 6.5. 플로우 저장소 초기화
 	storageCfg := cfg.Storage()
 	storageLogger := obs.Loggers.NewLogger("storage")
@@ -798,6 +806,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 은 device/secret 무동작 한계로 폐기되었다(§1.2 결정 5). 매니저는 원격 정의를
 		// fetch·확장하지 않으며, 원격 참조 flow-node 는 ExpandSubflows 에서 라이브 노드로 남아
 		// P3 의 매니저 측 브리지 통합(FlowBridgeOpener 구현 주입)에서 처리된다.
+
+		// P3 라이브 브리지 opener 주입(REQ-SUBFLOW-RB05): server 모드에서만 살아남은 remote://
+		// flow-node 가 라이브 브리지로 실행된다. flowSvc.DeployFlow 가 재배선 시 이 opener 로
+		// remote.Server 위에 bridge_open 을 전송한다(노드 권위 경계 포트 — RB06). 비-server
+		// 모드는 opener 미주입이므로 remote:// flow-node 배포가 명확한 오류로 거부된다.
+		flowSvc.SetRemoteBridgeOpener(service.NewServerBridgeOpener(
+			remoteServer, obs.Loggers.NewLogger("remote.bridge.opener").Logger()))
 
 		// 관리 WS 핸들러: 노드 토큰 핸드셰이크 검증 활성화(재접속 세션 복원 — REQ-C05).
 		remoteWSHandler := handler.NewRemoteHandler(remoteServer,

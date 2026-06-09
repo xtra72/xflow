@@ -37,6 +37,11 @@ const DefaultHeartbeatTimeout = 90 * time.Second
 // 결과가 이 시간 내 도착하지 않으면 명령은 타임아웃 처리되고 미적용으로 간주된다.
 const DefaultCommandTimeout = 30 * time.Second
 
+// DefaultBridgeOpenTimeout 은 bridge_open 후 bridge_open_ack 대기 기본 제한 시간이다
+// (SPEC-SUBFLOW-001 RB05). 이 시간 내 ack 가 도착하지 않으면 OpenBridge 는 타임아웃
+// 오류를 반환한다(노드 미응답/실행 시작 실패로 간주).
+const DefaultBridgeOpenTimeout = 30 * time.Second
+
 // Conn 은 관리 채널의 메시지 단위 양방향 연결 추상화이다.
 // gorilla/websocket 연결을 래핑하거나, 테스트에서 인메모리로 구현한다.
 type Conn interface {
@@ -180,6 +185,13 @@ type Server struct {
 	pendingQuery  map[string]chan QueryResultPayload // query_id -> 결과 채널(M8)
 	queryCache    *queryCache                        // 단기 TTL READ 캐시(REQ-J16)
 	streamManager *streamManager                     // 브라우저-노드 스트림 팬아웃(REQ-J08)
+
+	// P3(SPEC-SUBFLOW-001 그룹 RB) 라이브 브리지 상태. open 대기 상관(bridge_id →
+	// ack 채널)과 활성 브리지 레지스트리(bridge_id → ServerBridge)를 보유한다.
+	bridgeOpenTimeout time.Duration
+	bridgeMu          sync.Mutex
+	pendingBridge     map[string]chan BridgeOpenAckPayload // bridge_id -> open ack 채널(RB05)
+	bridges           map[string]*ServerBridge             // bridge_id -> 활성 브리지(RB07/RB12)
 }
 
 // NewServer 는 Server 를 생성한다. auth 가 nil 이면 부트스트랩 authenticator(빈
@@ -195,6 +207,7 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 	if cfg.QueryTimeout <= 0 {
 		cfg.QueryTimeout = DefaultQueryTimeout
 	}
+	bridgeOpenTimeout := DefaultBridgeOpenTimeout
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -218,6 +231,10 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 		queryTimeout: cfg.QueryTimeout,
 		pendingQuery: make(map[string]chan QueryResultPayload),
 		queryCache:   newQueryCache(cfg.QueryCacheTTL, DefaultQueryCacheMaxEntries),
+
+		bridgeOpenTimeout: bridgeOpenTimeout,
+		pendingBridge:     make(map[string]chan BridgeOpenAckPayload),
+		bridges:           make(map[string]*ServerBridge),
 	}
 	s.streamManager = newStreamManager(s)
 	return s
@@ -268,6 +285,9 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 			// M8(REQ-J08b): 세션 종료 시 이 노드의 모든 브라우저 스트림을 teardown 한다
 			// (노드 오프라인/연결 종료 → 해당 노드 스트림 전부 종료, 누수 없음).
 			s.teardownNodeStreams(instanceID)
+			// P3(SUBFLOW RB09): 세션 종료 시 이 노드의 모든 라이브 브리지를 teardown 한다
+			// (최종 offline status 방출 + 채널 close — 매니저 엔진 노드가 무출력으로 전이).
+			s.teardownNodeBridges(instanceID)
 			s.unregisterConn(instanceID)
 			s.markOffline(instanceID)
 		}
@@ -333,6 +353,18 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 			// 스트림 갱신/터미널 오류 프레임을 브라우저 소비자로 팬아웃한다(M8, REQ-J08).
 			s.touch(instanceID)
 			s.routeStreamData(msg.Payload)
+		case TypeBridgeOpenAck:
+			// 라이브 브리지 개설 결과를 대기 중인 OpenBridge 호출로 상관한다(SUBFLOW RB05/RB06).
+			s.touch(instanceID)
+			s.routeBridgeOpenAck(msg.Payload)
+		case TypeBridgeOutput:
+			// 원격 출력 경계 메시지를 소유 브리지의 Outputs 채널로 라우팅한다(SUBFLOW RB07).
+			s.touch(instanceID)
+			s.routeBridgeOutput(msg.Payload)
+		case TypeBridgeStatus:
+			// 브리지 라이프사이클/헬스 신호를 소유 브리지의 Status 채널로 라우팅한다(SUBFLOW RB09).
+			s.touch(instanceID)
+			s.routeBridgeStatus(msg.Payload)
 		case TypeInventorySnapshot:
 			// 접속 시 전체 인벤토리 — 노드별 미러를 종류별로 교체한다(REQ-E01/E03).
 			s.touch(instanceID)
