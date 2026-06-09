@@ -636,26 +636,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	agentSvc.SetNameResolver(eng)
 	nodeSvc := service.NewNodeServiceAdapter(registry, obs.Loggers.NewLogger("api.service.node").Logger())
 
-	// 9.1a. 자동 시작 플로우 복원
-	{
-		autoStartLogger := obs.Loggers.NewLogger("flow.autostart").Logger()
-		if storedFlows, flErr := repo.List(context.Background()); flErr == nil {
-			autoStartCount := 0
-			for _, f := range storedFlows {
-				if f.Metadata()["auto_start"] == "true" {
-					if err := flowSvc.StartFlow(context.Background(), f.ID()); err != nil {
-						autoStartLogger.Warn("플로우 자동 시작 실패", "flowID", f.ID(), "flowName", f.Name(), "error", err)
-					} else {
-						autoStartLogger.Info("플로우 자동 시작 완료", "flowID", f.ID(), "flowName", f.Name())
-						autoStartCount++
-					}
-				}
-			}
-			if autoStartCount > 0 {
-				autoStartLogger.Info("플로우 자동 시작 완료", "count", autoStartCount)
-			}
-		}
-	}
+	// 9.1a. 자동 시작 플로우 복원은 원격 관리 와이어링 완료 이후(아래 10.2절)로 미뤄진다.
+	// remote:// flow-node 를 가진 플로우는 server 모드의 SetRemoteBridgeOpener / client 모드의
+	// SetBridgeTapSource 가 flowSvc 에 주입된 뒤에야 배포(재배선)할 수 있기 때문이다. 여기서
+	// 자동 시작하면 opener/tap source 미주입 상태라 remote:// flow-node 가 ErrRemoteBridge
+	// Unavailable 로 배포 실패한다(부팅 auto-start 회귀). 이 블록 이후의 핸들러/인벤토리/쿼리
+	// 소스는 flowSvc 인스턴스만 참조하고 "이미 시작된 플로우"에 의존하지 않으므로 이동이 안전하다.
 
 	flowHandler := handler.NewFlowHandler(flowSvc, obs.Loggers.NewLogger("api.handler.flow").Logger(), handler.WithEventPublisher(eventPub), handler.WithAgentManager(agentSvc))
 	agentHandler := handler.NewAgentHandler(agentSvc, obs.Loggers.NewLogger("api.handler.agent").Logger(), handler.WithFlowManager(flowSvc))
@@ -1091,6 +1077,33 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		logger.Info("원격 관리 클라이언트 시작",
 			"instance_id", instanceID, "server_url", rmCfg.ServerURL)
+	}
+
+	// 10.2. 자동 시작 플로우 복원 (원격 관리 와이어링 완료 후).
+	// 9.5b(SetRemoteBridgeOpener — server) 및 10.1 client(SetBridgeTapSource) 의 두 모드
+	// switch 가 모두 완료된 뒤 실행한다. 이로써 remote:// flow-node 를 가진 플로우의 배포
+	// (재배선)가 opener(server) / tap source(client) 주입 이후에 일어나 ErrRemoteBridge
+	// Unavailable 없이 성공한다(부팅 auto-start 회귀 수정). server.Start(ctx) 직전에 두어
+	// 노드의 WS dial-in 보다 먼저 매니저 측 브리지 컨트롤러를 오프라인 시작시킨다(노드 도착
+	// 시 자동 연결 — remote_bridge_node.go 의 offline-at-boot 허용과 짝).
+	{
+		autoStartLogger := obs.Loggers.NewLogger("flow.autostart").Logger()
+		if storedFlows, flErr := repo.List(context.Background()); flErr == nil {
+			autoStartCount := 0
+			for _, f := range storedFlows {
+				if f.Metadata()["auto_start"] == "true" {
+					if err := flowSvc.StartFlow(context.Background(), f.ID()); err != nil {
+						autoStartLogger.Warn("플로우 자동 시작 실패", "flowID", f.ID(), "flowName", f.Name(), "error", err)
+					} else {
+						autoStartLogger.Info("플로우 자동 시작 완료", "flowID", f.ID(), "flowName", f.Name())
+						autoStartCount++
+					}
+				}
+			}
+			if autoStartCount > 0 {
+				autoStartLogger.Info("플로우 자동 시작 완료", "count", autoStartCount)
+			}
+		}
 	}
 
 	sigCh := make(chan os.Signal, 1)

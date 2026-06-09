@@ -136,26 +136,53 @@ func defaultReopenBackoff(attempt int) time.Duration {
 	return d + jitter
 }
 
-// start 는 OpenBridge 로 라이브 브리지를 열고(RB05) self-healing 감독 고루틴을 시작한다.
-// opener 미주입 시 ErrRemoteBridgeUnavailable.
+// start 는 라이브 브리지를 열고(RB05) self-healing 감독 고루틴을 시작한다. PERMANENT 오설정
+// (opener 미주입 — server 모드 요구)만 deploy 를 실패시키고, TRANSIENT 초기 open 실패(부팅 시
+// 노드 오프라인/미관리/open 타임아웃)는 deploy 를 실패시키지 않는다.
 //
-//	초기 open 은 동기적으로 성공해야 한다(deploy-time 게이팅 — 첫 OpenBridge 실패 시 에러를
-//	반환해 배포를 실패시킨다, 기존 동작 유지). 초기 open 성공 후에만 감독 고루틴이 라이프
-//	사이클(open→run→(브리지 사망)→reopen)을 인계받는다. 노드 PROGRAM 재시작으로 브리지가
-//	의도치 않게 죽으면(펌프 종료/채널 close) 감독자가 bounded 백오프로 OpenBridge 를 재시도해
-//	노드가 돌아오면 자동 재연결한다(c.bridge + 펌프만 교체, onOutput 보존 → 출력 투명 재개).
+//	deploy-time 게이팅(PERMANENT): opener==nil 이면 ErrRemoteBridgeUnavailable 을 반환해 배포를
+//	실패시킨다(비-server 모드는 remote:// flow-node 를 실행할 수 없다, 기존 동작 유지).
+//
+//	초기 open 성공(fast path): caller(deploy) ctx 로 동기 개설에 성공하면 c.bridge 를 즉시
+//	설정해 start() 반환 직후 forwardInput 이 동작하고, 감독자가 그 브리지로 첫 세대를 바로
+//	실행한다(펌프 즉시 시작). 노드 PROGRAM 재시작으로 브리지가 죽으면(펌프 종료/채널 close)
+//	감독자가 bounded 백오프로 재개설해 노드가 돌아오면 자동 재연결한다(c.bridge + 펌프만 교체,
+//	onOutput 보존 → 출력 투명 재개).
+//
+//	초기 open TRANSIENT 실패(offline-at-boot): 매니저 부팅 시 원격 노드는 아직 연결되지 않았다
+//	(노드는 server.Start 가 WS 엔드포인트를 올린 뒤에야 dial-in 하며, 이는 auto_start 보다
+//	나중이다). 이 경우 deploy 를 실패시키지 않고 c.bridge 를 nil 로 둔 채(forwardInput 은
+//	조용히 드롭) 감독자를 "아직 열지 못함" 모드(nil 브리지)로 시작한다. 감독자는 reopen 백오프
+//	루프로 OpenBridge 를 재시도해 노드가 온라인+관리됨이 되는 즉시 브리지를 열고 펌프를 시작한다
+//	— 출력이 노드 도착 시 자동으로 재개된다.
 func (c *managerBridgeController) start(ctx context.Context) error {
 	if c.opener == nil {
-		return ErrRemoteBridgeUnavailable
-	}
-	// 초기 open: caller(deploy) ctx 로 동기 개설 — 실패 시 배포 실패(기존 동작).
-	bridge, err := c.opener.OpenBridge(ctx, c.instanceID, c.remoteFlowID, c.inputPorts, c.outputPorts)
-	if err != nil {
-		return fmt.Errorf("remote bridge open(instance=%q, flow=%q): %w", c.instanceID, c.remoteFlowID, err)
+		return ErrRemoteBridgeUnavailable // PERMANENT — server 모드 요구.
 	}
 
-	// 감독 ctx 는 stop() 이 취소한다(백오프 sleep + 진행 중 OpenBridge + 펌프 종료).
+	// 초기 open: caller(deploy) ctx 로 한 번 동기 시도한다(fast path 보존).
+	bridge, err := c.opener.OpenBridge(ctx, c.instanceID, c.remoteFlowID, c.inputPorts, c.outputPorts)
+
+	// 감독 ctx 는 stop() 이 취소한다(백오프 sleep + 진행 중 OpenBridge + 펌프 종료). cancel 은
+	// 고루틴 시작 전에 mu 하에 설정해 stop() 이 초기 open-retry 루프까지 취소할 수 있게 한다.
 	superCtx, cancel := context.WithCancel(context.Background())
+
+	if err != nil {
+		// TRANSIENT(노드 오프라인/미관리/타임아웃) — deploy 를 실패시키지 않는다. c.bridge 는
+		// nil 로 두고(forwardInput 조용히 드롭), 감독자를 nil 브리지로 시작해 노드 도착 시 연다.
+		c.mu.Lock()
+		c.cancel = cancel
+		c.mu.Unlock()
+
+		c.wg.Add(1)
+		go c.supervise(superCtx, nil)
+
+		c.logger.Info("매니저 라이브 브리지 초기 미가용 — 노드 연결 대기(오프라인 시작)",
+			"instance_id", c.instanceID, "remote_flow_id", c.remoteFlowID,
+			"input_ports", c.inputPorts, "output_ports", c.outputPorts, "err", err)
+		return nil
+	}
+
 	c.mu.Lock()
 	c.cancel = cancel
 	// 초기 브리지를 동기적으로 설정한다 — start() 반환 직후 forwardInput 이 즉시 동작하도록
@@ -176,12 +203,28 @@ func (c *managerBridgeController) start(ctx context.Context) error {
 // 두 펌프가 종료하면(세대 종료) 의도적 stop 인지 노드 드롭인지 판별한다. stop(c.closed)이면
 // 종료, 아니면 bounded 백오프로 재개설한 뒤 다음 세대를 실행한다.
 //
+//	bridge==nil(never-opened-yet — offline-at-boot)로 진입하면 먼저 reopen 백오프 루프로 첫
+//	라이브 브리지를 연다(노드 도착까지 재시도). 이는 노드 드롭 후 재개설과 동일한 reopen 경로를
+//	재사용하므로 "초기 미가용"과 "사후 드롭"이 단일 코드 경로로 자가치유된다. bridge!=nil(초기
+//	open 성공 fast path)이면 그 브리지로 첫 세대를 바로 실행한다(펌프 즉시 시작).
+//
 //	감독자 자신이 c.wg 에 1 을 보유한 채로 매 세대의 펌프(c.wg.Add(2))를 추가하므로,
 //	stop() 의 c.wg.Wait() 가 Add 와 경합해 카운터가 0 으로 떨어지는 일이 없다(감독자가 살아
 //	있는 동안 카운터 >= 1). 따라서 단일 c.wg 로 안전하게 모든 고루틴을 추적한다.
 func (c *managerBridgeController) supervise(ctx context.Context, bridge FlowBridge) {
 	defer c.wg.Done()
 	attempt := 0
+
+	// never-opened-yet: 초기 open 이 transient 로 실패해 nil 브리지로 시작했다 — 노드가
+	// 도착할 때까지 reopen 백오프 루프로 첫 브리지를 연다. stop(ctx 취소) 시 깔끔히 종료한다.
+	if bridge == nil {
+		first, ok := c.reopen(ctx, &attempt)
+		if !ok {
+			return // 첫 open 전 stop — 펌프 미시작, 회수할 브리지 없음.
+		}
+		bridge = first
+	}
+
 	for {
 		genWG := c.runGeneration(ctx, bridge)
 		// 세대 종료 대기: 두 펌프가 종료하면 반환한다. stop(ctx 취소) 또는 노드 드롭(채널
