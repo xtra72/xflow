@@ -9,11 +9,18 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
 const configureNodeMock = vi.hoisted(() => vi.fn());
+const setNodeTapMock = vi.hoisted(() => vi.fn());
 const useManagedNodesMock = vi.hoisted(() => vi.fn());
 const useRemoteModeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/nodeService', () => ({
   configureNode: configureNodeMock,
+}));
+
+// CustomNode 는 tap 토글에서 flowService.setNodeTap 을 호출한다. 그 외
+// flowService export 를 사용하지 않으므로 setNodeTap 만 모킹한다.
+vi.mock('@/services/api/flowService', () => ({
+  setNodeTap: setNodeTapMock,
 }));
 
 // 원격 브릿지 표시명({hostname}.{flowName}) 해석에 쓰이는 원격 훅을 모킹한다.
@@ -32,6 +39,7 @@ import {
 } from '@/contexts/RuntimeStatsContext';
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
+import { useTapStore } from '@/stores/tapStore';
 import { CustomNode } from './CustomNode';
 
 const NODE_ID = 'out-1';
@@ -288,5 +296,139 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
 
     const dot = document.querySelector('[data-bridge-status]');
     expect(dot?.getAttribute('data-bridge-status')).toBe('error');
+  });
+});
+
+// 노드 출력 tap(관찰) 토글: 플로우 실행 중(런타임 stats 존재)일 때만 노출되며,
+// 클릭 시 setNodeTap 을 호출하고 눈 인디케이터(data-tapped)가 상태를 반영한다.
+describe('CustomNode 출력 tap(관찰) 토글', () => {
+  const TAP_NODE_ID = 'proc-1';
+
+  beforeEach(() => {
+    setNodeTapMock.mockReset();
+    useEditorStore.getState().resetEditor();
+    useUIStore.getState().clearNotifications();
+    useTapStore.getState().reset();
+    useManagedNodesMock.mockReset().mockReturnValue({ data: [] });
+    useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'disabled' } });
+  });
+
+  /** 일반 노드를 (선택적 런타임 stats 와 함께) 렌더한다. stats 존재 = 실행 중. */
+  function renderTapNode(opts: { running: boolean }) {
+    const data = {
+      label: 'transform',
+      nodeType: 'function',
+      category: 'processing',
+    };
+    useEditorStore.setState({
+      nodes: [
+        { id: TAP_NODE_ID, type: 'custom', position: { x: 0, y: 0 }, data },
+      ],
+    });
+    const props = {
+      id: TAP_NODE_ID,
+      data,
+      selected: false,
+    } as unknown as React.ComponentProps<typeof CustomNode>;
+
+    const statsMap: Record<string, NodeRuntimeStats> = opts.running
+      ? {
+          [TAP_NODE_ID]: {
+            inMessages: 0,
+            outMessages: 0,
+            state: 'running',
+            ports: [],
+          },
+        }
+      : {};
+
+    return render(
+      <MemoryRouter>
+        <I18nProvider>
+          <RuntimeStatsContext.Provider value={statsMap}>
+            <CustomNode {...props} />
+          </RuntimeStatsContext.Provider>
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('플로우 미실행(런타임 stats 없음)이면 관찰 토글을 렌더하지 않는다', () => {
+    renderTapNode({ running: false });
+    expect(screen.queryByRole('button', { name: '관찰 시작' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '관찰 중지' })).toBeNull();
+  });
+
+  it('실행 중이면 관찰 토글이 OFF 상태로 렌더된다', () => {
+    renderTapNode({ running: true });
+    expect(screen.getByRole('button', { name: '관찰 시작' })).toBeInTheDocument();
+  });
+
+  it('클릭 시 setNodeTap 을 enabled=true 로 호출하고 인디케이터가 ON 으로 바뀐다', async () => {
+    setNodeTapMock.mockResolvedValueOnce({
+      flow_id: 'flow-1',
+      node_id: TAP_NODE_ID,
+      enabled: true,
+    });
+    useEditorStore.getState().setCurrentFlowId('flow-1');
+
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 시작' }));
+
+    // 낙관적 갱신: 스토어와 인디케이터가 즉시 ON.
+    await waitFor(() => {
+      expect(useTapStore.getState().tappedNodeIds[TAP_NODE_ID]).toBe(true);
+    });
+    expect(setNodeTapMock).toHaveBeenCalledWith('flow-1', TAP_NODE_ID, true);
+    expect(screen.getByRole('button', { name: '관찰 중지' })).toBeInTheDocument();
+    const toggle = document.querySelector('[data-tap-toggle]');
+    expect(toggle?.getAttribute('data-tapped')).toBe('true');
+  });
+
+  it('이미 관찰 중이면 클릭 시 setNodeTap 을 enabled=false 로 호출한다', async () => {
+    setNodeTapMock.mockResolvedValueOnce({
+      flow_id: 'flow-1',
+      node_id: TAP_NODE_ID,
+      enabled: false,
+    });
+    useEditorStore.getState().setCurrentFlowId('flow-1');
+    useTapStore.getState().setTapped(TAP_NODE_ID, true);
+
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 중지' }));
+
+    await waitFor(() => {
+      expect(setNodeTapMock).toHaveBeenCalledWith('flow-1', TAP_NODE_ID, false);
+    });
+    await waitFor(() => {
+      expect(useTapStore.getState().tappedNodeIds[TAP_NODE_ID]).toBeUndefined();
+    });
+  });
+
+  it('서버 적용 실패 시 낙관적 갱신을 되돌리고 경고를 띄운다', async () => {
+    setNodeTapMock.mockRejectedValueOnce(new APIError('INTERNAL', 'boom', 500));
+    useEditorStore.getState().setCurrentFlowId('flow-1');
+
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 시작' }));
+
+    // 실패 후 롤백: 관찰 집합에서 제거되고 경고 알림이 추가된다.
+    await waitFor(() => {
+      expect(useUIStore.getState().notifications).toHaveLength(1);
+    });
+    expect(useTapStore.getState().tappedNodeIds[TAP_NODE_ID]).toBeUndefined();
+    expect(useUIStore.getState().notifications[0]?.type).toBe('warning');
+  });
+
+  it('currentFlowId 가 없으면 setNodeTap 을 호출하지 않는다', () => {
+    // resetEditor 로 currentFlowId 는 null.
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 시작' }));
+
+    expect(setNodeTapMock).not.toHaveBeenCalled();
   });
 });
