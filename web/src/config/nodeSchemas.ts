@@ -296,7 +296,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'key_value_map',
           label: 'metadata 필드',
           description:
-            '남길 metadata 키(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
+            '남길 metadata 키(화이트리스트). 최상위 키(node_id), 그룹 전체(device), 그룹 내 필드(device.id — 점 1단계) 지정 가능. 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다. 주의: 필터 ON 시 목록에 없는 그룹(agent/device)도 제거됩니다.',
           keyLabel: '필드명',
           valueLabel: '채울 값 (fill 모드)',
           valuePlaceholder: '예: unknown',

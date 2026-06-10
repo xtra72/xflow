@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/xtra/xflow/pkg/flow"
@@ -27,10 +28,24 @@ const (
 // payload / metadata / message 세 그룹에 대해 각각 필터 on/off 토글을 가지며,
 // 누락된 필드는 on_missing 정책(ignore/drop/fill)에 따라 처리한다.
 //
-// 스코프: payload_fields 와 metadata_fields 는 최상위(top-level) 키만 대상으로 한다.
-// (dot path 미지원 — top-level 키가 기준선.)
+// 스코프:
+//   - payload_fields 는 최상위(top-level) 키만 대상으로 한다 (dot path 미지원).
+//   - metadata_fields 는 메타데이터 nested group 을 인식한다. 각 엔트리는 다음 형식이다:
+//   - `key` (점 없음): top-level string 키 OR group 키 전체.
+//     예) `device` → device 그룹 전체 보존, `node_id` → top-level string 보존.
+//   - `group.field` (점 1개): group 안의 단일 필드.
+//     예) `device.id` → device 그룹에서 id 필드만 남김(나머지 device 필드 제거).
+//   - `a.b.c` (점 2개 이상): group 은 정확히 한 단계 깊이이므로 무효 — 무시된다(에러 관대).
+//     결합 규칙: 같은 그룹에 전체 키(`device`)와 필드 키(`device.id`)가 함께 있으면
+//     전체 키가 우선한다(그룹 전체 보존). `device.id` 와 `device.name` 만 있으면
+//     device 그룹은 {id, name} 으로 축소된다.
+//
 // message-level 에서 id 와 timestamp 는 구조적(structural) 필드이므로 항상 보존되며
 // 드랍할 수 없다. 실질적으로 message_filter 로 비울 수 있는 것은 type 뿐이다.
+//
+// 동작 변경 주의: metadata_filter 가 켜진 상태에서, 과거에는 메타데이터 group 값이
+// 필터에 보이지 않아 항상 통과했다. 이제 group 도 string 키와 동일하게 화이트리스트
+// 대상이 된다 — metadata_fields 에 나열되지 않은 group 은 제거된다.
 type SelectFieldNode struct {
 	*BaseNode
 
@@ -164,8 +179,11 @@ func (n *SelectFieldNode) Process(_ context.Context, msg message.Message) ([]mes
 		if payloadFilter && hasMissing(msg.Payload().ToMap(), payloadFields) {
 			return n.emitDrop(msg, dropToPort)
 		}
-		if metadataFilter && hasMissing(metadataToAnyMap(msg), metadataFields) {
-			return n.emitDrop(msg, dropToPort)
+		if metadataFilter {
+			topLevel, perGroup := parseMetadataFields(metadataFields)
+			if metadataHasMissing(msg.Metadata().Raw(), topLevel, perGroup) {
+				return n.emitDrop(msg, dropToPort)
+			}
 		}
 	}
 
@@ -188,19 +206,8 @@ func (n *SelectFieldNode) Process(_ context.Context, msg message.Message) ([]mes
 
 	// --- metadata 재구성 ---
 	if metadataFilter {
-		srcMeta := metadataToAnyMap(msg)
-		filtered := selectKeys(srcMeta, metadataFields, onMissing)
-		md := msg.Metadata()
-		// 화이트리스트에 없는 기존 키 제거.
-		for k := range srcMeta {
-			if _, keep := filtered[k]; !keep {
-				md.Remove(k)
-			}
-		}
-		// 유지/채움 키 적용 (metadata 값은 문자열).
-		for k, v := range filtered {
-			md.Set(k, anyToString(v))
-		}
+		topLevel, perGroup := parseMetadataFields(metadataFields)
+		rebuildMetadata(msg.Metadata(), topLevel, perGroup, onMissing)
 	}
 
 	// --- message-level (type) 재구성 ---
@@ -237,25 +244,144 @@ func hasMissing(src map[string]any, fields map[string]string) bool {
 	return false
 }
 
-// metadataToAnyMap 은 메시지 메타데이터를 map[string]any 로 변환한다.
-func metadataToAnyMap(msg message.Message) map[string]any {
-	all := msg.Metadata().All()
-	out := make(map[string]any, len(all))
-	for k, v := range all {
-		out[k] = v
+// parseMetadataFields 는 metadata_fields 화이트리스트를 두 구조로 분해한다.
+//   - topLevel:  점 없는 키 → fill 기본값. top-level string 키 또는 group 전체 키.
+//   - perGroup:  group 키 → (field 이름 → fill 기본값). `group.field` 형식.
+//
+// `a.b.c` 처럼 점이 2개 이상인 엔트리는 무효(group 은 한 단계 깊이)이므로 무시한다.
+func parseMetadataFields(fields map[string]string) (topLevel map[string]string, perGroup map[string]map[string]string) {
+	topLevel = make(map[string]string)
+	perGroup = make(map[string]map[string]string)
+	for key, fillVal := range fields {
+		group, field, hasDot := strings.Cut(key, ".")
+		if !hasDot {
+			// 점 없음 → top-level 키 (string 또는 group 전체).
+			topLevel[key] = fillVal
+			continue
+		}
+		if group == "" || field == "" || strings.Contains(field, ".") {
+			// 빈 그룹/필드 또는 한 단계 초과(a.b.c) → 무효, 무시.
+			continue
+		}
+		fset := perGroup[group]
+		if fset == nil {
+			fset = make(map[string]string)
+			perGroup[group] = fset
+		}
+		fset[field] = fillVal
 	}
-	return out
+	return topLevel, perGroup
 }
 
-// anyToString 은 metadata 값(any)을 문자열로 정규화한다.
-func anyToString(v any) string {
-	if s, ok := v.(string); ok {
-		return s
+// rebuildMetadata 는 화이트리스트(topLevel/perGroup)에 따라 메타데이터를 재구성한다.
+//
+// 현재 메타데이터를 Raw() 로 순회하며 각 top-level 키를 다음과 같이 처리한다:
+//   - string 값: topLevel 에 선택되었으면 유지, 아니면 제거.
+//   - group 값:
+//   - topLevel 에 전체 선택(whole)되었으면 그룹 전체 보존.
+//   - perGroup 에 필드 선택이 있으면 선택 필드만으로 그룹 재구성
+//     (subset 이 비면 SetGroup 의 no-op delete 로 그룹 제거).
+//   - 둘 다 아니면 그룹 제거.
+//
+// on_missing == fill 일 때 누락된 top-level string 키와 group 필드를 기본값으로 채운다.
+// (group 자체가 없으면 group 을 생성한다.)
+func rebuildMetadata(md message.Metadata, topLevel map[string]string, perGroup map[string]map[string]string, mode onMissingMode) {
+	raw := md.Raw()
+
+	for k, v := range raw {
+		switch val := v.(type) {
+		case map[string]string:
+			// group 값.
+			if _, whole := topLevel[k]; whole {
+				// 전체 선택 → 그룹 보존(전체 키 우선; perGroup 무시).
+				continue
+			}
+			fieldSel, ok := perGroup[k]
+			if !ok {
+				// 선택되지 않은 그룹 → 제거.
+				md.Remove(k)
+				continue
+			}
+			// 선택 필드만으로 그룹 재구성.
+			subset := make(map[string]string, len(fieldSel))
+			for field, fillVal := range fieldSel {
+				if fv, exists := val[field]; exists {
+					subset[field] = fv
+				} else if mode == onMissingFill {
+					subset[field] = fillVal
+				}
+				// ignore/drop: 건너뜀.
+			}
+			// subset 이 비면 SetGroup 이 키를 제거한다(no-op delete).
+			md.SetGroup(k, subset)
+		default:
+			// string 값.
+			if _, sel := topLevel[k]; !sel {
+				md.Remove(k)
+			}
+			// 선택된 string 은 그대로 둔다.
+		}
 	}
-	if v == nil {
-		return ""
+
+	if mode != onMissingFill {
+		return
 	}
-	return fmt.Sprintf("%v", v)
+
+	// fill: 누락된 top-level string 키 채움.
+	// (부재 키는 string/group 구분이 불가능하므로 string fill 로 처리한다 —
+	//  기존 top-level string fill 동작과 동일.)
+	for k, fillVal := range topLevel {
+		if _, exists := raw[k]; !exists {
+			md.Set(k, fillVal)
+		}
+	}
+
+	// fill: 그룹 자체가 부재인 perGroup 선택은 그룹을 생성하여 필드를 채운다.
+	// (그룹이 존재하지만 필드가 누락된 경우는 위 루프에서 이미 채워졌다.)
+	for group, fieldSel := range perGroup {
+		if _, whole := topLevel[group]; whole {
+			continue // 전체 키 우선.
+		}
+		if _, exists := raw[group]; exists {
+			continue // 위 루프에서 처리됨.
+		}
+		subset := make(map[string]string, len(fieldSel))
+		for field, fillVal := range fieldSel {
+			subset[field] = fillVal
+		}
+		md.SetGroup(group, subset)
+	}
+}
+
+// metadataHasMissing 은 화이트리스트(topLevel/perGroup) 중 raw 메타데이터에
+// 존재하지 않는 항목이 하나라도 있으면 true 를 반환한다 (drop 정책 판정용).
+//
+// 누락 판정:
+//   - topLevel 키: raw 에 해당 키(string 또는 group)가 없으면 누락.
+//   - perGroup `group.field`: group 이 없거나, group 에 해당 field 가 없으면 누락.
+//     (단, 같은 group 이 topLevel 에 전체 선택되어 있으면 perGroup 판정은 건너뛴다.)
+func metadataHasMissing(raw map[string]any, topLevel map[string]string, perGroup map[string]map[string]string) bool {
+	for key := range topLevel {
+		if _, ok := raw[key]; !ok {
+			return true
+		}
+	}
+	for group, fields := range perGroup {
+		if _, whole := topLevel[group]; whole {
+			continue // 전체 키 우선 — perGroup 판정 생략.
+		}
+		g, ok := raw[group].(map[string]string)
+		if !ok {
+			// 그룹 부재 또는 group 이 아님(string) → 누락.
+			return true
+		}
+		for field := range fields {
+			if _, ok := g[field]; !ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // selectKeys 는 src 맵에서 fields 화이트리스트에 해당하는 키만 추출한 새 맵을 반환한다.
