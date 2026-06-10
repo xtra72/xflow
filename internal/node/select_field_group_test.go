@@ -28,84 +28,14 @@ func newGroupTestMessage(strings map[string]string, groups map[string]map[string
 	return msg
 }
 
-// TestSelectFieldNode_Group_WholeGroupSelect 는 metadata_fields:[device] 가
-// device 그룹 전체를 보존하고, 나머지 그룹과 화이트리스트 외 string 키를 제거하는지 확인한다.
-func TestSelectFieldNode_Group_WholeGroupSelect(t *testing.T) {
-	t.Parallel()
-	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device": "",
-		},
-	})
-
-	msg := newGroupTestMessage(
-		map[string]string{"node_id": "n-1"},
-		map[string]map[string]string{
-			"device": {"type": "HVACR.IDU", "id": "dev-9", "name": "실내기"},
-			"agent":  {"type": "serial", "id": "a-1"},
-		},
-	)
-
-	out, err := sf.Process(context.Background(), msg)
-	require.NoError(t, err)
-	require.Len(t, out, 1)
-	md := out[0].Metadata()
-
-	// device 그룹 전체 보존
-	device, ok := md.GetGroup("device")
-	require.True(t, ok, "device 그룹은 전체 보존되어야 한다")
-	assert.Equal(t, map[string]string{"type": "HVACR.IDU", "id": "dev-9", "name": "실내기"}, device)
-
-	// agent 그룹 제거 (화이트리스트 미포함)
-	_, agentOk := md.GetGroup("agent")
-	assert.False(t, agentOk, "화이트리스트에 없는 agent 그룹은 제거되어야 한다")
-
-	// node_id string 제거 (화이트리스트 미포함)
-	assert.False(t, md.Has("node_id"), "화이트리스트에 없는 top-level string 키는 제거되어야 한다")
-}
-
-// TestSelectFieldNode_Group_InGroupFieldSelect 는 metadata_fields:[device.id] 가
-// device 그룹 안의 id 필드만 남기고, 다른 그룹은 제거하는지 확인한다.
-func TestSelectFieldNode_Group_InGroupFieldSelect(t *testing.T) {
-	t.Parallel()
-	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.id": "",
-		},
-	})
-
-	msg := newGroupTestMessage(
-		nil,
-		map[string]map[string]string{
-			"device": {"type": "HVACR.IDU", "id": "dev-9", "name": "실내기"},
-			"agent":  {"type": "serial", "id": "a-1"},
-		},
-	)
-
-	out, err := sf.Process(context.Background(), msg)
-	require.NoError(t, err)
-	require.Len(t, out, 1)
-	md := out[0].Metadata()
-
-	device, ok := md.GetGroup("device")
-	require.True(t, ok, "device 그룹은 id만 남아 생존해야 한다")
-	assert.Equal(t, map[string]string{"id": "dev-9"}, device, "device 그룹은 id 필드만 남아야 한다")
-
-	_, agentOk := md.GetGroup("agent")
-	assert.False(t, agentOk, "화이트리스트에 없는 agent 그룹은 제거되어야 한다")
-}
-
-// TestSelectFieldNode_Group_InGroupMultiFieldSelect 는 [device.id, device.name] 가
-// device 그룹을 {id, name} 으로 축소하는지 확인한다.
+// TestSelectFieldNode_Group_InGroupMultiFieldSelect 는 [$.metadata.device.id,
+// $.metadata.device.name] 가 device 그룹을 {id, name} 으로 축소하는지 확인한다.
 func TestSelectFieldNode_Group_InGroupMultiFieldSelect(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.id":   "",
-			"device.name": "",
+		"fields": map[string]any{
+			"$.metadata.device.id":   "",
+			"$.metadata.device.name": "",
 		},
 	})
 
@@ -125,16 +55,16 @@ func TestSelectFieldNode_Group_InGroupMultiFieldSelect(t *testing.T) {
 	assert.Equal(t, map[string]string{"id": "dev-9", "name": "실내기"}, device)
 }
 
-// TestSelectFieldNode_Group_Mixed 는 [node_id, agent.type, device] 혼합 선택이
-// node_id string 보존 + agent 그룹을 {type}으로 축소 + device 그룹 전체 보존하는지 확인한다.
+// TestSelectFieldNode_Group_Mixed 는 [$.metadata.node_id, $.metadata.agent.type,
+// $.metadata.device] 혼합 선택이 node_id string 보존 + agent 그룹을 {type}으로 축소 +
+// device 그룹 전체 보존하는지 확인한다.
 func TestSelectFieldNode_Group_Mixed(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"node_id":    "",
-			"agent.type": "",
-			"device":     "",
+		"fields": map[string]any{
+			"$.metadata.node_id":    "",
+			"$.metadata.agent.type": "",
+			"$.metadata.device":     "",
 		},
 	})
 
@@ -151,32 +81,29 @@ func TestSelectFieldNode_Group_Mixed(t *testing.T) {
 	require.Len(t, out, 1)
 	md := out[0].Metadata()
 
-	// node_id 보존, extra 제거
 	v, ok := md.Get("node_id")
 	assert.True(t, ok)
 	assert.Equal(t, "n-1", v)
 	assert.False(t, md.Has("extra"))
 
-	// agent → {type} 축소
 	agent, ok := md.GetGroup("agent")
 	require.True(t, ok)
 	assert.Equal(t, map[string]string{"type": "serial"}, agent)
 
-	// device → 전체 보존
 	device, ok := md.GetGroup("device")
 	require.True(t, ok)
 	assert.Equal(t, map[string]string{"type": "HVACR.IDU", "id": "dev-9", "name": "실내기"}, device)
 }
 
-// TestSelectFieldNode_Group_WholeWinsOverField 는 [device, device.id] 처럼
-// 같은 그룹에 전체 키와 필드 키가 동시에 있을 때, 전체 키(whole)가 우선하는지 확인한다.
+// TestSelectFieldNode_Group_WholeWinsOverField 는 [$.metadata.device,
+// $.metadata.device.id] 처럼 같은 그룹에 전체 키와 필드 키가 동시에 있을 때,
+// 전체 키(whole)가 우선하는지 확인한다.
 func TestSelectFieldNode_Group_WholeWinsOverField(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device":    "",
-			"device.id": "",
+		"fields": map[string]any{
+			"$.metadata.device":    "",
+			"$.metadata.device.id": "",
 		},
 	})
 
@@ -202,9 +129,8 @@ func TestSelectFieldNode_Group_WholeWinsOverField(t *testing.T) {
 func TestSelectFieldNode_Group_EmptySubsetRemovesGroup(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.nonexistent": "",
+		"fields": map[string]any{
+			"$.metadata.device.nonexistent": "",
 		},
 	})
 
@@ -224,14 +150,13 @@ func TestSelectFieldNode_Group_EmptySubsetRemovesGroup(t *testing.T) {
 }
 
 // TestSelectFieldNode_Group_OnMissingDrop_FieldAbsent 는 on_missing=drop 일 때
-// device.id 가 가리키는 필드가 그룹에 없으면 메시지를 드랍하는지 확인한다.
+// $.metadata.device.id 가 가리키는 필드가 그룹에 없으면 메시지를 드랍하는지 확인한다.
 func TestSelectFieldNode_Group_OnMissingDrop_FieldAbsent(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"on_missing":      "drop",
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.id": "",
+		"on_missing": "drop",
+		"fields": map[string]any{
+			"$.metadata.device.id": "",
 		},
 	})
 
@@ -249,14 +174,13 @@ func TestSelectFieldNode_Group_OnMissingDrop_FieldAbsent(t *testing.T) {
 }
 
 // TestSelectFieldNode_Group_OnMissingDrop_GroupAbsent 는 on_missing=drop 일 때
-// 그룹 자체가 없으면 device.id 가 누락으로 간주되어 드랍하는지 확인한다.
+// 그룹 자체가 없으면 $.metadata.device.id 가 누락으로 간주되어 드랍하는지 확인한다.
 func TestSelectFieldNode_Group_OnMissingDrop_GroupAbsent(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"on_missing":      "drop",
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.id": "",
+		"on_missing": "drop",
+		"fields": map[string]any{
+			"$.metadata.device.id": "",
 		},
 	})
 
@@ -273,10 +197,9 @@ func TestSelectFieldNode_Group_OnMissingDrop_GroupAbsent(t *testing.T) {
 func TestSelectFieldNode_Group_OnMissingFill_FieldInGroup(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"on_missing":      "fill",
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.id": "DEFAULT_ID",
+		"on_missing": "fill",
+		"fields": map[string]any{
+			"$.metadata.device.id": "DEFAULT_ID",
 		},
 	})
 
@@ -303,10 +226,9 @@ func TestSelectFieldNode_Group_OnMissingFill_FieldInGroup(t *testing.T) {
 func TestSelectFieldNode_Group_OnMissingFill_GroupAbsent(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"on_missing":      "fill",
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.id": "DEFAULT_ID",
+		"on_missing": "fill",
+		"fields": map[string]any{
+			"$.metadata.device.id": "DEFAULT_ID",
 		},
 	})
 
@@ -321,15 +243,14 @@ func TestSelectFieldNode_Group_OnMissingFill_GroupAbsent(t *testing.T) {
 	assert.Equal(t, map[string]string{"id": "DEFAULT_ID"}, device)
 }
 
-// TestSelectFieldNode_Group_TooDeepIgnored 는 한 단계 초과 경로(a.b.c)가
+// TestSelectFieldNode_Group_TooDeepIgnored 는 한 단계 초과 경로($.metadata.a.b.c)가
 // 무시(에러 관대)되는지 확인한다 — 해당 엔트리는 어떤 것도 선택하지 않는다.
 func TestSelectFieldNode_Group_TooDeepIgnored(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"device.id.deep": "", // 2단계 → 무시
-			"device.id":      "", // 유효
+		"fields": map[string]any{
+			"$.metadata.device.id.deep": "", // group 2단계 초과 → 무시
+			"$.metadata.device.id":      "", // 유효
 		},
 	})
 
@@ -347,17 +268,16 @@ func TestSelectFieldNode_Group_TooDeepIgnored(t *testing.T) {
 	device, ok := out[0].Metadata().GetGroup("device")
 	require.True(t, ok)
 	assert.Equal(t, map[string]string{"id": "dev-9"}, device,
-		"a.b.c 는 무시되고 유효한 device.id 만 적용되어야 한다")
+		"$.metadata.a.b.c 는 무시되고 유효한 $.metadata.device.id 만 적용되어야 한다")
 }
 
 // TestSelectFieldNode_Group_BackwardCompat_StringOnly 는 그룹이 없는
-// top-level string 전용 설정이 기존과 동일하게 동작하는지(회귀 없음) 확인한다.
+// top-level string 전용 설정이 동작하는지 확인한다.
 func TestSelectFieldNode_Group_BackwardCompat_StringOnly(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"node_id": "",
+		"fields": map[string]any{
+			"$.metadata.node_id": "",
 		},
 	})
 
@@ -377,14 +297,13 @@ func TestSelectFieldNode_Group_BackwardCompat_StringOnly(t *testing.T) {
 	assert.False(t, md.Has("other"))
 }
 
-// TestSelectFieldNode_Group_RemovedWhenNotListed 는 metadata_filter 가 켜진 상태에서
-// 화이트리스트에 없는 그룹이 (이제 필터 대상이 되어) 제거되는 동작 변경을 확인한다.
+// TestSelectFieldNode_Group_RemovedWhenNotListed 는 화이트리스트에 없는 그룹이
+// 제거되는지 확인한다 (단일 화이트리스트: 미나열 그룹 제거).
 func TestSelectFieldNode_Group_RemovedWhenNotListed(t *testing.T) {
 	t.Parallel()
 	sf := newSelectFieldForTest(t, map[string]any{
-		"metadata_filter": true,
-		"metadata_fields": map[string]any{
-			"node_id": "",
+		"fields": map[string]any{
+			"$.metadata.node_id": "",
 		},
 	})
 
@@ -404,5 +323,5 @@ func TestSelectFieldNode_Group_RemovedWhenNotListed(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "n-1", v)
 	_, agentOk := md.GetGroup("agent")
-	assert.False(t, agentOk, "필터 ON 시 화이트리스트에 없는 그룹은 제거되어야 한다 (동작 변경)")
+	assert.False(t, agentOk, "화이트리스트에 없는 그룹은 제거되어야 한다")
 }

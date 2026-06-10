@@ -241,19 +241,37 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   'select-field': {
     description:
-      '메시지에서 지정한 필드만 남깁니다. payload / metadata / 메시지 레벨(id·type·timestamp) 그룹별로 화이트리스트를 지정하고, 누락 필드는 무시/드랍/채움 처리합니다.',
-    inputDesc: '모든 메시지. payload / metadata / 메시지 레벨 필드를 화이트리스트로 필터링',
+      '메시지에서 지정한 경로의 필드만 남깁니다. payload / metadata / type 을 `$.` 경로 화이트리스트로 통합 지정하고, 누락 필드는 유지/드랍/채움 처리합니다.',
+    inputDesc: '모든 메시지. `$.` 경로 화이트리스트로 payload·metadata·type 을 통합 필터링',
     outputDesc:
-      '지정한 필드만 남긴 메시지(out). on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 drop 포트로.',
+      '지정한 경로만 남긴 메시지(out). on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 drop 포트로.',
     configSchema: {
       fields: [
+        {
+          name: 'fields',
+          type: 'key_value_map',
+          label: '선택 필드(경로)',
+          description:
+            '남길 필드의 `$.` 경로 화이트리스트입니다(store/mqtt 노드와 동일한 경로 문법).\n' +
+            '• `$.payload.<dotpath>` — 임의 깊이의 payload 필드 ($.payload.temperature, 중첩 $.payload.state.mode, 서브트리 전체 $.payload.state)\n' +
+            '• `$.metadata.<key>` — 최상위 metadata 문자열 또는 그룹 전체 ($.metadata.node_id, 그룹 전체 $.metadata.device)\n' +
+            '• `$.metadata.<group>.<field>` — 그룹 내 한 필드 ($.metadata.device.id)\n' +
+            '• `$.type` — 메시지 타입 유지(미지정 시 type 은 제거됨)\n' +
+            '• `$.id`, `$.timestamp` — 항상 보존(나열해도 무동작)\n' +
+            '화이트리스트 의미: fields 가 비어있지 않으면 나열되지 않은 모든 것(나열 안 된 payload 키, metadata 키/그룹, 그리고 $.type 미지정 시 type)이 제거됩니다. fields 가 비어있으면 그대로 통과(pass-through)합니다.\n' +
+            '값은 on_missing=fill 모드일 때만 채울 기본값으로 사용됩니다.',
+          keyLabel: '경로 ($.payload.x / $.metadata.device.id / $.type)',
+          valueLabel: '채울 값 (fill 모드)',
+          keyPlaceholder: '예: $.payload.temperature',
+          valuePlaceholder: '예: 0',
+        },
         {
           name: 'on_missing',
           type: 'select',
           label: '누락 필드 처리',
-          options: ['ignore', 'drop', 'fill'],
-          default: 'ignore',
-          description: 'ignore: 필드 생략 / drop: 메시지 전체 드랍 / fill: 지정한 기본값으로 채움',
+          options: ['keep', 'drop', 'fill'],
+          default: 'keep',
+          description: 'keep: 필드 생략 / drop: 메시지 전체 드랍 / fill: 지정한 기본값으로 채움',
         },
         {
           name: 'drop_to_port',
@@ -263,60 +281,6 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description:
             'on_missing=drop 으로 메시지가 드랍될 때, 버리지 않고 drop 출력 포트로 전송합니다. 끄면 메시지를 폐기합니다.',
           visibleWhen: { field: 'on_missing', value: 'drop' },
-        },
-        // --- payload 필터링 ---
-        {
-          name: 'payload_filter',
-          type: 'boolean',
-          label: 'payload 필터링',
-          default: false,
-          description: 'payload 필드 화이트리스트 필터링 사용 여부',
-        },
-        {
-          name: 'payload_fields',
-          type: 'key_value_map',
-          label: 'payload 필드',
-          description:
-            '남길 payload 필드명(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
-          keyLabel: '필드명',
-          valueLabel: '채울 값 (fill 모드)',
-          valuePlaceholder: '예: 0',
-          visibleWhen: { field: 'payload_filter', value: true },
-        },
-        // --- metadata 필터링 ---
-        {
-          name: 'metadata_filter',
-          type: 'boolean',
-          label: 'metadata 필터링',
-          default: false,
-          description: 'metadata 키 화이트리스트 필터링 사용 여부',
-        },
-        {
-          name: 'metadata_fields',
-          type: 'key_value_map',
-          label: 'metadata 필드',
-          description:
-            '남길 metadata 키(화이트리스트). 최상위 키(node_id), 그룹 전체(device), 그룹 내 필드(device.id — 점 1단계) 지정 가능. 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다. 주의: 필터 ON 시 목록에 없는 그룹(agent/device)도 제거됩니다.',
-          keyLabel: '필드명',
-          valueLabel: '채울 값 (fill 모드)',
-          valuePlaceholder: '예: unknown',
-          visibleWhen: { field: 'metadata_filter', value: true },
-        },
-        // --- 메시지 레벨 필터링 (id / type / timestamp) ---
-        {
-          name: 'message_filter',
-          type: 'boolean',
-          label: '메시지 레벨 필터링',
-          default: false,
-          description: 'id / type / timestamp 등 메시지 레벨 필드 필터링 사용 여부',
-        },
-        {
-          name: 'message_fields',
-          type: 'string_list',
-          label: '메시지 레벨 필드',
-          description:
-            '남길 메시지 레벨 필드 (id, type, timestamp 중). 안내: id / timestamp 는 구조상 항상 유지되며 실질적으로 type 만 제거 가능합니다.',
-          visibleWhen: { field: 'message_filter', value: true },
         },
       ],
     },

@@ -117,7 +117,7 @@ func (r *Registry) registerBuiltins() {
 		{"trigger", NewTriggerNode, "input", "스케줄 기반 데이터 자동 생성"},
 		{"chart-emitter", NewChartEmitterNode, "output", "차트 패널용 WebSocket 채널로 메시지 발행"},
 		{"inventory", NewInventoryNode, "processing", "in-process 디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit"},
-		{"select-field", NewSelectFieldNode, "processing", "메시지에서 지정한 필드만 남깁니다 (payload/metadata/message 그룹별 화이트리스트, 누락 시 무시/드랍/채움)"},
+		{"select-field", NewSelectFieldNode, "processing", "메시지에서 지정한 경로($.payload/$.metadata/$.type)만 남깁니다 (통합 화이트리스트, 누락 시 keep/drop/fill)"},
 		{"flow-node", NewFlowNodePlaceholder, "composition", "다른 플로우를 참조하는 서브플로우 노드 (배포 시 확장됨)"},
 	}
 	for _, b := range builtins {
