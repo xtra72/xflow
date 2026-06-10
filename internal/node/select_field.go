@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -23,6 +24,20 @@ const (
 	onMissingDrop onMissingMode = "drop"
 	// onMissingFill 은 누락된 경로를 설정된 fill 기본값으로 채워 포함한다.
 	onMissingFill onMissingMode = "fill"
+)
+
+// onRequiredMissingMode 는 required_fields 중 하나라도 누락되었을 때의 처리 정책이다.
+type onRequiredMissingMode string
+
+const (
+	// onRequiredErrorPort 는 원본(미변형) 메시지를 엔진 "error" 포트로 라우팅한다 (기본값).
+	// filter 의 on_reject=error_port 및 drop_to_port 의 _target_port 컨벤션을 미러링한다.
+	// Process 는 Go 에러를 반환하지 않고 메시지를 emit 한다.
+	onRequiredErrorPort onRequiredMissingMode = "error_port"
+	// onRequiredDrop 은 메시지를 폐기한다 (출력 없음). on_missing=drop 의 폐기 경로 미러링.
+	onRequiredDrop onRequiredMissingMode = "drop"
+	// onRequiredError 는 Process 에서 누락 필드명을 담은 Go 에러를 반환한다 (엔진 에러 경로).
+	onRequiredError onRequiredMissingMode = "error"
 )
 
 // legacySelectFieldKeys 는 v0.x 의 3-필터 설계에서 사용하던 제거된 설정 키이다.
@@ -82,8 +97,16 @@ type SelectFieldNode struct {
 	mdTopLevel map[string]string            // 점 없는 키 → fill 기본값 (string 또는 group 전체)
 	mdPerGroup map[string]map[string]string // group → (field → fill 기본값)
 
-	// typeKept 는 `$.type` 이 fields 에 포함되어 있는지 여부이다.
+	// typeKept 는 `$.type` 이 유효 화이트리스트(fields ∪ required_fields)에
+	// 포함되어 있는지 여부이다.
 	typeKept bool
+
+	// onRequiredMissing 은 required_fields 중 하나라도 누락되었을 때의 처리 정책이다.
+	onRequiredMissing onRequiredMissingMode
+
+	// requiredPaths 는 반드시 존재해야 하는 정규화된 $.-경로 목록이다 (정렬됨).
+	// 누락 보고의 결정성을 위해 정렬하며, 의미 없는 경로(bare/non-$.)는 제외한다.
+	requiredPaths []string
 
 	mu sync.RWMutex // 설정 보호 뮤텍스
 }
@@ -105,11 +128,12 @@ var _ Node = (*SelectFieldNode)(nil)
 func NewSelectFieldNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
 	n := &SelectFieldNode{
-		BaseNode:    base,
-		onMissing:   onMissingKeep, // 기본값
-		payloadRoot: &payloadNode{},
-		mdTopLevel:  map[string]string{},
-		mdPerGroup:  map[string]map[string]string{},
+		BaseNode:          base,
+		onMissing:         onMissingKeep,       // 기본값
+		onRequiredMissing: onRequiredErrorPort, // 기본값
+		payloadRoot:       &payloadNode{},
+		mdTopLevel:        map[string]string{},
+		mdPerGroup:        map[string]map[string]string{},
 	}
 	return n, nil
 }
@@ -174,16 +198,55 @@ func (n *SelectFieldNode) Configure(config map[string]any) error {
 	// drop_to_port: bool / "true"|"false" 문자열 모두 허용. 기본 false.
 	dropToPort, _ := configBool(config, "drop_to_port")
 
-	// fields 파싱.
+	// on_required_missing 정책 (기본 error_port).
+	onRequiredMissing := onRequiredErrorPort
+	if v, ok := config["on_required_missing"]; ok {
+		if s, ok := v.(string); ok {
+			switch s {
+			case string(onRequiredDrop):
+				onRequiredMissing = onRequiredDrop
+			case string(onRequiredError):
+				onRequiredMissing = onRequiredError
+			case string(onRequiredErrorPort):
+				onRequiredMissing = onRequiredErrorPort
+			default:
+				onRequiredMissing = onRequiredErrorPort
+			}
+		}
+	}
+
+	// fields(옵션) 와 required_fields(필수) 파싱. 값은 fill 기본값(required 는 무시).
 	fields := parseStringMap(config["fields"])
-	active := len(fields) > 0
-	payloadRoot, mdRaw, typeKept := parseSelectFields(fields)
+	required := parseStringMap(config["required_fields"])
+
+	// 유효 화이트리스트 = fields ∪ required_fields. projection 은 union 으로 수행한다.
+	union := make(map[string]string, len(fields)+len(required))
+	for k, v := range fields {
+		union[k] = v
+	}
+	for k, v := range required {
+		// 값이 비어있지 않은 fields 의 fill 기본값을 보존하기 위해, 이미 있으면 덮어쓰지 않는다.
+		// (required 는 항상 존재해야 하므로 fill 값이 의미 없지만, 동일 경로가 fields 에도
+		// 있으면 fields 의 fill 을 유지한다.)
+		if _, exists := union[k]; !exists {
+			union[k] = v
+		}
+	}
+
+	// active: union 이 비어있지 않으면 화이트리스트 필터 활성화.
+	active := len(union) > 0
+	payloadRoot, mdRaw, typeKept := parseSelectFields(union)
 	mdTopLevel, mdPerGroup := parseMetadataFields(mdRaw)
+
+	// required presence 체크용 경로 목록 (정규화 + 정렬).
+	requiredPaths := normalizeRequiredPaths(required)
 
 	// 원자적 설정 적용.
 	n.mu.Lock()
 	n.onMissing = onMissing
 	n.dropToPort = dropToPort
+	n.onRequiredMissing = onRequiredMissing
+	n.requiredPaths = requiredPaths
 	n.active = active
 	n.payloadRoot = payloadRoot
 	n.mdTopLevel = mdTopLevel
@@ -194,6 +257,36 @@ func (n *SelectFieldNode) Configure(config map[string]any) error {
 	return nil
 }
 
+// normalizeRequiredPaths 는 required_fields 맵의 키를 presence 체크 가능한 정규화된
+// $.-경로 목록으로 변환한다. `$.` prefix 가 없거나 bare $.payload / $.metadata 인
+// 의미 없는 경로는 제외하며(fields 와 동일한 관대 처리), 누락 보고의 결정성을 위해
+// 정렬한다. `$.id` / `$.timestamp` 는 구조적으로 항상 존재하므로 포함해도 무해하지만,
+// 노이즈를 줄이기 위해 제외한다.
+func normalizeRequiredPaths(required map[string]string) []string {
+	paths := make([]string, 0, len(required))
+	for path := range required {
+		if !strings.HasPrefix(path, "$.") {
+			continue // 관대: $. prefix 없으면 무시.
+		}
+		parts := strings.Split(path[2:], ".")
+		switch parts[0] {
+		case "payload", "metadata":
+			if len(parts) < 2 {
+				continue // bare $.payload / $.metadata → 무시.
+			}
+			paths = append(paths, path)
+		case "type":
+			paths = append(paths, path)
+		case "id", "timestamp":
+			// 항상 존재 → required 체크 불필요(무시).
+		default:
+			// 알 수 없는 root → 무시.
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 // Process 는 통합 화이트리스트 정책에 따라 출력 메시지를 구성한다.
 //
 // id 와 timestamp 는 구조적 필드이므로 항상 원본을 보존한다. 입력 메시지를 in-place 로
@@ -202,6 +295,8 @@ func (n *SelectFieldNode) Process(_ context.Context, msg message.Message) ([]mes
 	n.mu.RLock()
 	onMissing := n.onMissing
 	dropToPort := n.dropToPort
+	onRequiredMissing := n.onRequiredMissing
+	requiredPaths := n.requiredPaths
 	active := n.active
 	payloadRoot := n.payloadRoot
 	mdTopLevel := n.mdTopLevel
@@ -209,9 +304,18 @@ func (n *SelectFieldNode) Process(_ context.Context, msg message.Message) ([]mes
 	typeKept := n.typeKept
 	n.mu.RUnlock()
 
-	// fields 비어있음 → pass-through.
+	// fields ∪ required_fields 모두 비어있음 → pass-through.
 	if !active {
 		return []message.Message{msg}, nil
+	}
+
+	// --- 필수 필드 presence 체크 (projection 보다 먼저 수행) ---
+	// required 경로 중 하나라도 누락되면 on_required_missing 정책을 적용하고
+	// projection / on_missing 으로 진행하지 않는다.
+	if len(requiredPaths) > 0 {
+		if missing, ok := firstMissingRequired(msg, requiredPaths); !ok {
+			return n.handleRequiredMissing(msg, missing, onRequiredMissing)
+		}
 	}
 
 	// --- 드랍 판정 (drop 정책) ---
@@ -262,6 +366,109 @@ func (n *SelectFieldNode) emitDrop(msg message.Message, dropToPort bool) ([]mess
 	out := msg.Clone()
 	out.Metadata().Set("_target_port", "drop")
 	return []message.Message{out}, nil
+}
+
+// handleRequiredMissing 은 required 필드 누락 시 on_required_missing 정책을 적용한다.
+//   - error_port (기본): 원본(미변형) 메시지의 Clone 에 _target_port="error" 와
+//     에러 메타데이터(누락 필드명)를 설정하여 엔진 "error" 포트로 emit 한다
+//     (filter 의 on_reject=error_port 패턴 미러링). Go 에러는 반환하지 않는다.
+//   - drop: (nil, nil) 을 반환하여 메시지를 폐기한다 (on_missing=drop 폐기 경로 미러링).
+//   - error: 누락 필드명을 담은 Go 에러를 반환한다 (엔진 에러 경로 → sendErrorToWires).
+func (n *SelectFieldNode) handleRequiredMissing(
+	msg message.Message, missingPath string, mode onRequiredMissingMode,
+) ([]message.Message, error) {
+	switch mode {
+	case onRequiredDrop:
+		return nil, nil
+	case onRequiredError:
+		return nil, fmt.Errorf("select-field: required field %q missing", missingPath)
+	default: // onRequiredErrorPort
+		out := msg.Clone()
+		out.Metadata().Set(message.MetaKeyError,
+			fmt.Sprintf("select-field: required field %q missing", missingPath))
+		out.Metadata().Set(message.MetaKeyErrorNodeID, n.ID())
+		out.Metadata().Set("_target_port", "error")
+		return []message.Message{out}, nil
+	}
+}
+
+// firstMissingRequired 는 정렬된 required 경로를 순서대로 평가하여 메시지에서
+// 해석되지 않는 첫 경로를 반환한다. 모든 경로가 존재하면 ok=true 를 반환한다.
+// (정렬된 경로 + 첫 누락 보고로 결정적 에러 메시지를 보장한다.)
+//
+// 경로 문법은 fields 와 동일하다:
+//   - `$.payload.<dotpath>`        : 각 segment 를 따라 내려가 최종 키 존재 여부.
+//   - `$.metadata.<key>`           : raw[key] 존재 여부 (string 또는 group).
+//   - `$.metadata.<group>.<field>` : raw[group] 이 group(map[string]string) 이고
+//     field 가 존재해야 함.
+//   - `$.type`                     : msg.Type() 이 비어있지 않아야 함.
+func firstMissingRequired(msg message.Message, requiredPaths []string) (missing string, ok bool) {
+	for _, path := range requiredPaths {
+		if !requiredPathPresent(msg, path) {
+			return path, false
+		}
+	}
+	return "", true
+}
+
+// requiredPathPresent 는 단일 required $.-경로가 메시지에 존재하는지 평가한다.
+// normalizeRequiredPaths 가 의미 없는 경로를 미리 제거하므로, 여기서는 유효 경로만
+// 들어온다고 가정한다.
+func requiredPathPresent(msg message.Message, path string) bool {
+	parts := strings.Split(path[2:], ".") // "$." 제거
+	switch parts[0] {
+	case "payload":
+		return payloadPathPresent(msg.Payload().ToMap(), parts[1:])
+	case "metadata":
+		return metadataPathPresent(msg.Metadata().Raw(), parts[1:])
+	case "type":
+		return msg.Type() != ""
+	default:
+		// id / timestamp / 알 수 없는 root → 항상 존재로 간주 (체크 대상 아님).
+		return true
+	}
+}
+
+// payloadPathPresent 는 payload 맵에서 segment 경로가 해석되는지 확인한다.
+// 중간 segment 는 map 이어야 더 깊이 내려갈 수 있으며, 최종 segment 는 키만 존재하면 된다.
+func payloadPathPresent(src map[string]any, segs []string) bool {
+	cur := src
+	for i, seg := range segs {
+		v, exists := cur[seg]
+		if !exists {
+			return false
+		}
+		if i == len(segs)-1 {
+			return true // 최종 segment: 값 타입 무관, 존재만 하면 됨.
+		}
+		sub, ok := v.(map[string]any)
+		if !ok {
+			return false // 중간 경로가 map 이 아니면 더 내려갈 수 없음 → 누락.
+		}
+		cur = sub
+	}
+	return true
+}
+
+// metadataPathPresent 는 raw 메타데이터에서 metadata 경로가 해석되는지 확인한다.
+//   - segs 길이 1 (`$.metadata.<key>`): raw[key] 존재 여부.
+//   - segs 길이 2 (`$.metadata.<group>.<field>`): raw[group] 이 group 이고 field 존재.
+//   - 길이 3+ : metadata 는 한 단계 깊이만 지원 → 누락으로 간주.
+func metadataPathPresent(raw map[string]any, segs []string) bool {
+	switch len(segs) {
+	case 1:
+		_, exists := raw[segs[0]]
+		return exists
+	case 2:
+		g, ok := raw[segs[0]].(map[string]string)
+		if !ok {
+			return false
+		}
+		_, exists := g[segs[1]]
+		return exists
+	default:
+		return false
+	}
 }
 
 // parseSelectFields 는 통합 `fields` 화이트리스트를 도메인별 구조로 분해한다.
