@@ -627,6 +627,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// DebugSink 주입: output 노드의 editor 출력을 WebSocket으로 브로드캐스트
 	eng.SetDebugSink(ws.NewDebugSink(wsHub))
 
+	// 노드 출력 tap 주입: 와이어 없이 임의 노드의 출력 메시지를 관측한다.
+	// tapRegistry 는 런타임 전용 (flowID,nodeID) 관측 집합이고, TapObserver 는
+	// tap 된 노드의 출력만 node.output 으로 브로드캐스트한다 (미관측 노드는 zero-overhead).
+	// 플로우 시작 이전에 주입하므로 핫 패스 atomic 읽기와 경쟁하지 않는다.
+	tapRegistry := ws.NewTapRegistry()
+	eng.SetOutputObserver(ws.NewTapObserver(tapRegistry, wsHub))
+
 	eventPub := ws.NewEventPublisher(wsHub, obs.Loggers.NewLogger("api.ws.event").Logger())
 	eventPubRef = eventPub
 
@@ -643,7 +650,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// Unavailable 로 배포 실패한다(부팅 auto-start 회귀). 이 블록 이후의 핸들러/인벤토리/쿼리
 	// 소스는 flowSvc 인스턴스만 참조하고 "이미 시작된 플로우"에 의존하지 않으므로 이동이 안전하다.
 
-	flowHandler := handler.NewFlowHandler(flowSvc, obs.Loggers.NewLogger("api.handler.flow").Logger(), handler.WithEventPublisher(eventPub), handler.WithAgentManager(agentSvc))
+	flowHandler := handler.NewFlowHandler(flowSvc, obs.Loggers.NewLogger("api.handler.flow").Logger(), handler.WithEventPublisher(eventPub), handler.WithAgentManager(agentSvc), handler.WithTapRegistry(tapRegistry))
 	agentHandler := handler.NewAgentHandler(agentSvc, obs.Loggers.NewLogger("api.handler.agent").Logger(), handler.WithFlowManager(flowSvc))
 	nodeHandler := handler.NewNodeHandler(nodeSvc, obs.Loggers.NewLogger("api.handler.node").Logger())
 

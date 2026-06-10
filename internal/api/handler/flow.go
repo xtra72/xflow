@@ -39,6 +39,18 @@ type FlowManager interface {
 	RenameAgentInFlows(ctx context.Context, oldName, newName string) (int, error)
 }
 
+// TapController 는 노드 출력 tap(관측) 토글을 위한 인터페이스이다.
+// 핸들러를 구체적인 tap 레지스트리 구현(ws.TapRegistry)으로부터 분리한다.
+// tap 은 런타임 전용/임시 관측이므로 노드 존재 여부를 엄격히 검증하지 않는다(advisory).
+type TapController interface {
+	// SetTap 은 지정된 노드의 tap 상태를 설정한다.
+	SetTap(flowID, nodeID string, enabled bool)
+	// IsTapped 는 노드가 현재 tap 중인지 반환한다.
+	IsTapped(flowID, nodeID string) bool
+	// TappedNodes 는 플로우에서 현재 tap 중인 노드 ID 목록을 반환한다.
+	TappedNodes(flowID string) []string
+}
+
 // FlowInfo 는 핸들러가 반환하는 플로우 정보를 나타낸다.
 type FlowInfo struct {
 	ID          string         `json:"id"`
@@ -100,6 +112,7 @@ type FlowHandler struct {
 	flows  FlowManager
 	agents AgentManager       // nil 허용 (에이전트 조회 미사용 시)
 	events *ws.EventPublisher // nil 허용 (이벤트 미사용 시)
+	taps   TapController      // nil 허용 (노드 출력 tap 미사용 시)
 	logger *slog.Logger
 }
 
@@ -117,6 +130,15 @@ func WithEventPublisher(ep *ws.EventPublisher) FlowHandlerOption {
 func WithAgentManager(agents AgentManager) FlowHandlerOption {
 	return func(h *FlowHandler) {
 		h.agents = agents
+	}
+}
+
+// WithTapRegistry 는 FlowHandler 에 노드 출력 tap 컨트롤러를 설정한다.
+// 설정하면 tap 토글 라우트(POST /flows/{id}/nodes/{nodeID}/tap, GET /flows/{id}/taps)가
+// 등록된다. 미설정(nil)이면 해당 라우트는 등록되지 않는다.
+func WithTapRegistry(taps TapController) FlowHandlerOption {
+	return func(h *FlowHandler) {
+		h.taps = taps
 	}
 }
 
@@ -172,6 +194,12 @@ func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/flows/{id}/nodes", h.ListNodes)
 	g.GET("/flows/{id}/nodes/{nodeID}", h.GetNode)
 	g.POST("/flows/{id}/nodes/{nodeID}/configure", h.ConfigureNode)
+
+	// 노드 출력 tap 라우트는 TapController 가 주입된 경우에만 등록한다.
+	if h.taps != nil {
+		g.POST("/flows/{id}/nodes/{nodeID}/tap", h.TapNode)
+		g.GET("/flows/{id}/taps", h.ListTaps)
+	}
 }
 
 // List 는 페이지네이션을 적용하여 플로우 목록을 반환한다.
@@ -1126,6 +1154,58 @@ func (h *FlowHandler) ConfigureNode(ctx api.Context) error {
 		"id":      id,
 		"node_id": nodeID,
 		"status":  "configured",
+	}))
+}
+
+// TapNode 는 실행 중인 플로우 내 특정 노드의 출력 tap(관측)을 런타임으로 토글한다.
+// 와이어/재배포 없이 즉시 반영되며, tap 활성화 시 노드 출력 메시지가
+// WebSocket(node.output)으로 에디터에 스트리밍된다.
+// POST /flows/{id}/nodes/{nodeID}/tap
+// 요청 본문: { "enabled": true|false }
+//
+// tap 은 advisory(임시 관측)이므로 노드/플로우 존재 여부를 엄격히 검증하지 않는다.
+// 노드가 존재하지 않아도 설정은 레지스트리에 기록되며(무해), 출력이 없으면 스트림도 없다.
+func (h *FlowHandler) TapNode(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+	nodeID := ctx.Param("nodeID")
+	if nodeID == "" {
+		return api.ErrBadRequest.WithMessage("node id is required")
+	}
+
+	var req dto.NodeTapRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+
+	h.taps.SetTap(id, nodeID, req.Enabled)
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"flow_id": id,
+		"node_id": nodeID,
+		"enabled": req.Enabled,
+	}))
+}
+
+// ListTaps 는 지정된 플로우에서 현재 tap(관측) 중인 노드 ID 목록을 반환한다.
+// 에디터가 새로고침 시 tap 상태를 복원하는 데 사용된다.
+// GET /flows/{id}/taps
+func (h *FlowHandler) ListTaps(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+
+	nodeIDs := h.taps.TappedNodes(id)
+	if nodeIDs == nil {
+		nodeIDs = []string{}
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"flow_id":  id,
+		"node_ids": nodeIDs,
 	}))
 }
 
