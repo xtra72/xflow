@@ -60,9 +60,8 @@ export function DebugPanel() {
   const [entries, setEntries] = useState<DebugEntry[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  // 탭 출력 필터: 노드/포트 ('all' = 전체).
-  const [tapNodeFilter, setTapNodeFilter] = useState<string>('all');
-  const [tapPortFilter, setTapPortFilter] = useState<string>('all');
+  // 탭 출력 서브탭: 'all' = 전체, 그 외 = `${nodeId}${port}` 복합 키.
+  const [tapSubTab, setTapSubTab] = useState<string>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
   const wsRef = useRef<WSClient | null>(null);
@@ -94,27 +93,25 @@ export function DebugPanel() {
     return all;
   }, [outputsByNode]);
 
-  // 필터 옵션: 현재 탭 출력에 등장한 노드 ID / 포트 목록.
-  const tapNodeOptions = useMemo<string[]>(
-    () => Array.from(new Set(tapEntries.map((e) => e.nodeId))),
-    [tapEntries],
-  );
-  const tapPortOptions = useMemo<string[]>(
-    () => Array.from(new Set(tapEntries.map((e) => e.port))).sort(),
-    [tapEntries],
-  );
+  // 서브탭 목록: 현재 탭 출력에 등장한 (노드, 포트) 조합. 라벨순 정렬.
+  const subKey = (nodeId: string, port: string): string => `${nodeId}${port}`;
+  const tapSubTabs = useMemo<{ key: string; nodeId: string; port: string; label: string }[]>(() => {
+    const seen = new Map<string, { key: string; nodeId: string; port: string; label: string }>();
+    for (const e of tapEntries) {
+      const key = subKey(e.nodeId, e.port);
+      if (!seen.has(key)) {
+        const label = `${nodeLabelById.get(e.nodeId) ?? e.nodeId}:${e.port}`;
+        seen.set(key, { key, nodeId: e.nodeId, port: e.port, label });
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [tapEntries, nodeLabelById]);
 
-  // 노드/포트 필터 적용. 선택값이 더 이상 존재하지 않으면 'all' 로 간주(전체 표시).
+  // 선택 서브탭 적용. 선택 키가 더 이상 존재하지 않으면 전체로 폴백.
   const visibleTapEntries = useMemo<TapEntry[]>(() => {
-    const nodeOk = tapNodeFilter === 'all' || !tapNodeOptions.includes(tapNodeFilter);
-    const portOk = tapPortFilter === 'all' || !tapPortOptions.includes(tapPortFilter);
-    if (nodeOk && portOk) return tapEntries;
-    return tapEntries.filter(
-      (e) =>
-        (tapNodeFilter === 'all' || e.nodeId === tapNodeFilter) &&
-        (tapPortFilter === 'all' || e.port === tapPortFilter),
-    );
-  }, [tapEntries, tapNodeFilter, tapPortFilter, tapNodeOptions, tapPortOptions]);
+    if (tapSubTab === 'all' || !tapSubTabs.some((s) => s.key === tapSubTab)) return tapEntries;
+    return tapEntries.filter((e) => subKey(e.nodeId, e.port) === tapSubTab);
+  }, [tapEntries, tapSubTab, tapSubTabs]);
 
   const handleDebugMessage = useCallback((data: unknown) => {
     const msg = data as DebugMessage;
@@ -261,51 +258,37 @@ export function DebugPanel() {
         </button>
       </div>
 
-      {/* 탭 출력 필터 (노드/포트) */}
-      {isOpen && tab === 'tap' && tapEntries.length > 0 && (
-        <div className="flex items-center gap-2 border-t border-(--color-border-default) bg-gray-900 px-2 py-1 text-xs">
-          <span className="text-gray-400">필터</span>
-          <select
-            value={tapNodeFilter}
-            onChange={(e) => setTapNodeFilter(e.target.value)}
-            aria-label="노드 필터"
-            className="rounded border border-gray-700 bg-gray-950 px-1.5 py-0.5 text-gray-200"
+      {/* 탭 출력 서브탭 (노드:포트) */}
+      {isOpen && tab === 'tap' && tapSubTabs.length > 0 && (
+        <div className="flex items-center gap-1 overflow-x-auto border-t border-(--color-border-default) bg-gray-900 px-2 py-1 text-xs">
+          <button
+            type="button"
+            onClick={() => setTapSubTab('all')}
+            className={
+              'shrink-0 rounded px-1.5 py-0.5 ' +
+              (tapSubTab === 'all'
+                ? 'bg-sky-500/20 text-sky-300'
+                : 'text-gray-400 hover:bg-gray-800')
+            }
           >
-            <option value="all">전체 노드</option>
-            {tapNodeOptions.map((nid) => (
-              <option key={nid} value={nid}>
-                {nodeLabelById.get(nid) ?? nid}
-              </option>
-            ))}
-          </select>
-          <select
-            value={tapPortFilter}
-            onChange={(e) => setTapPortFilter(e.target.value)}
-            aria-label="포트 필터"
-            className="rounded border border-gray-700 bg-gray-950 px-1.5 py-0.5 text-gray-200"
-          >
-            <option value="all">전체 포트</option>
-            {tapPortOptions.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          {(tapNodeFilter !== 'all' || tapPortFilter !== 'all') && (
+            전체 ({tapEntries.length})
+          </button>
+          {tapSubTabs.map((s) => (
             <button
+              key={s.key}
               type="button"
-              onClick={() => {
-                setTapNodeFilter('all');
-                setTapPortFilter('all');
-              }}
-              className="text-gray-400 hover:text-gray-200"
+              onClick={() => setTapSubTab(s.key)}
+              title={s.label}
+              className={
+                'shrink-0 rounded px-1.5 py-0.5 ' +
+                (tapSubTab === s.key
+                  ? 'bg-sky-500/20 text-sky-300'
+                  : 'text-gray-400 hover:bg-gray-800')
+              }
             >
-              필터 해제
+              {s.label}
             </button>
-          )}
-          <span className="ml-auto text-gray-500">
-            {visibleTapEntries.length}/{tapEntries.length}
-          </span>
+          ))}
         </div>
       )}
 
