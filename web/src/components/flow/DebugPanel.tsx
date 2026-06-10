@@ -60,6 +60,9 @@ export function DebugPanel() {
   const [entries, setEntries] = useState<DebugEntry[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  // 탭 출력 필터: 노드/포트 ('all' = 전체).
+  const [tapNodeFilter, setTapNodeFilter] = useState<string>('all');
+  const [tapPortFilter, setTapPortFilter] = useState<string>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
   const wsRef = useRef<WSClient | null>(null);
@@ -90,6 +93,28 @@ export function DebugPanel() {
     all.sort((a, b) => a.id - b.id);
     return all;
   }, [outputsByNode]);
+
+  // 필터 옵션: 현재 탭 출력에 등장한 노드 ID / 포트 목록.
+  const tapNodeOptions = useMemo<string[]>(
+    () => Array.from(new Set(tapEntries.map((e) => e.nodeId))),
+    [tapEntries],
+  );
+  const tapPortOptions = useMemo<string[]>(
+    () => Array.from(new Set(tapEntries.map((e) => e.port))).sort(),
+    [tapEntries],
+  );
+
+  // 노드/포트 필터 적용. 선택값이 더 이상 존재하지 않으면 'all' 로 간주(전체 표시).
+  const visibleTapEntries = useMemo<TapEntry[]>(() => {
+    const nodeOk = tapNodeFilter === 'all' || !tapNodeOptions.includes(tapNodeFilter);
+    const portOk = tapPortFilter === 'all' || !tapPortOptions.includes(tapPortFilter);
+    if (nodeOk && portOk) return tapEntries;
+    return tapEntries.filter(
+      (e) =>
+        (tapNodeFilter === 'all' || e.nodeId === tapNodeFilter) &&
+        (tapPortFilter === 'all' || e.port === tapPortFilter),
+    );
+  }, [tapEntries, tapNodeFilter, tapPortFilter, tapNodeOptions, tapPortOptions]);
 
   const handleDebugMessage = useCallback((data: unknown) => {
     const msg = data as DebugMessage;
@@ -236,6 +261,54 @@ export function DebugPanel() {
         </button>
       </div>
 
+      {/* 탭 출력 필터 (노드/포트) */}
+      {isOpen && tab === 'tap' && tapEntries.length > 0 && (
+        <div className="flex items-center gap-2 border-t border-(--color-border-default) bg-gray-900 px-2 py-1 text-xs">
+          <span className="text-gray-400">필터</span>
+          <select
+            value={tapNodeFilter}
+            onChange={(e) => setTapNodeFilter(e.target.value)}
+            aria-label="노드 필터"
+            className="rounded border border-gray-700 bg-gray-950 px-1.5 py-0.5 text-gray-200"
+          >
+            <option value="all">전체 노드</option>
+            {tapNodeOptions.map((nid) => (
+              <option key={nid} value={nid}>
+                {nodeLabelById.get(nid) ?? nid}
+              </option>
+            ))}
+          </select>
+          <select
+            value={tapPortFilter}
+            onChange={(e) => setTapPortFilter(e.target.value)}
+            aria-label="포트 필터"
+            className="rounded border border-gray-700 bg-gray-950 px-1.5 py-0.5 text-gray-200"
+          >
+            <option value="all">전체 포트</option>
+            {tapPortOptions.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          {(tapNodeFilter !== 'all' || tapPortFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => {
+                setTapNodeFilter('all');
+                setTapPortFilter('all');
+              }}
+              className="text-gray-400 hover:text-gray-200"
+            >
+              필터 해제
+            </button>
+          )}
+          <span className="ml-auto text-gray-500">
+            {visibleTapEntries.length}/{tapEntries.length}
+          </span>
+        </div>
+      )}
+
       {/* 메시지 로그 영역 */}
       {isOpen && (
         <div
@@ -274,10 +347,14 @@ export function DebugPanel() {
             <div className="flex h-full items-center justify-center px-4 text-center text-gray-500">
               노드 카드의 눈 아이콘으로 관찰을 켜면 해당 노드의 출력이 여기에 표시됩니다.
             </div>
+          ) : visibleTapEntries.length === 0 ? (
+            <div className="flex h-full items-center justify-center px-4 text-center text-gray-500">
+              선택한 노드/포트 필터에 해당하는 출력이 없습니다.
+            </div>
           ) : (
             <table className="w-full">
               <tbody>
-                {tapEntries.map((entry) => (
+                {visibleTapEntries.map((entry) => (
                   <tr
                     key={entry.id}
                     className="border-b border-gray-800/50 hover:bg-gray-900/50"
