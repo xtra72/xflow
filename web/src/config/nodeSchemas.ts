@@ -248,24 +248,6 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     configSchema: {
       fields: [
         {
-          name: 'fields',
-          type: 'key_value_map',
-          label: '선택 필드(경로)',
-          description:
-            '남길 필드의 `$.` 경로 화이트리스트입니다(store/mqtt 노드와 동일한 경로 문법).\n' +
-            '• `$.payload.<dotpath>` — 임의 깊이의 payload 필드 ($.payload.temperature, 중첩 $.payload.state.mode, 서브트리 전체 $.payload.state)\n' +
-            '• `$.metadata.<key>` — 최상위 metadata 문자열 또는 그룹 전체 ($.metadata.node_id, 그룹 전체 $.metadata.device)\n' +
-            '• `$.metadata.<group>.<field>` — 그룹 내 한 필드 ($.metadata.device.id)\n' +
-            '• `$.type` — 메시지 타입 유지(미지정 시 type 은 제거됨)\n' +
-            '• `$.id`, `$.timestamp` — 항상 보존(나열해도 무동작)\n' +
-            '화이트리스트 의미: fields 가 비어있지 않으면 나열되지 않은 모든 것(나열 안 된 payload 키, metadata 키/그룹, 그리고 $.type 미지정 시 type)이 제거됩니다. fields 가 비어있으면 그대로 통과(pass-through)합니다.\n' +
-            '값은 on_missing=fill 모드일 때만 채울 기본값으로 사용됩니다.',
-          keyLabel: '경로 ($.payload.x / $.metadata.device.id / $.type)',
-          valueLabel: '채울 값 (fill 모드)',
-          keyPlaceholder: '예: $.payload.temperature',
-          valuePlaceholder: '예: 0',
-        },
-        {
           name: 'required_fields',
           type: 'key_value_map',
           label: '필수 필드(경로)',
@@ -283,6 +265,24 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: 'error_port',
           description:
             '필수 필드 누락 시: error_port(원본을 error 포트로) / drop(폐기) / error(노드 에러).',
+        },
+        {
+          name: 'fields',
+          type: 'key_value_map',
+          label: '선택 필드(경로)',
+          description:
+            '남길 필드의 `$.` 경로 화이트리스트입니다(store/mqtt 노드와 동일한 경로 문법).\n' +
+            '• `$.payload.<dotpath>` — 임의 깊이의 payload 필드 ($.payload.temperature, 중첩 $.payload.state.mode, 서브트리 전체 $.payload.state)\n' +
+            '• `$.metadata.<key>` — 최상위 metadata 문자열 또는 그룹 전체 ($.metadata.node_id, 그룹 전체 $.metadata.device)\n' +
+            '• `$.metadata.<group>.<field>` — 그룹 내 한 필드 ($.metadata.device.id)\n' +
+            '• `$.type` — 메시지 타입 유지(미지정 시 type 은 제거됨)\n' +
+            '• `$.id`, `$.timestamp` — 항상 보존(나열해도 무동작)\n' +
+            '화이트리스트 의미: fields 가 비어있지 않으면 나열되지 않은 모든 것(나열 안 된 payload 키, metadata 키/그룹, 그리고 $.type 미지정 시 type)이 제거됩니다. fields 가 비어있으면 그대로 통과(pass-through)합니다.\n' +
+            '값은 on_missing=fill 모드일 때만 채울 기본값으로 사용됩니다.',
+          keyLabel: '경로 ($.payload.x / $.metadata.device.id / $.type)',
+          valueLabel: '채울 값 (fill 모드)',
+          keyPlaceholder: '예: $.payload.temperature',
+          valuePlaceholder: '예: 0',
         },
         {
           name: 'on_missing',
