@@ -170,6 +170,13 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 
 	if v, ok := config["value_key"]; ok {
 		if s, ok := v.(string); ok {
+			// value_key 는 단일 message-field-path 선택자이므로 `$.` prefix 를 강제한다.
+			// 빈 문자열은 전체 payload 저장으로 허용한다.
+			// (key_template 의 {field} 보간은 별도 구문이므로 영향받지 않는다.)
+			if s != "" && !strings.HasPrefix(s, "$.") {
+				return fmt.Errorf(
+					"store-write: value_key %q must be a $.-path (e.g. $.payload.state.mode, $.metadata.device.id)", s)
+			}
 			n.valueKey = s
 		}
 	}
@@ -205,8 +212,7 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 		return nil, fmt.Errorf("store-write: %w", err)
 	}
 
-	// 값 추출 — v0.7.10: key_template 과 동일한 JSONPath 구문 지원
-	//   value_key="field"                       → payload.field (legacy)
+	// 값 추출 — value_key 는 Configure 에서 `$.` prefix 가 강제된 단일 경로 선택자이다.
 	//   value_key="$.payload.state.current_temp" → payload 의 중첩 경로
 	//   value_key="$.metadata.dev_id"            → metadata 값
 	var value any

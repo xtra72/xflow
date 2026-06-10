@@ -37,15 +37,15 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'error', direction: 'error', description: '처리 중 에러 발생 시 출력' },
     ],
     configFields: [
-      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키. bare name(예: idu_num) = 최상위 payload 필드(레거시). $.-경로(예: $.payload.state.mode, $.metadata.device.id)는 메시지 전체 대상. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
+      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키. $. prefix 필수 — $.-경로(예: $.payload.idu_num, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
       { name: 'window', type: 'string', required: false, description: '중복 억제 시간 창 (예: 30s, 1m)', default: '30s' },
-      { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외). 각 필드는 bare name(예: current_temperature) = 최상위 payload 키(레거시), 또는 $.-경로(예: $.payload.state.mode, $.metadata.device.id) = 메시지 전체 대상' },
+      { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외). 각 필드는 $. prefix 필수 — $.-경로(예: $.payload.current_temperature, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다' },
       { name: 'on_duplicate', type: 'string', required: false, description: '중복 시 처리: drop (기본, 폐기) 또는 reject_port (reject 포트로 전달)', default: 'drop' },
     ],
     configExample: {
-      key: 'idu_num',
+      key: '$.payload.idu_num',
       window: '30s',
-      compare_fields: 'current_temperature,target_temperature,op_mode,fan_byte',
+      compare_fields: '$.payload.current_temperature,$.payload.target_temperature,$.payload.op_mode,$.payload.fan_byte',
       on_duplicate: 'drop',
     },
   },
@@ -1087,7 +1087,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         type: 'string',
         required: false,
         description:
-          '저장할 값의 경로. bare 이름=payload 필드(중첩 dot 가능), $.payload.x / $.metadata.device.id / $.id 등 메시지 전체 경로 지원. 비워두면 전체 payload를 저장합니다.',
+          '저장할 값의 경로. $. prefix 필수 — $.payload.value / $.payload.state.mode / $.metadata.device.id / $.id 등 메시지 전체 경로를 지원합니다. 비워두면 전체 payload를 저장합니다.',
       },
       {
         name: 'namespace',
@@ -1106,7 +1106,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     configExample: {
       agent_ref: 'store-engine',
       key_template: '{location}:{point}:{sensor_type}',
-      value_key: 'value',
+      value_key: '$.payload.value',
       namespace: 'sensors',
       ttl: '1h',
     },

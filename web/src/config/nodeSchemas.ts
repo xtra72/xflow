@@ -108,9 +108,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '중복이 아닌 메시지만 통과 (값 변경 또는 window 초과 시)',
     configSchema: {
       fields: [
-        { name: 'key', type: 'string', label: '그룹핑 키', description: '메시지를 그룹핑할 키. bare name(예: idu_num) = 최상위 payload 필드(레거시). $.-경로(예: $.payload.state.mode, $.metadata.device.id)는 메시지 전체 대상. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
+        { name: 'key', type: 'string', label: '그룹핑 키', description: '메시지를 그룹핑할 키. $. prefix 필수 — $.-경로(예: $.payload.idu_num, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
         { name: 'window', type: 'string', label: '억제 시간', default: '30s', description: '중복 억제 시간 창 (예: 30s, 1m). 초과 시 동일 값도 강제 통과' },
-        { name: 'compare_fields', type: 'compare_fields', label: '비교 필드', description: '비교 대상 필드 목록. 빈 목록이면 전체 페이로드 비교. 각 필드는 bare name(예: current_temperature) = 최상위 payload 키(레거시), 또는 $.-경로(예: $.payload.state.mode, $.metadata.device.id) = 메시지 전체 대상. 허용오차(0 이상)를 지정하면 |현재-이전| ≤ 오차 일 때만 동일로 판정.' },
+        { name: 'compare_fields', type: 'compare_fields', label: '비교 필드', description: '비교 대상 필드 목록. 빈 목록이면 전체 페이로드 비교. 각 필드는 $. prefix 필수 — $.-경로(예: $.payload.current_temperature, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다. 허용오차(0 이상)를 지정하면 |현재-이전| ≤ 오차 일 때만 동일로 판정.' },
         { name: 'missing_field_as_different', type: 'boolean', label: '필드 부재 시 다름으로 처리', default: false, description: '활성화 시 신규 메시지에 비교 필드 중 하나라도 부재하면 즉시 통과 (중복 판정 안 함). 비활성 시 부재 필드는 nil 로 비교됨 (v0.18.4).' },
         { name: 'on_duplicate', type: 'select', label: '중복 시 처리', options: ['drop', 'reject_port'], default: 'drop', description: 'drop: 폐기, reject_port: reject 포트로 전달' },
       ],
@@ -1922,7 +1922,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'string',
           label: '값 키',
           description:
-            '저장할 값의 경로. bare 이름(field, item.nested)=payload 필드, $.payload.x / $.metadata.device.id / $.metadata.node_id / $.id / $.type / $.timestamp = 메시지 전체 경로. 비워두면 전체 payload 저장.',
+            '저장할 값의 경로. $. prefix 필수 — $.payload.value / $.payload.state.mode / $.metadata.device.id / $.metadata.node_id / $.id / $.type / $.timestamp = 메시지 전체 경로. 비워두면 전체 payload 저장.',
         },
         {
           name: 'namespace',

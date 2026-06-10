@@ -38,7 +38,7 @@ func iduMsg(iduNum int, roomTemp float64, setTemp int) message.Message {
 // 첫 메시지는 항상 통과
 func TestDeduplicate_FirstMessage_Pass(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":    "idu_num",
+		"key":    "$.payload.idu_num",
 		"window": "30s",
 	})
 
@@ -50,7 +50,7 @@ func TestDeduplicate_FirstMessage_Pass(t *testing.T) {
 // 동일 메시지 연속 → 두 번째 폐기
 func TestDeduplicate_SameMessage_Drop(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":    "idu_num",
+		"key":    "$.payload.idu_num",
 		"window": "30s",
 	})
 
@@ -66,7 +66,7 @@ func TestDeduplicate_SameMessage_Drop(t *testing.T) {
 // 값이 변경되면 통과
 func TestDeduplicate_ValueChanged_Pass(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":    "idu_num",
+		"key":    "$.payload.idu_num",
 		"window": "30s",
 	})
 
@@ -81,7 +81,7 @@ func TestDeduplicate_ValueChanged_Pass(t *testing.T) {
 // 다른 키(idu_num)는 독립
 func TestDeduplicate_DifferentKey_Independent(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":    "idu_num",
+		"key":    "$.payload.idu_num",
 		"window": "30s",
 	})
 
@@ -96,7 +96,7 @@ func TestDeduplicate_DifferentKey_Independent(t *testing.T) {
 // window 초과 시 동일 값이어도 통과
 func TestDeduplicate_WindowExpired_Pass(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":    "idu_num",
+		"key":    "$.payload.idu_num",
 		"window": "100ms",
 	})
 
@@ -112,9 +112,9 @@ func TestDeduplicate_WindowExpired_Pass(t *testing.T) {
 // compare_fields 지정 시 해당 필드만 비교
 func TestDeduplicate_CompareFields(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
-		"compare_fields": "current_temperature,target_temperature",
+		"compare_fields": "$.payload.current_temperature,$.payload.target_temperature",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -140,7 +140,7 @@ func TestDeduplicate_CompareFields(t *testing.T) {
 // on_duplicate=reject_port 시 reject 포트로 전달
 func TestDeduplicate_OnDuplicate_RejectPort(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":          "idu_num",
+		"key":          "$.payload.idu_num",
 		"window":       "30s",
 		"on_duplicate": "reject_port",
 	})
@@ -176,9 +176,9 @@ func TestDeduplicate_NoKey_GlobalDedup(t *testing.T) {
 // 허용오차 이내 → 중복
 func TestDeduplicate_Tolerance_WithinRange_Drop(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
-		"compare_fields": "current_temperature:0.5, target_temperature",
+		"compare_fields": "$.payload.current_temperature:0.5, $.payload.target_temperature",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -192,9 +192,9 @@ func TestDeduplicate_Tolerance_WithinRange_Drop(t *testing.T) {
 // 허용오차 초과 → 통과
 func TestDeduplicate_Tolerance_Exceeded_Pass(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
-		"compare_fields": "current_temperature:0.5, target_temperature",
+		"compare_fields": "$.payload.current_temperature:0.5, $.payload.target_temperature",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -208,9 +208,9 @@ func TestDeduplicate_Tolerance_Exceeded_Pass(t *testing.T) {
 // 허용오차 필드와 완전 일치 필드 혼합
 func TestDeduplicate_Tolerance_MixedFields(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
-		"compare_fields": "current_temperature:0.5, target_temperature, op_mode",
+		"compare_fields": "$.payload.current_temperature:0.5, $.payload.target_temperature, $.payload.op_mode",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
@@ -228,9 +228,9 @@ func TestDeduplicate_Tolerance_MixedFields(t *testing.T) {
 // 허용오차 경계값: 정확히 0.5 차이 → 동일 (<=)
 func TestDeduplicate_Tolerance_ExactBoundary(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
-		"compare_fields": "current_temperature:0.5",
+		"compare_fields": "$.payload.current_temperature:0.5",
 	})
 
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.0, 22))
@@ -254,11 +254,11 @@ func TestDeduplicate_Tolerance_ExactBoundary(t *testing.T) {
 // legacy string 형식과 동등하게 동작하는지 검증한다.
 func TestDeduplicate_CompareFieldsArray(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":    "idu_num",
+		"key":    "$.payload.idu_num",
 		"window": "30s",
 		"compare_fields": []any{
-			map[string]any{"name": "current_temperature", "tolerance": 0.5},
-			map[string]any{"name": "target_temperature"},
+			map[string]any{"name": "$.payload.current_temperature", "tolerance": 0.5},
+			map[string]any{"name": "$.payload.target_temperature"},
 		},
 	})
 
@@ -279,9 +279,9 @@ func TestDeduplicate_CompareFieldsArray(t *testing.T) {
 // 일 때 비교 필드 중 하나라도 부재면 통과로 판정되는지 검증한다.
 func TestDeduplicate_MissingFieldAsDifferent_True(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":                        "idu_num",
+		"key":                        "$.payload.idu_num",
 		"window":                     "30s",
-		"compare_fields":             "current_temperature, target_temperature",
+		"compare_fields":             "$.payload.current_temperature, $.payload.target_temperature",
 		"missing_field_as_different": true,
 	})
 
@@ -348,7 +348,7 @@ func TestDeduplicate_Key_NestedPayloadPath(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
 		"key":            "$.payload.state.mode",
 		"window":         "30s",
-		"compare_fields": "current_temperature",
+		"compare_fields": "$.payload.current_temperature",
 	})
 
 	mk := func(mode int, temp float64) message.Message {
@@ -371,11 +371,11 @@ func TestDeduplicate_Key_NestedPayloadPath(t *testing.T) {
 	assert.Len(t, results, 0, "동일 nested payload 그룹의 동일 값은 중복")
 }
 
-// TestDeduplicate_Key_LegacyBareName 는 레거시 bare name key("idu_num") 가
-// 여전히 top-level payload 필드로 그룹핑되는지 검증한다 (하위 호환).
-func TestDeduplicate_Key_LegacyBareName(t *testing.T) {
+// TestDeduplicate_Key_TopLevelPayloadPath 는 key 가 "$.payload.idu_num" 일 때
+// top-level payload 값으로 그룹핑되는지 검증한다.
+func TestDeduplicate_Key_TopLevelPayloadPath(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":    "idu_num",
+		"key":    "$.payload.idu_num",
 		"window": "30s",
 	})
 
@@ -385,11 +385,11 @@ func TestDeduplicate_Key_LegacyBareName(t *testing.T) {
 
 	// idu 2 (동일 비교값) → 다른 그룹이므로 통과.
 	results, _ = n.Process(context.Background(), iduMsg(2, 20.5, 22))
-	assert.Len(t, results, 1, "레거시 bare name: 다른 top-level 값은 독립 그룹")
+	assert.Len(t, results, 1, "다른 top-level 값은 독립 그룹")
 
 	// idu 1 동일 비교값 재전송 → 중복.
 	results, _ = n.Process(context.Background(), iduMsg(1, 20.5, 22))
-	assert.Len(t, results, 0, "레거시 bare name: 동일 그룹 동일 값은 중복")
+	assert.Len(t, results, 0, "동일 그룹 동일 값은 중복")
 }
 
 // TestDeduplicate_Key_UnresolvablePath_FallbackAll 은 $.-path 가 해석 불가능할 때
@@ -398,7 +398,7 @@ func TestDeduplicate_Key_UnresolvablePath_FallbackAll(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
 		"key":            "$.metadata.device.id", // device 그룹 없는 메시지 → 해석 불가
 		"window":         "30s",
-		"compare_fields": "current_temperature",
+		"compare_fields": "$.payload.current_temperature",
 	})
 
 	mk := func(temp float64) message.Message {
@@ -425,9 +425,9 @@ func TestDeduplicate_Key_UnresolvablePath_FallbackAll(t *testing.T) {
 // 부재 필드가 nil 로 비교되어 두 번째 누락 메시지는 중복으로 판정되는지 검증한다.
 func TestDeduplicate_MissingFieldAsDifferent_False(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
-		"compare_fields": "current_temperature, target_temperature",
+		"compare_fields": "$.payload.current_temperature, $.payload.target_temperature",
 		// missing_field_as_different 미지정 (기본 false)
 	})
 
@@ -515,33 +515,33 @@ func TestDeduplicate_CompareFields_NestedPayloadPath(t *testing.T) {
 	assert.Len(t, results, 1, "nested payload 비교값 변경은 통과")
 }
 
-// TestDeduplicate_CompareFields_LegacyBareStillWorks 는 레거시 bare 비교 필드가
-// 여전히 top-level payload 키로 비교되는지 검증한다 (하위 호환).
-func TestDeduplicate_CompareFields_LegacyBareStillWorks(t *testing.T) {
+// TestDeduplicate_CompareFields_TopLevelPayloadPath 는 단일 top-level payload
+// $.-경로 비교 필드가 해당 키만 비교하는지 검증한다.
+func TestDeduplicate_CompareFields_TopLevelPayloadPath(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
-		"compare_fields": "current_temperature",
+		"compare_fields": "$.payload.current_temperature",
 	})
 
 	// 첫 메시지 → 통과.
 	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
 	assert.Len(t, results, 1)
 
-	// 동일 current_temperature (set_temp 만 다름) → bare 비교는 current_temperature 만 → 중복.
+	// 동일 current_temperature (set_temp 만 다름) → 비교는 current_temperature 만 → 중복.
 	results, _ = n.Process(context.Background(), iduMsg(1, 20.5, 25))
-	assert.Len(t, results, 0, "레거시 bare 비교 필드: top-level payload 키 비교 유지")
+	assert.Len(t, results, 0, "top-level payload 비교 필드: 지정 키만 비교")
 
 	// current_temperature 변경 → 통과.
 	results, _ = n.Process(context.Background(), iduMsg(1, 21.0, 22))
-	assert.Len(t, results, 1, "레거시 bare 비교 필드: 값 변경은 통과")
+	assert.Len(t, results, 1, "top-level payload 비교 필드: 값 변경은 통과")
 }
 
 // TestDeduplicate_CompareFields_UnresolvablePath_Missing 는 비교 경로가 해석 불가능할 때
 // "부재(missing)" 로 간주되어 missing_field_as_different=true 면 통과되는지 검증한다.
 func TestDeduplicate_CompareFields_UnresolvablePath_Missing(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":                        "idu_num",
+		"key":                        "$.payload.idu_num",
 		"window":                     "30s",
 		"compare_fields":             []any{map[string]any{"name": "$.metadata.device.type"}},
 		"missing_field_as_different": true,
@@ -568,7 +568,7 @@ func TestDeduplicate_CompareFields_UnresolvablePath_Missing(t *testing.T) {
 // tolerance 가 적용되는지 검증한다.
 func TestDeduplicate_CompareFields_PayloadPathTolerance(t *testing.T) {
 	n := newDeduplicateNode(t, map[string]any{
-		"key":            "idu_num",
+		"key":            "$.payload.idu_num",
 		"window":         "30s",
 		"compare_fields": []any{map[string]any{"name": "$.payload.current_temperature", "tolerance": 0.5}},
 	})
