@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Eye, Trash2, Terminal } from 'lucide-react';
 import { createWSClient, type WSClient } from '@/services/ws/wsClient';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
+import { useAuthStore } from '@/stores/authStore';
 import { useEditorStore } from '@/stores/editorStore';
 import {
   useTapStore,
@@ -118,7 +119,12 @@ export function DebugPanel() {
   );
 
   useEffect(() => {
-    const client = createWSClient();
+    // 인증 활성 환경에서 /ws 는 토큰을 요구한다. 메인 모니터링 WS(useWebSocket)와
+    // 동일하게 connect 시점마다 최신 access_token 을 동반시킨다(미동반 시 인증 실패로
+    // debug.message·node.output 을 한 건도 받지 못한다).
+    const client = createWSClient({
+      tokenGetter: () => useAuthStore.getState().tokens?.access_token,
+    });
     wsRef.current = client;
     client.on(WS_MESSAGE_TYPES.DEBUG_MESSAGE, handleDebugMessage);
     client.on(WS_MESSAGE_TYPES.NODE_OUTPUT, handleNodeOutput);
