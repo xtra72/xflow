@@ -241,12 +241,31 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   'select-field': {
     description:
-      '메시지에서 지정한 경로의 필드만 남깁니다. payload / metadata / type 을 `$.` 경로 화이트리스트로 통합 지정하고, 누락 필드는 유지/드랍/채움 처리합니다.',
+      '메시지에서 지정한 경로의 필드만 남깁니다. payload / metadata / type 을 `$.` 경로 화이트리스트로 통합 지정합니다. 선택 필드(fields)는 "있으면 포함, 없어도 무방", 필수 필드(required_fields)는 "반드시 있어야 함, 없으면 on_required_missing 동작". 화이트리스트 = 선택 필드 ∪ 필수 필드. 선택 필드의 누락은 유지/드랍/채움 처리합니다.',
     inputDesc: '모든 메시지. `$.` 경로 화이트리스트로 payload·metadata·type 을 통합 필터링',
     outputDesc:
-      '지정한 경로만 남긴 메시지(out). on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 drop 포트로.',
+      '선택 필드(fields)와 필수 필드(required_fields)의 합집합만 남긴 메시지(out). 필수 필드 누락 시 on_required_missing=error_port 면 원본을 error 포트로 보냅니다. on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 drop 포트로.',
     configSchema: {
       fields: [
+        {
+          name: 'required_fields',
+          type: 'key_value_map',
+          label: '필수 필드(경로)',
+          description:
+            '반드시 존재해야 하는 경로(필수). 없으면 on_required_missing 동작. 출력에도 유지됨. 경로 문법은 선택 필드와 동일. 값 칼럼은 미사용.',
+          keyLabel: '경로 ($.payload.x / $.metadata.device.id)',
+          valueLabel: '(미사용)',
+          keyPlaceholder: '예: $.payload.temperature',
+        },
+        {
+          name: 'on_required_missing',
+          type: 'select',
+          label: '필수 누락 시',
+          options: ['error_port', 'drop', 'error'],
+          default: 'error_port',
+          description:
+            '필수 필드 누락 시: error_port(원본을 error 포트로) / drop(폐기) / error(노드 에러).',
+        },
         {
           name: 'fields',
           type: 'key_value_map',

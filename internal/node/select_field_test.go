@@ -877,3 +877,278 @@ func TestRegistry_SelectField등록(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, &SelectFieldNode{}, node)
 }
+
+// --- required_fields 테스트 (필수 필드 의미론) ---
+//
+// required_fields: 반드시 존재해야 하는 $.-경로 목록(key_value_map, 값은 무시).
+// fields(옵션) ∪ required_fields = 유효 화이트리스트. required 누락 시 on_required_missing
+// 정책(error_port 기본 / drop / error)을 적용하고 projection 으로 진행하지 않는다.
+
+// TestSelectFieldNode_Required_Present_통과및유지 는 필수 필드가 존재하면 메시지가
+// 통과하고, 화이트리스트가 required + optional(fields) 필드를 모두 유지하는지 확인한다.
+func TestSelectFieldNode_Required_Present_통과및유지(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"required_fields": map[string]any{
+			"$.payload.temperature": "",
+		},
+		"fields": map[string]any{
+			"$.payload.humidity": "", // optional
+		},
+	})
+
+	msg := newTestMessage(map[string]any{
+		"temperature": 21.5,
+		"humidity":    40,
+		"drop_me":     "x",
+	}, nil, "")
+
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1, "required 충족 시 정상 통과")
+
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, 21.5, p["temperature"], "required 필드는 유지되어야 한다")
+	assert.Equal(t, 40, p["humidity"], "optional(fields) 필드도 유지되어야 한다")
+	_, hasDrop := p["drop_me"]
+	assert.False(t, hasDrop, "화이트리스트 외 필드는 제거되어야 한다 (union 화이트리스트)")
+	_, hasTargetPort := out[0].Metadata().Get("_target_port")
+	assert.False(t, hasTargetPort, "정상 통과 시 _target_port 미설정")
+}
+
+// TestSelectFieldNode_Required_Missing_ErrorPort 는 required 필드 누락 시 기본
+// on_required_missing=error_port 가 원본(미변형) 메시지를 "error" 포트로 라우팅하는지
+// 확인한다 (_target_port="error" + MetaKeyError 에 누락 필드명 포함).
+func TestSelectFieldNode_Required_Missing_ErrorPort(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		// on_required_missing 미설정 → 기본 error_port
+		"required_fields": map[string]any{
+			"$.payload.temperature": "",
+		},
+	})
+
+	msg := newTestMessage(map[string]any{
+		"humidity": 40, // temperature 없음
+	}, nil, "orig.type")
+
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err, "error_port 모드는 Go 에러를 반환하지 않는다")
+	require.Len(t, out, 1, "error_port: 메시지가 1개 emit 되어야 한다")
+
+	tp, ok := out[0].Metadata().Get("_target_port")
+	require.True(t, ok, "_target_port 메타데이터가 설정되어야 한다")
+	assert.Equal(t, "error", tp, "_target_port 는 \"error\" 여야 한다")
+
+	errMeta, ok := out[0].Metadata().Get(message.MetaKeyError)
+	require.True(t, ok, "에러 메타데이터가 설정되어야 한다")
+	assert.Contains(t, errMeta, "$.payload.temperature", "누락된 필수 필드명이 포함되어야 한다")
+
+	// 원본(미변형) 보존: projection 이 적용되지 않아 원본 payload/type 가 유지된다.
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, 40, p["humidity"], "원본 메시지는 변형되지 않아야 한다")
+	assert.Equal(t, "orig.type", out[0].Type(), "원본 type 보존")
+}
+
+// TestSelectFieldNode_Required_Missing_Drop 은 on_required_missing=drop 시
+// 메시지가 폐기(출력 없음)되는지 확인한다.
+func TestSelectFieldNode_Required_Missing_Drop(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_required_missing": "drop",
+		"required_fields": map[string]any{
+			"$.payload.temperature": "",
+		},
+	})
+
+	msg := newTestMessage(map[string]any{"humidity": 40}, nil, "")
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Empty(t, out, "drop: 메시지가 폐기되어야 한다 (출력 없음)")
+}
+
+// TestSelectFieldNode_Required_Missing_Error 는 on_required_missing=error 시
+// Process 가 누락 필드명을 포함한 Go 에러를 반환하는지 확인한다.
+func TestSelectFieldNode_Required_Missing_Error(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_required_missing": "error",
+		"required_fields": map[string]any{
+			"$.payload.temperature": "",
+		},
+	})
+
+	msg := newTestMessage(map[string]any{"humidity": 40}, nil, "")
+	out, err := sf.Process(context.Background(), msg)
+	require.Error(t, err, "error 모드는 Go 에러를 반환해야 한다")
+	assert.Contains(t, err.Error(), "$.payload.temperature", "에러에 누락 필드명이 포함되어야 한다")
+	assert.Nil(t, out, "error 모드는 출력 메시지를 반환하지 않는다")
+}
+
+// TestSelectFieldNode_Required_MetadataGroup_Present 는 metadata group 필수 경로
+// ($.metadata.device.id)가 존재하면 통과하고 해당 그룹 필드가 유지되는지 확인한다.
+func TestSelectFieldNode_Required_MetadataGroup_Present(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"required_fields": map[string]any{
+			"$.metadata.device.id": "",
+		},
+	})
+
+	msg := newGroupTestMessage(
+		nil,
+		map[string]map[string]string{
+			"device": {"id": "dev-9", "name": "실내기"},
+		},
+	)
+
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	device, ok := out[0].Metadata().GetGroup("device")
+	require.True(t, ok, "required group 필드는 유지되어야 한다")
+	assert.Equal(t, map[string]string{"id": "dev-9"}, device, "required 경로만 유지 (union 화이트리스트)")
+}
+
+// TestSelectFieldNode_Required_MetadataGroup_Missing 은 metadata group 필수 경로의
+// 필드가 없으면 error_port 로 라우팅되는지 확인한다.
+func TestSelectFieldNode_Required_MetadataGroup_Missing(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"required_fields": map[string]any{
+			"$.metadata.device.id": "",
+		},
+	})
+
+	msg := newGroupTestMessage(
+		nil,
+		map[string]map[string]string{
+			"device": {"name": "실내기"}, // id 없음
+		},
+	)
+
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	tp, _ := out[0].Metadata().Get("_target_port")
+	assert.Equal(t, "error", tp, "group 필드 누락 → error_port")
+	errMeta, _ := out[0].Metadata().Get(message.MetaKeyError)
+	assert.Contains(t, errMeta, "$.metadata.device.id")
+}
+
+// TestSelectFieldNode_Optional_Absent_NoError 는 optional(fields) 필드가 없어도
+// 에러 없이 그냥 건너뛰는지(누락 keep), 존재하면 유지되는지 확인한다.
+func TestSelectFieldNode_Optional_Absent_NoError(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"required_fields": map[string]any{
+			"$.payload.temperature": "",
+		},
+		"fields": map[string]any{
+			"$.payload.optional_a": "", // 부재
+			"$.payload.optional_b": "", // 존재
+		},
+	})
+
+	msg := newTestMessage(map[string]any{
+		"temperature": 20,
+		"optional_b":  "B",
+	}, nil, "")
+
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err, "optional 부재는 에러가 아니다")
+	require.Len(t, out, 1)
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, 20, p["temperature"], "required 유지")
+	assert.Equal(t, "B", p["optional_b"], "존재하는 optional 유지")
+	_, hasA := p["optional_a"]
+	assert.False(t, hasA, "부재 optional 은 건너뜀(keep)")
+}
+
+// TestSelectFieldNode_Required_And_Fields_둘다비면passthrough 는 fields 와
+// required_fields 가 모두 비어있으면 pass-through 인지 확인한다 (기존 동작 보존).
+func TestSelectFieldNode_Required_And_Fields_둘다비면passthrough(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		// fields, required_fields 모두 없음
+	})
+
+	msg := newTestMessage(map[string]any{"a": 1, "b": 2}, map[string]string{"m": "v"}, "t")
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, 1, p["a"])
+	assert.Equal(t, 2, p["b"], "둘 다 비면 pass-through (모든 필드 유지)")
+	assert.Equal(t, "t", out[0].Type(), "type 보존")
+}
+
+// TestSelectFieldNode_Required_TypePresence 는 $.type 필수 경로가 type 이 비어있으면
+// 누락으로 간주되고, 존재하면 통과하는지 확인한다.
+func TestSelectFieldNode_Required_TypePresence(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"required_fields": map[string]any{
+			"$.type": "",
+		},
+	})
+
+	// type 존재 → 통과 + type 유지
+	out, err := sf.Process(context.Background(), newTestMessage(map[string]any{"x": 1}, nil, "evt"))
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "evt", out[0].Type(), "required $.type 는 유지되어야 한다")
+
+	// type 비어있음 → 누락 → error_port
+	out2, err2 := sf.Process(context.Background(), newTestMessage(map[string]any{"x": 1}, nil, ""))
+	require.NoError(t, err2)
+	require.Len(t, out2, 1)
+	tp, _ := out2[0].Metadata().Get("_target_port")
+	assert.Equal(t, "error", tp, "빈 type → required 누락 → error_port")
+}
+
+// TestSelectFieldNode_Required_RunsBeforeProjection 는 required 누락이
+// on_missing=drop 보다 먼저 평가되어 on_required_missing 정책이 우선하는지 확인한다.
+func TestSelectFieldNode_Required_RunsBeforeProjection(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"on_missing":          "drop", // optional 누락 시 drop (폐기)
+		"on_required_missing": "error",
+		"required_fields": map[string]any{
+			"$.payload.temperature": "",
+		},
+		"fields": map[string]any{
+			"$.payload.optional_a": "",
+		},
+	})
+
+	// temperature(required) 누락 → on_required_missing=error 가 우선해야 한다
+	msg := newTestMessage(map[string]any{"other": 1}, nil, "")
+	out, err := sf.Process(context.Background(), msg)
+	require.Error(t, err, "required 누락은 on_missing=drop 보다 먼저 평가되어 error 를 반환")
+	assert.Contains(t, err.Error(), "$.payload.temperature")
+	assert.Nil(t, out)
+}
+
+// TestSelectFieldNode_BackwardCompat_FieldsOnly 는 required_fields 없이 fields 만
+// 설정된 기존 설정이 정확히 기존과 동일하게 동작하는지 확인한다 (회귀 방지).
+func TestSelectFieldNode_BackwardCompat_FieldsOnly(t *testing.T) {
+	t.Parallel()
+	sf := newSelectFieldForTest(t, map[string]any{
+		"fields": map[string]any{
+			"$.payload.keep": "",
+		},
+	})
+
+	msg := newTestMessage(map[string]any{"keep": "K", "drop": "D"}, nil, "t")
+	out, err := sf.Process(context.Background(), msg)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	p := out[0].Payload().ToMap()
+	assert.Equal(t, "K", p["keep"])
+	_, hasDrop := p["drop"]
+	assert.False(t, hasDrop)
+	assert.Equal(t, "", out[0].Type(), "$.type 미선택 → type 비움 (기존 동작)")
+	_, hasTargetPort := out[0].Metadata().Get("_target_port")
+	assert.False(t, hasTargetPort)
+}
