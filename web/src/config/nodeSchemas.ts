@@ -1902,7 +1902,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'value_key',
           type: 'string',
           label: '값 키',
-          description: 'payload에서 저장할 값의 키 (비워두면 전체 payload 저장)',
+          description:
+            '저장할 값의 경로. bare 이름(field, item.nested)=payload 필드, $.payload.x / $.metadata.device.id / $.metadata.node_id / $.id / $.type / $.timestamp = 메시지 전체 경로. 비워두면 전체 payload 저장.',
         },
         {
           name: 'namespace',

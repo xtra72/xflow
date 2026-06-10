@@ -1086,7 +1086,8 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'value_key',
         type: 'string',
         required: false,
-        description: 'payload에서 저장할 값의 키입니다. 비워두면 전체 payload를 저장합니다.',
+        description:
+          '저장할 값의 경로. bare 이름=payload 필드(중첩 dot 가능), $.payload.x / $.metadata.device.id / $.id 등 메시지 전체 경로 지원. 비워두면 전체 payload를 저장합니다.',
       },
       {
         name: 'namespace',
