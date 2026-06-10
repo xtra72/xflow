@@ -534,6 +534,7 @@ func (n *LGHvacr02StatusNode) drainNewFrames(cfg LGHvacr02NodeConfig) {
 		if cfg.EmitMetadata.NodeID {
 			msg.Metadata().Set("node_id", n.ID())
 		}
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -616,6 +617,7 @@ func (n *LGHvacr02StatusNode) Process(ctx context.Context, msg message.Message) 
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	// v0.10.0: lg_hvacr02_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
@@ -771,6 +773,7 @@ func (n *LGHvacr02ControlNode) Process(ctx context.Context, msg message.Message)
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
@@ -983,6 +986,7 @@ func (n *LGHvacr02Node) pollSingle(cfg LGHvacr02NodeConfig) {
 			msg.Metadata().Set("node_id", n.ID())
 		}
 	}
+	emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 	select {
 	case n.sourceCh <- msg:
@@ -1069,6 +1073,7 @@ func (n *LGHvacr02Node) pollRecentBulk(cfg LGHvacr02NodeConfig) {
 				msg.Metadata().Set("node_id", n.ID())
 			}
 		}
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -1135,6 +1140,7 @@ func (n *LGHvacr02Node) Process(ctx context.Context, msg message.Message) ([]mes
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil

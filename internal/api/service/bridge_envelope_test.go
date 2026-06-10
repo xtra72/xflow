@@ -90,6 +90,36 @@ func TestBridgeEnvelope_WireShapeMatchesOutputNode(t *testing.T) {
 	assert.Equal(t, "v", md["k"])
 }
 
+// TestBridgeEnvelope_RoundTripPreservesGroups 는 nested group 메타데이터가
+// messageToJSON→messageFromJSON 왕복 후 group 으로 보존되는지 검증한다 (P2 Class A:
+// 라이브 브리지가 group 을 운반해야 한다). flat 키는 string 으로 유지된다.
+func TestBridgeEnvelope_RoundTripPreservesGroups(t *testing.T) {
+	ts := time.UnixMilli(1780980196676)
+	orig := message.New(
+		message.WithID("f7b30000-0000-0000-0000-000000000002"),
+		message.WithType("event"),
+		message.WithTimestamp(ts),
+		message.WithPayload(message.NewPayload(map[string]any{"data": "hello"})),
+		message.WithMetadata("flatKey", "flatVal"),
+	)
+	orig.Metadata().SetGroup("agent", map[string]string{"type": "serial", "id": "node-1"})
+
+	wire := messageToJSON(orig)
+	got, err := messageFromJSON(wire)
+	require.NoError(t, err)
+
+	// flat 키는 string 으로 보존
+	if v, ok := got.Metadata().Get("flatKey"); !ok || v != "flatVal" {
+		t.Errorf("flatKey = (%q, %v), 기대값 (\"flatVal\", true)", v, ok)
+	}
+
+	// group 은 group 으로 보존
+	agent, ok := got.Metadata().GetGroup("agent")
+	require.True(t, ok, "왕복 후 agent group 이 손실되었다")
+	assert.Equal(t, "serial", agent["type"])
+	assert.Equal(t, "node-1", agent["id"])
+}
+
 // TestBridgeEnvelope_GracefulFallbackNonEnvelope 는 봉투가 아닌 입력(스칼라/배열, payload 키
 // 없는 객체)이 회귀 없이 사용 가능한 메시지를 만드는지 검증한다.
 func TestBridgeEnvelope_GracefulFallbackNonEnvelope(t *testing.T) {

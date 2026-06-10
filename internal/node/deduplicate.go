@@ -91,16 +91,23 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 	missingDiff := n.missingFieldAsDifferent
 	n.mu.RUnlock()
 
-	// 그룹핑 키 추출
+	// 그룹핑 키 추출.
+	//   - "$." prefix → 전체 메시지 대상 JSONPath ($.payload.x / $.metadata.device.id / ...)
+	//     를 resolveTemplateExpr 로 해석. 해석 실패(부재/잘못된 경로)는 에러 없이 "_all" 폴백.
+	//   - bare name (레거시) → top-level payload 필드 직접 조회. 부재 시 "_all" 폴백.
 	groupKey := "_all"
 	if keyField != "" {
-		if v, ok := msg.Payload().Get(keyField); ok {
+		if strings.HasPrefix(keyField, "$.") {
+			if v, err := resolveTemplateExpr(keyField, msg); err == nil {
+				groupKey = fmt.Sprintf("%v", v)
+			}
+		} else if v, ok := msg.Payload().Get(keyField); ok {
 			groupKey = fmt.Sprintf("%v", v)
 		}
 	}
 
 	// 현재 메시지의 비교 값 추출 + 부재 필드 감지 (v0.18.4)
-	currentValues, hasMissing := extractValuesWithMissing(msg.Payload(), fields, allFields)
+	currentValues, hasMissing := extractValuesWithMissing(msg, fields, allFields)
 
 	now := time.Now()
 
@@ -269,18 +276,28 @@ func parseCompareFields(s string) ([]compareField, error) {
 	return result, nil
 }
 
-// extractValues 는 페이로드에서 비교 대상 값을 추출한다.
-func extractValues(payload message.Payload, fields []compareField, allFields bool) map[string]any {
-	result, _ := extractValuesWithMissing(payload, fields, allFields)
+// extractValues 는 메시지에서 비교 대상 값을 추출한다.
+func extractValues(msg message.Message, fields []compareField, allFields bool) map[string]any {
+	result, _ := extractValuesWithMissing(msg, fields, allFields)
 	return result
 }
 
 // extractValuesWithMissing 는 비교 대상 값과 부재 필드 존재 여부를 함께 반환한다 (v0.18.4).
-// hasMissing=true 면 fields 중 페이로드에 존재하지 않는 키가 하나 이상 있음.
-// allFields 모드에서는 hasMissing 이 항상 false (모든 키가 페이로드에서 추출됨).
-func extractValuesWithMissing(payload message.Payload, fields []compareField, allFields bool) (map[string]any, bool) {
+// hasMissing=true 면 fields 중 해석되지 않는(부재/잘못된 경로) 키가 하나 이상 있음.
+//
+// 비교 필드 형식 (SPEC-AGENT-METADATA-GROUPING):
+//   - "$." prefix → 전체 메시지 대상 경로 ($.payload.x / $.metadata.device.id / $.id ...)
+//     를 resolveTemplateExpr 로 해석. 해석 실패(부재/잘못된 경로)는 hasMissing=true 로
+//     표시하고 nil 을 저장한다 (bare 필드 부재와 동일한 missing 의미).
+//   - bare name (레거시) → top-level payload 키를 직접 조회. 부재 시 hasMissing=true + nil.
+//
+// 결과 map 은 f.name(경로 문자열 그대로)을 키로 사용한다. valuesEqual 도 동일하게
+// f.name 으로 prev/curr 를 조회하므로 추가 변경이 필요 없다.
+//
+// allFields 모드(fields 비어있음)는 기존 동작 그대로: payload 전체에서 skipFields 를 제외.
+func extractValuesWithMissing(msg message.Message, fields []compareField, allFields bool) (map[string]any, bool) {
 	if allFields {
-		m := payload.ToMap()
+		m := msg.Payload().ToMap()
 		result := make(map[string]any, len(m))
 		for k, v := range m {
 			if !skipFields[k] {
@@ -292,7 +309,19 @@ func extractValuesWithMissing(payload message.Payload, fields []compareField, al
 	result := make(map[string]any, len(fields))
 	hasMissing := false
 	for _, f := range fields {
-		v, ok := payload.Get(f.name)
+		if strings.HasPrefix(f.name, "$.") {
+			// 전체 메시지 대상 경로 — 해석 실패는 missing 으로 간주.
+			v, err := resolveTemplateExpr(f.name, msg)
+			if err != nil {
+				hasMissing = true
+				result[f.name] = nil
+				continue
+			}
+			result[f.name] = v
+			continue
+		}
+		// 레거시 bare name — top-level payload 키 직접 조회.
+		v, ok := msg.Payload().Get(f.name)
 		if !ok {
 			hasMissing = true
 		}

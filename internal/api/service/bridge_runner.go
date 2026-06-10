@@ -630,16 +630,43 @@ func messageFromEnvelope(m map[string]any, pv any) message.Message {
 		opts = append(opts, message.WithTimestamp(time.UnixMilli(ts)))
 	}
 
-	// metadata: map 의 문자열 값만 복원(점 표기 키 포함).
+	// metadata: 문자열 값(flat)은 WithMetadata 옵션으로 복원(점 표기 키 포함).
+	// P2: 객체(map) 값은 nested group 으로 복원해야 하나, WithMetadata 는 string-only
+	// 이므로 메시지 생성 후 SetGroup 으로 별도 복원한다.
+	var groupEntries map[string]map[string]string
 	if md, ok := m["metadata"].(map[string]any); ok {
 		for k, v := range md {
-			if sv, ok := v.(string); ok {
-				opts = append(opts, message.WithMetadata(k, sv))
+			switch val := v.(type) {
+			case string:
+				opts = append(opts, message.WithMetadata(k, val))
+			case map[string]any:
+				// JSON 객체 → group. 필드 값은 문자열로 강제 변환(message.FromJSON 과 동일 규칙).
+				fields := make(map[string]string, len(val))
+				for fk, fv := range val {
+					if s, ok := fv.(string); ok {
+						fields[fk] = s
+					} else if fv == nil {
+						fields[fk] = ""
+					} else {
+						fields[fk] = fmt.Sprintf("%v", fv)
+					}
+				}
+				if len(fields) > 0 {
+					if groupEntries == nil {
+						groupEntries = make(map[string]map[string]string)
+					}
+					groupEntries[k] = fields
+				}
 			}
 		}
 	}
 
-	return message.New(opts...)
+	msg := message.New(opts...)
+	// group 엔트리 복원(string-only WithMetadata 로는 불가능하므로 사후 적용).
+	for k, fields := range groupEntries {
+		msg.Metadata().SetGroup(k, fields)
+	}
+	return msg
 }
 
 // envelopeEpochMillis 는 봉투의 timestamp 값을 epoch ms(int64)로 정규화한다.
@@ -676,7 +703,9 @@ func messageToJSON(msg message.Message) json.RawMessage {
 		"type":      msg.Type(),
 		"timestamp": msg.Timestamp().UnixMilli(),
 		"payload":   msg.Payload().ToMap(),
-		"metadata":  msg.Metadata().All(),
+		// P2: Raw() 로 nested group 을 운반(flat 키는 문자열 유지). 브리지를 통과한
+		// 메시지가 group 메타데이터를 잃지 않는다.
+		"metadata": msg.Metadata().Raw(),
 	}
 	if data, err := json.Marshal(env); err == nil {
 		return data

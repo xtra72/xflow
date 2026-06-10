@@ -127,12 +127,39 @@ func mapToMessage(m map[string]any, original message.Message) message.Message {
 		opts = append(opts, message.WithPayload(original.Payload()))
 	}
 
+	// P2: nested group 메타데이터 보존.
+	//   - m["metadata"] 제공 시: 객체(map) 값은 group 으로 재구성(SetGroup), 그 외는 string.
+	//   - 누락 시: 원본 metadata 의 string + group 을 모두 보존.
+	var groupEntries map[string]map[string]string
+	addGroupEntry := func(k string, fields map[string]string) {
+		if len(fields) == 0 {
+			return
+		}
+		if groupEntries == nil {
+			groupEntries = make(map[string]map[string]string)
+		}
+		groupEntries[k] = fields
+	}
+
 	if rawMeta, ok := m["metadata"]; ok {
 		if metaMap, ok := rawMeta.(map[string]any); ok {
 			for k, v := range metaMap {
-				if s, ok := v.(string); ok {
-					opts = append(opts, message.WithMetadata(k, s))
-				} else {
+				switch val := v.(type) {
+				case string:
+					opts = append(opts, message.WithMetadata(k, val))
+				case map[string]any:
+					fields := make(map[string]string, len(val))
+					for fk, fv := range val {
+						if s, ok := fv.(string); ok {
+							fields[fk] = s
+						} else if fv == nil {
+							fields[fk] = ""
+						} else {
+							fields[fk] = fmt.Sprintf("%v", fv)
+						}
+					}
+					addGroupEntry(k, fields)
+				default:
 					opts = append(opts, message.WithMetadata(k, fmt.Sprintf("%v", v)))
 				}
 			}
@@ -143,5 +170,14 @@ func mapToMessage(m map[string]any, original message.Message) message.Message {
 		}
 	}
 
-	return message.New(opts...)
+	out := message.New(opts...)
+	// group 엔트리 적용(WithMetadata 는 string-only).
+	for k, fields := range groupEntries {
+		out.Metadata().SetGroup(k, fields)
+	}
+	// metadata 누락 폴백 시 원본 group 도 보존.
+	if _, ok := m["metadata"]; !ok && original != nil {
+		message.CopyMetadataGroups(out.Metadata(), original.Metadata())
+	}
+	return out
 }

@@ -155,6 +155,37 @@ func (hm *historyMetadata) All() map[string]string {
 	return hm.inner.All()
 }
 
+// SetGroup 은 nested group 을 설정하고 변경 이력을 기록한다.
+// nil/empty fields 는 no-op delete 로 동작하며, 이 경우 remove 로 기록한다.
+func (hm *historyMetadata) SetGroup(key string, fields map[string]string) {
+	oldVal, exists := hm.inner.GetGroup(key)
+	hm.inner.SetGroup(key, fields)
+
+	var oldAny any
+	if exists {
+		oldAny = oldVal
+	}
+
+	if len(fields) == 0 {
+		// no-op delete 로 동작 → remove 로 기록
+		hm.record("metadata", "remove", key, oldAny, nil)
+		return
+	}
+	// group 값 자체를 새 값으로 기록 (복사본 조회로 일관성 유지)
+	newVal, _ := hm.inner.GetGroup(key)
+	hm.record("metadata", "set", key, oldAny, newVal)
+}
+
+// GetGroup 은 내부 Metadata 의 group 조회를 위임한다.
+func (hm *historyMetadata) GetGroup(key string) (map[string]string, bool) {
+	return hm.inner.GetGroup(key)
+}
+
+// Raw 는 내부 Metadata 의 전체 복사본 조회를 위임한다.
+func (hm *historyMetadata) Raw() map[string]any {
+	return hm.inner.Raw()
+}
+
 // Clone 은 내부 Metadata의 복제본을 반환한다 (래핑되지 않은 상태).
 func (hm *historyMetadata) Clone() Metadata {
 	return hm.inner.Clone()

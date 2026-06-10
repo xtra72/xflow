@@ -317,14 +317,30 @@ func resolveTemplateExpr(expr string, msg message.Message) (any, error) {
 	case "payload":
 		return lookupPayloadPath(msg.Payload(), parts[1:])
 	case "metadata":
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("metadata path %q: nested access not supported", expr)
+		switch len(parts) {
+		case 2:
+			// $.metadata.{key} — flat 메타데이터 단일 키.
+			v, ok := msg.Metadata().Get(parts[1])
+			if !ok {
+				return nil, fmt.Errorf("metadata key %q not found", parts[1])
+			}
+			return v, nil
+		case 3:
+			// $.metadata.{group}.{field} — 그룹(device/agent 등) 의 필드.
+			// 예: $.metadata.device.id / $.metadata.device.type / $.metadata.agent.type.
+			group, ok := msg.Metadata().GetGroup(parts[1])
+			if !ok {
+				return nil, fmt.Errorf("metadata group %q not found", parts[1])
+			}
+			v, ok := group[parts[2]]
+			if !ok {
+				return nil, fmt.Errorf("metadata group field %q.%q not found", parts[1], parts[2])
+			}
+			return v, nil
+		default:
+			// 그룹은 한 단계 깊이만 지원한다.
+			return nil, fmt.Errorf("metadata path %q: too deep (groups are one level)", expr)
 		}
-		v, ok := msg.Metadata().Get(parts[1])
-		if !ok {
-			return nil, fmt.Errorf("metadata key %q not found", parts[1])
-		}
-		return v, nil
 	default:
 		return nil, fmt.Errorf("unknown key template root %q (expected $.payload, $.metadata, $.id, $.type, $.timestamp)", parts[0])
 	}

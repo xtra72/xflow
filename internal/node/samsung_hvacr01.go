@@ -602,6 +602,7 @@ func (n *SamsungHvacr01StatusNode) drainNewFrames(cfg SamsungHvacr01NodeConfig) 
 			msg.Metadata().Set("node_id", n.ID())
 		}
 		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -654,6 +655,7 @@ func (n *SamsungHvacr01StatusNode) Process(ctx context.Context, msg message.Mess
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
@@ -798,6 +800,7 @@ func (n *SamsungHvacr01ControlNode) Process(ctx context.Context, msg message.Mes
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
@@ -1043,6 +1046,7 @@ func (n *SamsungHvacr01Node) drainNewFrames(cfg SamsungHvacr01NodeConfig) {
 			msg.Metadata().Set("node_id", n.ID())
 		}
 		msg.Metadata().Set("seq", fmt.Sprintf("%d", snap.Seq))
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -1109,6 +1113,7 @@ func (n *SamsungHvacr01Node) Process(ctx context.Context, msg message.Message) (
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil

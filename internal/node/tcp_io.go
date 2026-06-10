@@ -31,6 +31,13 @@ const (
 // tcpNodeConfig 는 TCP 노드 공용 설정 구조체이다.
 type tcpNodeConfig struct {
 	AgentRef string `json:"agent_ref"` // 대상 TCP Agent 이름/ID (필수)
+
+	// EmitMetadata 는 metadata 그룹 emit 정책을 제어한다 (P3).
+	// tcp 는 디바이스 노드가 아니므로 Agent(에이전트 그룹)만 사용한다.
+	// parseEmitMetadata 가 Agent 기본 ON — emit_agent:false 로 비활성화.
+	// 주의: 기존 flat tcp.agent_type 메타데이터는 별도 소비자(웹 문서/테스트)가
+	// 있어 그대로 유지하고, agent 그룹을 추가로 emit 한다.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +72,9 @@ func (tb *tcpNodeBase) configure(config map[string]any) error {
 	if cfg.AgentRef == "" {
 		return ErrTCPMissingAgentRef
 	}
+
+	// P3: emit_metadata — agent 그룹 emit 정책 (기본 ON).
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	tb.mu.Lock()
 	tb.tcpCfg = cfg
@@ -253,6 +263,11 @@ func (n *TCPInNode) receiveLoop() {
 		if n.agent != nil {
 			msg.Metadata().Set("tcp.agent_type", n.agent.Type())
 		}
+		// P3: agent:{type,id} 그룹 (기본 ON). flat tcp.agent_type 는 별도 소비자가 있어 유지.
+		n.mu.RLock()
+		emitOpts := n.tcpCfg.EmitMetadata
+		n.mu.RUnlock()
+		emitAgentGroup(msg, n.agent, emitOpts)
 		msg.SetType("event")
 
 		select {
@@ -431,6 +446,11 @@ func (n *TCPOutNode) Process(_ context.Context, msg message.Message) ([]message.
 	// 패스스루 — 원본 메시지를 복제하여 출력
 	out := msg.Clone()
 	out.Metadata().Set("tcp.node_id", n.ID())
+	// P3: agent:{type,id} 그룹 (기본 ON). tcp.node_id 는 flat 유지.
+	n.mu.RLock()
+	emitOpts := n.tcpCfg.EmitMetadata
+	n.mu.RUnlock()
+	emitAgentGroup(out, n.agent, emitOpts)
 	out.SetType("response")
 
 	return []message.Message{out}, nil

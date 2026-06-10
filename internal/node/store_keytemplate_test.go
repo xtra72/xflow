@@ -90,6 +90,60 @@ func TestResolveKeyTemplate_MixedSyntax(t *testing.T) {
 	}
 }
 
+// TestResolveKeyTemplate_MetadataGroupPath 는 $.metadata.{group}.{field} 3-segment
+// nested 경로가 device/agent 그룹 필드로 해석되는지 검증한다 (flat 키 제거 후 대체 경로).
+func TestResolveKeyTemplate_MetadataGroupPath(t *testing.T) {
+	t.Parallel()
+	msg := message.New()
+	msg.Metadata().SetGroup("device", map[string]string{
+		"type": "controller",
+		"id":   "uuid-abc",
+		"name": "Living Room",
+	})
+	msg.Metadata().SetGroup("agent", map[string]string{
+		"type": "lg_hvacr02",
+		"id":   "agent-1",
+	})
+
+	cases := []struct {
+		template string
+		want     string
+	}{
+		{"{$.metadata.device.id}", "uuid-abc"},
+		{"{$.metadata.device.type}", "controller"},
+		{"{$.metadata.device.name}", "Living Room"},
+		{"{$.metadata.agent.type}", "lg_hvacr02"},
+		{"xflow/{$.metadata.device.type}/{$.metadata.device.id}/status", "xflow/controller/uuid-abc/status"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.template, func(t *testing.T) {
+			got, err := resolveKeyTemplate(tc.template, msg)
+			if err != nil {
+				t.Fatalf("resolveKeyTemplate(%q): %v", tc.template, err)
+			}
+			if got != tc.want {
+				t.Errorf("= %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveKeyTemplate_MetadataFlatStillWorks 는 2-segment $.metadata.{key} flat
+// 경로가 여전히 동작하는지 검증한다 (회귀 방지).
+func TestResolveKeyTemplate_MetadataFlatStillWorks(t *testing.T) {
+	t.Parallel()
+	msg := message.New()
+	msg.Metadata().Set("node_id", "node-xyz")
+
+	got, err := resolveKeyTemplate("{$.metadata.node_id}", msg)
+	if err != nil {
+		t.Fatalf("resolveKeyTemplate: %v", err)
+	}
+	if got != "node-xyz" {
+		t.Errorf("= %q, want %q", got, "node-xyz")
+	}
+}
+
 // TestResolveKeyTemplate_Errors 는 잘못된 입력의 에러 케이스를 검증한다.
 func TestResolveKeyTemplate_Errors(t *testing.T) {
 	t.Parallel()
@@ -106,7 +160,8 @@ func TestResolveKeyTemplate_Errors(t *testing.T) {
 		{"unknown metadata", "{$.metadata.nope}", `"nope" not found`},
 		{"unknown root", "{$.unknown.x}", `unknown key template root`},
 		{"too short path", "{$.payload}", `invalid key template path`},
-		{"metadata nested", "{$.metadata.a.b}", `nested access not supported`},
+		{"metadata missing group", "{$.metadata.absent.field}", `not found`},
+		{"metadata too deep", "{$.metadata.a.b.c}", `too deep`},
 		{"non-map traversal", "{$.payload.known.deeper}", `not a nested object`},
 	}
 	for _, tc := range cases {

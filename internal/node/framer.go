@@ -504,6 +504,8 @@ func (n *FramerNode) makeFrameMessageLocked(src message.Message, frame []byte, s
 	sb.index++
 
 	out := message.New(opts...)
+	// P2: nested group 메타데이터 보존(WithMetadata 는 string-only 이므로 별도 복사).
+	message.CopyMetadataGroups(out.Metadata(), src.Metadata())
 	// 프레임 바이트를 새 슬라이스에 복사하여 페이로드에 설정
 	copied := make([]byte, len(frame))
 	copy(copied, frame)
@@ -535,6 +537,8 @@ func (n *FramerNode) makeErrorMessage(src message.Message, code string, cause er
 		opts = append(opts, message.WithMetadata("frame.error.cause", cause.Error()))
 	}
 	out := message.New(opts...)
+	// P2: nested group 메타데이터 보존.
+	message.CopyMetadataGroups(out.Metadata(), src.Metadata())
 	return out
 }
 

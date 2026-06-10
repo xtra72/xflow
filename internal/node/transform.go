@@ -173,7 +173,10 @@ func (n *TransformNode) Configure(config map[string]any) error {
 			for mk, mv := range result.Metadata().All() {
 				opts = append(opts, message.WithMetadata(mk, mv))
 			}
-			return message.New(opts...), nil
+			out := message.New(opts...)
+			// P2: nested group 보존(All() 은 string 만 반환).
+			message.CopyMetadataGroups(out.Metadata(), result.Metadata())
+			return out, nil
 		}
 	}
 
@@ -231,7 +234,11 @@ func (n *TransformNode) Configure(config map[string]any) error {
 					}
 				}
 
-				return message.New(opts...), nil
+				out := message.New(opts...)
+				// P2: nested group 보존. metadata_expression(exclude/select) 은 flat 문자열
+				// 키만 다루므로(All() 기반), 원본 result 의 group 을 보존한다.
+				message.CopyMetadataGroups(out.Metadata(), result.Metadata())
+				return out, nil
 			}
 		}
 	}

@@ -37,9 +37,9 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'error', direction: 'error', description: '처리 중 에러 발생 시 출력' },
     ],
     configFields: [
-      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키 필드명 (예: idu_num). 비어있으면 전체 메시지 기준' },
+      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키. bare name(예: idu_num) = 최상위 payload 필드(레거시). $.-경로(예: $.payload.state.mode, $.metadata.device.id)는 메시지 전체 대상. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
       { name: 'window', type: 'string', required: false, description: '중복 억제 시간 창 (예: 30s, 1m)', default: '30s' },
-      { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외)' },
+      { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외). 각 필드는 bare name(예: current_temperature) = 최상위 payload 키(레거시), 또는 $.-경로(예: $.payload.state.mode, $.metadata.device.id) = 메시지 전체 대상' },
       { name: 'on_duplicate', type: 'string', required: false, description: '중복 시 처리: drop (기본, 폐기) 또는 reject_port (reject 포트로 전달)', default: 'drop' },
     ],
     configExample: {
@@ -1086,7 +1086,8 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'value_key',
         type: 'string',
         required: false,
-        description: 'payload에서 저장할 값의 키입니다. 비워두면 전체 payload를 저장합니다.',
+        description:
+          '저장할 값의 경로. bare 이름=payload 필드(중첩 dot 가능), $.payload.x / $.metadata.device.id / $.id 등 메시지 전체 경로 지원. 비워두면 전체 payload를 저장합니다.',
       },
       {
         name: 'namespace',
@@ -1279,11 +1280,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           raw: '[]byte (바이너리 원본)',
           data: '562d04445500670445500000204...',
         },
-        metadata: { node_id: 'node-abc-123', agent_type: 'serial' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123' },
       },
       raw_out: {
         payload: { raw: '[]byte (프레이밍 이전 원본)' },
-        metadata: { node_id: 'node-abc-123', port: 'raw_out' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123', port: 'raw_out' },
       },
     },
   },
@@ -1314,7 +1315,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
       out: {
         payload: { raw: '[56 2d 04 44 55 ...]', data: 'V-\\u0004DU...' },
-        metadata: { node_id: 'node-abc-123' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123' },
       },
     },
   },
@@ -1343,14 +1344,14 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           raw: '[]byte (바이너리 원본)',
           data: '48656c6c6f2066726f6d20636c69656e74',
         },
-        metadata: { 'tcp.remote_addr': '192.168.1.100:5678', 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-server' },
+        metadata: { agent: { type: 'tcp-server', id: 'agent-1' }, 'tcp.remote_addr': '192.168.1.100:5678', 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-server' },
       },
       'out (tcp-client)': {
         payload: {
           raw: '[]byte (바이너리 원본)',
           data: '48656c6c6f2066726f6d20736572766572',
         },
-        metadata: { 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-client' },
+        metadata: { agent: { type: 'tcp-client', id: 'agent-1' }, 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-client' },
       },
     },
   },
@@ -1382,7 +1383,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
       out: {
         payload: { raw: '[4f 4b]', data: 'OK' },
-        metadata: { 'tcp.node_id': 'node-abc', 'tcp.remote_addr': '192.168.1.100:5678' },
+        metadata: { agent: { type: 'tcp-server', id: 'agent-1' }, 'tcp.node_id': 'node-abc', 'tcp.remote_addr': '192.168.1.100:5678' },
       },
     },
   },

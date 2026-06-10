@@ -765,6 +765,11 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 	msg.Payload().Set("room", "living")
 	msg.Payload().Set("state", map[string]any{"power": true, "mode": "cool"})
 	msg.Metadata().Set("device_type", "HVACR.IDU")
+	msg.Metadata().SetGroup("device", map[string]string{
+		"type": "controller",
+		"id":   "uuid-abc",
+		"name": "Living Room",
+	})
 	msg.SetType("device_state.change")
 
 	tests := []struct {
@@ -783,6 +788,10 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 		{"$.type", "ev/{$.type}", "ev/device_state.change"},
 		{"$.payload nested", "x/{$.payload.state.mode}", "x/cool"},
 		{"JSONPath 키 없음", "out/{$.metadata.absent}/x", "out/{$.metadata.absent}/x"},
+		// nested metadata group path (flat 키 제거 후 대체 경로)
+		{"$.metadata.device.type", "xflow/{$.metadata.device.type}/{$.metadata.device.id}/status", "xflow/controller/uuid-abc/status"},
+		{"$.metadata.device.name", "out/{$.metadata.device.name}/x", "out/Living Room/x"},
+		{"nested group 키 없음", "out/{$.metadata.device.absent}/x", "out/{$.metadata.device.absent}/x"},
 	}
 
 	for _, tt := range tests {

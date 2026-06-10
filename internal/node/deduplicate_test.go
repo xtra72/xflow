@@ -303,6 +303,124 @@ func TestDeduplicate_MissingFieldAsDifferent_True(t *testing.T) {
 	assert.Len(t, results, 1, "missing_field_as_different=true: 부재 필드는 다름으로 판정 → 통과")
 }
 
+// ---------------------------------------------------------------------------
+// SPEC-AGENT-METADATA-GROUPING: 그룹핑 key 의 $.-path 지원
+// ---------------------------------------------------------------------------
+
+// iduMsgWithDevice 는 device 메타데이터 그룹(id 포함)을 가진 idu 메시지를 만든다.
+func iduMsgWithDevice(deviceID string, roomTemp float64, setTemp int) message.Message {
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"type":                "idu",
+		"current_temperature": roomTemp,
+		"target_temperature":  float64(setTemp),
+		"op_mode":             float64(20),
+		"fan_byte":            float64(84),
+	})))
+	msg.Metadata().SetGroup("device", map[string]string{"id": deviceID, "type": "HVACR.IDU"})
+	return msg
+}
+
+// TestDeduplicate_Key_MetadataGroupPath 는 key 가 "$.metadata.device.id" 일 때
+// device 그룹의 id 로 그룹핑되어, 서로 다른 device.id 는 독립적으로 통과하고
+// 동일 device.id 의 동일 비교값은 중복으로 판정되는지 검증한다.
+func TestDeduplicate_Key_MetadataGroupPath(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":    "$.metadata.device.id",
+		"window": "30s",
+	})
+
+	// device-1 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), iduMsgWithDevice("device-1", 20.5, 22))
+	assert.Len(t, results, 1)
+
+	// 다른 device-2 (동일 비교값) → 다른 그룹이므로 통과.
+	results, _ = n.Process(context.Background(), iduMsgWithDevice("device-2", 20.5, 22))
+	assert.Len(t, results, 1, "다른 device.id 는 독립 그룹이므로 통과해야 함")
+
+	// device-1 동일 비교값 재전송 → 동일 그룹 중복으로 판정.
+	results, _ = n.Process(context.Background(), iduMsgWithDevice("device-1", 20.5, 22))
+	assert.Len(t, results, 0, "동일 device.id 의 동일 값은 중복으로 판정")
+}
+
+// TestDeduplicate_Key_NestedPayloadPath 는 key 가 "$.payload.state.mode" 일 때
+// 중첩 payload 값으로 그룹핑되는지 검증한다.
+func TestDeduplicate_Key_NestedPayloadPath(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "$.payload.state.mode",
+		"window":         "30s",
+		"compare_fields": "current_temperature",
+	})
+
+	mk := func(mode int, temp float64) message.Message {
+		return message.New(message.WithPayload(message.NewPayload(map[string]any{
+			"state":               map[string]any{"mode": float64(mode)},
+			"current_temperature": temp,
+		})))
+	}
+
+	// mode=1 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), mk(1, 20.5))
+	assert.Len(t, results, 1)
+
+	// mode=2 (동일 비교값) → 다른 그룹이므로 통과.
+	results, _ = n.Process(context.Background(), mk(2, 20.5))
+	assert.Len(t, results, 1, "다른 nested payload 값은 독립 그룹")
+
+	// mode=1 동일 비교값 재전송 → 중복.
+	results, _ = n.Process(context.Background(), mk(1, 20.5))
+	assert.Len(t, results, 0, "동일 nested payload 그룹의 동일 값은 중복")
+}
+
+// TestDeduplicate_Key_LegacyBareName 는 레거시 bare name key("idu_num") 가
+// 여전히 top-level payload 필드로 그룹핑되는지 검증한다 (하위 호환).
+func TestDeduplicate_Key_LegacyBareName(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":    "idu_num",
+		"window": "30s",
+	})
+
+	// idu 1 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
+	assert.Len(t, results, 1)
+
+	// idu 2 (동일 비교값) → 다른 그룹이므로 통과.
+	results, _ = n.Process(context.Background(), iduMsg(2, 20.5, 22))
+	assert.Len(t, results, 1, "레거시 bare name: 다른 top-level 값은 독립 그룹")
+
+	// idu 1 동일 비교값 재전송 → 중복.
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.5, 22))
+	assert.Len(t, results, 0, "레거시 bare name: 동일 그룹 동일 값은 중복")
+}
+
+// TestDeduplicate_Key_UnresolvablePath_FallbackAll 은 $.-path 가 해석 불가능할 때
+// 모든 메시지가 "_all" 그룹으로 묶여 (비교값 동일 시) 중복 처리되는지 검증한다.
+func TestDeduplicate_Key_UnresolvablePath_FallbackAll(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "$.metadata.device.id", // device 그룹 없는 메시지 → 해석 불가
+		"window":         "30s",
+		"compare_fields": "current_temperature",
+	})
+
+	mk := func(temp float64) message.Message {
+		// device 그룹 없음 → "$.metadata.device.id" 해석 실패 → _all 폴백.
+		return message.New(message.WithPayload(message.NewPayload(map[string]any{
+			"current_temperature": temp,
+		})))
+	}
+
+	// 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), mk(20.5))
+	assert.Len(t, results, 1)
+
+	// 동일 비교값 → 같은 _all 그룹이므로 중복.
+	results, _ = n.Process(context.Background(), mk(20.5))
+	assert.Len(t, results, 0, "해석 불가 경로는 _all 그룹으로 폴백되어 동일 값은 중복")
+
+	// 다른 비교값 → 변경으로 통과.
+	results, _ = n.Process(context.Background(), mk(25.0))
+	assert.Len(t, results, 1, "_all 그룹 내 비교값 변경은 통과")
+}
+
 // TestDeduplicate_MissingFieldAsDifferent_False 는 기본 동작 (false) 에서
 // 부재 필드가 nil 로 비교되어 두 번째 누락 메시지는 중복으로 판정되는지 검증한다.
 func TestDeduplicate_MissingFieldAsDifferent_False(t *testing.T) {
@@ -328,4 +446,142 @@ func TestDeduplicate_MissingFieldAsDifferent_False(t *testing.T) {
 	})))
 	results, _ = n.Process(context.Background(), msg2)
 	assert.Len(t, results, 0, "기본 동작: nil==nil 이므로 동일")
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-AGENT-METADATA-GROUPING: compare_fields 의 $.-path 지원
+// (그룹핑 key 와 동일한 방식으로 메시지 전체 경로 비교)
+// ---------------------------------------------------------------------------
+
+// iduMsgWithDeviceType 는 device 메타데이터 그룹(id+type)을 가진 idu 메시지를 만든다.
+// 그룹핑은 device.id, 비교는 device.type 처럼 메타데이터 경로 시나리오를 위한 헬퍼.
+func iduMsgWithDeviceType(deviceID, deviceType string, roomTemp float64) message.Message {
+	msg := message.New(message.WithPayload(message.NewPayload(map[string]any{
+		"type":                "idu",
+		"current_temperature": roomTemp,
+	})))
+	msg.Metadata().SetGroup("device", map[string]string{"id": deviceID, "type": deviceType})
+	return msg
+}
+
+// TestDeduplicate_CompareFields_MetadataGroupPath 는 compare_fields 가
+// "$.metadata.device.type" 일 때, 같은 그룹(device.id) 내에서 device.type 이 동일하면
+// 중복으로 판정하고, device.type 이 다르면 통과시키는지 검증한다.
+func TestDeduplicate_CompareFields_MetadataGroupPath(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "$.metadata.device.id",
+		"window":         "30s",
+		"compare_fields": []any{map[string]any{"name": "$.metadata.device.type"}},
+	})
+
+	// device-1 / HVACR.IDU 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), iduMsgWithDeviceType("device-1", "HVACR.IDU", 20.5))
+	assert.Len(t, results, 1)
+
+	// 동일 device-1, 동일 device.type → 중복 (payload current_temperature 가 달라도 비교 대상 아님).
+	results, _ = n.Process(context.Background(), iduMsgWithDeviceType("device-1", "HVACR.IDU", 99.9))
+	assert.Len(t, results, 0, "동일 device.type 은 중복으로 판정 ($.metadata 경로 비교)")
+
+	// device-1, device.type 변경 → 통과.
+	results, _ = n.Process(context.Background(), iduMsgWithDeviceType("device-1", "HVACR.ODU", 20.5))
+	assert.Len(t, results, 1, "device.type 변경은 통과 ($.metadata 경로 비교)")
+}
+
+// TestDeduplicate_CompareFields_NestedPayloadPath 는 compare_fields 가
+// 중첩 payload 경로 "$.payload.state.mode" 일 때 nested 값으로 비교되는지 검증한다.
+func TestDeduplicate_CompareFields_NestedPayloadPath(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"window":         "30s",
+		"compare_fields": []any{map[string]any{"name": "$.payload.state.mode"}},
+	})
+
+	mk := func(mode int, temp float64) message.Message {
+		return message.New(message.WithPayload(message.NewPayload(map[string]any{
+			"state":               map[string]any{"mode": float64(mode)},
+			"current_temperature": temp,
+		})))
+	}
+
+	// mode=1 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), mk(1, 20.5))
+	assert.Len(t, results, 1)
+
+	// 동일 mode=1 (다른 temp) → nested 비교값 동일 → 중복.
+	results, _ = n.Process(context.Background(), mk(1, 99.9))
+	assert.Len(t, results, 0, "동일 nested payload 비교값은 중복")
+
+	// mode 변경 → 통과.
+	results, _ = n.Process(context.Background(), mk(2, 20.5))
+	assert.Len(t, results, 1, "nested payload 비교값 변경은 통과")
+}
+
+// TestDeduplicate_CompareFields_LegacyBareStillWorks 는 레거시 bare 비교 필드가
+// 여전히 top-level payload 키로 비교되는지 검증한다 (하위 호환).
+func TestDeduplicate_CompareFields_LegacyBareStillWorks(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "idu_num",
+		"window":         "30s",
+		"compare_fields": "current_temperature",
+	})
+
+	// 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), iduMsg(1, 20.5, 22))
+	assert.Len(t, results, 1)
+
+	// 동일 current_temperature (set_temp 만 다름) → bare 비교는 current_temperature 만 → 중복.
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.5, 25))
+	assert.Len(t, results, 0, "레거시 bare 비교 필드: top-level payload 키 비교 유지")
+
+	// current_temperature 변경 → 통과.
+	results, _ = n.Process(context.Background(), iduMsg(1, 21.0, 22))
+	assert.Len(t, results, 1, "레거시 bare 비교 필드: 값 변경은 통과")
+}
+
+// TestDeduplicate_CompareFields_UnresolvablePath_Missing 는 비교 경로가 해석 불가능할 때
+// "부재(missing)" 로 간주되어 missing_field_as_different=true 면 통과되는지 검증한다.
+func TestDeduplicate_CompareFields_UnresolvablePath_Missing(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":                        "idu_num",
+		"window":                     "30s",
+		"compare_fields":             []any{map[string]any{"name": "$.metadata.device.type"}},
+		"missing_field_as_different": true,
+	})
+
+	// device 그룹 없는 메시지 → "$.metadata.device.type" 해석 실패 → missing.
+	mk := func(idu int) message.Message {
+		return message.New(message.WithPayload(message.NewPayload(map[string]any{
+			"idu_num":             float64(idu),
+			"current_temperature": 20.5,
+		})))
+	}
+
+	// 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), mk(1))
+	assert.Len(t, results, 1)
+
+	// 동일 메시지 재전송 → 해석 불가 경로는 missing → missing_field_as_different=true → 통과.
+	results, _ = n.Process(context.Background(), mk(1))
+	assert.Len(t, results, 1, "해석 불가 $.-path 는 missing 으로 처리되어 다름으로 판정")
+}
+
+// TestDeduplicate_CompareFields_PayloadPathTolerance 는 $.payload.x 숫자 경로에
+// tolerance 가 적용되는지 검증한다.
+func TestDeduplicate_CompareFields_PayloadPathTolerance(t *testing.T) {
+	n := newDeduplicateNode(t, map[string]any{
+		"key":            "idu_num",
+		"window":         "30s",
+		"compare_fields": []any{map[string]any{"name": "$.payload.current_temperature", "tolerance": 0.5}},
+	})
+
+	// 첫 메시지 → 통과.
+	results, _ := n.Process(context.Background(), iduMsg(1, 20.0, 22))
+	assert.Len(t, results, 1)
+
+	// 허용오차 이내 (20.0 → 20.4, 차이 0.4 <= 0.5) → 중복.
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.4, 22))
+	assert.Len(t, results, 0, "$.payload 숫자 경로 허용오차 이내는 중복")
+
+	// 허용오차 초과 (20.0 → 20.6, 차이 0.6 > 0.5) → 통과.
+	results, _ = n.Process(context.Background(), iduMsg(1, 20.6, 22))
+	assert.Len(t, results, 1, "$.payload 숫자 경로 허용오차 초과는 통과")
 }
