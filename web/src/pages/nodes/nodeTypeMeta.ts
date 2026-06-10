@@ -37,7 +37,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'error', direction: 'error', description: '처리 중 에러 발생 시 출력' },
     ],
     configFields: [
-      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키 필드명 (예: idu_num). 비어있으면 전체 메시지 기준' },
+      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키. bare name(예: idu_num) = 최상위 payload 필드(레거시). $.-경로(예: $.payload.state.mode, $.metadata.device.id)는 메시지 전체 대상. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
       { name: 'window', type: 'string', required: false, description: '중복 억제 시간 창 (예: 30s, 1m)', default: '30s' },
       { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외)' },
       { name: 'on_duplicate', type: 'string', required: false, description: '중복 시 처리: drop (기본, 폐기) 또는 reject_port (reject 포트로 전달)', default: 'drop' },

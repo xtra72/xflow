@@ -91,10 +91,17 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 	missingDiff := n.missingFieldAsDifferent
 	n.mu.RUnlock()
 
-	// 그룹핑 키 추출
+	// 그룹핑 키 추출.
+	//   - "$." prefix → 전체 메시지 대상 JSONPath ($.payload.x / $.metadata.device.id / ...)
+	//     를 resolveTemplateExpr 로 해석. 해석 실패(부재/잘못된 경로)는 에러 없이 "_all" 폴백.
+	//   - bare name (레거시) → top-level payload 필드 직접 조회. 부재 시 "_all" 폴백.
 	groupKey := "_all"
 	if keyField != "" {
-		if v, ok := msg.Payload().Get(keyField); ok {
+		if strings.HasPrefix(keyField, "$.") {
+			if v, err := resolveTemplateExpr(keyField, msg); err == nil {
+				groupKey = fmt.Sprintf("%v", v)
+			}
+		} else if v, ok := msg.Payload().Get(keyField); ok {
 			groupKey = fmt.Sprintf("%v", v)
 		}
 	}
