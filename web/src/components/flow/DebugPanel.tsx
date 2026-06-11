@@ -7,7 +7,7 @@
 // 라인에는 노드 라벨 + 포트 + "tap" 뱃지를 달아 debug.message 와 구분한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Eye, Trash2, Terminal } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eye, Plus, Terminal, Trash2, X } from 'lucide-react';
 import { createWSClient, type WSClient } from '@/services/ws/wsClient';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import { useAuthStore } from '@/stores/authStore';
@@ -55,16 +55,35 @@ function formatTapPayload(payload: Record<string, unknown>): string {
   }
 }
 
+/** 사용자가 만든 탭 출력 뷰. 노드/포트 필터는 서로 독립적이다('all' = 전체). */
+interface TapView {
+  /** 안정적인 뷰 식별자 (React key + 활성 뷰 선택용). */
+  id: string;
+  /** 노드 필터: 'all' = 전체, 그 외 = nodeId. */
+  node: string;
+  /** 포트 필터: 'all' = 전체, 그 외 = 포트명. */
+  port: string;
+}
+
 export function DebugPanel() {
   const [tab, setTab] = useState<PanelTab>('debug');
   const [entries, setEntries] = useState<DebugEntry[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  // 탭 출력 서브탭: 'all' = 전체, 그 외 = `${nodeId}${port}` 복합 키.
-  const [tapSubTab, setTapSubTab] = useState<string>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
   const wsRef = useRef<WSClient | null>(null);
+
+  // 탭 출력 뷰 ID 발급용 카운터(렌더와 무관하게 단조 증가, 인메모리 전용).
+  const viewIdRef = useRef(0);
+  const genViewId = useCallback((): string => `view-${++viewIdRef.current}`, []);
+
+  // 탭 출력 뷰 목록 — 각 뷰는 자체 {node, port} 독립 필터를 가진다.
+  // 최초 1개 뷰({전체, 전체})로 시작한다. 영속화하지 않는다(인메모리 전용).
+  const [tapViews, setTapViews] = useState<TapView[]>(() => [
+    { id: 'view-0', node: 'all', port: 'all' },
+  ]);
+  const [activeTapView, setActiveTapView] = useState<string>('view-0');
 
   // 탭 출력 상태 (zustand) — 관찰 중인 노드별 링 버퍼.
   const outputsByNode = useTapStore((s) => s.outputsByNode);
@@ -93,25 +112,96 @@ export function DebugPanel() {
     return all;
   }, [outputsByNode]);
 
-  // 서브탭 목록: 현재 탭 출력에 등장한 (노드, 포트) 조합. 라벨순 정렬.
-  const subKey = (nodeId: string, port: string): string => `${nodeId}${port}`;
-  const tapSubTabs = useMemo<{ key: string; nodeId: string; port: string; label: string }[]>(() => {
-    const seen = new Map<string, { key: string; nodeId: string; port: string; label: string }>();
+  // 필터 옵션 소스 — 현재 탭 출력에 실제로 등장한 노드/포트만 노출한다.
+  // 노드 옵션: 라벨순 정렬. (value=nodeId, label=노드 라벨)
+  const tapNodeOptions = useMemo<{ id: string; label: string }[]>(() => {
+    const seen = new Map<string, string>();
     for (const e of tapEntries) {
-      const key = subKey(e.nodeId, e.port);
-      if (!seen.has(key)) {
-        const label = `${nodeLabelById.get(e.nodeId) ?? e.nodeId}:${e.port}`;
-        seen.set(key, { key, nodeId: e.nodeId, port: e.port, label });
+      if (!seen.has(e.nodeId)) {
+        seen.set(e.nodeId, nodeLabelById.get(e.nodeId) ?? e.nodeId);
       }
     }
-    return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label));
+    return Array.from(seen, ([id, label]) => ({ id, label })).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    );
   }, [tapEntries, nodeLabelById]);
 
-  // 선택 서브탭 적용. 선택 키가 더 이상 존재하지 않으면 전체로 폴백.
+  // 포트 옵션: 등장 포트의 정렬된 유니크 목록.
+  const tapPortOptions = useMemo<string[]>(() => {
+    const seen = new Set<string>();
+    for (const e of tapEntries) seen.add(e.port);
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [tapEntries]);
+
+  // 활성 뷰 해석. 활성 ID가 없으면 첫 뷰로 폴백한다(빈 목록은 불가 — 최소 1개 유지).
+  const activeView = useMemo<TapView>(() => {
+    return (
+      tapViews.find((v) => v.id === activeTapView) ??
+      tapViews[0] ?? { id: 'view-0', node: 'all', port: 'all' }
+    );
+  }, [tapViews, activeTapView]);
+
+  // 선택된 노드/포트가 더 이상 옵션에 없으면 'all'로 폴백한다(크래시·stale 방지).
+  // 필터링·select 표시·뷰 라벨 모두 이 실효(effective) 값을 사용한다.
+  const effectiveNode = useMemo<string>(() => {
+    if (activeView.node === 'all') return 'all';
+    return tapNodeOptions.some((o) => o.id === activeView.node) ? activeView.node : 'all';
+  }, [activeView.node, tapNodeOptions]);
+
+  const effectivePort = useMemo<string>(() => {
+    if (activeView.port === 'all') return 'all';
+    return tapPortOptions.includes(activeView.port) ? activeView.port : 'all';
+  }, [activeView.port, tapPortOptions]);
+
+  // 활성 뷰의 독립 AND 필터 적용: (노드='all' OR 일치) AND (포트='all' OR 일치).
   const visibleTapEntries = useMemo<TapEntry[]>(() => {
-    if (tapSubTab === 'all' || !tapSubTabs.some((s) => s.key === tapSubTab)) return tapEntries;
-    return tapEntries.filter((e) => subKey(e.nodeId, e.port) === tapSubTab);
-  }, [tapEntries, tapSubTab, tapSubTabs]);
+    return tapEntries.filter(
+      (e) =>
+        (effectiveNode === 'all' || e.nodeId === effectiveNode) &&
+        (effectivePort === 'all' || e.port === effectivePort),
+    );
+  }, [tapEntries, effectiveNode, effectivePort]);
+
+  // 뷰 탭 버튼 라벨을 필터로부터 자동 도출한다(실효 값 기준).
+  //   all/all -> "전체", node/all -> {라벨}, all/port -> *:{port}, node/port -> {라벨}:{port}.
+  const viewLabel = useCallback(
+    (node: string, port: string): string => {
+      const nodePart = node === 'all' ? null : (nodeLabelById.get(node) ?? node);
+      if (node === 'all' && port === 'all') return '전체';
+      if (node !== 'all' && port === 'all') return nodePart ?? '전체';
+      if (node === 'all' && port !== 'all') return `*:${port}`;
+      return `${nodePart}:${port}`;
+    },
+    [nodeLabelById],
+  );
+
+  // --- 뷰 추가/삭제/필터 갱신 (불변 업데이트, 인메모리 전용) ---
+
+  const addTapView = useCallback(() => {
+    const id = genViewId();
+    setTapViews((prev) => [...prev, { id, node: 'all', port: 'all' }]);
+    setActiveTapView(id);
+  }, [genViewId]);
+
+  const removeTapView = useCallback((id: string) => {
+    setTapViews((prev) => {
+      if (prev.length <= 1) return prev; // 최소 1개 유지.
+      const next = prev.filter((v) => v.id !== id);
+      // 활성 뷰를 지웠다면 남은 첫 뷰를 활성으로.
+      setActiveTapView((cur) => (cur === id ? (next[0]?.id ?? cur) : cur));
+      return next;
+    });
+  }, []);
+
+  // 활성 뷰의 필터만 불변 갱신한다(다른 뷰는 그대로).
+  const updateActiveView = useCallback(
+    (patch: Partial<Pick<TapView, 'node' | 'port'>>) => {
+      setTapViews((prev) =>
+        prev.map((v) => (v.id === activeView.id ? { ...v, ...patch } : v)),
+      );
+    },
+    [activeView.id],
+  );
 
   const handleDebugMessage = useCallback((data: unknown) => {
     const msg = data as DebugMessage;
@@ -298,43 +388,104 @@ export function DebugPanel() {
             </div>
           ) : (
             <>
-              {/* 노드:포트 서브탭 — 고정 높이 로그 영역 내부 sticky 헤더라
-                  탭 전환 시 패널 높이가 바뀌지 않는다(레이아웃 점프 방지). */}
-              {tapSubTabs.length > 0 && (
-                <div className="sticky top-0 z-10 flex items-center gap-1 overflow-x-auto border-b border-gray-800 bg-gray-900 px-2 py-1">
+              {/* 뷰 컨트롤 — 고정 높이 로그 영역 내부 sticky 헤더라
+                  탭 전환 시 패널 높이가 바뀌지 않는다(레이아웃 점프 방지).
+                  Row 1: 뷰 탭(추가/삭제), Row 2: 활성 뷰의 노드/포트 필터. */}
+              <div className="sticky top-0 z-10 bg-gray-900">
+                {/* Row 1: 뷰 탭 + 추가 버튼 */}
+                <div className="flex items-center gap-1 overflow-x-auto border-b border-gray-800 px-2 py-1">
+                  {tapViews.map((v) => {
+                    const isActive = v.id === activeView.id;
+                    // 라벨도 실효 필터 기준으로 도출한다(사라진 옵션 → all 폴백, stale 방지).
+                    const vNode =
+                      v.node === 'all' || tapNodeOptions.some((o) => o.id === v.node)
+                        ? v.node
+                        : 'all';
+                    const vPort =
+                      v.port === 'all' || tapPortOptions.includes(v.port) ? v.port : 'all';
+                    const label = viewLabel(vNode, vPort);
+                    return (
+                      <div
+                        key={v.id}
+                        className={
+                          'flex shrink-0 items-center rounded ' +
+                          (isActive ? 'bg-sky-500/20 text-sky-300' : 'text-gray-400')
+                        }
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setActiveTapView(v.id)}
+                          title={label}
+                          className={
+                            'max-w-[12rem] truncate px-1.5 py-0.5 ' +
+                            (isActive ? '' : 'rounded hover:bg-gray-800')
+                          }
+                        >
+                          {label}
+                        </button>
+                        {tapViews.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeTapView(v.id)}
+                            title="뷰 삭제"
+                            aria-label={`${label} 뷰 삭제`}
+                            className="rounded px-1 py-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                   <button
                     type="button"
-                    onClick={() => setTapSubTab('all')}
-                    className={
-                      'shrink-0 rounded px-1.5 py-0.5 ' +
-                      (tapSubTab === 'all'
-                        ? 'bg-sky-500/20 text-sky-300'
-                        : 'text-gray-400 hover:bg-gray-800')
-                    }
+                    onClick={addTapView}
+                    title="뷰 추가"
+                    aria-label="뷰 추가"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
                   >
-                    전체 ({tapEntries.length})
+                    <Plus className="h-3.5 w-3.5" />
                   </button>
-                  {tapSubTabs.map((s) => (
-                    <button
-                      key={s.key}
-                      type="button"
-                      onClick={() => setTapSubTab(s.key)}
-                      title={s.label}
-                      className={
-                        'shrink-0 rounded px-1.5 py-0.5 ' +
-                        (tapSubTab === s.key
-                          ? 'bg-sky-500/20 text-sky-300'
-                          : 'text-gray-400 hover:bg-gray-800')
-                      }
-                    >
-                      {s.label}
-                    </button>
-                  ))}
                 </div>
-              )}
+                {/* Row 2: 활성 뷰의 노드/포트 필터 (서로 독립) */}
+                <div className="flex items-center gap-2 border-b border-gray-800 px-2 py-1">
+                  <label className="flex items-center gap-1 text-gray-400">
+                    <span className="text-[10px]">노드</span>
+                    <select
+                      aria-label="노드 필터"
+                      value={effectiveNode}
+                      onChange={(e) => updateActiveView({ node: e.target.value })}
+                      className="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-200"
+                    >
+                      <option value="all">전체</option>
+                      {tapNodeOptions.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-1 text-gray-400">
+                    <span className="text-[10px]">포트</span>
+                    <select
+                      aria-label="포트 필터"
+                      value={effectivePort}
+                      onChange={(e) => updateActiveView({ port: e.target.value })}
+                      className="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-200"
+                    >
+                      <option value="all">전체</option>
+                      {tapPortOptions.map((port) => (
+                        <option key={port} value={port}>
+                          {port}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
               {visibleTapEntries.length === 0 ? (
                 <div className="flex items-center justify-center px-4 py-6 text-center text-gray-500">
-                  선택한 노드/포트에 해당하는 출력이 없습니다.
+                  해당 출력이 없습니다.
                 </div>
               ) : (
                 <table className="w-full">
