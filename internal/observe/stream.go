@@ -167,9 +167,9 @@ func (h *routingHandler) Handle(ctx context.Context, record slog.Record) error {
 func (h *routingHandler) writeToTarget(ctx context.Context, record slog.Record, w io.Writer) {
 	var handler slog.Handler
 	if h.format == "text" {
-		handler = slog.NewTextHandler(w, nil)
+		handler = slog.NewTextHandler(w, logHandlerOpts)
 	} else {
-		handler = slog.NewJSONHandler(w, nil)
+		handler = slog.NewJSONHandler(w, logHandlerOpts)
 	}
 
 	// 내부 라우팅 키(component)를 제외하고 attrs 를 적용한다
