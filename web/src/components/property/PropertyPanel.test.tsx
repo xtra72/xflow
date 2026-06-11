@@ -6,7 +6,7 @@
 //  3) 타입 설명과 포트 설명이 인라인 텍스트가 아니라 `?` 도움말(FieldHelp)로 렌더된다.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 // useAgents 는 React Query 훅이므로 QueryClientProvider 없이 렌더되도록 모킹한다.
 vi.mock('@/hooks/useAgent', () => ({
@@ -19,7 +19,11 @@ import { PropertyPanel } from './PropertyPanel';
 const NODE_ID = 'node-test-1';
 
 /** 지정 nodeType 의 노드를 스토어에 심고 선택한 뒤 PropertyPanel 을 렌더한다. */
-function renderPanelFor(nodeType: string, ports: Array<{ name: string; direction: 'input' | 'output' | 'error' }>) {
+function renderPanelFor(
+  nodeType: string,
+  ports: Array<{ name: string; direction: 'input' | 'output' | 'error' }>,
+  extraData: Record<string, unknown> = {},
+) {
   useEditorStore.setState({
     nodes: [
       {
@@ -31,6 +35,7 @@ function renderPanelFor(nodeType: string, ports: Array<{ name: string; direction
           nodeType,
           category: 'io',
           ports,
+          ...extraData,
         },
       },
     ],
@@ -86,5 +91,67 @@ describe('PropertyPanel — 타입/아이디 타이틀 + ? 도움말', () => {
     // 타입 설명(1) + 포트 in/out 설명(2) = 최소 3개의 도움말 토글이 존재한다.
     const helpButtons = screen.getAllByRole('button', { name: '설명 보기' });
     expect(helpButtons.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('PropertyPanel — 출력 미연결 경고 끄기 토글 (모든 노드 공통)', () => {
+  beforeEach(() => {
+    useEditorStore.setState({ nodes: [], edges: [], selectedNodeId: null });
+  });
+
+  it('모든 노드 타입에 토글을 렌더하고 기본값은 off(false)이다', () => {
+    // filter 는 타입 전용 스키마와 무관하게 공통 토글이 노출되어야 한다.
+    renderPanelFor('filter', [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ]);
+    expect(screen.getByText('출력 미연결 경고 끄기')).toBeInTheDocument();
+    const toggle = screen.getByRole('switch', { name: '출력 미연결 경고 끄기' });
+    // 기본값은 off — config 에 키가 없으면 aria-checked=false.
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('토글하면 노드 config 에 suppress_unconnected_warning: true 를 기록한다', () => {
+    // filter 의 필수 필드(condition)를 미리 채워 "적용" 버튼이 활성화되게 한다.
+    renderPanelFor(
+      'filter',
+      [
+        { name: 'in', direction: 'input' },
+        { name: 'out', direction: 'output' },
+      ],
+      { condition: '.payload != null' },
+    );
+
+    // 토글 ON
+    const toggle = screen.getByRole('switch', { name: '출력 미연결 경고 끄기' });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    // 드래프트 변경 후 "적용" 으로 스토어에 반영한다.
+    fireEvent.click(screen.getByRole('button', { name: /적용/ }));
+
+    const node = useEditorStore.getState().nodes.find((n) => n.id === NODE_ID);
+    expect(node?.data.suppress_unconnected_warning).toBe(true);
+  });
+
+  it('다시 토글하면 false 를 기록한다(기본값 직렬화)', () => {
+    renderPanelFor(
+      'filter',
+      [
+        { name: 'in', direction: 'input' },
+        { name: 'out', direction: 'output' },
+      ],
+      { condition: '.payload != null' },
+    );
+    const toggle = screen.getByRole('switch', { name: '출력 미연결 경고 끄기' });
+    // ON → OFF
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: /적용/ }));
+
+    const node = useEditorStore.getState().nodes.find((n) => n.id === NODE_ID);
+    expect(node?.data.suppress_unconnected_warning).toBe(false);
   });
 });

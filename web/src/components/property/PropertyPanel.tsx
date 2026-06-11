@@ -506,6 +506,49 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           </button>
         </div>
 
+        {/* 출력 미연결 경고 끄기 토글 (모든 노드 공통).
+            ON 시 노드 config 에 suppress_unconnected_warning: true 를 기록한다.
+            기본값(false)일 때는 명시적으로 false 를 기록한다(다른 공통 boolean 토글과 동일). */}
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1">
+            <label
+              htmlFor="node-suppress-unconnected-warning"
+              className="text-xs font-medium text-(--color-text-secondary)"
+            >
+              출력 미연결 경고 끄기
+            </label>
+            <FieldHelp
+              text="이 노드의 연결되지 않은 출력 포트 경고(메시지 폐기)를 로그에서 끕니다. 의도적으로 출력을 연결하지 않은 writer 노드 등에 사용."
+              describedById="node-suppress-unconnected-warning-desc"
+            />
+          </span>
+          <button
+            id="node-suppress-unconnected-warning"
+            type="button"
+            role="switch"
+            aria-checked={draft.suppress_unconnected_warning === true}
+            aria-describedby="node-suppress-unconnected-warning-desc"
+            onClick={() =>
+              handleDraftChange({
+                suppress_unconnected_warning: draft.suppress_unconnected_warning !== true,
+              })
+            }
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors',
+              draft.suppress_unconnected_warning === true
+                ? 'bg-blue-500 dark:bg-blue-600'
+                : 'bg-gray-300 dark:bg-gray-600',
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                draft.suppress_unconnected_warning === true ? 'translate-x-4.5' : 'translate-x-0.5',
+              )}
+            />
+          </button>
+        </div>
+
         {/* 포트 관리 */}
         <PortSection
           ports={ports}
