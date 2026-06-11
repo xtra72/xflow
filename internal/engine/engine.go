@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -35,8 +36,13 @@ type Engine struct {
 	nodeOpts        []node.NodeOption
 	debugSink       node.DebugSink // output 노드의 editor 출력용 싱크
 	config          map[string]any
-	onAgentStart    func(agent.Agent) // 에이전트 자동 시작 후 콜백
-	agentManager    agent.Manager     // 플로우 배포 시 에이전트 참조 검증용 (선택)
+
+	// outputObserver 는 노드 출력 메시지 관측용 옵저버를 보관한다 (선택).
+	// atomic.Value 에 outputObserverHolder 를 저장하여 핫 패스에서 lock-free 로
+	// 읽는다. 미설정 시 Load() 는 nil 을 반환한다. notifyOutputObserver 참조.
+	outputObserver atomic.Value
+	onAgentStart   func(agent.Agent) // 에이전트 자동 시작 후 콜백
+	agentManager   agent.Manager     // 플로우 배포 시 에이전트 참조 검증용 (선택)
 
 	// unconnectedWarned 는 portCounter 가 없는 경로(주로 테스트)에서 미연결 포트
 	// 경고를 (nodeID, portName)당 1회로 제한하기 위한 폴백 dedupe 맵이다.
@@ -1289,6 +1295,8 @@ func (e *Engine) runNode(
 	}
 
 	nodeID := n.ID()
+	// flowID 는 OutputObserver(노드 출력 tap) 통지에 사용된다.
+	flowID := rt.flow.ID()
 
 	// 비활성화된 노드: 메시지를 소비만 하고 처리/전달하지 않는다.
 	if rt.disabledNodes[nodeID] {
@@ -1391,6 +1399,8 @@ func (e *Engine) runNode(
 										pc.Record() // emitted (생산)
 									}
 								}
+								// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+								e.notifyOutputObserver(flowID, n.ID(), portName, msg)
 								// 이 고루틴은 len(wires) > 0 인 포트에 대해서만 시작되므로
 								// 항상 연결된 와이어가 존재한다.
 								if e.sendToWires(ctx, msg, wires, n.ID()) > 0 && pc != nil {
@@ -1447,6 +1457,8 @@ func (e *Engine) runNode(
 						)
 					}
 					debugPortLog(ctx, nodeLogger, "source", n.ID(), msg)
+					// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+					e.notifyOutputObserver(flowID, n.ID(), "out", msg)
 					if len(outWires) == 0 {
 						e.warnUnconnectedPort(n.ID(), n.Name(), "out", pc)
 					} else if e.sendToWires(ctx, msg, outWires, n.ID()) > 0 && pc != nil {
@@ -1560,6 +1572,8 @@ func (e *Engine) runNode(
 					portName = "out"
 				}
 				debugPortLog(ctx, nodeLogger, "output", n.ID(), result)
+				// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+				e.notifyOutputObserver(flowID, n.ID(), portName, result)
 				var pc *portCounter
 				if nc := rt.nodeCounters[n.ID()]; nc != nil {
 					if pc = nc.portCounters[portName]; pc != nil {

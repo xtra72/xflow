@@ -44,8 +44,9 @@ import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { TargetProvider } from '@/lib/remote/TargetContext';
-import { getFlowNodes } from '@/services/api/flowService';
+import { getFlowNodes, getFlowTaps } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
+import { useTapStore } from '@/stores/tapStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { NodeTypeInfo } from '@/types/node';
 import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
@@ -146,6 +147,36 @@ function EditorPageInner() {
   // 빈 id 로 호출해 쿼리를 비활성화한다(원격 편집기에는 런타임 통계 미표시).
   const { data: flowStatus } = useFlowStatus(isRemote ? '' : (flowId ?? ''));
   const isFlowRunning = !isRemote && flowStatus?.status === 'running';
+
+  // 노드 출력 tap(관찰) 상태 복원.
+  //
+  // tap 은 서버 측에서도 런타임/인메모리 전용이므로, 실행 중인 로컬 플로우를
+  // 열 때 현재 서버 tap 목록을 1회 조회해 캔버스의 눈 인디케이터에 반영한다.
+  // 실행이 멈추거나 플로우를 떠나면 클라이언트 미러를 초기화한다(핸들러 누수
+  // 방지를 위해 출력 버퍼와 관찰 집합을 모두 비운다).
+  const setTappedNodeIds = useTapStore((s) => s.setTappedNodeIds);
+  const resetTapStore = useTapStore((s) => s.reset);
+  useEffect(() => {
+    if (isRemote || !flowId || !isFlowRunning) return;
+    let cancelled = false;
+    getFlowTaps(flowId)
+      .then((taps) => {
+        if (!cancelled) setTappedNodeIds(taps.node_ids);
+      })
+      .catch(() => {
+        // 플로우 미실행/조회 실패 — 복원 없이 진행한다(빈 상태 유지).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isRemote, flowId, isFlowRunning, setTappedNodeIds]);
+
+  // 에디터를 떠나거나 플로우를 전환하면 tap 스토어를 초기화한다.
+  useEffect(() => {
+    return () => {
+      resetTapStore();
+    };
+  }, [flowId, resetTapStore]);
 
   // 런타임 노드 정보 폴링 (플로우 실행 중일 때만, 3초 간격) — 로컬 전용.
   const { data: runtimeNodes } = useQuery({

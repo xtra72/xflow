@@ -88,6 +88,12 @@ type NodeConfigureRequest struct {
 	Config map[string]any `json:"config" validate:"required"`
 }
 
+// NodeTapRequest 는 실행 중인 노드의 출력 tap(관측) 토글을 위한 DTO이다.
+// Enabled=true 면 해당 노드의 출력 메시지를 WebSocket(node.output)으로 스트리밍한다.
+type NodeTapRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 // AgentExecRequest 는 에이전트 Process 커맨드 실행을 위한 DTO이다.
 type AgentExecRequest struct {
 	Command string         `json:"command" validate:"required"`

@@ -12,6 +12,8 @@ import {
   Cable,
   Cog,
   Database,
+  Eye,
+  EyeOff,
   GitBranch,
   Power,
   PowerOff,
@@ -36,7 +38,9 @@ import {
 import { resolveRemoteNodeLabel, shortenInstanceId } from '@/lib/remote/nodeLabel';
 import { cn } from '@/lib/utils/cn';
 import { configureNode } from '@/services/api/nodeService';
+import { setNodeTap } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
+import { useTapStore } from '@/stores/tapStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
 import { computeLinkList, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
@@ -145,6 +149,44 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
       }
     },
     [id, outputEnabled, updateNodeData, currentFlowId, addNotification],
+  );
+
+  // 노드 출력 tap(관찰) 토글.
+  //
+  // 와이어 연결 없이 이 노드의 출력 메시지를 WebSocket(node.output)으로
+  // 스트리밍하도록 런타임에 설정한다. tap 은 런타임 전용이므로 플로우가
+  // 실행 중일 때(런타임 통계 stats 존재)만 의미가 있다 — output 토글이
+  // 항상 노출되는 것과 달리, 이 토글은 실행 중 게이팅한다.
+  const isFlowRunning = stats !== undefined;
+  const isTapped = useTapStore((s) => s.tappedNodeIds[id] === true);
+  const setTapped = useTapStore((s) => s.setTapped);
+  const toggleTap = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!currentFlowId) return;
+      const next = !isTapped;
+
+      // 1) 낙관적 UI 갱신 — 즉시 눈 인디케이터에 반영.
+      setTapped(id, next);
+
+      // 2) 서버에 tap 상태 적용 (fire-and-forget). 실패 시 UI 를 되돌리고 알림.
+      setNodeTap(currentFlowId, id, next).catch((err: unknown) => {
+        setTapped(id, !next);
+        // 플로우 미실행 등으로 적용 실패 — 경고로 안내한다.
+        if (err instanceof APIError && err.status === 404) {
+          addNotification({
+            type: 'warning',
+            message: '관찰을 적용하지 못했습니다. 플로우가 실행 중인지 확인하세요.',
+          });
+          return;
+        }
+        addNotification({
+          type: 'warning',
+          message: '관찰 설정을 적용하지 못했습니다.',
+        });
+      });
+    },
+    [id, isTapped, currentFlowId, setTapped, addNotification],
   );
 
   // 필수 필드 누락 검사 (노드 카드에 경고 뱃지 표시용).
@@ -373,6 +415,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
 
   return (
     <div
+      data-tapped={isTapped ? 'true' : 'false'}
       className={cn(
         'relative flex flex-col rounded-lg border bg-white px-3 py-2 shadow-sm',
         'dark:bg-zinc-900 dark:border-zinc-700',
@@ -383,6 +426,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         selected
           ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
           : 'border-zinc-200 hover:shadow-md',
+        // 관찰 중인 노드는 subtle sky ring 으로 시각화 (선택 상태가 우선).
+        !selected && isTapped && 'ring-2 ring-sky-400/70 dark:ring-sky-500/60',
         // 필수 설정이 누락된 경우 호박색 테두리로 시각화 (선택 상태가 우선)
         !selected && hasValidationError && 'border-amber-400 dark:border-amber-600',
         disabled && 'opacity-45',
@@ -491,6 +536,30 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
               <Power className="h-3 w-3" />
             ) : (
               <PowerOff className="h-3 w-3" />
+            )}
+          </button>
+        )}
+        {/* 노드 출력 tap(관찰) 토글 버튼 — 플로우 실행 중일 때만 노출. */}
+        {isFlowRunning && (
+          <button
+            type="button"
+            data-tap-toggle
+            data-tapped={isTapped ? 'true' : 'false'}
+            onClick={toggleTap}
+            onMouseDown={(e) => e.stopPropagation()}
+            className={cn(
+              'flex-shrink-0 rounded-md p-1 transition-colors',
+              isTapped
+                ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-600 dark:hover:bg-sky-900/60'
+                : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
+            )}
+            title={isTapped ? '관찰 ON — 클릭하여 OFF' : '관찰 OFF — 클릭하여 ON'}
+            aria-label={isTapped ? '관찰 중지' : '관찰 시작'}
+          >
+            {isTapped ? (
+              <Eye className="h-3 w-3" />
+            ) : (
+              <EyeOff className="h-3 w-3" />
             )}
           </button>
         )}

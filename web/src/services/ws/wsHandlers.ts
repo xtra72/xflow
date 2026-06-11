@@ -20,6 +20,8 @@ export const WS_MESSAGE_TYPES = {
   SYSTEM_EVENT: 'system.event',
   DEVICE_STATUS: 'device.status',
   DEBUG_MESSAGE: 'debug.message',
+  // 노드 출력 tap(관찰) 스트림. 와이어 연결 없이 임의 노드의 출력 메시지를 전달한다.
+  NODE_OUTPUT: 'node.output',
 } as const;
 
 export type WSMessageType = (typeof WS_MESSAGE_TYPES)[keyof typeof WS_MESSAGE_TYPES];
@@ -33,6 +35,7 @@ export type LogEntryHandler = (data: unknown) => void;
 export type SystemEventHandler = (data: unknown) => void;
 export type DeviceStatusHandler = (data: unknown) => void;
 export type DebugMessageHandler = (data: unknown) => void;
+export type NodeOutputHandler = (data: unknown) => void;
 
 // Handler map for typed registration
 export interface WSHandlerMap {
@@ -44,6 +47,7 @@ export interface WSHandlerMap {
   [WS_MESSAGE_TYPES.SYSTEM_EVENT]?: SystemEventHandler;
   [WS_MESSAGE_TYPES.DEVICE_STATUS]?: DeviceStatusHandler;
   [WS_MESSAGE_TYPES.DEBUG_MESSAGE]?: DebugMessageHandler;
+  [WS_MESSAGE_TYPES.NODE_OUTPUT]?: NodeOutputHandler;
 }
 
 // Set up a message router that dispatches incoming messages to typed callbacks.
@@ -103,4 +107,9 @@ export function onDeviceStatus(client: WSClient, handler: DeviceStatusHandler): 
 export function onDebugMessage(client: WSClient, handler: DebugMessageHandler): () => void {
   client.on(WS_MESSAGE_TYPES.DEBUG_MESSAGE, handler);
   return () => client.off(WS_MESSAGE_TYPES.DEBUG_MESSAGE, handler);
+}
+
+export function onNodeOutput(client: WSClient, handler: NodeOutputHandler): () => void {
+  client.on(WS_MESSAGE_TYPES.NODE_OUTPUT, handler);
+  return () => client.off(WS_MESSAGE_TYPES.NODE_OUTPUT, handler);
 }
