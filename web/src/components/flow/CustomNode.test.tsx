@@ -264,12 +264,12 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
   it('평문(local) flow_id 면 원격 브릿지 인디케이터를 표시하지 않는다', () => {
     renderFlowNode('flow-9', { flowName: '로컬 서브플로우' });
 
+    // 로컬(평문) flow_id 는 원격 브릿지 대상이 아니므로 인디케이터가 없어야 한다.
+    // 로컬 서브플로우 참조 플로우 이름 배지는 제거됨(변경 2): 라벨이 곧 플로우 이름.
     expect(screen.queryByText('원격 브릿지')).toBeNull();
     expect(
       document.querySelector('[data-remote-bridge]'),
     ).toBeNull();
-    // 로컬 서브플로우 표시(참조 플로우 이름)는 그대로 유지된다.
-    expect(screen.getByText('로컬 서브플로우')).toBeInTheDocument();
   });
 
   it('런타임 state 가 없으면(플로우 미실행) 상태 점 없이 정적 인디케이터만 표시한다', () => {

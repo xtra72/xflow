@@ -10,7 +10,6 @@ import {
   ArrowUpFromLine,
   Eye,
   EyeOff,
-  GitBranch,
   Power,
   PowerOff,
   Radio,
@@ -477,23 +476,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
               </span>
             </p>
           )}
-          {/* flow-node 로컬 서브플로우: 참조 플로우 이름 표시 (없으면 안내 문구). 변경 없음. */}
-          {isFlowNode && !isRemoteBridge && (
-            <p
-              className={cn(
-                'mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded px-1 py-0.5 text-[9px] font-medium',
-                referencedFlowLabel
-                  ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300'
-                  : 'bg-amber-50 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300',
-              )}
-              title={referencedFlowLabel ? `참조 플로우: ${referencedFlowLabel}` : '참조 플로우 미지정'}
-            >
-              <GitBranch className="h-2.5 w-2.5 shrink-0" />
-              <span className="truncate">
-                {referencedFlowLabel || '플로우 미지정'}
-              </span>
-            </p>
-          )}
+          {/* flow-node 로컬 서브플로우 참조 플로우 이름 배지 제거:
+              노드 라벨이 이제 선택한 플로우 이름이 되므로 중복 표시 불필요(변경 2). */}
         </div>
         {/* v0.18.9: output 노드 ON/OFF 토글 버튼 */}
         {isOutputNode && (
