@@ -50,12 +50,27 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
     onChange(updated);
   };
 
+  // 포트별 설명을 "포트" 타이틀 옆 ? 도움말 하나로 합친다. 행마다 ? 를 두면
+  // 우측 끝에서 팝오버가 화면 밖으로 잘리므로(left-0 기준), 좌측 타이틀에 모은다.
+  const portsHelpText = ports
+    .map((p) => {
+      const d = portDescriptions?.[p.name];
+      return d ? `${p.name} — ${d}` : null;
+    })
+    .filter((v): v is string => !!v)
+    .join('\n\n');
+
   return (
     <div className="space-y-2">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-(--color-text-secondary)">
-          포트
+        <span className="flex items-center gap-1">
+          <span className="text-xs font-medium text-(--color-text-secondary)">
+            포트
+          </span>
+          {portsHelpText && (
+            <FieldHelp text={portsHelpText} describedById="ports-desc" />
+          )}
         </span>
         <button
           type="button"
@@ -94,13 +109,6 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
               'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
             )}
           />
-          {/* 포트 설명 ? 도움말 (있을 때만). 인라인 텍스트 대신 아이콘 클릭 팝오버. */}
-          {portDescriptions?.[port.name] && (
-            <FieldHelp
-              text={portDescriptions[port.name]!}
-              describedById={`port-desc-${idx}`}
-            />
-          )}
           {/* 삭제 버튼 */}
           <button
             type="button"
