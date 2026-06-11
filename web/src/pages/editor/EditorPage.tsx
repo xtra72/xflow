@@ -44,7 +44,6 @@ import { TargetProvider } from '@/lib/remote/TargetContext';
 import {
   getFlowNodes,
   getFlowTaps,
-  getSubflowStats,
 } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
 import { useTapStore } from '@/stores/tapStore';
@@ -66,7 +65,6 @@ import {
 import {
   aggregateFlowNodeStats,
   buildRuntimeStatsMap,
-  mergeSubflowStats,
 } from '@/lib/flow/subflowNamespace';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
@@ -184,25 +182,18 @@ function EditorPageInner() {
     };
   }, [flowId, resetTapStore]);
 
-  // 런타임 노드 정보 폴링 (플로우 실행 중일 때만, 3초 간격) — 로컬 전용.
+  // 런타임 노드 정보 폴링 (로컬 플로우가 열려 있으면 항상, 3초 간격) — 로컬 전용.
+  //
+  // isFlowRunning 으로 게이팅하지 않는다. 백엔드가 서브플로우 통계를 기존
+  // GET /flows/{id}/nodes 응답에 접어 넣기 때문이다: 플로우 X 가 단독 배포되지
+  // 않고 부모 안에서만 서브플로우로 실행되면, getFlowNodes(X) 는 de-namespace 된
+  // per-original-node LIVE 통계를 반환한다. 따라서 서브플로우를 단독으로 열어도
+  // (그 자신은 isFlowRunning=false) 이 단일 쿼리가 통계를 채운다. 정지/미참조
+  // 플로우에 대해서는 백엔드가 빈 배열([])을 싸게 반환하므로, 열린 플로우당
+  // 3초마다 요청 1개의 비용으로 메인 플로우와 서브플로우를 균일하게 처리한다.
   const { data: runtimeNodes } = useQuery({
     queryKey: ['flows', flowId, 'nodes'],
     queryFn: () => getFlowNodes(flowId!),
-    enabled: !isRemote && !!flowId && isFlowRunning,
-    refetchInterval: 3000,
-  });
-
-  // 서브플로우 LIVE 통계 폴링 (Fix 2) — 로컬 플로우가 열려 있으면 항상 폴링한다.
-  //
-  // 핵심: 현재 플로우가 단독 배포되지 않고 부모 안에서만 실행되면 자기 자신은
-  // "실행 중"이 아니므로(isFlowRunning=false) getFlowNodes 는 비어 있다. 따라서
-  // 이 쿼리는 isFlowRunning 으로 게이팅하면 안 된다 — 부모 안에서 도는 동안에도
-  // 통계를 받아와야 하기 때문이다. subflow-stats 는 부모의 네임스페이스 노드에서
-  // 역집계한 per-original-node 통계를 돌려주며, 참조 부모가 없으면 nodes:[] 라
-  // 추가 비용은 틱당 요청 1개뿐이다.
-  const { data: subflowStats } = useQuery({
-    queryKey: ['flows', flowId, 'subflow-stats'],
-    queryFn: () => getSubflowStats(flowId!),
     enabled: !isRemote && !!flowId,
     refetchInterval: 3000,
   });
@@ -226,28 +217,23 @@ function EditorPageInner() {
   //
   // 단계:
   //  1) getFlowNodes 결과로 exact-id 기준 기본 맵을 만든다(일반 노드는 그대로 매핑).
-  //  2) Fix 2 — subflow-stats 노드를 병합한다(own 우선). 현재 플로우가 부모 안에서만
-  //     실행될 때 비어 있는 자기 통계를 부모 역집계 통계로 채운다.
-  //  3) Fix 1 — 표시된 각 flow-node 에 대해 subflow_<id>_* 자식 통계를 합산해
+  //     백엔드가 서브플로우 통계를 이 응답에 접어 넣으므로(원본 노드 id 키),
+  //     서브플로우 단독 뷰에서도 별도 병합 없이 기본 맵이 이미 채워져 있다.
+  //  2) Fix 1 — 표시된 각 flow-node 에 대해 subflow_<id>_* 자식 통계를 합산해
   //     flow-node 자신의 id 로 올린다(부모 뷰에서 0 으로 보이던 문제 해결).
+  //     부모 뷰에서는 getFlowNodes(parent) 가 네임스페이스 노드를 반환하므로 유효하다.
   const runtimeStatsMap = useMemo(() => {
-    // isFlowRunning 으로 막지 않는다 — 서브플로우가 부모 안에서만 실행될 때 자기
-    // isFlowRunning 은 false 이지만 subflowStats 로 통계를 채워야 한다(Fix 2).
     // 1) 기본 맵(exact id). runtimeNodes 가 아직 없으면 빈 맵에서 시작한다.
-    const baseMap = buildRuntimeStatsMap(runtimeNodes ?? []);
-    // 2) Fix 2 — subflow-stats 병합(own 우선).
-    const merged = subflowStats
-      ? mergeSubflowStats(baseMap, subflowStats.nodes)
-      : baseMap;
-    // 3) Fix 1 — flow-node 위로 자식 네임스페이스 노드 통계 집계.
+    const map = buildRuntimeStatsMap(runtimeNodes ?? []);
+    // 2) Fix 1 — flow-node 위로 자식 네임스페이스 노드 통계 집계.
     for (const flowNodeId of flowNodeIds) {
       const agg = aggregateFlowNodeStats(flowNodeId, runtimeNodes ?? []);
       if (agg !== undefined) {
-        merged[flowNodeId] = agg;
+        map[flowNodeId] = agg;
       }
     }
-    return merged;
-  }, [runtimeNodes, subflowStats, flowNodeIds]);
+    return map;
+  }, [runtimeNodes, flowNodeIds]);
 
   // 에디터 그리드 스냅 설정 (v0.18.4)
   const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);
