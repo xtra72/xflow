@@ -34,6 +34,12 @@ type FlowManager interface {
 	// 플로우가 배포/실행 중이 아니거나 노드를 찾지 못하면 404 로 매핑되는 에러를 반환한다.
 	ReconfigureFlowNode(ctx context.Context, flowID, nodeID string, config map[string]any) error
 
+	// SubflowNodeStats 는 서브플로우(subflowID)의 LIVE per-ORIGINAL-node 통계를,
+	// 현재 배포된 모든 부모 플로우 중 subflowID 를 LOCAL 참조하는 flow-node 인스턴스에서
+	// 집계하여 반환한다(SPEC subflow live-stats — Fix 2). 참조 부모가 없으면 nodes 가 빈
+	// 슬라이스인 결과를 반환한다(에러 아님).
+	SubflowNodeStats(ctx context.Context, subflowID string) (*SubflowStatsInfo, error)
+
 	// RenameAgentInFlows 는 저장된 모든 플로우에서 oldName 에이전트 참조를 newName 으로 변경한다.
 	// 업데이트된 플로우 수를 반환한다.
 	RenameAgentInFlows(ctx context.Context, oldName, newName string) (int, error)
@@ -93,6 +99,29 @@ type FlowNodeInfo struct {
 	Config map[string]any `json:"config,omitempty"`
 	Ports  []PortInfo     `json:"ports,omitempty"`
 	Extra  map[string]any `json:"extra,omitempty"`
+}
+
+// SubflowStatsInfo 는 서브플로우 단독 뷰의 LIVE per-original-node 통계 응답이다.
+// 배포된 모든 부모 플로우의 네임스페이스 노드(subflow_<flowNodeID>_*)에서 집계된다.
+// (SPEC subflow live-stats — Fix 2)
+type SubflowStatsInfo struct {
+	// FlowID 는 조회 대상 서브플로우의 id 이다(요청한 {id}).
+	FlowID string `json:"flow_id"`
+	// Nodes 는 서브플로우 정의 내 원본 노드 단위의 집계 통계이다.
+	// 참조하는 실행 부모가 없으면 빈 슬라이스([])로 직렬화된다.
+	Nodes []SubflowNodeStat `json:"nodes"`
+}
+
+// SubflowNodeStat 는 서브플로우 원본 노드 1개의 집계 런타임 통계이다.
+// NodeInstanceInfo 와 유사한 형태로, 웹이 노드 렌더링을 재사용할 수 있게 한다.
+type SubflowNodeStat struct {
+	NodeID    string     `json:"node_id"`        // 서브플로우 정의 내 원본 노드 ID
+	Name      string     `json:"name,omitempty"` // 노드 이름(첫 매칭 인스턴스 기준)
+	Type      string     `json:"type,omitempty"` // 노드 타입(첫 매칭 인스턴스 기준)
+	State     string     `json:"state,omitempty"`
+	Processed int64      `json:"processed"` // 모든 부모/flow-node 인스턴스 합산
+	Errors    int64      `json:"errors"`    // 합산
+	Ports     []PortInfo `json:"ports,omitempty"`
 }
 
 // PortInfo 는 노드 포트의 런타임 정보를 나타낸다.
@@ -192,6 +221,7 @@ func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.PUT("/flows/{id}/config", h.Configure)
 	g.GET("/flows/{id}/status", h.Status)
 	g.GET("/flows/{id}/nodes", h.ListNodes)
+	g.GET("/flows/{id}/subflow-stats", h.SubflowStats)
 	g.GET("/flows/{id}/nodes/{nodeID}", h.GetNode)
 	g.POST("/flows/{id}/nodes/{nodeID}/configure", h.ConfigureNode)
 
@@ -1098,6 +1128,27 @@ func (h *FlowHandler) ListNodes(ctx api.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(nodes))
+}
+
+// SubflowStats 는 서브플로우 {id} 의 LIVE per-original-node 통계를 반환한다.
+// GET /flows/{id}/subflow-stats
+//
+// {id} 를 LOCAL 참조하는 모든 배포 부모 플로우의 네임스페이스 노드(subflow_<flowNodeID>_*)
+// 통계를 원본 노드 단위로 집계한다(Fix 2). 참조 부모가 없으면 nodes:[] (200) 를 반환한다.
+// 서브플로우를 에디터에서 단독으로 열었을 때 실제 처리 중인 per-node 카운트를 보여주기 위한
+// 엔드포인트이다.
+func (h *FlowHandler) SubflowStats(ctx api.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("flow id is required")
+	}
+
+	info, err := h.flows.SubflowNodeStats(ctx.Context(), id)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(info))
 }
 
 // GetNode 는 플로우 내 특정 노드 인스턴스의 상세 정보를 반환한다.

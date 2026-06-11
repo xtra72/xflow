@@ -84,6 +84,39 @@ export interface FlowNodeInfo {
 }
 
 /**
+ * 서브플로우 원본 노드 1개의 집계 런타임 통계.
+ * Go handler.SubflowNodeStat 구조체와 매핑된다.
+ *
+ * getFlowNodes(FlowNodeInfo)와 동일한 형태(node_id/state/ports)에 더해
+ * 부모 인스턴스 전체 합산값인 processed/errors 를 포함한다. node_id 는
+ * 서브플로우 정의 내 ORIGINAL 노드 id 이다(네임스페이스 접두 제거됨).
+ */
+export interface SubflowNodeStat {
+  node_id: string;
+  name?: string;
+  type?: string;
+  state?: string;
+  /** 모든 부모/flow-node 인스턴스 합산 처리 건수. */
+  processed: number;
+  /** 모든 부모/flow-node 인스턴스 합산 에러 건수. */
+  errors: number;
+  ports?: PortInfo[];
+}
+
+/**
+ * `GET /flows/{id}/subflow-stats` 응답 데이터.
+ * Go handler.SubflowStatsInfo 구조체와 매핑된다.
+ *
+ * 서브플로우 {id} 를 LOCAL 참조하는 배포 부모 플로우들의 네임스페이스 노드
+ * (subflow_<flowNodeID>_*)에서 원본 노드 단위로 집계된다. 참조 부모가 없으면
+ * nodes 는 빈 배열([])로 직렬화된다(200).
+ */
+export interface SubflowStatsInfo {
+  flow_id: string;
+  nodes: SubflowNodeStat[];
+}
+
+/**
  * Request body for creating a new flow.
  * Maps to Go FlowCreateRequest DTO.
  */

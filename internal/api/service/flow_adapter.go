@@ -620,18 +620,167 @@ func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handle
 	return info, nil
 }
 
-// ListFlowNodes 는 배포된 플로우의 모든 노드 인스턴스 정보를 반환한다.
-func (a *FlowServiceAdapter) ListFlowNodes(_ context.Context, flowID string) ([]handler.FlowNodeInfo, error) {
-	nodes, err := a.engine.GetFlowNodes(flowID)
-	if err != nil {
-		return nil, err
+// ListFlowNodes 는 플로우의 LIVE 노드 인스턴스 통계를 반환한다(단일 경로 — 메인/서브 공통).
+//
+// 에디터는 메인 플로우인지 서브플로우인지 구분하지 않고 GET /flows/{id}/nodes 만 호출한다.
+// 따라서 flowID 가 어떻게(단독·부모·임베디드, 또는 이들의 조합으로) 실행 중이든 라이브
+// per-node 통계를 일관되게 돌려준다. flowID 의 모든 실행 인스턴스 통계를 합산한다:
+//
+//  1. ownNodes = engine.GetFlowNodes(flowID): flowID 단독 배포 노드(부모 플로우면 자신의
+//     네임스페이스 노드 포함). 단독 배포가 없으면(ErrFlowNotFound) 빈 슬라이스.
+//  2. embedded = subflowEmbeddedNodes(flowID): flowID 를 LOCAL 참조하는 모든 배포 부모의
+//     네임스페이스 노드(subflow_<F>_<orig>)를 원본 노드 ID 로 역매핑·합산한 통계.
+//  3. embedded 가 비어 있으면 ownNodes 를 그대로 반환한다(일반/부모/단독 플로우 — 기존
+//     동작 보존). embedded 가 있으면 ownNodes + embedded 를 노드 ID 단위로 병합하여
+//     반환한다. 서브플로우가 단독 배포(idle, 0)되어 있으면서 동시에 부모 안에서 활성(>0)
+//     으로 실행될 수 있으므로, 두 인스턴스의 합(idle + active)을 노출해야 사용자가 단독
+//     뷰에서 실제 활동을 본다.
+//  4. 단독 배포도 없고 참조 부모도 없으면 빈(비-nil) 슬라이스를 반환한다(에러 아님).
+func (a *FlowServiceAdapter) ListFlowNodes(ctx context.Context, flowID string) ([]handler.FlowNodeInfo, error) {
+	// 1) 단독 배포 노드: flowID 가 단독 배포되어 있으면 엔진 자신의 노드(부모 플로우의
+	//    네임스페이스 노드 포함). 단독 배포가 없으면(ErrFlowNotFound) 빈 슬라이스.
+	ownNodes, ownErr := a.engine.GetFlowNodes(flowID)
+	if ownErr != nil {
+		ownNodes = nil // ErrFlowNotFound 등 — 빈 슬라이스로 취급(에러 아님).
 	}
 
+	// 2) 서브플로우 임베디드 통계: flowID 를 LOCAL 참조하는 모든 배포 부모의 네임스페이스
+	//    노드(subflow_<F>_<orig>)를 원본 노드 ID 로 역매핑·합산한다(공유 헬퍼). 부모 뷰
+	//    (flowID 자신이 부모)에서는 비어 있다(flowID 가 다른 부모에 참조되지 않는 한).
+	embedded := a.subflowEmbeddedNodes(ctx, flowID)
+
+	if len(embedded) == 0 {
+		// 임베디드가 없으면 단독/부모/일반 플로우의 기존 동작을 그대로 유지한다.
+		return engineNodesToFlowNodeInfos(ownNodes), nil
+	}
+
+	// 3) 임베디드가 있으면 단독 배포 노드 + 임베디드를 노드 ID 단위로 병합한다. 서브플로우가
+	//    단독 배포(idle, 0)되어 있으면서 동시에 부모 안에서 활성(>0)으로 실행될 수 있으므로,
+	//    실행 중인 모든 인스턴스의 합(단독 idle + 임베디드 active)을 노출해야 사용자가 단독
+	//    뷰에서 실제 활동을 본다. 노드 ID 는 단독 배포·임베디드·서브플로우 정의에서 동일하다
+	//    (ParseSubflowNodeID 가 네임스페이스를 원본 ID 로 역매핑).
+	merged := mergeNodeInstanceStats(ownNodes, embedded)
+	a.logger.Info("list-flow-nodes: 단독 배포 + 서브플로우 임베디드 병합 반환",
+		"flow_id", flowID, "own_nodes", len(ownNodes),
+		"embedded_nodes", len(embedded), "result_nodes", len(merged))
+	return engineNodesToFlowNodeInfos(merged), nil
+}
+
+// mergeNodeInstanceStats 는 두 노드 인스턴스 통계 슬라이스를 노드 ID 단위로 병합한다(순수
+// 함수 — 외부 의존 없음). 동일 서브플로우의 서로 다른 실행 인스턴스(단독 배포 idle + 부모
+// 안 임베디드 active)는 동일한 원본 노드 ID 를 공유하므로, 이 둘을 합산하면 단독 뷰에서
+// 모든 인스턴스의 실제 활동 합계가 보인다.
+//
+// 병합 규칙(노드 단위):
+//   - Processed/Errors 합산.
+//   - Name/Type/State/Config 는 가진 쪽(비어 있지 않은 쪽)에서 채운다(a 우선, 빈 값이면 b).
+//   - 포트는 이름 단위로 병합: Messages/Delivered 합산, Throughput 합산, ActiveFor 는 max,
+//     Connected 는 OR, ID/Direction 은 가진 쪽에서 채운다.
+//   - Extra 는 한쪽에만 있으면 보존하고, 양쪽에 있으면 키 단위로 병합(a 우선)한다.
+//
+// 결과는 항상 비-nil 이며, a 의 노드 등장 순서를 보존하고 b 전용 노드를 뒤에 이어 붙여
+// 결정적 출력을 보장한다. 포트도 a 의 등장 순서 → b 전용 포트 순으로 결정적이다.
+func mergeNodeInstanceStats(a, b []engine.NodeInstanceInfo) []engine.NodeInstanceInfo {
+	// 한쪽이 비어 있으면 다른 쪽을 그대로 복사하여 반환한다(항상 비-nil 슬라이스).
+	if len(a) == 0 {
+		return append(make([]engine.NodeInstanceInfo, 0, len(b)), b...)
+	}
+	if len(b) == 0 {
+		return append(make([]engine.NodeInstanceInfo, 0, len(a)), a...)
+	}
+
+	idx := make(map[string]int) // nodeID → out 슬라이스 내 위치
+	out := make([]engine.NodeInstanceInfo, 0, len(a)+len(b))
+
+	add := func(n engine.NodeInstanceInfo) {
+		if pos, ok := idx[n.NodeID]; ok {
+			out[pos] = mergeOneNode(out[pos], n)
+			return
+		}
+		idx[n.NodeID] = len(out)
+		out = append(out, n)
+	}
+
+	for _, n := range a {
+		add(n)
+	}
+	for _, n := range b {
+		add(n)
+	}
+	return out
+}
+
+// mergeOneNode 는 동일 노드 ID 를 가진 두 인스턴스 통계를 합산한다(mergeNodeInstanceStats
+// 내부 헬퍼). dst 는 누적 대상(먼저 등장한 인스턴스), src 는 합칠 인스턴스이다.
+func mergeOneNode(dst, src engine.NodeInstanceInfo) engine.NodeInstanceInfo {
+	dst.Processed += src.Processed
+	dst.Errors += src.Errors
+
+	// 메타데이터: dst 가 비어 있으면 src 에서 채운다.
+	if dst.Name == "" {
+		dst.Name = src.Name
+	}
+	if dst.Type == "" {
+		dst.Type = src.Type
+	}
+	if dst.State == "" {
+		dst.State = src.State
+	}
+	if dst.Config == nil {
+		dst.Config = src.Config
+	}
+
+	// Extra 병합(키 단위, dst 우선).
+	if len(src.Extra) > 0 {
+		if dst.Extra == nil {
+			dst.Extra = make(map[string]any, len(src.Extra))
+		}
+		for k, v := range src.Extra {
+			if _, exists := dst.Extra[k]; !exists {
+				dst.Extra[k] = v
+			}
+		}
+	}
+
+	// 포트 병합(이름 단위). dst 포트 순서를 보존하고 src 전용 포트를 뒤에 이어 붙인다.
+	portIdx := make(map[string]int, len(dst.Ports))
+	for i, p := range dst.Ports {
+		portIdx[p.Name] = i
+	}
+	for _, sp := range src.Ports {
+		if i, ok := portIdx[sp.Name]; ok {
+			dp := dst.Ports[i]
+			dp.Messages += sp.Messages
+			dp.Delivered += sp.Delivered
+			dp.Throughput += sp.Throughput
+			if sp.ActiveFor > dp.ActiveFor {
+				dp.ActiveFor = sp.ActiveFor
+			}
+			dp.Connected = dp.Connected || sp.Connected
+			if dp.ID == "" {
+				dp.ID = sp.ID
+			}
+			if dp.Direction == "" {
+				dp.Direction = sp.Direction
+			}
+			dst.Ports[i] = dp
+		} else {
+			portIdx[sp.Name] = len(dst.Ports)
+			dst.Ports = append(dst.Ports, sp)
+		}
+	}
+
+	return dst
+}
+
+// engineNodesToFlowNodeInfos 는 engine.NodeInstanceInfo 슬라이스를 handler DTO 로 변환한다.
+// 항상 비-nil 슬라이스를 반환한다.
+func engineNodesToFlowNodeInfos(nodes []engine.NodeInstanceInfo) []handler.FlowNodeInfo {
 	result := make([]handler.FlowNodeInfo, len(nodes))
 	for i, n := range nodes {
 		result[i] = engineNodeToFlowNodeInfo(n)
 	}
-	return result, nil
+	return result
 }
 
 // GetFlowNode 는 배포된 플로우 내 특정 노드 인스턴스 정보를 반환한다.

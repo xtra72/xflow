@@ -35,6 +35,7 @@ type mockFlowManager struct {
 	listFlowNodesFn func(ctx context.Context, flowID string) ([]FlowNodeInfo, error)
 	getFlowNodeFn   func(ctx context.Context, flowID, nodeID string) (*FlowNodeInfo, error)
 	reconfigureFn   func(ctx context.Context, flowID, nodeID string, config map[string]any) error
+	subflowStatsFn  func(ctx context.Context, subflowID string) (*SubflowStatsInfo, error)
 }
 
 func (m *mockFlowManager) ListFlows(ctx context.Context, opts dto.ListOptions) ([]FlowInfo, int64, error) {
@@ -146,6 +147,13 @@ func (m *mockFlowManager) RenameAgentInFlows(_ context.Context, _, _ string) (in
 	return 0, nil
 }
 
+func (m *mockFlowManager) SubflowNodeStats(ctx context.Context, subflowID string) (*SubflowStatsInfo, error) {
+	if m.subflowStatsFn != nil {
+		return m.subflowStatsFn(ctx, subflowID)
+	}
+	return &SubflowStatsInfo{FlowID: subflowID, Nodes: []SubflowNodeStat{}}, nil
+}
+
 // --- Test Helpers ---
 
 // doRequest 는 HTTP 요청을 생성하고 라우터를 통해 처리한다.
@@ -191,8 +199,8 @@ func TestNewFlowHandler(t *testing.T) {
 
 func TestFlowHandler_RegisterRoutes(t *testing.T) {
 	router := setupFlowRouter(&mockFlowManager{})
-	// 17개 라우트 등록 확인 (기존 16 + ConfigureNode)
-	assert.Equal(t, 17, router.RouteCount())
+	// 18개 라우트 등록 확인 (기존 17 + SubflowStats)
+	assert.Equal(t, 18, router.RouteCount())
 }
 
 // --- List 테스트 ---

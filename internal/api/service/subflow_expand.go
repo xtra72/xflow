@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/pkg/flow"
@@ -35,11 +36,74 @@ import (
 //	모든 (생산자 × 소비자) 조합을 직접 와이어로 합성한다. 이로써 일반 노드, 두 flow-node 의
 //	직접 연결, 입력→출력 passthrough 가 단일 규칙으로 일관되게 처리된다.
 
+// subflowNamespaceScheme 은 서브플로우 네임스페이스 접두사의 스킴(고정 토큰)이다.
+// 확장된 서브그래프 노드/와이어 엔드포인트 ID 는 모두 이 토큰으로 시작한다.
+//
+// 네임스페이스 ID 정규형(WEB 팀 공유 규약):
+//
+//	subflow_<flowNodeID>_<originalID>
+//
+// 여기서
+//   - "subflow_" 는 고정 접두 토큰(subflowNamespaceScheme).
+//   - <flowNodeID> 는 부모 플로우 내 flow-node 노드의 ID(보통 UUID, 밑줄 없음).
+//   - <originalID> 는 참조 서브플로우 정의 내 원본 노드 ID. 중첩 서브플로우인 경우
+//     <originalID> 자체가 다시 "subflow_<childFlowNodeID>_<...>" 형태로 누적된다.
+//
+// 한 겹(immediate layer) 을 떼어내려면 ParseSubflowNodeID 를, 접두사 문자열을 만들려면
+// SubflowNodeIDPrefix 를 사용한다. WEB 측은 동일한 규약을 복제하여 부모 뷰 집계(Fix 1)를
+// 수행한다.
+const subflowNamespaceScheme = "subflow_"
+
 // subflowNamespacePrefix 는 확장된 서브그래프 노드/와이어 엔드포인트에 부여하는
 // 네임스페이스 접두사를 만든다: "subflow_<flowNodeID>_".
 // (SPEC-SUBFLOW-001 5.3 네임스페이스 규칙)
 func subflowNamespacePrefix(flowNodeID string) string {
-	return "subflow_" + flowNodeID + "_"
+	return SubflowNodeIDPrefix(flowNodeID)
+}
+
+// SubflowNodeIDPrefix 는 flow-node ID 에 대한 서브플로우 네임스페이스 접두사를 반환한다:
+//
+//	"subflow_<flowNodeID>_"
+//
+// 부모 플로우에 배포된(평탄화된) 네임스페이스 노드 ID 는 모두 이 접두사로 시작한다.
+// WEB 팀의 부모 뷰 집계(Fix 1)는 이 접두사 문자열을 그대로 복제하여, 특정 flow-node 의
+// 직속 내부 노드(subflow_<flowNodeID>_*)를 모아 합산한다. ParseSubflowNodeID 의 역연산에
+// 해당하는 생성기이며, 두 백엔드/프론트엔드가 동일한 규약을 공유하도록 노출한다.
+func SubflowNodeIDPrefix(flowNodeID string) string {
+	return subflowNamespaceScheme + flowNodeID + "_"
+}
+
+// ParseSubflowNodeID 는 네임스페이스 노드 ID 에서 한 겹(immediate layer)의
+// "subflow_<flowNodeID>_" 접두사를 떼어낸다.
+//
+//	subflow_F_inner               → (flowNodeID="F", originalID="inner",          ok=true)
+//	subflow_F_subflow_G_inner     → (flowNodeID="F", originalID="subflow_G_inner", ok=true)
+//	inner                         → ("", "", false)  // 네임스페이스가 아님
+//	subflow_inner                 → ("", "", false)  // 두 번째 구분자 없음
+//	subflow__inner                → ("", "", false)  // flowNodeID 비어 있음
+//	subflow_F_                    → ("", "", false)  // originalID 비어 있음
+//
+// 한 겹만 제거하므로, 중첩 서브플로우의 경우 originalID 가 다시 "subflow_..._..." 형태로
+// 남는다. 이때 originalID 는 부모 flow-node F 가 참조하는 서브플로우 정의 안의 직속 노드
+// (중첩 서브플로우라면 그 안의 flow-node) ID 에 해당한다 — 즉 한 겹 위 서브플로우의
+// "원본 노드 ID" 이다. (WEB 팀 공유 규약: SubflowNodeIDPrefix 의 역연산.)
+func ParseSubflowNodeID(id string) (flowNodeID, originalID string, ok bool) {
+	rest, found := strings.CutPrefix(id, subflowNamespaceScheme)
+	if !found {
+		return "", "", false
+	}
+	// 접두 토큰 직후의 첫 번째 '_' 가 flowNodeID 와 originalID 의 경계이다.
+	// flowNodeID 는 보통 UUID(밑줄 없음)이므로 첫 구분자 분할이 결정적이다.
+	sep := strings.IndexByte(rest, '_')
+	if sep < 0 {
+		return "", "", false // 두 번째 구분자 없음(예: "subflow_inner").
+	}
+	flowNodeID = rest[:sep]
+	originalID = rest[sep+1:]
+	if flowNodeID == "" || originalID == "" {
+		return "", "", false // 어느 한쪽이라도 비면 모호 — 네임스페이스로 간주하지 않는다.
+	}
+	return flowNodeID, originalID, true
 }
 
 // maxSubflowExpandDepth 는 서브플로우 확장 재귀의 최대 중첩 깊이이다.
