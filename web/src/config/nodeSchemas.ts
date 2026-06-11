@@ -1866,7 +1866,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
-        { name: 'query', type: 'string', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
+        { name: 'query', type: 'multiline', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '30s', description: '쿼리 실행 간격 (예: 10s, 1m, 5m)' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
@@ -1885,7 +1885,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     configSchema: {
       fields: [
         { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
-        { name: 'query', type: 'string', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
+        { name: 'query', type: 'multiline', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
         { name: 'result_key', type: 'string', label: '결과 키', default: 'results', description: '쿼리 결과를 저장할 payload 키' },
