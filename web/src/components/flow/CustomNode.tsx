@@ -8,19 +8,12 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
-  Bug,
-  Cable,
-  Cog,
-  Database,
   Eye,
   EyeOff,
   GitBranch,
   Power,
   PowerOff,
   Radio,
-  ShieldAlert,
-  Sparkles,
-  type LucideIcon,
 } from 'lucide-react';
 
 import { useParams } from 'react-router';
@@ -30,6 +23,7 @@ import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
 import { useManagedNodes, useRemoteMode } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { parseRemoteFlowRef } from '@/lib/flow/subflowPorts';
+import { getNodeIcon } from '@/lib/flow/nodeIcon';
 import {
   BRIDGE_STATUS_DOT_CLASS,
   BRIDGE_STATUS_I18N_KEY,
@@ -48,22 +42,6 @@ import { getConnectedElements } from '@/lib/flow/connectionFocus';
 import { LinkIndicator } from './LinkIndicator';
 import { LinkListPopover } from './LinkListPopover';
 import { NodeHandle } from './NodeHandle';
-
-/** 카테고리별 아이콘 매핑 */
-const CATEGORY_ICONS: Record<string, LucideIcon> = {
-  processing: Cog,
-  routing: GitBranch,
-  io: Cable,
-  error: ShieldAlert,
-  debug: Bug,
-  storage: Database,
-  // 레거시 호환
-  input: ArrowDownToLine,
-  output: ArrowUpFromLine,
-  process: Cog,
-  bridge: Cable,
-  special: Sparkles,
-};
 
 /** 노드 data에 전달되는 속성 */
 interface CustomNodeData {
@@ -87,7 +65,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as CustomNodeData;
   const disabled = nodeData.enabled === false;
   const stats = useNodeRuntimeStats(id);
-  const Icon = CATEGORY_ICONS[nodeData.category] ?? Cog;
+  const Icon = getNodeIcon(nodeData.nodeType, nodeData.category);
   const { t } = useTranslation();
 
   // 2026-05-31: 플로우 단위 표시 설정 (showPortStats / showPortNames).
