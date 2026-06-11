@@ -46,13 +46,18 @@ function formatTime(value: number | string): string {
   });
 }
 
-/** tap 메시지의 payload 를 한 줄로 직렬화한다(렌더 표시용). */
-function formatTapPayload(payload: Record<string, unknown>): string {
+/** tap 메시지의 레코드(payload/metadata)를 한 줄로 직렬화한다(렌더 표시용). */
+function formatTapRecord(rec: Record<string, unknown>): string {
   try {
-    return JSON.stringify(payload);
+    return JSON.stringify(rec);
   } catch {
-    return String(payload);
+    return String(rec);
   }
+}
+
+/** 메타데이터가 비어있지 않은지 판정한다. */
+function hasMetadata(meta: Record<string, unknown> | undefined): meta is Record<string, unknown> {
+  return !!meta && Object.keys(meta).length > 0;
 }
 
 /** 사용자가 만든 탭 출력 뷰. 노드/포트 필터는 서로 독립적이다('all' = 전체). */
@@ -508,7 +513,13 @@ export function DebugPanel() {
                       <span className="text-gray-500">:{entry.port}</span>
                     </td>
                     <td className="px-2 py-0.5 text-gray-200 break-all">
-                      {formatTapPayload(entry.message.payload)}
+                      {formatTapRecord(entry.message.payload)}
+                      {hasMetadata(entry.message.metadata) && (
+                        <span className="ml-2 text-gray-400">
+                          <span className="text-gray-500">meta </span>
+                          {formatTapRecord(entry.message.metadata)}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
