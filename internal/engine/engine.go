@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -216,21 +217,31 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		}
 	}
 
+	// 노드별 미연결 출력 경고 억제(opt-out) 플래그를 config 에서 읽어 둔다.
+	// 배포 시점에 한 번만 파싱하며, 해당 노드의 모든 portCounter 에 전파한다.
+	suppressByNode := make(map[string]bool, len(runtimeNodes))
+	for _, nd := range f.Nodes() {
+		if parseSuppressUnconnected(nd.Config) {
+			suppressByNode[nd.ID] = true
+		}
+	}
+
 	// 노드가 선언한 모든 포트에 대해 카운터를 초기화한다.
 	// 와이어 연결 여부와 관계없이 모든 포트의 카운터가 존재해야
 	// 엔진의 "in"/"out"/"error" 기록이 누락되지 않는다.
 	for id, n := range runtimeNodes {
 		nc := counters[id]
+		suppress := suppressByNode[id]
 		for _, p := range n.Ports() {
 			name := p.Name
 			// 에러 포트는 노드에서 "_error"로 선언되지만
 			// 엔진은 "error"로 기록하므로 둘 다 초기화한다.
 			if _, ok := nc.portCounters[name]; !ok {
-				nc.portCounters[name] = &portCounter{}
+				nc.portCounters[name] = &portCounter{suppressUnconnected: suppress}
 			}
 			if p.Direction == flow.PortError {
 				if _, ok := nc.portCounters["error"]; !ok {
-					nc.portCounters["error"] = &portCounter{}
+					nc.portCounters["error"] = &portCounter{suppressUnconnected: suppress}
 				}
 			}
 		}
@@ -1247,6 +1258,13 @@ func (e *Engine) warnUnconnectedPort(nodeID, nodeName, portName string, pc *port
 		return
 	}
 	if pc != nil {
+		// 노드별 옵트아웃: suppress 설정 시 미연결 경고를 완전히 억제한다.
+		// once-guard CAS 보다 먼저 검사하여 guard 를 소비하지 않는다.
+		// 주의: pc == nil 경로(아래 단위 테스트 폴백)는 노드별 플래그가 없으므로
+		// 억제할 수 없다. 억제는 실제 배포 경로(pc != nil)에서만 동작한다.
+		if pc.suppressUnconnected {
+			return
+		}
 		// portCounter 기반 1회 가드 (정상 경로).
 		if !pc.warnedUnconnected.CompareAndSwap(false, true) {
 			return // 이미 경고함
@@ -1263,6 +1281,35 @@ func (e *Engine) warnUnconnectedPort(nodeID, nodeName, portName string, pc *port
 		"nodeName", nodeName,
 		"port", portName,
 	)
+}
+
+// suppressUnconnectedWarningKey 는 노드 미연결 출력 경고 억제 옵트인 config 키이다.
+const suppressUnconnectedWarningKey = "suppress_unconnected_warning"
+
+// parseSuppressUnconnected 는 노드 config 에서 suppress_unconnected_warning 값을
+// 관대하게(tolerant) 파싱한다. Go bool 과 문자열("true"/"false"/"1"/"0" 등,
+// strconv.ParseBool 규칙) 을 모두 허용하며, 키가 없거나 파싱 불가하면 false 를
+// 반환한다 (기본 비활성).
+func parseSuppressUnconnected(cfg map[string]any) bool {
+	if cfg == nil {
+		return false
+	}
+	v, ok := cfg[suppressUnconnectedWarningKey]
+	if !ok {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		b, err := strconv.ParseBool(strings.TrimSpace(val))
+		if err != nil {
+			return false
+		}
+		return b
+	default:
+		return false
+	}
 }
 
 // sendErrorToWires 는 에러가 발생한 원본 메시지에 에러 메타데이터를 추가하여 에러 와이어로 전송한다.
