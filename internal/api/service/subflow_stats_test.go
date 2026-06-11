@@ -41,13 +41,11 @@ func nsPort(name, dir string, messages, delivered int64) engine.NodePortInfo {
 	}
 }
 
-// 실행 중인 부모가 없으면 nodes 는 빈(비-nil) 슬라이스여야 한다.
+// 실행 중인 부모가 없으면 빈(비-nil) 슬라이스여야 한다.
 func TestAggregateSubflowStats_부모없음_빈결과(t *testing.T) {
-	got := aggregateSubflowStats("S", nil)
-	require.NotNil(t, got)
-	assert.Equal(t, "S", got.FlowID)
-	assert.NotNil(t, got.Nodes)
-	assert.Len(t, got.Nodes, 0)
+	got := aggregateSubflowStats(nil)
+	assert.NotNil(t, got)
+	assert.Len(t, got, 0)
 }
 
 // 단일 부모: flow-node F 가 S 를 참조하고, subflow_F_* 네임스페이스 노드의 통계가
@@ -67,12 +65,11 @@ func TestAggregateSubflowStats_단일부모_매핑(t *testing.T) {
 		},
 	}
 
-	got := aggregateSubflowStats("S", parents)
-	require.NotNil(t, got)
-	require.Len(t, got.Nodes, 2)
+	got := aggregateSubflowStats(parents)
+	require.Len(t, got, 2)
 
-	byID := map[string]handler.SubflowNodeStat{}
-	for _, n := range got.Nodes {
+	byID := map[string]engine.NodeInstanceInfo{}
+	for _, n := range got {
 		byID[n.NodeID] = n
 	}
 
@@ -107,9 +104,9 @@ func TestAggregateSubflowStats_두부모_합산(t *testing.T) {
 		},
 	}
 
-	got := aggregateSubflowStats("S", parents)
-	require.Len(t, got.Nodes, 1)
-	a := got.Nodes[0]
+	got := aggregateSubflowStats(parents)
+	require.Len(t, got, 1)
+	a := got[0]
 	assert.Equal(t, "A", a.NodeID)
 	assert.Equal(t, int64(15), a.Processed, "processed 합산")
 	assert.Equal(t, int64(3), a.Errors, "errors 합산")
@@ -129,9 +126,9 @@ func TestAggregateSubflowStats_한부모_다중참조_합산(t *testing.T) {
 			},
 		},
 	}
-	got := aggregateSubflowStats("S", parents)
-	require.Len(t, got.Nodes, 1)
-	assert.Equal(t, int64(7), got.Nodes[0].Processed)
+	got := aggregateSubflowStats(parents)
+	require.Len(t, got, 1)
+	assert.Equal(t, int64(7), got[0].Processed)
 }
 
 // ---------------------------------------------------------------------------

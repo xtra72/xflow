@@ -34,20 +34,26 @@ type parentNamespacedStats struct {
 	nodes       []engine.NodeInstanceInfo
 }
 
-// aggregateSubflowStats 는 부모별 네임스페이스 노드 통계를 원본 노드 단위로 합산한 결과를
-// 만든다(순수 함수 — 외부 의존 없음).
+// aggregateSubflowStats 는 부모별 네임스페이스 노드 통계를 원본 노드 단위로 합산하여
+// de-namespaced [] engine.NodeInstanceInfo 로 반환한다(순수 함수 — 외부 의존 없음).
+//
+// 단일 진실원(single source of truth): 이 함수가 서브플로우 임베디드 통계의 정규형이며,
+// engine.NodeInstanceInfo 를 직접 돌려주므로 ListFlowNodes 의 단독-배포 경로와 동일한
+// DTO(engineNodeToFlowNodeInfo) 변환을 그대로 재사용한다. /subflow-stats 응답
+// (*handler.SubflowStatsInfo)이 필요하면 subflowStatsFromNodes 로 얇게 감싼다.
 //
 // 매핑 규칙:
 //   - 각 네임스페이스 노드 ID 에 ParseSubflowNodeID 를 적용하여 (flowNodeID, originalID) 를 얻는다.
 //   - flowNodeID 가 해당 부모의 대상 flow-node 집합(flowNodeIDs)에 속할 때만 채택한다.
 //     (같은 부모 안의 다른 서브플로우 인스턴스 노드는 제외.)
-//   - originalID 를 키로 Processed/Errors 와 포트별 Messages/Delivered/Throughput 를 합산한다.
+//   - originalID 를 NodeID 로 하여 Processed/Errors 와 포트별 Messages/Delivered/Throughput 를 합산한다.
 //
-// 결과의 Nodes 는 항상 비-nil 슬라이스이며(참조 부모 없음 → 빈 슬라이스), 결정적 출력을 위해
-// 원본 노드 ID 오름차순으로 정렬된다.
-func aggregateSubflowStats(subflowID string, parents []parentNamespacedStats) *handler.SubflowStatsInfo {
+// 결과 슬라이스는 항상 비-nil 이며(참조 부모 없음 → 빈 슬라이스), 결정적 출력을 위해
+// NodeID(원본 노드 ID) 오름차순으로 정렬된다.
+func aggregateSubflowStats(parents []parentNamespacedStats) []engine.NodeInstanceInfo {
 	// 원본 노드 ID → 누적 통계.
 	type portAgg struct {
+		id         string
 		direction  string
 		connected  bool
 		messages   int64
@@ -106,7 +112,7 @@ func aggregateSubflowStats(subflowID string, parents []parentNamespacedStats) *h
 			for _, port := range n.Ports {
 				pa := na.ports[port.Name]
 				if pa == nil {
-					pa = &portAgg{direction: port.Direction}
+					pa = &portAgg{id: port.ID, direction: port.Direction}
 					na.ports[port.Name] = pa
 					na.portOrder = append(na.portOrder, port.Name)
 				}
@@ -121,17 +127,13 @@ func aggregateSubflowStats(subflowID string, parents []parentNamespacedStats) *h
 		}
 	}
 
-	out := &handler.SubflowStatsInfo{
-		FlowID: subflowID,
-		Nodes:  make([]handler.SubflowNodeStat, 0, len(order)),
-	}
-
 	// 결정적 출력을 위해 원본 노드 ID 오름차순 정렬.
 	sortStrings(order)
 
+	out := make([]engine.NodeInstanceInfo, 0, len(order))
 	for _, originalID := range order {
 		na := agg[originalID]
-		stat := handler.SubflowNodeStat{
+		ni := engine.NodeInstanceInfo{
 			NodeID:    originalID,
 			Name:      na.name,
 			Type:      na.nodeType,
@@ -141,22 +143,57 @@ func aggregateSubflowStats(subflowID string, parents []parentNamespacedStats) *h
 		}
 		for _, portName := range na.portOrder {
 			pa := na.ports[portName]
-			pi := handler.PortInfo{
+			ni.Ports = append(ni.Ports, engine.NodePortInfo{
+				ID:         pa.id,
 				Name:       portName,
 				Direction:  pa.direction,
 				Connected:  pa.connected,
 				Messages:   pa.messages,
 				Delivered:  pa.delivered,
-				Throughput: fmt.Sprintf("%.3f", pa.throughput),
+				Throughput: pa.throughput,
+				ActiveFor:  pa.activeFor,
+			})
+		}
+		out = append(out, ni)
+	}
+
+	return out
+}
+
+// subflowStatsFromNodes 는 de-namespaced 노드 통계를 /subflow-stats 응답 DTO 로 감싼다.
+// aggregateSubflowStats 의 정규형(engine.NodeInstanceInfo)을 handler.SubflowStatsInfo 로
+// 변환하여, /subflow-stats 엔드포인트가 기존 계약을 그대로 유지하게 한다.
+func subflowStatsFromNodes(subflowID string, nodes []engine.NodeInstanceInfo) *handler.SubflowStatsInfo {
+	out := &handler.SubflowStatsInfo{
+		FlowID: subflowID,
+		Nodes:  make([]handler.SubflowNodeStat, 0, len(nodes)),
+	}
+	for _, n := range nodes {
+		stat := handler.SubflowNodeStat{
+			NodeID:    n.NodeID,
+			Name:      n.Name,
+			Type:      n.Type,
+			State:     n.State,
+			Processed: n.Processed,
+			Errors:    n.Errors,
+		}
+		for _, p := range n.Ports {
+			pi := handler.PortInfo{
+				ID:         p.ID,
+				Name:       p.Name,
+				Direction:  p.Direction,
+				Connected:  p.Connected,
+				Messages:   p.Messages,
+				Delivered:  p.Delivered,
+				Throughput: fmt.Sprintf("%.3f", p.Throughput),
 			}
-			if pa.activeFor > 0 {
-				pi.ActiveFor = pa.activeFor.Truncate(time.Second).String()
+			if p.ActiveFor > 0 {
+				pi.ActiveFor = p.ActiveFor.Truncate(time.Second).String()
 			}
 			stat.Ports = append(stat.Ports, pi)
 		}
 		out.Nodes = append(out.Nodes, stat)
 	}
-
 	return out
 }
 
@@ -173,6 +210,29 @@ func aggregateSubflowStats(subflowID string, parents []parentNamespacedStats) *h
 // 부모가 실행 중이 아니거나 정의 조회에 실패해도 전체가 실패하지 않는다(견고성 — 해당 부모만
 // 건너뛴다). 참조 부모가 없으면 Nodes 가 빈 슬라이스인 결과를 반환한다(에러 아님).
 func (a *FlowServiceAdapter) SubflowNodeStats(ctx context.Context, subflowID string) (*handler.SubflowStatsInfo, error) {
+	nodes := a.subflowEmbeddedNodes(ctx, subflowID)
+	return subflowStatsFromNodes(subflowID, nodes), nil
+}
+
+// subflowEmbeddedNodes 는 subflowID 를 LOCAL 참조하는 모든 배포 부모에서, 서브플로우의
+// LIVE per-original-node 통계를 de-namespaced []engine.NodeInstanceInfo 로 집계한다(공유 헬퍼).
+//
+// 이것이 서브플로우 임베디드 통계의 단일 진실원이다:
+//   - /subflow-stats(SubflowNodeStats)는 이를 subflowStatsFromNodes 로 감싸 응답한다.
+//   - /flows/{id}/nodes(ListFlowNodes)는 단독 배포가 없을 때 이 결과를 그대로 노출하여
+//     에디터가 메인/서브 구분 없이 동일한 쿼리로 라이브 통계를 본다.
+//
+// 배선:
+//  1. engine.ListFlows() 로 현재 배포된 모든 부모 플로우를 열거한다.
+//  2. 각 부모의 정의를 repo(우선) 또는 engine.GetFlow 에서 가져와, subflowID 를 LOCAL(bare id)
+//     참조하는 flow-node ID 들을 찾는다. (확장된 엔진 정의에는 LOCAL flow-node 가 남지 않으므로
+//     repo 정의가 1순위이다.)
+//  3. 참조 flow-node 가 있는 부모만 engine.GetFlowNodes(parent) 로 네임스페이스 노드 통계를
+//     모아 aggregateSubflowStats 로 합산한다.
+//
+// 부모가 실행 중이 아니거나 정의 조회에 실패해도 전체가 실패하지 않는다(견고성 — 해당 부모만
+// 건너뛴다). 참조 부모가 없으면 빈(비-nil) 슬라이스를 반환한다.
+func (a *FlowServiceAdapter) subflowEmbeddedNodes(ctx context.Context, subflowID string) []engine.NodeInstanceInfo {
 	deployed := a.engine.ListFlows()
 
 	matchedParents := 0
@@ -208,12 +268,12 @@ func (a *FlowServiceAdapter) SubflowNodeStats(ctx context.Context, subflowID str
 		})
 	}
 
-	out := aggregateSubflowStats(subflowID, parents)
+	out := aggregateSubflowStats(parents)
 	a.logger.Info("subflow-stats: 결과",
 		"subflow_id", subflowID, "deployed", len(deployed),
 		"matched_parents", matchedParents, "parent_nodes_total", totalNamespaced,
-		"result_nodes", len(out.Nodes))
-	return out, nil
+		"result_nodes", len(out))
+	return out
 }
 
 // parentFlowDefinition 은 부모 플로우의 정의를 repo(우선) 또는 엔진 런타임에서 가져온다.

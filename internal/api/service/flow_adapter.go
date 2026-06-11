@@ -620,18 +620,43 @@ func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handle
 	return info, nil
 }
 
-// ListFlowNodes 는 배포된 플로우의 모든 노드 인스턴스 정보를 반환한다.
-func (a *FlowServiceAdapter) ListFlowNodes(_ context.Context, flowID string) ([]handler.FlowNodeInfo, error) {
+// ListFlowNodes 는 플로우의 LIVE 노드 인스턴스 통계를 반환한다(단일 경로 — 메인/서브 공통).
+//
+// 에디터는 메인 플로우인지 서브플로우인지 구분하지 않고 GET /flows/{id}/nodes 만 호출한다.
+// 따라서 flowID 가 어떻게 실행 중이든 라이브 per-node 통계를 일관되게 돌려준다:
+//
+//  1. engine.GetFlowNodes(flowID) 가 성공하고 비어 있지 않으면 그 결과를 반환한다
+//     (flowID 가 단독 배포됨 — 부모 플로우면 자신의 네임스페이스 노드를 그대로 노출하며,
+//     기존 동작과 동일하다).
+//  2. 엔진에 flowID 의 단독 배포가 없으면(ErrFlowNotFound 또는 빈 목록) flowID 를 LOCAL
+//     참조하는 배포 부모들의 네임스페이스 노드(subflow_<F>_<orig>)를 원본 노드 ID 로
+//     역매핑·합산한 서브플로우 임베디드 통계를 반환한다(별도 엔드포인트 불필요).
+//  3. 단독 배포도 없고 참조 부모도 없으면 빈(비-nil) 슬라이스를 반환한다(에러 아님).
+func (a *FlowServiceAdapter) ListFlowNodes(ctx context.Context, flowID string) ([]handler.FlowNodeInfo, error) {
 	nodes, err := a.engine.GetFlowNodes(flowID)
-	if err != nil {
-		return nil, err
+	if err == nil && len(nodes) > 0 {
+		// 1) 단독 배포: 엔진 자신의 노드를 그대로 노출한다(부모 플로우의 네임스페이스 노드 포함).
+		return engineNodesToFlowNodeInfos(nodes), nil
 	}
 
+	// 2) 단독 배포 없음(ErrFlowNotFound 또는 빈 목록) → 서브플로우 임베디드 통계로 폴백한다.
+	embedded := a.subflowEmbeddedNodes(ctx, flowID)
+	if len(embedded) > 0 {
+		a.logger.Info("list-flow-nodes: 서브플로우 임베디드 통계 반환",
+			"flow_id", flowID, "result_nodes", len(embedded))
+	}
+	// 3) 참조 부모도 없으면 embedded 는 빈 슬라이스 → 빈 결과(에러 아님)로 반환한다.
+	return engineNodesToFlowNodeInfos(embedded), nil
+}
+
+// engineNodesToFlowNodeInfos 는 engine.NodeInstanceInfo 슬라이스를 handler DTO 로 변환한다.
+// 항상 비-nil 슬라이스를 반환한다.
+func engineNodesToFlowNodeInfos(nodes []engine.NodeInstanceInfo) []handler.FlowNodeInfo {
 	result := make([]handler.FlowNodeInfo, len(nodes))
 	for i, n := range nodes {
 		result[i] = engineNodeToFlowNodeInfo(n)
 	}
-	return result, nil
+	return result
 }
 
 // GetFlowNode 는 배포된 플로우 내 특정 노드 인스턴스 정보를 반환한다.

@@ -344,10 +344,18 @@ func TestFlowServiceAdapter_ListFlowNodes(t *testing.T) {
 	eng := newTestEngine()
 	adapter := NewFlowServiceAdapter(eng, newTestRepo(t), nil)
 
-	// 미배포 플로우 → 에러
-	_, err := adapter.ListFlowNodes(context.Background(), "nonexistent")
-	if err == nil {
-		t.Error("미배포 플로우의 노드 목록 조회 시 에러가 발생해야 함")
+	// 미배포·미참조 플로우 → 빈 결과(에러 아님).
+	// ListFlowNodes 는 메인/서브 단일 경로이므로, 단독 배포도 없고 참조 부모도 없으면
+	// 서브플로우 임베디드 폴백이 빈 슬라이스를 돌려준다(에디터가 0 노드로 표시).
+	nonexistent, err := adapter.ListFlowNodes(context.Background(), "nonexistent")
+	if err != nil {
+		t.Errorf("미배포·미참조 플로우 조회는 에러가 아니어야 함: %v", err)
+	}
+	if nonexistent == nil {
+		t.Error("미배포·미참조 플로우 조회 결과는 비-nil 빈 슬라이스여야 함")
+	}
+	if len(nonexistent) != 0 {
+		t.Errorf("미배포·미참조 플로우는 빈 노드 목록이어야 함: len=%d", len(nonexistent))
 	}
 
 	// 빈 노드 플로우 배포 후 조회
