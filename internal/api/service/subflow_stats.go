@@ -175,12 +175,15 @@ func aggregateSubflowStats(subflowID string, parents []parentNamespacedStats) *h
 func (a *FlowServiceAdapter) SubflowNodeStats(ctx context.Context, subflowID string) (*handler.SubflowStatsInfo, error) {
 	deployed := a.engine.ListFlows()
 
+	matchedParents := 0
+	totalNamespaced := 0
 	parents := make([]parentNamespacedStats, 0, len(deployed))
 	for _, s := range deployed {
 		parentID := s.FlowID
 
 		def := a.parentFlowDefinition(ctx, parentID)
 		if def == nil {
+			a.logger.Debug("subflow-stats: 부모 정의 조회 실패", "parent_id", parentID)
 			continue // 정의를 어디서도 못 얻으면 건너뛴다.
 		}
 
@@ -193,6 +196,11 @@ func (a *FlowServiceAdapter) SubflowNodeStats(ctx context.Context, subflowID str
 		if err != nil {
 			continue // 부모가 더 이상 배포 상태가 아니면 건너뛴다.
 		}
+		matchedParents++
+		totalNamespaced += len(nodes)
+		a.logger.Info("subflow-stats: 참조 부모 발견",
+			"subflow_id", subflowID, "parent_id", parentID,
+			"flow_node_ids", flowNodeIDs, "parent_node_count", len(nodes))
 
 		parents = append(parents, parentNamespacedStats{
 			flowNodeIDs: flowNodeIDs,
@@ -200,7 +208,12 @@ func (a *FlowServiceAdapter) SubflowNodeStats(ctx context.Context, subflowID str
 		})
 	}
 
-	return aggregateSubflowStats(subflowID, parents), nil
+	out := aggregateSubflowStats(subflowID, parents)
+	a.logger.Info("subflow-stats: 결과",
+		"subflow_id", subflowID, "deployed", len(deployed),
+		"matched_parents", matchedParents, "parent_nodes_total", totalNamespaced,
+		"result_nodes", len(out.Nodes))
+	return out, nil
 }
 
 // parentFlowDefinition 은 부모 플로우의 정의를 repo(우선) 또는 엔진 런타임에서 가져온다.
