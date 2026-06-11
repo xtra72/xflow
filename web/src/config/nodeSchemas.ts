@@ -517,7 +517,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -591,7 +591,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -643,7 +643,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -718,7 +718,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -785,7 +785,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -837,7 +837,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -897,7 +897,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -964,7 +964,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -1016,7 +1016,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -1091,7 +1091,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr01'],
           description: '연결할 LG HVACR-01 에이전트를 선택합니다',
@@ -1153,7 +1153,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     description: 'LG HVACR-01 디바이스 제어 (현재 미지원 - 프로토콜 분석 진행 중)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
       ],
     },
@@ -1168,7 +1168,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     description: 'LG HVACR-01 상태 수신 + 제어 통합 노드. push 모델 (lg-hvacr01-status 와 동일). 제어는 현재 미지원.',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1202,7 +1202,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Century HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['century_hvacr01'],
           description: '연결할 Century HVACR-01 에이전트를 선택합니다',
@@ -1273,7 +1273,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     description: 'Century HVACR-01 디바이스 제어 (미지원 — 패시브 전용)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['century_hvacr01'] },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
       ],
     },
@@ -1288,7 +1288,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     description: 'Century HVACR-01 상태 수신 + 제어 통합 노드 (제어는 항상 not_supported 반환). push 모델.',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['century_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s', description: 'Agent Process 호출 타임아웃' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1323,7 +1323,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1495,7 +1495,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MQTT 에이전트',
+          label: '에이전트',
           required: true,
           options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
@@ -1541,7 +1541,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1586,7 +1586,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1649,7 +1649,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MQTT 에이전트',
+          label: '에이전트',
           required: true,
           options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
@@ -1703,7 +1703,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TSDB 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tsdb'],
           description: '연결할 TSDB 에이전트를 선택합니다',
@@ -1750,7 +1750,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TSDB 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tsdb'],
           description: '연결할 TSDB 에이전트를 선택합니다',
@@ -1821,7 +1821,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '원본 메시지 pass-through',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
         { name: 'measurement', type: 'string', label: 'Measurement', description: '고정 measurement 이름. 비어있으면 measurement_key 사용' },
         {
           name: 'measurement_key',
@@ -1865,7 +1865,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '쿼리 결과의 각 행이 개별 메시지로 출력',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
         { name: 'query', type: 'string', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '30s', description: '쿼리 실행 간격 (예: 10s, 1m, 5m)' },
@@ -1884,7 +1884,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '쿼리 결과를 result_key에 담은 새 메시지',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
         { name: 'query', type: 'string', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
@@ -1906,7 +1906,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Store 에이전트',
+          label: '에이전트',
           required: true,
           options: ['store'],
           description: '연결할 Store 에이전트를 선택합니다',
@@ -2021,7 +2021,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: '시리얼 에이전트',
+          label: '에이전트',
           required: true,
           options: ['serial'],
           description: '연결할 시리얼 에이전트를 선택합니다',
@@ -2046,7 +2046,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: '시리얼 에이전트',
+          label: '에이전트',
           required: true,
           options: ['serial'],
           description: '연결할 시리얼 에이전트를 선택합니다',
@@ -2081,7 +2081,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TCP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tcp-server', 'tcp-client'],
           description: '연결할 TCP 에이전트를 선택합니다',
@@ -2105,7 +2105,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TCP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tcp-server', 'tcp-client'],
           description: '연결할 TCP 에이전트를 선택합니다',
@@ -2131,7 +2131,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Store 에이전트',
+          label: '에이전트',
           required: true,
           options: ['store'],
           description: '연결할 Store 에이전트를 선택합니다',
