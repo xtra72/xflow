@@ -258,40 +258,6 @@ export function DebugPanel() {
         </button>
       </div>
 
-      {/* 탭 출력 서브탭 (노드:포트) */}
-      {isOpen && tab === 'tap' && tapSubTabs.length > 0 && (
-        <div className="flex items-center gap-1 overflow-x-auto border-t border-(--color-border-default) bg-gray-900 px-2 py-1 text-xs">
-          <button
-            type="button"
-            onClick={() => setTapSubTab('all')}
-            className={
-              'shrink-0 rounded px-1.5 py-0.5 ' +
-              (tapSubTab === 'all'
-                ? 'bg-sky-500/20 text-sky-300'
-                : 'text-gray-400 hover:bg-gray-800')
-            }
-          >
-            전체 ({tapEntries.length})
-          </button>
-          {tapSubTabs.map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => setTapSubTab(s.key)}
-              title={s.label}
-              className={
-                'shrink-0 rounded px-1.5 py-0.5 ' +
-                (tapSubTab === s.key
-                  ? 'bg-sky-500/20 text-sky-300'
-                  : 'text-gray-400 hover:bg-gray-800')
-              }
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* 메시지 로그 영역 */}
       {isOpen && (
         <div
@@ -330,14 +296,50 @@ export function DebugPanel() {
             <div className="flex h-full items-center justify-center px-4 text-center text-gray-500">
               노드 카드의 눈 아이콘으로 관찰을 켜면 해당 노드의 출력이 여기에 표시됩니다.
             </div>
-          ) : visibleTapEntries.length === 0 ? (
-            <div className="flex h-full items-center justify-center px-4 text-center text-gray-500">
-              선택한 노드/포트 필터에 해당하는 출력이 없습니다.
-            </div>
           ) : (
-            <table className="w-full">
-              <tbody>
-                {visibleTapEntries.map((entry) => (
+            <>
+              {/* 노드:포트 서브탭 — 고정 높이 로그 영역 내부 sticky 헤더라
+                  탭 전환 시 패널 높이가 바뀌지 않는다(레이아웃 점프 방지). */}
+              {tapSubTabs.length > 0 && (
+                <div className="sticky top-0 z-10 flex items-center gap-1 overflow-x-auto border-b border-gray-800 bg-gray-900 px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => setTapSubTab('all')}
+                    className={
+                      'shrink-0 rounded px-1.5 py-0.5 ' +
+                      (tapSubTab === 'all'
+                        ? 'bg-sky-500/20 text-sky-300'
+                        : 'text-gray-400 hover:bg-gray-800')
+                    }
+                  >
+                    전체 ({tapEntries.length})
+                  </button>
+                  {tapSubTabs.map((s) => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => setTapSubTab(s.key)}
+                      title={s.label}
+                      className={
+                        'shrink-0 rounded px-1.5 py-0.5 ' +
+                        (tapSubTab === s.key
+                          ? 'bg-sky-500/20 text-sky-300'
+                          : 'text-gray-400 hover:bg-gray-800')
+                      }
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {visibleTapEntries.length === 0 ? (
+                <div className="flex items-center justify-center px-4 py-6 text-center text-gray-500">
+                  선택한 노드/포트에 해당하는 출력이 없습니다.
+                </div>
+              ) : (
+                <table className="w-full">
+                  <tbody>
+                    {visibleTapEntries.map((entry) => (
                   <tr
                     key={entry.id}
                     className="border-b border-gray-800/50 hover:bg-gray-900/50"
@@ -359,8 +361,10 @@ export function DebugPanel() {
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </div>
       )}
