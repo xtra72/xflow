@@ -430,35 +430,35 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
             {nodeData.label}
           </p>
-          <p className="truncate text-[10px] text-zinc-400">
-            {nodeData.nodeType}
-          </p>
-          {/* flow-node 원격 브릿지(REQ-RU06): 텍스트 배지 제거 — 호스트.플로우 식별
-              정보는 이제 노드 라벨(`xagent04.Serial`)에 들어가므로 중복이다.
-              라이브 브릿지 상태는 보존: 실행 중이면 상태 색상 점, 아니면 Radio 아이콘만
-              작게 남긴다. data-remote-bridge 속성과 title/aria-label(접근성·테스트
-              식별)은 그대로 유지한다. */}
-          {isFlowNode && isRemoteBridge && (
-            <span
-              data-remote-bridge="true"
-              className="mt-0.5 inline-flex items-center text-sky-500 dark:text-sky-400"
-              title={remoteBridgeStatusTooltip}
-              aria-label={remoteBridgeStatusTooltip}
-            >
-              {showBridgeStatusDot ? (
-                <span
-                  data-bridge-status={bridgeStatus}
-                  className={cn(
-                    'h-1.5 w-1.5 shrink-0 rounded-full',
-                    BRIDGE_STATUS_DOT_CLASS[bridgeStatus],
-                  )}
-                  aria-hidden="true"
-                />
-              ) : (
-                <Radio className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
-              )}
-            </span>
-          )}
+          {/* 노드 타입 + (flow-node 원격 브릿지) 라이브 상태 점.
+              REQ-RU06: 텍스트 배지 제거 — 호스트.플로우 식별 정보는 노드 라벨
+              (`xagent04.Serial`)에 들어가므로 중복이다. 브릿지 연결 상태는 노드
+              타입 텍스트 바로 뒤에 작은 상태 점(실행 중) 또는 Radio 아이콘으로
+              보존한다. data-remote-bridge/title/aria-label(접근성·테스트)은 유지. */}
+          <div className="flex items-center gap-1 text-[10px] text-zinc-400">
+            <span className="truncate">{nodeData.nodeType}</span>
+            {isFlowNode && isRemoteBridge && (
+              <span
+                data-remote-bridge="true"
+                className="inline-flex shrink-0 items-center text-sky-500 dark:text-sky-400"
+                title={remoteBridgeStatusTooltip}
+                aria-label={remoteBridgeStatusTooltip}
+              >
+                {showBridgeStatusDot ? (
+                  <span
+                    data-bridge-status={bridgeStatus}
+                    className={cn(
+                      'h-1.5 w-1.5 shrink-0 rounded-full',
+                      BRIDGE_STATUS_DOT_CLASS[bridgeStatus],
+                    )}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Radio className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                )}
+              </span>
+            )}
+          </div>
           {/* flow-node 로컬 서브플로우 참조 플로우 이름 배지 제거:
               노드 라벨이 이제 선택한 플로우 이름이 되므로 중복 표시 불필요(변경 2). */}
         </div>
