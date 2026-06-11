@@ -6,6 +6,7 @@ import { Link } from 'react-router';
 
 import { cn } from '@/lib/utils/cn';
 import { useNodeTypeInstances } from '@/hooks/useNodeTypeInstances';
+import { FieldHelp } from '@/components/property/FieldHelp';
 
 import { NODE_TYPE_META } from './nodeTypeMeta';
 import type { PortMeta } from './nodeTypeMeta';
@@ -30,7 +31,7 @@ const PORT_STYLES: Record<string, { icon: React.ReactNode; color: string }> = {
   },
 };
 
-/** 포트 항목 렌더링 */
+/** 포트 항목 렌더링. 설명은 포트 타이틀 뒤 `?` 도움말로 표시한다(인라인 텍스트 대신). */
 function PortItem({ port }: { port: PortMeta }) {
   const style = PORT_STYLES[port.direction] ?? PORT_STYLES.output!;
   return (
@@ -42,9 +43,12 @@ function PortItem({ port }: { port: PortMeta }) {
       <span className="text-xs text-(--color-text-muted)">
         ({port.direction})
       </span>
-      <span className="text-xs text-(--color-text-muted)">
-        - {port.description}
-      </span>
+      {port.description && (
+        <FieldHelp
+          text={port.description}
+          describedById={`nodetype-port-desc-${port.direction}-${port.name}`}
+        />
+      )}
     </div>
   );
 }
