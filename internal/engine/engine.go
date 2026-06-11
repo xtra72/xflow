@@ -1202,6 +1202,48 @@ type nodeWithLogger interface {
 	Logger() observe.ComponentLogger
 }
 
+// nodeDeclaresOutputPort 는 노드가 portName 을 출력 포트로 선언했는지 보고한다.
+//
+// 판정은 보수적(OR 결합)으로 수행하여 하위호환을 최대한 보장한다:
+//   - Ports() 목록(node.Node 핵심 인터페이스, 항상 구현됨)에 Direction==PortOutput
+//     이고 Name==portName 인 포트가 있으면 선언된 것으로 본다. switch 처럼 라우트
+//     포트를 동적으로 계산하는 노드의 출력 포트도 이 경로로 정확히 인식된다.
+//   - 추가로 선택적 GetOutputPort 조회 인터페이스(BaseNode 구현)가 선언을 보고하면
+//     역시 선언된 것으로 본다(정적 outputs 기준).
+//
+// 두 출처 중 어느 쪽도 선언을 보고하지 않을 때에만 미선언(false)으로 판정하므로,
+// 동적/정적 포트 모두에 대해 안전하다. 두 인터페이스를 모두 구현하지 않는 노드는
+// 게이트 대상이 아니다(true 반환, 기존 동작 유지).
+func nodeDeclaresOutputPort(n node.Node, portName string) bool {
+	type outputPortGetter interface {
+		GetOutputPort(name string) (*node.NodePort, bool)
+	}
+
+	declaredViaPorts := false
+	type portsLister interface {
+		Ports() []node.NodePort
+	}
+	if pl, ok := n.(portsLister); ok {
+		for _, p := range pl.Ports() {
+			if p.Direction == flow.PortOutput && p.Name == portName {
+				declaredViaPorts = true
+				break
+			}
+		}
+	} else {
+		// Ports() 를 구현하지 않으면 선언 여부를 알 수 없으므로 게이트하지 않는다.
+		return true
+	}
+
+	if g, ok := n.(outputPortGetter); ok {
+		if _, declared := g.GetOutputPort(portName); declared {
+			return true
+		}
+	}
+
+	return declaredViaPorts
+}
+
 // debugPortLog 는 노드 로그 레벨이 Debug일 때 포트 입출력 메시지를 로깅한다.
 // slog.Logger.Enabled() 체크로 불필요한 Payload.ToMap() 비용을 방지한다.
 func debugPortLog(ctx context.Context, logger observe.ComponentLogger, direction string, nodeID string, msg message.Message) {
@@ -1504,6 +1546,15 @@ func (e *Engine) runNode(
 						)
 					}
 					debugPortLog(ctx, nodeLogger, "source", n.ID(), msg)
+					// 미선언 출력 포트 emit 게이트(SourceNode "out" 경로, 보수적 적용):
+					// "out" 와이어가 없고 노드가 "out" 출력 포트를 선언하지 않았다면
+					// tap 통지와 미연결 경고를 생략한다. emit 카운트(pc.Record())는 위에서
+					// 이미 기록되었으므로 source 경로에서는 동작을 깨지 않도록 통지+경고만
+					// 게이트한다("out" 은 절대 "error" 포트가 아니므로 조건 2는 항상 참).
+					if len(outWires) == 0 && !nodeDeclaresOutputPort(n, "out") {
+						// 미선언+미연결: 조용히 폐기(통지·경고 생략).
+						continue
+					}
 					// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
 					e.notifyOutputObserver(flowID, n.ID(), "out", msg)
 					if len(outWires) == 0 {
@@ -1617,6 +1668,18 @@ func (e *Engine) runNode(
 				portName := targetPort
 				if portName == "" {
 					portName = "out"
+				}
+				// 미선언 출력 포트 emit 게이트:
+				// (1) 연결된 와이어가 없고 (2) 에러 포트가 아니며 (3) 노드가 해당
+				// 포트를 출력 포트로 선언하지 않았다면, 결과를 조용히 폐기한다.
+				// emit·tap 통지·포트 카운트(pc.Record())·미연결 경고를 모두 생략하기
+				// 위해 debugPortLog/notifyOutputObserver/pc 로직 이전에 게이트한다.
+				// 사용자가 에디터에서 출력 포트를 삭제한 경우(def.Outputs 에서 빠짐)의
+				// 노이즈(폐기 경고/유령 카운트)를 제거한다. 와이어가 있는 포트(조건 1)와
+				// 선언된 포트(조건 3)는 게이트되지 않아 하위호환을 보장한다.
+				if len(targetWires) == 0 && portName != "error" &&
+					!nodeDeclaresOutputPort(n, portName) {
+					continue
 				}
 				debugPortLog(ctx, nodeLogger, "output", n.ID(), result)
 				// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
