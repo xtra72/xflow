@@ -116,13 +116,37 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         // 비동기로 참조 플로우 포트를 비정규화한다.
         const compound = value as Record<string, unknown>;
         const flowId = (compound.flow_id as string) ?? '';
+        const flowName = (compound.flow_name as string) ?? '';
         updated = {
           ...localData,
           [fieldName]: flowId,
-          flow_name: (compound.flow_name as string) ?? '',
+          flow_name: flowName,
           input_ports: [],
           output_ports: [],
         };
+        // 노드 라벨 자동 설정(변경 1): 사용자가 라벨을 직접 바꾸지 않은 경우에만
+        // 선택한 플로우 이름으로 덮어쓴다(수동 커스텀 라벨 보존). 아래 중 하나면
+        // "자동 라벨"로 간주한다:
+        //   - 현재 label 이 비어있음('' / undefined)
+        //   - 현재 label 이 직전 flow_name 과 동일(이전에 자동 설정된 라벨)
+        //   - 현재 label 이 flow-node 기본 생성 라벨(= nodeType, EditorPage 드롭 시
+        //     data.label = canonicalType)과 동일(신규 드롭 직후 상태)
+        // flow_name 이 빈 문자열이면(플로우 해제) 라벨을 덮어쓰지 않는다.
+        if (flowName !== '') {
+          const currentLabel = localData.label;
+          const prevFlowName = localData.flow_name;
+          const defaultLabel = localData.nodeType;
+          const isAutoLabel =
+            currentLabel === '' ||
+            currentLabel == null ||
+            (typeof prevFlowName === 'string' &&
+              prevFlowName !== '' &&
+              currentLabel === prevFlowName) ||
+            (typeof defaultLabel === 'string' && currentLabel === defaultLabel);
+          if (isAutoLabel) {
+            updated.label = flowName;
+          }
+        }
         setLocalData(updated);
         onChange(updated);
         if (field.required && flowId === '') {

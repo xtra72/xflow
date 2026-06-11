@@ -2,6 +2,7 @@
 // 백엔드 Configure() 메서드의 config 키에 매핑된다.
 
 import type { ConfigField, ConfigSchema } from '@/types/node';
+import { normalizeNodeType } from '@/lib/flow/nodeType';
 import { getBridgeAdapterFields } from './bridgeAdapterSchemas';
 
 export type PortDef = { name: string; direction: 'input' | 'output' | 'error' };
@@ -507,7 +508,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: Samsung HVACR-01 (Samsung NASA 프로토콜) ---
-  'samsung_hvacr01_status': {
+  'samsung-hvacr01-status': {
     description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
     outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
@@ -516,7 +517,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -581,7 +582,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'samsung_hvacr01_control': {
+  'samsung-hvacr01-control': {
     description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨을 제어합니다. 전원, 온도, 풍량, 모드 등을 설정합니다.',
     inputDesc: 'payload: {device_id, command, ...params} (예: {device_id:"01", command:"set_power", power:true})',
     outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
@@ -590,7 +591,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -633,7 +634,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  samsung_hvacr01: {
+  'samsung-hvacr01': {
     description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태 수신 + 제어 통합 노드입니다. push 모델로 동작하며, 무수신 임계 시간 초과 시 request_state 자동 전송.',
     inputDesc: '상태 조회 트리거 또는 제어 명령. payload 에 제어 키(power, mode, temperature 등) 가 있으면 제어, 없으면 즉시 drain.',
     outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
@@ -642,7 +643,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -717,7 +718,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -784,7 +785,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -836,7 +837,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -887,7 +888,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: LG HVACR-02 (ICP-02 protocol) ---
-  'lg_hvacr02_status': {
+  'lg-hvacr02-status': {
     description: 'LG HVACR-02 에이전트(LG ICP-02 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 FrameNotifyCh 신호 수신 시 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다. (2026-05-30 LG HVACR-01 통일 패턴)',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
     outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
@@ -896,7 +897,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -954,7 +955,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'lg_hvacr02_control': {
+  'lg-hvacr02-control': {
     description: 'LG ICP-02 프로토콜로 실내기를 제어합니다. 전원, 온도, 풍량, 모드를 설정합니다.',
     inputDesc: 'payload: {address, command, ...params} (예: {address:"67", command:"set_power", power:true})',
     outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
@@ -963,7 +964,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -1006,7 +1007,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  lg_hvacr02: {
+  'lg-hvacr02': {
     description: 'LG HVACR-02 실내기 상태 조회 + 제어 통합 노드입니다.',
     inputDesc: 'payload.address (조회/제어 대상), payload.command + params (제어 시)',
     outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
@@ -1015,7 +1016,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -1081,7 +1082,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: LG HVACR-01 (LG ICP-01 protocol) ---
-  'lg_hvacr01_status': {
+  'lg-hvacr01-status': {
     description: 'LG HVACR-01 에이전트(LG ICP-01 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
     outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
@@ -1090,7 +1091,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr01'],
           description: '연결할 LG HVACR-01 에이전트를 선택합니다',
@@ -1148,11 +1149,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'lg_hvacr01_control': {
+  'lg-hvacr01-control': {
     description: 'LG HVACR-01 디바이스 제어 (현재 미지원 - 프로토콜 분석 진행 중)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
       ],
     },
@@ -1163,11 +1164,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  lg_hvacr01: {
-    description: 'LG HVACR-01 상태 수신 + 제어 통합 노드. push 모델 (lg_hvacr01_status 와 동일). 제어는 현재 미지원.',
+  'lg-hvacr01': {
+    description: 'LG HVACR-01 상태 수신 + 제어 통합 노드. push 모델 (lg-hvacr01-status 와 동일). 제어는 현재 미지원.',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1192,7 +1193,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: Century HVACR-01 (SPEC-CENTURY-HVACR-001) ---
-  'century_hvacr01_status': {
+  'century-hvacr01-status': {
     description: 'Century HVACR-01 에이전트(Century ICP-01 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
     outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
@@ -1201,7 +1202,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Century HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['century_hvacr01'],
           description: '연결할 Century HVACR-01 에이전트를 선택합니다',
@@ -1268,11 +1269,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'century_hvacr01_control': {
+  'century-hvacr01-control': {
     description: 'Century HVACR-01 디바이스 제어 (미지원 — 패시브 전용)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['century_hvacr01'] },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
       ],
     },
@@ -1283,11 +1284,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  century_hvacr01: {
+  'century-hvacr01': {
     description: 'Century HVACR-01 상태 수신 + 제어 통합 노드 (제어는 항상 not_supported 반환). push 모델.',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['century_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s', description: 'Agent Process 호출 타임아웃' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1322,7 +1323,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1494,7 +1495,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MQTT 에이전트',
+          label: '에이전트',
           required: true,
           options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
@@ -1540,7 +1541,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1585,7 +1586,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1648,7 +1649,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MQTT 에이전트',
+          label: '에이전트',
           required: true,
           options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
@@ -1702,7 +1703,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TSDB 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tsdb'],
           description: '연결할 TSDB 에이전트를 선택합니다',
@@ -1749,7 +1750,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TSDB 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tsdb'],
           description: '연결할 TSDB 에이전트를 선택합니다',
@@ -1820,7 +1821,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '원본 메시지 pass-through',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
         { name: 'measurement', type: 'string', label: 'Measurement', description: '고정 measurement 이름. 비어있으면 measurement_key 사용' },
         {
           name: 'measurement_key',
@@ -1864,8 +1865,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '쿼리 결과의 각 행이 개별 메시지로 출력',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
-        { name: 'query', type: 'string', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
+        { name: 'query', type: 'multiline', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '30s', description: '쿼리 실행 간격 (예: 10s, 1m, 5m)' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
@@ -1883,8 +1884,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '쿼리 결과를 result_key에 담은 새 메시지',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
-        { name: 'query', type: 'string', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
+        { name: 'query', type: 'multiline', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
         { name: 'result_key', type: 'string', label: '결과 키', default: 'results', description: '쿼리 결과를 저장할 payload 키' },
@@ -1905,7 +1906,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Store 에이전트',
+          label: '에이전트',
           required: true,
           options: ['store'],
           description: '연결할 Store 에이전트를 선택합니다',
@@ -2020,7 +2021,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: '시리얼 에이전트',
+          label: '에이전트',
           required: true,
           options: ['serial'],
           description: '연결할 시리얼 에이전트를 선택합니다',
@@ -2045,7 +2046,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: '시리얼 에이전트',
+          label: '에이전트',
           required: true,
           options: ['serial'],
           description: '연결할 시리얼 에이전트를 선택합니다',
@@ -2080,7 +2081,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TCP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tcp-server', 'tcp-client'],
           description: '연결할 TCP 에이전트를 선택합니다',
@@ -2104,7 +2105,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TCP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tcp-server', 'tcp-client'],
           description: '연결할 TCP 에이전트를 선택합니다',
@@ -2130,7 +2131,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Store 에이전트',
+          label: '에이전트',
           required: true,
           options: ['store'],
           description: '연결할 Store 에이전트를 선택합니다',
@@ -2468,7 +2469,8 @@ export function getNodeSchema(nodeType: string, agentType?: string): NodeTypeSch
       defaultPorts: BRIDGE_DEFAULT_PORTS,
     };
   }
-  return NODE_SCHEMAS[nodeType];
+  // 저장된 플로우의 옛 `_` HVAC 타입도 canonical 키로 스키마를 찾도록 정규화.
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)];
 }
 
 /**
@@ -2477,7 +2479,8 @@ export function getNodeSchema(nodeType: string, agentType?: string): NodeTypeSch
  */
 export function getDefaultPorts(nodeType: string): PortDef[] {
   if (nodeType === 'bridge') return BRIDGE_DEFAULT_PORTS;
-  return NODE_SCHEMAS[nodeType]?.defaultPorts ?? [
+  // 저장된 플로우의 옛 `_` HVAC 타입도 canonical 키로 기본 포트를 찾도록 정규화.
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)]?.defaultPorts ?? [
     { name: 'in', direction: 'input' },
     { name: 'out', direction: 'output' },
   ];
@@ -2579,14 +2582,14 @@ export function getNodeDescription(nodeType: string): string | undefined {
   if (nodeType === 'bridge') {
     return '외부 에이전트와 메시지를 송수신하는 브릿지 노드입니다.';
   }
-  return NODE_SCHEMAS[nodeType]?.description;
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)]?.description;
 }
 
 export function getConfigSchema(nodeType: string, agentType?: string): ConfigSchema | undefined {
   if (nodeType === 'bridge') {
     return { fields: getBridgeConfigFields(agentType) };
   }
-  return NODE_SCHEMAS[nodeType]?.configSchema;
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)]?.configSchema;
 }
 
 /**
@@ -2620,7 +2623,7 @@ export function getNodeIODesc(nodeType: string, direction?: string): { inputDesc
         return {};
     }
   }
-  const schema = NODE_SCHEMAS[nodeType];
+  const schema = NODE_SCHEMAS[normalizeNodeType(nodeType)];
   return { inputDesc: schema?.inputDesc, outputDesc: schema?.outputDesc };
 }
 

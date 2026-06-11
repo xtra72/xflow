@@ -9,38 +9,13 @@ import { cn } from '@/lib/utils/cn';
 
 import { computePortsForNode, getConfigSchema, getNodeDescription, getNodeIODesc, getRequiredFieldErrors, type PortDef } from '@/config/nodeSchemas';
 import { useAgents } from '@/hooks/useAgent';
+import { normalizeNodeType } from '@/lib/flow/nodeType';
 import { useEditorStore } from '@/stores/editorStore';
+import { NODE_TYPE_META } from '@/pages/nodes/nodeTypeMeta';
 import type { ConfigSchema } from '@/types/node';
 
 import { DynamicForm } from './DynamicForm';
-
-// --- 입출력 메시지 설명 컴포넌트 ---
-
-function NodeIODescription({ nodeType, direction }: { nodeType: string; direction?: string }): React.ReactElement | null {
-  const { inputDesc, outputDesc } = getNodeIODesc(nodeType, direction);
-  if (!inputDesc && !outputDesc) return null;
-
-  return (
-    <div className="space-y-1.5 px-4 py-2 text-xs text-(--color-text-muted)">
-      {inputDesc && (
-        <div>
-          <span className="font-medium text-(--color-text-secondary)">
-            <ArrowDownToLine className="mr-1 inline h-3 w-3" />입력
-          </span>{' '}
-          {inputDesc}
-        </div>
-      )}
-      {outputDesc && (
-        <div>
-          <span className="font-medium text-(--color-text-secondary)">
-            <ArrowUpFromLine className="mr-1 inline h-3 w-3" />출력
-          </span>{' '}
-          {outputDesc}
-        </div>
-      )}
-    </div>
-  );
-}
+import { FieldHelp } from './FieldHelp';
 
 // --- 포트 관리 서브 컴포넌트 ---
 
@@ -49,9 +24,11 @@ type Port = { name: string; direction: 'input' | 'output' | 'error' };
 interface PortSectionProps {
   ports: Port[];
   onChange: (ports: Port[]) => void;
+  /** 포트 이름 → 설명. 라벨 옆 `?` 도움말로 표시한다(편집은 그대로 유지). */
+  portDescriptions?: Record<string, string>;
 }
 
-function PortSection({ ports, onChange }: PortSectionProps) {
+function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
   const [adding, setAdding] = useState(false);
   const [newDirection, setNewDirection] = useState<'input' | 'output'>('input');
   const [newName, setNewName] = useState('');
@@ -73,12 +50,27 @@ function PortSection({ ports, onChange }: PortSectionProps) {
     onChange(updated);
   };
 
+  // 포트별 설명을 "포트" 타이틀 옆 ? 도움말 하나로 합친다. 행마다 ? 를 두면
+  // 우측 끝에서 팝오버가 화면 밖으로 잘리므로(left-0 기준), 좌측 타이틀에 모은다.
+  const portsHelpText = ports
+    .map((p) => {
+      const d = portDescriptions?.[p.name];
+      return d ? `${p.name} — ${d}` : null;
+    })
+    .filter((v): v is string => !!v)
+    .join('\n\n');
+
   return (
     <div className="space-y-2">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-(--color-text-secondary)">
-          포트
+        <span className="flex items-center gap-1">
+          <span className="text-xs font-medium text-(--color-text-secondary)">
+            포트
+          </span>
+          {portsHelpText && (
+            <FieldHelp text={portsHelpText} describedById="ports-desc" />
+          )}
         </span>
         <button
           type="button"
@@ -352,11 +344,37 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     );
   }
 
-  const nodeType = (draft.nodeType as string) ?? (draft.type as string) ?? selectedNode.type ?? 'unknown';
+  const rawNodeType = (draft.nodeType as string) ?? (draft.type as string) ?? selectedNode.type ?? 'unknown';
+  // 저장된 옛 `_` HVAC 타입도 canonical `-` 표기로 보여준다.
+  const nodeType = normalizeNodeType(rawNodeType);
   const nodeLabel = (draft.label as string) ?? '';
 
   const configSchema = getConfigSchema(nodeType, agentType) ?? (draft.config_schema as ConfigSchema | undefined);
   const ports = (draft.ports ?? []) as Port[];
+
+  // 타입 설명: NODE_TYPE_META 우선, 없으면 스키마 description.
+  const typeDescription = NODE_TYPE_META[nodeType]?.description ?? getNodeDescription(nodeType);
+
+  // 포트 이름 → 설명 맵.
+  // NODE_TYPE_META 의 포트별 설명에 스키마의 방향별 입출력 메시지 설명
+  // (inputDesc/outputDesc)을 합쳐 포트 ? 도움말 하나로 노출한다. 별도 인라인
+  // IO 설명 블록 대신 포트 ? 로 일원화한다.
+  // 이 블록은 위의 early return(노드 미선택) 이후이므로 hook 을 쓰지 않고 즉시 계산한다.
+  const { inputDesc, outputDesc } = getNodeIODesc(nodeType, draft.direction as string | undefined);
+  const metaPortDesc = new Map<string, string>();
+  for (const p of NODE_TYPE_META[nodeType]?.ports ?? []) {
+    if (p.description) metaPortDesc.set(p.name, p.description);
+  }
+  const portDescriptions: Record<string, string> = {};
+  for (const port of ports) {
+    const ioDesc =
+      port.direction === 'input' ? inputDesc : port.direction === 'output' ? outputDesc : undefined;
+    const parts = [metaPortDesc.get(port.name), ioDesc].filter((v): v is string => !!v);
+    // 동일 문구 중복 노출 방지 후 단락 구분(\n\n)으로 합친다. FieldHelp 는
+    // whitespace-pre-wrap 이라 줄바꿈이 그대로 렌더된다.
+    const merged = [...new Set(parts)].join('\n\n');
+    if (merged) portDescriptions[port.name] = merged;
+  }
 
   // 필수 필드 누락 검사. draft 기준으로 계산하여 사용자가 값을 채우는 즉시 반영된다.
   const missingRequired = getRequiredFieldErrors(nodeType, draft, agentType);
@@ -369,25 +387,37 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         bg-(--color-bg-surface)
         ${width ? '' : 'w-[300px]'}`}
     >
-      {/* 헤더: 노드 타입 + 닫기 버튼 */}
-      <div className="flex items-center justify-between border-b border-(--color-border-default) px-4 py-3">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-(--color-text-primary)">
-            {nodeType}
-          </h3>
-          <p className="truncate text-xs text-(--color-text-muted)">
-            {selectedNode.id}
-          </p>
-          {getNodeDescription(nodeType) && (
-            <p className="mt-1 text-xs text-(--color-text-muted) leading-relaxed">
-              {getNodeDescription(nodeType)}
+      {/* 헤더: 타입/아이디 라벨 필드 + 닫기 버튼 */}
+      <div className="flex items-start justify-between gap-2 border-b border-(--color-border-default) px-4 py-3">
+        <div className="min-w-0 space-y-1.5">
+          {/* 타입: 라벨 + canonical 타입 + 설명 ? 도움말 */}
+          <div className="min-w-0">
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+                타입
+              </span>
+              {typeDescription && (
+                <FieldHelp text={typeDescription} describedById="node-type-desc" />
+              )}
+            </div>
+            <p className="truncate text-sm font-semibold text-(--color-text-primary)">
+              {nodeType}
             </p>
-          )}
+          </div>
+          {/* 아이디: 라벨 + 노드 id */}
+          <div className="min-w-0">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+              아이디
+            </span>
+            <p className="truncate text-xs text-(--color-text-secondary)" title={selectedNode.id}>
+              {selectedNode.id}
+            </p>
+          </div>
         </div>
         <button
           type="button"
           onClick={() => selectNode(null)}
-          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
+          className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
             dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
           aria-label="속성 패널 닫기"
         >
@@ -470,14 +500,58 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           </button>
         </div>
 
+        {/* 출력 미연결 경고 끄기 토글 (모든 노드 공통).
+            ON 시 노드 config 에 suppress_unconnected_warning: true 를 기록한다.
+            기본값(false)일 때는 명시적으로 false 를 기록한다(다른 공통 boolean 토글과 동일). */}
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1">
+            <label
+              htmlFor="node-suppress-unconnected-warning"
+              className="text-xs font-medium text-(--color-text-secondary)"
+            >
+              출력 미연결 경고 끄기
+            </label>
+            <FieldHelp
+              text="이 노드의 연결되지 않은 출력 포트 경고(메시지 폐기)를 로그에서 끕니다. 의도적으로 출력을 연결하지 않은 writer 노드 등에 사용."
+              describedById="node-suppress-unconnected-warning-desc"
+            />
+          </span>
+          <button
+            id="node-suppress-unconnected-warning"
+            type="button"
+            role="switch"
+            aria-checked={draft.suppress_unconnected_warning === true}
+            aria-describedby="node-suppress-unconnected-warning-desc"
+            onClick={() =>
+              handleDraftChange({
+                suppress_unconnected_warning: draft.suppress_unconnected_warning !== true,
+              })
+            }
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors',
+              draft.suppress_unconnected_warning === true
+                ? 'bg-blue-500 dark:bg-blue-600'
+                : 'bg-gray-300 dark:bg-gray-600',
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                draft.suppress_unconnected_warning === true ? 'translate-x-4.5' : 'translate-x-0.5',
+              )}
+            />
+          </button>
+        </div>
+
         {/* 포트 관리 */}
-        <PortSection ports={ports} onChange={(newPorts) => handleDraftChange({ ports: newPorts })} />
+        <PortSection
+          ports={ports}
+          onChange={(newPorts) => handleDraftChange({ ports: newPorts })}
+          portDescriptions={portDescriptions}
+        />
 
         {/* 구분선 */}
         <hr className="border-(--color-border-default)" />
-
-        {/* 입출력 메시지 설명 */}
-        <NodeIODescription nodeType={nodeType} direction={draft.direction as string | undefined} />
 
         {/* 동적 폼 */}
         <DynamicForm

@@ -258,7 +258,7 @@ func (a *FlowServiceAdapter) subflowEmbeddedNodes(ctx context.Context, subflowID
 		}
 		matchedParents++
 		totalNamespaced += len(nodes)
-		a.logger.Info("subflow-stats: 참조 부모 발견",
+		a.logger.Debug("subflow-stats: 참조 부모 발견",
 			"subflow_id", subflowID, "parent_id", parentID,
 			"flow_node_ids", flowNodeIDs, "parent_node_count", len(nodes))
 
@@ -269,7 +269,7 @@ func (a *FlowServiceAdapter) subflowEmbeddedNodes(ctx context.Context, subflowID
 	}
 
 	out := aggregateSubflowStats(parents)
-	a.logger.Info("subflow-stats: 결과",
+	a.logger.Debug("subflow-stats: 결과",
 		"subflow_id", subflowID, "deployed", len(deployed),
 		"matched_parents", matchedParents, "parent_nodes_total", totalNamespaced,
 		"result_nodes", len(out))

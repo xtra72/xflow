@@ -660,7 +660,7 @@ func (a *FlowServiceAdapter) ListFlowNodes(ctx context.Context, flowID string) (
 	//    뷰에서 실제 활동을 본다. 노드 ID 는 단독 배포·임베디드·서브플로우 정의에서 동일하다
 	//    (ParseSubflowNodeID 가 네임스페이스를 원본 ID 로 역매핑).
 	merged := mergeNodeInstanceStats(ownNodes, embedded)
-	a.logger.Info("list-flow-nodes: 단독 배포 + 서브플로우 임베디드 병합 반환",
+	a.logger.Debug("list-flow-nodes: 단독 배포 + 서브플로우 임베디드 병합 반환",
 		"flow_id", flowID, "own_nodes", len(ownNodes),
 		"embedded_nodes", len(embedded), "result_nodes", len(merged))
 	return engineNodesToFlowNodeInfos(merged), nil

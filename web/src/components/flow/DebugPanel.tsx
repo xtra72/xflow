@@ -46,12 +46,12 @@ function formatTime(value: number | string): string {
   });
 }
 
-/** tap 메시지의 payload 를 한 줄로 직렬화한다(렌더 표시용). */
-function formatTapPayload(payload: Record<string, unknown>): string {
+/** tap 메시지(전체 envelope 또는 임의 값)를 한 줄로 직렬화한다(렌더 표시용). */
+function formatTapRecord(value: unknown): string {
   try {
-    return JSON.stringify(payload);
+    return JSON.stringify(value);
   } catch {
-    return String(payload);
+    return String(value);
   }
 }
 
@@ -508,7 +508,7 @@ export function DebugPanel() {
                       <span className="text-gray-500">:{entry.port}</span>
                     </td>
                     <td className="px-2 py-0.5 text-gray-200 break-all">
-                      {formatTapPayload(entry.message.payload)}
+                      {formatTapRecord(entry.message)}
                     </td>
                   </tr>
                 ))}

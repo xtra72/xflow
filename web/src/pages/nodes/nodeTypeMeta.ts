@@ -414,7 +414,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'samsung_hvacr01_status': {
+  'samsung-hvacr01-status': {
     description:
       'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 push 메시지를 수신하는 노드입니다. 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit 하고, 노드는 ring buffer 를 drain 합니다. inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다. group_id / unit_id 로 특정 외기/내기를 필터링할 수 있습니다.',
     ports: [
@@ -471,7 +471,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'samsung_hvacr01_control': {
+  'samsung-hvacr01-control': {
     description:
       'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)에 제어 명령을 전송하는 노드입니다. 직접 명령 형식(command 키 포함)과 간편 형식(power, mode 등 제어 키)을 모두 지원합니다. 간편 형식은 자동으로 set_multiple 명령으로 변환됩니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
     ports: [
@@ -507,7 +507,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  samsung_hvacr01: {
+  'samsung-hvacr01': {
     description:
       'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 상태 수신과 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지에 제어 키(power, mode, temperature, target_temperature, fan_speed)가 있으면 제어 명령으로, 없으면 즉시 drain 으로 동작합니다. 무수신 임계 시간(inactivity_timeout) 초과 시 request_state 자동 전송. group_id / unit_id 로 외기/내기 어드레싱 가능.',
     ports: [
@@ -1388,7 +1388,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lg_hvacr02_status': {
+  'lg-hvacr02-status': {
     description:
       'LG HVACR-02 에이전트에 연결하여 RS-485 버스에서 캡처된 실내기 상태를 조회하는 노드입니다. 주소를 지정하면 해당 실내기만, 미지정 시 전체 실내기를 조회합니다. poll_interval 설정 시 주기적으로 자동 폴링합니다.',
     ports: [
@@ -1412,7 +1412,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lg_hvacr02_control': {
+  'lg-hvacr02-control': {
     description:
       'LG ICP-02 프로토콜로 실내기를 제어하는 노드입니다. 전원, 온도, 풍량, 운전모드를 설정합니다. control_enabled가 활성화된 LG HVACR-02 에이전트가 필요합니다.',
     ports: [
@@ -1432,7 +1432,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  lg_hvacr02: {
+  'lg-hvacr02': {
     description:
       'LG HVACR-02 실내기 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키(power, temperature, fan_speed, mode)가 있으면 제어, 없으면 상태 조회로 동작합니다.',
     ports: [
@@ -1455,7 +1455,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lg_hvacr01_status': {
+  'lg-hvacr01-status': {
     description:
       'LG ICP-01 프로토콜로 에어컨 상태를 push 수신하는 노드입니다. 에이전트가 NotifyInterval 마다 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 emit, 노드는 ring buffer drain. 무수신 임계 시간(inactivity_timeout) 초과 시 request_state 자동 전송. unit_id(STX hex)로 ODU/IDU 단독 필터링 가능.',
     ports: [
@@ -1478,7 +1478,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lg_hvacr01_control': {
+  'lg-hvacr01-control': {
     description:
       'LG HVACR-01 디바이스 제어 노드입니다. 현재 LG ICP-01 프로토콜의 쓰기 명령이 확인되지 않아 모든 제어 요청에 미지원 응답을 반환합니다.',
     ports: [
@@ -1495,7 +1495,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  lg_hvacr01: {
+  'lg-hvacr01': {
     description:
       'LG HVACR-01 상태 수신 + 제어 통합 노드입니다. 입력 메시지에 제어 키가 있으면 미지원 응답을 반환하고, 없으면 즉시 drain. push 모델로 무수신 임계 시간 초과 시 request_state 자동 전송.',
     ports: [

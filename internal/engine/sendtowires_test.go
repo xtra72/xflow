@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -37,6 +38,20 @@ func (h *countingHandler) warnCount() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.warns
+}
+
+// warnCountContaining 은 WARN 메시지 중 substr 을 포함하는 건수를 반환한다.
+// 특정 경고(예: 미연결 출력 포트 경고)만 선별 검증할 때 사용한다.
+func (h *countingHandler) warnCountContaining(substr string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, m := range h.msgs {
+		if strings.Contains(m, substr) {
+			n++
+		}
+	}
+	return n
 }
 
 // testComponentLogger 는 countingHandler 를 감싸 ComponentLogger 인터페이스를
