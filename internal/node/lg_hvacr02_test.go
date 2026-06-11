@@ -1420,15 +1420,26 @@ func TestLGHvacr02ControlNode_Process_타임아웃(t *testing.T) {
 func TestRegistry_LGHvacr02노드등록(t *testing.T) {
 	r := NewRegistry()
 
-	lgHvacr02Types := []string{"lg_hvacr02_status", "lg_hvacr02_control", "lg_hvacr02"}
-	for _, typeName := range lgHvacr02Types {
-		t.Run(typeName, func(t *testing.T) {
-			assert.True(t, r.Has(typeName), "%s가 레지스트리에 등록되어 있어야 한다", typeName)
+	// canonical(-) 이름은 "builtin", DEPRECATED(_) 별칭은 "builtin-deprecated".
+	cases := []struct {
+		typeName   string
+		wantSource string
+	}{
+		{"lg-hvacr02-status", "builtin"},
+		{"lg-hvacr02-control", "builtin"},
+		{"lg-hvacr02", "builtin"},
+		{"lg_hvacr02_status", "builtin-deprecated"},
+		{"lg_hvacr02_control", "builtin-deprecated"},
+		{"lg_hvacr02", "builtin-deprecated"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.typeName, func(t *testing.T) {
+			assert.True(t, r.Has(tc.typeName), "%s가 레지스트리에 등록되어 있어야 한다", tc.typeName)
 
-			meta, ok := r.TypeMeta(typeName)
+			meta, ok := r.TypeMeta(tc.typeName)
 			assert.True(t, ok)
 			assert.Equal(t, "io", meta.Category)
-			assert.Equal(t, "builtin", meta.Source)
+			assert.Equal(t, tc.wantSource, meta.Source)
 		})
 	}
 }
