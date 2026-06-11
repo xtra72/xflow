@@ -30,10 +30,7 @@ import { NodePalette } from '@/components/palette/NodePalette';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { EdgePropertyPanel } from '@/components/property/EdgePropertyPanel';
 import { PropertyPanel } from '@/components/property/PropertyPanel';
-import {
-  RuntimeStatsContext,
-  type NodeRuntimeStats,
-} from '@/contexts/RuntimeStatsContext';
+import { RuntimeStatsContext } from '@/contexts/RuntimeStatsContext';
 import { useFlowStatus } from '@/hooks/useFlow';
 import { useRemoteNodeDetail } from '@/hooks/useRemote';
 import { useEditorFlowTarget } from '@/hooks/useEditorFlowTarget';
@@ -44,7 +41,11 @@ import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { TargetProvider } from '@/lib/remote/TargetContext';
-import { getFlowNodes, getFlowTaps } from '@/services/api/flowService';
+import {
+  getFlowNodes,
+  getFlowTaps,
+  getSubflowStats,
+} from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
 import { useTapStore } from '@/stores/tapStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -62,6 +63,11 @@ import {
   readBackStack,
   SUBFLOW_BACK_STATE_KEY,
 } from '@/lib/flow/subflowNav';
+import {
+  aggregateFlowNodeStats,
+  buildRuntimeStatsMap,
+  mergeSubflowStats,
+} from '@/lib/flow/subflowNamespace';
 
 /** React Flow에 등록할 커스텀 노드 타입 맵 */
 const nodeTypes = {
@@ -186,34 +192,58 @@ function EditorPageInner() {
     refetchInterval: 3000,
   });
 
-  // 런타임 통계 맵 구성 (nodeId → { inMessages, outMessages, state })
+  // 서브플로우 LIVE 통계 폴링 (Fix 2) — getFlowNodes 와 동일 게이팅/간격(로컬 전용).
+  //
+  // 현재 플로우가 단독 배포되지 않고 부모 안에서만 실행되면 getFlowNodes 는 비어
+  // 있으나, subflow-stats 는 부모의 네임스페이스 노드에서 역집계한 per-original-node
+  // 통계를 돌려준다. 참조 부모가 없으면 nodes:[] 라 추가 비용은 틱당 요청 1개뿐이다.
+  const { data: subflowStats } = useQuery({
+    queryKey: ['flows', flowId, 'subflow-stats'],
+    queryFn: () => getSubflowStats(flowId!),
+    enabled: !isRemote && !!flowId && isFlowRunning,
+    refetchInterval: 3000,
+  });
+
+  // 현재 캔버스에 표시된 flow-node(서브플로우 참조 노드) id 목록 (Fix 1 집계 대상).
+  // data.nodeType === 'flow-node' 로 식별한다. 셀렉터에서 id 만 추출해 불필요한
+  // 재계산을 줄인다(노드 위치 변경 등에는 반응하지 않도록 정렬 후 join 비교).
+  const flowNodeIdsKey = useEditorStore((s) =>
+    s.nodes
+      .filter((n) => (n.data as Record<string, unknown>)?.nodeType === 'flow-node')
+      .map((n) => n.id)
+      .sort()
+      .join(' '),
+  );
+  const flowNodeIds = useMemo(
+    () => (flowNodeIdsKey === '' ? [] : flowNodeIdsKey.split(' ')),
+    [flowNodeIdsKey],
+  );
+
+  // 런타임 통계 맵 구성 (nodeId → { inMessages, outMessages, state, ports }).
+  //
+  // 단계:
+  //  1) getFlowNodes 결과로 exact-id 기준 기본 맵을 만든다(일반 노드는 그대로 매핑).
+  //  2) Fix 2 — subflow-stats 노드를 병합한다(own 우선). 현재 플로우가 부모 안에서만
+  //     실행될 때 비어 있는 자기 통계를 부모 역집계 통계로 채운다.
+  //  3) Fix 1 — 표시된 각 flow-node 에 대해 subflow_<id>_* 자식 통계를 합산해
+  //     flow-node 자신의 id 로 올린다(부모 뷰에서 0 으로 보이던 문제 해결).
   const runtimeStatsMap = useMemo(() => {
-    if (!runtimeNodes || !isFlowRunning) return {};
-    const map: Record<string, NodeRuntimeStats> = {};
-    for (const node of runtimeNodes) {
-      const ports = node.ports ?? [];
-      const inMessages = ports
-        .filter((p) => p.direction === 'input')
-        .reduce((sum, p) => sum + p.messages, 0);
-      const outMessages = ports
-        .filter((p) => p.direction === 'output')
-        .reduce((sum, p) => sum + p.messages, 0);
-      // 포트별 상세 통계 — output 포트의 delivered / 큐 적체량 표시에 사용.
-      const portStats = ports.map((p) => ({
-        name: p.name,
-        direction: p.direction,
-        messages: p.messages,
-        delivered: p.delivered,
-      }));
-      map[node.node_id] = {
-        inMessages,
-        outMessages,
-        state: node.state,
-        ports: portStats,
-      };
+    if (!isFlowRunning) return {};
+    // 1) 기본 맵(exact id). runtimeNodes 가 아직 없으면 빈 맵에서 시작한다.
+    const baseMap = buildRuntimeStatsMap(runtimeNodes ?? []);
+    // 2) Fix 2 — subflow-stats 병합(own 우선).
+    const merged = subflowStats
+      ? mergeSubflowStats(baseMap, subflowStats.nodes)
+      : baseMap;
+    // 3) Fix 1 — flow-node 위로 자식 네임스페이스 노드 통계 집계.
+    for (const flowNodeId of flowNodeIds) {
+      const agg = aggregateFlowNodeStats(flowNodeId, runtimeNodes ?? []);
+      if (agg !== undefined) {
+        merged[flowNodeId] = agg;
+      }
     }
-    return map;
-  }, [runtimeNodes, isFlowRunning]);
+    return merged;
+  }, [runtimeNodes, subflowStats, flowNodeIds, isFlowRunning]);
 
   // 에디터 그리드 스냅 설정 (v0.18.4)
   const editorSnapToGrid = useUIStore((s) => s.editorSnapToGrid);

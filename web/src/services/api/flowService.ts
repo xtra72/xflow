@@ -5,6 +5,7 @@ import type {
   FlowNodeInfo,
   FlowStatusInfo,
   FlowUpdateRequest,
+  SubflowStatsInfo,
 } from '@/types/flow';
 
 import { del, get, getList, post, put } from './client';
@@ -118,6 +119,19 @@ export async function getFlowNodes(flowId: string): Promise<FlowNodeInfo[]> {
  */
 export async function getFlowNode(flowId: string, nodeId: string): Promise<FlowNodeInfo> {
   return get<FlowNodeInfo>(`/flows/${flowId}/nodes/${nodeId}`);
+}
+
+/**
+ * 서브플로우 {flowId} 의 LIVE per-original-node 통계를 조회한다(Fix 2).
+ *
+ * {flowId} 를 LOCAL 참조하는 배포 부모 플로우의 네임스페이스 노드
+ * (subflow_<flowNodeID>_*)에서 원본 노드 단위로 집계된 통계를 반환한다.
+ * 서브플로우가 단독 배포되지 않고 부모 안에서만 실행될 때, 에디터가 서브플로우를
+ * 단독으로 열어도 실제 처리 중인 per-node 카운트를 표시하기 위해 사용한다.
+ * 참조하는 실행 부모가 없으면 nodes 가 빈 배열인 응답을 반환한다(200).
+ */
+export async function getSubflowStats(flowId: string): Promise<SubflowStatsInfo> {
+  return get<SubflowStatsInfo>(`/flows/${flowId}/subflow-stats`);
 }
 
 // ---- Node Output Tap (관찰) ----
