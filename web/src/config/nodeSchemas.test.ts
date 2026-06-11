@@ -5,7 +5,15 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { computePortsForNode, getConfigSchema, type PortDef } from './nodeSchemas';
+import {
+  computePortsForNode,
+  getConfigSchema,
+  getDefaultPorts,
+  getNodeDescription,
+  getNodeIODesc,
+  getNodeSchema,
+  type PortDef,
+} from './nodeSchemas';
 import type { ConfigField } from '@/types/node';
 
 /** nodeType 의 config 필드 중 name 으로 하나를 찾는다. */
@@ -201,17 +209,17 @@ describe('computePortsForNode — flow-node 동적 포트 (SPEC-SUBFLOW-001)', (
 describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
   // emit_agent 가 default ON 으로 노출되는 노드 — HVACR(디바이스) + 그 외 에이전트 IO 노드.
   const AGENT_TOGGLE_NODES = [
-    'samsung_hvacr01_status',
-    'samsung_hvacr01_control',
-    'samsung_hvacr01',
+    'samsung-hvacr01-status',
+    'samsung-hvacr01-control',
+    'samsung-hvacr01',
     'lgap',
-    'lg_hvacr02_status',
-    'lg_hvacr02_control',
-    'lg_hvacr02',
-    'lg_hvacr01_status',
-    'lg_hvacr01',
-    'century_hvacr01_status',
-    'century_hvacr01',
+    'lg-hvacr02-status',
+    'lg-hvacr02-control',
+    'lg-hvacr02',
+    'lg-hvacr01-status',
+    'lg-hvacr01',
+    'century-hvacr01-status',
+    'century-hvacr01',
     'modbus',
     'modbus-writer',
     'mqtt-subscriber',
@@ -224,17 +232,17 @@ describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
 
   // emit_device 까지 노출되는 노드 — HVACR/디바이스 그룹만.
   const DEVICE_TOGGLE_NODES = [
-    'samsung_hvacr01_status',
-    'samsung_hvacr01_control',
-    'samsung_hvacr01',
+    'samsung-hvacr01-status',
+    'samsung-hvacr01-control',
+    'samsung-hvacr01',
     'lgap',
-    'lg_hvacr02_status',
-    'lg_hvacr02_control',
-    'lg_hvacr02',
-    'lg_hvacr01_status',
-    'lg_hvacr01',
-    'century_hvacr01_status',
-    'century_hvacr01',
+    'lg-hvacr02-status',
+    'lg-hvacr02-control',
+    'lg-hvacr02',
+    'lg-hvacr01-status',
+    'lg-hvacr01',
+    'century-hvacr01-status',
+    'century-hvacr01',
   ] as const;
 
   // emit_agent 만 노출하고 emit_device 는 노출하지 않는 노드(디바이스 아님).
@@ -272,5 +280,44 @@ describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
 
   it('modbus-poller 는 agent 그룹을 emit 하지 않으므로 emit_agent 토글이 없다', () => {
     expect(findField('modbus-poller', 'emit_agent')).toBeUndefined();
+  });
+});
+
+// 옛 `_` HVAC 타입이 스키마/포트/설명 조회에서 canonical `-` 키로 해석되는지 검증.
+// 저장된 플로우가 옛 `_` 타입을 들고 있어도 에디터가 정상 동작해야 한다.
+describe('옛 `_` HVAC 타입의 스키마/메타 정규화 해석', () => {
+  // [옛 `_` 타입, 대응 canonical `-` 타입]
+  const pairs: Array<[string, string]> = [
+    ['samsung_hvacr01_status', 'samsung-hvacr01-status'],
+    ['samsung_hvacr01_control', 'samsung-hvacr01-control'],
+    ['samsung_hvacr01', 'samsung-hvacr01'],
+    ['lg_hvacr01_status', 'lg-hvacr01-status'],
+    ['lg_hvacr02', 'lg-hvacr02'],
+    ['century_hvacr01_status', 'century-hvacr01-status'],
+  ];
+
+  it.each(pairs)('%s 의 configSchema 가 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    const legacySchema = getConfigSchema(legacy);
+    const canonicalSchema = getConfigSchema(canonical);
+    expect(legacySchema).toBeDefined();
+    expect(legacySchema).toEqual(canonicalSchema);
+  });
+
+  it.each(pairs)('%s 의 NodeTypeSchema 가 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    expect(getNodeSchema(legacy)).toEqual(getNodeSchema(canonical));
+  });
+
+  it.each(pairs)('%s 의 기본 포트가 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    const ports = getDefaultPorts(legacy);
+    expect(ports.length).toBeGreaterThan(0);
+    expect(ports).toEqual(getDefaultPorts(canonical));
+    // computePortsForNode 도 fallback 경로에서 동일하게 정규화된다.
+    expect(computePortsForNode(legacy)).toEqual(computePortsForNode(canonical));
+  });
+
+  it.each(pairs)('%s 의 설명/입출력 설명이 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    expect(getNodeDescription(legacy)).toBe(getNodeDescription(canonical));
+    expect(getNodeDescription(legacy)).toBeTruthy();
+    expect(getNodeIODesc(legacy)).toEqual(getNodeIODesc(canonical));
   });
 });

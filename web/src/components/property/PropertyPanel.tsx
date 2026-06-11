@@ -9,10 +9,13 @@ import { cn } from '@/lib/utils/cn';
 
 import { computePortsForNode, getConfigSchema, getNodeDescription, getNodeIODesc, getRequiredFieldErrors, type PortDef } from '@/config/nodeSchemas';
 import { useAgents } from '@/hooks/useAgent';
+import { normalizeNodeType } from '@/lib/flow/nodeType';
 import { useEditorStore } from '@/stores/editorStore';
+import { NODE_TYPE_META } from '@/pages/nodes/nodeTypeMeta';
 import type { ConfigSchema } from '@/types/node';
 
 import { DynamicForm } from './DynamicForm';
+import { FieldHelp } from './FieldHelp';
 
 // --- 입출력 메시지 설명 컴포넌트 ---
 
@@ -49,9 +52,11 @@ type Port = { name: string; direction: 'input' | 'output' | 'error' };
 interface PortSectionProps {
   ports: Port[];
   onChange: (ports: Port[]) => void;
+  /** 포트 이름 → 설명. 라벨 옆 `?` 도움말로 표시한다(편집은 그대로 유지). */
+  portDescriptions?: Record<string, string>;
 }
 
-function PortSection({ ports, onChange }: PortSectionProps) {
+function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
   const [adding, setAdding] = useState(false);
   const [newDirection, setNewDirection] = useState<'input' | 'output'>('input');
   const [newName, setNewName] = useState('');
@@ -117,6 +122,13 @@ function PortSection({ ports, onChange }: PortSectionProps) {
               'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
             )}
           />
+          {/* 포트 설명 ? 도움말 (있을 때만). 인라인 텍스트 대신 아이콘 클릭 팝오버. */}
+          {portDescriptions?.[port.name] && (
+            <FieldHelp
+              text={portDescriptions[port.name]!}
+              describedById={`port-desc-${idx}`}
+            />
+          )}
           {/* 삭제 버튼 */}
           <button
             type="button"
@@ -352,11 +364,23 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
     );
   }
 
-  const nodeType = (draft.nodeType as string) ?? (draft.type as string) ?? selectedNode.type ?? 'unknown';
+  const rawNodeType = (draft.nodeType as string) ?? (draft.type as string) ?? selectedNode.type ?? 'unknown';
+  // 저장된 옛 `_` HVAC 타입도 canonical `-` 표기로 보여준다.
+  const nodeType = normalizeNodeType(rawNodeType);
   const nodeLabel = (draft.label as string) ?? '';
 
   const configSchema = getConfigSchema(nodeType, agentType) ?? (draft.config_schema as ConfigSchema | undefined);
   const ports = (draft.ports ?? []) as Port[];
+
+  // 타입 설명: NODE_TYPE_META 우선, 없으면 스키마 description.
+  const typeDescription = NODE_TYPE_META[nodeType]?.description ?? getNodeDescription(nodeType);
+
+  // 포트 이름 → 설명 맵 (NODE_TYPE_META 의 포트 메타에서 파생).
+  // 이 블록은 위의 early return(노드 미선택) 이후이므로 hook 을 쓰지 않고 즉시 계산한다.
+  const portDescriptions: Record<string, string> = {};
+  for (const p of NODE_TYPE_META[nodeType]?.ports ?? []) {
+    if (p.description) portDescriptions[p.name] = p.description;
+  }
 
   // 필수 필드 누락 검사. draft 기준으로 계산하여 사용자가 값을 채우는 즉시 반영된다.
   const missingRequired = getRequiredFieldErrors(nodeType, draft, agentType);
@@ -369,25 +393,37 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         bg-(--color-bg-surface)
         ${width ? '' : 'w-[300px]'}`}
     >
-      {/* 헤더: 노드 타입 + 닫기 버튼 */}
-      <div className="flex items-center justify-between border-b border-(--color-border-default) px-4 py-3">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-(--color-text-primary)">
-            {nodeType}
-          </h3>
-          <p className="truncate text-xs text-(--color-text-muted)">
-            {selectedNode.id}
-          </p>
-          {getNodeDescription(nodeType) && (
-            <p className="mt-1 text-xs text-(--color-text-muted) leading-relaxed">
-              {getNodeDescription(nodeType)}
+      {/* 헤더: 타입/아이디 라벨 필드 + 닫기 버튼 */}
+      <div className="flex items-start justify-between gap-2 border-b border-(--color-border-default) px-4 py-3">
+        <div className="min-w-0 space-y-1.5">
+          {/* 타입: 라벨 + canonical 타입 + 설명 ? 도움말 */}
+          <div className="min-w-0">
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+                타입
+              </span>
+              {typeDescription && (
+                <FieldHelp text={typeDescription} describedById="node-type-desc" />
+              )}
+            </div>
+            <p className="truncate text-sm font-semibold text-(--color-text-primary)">
+              {nodeType}
             </p>
-          )}
+          </div>
+          {/* 아이디: 라벨 + 노드 id */}
+          <div className="min-w-0">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+              아이디
+            </span>
+            <p className="truncate text-xs text-(--color-text-secondary)" title={selectedNode.id}>
+              {selectedNode.id}
+            </p>
+          </div>
         </div>
         <button
           type="button"
           onClick={() => selectNode(null)}
-          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
+          className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
             dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
           aria-label="속성 패널 닫기"
         >
@@ -471,7 +507,11 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         </div>
 
         {/* 포트 관리 */}
-        <PortSection ports={ports} onChange={(newPorts) => handleDraftChange({ ports: newPorts })} />
+        <PortSection
+          ports={ports}
+          onChange={(newPorts) => handleDraftChange({ ports: newPorts })}
+          portDescriptions={portDescriptions}
+        />
 
         {/* 구분선 */}
         <hr className="border-(--color-border-default)" />

@@ -50,6 +50,7 @@ import { useTapStore } from '@/stores/tapStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { NodeTypeInfo } from '@/types/node';
 import { computePortsForNode, getConfigSchema } from '@/config/nodeSchemas';
+import { normalizeNodeType } from '@/lib/flow/nodeType';
 import { generateUUID } from '@/lib/utils/uuid';
 import {
   FLOW_AREA_NODE_TYPE,
@@ -294,8 +295,20 @@ function EditorPageInner() {
     // config 또는 definition에서 노드/엣지 파싱
     const source =
       (flowData.config as Record<string, unknown>) ?? {};
-    const rawNodes = (source.nodes as Node[]) ?? [];
+    const parsedNodes = (source.nodes as Node[]) ?? [];
     const rawEdges = (source.edges as Edge[]) ?? [];
+
+    // 옛 `_` HVAC 타입을 canonical `-` 로 정규화한다(로드 시 마이그레이션).
+    // 이후 재저장하면 canonical 타입이 영속화된다. 미오픈 플로우는 백엔드
+    // 별칭으로 그대로 배포되므로 안전하다.
+    const rawNodes = parsedNodes.map((node) => {
+      const data = node.data as Record<string, unknown> | undefined;
+      const nodeType = data?.nodeType;
+      if (typeof nodeType !== 'string') return node;
+      const canonical = normalizeNodeType(nodeType);
+      if (canonical === nodeType) return node;
+      return { ...node, data: { ...data, nodeType: canonical } };
+    });
     // SPEC-SUBFLOW-001: 정의 최상위 inputs/outputs(플로우 레벨 포트)를 파싱한다.
     // 백엔드는 이를 config.inputs / config.outputs 로 방출한다(REQ-SUBFLOW-A07).
     // loadFlow 가 이 포트들로부터 합성 경계 노드를 만들어 렌더한다.
@@ -536,6 +549,10 @@ function EditorPageInner() {
         y: e.clientY,
       });
 
+      // 신규 노드는 canonical `-` 타입으로 생성한다. 팔레트가 옛 `_` 별칭을
+      // 걸러내므로 보통 이미 canonical 이지만, 방어적으로 정규화한다.
+      const canonicalType = normalizeNodeType(nodeType.type);
+
       const newNode: Node = {
         // v0.18.12: 노드 id 를 UUID v4 로 생성 (이전: `${type}-${Date.now()}`).
         // generateUUID 는 secure context 외부 (HTTP 환경) 에서도 안전한 fallback 보유.
@@ -543,11 +560,11 @@ function EditorPageInner() {
         type: 'custom',
         position,
         data: {
-          label: nodeType.type,
-          nodeType: nodeType.type,
+          label: canonicalType,
+          nodeType: canonicalType,
           category: nodeType.category,
-          ports: computePortsForNode(nodeType.type),
-          config_schema: nodeType.type === 'bridge' ? undefined : getConfigSchema(nodeType.type),
+          ports: computePortsForNode(canonicalType),
+          config_schema: canonicalType === 'bridge' ? undefined : getConfigSchema(canonicalType),
           status: 'draft',
         },
       };
