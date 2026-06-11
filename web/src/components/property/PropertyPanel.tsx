@@ -17,34 +17,6 @@ import type { ConfigSchema } from '@/types/node';
 import { DynamicForm } from './DynamicForm';
 import { FieldHelp } from './FieldHelp';
 
-// --- 입출력 메시지 설명 컴포넌트 ---
-
-function NodeIODescription({ nodeType, direction }: { nodeType: string; direction?: string }): React.ReactElement | null {
-  const { inputDesc, outputDesc } = getNodeIODesc(nodeType, direction);
-  if (!inputDesc && !outputDesc) return null;
-
-  return (
-    <div className="space-y-1.5 px-4 py-2 text-xs text-(--color-text-muted)">
-      {inputDesc && (
-        <div>
-          <span className="font-medium text-(--color-text-secondary)">
-            <ArrowDownToLine className="mr-1 inline h-3 w-3" />입력
-          </span>{' '}
-          {inputDesc}
-        </div>
-      )}
-      {outputDesc && (
-        <div>
-          <span className="font-medium text-(--color-text-secondary)">
-            <ArrowUpFromLine className="mr-1 inline h-3 w-3" />출력
-          </span>{' '}
-          {outputDesc}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // --- 포트 관리 서브 컴포넌트 ---
 
 type Port = { name: string; direction: 'input' | 'output' | 'error' };
@@ -375,11 +347,25 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   // 타입 설명: NODE_TYPE_META 우선, 없으면 스키마 description.
   const typeDescription = NODE_TYPE_META[nodeType]?.description ?? getNodeDescription(nodeType);
 
-  // 포트 이름 → 설명 맵 (NODE_TYPE_META 의 포트 메타에서 파생).
+  // 포트 이름 → 설명 맵.
+  // NODE_TYPE_META 의 포트별 설명에 스키마의 방향별 입출력 메시지 설명
+  // (inputDesc/outputDesc)을 합쳐 포트 ? 도움말 하나로 노출한다. 별도 인라인
+  // IO 설명 블록 대신 포트 ? 로 일원화한다.
   // 이 블록은 위의 early return(노드 미선택) 이후이므로 hook 을 쓰지 않고 즉시 계산한다.
-  const portDescriptions: Record<string, string> = {};
+  const { inputDesc, outputDesc } = getNodeIODesc(nodeType, draft.direction as string | undefined);
+  const metaPortDesc = new Map<string, string>();
   for (const p of NODE_TYPE_META[nodeType]?.ports ?? []) {
-    if (p.description) portDescriptions[p.name] = p.description;
+    if (p.description) metaPortDesc.set(p.name, p.description);
+  }
+  const portDescriptions: Record<string, string> = {};
+  for (const port of ports) {
+    const ioDesc =
+      port.direction === 'input' ? inputDesc : port.direction === 'output' ? outputDesc : undefined;
+    const parts = [metaPortDesc.get(port.name), ioDesc].filter((v): v is string => !!v);
+    // 동일 문구 중복 노출 방지 후 단락 구분(\n\n)으로 합친다. FieldHelp 는
+    // whitespace-pre-wrap 이라 줄바꿈이 그대로 렌더된다.
+    const merged = [...new Set(parts)].join('\n\n');
+    if (merged) portDescriptions[port.name] = merged;
   }
 
   // 필수 필드 누락 검사. draft 기준으로 계산하여 사용자가 값을 채우는 즉시 반영된다.
@@ -558,9 +544,6 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
 
         {/* 구분선 */}
         <hr className="border-(--color-border-default)" />
-
-        {/* 입출력 메시지 설명 */}
-        <NodeIODescription nodeType={nodeType} direction={draft.direction as string | undefined} />
 
         {/* 동적 폼 */}
         <DynamicForm
