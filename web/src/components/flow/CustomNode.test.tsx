@@ -222,7 +222,9 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
     useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'server' } });
   });
 
-  it('hostname 과 flow_name 이 있으면 `{hostname}.{flowName}` 표시명을 렌더한다', () => {
+  it('hostname 과 flow_name 이 있으면 `{hostname}.{flowName}` 표시명을 툴팁에 담는다', () => {
+    // 변경: 호스트.플로우 식별 정보는 이제 노드 라벨에 들어가고, 브릿지 인디케이터는
+    // 텍스트 없는 상태 점(+툴팁)으로 축소됐다. 표시명은 title 속성으로 검증한다.
     useManagedNodesMock.mockReturnValue({
       data: [{ instance_id: 'inst-uuid-1234', hostname: 'xagent04' }],
     });
@@ -230,11 +232,9 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
       flowName: 'HVACR Control',
     });
 
-    const indicator = screen.getByText('원격 브릿지').closest('[data-remote-bridge]');
+    const indicator = document.querySelector('[data-remote-bridge]');
     expect(indicator).not.toBeNull();
-    // 해석된 표시명: hostname.flowName.
-    expect(screen.getByText('· xagent04.HVACR Control')).toBeInTheDocument();
-    // 전체 표시명이 툴팁(title)에도 포함된다(절단 시 호버로 확인 가능).
+    // 해석된 표시명(hostname.flowName)이 툴팁(title)에 포함된다.
     expect(indicator?.getAttribute('title')).toContain(
       'xagent04.HVACR Control',
     );
@@ -244,11 +244,11 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
     // 관리 노드 없음(기본) → hostname 폴백; flow_name 미지정 → flowId 폴백.
     renderFlowNode('remote://inst-uuid-1234/flow-uuid-5678');
 
-    const indicator = screen.getByText('원격 브릿지').closest('[data-remote-bridge]');
+    const indicator = document.querySelector('[data-remote-bridge]');
     expect(indicator).not.toBeNull();
     // hostname 폴백: 단축 instanceId(앞 8자 + 생략부호) = "inst-uui…".
-    // flowId 폴백: 단축 flowId(앞 8자 + 생략부호) = "flow-uui…".
-    expect(screen.getByText('· inst-uui….flow-uui…')).toBeInTheDocument();
+    // flowId 폴백: 단축 flowId(앞 8자 + 생략부호) = "flow-uui…". (툴팁으로 검증)
+    expect(indicator?.getAttribute('title')).toContain('inst-uui….flow-uui…');
   });
 
   it('hostname 은 있으나 flow_name 이 없으면 `{hostname}.{단축 flowId}` 로 표시한다', () => {
@@ -257,8 +257,9 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
     });
     renderFlowNode('remote://inst-uuid-1234/flow-9');
 
-    // flow-9 는 8자 이하라 단축되지 않는다.
-    expect(screen.getByText('· xagent04.flow-9')).toBeInTheDocument();
+    // flow-9 는 8자 이하라 단축되지 않는다. (툴팁으로 검증)
+    const indicator = document.querySelector('[data-remote-bridge]');
+    expect(indicator?.getAttribute('title')).toContain('xagent04.flow-9');
   });
 
   it('평문(local) flow_id 면 원격 브릿지 인디케이터를 표시하지 않는다', () => {
@@ -266,7 +267,6 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
 
     // 로컬(평문) flow_id 는 원격 브릿지 대상이 아니므로 인디케이터가 없어야 한다.
     // 로컬 서브플로우 참조 플로우 이름 배지는 제거됨(변경 2): 라벨이 곧 플로우 이름.
-    expect(screen.queryByText('원격 브릿지')).toBeNull();
     expect(
       document.querySelector('[data-remote-bridge]'),
     ).toBeNull();
@@ -275,7 +275,8 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
   it('런타임 state 가 없으면(플로우 미실행) 상태 점 없이 정적 인디케이터만 표시한다', () => {
     renderFlowNode('remote://inst-uuid-1234/flow-9');
 
-    expect(screen.getByText('원격 브릿지')).toBeInTheDocument();
+    // 텍스트 없는 인디케이터(상태 점/Radio)는 존재하되 상태 점은 없어야 한다.
+    expect(document.querySelector('[data-remote-bridge]')).not.toBeNull();
     expect(document.querySelector('[data-bridge-status]')).toBeNull();
   });
 

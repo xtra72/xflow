@@ -178,9 +178,12 @@ describe('FlowPickerInput — 로컬 편집에서 원격 노드 플로우 선택
     fireEvent.change(screen.getByLabelText('참조 플로우'), {
       target: { value: 'rf1' },
     });
+    // 원격 선택은 라벨 자동 산출용 호스트 라벨(remote_node_label)도 함께 전달한다.
+    // node-a 의 hostname 은 edge-host-a 이므로 selectedNodeLabel = 'edge-host-a'.
     expect(onChange).toHaveBeenCalledWith({
       flow_id: 'remote://node-a/rf1',
       flow_name: '원격 플로우 1',
+      remote_node_label: 'edge-host-a',
     });
   });
 

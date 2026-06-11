@@ -636,11 +636,16 @@ function FlowPickerInput({
       return;
     }
     if (remoteNodeSelected) {
+      // 원격 분기: 노드 라벨 자동 산출에 쓸 호스트 라벨(`xagent04` 등)을
+      // 임시 키 remote_node_label 로 함께 전달한다. DynamicForm 에서 라벨
+      // 계산(`{호스트}.{플로우}`)에만 사용하고 저장 데이터에는 남기지 않는다.
       onChange({
         flow_id: buildRemoteFlowRef(selectedNode, selected.id),
         flow_name: selected.name,
+        remote_node_label: selectedNodeLabel,
       });
     } else {
+      // 로컬 분기: remote_node_label 미포함(로컬 라벨은 기존대로 플로우 이름).
       onChange({ flow_id: selected.id, flow_name: selected.name });
     }
   };

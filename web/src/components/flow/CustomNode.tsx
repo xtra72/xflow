@@ -227,14 +227,6 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
     ? `${remoteHostLabel}.${remoteFlowLabel}`
     : '';
 
-  // 참조 플로우 표시명(로컬·원격 공통). flow_name 캐시 → flow_id 폴백.
-  // 원격 브릿지는 정규화 참조 전체 대신 노드-로컬 flowId 로 폴백(가독성).
-  const referencedFlowLabel = isFlowNode
-    ? (cachedFlowName ||
-        (remoteRef ? remoteRef.flowId : (nodeData.flow_id as string)) ||
-        '')
-    : '';
-
   // 라이브 브릿지 상태(REQ-RU06): 캔버스에 이미 도달한 노드 런타임 state 를
   // 매핑한다(플로우 미실행 시 state 없음 → 'unknown' → 상태 점 미표시).
   // 백엔드 status 엔드포인트는 추가하지 않는다.
@@ -441,16 +433,15 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           <p className="truncate text-[10px] text-zinc-400">
             {nodeData.nodeType}
           </p>
-          {/* flow-node 원격 브릿지(REQ-RU06): 정적 인디케이터(항상 표시) + 라이브 상태 점.
-              로컬 서브플로우(평문 flow_id)와 시각적으로 구분되도록 sky 계열 배지 + Radio
-              아이콘 + 노드 라벨을 노출하고, 실행 중이면 상태 색상 점을 덧붙인다. */}
+          {/* flow-node 원격 브릿지(REQ-RU06): 텍스트 배지 제거 — 호스트.플로우 식별
+              정보는 이제 노드 라벨(`xagent04.Serial`)에 들어가므로 중복이다.
+              라이브 브릿지 상태는 보존: 실행 중이면 상태 색상 점, 아니면 Radio 아이콘만
+              작게 남긴다. data-remote-bridge 속성과 title/aria-label(접근성·테스트
+              식별)은 그대로 유지한다. */}
           {isFlowNode && isRemoteBridge && (
-            <p
+            <span
               data-remote-bridge="true"
-              className={cn(
-                'mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded px-1 py-0.5 text-[9px] font-medium',
-                'bg-sky-50 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
-              )}
+              className="mt-0.5 inline-flex items-center text-sky-500 dark:text-sky-400"
               title={remoteBridgeStatusTooltip}
               aria-label={remoteBridgeStatusTooltip}
             >
@@ -466,15 +457,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
               ) : (
                 <Radio className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
               )}
-              <span className="shrink-0">{t('remote.bridge.label')}</span>
-              <span className="truncate text-sky-500 dark:text-sky-400">
-                {remoteNodeLabel
-                  ? `· ${remoteNodeLabel}`
-                  : referencedFlowLabel
-                    ? `· ${referencedFlowLabel}`
-                    : ''}
-              </span>
-            </p>
+            </span>
           )}
           {/* flow-node 로컬 서브플로우 참조 플로우 이름 배지 제거:
               노드 라벨이 이제 선택한 플로우 이름이 되므로 중복 표시 불필요(변경 2). */}

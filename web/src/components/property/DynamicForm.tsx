@@ -117,6 +117,14 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         const compound = value as Record<string, unknown>;
         const flowId = (compound.flow_id as string) ?? '';
         const flowName = (compound.flow_name as string) ?? '';
+        // 원격 노드 라벨(호스트명, 예 "xagent04")은 라벨 산출에만 쓰는 임시 키다.
+        // 저장 데이터(updated)에는 절대 남기지 않는다(라벨 계산 후 폐기).
+        const remoteNodeLabel =
+          typeof compound.remote_node_label === 'string'
+            ? compound.remote_node_label
+            : '';
+        // 원격 여부 판정: 정규화된 remote:// 참조이거나 remote_node_label 존재.
+        const isRemote = flowId.startsWith('remote://') || remoteNodeLabel !== '';
         updated = {
           ...localData,
           [fieldName]: flowId,
@@ -125,10 +133,14 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
           output_ports: [],
         };
         // 노드 라벨 자동 설정(변경 1): 사용자가 라벨을 직접 바꾸지 않은 경우에만
-        // 선택한 플로우 이름으로 덮어쓴다(수동 커스텀 라벨 보존). 아래 중 하나면
-        // "자동 라벨"로 간주한다:
+        // 자동 라벨로 덮어쓴다(수동 커스텀 라벨 보존). 자동 라벨 산출 규칙:
+        //   - 원격: `{호스트}.{플로우}`(예 "xagent04.Serial"), 호스트 미해석 시 플로우명 폴백.
+        //   - 로컬: 플로우명(기존 동작).
+        // 아래 중 하나면 "자동 라벨"(=사용자 미변경)로 간주한다:
         //   - 현재 label 이 비어있음('' / undefined)
-        //   - 현재 label 이 직전 flow_name 과 동일(이전에 자동 설정된 라벨)
+        //   - 현재 label 이 직전 flow_name 과 동일(이전에 로컬 자동 설정된 라벨)
+        //   - 현재 label 이 `*.{직전 flow_name}` 형태(이전에 원격 자동 설정된 라벨,
+        //     예 직전이 "xagent04.Serial" 이고 직전 flow_name 이 "Serial")
         //   - 현재 label 이 flow-node 기본 생성 라벨(= nodeType, EditorPage 드롭 시
         //     data.label = canonicalType)과 동일(신규 드롭 직후 상태)
         // flow_name 이 빈 문자열이면(플로우 해제) 라벨을 덮어쓰지 않는다.
@@ -136,15 +148,23 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
           const currentLabel = localData.label;
           const prevFlowName = localData.flow_name;
           const defaultLabel = localData.nodeType;
+          const matchesPrevFlowName =
+            typeof prevFlowName === 'string' &&
+            prevFlowName !== '' &&
+            typeof currentLabel === 'string' &&
+            (currentLabel === prevFlowName ||
+              // 원격 과거 자동 라벨(`호스트.직전플로우`)도 자동으로 인정한다.
+              currentLabel.endsWith(`.${prevFlowName}`));
           const isAutoLabel =
             currentLabel === '' ||
             currentLabel == null ||
-            (typeof prevFlowName === 'string' &&
-              prevFlowName !== '' &&
-              currentLabel === prevFlowName) ||
+            matchesPrevFlowName ||
             (typeof defaultLabel === 'string' && currentLabel === defaultLabel);
           if (isAutoLabel) {
-            updated.label = flowName;
+            updated.label =
+              isRemote && remoteNodeLabel !== ''
+                ? `${remoteNodeLabel}.${flowName}`
+                : flowName;
           }
         }
         setLocalData(updated);
