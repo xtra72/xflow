@@ -51,6 +51,11 @@ const (
 	sharedBoundaryInputTapNodeID  = "__shared_boundary_input_tap_node__"
 	sharedBoundaryOutputTapNodeID = "__shared_boundary_output_tap_node__"
 
+	// sharedBoundaryOutputTapNodeIDPrefix 는 출력 경계 포트별 전용 출력 탭 노드 ID 접두사이다.
+	// 출력 포트마다 단일 입력 포트를 갖는 별도 탭 노드를 생성해 포트별 정확 라우팅을 보장한다
+	// (다중 출력 포트 — 아래 rewireBoundariesToSharedTap 주석 참조).
+	sharedBoundaryOutputTapNodeIDPrefix = "__shared_boundary_output_tap_node__:"
+
 	// sharedBoundaryInputChanBuffer 는 입력 경계 포트별 in-process 채널의 유계 버퍼이다(N03).
 	sharedBoundaryInputChanBuffer = 64
 )
@@ -308,18 +313,18 @@ func rewireBoundariesToSharedTap(f flow.Flow, flowID string) (tappedFlow flow.Fl
 	for _, w := range srcWires {
 		switch {
 		case w.SourceNodeID == flow.FlowInputBoundaryID && w.TargetNodeID == flow.FlowOutputBoundaryID:
-			// 입력 포트 → 출력 포트 직결(passthrough): 입력 탭 → 출력 탭 으로 재배선.
+			// 입력 포트 → 출력 포트 직결(passthrough): 입력 탭 → 포트별 출력 탭 으로 재배선.
 			inSet[w.SourcePort] = struct{}{}
 			outSet[w.TargetPort] = struct{}{}
-			resultWires = append(resultWires, retargetWire(w, sharedBoundaryInputTapNodeID, w.SourcePort, sharedBoundaryOutputTapNodeID, w.TargetPort))
+			resultWires = append(resultWires, retargetWire(w, sharedBoundaryInputTapNodeID, w.SourcePort, sharedBoundaryOutputTapNodeIDForPort(w.TargetPort), w.TargetPort))
 		case w.SourceNodeID == flow.FlowInputBoundaryID:
 			// 입력 경계: 입력 탭(SourcePort) → 내부 소비자.
 			inSet[w.SourcePort] = struct{}{}
 			resultWires = append(resultWires, retargetWire(w, sharedBoundaryInputTapNodeID, w.SourcePort, w.TargetNodeID, w.TargetPort))
 		case w.TargetNodeID == flow.FlowOutputBoundaryID:
-			// 출력 경계: 내부 생산자 → 출력 탭(TargetPort).
+			// 출력 경계: 내부 생산자 → 포트별 출력 탭(TargetPort).
 			outSet[w.TargetPort] = struct{}{}
-			resultWires = append(resultWires, retargetWire(w, w.SourceNodeID, w.SourcePort, sharedBoundaryOutputTapNodeID, w.TargetPort))
+			resultWires = append(resultWires, retargetWire(w, w.SourceNodeID, w.SourcePort, sharedBoundaryOutputTapNodeIDForPort(w.TargetPort), w.TargetPort))
 		default:
 			resultWires = append(resultWires, w)
 		}
@@ -328,16 +333,31 @@ func rewireBoundariesToSharedTap(f flow.Flow, flowID string) (tappedFlow flow.Fl
 	inputPorts = setToSortedSlice(inSet)
 	outputPorts = setToSortedSlice(outSet)
 
-	resultNodes := make([]flow.NodeDef, 0, len(srcNodes)+2)
+	resultNodes := make([]flow.NodeDef, 0, len(srcNodes)+1+len(outputPorts))
 	resultNodes = append(resultNodes, srcNodes...)
 	if len(inputPorts) > 0 {
+		// 입력 탭은 단일 MultiSourceNode 로 충분하다: 엔진이 출력 와이어를 SourcePort 로
+		// 그룹핑해 포트별 source 채널을 별도 라우팅하므로 입력 포트별 분기가 자연 성립한다.
 		resultNodes = append(resultNodes, sharedBoundaryNodeDef(sharedBoundaryInputTapNodeID, sharedBoundaryInputTapType, flowID, nil, inputPorts))
 	}
-	if len(outputPorts) > 0 {
-		resultNodes = append(resultNodes, sharedBoundaryNodeDef(sharedBoundaryOutputTapNodeID, sharedBoundaryOutputTapType, flowID, outputPorts, nil))
+	// 출력 탭은 출력 경계 포트마다 "단일 입력 포트"를 갖는 별도 노드로 생성한다(다중 출력
+	// 포트 정확 라우팅). 엔진의 mergeInputWires 가 한 노드의 여러 입력 와이어를 단일 채널로
+	// 머지해 도착 포트 정보를 잃기 때문에, 단일 노드+다중 입력 포트로는 어느 출력 경계 포트로
+	// 도착했는지 판별할 수 없다. 포트별로 노드를 쪼개면 각 노드가 단일 포트만 보므로
+	// resolveOutputPort 가 그 포트로 정확히 emit 한다(교차·누락 없음). 각 노드는 동일 flowID
+	// 컨트롤러에 바인딩되어 emitOutput 이 해당 포트로 fan-out 한다.
+	for _, p := range outputPorts {
+		resultNodes = append(resultNodes, sharedBoundaryNodeDef(sharedBoundaryOutputTapNodeIDForPort(p), sharedBoundaryOutputTapType, flowID, []string{p}, nil))
 	}
 
 	return flow.RebuildFlow(f, resultNodes, resultWires), inputPorts, outputPorts
+}
+
+// sharedBoundaryOutputTapNodeIDForPort 는 출력 경계 포트 전용 출력 탭 노드 ID 를 만든다.
+// 출력 포트마다 단일 입력 포트를 갖는 별도 노드를 두어 포트별 정확 라우팅을 보장한다.
+// 포트 이름은 outSet 내에서 유일하므로(중복 제거) 노드 ID 충돌이 없다.
+func sharedBoundaryOutputTapNodeIDForPort(port string) string {
+	return sharedBoundaryOutputTapNodeIDPrefix + port
 }
 
 // sharedBoundaryNodeDef 는 공유 경계 탭 노드 정의를 만든다. Config 에 flow_id 를 실어 노드
@@ -423,27 +443,29 @@ func (n *sharedBoundaryInputTapNode) Process(_ context.Context, msg message.Mess
 	return []message.Message{msg}, nil
 }
 
-// SourceCh 는 첫 입력 경계 포트 채널을 반환한다(SourceNode 인터페이스). 포트가 없으면 닫힌
-// 빈 채널을 반환한다. 다중 포트는 ExtraSourceChannels 로 노출한다.
+// SourceCh 는 항상 닫힌 빈 채널을 반환한다(SourceNode 인터페이스 충족용). 모든 입력 경계
+// 포트는 ExtraSourceChannels 로 노출한다.
+//
+// 이유(다중 입력 포트 교차 방지): 엔진은 SourceCh 를 "out" 기본 포트로 간주해, 출력 와이어를
+// SourcePort 로 그룹핑한 뒤 "out" 그룹이 없으면 outWires 전체(=모든 포트 와이어)로 라우팅한다.
+// 따라서 첫 포트를 SourceCh 로 노출하면 그 포트 메시지가 전 포트 와이어로 fan-out 되어 교차
+// 방출이 발생한다(in1 → out1·out2). 모든 포트를 ExtraSourceChannels 로 노출하면 엔진이 각
+// 포트를 portWires[port] 로 정확 매칭해 포트별로만 라우팅한다(교차·누락 없음).
 func (n *sharedBoundaryInputTapNode) SourceCh() <-chan message.Message {
-	if n.ctrl == nil || len(n.ports) == 0 {
-		ch := make(chan message.Message)
-		close(ch)
-		return ch
-	}
-	return n.ctrl.ensureInputChan(n.ports[0])
+	ch := make(chan message.Message)
+	close(ch)
+	return ch
 }
 
-// ExtraSourceChannels 는 첫 포트를 제외한 추가 입력 경계 포트 채널을 반환한다.
+// ExtraSourceChannels 는 모든 입력 경계 포트 채널을 반환한다. 엔진이 포트 이름으로 출력
+// 와이어를 정확 매칭(groupWiresBySourcePort)해 포트별로만 라우팅하므로 다중 입력 포트
+// 교차가 방지된다.
 func (n *sharedBoundaryInputTapNode) ExtraSourceChannels() map[string]<-chan message.Message {
 	out := make(map[string]<-chan message.Message)
 	if n.ctrl == nil {
 		return out
 	}
-	for i, p := range n.ports {
-		if i == 0 {
-			continue
-		}
+	for _, p := range n.ports {
 		out[p] = n.ctrl.ensureInputChan(p)
 	}
 	return out
