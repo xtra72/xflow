@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/engine"
+	"github.com/xtra/xflow/internal/node"
 	"github.com/xtra/xflow/pkg/flow"
 )
 
@@ -139,4 +141,49 @@ func TestAdapter_DeployFlow_경계와이어_단독배포_무에러(t *testing.T)
 	// 단독 배포: 경계 와이어가 stripped 되어 엔진 배포가 에러 없이 완료되어야 한다.
 	err := adapter.DeployFlow(ctx, f.ID())
 	assert.NoError(t, err)
+}
+
+// TestAdapter_DeployFlow_경계와이어_shared옵너설정_무에러 는 로컬 opener 가 설정된 상태에서
+// 경계 포트 플로우를 단독 배포·시작·정지해도(공유 경계 탭 설치 경로) 에러가 없는지 검증한다
+// (SPEC-SUBFLOW-002 N01 회귀 0 — 부착 브리지 0개면 StripBoundaryWires 와 동작 동일).
+func TestAdapter_DeployFlow_경계와이어_shared옵너설정_무에러(t *testing.T) {
+	reg := node.NewRegistry()
+	require.NoError(t, RegisterSharedBoundaryNodes(reg))
+	eng := engine.NewEngine(engine.WithNodeRegistry(reg))
+	repo := newTestRepo(t)
+	adapter := NewFlowServiceAdapter(eng, repo, nil)
+	adapter.SetLocalBridgeOpener(NewLocalBridgeOpener(eng, nil))
+	ctx := context.Background()
+
+	f := flow.NewFlow("boundary-shared",
+		flow.WithFlowInputPorts(flow.Port{ID: "p-in", Name: "in1"}),
+		flow.WithFlowOutputPorts(flow.Port{ID: "p-out", Name: "out1"}),
+		flow.WithNodes(flow.NodeDef{
+			ID:      "filter-1",
+			Type:    "filter",
+			Inputs:  []flow.Port{{ID: "in", Name: "in", Direction: flow.PortInput}},
+			Outputs: []flow.Port{{ID: "out", Name: "out", Direction: flow.PortOutput}},
+			Config:  map[string]any{"condition": "$.payload.value > 0"},
+		}),
+		flow.WithWires(
+			flow.NewWire(flow.FlowInputBoundaryID, "in1", "filter-1", "in"),
+			flow.NewWire("filter-1", "out", flow.FlowOutputBoundaryID, "out1"),
+		),
+	)
+	require.NoError(t, repo.Save(ctx, f))
+
+	// 배포: 공유 경계 탭으로 재배선되어 엔진 배포가 에러 없이 완료되어야 한다.
+	require.NoError(t, adapter.DeployFlow(ctx, f.ID()))
+	// 공유 경계 컨트롤러가 등록되어야 한다(경계 포트 보유 플로우).
+	_, ok := globalSharedBoundaryTable.lookup(f.ID())
+	assert.True(t, ok, "경계 포트 플로우는 공유 경계 컨트롤러를 등록해야 한다")
+
+	// 시작·정지·undeploy 도 에러 없이 동작해야 한다(부착 브리지 0개 — 무출력).
+	require.NoError(t, eng.StartFlow(ctx, f.ID()))
+	require.NoError(t, eng.StopFlow(ctx, f.ID()))
+	require.NoError(t, adapter.UndeployFlow(ctx, f.ID()))
+
+	// undeploy 시 공유 경계 컨트롤러가 정리되어야 한다(누수 방지).
+	_, stillThere := globalSharedBoundaryTable.lookup(f.ID())
+	assert.False(t, stillThere, "undeploy 시 공유 경계 컨트롤러가 정리되어야 한다")
 }

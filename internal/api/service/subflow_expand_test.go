@@ -99,14 +99,19 @@ func passthroughNode(id, name string) flow.NodeDef {
 	}
 }
 
-// flowNode 는 다른 플로우를 참조하는 flow-node 노드를 만든다.
+// flowNode 는 다른 플로우를 참조하는 flow-node 노드를 만든다(mode=instance — 인라인 확장).
 // 입출력 핸들은 참조 플로우의 포트 이름과 일치시킨다(테스트 단순화).
+//
+// SPEC-SUBFLOW-002: bare id LOCAL flow-node 의 기본 모드는 shared(미확장 라이브 브리지)로
+// 바뀌었다(breaking). 따라서 인라인 확장(instance)을 검증하는 기존 특성화 테스트는 mode 를
+// 명시적으로 instance 로 설정한다(보존 경로 — AC-9/AC-11, regression-0). shared 동작은 별도
+// 테스트(flowNodeShared / subflow_shared_*_test.go)에서 검증한다.
 func flowNode(id, name, refFlowID string, inputs, outputs []flow.Port) flow.NodeDef {
 	return flow.NodeDef{
 		ID:      id,
 		Name:    name,
 		Type:    flowNodeType,
-		Config:  map[string]any{flowNodeFlowIDKey: refFlowID},
+		Config:  map[string]any{flowNodeFlowIDKey: refFlowID, flowNodeModeKey: flowModeInstance},
 		Inputs:  inputs,
 		Outputs: outputs,
 	}

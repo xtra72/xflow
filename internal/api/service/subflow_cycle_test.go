@@ -130,6 +130,79 @@ func TestDetectCycle_깊이상한_초과시에러(t *testing.T) {
 	assert.Contains(t, err.Error(), "깊이 초과")
 }
 
+// makeFlowWithModedRefs 는 (refFlowID, mode) 쌍 각각을 참조하는 flow-node 들을 보유한 플로우를
+// 생성한다(SPEC-SUBFLOW-002 순환 검출 — 모드 혼합 그래프 검증용).
+func makeFlowWithModedRefs(t *testing.T, id string, refs map[string]string) flow.Flow {
+	t.Helper()
+	nodes := make([]map[string]any, 0, len(refs))
+	i := 0
+	for ref, mode := range refs {
+		nodes = append(nodes, map[string]any{
+			"id":   "fn-" + ref,
+			"type": "flow-node",
+			"name": "subflow",
+			"config": map[string]any{
+				"flow_id": ref,
+				"mode":    mode,
+			},
+			"_idx": i,
+		})
+		i++
+	}
+	def := map[string]any{"id": id, "name": id, "nodes": nodes, "wires": []any{}}
+	data, err := json.Marshal(def)
+	require.NoError(t, err)
+	f, err := flow.FlowFromJSON(data)
+	require.NoError(t, err)
+	require.Equal(t, id, f.ID())
+	return f
+}
+
+// TestDetectCycle_shared_자기참조_거부 는 mode=shared 직접 자기참조도 거부되는지 검증한다
+// (SPEC-SUBFLOW-002 CY01 — shared 순환 거부).
+func TestDetectCycle_shared_자기참조_거부(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+
+	a := makeFlowWithModedRefs(t, "A", map[string]string{"A": "shared"})
+
+	err := DetectFlowReferenceCycle(ctx, "A", a, repo)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "순환 참조")
+	assert.Contains(t, err.Error(), "A → A")
+}
+
+// TestDetectCycle_shared_ABA_거부 는 A(shared)→B, B(shared)→A 연결 순환이 거부되는지
+// 검증한다(CY01 — shared A↔B).
+func TestDetectCycle_shared_ABA_거부(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+
+	b := makeFlowWithModedRefs(t, "B", map[string]string{"A": "shared"})
+	require.NoError(t, repo.Save(ctx, b))
+	a := makeFlowWithModedRefs(t, "A", map[string]string{"B": "shared"})
+
+	err := DetectFlowReferenceCycle(ctx, "A", a, repo)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "순환 참조")
+	assert.Contains(t, err.Error(), "A → B → A")
+}
+
+// TestDetectCycle_혼합모드_순환_거부 는 shared/instance 가 섞인 순환(A shared→B, B instance→A)도
+// 검출되는지 검증한다(CY02 — 혼합 그래프 순환).
+func TestDetectCycle_혼합모드_순환_거부(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+
+	b := makeFlowWithModedRefs(t, "B", map[string]string{"A": "instance"})
+	require.NoError(t, repo.Save(ctx, b))
+	a := makeFlowWithModedRefs(t, "A", map[string]string{"B": "shared"})
+
+	err := DetectFlowReferenceCycle(ctx, "A", a, repo)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "순환 참조")
+}
+
 // itoa 는 작은 정수의 문자열 변환 헬퍼이다(테스트 전용).
 func itoa(n int) string {
 	if n == 0 {
