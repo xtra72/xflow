@@ -518,6 +518,24 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                 )}
               </span>
             )}
+            {/* SPEC-SUBFLOW-002 S03: 통계 출처 배지. 이 노드의 통계가 instance
+                (인라인 복제본) 임베디드 실행을 집계한 값이면 작은 "임베디드" 배지로
+                출처를 알린다. 'direct'(공유/단독)·미표식은 기본이라 배지 없음.
+                statSource 는 런타임 통계가 있을 때(실행 중)만 존재한다. */}
+            {(stats?.statSource === 'embedded' ||
+              stats?.statSource === 'direct+embedded') && (
+              <span
+                data-stat-source={stats.statSource}
+                className="inline-flex shrink-0 items-center rounded-sm bg-amber-100 px-1 text-[9px] font-medium leading-tight text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                title={
+                  stats.statSource === 'direct+embedded'
+                    ? t('editor.statSource.mixedTitle')
+                    : t('editor.statSource.embeddedTitle')
+                }
+              >
+                {t('editor.statSource.embeddedBadge')}
+              </span>
+            )}
           </div>
           {/* flow-node 로컬 서브플로우 참조 플로우 이름 배지 제거:
               노드 라벨이 이제 선택한 플로우 이름이 되므로 중복 표시 불필요(변경 2). */}

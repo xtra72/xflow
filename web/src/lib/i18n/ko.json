@@ -183,7 +183,12 @@
     "noSchema": "설정 스키마가 없습니다",
     "loading": "플로우를 불러오는 중...",
     "loadError": "플로우를 불러올 수 없습니다",
-    "notFound": "플로우를 찾을 수 없습니다"
+    "notFound": "플로우를 찾을 수 없습니다",
+    "statSource": {
+      "embeddedBadge": "임베디드",
+      "embeddedTitle": "이 노드의 통계는 instance(인라인 복제본) 임베디드 실행을 집계한 값입니다.",
+      "mixedTitle": "이 노드의 통계는 공유(direct) 실행과 instance(인라인 복제본) 임베디드 실행을 합산한 값입니다."
+    }
   },
   "settings": {
     "title": "설정",

@@ -86,7 +86,12 @@ function renderOutputNode(outputEnabled: boolean) {
 /** flow-node 를 (선택적 런타임 state 와 함께) 렌더한다 — 원격 브릿지 인디케이터 검증용. */
 function renderFlowNode(
   flowId: string,
-  opts: { flowName?: string; runtimeState?: string; mode?: string } = {},
+  opts: {
+    flowName?: string;
+    runtimeState?: string;
+    mode?: string;
+    statSource?: NodeRuntimeStats['statSource'];
+  } = {},
 ) {
   const data = {
     label: 'sub',
@@ -120,6 +125,7 @@ function renderFlowNode(
             outMessages: 0,
             state: opts.runtimeState,
             ports: [],
+            ...(opts.statSource ? { statSource: opts.statSource } : {}),
           },
         }
       : {};
@@ -505,5 +511,35 @@ describe('CustomNode 출력 tap(관찰) 토글', () => {
     fireEvent.click(screen.getByRole('button', { name: '관찰 시작' }));
 
     expect(setNodeTapMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('CustomNode 통계 출처 배지 (SPEC-SUBFLOW-002 S03)', () => {
+  it("statSource='embedded' 면 임베디드 배지를 표시한다", () => {
+    renderFlowNode('flow-9', { runtimeState: 'running', statSource: 'embedded' });
+    const badge = document.querySelector('[data-stat-source="embedded"]');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('임베디드');
+  });
+
+  it("statSource='direct+embedded' 면 임베디드 배지를 표시한다", () => {
+    renderFlowNode('flow-9', {
+      runtimeState: 'running',
+      statSource: 'direct+embedded',
+    });
+    expect(
+      document.querySelector('[data-stat-source="direct+embedded"]'),
+    ).not.toBeNull();
+  });
+
+  it("statSource='direct' 면 배지를 표시하지 않는다", () => {
+    renderFlowNode('flow-9', { runtimeState: 'running', statSource: 'direct' });
+    expect(document.querySelector('[data-stat-source]')).toBeNull();
+  });
+
+  it('런타임 통계가 없으면(미실행) 배지를 표시하지 않는다', () => {
+    // runtimeState 미지정 → statsMap 비어 statSource 도 없음.
+    renderFlowNode('flow-9', { statSource: 'embedded' });
+    expect(document.querySelector('[data-stat-source]')).toBeNull();
   });
 });

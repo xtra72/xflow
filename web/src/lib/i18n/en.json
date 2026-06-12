@@ -183,7 +183,12 @@
     "noSchema": "No configuration schema",
     "loading": "Loading flow...",
     "loadError": "Failed to load flow",
-    "notFound": "Flow not found"
+    "notFound": "Flow not found",
+    "statSource": {
+      "embeddedBadge": "Embedded",
+      "embeddedTitle": "This node's stats aggregate instance (inline replica) embedded execution.",
+      "mixedTitle": "This node's stats combine shared (direct) execution with instance (inline replica) embedded execution."
+    }
   },
   "settings": {
     "title": "Settings",
