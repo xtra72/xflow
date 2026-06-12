@@ -9,8 +9,45 @@
 // 이 모듈은 백엔드 SubflowNodeIDPrefix 와 동일한 접두 문자열 규약을 복제하고,
 // 부모 뷰 집계(Fix 1)와 서브플로우 단독 뷰 병합(Fix 2)의 순수 로직을 제공한다.
 
-import type { NodeRuntimeStats, PortRuntimeStat } from '@/contexts/RuntimeStatsContext';
+import type {
+  NodeRuntimeStats,
+  PortRuntimeStat,
+  StatSource,
+} from '@/contexts/RuntimeStatsContext';
 import type { FlowNodeInfo, SubflowNodeStat } from '@/types/flow';
+
+/**
+ * FlowNodeInfo.extra["stat_source"] 를 StatSource 로 정규화한다(SPEC-SUBFLOW-002 S03).
+ *
+ * 백엔드가 넣는 값은 'direct' | 'embedded' | 'direct+embedded' 셋 중 하나다. 그 외
+ * 값/부재는 undefined 로 처리해 출처 배지를 표시하지 않는다(과해석 방지).
+ */
+export function parseStatSource(
+  extra: Record<string, unknown> | undefined,
+): StatSource | undefined {
+  const raw = extra?.['stat_source'];
+  if (raw === 'direct' || raw === 'embedded' || raw === 'direct+embedded') {
+    return raw;
+  }
+  return undefined;
+}
+
+/**
+ * 두 출처 표식을 합집합으로 결합한다(Fix 1 집계 보조).
+ *
+ * direct/embedded 둘 중 하나라도 양쪽에서 관측되면 'direct+embedded'(혼합)로 승급한다.
+ * 한쪽만 있으면 그 값을, 둘 다 없으면 undefined 를 반환한다.
+ */
+export function combineStatSource(
+  a: StatSource | undefined,
+  b: StatSource | undefined,
+): StatSource | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  if (a === b) return a;
+  // 서로 다르거나 한쪽이 이미 혼합이면 혼합으로 승급한다.
+  return 'direct+embedded';
+}
 
 /**
  * 서브플로우 네임스페이스 접두사를 만든다: `subflow_<flowNodeId>_`.
@@ -29,6 +66,7 @@ export function subflowNodeIdPrefix(flowNodeId: string): string {
 function portsToRuntimeStats(
   ports: ReadonlyArray<{ name: string; direction: string; messages: number; delivered: number }>,
   state: string,
+  statSource?: StatSource,
 ): NodeRuntimeStats {
   const inMessages = ports
     .filter((p) => p.direction === 'input')
@@ -42,17 +80,18 @@ function portsToRuntimeStats(
     messages: p.messages,
     delivered: p.delivered,
   }));
-  return { inMessages, outMessages, state, ports: portStats };
+  return { inMessages, outMessages, state, ports: portStats, statSource };
 }
 
 /**
  * 단일 runtime 노드(FlowNodeInfo)를 NodeRuntimeStats 로 변환한다.
  *
  * 기존 EditorPage 의 인라인 매핑과 동일한 규칙(input/output 포트 messages 합산,
- * 포트별 messages/delivered 보존)을 순수 함수로 추출한 것이다.
+ * 포트별 messages/delivered 보존)을 순수 함수로 추출한 것이다. SPEC-SUBFLOW-002 S03:
+ * extra["stat_source"] 표식도 NodeRuntimeStats.statSource 로 함께 운반한다.
  */
 export function nodeInfoToRuntimeStats(node: FlowNodeInfo): NodeRuntimeStats {
-  return portsToRuntimeStats(node.ports ?? [], node.state);
+  return portsToRuntimeStats(node.ports ?? [], node.state, parseStatSource(node.extra));
 }
 
 /**
@@ -123,12 +162,16 @@ export function aggregateFlowNodeStats(
   const portAcc = new Map<string, PortRuntimeStat>();
   const portOrder: string[] = [];
   const states: string[] = [];
+  // SPEC-SUBFLOW-002 S03: 자식 네임스페이스 노드들의 stat_source 를 합집합으로
+  // 결합한다(하나라도 embedded 면 flow-node 집계에 embedded 가 섞인 것으로 본다).
+  let aggSource: StatSource | undefined;
   let matched = false;
 
   for (const node of nodes) {
     if (!node.node_id.startsWith(prefix)) continue;
     matched = true;
     states.push(node.state);
+    aggSource = combineStatSource(aggSource, parseStatSource(node.extra));
     const ports = (node.ports ?? []).map((p) => ({
       name: p.name,
       direction: p.direction,
@@ -145,7 +188,7 @@ export function aggregateFlowNodeStats(
     // portOrder 에 들어간 이름은 항상 accumulator 에 존재한다.
     return port as PortRuntimeStat;
   });
-  return portsToRuntimeStats(mergedPorts, pickAggregateState(states));
+  return portsToRuntimeStats(mergedPorts, pickAggregateState(states), aggSource);
 }
 
 /**

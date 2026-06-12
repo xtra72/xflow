@@ -9,6 +9,7 @@ import {
   computePortsForNode,
   getConfigSchema,
   getDefaultPorts,
+  getFlowNodeMode,
   getNodeDescription,
   getNodeIODesc,
   getNodeSchema,
@@ -200,6 +201,56 @@ describe('computePortsForNode — flow-node 동적 포트 (SPEC-SUBFLOW-001)', (
       output_ports: { a: 1 } as unknown as string[],
     });
     expect(ports).toEqual([]);
+  });
+
+  // SPEC-SUBFLOW-002 REQ-SUBFLOW2-P01: 핸들 파생은 mode 와 무관하다.
+  it('mode(shared/instance) 와 무관하게 핸들 파생 규칙이 동일하다', () => {
+    const shared = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      mode: 'shared',
+      input_ports: ['in1'],
+      output_ports: ['out1'],
+    });
+    const instance = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      mode: 'instance',
+      input_ports: ['in1'],
+      output_ports: ['out1'],
+    });
+    expect(shared).toEqual(instance);
+    expect(inputNames(shared)).toEqual(['in1']);
+    expect(outputNames(shared)).toEqual(['out1']);
+  });
+});
+
+// SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W01) + M (M02/M03): flow-node mode 토글.
+describe('flow-node mode 토글 / 정규화 (SPEC-SUBFLOW-002)', () => {
+  it('flow-node 스키마에 mode select 필드(shared/instance, 기본 shared)가 존재한다', () => {
+    const field = findField('flow-node', 'mode');
+    expect(field).toBeDefined();
+    expect(field?.type).toBe('select');
+    expect(field?.options).toEqual(['shared', 'instance']);
+    expect(field?.default).toBe('shared');
+    // 편집 반영 안내(W03)가 설명에 포함되어 있다.
+    expect(field?.description).toContain('재시작');
+  });
+
+  it('flow_id picker 필드는 보존된다(회귀 0)', () => {
+    const field = findField('flow-node', 'flow_id');
+    expect(field?.type).toBe('flow_picker');
+    expect(field?.required).toBe(true);
+  });
+
+  it('getFlowNodeMode 는 미지정/빈/알 수 없는 값을 shared 로 정규화한다 (M02/M03)', () => {
+    expect(getFlowNodeMode(undefined)).toBe('shared');
+    expect(getFlowNodeMode(null)).toBe('shared');
+    expect(getFlowNodeMode('')).toBe('shared');
+    expect(getFlowNodeMode('bogus')).toBe('shared');
+    expect(getFlowNodeMode('shared')).toBe('shared');
+  });
+
+  it('getFlowNodeMode 는 instance 명시만 instance 로 판별한다 (MG02)', () => {
+    expect(getFlowNodeMode('instance')).toBe('instance');
   });
 });
 

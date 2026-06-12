@@ -10,6 +10,12 @@ import (
 // (SPEC-SUBFLOW-001 REQ-SUBFLOW-C01, 5.2 데이터 계약)
 const flowNodeConfigFlowID = "flow_id"
 
+// flowNodeConfigMode 는 flow-node 의 참조 실행 모드를 담는 Config 키이다(SPEC-SUBFLOW-002
+// REQ-SUBFLOW2-M01). 값은 "shared"(공유 단일 인스턴스 라이브 브리지) 또는 "instance"(인라인
+// 확장 복제본)이며, 미지정 시 "shared" 로 해석된다(M02 — breaking). 실제 정규화/분기는 배포
+// 어댑터(internal/api/service)가 수행한다.
+const flowNodeConfigMode = "mode"
+
 // NewFlowNodePlaceholder 는 flow-node 타입의 안전망(safety-net) 팩토리이다.
 //
 // flow-node 는 "다른 플로우를 참조하는 서브플로우 노드"이며 실제 런타임 동작을 갖지 않는다.

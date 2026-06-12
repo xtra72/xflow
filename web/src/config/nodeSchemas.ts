@@ -2423,12 +2423,44 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description:
             '서브플로우로 참조할 플로우를 선택합니다. 현재 편집 중인 플로우는 자기참조 방지를 위해 후보에서 제외됩니다. 선택하면 참조 플로우의 입출력 포트가 이 노드의 핸들로 표시됩니다.',
         },
+        // SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W01/W03): 참조 실행 모드 토글.
+        //   shared(기본) = 실행 중인 단일 인스턴스에 라이브 연결(미확장, 여러 곳에서 공유).
+        //   instance     = 이 노드 전용 복제본(네임스페이스 인라인 확장).
+        //   미지정 → shared 로 해석(getFlowNodeMode). 핸들 파생은 mode 와 무관(REQ-SUBFLOW2-P01).
+        // remote:// 참조는 mode 와 직교하므로(항상 원격 라이브 브리지) 토글의 select 표시는
+        //   동일하되 백엔드가 원격 종류를 우선한다(REQ-SUBFLOW2-M04).
+        {
+          name: 'mode',
+          type: 'select',
+          label: '참조 방식',
+          options: ['shared', 'instance'],
+          default: 'shared',
+          description:
+            '공유(shared): 리스트의 실행 중 플로우에 연결합니다. 여러 곳에서 같은 인스턴스를 공유하며, 참조 플로우가 실행 중이어야 데이터가 흐릅니다(미실행 시 오프라인 대기). 참조 플로우를 편집한 변경은 그 플로우를 재시작(재배포)해야 반영됩니다.\n' +
+            '인스턴스(instance): 이 노드 전용 복제본을 생성합니다. 부모 배포 시 함께 실행되며 상태를 공유하지 않습니다(기존 인라인 확장 동작).',
+        },
       ],
     },
     // 초기(미해결) 기본 포트는 없음 — flow_id 선택 후 참조 플로우 포트로 채워진다.
     defaultPorts: [],
   },
 };
+
+/** flow-node 참조 실행 모드. */
+export type FlowNodeMode = 'shared' | 'instance';
+
+/**
+ * flow-node config 의 `mode` 값을 결정적으로 정규화한다(SPEC-SUBFLOW-002 REQ-SUBFLOW2-M02/M03).
+ *
+ * 미지정·빈 값·알 수 없는 값은 기본 `shared` 로 해석한다(저장·렌더·인디케이터 전 경로 일관).
+ * 백엔드 배포 분기와 동일 규약(미지정→shared)이다.
+ *
+ * @param mode - flow-node config 의 `mode` 값(보통 string | undefined).
+ * @returns 정규화된 모드(`shared` | `instance`).
+ */
+export function getFlowNodeMode(mode: unknown): FlowNodeMode {
+  return mode === 'instance' ? 'instance' : 'shared';
+}
 
 /**
  * 비정규화된 참조 플로우 포트 이름 배열을 PortDef 로 변환한다.

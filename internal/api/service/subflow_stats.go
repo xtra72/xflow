@@ -291,8 +291,20 @@ func (a *FlowServiceAdapter) parentFlowDefinition(ctx context.Context, parentID 
 	return nil
 }
 
-// localFlowNodesReferencing 은 def 안에서 subflowID 를 LOCAL(bare id)로 참조하는 flow-node
-// 들의 ID 목록을 반환한다. remote:// 참조나 다른 서브플로우를 참조하는 flow-node 는 제외한다.
+// localFlowNodesReferencing 은 def 안에서 subflowID 를 mode=instance 로 LOCAL(bare id) 참조하는
+// flow-node 들의 ID 목록을 반환한다. remote:// 참조·다른 서브플로우 참조·mode=shared 참조는
+// 제외한다.
+//
+// SPEC-SUBFLOW-002 M4(통계 정합) — 이중계상 방지의 핵심 필터:
+//   - mode=instance 만 임베디드 병합 대상이다. instance 는 부모 안에 네임스페이스 복제본
+//     (subflow_<F>_<orig>)을 만들므로 그 통계를 원본 노드로 역매핑·합산해야 단독 뷰에 보인다(S02).
+//   - mode=shared(또는 미지정→shared)는 인라인 확장하지 않아 네임스페이스 노드가 없다. 또한 shared
+//     부모의 트래픽은 참조 플로우의 단일 공유 인스턴스(=GetFlowNodes(subflowID) 의 direct 통계)에
+//     이미 반영된다. 따라서 shared 를 이 함수에서 제외하면 (a) 병합 대상이 없어 자연히 비기여이고,
+//     (b) ListFlowNodes 의 direct(ownNodes)와 embedded 가 분리되어 shared 가 이중계상되지 않는다
+//     (요구사항 3 — 같은 참조 플로우를 shared·instance 혼합 참조해도 정확 합산).
+//   - shared 통계 자체는 별도 직접 경로(ListFlowNodes 의 ownNodes = GetFlowNodes(subflowID))로
+//     노출되며(S01), 출처 표식은 tagStatSources 가 부여한다(S03).
 func localFlowNodesReferencing(def flow.Flow, subflowID string) []string {
 	var ids []string
 	for _, n := range def.Nodes() {
@@ -306,6 +318,12 @@ func localFlowNodesReferencing(def flow.Flow, subflowID string) []string {
 		// remote:// 참조는 확장되지 않고 라이브 브리지로 동작하므로 네임스페이스 노드를
 		// 만들지 않는다. LOCAL bare id 가 대상 서브플로우와 정확히 일치할 때만 채택한다.
 		if _, _, isRemote, _ := parseRemoteFlowRef(ref); isRemote {
+			continue
+		}
+		// mode=shared(또는 미지정) flow-node 는 인라인 확장하지 않으므로 임베디드 병합 대상이
+		// 아니다(네임스페이스 노드 부재). mode=instance 만 병합 대상으로 채택한다(M4 전까지의
+		// 보수적 처리 — shared 통계는 별도 직접 경로로 M4 에서 연결).
+		if normalizeFlowNodeMode(n.Config) != flowModeInstance {
 			continue
 		}
 		if ref == subflowID {

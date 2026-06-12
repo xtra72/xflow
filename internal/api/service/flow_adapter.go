@@ -51,16 +51,25 @@ type FlowServiceAdapter struct {
 	// 위한 FlowBridgeOpener 이다(P3, SUBFLOW RB05). nil 이면(비-server 모드) remote://
 	// flow-node 배포는 명확한 오류로 거부된다(ErrRemoteBridgeUnavailable).
 	bridgeOpener FlowBridgeOpener
+	// localBridgeOpener 는 로컬 shared flow-node 를 in-process 라이브 브리지로 실행하기 위한
+	// FlowBridgeOpener 이다(SPEC-SUBFLOW-002 SH04). nil 이면 로컬 shared flow-node 배포가
+	// ErrSharedBridgeUnavailable 로 거부된다(shared 미지원 모드). 설정 시 참조 플로우 배포가
+	// 경계 포트를 공유 경계 탭으로 노출하고, 부모 배포가 shared flow-node 를 이 opener 로 연결한다.
+	localBridgeOpener FlowBridgeOpener
 	// tapSource 는 client 모드에서 노드 측 라이브 브리지 tap 컨트롤러의 소스이다(재배포 시
 	// 재바인딩). 설정 시 DeployFlow 는 활성 tap 컨트롤러가 있는 flow 를 동일 tapID 로 경계
 	// 재배선하여 배포하므로, 참조 플로우 재시작이 매니저 측 브리지에 투명해진다(출력/입력
 	// 보존). nil 이면(비-client 모드, 또는 runner 미구성) 동작은 변경되지 않는다.
 	tapSource bridgeTapSource
-	// bridgeMu 는 flowBridges 접근을 보호한다.
+	// bridgeMu 는 flowBridges·sharedBoundaries 접근을 보호한다.
 	bridgeMu sync.Mutex
 	// flowBridges 는 flow id → 해당 배포에서 등록한 매니저 브리지 컨트롤러 목록이다(재배포/
 	// undeploy 시 globalManagerBridgeTable 에서 정리 — 누수 방지, RB12).
 	flowBridges map[string][]*managerBridgeController
+	// sharedBoundaries 는 flow id → 해당 플로우가 배포 시 설치한 공유 경계 컨트롤러이다
+	// (SPEC-SUBFLOW-002). 재배포/undeploy 시 shutdown·등록 해제하여(globalSharedBoundaryTable)
+	// 참조하던 부모 브리지의 self-heal 을 트리거하고 누수를 방지한다(L04).
+	sharedBoundaries map[string]*sharedBoundaryController
 }
 
 // bridgeTapSource 는 노드 측 라이브 브리지 tap 컨트롤러의 조회·재바인딩 소스이다
@@ -80,10 +89,11 @@ func NewFlowServiceAdapter(eng *engine.Engine, repo storage.FlowRepository, logg
 		logger = slog.Default()
 	}
 	return &FlowServiceAdapter{
-		engine:      eng,
-		repo:        repo,
-		logger:      logger,
-		flowBridges: make(map[string][]*managerBridgeController),
+		engine:           eng,
+		repo:             repo,
+		logger:           logger,
+		flowBridges:      make(map[string][]*managerBridgeController),
+		sharedBoundaries: make(map[string]*sharedBoundaryController),
 	}
 }
 
@@ -102,6 +112,14 @@ func (a *FlowServiceAdapter) SetBridgeTapSource(src bridgeTapSource) {
 	a.tapSource = src
 }
 
+// SetLocalBridgeOpener 는 로컬 shared flow-node 의 in-process 라이브 브리지 opener 를 주입한다
+// (SPEC-SUBFLOW-002 SH04). 설정 시 (1) 참조 플로우 배포가 경계 포트를 공유 경계 탭으로 노출하고,
+// (2) 부모 배포가 shared flow-node 를 이 opener 로 연결한다. 미설정 시 로컬 shared flow-node
+// 배포는 ErrSharedBridgeUnavailable 로 거부되고, 경계 처리는 기존 StripBoundaryWires 로 유지된다.
+func (a *FlowServiceAdapter) SetLocalBridgeOpener(opener FlowBridgeOpener) {
+	a.localBridgeOpener = opener
+}
+
 // clearFlowBridges 는 이전 배포에서 등록한 이 flow 의 브리지 컨트롤러를 테이블에서 제거한다
 // (재배포/undeploy 정리 — 누수 방지). 노드 Shutdown 이 stop(bridge.Close)을 구동하므로
 // 여기서는 테이블 등록 해제만 한다.
@@ -112,6 +130,22 @@ func (a *FlowServiceAdapter) clearFlowBridges(flowID string) {
 	a.bridgeMu.Unlock()
 	for _, c := range ctrls {
 		globalManagerBridgeTable.unregister(c.bridgeNodeID)
+	}
+}
+
+// clearSharedBoundary 는 이전 배포에서 이 flow 가 설치한 공유 경계 컨트롤러를 shutdown·등록
+// 해제한다(재배포/undeploy 정리 — SPEC-SUBFLOW-002 L04). shutdown 은 입력 채널을 닫고, 참조
+// 하던 부모 브리지(매니저 컨트롤러)의 self-heal 을 트리거한다(참조 플로우 정지 = 오프라인 →
+// 재시작 시 새 컨트롤러로 자동 재연결). 참조 카운팅 없음(L06): 부모 브리지에는 영향을 주지
+// 않고 경계 탭만 정리한다.
+func (a *FlowServiceAdapter) clearSharedBoundary(flowID string) {
+	a.bridgeMu.Lock()
+	ctrl := a.sharedBoundaries[flowID]
+	delete(a.sharedBoundaries, flowID)
+	a.bridgeMu.Unlock()
+	if ctrl != nil {
+		globalSharedBoundaryTable.unregister(flowID, ctrl)
+		ctrl.shutdown()
 	}
 }
 
@@ -443,9 +477,9 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 	// 가 있으면 ErrRemoteBridgeUnavailable 로 배포를 거부한다(명확한 오류). 반드시 확장
 	// 이후·경계 제거 이전에 수행한다(emitter 가 OUTPUT 경계 와이어를 가질 수 있으므로).
 	a.clearFlowBridges(id)
-	bridged, ctrls, brErr := rewireRemoteBridges(f, a.bridgeOpener, globalManagerBridgeTable, a.logger)
+	bridged, ctrls, brErr := rewireLiveBridges(f, a.bridgeOpener, a.localBridgeOpener, globalManagerBridgeTable, a.logger)
 	if brErr != nil {
-		return fmt.Errorf("flow deploy: remote bridge rewire: %w", brErr)
+		return fmt.Errorf("flow deploy: live bridge rewire: %w", brErr)
 	}
 	f = bridged
 	if len(ctrls) > 0 {
@@ -469,12 +503,27 @@ func (a *FlowServiceAdapter) DeployFlow(ctx context.Context, id string) error {
 		}
 	}
 
-	// 단독 배포(top-level standalone) 전처리: 플로우 포트 경계(센티넬) 와이어를 제거한다.
-	// 단독 배포 시 경계 와이어는 외부 카운터파트가 없으므로 엔진에 전달하면 dangling/블로킹을
-	// 유발한다(REQ-SUBFLOW-F01). 서브플로우 확장에서 소비된 경계 와이어는 이미 재배선되었고,
-	// 여기서는 이 플로우 자신의 top-level 플로우 포트 경계 와이어(외부 미연결)만 제거한다.
-	// 반드시 확장 이후에 수행해야 한다(확장이 자식 경계를 재배선할 기회를 보존).
-	f = flow.StripBoundaryWires(f)
+	// 공유 경계 탭 설치 / 경계 와이어 제거(SPEC-SUBFLOW-002 SH02):
+	//   - localBridgeOpener 가 설정되어 있고(shared 지원 모드) 이 플로우에 경계 와이어가 남아
+	//     있으면, 경계를 제거하는 대신 flow_id 기준 공유 경계 탭으로 재배선하여 배포한다. 이로써
+	//     이 플로우의 실행 인스턴스가 부모의 shared flow-node 에 in-process 로 연결 가능해진다
+	//     (탭이 0개여도 입력 무생산자 + 출력 0-subscriber 드롭이라 동작은 StripBoundaryWires 와
+	//     동일 — 회귀 0). 이전 배포의 컨트롤러는 clearSharedBoundary 로 정리한다(L04).
+	//   - localBridgeOpener 미설정 또는 경계 와이어 없음이면 기존 StripBoundaryWires 경로를
+	//     그대로 따른다(단독 배포 — 외부 카운터파트 없음, REQ-SUBFLOW-F01).
+	// 반드시 확장·라이브 브리지·노드측 retap 이후에 수행한다(남은 top-level 경계만 대상).
+	a.clearSharedBoundary(id)
+	if a.localBridgeOpener != nil && flowHasBoundaryWire(f) {
+		tapped, sbCtrl := installSharedBoundaryTaps(f, id)
+		f = tapped
+		if sbCtrl != nil {
+			a.bridgeMu.Lock()
+			a.sharedBoundaries[id] = sbCtrl
+			a.bridgeMu.Unlock()
+		}
+	} else {
+		f = flow.StripBoundaryWires(f)
+	}
 
 	return a.engine.DeployFlow(ctx, f)
 }
@@ -560,6 +609,9 @@ func (a *FlowServiceAdapter) UndeployFlow(ctx context.Context, id string) error 
 	// 라이브 브리지 정리(P3, SUBFLOW RB09): 노드 Shutdown 이 이미 bridge.Close 를 구동했으나,
 	// 테이블 등록을 확실히 해제하여 누수를 방지한다(redeploy 없이 undeploy 만 하는 경로).
 	a.clearFlowBridges(id)
+	// 공유 경계 탭 정리(SPEC-SUBFLOW-002 L04): 이 플로우가 shared 참조 대상이었다면 경계
+	// 컨트롤러를 shutdown·등록 해제하여 부모 브리지를 오프라인으로 전환한다(재시작 시 자가치유).
+	a.clearSharedBoundary(id)
 	return a.engine.UndeployFlow(ctx, id)
 }
 
@@ -636,31 +688,47 @@ func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handle
 //     으로 실행될 수 있으므로, 두 인스턴스의 합(idle + active)을 노출해야 사용자가 단독
 //     뷰에서 실제 활동을 본다.
 //  4. 단독 배포도 없고 참조 부모도 없으면 빈(비-nil) 슬라이스를 반환한다(에러 아님).
+//
+// 통계 출처(SPEC-SUBFLOW-002 M4, S01~S03): ownNodes 는 참조 플로우의 직접/공유 실행 통계
+// (mode=shared 부모의 in-process 브리지 트래픽이 단일 공유 인스턴스에 이미 반영됨 — S01),
+// embedded 는 mode=instance 부모의 네임스페이스 복제본 병합(S02)이다. shared 부모는 인라인
+// 확장하지 않아 embedded 에 기여하지 않으므로(subflowEmbeddedNodes 의 instance-only 필터),
+// shared 트래픽은 direct 에만 한 번 계상되어 이중계상되지 않는다(요구사항 3). 병합 결과의 각
+// 노드에는 출처 표식(Extra["stat_source"]: direct/embedded/혼합)을 부여하여 운영자가 화면에서
+// 모드를 식별하게 한다(S03 — tagStatSources).
 func (a *FlowServiceAdapter) ListFlowNodes(ctx context.Context, flowID string) ([]handler.FlowNodeInfo, error) {
 	// 1) 단독 배포 노드: flowID 가 단독 배포되어 있으면 엔진 자신의 노드(부모 플로우의
 	//    네임스페이스 노드 포함). 단독 배포가 없으면(ErrFlowNotFound) 빈 슬라이스.
+	//    mode=shared 참조의 경우 참조 플로우 자체가 이 경로로 실행되므로, shared 부모가
+	//    브리지로 보낸 트래픽까지 포함한 "직접/공유 실행" 통계가 된다(S01).
 	ownNodes, ownErr := a.engine.GetFlowNodes(flowID)
 	if ownErr != nil {
 		ownNodes = nil // ErrFlowNotFound 등 — 빈 슬라이스로 취급(에러 아님).
 	}
 
-	// 2) 서브플로우 임베디드 통계: flowID 를 LOCAL 참조하는 모든 배포 부모의 네임스페이스
-	//    노드(subflow_<F>_<orig>)를 원본 노드 ID 로 역매핑·합산한다(공유 헬퍼). 부모 뷰
-	//    (flowID 자신이 부모)에서는 비어 있다(flowID 가 다른 부모에 참조되지 않는 한).
+	// 2) 서브플로우 임베디드 통계: flowID 를 mode=instance 로 LOCAL 참조하는 모든 배포 부모의
+	//    네임스페이스 노드(subflow_<F>_<orig>)를 원본 노드 ID 로 역매핑·합산한다(공유 헬퍼).
+	//    mode=shared 참조는 인라인 확장이 없어 여기에 기여하지 않는다(이중계상 방지 — S02/요구3).
+	//    부모 뷰(flowID 자신이 부모)에서는 비어 있다(flowID 가 다른 부모에 instance 참조되지 않는 한).
 	embedded := a.subflowEmbeddedNodes(ctx, flowID)
 
 	if len(embedded) == 0 {
-		// 임베디드가 없으면 단독/부모/일반 플로우의 기존 동작을 그대로 유지한다.
-		return engineNodesToFlowNodeInfos(ownNodes), nil
+		// 임베디드가 없으면 단독/부모/일반/shared 플로우의 기존 동작을 그대로 유지한다.
+		// 이 경로의 노드는 모두 direct 출처이다(S01/S03). own 이 비어 있으면(미배포·미참조)
+		// 빈 슬라이스이므로 표식 부여는 no-op 이다.
+		tagged := tagStatSources(ownNodes, ownNodes, nil)
+		return engineNodesToFlowNodeInfos(tagged), nil
 	}
 
-	// 3) 임베디드가 있으면 단독 배포 노드 + 임베디드를 노드 ID 단위로 병합한다. 서브플로우가
-	//    단독 배포(idle, 0)되어 있으면서 동시에 부모 안에서 활성(>0)으로 실행될 수 있으므로,
-	//    실행 중인 모든 인스턴스의 합(단독 idle + 임베디드 active)을 노출해야 사용자가 단독
-	//    뷰에서 실제 활동을 본다. 노드 ID 는 단독 배포·임베디드·서브플로우 정의에서 동일하다
-	//    (ParseSubflowNodeID 가 네임스페이스를 원본 ID 로 역매핑).
+	// 3) 임베디드가 있으면 단독/공유 직접 노드 + instance 임베디드를 노드 ID 단위로 병합한다.
+	//    서브플로우가 직접(idle, 0 또는 shared 활성)으로 실행되면서 동시에 instance 부모 안에서
+	//    활성(>0)으로 복제 실행될 수 있으므로, 모든 인스턴스의 합(direct + embedded)을 노출해야
+	//    사용자가 단독 뷰에서 실제 활동을 본다. 노드 ID 는 단독 배포·임베디드·서브플로우 정의에서
+	//    동일하다(ParseSubflowNodeID 가 네임스페이스를 원본 ID 로 역매핑). 병합 후 각 노드의 출처를
+	//    표식한다(혼합 = 어떤 부모는 shared, 어떤 부모는 instance — S03).
 	merged := mergeNodeInstanceStats(ownNodes, embedded)
-	a.logger.Debug("list-flow-nodes: 단독 배포 + 서브플로우 임베디드 병합 반환",
+	merged = tagStatSources(merged, ownNodes, embedded)
+	a.logger.Debug("list-flow-nodes: 직접/공유 실행 + 서브플로우 임베디드 병합 반환",
 		"flow_id", flowID, "own_nodes", len(ownNodes),
 		"embedded_nodes", len(embedded), "result_nodes", len(merged))
 	return engineNodesToFlowNodeInfos(merged), nil

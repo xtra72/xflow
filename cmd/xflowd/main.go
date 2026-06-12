@@ -466,6 +466,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("remote.bridge").Warn("매니저 브리지 노드 등록 실패", "error", regErr)
 	}
 
+	// SPEC-SUBFLOW-002: 로컬 shared 모드 공유 경계 탭 노드(입력/출력)를 등록한다. 참조 플로우가
+	// 경계 포트를 가지고 배포될 때 경계 와이어를 이 탭으로 재배선하여, 부모의 shared flow-node 가
+	// in-process 라이브 브리지로 단일 실행 인스턴스에 연결할 수 있게 한다(엔진 불변 — 일반 노드
+	// 타입 추가). 로컬 in-process 이므로 모드와 무관하게 무해하게 등록한다(부착 브리지 0개면
+	// StripBoundaryWires 와 동작 동일).
+	if regErr := service.RegisterSharedBoundaryNodes(registry); regErr != nil {
+		obs.Loggers.NewLogger("remote.bridge").Warn("공유 경계 탭 노드 등록 실패", "error", regErr)
+	}
+
 	// 6.5. 플로우 저장소 초기화
 	storageCfg := cfg.Storage()
 	storageLogger := obs.Loggers.NewLogger("storage")
@@ -639,6 +648,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 	// 9.1. Flow/Agent/Node API 핸들러 등록
 	flowSvc := service.NewFlowServiceAdapter(eng, repo, obs.Loggers.NewLogger("api.service.flow").Logger())
+	// SPEC-SUBFLOW-002: 로컬 shared flow-node 의 in-process 라이브 브리지 opener 를 주입한다.
+	// 모드와 무관하게(로컬 in-process) 항상 주입하여, 참조 플로우 배포가 공유 경계 탭을 설치하고
+	// 부모의 shared flow-node 가 단일 실행 인스턴스에 연결되게 한다(SH04). 미주입 시 shared
+	// flow-node 배포가 ErrSharedBridgeUnavailable 로 거부된다.
+	flowSvc.SetLocalBridgeOpener(service.NewLocalBridgeOpener(eng, obs.Loggers.NewLogger("api.service.flow.localbridge").Logger()))
 	agentSvc := service.NewAgentServiceAdapter(agentMgr, agentRepo, obs.Loggers.NewLogger("api.service.agent").Logger())
 	agentSvc.SetNameResolver(eng)
 	nodeSvc := service.NewNodeServiceAdapter(registry, obs.Loggers.NewLogger("api.service.node").Logger())

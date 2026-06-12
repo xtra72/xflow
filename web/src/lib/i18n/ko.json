@@ -183,7 +183,12 @@
     "noSchema": "설정 스키마가 없습니다",
     "loading": "플로우를 불러오는 중...",
     "loadError": "플로우를 불러올 수 없습니다",
-    "notFound": "플로우를 찾을 수 없습니다"
+    "notFound": "플로우를 찾을 수 없습니다",
+    "statSource": {
+      "embeddedBadge": "임베디드",
+      "embeddedTitle": "이 노드의 통계는 instance(인라인 복제본) 임베디드 실행을 집계한 값입니다.",
+      "mixedTitle": "이 노드의 통계는 공유(direct) 실행과 instance(인라인 복제본) 임베디드 실행을 합산한 값입니다."
+    }
   },
   "settings": {
     "title": "설정",
@@ -508,6 +513,10 @@
       "tooltip": "이 플로우 노드는 원격 노드({node})의 플로우를 라이브로 브릿지합니다. 배포 시 원격 노드가 참조 플로우를 실행하고 메시지를 중계합니다.",
       "statusTooltip": "원격 브릿지({node}) · 상태: {status}",
       "liveStatusUnavailable": "라이브 브릿지 상태는 플로우 실행 중에만 표시됩니다.",
+      "localLabel": "공유 연결",
+      "localTooltip": "이 플로우 노드는 실행 중인 플로우({node})의 단일 공유 인스턴스에 라이브로 연결됩니다. 참조 플로우가 실행 중이어야 데이터가 흐르며(미실행 시 오프라인·무출력), 참조 플로우 편집은 그 플로우를 재시작해야 반영됩니다.",
+      "localStatusTooltip": "공유 연결({node}) · 상태: {status}",
+      "localOfflineHint": "참조 플로우가 실행 중이 아니어서 데이터를 패싱하지 않습니다(무출력). 참조 플로우를 시작하면 자동 연결됩니다.",
       "status": {
         "running": "실행 중",
         "connected": "연결됨",

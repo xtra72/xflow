@@ -13,11 +13,12 @@ import {
   Power,
   PowerOff,
   Radio,
+  Share2,
 } from 'lucide-react';
 
 import { useParams } from 'react-router';
 
-import { getRequiredFieldErrors } from '@/config/nodeSchemas';
+import { getFlowNodeMode, getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
 import { useManagedNodes, useRemoteMode } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
@@ -245,6 +246,39 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         .replace('{status}', bridgeStatusTerm)
     : remoteBridgeTooltip;
 
+  // SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W02/W04): 로컬 `shared` flow-node 의 공유
+  // 연결 상태 인디케이터. flow_id 가 평문(bare) 로컬 id 이고(=원격 브릿지 아님) mode 가
+  // shared(미지정 기본)이면, 참조 플로우의 단일 실행 인스턴스에 라이브 연결되는
+  // 로컬 브릿지다 — 원격 브릿지와 일관된 시각 언어(노드 타입 뒤 상태 점)로,
+  // 단 색/아이콘으로 로컬(공유)임을 구분해 표시한다.
+  //   instance 모드(인라인 확장)·미선택 flow-node 는 인디케이터를 표시하지 않는다.
+  // 상태 매핑은 원격과 동일한 mapRuntimeStateToBridgeStatus(런타임 state 기반)를
+  // 재사용한다(미실행 → 'unknown' → 오프라인 의미의 정적 인디케이터).
+  const flowNodeMode = isFlowNode ? getFlowNodeMode(nodeData.mode) : 'shared';
+  const isLocalShared =
+    isFlowNode && !isRemoteBridge && flowIdValue !== '' && flowNodeMode === 'shared';
+
+  // 로컬 공유 표시명: flow_name 캐시(픽커 선택 시 비정규화) → 단축 flowId 폴백.
+  const localSharedLabel = isLocalShared
+    ? cachedFlowName || shortenInstanceId(flowIdValue)
+    : '';
+  // 로컬 공유도 동일한 브릿지 상태 매핑을 사용한다. 런타임 state 부재(미실행)는
+  // 'unknown' → 상태 점 대신 정적 공유 아이콘(오프라인 대기 의미, W04)으로 표시.
+  const localBridgeStatus = isLocalShared
+    ? mapRuntimeStateToBridgeStatus(stats?.state)
+    : 'unknown';
+  const showLocalStatusDot = isLocalShared && localBridgeStatus !== 'unknown';
+  const localBridgeStatusTerm = t(BRIDGE_STATUS_I18N_KEY[localBridgeStatus]);
+  const localSharedTooltip = t('remote.bridge.localTooltip').replace(
+    '{node}',
+    localSharedLabel,
+  );
+  const localSharedStatusTooltip = showLocalStatusDot
+    ? t('remote.bridge.localStatusTooltip')
+        .replace('{node}', localSharedLabel)
+        .replace('{status}', localBridgeStatusTerm)
+    : localSharedTooltip;
+
   // 입력/출력/에러 포트 분리
   const inputPorts = nodeData.ports?.filter((p) => p.direction === 'input') ?? [];
   const outputPorts = nodeData.ports?.filter((p) => p.direction === 'output') ?? [];
@@ -456,6 +490,50 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                 ) : (
                   <Radio className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
                 )}
+              </span>
+            )}
+            {/* SPEC-SUBFLOW-002 W02/W04: 로컬 shared flow-node 의 공유 연결 상태.
+                원격 브릿지와 동일한 상태 점(BRIDGE_STATUS_DOT_CLASS) 메커니즘을
+                재사용하되, 색(violet)·아이콘(Share2)으로 로컬 공유임을 구분한다.
+                data-local-bridge/title/aria-label 은 접근성·테스트용으로 유지한다.
+                원격 케이스(isRemoteBridge)와는 상호 배타적이라 회귀가 없다. */}
+            {isLocalShared && (
+              <span
+                data-local-bridge="true"
+                className="inline-flex shrink-0 items-center text-violet-500 dark:text-violet-400"
+                title={localSharedStatusTooltip}
+                aria-label={localSharedStatusTooltip}
+              >
+                {showLocalStatusDot ? (
+                  <span
+                    data-bridge-status={localBridgeStatus}
+                    className={cn(
+                      'h-1.5 w-1.5 shrink-0 rounded-full',
+                      BRIDGE_STATUS_DOT_CLASS[localBridgeStatus],
+                    )}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Share2 className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                )}
+              </span>
+            )}
+            {/* SPEC-SUBFLOW-002 S03: 통계 출처 배지. 이 노드의 통계가 instance
+                (인라인 복제본) 임베디드 실행을 집계한 값이면 작은 "임베디드" 배지로
+                출처를 알린다. 'direct'(공유/단독)·미표식은 기본이라 배지 없음.
+                statSource 는 런타임 통계가 있을 때(실행 중)만 존재한다. */}
+            {(stats?.statSource === 'embedded' ||
+              stats?.statSource === 'direct+embedded') && (
+              <span
+                data-stat-source={stats.statSource}
+                className="inline-flex shrink-0 items-center rounded-sm bg-amber-100 px-1 text-[9px] font-medium leading-tight text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                title={
+                  stats.statSource === 'direct+embedded'
+                    ? t('editor.statSource.mixedTitle')
+                    : t('editor.statSource.embeddedTitle')
+                }
+              >
+                {t('editor.statSource.embeddedBadge')}
               </span>
             )}
           </div>

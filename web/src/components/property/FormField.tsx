@@ -213,7 +213,17 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
       {field.type === 'select' && (
         <select
           id={id}
-          value={(value as string) ?? ''}
+          // 값 미지정(undefined/null/빈 문자열)이고 비어있지 않은 default 가 있으면
+          // 그 default 를 표시값으로 사용한다(boolean 필드의 default fallback 과 일관).
+          // default 가 없거나 ''(의도적 빈 선택)면 기존 "선택..." 동작을 유지한다.
+          // SPEC-SUBFLOW-002 W01/AC-1: flow-node `mode` 토글이 미지정 시 shared 로 표시된다.
+          value={
+            (value == null || value === '') &&
+            field.default != null &&
+            field.default !== ''
+              ? String(field.default)
+              : ((value as string) ?? '')
+          }
           onChange={(e) => onChange(e.target.value)}
           disabled={readOnly}
           className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}

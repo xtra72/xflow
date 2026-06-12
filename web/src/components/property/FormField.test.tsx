@@ -184,6 +184,60 @@ describe('FormField readOnly visibility', () => {
   });
 });
 
+// SPEC-SUBFLOW-002 W01/AC-1: select 의 default fallback.
+//   값 미지정이고 비어있지 않은 default 가 있으면 그 default 가 선택값으로 표시된다
+//   (flow-node mode 토글이 미지정 시 shared 로 표시됨). default 가 없거나 ''이면
+//   기존 "선택..." 동작을 유지한다(회귀 0).
+describe('FormField select default fallback', () => {
+  it('value 미지정 + 비어있지 않은 default 면 default 가 선택값으로 표시된다', () => {
+    const { container } = render(
+      <FormField
+        field={{
+          name: 'mode',
+          type: 'select',
+          label: '참조 방식',
+          options: ['shared', 'instance'],
+          default: 'shared',
+        }}
+        value={undefined}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = container.querySelector('select') as HTMLSelectElement;
+    expect(select.value).toBe('shared');
+  });
+
+  it('명시값이 있으면 default 가 아니라 명시값이 선택된다', () => {
+    const { container } = render(
+      <FormField
+        field={{
+          name: 'mode',
+          type: 'select',
+          label: '참조 방식',
+          options: ['shared', 'instance'],
+          default: 'shared',
+        }}
+        value="instance"
+        onChange={vi.fn()}
+      />,
+    );
+    const select = container.querySelector('select') as HTMLSelectElement;
+    expect(select.value).toBe('instance');
+  });
+
+  it('default 가 없으면 value 미지정 시 "선택..."(빈 값)을 유지한다(회귀 0)', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'x', type: 'select', label: 'X', options: ['a', 'b'] }}
+        value={undefined}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = container.querySelector('select') as HTMLSelectElement;
+    expect(select.value).toBe('');
+  });
+});
+
 // field.placeholder opt-in 회귀 테스트.
 //
 // influxdb-write 의 measurement_key 처럼 placeholder 로 $. JSONPath 예시를
