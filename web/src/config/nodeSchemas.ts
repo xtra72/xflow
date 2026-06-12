@@ -2233,12 +2233,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   // --- Inventory (SPEC-INVENTORY-001) ---
   inventory: {
     description:
-      '디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit. trigger 와 체이닝하여 주기적 상태 동기화에 사용합니다. 4종 source × 2종 emit_shape × 선택적 DeviceFilter 매트릭스를 지원합니다.',
+      '디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit. trigger 와 체이닝하여 주기적 상태 동기화에 사용합니다. 4종 source 를 조건식 필터·필드 화이트리스트·청크 분할과 함께 지원합니다.',
     inputDesc:
-      '임의의 트리거 메시지 (페이로드 무시). 보통 trigger 노드의 출력을 입력으로 사용합니다. 입력 metadata 는 출력에 얕은 복사로 보존됩니다.',
+      '스냅샷을 트리거하는 입력 메시지 (payload 무시). 보통 trigger 노드의 출력을 입력으로 사용합니다. 입력 metadata 는 출력에 얕은 복사로 보존됩니다.',
     outputDesc:
-      'array 모드: payload { source, count, items[] } 의 단일 메시지. per_item 모드: payload 가 단일 item 객체인 N 개 메시지 fan-out. ' +
-      'metadata: inventory.source, inventory.count. per_item 모드에서 추가로 inventory.index, inventory.total. ' +
+      'payload { items: [ {항목}, {항목}, ... ] } 형태의 메시지. max_items=0 이면 전체 항목을 한 메시지로, N 이면 N 개씩 분할하여 여러 메시지로 출력합니다. ' +
+      'metadata: type (source 단수형 — devices→device, agents→agent, nodes→node, flows→flow), total_count (필터 후 전체 개수), offset (이 메시지의 시작 인덱스), count (이 메시지의 항목 수). 메타데이터 값은 모두 문자열입니다. ' +
       'devices 항목은 id (composite key, address 역할) 외에 uid (글로벌 UUID, identity 역할, v1.0 1급 키) 를 함께 노출하며, UUID 매핑이 없으면 uid 키는 생략됩니다. ' +
       '시계열 tag 키 / MQTT topic 에는 uid 권장. ' +
       'v0.2.0 호환 alias device_uuid 는 v1.0 (Phase D § D-T18) 에서 제거되었습니다.',
@@ -2253,34 +2253,26 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '스냅샷 대상 인벤토리 종류',
         },
         {
-          name: 'emit_shape',
-          type: 'select',
-          label: 'emit 형태',
-          options: ['array', 'per_item'],
-          default: 'array',
+          name: 'condition',
+          type: 'multiline',
+          label: '필터 조건식',
           description:
-            'array: 단일 메시지에 배열을 담음 / per_item: 항목별 N 개 메시지 fan-out (inventory.index/total metadata 포함)',
+            'filter 노드와 동일한 조건식 문법으로 항목을 필터링합니다. 각 항목을 메시지로 감싸 평가하므로 항목 필드는 $.payload.<필드> 로 참조합니다 (예: $.payload.online == true, exists($.payload.uid)). ' +
+            '== != > < >= <=, && || !, exists(path) 를 지원합니다. 비우면 필터 없이 전체 항목을 출력합니다. 모든 source 에 적용됩니다.',
         },
         {
-          name: 'include_metadata',
-          type: 'boolean',
-          label: '메타데이터 포함',
-          default: true,
-          description:
-            'true: 풍부한 메타데이터(device.metadata/state, agent.info/stats, flow.extra 등) 포함 / false: 핵심 식별 필드만',
+          name: 'fields',
+          type: 'string',
+          label: '포함 필드',
+          placeholder: 'id, name, online',
+          description: '쉼표로 구분한 항목 필드 화이트리스트. 비우면 전체 필드.',
         },
-        // DeviceFilter — source=devices 한정. JSON 객체 직접 편집.
-        // 백엔드 device.DeviceFilter 와 동일 schema (protocol/agent_name/type/online/group/tags).
-        // ConfigField 의 'object' 타입은 nested 평면 필드 표현을 지원하지 않으므로 단일 JSON 편집기로 노출.
         {
-          name: 'filter',
-          type: 'object',
-          label: '디바이스 필터 (JSON)',
-          description:
-            'source=devices 일 때만 적용. DeviceFilter 와 동일 스키마.\n' +
-            '예: {"protocol": "lg_icp01", "online": true, "group": "production", "tags": ["critical"]}\n' +
-            '지원 필드: protocol (string), agent_name (string), type (string), online (bool), group (string), tags (string array).',
-          visibleWhen: { field: 'source', value: 'devices' },
+          name: 'max_items',
+          type: 'number',
+          label: '메시지당 최대 요소 수',
+          default: 0,
+          description: '0 이면 전체를 한 메시지로, N 이면 N 개씩 분할 출력합니다.',
         },
       ],
     },
