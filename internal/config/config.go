@@ -47,6 +47,7 @@ type Config interface {
 	Server() ServerConfig
 	Engine() EngineConfig
 	Storage() StorageConfig
+	DeviceHistory() DeviceHistoryConfig // 디바이스 수신 데이터 이력(주기 스냅샷)
 	Auth() AuthConfig
 	Observe() ObserveConfig
 	Script() ScriptConfig
@@ -303,6 +304,31 @@ func (c *viperConfig) Storage() StorageConfig {
 		SQLitePath:    c.v.GetString("storage.sqlite.path"),
 		PostgresDSN:   c.v.GetString("storage.postgres.dsn"),
 		PoolSize:      c.v.GetInt("storage.pool_size"),
+	}
+}
+
+// DeviceHistory - 디바이스 수신 데이터 이력(주기 스냅샷) 설정 반환.
+//
+// Interval 은 viper.GetDuration 으로 "10s" 형식과 정수형(ns)을 모두 수용하며,
+// 0/미설정 시 안전 기본값(10s)으로 대체한다. MaxEntries 가 0 이하이면 100 으로
+// 보정한다(레코더도 자체 보정하지만 설정 계층에서 명시값을 노출).
+func (c *viperConfig) DeviceHistory() DeviceHistoryConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	interval := c.v.GetDuration("device_history.interval")
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	maxEntries := c.v.GetInt("device_history.max_entries")
+	if maxEntries <= 0 {
+		maxEntries = 100
+	}
+
+	return DeviceHistoryConfig{
+		Enabled:    c.v.GetBool("device_history.enabled"),
+		Interval:   interval,
+		MaxEntries: maxEntries,
 	}
 }
 

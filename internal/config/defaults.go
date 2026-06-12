@@ -35,6 +35,13 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("storage.file.directory", "./data/flows")
 	v.SetDefault("storage.pool_size", 10)
 
+	// 디바이스 수신 데이터 이력(주기 스냅샷) 기본값.
+	// 주기 스냅샷 방식: interval 마다 전체 디바이스의 현재 상태를 디바이스별
+	// 링버퍼(최대 max_entries)에 저장한다. 기본 활성, 10초 주기, 100개 보관.
+	v.SetDefault("device_history.enabled", true)
+	v.SetDefault("device_history.interval", "10s")
+	v.SetDefault("device_history.max_entries", 100)
+
 	// 인증 기본값
 	v.SetDefault("auth.jwt.secret", "")
 	v.SetDefault("auth.jwt.access_ttl", "15m")

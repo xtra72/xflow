@@ -679,7 +679,23 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
 	// 9.2. Device API 핸들러 등록
-	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger(), handler.WithDeviceEventPublisher(eventPub))
+	// 디바이스 수신 데이터 이력(주기 스냅샷) 레코더 — 설정에 따라 구성/주입.
+	// 주기 스냅샷 방식: interval 마다 전체 디바이스의 현재 상태를 디바이스별
+	// 링버퍼(최대 max_entries)에 저장한다. 비활성 시 nil → history 라우트 미등록.
+	deviceHistoryCfg := cfg.DeviceHistory()
+	var deviceHistoryRecorder *device.DeviceHistoryRecorder
+	deviceHandlerOpts := []handler.DeviceHandlerOption{handler.WithDeviceEventPublisher(eventPub)}
+	if deviceHistoryCfg.Enabled {
+		deviceHistoryRecorder = device.NewDeviceHistoryRecorder(deviceRegistry, device.DeviceHistoryConfig{
+			Interval:   deviceHistoryCfg.Interval,
+			MaxEntries: deviceHistoryCfg.MaxEntries,
+		})
+		deviceHandlerOpts = append(deviceHandlerOpts, handler.WithDeviceHistory(deviceHistoryRecorder))
+		logger.Info("디바이스 이력 레코더 구성",
+			"interval", deviceHistoryCfg.Interval,
+			"max_entries", deviceHistoryCfg.MaxEntries)
+	}
+	deviceHandler := handler.NewDeviceHandler(deviceRegistry, deviceMetaRepo, obs.Loggers.NewLogger("api.handler.device").Logger(), deviceHandlerOpts...)
 
 	// 9.3. System / Update API 핸들러 등록 (SPEC-UPDATE-001 v0.1.0 M10)
 	// 설정 로딩 실패 또는 binary path / 공개키 부재 시에도 데몬은 정상 기동하며,
@@ -698,6 +714,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		server.JWTService(),
 		obs.Loggers.NewLogger("api.handler.dashboard").Logger(),
 	)
+
+	// 9.5. 전역 설정(settings) API 핸들러 등록.
+	// 디바이스 컬럼 구성 등 "전역 1벌" UI/서버 설정을 영속화한다. 공유 xflow.db
+	// 핸들(authDashboardDB)을 재사용해 별도 파일 핸들을 늘리지 않는다(WAL 공존, ASM-007).
+	settingsRepo, err := storage.NewSettingsSQLiteRepositoryWithDB(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("settings 저장소 초기화 실패: %w", err)
+	}
+	settingsHandler := handler.NewSettingsHandler(settingsRepo, obs.Loggers.NewLogger("api.handler.settings").Logger())
 
 	server.RegisterRoutes(func(g *api.RouteGroup) {
 		// 인증 상태 엔드포인트 (항상 등록 - 프론트엔드가 인증 활성화 여부를 확인)
@@ -725,6 +750,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// SPEC-DASHBOARD-001 v0.2.0 M-8: 대시보드 라우트 (shared / mine).
 		dashboardHandler.RegisterRoutes(g)
+
+		// 전역 설정 라우트 (GET/PUT /settings/{key}) — 디바이스 컬럼 구성 등.
+		settingsHandler.RegisterRoutes(g)
 	})
 
 	// 9.5. WebSocket 핸들러 등록
@@ -964,6 +992,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	broadcaster.Start(ctx)
 	defer broadcaster.Stop()
 
+	// 디바이스 이력 레코더 시작 (ctx 생성 후). ctx 취소(종료 시그널) 시 수집 고루틴이
+	// 정리된다. nil(비활성)이면 Start 는 no-op 이다.
+	if deviceHistoryRecorder != nil {
+		deviceHistoryRecorder.Start(ctx)
+		logger.Info("디바이스 이력 레코더 시작")
+	}
+
 	// 10.1. 원격 관리 라이프사이클 시작 (@SPEC:SPEC-REMOTE-001 M1).
 	// ctx 취소(종료 시그널) 시 sweeper/client 고루틴이 정리된다.
 	switch rmCfg.Mode {
@@ -1144,6 +1179,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// server.Start 는 ctx 취소 시 자동으로 Stop 호출
 	if err := server.Start(ctx); err != nil {
 		return fmt.Errorf("서버 실행 실패: %w", err)
+	}
+
+	// 정리: 디바이스 이력 레코더 수집 고루틴 종료 대기 (ctx 취소로 이미 정리 시작됨).
+	if deviceHistoryRecorder != nil {
+		deviceHistoryRecorder.Wait()
+		logger.Info("디바이스 이력 레코더 종료 완료")
 	}
 
 	// 정리: Agent 매니저 종료
