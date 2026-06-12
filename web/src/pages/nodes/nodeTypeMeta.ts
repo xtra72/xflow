@@ -1678,4 +1678,75 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         '출력 포트 없음 (sink). WebSocket 프레임 예: { type: "chart.append", channel: "room1_temp", entry: { timestamp: 1713312000000, value: 25.5, labels: { room: "room1" } } }. 배치 모드에서는 각 엔트리가 개별 chart.append 로 브로드캐스트됩니다.',
     },
   },
+
+  inventory: {
+    description:
+      '디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit 합니다. trigger 노드와 체이닝하여 주기적 상태 동기화에 사용합니다. condition(조건식 필터), fields(필드 화이트리스트), max_items(청크 분할) 로 출력을 다듬을 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '스냅샷을 트리거하는 입력 메시지 (payload 무시). 입력 metadata 는 출력에 얕은 복사로 보존됩니다.' },
+      { name: 'out', direction: 'output', description: 'payload { items: [...] } 형태의 스냅샷 메시지. max_items 분할 시 여러 메시지로 출력됩니다.' },
+      { name: 'error', direction: 'error', description: '인벤토리 수집/조건식 평가 중 에러 발생 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'source',
+        type: 'select',
+        required: true,
+        description: '스냅샷 대상 인벤토리 종류: devices | agents | nodes | flows',
+      },
+      {
+        name: 'condition',
+        type: 'multiline',
+        required: false,
+        description:
+          'filter 노드와 동일한 조건식 문법으로 항목을 필터링합니다. 각 항목을 메시지로 감싸 평가하므로 항목 필드는 $.payload.<필드> 로 참조합니다 (예: $.payload.online == true, exists($.payload.uid)). == != > < >= <=, && || !, exists(path) 지원. 비우면 전체 항목 출력. 모든 source 적용.',
+      },
+      {
+        name: 'fields',
+        type: 'string',
+        required: false,
+        description: '쉼표로 구분한 항목 필드 화이트리스트 (예: id, name, online). 비우면 전체 필드.',
+      },
+      {
+        name: 'max_items',
+        type: 'number',
+        required: false,
+        description: '메시지당 최대 항목 수. 0 이면 전체를 한 메시지로, N 이면 N 개씩 분할 출력.',
+        default: '0',
+      },
+    ],
+    configExample: {
+      source: 'devices',
+      condition: '$.payload.online == true',
+      fields: 'id, name, online',
+      max_items: 2,
+    },
+    inputExamples: {
+      '트리거 (payload 무시 — trigger 노드 출력 연결)': {
+        trigger_time: 1713312000000,
+      },
+    },
+    outputExamples: {
+      'out · max_items=2 첫 번째 청크 (devices)': {
+        _comment:
+          'payload.items 는 청크별 항목 배열. metadata.type 은 source 단수형, total_count/offset/count 는 모두 문자열.',
+        payload: {
+          items: [
+            { id: 'lg_icp01:1', name: 'IDU-1', online: true },
+            { id: 'lg_icp01:2', name: 'IDU-2', online: true },
+          ],
+        },
+        metadata: { type: 'device', total_count: '5', offset: '0', count: '2' },
+      },
+      'out · max_items=0 전체를 한 메시지로 (agents)': {
+        payload: {
+          items: [
+            { id: 'agent-mqtt', name: 'MQTT Bridge' },
+            { id: 'agent-modbus', name: 'Modbus Poller' },
+          ],
+        },
+        metadata: { type: 'agent', total_count: '2', offset: '0', count: '2' },
+      },
+    },
+  },
 };
