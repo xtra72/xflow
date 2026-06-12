@@ -2355,7 +2355,12 @@ function StoreEntryRow({
           command: 'get_history',
           params: {
             key: entry.key as string,
-            namespace: (entry.namespace as string) || 'default',
+            // 네임스페이스 라운드트립 버그 수정 (v0.7.0 M14):
+            // entry.namespace="" (빈 문자열)인 경우도 그대로 전송.
+            // || 'default' 는 falsy 체크로 "" 를 "default" 로 강제했는데,
+            // 백엔드의 ForNamespace("") 조회와 불일치 → 히스토리 0개 버그 발생.
+            // ?? '' 를 사용하여 undefined/null 만 기본값으로, "" 는 유지.
+            namespace: (entry.namespace as string) ?? '',
           },
         },
       },

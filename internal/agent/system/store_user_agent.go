@@ -485,10 +485,12 @@ func (a *UserStoreAgent) processGetHistory(params map[string]any) ([]byte, error
 		return nil, fmt.Errorf("store get_history: key is required")
 	}
 
+	// 네임스페이스 라운드트립 버그 수정 (v0.7.0 M14):
+	// 빈 네임스페이스("")로 저장된 키를 조회하려면 "default"로 강제하면 안 됨.
+	// 웹 UI에서 전송한 namespace("")를 그대로 사용하여 저장된 실제 네임스페이스와 일치시킴.
 	namespace, _ := params["namespace"].(string)
-	if namespace == "" {
-		namespace = "default"
-	}
+	// 빈 네임스페이스도 그대로 사용하고, 강제하지 않음
+	// (이전: if namespace == "" { namespace = "default" })
 
 	a.mu.RLock()
 	inner := a.inner
@@ -665,12 +667,12 @@ func (a *UserStoreAgent) State() map[string]any {
 		// 내부 키에서 네임스페이스 접두사를 분리한다.
 		// VolatileStore에는 "sensors:factory-A/line-3:device_id" 형태로 저장되지만,
 		// 사용자에게는 key_template 기준의 키("factory-A/line-3:device_id")만 표시한다.
+		// prefixKey 는 ns="" 라도 ":"+key 로 저장하므로, ns+":" 접두사 제거는 ns=""
+		// (= ":") 경우에도 항상 적용해야 displayKey 가 라운드트립된다.
+		// (버그: 이전엔 ns!="" 일 때만 strip 해 ns="" 키가 ":09a..." 로 표시됐다.)
 		rawKey, _ := key.(string)
-		displayKey := rawKey
 		ns := item.namespace
-		if ns != "" {
-			displayKey = strings.TrimPrefix(rawKey, ns+":")
-		}
+		displayKey := strings.TrimPrefix(rawKey, ns+":")
 
 		entry := map[string]any{
 			"key":           displayKey,
