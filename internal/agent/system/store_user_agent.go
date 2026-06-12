@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -500,6 +501,18 @@ func (a *UserStoreAgent) processGetHistory(params map[string]any) ([]byte, error
 	store := inner.ForNamespace(namespace)
 	entries, err := store.GetHistory(context.Background(), key)
 	if err != nil {
+		// 키가 없거나 만료된 경우(ErrKeyNotFound)는 에러가 아니라 빈 이력으로
+		// 응답한다. 목록 조회와 행 클릭 사이에 TTL 만료로 키가 사라질 수 있으며,
+		// 이는 500 INTERNAL_ERROR 가 아니라 graceful 한 빈 결과여야 한다.
+		if errors.Is(err, ErrKeyNotFound) {
+			return json.Marshal(map[string]any{
+				"key":       key,
+				"namespace": namespace,
+				"count":     0,
+				"history":   []map[string]any{},
+				"found":     false,
+			})
+		}
 		return nil, fmt.Errorf("store get_history: %w", err)
 	}
 
