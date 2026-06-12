@@ -86,7 +86,7 @@ function renderOutputNode(outputEnabled: boolean) {
 /** flow-node 를 (선택적 런타임 state 와 함께) 렌더한다 — 원격 브릿지 인디케이터 검증용. */
 function renderFlowNode(
   flowId: string,
-  opts: { flowName?: string; runtimeState?: string } = {},
+  opts: { flowName?: string; runtimeState?: string; mode?: string } = {},
 ) {
   const data = {
     label: 'sub',
@@ -94,6 +94,7 @@ function renderFlowNode(
     category: 'special',
     flow_id: flowId,
     ...(opts.flowName ? { flow_name: opts.flowName } : {}),
+    ...(opts.mode ? { mode: opts.mode } : {}),
   };
   useEditorStore.setState({
     nodes: [
@@ -297,6 +298,79 @@ describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
 
     const dot = document.querySelector('[data-bridge-status]');
     expect(dot?.getAttribute('data-bridge-status')).toBe('error');
+  });
+});
+
+// SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W01/W02/W04): 로컬 shared flow-node 의
+// 공유 연결 인디케이터. 원격 브릿지와 일관된 상태 점 메커니즘을 재사용하되
+// 로컬(공유)임을 data-local-bridge 로 구분한다.
+describe('CustomNode flow-node 로컬 shared 연결 인디케이터', () => {
+  beforeEach(() => {
+    useEditorStore.getState().resetEditor();
+    useUIStore.getState().clearNotifications();
+    useManagedNodesMock.mockReset().mockReturnValue({ data: [] });
+    useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'disabled' } });
+  });
+
+  it('mode 미지정(기본 shared)인 로컬 flow-node 는 공유 인디케이터를 표시한다(원격 아님)', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우' });
+
+    // 로컬 공유 인디케이터는 표시되고, 원격 인디케이터는 표시되지 않는다.
+    expect(document.querySelector('[data-local-bridge]')).not.toBeNull();
+    expect(document.querySelector('[data-remote-bridge]')).toBeNull();
+  });
+
+  it('mode=shared 명시 로컬 flow-node 도 공유 인디케이터를 표시한다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우', mode: 'shared' });
+    expect(document.querySelector('[data-local-bridge]')).not.toBeNull();
+  });
+
+  it('mode=instance 인 로컬 flow-node 는 공유 인디케이터를 표시하지 않는다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우', mode: 'instance' });
+
+    expect(document.querySelector('[data-local-bridge]')).toBeNull();
+    expect(document.querySelector('[data-remote-bridge]')).toBeNull();
+  });
+
+  it('런타임 state 가 없으면(미실행=오프라인 대기) 상태 점 없이 정적 공유 아이콘만 표시한다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우' });
+
+    // W04: 미실행 시 상태 점은 없고(오프라인·무출력), 정적 공유 인디케이터만 노출.
+    expect(document.querySelector('[data-local-bridge]')).not.toBeNull();
+    expect(document.querySelector('[data-bridge-status]')).toBeNull();
+  });
+
+  it('런타임 state=running 이면 running 상태 점을 반영한다', () => {
+    renderFlowNode('flow-9', {
+      flowName: '로컬 서브플로우',
+      runtimeState: 'running',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot?.getAttribute('data-bridge-status')).toBe('running');
+  });
+
+  it('런타임 state=stopped 면 offline 상태 점을 반영한다(연결 끊김)', () => {
+    renderFlowNode('flow-9', {
+      flowName: '로컬 서브플로우',
+      runtimeState: 'stopped',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot?.getAttribute('data-bridge-status')).toBe('offline');
+  });
+
+  it('flow_id 미선택(빈 값) flow-node 는 공유 인디케이터를 표시하지 않는다', () => {
+    renderFlowNode('', { flowName: '' });
+    expect(document.querySelector('[data-local-bridge]')).toBeNull();
+  });
+
+  it('원격 참조 flow-node 는 로컬 공유 인디케이터를 표시하지 않는다(원격 인디케이터만)', () => {
+    useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
+    renderFlowNode('remote://inst-uuid-1234/flow-9', { flowName: 'HVACR' });
+
+    expect(document.querySelector('[data-local-bridge]')).toBeNull();
+    expect(document.querySelector('[data-remote-bridge]')).not.toBeNull();
   });
 });
 

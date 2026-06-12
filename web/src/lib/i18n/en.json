@@ -508,6 +508,10 @@
       "tooltip": "This flow node live-bridges a flow on a remote node ({node}). On deploy, the remote node runs the referenced flow and relays its messages.",
       "statusTooltip": "Remote bridge ({node}) · status: {status}",
       "liveStatusUnavailable": "Live bridge status is shown only while the flow is running.",
+      "localLabel": "Shared link",
+      "localTooltip": "This flow node live-links to the single shared instance of a running flow ({node}). The referenced flow must be running for data to flow (offline with no output otherwise), and edits to the referenced flow take effect only after that flow is restarted.",
+      "localStatusTooltip": "Shared link ({node}) · status: {status}",
+      "localOfflineHint": "The referenced flow is not running, so no data is passed (no output). It auto-connects once the referenced flow starts.",
       "status": {
         "running": "Running",
         "connected": "Connected",
