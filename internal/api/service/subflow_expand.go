@@ -233,7 +233,16 @@ func expandSubflowsRec(ctx context.Context, f flow.Flow, repo storage.FlowReposi
 			resultNodes = append(resultNodes, n)
 			continue
 		}
-		// 로컬 참조 = 인스턴스화 대상.
+		// 로컬 참조 — mode 로 재분류한다(SPEC-SUBFLOW-002 그룹 SH/IN, REQ-SUBFLOW2-SH01/IN01).
+		//   - mode=shared(기본/미지정): 인라인 확장하지 않고 LIVE NODE 로 보존한다(REMOTE 와
+		//     동일 경로). 후속 rewireRemoteBridges 일반화가 로컬 in-process opener 로 브리지
+		//     엔드포인트화한다(미확장 — SH01).
+		//   - mode=instance: 기존 인라인 확장 대상(localFlowNodeIDs)으로 등록한다(보존 — IN01).
+		if normalizeFlowNodeMode(n.Config) == flowModeShared {
+			resultNodes = append(resultNodes, n)
+			continue
+		}
+		// mode=instance — 인스턴스화 대상.
 		localFlowNodeIDs[n.ID] = true
 	}
 

@@ -464,29 +464,42 @@ func newManagerBridgeID() string {
 func bridgeFwdNodeID(fnID string) string  { return "__rbridge_fwd__" + fnID }
 func bridgeEmitNodeID(fnID string) string { return "__rbridge_emit__" + fnID }
 
-// rewireRemoteBridges 는 f 의 살아남은 remote:// flow-node 를 입력 forwarder + 출력 emitter
-// 쌍으로 재배선한 새 플로우와, 등록된 컨트롤러 목록을 반환한다(RB01/RB07/RB12).
-//
-//	각 remote flow-node 마다 고유 bridgeNodeID 컨트롤러를 만들고 tbl 에 등록한다. 부모 와이어
-//	중 flow-node 를 INPUT 으로 갖는 와이어(upstream→fn:inP)는 fwd 노드로, flow-node 를 OUTPUT
-//	으로 갖는 와이어(fn:outP→downstream)는 emit 노드로 재배선한다. flow-node 자체는 결과에서
-//	제거된다(fwd+emit 로 치환).
-//
-// opener 가 nil 이고 remote flow-node 가 존재하면 ErrRemoteBridgeUnavailable 을 반환한다
-// (비-server 모드 명확한 거부 — RB 미지원).
+// rewireRemoteBridges 는 remote:// 참조만 처리하는 하위 호환 진입점이다(로컬 opener 없음).
+// 신규 코드는 rewireLiveBridges 를 사용해 remote/local-shared 를 함께 처리한다. 본 래퍼는
+// localOpener 를 nil 로 두므로, 로컬 shared flow-node 가 남아 있으면 ErrSharedBridgeUnavailable
+// 로 거부된다(테스트/하위 호환 보존).
 func rewireRemoteBridges(f flow.Flow, opener FlowBridgeOpener, tbl *managerBridgeTable, logger *slog.Logger) (flow.Flow, []*managerBridgeController, error) {
+	return rewireLiveBridges(f, opener, nil, tbl, logger)
+}
+
+// ErrSharedBridgeUnavailable 은 로컬 in-process opener 가 주입되지 않았는데(shared 미지원 모드)
+// 살아남은 로컬 shared flow-node 가 존재할 때 반환된다(명확한 거부).
+var ErrSharedBridgeUnavailable = fmt.Errorf("shared bridge unavailable: local shared flow-node requires local in-process opener")
+
+// liveFN 은 살아남은 라이브 브리지 flow-node 한 개의 재배선 메타데이터이다.
+type liveFN struct {
+	id           string
+	instanceID   string // 원격: 노드 instance_id. 로컬 shared: "".
+	bridgeFlowID string // 원격: remote_flow_id. 로컬 shared: 로컬 참조 flow_id.
+	inputPorts   []string
+	outputPorts  []string
+	opener       FlowBridgeOpener // 이 flow-node 가 사용할 opener(remote 또는 local).
+}
+
+// rewireLiveBridges 는 f 의 살아남은 라이브 브리지 flow-node(remote:// 와 로컬 shared)를 입력
+// forwarder + 출력 emitter 쌍으로 재배선한 새 플로우와 등록된 컨트롤러 목록을 반환한다
+// (SPEC-SUBFLOW-001 RB01/RB07/RB12 + SPEC-SUBFLOW-002 SH01/SH04).
+//
+//	각 라이브 flow-node 의 참조 종류로 opener 를 선택한다:
+//	  - remote:// → remoteOpener(WS 세션). 미주입 시 ErrRemoteBridgeUnavailable.
+//	  - 로컬 bare id + mode=shared → localOpener(in-process). 미주입 시 ErrSharedBridgeUnavailable.
+//	  - 로컬 bare id + mode=instance → 여기 도달하지 않음(ExpandSubflows 가 이미 인라인 확장).
+//	컨트롤러·fwd/emit 노드·와이어 재배선은 종류와 무관하게 동일하다(opener 만 다름 — 추상화 재사용).
+func rewireLiveBridges(f flow.Flow, remoteOpener, localOpener FlowBridgeOpener, tbl *managerBridgeTable, logger *slog.Logger) (flow.Flow, []*managerBridgeController, error) {
 	srcNodes := f.Nodes()
 	srcWires := f.Wires()
 
-	// 살아남은 remote flow-node 를 식별한다.
-	type remoteFN struct {
-		id           string
-		instanceID   string
-		remoteFlowID string
-		inputPorts   []string
-		outputPorts  []string
-	}
-	remotes := make(map[string]*remoteFN)
+	lives := make(map[string]*liveFN)
 	for _, n := range srcNodes {
 		if n.Type != flowNodeType {
 			continue
@@ -496,53 +509,69 @@ func rewireRemoteBridges(f flow.Flow, opener FlowBridgeOpener, tbl *managerBridg
 		if perr != nil {
 			return nil, nil, fmt.Errorf("flow-node %q: %w", n.ID, perr)
 		}
-		if !isRemote {
-			continue // LOCAL flow-node 는 ExpandSubflows 에서 이미 소비됨(여기 도달 시 방어).
+
+		lf := &liveFN{id: n.ID}
+		if isRemote {
+			// 원격 라이브 브리지(서버 opener).
+			if remoteOpener == nil {
+				return nil, nil, ErrRemoteBridgeUnavailable
+			}
+			lf.instanceID = instanceID
+			lf.bridgeFlowID = remoteFlowID
+			lf.opener = remoteOpener
+		} else {
+			// 로컬 bare id — mode 로 판별. instance 는 여기 도달하지 않아야 하나(ExpandSubflows
+			// 가 소비), 방어적으로 shared 만 라이브 브리지로 처리한다.
+			if normalizeFlowNodeMode(n.Config) != flowModeShared {
+				continue // mode=instance 잔존(방어) — 일반 노드 취급.
+			}
+			if localOpener == nil {
+				return nil, nil, ErrSharedBridgeUnavailable
+			}
+			lf.instanceID = ""
+			lf.bridgeFlowID = flowID // 로컬 참조 flow_id.
+			lf.opener = localOpener
 		}
-		rf := &remoteFN{id: n.ID, instanceID: instanceID, remoteFlowID: remoteFlowID}
 		for _, p := range n.Inputs {
-			rf.inputPorts = append(rf.inputPorts, p.Name)
+			lf.inputPorts = append(lf.inputPorts, p.Name)
 		}
 		for _, p := range n.Outputs {
-			rf.outputPorts = append(rf.outputPorts, p.Name)
+			lf.outputPorts = append(lf.outputPorts, p.Name)
 		}
-		remotes[n.ID] = rf
+		lives[n.ID] = lf
 	}
 
-	if len(remotes) == 0 {
-		return f, nil, nil // 원격 참조 없음 — 원본 그대로(회귀 0).
-	}
-	if opener == nil {
-		return nil, nil, ErrRemoteBridgeUnavailable
+	if len(lives) == 0 {
+		return f, nil, nil // 라이브 브리지 참조 없음 — 원본 그대로(회귀 0).
 	}
 
-	// 비-remote 노드는 보존, remote flow-node 는 제거 + fwd/emit 추가.
-	resultNodes := make([]flow.NodeDef, 0, len(srcNodes)+len(remotes)*2)
+	// 비-라이브 노드는 보존, 라이브 flow-node 는 제거 + fwd/emit 추가.
+	resultNodes := make([]flow.NodeDef, 0, len(srcNodes)+len(lives)*2)
 	for _, n := range srcNodes {
-		if _, isRemote := remotes[n.ID]; isRemote {
-			continue // remote flow-node 제거(fwd+emit 로 치환).
+		if _, isLive := lives[n.ID]; isLive {
+			continue // 라이브 flow-node 제거(fwd+emit 로 치환).
 		}
 		resultNodes = append(resultNodes, n)
 	}
 
-	controllers := make([]*managerBridgeController, 0, len(remotes))
-	for _, rf := range remotes {
+	controllers := make([]*managerBridgeController, 0, len(lives))
+	for _, lf := range lives {
 		bridgeNodeID := newManagerBridgeID()
-		ctrl := newManagerBridgeController(rf.instanceID, rf.remoteFlowID,
-			rf.inputPorts, rf.outputPorts, opener, logger)
+		ctrl := newManagerBridgeController(lf.instanceID, lf.bridgeFlowID,
+			lf.inputPorts, lf.outputPorts, lf.opener, logger)
 		ctrl.bridgeNodeID = bridgeNodeID
 		tbl.register(bridgeNodeID, ctrl)
 		controllers = append(controllers, ctrl)
 
 		// fwd 노드: flow-node 입력 포트를 입력 포트로 선언(엔진이 입력 와이어 매핑).
-		if len(rf.inputPorts) > 0 {
+		if len(lf.inputPorts) > 0 {
 			resultNodes = append(resultNodes,
-				bridgeNodeDef(bridgeFwdNodeID(rf.id), bridgeFwdType, bridgeNodeID, rf.inputPorts, nil))
+				bridgeNodeDef(bridgeFwdNodeID(lf.id), bridgeFwdType, bridgeNodeID, lf.inputPorts, nil))
 		}
 		// emit 노드: flow-node 출력 포트를 출력 포트로 선언(엔진이 출력 와이어 라우팅).
-		if len(rf.outputPorts) > 0 {
+		if len(lf.outputPorts) > 0 {
 			resultNodes = append(resultNodes,
-				bridgeNodeDef(bridgeEmitNodeID(rf.id), bridgeEmitType, bridgeNodeID, nil, rf.outputPorts))
+				bridgeNodeDef(bridgeEmitNodeID(lf.id), bridgeEmitType, bridgeNodeID, nil, lf.outputPorts))
 		}
 	}
 
@@ -550,11 +579,11 @@ func rewireRemoteBridges(f flow.Flow, opener FlowBridgeOpener, tbl *managerBridg
 	resultWires := make([]flow.Wire, 0, len(srcWires))
 	for _, w := range srcWires {
 		nw := w
-		if _, ok := remotes[w.TargetNodeID]; ok {
+		if _, ok := lives[w.TargetNodeID]; ok {
 			// upstream → fn:inPort  ⇒  upstream → fwd:inPort.
 			nw.TargetNodeID = bridgeFwdNodeID(w.TargetNodeID)
 		}
-		if _, ok := remotes[w.SourceNodeID]; ok {
+		if _, ok := lives[w.SourceNodeID]; ok {
 			// fn:outPort → downstream  ⇒  emit:outPort → downstream.
 			nw.SourceNodeID = bridgeEmitNodeID(w.SourceNodeID)
 		}

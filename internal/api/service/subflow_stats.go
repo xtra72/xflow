@@ -293,6 +293,13 @@ func (a *FlowServiceAdapter) parentFlowDefinition(ctx context.Context, parentID 
 
 // localFlowNodesReferencing 은 def 안에서 subflowID 를 LOCAL(bare id)로 참조하는 flow-node
 // 들의 ID 목록을 반환한다. remote:// 참조나 다른 서브플로우를 참조하는 flow-node 는 제외한다.
+//
+// TODO(SPEC-SUBFLOW-002 M4 — 통계 정합): 현재는 mode=instance(인라인 확장)만 임베디드 병합
+// 대상으로 의미가 있다. mode=shared(또는 미지정→shared) flow-node 는 인라인 확장하지 않아
+// 네임스페이스 노드를 만들지 않으므로 이 함수가 자연히 아무것도 반환하지 않는다(병합 비활성 —
+// S01 과 정합). M4 에서 shared 통계를 "참조 플로우 자체 통계 직접"으로 연결하고(S01), 화면에
+// 모드 배지를 노출(S03)하도록 mode 인지 처리를 추가한다. 현재 백엔드 핵심(M1~M3) 범위에서는
+// 기존 instance 병합 경로를 보존만 하고 shared 는 병합에서 제외되도록 둔다(회귀 0).
 func localFlowNodesReferencing(def flow.Flow, subflowID string) []string {
 	var ids []string
 	for _, n := range def.Nodes() {
@@ -306,6 +313,12 @@ func localFlowNodesReferencing(def flow.Flow, subflowID string) []string {
 		// remote:// 참조는 확장되지 않고 라이브 브리지로 동작하므로 네임스페이스 노드를
 		// 만들지 않는다. LOCAL bare id 가 대상 서브플로우와 정확히 일치할 때만 채택한다.
 		if _, _, isRemote, _ := parseRemoteFlowRef(ref); isRemote {
+			continue
+		}
+		// mode=shared(또는 미지정) flow-node 는 인라인 확장하지 않으므로 임베디드 병합 대상이
+		// 아니다(네임스페이스 노드 부재). mode=instance 만 병합 대상으로 채택한다(M4 전까지의
+		// 보수적 처리 — shared 통계는 별도 직접 경로로 M4 에서 연결).
+		if normalizeFlowNodeMode(n.Config) != flowModeInstance {
 			continue
 		}
 		if ref == subflowID {
