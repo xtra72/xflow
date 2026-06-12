@@ -1130,8 +1130,14 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
     });
   };
 
+  // 입력 필드 스타일.
+  // 다크모드 가시성: Tailwind v4 에서 `dark:` 변형은 기본적으로
+  // `prefers-color-scheme` 미디어쿼리에 묶이므로, OS 가 라이트인데 앱 테마만
+  // night 로 바꾼 경우 `dark:bg-*`/`dark:text-*` 가 적용되지 않아 입력 글자가
+  // 어두운 패널 위에서 안 보였다. 데이터 소스인 `data-theme` 기반 CSS 변수
+  // (--color-*)로 통일하여 day/night/custom 모든 테마에서 또렷하게 보이도록 한다.
   const inputBase =
-    'block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400';
+    'block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   return (
     <div>
@@ -1278,7 +1284,7 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               <div className="mb-2 space-y-1">
                 {Object.entries(form.labels).map(([k, v]) => (
                   <div key={k} className="flex items-center gap-2">
-                    <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                    <span className="rounded bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary)">
                       {k}: {v}
                     </span>
                     <button
@@ -1310,7 +1316,7 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               <button
                 type="button"
                 onClick={handleAddLabel}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 추가
               </button>
@@ -1331,7 +1337,7 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
             <button
               type="button"
               onClick={() => onEditChange(false)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
             >
               취소
             </button>

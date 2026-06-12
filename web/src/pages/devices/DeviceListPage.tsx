@@ -175,6 +175,11 @@ export default function DeviceListPage({
           va = (a.name || a.id).toLowerCase();
           vb = (b.name || b.id).toLowerCase();
           break;
+        case 'id':
+          // uid(1급 UUID 식별자) 우선, 없으면 id 로 정렬.
+          va = (a.uid || a.id).toLowerCase();
+          vb = (b.uid || b.id).toLowerCase();
+          break;
         case 'type':
           va = a.type.toLowerCase();
           vb = b.type.toLowerCase();
@@ -422,6 +427,7 @@ export default function DeviceListPage({
                 <tr>
                   <th className="w-8 px-3 py-3" />
                   <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label="ID" field="id" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="프로토콜" field="protocol" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
@@ -488,6 +494,21 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
           {getDeviceDisplayName(device)}
         </td>
 
+        {/* ID (uid 우선, UUID 가 길 수 있어 truncate + 전체값 툴팁) */}
+        <td className="px-4 py-3">
+          {(() => {
+            const idValue = device.uid || device.id;
+            return (
+              <span
+                title={idValue}
+                className="block max-w-[160px] truncate font-mono text-xs text-(--color-text-muted)"
+              >
+                {idValue || '-'}
+              </span>
+            );
+          })()}
+        </td>
+
         {/* 타입 */}
         <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {getDeviceTypeLabel(device.type)}
@@ -542,7 +563,7 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
       {/* 확장된 상세 패널 */}
       {isExpanded && (
         <tr>
-          <td colSpan={8} className="bg-(--color-bg-sunken)">
+          <td colSpan={9} className="bg-(--color-bg-sunken)">
             <DeviceDetailPanel deviceId={device.id} />
           </td>
         </tr>
