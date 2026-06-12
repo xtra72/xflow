@@ -169,10 +169,13 @@ type InventoryNode struct {
 	*BaseNode
 
 	// 노드 설정 (immutable after factory)
-	source   string
-	fields   []string        // 필드 화이트리스트 (빈 슬라이스면 전체 필드)
-	cond     FilterCondition // 항목 조건식 필터 (nil 이면 필터 없음)
-	maxItems int             // 메시지당 최대 항목 수 (<=0 이면 무제한)
+	source string
+	fields []string // 필드 화이트리스트 (빈 슬라이스면 전체 필드)
+	// cond 는 항목 조건식 필터이다 (nil 이면 필터 없음). 항목 맵을 직접 평가하는
+	// zero-copy 변형(compileConditionData)을 사용해 항목당 메시지 래핑/깊은 복사를
+	// 피한다. 호출 시 {"payload": item} 형태로 data 를 구성한다.
+	cond     func(map[string]any) bool
+	maxItems int // 메시지당 최대 항목 수 (<=0 이면 무제한)
 
 	// 의존성 resolver (NodeOption 으로 주입, Init 에서 검증)
 	deviceRegistryFn func() device.DeviceRegistry
@@ -318,10 +321,11 @@ func parseInventoryFields(cfg map[string]any) ([]string, error) {
 	return out, nil
 }
 
-// compileInventoryCondition 은 config 의 condition 키를 FilterCondition 으로 컴파일한다.
-// filter 노드와 동일하게 compileCondition 을 재사용한다. 미지정/빈 문자열이면
-// nil (필터 없음)을 반환한다. 타입 불일치/컴파일 실패 시 에러를 반환한다.
-func compileInventoryCondition(cfg map[string]any) (FilterCondition, error) {
+// compileInventoryCondition 은 config 의 condition 키를 항목 맵 평가 함수로 컴파일한다.
+// filter 노드와 동일한 조건식 문법을 쓰되, zero-copy 변형(compileConditionData)을
+// 사용해 대량 항목 평가 시 항목당 메시지 래핑/깊은 복사를 피한다. 미지정/빈 문자열
+// 이면 nil (필터 없음)을 반환한다. 타입 불일치/컴파일 실패 시 에러를 반환한다.
+func compileInventoryCondition(cfg map[string]any) (func(map[string]any) bool, error) {
 	raw, ok := cfg["condition"]
 	if !ok || raw == nil {
 		return nil, nil
@@ -333,7 +337,7 @@ func compileInventoryCondition(cfg map[string]any) (FilterCondition, error) {
 	if strings.TrimSpace(expr) == "" {
 		return nil, nil
 	}
-	cond, err := compileCondition(expr)
+	cond, err := compileConditionData(expr)
 	if err != nil {
 		return nil, fmt.Errorf("inventory configure: %w", err)
 	}
@@ -467,14 +471,17 @@ func (n *InventoryNode) Process(ctx context.Context, _ message.Message) ([]messa
 	return results, nil
 }
 
-// applyCondition 은 각 항목을 message payload 로 감싸 조건식을 평가하고,
-// 통과한 항목만 남긴다. filter 노드와 동일한 평가 경로를 재사용한다
-// ($.payload.X 가 항목의 키 X 를 가리킨다).
+// applyCondition 은 각 항목을 {"payload": item} data 맵으로 평가하고, 통과한
+// 항목만 남긴다. compileConditionData 의 zero-copy 평가를 사용하므로 항목당
+// 메시지 래핑이나 깊은 복사가 없다($.payload.X 가 항목의 키 X 를 가리킨다).
+// data 맵 1개는 항목당 재사용하지 않고 새로 만들되, item 은 복사하지 않고
+// 참조만 한다(평가는 읽기 전용).
 func (n *InventoryNode) applyCondition(items []map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(items))
+	data := map[string]any{}
 	for _, item := range items {
-		msg := message.New(message.WithPayload(message.NewPayload(item)))
-		if n.cond(msg) {
+		data["payload"] = item
+		if n.cond(data) {
 			out = append(out, item)
 		}
 	}
