@@ -688,31 +688,47 @@ func (a *FlowServiceAdapter) FlowStatus(ctx context.Context, id string) (*handle
 //     으로 실행될 수 있으므로, 두 인스턴스의 합(idle + active)을 노출해야 사용자가 단독
 //     뷰에서 실제 활동을 본다.
 //  4. 단독 배포도 없고 참조 부모도 없으면 빈(비-nil) 슬라이스를 반환한다(에러 아님).
+//
+// 통계 출처(SPEC-SUBFLOW-002 M4, S01~S03): ownNodes 는 참조 플로우의 직접/공유 실행 통계
+// (mode=shared 부모의 in-process 브리지 트래픽이 단일 공유 인스턴스에 이미 반영됨 — S01),
+// embedded 는 mode=instance 부모의 네임스페이스 복제본 병합(S02)이다. shared 부모는 인라인
+// 확장하지 않아 embedded 에 기여하지 않으므로(subflowEmbeddedNodes 의 instance-only 필터),
+// shared 트래픽은 direct 에만 한 번 계상되어 이중계상되지 않는다(요구사항 3). 병합 결과의 각
+// 노드에는 출처 표식(Extra["stat_source"]: direct/embedded/혼합)을 부여하여 운영자가 화면에서
+// 모드를 식별하게 한다(S03 — tagStatSources).
 func (a *FlowServiceAdapter) ListFlowNodes(ctx context.Context, flowID string) ([]handler.FlowNodeInfo, error) {
 	// 1) 단독 배포 노드: flowID 가 단독 배포되어 있으면 엔진 자신의 노드(부모 플로우의
 	//    네임스페이스 노드 포함). 단독 배포가 없으면(ErrFlowNotFound) 빈 슬라이스.
+	//    mode=shared 참조의 경우 참조 플로우 자체가 이 경로로 실행되므로, shared 부모가
+	//    브리지로 보낸 트래픽까지 포함한 "직접/공유 실행" 통계가 된다(S01).
 	ownNodes, ownErr := a.engine.GetFlowNodes(flowID)
 	if ownErr != nil {
 		ownNodes = nil // ErrFlowNotFound 등 — 빈 슬라이스로 취급(에러 아님).
 	}
 
-	// 2) 서브플로우 임베디드 통계: flowID 를 LOCAL 참조하는 모든 배포 부모의 네임스페이스
-	//    노드(subflow_<F>_<orig>)를 원본 노드 ID 로 역매핑·합산한다(공유 헬퍼). 부모 뷰
-	//    (flowID 자신이 부모)에서는 비어 있다(flowID 가 다른 부모에 참조되지 않는 한).
+	// 2) 서브플로우 임베디드 통계: flowID 를 mode=instance 로 LOCAL 참조하는 모든 배포 부모의
+	//    네임스페이스 노드(subflow_<F>_<orig>)를 원본 노드 ID 로 역매핑·합산한다(공유 헬퍼).
+	//    mode=shared 참조는 인라인 확장이 없어 여기에 기여하지 않는다(이중계상 방지 — S02/요구3).
+	//    부모 뷰(flowID 자신이 부모)에서는 비어 있다(flowID 가 다른 부모에 instance 참조되지 않는 한).
 	embedded := a.subflowEmbeddedNodes(ctx, flowID)
 
 	if len(embedded) == 0 {
-		// 임베디드가 없으면 단독/부모/일반 플로우의 기존 동작을 그대로 유지한다.
-		return engineNodesToFlowNodeInfos(ownNodes), nil
+		// 임베디드가 없으면 단독/부모/일반/shared 플로우의 기존 동작을 그대로 유지한다.
+		// 이 경로의 노드는 모두 direct 출처이다(S01/S03). own 이 비어 있으면(미배포·미참조)
+		// 빈 슬라이스이므로 표식 부여는 no-op 이다.
+		tagged := tagStatSources(ownNodes, ownNodes, nil)
+		return engineNodesToFlowNodeInfos(tagged), nil
 	}
 
-	// 3) 임베디드가 있으면 단독 배포 노드 + 임베디드를 노드 ID 단위로 병합한다. 서브플로우가
-	//    단독 배포(idle, 0)되어 있으면서 동시에 부모 안에서 활성(>0)으로 실행될 수 있으므로,
-	//    실행 중인 모든 인스턴스의 합(단독 idle + 임베디드 active)을 노출해야 사용자가 단독
-	//    뷰에서 실제 활동을 본다. 노드 ID 는 단독 배포·임베디드·서브플로우 정의에서 동일하다
-	//    (ParseSubflowNodeID 가 네임스페이스를 원본 ID 로 역매핑).
+	// 3) 임베디드가 있으면 단독/공유 직접 노드 + instance 임베디드를 노드 ID 단위로 병합한다.
+	//    서브플로우가 직접(idle, 0 또는 shared 활성)으로 실행되면서 동시에 instance 부모 안에서
+	//    활성(>0)으로 복제 실행될 수 있으므로, 모든 인스턴스의 합(direct + embedded)을 노출해야
+	//    사용자가 단독 뷰에서 실제 활동을 본다. 노드 ID 는 단독 배포·임베디드·서브플로우 정의에서
+	//    동일하다(ParseSubflowNodeID 가 네임스페이스를 원본 ID 로 역매핑). 병합 후 각 노드의 출처를
+	//    표식한다(혼합 = 어떤 부모는 shared, 어떤 부모는 instance — S03).
 	merged := mergeNodeInstanceStats(ownNodes, embedded)
-	a.logger.Debug("list-flow-nodes: 단독 배포 + 서브플로우 임베디드 병합 반환",
+	merged = tagStatSources(merged, ownNodes, embedded)
+	a.logger.Debug("list-flow-nodes: 직접/공유 실행 + 서브플로우 임베디드 병합 반환",
 		"flow_id", flowID, "own_nodes", len(ownNodes),
 		"embedded_nodes", len(embedded), "result_nodes", len(merged))
 	return engineNodesToFlowNodeInfos(merged), nil
