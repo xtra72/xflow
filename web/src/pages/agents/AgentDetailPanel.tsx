@@ -2404,10 +2404,10 @@ function StoreEntryRow({
   }, [hasHistory, historyOpen, execAgent, agentId, entry.key, entry.namespace]);
 
   // 히스토리 확장 행의 colSpan 계산:
-  //   key + 타입 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated + 액션
-  // 타입과 액션 컬럼은 항상 렌더링되므로 +2.
+  //   key + 바인딩 + 메트릭 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated + 액션
+  // 항상 렌더링되는 컬럼 8개(key/바인딩/메트릭/value/ns/ttl/updated/액션) 기준.
   const colSpan =
-    7 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
+    8 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
 
   const entryTags = extractEntryTags(entry);
 
@@ -2461,40 +2461,38 @@ function StoreEntryRow({
             {entry.key as string}
           </span>
         </td>
-        {/* 타입 컬럼: 정적/동적 배지 + 메트릭 타입(metric_type) 배지 (SPEC-STORE-003 v0.4.0).
-            모든 엔트리에 metric_type 이 노출되며, 동적 키 등은 "unknown" 으로 표시된다.
-            액션 버튼은 마지막 "액션" 컬럼으로 분리하였다. */}
+        {/* 바인딩 컬럼: 정적/동적(metric 과 분리). */}
         <td className="px-3 py-2 text-xs">
-          <div className="flex flex-col items-start gap-1">
-            {isStatic ? (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                title="설정에 등록된 정적 키"
-              >
-                <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-                정적
-              </span>
-            ) : (
-              <span
-                className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                title="설정에 없는 동적 키"
-              >
-                동적
-              </span>
-            )}
-            {/* 메트릭 타입 배지. unknown 은 중립 톤, 그 외는 인디고 톤으로 강조. */}
+          {isStatic ? (
             <span
-              className={cn(
-                'inline-flex max-w-[120px] items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium',
-                isUnknownMetric
-                  ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                  : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
-              )}
-              title={`메트릭 타입: ${metricTypeLabel}`}
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+              title="설정에 등록된 정적 키"
             >
-              <span className="truncate">{metricTypeLabel}</span>
+              <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+              정적
             </span>
-          </div>
+          ) : (
+            <span
+              className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+              title="설정에 없는 동적 키"
+            >
+              동적
+            </span>
+          )}
+        </td>
+        {/* 메트릭 컬럼: metric_type. unknown 은 중립 톤, 그 외는 인디고 톤. */}
+        <td className="px-3 py-2 text-xs">
+          <span
+            className={cn(
+              'inline-flex max-w-[120px] items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium',
+              isUnknownMetric
+                ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
+                : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
+            )}
+            title={`메트릭 타입: ${metricTypeLabel}`}
+          >
+            <span className="truncate">{metricTypeLabel}</span>
+          </span>
         </td>
         <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
           <span
@@ -3235,8 +3233,9 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">키</th>
-                  {/* 타입 컬럼: 정적 vs 동적 (SPEC-STORE-003) — 항상 표시 */}
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">타입</th>
+                  {/* 바인딩(정적/동적) 과 메트릭(metric_type) 을 별도 컬럼으로 분리. */}
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">바인딩</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">메트릭</th>
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">값</th>
                   <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">네임스페이스</th>
                   {showTagsColumn && (
