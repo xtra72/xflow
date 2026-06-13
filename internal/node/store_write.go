@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,6 +30,26 @@ type StoreReader interface {
 	GetHistory(ctx context.Context, key string) ([]any, error)
 }
 
+// StoreWriteMeta 는 SetWithMeta 호출 시 부여할 메타데이터 옵션이다.
+// system.StoreWriteMeta 와 동일 형태이며, 어댑터가 이 노드 인터페이스를 구현한다.
+type StoreWriteMeta struct {
+	// DataType 은 빈 문자열이 아니면 기록되는 키를 그 data_type 으로 등록/고정한다.
+	DataType string
+	// Tags 는 비어있지 않으면 기록되는 키에 태그를 부여한다.
+	Tags map[string]string
+	// TTL 은 0 보다 크면 값 쓰기에 TTL 을 적용한다.
+	TTL time.Duration
+}
+
+// StoreMetaWriter 는 data_type/tags 메타데이터를 함께 지정하여 기록할 수 있는
+// 선택적(optional) 인터페이스이다. NodeStoreAdapter 가 이를 구현한다.
+//
+// store 가 이 인터페이스를 만족하고 노드에 data_type 또는 tags 가 설정된 경우에만
+// SetWithMeta 가 사용되며, 그 외에는 기존 StoreWriter.Set/SetWithTTL 로 폴백한다 (하위 호환).
+type StoreMetaWriter interface {
+	SetWithMeta(ctx context.Context, key string, value any, opts StoreWriteMeta) error
+}
+
 // storeProvider 는 네임스페이스별 Store 어댑터를 제공하는 에이전트의 인터페이스이다.
 // UserStoreAgent 가 이 인터페이스를 구현하며, AgentResolver로 해석된 에이전트에서
 // 타입 단언을 통해 StoreWriter/StoreReader 에 접근한다.
@@ -50,13 +71,29 @@ type storeProvider interface {
 type StoreWriteNode struct {
 	*BaseNode
 	store       StoreWriter
-	resolver    AgentResolver  // AgentResolver (생성 시 옵션에서 추출)
-	agentRef    *flow.AgentRef // Store 에이전트 참조
-	keyTemplate string         // 키 템플릿 (예: "{location}:{sensor}")
-	valueKey    string         // payload에서 저장할 값의 키 (빈 문자열이면 전체 payload)
-	namespace   string         // Store 네임스페이스
-	ttl         time.Duration  // TTL (0이면 만료 없음)
+	resolver    AgentResolver     // AgentResolver (생성 시 옵션에서 추출)
+	agentRef    *flow.AgentRef    // Store 에이전트 참조
+	keyTemplate string            // 키 템플릿 (예: "{location}:{sensor}")
+	valueKey    string            // payload에서 저장할 값의 키 (빈 문자열이면 전체 payload)
+	namespace   string            // Store 네임스페이스
+	ttl         time.Duration     // TTL (0이면 만료 없음)
+	dataType    string            // 기록되는 키에 부여할 data_type (빈 문자열이면 미지정)
+	tags        map[string]string // 기록되는 키에 부여할 태그 (nil/빈 맵이면 미지정)
 }
+
+// validDataTypes 는 store-write 노드 config 의 data_type 으로 허용되는 6종 enum 이다.
+// system 계층의 DataType enum 과 동일하며, 노드 패키지의 순환 의존을 피하기 위해 여기서도 정의한다.
+var validDataTypes = map[string]bool{
+	"int":     true,
+	"float":   true,
+	"string":  true,
+	"boolean": true,
+	"bytes":   true,
+	"json":    true,
+}
+
+// tagKeyPattern 은 태그 key 로 허용되는 문자 패턴이다 (system 계층과 동일).
+var tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // NewStoreWriteNode 는 새로운 StoreWriteNode를 생성하는 팩토리 함수이다.
 func NewStoreWriteNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
@@ -197,6 +234,39 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
+	// data_type (선택): 지정 시 기록되는 키를 그 타입으로 등록한다.
+	// 6종 enum(int/float/string/boolean/bytes/json) 외 값은 거부한다.
+	if v, ok := config["data_type"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			if !validDataTypes[s] {
+				return fmt.Errorf(
+					"store-write: invalid data_type %q (must be one of: int, float, string, boolean, bytes, json)", s)
+			}
+			n.dataType = s
+		}
+	}
+
+	// tags (선택): 기록되는 키에 부여할 key-value 태그.
+	// map[string]any 로 들어온 값을 map[string]string 으로 정규화하며,
+	// key 는 ^[a-zA-Z0-9_-]+$ 를 만족해야 하고 value 는 문자열이어야 한다.
+	if v, ok := config["tags"]; ok {
+		if raw, ok := v.(map[string]any); ok && len(raw) > 0 {
+			parsed := make(map[string]string, len(raw))
+			for tk, tv := range raw {
+				if !tagKeyPattern.MatchString(tk) {
+					return fmt.Errorf(
+						"store-write: invalid tag key %q (must match ^[a-zA-Z0-9_-]+$)", tk)
+				}
+				sv, ok := tv.(string)
+				if !ok {
+					return fmt.Errorf("store-write: tag %q value must be a string", tk)
+				}
+				parsed[tk] = sv
+			}
+			n.tags = parsed
+		}
+	}
+
 	return nil
 }
 
@@ -227,8 +297,20 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 		value = msg.Payload().ToMap()
 	}
 
-	// Store에 기록
-	if n.ttl > 0 {
+	// Store에 기록.
+	// data_type 또는 tags 가 설정됐고 store 가 StoreMetaWriter 를 만족하면 SetWithMeta 를 사용하여
+	// 메타데이터를 함께 적용한다. 그 외에는 기존 Set/SetWithTTL 경로로 폴백한다 (하위 호환).
+	useMeta := n.dataType != "" || len(n.tags) > 0
+	if mw, ok := n.store.(StoreMetaWriter); ok && useMeta {
+		opts := StoreWriteMeta{
+			DataType: n.dataType,
+			Tags:     n.tags,
+			TTL:      n.ttl,
+		}
+		if err := mw.SetWithMeta(ctx, key, value, opts); err != nil {
+			return nil, fmt.Errorf("store-write: %w", err)
+		}
+	} else if n.ttl > 0 {
 		if err := n.store.SetWithTTL(ctx, key, value, n.ttl); err != nil {
 			return nil, fmt.Errorf("store-write: %w", err)
 		}

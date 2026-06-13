@@ -12,11 +12,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
+const putMock = vi.hoisted(() => vi.fn());
 const delWithMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./client', () => ({
   get: getMock,
   post: postMock,
+  put: putMock,
   delWith: delWithMock,
 }));
 
@@ -31,6 +33,7 @@ import {
   queryStoreMatrix,
   resetAllStoreKeys,
   resetStoreKey,
+  setStoreKeyMeta,
   sliceKeysPage,
 } from './store';
 
@@ -853,5 +856,55 @@ describe('fetchStoreKeyObjects (v0.7.0 신규 API)', () => {
   it('keys 필드가 생략되면 빈 배열 반환', async () => {
     getMock.mockResolvedValueOnce({});
     expect(await fetchStoreKeyObjects('agent-a')).toEqual([]);
+  });
+});
+
+// ---- setStoreKeyMeta (SPEC-STORE-003 v0.4.0) ----
+
+describe('setStoreKeyMeta', () => {
+  beforeEach(() => {
+    putMock.mockReset();
+  });
+
+  it('metric_type/tags 를 meta 엔드포인트로 PUT 한다', async () => {
+    const resp = {
+      key: 'outdoor:humidity',
+      metric_type: 'humidity',
+      tags: { room: 'kitchen' },
+    };
+    putMock.mockResolvedValueOnce(resp);
+
+    const result = await setStoreKeyMeta('agent-a', 'outdoor:humidity', {
+      metric_type: 'humidity',
+      tags: { room: 'kitchen' },
+    });
+
+    // 키의 콜론은 encodeURIComponent 로 %3A 인코딩되어야 한다.
+    expect(putMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys/outdoor%3Ahumidity/meta',
+      { metric_type: 'humidity', tags: { room: 'kitchen' } },
+    );
+    expect(result).toEqual(resp);
+  });
+
+  it('agent 이름과 키를 모두 URL 인코딩한다', async () => {
+    putMock.mockResolvedValueOnce({ key: 'k', metric_type: 'unknown', tags: {} });
+
+    await setStoreKeyMeta('agent a/b', 'ns:key with space', { tags: {} });
+
+    expect(putMock).toHaveBeenCalledWith(
+      `/store/${encodeURIComponent('agent a/b')}/keys/${encodeURIComponent('ns:key with space')}/meta`,
+      { tags: {} },
+    );
+  });
+
+  it('metric_type 생략 시 tags 만 전송한다 (백엔드가 unknown normalize)', async () => {
+    putMock.mockResolvedValueOnce({ key: 'k', metric_type: 'unknown', tags: { a: '1' } });
+
+    await setStoreKeyMeta('agent-a', 'k', { tags: { a: '1' } });
+
+    expect(putMock).toHaveBeenCalledWith('/store/agent-a/keys/k/meta', {
+      tags: { a: '1' },
+    });
   });
 });

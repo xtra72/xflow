@@ -77,6 +77,18 @@ type storeKeyMetaLister interface {
 	StaticKeysSnapshot() map[string]system.StaticKeyMeta
 }
 
+// @spec SPEC-STORE-003 v0.4.0
+// storeKeyMetaSetter 는 임의 엔트리(정적 + 동적)의 metric_type/tags 를 설정하는
+// 에이전트 계약이다. system.UserStoreAgent 가 이 인터페이스를 만족한다.
+//
+// PUT /store/{name}/keys/{key}/meta 핸들러가 사용하며, 동적으로 등록된 키에도
+// 사용자가 나중에 타입/태그를 부여할 수 있게 한다. 미등록 키이면 동적 string 키로
+// 신규 등록된다. 입력 검증(metric_type 정규식, tag key 정규식)은 구현체가 수행하며,
+// 검증 실패 시 system.ErrInvalidMetricType / system.ErrInvalidTagKey 를 반환한다.
+type storeKeyMetaSetter interface {
+	SetKeyMeta(key string, metricType string, tags map[string]string) error
+}
+
 // @spec SPEC-STORE-003
 // storeResetter 는 reset 엔드포인트(DELETE /keys, DELETE /keys/{key}) 가 요구하는 에이전트 계약이다.
 // 정책(정적 키 → 히스토리만 / 동적 키 → 엔트리 삭제) 는 핸들러가 IsStaticKey 결과로 분기한다.
@@ -115,6 +127,8 @@ func NewStoreQueryHandler(agents AgentLookup, logger *slog.Logger) *StoreQueryHa
 func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/store/{agent_name}/query", h.Query)
 	g.GET("/store/{agent_name}/keys", h.ListKeys)
+	// @spec SPEC-STORE-003 v0.4.0: 임의 엔트리(동적 포함)의 metric_type/tags 설정.
+	g.PUT("/store/{agent_name}/keys/{key}/meta", h.SetKeyMeta)
 	// @spec SPEC-STORE-003
 	g.GET("/store/{agent_name}/tags", h.ListTags)
 	// @spec SPEC-STORE-003: reset 엔드포인트.
@@ -721,6 +735,95 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(StoreKeysListResponse{
 		Count: len(objects),
 		Keys:  objects,
+	}))
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// setKeyMetaRequest 는 PUT /store/{name}/keys/{key}/meta 요청 바디이다.
+//
+// 필드:
+//   - MetricType: 설정할 metric_type (생략/빈 문자열 → "unknown" 으로 normalize).
+//   - Tags:       설정할 태그 맵 전체(replace 시맨틱). 생략하면 빈 맵으로 간주되어 기존 태그가 비워진다.
+//
+// 주의: Tags 는 부분 갱신(merge)이 아니라 전체 교체(replace)이다. 일부만 바꾸려면
+// 클라이언트가 기존 태그를 포함한 전체 맵을 보내야 한다 (단순하고 예측 가능한 시맨틱).
+type setKeyMetaRequest struct {
+	MetricType string            `json:"metric_type"`
+	Tags       map[string]string `json:"tags"`
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 metric_type 과 tags 를 설정한다.
+//
+//	PUT /store/{agent_name}/keys/{key}/meta
+//	body: {"metric_type": "temperature", "tags": {"room": "1"}}
+//
+// 동작:
+//   - 정적 키: DataType/Source 보존, metric_type/tags 만 갱신.
+//   - 동적 키: data_type=string/Source=auto 보존, metric_type/tags 갱신.
+//   - 미등록 키: 동적 string 키로 신규 등록 후 메타 적용(사전 타입/태그 지정).
+//
+// 검증 실패 매핑:
+//   - metric_type 정규식 위반 → 400 (system.ErrInvalidMetricType)
+//   - tag key 정규식 위반     → 400 (system.ErrInvalidTagKey)
+//
+// 키 경로 파라미터는 url.PathUnescape 로 디코딩되어 콜론(%3A) 등 특수문자를 안전히 처리한다.
+// 응답: 200 OK 와 함께 적용된 {key, metric_type, tags} 를 반환한다.
+func (h *StoreQueryHandler) SetKeyMeta(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+
+	rawKey := ctx.Param("key")
+	if rawKey == "" {
+		return api.ErrBadRequest.WithMessage("key is required")
+	}
+	decodedKey, derr := url.PathUnescape(rawKey)
+	if derr != nil {
+		return api.ErrBadRequest.WithMessage("invalid key encoding")
+	}
+
+	var req setKeyMetaRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	setter, ok := ag.(storeKeyMetaSetter)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName).
+			WithDetails(map[string]string{"error": "not_a_store_agent"})
+	}
+
+	if err := setter.SetKeyMeta(decodedKey, req.MetricType, req.Tags); err != nil {
+		// 검증 에러는 400 으로 매핑한다 (그 외는 그대로 메시지 노출).
+		if errors.Is(err, system.ErrInvalidMetricType) || errors.Is(err, system.ErrInvalidTagKey) {
+			return api.ErrBadRequest.WithMessage(err.Error())
+		}
+		return api.ErrBadRequest.WithMessage(err.Error())
+	}
+
+	// 응답: 적용 결과(normalize 된 metric_type/tags) 를 일관되게 반환한다.
+	metricType := req.MetricType
+	if metricType == "" {
+		metricType = system.MetricTypeUnknown
+	}
+	tags := req.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"key":         decodedKey,
+		"metric_type": metricType,
+		"tags":        tags,
 	}))
 }
 

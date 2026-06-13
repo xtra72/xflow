@@ -65,9 +65,11 @@ func TestStoreQueryHandler_RegisterRoutes(t *testing.T) {
 
 	// @spec SPEC-STORE-003:
 	//   POST   /query, GET /keys, GET /tags,
-	//   DELETE /keys/{key}, DELETE /keys (신규)
-	// 총 5개.
-	assert.Equal(t, 5, after-before)
+	//   DELETE /keys/{key}, DELETE /keys
+	// @spec SPEC-STORE-003 v0.4.0:
+	//   PUT    /keys/{key}/meta (신규)
+	// 총 6개.
+	assert.Equal(t, 6, after-before)
 }
 
 func TestStoreQueryHandler_각모드_성공(t *testing.T) {

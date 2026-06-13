@@ -14,11 +14,15 @@
 //
 // @spec SPEC-WEB-005
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { APIError } from '@/types/api';
+import type {
+  SetStoreKeyMetaRequest,
+  SetStoreKeyMetaResponse,
+} from '@/types/store';
 
-import { delWith, get, post } from './client';
+import { delWith, get, post, put } from './client';
 import {
   aggregateValues,
   type SeriesDataSource,
@@ -605,6 +609,65 @@ export async function resetAllStoreKeys(
   const ns = namespace ?? 'default';
   const url = `/store/${encodeURIComponent(agentName)}/keys?namespace=${encodeURIComponent(ns)}`;
   return delWith<StoreResetAllResult>(url);
+}
+
+// ---- Key meta (metric_type / tags) ----
+
+/**
+ * 임의 엔트리(정적 + 동적)의 metric_type / tags 를 설정한다.
+ *
+ * `PUT /api/v1/store/{agent_name}/keys/{key}/meta` 를 호출한다.
+ *
+ * 동작 특성:
+ *   - tags 는 **전체 교체** (merge 아님). 부분 수정 시 기존+변경 전체를 전송해야 한다.
+ *   - metric_type 미지정/빈 문자열 → 백엔드가 `"unknown"` 으로 normalize.
+ *   - 키는 URL 인코딩된다 (`:` → `%3A`). `encodeURIComponent` 가 콜론을 인코딩한다.
+ *   - 검증 실패(metric_type 정규식 / tag key 정규식) 시 400 → `APIError` 로 전파된다.
+ *
+ * @spec SPEC-STORE-003 v0.4.0
+ */
+export async function setStoreKeyMeta(
+  agentName: string,
+  key: string,
+  meta: SetStoreKeyMetaRequest,
+): Promise<SetStoreKeyMetaResponse> {
+  const url = `/store/${encodeURIComponent(agentName)}/keys/${encodeURIComponent(key)}/meta`;
+  return put<SetStoreKeyMetaResponse>(url, meta);
+}
+
+/** `useSetStoreKeyMeta` mutation 변수. */
+export interface SetStoreKeyMetaVars {
+  agentName: string;
+  key: string;
+  meta: SetStoreKeyMetaRequest;
+}
+
+/**
+ * 엔트리 메타데이터(metric_type/tags) 설정 mutation 훅.
+ *
+ * 성공 시 해당 에이전트의 store 키 목록/태그 캐시를 invalidate 하여 즉시 UI 에
+ * 반영한다. State 엔트리(`['agents', agentId]`)는 호출자가 추가로 invalidate 해야
+ * 한다(이 훅은 agentId 를 알지 못하므로 store 키 캐시만 담당한다).
+ *
+ * @spec SPEC-STORE-003 v0.4.0
+ */
+export function useSetStoreKeyMeta() {
+  const queryClient = useQueryClient();
+  return useMutation<SetStoreKeyMetaResponse, Error, SetStoreKeyMetaVars>({
+    mutationFn: ({ agentName, key, meta }) =>
+      setStoreKeyMeta(agentName, key, meta),
+    onSuccess: (_data, { agentName }) => {
+      void queryClient.invalidateQueries({
+        queryKey: ['store', 'keys', agentName],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['store', 'keys-with-tags', agentName],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['store', 'tags', agentName],
+      });
+    },
+  });
 }
 
 // ---- Factory ----

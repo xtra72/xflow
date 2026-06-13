@@ -345,11 +345,21 @@ func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
 // 뷰로 라우팅된다. 생성 시점 스냅샷을 잡으면 재시작 후 옛 inner 로 향해
 // 모든 쓰기/읽기가 실패하는 회귀가 발생한다.
 func (a *UserStoreAgent) NodeStoreForNamespace(namespace string) any {
-	return NewLazyNodeStoreAdapter(func() Store {
+	// store resolver: 매 호출마다 현재 inner 의 네임스페이스 뷰를 반환.
+	storeResolver := func() Store {
 		a.mu.RLock()
 		defer a.mu.RUnlock()
 		return a.inner.ForNamespace(namespace)
-	})
+	}
+	// agent resolver: data_type/tags 메타 설정에 필요한 현재 *StoreAgent(inner) 를 반환.
+	// store-write 노드의 SetWithMeta 경로에서 사용된다. 에이전트 재시작에 안전하도록
+	// 호출 시점의 inner 를 lazy 하게 돌려준다.
+	agentResolver := func() *StoreAgent {
+		a.mu.RLock()
+		defer a.mu.RUnlock()
+		return a.inner
+	}
+	return NewLazyNodeStoreAdapterWithAgent(storeResolver, agentResolver, namespace)
 }
 
 // Init 은 에이전트를 초기화하고 내부 StoreAgent를 시작한다.
@@ -683,16 +693,22 @@ func (a *UserStoreAgent) State() map[string]any {
 			"history_count": len(item.history),
 		}
 
-		// @spec SPEC-STORE-003 v0.3.0: 정적 키로 선언된 키에 대해서는 태그 맵을 첨부한다.
-		// 동적으로 쓰여진 키(정적 목록에 없음)는 tags 필드를 생략한다.
-		// v0.3.0: staticKeys value 가 StaticKeyMeta 로 진화했으므로 .Tags 필드를 추출한다.
-		if meta, ok := inner.config.staticKeys[displayKey]; ok && len(meta.Tags) > 0 {
-			copied := make(map[string]string, len(meta.Tags))
-			for tk, tv := range meta.Tags {
-				copied[tk] = tv
+		// @spec SPEC-STORE-003 v0.4.0: 모든 엔트리(정적 + 동적)에 metric_type 과 tags 를 노출한다.
+		// 정적/동적 키는 staticKeys 맵에 메타가 존재하므로 그 값을 사용하고,
+		// (아직 메타가 없는 극히 예외적 경우에 대비해) 없으면 기본값 unknown / 빈 맵을 부여한다.
+		// 이로써 동적 키도 항상 metric_type="unknown", tags={} 로 표시되어 프론트가 일관되게 필터/표시할 수 있다.
+		metricType := MetricTypeUnknown
+		tagsCopy := map[string]string{}
+		if meta, ok := inner.config.staticKeys[displayKey]; ok {
+			if meta.MetricType != "" {
+				metricType = meta.MetricType
 			}
-			entry["tags"] = copied
+			for tk, tv := range meta.Tags {
+				tagsCopy[tk] = tv
+			}
 		}
+		entry["metric_type"] = metricType
+		entry["tags"] = tagsCopy
 
 		if item.expiresAt.IsZero() {
 			entry["expires_at"] = ""

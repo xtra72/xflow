@@ -123,10 +123,10 @@ func TestV3_Scenario3_AutoModeAndCoexistence(t *testing.T) {
 	assert.Equal(t, "temperature", manual.MetricType)
 	assert.Equal(t, "1", manual.Tags["room"])
 
-	// Auto 키 default.
+	// Auto 키 default. @spec v0.4.0: 동적 키는 항상 data_type=string.
 	auto := snap["outdoor:temperature"]
 	assert.Equal(t, SourceAuto, auto.Source)
-	assert.Equal(t, DataTypeFloat, auto.DataType)
+	assert.Equal(t, DataTypeString, auto.DataType, "동적 키는 data_type=string")
 	assert.Equal(t, "unknown", auto.MetricType)
 	assert.Empty(t, auto.Tags)
 }
@@ -183,10 +183,11 @@ func TestV3_Scenario7_ManualModeStrictType(t *testing.T) {
 // Scenario 8: Auto 모드 data_type 추론 + type pinning (M7)
 // =============================================================================
 
-// @spec SPEC-STORE-003 v0.3.0 / Scenario 8
-// TestV3_Scenario8_AutoModeTypePinning 는 auto 모드에서 첫 쓰기 시 추론된 data_type 이
-// 영구 고정되어 후속 다른 타입 쓰기는 거부됨을 검증한다.
-func TestV3_Scenario8_AutoModeTypePinning(t *testing.T) {
+// @spec SPEC-STORE-003 v0.4.0 (동적=string 정책 도입에 따른 갱신)
+// TestV3_Scenario8_AutoModeDynamicString 는 auto 모드에서 미등록 키가 첫 쓰기 시
+// data_type=string 으로 등록되고, 이후 어떤 타입의 쓰기든 string 으로 변환되어
+// 저장됨을 검증한다 (type pinning → 동적 string 정책으로 변경).
+func TestV3_Scenario8_AutoModeDynamicString(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID: "s1", Name: "store-a", Type: "store",
 		Transport: agent.TransportConfig{
@@ -204,26 +205,28 @@ func TestV3_Scenario8_AutoModeTypePinning(t *testing.T) {
 
 	store := u.inner.ForNamespace("default")
 
-	// 첫 쓰기: int 자동 등록.
+	// 첫 쓰기: int 42 → 동적 string 키 등록 + 값 "42" 저장.
 	require.NoError(t, store.Set(context.Background(), "sensor1", 42))
 	snap := u.StaticKeysSnapshot()
 	require.Contains(t, snap, "sensor1")
-	assert.Equal(t, DataTypeInt, snap["sensor1"].DataType)
+	assert.Equal(t, DataTypeString, snap["sensor1"].DataType)
 	assert.Equal(t, SourceAuto, snap["sensor1"].Source)
 	assert.Equal(t, "unknown", snap["sensor1"].MetricType)
 
-	// 동일 타입 후속 쓰기: 통과.
-	require.NoError(t, store.Set(context.Background(), "sensor1", 100))
+	entry, err := store.Get(context.Background(), "sensor1")
+	require.NoError(t, err)
+	assert.Equal(t, "42", entry.Value)
 
-	// 다른 타입 후속 쓰기: ErrTypeMismatch.
-	err = store.Set(context.Background(), "sensor1", "broken")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrTypeMismatch)
+	// 다른 타입 후속 쓰기: 거부되지 않고 string 으로 변환되어 저장.
+	require.NoError(t, store.Set(context.Background(), "sensor1", "broken"))
+	entry, err = store.Get(context.Background(), "sensor1")
+	require.NoError(t, err)
+	assert.Equal(t, "broken", entry.Value)
 
-	// 등록 메타 변경 없음.
+	// 등록 메타: data_type=string 유지.
 	snap = u.StaticKeysSnapshot()
-	assert.Equal(t, DataTypeInt, snap["sensor1"].DataType,
-		"data_type 은 첫 쓰기 시 결정된 int 로 영구 고정")
+	assert.Equal(t, DataTypeString, snap["sensor1"].DataType,
+		"data_type 은 string 으로 고정")
 }
 
 // =============================================================================

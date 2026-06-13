@@ -1938,6 +1938,25 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           label: 'TTL',
           description: '만료 시간 (예: 5m, 1h, 24h). 비워두면 만료 없음',
         },
+        {
+          name: 'data_type',
+          type: 'select',
+          label: '데이터 타입',
+          options: ['', 'int', 'float', 'string', 'boolean', 'bytes', 'json'],
+          description:
+            '기록되는 키를 특정 값 타입으로 고정합니다. 비워두면 동적 키는 문자열(string)로 저장됩니다. 숫자 차트/집계가 필요하면 int/float 등을 지정하세요.',
+          advanced: true,
+        },
+        {
+          name: 'tags',
+          type: 'key_value_map',
+          label: '태그',
+          description:
+            '기록되는 키에 부여할 태그(키-값). 태그 키는 영문/숫자/밑줄/하이픈, 값은 문자열. Store 탭에서 태그로 검색·필터할 수 있습니다.',
+          keyLabel: '태그 키',
+          valueLabel: '값',
+          advanced: true,
+        },
       ],
     },
     defaultPorts: [
