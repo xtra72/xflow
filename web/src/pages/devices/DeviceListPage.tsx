@@ -602,13 +602,13 @@ function DeviceCell({ column, device }: { column: DeviceListColumnKey; device: D
         </td>
       );
     case 'id': {
-      // uid 우선, UUID 가 길 수 있어 truncate + 전체값 툴팁
+      // uid 우선. 공간이 남으면 전체 표시 — 잘라내지 않고 한 줄로 노출(전체값 툴팁 유지).
       const idValue = device.uid || device.id;
       return (
         <td className="px-4 py-3">
           <span
             title={idValue}
-            className="block max-w-[160px] truncate font-mono text-xs text-(--color-text-muted)"
+            className="block whitespace-nowrap font-mono text-xs text-(--color-text-muted)"
           >
             {idValue || '-'}
           </span>

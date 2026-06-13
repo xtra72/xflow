@@ -1,11 +1,9 @@
 // 디바이스 상세 패널 컴포넌트.
 // 디바이스 상태 속성, 명령 실행, 메타데이터 편집 기능을 제공한다.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  ChevronDown,
-  ChevronRight,
   ChevronsUpDown,
   Clock,
   Droplets,
@@ -176,15 +174,6 @@ function formatTimestamp(ms: number): string {
   });
 }
 
-/** 속성 맵을 "키=값" 요약 문자열로 직렬화 (펼치기 전 표시용). */
-function summarizeProperties(properties: Record<string, unknown>, protocol: string, type: string): string {
-  const entries = Object.entries(properties ?? {});
-  if (entries.length === 0) return '-';
-  return entries
-    .map(([k, v]) => `${getPropertyLabel(k, protocol, type)}=${formatPropertyValue(k, v)}`)
-    .join(', ');
-}
-
 function DeviceHistorySection({
   deviceId,
   protocol,
@@ -200,6 +189,22 @@ function DeviceHistorySection({
   // 이력 비활성(404) 안내. 그 외 오류는 일반 오류 안내.
   const disabled = error instanceof APIError && error.status === 404;
   const entries: DeviceHistoryEntry[] = data?.entries ?? [];
+
+  // 속성을 개별 컬럼으로 분리한다. 컬럼 키 집합은 최신 엔트리 기준 순서로
+  // 합집합을 구성한다(최신 엔트리에 없는 옛 키도 뒤에 추가해 누락 방지).
+  const propColumns = useMemo<string[]>(() => {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    for (const e of entries) {
+      for (const k of Object.keys(e.properties ?? {})) {
+        if (!seen.has(k)) {
+          seen.add(k);
+          ordered.push(k);
+        }
+      }
+    }
+    return ordered;
+  }, [entries]);
 
   return (
     <div className="mt-6 border-t border-(--color-border-default) pt-4">
@@ -249,17 +254,22 @@ function DeviceHistorySection({
           <table className="min-w-full divide-y divide-(--color-border-default)">
             <thead className="bg-(--color-bg-primary)">
               <tr>
-                <th className="w-8 px-3 py-2" />
-                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
                   시각
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
                   상태
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
-                  속성
-                </th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                {/* 속성을 키별 개별 컬럼으로 분리 */}
+                {propColumns.map((k) => (
+                  <th
+                    key={k}
+                    className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider"
+                  >
+                    {getPropertyLabel(k, protocol, type)}
+                  </th>
+                ))}
+                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
                   최근 통신
                 </th>
               </tr>
@@ -269,8 +279,7 @@ function DeviceHistorySection({
                 <HistoryRow
                   key={`${entry.timestamp}-${idx}`}
                   entry={entry}
-                  protocol={protocol}
-                  type={type}
+                  propColumns={propColumns}
                 />
               ))}
             </tbody>
@@ -281,78 +290,49 @@ function DeviceHistorySection({
   );
 }
 
-/** 이력 단일 행 (긴 속성은 펼치기 토글). */
+/** 이력 단일 행. 속성은 propColumns 순서대로 개별 셀로 표시한다. */
 function HistoryRow({
   entry,
-  protocol,
-  type,
+  propColumns,
 }: {
   entry: DeviceHistoryEntry;
-  protocol: string;
-  type: string;
+  propColumns: string[];
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const propEntries = Object.entries(entry.properties ?? {});
-  const summary = summarizeProperties(entry.properties ?? {}, protocol, type);
-  // 요약이 길거나 속성이 많으면 펼치기 제공
-  const expandable = propEntries.length > 0;
+  const props = entry.properties ?? {};
 
   return (
-    <>
-      <tr
-        className={cn('align-top', expandable && 'cursor-pointer hover:bg-(--color-bg-elevated)')}
-        onClick={expandable ? () => setExpanded((v) => !v) : undefined}
-      >
-        <td className="px-3 py-2 text-gray-400">
-          {expandable ? (
-            expanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
-            )
-          ) : null}
+    <tr className="hover:bg-(--color-bg-elevated)">
+      <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
+        <span className="inline-flex items-center gap-1">
+          <Clock className="h-3 w-3 text-gray-400" />
+          {formatTimestamp(entry.timestamp)}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2">
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-[10px] font-medium',
+            entry.online
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+          )}
+        >
+          {entry.online ? '온라인' : '오프라인'}
+        </span>
+      </td>
+      {/* 속성별 개별 셀. 해당 엔트리에 키가 없으면 '-'. */}
+      {propColumns.map((k) => (
+        <td
+          key={k}
+          className="whitespace-nowrap px-3 py-2 text-xs font-medium text-(--color-text-primary)"
+        >
+          {k in props ? formatPropertyValue(k, props[k]) : '-'}
         </td>
-        <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
-          <span className="inline-flex items-center gap-1">
-            <Clock className="h-3 w-3 text-gray-400" />
-            {formatTimestamp(entry.timestamp)}
-          </span>
-        </td>
-        <td className="whitespace-nowrap px-3 py-2">
-          <span
-            className={cn(
-              'rounded-full px-2 py-0.5 text-[10px] font-medium',
-              entry.online
-                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
-            )}
-          >
-            {entry.online ? '온라인' : '오프라인'}
-          </span>
-        </td>
-        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-          {!expanded && <span className="block max-w-md truncate">{summary}</span>}
-        </td>
-        <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
-          {formatTimestamp(entry.last_seen)}
-        </td>
-      </tr>
-      {expandable && expanded && (
-        <tr className="bg-(--color-bg-sunken)">
-          <td />
-          <td colSpan={4} className="px-3 py-2">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 md:grid-cols-4">
-              {propEntries.map(([k, v]) => (
-                <div key={k} className="text-xs">
-                  <span className="text-(--color-text-muted)">{getPropertyLabel(k, protocol, type)}: </span>
-                  <span className="font-medium text-(--color-text-primary)">{formatPropertyValue(k, v)}</span>
-                </div>
-              ))}
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
+      ))}
+      <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
+        {formatTimestamp(entry.last_seen)}
+      </td>
+    </tr>
   );
 }
 

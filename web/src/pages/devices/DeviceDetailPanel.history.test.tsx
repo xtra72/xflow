@@ -95,6 +95,26 @@ describe('DeviceDetailPanel 이력 섹션', () => {
     expect(screen.getByText('오프라인')).toBeInTheDocument();
   });
 
+  it('속성을 개별 컬럼(셀)으로 분리해 표시한다 (요약 문자열 아님)', () => {
+    useDeviceHistoryMock.mockReturnValue({
+      data: {
+        device_id: 'uuid-1',
+        count: 1,
+        entries: [makeEntry({ properties: { note_x: 'abc123' } })],
+      },
+      isLoading: false,
+      error: null,
+      isFetching: false,
+    });
+
+    render(<DeviceDetailPanel deviceId="uuid-1" />);
+
+    // 값이 개별 셀로 렌더된다.
+    expect(screen.getByText('abc123')).toBeInTheDocument();
+    // 이전의 "키=값, 키=값" 요약 문자열은 더 이상 없다.
+    expect(screen.queryByText(/note_x=abc123/)).toBeNull();
+  });
+
   it('빈 이력이면 "최근 데이터 없음" 을 표시한다', () => {
     useDeviceHistoryMock.mockReturnValue({
       data: { device_id: 'uuid-1', count: 0, entries: [] },
