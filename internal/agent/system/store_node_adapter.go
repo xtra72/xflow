@@ -84,21 +84,31 @@ type StoreWriteMeta struct {
 	// DataType 은 빈 문자열이 아니면 키를 그 data_type 으로 등록/고정한다.
 	// 6종 enum(int/float/string/boolean/bytes/json) 검증은 호출자(노드 Configure)의 책임이다.
 	DataType string
-	// Tags 는 비어있지 않으면 키에 태그를 부여한다 (metric_type 은 기존값/unknown 유지).
+	// MetricType 은 빈 문자열이 아니면 키의 metric_type 으로 적용한다.
+	// 빈 문자열이면 기존 metric_type(또는 unknown)을 보존한다 — metric_type 변경 안 함.
+	// 정규식 ^[a-zA-Z0-9_-]+$ 검증은 호출자(노드 Configure/Process)의 책임이며,
+	// 본 어댑터는 전달된 값을 신뢰하고 SetKeyMeta 로 적용한다.
+	MetricType string
+	// Tags 는 비어있지 않으면 키에 태그를 부여한다.
 	Tags map[string]string
 	// TTL 은 0 보다 크면 값 쓰기에 TTL 을 적용한다.
 	TTL time.Duration
 }
 
-// SetWithMeta 는 data_type / tags 를 지정하여 값을 기록한다 (node.StoreMetaWriter 구현).
+// SetWithMeta 는 data_type / metric_type / tags 를 지정하여 값을 기록한다 (node.StoreMetaWriter 구현).
 //
 // 처리 순서 (네임스페이스 일관성 보존):
 //  1. DataType 지정 시 → 값 쓰기 전에 StoreAgent.SetKeyDataType 으로 키를 그 타입으로 등록/고정한다.
 //     이렇게 하면 이어지는 값 쓰기에서 명시 타입으로 검증되고 coercion(동적 string 변환)이 우회된다.
 //  2. 값 쓰기 → 일반 Set/SetWithTTL 경로(NamespacedStore)를 그대로 사용한다.
 //     NamespacedStore 가 네임스페이스 접두사·gatekeeper 검증·coercion 을 일관되게 처리한다.
-//  3. Tags 지정 시 → StoreAgent.SetKeyMeta 로 태그를 적용한다 (metric_type 은 기존/unknown 보존).
-//     값 쓰기로 키가 확실히 등록된 뒤 적용하므로 태그가 유실되지 않는다.
+//  3. MetricType 또는 Tags 지정 시 → StoreAgent.SetKeyMeta 로 metric_type + tags 를 한 번에 적용한다.
+//     값 쓰기로 키가 확실히 등록된 뒤 적용하므로 메타가 유실되지 않는다.
+//     - MetricType 이 비어있지 않으면 그 값으로 적용한다.
+//     - MetricType 이 비어있으면 기존 metric_type(또는 unknown)을 조회하여 보존한다
+//     (SetKeyMeta 가 metric_type 을 항상 덮어쓰므로 기존값을 다시 넘겨야 한다).
+//     - Tags 는 SetKeyMeta 가 항상 덮어쓰므로, MetricType 만 지정하고 Tags 가 비어있으면
+//     기존 tags 를 보존하기 위해 현재 tags 를 조회하여 그대로 다시 넘긴다.
 //
 // agentResolver 가 없으면(NewNodeStoreAdapter 등으로 생성된 경우) 메타 적용을 건너뛰고
 // 일반 쓰기로 폴백하여 하위 호환을 보장한다.
@@ -123,17 +133,35 @@ func (a *NodeStoreAdapter) SetWithMeta(ctx context.Context, key string, value an
 		return err
 	}
 
-	// 3) Tags 지정 시 태그 적용 (metric_type 은 빈 문자열 → 기존/unknown normalize).
-	if len(opts.Tags) > 0 && ag != nil {
-		// 기존 metric_type 을 보존하기 위해 현재 메타를 조회하여 그대로 다시 넘긴다.
-		// SetKeyMeta 는 metric_type 을 항상 덮어쓰므로, 기존값(또는 unknown)을 유지해야
-		// tags 부여가 metric_type 을 망가뜨리지 않는다.
-		metricType := MetricTypeUnknown
-		if meta, ok := ag.StaticKeyMetaFor(key); ok && meta.MetricType != "" {
-			metricType = meta.MetricType
+	// 3) MetricType 또는 Tags 지정 시 metric_type + tags 를 한 번에 적용한다.
+	//    SetKeyMeta 는 metric_type 과 tags 를 모두 덮어쓰므로, 지정되지 않은 항목은
+	//    기존값을 조회하여 보존한다 (PRESERVE).
+	if opts.MetricType != "" || len(opts.Tags) > 0 {
+		if ag != nil {
+			metricType := opts.MetricType
+			tags := opts.Tags
+
+			// 지정되지 않은 항목 보존을 위해 기존 메타가 필요한 경우에만 조회한다.
+			if metricType == "" || tags == nil {
+				if meta, ok := ag.StaticKeyMetaFor(key); ok {
+					if metricType == "" && meta.MetricType != "" {
+						// MetricType 미지정 → 기존 metric_type 보존.
+						metricType = meta.MetricType
+					}
+					if tags == nil {
+						// Tags 미지정 → 기존 tags 보존.
+						tags = meta.Tags
+					}
+				}
+			}
+
+			// metric_type 미지정이고 기존값도 없으면 unknown 으로 normalize.
+			if metricType == "" {
+				metricType = MetricTypeUnknown
+			}
+			// StoreAgent.SetKeyMeta 는 검증 없이 적용한다 (tag key / metric_type 검증은 노드 Configure/Process 의 책임).
+			ag.SetKeyMeta(key, metricType, tags)
 		}
-		// StoreAgent.SetKeyMeta 는 검증 없이 적용한다 (tag key 검증은 노드 Configure 의 책임).
-		ag.SetKeyMeta(key, metricType, opts.Tags)
 	}
 
 	return nil

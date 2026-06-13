@@ -35,6 +35,9 @@ type StoreReader interface {
 type StoreWriteMeta struct {
 	// DataType 은 빈 문자열이 아니면 기록되는 키를 그 data_type 으로 등록/고정한다.
 	DataType string
+	// MetricType 은 빈 문자열이 아니면 기록되는 키의 metric_type 으로 적용한다.
+	// 빈 문자열이면 기존 metric_type(또는 unknown)을 보존한다.
+	MetricType string
 	// Tags 는 비어있지 않으면 기록되는 키에 태그를 부여한다.
 	Tags map[string]string
 	// TTL 은 0 보다 크면 값 쓰기에 TTL 을 적용한다.
@@ -78,7 +81,8 @@ type StoreWriteNode struct {
 	namespace   string            // Store 네임스페이스
 	ttl         time.Duration     // TTL (0이면 만료 없음)
 	dataType    string            // 기록되는 키에 부여할 data_type (빈 문자열이면 미지정)
-	tags        map[string]string // 기록되는 키에 부여할 태그 (nil/빈 맵이면 미지정)
+	metricType  string            // 기록되는 키에 부여할 metric_type. 리터럴 또는 `$.` 경로 (빈 문자열이면 미지정)
+	tags        map[string]string // 기록되는 키에 부여할 태그. 값은 리터럴 또는 `$.` 경로 (nil/빈 맵이면 미지정)
 }
 
 // validDataTypes 는 store-write 노드 config 의 data_type 으로 허용되는 6종 enum 이다.
@@ -94,6 +98,10 @@ var validDataTypes = map[string]bool{
 
 // tagKeyPattern 은 태그 key 로 허용되는 문자 패턴이다 (system 계층과 동일).
 var tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// metricTypePattern 은 metric_type 으로 허용되는 문자 패턴이다 (system 계층의 metricTypePattern 과 동일).
+// metric_type 이 리터럴일 때 Configure 시점에, `$.` 경로일 때 해석 결과를 Process 시점에 검증한다.
+var metricTypePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // NewStoreWriteNode 는 새로운 StoreWriteNode를 생성하는 팩토리 함수이다.
 func NewStoreWriteNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
@@ -246,9 +254,25 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
+	// metric_type (선택): 기록되는 키에 부여할 metric_type.
+	// 값은 리터럴 또는 `$.` 경로(메시지 필드 참조)이다. `$.` 로 시작하면 Process 시점에
+	// resolveTemplateExpr 로 메시지에서 해석하고, 아니면 리터럴 그대로 사용한다.
+	// 리터럴인 경우에만 Configure 시점에 정규식(^[a-zA-Z0-9_-]+$)을 검증한다.
+	// (`$.` 경로의 해석 결과 검증은 Process 시점의 책임이다.)
+	if v, ok := config["metric_type"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			if !strings.HasPrefix(s, "$.") && !metricTypePattern.MatchString(s) {
+				return fmt.Errorf(
+					"store-write: invalid metric_type %q (must match ^[a-zA-Z0-9_-]+$ or be a $.-path)", s)
+			}
+			n.metricType = s
+		}
+	}
+
 	// tags (선택): 기록되는 키에 부여할 key-value 태그.
 	// map[string]any 로 들어온 값을 map[string]string 으로 정규화하며,
-	// key 는 ^[a-zA-Z0-9_-]+$ 를 만족해야 하고 value 는 문자열이어야 한다.
+	// key(태그 이름)는 ^[a-zA-Z0-9_-]+$ 를 만족해야 하고 value 는 문자열이어야 한다.
+	// value 는 리터럴 또는 `$.` 경로이며, 해석은 Process 시점에 이뤄진다 (여기서는 raw 문자열로 보관).
 	if v, ok := config["tags"]; ok {
 		if raw, ok := v.(map[string]any); ok && len(raw) > 0 {
 			parsed := make(map[string]string, len(raw))
@@ -297,15 +321,22 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 		value = msg.Payload().ToMap()
 	}
 
+	// metric_type / tags 를 메시지 단위로 해석한다.
+	// 리터럴은 그대로, `$.` 경로는 resolveTemplateExpr 로 메시지에서 해석한다.
+	// 해석 실패(경로 없음 등)나 검증 위반(metric_type 정규식)은 해당 항목만 생략하고 계속한다.
+	resolvedMetric := n.resolveMetricType(msg)
+	resolvedTags := n.resolveTags(msg)
+
 	// Store에 기록.
-	// data_type 또는 tags 가 설정됐고 store 가 StoreMetaWriter 를 만족하면 SetWithMeta 를 사용하여
-	// 메타데이터를 함께 적용한다. 그 외에는 기존 Set/SetWithTTL 경로로 폴백한다 (하위 호환).
-	useMeta := n.dataType != "" || len(n.tags) > 0
+	// data_type / metric_type / tags 중 하나라도 설정됐고 store 가 StoreMetaWriter 를 만족하면
+	// SetWithMeta 를 사용하여 메타데이터를 함께 적용한다. 그 외에는 기존 Set/SetWithTTL 경로로 폴백한다 (하위 호환).
+	useMeta := n.dataType != "" || resolvedMetric != "" || len(resolvedTags) > 0
 	if mw, ok := n.store.(StoreMetaWriter); ok && useMeta {
 		opts := StoreWriteMeta{
-			DataType: n.dataType,
-			Tags:     n.tags,
-			TTL:      n.ttl,
+			DataType:   n.dataType,
+			MetricType: resolvedMetric,
+			Tags:       resolvedTags,
+			TTL:        n.ttl,
 		}
 		if err := mw.SetWithMeta(ctx, key, value, opts); err != nil {
 			return nil, fmt.Errorf("store-write: %w", err)
@@ -322,6 +353,80 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 
 	// pass-through: 원본 메시지를 그대로 반환
 	return []message.Message{msg}, nil
+}
+
+// resolveMetricType 은 config 의 metric_type 을 메시지 단위로 해석한다.
+//
+// 동작:
+//   - n.metricType 가 비어있으면 "" 반환 (metric_type 미설정 — 어댑터가 기존값/unknown 보존).
+//   - `$.` prefix 면 resolveTemplateExpr 로 메시지에서 값을 해석하여 문자열화한다.
+//     해석 실패(경로 없음 등)나 해석 결과가 빈 문자열이면 "" 반환(생략).
+//   - 그 외는 리터럴 그대로.
+//
+// 정책: 해석된 최종 값이 metric_type 정규식(^[a-zA-Z0-9_-]+$)을 위반하면 "" 반환(해당 metric 생략).
+// 리터럴은 Configure 에서 이미 검증되었으나, `$.` 경로 해석 결과는 여기서 다시 검증한다.
+func (n *StoreWriteNode) resolveMetricType(msg message.Message) string {
+	if n.metricType == "" {
+		return ""
+	}
+
+	var resolved string
+	if strings.HasPrefix(n.metricType, "$.") {
+		v, err := resolveTemplateExpr(n.metricType, msg)
+		if err != nil {
+			// 해석 실패 → metric_type 생략 (해당 항목만 건너뛰고 계속).
+			return ""
+		}
+		resolved = metaToString(v)
+	} else {
+		resolved = n.metricType
+	}
+
+	if resolved == "" || !metricTypePattern.MatchString(resolved) {
+		// 빈 값 또는 정규식 위반 → 생략.
+		return ""
+	}
+	return resolved
+}
+
+// resolveTags 는 config 의 tags(값이 리터럴 또는 `$.` 경로)를 메시지 단위로 해석한다.
+//
+// 각 값에 대해:
+//   - `$.` prefix 면 resolveTemplateExpr 로 메시지에서 해석하여 문자열화한다.
+//     해석 실패(경로 없음 등)면 해당 태그만 생략하고 계속한다.
+//   - 그 외는 리터럴 그대로.
+//
+// 키(태그 이름)는 항상 리터럴이며 Configure 에서 이미 검증되었다.
+// 해석 결과가 빈 맵이면 nil 을 반환하여 어댑터가 tags 미설정으로 처리하게 한다.
+func (n *StoreWriteNode) resolveTags(msg message.Message) map[string]string {
+	if len(n.tags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(n.tags))
+	for tk, tv := range n.tags {
+		if strings.HasPrefix(tv, "$.") {
+			v, err := resolveTemplateExpr(tv, msg)
+			if err != nil {
+				// 해석 실패 → 해당 태그만 생략하고 계속.
+				continue
+			}
+			out[tk] = metaToString(v)
+			continue
+		}
+		// 리터럴 값은 그대로.
+		out[tk] = tv
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// metaToString 은 `$.` 경로 해석 결과를 metric_type / tag 값으로 쓰기 위해 문자열화한다.
+// influxdb-write 가 tag 값에 쓰는 influxToString 과 동일한 규약(오브젝트는 JSON, 스칼라는 fmt,
+// nil 은 빈 문자열)을 사용하여 일관성을 유지한다. 숫자/불리언도 문자열로 변환된다.
+func metaToString(v any) string {
+	return influxToString(v)
 }
 
 // resolveKeyTemplate 는 {expr} 플레이스홀더를 메시지 값으로 치환한다.
