@@ -7,7 +7,7 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Tag, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -29,6 +29,7 @@ import * as agentService from '@/services/api/agentService';
 import {
   resetAllStoreKeys,
   resetStoreKey,
+  useSetStoreKeyMeta,
   useStoreKeysWithTags,
   useStoreTagPairs,
   type DataType,
@@ -56,6 +57,10 @@ import {
   PromoteToStaticDialog,
   type PromoteToStaticPayload,
 } from '@/components/property/PromoteToStaticDialog';
+import {
+  EditKeyMetaDialog,
+  type EditKeyMetaPayload,
+} from '@/components/property/EditKeyMetaDialog';
 import {
   TagFilterChips,
   matchesTagFilter,
@@ -2285,6 +2290,18 @@ function extractEntryTags(
   return Object.keys(out).length > 0 ? out : null;
 }
 
+/**
+ * 엔트리의 `metric_type` 필드를 추출한다.
+ * 백엔드는 모든 엔트리에 metric_type 을 포함하며(동적 키는 "unknown"),
+ * 누락/비문자열인 경우 빈 문자열을 반환해 호출자가 "unknown" 으로 표시하도록 한다.
+ *
+ * @spec SPEC-STORE-003 v0.4.0
+ */
+function extractEntryMetricType(entry: Record<string, unknown>): string {
+  const raw = entry.metric_type;
+  return typeof raw === 'string' ? raw : '';
+}
+
 function StoreEntryRow({
   entry,
   maxHistorySize,
@@ -2293,6 +2310,7 @@ function StoreEntryRow({
   isStatic,
   onPromote,
   onReset,
+  onEditMeta,
   readOnly = false,
 }: {
   entry: Record<string, unknown>;
@@ -2319,6 +2337,12 @@ function StoreEntryRow({
    * @spec SPEC-STORE-003
    */
   onReset: (key: string) => void;
+  /**
+   * 타입(metric_type)/태그 편집 핸들러. 정적/동적 모두에서 노출되며 클릭 시
+   * 부모가 편집 다이얼로그를 띄운다.
+   * @spec SPEC-STORE-003 v0.4.0
+   */
+  onEditMeta: (key: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -2407,6 +2431,22 @@ function StoreEntryRow({
     [entry.key, onReset],
   );
 
+  // 타입/태그 편집 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
+  // @spec SPEC-STORE-003 v0.4.0
+  const handleEditMetaClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onEditMeta(entry.key as string);
+    },
+    [entry.key, onEditMeta],
+  );
+
+  // 모든 엔트리가 metric_type 을 갖는다 (동적 키는 "unknown"). 빈 값은 "unknown" 표시.
+  // @spec SPEC-STORE-003 v0.4.0
+  const metricType = extractEntryMetricType(entry);
+  const metricTypeLabel = metricType || 'unknown';
+  const isUnknownMetric = metricTypeLabel === 'unknown';
+
   return (
     <>
       <tr
@@ -2421,25 +2461,40 @@ function StoreEntryRow({
             {entry.key as string}
           </span>
         </td>
-        {/* 타입 컬럼: 정적/동적 배지만 표시 (SPEC-STORE-003).
+        {/* 타입 컬럼: 정적/동적 배지 + 메트릭 타입(metric_type) 배지 (SPEC-STORE-003 v0.4.0).
+            모든 엔트리에 metric_type 이 노출되며, 동적 키 등은 "unknown" 으로 표시된다.
             액션 버튼은 마지막 "액션" 컬럼으로 분리하였다. */}
         <td className="px-3 py-2 text-xs">
-          {isStatic ? (
+          <div className="flex flex-col items-start gap-1">
+            {isStatic ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                title="설정에 등록된 정적 키"
+              >
+                <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+                정적
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                title="설정에 없는 동적 키"
+              >
+                동적
+              </span>
+            )}
+            {/* 메트릭 타입 배지. unknown 은 중립 톤, 그 외는 인디고 톤으로 강조. */}
             <span
-              className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-              title="설정에 등록된 정적 키"
+              className={cn(
+                'inline-flex max-w-[120px] items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium',
+                isUnknownMetric
+                  ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
+                  : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
+              )}
+              title={`메트릭 타입: ${metricTypeLabel}`}
             >
-              <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-              정적
+              <span className="truncate">{metricTypeLabel}</span>
             </span>
-          ) : (
-            <span
-              className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-              title="설정에 없는 동적 키"
-            >
-              동적
-            </span>
-          )}
+          </div>
         </td>
         <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
           <span
@@ -2486,11 +2541,22 @@ function StoreEntryRow({
         <td className="px-3 py-2 text-xs text-(--color-text-muted)" title={entry.updated_at as string}>
           {timeAgo}
         </td>
-        {/* 액션 컬럼 (SPEC-STORE-003): 정적으로 변환 + 초기화 버튼.
-            동적 키: [정적으로 변환] [초기화]
-            정적 키: [초기화] */}
+        {/* 액션 컬럼 (SPEC-STORE-003): 타입/태그 편집 + 정적으로 변환 + 초기화 버튼.
+            동적 키: [편집] [정적으로 변환] [초기화]
+            정적 키: [편집] [초기화] */}
         <td className="px-3 py-2 text-right text-xs">
           <span className="inline-flex items-center gap-1">
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={handleEditMetaClick}
+                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400"
+                title="타입 / 태그 편집"
+                aria-label={`${entry.key as string} 키의 타입/태그 편집`}
+              >
+                <Tag className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
             {!readOnly && !isStatic && (
               <button
                 type="button"
@@ -2573,11 +2639,16 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const remote = isRemoteTarget(target);
   const { data: agent, isLoading } = useAgentDetailTarget(target, agentId, 'full');
   const configureAgent = useConfigureAgent();
+  const setKeyMeta = useSetStoreKeyMeta();
   const addNotification = useUIStore((s) => s.addNotification);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // --- 데이터 뷰어 모달 상태 ---
   const [modalOpen, setModalOpen] = useState(false);
+
+  // --- 타입/태그 편집 모달 상태 (SPEC-STORE-003 v0.4.0) ---
+  // 편집 대상 키 이름. null 이면 모달 닫힘.
+  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   // --- 동적→정적 변환 모달 상태 (SPEC-STORE-003) ---
   // 변환 대상 키 이름. null 이면 모달 닫힘.
@@ -2600,6 +2671,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   // --- 태그 필터 상태 (SPEC-STORE-003) ---
   // "tagKey=tagValue" 문자열 집합. AND 로직 (모두 일치하는 엔트리만 표시).
   const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set());
+
+  // --- 메트릭 타입 필터 상태 (SPEC-STORE-003 v0.4.0) ---
+  // 빈 문자열 = 전체. 엔트리에 모두 metric_type 이 포함되므로 클라이언트 측 필터.
+  const [selectedMetricType, setSelectedMetricType] = useState<string>('');
 
   // 태그 쌍 목록 조회 (구버전 서버/태그 없음 은 빈 배열로 폴백).
   const tagPairsQuery = useStoreTagPairs(agentName);
@@ -2644,17 +2719,43 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
   const maxHistorySize = (agent?.state as { max_history_size?: number } | undefined)?.max_history_size ?? 0;
 
-  // 태그 필터 적용 (AND 로직). 선택이 없으면 원본 그대로.
+  // 사용 중인 메트릭 타입 목록 (필터 셀렉트 옵션). 빈 값은 "unknown" 으로 정규화.
+  // 필터링 전 전체 엔트리 기준으로 계산하여, 필터 적용 후에도 옵션이 사라지지 않게 한다.
+  // @spec SPEC-STORE-003 v0.4.0
+  const metricTypeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of allEntries) {
+      set.add(extractEntryMetricType(e) || 'unknown');
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allEntries]);
+
+  // 태그 + 메트릭 타입 필터 적용 (AND 로직). 선택이 없으면 원본 그대로.
+  // @spec SPEC-STORE-003 v0.4.0
   const entries = useMemo(() => {
-    if (selectedTags.size === 0) return allEntries;
-    return allEntries.filter((e) => matchesTagFilter(extractEntryTags(e), selectedTags));
-  }, [allEntries, selectedTags]);
+    const tagActive = selectedTags.size > 0;
+    const metricActive = selectedMetricType !== '';
+    if (!tagActive && !metricActive) return allEntries;
+    return allEntries.filter((e) => {
+      if (tagActive && !matchesTagFilter(extractEntryTags(e), selectedTags)) {
+        return false;
+      }
+      if (metricActive) {
+        const mt = extractEntryMetricType(e) || 'unknown';
+        if (mt !== selectedMetricType) return false;
+      }
+      return true;
+    });
+  }, [allEntries, selectedTags, selectedMetricType]);
 
   // 태그 컬럼 표시 여부: 필터링 전 전체 엔트리 중 하나라도 태그가 있으면 표시.
   // (필터링 후 엔트리만 기준으로 하면, 필터 해제 시 컬럼이 사라지는 UX 문제가 발생)
   const showTagsColumn = useMemo(() => {
     return allEntries.some((e) => extractEntryTags(e) !== null);
   }, [allEntries]);
+
+  // 활성 필터 존재 여부 (빈 결과 안내 문구 분기에 사용).
+  const hasActiveFilter = selectedTags.size > 0 || selectedMetricType !== '';
 
   // --- 페이지네이션 파생 값 ---
   // 현재 페이지가 총 페이지 수를 초과할 때 (예: 새로고침 후 항목이 줄어든 경우)
@@ -2688,6 +2789,16 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     setSelectedTags(new Set());
     setPage(1);
   }, []);
+
+  // --- 메트릭 타입 필터 핸들러 (SPEC-STORE-003 v0.4.0) ---
+  const handleMetricTypeFilterChange = useCallback(
+    (e: ChangeEvent<HTMLSelectElement>) => {
+      setSelectedMetricType(e.target.value);
+      // 필터 변경 시 1페이지로 리셋.
+      setPage(1);
+    },
+    [],
+  );
 
   // --- 데이터 뷰어 모달용 데이터 소스 (Store 전용) ---
   // agentName 이 없는 에지 케이스 (이전 콜사이트 호환) 에서는 데이터 소스를 생성하지 않고
@@ -2832,6 +2943,71 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     const obj = storeKeyObjects.find((o) => o.key === promotingKey);
     return obj?.data_type;
   }, [promotingKey, storeKeyObjects]);
+
+  // --- 타입/태그 편집 핸들러 (SPEC-STORE-003 v0.4.0) ---
+
+  // 편집 모달 트리거 / 닫기.
+  const handleOpenEditMeta = useCallback((key: string) => {
+    setEditingKey(key);
+  }, []);
+
+  const handleCloseEditMeta = useCallback(() => {
+    // 진행 중에는 무시 (다이얼로그 자체도 가드하지만 명시적 경로도 안전하게 가드).
+    if (setKeyMeta.isPending) return;
+    setEditingKey(null);
+  }, [setKeyMeta.isPending]);
+
+  // 편집 대상 엔트리의 현재 metric_type / tags 를 사전 채움 값으로 제공한다.
+  // State 엔트리(allEntries)를 단일 출처로 사용한다.
+  const editingEntry = useMemo(() => {
+    if (!editingKey) return undefined;
+    return allEntries.find((e) => (e.key as string) === editingKey);
+  }, [editingKey, allEntries]);
+
+  const editingInitialMetricType = useMemo(
+    () => (editingEntry ? extractEntryMetricType(editingEntry) : ''),
+    [editingEntry],
+  );
+
+  const editingInitialTags = useMemo(
+    () => (editingEntry ? extractEntryTags(editingEntry) ?? {} : {}),
+    [editingEntry],
+  );
+
+  /**
+   * 타입/태그 편집 확정 — PUT /store/{name}/keys/{key}/meta.
+   * tags 는 전체 교체이며, metric_type 빈 값은 백엔드가 "unknown" 으로 처리한다.
+   * 성공 시 훅이 store 키 캐시를, 여기서 추가로 agents(State 엔트리) 캐시를 invalidate 한다.
+   *
+   * @spec SPEC-STORE-003 v0.4.0
+   */
+  const handleEditMetaConfirm = useCallback(
+    async (payload: EditKeyMetaPayload) => {
+      if (!editingKey || !agentName) return;
+      try {
+        await setKeyMeta.mutateAsync({
+          agentName,
+          key: editingKey,
+          meta: { metric_type: payload.metric_type, tags: payload.tags },
+        });
+        addNotification({
+          type: 'success',
+          message: `'${editingKey}' 타입/태그가 저장되었습니다`,
+        });
+        setEditingKey(null);
+        // State 엔트리(metric_type/tags 표시 출처)를 즉시 갱신.
+        await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
+      } catch (err) {
+        // 다이얼로그를 닫지 않고 재시도 가능하게 한다.
+        const mapped = mapStoreError(err);
+        addNotification({
+          type: 'error',
+          message: `저장 실패: ${mapped.userMessage}`,
+        });
+      }
+    },
+    [editingKey, agentName, setKeyMeta, addNotification, queryClient, agentId],
+  );
 
   // --- 초기화 핸들러 (SPEC-STORE-003) ---
 
@@ -2991,6 +3167,46 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         </div>
       </div>
 
+      {/* 메트릭 타입 필터 (SPEC-STORE-003 v0.4.0): 사용 중인 타입이 2종 이상일 때만 노출.
+          (단일 종류뿐이면 필터 의미가 없으므로 숨겨 노이즈를 줄인다.) */}
+      {metricTypeOptions.length > 1 && (
+        <div className="flex items-center gap-2 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+          <label
+            htmlFor="store-metric-type-filter"
+            className="flex items-center gap-1.5 text-xs font-medium text-(--color-text-muted)"
+          >
+            <Tag className="h-3.5 w-3.5" aria-hidden="true" />
+            메트릭 타입
+          </label>
+          <select
+            id="store-metric-type-filter"
+            value={selectedMetricType}
+            onChange={handleMetricTypeFilterChange}
+            data-testid="store-metric-type-filter"
+            className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">전체</option>
+            {metricTypeOptions.map((mt) => (
+              <option key={mt} value={mt}>
+                {mt}
+              </option>
+            ))}
+          </select>
+          {selectedMetricType !== '' && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedMetricType('');
+                setPage(1);
+              }}
+              className="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              해제
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 태그 필터 섹션 (SPEC-STORE-003): 태그 쌍이 하나도 없으면 전체를 숨긴다. */}
       {tagPairs.length > 0 && (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
@@ -3008,7 +3224,9 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-8 text-center text-sm text-(--color-text-muted)">
           {allEntries.length === 0
             ? '저장된 데이터가 없습니다'
-            : '선택한 태그와 일치하는 항목이 없습니다'}
+            : hasActiveFilter
+              ? '선택한 필터와 일치하는 항목이 없습니다'
+              : '선택한 태그와 일치하는 항목이 없습니다'}
         </div>
       ) : (
         <>
@@ -3044,6 +3262,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                     isStatic={staticKeyNames.has(entry.key as string)}
                     onPromote={handleOpenPromote}
                     onReset={handleOpenReset}
+                    onEditMeta={handleOpenEditMeta}
                     readOnly={remote}
                   />
                 ))}
@@ -3097,6 +3316,18 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         onConfirm={handlePromoteConfirm}
         isSubmitting={configureAgent.isPending}
         defaultDataType={promotingKeyDefaultDataType}
+      />
+
+      {/* 타입/태그 편집 모달 (SPEC-STORE-003 v0.4.0). 임의 엔트리(동적 포함)의
+          metric_type/tags 를 PUT .../keys/{key}/meta 로 갱신한다. */}
+      <EditKeyMetaDialog
+        isOpen={editingKey !== null}
+        onClose={handleCloseEditMeta}
+        keyName={editingKey ?? ''}
+        initialMetricType={editingInitialMetricType}
+        initialTags={editingInitialTags}
+        onConfirm={handleEditMetaConfirm}
+        isSubmitting={setKeyMeta.isPending}
       />
 
       {/* 행별 초기화 모달 (SPEC-STORE-003) */}
