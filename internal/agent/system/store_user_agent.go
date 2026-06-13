@@ -345,11 +345,21 @@ func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
 // 뷰로 라우팅된다. 생성 시점 스냅샷을 잡으면 재시작 후 옛 inner 로 향해
 // 모든 쓰기/읽기가 실패하는 회귀가 발생한다.
 func (a *UserStoreAgent) NodeStoreForNamespace(namespace string) any {
-	return NewLazyNodeStoreAdapter(func() Store {
+	// store resolver: 매 호출마다 현재 inner 의 네임스페이스 뷰를 반환.
+	storeResolver := func() Store {
 		a.mu.RLock()
 		defer a.mu.RUnlock()
 		return a.inner.ForNamespace(namespace)
-	})
+	}
+	// agent resolver: data_type/tags 메타 설정에 필요한 현재 *StoreAgent(inner) 를 반환.
+	// store-write 노드의 SetWithMeta 경로에서 사용된다. 에이전트 재시작에 안전하도록
+	// 호출 시점의 inner 를 lazy 하게 돌려준다.
+	agentResolver := func() *StoreAgent {
+		a.mu.RLock()
+		defer a.mu.RUnlock()
+		return a.inner
+	}
+	return NewLazyNodeStoreAdapterWithAgent(storeResolver, agentResolver, namespace)
 }
 
 // Init 은 에이전트를 초기화하고 내부 StoreAgent를 시작한다.

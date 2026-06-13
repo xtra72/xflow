@@ -545,6 +545,60 @@ func (s *StoreAgent) SetKeyMeta(key string, metricType string, tags map[string]s
 	}
 }
 
+// @spec SPEC-STORE-003 (store-write 노드 data_type/tags 지정)
+// SetKeyDataType 은 지정된 key 를 명시 data_type 으로 등록/갱신한다.
+// store-write 노드가 config 의 data_type 을 통해 동적 키를 특정 타입으로 고정(pin)할 때 사용한다.
+//
+// data_type 적용 정책 (PRESERVE 우선):
+//   - 미등록 키: 지정 dataType + Source=auto 로 신규 등록한다. 이후 쓰기는 해당 타입으로 검증된다.
+//   - 동적 string 키(Source=auto && data_type=string): 지정 dataType 으로 덮어쓴다.
+//     (동적 키는 사용자가 노드 설정으로 타입을 명시한 것이므로 그 의도를 반영한다.)
+//     단, 지정 dataType 도 string 이면 동적 string 그대로 유지된다.
+//   - 정적/명시 data_type 키(Source=manual 또는 non-dynamic): DataType/Source 를 보존한다.
+//     yaml 로 선언된 타입 계약을 노드 설정이 침범하지 못하도록 한다 (PRESERVE).
+//
+// metric_type 은 이 메서드의 범위가 아니다. 기존 키의 metric_type 은 보존되고,
+// 신규 등록 키에는 "unknown" 이 부여된다.
+//
+// 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 값(value/ttl/history)에는 영향을 주지 않는다.
+func (s *StoreAgent) SetKeyDataType(key string, dataType DataType) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.config.staticKeys == nil {
+		s.config.staticKeys = make(map[string]StaticKeyMeta)
+	}
+
+	if existing, ok := s.config.staticKeys[key]; ok {
+		// 동적 string 키만 지정 타입으로 덮어쓴다. 그 외(정적/명시 타입)는 보존.
+		if isDynamicStringMeta(existing) {
+			existing.DataType = dataType
+			// 동적 키에 명시 타입을 부여하면 더 이상 "동적 string" 이 아니므로
+			// Source 를 manual 로 승격해 후속 쓰기에서 타입 검증(coercion 우회)이 적용되게 한다.
+			// 단, 지정 타입이 string 이면 동적 string 정책을 그대로 유지한다.
+			if dataType != DataTypeString {
+				existing.Source = SourceManual
+			}
+			s.config.staticKeys[key] = existing
+		}
+		return
+	}
+
+	// 미등록 키: 지정 data_type 으로 신규 등록.
+	// 지정 타입이 string 이면 동적 string 정책(Source=auto)을 따르고,
+	// 그 외 타입이면 명시 등록(Source=manual)으로 타입 검증이 적용되게 한다.
+	src := SourceManual
+	if dataType == DataTypeString {
+		src = SourceAuto
+	}
+	s.config.staticKeys[key] = StaticKeyMeta{
+		DataType:   dataType,
+		MetricType: MetricTypeUnknown,
+		Tags:       map[string]string{},
+		Source:     src,
+	}
+}
+
 // @spec SPEC-STORE-003 v0.3.0
 // StaticKeysSnapshot 은 (사용자 키 → StaticKeyMeta) 전체 깊은 복사본을 반환한다.
 // 정적 키가 하나도 없으면 빈 맵을 반환한다.
