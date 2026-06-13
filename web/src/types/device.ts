@@ -111,6 +111,34 @@ export interface DeviceExecuteRequest {
 }
 
 /**
+ * 디바이스 수신 데이터 이력 항목(주기 스냅샷).
+ * Maps to Go device.HistorySnapshot struct.
+ *
+ * timestamp / last_seen 는 프로젝트 규약에 따라 epoch milliseconds(int64)이다.
+ */
+export interface DeviceHistoryEntry {
+  /** 스냅샷 수집 시각 (epoch milliseconds) */
+  timestamp: number;
+  /** 수집 시점 온라인 여부 */
+  online: boolean;
+  /** 수집 시점 디바이스 last_seen (epoch milliseconds) */
+  last_seen: number;
+  /** 수집 시점 프로토콜별 속성 맵 (없으면 빈 객체일 수 있음) */
+  properties: Record<string, unknown>;
+}
+
+/**
+ * 디바이스 이력 조회 응답.
+ * GET /devices/{id}/history?limit=N 응답의 data 형태.
+ * Maps to Go HistoryResponse struct. entries 는 최신순.
+ */
+export interface DeviceHistoryResponse {
+  device_id: string;
+  count: number;
+  entries: DeviceHistoryEntry[];
+}
+
+/**
  * Request body for updating device metadata.
  */
 export interface DeviceMetadataUpdateRequest {

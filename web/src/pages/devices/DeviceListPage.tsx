@@ -2,11 +2,12 @@
 // 에이전트 페이지와 동일한 테이블 리스트 형식으로 디바이스를 표시한다.
 // 행 클릭으로 상세 패널을 토글하고, 검색/필터/페이지네이션을 지원한다.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Columns3,
   HardDrive,
   Lock,
   Plus,
@@ -14,6 +15,12 @@ import {
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
+import {
+  ALL_DEVICE_COLUMNS,
+  DEVICE_COLUMN_LABELS,
+  useDeviceColumns,
+  type DeviceListColumnKey,
+} from '@/hooks/useDeviceColumns';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
@@ -129,6 +136,10 @@ export default function DeviceListPage({
   // 디바이스 추가 다이얼로그
   const [showAddDialog, setShowAddDialog] = useState(false);
 
+  // 컬럼 구성(서버 영속, 전역 1벌). 토글 변경 시 PUT 으로 저장된다.
+  const { columns: visibleColumns, setColumns } = useDeviceColumns();
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
+
   const devices: DeviceInfo[] = data?.data ?? [];
 
   // 클라이언트 측 필터링
@@ -174,6 +185,11 @@ export default function DeviceListPage({
         case 'name':
           va = (a.name || a.id).toLowerCase();
           vb = (b.name || b.id).toLowerCase();
+          break;
+        case 'id':
+          // uid(1급 UUID 식별자) 우선, 없으면 id 로 정렬.
+          va = (a.uid || a.id).toLowerCase();
+          vb = (b.uid || b.id).toLowerCase();
           break;
         case 'type':
           va = a.type.toLowerCase();
@@ -318,20 +334,26 @@ export default function DeviceListPage({
         />
       )}
 
-      {/* 액션 버튼 (원격 타깃에서는 로컬 추가 어포던스 숨김 — 디바이스 추가는
-          그룹 D 명령 경로) */}
-      {showLocalWrites && (
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={() => setShowAddDialog(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-4 w-4" />
-          디바이스 추가
-        </button>
+      {/* 툴바: 컬럼 설정(항상 표시) + 디바이스 추가(로컬 전용). 원격 타깃에서는
+          로컬 추가 어포던스를 숨긴다(디바이스 추가는 그룹 D 명령 경로). */}
+      <div className="flex items-center justify-end gap-2">
+        <ColumnsSettingButton
+          open={showColumnsMenu}
+          onOpenChange={setShowColumnsMenu}
+          visibleColumns={visibleColumns}
+          onChange={setColumns}
+        />
+        {showLocalWrites && (
+          <button
+            type="button"
+            onClick={() => setShowAddDialog(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-4 w-4" />
+            디바이스 추가
+          </button>
+        )}
       </div>
-      )}
 
       {/* 검색 및 필터 */}
       <DeviceSearchFilter
@@ -415,19 +437,32 @@ export default function DeviceListPage({
             </div>
           </div>
 
-          {/* 디바이스 테이블 */}
+          {/* 디바이스 테이블 (선택된 컬럼만 헤더/셀 렌더) */}
           <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
             <table className="min-w-full divide-y divide-(--color-border-default)">
               <thead className="bg-(--color-bg-primary)">
                 <tr>
                   <th className="w-8 px-3 py-3" />
-                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="프로토콜" field="protocol" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="에이전트" field="agent" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <th className="px-4 py-3 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">등록</th>
-                  <SortableHeader label="최근 확인" field="last_seen" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  {visibleColumns.map((col) =>
+                    col === 'source' ? (
+                      // '등록' 컬럼은 정렬 비대상 (기존 동작 보존)
+                      <th
+                        key={col}
+                        className="px-4 py-3 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider"
+                      >
+                        {DEVICE_COLUMN_LABELS[col]}
+                      </th>
+                    ) : (
+                      <SortableHeader
+                        key={col}
+                        label={DEVICE_COLUMN_LABELS[col]}
+                        field={col}
+                        currentSort={sort}
+                        onSort={handleSort}
+                        className="px-4 py-3"
+                      />
+                    ),
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
@@ -437,6 +472,7 @@ export default function DeviceListPage({
                     <DeviceRow
                       key={device.id}
                       device={device}
+                      columns={visibleColumns}
                       isExpanded={isExpanded}
                       onToggle={() => toggleExpand(device.id)}
                     />
@@ -457,17 +493,192 @@ export default function DeviceListPage({
   );
 }
 
+// ---- 컬럼 설정 버튼 (체크박스 토글 팝오버) ----
+
+interface ColumnsSettingButtonProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  visibleColumns: DeviceListColumnKey[];
+  onChange: (cols: DeviceListColumnKey[]) => void;
+}
+
+/** 목록 상단 "컬럼 설정" 버튼 + 체크박스 토글 팝오버 (최소 1개 강제). */
+function ColumnsSettingButton({
+  open,
+  onOpenChange,
+  visibleColumns,
+  onChange,
+}: ColumnsSettingButtonProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭 시 팝오버 닫기
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onOpenChange(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, onOpenChange]);
+
+  const toggle = (key: DeviceListColumnKey) => {
+    if (visibleColumns.includes(key)) {
+      // 최소 1개 강제 — 마지막 1개는 해제 불가
+      if (visibleColumns.length > 1) {
+        onChange(visibleColumns.filter((c) => c !== key));
+      }
+    } else {
+      onChange([...visibleColumns, key]);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        className="inline-flex items-center gap-2 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+      >
+        <Columns3 className="h-4 w-4" />
+        컬럼 설정
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-1 shadow-lg"
+        >
+          {ALL_DEVICE_COLUMNS.map((key) => {
+            const checked = visibleColumns.includes(key);
+            const lastOne = checked && visibleColumns.length === 1;
+            return (
+              <label
+                key={key}
+                className={cn(
+                  'flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors',
+                  lastOne
+                    ? 'cursor-not-allowed opacity-60'
+                    : 'cursor-pointer hover:bg-(--color-bg-elevated)',
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={lastOne}
+                  onChange={() => toggle(key)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-(--color-text-primary)">
+                  {DEVICE_COLUMN_LABELS[key]}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- 디바이스 행 컴포넌트 ----
 
 interface DeviceRowProps {
   device: DeviceInfo;
+  columns: DeviceListColumnKey[];
   isExpanded: boolean;
   onToggle: () => void;
 }
 
-function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
-  const protocolColor = PROTOCOL_COLORS[device.protocol] ?? 'bg-(--color-bg-elevated) text-(--color-text-muted)';
+/** 단일 컬럼 셀 렌더 (컬럼 키별). */
+function DeviceCell({ column, device }: { column: DeviceListColumnKey; device: DeviceInfo }) {
+  switch (column) {
+    case 'name':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
+          {getDeviceDisplayName(device)}
+        </td>
+      );
+    case 'id': {
+      // uid 우선, UUID 가 길 수 있어 truncate + 전체값 툴팁
+      const idValue = device.uid || device.id;
+      return (
+        <td className="px-4 py-3">
+          <span
+            title={idValue}
+            className="block max-w-[160px] truncate font-mono text-xs text-(--color-text-muted)"
+          >
+            {idValue || '-'}
+          </span>
+        </td>
+      );
+    }
+    case 'type':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+          {getDeviceTypeLabel(device.type)}
+        </td>
+      );
+    case 'protocol': {
+      const protocolColor =
+        PROTOCOL_COLORS[device.protocol] ?? 'bg-(--color-bg-elevated) text-(--color-text-muted)';
+      return (
+        <td className="whitespace-nowrap px-4 py-3">
+          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', protocolColor)}>
+            {device.protocol.toUpperCase()}
+          </span>
+        </td>
+      );
+    }
+    case 'status':
+      return (
+        <td className="whitespace-nowrap px-4 py-3">
+          <DeviceStatusBadge online={device.online} />
+        </td>
+      );
+    case 'agent':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+          {device.agent_name}
+        </td>
+      );
+    case 'source': {
+      const variant = sourceVariant(device.source);
+      return (
+        <td className="whitespace-nowrap px-4 py-3">
+          {!variant ? (
+            <span className="text-xs text-(--color-text-muted)">-</span>
+          ) : (
+            <span
+              className={cn(
+                'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                variant.manual
+                  ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
+                  : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
+              )}
+              title={variant.manual ? '수동 등록 (설정/고정)' : '자동 등록 (발견/브리지)'}
+            >
+              {variant.manual && <Lock className="h-2.5 w-2.5" />}
+              {variant.label}
+            </span>
+          )}
+        </td>
+      );
+    }
+    case 'last_seen':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+          {formatRelativeTime(device.last_seen)}
+        </td>
+      );
+    default:
+      return null;
+  }
+}
 
+function DeviceRow({ device, columns, isExpanded, onToggle }: DeviceRowProps) {
   return (
     <>
       <tr
@@ -483,66 +694,15 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
           )}
         </td>
 
-        {/* 이름 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
-          {getDeviceDisplayName(device)}
-        </td>
-
-        {/* 타입 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {getDeviceTypeLabel(device.type)}
-        </td>
-
-        {/* 프로토콜 */}
-        <td className="whitespace-nowrap px-4 py-3">
-          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', protocolColor)}>
-            {device.protocol.toUpperCase()}
-          </span>
-        </td>
-
-        {/* 상태 */}
-        <td className="whitespace-nowrap px-4 py-3">
-          <DeviceStatusBadge online={device.online} />
-        </td>
-
-        {/* 에이전트 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {device.agent_name}
-        </td>
-
-        {/* 등록 (자동/수동) */}
-        <td className="whitespace-nowrap px-4 py-3">
-          {(() => {
-            const variant = sourceVariant(device.source);
-            if (!variant) return <span className="text-xs text-(--color-text-muted)">-</span>;
-            return (
-              <span
-                className={cn(
-                  'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
-                  variant.manual
-                    ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                    : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
-                )}
-                title={variant.manual ? '수동 등록 (설정/고정)' : '자동 등록 (발견/브리지)'}
-              >
-                {variant.manual && <Lock className="h-2.5 w-2.5" />}
-                {variant.label}
-              </span>
-            );
-          })()}
-        </td>
-
-        {/* 최근 확인 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {formatRelativeTime(device.last_seen)}
-        </td>
-
+        {columns.map((col) => (
+          <DeviceCell key={col} column={col} device={device} />
+        ))}
       </tr>
 
-      {/* 확장된 상세 패널 */}
+      {/* 확장된 상세 패널 (colspan = 확장 아이콘 1 + 표시 컬럼 수) */}
       {isExpanded && (
         <tr>
-          <td colSpan={8} className="bg-(--color-bg-sunken)">
+          <td colSpan={columns.length + 1} className="bg-(--color-bg-sunken)">
             <DeviceDetailPanel deviceId={device.id} />
           </td>
         </tr>

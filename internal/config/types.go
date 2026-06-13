@@ -65,6 +65,22 @@ type StorageConfig struct {
 	PoolSize      int
 }
 
+// DeviceHistoryConfig - 디바이스 수신 데이터 이력(주기 스냅샷) 설정
+//
+// 수신마다의 중앙 이벤트가 없으므로 주기 스냅샷 방식으로 동작한다: Interval 마다 전체
+// 디바이스의 현재 상태를 디바이스별 링버퍼(최대 MaxEntries)에 저장한다. 설정 변경
+// 적용은 재시작 기준으로 충분하다(런타임 핫리로드 비대상).
+type DeviceHistoryConfig struct {
+	// Enabled 는 이력 레코더 활성 여부이다(기본 true).
+	Enabled bool
+
+	// Interval 은 스냅샷 수집 주기이다(기본 10s).
+	Interval time.Duration
+
+	// MaxEntries 는 디바이스별 링버퍼 최대 보관 개수이다(기본 100).
+	MaxEntries int
+}
+
 // AuthConfig - 인증 설정
 type AuthConfig struct {
 	JWT    JWTConfig

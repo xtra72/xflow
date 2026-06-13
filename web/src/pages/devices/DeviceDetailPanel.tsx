@@ -4,10 +4,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
+  ChevronDown,
+  ChevronRight,
   ChevronsUpDown,
+  Clock,
   Droplets,
   Edit2,
   Flame,
+  History,
   Loader2,
   Lock,
   MapPin,
@@ -25,7 +29,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
+import { useDeviceHistory, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { useTargetContext } from '@/lib/remote/TargetContext';
@@ -33,7 +37,8 @@ import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { normalizeAcMode, normalizeFanSpeed } from '@/pages/dashboard/panels/acControlTypes';
-import type { CommandSpec, ParamSpec } from '@/types/device';
+import { APIError } from '@/types/api';
+import type { CommandSpec, DeviceHistoryEntry, ParamSpec } from '@/types/device';
 
 interface DeviceDetailPanelProps {
   deviceId: string;
@@ -139,7 +144,215 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
           />
         </div>
       </div>
+
+      {/* 최근 데이터(이력) 섹션 — 전체 너비. uid(1급 식별자) 우선 사용. */}
+      <DeviceHistorySection
+        deviceId={device.uid || deviceId}
+        protocol={device.protocol}
+        type={device.type}
+      />
     </div>
+  );
+}
+
+// ---- Section 4: 최근 데이터(이력) ----
+
+/** limit 선택 옵션 (서버가 max 로 clamp 하므로 상한 초과는 안전). */
+const HISTORY_LIMIT_OPTIONS = [50, 100, 200] as const;
+
+/** epoch milliseconds → 사람이 읽는 로컬 시간 문자열. */
+function formatTimestamp(ms: number): string {
+  if (!ms || ms <= 0) return '-';
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '-';
+  return d.toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+/** 속성 맵을 "키=값" 요약 문자열로 직렬화 (펼치기 전 표시용). */
+function summarizeProperties(properties: Record<string, unknown>, protocol: string, type: string): string {
+  const entries = Object.entries(properties ?? {});
+  if (entries.length === 0) return '-';
+  return entries
+    .map(([k, v]) => `${getPropertyLabel(k, protocol, type)}=${formatPropertyValue(k, v)}`)
+    .join(', ');
+}
+
+function DeviceHistorySection({
+  deviceId,
+  protocol,
+  type,
+}: {
+  deviceId: string;
+  protocol: string;
+  type: string;
+}) {
+  const [limit, setLimit] = useState<number>(100);
+  const { data, isLoading, error, isFetching } = useDeviceHistory(deviceId, limit, true);
+
+  // 이력 비활성(404) 안내. 그 외 오류는 일반 오류 안내.
+  const disabled = error instanceof APIError && error.status === 404;
+  const entries: DeviceHistoryEntry[] = data?.entries ?? [];
+
+  return (
+    <div className="mt-6 border-t border-(--color-border-default) pt-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h4 className="flex items-center gap-1.5 text-sm font-semibold text-(--color-text-primary)">
+          <History className="h-4 w-4" />
+          최근 데이터(이력)
+        </h4>
+        <div className="flex items-center gap-2">
+          {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
+          <label className="text-xs text-(--color-text-muted)">개수</label>
+          <select
+            value={limit}
+            onChange={(e) => setLimit(Number(e.target.value))}
+            disabled={disabled}
+            className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          >
+            {HISTORY_LIMIT_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {disabled ? (
+        <p className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-6 text-center text-sm text-(--color-text-muted)">
+          이력 기록이 비활성화되어 있습니다.
+        </p>
+      ) : error ? (
+        <p className="flex items-center justify-center gap-2 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-6 text-center text-sm text-red-500 dark:text-red-400">
+          <AlertCircle className="h-4 w-4" />
+          이력을 불러올 수 없습니다.
+        </p>
+      ) : isLoading ? (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+          <span className="ml-2 text-sm text-(--color-text-muted)">불러오는 중...</span>
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-6 text-center text-sm text-(--color-text-muted)">
+          최근 데이터 없음
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+          <table className="min-w-full divide-y divide-(--color-border-default)">
+            <thead className="bg-(--color-bg-primary)">
+              <tr>
+                <th className="w-8 px-3 py-2" />
+                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                  시각
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                  상태
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                  속성
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                  최근 통신
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+              {entries.map((entry, idx) => (
+                <HistoryRow
+                  key={`${entry.timestamp}-${idx}`}
+                  entry={entry}
+                  protocol={protocol}
+                  type={type}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 이력 단일 행 (긴 속성은 펼치기 토글). */
+function HistoryRow({
+  entry,
+  protocol,
+  type,
+}: {
+  entry: DeviceHistoryEntry;
+  protocol: string;
+  type: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const propEntries = Object.entries(entry.properties ?? {});
+  const summary = summarizeProperties(entry.properties ?? {}, protocol, type);
+  // 요약이 길거나 속성이 많으면 펼치기 제공
+  const expandable = propEntries.length > 0;
+
+  return (
+    <>
+      <tr
+        className={cn('align-top', expandable && 'cursor-pointer hover:bg-(--color-bg-elevated)')}
+        onClick={expandable ? () => setExpanded((v) => !v) : undefined}
+      >
+        <td className="px-3 py-2 text-gray-400">
+          {expandable ? (
+            expanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )
+          ) : null}
+        </td>
+        <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
+          <span className="inline-flex items-center gap-1">
+            <Clock className="h-3 w-3 text-gray-400" />
+            {formatTimestamp(entry.timestamp)}
+          </span>
+        </td>
+        <td className="whitespace-nowrap px-3 py-2">
+          <span
+            className={cn(
+              'rounded-full px-2 py-0.5 text-[10px] font-medium',
+              entry.online
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+            )}
+          >
+            {entry.online ? '온라인' : '오프라인'}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
+          {!expanded && <span className="block max-w-md truncate">{summary}</span>}
+        </td>
+        <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
+          {formatTimestamp(entry.last_seen)}
+        </td>
+      </tr>
+      {expandable && expanded && (
+        <tr className="bg-(--color-bg-sunken)">
+          <td />
+          <td colSpan={4} className="px-3 py-2">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 md:grid-cols-4">
+              {propEntries.map(([k, v]) => (
+                <div key={k} className="text-xs">
+                  <span className="text-(--color-text-muted)">{getPropertyLabel(k, protocol, type)}: </span>
+                  <span className="font-medium text-(--color-text-primary)">{formatPropertyValue(k, v)}</span>
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -1130,8 +1343,14 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
     });
   };
 
+  // 입력 필드 스타일.
+  // 다크모드 가시성: Tailwind v4 에서 `dark:` 변형은 기본적으로
+  // `prefers-color-scheme` 미디어쿼리에 묶이므로, OS 가 라이트인데 앱 테마만
+  // night 로 바꾼 경우 `dark:bg-*`/`dark:text-*` 가 적용되지 않아 입력 글자가
+  // 어두운 패널 위에서 안 보였다. 데이터 소스인 `data-theme` 기반 CSS 변수
+  // (--color-*)로 통일하여 day/night/custom 모든 테마에서 또렷하게 보이도록 한다.
   const inputBase =
-    'block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400';
+    'block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   return (
     <div>
@@ -1278,7 +1497,7 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               <div className="mb-2 space-y-1">
                 {Object.entries(form.labels).map(([k, v]) => (
                   <div key={k} className="flex items-center gap-2">
-                    <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                    <span className="rounded bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary)">
                       {k}: {v}
                     </span>
                     <button
@@ -1310,7 +1529,7 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               <button
                 type="button"
                 onClick={handleAddLabel}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 추가
               </button>
@@ -1331,7 +1550,7 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
             <button
               type="button"
               onClick={() => onEditChange(false)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
             >
               취소
             </button>
