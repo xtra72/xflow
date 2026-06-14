@@ -1915,15 +1915,27 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'key_template',
           type: 'string',
           label: '키 템플릿',
-          required: true,
-          description: '{field} 형식 플레이스홀더를 payload 값으로 치환 (예: {location}:{point}:{sensor_type})',
+          description: '단일 키. {field} 형식 플레이스홀더를 메시지 값으로 치환 (예: {$.metadata.device_id}:{$.payload.sensor}). 여러 키를 쓰려면 아래 "키 매핑"을 사용하세요. 키 템플릿 또는 키 매핑 중 하나 이상 필요.',
         },
         {
           name: 'value_key',
           type: 'string',
           label: '값 키',
           description:
-            '저장할 값의 경로. $. prefix 필수 — $.payload.value / $.payload.state.mode / $.metadata.device.id / $.metadata.node_id / $.id / $.type / $.timestamp = 메시지 전체 경로. 비워두면 전체 payload 저장.',
+            '키 템플릿에 저장할 값의 경로. $. prefix 필수 — $.payload.value / $.payload.state.mode / $.metadata.device.id / $.id / $.type / $.timestamp. 비워두면 전체 payload 저장.',
+        },
+        {
+          name: 'key_mappings',
+          type: 'key_value_map',
+          label: '키 매핑 (다중 키)',
+          description:
+            '한 메시지에서 여러 키를 기록합니다. 키(왼쪽)는 키 템플릿({...} 보간 또는 리터럴), 값(오른쪽)은 저장할 값의 $. 경로(비우면 전체 payload). 키 템플릿과 함께 쓰면 모두 기록됩니다. 네임스페이스·TTL·데이터 타입·메트릭·태그는 모든 키에 동일 적용.',
+          keyLabel: '키 템플릿',
+          valueLabel: '값 경로 ($.)',
+          keyPlaceholder: '{$.metadata.device_id}:power',
+          valuePlaceholder: '$.payload.power',
+          pathHelper: true,
+          advanced: true,
         },
         {
           name: 'namespace',
