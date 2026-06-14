@@ -35,6 +35,9 @@ type StoreReader interface {
 type StoreWriteMeta struct {
 	// DataType 은 빈 문자열이 아니면 기록되는 키를 그 data_type 으로 등록/고정한다.
 	DataType string
+	// MetricType 은 빈 문자열이 아니면 기록되는 키의 metric_type 으로 적용한다.
+	// 빈 문자열이면 기존 metric_type(또는 unknown)을 보존한다.
+	MetricType string
 	// Tags 는 비어있지 않으면 기록되는 키에 태그를 부여한다.
 	Tags map[string]string
 	// TTL 은 0 보다 크면 값 쓰기에 TTL 을 적용한다.
@@ -75,10 +78,12 @@ type StoreWriteNode struct {
 	agentRef    *flow.AgentRef    // Store 에이전트 참조
 	keyTemplate string            // 키 템플릿 (예: "{location}:{sensor}")
 	valueKey    string            // payload에서 저장할 값의 키 (빈 문자열이면 전체 payload)
+	keyMappings map[string]string // 다중 (키,값) 매핑: 키 템플릿 → 값 경로. 한 메시지에서 여러 키를 기록 (key_template 과 병행 가능)
 	namespace   string            // Store 네임스페이스
 	ttl         time.Duration     // TTL (0이면 만료 없음)
 	dataType    string            // 기록되는 키에 부여할 data_type (빈 문자열이면 미지정)
-	tags        map[string]string // 기록되는 키에 부여할 태그 (nil/빈 맵이면 미지정)
+	metricType  string            // 기록되는 키에 부여할 metric_type. 리터럴 또는 `$.` 경로 (빈 문자열이면 미지정)
+	tags        map[string]string // 기록되는 키에 부여할 태그. 값은 리터럴 또는 `$.` 경로 (nil/빈 맵이면 미지정)
 }
 
 // validDataTypes 는 store-write 노드 config 의 data_type 으로 허용되는 6종 enum 이다.
@@ -94,6 +99,10 @@ var validDataTypes = map[string]bool{
 
 // tagKeyPattern 은 태그 key 로 허용되는 문자 패턴이다 (system 계층과 동일).
 var tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// metricTypePattern 은 metric_type 으로 허용되는 문자 패턴이다 (system 계층의 metricTypePattern 과 동일).
+// metric_type 이 리터럴일 때 Configure 시점에, `$.` 경로일 때 해석 결과를 Process 시점에 검증한다.
+var metricTypePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // NewStoreWriteNode 는 새로운 StoreWriteNode를 생성하는 팩토리 함수이다.
 func NewStoreWriteNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
@@ -218,6 +227,32 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
+	// key_mappings (선택): 다중 (키,값) 매핑.
+	//   - 맵의 key  = 키 템플릿 (key_template 과 동일한 {...} 보간 지원, 리터럴도 가능)
+	//   - 맵의 value = 값 경로 (value_key 와 동일한 규칙: 빈 문자열이면 전체 payload, 그 외는 `$.` 경로)
+	// 각 엔트리가 하나의 store 쓰기가 되며, key_template/value_key 와 병행 지정 가능하다.
+	if v, ok := config["key_mappings"]; ok {
+		if raw, ok := v.(map[string]any); ok && len(raw) > 0 {
+			parsed := make(map[string]string, len(raw))
+			for kt, vp := range raw {
+				if kt == "" {
+					return fmt.Errorf("store-write: key_mappings 키 템플릿은 비어 있을 수 없습니다")
+				}
+				sv, ok := vp.(string)
+				if !ok {
+					return fmt.Errorf("store-write: key_mappings[%q] value must be a string", kt)
+				}
+				// value 는 value_key 와 동일 규칙: 빈 문자열(전체 payload) 또는 `$.` 경로.
+				if sv != "" && !strings.HasPrefix(sv, "$.") {
+					return fmt.Errorf(
+						"store-write: key_mappings[%q] value %q must be a $.-path (e.g. $.payload.state.mode) or empty for whole payload", kt, sv)
+				}
+				parsed[kt] = sv
+			}
+			n.keyMappings = parsed
+		}
+	}
+
 	if v, ok := config["namespace"]; ok {
 		if s, ok := v.(string); ok {
 			n.namespace = s
@@ -246,9 +281,25 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
+	// metric_type (선택): 기록되는 키에 부여할 metric_type.
+	// 값은 리터럴 또는 `$.` 경로(메시지 필드 참조)이다. `$.` 로 시작하면 Process 시점에
+	// resolveTemplateExpr 로 메시지에서 해석하고, 아니면 리터럴 그대로 사용한다.
+	// 리터럴인 경우에만 Configure 시점에 정규식(^[a-zA-Z0-9_-]+$)을 검증한다.
+	// (`$.` 경로의 해석 결과 검증은 Process 시점의 책임이다.)
+	if v, ok := config["metric_type"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			if !strings.HasPrefix(s, "$.") && !metricTypePattern.MatchString(s) {
+				return fmt.Errorf(
+					"store-write: invalid metric_type %q (must match ^[a-zA-Z0-9_-]+$ or be a $.-path)", s)
+			}
+			n.metricType = s
+		}
+	}
+
 	// tags (선택): 기록되는 키에 부여할 key-value 태그.
 	// map[string]any 로 들어온 값을 map[string]string 으로 정규화하며,
-	// key 는 ^[a-zA-Z0-9_-]+$ 를 만족해야 하고 value 는 문자열이어야 한다.
+	// key(태그 이름)는 ^[a-zA-Z0-9_-]+$ 를 만족해야 하고 value 는 문자열이어야 한다.
+	// value 는 리터럴 또는 `$.` 경로이며, 해석은 Process 시점에 이뤄진다 (여기서는 raw 문자열로 보관).
 	if v, ok := config["tags"]; ok {
 		if raw, ok := v.(map[string]any); ok && len(raw) > 0 {
 			parsed := make(map[string]string, len(raw))
@@ -267,61 +318,217 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 		}
 	}
 
+	// 검증: key_template 과 key_mappings 가 둘 다 비어 있으면 기록할 키가 없으므로 거부한다 (fail-fast).
+	// 최소 하나의 키 소스(단일 key_template 또는 key_mappings 엔트리)는 반드시 제공되어야 한다.
+	if n.keyTemplate == "" && len(n.keyMappings) == 0 {
+		return fmt.Errorf("store-write: key_template 또는 key_mappings 중 최소 하나는 지정해야 합니다")
+	}
+
 	return nil
 }
 
+// storeTarget 은 한 메시지에서 기록할 단일 (키, 값) 쌍이다.
+type storeTarget struct {
+	key   string
+	value any
+}
+
 // Process 는 메시지 데이터를 Store에 기록하고, 원본 메시지를 그대로 반환한다.
+//
+// 다중 키 지원:
+//   - key_template/value_key 가 설정되어 있으면 (단일) 1개의 (키,값)을 기록한다.
+//   - key_mappings 의 각 엔트리(키 템플릿 → 값 경로)가 추가로 1개씩 기록된다.
+//   - 둘 다 지정 시 총 (1 + len(key_mappings))개의 키가 한 메시지에서 기록된다.
+//
+// 공유 메타(data_type/metric_type/tags/ttl)는 모든 키에 동일하게 적용된다.
+//
+// 에러 정책:
+//   - 키/값 해석 실패는 기존 단일 키 동작과 동일하게 즉시 에러를 반환한다
+//     (키는 필수이며, value_key 해석 실패도 기존처럼 에러).
+//   - 개별 키 쓰기 실패 시에는 fail-fast 로 첫 실패에서 에러를 반환한다.
+//     이는 단일 키 경로의 기존 정책과 일관된다.
 func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	if n.store == nil {
 		return nil, ErrStoreNotConfigured
 	}
 
-	// 키 해석
-	key, err := resolveKeyTemplate(n.keyTemplate, msg)
+	// 기록할 (키,값) 목록을 구성한다.
+	targets, err := n.buildTargets(msg)
 	if err != nil {
-		return nil, fmt.Errorf("store-write: %w", err)
+		return nil, err
 	}
 
-	// 값 추출 — value_key 는 Configure 에서 `$.` prefix 가 강제된 단일 경로 선택자이다.
-	//   value_key="$.payload.state.current_temp" → payload 의 중첩 경로
-	//   value_key="$.metadata.dev_id"            → metadata 값
-	var value any
-	if n.valueKey != "" {
-		v, err := resolveTemplateExpr(n.valueKey, msg)
-		if err != nil {
-			return nil, fmt.Errorf("store-write: value_key %q: %w", n.valueKey, err)
-		}
-		value = v
-	} else {
-		// value_key가 없으면 전체 payload를 저장
-		value = msg.Payload().ToMap()
-	}
+	// metric_type / tags 를 메시지 단위로 한 번만 해석한다 (모든 키에 공유 적용).
+	// 리터럴은 그대로, `$.` 경로는 resolveTemplateExpr 로 메시지에서 해석한다.
+	// 해석 실패(경로 없음 등)나 검증 위반(metric_type 정규식)은 해당 항목만 생략하고 계속한다.
+	resolvedMetric := n.resolveMetricType(msg)
+	resolvedTags := n.resolveTags(msg)
 
-	// Store에 기록.
-	// data_type 또는 tags 가 설정됐고 store 가 StoreMetaWriter 를 만족하면 SetWithMeta 를 사용하여
-	// 메타데이터를 함께 적용한다. 그 외에는 기존 Set/SetWithTTL 경로로 폴백한다 (하위 호환).
-	useMeta := n.dataType != "" || len(n.tags) > 0
-	if mw, ok := n.store.(StoreMetaWriter); ok && useMeta {
-		opts := StoreWriteMeta{
-			DataType: n.dataType,
-			Tags:     n.tags,
-			TTL:      n.ttl,
-		}
-		if err := mw.SetWithMeta(ctx, key, value, opts); err != nil {
-			return nil, fmt.Errorf("store-write: %w", err)
-		}
-	} else if n.ttl > 0 {
-		if err := n.store.SetWithTTL(ctx, key, value, n.ttl); err != nil {
-			return nil, fmt.Errorf("store-write: %w", err)
-		}
-	} else {
-		if err := n.store.Set(ctx, key, value); err != nil {
-			return nil, fmt.Errorf("store-write: %w", err)
+	// 각 (키,값)을 동일한 공유 메타로 기록한다.
+	// 첫 쓰기 실패에서 즉시 에러를 반환한다 (fail-fast).
+	for _, t := range targets {
+		if err := n.writeOne(ctx, t.key, t.value, resolvedMetric, resolvedTags); err != nil {
+			return nil, err
 		}
 	}
 
 	// pass-through: 원본 메시지를 그대로 반환
 	return []message.Message{msg}, nil
+}
+
+// buildTargets 는 한 메시지에서 기록할 모든 (키,값) 쌍을 구성한다.
+//
+//  1. key_template 이 비어있지 않으면 (resolveKeyTemplate(key_template), resolve(value_key)) 추가.
+//  2. key_mappings 의 각 엔트리: (resolveKeyTemplate(키 템플릿), resolve(값 경로)) 추가.
+//
+// 키 또는 값 해석에 실패하면 즉시 에러를 반환한다 (키는 필수).
+func (n *StoreWriteNode) buildTargets(msg message.Message) ([]storeTarget, error) {
+	// 단일 + key_mappings 각 엔트리. 용량을 미리 확보한다.
+	targets := make([]storeTarget, 0, 1+len(n.keyMappings))
+
+	// 1. 단일 key_template/value_key (하위 호환).
+	if n.keyTemplate != "" {
+		key, err := resolveKeyTemplate(n.keyTemplate, msg)
+		if err != nil {
+			return nil, fmt.Errorf("store-write: %w", err)
+		}
+		value, err := n.resolveValue(n.valueKey, msg)
+		if err != nil {
+			return nil, fmt.Errorf("store-write: value_key %q: %w", n.valueKey, err)
+		}
+		targets = append(targets, storeTarget{key: key, value: value})
+	}
+
+	// 2. key_mappings 각 엔트리.
+	for keyTemplate, valuePath := range n.keyMappings {
+		key, err := resolveKeyTemplate(keyTemplate, msg)
+		if err != nil {
+			return nil, fmt.Errorf("store-write: key_mappings key %q: %w", keyTemplate, err)
+		}
+		value, err := n.resolveValue(valuePath, msg)
+		if err != nil {
+			return nil, fmt.Errorf("store-write: key_mappings[%q] value %q: %w", keyTemplate, valuePath, err)
+		}
+		targets = append(targets, storeTarget{key: key, value: value})
+	}
+
+	return targets, nil
+}
+
+// resolveValue 는 값 경로를 메시지에서 해석한다 (value_key 와 key_mappings 값에 공통 사용).
+//
+//	path == ""          → 전체 payload (map) 저장.
+//	path == "$.payload.X" → 해당 `$.` 경로 값.
+func (n *StoreWriteNode) resolveValue(path string, msg message.Message) (any, error) {
+	if path == "" {
+		// 빈 경로이면 전체 payload 를 저장.
+		return msg.Payload().ToMap(), nil
+	}
+	return resolveTemplateExpr(path, msg)
+}
+
+// writeOne 은 단일 (키,값)을 공유 메타와 함께 Store 에 기록한다.
+//
+// data_type / metric_type / tags 중 하나라도 설정됐고 store 가 StoreMetaWriter 를 만족하면
+// SetWithMeta 를 사용하여 메타데이터를 함께 적용한다. 그 외에는 기존 Set/SetWithTTL 경로로 폴백한다 (하위 호환).
+func (n *StoreWriteNode) writeOne(ctx context.Context, key string, value any, metric string, tags map[string]string) error {
+	useMeta := n.dataType != "" || metric != "" || len(tags) > 0
+	if mw, ok := n.store.(StoreMetaWriter); ok && useMeta {
+		opts := StoreWriteMeta{
+			DataType:   n.dataType,
+			MetricType: metric,
+			Tags:       tags,
+			TTL:        n.ttl,
+		}
+		if err := mw.SetWithMeta(ctx, key, value, opts); err != nil {
+			return fmt.Errorf("store-write: %w", err)
+		}
+		return nil
+	}
+	if n.ttl > 0 {
+		if err := n.store.SetWithTTL(ctx, key, value, n.ttl); err != nil {
+			return fmt.Errorf("store-write: %w", err)
+		}
+		return nil
+	}
+	if err := n.store.Set(ctx, key, value); err != nil {
+		return fmt.Errorf("store-write: %w", err)
+	}
+	return nil
+}
+
+// resolveMetricType 은 config 의 metric_type 을 메시지 단위로 해석한다.
+//
+// 동작:
+//   - n.metricType 가 비어있으면 "" 반환 (metric_type 미설정 — 어댑터가 기존값/unknown 보존).
+//   - `$.` prefix 면 resolveTemplateExpr 로 메시지에서 값을 해석하여 문자열화한다.
+//     해석 실패(경로 없음 등)나 해석 결과가 빈 문자열이면 "" 반환(생략).
+//   - 그 외는 리터럴 그대로.
+//
+// 정책: 해석된 최종 값이 metric_type 정규식(^[a-zA-Z0-9_-]+$)을 위반하면 "" 반환(해당 metric 생략).
+// 리터럴은 Configure 에서 이미 검증되었으나, `$.` 경로 해석 결과는 여기서 다시 검증한다.
+func (n *StoreWriteNode) resolveMetricType(msg message.Message) string {
+	if n.metricType == "" {
+		return ""
+	}
+
+	var resolved string
+	if strings.HasPrefix(n.metricType, "$.") {
+		v, err := resolveTemplateExpr(n.metricType, msg)
+		if err != nil {
+			// 해석 실패 → metric_type 생략 (해당 항목만 건너뛰고 계속).
+			return ""
+		}
+		resolved = metaToString(v)
+	} else {
+		resolved = n.metricType
+	}
+
+	if resolved == "" || !metricTypePattern.MatchString(resolved) {
+		// 빈 값 또는 정규식 위반 → 생략.
+		return ""
+	}
+	return resolved
+}
+
+// resolveTags 는 config 의 tags(값이 리터럴 또는 `$.` 경로)를 메시지 단위로 해석한다.
+//
+// 각 값에 대해:
+//   - `$.` prefix 면 resolveTemplateExpr 로 메시지에서 해석하여 문자열화한다.
+//     해석 실패(경로 없음 등)면 해당 태그만 생략하고 계속한다.
+//   - 그 외는 리터럴 그대로.
+//
+// 키(태그 이름)는 항상 리터럴이며 Configure 에서 이미 검증되었다.
+// 해석 결과가 빈 맵이면 nil 을 반환하여 어댑터가 tags 미설정으로 처리하게 한다.
+func (n *StoreWriteNode) resolveTags(msg message.Message) map[string]string {
+	if len(n.tags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(n.tags))
+	for tk, tv := range n.tags {
+		if strings.HasPrefix(tv, "$.") {
+			v, err := resolveTemplateExpr(tv, msg)
+			if err != nil {
+				// 해석 실패 → 해당 태그만 생략하고 계속.
+				continue
+			}
+			out[tk] = metaToString(v)
+			continue
+		}
+		// 리터럴 값은 그대로.
+		out[tk] = tv
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// metaToString 은 `$.` 경로 해석 결과를 metric_type / tag 값으로 쓰기 위해 문자열화한다.
+// influxdb-write 가 tag 값에 쓰는 influxToString 과 동일한 규약(오브젝트는 JSON, 스칼라는 fmt,
+// nil 은 빈 문자열)을 사용하여 일관성을 유지한다. 숫자/불리언도 문자열로 변환된다.
+func metaToString(v any) string {
+	return influxToString(v)
 }
 
 // resolveKeyTemplate 는 {expr} 플레이스홀더를 메시지 값으로 치환한다.

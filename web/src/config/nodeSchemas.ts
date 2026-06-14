@@ -1915,15 +1915,27 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'key_template',
           type: 'string',
           label: '키 템플릿',
-          required: true,
-          description: '{field} 형식 플레이스홀더를 payload 값으로 치환 (예: {location}:{point}:{sensor_type})',
+          description: '단일 키. {field} 형식 플레이스홀더를 메시지 값으로 치환 (예: {$.metadata.device_id}:{$.payload.sensor}). 여러 키를 쓰려면 아래 "키 매핑"을 사용하세요. 키 템플릿 또는 키 매핑 중 하나 이상 필요.',
         },
         {
           name: 'value_key',
           type: 'string',
           label: '값 키',
           description:
-            '저장할 값의 경로. $. prefix 필수 — $.payload.value / $.payload.state.mode / $.metadata.device.id / $.metadata.node_id / $.id / $.type / $.timestamp = 메시지 전체 경로. 비워두면 전체 payload 저장.',
+            '키 템플릿에 저장할 값의 경로. $. prefix 필수 — $.payload.value / $.payload.state.mode / $.metadata.device.id / $.id / $.type / $.timestamp. 비워두면 전체 payload 저장.',
+        },
+        {
+          name: 'key_mappings',
+          type: 'key_value_map',
+          label: '키 매핑 (다중 키)',
+          description:
+            '한 메시지에서 여러 키를 기록합니다. 키(왼쪽)는 키 템플릿({...} 보간 또는 리터럴), 값(오른쪽)은 저장할 값의 $. 경로(비우면 전체 payload). 키 템플릿과 함께 쓰면 모두 기록됩니다. 네임스페이스·TTL·데이터 타입·메트릭·태그는 모든 키에 동일 적용.',
+          keyLabel: '키 템플릿',
+          valueLabel: '값 경로 ($.)',
+          keyPlaceholder: '{$.metadata.device_id}:power',
+          valuePlaceholder: '$.payload.power',
+          pathHelper: true,
+          advanced: true,
         },
         {
           name: 'namespace',
@@ -1939,6 +1951,15 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '만료 시간 (예: 5m, 1h, 24h). 비워두면 만료 없음',
         },
         {
+          name: 'metric_type',
+          type: 'string',
+          label: '메트릭(metric_type)',
+          placeholder: 'temperature 또는 $.payload.metric',
+          description:
+            '기록되는 키의 메트릭 타입. 직접 입력(예: temperature) 또는 $. 경로로 메시지 필드 선택(예: $.payload.metric / $.metadata.metric). 직접 입력 시 영문/숫자/밑줄/하이픈만 허용. 비우면 기존값/unknown 유지. 해석 실패·규칙 위반 시 생략됩니다.',
+          advanced: true,
+        },
+        {
           name: 'data_type',
           type: 'select',
           label: '데이터 타입',
@@ -1952,9 +1973,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'key_value_map',
           label: '태그',
           description:
-            '기록되는 키에 부여할 태그(키-값). 태그 키는 영문/숫자/밑줄/하이픈, 값은 문자열. Store 탭에서 태그로 검색·필터할 수 있습니다.',
+            '기록되는 키에 부여할 태그(키=값). 태그 키는 영문/숫자/밑줄/하이픈. 값은 직접 입력(리터럴) 또는 $. 경로로 메시지 필드 선택($.payload.room / $.metadata.x). 하나 이상 지정 가능. Store 탭에서 태그로 검색·필터됩니다.',
           keyLabel: '태그 키',
-          valueLabel: '값',
+          valueLabel: '값 (리터럴 또는 $. 경로)',
+          valuePlaceholder: '값 또는 $.payload.room',
+          pathHelper: true,
           advanced: true,
         },
       ],
