@@ -1939,6 +1939,15 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '만료 시간 (예: 5m, 1h, 24h). 비워두면 만료 없음',
         },
         {
+          name: 'metric_type',
+          type: 'string',
+          label: '메트릭(metric_type)',
+          placeholder: 'temperature 또는 $.payload.metric',
+          description:
+            '기록되는 키의 메트릭 타입. 직접 입력(예: temperature) 또는 $. 경로로 메시지 필드 선택(예: $.payload.metric / $.metadata.metric). 직접 입력 시 영문/숫자/밑줄/하이픈만 허용. 비우면 기존값/unknown 유지. 해석 실패·규칙 위반 시 생략됩니다.',
+          advanced: true,
+        },
+        {
           name: 'data_type',
           type: 'select',
           label: '데이터 타입',
@@ -1952,9 +1961,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'key_value_map',
           label: '태그',
           description:
-            '기록되는 키에 부여할 태그(키-값). 태그 키는 영문/숫자/밑줄/하이픈, 값은 문자열. Store 탭에서 태그로 검색·필터할 수 있습니다.',
+            '기록되는 키에 부여할 태그(키=값). 태그 키는 영문/숫자/밑줄/하이픈. 값은 직접 입력(리터럴) 또는 $. 경로로 메시지 필드 선택($.payload.room / $.metadata.x). 하나 이상 지정 가능. Store 탭에서 태그로 검색·필터됩니다.',
           keyLabel: '태그 키',
-          valueLabel: '값',
+          valueLabel: '값 (리터럴 또는 $. 경로)',
+          valuePlaceholder: '값 또는 $.payload.room',
+          pathHelper: true,
           advanced: true,
         },
       ],
