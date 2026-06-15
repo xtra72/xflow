@@ -31,6 +31,7 @@ import {
   type SeriesMatrix,
   type SeriesMatrixQuery,
 } from './seriesDataSource';
+import { seriesDisplayName, seriesSignature } from './seriesLabels';
 
 // ---- Backend DTOs ----
 
@@ -148,10 +149,20 @@ interface StoreQueryRequest {
   aggregation?: 'min' | 'max' | 'avg';
 }
 
-/** 개별 엔트리 (값 타입은 런타임에 검증). */
+/**
+ * 개별 엔트리 (값 타입은 런타임에 검증).
+ *
+ * @spec SPEC-STORE-004
+ * `labels` 는 M3 백엔드부터 추가된 시리즈 식별자다. 예약 키 `__metric__` 는
+ * metric_type, 그 외 키는 tag key=value 이다. 같은 store key 라도 metric/tags 가
+ * 다른 다중 시리즈가 한 응답에 평탄화되어 섞여 올 수 있으므로, 클라이언트는 이
+ * 라벨을 기준으로 시리즈를 분리해 각각 독립 컬럼/라인으로 렌더한다.
+ * 라벨이 없는(undefined) 엔트리는 라벨 없는 단일 시리즈로 취급한다(기존 호환).
+ */
 interface StoreQueryEntry {
   timestamp: number;
   value: unknown;
+  labels?: Record<string, string>;
 }
 
 /** `POST /api/v1/store/{agent_name}/query` 응답 형상. */
@@ -205,7 +216,19 @@ export async function fetchStoreKeys(agentName: string): Promise<string[]> {
   const data = await get<StoreKeysRawResponse>(
     `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
   );
-  return (data.keys ?? []).map((obj) => obj.key);
+  // @spec SPEC-STORE-004
+  // 백엔드 GET /keys 는 같은 key 를 metric/tags 별 다중 시리즈 행으로 반환한다.
+  // 시리즈 선택 풀은 key 단위이므로(선택 시 해당 key 의 모든 시리즈를 한 번에 조회)
+  // 등장 순서를 보존하며 중복 key 를 제거한다. 그렇지 않으면 멀티셀렉트 리스트에서
+  // React key 충돌과 중복 체크박스가 발생한다.
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const obj of data.keys ?? []) {
+    if (seen.has(obj.key)) continue;
+    seen.add(obj.key);
+    keys.push(obj.key);
+  }
+  return keys;
 }
 
 /**
@@ -318,17 +341,81 @@ function isAggregationUnsupportedError(err: unknown): boolean {
 }
 
 /**
- * 개별 키에 대해 "서버 집계 시도 → 4xx 시 폴백" 을 수행한다.
+ * @spec SPEC-STORE-004
+ * 단일 store key 조회 결과를 시리즈 단위로 분리한 표현.
  *
- * 반환값은 버킷 시작 시각에 정렬된 `Map<bucketStartMs, value>`. 각 경로에서
- * 반환 형태를 통일시켜 매트릭스 병합 단계의 로직을 단순하게 유지한다.
+ * - `signature`: labels 기준 결정적 서명. 라벨 없는 단일 시리즈는 "".
+ * - `labels`: 원본 labels 맵(metric `__metric__` + tags). 라벨 없으면 undefined.
+ * - `buckets`: 버킷 시작 시각 → 집계값 맵.
  */
-async function fetchKeyBuckets(
+interface KeySeries {
+  signature: string;
+  labels: Record<string, string> | undefined;
+  buckets: Map<number, number>;
+}
+
+/**
+ * @spec SPEC-STORE-004
+ * 한 응답의 엔트리들을 labels 서명 기준으로 그룹화한다.
+ *
+ * 같은 labels(metric/tags) 를 가진 엔트리들이 하나의 시리즈로 묶이며, 같은 버킷
+ * 시각에 서로 다른 시리즈가 섞여 있어도 서명으로 분리되어 값이 덮어써지지 않는다.
+ * 그룹 순서는 응답에서 각 서명이 처음 등장한 순서를 보존한다(결정적 컬럼 순서).
+ *
+ * 라벨이 없는 엔트리는 서명 "" 으로 묶여 "라벨 없는 단일 시리즈" 가 된다(기존 호환).
+ */
+function groupEntriesBySeries(
+  entries: StoreQueryEntry[],
+): Map<string, { labels: Record<string, string> | undefined; entries: StoreQueryEntry[] }> {
+  const groups = new Map<
+    string,
+    { labels: Record<string, string> | undefined; entries: StoreQueryEntry[] }
+  >();
+  for (const e of entries) {
+    const sig = seriesSignature(e.labels);
+    let g = groups.get(sig);
+    if (!g) {
+      g = {
+        labels:
+          e.labels && Object.keys(e.labels).length > 0 ? e.labels : undefined,
+        entries: [],
+      };
+      groups.set(sig, g);
+    }
+    g.entries.push(e);
+  }
+  return groups;
+}
+
+/**
+ * 서버 집계 응답(이미 버킷 단위) 엔트리들을 버킷 맵으로 수집한다.
+ * 비숫자/비유한 값과 유한하지 않은 타임스탬프는 스킵한다.
+ */
+function collectAggregatedBuckets(entries: StoreQueryEntry[]): Map<number, number> {
+  const result = new Map<number, number>();
+  for (const e of entries) {
+    if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
+    if (!Number.isFinite(e.timestamp)) continue;
+    result.set(e.timestamp, e.value);
+  }
+  return result;
+}
+
+/**
+ * @spec SPEC-STORE-004
+ * 개별 store key 에 대해 "서버 집계 시도 → 4xx 시 폴백" 을 수행하고, 응답을
+ * labels 기준 다중 시리즈로 분리해 반환한다.
+ *
+ * 반환 배열의 각 원소는 하나의 시리즈(고유 metric/tags 조합)이며, 매트릭스 병합
+ * 단계에서 각각 독립 컬럼으로 배치된다. 같은 key 에서 시리즈가 1개뿐이면 배열
+ * 길이도 1 이고, 그 시리즈의 라벨이 비어있으면 기존 단일 컬럼 동작과 동일하다.
+ */
+async function fetchKeySeries(
   agentName: string,
   key: string,
   params: SeriesMatrixQuery,
   signal: AbortSignal | undefined,
-): Promise<Map<number, number>> {
+): Promise<KeySeries[]> {
   const url = `/store/${encodeURIComponent(agentName)}/query`;
   const config = signal ? { signal } : undefined;
 
@@ -345,15 +432,18 @@ async function fetchKeyBuckets(
 
   try {
     const resp = await post<StoreQueryRawResponse>(url, serverBody, config);
-    // 서버 집계 응답의 각 엔트리는 "버킷 시작 시각 + 집계값" 이다.
-    // 비어 있는 버킷은 서버가 생략해 돌려주므로 매트릭스 align 은 병합 단계에서 처리.
-    const result = new Map<number, number>();
-    for (const e of resp?.entries ?? []) {
-      if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
-      if (!Number.isFinite(e.timestamp)) continue;
-      result.set(e.timestamp, e.value);
+    // 서버 집계 응답: 각 엔트리는 "버킷 시작 시각 + 집계값 (+ labels)" 이다.
+    // labels 기준으로 시리즈를 분리해 각 시리즈의 버킷 맵을 구성한다.
+    const groups = groupEntriesBySeries(resp?.entries ?? []);
+    const out: KeySeries[] = [];
+    for (const [signature, g] of groups) {
+      out.push({
+        signature,
+        labels: g.labels,
+        buckets: collectAggregatedBuckets(g.entries),
+      });
     }
-    return result;
+    return out;
   } catch (err) {
     if (!isAggregationUnsupportedError(err)) {
       throw err;
@@ -361,7 +451,8 @@ async function fetchKeyBuckets(
     // 4xx: 구버전 서버 또는 파라미터 불허 → 클라이언트 집계 경로로 폴백.
   }
 
-  // 2차: 원본 엔트리 요청 + 클라이언트 측 버킷화/집계.
+  // 2차: 원본 엔트리 요청 + 클라이언트 측 버킷화/집계. 폴백 경로도 labels 기준으로
+  // 시리즈를 분리한 뒤 시리즈별로 bucketAndAggregate 를 적용한다.
   const fallbackBody: StoreQueryRequest = {
     key,
     mode: 'time_range',
@@ -370,13 +461,22 @@ async function fetchKeyBuckets(
     namespace: 'default',
   };
   const resp = await post<StoreQueryRawResponse>(url, fallbackBody, config);
-  return bucketAndAggregate(
-    resp?.entries ?? [],
-    params.startMs,
-    params.endMs,
-    params.intervalMs,
-    params.aggregation,
-  );
+  const groups = groupEntriesBySeries(resp?.entries ?? []);
+  const out: KeySeries[] = [];
+  for (const [signature, g] of groups) {
+    out.push({
+      signature,
+      labels: g.labels,
+      buckets: bucketAndAggregate(
+        g.entries,
+        params.startMs,
+        params.endMs,
+        params.intervalMs,
+        params.aggregation,
+      ),
+    });
+  }
+  return out;
 }
 
 /**
@@ -387,6 +487,13 @@ async function fetchKeyBuckets(
  * - 개별 요청(폴백 포함)이 최종적으로 실패하면 전체 프로미스가 rejected 된다.
  * - `signal` 로 axios 요청 중단을 전파할 수 있다 (개별 요청 모두에 주입).
  * - 결과 매트릭스의 행은 `bucketStartMs` 오름차순으로 정렬된다.
+ *
+ * @spec SPEC-STORE-004
+ * 다중 시리즈 분리: 한 store key 가 백엔드에서 metric/tags 별 다중 시리즈로 반환되면
+ * (labels 로 구분), 각 시리즈를 독립 컬럼으로 분리한다. 컬럼 표시 이름은 다음과 같다:
+ *   - 한 key 에서 시리즈가 1개뿐이면 → store key 그대로 (기존 동작 보존).
+ *   - 2개 이상이면 → `key · metric{tag=...}` 형태로 라벨을 덧붙여 구분.
+ * 컬럼 순서는 요청 key 순서 → 각 key 안에서 시리즈 등장 순서를 보존한다.
  */
 export async function queryStoreMatrix(
   agentName: string,
@@ -403,14 +510,34 @@ export async function queryStoreMatrix(
     throw new Error('인터벌은 양수여야 합니다');
   }
 
-  // 키별로 버킷 맵을 병렬 조회 (서버 집계 우선, 4xx 시 폴백).
-  const perKeyBuckets: Array<Map<number, number>> = await Promise.all(
-    params.keys.map((key) => fetchKeyBuckets(agentName, key, params, signal)),
+  // 키별로 시리즈 배열을 병렬 조회 (서버 집계 우선, 4xx 시 폴백).
+  // 같은 인덱스의 결과가 같은 요청 key 에 대응한다.
+  const perKeySeries: KeySeries[][] = await Promise.all(
+    params.keys.map((key) => fetchKeySeries(agentName, key, params, signal)),
   );
+
+  // 요청 key 순서를 보존하며 모든 시리즈를 컬럼으로 평탄화한다.
+  // 한 key 의 시리즈가 2개 이상이면 라벨 표기를 덧붙여 컬럼명을 구분한다.
+  const columns: string[] = [];
+  const columnBuckets: Array<Map<number, number>> = [];
+  params.keys.forEach((key, idx) => {
+    const seriesList = perKeySeries[idx] ?? [];
+    // 데이터가 전혀 없는 key 도 단일 컬럼(전부 null)으로 노출해 기존 동작을 보존한다.
+    if (seriesList.length === 0) {
+      columns.push(key);
+      columnBuckets.push(new Map<number, number>());
+      return;
+    }
+    const withLabel = seriesList.length > 1;
+    for (const series of seriesList) {
+      columns.push(seriesDisplayName(key, series.labels, withLabel));
+      columnBuckets.push(series.buckets);
+    }
+  });
 
   // 전체 버킷 시작 시각의 합집합을 수집하고 정렬한다.
   const allBuckets = new Set<number>();
-  for (const m of perKeyBuckets) {
+  for (const m of columnBuckets) {
     for (const ts of m.keys()) allBuckets.add(ts);
   }
   const sortedBuckets = Array.from(allBuckets).sort((a, b) => a - b);
@@ -418,14 +545,14 @@ export async function queryStoreMatrix(
   // 각 버킷에 대해 컬럼 순서대로 값을 배치한다 (없으면 null).
   const rows: SeriesMatrix['rows'] = sortedBuckets.map((bucketStartMs) => ({
     bucketStartMs,
-    values: perKeyBuckets.map((m) => {
+    values: columnBuckets.map((m) => {
       const v = m.get(bucketStartMs);
       return v === undefined ? null : v;
     }),
   }));
 
   return {
-    columns: [...params.keys],
+    columns,
     rows,
   };
 }

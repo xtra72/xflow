@@ -248,6 +248,22 @@
     "uptime": "가동 시간",
     "lastSeen": "마지막 활동"
   },
+  "series": {
+    "title": "시리즈 데이터 뷰어",
+    "seriesKey": "시리즈 키",
+    "selectSeries": "시리즈 선택",
+    "series": "시리즈",
+    "seriesCount": "{count}개 시리즈",
+    "metric": "메트릭",
+    "metricType": "메트릭 타입",
+    "tags": "태그",
+    "dataType": "데이터 타입",
+    "registration": "등록 출처",
+    "unknownMetric": "미지정",
+    "noMatchingSeries": "일치하는 시리즈가 없습니다.",
+    "resultMatrix": "결과 매트릭스",
+    "multiSeriesHint": "이 키를 선택하면 metric/tag 별 시리즈가 각각 별도 라인으로 표시됩니다."
+  },
   "nodes": {
     "title": "노드 타입",
     "search": "노드 검색...",

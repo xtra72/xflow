@@ -542,6 +542,119 @@ describe('queryStoreMatrix: server aggregation and fallback', () => {
   });
 });
 
+// ---- 다중 시리즈 분리 (SPEC-STORE-004 M5) ----
+
+describe('queryStoreMatrix: 다중 시리즈 분리 (labels)', () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it('한 key 의 metric/tags 별 다중 시리즈를 독립 컬럼으로 분리한다', async () => {
+    // 백엔드가 같은 key 에 대해 2개 시리즈(서로 다른 room)를 평탄화해 반환.
+    // 같은 버킷(1000)에 두 시리즈 값이 섞여 있어도 labels 로 분리되어야 한다.
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 1_000, value: 21, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 1_000, value: 22, labels: { __metric__: 'temp', room: '2' } },
+        { timestamp: 4_000, value: 23, labels: { __metric__: 'temp', room: '1' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      startMs: 1_000,
+      endMs: 7_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // 시리즈 2개 → 라벨이 덧붙은 2개 컬럼.
+    expect(m.columns).toEqual([
+      'sensor · temp{room=1}',
+      'sensor · temp{room=2}',
+    ]);
+    expect(m.rows).toEqual([
+      { bucketStartMs: 1_000, values: [21, 22] },
+      { bucketStartMs: 4_000, values: [23, null] },
+    ]);
+  });
+
+  it('한 key 에서 단일 시리즈면 라벨을 붙이지 않고 key 만 컬럼명으로 쓴다', async () => {
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 1_000, value: 5, labels: { __metric__: 'temp', room: '1' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      startMs: 1_000,
+      endMs: 7_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // 단일 시리즈 → 기존 동작 보존(키만 표기).
+    expect(m.columns).toEqual(['sensor']);
+    expect(m.rows).toEqual([{ bucketStartMs: 1_000, values: [5] }]);
+  });
+
+  it('여러 key 가 각각 다중 시리즈를 가지면 key 순서 → 시리즈 순서로 평탄화', async () => {
+    postMock.mockImplementation(async (_url, body) => {
+      const req = body as { key: string };
+      if (req.key === 'A') {
+        return {
+          entries: [
+            { timestamp: 0, value: 1, labels: { __metric__: 'm', t: 'x' } },
+            { timestamp: 0, value: 2, labels: { __metric__: 'm', t: 'y' } },
+          ],
+        };
+      }
+      // B 는 라벨 없는 단일 시리즈.
+      return { entries: [{ timestamp: 0, value: 9 }] };
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['A', 'B'],
+      startMs: 0,
+      endMs: 1_000,
+      intervalMs: 1_000,
+      aggregation: 'average',
+    });
+
+    expect(m.columns).toEqual(['A · m{t=x}', 'A · m{t=y}', 'B']);
+    expect(m.rows).toEqual([{ bucketStartMs: 0, values: [1, 2, 9] }]);
+  });
+
+  it('폴백(4xx) 경로에서도 labels 기준으로 시리즈를 분리해 클라이언트 집계', async () => {
+    // 1차 서버 집계 시도 → 400, 2차 폴백 → 원본 엔트리(라벨 포함) 반환.
+    // epoch-zero 정렬: 1500/2500 → bucket 0. 두 시리즈를 각각 평균낸다.
+    postMock.mockImplementationOnce(async () => {
+      throw new APIError('UNSUPPORTED', 'aggregation not supported', 400);
+    });
+    postMock.mockImplementationOnce(async () => ({
+      entries: [
+        { timestamp: 1_500, value: 10, labels: { __metric__: 'm', s: 'a' } },
+        { timestamp: 2_500, value: 20, labels: { __metric__: 'm', s: 'a' } },
+        { timestamp: 1_500, value: 100, labels: { __metric__: 'm', s: 'b' } },
+      ],
+    }));
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['k'],
+      startMs: 1_000,
+      endMs: 4_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    expect(postMock).toHaveBeenCalledTimes(2);
+    expect(m.columns).toEqual(['k · m{s=a}', 'k · m{s=b}']);
+    // s=a: (10+20)/2 = 15, s=b: 100.
+    expect(m.rows).toEqual([{ bucketStartMs: 0, values: [15, 100] }]);
+  });
+});
+
 // ---- fetchStoreTagPairs / fetchStoreKeysWithTags (SPEC-STORE-003) ----
 
 describe('fetchStoreTagPairs', () => {

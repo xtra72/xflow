@@ -1021,4 +1021,106 @@ describe('SeriesDataViewerModal', () => {
       expect(arg.endMs).toBeGreaterThan(arg.startMs);
     });
   });
+
+  // SPEC-STORE-004 (M5): 같은 key 의 metric/tags 별 다중 시리즈를 구분된 행으로 표시.
+  describe('다중 시리즈 행 표시 (SPEC-STORE-004 M5)', () => {
+    /** 같은 key 'sensor' 가 metric/tags 별 3개 시리즈로 반환되는 fixture. */
+    function makeMultiSeriesObjects(): StoreKeyObject[] {
+      return [
+        {
+          key: 'sensor',
+          registration: 'manual',
+          data_type: 'float',
+          metric_type: 'temp',
+          tags: { room: '1' },
+        },
+        {
+          key: 'sensor',
+          registration: 'manual',
+          data_type: 'float',
+          metric_type: 'temp',
+          tags: { room: '2' },
+        },
+        {
+          key: 'sensor',
+          registration: 'auto',
+          data_type: 'int',
+          metric_type: 'humid',
+          tags: { room: '1' },
+        },
+        // 단일 시리즈 key (구분 행 미표시 대조군).
+        {
+          key: 'lonely',
+          registration: 'manual',
+          data_type: 'string',
+          metric_type: 'status',
+          tags: {},
+        },
+      ];
+    }
+
+    function renderMultiSeriesModal() {
+      const objs = makeMultiSeriesObjects();
+      // allSeriesKeys 는 key 단위 dedupe 된 풀 (fetchStoreKeys 와 동일 의미).
+      const uniqueKeys = [...new Set(objs.map((o) => o.key))];
+      storeKeysState.current = {
+        keys: uniqueKeys,
+        tags: {},
+        keyObjects: objs,
+      };
+      return render(
+        <TsdbDataViewerModal
+          isOpen
+          onClose={vi.fn()}
+          allSeriesKeys={uniqueKeys}
+          dataSource={storeDataSource()}
+          agentName="agent-test"
+        />,
+      );
+    }
+
+    it('다중 시리즈 key 는 시리즈 개수 배지와 구분된 하위 행을 표시한다', () => {
+      renderMultiSeriesModal();
+      // 'sensor' key 는 3개 시리즈 → 개수 배지 + 구분 행 컨테이너.
+      expect(screen.getByTestId('series-count-sensor')).toHaveTextContent(
+        '3 시리즈',
+      );
+      const rowsContainer = screen.getByTestId('series-rows-sensor');
+      expect(rowsContainer).toBeInTheDocument();
+      // 3개의 구분된 시리즈 행.
+      expect(screen.getByTestId('series-row-sensor-0')).toBeInTheDocument();
+      expect(screen.getByTestId('series-row-sensor-1')).toBeInTheDocument();
+      expect(screen.getByTestId('series-row-sensor-2')).toBeInTheDocument();
+    });
+
+    it('단일 시리즈 key 는 개수 배지/구분 행 없이 인라인 메타 칩만 표시한다', () => {
+      renderMultiSeriesModal();
+      expect(screen.queryByTestId('series-count-lonely')).toBeNull();
+      expect(screen.queryByTestId('series-rows-lonely')).toBeNull();
+    });
+
+    it('key 는 dedupe 되어 체크박스가 key 당 하나만 노출된다', () => {
+      renderMultiSeriesModal();
+      const checkboxes = screen
+        .getAllByRole('checkbox')
+        .filter((el) => (el as HTMLInputElement).type === 'checkbox');
+      // sensor, lonely → 2개 (시리즈 행은 체크박스가 아니라 정보 표시 전용).
+      expect(checkboxes.length).toBe(2);
+    });
+
+    it('다중 시리즈 key 선택 시 mutate 에는 key 가 1개만 전달된다 (시리즈 분리는 응답 단계)', () => {
+      renderMultiSeriesModal();
+      const checkboxes = screen
+        .getAllByRole('checkbox')
+        .filter((el) => (el as HTMLInputElement).type === 'checkbox');
+      fireEvent.click(checkboxes[0]!);
+      const execute = screen.getByRole('button', {
+        name: /^실행$/,
+      }) as HTMLButtonElement;
+      expect(execute.disabled).toBe(false);
+      fireEvent.click(execute);
+      const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
+      expect(arg.keys).toEqual(['sensor']);
+    });
+  });
 });
