@@ -228,7 +228,15 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 
 	entries, err := storeAgent.QueryHistory(ctx.Context(), req.Namespace, req.Key, q)
 	if err != nil {
-		return api.MapDomainError(err)
+		// 키가 존재하지 않는 경우(아직 데이터가 쓰이기 전, 또는 device_id 변경으로
+		// 옛 키를 조회하는 등)는 에러가 아니라 빈 결과(200)로 응답한다. 차트가
+		// "데이터 없음" 으로 정상 렌더되며, 과거 ErrKeyNotFound 가 INTERNAL_ERROR(500)
+		// 로 새어 나가던 회귀를 막는다.
+		if errors.Is(err, system.ErrKeyNotFound) {
+			entries = nil
+		} else {
+			return api.MapDomainError(err)
+		}
 	}
 
 	// 집계 경로: time_range / duration 에서만 도달한다 (validateAggregationParams 가 보장).

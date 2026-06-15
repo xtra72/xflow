@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/device"
 	"github.com/xtra/xflow/internal/engine"
 	"github.com/xtra/xflow/internal/node"
@@ -99,7 +100,8 @@ func MapDomainError(err error) *APIError {
 	case errors.Is(err, engine.ErrFlowNotFound),
 		errors.Is(err, engine.ErrNodeNotFound),
 		errors.Is(err, agent.ErrAgentNotFound),
-		errors.Is(err, node.ErrNodeTypeNotFound):
+		errors.Is(err, node.ErrNodeTypeNotFound),
+		errors.Is(err, system.ErrKeyNotFound):
 		return ErrNotFound.WithMessage(err.Error())
 
 	// 유효성 검증 실패 → 422 Unprocessable Entity
