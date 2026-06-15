@@ -68,16 +68,14 @@ func TestHTTP_ResetSeries_SingleSeries_OthersUnaffected(t *testing.T) {
 	resp := decodeResetSeries(t, rec)
 	assert.True(t, resp.Success)
 	assert.Equal(t, "room", resp.Data.Key)
-	// 동적(auto) 시리즈지만 값이 쓰여 레지스트리에 등록되었으므로 IsStaticKey=true → ClearHistory.
+	// @spec SPEC-STORE-004: 동적(auto) 시리즈 → DeleteEntry (값+레지스트리 메타 삭제).
 	assert.Equal(t, 1, resp.Data.HistoryCleared+resp.Data.EntriesDeleted,
 		"humidity 단일 시리즈만 처리되어야 한다")
+	assert.Equal(t, 1, resp.Data.EntriesDeleted, "동적 시리즈는 삭제")
 
-	// temperature 2개 시리즈는 그대로 남아있어야 한다(AC-15: 다른 시리즈 무영향).
-	// ClearHistory 는 엔트리를 보존하므로 humidity 도 현재값 조회는 남아있을 수 있으나,
-	// 여기서는 "단일 시리즈만 대상" 을 카운트로 검증한다.
+	// humidity 동적 시리즈는 삭제되고 temperature 2개만 남는다(AC-15: 다른 시리즈 무영향).
 	got := remainingSeriesCount(t, router, "store-s", "room")
-	assert.Equal(t, 3, got,
-		"ClearHistory 는 엔트리를 보존하므로 시리즈 수는 유지(단일 시리즈만 처리됨)")
+	assert.Equal(t, 2, got, "humidity 삭제 후 temperature 2개 시리즈만 남음")
 }
 
 // AC-15 변형: metric+tags 로 더 좁혀 단일 시리즈 reset.
@@ -122,16 +120,14 @@ func TestHTTP_ResetSeries_NoIdentifier_AllSeriesOfKey(t *testing.T) {
 
 // plain Set(메타 없음) 으로 쓴 bare key 기본 시리즈도 reset 대상이 된다.
 //
-// 주의(현재 정책): auto 모드에서는 checkKeyAllowed 가 첫 쓰기에 미등록 키를 SourceAuto 로
-// 레지스트리에 자동 등록한다. 따라서 plain Set 키도 레지스트리에 존재 → IsStaticKey=true →
-// 시리즈 reset 은 ClearHistory 경로를 탄다(엔트리 보존). 이는 SPEC-STORE-003 의 reset 정책
-// (레지스트리 존재 = 정적 취급) 을 시리즈 단위로 보존한 것이다. 동적(DeleteEntry) 경로는
-// 레지스트리에 등록되지 않은 키에서만 발생하며, 그 동작은 핸들러 폴백 경로 테스트
-// (fakeStoreResetter, DynamicKey_EntryDeleted) 가 별도로 검증한다.
-func TestHTTP_ResetSeries_PlainBareKey_HistoryCleared(t *testing.T) {
+// @spec SPEC-STORE-004: auto 모드에서 plain Set 키는 SourceAuto 로 자동 등록되는 동적
+// 키이다. 따라서 reset 시 DeleteEntry 경로로 값과 레지스트리 메타가 함께 제거되어
+// 키가 완전히 사라진다("전체 초기화 시 동적 키 삭제"). manual(yaml) 정적 키만
+// ClearHistory 로 정의를 보존한다.
+func TestHTTP_ResetSeries_PlainBareKey_Deleted(t *testing.T) {
 	ag, adapter := newSeriesStoreAgent(t, "store-s")
 	ctx := context.Background()
-	// 메타 없는 plain Set → bare key 기본 시리즈. auto 모드라 레지스트리에 자동 등록된다.
+	// 메타 없는 plain Set → bare key 기본 시리즈. auto 모드라 SourceAuto 로 자동 등록된다.
 	require.NoError(t, adapter.Set(ctx, "plain", 7))
 	router := setupStoreQueryRouter(t, ag)
 
@@ -141,11 +137,11 @@ func TestHTTP_ResetSeries_PlainBareKey_HistoryCleared(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeResetSeries(t, rec)
-	assert.Equal(t, 1, resp.Data.HistoryCleared, "레지스트리 등록 키 → ClearHistory")
-	assert.Equal(t, 0, resp.Data.EntriesDeleted)
+	assert.Equal(t, 0, resp.Data.HistoryCleared)
+	assert.Equal(t, 1, resp.Data.EntriesDeleted, "동적(auto) 키 → 완전 삭제")
 
-	// ClearHistory 는 엔트리를 보존하므로 시리즈 현재값 조회는 유지된다(단일 시리즈만 처리됨).
-	assert.Equal(t, 1, remainingSeriesCount(t, router, "store-s", "plain"))
+	// 동적 키는 값+레지스트리 메타가 삭제되어 더 이상 조회되지 않는다.
+	assert.Equal(t, 0, remainingSeriesCount(t, router, "store-s", "plain"))
 }
 
 // 미일치 식별자 → 200 + 카운트 0 (S4 정합, 에러 아님).

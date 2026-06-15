@@ -53,12 +53,13 @@ func TestChar_SeriesWrite_RegistryKeyedByEncoded(t *testing.T) {
 
 	encoded := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
 	snap := a.StaticKeysSnapshot()
-	_, exists := snap[encoded]
-	assert.True(t, exists, "레지스트리는 인코딩 키로 메타를 보관한다 (현재 동작)")
+	meta, exists := snap[encoded]
+	assert.True(t, exists, "레지스트리는 인코딩 키로 메타를 보관한다")
+	assert.Equal(t, SourceAuto, meta.Source, "런타임 자동 등록 시리즈는 Source=auto")
 
-	// 현재 동작: IsStaticKey 는 레지스트리 존재 여부만 본다 → 등록된 인코딩 키는 true.
-	assert.True(t, a.IsStaticKey(encoded),
-		"IsStaticKey 는 레지스트리 존재 여부로 판단하므로 등록된 인코딩 키는 true (현재 동작)")
+	// @spec SPEC-STORE-004: IsStaticKey 는 Source=manual 만 정적으로 본다.
+	// 동적(auto) 시리즈는 레지스트리에 있어도 정적이 아니다(reset 시 삭제 대상).
+	assert.False(t, a.IsStaticKey(encoded), "동적(auto) 인코딩 키는 정적이 아니다")
 }
 
 // CHAR: yaml 정적 키는 bare key 로 등록되며 IsStaticKey(bareKey)=true (직접 조회 적중).

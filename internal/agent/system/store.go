@@ -498,6 +498,16 @@ func (s *StoreAgent) SetStaticKeys(keys map[string]StaticKeyMeta) {
 	s.config.staticKeys = cloned
 }
 
+// @spec SPEC-STORE-004
+// RemoveStaticKey 는 레지스트리(staticKeys)에서 주어진 키를 제거한다.
+// 동적(auto) 키를 reset/삭제할 때 값 엔트리뿐 아니라 등록 메타까지 지워 키가 완전히
+// 사라지게 하기 위함이다. 키가 없으면 no-op. 내부 VolatileStore 값에는 영향이 없다.
+func (s *StoreAgent) RemoveStaticKey(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.config.staticKeys, key)
+}
+
 // @spec SPEC-STORE-003 v0.4.0
 // SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 metric_type 과 tags 를 설정한다.
 // 사용자가 Web UI 등에서 동적으로 등록된 키에도 타입/태그를 나중에 부여할 수 있게 한다.

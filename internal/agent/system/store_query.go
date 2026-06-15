@@ -129,7 +129,14 @@ func (a *UserStoreAgent) DeleteEntry(ctx context.Context, namespace, key string)
 	}
 
 	store := inner.ForNamespace(namespace)
-	return store.Delete(ctx, key)
+	if err := store.Delete(ctx, key); err != nil {
+		return err
+	}
+	// @spec SPEC-STORE-004: 값 엔트리뿐 아니라 레지스트리 메타(staticKeys)도 제거하여
+	// 동적 키가 완전히 사라지게 한다(전체 초기화 시 동적 키 삭제 요구). manual 정적 키는
+	// reset 정책상 DeleteEntry 경로를 타지 않으므로(IsStaticKey=true → ClearHistory) 영향 없다.
+	inner.RemoveStaticKey(key)
+	return nil
 }
 
 // @spec SPEC-STORE-003
@@ -151,9 +158,10 @@ func (a *UserStoreAgent) DeleteEntry(ctx context.Context, namespace, key string)
 //     호출자(예: 사용자 key 만 가진 코드)가 정적 여부를 물을 수 있게 하는 가산적 의미이며,
 //     primary 경로를 침범하지 않는다(직접 적중 시 fallback 미실행).
 //
-// 주의: 본 메서드는 Source(manual/auto) 가 아니라 "레지스트리 존재 여부" 로 정적성을
-// 정의한다(SPEC-STORE-003 characterization). 따라서 값이 쓰여 레지스트리에 올라온 동적
-// 시리즈도 IsStaticKey=true 이며, reset 시 ClearHistory 경로를 탄다.
+// 정적성 정의(SPEC-STORE-004 수정): 정적 = Source=manual(yaml/수동 정의) 인 키만이다.
+// 동적(Source=auto, 런타임 자동 등록) 키는 정적이 아니며, reset 시 DeleteEntry 경로로
+// 값과 레지스트리 메타가 함께 제거된다("전체 초기화 시 동적 키 삭제" 요구). 과거에는
+// 레지스트리 존재 여부로 판정해 동적 키도 정적으로 취급(ClearHistory 보존)되던 버그가 있었다.
 func (a *UserStoreAgent) IsStaticKey(key string) bool {
 	a.mu.RLock()
 	inner := a.inner
@@ -161,29 +169,22 @@ func (a *UserStoreAgent) IsStaticKey(key string) bool {
 	if inner == nil {
 		return false
 	}
-	tags := inner.StaticTagsFor(key)
-	// StaticTagsFor 는 정적 키가 아니면 빈 맵을 반환하지만, 정적 키가 빈 태그 맵을
-	// 가질 수도 있으므로 별도 확인이 필요하다.
-	if len(tags) > 0 {
-		return true
-	}
-	all := inner.StaticKeyTags()
-	if _, ok := all[key]; ok {
-		return true
+
+	// 1) 직접 조회(primary): key 가 레지스트리에 그대로 있으면 그 Source 로 판정.
+	//    (ResetAll/ResetSeries 는 저장 키 — 인코딩 또는 bare — 를 그대로 넘긴다.)
+	if meta, ok := inner.StaticKeyMetaFor(key); ok {
+		return meta.Source == SourceManual
 	}
 
-	// @spec SPEC-STORE-004
-	// fallback: 직접 조회 미적중 시 사용자 관점 key 로 해석하여 "그 key 의 어떤 시리즈라도
-	// 정적이면 true". 레지스트리 키를 디코드하여 SeriesID.Key 비교한다. 빈 key 는 즉시 false.
+	// 2) fallback(사용자 관점): 미등록 key 면, 그 key 의 어떤 시리즈라도 manual 이면 true.
 	if key == "" {
 		return false
 	}
-	for regKey := range all {
-		if regKey == key {
-			// 위에서 이미 처리되었으나 방어적으로 유지.
-			return true
+	for regKey, meta := range inner.StaticKeysSnapshot() {
+		if meta.Source != SourceManual {
+			continue
 		}
-		if decodeStorageKeyToSeries(regKey).Key == key {
+		if regKey == key || decodeStorageKeyToSeries(regKey).Key == key {
 			return true
 		}
 	}
