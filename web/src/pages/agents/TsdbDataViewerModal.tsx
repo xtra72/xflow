@@ -217,9 +217,22 @@ interface StoreTagFilterState {
    * TSDB/그 외 모드에서는 빈 객체를 반환한다. v0.7.0 (M16) 메타데이터 칩
    * 표시와 data_type/metric_type/registration 필터 적용에 사용된다.
    *
+   * 같은 key 에 다중 시리즈가 있으면 마지막 시리즈가 대표값으로 들어간다.
+   * 시리즈별 구분 표시는 `seriesByKey` 를 사용한다.
+   *
    * @spec SPEC-WEB-005 v0.7.0 (M16)
    */
   keyMetaByKey: Record<string, StoreKeyObject>;
+  /**
+   * 키 → 해당 key 의 모든 시리즈(metric/tags 별) 배열.
+   *
+   * @spec SPEC-STORE-004 (M5)
+   * 백엔드 GET /keys 는 같은 key 를 metric/tags 별 다중 행으로 반환한다. 시리즈
+   * 풀 리스트에서 한 key 아래 여러 시리즈를 "구분된 행" 으로 표시하기 위해, key
+   * 단위로 그 key 의 모든 StoreKeyObject 를 모아둔다. Store 모드는 백엔드 응답을
+   * 그대로 그룹화하고, TSDB/그 외 모드는 합성 메타 1개를 단일 원소 배열로 채운다.
+   */
+  seriesByKey: Record<string, StoreKeyObject[]>;
 }
 
 /**
@@ -287,6 +300,15 @@ function useStoreTagFilterStateImpl(
     }
     return map;
   }, [keysWithTagsQuery.data]);
+  // SPEC-STORE-004 (M5): key → 다중 시리즈 그룹. 백엔드 keyObjects 는 같은 key 를
+  // metric/tags 별 여러 행으로 반환하므로, key 단위로 모아 "구분된 시리즈 행" 표시에 쓴다.
+  const seriesByKey = useMemo<Record<string, StoreKeyObject[]>>(() => {
+    const map: Record<string, StoreKeyObject[]> = {};
+    for (const obj of keysWithTagsQuery.data?.keyObjects ?? []) {
+      (map[obj.key] ??= []).push(obj);
+    }
+    return map;
+  }, [keysWithTagsQuery.data]);
   // 모달은 부모로부터 받은 `allSeriesKeys` 를 정렬 기준 풀로 사용한다.
   // 서버의 keys 와 부모 풀이 다를 수 있으므로 양쪽 합집합을 채택한다.
   const allKeys = useMemo(() => {
@@ -318,7 +340,7 @@ function useStoreTagFilterStateImpl(
 
   const clearAll = useCallback(() => setSelected(new Set()), []);
 
-  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey };
+  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey, seriesByKey };
 }
 
 /**
@@ -376,7 +398,16 @@ function useExtractedTagFilterState(
     }
     return out;
   }, [allSeriesKeys, separator, tagsByKey]);
-  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey };
+  // SPEC-STORE-004 (M5): TSDB/그 외 모드는 키당 합성 시리즈 1개. keyMetaByKey 의
+  // 각 항목을 단일 원소 배열로 감싸 Store 모드와 동일한 seriesByKey 형상을 제공한다.
+  const seriesByKey = useMemo<Record<string, StoreKeyObject[]>>(() => {
+    const out: Record<string, StoreKeyObject[]> = {};
+    for (const [k, meta] of Object.entries(keyMetaByKey)) {
+      out[k] = [meta];
+    }
+    return out;
+  }, [keyMetaByKey]);
+  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey, seriesByKey };
 }
 
 function SeriesDataViewerModalImpl({
@@ -930,8 +961,12 @@ function SeriesDataViewerModalImpl({
                       : [];
                     // SPEC-WEB-005 v0.7.0 (M16): Store 모드에서 키별 메타데이터 칩 (data_type/metric_type/auto badge).
                     const meta = tagFilter.keyMetaByKey[k];
+                    // SPEC-STORE-004 (M5): 같은 key 의 metric/tags 별 시리즈 목록.
+                    // 2개 이상이면 각 시리즈를 구분된 하위 행으로 표시한다.
+                    const series = tagFilter.seriesByKey[k] ?? [];
+                    const isMultiSeries = series.length > 1;
                     return (
-                      <li key={k}>
+                      <li key={k} className="border-b border-(--color-border-default) last:border-b-0">
                         <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
                           <input
                             type="checkbox"
@@ -942,7 +977,18 @@ function SeriesDataViewerModalImpl({
                           <span className="flex-1 truncate font-mono text-(--color-text-primary)">
                             {k}
                           </span>
-                          {meta && (
+                          {/* 시리즈가 여러 개면 개수 배지를 표시 (선택 시 모두 조회됨을 시사). */}
+                          {isMultiSeries && (
+                            <span
+                              className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-200"
+                              data-testid={`series-count-${k}`}
+                              title={`${series.length}개 시리즈`}
+                            >
+                              {series.length} 시리즈
+                            </span>
+                          )}
+                          {/* 단일 시리즈: 기존처럼 대표 메타 칩을 인라인 표시. */}
+                          {!isMultiSeries && meta && (
                             <MetadataChips
                               dataType={meta.data_type}
                               metricType={meta.metric_type}
@@ -951,7 +997,7 @@ function SeriesDataViewerModalImpl({
                               className="shrink-0"
                             />
                           )}
-                          {tagValues.length > 0 && (
+                          {!isMultiSeries && tagValues.length > 0 && (
                             <span
                               className="flex shrink-0 items-center gap-1"
                               data-testid={`series-row-tags-${k}`}
@@ -967,6 +1013,53 @@ function SeriesDataViewerModalImpl({
                             </span>
                           )}
                         </label>
+                        {/*
+                          SPEC-STORE-004 (M5): 다중 시리즈 구분 행.
+                          한 key 에 metric/tags 가 다른 시리즈가 여러 개면, key 행 아래에
+                          각 시리즈를 별도 행으로 들여써서(indent) 표시한다. 선택 자체는
+                          key 단위이므로(체크 시 모든 시리즈가 차트에서 개별 라인으로 분리됨)
+                          하위 행은 정보 표시 전용이다.
+                        */}
+                        {isMultiSeries && (
+                          <ul
+                            className="ml-7 mb-1 space-y-0.5"
+                            data-testid={`series-rows-${k}`}
+                          >
+                            {series.map((s, i) => {
+                              const sTagValues = Object.entries(s.tags);
+                              return (
+                                <li
+                                  key={`${k}-series-${i}`}
+                                  className="flex items-center gap-2 px-3 py-1 text-[11px] text-(--color-text-muted)"
+                                  data-testid={`series-row-${k}-${i}`}
+                                >
+                                  <span aria-hidden="true" className="text-(--color-text-muted)">
+                                    └
+                                  </span>
+                                  <MetadataChips
+                                    dataType={s.data_type}
+                                    metricType={s.metric_type}
+                                    registration={s.registration}
+                                    showAutoBadge
+                                    className="shrink-0"
+                                  />
+                                  {sTagValues.length > 0 && (
+                                    <span className="flex flex-wrap items-center gap-1">
+                                      {sTagValues.map(([tk, tv]) => (
+                                        <span
+                                          key={`${k}-series-${i}-tag-${tk}`}
+                                          className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-mono font-medium text-(--color-text-muted)"
+                                        >
+                                          {tk}={tv}
+                                        </span>
+                                      ))}
+                                    </span>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
                       </li>
                     );
                   })}

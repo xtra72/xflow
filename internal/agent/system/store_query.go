@@ -133,8 +133,27 @@ func (a *UserStoreAgent) DeleteEntry(ctx context.Context, namespace, key string)
 }
 
 // @spec SPEC-STORE-003
-// IsStaticKey 는 사용자 관점 key 가 정적 키 목록에 정의되어 있는지 검사한다.
-// HTTP 핸들러가 reset 정책을 결정할 때 사용한다.
+// @spec SPEC-STORE-004
+// IsStaticKey 는 입력 key 가 정적(레지스트리 등록) 키인지 검사한다. reset 정책 분기
+// (정적 → ClearHistory / 동적 → DeleteEntry) 에 사용된다.
+//
+// 시리즈 모델(M2 이후)에서의 의미 — 두 단계 판정:
+//
+//  1. 직접 조회(primary): key 가 레지스트리(staticKeys)에 그대로 존재하면 true.
+//     레지스트리 키는 (a) 시리즈 인코딩 키(SetWithMeta 경로) 또는 (b) bare key(yaml 정적/
+//     plain Set 으로 등록된 키)이다. ResetAll/ResetSeries 가 저장 키(인코딩 또는 bare)를
+//     그대로 넘기면 이 경로가 적중한다. 이 동작은 SPEC-STORE-003 시절과 byte-identical 하게
+//     보존된다(회귀 0).
+//
+//  2. 사용자 관점 보조 의미(fallback): 직접 조회가 빗나가면 key 를 "사용자 관점 key" 로 보고,
+//     레지스트리에 디코드 후 SeriesID.Key == key 인 시리즈가 하나라도 존재하면 true 를
+//     반환한다. 즉 "그 key 의 어떤 시리즈라도 정적이면 true". 이는 시리즈 인코딩을 모르는
+//     호출자(예: 사용자 key 만 가진 코드)가 정적 여부를 물을 수 있게 하는 가산적 의미이며,
+//     primary 경로를 침범하지 않는다(직접 적중 시 fallback 미실행).
+//
+// 주의: 본 메서드는 Source(manual/auto) 가 아니라 "레지스트리 존재 여부" 로 정적성을
+// 정의한다(SPEC-STORE-003 characterization). 따라서 값이 쓰여 레지스트리에 올라온 동적
+// 시리즈도 IsStaticKey=true 이며, reset 시 ClearHistory 경로를 탄다.
 func (a *UserStoreAgent) IsStaticKey(key string) bool {
 	a.mu.RLock()
 	inner := a.inner
@@ -149,8 +168,26 @@ func (a *UserStoreAgent) IsStaticKey(key string) bool {
 		return true
 	}
 	all := inner.StaticKeyTags()
-	_, ok := all[key]
-	return ok
+	if _, ok := all[key]; ok {
+		return true
+	}
+
+	// @spec SPEC-STORE-004
+	// fallback: 직접 조회 미적중 시 사용자 관점 key 로 해석하여 "그 key 의 어떤 시리즈라도
+	// 정적이면 true". 레지스트리 키를 디코드하여 SeriesID.Key 비교한다. 빈 key 는 즉시 false.
+	if key == "" {
+		return false
+	}
+	for regKey := range all {
+		if regKey == key {
+			// 위에서 이미 처리되었으나 방어적으로 유지.
+			return true
+		}
+		if decodeStorageKeyToSeries(regKey).Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // @spec SPEC-STORE-003

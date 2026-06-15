@@ -534,6 +534,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer deviceIDRepo.Close()
 	agent.SetDeviceIDRepository(deviceIDRepo)
 
+	// device_id / device_info 키를 항상 에이전트 ID 기준으로 정규화하는 resolver 를
+	// 주입한다. agentRef 가 이름("LG HVACR2")으로 들어오든 ID(UUID)로 들어오든
+	// 동일한 device_id 가 발급되도록 보장한다 (SPEC-DEVICE-IDENTITY-001).
+	// 이름→ID 변환은 agentMgr.ResolveAgentID(registry.GetByName)를 사용한다.
+	agent.SetAgentIDResolver(agentMgr.ResolveAgentID)
+
 	// 6.9. SPEC-DEVICE-IDENTITY-001 Phase D § D-T6 — 자동 부팅 sanity check.
 	// device_metadata.json 에 composite key (legacy) 가 잔존하면 v1.0 부팅을 거부.
 	// xflowd preflight 명령과 동일한 로직 (checkDeviceMetadataKeys) 재사용.

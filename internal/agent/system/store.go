@@ -881,8 +881,58 @@ func (as *agentStore) coerceWriteValue(key string, value any) any {
 	as.agent.mu.RLock()
 	meta, ok := as.agent.config.staticKeys[key]
 	as.agent.mu.RUnlock()
-	if ok && isDynamicStringMeta(meta) {
+	if !ok {
+		return value
+	}
+	if isDynamicStringMeta(meta) {
 		return stringifyValue(value)
+	}
+	// 숫자 타입 정규화: 선언 data_type 에 맞춰 저장값을 변환한다(JSON float64 호환).
+	//  - int  선언 + 정수값 float64(2.0) → int64(2)
+	//  - float 선언 + 정수(int 계열)     → float64
+	// 그 외에는 원본 값을 그대로 둔다.
+	return coerceNumericToDeclared(value, meta.DataType)
+}
+
+// coerceNumericToDeclared 는 값을 선언된 숫자 data_type 에 맞춰 정규화한다.
+// matchesDataType 의 JSON 숫자 호환(정수값 float ↔ int)과 짝을 이루어, 검증을 통과한
+// 값이 선언 타입으로 저장되게 한다. 대상이 아니면 원본을 반환한다.
+func coerceNumericToDeclared(value any, dt DataType) any {
+	switch dt {
+	case DataTypeInt:
+		switch v := value.(type) {
+		case float64:
+			if isIntegralFloat(v) {
+				return int64(v)
+			}
+		case float32:
+			if isIntegralFloat(v) {
+				return int64(v)
+			}
+		}
+	case DataTypeFloat:
+		switch v := value.(type) {
+		case int:
+			return float64(v)
+		case int8:
+			return float64(v)
+		case int16:
+			return float64(v)
+		case int32:
+			return float64(v)
+		case int64:
+			return float64(v)
+		case uint:
+			return float64(v)
+		case uint8:
+			return float64(v)
+		case uint16:
+			return float64(v)
+		case uint32:
+			return float64(v)
+		case uint64:
+			return float64(v)
+		}
 	}
 	return value
 }

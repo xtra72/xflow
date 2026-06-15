@@ -248,6 +248,22 @@
     "uptime": "Uptime",
     "lastSeen": "Last Seen"
   },
+  "series": {
+    "title": "Series Data Viewer",
+    "seriesKey": "Series Key",
+    "selectSeries": "Select Series",
+    "series": "Series",
+    "seriesCount": "{count} series",
+    "metric": "Metric",
+    "metricType": "Metric Type",
+    "tags": "Tags",
+    "dataType": "Data Type",
+    "registration": "Registration",
+    "unknownMetric": "unknown",
+    "noMatchingSeries": "No matching series.",
+    "resultMatrix": "Result Matrix",
+    "multiSeriesHint": "Selecting this key plots each metric/tag series as a separate line."
+  },
   "nodes": {
     "title": "Node Types",
     "search": "Search nodes...",

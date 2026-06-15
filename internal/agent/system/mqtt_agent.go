@@ -214,6 +214,15 @@ func (a *MQTTAgent) Init(config agent.AgentConfig) error {
 		SetConnectTimeout(time.Duration(a.mqttConfig.ConnectTimeoutSec) * time.Second).
 		SetOrderMatters(false)
 
+	// AutoReconnect 가 켜져 있으면 초기 연결도 백그라운드에서 재시도하게 한다.
+	// paho 의 SetAutoReconnect 는 "최초 연결 성공 후" 의 연결 끊김에만 적용되므로,
+	// 브로커가 처음부터 도달 불가일 때 초기 연결을 재시도하려면 ConnectRetry 가 필요하다.
+	// 이로써 죽은 브로커가 이 에이전트를 참조하는 플로우의 시작을 막지 않는다.
+	if a.mqttConfig.AutoReconnect {
+		opts.SetConnectRetry(true)
+		opts.SetConnectRetryInterval(time.Duration(a.mqttConfig.ConnectTimeoutSec) * time.Second)
+	}
+
 	if a.mqttConfig.Username != "" {
 		opts.SetUsername(a.mqttConfig.Username)
 	}
@@ -243,13 +252,23 @@ func (a *MQTTAgent) Init(config agent.AgentConfig) error {
 	// MQTT 클라이언트 생성 및 연결
 	a.client = mqtt.NewClient(opts)
 	token := a.client.Connect()
-	if !token.WaitTimeout(time.Duration(a.mqttConfig.ConnectTimeoutSec) * time.Second) {
-		_ = a.TransitionTo(lifecycle.StateError)
-		return fmt.Errorf("mqtt init: 연결 타임아웃 (%s)", a.mqttConfig.Broker)
-	}
-	if token.Error() != nil {
-		_ = a.TransitionTo(lifecycle.StateError)
-		return fmt.Errorf("mqtt init: 연결 실패: %w", token.Error())
+	connected := token.WaitTimeout(time.Duration(a.mqttConfig.ConnectTimeoutSec)*time.Second) && token.Error() == nil
+	if !connected {
+		// AutoReconnect 시: 초기 연결 실패를 치명적으로 보지 않고 Running(degraded)으로 진입한다.
+		// 백그라운드 ConnectRetry 가 브로커 복구 시 자동 연결하며, 그동안 발행은 미연결 에러를
+		// 반환하나 플로우 자체는 시작·동작한다. 죽은 외부 브로커가 플로우를 막지 못하게 한다.
+		if a.mqttConfig.AutoReconnect {
+			a.logger.Warn("mqtt: 초기 연결 실패 — 백그라운드 재연결로 진행(degraded)",
+				"broker", a.mqttConfig.Broker,
+				"error", token.Error(),
+			)
+		} else {
+			_ = a.TransitionTo(lifecycle.StateError)
+			if token.Error() != nil {
+				return fmt.Errorf("mqtt init: 연결 실패: %w", token.Error())
+			}
+			return fmt.Errorf("mqtt init: 연결 타임아웃 (%s)", a.mqttConfig.Broker)
+		}
 	}
 
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
