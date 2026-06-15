@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/message"
 )
@@ -35,7 +36,7 @@ type mockMetaStore struct {
 type metaCall struct {
 	key   string
 	value any
-	opts  StoreWriteMeta
+	opts  system.StoreWriteMeta
 }
 
 func newMockMetaStore() *mockMetaStore {
@@ -56,7 +57,7 @@ func (m *mockMetaStore) SetWithTTL(_ context.Context, _ string, _ any, _ time.Du
 	return nil
 }
 
-func (m *mockMetaStore) SetWithMeta(_ context.Context, key string, value any, opts StoreWriteMeta) error {
+func (m *mockMetaStore) SetWithMeta(_ context.Context, key string, value any, opts system.StoreWriteMeta) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.metaCalls = append(m.metaCalls, metaCall{key: key, value: value, opts: opts})

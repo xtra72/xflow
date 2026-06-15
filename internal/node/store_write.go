@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
@@ -30,28 +31,26 @@ type StoreReader interface {
 	GetHistory(ctx context.Context, key string) ([]any, error)
 }
 
-// StoreWriteMeta 는 SetWithMeta 호출 시 부여할 메타데이터 옵션이다.
-// system.StoreWriteMeta 와 동일 형태이며, 어댑터가 이 노드 인터페이스를 구현한다.
-type StoreWriteMeta struct {
-	// DataType 은 빈 문자열이 아니면 기록되는 키를 그 data_type 으로 등록/고정한다.
-	DataType string
-	// MetricType 은 빈 문자열이 아니면 기록되는 키의 metric_type 으로 적용한다.
-	// 빈 문자열이면 기존 metric_type(또는 unknown)을 보존한다.
-	MetricType string
-	// Tags 는 비어있지 않으면 기록되는 키에 태그를 부여한다.
-	Tags map[string]string
-	// TTL 은 0 보다 크면 값 쓰기에 TTL 을 적용한다.
-	TTL time.Duration
-}
-
 // StoreMetaWriter 는 data_type/tags 메타데이터를 함께 지정하여 기록할 수 있는
-// 선택적(optional) 인터페이스이다. NodeStoreAdapter 가 이를 구현한다.
+// 선택적(optional) 인터페이스이다. system.NodeStoreAdapter 가 이를 구현한다.
 //
-// store 가 이 인터페이스를 만족하고 노드에 data_type 또는 tags 가 설정된 경우에만
+// 중요: 옵션 타입은 system.StoreWriteMeta 를 그대로 사용한다. 과거에는 node 패키지에
+// 동일 형태의 StoreWriteMeta 를 중복 정의했는데, Go 인터페이스 만족은 메서드 시그니처가
+// 정확히 일치해야 하므로(파라미터 타입 포함) 어댑터의 SetWithMeta(system.StoreWriteMeta)
+// 가 이 인터페이스를 만족하지 못했다. 그 결과 store-write 노드의 data_type/metric_type
+// 메타가 한 번도 적용되지 못하고(키가 항상 동적 string/unknown), 일반 Set 로 폴백했다.
+// node 패키지는 이미 system 을 import 하므로(store_read.go 등) system 타입을 직접 사용한다.
+//
+// store 가 이 인터페이스를 만족하고 노드에 data_type/metric_type/tags 가 설정된 경우에만
 // SetWithMeta 가 사용되며, 그 외에는 기존 StoreWriter.Set/SetWithTTL 로 폴백한다 (하위 호환).
 type StoreMetaWriter interface {
-	SetWithMeta(ctx context.Context, key string, value any, opts StoreWriteMeta) error
+	SetWithMeta(ctx context.Context, key string, value any, opts system.StoreWriteMeta) error
 }
+
+// 컴파일 타임 보장: 실제 store 어댑터(*system.NodeStoreAdapter)가 StoreMetaWriter 를
+// 만족해야 한다. 과거 opts 타입(node.StoreWriteMeta vs system.StoreWriteMeta) 불일치로
+// 만족하지 못해 메타 경로가 죽어있던 회귀를 영구 차단한다.
+var _ StoreMetaWriter = (*system.NodeStoreAdapter)(nil)
 
 // storeProvider 는 네임스페이스별 Store 어댑터를 제공하는 에이전트의 인터페이스이다.
 // UserStoreAgent 가 이 인터페이스를 구현하며, AgentResolver로 해석된 에이전트에서
@@ -434,7 +433,7 @@ func (n *StoreWriteNode) resolveValue(path string, msg message.Message) (any, er
 func (n *StoreWriteNode) writeOne(ctx context.Context, key string, value any, metric string, tags map[string]string) error {
 	useMeta := n.dataType != "" || metric != "" || len(tags) > 0
 	if mw, ok := n.store.(StoreMetaWriter); ok && useMeta {
-		opts := StoreWriteMeta{
+		opts := system.StoreWriteMeta{
 			DataType:   n.dataType,
 			MetricType: metric,
 			Tags:       tags,
