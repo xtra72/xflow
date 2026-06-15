@@ -116,6 +116,18 @@ type storeResetter interface {
 	IsStaticKey(key string) bool
 }
 
+// @spec SPEC-STORE-004
+// storeSeriesResetter 는 단일/부분 시리즈 reset 계약이다 (E8, M4).
+// system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로 옵셔널하게
+// 시리즈 reset 을 사용하며, 미구현(레거시/페이크) 에이전트는 기존 bare-key reset 경로로 폴백한다.
+//
+// ResetSeries 는 (namespace, key, metricFilter, tagsFilter) 에 일치하는 시리즈만 reset 하고,
+// 시리즈별로 정적 → ClearHistory(historyCleared++), 동적 → DeleteEntry(entriesDeleted++)
+// 정책을 적용한다. 필터가 모두 비어있으면 해당 key 의 모든 시리즈가 대상이다(식별자 누락 정책).
+type storeSeriesResetter interface {
+	ResetSeries(ctx context.Context, namespace, key, metricFilter string, tagsFilter map[string]string) (historyCleared, entriesDeleted int, err error)
+}
+
 // StoreQueryHandler 는 SPEC-CHART-001 REQ-M3-01 를 구현한다.
 //
 // 라우트:
@@ -1068,19 +1080,27 @@ func findAgentByName(lookup AgentLookup, name string) agent.Agent {
 }
 
 // @spec SPEC-STORE-003
+// @spec SPEC-STORE-004
 // ResetKey 는 단일 키 reset 을 처리한다.
 //
 //	DELETE /store/{agent_name}/keys/{key}?namespace=default
+//	DELETE /store/{agent_name}/keys/{key}?metric_type=temperature&tag=room:1   (단일 시리즈, E8)
 //
-// 정책:
-//   - 정적 키(IsStaticKey=true)  → ClearHistory(엔트리 보존, 히스토리만 비움)
-//     응답: action=history_cleared
-//   - 동적 키(IsStaticKey=false) → DeleteEntry(엔트리+히스토리 모두 삭제)
-//     응답: action=entry_deleted
+// 시리즈 모델(M4) — 에이전트가 storeSeriesResetter 를 구현하면 시리즈 단위 reset 을 수행한다:
+//   - ?metric_type= / ?tag=key:value 식별자로 대상 시리즈를 좁힌다.
+//   - 식별자(metric/tags) 가 모두 생략되면 **해당 key 의 모든 시리즈**가 대상이다(식별자
+//     누락 정책 — 사용자 직관 "이 키 삭제" = 그 키의 전 시리즈, ResetSeries 주석 참조).
+//   - 시리즈별 정책: 정적 → ClearHistory, 동적 → DeleteEntry. 응답은 카운트
+//     {key, history_cleared, entries_deleted} 이다(다중 시리즈 가능하므로 단일 action 대신 카운트).
+//   - 다른 시리즈에 영향을 주지 않는다(AC-15).
+//
+// 레거시/시리즈 미지원 폴백 (storeSeriesResetter 미구현 에이전트):
+//   - 기존 SPEC-STORE-003 동작을 byte-identical 하게 유지한다.
+//   - 정적 키(IsStaticKey=true)  → ClearHistory, 응답 action=history_cleared.
+//   - 동적 키(IsStaticKey=false) → DeleteEntry, 응답 action=entry_deleted.
+//   - 정적 키 ClearHistory 가 ErrKeyNotFound → 404.
 //
 // 키 경로 파라미터는 url.PathUnescape 로 디코딩되어 콜론(%3A) 등 특수문자가 안전히 처리된다.
-// 정적 키에 대해 ClearHistory 가 ErrKeyNotFound 를 반환하면 404 로 응답한다.
-// (동적 키에 대해 DeleteEntry 는 키 부재를 에러로 보고하지 않으므로 항상 200 entry_deleted.)
 func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
 	agentName := ctx.Param("agent_name")
 	if agentName == "" {
@@ -1106,6 +1126,12 @@ func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
 		return api.ErrNotFound.
 			WithMessage("agent_not_found: " + agentName).
 			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	// @spec SPEC-STORE-004
+	// 시리즈 reset 경로: 에이전트가 ResetSeries 를 구현하면 시리즈 단위로 처리한다.
+	if seriesResetter, ok := ag.(storeSeriesResetter); ok {
+		return h.resetSeries(ctx, seriesResetter, namespace, decodedKey)
 	}
 
 	resetter, ok := ag.(storeResetter)
@@ -1142,6 +1168,48 @@ func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
 		"action": action,
 		"key":    decodedKey,
+	}))
+}
+
+// @spec SPEC-STORE-004
+// resetSeries 는 시리즈 모델 reset(E8)을 수행한다. ResetKey 가 에이전트의 ResetSeries
+// 구현을 발견했을 때 호출한다.
+//
+// 식별자 파싱:
+//   - ?metric_type= : 단일 값. 빈 문자열이면 metric 축 필터 미적용.
+//   - ?tag=key:value : 다중 허용(AND). 잘못된 형식(콜론 없음)은 400.
+//   - 둘 다 생략 시 해당 key 의 모든 시리즈가 대상(식별자 누락 정책).
+//
+// 응답: {key, history_cleared, entries_deleted}. 일치 시리즈가 0개여도 200 + 카운트 0 이다
+// (S4 정합 — 존재하지 않는 시리즈 삭제는 에러가 아니다). 도메인 에러만 매핑한다.
+func (h *StoreQueryHandler) resetSeries(
+	ctx api.Context,
+	resetter storeSeriesResetter,
+	namespace, key string,
+) error {
+	metricFilter := ctx.Query("metric_type")
+
+	tagFilters, perr := parseTagFilters(ctx.QueryValues("tag"))
+	if perr != nil {
+		return api.ErrBadRequest.WithMessage(perr.Error())
+	}
+	var tagsFilter map[string]string
+	if len(tagFilters) > 0 {
+		tagsFilter = make(map[string]string, len(tagFilters))
+		for _, tf := range tagFilters {
+			tagsFilter[tf.key] = tf.value
+		}
+	}
+
+	historyCleared, entriesDeleted, err := resetter.ResetSeries(ctx.Context(), namespace, key, metricFilter, tagsFilter)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"key":             key,
+		"history_cleared": historyCleared,
+		"entries_deleted": entriesDeleted,
 	}))
 }
 
