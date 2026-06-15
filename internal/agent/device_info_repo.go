@@ -61,6 +61,10 @@ func DeleteDeviceInfo(agentName, unitID string) {
 	delete(deviceInfo, deviceInfoKey(agentName, unitID))
 }
 
+// deviceInfoKey 는 (agentName, unitID) 을 device_info 맵 키로 결합한다.
+// agentName 을 정본 에이전트 ID 로 정규화하여, Set/Get/Delete 의 읽기·쓰기 키가
+// 호출처가 이름을 쓰든 ID 를 쓰든 항상 동일하게 맞춰지도록 한다
+// (device_id 정규화와 동일한 기준 — SPEC-DEVICE-IDENTITY-001).
 func deviceInfoKey(agentName, unitID string) string {
-	return agentName + ":" + unitID
+	return normalizeAgentRef(agentName) + ":" + unitID
 }

@@ -68,6 +68,9 @@ func ResolveDeviceID(ctx context.Context, agentName, unitID string) string {
 		})
 		return ""
 	}
+	// agentName 이 이름이든 ID 든 정본 에이전트 ID 로 정규화하여, 저장소 키가
+	// 항상 ID 기준으로 일관되게 발급되도록 한다 (이름키/ID키 중복 발급 방지).
+	agentName = normalizeAgentRef(agentName)
 	id, err := repo.GetOrCreate(ctx, agentName, unitID)
 	if err != nil {
 		return ""

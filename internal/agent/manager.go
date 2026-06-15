@@ -322,6 +322,27 @@ func (m *DefaultManager) Get(agentID string) (Agent, error) {
 	return m.getAgent(agentID)
 }
 
+// ResolveAgentID 는 ref(에이전트 이름 또는 ID)를 정본 에이전트 ID 로 변환한다.
+// ref 가 등록된 에이전트 "이름" 이면 그 에이전트의 ID 와 true 를 반환하고,
+// 이미 ID 이거나 못 찾으면 ("", false) 를 반환한다 (호출자가 ref 폴백).
+//
+// device_id / device_info 정규화(SetAgentIDResolver)에 와이어링하기 위한 진입점.
+// 이름 조회는 registry.GetByName 을 사용한다.
+func (m *DefaultManager) ResolveAgentID(ref string) (string, bool) {
+	if ref == "" {
+		return "", false
+	}
+	// 이미 등록된 ID 인 경우: 정규화 불필요하나, ID 그대로가 정본이므로 반환.
+	if a, ok := m.registry.Get(ref); ok {
+		return a.ID(), true
+	}
+	// 이름으로 조회되면 해당 에이전트의 ID 를 반환.
+	if a, ok := m.registry.GetByName(ref); ok {
+		return a.ID(), true
+	}
+	return "", false
+}
+
 // List returns all managed agents.
 func (m *DefaultManager) List() []Agent {
 	m.mu.RLock()
