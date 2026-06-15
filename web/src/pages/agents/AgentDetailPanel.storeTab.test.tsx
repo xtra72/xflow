@@ -228,3 +228,80 @@ describe('StoreTab — 원격 READ-ONLY', () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe('StoreTab — 검색 필터', () => {
+  it('key 부분일치로 행을 필터한다', () => {
+    renderPanel(LOCAL_TARGET);
+    fireEvent.change(screen.getByTestId('store-search-input'), {
+      target: { value: 'indoor' },
+    });
+    expect(screen.getByText('indoor:temp')).toBeInTheDocument();
+    expect(screen.queryByText('outdoor:humidity')).not.toBeInTheDocument();
+    expect(screen.queryByText('dynamic:count')).not.toBeInTheDocument();
+  });
+
+  it('metric_type 으로도 검색된다 (key 에 없는 텍스트)', () => {
+    renderPanel(LOCAL_TARGET);
+    fireEvent.change(screen.getByTestId('store-search-input'), {
+      target: { value: 'humidity' },
+    });
+    expect(screen.getByText('outdoor:humidity')).toBeInTheDocument();
+    expect(screen.queryByText('indoor:temp')).not.toBeInTheDocument();
+  });
+
+  it('태그(room=1)로도 검색된다', () => {
+    renderPanel(LOCAL_TARGET);
+    fireEvent.change(screen.getByTestId('store-search-input'), {
+      target: { value: 'room=1' },
+    });
+    expect(screen.getByText('indoor:temp')).toBeInTheDocument();
+    expect(screen.queryByText('outdoor:humidity')).not.toBeInTheDocument();
+  });
+
+  it('매칭이 없으면 필터 안내 문구를 표시한다', () => {
+    renderPanel(LOCAL_TARGET);
+    fireEvent.change(screen.getByTestId('store-search-input'), {
+      target: { value: 'zzz-nomatch' },
+    });
+    expect(
+      screen.getByText('선택한 필터와 일치하는 항목이 없습니다'),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('StoreTab — 컬럼 정렬', () => {
+  // 테이블 본문 행의 key 컬럼(첫 번째 셀) 순서를 추출한다.
+  function rowKeys(): string[] {
+    const table = screen.getByRole('table');
+    const bodyRows = within(table)
+      .getAllByRole('row')
+      // 헤더 행(th 포함) 제외.
+      .filter((r) => within(r).queryAllByRole('cell').length > 0);
+    return bodyRows.map((r) => {
+      const firstCell = within(r).getAllByRole('cell')[0];
+      return firstCell?.textContent?.trim() ?? '';
+    });
+  }
+
+  it('키 헤더 클릭 시 오름차순으로 정렬된다', () => {
+    renderPanel(LOCAL_TARGET);
+    fireEvent.click(screen.getByLabelText('키 기준 정렬'));
+    expect(rowKeys()).toEqual([
+      'dynamic:count',
+      'indoor:temp',
+      'outdoor:humidity',
+    ]);
+  });
+
+  it('키 헤더 재클릭 시 내림차순으로 토글된다', () => {
+    renderPanel(LOCAL_TARGET);
+    const header = screen.getByLabelText('키 기준 정렬');
+    fireEvent.click(header); // asc
+    fireEvent.click(header); // desc
+    expect(rowKeys()).toEqual([
+      'outdoor:humidity',
+      'indoor:temp',
+      'dynamic:count',
+    ]);
+  });
+});
