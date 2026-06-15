@@ -62,3 +62,27 @@ func TestDeleteEntry_RemovesDynamicRegistryMeta(t *testing.T) {
 	_, ok = u.inner.StaticKeyMetaFor(dynKey)
 	assert.False(t, ok, "DeleteEntry 후 동적 키의 레지스트리 메타가 제거되어야 한다")
 }
+
+// TestState_EntryKeyIsDecodedUserKey 는 State() 의 엔트리 key 가 인코딩 시리즈 키
+// (metric|tags|key)가 아니라 디코드된 사용자 key 임을 검증한다(저장소 탭 키 컬럼 표시).
+// 회귀(수정 전): displayKey 가 인코딩 키 그대로라 "metric|key" 가 노출됐다.
+func TestState_EntryKeyIsDecodedUserKey(t *testing.T) {
+	u := newAutoUserStoreAgentWithManualKey(t)
+	_ = writeDynamicSeries(t, u, "dev.temp", "current_temperature")
+
+	st := u.State()
+	entries, _ := st["entries"].([]map[string]any)
+	require.NotEmpty(t, entries)
+
+	var found bool
+	for _, e := range entries {
+		if e["key"] == "dev.temp" {
+			found = true
+			assert.Equal(t, "current_temperature", e["metric_type"], "metric 은 별도 필드로 노출")
+		}
+		// 인코딩 키(metric|...|key)가 그대로 노출되면 안 된다.
+		k, _ := e["key"].(string)
+		assert.NotContains(t, k, "|", "엔트리 key 에 시리즈 인코딩 구분자가 없어야 한다(디코드된 사용자 key)")
+	}
+	assert.True(t, found, "디코드된 사용자 key 'dev.temp' 엔트리가 있어야 한다")
+}
