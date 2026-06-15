@@ -193,7 +193,40 @@ func matchesDataType(value any, dt DataType) bool {
 	if err != nil {
 		return false
 	}
-	return inferred == dt
+	if inferred == dt {
+		return true
+	}
+	// JSON 경유 숫자 호환: JSON 디코딩은 모든 숫자를 float64 로 만들기 때문에,
+	// 서브플로우 브리지 등 JSON 직렬화를 거친 정수 값이 float64 로 도착한다.
+	//  - data_type=int  : 소수부가 없는 정수값 float(2.0) 를 허용한다.
+	//  - data_type=float: 정수(int 계열)를 허용한다(정수는 유효한 실수).
+	switch dt {
+	case DataTypeInt:
+		return inferred == DataTypeFloat && isIntegralFloat(value)
+	case DataTypeFloat:
+		return inferred == DataTypeInt
+	default:
+		return false
+	}
+}
+
+// isIntegralFloat 은 값이 소수부 없는 float(예: 2.0) 인지 판별한다.
+// float32/float64 만 대상으로 하며, 정수값이고 int64 범위 안이면 true 를 반환한다.
+func isIntegralFloat(value any) bool {
+	var f float64
+	switch v := value.(type) {
+	case float64:
+		f = v
+	case float32:
+		f = float64(v)
+	default:
+		return false
+	}
+	// NaN/Inf 및 소수부 존재 시 false. int64 범위 밖도 false.
+	if f != f || f > 9.223372036854776e18 || f < -9.223372036854776e18 {
+		return false
+	}
+	return f == float64(int64(f))
 }
 
 // =============================================================================
