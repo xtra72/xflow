@@ -327,20 +327,17 @@ func (m *DefaultManager) Get(agentID string) (Agent, error) {
 // 이미 ID 이거나 못 찾으면 ("", false) 를 반환한다 (호출자가 ref 폴백).
 //
 // device_id / device_info 정규화(SetAgentIDResolver)에 와이어링하기 위한 진입점.
-// 이름 조회는 registry.GetByName 을 사용한다.
+//
+// registry.ResolveID 는 ID/이름 인덱스 맵 조회만 수행하고 에이전트 메서드
+// (Name()/ID())를 호출하지 않는다. 이는 HVAC 에이전트가 자기 RWMutex 를 보유한
+// 컨텍스트(수신 루프의 메시지 처리 등)에서 device_id 정규화를 호출할 때 발생하던
+// 재귀 RLock deadlock 을 방지한다. (이전 구현은 GetByName 이 에이전트 Name() 을
+// 순회 호출하여 호출 에이전트의 RLock 을 재귀적으로 요구했다.)
 func (m *DefaultManager) ResolveAgentID(ref string) (string, bool) {
 	if ref == "" {
 		return "", false
 	}
-	// 이미 등록된 ID 인 경우: 정규화 불필요하나, ID 그대로가 정본이므로 반환.
-	if a, ok := m.registry.Get(ref); ok {
-		return a.ID(), true
-	}
-	// 이름으로 조회되면 해당 에이전트의 ID 를 반환.
-	if a, ok := m.registry.GetByName(ref); ok {
-		return a.ID(), true
-	}
-	return "", false
+	return m.registry.ResolveID(ref)
 }
 
 // List returns all managed agents.
