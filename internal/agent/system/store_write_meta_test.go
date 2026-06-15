@@ -80,12 +80,13 @@ func TestNodeStoreAdapter_SetWithMeta_DataType(t *testing.T) {
 	err := adapter.SetWithMeta(ctx, "temp", 21.5, StoreWriteMeta{DataType: "float"})
 	require.NoError(t, err)
 
-	// 키가 float 으로 등록됐는지.
-	meta := a.StaticKeysSnapshot()["temp"]
+	// @spec SPEC-STORE-004: 기본 시리즈 (temp, "unknown", {}) 로 라우팅된다.
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "temp"})
+	meta := a.StaticKeysSnapshot()[seriesKey]
 	assert.Equal(t, DataTypeFloat, meta.DataType)
 
 	// 값이 float 으로 그대로 저장됐는지 (동적 string coercion 우회 확인).
-	val, ok, getErr := adapter.Get(ctx, "temp")
+	val, ok, getErr := adapter.GetSeries(ctx, "temp", "", nil)
 	require.NoError(t, getErr)
 	require.True(t, ok)
 	assert.Equal(t, 21.5, val, "float 값이 string 으로 변환되지 않아야 한다")
@@ -102,7 +103,9 @@ func TestNodeStoreAdapter_SetWithMeta_Tags(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	meta := a.StaticKeysSnapshot()["hum"]
+	// @spec SPEC-STORE-004: 시리즈 (hum, "unknown", {room:kitchen}) 로 라우팅된다.
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "hum", Tags: map[string]string{"room": "kitchen"}})
+	meta := a.StaticKeysSnapshot()[seriesKey]
 	assert.Equal(t, "kitchen", meta.Tags["room"], "태그가 부여되어야 한다")
 	assert.Equal(t, "unknown", meta.MetricType, "tags 부여가 metric_type 을 망가뜨리지 않아야 한다")
 }
@@ -120,11 +123,13 @@ func TestNodeStoreAdapter_SetWithMeta_DataType_Tags_TTL(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	meta := a.StaticKeysSnapshot()["co2"]
+	// @spec SPEC-STORE-004: 시리즈 (co2, "unknown", {unit:ppm}) 로 라우팅된다.
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "co2", Tags: map[string]string{"unit": "ppm"}})
+	meta := a.StaticKeysSnapshot()[seriesKey]
 	assert.Equal(t, DataTypeInt, meta.DataType)
 	assert.Equal(t, "ppm", meta.Tags["unit"])
 
-	val, ok, getErr := adapter.Get(ctx, "co2")
+	val, ok, getErr := adapter.GetSeries(ctx, "co2", "", map[string]string{"unit": "ppm"})
 	require.NoError(t, getErr)
 	require.True(t, ok)
 	assert.Equal(t, 420, val)

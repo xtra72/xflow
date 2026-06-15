@@ -31,7 +31,10 @@ func TestRepro_DataTypeInt_AcceptsIntegralFloat(t *testing.T) {
 		t.Fatalf("정수값 float64 쓰기는 성공해야 한다: %v", err)
 	}
 
-	meta, ok := ag.StaticKeyMetaFor("dev.mode")
+	// @spec SPEC-STORE-004: 레지스트리/저장 키가 시리즈 인코딩으로 승격되었으므로
+	// (dev.mode, mode, {}) 시리즈 키로 조회한다 (data_type 은 식별 차원 아님).
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "dev.mode", MetricType: "mode"})
+	meta, ok := ag.StaticKeyMetaFor(seriesKey)
 	if !ok {
 		t.Fatal("키가 등록되어야 한다")
 	}
@@ -43,7 +46,7 @@ func TestRepro_DataTypeInt_AcceptsIntegralFloat(t *testing.T) {
 	}
 
 	// 저장값이 int 로 정규화되었는지 확인.
-	entry, gErr := ag.ForNamespace("").Get(context.Background(), "dev.mode")
+	entry, gErr := ag.ForNamespace("").Get(context.Background(), seriesKey)
 	if gErr != nil {
 		t.Fatalf("get: %v", gErr)
 	}

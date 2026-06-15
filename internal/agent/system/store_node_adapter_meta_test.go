@@ -35,7 +35,9 @@ func TestSetWithMeta_AppliesMetricType(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	meta, ok := sa.StaticKeyMetaFor("k")
+	// @spec SPEC-STORE-004: 레지스트리 키가 시리즈 인코딩으로 승격됨.
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "k", MetricType: "temperature"})
+	meta, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok)
 	assert.Equal(t, "temperature", meta.MetricType)
 }
@@ -52,54 +54,79 @@ func TestSetWithMeta_MetricTypeWithTags(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	meta, ok := sa.StaticKeyMetaFor("k")
+	// @spec SPEC-STORE-004: 시리즈 키(k, humidity, {unit:percent}) 로 메타가 적용된다.
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "k", MetricType: "humidity", Tags: map[string]string{"unit": "percent"}})
+	meta, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok)
 	assert.Equal(t, "humidity", meta.MetricType)
 	assert.Equal(t, map[string]string{"unit": "percent"}, meta.Tags)
 }
 
-// TestSetWithMeta_EmptyMetricType_PreservesExisting 는 MetricType 이 빈 문자열일 때
-// 기존 metric_type 이 보존되는지 검증한다 (PRESERVE).
-func TestSetWithMeta_EmptyMetricType_PreservesExisting(t *testing.T) {
+// @spec SPEC-STORE-004
+// TestSetWithMeta_DiffMetricTags_IndependentSeries 는 같은 key 에 (metric only) 쓰기와
+// (tags only) 쓰기가 서로 독립된 시리즈를 만들고 덮어쓰지 않음을 검증한다 (N1/N2/E2/E3).
+// (구 모델의 "메타 덮어쓰기 보존" 테스트가 시리즈 모델에서 독립성 검증으로 진화함.)
+func TestSetWithMeta_DiffMetricTags_IndependentSeries(t *testing.T) {
 	ctx := context.Background()
 	adapter, sa := newMetaAdapterWithAgent(t, "default")
 
-	// 1) 먼저 metric_type 을 지정해 둔다.
+	// 1) (k, temperature, {}) 시리즈.
 	require.NoError(t, adapter.SetWithMeta(ctx, "k", "v1", StoreWriteMeta{
 		MetricType: "temperature",
 	}))
 
-	// 2) metric_type 없이 tags 만 갱신 → 기존 metric_type 이 보존되어야 한다.
+	// 2) metric 없이 tags 만 → (k, unknown, {unit:celsius}) 별개 시리즈.
 	require.NoError(t, adapter.SetWithMeta(ctx, "k", "v2", StoreWriteMeta{
 		Tags: map[string]string{"unit": "celsius"},
 	}))
 
-	meta, ok := sa.StaticKeyMetaFor("k")
-	require.True(t, ok)
-	assert.Equal(t, "temperature", meta.MetricType, "metric_type 미지정 시 기존값 보존")
-	assert.Equal(t, map[string]string{"unit": "celsius"}, meta.Tags)
+	// 두 시리즈가 독립 존재하며 서로 덮어쓰지 않는다.
+	tempKey := EncodeSeriesKey(SeriesID{Key: "k", MetricType: "temperature"})
+	tagsKey := EncodeSeriesKey(SeriesID{Key: "k", Tags: map[string]string{"unit": "celsius"}})
+
+	tempMeta, ok := sa.StaticKeyMetaFor(tempKey)
+	require.True(t, ok, "temperature 시리즈가 보존되어야 한다")
+	assert.Equal(t, "temperature", tempMeta.MetricType)
+	assert.Empty(t, tempMeta.Tags, "temperature 시리즈는 tags-only 쓰기로 변경되지 않는다 (N1)")
+
+	tagsMeta, ok := sa.StaticKeyMetaFor(tagsKey)
+	require.True(t, ok, "tags-only 시리즈가 독립 생성되어야 한다")
+	assert.Equal(t, MetricTypeUnknown, tagsMeta.MetricType)
+	assert.Equal(t, map[string]string{"unit": "celsius"}, tagsMeta.Tags)
 }
 
-// TestSetWithMeta_MetricTypeOnly_PreservesExistingTags 는 MetricType 만 갱신할 때
-// 기존 tags 가 보존되는지 검증한다 (SetKeyMeta 가 tags 를 덮어쓰지 않도록).
-func TestSetWithMeta_MetricTypeOnly_PreservesExistingTags(t *testing.T) {
+// @spec SPEC-STORE-004
+// TestSetWithMeta_SameSeries_DataTypeIrrelevant 는 같은 (key, metric, tags) 에 대해
+// data_type 만 다른 후속 쓰기가 새 시리즈를 만들지 않고 동일 시리즈를 갱신함을 검증한다
+// (U3/N3/AC-4: data_type 은 식별 차원이 아니다).
+func TestSetWithMeta_SameSeries_DataTypeIrrelevant(t *testing.T) {
 	ctx := context.Background()
 	adapter, sa := newMetaAdapterWithAgent(t, "default")
 
-	// 1) tags 를 먼저 지정해 둔다.
+	// 동적 string 시리즈로 쓰기.
 	require.NoError(t, adapter.SetWithMeta(ctx, "k", "v1", StoreWriteMeta{
-		Tags: map[string]string{"unit": "celsius"},
-	}))
-
-	// 2) metric_type 만 갱신 → 기존 tags 가 보존되어야 한다.
-	require.NoError(t, adapter.SetWithMeta(ctx, "k", "v2", StoreWriteMeta{
 		MetricType: "temperature",
+		Tags:       map[string]string{"unit": "celsius"},
 	}))
 
-	meta, ok := sa.StaticKeyMetaFor("k")
-	require.True(t, ok)
-	assert.Equal(t, "temperature", meta.MetricType)
-	assert.Equal(t, map[string]string{"unit": "celsius"}, meta.Tags, "metric_type 만 갱신 시 기존 tags 보존")
+	// 같은 (key, metric, tags) — data_type 만 명시(float) → 동일 시리즈.
+	require.NoError(t, adapter.SetWithMeta(ctx, "k", float64(22.2), StoreWriteMeta{
+		DataType:   "float",
+		MetricType: "temperature",
+		Tags:       map[string]string{"unit": "celsius"},
+	}))
+
+	// 시리즈가 하나만 존재해야 한다 (data_type 차이로 새 시리즈 생성 안 함).
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "k", MetricType: "temperature", Tags: map[string]string{"unit": "celsius"}})
+	snap := sa.StaticKeysSnapshot()
+	count := 0
+	for sk := range snap {
+		if sk == seriesKey {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "data_type 차이는 동일 시리즈로 합산되어야 한다")
+	assert.Len(t, snap, 1, "단일 시리즈만 존재해야 한다")
 }
 
 // TestSetWithMeta_DataTypeMetricTags_Combined 는 data_type + metric_type + tags 가
@@ -115,7 +142,9 @@ func TestSetWithMeta_DataTypeMetricTags_Combined(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	meta, ok := sa.StaticKeyMetaFor("k")
+	// @spec SPEC-STORE-004: 시리즈 키(k, temperature, {unit:celsius}) 로 라우팅된다.
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "k", MetricType: "temperature", Tags: map[string]string{"unit": "celsius"}})
+	meta, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok)
 	assert.Equal(t, DataTypeFloat, meta.DataType)
 	assert.Equal(t, "temperature", meta.MetricType)
@@ -130,12 +159,14 @@ func TestSetWithMeta_NoMeta_Fallback(t *testing.T) {
 
 	require.NoError(t, adapter.SetWithMeta(ctx, "k", "v", StoreWriteMeta{}))
 
-	val, found, err := adapter.Get(ctx, "k")
+	// @spec SPEC-STORE-004: 메타 미지정 = 기본 시리즈 (k, "unknown", {}).
+	val, found, err := adapter.GetSeries(ctx, "k", "", nil)
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, "v", val)
 
-	meta, ok := sa.StaticKeyMetaFor("k")
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "k"})
+	meta, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok)
-	assert.Equal(t, MetricTypeUnknown, meta.MetricType, "메타 미지정 시 자동 등록 unknown")
+	assert.Equal(t, MetricTypeUnknown, meta.MetricType, "메타 미지정 시 기본 시리즈 unknown")
 }
