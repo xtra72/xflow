@@ -345,6 +345,13 @@ func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
 // 뷰로 라우팅된다. 생성 시점 스냅샷을 잡으면 재시작 후 옛 inner 로 향해
 // 모든 쓰기/읽기가 실패하는 회귀가 발생한다.
 func (a *UserStoreAgent) NodeStoreForNamespace(namespace string) any {
+	// 빈 네임스페이스는 읽기 경로(QueryHistory/ListStoreKeys 등)와 동일하게
+	// defaultStoreNamespace 로 정규화한다. 이렇게 하지 않으면 store-write 노드가
+	// namespace="" 로 쓴 값(":key")을 API 쿼리(""→"default" 기본값, "default:key")가
+	// 찾지 못해, 등록된 키인데도 "store: key not found" 가 발생한다.
+	if namespace == "" {
+		namespace = defaultStoreNamespace
+	}
 	// store resolver: 매 호출마다 현재 inner 의 네임스페이스 뷰를 반환.
 	storeResolver := func() Store {
 		a.mu.RLock()
