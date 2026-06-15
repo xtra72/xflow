@@ -268,7 +268,8 @@ func TestMQTTAgent_ReceiveMessage_ContextCancel(t *testing.T) {
 }
 
 func TestMQTTAgent_Init_ConnectionTimeout(t *testing.T) {
-	// 존재하지 않는 브로커에 연결 시도 → 타임아웃 에러
+	// auto_reconnect=false (strict 모드): 존재하지 않는 브로커에 연결 시도 → 타임아웃 에러.
+	// auto_reconnect 가 꺼져 있으면 기존처럼 초기 연결 실패가 치명적이다.
 	cfg := agent.AgentConfig{
 		ID:   "agent-mqtt-timeout",
 		Name: "timeout-mqtt",
@@ -280,6 +281,7 @@ func TestMQTTAgent_Init_ConnectionTimeout(t *testing.T) {
 				"client_id":           "xflow-timeout-test",
 				"connect_timeout_sec": 1, // 1초 타임아웃
 				"buffer_size":         10,
+				"auto_reconnect":      false, // strict 모드 — 초기 연결 실패 시 Init 실패
 			},
 		},
 	}
@@ -287,6 +289,37 @@ func TestMQTTAgent_Init_ConnectionTimeout(t *testing.T) {
 	_, err := NewMQTTAgent(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mqtt init")
+}
+
+// TestMQTTAgent_Init_NonBlockingWithAutoReconnect 는 auto_reconnect=true 일 때
+// 브로커가 도달 불가해도 Init 이 블로킹/실패하지 않고 성공(Running)함을 검증한다.
+// 죽은 외부 브로커가 이 에이전트를 참조하는 플로우의 시작을 막지 못하게 하기 위함이며,
+// 백그라운드 connect-retry 가 브로커 복구 시 자동 연결한다.
+func TestMQTTAgent_Init_NonBlockingWithAutoReconnect(t *testing.T) {
+	cfg := agent.AgentConfig{
+		ID:   "agent-mqtt-nonblocking",
+		Name: "nonblocking-mqtt",
+		Type: "mqtt-client",
+		Transport: agent.TransportConfig{
+			Type: "mqtt",
+			Options: map[string]any{
+				"broker":              "tcp://192.0.2.1:1883", // RFC 5737 문서용 IP (연결 불가)
+				"client_id":           "xflow-nonblocking-test",
+				"connect_timeout_sec": 1, // 1초 타임아웃
+				"buffer_size":         10,
+				"auto_reconnect":      true, // 논블로킹 — 초기 연결 실패해도 Init 성공
+			},
+		},
+	}
+
+	a, err := NewMQTTAgent(cfg)
+	require.NoError(t, err, "auto_reconnect 시 도달 불가 브로커여도 Init 은 성공해야 한다")
+	require.NotNil(t, a)
+	// 핵심: 죽은 브로커가 Init/플로우 시작을 막지 않는다(Running 진입). Health 는
+	// paho 의 ConnectRetry 낙관적 보고로 healthy/degraded 둘 다 가능하나, Unhealthy(미시작)
+	// 는 아니어야 한다.
+	assert.NotEqual(t, agent.HealthUnhealthy, a.Health().Status,
+		"Init 후 Running 상태여야 한다(미시작/Unhealthy 가 아님)")
 }
 
 func TestRegisterMQTTTypes(t *testing.T) {
