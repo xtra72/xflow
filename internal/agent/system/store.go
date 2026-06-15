@@ -582,30 +582,25 @@ func (s *StoreAgent) SetKeyDataType(key string, dataType DataType) {
 	if existing, ok := s.config.staticKeys[key]; ok {
 		// 동적 string 키만 지정 타입으로 덮어쓴다. 그 외(정적/명시 타입)는 보존.
 		if isDynamicStringMeta(existing) {
+			// @spec SPEC-STORE-004: 명시 타입을 부여하되 Source 는 보존(auto)한다.
+			// 타입 검증(strict/coercion 우회)은 isDynamicStringMeta(DataType==string)로
+			// 결정되므로 Source 승격은 불필요하다. 또한 Source 는 "키의 출처"(config 정의
+			// =manual / 런타임 자동=auto)를 의미하며 reset 정책(manual 보존/auto 삭제)에
+			// 쓰이므로, 런타임에 명시 타입이 부여된 동적 키를 manual 로 승격하면 전체 초기화
+			// 시 자동 등록 키가 정적으로 오인되어 삭제되지 않는 버그가 생긴다.
 			existing.DataType = dataType
-			// 동적 키에 명시 타입을 부여하면 더 이상 "동적 string" 이 아니므로
-			// Source 를 manual 로 승격해 후속 쓰기에서 타입 검증(coercion 우회)이 적용되게 한다.
-			// 단, 지정 타입이 string 이면 동적 string 정책을 그대로 유지한다.
-			if dataType != DataTypeString {
-				existing.Source = SourceManual
-			}
 			s.config.staticKeys[key] = existing
 		}
 		return
 	}
 
-	// 미등록 키: 지정 data_type 으로 신규 등록.
-	// 지정 타입이 string 이면 동적 string 정책(Source=auto)을 따르고,
-	// 그 외 타입이면 명시 등록(Source=manual)으로 타입 검증이 적용되게 한다.
-	src := SourceManual
-	if dataType == DataTypeString {
-		src = SourceAuto
-	}
+	// 미등록 키: 지정 data_type 으로 신규 등록한다. 런타임 등록이므로 Source=auto.
+	// (명시 타입이어도 출처는 런타임 자동이며, 타입 검증은 DataType 으로 동작한다.)
 	s.config.staticKeys[key] = StaticKeyMeta{
 		DataType:   dataType,
 		MetricType: MetricTypeUnknown,
 		Tags:       map[string]string{},
-		Source:     src,
+		Source:     SourceAuto,
 	}
 }
 

@@ -86,3 +86,22 @@ func TestState_EntryKeyIsDecodedUserKey(t *testing.T) {
 	}
 	assert.True(t, found, "디코드된 사용자 key 'dev.temp' 엔트리가 있어야 한다")
 }
+
+// TestIsStaticKey_ExplicitDataTypeStillDynamic 는 명시 data_type(float/int/boolean)으로
+// store-write 된 런타임 키가 여전히 동적(IsStaticKey=false)임을 검증한다.
+// 회귀(수정 전): SetKeyDataType 가 명시 타입 신규 키를 Source=manual 로 등록해 정적 취급
+// → 전체 초기화에서 보존되어 자동 등록 키가 남았다.
+func TestIsStaticKey_ExplicitDataTypeStillDynamic(t *testing.T) {
+	u := newAutoUserStoreAgentWithManualKey(t)
+	raw := u.NodeStoreForNamespace("")
+	adapter := raw.(*NodeStoreAdapter)
+	// store-write 노드와 동일: data_type 명시 + metric (HVAC current_temperature=float).
+	require.NoError(t, adapter.SetWithMeta(context.Background(), "dev.temp", 21.5,
+		StoreWriteMeta{DataType: "float", MetricType: "current_temperature"}))
+
+	seriesKey := EncodeSeriesKey(SeriesID{Key: "dev.temp", MetricType: "current_temperature"}.Normalize())
+	meta, ok := u.inner.StaticKeyMetaFor(seriesKey)
+	require.True(t, ok)
+	assert.Equal(t, SourceAuto, meta.Source, "명시 data_type 이어도 런타임 등록 키는 Source=auto")
+	assert.False(t, u.IsStaticKey(seriesKey), "명시 data_type 의 런타임 키도 동적이어야 한다(reset 삭제 대상)")
+}

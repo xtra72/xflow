@@ -15,8 +15,11 @@ import (
 
 // --- SetKeyDataType 정책 ---
 
-// 미등록 키에 비-string data_type 을 지정하면 명시 등록(Source=manual)된다.
-func TestSetKeyDataType_Unregistered_NonString_RegistersManual(t *testing.T) {
+// @spec SPEC-STORE-004: 미등록 키에 비-string data_type 을 지정하면 그 타입으로 등록되되
+// Source=auto(런타임 등록) 를 유지한다. 타입 검증은 DataType(isDynamicStringMeta)로
+// 동작하므로 Source 승격은 불필요하며, Source 는 reset 정책(config=manual 보존/runtime=auto
+// 삭제)에만 쓰인다.
+func TestSetKeyDataType_Unregistered_NonString_RegistersAuto(t *testing.T) {
 	a := newAutoStoreAgent(t)
 
 	a.inner.SetKeyDataType("temp", DataTypeFloat)
@@ -25,7 +28,7 @@ func TestSetKeyDataType_Unregistered_NonString_RegistersManual(t *testing.T) {
 	require.Contains(t, snap, "temp")
 	meta := snap["temp"]
 	assert.Equal(t, DataTypeFloat, meta.DataType)
-	assert.Equal(t, SourceManual, meta.Source, "명시 타입은 manual 로 등록되어 타입 검증이 적용된다")
+	assert.Equal(t, SourceAuto, meta.Source, "런타임 등록 키는 명시 타입이어도 Source=auto")
 	assert.Equal(t, "unknown", meta.MetricType)
 }
 
@@ -40,7 +43,8 @@ func TestSetKeyDataType_Unregistered_String_RegistersDynamic(t *testing.T) {
 	assert.Equal(t, SourceAuto, meta.Source)
 }
 
-// 동적 string 키(런타임 자동 등록)에 비-string data_type 을 지정하면 덮어쓰고 manual 로 승격한다.
+// 동적 string 키(런타임 자동 등록)에 비-string data_type 을 지정하면 타입은 덮어쓰되
+// Source=auto(런타임 출처)를 유지한다(SPEC-STORE-004).
 func TestSetKeyDataType_DynamicString_Overwritten(t *testing.T) {
 	a := newAutoStoreAgent(t)
 	ctx := context.Background()
@@ -54,7 +58,7 @@ func TestSetKeyDataType_DynamicString_Overwritten(t *testing.T) {
 
 	meta := a.StaticKeysSnapshot()["co2"]
 	assert.Equal(t, DataTypeInt, meta.DataType, "동적 키는 지정 타입으로 덮어써진다")
-	assert.Equal(t, SourceManual, meta.Source)
+	assert.Equal(t, SourceAuto, meta.Source, "런타임 키는 명시 타입 부여 후에도 Source=auto")
 }
 
 // PRESERVE: yaml 정적 키(명시 data_type)는 SetKeyDataType 으로도 보존된다.
