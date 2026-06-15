@@ -44,6 +44,17 @@ type storeHistoryQueryer interface {
 	QueryHistory(ctx context.Context, namespace, key string, q system.HistoryQuery) ([]system.HistoryEntry, error)
 }
 
+// @spec SPEC-STORE-004
+// storeSeriesQueryer 는 key → 다중 시리즈 fan-out 조회 계약이다 (M3).
+// system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로 옵셔널하게
+// 시리즈 조회를 사용하며, 미구현 에이전트는 기존 단일 QueryHistory 경로로 폴백한다.
+//
+// metricFilter/tagsFilter 가 모두 비어있으면 해당 key 의 모든 시리즈를 반환하고(E4),
+// 필터가 주어지면 일치하는 부분집합만 반환한다(E5/S3). 미일치 시 빈 슬라이스(S4).
+type storeSeriesQueryer interface {
+	QuerySeries(ctx context.Context, namespace, key, metricFilter string, tagsFilter map[string]string, q system.HistoryQuery) ([]system.SeriesResult, error)
+}
+
 type storeKeyLister interface {
 	ListStoreKeys(ctx context.Context, namespace, pattern string) ([]string, error)
 }
@@ -168,6 +179,13 @@ type storeQueryRequest struct {
 	// SPEC-WEB-005: 서버측 집계 파라미터 (선택).
 	IntervalMs  int64  `json:"interval_ms,omitempty"`
 	Aggregation string `json:"aggregation,omitempty"`
+
+	// @spec SPEC-STORE-004: 시리즈 필터 (선택).
+	//   - MetricType 만 주면 그 metric 의 모든 tags 시리즈 (S3).
+	//   - MetricType+Tags 주면 단일/부분집합 시리즈 (E5).
+	//   - 둘 다 생략하면 해당 key 의 모든 시리즈 (E4).
+	MetricType string            `json:"metric_type,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
 }
 
 // chartQueryEntry 는 표준 응답(REQ-M3-04) 의 entries 항목이다.
@@ -218,7 +236,14 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 			WithDetails(map[string]string{"error": "agent_not_found"})
 	}
 
-	// 타입 단언: Store 계열 에이전트만 QueryHistory 를 구현한다.
+	// @spec SPEC-STORE-004
+	// 시리즈 fan-out 경로: 에이전트가 QuerySeries 를 구현하면 key → 다중 시리즈로 조회한다.
+	// metric/tags 필터로 부분집합을 좁히고, 각 엔트리에 labels(metric_type + tags)를 채운다.
+	if seriesAgent, ok := ag.(storeSeriesQueryer); ok {
+		return h.querySeries(ctx, seriesAgent, &req, q, aggEnabled)
+	}
+
+	// 타입 단언: Store 계열 에이전트만 QueryHistory 를 구현한다 (시리즈 미지원 폴백).
 	storeAgent, ok := ag.(storeHistoryQueryer)
 	if !ok {
 		return api.ErrBadRequest.
@@ -260,6 +285,76 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 		Truncated: false,
 	}
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(resp))
+}
+
+// @spec SPEC-STORE-004
+// querySeries 는 key → 다중 시리즈 fan-out 조회 결과를 표준 응답으로 직렬화한다.
+//
+// 동작:
+//   - QuerySeries 로 (namespace, key, metric/tags 필터) 에 일치하는 모든 시리즈를 조회한다.
+//   - 각 시리즈의 엔트리에 labels(metric_type + tags)를 부여하여 출처를 식별 가능하게 한다(E4).
+//   - 집계가 활성화되면 시리즈별로 bucketAggregate 를 적용하고, 라벨을 유지한다.
+//   - 미일치(빈 결과)는 HTTP 200 + entries 0개로 응답한다(S4).
+//
+// 다중 시리즈의 엔트리는 단일 entries 배열로 평탄화되며, 각 엔트리의 labels 로 시리즈를 구분한다.
+func (h *StoreQueryHandler) querySeries(
+	ctx api.Context,
+	agent storeSeriesQueryer,
+	req *storeQueryRequest,
+	q system.HistoryQuery,
+	aggEnabled bool,
+) error {
+	seriesList, err := agent.QuerySeries(ctx.Context(), req.Namespace, req.Key, req.MetricType, req.Tags, q)
+	if err != nil {
+		// 키/시리즈 부재는 빈 결과(200)로 흡수한다(S4, ErrKeyNotFound→200 정책 보존).
+		if errors.Is(err, system.ErrKeyNotFound) {
+			seriesList = nil
+		} else {
+			return api.MapDomainError(err)
+		}
+	}
+
+	entries := make([]chartQueryEntry, 0)
+	for _, sr := range seriesList {
+		labels := seriesLabels(sr.Series)
+		if aggEnabled {
+			originMs, aerr := resolveAggregationOriginMs(req, q)
+			if aerr != nil {
+				return api.ErrBadRequest.WithMessage(aerr.Error())
+			}
+			bucketed := bucketAggregate(sr.Entries, originMs, req.IntervalMs, req.Aggregation)
+			for i := range bucketed {
+				bucketed[i].Labels = labels
+			}
+			entries = append(entries, bucketed...)
+			continue
+		}
+		for _, e := range sr.Entries {
+			entries = append(entries, chartQueryEntry{
+				Timestamp: e.Timestamp.UnixMilli(),
+				Value:     e.Value,
+				Labels:    labels,
+			})
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(chartQueryResponse{
+		Entries:   entries,
+		Count:     len(entries),
+		Truncated: false,
+	}))
+}
+
+// @spec SPEC-STORE-004
+// seriesLabels 는 시리즈 식별자를 응답 labels(metric_type + tags) 맵으로 변환한다.
+// metric_type 은 "__metric__" 키로, 각 tag 는 tag key 그대로 담는다. 항상 non-nil 을 반환한다.
+func seriesLabels(sid system.SeriesID) map[string]string {
+	labels := make(map[string]string, len(sid.Tags)+1)
+	labels["__metric__"] = sid.MetricType
+	for k, v := range sid.Tags {
+		labels[k] = v
+	}
+	return labels
 }
 
 // validateAggregationParams 는 SPEC-WEB-005 집계 파라미터를 검증한다.
@@ -561,6 +656,30 @@ func mapHistoryEntriesToDTO(entries []system.HistoryEntry) []chartQueryEntry {
 	return out
 }
 
+// @spec SPEC-STORE-004
+// encodeTagsForSort 는 tags 를 tag-key 사전순 "k1=v1,k2=v2" 문자열로 직렬화한다.
+// GET /keys 시리즈 행의 결정적 정렬 보조 키로만 사용된다(저장 인코딩과 무관).
+func encodeTagsForSort(tags map[string]string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(tags[k])
+	}
+	return b.String()
+}
+
 // @spec SPEC-STORE-003 v0.3.0
 // StoreKeyResponse 는 GET /store/{name}/keys 응답 배열의 단일 키 객체이다.
 // v0.2.0 의 단순 string 배열에서 객체 배열로 BREAKING 변경되었다 (M9).
@@ -715,11 +834,20 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	// 일관된 스냅샷 (manual + auto-registered 모두 포함, deep copy).
 	snapshot := metaLister.StaticKeysSnapshot()
 
-	// 필터 적용 + 응답 객체 빌드.
+	// @spec SPEC-STORE-004
+	// 필터 적용 + 시리즈 행 빌드 (E7/AC-13).
+	// 레지스트리 키는 시리즈 인코딩(SetWithMeta 경로) 또는 bare key(yaml 정적/plain Set)이다.
+	// DecodeSeriesKey 로 디코드하여 행의 key 를 사용자 관점 key 로 복원한다. 디코드 실패(bare)
+	// 시 raw 를 그대로 key 로 쓴다(레거시 호환). metric_type/tags 는 메타에 저장된 라벨을 쓰되,
+	// 디코드 성공 시 시리즈 식별자와 일치한다.
 	objects := make([]StoreKeyResponse, 0, len(snapshot))
-	for key, meta := range snapshot {
+	for regKey, meta := range snapshot {
 		if !filter.matches(meta) {
 			continue
+		}
+		userKey := regKey
+		if sid, derr := system.DecodeSeriesKey(regKey); derr == nil {
+			userKey = sid.Key
 		}
 		// Tags 는 항상 non-nil 보장 (M9: "빈 tags 객체로 표시").
 		// snapshot 이 깊은 복사를 보장하므로 그대로 사용해도 안전하지만, nil 가능성을
@@ -729,7 +857,7 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 			tags = map[string]string{}
 		}
 		objects = append(objects, StoreKeyResponse{
-			Key:          key,
+			Key:          userKey,
 			Registration: string(meta.Source),
 			DataType:     string(meta.DataType),
 			MetricType:   meta.MetricType,
@@ -737,8 +865,18 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 		})
 	}
 
-	// 알파벳순 정렬 (M9 안정성 요구). 결정적 응답 순서를 보장한다.
-	sort.Slice(objects, func(i, j int) bool { return objects[i].Key < objects[j].Key })
+	// @spec SPEC-STORE-004
+	// 결정적 정렬: key → metric_type → tags 인코딩 순. 같은 key 의 여러 시리즈 행이
+	// 안정적 순서로 노출된다(M9 안정성 + 시리즈 다중 행).
+	sort.Slice(objects, func(i, j int) bool {
+		if objects[i].Key != objects[j].Key {
+			return objects[i].Key < objects[j].Key
+		}
+		if objects[i].MetricType != objects[j].MetricType {
+			return objects[i].MetricType < objects[j].MetricType
+		}
+		return encodeTagsForSort(objects[i].Tags) < encodeTagsForSort(objects[j].Tags)
+	})
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(StoreKeysListResponse{
 		Count: len(objects),
