@@ -2444,7 +2444,9 @@ function StoreEntryRow({
         req: {
           command: 'get_history',
           params: {
-            key: entry.key as string,
+            // @spec SPEC-STORE-004: 히스토리는 인코딩 시리즈 키(storage_key)로 저장되므로
+            // 디코드된 표시용 key 가 아니라 storage_key 로 조회해야 한다(없으면 key 폴백 — 레거시).
+            key: (entry.storage_key as string) || (entry.key as string),
             // 네임스페이스 라운드트립 버그 수정 (v0.7.0 M14):
             // entry.namespace="" (빈 문자열)인 경우도 그대로 전송.
             // || 'default' 는 falsy 체크로 "" 를 "default" 로 강제했는데,
@@ -2467,7 +2469,7 @@ function StoreEntryRow({
         },
       },
     );
-  }, [hasHistory, historyOpen, execAgent, agentId, entry.key, entry.namespace]);
+  }, [hasHistory, historyOpen, execAgent, agentId, entry.storage_key, entry.key, entry.namespace]);
 
   // 히스토리 확장 행의 colSpan 계산:
   //   key + 바인딩 + 메트릭 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated + 액션
@@ -2482,9 +2484,10 @@ function StoreEntryRow({
   const handlePromoteClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      onPromote(entry.key as string);
+      // @spec SPEC-STORE-004: 승격은 인코딩 시리즈 키(storage_key)로 동작해야 한다.
+      onPromote((entry.storage_key as string) || (entry.key as string));
     },
-    [entry.key, onPromote],
+    [entry.storage_key, entry.key, onPromote],
   );
 
   // 행별 초기화 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
@@ -2502,9 +2505,10 @@ function StoreEntryRow({
   const handleEditMetaClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      onEditMeta(entry.key as string);
+      // @spec SPEC-STORE-004: 메타 편집은 인코딩 시리즈 키(storage_key)로 동작해야 한다.
+      onEditMeta((entry.storage_key as string) || (entry.key as string));
     },
-    [entry.key, onEditMeta],
+    [entry.storage_key, entry.key, onEditMeta],
   );
 
   // 모든 엔트리가 metric_type 을 갖는다 (동적 키는 "unknown"). 빈 값은 "unknown" 표시.

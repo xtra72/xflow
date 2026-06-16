@@ -105,3 +105,22 @@ func TestIsStaticKey_ExplicitDataTypeStillDynamic(t *testing.T) {
 	assert.Equal(t, SourceAuto, meta.Source, "명시 data_type 이어도 런타임 등록 키는 Source=auto")
 	assert.False(t, u.IsStaticKey(seriesKey), "명시 data_type 의 런타임 키도 동적이어야 한다(reset 삭제 대상)")
 }
+
+// TestState_StorageKeyIsEncoded 는 State() 엔트리가 인코딩 시리즈 키(storage_key)를
+// 별도로 노출하여, 히스토리/메타 편집 등 직접 저장 키 작업에 쓸 수 있음을 검증한다.
+func TestState_StorageKeyIsEncoded(t *testing.T) {
+	u := newAutoUserStoreAgentWithManualKey(t)
+	_ = writeDynamicSeries(t, u, "dev.temp", "current_temperature")
+	wantStorage := EncodeSeriesKey(SeriesID{Key: "dev.temp", MetricType: "current_temperature"}.Normalize())
+
+	st := u.State()
+	entries, _ := st["entries"].([]map[string]any)
+	var found bool
+	for _, e := range entries {
+		if e["key"] == "dev.temp" {
+			found = true
+			assert.Equal(t, wantStorage, e["storage_key"], "storage_key 는 인코딩 시리즈 키")
+		}
+	}
+	assert.True(t, found)
+}

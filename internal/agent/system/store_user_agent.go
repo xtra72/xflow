@@ -696,7 +696,12 @@ func (a *UserStoreAgent) State() map[string]any {
 		userKey := decodeStorageKeyToSeries(encodedKey).Key
 
 		entry := map[string]any{
-			"key":           userKey,
+			"key": userKey,
+			// @spec SPEC-STORE-004: storage_key 는 인코딩 시리즈 키(저장/레지스트리 키)이다.
+			// 표시·정렬·필터는 디코드된 key 를 쓰지만, 직접 저장 키로 동작하는 행 작업
+			// (get_history, 메타 편집/승격 등)은 이 storage_key 를 사용해야 한다. 디코드된
+			// key 로 조회하면 인코딩 키로 저장된 값을 못 찾는다(예: 히스토리 0).
+			"storage_key":   encodedKey,
 			"value":         item.value,
 			"namespace":     ns,
 			"created_at":    item.createdAt.Format(time.RFC3339),
