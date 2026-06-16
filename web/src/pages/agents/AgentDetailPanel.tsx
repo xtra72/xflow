@@ -2484,10 +2484,11 @@ function StoreEntryRow({
   const handlePromoteClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      // @spec SPEC-STORE-004: 승격은 인코딩 시리즈 키(storage_key)로 동작해야 한다.
-      onPromote((entry.storage_key as string) || (entry.key as string));
+      // @spec SPEC-STORE-004: 승격은 config 정적 키(=사용자 key)에 추가하므로 디코드된
+      // 사용자 key 를 쓴다(히스토리/메타편집의 storage_key 와 다름).
+      onPromote(entry.key as string);
     },
-    [entry.storage_key, entry.key, onPromote],
+    [entry.key, onPromote],
   );
 
   // 행별 초기화 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
@@ -3071,10 +3072,21 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
 
   // 편집 대상 엔트리의 현재 metric_type / tags 를 사전 채움 값으로 제공한다.
   // State 엔트리(allEntries)를 단일 출처로 사용한다.
+  // @spec SPEC-STORE-004: editingKey 는 storage_key(인코딩 시리즈 키)이다. 엔트리는
+  // storage_key 로 찾아 그 시리즈의 metric_type/tags 를 사전 채움한다(없으면 key 폴백 — 레거시).
   const editingEntry = useMemo(() => {
     if (!editingKey) return undefined;
-    return allEntries.find((e) => (e.key as string) === editingKey);
+    return allEntries.find(
+      (e) => ((e.storage_key as string) || (e.key as string)) === editingKey,
+    );
   }, [editingKey, allEntries]);
+
+  // 다이얼로그에 표시할 키는 디코드된 사용자 key(설정 key_template 결과)이다.
+  // 인코딩 시리즈 키(metric|tags|key)가 아니라 사용자가 설정한 형태로 출력한다.
+  const editingDisplayKey = useMemo(
+    () => (editingEntry?.key as string) || editingKey || '',
+    [editingEntry, editingKey],
+  );
 
   const editingInitialMetricType = useMemo(
     () => (editingEntry ? extractEntryMetricType(editingEntry) : ''),
@@ -3104,7 +3116,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         });
         addNotification({
           type: 'success',
-          message: `'${editingKey}' 타입/태그가 저장되었습니다`,
+          message: `'${editingDisplayKey}' 타입/태그가 저장되었습니다`,
         });
         setEditingKey(null);
         // State 엔트리(metric_type/tags 표시 출처)를 즉시 갱신.
@@ -3118,7 +3130,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         });
       }
     },
-    [editingKey, agentName, setKeyMeta, addNotification, queryClient, agentId],
+    [editingKey, editingDisplayKey, agentName, setKeyMeta, addNotification, queryClient, agentId],
   );
 
   // --- 초기화 핸들러 (SPEC-STORE-003) ---
@@ -3465,7 +3477,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       <EditKeyMetaDialog
         isOpen={editingKey !== null}
         onClose={handleCloseEditMeta}
-        keyName={editingKey ?? ''}
+        keyName={editingDisplayKey}
         initialMetricType={editingInitialMetricType}
         initialTags={editingInitialTags}
         onConfirm={handleEditMetaConfirm}
