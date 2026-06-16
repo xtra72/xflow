@@ -20,24 +20,24 @@ type Icp02DecodedPayload struct {
 	Pairs []Icp02RegPairJSON `json:"pairs,omitempty"`
 
 	// 해석된 필드 (알려진 레지스터만)
-	Power         *string  `json:"power,omitempty"`          // "ON" / "OFF" (제어 명령: 0x18 0x4_)
-	PowerState    *string  `json:"power_state,omitempty"`    // "ON" / "OFF" (응답 상태: 0x60 0xC_)
-	SetTempC      *float64 `json:"target_temperature,omitempty"`    // 설정 온도 (°C) — v0.x: NASA/Century 와 통일 (이전 set_temp_c)
-	FanSpeed      *string  `json:"fan_speed,omitempty"`      // "low" / "medium" / "high" / "turbo" / "auto"
-	Mode          *string  `json:"mode,omitempty"`           // "cool" / "dry" / "fan" / "auto" / "heat"
-	CompressorCap *int     `json:"compressor_cap,omitempty"` // 압축기 용량 (4비트 값)
-	CompressorHz  *int     `json:"compressor_hz,omitempty"`  // 압축기 주파수 (확장 Hz)
-	ValveOpen     *bool    `json:"valve_open,omitempty"`     // 냉매 밸브 개폐 (0x62 0x4_)
-	FanMotorHz    *int     `json:"fan_motor_hz,omitempty"`   // 실내기 팬모터 주파수 (0x62 0xD_+ext)
-	PipeTemp1C    *float64 `json:"pipe_temperature1_c,omitempty"`   // 배관 온도 1 (°C)
-	PipeTemp2C    *float64 `json:"pipe_temperature2_c,omitempty"`   // 배관 온도 2 (°C) — 0x62 0xD0+V 두 번째
-	IndoorTempC   *float64 `json:"current_temperature,omitempty"`   // 실내 온도 (°C) — v0.x: NASA/Century 와 통일 (이전 indoor_temp_c)
-	FanSpeedResp  *int     `json:"fan_speed_resp,omitempty"` // 풍속 응답 (0x71)
-	OutdoorActive *bool    `json:"outdoor_active,omitempty"` // 실외기 활성 (0x10 0xC_)
-	HeatDemand    *bool    `json:"heat_demand,omitempty"`    // 난방 요구 신호 (0x11 0x0_)
-	CompressorRun *bool    `json:"compressor_run,omitempty"` // 압축기 운전 플래그 (0x12 0x4_)
-	RefrigerantOn *bool    `json:"refrigerant_on,omitempty"` // 냉매 회로 운전 (0x1A 0xC_)
-	OpMode        *string  `json:"op_mode,omitempty"`        // 운전 모드 (0x13 0xC_)
+	Power         *string  `json:"power,omitempty"`               // "ON" / "OFF" (제어 명령: 0x18 0x4_)
+	PowerState    *string  `json:"power_state,omitempty"`         // "ON" / "OFF" (응답 상태: 0x60 0xC_)
+	SetTempC      *float64 `json:"target_temperature,omitempty"`  // 설정 온도 (°C) — v0.x: NASA/Century 와 통일 (이전 set_temp_c)
+	FanSpeed      *string  `json:"fan_speed,omitempty"`           // "low" / "medium" / "high" / "turbo" / "auto"
+	Mode          *string  `json:"mode,omitempty"`                // "cool" / "dry" / "fan" / "auto" / "heat"
+	CompressorCap *int     `json:"compressor_cap,omitempty"`      // 압축기 용량 (4비트 값)
+	CompressorHz  *int     `json:"compressor_hz,omitempty"`       // 압축기 주파수 (확장 Hz)
+	ValveOpen     *bool    `json:"valve_open,omitempty"`          // 냉매 밸브 개폐 (0x62 0x4_)
+	FanMotorHz    *int     `json:"fan_motor_hz,omitempty"`        // 실내기 팬모터 주파수 (0x62 0xD_+ext)
+	PipeTemp1C    *float64 `json:"pipe_temperature1_c,omitempty"` // 배관 온도 1 (°C)
+	PipeTemp2C    *float64 `json:"pipe_temperature2_c,omitempty"` // 배관 온도 2 (°C) — 0x62 0xD0+V 두 번째
+	IndoorTempC   *float64 `json:"current_temperature,omitempty"` // 실내 온도 (°C) — v0.x: NASA/Century 와 통일 (이전 indoor_temp_c)
+	FanSpeedResp  *int     `json:"fan_speed_resp,omitempty"`      // 풍속 응답 (0x71)
+	OutdoorActive *bool    `json:"outdoor_active,omitempty"`      // 실외기 활성 (0x10 0xC_)
+	HeatDemand    *bool    `json:"heat_demand,omitempty"`         // 난방 요구 신호 (0x11 0x0_)
+	CompressorRun *bool    `json:"compressor_run,omitempty"`      // 압축기 운전 플래그 (0x12 0x4_)
+	RefrigerantOn *bool    `json:"refrigerant_on,omitempty"`      // 냉매 회로 운전 (0x1A 0xC_)
+	OpMode        *string  `json:"op_mode,omitempty"`             // 운전 모드 (0x13 0xC_)
 }
 
 // Icp02RegPairJSON 은 레지스터-속성 쌍의 JSON 표현이다.
@@ -304,6 +304,10 @@ func decodeOpMode(lo byte) string {
 		return "heating"
 	case 0x3:
 		return "defrost"
+	case 0x4:
+		// 0x4: 실내기 가동 중(실외 active + 냉매 ON 맥락에서 관측, 2026-06-16).
+		// 잠정 매핑 — 라벨은 세그먼트별 추후 검증 가능.
+		return "cooling"
 	case 0x6:
 		return "defrost-transition"
 	default:
