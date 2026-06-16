@@ -27,9 +27,9 @@ func TestResetSeries_SingleSeries_OthersUntouched(t *testing.T) {
 
 	cleared, deleted, err := a.ResetSeries(ctx, "default", "room", "humidity", nil)
 	require.NoError(t, err)
-	// 동적(auto) 시리즈지만 레지스트리 등록 → 정적 취급 → ClearHistory.
-	assert.Equal(t, 1, cleared, "humidity 단일 시리즈만 ClearHistory")
-	assert.Equal(t, 0, deleted)
+	// @spec SPEC-STORE-004: 동적(auto) 시리즈 → DeleteEntry (값+레지스트리 메타 완전 삭제).
+	assert.Equal(t, 0, cleared)
+	assert.Equal(t, 1, deleted, "humidity 동적 시리즈 삭제")
 
 	// temperature 시리즈는 영향받지 않는다.
 	results, err := a.QuerySeries(ctx, "default", "room", "temperature", nil, lastN(10))
@@ -78,10 +78,10 @@ func TestResetSeries_MetricAndTags_NarrowsToOne(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, cleared+deleted, "(temperature, area=a) 단일 시리즈만")
 
-	// 태그 없는 temperature 시리즈는 보존.
+	// 태그 없는 temperature 시리즈는 보존, (temperature,area=a) 동적 시리즈는 삭제됨.
 	results, err := a.QuerySeries(ctx, "default", "room", "temperature", nil, lastN(10))
 	require.NoError(t, err)
-	assert.Len(t, results, 2, "ClearHistory 는 엔트리 보존 — 두 시리즈 모두 현재값 유지")
+	assert.Len(t, results, 1, "동적 시리즈 (temperature,area=a) 삭제 — 태그 없는 1개만 남음")
 }
 
 // 미일치 → (0,0,nil), 어떤 시리즈도 건드리지 않음.
@@ -97,21 +97,19 @@ func TestResetSeries_NoMatch_Zero(t *testing.T) {
 	assert.Equal(t, 0, deleted)
 }
 
-// IsStaticKey fallback: 사용자 관점 key 로 "그 key 의 어떤 시리즈라도 정적이면 true".
-func TestIsStaticKey_UserKeyFallback(t *testing.T) {
+// @spec SPEC-STORE-004: IsStaticKey 는 Source=manual 만 정적으로 본다.
+// 동적(auto) 시리즈만 있는 경우 인코딩 키 직접 조회·사용자 key fallback 모두 false.
+// (manual 키가 정적으로 판정되는 양성 케이스는 TestIsStaticKey_OnlyManualIsStatic 참고.)
+func TestIsStaticKey_DynamicSeriesNotStatic(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
-	// 인코딩 키로 레지스트리에 등록되는 시리즈.
 	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
 
 	encoded := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
 
-	// primary: 인코딩 키 직접 조회 적중.
-	assert.True(t, a.IsStaticKey(encoded), "인코딩 키 직접 조회로 true")
-	// fallback: 사용자 관점 key "room" 으로도 true (그 key 의 시리즈가 정적).
-	assert.True(t, a.IsStaticKey("room"), "사용자 key 로도 그 key 의 시리즈가 정적이면 true")
-	// 미존재 사용자 key 는 false.
+	assert.False(t, a.IsStaticKey(encoded), "동적(auto) 인코딩 키 → 정적 아님")
+	assert.False(t, a.IsStaticKey("room"), "동적 시리즈만 있는 사용자 key → 정적 아님")
 	assert.False(t, a.IsStaticKey("nonexistent"))
 	assert.False(t, a.IsStaticKey(""))
 }

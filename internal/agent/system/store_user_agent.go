@@ -689,10 +689,19 @@ func (a *UserStoreAgent) State() map[string]any {
 		// (버그: 이전엔 ns!="" 일 때만 strip 해 ns="" 키가 ":09a..." 로 표시됐다.)
 		rawKey, _ := key.(string)
 		ns := item.namespace
-		displayKey := strings.TrimPrefix(rawKey, ns+":")
+		// 네임스페이스 접두사를 제거한 저장 키(= 시리즈 인코딩 키, 또는 레거시 bare 키).
+		// @spec SPEC-STORE-004: 레지스트리/저장 키는 EncodeSeriesKey("metric|tags|key") 로
+		// 키잉되므로, 메타 조회는 이 인코딩 키로 하고, 표시용 key 는 디코드된 사용자 key 로 한다.
+		encodedKey := strings.TrimPrefix(rawKey, ns+":")
+		userKey := decodeStorageKeyToSeries(encodedKey).Key
 
 		entry := map[string]any{
-			"key":           displayKey,
+			"key": userKey,
+			// @spec SPEC-STORE-004: storage_key 는 인코딩 시리즈 키(저장/레지스트리 키)이다.
+			// 표시·정렬·필터는 디코드된 key 를 쓰지만, 직접 저장 키로 동작하는 행 작업
+			// (get_history, 메타 편집/승격 등)은 이 storage_key 를 사용해야 한다. 디코드된
+			// key 로 조회하면 인코딩 키로 저장된 값을 못 찾는다(예: 히스토리 0).
+			"storage_key":   encodedKey,
 			"value":         item.value,
 			"namespace":     ns,
 			"created_at":    item.createdAt.Format(time.RFC3339),
@@ -701,12 +710,12 @@ func (a *UserStoreAgent) State() map[string]any {
 		}
 
 		// @spec SPEC-STORE-003 v0.4.0: 모든 엔트리(정적 + 동적)에 metric_type 과 tags 를 노출한다.
-		// 정적/동적 키는 staticKeys 맵에 메타가 존재하므로 그 값을 사용하고,
-		// (아직 메타가 없는 극히 예외적 경우에 대비해) 없으면 기본값 unknown / 빈 맵을 부여한다.
-		// 이로써 동적 키도 항상 metric_type="unknown", tags={} 로 표시되어 프론트가 일관되게 필터/표시할 수 있다.
+		// @spec SPEC-STORE-004: 메타 조회는 인코딩 시리즈 키(encodedKey)로 한다(staticKeys 는
+		// 인코딩 키로 키잉됨). 표시용 key 는 위에서 디코드한 사용자 key(userKey)이므로,
+		// 같은 key 의 서로 다른 metric/tags 시리즈는 각각의 행으로 metric_type/tags 가 노출된다.
 		metricType := MetricTypeUnknown
 		tagsCopy := map[string]string{}
-		if meta, ok := inner.config.staticKeys[displayKey]; ok {
+		if meta, ok := inner.config.staticKeys[encodedKey]; ok {
 			if meta.MetricType != "" {
 				metricType = meta.MetricType
 			}

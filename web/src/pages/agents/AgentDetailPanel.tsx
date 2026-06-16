@@ -7,7 +7,7 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Server, Tag, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowDown, ArrowUp, ArrowUpCircle, ArrowUpDown, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -76,6 +76,13 @@ import { useUIStore } from '@/stores/uiStore';
 
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
+import {
+  filterEntries,
+  nextSortState,
+  sortEntries,
+  type SortColumn,
+  type SortState,
+} from './storeEntrySort';
 
 interface AgentDetailPanelProps {
   agentId: string;
@@ -2273,6 +2280,65 @@ function formatTimeAgo(date: Date): string {
 }
 
 /**
+ * 정렬 가능한 테이블 헤더 셀.
+ *
+ * 타이틀 클릭 시 onSort(column) 을 호출하고, 현재 활성 컬럼이면 방향 화살표를
+ * 표시한다(비활성 컬럼은 중립 양방향 아이콘). 기존 헤더 스타일(텍스트 muted)을
+ * 유지하면서 클릭 가능한 버튼으로 감싼다.
+ */
+function SortableHeader({
+  column,
+  label,
+  sort,
+  onSort,
+  align = 'left',
+}: {
+  column: SortColumn;
+  label: string;
+  sort: SortState;
+  onSort: (column: SortColumn) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sort.column === column;
+  const ariaSort: React.AriaAttributes['aria-sort'] = active
+    ? sort.direction === 'asc'
+      ? 'ascending'
+      : 'descending'
+    : 'none';
+  return (
+    <th
+      className={cn(
+        'px-3 py-2 font-medium text-(--color-text-muted)',
+        align === 'right' ? 'text-right' : 'text-left',
+      )}
+      aria-sort={ariaSort}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={cn(
+          'inline-flex items-center gap-1 transition-colors hover:text-(--color-text-primary)',
+          align === 'right' && 'flex-row-reverse',
+          active && 'text-(--color-text-primary)',
+        )}
+        aria-label={`${label} 기준 정렬`}
+      >
+        {label}
+        {active ? (
+          sort.direction === 'asc' ? (
+            <ArrowUp className="h-3 w-3" aria-hidden="true" />
+          ) : (
+            <ArrowDown className="h-3 w-3" aria-hidden="true" />
+          )
+        ) : (
+          <ArrowUpDown className="h-3 w-3 opacity-40" aria-hidden="true" />
+        )}
+      </button>
+    </th>
+  );
+}
+
+/**
  * 엔트리의 `tags` 필드에서 태그 맵을 추출한다.
  * 정적 키가 아닌 동적 키 엔트리는 `tags` 를 가지지 않아 null 을 반환한다.
  *
@@ -2378,7 +2444,9 @@ function StoreEntryRow({
         req: {
           command: 'get_history',
           params: {
-            key: entry.key as string,
+            // @spec SPEC-STORE-004: 히스토리는 인코딩 시리즈 키(storage_key)로 저장되므로
+            // 디코드된 표시용 key 가 아니라 storage_key 로 조회해야 한다(없으면 key 폴백 — 레거시).
+            key: (entry.storage_key as string) || (entry.key as string),
             // 네임스페이스 라운드트립 버그 수정 (v0.7.0 M14):
             // entry.namespace="" (빈 문자열)인 경우도 그대로 전송.
             // || 'default' 는 falsy 체크로 "" 를 "default" 로 강제했는데,
@@ -2401,7 +2469,7 @@ function StoreEntryRow({
         },
       },
     );
-  }, [hasHistory, historyOpen, execAgent, agentId, entry.key, entry.namespace]);
+  }, [hasHistory, historyOpen, execAgent, agentId, entry.storage_key, entry.key, entry.namespace]);
 
   // 히스토리 확장 행의 colSpan 계산:
   //   key + 바인딩 + 메트릭 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated + 액션
@@ -2416,6 +2484,8 @@ function StoreEntryRow({
   const handlePromoteClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      // @spec SPEC-STORE-004: 승격은 config 정적 키(=사용자 key)에 추가하므로 디코드된
+      // 사용자 key 를 쓴다(히스토리/메타편집의 storage_key 와 다름).
       onPromote(entry.key as string);
     },
     [entry.key, onPromote],
@@ -2436,9 +2506,10 @@ function StoreEntryRow({
   const handleEditMetaClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      onEditMeta(entry.key as string);
+      // @spec SPEC-STORE-004: 메타 편집은 인코딩 시리즈 키(storage_key)로 동작해야 한다.
+      onEditMeta((entry.storage_key as string) || (entry.key as string));
     },
-    [entry.key, onEditMeta],
+    [entry.storage_key, entry.key, onEditMeta],
   );
 
   // 모든 엔트리가 metric_type 을 갖는다 (동적 키는 "unknown"). 빈 값은 "unknown" 표시.
@@ -2674,6 +2745,17 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   // 빈 문자열 = 전체. 엔트리에 모두 metric_type 이 포함되므로 클라이언트 측 필터.
   const [selectedMetricType, setSelectedMetricType] = useState<string>('');
 
+  // --- 검색 필터 상태 (store key 테이블) ---
+  // key / metric_type / tags 에 대한 부분일치(대소문자 무시) 검색어.
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // --- 컬럼 정렬 상태 (store key 테이블) ---
+  // column=null 이면 원본 순서. 헤더 클릭으로 asc/desc 토글.
+  const [sort, setSort] = useState<SortState>(() => ({
+    column: null,
+    direction: 'asc',
+  }));
+
   // 태그 쌍 목록 조회 (구버전 서버/태그 없음 은 빈 배열로 폴백).
   const tagPairsQuery = useStoreTagPairs(agentName);
   const tagPairs: StoreTagPair[] = tagPairsQuery.data ?? [];
@@ -2730,7 +2812,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
 
   // 태그 + 메트릭 타입 필터 적용 (AND 로직). 선택이 없으면 원본 그대로.
   // @spec SPEC-STORE-003 v0.4.0
-  const entries = useMemo(() => {
+  const filteredEntries = useMemo(() => {
     const tagActive = selectedTags.size > 0;
     const metricActive = selectedMetricType !== '';
     if (!tagActive && !metricActive) return allEntries;
@@ -2746,6 +2828,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     });
   }, [allEntries, selectedTags, selectedMetricType]);
 
+  // 검색 필터(key/metric_type/tags 부분일치, 대소문자 무시) → 컬럼 정렬을 차례로 적용.
+  // 파이프라인: 태그/메트릭 필터(filteredEntries) → 검색 → 정렬.
+  // binding(정적/동적) 정렬은 staticKeyNames 집합을 사용한다.
+  const entries = useMemo(() => {
+    const searched = filterEntries(filteredEntries, searchQuery);
+    return sortEntries(searched, sort, { staticKeyNames });
+  }, [filteredEntries, searchQuery, sort, staticKeyNames]);
+
   // 태그 컬럼 표시 여부: 필터링 전 전체 엔트리 중 하나라도 태그가 있으면 표시.
   // (필터링 후 엔트리만 기준으로 하면, 필터 해제 시 컬럼이 사라지는 UX 문제가 발생)
   const showTagsColumn = useMemo(() => {
@@ -2753,7 +2843,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   }, [allEntries]);
 
   // 활성 필터 존재 여부 (빈 결과 안내 문구 분기에 사용).
-  const hasActiveFilter = selectedTags.size > 0 || selectedMetricType !== '';
+  const hasActiveFilter =
+    selectedTags.size > 0 ||
+    selectedMetricType !== '' ||
+    searchQuery.trim() !== '';
 
   // --- 페이지네이션 파생 값 ---
   // 현재 페이지가 총 페이지 수를 초과할 때 (예: 새로고침 후 항목이 줄어든 경우)
@@ -2797,6 +2890,28 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     },
     [],
   );
+
+  // --- 검색 핸들러 (store key 테이블) ---
+  const handleSearchChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      setSearchQuery(e.target.value);
+      // 검색어 변경 시 1페이지로 리셋(가시 범위 혼란 방지).
+      setPage(1);
+    },
+    [],
+  );
+
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('');
+    setPage(1);
+  }, []);
+
+  // --- 정렬 핸들러 (store key 테이블) ---
+  // 헤더 클릭 시 컬럼별 asc/desc 토글. 정렬 변경 시 1페이지로 리셋.
+  const handleSort = useCallback((column: SortColumn) => {
+    setSort((prev) => nextSortState(prev, column));
+    setPage(1);
+  }, []);
 
   // --- 데이터 뷰어 모달용 데이터 소스 (Store 전용) ---
   // agentName 이 없는 에지 케이스 (이전 콜사이트 호환) 에서는 데이터 소스를 생성하지 않고
@@ -2957,10 +3072,21 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
 
   // 편집 대상 엔트리의 현재 metric_type / tags 를 사전 채움 값으로 제공한다.
   // State 엔트리(allEntries)를 단일 출처로 사용한다.
+  // @spec SPEC-STORE-004: editingKey 는 storage_key(인코딩 시리즈 키)이다. 엔트리는
+  // storage_key 로 찾아 그 시리즈의 metric_type/tags 를 사전 채움한다(없으면 key 폴백 — 레거시).
   const editingEntry = useMemo(() => {
     if (!editingKey) return undefined;
-    return allEntries.find((e) => (e.key as string) === editingKey);
+    return allEntries.find(
+      (e) => ((e.storage_key as string) || (e.key as string)) === editingKey,
+    );
   }, [editingKey, allEntries]);
+
+  // 다이얼로그에 표시할 키는 디코드된 사용자 key(설정 key_template 결과)이다.
+  // 인코딩 시리즈 키(metric|tags|key)가 아니라 사용자가 설정한 형태로 출력한다.
+  const editingDisplayKey = useMemo(
+    () => (editingEntry?.key as string) || editingKey || '',
+    [editingEntry, editingKey],
+  );
 
   const editingInitialMetricType = useMemo(
     () => (editingEntry ? extractEntryMetricType(editingEntry) : ''),
@@ -2990,7 +3116,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         });
         addNotification({
           type: 'success',
-          message: `'${editingKey}' 타입/태그가 저장되었습니다`,
+          message: `'${editingDisplayKey}' 타입/태그가 저장되었습니다`,
         });
         setEditingKey(null);
         // State 엔트리(metric_type/tags 표시 출처)를 즉시 갱신.
@@ -3004,7 +3130,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         });
       }
     },
-    [editingKey, agentName, setKeyMeta, addNotification, queryClient, agentId],
+    [editingKey, editingDisplayKey, agentName, setKeyMeta, addNotification, queryClient, agentId],
   );
 
   // --- 초기화 핸들러 (SPEC-STORE-003) ---
@@ -3165,6 +3291,34 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         </div>
       </div>
 
+      {/* 검색 필터 (store key 테이블): key / metric_type / tags 부분일치(대소문자 무시).
+          메트릭은 key 컬럼에 이어붙이지 않되 검색 대상에는 포함한다. */}
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
+          aria-hidden="true"
+        />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={handleSearchChange}
+          placeholder="키 / 메트릭 / 태그 검색"
+          aria-label="저장소 키 검색"
+          data-testid="store-search-input"
+          className="w-full rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) py-1.5 pl-8 pr-8 text-xs text-(--color-text-primary) placeholder:text-(--color-text-muted) focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+        {searchQuery !== '' && (
+          <button
+            type="button"
+            onClick={handleClearSearch}
+            aria-label="검색어 지우기"
+            className="absolute right-2 top-1/2 inline-flex -translate-y-1/2 items-center rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
       {/* 메트릭 타입 필터 (SPEC-STORE-003 v0.4.0): 사용 중인 타입이 2종 이상일 때만 노출.
           (단일 종류뿐이면 필터 의미가 없으므로 숨겨 노이즈를 줄인다.) */}
       {metricTypeOptions.length > 1 && (
@@ -3232,12 +3386,13 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">키</th>
+                  {/* 정렬 가능한 컬럼은 타이틀 클릭으로 asc/desc 토글. */}
+                  <SortableHeader column="key" label="키" sort={sort} onSort={handleSort} />
                   {/* 바인딩(정적/동적) 과 메트릭(metric_type) 을 별도 컬럼으로 분리. */}
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">바인딩</th>
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">메트릭</th>
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">값</th>
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">네임스페이스</th>
+                  <SortableHeader column="binding" label="바인딩" sort={sort} onSort={handleSort} />
+                  <SortableHeader column="metric" label="메트릭" sort={sort} onSort={handleSort} />
+                  <SortableHeader column="value" label="값" sort={sort} onSort={handleSort} />
+                  <SortableHeader column="namespace" label="네임스페이스" sort={sort} onSort={handleSort} />
                   {showTagsColumn && (
                     <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">태그</th>
                   )}
@@ -3245,7 +3400,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                   {maxHistorySize > 0 && (
                     <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">히스토리</th>
                   )}
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">갱신</th>
+                  <SortableHeader column="updated" label="갱신" sort={sort} onSort={handleSort} />
                   {/* 액션 컬럼 (SPEC-STORE-003): 행별 액션 버튼들. 항상 표시. */}
                   <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">액션</th>
                 </tr>
@@ -3322,7 +3477,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       <EditKeyMetaDialog
         isOpen={editingKey !== null}
         onClose={handleCloseEditMeta}
-        keyName={editingKey ?? ''}
+        keyName={editingDisplayKey}
         initialMetricType={editingInitialMetricType}
         initialTags={editingInitialTags}
         onConfirm={handleEditMetaConfirm}

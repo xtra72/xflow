@@ -67,7 +67,8 @@ func (a *UserStoreAgent) ResetSeries(
 		}
 
 		// 정적/동적 분기는 저장 키(rawKey, 인코딩 또는 bare) 기준으로 판단한다.
-		// IsStaticKey 는 레지스트리 존재 여부(직접 조회)로 정적 여부를 결정한다(characterization).
+		// IsStaticKey 는 Source=manual(yaml/수동 정의) 만 정적으로 본다(SPEC-STORE-004).
+		// 정적(manual) → 히스토리만 비우고 정의 보존, 동적(auto) → 값+레지스트리 메타 완전 삭제.
 		if a.IsStaticKey(rawKey) {
 			if cerr := store.ClearHistory(ctx, rawKey); cerr != nil {
 				if errors.Is(cerr, ErrKeyNotFound) {
@@ -85,6 +86,9 @@ func (a *UserStoreAgent) ResetSeries(
 			}
 			return historyCleared, entriesDeleted, derr
 		}
+		// @spec SPEC-STORE-004: 동적 키는 값뿐 아니라 레지스트리 메타(staticKeys)도 제거하여
+		// 완전히 사라지게 한다(전체 초기화 시 동적 키 삭제).
+		inner.RemoveStaticKey(rawKey)
 		entriesDeleted++
 	}
 
