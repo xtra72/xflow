@@ -1408,6 +1408,7 @@ func (a *Hvacr02Agent) handleCapturedFrame(frame *Icp02Frame) {
 		daLabel := a.deviceLabel(daHex)
 		saLabel := a.deviceLabel(saHex)
 		a.mu.RUnlock()
+		payloadHex := hex.EncodeToString(frame.Payload)
 		evt.Parsed = &ParsedHeader{
 			DA:         daHex,
 			DALabel:    daLabel,
@@ -1417,7 +1418,7 @@ func (a *Hvacr02Agent) handleCapturedFrame(frame *Icp02Frame) {
 			CMDName:    hvacr02CMDNames[cmdHex],
 			SEQ0:       int(frame.SEQ0),
 			PLEN:       len(frame.Payload),
-			PayloadHex: hex.EncodeToString(frame.Payload),
+			PayloadHex: payloadHex,
 			SEQ1:       int(frame.SEQ1),
 			Decoded:    decoded,
 			Pairs:      pairs,
@@ -1448,7 +1449,7 @@ func (a *Hvacr02Agent) handleCapturedFrame(frame *Icp02Frame) {
 
 				// 디코딩 결과가 있으면 상태도 갱신
 				if decoded != nil {
-					a.updateDeviceState(saHex, daHex, cmdHex, decoded, frame.Timestamp)
+					a.updateDeviceState(saHex, daHex, cmdHex, payloadHex, decoded, frame.Timestamp)
 				}
 			}
 		} else {
@@ -1799,8 +1800,10 @@ func (a *Hvacr02Agent) ensureDevice(addrHex string, ts time.Time) *Icp02Device {
 // updateDeviceState 는 캡처된 프레임에서 디바이스 상태를 갱신하고 변경을 감지한다.
 //
 // 제어 명령 (cmd=0201, 실외기→실내기): DA 디바이스에 제어 필드 병합
-// 상태 응답 (cmd=0204 등, 실내기→실외기): SA 디바이스에 응답 필드 병합
-func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex string, decoded *Icp02DecodedPayload, ts time.Time) {
+// 상태 응답 (cmd=0204 등): SA 디바이스에 응답 필드 병합
+// 단, controller→특정 실내기(DA≠broadcast) status 는 실내기별 실외 컨텍스트라
+// 단일 controller 디바이스 병합 시 진동을 유발하므로 제외한다 (모델 B, 2026-06-16).
+func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string, decoded *Icp02DecodedPayload, ts time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -1827,6 +1830,17 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex string, decoded *I
 		targetAddr = daHex
 		controlOnly = true
 	default:
+		// controller→특정 실내기(DA≠broadcast) status 진동 방지 (모델 B, 2026-06-16):
+		// controller(SA)는 실내기(DA)별로 서로 다른 실외 서비스 상태(outdoor_active/
+		// refrigerant_on/op_mode/compressor)를 보낸다. 이를 단일 controller 디바이스에
+		// 병합하면 실내기별 컨텍스트가 충돌하여 ~5초 간격으로 진동한다. controller→실내기
+		// status 는 병합에서 제외하고, broadcast(ffffffff)·전역 프레임과 실내기→controller
+		// 보고만 SA 디바이스에 병합한다.
+		if a.hvacr02Config.ControllerAddress != "" &&
+			saHex == a.hvacr02Config.ControllerAddress &&
+			daHex != "ffffffff" {
+			return
+		}
 		targetAddr = saHex
 	}
 
@@ -1866,7 +1880,7 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex string, decoded *I
 		// LogStateUpdates: 진단용 — 디코드된 핵심 필드 + cmd 를 INFO 로그로 출력
 		// (LG01 / Century 의 logDecodedState 패턴과 통일, 2026-05-30).
 		if a.hvacr02Config.LogStateUpdates {
-			a.logStateUpdate(dev.Label, targetAddr, cmdHex, curr)
+			a.logStateUpdate(dev.Label, targetAddr, saHex, daHex, cmdHex, payloadHex, curr)
 		}
 
 		// v0.7.0: 통합 schema (type="device_state") 로 change emit. 이전엔 emit
@@ -1886,11 +1900,28 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex string, decoded *I
 // logStateUpdate 는 디바이스 state 변경 시 핵심 필드를 INFO 로그로 출력한다.
 // LogStateUpdates=true 일 때만 호출된다. LG01 / Century 의 logDecodedState 패턴.
 // 호출 전제: a.mu 락 보유 (curr 는 caller 가 이미 snapshot 한 값).
-func (a *Hvacr02Agent) logStateUpdate(label, address, cmdHex string, curr Icp02DeviceState) {
+func (a *Hvacr02Agent) logStateUpdate(label, address, saHex, daHex, cmdHex, payloadHex string, curr Icp02DeviceState) {
 	args := []any{
 		"address", address,
 		"label", label,
+		"sa", saHex,
+		"da", daHex,
 		"cmd", cmdHex,
+	}
+	// 진단(2026-06-16): controller 상태 진동 원인 추적 — 진동 필드(op_mode/
+	// compressor_cap/outdoor_active/refrigerant_on)와 raw payload_hex 를 함께 찍어
+	// 비-status CMD 프레임의 오분류 여부를 확정한다.
+	if curr.OpMode != nil {
+		args = append(args, "op_mode", *curr.OpMode)
+	}
+	if curr.CompressorCap != nil {
+		args = append(args, "compressor_cap", *curr.CompressorCap)
+	}
+	if curr.OutdoorActive != nil {
+		args = append(args, "outdoor_active", *curr.OutdoorActive)
+	}
+	if curr.RefrigerantOn != nil {
+		args = append(args, "refrigerant_on", *curr.RefrigerantOn)
 	}
 	if curr.PowerState != nil {
 		args = append(args, "power_state", *curr.PowerState)
@@ -1916,6 +1947,7 @@ func (a *Hvacr02Agent) logStateUpdate(label, address, cmdHex string, curr Icp02D
 	if curr.PipeTemp2C != nil {
 		args = append(args, "pipe_temperature2_c", fmt.Sprintf("%.1f", *curr.PipeTemp2C))
 	}
+	args = append(args, "payload_hex", payloadHex)
 	a.logger.Info("lg_hvacr02: state update", args...)
 }
 
