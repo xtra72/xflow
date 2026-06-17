@@ -60,6 +60,12 @@ type Hvacr02Agent struct {
 	// Bridge 소비자 활성 여부 (ReceiveMessage 호출 시 true)
 	bridgeActive atomic.Bool
 
+	// 백그라운드 루프(notifyLoop/captureLoop/offlineWatchLoop) 기동 여부.
+	// Start 가 중복 호출되어도(재연결 윈도우 등 fast-path 가드를 빠져나가는 경우 포함)
+	// 루프 고루틴이 누적되지 않도록 보장한다. 누적되면 notifyLoop 가 여러 개 떠
+	// 같은 디바이스 report 가 한 틱에 N건 중복 발행된다. Stop 에서 false 로 리셋.
+	bgStarted atomic.Bool
+
 	// 드롭 로그 rate-limit
 	lastDropLog atomic.Int64 // UnixNano
 
@@ -290,6 +296,14 @@ func (a *Hvacr02Agent) Start(_ context.Context) error {
 		return nil // 이미 실행 중이면 no-op
 	}
 
+	// 백그라운드 루프 중복 기동 방지 (멱등). 위 fast-path 가드는 transport.Available()
+	// 에 의존하므로, 재연결 윈도우처럼 transport 가 잠시 unavailable 한 동안 Start 가
+	// 다시 호출되면 가드를 빠져나가 notifyLoop 등 고루틴이 누적되어 같은 디바이스 report 가
+	// 한 틱에 여러 건 중복 발행된다. bgStarted CAS 로 루프 기동을 정확히 1회로 제한한다.
+	if !a.bgStarted.CompareAndSwap(false, true) {
+		return nil
+	}
+
 	// 재시작 시 stopCh 재생성 (이전 Stop 에서 close 됨)
 	a.stopCh = make(chan struct{})
 
@@ -336,6 +350,9 @@ func (a *Hvacr02Agent) Stop(_ context.Context) error {
 
 	// goroutine 들에게 종료 시그널
 	close(a.stopCh)
+
+	// 다음 Start 에서 백그라운드 루프를 다시 기동할 수 있도록 리셋.
+	a.bgStarted.Store(false)
 
 	// 트랜스포트 닫기
 	if err := a.transport.Close(); err != nil {
