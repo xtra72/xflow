@@ -1900,6 +1900,12 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 			}
 		}
 
+		// 최초 관측 여부 판정: 이전에 한 번이라도 emit 한 적이 있는지(lastStates 존재).
+		// 최초 관측은 비교할 이전 상태가 없으므로 "변경(change)"이 아니라 초기 상태이다.
+		// 이를 change 로 내보내면, 에이전트 재생성/재시작으로 디바이스 상태가 초기화될 때마다
+		// 첫 프레임이 거짓 change(예: power:false)로 새어나가 change 시리즈를 오염시킨다.
+		// 최초 관측은 report(전체 상태)로 발행하여 change 에는 실제 변경만 남게 한다.
+		_, hadPrev := a.lastStates[targetAddr]
 		a.lastStates[targetAddr] = curr
 
 		a.logger.Debug("lg_hvacr02: 디바이스 상태 변경",
@@ -1911,15 +1917,19 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 			a.logStateUpdate(dev.Label, targetAddr, saHex, daHex, cmdHex, payloadHex, curr)
 		}
 
-		// change 메시지는 변경된 필드만 전송한다(중복 데이터 방지). report/response 는
-		// emitDeviceStateLocked 가 전체 상태를 전송한다. 직전 투영(prevProps) 대비 값이
-		// 바뀌거나 새로 생긴 키만 추려서 보낸다.
-		changed := changedProperties(prevProps, currProps)
-		if len(changed) == 0 {
-			// 투영은 달라졌으나(키 제거 등) 새로/바뀐 값이 없는 드문 경우 — 안전하게 전체 전송.
-			changed = currProps
+		if !hadPrev {
+			// 최초 관측 → 초기 상태를 report(전체)로 발행 (change 아님).
+			a.emitDeviceStatePayloadLocked(dev, "report", currProps)
+		} else {
+			// change 메시지는 변경된 필드만 전송한다(중복 데이터 방지). 직전 투영(prevProps)
+			// 대비 값이 바뀌거나 새로 생긴 키만 추려서 보낸다.
+			changed := changedProperties(prevProps, currProps)
+			if len(changed) == 0 {
+				// 투영은 달라졌으나(키 제거 등) 새로/바뀐 값이 없는 드문 경우 — 안전하게 전체 전송.
+				changed = currProps
+			}
+			a.emitDeviceStatePayloadLocked(dev, "change", changed)
 		}
-		a.emitDeviceStatePayloadLocked(dev, "change", changed)
 
 		// 변경 이벤트 발행 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
 		if v2 := a.onDeviceStateChangeV2; v2 != nil {
