@@ -1867,7 +1867,9 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 		// 온도 센서값만 흔들리는 경우 — OFF 투영에는 노출되지 않아 payload 가
 		// {power:false} 로 동일하다.) dev.State 는 이미 병합되어 누적 최신값을 유지하며,
 		// lastStates 는 갱신하지 않아 다음 프레임에서 누적 감지된다.
-		if propertiesEqualIcp02(prev.toProperties(dev.Type), curr.toProperties(dev.Type)) {
+		prevProps := prev.toProperties(dev.Type)
+		currProps := curr.toProperties(dev.Type)
+		if propertiesEqualIcp02(prevProps, currProps) {
 			return
 		}
 
@@ -1892,9 +1894,15 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 			a.logStateUpdate(dev.Label, targetAddr, saHex, daHex, cmdHex, payloadHex, curr)
 		}
 
-		// v0.7.0: 통합 schema (type="device_state") 로 change emit. 이전엔 emit
-		// 없이 콜백만 호출했으나, 다른 4개 HVAC 에이전트와 동일 패턴으로 통일.
-		a.emitDeviceStateLocked(dev, "change")
+		// change 메시지는 변경된 필드만 전송한다(중복 데이터 방지). report/response 는
+		// emitDeviceStateLocked 가 전체 상태를 전송한다. 직전 투영(prevProps) 대비 값이
+		// 바뀌거나 새로 생긴 키만 추려서 보낸다.
+		changed := changedProperties(prevProps, currProps)
+		if len(changed) == 0 {
+			// 투영은 달라졌으나(키 제거 등) 새로/바뀐 값이 없는 드문 경우 — 안전하게 전체 전송.
+			changed = currProps
+		}
+		a.emitDeviceStatePayloadLocked(dev, "change", changed)
 
 		// 변경 이벤트 발행 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
 		if v2 := a.onDeviceStateChangeV2; v2 != nil {
@@ -1971,6 +1979,17 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 	if dev == nil || dev.State == nil {
 		return
 	}
+	// report/response 등은 전체 상태를 전송한다.
+	a.emitDeviceStatePayloadLocked(dev, trigger, dev.State.toProperties(dev.Type))
+}
+
+// emitDeviceStatePayloadLocked 는 주어진 state 맵으로 device_state 이벤트를 emit 한다.
+// trigger="change" 는 변경된 필드만, 그 외(report/response)는 전체 상태를 state 로 받는다.
+// 호출 전제: a.mu 쓰기 락 보유.
+func (a *Hvacr02Agent) emitDeviceStatePayloadLocked(dev *Icp02Device, trigger string, state map[string]any) {
+	if dev == nil || dev.State == nil {
+		return
+	}
 	metadata := map[string]any{
 		"name":        dev.Label,
 		"address":     dev.Address,
@@ -1984,7 +2003,7 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 		"unit_id":   dev.Address,
 		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
 		"trigger":   trigger,
-		"state":     dev.State.toProperties(dev.Type),
+		"state":     state,
 		"metadata":  metadata,
 	}
 	if !dev.LastSeen.IsZero() {
