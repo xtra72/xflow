@@ -1077,19 +1077,6 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: '연결할 Store 에이전트의 이름 또는 ID입니다.',
       },
       {
-        name: 'key_template',
-        type: 'string',
-        required: true,
-        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다 (예: "{location}:{point}:{sensor_type}").',
-      },
-      {
-        name: 'value_key',
-        type: 'string',
-        required: false,
-        description:
-          '저장할 값의 경로. $. prefix 필수 — $.payload.value / $.payload.state.mode / $.metadata.device.id / $.id 등 메시지 전체 경로를 지원합니다. 비워두면 전체 payload를 저장합니다.',
-      },
-      {
         name: 'namespace',
         type: 'string',
         required: false,
@@ -1097,18 +1084,46 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         default: 'default',
       },
       {
+        name: 'key_template',
+        type: 'string',
+        required: true,
+        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다 (예: "{location}:{point}"). 이 키에 metrics 의 각 메트릭이 metric_type 별 시리즈로 기록됩니다.',
+      },
+      {
+        name: 'key_mappings',
+        type: 'object',
+        required: false,
+        description: '한 메시지에서 서로 다른 키에 값을 기록합니다(키 템플릿 → 값 $.경로). 네임스페이스·TTL·태그는 공유 적용됩니다.',
+      },
+      {
+        name: 'tags',
+        type: 'object',
+        required: false,
+        description: '모든 메트릭/키에 공유 적용되는 태그(키=값). 값은 리터럴 또는 $. 경로.',
+      },
+      {
+        name: 'metrics',
+        type: 'array',
+        required: false,
+        description:
+          '다중 메트릭 배열. 각 항목은 { metric_type, value_key(기본 $.payload.value), data_type, min_interval, min_change, min_change_percent } 를 가집니다. 같은 key_template 키에 metric_type 별 시리즈로 저장되며, 메트릭마다 독립적인 미세변화 억제(dead-band)가 적용됩니다. min_interval 이 설정된 메트릭만 억제되고, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
+      },
+      {
         name: 'ttl',
         type: 'string',
         required: false,
-        description: 'TTL 기간입니다 (예: "5m", "1h", "24h"). 비워두면 만료 없음.',
+        description: 'TTL 기간입니다 (예: "5m", "1h", "24h"). 모든 메트릭/키에 공유 적용. 비워두면 만료 없음.',
       },
     ],
     configExample: {
       agent_ref: 'store-engine',
-      key_template: '{location}:{point}:{sensor_type}',
-      value_key: '$.payload.value',
       namespace: 'sensors',
+      key_template: '{location}:{device_id}',
       ttl: '1h',
+      metrics: [
+        { metric_type: 'temperature', value_key: '$.payload.temperature', data_type: 'float', min_interval: '30s', min_change: 0.5 },
+        { metric_type: 'humidity', value_key: '$.payload.humidity', data_type: 'float', min_interval: '1m', min_change: 2 },
+      ],
     },
   },
 

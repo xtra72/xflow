@@ -1,6 +1,7 @@
 package lg
 
 import (
+	"reflect"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent/hvac"
@@ -249,6 +250,16 @@ func stateChanged(prev, curr Icp02DeviceState) bool {
 		return true
 	}
 	return false
+}
+
+// propertiesEqualIcp02 는 두 외부 투영 속성 맵이 동일한지 비교한다.
+// stateChanged 는 내부 누적 상태(센서 raw 필드 포함)의 변화를 감지하지만,
+// 실제로 다운스트림에 노출되는 것은 toProperties 투영이다. 전원 OFF 시 운전/센서
+// 필드는 투영에서 제외되므로, OFF 상태에서 배관/실내 온도만 흔들리면 내부 상태는
+// 변해도 투영은 {power:false} 로 동일하다. 이 경우 device_state.change 를 emit 하면
+// "상태 변경 메시지지만 실제 변경 없음" 이 되므로, 투영 동일 여부로 emit 을 게이트한다.
+func propertiesEqualIcp02(a, b map[string]any) bool {
+	return reflect.DeepEqual(a, b)
 }
 
 // modeToCanonical 은 프로토콜별 모드 값을 통일된 이름으로 변환한다.

@@ -1862,6 +1862,15 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 	curr := dev.State.snapshot()
 
 	if stateChanged(prev, curr) {
+		// 외부 투영(toProperties)이 동일하면 다운스트림에 보이는 변화가 없으므로
+		// device_state.change 를 emit 하지 않는다. (예: 전원 OFF 상태에서 배관/실내
+		// 온도 센서값만 흔들리는 경우 — OFF 투영에는 노출되지 않아 payload 가
+		// {power:false} 로 동일하다.) dev.State 는 이미 병합되어 누적 최신값을 유지하며,
+		// lastStates 는 갱신하지 않아 다음 프레임에서 누적 감지된다.
+		if propertiesEqualIcp02(prev.toProperties(dev.Type), curr.toProperties(dev.Type)) {
+			return
+		}
+
 		// v0.6.7: event_temp_threshold gate — 비온도 필드 변경 없이 온도 센서값
 		// (IndoorTempC + PipeTemp1C + PipeTemp2C) 만 변경된 경우 max|Δ| < threshold
 		// 면 emit suppress. (v0.6.6: IndoorTempC 만 검사 → Pipe 온도 변경 시
