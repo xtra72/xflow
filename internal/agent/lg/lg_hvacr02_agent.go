@@ -2044,15 +2044,22 @@ func (a *Hvacr02Agent) emitDeviceStatePayloadLocked(dev *Icp02Device, trigger st
 	// FIX: a.Name() 호출 금지 — caller 가 a.mu 쓰기 락 보유 중. a.Name() 은
 	// 같은 mutex 의 RLock 을 시도하여 자기 deadlock 을 일으킨다 (Go RWMutex 는
 	// 재귀 락 금지). agentConfig.Name 직접 접근으로 대체.
-	payload := map[string]any{
-		"unit_id":   dev.Address,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
-		"trigger":   trigger,
-		"state":     state,
-		"metadata":  metadata,
+	// 이벤트(메시지) 타임스탬프 결정. 노드는 last_seen_ms 를 메시지 타임스탬프로 사용한다.
+	//   - "report"(주기 heartbeat): 발행 시점이 곧 스냅샷 시각 → now.
+	//     dev.LastSeen 을 쓰면 OFF 처럼 조용한 디바이스의 주기 report 가 모두 "마지막
+	//     프레임 시각"으로 찍혀, store 에 같은 시각으로 쌓이고 보고 주기가 어긋난다.
+	//   - 그 외("change" 등): 이벤트가 발생한 프레임 수신 시각(dev.LastSeen).
+	eventTime := dev.LastSeen
+	if trigger == "report" || eventTime.IsZero() {
+		eventTime = time.Now()
 	}
-	if !dev.LastSeen.IsZero() {
-		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	payload := map[string]any{
+		"unit_id":      dev.Address,
+		"device_id":    agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
+		"trigger":      trigger,
+		"state":        state,
+		"metadata":     metadata,
+		"last_seen_ms": eventTime.UnixMilli(),
 	}
 
 	// 2026-05-30: LG01 통일 — device_state schema 를 ring buffer + msgCh (bridge 활성 시)
@@ -2065,11 +2072,7 @@ func (a *Hvacr02Agent) emitDeviceStatePayloadLocked(dev *Icp02Device, trigger st
 		return
 	}
 	seq := a.framesCaptured.Add(1)
-	now := dev.LastSeen
-	if now.IsZero() {
-		now = time.Now()
-	}
-	a.pushRecentFrame(b, now, seq)
+	a.pushRecentFrame(b, eventTime, seq)
 	if a.bridgeActive.Load() {
 		a.sendFrameEvent(b)
 	}
