@@ -42,10 +42,12 @@ func TestUpdateDeviceState_AfterStateReset_FirstIsReport(t *testing.T) {
 	trig1, _ := lastEmittedState(t, a)
 	assert.Equal(t, "report", trig1)
 
-	// 에이전트 재생성 모사: 디바이스 맵 + lastStates 초기화.
+	// 에이전트 재생성 모사: 디바이스 맵 + lastStates + lastEmitted 초기화
+	// (새 인스턴스는 이 셋 모두 비어 있다).
 	a.mu.Lock()
 	a.devices = map[string]*Icp02Device{}
 	a.lastStates = map[string]Icp02DeviceState{}
+	a.lastEmitted = map[string]map[string]any{}
 	a.mu.Unlock()
 
 	// 재초기화 후 첫 관측 (다시 OFF) → change 가 아니라 report.

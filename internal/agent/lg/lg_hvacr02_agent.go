@@ -72,6 +72,7 @@ type Hvacr02Agent struct {
 	// 디바이스 관리
 	devices      map[string]*Icp02Device     // 주소(hex) → 디바이스
 	lastStates   map[string]Icp02DeviceState // 주소(hex) → 이전 상태 (변경 감지용)
+	lastEmitted  map[string]map[string]any   // 주소(hex) → 직전 발행 투영 (변경 시에만 발행하기 위한 dedup)
 	notifyTicker *time.Ticker                // 주기적 상태 보고 타이머
 
 	// V2 콜백 (Phase D 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
@@ -221,6 +222,7 @@ func NewHvacr02Agent(config agent.AgentConfig) (agent.Agent, error) {
 		recentNotify:  make(chan struct{}, 1),
 		devices:       make(map[string]*Icp02Device),
 		lastStates:    make(map[string]Icp02DeviceState),
+		lastEmitted:   make(map[string]map[string]any),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -2017,6 +2019,22 @@ func (a *Hvacr02Agent) emitDeviceStatePayloadLocked(dev *Icp02Device, trigger st
 	if dev == nil || dev.State == nil {
 		return
 	}
+
+	// trigger 별 발행 정책:
+	//   - "report": 주기적 heartbeat. 변경 여부와 무관하게 항상 발행한다.
+	//   - 그 외("change"/"response"/최초관측 등): 직전 발행 투영과 동일하면 발행하지
+	//     않는다(변경 시에만). 특히 response 는 노드가 inactivity_timeout 무수신 시
+	//     보내는 request_state 에 대한 내부 폴링 응답인데, 무수신 중에는 상태가 바뀌지
+	//     않으므로 항상 직전 발행과 동일 → dedup 되어 플로우로 전달되지 않는다.
+	// lastEmitted 는 모든 발행에서 갱신하여, 이후 dedup 기준을 최신값으로 유지한다.
+	full := dev.State.toProperties(dev.Type)
+	if trigger != "report" {
+		if prev, ok := a.lastEmitted[dev.Address]; ok && propertiesEqualIcp02(prev, full) {
+			return
+		}
+	}
+	a.lastEmitted[dev.Address] = full
+
 	metadata := map[string]any{
 		"name":        dev.Label,
 		"address":     dev.Address,
