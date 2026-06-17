@@ -1081,11 +1081,19 @@ func (a *Hvacr02Agent) processGetRecent(count int, lastSeq int64, nodeID, flowID
 		count = total
 	}
 
-	// 최신 항목부터 역순으로 추출, lastSeq 필터링
+	// 최신 항목부터 역순으로 추출, lastSeq 필터링.
+	// newestSeq 는 ring 의 현재 최신 seq(필터와 무관, i==0 항목)로, 응답의 last_seq 로
+	// 반환한다. 노드는 이 값으로 자신의 lastSeq 를 전진시켜 다음 조회부터 이미 보낸
+	// 프레임을 건너뛴다. 이 값을 반환하지 않으면 노드 lastSeq 가 0 에 머물러 매 조회마다
+	// 백로그가 통째로 재전송된다(중복 발행의 근본 원인).
 	result := make([]json.RawMessage, 0, count)
+	var newestSeq int64
 	for i := 0; i < count; i++ {
 		idx := (a.recentIdx - 1 - i + hvacr02RecentBufferSize) % hvacr02RecentBufferSize
 		rec := a.recentFrames[idx]
+		if i == 0 {
+			newestSeq = rec.Seq // ring 의 현재 최신 seq
+		}
 		if lastSeq > 0 && rec.Seq <= lastSeq {
 			break // seq는 단조 증가하므로 이 이후는 전부 이전 프레임
 		}
@@ -1100,9 +1108,16 @@ func (a *Hvacr02Agent) processGetRecent(count int, lastSeq int64, nodeID, flowID
 		}
 	}
 
+	// last_seq: 새 프레임이 있으면 현재 최신 seq, 없으면 노드가 보낸 lastSeq 를 그대로
+	// 유지하여(에코) 노드 lastSeq 가 후퇴하지 않게 한다.
+	respLastSeq := newestSeq
+	if respLastSeq < lastSeq {
+		respLastSeq = lastSeq
+	}
 	return json.Marshal(map[string]any{
-		"count":  len(result),
-		"frames": result,
+		"count":    len(result),
+		"frames":   result,
+		"last_seq": respLastSeq,
 	})
 }
 
