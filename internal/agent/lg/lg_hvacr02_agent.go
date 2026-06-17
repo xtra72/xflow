@@ -60,12 +60,19 @@ type Hvacr02Agent struct {
 	// Bridge 소비자 활성 여부 (ReceiveMessage 호출 시 true)
 	bridgeActive atomic.Bool
 
+	// 백그라운드 루프(notifyLoop/captureLoop/offlineWatchLoop) 기동 여부.
+	// Start 가 중복 호출되어도(재연결 윈도우 등 fast-path 가드를 빠져나가는 경우 포함)
+	// 루프 고루틴이 누적되지 않도록 보장한다. 누적되면 notifyLoop 가 여러 개 떠
+	// 같은 디바이스 report 가 한 틱에 N건 중복 발행된다. Stop 에서 false 로 리셋.
+	bgStarted atomic.Bool
+
 	// 드롭 로그 rate-limit
 	lastDropLog atomic.Int64 // UnixNano
 
 	// 디바이스 관리
 	devices      map[string]*Icp02Device     // 주소(hex) → 디바이스
 	lastStates   map[string]Icp02DeviceState // 주소(hex) → 이전 상태 (변경 감지용)
+	lastEmitted  map[string]map[string]any   // 주소(hex) → 직전 발행 투영 (변경 시에만 발행하기 위한 dedup)
 	notifyTicker *time.Ticker                // 주기적 상태 보고 타이머
 
 	// V2 콜백 (Phase D 1급 — UUID + composite). SPEC-DEVICE-IDENTITY-001 § M3.
@@ -215,6 +222,7 @@ func NewHvacr02Agent(config agent.AgentConfig) (agent.Agent, error) {
 		recentNotify:  make(chan struct{}, 1),
 		devices:       make(map[string]*Icp02Device),
 		lastStates:    make(map[string]Icp02DeviceState),
+		lastEmitted:   make(map[string]map[string]any),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -290,6 +298,14 @@ func (a *Hvacr02Agent) Start(_ context.Context) error {
 		return nil // 이미 실행 중이면 no-op
 	}
 
+	// 백그라운드 루프 중복 기동 방지 (멱등). 위 fast-path 가드는 transport.Available()
+	// 에 의존하므로, 재연결 윈도우처럼 transport 가 잠시 unavailable 한 동안 Start 가
+	// 다시 호출되면 가드를 빠져나가 notifyLoop 등 고루틴이 누적되어 같은 디바이스 report 가
+	// 한 틱에 여러 건 중복 발행된다. bgStarted CAS 로 루프 기동을 정확히 1회로 제한한다.
+	if !a.bgStarted.CompareAndSwap(false, true) {
+		return nil
+	}
+
 	// 재시작 시 stopCh 재생성 (이전 Stop 에서 close 됨)
 	a.stopCh = make(chan struct{})
 
@@ -336,6 +352,9 @@ func (a *Hvacr02Agent) Stop(_ context.Context) error {
 
 	// goroutine 들에게 종료 시그널
 	close(a.stopCh)
+
+	// 다음 Start 에서 백그라운드 루프를 다시 기동할 수 있도록 리셋.
+	a.bgStarted.Store(false)
 
 	// 트랜스포트 닫기
 	if err := a.transport.Close(); err != nil {
@@ -1062,11 +1081,19 @@ func (a *Hvacr02Agent) processGetRecent(count int, lastSeq int64, nodeID, flowID
 		count = total
 	}
 
-	// 최신 항목부터 역순으로 추출, lastSeq 필터링
+	// 최신 항목부터 역순으로 추출, lastSeq 필터링.
+	// newestSeq 는 ring 의 현재 최신 seq(필터와 무관, i==0 항목)로, 응답의 last_seq 로
+	// 반환한다. 노드는 이 값으로 자신의 lastSeq 를 전진시켜 다음 조회부터 이미 보낸
+	// 프레임을 건너뛴다. 이 값을 반환하지 않으면 노드 lastSeq 가 0 에 머물러 매 조회마다
+	// 백로그가 통째로 재전송된다(중복 발행의 근본 원인).
 	result := make([]json.RawMessage, 0, count)
+	var newestSeq int64
 	for i := 0; i < count; i++ {
 		idx := (a.recentIdx - 1 - i + hvacr02RecentBufferSize) % hvacr02RecentBufferSize
 		rec := a.recentFrames[idx]
+		if i == 0 {
+			newestSeq = rec.Seq // ring 의 현재 최신 seq
+		}
 		if lastSeq > 0 && rec.Seq <= lastSeq {
 			break // seq는 단조 증가하므로 이 이후는 전부 이전 프레임
 		}
@@ -1081,9 +1108,16 @@ func (a *Hvacr02Agent) processGetRecent(count int, lastSeq int64, nodeID, flowID
 		}
 	}
 
+	// last_seq: 새 프레임이 있으면 현재 최신 seq, 없으면 노드가 보낸 lastSeq 를 그대로
+	// 유지하여(에코) 노드 lastSeq 가 후퇴하지 않게 한다.
+	respLastSeq := newestSeq
+	if respLastSeq < lastSeq {
+		respLastSeq = lastSeq
+	}
 	return json.Marshal(map[string]any{
-		"count":  len(result),
-		"frames": result,
+		"count":    len(result),
+		"frames":   result,
+		"last_seq": respLastSeq,
 	})
 }
 
@@ -1867,7 +1901,9 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 		// 온도 센서값만 흔들리는 경우 — OFF 투영에는 노출되지 않아 payload 가
 		// {power:false} 로 동일하다.) dev.State 는 이미 병합되어 누적 최신값을 유지하며,
 		// lastStates 는 갱신하지 않아 다음 프레임에서 누적 감지된다.
-		if propertiesEqualIcp02(prev.toProperties(dev.Type), curr.toProperties(dev.Type)) {
+		prevProps := prev.toProperties(dev.Type)
+		currProps := curr.toProperties(dev.Type)
+		if propertiesEqualIcp02(prevProps, currProps) {
 			return
 		}
 
@@ -1881,6 +1917,12 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 			}
 		}
 
+		// 최초 관측 여부 판정: 이전에 한 번이라도 emit 한 적이 있는지(lastStates 존재).
+		// 최초 관측은 비교할 이전 상태가 없으므로 "변경(change)"이 아니라 초기 상태이다.
+		// 이를 change 로 내보내면, 에이전트 재생성/재시작으로 디바이스 상태가 초기화될 때마다
+		// 첫 프레임이 거짓 change(예: power:false)로 새어나가 change 시리즈를 오염시킨다.
+		// 최초 관측은 report(전체 상태)로 발행하여 change 에는 실제 변경만 남게 한다.
+		_, hadPrev := a.lastStates[targetAddr]
 		a.lastStates[targetAddr] = curr
 
 		a.logger.Debug("lg_hvacr02: 디바이스 상태 변경",
@@ -1892,9 +1934,19 @@ func (a *Hvacr02Agent) updateDeviceState(saHex, daHex, cmdHex, payloadHex string
 			a.logStateUpdate(dev.Label, targetAddr, saHex, daHex, cmdHex, payloadHex, curr)
 		}
 
-		// v0.7.0: 통합 schema (type="device_state") 로 change emit. 이전엔 emit
-		// 없이 콜백만 호출했으나, 다른 4개 HVAC 에이전트와 동일 패턴으로 통일.
-		a.emitDeviceStateLocked(dev, "change")
+		if !hadPrev {
+			// 최초 관측 → 초기 상태를 report(전체)로 발행 (change 아님).
+			a.emitDeviceStatePayloadLocked(dev, "report", currProps)
+		} else {
+			// change 메시지는 변경된 필드만 전송한다(중복 데이터 방지). 직전 투영(prevProps)
+			// 대비 값이 바뀌거나 새로 생긴 키만 추려서 보낸다.
+			changed := changedProperties(prevProps, currProps)
+			if len(changed) == 0 {
+				// 투영은 달라졌으나(키 제거 등) 새로/바뀐 값이 없는 드문 경우 — 안전하게 전체 전송.
+				changed = currProps
+			}
+			a.emitDeviceStatePayloadLocked(dev, "change", changed)
+		}
 
 		// 변경 이벤트 발행 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
 		if v2 := a.onDeviceStateChangeV2; v2 != nil {
@@ -1971,6 +2023,33 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 	if dev == nil || dev.State == nil {
 		return
 	}
+	// report/response 등은 전체 상태를 전송한다.
+	a.emitDeviceStatePayloadLocked(dev, trigger, dev.State.toProperties(dev.Type))
+}
+
+// emitDeviceStatePayloadLocked 는 주어진 state 맵으로 device_state 이벤트를 emit 한다.
+// trigger="change" 는 변경된 필드만, 그 외(report/response)는 전체 상태를 state 로 받는다.
+// 호출 전제: a.mu 쓰기 락 보유.
+func (a *Hvacr02Agent) emitDeviceStatePayloadLocked(dev *Icp02Device, trigger string, state map[string]any) {
+	if dev == nil || dev.State == nil {
+		return
+	}
+
+	// trigger 별 발행 정책:
+	//   - "report": 주기적 heartbeat. 변경 여부와 무관하게 항상 발행한다.
+	//   - 그 외("change"/"response"/최초관측 등): 직전 발행 투영과 동일하면 발행하지
+	//     않는다(변경 시에만). 특히 response 는 노드가 inactivity_timeout 무수신 시
+	//     보내는 request_state 에 대한 내부 폴링 응답인데, 무수신 중에는 상태가 바뀌지
+	//     않으므로 항상 직전 발행과 동일 → dedup 되어 플로우로 전달되지 않는다.
+	// lastEmitted 는 모든 발행에서 갱신하여, 이후 dedup 기준을 최신값으로 유지한다.
+	full := dev.State.toProperties(dev.Type)
+	if trigger != "report" {
+		if prev, ok := a.lastEmitted[dev.Address]; ok && propertiesEqualIcp02(prev, full) {
+			return
+		}
+	}
+	a.lastEmitted[dev.Address] = full
+
 	metadata := map[string]any{
 		"name":        dev.Label,
 		"address":     dev.Address,
@@ -1980,15 +2059,22 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 	// FIX: a.Name() 호출 금지 — caller 가 a.mu 쓰기 락 보유 중. a.Name() 은
 	// 같은 mutex 의 RLock 을 시도하여 자기 deadlock 을 일으킨다 (Go RWMutex 는
 	// 재귀 락 금지). agentConfig.Name 직접 접근으로 대체.
-	payload := map[string]any{
-		"unit_id":   dev.Address,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
-		"trigger":   trigger,
-		"state":     dev.State.toProperties(dev.Type),
-		"metadata":  metadata,
+	// 이벤트(메시지) 타임스탬프 결정. 노드는 last_seen_ms 를 메시지 타임스탬프로 사용한다.
+	//   - "report"(주기 heartbeat): 발행 시점이 곧 스냅샷 시각 → now.
+	//     dev.LastSeen 을 쓰면 OFF 처럼 조용한 디바이스의 주기 report 가 모두 "마지막
+	//     프레임 시각"으로 찍혀, store 에 같은 시각으로 쌓이고 보고 주기가 어긋난다.
+	//   - 그 외("change" 등): 이벤트가 발생한 프레임 수신 시각(dev.LastSeen).
+	eventTime := dev.LastSeen
+	if trigger == "report" || eventTime.IsZero() {
+		eventTime = time.Now()
 	}
-	if !dev.LastSeen.IsZero() {
-		payload["last_seen_ms"] = dev.LastSeen.UnixMilli()
+	payload := map[string]any{
+		"unit_id":      dev.Address,
+		"device_id":    agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
+		"trigger":      trigger,
+		"state":        state,
+		"metadata":     metadata,
+		"last_seen_ms": eventTime.UnixMilli(),
 	}
 
 	// 2026-05-30: LG01 통일 — device_state schema 를 ring buffer + msgCh (bridge 활성 시)
@@ -2001,11 +2087,7 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 		return
 	}
 	seq := a.framesCaptured.Add(1)
-	now := dev.LastSeen
-	if now.IsZero() {
-		now = time.Now()
-	}
-	a.pushRecentFrame(b, now, seq)
+	a.pushRecentFrame(b, eventTime, seq)
 	if a.bridgeActive.Load() {
 		a.sendFrameEvent(b)
 	}

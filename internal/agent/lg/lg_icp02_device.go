@@ -262,6 +262,20 @@ func propertiesEqualIcp02(a, b map[string]any) bool {
 	return reflect.DeepEqual(a, b)
 }
 
+// changedProperties 는 직전 투영(prev) 대비 현재 투영(curr)에서 값이 바뀌었거나
+// 새로 생긴 키만 추려 반환한다. device_state.change 메시지가 변경된 필드만 전송하여
+// 불필요한 중복 데이터를 줄이기 위함이다 (report 는 전체 상태를 전송).
+// prev 에는 있었으나 curr 에서 사라진 키는 포함하지 않는다(부분 갱신 의미 유지).
+func changedProperties(prev, curr map[string]any) map[string]any {
+	out := make(map[string]any, len(curr))
+	for k, v := range curr {
+		if pv, ok := prev[k]; !ok || !reflect.DeepEqual(pv, v) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // modeToCanonical 은 프로토콜별 모드 값을 통일된 이름으로 변환한다.
 // v0.7.4: NASA/LG ICP-01/Century 와 통일 — "cool"/"heat"/"dry"/"fan"/"auto"
 // (이전: cooling/heating/dehumidify 같은 외장형 명칭)
