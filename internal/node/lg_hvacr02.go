@@ -412,11 +412,15 @@ func (n *LGHvacr02StatusNode) receiveLoop() {
 		timer.Reset(n.inactivityTimeout)
 	}
 
-	// 첫 진입: 이전에 누적된 frame 이 있을 수 있으므로 drain.
-	n.mu.RLock()
-	cfg := n.lgHvacr02Cfg
-	n.mu.RUnlock()
-	n.drainNewFrames(cfg)
+	// 첫 진입(Init/Reinit): ring 의 과거 프레임을 재방출하지 않고 현재 최신 seq 로
+	// 시킹만 한다. 이후 새 프레임만 stream 된다.
+	//
+	// 이전에는 첫 진입에서 drainNewFrames(lastSeq=0)로 ring 버퍼(최대 64프레임)를
+	// 통째로 재방출했다. 노드가 (재)시작(특히 agent 재시작에 따른 Reinit)될 때마다
+	// 누적된 과거 report 들이 새 메시지로 전부 다시 흘러나가 "같은 report 수십 개
+	// 동시 발행" 이 발생했다. 시킹으로 백로그 재방출을 차단한다. 현재 상태는 다음
+	// 주기 report(report_interval) 또는 변경 시 change 로 채워진다.
+	n.seekToLatestSeq()
 
 	for {
 		select {
@@ -460,6 +464,35 @@ func (n *LGHvacr02StatusNode) requestStateRefresh(cfg LGHvacr02NodeConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
 	defer cancel()
 	_, _ = n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
+}
+
+// seekToLatestSeq 는 ring 의 프레임을 재방출하지 않고 현재 최신 seq 로 lastSeq 만
+// 전진시킨다. 노드 (재)시작 시 누적된 과거 프레임을 다시 흘려보내지 않기 위함이다.
+// agent 재시작으로 seq 가 리셋된 경우에도 현재 max 로 재동기화하므로 안전하다.
+func (n *LGHvacr02StatusNode) seekToLatestSeq() {
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command":  "get_recent",
+		"count":    1,
+		"node_id":  n.ID(),
+		"last_seq": n.lastSeq,
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.lgHvacr02NodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
+	if err != nil {
+		return
+	}
+	var result struct {
+		LastSeq int64 `json:"last_seq"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+	// 재방출 없이 현재 최신 seq 로 전진(또는 seq 리셋 시 재동기화).
+	n.lastSeq = result.LastSeq
 }
 
 // drainNewFrames 는 ring buffer 의 lastSeq 이후 새 frame 을 sourceCh 로 전달한다.
