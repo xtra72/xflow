@@ -281,3 +281,62 @@ func TestDeriveUptime(t *testing.T) {
 	assert.Equal(t, int64(0), up)
 	assert.True(t, ok)
 }
+
+// TestServer_RenameGroup 은 그룹 일괄 이름변경(영향 노드 수 + repo 반영)을 검증한다.
+func TestServer_RenameGroup(t *testing.T) {
+	srv, repo, _ := newGroupingServer(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "a", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "b", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "c", Status: RegStatusApproved, GroupName: "dev"}))
+
+	n, err := srv.RenameGroup(ctx, "prod", "production")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	a, _ := repo.Get(ctx, "a")
+	assert.Equal(t, "production", a.GroupName)
+	c, _ := repo.Get(ctx, "c")
+	assert.Equal(t, "dev", c.GroupName)
+}
+
+// TestServer_DeleteGroup 은 그룹 삭제(멤버를 "전체"로 이동)를 검증한다.
+func TestServer_DeleteGroup(t *testing.T) {
+	srv, repo, _ := newGroupingServer(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "a", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "b", Status: RegStatusApproved, GroupName: "prod"}))
+
+	n, err := srv.DeleteGroup(ctx, "prod")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	a, _ := repo.Get(ctx, "a")
+	assert.Empty(t, a.GroupName)
+}
+
+// TestServer_DispatchGroup_FiltersAndAggregates 는 DispatchGroup 이 그룹+승인 노드만
+// 대상으로 하고, 오프라인 노드를 부분 실패(Error)로 집계하는지 검증한다.
+func TestServer_DispatchGroup_FiltersAndAggregates(t *testing.T) {
+	srv, repo, _ := newGroupingServer(t)
+	ctx := context.Background()
+	// 승인 + prod (라이브 연결 없음 → 디스패치 시 오프라인/미관리 오류).
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "p1", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "p2", Status: RegStatusApproved, GroupName: "prod"}))
+	// 미승인 prod → 건너뜀.
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "pending1", Status: RegStatusPending, GroupName: "prod"}))
+	// 다른 그룹 → 대상 아님.
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "d1", Status: RegStatusApproved, GroupName: "dev"}))
+
+	results, err := srv.DispatchGroup(ctx, "prod", "system", "update", nil)
+	require.NoError(t, err)
+	// 승인 prod 2개만 결과에 포함(미승인/타그룹 제외).
+	require.Len(t, results, 2)
+	ids := map[string]bool{}
+	for _, r := range results {
+		ids[r.InstanceID] = true
+		assert.False(t, r.OK, "라이브 연결 없으므로 오프라인 실패")
+		assert.NotEmpty(t, r.Error)
+	}
+	assert.True(t, ids["p1"] && ids["p2"])
+	assert.False(t, ids["pending1"])
+	assert.False(t, ids["d1"])
+}

@@ -121,6 +121,34 @@ func (m *memManagedNodeRepo) SetNodeGroup(_ context.Context, instanceID, groupNa
 	return nil
 }
 
+func (m *memManagedNodeRepo) RenameGroup(_ context.Context, oldName, newName string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for id, n := range m.nodes {
+		if n.GroupName == oldName {
+			n.GroupName = newName
+			m.nodes[id] = n
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *memManagedNodeRepo) DeleteGroup(_ context.Context, groupName string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for id, n := range m.nodes {
+		if n.GroupName == groupName {
+			n.GroupName = ""
+			m.nodes[id] = n
+			count++
+		}
+	}
+	return count, nil
+}
+
 // ListGroups 는 distinct 그룹 라벨 + 카운트를 반환한다(항상 "전체" 포함 — REQ-K03).
 func (m *memManagedNodeRepo) ListGroups(_ context.Context) ([]storage.NodeGroupCount, error) {
 	m.mu.Lock()

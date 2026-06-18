@@ -23,11 +23,44 @@ import (
 
 // fakeGrouping 은 NodeGroupingService 의 테스트 구현이다.
 type fakeGrouping struct {
-	groups    map[string]string // instance_id -> group_name
-	overrides map[string][2]int // instance_id -> [width, height] 해상도 오버라이드(M11 확장)
-	detail    remote.NodeDetail
-	detailErr error
-	setErr    error
+	groups       map[string]string // instance_id -> group_name
+	overrides    map[string][2]int // instance_id -> [width, height] 해상도 오버라이드(M11 확장)
+	detail       remote.NodeDetail
+	detailErr    error
+	setErr       error
+	renamed      [2]string                    // [oldName, newName] 마지막 rename 기록
+	deletedGroup string                       // 마지막 delete 그룹 기록
+	dispatched   []string                     // "group/domain/action" 기록
+	dispatchRes  []remote.GroupDispatchResult // DispatchGroup 반환값
+	groupErr     error                        // rename/delete/dispatch 공통 에러 주입
+}
+
+func (f *fakeGrouping) RenameGroup(_ context.Context, oldName, newName string) (int, error) {
+	if f.groupErr != nil {
+		return 0, f.groupErr
+	}
+	f.renamed = [2]string{oldName, newName}
+	return 1, nil
+}
+
+func (f *fakeGrouping) DeleteGroup(_ context.Context, groupName string) (int, error) {
+	if f.groupErr != nil {
+		return 0, f.groupErr
+	}
+	f.deletedGroup = groupName
+	return 1, nil
+}
+
+func (f *fakeGrouping) DispatchGroup(
+	_ context.Context,
+	groupName, domain, action string,
+	_ json.RawMessage,
+) ([]remote.GroupDispatchResult, error) {
+	if f.groupErr != nil {
+		return nil, f.groupErr
+	}
+	f.dispatched = append(f.dispatched, groupName+"/"+domain+"/"+action)
+	return f.dispatchRes, nil
 }
 
 func newFakeGrouping() *fakeGrouping {
@@ -318,4 +351,75 @@ func (erroringGrouping) SetNodeDisplayOverride(context.Context, string, int, int
 }
 func (erroringGrouping) ClearNodeDisplayOverride(context.Context, string) error {
 	return errors.New("boom")
+}
+func (erroringGrouping) RenameGroup(context.Context, string, string) (int, error) {
+	return 0, errors.New("boom")
+}
+func (erroringGrouping) DeleteGroup(context.Context, string) (int, error) {
+	return 0, errors.New("boom")
+}
+func (erroringGrouping) DispatchGroup(context.Context, string, string, string, json.RawMessage) ([]remote.GroupDispatchResult, error) {
+	return nil, errors.New("boom")
+}
+
+// TestRemoteGrouping_RenameGroup 는 admin 그룹 일괄 이름변경을 검증한다.
+func TestRemoteGrouping_RenameGroup(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodPut, "/api/v1/remote/groups/prod", `{"new_name":"production"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, [2]string{"prod", "production"}, svc.renamed)
+}
+
+// 빈 new_name 은 거부된다.
+func TestRemoteGrouping_RenameGroup_EmptyName(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodPut, "/api/v1/remote/groups/prod", `{"new_name":"  "}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestRemoteGrouping_DeleteGroup 는 admin 그룹 삭제(→전체)를 검증한다.
+func TestRemoteGrouping_DeleteGroup(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodDelete, "/api/v1/remote/groups/prod", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "prod", svc.deletedGroup)
+}
+
+// TestRemoteGrouping_UpdateGroup 는 그룹 일괄 업데이트가 system/update 로 디스패치되는지 검증한다.
+func TestRemoteGrouping_UpdateGroup(t *testing.T) {
+	svc := newFakeGrouping()
+	svc.dispatchRes = []remote.GroupDispatchResult{{InstanceID: "p1", OK: true}}
+	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/update", `{"version":"v1.3.0","restart":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, svc.dispatched, "prod/system/update")
+}
+
+// 잘못된 버전은 거부된다(디스패치 안 함).
+func TestRemoteGrouping_UpdateGroup_InvalidVersion(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/update", `{"version":"garbage"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, svc.dispatched)
+}
+
+// TestRemoteGrouping_CommandGroup 는 그룹 일괄 명령 디스패치를 검증한다.
+func TestRemoteGrouping_CommandGroup(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/command", `{"domain":"agent","action":"stop"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, svc.dispatched, "prod/agent/stop")
+}
+
+// domain/action 누락은 거부된다.
+func TestRemoteGrouping_CommandGroup_MissingFields(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/command", `{"domain":"agent"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// 비-admin 은 그룹 관리 엔드포인트에서 403.
+func TestRemoteGrouping_GroupOps_RequireAdmin(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "", http.MethodPut, "/api/v1/remote/groups/prod", `{"new_name":"x"}`)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 }

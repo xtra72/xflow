@@ -292,6 +292,33 @@ func (r *ManagedNodeSQLiteRepository) SetNodeGroup(ctx context.Context, instance
 	return checkAffected(res, err, "set managed node group")
 }
 
+// RenameGroup 은 oldName 그룹의 모든 노드 group_name 을 newName 으로 일괄 변경한다.
+// 영향받은 노드 수를 반환한다(0 이면 해당 그룹 없음). 노드 보고가 group_name 을 덮어쓰지
+// 않으므로(Upsert ON CONFLICT 제외) 관리자 변경이 안정적으로 유지된다.
+func (r *ManagedNodeSQLiteRepository) RenameGroup(ctx context.Context, oldName, newName string) (int, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE managed_nodes SET group_name = ?, updated_at = ? WHERE group_name = ?
+	`, newName, time.Now().UnixMilli(), oldName)
+	if err != nil {
+		return 0, fmt.Errorf("rename node group: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// DeleteGroup 은 groupName 그룹의 모든 노드를 "전체" 버킷(group_name="")으로 이동한다.
+// 영향받은 노드 수를 반환한다(0 이면 해당 그룹 없음). 노드 행은 삭제하지 않는다(REQ-K05).
+func (r *ManagedNodeSQLiteRepository) DeleteGroup(ctx context.Context, groupName string) (int, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE managed_nodes SET group_name = '', updated_at = ? WHERE group_name = ?
+	`, time.Now().UnixMilli(), groupName)
+	if err != nil {
+		return 0, fmt.Errorf("delete node group: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // ListGroups 는 현재 사용 중인 distinct 그룹 라벨과 노드 수를 반환한다(REQ-K03).
 //
 // 응답은 항상 가상 "전체" 버킷(GroupName="")의 노드 수를 먼저 포함하고(그룹 미지정

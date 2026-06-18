@@ -19,12 +19,15 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/remote"
 	"github.com/xtra/xflow/internal/storage"
+	"github.com/xtra/xflow/internal/updater"
 )
 
 // NodeGroupingService 는 노드 그룹핑 + 상세 오케스트레이션을 추상화한다(*remote.Server
@@ -47,6 +50,15 @@ type NodeGroupingService interface {
 	// ClearNodeDisplayOverride 는 해상도 오버라이드를 해제한다(effective=노드 보고값 폴백).
 	// 미존재 시 storage.ErrManagedNodeNotFound.
 	ClearNodeDisplayOverride(ctx context.Context, instanceID string) error
+
+	// --- 그룹 관리(일괄) ---
+
+	// RenameGroup 은 oldName 그룹의 모든 노드를 newName 으로 일괄 이름변경한다(영향 노드 수).
+	RenameGroup(ctx context.Context, oldName, newName string) (int, error)
+	// DeleteGroup 은 groupName 그룹을 삭제하여 멤버를 "전체"로 이동한다(영향 노드 수).
+	DeleteGroup(ctx context.Context, groupName string) (int, error)
+	// DispatchGroup 은 그룹 내 승인 노드 전체에 명령을 디스패치하고 노드별 결과를 모은다.
+	DispatchGroup(ctx context.Context, groupName, domain, action string, args json.RawMessage) ([]remote.GroupDispatchResult, error)
 }
 
 // setGroupRequest 는 그룹 배정 요청 본문이다(PUT .../group).
@@ -140,6 +152,139 @@ func (h *RemoteGroupingHandler) RegisterRoutes(g *api.RouteGroup) {
 	// 2-세그먼트 패턴이라 GET .../{id}(단일 세그먼트)·.../flows 등과 충돌하지 않는다.
 	g.PUT("/remote/nodes/{instance_id}/display", h.SetDisplayOverride)
 	g.DELETE("/remote/nodes/{instance_id}/display", h.ClearDisplayOverride)
+
+	// 그룹 관리(일괄): 이름변경/삭제 + 그룹 단위 업데이트/명령. {group_name} 단일 세그먼트는
+	// 리터럴 GET /remote/groups 와 충돌하지 않는다.
+	g.PUT("/remote/groups/{group_name}", h.RenameGroup)
+	g.DELETE("/remote/groups/{group_name}", h.DeleteGroup)
+	g.POST("/remote/groups/{group_name}/update", h.UpdateGroup)
+	g.POST("/remote/groups/{group_name}/command", h.CommandGroup)
+}
+
+// renameGroupRequest 는 그룹 이름변경 요청 본문이다(PUT /remote/groups/{name}).
+type renameGroupRequest struct {
+	NewName string `json:"new_name"`
+}
+
+// groupUpdateRequest 는 그룹 일괄 업데이트 요청 본문이다(POST /remote/groups/{name}/update).
+type groupUpdateRequest struct {
+	Version string `json:"version"`
+	Channel string `json:"channel,omitempty"`
+	Restart bool   `json:"restart,omitempty"`
+}
+
+// groupCommandRequest 는 그룹 일괄 명령 요청 본문이다(POST /remote/groups/{name}/command).
+type groupCommandRequest struct {
+	Domain string          `json:"domain"`
+	Action string          `json:"action"`
+	Args   json.RawMessage `json:"args,omitempty"`
+}
+
+// RenameGroup 은 그룹을 일괄 이름변경한다. PUT /remote/groups/{group_name} {new_name}
+func (h *RemoteGroupingHandler) RenameGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	old := strings.TrimSpace(ctx.Param("group_name"))
+	if old == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	var req renameGroupRequest
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("new_name 본문이 올바르지 않습니다")
+	}
+	newName := strings.TrimSpace(req.NewName)
+	if newName == "" {
+		return api.ErrBadRequest.WithMessage("new_name 은 비어 있을 수 없습니다")
+	}
+	moved, err := h.svc.RenameGroup(ctx.Context(), old, newName)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"group_name": newName,
+		"moved":      moved,
+	}))
+}
+
+// DeleteGroup 은 그룹을 삭제하여 멤버를 "전체"로 이동한다. DELETE /remote/groups/{group_name}
+func (h *RemoteGroupingHandler) DeleteGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(ctx.Param("group_name"))
+	if name == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	moved, err := h.svc.DeleteGroup(ctx.Context(), name)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{"moved": moved}))
+}
+
+// UpdateGroup 은 그룹 내 승인·온라인 노드를 일괄 원격 업데이트한다(버전 관리 Phase 2 그룹 확장).
+// POST /remote/groups/{group_name}/update {version, channel?, restart?}
+func (h *RemoteGroupingHandler) UpdateGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(ctx.Param("group_name"))
+	if name == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	var req groupUpdateRequest
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("요청 본문 파싱 실패")
+	}
+	if req.Version != "" && !updater.Version(req.Version).IsValid() {
+		return api.ErrBadRequest.WithMessage("version 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
+	}
+	args, err := json.Marshal(remote.SystemUpdateArgs{
+		TargetVersion: req.Version,
+		Channel:       req.Channel,
+		Restart:       req.Restart,
+	})
+	if err != nil {
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
+	dctx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
+	results, err := h.svc.DispatchGroup(dctx, name, remote.DomainSystem, remote.ActionSystemUpdate, args)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"group_name": name,
+		"results":    results,
+	}))
+}
+
+// CommandGroup 은 그룹 내 승인·온라인 노드에 임의 명령을 일괄 디스패치한다.
+// POST /remote/groups/{group_name}/command {domain, action, args?}
+func (h *RemoteGroupingHandler) CommandGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(ctx.Param("group_name"))
+	if name == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	var req groupCommandRequest
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("요청 본문 파싱 실패")
+	}
+	if req.Domain == "" || req.Action == "" {
+		return api.ErrBadRequest.WithMessage("domain 과 action 은 필수입니다")
+	}
+	dctx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
+	results, err := h.svc.DispatchGroup(dctx, name, req.Domain, req.Action, req.Args)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"group_name": name,
+		"results":    results,
+	}))
 }
 
 // SetGroup 은 노드의 그룹을 배정/변경한다(REQ-K02). PUT /remote/nodes/{instance_id}/group

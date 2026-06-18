@@ -91,6 +91,12 @@ type ManagedNodeRepository interface {
 	// 이 빈 문자열이면 그룹을 해제하여 "전체" 버킷으로 환원한다(REQ-K05). 그룹은 서버
 	// 운영 메타데이터이므로 노드로 명령을 전파하지 않는다(A13). 없으면 ErrManagedNodeNotFound.
 	SetNodeGroup(ctx context.Context, instanceID, groupName string) error
+	// RenameGroup 은 oldName 그룹의 모든 노드 group_name 을 newName 으로 일괄 변경한다.
+	// 영향받은 노드 수를 반환한다(0 이면 해당 그룹이 없음 — 멤버 없는 그룹은 비존재).
+	RenameGroup(ctx context.Context, oldName, newName string) (int, error)
+	// DeleteGroup 은 groupName 그룹의 모든 노드를 "전체" 버킷으로 이동한다(group_name="").
+	// 영향받은 노드 수를 반환한다(0 이면 해당 그룹이 없음). 노드 행 자체는 삭제하지 않는다.
+	DeleteGroup(ctx context.Context, groupName string) (int, error)
 	// ListGroups 는 현재 사용 중인 distinct 그룹 라벨과 노드 수를 반환한다(REQ-K03).
 	// 응답은 항상 가상 "전체" 버킷(GroupName="")의 노드 수를 포함하며(그룹 미지정 노드),
 	// 빈 그룹(구성원 0)은 자동으로 목록에서 사라진다(REQ-K05). 정렬: "전체" 먼저, 그

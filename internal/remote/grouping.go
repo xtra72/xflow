@@ -68,6 +68,76 @@ func (s *Server) ListGroups(ctx context.Context) ([]storage.NodeGroupCount, erro
 	return s.repo.ListGroups(ctx)
 }
 
+// GroupDispatchResult 는 그룹 일괄 명령/업데이트의 노드별 결과이다(그룹 관리).
+// 부분 성공을 허용하므로 노드마다 OK/Error 를 개별 보고한다.
+type GroupDispatchResult struct {
+	InstanceID string          `json:"instance_id"`
+	OK         bool            `json:"ok"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      string          `json:"error,omitempty"`
+}
+
+// RenameGroup 은 oldName 그룹의 모든 노드 group_name 을 newName 으로 일괄 변경한다(그룹 관리).
+// 영향받은 노드 수를 반환한다(0 이면 해당 그룹 없음). repo 미구성 시 ErrNoRepo.
+func (s *Server) RenameGroup(ctx context.Context, oldName, newName string) (int, error) {
+	if s.repo == nil {
+		return 0, ErrNoRepo
+	}
+	n, err := s.repo.RenameGroup(ctx, oldName, newName)
+	if err != nil {
+		return 0, err
+	}
+	s.logger.Info("관리 노드 그룹 이름변경", "from", oldName, "to", newName, "moved", n)
+	return n, nil
+}
+
+// DeleteGroup 은 groupName 그룹을 삭제하여 멤버를 "전체" 버킷으로 이동한다(그룹 관리).
+// 영향받은 노드 수를 반환한다(0 이면 해당 그룹 없음). repo 미구성 시 ErrNoRepo.
+func (s *Server) DeleteGroup(ctx context.Context, groupName string) (int, error) {
+	if s.repo == nil {
+		return 0, ErrNoRepo
+	}
+	n, err := s.repo.DeleteGroup(ctx, groupName)
+	if err != nil {
+		return 0, err
+	}
+	s.logger.Info("관리 노드 그룹 삭제", "group", groupName, "moved", n)
+	return n, nil
+}
+
+// DispatchGroup 은 groupName 그룹 내 승인 노드 전체에 명령을 디스패치하고 노드별 결과를
+// 모은다(그룹 일괄 명령/업데이트). 오프라인/적용 실패 노드는 해당 결과의 Error 로 보고되어
+// 부분 성공을 허용한다(미승인 노드는 그룹 대상이 아니므로 건너뛴다). repo 미구성 시 ErrNoRepo.
+func (s *Server) DispatchGroup(
+	ctx context.Context,
+	groupName, domain, action string,
+	args json.RawMessage,
+) ([]GroupDispatchResult, error) {
+	if s.repo == nil {
+		return nil, ErrNoRepo
+	}
+	nodes, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]GroupDispatchResult, 0)
+	for _, n := range nodes {
+		if n.GroupName != groupName || n.Status != RegStatusApproved {
+			continue
+		}
+		r := GroupDispatchResult{InstanceID: n.InstanceID}
+		res, derr := s.Dispatch(ctx, n.InstanceID, domain, action, args)
+		if derr != nil {
+			r.Error = derr.Error()
+		} else {
+			r.OK = true
+			r.Result = res
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
 // NodeSummary 는 노드별 운영 요약을 미러에서 파생해 반환한다(REQ-K10/A15). 노드 존재를
 // 먼저 검증하고(미존재 → ErrManagedNodeNotFound), 미러 집계로 요약을 산출한다(오프라인
 // 시에도 last-known 미러 제공 — REQ-E06). mirror 미구성 시 0 요약을 반환한다.
