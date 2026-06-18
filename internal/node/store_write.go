@@ -110,6 +110,14 @@ type StoreWriteNode struct {
 	minChangePercent    float64       // 상대(%) 변화 임계값 (hasMinChangePercent 일 때만 적용)
 	hasMinChangePercent bool          // min_change_percent 설정 여부
 
+	// 스냅샷 dead-band 우회: device_state.report 처럼 "전체 상태 스냅샷" 메시지는
+	// 모든 메트릭을 매번 함께 기록해야 한다(메트릭별 카운트 일치). 이런 메시지는
+	// dead-band(min_interval/min_change)를 완전히 우회하여 무조건 저장한다.
+	//   - snapshotPath: 스냅샷 식별값의 `$.` 경로 (예: "$.payload.message_type"). "" 면 비활성.
+	//   - snapshotValues: 스냅샷으로 간주할 값 집합 (예: {"device_state.report"}).
+	snapshotPath   string          // 스냅샷 식별 경로 ("" = 비활성)
+	snapshotValues map[string]bool // 스냅샷으로 간주할 값들
+
 	dedupMu    sync.Mutex            // lastStored 보호
 	lastStored map[string]dedupState // 시리즈 시그니처 → 마지막 저장 상태
 }
@@ -386,6 +394,13 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 	n.minChangePercent = nodeDB.minChangePercent
 	n.hasMinChangePercent = nodeDB.hasMinChangePercent
 
+	// 스냅샷 dead-band 우회(선택): snapshot_value_path + snapshot_values.
+	// 전체 상태 스냅샷(예: device_state.report)을 모든 메트릭 동일 카운트로 기록하기 위해
+	// 해당 메시지는 dead-band 를 우회해 무조건 저장한다. 둘은 함께 지정해야 한다.
+	if err := n.configureSnapshotBypass(config); err != nil {
+		return err
+	}
+
 	// metrics (선택): 다중 메트릭. 각 항목은 metric_type/value_key/data_type 와
 	// 자체 dead-band(min_interval/min_change/min_change_percent)를 갖는다.
 	// 비어 있지 않으면 key_template 의 키에 대해 metric 별 시리즈를 기록한다.
@@ -420,6 +435,58 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 	}
 
 	return nil
+}
+
+// configureSnapshotBypass 는 snapshot_value_path / snapshot_values 설정을 해석한다.
+//
+// 정책: 둘 다 지정되거나 둘 다 없어야 한다(한쪽만 지정 시 설정 오류).
+//   - snapshot_value_path: `$.` 경로 문자열 (예: "$.payload.message_type").
+//   - snapshot_values: 비어 있지 않은 문자열 리스트 (예: ["device_state.report"]).
+func (n *StoreWriteNode) configureSnapshotBypass(config map[string]any) error {
+	pathRaw, hasPath := config["snapshot_value_path"]
+	valsRaw, hasVals := config["snapshot_values"]
+	if !hasPath && !hasVals {
+		return nil
+	}
+	if hasPath != hasVals {
+		return fmt.Errorf(
+			"store-write: snapshot_value_path 와 snapshot_values 는 함께 지정해야 합니다")
+	}
+	path, ok := pathRaw.(string)
+	if !ok || !strings.HasPrefix(path, "$.") {
+		return fmt.Errorf(
+			"store-write: snapshot_value_path 는 `$.` 로 시작하는 문자열이어야 합니다")
+	}
+	list, ok := valsRaw.([]any)
+	if !ok || len(list) == 0 {
+		return fmt.Errorf(
+			"store-write: snapshot_values 는 비어 있지 않은 리스트여야 합니다")
+	}
+	values := make(map[string]bool, len(list))
+	for i, item := range list {
+		s, ok := item.(string)
+		if !ok || s == "" {
+			return fmt.Errorf(
+				"store-write: snapshot_values[%d] 는 비어 있지 않은 문자열이어야 합니다", i)
+		}
+		values[s] = true
+	}
+	n.snapshotPath = path
+	n.snapshotValues = values
+	return nil
+}
+
+// isSnapshotMessage 는 이 메시지가 "전체 상태 스냅샷"인지(= dead-band 우회 대상) 판정한다.
+// snapshotPath 가 비활성이거나 경로 해석 실패/값 불일치면 false.
+func (n *StoreWriteNode) isSnapshotMessage(msg message.Message) bool {
+	if n.snapshotPath == "" {
+		return false
+	}
+	v, err := resolveTemplateExpr(n.snapshotPath, msg)
+	if err != nil {
+		return false
+	}
+	return n.snapshotValues[metaToString(v)]
 }
 
 // parseDeadband 는 config(노드 레벨 또는 metric 항목)에서 dead-band 설정을 해석한다.
@@ -573,17 +640,23 @@ func (n *StoreWriteNode) Process(ctx context.Context, msg message.Message) ([]me
 	//
 	// dead-band: 시리즈(key+metric+tags)별로 미세변화면 저장을 생략한다(메시지는 그대로 pass-through).
 	// 판정은 직전 *저장값* 기준이며, 실제 저장 성공 후에만 상태를 갱신한다.
+	// 전체 상태 스냅샷(예: device_state.report)은 dead-band 를 우회하여 모든 메트릭을
+	// 매번 함께 저장한다(메트릭별 카운트 일치). change 스트림 등 그 외 메시지는 기존 dead-band 적용.
+	isSnapshot := n.isSnapshotMessage(msg)
 	ts := msg.Timestamp()
 	for i := range targets {
 		t := targets[i]
 		sig := seriesSignature(t.key, t.metricType, resolvedTags)
-		if !n.shouldStore(&t.deadband, sig, t.value, ts) {
+		if !isSnapshot && !n.shouldStore(&t.deadband, sig, t.value, ts) {
 			continue
 		}
 		if err := n.writeOne(ctx, t.key, t.value, t.metricType, t.dataType, resolvedTags); err != nil {
 			return nil, err
 		}
-		n.commitDedup(&t.deadband, sig, t.value, ts)
+		// 스냅샷은 무조건 저장하므로 dead-band 상태를 갱신하지 않는다(판정에 사용되지 않음).
+		if !isSnapshot {
+			n.commitDedup(&t.deadband, sig, t.value, ts)
+		}
 	}
 
 	// pass-through: 원본 메시지를 그대로 반환
