@@ -1194,6 +1194,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		"port", serverCfg.Port,
 	)
 
+	// 원격 자가 업데이트 후 부팅이면(post-update 마커), 서버가 뜨는 동안 로컬 /health 를
+	// 폴링해 자가 검증하고 실패 시 자동 롤백한다(버전 관리 Phase 2). 일반 부팅은 즉시 no-op.
+	if isPostUpdateBoot() {
+		go runPostUpdateSelfCheck(ctx, serverCfg.Port, logger.Logger())
+	}
+
 	// server.Start 는 ctx 취소 시 자동으로 Stop 호출
 	if err := server.Start(ctx); err != nil {
 		return fmt.Errorf("서버 실행 실패: %w", err)

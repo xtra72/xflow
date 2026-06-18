@@ -29,14 +29,14 @@ func (f *fakeUpdateRunner) ApplyUpdate(_ context.Context, targetVersion, channel
 	return f.result, f.err
 }
 
-func newTestSystemCommander(runner systemUpdateApplier, restart func()) *systemCommander {
+func newTestSystemCommander(runner systemUpdateApplier, restart func(string)) *systemCommander {
 	return &systemCommander{runner: runner, restart: restart, logger: slog.Default()}
 }
 
 func TestSystemCommander_UpdateSuccess_NoRestart(t *testing.T) {
 	runner := &fakeUpdateRunner{result: remote.SystemUpdateResult{NewVersion: "v1.3.0", BackupPath: "/x.previous", AppliedAtMs: 1234}}
 	restarted := false
-	c := newTestSystemCommander(runner, func() { restarted = true })
+	c := newTestSystemCommander(runner, func(string) { restarted = true })
 
 	args, _ := json.Marshal(remote.SystemUpdateArgs{TargetVersion: "v1.3.0", Channel: "stable"})
 	raw, err := c.Do(context.Background(), remote.ActionSystemUpdate, args)
@@ -55,7 +55,7 @@ func TestSystemCommander_UpdateSuccess_NoRestart(t *testing.T) {
 func TestSystemCommander_UpdateSuccess_WithRestart(t *testing.T) {
 	runner := &fakeUpdateRunner{result: remote.SystemUpdateResult{NewVersion: "v1.3.0"}}
 	restarted := false
-	c := newTestSystemCommander(runner, func() { restarted = true })
+	c := newTestSystemCommander(runner, func(string) { restarted = true })
 
 	args, _ := json.Marshal(remote.SystemUpdateArgs{TargetVersion: "v1.3.0", Restart: true})
 	raw, err := c.Do(context.Background(), remote.ActionSystemUpdate, args)
@@ -83,7 +83,7 @@ func TestSystemCommander_RestartRequestedButUnsupported(t *testing.T) {
 
 func TestSystemCommander_RunnerError(t *testing.T) {
 	runner := &fakeUpdateRunner{err: errors.New("download failed")}
-	c := newTestSystemCommander(runner, func() {})
+	c := newTestSystemCommander(runner, func(string) {})
 	args, _ := json.Marshal(remote.SystemUpdateArgs{TargetVersion: "v1.3.0"})
 	_, err := c.Do(context.Background(), remote.ActionSystemUpdate, args)
 	require.Error(t, err)
@@ -91,7 +91,7 @@ func TestSystemCommander_RunnerError(t *testing.T) {
 }
 
 func TestSystemCommander_UnknownAction(t *testing.T) {
-	c := newTestSystemCommander(&fakeUpdateRunner{}, func() {})
+	c := newTestSystemCommander(&fakeUpdateRunner{}, func(string) {})
 	_, err := c.Do(context.Background(), "reboot", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reboot")
@@ -99,7 +99,7 @@ func TestSystemCommander_UnknownAction(t *testing.T) {
 
 func TestSystemCommander_EmptyArgsDefaultsToLatest(t *testing.T) {
 	runner := &fakeUpdateRunner{result: remote.SystemUpdateResult{NewVersion: "v9.9.9"}}
-	c := newTestSystemCommander(runner, func() {})
+	c := newTestSystemCommander(runner, func(string) {})
 	_, err := c.Do(context.Background(), remote.ActionSystemUpdate, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "", runner.gotTarget, "빈 args → target 빈 문자열(채널 최신)")

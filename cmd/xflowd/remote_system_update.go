@@ -42,24 +42,26 @@ func newSystemCommander(cfg config.Config, logger *slog.Logger) *systemCommander
 	}
 	return &systemCommander{
 		runner: runner,
-		restart: func() {
+		restart: func(expectedVersion string) {
 			// 결과가 서버로 flush 될 시간을 준 뒤 새 바이너리로 re-exec 한다(opt-in).
-			go gracefulReexec(binPath, logger)
+			// post-update 마커를 환경에 실어, 부팅한 새 프로세스가 자가 검증/롤백하도록 한다.
+			go gracefulReexec(binPath, expectedVersion, logger)
 		},
 		logger: logger,
 	}
 }
 
-// gracefulReexec 는 짧은 지연 후 현재 인자/환경으로 새 바이너리를 re-exec 한다.
+// gracefulReexec 는 짧은 지연 후 post-update 마커를 실어 새 바이너리를 re-exec 한다.
 // syscall.Exec 는 성공 시 반환하지 않고 프로세스 이미지를 교체한다(unix).
-func gracefulReexec(binPath string, logger *slog.Logger) {
+func gracefulReexec(binPath, expectedVersion string, logger *slog.Logger) {
 	time.Sleep(2 * time.Second)
 	if binPath == "" {
 		logger.Error("재시작 실패 — 실행 파일 경로 미상")
 		return
 	}
-	logger.Info("system/update: 새 바이너리로 재시작", "binary", binPath)
-	if err := syscall.Exec(binPath, os.Args, os.Environ()); err != nil {
+	logger.Info("system/update: 새 바이너리로 재시작", "binary", binPath, "expected_version", expectedVersion)
+	env := postUpdateEnv(os.Environ(), expectedVersion)
+	if err := syscall.Exec(binPath, os.Args, env); err != nil {
 		logger.Error("재시작(re-exec) 실패", "error", err)
 	}
 }
@@ -75,7 +77,7 @@ type systemUpdateApplier interface {
 // 재시작 미지원으로, args.restart=true 라도 교체만 수행하고 경고를 남긴다(테스트 주입 가능).
 type systemCommander struct {
 	runner  systemUpdateApplier
-	restart func()
+	restart func(expectedVersion string)
 	logger  *slog.Logger
 }
 
@@ -102,8 +104,9 @@ func (c *systemCommander) Do(ctx context.Context, action string, args json.RawMe
 				"new_version", res.NewVersion)
 		} else {
 			// 결과를 서버로 먼저 전송한 뒤 재시작되도록 비동기로 스케줄한다(re-exec).
+			// 새 프로세스가 자가 검증할 수 있도록 적용된 버전을 expected 로 넘긴다.
 			res.Restarting = true
-			c.restart()
+			c.restart(res.NewVersion)
 		}
 	}
 	return json.Marshal(res)
