@@ -456,8 +456,8 @@ function SeriesDataViewerModalImpl({
   const [relativeCustom, setRelativeCustom] = useState('');
 
   // 세그먼트 구분자 — 키 패턴에서 태그를 자동 추출할 때 사용한다.
-  // 모달 오픈 시 기본값 (':') 으로 리셋되며, 사용자가 헤더에서 변경 가능하다.
-  const [separator, setSeparator] = useState<string>(DEFAULT_SEGMENT_SEPARATOR);
+  // 구분자 필터링 UI 는 제거되었고(#3), 표준 기본 구분자로 고정한다.
+  const separator = DEFAULT_SEGMENT_SEPARATOR;
 
   // 결과 표시 모드 (테이블/차트). 모달에서 보유하여 "다시 실행" 시
   // 결과 컴포넌트가 unmount/remount 되어도 사용자 선택이 보존되도록 한다.
@@ -512,7 +512,7 @@ function SeriesDataViewerModalImpl({
     setRangeMode('relative');
     setRelativeSelect(RELATIVE_DEFAULT);
     setRelativeCustom('');
-    setSeparator(DEFAULT_SEGMENT_SEPARATOR);
+    setFill('');
     setResultViewMode('table');
     setWarningPending(false);
     // SPEC-WEB-005 v0.7.0 (M16): 메타데이터 필터도 초기화한다.
@@ -755,20 +755,15 @@ function SeriesDataViewerModalImpl({
     });
   }, []);
 
-  /**
-   * 세그먼트 구분자 변경 핸들러.
-   *
-   * 구분자가 바뀌면 키에서 추출되는 태그 키 (`seg0`, `seg1`, ...) 가 달라지거나
-   * 사라질 수 있으므로 기존에 선택해둔 태그 필터(`tagFilter.selected`)는 더 이상
-   * 유효하지 않다. 혼란을 방지하기 위해 변경 즉시 선택을 초기화한다.
-   */
-  const handleSeparatorChange = useCallback(
-    (next: string) => {
-      setSeparator(next);
-      tagFilter.clearAll();
-    },
-    [tagFilter],
-  );
+  // 일괄 체크: 현재 필터된 시리즈를 모두 선택에 추가(기존 선택 유지).
+  const selectAllFiltered = useCallback(() => {
+    setSelectedKeys((prev) => Array.from(new Set([...prev, ...filteredKeys])));
+  }, [filteredKeys]);
+
+  // 일괄 언체크: 현재 필터된 시리즈를 선택에서 제거.
+  const clearAllFiltered = useCallback(() => {
+    setSelectedKeys((prev) => prev.filter((k) => !filteredKeys.includes(k)));
+  }, [filteredKeys]);
 
   /**
    * 절대 모드의 상대 범위 프리셋 버튼 핸들러.
@@ -955,6 +950,27 @@ function SeriesDataViewerModalImpl({
                     className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) pl-7 pr-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
+                {/* 일괄 체크/언체크 (#4): 현재 필터된 시리즈 대상. */}
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={selectAllFiltered}
+                    disabled={filteredKeys.length === 0}
+                    data-testid="tsdb-select-all"
+                    className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
+                  >
+                    전체 선택 ({filteredKeys.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAllFiltered}
+                    disabled={filteredKeys.length === 0}
+                    data-testid="tsdb-clear-all"
+                    className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
+                  >
+                    전체 해제
+                  </button>
+                </div>
                 {/*
                   체크박스 옵션 리스트.
                   체크 상태만으로 선택을 표현하여 시각 노이즈 최소화.
@@ -1091,8 +1107,6 @@ function SeriesDataViewerModalImpl({
                     selected={tagFilter.selected}
                     onToggle={tagFilter.toggle}
                     onClearAll={tagFilter.clearAll}
-                    separator={separator}
-                    onSeparatorChange={handleSeparatorChange}
                   />
                 </div>
               )}
