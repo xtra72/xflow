@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDrive,
+  Layers,
   LayoutDashboard,
   Monitor,
   Network,
@@ -114,6 +115,12 @@ const NAV_ENTRIES: NavEntry[] = [
         labelKey: 'nav.nodeManagement',
         path: '/admin/remote',
         icon: SlidersHorizontal,
+        roles: ['admin'],
+      },
+      {
+        labelKey: 'nav.groupManagement',
+        path: '/admin/remote/groups',
+        icon: Layers,
         roles: ['admin'],
       },
       {

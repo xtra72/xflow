@@ -21,7 +21,8 @@
     "expandSidebar": "Expand Sidebar",
     "collapseSidebar": "Collapse Sidebar",
     "nodeManagement": "Node Management",
-    "enrollmentManagement": "Enrollment"
+    "enrollmentManagement": "Enrollment",
+    "groupManagement": "Group Management"
   },
   "auth": {
     "login": "Login",
@@ -708,6 +709,19 @@
       "history": "Version history",
       "historyEmpty": "No version changes recorded.",
       "changedAt": "Changed at"
+    },
+    "groupManagement": {
+      "title": "Group Management",
+      "subtitle": "Organize nodes into groups; select from the left tree to manage.",
+      "tree": "Group tree",
+      "ungrouped": "Unclassified",
+      "addNew": "+ New group",
+      "selectHint": "Select a group or node from the left tree.",
+      "members": "Member nodes",
+      "memberCount": "nodes",
+      "noMembers": "No nodes in this group.",
+      "ungroupedDesc": "Nodes not in any group (default — cannot delete)",
+      "notServer": "Available only in remote management (server mode)."
     }
   },
   "flowPicker": {

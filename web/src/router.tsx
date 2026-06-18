@@ -35,6 +35,9 @@ const SystemStatusPage = lazy(() =>
 //   노드 관리(운영, 디렉토리+대시보드) + 등록 관리(온보딩, 토큰+승인).
 //   기존 RemoteNodesPage(관리 노드) + RemoteControlPage(원격 노드 제어)를 대체한다.
 const NodeManagementPage = lazy(() => import('@/pages/remote/NodeManagementPage'));
+const GroupManagementPage = lazy(
+  () => import('@/pages/remote/GroupManagementPage'),
+);
 const EnrollmentManagementPage = lazy(
   () => import('@/pages/remote/EnrollmentManagementPage'),
 );
@@ -158,6 +161,15 @@ const router = createBrowserRouter([
                 element: (
                   <SuspenseWrapper>
                     <NodeManagementPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // 그룹 관리(서브 페이지): 좌측 그룹 트리 + 우측 그룹 제어/노드 상세.
+              {
+                path: 'remote/groups',
+                element: (
+                  <SuspenseWrapper>
+                    <GroupManagementPage />
                   </SuspenseWrapper>
                 ),
               },
