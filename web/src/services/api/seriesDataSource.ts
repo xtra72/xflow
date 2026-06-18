@@ -30,9 +30,25 @@ export interface SeriesKeysPage {
 }
 
 /** 매트릭스 쿼리 파라미터. 시간은 UTC epoch milliseconds(int64). */
+/**
+ * 시리즈별 조회 필터(저장소 기준 분류 — key + metric_type + tags).
+ * `keys[i]` 와 같은 인덱스로 짝지어, 해당 key 의 조회를 특정 metric/tags 시리즈로 좁힌다.
+ * 미지정(undefined)이면 그 key 의 모든 시리즈를 조회한다(기존 동작).
+ */
+export interface SeriesSelectorFilter {
+  metricType?: string;
+  tags?: Record<string, string>;
+}
+
 export interface SeriesMatrixQuery {
-  /** 요청 순서대로 컬럼을 구성할 시리즈/스토어 키 배열. */
+  /**
+   * 요청 순서대로 컬럼을 구성할 시리즈/스토어 키 배열.
+   * 시리즈별 선택 시 같은 key 가 metric/tags 가 다른 채로 중복될 수 있으며,
+   * 그 경우 `seriesFilters` 로 각 시리즈를 구분한다.
+   */
   keys: string[];
+  /** `keys` 와 같은 인덱스의 시리즈 필터(선택). 시리즈별 분류/선택에 사용. */
+  seriesFilters?: Array<SeriesSelectorFilter | undefined>;
   /** 시작 시각 — UTC epoch ms. */
   startMs: number;
   /** 종료 시각 — UTC epoch ms (exclusive 로 가정). */
