@@ -1046,7 +1046,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			// 로컬 제어와 동일한 경로/검증/오류 의미를 갖도록 동일 레지스트리를 재사용한다
 			// (A5 — 원격 우회 없음, OQ-L4 — 제어 쓰기는 그룹 D 재사용).
 			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo, executor: deviceRegistry},
-		)
+		).WithSystem(newSystemCommander(cfg, obs.Loggers.NewLogger("remote.system_update").Logger()))
 
 		// 인벤토리 소스(M4, REQ-E01): 로컬 API 와 동일한 어댑터 인스턴스를 재사용하여
 		// 미러가 로컬 상태와 일치하도록 한다. redaction(F06)은 소스 어댑터가 수행한다.

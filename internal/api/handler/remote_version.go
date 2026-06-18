@@ -18,8 +18,56 @@ import (
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/remote"
 	"github.com/xtra/xflow/internal/updater"
 )
+
+// updateNodeRequest 는 원격 업데이트 명령 요청 본문이다(POST /remote/nodes/{id}/update).
+type updateNodeRequest struct {
+	Version string `json:"version"`           // 목표 버전(빈 값=채널 최신)
+	Channel string `json:"channel,omitempty"` // stable/beta/nightly(빈 값=노드 기본)
+	Restart bool   `json:"restart,omitempty"` // true 면 교체 후 노드 graceful 재시작
+}
+
+// UpdateNode 는 노드에 자가 업데이트(system/update)를 명령한다(버전 관리 Phase 2).
+// POST /remote/nodes/{instance_id}/update
+//
+// 기존 명령 디스패치(M3)를 재사용한다: 승인·온라인 노드에만 전달되고, 결과/타임아웃은
+// command 와 동일하게 매핑되며, dispatch 가 감사 레코드를 1행 기록한다(actor 전파).
+func (h *RemoteAdminHandler) UpdateNode(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	id := ctx.Param("instance_id")
+	var req updateNodeRequest
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("요청 본문 파싱 실패")
+	}
+	if req.Version != "" && !updater.Version(req.Version).IsValid() {
+		return api.ErrBadRequest.WithMessage("version 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
+	}
+	args, err := json.Marshal(remote.SystemUpdateArgs{
+		TargetVersion: req.Version,
+		Channel:       req.Channel,
+		Restart:       req.Restart,
+	})
+	if err != nil {
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
+	h.logger.Info("원격 업데이트 명령",
+		"instance_id", id, "target_version", req.Version, "restart", req.Restart,
+		"actor", ctx.UserID())
+	dispatchCtx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
+	result, derr := h.svc.Dispatch(dispatchCtx, id, remote.DomainSystem, remote.ActionSystemUpdate, args)
+	if derr != nil {
+		return mapRemoteCommandError(derr)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"instance_id":    id,
+		"target_version": req.Version,
+		"result":         result,
+	}))
+}
 
 // targetVersionSettingKey 는 SettingsRepository 에 목표 버전을 저장하는 전역 키이다.
 const targetVersionSettingKey = "remote.target_version"

@@ -22,16 +22,17 @@ import (
 
 // fakeNodeAdmin 은 NodeAdminService 의 테스트 구현이다.
 type fakeNodeAdmin struct {
-	nodes          map[string]storage.ManagedNode
-	approved       []string
-	rejected       []string
-	revoked        []string
-	getErr         error
-	dispatched     []string // domain/action 기록
-	dispatchResult json.RawMessage
-	dispatchErr    error
-	mirror         *mirrorStore                            // M4 미러 목록(노드 push 로만 변경 — E08)
-	versionHistory map[string][]storage.NodeVersionHistory // 버전 관리 Phase 1
+	nodes            map[string]storage.ManagedNode
+	approved         []string
+	rejected         []string
+	revoked          []string
+	getErr           error
+	dispatched       []string // domain/action 기록
+	dispatchResult   json.RawMessage
+	dispatchErr      error
+	mirror           *mirrorStore                            // M4 미러 목록(노드 push 로만 변경 — E08)
+	versionHistory   map[string][]storage.NodeVersionHistory // 버전 관리 Phase 1
+	lastDispatchArgs json.RawMessage                         // 마지막 Dispatch args(테스트 검증용)
 }
 
 func (f *fakeNodeAdmin) NodeVersionHistory(_ context.Context, instanceID string, limit int) ([]storage.NodeVersionHistory, error) {
@@ -78,11 +79,12 @@ func (f *fakeNodeAdmin) Revoke(_ context.Context, instanceID string) error {
 	return nil
 }
 
-func (f *fakeNodeAdmin) Dispatch(_ context.Context, _, domain, action string, _ json.RawMessage) (json.RawMessage, error) {
+func (f *fakeNodeAdmin) Dispatch(_ context.Context, _, domain, action string, args json.RawMessage) (json.RawMessage, error) {
 	if f.dispatchErr != nil {
 		return nil, f.dispatchErr
 	}
 	f.dispatched = append(f.dispatched, domain+"/"+action)
+	f.lastDispatchArgs = args
 	return f.dispatchResult, nil
 }
 

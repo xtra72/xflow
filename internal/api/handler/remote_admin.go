@@ -166,6 +166,9 @@ func (h *RemoteAdminHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/remote/nodes/{instance_id}/version-history", h.VersionHistory)
 	g.GET("/remote/target-version", h.GetTargetVersion)
 	g.PUT("/remote/target-version", h.PutTargetVersion)
+
+	// 버전 관리 Phase 2: 노드 자가 업데이트 명령(system/update 디스패치).
+	g.POST("/remote/nodes/{instance_id}/update", h.UpdateNode)
 }
 
 // requireAdmin 은 admin 권한을 강제한다. node/viewer/editor 등은 403(REQ-F04).

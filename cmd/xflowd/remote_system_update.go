@@ -1,0 +1,210 @@
+// remote_system_update.go 는 원격 관리 "system/update" 명령(버전 관리 Phase 2)의
+// 클라이언트 측 핸들러를 구현한다.
+//
+// 관리 서버가 Dispatch("system","update",{target_version,...}) 를 보내면, 이 노드의
+// systemCommander 가 updater 파이프라인(check→download→verify(Ed25519)→apply)을 실행해
+// 바이너리를 원자적으로 교체(.previous 백업)한다. 기본은 교체만 하고 restart_required=true
+// 를 반환하며(운영 측 재시작 위임), args.restart=true 면 결과 전송 후 graceful 재시작한다.
+//
+// remote.DomainCommander 를 구현하여 remote.Applier.WithSystem 으로 바인딩된다.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
+	"syscall"
+	"time"
+
+	"github.com/xtra/xflow/internal/config"
+	"github.com/xtra/xflow/internal/remote"
+	"github.com/xtra/xflow/internal/updater"
+)
+
+// newSystemCommander 는 데몬 설정으로부터 system 도메인 commander 를 구성한다.
+// update.update_url/public_key_path 미설정이어도 생성은 성공하며(ApplyUpdate 호출 시
+// 명확히 실패). 재시작은 opt-in(args.restart=true)일 때만 graceful re-exec 한다.
+func newSystemCommander(cfg config.Config, logger *slog.Logger) *systemCommander {
+	binPath, err := os.Executable()
+	if err != nil {
+		logger.Warn("실행 파일 경로 조회 실패 — 원격 업데이트 제한", "error", err)
+		binPath = ""
+	}
+	runner := &remoteUpdateRunner{
+		settings:   cfg.Update(),
+		version:    Version,
+		binaryPath: binPath,
+	}
+	return &systemCommander{
+		runner: runner,
+		restart: func() {
+			// 결과가 서버로 flush 될 시간을 준 뒤 새 바이너리로 re-exec 한다(opt-in).
+			go gracefulReexec(binPath, logger)
+		},
+		logger: logger,
+	}
+}
+
+// gracefulReexec 는 짧은 지연 후 현재 인자/환경으로 새 바이너리를 re-exec 한다.
+// syscall.Exec 는 성공 시 반환하지 않고 프로세스 이미지를 교체한다(unix).
+func gracefulReexec(binPath string, logger *slog.Logger) {
+	time.Sleep(2 * time.Second)
+	if binPath == "" {
+		logger.Error("재시작 실패 — 실행 파일 경로 미상")
+		return
+	}
+	logger.Info("system/update: 새 바이너리로 재시작", "binary", binPath)
+	if err := syscall.Exec(binPath, os.Args, os.Environ()); err != nil {
+		logger.Error("재시작(re-exec) 실패", "error", err)
+	}
+}
+
+// systemUpdateApplier 는 self-update 오케스트레이션을 추상화한다(테스트 fake 주입용).
+type systemUpdateApplier interface {
+	ApplyUpdate(ctx context.Context, targetVersion, channel string) (remote.SystemUpdateResult, error)
+}
+
+// systemCommander 는 remote.DomainCommander 를 구현해 system 도메인 명령을 라우팅한다.
+//
+// restart 는 비동기 graceful 재시작 스케줄러이다(실 구현은 결과 전송 후 re-exec). nil 이면
+// 재시작 미지원으로, args.restart=true 라도 교체만 수행하고 경고를 남긴다(테스트 주입 가능).
+type systemCommander struct {
+	runner  systemUpdateApplier
+	restart func()
+	logger  *slog.Logger
+}
+
+// Do 는 system 도메인 action 을 처리한다(현재 update 만 지원).
+func (c *systemCommander) Do(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	if action != remote.ActionSystemUpdate {
+		return nil, fmt.Errorf("알 수 없는 system action: %q", action)
+	}
+	var a remote.SystemUpdateArgs
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("system/update args 파싱: %w", err)
+		}
+	}
+	res, err := c.runner.ApplyUpdate(ctx, a.TargetVersion, a.Channel)
+	if err != nil {
+		return nil, err
+	}
+	// 바이너리는 교체됐으나 실행 중 프로세스는 여전히 구버전 — 재시작이 있어야 반영된다.
+	res.RestartRequired = true
+	if a.Restart {
+		if c.restart == nil {
+			c.logger.Warn("system/update: 재시작 요청됐으나 미지원 — 수동 재시작 필요",
+				"new_version", res.NewVersion)
+		} else {
+			// 결과를 서버로 먼저 전송한 뒤 재시작되도록 비동기로 스케줄한다(re-exec).
+			res.Restarting = true
+			c.restart()
+		}
+	}
+	return json.Marshal(res)
+}
+
+// remoteUpdateRunner 는 updater 패키지를 직접 오케스트레이션하는 실 구현이다.
+// cmd/xflowd/update.go 의 runApply 와 동일한 순서(check→download→verify→apply)를 따른다.
+type remoteUpdateRunner struct {
+	settings   config.UpdateSettings
+	version    string // 현재 빌드 버전(main.Version)
+	binaryPath string // 교체 대상 실행 파일 경로
+}
+
+// ApplyUpdate 는 목표 버전 바이너리를 받아 검증 후 원자적으로 교체한다.
+func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, channel string) (remote.SystemUpdateResult, error) {
+	var zero remote.SystemUpdateResult
+	if r.settings.UpdateURL == "" {
+		return zero, errors.New("update_url 미설정 — 원격 업데이트 비활성")
+	}
+	if r.settings.PublicKeyPath == "" {
+		return zero, errors.New("public_key_path 미설정 — Ed25519 검증에 필수")
+	}
+	ch := channel
+	if ch == "" {
+		ch = r.settings.Channel
+	}
+	checker, err := updater.NewChecker(r.settings.UpdateURL, updater.Channel(ch))
+	if err != nil {
+		return zero, fmt.Errorf("checker 생성: %w", err)
+	}
+	res, err := checker.Check(ctx, updater.Version(r.version), runtime.GOOS, runtime.GOARCH, "xflowd")
+	if err != nil {
+		return zero, fmt.Errorf("버전 확인: %w", err)
+	}
+	target := updater.Version(targetVersion)
+	if targetVersion == "" {
+		target = res.Latest
+	}
+	if !target.IsValid() {
+		return zero, fmt.Errorf("유효하지 않은 목표 버전: %q", targetVersion)
+	}
+	if res.BinaryAsset == nil || res.SignatureAsset == nil || res.ChecksumAsset == nil {
+		return zero, errors.New("release asset(binary/signature/checksum) 누락")
+	}
+
+	pubKey, err := updater.LoadPublicKeyFromFile(r.settings.PublicKeyPath)
+	if err != nil {
+		return zero, fmt.Errorf("공개키 로드: %w", err)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "xflowd-remote-update-*")
+	if err != nil {
+		return zero, fmt.Errorf("임시 디렉토리: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	dl := updater.NewDownloader()
+	binDest := filepath.Join(tmpDir, res.BinaryAsset.Name)
+	if err := dl.Download(ctx, *res.BinaryAsset, binDest, nil); err != nil {
+		return zero, fmt.Errorf("바이너리 다운로드: %w", err)
+	}
+	sigDest := filepath.Join(tmpDir, res.SignatureAsset.Name)
+	if err := dl.Download(ctx, *res.SignatureAsset, sigDest, nil); err != nil {
+		return zero, fmt.Errorf("서명 다운로드: %w", err)
+	}
+	checksumDest := filepath.Join(tmpDir, res.ChecksumAsset.Name)
+	if err := dl.Download(ctx, *res.ChecksumAsset, checksumDest, nil); err != nil {
+		return zero, fmt.Errorf("체크섬 다운로드: %w", err)
+	}
+
+	checksumHex, err := readChecksumFor(checksumDest, res.BinaryAsset.Name)
+	if err != nil {
+		return zero, fmt.Errorf("체크섬 파싱: %w", err)
+	}
+	sigBytes, err := os.ReadFile(sigDest)
+	if err != nil {
+		return zero, fmt.Errorf("서명 읽기: %w", err)
+	}
+	sigBytes = decodeSignature(sigBytes)
+
+	verifier, err := updater.NewVerifier(pubKey)
+	if err != nil {
+		return zero, fmt.Errorf("verifier 생성: %w", err)
+	}
+	applier := updater.NewApplier(verifier, r.binaryPath)
+	applyRes, err := applier.Apply(ctx, updater.ApplyOptions{
+		Manifest: updater.Manifest{
+			Version:   target,
+			SHA256:    checksumHex,
+			Signature: sigBytes,
+			BinaryURL: res.BinaryAsset.DownloadURL,
+		},
+		DownloadedPath: binDest,
+	})
+	if err != nil {
+		return zero, fmt.Errorf("적용: %w", err)
+	}
+
+	return remote.SystemUpdateResult{
+		NewVersion:  applyRes.NewVersion.String(),
+		BackupPath:  applyRes.BackupPath,
+		AppliedAtMs: applyRes.AppliedAt.UnixMilli(),
+	}, nil
+}

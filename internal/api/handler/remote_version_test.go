@@ -171,6 +171,46 @@ func TestVersionHistory_Endpoint(t *testing.T) {
 	assert.Equal(t, int64(3000), hist[0].ChangedAt)
 }
 
+func TestUpdateNode_DispatchesSystemUpdate(t *testing.T) {
+	svc := newFakeNodeAdmin()
+	svc.nodes["n1"] = storage.ManagedNode{InstanceID: "n1", Status: "approved", Online: true}
+	svc.dispatchResult = json.RawMessage(`{"new_version":"v1.3.0","restart_required":true}`)
+	do := versionAdminRequest(t, svc, newMemSettings())
+
+	rec := do(http.MethodPost, "/api/v1/remote/nodes/n1/update", `{"version":"v1.3.0","restart":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// system/update 로 디스패치되었는지.
+	require.Contains(t, svc.dispatched, "system/update")
+	// args 가 SystemUpdateArgs 로 전달되었는지.
+	var args struct {
+		TargetVersion string `json:"target_version"`
+		Restart       bool   `json:"restart"`
+	}
+	require.NoError(t, json.Unmarshal(svc.lastDispatchArgs, &args))
+	assert.Equal(t, "v1.3.0", args.TargetVersion)
+	assert.True(t, args.Restart)
+}
+
+func TestUpdateNode_InvalidVersionRejected(t *testing.T) {
+	svc := newFakeNodeAdmin()
+	svc.nodes["n1"] = storage.ManagedNode{InstanceID: "n1", Status: "approved", Online: true}
+	do := versionAdminRequest(t, svc, newMemSettings())
+	rec := do(http.MethodPost, "/api/v1/remote/nodes/n1/update", `{"version":"garbage"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.NotContains(t, svc.dispatched, "system/update", "잘못된 버전은 디스패치되지 않아야 한다")
+}
+
+func TestUpdateNode_EmptyVersionAllowed(t *testing.T) {
+	// 빈 버전 = 채널 최신 → 디스패치 허용.
+	svc := newFakeNodeAdmin()
+	svc.nodes["n1"] = storage.ManagedNode{InstanceID: "n1", Status: "approved", Online: true}
+	svc.dispatchResult = json.RawMessage(`{}`)
+	do := versionAdminRequest(t, svc, newMemSettings())
+	rec := do(http.MethodPost, "/api/v1/remote/nodes/n1/update", `{}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, svc.dispatched, "system/update")
+}
+
 func TestVersionEndpoints_RequireAdmin(t *testing.T) {
 	h := NewRemoteAdminHandler(newFakeNodeAdmin(), nil).WithSettings(newMemSettings())
 	router := api.NewRouter()
