@@ -40,10 +40,6 @@ vi.mock('@/components/remote/NodeDashboard', () => ({
   ),
 }));
 
-vi.mock('@/components/remote/GroupManagementPanel', () => ({
-  GroupManagementPanel: () => <div data-testid="group-management-stub" />,
-}));
-
 vi.mock('@/components/remote/RemoteNotServerNotice', () => ({
   RemoteNotServerNotice: () => <div data-testid="not-server" />,
 }));

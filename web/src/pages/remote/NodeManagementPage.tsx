@@ -17,7 +17,7 @@
 // 권한/모드: admin 전용 라우트 + server 모드에서만 쿼리를 발행한다.
 
 import { useMemo } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { Network } from 'lucide-react';
 
 import {
@@ -26,7 +26,6 @@ import {
   type ManagerViewTab,
 } from '@/components/remote/ManagerViewTopBar';
 import { NodeDashboard } from '@/components/remote/NodeDashboard';
-import { GroupManagementPanel } from '@/components/remote/GroupManagementPanel';
 import { RemoteNotServerNotice } from '@/components/remote/RemoteNotServerNotice';
 import {
   useClearNodeGroup,
@@ -235,16 +234,19 @@ export default function NodeManagementPage(): React.JSX.Element {
         ) : (
           <div
             data-testid="node-management-no-selection"
-            className="flex h-full min-h-64 flex-col items-center gap-6 p-8"
+            className="flex h-full min-h-64 flex-col items-center justify-center gap-3 p-8 text-center"
           >
-            <div className="flex flex-col items-center text-center">
-              <Network className="h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
-              <p className="mt-3 text-sm text-(--color-text-muted)">
-                {t('remote.managerView.selectNodeHint')}
-              </p>
-            </div>
-            {/* 노드 미선택 시 그룹 일괄 관리(이름변경/삭제/업데이트) 패널을 노출한다. */}
-            <GroupManagementPanel groups={sortedGroups} nodes={nodes ?? []} />
+            <Network className="h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+            <p className="text-sm text-(--color-text-muted)">
+              {t('remote.managerView.selectNodeHint')}
+            </p>
+            {/* 그룹 관리는 전용 서브 페이지로 일원화되었다(트리뷰 + 그룹 제어). */}
+            <Link
+              to="/admin/remote/groups"
+              className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {t('nav.groupManagement')}
+            </Link>
           </div>
         )}
       </div>
