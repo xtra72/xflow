@@ -25,6 +25,10 @@ import type {
   SeriesMatrixQuery,
 } from '@/services/api/seriesDataSource';
 import type { StoreKeyObject } from '@/services/api/store';
+import {
+  makeSeriesId,
+  SERIES_ID_SEPARATOR,
+} from '@/services/api/seriesLabels';
 
 interface MockMutation {
   mutate: ReturnType<typeof vi.fn>;
@@ -654,40 +658,6 @@ describe('SeriesDataViewerModal', () => {
     expect(start.value).toBe(toLocal(fixedNow - 60 * 60 * 1000));
   });
 
-  // ---- v0.4.0: 키 구조 기반 자동 태그 추출 ----
-
-  it('정적 태그가 없는 InfluxDB 스타일 키에서 태그 칩이 자동 추출된다', () => {
-    // TSDB 모드 (kind: 'tsdb') — 정적 태그 소스 없음. 키 구조에서 추출.
-    render(
-      <TsdbDataViewerModal
-        isOpen
-        onClose={vi.fn()}
-        allSeriesKeys={['temp,room=1', 'temp,room=2', 'humid,room=1']}
-        dataSource={fakeDataSource()}
-      />,
-    );
-    // 값 칩 — TagFilterChips 가 data-testid 를 부여하므로 이를 사용해 정확히 매칭.
-    expect(screen.getByTestId('tag-filter-measurement-temp')).toBeInTheDocument();
-    expect(screen.getByTestId('tag-filter-measurement-humid')).toBeInTheDocument();
-    expect(screen.getByTestId('tag-filter-room-1')).toBeInTheDocument();
-    expect(screen.getByTestId('tag-filter-room-2')).toBeInTheDocument();
-  });
-
-  it('구조 없는 키만 있으면 태그 필터 섹션이 숨겨진다', () => {
-    const { container } = render(
-      <TsdbDataViewerModal
-        isOpen
-        onClose={vi.fn()}
-        allSeriesKeys={['plain_a', 'plain_b']}
-        dataSource={fakeDataSource()}
-      />,
-    );
-    // 태그 칩이 단 하나도 렌더링되지 않아야 한다.
-    expect(
-      container.querySelectorAll('[data-testid^="tag-filter-"]').length,
-    ).toBe(0);
-  });
-
   // ---- v0.4.0: 평균 자릿수 입력 ----
 
   it('기본 집계가 average 이므로 소수점 자릿수 입력이 노출된다', () => {
@@ -817,209 +787,6 @@ describe('SeriesDataViewerModal', () => {
       expect(screen.getAllByTestId('metadata-registration-manual').length).toBe(2);
     });
 
-    it('Store 모드에서 메타데이터 필터 UI 가 노출된다', () => {
-      renderStoreModal();
-      expect(screen.getByTestId('series-meta-filters')).toBeInTheDocument();
-      expect(screen.getByTestId('meta-filter-data-type')).toBeInTheDocument();
-      expect(screen.getByTestId('meta-filter-metric-type')).toBeInTheDocument();
-      expect(screen.getByTestId('meta-filter-registration-all')).toBeInTheDocument();
-      expect(screen.getByTestId('meta-filter-registration-manual')).toBeInTheDocument();
-      expect(screen.getByTestId('meta-filter-registration-auto')).toBeInTheDocument();
-    });
-
-    // SPEC-WEB-005 v0.7.0 (Option A): TSDB 모드에서도 metric_type/data_type 필터 노출.
-    // registration 필터는 TSDB 에 개념이 없으므로 숨김. (Option A 마이그레이션)
-    it('TSDB 모드에서 metric_type / data_type 필터는 노출되고 registration 필터는 숨겨진다', () => {
-      render(
-        <TsdbDataViewerModal
-          isOpen
-          onClose={vi.fn()}
-          allSeriesKeys={ALL_KEYS}
-          dataSource={fakeDataSource()}
-        />,
-      );
-      expect(screen.getByTestId('series-meta-filters')).toBeInTheDocument();
-      expect(screen.getByTestId('meta-filter-data-type')).toBeInTheDocument();
-      expect(screen.getByTestId('meta-filter-metric-type')).toBeInTheDocument();
-      // registration 필터는 TSDB 에서 숨김
-      expect(screen.queryByTestId('meta-filter-registration-all')).toBeNull();
-      expect(screen.queryByTestId('meta-filter-registration-manual')).toBeNull();
-      expect(screen.queryByTestId('meta-filter-registration-auto')).toBeNull();
-    });
-
-    it('data_type 필터 (float) 적용 시 float 키만 시리즈 풀에 노출된다', () => {
-      renderStoreModal();
-      // 초기에는 4개 모두 노출.
-      const before = screen.getAllByTestId('metadata-data-type');
-      expect(before.length).toBe(4);
-
-      // float 으로 필터링.
-      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
-        target: { value: 'float' },
-      });
-
-      const after = screen.getAllByTestId('metadata-data-type');
-      // float 만 2개 남는다.
-      expect(after.length).toBe(2);
-      expect(after.every((el) => el.textContent === 'float')).toBe(true);
-    });
-
-    it('metric_type 필터 (temperature) 적용 시 정확히 일치하는 키만 노출된다', () => {
-      renderStoreModal();
-
-      fireEvent.change(screen.getByTestId('meta-filter-metric-type'), {
-        target: { value: 'temperature' },
-      });
-
-      const dataTypes = screen.getAllByTestId('metadata-data-type');
-      expect(dataTypes.length).toBe(2); // indoor:1:temp + indoor:2:temp
-      // metric_type=humidity / unknown 키는 사라졌다.
-      const metricChips = screen.getAllByTestId('metadata-metric-type');
-      expect(metricChips.every((el) => el.textContent === 'temperature')).toBe(true);
-    });
-
-    it('registration 필터 (auto) 적용 시 auto 키만 노출된다', () => {
-      renderStoreModal();
-
-      fireEvent.click(screen.getByTestId('meta-filter-registration-auto'));
-
-      // 2개 auto 키만 남아있다.
-      const dataTypes = screen.getAllByTestId('metadata-data-type');
-      expect(dataTypes.length).toBe(2);
-      // auto 배지 2개 (manual 배지는 0).
-      expect(screen.getAllByTestId('metadata-registration-auto').length).toBe(2);
-      expect(screen.queryAllByTestId('metadata-registration-manual').length).toBe(0);
-    });
-
-    it('registration "전체" 버튼은 필터를 해제한다', () => {
-      renderStoreModal();
-      // auto 로 좁힌 뒤 다시 전체로 해제.
-      fireEvent.click(screen.getByTestId('meta-filter-registration-auto'));
-      expect(screen.getAllByTestId('metadata-data-type').length).toBe(2);
-
-      fireEvent.click(screen.getByTestId('meta-filter-registration-all'));
-      expect(screen.getAllByTestId('metadata-data-type').length).toBe(4);
-    });
-
-    it('registration 버튼은 aria-pressed 로 선택 상태를 노출한다', () => {
-      renderStoreModal();
-      const allBtn = screen.getByTestId('meta-filter-registration-all');
-      const manualBtn = screen.getByTestId('meta-filter-registration-manual');
-      const autoBtn = screen.getByTestId('meta-filter-registration-auto');
-      // 초기: 전체 선택.
-      expect(allBtn.getAttribute('aria-pressed')).toBe('true');
-      expect(manualBtn.getAttribute('aria-pressed')).toBe('false');
-      expect(autoBtn.getAttribute('aria-pressed')).toBe('false');
-      // manual 클릭.
-      fireEvent.click(manualBtn);
-      expect(allBtn.getAttribute('aria-pressed')).toBe('false');
-      expect(manualBtn.getAttribute('aria-pressed')).toBe('true');
-      expect(autoBtn.getAttribute('aria-pressed')).toBe('false');
-    });
-
-    it('필터 결합: data_type=float + registration=manual → 1개로 좁혀진다', () => {
-      renderStoreModal();
-
-      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
-        target: { value: 'float' },
-      });
-      fireEvent.click(screen.getByTestId('meta-filter-registration-manual'));
-
-      // float + manual: indoor:1:temp / indoor:2:temp 2개.
-      const dataTypes = screen.getAllByTestId('metadata-data-type');
-      expect(dataTypes.length).toBe(2);
-      expect(dataTypes.every((el) => el.textContent === 'float')).toBe(true);
-      expect(screen.getAllByTestId('metadata-registration-manual').length).toBe(2);
-    });
-
-    it('모든 필터가 매치되지 않으면 "일치하는 시리즈가 없습니다" 빈 상태가 노출된다', () => {
-      renderStoreModal();
-      // boolean 타입은 fixture 에 없음 → 결과 0건.
-      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
-        target: { value: 'boolean' },
-      });
-      expect(screen.getByText(/일치하는 시리즈가 없습니다/)).toBeInTheDocument();
-    });
-
-    it('검색 + 메타데이터 필터는 AND 결합된다', () => {
-      renderStoreModal();
-      // 검색: "indoor" → 3개 (indoor:1:temp / indoor:2:temp / indoor:1:hum)
-      fireEvent.change(screen.getByPlaceholderText('시리즈 키 검색'), {
-        target: { value: 'indoor' },
-      });
-      expect(screen.getAllByTestId('metadata-data-type').length).toBe(3);
-      // + data_type=int → 1개 (indoor:1:hum)
-      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
-        target: { value: 'int' },
-      });
-      const remaining = screen.getAllByTestId('metadata-data-type');
-      expect(remaining.length).toBe(1);
-      expect(remaining[0]!.textContent).toBe('int');
-    });
-
-    it('모달 재오픈 시 메타데이터 필터가 모두 초기화된다', () => {
-      const { rerender } = renderStoreModal();
-      // float + auto 필터 적용.
-      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
-        target: { value: 'float' },
-      });
-      fireEvent.click(screen.getByTestId('meta-filter-registration-auto'));
-      // 닫고 다시 연다.
-      rerender(
-        <TsdbDataViewerModal
-          isOpen={false}
-          onClose={vi.fn()}
-          allSeriesKeys={makeKeyObjects().map((o) => o.key)}
-          dataSource={storeDataSource()}
-          agentName="agent-test"
-        />,
-      );
-      rerender(
-        <TsdbDataViewerModal
-          isOpen
-          onClose={vi.fn()}
-          allSeriesKeys={makeKeyObjects().map((o) => o.key)}
-          dataSource={storeDataSource()}
-          agentName="agent-test"
-        />,
-      );
-      // 필터 모두 해제: 4개 키 다시 노출.
-      expect(screen.getAllByTestId('metadata-data-type').length).toBe(4);
-      expect(
-        screen
-          .getByTestId('meta-filter-data-type')
-          .getAttribute('value') ?? '',
-      ).toBe('');
-      expect(
-        screen.getByTestId('meta-filter-registration-all').getAttribute('aria-pressed'),
-      ).toBe('true');
-    });
-
-    it('data_type 필터는 시간 범위/집계/CSV 내보내기 로직에 영향을 주지 않는다 (회귀)', () => {
-      renderStoreModal();
-      // float 필터 적용.
-      fireEvent.change(screen.getByTestId('meta-filter-data-type'), {
-        target: { value: 'float' },
-      });
-      // 첫 번째 키 (float) 선택 — 체크박스 클릭.
-      const checkboxes = screen
-        .getAllByRole('checkbox')
-        .filter((el) => (el as HTMLInputElement).type === 'checkbox');
-      fireEvent.click(checkboxes[0]!);
-      // 실행 가능 상태가 됨.
-      const execute = screen.getByRole('button', {
-        name: /^실행$/,
-      }) as HTMLButtonElement;
-      expect(execute.disabled).toBe(false);
-      fireEvent.click(execute);
-      expect(mutationState.current.mutate).toHaveBeenCalledTimes(1);
-      const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
-      // 키는 1개만 전달, 시간 범위/집계는 기본값 그대로 동작.
-      expect(arg.keys.length).toBe(1);
-      expect(arg.aggregation).toBe('average');
-      expect(arg.intervalMs).toBeGreaterThan(0);
-      expect(arg.endMs).toBeGreaterThan(arg.startMs);
-    });
   });
 
   // SPEC-STORE-004 (M5): 같은 key 의 metric/tags 별 다중 시리즈를 구분된 행으로 표시.
@@ -1079,44 +846,29 @@ describe('SeriesDataViewerModal', () => {
       );
     }
 
-    it('다중 시리즈 key 는 시리즈 개수 배지와 구분된 하위 행을 표시한다', () => {
-      renderMultiSeriesModal();
-      // 'sensor' key 는 3개 시리즈 → 개수 배지 + 구분 행 컨테이너.
-      expect(screen.getByTestId('series-count-sensor')).toHaveTextContent(
-        '3 시리즈',
-      );
-      const rowsContainer = screen.getByTestId('series-rows-sensor');
-      expect(rowsContainer).toBeInTheDocument();
-      // 3개의 구분된 시리즈 행.
-      expect(screen.getByTestId('series-row-sensor-0')).toBeInTheDocument();
-      expect(screen.getByTestId('series-row-sensor-1')).toBeInTheDocument();
-      expect(screen.getByTestId('series-row-sensor-2')).toBeInTheDocument();
-    });
+    /** 행 체크박스 testid (SeriesID 의 NUL 을 '~' 로 치환한 형식). */
+    const sid = (key: string, metric: string, tags: Record<string, string>) =>
+      `series-select-${makeSeriesId(key, metric, tags)
+        .split(SERIES_ID_SEPARATOR)
+        .join('~')}`;
 
-    it('단일 시리즈 key 는 개수 배지/구분 행 없이 인라인 메타 칩만 표시한다', () => {
-      renderMultiSeriesModal();
-      expect(screen.queryByTestId('series-count-lonely')).toBeNull();
-      expect(screen.queryByTestId('series-rows-lonely')).toBeNull();
-    });
-
-    it('각 시리즈가 독립 체크박스로 노출된다 (#2 순수 시리즈별 선택)', () => {
+    it('모든 시리즈가 평면 테이블 행으로 노출된다 (저장소 스타일)', () => {
       renderMultiSeriesModal();
       const checkboxes = screen
         .getAllByRole('checkbox')
         .filter((el) => (el as HTMLInputElement).type === 'checkbox');
-      // sensor 의 3개 시리즈(각 하위 행 체크박스) + lonely 단일 시리즈 1개 = 4개.
-      // 다중 시리즈 key 행은 그룹 헤더(체크박스 없음)이다.
+      // sensor 3개 + lonely 1개 = 4개 행 체크박스 (그룹 헤더 없음).
       expect(checkboxes.length).toBe(4);
-      // sensor 하위 행 체크박스가 존재한다.
-      expect(screen.getByTestId('series-checkbox-sensor-0')).toBeInTheDocument();
-      expect(screen.getByTestId('series-checkbox-sensor-1')).toBeInTheDocument();
-      expect(screen.getByTestId('series-checkbox-sensor-2')).toBeInTheDocument();
+      expect(screen.getByTestId(sid('sensor', 'temp', { room: '1' }))).toBeInTheDocument();
+      expect(screen.getByTestId(sid('sensor', 'temp', { room: '2' }))).toBeInTheDocument();
+      expect(screen.getByTestId(sid('sensor', 'humid', { room: '1' }))).toBeInTheDocument();
+      expect(screen.getByTestId(sid('lonely', 'status', {}))).toBeInTheDocument();
     });
 
     it('단일 시리즈만 선택하면 mutate 에 그 key + 해당 metric/tags 필터가 전달된다 (#2)', () => {
       renderMultiSeriesModal();
       // sensor 의 첫 시리즈(temp, room=1)만 선택.
-      fireEvent.click(screen.getByTestId('series-checkbox-sensor-0'));
+      fireEvent.click(screen.getByTestId(sid('sensor', 'temp', { room: '1' })));
       const execute = screen.getByRole('button', {
         name: /^실행$/,
       }) as HTMLButtonElement;
@@ -1132,8 +884,8 @@ describe('SeriesDataViewerModal', () => {
 
     it('다중 시리즈에서 두 시리즈 선택 시 같은 key 가 두 번 + 각자 필터로 전달된다 (#2)', () => {
       renderMultiSeriesModal();
-      fireEvent.click(screen.getByTestId('series-checkbox-sensor-0'));
-      fireEvent.click(screen.getByTestId('series-checkbox-sensor-2'));
+      fireEvent.click(screen.getByTestId(sid('sensor', 'temp', { room: '1' })));
+      fireEvent.click(screen.getByTestId(sid('sensor', 'humid', { room: '1' })));
       fireEvent.click(
         screen.getByRole('button', { name: /^실행$/ }) as HTMLButtonElement,
       );
@@ -1147,12 +899,7 @@ describe('SeriesDataViewerModal', () => {
 
     it('단일 시리즈 key 선택은 필터 없이 key 만 전달한다 (기존 동작 보존)', () => {
       renderMultiSeriesModal();
-      // 'lonely' 는 단일 시리즈 → key 행 체크박스.
-      const lonelyRow = screen.getByText('lonely').closest('label');
-      const lonelyCheckbox = lonelyRow!.querySelector(
-        'input[type="checkbox"]',
-      ) as HTMLInputElement;
-      fireEvent.click(lonelyCheckbox);
+      fireEvent.click(screen.getByTestId(sid('lonely', 'status', {})));
       fireEvent.click(
         screen.getByRole('button', { name: /^실행$/ }) as HTMLButtonElement,
       );

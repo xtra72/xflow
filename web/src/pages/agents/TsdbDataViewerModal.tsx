@@ -46,7 +46,6 @@ import {
   Check,
   Loader2,
   Play,
-  Search,
   X,
 } from 'lucide-react';
 
@@ -65,21 +64,14 @@ import type {
   SeriesSelectorFilter,
 } from '@/services/api/seriesDataSource';
 import { makeSeriesId } from '@/services/api/seriesLabels';
+import { SeriesSelectTable, type SeriesRow } from './SeriesSelectTable';
 import {
   useStoreKeysWithTags,
   useStoreTagPairs,
   type StoreKeyObject,
   type StoreKeyTagsMap,
   type StoreTagPair,
-  type DataType,
-  type RegistrationSource,
 } from '@/services/api/store';
-import {
-  TagFilterChips,
-  matchesTagFilter,
-} from '@/components/property/TagFilterChips';
-import { MetadataChips } from '@/components/property/MetadataChips';
-import { DATA_TYPE_OPTIONS } from '@/components/property/storeKeysValidation';
 
 import SeriesResultMatrix from './TsdbResultMatrix';
 import {
@@ -437,7 +429,6 @@ function SeriesDataViewerModalImpl({
   // SeriesID(key + metric + tags). 단일 시리즈 key 는 SeriesID 가 곧 그 시리즈를
   // 가리키고, 다중 시리즈 key 는 각 시리즈가 독립적으로 선택된다.
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
-  const [keySearch, setKeySearch] = useState('');
   const [startLocal, setStartLocal] = useState('');
   const [endLocal, setEndLocal] = useState('');
   const [intervalSelect, setIntervalSelect] = useState<IntervalValue>('1m');
@@ -472,15 +463,7 @@ function SeriesDataViewerModalImpl({
   // 5,000행 경고 확인 상태: pending 은 "경고 표시됨, 사용자 확정 대기 중".
   const [warningPending, setWarningPending] = useState(false);
 
-  // SPEC-WEB-005 v0.7.0 (M16, Task 13): 메타데이터 기반 신규 필터.
-  //   - data_type: '' (전체) | DataType (int/float/...).
-  //   - metric_type: 빈 문자열 = 전체, 비어있지 않으면 정확히 일치(부분 일치 X).
-  //   - registration: '' (전체) | 'manual' | 'auto'.
-  // 신규 필터는 Store 모드 + 부모로부터 받은 keyObjects 가 있을 때만 의미 있으며,
-  // TSDB/그 외 모드에서는 UI 가 노출되지 않는다 (메타데이터 소스 없음).
-  const [dataTypeFilter, setDataTypeFilter] = useState<'' | DataType>('');
-  const [metricTypeFilter, setMetricTypeFilter] = useState<string>('');
-  const [registrationFilter, setRegistrationFilter] = useState<'' | RegistrationSource>('');
+  // 메타데이터/태그/검색 필터는 SeriesSelectTable 내부 상태로 이동했다(컬럼별 정렬+필터).
 
   // 매트릭스 쿼리 mutation — dataSource.queryMatrix 를 호출한다.
   const mutation = useMutation<SeriesMatrix, Error, SeriesMatrixQuery>({
@@ -537,6 +520,32 @@ function SeriesDataViewerModalImpl({
     [seriesIndex],
   );
 
+  // 시리즈 선택 테이블 행 — seriesIndex 와 동일한 SeriesID 를 사용해 선택 정합성을 보장한다.
+  // 메타데이터(metric/data_type/registration/tags)는 StoreKeyObject 또는 합성 keyMeta 에서 채운다.
+  const allRows = useMemo<SeriesRow[]>(() => {
+    const rows: SeriesRow[] = [];
+    for (const [id, { key, obj }] of seriesIndex.byId) {
+      const meta = obj ?? tagFilter.keyMetaByKey[key];
+      rows.push({
+        id,
+        key,
+        metric: meta?.metric_type ?? '',
+        dataType: meta?.data_type ?? '',
+        registration: meta?.registration ?? '',
+        tags: meta?.tags ?? {},
+      });
+    }
+    return rows;
+  }, [seriesIndex, tagFilter.keyMetaByKey]);
+
+  // 일괄 선택/해제 — 테이블이 필터링한 id 목록을 받아 선택 집합에 가감한다.
+  const selectManyIds = useCallback((ids: string[]) => {
+    setSelectedSeriesIds((prev) => Array.from(new Set([...prev, ...ids])));
+  }, []);
+  const clearManyIds = useCallback((ids: string[]) => {
+    setSelectedSeriesIds((prev) => prev.filter((id) => !ids.includes(id)));
+  }, []);
+
   const modalRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
 
@@ -552,7 +561,6 @@ function SeriesDataViewerModalImpl({
     if (!isOpen) return;
     pendingInitialKeyRef.current = initialSeriesKey;
     setSelectedSeriesIds(initialSeriesKey ? seriesIdsForKey(initialSeriesKey) : []);
-    setKeySearch('');
     const nowMs = Date.now();
     setEndLocal(epochMsToDatetimeLocal(nowMs));
     setStartLocal(epochMsToDatetimeLocal(nowMs - ONE_DAY_MS));
@@ -566,10 +574,6 @@ function SeriesDataViewerModalImpl({
     setFill('');
     setResultViewMode('table');
     setWarningPending(false);
-    // SPEC-WEB-005 v0.7.0 (M16): 메타데이터 필터도 초기화한다.
-    setDataTypeFilter('');
-    setMetricTypeFilter('');
-    setRegistrationFilter('');
     mutation.reset();
     // mutation 은 ref-stable 해야 하지만 완벽히 안전하진 않으므로 exhaustive-deps 무시.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -727,98 +731,9 @@ function SeriesDataViewerModalImpl({
     intervalValid &&
     !mutation.isPending;
 
-  /**
-   * 검색어 + (Store 전용) 태그 필터 + (Store 전용) 메타데이터 필터로 필터링된
-   * 시리즈 키 옵션. 모든 필터는 AND 로직으로 결합된다.
-   *
-   * - 태그 필터: 정적 키가 아닌 키(tagsByKey 에 없음) 는 태그 필터 활성 시 모두 제외.
-   * - 메타데이터 필터: keyMetaByKey 에 없는 키(TSDB 모드 또는 메타 미수신) 는
-   *   data_type/metric_type/registration 어떤 값이든 매치하지 않으므로 필터가
-   *   활성화되면 제외된다 (보수적 정책 — 알 수 없는 키는 보여주지 않음).
-   *
-   * @spec SPEC-STORE-003
-   * @spec SPEC-WEB-005 v0.7.0 (M16)
-   */
-  const filteredKeys = useMemo(() => {
-    const q = keySearch.trim().toLowerCase();
-    const tagActive = tagFilter.selected.size > 0;
-    const metaActive =
-      dataTypeFilter !== '' || metricTypeFilter !== '' || registrationFilter !== '';
-    const trimmedMetric = metricTypeFilter.trim();
-    return allSeriesKeys.filter((k) => {
-      if (q && !k.toLowerCase().includes(q)) return false;
-      if (tagActive) {
-        const tagsForKey = tagFilter.tagsByKey[k];
-        if (!matchesTagFilter(tagsForKey, tagFilter.selected)) return false;
-      }
-      if (metaActive) {
-        const meta = tagFilter.keyMetaByKey[k];
-        if (!meta) return false;
-        if (dataTypeFilter !== '' && meta.data_type !== dataTypeFilter) return false;
-        if (trimmedMetric !== '' && meta.metric_type !== trimmedMetric) return false;
-        if (registrationFilter !== '' && meta.registration !== registrationFilter) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }, [
-    allSeriesKeys,
-    keySearch,
-    tagFilter.selected,
-    tagFilter.tagsByKey,
-    tagFilter.keyMetaByKey,
-    dataTypeFilter,
-    metricTypeFilter,
-    registrationFilter,
-  ]);
-
-  /**
-   * 메타데이터 필터 UI 노출 여부.
-   *
-   * v0.7.0 (M16): 초기에는 Store 모드에만 노출되었다.
-   * v0.7.0 (Option A): TSDB 모드에서도 키 이름 기반 합성 메타데이터를 사용해
-   *   metric_type / data_type 필터를 제공한다 (registration 은 숨김).
-   *   `useExtractedTagFilterState` 가 합성 `keyMetaByKey` 를 채우므로
-   *   기존 필터 매칭 로직 (`filteredKeys`) 은 변경 없이 양쪽에서 동작한다.
-   *
-   * @spec SPEC-WEB-005 v0.7.0 (M16, Task 13)
-   * @spec SPEC-WEB-005 v0.7.0 (Option A)
-   */
-  const showMetaFilters = true;
-  /**
-   * registration 필터 노출 여부.
-   *
-   * registration (manual / auto) 은 Store 의 정적 vs 동적 키 분류 개념이며,
-   * TSDB 시계열에는 적용되지 않는 메타데이터다. 따라서 Store 모드에서만 노출한다.
-   *
-   * @spec SPEC-WEB-005 v0.7.0 (Option A)
-   */
-  const showRegistrationFilter = dataSource.kind === 'store';
-
-  /**
-   * 현재 keyObjects 풀에서 관찰된 metric_type 후보 목록.
-   * 신규 메트릭 타입 필터의 자동완성/드롭다운 옵션으로 사용된다.
-   * unknown 도 후보로 포함되며, 사용자가 명시적으로 선택할 수 있다.
-   *
-   * @spec SPEC-WEB-005 v0.7.0 (M16, Task 13)
-   */
-  const observedMetricTypes = useMemo(() => {
-    const set = new Set<string>();
-    for (const obj of Object.values(tagFilter.keyMetaByKey)) {
-      const mt = obj.metric_type;
-      if (mt !== undefined && mt !== null && mt !== '') set.add(mt);
-    }
-    return [...set].sort();
-  }, [tagFilter.keyMetaByKey]);
-
   // --- 핸들러 ---
-
-  // 현재 필터된 key 들에 속한 모든 SeriesID(순서 보존) — 일괄선택/카운트의 단위.
-  const filteredSeriesIds = useMemo(
-    () => filteredKeys.flatMap((k) => seriesIdsForKey(k)),
-    [filteredKeys, seriesIdsForKey],
-  );
+  // 검색/태그/메타 필터링은 SeriesSelectTable 내부로 이동했다. 모달은 선택 토글과
+  // 일괄 선택/해제(selectManyIds/clearManyIds, 위에서 정의)만 보유한다.
 
   const toggleSeries = useCallback((id: string) => {
     setSelectedSeriesIds((prev) => {
@@ -826,20 +741,6 @@ function SeriesDataViewerModalImpl({
       return [...prev, id];
     });
   }, []);
-
-  // 일괄 체크: 현재 필터된 시리즈를 모두 선택에 추가(기존 선택 유지).
-  const selectAllFiltered = useCallback(() => {
-    setSelectedSeriesIds((prev) =>
-      Array.from(new Set([...prev, ...filteredSeriesIds])),
-    );
-  }, [filteredSeriesIds]);
-
-  // 일괄 언체크: 현재 필터된 시리즈를 선택에서 제거.
-  const clearAllFiltered = useCallback(() => {
-    setSelectedSeriesIds((prev) =>
-      prev.filter((id) => !filteredSeriesIds.includes(id)),
-    );
-  }, [filteredSeriesIds]);
 
   /**
    * 절대 모드의 상대 범위 프리셋 버튼 핸들러.
@@ -1019,312 +920,23 @@ function SeriesDataViewerModalImpl({
           `flex-shrink-0` 을 제거해 부모 flex-col 에서 공간 부족 시 줄어들 수 있게 한다.
         */}
         <div className="min-h-0 shrink overflow-y-auto space-y-4 border-b border-(--color-border-default) px-6 py-4">
-          {/* 시리즈 멀티셀렉트 */}
-          <fieldset>
+          {/*
+            시리즈 선택 — 저장소(StoreTab) 스타일의 정렬/필터 테이블.
+            각 컬럼에 정렬 + 다중선택 필터(facet)가 있고, 행 체크박스로 조회 대상을
+            선택한다. 필터/정렬 상태는 SeriesSelectTable 내부에서 관리한다.
+          */}
+          <fieldset data-testid="series-select-fieldset">
             <legend className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
               시리즈 선택 ({selectedSeriesIds.length}개 선택됨)
             </legend>
-            {/*
-              2열 레이아웃: 좌측 = 검색 + 체크박스 리스트, 우측 = 태그 필터링.
-              선택된 시리즈는 별도 pill 표시 없이 리스트의 체크 표시로만 확인.
-              시리즈 키가 존재하는 한 우측 영역은 항상 노출 — 페어가 비어 있어도
-              세그먼트 구분자를 조정해 자동 추출을 활성화할 수 있도록 한다.
-            */}
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {/* 좌측: 검색 입력 + 체크박스 리스트 */}
-              <div className="flex flex-col gap-2">
-                <div className="relative">
-                  <Search
-                    className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
-                    aria-hidden="true"
-                  />
-                  <input
-                    ref={firstFocusRef}
-                    type="text"
-                    placeholder="시리즈 키 검색"
-                    value={keySearch}
-                    onChange={(e) => setKeySearch(e.target.value)}
-                    className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) pl-7 pr-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                {/* 일괄 체크/언체크 (#4): 현재 필터된 시리즈 대상. */}
-                <div className="flex items-center gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={selectAllFiltered}
-                    disabled={filteredSeriesIds.length === 0}
-                    data-testid="tsdb-select-all"
-                    className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
-                  >
-                    전체 선택 ({filteredSeriesIds.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearAllFiltered}
-                    disabled={filteredSeriesIds.length === 0}
-                    data-testid="tsdb-clear-all"
-                    className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
-                  >
-                    전체 해제
-                  </button>
-                </div>
-                {/*
-                  체크박스 옵션 리스트.
-                  체크 상태만으로 선택을 표현하여 시각 노이즈 최소화.
-                  최대 높이 40vh 로 제한하여 폼 영역의 다른 섹션을 침범하지 않게 한다.
-                */}
-                <div className="max-h-[40vh] overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
-              {filteredKeys.length === 0 ? (
-                <p className="p-3 text-xs text-(--color-text-muted)">
-                  일치하는 시리즈가 없습니다.
-                </p>
-              ) : (
-                <ul>
-                  {filteredKeys.map((k) => {
-                    // 행 우측에 표시할 태그 값 목록 (자동 추출 또는 정적 태그).
-                    // 표시 영역을 과점유하지 않도록 최대 3개까지만 노출한다.
-                    const rowTags = tagFilter.tagsByKey[k];
-                    const tagValues = rowTags
-                      ? Object.values(rowTags).slice(0, 3)
-                      : [];
-                    // SPEC-WEB-005 v0.7.0 (M16): Store 모드에서 키별 메타데이터 칩 (data_type/metric_type/auto badge).
-                    const meta = tagFilter.keyMetaByKey[k];
-                    // #2 저장소 기준 분류: 같은 key 의 metric/tags 별 시리즈 목록.
-                    // 2개 이상이면 각 시리즈를 독립 선택 가능한 하위 행으로 표시한다.
-                    const series = tagFilter.seriesByKey[k] ?? [];
-                    const isMultiSeries = series.length > 1;
-                    // 단일 시리즈 key 의 SeriesID (메타 있으면 그 시리즈, 없으면 key).
-                    const singleId =
-                      series.length === 1
-                        ? makeSeriesId(series[0]!.key, series[0]!.metric_type, series[0]!.tags)
-                        : k;
-                    const singleChecked = selectedSeriesIds.includes(singleId);
-                    return (
-                      <li key={k} className="border-b border-(--color-border-default) last:border-b-0">
-                        {/*
-                          단일 시리즈 key: key 행 자체가 그 시리즈의 선택 체크박스.
-                          다중 시리즈 key: key 행은 그룹 헤더(체크박스 없음)이고,
-                          각 시리즈는 아래 하위 행에서 독립적으로 선택한다(#2 순수 시리즈별).
-                        */}
-                        {isMultiSeries ? (
-                          <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                            <span className="flex-1 truncate font-mono text-(--color-text-primary)">
-                              {k}
-                            </span>
-                            <span
-                              className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-200"
-                              data-testid={`series-count-${k}`}
-                              title={`${series.length}개 시리즈`}
-                            >
-                              {series.length} 시리즈
-                            </span>
-                          </div>
-                        ) : (
-                          <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
-                            <input
-                              type="checkbox"
-                              checked={singleChecked}
-                              onChange={() => toggleSeries(singleId)}
-                              className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600"
-                            />
-                            <span className="flex-1 truncate font-mono text-(--color-text-primary)">
-                              {k}
-                            </span>
-                            {meta && (
-                              <MetadataChips
-                                dataType={meta.data_type}
-                                metricType={meta.metric_type}
-                                registration={meta.registration}
-                                showAutoBadge
-                                className="shrink-0"
-                              />
-                            )}
-                            {tagValues.length > 0 && (
-                              <span
-                                className="flex shrink-0 items-center gap-1"
-                                data-testid={`series-row-tags-${k}`}
-                              >
-                                {tagValues.map((v, i) => (
-                                  <span
-                                    key={`${k}-tag-${i}`}
-                                    className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-medium text-(--color-text-muted)"
-                                  >
-                                    {v}
-                                  </span>
-                                ))}
-                              </span>
-                            )}
-                          </label>
-                        )}
-                        {/*
-                          #2 저장소 기준 분류: 다중 시리즈 선택 행.
-                          한 key 에 metric/tags 가 다른 시리즈가 여러 개면, 각 시리즈를
-                          개별 체크박스 행으로 들여써서(indent) 독립 선택하게 한다.
-                        */}
-                        {isMultiSeries && (
-                          <ul
-                            className="ml-4 mb-1 space-y-0.5"
-                            data-testid={`series-rows-${k}`}
-                          >
-                            {series.map((s, i) => {
-                              const sTagValues = Object.entries(s.tags);
-                              const sId = makeSeriesId(s.key, s.metric_type, s.tags);
-                              const sChecked = selectedSeriesIds.includes(sId);
-                              return (
-                                <li
-                                  key={`${k}-series-${i}`}
-                                  data-testid={`series-row-${k}-${i}`}
-                                >
-                                  <label className="flex cursor-pointer items-center gap-2 px-3 py-1 text-[11px] text-(--color-text-muted) hover:bg-(--color-bg-elevated)">
-                                    <input
-                                      type="checkbox"
-                                      checked={sChecked}
-                                      onChange={() => toggleSeries(sId)}
-                                      data-testid={`series-checkbox-${k}-${i}`}
-                                      className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600"
-                                    />
-                                    <MetadataChips
-                                      dataType={s.data_type}
-                                      metricType={s.metric_type}
-                                      registration={s.registration}
-                                      showAutoBadge
-                                      className="shrink-0"
-                                    />
-                                    {sTagValues.length > 0 && (
-                                      <span className="flex flex-wrap items-center gap-1">
-                                        {sTagValues.map(([tk, tv]) => (
-                                          <span
-                                            key={`${k}-series-${i}-tag-${tk}`}
-                                            className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-mono font-medium text-(--color-text-muted)"
-                                          >
-                                            {tk}={tv}
-                                          </span>
-                                        ))}
-                                      </span>
-                                    )}
-                                  </label>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-                </div>
-              </div>
-              {/* 우측: 태그 필터링 (구분자 + 칩 그룹) */}
-              {allSeriesKeys.length > 0 && (
-                <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5">
-                  <TagFilterChips
-                    pairs={tagFilter.pairs}
-                    selected={tagFilter.selected}
-                    onToggle={tagFilter.toggle}
-                    onClearAll={tagFilter.clearAll}
-                  />
-                </div>
-              )}
-            </div>
-            {/*
-              SPEC-WEB-005 v0.7.0 (M16, Task 13): 메타데이터 기반 신규 필터 행.
-              v0.7.0 (Option A): Store 모드 + TSDB 모드 모두 노출된다.
-                - Store: 백엔드 keyObjects 메타데이터 사용.
-                - TSDB: 키 이름 기반 합성 메타데이터 사용 (registration 은 숨김).
-              필터는 기존 태그 필터 + 검색과 AND 결합된다.
-            */}
-            {showMetaFilters && (
-              <div
-                className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-2 text-xs"
-                data-testid="series-meta-filters"
-              >
-                <span className="font-medium text-(--color-text-secondary)">
-                  메타데이터 필터:
-                </span>
-                <label className="flex items-center gap-1.5">
-                  <span className="text-(--color-text-muted)">data_type</span>
-                  <select
-                    data-testid="meta-filter-data-type"
-                    aria-label="data_type 필터"
-                    value={dataTypeFilter}
-                    onChange={(e) =>
-                      setDataTypeFilter(e.target.value as '' | DataType)
-                    }
-                    className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="">전체</option>
-                    {/*
-                      v0.7.0 (Option A): TSDB 모드는 합성 data_type 이 항상 'float'
-                      이므로 다른 옵션을 노출해도 0개 매칭이 되어 사용자 혼란을 유발한다.
-                      Store 모드는 백엔드 메타에 따라 모든 옵션을 노출한다.
-                    */}
-                    {(dataSource.kind === 'store'
-                      ? DATA_TYPE_OPTIONS
-                      : (['float'] as const)
-                    ).map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex items-center gap-1.5">
-                  <span className="text-(--color-text-muted)">metric_type</span>
-                  <input
-                    list="meta-filter-metric-options"
-                    data-testid="meta-filter-metric-type"
-                    aria-label="metric_type 필터"
-                    type="text"
-                    placeholder="전체"
-                    value={metricTypeFilter}
-                    onChange={(e) => setMetricTypeFilter(e.target.value)}
-                    className="w-32 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-mono text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <datalist id="meta-filter-metric-options">
-                    {observedMetricTypes.map((mt) => (
-                      <option key={mt} value={mt} />
-                    ))}
-                  </datalist>
-                </label>
-                {/*
-                  v0.7.0 (Option A): registration 필터는 Store 모드에만 노출.
-                  TSDB 시계열에는 manual/auto 분류 개념이 없다.
-                */}
-                {showRegistrationFilter && (
-                  <div
-                    className="inline-flex items-center gap-1.5"
-                    role="group"
-                    aria-label="registration 필터"
-                  >
-                    <span className="text-(--color-text-muted)">registration</span>
-                    <div className="inline-flex overflow-hidden rounded-md border border-(--color-border-strong)">
-                      {(['', 'manual', 'auto'] as const).map((opt) => {
-                        const label =
-                          opt === '' ? '전체' : opt === 'manual' ? 'manual' : 'auto';
-                        const selected = registrationFilter === opt;
-                        return (
-                          <button
-                            key={opt || 'all'}
-                            type="button"
-                            aria-pressed={selected}
-                            data-testid={`meta-filter-registration-${opt || 'all'}`}
-                            onClick={() => setRegistrationFilter(opt)}
-                            className={`px-2 py-1 text-xs font-medium transition-colors ${
-                              selected
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-(--color-bg-surface) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            <SeriesSelectTable
+              rows={allRows}
+              selectedIds={selectedSeriesIds}
+              onToggle={toggleSeries}
+              onSelectMany={selectManyIds}
+              onClearMany={clearManyIds}
+              showRegistration={dataSource.kind === 'store'}
+            />
           </fieldset>
 
           {/*
