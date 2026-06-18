@@ -24,7 +24,7 @@ import type {
   RemoteFlowCreateRequest,
   RemoteFlowUpdateRequest,
 } from '@/types/remote';
-import type { NodeDetail, NodeGroup } from '@/types/remote';
+import type { NodeDetail, NodeGroup, NodeUpdateRequest } from '@/types/remote';
 import * as remoteService from '@/services/api/remoteService';
 
 // 노드 라이브 상태(online/offline)는 빠르게 변하므로 짧은 폴링 주기를 둔다.
@@ -351,6 +351,68 @@ export function useClearNodeDisplay() {
       remoteService.clearRemoteNodeDisplay(instanceID),
     onSuccess: (_data, instanceID) =>
       invalidateNodeDisplayQueries(queryClient, instanceID),
+  });
+}
+
+// ---- 버전 관리 (Phase 1/2) ----
+
+const TARGET_VERSION_KEY = ['remote', 'target-version'] as const;
+const VERSION_HISTORY_KEY = (instanceID: string) =>
+  ['remote', 'nodes', instanceID, 'version-history'] as const;
+
+/** 서버 전역 목표 버전 조회 쿼리. */
+export function useTargetVersion(enabled = true) {
+  return useQuery({
+    queryKey: TARGET_VERSION_KEY,
+    queryFn: () => remoteService.getTargetVersion(),
+    enabled,
+  });
+}
+
+/**
+ * 서버 전역 목표 버전 설정 뮤테이션. 성공 시 목표 버전 + 노드 목록(outdated 재계산)을
+ * 무효화한다.
+ */
+export function useSetTargetVersion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (version: string) => remoteService.setTargetVersion(version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: TARGET_VERSION_KEY });
+      queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+    },
+  });
+}
+
+/** 노드 버전 변경 이력 조회 쿼리(최신순). */
+export function useNodeVersionHistory(instanceID: string, enabled = true) {
+  return useQuery({
+    queryKey: VERSION_HISTORY_KEY(instanceID),
+    queryFn: () => remoteService.getNodeVersionHistory(instanceID),
+    enabled: enabled && !!instanceID,
+  });
+}
+
+/**
+ * 노드 원격 업데이트(system/update) 뮤테이션 (Phase 2). 성공 시 노드 prefix(상세/버전)
+ * + 목록 + 해당 노드 버전 이력을 무효화한다. 미승인/오프라인(503)·타임아웃(504)·적용
+ * 실패(502) 는 APIError 로 호출자에게 전파된다.
+ */
+export function useUpdateNode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      req,
+    }: {
+      instanceID: string;
+      req: NodeUpdateRequest;
+    }) => remoteService.updateNode(instanceID, req),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['remote', 'nodes', variables.instanceID] });
+      queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+      queryClient.invalidateQueries({ queryKey: VERSION_HISTORY_KEY(variables.instanceID) });
+    },
   });
 }
 

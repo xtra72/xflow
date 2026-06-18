@@ -27,6 +27,13 @@ vi.mock('@/components/remote/NodeDisplayResolutionSection', () => ({
   ),
 }));
 
+// 버전 관리 섹션은 별도로 테스트되므로 여기서는 스텁으로 대체한다(useRemote 버전 훅 격리).
+vi.mock('@/components/remote/VersionManagementSection', () => ({
+  VersionManagementSection: ({ instanceId }: { instanceId: string }) => (
+    <div data-testid="version-management-stub" data-instance-id={instanceId} />
+  ),
+}));
+
 // 통합 페이지는 target/hideRemoteBanner prop 을 캡처하는 스텁으로 대체한다
 // (라우팅·배너 위임 검증 격리). 스텁은 hideRemoteBanner 가 true 인 동안 실제
 // 페이지가 배너를 렌더하지 않음을 표현하기 위해 배너 자체는 그리지 않는다.

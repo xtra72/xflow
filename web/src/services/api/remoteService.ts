@@ -29,6 +29,8 @@ import type {
   MirroredResource,
   NodeDetail,
   NodeGroup,
+  NodeUpdateRequest,
+  NodeVersionHistoryEntry,
   PreRegisterRequest,
   RemoteAgentCreateRequest,
   RemoteAgentUpdateRequest,
@@ -36,6 +38,7 @@ import type {
   RemoteFlowUpdateRequest,
   RemoteModeResponse,
   RemoteResourceResult,
+  TargetVersion,
 } from '@/types/remote';
 
 import { del, get, patch, post, put } from './client';
@@ -254,6 +257,52 @@ export async function sendCommand(
   req: CommandRequest,
 ): Promise<CommandResult> {
   return post<CommandResult>(`/remote/nodes/${encodeId(instanceID)}/command`, req);
+}
+
+// ---- 버전 관리 (Phase 1/2) ----
+
+/**
+ * 서버 전역 목표 버전을 조회한다. GET /remote/target-version
+ * 미설정이면 { version: "" } 를 반환한다.
+ */
+export async function getTargetVersion(): Promise<TargetVersion> {
+  return get<TargetVersion>('/remote/target-version');
+}
+
+/**
+ * 서버 전역 목표 버전을 설정한다. PUT /remote/target-version  본문: { version }
+ * 빈 문자열은 목표 버전 해제(outdated 비활성)를 의미한다.
+ */
+export async function setTargetVersion(version: string): Promise<TargetVersion> {
+  return put<TargetVersion>('/remote/target-version', { version });
+}
+
+/**
+ * 한 노드의 버전 변경 이력을 최신순으로 조회한다.
+ * GET /remote/nodes/{instance_id}/version-history?limit=N
+ */
+export async function getNodeVersionHistory(
+  instanceID: string,
+  limit?: number,
+): Promise<NodeVersionHistoryEntry[]> {
+  const q = limit && limit > 0 ? `?limit=${limit}` : '';
+  return get<NodeVersionHistoryEntry[]>(
+    `/remote/nodes/${encodeId(instanceID)}/version-history${q}`,
+  );
+}
+
+/**
+ * 승인+온라인 노드에 자가 업데이트를 명령한다 (버전 관리 Phase 2).
+ * POST /remote/nodes/{instance_id}/update  본문: { version, channel?, restart? }
+ *
+ * 명령 디스패치(M3)를 재사용하므로 미승인/오프라인 503, 타임아웃 504, 적용 실패 502 로
+ * 매핑된다. 결과는 노드의 SystemUpdateResult(new_version/restart_required 등)이다.
+ */
+export async function updateNode(
+  instanceID: string,
+  req: NodeUpdateRequest,
+): Promise<CommandResult> {
+  return post<CommandResult>(`/remote/nodes/${encodeId(instanceID)}/update`, req);
 }
 
 // ---- 노드별 미러 조회 (G03) ----

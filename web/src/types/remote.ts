@@ -71,6 +71,35 @@ export interface ManagedNode {
   group_name?: string;
   /** 마지막 수신 시각 (epoch ms, 0 = 미수신). */
   last_seen: number;
+  /**
+   * 관리자 지정 목표 버전 대비 구버전 여부 (버전 관리 Phase 1). 목표 버전 미설정/
+   * 비-semver 면 false. 구버전 백엔드 응답에는 없을 수 있으므로 선택적.
+   */
+  outdated?: boolean;
+}
+
+/** 서버 전역 목표 버전 (버전 관리 Phase 1). GET/PUT /remote/target-version */
+export interface TargetVersion {
+  /** 목표 버전 문자열 (vMAJOR.MINOR.PATCH). 빈 문자열 = 미설정/해제. */
+  version: string;
+}
+
+/** 노드 버전 변경 이력 한 줄 (버전 관리 Phase 1). */
+export interface NodeVersionHistoryEntry {
+  /** 변경 후 버전 문자열. */
+  version: string;
+  /** 변경 감지 시각 (epoch ms). */
+  changed_at: number;
+}
+
+/** 노드 원격 업데이트 요청 (버전 관리 Phase 2). POST /remote/nodes/{id}/update */
+export interface NodeUpdateRequest {
+  /** 목표 버전 (vMAJOR.MINOR.PATCH). 빈 값 = 채널 최신. */
+  version?: string;
+  /** 릴리스 채널 (stable/beta/nightly). 빈 값 = 노드 기본. */
+  channel?: string;
+  /** true 면 바이너리 교체 후 노드 graceful 재시작. */
+  restart?: boolean;
 }
 
 // ---- 노드 그룹핑 + 시스템 정보 + 운영 요약 (v1.4 M9, 그룹 K, REQ-K01~K10) ----

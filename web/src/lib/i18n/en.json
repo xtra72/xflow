@@ -396,7 +396,8 @@
       "approve": "Approve",
       "reject": "Reject",
       "revoke": "Revoke",
-      "delete": "Delete"
+      "delete": "Delete",
+      "update": "Update"
     },
     "confirm": {
       "rejectTitle": "Reject this node?",
@@ -404,7 +405,9 @@
       "revokeTitle": "Revoke this node?",
       "revokeDesc": "This revokes approval for {node}. The node will no longer receive commands. This action cannot be undone.",
       "deleteTitle": "Delete this node?",
-      "deleteDesc": "This permanently removes {node} from the list. This action cannot be undone."
+      "deleteDesc": "This permanently removes {node} from the list. This action cannot be undone.",
+      "updateTitle": "Update node",
+      "updateDesc": "Update this node to the target version. The binary will be replaced; if the restart option is on, the node restarts afterward. Continue?"
     },
     "toast": {
       "approved": "Node approved.",
@@ -412,7 +415,10 @@
       "revoked": "Node revoked.",
       "deleted": "Node deleted.",
       "preRegistered": "Node registered.",
-      "actionFailed": "Failed to complete the action."
+      "actionFailed": "Failed to complete the action.",
+      "targetSaved": "Target version saved",
+      "updateStarted": "Update command sent",
+      "updateFailed": "Update failed"
     },
     "preRegister": {
       "button": "Add node (pre-register)",
@@ -649,6 +655,21 @@
         "fixed": "Node resolution",
         "fixedHint": "Pixel-exact replica on a fixed node-resolution canvas. The resolution setting is only used in this mode."
       }
+    },
+    "version": {
+      "title": "Version Management",
+      "current": "Current version",
+      "target": "Target version",
+      "targetPlaceholder": "e.g. v1.3.0 (empty to clear)",
+      "save": "Save",
+      "outdated": "Outdated",
+      "upToDate": "Up to date",
+      "noTarget": "No target version set",
+      "update": "Update",
+      "restart": "Restart after update",
+      "history": "Version history",
+      "historyEmpty": "No version changes recorded.",
+      "changedAt": "Changed at"
     }
   },
   "flowPicker": {
