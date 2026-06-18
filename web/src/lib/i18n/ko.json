@@ -592,7 +592,24 @@
       "toast": {
         "assigned": "노드 그룹을 변경했습니다.",
         "cleared": "노드를 전체로 환원했습니다.",
-        "failed": "그룹 변경을 처리하지 못했습니다."
+        "failed": "그룹 변경을 처리하지 못했습니다.",
+        "renamed": "그룹 이름을 변경했습니다",
+        "deleted": "그룹을 삭제했습니다",
+        "updateDispatched": "그룹 업데이트 명령을 전송했습니다",
+        "opFailed": "그룹 작업에 실패했습니다"
+      },
+      "manage": {
+        "title": "그룹 관리",
+        "rename": "이름변경",
+        "delete": "삭제",
+        "update": "일괄 업데이트",
+        "restart": "업데이트 후 재시작",
+        "node": "노드",
+        "noGroups": "관리할 그룹이 없습니다. 먼저 노드를 그룹에 배정하세요.",
+        "confirmDeleteTitle": "그룹 삭제",
+        "confirmDeleteDesc": "이 그룹을 삭제하고 모든 노드를 '전체' 버킷으로 이동합니다. 계속할까요?",
+        "confirmUpdateTitle": "그룹 일괄 업데이트",
+        "confirmUpdateDesc": "그룹 내 모든 승인·온라인 노드를 목표 버전으로 원격 업데이트합니다. 계속할까요?"
       }
     },
     "dashboard": {

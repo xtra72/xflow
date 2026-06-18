@@ -416,6 +416,53 @@ export function useUpdateNode() {
   });
 }
 
+// ---- 그룹 관리(일괄) ----
+
+/** 그룹 변경 뮤테이션 성공 시 노드 목록 + 그룹 목록을 무효화한다. */
+function invalidateGroupOps(queryClient: ReturnType<typeof useQueryClient>): void {
+  queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+  queryClient.invalidateQueries({ queryKey: GROUPS_KEY });
+}
+
+/** 그룹 일괄 이름변경 뮤테이션. */
+export function useRenameGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ oldName, newName }: { oldName: string; newName: string }) =>
+      remoteService.renameGroup(oldName, newName),
+    onSuccess: () => invalidateGroupOps(queryClient),
+  });
+}
+
+/** 그룹 삭제(멤버를 "전체"로 이동) 뮤테이션. */
+export function useDeleteGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => remoteService.deleteGroup(name),
+    onSuccess: () => invalidateGroupOps(queryClient),
+  });
+}
+
+/** 그룹 일괄 원격 업데이트 뮤테이션. 성공 시 노드/그룹 무효화(버전 변동 반영). */
+export function useUpdateGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, req }: { name: string; req: NodeUpdateRequest }) =>
+      remoteService.updateGroup(name, req),
+    onSuccess: () => invalidateGroupOps(queryClient),
+  });
+}
+
+/** 그룹 일괄 명령 뮤테이션. */
+export function useCommandGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, req }: { name: string; req: CommandRequest }) =>
+      remoteService.commandGroup(name, req),
+    onSuccess: () => invalidateGroupOps(queryClient),
+  });
+}
+
 // ---- Enrollment 토큰 쿼리/뮤테이션 ----
 
 /** enrollment 토큰 목록 쿼리 키. */

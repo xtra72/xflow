@@ -92,6 +92,14 @@ export interface NodeVersionHistoryEntry {
   changed_at: number;
 }
 
+/** 그룹 일괄 명령/업데이트의 노드별 결과 (그룹 관리). */
+export interface GroupDispatchResult {
+  instance_id: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
 /** 노드 원격 업데이트 요청 (버전 관리 Phase 2). POST /remote/nodes/{id}/update */
 export interface NodeUpdateRequest {
   /** 목표 버전 (vMAJOR.MINOR.PATCH). 빈 값 = 채널 최신. */

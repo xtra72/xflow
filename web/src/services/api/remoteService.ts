@@ -25,6 +25,7 @@ import type {
   EnrollmentToken,
   EnrollmentTokenCreated,
   EnrollmentTokenCreateRequest,
+  GroupDispatchResult,
   ManagedNode,
   MirroredResource,
   NodeDetail,
@@ -41,7 +42,7 @@ import type {
   TargetVersion,
 } from '@/types/remote';
 
-import { del, get, patch, post, put } from './client';
+import { del, delWith, get, patch, post, put } from './client';
 
 /** instance_id 를 URL 경로에 안전하게 인코딩한다. */
 function encodeId(instanceID: string): string {
@@ -303,6 +304,37 @@ export async function updateNode(
   req: NodeUpdateRequest,
 ): Promise<CommandResult> {
   return post<CommandResult>(`/remote/nodes/${encodeId(instanceID)}/update`, req);
+}
+
+// ---- 그룹 관리 (일괄) ----
+
+/** 그룹을 일괄 이름변경한다. PUT /remote/groups/{name}  본문: { new_name } */
+export async function renameGroup(
+  oldName: string,
+  newName: string,
+): Promise<{ group_name: string; moved: number }> {
+  return put(`/remote/groups/${encodeId(oldName)}`, { new_name: newName });
+}
+
+/** 그룹을 삭제(멤버를 "전체"로 이동)한다. DELETE /remote/groups/{name} */
+export async function deleteGroup(name: string): Promise<{ moved: number }> {
+  return delWith<{ moved: number }>(`/remote/groups/${encodeId(name)}`);
+}
+
+/** 그룹 내 승인·온라인 노드를 일괄 원격 업데이트한다. POST /remote/groups/{name}/update */
+export async function updateGroup(
+  name: string,
+  req: NodeUpdateRequest,
+): Promise<{ group_name: string; results: GroupDispatchResult[] }> {
+  return post(`/remote/groups/${encodeId(name)}/update`, req);
+}
+
+/** 그룹 내 승인·온라인 노드에 임의 명령을 일괄 디스패치한다. POST /remote/groups/{name}/command */
+export async function commandGroup(
+  name: string,
+  req: CommandRequest,
+): Promise<{ group_name: string; results: GroupDispatchResult[] }> {
+  return post(`/remote/groups/${encodeId(name)}/command`, req);
 }
 
 // ---- 노드별 미러 조회 (G03) ----

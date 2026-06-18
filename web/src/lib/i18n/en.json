@@ -592,7 +592,24 @@
       "toast": {
         "assigned": "Node group updated.",
         "cleared": "Node returned to All.",
-        "failed": "Failed to update group."
+        "failed": "Failed to update group.",
+        "renamed": "Group renamed",
+        "deleted": "Group deleted",
+        "updateDispatched": "Group update command sent",
+        "opFailed": "Group operation failed"
+      },
+      "manage": {
+        "title": "Group Management",
+        "rename": "Rename",
+        "delete": "Delete",
+        "update": "Bulk update",
+        "restart": "Restart after update",
+        "node": "nodes",
+        "noGroups": "No groups to manage. Assign nodes to a group first.",
+        "confirmDeleteTitle": "Delete group",
+        "confirmDeleteDesc": "Delete this group and move all its nodes to the 'All' bucket. Continue?",
+        "confirmUpdateTitle": "Bulk update group",
+        "confirmUpdateDesc": "Remotely update all approved/online nodes in this group to the target version. Continue?"
       }
     },
     "dashboard": {

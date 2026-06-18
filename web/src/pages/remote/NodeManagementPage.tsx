@@ -26,6 +26,7 @@ import {
   type ManagerViewTab,
 } from '@/components/remote/ManagerViewTopBar';
 import { NodeDashboard } from '@/components/remote/NodeDashboard';
+import { GroupManagementPanel } from '@/components/remote/GroupManagementPanel';
 import { RemoteNotServerNotice } from '@/components/remote/RemoteNotServerNotice';
 import {
   useClearNodeGroup,
@@ -234,12 +235,16 @@ export default function NodeManagementPage(): React.JSX.Element {
         ) : (
           <div
             data-testid="node-management-no-selection"
-            className="flex h-full min-h-64 flex-col items-center justify-center rounded-lg border border-dashed border-(--color-border-default) bg-(--color-bg-surface) p-8 text-center"
+            className="flex h-full min-h-64 flex-col items-center gap-6 p-8"
           >
-            <Network className="h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
-            <p className="mt-3 text-sm text-(--color-text-muted)">
-              {t('remote.managerView.selectNodeHint')}
-            </p>
+            <div className="flex flex-col items-center text-center">
+              <Network className="h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+              <p className="mt-3 text-sm text-(--color-text-muted)">
+                {t('remote.managerView.selectNodeHint')}
+              </p>
+            </div>
+            {/* 노드 미선택 시 그룹 일괄 관리(이름변경/삭제/업데이트) 패널을 노출한다. */}
+            <GroupManagementPanel groups={sortedGroups} />
           </div>
         )}
       </div>
