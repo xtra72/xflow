@@ -28,19 +28,19 @@ type HealthChecker interface {
 
 // Server 는 HTTP 서버의 라이프사이클을 관리한다.
 type Server struct {
-	config       *config.ServerConfig
-	router       *Router
-	httpServer   *http.Server
-	logger       *slog.Logger
-	observer     *observe.Observer
-	stats        *statsCollector
-	listener     net.Listener
-	healthDeps   map[string]HealthChecker
-	mu           sync.RWMutex
-	state        lifecycle.State
-	startedAt    time.Time
-	authEnabled  bool
-	jwtSvc       *auth.JWTService
+	config      *config.ServerConfig
+	router      *Router
+	httpServer  *http.Server
+	logger      *slog.Logger
+	observer    *observe.Observer
+	stats       *statsCollector
+	listener    net.Listener
+	healthDeps  map[string]HealthChecker
+	mu          sync.RWMutex
+	state       lifecycle.State
+	startedAt   time.Time
+	authEnabled bool
+	jwtSvc      *auth.JWTService
 }
 
 // ServerOption 은 Server 구성을 위한 함수 옵션이다.
@@ -243,16 +243,32 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.mu.Unlock()
 
+	// TLS 활성화 여부는 설정 옵션(server.tls.enabled)으로 결정한다.
+	// cert/key 파일 존재는 config 로드 시 validateTLS 에서 이미 보장된다.
+	tlsEnabled := s.config.TLS.Enabled
+	scheme := "http"
+	if tlsEnabled {
+		scheme = "https"
+	}
+
 	s.logger.Info("서버 시작",
 		slog.String("addr", ln.Addr().String()),
+		slog.String("scheme", scheme),
 		slog.String("mode", s.config.Mode),
 	)
 
-	// Serve는 블로킹이므로 고루틴에서 실행한다
+	// Serve는 블로킹이므로 고루틴에서 실행한다.
+	// TLS 가 켜져 있으면 ServeTLS 로 cert/key 를 적용해 HTTPS 로 서빙한다.
 	errCh := make(chan error, 1)
 	go func() {
-		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
-			errCh <- err
+		var serveErr error
+		if tlsEnabled {
+			serveErr = s.httpServer.ServeTLS(ln, s.config.TLS.CertFile, s.config.TLS.KeyFile)
+		} else {
+			serveErr = s.httpServer.Serve(ln)
+		}
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- serveErr
 		}
 		close(errCh)
 	}()
