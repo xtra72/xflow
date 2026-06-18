@@ -56,6 +56,7 @@ import {
   isValidInterval,
   parseIntervalToMs,
   type TsdbAggregation,
+  type TsdbFill,
 } from '@/services/api/tsdb';
 import type {
   SeriesDataSource,
@@ -112,6 +113,17 @@ const AGGREGATION_OPTIONS: { value: TsdbAggregation; label: string }[] = [
   { value: 'min', label: '최소 (min)' },
   { value: 'max', label: '최대 (max)' },
   { value: 'average', label: '평균 (average)' },
+  { value: 'first', label: '첫번째 (first)' },
+  { value: 'last', label: '마지막 (last)' },
+];
+
+/** 빈 버킷 채우기(gap-fill) 전략 옵션. 인터벌 구간에 값이 없을 때 적용. */
+const FILL_OPTIONS: { value: TsdbFill; label: string }[] = [
+  { value: '', label: '비움(생략)' },
+  { value: 'null', label: '빈 값(null)' },
+  { value: 'previous', label: '이전값' },
+  { value: 'avg', label: '전/후 평균' },
+  { value: 'zero', label: '0' },
 ];
 
 /** 상대 범위 프리셋 (지속 시간 ms). */
@@ -426,6 +438,8 @@ function SeriesDataViewerModalImpl({
   const [intervalSelect, setIntervalSelect] = useState<IntervalValue>('1m');
   const [customInterval, setCustomInterval] = useState('');
   const [aggregation, setAggregation] = useState<TsdbAggregation>('average');
+  // 빈 버킷 채우기(gap-fill) 전략. ''=빈 버킷 생략(기본). 인터벌 적용 시에만 의미.
+  const [fill, setFill] = useState<TsdbFill>('');
   // SPEC-WEB-005: 평균 집계 시 표시할 소수점 자릿수 (0-6, 기본 1).
   // min/max 집계에서는 무시되며 원본 값이 그대로 표시된다.
   const [decimalPrecision, setDecimalPrecision] = useState<number>(1);
@@ -820,6 +834,7 @@ function SeriesDataViewerModalImpl({
       endMs: resolvedEnd,
       intervalMs,
       aggregation,
+      fill,
     });
   }, [
     canExecute,
@@ -827,6 +842,7 @@ function SeriesDataViewerModalImpl({
     resolveQueryRange,
     effectiveInterval,
     aggregation,
+    fill,
     mutation,
   ]);
 
@@ -1444,6 +1460,32 @@ function SeriesDataViewerModalImpl({
                     </p>
                   </div>
                 )}
+
+                {/* 빈 버킷 채우기(gap-fill): 인터벌 구간에 값이 없을 때 처리 방법 */}
+                <div className="mt-3">
+                  <label
+                    htmlFor="tsdb-fill"
+                    className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+                  >
+                    빈 구간 채우기
+                  </label>
+                  <select
+                    id="tsdb-fill"
+                    data-testid="tsdb-fill"
+                    value={fill}
+                    onChange={(e) => setFill(e.target.value as TsdbFill)}
+                    className="block w-44 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    {FILL_OPTIONS.map((opt) => (
+                      <option key={opt.value || 'none'} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-(--color-text-muted)">
+                    인터벌 구간에 값이 없을 때: 이전값/전후 평균/0/빈 값으로 채우거나 생략
+                  </p>
+                </div>
               </fieldset>
             </div>
           </div>

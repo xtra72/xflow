@@ -320,8 +320,19 @@ export function bucketAndAggregate(
  */
 function toBackendAggregation(
   aggregation: SeriesMatrixQuery['aggregation'],
-): 'min' | 'max' | 'avg' {
-  return aggregation === 'average' ? 'avg' : aggregation;
+): 'min' | 'max' | 'avg' | null {
+  switch (aggregation) {
+    case 'average':
+      return 'avg';
+    case 'min':
+      return 'min';
+    case 'max':
+      return 'max';
+    default:
+      // first/last 는 store 백엔드 서버 집계가 미지원 → null 반환하여
+      // 클라이언트 측 bucketAndAggregate(aggregateValues) 경로를 사용한다.
+      return null;
+  }
 }
 
 /**
@@ -419,37 +430,41 @@ async function fetchKeySeries(
   const url = `/store/${encodeURIComponent(agentName)}/query`;
   const config = signal ? { signal } : undefined;
 
-  // 1차: 서버 측 집계 시도.
-  const serverBody: StoreQueryRequest = {
-    key,
-    mode: 'time_range',
-    start_ms: params.startMs,
-    end_ms: params.endMs,
-    namespace: 'default',
-    interval_ms: params.intervalMs,
-    aggregation: toBackendAggregation(params.aggregation),
-  };
+  // 1차: 서버 측 집계 시도 (백엔드가 지원하는 집계일 때만).
+  const backendAgg = toBackendAggregation(params.aggregation);
+  if (backendAgg !== null) {
+    const serverBody: StoreQueryRequest = {
+      key,
+      mode: 'time_range',
+      start_ms: params.startMs,
+      end_ms: params.endMs,
+      namespace: 'default',
+      interval_ms: params.intervalMs,
+      aggregation: backendAgg,
+    };
 
-  try {
-    const resp = await post<StoreQueryRawResponse>(url, serverBody, config);
-    // 서버 집계 응답: 각 엔트리는 "버킷 시작 시각 + 집계값 (+ labels)" 이다.
-    // labels 기준으로 시리즈를 분리해 각 시리즈의 버킷 맵을 구성한다.
-    const groups = groupEntriesBySeries(resp?.entries ?? []);
-    const out: KeySeries[] = [];
-    for (const [signature, g] of groups) {
-      out.push({
-        signature,
-        labels: g.labels,
-        buckets: collectAggregatedBuckets(g.entries),
-      });
+    try {
+      const resp = await post<StoreQueryRawResponse>(url, serverBody, config);
+      // 서버 집계 응답: 각 엔트리는 "버킷 시작 시각 + 집계값 (+ labels)" 이다.
+      // labels 기준으로 시리즈를 분리해 각 시리즈의 버킷 맵을 구성한다.
+      const groups = groupEntriesBySeries(resp?.entries ?? []);
+      const out: KeySeries[] = [];
+      for (const [signature, g] of groups) {
+        out.push({
+          signature,
+          labels: g.labels,
+          buckets: collectAggregatedBuckets(g.entries),
+        });
+      }
+      return out;
+    } catch (err) {
+      if (!isAggregationUnsupportedError(err)) {
+        throw err;
+      }
+      // 4xx: 구버전 서버 또는 파라미터 불허 → 클라이언트 집계 경로로 폴백.
     }
-    return out;
-  } catch (err) {
-    if (!isAggregationUnsupportedError(err)) {
-      throw err;
-    }
-    // 4xx: 구버전 서버 또는 파라미터 불허 → 클라이언트 집계 경로로 폴백.
   }
+  // first/last 또는 서버 미지원: 원본 엔트리 요청 + 클라이언트 측 버킷화/집계.
 
   // 2차: 원본 엔트리 요청 + 클라이언트 측 버킷화/집계. 폴백 경로도 labels 기준으로
   // 시리즈를 분리한 뒤 시리즈별로 bucketAndAggregate 를 적용한다.

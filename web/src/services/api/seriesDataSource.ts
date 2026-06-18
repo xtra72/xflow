@@ -39,8 +39,13 @@ export interface SeriesMatrixQuery {
   endMs: number;
   /** 버킷 크기 — milliseconds. Go duration 파서 결과를 전달받는다. */
   intervalMs: number;
-  /** 집계 함수 — UI 표기(`average`) 그대로 전달한다. */
-  aggregation: 'min' | 'max' | 'average';
+  /** 집계 함수 — UI 표기(`average`) 그대로 전달한다. first/last 는 버킷 내 첫/마지막 값. */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /**
+   * 빈 버킷 채우기 전략(인터벌 구간에 값이 없을 때). 생략/'' 이면 빈 버킷 생략.
+   * TSDB 소스는 백엔드에서 계산한다. Store 소스는 현재 미지원(무시).
+   */
+  fill?: '' | 'null' | 'zero' | 'previous' | 'avg';
 }
 
 /**
@@ -149,6 +154,10 @@ export function aggregateValues(
       for (const v of values) sum += v;
       return sum / values.length;
     }
+    case 'first':
+      return values[0]!;
+    case 'last':
+      return values[values.length - 1]!;
     default: {
       // 타입 가드: exhaustive switch 를 컴파일 시 강제.
       const _exhaustive: never = aggregation;
