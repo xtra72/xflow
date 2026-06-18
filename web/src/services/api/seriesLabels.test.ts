@@ -6,7 +6,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   METRIC_LABEL_KEY,
+  SERIES_ID_SEPARATOR,
   formatSeriesLabel,
+  makeSeriesId,
   parseSeriesLabels,
   seriesDisplayName,
   seriesSignature,
@@ -70,6 +72,42 @@ describe('seriesSignature', () => {
     const s2 = seriesSignature({ [METRIC_LABEL_KEY]: 'temp', room: '2' });
     const s3 = seriesSignature({ [METRIC_LABEL_KEY]: 'humid', room: '1' });
     expect(new Set([s1, s2, s3]).size).toBe(3);
+  });
+});
+
+describe('makeSeriesId', () => {
+  it('key + metric + tags 를 NUL 구분 결정적 ID 로 만든다', () => {
+    const id = makeSeriesId('sensor', 'temp', { room: '1' });
+    expect(id).toBe(`sensor${SERIES_ID_SEPARATOR}temp|room=1`);
+  });
+
+  it('tag 입력 순서가 달라도 같은 ID (서명 정규화)', () => {
+    const a = makeSeriesId('s', 'temp', { b: '2', a: '1' });
+    const b = makeSeriesId('s', 'temp', { a: '1', b: '2' });
+    expect(a).toBe(b);
+  });
+
+  it('metric/tags 가 없으면 빈 서명 → `key<NUL>`', () => {
+    expect(makeSeriesId('lonely', '', undefined)).toBe(
+      `lonely${SERIES_ID_SEPARATOR}`,
+    );
+    expect(makeSeriesId('lonely', undefined, {})).toBe(
+      `lonely${SERIES_ID_SEPARATOR}`,
+    );
+  });
+
+  it('같은 key 의 서로 다른 시리즈는 다른 ID 를 가진다 (#2 시리즈별 분류)', () => {
+    const a = makeSeriesId('sensor', 'temp', { room: '1' });
+    const b = makeSeriesId('sensor', 'temp', { room: '2' });
+    const c = makeSeriesId('sensor', 'humid', { room: '1' });
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+
+  it('selectorSignature(store) 와 동일 규칙 — ID 의 서명부가 seriesSignature 와 일치', () => {
+    const labels = { [METRIC_LABEL_KEY]: 'temp', room: '1' };
+    const id = makeSeriesId('sensor', 'temp', { room: '1' });
+    const sigPart = id.slice(`sensor${SERIES_ID_SEPARATOR}`.length);
+    expect(sigPart).toBe(seriesSignature(labels));
   });
 });
 

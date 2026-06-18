@@ -1099,28 +1099,67 @@ describe('SeriesDataViewerModal', () => {
       expect(screen.queryByTestId('series-rows-lonely')).toBeNull();
     });
 
-    it('key 는 dedupe 되어 체크박스가 key 당 하나만 노출된다', () => {
+    it('각 시리즈가 독립 체크박스로 노출된다 (#2 순수 시리즈별 선택)', () => {
       renderMultiSeriesModal();
       const checkboxes = screen
         .getAllByRole('checkbox')
         .filter((el) => (el as HTMLInputElement).type === 'checkbox');
-      // sensor, lonely → 2개 (시리즈 행은 체크박스가 아니라 정보 표시 전용).
-      expect(checkboxes.length).toBe(2);
+      // sensor 의 3개 시리즈(각 하위 행 체크박스) + lonely 단일 시리즈 1개 = 4개.
+      // 다중 시리즈 key 행은 그룹 헤더(체크박스 없음)이다.
+      expect(checkboxes.length).toBe(4);
+      // sensor 하위 행 체크박스가 존재한다.
+      expect(screen.getByTestId('series-checkbox-sensor-0')).toBeInTheDocument();
+      expect(screen.getByTestId('series-checkbox-sensor-1')).toBeInTheDocument();
+      expect(screen.getByTestId('series-checkbox-sensor-2')).toBeInTheDocument();
     });
 
-    it('다중 시리즈 key 선택 시 mutate 에는 key 가 1개만 전달된다 (시리즈 분리는 응답 단계)', () => {
+    it('단일 시리즈만 선택하면 mutate 에 그 key + 해당 metric/tags 필터가 전달된다 (#2)', () => {
       renderMultiSeriesModal();
-      const checkboxes = screen
-        .getAllByRole('checkbox')
-        .filter((el) => (el as HTMLInputElement).type === 'checkbox');
-      fireEvent.click(checkboxes[0]!);
+      // sensor 의 첫 시리즈(temp, room=1)만 선택.
+      fireEvent.click(screen.getByTestId('series-checkbox-sensor-0'));
       const execute = screen.getByRole('button', {
         name: /^실행$/,
       }) as HTMLButtonElement;
       expect(execute.disabled).toBe(false);
       fireEvent.click(execute);
       const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
+      // 다중 시리즈 key 이므로 key 1개 + 시리즈 필터로 정확히 한 시리즈만 좁힌다.
       expect(arg.keys).toEqual(['sensor']);
+      expect(arg.seriesFilters).toEqual([
+        { metricType: 'temp', tags: { room: '1' } },
+      ]);
+    });
+
+    it('다중 시리즈에서 두 시리즈 선택 시 같은 key 가 두 번 + 각자 필터로 전달된다 (#2)', () => {
+      renderMultiSeriesModal();
+      fireEvent.click(screen.getByTestId('series-checkbox-sensor-0'));
+      fireEvent.click(screen.getByTestId('series-checkbox-sensor-2'));
+      fireEvent.click(
+        screen.getByRole('button', { name: /^실행$/ }) as HTMLButtonElement,
+      );
+      const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
+      expect(arg.keys).toEqual(['sensor', 'sensor']);
+      expect(arg.seriesFilters).toEqual([
+        { metricType: 'temp', tags: { room: '1' } },
+        { metricType: 'humid', tags: { room: '1' } },
+      ]);
+    });
+
+    it('단일 시리즈 key 선택은 필터 없이 key 만 전달한다 (기존 동작 보존)', () => {
+      renderMultiSeriesModal();
+      // 'lonely' 는 단일 시리즈 → key 행 체크박스.
+      const lonelyRow = screen.getByText('lonely').closest('label');
+      const lonelyCheckbox = lonelyRow!.querySelector(
+        'input[type="checkbox"]',
+      ) as HTMLInputElement;
+      fireEvent.click(lonelyCheckbox);
+      fireEvent.click(
+        screen.getByRole('button', { name: /^실행$/ }) as HTMLButtonElement,
+      );
+      const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
+      expect(arg.keys).toEqual(['lonely']);
+      // 단일 시리즈는 필터를 전송하지 않는다(undefined → 키 생략).
+      expect(arg.seriesFilters).toBeUndefined();
     });
   });
 });

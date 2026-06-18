@@ -655,6 +655,82 @@ describe('queryStoreMatrix: 다중 시리즈 분리 (labels)', () => {
   });
 });
 
+describe('queryStoreMatrix: seriesFilters 시리즈별 조회 (#2)', () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it('seriesFilters 로 한 key 의 응답을 지정한 시리즈로만 좁힌다', async () => {
+    // 백엔드는 key 의 모든 시리즈를 평탄화해 반환하지만, filter 서명과
+    // 일치하는 시리즈(temp/room=2)만 남아 단일 컬럼이 된다.
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 1_000, value: 21, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 1_000, value: 22, labels: { __metric__: 'temp', room: '2' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      seriesFilters: [{ metricType: 'temp', tags: { room: '2' } }],
+      startMs: 1_000,
+      endMs: 4_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // filter 일치 시리즈 1개. 같은 key 가 1회만 요청되었으므로 라벨 미부착.
+    expect(m.columns).toEqual(['sensor']);
+    expect(m.rows).toEqual([{ bucketStartMs: 1_000, values: [22] }]);
+  });
+
+  it('같은 key 를 두 시리즈 필터로 중복 요청하면 각각 분리된 라벨 컬럼이 된다', async () => {
+    // 두 번 요청되므로 매번 같은 응답을 반환(각 호출에서 서로 다른 시리즈로 좁혀짐).
+    postMock.mockResolvedValue({
+      entries: [
+        { timestamp: 0, value: 21, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 0, value: 22, labels: { __metric__: 'temp', room: '2' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor', 'sensor'],
+      seriesFilters: [
+        { metricType: 'temp', tags: { room: '1' } },
+        { metricType: 'temp', tags: { room: '2' } },
+      ],
+      startMs: 0,
+      endMs: 3_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // 같은 key 가 2회 요청 → 라벨 강제 부착으로 컬럼명 충돌 방지.
+    expect(m.columns).toEqual(['sensor · temp{room=1}', 'sensor · temp{room=2}']);
+    expect(m.rows).toEqual([{ bucketStartMs: 0, values: [21, 22] }]);
+  });
+
+  it('filter 미지정(undefined)이면 모든 시리즈를 반환한다 (기존 동작 보존)', async () => {
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 0, value: 1, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 0, value: 2, labels: { __metric__: 'temp', room: '2' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      seriesFilters: [undefined],
+      startMs: 0,
+      endMs: 3_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    expect(m.columns).toEqual(['sensor · temp{room=1}', 'sensor · temp{room=2}']);
+  });
+});
+
 // ---- fetchStoreTagPairs / fetchStoreKeysWithTags (SPEC-STORE-003) ----
 
 describe('fetchStoreTagPairs', () => {

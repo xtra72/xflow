@@ -21,6 +21,9 @@
 /** 백엔드가 metric_type 을 담는 예약 라벨 키. (Go: seriesLabels) */
 export const METRIC_LABEL_KEY = '__metric__';
 
+/** 시리즈 ID 의 `key` 와 서명 구분자 — 키/라벨에 등장하지 않는 NUL. */
+export const SERIES_ID_SEPARATOR = String.fromCharCode(0);
+
 /** labels 맵을 metric 과 tags 로 분해한 결과. */
 export interface ParsedSeriesLabels {
   /** `__metric__` 값. 없으면 빈 문자열. */
@@ -71,6 +74,26 @@ export function seriesSignature(
   const tagKeys = Object.keys(tags).sort();
   const tagPart = tagKeys.map((k) => `${k}=${tags[k]}`).join(',');
   return `${metric}|${tagPart}`;
+}
+
+/**
+ * (key + metric_type + tags) 로부터 결정적 시리즈 식별자를 만든다.
+ *
+ * 저장소 기준 분류(SeriesID = key + metric + tags)와 동일한 단위로, 시리즈별 선택
+ * 상태의 키로 사용한다. `key` 와 `seriesSignature` 사이를 NUL()로 구분해
+ * 키/라벨에 등장하지 않는 경계를 보장한다.
+ *
+ * metric 이 비어있고 tags 도 없으면 서명은 ""(라벨 없는 단일 시리즈)이 되어
+ * `${key}` 형태가 된다.
+ */
+export function makeSeriesId(
+  key: string,
+  metric: string | undefined,
+  tags: Record<string, string> | undefined,
+): string {
+  const labels: Record<string, string> = { ...(tags ?? {}) };
+  if (metric) labels[METRIC_LABEL_KEY] = metric;
+  return `${key}${SERIES_ID_SEPARATOR}${seriesSignature(labels)}`;
 }
 
 /**

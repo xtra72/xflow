@@ -56,12 +56,15 @@ import {
   isValidInterval,
   parseIntervalToMs,
   type TsdbAggregation,
+  type TsdbFill,
 } from '@/services/api/tsdb';
 import type {
   SeriesDataSource,
   SeriesMatrix,
   SeriesMatrixQuery,
+  SeriesSelectorFilter,
 } from '@/services/api/seriesDataSource';
+import { makeSeriesId } from '@/services/api/seriesLabels';
 import {
   useStoreKeysWithTags,
   useStoreTagPairs,
@@ -112,6 +115,17 @@ const AGGREGATION_OPTIONS: { value: TsdbAggregation; label: string }[] = [
   { value: 'min', label: '최소 (min)' },
   { value: 'max', label: '최대 (max)' },
   { value: 'average', label: '평균 (average)' },
+  { value: 'first', label: '첫번째 (first)' },
+  { value: 'last', label: '마지막 (last)' },
+];
+
+/** 빈 버킷 채우기(gap-fill) 전략 옵션. 인터벌 구간에 값이 없을 때 적용. */
+const FILL_OPTIONS: { value: TsdbFill; label: string }[] = [
+  { value: '', label: '비움(생략)' },
+  { value: 'null', label: '빈 값(null)' },
+  { value: 'previous', label: '이전값' },
+  { value: 'avg', label: '전/후 평균' },
+  { value: 'zero', label: '0' },
 ];
 
 /** 상대 범위 프리셋 (지속 시간 ms). */
@@ -419,13 +433,18 @@ function SeriesDataViewerModalImpl({
   agentName,
 }: SeriesDataViewerModalProps) {
   // --- 폼 상태 ---
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  // 시리즈별 선택(저장소 기준 분류 #2): 선택 단위는 key 가 아니라
+  // SeriesID(key + metric + tags). 단일 시리즈 key 는 SeriesID 가 곧 그 시리즈를
+  // 가리키고, 다중 시리즈 key 는 각 시리즈가 독립적으로 선택된다.
+  const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const [keySearch, setKeySearch] = useState('');
   const [startLocal, setStartLocal] = useState('');
   const [endLocal, setEndLocal] = useState('');
   const [intervalSelect, setIntervalSelect] = useState<IntervalValue>('1m');
   const [customInterval, setCustomInterval] = useState('');
   const [aggregation, setAggregation] = useState<TsdbAggregation>('average');
+  // 빈 버킷 채우기(gap-fill) 전략. ''=빈 버킷 생략(기본). 인터벌 적용 시에만 의미.
+  const [fill, setFill] = useState<TsdbFill>('');
   // SPEC-WEB-005: 평균 집계 시 표시할 소수점 자릿수 (0-6, 기본 1).
   // min/max 집계에서는 무시되며 원본 값이 그대로 표시된다.
   const [decimalPrecision, setDecimalPrecision] = useState<number>(1);
@@ -442,8 +461,8 @@ function SeriesDataViewerModalImpl({
   const [relativeCustom, setRelativeCustom] = useState('');
 
   // 세그먼트 구분자 — 키 패턴에서 태그를 자동 추출할 때 사용한다.
-  // 모달 오픈 시 기본값 (':') 으로 리셋되며, 사용자가 헤더에서 변경 가능하다.
-  const [separator, setSeparator] = useState<string>(DEFAULT_SEGMENT_SEPARATOR);
+  // 구분자 필터링 UI 는 제거되었고(#3), 표준 기본 구분자로 고정한다.
+  const separator = DEFAULT_SEGMENT_SEPARATOR;
 
   // 결과 표시 모드 (테이블/차트). 모달에서 보유하여 "다시 실행" 시
   // 결과 컴포넌트가 unmount/remount 되어도 사용자 선택이 보존되도록 한다.
@@ -478,15 +497,61 @@ function SeriesDataViewerModalImpl({
     separator,
   );
 
+  /**
+   * SeriesID 인덱스 (#2 저장소 기준 분류).
+   *
+   * - `byId`: SeriesID → { key, obj? }. obj 는 StoreKeyObject(메타데이터가 있을 때).
+   * - `idsByKey`: key → 그 key 에 속한 SeriesID 목록(렌더/일괄선택 순서 보존).
+   *
+   * 메타데이터가 전혀 없는 key 는 "암묵적 단일 시리즈"로 취급하여 SeriesID = key
+   * 로 둔다(필터 없이 key 단위 조회 → 기존 동작 보존).
+   */
+  const seriesIndex = useMemo(() => {
+    const byId = new Map<string, { key: string; obj?: StoreKeyObject }>();
+    const idsByKey = new Map<string, string[]>();
+    const keysUnion = new Set<string>([
+      ...allSeriesKeys,
+      ...Object.keys(tagFilter.seriesByKey),
+    ]);
+    for (const k of keysUnion) {
+      const arr = tagFilter.seriesByKey[k] ?? [];
+      const ids: string[] = [];
+      if (arr.length === 0) {
+        // 메타데이터 없는 key → 암묵적 단일 시리즈(SeriesID = key).
+        byId.set(k, { key: k });
+        ids.push(k);
+      } else {
+        for (const o of arr) {
+          const id = makeSeriesId(o.key, o.metric_type, o.tags);
+          byId.set(id, { key: o.key, obj: o });
+          ids.push(id);
+        }
+      }
+      idsByKey.set(k, ids);
+    }
+    return { byId, idsByKey };
+  }, [allSeriesKeys, tagFilter.seriesByKey]);
+
+  const seriesIdsForKey = useCallback(
+    (key: string): string[] => seriesIndex.idsByKey.get(key) ?? [key],
+    [seriesIndex],
+  );
+
   const modalRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
 
   // --- 모달 오픈 시 상태 초기화 ---
   // 시간 범위는 매번 "지난 1일" 로 리셋한다 (사용자 입력은 오픈 중에만 보존).
   // 모드는 매번 'absolute' 로 리셋되어 기존 기본 동작을 보존한다.
+  // initialSeriesKey(키 문자열)를 SeriesID 로 해석하기 위한 대기 표식.
+  // 모달 오픈 시점에는 Store 메타데이터(seriesByKey)가 아직 로드되지 않았을 수
+  // 있으므로, 즉시 해석을 시도하되 실패하면 아래 resolver 가 뒤늦게 채운다.
+  const pendingInitialKeyRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     if (!isOpen) return;
-    setSelectedKeys(initialSeriesKey ? [initialSeriesKey] : []);
+    pendingInitialKeyRef.current = initialSeriesKey;
+    setSelectedSeriesIds(initialSeriesKey ? seriesIdsForKey(initialSeriesKey) : []);
     setKeySearch('');
     const nowMs = Date.now();
     setEndLocal(epochMsToDatetimeLocal(nowMs));
@@ -498,7 +563,7 @@ function SeriesDataViewerModalImpl({
     setRangeMode('relative');
     setRelativeSelect(RELATIVE_DEFAULT);
     setRelativeCustom('');
-    setSeparator(DEFAULT_SEGMENT_SEPARATOR);
+    setFill('');
     setResultViewMode('table');
     setWarningPending(false);
     // SPEC-WEB-005 v0.7.0 (M16): 메타데이터 필터도 초기화한다.
@@ -509,6 +574,21 @@ function SeriesDataViewerModalImpl({
     // mutation 은 ref-stable 해야 하지만 완벽히 안전하진 않으므로 exhaustive-deps 무시.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialSeriesKey]);
+
+  // initialSeriesKey resolver: 오픈 직후 Store 메타데이터가 비어 SeriesID 해석에
+  // 실패했다면, seriesByKey 가 로드되는 시점에 한 번 더 시도해 초기 선택을 채운다.
+  useEffect(() => {
+    if (!isOpen) return;
+    const k = pendingInitialKeyRef.current;
+    if (!k) return;
+    const ids = seriesIdsForKey(k);
+    // 암묵적 단일 시리즈(ids === [k]) 는 이미 오픈 시 반영되었으므로,
+    // 메타데이터 기반 SeriesID 가 새로 확보되었을 때만 갱신한다.
+    if (ids.length > 0 && !(ids.length === 1 && ids[0] === k)) {
+      setSelectedSeriesIds(ids);
+      pendingInitialKeyRef.current = undefined;
+    }
+  }, [isOpen, seriesIdsForKey]);
 
   // --- Esc 키 / 배경 클릭 닫기 ---
   useEffect(() => {
@@ -642,7 +722,7 @@ function SeriesDataViewerModalImpl({
   ]);
 
   const canExecute =
-    selectedKeys.length > 0 &&
+    selectedSeriesIds.length > 0 &&
     timeRangeValid &&
     intervalValid &&
     !mutation.isPending;
@@ -734,27 +814,32 @@ function SeriesDataViewerModalImpl({
 
   // --- 핸들러 ---
 
-  const toggleKey = useCallback((key: string) => {
-    setSelectedKeys((prev) => {
-      if (prev.includes(key)) return prev.filter((k) => k !== key);
-      return [...prev, key];
+  // 현재 필터된 key 들에 속한 모든 SeriesID(순서 보존) — 일괄선택/카운트의 단위.
+  const filteredSeriesIds = useMemo(
+    () => filteredKeys.flatMap((k) => seriesIdsForKey(k)),
+    [filteredKeys, seriesIdsForKey],
+  );
+
+  const toggleSeries = useCallback((id: string) => {
+    setSelectedSeriesIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      return [...prev, id];
     });
   }, []);
 
-  /**
-   * 세그먼트 구분자 변경 핸들러.
-   *
-   * 구분자가 바뀌면 키에서 추출되는 태그 키 (`seg0`, `seg1`, ...) 가 달라지거나
-   * 사라질 수 있으므로 기존에 선택해둔 태그 필터(`tagFilter.selected`)는 더 이상
-   * 유효하지 않다. 혼란을 방지하기 위해 변경 즉시 선택을 초기화한다.
-   */
-  const handleSeparatorChange = useCallback(
-    (next: string) => {
-      setSeparator(next);
-      tagFilter.clearAll();
-    },
-    [tagFilter],
-  );
+  // 일괄 체크: 현재 필터된 시리즈를 모두 선택에 추가(기존 선택 유지).
+  const selectAllFiltered = useCallback(() => {
+    setSelectedSeriesIds((prev) =>
+      Array.from(new Set([...prev, ...filteredSeriesIds])),
+    );
+  }, [filteredSeriesIds]);
+
+  // 일괄 언체크: 현재 필터된 시리즈를 선택에서 제거.
+  const clearAllFiltered = useCallback(() => {
+    setSelectedSeriesIds((prev) =>
+      prev.filter((id) => !filteredSeriesIds.includes(id)),
+    );
+  }, [filteredSeriesIds]);
 
   /**
    * 절대 모드의 상대 범위 프리셋 버튼 핸들러.
@@ -807,7 +892,25 @@ function SeriesDataViewerModalImpl({
 
   const performQuery = useCallback(() => {
     if (!canExecute) return;
-    const orderedKeys = [...selectedKeys];
+    // 선택된 SeriesID 를 (key, seriesFilter) 쌍으로 환원한다(#2 저장소 기준 분류).
+    //   - 단일 시리즈 key: filter 없이 key 단위 조회(기존 동작 보존).
+    //   - 다중 시리즈 key: 같은 key 가 여러 번 등장하며 각자 metric/tags 필터로 구분.
+    const orderedKeys: string[] = [];
+    const seriesFilters: Array<SeriesSelectorFilter | undefined> = [];
+    for (const id of selectedSeriesIds) {
+      const entry = seriesIndex.byId.get(id);
+      if (!entry) continue;
+      const arr = tagFilter.seriesByKey[entry.key] ?? [];
+      const isMulti = arr.length > 1;
+      orderedKeys.push(entry.key);
+      seriesFilters.push(
+        isMulti && entry.obj
+          ? { metricType: entry.obj.metric_type, tags: entry.obj.tags }
+          : undefined,
+      );
+    }
+    if (orderedKeys.length === 0) return;
+    const anyFilter = seriesFilters.some((f) => f !== undefined);
     // Go duration 을 milliseconds 로 역환산. 유효성은 위에서 이미 확인됨.
     const intervalMs = parseIntervalToMs(effectiveInterval);
     // 상대 모드는 실행 시점의 now 로 재계산된다.
@@ -816,17 +919,22 @@ function SeriesDataViewerModalImpl({
     setLastQueryRange({ startMs: resolvedStart, endMs: resolvedEnd });
     mutation.mutate({
       keys: orderedKeys,
+      ...(anyFilter ? { seriesFilters } : {}),
       startMs: resolvedStart,
       endMs: resolvedEnd,
       intervalMs,
       aggregation,
+      fill,
     });
   }, [
     canExecute,
-    selectedKeys,
+    selectedSeriesIds,
+    seriesIndex,
+    tagFilter.seriesByKey,
     resolveQueryRange,
     effectiveInterval,
     aggregation,
+    fill,
     mutation,
   ]);
 
@@ -914,7 +1022,7 @@ function SeriesDataViewerModalImpl({
           {/* 시리즈 멀티셀렉트 */}
           <fieldset>
             <legend className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
-              시리즈 선택 ({selectedKeys.length}개 선택됨)
+              시리즈 선택 ({selectedSeriesIds.length}개 선택됨)
             </legend>
             {/*
               2열 레이아웃: 좌측 = 검색 + 체크박스 리스트, 우측 = 태그 필터링.
@@ -939,6 +1047,27 @@ function SeriesDataViewerModalImpl({
                     className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) pl-7 pr-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
+                {/* 일괄 체크/언체크 (#4): 현재 필터된 시리즈 대상. */}
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={selectAllFiltered}
+                    disabled={filteredSeriesIds.length === 0}
+                    data-testid="tsdb-select-all"
+                    className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
+                  >
+                    전체 선택 ({filteredSeriesIds.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAllFiltered}
+                    disabled={filteredSeriesIds.length === 0}
+                    data-testid="tsdb-clear-all"
+                    className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
+                  >
+                    전체 해제
+                  </button>
+                </div>
                 {/*
                   체크박스 옵션 리스트.
                   체크 상태만으로 선택을 표현하여 시각 노이즈 최소화.
@@ -952,7 +1081,6 @@ function SeriesDataViewerModalImpl({
               ) : (
                 <ul>
                   {filteredKeys.map((k) => {
-                    const checked = selectedKeys.includes(k);
                     // 행 우측에 표시할 태그 값 목록 (자동 추출 또는 정적 태그).
                     // 표시 영역을 과점유하지 않도록 최대 3개까지만 노출한다.
                     const rowTags = tagFilter.tagsByKey[k];
@@ -961,24 +1089,28 @@ function SeriesDataViewerModalImpl({
                       : [];
                     // SPEC-WEB-005 v0.7.0 (M16): Store 모드에서 키별 메타데이터 칩 (data_type/metric_type/auto badge).
                     const meta = tagFilter.keyMetaByKey[k];
-                    // SPEC-STORE-004 (M5): 같은 key 의 metric/tags 별 시리즈 목록.
-                    // 2개 이상이면 각 시리즈를 구분된 하위 행으로 표시한다.
+                    // #2 저장소 기준 분류: 같은 key 의 metric/tags 별 시리즈 목록.
+                    // 2개 이상이면 각 시리즈를 독립 선택 가능한 하위 행으로 표시한다.
                     const series = tagFilter.seriesByKey[k] ?? [];
                     const isMultiSeries = series.length > 1;
+                    // 단일 시리즈 key 의 SeriesID (메타 있으면 그 시리즈, 없으면 key).
+                    const singleId =
+                      series.length === 1
+                        ? makeSeriesId(series[0]!.key, series[0]!.metric_type, series[0]!.tags)
+                        : k;
+                    const singleChecked = selectedSeriesIds.includes(singleId);
                     return (
                       <li key={k} className="border-b border-(--color-border-default) last:border-b-0">
-                        <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleKey(k)}
-                            className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600"
-                          />
-                          <span className="flex-1 truncate font-mono text-(--color-text-primary)">
-                            {k}
-                          </span>
-                          {/* 시리즈가 여러 개면 개수 배지를 표시 (선택 시 모두 조회됨을 시사). */}
-                          {isMultiSeries && (
+                        {/*
+                          단일 시리즈 key: key 행 자체가 그 시리즈의 선택 체크박스.
+                          다중 시리즈 key: key 행은 그룹 헤더(체크박스 없음)이고,
+                          각 시리즈는 아래 하위 행에서 독립적으로 선택한다(#2 순수 시리즈별).
+                        */}
+                        {isMultiSeries ? (
+                          <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                            <span className="flex-1 truncate font-mono text-(--color-text-primary)">
+                              {k}
+                            </span>
                             <span
                               className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-200"
                               data-testid={`series-count-${k}`}
@@ -986,75 +1118,91 @@ function SeriesDataViewerModalImpl({
                             >
                               {series.length} 시리즈
                             </span>
-                          )}
-                          {/* 단일 시리즈: 기존처럼 대표 메타 칩을 인라인 표시. */}
-                          {!isMultiSeries && meta && (
-                            <MetadataChips
-                              dataType={meta.data_type}
-                              metricType={meta.metric_type}
-                              registration={meta.registration}
-                              showAutoBadge
-                              className="shrink-0"
+                          </div>
+                        ) : (
+                          <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
+                            <input
+                              type="checkbox"
+                              checked={singleChecked}
+                              onChange={() => toggleSeries(singleId)}
+                              className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600"
                             />
-                          )}
-                          {!isMultiSeries && tagValues.length > 0 && (
-                            <span
-                              className="flex shrink-0 items-center gap-1"
-                              data-testid={`series-row-tags-${k}`}
-                            >
-                              {tagValues.map((v, i) => (
-                                <span
-                                  key={`${k}-tag-${i}`}
-                                  className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-medium text-(--color-text-muted)"
-                                >
-                                  {v}
-                                </span>
-                              ))}
+                            <span className="flex-1 truncate font-mono text-(--color-text-primary)">
+                              {k}
                             </span>
-                          )}
-                        </label>
+                            {meta && (
+                              <MetadataChips
+                                dataType={meta.data_type}
+                                metricType={meta.metric_type}
+                                registration={meta.registration}
+                                showAutoBadge
+                                className="shrink-0"
+                              />
+                            )}
+                            {tagValues.length > 0 && (
+                              <span
+                                className="flex shrink-0 items-center gap-1"
+                                data-testid={`series-row-tags-${k}`}
+                              >
+                                {tagValues.map((v, i) => (
+                                  <span
+                                    key={`${k}-tag-${i}`}
+                                    className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-medium text-(--color-text-muted)"
+                                  >
+                                    {v}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
+                          </label>
+                        )}
                         {/*
-                          SPEC-STORE-004 (M5): 다중 시리즈 구분 행.
-                          한 key 에 metric/tags 가 다른 시리즈가 여러 개면, key 행 아래에
-                          각 시리즈를 별도 행으로 들여써서(indent) 표시한다. 선택 자체는
-                          key 단위이므로(체크 시 모든 시리즈가 차트에서 개별 라인으로 분리됨)
-                          하위 행은 정보 표시 전용이다.
+                          #2 저장소 기준 분류: 다중 시리즈 선택 행.
+                          한 key 에 metric/tags 가 다른 시리즈가 여러 개면, 각 시리즈를
+                          개별 체크박스 행으로 들여써서(indent) 독립 선택하게 한다.
                         */}
                         {isMultiSeries && (
                           <ul
-                            className="ml-7 mb-1 space-y-0.5"
+                            className="ml-4 mb-1 space-y-0.5"
                             data-testid={`series-rows-${k}`}
                           >
                             {series.map((s, i) => {
                               const sTagValues = Object.entries(s.tags);
+                              const sId = makeSeriesId(s.key, s.metric_type, s.tags);
+                              const sChecked = selectedSeriesIds.includes(sId);
                               return (
                                 <li
                                   key={`${k}-series-${i}`}
-                                  className="flex items-center gap-2 px-3 py-1 text-[11px] text-(--color-text-muted)"
                                   data-testid={`series-row-${k}-${i}`}
                                 >
-                                  <span aria-hidden="true" className="text-(--color-text-muted)">
-                                    └
-                                  </span>
-                                  <MetadataChips
-                                    dataType={s.data_type}
-                                    metricType={s.metric_type}
-                                    registration={s.registration}
-                                    showAutoBadge
-                                    className="shrink-0"
-                                  />
-                                  {sTagValues.length > 0 && (
-                                    <span className="flex flex-wrap items-center gap-1">
-                                      {sTagValues.map(([tk, tv]) => (
-                                        <span
-                                          key={`${k}-series-${i}-tag-${tk}`}
-                                          className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-mono font-medium text-(--color-text-muted)"
-                                        >
-                                          {tk}={tv}
-                                        </span>
-                                      ))}
-                                    </span>
-                                  )}
+                                  <label className="flex cursor-pointer items-center gap-2 px-3 py-1 text-[11px] text-(--color-text-muted) hover:bg-(--color-bg-elevated)">
+                                    <input
+                                      type="checkbox"
+                                      checked={sChecked}
+                                      onChange={() => toggleSeries(sId)}
+                                      data-testid={`series-checkbox-${k}-${i}`}
+                                      className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600"
+                                    />
+                                    <MetadataChips
+                                      dataType={s.data_type}
+                                      metricType={s.metric_type}
+                                      registration={s.registration}
+                                      showAutoBadge
+                                      className="shrink-0"
+                                    />
+                                    {sTagValues.length > 0 && (
+                                      <span className="flex flex-wrap items-center gap-1">
+                                        {sTagValues.map(([tk, tv]) => (
+                                          <span
+                                            key={`${k}-series-${i}-tag-${tk}`}
+                                            className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-mono font-medium text-(--color-text-muted)"
+                                          >
+                                            {tk}={tv}
+                                          </span>
+                                        ))}
+                                      </span>
+                                    )}
+                                  </label>
                                 </li>
                               );
                             })}
@@ -1075,8 +1223,6 @@ function SeriesDataViewerModalImpl({
                     selected={tagFilter.selected}
                     onToggle={tagFilter.toggle}
                     onClearAll={tagFilter.clearAll}
-                    separator={separator}
-                    onSeparatorChange={handleSeparatorChange}
                   />
                 </div>
               )}
@@ -1444,6 +1590,32 @@ function SeriesDataViewerModalImpl({
                     </p>
                   </div>
                 )}
+
+                {/* 빈 버킷 채우기(gap-fill): 인터벌 구간에 값이 없을 때 처리 방법 */}
+                <div className="mt-3">
+                  <label
+                    htmlFor="tsdb-fill"
+                    className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+                  >
+                    빈 구간 채우기
+                  </label>
+                  <select
+                    id="tsdb-fill"
+                    data-testid="tsdb-fill"
+                    value={fill}
+                    onChange={(e) => setFill(e.target.value as TsdbFill)}
+                    className="block w-44 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    {FILL_OPTIONS.map((opt) => (
+                      <option key={opt.value || 'none'} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-(--color-text-muted)">
+                    인터벌 구간에 값이 없을 때: 이전값/전후 평균/0/빈 값으로 채우거나 생략
+                  </p>
+                </div>
               </fieldset>
             </div>
           </div>

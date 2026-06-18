@@ -164,6 +164,14 @@ func (h *TSDBHandler) Query(ctx api.Context) error {
 		q.BucketInterval = d
 	}
 
+	// 빈 버킷 채우기 전략 (버킷 다운샘플링 시에만 의미)
+	switch tsdb.FillStrategy(req.Fill) {
+	case tsdb.FillNone, tsdb.FillNull, tsdb.FillZero, tsdb.FillPrevious, tsdb.FillAvg:
+		q.Fill = tsdb.FillStrategy(req.Fill)
+	default:
+		return api.ErrBadRequest.WithMessage("invalid fill strategy: " + req.Fill + " (allowed: null, zero, previous, avg)")
+	}
+
 	results, err := h.db.Execute(q)
 	if err != nil {
 		return api.MapDomainError(err)
@@ -213,7 +221,7 @@ const (
 //   - page:     1 이상 정수. 기본 1. 0 또는 음수는 1 로 클램프.
 //   - size:     페이지 크기. 기본 25. 0 이면 기본값. 100 초과 시 100 으로 클램프.
 //   - agent_id: 선택. 향후 멀티 인스턴스 TSDB 라우팅용 식별자. 현재는 파싱만 하고
-//               싱글톤 인스턴스로 라우팅한다.
+//     싱글톤 인스턴스로 라우팅한다.
 //
 // 하위 호환성: page 와 size 가 모두 부재하면 기존 응답 포맷 ({series, count}) 을
 // 그대로 유지하며 pagination 필드는 JSON 에 포함되지 않는다 (omitempty).

@@ -30,6 +30,7 @@ import {
   type SeriesKeysQueryResult,
   type SeriesMatrix,
   type SeriesMatrixQuery,
+  type SeriesSelectorFilter,
 } from './seriesDataSource';
 import { seriesDisplayName, seriesSignature } from './seriesLabels';
 
@@ -320,8 +321,19 @@ export function bucketAndAggregate(
  */
 function toBackendAggregation(
   aggregation: SeriesMatrixQuery['aggregation'],
-): 'min' | 'max' | 'avg' {
-  return aggregation === 'average' ? 'avg' : aggregation;
+): 'min' | 'max' | 'avg' | null {
+  switch (aggregation) {
+    case 'average':
+      return 'avg';
+    case 'min':
+      return 'min';
+    case 'max':
+      return 'max';
+    default:
+      // first/last 는 store 백엔드 서버 집계가 미지원 → null 반환하여
+      // 클라이언트 측 bucketAndAggregate(aggregateValues) 경로를 사용한다.
+      return null;
+  }
 }
 
 /**
@@ -410,46 +422,67 @@ function collectAggregatedBuckets(entries: StoreQueryEntry[]): Map<number, numbe
  * 단계에서 각각 독립 컬럼으로 배치된다. 같은 key 에서 시리즈가 1개뿐이면 배열
  * 길이도 1 이고, 그 시리즈의 라벨이 비어있으면 기존 단일 컬럼 동작과 동일하다.
  */
+/**
+ * 시리즈 필터(저장소 기준 분류)를 결정적 서명으로 직렬화한다.
+ * `KeySeries.signature` 와 같은 규칙(seriesSignature)을 사용하므로, 같은
+ * (metric, tags) 조합이면 동일한 서명을 만들어 정확히 매칭된다.
+ */
+function selectorSignature(filter: SeriesSelectorFilter): string {
+  const labels: Record<string, string> = { ...(filter.tags ?? {}) };
+  if (filter.metricType) labels['__metric__'] = filter.metricType;
+  return seriesSignature(labels);
+}
+
 async function fetchKeySeries(
   agentName: string,
   key: string,
   params: SeriesMatrixQuery,
   signal: AbortSignal | undefined,
+  filter?: SeriesSelectorFilter,
 ): Promise<KeySeries[]> {
   const url = `/store/${encodeURIComponent(agentName)}/query`;
   const config = signal ? { signal } : undefined;
+  // 시리즈별 선택(저장소 기준 분류): filter 가 주어지면, 응답에서 분리된 시리즈
+  // 중 서명이 일치하는 것만 남긴다. filter 미지정이면 모든 시리즈를 반환한다(기존 동작).
+  const targetSig = filter ? selectorSignature(filter) : null;
+  const applyFilter = (series: KeySeries[]): KeySeries[] =>
+    targetSig === null ? series : series.filter((s) => s.signature === targetSig);
 
-  // 1차: 서버 측 집계 시도.
-  const serverBody: StoreQueryRequest = {
-    key,
-    mode: 'time_range',
-    start_ms: params.startMs,
-    end_ms: params.endMs,
-    namespace: 'default',
-    interval_ms: params.intervalMs,
-    aggregation: toBackendAggregation(params.aggregation),
-  };
+  // 1차: 서버 측 집계 시도 (백엔드가 지원하는 집계일 때만).
+  const backendAgg = toBackendAggregation(params.aggregation);
+  if (backendAgg !== null) {
+    const serverBody: StoreQueryRequest = {
+      key,
+      mode: 'time_range',
+      start_ms: params.startMs,
+      end_ms: params.endMs,
+      namespace: 'default',
+      interval_ms: params.intervalMs,
+      aggregation: backendAgg,
+    };
 
-  try {
-    const resp = await post<StoreQueryRawResponse>(url, serverBody, config);
-    // 서버 집계 응답: 각 엔트리는 "버킷 시작 시각 + 집계값 (+ labels)" 이다.
-    // labels 기준으로 시리즈를 분리해 각 시리즈의 버킷 맵을 구성한다.
-    const groups = groupEntriesBySeries(resp?.entries ?? []);
-    const out: KeySeries[] = [];
-    for (const [signature, g] of groups) {
-      out.push({
-        signature,
-        labels: g.labels,
-        buckets: collectAggregatedBuckets(g.entries),
-      });
+    try {
+      const resp = await post<StoreQueryRawResponse>(url, serverBody, config);
+      // 서버 집계 응답: 각 엔트리는 "버킷 시작 시각 + 집계값 (+ labels)" 이다.
+      // labels 기준으로 시리즈를 분리해 각 시리즈의 버킷 맵을 구성한다.
+      const groups = groupEntriesBySeries(resp?.entries ?? []);
+      const out: KeySeries[] = [];
+      for (const [signature, g] of groups) {
+        out.push({
+          signature,
+          labels: g.labels,
+          buckets: collectAggregatedBuckets(g.entries),
+        });
+      }
+      return applyFilter(out);
+    } catch (err) {
+      if (!isAggregationUnsupportedError(err)) {
+        throw err;
+      }
+      // 4xx: 구버전 서버 또는 파라미터 불허 → 클라이언트 집계 경로로 폴백.
     }
-    return out;
-  } catch (err) {
-    if (!isAggregationUnsupportedError(err)) {
-      throw err;
-    }
-    // 4xx: 구버전 서버 또는 파라미터 불허 → 클라이언트 집계 경로로 폴백.
   }
+  // first/last 또는 서버 미지원: 원본 엔트리 요청 + 클라이언트 측 버킷화/집계.
 
   // 2차: 원본 엔트리 요청 + 클라이언트 측 버킷화/집계. 폴백 경로도 labels 기준으로
   // 시리즈를 분리한 뒤 시리즈별로 bucketAndAggregate 를 적용한다.
@@ -476,7 +509,7 @@ async function fetchKeySeries(
       ),
     });
   }
-  return out;
+  return applyFilter(out);
 }
 
 /**
@@ -511,13 +544,24 @@ export async function queryStoreMatrix(
   }
 
   // 키별로 시리즈 배열을 병렬 조회 (서버 집계 우선, 4xx 시 폴백).
-  // 같은 인덱스의 결과가 같은 요청 key 에 대응한다.
+  // 같은 인덱스의 결과가 같은 요청 (key, seriesFilters[idx]) 에 대응한다.
+  // 시리즈별 선택 시 같은 key 가 metric/tags 가 다른 채로 여러 인덱스에 중복될 수 있다.
   const perKeySeries: KeySeries[][] = await Promise.all(
-    params.keys.map((key) => fetchKeySeries(agentName, key, params, signal)),
+    params.keys.map((key, idx) =>
+      fetchKeySeries(agentName, key, params, signal, params.seriesFilters?.[idx]),
+    ),
   );
 
-  // 요청 key 순서를 보존하며 모든 시리즈를 컬럼으로 평탄화한다.
-  // 한 key 의 시리즈가 2개 이상이면 라벨 표기를 덧붙여 컬럼명을 구분한다.
+  // 같은 key 가 몇 번 요청되었는지 — 시리즈별 선택으로 한 key 가 여러 인덱스에
+  // 나뉘어 오면 컬럼명이 충돌하므로 라벨 표기를 강제한다.
+  const keyRequestCount = new Map<string, number>();
+  for (const key of params.keys) {
+    keyRequestCount.set(key, (keyRequestCount.get(key) ?? 0) + 1);
+  }
+
+  // 요청 순서를 보존하며 모든 시리즈를 컬럼으로 평탄화한다.
+  // 한 key 의 시리즈가 2개 이상이거나, 같은 key 가 여러 인덱스로 중복 요청되면
+  // 라벨 표기를 덧붙여 컬럼명을 구분한다.
   const columns: string[] = [];
   const columnBuckets: Array<Map<number, number>> = [];
   params.keys.forEach((key, idx) => {
@@ -528,7 +572,7 @@ export async function queryStoreMatrix(
       columnBuckets.push(new Map<number, number>());
       return;
     }
-    const withLabel = seriesList.length > 1;
+    const withLabel = seriesList.length > 1 || (keyRequestCount.get(key) ?? 0) > 1;
     for (const series of seriesList) {
       columns.push(seriesDisplayName(key, series.labels, withLabel));
       columnBuckets.push(series.buckets);
