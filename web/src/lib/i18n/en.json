@@ -596,7 +596,8 @@
         "renamed": "Group renamed",
         "deleted": "Group deleted",
         "updateDispatched": "Group update command sent",
-        "opFailed": "Group operation failed"
+        "opFailed": "Group operation failed",
+        "commandDispatched": "Group command sent"
       },
       "manage": {
         "title": "Group Management",
@@ -609,7 +610,19 @@
         "confirmDeleteTitle": "Delete group",
         "confirmDeleteDesc": "Delete this group and move all its nodes to the 'All' bucket. Continue?",
         "confirmUpdateTitle": "Bulk update group",
-        "confirmUpdateDesc": "Remotely update all approved/online nodes in this group to the target version. Continue?"
+        "confirmUpdateDesc": "Remotely update all approved/online nodes in this group to the target version. Continue?",
+        "command": "Bulk command",
+        "cmdDomain": "Domain",
+        "cmdAction": "Action",
+        "cmdActionPlaceholder": "e.g. start, stop, restart",
+        "cmdArgs": "Args (JSON, optional)",
+        "cmdArgsPlaceholder": "{ \"id\": \"...\" }",
+        "cmdSend": "Send",
+        "cmdGroup": "Target group",
+        "confirmCommandTitle": "Bulk command",
+        "confirmCommandDesc": "Send the same command to all approved/online nodes in the group. Continue?",
+        "invalidArgs": "Args is not valid JSON",
+        "cmdResult": "Command result (ok/total)"
       }
     },
     "dashboard": {

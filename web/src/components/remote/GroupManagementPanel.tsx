@@ -11,11 +11,13 @@ import { Loader2, Pencil, RefreshCw, Trash2, Users } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/remote/ConfirmDialog';
 import {
+  useCommandGroup,
   useDeleteGroup,
   useRenameGroup,
   useTargetVersion,
   useUpdateGroup,
 } from '@/hooks/useRemote';
+import type { GroupDispatchResult } from '@/types/remote';
 import { useTranslation } from '@/lib/i18n';
 import type { NodeGroup } from '@/types/remote';
 import { useUIStore } from '@/stores/uiStore';
@@ -27,7 +29,14 @@ interface GroupManagementPanelProps {
 
 type PendingAction =
   | { kind: 'delete'; group: string }
-  | { kind: 'update'; group: string };
+  | { kind: 'update'; group: string }
+  | { kind: 'command'; group: string };
+
+/** 일괄 명령 결과 요약 문자열(ok/total). */
+function summarize(results: GroupDispatchResult[]): string {
+  const ok = results.filter((r) => r.ok).length;
+  return `${ok}/${results.length}`;
+}
 
 export function GroupManagementPanel({
   groups,
@@ -39,10 +48,17 @@ export function GroupManagementPanel({
   const rename = useRenameGroup();
   const remove = useDeleteGroup();
   const update = useUpdateGroup();
+  const command = useCommandGroup();
 
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [restart, setRestart] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
+
+  // 일괄 명령 폼 상태.
+  const [cmdGroup, setCmdGroup] = useState('');
+  const [cmdDomain, setCmdDomain] = useState('agent');
+  const [cmdAction, setCmdAction] = useState('');
+  const [cmdArgs, setCmdArgs] = useState('');
 
   const named = groups.filter((g) => g.group_name !== '');
   const target = targetQuery.data?.version ?? '';
@@ -69,8 +85,42 @@ export function GroupManagementPanel({
     );
   };
 
+  // 일괄 명령 전송 시도: 그룹/액션 검증 + args JSON 파싱 후 확인 다이얼로그를 연다.
+  const handleCommandSubmit = (): void => {
+    if (cmdGroup === '' || cmdAction.trim() === '') return;
+    if (cmdArgs.trim() !== '') {
+      try {
+        JSON.parse(cmdArgs);
+      } catch {
+        addNotification({ type: 'error', message: t('remote.group.manage.invalidArgs') });
+        return;
+      }
+    }
+    setPending({ kind: 'command', group: cmdGroup });
+  };
+
   const handleConfirm = (): void => {
     if (!pending) return;
+    if (pending.kind === 'command') {
+      const args =
+        cmdArgs.trim() === ''
+          ? undefined
+          : (JSON.parse(cmdArgs) as Record<string, unknown>);
+      command.mutate(
+        { name: pending.group, req: { domain: cmdDomain, action: cmdAction.trim(), args } },
+        {
+          onSuccess: (data) =>
+            addNotification({
+              type: 'success',
+              message: `${t('remote.group.toast.commandDispatched')} (${t('remote.group.manage.cmdResult')}: ${summarize(data.results)})`,
+            }),
+          onError: () =>
+            addNotification({ type: 'error', message: t('remote.group.toast.opFailed') }),
+        },
+      );
+      setPending(null);
+      return;
+    }
     if (pending.kind === 'delete') {
       remove.mutate(pending.group, {
         onSuccess: () =>
@@ -192,20 +242,99 @@ export function GroupManagementPanel({
         </div>
       )}
 
+      {/* 일괄 명령 폼: 대상 그룹 + 도메인/액션/인자(JSON) → 그룹 내 전 노드에 동일 전송. */}
+      {named.length > 0 && (
+        <div
+          className="mt-4 border-t border-(--color-border-default) pt-3"
+          data-testid="group-command-form"
+        >
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-(--color-text-muted)">
+            {t('remote.group.manage.command')}
+          </h3>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-1 text-xs text-(--color-text-muted)">
+              {t('remote.group.manage.cmdGroup')}
+              <select
+                value={cmdGroup}
+                onChange={(e) => setCmdGroup(e.target.value)}
+                data-testid="group-command-group"
+                className="rounded border border-(--color-border-strong) bg-(--color-bg-primary) px-2 py-1 text-sm text-(--color-text-primary)"
+              >
+                <option value="">—</option>
+                {named.map((g) => (
+                  <option key={g.group_name} value={g.group_name}>
+                    {g.group_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-(--color-text-muted)">
+              {t('remote.group.manage.cmdDomain')}
+              <select
+                value={cmdDomain}
+                onChange={(e) => setCmdDomain(e.target.value)}
+                data-testid="group-command-domain"
+                className="rounded border border-(--color-border-strong) bg-(--color-bg-primary) px-2 py-1 text-sm text-(--color-text-primary)"
+              >
+                <option value="agent">agent</option>
+                <option value="flow">flow</option>
+                <option value="device">device</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-(--color-text-muted)">
+              {t('remote.group.manage.cmdAction')}
+              <input
+                type="text"
+                value={cmdAction}
+                onChange={(e) => setCmdAction(e.target.value)}
+                placeholder={t('remote.group.manage.cmdActionPlaceholder')}
+                data-testid="group-command-action"
+                className="w-40 rounded border border-(--color-border-strong) bg-(--color-bg-primary) px-2 py-1 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleCommandSubmit}
+              disabled={command.isPending || cmdGroup === '' || cmdAction.trim() === ''}
+              data-testid="group-command-send"
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+            >
+              {command.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t('remote.group.manage.cmdSend')}
+            </button>
+          </div>
+          <label className="mt-2 flex flex-col gap-1 text-xs text-(--color-text-muted)">
+            {t('remote.group.manage.cmdArgs')}
+            <textarea
+              value={cmdArgs}
+              onChange={(e) => setCmdArgs(e.target.value)}
+              placeholder={t('remote.group.manage.cmdArgsPlaceholder')}
+              data-testid="group-command-args"
+              rows={2}
+              className="w-full rounded border border-(--color-border-strong) bg-(--color-bg-primary) px-2 py-1 font-mono text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+        </div>
+      )}
+
       <ConfirmDialog
         open={pending !== null}
         title={t(
           pending?.kind === 'delete'
             ? 'remote.group.manage.confirmDeleteTitle'
-            : 'remote.group.manage.confirmUpdateTitle',
+            : pending?.kind === 'command'
+              ? 'remote.group.manage.confirmCommandTitle'
+              : 'remote.group.manage.confirmUpdateTitle',
         )}
         description={t(
           pending?.kind === 'delete'
             ? 'remote.group.manage.confirmDeleteDesc'
-            : 'remote.group.manage.confirmUpdateDesc',
+            : pending?.kind === 'command'
+              ? 'remote.group.manage.confirmCommandDesc'
+              : 'remote.group.manage.confirmUpdateDesc',
         )}
         destructive={pending?.kind === 'delete'}
-        pending={remove.isPending || update.isPending}
+        pending={remove.isPending || update.isPending || command.isPending}
         onConfirm={handleConfirm}
         onCancel={() => setPending(null)}
       />

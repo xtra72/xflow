@@ -12,12 +12,14 @@ import type { NodeGroup } from '@/types/remote';
 const renameMutate = vi.hoisted(() => vi.fn());
 const deleteMutate = vi.hoisted(() => vi.fn());
 const updateMutate = vi.hoisted(() => vi.fn());
+const commandMutate = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useRemote', () => ({
   useTargetVersion: () => ({ data: { version: 'v1.3.0' } }),
   useRenameGroup: () => ({ mutate: renameMutate, isPending: false }),
   useDeleteGroup: () => ({ mutate: deleteMutate, isPending: false }),
   useUpdateGroup: () => ({ mutate: updateMutate, isPending: false }),
+  useCommandGroup: () => ({ mutate: commandMutate, isPending: false }),
 }));
 
 const addNotificationMock = vi.hoisted(() => vi.fn());
@@ -48,6 +50,7 @@ beforeEach(() => {
   renameMutate.mockReset();
   deleteMutate.mockReset();
   updateMutate.mockReset();
+  commandMutate.mockReset();
   addNotificationMock.mockReset();
 });
 
@@ -102,5 +105,41 @@ describe('GroupManagementPanel', () => {
       name: 'prod',
       req: { version: 'v1.3.0', restart: true },
     });
+  });
+
+  it('일괄 명령 → 확인 시 도메인/액션/인자로 commandGroup 을 호출한다', () => {
+    renderPanel(GROUPS);
+    fireEvent.change(screen.getByTestId('group-command-group'), { target: { value: 'prod' } });
+    fireEvent.change(screen.getByTestId('group-command-domain'), { target: { value: 'flow' } });
+    fireEvent.change(screen.getByTestId('group-command-action'), { target: { value: 'stop' } });
+    fireEvent.change(screen.getByTestId('group-command-args'), {
+      target: { value: '{"id":"f1"}' },
+    });
+    fireEvent.click(screen.getByTestId('group-command-send'));
+    // 확인 다이얼로그 확정.
+    const buttons = screen.getAllByRole('button');
+    fireEvent.click(buttons[buttons.length - 1]!);
+    expect(commandMutate).toHaveBeenCalledTimes(1);
+    expect(commandMutate.mock.calls[0]![0]).toEqual({
+      name: 'prod',
+      req: { domain: 'flow', action: 'stop', args: { id: 'f1' } },
+    });
+  });
+
+  it('잘못된 JSON 인자는 거부하고 명령을 전송하지 않는다', () => {
+    renderPanel(GROUPS);
+    fireEvent.change(screen.getByTestId('group-command-group'), { target: { value: 'prod' } });
+    fireEvent.change(screen.getByTestId('group-command-action'), { target: { value: 'stop' } });
+    fireEvent.change(screen.getByTestId('group-command-args'), {
+      target: { value: 'not-json' },
+    });
+    fireEvent.click(screen.getByTestId('group-command-send'));
+    expect(commandMutate).not.toHaveBeenCalled();
+    expect(addNotificationMock).toHaveBeenCalled();
+  });
+
+  it('대상 그룹/액션 미입력 시 전송 버튼이 비활성화된다', () => {
+    renderPanel(GROUPS);
+    expect(screen.getByTestId('group-command-send')).toBeDisabled();
   });
 });

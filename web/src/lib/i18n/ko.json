@@ -596,7 +596,8 @@
         "renamed": "그룹 이름을 변경했습니다",
         "deleted": "그룹을 삭제했습니다",
         "updateDispatched": "그룹 업데이트 명령을 전송했습니다",
-        "opFailed": "그룹 작업에 실패했습니다"
+        "opFailed": "그룹 작업에 실패했습니다",
+        "commandDispatched": "그룹 명령을 전송했습니다"
       },
       "manage": {
         "title": "그룹 관리",
@@ -609,7 +610,19 @@
         "confirmDeleteTitle": "그룹 삭제",
         "confirmDeleteDesc": "이 그룹을 삭제하고 모든 노드를 '전체' 버킷으로 이동합니다. 계속할까요?",
         "confirmUpdateTitle": "그룹 일괄 업데이트",
-        "confirmUpdateDesc": "그룹 내 모든 승인·온라인 노드를 목표 버전으로 원격 업데이트합니다. 계속할까요?"
+        "confirmUpdateDesc": "그룹 내 모든 승인·온라인 노드를 목표 버전으로 원격 업데이트합니다. 계속할까요?",
+        "command": "일괄 명령",
+        "cmdDomain": "도메인",
+        "cmdAction": "액션",
+        "cmdActionPlaceholder": "예: start, stop, restart",
+        "cmdArgs": "인자(JSON, 선택)",
+        "cmdArgsPlaceholder": "{ \"id\": \"...\" }",
+        "cmdSend": "전송",
+        "cmdGroup": "대상 그룹",
+        "confirmCommandTitle": "그룹 일괄 명령",
+        "confirmCommandDesc": "그룹 내 모든 승인·온라인 노드에 동일한 명령을 전송합니다. 계속할까요?",
+        "invalidArgs": "인자가 올바른 JSON 이 아닙니다",
+        "cmdResult": "명령 결과(성공/전체)"
       }
     },
     "dashboard": {
