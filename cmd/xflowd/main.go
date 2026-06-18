@@ -82,6 +82,7 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&logOutput, "log-output", "", "로그 출력 대상 (stdout, 파일 경로, stdout+파일경로)")
 
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newVerifyCmd())                    // 원격 업데이트 pre-flight 스모크 테스트
 	cmd.AddCommand(newUpdateCmd(defaultUpdateDeps())) // @SPEC:SPEC-UPDATE-001 v0.1.0
 	cmd.AddCommand(newMigrateCmd())                   // @SPEC:SPEC-DEVICE-IDENTITY-001 Phase C § C1
 	cmd.AddCommand(newPreflightCmd())                 // @SPEC:SPEC-DEVICE-IDENTITY-001 Phase D § D-T5
@@ -1046,7 +1047,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			// 로컬 제어와 동일한 경로/검증/오류 의미를 갖도록 동일 레지스트리를 재사용한다
 			// (A5 — 원격 우회 없음, OQ-L4 — 제어 쓰기는 그룹 D 재사용).
 			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo, executor: deviceRegistry},
-		).WithSystem(newSystemCommander(cfg, obs.Loggers.NewLogger("remote.system_update").Logger()))
+		).WithSystem(newSystemCommander(cfg, configFile, obs.Loggers.NewLogger("remote.system_update").Logger()))
 
 		// 인벤토리 소스(M4, REQ-E01): 로컬 API 와 동일한 어댑터 인스턴스를 재사용하여
 		// 미러가 로컬 상태와 일치하도록 한다. redaction(F06)은 소스 어댑터가 수행한다.
@@ -1194,11 +1195,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		"port", serverCfg.Port,
 	)
 
-	// 원격 자가 업데이트 후 부팅이면(post-update 마커), 서버가 뜨는 동안 로컬 /health 를
-	// 폴링해 자가 검증하고 실패 시 자동 롤백한다(버전 관리 Phase 2). 일반 부팅은 즉시 no-op.
-	if isPostUpdateBoot() {
-		go runPostUpdateSelfCheck(ctx, serverCfg.Port, logger.Logger())
-	}
+	// 원격 자가 업데이트 후 부팅이면(update-state 파일의 pending), 서버가 뜨는 동안 로컬
+	// /health 를 폴링해 자가 검증하고 실패/반복크래시 시 자동 롤백한다(버전 관리 Phase 2).
+	// 상태 파일이 없는 일반 부팅은 즉시 no-op 이므로 항상 호출해도 안전하다.
+	go runPostUpdateSelfCheck(ctx, serverCfg.Port, logger.Logger())
 
 	// server.Start 는 ctx 취소 시 자동으로 Stop 호출
 	if err := server.Start(ctx); err != nil {

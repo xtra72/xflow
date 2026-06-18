@@ -1,21 +1,23 @@
 // post_update.go 는 원격 자가 업데이트(버전 관리 Phase 2)의 "재시작 후 자동 검증 +
-// 자동 롤백"을 구현한다.
+// 자동 롤백"을 구현한다. 상태 파일 기반이라 systemd 등 외부 supervisor 의 재시작에도
+// 부팅 실패를 누적 추적해, 새 바이너리가 health 도달 전 즉시 크래시하는 경우까지 다룬다.
 //
 // 흐름:
-//  1. 업데이트 적용 후 재시작 시, 새 바이너리를 exec 하면서 환경변수 마커
-//     (XFLOW_POST_UPDATE=1, XFLOW_UPDATE_EXPECTED_VERSION=vX)를 전달한다.
-//  2. 부팅한 새 프로세스는 마커를 감지하면(isPostUpdateBoot), 서버가 뜨는 동안 로컬
-//     /health 를 폴링(PostExecHealthCheck)한다.
-//  3. 타임아웃 내 정상 응답하면 검증 통과(마커 제거). 실패하면 자동 롤백
-//     (AutoRollback: .previous 백업 복원 후 이전 바이너리로 재-exec).
+//  1. 업데이트 적용(바이너리 교체) 직후, <binary>.update-state 에 pending 상태를 기록한다
+//     (markUpdatePending). 백업(.previous)은 Applier 가 이미 만들어 둔다.
+//  2. 모든 부팅에서 runPostUpdateSelfCheck 가 상태 파일을 읽는다. pending 이면:
+//     - boot_attempts 가 임계 초과면 → 검증 생략하고 즉시 자동 롤백(반복 크래시 차단).
+//     - 아니면 boot_attempts 를 증가·영속한 뒤 로컬 /health 를 폴링(PostExecHealthCheck).
+//     정상 → pending 해제(성공). 실패 → 자동 롤백.
+//  3. 자동 롤백: AutoRollback 이 .previous 를 복원하고 이전 바이너리로 재-exec 한다.
 //
-// 한계: 새 바이너리가 health 서버를 띄우기도 전에 즉시 크래시하면 이 프로세스(및 본
-// 고루틴)도 함께 사라져 롤백이 불가하다 — 그 경우는 systemd 등 외부 supervisor 의
-// 자동 재시작/롤백에 의존한다. 본 메커니즘은 "기동은 되나 비정상/행/버전불일치" 케이스를 다룬다.
+// boot_attempts 를 부팅 시작 시점에 증가·영속하므로, 새 프로세스가 health 도달 전에
+// 크래시해도 systemd 가 재시작하면 다음 부팅에서 카운트가 누적되어 결국 롤백된다.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,68 +26,128 @@ import (
 	"github.com/xtra/xflow/internal/updater"
 )
 
+// maxBootAttempts 는 health 도달 실패를 허용하는 부팅 횟수다. 이를 넘으면 자동 롤백한다.
+const maxBootAttempts = 2
+
+// updateState 는 <binary>.update-state 파일의 내용이다.
+type updateState struct {
+	Version      string `json:"version"`
+	BootAttempts int    `json:"boot_attempts"`
+	Pending      bool   `json:"pending"`
+}
+
+func stateFilePath(binaryPath string) string {
+	return binaryPath + ".update-state"
+}
+
+// markUpdatePending 은 업데이트 적용 직후 호출되어, 다음 부팅이 검증 대상임을 표시한다.
+func markUpdatePending(binaryPath, version string) error {
+	return writeUpdateState(binaryPath, updateState{Version: version, BootAttempts: 0, Pending: true})
+}
+
+func writeUpdateState(binaryPath string, st updateState) error {
+	data, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(stateFilePath(binaryPath), data, 0o600)
+}
+
+// readUpdateState 는 상태 파일을 읽는다. 파일이 없거나 파싱 실패면 ok=false.
+func readUpdateState(binaryPath string) (updateState, bool) {
+	data, err := os.ReadFile(stateFilePath(binaryPath))
+	if err != nil {
+		return updateState{}, false
+	}
+	var st updateState
+	if json.Unmarshal(data, &st) != nil {
+		return updateState{}, false
+	}
+	return st, true
+}
+
+// clearUpdateState 는 상태 파일을 제거한다(검증 성공 또는 롤백 직전).
+func clearUpdateState(binaryPath string) {
+	_ = os.Remove(stateFilePath(binaryPath))
+}
+
+// bootAction 은 부팅 시점에 취할 동작이다.
+type bootAction int
+
 const (
-	envPostUpdate      = "XFLOW_POST_UPDATE"
-	envExpectedVersion = "XFLOW_UPDATE_EXPECTED_VERSION"
+	bootNone        bootAction = iota // pending 아님 — 일반 부팅
+	bootHealthCheck                   // 헬스체크 후 성공/실패 판정
+	bootRollback                      // 검증 생략, 즉시 롤백(반복 실패)
 )
 
-// postUpdateEnv 는 재시작(exec) 시 자식 프로세스에 넘길 환경에 post-update 마커를
-// 추가해 반환한다. base 는 보통 os.Environ() 이다.
-func postUpdateEnv(base []string, expectedVersion string) []string {
-	out := make([]string, 0, len(base)+2)
-	out = append(out, base...)
-	out = append(out, envPostUpdate+"=1")
-	out = append(out, envExpectedVersion+"="+expectedVersion)
-	return out
-}
-
-// isPostUpdateBoot 는 현재 프로세스가 업데이트 직후 부팅인지(마커 보유) 판정한다.
-func isPostUpdateBoot() bool {
-	return os.Getenv(envPostUpdate) == "1"
-}
-
-// runPostUpdateSelfCheck 는 post-update 부팅 시 로컬 헬스를 폴링하고, 실패하면 자동
-// 롤백한다. 마커가 없으면 즉시 반환한다(일반 부팅). 본 함수는 별도 고루틴에서 호출한다
-// (서버 리스닝과 병행 — WaitHealthy 가 서버 기동을 폴링으로 대기).
-//
-// AutoRollback 성공 시 프로세스 이미지가 교체되어 본 함수는 반환하지 않는다.
-func runPostUpdateSelfCheck(ctx context.Context, port int, logger *slog.Logger) {
-	if !isPostUpdateBoot() {
-		return
+// decideBootAction 은 상태로부터 부팅 동작을 결정한다(순수 함수 — 테스트 용이).
+func decideBootAction(st updateState, ok bool, maxAttempts int) bootAction {
+	if !ok || !st.Pending {
+		return bootNone
 	}
-	expected := os.Getenv(envExpectedVersion)
+	if st.BootAttempts >= maxAttempts {
+		return bootRollback
+	}
+	return bootHealthCheck
+}
+
+// runPostUpdateSelfCheck 는 부팅 시 pending 업데이트를 검증하고 실패 시 자동 롤백한다.
+// 일반 부팅(pending 없음)은 즉시 no-op. 별도 고루틴에서 호출한다(서버 리스닝과 병행 —
+// WaitHealthy 가 서버 기동을 폴링 대기). 롤백 성공 시 프로세스 이미지가 교체되어 반환하지 않는다.
+func runPostUpdateSelfCheck(ctx context.Context, port int, logger *slog.Logger) {
 	binaryPath, err := os.Executable()
 	if err != nil {
 		logger.Error("post-update: 실행 파일 경로 조회 실패 — 자가 검증 생략", "error", err)
 		return
 	}
+	st, ok := readUpdateState(binaryPath)
+	switch decideBootAction(st, ok, maxBootAttempts) {
+	case bootNone:
+		return
+	case bootRollback:
+		logger.Error("post-update: 부팅 반복 실패 — 즉시 자동 롤백",
+			"attempts", st.BootAttempts, "version", st.Version)
+		rollback(ctx, binaryPath, port, logger)
+		return
+	case bootHealthCheck:
+		// 증가 후 영속: health 도달 전 크래시해도 다음 부팅에서 누적된다.
+		st.BootAttempts++
+		if werr := writeUpdateState(binaryPath, st); werr != nil {
+			logger.Warn("post-update: 부팅 카운터 기록 실패", "error", werr)
+		}
+	}
 
-	// 무인증 liveness 엔드포인트(/health)로 새 바이너리 기동을 확인한다. /api/v1/* 는
-	// basic_auth 가 켜지면 401 이 되어 거짓 실패를 유발할 수 있으므로 사용하지 않는다.
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
-	orch := updater.NewRestartOrchestrator(updater.RestartOrchestratorParams{
+	orch := newBootOrchestrator(binaryPath, port, logger)
+	logger.Info("post-update: 자가 검증 시작",
+		"expected_version", st.Version, "attempt", st.BootAttempts)
+	res, hErr := orch.PostExecHealthCheck(ctx, updater.Version(st.Version))
+	if hErr != nil {
+		logger.Error("post-update: 헬스체크 실패 — 자동 롤백", "error", hErr)
+		rollback(ctx, binaryPath, port, logger)
+		return
+	}
+	logger.Info("post-update: 자가 검증 통과", "version", string(res.Version), "attempts", res.Attempts)
+	clearUpdateState(binaryPath)
+}
+
+// rollback 은 상태를 정리한 뒤 자동 롤백(.previous 복원 + 이전 바이너리 재-exec)을 수행한다.
+// 상태를 먼저 지워 롤백된 이전 바이너리가 깨끗하게 부팅하도록 한다.
+func rollback(ctx context.Context, binaryPath string, port int, logger *slog.Logger) {
+	clearUpdateState(binaryPath)
+	orch := newBootOrchestrator(binaryPath, port, logger)
+	if rbErr := orch.AutoRollback(ctx); rbErr != nil {
+		// 백업 없음(CanRollback=false) 또는 복원 실패 — 수동 개입 필요.
+		logger.Error("post-update: 자동 롤백 실패 — 수동 개입 필요", "error", rbErr)
+	}
+}
+
+// newBootOrchestrator 는 부팅 측 헬스체크/롤백용 orchestrator 를 만든다(무인증 /health 사용).
+func newBootOrchestrator(binaryPath string, port int, logger *slog.Logger) *updater.RestartOrchestrator {
+	return updater.NewRestartOrchestrator(updater.RestartOrchestratorParams{
 		BinaryPath:     binaryPath,
-		HealthEndpoint: healthURL,
+		HealthEndpoint: fmt.Sprintf("http://127.0.0.1:%d/health", port),
 		HealthTimeout:  60 * time.Second,
 		HealthInterval: time.Second,
 		Logger:         logger,
 	})
-
-	logger.Info("post-update: 자가 검증 시작", "expected_version", expected, "health", healthURL)
-	res, hErr := orch.PostExecHealthCheck(ctx, updater.Version(expected))
-	if hErr != nil {
-		logger.Error("post-update: 헬스체크 실패 — 자동 롤백 시도", "error", hErr)
-		if rbErr := orch.AutoRollback(ctx); rbErr != nil {
-			// CanRollback=false(백업 없음) 또는 복원 실패 — 수동 개입 필요.
-			logger.Error("post-update: 자동 롤백 실패 — 수동 개입 필요", "error", rbErr)
-		}
-		// AutoRollback 성공 시 이전 바이너리로 exec 되어 여기 도달하지 않는다.
-		return
-	}
-
-	logger.Info("post-update: 자가 검증 통과",
-		"version", string(res.Version), "attempts", res.Attempts)
-	// 마커 제거 — 이후 자식 exec 로 전파되지 않도록 한다.
-	_ = os.Unsetenv(envPostUpdate)
-	_ = os.Unsetenv(envExpectedVersion)
 }

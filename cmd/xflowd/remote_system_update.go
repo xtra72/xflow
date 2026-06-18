@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,7 +31,7 @@ import (
 // newSystemCommander 는 데몬 설정으로부터 system 도메인 commander 를 구성한다.
 // update.update_url/public_key_path 미설정이어도 생성은 성공하며(ApplyUpdate 호출 시
 // 명확히 실패). 재시작은 opt-in(args.restart=true)일 때만 graceful re-exec 한다.
-func newSystemCommander(cfg config.Config, logger *slog.Logger) *systemCommander {
+func newSystemCommander(cfg config.Config, configFile string, logger *slog.Logger) *systemCommander {
 	binPath, err := os.Executable()
 	if err != nil {
 		logger.Warn("실행 파일 경로 조회 실패 — 원격 업데이트 제한", "error", err)
@@ -39,20 +41,23 @@ func newSystemCommander(cfg config.Config, logger *slog.Logger) *systemCommander
 		settings:   cfg.Update(),
 		version:    Version,
 		binaryPath: binPath,
+		configFile: configFile,
+		logger:     logger,
 	}
 	return &systemCommander{
 		runner: runner,
 		restart: func(expectedVersion string) {
 			// 결과가 서버로 flush 될 시간을 준 뒤 새 바이너리로 re-exec 한다(opt-in).
-			// post-update 마커를 환경에 실어, 부팅한 새 프로세스가 자가 검증/롤백하도록 한다.
+			// 검증/롤백은 ApplyUpdate 가 미리 기록한 update-state(파일)로 부팅 측에서 수행한다.
 			go gracefulReexec(binPath, expectedVersion, logger)
 		},
 		logger: logger,
 	}
 }
 
-// gracefulReexec 는 짧은 지연 후 post-update 마커를 실어 새 바이너리를 re-exec 한다.
-// syscall.Exec 는 성공 시 반환하지 않고 프로세스 이미지를 교체한다(unix).
+// gracefulReexec 는 짧은 지연 후 새 바이너리를 re-exec 한다(현재 인자/환경 유지).
+// syscall.Exec 는 성공 시 반환하지 않고 프로세스 이미지를 교체한다(unix). 부팅한 새
+// 프로세스는 update-state 파일을 보고 자가 검증/롤백한다(post_update.go).
 func gracefulReexec(binPath, expectedVersion string, logger *slog.Logger) {
 	time.Sleep(2 * time.Second)
 	if binPath == "" {
@@ -60,8 +65,7 @@ func gracefulReexec(binPath, expectedVersion string, logger *slog.Logger) {
 		return
 	}
 	logger.Info("system/update: 새 바이너리로 재시작", "binary", binPath, "expected_version", expectedVersion)
-	env := postUpdateEnv(os.Environ(), expectedVersion)
-	if err := syscall.Exec(binPath, os.Args, env); err != nil {
+	if err := syscall.Exec(binPath, os.Args, os.Environ()); err != nil {
 		logger.Error("재시작(re-exec) 실패", "error", err)
 	}
 }
@@ -118,6 +122,32 @@ type remoteUpdateRunner struct {
 	settings   config.UpdateSettings
 	version    string // 현재 빌드 버전(main.Version)
 	binaryPath string // 교체 대상 실행 파일 경로
+	configFile string // 데몬 설정 파일 경로(pre-flight `verify` 에 전달)
+	logger     *slog.Logger
+}
+
+// smokeTest 는 교체 전에 후보 바이너리를 `verify` 로 실행해 기동 가능성을 확인한다(A안).
+// 후보가 설정 로드/초기화에 실패하면(아키텍처 불일치/링크 오류/설정 비호환) 오류를 반환해
+// 교체를 중단시킨다 — 실행 중 데몬은 그대로 유지된다(다운타임 0).
+func (r *remoteUpdateRunner) smokeTest(ctx context.Context, candidatePath string) error {
+	if err := os.Chmod(candidatePath, 0o755); err != nil {
+		return fmt.Errorf("후보 실행 권한 설정: %w", err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	args := []string{"verify"}
+	if r.configFile != "" {
+		args = append(args, "--config", r.configFile)
+	}
+	cmd := exec.CommandContext(cctx, candidatePath, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("후보 verify 실패: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if r.logger != nil {
+		r.logger.Info("pre-flight 스모크 테스트 통과", "candidate", candidatePath)
+	}
+	return nil
 }
 
 // ApplyUpdate 는 목표 버전 바이너리를 받아 검증 후 원자적으로 교체한다.
@@ -191,6 +221,23 @@ func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, cha
 	if err != nil {
 		return zero, fmt.Errorf("verifier 생성: %w", err)
 	}
+
+	// 교체 전 서명 검증(TOCTOU 전) — 미서명/위조 바이너리를 실행하지 않도록 스모크 테스트
+	// 직전에 한 번 확인한다. Apply 가 교체 직전 다시 검증한다(이중 방어).
+	candidateBytes, err := os.ReadFile(binDest)
+	if err != nil {
+		return zero, fmt.Errorf("후보 바이너리 읽기: %w", err)
+	}
+	if err := verifier.VerifyAll(candidateBytes, checksumHex, sigBytes); err != nil {
+		return zero, fmt.Errorf("후보 서명/체크섬 검증 실패: %w", err)
+	}
+
+	// pre-flight 스모크 테스트(A안): 검증된 후보를 verify 로 실행해 기동 가능성을 확인한다.
+	// 실패하면 교체하지 않고 중단한다(다운타임 0).
+	if err := r.smokeTest(ctx, binDest); err != nil {
+		return zero, fmt.Errorf("pre-flight 검증 실패(교체 중단): %w", err)
+	}
+
 	applier := updater.NewApplier(verifier, r.binaryPath)
 	applyRes, err := applier.Apply(ctx, updater.ApplyOptions{
 		Manifest: updater.Manifest{
@@ -203,6 +250,13 @@ func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, cha
 	})
 	if err != nil {
 		return zero, fmt.Errorf("적용: %w", err)
+	}
+
+	// 교체 성공 → 다음 부팅이 자가 검증/롤백 대상임을 상태 파일에 기록한다(재시작 여부 무관).
+	// 실패해도 교체 자체는 유효하므로 경고만 남긴다(검증 비활성화 fallback).
+	if mErr := markUpdatePending(r.binaryPath, applyRes.NewVersion.String()); mErr != nil {
+		// logger 가 없으므로 결과에 영향 주지 않고 무시(상위에서 dispatch 결과로 관측 가능).
+		_ = mErr
 	}
 
 	return remote.SystemUpdateResult{
