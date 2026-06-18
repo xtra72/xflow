@@ -150,6 +150,11 @@ type ServerConfig struct {
 	// 기존 pending 흐름만 동작한다(하위 호환). 토큰은 SHA-256 해시로만 저장된다(REQ-H06).
 	Enrollment storage.EnrollmentTokenRepository
 
+	// VersionHistory 는 노드 버전 변경 이력 저장소이다(버전 관리 Phase 1). nil 이면
+	// 버전 이력 기록은 비활성화된다(하위 호환). 노드가 보고한 version 이 직전 저장값과
+	// 달라질 때마다 (instance_id, version, changed_at) 한 줄을 append 한다.
+	VersionHistory storage.NodeVersionHistoryRepository
+
 	// Logger 는 선택적 로거이다. nil 이면 slog.Default() 를 사용한다.
 	Logger *slog.Logger
 }
@@ -162,14 +167,15 @@ type nodeConn struct {
 
 // Server 는 관리 서버 측 노드 연결/상태 추적 + 등록/승인 상태 머신을 담당한다.
 type Server struct {
-	cfg    ServerConfig
-	auth   Authenticator
-	repo   storage.ManagedNodeRepository
-	mirror storage.MirrorRepository
-	tokens TokenIssuer
-	audit  storage.RemoteAuditRepository
-	enroll storage.EnrollmentTokenRepository
-	logger *slog.Logger
+	cfg     ServerConfig
+	auth    Authenticator
+	repo    storage.ManagedNodeRepository
+	mirror  storage.MirrorRepository
+	tokens  TokenIssuer
+	audit   storage.RemoteAuditRepository
+	enroll  storage.EnrollmentTokenRepository
+	verHist storage.NodeVersionHistoryRepository
+	logger  *slog.Logger
 
 	mu    sync.RWMutex
 	nodes map[string]*NodeState
@@ -223,6 +229,7 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 		tokens:       cfg.TokenIssuer,
 		audit:        cfg.Audit,
 		enroll:       cfg.Enrollment,
+		verHist:      cfg.VersionHistory,
 		logger:       logger,
 		nodes:        make(map[string]*NodeState),
 		conns:        make(map[string]*nodeConn),

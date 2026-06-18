@@ -791,6 +791,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		mirrorRepo              storage.MirrorRepository
 		remoteAuditRepo         storage.RemoteAuditRepository
 		enrollmentTokenRepo     storage.EnrollmentTokenRepository
+		nodeVersionHistoryRepo  storage.NodeVersionHistoryRepository
 	)
 	switch rmCfg.Mode {
 	case "server":
@@ -828,6 +829,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		enrollmentTokenRepo = etRepo
 		defer enrollmentTokenRepo.Close()
 
+		// 노드 버전 변경 이력(버전 관리 Phase 1) — 동일 SQLite DB 에 node_version_history
+		// 테이블을 멱등 추가. 노드 version 이 직전 저장값과 달라질 때마다 한 줄 append 한다.
+		vhRepo, vhErr := storage.NewNodeVersionHistoryRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if vhErr != nil {
+			return fmt.Errorf("노드 버전 이력 저장소 초기화 실패: %w", vhErr)
+		}
+		nodeVersionHistoryRepo = vhRepo
+		defer nodeVersionHistoryRepo.Close()
+
 		// 노드 토큰은 기존 JWTService 를 재사용한다(REQ-C04/C05/C07/F02/F07).
 		tokenIssuer := remote.NewJWTTokenIssuer(server.JWTService())
 
@@ -838,6 +848,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			TokenIssuer:      tokenIssuer,
 			Audit:            remoteAuditRepo,
 			Enrollment:       enrollmentTokenRepo,
+			VersionHistory:   nodeVersionHistoryRepo,
 			BootstrapSecret:  rmCfg.BootstrapSecret,
 			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
 		}, nil)
@@ -865,7 +876,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 감사 저장소를 연결해 mutation 을 영속 기록하고 GET /remote/audit 로 관측한다(M6).
 		remoteAdminHandler = handler.NewRemoteAdminHandler(remoteServer,
 			obs.Loggers.NewLogger("api.handler.remote_admin").Logger()).
-			WithAudit(remoteAuditRepo)
+			WithAudit(remoteAuditRepo).
+			WithSettings(settingsRepo)
 
 		// 수동 enrollment 관리자 API(v1.1 그룹 H): 사전 등록 노드 생성/삭제 + enrollment
 		// 토큰 발급/목록/폐기. *remote.Server 가 PreRegistrationService 를 만족한다.

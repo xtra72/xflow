@@ -30,7 +30,16 @@ type fakeNodeAdmin struct {
 	dispatched     []string // domain/action 기록
 	dispatchResult json.RawMessage
 	dispatchErr    error
-	mirror         *mirrorStore // M4 미러 목록(노드 push 로만 변경 — E08)
+	mirror         *mirrorStore                            // M4 미러 목록(노드 push 로만 변경 — E08)
+	versionHistory map[string][]storage.NodeVersionHistory // 버전 관리 Phase 1
+}
+
+func (f *fakeNodeAdmin) NodeVersionHistory(_ context.Context, instanceID string, limit int) ([]storage.NodeVersionHistory, error) {
+	hist := f.versionHistory[instanceID]
+	if limit > 0 && len(hist) > limit {
+		return hist[:limit], nil
+	}
+	return hist, nil
 }
 
 func newFakeNodeAdmin() *fakeNodeAdmin {
@@ -229,6 +238,9 @@ func (erroringAdmin) Approve(context.Context, string) error        { return erro
 func (erroringAdmin) Reject(context.Context, string, string) error { return errors.New("boom") }
 func (erroringAdmin) Revoke(context.Context, string) error         { return errors.New("boom") }
 func (erroringAdmin) Dispatch(context.Context, string, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errors.New("boom")
+}
+func (erroringAdmin) NodeVersionHistory(context.Context, string, int) ([]storage.NodeVersionHistory, error) {
 	return nil, errors.New("boom")
 }
 
