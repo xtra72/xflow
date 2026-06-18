@@ -244,7 +244,7 @@ export default function NodeManagementPage(): React.JSX.Element {
               </p>
             </div>
             {/* 노드 미선택 시 그룹 일괄 관리(이름변경/삭제/업데이트) 패널을 노출한다. */}
-            <GroupManagementPanel groups={sortedGroups} />
+            <GroupManagementPanel groups={sortedGroups} nodes={nodes ?? []} />
           </div>
         )}
       </div>

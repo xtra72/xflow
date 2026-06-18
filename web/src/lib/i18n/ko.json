@@ -597,7 +597,8 @@
         "deleted": "그룹을 삭제했습니다",
         "updateDispatched": "그룹 업데이트 명령을 전송했습니다",
         "opFailed": "그룹 작업에 실패했습니다",
-        "commandDispatched": "그룹 명령을 전송했습니다"
+        "commandDispatched": "그룹 명령을 전송했습니다",
+        "created": "그룹을 생성했습니다"
       },
       "manage": {
         "title": "그룹 관리",
@@ -622,7 +623,14 @@
         "confirmCommandTitle": "그룹 일괄 명령",
         "confirmCommandDesc": "그룹 내 모든 승인·온라인 노드에 동일한 명령을 전송합니다. 계속할까요?",
         "invalidArgs": "인자가 올바른 JSON 이 아닙니다",
-        "cmdResult": "명령 결과(성공/전체)"
+        "cmdResult": "명령 결과(성공/전체)",
+        "create": "그룹 생성",
+        "createName": "새 그룹 이름",
+        "createPlaceholder": "예: 1층-로비",
+        "selectNodes": "노드 선택",
+        "createButton": "생성",
+        "noNodes": "배정 가능한 노드가 없습니다",
+        "ungrouped": "미지정"
       }
     },
     "dashboard": {

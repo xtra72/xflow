@@ -7,17 +7,18 @@
 // 가상 "전체"(빈 라벨) 버킷은 관리 대상이 아니므로 목록에서 제외한다.
 
 import { useState } from 'react';
-import { Loader2, Pencil, RefreshCw, Trash2, Users } from 'lucide-react';
+import { Loader2, Pencil, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/remote/ConfirmDialog';
 import {
   useCommandGroup,
   useDeleteGroup,
   useRenameGroup,
+  useSetNodeGroup,
   useTargetVersion,
   useUpdateGroup,
 } from '@/hooks/useRemote';
-import type { GroupDispatchResult } from '@/types/remote';
+import type { GroupDispatchResult, ManagedNode } from '@/types/remote';
 import { useTranslation } from '@/lib/i18n';
 import type { NodeGroup } from '@/types/remote';
 import { useUIStore } from '@/stores/uiStore';
@@ -25,6 +26,8 @@ import { useUIStore } from '@/stores/uiStore';
 interface GroupManagementPanelProps {
   /** /remote/groups 결과(전체 포함). 빈 라벨("전체")은 패널에서 제외된다. */
   groups: NodeGroup[];
+  /** 전체 노드 목록(그룹 생성 시 멤버 다중선택용). */
+  nodes: ManagedNode[];
 }
 
 type PendingAction =
@@ -40,6 +43,7 @@ function summarize(results: GroupDispatchResult[]): string {
 
 export function GroupManagementPanel({
   groups,
+  nodes,
 }: GroupManagementPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const addNotification = useUIStore((s) => s.addNotification);
@@ -49,6 +53,12 @@ export function GroupManagementPanel({
   const remove = useDeleteGroup();
   const update = useUpdateGroup();
   const command = useCommandGroup();
+  const setNodeGroup = useSetNodeGroup();
+
+  // 그룹 생성 폼 상태(새 이름 + 멤버 다중선택).
+  const [createName, setCreateName] = useState('');
+  const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
 
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [restart, setRestart] = useState(false);
@@ -83,6 +93,36 @@ export function GroupManagementPanel({
           addNotification({ type: 'error', message: t('remote.group.toast.opFailed') }),
       },
     );
+  };
+
+  // 그룹 생성: 선택한 노드들을 새 그룹명으로 일괄 배정한다(첫 배정이 곧 생성 — 파생 모델).
+  const handleCreate = async (): Promise<void> => {
+    const name = createName.trim();
+    if (name === '' || selectedNodes.size === 0) return;
+    setCreating(true);
+    try {
+      await Promise.all(
+        Array.from(selectedNodes).map((instanceID) =>
+          setNodeGroup.mutateAsync({ instanceID, groupName: name }),
+        ),
+      );
+      addNotification({ type: 'success', message: t('remote.group.toast.created') });
+      setCreateName('');
+      setSelectedNodes(new Set());
+    } catch {
+      addNotification({ type: 'error', message: t('remote.group.toast.opFailed') });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const toggleNode = (id: string): void => {
+    setSelectedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   // 일괄 명령 전송 시도: 그룹/액션 검증 + args JSON 파싱 후 확인 다이얼로그를 연다.
@@ -159,6 +199,67 @@ export function GroupManagementPanel({
         >
           {t('remote.group.manage.title')}
         </h2>
+      </div>
+
+      {/* 그룹 생성: 새 이름 + 노드 다중선택 → 일괄 배정(첫 배정이 곧 생성). */}
+      <div
+        className="mb-4 rounded border border-(--color-border-default) p-2.5"
+        data-testid="group-create-form"
+      >
+        <div className="mb-2 flex items-center gap-1.5">
+          <Plus className="h-3.5 w-3.5 text-(--color-text-muted)" aria-hidden="true" />
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-text-muted)">
+            {t('remote.group.manage.create')}
+          </h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={createName}
+            onChange={(e) => setCreateName(e.target.value)}
+            placeholder={t('remote.group.manage.createPlaceholder')}
+            data-testid="group-create-name"
+            className="w-44 rounded border border-(--color-border-strong) bg-(--color-bg-primary) px-2 py-1 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => void handleCreate()}
+            disabled={creating || createName.trim() === '' || selectedNodes.size === 0}
+            data-testid="group-create-submit"
+            className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {t('remote.group.manage.createButton')} ({selectedNodes.size})
+          </button>
+        </div>
+        {/* 멤버 다중선택 — 새 그룹으로 이동할 노드. */}
+        {nodes.length === 0 ? (
+          <p className="mt-2 text-xs text-(--color-text-muted)" data-testid="group-create-nonodes">
+            {t('remote.group.manage.noNodes')}
+          </p>
+        ) : (
+          <ul className="mt-2 max-h-40 overflow-y-auto rounded border border-(--color-border-default)">
+            {nodes.map((n) => (
+              <li key={n.instance_id}>
+                <label className="flex cursor-pointer items-center gap-2 px-2 py-1 text-xs hover:bg-(--color-bg-elevated)">
+                  <input
+                    type="checkbox"
+                    checked={selectedNodes.has(n.instance_id)}
+                    onChange={() => toggleNode(n.instance_id)}
+                    data-testid={`group-create-node-${n.instance_id}`}
+                    className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                  />
+                  <span className="flex-1 truncate text-(--color-text-primary)">
+                    {n.hostname || n.instance_id}
+                  </span>
+                  <span className="shrink-0 text-(--color-text-muted)">
+                    {n.group_name || t('remote.group.manage.ungrouped')}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* 업데이트 후 재시작 옵션(그룹 일괄 업데이트에 공통 적용). */}

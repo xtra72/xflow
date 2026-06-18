@@ -597,7 +597,8 @@
         "deleted": "Group deleted",
         "updateDispatched": "Group update command sent",
         "opFailed": "Group operation failed",
-        "commandDispatched": "Group command sent"
+        "commandDispatched": "Group command sent",
+        "created": "Group created"
       },
       "manage": {
         "title": "Group Management",
@@ -622,7 +623,14 @@
         "confirmCommandTitle": "Bulk command",
         "confirmCommandDesc": "Send the same command to all approved/online nodes in the group. Continue?",
         "invalidArgs": "Args is not valid JSON",
-        "cmdResult": "Command result (ok/total)"
+        "cmdResult": "Command result (ok/total)",
+        "create": "Create group",
+        "createName": "New group name",
+        "createPlaceholder": "e.g. lobby-1f",
+        "selectNodes": "Select nodes",
+        "createButton": "Create",
+        "noNodes": "No nodes available to assign",
+        "ungrouped": "unassigned"
       }
     },
     "dashboard": {

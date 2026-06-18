@@ -3,16 +3,17 @@
 // useRemote 의 rename/delete/update 뮤테이션 + target 쿼리, uiStore(toast)를 mock 한다.
 // 범위: 명명된 그룹만 표시, 이름변경, 삭제 확인, 일괄 업데이트 확인.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '@/lib/i18n';
-import type { NodeGroup } from '@/types/remote';
+import type { ManagedNode, NodeGroup } from '@/types/remote';
 
 const renameMutate = vi.hoisted(() => vi.fn());
 const deleteMutate = vi.hoisted(() => vi.fn());
 const updateMutate = vi.hoisted(() => vi.fn());
 const commandMutate = vi.hoisted(() => vi.fn());
+const setNodeGroupAsync = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('@/hooks/useRemote', () => ({
   useTargetVersion: () => ({ data: { version: 'v1.3.0' } }),
@@ -20,6 +21,7 @@ vi.mock('@/hooks/useRemote', () => ({
   useDeleteGroup: () => ({ mutate: deleteMutate, isPending: false }),
   useUpdateGroup: () => ({ mutate: updateMutate, isPending: false }),
   useCommandGroup: () => ({ mutate: commandMutate, isPending: false }),
+  useSetNodeGroup: () => ({ mutateAsync: setNodeGroupAsync, isPending: false }),
 }));
 
 const addNotificationMock = vi.hoisted(() => vi.fn());
@@ -32,10 +34,15 @@ vi.mock('@/stores/uiStore', () => ({
 
 import { GroupManagementPanel } from './GroupManagementPanel';
 
-function renderPanel(groups: NodeGroup[]): void {
+const NODES: ManagedNode[] = [
+  { instance_id: 'n1', hostname: 'host-1', version: 'v1.0.0', status: 'approved', online: true, last_seen: 0, group_name: '' },
+  { instance_id: 'n2', hostname: 'host-2', version: 'v1.0.0', status: 'approved', online: true, last_seen: 0, group_name: 'dev' },
+];
+
+function renderPanel(groups: NodeGroup[], nodes: ManagedNode[] = NODES): void {
   render(
     <I18nProvider>
-      <GroupManagementPanel groups={groups} />
+      <GroupManagementPanel groups={groups} nodes={nodes} />
     </I18nProvider>,
   );
 }
@@ -51,6 +58,7 @@ beforeEach(() => {
   deleteMutate.mockReset();
   updateMutate.mockReset();
   commandMutate.mockReset();
+  setNodeGroupAsync.mockClear();
   addNotificationMock.mockReset();
 });
 
@@ -141,5 +149,32 @@ describe('GroupManagementPanel', () => {
   it('대상 그룹/액션 미입력 시 전송 버튼이 비활성화된다', () => {
     renderPanel(GROUPS);
     expect(screen.getByTestId('group-command-send')).toBeDisabled();
+  });
+
+  it('그룹 생성: 이름 + 노드 선택 후 생성 시 각 노드를 새 그룹으로 배정한다', async () => {
+    renderPanel(GROUPS);
+    fireEvent.change(screen.getByTestId('group-create-name'), {
+      target: { value: 'lobby' },
+    });
+    fireEvent.click(screen.getByTestId('group-create-node-n1'));
+    fireEvent.click(screen.getByTestId('group-create-node-n2'));
+    fireEvent.click(screen.getByTestId('group-create-submit'));
+    await waitFor(() => expect(setNodeGroupAsync).toHaveBeenCalledTimes(2));
+    expect(setNodeGroupAsync).toHaveBeenCalledWith({ instanceID: 'n1', groupName: 'lobby' });
+    expect(setNodeGroupAsync).toHaveBeenCalledWith({ instanceID: 'n2', groupName: 'lobby' });
+  });
+
+  it('그룹 생성: 이름 비었거나 노드 미선택이면 버튼 비활성', () => {
+    renderPanel(GROUPS);
+    // 초기: 이름 없음 + 선택 없음 → 비활성.
+    expect(screen.getByTestId('group-create-submit')).toBeDisabled();
+    // 이름만 입력 → 여전히 비활성(노드 미선택).
+    fireEvent.change(screen.getByTestId('group-create-name'), { target: { value: 'x' } });
+    expect(screen.getByTestId('group-create-submit')).toBeDisabled();
+  });
+
+  it('그룹 생성: 노드가 없으면 안내 메시지를 표시한다', () => {
+    renderPanel(GROUPS, []);
+    expect(screen.getByTestId('group-create-nonodes')).toBeInTheDocument();
   });
 });
