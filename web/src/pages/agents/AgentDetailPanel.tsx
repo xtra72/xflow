@@ -2428,15 +2428,8 @@ function StoreEntryRow({
   // 히스토리 토글은 exec(get_history) 에 의존하므로 원격 READ-ONLY 에서는 비활성.
   const hasHistory = maxHistorySize > 0 && !readOnly;
 
-  const handleRowClick = useCallback(() => {
-    if (!hasHistory) return;
-
-    if (historyOpen) {
-      setHistoryOpen(false);
-      return;
-    }
-
-    setHistoryOpen(true);
+  // fetchHistory 는 get_history(exec)로 현재 히스토리를 조회하여 로컬 state 에 반영한다.
+  const fetchHistory = useCallback(() => {
     setHistoryLoading(true);
     execAgent.mutate(
       {
@@ -2469,7 +2462,23 @@ function StoreEntryRow({
         },
       },
     );
-  }, [hasHistory, historyOpen, execAgent, agentId, entry.storage_key, entry.key, entry.namespace]);
+  }, [execAgent, agentId, entry.storage_key, entry.key, entry.namespace]);
+
+  const handleRowClick = useCallback(() => {
+    if (!hasHistory) return;
+    setHistoryOpen((open) => !open);
+  }, [hasHistory]);
+
+  // 히스토리가 열려 있는 동안 엔트리가 갱신되면(새로고침으로 값/카운트/갱신시각 변경)
+  // 히스토리를 다시 가져온다. 이전에는 히스토리가 펼칠 때 단 한 번만 로컬 state 에
+  // 캐시되어, 새로고침해도 갱신되지 않고 행을 닫았다 다시 열어야만 반영됐다.
+  useEffect(() => {
+    if (!historyOpen) return;
+    fetchHistory();
+    // entry 의 변경 지표(history_count/updated_at/value)가 바뀔 때만 재조회한다.
+    // 값이 동일하면 deps 가 그대로라 불필요한 재조회가 발생하지 않는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyOpen, entry.history_count, entry.updated_at, entry.value]);
 
   // 히스토리 확장 행의 colSpan 계산:
   //   key + 바인딩 + 메트릭 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated + 액션
