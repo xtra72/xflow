@@ -71,8 +71,9 @@ func gracefulReexec(binPath, expectedVersion string, logger *slog.Logger) {
 }
 
 // systemUpdateApplier 는 self-update 오케스트레이션을 추상화한다(테스트 fake 주입용).
+// updateURL 이 비어 있지 않으면 노드 로컬 update_url 대신 사용한다(서버 소스 오버라이드).
 type systemUpdateApplier interface {
-	ApplyUpdate(ctx context.Context, targetVersion, channel string) (remote.SystemUpdateResult, error)
+	ApplyUpdate(ctx context.Context, targetVersion, channel, updateURL string) (remote.SystemUpdateResult, error)
 }
 
 // systemCommander 는 remote.DomainCommander 를 구현해 system 도메인 명령을 라우팅한다.
@@ -96,7 +97,7 @@ func (c *systemCommander) Do(ctx context.Context, action string, args json.RawMe
 			return nil, fmt.Errorf("system/update args 파싱: %w", err)
 		}
 	}
-	res, err := c.runner.ApplyUpdate(ctx, a.TargetVersion, a.Channel)
+	res, err := c.runner.ApplyUpdate(ctx, a.TargetVersion, a.Channel, a.UpdateURL)
 	if err != nil {
 		return nil, err
 	}
@@ -151,9 +152,15 @@ func (r *remoteUpdateRunner) smokeTest(ctx context.Context, candidatePath string
 }
 
 // ApplyUpdate 는 목표 버전 바이너리를 받아 검증 후 원자적으로 교체한다.
-func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, channel string) (remote.SystemUpdateResult, error) {
+// updateURL 이 비어 있지 않으면 노드 로컬 update_url 대신 사용한다(서버 소스 오버라이드).
+// 공개키(public_key_path)는 항상 노드 로컬 설정을 사용한다(신뢰 앵커 — 서버가 못 바꿈).
+func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, channel, updateURL string) (remote.SystemUpdateResult, error) {
 	var zero remote.SystemUpdateResult
-	if r.settings.UpdateURL == "" {
+	srcURL := updateURL
+	if srcURL == "" {
+		srcURL = r.settings.UpdateURL
+	}
+	if srcURL == "" {
 		return zero, errors.New("update_url 미설정 — 원격 업데이트 비활성")
 	}
 	if r.settings.PublicKeyPath == "" {
@@ -163,7 +170,7 @@ func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, cha
 	if ch == "" {
 		ch = r.settings.Channel
 	}
-	checker, err := updater.NewChecker(r.settings.UpdateURL, updater.Channel(ch))
+	checker, err := updater.NewChecker(srcURL, updater.Channel(ch))
 	if err != nil {
 		return zero, fmt.Errorf("checker 생성: %w", err)
 	}

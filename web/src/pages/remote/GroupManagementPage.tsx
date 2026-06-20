@@ -14,6 +14,7 @@ import { GroupCreatePanel } from '@/components/remote/GroupCreatePanel';
 import { GroupTree } from '@/components/remote/GroupTree';
 import { NodeDashboard } from '@/components/remote/NodeDashboard';
 import { RemoteNotServerNotice } from '@/components/remote/RemoteNotServerNotice';
+import { UpdateSourceSettings } from '@/components/remote/UpdateSourceSettings';
 import {
   useManagedNodes,
   useRemoteGroups,
@@ -122,8 +123,9 @@ export default function GroupManagementPage(): React.JSX.Element {
     >
       <PageHeader />
       <div className="flex min-h-0 flex-1">
-        {/* 좌측: 그룹 트리 */}
-        <aside className="w-72 shrink-0 overflow-y-auto border-r border-(--color-border-default) p-3">
+        {/* 좌측: 업데이트 소스(전역 설정) + 그룹 트리 */}
+        <aside className="w-72 shrink-0 space-y-3 overflow-y-auto border-r border-(--color-border-default) p-3">
+          <UpdateSourceSettings />
           <GroupTree
             namedGroups={namedGroups}
             nodesByGroup={nodesByGroup}

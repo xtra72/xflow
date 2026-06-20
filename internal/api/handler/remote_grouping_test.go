@@ -31,6 +31,7 @@ type fakeGrouping struct {
 	renamed      [2]string                    // [oldName, newName] 마지막 rename 기록
 	deletedGroup string                       // 마지막 delete 그룹 기록
 	dispatched   []string                     // "group/domain/action" 기록
+	lastArgs     json.RawMessage              // 마지막 DispatchGroup args
 	dispatchRes  []remote.GroupDispatchResult // DispatchGroup 반환값
 	groupErr     error                        // rename/delete/dispatch 공통 에러 주입
 }
@@ -54,12 +55,13 @@ func (f *fakeGrouping) DeleteGroup(_ context.Context, groupName string) (int, er
 func (f *fakeGrouping) DispatchGroup(
 	_ context.Context,
 	groupName, domain, action string,
-	_ json.RawMessage,
+	args json.RawMessage,
 ) ([]remote.GroupDispatchResult, error) {
 	if f.groupErr != nil {
 		return nil, f.groupErr
 	}
 	f.dispatched = append(f.dispatched, groupName+"/"+domain+"/"+action)
+	f.lastArgs = args
 	return f.dispatchRes, nil
 }
 
@@ -392,6 +394,34 @@ func TestRemoteGrouping_UpdateGroup(t *testing.T) {
 	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/update", `{"version":"v1.3.0","restart":true}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, svc.dispatched, "prod/system/update")
+}
+
+// TestRemoteGrouping_UpdateGroup_InjectsSource 는 그룹 일괄 업데이트가 서버 저장
+// 업데이트 소스(update_url/채널)를 주입하는지 검증한다.
+func TestRemoteGrouping_UpdateGroup_InjectsSource(t *testing.T) {
+	svc := newFakeGrouping()
+	svc.dispatchRes = []remote.GroupDispatchResult{{InstanceID: "p1", OK: true}}
+	settings := newMemSettings()
+	require.NoError(t, settings.SetSetting(context.Background(), updateSourceSettingKey,
+		`{"update_url":"https://dl.example.com/xflow","channel":"beta"}`))
+
+	h := NewRemoteGroupingHandler(svc).WithSettings(settings)
+	router := api.NewRouter()
+	h.RegisterRoutes(router.Group("/api/v1"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/remote/groups/prod/update", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), api.ContextKeyUserRole(), "admin"))
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var args struct {
+		UpdateURL string `json:"update_url"`
+		Channel   string `json:"channel"`
+	}
+	require.NoError(t, json.Unmarshal(svc.lastArgs, &args))
+	assert.Equal(t, "https://dl.example.com/xflow", args.UpdateURL)
+	assert.Equal(t, "beta", args.Channel)
 }
 
 // 잘못된 버전은 거부된다(디스패치 안 함).

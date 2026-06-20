@@ -22,7 +22,8 @@
     "collapseSidebar": "사이드바 접기",
     "nodeManagement": "노드 관리",
     "enrollmentManagement": "등록 관리",
-    "groupManagement": "그룹 관리"
+    "groupManagement": "그룹 관리",
+    "releaseStore": "릴리스 저장소"
   },
   "auth": {
     "login": "로그인",
@@ -710,6 +711,21 @@
       "historyEmpty": "버전 변경 이력이 없습니다.",
       "changedAt": "변경 시각"
     },
+    "updateSource": {
+      "title": "업데이트 소스",
+      "github": "GitHub (기본)",
+      "selfHosting": "자체 호스팅",
+      "thisServer": "이 관리 서버",
+      "thisServerHint": "이 서버의 릴리스 저장소를 소스로 사용합니다. 노드는 릴리스 저장소에 업로드된 자기 아키텍처 이미지를 내려받습니다.",
+      "change": "변경",
+      "urlLabel": "릴리스 API 베이스 URL",
+      "urlHint": "https:// 로 시작해야 합니다. 예: https://dl.example.com/xflow",
+      "channelLabel": "채널",
+      "securityNote": "공개키는 각 노드에 로컬로 보관되며 서버는 전송하지 않습니다. 노드가 자기 공개키로 서명을 검증해 무결성을 보장합니다.",
+      "invalidUrl": "URL 은 https:// 로 시작해야 합니다",
+      "saved": "업데이트 소스를 저장했습니다",
+      "saveFailed": "업데이트 소스 저장에 실패했습니다"
+    },
     "groupManagement": {
       "title": "그룹 관리",
       "subtitle": "노드를 그룹으로 구성하고 좌측 트리에서 선택해 관리합니다.",
@@ -722,6 +738,45 @@
       "noMembers": "이 그룹에 노드가 없습니다.",
       "ungroupedDesc": "그룹에 속하지 않은 노드(기본 — 삭제 불가)",
       "notServer": "원격 관리(server 모드)에서만 사용할 수 있습니다."
+    },
+    "releaseStore": {
+      "title": "릴리스 저장소",
+      "subtitle": "아키텍처별 xflowd 이미지를 이 관리 서버에 저장합니다. 업데이트 소스를 이 서버로 지정한 노드는 자기 아키텍처에 맞는 이미지를 자동으로 내려받습니다.",
+      "newVersion": "새 버전",
+      "versionLabel": "버전",
+      "versionPlaceholder": "v1.3.0",
+      "channelLabel": "채널",
+      "notesLabel": "릴리스 노트",
+      "notesPlaceholder": "변경 사항(선택)",
+      "create": "버전 생성",
+      "invalidVersion": "버전은 vMAJOR.MINOR.PATCH 형식이어야 합니다 (예: v1.3.0)",
+      "created": "버전을 생성했습니다",
+      "createFailed": "버전 생성에 실패했습니다",
+      "publishedAt": "게시:",
+      "empty": "아직 릴리스가 없습니다. 위에서 새 버전을 생성하세요.",
+      "matrixHeading": "아키텍처 매트릭스",
+      "uploaded": "업로드됨",
+      "missing": "누락",
+      "extraAssets": "추가 아키텍처",
+      "noSignature": "서명 없음",
+      "binaryLabel": "바이너리",
+      "signatureLabel": "서명(.sig)",
+      "upload": "업로드",
+      "uploadHint": "바이너리와 .sig 서명 파일을 모두 선택하세요.",
+      "uploadIncomplete": "바이너리와 서명 파일을 모두 선택하세요",
+      "uploaded.success": "{slot} 자산을 업로드했습니다",
+      "uploadFailed": "자산 업로드에 실패했습니다",
+      "deleteAsset": "자산 삭제",
+      "deleteAssetTitle": "자산 삭제",
+      "deleteAssetDesc": "{version}의 {slot} 자산을 삭제합니다. 이 작업은 되돌릴 수 없습니다.",
+      "assetDeleted": "자산을 삭제했습니다",
+      "deleteVersion": "버전 삭제",
+      "deleteVersionTitle": "버전 삭제",
+      "deleteVersionDesc": "{version} 버전과 모든 아키텍처 자산을 삭제합니다. 이 작업은 되돌릴 수 없습니다.",
+      "versionDeleted": "버전을 삭제했습니다",
+      "deleteFailed": "삭제에 실패했습니다",
+      "notServer": "원격 관리(server 모드)에서만 사용할 수 있습니다.",
+      "loadError": "릴리스 목록을 불러오지 못했습니다"
     }
   },
   "flowPicker": {

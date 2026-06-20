@@ -33,6 +33,9 @@ import type {
   NodeUpdateRequest,
   NodeVersionHistoryEntry,
   PreRegisterRequest,
+  ReleaseAsset,
+  ReleaseCreateRequest,
+  ReleaseRecord,
   RemoteAgentCreateRequest,
   RemoteAgentUpdateRequest,
   RemoteFlowCreateRequest,
@@ -40,8 +43,10 @@ import type {
   RemoteModeResponse,
   RemoteResourceResult,
   TargetVersion,
+  UpdateSource,
 } from '@/types/remote';
 
+import { apiClient } from './client';
 import { del, delWith, get, patch, post, put } from './client';
 
 /** instance_id 를 URL 경로에 안전하게 인코딩한다. */
@@ -276,6 +281,109 @@ export async function getTargetVersion(): Promise<TargetVersion> {
  */
 export async function setTargetVersion(version: string): Promise<TargetVersion> {
   return put<TargetVersion>('/remote/target-version', { version });
+}
+
+/**
+ * 서버 저장 업데이트 소스(GitHub/자체 호스팅)를 조회한다. GET /remote/update-source
+ * 미설정이면 { update_url: "" } 를 반환한다.
+ */
+export async function getUpdateSource(): Promise<UpdateSource> {
+  return get<UpdateSource>('/remote/update-source');
+}
+
+/**
+ * 서버 저장 업데이트 소스를 설정한다. PUT /remote/update-source  본문: { update_url, channel }
+ * update_url 은 비어 있거나 https:// 여야 한다(빈 값 = 해제 → 노드 로컬 설정 사용).
+ */
+export async function setUpdateSource(source: UpdateSource): Promise<UpdateSource> {
+  return put<UpdateSource>('/remote/update-source', source);
+}
+
+// ---- 릴리스 저장소 (관리 서버 호스팅 프로그램 이미지) ----
+//
+// 관리 서버가 아키텍처별 `xflowd` 바이너리 + 서명을 저장하고, 업데이트 소스를 이
+// 서버로 지정한 노드가 자기 아키텍처에 맞는 이미지를 자동 다운로드한다.
+// 자산 업로드(POST .../assets)는 JSON 이 아니라 multipart/form-data 이므로
+// envelope 래퍼(post) 대신 apiClient 를 직접 사용한다. apiClient 의 request
+// 인터셉터가 Bearer 토큰을 부착하고(main.tsx setupInterceptors), FormData 를
+// 전달하면 axios 가 multipart 경계를 자동 설정한다(기본 JSON Content-Type 덮어씀).
+// response 인터셉터가 성공 envelope 를 벗기므로 본문은 ReleaseAsset 이다.
+
+/**
+ * 릴리스 버전 목록을 조회한다. GET /remote/releases
+ *
+ * 응답 `{ releases: ReleaseRecord[] }` 의 `.releases` 를 언래핑한다(미설정 시 []).
+ */
+export async function listReleases(): Promise<ReleaseRecord[]> {
+  const body = await get<{ releases: ReleaseRecord[] }>('/remote/releases');
+  return body.releases ?? [];
+}
+
+/**
+ * 릴리스 버전을 생성/갱신한다. POST /remote/releases  본문: { version, channel?, notes? }
+ *
+ * version 은 semver(vMAJOR.MINOR.PATCH) 여야 한다. 잘못된 버전은 400 으로 매핑되어
+ * APIError 로 전파된다. 기존 버전 재게시는 메타데이터를 갱신한다.
+ */
+export async function createRelease(
+  req: ReleaseCreateRequest,
+): Promise<ReleaseRecord> {
+  return post<ReleaseRecord>('/remote/releases', req);
+}
+
+/**
+ * 아키텍처별 바이너리 + 서명 자산을 업로드한다.
+ * POST /remote/releases/{version}/assets  (multipart/form-data)
+ *   텍스트 필드: os, arch
+ *   파일 필드:   binary, signature
+ *
+ * envelope 래퍼(post)가 강제하는 JSON Content-Type 을 피하기 위해 apiClient 를 직접
+ * 사용한다. request 인터셉터가 Bearer 토큰을 부착하고, FormData 전달 시 axios 가
+ * multipart 경계를 자동 설정한다. response 인터셉터가 성공 envelope 를 벗겨 본문
+ * (ReleaseAsset)을 반환한다. 미존재 버전은 404 로 매핑되어 APIError 로 전파된다.
+ */
+export async function uploadReleaseAsset(
+  version: string,
+  os: string,
+  arch: string,
+  binary: File,
+  signature: File,
+): Promise<ReleaseAsset> {
+  const form = new FormData();
+  form.append('os', os);
+  form.append('arch', arch);
+  form.append('binary', binary);
+  form.append('signature', signature);
+  const response = await apiClient.post<ReleaseAsset>(
+    `/remote/releases/${encodeId(version)}/assets`,
+    form,
+  );
+  return response.data;
+}
+
+/**
+ * 릴리스 버전을 삭제한다(모든 자산 포함). DELETE /remote/releases/{version} → 204
+ *
+ * 미존재 버전은 404 로 매핑되어 APIError 로 전파된다.
+ */
+export async function deleteRelease(version: string): Promise<void> {
+  await del(`/remote/releases/${encodeId(version)}`);
+}
+
+/**
+ * 한 아키텍처 자산을 삭제한다.
+ * DELETE /remote/releases/{version}/assets/{os}/{arch} → 204
+ *
+ * 미존재 버전/자산은 404 로 매핑되어 APIError 로 전파된다.
+ */
+export async function deleteReleaseAsset(
+  version: string,
+  os: string,
+  arch: string,
+): Promise<void> {
+  await del(
+    `/remote/releases/${encodeId(version)}/assets/${encodeId(os)}/${encodeId(arch)}`,
+  );
 }
 
 /**

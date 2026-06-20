@@ -84,6 +84,77 @@ export interface TargetVersion {
   version: string;
 }
 
+/**
+ * 서버 저장 업데이트 소스 (GitHub/자체 호스팅). GET/PUT /remote/update-source
+ * 원격 업데이트 명령에 자동 주입된다. 공개키는 노드 로컬 신뢰 앵커이므로 서버가 저장/전달하지
+ * 않는다(무결성은 각 노드가 자기 로컬 공개키로 서명 검증).
+ */
+export interface UpdateSource {
+  /** 릴리스 API 베이스 URL. 빈 문자열 = 미설정(노드 로컬 설정으로 폴백). https:// 필수. */
+  update_url: string;
+  /** 채널(stable/beta/nightly). 빈 문자열 = 노드 기본. */
+  channel?: string;
+}
+
+// ---- 릴리스 저장소 (관리 서버 호스팅 프로그램 이미지) ----
+//
+// 관리 서버가 아키텍처별 `xflowd` 바이너리 + Ed25519 서명을 저장하는 릴리스 저장소이다.
+// 노드는 런타임 GOOS/GOARCH 를 보고하므로(RPi armv6/armv7 은 모두 arm), UI 는
+// linux/amd64 · linux/arm64 · linux/arm · darwin/amd64 · darwin/arm64 5개 슬롯을
+// 행렬로 표시하고 업로드 여부를 표시한다. 업데이트 소스를 이 서버로 지정하면 각 노드가
+// 자신의 아키텍처에 맞는 바이너리를 자동 다운로드한다.
+//
+// Go DTO 매핑: internal/api/handler/remote_admin.go (ReleaseRecord/ReleaseAsset).
+// 모든 epoch 시각은 밀리초(int64 UnixMilli)이다.
+
+/**
+ * 릴리스 자산 한 개(아키텍처별 바이너리 + 서명 메타데이터).
+ * Go `ReleaseAsset` 와 1:1 매핑된다.
+ */
+export interface ReleaseAsset {
+  /** 운영체제 (GOOS). 예: linux, darwin. */
+  os: string;
+  /** 아키텍처 (GOARCH). 예: amd64, arm64, arm. */
+  arch: string;
+  /** 저장된 바이너리 파일명. */
+  filename: string;
+  /** 바이너리 크기 (바이트). */
+  size: number;
+  /** 바이너리 SHA-256 해시 (hex 문자열). */
+  sha256: string;
+  /** Ed25519 서명(.sig) 동반 여부. */
+  has_sig: boolean;
+  /** 업로드 시각 (epoch ms). */
+  uploaded_at: number;
+}
+
+/**
+ * 릴리스 버전 한 개(버전 + 채널 + 노트 + 아키텍처별 자산 목록).
+ * Go `ReleaseRecord` 와 1:1 매핑된다.
+ */
+export interface ReleaseRecord {
+  /** semver 버전 문자열 (vMAJOR.MINOR.PATCH). */
+  version: string;
+  /** 릴리스 채널 (stable/beta/nightly). */
+  channel: string;
+  /** 릴리스 노트(자유 텍스트). */
+  notes: string;
+  /** 게시 시각 (epoch ms). */
+  published_at: number;
+  /** 아키텍처별 업로드된 자산 목록. */
+  assets: ReleaseAsset[];
+}
+
+/** 릴리스 버전 생성/갱신 요청. POST /remote/releases */
+export interface ReleaseCreateRequest {
+  /** semver 버전 문자열 (vMAJOR.MINOR.PATCH). */
+  version: string;
+  /** 릴리스 채널 (stable/beta/nightly). 미지정 시 서버 기본(stable). */
+  channel?: string;
+  /** 릴리스 노트(자유 텍스트). */
+  notes?: string;
+}
+
 /** 노드 버전 변경 이력 한 줄 (버전 관리 Phase 1). */
 export interface NodeVersionHistoryEntry {
   /** 변경 후 버전 문자열. */

@@ -10,8 +10,8 @@ server:
   mode: "development"       # "development" 또는 "production"
   tls:
     enabled: false
-    cert_file: ""
-    key_file: ""
+    # cert_file: "./certs/cert.pem"
+    # key_file: "./certs/key.pem"
   cors:
     enabled: true
     allowed_origins:
@@ -100,6 +100,19 @@ remote_management:
   mode: server
   # bootstrap_secret: ""          # (선택) 사전 공유 시크릿. 설정 시 클라이언트도 동일 값이어야 등록 1차 통과.
   # require_secure: false         # true 면 평문 ws 거절(wss 강제).
+
+  # --- server 모드: 서버 호스팅 프로그램 이미지(버전 관리) ---
+  # 서버가 아키텍처별 xflowd 바이너리 + Ed25519 .sig 를 보관하고, GitHub-Releases 호환
+  # HTTP 피드(/api/v1/updates/releases*)로 노드에 서빙한다. 노드 업데이트 소스(update_url)
+  # 를 https://{public_base_url}/api/v1/updates 로 지정하면 기존 노드 updater 가 무변경 동작한다.
+  # 공개키는 노드 로컬에만 둔다(서버는 관리자 사전 서명 .sig 와 바이너리 바이트만 저장).
+  #
+  # public_base_url: ""           # (선택) asset 다운로드 URL 의 공개 base (예: https://mgmt.example.com).
+  #                               # 비우면 들어오는 요청 Host(+X-Forwarded-Host)에서 유도하되 scheme 은
+  #                               # 항상 https 로 강제한다(노드 Downloader 의 https 강제 충족).
+  # releases_dir: ""              # (선택) 바이너리+.sig 저장 디렉토리. 비우면 {dir(sqlite_path)}/releases.
+  #                               # nightly 채널 버전은 tag_name 에 "-nightly" 식별자를 포함해야 한다
+  #                               # (예: v1.2.3-nightly.20260620). beta 는 채널만 beta 로 지정하면 된다.
 
   # --- client 모드일 때만 사용하는 항목 ---
   # server_url: "ws://127.0.0.1:8081/api/remote/ws"   # 운영은 wss:// 권장

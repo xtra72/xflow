@@ -19,13 +19,15 @@ type fakeUpdateRunner struct {
 	err        error
 	gotTarget  string
 	gotChannel string
+	gotURL     string
 	callCount  int
 }
 
-func (f *fakeUpdateRunner) ApplyUpdate(_ context.Context, targetVersion, channel string) (remote.SystemUpdateResult, error) {
+func (f *fakeUpdateRunner) ApplyUpdate(_ context.Context, targetVersion, channel, updateURL string) (remote.SystemUpdateResult, error) {
 	f.callCount++
 	f.gotTarget = targetVersion
 	f.gotChannel = channel
+	f.gotURL = updateURL
 	return f.result, f.err
 }
 
@@ -109,7 +111,7 @@ func TestSystemCommander_EmptyArgsDefaultsToLatest(t *testing.T) {
 func TestRemoteUpdateRunner_RequiresConfig(t *testing.T) {
 	// update_url/public_key_path 미설정 시 명확한 오류.
 	r := &remoteUpdateRunner{version: "v1.0.0", binaryPath: "/bin/xflowd"}
-	_, err := r.ApplyUpdate(context.Background(), "v1.3.0", "stable")
+	_, err := r.ApplyUpdate(context.Background(), "v1.3.0", "stable", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "update_url")
 }

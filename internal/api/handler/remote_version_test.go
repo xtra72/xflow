@@ -211,6 +211,99 @@ func TestUpdateNode_EmptyVersionAllowed(t *testing.T) {
 	assert.Contains(t, svc.dispatched, "system/update")
 }
 
+func TestUpdateSource_SetAndGet(t *testing.T) {
+	settings := newMemSettings()
+	do := versionAdminRequest(t, newFakeNodeAdmin(), settings)
+
+	// 초기: 빈 소스.
+	rec := do(http.MethodGet, "/api/v1/remote/update-source", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		UpdateURL string `json:"update_url"`
+		Channel   string `json:"channel"`
+	}
+	decodeData(t, rec, &got)
+	assert.Equal(t, "", got.UpdateURL)
+
+	// 설정(자체 호스팅 + beta).
+	rec = do(http.MethodPut, "/api/v1/remote/update-source",
+		`{"update_url":"https://dl.example.com/xflow","channel":"beta"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = do(http.MethodGet, "/api/v1/remote/update-source", "")
+	decodeData(t, rec, &got)
+	assert.Equal(t, "https://dl.example.com/xflow", got.UpdateURL)
+	assert.Equal(t, "beta", got.Channel)
+}
+
+func TestUpdateSource_RejectsNonHTTPS(t *testing.T) {
+	do := versionAdminRequest(t, newFakeNodeAdmin(), newMemSettings())
+	rec := do(http.MethodPut, "/api/v1/remote/update-source",
+		`{"update_url":"http://insecure.example.com"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestUpdateSource_EmptyClears(t *testing.T) {
+	settings := newMemSettings()
+	do := versionAdminRequest(t, newFakeNodeAdmin(), settings)
+	require.Equal(t, http.StatusOK, do(http.MethodPut, "/api/v1/remote/update-source",
+		`{"update_url":"https://dl.example.com/xflow"}`).Code)
+	// 빈 값 = 해제(노드 로컬 설정 폴백).
+	require.Equal(t, http.StatusOK, do(http.MethodPut, "/api/v1/remote/update-source",
+		`{"update_url":""}`).Code)
+	rec := do(http.MethodGet, "/api/v1/remote/update-source", "")
+	var got struct {
+		UpdateURL string `json:"update_url"`
+	}
+	decodeData(t, rec, &got)
+	assert.Equal(t, "", got.UpdateURL)
+}
+
+func TestUpdateNode_InjectsStoredSource(t *testing.T) {
+	svc := newFakeNodeAdmin()
+	svc.nodes["n1"] = storage.ManagedNode{InstanceID: "n1", Status: "approved", Online: true}
+	svc.dispatchResult = json.RawMessage(`{}`)
+	settings := newMemSettings()
+	do := versionAdminRequest(t, svc, settings)
+
+	// 서버에 소스 저장(채널 nightly).
+	require.Equal(t, http.StatusOK, do(http.MethodPut, "/api/v1/remote/update-source",
+		`{"update_url":"https://dl.example.com/xflow","channel":"nightly"}`).Code)
+
+	// 채널 미지정 업데이트 → 저장된 소스/채널 주입.
+	rec := do(http.MethodPost, "/api/v1/remote/nodes/n1/update", `{}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var args struct {
+		UpdateURL string `json:"update_url"`
+		Channel   string `json:"channel"`
+	}
+	require.NoError(t, json.Unmarshal(svc.lastDispatchArgs, &args))
+	assert.Equal(t, "https://dl.example.com/xflow", args.UpdateURL)
+	assert.Equal(t, "nightly", args.Channel)
+}
+
+func TestUpdateNode_RequestChannelOverridesStored(t *testing.T) {
+	svc := newFakeNodeAdmin()
+	svc.nodes["n1"] = storage.ManagedNode{InstanceID: "n1", Status: "approved", Online: true}
+	svc.dispatchResult = json.RawMessage(`{}`)
+	settings := newMemSettings()
+	do := versionAdminRequest(t, svc, settings)
+
+	require.Equal(t, http.StatusOK, do(http.MethodPut, "/api/v1/remote/update-source",
+		`{"update_url":"https://dl.example.com/xflow","channel":"nightly"}`).Code)
+
+	// 요청이 채널을 명시하면 우선한다.
+	rec := do(http.MethodPost, "/api/v1/remote/nodes/n1/update", `{"channel":"stable"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var args struct {
+		UpdateURL string `json:"update_url"`
+		Channel   string `json:"channel"`
+	}
+	require.NoError(t, json.Unmarshal(svc.lastDispatchArgs, &args))
+	assert.Equal(t, "https://dl.example.com/xflow", args.UpdateURL)
+	assert.Equal(t, "stable", args.Channel)
+}
+
 func TestVersionEndpoints_RequireAdmin(t *testing.T) {
 	h := NewRemoteAdminHandler(newFakeNodeAdmin(), nil).WithSettings(newMemSettings())
 	router := api.NewRouter()

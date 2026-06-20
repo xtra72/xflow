@@ -260,8 +260,12 @@ const (
 type SystemUpdateArgs struct {
 	// TargetVersion 은 적용할 목표 버전(vMAJOR.MINOR.PATCH)이다. 비면 채널 최신.
 	TargetVersion string `json:"target_version,omitempty"`
-	// Channel 은 릴리스 채널(stable/beta/nightly)이다. 비면 기본 채널.
+	// Channel 은 릴리스 채널(stable/beta/nightly)이다. 비면 노드 기본 채널.
 	Channel string `json:"channel,omitempty"`
+	// UpdateURL 은 다운로드 소스(릴리스 API 베이스 URL) 오버라이드다. 관리 서버가
+	// 저장한 소스를 주입한다. 비면 노드 로컬 설정(update.update_url)을 사용한다. 공개키는
+	// 절대 전달하지 않는다 — 노드가 자기 로컬 공개키로 서명을 검증한다(무결성 보장).
+	UpdateURL string `json:"update_url,omitempty"`
 	// Restart 가 true 면 바이너리 교체 성공 후 결과 전송 후 graceful 재시작을 수행한다.
 	// 기본 false: 교체만 하고 restart_required=true 를 반환한다(운영 측 재시작 위임).
 	Restart bool `json:"restart,omitempty"`

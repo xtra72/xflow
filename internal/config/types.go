@@ -184,6 +184,16 @@ type RemoteManagementConfig struct {
 	// server_url 과 server 모드의 TLS 미설정을 거부한다. 기본 false(기존 동작 보존,
 	// REQ-N03). development 모드에서는 강제하지 않는다(로컬 개발 편의).
 	RequireSecure bool
+
+	// PublicBaseURL 은 server 모드가 호스팅하는 프로그램 이미지 다운로드 URL 의 공개 base
+	// 이다(예: https://mgmt.example.com). 설정되면 GitHub-호환 릴리즈 피드의 asset
+	// browser_download_url 을 이 base 로 만든다. 빈 값이면 들어오는 요청 Host(+X-Forwarded-*)
+	// 에서 유도하되 scheme 은 항상 https 로 강제한다(노드 Downloader 의 https 강제 충족).
+	PublicBaseURL string
+
+	// ReleasesDir 은 호스팅 프로그램 이미지(바이너리 + .sig)를 저장할 디렉토리이다. 빈 값이면
+	// {dir(sqlite_path)}/releases 로 유도한다(device_metadata 와 동일 컨벤션).
+	ReleasesDir string
 }
 
 // DisplayConfig - 노드 장비 모니터 해상도 설정 (v1.6 M11, 그룹 M, REQ-M01/M03, spec §5.13.1)

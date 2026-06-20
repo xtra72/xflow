@@ -134,12 +134,20 @@ type NodeDetailDTO struct {
 
 // RemoteGroupingHandler 는 노드 그룹핑 + 상세 엔드포인트를 처리한다.
 type RemoteGroupingHandler struct {
-	svc NodeGroupingService
+	svc      NodeGroupingService
+	settings storage.SettingsRepository // 업데이트 소스(update_url/채널) 주입용(선택).
 }
 
 // NewRemoteGroupingHandler 는 RemoteGroupingHandler 를 생성한다.
 func NewRemoteGroupingHandler(svc NodeGroupingService) *RemoteGroupingHandler {
 	return &RemoteGroupingHandler{svc: svc}
+}
+
+// WithSettings 는 전역 설정 저장소를 연결한다(그룹 일괄 업데이트에 서버 저장 update_url/
+// 채널을 주입). nil 이면 노드 로컬 설정으로 폴백한다.
+func (h *RemoteGroupingHandler) WithSettings(settings storage.SettingsRepository) *RemoteGroupingHandler {
+	h.settings = settings
+	return h
 }
 
 // RegisterRoutes 는 그룹핑 + 상세 라우트를 그룹에 등록한다(remote_admin 의 라우트와 공존).
@@ -240,9 +248,16 @@ func (h *RemoteGroupingHandler) UpdateGroup(ctx api.Context) error {
 	if req.Version != "" && !updater.Version(req.Version).IsValid() {
 		return api.ErrBadRequest.WithMessage("version 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
 	}
+	// 서버 저장 소스(update_url/채널)를 주입한다(요청이 명시하면 우선).
+	srcURL, srcChannel := resolveUpdateSource(ctx.Context(), h.settings)
+	channel := req.Channel
+	if channel == "" {
+		channel = srcChannel
+	}
 	args, err := json.Marshal(remote.SystemUpdateArgs{
 		TargetVersion: req.Version,
-		Channel:       req.Channel,
+		Channel:       channel,
+		UpdateURL:     srcURL,
 		Restart:       req.Restart,
 	})
 	if err != nil {

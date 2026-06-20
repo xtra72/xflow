@@ -41,6 +41,8 @@ const GroupManagementPage = lazy(
 const EnrollmentManagementPage = lazy(
   () => import('@/pages/remote/EnrollmentManagementPage'),
 );
+// 릴리스 저장소(관리 서버 호스팅 프로그램 이미지): 아키텍처별 xflowd 이미지 관리.
+const ReleaseStorePage = lazy(() => import('@/pages/remote/ReleaseStorePage'));
 
 /** Suspense 래퍼 - 지연 로딩 중 로딩 스피너를 표시한다 */
 function SuspenseWrapper({ children }: { children: React.ReactNode }) {
@@ -180,6 +182,17 @@ const router = createBrowserRouter([
                 element: (
                   <SuspenseWrapper>
                     <EnrollmentManagementPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // 릴리스 저장소(관리 서버 호스팅 프로그램 이미지): 아키텍처별 xflowd
+              //   이미지 업로드/조회/삭제. 업데이트 소스를 이 서버로 지정한 노드가
+              //   자기 아키텍처 이미지를 자동 다운로드한다.
+              {
+                path: 'remote/releases',
+                element: (
+                  <SuspenseWrapper>
+                    <ReleaseStorePage />
                   </SuspenseWrapper>
                 ),
               },

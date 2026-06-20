@@ -15,10 +15,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/remote"
+	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/internal/updater"
 )
 
@@ -46,9 +48,16 @@ func (h *RemoteAdminHandler) UpdateNode(ctx api.Context) error {
 	if req.Version != "" && !updater.Version(req.Version).IsValid() {
 		return api.ErrBadRequest.WithMessage("version 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
 	}
+	// 서버 저장 소스(update_url/채널)를 주입한다(요청이 명시하면 우선).
+	srcURL, srcChannel := resolveUpdateSource(ctx.Context(), h.settings)
+	channel := req.Channel
+	if channel == "" {
+		channel = srcChannel
+	}
 	args, err := json.Marshal(remote.SystemUpdateArgs{
 		TargetVersion: req.Version,
-		Channel:       req.Channel,
+		Channel:       channel,
+		UpdateURL:     srcURL,
 		Restart:       req.Restart,
 	})
 	if err != nil {
@@ -153,6 +162,73 @@ func (h *RemoteAdminHandler) PutTargetVersion(ctx api.Context) error {
 	}
 	h.logger.Info("원격 목표 버전 설정", "target_version", req.Version, "actor", ctx.UserID())
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(targetVersionDoc{Version: req.Version}))
+}
+
+// ---- 업데이트 소스(GitHub/자체 호스팅) 설정 ----
+
+// updateSourceSettingKey 는 서버 저장 업데이트 소스(update_url/채널)의 전역 키이다.
+const updateSourceSettingKey = "remote.update_source"
+
+// updateSourceDoc 는 업데이트 소스 설정 값/응답 스키마이다. 공개키는 노드 로컬 신뢰
+// 앵커이므로 서버가 저장/전달하지 않는다(보안).
+type updateSourceDoc struct {
+	UpdateURL string `json:"update_url"`
+	Channel   string `json:"channel,omitempty"`
+}
+
+// resolveUpdateSource 는 저장된 업데이트 소스(update_url/채널)를 반환한다.
+// settings 미구성/미설정/파싱 실패 시 빈 문자열(노드 로컬 설정으로 폴백).
+func resolveUpdateSource(ctx context.Context, settings storage.SettingsRepository) (string, string) {
+	if settings == nil {
+		return "", ""
+	}
+	raw, err := settings.GetSetting(ctx, updateSourceSettingKey)
+	if err != nil || raw == "" {
+		return "", ""
+	}
+	var doc updateSourceDoc
+	if json.Unmarshal([]byte(raw), &doc) != nil {
+		return "", ""
+	}
+	return doc.UpdateURL, doc.Channel
+}
+
+// GetUpdateSource 는 저장된 업데이트 소스를 반환한다. GET /remote/update-source
+func (h *RemoteAdminHandler) GetUpdateSource(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	url, channel := resolveUpdateSource(ctx.Context(), h.settings)
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(updateSourceDoc{UpdateURL: url, Channel: channel}))
+}
+
+// PutUpdateSource 는 업데이트 소스를 설정한다. PUT /remote/update-source {update_url, channel}
+// update_url 은 비어 있거나 https:// 여야 한다(빈 값 = 해제 → 노드 로컬 설정 사용).
+func (h *RemoteAdminHandler) PutUpdateSource(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	if h.settings == nil {
+		return api.ErrInternalServer.WithMessage("설정 저장소가 구성되지 않았습니다")
+	}
+	var req updateSourceDoc
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("요청 본문 파싱 실패")
+	}
+	req.UpdateURL = strings.TrimSpace(req.UpdateURL)
+	if req.UpdateURL != "" && !strings.HasPrefix(req.UpdateURL, "https://") {
+		return api.ErrBadRequest.WithMessage("update_url 은 https:// 로 시작해야 합니다")
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
+	if err := h.settings.SetSetting(ctx.Context(), updateSourceSettingKey, string(payload)); err != nil {
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
+	h.logger.Info("원격 업데이트 소스 설정",
+		"update_url", req.UpdateURL, "channel", req.Channel, "actor", ctx.UserID())
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(req))
 }
 
 // isOutdated 는 노드 버전이 목표 버전보다 낮은지(semver) 판정한다.

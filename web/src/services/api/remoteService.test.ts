@@ -10,6 +10,8 @@ const postMock = vi.hoisted(() => vi.fn());
 const patchMock = vi.hoisted(() => vi.fn());
 const putMock = vi.hoisted(() => vi.fn());
 const delMock = vi.hoisted(() => vi.fn());
+// apiClient 는 multipart 업로드(uploadReleaseAsset)에서 직접 사용된다.
+const apiClientPostMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./client', () => ({
   get: getMock,
@@ -17,6 +19,7 @@ vi.mock('./client', () => ({
   patch: patchMock,
   put: putMock,
   del: delMock,
+  apiClient: { post: apiClientPostMock },
 }));
 
 import { APIError } from '@/types/api';
@@ -29,6 +32,80 @@ beforeEach(() => {
   patchMock.mockReset();
   putMock.mockReset();
   delMock.mockReset();
+  apiClientPostMock.mockReset();
+});
+
+describe('remoteService — 릴리스 저장소', () => {
+  it('listReleases 는 GET /remote/releases 를 호출하고 .releases 를 언래핑한다', async () => {
+    getMock.mockResolvedValueOnce({ releases: [{ version: 'v1.0.0' }] });
+    const res = await remoteService.listReleases();
+    expect(getMock).toHaveBeenCalledWith('/remote/releases');
+    expect(res).toEqual([{ version: 'v1.0.0' }]);
+  });
+
+  it('listReleases 는 releases 누락 시 빈 배열을 반환한다', async () => {
+    getMock.mockResolvedValueOnce({});
+    const res = await remoteService.listReleases();
+    expect(res).toEqual([]);
+  });
+
+  it('createRelease 는 POST /remote/releases 를 본문과 함께 호출한다', async () => {
+    postMock.mockResolvedValueOnce({ version: 'v1.3.0', channel: 'beta' });
+    const req = { version: 'v1.3.0', channel: 'beta', notes: '변경' };
+    await remoteService.createRelease(req);
+    expect(postMock).toHaveBeenCalledWith('/remote/releases', req);
+  });
+
+  it('createRelease 의 400 에러는 호출자로 전파된다', async () => {
+    postMock.mockRejectedValueOnce(new APIError('BAD_REQUEST', 'invalid semver', 400));
+    await expect(
+      remoteService.createRelease({ version: 'bad' }),
+    ).rejects.toBeInstanceOf(APIError);
+  });
+
+  it('uploadReleaseAsset 는 apiClient.post 로 multipart FormData 를 전송한다', async () => {
+    apiClientPostMock.mockResolvedValueOnce({ data: { os: 'linux', arch: 'amd64' } });
+    const binary = new File(['bin'], 'xflowd', { type: 'application/octet-stream' });
+    const signature = new File(['sig'], 'xflowd.sig', { type: 'application/octet-stream' });
+    const res = await remoteService.uploadReleaseAsset(
+      'v1.3.0',
+      'linux',
+      'amd64',
+      binary,
+      signature,
+    );
+    expect(apiClientPostMock).toHaveBeenCalledTimes(1);
+    const [url, form] = apiClientPostMock.mock.calls[0] as [string, FormData];
+    expect(url).toBe('/remote/releases/v1.3.0/assets');
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get('os')).toBe('linux');
+    expect(form.get('arch')).toBe('amd64');
+    expect(form.get('binary')).toBe(binary);
+    expect(form.get('signature')).toBe(signature);
+    expect(res).toEqual({ os: 'linux', arch: 'amd64' });
+  });
+
+  it('uploadReleaseAsset 는 version 을 URL 인코딩한다', async () => {
+    apiClientPostMock.mockResolvedValueOnce({ data: {} });
+    const f = new File(['x'], 'x');
+    await remoteService.uploadReleaseAsset('v1/3', 'linux', 'arm', f, f);
+    const [url] = apiClientPostMock.mock.calls[0] as [string];
+    expect(url).toBe('/remote/releases/v1%2F3/assets');
+  });
+
+  it('deleteRelease 는 DELETE /remote/releases/{version} 를 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.deleteRelease('v1.3.0');
+    expect(delMock).toHaveBeenCalledWith('/remote/releases/v1.3.0');
+  });
+
+  it('deleteReleaseAsset 는 DELETE /remote/releases/{version}/assets/{os}/{arch} 를 호출한다', async () => {
+    delMock.mockResolvedValueOnce(undefined);
+    await remoteService.deleteReleaseAsset('v1.3.0', 'linux', 'amd64');
+    expect(delMock).toHaveBeenCalledWith(
+      '/remote/releases/v1.3.0/assets/linux/amd64',
+    );
+  });
 });
 
 describe('remoteService — 동작 모드', () => {

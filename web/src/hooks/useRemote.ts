@@ -19,10 +19,12 @@ import type {
   EnrollmentTokenCreateRequest,
   MirroredResourceKind,
   PreRegisterRequest,
+  ReleaseCreateRequest,
   RemoteAgentCreateRequest,
   RemoteAgentUpdateRequest,
   RemoteFlowCreateRequest,
   RemoteFlowUpdateRequest,
+  UpdateSource,
 } from '@/types/remote';
 import type { NodeDetail, NodeGroup, NodeUpdateRequest } from '@/types/remote';
 import * as remoteService from '@/services/api/remoteService';
@@ -381,6 +383,117 @@ export function useSetTargetVersion() {
       queryClient.invalidateQueries({ queryKey: TARGET_VERSION_KEY });
       queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
     },
+  });
+}
+
+const UPDATE_SOURCE_KEY = ['remote', 'update-source'] as const;
+
+/** 서버 저장 업데이트 소스(GitHub/자체 호스팅) 조회 쿼리. */
+export function useUpdateSource(enabled = true) {
+  return useQuery({
+    queryKey: UPDATE_SOURCE_KEY,
+    queryFn: () => remoteService.getUpdateSource(),
+    enabled,
+  });
+}
+
+/** 서버 저장 업데이트 소스 설정 뮤테이션. 성공 시 소스 쿼리를 무효화한다. */
+export function useSetUpdateSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (source: UpdateSource) => remoteService.setUpdateSource(source),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: UPDATE_SOURCE_KEY });
+    },
+  });
+}
+
+// ---- 릴리스 저장소 (관리 서버 호스팅 프로그램 이미지) ----
+
+/** 릴리스 목록 쿼리 키. */
+const RELEASES_KEY = ['remote', 'releases'] as const;
+
+/** 릴리스 뮤테이션 성공 시 릴리스 목록 쿼리를 무효화한다. */
+function invalidateReleases(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  queryClient.invalidateQueries({ queryKey: RELEASES_KEY });
+}
+
+/**
+ * 릴리스 버전 목록 쿼리.
+ *
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
+ */
+export function useReleases(enabled = true) {
+  return useQuery({
+    queryKey: RELEASES_KEY,
+    queryFn: () => remoteService.listReleases(),
+    enabled,
+  });
+}
+
+/**
+ * 릴리스 버전 생성/갱신 뮤테이션. 성공 시 릴리스 목록 무효화.
+ *
+ * 잘못된 semver(400) 등 에러는 APIError 로 호출자에게 전파된다.
+ */
+export function useCreateRelease() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: ReleaseCreateRequest) => remoteService.createRelease(req),
+    onSuccess: () => invalidateReleases(queryClient),
+  });
+}
+
+/**
+ * 릴리스 자산(아키텍처별 바이너리 + 서명) 업로드 뮤테이션. 성공 시 릴리스 목록 무효화.
+ *
+ * 미존재 버전(404) 등 에러는 APIError 로 호출자에게 전파된다.
+ */
+export function useUploadReleaseAsset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      version,
+      os,
+      arch,
+      binary,
+      signature,
+    }: {
+      version: string;
+      os: string;
+      arch: string;
+      binary: File;
+      signature: File;
+    }) => remoteService.uploadReleaseAsset(version, os, arch, binary, signature),
+    onSuccess: () => invalidateReleases(queryClient),
+  });
+}
+
+/** 릴리스 버전 삭제 뮤테이션. 성공 시 릴리스 목록 무효화. */
+export function useDeleteRelease() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (version: string) => remoteService.deleteRelease(version),
+    onSuccess: () => invalidateReleases(queryClient),
+  });
+}
+
+/** 릴리스 자산(한 아키텍처) 삭제 뮤테이션. 성공 시 릴리스 목록 무효화. */
+export function useDeleteReleaseAsset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      version,
+      os,
+      arch,
+    }: {
+      version: string;
+      os: string;
+      arch: string;
+    }) => remoteService.deleteReleaseAsset(version, os, arch),
+    onSuccess: () => invalidateReleases(queryClient),
   });
 }
 

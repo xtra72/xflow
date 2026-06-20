@@ -52,6 +52,16 @@ function renderSidebar() {
   );
 }
 
+function renderSidebarAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <I18nProvider>
+        <Sidebar />
+      </I18nProvider>
+    </MemoryRouter>,
+  );
+}
+
 beforeEach(() => {
   useAuthMock.mockReset();
   useRemoteModeMock.mockReset();
@@ -61,11 +71,25 @@ beforeEach(() => {
 });
 
 describe('Sidebar — 접힘 상태 그룹 하위 항목', () => {
-  it('접힘 시 원격 그룹의 노드 관리/등록 관리를 개별 아이콘으로 모두 노출한다', () => {
+  it('접힘 시 원격 그룹의 노드 관리/등록 관리/릴리스 저장소를 개별 아이콘으로 모두 노출한다', () => {
     sidebarCollapsedMock.value = true;
     renderSidebar();
     expect(screen.getByTitle('노드 관리')).toBeInTheDocument();
     expect(screen.getByTitle('등록 관리')).toBeInTheDocument();
+    expect(screen.getByTitle('릴리스 저장소')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — 릴리스 저장소 하위 항목', () => {
+  it('admin + server 모드이면 릴리스 저장소 링크를 end 매칭으로 노출한다', () => {
+    renderSidebarAt('/admin/remote/releases');
+    const link = screen.getByRole('link', { name: '릴리스 저장소' });
+    expect(link).toHaveAttribute('href', '/admin/remote/releases');
+    expect(link).toHaveAttribute('aria-current', 'page');
+    // 형제 노드 관리(/admin/remote)는 end 매칭으로 비활성이어야 한다.
+    expect(screen.getByRole('link', { name: '노드 관리' })).not.toHaveAttribute(
+      'aria-current',
+    );
   });
 });
 
@@ -94,5 +118,35 @@ describe('Sidebar — 원격 관리 그룹 게이팅', () => {
     useAuthMock.mockReturnValue({ user: makeUser('viewer') });
     renderSidebar();
     expect(screen.queryByText('원격 관리')).not.toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — 하위 항목 활성 하이라이트', () => {
+  // NavLink 는 활성 시 aria-current="page" 를 부여한다. 경로 접두사 매칭으로
+  // 형제 메뉴가 동시에 활성되지 않아야 한다(end 매칭).
+  it('그룹 관리 경로에서는 그룹 관리만 활성이고 노드 관리는 비활성이다', () => {
+    renderSidebarAt('/admin/remote/groups');
+    expect(screen.getByRole('link', { name: '그룹 관리' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('link', { name: '노드 관리' })).not.toHaveAttribute(
+      'aria-current',
+    );
+  });
+
+  it('등록 관리 경로에서는 노드 관리가 활성으로 표시되지 않는다', () => {
+    renderSidebarAt('/admin/remote/enrollment');
+    expect(screen.getByRole('link', { name: '노드 관리' })).not.toHaveAttribute(
+      'aria-current',
+    );
+  });
+
+  it('노드 관리 경로에서는 노드 관리만 활성이다', () => {
+    renderSidebarAt('/admin/remote');
+    expect(screen.getByRole('link', { name: '노드 관리' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   });
 });

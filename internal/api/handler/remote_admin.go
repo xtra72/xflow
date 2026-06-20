@@ -167,6 +167,10 @@ func (h *RemoteAdminHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/remote/target-version", h.GetTargetVersion)
 	g.PUT("/remote/target-version", h.PutTargetVersion)
 
+	// 업데이트 소스(GitHub/자체 호스팅) — 서버 저장, 필요시 변경. 원격 업데이트 명령에 주입된다.
+	g.GET("/remote/update-source", h.GetUpdateSource)
+	g.PUT("/remote/update-source", h.PutUpdateSource)
+
 	// 버전 관리 Phase 2: 노드 자가 업데이트 명령(system/update 디스패치).
 	g.POST("/remote/nodes/{instance_id}/update", h.UpdateNode)
 }

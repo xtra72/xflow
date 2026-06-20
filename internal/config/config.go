@@ -495,6 +495,8 @@ func (c *viperConfig) RemoteManagement() RemoteManagementConfig {
 			KeyFile:  c.v.GetString("remote_management.tls.key_file"),
 		},
 		RequireSecure: c.v.GetBool("remote_management.require_secure"),
+		PublicBaseURL: c.v.GetString("remote_management.public_base_url"),
+		ReleasesDir:   c.v.GetString("remote_management.releases_dir"),
 	}
 }
 

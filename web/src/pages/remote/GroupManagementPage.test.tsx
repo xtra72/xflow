@@ -44,6 +44,9 @@ vi.mock('@/components/remote/NodeDashboard', () => ({
 vi.mock('@/components/remote/RemoteNotServerNotice', () => ({
   RemoteNotServerNotice: () => <div data-testid="not-server" />,
 }));
+vi.mock('@/components/remote/UpdateSourceSettings', () => ({
+  UpdateSourceSettings: () => <div data-testid="update-source-stub" />,
+}));
 
 import GroupManagementPage from './GroupManagementPage';
 
