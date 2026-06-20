@@ -158,6 +158,11 @@ logs/
 *-key.*
 *_key.*
 *.key.*
+# @SPEC:SPEC-UPDATE-001 — 릴리스 서명 개인키 (xflow-release.key 등). 절대 커밋 금지.
+*.key
+# 릴리스 이미지 산출물 (서명된 바이너리 + .sig + checksum). bin/ 하위지만 명시.
+bin/images/
+build/images/
 *-secret-key.*
 *-api-key.*
 api-key-*
