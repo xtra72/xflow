@@ -633,6 +633,18 @@
         "createButton": "Create",
         "noNodes": "No nodes available to assign",
         "ungrouped": "unassigned"
+      },
+      "update": {
+        "strategyLabel": "Update strategy",
+        "strategyLatest": "Latest",
+        "strategyPin": "Pin version",
+        "strategyPerArch": "Per architecture",
+        "channel": "Channel",
+        "version": "Version",
+        "latestOption": "(latest)",
+        "latestHint": "Each node updates to the newest store version for its architecture within the channel.",
+        "missingArchWarn": "Architectures skipped (no asset for this version)",
+        "noArches": "No release assets uploaded to the store."
       }
     },
     "dashboard": {

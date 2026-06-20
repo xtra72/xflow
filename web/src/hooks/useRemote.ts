@@ -26,7 +26,12 @@ import type {
   RemoteFlowUpdateRequest,
   UpdateSource,
 } from '@/types/remote';
-import type { NodeDetail, NodeGroup, NodeUpdateRequest } from '@/types/remote';
+import type {
+  GroupUpdateRequest,
+  NodeDetail,
+  NodeGroup,
+  NodeUpdateRequest,
+} from '@/types/remote';
 import * as remoteService from '@/services/api/remoteService';
 
 // 노드 라이브 상태(online/offline)는 빠르게 변하므로 짧은 폴링 주기를 둔다.
@@ -560,7 +565,7 @@ export function useDeleteGroup() {
 export function useUpdateGroup() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, req }: { name: string; req: NodeUpdateRequest }) =>
+    mutationFn: ({ name, req }: { name: string; req: GroupUpdateRequest }) =>
       remoteService.updateGroup(name, req),
     onSuccess: () => invalidateGroupOps(queryClient),
   });

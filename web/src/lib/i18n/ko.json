@@ -633,6 +633,18 @@
         "createButton": "생성",
         "noNodes": "배정 가능한 노드가 없습니다",
         "ungrouped": "미지정"
+      },
+      "update": {
+        "strategyLabel": "업데이트 전략",
+        "strategyLatest": "최종 버전",
+        "strategyPin": "단일 버전 고정",
+        "strategyPerArch": "아키텍처별 지정",
+        "channel": "채널",
+        "version": "버전",
+        "latestOption": "(최신)",
+        "latestHint": "각 노드가 채널 범위에서 자기 아키텍처의 최신 스토어 버전으로 갱신됩니다.",
+        "missingArchWarn": "이 버전의 자산이 없어 건너뛰는 아키텍처",
+        "noArches": "스토어에 업로드된 릴리스 자산이 없습니다."
       }
     },
     "dashboard": {

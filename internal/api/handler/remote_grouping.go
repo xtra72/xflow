@@ -59,6 +59,9 @@ type NodeGroupingService interface {
 	DeleteGroup(ctx context.Context, groupName string) (int, error)
 	// DispatchGroup 은 그룹 내 승인 노드 전체에 명령을 디스패치하고 노드별 결과를 모은다.
 	DispatchGroup(ctx context.Context, groupName, domain, action string, args json.RawMessage) ([]remote.GroupDispatchResult, error)
+	// DispatchGroupUpdate 은 그룹 내 승인 노드에 아키텍처-aware 한 system/update 를 디스패치한다.
+	// 각 노드의 보고된 OS/Arch 로 plan.VersionByArch 를 조회해 노드별 TargetVersion 을 해석한다.
+	DispatchGroupUpdate(ctx context.Context, groupName string, plan remote.GroupUpdatePlan) ([]remote.GroupDispatchResult, error)
 }
 
 // setGroupRequest 는 그룹 배정 요청 본문이다(PUT .../group).
@@ -136,6 +139,7 @@ type NodeDetailDTO struct {
 type RemoteGroupingHandler struct {
 	svc      NodeGroupingService
 	settings storage.SettingsRepository // 업데이트 소스(update_url/채널) 주입용(선택).
+	releases *storage.ReleaseRepository // 아키텍처-aware 그룹 업데이트의 버전 해석용(선택).
 }
 
 // NewRemoteGroupingHandler 는 RemoteGroupingHandler 를 생성한다.
@@ -147,6 +151,13 @@ func NewRemoteGroupingHandler(svc NodeGroupingService) *RemoteGroupingHandler {
 // 채널을 주입). nil 이면 노드 로컬 설정으로 폴백한다.
 func (h *RemoteGroupingHandler) WithSettings(settings storage.SettingsRepository) *RemoteGroupingHandler {
 	h.settings = settings
+	return h
+}
+
+// WithReleases 는 릴리즈 저장소를 연결한다(strategy=latest/per_arch 의 노드별 버전 해석에
+// 사용). nil 이면 strategy=latest/per_arch 요청이 400 으로 거부된다(strategy=pin 은 무관).
+func (h *RemoteGroupingHandler) WithReleases(releases *storage.ReleaseRepository) *RemoteGroupingHandler {
+	h.releases = releases
 	return h
 }
 
@@ -175,10 +186,15 @@ type renameGroupRequest struct {
 }
 
 // groupUpdateRequest 는 그룹 일괄 업데이트 요청 본문이다(POST /remote/groups/{name}/update).
+//
+// 하위 호환: strategy 가 비면 기존 동작(pin — 단일 version 을 전 멤버에 동일 적용,
+// version 이 비면 채널 최신)을 유지한다. strategy 로 아키텍처-aware 해석을 선택할 수 있다.
 type groupUpdateRequest struct {
-	Version string `json:"version"`
-	Channel string `json:"channel,omitempty"`
-	Restart bool   `json:"restart,omitempty"`
+	Version       string            `json:"version"`            // 단일 버전 고정(기존). strategy 빈 값일 때 사용.
+	Strategy      string            `json:"strategy,omitempty"` // "latest" | "pin" | "per_arch"; 빈 값 = pin(기존 동작)
+	Channel       string            `json:"channel,omitempty"`
+	Restart       bool              `json:"restart,omitempty"`
+	VersionByArch map[string]string `json:"version_by_arch,omitempty"` // per_arch 모드: "os/arch"→version
 }
 
 // groupCommandRequest 는 그룹 일괄 명령 요청 본문이다(POST /remote/groups/{name}/command).
@@ -231,8 +247,15 @@ func (h *RemoteGroupingHandler) DeleteGroup(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{"moved": moved}))
 }
 
-// UpdateGroup 은 그룹 내 승인·온라인 노드를 일괄 원격 업데이트한다(버전 관리 Phase 2 그룹 확장).
-// POST /remote/groups/{group_name}/update {version, channel?, restart?}
+// UpdateGroup 은 그룹 내 승인·온라인 노드를 일괄 원격 업데이트한다(아키텍처/OS-aware 그룹 확장).
+// POST /remote/groups/{group_name}/update {version?, strategy?, channel?, restart?, version_by_arch?}
+//
+// strategy 로 노드별 타깃 버전 해석 정책을 선택한다(하위 호환 — 빈 값 = pin):
+//   - ""|"pin": 단일 version 을 전 멤버에 동일 적용(version 이 비면 채널 최신). 기존 동작.
+//   - "latest": 릴리즈 저장소에서 채널별 (os,arch) 슬롯 최신 버전을 해석해 노드별 적용.
+//   - "per_arch": 요청의 version_by_arch("os/arch"→version) 맵을 그대로 적용(각 값 검증).
+//
+// latest/per_arch 는 미매핑 아키텍처를 건너뛴다(RequireMapping=true — 부분 성공).
 func (h *RemoteGroupingHandler) UpdateGroup(ctx api.Context) error {
 	if err := requireAdmin(ctx); err != nil {
 		return err
@@ -245,26 +268,20 @@ func (h *RemoteGroupingHandler) UpdateGroup(ctx api.Context) error {
 	if err := ctx.Bind(&req); err != nil {
 		return api.ErrBadRequest.WithMessage("요청 본문 파싱 실패")
 	}
-	if req.Version != "" && !updater.Version(req.Version).IsValid() {
-		return api.ErrBadRequest.WithMessage("version 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
-	}
 	// 서버 저장 소스(update_url/채널)를 주입한다(요청이 명시하면 우선).
 	srcURL, srcChannel := resolveUpdateSource(ctx.Context(), h.settings)
 	channel := req.Channel
 	if channel == "" {
 		channel = srcChannel
 	}
-	args, err := json.Marshal(remote.SystemUpdateArgs{
-		TargetVersion: req.Version,
-		Channel:       channel,
-		UpdateURL:     srcURL,
-		Restart:       req.Restart,
-	})
+
+	plan, err := h.buildGroupUpdatePlan(ctx.Context(), req, channel, srcURL)
 	if err != nil {
-		return api.ErrInternalServer.WithMessage(err.Error())
+		return err // 이미 api.ErrBadRequest 등으로 매핑됨.
 	}
+
 	dctx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
-	results, err := h.svc.DispatchGroup(dctx, name, remote.DomainSystem, remote.ActionSystemUpdate, args)
+	results, err := h.svc.DispatchGroupUpdate(dctx, name, plan)
 	if err != nil {
 		return mapRemoteAdminError(err)
 	}
@@ -272,6 +289,93 @@ func (h *RemoteGroupingHandler) UpdateGroup(ctx api.Context) error {
 		"group_name": name,
 		"results":    results,
 	}))
+}
+
+// buildGroupUpdatePlan 은 요청의 strategy 에 따라 remote.GroupUpdatePlan 을 구성한다.
+// channel/updateURL 은 호출자가 이미 서버 소스 폴백을 해석해 전달한다(요청 우선).
+// 검증 실패는 api.ErrBadRequest 류로 즉시 반환한다(디스패치 전 차단).
+func (h *RemoteGroupingHandler) buildGroupUpdatePlan(
+	ctx context.Context,
+	req groupUpdateRequest,
+	channel, updateURL string,
+) (remote.GroupUpdatePlan, error) {
+	base := remote.GroupUpdatePlan{
+		Channel:   channel,
+		UpdateURL: updateURL,
+		Restart:   req.Restart,
+	}
+
+	switch req.Strategy {
+	case "", "pin":
+		// 기존 동작: 단일 version 을 전 멤버에 동일 적용(version 이 비면 채널 최신).
+		if req.Version != "" && !updater.Version(req.Version).IsValid() {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("version 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
+		}
+		base.DefaultVersion = req.Version
+		base.RequireMapping = false
+		return base, nil
+
+	case "latest":
+		// 채널별 (os,arch) 슬롯 최신 버전을 릴리즈 저장소에서 해석한다.
+		if h.releases == nil {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("릴리스 저장소가 구성되지 않았습니다")
+		}
+		// 해석 채널: 요청/소스 채널 우선, 둘 다 비면 stable.
+		resolveChannel := channel
+		if resolveChannel == "" {
+			resolveChannel = "stable"
+		}
+		vmap, err := h.releases.LatestVersionByArch(ctx, resolveChannel)
+		if err != nil {
+			return remote.GroupUpdatePlan{}, mapRemoteAdminError(err)
+		}
+		base.VersionByArch = vmap
+		base.RequireMapping = true
+		return base, nil
+
+	case "per_arch":
+		// 요청의 명시 맵을 적용한다. 각 값은 유효 semver 이며 그 버전이 해당 os/arch
+		// asset 을 실제로 보유해야 한다(없으면 잘못된 키로 400).
+		if h.releases == nil {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("릴리스 저장소가 구성되지 않았습니다")
+		}
+		if len(req.VersionByArch) == 0 {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("per_arch 전략은 version_by_arch 가 비어 있을 수 없습니다")
+		}
+		for key, version := range req.VersionByArch {
+			if !updater.Version(version).IsValid() {
+				return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("version_by_arch[" + key + "] 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
+			}
+			if !h.assetExistsForKey(ctx, version, key) {
+				return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("version_by_arch[" + key + "]: 버전 " + version + " 에 해당 아키텍처 asset 이 없습니다")
+			}
+		}
+		base.VersionByArch = req.VersionByArch
+		base.RequireMapping = true
+		return base, nil
+
+	default:
+		return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("알 수 없는 strategy 입니다(pin|latest|per_arch)")
+	}
+}
+
+// assetExistsForKey 는 version 릴리즈가 "os/arch" 키에 해당하는 asset 을 보유하는지 확인한다.
+// 릴리즈/asset 미존재는 false(잘못된 매핑)로 취급한다.
+func (h *RemoteGroupingHandler) assetExistsForKey(ctx context.Context, version, key string) bool {
+	osArch := strings.SplitN(key, "/", 2)
+	if len(osArch) != 2 || osArch[0] == "" || osArch[1] == "" {
+		return false
+	}
+	rec, err := h.releases.GetRelease(ctx, version)
+	if err != nil {
+		return false
+	}
+	for _, a := range rec.Assets {
+		if a.OS == osArch[0] && a.Arch == osArch[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // CommandGroup 은 그룹 내 승인·온라인 노드에 임의 명령을 일괄 디스패치한다.

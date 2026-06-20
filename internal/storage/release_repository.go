@@ -372,6 +372,39 @@ func (r *ReleaseRepository) ResolveLatestStable(ctx context.Context) (ReleaseRec
 	return ReleaseRecord{}, false, nil
 }
 
+// LatestVersionByArch 는 (os,arch) 슬롯별로 바이너리 asset 을 가진 최고-semver 버전을
+// 매핑해 반환한다(아키텍처-aware 그룹 일괄 업데이트의 노드별 타깃 버전 해석에 사용).
+//
+// 키 형식은 정확히 `os + "/" + arch`(예: "linux/arm64")이다. 값은 해당 슬롯의 asset 을
+// 보유한 릴리즈 중 semver 최고 버전이다. channel 이 비어 있지 않으면 그 채널 릴리즈만
+// 고려하고, 비어 있으면 전 채널을 고려한다.
+//
+// 구현: ListReleases(semver 내림차순)를 순회하며, 각 릴리즈의 asset 슬롯이 아직 미설정
+// 이면 그 버전을 기록한다(내림차순에서 처음 본 값 = 최신). 따라서 신규 버전이 일부
+// 아키텍처를 누락하면 그 슬롯은 자연히 더 낮은(이전) 버전이 차지한다. 저장소가 비면
+// 빈 맵을 반환한다.
+func (r *ReleaseRepository) LatestVersionByArch(ctx context.Context, channel string) (map[string]string, error) {
+	releases, err := r.ListReleases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// ListReleases 는 semver 내림차순이므로, 슬롯별 첫 등장이 곧 최신 버전이다.
+	out := make(map[string]string)
+	for _, rec := range releases {
+		// 채널 필터: 비어 있지 않으면 일치 릴리즈만 고려한다.
+		if channel != "" && rec.Channel != channel {
+			continue
+		}
+		for _, a := range rec.Assets {
+			key := a.OS + "/" + a.Arch
+			if _, seen := out[key]; !seen {
+				out[key] = rec.Version
+			}
+		}
+	}
+	return out, nil
+}
+
 // OpenAsset 은 저장된 파일(바이너리 또는 .sig)을 스트리밍용으로 연다. 호출자가 Close
 // 책임을 진다. filename 은 경로 순회("/", "..")를 거부한다(보안). 없으면
 // ErrReleaseAssetNotFound.

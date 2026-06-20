@@ -87,11 +87,11 @@ describe('ReleaseStorePanel', () => {
     expect(card).toHaveTextContent('stable');
   });
 
-  it('5개 표준 아키텍처 슬롯을 표시한다', () => {
+  it('6개 표준 아키텍처 슬롯을 표시한다', () => {
     releasesData.value = [RELEASE];
     renderPanel();
     const slots = screen.getAllByTestId('release-arch-slot');
-    expect(slots).toHaveLength(5);
+    expect(slots).toHaveLength(6);
     // linux/amd64 는 업로드됨, 나머지는 누락.
     const uploaded = slots.filter((s) => s.getAttribute('data-uploaded') === 'true');
     expect(uploaded).toHaveLength(1);
@@ -199,15 +199,16 @@ describe('ReleaseStorePanel', () => {
   });
 
   it('표준 외 추가 자산을 별도로 표시한다', () => {
+    // freebsd/amd64 는 표준 슬롯이 아니므로 "추가 아키텍처"로 표시되어야 한다.
     releasesData.value = [
       {
         ...RELEASE,
         assets: [
           ...RELEASE.assets,
           {
-            os: 'windows',
+            os: 'freebsd',
             arch: 'amd64',
-            filename: 'xflowd.exe',
+            filename: 'xflowd-freebsd-amd64',
             size: 100,
             sha256: 'deadbeef',
             has_sig: false,
@@ -219,7 +220,7 @@ describe('ReleaseStorePanel', () => {
     renderPanel();
     const extra = screen
       .getAllByTestId('release-arch-slot')
-      .find((s) => s.getAttribute('data-slot') === 'windows/amd64');
+      .find((s) => s.getAttribute('data-slot') === 'freebsd/amd64');
     expect(extra).toBeDefined();
   });
 });

@@ -44,7 +44,21 @@ const ARCH_SLOTS: readonly { os: string; arch: string }[] = [
   { os: 'linux', arch: 'arm' },
   { os: 'darwin', arch: 'amd64' },
   { os: 'darwin', arch: 'arm64' },
+  { os: 'windows', arch: 'amd64' },
 ] as const;
+
+/**
+ * 표준 슬롯의 친숙한 표시 라벨. 키는 canonical "os/arch"(노드 보고값과 동일).
+ * armv6/armv7 은 런타임 GOARCH 가 모두 "arm" 이므로 ARM32 단일 슬롯으로 표기한다.
+ */
+const SLOT_LABELS: Readonly<Record<string, string>> = {
+  'linux/amd64': 'Linux x64',
+  'linux/arm64': 'Linux ARM64',
+  'linux/arm': 'Linux ARM32',
+  'darwin/amd64': 'macOS Intel',
+  'darwin/arm64': 'macOS Apple Silicon',
+  'windows/amd64': 'Windows x64',
+};
 
 /** semver(vMAJOR.MINOR.PATCH) 검증 정규식. */
 const SEMVER_RE = /^v\d+\.\d+\.\d+$/;
@@ -52,9 +66,14 @@ const SEMVER_RE = /^v\d+\.\d+\.\d+$/;
 /** 릴리스 채널 옵션. */
 const CHANNELS = ['stable', 'beta', 'nightly'] as const;
 
-/** "os/arch" 슬롯 라벨. */
-function slotLabel(os: string, arch: string): string {
+/** canonical "os/arch" 키(식별·중복 판정·DOM id·삭제 대상). 노드 보고값과 일치. */
+function slotKey(os: string, arch: string): string {
   return `${os}/${arch}`;
+}
+
+/** 친숙한 표시 라벨. 표준 슬롯은 매핑, 그 외(추가 자산)는 canonical "os/arch" 로 폴백. */
+function slotDisplay(os: string, arch: string): string {
+  return SLOT_LABELS[slotKey(os, arch)] ?? `${os}/${arch}`;
 }
 
 /** sha256 짧은 표시(앞 12자). */
@@ -285,7 +304,7 @@ export function ReleaseStorePanel(): React.JSX.Element {
                 )
               : t('remote.releaseStore.deleteAssetDesc')
                   .replace('{version}', deleteTarget.version)
-                  .replace('{slot}', slotLabel(deleteTarget.os, deleteTarget.arch))
+                  .replace('{slot}', slotDisplay(deleteTarget.os, deleteTarget.arch))
         }
         confirmLabel={
           deleteTarget?.kind === 'version'
@@ -320,12 +339,12 @@ function ReleaseCard({
   // os/arch → 자산 매핑(빠른 조회).
   const assetByKey = new Map<string, ReleaseAsset>();
   for (const a of release.assets) {
-    assetByKey.set(slotLabel(a.os, a.arch), a);
+    assetByKey.set(slotKey(a.os, a.arch), a);
   }
   // 표준 슬롯에 포함되지 않은 추가 업로드 자산.
-  const standardKeys = new Set(ARCH_SLOTS.map((s) => slotLabel(s.os, s.arch)));
+  const standardKeys = new Set(ARCH_SLOTS.map((s) => slotKey(s.os, s.arch)));
   const extraAssets = release.assets.filter(
-    (a) => !standardKeys.has(slotLabel(a.os, a.arch)),
+    (a) => !standardKeys.has(slotKey(a.os, a.arch)),
   );
 
   return (
@@ -374,7 +393,7 @@ function ReleaseCard({
         </h4>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {ARCH_SLOTS.map((slot) => {
-            const key = slotLabel(slot.os, slot.arch);
+            const key = slotKey(slot.os, slot.arch);
             const asset = assetByKey.get(key);
             return (
               <ArchSlot
@@ -398,7 +417,7 @@ function ReleaseCard({
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {extraAssets.map((asset) => (
                 <ArchSlot
-                  key={slotLabel(asset.os, asset.arch)}
+                  key={slotKey(asset.os, asset.arch)}
                   version={release.version}
                   os={asset.os}
                   arch={asset.arch}
@@ -439,7 +458,8 @@ function ArchSlot({
   const [binary, setBinary] = useState<File | null>(null);
   const [signature, setSignature] = useState<File | null>(null);
 
-  const slot = slotLabel(os, arch);
+  const slot = slotKey(os, arch);
+  const display = slotDisplay(os, arch);
 
   const handleUpload = (): void => {
     if (!binary || !signature) {
@@ -474,8 +494,11 @@ function ArchSlot({
       className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-3"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-sm font-medium text-(--color-text-primary)">
-          {slot}
+        <span
+          className="text-sm font-medium text-(--color-text-primary)"
+          title={slot}
+        >
+          {display}
         </span>
         {asset ? (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">

@@ -941,7 +941,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 운영 메타데이터이므로 노드로 명령을 전파하지 않는다(A13). admin 게이팅(REQ-K06/F04).
 		// *remote.Server 가 NodeGroupingService 를 만족한다.
 		remoteGroupingHandler = handler.NewRemoteGroupingHandler(remoteServer).
-			WithSettings(settingsRepo)
+			WithSettings(settingsRepo).
+			WithReleases(releaseRepo)
 
 		logger.Info("원격 관리 서버 모드 활성화",
 			"endpoint", handler.RemoteWSPattern)

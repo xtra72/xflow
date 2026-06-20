@@ -181,6 +181,51 @@ export interface NodeUpdateRequest {
   restart?: boolean;
 }
 
+/**
+ * 그룹 일괄 업데이트 전략(아키텍처/OS 인지 일괄 업데이트). POST /remote/groups/{name}/update.
+ *
+ * 하나의 그룹 안에 서로 다른 아키텍처(linux/amd64, linux/arm 등) 노드가 섞여 있을 수 있어,
+ * 단일 버전을 강제하면 자산이 없는 아키텍처는 건너뛰게 된다. 이를 다루기 위해 세 전략을 둔다.
+ *
+ *   - latest   : 아키텍처별 최신 — 각 노드가 `channel` 범위에서 자기 os/arch 자산을 가진
+ *                가장 최신 스토어 버전으로 갱신된다. 버전 해석은 서버가 노드별로 수행한다.
+ *   - pin      : 단일 버전 고정 — 모든 노드를 동일한 `version` 으로 갱신한다. 해당 버전에
+ *                자산이 없는 아키텍처 노드는 서버가 건너뛴다(결과에 ok:false + error 로 보고).
+ *                `version` 이 빈 값이면 채널 최신과 동일하게 동작한다.
+ *   - per_arch : 아키텍처별 지정 — `version_by_arch` 로 "os/arch" → version 명시 매핑을 보낸다.
+ */
+export type GroupUpdateStrategy = 'latest' | 'pin' | 'per_arch';
+
+/**
+ * 그룹 일괄 원격 업데이트 요청 본문 (아키텍처/OS 인지 일괄 업데이트).
+ * POST /remote/groups/{name}/update.
+ *
+ * 하위 호환: `strategy` 가 없거나 빈 값이면 서버는 기존 `pin` 동작으로 해석한다(레거시).
+ * 따라서 `version`/`channel`/`restart` 만 보내던 구버전 클라이언트는 그대로 동작한다.
+ */
+export interface GroupUpdateRequest {
+  /**
+   * 업데이트 전략. 미지정/빈 값은 `pin`(레거시)으로 해석된다(하위 호환).
+   */
+  strategy?: GroupUpdateStrategy;
+  /**
+   * `pin` 전략의 목표 버전 (vMAJOR.MINOR.PATCH). 빈 값 = 채널 최신.
+   * `latest`/`per_arch` 전략에서는 무시된다.
+   */
+  version?: string;
+  /**
+   * `per_arch` 전략의 명시 매핑: canonical "os/arch"(노드 보고값) → 버전 문자열.
+   * 예: { "linux/amd64": "v1.3.0", "linux/arm": "v1.2.0" }.
+   */
+  version_by_arch?: Record<string, string>;
+  /**
+   * `latest` 전략에서 후보를 한정할 릴리스 채널 (stable/beta/nightly). 빈 값 = 노드 기본.
+   */
+  channel?: string;
+  /** true 면 바이너리 교체 후 노드 graceful 재시작. */
+  restart?: boolean;
+}
+
 // ---- 노드 그룹핑 + 시스템 정보 + 운영 요약 (v1.4 M9, 그룹 K, REQ-K01~K10) ----
 
 /**

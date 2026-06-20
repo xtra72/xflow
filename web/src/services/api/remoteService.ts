@@ -26,6 +26,7 @@ import type {
   EnrollmentTokenCreated,
   EnrollmentTokenCreateRequest,
   GroupDispatchResult,
+  GroupUpdateRequest,
   ManagedNode,
   MirroredResource,
   NodeDetail,
@@ -429,10 +430,15 @@ export async function deleteGroup(name: string): Promise<{ moved: number }> {
   return delWith<{ moved: number }>(`/remote/groups/${encodeId(name)}`);
 }
 
-/** 그룹 내 승인·온라인 노드를 일괄 원격 업데이트한다. POST /remote/groups/{name}/update */
+/**
+ * 그룹 내 승인·온라인 노드를 일괄 원격 업데이트한다. POST /remote/groups/{name}/update.
+ *
+ * 아키텍처/OS 인지 전략(`GroupUpdateRequest.strategy`)을 지원한다. `strategy` 미지정 시
+ * 서버는 기존 단일 버전 고정(`pin`)으로 해석한다(하위 호환).
+ */
 export async function updateGroup(
   name: string,
-  req: NodeUpdateRequest,
+  req: GroupUpdateRequest,
 ): Promise<{ group_name: string; results: GroupDispatchResult[] }> {
   return post(`/remote/groups/${encodeId(name)}/update`, req);
 }

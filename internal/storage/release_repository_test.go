@@ -109,6 +109,46 @@ func TestPutAsset_AutoCreatesReleaseRow(t *testing.T) {
 	assert.Equal(t, "arm64", rec.Assets[0].Arch)
 }
 
+// TestLatestVersionByArch_NewerVersionMissingArch 는 신규 버전이 일부 아키텍처를 누락하면
+// 그 슬롯은 더 낮은(이전) 버전이 차지하고, 채널 필터·빈 저장소 경계를 검증한다.
+func TestLatestVersionByArch_NewerVersionMissingArch(t *testing.T) {
+	repo, _ := newTestReleaseRepo(t)
+	ctx := context.Background()
+
+	// v1.0.0(stable): amd64 + arm64 둘 다 보유.
+	putBinary(t, repo, "v1.0.0", "linux", "amd64", []byte("a1"), nil)
+	putBinary(t, repo, "v1.0.0", "linux", "arm64", []byte("a2"), nil)
+	// v2.0.0(stable): amd64 만 보유(arm64 누락).
+	putBinary(t, repo, "v2.0.0", "linux", "amd64", []byte("b1"), nil)
+	// v1.5.0(beta): arm 만 보유(채널 필터 검증용).
+	require.NoError(t, repo.UpsertRelease(ctx, "v1.5.0", "beta", "", 1000))
+	putBinary(t, repo, "v1.5.0", "linux", "arm", []byte("c1"), nil)
+
+	// stable 채널: amd64 는 최신 v2.0.0, arm64 는 v2.0.0 누락이라 v1.0.0 으로 폴백.
+	// beta-only arm 슬롯은 stable 필터에서 제외된다.
+	stable, err := repo.LatestVersionByArch(ctx, "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "v2.0.0", stable["linux/amd64"])
+	assert.Equal(t, "v1.0.0", stable["linux/arm64"])
+	_, hasArm := stable["linux/arm"]
+	assert.False(t, hasArm, "beta-only arm 슬롯은 stable 필터에서 제외")
+
+	// 전 채널(빈 channel): beta arm 슬롯도 포함된다.
+	all, err := repo.LatestVersionByArch(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, "v2.0.0", all["linux/amd64"])
+	assert.Equal(t, "v1.0.0", all["linux/arm64"])
+	assert.Equal(t, "v1.5.0", all["linux/arm"])
+}
+
+// TestLatestVersionByArch_EmptyStore 는 빈 저장소에서 빈 맵을 반환하는지 검증한다.
+func TestLatestVersionByArch_EmptyStore(t *testing.T) {
+	repo, _ := newTestReleaseRepo(t)
+	m, err := repo.LatestVersionByArch(context.Background(), "stable")
+	require.NoError(t, err)
+	assert.Empty(t, m)
+}
+
 func TestListReleases_SortedSemverDesc(t *testing.T) {
 	repo, _ := newTestReleaseRepo(t)
 	ctx := context.Background()

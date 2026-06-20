@@ -30,9 +30,11 @@ type fakeGrouping struct {
 	setErr       error
 	renamed      [2]string                    // [oldName, newName] 마지막 rename 기록
 	deletedGroup string                       // 마지막 delete 그룹 기록
-	dispatched   []string                     // "group/domain/action" 기록
-	lastArgs     json.RawMessage              // 마지막 DispatchGroup args
-	dispatchRes  []remote.GroupDispatchResult // DispatchGroup 반환값
+	dispatched   []string                     // "group/domain/action" 기록(CommandGroup 경로)
+	lastArgs     json.RawMessage              // 마지막 DispatchGroup args(CommandGroup 경로)
+	updatedGroup string                       // 마지막 DispatchGroupUpdate 대상 그룹
+	lastPlan     remote.GroupUpdatePlan       // 마지막 DispatchGroupUpdate plan(업데이트 경로)
+	dispatchRes  []remote.GroupDispatchResult // DispatchGroup/Update 반환값
 	groupErr     error                        // rename/delete/dispatch 공통 에러 주입
 }
 
@@ -62,6 +64,30 @@ func (f *fakeGrouping) DispatchGroup(
 	}
 	f.dispatched = append(f.dispatched, groupName+"/"+domain+"/"+action)
 	f.lastArgs = args
+	return f.dispatchRes, nil
+}
+
+// DispatchGroupUpdate 은 아키텍처-aware 그룹 업데이트 경로를 캡처한다. 단일 버전(pin)
+// 경로의 하위 호환 검증을 위해 plan 의 Channel/UpdateURL/DefaultVersion 을 lastArgs
+// (SystemUpdateArgs JSON)로도 합성해 기존 어서션을 유지한다.
+func (f *fakeGrouping) DispatchGroupUpdate(
+	_ context.Context,
+	groupName string,
+	plan remote.GroupUpdatePlan,
+) ([]remote.GroupDispatchResult, error) {
+	if f.groupErr != nil {
+		return nil, f.groupErr
+	}
+	f.dispatched = append(f.dispatched, groupName+"/"+remote.DomainSystem+"/"+remote.ActionSystemUpdate)
+	f.updatedGroup = groupName
+	f.lastPlan = plan
+	// pin 경로 하위 호환: DefaultVersion 을 TargetVersion 으로 노출(소스 주입 검증용).
+	f.lastArgs, _ = json.Marshal(remote.SystemUpdateArgs{
+		TargetVersion: plan.DefaultVersion,
+		Channel:       plan.Channel,
+		UpdateURL:     plan.UpdateURL,
+		Restart:       plan.Restart,
+	})
 	return f.dispatchRes, nil
 }
 
@@ -363,6 +389,9 @@ func (erroringGrouping) DeleteGroup(context.Context, string) (int, error) {
 func (erroringGrouping) DispatchGroup(context.Context, string, string, string, json.RawMessage) ([]remote.GroupDispatchResult, error) {
 	return nil, errors.New("boom")
 }
+func (erroringGrouping) DispatchGroupUpdate(context.Context, string, remote.GroupUpdatePlan) ([]remote.GroupDispatchResult, error) {
+	return nil, errors.New("boom")
+}
 
 // TestRemoteGrouping_RenameGroup 는 admin 그룹 일괄 이름변경을 검증한다.
 func TestRemoteGrouping_RenameGroup(t *testing.T) {
@@ -387,13 +416,21 @@ func TestRemoteGrouping_DeleteGroup(t *testing.T) {
 	assert.Equal(t, "prod", svc.deletedGroup)
 }
 
-// TestRemoteGrouping_UpdateGroup 는 그룹 일괄 업데이트가 system/update 로 디스패치되는지 검증한다.
+// TestRemoteGrouping_UpdateGroup 는 그룹 일괄 업데이트(strategy 미지정 = pin)가
+// DispatchGroupUpdate 를 통해 system/update 로 디스패치되고, plan 이 단일 버전(pin)을
+// DefaultVersion 으로 담는지(VersionByArch 없음, RequireMapping=false) 검증한다.
 func TestRemoteGrouping_UpdateGroup(t *testing.T) {
 	svc := newFakeGrouping()
 	svc.dispatchRes = []remote.GroupDispatchResult{{InstanceID: "p1", OK: true}}
 	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/update", `{"version":"v1.3.0","restart":true}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, svc.dispatched, "prod/system/update")
+	assert.Equal(t, "prod", svc.updatedGroup)
+	// pin 경로: 단일 버전은 DefaultVersion 으로, 아키텍처 매핑은 없어야 한다.
+	assert.Equal(t, "v1.3.0", svc.lastPlan.DefaultVersion)
+	assert.True(t, svc.lastPlan.Restart)
+	assert.Empty(t, svc.lastPlan.VersionByArch)
+	assert.False(t, svc.lastPlan.RequireMapping)
 }
 
 // TestRemoteGrouping_UpdateGroup_InjectsSource 는 그룹 일괄 업데이트가 서버 저장
@@ -428,6 +465,127 @@ func TestRemoteGrouping_UpdateGroup_InjectsSource(t *testing.T) {
 func TestRemoteGrouping_UpdateGroup_InvalidVersion(t *testing.T) {
 	svc := newFakeGrouping()
 	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/update", `{"version":"garbage"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, svc.dispatched)
+}
+
+// newHandlerReleaseRepo 는 핸들러 테스트용 실제 릴리즈 저장소를 임시 DB 로 만든다.
+func newHandlerReleaseRepo(t *testing.T) *storage.ReleaseRepository {
+	t.Helper()
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := storage.OpenSQLiteDB(ctx, dir+"/xflow.db")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo, err := storage.NewReleaseRepository(db, dir+"/releases")
+	require.NoError(t, err)
+	return repo
+}
+
+// putHandlerAsset 은 (version,os,arch) asset 을 올린다(서명 없이).
+func putHandlerAsset(t *testing.T, repo *storage.ReleaseRepository, version, goos, arch string) {
+	t.Helper()
+	_, err := repo.PutAsset(context.Background(), version, goos, arch,
+		strings.NewReader("bin"), nil, 1000)
+	require.NoError(t, err)
+}
+
+// doGroupingWithReleases 는 릴리즈 저장소를 연결한 핸들러로 요청한다(strategy=latest/per_arch).
+func doGroupingWithReleases(t *testing.T, svc NodeGroupingService, releases *storage.ReleaseRepository, role, method, target, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := NewRemoteGroupingHandler(svc).WithReleases(releases)
+	router := api.NewRouter()
+	h.RegisterRoutes(router.Group("/api/v1"))
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if role != "" {
+		req = req.WithContext(context.WithValue(req.Context(), api.ContextKeyUserRole(), role))
+	}
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// TestRemoteGrouping_UpdateGroup_StrategyLatest 는 strategy=latest 가 릴리즈 저장소에서
+// 채널별 (os,arch) 슬롯 최신 버전으로 VersionByArch 를 구성하고 RequireMapping 을
+// 활성화하는지 검증한다.
+func TestRemoteGrouping_UpdateGroup_StrategyLatest(t *testing.T) {
+	svc := newFakeGrouping()
+	svc.dispatchRes = []remote.GroupDispatchResult{{InstanceID: "p1", OK: true}}
+	releases := newHandlerReleaseRepo(t)
+	// v1.0.0: amd64+arm64, v2.0.0: amd64 만(arm64 누락 → v1.0.0 폴백).
+	putHandlerAsset(t, releases, "v1.0.0", "linux", "amd64")
+	putHandlerAsset(t, releases, "v1.0.0", "linux", "arm64")
+	putHandlerAsset(t, releases, "v2.0.0", "linux", "amd64")
+
+	rec := doGroupingWithReleases(t, svc, releases, "admin", http.MethodPost,
+		"/api/v1/remote/groups/prod/update", `{"strategy":"latest","channel":"stable"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, svc.dispatched, "prod/system/update")
+	assert.True(t, svc.lastPlan.RequireMapping)
+	assert.Equal(t, "v2.0.0", svc.lastPlan.VersionByArch["linux/amd64"])
+	assert.Equal(t, "v1.0.0", svc.lastPlan.VersionByArch["linux/arm64"])
+	assert.Empty(t, svc.lastPlan.DefaultVersion)
+}
+
+// TestRemoteGrouping_UpdateGroup_StrategyLatestNoReleases 는 릴리즈 저장소 미구성 시
+// strategy=latest 가 400 으로 거부되는지 검증한다.
+func TestRemoteGrouping_UpdateGroup_StrategyLatestNoReleases(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/update", `{"strategy":"latest"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, svc.dispatched)
+}
+
+// TestRemoteGrouping_UpdateGroup_StrategyPerArch 는 strategy=per_arch 가 명시 맵을 검증 후
+// 그대로 plan.VersionByArch 로 전달하는지 검증한다(asset 존재 확인 포함).
+func TestRemoteGrouping_UpdateGroup_StrategyPerArch(t *testing.T) {
+	svc := newFakeGrouping()
+	svc.dispatchRes = []remote.GroupDispatchResult{{InstanceID: "p1", OK: true}}
+	releases := newHandlerReleaseRepo(t)
+	putHandlerAsset(t, releases, "v1.0.0", "linux", "amd64")
+	putHandlerAsset(t, releases, "v1.5.0", "linux", "arm64")
+
+	body := `{"strategy":"per_arch","version_by_arch":{"linux/amd64":"v1.0.0","linux/arm64":"v1.5.0"}}`
+	rec := doGroupingWithReleases(t, svc, releases, "admin", http.MethodPost,
+		"/api/v1/remote/groups/prod/update", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.True(t, svc.lastPlan.RequireMapping)
+	assert.Equal(t, "v1.0.0", svc.lastPlan.VersionByArch["linux/amd64"])
+	assert.Equal(t, "v1.5.0", svc.lastPlan.VersionByArch["linux/arm64"])
+}
+
+// TestRemoteGrouping_UpdateGroup_PerArchMissingAsset 는 per_arch 맵의 버전이 해당
+// os/arch asset 을 보유하지 않으면 400 으로 거부되는지(디스패치 안 함) 검증한다.
+func TestRemoteGrouping_UpdateGroup_PerArchMissingAsset(t *testing.T) {
+	svc := newFakeGrouping()
+	releases := newHandlerReleaseRepo(t)
+	// v1.0.0 은 amd64 만 보유 — arm64 매핑은 asset 부재로 400.
+	putHandlerAsset(t, releases, "v1.0.0", "linux", "amd64")
+
+	body := `{"strategy":"per_arch","version_by_arch":{"linux/arm64":"v1.0.0"}}`
+	rec := doGroupingWithReleases(t, svc, releases, "admin", http.MethodPost,
+		"/api/v1/remote/groups/prod/update", body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, svc.dispatched)
+}
+
+// TestRemoteGrouping_UpdateGroup_PerArchInvalidVersion 는 per_arch 맵에 비-semver 가
+// 있으면 400 으로 거부되는지 검증한다.
+func TestRemoteGrouping_UpdateGroup_PerArchInvalidVersion(t *testing.T) {
+	svc := newFakeGrouping()
+	releases := newHandlerReleaseRepo(t)
+	body := `{"strategy":"per_arch","version_by_arch":{"linux/amd64":"garbage"}}`
+	rec := doGroupingWithReleases(t, svc, releases, "admin", http.MethodPost,
+		"/api/v1/remote/groups/prod/update", body)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, svc.dispatched)
+}
+
+// TestRemoteGrouping_UpdateGroup_UnknownStrategy 는 알 수 없는 strategy 가 400 인지 검증한다.
+func TestRemoteGrouping_UpdateGroup_UnknownStrategy(t *testing.T) {
+	svc := newFakeGrouping()
+	rec := doGrouping(t, svc, "admin", http.MethodPost, "/api/v1/remote/groups/prod/update", `{"strategy":"rolling"}`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Empty(t, svc.dispatched)
 }
