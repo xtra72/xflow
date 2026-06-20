@@ -47,7 +47,7 @@ DOCKER_TAG   ?= $(VERSION)
 DOCKER_PORT  ?= 8081
 
 .PHONY: all web server rpi rpi-deploy rpi-pkg run dev test test-go test-web lint clean help \
-        release-all release-platform checksums docker-build docker-run release-images release-image-one release-images-guard
+        release-all release-platform checksums docker-build docker-run keygen release-images release-image-one release-images-guard
 
 ## all: Build frontend and backend
 all: web server
@@ -190,6 +190,21 @@ checksums:
 
 # IMAGES_DIR: 스토어용 xflowd-{os}-{arch} + .sig 산출물 위치.
 IMAGES_DIR := $(BUILD_DIR)/images
+
+# KEY_OUT_DIR / KEY_NAME: keygen 산출 위치/이름(개인키 {NAME}.key, 공개키 {NAME}.pub).
+KEY_OUT_DIR ?= .
+KEY_NAME    ?= xflow-release
+
+## keygen: Generate an Ed25519 release signing keypair (private .key 0600 + public .pub)
+# 사용 예:
+#   make keygen                                  # ./xflow-release.key + ./xflow-release.pub
+#   make keygen KEY_OUT_DIR=secrets KEY_NAME=prod
+#   make keygen FORCE=1                          # 기존 키 덮어쓰기
+#
+# 개인키(.key)는 서명 전용이며 절대 커밋 금지(.gitignore 의 *.key). 공개키(.pub)만
+# 각 노드의 update.public_key_path 에 배포한다. 자세한 내용은 deploy/RELEASE_IMAGES.md.
+keygen:
+	@go run ./cmd/xflowd update keygen --out-dir $(KEY_OUT_DIR) --name $(KEY_NAME) $(if $(FORCE),--force,)
 
 ## release-images: Build + sign store-ready xflowd images for all 6 targets
 # 사용 예:
