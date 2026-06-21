@@ -198,14 +198,14 @@ jobs:
 
       # 프론트엔드 자산 다운로드
       - name: Download frontend dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: pkg-staging/web/dist
 
       # 해당 플랫폼 바이너리 다운로드
       - name: Download platform binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-${{ matrix.suffix }}
           path: bin-staging
@@ -265,7 +265,7 @@ jobs:
 
     steps:
       - name: Download all packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: package-*
           path: packages
@@ -310,7 +310,7 @@ jobs:
 
       # 모든 플랫폼 패키지 수집
       - name: Download all packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: package-*
           path: release-assets
@@ -318,7 +318,7 @@ jobs:
 
       # 체크섬 추가
       - name: Download checksums
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: checksums
           path: release-assets
