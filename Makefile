@@ -39,7 +39,7 @@ PKG_DIR    := $(BUILD_DIR)/pkg
 # CI 워크플로우와 동일한 산출물을 로컬에서 미러링한다.
 VERSION    ?= dev
 DIST_DIR   := dist
-RELEASE_LDFLAGS := -s -w -X main.version=$(VERSION)
+RELEASE_LDFLAGS := -s -w -X main.Version=$(VERSION)
 
 # Docker
 DOCKER_IMAGE ?= xflow
@@ -64,12 +64,16 @@ server:
 	done
 
 ## rpi: Cross-compile for Raspberry Pi (linux/arm64)
+# 버전을 main.Version 으로 주입한다(VERSION 미지정 시 기본 "dev"). 원격 자가 업데이트
+# 의 버전 표시/이력은 노드가 보고하는 이 값이 바뀔 때만 갱신되므로, 패키지에는 반드시
+# 실제 버전을 박아야 한다(예: make rpi-pkg VERSION=v1.3.0).
+RPI_LDFLAGS := $(LDFLAGS) -X main.Version=$(VERSION)
 rpi: web
 	GOOS=linux GOARCH=$(RPI_GOARCH) GOARM=$(RPI_GOARM) \
-		go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(APP)-linux-$(RPI_GOARCH) ./cmd/$(APP)
+		go build $(GOFLAGS) -ldflags "$(RPI_LDFLAGS)" -o $(BUILD_DIR)/$(APP)-linux-$(RPI_GOARCH) ./cmd/$(APP)
 	@for cli in $(CLI_APPS); do \
 		GOOS=linux GOARCH=$(RPI_GOARCH) GOARM=$(RPI_GOARM) \
-			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$$cli-linux-$(RPI_GOARCH) ./cmd/$$cli; \
+			go build $(GOFLAGS) -ldflags "$(RPI_LDFLAGS)" -o $(BUILD_DIR)/$$cli-linux-$(RPI_GOARCH) ./cmd/$$cli; \
 	done
 
 ## rpi-deploy: Build and deploy to Raspberry Pi via scp (RPI_HOST required)
