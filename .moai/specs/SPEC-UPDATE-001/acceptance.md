@@ -270,6 +270,82 @@ priority: high
 
 ---
 
+### Scenario 11: 릴리스 이미지 키 생성·서명·서명 이미지 빌드 (M15)
+
+**Given**
+
+- 릴리스 담당자가 빌드 환경에 접속해 있다
+
+**When**
+
+- `make keygen` 을 실행하고, 이어서 `make release-images VERSION=v0.4.0 SIGN_KEY=xflow-release.key` 를 실행한다
+
+**Then**
+
+- `keygen` 이 비공개키 `xflow-release.key`(권한 `0600`)와 공개키 `xflow-release.pub` 를 생성한다 (`xflowd update keygen` 위임)
+- `release-images` 가 6 교차컴파일 타깃의 `xflowd` 바이너리를 산출하고, 각 바이너리에 대해 `xflowd update sign --key xflow-release.key` 로 raw 64-byte `.sig` 를 생성하며, 버전별 `checksum.txt` 를 만든다
+- LDFLAGS 에 `-X main.Version=v0.4.0` 이 주입되어 산출 바이너리가 v0.4.0 을 보고한다 (M18)
+- `VERSION` 또는 `SIGN_KEY` 미지정 시 `release-images` 가 명시적 에러로 즉시 실패한다 (가드)
+- 비공개키는 산출 아티팩트/로그에 노출되지 않는다
+
+---
+
+### Scenario 12: CI release-images 잡 — 시크릿 주입·GitHub Release 첨부 (M15)
+
+**Given**
+
+- `release.yml` 에 `release-images` 잡이 정의되어 있고, 리포지토리 시크릿 `XFLOW_RELEASE_PRIVATE_KEY`(128-hex)가 설정되어 있다
+
+**When**
+
+- 버전 태그(예: `v0.4.0`)가 푸시된다
+
+**Then**
+
+- 잡이 시크릿에서 서명 비공개키를 임시 파일로 주입하고 `make release-images VERSION=… SIGN_KEY=…` 를 실행한다
+- 6 타깃 서명 이미지(`.sig` 포함) + `checksum.txt` 가 GitHub Release 에 추가 첨부된다
+- 빌드 후 서명 키 임시 파일이 제거된다
+- 시크릿 `XFLOW_RELEASE_PRIVATE_KEY` 가 미설정이면 서명 이미지 발행을 건너뛰고 명시 notice 를 남긴다
+
+---
+
+### Scenario 13: 원격 업데이트 — public_key_path 필수·채널/자산 진단 (M16)
+
+**Given**
+
+- 노드가 원격 관리 서버에 등록·승인되어 있고, 서버가 `system/update` 를 디스패치한다
+
+**When**
+
+- 노드의 `update.public_key_path` 가 미설정인 상태로 원격 업데이트를 시도한다
+
+**Then**
+
+- 시스템은 업데이트를 거부한다 (내장 핀닝 키 없음 — 로컬 공개키 명시 필수)
+- `public_key_path` 가 설정되면, 노드는 그 공개키로 Ed25519 서명을 검증한다
+- 채널 불일치 또는 현재 OS/Arch 자산 누락 시, 구체적 진단 메시지(불일치 채널/누락 OS·Arch 자산명)를 포함한 에러를 반환한다
+- `update.insecure_skip_verify=true` 면 다운로드 TLS 검증은 건너뛰되 Ed25519 검증은 그대로 수행되어 무결성이 유지된다
+- 공개키는 노드 로컬에만 존재하며 서버로부터 전송받지 않는다
+
+---
+
+### Scenario 14: systemd ReadWritePaths — 바이너리 교체 권한 (M17)
+
+**Given**
+
+- xflowd 가 `/opt/xflow/xflowd` 로 설치되어 systemd 하드닝(`ProtectSystem=strict`) 하에 운영 중이다
+
+**When**
+
+- 자가 업데이트가 바이너리를 원자 교체(M5)하려 한다
+
+**Then**
+
+- `ReadWritePaths=/opt/xflow` 인 경우, 바이너리 교체 + `.previous` 백업이 정상 수행된다
+- `ReadWritePaths=/opt/xflow/data` 만 허용된 경우, 바이너리 교체(`rename(2)`)가 `read-only file system` 으로 실패하며, 운영자가 `ReadWritePaths` 에 설치 디렉토리를 포함하도록 유닛을 수정해야 한다
+
+---
+
 ## Edge Case Checklist
 
 ### 보안
@@ -467,10 +543,14 @@ priority: high
 
 ### 5. 빌드 시스템 통합
 
-- [ ] Makefile (또는 build.sh)에 `UpdaterPublicKey` ldflags 주입 자동화
-- [ ] GitHub Actions release workflow에 자동 서명 + checksums.txt + signature.bin 생성 단계 추가
-- [ ] 빌드 시 비공개키는 GitHub Actions secrets에서 안전하게 주입
-- [ ] 릴리즈 asset 명명 규칙 정착 (`xflowd-{os}-{arch}`)
+- [ ] (M18) Makefile LDFLAGS 에 `-X main.Version=$(VERSION)`(대문자 `main.Version`) 주입 — 대소문자 일치 확인(불일치 시 `dev` 폴백)
+- [ ] (M15) `make keygen` 으로 Ed25519 키쌍 생성(비공개 `.key` `0600` + 공개 `.pub`)
+- [ ] (M15) `make release-images VERSION SIGN_KEY` 가 6 타깃 교차컴파일 + `.sig` 서명 + `checksum.txt` 산출, `VERSION`/`SIGN_KEY` 미지정 시 가드 실패
+- [ ] (M15) `release.yml` `release-images` 잡: 시크릿 `XFLOW_RELEASE_PRIVATE_KEY` 주입 → 서명 이미지 GitHub Release 첨부, 시크릿 미설정 시 스킵, 빌드 후 키 파일 제거
+- [ ] 빌드 시 비공개키는 GitHub Actions secrets에서 안전하게 주입(코드/로그/아티팩트 비노출)
+- [ ] 릴리즈 asset 명명 규칙 정착 (`xflowd-{os}-{arch}` + `.sig`)
+- [ ] (M16) 공개키는 노드 로컬(`update.public_key_path`)에만 배치 — 내장 핀닝 키 없음, 원격 업데이트 시 미설정 거부
+- [ ] (M17) systemd 유닛 `ReadWritePaths=/opt/xflow`(설치 디렉토리 전체) — `…/data` 만 허용 시 바이너리 교체 실패 회귀 확인
 
 ### 6. API 변경 검증
 
@@ -497,7 +577,7 @@ priority: high
 
 ### 9. 문서화
 
-- [ ] spec.md, plan.md, acceptance.md 3개 파일 v0.1.0 일관 작성
+- [ ] spec.md, plan.md, acceptance.md 3개 파일 v0.2.0 일관 작성(M15~M18 포함)
 - [ ] CHANGELOG 갱신 (신규 기능 + 신규 의존성 + 신규 설정 + 보안)
 - [ ] 운영자 가이드 (`docs/updater-design.md`) 작성
   - 채널 설정 / 자동 업데이트 활성화 / 롤백 / 트러블슈팅
