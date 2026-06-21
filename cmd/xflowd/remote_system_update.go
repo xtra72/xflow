@@ -185,8 +185,21 @@ func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, cha
 	if !target.IsValid() {
 		return zero, fmt.Errorf("유효하지 않은 목표 버전: %q", targetVersion)
 	}
-	if res.BinaryAsset == nil || res.SignatureAsset == nil || res.ChecksumAsset == nil {
-		return zero, errors.New("release asset(binary/signature/checksum) 누락")
+	// 어떤 자산이 왜 누락인지 구체적으로 알린다(진단성). 자산은 Checker 가 매칭한
+	// 릴리스(res.Latest)의 것이며, 노드 아키텍처(GOOS/GOARCH)에 정확히 일치해야 한다.
+	assetName := updater.AssetName("xflowd", runtime.GOOS, runtime.GOARCH)
+	if res.BinaryAsset == nil {
+		return zero, fmt.Errorf(
+			"release %s 에 이 노드 아키텍처(%s/%s)용 바이너리 %q 가 없습니다 — 해당 아키텍처 이미지를 릴리스 저장소에 업로드하세요",
+			res.Latest, runtime.GOOS, runtime.GOARCH, assetName)
+	}
+	if res.SignatureAsset == nil {
+		return zero, fmt.Errorf(
+			"release %s 의 %q 에 서명(%s.sig)이 없습니다 — 업로드 시 .sig 가 누락되었습니다",
+			res.Latest, assetName, assetName)
+	}
+	if res.ChecksumAsset == nil {
+		return zero, fmt.Errorf("release %s 에 checksum.txt 가 없습니다", res.Latest)
 	}
 
 	pubKey, err := updater.LoadPublicKeyFromFile(r.settings.PublicKeyPath)
