@@ -18,6 +18,7 @@ import {
   useUpdateNode,
 } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
+import { errorDetail } from '@/lib/remote/errorMessage';
 import { formatDate } from '@/lib/utils/format';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -104,8 +105,11 @@ export function VersionManagementSection({
           addNotification({ type: 'success', message: t('remote.toast.updateStarted') });
           setConfirmOpen(false);
         },
-        onError: () => {
-          addNotification({ type: 'error', message: t('remote.toast.updateFailed') });
+        onError: (err: unknown) => {
+          addNotification({
+            type: 'error',
+            message: t('remote.toast.updateFailed') + errorDetail(err),
+          });
           setConfirmOpen(false);
         },
       },

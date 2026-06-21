@@ -33,6 +33,7 @@ import {
   useUploadReleaseAsset,
 } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
+import { errorDetail } from '@/lib/remote/errorMessage';
 import { formatBytes, formatDate } from '@/lib/utils/format';
 import { useUIStore } from '@/stores/uiStore';
 import type { ReleaseAsset, ReleaseRecord } from '@/types/remote';
@@ -79,17 +80,6 @@ function slotDisplay(os: string, arch: string): string {
 /** sha256 짧은 표시(앞 12자). */
 function shortSha(sha: string): string {
   return sha.length > 12 ? sha.slice(0, 12) : sha;
-}
-
-/** 에러에서 사용자에게 보여줄 상세 메시지를 추출한다(서버 평문/APIError message). */
-function errorDetail(err: unknown): string {
-  if (err && typeof err === 'object') {
-    const e = err as { message?: string; response?: { data?: unknown } };
-    const data = e.response?.data;
-    if (typeof data === 'string' && data.trim() !== '') return `: ${data.trim()}`;
-    if (typeof e.message === 'string' && e.message !== '') return `: ${e.message}`;
-  }
-  return '';
 }
 
 /** 삭제 확인 대상 상태. */

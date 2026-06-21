@@ -22,6 +22,7 @@ import {
   useUpdateGroup,
 } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
+import { errorDetail } from '@/lib/remote/errorMessage';
 import type {
   GroupDispatchResult,
   GroupUpdateRequest,
@@ -231,13 +232,22 @@ export function GroupControlPanel({
       update.mutate(
         { name: groupName, req: buildUpdateRequest() },
         {
-          onSuccess: (data) =>
+          onSuccess: (data) => {
+            const ok = data.results.filter((r) => r.ok).length;
+            const allOk = ok === data.results.length;
+            // 일부/전부 실패 시 첫 실패 노드의 사유를 덧붙여 원인을 드러낸다.
+            const firstErr = data.results.find((r) => !r.ok && r.error)?.error;
+            const detail = !allOk && firstErr ? ` — ${firstErr}` : '';
             addNotification({
-              type: 'success',
-              message: `${t('remote.group.toast.updateDispatched')} (${summarize(data.results)})`,
+              type: allOk ? 'success' : 'error',
+              message: `${t('remote.group.toast.updateDispatched')} (${summarize(data.results)})${detail}`,
+            });
+          },
+          onError: (err: unknown) =>
+            addNotification({
+              type: 'error',
+              message: t('remote.group.toast.opFailed') + errorDetail(err),
             }),
-          onError: () =>
-            addNotification({ type: 'error', message: t('remote.group.toast.opFailed') }),
         },
       );
     } else if (pending === 'command') {
