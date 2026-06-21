@@ -4,12 +4,15 @@ import { APIError, type APIResponse, type PaginationMeta } from '@/types/api';
 
 // Axios instance configured for the XFlow backend API.
 // Vite dev server proxy handles forwarding /api requests to the Go backend.
+//
+// 주의: 인스턴스 기본 Content-Type 을 강제하지 않는다. axios v1 은 객체 본문에는
+// 자동으로 application/json 을 설정하고, FormData 본문에는 multipart/form-data 와
+// boundary 를 브라우저가 부여한다. 기본값으로 application/json 을 고정하면 axios 의
+// transformRequest 가 FormData 를 JSON 으로 직렬화해버려(멀티파트 boundary 누락)
+// 파일 업로드(릴리스 자산 등)가 서버에서 파싱 실패한다.
 const apiClient: AxiosInstance = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
 
 // Response interceptor: unwrap the API envelope.

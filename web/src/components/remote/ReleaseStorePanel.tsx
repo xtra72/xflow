@@ -81,6 +81,17 @@ function shortSha(sha: string): string {
   return sha.length > 12 ? sha.slice(0, 12) : sha;
 }
 
+/** 에러에서 사용자에게 보여줄 상세 메시지를 추출한다(서버 평문/APIError message). */
+function errorDetail(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; response?: { data?: unknown } };
+    const data = e.response?.data;
+    if (typeof data === 'string' && data.trim() !== '') return `: ${data.trim()}`;
+    if (typeof e.message === 'string' && e.message !== '') return `: ${e.message}`;
+  }
+  return '';
+}
+
 /** 삭제 확인 대상 상태. */
 type DeleteTarget =
   | { kind: 'version'; version: string }
@@ -480,8 +491,11 @@ function ArchSlot({
           setBinary(null);
           setSignature(null);
         },
-        onError: () =>
-          addNotification({ type: 'error', message: t('remote.releaseStore.uploadFailed') }),
+        onError: (err: unknown) =>
+          addNotification({
+            type: 'error',
+            message: t('remote.releaseStore.uploadFailed') + errorDetail(err),
+          }),
       },
     );
   };
