@@ -11,10 +11,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +129,19 @@ type remoteUpdateRunner struct {
 	logger     *slog.Logger
 }
 
+// insecureHTTPClient 는 TLS 인증서 검증을 건너뛰는 HTTP 클라이언트를 만든다(노드
+// update.insecure_skip_verify 옵트인 — 관리 서버가 자체 서명 인증서/사설 TLS 일 때만).
+// 다운로드 무결성은 Ed25519 서명 검증으로 별도 보장되므로 인증서 검증을 건너뛰어도
+// 변조된 바이너리는 거부된다(전송 경로 검증만 완화).
+func insecureHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // 옵트인(자체 서명/사설망 전용); 무결성은 Ed25519 로 보장.
+		},
+	}
+}
+
 // smokeTest 는 교체 전에 후보 바이너리를 `verify` 로 실행해 기동 가능성을 확인한다(A안).
 // 후보가 설정 로드/초기화에 실패하면(아키텍처 불일치/링크 오류/설정 비호환) 오류를 반환해
 // 교체를 중단시킨다 — 실행 중 데몬은 그대로 유지된다(다운타임 0).
@@ -173,6 +188,12 @@ func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, cha
 	checker, err := updater.NewChecker(srcURL, updater.Channel(ch))
 	if err != nil {
 		return zero, fmt.Errorf("checker 생성: %w", err)
+	}
+	// 노드 update.insecure_skip_verify 가 켜져 있으면 TLS 인증서 검증을 건너뛴다
+	// (자체 서명 인증서/사설망 전용 — 관리 서버가 사설 TLS 일 때 로컬/내부망 업데이트 허용).
+	// Ed25519 서명 검증은 그대로 수행하므로 무결성은 유지된다.
+	if r.settings.InsecureSkipVerify {
+		checker.HTTPClient = insecureHTTPClient(30 * time.Second)
 	}
 	res, err := checker.Check(ctx, updater.Version(r.version), runtime.GOOS, runtime.GOARCH, "xflowd")
 	if err != nil {
@@ -222,6 +243,9 @@ func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, cha
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dl := updater.NewDownloader()
+	if r.settings.InsecureSkipVerify {
+		dl.HTTPClient = insecureHTTPClient(30 * time.Minute)
+	}
 	binDest := filepath.Join(tmpDir, res.BinaryAsset.Name)
 	if err := dl.Download(ctx, *res.BinaryAsset, binDest, nil); err != nil {
 		return zero, fmt.Errorf("바이너리 다운로드: %w", err)
