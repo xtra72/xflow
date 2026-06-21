@@ -9,9 +9,9 @@ server:
   host: "0.0.0.0"
   mode: "development"       # "development" 또는 "production"
   tls:
-    enabled: false
-    # cert_file: "./certs/cert.pem"
-    # key_file: "./certs/key.pem"
+    enabled: true
+    cert_file: "./certs/cert.pem"
+    key_file: "./certs/key.pem"
   cors:
     enabled: true
     allowed_origins:
@@ -115,7 +115,10 @@ remote_management:
   #                               # (예: v1.2.3-nightly.20260620). beta 는 채널만 beta 로 지정하면 된다.
 
   # --- client 모드일 때만 사용하는 항목 ---
-  # server_url: "ws://127.0.0.1:8081/api/remote/ws"   # 운영은 wss:// 권장
+  # server_url: "wss://<관리서버-주소>:8081/api/remote/ws"  # 운영은 wss:// 필수(서버 TLS 시)
+  # insecure_skip_verify: false   # (선택) 관리 WS(wss) 인증서 검증 건너뛰기. 관리 서버가
+  #                               # 자체 서명 인증서/사설망일 때만 true(테스트/사설망 전용).
+  #                               # 운영에서는 신뢰 CA 인증서를 쓰고 false 유지.
   # instance_id: ""               # 비우면 최초 기동 시 자동 생성·영속(노드 고유 식별자)
   # auto_register: true           # 미등록 시 자동으로 등록 요청 전송
   # heartbeat_interval: "30s"     # 연결 생존성 heartbeat 주기
@@ -126,15 +129,22 @@ remote_management:
 
 # --- 프로그램 자가 업데이트 (SPEC-UPDATE-001) ---
 # 노드가 새 xflowd 바이너리를 내려받아 무결성 검증 후 원자적으로 교체한다.
-# 관리 서버가 Web UI 로 원격 업데이트를 지시하는 경우(원격 노드 버전 관리), 노드는
-# 아래 public_key_path 만 설정하면 된다 — update_url/channel 은 서버가 명령에 주입한다.
+#
+# [중요] 이 update 섹션은 업데이트를 "받는" 노드, 즉 remote_management.mode: client
+# 인 장비의 설정에 둔다. 관리 서버(mode: server)에는 적용되지 않는다 — 업데이트를
+# 실행하는 commander 는 client 모드에서만 구성되기 때문이다(cmd/xflowd/main.go).
+# 따라서 관리 서버에서 원격 업데이트가 "public_key_path 미설정"으로 거부되면, 값을
+# 서버가 아니라 "대상 client 노드"의 설정 파일에 넣고 그 노드를 재시작해야 한다.
+#
+# 관리 서버가 Web UI 로 원격 업데이트를 지시하는 경우, client 노드는 아래
+# public_key_path 만 설정하면 된다 — update_url/channel 은 서버가 명령에 주입한다.
 update:
   # [필수] Ed25519 공개키 파일 경로(PEM 또는 hex). 다운로드한 바이너리의 .sig 서명을
   # 이 공개키로 검증한다. 미설정 시 원격 업데이트가 거부된다
   # ("public_key_path 미설정 — Ed25519 검증에 필수"). 공개키는 릴리스 담당자가
   # `make keygen`(또는 xflowd update keygen)으로 생성한 .pub 를 각 노드에 배포한 것이다.
   # 개인키(.key)는 절대 노드에 두지 않는다. 자세한 내용: deploy/RELEASE_IMAGES.md
-  public_key_path: "/etc/xflow/xflow-release.pub"
+  public_key_path: "./examples/config/xflow-release.pub"
 
   # (선택) 다운로드 소스. 관리 서버가 명령에 update_url 을 주입하면 그 값이 우선한다.
   # 자체 호스팅 스토어 예: https://{관리서버}/api/v1/updates

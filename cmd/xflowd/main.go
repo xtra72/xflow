@@ -1137,6 +1137,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
 		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
+		// 관리 WS 다이얼러: insecure_skip_verify 면 자체 서명 인증서/사설망용으로 TLS
+		// 인증서 검증을 건너뛰는 다이얼러를 쓴다(nil → 기본 보안 다이얼러).
+		var clientDialer remote.Dialer
+		if rmCfg.InsecureSkipVerify {
+			clientDialer = remote.NewGorillaDialerInsecure()
+			logger.Warn("원격 client TLS 인증서 검증 건너뜀(remote_management.insecure_skip_verify) — 자체 서명/사설망 전용")
+		}
 		remoteClient := remote.NewClient(remote.ClientConfig{
 			ServerURL:  rmCfg.ServerURL,
 			InstanceID: instanceID,
@@ -1171,7 +1178,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			// open/close/input 을 시크릿 페이로드 제외로 로깅한다(REQ-SUBFLOW-RB06/RB11).
 			BridgeRunner: bridgeRunner,
 			Logger:       obs.Loggers.NewLogger("remote.client").Logger(),
-		}, nil)
+		}, clientDialer)
 		remoteClient.Start(ctx)
 		defer remoteClient.Stop()
 

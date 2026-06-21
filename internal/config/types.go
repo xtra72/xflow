@@ -185,6 +185,12 @@ type RemoteManagementConfig struct {
 	// REQ-N03). development 모드에서는 강제하지 않는다(로컬 개발 편의).
 	RequireSecure bool
 
+	// InsecureSkipVerify 는 client 모드에서 관리 WS(wss) 핸드셰이크의 TLS 인증서 검증을
+	// 건너뛸지 결정한다(기본 false). 관리 서버가 자체 서명 인증서/사설망일 때 옵트인한다.
+	// 명령/등록 페이로드 의미는 변하지 않으며, 전송 경로 인증서 검증만 완화한다. 운영에서는
+	// 신뢰 CA 인증서 사용을 권장한다(테스트/사설망 전용).
+	InsecureSkipVerify bool
+
 	// PublicBaseURL 은 server 모드가 호스팅하는 프로그램 이미지 다운로드 URL 의 공개 base
 	// 이다(예: https://mgmt.example.com). 설정되면 GitHub-호환 릴리즈 피드의 asset
 	// browser_download_url 을 이 base 로 만든다. 빈 값이면 들어오는 요청 Host(+X-Forwarded-*)

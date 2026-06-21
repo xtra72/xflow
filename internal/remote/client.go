@@ -18,6 +18,7 @@ package remote
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"log/slog"
 	"math"
@@ -64,14 +65,25 @@ type gorillaDialer struct {
 	dialer *websocket.Dialer
 }
 
-// NewGorillaDialer 는 gorilla/websocket 기반 Dialer 를 생성한다.
-// TLS(wss) 는 url scheme 으로 결정된다(REQ-F01).
+// NewGorillaDialer 는 gorilla/websocket 기반 Dialer 를 생성한다(시스템 신뢰 저장소로
+// TLS 인증서 검증). TLS(wss) 는 url scheme 으로 결정된다(REQ-F01).
 func NewGorillaDialer() Dialer {
-	return &gorillaDialer{
-		dialer: &websocket.Dialer{
-			HandshakeTimeout: 10 * time.Second,
-		},
+	return newGorillaDialer(false)
+}
+
+// NewGorillaDialerInsecure 는 wss 핸드셰이크의 TLS 인증서 검증을 건너뛰는 Dialer 를
+// 생성한다(remote_management.insecure_skip_verify — 자체 서명 인증서/사설망 전용 옵트인).
+// 전송 경로 인증서 검증만 완화하며, 명령/등록 페이로드 의미는 변하지 않는다.
+func NewGorillaDialerInsecure() Dialer {
+	return newGorillaDialer(true)
+}
+
+func newGorillaDialer(insecureSkipVerify bool) Dialer {
+	d := &websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	if insecureSkipVerify {
+		d.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // 옵트인(자체 서명/사설망 전용); 명령 무결성은 별도 보장.
 	}
+	return &gorillaDialer{dialer: d}
 }
 
 func (d *gorillaDialer) Dial(ctx context.Context, url string) (Conn, error) {
