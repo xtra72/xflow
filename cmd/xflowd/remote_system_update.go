@@ -178,6 +178,14 @@ func (r *remoteUpdateRunner) ApplyUpdate(ctx context.Context, targetVersion, cha
 	if err != nil {
 		return zero, fmt.Errorf("버전 확인: %w", err)
 	}
+	// 채널에 릴리스가 없으면(404) Checker 는 에러 없이 빈 결과(Latest 빈 값, 자산 nil)를
+	// 반환한다 — 채널 불일치를 명확히 알린다(가장 흔한 함정: beta 릴리스인데 업데이트가
+	// stable 채널을 조회). 자산 nil 검사보다 먼저 처리해 "asset 누락" 오해를 막는다.
+	if res.Latest == "" {
+		return zero, fmt.Errorf(
+			"채널 %q 에서 릴리스를 찾지 못했습니다 — 릴리스 채널과 업데이트 채널이 일치해야 합니다"+
+				"(예: beta 릴리스는 업데이트 소스 채널도 beta 여야 함)", ch)
+	}
 	target := updater.Version(targetVersion)
 	if targetVersion == "" {
 		target = res.Latest
