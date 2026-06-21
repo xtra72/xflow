@@ -395,7 +395,7 @@ jobs:
 
       # QEMU: linux/arm64 에뮬레이션 활성화
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       # Buildx: 멀티 플랫폼 빌드 드라이버
       - name: Set up Docker Buildx
