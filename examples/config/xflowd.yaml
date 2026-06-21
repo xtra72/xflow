@@ -122,4 +122,33 @@ remote_management:
   # exposure:                     # 서버에 노출(미러링)할 자원 범위: all | none | [이름 목록]
   #   flows: all
   #   agents: all
-  #   devices: all 
+  #   devices: all
+
+# --- 프로그램 자가 업데이트 (SPEC-UPDATE-001) ---
+# 노드가 새 xflowd 바이너리를 내려받아 무결성 검증 후 원자적으로 교체한다.
+# 관리 서버가 Web UI 로 원격 업데이트를 지시하는 경우(원격 노드 버전 관리), 노드는
+# 아래 public_key_path 만 설정하면 된다 — update_url/channel 은 서버가 명령에 주입한다.
+update:
+  # [필수] Ed25519 공개키 파일 경로(PEM 또는 hex). 다운로드한 바이너리의 .sig 서명을
+  # 이 공개키로 검증한다. 미설정 시 원격 업데이트가 거부된다
+  # ("public_key_path 미설정 — Ed25519 검증에 필수"). 공개키는 릴리스 담당자가
+  # `make keygen`(또는 xflowd update keygen)으로 생성한 .pub 를 각 노드에 배포한 것이다.
+  # 개인키(.key)는 절대 노드에 두지 않는다. 자세한 내용: deploy/RELEASE_IMAGES.md
+  public_key_path: "/etc/xflow/xflow-release.pub"
+
+  # (선택) 다운로드 소스. 관리 서버가 명령에 update_url 을 주입하면 그 값이 우선한다.
+  # 자체 호스팅 스토어 예: https://{관리서버}/api/v1/updates
+  # update_url: "https://api.github.com/repos/xtra72/xflow"
+
+  # (선택) 릴리스 채널: stable | beta | nightly. 서버가 채널을 주입하면 그 값이 우선.
+  # channel: "stable"
+
+  # (선택) 노드 자체 주기 자동 체크(원격 명령과 별개). 기본 false.
+  # enabled: false
+  # check_interval: "24h"
+  # auto_apply: false
+
+  # (선택) 관리 서버가 자체 서명(self-signed) TLS 인증서면 true 로 설정한다. 노드
+  # Downloader 는 https 를 강제하므로, 신뢰되지 않은 인증서면 검증을 건너뛰어야 한다
+  # (운영에서는 신뢰 CA 인증서 사용을 권장 — 테스트/사설망 전용 옵션).
+  # insecure_skip_verify: false 

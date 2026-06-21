@@ -43,8 +43,9 @@ type UpdateSettings struct {
 	// UpdateURL 은 GitHub Releases API 베이스 URL (https:// 강제).
 	UpdateURL string `yaml:"update_url" json:"update_url"`
 
-	// PublicKeyPath 는 Ed25519 공개키 파일 경로 (PEM 또는 hex).
-	// 빈 문자열이면 빌드 시 임베드된 핀닝 키 사용 (Phase A keys.go 참조).
+	// PublicKeyPath 는 Ed25519 공개키 파일 경로 (PEM 또는 hex). 다운로드 바이너리의
+	// .sig 서명 검증에 사용한다. 내장 핀닝 키는 없으므로, 비어 있으면 업데이트(apply/
+	// 원격 업데이트)가 거부된다("public_key_path 미설정 — Ed25519 검증에 필수").
 	PublicKeyPath string `yaml:"public_key_path" json:"public_key_path"`
 
 	// DrainTimeout 은 restart 전 in-flight 요청 처리 대기 시간 (기본 30s).
