@@ -3,7 +3,7 @@
 > 원격 관리 서버/클라이언트 — xflow 인스턴스 fleet 등록·승인·원격 제어·인벤토리 미러링
 > 본 문서는 PLAN 단계 산출물이다. 코드는 포함하지 않으며 기술 접근/마일스톤/위험을 정의한다.
 
-> **상태(2026-06-08)**: 4개 확정 아키텍처 결정(영속 WS dial / 라이브 RPC over 연결 / 인벤토리 미러+서버 DB 캐시 / 클라이언트 노출 opt-in)을 고정 제약으로 둔다. 마일스톤 M1~M6·H·M7 백엔드 완료, M7 웹(7.4)·M8(그룹 J, v1.3)·M9(그룹 K, v1.4)·M10(그룹 L, v1.5)·**M11(그룹 M, v1.6)** 계획 단계. M8 은 원격 노드 FULL 제어 패리티(READ/QUERY 프록시 + 통합 UI), M9 는 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드, M10 은 원격 노드 대시보드 패리티(로컬 DashboardPage 재사용 + 대시보드 config 읽기 프록시 + 패널 target-aware + 차트 스트림 프록시), **M11 은 관리자 뷰(상단 바 풀폭 레이아웃) + 노드 해상도 보고 + 대시보드 고정 캔버스 충실 재현** 을 증분 구현한다. **M9 의 OQ-K1~K7 / M10 의 OQ-L1~L6 / M11 의 OQ-M1~M5 은 ✅ 전부 RESOLVED(M11 은 2026-06-08 사용자 권고안대로 확정 — 구현 시 고정 제약). M11 은 M9 의 좌측 디렉토리 `NodeManagementPage` 레이아웃을 대체(supersede)한다(기능 보존, 레이아웃만 진화).**
+> **상태(2026-06-21)**: 4개 확정 아키텍처 결정(영속 WS dial / 라이브 RPC over 연결 / 인벤토리 미러+서버 DB 캐시 / 클라이언트 노출 opt-in)을 고정 제약으로 둔다. 마일스톤 M1~M6·H·M7 백엔드·**M12(그룹 O, v1.7) 백엔드 완료**, M7 웹(7.4)·M8(그룹 J, v1.3)·M9(그룹 K, v1.4)·M10(그룹 L, v1.5)·**M11(그룹 M, v1.6)**·M12 웹(12.5) 계획 단계. **M12 는 원격 프로그램 버전 관리(릴리스 호스팅+노드용 익명 GitHub-Releases 호환 피드 / 업데이트 소스 서버 저장·자동 주입 / 아키텍처-aware 그룹 일괄 업데이트 latest·pin·per_arch / 관리 WS insecure_skip_verify)를 증분 구현하며, 노드 자가 업데이트(SPEC-UPDATE-001)는 무변경 재사용하고 서버는 사전 서명 `.sig` 만 배포한다(공개키 노드 로컬·https 강제·Ed25519 무결성 — 고정 보안 불변식).** M8 은 원격 노드 FULL 제어 패리티(READ/QUERY 프록시 + 통합 UI), M9 는 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드, M10 은 원격 노드 대시보드 패리티(로컬 DashboardPage 재사용 + 대시보드 config 읽기 프록시 + 패널 target-aware + 차트 스트림 프록시), **M11 은 관리자 뷰(상단 바 풀폭 레이아웃) + 노드 해상도 보고 + 대시보드 고정 캔버스 충실 재현** 을 증분 구현한다. **M9 의 OQ-K1~K7 / M10 의 OQ-L1~L6 / M11 의 OQ-M1~M5 은 ✅ 전부 RESOLVED(M11 은 2026-06-08 사용자 권고안대로 확정 — 구현 시 고정 제약). M11 은 M9 의 좌측 디렉토리 `NodeManagementPage` 레이아웃을 대체(supersede)한다(기능 보존, 레이아웃만 진화).**
 
 ## 1. 기술 접근
 
@@ -282,6 +282,22 @@
   - 검증: FixedCanvasScaler Vitest(캔버스 크기=노드 해상도·레터박스 종횡비 보존·stretch/crop 금지·가용 영역 변경 재스케일·미보고 폴백), 대시보드 패널 그룹 L 경로/게이팅/READ-ONLY 불변 Vitest, 패널 로컬 렌더 바이트 동일 회귀.
 - 의존: M9(노드 그룹핑·시스템 정보 보고 경로·NodeManagementPage·NodeDashboard — 진화 대상이자 재사용), M10(RemoteDashboardView/DashboardPage/패널 target-aware — 고정 캔버스 감싸기 대상), M8(통합 제어 서브탭), M4(시스템 정보 저장 경로). **백엔드 11.1 은 M9 백엔드 완료 시 병행 가능, 웹 단계(11.2/11.3)는 M9 웹(9.4)·M10 웹(10.3) 이후** 진행한다(진화/감싸기 대상이 그 산출물이므로).
 - 매핑: REQ-M01~M10, REQ-K07/K08/K09/K11~K14·L01~L13·J03/J05/J06/J07/J12·D04·N03/N04·A16/A19/A20/A21 일관.
+
+### 마일스톤 12 — v1.7 확장: 원격 프로그램 버전 관리 (릴리스 호스팅 + 업데이트 소스 + 그룹 일괄 업데이트) (그룹 O) ✅ 백엔드 완료(2026-06-21) / 웹 🔲 계획
+> 그룹 O. 관리 서버가 노드용 프로그램 이미지를 호스팅하고, 원격 업데이트 소스를 저장해 명령에 자동 주입하며, 노드의 보고된 아키텍처/OS 별로 그룹 일괄 업데이트를 디스패치한다. **노드 자가 업데이트(SPEC-UPDATE-001)는 무변경 재사용** — 서버는 사전 서명된 `.sig` 만 저장·배포하고 공개키는 노드 로컬에만 둔다(A22). 4단계(릴리스 호스팅+피드 → 업데이트 소스 저장·주입 → 아키텍처-aware 그룹 일괄 업데이트 → 관리 WS TLS 옵트인)로 분할한다. 보안 불변식(공개키 노드 로컬·https 강제·Ed25519 무결성)은 고정 제약이다.
+
+- **단계 12.1 — 릴리스 호스팅 + 노드용 피드(백엔드)** ✅: `internal/api/handler/release_admin.go`(신규 — admin 릴리스/자산 CRUD·multipart 업로드 os/arch/binary/signature, REQ-O04). `internal/api/handler/release_feed.go`(신규 — 무인증 GitHub-Releases 호환 피드 latest/list/download·asset `browser_download_url` https 강제, REQ-O02/O03). `internal/storage`(`releases`/`release_assets` 메타 + 디스크 `{releases_dir}/{version}/`·SHA256 자동·`checksum.txt` 자동, REQ-O01). `internal/config`(`remote_management.public_base_url`/`releases_dir`, REQ-O05). `cmd/xflowd/main.go`(피드/관리 라우트 배선). 서버는 `.sig` 를 검증/생성하지 않고 그대로 저장(A22).
+  - 검증: release_feed_test(latest/list/download·https 강제·asset 형태·updater 호환), release_admin_test(CRUD·multipart·admin 게이팅), release_store_test(SHA256·checksum.txt 자동 생성).
+- **단계 12.2 — 업데이트 소스 저장·자동 주입(백엔드)** ✅: `internal/api/handler/remote_version.go`(신규/수정 — `GET/PUT /remote/update-source`, `remote.update_source`(SettingsRepository) 저장/조회, `update_url` 빈 값/`https://` 만 허용, `system/update` 명령에 소스 자동 주입(요청 우선), REQ-O06/O07/O08). 공개키 비전송(REQ-O09). 별도 테이블 미신설(SettingsRepository 재사용).
+  - 검증: update_source_test(저장/조회·자동 주입·http 거부·빈 값 해제·공개키 비전송).
+- **단계 12.3 — 아키텍처/OS-aware 그룹 일괄 업데이트(백엔드)** ✅: `internal/remote/grouping.go`(`GroupUpdatePlan`{Channel,UpdateURL,Restart,VersionByArch,DefaultVersion,RequireMapping}·`DispatchGroupUpdate` — 그룹 내 승인 노드 순회, `n.OS+"/"+n.Arch` 키로 per-node 타깃 해석, 미매핑은 RequireMapping 시 건너뜀(부분 성공), REQ-O10/O11/O12). `internal/remote/protocol.go`(`SystemUpdateArgs{target_version,channel,update_url,restart}` 재사용 — 신규 메시지 타입 없음). 전략 latest/pin/per_arch 는 서버 측 해석 정책(노드 무변경 — A24).
+  - 검증: grouping_test(latest/pin/per_arch·per-arch 타깃 버전·미매핑 건너뜀·부분 성공·승인 필터).
+- **단계 12.4 — 관리 WS TLS 옵트인(백엔드)** ✅: `internal/remote/client.go`(`newGorillaDialer(insecureSkipVerify)` → `TLSClientConfig.InsecureSkipVerify`, REQ-O13). `internal/config`(`remote_management.insecure_skip_verify` 기본 false). 동일 원칙이 노드 자가 업데이트 다운로드(`cmd/xflowd/remote_system_update.go`, `update.insecure_skip_verify`)에도 적용되며 Ed25519 검증은 유지된다.
+  - 검증: client_dialer_test(insecure_skip_verify 옵트인·기본 false).
+- **단계 12.5 — 릴리스/업데이트 관리 UI(추후 expert-frontend)** 🔲: 릴리스 업로드/목록·업데이트 소스 설정(`/remote/update-source`)·그룹 일괄 업데이트(전략 latest/pin/per_arch 선택)·노드별 업데이트 액션. 관리 노드 화면(그룹 K/M)에 부착.
+  - 검증: 릴리스 관리 Vitest(업로드/목록), 업데이트 소스 설정 Vitest, 그룹 업데이트 전략 선택 Vitest.
+- 의존: M3(명령 디스패치 — `system/update`), M4(노드 OS/Arch 시스템 정보 — K07/K08), M9(노드 그룹 — 그룹 일괄 업데이트 대상), SPEC-UPDATE-001(노드 자가 업데이트 파이프라인·릴리스 도구·서명). **백엔드(12.1~12.4) 완료**, 웹(12.5)은 그룹 K/M 웹 이후.
+- 매핑: REQ-O01~O13, REQ-K07/K08·D01·F04·N04·A22/A23/A24 일관.
 
 ## 3. 위험 및 대응
 

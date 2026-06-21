@@ -497,9 +497,69 @@
 - When: 관리자가 노드 그룹핑·그룹 배정/해제·노드 대시보드 개요(시스템 정보+운영 요약)·Flow/Agent/Device 서브탭·대시보드 서브탭·딥링크(`?node=`/`?tab=`)·`등록 관리`·기존 라우트(`/admin/remote`, `/admin/remote/control` 리다이렉트, M8/편집기 딥링크)를 사용한다.
 - Then: M9 의 모든 기능이 상단 바 관리자 뷰에서 보존되고(디렉토리/그룹 선택→노드 피커, 서브탭→상단 바), `등록 관리`(EnrollmentManagementPage)는 변경 없이 그대로 유지되며, 기존 라우트·딥링크·리다이렉트가 관리자 뷰에서 도달 가능하다(워크플로 단절 없음). 별도 관리자 앱/바이너리/백엔드 분리/별도 SPA 는 도입되지 않는다.
 
+### AC-81: 릴리스 이미지 저장 + SHA256 + checksum.txt 자동 생성 (REQ-O01)
+
+- Given: 서버 모드 xflowd 에 admin 으로 접속해 있다.
+- When: 관리자가 multipart 업로드(`POST /remote/releases/{version}/assets`, os/arch/binary/signature)로 아키텍처별 `xflowd` 바이너리 + Ed25519 `.sig` 를 올린다.
+- Then: 메타(`releases`/`release_assets`)와 디스크(`{releases_dir}/{version}/`)에 저장되고, 각 바이너리의 SHA256 이 자동 계산되며 버전별 `checksum.txt` 가 자동 생성된다. 서버는 `.sig` 를 검증·생성하지 않고 그대로 저장한다(사전 서명 — A22).
+
+### AC-82: 노드용 익명 릴리스 피드 — GitHub-Releases 호환·updater 무변경 (REQ-O02)
+
+- Given: 한 개 이상 릴리스/자산이 저장되어 있다.
+- When: 노드 updater(또는 임의 무인증 클라이언트)가 `GET /api/v1/updates/releases/latest`·`/releases`·`/releases/download/{version}/{filename}` 를 호출한다.
+- Then: latest 는 최신 stable 단일 객체, list 는 semver 내림차순 배열을 반환하고, asset 객체는 `{name, size, browser_download_url}` 형태로 SPEC-UPDATE-001 checker 가 무변경으로 소비한다. download 는 바이너리/`.sig`/`checksum.txt` 를 스트림한다. 인증 없이 접근 가능하다.
+
+### AC-83: asset URL https 강제 (REQ-O03)
+
+- Given: `remote_management.public_base_url` 이 설정되었거나 비어 있다(요청 Host 유도).
+- When: 노드가 피드를 조회한다.
+- Then: 모든 asset `browser_download_url` 은 https 스킴이다. base 는 `public_base_url`(우선) 또는 요청 Host(+`X-Forwarded-*`)에서 유도된다.
+
+### AC-84: 릴리스 관리 API admin 게이팅 (REQ-O04, F04)
+
+- Given: admin 토큰과 비-admin 토큰이 있다.
+- When: 각각 `GET/POST /remote/releases`·`DELETE /remote/releases/{version}`·`DELETE …/assets/{os}/{arch}`·multipart 업로드를 호출한다.
+- Then: admin 만 성공하고 비-admin 은 거부된다(인증 401 / 권한 403). 무인증 피드(AC-82)와 admin 관리 API 는 명확히 분리된다.
+
+### AC-85: 업데이트 소스 저장·조회·https 검증 (REQ-O06, O08)
+
+- Given: admin 으로 접속해 있다.
+- When: 관리자가 `PUT /remote/update-source {update_url, channel}` 로 소스를 설정하고 `GET /remote/update-source` 로 조회한다.
+- Then: `remote.update_source`(SettingsRepository)에 1회 저장되고 조회 시 그대로 반환된다. `update_url` 이 `http://`(또는 비-https·비-빈값)이면 거부되고, 빈 값은 해제(노드 로컬 설정 사용)로 허용된다. 응답/저장 어디에도 공개키는 포함되지 않는다(REQ-O09).
+
+### AC-86: 원격 업데이트 명령에 소스 자동 주입 (REQ-O07)
+
+- Given: `remote.update_source` 에 `update_url`/채널이 저장되어 있다.
+- When: 관리자가 UpdateNode/UpdateGroup(`system/update`)을 디스패치한다(요청에 소스 미명시).
+- Then: 서버가 저장된 `update_url`/채널을 `SystemUpdateArgs` 에 자동 주입해 노드로 전파한다. 요청이 소스를 명시하면 요청 값이 우선한다. 노드는 이 args 로 자신의 기존 자가 업데이트 파이프라인(check→download→verify(Ed25519)→apply)을 실행한다(updater 무변경 — A22).
+
+### AC-87: 아키텍처/OS-aware 그룹 일괄 업데이트 — per-node 타깃 (REQ-O10, O11)
+
+- Given: 한 그룹에 서로 다른 OS/Arch(예: linux/amd64, linux/arm64, darwin/arm64)의 승인 노드가 있다.
+- When: 관리자가 `per_arch` 전략((os/arch)→버전 맵)으로 그룹 일괄 업데이트를 요청한다.
+- Then: 서버가 각 노드의 보고된 `os/arch` 로 타깃 버전을 해석해 per-node `system/update` 를 디스패치한다. `latest`(채널 내 각 os/arch 최고 semver)·`pin`(단일 버전, 기존 호환) 전략도 동일하게 노드별로 적용된다.
+
+### AC-88: 자산 없는 노드 건너뜀 — 부분 성공 (REQ-O12)
+
+- Given: 그룹 내 일부 노드의 OS/Arch 에 대한 타깃 버전/자산이 없다(`per_arch` + `RequireMapping`).
+- When: 그룹 일괄 업데이트를 디스패치한다.
+- Then: 해당 노드는 디스패치되지 않고 사유와 함께 결과에 건너뜀으로 보고되며(`GroupDispatchResult.Error`), 나머지 노드는 정상 디스패치되어 부분 성공한다.
+
+### AC-89: 관리 WS insecure_skip_verify 옵트인 (REQ-O13)
+
+- Given: 자체 서명 인증서 또는 사설망 wss 관리 서버이다.
+- When: `remote_management.insecure_skip_verify=true`(기본 false)로 client 모드가 dial 한다.
+- Then: 관리 WS 핸드셰이크의 TLS 인증서 검증을 건너뛰고 연결된다. 이 옵션은 전송 무결성 보장과 무관하며, 명령 무결성(토큰)·자가 업데이트 무결성(Ed25519)은 그대로 유지된다. 기본값(false)에서는 인증서 검증이 정상 수행된다.
+
+### AC-90: 보안 불변식 — 공개키 노드 로컬·서버 사전 서명·https (REQ-O03, O08, O09, A22)
+
+- Given: 릴리스 호스팅·업데이트 소스·원격 업데이트 명령 경로가 모두 동작한다.
+- When: 노드가 피드에서 바이너리를 받아 적용한다.
+- Then: (1) 검증 공개키는 노드 로컬(`update.public_key_path`)에만 존재하고 서버/피드/소스/명령 어디에도 전송되지 않는다. (2) 서버는 사전 서명된 `.sig` 만 저장·배포하며 서명을 생성하지 않는다. (3) 다운로드 URL(피드 asset·update_url)은 https 강제이다. (4) `insecure_skip_verify` 는 TLS 인증서 검증만 스킵하며 바이너리 무결성은 노드 Ed25519 검증으로 보장된다.
+
 ## 2. 품질 게이트 (Definition of Done)
 
-- [ ] 모든 EARS 요구사항(REQ-REMOTE-A01~J16, K01~K16, L01~L13, M01~M10, N01~N04)에 대응 인수 시나리오 통과.
+- [ ] 모든 EARS 요구사항(REQ-REMOTE-A01~J16, K01~K16, L01~L13, M01~M10, O01~O13, N01~N04)에 대응 인수 시나리오 통과.
 - [ ] 백엔드: 신규 코드(`internal/remote/*`, `managed_node_*`, remote 핸들러, instance_id) TDD, 커버리지 85%+.
 - [ ] 백엔드: 기존 변경(config types/defaults/validate, 어댑터 명령 진입, main.go 배선) 동작 보존 — 기존 회귀 스위트 100% 통과.
 - [ ] ws/auth/adapter 인프라 재사용 — 기존 ws/auth/adapter 테스트 전부 통과(회귀 0).
@@ -523,6 +583,12 @@
 - [ ] 관리자 뷰(그룹 M, 백엔드): 노드 해상도 보고(config 선언→register/heartbeat→저장→NodeDetail 노출)·미보고 0 하위 호환·잘못된 형식 안전 파싱 검증. 자원 메트릭 비보고 확인.
 - [ ] 관리자 뷰(그룹 M, 프론트, 추후): 상단 바 관리 크롬+풀폭 노드 화면(좌측 크롬 제거·왜곡 방지)·노드 피커(그룹 묶음·M9 그룹 보존)·서브탭 호이스팅·전역 사이드바 숨김/복원·딥링크 보존·M9 기능 보존·등록 관리 불변 Vitest 통과.
 - [ ] 충실 재현(그룹 M, 프론트, 추후): 대시보드 고정 캔버스(노드 해상도·리플로우 없음)·레터박스 스케일(종횡비 보존·stretch/crop 금지·재스케일·미보고 폴백)·패널 데이터/게이팅/READ-ONLY 불변(그룹 L 경로 재사용)·충실 재현 범위=대시보드만 Vitest 통과.
+- [ ] 릴리스 호스팅(그룹 O, 백엔드): 릴리스/자산 저장(SHA256·checksum.txt 자동)·무인증 GitHub-Releases 호환 피드(latest/list/download·asset 형태)·asset https 강제·admin 릴리스/자산 CRUD·multipart 업로드·admin 게이팅 검증.
+- [ ] 업데이트 소스(그룹 O, 백엔드): `remote.update_source` 저장/조회·`system/update` 명령 자동 주입(요청 우선)·http 거부/빈 값 해제·공개키 비전송 검증.
+- [ ] 그룹 일괄 업데이트(그룹 O, 백엔드): per-node OS/Arch 타깃 해석·전략 latest/pin/per_arch·자산 없는 노드 건너뜀(부분 성공) 검증.
+- [ ] 관리 WS TLS 옵트인(그룹 O): `remote_management.insecure_skip_verify`(기본 false) 옵트인·전송 무결성 무관(명령=토큰·자가 업데이트=Ed25519) 검증.
+- [ ] 보안 불변식(그룹 O): 공개키 노드 로컬(비전송)·서버 사전 서명 `.sig` 만 저장(서명 미생성)·https 강제(피드/update_url)·무결성=노드 Ed25519 검증 확인.
+- [ ] 릴리스/업데이트 관리 UI(그룹 O, 프론트, 추후): 릴리스 업로드/목록·업데이트 소스 설정·그룹 일괄 업데이트(전략 선택)·노드별 업데이트 액션 Vitest 통과.
 - [ ] LSP 품질 게이트(run): error/type-error/lint-error 0.
 
 ## 3. 검증 방법·도구
@@ -629,4 +695,14 @@
 | AC-78 | M09, L04, L05, L06, L07, L08, L12, J03, J12 |
 | AC-79 | M07, OQ-M2 |
 | AC-80 | M10, K11, K12, K13, K14, K15, K16 |
-| (전반) | A05, B05, F02, N01, J15, A13, A14, A15, A16, A17, A18, A19, A20, A21 |
+| AC-81 | O01, A22 |
+| AC-82 | O02 |
+| AC-83 | O03, O05 |
+| AC-84 | O04, F04 |
+| AC-85 | O06, O08, O09 |
+| AC-86 | O07, A22, A23 |
+| AC-87 | O10, O11, K07, K08, A24 |
+| AC-88 | O12, A24 |
+| AC-89 | O13 |
+| AC-90 | O03, O08, O09, A22 |
+| (전반) | A05, B05, F02, N01, J15, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, A23, A24 |

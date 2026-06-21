@@ -56,6 +56,7 @@ tags:
 | 1.5.0 | 2026-06-08 | xtra | v1.5 확장 — 원격 노드 대시보드 패리티(그룹 L). 관리자가 서버에서 승인·온라인 원격 노드의 대시보드를 **로컬과 동일한 DashboardPage**(`target=remote:{instanceId}`)로 보고 제어한다(M8 query/스트림 프록시 + target 추상화 재사용). (A) **대시보드 CONFIG 읽기 프록시** — 노드의 대시보드 설정(dashboardPages[]/activeDashboardId/grid/refresh/deviceGridLayout, SPEC-DASHBOARD-001 `GET /dashboards/{shared,mine}`)을 그룹 J query-action(`dashboard` 도메인 `get_shared`/`get_mine`)으로 **READ-ONLY** 취득(원격 config **편집은 v1.5 비목표**, 차기 위임). (B) **패널 데이터 소스 target-aware** — flows/agents/devices/single-device 패널은 기존 target 훅(useResourceTargets/useDetailTargets) 재사용, resource(메트릭)·logs·CHART 를 신규 query-action/스트림으로 원격화: 신규 `monitor/metrics` query-action, 신규 `monitor/logs` 스트림 action, **CHART 는 M8 스트림 프록시에 `chart` stream-action(subscribe/stream_data) 추가**(`/ws/chart/{channel}` 직결 대신 서버 경유 중계, 폴링 폴백·teardown·백프레셔 J08/J08b 재사용). control 패널(ac/hvac/outdoor)은 useDeviceDetailTarget + **그룹 D 명령**으로 디바이스 쓰기. 패널은 dashboard 레벨 TargetProvider/prop 으로 target 수신(target 없으면 로컬 렌더 바이트 동일). (C) **디바이스/자원 ref 네임스페이싱** — 원격 target 하에서 패널 device ref 는 **그 노드 기준** 해석(대시보드 config 는 **노드-로컬**: 노드별 fetch, deviceId 는 그 노드의 것 — 중앙 cross-node config 대신 v1 단순성 채택). (D) **UI** — `노드 대시보드`(NodeDashboard, M9)에 **대시보드 서브탭** 추가 및/또는 DashboardPage `target=remote:{id}` 지원, 게이팅(승인+온라인+노출)·redaction·실패 의미(503/504/502/404)·read-only-by-default·원격 컨텍스트 표시. 마일스톤 M10 추가. (OQ-L1~L6 ✅ RESOLVED 2026-06-08 — 사용자 권고안대로 확정: 노드-로컬 read-only config / CHART=M8 스트림 프록시 chart-action 확장 / 원격 config READ-ONLY(편집 차기) / control 쓰기=그룹 D 재사용 / 대시보드 서브탭(노드 대시보드) / 메트릭=query-action·로그=스트림) |
 | 1.6.0 | 2026-06-08 | xtra | v1.6 확장 — 관리자 뷰(Manager View)·노드 화면 충실 재현(그룹 M). xflowd 서버 모드 구조는 **유지**하되(별도 관리자 앱/바이너리/백엔드 분리/별도 SPA 없음 — M7~M10 백엔드·컴포넌트 전부 재사용), 원격 관리 UI 를 노드 화면을 충실히 재현하는 **전용 관리자 뷰**로 재구성한다. (A) **노드 해상도 보고** — 노드가 자신의 장비 모니터(키오스크/터치스크린) 해상도(width×height)를 보고(기본: 노드 config `display.resolution`/`display.width`+`display.height` — xflowd 는 헤드리스 데몬이므로 운영자가 장비 화면 해상도를 선언, M9 register/heartbeat 시스템 정보 페이로드로 운반, 하위 호환 — 미보고 시 관리자 뷰가 합리적 기본값/컨테이너 크기로 폴백), 서버가 `managed_nodes` 에 저장·노드 상세에 노출, 관리자 뷰가 소비. (B) **관리자 뷰 레이아웃** — 노드 선택 시 관리 크롬(노드 선택기=좌측 디렉토리를 대체하는 노드 피커 드롭다운(M9 그룹 구조 유지)·서브탭 네비 개요/플로우/에이전트/디바이스/대시보드·관리 액션·나가기)을 **상단 수평 바**로 옮기고, 노드 화면이 그 아래 **전체 너비/높이**를 점유한다(좌우 폭 축소/왜곡 방지). 전역 좌측 사이드바는 이 뷰에서 숨김/접힘. M9 NodeManagementPage(좌측 디렉토리) → 상단 바 관리자 뷰로 **진화**(디렉토리/그룹 선택은 상단 노드 피커로 이전, 서브탭은 상단 바로 이전). 등록 관리는 그대로. (C) **해상도 충실 대시보드 렌더** — RemoteDashboardView(그룹 L) 가 노드 보고 해상도에 맞춘 **고정 캔버스**에 렌더 후 가용 영역에 종횡비 보존 스케일-투-핏(레터박스, 패널 리플로우 없음) → 노드 장비에서 보이는 그대로의 왜곡 없는 복제. **변경 경로 불변**(그룹 D/I). 마일스톤 M11 추가. (OQ-M1~M5 ✅ 전부 RESOLVED 2026-06-08 — 사용자 권고안대로 확정: 노드 config 선언 해상도(폴백=기본값/컨테이너) / 대시보드 전용 고정 캔버스 / 그룹 묶음 드롭다운 노드 피커 / fit·레터박스 스케일(수동 줌 차기) / NodeManagementPage 제자리 진화) |
 | 1.4.0 | 2026-06-07 | xtra | v1.4 확장 — 원격 관리 UI 정보 구조 재편 + 노드 그룹핑 + 노드 대시보드(그룹 K). 사이드바 `원격 관리` 그룹을 **두 개의 최상위 진입점**(`노드 관리`(운영) + `등록 관리`(온보딩))으로 재편하여 기존 `관리 노드`(RemoteNodesPage) + `원격 노드 제어`(RemoteControlPage) 를 **대체**한다. (A) 노드 그룹핑: `managed_nodes` 에 **단일 그룹 라벨**(group_name, 기본 빈값→"전체"(All) 기본 버킷) 추가 — 한 노드는 **최대 하나의 그룹**에만 속하고, 그룹은 자유 입력 단일 레벨 라벨이며, 그룹 배정/해제·distinct 그룹 목록·그룹별 노드 목록(전체 기본 버킷 포함) API + admin-gated 영속. 그룹 이름 변경=노드 재라벨링, 그룹 비움/삭제=노드를 "전체"로 환원. (B) 노드 시스템 정보 보고(BASIC): 노드가 OS+arch+version+started_at(epoch ms, uptime 산출용)을 register/heartbeat 페이로드로 보고(자원 메트릭 CPU/메모리/디스크 **제외**), 서버가 managed_nodes 에 저장·노드 상세/목록 API 로 노출(하위 호환 — 미보고 노드는 필드 빈값). (C) 노드별 운영 요약: 기존 미러(그룹 E)에서 플로우/에이전트/디바이스 카운트+상태 분해를 **파생**(신규 쿼리 우선이 아니라 미러 데이터 우선). (D) UI 재구성: `노드 관리`=디렉토리 뷰(단일 레벨 그룹 트리, "전체" 기본)+노드 선택→**노드 대시보드**(시스템 정보 BASIC + 운영 요약 + Flow/Agent/Device 서브탭이 기존 M8 통합 제어(`target=remote:{instanceId}`) 재사용); `등록 관리`=토큰 관리(EnrollmentTokenSection)+노드 등록 관리(pending 승인 큐·승인/거부/폐기·사전 등록). 마일스톤 M9 추가. (OQ-K1~K7 ✅ RESOLVED 2026-06-07 — 사용자 권고안대로 확정: 서버 전용 그룹 / register+heartbeat 시스템 정보 / 미러 파생 운영 요약 / started_at 서버 파생 uptime / 빈 라벨=가상 "전체" 버킷 / 사전 등록·승인 UI 등록 관리 흡수 / /admin/remote/control 리다이렉트) |
+| 1.7.0 | 2026-06-21 | xtra | v1.7 확장 — 원격 프로그램 버전 관리(릴리스 호스팅 + 업데이트 소스 + 아키텍처-aware 그룹 일괄 업데이트)(그룹 O). 관리 서버가 노드용 프로그램 이미지(아키텍처별 `xflowd` 바이너리 + Ed25519 `.sig`)를 호스팅하고, 노드가 무변경 updater 로 소비하는 **익명 GitHub-Releases 호환 피드**(`GET /api/v1/updates/releases/latest`·`/releases`·`/releases/download/{version}/{filename}`, asset `browser_download_url` https 강제)를 제공한다. (A) **릴리스 저장소** — SQLite 메타(`releases`/`release_assets`) + 디스크 `{data}/releases/{version}/`, SHA256 자동 계산·`checksum.txt` 자동 생성. admin 관리 API(`GET/POST /remote/releases`·`DELETE /remote/releases/{version}`·`DELETE …/assets/{os}/{arch}`·multipart 업로드 `POST …/{version}/assets`). 설정 `remote_management.public_base_url`(또는 요청 Host 유도)·`remote_management.releases_dir`. (B) **업데이트 소스 서버 저장** — `update_url`+채널을 SettingsRepository(`remote.update_source`)에 1회 저장(필요시만 변경), `GET/PUT /remote/update-source`(admin), 원격 업데이트 명령(UpdateNode/UpdateGroup)에 서버가 자동 주입. `update_url` 은 빈 값 또는 `https://` 만 허용, **공개키는 절대 전송하지 않음**(노드 로컬 신뢰 앵커). (C) **아키텍처/OS-aware 그룹 일괄 업데이트** — 서버가 각 노드의 보고된 OS/Arch 로 per-node 타깃 버전을 계산해 per-node `system/update` 디스패치, 전략 3종(`latest`=채널 내 각 os/arch 최고 semver / `pin`=단일 버전(기존 호환) / `per_arch`=(os/arch)→버전 맵), 자산 없는 노드는 사유와 함께 건너뜀(부분 성공). (D) **client WS insecure_skip_verify** — `remote_management.insecure_skip_verify`(기본 false), 관리 WS(wss) TLS 인증서 검증 스킵(자체 서명/사설망 전용 옵트인, 명령 무결성은 별도 보장). 마일스톤 M12 추가. (보안 불변식: 서버는 사전 서명 `.sig` 만 저장, https 강제, 공개키 노드 로컬, insecure_skip_verify 는 전송 무결성과 무관 — 자가 업데이트는 Ed25519 로 보장.) |
 | 1.3.0 | 2026-06-06 | xtra | v1.3 확장 — 원격 노드 FULL 제어 패리티(그룹 J). 원격 노드의 플로우/에이전트/디바이스를 **별도 원격 페이지가 아니라 로컬과 동일한 웹 UI**(FlowListPage/AgentListPage/DeviceListPage + 상세 패널)로 제어한다. 목록·라이프사이클을 넘어 **상세 패널까지 FULL 패리티**(에이전트 통계/설정/디바이스/토픽/store/세션/시리즈, 디바이스 실시간 상태+명령+메타데이터, 플로우 노드 레벨 런타임/로그). 이를 위해 미러(그룹 E)·명령(그룹 D)과 구분되는 **신규 READ/QUERY 프록시**를 신설: 그룹 D 명령과 **대칭되는 per-domain query-action**(`{domain, query_action, args}`)을 `query`/`query_result` 로 운반하고 노드가 각 action 을 로컬 read 핸들러로 매핑해 라이브 JSON 반환(READ-ONLY — 변경은 그룹 D/M7 유지). 실시간 데이터(디바이스 상태·에이전트 라이브 통계/시리즈)는 **스트리밍 프록시**(subscribe/stream_data/unsubscribe, 서버 경유 중계, teardown·백프레셔)로 제공(폴링은 폴백). 서버는 query-action 응답을 **단기 TTL 캐시**(스트리밍/라이브 action 캐시 우회, 변경 시 무효화). UI 는 `useEditorFlowTarget` 의 target 추상화를 목록/제어 페이지로 확장(useFlowsTarget/useAgentsTarget/useDevicesTarget), `?target=remote:{instanceId}` 쿼리 파라미터 + 노드 셀렉터로 동일 페이지 재사용. 기존 RemoteResourcesPage 는 노드 셀렉터로 재용도화/폐기. 마일스톤 M8 추가. (OQ-J1~J7 RESOLVED: per-domain query-action / FULL 커버리지 / 스트리밍 포함 / 디바이스 쓰기=그룹 D / 최소 감사 / 단기 TTL 캐시 / 서버 admin 게이팅) |
 
 > **상태(Status)** — `planned`. 본 SPEC 은 PLAN 단계 산출물이며 구현 코드를 포함하지 않는다. `/moai run SPEC-REMOTE-001` 로 마일스톤 단위 증분 구현한다.
@@ -154,7 +155,7 @@ tags:
 
 **제외(Non-goals):**
 - 역터널/리버스 프록시, 노드 간 직접 P2P, 공유 데이터베이스(명시적 금지 — RPC over 라이브 연결만).
-- 서버→노드 일괄 펌웨어/바이너리 업데이트(별도 SPEC-UPDATE 계열 영역, 본 SPEC 은 설정/자원 제어만).
+- ~~서버→노드 일괄 펌웨어/바이너리 업데이트~~ → **v1.7(그룹 O)에서 부분 대체**: 관리 서버가 노드용 프로그램 이미지를 호스팅하고(릴리스 피드), 업데이트 소스를 저장해 명령에 주입하며, 아키텍처/OS-aware 그룹 일괄 업데이트(`system/update`)를 디스패치한다. 단, **바이너리 적용·검증은 노드의 기존 자가 업데이트(SPEC-UPDATE-001)** 가 수행하며 서버는 사전 서명 `.sig` 만 배포한다(서명·적용 로직 미신설 — A22). 펌웨어(비 xflowd) 업데이트는 여전히 제외.
 - 멀티 서버 HA/클러스터링, 서버 페일오버.
 - 노드 그룹/정책 기반 일괄 배포 오케스트레이션(향후 SPEC).
 - ~~미러링된 자원의 서버 측 직접 영속 편집~~ → **v1.2(그룹 I)에서 대체**: 원격 플로우/에이전트 편집(생성·수정·삭제)은 이제 지원되나, **명령 디스패치 경유로만** 허용된다(서버는 (온라인) 노드로 명령을 전파하고 결과 수신 후에야 미러 캐시를 갱신; **서버 단독 직접 영속은 여전히 금지** — A4/REQ-E08). 영속 정의의 권위 소유자는 변함없이 노드이다.
@@ -216,6 +217,12 @@ tags:
 - **A20**(v1.6): 노드 해상도는 노드의 **장비 모니터(키오스크/터치스크린) 디스플레이 해상도**(width×height, px)를 의미한다. xflowd 는 헤드리스 데몬이므로 OS 디스플레이로부터 런타임 자동 감지하지 않고, 운영자가 노드 config(`display.resolution` 또는 `display.width`+`display.height`)로 **선언**한 값을 1차 출처로 한다(OQ-M1 ✅ RESOLVED — config 선언). 노드는 이 값을 M9 시스템 정보 페이로드(register 필수·heartbeat 갱신)로 운반하고 서버는 `managed_nodes` 에 저장한다. **하위 호환**: 미보고/미설정 노드는 빈값으로 처리되며(REQ-N03/K09 일관, 회귀 0), 관리자 뷰는 합리적 기본값(예: 1920×1080) 또는 가용 컨테이너 크기로 폴백한다. 이 해상도는 그룹 L 의 IoT 디바이스/대시보드 deviceId 네임스페이싱과 무관한 **노드(설치본) 표시 메타**이다.
 
 - **A21**(v1.6): 대시보드 충실 재현은 노드 장비 화면을 **비트맵/비디오로 스트리밍하지 않고**, 그룹 L 의 노드-로컬 대시보드 config(REQ-L01) + 패널 데이터(REQ-L04~L08)를 **재구성**한 뒤 노드 보고 해상도와 동일한 고정 캔버스에 렌더하여 종횡비 보존 스케일-투-핏(레터박스)한다. 패널 컴포넌트는 **target 미지정 시 로컬 바이트 동일**(A16) 원칙을 유지하며 고정 캔버스는 그 바깥의 래퍼(스케일 컨테이너)로 적용된다(패널 UI/레이아웃 코드 비분기). 노드 측에 해상도에 따른 렌더 변형은 없다(노드 권위 config 그대로 — A4/A17).
+
+- **A22**(v1.7): 관리 서버가 호스팅하는 노드용 릴리스 피드는 **노드의 기존 자가 업데이트 메커니즘(SPEC-UPDATE-001)을 변경하지 않는다**. 피드는 노드 updater 가 소비하는 **익명 GitHub-Releases 호환** 형태(`releases/latest`·`releases`·`releases/download/{version}/{filename}`, asset 객체에 `browser_download_url`·`size`·`name`)이며, asset URL 은 항상 **https 강제**(`public_base_url` 설정 또는 요청 Host/`X-Forwarded-*` 에서 유도)이다. 무결성은 노드 측 Ed25519 서명 검증(SPEC-UPDATE-001 M4)으로 보장되며 서버는 **사전 서명된 `.sig` 만 저장·배포**한다(서버가 서명을 생성하지 않음). 공개키는 노드 로컬(`update.public_key_path`)에만 존재하며 서버·피드·업데이트 소스 어디에도 전송되지 않는다.
+
+- **A23**(v1.7): 원격 업데이트 소스(`update_url`+채널)는 **서버 운영 메타데이터**로 SettingsRepository(`remote.update_source`)에 1회 저장되고 필요시에만 변경된다(그룹 D 비경유 — 노드 권위 자원 정의에 영향 없음, A13 일관). 서버는 원격 업데이트 명령(UpdateNode/UpdateGroup)을 디스패치할 때 저장된 소스를 명령 인자에 **자동 주입**한다(요청이 명시하면 요청 우선). `update_url` 은 빈 값(=해제, 노드 로컬 설정 사용) 또는 `https://` 스킴만 허용한다(http 거부). 업데이트 소스에는 공개키를 포함하지 않는다(A22 — 노드 로컬 신뢰 앵커).
+
+- **A24**(v1.7): 그룹 일괄 업데이트의 노드별 타깃 버전은 **서버가 각 노드의 보고된 OS/Arch(그룹 K BASIC 시스템 정보, REQ-K07/K08)로 해석**한다(노드는 변경 없이 기존 `system/update` 명령 + `TargetVersion` 인자 재사용). 미매핑/자산 없는 노드는 디스패치하지 않고 **사유와 함께 결과에 건너뜀**으로 보고한다(부분 성공 — 다른 아키텍처는 계속 진행). 전략(`latest`/`pin`/`per_arch`)은 서버 측 해석 정책일 뿐 노드 동작·프로토콜 봉투를 바꾸지 않는다(REQ-N04 유지).
 
 ## 4. 요구사항 (EARS)
 
@@ -677,6 +684,57 @@ tags:
 **REQ-REMOTE-M10**: M9 좌측 디렉토리 레이아웃 대체 (기능 보존·딥링크 보존)
 시스템은 **항상** M9 `NodeManagementPage` 의 좌측 디렉토리(20rem) + 우측 노드 대시보드 master/detail 레이아웃을 **상단 바 관리자 뷰**로 대체(supersede)하되, M9 의 모든 **기능**(노드 그룹핑·그룹 배정/해제·노드 대시보드 개요(시스템 정보+운영 요약)·Flow/Agent/Device 서브탭·대시보드 서브탭·딥링크 `?node=`/`?tab=`)을 보존해야 한다. 디렉토리/그룹 선택은 상단 노드 피커(REQ-M05)로, 서브탭은 상단 바(REQ-M06)로 이전된다. `등록 관리`(EnrollmentManagementPage)는 **변경 없이 그대로** 유지된다. 기존 라우트(`/admin/remote`, M8/편집기 딥링크, `/admin/remote/control` 리다이렉트 — REQ-K16)는 관리자 뷰에서 도달 가능하게 유지되어야 한다(워크플로 단절 금지).
 
+### 4.7f 그룹 O — 원격 프로그램 버전 관리 (Remote Program Version Management) — v1.7 확장
+
+> **범위(v1.7)** — 관리 서버가 노드용 프로그램 이미지를 호스팅하고(O-a), 원격 업데이트 소스를 서버에 저장해 명령에 자동 주입하며(O-b), 노드의 보고된 아키텍처/OS 별로 그룹 일괄 업데이트를 디스패치하고(O-c), 관리 WS 의 TLS 검증 스킵 옵트인을 제공한다(O-d). 노드 자가 업데이트 메커니즘(SPEC-UPDATE-001)은 **무변경 재사용**하며 서버는 사전 서명된 `.sig` 만 저장·배포한다(A22~A24).
+
+#### O-a. 릴리스 호스팅 (Release Hosting)
+
+**REQ-REMOTE-O01**: 릴리스 이미지 저장
+시스템은 **항상** 서버 모드에서 아키텍처별 `xflowd` 바이너리 + Ed25519 `.sig` 를 메타(SQLite `releases`/`release_assets`) + 디스크(`{data}/releases/{version}/`)로 저장해야 하며, 업로드 시 각 바이너리의 SHA256 을 자동 계산하고 버전별 `checksum.txt` 를 자동 생성해야 한다.
+
+**REQ-REMOTE-O02**: 노드용 익명 릴리스 피드 (GitHub-Releases 호환)
+시스템은 **항상** 노드 updater 가 무변경으로 소비할 수 있는 **인증 없는** GitHub-Releases 호환 피드를 제공해야 한다: `GET /api/v1/updates/releases/latest`(최신 stable 단일 객체), `GET /api/v1/updates/releases`(전체 릴리스 배열, semver 내림차순), `GET /api/v1/updates/releases/download/{version}/{filename}`(바이너리/`.sig`/`checksum.txt` 스트림). asset 객체는 `name`·`size`·`browser_download_url` 을 포함한다.
+
+**REQ-REMOTE-O03**: asset URL https 강제
+시스템은 **항상** 피드 asset 의 `browser_download_url` 을 https 로 강제해야 하며, base 는 설정 `remote_management.public_base_url`(우선) 또는 요청 Host(+`X-Forwarded-*`)에서 유도해야 한다.
+
+**REQ-REMOTE-O04**: 릴리스 관리 API (admin)
+시스템은 **항상** admin 인증 하에서 릴리스 관리 API 를 제공해야 한다: `GET /remote/releases`(목록), `POST /remote/releases`(릴리스 메타 생성), `DELETE /remote/releases/{version}`(릴리스 삭제), `DELETE /remote/releases/{version}/assets/{os}/{arch}`(자산 삭제), multipart 업로드 `POST /remote/releases/{version}/assets`(필드: os/arch/binary/signature).
+
+**REQ-REMOTE-O05**: 릴리스 저장 설정
+시스템은 **항상** `remote_management.public_base_url`(피드 asset URL base, 빈 값이면 요청 Host 유도)·`remote_management.releases_dir`(릴리스 디스크 루트, 빈 값이면 `{data}/releases`) 설정을 지원해야 한다.
+
+#### O-b. 업데이트 소스 서버 저장 (Update Source)
+
+**REQ-REMOTE-O06**: 업데이트 소스 저장·조회 (admin)
+시스템은 **항상** 원격 업데이트 소스(`update_url`+채널)를 SettingsRepository 키 `remote.update_source` 에 1회 저장하고 필요시에만 변경하도록, admin API `GET /remote/update-source`(조회)·`PUT /remote/update-source`(설정, `{update_url, channel}`)를 제공해야 한다.
+
+**REQ-REMOTE-O07**: 업데이트 소스 자동 주입
+시스템은 **항상** 원격 업데이트 명령(UpdateNode/UpdateGroup → `system/update`)을 디스패치할 때 저장된 업데이트 소스(`update_url`/채널)를 명령 인자에 자동 주입해야 한다(요청이 명시하면 요청 값 우선).
+
+**REQ-REMOTE-O08**: 업데이트 소스 https 강제
+시스템은 **WHEN** `update_url` 이 빈 값도 `https://` 스킴도 아니면, **THEN** 설정을 거부해야 한다(빈 값=해제 → 노드 로컬 설정 사용 허용).
+
+**REQ-REMOTE-O09**: 공개키 비전송 불변식
+시스템은 **절대** 업데이트 소스/릴리스 피드/명령 어디에도 노드 검증 공개키를 전송하지 않아야 한다(공개키는 노드 로컬 신뢰 앵커 — `update.public_key_path`, A22).
+
+#### O-c. 아키텍처/OS-aware 그룹 일괄 업데이트 (Group Update)
+
+**REQ-REMOTE-O10**: per-node 타깃 버전 해석
+시스템은 **WHEN** 관리자가 그룹 일괄 업데이트를 요청하면, **THEN** 그룹 내 승인 노드 각각의 보고된 OS/Arch(`os/arch`, REQ-K07/K08)로 타깃 버전을 해석해 per-node `system/update` 를 디스패치해야 한다.
+
+**REQ-REMOTE-O11**: 업데이트 전략 3종
+시스템은 **항상** 그룹 일괄 업데이트 전략으로 (1) `latest`(채널 내 각 os/arch 의 최고 semver), (2) `pin`(단일 버전 — 기존 호환), (3) `per_arch`((os/arch)→버전 맵)을 지원해야 한다.
+
+**REQ-REMOTE-O12**: 자산 없는 노드 건너뜀 (부분 성공)
+시스템은 **WHEN** 노드의 OS/Arch 에 대한 타깃 버전/자산이 없으면, **THEN** 해당 노드를 디스패치하지 않고 사유와 함께 결과에 건너뜀으로 보고해야 하며, 다른 아키텍처 노드는 계속 진행해야 한다.
+
+#### O-d. 관리 WS TLS 옵트인 (Client WS Insecure Skip Verify)
+
+**REQ-REMOTE-O13**: 관리 WS insecure_skip_verify
+시스템은 **항상** `remote_management.insecure_skip_verify`(기본 false)를 지원하여, client 모드가 관리 WS(wss) 핸드셰이크의 TLS 인증서 검증을 건너뛸 수 있도록 해야 한다(자체 서명 인증서/사설망 전용 옵트인). 이 옵션은 전송 무결성 보장과 무관하며, 명령/자가 업데이트 무결성은 별도(토큰·Ed25519)로 보장된다.
+
 ### 4.8 비기능 요구사항
 
 **REQ-REMOTE-N01**: 다중 노드 확장성
@@ -701,7 +759,7 @@ tags:
 |------|------|----------------|------|
 | `register` | client→server | instance_id, hostname, version, exposure 요약, (선택)부트스트랩 시크릿, (v1.4 선택) os, arch, started_at(epoch ms), **(v1.6 선택) display_width, display_height(px)** | 등록 요청(REQ-C01) + BASIC 시스템 정보 보고(REQ-K07) + 노드 해상도 보고(REQ-M01) |
 | `register_ack` | server→client | status(pending/approved/rejected), (승인 시) node_token | 등록 응답·토큰 발급(REQ-C03/C04) |
-| `command` | server→client | command_id, target instance_id, domain(flow/agent/device), action, args | 원격 명령(REQ-D01) |
+| `command` | server→client | command_id, target instance_id, domain(flow/agent/device, **(v1.7) system**), action(**(v1.7) `update`**), args(**(v1.7) `system/update`: target_version, channel, update_url, restart**) | 원격 명령(REQ-D01) + (v1.7) 원격 프로그램 업데이트(REQ-O07/O10) |
 | `command_result` | client→server | command_id, ok, result \| error | 명령 결과/ack(REQ-D05) |
 | `query` | server→client | query_id, domain(flow/agent/device, **(v1.5) dashboard/monitor**), query_action(열거 allowlist, REQ-J04/L01/L05), args | READ-ONLY per-domain 질의 프록시(REQ-J01/J02) |
 | `query_result` | client→server | query_id, status, body(JSON, redacted) \| error | 질의 응답/ack(REQ-J01/J06/J07) |
@@ -719,6 +777,7 @@ tags:
 - v1.4(그룹 K): `register`/`heartbeat` 페이로드는 BASIC 시스템 정보(`os`, `arch`, `started_at`(epoch ms))를 **선택 필드**로 운반한다(REQ-K07). 신규 메시지 타입은 신설하지 않으며 기존 봉투/타입을 재사용한다(REQ-N04 유지). 필드 미존재(구버전 노드)는 빈값으로 처리(REQ-K09, 하위 호환). 노드 그룹(`group_name`)은 **서버 측 속성**이므로 와이어 프로토콜로 운반되지 않는다(A13 — 그룹 배정은 서버 REST 전용, 노드 비경유).
 - v1.6(그룹 M): `register`/`heartbeat` 페이로드는 노드 해상도(`display_width`, `display_height`, px 정수)를 **선택 필드**로 운반한다(REQ-M01). M9 시스템 정보 필드(os/arch/started_at)와 동일하게 기존 봉투/타입을 재사용하며 신규 메시지 타입을 신설하지 않는다(REQ-N04 유지). 필드 미존재(구버전/미설정 노드)는 빈값/0 으로 처리(REQ-M03, 하위 호환). 해상도는 노드 config 선언값(A20)이며 와이어로는 시스템 정보의 일부로 운반된다. 관리자 뷰 레이아웃·고정 캔버스 스케일은 **순수 프론트엔드** 변경으로 신규 와이어 메시지가 없다(데이터는 그룹 L 재사용).
 - v1.5(그룹 L): 그룹 J 프록시 인프라를 **재사용**하여 대시보드 패리티를 제공한다. query-action allowlist 에 **`dashboard` 도메인**(`get_shared`/`get_mine` — READ-ONLY, REQ-L01)과 **`monitor` 도메인**(`metrics` query-action, REQ-L05)을 추가하고, 스트림 action allowlist 에 **`chart`**(REQ-L07, M8 스트림 프록시 chart-action — `/ws/chart/{channel}` 별도 경로 미신설)와 **`monitor` 도메인 `logs`**(REQ-L06)를 추가한다. 변경 의미 action(`dashboard.put`/`delete` 등)은 명시 배제(READ-ONLY — REQ-J03, 원격 config 편집 비목표). 신규 메시지 타입은 신설하지 않으며 기존 `query`/`subscribe` 봉투를 재사용한다(REQ-N04). 대시보드 config·메트릭은 완만 변동이므로 단기 TTL 캐시 대상, 차트/로그는 라이브이므로 캐시 우회(REQ-J16).
+- v1.7(그룹 O): 원격 프로그램 업데이트는 기존 `command` 봉투의 **`system` 도메인 `update` action**(`SystemUpdateArgs{target_version, channel, update_url, restart}`)으로 운반된다(신규 메시지 타입 미신설 — REQ-N04 유지). 서버는 디스패치 시 저장된 업데이트 소스(`remote.update_source`)의 `update_url`/채널을 args 에 자동 주입하고(요청 명시 시 우선 — REQ-O07), 그룹 일괄 업데이트는 노드별 OS/Arch 로 `target_version` 을 해석한다(REQ-O10/O11). 노드는 이 args 로 자신의 기존 자가 업데이트 파이프라인(check→download→verify(Ed25519)→apply, SPEC-UPDATE-001)을 실행하므로 **노드 프로토콜·updater 무변경**이다(A22). 릴리스 피드(`/api/v1/updates/releases/*`)·릴리스 관리 API·업데이트 소스 API 는 관리 WS 가 아닌 **REST** 경로이며, 피드는 무인증·관리 API 는 admin-gated 이다(REQ-O02/O04/O06).
 - v1.3(그룹 J): `query`/`query_result`(온디맨드 읽기)와 `subscribe`/`stream_data`/`unsubscribe`(실시간 스트림)는 모두 **READ-ONLY** 프록시 전용이다(REQ-J01/J03/J08). `query` 페이로드는 **그룹 D 명령과 대칭되는 per-domain query-action**(`{domain, query_action, args}`, raw GET path 아님 — OQ-J1 RESOLVED)으로 노드의 로컬 read 핸들러를 지정하며, 노드가 실행 후 **redaction(REQ-J06)** 된 본문을 `query_result{query_id, status, body|error}` 로 반환한다. 스트림은 `subscribe{subscription_id, domain, stream_action, args}` 로 시작해 `stream_data{subscription_id, payload}` 로 갱신을 push 하고, `unsubscribe` 또는 노드 오프라인 시 teardown 된다(REQ-J08b). 서버는 query-action 응답을 단기 TTL 로 캐시하되 스트리밍/라이브 action 은 캐시 우회한다(REQ-J16). `command`/`command_result`(변경)와 read 프록시(읽기)는 역할이 분리되며, 봉투/상관/타임아웃 패턴은 공유한다(REQ-D06/D07 준용 — REQ-J02). 변경 의미 action 은 프록시에서 거부된다(REQ-J03).
 
 ### 5.2 신규 — xflow 인스턴스 식별자(instance_id)
@@ -744,6 +803,9 @@ tags:
 | `remote_management.exposure.agents` | string/list | 정책값 | 노출할 에이전트 범위 |
 | `remote_management.exposure.devices` | string/list | 정책값 | 노출할 디바이스 범위 |
 | `remote_management.tls.*` | — | — | wss 용 TLS(기존 TLSConfig 준용, REQ-F01) |
+| `remote_management.insecure_skip_verify` | bool | `false` | (v1.7) client 모드 관리 WS(wss) TLS 인증서 검증 스킵(자체 서명/사설망 전용 옵트인, REQ-O13) |
+| `remote_management.public_base_url` | string | `""`(요청 Host 유도) | (v1.7) 노드 릴리스 피드 asset `browser_download_url` base(https 강제, REQ-O03/O05) |
+| `remote_management.releases_dir` | string | `""`(=`{data}/releases`) | (v1.7) 릴리스 이미지 디스크 루트(REQ-O01/O05) |
 
 - 핫리로드: 기존 `OnChange`/`WatchConfig` 로 mode/server_url/exposure 변경을 감지·반영(REQ-A06/A07).
 - `bootstrap_secret`/발급 토큰은 시크릿이며 redaction·비커밋 대상(REQ-F06).
@@ -758,12 +820,15 @@ tags:
 | `mirrored_flows` | id, source_instance_id(FK), name, definition(redacted), updated_at | 노드별 플로우 미러(태그=source_instance_id) |
 | `mirrored_agents` | id, source_instance_id(FK), name, kind, config(redacted), updated_at | 노드별 에이전트 미러 |
 | `mirrored_devices` | id, source_instance_id(FK), node_assoc, name, meta, updated_at | 노드별 IoT 디바이스 미러 |
+| `releases` | version(PK), channel, notes, published_at | (v1.7) 노드용 릴리스 메타(REQ-O01) |
+| `release_assets` | version(FK), os, arch, filename, size, sha256, kind(binary/signature/checksum) | (v1.7) 릴리스 자산(아키텍처별 바이너리 + Ed25519 `.sig`, SHA256, REQ-O01) |
 
 - 출처 태깅: 모든 미러 행은 `source_instance_id` 를 보유(REQ-E04/E05).
 - last-known: 오프라인 시 행을 삭제하지 않고 `online=false`·`last_seen` 만 갱신(REQ-E06).
 - redaction: 정의/설정 저장 시 시크릿 마스킹(REQ-F06).
 - (v1.6) 노드 해상도: `managed_nodes` 에 `display_width`/`display_height`(px 정수, 0=미보고) 컬럼을 추가한다(REQ-M01/M02). 미보고/잘못된 값은 0 으로 저장되며 관리자 뷰가 폴백 처리한다(REQ-M03). 노드 상세(NodeDetail)로 노출된다. 관리자 뷰 레이아웃/고정 캔버스는 서버 저장 불필요(순수 프론트 — A19/A21).
 - (v1.4) 그룹·시스템 정보: `managed_nodes` 에 `group_name`(단일 그룹 라벨, 기본 빈값→"전체"; REQ-K01), `os`/`arch`/`started_at`(BASIC 시스템 정보; REQ-K08) 컬럼을 추가한다. 그룹은 별도 엔티티 테이블 없이 `group_name` distinct 값으로 표현하며(REQ-K03/K05), 운영 요약은 미러 테이블 집계로 파생한다(저장 컬럼 불필요 — REQ-K10/A15). uptime 은 `started_at` 파생값으로 저장하지 않는다(REQ-K08).
+- (v1.7) 릴리스: `releases`/`release_assets` 테이블에 노드용 프로그램 이미지 메타·자산(아키텍처별 바이너리 + Ed25519 `.sig`)을 저장하고, 바이너리 본문은 디스크(`{releases_dir}/{version}/`)에 둔다. 업로드 시 SHA256 자동 계산·`checksum.txt` 자동 생성(REQ-O01). 서버는 사전 서명된 `.sig` 만 저장하며 서명을 생성하지 않는다(A22). 업데이트 소스(`update_url`+채널)는 별도 테이블 없이 `SettingsRepository` 키 `remote.update_source`(JSON)로 저장한다(REQ-O06). 공개키는 어디에도 저장·전송하지 않는다(REQ-O09).
 
 ### 5.5 서버/클라이언트 컴포넌트 (신규 `internal/remote`)
 
@@ -850,6 +915,16 @@ tags:
 | `web/src/pages/dashboard/panels/charts/useChartChannel.ts`·`useChartChannels.ts` (원격 스트림 어댑터 주입) | 원격 target 에서 `wsBaseUrl`/`createClient` 주입점으로 스트림 프록시(SSE) 어댑터 주입(WS 직결 대신), 폴링 폴백(REQ-L07, A18) (그룹 L) | 수정(추후) |
 | `web/src/hooks/*`·`web/src/services/api/remoteService.ts` (dashboard config·metrics·logs·chart 프록시 클라이언트) | dashboard config query-action·metrics query-action·logs/chart 스트림 구독 클라이언트·폴링 폴백(REQ-L01/L05/L06/L07) (그룹 L) | 수정(추후) |
 | `web/src/components/remote/NodeDashboard.tsx` (대시보드 서브탭) | 노드 대시보드에 대시보드 서브탭 추가 → 로컬 DashboardPage `target=remote:{id}` 재사용·게이팅·원격 컨텍스트·read-only(REQ-L10/L11/L12) (그룹 L) | 수정(추후) |
+| `internal/api/handler/release_feed.go` (노드용 릴리스 피드) | 무인증 GitHub-Releases 호환 피드(latest/list/download)·asset https 강제(REQ-O02/O03) (그룹 O) | 신규 |
+| `internal/api/handler/release_admin.go` (릴리스 관리 API) | admin 릴리스/자산 CRUD·multipart 업로드(os/arch/binary/signature)(REQ-O04) (그룹 O) | 신규 |
+| `internal/storage` (releases/release_assets + 디스크) | `releases`/`release_assets` 메타 + `{releases_dir}/{version}/` 디스크·SHA256·checksum.txt 자동 생성(REQ-O01) (그룹 O) | 신규 |
+| `internal/api/handler/remote_version.go` (업데이트 소스 + 명령 주입) | `GET/PUT /remote/update-source`(`remote.update_source` 저장/조회)·`system/update` 명령에 소스 자동 주입·https 검증(REQ-O06/O07/O08) (그룹 O) | 신규/수정 |
+| `internal/remote/grouping.go` (그룹 일괄 업데이트) | `GroupUpdatePlan`·`DispatchGroupUpdate`·per-node OS/Arch 타깃 해석·전략 latest/pin/per_arch·부분 성공(REQ-O10/O11/O12) (그룹 O) | 신규/수정 |
+| `internal/remote/protocol.go` (system/update args) | `SystemUpdateArgs{target_version, channel, update_url, restart}` + `system` 도메인 `update` action(REQ-O07/O10) (그룹 O) | 수정 |
+| `internal/remote/client.go` (관리 WS TLS 옵트인) | `newGorillaDialer(insecureSkipVerify)` → `TLSClientConfig.InsecureSkipVerify`(REQ-O13) (그룹 O) | 수정 |
+| `internal/config/types.go`/`config.go`/`defaults.go` (v1.7 설정) | `remote_management.insecure_skip_verify`/`public_base_url`/`releases_dir`(REQ-O05/O13) (그룹 O) | 수정 |
+| `cmd/xflowd/main.go`/`remote_system_update.go` (배선·자가 업데이트 실행) | 피드/관리/소스 라우트 배선, `system/update` 수신 시 노드 updater 파이프라인(check→download→verify(Ed25519)→apply) 실행·`update.insecure_skip_verify` 연결(REQ-O02/O04/O07) (그룹 O) | 수정 |
+| `web/src/` (릴리스/업데이트 관리 UI) | 릴리스 업로드/목록·업데이트 소스 설정·그룹 일괄 업데이트(전략 선택)·노드별 업데이트 액션(REQ-O04/O06/O10) (그룹 O) | 신규(추후) |
 
 ### 5.9 OPEN QUESTIONS (구현 단계에서 결정)
 
@@ -1079,6 +1154,42 @@ tags:
 - `등록 관리`(EnrollmentManagementPage) **불변**. 라우트(`/admin/remote`)·게이팅(admin+server)·M8/편집기 딥링크·`/admin/remote/control` 리다이렉트(REQ-K16) 보존.
 - **본 그룹은 §5.11.3 의 좌측 디렉토리 master/detail 배치를 대체한다**(그룹 K 기능 보존, 레이아웃만 진화).
 
+### 5.14 그룹 O(v1.7) 명세 — 원격 프로그램 버전 관리
+
+> 노드 자가 업데이트(SPEC-UPDATE-001)·그룹 D 명령·그룹 K 시스템 정보 보고를 **재사용**한다(재발명 금지). 신규는 (1) 릴리스 저장소(메타+디스크) + 무인증 GitHub-Releases 호환 피드, (2) 업데이트 소스 서버 저장(`remote.update_source`)·자동 주입, (3) 아키텍처-aware 그룹 일괄 업데이트(per-node 타깃 해석), (4) 관리 WS insecure_skip_verify 옵트인뿐이다. **변경/무결성 경로 불변**: 서버는 사전 서명 `.sig` 만 저장·배포하고 서명을 생성하지 않으며, 무결성은 노드 Ed25519 검증으로 보장된다(A22).
+
+#### 5.14.1 릴리스 호스팅 (REQ-O01~O05)
+
+- **저장(REQ-O01)**: `releases`(version PK·channel·notes·published_at) + `release_assets`(version·os·arch·filename·size·sha256·kind) SQLite 메타 + 디스크 `{releases_dir}/{version}/`. 업로드 시 SHA256 자동 계산, 버전별 `checksum.txt` 자동 생성.
+- **노드 피드(REQ-O02, 무인증·updater 무변경 소비)**: `GET /api/v1/updates/releases/latest`(최신 stable 단일 객체) / `GET /api/v1/updates/releases`(전체, semver 내림차순) / `GET /api/v1/updates/releases/download/{version}/{filename}`(바이너리/`.sig`/`checksum.txt` 스트림). asset 객체 = `{name, size, browser_download_url}`(SPEC-UPDATE-001 checker 호환).
+- **https 강제(REQ-O03)**: asset `browser_download_url` base = `remote_management.public_base_url`(우선) 또는 요청 Host(+`X-Forwarded-*`) 유도, 항상 https.
+- **관리 API(REQ-O04, admin-gated)**: `GET/POST /remote/releases`, `DELETE /remote/releases/{version}`, `DELETE /remote/releases/{version}/assets/{os}/{arch}`, multipart 업로드 `POST /remote/releases/{version}/assets`(필드 os/arch/binary/signature).
+- **설정(REQ-O05)**: `remote_management.public_base_url`·`remote_management.releases_dir`.
+
+#### 5.14.2 업데이트 소스 (REQ-O06~O09)
+
+- **저장(REQ-O06)**: `SettingsRepository` 키 `remote.update_source`(JSON `{update_url, channel}`), 별도 테이블 미신설. admin `GET/PUT /remote/update-source`.
+- **자동 주입(REQ-O07)**: UpdateNode/UpdateGroup 디스패치 시 `system/update` args 에 저장된 `update_url`/채널 주입(요청 명시 시 우선).
+- **https 강제(REQ-O08)**: `update_url` 은 빈 값(=해제, 노드 로컬 설정 사용) 또는 `https://` 만 허용(http 거부).
+- **공개키 비전송(REQ-O09)**: 업데이트 소스/피드/명령에 공개키 미포함(노드 로컬 `update.public_key_path` 만 신뢰 앵커 — A22).
+
+#### 5.14.3 아키텍처-aware 그룹 일괄 업데이트 (REQ-O10~O12)
+
+- **per-node 해석(REQ-O10)**: 그룹 내 승인 노드 각각의 `os/arch`(그룹 K 보고)로 `GroupUpdatePlan` 조회 → per-node `system/update` args(`target_version`) 디스패치.
+- **전략(REQ-O11)**: `latest`(채널 내 각 os/arch 최고 semver) / `pin`(단일 버전 — `DefaultVersion`, 기존 호환) / `per_arch`((os/arch)→버전 맵 `VersionByArch`, 미매핑은 `RequireMapping` 시 건너뜀).
+- **부분 성공(REQ-O12)**: 타깃/자산 없는 노드는 디스패치하지 않고 사유와 함께 결과(`GroupDispatchResult.Error`)에 건너뜀 보고, 나머지는 계속 진행.
+
+#### 5.14.4 관리 WS TLS 옵트인 (REQ-O13)
+
+- **insecure_skip_verify(REQ-O13)**: `remote_management.insecure_skip_verify`(기본 false) → client Dialer 의 `TLSClientConfig.InsecureSkipVerify`. 자체 서명/사설망 전용 옵트인이며 전송 무결성 보장과 무관(명령=토큰, 자가 업데이트=Ed25519 로 별도 보장). 동일 원칙이 노드 자가 업데이트 다운로드 경로에도 적용된다(SPEC-UPDATE-001 M13 — `update.insecure_skip_verify`, Ed25519 검증 유지).
+
+#### 5.14.5 보안 불변식 (요약)
+
+- 공개키는 **노드 로컬**(`update.public_key_path`)에만 존재 — 서버/피드/소스/명령 비전송(REQ-O09).
+- 서버는 **사전 서명된 `.sig` 만 저장·배포**(서명 미생성), 무결성은 노드 Ed25519 검증으로 보장(A22).
+- 다운로드 URL 은 **https 강제**(피드 asset·update_url — REQ-O03/O08).
+- `insecure_skip_verify`(관리 WS·자가 업데이트 다운로드)는 **TLS 인증서 검증만** 스킵하는 사설망/자체 서명 옵트인이며, 메시지/바이너리 무결성은 토큰·Ed25519 로 별도 보장(REQ-O13).
+
 ## 6. 추적성
 
 | 요구사항 ID | 구현 위치(예정) | 검증 |
@@ -1104,4 +1215,8 @@ tags:
 | REQ-REMOTE-M04 ~ M06 (v1.6, 관리자 뷰 레이아웃, 프론트) | `web/src/pages/remote/NodeManagementPage.tsx`(좌측 디렉토리 → 상단 바 셸 진화), `web/src/components/remote/NodePicker.tsx`(신규 — 그룹 묶음 드롭다운, M9 그룹핑 재사용), `web/src/components/remote/ManagerViewTopBar.tsx`(신규 — 노드 피커+서브탭 네비+관리 액션+나가기), `web/src/components/remote/NodeDashboard.tsx`(서브탭 네비 상단 바로 호이스팅), `web/src/components/layout/Sidebar.tsx`/`AppLayout.tsx`·`web/src/stores/uiStore.ts`(관리자 뷰 진입 시 전역 사이드바 숨김/복원) | ManagerView 레이아웃 Vitest(상단 바·풀폭 노드 화면·좌측 크롬 제거), NodePicker Vitest(그룹 묶음·전환), 전역 사이드바 숨김/복원 Vitest, 딥링크 보존 Vitest |
 | REQ-REMOTE-M07 ~ M09 (v1.6, 고정 캔버스 충실 재현, 프론트) | `web/src/components/remote/FixedCanvasScaler.tsx`(신규 — 노드 해상도 고정 캔버스 + 레터박스 transform scale), `web/src/components/remote/RemoteDashboardView.tsx`(또는 NodeDashboard 대시보드 서브탭, FixedCanvasScaler 로 감싸기), `web/src/hooks/useRemote.ts`(NodeDetail display_width/height 소비) | FixedCanvasScaler Vitest(고정 캔버스 크기=노드 해상도·레터박스 종횡비 보존·stretch/crop 금지·미보고 폴백), 패널 데이터/게이팅/READ-ONLY 불변 Vitest(그룹 L 경로 재사용) |
 | REQ-REMOTE-M10 (v1.6, 마이그레이션) | `web/src/pages/remote/NodeManagementPage.tsx`(제자리 진화·M9 기능 보존), `web/src/router.tsx`(라우트·딥링크·리다이렉트 보존), EnrollmentManagementPage 불변 | 마이그레이션 Vitest(M9 기능 보존: 그룹핑/그룹 배정/개요/서브탭/딥링크), 등록 관리 회귀 0, 라우트/리다이렉트 보존 |
+| REQ-REMOTE-O01 ~ O05 (v1.7, 릴리스 호스팅) | `internal/api/handler/release_feed.go`(무인증 GitHub-Releases 호환 피드·https 강제), `internal/api/handler/release_admin.go`(admin 릴리스/자산 관리·multipart 업로드), `internal/storage`(`releases`/`release_assets` + 디스크 `{releases_dir}/{version}/`·SHA256·checksum.txt), `internal/config/types.go`/`config.go`/`defaults.go`(`public_base_url`/`releases_dir`), `cmd/xflowd/main.go`(피드/관리 라우트 배선) | release_feed_test(latest/list/download·https 강제·asset 형태), release_admin_test(목록/생성/삭제/자산 삭제/multipart 업로드·admin 게이팅), release_store_test(SHA256·checksum.txt 자동 생성) |
+| REQ-REMOTE-O06 ~ O09 (v1.7, 업데이트 소스) | `internal/api/handler/remote_version.go`(`GET/PUT /remote/update-source`·`remote.update_source` 저장/조회·자동 주입·https 검증), `internal/storage`(SettingsRepository) | update_source_test(저장/조회·자동 주입·http 거부·빈 값 해제·공개키 비전송) |
+| REQ-REMOTE-O10 ~ O12 (v1.7, 그룹 일괄 업데이트) | `internal/remote/grouping.go`(`GroupUpdatePlan`·`DispatchGroupUpdate`·per-node OS/Arch 타깃 해석·부분 성공), `internal/remote/protocol.go`(`SystemUpdateArgs{target_version,channel,update_url,restart}`) | grouping_test(latest/pin/per_arch·per-arch 타깃·미매핑 건너뜀·부분 성공) |
+| REQ-REMOTE-O13 (v1.7, 관리 WS TLS 옵트인) | `internal/remote/client.go`(`newGorillaDialer(insecureSkipVerify)`), `internal/config/types.go`/`config.go`/`defaults.go`(`remote_management.insecure_skip_verify`) | client_dialer_test(insecure_skip_verify 옵트인·기본 false) |
 | REQ-REMOTE-N01 ~ N04 | server 연결 관리, 엔드포인트 분리, disabled 회귀, Message 봉투 | 부하/회귀 + ws 호환 |

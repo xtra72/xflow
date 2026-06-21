@@ -120,3 +120,20 @@ func TestApply_DomainNotConfigured(t *testing.T) {
 		assert.ErrorIs(t, err, ErrApplierUnavailable, "도메인=%s", domain)
 	}
 }
+
+// TestApply_SystemDomainRouting 은 WithSystem 으로 바인딩된 system 도메인이 라우팅되고,
+// 미바인딩 시 거부되는지 검증한다(버전 관리 Phase 2).
+func TestApply_SystemDomainRouting(t *testing.T) {
+	// 미바인딩: system 도메인 거부.
+	applier := NewApplier(nil, nil, nil)
+	_, err := applier.Apply(context.Background(), DomainSystem, ActionSystemUpdate, nil)
+	assert.ErrorIs(t, err, ErrApplierUnavailable)
+
+	// WithSystem 바인딩: system 커맨더로 라우팅.
+	sys := &fakeCommander{name: "system", result: json.RawMessage(`"sys-ok"`)}
+	applier = NewApplier(nil, nil, nil).WithSystem(sys)
+	res, err := applier.Apply(context.Background(), DomainSystem, ActionSystemUpdate, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, json.RawMessage(`"sys-ok"`), res)
+	assert.Equal(t, ActionSystemUpdate, sys.lastAction)
+}

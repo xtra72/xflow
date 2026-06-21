@@ -11,9 +11,11 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDrive,
+  Layers,
   LayoutDashboard,
   Monitor,
   Network,
+  Package,
   Settings,
   SlidersHorizontal,
   UserPlus,
@@ -117,9 +119,21 @@ const NAV_ENTRIES: NavEntry[] = [
         roles: ['admin'],
       },
       {
+        labelKey: 'nav.groupManagement',
+        path: '/admin/remote/groups',
+        icon: Layers,
+        roles: ['admin'],
+      },
+      {
         labelKey: 'nav.enrollmentManagement',
         path: '/admin/remote/enrollment',
         icon: UserPlus,
+        roles: ['admin'],
+      },
+      {
+        labelKey: 'nav.releaseStore',
+        path: '/admin/remote/releases',
+        icon: Package,
         roles: ['admin'],
       },
     ],
@@ -314,6 +328,7 @@ function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGr
             <NavLink
               key={child.path}
               to={child.path}
+              end
               className={({ isActive }) =>
                 cn(
                   'flex items-center justify-center rounded-md px-2 py-2 text-sm font-medium transition-colors',
@@ -367,6 +382,7 @@ function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGr
               <NavLink
                 key={child.path}
                 to={child.path}
+                end
                 className={({ isActive }) =>
                   cn(
                     'flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',

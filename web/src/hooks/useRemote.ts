@@ -19,12 +19,19 @@ import type {
   EnrollmentTokenCreateRequest,
   MirroredResourceKind,
   PreRegisterRequest,
+  ReleaseCreateRequest,
   RemoteAgentCreateRequest,
   RemoteAgentUpdateRequest,
   RemoteFlowCreateRequest,
   RemoteFlowUpdateRequest,
+  UpdateSource,
 } from '@/types/remote';
-import type { NodeDetail, NodeGroup } from '@/types/remote';
+import type {
+  GroupUpdateRequest,
+  NodeDetail,
+  NodeGroup,
+  NodeUpdateRequest,
+} from '@/types/remote';
 import * as remoteService from '@/services/api/remoteService';
 
 // 노드 라이브 상태(online/offline)는 빠르게 변하므로 짧은 폴링 주기를 둔다.
@@ -351,6 +358,226 @@ export function useClearNodeDisplay() {
       remoteService.clearRemoteNodeDisplay(instanceID),
     onSuccess: (_data, instanceID) =>
       invalidateNodeDisplayQueries(queryClient, instanceID),
+  });
+}
+
+// ---- 버전 관리 (Phase 1/2) ----
+
+const TARGET_VERSION_KEY = ['remote', 'target-version'] as const;
+const VERSION_HISTORY_KEY = (instanceID: string) =>
+  ['remote', 'nodes', instanceID, 'version-history'] as const;
+
+/** 서버 전역 목표 버전 조회 쿼리. */
+export function useTargetVersion(enabled = true) {
+  return useQuery({
+    queryKey: TARGET_VERSION_KEY,
+    queryFn: () => remoteService.getTargetVersion(),
+    enabled,
+  });
+}
+
+/**
+ * 서버 전역 목표 버전 설정 뮤테이션. 성공 시 목표 버전 + 노드 목록(outdated 재계산)을
+ * 무효화한다.
+ */
+export function useSetTargetVersion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (version: string) => remoteService.setTargetVersion(version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: TARGET_VERSION_KEY });
+      queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+    },
+  });
+}
+
+const UPDATE_SOURCE_KEY = ['remote', 'update-source'] as const;
+
+/** 서버 저장 업데이트 소스(GitHub/자체 호스팅) 조회 쿼리. */
+export function useUpdateSource(enabled = true) {
+  return useQuery({
+    queryKey: UPDATE_SOURCE_KEY,
+    queryFn: () => remoteService.getUpdateSource(),
+    enabled,
+  });
+}
+
+/** 서버 저장 업데이트 소스 설정 뮤테이션. 성공 시 소스 쿼리를 무효화한다. */
+export function useSetUpdateSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (source: UpdateSource) => remoteService.setUpdateSource(source),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: UPDATE_SOURCE_KEY });
+    },
+  });
+}
+
+// ---- 릴리스 저장소 (관리 서버 호스팅 프로그램 이미지) ----
+
+/** 릴리스 목록 쿼리 키. */
+const RELEASES_KEY = ['remote', 'releases'] as const;
+
+/** 릴리스 뮤테이션 성공 시 릴리스 목록 쿼리를 무효화한다. */
+function invalidateReleases(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  queryClient.invalidateQueries({ queryKey: RELEASES_KEY });
+}
+
+/**
+ * 릴리스 버전 목록 쿼리.
+ *
+ * @param enabled - 쿼리 활성 여부. server 모드가 아니면 false 로 발행을 막는다.
+ */
+export function useReleases(enabled = true) {
+  return useQuery({
+    queryKey: RELEASES_KEY,
+    queryFn: () => remoteService.listReleases(),
+    enabled,
+  });
+}
+
+/**
+ * 릴리스 버전 생성/갱신 뮤테이션. 성공 시 릴리스 목록 무효화.
+ *
+ * 잘못된 semver(400) 등 에러는 APIError 로 호출자에게 전파된다.
+ */
+export function useCreateRelease() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: ReleaseCreateRequest) => remoteService.createRelease(req),
+    onSuccess: () => invalidateReleases(queryClient),
+  });
+}
+
+/**
+ * 릴리스 자산(아키텍처별 바이너리 + 서명) 업로드 뮤테이션. 성공 시 릴리스 목록 무효화.
+ *
+ * 미존재 버전(404) 등 에러는 APIError 로 호출자에게 전파된다.
+ */
+export function useUploadReleaseAsset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      version,
+      os,
+      arch,
+      binary,
+      signature,
+    }: {
+      version: string;
+      os: string;
+      arch: string;
+      binary: File;
+      signature: File;
+    }) => remoteService.uploadReleaseAsset(version, os, arch, binary, signature),
+    onSuccess: () => invalidateReleases(queryClient),
+  });
+}
+
+/** 릴리스 버전 삭제 뮤테이션. 성공 시 릴리스 목록 무효화. */
+export function useDeleteRelease() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (version: string) => remoteService.deleteRelease(version),
+    onSuccess: () => invalidateReleases(queryClient),
+  });
+}
+
+/** 릴리스 자산(한 아키텍처) 삭제 뮤테이션. 성공 시 릴리스 목록 무효화. */
+export function useDeleteReleaseAsset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      version,
+      os,
+      arch,
+    }: {
+      version: string;
+      os: string;
+      arch: string;
+    }) => remoteService.deleteReleaseAsset(version, os, arch),
+    onSuccess: () => invalidateReleases(queryClient),
+  });
+}
+
+/** 노드 버전 변경 이력 조회 쿼리(최신순). */
+export function useNodeVersionHistory(instanceID: string, enabled = true) {
+  return useQuery({
+    queryKey: VERSION_HISTORY_KEY(instanceID),
+    queryFn: () => remoteService.getNodeVersionHistory(instanceID),
+    enabled: enabled && !!instanceID,
+  });
+}
+
+/**
+ * 노드 원격 업데이트(system/update) 뮤테이션 (Phase 2). 성공 시 노드 prefix(상세/버전)
+ * + 목록 + 해당 노드 버전 이력을 무효화한다. 미승인/오프라인(503)·타임아웃(504)·적용
+ * 실패(502) 는 APIError 로 호출자에게 전파된다.
+ */
+export function useUpdateNode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      instanceID,
+      req,
+    }: {
+      instanceID: string;
+      req: NodeUpdateRequest;
+    }) => remoteService.updateNode(instanceID, req),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['remote', 'nodes', variables.instanceID] });
+      queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+      queryClient.invalidateQueries({ queryKey: VERSION_HISTORY_KEY(variables.instanceID) });
+    },
+  });
+}
+
+// ---- 그룹 관리(일괄) ----
+
+/** 그룹 변경 뮤테이션 성공 시 노드 목록 + 그룹 목록을 무효화한다. */
+function invalidateGroupOps(queryClient: ReturnType<typeof useQueryClient>): void {
+  queryClient.invalidateQueries({ queryKey: ['remote', 'nodes'] });
+  queryClient.invalidateQueries({ queryKey: GROUPS_KEY });
+}
+
+/** 그룹 일괄 이름변경 뮤테이션. */
+export function useRenameGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ oldName, newName }: { oldName: string; newName: string }) =>
+      remoteService.renameGroup(oldName, newName),
+    onSuccess: () => invalidateGroupOps(queryClient),
+  });
+}
+
+/** 그룹 삭제(멤버를 "전체"로 이동) 뮤테이션. */
+export function useDeleteGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => remoteService.deleteGroup(name),
+    onSuccess: () => invalidateGroupOps(queryClient),
+  });
+}
+
+/** 그룹 일괄 원격 업데이트 뮤테이션. 성공 시 노드/그룹 무효화(버전 변동 반영). */
+export function useUpdateGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, req }: { name: string; req: GroupUpdateRequest }) =>
+      remoteService.updateGroup(name, req),
+    onSuccess: () => invalidateGroupOps(queryClient),
+  });
+}
+
+/** 그룹 일괄 명령 뮤테이션. */
+export function useCommandGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, req }: { name: string; req: CommandRequest }) =>
+      remoteService.commandGroup(name, req),
+    onSuccess: () => invalidateGroupOps(queryClient),
   });
 }
 

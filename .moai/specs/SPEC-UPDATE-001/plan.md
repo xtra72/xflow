@@ -27,6 +27,17 @@ priority: high
 
 기존 SPEC(STORE, AGENT, CLI 등)의 동작에는 영향이 없으며, `cmd/xflowd/main.go`에 update 서브커맨드 등록과 lifecycle hook 추가만 발생한다.
 
+## v0.2.0 Scope Note (릴리스 도구 + 운영 요구사항, M15~M18)
+
+v0.2.0 은 v0.1.0 자가 업데이트 메커니즘 위에 **릴리스 이미지 생성·서명 도구**와 **원격 업데이트 운영 요구사항**을 추가한다(SPEC-REMOTE-001 그룹 O 가 무변경 소비). 백엔드 완료(2026-06-21):
+
+- **(M15) 릴리스 도구**: `cmd/xflowd/update_image.go`(`update keygen`/`update sign` — Ed25519 키쌍·바이너리 본문 서명), `Makefile`(`keygen`·`release-images VERSION SIGN_KEY`·`release-images-guard` — 6 타깃 교차컴파일+서명+`checksum.txt`), `.github/workflows/release.yml`(`release-images` 잡 — 시크릿 `XFLOW_RELEASE_PRIVATE_KEY` 주입·서명 이미지 GitHub Release 첨부).
+- **(M16) 노드 설정 요구사항**: `update.public_key_path` 원격 업데이트 필수(내장 핀닝 키 없음 — 미설정 거부), `update.insecure_skip_verify` 를 원격 다운로드(Checker/Downloader)에 연결(Ed25519 검증 유지), 채널 불일치/자산 누락 시 구체적 진단. 공개키는 노드 로컬 신뢰 앵커(서버 비전송 — REQ-O09).
+- **(M17) 배포**: systemd `ReadWritePaths=/opt/xflow`(설치 디렉토리 전체 — 바이너리 교체 + `.previous` 백업). `…/data` 만 허용 시 `read-only file system` 실패.
+- **(M18) 버전 stamp**: LDFLAGS `-X main.Version=$(VERSION)`(대문자) — 노드 보고 버전·버전 표시·이력 갱신의 전제(대소문자 불일치 시 `dev` 폴백).
+
+비공개키는 릴리스 담당자(`make keygen`) 또는 CI 시크릿에만 존재하고, 공개키만 노드로 배포된다. 서버는 사전 서명된 `.sig` 만 저장·배포하며 서명을 생성하지 않는다.
+
 ## 기술 스택 (Technical Stack)
 
 ### 언어 및 런타임

@@ -21,7 +21,9 @@
     "expandSidebar": "사이드바 펼치기",
     "collapseSidebar": "사이드바 접기",
     "nodeManagement": "노드 관리",
-    "enrollmentManagement": "등록 관리"
+    "enrollmentManagement": "등록 관리",
+    "groupManagement": "그룹 관리",
+    "releaseStore": "릴리스 저장소"
   },
   "auth": {
     "login": "로그인",
@@ -396,7 +398,8 @@
       "approve": "승인",
       "reject": "거부",
       "revoke": "폐기",
-      "delete": "삭제"
+      "delete": "삭제",
+      "update": "업데이트"
     },
     "confirm": {
       "rejectTitle": "노드를 거부하시겠습니까?",
@@ -404,7 +407,9 @@
       "revokeTitle": "노드를 폐기하시겠습니까?",
       "revokeDesc": "{node} 노드의 승인을 폐기합니다. 해당 노드는 더 이상 명령을 받을 수 없으며, 이 작업은 되돌릴 수 없습니다.",
       "deleteTitle": "노드를 삭제하시겠습니까?",
-      "deleteDesc": "{node} 노드를 목록에서 완전히 제거합니다. 이 작업은 되돌릴 수 없습니다."
+      "deleteDesc": "{node} 노드를 목록에서 완전히 제거합니다. 이 작업은 되돌릴 수 없습니다.",
+      "updateTitle": "노드 업데이트",
+      "updateDesc": "이 노드를 목표 버전으로 업데이트합니다. 바이너리가 교체되며, 재시작 옵션을 켜면 교체 후 재시작합니다. 계속할까요?"
     },
     "toast": {
       "approved": "노드를 승인했습니다.",
@@ -412,7 +417,10 @@
       "revoked": "노드를 폐기했습니다.",
       "deleted": "노드를 삭제했습니다.",
       "preRegistered": "노드를 등록했습니다.",
-      "actionFailed": "작업을 처리하지 못했습니다."
+      "actionFailed": "작업을 처리하지 못했습니다.",
+      "targetSaved": "목표 버전이 저장되었습니다",
+      "updateStarted": "업데이트 명령을 전송했습니다",
+      "updateFailed": "업데이트에 실패했습니다"
     },
     "preRegister": {
       "button": "노드 추가(사전 등록)",
@@ -586,7 +594,57 @@
       "toast": {
         "assigned": "노드 그룹을 변경했습니다.",
         "cleared": "노드를 전체로 환원했습니다.",
-        "failed": "그룹 변경을 처리하지 못했습니다."
+        "failed": "그룹 변경을 처리하지 못했습니다.",
+        "renamed": "그룹 이름을 변경했습니다",
+        "deleted": "그룹을 삭제했습니다",
+        "updateDispatched": "그룹 업데이트 명령을 전송했습니다",
+        "opFailed": "그룹 작업에 실패했습니다",
+        "commandDispatched": "그룹 명령을 전송했습니다",
+        "created": "그룹을 생성했습니다"
+      },
+      "manage": {
+        "title": "그룹 관리",
+        "rename": "이름변경",
+        "delete": "삭제",
+        "update": "일괄 업데이트",
+        "restart": "업데이트 후 재시작",
+        "node": "노드",
+        "noGroups": "관리할 그룹이 없습니다. 먼저 노드를 그룹에 배정하세요.",
+        "confirmDeleteTitle": "그룹 삭제",
+        "confirmDeleteDesc": "이 그룹을 삭제하고 모든 노드를 '전체' 버킷으로 이동합니다. 계속할까요?",
+        "confirmUpdateTitle": "그룹 일괄 업데이트",
+        "confirmUpdateDesc": "그룹 내 모든 승인·온라인 노드를 목표 버전으로 원격 업데이트합니다. 계속할까요?",
+        "command": "일괄 명령",
+        "cmdDomain": "도메인",
+        "cmdAction": "액션",
+        "cmdActionPlaceholder": "예: start, stop, restart",
+        "cmdArgs": "인자(JSON, 선택)",
+        "cmdArgsPlaceholder": "{ \"id\": \"...\" }",
+        "cmdSend": "전송",
+        "cmdGroup": "대상 그룹",
+        "confirmCommandTitle": "그룹 일괄 명령",
+        "confirmCommandDesc": "그룹 내 모든 승인·온라인 노드에 동일한 명령을 전송합니다. 계속할까요?",
+        "invalidArgs": "인자가 올바른 JSON 이 아닙니다",
+        "cmdResult": "명령 결과(성공/전체)",
+        "create": "그룹 생성",
+        "createName": "새 그룹 이름",
+        "createPlaceholder": "예: 1층-로비",
+        "selectNodes": "노드 선택",
+        "createButton": "생성",
+        "noNodes": "배정 가능한 노드가 없습니다",
+        "ungrouped": "미지정"
+      },
+      "update": {
+        "strategyLabel": "업데이트 전략",
+        "strategyLatest": "최종 버전",
+        "strategyPin": "단일 버전 고정",
+        "strategyPerArch": "아키텍처별 지정",
+        "channel": "채널",
+        "version": "버전",
+        "latestOption": "(최신)",
+        "latestHint": "각 노드가 채널 범위에서 자기 아키텍처의 최신 스토어 버전으로 갱신됩니다.",
+        "missingArchWarn": "이 버전의 자산이 없어 건너뛰는 아키텍처",
+        "noArches": "스토어에 업로드된 릴리스 자산이 없습니다."
       }
     },
     "dashboard": {
@@ -649,6 +707,88 @@
         "fixed": "노드 해상도",
         "fixedHint": "노드 해상도 고정 캔버스로 픽셀 그대로 재현합니다. 해상도 설정은 이 모드에서만 사용됩니다."
       }
+    },
+    "version": {
+      "title": "버전 관리",
+      "current": "현재 버전",
+      "target": "목표 버전",
+      "targetPlaceholder": "예: v1.3.0 (비우면 해제)",
+      "save": "저장",
+      "outdated": "구버전",
+      "upToDate": "최신",
+      "noTarget": "목표 버전 미설정",
+      "update": "업데이트",
+      "restart": "업데이트 후 재시작",
+      "history": "버전 이력",
+      "historyEmpty": "버전 변경 이력이 없습니다.",
+      "changedAt": "변경 시각"
+    },
+    "updateSource": {
+      "title": "업데이트 소스",
+      "github": "GitHub (기본)",
+      "selfHosting": "자체 호스팅",
+      "thisServer": "이 관리 서버",
+      "thisServerHint": "이 서버의 릴리스 저장소를 소스로 사용합니다. 노드는 릴리스 저장소에 업로드된 자기 아키텍처 이미지를 내려받습니다.",
+      "change": "변경",
+      "urlLabel": "릴리스 API 베이스 URL",
+      "urlHint": "https:// 로 시작해야 합니다. 예: https://dl.example.com/xflow",
+      "channelLabel": "채널",
+      "securityNote": "공개키는 각 노드에 로컬로 보관되며 서버는 전송하지 않습니다. 노드가 자기 공개키로 서명을 검증해 무결성을 보장합니다.",
+      "invalidUrl": "URL 은 https:// 로 시작해야 합니다",
+      "saved": "업데이트 소스를 저장했습니다",
+      "saveFailed": "업데이트 소스 저장에 실패했습니다"
+    },
+    "groupManagement": {
+      "title": "그룹 관리",
+      "subtitle": "노드를 그룹으로 구성하고 좌측 트리에서 선택해 관리합니다.",
+      "tree": "그룹 트리",
+      "ungrouped": "미분류",
+      "addNew": "+ 신규 그룹",
+      "selectHint": "좌측 트리에서 그룹 또는 노드를 선택하세요.",
+      "members": "멤버 노드",
+      "memberCount": "노드",
+      "noMembers": "이 그룹에 노드가 없습니다.",
+      "ungroupedDesc": "그룹에 속하지 않은 노드(기본 — 삭제 불가)",
+      "notServer": "원격 관리(server 모드)에서만 사용할 수 있습니다."
+    },
+    "releaseStore": {
+      "title": "릴리스 저장소",
+      "subtitle": "아키텍처별 xflowd 이미지를 이 관리 서버에 저장합니다. 업데이트 소스를 이 서버로 지정한 노드는 자기 아키텍처에 맞는 이미지를 자동으로 내려받습니다.",
+      "newVersion": "새 버전",
+      "versionLabel": "버전",
+      "versionPlaceholder": "v1.3.0",
+      "channelLabel": "채널",
+      "notesLabel": "릴리스 노트",
+      "notesPlaceholder": "변경 사항(선택)",
+      "create": "버전 생성",
+      "invalidVersion": "버전은 vMAJOR.MINOR.PATCH 형식이어야 합니다 (예: v1.3.0)",
+      "created": "버전을 생성했습니다",
+      "createFailed": "버전 생성에 실패했습니다",
+      "publishedAt": "게시:",
+      "empty": "아직 릴리스가 없습니다. 위에서 새 버전을 생성하세요.",
+      "matrixHeading": "아키텍처 매트릭스",
+      "uploaded": "업로드됨",
+      "missing": "누락",
+      "extraAssets": "추가 아키텍처",
+      "noSignature": "서명 없음",
+      "binaryLabel": "바이너리",
+      "signatureLabel": "서명(.sig)",
+      "upload": "업로드",
+      "uploadHint": "바이너리와 .sig 서명 파일을 모두 선택하세요.",
+      "uploadIncomplete": "바이너리와 서명 파일을 모두 선택하세요",
+      "uploaded.success": "{slot} 자산을 업로드했습니다",
+      "uploadFailed": "자산 업로드에 실패했습니다",
+      "deleteAsset": "자산 삭제",
+      "deleteAssetTitle": "자산 삭제",
+      "deleteAssetDesc": "{version}의 {slot} 자산을 삭제합니다. 이 작업은 되돌릴 수 없습니다.",
+      "assetDeleted": "자산을 삭제했습니다",
+      "deleteVersion": "버전 삭제",
+      "deleteVersionTitle": "버전 삭제",
+      "deleteVersionDesc": "{version} 버전과 모든 아키텍처 자산을 삭제합니다. 이 작업은 되돌릴 수 없습니다.",
+      "versionDeleted": "버전을 삭제했습니다",
+      "deleteFailed": "삭제에 실패했습니다",
+      "notServer": "원격 관리(server 모드)에서만 사용할 수 있습니다.",
+      "loadError": "릴리스 목록을 불러오지 못했습니다"
     }
   },
   "flowPicker": {

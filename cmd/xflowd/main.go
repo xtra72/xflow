@@ -82,6 +82,7 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&logOutput, "log-output", "", "로그 출력 대상 (stdout, 파일 경로, stdout+파일경로)")
 
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newVerifyCmd())                    // 원격 업데이트 pre-flight 스모크 테스트
 	cmd.AddCommand(newUpdateCmd(defaultUpdateDeps())) // @SPEC:SPEC-UPDATE-001 v0.1.0
 	cmd.AddCommand(newMigrateCmd())                   // @SPEC:SPEC-DEVICE-IDENTITY-001 Phase C § C1
 	cmd.AddCommand(newPreflightCmd())                 // @SPEC:SPEC-DEVICE-IDENTITY-001 Phase D § D-T5
@@ -787,10 +788,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		remoteQueryHandler      *handler.RemoteQueryHandler
 		remoteStreamHandler     *handler.RemoteStreamHandler
 		remoteGroupingHandler   *handler.RemoteGroupingHandler
+		releaseFeedHandler      *handler.ReleaseFeedHandler
+		releaseAdminHandler     *handler.ReleaseAdminHandler
 		managedNodeRepo         storage.ManagedNodeRepository
 		mirrorRepo              storage.MirrorRepository
 		remoteAuditRepo         storage.RemoteAuditRepository
 		enrollmentTokenRepo     storage.EnrollmentTokenRepository
+		nodeVersionHistoryRepo  storage.NodeVersionHistoryRepository
 	)
 	switch rmCfg.Mode {
 	case "server":
@@ -828,6 +832,39 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		enrollmentTokenRepo = etRepo
 		defer enrollmentTokenRepo.Close()
 
+		// 노드 버전 변경 이력(버전 관리 Phase 1) — 동일 SQLite DB 에 node_version_history
+		// 테이블을 멱등 추가. 노드 version 이 직전 저장값과 달라질 때마다 한 줄 append 한다.
+		vhRepo, vhErr := storage.NewNodeVersionHistoryRepository(context.Background(), "sqlite", storageCfg.SQLitePath)
+		if vhErr != nil {
+			return fmt.Errorf("노드 버전 이력 저장소 초기화 실패: %w", vhErr)
+		}
+		nodeVersionHistoryRepo = vhRepo
+		defer nodeVersionHistoryRepo.Close()
+
+		// 서버 호스팅 프로그램 이미지(버전 관리 — 서버 호스팅 이미지). 메타데이터는 공유
+		// SQLite DB(authDashboardDB)에 releases/release_assets 테이블로 멱등 추가하고,
+		// 바이너리 본체와 .sig 는 디스크({releasesDir})에 둔다. releasesDir 은 설정값이
+		// 있으면 우선하고, 없으면 {dir(sqlite_path)}/releases 로 유도한다(device_metadata
+		// 와 동일 컨벤션). 노드-측 익명 피드 + admin 업로드/관리 핸들러가 이 저장소를 공유한다.
+		releasesDir := rmCfg.ReleasesDir
+		if releasesDir == "" {
+			releasesDir = filepath.Join(filepath.Dir(storageCfg.SQLitePath), "releases")
+		}
+		releaseRepo, rrErr := storage.NewReleaseRepository(authDashboardDB, releasesDir)
+		if rrErr != nil {
+			return fmt.Errorf("릴리즈 저장소 초기화 실패: %w", rrErr)
+		}
+		// 익명 GitHub-호환 피드(노드 Checker/Downloader 가 인증 없이 소비). 다운로드 URL
+		// 의 public base 는 설정(public_base_url) 우선, 미설정 시 요청 Host 에서 유도(https 강제).
+		releaseFeedHandler = handler.NewReleaseFeedHandler(
+			releaseRepo, rmCfg.PublicBaseURL,
+			obs.Loggers.NewLogger("api.handler.release_feed").Logger())
+		// admin 릴리즈 관리(생성/삭제) + multipart 업로드(바이너리 + Ed25519 .sig). raw
+		// 업로드 핸들러는 Auth 미들웨어를 우회하므로 JWTService 를 주입해 admin 을 직접 검증한다.
+		releaseAdminHandler = handler.NewReleaseAdminHandler(
+			releaseRepo, server.JWTService(),
+			obs.Loggers.NewLogger("api.handler.release_admin").Logger())
+
 		// 노드 토큰은 기존 JWTService 를 재사용한다(REQ-C04/C05/C07/F02/F07).
 		tokenIssuer := remote.NewJWTTokenIssuer(server.JWTService())
 
@@ -838,6 +875,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			TokenIssuer:      tokenIssuer,
 			Audit:            remoteAuditRepo,
 			Enrollment:       enrollmentTokenRepo,
+			VersionHistory:   nodeVersionHistoryRepo,
 			BootstrapSecret:  rmCfg.BootstrapSecret,
 			Logger:           obs.Loggers.NewLogger("remote.server").Logger(),
 		}, nil)
@@ -865,7 +903,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 감사 저장소를 연결해 mutation 을 영속 기록하고 GET /remote/audit 로 관측한다(M6).
 		remoteAdminHandler = handler.NewRemoteAdminHandler(remoteServer,
 			obs.Loggers.NewLogger("api.handler.remote_admin").Logger()).
-			WithAudit(remoteAuditRepo)
+			WithAudit(remoteAuditRepo).
+			WithSettings(settingsRepo)
 
 		// 수동 enrollment 관리자 API(v1.1 그룹 H): 사전 등록 노드 생성/삭제 + enrollment
 		// 토큰 발급/목록/폐기. *remote.Server 가 PreRegistrationService 를 만족한다.
@@ -901,7 +940,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 목록·노드 상세(BASIC 시스템 정보 + uptime + 미러 파생 운영 요약). 그룹은 서버
 		// 운영 메타데이터이므로 노드로 명령을 전파하지 않는다(A13). admin 게이팅(REQ-K06/F04).
 		// *remote.Server 가 NodeGroupingService 를 만족한다.
-		remoteGroupingHandler = handler.NewRemoteGroupingHandler(remoteServer)
+		remoteGroupingHandler = handler.NewRemoteGroupingHandler(remoteServer).
+			WithSettings(settingsRepo).
+			WithReleases(releaseRepo)
 
 		logger.Info("원격 관리 서버 모드 활성화",
 			"endpoint", handler.RemoteWSPattern)
@@ -959,6 +1000,21 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		server.RegisterRoutes(func(g *api.RouteGroup) {
 			remoteGroupingHandler.RegisterRoutes(g)
 		})
+	}
+
+	// 9.5b''''''. 서버 호스팅 프로그램 이미지(버전 관리 — 서버 호스팅 이미지). server
+	// 모드에서만 등록한다. 익명 GitHub-호환 피드 + 다운로드는 raw 핸들러로 등록한다(노드
+	// Checker/Downloader 는 토큰을 보내지 않으므로 /api/v1/* Auth 미들웨어를 우회해야 하고,
+	// 다운로드는 octet-stream 바이트를 직접 스트리밍한다). admin 관리(GET/POST/DELETE)는
+	// RouteGroup(Auth + requireAdmin)으로, multipart 업로드는 raw 핸들러(JWT 직접 검증)로 등록한다.
+	if releaseFeedHandler != nil {
+		releaseFeedHandler.RegisterRawHandlers(server.RegisterRawHandler)
+	}
+	if releaseAdminHandler != nil {
+		server.RegisterRoutes(func(g *api.RouteGroup) {
+			releaseAdminHandler.RegisterRoutes(g)
+		})
+		releaseAdminHandler.RegisterRawHandlers(server.RegisterRawHandler)
 	}
 
 	// 9.5d. 원격 관리 모드 조회 API 등록 (@SPEC:SPEC-REMOTE-001).
@@ -1034,7 +1090,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			// 로컬 제어와 동일한 경로/검증/오류 의미를 갖도록 동일 레지스트리를 재사용한다
 			// (A5 — 원격 우회 없음, OQ-L4 — 제어 쓰기는 그룹 D 재사용).
 			&deviceCommander{registry: deviceRegistry, repo: deviceMetaRepo, executor: deviceRegistry},
-		)
+		).WithSystem(newSystemCommander(cfg, configFile, obs.Loggers.NewLogger("remote.system_update").Logger()))
 
 		// 인벤토리 소스(M4, REQ-E01): 로컬 API 와 동일한 어댑터 인스턴스를 재사용하여
 		// 미러가 로컬 상태와 일치하도록 한다. redaction(F06)은 소스 어댑터가 수행한다.
@@ -1081,6 +1137,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// 노드 토큰은 instance_id 와 동일 데이터 디렉토리에 영속한다(REQ-C04/C05).
 		// Exposure 요약은 register 에 운반되고, 미러 송신 시 노출 필터로 평가된다(REQ-A04/E07).
+		// 관리 WS 다이얼러: insecure_skip_verify 면 자체 서명 인증서/사설망용으로 TLS
+		// 인증서 검증을 건너뛰는 다이얼러를 쓴다(nil → 기본 보안 다이얼러).
+		var clientDialer remote.Dialer
+		if rmCfg.InsecureSkipVerify {
+			clientDialer = remote.NewGorillaDialerInsecure()
+			logger.Warn("원격 client TLS 인증서 검증 건너뜀(remote_management.insecure_skip_verify) — 자체 서명/사설망 전용")
+		}
 		remoteClient := remote.NewClient(remote.ClientConfig{
 			ServerURL:  rmCfg.ServerURL,
 			InstanceID: instanceID,
@@ -1115,7 +1178,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			// open/close/input 을 시크릿 페이로드 제외로 로깅한다(REQ-SUBFLOW-RB06/RB11).
 			BridgeRunner: bridgeRunner,
 			Logger:       obs.Loggers.NewLogger("remote.client").Logger(),
-		}, nil)
+		}, clientDialer)
 		remoteClient.Start(ctx)
 		defer remoteClient.Stop()
 
@@ -1181,6 +1244,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		"host", serverCfg.Host,
 		"port", serverCfg.Port,
 	)
+
+	// 원격 자가 업데이트 후 부팅이면(update-state 파일의 pending), 서버가 뜨는 동안 로컬
+	// /health 를 폴링해 자가 검증하고 실패/반복크래시 시 자동 롤백한다(버전 관리 Phase 2).
+	// 상태 파일이 없는 일반 부팅은 즉시 no-op 이므로 항상 호출해도 안전하다.
+	go runPostUpdateSelfCheck(ctx, serverCfg.Port, logger.Logger())
 
 	// server.Start 는 ctx 취소 시 자동으로 Stop 호출
 	if err := server.Start(ctx); err != nil {

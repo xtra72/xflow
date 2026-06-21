@@ -21,6 +21,7 @@ import { FixedCanvasScaler } from '@/components/remote/FixedCanvasScaler';
 import { NodeDisplayResolutionSection } from '@/components/remote/NodeDisplayResolutionSection';
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
 import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
+import { VersionManagementSection } from '@/components/remote/VersionManagementSection';
 import { useRemoteNodeDetail } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import type { ResourceTarget } from '@/lib/remote/target';
@@ -336,6 +337,13 @@ function NodeOverview({ instanceId, enabled }: NodeOverviewProps): React.JSX.Ele
 
       {/* 디스플레이 해상도(EFFECTIVE + 출처 + admin 오버라이드 SET/CLEAR, M12) */}
       <NodeDisplayResolutionSection instanceId={instanceId} detail={detail} />
+
+      {/* 버전 관리(현재/목표 버전 + outdated + 이력 + 원격 업데이트, Phase 1/2) */}
+      <VersionManagementSection
+        instanceId={instanceId}
+        currentVersion={detail.version}
+        online={detail.online}
+      />
 
       {/* 운영 요약(미러 파생) */}
       <section

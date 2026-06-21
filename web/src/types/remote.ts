@@ -71,6 +71,159 @@ export interface ManagedNode {
   group_name?: string;
   /** 마지막 수신 시각 (epoch ms, 0 = 미수신). */
   last_seen: number;
+  /**
+   * 관리자 지정 목표 버전 대비 구버전 여부 (버전 관리 Phase 1). 목표 버전 미설정/
+   * 비-semver 면 false. 구버전 백엔드 응답에는 없을 수 있으므로 선택적.
+   */
+  outdated?: boolean;
+}
+
+/** 서버 전역 목표 버전 (버전 관리 Phase 1). GET/PUT /remote/target-version */
+export interface TargetVersion {
+  /** 목표 버전 문자열 (vMAJOR.MINOR.PATCH). 빈 문자열 = 미설정/해제. */
+  version: string;
+}
+
+/**
+ * 서버 저장 업데이트 소스 (GitHub/자체 호스팅). GET/PUT /remote/update-source
+ * 원격 업데이트 명령에 자동 주입된다. 공개키는 노드 로컬 신뢰 앵커이므로 서버가 저장/전달하지
+ * 않는다(무결성은 각 노드가 자기 로컬 공개키로 서명 검증).
+ */
+export interface UpdateSource {
+  /** 릴리스 API 베이스 URL. 빈 문자열 = 미설정(노드 로컬 설정으로 폴백). https:// 필수. */
+  update_url: string;
+  /** 채널(stable/beta/nightly). 빈 문자열 = 노드 기본. */
+  channel?: string;
+}
+
+// ---- 릴리스 저장소 (관리 서버 호스팅 프로그램 이미지) ----
+//
+// 관리 서버가 아키텍처별 `xflowd` 바이너리 + Ed25519 서명을 저장하는 릴리스 저장소이다.
+// 노드는 런타임 GOOS/GOARCH 를 보고하므로(RPi armv6/armv7 은 모두 arm), UI 는
+// linux/amd64 · linux/arm64 · linux/arm · darwin/amd64 · darwin/arm64 5개 슬롯을
+// 행렬로 표시하고 업로드 여부를 표시한다. 업데이트 소스를 이 서버로 지정하면 각 노드가
+// 자신의 아키텍처에 맞는 바이너리를 자동 다운로드한다.
+//
+// Go DTO 매핑: internal/api/handler/remote_admin.go (ReleaseRecord/ReleaseAsset).
+// 모든 epoch 시각은 밀리초(int64 UnixMilli)이다.
+
+/**
+ * 릴리스 자산 한 개(아키텍처별 바이너리 + 서명 메타데이터).
+ * Go `ReleaseAsset` 와 1:1 매핑된다.
+ */
+export interface ReleaseAsset {
+  /** 운영체제 (GOOS). 예: linux, darwin. */
+  os: string;
+  /** 아키텍처 (GOARCH). 예: amd64, arm64, arm. */
+  arch: string;
+  /** 저장된 바이너리 파일명. */
+  filename: string;
+  /** 바이너리 크기 (바이트). */
+  size: number;
+  /** 바이너리 SHA-256 해시 (hex 문자열). */
+  sha256: string;
+  /** Ed25519 서명(.sig) 동반 여부. */
+  has_sig: boolean;
+  /** 업로드 시각 (epoch ms). */
+  uploaded_at: number;
+}
+
+/**
+ * 릴리스 버전 한 개(버전 + 채널 + 노트 + 아키텍처별 자산 목록).
+ * Go `ReleaseRecord` 와 1:1 매핑된다.
+ */
+export interface ReleaseRecord {
+  /** semver 버전 문자열 (vMAJOR.MINOR.PATCH). */
+  version: string;
+  /** 릴리스 채널 (stable/beta/nightly). */
+  channel: string;
+  /** 릴리스 노트(자유 텍스트). */
+  notes: string;
+  /** 게시 시각 (epoch ms). */
+  published_at: number;
+  /** 아키텍처별 업로드된 자산 목록. */
+  assets: ReleaseAsset[];
+}
+
+/** 릴리스 버전 생성/갱신 요청. POST /remote/releases */
+export interface ReleaseCreateRequest {
+  /** semver 버전 문자열 (vMAJOR.MINOR.PATCH). */
+  version: string;
+  /** 릴리스 채널 (stable/beta/nightly). 미지정 시 서버 기본(stable). */
+  channel?: string;
+  /** 릴리스 노트(자유 텍스트). */
+  notes?: string;
+}
+
+/** 노드 버전 변경 이력 한 줄 (버전 관리 Phase 1). */
+export interface NodeVersionHistoryEntry {
+  /** 변경 후 버전 문자열. */
+  version: string;
+  /** 변경 감지 시각 (epoch ms). */
+  changed_at: number;
+}
+
+/** 그룹 일괄 명령/업데이트의 노드별 결과 (그룹 관리). */
+export interface GroupDispatchResult {
+  instance_id: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
+/** 노드 원격 업데이트 요청 (버전 관리 Phase 2). POST /remote/nodes/{id}/update */
+export interface NodeUpdateRequest {
+  /** 목표 버전 (vMAJOR.MINOR.PATCH). 빈 값 = 채널 최신. */
+  version?: string;
+  /** 릴리스 채널 (stable/beta/nightly). 빈 값 = 노드 기본. */
+  channel?: string;
+  /** true 면 바이너리 교체 후 노드 graceful 재시작. */
+  restart?: boolean;
+}
+
+/**
+ * 그룹 일괄 업데이트 전략(아키텍처/OS 인지 일괄 업데이트). POST /remote/groups/{name}/update.
+ *
+ * 하나의 그룹 안에 서로 다른 아키텍처(linux/amd64, linux/arm 등) 노드가 섞여 있을 수 있어,
+ * 단일 버전을 강제하면 자산이 없는 아키텍처는 건너뛰게 된다. 이를 다루기 위해 세 전략을 둔다.
+ *
+ *   - latest   : 아키텍처별 최신 — 각 노드가 `channel` 범위에서 자기 os/arch 자산을 가진
+ *                가장 최신 스토어 버전으로 갱신된다. 버전 해석은 서버가 노드별로 수행한다.
+ *   - pin      : 단일 버전 고정 — 모든 노드를 동일한 `version` 으로 갱신한다. 해당 버전에
+ *                자산이 없는 아키텍처 노드는 서버가 건너뛴다(결과에 ok:false + error 로 보고).
+ *                `version` 이 빈 값이면 채널 최신과 동일하게 동작한다.
+ *   - per_arch : 아키텍처별 지정 — `version_by_arch` 로 "os/arch" → version 명시 매핑을 보낸다.
+ */
+export type GroupUpdateStrategy = 'latest' | 'pin' | 'per_arch';
+
+/**
+ * 그룹 일괄 원격 업데이트 요청 본문 (아키텍처/OS 인지 일괄 업데이트).
+ * POST /remote/groups/{name}/update.
+ *
+ * 하위 호환: `strategy` 가 없거나 빈 값이면 서버는 기존 `pin` 동작으로 해석한다(레거시).
+ * 따라서 `version`/`channel`/`restart` 만 보내던 구버전 클라이언트는 그대로 동작한다.
+ */
+export interface GroupUpdateRequest {
+  /**
+   * 업데이트 전략. 미지정/빈 값은 `pin`(레거시)으로 해석된다(하위 호환).
+   */
+  strategy?: GroupUpdateStrategy;
+  /**
+   * `pin` 전략의 목표 버전 (vMAJOR.MINOR.PATCH). 빈 값 = 채널 최신.
+   * `latest`/`per_arch` 전략에서는 무시된다.
+   */
+  version?: string;
+  /**
+   * `per_arch` 전략의 명시 매핑: canonical "os/arch"(노드 보고값) → 버전 문자열.
+   * 예: { "linux/amd64": "v1.3.0", "linux/arm": "v1.2.0" }.
+   */
+  version_by_arch?: Record<string, string>;
+  /**
+   * `latest` 전략에서 후보를 한정할 릴리스 채널 (stable/beta/nightly). 빈 값 = 노드 기본.
+   */
+  channel?: string;
+  /** true 면 바이너리 교체 후 노드 graceful 재시작. */
+  restart?: boolean;
 }
 
 // ---- 노드 그룹핑 + 시스템 정보 + 운영 요약 (v1.4 M9, 그룹 K, REQ-K01~K10) ----

@@ -233,6 +233,8 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 			s.logger.Error("등록 pending 저장 실패", "instance_id", p.InstanceID, "error", upErr)
 			return "", nil, false
 		}
+		// 최초 등록 → 초기 버전을 이력에 기록한다(prev="" — 버전 관리 Phase 1).
+		s.recordVersionChange(ctx, p.InstanceID, "", p.Version)
 		s.setNodeState(p.InstanceID, RegStatusPending, true, time.Now())
 		owned := s.registerConn(p.InstanceID, conn, cancel)
 		s.sendRegisterAck(conn, RegisterAckPayload{Status: RegStatusPending})
@@ -279,6 +281,7 @@ func (s *Server) updateNodeMeta(ctx context.Context, p RegisterPayload) {
 	if err != nil {
 		return
 	}
+	prevVersion := node.Version
 	node.Hostname = p.Hostname
 	node.Version = p.Version
 	node.Online = true
@@ -286,6 +289,8 @@ func (s *Server) updateNodeMeta(ctx context.Context, p RegisterPayload) {
 	if upErr := s.repo.Upsert(ctx, node); upErr != nil {
 		s.logger.Debug("노드 메타 갱신 실패", "instance_id", p.InstanceID, "error", upErr)
 	}
+	// 버전이 직전 저장값과 달라졌으면 이력에 기록한다(버전 관리 Phase 1).
+	s.recordVersionChange(ctx, p.InstanceID, prevVersion, p.Version)
 	// 재기동 register 의 시스템 정보(started_at 등) + 노드 해상도를 제공 시에만 갱신한다
 	// (REQ-K08/K09/M01/M03). 미제공 필드는 SetSystemInfo 가 기존값을 보존한다(preserve-on-omit).
 	s.storeSystemInfo(ctx, p.InstanceID, p.OS, p.Arch, p.StartedAt, p.DisplayWidth, p.DisplayHeight)
@@ -305,6 +310,52 @@ func (s *Server) storeSystemInfo(ctx context.Context, instanceID, osName, arch s
 	if err := s.repo.SetSystemInfo(ctx, instanceID, osName, arch, startedAtMs, displayWidth, displayHeight); err != nil {
 		s.logger.Debug("시스템 정보 저장 생략", "instance_id", instanceID, "error", err)
 	}
+}
+
+// recordVersionChange 는 노드 버전이 직전 저장값과 달라졌을 때 이력에 한 줄 append 하고,
+// (감사 저장소가 있으면) system actor 로 버전 변경 감사를 남긴다(버전 관리 Phase 1).
+//
+// verHist 미구성이거나 newVersion 이 비었거나 prev==new 이면 no-op 이다(하위 호환).
+// 호출 측은 stored version 을 덮어쓰기 *전*의 prevVersion 을 전달해야 한다.
+func (s *Server) recordVersionChange(ctx context.Context, instanceID, prevVersion, newVersion string) {
+	if s.verHist == nil || instanceID == "" || newVersion == "" {
+		return
+	}
+	if prevVersion == newVersion {
+		return
+	}
+	now := time.Now().UnixMilli()
+	if err := s.verHist.Append(ctx, instanceID, newVersion, now); err != nil {
+		s.logger.Warn("버전 이력 기록 실패", "instance_id", instanceID, "error", err)
+		return
+	}
+	if s.audit != nil {
+		reason := "최초 " + newVersion
+		if prevVersion != "" {
+			reason = prevVersion + " -> " + newVersion
+		}
+		if err := s.audit.Append(ctx, storage.RemoteAuditRecord{
+			InstanceID: instanceID,
+			Actor:      "system",
+			Action:     storage.AuditActionVersionUpdate,
+			Result:     storage.AuditResultOK,
+			Reason:     reason,
+			Timestamp:  now,
+		}); err != nil {
+			s.logger.Debug("버전 변경 감사 기록 생략", "instance_id", instanceID, "error", err)
+		}
+	}
+	s.logger.Info("노드 버전 변경 기록",
+		"instance_id", instanceID, "from", prevVersion, "to", newVersion)
+}
+
+// NodeVersionHistory 는 노드의 버전 변경 이력을 최신순으로 반환한다(버전 관리 Phase 1).
+// limit <= 0 이면 전체. VersionHistory 저장소가 미구성이면 빈 슬라이스를 반환한다.
+func (s *Server) NodeVersionHistory(ctx context.Context, instanceID string, limit int) ([]storage.NodeVersionHistory, error) {
+	if s.verHist == nil {
+		return nil, nil
+	}
+	return s.verHist.List(ctx, instanceID, limit)
 }
 
 // restoreSession 은 토큰이 검증된 재접속 노드의 관리 세션을 복원한다(REQ-C05).

@@ -35,9 +35,14 @@ const SystemStatusPage = lazy(() =>
 //   노드 관리(운영, 디렉토리+대시보드) + 등록 관리(온보딩, 토큰+승인).
 //   기존 RemoteNodesPage(관리 노드) + RemoteControlPage(원격 노드 제어)를 대체한다.
 const NodeManagementPage = lazy(() => import('@/pages/remote/NodeManagementPage'));
+const GroupManagementPage = lazy(
+  () => import('@/pages/remote/GroupManagementPage'),
+);
 const EnrollmentManagementPage = lazy(
   () => import('@/pages/remote/EnrollmentManagementPage'),
 );
+// 릴리스 저장소(관리 서버 호스팅 프로그램 이미지): 아키텍처별 xflowd 이미지 관리.
+const ReleaseStorePage = lazy(() => import('@/pages/remote/ReleaseStorePage'));
 
 /** Suspense 래퍼 - 지연 로딩 중 로딩 스피너를 표시한다 */
 function SuspenseWrapper({ children }: { children: React.ReactNode }) {
@@ -161,6 +166,15 @@ const router = createBrowserRouter([
                   </SuspenseWrapper>
                 ),
               },
+              // 그룹 관리(서브 페이지): 좌측 그룹 트리 + 우측 그룹 제어/노드 상세.
+              {
+                path: 'remote/groups',
+                element: (
+                  <SuspenseWrapper>
+                    <GroupManagementPage />
+                  </SuspenseWrapper>
+                ),
+              },
               // SPEC-REMOTE-001 M9 (그룹 K, REQ-K15): 등록 관리(온보딩).
               //   토큰 관리 + 노드 등록 관리(승인 큐/사전 등록).
               {
@@ -168,6 +182,17 @@ const router = createBrowserRouter([
                 element: (
                   <SuspenseWrapper>
                     <EnrollmentManagementPage />
+                  </SuspenseWrapper>
+                ),
+              },
+              // 릴리스 저장소(관리 서버 호스팅 프로그램 이미지): 아키텍처별 xflowd
+              //   이미지 업로드/조회/삭제. 업데이트 소스를 이 서버로 지정한 노드가
+              //   자기 아키텍처 이미지를 자동 다운로드한다.
+              {
+                path: 'remote/releases',
+                element: (
+                  <SuspenseWrapper>
+                    <ReleaseStorePage />
                   </SuspenseWrapper>
                 ),
               },

@@ -96,6 +96,53 @@ func TestManagedNode_SetNodeGroupAndClear(t *testing.T) {
 	assert.Empty(t, got.GroupName, "그룹 해제 시 빈값으로 환원되어야 함")
 }
 
+// TestManagedNode_RenameGroup 은 그룹 일괄 이름변경을 검증한다.
+func TestManagedNode_RenameGroup(t *testing.T) {
+	repo := newTestManagedNodeRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "a", Status: "approved", GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "b", Status: "approved", GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "c", Status: "approved", GroupName: "dev"}))
+
+	n, err := repo.RenameGroup(ctx, "prod", "production")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "prod 멤버 2개가 이동")
+
+	a, _ := repo.Get(ctx, "a")
+	b, _ := repo.Get(ctx, "b")
+	c, _ := repo.Get(ctx, "c")
+	assert.Equal(t, "production", a.GroupName)
+	assert.Equal(t, "production", b.GroupName)
+	assert.Equal(t, "dev", c.GroupName, "다른 그룹은 영향 없음")
+
+	// 미존재 그룹 → 0.
+	n, err = repo.RenameGroup(ctx, "nope", "x")
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
+
+// TestManagedNode_DeleteGroup 은 그룹 삭제(→"전체" 이동)를 검증한다.
+func TestManagedNode_DeleteGroup(t *testing.T) {
+	repo := newTestManagedNodeRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "a", Status: "approved", GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "b", Status: "approved", GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, ManagedNode{InstanceID: "c", Status: "approved", GroupName: "dev"}))
+
+	n, err := repo.DeleteGroup(ctx, "prod")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	a, _ := repo.Get(ctx, "a")
+	c, _ := repo.Get(ctx, "c")
+	assert.Empty(t, a.GroupName, "삭제된 그룹 멤버는 전체 버킷으로 이동")
+	assert.Equal(t, "dev", c.GroupName)
+
+	// 노드 행 자체는 보존(삭제 아님).
+	_, err = repo.Get(ctx, "a")
+	assert.NoError(t, err)
+}
+
 // TestManagedNode_SetNodeGroupNotFound 는 미존재 노드 그룹 배정이 에러를 반환하는지
 // 검증한다.
 func TestManagedNode_SetNodeGroupNotFound(t *testing.T) {

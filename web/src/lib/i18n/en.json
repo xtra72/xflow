@@ -21,7 +21,9 @@
     "expandSidebar": "Expand Sidebar",
     "collapseSidebar": "Collapse Sidebar",
     "nodeManagement": "Node Management",
-    "enrollmentManagement": "Enrollment"
+    "enrollmentManagement": "Enrollment",
+    "groupManagement": "Group Management",
+    "releaseStore": "Release Store"
   },
   "auth": {
     "login": "Login",
@@ -396,7 +398,8 @@
       "approve": "Approve",
       "reject": "Reject",
       "revoke": "Revoke",
-      "delete": "Delete"
+      "delete": "Delete",
+      "update": "Update"
     },
     "confirm": {
       "rejectTitle": "Reject this node?",
@@ -404,7 +407,9 @@
       "revokeTitle": "Revoke this node?",
       "revokeDesc": "This revokes approval for {node}. The node will no longer receive commands. This action cannot be undone.",
       "deleteTitle": "Delete this node?",
-      "deleteDesc": "This permanently removes {node} from the list. This action cannot be undone."
+      "deleteDesc": "This permanently removes {node} from the list. This action cannot be undone.",
+      "updateTitle": "Update node",
+      "updateDesc": "Update this node to the target version. The binary will be replaced; if the restart option is on, the node restarts afterward. Continue?"
     },
     "toast": {
       "approved": "Node approved.",
@@ -412,7 +417,10 @@
       "revoked": "Node revoked.",
       "deleted": "Node deleted.",
       "preRegistered": "Node registered.",
-      "actionFailed": "Failed to complete the action."
+      "actionFailed": "Failed to complete the action.",
+      "targetSaved": "Target version saved",
+      "updateStarted": "Update command sent",
+      "updateFailed": "Update failed"
     },
     "preRegister": {
       "button": "Add node (pre-register)",
@@ -586,7 +594,57 @@
       "toast": {
         "assigned": "Node group updated.",
         "cleared": "Node returned to All.",
-        "failed": "Failed to update group."
+        "failed": "Failed to update group.",
+        "renamed": "Group renamed",
+        "deleted": "Group deleted",
+        "updateDispatched": "Group update command sent",
+        "opFailed": "Group operation failed",
+        "commandDispatched": "Group command sent",
+        "created": "Group created"
+      },
+      "manage": {
+        "title": "Group Management",
+        "rename": "Rename",
+        "delete": "Delete",
+        "update": "Bulk update",
+        "restart": "Restart after update",
+        "node": "nodes",
+        "noGroups": "No groups to manage. Assign nodes to a group first.",
+        "confirmDeleteTitle": "Delete group",
+        "confirmDeleteDesc": "Delete this group and move all its nodes to the 'All' bucket. Continue?",
+        "confirmUpdateTitle": "Bulk update group",
+        "confirmUpdateDesc": "Remotely update all approved/online nodes in this group to the target version. Continue?",
+        "command": "Bulk command",
+        "cmdDomain": "Domain",
+        "cmdAction": "Action",
+        "cmdActionPlaceholder": "e.g. start, stop, restart",
+        "cmdArgs": "Args (JSON, optional)",
+        "cmdArgsPlaceholder": "{ \"id\": \"...\" }",
+        "cmdSend": "Send",
+        "cmdGroup": "Target group",
+        "confirmCommandTitle": "Bulk command",
+        "confirmCommandDesc": "Send the same command to all approved/online nodes in the group. Continue?",
+        "invalidArgs": "Args is not valid JSON",
+        "cmdResult": "Command result (ok/total)",
+        "create": "Create group",
+        "createName": "New group name",
+        "createPlaceholder": "e.g. lobby-1f",
+        "selectNodes": "Select nodes",
+        "createButton": "Create",
+        "noNodes": "No nodes available to assign",
+        "ungrouped": "unassigned"
+      },
+      "update": {
+        "strategyLabel": "Update strategy",
+        "strategyLatest": "Latest",
+        "strategyPin": "Pin version",
+        "strategyPerArch": "Per architecture",
+        "channel": "Channel",
+        "version": "Version",
+        "latestOption": "(latest)",
+        "latestHint": "Each node updates to the newest store version for its architecture within the channel.",
+        "missingArchWarn": "Architectures skipped (no asset for this version)",
+        "noArches": "No release assets uploaded to the store."
       }
     },
     "dashboard": {
@@ -649,6 +707,88 @@
         "fixed": "Node resolution",
         "fixedHint": "Pixel-exact replica on a fixed node-resolution canvas. The resolution setting is only used in this mode."
       }
+    },
+    "version": {
+      "title": "Version Management",
+      "current": "Current version",
+      "target": "Target version",
+      "targetPlaceholder": "e.g. v1.3.0 (empty to clear)",
+      "save": "Save",
+      "outdated": "Outdated",
+      "upToDate": "Up to date",
+      "noTarget": "No target version set",
+      "update": "Update",
+      "restart": "Restart after update",
+      "history": "Version history",
+      "historyEmpty": "No version changes recorded.",
+      "changedAt": "Changed at"
+    },
+    "updateSource": {
+      "title": "Update source",
+      "github": "GitHub (default)",
+      "selfHosting": "Self-hosting",
+      "thisServer": "This management server",
+      "thisServerHint": "Use this server's release store as the source. Nodes download the image for their architecture uploaded to the release store.",
+      "change": "Change",
+      "urlLabel": "Release API base URL",
+      "urlHint": "Must start with https://. e.g. https://dl.example.com/xflow",
+      "channelLabel": "Channel",
+      "securityNote": "The public key stays local to each node and is never sent by the server. Each node verifies the signature with its own key to guarantee integrity.",
+      "invalidUrl": "URL must start with https://",
+      "saved": "Update source saved",
+      "saveFailed": "Failed to save update source"
+    },
+    "releaseStore": {
+      "title": "Release Store",
+      "subtitle": "Store per-architecture xflowd images on this management server. Nodes pointed at this server auto-download the image for their architecture.",
+      "newVersion": "New version",
+      "versionLabel": "Version",
+      "versionPlaceholder": "v1.3.0",
+      "channelLabel": "Channel",
+      "notesLabel": "Release notes",
+      "notesPlaceholder": "Changes (optional)",
+      "create": "Create version",
+      "invalidVersion": "Version must be vMAJOR.MINOR.PATCH (e.g. v1.3.0)",
+      "created": "Version created",
+      "createFailed": "Failed to create version",
+      "publishedAt": "Published:",
+      "empty": "No releases yet. Create a new version above.",
+      "matrixHeading": "Architecture matrix",
+      "uploaded": "Uploaded",
+      "missing": "Missing",
+      "extraAssets": "Extra architectures",
+      "noSignature": "No signature",
+      "binaryLabel": "Binary",
+      "signatureLabel": "Signature (.sig)",
+      "upload": "Upload",
+      "uploadHint": "Select both the binary and the .sig signature file.",
+      "uploadIncomplete": "Select both the binary and the signature file",
+      "uploaded.success": "Uploaded {slot} asset",
+      "uploadFailed": "Failed to upload asset",
+      "deleteAsset": "Delete asset",
+      "deleteAssetTitle": "Delete asset",
+      "deleteAssetDesc": "Delete the {slot} asset of {version}. This cannot be undone.",
+      "assetDeleted": "Asset deleted",
+      "deleteVersion": "Delete version",
+      "deleteVersionTitle": "Delete version",
+      "deleteVersionDesc": "Delete version {version} and all architecture assets. This cannot be undone.",
+      "versionDeleted": "Version deleted",
+      "deleteFailed": "Delete failed",
+      "notServer": "Available only in remote management (server mode).",
+      "loadError": "Failed to load releases"
+    },
+    "groupManagement": {
+      "title": "Group Management",
+      "subtitle": "Organize nodes into groups; select from the left tree to manage.",
+      "tree": "Group tree",
+      "ungrouped": "Unclassified",
+      "addNew": "+ New group",
+      "selectHint": "Select a group or node from the left tree.",
+      "members": "Member nodes",
+      "memberCount": "nodes",
+      "noMembers": "No nodes in this group.",
+      "ungroupedDesc": "Nodes not in any group (default — cannot delete)",
+      "notServer": "Available only in remote management (server mode)."
     }
   },
   "flowPicker": {

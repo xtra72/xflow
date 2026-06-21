@@ -53,6 +53,10 @@ type NodeAdminService interface {
 	ListAllMirroredFlows(ctx context.Context) ([]remote.MirroredResourceView, error)
 	ListAllMirroredAgents(ctx context.Context) ([]remote.MirroredResourceView, error)
 	ListAllMirroredDevices(ctx context.Context) ([]remote.MirroredResourceView, error)
+
+	// NodeVersionHistory 는 노드 버전 변경 이력을 최신순으로 반환한다(버전 관리 Phase 1).
+	// limit <= 0 이면 전체. VersionHistory 저장소 미구성 시 빈 슬라이스.
+	NodeVersionHistory(ctx context.Context, instanceID string, limit int) ([]storage.NodeVersionHistory, error)
 }
 
 // commandRequest 는 원격 명령 발행 요청 본문이다(POST /remote/nodes/{id}/command).
@@ -75,6 +79,9 @@ type ManagedNodeDTO struct {
 	Online     bool   `json:"online"`
 	GroupName  string `json:"group_name"` // 단일 그룹 라벨(빈값=전체 — REQ-K01/K04)
 	LastSeen   int64  `json:"last_seen"`  // epoch ms
+	// Outdated 는 관리자 지정 목표 버전 대비 이 노드가 구버전인지 여부이다(버전 관리
+	// Phase 1). 목표 버전 미설정이거나 버전 문자열이 semver 가 아니면 false.
+	Outdated bool `json:"outdated"`
 }
 
 // rejectRequest 는 거부 사유를 담는 선택적 요청 본문이다.
@@ -84,9 +91,10 @@ type rejectRequest struct {
 
 // RemoteAdminHandler 는 관리 노드 승인/거부/폐기/목록 엔드포인트를 처리한다.
 type RemoteAdminHandler struct {
-	svc    NodeAdminService
-	audit  storage.RemoteAuditRepository
-	logger *slog.Logger
+	svc      NodeAdminService
+	audit    storage.RemoteAuditRepository
+	settings storage.SettingsRepository
+	logger   *slog.Logger
 }
 
 // NewRemoteAdminHandler 는 RemoteAdminHandler 를 생성한다.
@@ -102,6 +110,14 @@ func NewRemoteAdminHandler(svc NodeAdminService, logger *slog.Logger) *RemoteAdm
 // 조회할 수 있게 한다. nil 이면 감사는 구조화 로그로만 남는다(하위 호환).
 func (h *RemoteAdminHandler) WithAudit(audit storage.RemoteAuditRepository) *RemoteAdminHandler {
 	h.audit = audit
+	return h
+}
+
+// WithSettings 는 전역 설정 저장소를 연결한다(버전 관리 Phase 1). 설정되면 관리자가
+// 지정한 목표 버전(target_version)을 GET/PUT 으로 관리하고, /remote/nodes 응답의
+// outdated 플래그 계산에 사용한다. nil 이면 목표 버전 기능은 비활성(outdated 항상 false).
+func (h *RemoteAdminHandler) WithSettings(settings storage.SettingsRepository) *RemoteAdminHandler {
+	h.settings = settings
 	return h
 }
 
@@ -145,6 +161,18 @@ func (h *RemoteAdminHandler) RegisterRoutes(g *api.RouteGroup) {
 	// 원격 변경 감사 로그 조회(M6, REQ-F05). admin-gated, 선택적 instance_id 필터 +
 	// limit/offset 페이지네이션. 감사 영속 관측성을 제공한다.
 	g.GET("/remote/audit", h.Audit)
+
+	// 버전 관리(Phase 1): 노드 버전 이력 조회 + 관리자 수동 목표 버전 GET/PUT.
+	g.GET("/remote/nodes/{instance_id}/version-history", h.VersionHistory)
+	g.GET("/remote/target-version", h.GetTargetVersion)
+	g.PUT("/remote/target-version", h.PutTargetVersion)
+
+	// 업데이트 소스(GitHub/자체 호스팅) — 서버 저장, 필요시 변경. 원격 업데이트 명령에 주입된다.
+	g.GET("/remote/update-source", h.GetUpdateSource)
+	g.PUT("/remote/update-source", h.PutUpdateSource)
+
+	// 버전 관리 Phase 2: 노드 자가 업데이트 명령(system/update 디스패치).
+	g.POST("/remote/nodes/{instance_id}/update", h.UpdateNode)
 }
 
 // requireAdmin 은 admin 권한을 강제한다. node/viewer/editor 등은 403(REQ-F04).
@@ -164,7 +192,8 @@ func (h *RemoteAdminHandler) ListNodes(ctx api.Context) error {
 	if err != nil {
 		return mapRemoteAdminError(err)
 	}
-	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toManagedNodeDTOs(nodes)))
+	target := h.targetVersion(ctx.Context())
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toManagedNodeDTOsWithTarget(nodes, target)))
 }
 
 // ListPending 는 pending 상태 노드만 반환한다. GET /remote/nodes/pending
@@ -450,6 +479,12 @@ func toMirroredDTOs(views []remote.MirroredResourceView) []MirroredResourceDTO {
 
 // toManagedNodeDTOs 는 저장소 모델을 응답 DTO 로 변환한다(토큰 식별자 제외 — REQ-F06).
 func toManagedNodeDTOs(nodes []storage.ManagedNode) []ManagedNodeDTO {
+	return toManagedNodeDTOsWithTarget(nodes, "")
+}
+
+// toManagedNodeDTOsWithTarget 는 목표 버전 대비 outdated 플래그를 계산하여 DTO 로
+// 변환한다(버전 관리 Phase 1). target 이 빈 문자열이면 outdated 는 항상 false.
+func toManagedNodeDTOsWithTarget(nodes []storage.ManagedNode, target string) []ManagedNodeDTO {
 	out := make([]ManagedNodeDTO, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, ManagedNodeDTO{
@@ -460,6 +495,7 @@ func toManagedNodeDTOs(nodes []storage.ManagedNode) []ManagedNodeDTO {
 			Online:     n.Online,
 			GroupName:  n.GroupName,
 			LastSeen:   n.LastSeen,
+			Outdated:   isOutdated(n.Version, target),
 		})
 	}
 	return out

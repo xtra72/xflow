@@ -21,6 +21,9 @@ const (
 	AuditActionRevoke = "revoke"
 	// AuditActionCommand 는 원격 명령 발행이다(REQ-D01).
 	AuditActionCommand = "command"
+	// AuditActionVersionUpdate 는 노드 버전 변경 관측이다(버전 관리 Phase 1).
+	// 노드가 보고한 version 이 직전 저장값과 달라질 때 system actor 로 기록한다.
+	AuditActionVersionUpdate = "version_update"
 )
 
 // 감사 결과 상수.

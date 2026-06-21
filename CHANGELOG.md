@@ -6,6 +6,36 @@
 
 ## [Unreleased]
 
+### 추가 — 원격 프로그램 버전 관리 (릴리스 호스팅 + 업데이트 소스 + 아키텍처-aware 그룹 일괄 업데이트)
+
+- **관리 서버가 노드용 프로그램 이미지를 호스팅하고 원격 자가 업데이트를 오케스트레이션 (Non-breaking)**
+
+  관리 서버(`xflowd` 서버 모드)가 아키텍처별 `xflowd` 바이너리 + 사전 서명된 Ed25519 `.sig` 를 저장·배포하고, 노드의 기존 자가 업데이트(SPEC-UPDATE-001)를 **무변경**으로 구동한다. 공개키는 노드 로컬에만 존재하고(서버 비전송), 서버는 서명을 생성하지 않으며 무결성은 노드 Ed25519 검증으로 보장된다.
+
+  - **릴리스 저장소**: SQLite 메타(`releases`/`release_assets`) + 디스크 `{data}/releases/{version}/`. 업로드 시 SHA256 자동 계산·`checksum.txt` 자동 생성.
+  - **노드용 익명 GitHub-Releases 호환 피드** (인증 없음, 노드 updater 무변경 소비): `GET /api/v1/updates/releases/latest`·`/releases`·`/releases/download/{version}/{filename}`. asset `browser_download_url` 은 https 강제(`remote_management.public_base_url` 설정 또는 요청 Host 유도).
+  - **admin 릴리스 관리 API**: `GET/POST /remote/releases`, `DELETE /remote/releases/{version}`, `DELETE /remote/releases/{version}/assets/{os}/{arch}`, multipart 업로드 `POST /remote/releases/{version}/assets`(os/arch/binary/signature).
+  - **업데이트 소스 서버 저장**: `update_url`+채널을 SettingsRepository(`remote.update_source`)에 1회 저장하고 필요시에만 변경. `GET/PUT /remote/update-source`(admin). 원격 업데이트 명령(UpdateNode/UpdateGroup)에 서버가 자동 주입(요청 명시 시 우선). `update_url` 은 빈 값 또는 `https://` 만 허용. 공개키는 절대 전송하지 않음.
+  - **아키텍처/OS-aware 그룹 일괄 업데이트**: 서버가 각 노드의 보고된 OS/Arch 로 per-node 타깃 버전을 계산해 per-node `system/update` 디스패치. 전략 3종 — `latest`(채널 내 각 os/arch 최고 semver)·`pin`(단일 버전, 기존 호환)·`per_arch`((os/arch)→버전 맵). 자산 없는 노드는 사유와 함께 건너뜀(부분 성공).
+  - **client WS insecure_skip_verify**: `remote_management.insecure_skip_verify`(기본 false) — 관리 WS(wss) TLS 인증서 검증 스킵(자체 서명/사설망 전용 옵트인). 전송 무결성 보장과 무관(명령=토큰·자가 업데이트=Ed25519).
+  - **신규 설정**: `remote_management.public_base_url`·`remote_management.releases_dir`·`remote_management.insecure_skip_verify`.
+  - **관련**: SPEC-REMOTE-001 v1.7(그룹 O).
+
+### 추가 — 릴리스 이미지 생성·서명 도구 및 원격 업데이트 운영 요구사항
+
+- **xflowd 릴리스 이미지 빌드·서명 도구와 노드 운영 요구사항 명세 (Non-breaking)**
+
+  - **서명 도구**: `xflowd update keygen`(Ed25519 키쌍, 비공개 `.key` `0600` + 공개 `.pub`), `xflowd update sign --key K BIN`(바이너리 본문 서명 → raw 64-byte `.sig`).
+  - **빌드/CI**: `make keygen`, `make release-images VERSION=<v> SIGN_KEY=<key>`(6 타깃 교차컴파일+서명+`checksum.txt`, 인자 미지정 시 가드 실패). CI `release.yml` `release-images` 잡 — 태그 푸시 시 서명 이미지 산출·GitHub Release 첨부, 시크릿 `XFLOW_RELEASE_PRIVATE_KEY`(미설정 시 스킵). 공개키는 노드 로컬, 비공개키는 릴리스 담당자/CI 만.
+  - **노드 설정 요구사항**: `update.public_key_path` 가 원격 업데이트 필수(미설정 시 거부 — 내장 핀닝 키 없음), `update.insecure_skip_verify` 를 원격 업데이트 다운로드(Checker/Downloader)에 연결(Ed25519 검증 유지). 채널 불일치/자산 누락 시 구체적 진단 메시지.
+  - **배포(systemd)**: 자가 업데이트가 설치 디렉토리에 새 바이너리를 원자 교체하므로 `ReadWritePaths=/opt/xflow` 필요(`/opt/xflow/data` 만으로는 `read-only file system` 실패).
+  - **관련**: SPEC-UPDATE-001 v0.2.0(M15~M18).
+
+### 수정 — 원격 자가 업데이트 빌드/업로드 정합성
+
+- **버전 ldflag 대소문자 정정 (Non-breaking)**: 빌드 LDFLAGS 의 버전 주입 심볼을 코드 빌드 변수와 일치하는 `-X main.Version=$(VERSION)`(대문자 `Version`)로 정정. 불일치 시 노드 보고 버전이 기본값(`dev`)으로 떨어지던 문제를 해결 — 버전 표시·다운그레이드 방지·버전 이력 갱신의 전제(SPEC-UPDATE-001 M18).
+- **릴리스 자산 multipart 업로드 FormData 정정 (Non-breaking)**: 웹 admin 의 릴리스 자산 업로드를 axios FormData(multipart, os/arch/binary/signature 필드)로 전송하도록 정정해 `POST /remote/releases/{version}/assets` 와 정합(SPEC-REMOTE-001 REQ-O04).
+
 ### 추가 — Switch 노드 완성 (문자열 조건 라우팅 / first·all / default_port·드롭 / 동적 포트)
 
 - **Switch 노드를 에디터에서 사용 가능하도록 완성 (Non-breaking)**

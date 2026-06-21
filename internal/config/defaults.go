@@ -105,4 +105,8 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("remote_management.tls.key_file", "")
 	// require_secure 기본 false — 기존 동작 보존(REQ-N03). M6 보안 전송 강제 옵션.
 	v.SetDefault("remote_management.require_secure", false)
+
+	// insecure_skip_verify 기본 false — client 모드 wss 핸드셰이크의 TLS 인증서 검증을
+	// 건너뛸지(자체 서명 인증서/사설망 전용 옵트인). 기본 보안(검증 수행) 유지.
+	v.SetDefault("remote_management.insecure_skip_verify", false)
 }

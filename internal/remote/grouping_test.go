@@ -11,6 +11,7 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -280,4 +281,161 @@ func TestDeriveUptime(t *testing.T) {
 	up, ok = deriveUptime(5000, 1000)
 	assert.Equal(t, int64(0), up)
 	assert.True(t, ok)
+}
+
+// TestServer_RenameGroup 은 그룹 일괄 이름변경(영향 노드 수 + repo 반영)을 검증한다.
+func TestServer_RenameGroup(t *testing.T) {
+	srv, repo, _ := newGroupingServer(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "a", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "b", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "c", Status: RegStatusApproved, GroupName: "dev"}))
+
+	n, err := srv.RenameGroup(ctx, "prod", "production")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	a, _ := repo.Get(ctx, "a")
+	assert.Equal(t, "production", a.GroupName)
+	c, _ := repo.Get(ctx, "c")
+	assert.Equal(t, "dev", c.GroupName)
+}
+
+// TestServer_DeleteGroup 은 그룹 삭제(멤버를 "전체"로 이동)를 검증한다.
+func TestServer_DeleteGroup(t *testing.T) {
+	srv, repo, _ := newGroupingServer(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "a", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "b", Status: RegStatusApproved, GroupName: "prod"}))
+
+	n, err := srv.DeleteGroup(ctx, "prod")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	a, _ := repo.Get(ctx, "a")
+	assert.Empty(t, a.GroupName)
+}
+
+// TestServer_DispatchGroup_FiltersAndAggregates 는 DispatchGroup 이 그룹+승인 노드만
+// 대상으로 하고, 오프라인 노드를 부분 실패(Error)로 집계하는지 검증한다.
+func TestServer_DispatchGroup_FiltersAndAggregates(t *testing.T) {
+	srv, repo, _ := newGroupingServer(t)
+	ctx := context.Background()
+	// 승인 + prod (라이브 연결 없음 → 디스패치 시 오프라인/미관리 오류).
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "p1", Status: RegStatusApproved, GroupName: "prod"}))
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "p2", Status: RegStatusApproved, GroupName: "prod"}))
+	// 미승인 prod → 건너뜀.
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "pending1", Status: RegStatusPending, GroupName: "prod"}))
+	// 다른 그룹 → 대상 아님.
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{InstanceID: "d1", Status: RegStatusApproved, GroupName: "dev"}))
+
+	results, err := srv.DispatchGroup(ctx, "prod", "system", "update", nil)
+	require.NoError(t, err)
+	// 승인 prod 2개만 결과에 포함(미승인/타그룹 제외).
+	require.Len(t, results, 2)
+	ids := map[string]bool{}
+	for _, r := range results {
+		ids[r.InstanceID] = true
+		assert.False(t, r.OK, "라이브 연결 없으므로 오프라인 실패")
+		assert.NotEmpty(t, r.Error)
+	}
+	assert.True(t, ids["p1"] && ids["p2"])
+	assert.False(t, ids["pending1"])
+	assert.False(t, ids["d1"])
+}
+
+// TestServer_DispatchGroupUpdate_PerArchTargetVersion 는 아키텍처-aware 그룹 업데이트가
+// 각 노드의 보고된 OS/Arch 로 노드별 TargetVersion 을 해석해 디스패치하는지, 그리고
+// 미매핑 아키텍처(RequireMapping=true)는 디스패치하지 않고 Error 결과로 건너뛰는지를
+// 검증한다. 디스패치된 command 의 args(SystemUpdateArgs)를 라이브 conn 에서 캡처한다.
+func TestServer_DispatchGroupUpdate_PerArchTargetVersion(t *testing.T) {
+	repo := newMemManagedNodeRepo()
+	issuer := newFakeTokenIssuer()
+	srv := NewServer(ServerConfig{
+		Repo:           repo,
+		TokenIssuer:    issuer,
+		CommandTimeout: 500 * time.Millisecond,
+	}, nil)
+	ctx := context.Background()
+
+	// 라이브 노드 1개를 승인+온라인 상태로 연결하는 헬퍼(보고 OS/Arch 주입).
+	connect := func(instanceID, goos, arch string) *fakeConn {
+		require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{
+			InstanceID: instanceID, Status: RegStatusApproved, GroupName: "prod",
+			OS: goos, Arch: arch,
+		}))
+		token, _ := issuer.Issue(instanceID, "node")
+		require.NoError(t, repo.SetToken(ctx, instanceID, token))
+		conn := newFakeConn()
+		cctx, cancel := context.WithCancel(ctx)
+		t.Cleanup(cancel)
+		go func() { _ = srv.HandleConnectionAuth(cctx, conn, instanceID) }()
+		require.Eventually(t, func() bool { return srv.IsManaged(instanceID) },
+			time.Second, 5*time.Millisecond)
+		return conn
+	}
+
+	amdConn := connect("amd1", "linux", "amd64")
+	armConn := connect("arm1", "linux", "arm64")
+	// 미매핑 아키텍처(linux/arm) — RequireMapping=true 이면 건너뛴다(디스패치 안 함).
+	require.NoError(t, repo.Upsert(ctx, storage.ManagedNode{
+		InstanceID: "rpi1", Status: RegStatusApproved, GroupName: "prod",
+		OS: "linux", Arch: "arm",
+	}))
+
+	plan := GroupUpdatePlan{
+		Channel: "stable",
+		VersionByArch: map[string]string{
+			"linux/amd64": "v2.0.0",
+			"linux/arm64": "v1.5.0",
+		},
+		RequireMapping: true,
+	}
+
+	// 디스패치는 결과 수신까지 블록되므로 goroutine 에서 실행한다.
+	resCh := make(chan []GroupDispatchResult, 1)
+	go func() {
+		r, derr := srv.DispatchGroupUpdate(ctx, "prod", plan)
+		require.NoError(t, derr)
+		resCh <- r
+	}()
+
+	// 각 라이브 노드가 받은 command 의 TargetVersion 을 캡처하고 결과를 주입한다.
+	expectVersion := func(conn *fakeConn, wantVersion string) {
+		cmd := readDispatchedCommand(t, conn)
+		assert.Equal(t, DomainSystem, cmd.Domain)
+		assert.Equal(t, ActionSystemUpdate, cmd.Action)
+		var args SystemUpdateArgs
+		require.NoError(t, json.Unmarshal(cmd.Args, &args))
+		assert.Equal(t, wantVersion, args.TargetVersion, "노드별 타깃 버전이 아키텍처 매핑과 일치해야 함")
+		ack, _ := NewCommandResultMessage(CommandResultPayload{
+			CommandID: cmd.CommandID, OK: true, Result: json.RawMessage(`{}`),
+		})
+		conn.inject(t, ack)
+	}
+	expectVersion(amdConn, "v2.0.0")
+	expectVersion(armConn, "v1.5.0")
+
+	var results []GroupDispatchResult
+	select {
+	case results = <-resCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("DispatchGroupUpdate 완료 타임아웃")
+	}
+
+	byID := map[string]GroupDispatchResult{}
+	for _, r := range results {
+		byID[r.InstanceID] = r
+	}
+	require.Len(t, results, 3, "승인 prod 멤버 3개 모두 결과에 포함(건너뜀 포함)")
+	assert.True(t, byID["amd1"].OK)
+	assert.True(t, byID["arm1"].OK)
+	// 미매핑 노드는 디스패치 없이 Error 로 건너뛴다.
+	assert.False(t, byID["rpi1"].OK)
+	assert.Contains(t, byID["rpi1"].Error, "linux/arm", "미매핑 아키텍처는 명시적 에러로 건너뜀")
+}
+
+// TestServer_DispatchGroupUpdate_NoRepo 는 repo 미구성(M1 모드)에서 ErrNoRepo 를 반환하는지 검증한다.
+func TestServer_DispatchGroupUpdate_NoRepo(t *testing.T) {
+	srv := NewServer(ServerConfig{}, nil)
+	_, err := srv.DispatchGroupUpdate(context.Background(), "prod", GroupUpdatePlan{})
+	assert.ErrorIs(t, err, ErrNoRepo)
 }

@@ -55,6 +55,9 @@ type Applier struct {
 	Flow   DomainCommander
 	Agent  DomainCommander
 	Device DomainCommander
+	// System 은 노드 자체 운영 명령(예: system/update 자가 업데이트) 도메인이다(버전
+	// 관리 Phase 2). nil 이면 system 도메인 명령은 ErrApplierUnavailable 로 거부된다.
+	System DomainCommander
 }
 
 var _ CommandApplier = (*Applier)(nil)
@@ -62,6 +65,13 @@ var _ CommandApplier = (*Applier)(nil)
 // NewApplier 는 도메인 commander 를 바인딩한 Applier 를 생성한다.
 func NewApplier(flow, agent, device DomainCommander) *Applier {
 	return &Applier{Flow: flow, Agent: agent, Device: device}
+}
+
+// WithSystem 은 system 도메인 commander 를 바인딩한다(버전 관리 Phase 2, chainable).
+// 주입하지 않으면 system 도메인 명령은 거부된다(자가 업데이트 미지원 노드 보호).
+func (a *Applier) WithSystem(system DomainCommander) *Applier {
+	a.System = system
+	return a
 }
 
 // Apply 는 domain 에 따라 적절한 DomainCommander 로 라우팅한다(REQ-D02/D03/D04).
@@ -91,6 +101,11 @@ func (a *Applier) commanderFor(domain string) (DomainCommander, error) {
 			return nil, fmt.Errorf("%w: %s", ErrApplierUnavailable, domain)
 		}
 		return a.Device, nil
+	case DomainSystem:
+		if a.System == nil {
+			return nil, fmt.Errorf("%w: %s", ErrApplierUnavailable, domain)
+		}
+		return a.System, nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownDomain, domain)
 	}

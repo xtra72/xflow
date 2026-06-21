@@ -68,6 +68,159 @@ func (s *Server) ListGroups(ctx context.Context) ([]storage.NodeGroupCount, erro
 	return s.repo.ListGroups(ctx)
 }
 
+// GroupDispatchResult 는 그룹 일괄 명령/업데이트의 노드별 결과이다(그룹 관리).
+// 부분 성공을 허용하므로 노드마다 OK/Error 를 개별 보고한다.
+type GroupDispatchResult struct {
+	InstanceID string          `json:"instance_id"`
+	OK         bool            `json:"ok"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      string          `json:"error,omitempty"`
+}
+
+// RenameGroup 은 oldName 그룹의 모든 노드 group_name 을 newName 으로 일괄 변경한다(그룹 관리).
+// 영향받은 노드 수를 반환한다(0 이면 해당 그룹 없음). repo 미구성 시 ErrNoRepo.
+func (s *Server) RenameGroup(ctx context.Context, oldName, newName string) (int, error) {
+	if s.repo == nil {
+		return 0, ErrNoRepo
+	}
+	n, err := s.repo.RenameGroup(ctx, oldName, newName)
+	if err != nil {
+		return 0, err
+	}
+	s.logger.Info("관리 노드 그룹 이름변경", "from", oldName, "to", newName, "moved", n)
+	return n, nil
+}
+
+// DeleteGroup 은 groupName 그룹을 삭제하여 멤버를 "전체" 버킷으로 이동한다(그룹 관리).
+// 영향받은 노드 수를 반환한다(0 이면 해당 그룹 없음). repo 미구성 시 ErrNoRepo.
+func (s *Server) DeleteGroup(ctx context.Context, groupName string) (int, error) {
+	if s.repo == nil {
+		return 0, ErrNoRepo
+	}
+	n, err := s.repo.DeleteGroup(ctx, groupName)
+	if err != nil {
+		return 0, err
+	}
+	s.logger.Info("관리 노드 그룹 삭제", "group", groupName, "moved", n)
+	return n, nil
+}
+
+// DispatchGroup 은 groupName 그룹 내 승인 노드 전체에 명령을 디스패치하고 노드별 결과를
+// 모은다(그룹 일괄 명령/업데이트). 오프라인/적용 실패 노드는 해당 결과의 Error 로 보고되어
+// 부분 성공을 허용한다(미승인 노드는 그룹 대상이 아니므로 건너뛴다). repo 미구성 시 ErrNoRepo.
+func (s *Server) DispatchGroup(
+	ctx context.Context,
+	groupName, domain, action string,
+	args json.RawMessage,
+) ([]GroupDispatchResult, error) {
+	if s.repo == nil {
+		return nil, ErrNoRepo
+	}
+	nodes, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]GroupDispatchResult, 0)
+	for _, n := range nodes {
+		if n.GroupName != groupName || n.Status != RegStatusApproved {
+			continue
+		}
+		r := GroupDispatchResult{InstanceID: n.InstanceID}
+		res, derr := s.Dispatch(ctx, n.InstanceID, domain, action, args)
+		if derr != nil {
+			r.Error = derr.Error()
+		} else {
+			r.OK = true
+			r.Result = res
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+// GroupUpdatePlan 은 그룹 일괄 업데이트의 노드별 타깃 버전 해석 정책이다.
+//
+// 노드는 변경하지 않고 기존 remote.SystemUpdateArgs.TargetVersion 을 재사용한다. 서버가
+// 각 멤버의 보고된 OS/Arch("os/arch")로 VersionByArch 를 조회해 노드별 타깃 버전을
+// 결정하고, 미매핑 슬롯은 RequireMapping 정책에 따라 건너뛰거나 DefaultVersion 으로 폴백한다.
+type GroupUpdatePlan struct {
+	Channel        string
+	UpdateURL      string
+	Restart        bool
+	VersionByArch  map[string]string // "os/arch" → target version(우선). 빈 맵 가능.
+	DefaultVersion string            // VersionByArch 에 없을 때 사용(빈 문자열 허용 = 채널 최신).
+	RequireMapping bool              // true: arch 가 VersionByArch 에 없으면 노드 건너뜀(Default 미사용).
+}
+
+// DispatchGroupUpdate 은 groupName 그룹 내 승인 노드 전체에 아키텍처-aware 한 system/update
+// 를 디스패치하고 노드별 결과를 모은다(아키텍처/OS-aware 그룹 일괄 업데이트). DispatchGroup
+// 의 멤버 순회/필터링(그룹 일치 + 승인)을 그대로 따르되, 각 노드의 보고된 OS/Arch 로
+// plan.VersionByArch 를 조회해 노드별 TargetVersion 을 해석한다.
+//
+// 해석 규칙(노드별):
+//   - key = n.OS + "/" + n.Arch.
+//   - VersionByArch[key] 가 있으면 그 버전을 타깃으로 한다.
+//   - 없을 때 RequireMapping 이면 해당 노드를 디스패치하지 않고 Error 결과로 건너뛴다
+//     (부분 성공 — 다른 아키텍처는 계속 진행). RequireMapping 이 아니면 DefaultVersion 을
+//     사용한다(빈 문자열 = 채널 최신).
+//
+// 결과 집계는 DispatchGroup 과 동일하다(OK+Result 또는 Error). repo 미구성 시 ErrNoRepo.
+func (s *Server) DispatchGroupUpdate(
+	ctx context.Context,
+	groupName string,
+	plan GroupUpdatePlan,
+) ([]GroupDispatchResult, error) {
+	if s.repo == nil {
+		return nil, ErrNoRepo
+	}
+	nodes, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]GroupDispatchResult, 0)
+	for _, n := range nodes {
+		if n.GroupName != groupName || n.Status != RegStatusApproved {
+			continue
+		}
+		r := GroupDispatchResult{InstanceID: n.InstanceID}
+
+		// 노드별 타깃 버전 해석: 보고된 OS/Arch 슬롯으로 매핑을 조회한다.
+		key := n.OS + "/" + n.Arch
+		ver, ok := plan.VersionByArch[key]
+		if !ok {
+			if plan.RequireMapping {
+				// 미매핑 슬롯은 건너뛴다(Default 미사용 — 부분 성공으로 보고).
+				r.Error = "해당 아키텍처(" + key + ") 대상 버전 없음 — 건너뜀"
+				results = append(results, r)
+				continue
+			}
+			ver = plan.DefaultVersion
+		}
+
+		args, merr := json.Marshal(SystemUpdateArgs{
+			TargetVersion: ver,
+			Channel:       plan.Channel,
+			UpdateURL:     plan.UpdateURL,
+			Restart:       plan.Restart,
+		})
+		if merr != nil {
+			r.Error = merr.Error()
+			results = append(results, r)
+			continue
+		}
+
+		res, derr := s.Dispatch(ctx, n.InstanceID, DomainSystem, ActionSystemUpdate, args)
+		if derr != nil {
+			r.Error = derr.Error()
+		} else {
+			r.OK = true
+			r.Result = res
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
 // NodeSummary 는 노드별 운영 요약을 미러에서 파생해 반환한다(REQ-K10/A15). 노드 존재를
 // 먼저 검증하고(미존재 → ErrManagedNodeNotFound), 미러 집계로 요약을 산출한다(오프라인
 // 시에도 last-known 미러 제공 — REQ-E06). mirror 미구성 시 0 요약을 반환한다.

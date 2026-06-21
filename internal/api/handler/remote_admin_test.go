@@ -22,15 +22,25 @@ import (
 
 // fakeNodeAdmin 은 NodeAdminService 의 테스트 구현이다.
 type fakeNodeAdmin struct {
-	nodes          map[string]storage.ManagedNode
-	approved       []string
-	rejected       []string
-	revoked        []string
-	getErr         error
-	dispatched     []string // domain/action 기록
-	dispatchResult json.RawMessage
-	dispatchErr    error
-	mirror         *mirrorStore // M4 미러 목록(노드 push 로만 변경 — E08)
+	nodes            map[string]storage.ManagedNode
+	approved         []string
+	rejected         []string
+	revoked          []string
+	getErr           error
+	dispatched       []string // domain/action 기록
+	dispatchResult   json.RawMessage
+	dispatchErr      error
+	mirror           *mirrorStore                            // M4 미러 목록(노드 push 로만 변경 — E08)
+	versionHistory   map[string][]storage.NodeVersionHistory // 버전 관리 Phase 1
+	lastDispatchArgs json.RawMessage                         // 마지막 Dispatch args(테스트 검증용)
+}
+
+func (f *fakeNodeAdmin) NodeVersionHistory(_ context.Context, instanceID string, limit int) ([]storage.NodeVersionHistory, error) {
+	hist := f.versionHistory[instanceID]
+	if limit > 0 && len(hist) > limit {
+		return hist[:limit], nil
+	}
+	return hist, nil
 }
 
 func newFakeNodeAdmin() *fakeNodeAdmin {
@@ -69,11 +79,12 @@ func (f *fakeNodeAdmin) Revoke(_ context.Context, instanceID string) error {
 	return nil
 }
 
-func (f *fakeNodeAdmin) Dispatch(_ context.Context, _, domain, action string, _ json.RawMessage) (json.RawMessage, error) {
+func (f *fakeNodeAdmin) Dispatch(_ context.Context, _, domain, action string, args json.RawMessage) (json.RawMessage, error) {
 	if f.dispatchErr != nil {
 		return nil, f.dispatchErr
 	}
 	f.dispatched = append(f.dispatched, domain+"/"+action)
+	f.lastDispatchArgs = args
 	return f.dispatchResult, nil
 }
 
@@ -229,6 +240,9 @@ func (erroringAdmin) Approve(context.Context, string) error        { return erro
 func (erroringAdmin) Reject(context.Context, string, string) error { return errors.New("boom") }
 func (erroringAdmin) Revoke(context.Context, string) error         { return errors.New("boom") }
 func (erroringAdmin) Dispatch(context.Context, string, string, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errors.New("boom")
+}
+func (erroringAdmin) NodeVersionHistory(context.Context, string, int) ([]storage.NodeVersionHistory, error) {
 	return nil, errors.New("boom")
 }
 

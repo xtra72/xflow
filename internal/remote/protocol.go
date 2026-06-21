@@ -245,7 +245,40 @@ const (
 	DomainAgent = "agent"
 	// DomainDevice 는 IoT 디바이스 메타데이터 명령 도메인이다(device 서비스 적용, REQ-D04).
 	DomainDevice = "device"
+	// DomainSystem 은 노드 자체 운영 명령 도메인이다(버전 관리 Phase 2 — 자가 업데이트).
+	// 자원(flow/agent/device)이 아닌 노드 프로세스 수준 동작을 다룬다.
+	DomainSystem = "system"
 )
+
+// 원격 system 도메인 action 상수 (버전 관리 Phase 2).
+const (
+	// ActionSystemUpdate 는 노드 자가 업데이트 action 이다. args 는 SystemUpdateArgs.
+	ActionSystemUpdate = "update"
+)
+
+// SystemUpdateArgs 는 system/update 명령의 args 스키마이다(버전 관리 Phase 2).
+type SystemUpdateArgs struct {
+	// TargetVersion 은 적용할 목표 버전(vMAJOR.MINOR.PATCH)이다. 비면 채널 최신.
+	TargetVersion string `json:"target_version,omitempty"`
+	// Channel 은 릴리스 채널(stable/beta/nightly)이다. 비면 노드 기본 채널.
+	Channel string `json:"channel,omitempty"`
+	// UpdateURL 은 다운로드 소스(릴리스 API 베이스 URL) 오버라이드다. 관리 서버가
+	// 저장한 소스를 주입한다. 비면 노드 로컬 설정(update.update_url)을 사용한다. 공개키는
+	// 절대 전달하지 않는다 — 노드가 자기 로컬 공개키로 서명을 검증한다(무결성 보장).
+	UpdateURL string `json:"update_url,omitempty"`
+	// Restart 가 true 면 바이너리 교체 성공 후 결과 전송 후 graceful 재시작을 수행한다.
+	// 기본 false: 교체만 하고 restart_required=true 를 반환한다(운영 측 재시작 위임).
+	Restart bool `json:"restart,omitempty"`
+}
+
+// SystemUpdateResult 는 system/update 명령의 결과 스키마이다.
+type SystemUpdateResult struct {
+	NewVersion      string `json:"new_version"`
+	BackupPath      string `json:"backup_path,omitempty"`
+	AppliedAtMs     int64  `json:"applied_at_ms"`
+	RestartRequired bool   `json:"restart_required"`
+	Restarting      bool   `json:"restarting"`
+}
 
 // 원격 명령 action 상수 (spec §5.1 command.action, v1.2 그룹 I — REQ-I01~I06).
 //

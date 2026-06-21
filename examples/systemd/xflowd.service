@@ -1,0 +1,51 @@
+# xflowd systemd 유닛 (원격 자가 업데이트 자동 롤백 연동)
+#
+# 설치:
+#   sudo cp examples/systemd/xflowd.service /etc/systemd/system/xflowd.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now xflowd
+#
+# 자동 롤백과의 관계(버전 관리 Phase 2):
+#   - xflowd 는 원격 업데이트 후 부팅 시 <binary>.update-state 를 보고 로컬 /health 를
+#     폴링해 자가 검증한다. 정상이면 통과, 비정상이면 자동 롤백(.previous 복원 + 재시작).
+#   - 새 바이너리가 health 서버 기동 *전* 즉시 크래시하면 자가 검증 고루틴도 함께 죽는다.
+#     이때 systemd 의 Restart=on-failure 가 프로세스를 다시 띄우면, 다음 부팅에서
+#     update-state 의 boot_attempts 가 누적되어 임계(기본 2) 초과 시 자동 롤백된다.
+#   - 즉, "기동 후 비정상"은 xflowd 단독으로, "기동 전 크래시"는 systemd 재시작 + 부팅
+#     카운터 조합으로 복구된다.
+
+[Unit]
+Description=xflow daemon (xflowd)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 운영 사용자/그룹(설치 환경에 맞게 조정).
+User=xflow
+Group=xflow
+
+# 실행 파일 경로(원격 업데이트가 이 바이너리를 교체한다). 절대경로 권장.
+ExecStart=/usr/local/bin/xflowd --config /etc/xflow/xflowd.yaml
+
+# 크래시(비정상 종료) 시 재시작 — 자동 롤백 부팅 카운터가 동작하려면 필수.
+Restart=on-failure
+RestartSec=3s
+
+# 재시작 폭주 방지하되, 부팅 카운터가 임계(기본 2회)에 도달할 만큼은 허용한다.
+# 60초 내 5회까지 재시작 허용(그 안에서 boot_attempts 가 누적되어 롤백이 트리거된다).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# graceful 종료(in-flight drain) 여유.
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+
+# 기본 보안 하드닝(환경에 맞게 조정 — 시리얼 장치 접근 시 DeviceAllow 등 추가 필요).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

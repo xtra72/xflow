@@ -42,18 +42,18 @@ COPY . .
 # CGO_ENABLED=0: 정적 바이너리 (distroless static 호환)
 # -trimpath: 재현 가능 빌드 (절대 경로 제거)
 # -s -w: 디버그 심볼/심볼 테이블 제거 (바이너리 크기 축소)
-# -X main.version=...: 버전 문자열 주입
+# -X main.Version=...: 버전 문자열 주입
 RUN CGO_ENABLED=0 go build \
     -trimpath \
-    -ldflags "-s -w -X main.version=${VERSION}" \
+    -ldflags "-s -w -X main.Version=${VERSION}" \
     -o /out/xflowd ./cmd/xflowd \
  && CGO_ENABLED=0 go build \
     -trimpath \
-    -ldflags "-s -w -X main.version=${VERSION}" \
+    -ldflags "-s -w -X main.Version=${VERSION}" \
     -o /out/xflow ./cmd/xflow \
  && CGO_ENABLED=0 go build \
     -trimpath \
-    -ldflags "-s -w -X main.version=${VERSION}" \
+    -ldflags "-s -w -X main.Version=${VERSION}" \
     -o /out/xflow-agent ./cmd/xflow-agent
 
 # ============================================================================

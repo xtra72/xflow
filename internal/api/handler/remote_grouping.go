@@ -19,12 +19,15 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/remote"
 	"github.com/xtra/xflow/internal/storage"
+	"github.com/xtra/xflow/internal/updater"
 )
 
 // NodeGroupingService 는 노드 그룹핑 + 상세 오케스트레이션을 추상화한다(*remote.Server
@@ -47,6 +50,18 @@ type NodeGroupingService interface {
 	// ClearNodeDisplayOverride 는 해상도 오버라이드를 해제한다(effective=노드 보고값 폴백).
 	// 미존재 시 storage.ErrManagedNodeNotFound.
 	ClearNodeDisplayOverride(ctx context.Context, instanceID string) error
+
+	// --- 그룹 관리(일괄) ---
+
+	// RenameGroup 은 oldName 그룹의 모든 노드를 newName 으로 일괄 이름변경한다(영향 노드 수).
+	RenameGroup(ctx context.Context, oldName, newName string) (int, error)
+	// DeleteGroup 은 groupName 그룹을 삭제하여 멤버를 "전체"로 이동한다(영향 노드 수).
+	DeleteGroup(ctx context.Context, groupName string) (int, error)
+	// DispatchGroup 은 그룹 내 승인 노드 전체에 명령을 디스패치하고 노드별 결과를 모은다.
+	DispatchGroup(ctx context.Context, groupName, domain, action string, args json.RawMessage) ([]remote.GroupDispatchResult, error)
+	// DispatchGroupUpdate 은 그룹 내 승인 노드에 아키텍처-aware 한 system/update 를 디스패치한다.
+	// 각 노드의 보고된 OS/Arch 로 plan.VersionByArch 를 조회해 노드별 TargetVersion 을 해석한다.
+	DispatchGroupUpdate(ctx context.Context, groupName string, plan remote.GroupUpdatePlan) ([]remote.GroupDispatchResult, error)
 }
 
 // setGroupRequest 는 그룹 배정 요청 본문이다(PUT .../group).
@@ -122,12 +137,28 @@ type NodeDetailDTO struct {
 
 // RemoteGroupingHandler 는 노드 그룹핑 + 상세 엔드포인트를 처리한다.
 type RemoteGroupingHandler struct {
-	svc NodeGroupingService
+	svc      NodeGroupingService
+	settings storage.SettingsRepository // 업데이트 소스(update_url/채널) 주입용(선택).
+	releases *storage.ReleaseRepository // 아키텍처-aware 그룹 업데이트의 버전 해석용(선택).
 }
 
 // NewRemoteGroupingHandler 는 RemoteGroupingHandler 를 생성한다.
 func NewRemoteGroupingHandler(svc NodeGroupingService) *RemoteGroupingHandler {
 	return &RemoteGroupingHandler{svc: svc}
+}
+
+// WithSettings 는 전역 설정 저장소를 연결한다(그룹 일괄 업데이트에 서버 저장 update_url/
+// 채널을 주입). nil 이면 노드 로컬 설정으로 폴백한다.
+func (h *RemoteGroupingHandler) WithSettings(settings storage.SettingsRepository) *RemoteGroupingHandler {
+	h.settings = settings
+	return h
+}
+
+// WithReleases 는 릴리즈 저장소를 연결한다(strategy=latest/per_arch 의 노드별 버전 해석에
+// 사용). nil 이면 strategy=latest/per_arch 요청이 400 으로 거부된다(strategy=pin 은 무관).
+func (h *RemoteGroupingHandler) WithReleases(releases *storage.ReleaseRepository) *RemoteGroupingHandler {
+	h.releases = releases
+	return h
 }
 
 // RegisterRoutes 는 그룹핑 + 상세 라우트를 그룹에 등록한다(remote_admin 의 라우트와 공존).
@@ -140,6 +171,239 @@ func (h *RemoteGroupingHandler) RegisterRoutes(g *api.RouteGroup) {
 	// 2-세그먼트 패턴이라 GET .../{id}(단일 세그먼트)·.../flows 등과 충돌하지 않는다.
 	g.PUT("/remote/nodes/{instance_id}/display", h.SetDisplayOverride)
 	g.DELETE("/remote/nodes/{instance_id}/display", h.ClearDisplayOverride)
+
+	// 그룹 관리(일괄): 이름변경/삭제 + 그룹 단위 업데이트/명령. {group_name} 단일 세그먼트는
+	// 리터럴 GET /remote/groups 와 충돌하지 않는다.
+	g.PUT("/remote/groups/{group_name}", h.RenameGroup)
+	g.DELETE("/remote/groups/{group_name}", h.DeleteGroup)
+	g.POST("/remote/groups/{group_name}/update", h.UpdateGroup)
+	g.POST("/remote/groups/{group_name}/command", h.CommandGroup)
+}
+
+// renameGroupRequest 는 그룹 이름변경 요청 본문이다(PUT /remote/groups/{name}).
+type renameGroupRequest struct {
+	NewName string `json:"new_name"`
+}
+
+// groupUpdateRequest 는 그룹 일괄 업데이트 요청 본문이다(POST /remote/groups/{name}/update).
+//
+// 하위 호환: strategy 가 비면 기존 동작(pin — 단일 version 을 전 멤버에 동일 적용,
+// version 이 비면 채널 최신)을 유지한다. strategy 로 아키텍처-aware 해석을 선택할 수 있다.
+type groupUpdateRequest struct {
+	Version       string            `json:"version"`            // 단일 버전 고정(기존). strategy 빈 값일 때 사용.
+	Strategy      string            `json:"strategy,omitempty"` // "latest" | "pin" | "per_arch"; 빈 값 = pin(기존 동작)
+	Channel       string            `json:"channel,omitempty"`
+	Restart       bool              `json:"restart,omitempty"`
+	VersionByArch map[string]string `json:"version_by_arch,omitempty"` // per_arch 모드: "os/arch"→version
+}
+
+// groupCommandRequest 는 그룹 일괄 명령 요청 본문이다(POST /remote/groups/{name}/command).
+type groupCommandRequest struct {
+	Domain string          `json:"domain"`
+	Action string          `json:"action"`
+	Args   json.RawMessage `json:"args,omitempty"`
+}
+
+// RenameGroup 은 그룹을 일괄 이름변경한다. PUT /remote/groups/{group_name} {new_name}
+func (h *RemoteGroupingHandler) RenameGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	old := strings.TrimSpace(ctx.Param("group_name"))
+	if old == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	var req renameGroupRequest
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("new_name 본문이 올바르지 않습니다")
+	}
+	newName := strings.TrimSpace(req.NewName)
+	if newName == "" {
+		return api.ErrBadRequest.WithMessage("new_name 은 비어 있을 수 없습니다")
+	}
+	moved, err := h.svc.RenameGroup(ctx.Context(), old, newName)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"group_name": newName,
+		"moved":      moved,
+	}))
+}
+
+// DeleteGroup 은 그룹을 삭제하여 멤버를 "전체"로 이동한다. DELETE /remote/groups/{group_name}
+func (h *RemoteGroupingHandler) DeleteGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(ctx.Param("group_name"))
+	if name == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	moved, err := h.svc.DeleteGroup(ctx.Context(), name)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{"moved": moved}))
+}
+
+// UpdateGroup 은 그룹 내 승인·온라인 노드를 일괄 원격 업데이트한다(아키텍처/OS-aware 그룹 확장).
+// POST /remote/groups/{group_name}/update {version?, strategy?, channel?, restart?, version_by_arch?}
+//
+// strategy 로 노드별 타깃 버전 해석 정책을 선택한다(하위 호환 — 빈 값 = pin):
+//   - ""|"pin": 단일 version 을 전 멤버에 동일 적용(version 이 비면 채널 최신). 기존 동작.
+//   - "latest": 릴리즈 저장소에서 채널별 (os,arch) 슬롯 최신 버전을 해석해 노드별 적용.
+//   - "per_arch": 요청의 version_by_arch("os/arch"→version) 맵을 그대로 적용(각 값 검증).
+//
+// latest/per_arch 는 미매핑 아키텍처를 건너뛴다(RequireMapping=true — 부분 성공).
+func (h *RemoteGroupingHandler) UpdateGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(ctx.Param("group_name"))
+	if name == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	var req groupUpdateRequest
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("요청 본문 파싱 실패")
+	}
+	// 서버 저장 소스(update_url/채널)를 주입한다(요청이 명시하면 우선).
+	srcURL, srcChannel := resolveUpdateSource(ctx.Context(), h.settings)
+	channel := req.Channel
+	if channel == "" {
+		channel = srcChannel
+	}
+
+	plan, err := h.buildGroupUpdatePlan(ctx.Context(), req, channel, srcURL)
+	if err != nil {
+		return err // 이미 api.ErrBadRequest 등으로 매핑됨.
+	}
+
+	dctx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
+	results, err := h.svc.DispatchGroupUpdate(dctx, name, plan)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"group_name": name,
+		"results":    results,
+	}))
+}
+
+// buildGroupUpdatePlan 은 요청의 strategy 에 따라 remote.GroupUpdatePlan 을 구성한다.
+// channel/updateURL 은 호출자가 이미 서버 소스 폴백을 해석해 전달한다(요청 우선).
+// 검증 실패는 api.ErrBadRequest 류로 즉시 반환한다(디스패치 전 차단).
+func (h *RemoteGroupingHandler) buildGroupUpdatePlan(
+	ctx context.Context,
+	req groupUpdateRequest,
+	channel, updateURL string,
+) (remote.GroupUpdatePlan, error) {
+	base := remote.GroupUpdatePlan{
+		Channel:   channel,
+		UpdateURL: updateURL,
+		Restart:   req.Restart,
+	}
+
+	switch req.Strategy {
+	case "", "pin":
+		// 기존 동작: 단일 version 을 전 멤버에 동일 적용(version 이 비면 채널 최신).
+		if req.Version != "" && !updater.Version(req.Version).IsValid() {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("version 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
+		}
+		base.DefaultVersion = req.Version
+		base.RequireMapping = false
+		return base, nil
+
+	case "latest":
+		// 채널별 (os,arch) 슬롯 최신 버전을 릴리즈 저장소에서 해석한다.
+		if h.releases == nil {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("릴리스 저장소가 구성되지 않았습니다")
+		}
+		// 해석 채널: 요청/소스 채널 우선, 둘 다 비면 stable.
+		resolveChannel := channel
+		if resolveChannel == "" {
+			resolveChannel = "stable"
+		}
+		vmap, err := h.releases.LatestVersionByArch(ctx, resolveChannel)
+		if err != nil {
+			return remote.GroupUpdatePlan{}, mapRemoteAdminError(err)
+		}
+		base.VersionByArch = vmap
+		base.RequireMapping = true
+		return base, nil
+
+	case "per_arch":
+		// 요청의 명시 맵을 적용한다. 각 값은 유효 semver 이며 그 버전이 해당 os/arch
+		// asset 을 실제로 보유해야 한다(없으면 잘못된 키로 400).
+		if h.releases == nil {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("릴리스 저장소가 구성되지 않았습니다")
+		}
+		if len(req.VersionByArch) == 0 {
+			return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("per_arch 전략은 version_by_arch 가 비어 있을 수 없습니다")
+		}
+		for key, version := range req.VersionByArch {
+			if !updater.Version(version).IsValid() {
+				return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("version_by_arch[" + key + "] 은 vMAJOR.MINOR.PATCH 형식이어야 합니다")
+			}
+			if !h.assetExistsForKey(ctx, version, key) {
+				return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("version_by_arch[" + key + "]: 버전 " + version + " 에 해당 아키텍처 asset 이 없습니다")
+			}
+		}
+		base.VersionByArch = req.VersionByArch
+		base.RequireMapping = true
+		return base, nil
+
+	default:
+		return remote.GroupUpdatePlan{}, api.ErrBadRequest.WithMessage("알 수 없는 strategy 입니다(pin|latest|per_arch)")
+	}
+}
+
+// assetExistsForKey 는 version 릴리즈가 "os/arch" 키에 해당하는 asset 을 보유하는지 확인한다.
+// 릴리즈/asset 미존재는 false(잘못된 매핑)로 취급한다.
+func (h *RemoteGroupingHandler) assetExistsForKey(ctx context.Context, version, key string) bool {
+	osArch := strings.SplitN(key, "/", 2)
+	if len(osArch) != 2 || osArch[0] == "" || osArch[1] == "" {
+		return false
+	}
+	rec, err := h.releases.GetRelease(ctx, version)
+	if err != nil {
+		return false
+	}
+	for _, a := range rec.Assets {
+		if a.OS == osArch[0] && a.Arch == osArch[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// CommandGroup 은 그룹 내 승인·온라인 노드에 임의 명령을 일괄 디스패치한다.
+// POST /remote/groups/{group_name}/command {domain, action, args?}
+func (h *RemoteGroupingHandler) CommandGroup(ctx api.Context) error {
+	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(ctx.Param("group_name"))
+	if name == "" {
+		return api.ErrBadRequest.WithMessage("그룹 이름이 필요합니다")
+	}
+	var req groupCommandRequest
+	if err := ctx.Bind(&req); err != nil {
+		return api.ErrBadRequest.WithMessage("요청 본문 파싱 실패")
+	}
+	if req.Domain == "" || req.Action == "" {
+		return api.ErrBadRequest.WithMessage("domain 과 action 은 필수입니다")
+	}
+	dctx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
+	results, err := h.svc.DispatchGroup(dctx, name, req.Domain, req.Action, req.Args)
+	if err != nil {
+		return mapRemoteAdminError(err)
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"group_name": name,
+		"results":    results,
+	}))
 }
 
 // SetGroup 은 노드의 그룹을 배정/변경한다(REQ-K02). PUT /remote/nodes/{instance_id}/group
