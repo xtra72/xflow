@@ -23,6 +23,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { ChannelChangeDialog } from '@/components/system/ChannelChangeDialog';
+import { SystemInfoCard } from '@/components/system/SystemInfoCard';
+import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import { SystemVersionCard } from '@/components/system/SystemVersionCard';
 import { UpdateDialog } from '@/components/system/UpdateDialog';
 import { useAuth } from '@/hooks/useAuth';
@@ -129,6 +131,24 @@ export function SystemStatusPage() {
           currentChannel={versionQuery.data.channel}
         />
       ) : null}
+
+      {/* SPEC-WEB-007 (M2, M3, M7, M8) — 시스템 정보 영역.
+          SystemInfoCard(Identity) 와 SystemRuntimeCard(Runtime) 는 각자 별도
+          query 를 소비하므로(useSystemVersion / useSystemMetrics) 페이지의
+          versionQuery 상태와 무관하게 항상 마운트한다. 두 카드는 자체적으로
+          로딩/에러를 분기하며 서로의 상태에 영향받지 않는다 (영역별 독립). */}
+      <section data-testid="system-info-section" className="space-y-4">
+        <header>
+          <h2 className="text-lg font-semibold text-(--color-text-primary)">
+            시스템 정보
+          </h2>
+          <p className="mt-0.5 text-sm text-(--color-text-muted)">
+            현재 접속한 인스턴스(self)의 식별 정보와 런타임 메트릭입니다.
+          </p>
+        </header>
+        <SystemInfoCard />
+        <SystemRuntimeCard />
+      </section>
 
       {/* 향후 영역: 업데이트 이력 / changelog / 백업 정보 */}
       <section

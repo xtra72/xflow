@@ -94,6 +94,12 @@ function makeVersion(overrides: Partial<VersionInfo> = {}): VersionInfo {
     channel: 'stable',
     update_available: false,
     latest_version: null,
+    // SPEC-WEB-007 추가 필드.
+    os: 'linux',
+    arch: 'amd64',
+    hostname: 'xflow-node-01',
+    mode: 'server',
+    uptime_seconds: 3600,
     ...overrides,
   };
 }

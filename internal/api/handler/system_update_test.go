@@ -1390,3 +1390,137 @@ func TestApplyRequest_TargetField_DeserializeFromJSON(t *testing.T) {
 		})
 	}
 }
+
+// --- SPEC-WEB-007: self identity + uptime tests ---
+
+// newSelfInfoSvc 는 SPEC-WEB-007 self identity 필드(Mode/StartedAt)를 주입한
+// UpdateService 를 생성한다. newTestSvc 와 동일한 기본값을 쓰되 두 필드만 override 한다.
+func newSelfInfoSvc(t *testing.T, mode string, startedAt time.Time) *UpdateService {
+	t.Helper()
+	pubKey := make(ed25519.PublicKey, ed25519.PublicKeySize)
+	cfg := UpdateServiceConfig{
+		Config: updater.UpdateConfig{
+			Channel:   updater.ChannelStable,
+			UpdateURL: "https://api.github.com/repos/xtra/xflow",
+		},
+		BinaryPath:     "/tmp/fake-xflowd",
+		PublicKey:      pubKey,
+		CurrentVersion: "v0.3.0",
+		Commit:         "abc123",
+		BuildDate:      "2026-04-30T12:00:00Z",
+		BinaryName:     "xflowd",
+		Factories:      (&fakeFactories{}).toServiceFactories(),
+		// @SPEC:SPEC-WEB-007
+		Mode:      mode,
+		StartedAt: startedAt,
+	}
+	return NewUpdateService(cfg, nil)
+}
+
+// TestVersion_SelfIdentityFields 는 Version() 이 self identity 필드를 채우는지 검증한다.
+// OS/Arch 는 runtime 값, Hostname 은 비어있지 않음(os.Hostname 성공 가정), Mode 는 주입값.
+func TestVersion_SelfIdentityFields(t *testing.T) {
+	t.Parallel()
+	svc := newSelfInfoSvc(t, "server", time.Time{})
+
+	resp := svc.Version()
+
+	assert.Equal(t, runtime.GOOS, resp.OS, "OS 는 runtime.GOOS 와 일치해야 함")
+	assert.Equal(t, runtime.GOARCH, resp.Arch, "Arch 는 runtime.GOARCH 와 일치해야 함")
+	assert.NotEmpty(t, resp.Hostname, "Hostname 은 비어있지 않아야 함")
+	assert.Equal(t, "server", resp.Mode, "Mode 는 주입값과 일치해야 함")
+	assert.GreaterOrEqual(t, resp.UptimeSeconds, float64(0), "UptimeSeconds 는 0 이상이어야 함")
+}
+
+// TestVersion_Mode 는 주입된 mode 값이 그대로 반영되는지 table-driven 으로 검증한다.
+func TestVersion_Mode(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		mode string
+	}{
+		{"server", "server"},
+		{"client", "client"},
+		{"disabled", "disabled"},
+		{"empty", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := newSelfInfoSvc(t, tc.mode, time.Time{})
+			resp := svc.Version()
+			assert.Equal(t, tc.mode, resp.Mode)
+		})
+	}
+}
+
+// TestVersion_UptimeSeconds 는 StartedAt 주입 시 UptimeSeconds 계산을 검증한다.
+//   - zero StartedAt → 0
+//   - 과거 StartedAt → 양수 (~경과 초)
+func TestVersion_UptimeSeconds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero_started_at_returns_zero", func(t *testing.T) {
+		t.Parallel()
+		svc := newSelfInfoSvc(t, "disabled", time.Time{})
+		resp := svc.Version()
+		assert.Equal(t, float64(0), resp.UptimeSeconds, "zero StartedAt 면 uptime 0")
+	})
+
+	t.Run("past_started_at_returns_positive", func(t *testing.T) {
+		t.Parallel()
+		started := time.Now().Add(-10 * time.Second)
+		svc := newSelfInfoSvc(t, "disabled", started)
+		resp := svc.Version()
+		assert.Positive(t, resp.UptimeSeconds, "과거 StartedAt 면 uptime 양수")
+		// ~10초 근방인지 느슨히 검증 (스케줄링 지연 허용).
+		assert.GreaterOrEqual(t, resp.UptimeSeconds, float64(9), "약 10초 경과 기대")
+		assert.Less(t, resp.UptimeSeconds, float64(60), "비정상적으로 큰 값이 아니어야 함")
+	})
+}
+
+// TestVersion_ExistingFieldsUnchanged 는 SPEC-WEB-007 변경 이후에도 기존 7개 필드가
+// 주입값 그대로 반환되는지(characterization) 검증한다.
+func TestVersion_ExistingFieldsUnchanged(t *testing.T) {
+	t.Parallel()
+	svc := newSelfInfoSvc(t, "server", time.Time{})
+
+	resp := svc.Version()
+
+	assert.Equal(t, "v0.3.0", resp.Version)
+	assert.Equal(t, "abc123", resp.Commit)
+	assert.Equal(t, "2026-04-30T12:00:00Z", resp.BuildDate)
+	assert.Equal(t, runtime.Version(), resp.GoVersion)
+	assert.Equal(t, "stable", resp.Channel)
+	assert.False(t, resp.UpdateAvailable, "Check 미수행 시 false")
+	assert.Empty(t, resp.LatestVersion, "Check 미수행 시 빈 문자열")
+}
+
+// TestVersion_NoSecretsInResponse 는 Version() 응답 JSON 에 시크릿 관련 키가
+// 절대 노출되지 않는지 table-driven 으로 검증한다 (SPEC-WEB-007 시크릿 부재 보장).
+func TestVersion_NoSecretsInResponse(t *testing.T) {
+	t.Parallel()
+	svc := newSelfInfoSvc(t, "server", time.Now().Add(-5*time.Second))
+	resp := svc.Version()
+
+	raw, err := json.Marshal(resp)
+	require.NoError(t, err)
+	lower := strings.ToLower(string(raw))
+
+	forbidden := []string{
+		"jwt_secret",
+		"bootstrap_secret",
+		"enrollment_token",
+		"secret",
+		"private_key",
+		"token",
+		"password",
+		"api_key",
+	}
+	for _, key := range forbidden {
+		t.Run(key, func(t *testing.T) {
+			assert.NotContainsf(t, lower, key,
+				"Version() 응답 JSON 에 금지 키 %q 가 포함되어서는 안 됨: %s", key, string(raw))
+		})
+	}
+}

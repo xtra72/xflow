@@ -2,9 +2,9 @@
 id: SPEC-WEB-007
 title: 로컬 인스턴스 시스템 정보 표출 — 구현 계획
 version: 0.2.0
-status: draft
+status: completed
 created: 2026-06-21
-updated: 2026-06-21
+updated: 2026-06-22
 author: xtra
 ---
 

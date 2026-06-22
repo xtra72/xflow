@@ -2,9 +2,9 @@
 id: SPEC-WEB-007
 title: 로컬 인스턴스 시스템 정보 표출 (Self / Local Instance System Info Display)
 version: 0.2.0
-status: draft
+status: completed
 created: 2026-06-21
-updated: 2026-06-21
+updated: 2026-06-22
 author: xtra
 priority: medium
 ---
@@ -337,4 +337,64 @@ web/src/
 
 ---
 
-## Status: draft (Level 1 spec-first lifecycle, v0.2.0 — Decision Points 확정 완료)
+## Implementation Notes (구현 완료 2026-06-22)
+
+`@SPEC:SPEC-WEB-007` 의 구현이 완료되었다 (hybrid 방법론: 신규 코드 TDD, 기존 코드 수정 DDD).
+TRUST 5 품질 게이트 전부 PASS, LSP 0/0/0, AC-1~AC-14 전부 커버. 아래는 실제 구현 요약과
+plan.md 예정 경로 대비 분기 사항이다.
+
+### 실제 변경 파일 (계획 대비)
+
+**백엔드 (Go) — plan.md TAG Traceability 명시 + 와이어링 추가:**
+
+- `internal/api/dto/update.go` — `VersionResponse` 에 `os/arch/hostname/mode/uptime_seconds`
+  5필드 append (기존 7필드 불변). 계획대로.
+- `internal/api/handler/system_update.go` — `UpdateServiceConfig` 에 `Mode`/`StartedAt` 추가,
+  `Version()` 에서 채움. hostname/`GOOS`/`GOARCH` 는 락 외부에서 선계산. 계획대로.
+- `cmd/xflowd/main.go` — **(계획 외 추가)** `buildSystemHandler` 에 `startedAt time.Time`
+  파라미터 추가, 기존 `daemonStartedAtMs`(프로세스 부팅 시각) 재사용해 `Mode`/`StartedAt`
+  와이어링. 분기 사항 #2 참조.
+- `internal/api/handler/system_update_test.go` — table-driven 테스트 (필드 채움 + 기존 필드
+  불변 + 시크릿 부재 characterization). 계획대로.
+
+**프론트엔드 (TS/React):**
+
+- `web/src/services/api/systemUpdate.ts` — `VersionInfo` 확장. 계획대로.
+- `web/src/services/api/monitorService.ts` — `SystemMetrics` 타입 + `useSystemMetrics` 훅
+  (5초 폴링, `refetchIntervalInBackground: false`). 계획대로. 분기 #3, #4 참조.
+- `web/src/components/system/SystemInfoCard.tsx` (신규), `SystemRuntimeCard.tsx` (신규). 계획대로.
+- `web/src/lib/utils/formatUptime.ts` — **(계획 외 추가)** uptime 가독 형식 변환 유틸 + 단위 테스트
+  분리. 분기 사항 #1 참조.
+- `web/src/pages/system/SystemStatusPage.tsx` (수정 — 두 카드 마운트, 영역별 독립 로딩/에러).
+- 각 신규 `*.test.*` + 기존 픽스처 6개 보강 (`SystemVersionCard.test.tsx`,
+  `UpdateDialog.test.tsx`, `useUpdateAvailableNotification.test.ts`,
+  `SystemStatusPage.test.tsx`, `SystemStatusPage.integration.test.tsx`, `systemUpdate.test.tsx`).
+
+### 계획 대비 분기 사항 (Decision)
+
+1. **신규 유틸 파일 추가**: plan.md 컴포넌트 구조(266-276줄)에 없던
+   `web/src/lib/utils/formatUptime.ts` 신설 — uptime 가독 형식 변환 로직을 컴포넌트에서 분리하고
+   단위 테스트를 독립시키기 위한 의도된 추가. `web/src/lib/utils/` 는 **기존 디렉토리**
+   (cn.ts/format.ts 등 존재)이므로 신규 디렉토리 추가는 없다.
+2. **main.go 시그니처 변경**: `buildSystemHandler` 에 `startedAt time.Time` 파라미터 추가.
+   uptime 정확도를 위해 핸들러 내부 `time.Now()` 대신 프로세스 부팅 시각(`daemonStartedAtMs`,
+   epoch ms — `project_timestamp_convention.md` 준수)을 기준 시각으로 재사용. plan.md 의
+   TAG Traceability 에는 dto/handler 만 명시됐으나 와이어링상 필요한 최소 변경.
+3. **queryKey 결정**: `useSystemMetrics` 가 `['system','metrics']` 대신
+   `['monitor','metrics']` 사용 — 동일 엔드포인트/queryFn 을 쓰는 기존 대시보드 메트릭
+   소비자(`ResourceWidget` 등)와 캐시를 공유해 중복 폴링을 회피. 기존 키 컨벤션 우선.
+4. **SystemMetrics 인덱스 시그니처**: 기존 소비자(`Record<string, unknown>` 기대 4곳)의
+   호환을 위해 `[key: string]: unknown` 추가 (`any` 미사용). 회귀 방지 트레이드오프.
+5. **신규 외부 의존성 0**: acceptance.md 품질 게이트("신규 외부 의존성 0") 충족.
+
+### 품질 결과
+
+- TRUST 5: Tested / Readable / Unified / Secured / Trackable 전부 PASS
+- LSP: 0 errors / 0 type errors / 0 lint errors
+- 커버리지: 백엔드 `Version()` 94.7%, 프론트 신규 컴포넌트/유틸 96~100%
+- AC 커버리지: AC-1 ~ AC-14 전부 (AC-14 commit 링크 Optional 포함)
+- 시크릿 노출: 0 (characterization 테스트로 강제)
+
+---
+
+## Status: completed (Level 1 spec-first, 구현 완료 2026-06-22)

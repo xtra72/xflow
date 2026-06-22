@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 추가 — 로컬 인스턴스 시스템 정보 표출 (self/local Identity + Runtime)
+
+- **접속한 xflowd 인스턴스 자신의 시스템 정보를 `/admin/system` 페이지에 표출 (Non-breaking)**
+
+  관리 서버·client 노드·standalone 어디에 로그인하든 **그 인스턴스 자신(self)** 의 hostname / OS·Arch / 버전·빌드 메타 / remote 모드 / uptime / 실시간 리소스를 한눈에 확인한다. 관리 서버가 원격 노드 보고를 표시하는 NodeDashboard(REMOTE-001)와는 별개의 SELF/로컬 케이스로, 원격 프로토콜은 변경하지 않는다.
+
+  - **Identity 백엔드 확장**: 기존 `GET /api/v1/system/version` 응답에 `os`(GOOS)·`arch`(GOARCH)·`hostname`·`mode`(remote_management.mode)·`uptime_seconds` 5필드를 추가(기존 7필드 불변, SystemVersionCard 회귀 없음). 신규 `/system/info` 엔드포인트는 만들지 않음. uptime 기준 시각은 프로세스 부팅 시각(epoch ms)을 재사용해 정확도 확보.
+  - **시크릿 비노출**: 확장 응답은 jwt_secret·bootstrap_secret·enrollment_token·키 등 어떤 비밀 값도 포함하지 않음(단위 테스트로 강제).
+  - **Runtime 표시**: 기존 `GET /api/v1/monitor/metrics` 재사용(신규 백엔드 0), TanStack Query 5초 폴링(`refetchIntervalInBackground: false`, 기존 대시보드 메트릭과 캐시 공유). uptime 가독 형식("3d 4h 12m"), CPU 0%는 "측정 미지원" 안내(v1 샘플링 미지원).
+  - **UI**: `/admin/system` 페이지에 Identity 카드 + Runtime 카드 영역 추가(별도 페이지/탭 신설 없음). "이 인스턴스 (self)" 명시 라벨, mode 한글 라벨 매핑(관리 서버/클라이언트 노드/독립 실행), monospaced 칩, 영역별 독립 로딩/에러 처리. mode 무관 동작, 기존 admin 게이팅 재사용.
+  - **신규 외부 의존성 0**.
+  - **관련**: SPEC-WEB-007 v0.2.0, SPEC-WEB-006(공존), SPEC-UPDATE-001·SPEC-OBS-001(데이터 출처).
+
 ### 추가 — 원격 프로그램 버전 관리 (릴리스 호스팅 + 업데이트 소스 + 아키텍처-aware 그룹 일괄 업데이트)
 
 - **관리 서버가 노드용 프로그램 이미지를 호스팅하고 원격 자가 업데이트를 오케스트레이션 (Non-breaking)**

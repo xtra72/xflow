@@ -707,7 +707,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 9.3. System / Update API 핸들러 등록 (SPEC-UPDATE-001 v0.1.0 M10)
 	// 설정 로딩 실패 또는 binary path / 공개키 부재 시에도 데몬은 정상 기동하며,
 	// /system/update/* 엔드포인트는 적절한 에러 (예: ErrUpdateInvalidInput) 를 반환한다.
-	systemHandler := buildSystemHandler(cfg, obs)
+	// @SPEC:SPEC-WEB-007
+	// 프로세스 부팅 시각(daemonStartedAtMs, epoch ms)을 재사용해 self uptime 의
+	// 기준 시각을 가장 이른 시점으로 맞춘다 (buildSystemHandler 내 time.Now() 보다 정확).
+	systemHandler := buildSystemHandler(cfg, obs, time.UnixMilli(daemonStartedAtMs))
 
 	// 9.4. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
 	// Dashboard API 핸들러 등록 — 공유/개인 snapshot 영속화.
@@ -1324,7 +1327,9 @@ func restoreAgents(ctx context.Context, mgr agentRestoreManager, configs []agent
 // ErrUpdateInvalidInput 으로 실패한다 (graceful degradation).
 //
 // 데몬 기동을 update 설정 부재로 막지 않도록 모든 에러를 warn 로그로만 기록한다.
-func buildSystemHandler(cfg config.Config, obs *observe.Observer) *handler.SystemHandler {
+// @SPEC:SPEC-WEB-007
+// startedAt 은 프로세스 부팅 시각이다. self uptime 계산의 기준 시각으로 svcCfg 에 전달된다.
+func buildSystemHandler(cfg config.Config, obs *observe.Observer, startedAt time.Time) *handler.SystemHandler {
 	logger := obs.Loggers.NewLogger("api.handler.system").Logger()
 
 	// 1. UpdateSettings → updater.UpdateConfig 변환.
@@ -1361,6 +1366,9 @@ func buildSystemHandler(cfg config.Config, obs *observe.Observer) *handler.Syste
 		BuildDate:      BuildDate,
 		BinaryName:     "xflowd",
 		Factories:      handler.DefaultUpdateServiceFactories(),
+		// @SPEC:SPEC-WEB-007 — self identity + uptime.
+		Mode:      cfg.RemoteManagement().Mode,
+		StartedAt: startedAt,
 	}
 	svc := handler.NewUpdateService(svcCfg, logger)
 	return handler.NewSystemHandler(svc, logger)

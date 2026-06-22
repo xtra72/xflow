@@ -105,6 +105,14 @@ export interface VersionInfo {
   channel: Channel;
   update_available: boolean;
   latest_version: string | null;
+  // --- SPEC-WEB-007 추가 ---
+  // 로컬 인스턴스 시스템 정보 표출용 필드. 백엔드가 GET /system/version 응답에
+  // 함께 내려준다. 기존 필드는 불변.
+  os: string; // 예: "linux"
+  arch: string; // 예: "amd64"
+  hostname: string; // 예: "xflow-node-01"
+  mode: 'server' | 'client' | 'disabled';
+  uptime_seconds: number; // 프로세스 uptime(초)
 }
 
 /**
