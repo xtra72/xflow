@@ -14,7 +14,6 @@ import {
   Monitor,
   Moon,
   Palette,
-  RefreshCw,
   Search,
   Shield,
   Sun,
@@ -37,7 +36,7 @@ import { cn } from '@/lib/utils/cn';
 
 // --- 탭 정의 ---
 
-type TabId = 'profile' | 'system' | 'dashboard' | 'theme' | 'language';
+type TabId = 'profile' | 'system' | 'theme' | 'language';
 
 interface TabItem {
   /** 탭 식별자 */
@@ -51,7 +50,6 @@ interface TabItem {
 const TABS: TabItem[] = [
   { id: 'profile', label: '프로필', icon: User },
   { id: 'system', label: '시스템', icon: Shield },
-  { id: 'dashboard', label: '대시보드', icon: RefreshCw },
   { id: 'theme', label: '테마', icon: Palette },
   { id: 'language', label: '언어', icon: Globe },
 ];
@@ -191,7 +189,6 @@ export default function SettingsPage() {
         <div className="min-w-0 flex-1">
           {activeTab === 'profile' && <ProfileTab />}
           {activeTab === 'system' && <SystemTab />}
-          {activeTab === 'dashboard' && <DashboardTab />}
           {activeTab === 'theme' && <ThemeTab />}
           {activeTab === 'language' && <LanguageTab />}
         </div>
@@ -1079,79 +1076,6 @@ function ComponentLogLevelOverrides({
             )}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// 대시보드 탭
-// ============================================================
-
-/** 갱신 주기 옵션 (초 단위) */
-const REFRESH_INTERVALS = [
-  { value: 5, label: '5초' },
-  { value: 10, label: '10초' },
-  { value: 15, label: '15초' },
-  { value: 30, label: '30초' },
-  { value: 60, label: '60초' },
-] as const;
-
-/** 대시보드 탭: 자동 갱신 주기 설정. 변경 시 즉시 적용. */
-function DashboardTab() {
-  const interval = useUIStore((s) => s.dashboardRefreshInterval);
-  const setInterval = useUIStore((s) => s.setDashboardRefreshInterval);
-  const addNotification = useUIStore((s) => s.addNotification);
-
-  function handleChange(seconds: number) {
-    setInterval(seconds);
-    addNotification({
-      type: 'success',
-      message: `대시보드 갱신 주기가 ${seconds}초로 변경되었습니다`,
-    });
-  }
-
-  return (
-    <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
-      <h3 className="text-lg font-semibold text-(--color-text-primary)">갱신 주기</h3>
-      <p className="mt-1 text-sm text-(--color-text-muted)">
-        대시보드 데이터의 자동 갱신 주기를 설정합니다. 변경 사항은 즉시 적용됩니다.
-      </p>
-
-      <div className="mt-6 space-y-2 max-w-sm">
-        {REFRESH_INTERVALS.map((opt) => {
-          const isSelected = interval === opt.value;
-          return (
-            <label
-              key={opt.value}
-              className={cn(
-                'flex cursor-pointer items-center gap-3 rounded-lg border-2 px-4 py-3 transition-colors',
-                isSelected
-                  ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
-                  : 'border-(--color-border-default) hover:border-(--color-border-strong)',
-              )}
-            >
-              <input
-                type="radio"
-                name="refresh-interval"
-                value={opt.value}
-                checked={isSelected}
-                onChange={() => handleChange(opt.value)}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 dark:focus:ring-offset-gray-800"
-              />
-              <span
-                className={cn(
-                  'text-sm font-medium',
-                  isSelected
-                    ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-(--color-text-primary)',
-                )}
-              >
-                {opt.label}
-              </span>
-            </label>
-          );
-        })}
       </div>
     </div>
   );

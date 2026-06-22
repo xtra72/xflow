@@ -25,6 +25,7 @@ import {
   Check,
   Grid3X3,
   ChevronUp,
+  Clock,
 } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
@@ -72,6 +73,15 @@ export default function DashboardPage({
   );
 }
 
+/** 대시보드 자동 갱신 주기 옵션 (초 단위). 설정 페이지에서 헤더로 이동. */
+const REFRESH_INTERVALS = [
+  { value: 5, label: '5초' },
+  { value: 10, label: '10초' },
+  { value: 15, label: '15초' },
+  { value: 30, label: '30초' },
+  { value: 60, label: '60초' },
+] as const;
+
 /** 테마 모드 라벨 (Pencil 디자인 매칭) */
 const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string; icon: React.ReactNode; iconColor: string }[] = [
   { value: 'system', label: '시스템', desc: 'OS 설정에 따라 자동 전환', icon: <Monitor className="h-4 w-4" />, iconColor: 'text-blue-500' },
@@ -97,6 +107,7 @@ function LocalDashboardView() {
 
   // UI store
   const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
+  const setRefreshInterval = useUIStore((s) => s.setDashboardRefreshInterval);
 
   const dashboardPages = useUIStore((s) => s.dashboardPages);
   const activeDashboardId = useUIStore((s) => s.activeDashboardId);
@@ -136,6 +147,9 @@ function LocalDashboardView() {
   // 그리드 드롭다운
   const [gridDropdownOpen, setGridDropdownOpen] = useState(false);
   const gridDropdownRef = useRef<HTMLDivElement>(null);
+  // 갱신 주기 드롭다운 (일반 모드 헤더)
+  const [refreshDropdownOpen, setRefreshDropdownOpen] = useState(false);
+  const refreshDropdownRef = useRef<HTMLDivElement>(null);
   // 패널 추가 다이얼로그
   const [addPanelOpen, setAddPanelOpen] = useState(false);
   // 패널 설정 다이얼로그 (열린 패널 ID)
@@ -182,7 +196,7 @@ function LocalDashboardView() {
 
   // 드롭다운 외부 클릭 닫기
   useEffect(() => {
-    if (!dashboardDropdownOpen && !themeDropdownOpen && !gridDropdownOpen) return;
+    if (!dashboardDropdownOpen && !themeDropdownOpen && !gridDropdownOpen && !refreshDropdownOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (dashboardDropdownOpen && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDashboardDropdownOpen(false);
@@ -193,10 +207,13 @@ function LocalDashboardView() {
       if (gridDropdownOpen && gridDropdownRef.current && !gridDropdownRef.current.contains(e.target as Node)) {
         setGridDropdownOpen(false);
       }
+      if (refreshDropdownOpen && refreshDropdownRef.current && !refreshDropdownRef.current.contains(e.target as Node)) {
+        setRefreshDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [dashboardDropdownOpen, themeDropdownOpen, gridDropdownOpen]);
+  }, [dashboardDropdownOpen, themeDropdownOpen, gridDropdownOpen, refreshDropdownOpen]);
 
   // 데이터 로드
   const {
@@ -645,6 +662,59 @@ function LocalDashboardView() {
                     {wsState === 'connected' ? '연결됨' : '오프라인'}
                   </span>
                 </span>
+
+                {/* 갱신 주기 셀렉터 — 개인/뷰 설정이므로 편집 권한과 무관하게 항상 사용 가능 */}
+                <div className="relative" ref={refreshDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setRefreshDropdownOpen((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-2.5 py-1.5 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
+                    aria-label="갱신 주기"
+                    aria-haspopup="listbox"
+                    aria-expanded={refreshDropdownOpen}
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                    {refreshInterval}초
+                    <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
+                  </button>
+
+                  {refreshDropdownOpen && (
+                    <div
+                      role="listbox"
+                      aria-label="갱신 주기 선택"
+                      className="absolute right-0 top-full z-50 mt-1 w-[160px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg"
+                    >
+                      <div className="px-4 py-2.5">
+                        <span className="text-[13px] font-semibold text-(--color-text-primary)">갱신 주기</span>
+                      </div>
+                      <div className="h-px bg-(--color-border-default)" />
+                      <div className="flex flex-col gap-0.5 p-1.5">
+                        {REFRESH_INTERVALS.map((opt) => {
+                          const isSelected = refreshInterval === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              role="option"
+                              aria-selected={isSelected}
+                              onClick={() => { setRefreshInterval(opt.value); setRefreshDropdownOpen(false); }}
+                              className={`flex items-center justify-between rounded-md px-3 py-2 transition-colors ${
+                                isSelected
+                                  ? 'bg-blue-50 dark:bg-blue-900/20'
+                                  : 'hover:bg-(--color-bg-elevated)'
+                              }`}
+                            >
+                              <span className={`text-[13px] font-medium ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-primary)'}`}>
+                                {opt.label}
+                              </span>
+                              {isSelected && <Check className="h-3.5 w-3.5 text-blue-500" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* 새로고침 */}
                 <button

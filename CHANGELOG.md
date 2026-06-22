@@ -8,16 +8,27 @@
 
 ### 추가 — 로컬 인스턴스 시스템 정보 표출 (self/local Identity + Runtime)
 
-- **접속한 xflowd 인스턴스 자신의 시스템 정보를 `/admin/system` 페이지에 표출 (Non-breaking)**
+- **접속한 xflowd 인스턴스 자신의 시스템 정보를 `/admin/system` 및 설정 "시스템" 탭에 표출 (Non-breaking)**
 
-  관리 서버·client 노드·standalone 어디에 로그인하든 **그 인스턴스 자신(self)** 의 hostname / OS·Arch / 버전·빌드 메타 / remote 모드 / uptime / 실시간 리소스를 한눈에 확인한다. 관리 서버가 원격 노드 보고를 표시하는 NodeDashboard(REMOTE-001)와는 별개의 SELF/로컬 케이스로, 원격 프로토콜은 변경하지 않는다.
+  관리 서버·client 노드·standalone 어디에 로그인하든 **그 인스턴스 자신(self)** 의 hostname / OS·Arch / 버전 / remote 모드 / uptime / 실시간 리소스를 한눈에 확인한다. 관리 서버가 원격 노드 보고를 표시하는 NodeDashboard(REMOTE-001)와는 별개의 SELF/로컬 케이스로, 원격 프로토콜은 변경하지 않는다.
 
   - **Identity 백엔드 확장**: 기존 `GET /api/v1/system/version` 응답에 `os`(GOOS)·`arch`(GOARCH)·`hostname`·`mode`(remote_management.mode)·`uptime_seconds` 5필드를 추가(기존 7필드 불변, SystemVersionCard 회귀 없음). 신규 `/system/info` 엔드포인트는 만들지 않음. uptime 기준 시각은 프로세스 부팅 시각(epoch ms)을 재사용해 정확도 확보.
   - **시크릿 비노출**: 확장 응답은 jwt_secret·bootstrap_secret·enrollment_token·키 등 어떤 비밀 값도 포함하지 않음(단위 테스트로 강제).
   - **Runtime 표시**: 기존 `GET /api/v1/monitor/metrics` 재사용(신규 백엔드 0), TanStack Query 5초 폴링(`refetchIntervalInBackground: false`, 기존 대시보드 메트릭과 캐시 공유). uptime 가독 형식("3d 4h 12m"), CPU 0%는 "측정 미지원" 안내(v1 샘플링 미지원).
-  - **UI**: `/admin/system` 페이지에 Identity 카드 + Runtime 카드 영역 추가(별도 페이지/탭 신설 없음). "이 인스턴스 (self)" 명시 라벨, mode 한글 라벨 매핑(관리 서버/클라이언트 노드/독립 실행), monospaced 칩, 영역별 독립 로딩/에러 처리. mode 무관 동작, 기존 admin 게이팅 재사용.
+  - **노출 위치 추가**: 시스템 정보 카드를 `/admin/system` 외에 **설정(Settings) → "시스템" 탭에도 추가**(동일 컴포넌트 재사용, 양쪽 공존). `/admin/system` 으로 가는 명시적 메뉴 진입점이 없어 사용자가 도달하기 어려웠던 문제를 해소한다.
+  - **표시 필드 축소**: 인스턴스 정보 카드(`SystemInfoCard`)에서 **Commit / Build Date / Go Runtime 필드를 UI 에서 제거**. Makefile/Dockerfile 이 `main.Version` 만 ldflags 주입하여 commit/build_date 가 항상 "unknown" 이고 Go Runtime 은 운영자에게 불필요하기 때문. 남은 식별 필드: hostname, OS/Arch, 버전, 원격 모드. 백엔드 `GET /system/version` 응답 스키마는 불변이며, 별개 `SystemVersionCard` 가 commit/build_date/go_version 을 계속 소비한다.
+  - **룩앤필 통일**: 시스템 정보/런타임 카드를 원격 노드 카드(NodeDashboard, REMOTE-001)와 시각 통일 — 기존 "monospaced 칩" 표기를 제거하고 plain 텍스트 + 라벨 스타일로, 카드 컨테이너/헤더 아이콘/제목 크기를 원격 카드와 일치시켰다. "이 인스턴스 (self)" 배지는 유지. mode 한글 라벨 매핑(관리 서버/클라이언트 노드/독립 실행), 영역별 독립 로딩/에러 처리, mode 무관 동작, 기존 admin 게이팅 재사용.
   - **신규 외부 의존성 0**.
-  - **관련**: SPEC-WEB-007 v0.2.0, SPEC-WEB-006(공존), SPEC-UPDATE-001·SPEC-OBS-001(데이터 출처).
+  - **관련**: SPEC-WEB-007 v0.3.0, SPEC-WEB-006(공존), SPEC-UPDATE-001·SPEC-OBS-001(데이터 출처).
+
+### 변경 — 설정 "시스템" 탭 부수 개선 (API 서버 주소 / 로그 레벨 UI)
+
+- **설정 시스템 탭의 API 서버 주소 표시 정정 (Non-breaking)**: "API 서버" 카드가 보여주던 서버 URL 을 `import.meta.env.VITE_API_URL` 하드코딩(`localhost:8080`)에서 **실제 접속 주소(`window.location.origin`)** 로 정정했다. API client 가 상대경로 `/api/v1` 를 사용하므로 origin 이 곧 백엔드 주소이며, HTTPS 보안 접속 시에도 자동 반영된다.
+- **컴포넌트별 로그 레벨 UI 개선 (Non-breaking)**: 컴포넌트명 첫 세그먼트를 기준으로 종류 분류 표시(에이전트/플로우/노드/원격/엔진/API/DB 등), 레벨 직접 변경(select), 종류·컴포넌트·레벨 정렬, 종류 필터 + 이름 검색, 선택 기반 일괄 레벨 변경·일괄 리셋을 추가했다.
+
+### 변경 — 대시보드 자동 갱신 주기 컨트롤 위치 이동
+
+- **자동 갱신 주기 컨트롤을 설정 페이지에서 대시보드 페이지 헤더로 이동 (Non-breaking)**: 설정의 "대시보드" 탭을 제거하고, 대시보드 자동 갱신 주기 컨트롤을 대시보드 페이지 우측 상단 헤더(일반/읽기 모드의 새로고침 옆)에 컴팩트 드롭다운(5/10/15/30/60초)으로 배치했다. 값은 기존 전역 상태(`dashboardRefreshInterval`)를 그대로 사용하여 동작은 동일하며(폴링 `refetchInterval` 에 즉시 반영), 위치만 이동했다. 편집 권한과 무관하게 항상 사용 가능하다.
 
 ### 추가 — 원격 프로그램 버전 관리 (릴리스 호스팅 + 업데이트 소스 + 아키텍처-aware 그룹 일괄 업데이트)
 
