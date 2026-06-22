@@ -100,6 +100,7 @@ vi.mock('@/stores/uiStore', async () => {
 
 import type { VersionInfo } from '@/services/api/systemUpdate';
 import type { SystemMetrics } from '@/services/api/monitorService';
+import { I18nProvider, useTranslation } from '@/lib/i18n';
 
 import SettingsPage from './SettingsPage';
 
@@ -335,5 +336,70 @@ describe('SettingsPage 시스템 탭 — 컴포넌트별 로그 레벨', () => {
     expect(resetComponentLogLevelMock).toHaveBeenCalledWith('agent.mqtt-client');
     expect(resetComponentLogLevelMock).toHaveBeenCalledWith('flow.autostart');
     expect(resetComponentLogLevelMock).toHaveBeenCalledWith('db.postgres');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 언어 탭 — i18n 연동 (재현 테스트)
+//
+// 언어 탭에서 언어를 바꾸면 i18n 시스템(I18nProvider/useTranslation)에
+// 실제로 반영되어야 한다. 수정 전에는 LanguageTab 이 별도 localStorage 키
+// ('xflow-language')와 로컬 state 만 사용하여 i18n('xflow-locale')에 전혀
+// 반영되지 않으므로 이 테스트가 실패한다.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('SettingsPage 언어 탭 — i18n 연동', () => {
+  /** i18n 의 현재 locale 을 화면에 노출하는 프로브 컴포넌트. */
+  function LocaleProbe() {
+    const { locale } = useTranslation();
+    return <span data-testid="locale-probe">{locale}</span>;
+  }
+
+  /** SettingsPage 와 LocaleProbe 를 실제 I18nProvider + QueryClient 로 감싼다. */
+  function buildI18nWrapper() {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    function Wrapper({ children }: PropsWithChildren) {
+      return (
+        <QueryClientProvider client={client}>
+          <I18nProvider>
+            {children}
+            <LocaleProbe />
+          </I18nProvider>
+        </QueryClientProvider>
+      );
+    }
+    return { Wrapper };
+  }
+
+  beforeEach(() => {
+    // i18n 은 localStorage('xflow-locale')에서 초기 locale 을 읽으므로
+    // 각 테스트 전에 깨끗한 상태(기본 'ko')로 초기화한다.
+    localStorage.clear();
+  });
+
+  it('English 라디오 클릭 시 i18n locale 이 en 으로 전환된다', () => {
+    primeSystemCards();
+    const { Wrapper } = buildI18nWrapper();
+    render(<SettingsPage />, { wrapper: Wrapper });
+
+    // 초기 locale 은 'ko'.
+    expect(screen.getByTestId('locale-probe')).toHaveTextContent('ko');
+
+    // 언어 탭으로 전환.
+    fireEvent.click(screen.getByRole('button', { name: '언어' }));
+
+    // "English" 라디오 선택.
+    fireEvent.click(screen.getByRole('radio', { name: 'English' }));
+
+    // (c) 프로브: i18n locale 이 en 으로 반영되었는가.
+    expect(screen.getByTestId('locale-probe')).toHaveTextContent('en');
+
+    // (b) localStorage: i18n 이 읽는 키('xflow-locale')에 저장되었는가.
+    expect(localStorage.getItem('xflow-locale')).toBe('en');
   });
 });

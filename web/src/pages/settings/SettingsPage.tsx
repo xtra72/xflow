@@ -33,6 +33,7 @@ import type { LogLevelInfo } from '@/services/api/monitorService';
 import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import { cn } from '@/lib/utils/cn';
+import { useTranslation, type Locale } from '@/lib/i18n';
 
 // --- 탭 정의 ---
 
@@ -118,7 +119,7 @@ function getCategoryDotClass(key: string): string {
 // --- 언어 옵션 ---
 
 interface LanguageOption {
-  code: string;
+  code: Locale;
   label: string;
 }
 
@@ -1149,24 +1150,20 @@ function ThemeTab() {
 // 언어 탭
 // ============================================================
 
-/** localStorage 키: 사용자 언어 설정 */
-const LANGUAGE_STORAGE_KEY = 'xflow-language';
-
-/** 언어 탭: 한국어/영어 선택. localStorage에 저장. */
+/** 언어 탭: 한국어/영어 선택. i18n 시스템(useTranslation)과 연동한다. */
 function LanguageTab() {
   const addNotification = useUIStore((s) => s.addNotification);
-  const [language, setLanguage] = useState<string>(
-    () => localStorage.getItem(LANGUAGE_STORAGE_KEY) ?? 'ko',
-  );
+  // i18n 의 locale/setLocale 을 직접 사용한다.
+  // setLocale 이 'xflow-locale' 저장과 t() 갱신을 모두 처리하므로
+  // 별도의 로컬 state·localStorage 조작은 두지 않는다.
+  const { locale, setLocale, t } = useTranslation();
 
   /** 언어 변경 핸들러 */
-  function handleLanguageChange(code: string) {
-    setLanguage(code);
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, code);
-    const selected = LANGUAGES.find((l) => l.code === code);
+  function handleLanguageChange(code: Locale) {
+    setLocale(code);
     addNotification({
       type: 'success',
-      message: `언어가 "${selected?.label ?? code}"(으)로 변경되었습니다`,
+      message: t('settings.langChanged'),
     });
   }
 
@@ -1179,7 +1176,7 @@ function LanguageTab() {
 
       <div className="mt-6 space-y-2 max-w-sm">
         {LANGUAGES.map((lang) => {
-          const isSelected = language === lang.code;
+          const isSelected = locale === lang.code;
           return (
             <label
               key={lang.code}
