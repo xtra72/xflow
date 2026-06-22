@@ -33,7 +33,7 @@ import type { LogLevelInfo } from '@/services/api/monitorService';
 import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import { cn } from '@/lib/utils/cn';
-import { useTranslation, type Locale } from '@/lib/i18n';
+import { useTranslation, type Locale, type TranslationFn } from '@/lib/i18n';
 
 // --- 탭 정의 ---
 
@@ -42,32 +42,34 @@ type TabId = 'profile' | 'system' | 'theme' | 'language';
 interface TabItem {
   /** 탭 식별자 */
   id: TabId;
-  /** 탭 라벨 */
-  label: string;
+  /** 탭 라벨 i18n 키 (렌더 시 t()로 변환) */
+  labelKey: string;
   /** lucide-react 아이콘 컴포넌트 */
   icon: React.ComponentType<{ className?: string }>;
 }
 
 const TABS: TabItem[] = [
-  { id: 'profile', label: '프로필', icon: User },
-  { id: 'system', label: '시스템', icon: Shield },
-  { id: 'theme', label: '테마', icon: Palette },
-  { id: 'language', label: '언어', icon: Globe },
+  { id: 'profile', labelKey: 'settings.profile', icon: User },
+  { id: 'system', labelKey: 'settings.system', icon: Shield },
+  { id: 'theme', labelKey: 'settings.theme', icon: Palette },
+  { id: 'language', labelKey: 'settings.language', icon: Globe },
 ];
 
 // --- 테마 옵션 정의 ---
 
 interface ThemeOption {
   value: 'system' | 'day' | 'night' | 'custom';
-  label: string;
-  description: string;
+  /** 라벨 i18n 키 (렌더 시 t()로 변환) */
+  labelKey: string;
+  /** 설명 i18n 키 (렌더 시 t()로 변환) */
+  descKey: string;
   icon: React.ComponentType<{ className?: string }>;
 }
 
 const THEME_OPTIONS: ThemeOption[] = [
-  { value: 'day', label: '라이트', description: '밝은 테마를 사용합니다', icon: Sun },
-  { value: 'night', label: '다크', description: '어두운 테마를 사용합니다', icon: Moon },
-  { value: 'system', label: '시스템', description: '시스템 설정을 따릅니다', icon: Monitor },
+  { value: 'day', labelKey: 'settings.themeLight', descKey: 'settings.themeDayDesc', icon: Sun },
+  { value: 'night', labelKey: 'settings.themeDark', descKey: 'settings.themeNightDesc', icon: Moon },
+  { value: 'system', labelKey: 'settings.themeSystem', descKey: 'settings.themeSystemDesc', icon: Monitor },
 ];
 
 // --- 로그 레벨 옵션 ---
@@ -85,17 +87,19 @@ const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
  * 기존 디자인 토큰(`--color-*`)만 사용한다. Tailwind v4 JIT가 클래스를 인식하도록
  * 동적 조합이 아닌 정적 문자열로 선언한다.
  */
-const CATEGORY_META: Record<string, { label: string; dotClass: string }> = {
-  agent: { label: '에이전트', dotClass: 'bg-(--color-interactive-primary)' },
-  flow: { label: '플로우', dotClass: 'bg-(--color-status-running)' },
-  node: { label: '노드', dotClass: 'bg-(--color-status-info)' },
-  remote: { label: '원격', dotClass: 'bg-(--color-status-warning)' },
-  engine: { label: '엔진', dotClass: 'bg-(--color-status-error)' },
-  api: { label: 'API', dotClass: 'bg-(--color-status-stopped)' },
-  router: { label: '라우터', dotClass: 'bg-(--color-interactive-active)' },
-  db: { label: '데이터베이스', dotClass: 'bg-(--color-status-running)' },
-  auth: { label: '인증', dotClass: 'bg-(--color-status-info)' },
-  storage: { label: '스토리지', dotClass: 'bg-(--color-status-warning)' },
+// `labelKey`는 i18n 키(`settings.category.*`)이며 렌더 시 t()로 변환한다.
+// 컴포넌트 밖에서 t()를 호출하지 않기 위해 키만 보관한다.
+const CATEGORY_META: Record<string, { labelKey: string; dotClass: string }> = {
+  agent: { labelKey: 'settings.categoryLabel.agent', dotClass: 'bg-(--color-interactive-primary)' },
+  flow: { labelKey: 'settings.categoryLabel.flow', dotClass: 'bg-(--color-status-running)' },
+  node: { labelKey: 'settings.categoryLabel.node', dotClass: 'bg-(--color-status-info)' },
+  remote: { labelKey: 'settings.categoryLabel.remote', dotClass: 'bg-(--color-status-warning)' },
+  engine: { labelKey: 'settings.categoryLabel.engine', dotClass: 'bg-(--color-status-error)' },
+  api: { labelKey: 'settings.categoryLabel.api', dotClass: 'bg-(--color-status-stopped)' },
+  router: { labelKey: 'settings.categoryLabel.router', dotClass: 'bg-(--color-interactive-active)' },
+  db: { labelKey: 'settings.categoryLabel.db', dotClass: 'bg-(--color-status-running)' },
+  auth: { labelKey: 'settings.categoryLabel.auth', dotClass: 'bg-(--color-status-info)' },
+  storage: { labelKey: 'settings.categoryLabel.storage', dotClass: 'bg-(--color-status-warning)' },
 };
 
 /** 매핑되지 않은 종류의 기본 배지 점 색상(중립 회색 토큰). */
@@ -106,9 +110,13 @@ function getCategoryKey(component: string): string {
   return component.split('.')[0] ?? component;
 }
 
-/** 종류 키를 한글 종류 라벨로 변환한다. 매핑에 없으면 키를 그대로 표기한다. */
-function getCategoryLabel(key: string): string {
-  return CATEGORY_META[key]?.label ?? key;
+/**
+ * 종류 키를 현지화된 종류 라벨로 변환한다. 매핑에 없으면 키를 그대로 표기한다.
+ * t()를 인자로 받아 컴포넌트 밖 호출을 피한다.
+ */
+function getCategoryLabel(key: string, t: TranslationFn): string {
+  const meta = CATEGORY_META[key];
+  return meta ? t(meta.labelKey) : key;
 }
 
 /** 종류 키에 해당하는 배지 점 색상 클래스를 반환한다. */
@@ -120,12 +128,13 @@ function getCategoryDotClass(key: string): string {
 
 interface LanguageOption {
   code: Locale;
-  label: string;
+  /** 라벨 i18n 키 (렌더 시 t()로 변환) */
+  labelKey: string;
 }
 
 const LANGUAGES: LanguageOption[] = [
-  { code: 'ko', label: '한국어' },
-  { code: 'en', label: 'English' },
+  { code: 'ko', labelKey: 'settings.langKo' },
+  { code: 'en', labelKey: 'settings.langEn' },
 ];
 
 // --- 공통 스타일 ---
@@ -144,14 +153,15 @@ const inputClass = cn(
  */
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('profile');
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-6">
       {/* 페이지 헤더 */}
       <div>
-        <h2 className="text-2xl font-bold text-(--color-text-primary)">설정</h2>
+        <h2 className="text-2xl font-bold text-(--color-text-primary)">{t('settings.title')}</h2>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          애플리케이션 환경을 구성합니다
+          {t('settings.pageSubtitle')}
         </p>
       </div>
 
@@ -159,7 +169,7 @@ export default function SettingsPage() {
         {/* 탭 네비게이션 - 모바일: 수평, 데스크톱: 수직 */}
         <nav
           className="flex gap-1 overflow-x-auto md:w-48 md:shrink-0 md:flex-col"
-          aria-label="설정 탭"
+          aria-label={t('settings.tabsLabel')}
         >
           {TABS.map((tab) => {
             const Icon = tab.icon;
@@ -180,7 +190,7 @@ export default function SettingsPage() {
                 aria-current={isActive ? 'page' : undefined}
               >
                 <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>{tab.label}</span>
+                <span>{t(tab.labelKey)}</span>
               </button>
             );
           })}
@@ -206,17 +216,18 @@ export default function SettingsPage() {
 function ProfileTab() {
   const user = useAuthStore((s) => s.user);
   const addNotification = useUIStore((s) => s.addNotification);
+  const { t } = useTranslation();
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPasswords, setShowPasswords] = useState(false);
 
-  /** 역할 라벨 매핑 */
-  const roleLabels: Record<string, string> = {
-    admin: '관리자',
-    editor: '편집자',
-    viewer: '뷰어',
+  /** 역할 라벨 i18n 키 매핑 (공통 키 재사용) */
+  const roleLabelKeys: Record<string, string> = {
+    admin: 'common.admin',
+    editor: 'common.editor',
+    viewer: 'common.viewer',
   };
 
   /** 비밀번호 변경 폼 제출 */
@@ -224,22 +235,22 @@ function ProfileTab() {
     e.preventDefault();
 
     if (!currentPassword || !newPassword || !confirmPassword) {
-      addNotification({ type: 'error', message: '모든 비밀번호 필드를 입력해 주세요' });
+      addNotification({ type: 'error', message: t('settings.allPasswordFieldsRequired') });
       return;
     }
 
     if (newPassword.length < 8) {
-      addNotification({ type: 'error', message: '새 비밀번호는 8자 이상이어야 합니다' });
+      addNotification({ type: 'error', message: t('settings.newPasswordTooShort') });
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      addNotification({ type: 'error', message: '새 비밀번호가 일치하지 않습니다' });
+      addNotification({ type: 'error', message: t('settings.newPasswordMismatch') });
       return;
     }
 
     // 백엔드 API 미구현 - 클라이언트 측 시뮬레이션
-    addNotification({ type: 'success', message: '프로필이 저장되었습니다' });
+    addNotification({ type: 'success', message: t('settings.profileSaved') });
     setCurrentPassword('');
     setNewPassword('');
     setConfirmPassword('');
@@ -249,22 +260,22 @@ function ProfileTab() {
     <div className="space-y-6">
       {/* 사용자 정보 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">사용자 정보</h3>
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('settings.userInfo')}</h3>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          현재 로그인된 계정 정보입니다
+          {t('settings.userInfoDesc')}
         </p>
 
         <dl className="mt-4 space-y-3">
           <div className="flex items-center gap-3">
             <dt className="w-20 shrink-0 text-sm font-medium text-(--color-text-muted)">
-              이름
+              {t('settings.name')}
             </dt>
             <dd className="text-sm text-(--color-text-primary)">{user?.name ?? '-'}</dd>
           </div>
           {/* Basic Auth에서는 이메일 필드 없음 */}
           <div className="flex items-center gap-3">
             <dt className="w-20 shrink-0 text-sm font-medium text-(--color-text-muted)">
-              역할
+              {t('settings.role')}
             </dt>
             <dd>
               <span
@@ -277,7 +288,11 @@ function ProfileTab() {
                       : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
                 )}
               >
-                {user?.role ? (roleLabels[user.role] ?? user.role) : '-'}
+                {(() => {
+                  if (!user?.role) return '-';
+                  const roleKey = roleLabelKeys[user.role];
+                  return roleKey ? t(roleKey) : user.role;
+                })()}
               </span>
             </dd>
           </div>
@@ -288,10 +303,10 @@ function ProfileTab() {
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
         <div className="flex items-center gap-2">
           <Lock className="h-5 w-5 text-gray-400" aria-hidden="true" />
-          <h3 className="text-lg font-semibold text-(--color-text-primary)">비밀번호 변경</h3>
+          <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('settings.changePassword')}</h3>
         </div>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          계정 보안을 위해 주기적으로 비밀번호를 변경하세요
+          {t('settings.changePasswordDesc')}
         </p>
 
         <form onSubmit={handlePasswordSubmit} className="mt-4 max-w-md space-y-4">
@@ -301,7 +316,7 @@ function ProfileTab() {
               htmlFor="current-password"
               className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
-              현재 비밀번호
+              {t('settings.currentPassword')}
             </label>
             <div className="relative">
               <input
@@ -311,13 +326,13 @@ function ProfileTab() {
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 className={cn(inputClass, 'pr-10')}
-                placeholder="현재 비밀번호 입력"
+                placeholder={t('settings.currentPasswordPlaceholder')}
               />
               <button
                 type="button"
                 onClick={() => setShowPasswords((prev) => !prev)}
                 className="absolute inset-y-0 right-0 flex items-center pr-3 text-(--color-text-muted) hover:text-(--color-text-secondary)"
-                aria-label={showPasswords ? '비밀번호 숨기기' : '비밀번호 표시'}
+                aria-label={showPasswords ? t('auth.hidePassword') : t('auth.showPassword')}
               >
                 {showPasswords ? (
                   <EyeOff className="h-4 w-4" aria-hidden="true" />
@@ -334,7 +349,7 @@ function ProfileTab() {
               htmlFor="new-password"
               className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
-              새 비밀번호
+              {t('settings.newPassword')}
             </label>
             <input
               id="new-password"
@@ -343,7 +358,7 @@ function ProfileTab() {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               className={inputClass}
-              placeholder="새 비밀번호 입력 (8자 이상)"
+              placeholder={t('settings.newPasswordPlaceholder')}
             />
           </div>
 
@@ -353,7 +368,7 @@ function ProfileTab() {
               htmlFor="confirm-password"
               className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
-              비밀번호 확인
+              {t('settings.confirmPassword')}
             </label>
             <input
               id="confirm-password"
@@ -362,7 +377,7 @@ function ProfileTab() {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className={inputClass}
-              placeholder="새 비밀번호 다시 입력"
+              placeholder={t('settings.confirmPasswordPlaceholder')}
             />
           </div>
 
@@ -374,7 +389,7 @@ function ProfileTab() {
               'dark:focus:ring-offset-gray-800 transition-colors',
             )}
           >
-            비밀번호 변경
+            {t('settings.changePassword')}
           </button>
         </form>
       </div>
@@ -390,6 +405,7 @@ function ProfileTab() {
 function SystemTab() {
   const user = useAuthStore((s) => s.user);
   const addNotification = useUIStore((s) => s.addNotification);
+  const { t } = useTranslation();
   const [logLevel, setLogLevelState] = useState<string>('info');
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -405,9 +421,12 @@ function SystemTab() {
     try {
       await setLogLevel(level);
       setLogLevelState(level);
-      addNotification({ type: 'success', message: `로그 레벨이 "${level}"로 변경되었습니다` });
+      addNotification({
+        type: 'success',
+        message: t('settings.logLevelChangedNamed').replace('{level}', level),
+      });
     } catch {
-      addNotification({ type: 'error', message: '로그 레벨 변경에 실패했습니다' });
+      addNotification({ type: 'error', message: t('settings.logLevelError') });
     } finally {
       setIsUpdating(false);
     }
@@ -422,7 +441,7 @@ function SystemTab() {
           className="flex items-center gap-2 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400"
         >
           <Shield className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>관리자 권한이 필요합니다</span>
+          <span>{t('settings.adminRequired')}</span>
         </div>
       )}
 
@@ -433,9 +452,9 @@ function SystemTab() {
 
       {/* 로그 레벨 설정 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">로그 레벨</h3>
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('settings.logLevel')}</h3>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          서버 런타임 로그 레벨을 변경합니다
+          {t('settings.logLevelDesc')}
         </p>
 
         <div className="mt-4 max-w-xs">
@@ -443,7 +462,7 @@ function SystemTab() {
             htmlFor="log-level"
             className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
           >
-            레벨 선택
+            {t('settings.logLevelSelect')}
           </label>
           <select
             id="log-level"
@@ -469,9 +488,9 @@ function SystemTab() {
 
       {/* API 서버 정보 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
-        <h3 className="text-lg font-semibold text-(--color-text-primary)">API 서버</h3>
+        <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('settings.apiServer')}</h3>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          현재 접속 중인 서버 주소입니다
+          {t('settings.apiServerDesc')}
         </p>
 
         <div className="mt-4 max-w-md">
@@ -479,7 +498,7 @@ function SystemTab() {
             htmlFor="api-url"
             className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
           >
-            서버 URL
+            {t('settings.serverUrl')}
           </label>
           <input
             id="api-url"
@@ -527,12 +546,12 @@ function levelRank(level: string): number {
 }
 
 /** 정렬 비교자. 컬럼/방향에 따라 두 행을 비교한다. */
-function compareRows(a: OverrideRow, b: OverrideRow, column: SortColumn): number {
+function compareRows(a: OverrideRow, b: OverrideRow, column: SortColumn, t: TranslationFn): number {
   switch (column) {
     case 'category': {
-      // 한글 종류 라벨 기준 비교. 동률이면 컴포넌트명으로 안정 정렬한다.
-      const byLabel = getCategoryLabel(a.categoryKey).localeCompare(
-        getCategoryLabel(b.categoryKey),
+      // 현지화된 종류 라벨 기준 비교. 동률이면 컴포넌트명으로 안정 정렬한다.
+      const byLabel = getCategoryLabel(a.categoryKey, t).localeCompare(
+        getCategoryLabel(b.categoryKey, t),
         'ko',
       );
       return byLabel !== 0 ? byLabel : a.component.localeCompare(b.component, 'ko');
@@ -616,15 +635,15 @@ function SortableHeader({
   );
 }
 
-/** 종류 배지: 색상 점 + 한글 라벨. */
-function CategoryBadge({ categoryKey }: { categoryKey: string }) {
+/** 종류 배지: 색상 점 + 현지화된 라벨. */
+function CategoryBadge({ categoryKey, t }: { categoryKey: string; t: TranslationFn }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-0.5 text-xs font-medium text-(--color-text-secondary)">
       <span
         className={cn('h-2 w-2 shrink-0 rounded-full', getCategoryDotClass(categoryKey))}
         aria-hidden="true"
       />
-      {getCategoryLabel(categoryKey)}
+      {getCategoryLabel(categoryKey, t)}
     </span>
   );
 }
@@ -642,6 +661,7 @@ function ComponentLogLevelOverrides({
   isViewer: boolean;
   addNotification: NotifyFn;
 }) {
+  const { t } = useTranslation();
   const [logLevelInfo, setLogLevelInfo] = useState<LogLevelInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -696,9 +716,9 @@ function ComponentLogLevelOverrides({
   const availableCategories = useMemo<string[]>(() => {
     const keys = new Set(allRows.map((r) => r.categoryKey));
     return Array.from(keys).sort((a, b) =>
-      getCategoryLabel(a).localeCompare(getCategoryLabel(b), 'ko'),
+      getCategoryLabel(a, t).localeCompare(getCategoryLabel(b, t), 'ko'),
     );
-  }, [allRows]);
+  }, [allRows, t]);
 
   /** 필터 + 정렬을 적용한 표시 행. */
   const visibleRows = useMemo<OverrideRow[]>(() => {
@@ -712,9 +732,9 @@ function ComponentLogLevelOverrides({
       }
       return true;
     });
-    const sorted = [...filtered].sort((a, b) => compareRows(a, b, sortColumn));
+    const sorted = [...filtered].sort((a, b) => compareRows(a, b, sortColumn, t));
     return sortDirection === 'asc' ? sorted : sorted.reverse();
-  }, [allRows, categoryFilter, nameFilter, sortColumn, sortDirection]);
+  }, [allRows, categoryFilter, nameFilter, sortColumn, sortDirection, t]);
 
   /** 정렬 토글: 같은 컬럼이면 방향 반전, 다른 컬럼이면 오름차순으로 시작. */
   function handleSort(column: SortColumn) {
@@ -733,11 +753,13 @@ function ComponentLogLevelOverrides({
       await setComponentLogLevel(component, level);
       addNotification({
         type: 'success',
-        message: `"${component}" 로그 레벨이 "${level}"로 변경되었습니다`,
+        message: t('settings.logLevelChangedFor')
+          .replace('{component}', component)
+          .replace('{level}', level),
       });
       loadLogLevels();
     } catch {
-      addNotification({ type: 'error', message: '로그 레벨 변경에 실패했습니다' });
+      addNotification({ type: 'error', message: t('settings.logLevelError') });
     } finally {
       setPending((prev) => {
         const next = new Set(prev);
@@ -752,10 +774,13 @@ function ComponentLogLevelOverrides({
     setPending((prev) => new Set(prev).add(component));
     try {
       await resetComponentLogLevel(component);
-      addNotification({ type: 'success', message: `"${component}" 로그 레벨이 리셋되었습니다` });
+      addNotification({
+        type: 'success',
+        message: t('settings.logLevelResetFor').replace('{component}', component),
+      });
       loadLogLevels();
     } catch {
-      addNotification({ type: 'error', message: '로그 레벨 리셋에 실패했습니다' });
+      addNotification({ type: 'error', message: t('settings.logLevelResetError') });
     } finally {
       setPending((prev) => {
         const next = new Set(prev);
@@ -803,8 +828,12 @@ function ComponentLogLevelOverrides({
         type: rejected === 0 ? 'success' : 'warning',
         message:
           rejected === 0
-            ? `${fulfilled}개 컴포넌트 레벨을 "${bulkLevel}"로 변경했습니다`
-            : `일괄 변경: 성공 ${fulfilled}개, 실패 ${rejected}개`,
+            ? t('settings.bulkApplied')
+                .replace('{count}', String(fulfilled))
+                .replace('{level}', bulkLevel)
+            : t('settings.bulkApplyPartial')
+                .replace('{ok}', String(fulfilled))
+                .replace('{fail}', String(rejected)),
       });
     } finally {
       setIsBulkProcessing(false);
@@ -827,8 +856,10 @@ function ComponentLogLevelOverrides({
         type: rejected === 0 ? 'success' : 'warning',
         message:
           rejected === 0
-            ? `${fulfilled}개 컴포넌트를 리셋했습니다`
-            : `일괄 리셋: 성공 ${fulfilled}개, 실패 ${rejected}개`,
+            ? t('settings.bulkResetDone').replace('{count}', String(fulfilled))
+            : t('settings.bulkResetPartial')
+                .replace('{ok}', String(fulfilled))
+                .replace('{fail}', String(rejected)),
       });
     } finally {
       setIsBulkProcessing(false);
@@ -849,10 +880,10 @@ function ComponentLogLevelOverrides({
   return (
     <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
       <h3 className="text-lg font-semibold text-(--color-text-primary)">
-        컴포넌트별 로그 레벨
+        {t('settings.componentLogLevel')}
       </h3>
       <p className="mt-1 text-sm text-(--color-text-muted)">
-        개별 컴포넌트의 로그 레벨을 조회·변경하고, 선택하여 일괄 처리할 수 있습니다
+        {t('settings.componentLogLevelDesc')}
       </p>
 
       <div className="mt-4">
@@ -863,7 +894,7 @@ function ComponentLogLevelOverrides({
             ))}
           </div>
         ) : !hasOverrides ? (
-          <p className="text-sm text-(--color-text-muted)">설정된 오버라이드가 없습니다</p>
+          <p className="text-sm text-(--color-text-muted)">{t('settings.noOverrides')}</p>
         ) : (
           <div className="space-y-4">
             {/* 필터 영역: 종류 필터 + 이름 검색 */}
@@ -873,7 +904,7 @@ function ComponentLogLevelOverrides({
                   htmlFor="log-category-filter"
                   className="mb-1 block text-xs font-medium text-(--color-text-muted)"
                 >
-                  종류
+                  {t('settings.category')}
                 </label>
                 <select
                   id="log-category-filter"
@@ -881,10 +912,10 @@ function ComponentLogLevelOverrides({
                   onChange={(e) => setCategoryFilter(e.target.value)}
                   className={cn(inputClass, 'py-1.5 text-sm')}
                 >
-                  <option value={CATEGORY_FILTER_ALL}>전체</option>
+                  <option value={CATEGORY_FILTER_ALL}>{t('settings.categoryAll')}</option>
                   {availableCategories.map((key) => (
                     <option key={key} value={key}>
-                      {getCategoryLabel(key)}
+                      {getCategoryLabel(key, t)}
                     </option>
                   ))}
                 </select>
@@ -895,7 +926,7 @@ function ComponentLogLevelOverrides({
                   htmlFor="log-name-filter"
                   className="mb-1 block text-xs font-medium text-(--color-text-muted)"
                 >
-                  컴포넌트 검색
+                  {t('settings.componentSearch')}
                 </label>
                 <div className="relative">
                   <Search
@@ -907,7 +938,7 @@ function ComponentLogLevelOverrides({
                     type="text"
                     value={nameFilter}
                     onChange={(e) => setNameFilter(e.target.value)}
-                    placeholder="컴포넌트명 부분 검색"
+                    placeholder={t('settings.componentSearchPlaceholder')}
                     className={cn(inputClass, 'py-1.5 pl-8 text-sm')}
                   />
                 </div>
@@ -918,12 +949,12 @@ function ComponentLogLevelOverrides({
             <div className="flex flex-col gap-2 rounded-md border border-(--color-border-subtle) bg-(--color-bg-sunken) p-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-xs text-(--color-text-muted)">
                 {selectedCount > 0
-                  ? `${selectedCount}개 선택됨`
-                  : '체크박스로 컴포넌트를 선택하세요'}
+                  ? t('settings.selectedCount').replace('{count}', String(selectedCount))
+                  : t('settings.selectHint')}
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <select
-                  aria-label="일괄 적용 레벨"
+                  aria-label={t('settings.bulkLevelLabel')}
                   value={bulkLevel}
                   onChange={(e) => setBulkLevel(e.target.value)}
                   disabled={controlsDisabled || selectedCount === 0}
@@ -945,7 +976,7 @@ function ComponentLogLevelOverrides({
                     'disabled:cursor-not-allowed disabled:opacity-50',
                   )}
                 >
-                  {isBulkProcessing ? '처리 중...' : '적용'}
+                  {isBulkProcessing ? t('settings.processing') : t('settings.apply')}
                 </button>
                 <button
                   type="button"
@@ -957,7 +988,7 @@ function ComponentLogLevelOverrides({
                     'disabled:cursor-not-allowed disabled:opacity-50',
                   )}
                 >
-                  선택 리셋
+                  {t('settings.bulkReset')}
                 </button>
               </div>
             </div>
@@ -965,7 +996,7 @@ function ComponentLogLevelOverrides({
             {/* 필터 결과가 0건일 때의 빈 상태 */}
             {visibleRows.length === 0 ? (
               <p className="py-4 text-center text-sm text-(--color-text-muted)">
-                조건에 맞는 컴포넌트가 없습니다
+                {t('settings.noMatchingComponents')}
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -975,7 +1006,7 @@ function ComponentLogLevelOverrides({
                       <th scope="col" className="pb-2 pr-2">
                         <input
                           type="checkbox"
-                          aria-label="표시된 컴포넌트 전체 선택"
+                          aria-label={t('settings.selectAllVisible')}
                           checked={allVisibleSelected}
                           ref={(el) => {
                             if (el) el.indeterminate = someVisibleSelected;
@@ -986,21 +1017,21 @@ function ComponentLogLevelOverrides({
                         />
                       </th>
                       <SortableHeader
-                        label="종류"
+                        label={t('settings.category')}
                         column="category"
                         sortColumn={sortColumn}
                         sortDirection={sortDirection}
                         onSort={handleSort}
                       />
                       <SortableHeader
-                        label="컴포넌트"
+                        label={t('settings.column')}
                         column="component"
                         sortColumn={sortColumn}
                         sortDirection={sortDirection}
                         onSort={handleSort}
                       />
                       <SortableHeader
-                        label="레벨"
+                        label={t('settings.level')}
                         column="level"
                         sortColumn={sortColumn}
                         sortDirection={sortDirection}
@@ -1010,7 +1041,7 @@ function ComponentLogLevelOverrides({
                         scope="col"
                         className="pb-2 font-medium text-(--color-text-muted)"
                       >
-                        액션
+                        {t('common.actions')}
                       </th>
                     </tr>
                   </thead>
@@ -1026,7 +1057,7 @@ function ComponentLogLevelOverrides({
                           <td className="py-2 pr-2">
                             <input
                               type="checkbox"
-                              aria-label={`${row.component} 선택`}
+                              aria-label={t('settings.rowSelect').replace('{component}', row.component)}
                               checked={selected.has(row.component)}
                               onChange={() => toggleSelected(row.component)}
                               disabled={controlsDisabled}
@@ -1034,14 +1065,14 @@ function ComponentLogLevelOverrides({
                             />
                           </td>
                           <td className="py-2 pr-4">
-                            <CategoryBadge categoryKey={row.categoryKey} />
+                            <CategoryBadge categoryKey={row.categoryKey} t={t} />
                           </td>
                           <td className="py-2 pr-4 break-all text-(--color-text-primary)">
                             {row.component}
                           </td>
                           <td className="py-2 pr-4">
                             <select
-                              aria-label={`${row.component} 로그 레벨`}
+                              aria-label={t('settings.rowLogLevel').replace('{component}', row.component)}
                               value={row.level}
                               onChange={(e) => handleLevelChange(row.component, e.target.value)}
                               disabled={rowDisabled}
@@ -1065,7 +1096,7 @@ function ComponentLogLevelOverrides({
                                 'disabled:cursor-not-allowed disabled:opacity-50',
                               )}
                             >
-                              {isRowPending ? '처리 중...' : '리셋'}
+                              {isRowPending ? t('settings.processing') : t('settings.reset')}
                             </button>
                           </td>
                         </tr>
@@ -1089,12 +1120,13 @@ function ComponentLogLevelOverrides({
 /** 테마 탭: 라이트/다크/시스템 테마 선택. 변경 시 즉시 적용. */
 function ThemeTab() {
   const { theme, setTheme } = useTheme();
+  const { t } = useTranslation();
 
   return (
     <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
-      <h3 className="text-lg font-semibold text-(--color-text-primary)">테마 설정</h3>
+      <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('settings.themeTitle')}</h3>
       <p className="mt-1 text-sm text-(--color-text-muted)">
-        애플리케이션 외관을 설정합니다. 변경 사항은 즉시 적용됩니다.
+        {t('settings.themeSubtitle')}
       </p>
 
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
@@ -1132,10 +1164,10 @@ function ThemeTab() {
                       : 'text-(--color-text-primary)',
                   )}
                 >
-                  {option.label}
+                  {t(option.labelKey)}
                 </div>
                 <div className="mt-0.5 text-xs text-(--color-text-muted)">
-                  {option.description}
+                  {t(option.descKey)}
                 </div>
               </div>
             </button>
@@ -1169,9 +1201,9 @@ function LanguageTab() {
 
   return (
     <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
-      <h3 className="text-lg font-semibold text-(--color-text-primary)">언어 설정</h3>
+      <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('settings.languageTitle')}</h3>
       <p className="mt-1 text-sm text-(--color-text-muted)">
-        인터페이스 표시 언어를 선택합니다
+        {t('settings.languageSubtitle')}
       </p>
 
       <div className="mt-6 space-y-2 max-w-sm">
@@ -1203,7 +1235,7 @@ function LanguageTab() {
                     : 'text-(--color-text-primary)',
                 )}
               >
-                {lang.label}
+                {t(lang.labelKey)}
               </span>
             </label>
           );

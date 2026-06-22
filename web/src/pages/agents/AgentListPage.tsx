@@ -275,14 +275,14 @@ export default function AgentListPage({
       <div className="space-y-6">
         <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
           <p className="text-sm text-red-700 dark:text-red-400">
-            에이전트 목록을 불러오는 중 오류가 발생했습니다.
+            {t('agents.loadError')}
           </p>
           <button
             type="button"
             onClick={() => refetch()}
             className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
           >
-            다시 시도
+            {t('common.retry')}
           </button>
         </div>
       </div>
@@ -313,7 +313,7 @@ export default function AgentListPage({
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Upload className="h-4 w-4" />
-                가져오기
+                {t('common.import')}
               </button>
               <button
                 type="button"
@@ -321,7 +321,7 @@ export default function AgentListPage({
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Download className="h-4 w-4" />
-                전체 내보내기
+                {t('common.exportAll')}
               </button>
             </>
           )}
@@ -334,7 +334,7 @@ export default function AgentListPage({
             className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             <Plus className="h-4 w-4" />
-            새 에이전트
+            {t('agents.newAgent')}
           </button>
         </div>
       </div>
@@ -353,8 +353,8 @@ export default function AgentListPage({
           <Bot className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
           <p className="mt-4 text-sm text-(--color-text-muted)">
             {allAgents.length === 0
-              ? '등록된 에이전트가 없습니다. 새 에이전트를 만들어 보세요.'
-              : '검색 결과가 없습니다.'}
+              ? t('agents.emptyTitle')
+              : t('agents.noSearchResults')}
           </p>
           {allAgents.length === 0 && (showLocalWrites || gating.nodeReady) && (
             <button
@@ -363,7 +363,7 @@ export default function AgentListPage({
               className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
-              새 에이전트
+              {t('agents.newAgent')}
             </button>
           )}
         </div>
@@ -373,7 +373,7 @@ export default function AgentListPage({
           <div className="flex items-center justify-between">
             {/* 페이지 크기 선택 */}
             <div className="flex items-center gap-2 text-sm text-(--color-text-muted)">
-              <span>페이지당</span>
+              <span>{t('common.pagination.perPage')}</span>
               <select
                 value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
@@ -385,11 +385,13 @@ export default function AgentListPage({
                   </option>
                 ))}
               </select>
-              <span>건</span>
+              <span>{t('common.pagination.unit')}</span>
               <span className="ml-2 text-gray-400">|</span>
               <span className="ml-2">
-                총 {totalItems}건 중 {startIndex + 1}-
-                {Math.min(startIndex + pageSize, totalItems)}건
+                {t('common.pagination.range')
+                  .replace('{total}', String(totalItems))
+                  .replace('{start}', String(startIndex + 1))
+                  .replace('{end}', String(Math.min(startIndex + pageSize, totalItems)))}
               </span>
             </div>
 
@@ -400,7 +402,7 @@ export default function AgentListPage({
                 disabled={safePage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="이전 페이지"
+                aria-label={t('common.pagination.prev')}
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -412,7 +414,7 @@ export default function AgentListPage({
                 disabled={safePage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="다음 페이지"
+                aria-label={t('common.pagination.next')}
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -425,17 +427,17 @@ export default function AgentListPage({
               <thead className="bg-(--color-bg-primary)">
                 <tr>
                   <th className="w-8 px-3 py-3" />
-                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('common.name')} field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('common.type')} field="type" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('common.status')} field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    업타임
+                    {t('common.uptime')}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    메시지 (IN/OUT)
+                    {t('agents.colMessages')}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    액션
+                    {t('common.actions')}
                   </th>
                 </tr>
               </thead>
@@ -506,6 +508,7 @@ function AgentRow({
   onToggle,
   showLocalWrites,
 }: AgentRowProps) {
+  const { t } = useTranslation();
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(agent.name);
   const updateAgent = useUpdateAgent();
@@ -565,14 +568,14 @@ function AgentRow({
               <button
                 onClick={handleSaveName}
                 className="rounded p-0.5 text-green-600 hover:bg-green-100 dark:hover:bg-green-900/30"
-                title="저장"
+                title={t('common.save')}
               >
                 <Check className="h-3.5 w-3.5" />
               </button>
               <button
                 onClick={handleCancelName}
                 className="rounded p-0.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
-                title="취소"
+                title={t('common.cancel')}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -589,7 +592,7 @@ function AgentRow({
                     setEditingName(true);
                   }}
                   className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-(--color-bg-elevated)"
-                  title="이름 편집"
+                  title={t('agents.editName')}
                 >
                   <Pencil className="h-3 w-3 text-(--color-text-muted)" />
                 </button>
@@ -608,17 +611,17 @@ function AgentRow({
           {(() => {
             if (agent.status === 'error') {
               return (
-                <span className="inline-flex items-center text-red-600 dark:text-red-400" title="오류">
+                <span className="inline-flex items-center text-red-600 dark:text-red-400" title={t('status.error')}>
                   <AlertTriangle className="h-4 w-4" />
                 </span>
               );
             }
             return agent.connected === true ? (
-              <span className="inline-flex items-center text-green-600 dark:text-green-400" title="연결됨">
+              <span className="inline-flex items-center text-green-600 dark:text-green-400" title={t('agents.connected')}>
                 <Activity className="h-4 w-4" />
               </span>
             ) : (
-              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title="연결 해제">
+              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title={t('agents.disconnected')}>
                 <CircleStop className="h-4 w-4" />
               </span>
             );

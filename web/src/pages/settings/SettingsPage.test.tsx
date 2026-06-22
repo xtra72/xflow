@@ -147,13 +147,18 @@ function buildWrapper() {
   });
   function Wrapper({ children }: PropsWithChildren) {
     return (
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      <QueryClientProvider client={client}>
+        <I18nProvider>{children}</I18nProvider>
+      </QueryClientProvider>
     );
   }
   return { Wrapper };
 }
 
 beforeEach(() => {
+  // i18n 은 localStorage('xflow-locale')에서 초기 locale 을 읽으므로
+  // 각 테스트 전에 깨끗한 상태(기본 'ko')로 초기화한다(테스트 순서 무관 보장).
+  localStorage.clear();
   // 로그 레벨 API 기본 동작 — 각 테스트에서 필요 시 재정의한다.
   getLogLevelsMock.mockResolvedValue({ default_level: 'info', components: {} });
   setComponentLogLevelMock.mockResolvedValue(undefined);

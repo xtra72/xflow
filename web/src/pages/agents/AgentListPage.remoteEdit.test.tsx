@@ -136,7 +136,7 @@ describe('AgentListPage — 행 업데이트 어포던스 제거(회귀)', () =>
 describe('AgentListPage — 원격 에이전트 생성(유지)', () => {
   it('"새 에이전트" 클릭 시 create 다이얼로그가 열린다', () => {
     renderPage(REMOTE_TARGET);
-    fireEvent.click(screen.getByText('새 에이전트'));
+    fireEvent.click(screen.getByText('agents.newAgent'));
     expect(screen.getByTestId('remote-agent-edit-dialog')).toBeInTheDocument();
     // create 모드: 종류 입력이 활성(편집 가능)이어야 한다.
     const typeInput = screen.getByTestId('remote-agent-type') as HTMLInputElement;
@@ -146,7 +146,7 @@ describe('AgentListPage — 원격 에이전트 생성(유지)', () => {
   it('생성 저장 시 useCreateRemoteAgent 를 마스킹 시크릿이 생략된 config 로 호출한다', async () => {
     createMutateAsync.mockResolvedValueOnce({ id: 'a-new' });
     renderPage(REMOTE_TARGET);
-    fireEvent.click(screen.getByText('새 에이전트'));
+    fireEvent.click(screen.getByText('agents.newAgent'));
 
     // 필수 입력(이름/종류) 채우기 + config 에 비시크릿+빈 시크릿 작성.
     fireEvent.change(screen.getByTestId('remote-agent-name'), {

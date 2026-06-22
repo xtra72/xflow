@@ -26,7 +26,7 @@ import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
 import { useFlowsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { TargetProvider } from '@/lib/remote/TargetContext';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
@@ -38,30 +38,33 @@ import FlowActionMenu from './FlowActionMenu';
 import FlowDetailPanel from './FlowDetailPanel';
 import FlowSearchFilter from './FlowSearchFilter';
 
-/** 상태별 색상 및 아이콘 매핑 (대시보드 FlowPanel과 동일) */
-const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+/**
+ * 상태별 색상 및 아이콘 매핑 (대시보드 FlowPanel과 동일).
+ * `labelKey`는 i18n 키(`status.*`)이며 렌더 시 t()로 변환한다(컴포넌트 밖 t() 호출 금지).
+ */
+const STATUS_CONFIG: Record<string, { labelKey: string; color: string; icon: React.ReactNode }> = {
   running: {
-    label: '실행 중',
+    labelKey: 'status.running',
     color: 'text-green-600 dark:text-green-400',
     icon: <Activity className="h-4 w-4" />,
   },
   stopped: {
-    label: '중지됨',
+    labelKey: 'status.stopped',
     color: 'text-gray-600 dark:text-gray-400',
     icon: <CircleStop className="h-4 w-4" />,
   },
   error: {
-    label: '오류',
+    labelKey: 'status.error',
     color: 'text-red-600 dark:text-red-400',
     icon: <AlertTriangle className="h-4 w-4" />,
   },
   stored: {
-    label: '저장됨',
+    labelKey: 'status.stored',
     color: 'text-blue-600 dark:text-blue-400',
     icon: <FileText className="h-4 w-4" />,
   },
   loaded: {
-    label: '탑재됨',
+    labelKey: 'status.loaded',
     color: 'text-yellow-600 dark:text-yellow-400',
     icon: <Rocket className="h-4 w-4" />,
   },
@@ -293,14 +296,14 @@ export default function FlowListPage({
       <div className="space-y-6">
         <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
           <p className="text-sm text-red-700 dark:text-red-400">
-            플로우 목록을 불러오는 중 오류가 발생했습니다.
+            {t('flows.loadError')}
           </p>
           <button
             type="button"
             onClick={() => refetch()}
             className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
           >
-            다시 시도
+            {t('common.retry')}
           </button>
         </div>
       </div>
@@ -331,7 +334,7 @@ export default function FlowListPage({
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Upload className="h-4 w-4" />
-                가져오기
+                {t('common.import')}
               </button>
               <button
                 type="button"
@@ -339,7 +342,7 @@ export default function FlowListPage({
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Download className="h-4 w-4" />
-                전체 내보내기
+                {t('common.exportAll')}
               </button>
             </>
           )}
@@ -358,7 +361,7 @@ export default function FlowListPage({
             className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             <Plus className="h-4 w-4" />
-            새 플로우
+            {t('flows.newFlow')}
           </button>
         </div>
       </div>
@@ -377,8 +380,8 @@ export default function FlowListPage({
           <Workflow className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
           <p className="mt-4 text-sm text-(--color-text-muted)">
             {allFlows.length === 0
-              ? '등록된 플로우가 없습니다. 새 플로우를 만들어 보세요.'
-              : '검색 결과가 없습니다.'}
+              ? t('flows.emptyTitle')
+              : t('flows.noSearchResults')}
           </p>
           {allFlows.length === 0 && (showLocalWrites || gating.nodeReady) && (
             <button
@@ -393,7 +396,7 @@ export default function FlowListPage({
               className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
-              새 플로우
+              {t('flows.newFlow')}
             </button>
           )}
         </div>
@@ -403,7 +406,7 @@ export default function FlowListPage({
           <div className="flex items-center justify-between">
             {/* 페이지 크기 선택 */}
             <div className="flex items-center gap-2 text-sm text-(--color-text-muted)">
-              <span>페이지당</span>
+              <span>{t('common.pagination.perPage')}</span>
               <select
                 value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
@@ -415,11 +418,13 @@ export default function FlowListPage({
                   </option>
                 ))}
               </select>
-              <span>건</span>
+              <span>{t('common.pagination.unit')}</span>
               <span className="ml-2 text-gray-400">|</span>
               <span className="ml-2">
-                총 {totalItems}건 중 {startIndex + 1}-
-                {Math.min(startIndex + pageSize, totalItems)}건
+                {t('common.pagination.range')
+                  .replace('{total}', String(totalItems))
+                  .replace('{start}', String(startIndex + 1))
+                  .replace('{end}', String(Math.min(startIndex + pageSize, totalItems)))}
               </span>
             </div>
 
@@ -430,7 +435,7 @@ export default function FlowListPage({
                 disabled={safePage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="이전 페이지"
+                aria-label={t('common.pagination.prev')}
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -442,7 +447,7 @@ export default function FlowListPage({
                 disabled={safePage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="다음 페이지"
+                aria-label={t('common.pagination.next')}
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -455,21 +460,21 @@ export default function FlowListPage({
               <thead className="bg-(--color-bg-primary)">
                 <tr>
                   <th className="w-8 px-3 py-3" />
-                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colName')} field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colStatus')} field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    노드
+                    {t('flows.colNode')}
                   </th>
-                  <SortableHeader label="생성일" field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="수정일" field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colCreatedAt')} field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colUpdatedAt')} field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    업타임
+                    {t('common.uptime')}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    자동시작
+                    {t('flows.colAutoStart')}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    액션
+                    {t('common.actions')}
                   </th>
                 </tr>
               </thead>
@@ -492,6 +497,7 @@ export default function FlowListPage({
                       formatDate={formatDate}
                       onAutoStartToggle={handleAutoStartToggle}
                       showLocalWrites={showLocalWrites}
+                      t={t}
                     />
                   );
                 })}
@@ -531,10 +537,12 @@ interface FlowRowProps {
   onAutoStartToggle: (flow: FlowInfo) => void;
   /** 로컬 쓰기 어포던스(자동시작 토글·액션 메뉴) 표시 여부(원격은 숨김). */
   showLocalWrites: boolean;
+  /** 번역 함수(상위에서 주입). */
+  t: TranslationFn;
 }
 
 /** 플로우 테이블 행 (확장 가능) */
-function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoStartToggle, showLocalWrites }: FlowRowProps) {
+function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoStartToggle, showLocalWrites, t }: FlowRowProps) {
   return (
     <>
       <tr
@@ -573,7 +581,7 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoSta
           {(() => {
             const cfg = STATUS_CONFIG[flow.status];
             return cfg ? (
-              <span className={`inline-flex items-center ${cfg.color}`} title={cfg.label}>
+              <span className={`inline-flex items-center ${cfg.color}`} title={t(cfg.labelKey)}>
                 {cfg.icon}
               </span>
             ) : (
