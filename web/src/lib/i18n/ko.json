@@ -309,7 +309,49 @@
     "disconnected": "연결 해제"
   },
   "header": {
-    "changeTheme": "테마 변경"
+    "changeTheme": "테마 변경",
+    "dashboard": {
+      "selectAria": "대시보드 선택",
+      "renameAria": "대시보드 이름 편집",
+      "add": "대시보드 추가",
+      "delete": "대시보드 삭제",
+      "setDefault": "기본 대시보드로 설정",
+      "deleteConfirm": "\"{name}\" 대시보드를 삭제하시겠습니까?"
+    }
+  },
+  "import": {
+    "title": {
+      "flow": "플로우 가져오기",
+      "agent": "에이전트 가져오기"
+    },
+    "dropzone": "파일을 드래그하거나 클릭하여 선택",
+    "dropzoneHint": ".json, .yaml, .yml 파일 지원",
+    "preview": "미리보기 ({count}건)",
+    "typePrefix": "타입:",
+    "missingAgents": "누락된 에이전트 ({count}건)",
+    "missingAgentsDesc": "플로우에서 참조하지만 서버에 없는 에이전트입니다. 각 에이전트의 처리 방식을 선택하세요.",
+    "substitute": "대체",
+    "create": "새로 생성",
+    "skip": "건너뛰기",
+    "autoCreate": "자동 생성됩니다",
+    "noTypeInfo": "타입 정보 없음 - 수동 생성 필요",
+    "addAgentFile": "에이전트 파일 드래그 또는 클릭하여 추가",
+    "secretInput": "비밀 값 입력 ({count}건)",
+    "secretInputDesc": "내보내기 시 비밀번호/토큰 등의 값이 제거되었습니다. 생성 전에 값을 입력하세요. 비워두면 에이전트는 비밀 값 없이 생성됩니다.",
+    "importing": "가져오는 중...",
+    "button": "가져오기 ({count}건)",
+    "parseFailed": "파일 파싱에 실패했습니다.",
+    "importFailed": "가져오기 중 오류가 발생했습니다.",
+    "secretsMissingWarning": "비밀 값이 입력되지 않은 에이전트가 있습니다: {agents}. 에이전트 설정에서 값을 입력해 주세요."
+  },
+  "panel": {
+    "settings": {
+      "aria": "패널 설정",
+      "title": "타이틀",
+      "visibleColumns": "표시 항목",
+      "panelColor": "패널 컬러",
+      "reset": "초기화"
+    }
   },
   "bridge": {
     "mqttSettings": "MQTT 설정",

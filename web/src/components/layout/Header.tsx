@@ -183,7 +183,7 @@ export default function Header() {
   const handleDelete = () => {
     if (isOnlyPage) return;
     const confirmed = window.confirm(
-      `"${activePage?.name}" 대시보드를 삭제하시겠습니까?`,
+      t('header.dashboard.deleteConfirm').replace('{name}', activePage?.name ?? ''),
     );
     if (confirmed) {
       removeDashboardPage(activeDashboardId);
@@ -213,14 +213,14 @@ export default function Header() {
               onBlur={handleConfirmRename}
               onKeyDown={handleRenameKeyDown}
               className="rounded-md border border-blue-500 bg-(--color-bg-surface) px-2 py-1 text-sm font-semibold text-(--color-text-primary) outline-none ring-1 ring-blue-500"
-              aria-label="대시보드 이름 편집"
+              aria-label={t('header.dashboard.renameAria')}
             />
           ) : (
             <select
               value={activeDashboardId}
               onChange={(e) => setActiveDashboard(e.target.value)}
               className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm font-semibold text-(--color-text-primary)"
-              aria-label="대시보드 선택"
+              aria-label={t('header.dashboard.selectAria')}
             >
               {dashboardPages.map((page) => (
                 <option key={page.id} value={page.id}>
@@ -236,8 +236,8 @@ export default function Header() {
             onClick={handleStartRename}
             disabled={renaming}
             className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-40"
-            aria-label="대시보드 이름 편집"
-            title="대시보드 이름 편집"
+            aria-label={t('header.dashboard.renameAria')}
+            title={t('header.dashboard.renameAria')}
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -247,8 +247,8 @@ export default function Header() {
             type="button"
             onClick={() => setCreateOpen(true)}
             className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
-            aria-label="대시보드 추가"
-            title="대시보드 추가"
+            aria-label={t('header.dashboard.add')}
+            title={t('header.dashboard.add')}
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -259,8 +259,8 @@ export default function Header() {
             onClick={handleDelete}
             disabled={isOnlyPage}
             className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="대시보드 삭제"
-            title="대시보드 삭제"
+            aria-label={t('header.dashboard.delete')}
+            title={t('header.dashboard.delete')}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -277,8 +277,8 @@ export default function Header() {
                 : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)',
               'disabled:cursor-not-allowed disabled:opacity-40',
             )}
-            aria-label="기본 대시보드로 설정"
-            title="기본 대시보드로 설정"
+            aria-label={t('header.dashboard.setDefault')}
+            title={t('header.dashboard.setDefault')}
           >
             <Star className={cn('h-3.5 w-3.5', isDefaultPage && 'fill-current')} />
           </button>

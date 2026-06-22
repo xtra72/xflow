@@ -309,7 +309,49 @@
     "disconnected": "Disconnected"
   },
   "header": {
-    "changeTheme": "Change Theme"
+    "changeTheme": "Change Theme",
+    "dashboard": {
+      "selectAria": "Select dashboard",
+      "renameAria": "Edit dashboard name",
+      "add": "Add dashboard",
+      "delete": "Delete dashboard",
+      "setDefault": "Set as default dashboard",
+      "deleteConfirm": "Delete the \"{name}\" dashboard?"
+    }
+  },
+  "import": {
+    "title": {
+      "flow": "Import Flow",
+      "agent": "Import Agent"
+    },
+    "dropzone": "Drag a file or click to select",
+    "dropzoneHint": "Supports .json, .yaml, .yml files",
+    "preview": "Preview ({count})",
+    "typePrefix": "Type:",
+    "missingAgents": "Missing agents ({count})",
+    "missingAgentsDesc": "These agents are referenced by the flow but not found on the server. Choose how to handle each one.",
+    "substitute": "Substitute",
+    "create": "Create new",
+    "skip": "Skip",
+    "autoCreate": "Will be created automatically",
+    "noTypeInfo": "No type info - manual creation required",
+    "addAgentFile": "Drag agent files or click to add",
+    "secretInput": "Enter secret values ({count})",
+    "secretInputDesc": "Passwords/tokens were removed during export. Enter the values before creating. Leave blank to create the agent without secret values.",
+    "importing": "Importing...",
+    "button": "Import ({count})",
+    "parseFailed": "Failed to parse file.",
+    "importFailed": "An error occurred during import.",
+    "secretsMissingWarning": "Some agents were created without secret values: {agents}. Please enter the values in agent settings."
+  },
+  "panel": {
+    "settings": {
+      "aria": "Panel settings",
+      "title": "Title",
+      "visibleColumns": "Visible columns",
+      "panelColor": "Panel color",
+      "reset": "Reset"
+    }
   },
   "bridge": {
     "mqttSettings": "MQTT Settings",
