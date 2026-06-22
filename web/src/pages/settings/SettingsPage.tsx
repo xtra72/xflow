@@ -2,8 +2,11 @@
 // 프로필, 시스템, 테마, 언어 탭으로 구성된 설정 화면을 제공한다.
 // viewer 역할은 시스템 설정 섹션이 비활성화된다.
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
   Eye,
   EyeOff,
   Globe,
@@ -12,6 +15,7 @@ import {
   Moon,
   Palette,
   RefreshCw,
+  Search,
   Shield,
   Sun,
   User,
@@ -20,8 +24,15 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useTheme } from '@/hooks/useTheme';
-import { setLogLevel, getLogLevels, resetComponentLogLevel } from '@/services/api/monitorService';
+import {
+  setLogLevel,
+  getLogLevels,
+  setComponentLogLevel,
+  resetComponentLogLevel,
+} from '@/services/api/monitorService';
 import type { LogLevelInfo } from '@/services/api/monitorService';
+import { SystemInfoCard } from '@/components/system/SystemInfoCard';
+import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import { cn } from '@/lib/utils/cn';
 
 // --- 탭 정의 ---
@@ -63,6 +74,48 @@ const THEME_OPTIONS: ThemeOption[] = [
 // --- 로그 레벨 옵션 ---
 
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+
+// --- 컴포넌트 종류(category) 매핑 ---
+
+/**
+ * 컴포넌트 종류 메타데이터.
+ *
+ * 컴포넌트명은 점(.) 구분 계층이며 첫 세그먼트가 종류이다
+ * (예: `agent.mqtt-client` → `agent`, `flow.test-flow.node.modbus-reader` → `flow`).
+ * `dotClass`는 종류를 가볍게 구분하기 위한 배지 점 색상으로, 하드코딩 색상 없이
+ * 기존 디자인 토큰(`--color-*`)만 사용한다. Tailwind v4 JIT가 클래스를 인식하도록
+ * 동적 조합이 아닌 정적 문자열로 선언한다.
+ */
+const CATEGORY_META: Record<string, { label: string; dotClass: string }> = {
+  agent: { label: '에이전트', dotClass: 'bg-(--color-interactive-primary)' },
+  flow: { label: '플로우', dotClass: 'bg-(--color-status-running)' },
+  node: { label: '노드', dotClass: 'bg-(--color-status-info)' },
+  remote: { label: '원격', dotClass: 'bg-(--color-status-warning)' },
+  engine: { label: '엔진', dotClass: 'bg-(--color-status-error)' },
+  api: { label: 'API', dotClass: 'bg-(--color-status-stopped)' },
+  router: { label: '라우터', dotClass: 'bg-(--color-interactive-active)' },
+  db: { label: '데이터베이스', dotClass: 'bg-(--color-status-running)' },
+  auth: { label: '인증', dotClass: 'bg-(--color-status-info)' },
+  storage: { label: '스토리지', dotClass: 'bg-(--color-status-warning)' },
+};
+
+/** 매핑되지 않은 종류의 기본 배지 점 색상(중립 회색 토큰). */
+const FALLBACK_DOT_CLASS = 'bg-(--color-status-stopped)';
+
+/** 컴포넌트명에서 종류 키(첫 세그먼트)를 추출한다. */
+function getCategoryKey(component: string): string {
+  return component.split('.')[0] ?? component;
+}
+
+/** 종류 키를 한글 종류 라벨로 변환한다. 매핑에 없으면 키를 그대로 표기한다. */
+function getCategoryLabel(key: string): string {
+  return CATEGORY_META[key]?.label ?? key;
+}
+
+/** 종류 키에 해당하는 배지 점 색상 클래스를 반환한다. */
+function getCategoryDotClass(key: string): string {
+  return CATEGORY_META[key]?.dotClass ?? FALLBACK_DOT_CLASS;
+}
 
 // --- 언어 옵션 ---
 
@@ -343,7 +396,10 @@ function SystemTab() {
   const [isUpdating, setIsUpdating] = useState(false);
 
   const isViewer = user?.role === 'viewer';
-  const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
+  // API client(client.ts)는 상대경로 `/api/v1`를 사용하므로 백엔드는 브라우저가
+  // 접속한 origin과 동일하다. window.location.origin을 그대로 표시하면 HTTP/HTTPS
+  // 프로토콜도 현재 접속 상태를 정확히 반영한다(별도 변환 불필요).
+  const apiUrl = window.location.origin;
 
   /** 로그 레벨 변경 핸들러 */
   async function handleLogLevelChange(level: string) {
@@ -371,6 +427,11 @@ function SystemTab() {
           <span>관리자 권한이 필요합니다</span>
         </div>
       )}
+
+      {/* 로컬(self) 인스턴스 시스템 정보 카드 (SPEC-WEB-007) */}
+      {/* 시스템 정보(OS/버전/업타임)를 로그·API 설정보다 먼저 배치한다. */}
+      <SystemInfoCard />
+      <SystemRuntimeCard />
 
       {/* 로그 레벨 설정 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
@@ -412,7 +473,7 @@ function SystemTab() {
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
         <h3 className="text-lg font-semibold text-(--color-text-primary)">API 서버</h3>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          현재 연결된 백엔드 API 서버 정보입니다
+          현재 접속 중인 서버 주소입니다
         </p>
 
         <div className="mt-4 max-w-md">
@@ -437,17 +498,172 @@ function SystemTab() {
 
 // ---- 컴포넌트별 로그 레벨 오버라이드 ----
 
-/** 컴포넌트별 로그 레벨 오버라이드 목록 표시 및 리셋 기능 */
+/** 오버라이드 행 모델 (컴포넌트명 + 종류 키 + 현재 레벨). */
+interface OverrideRow {
+  /** 전체 컴포넌트명 (예: `flow.test-flow.node.modbus-reader`). */
+  component: string;
+  /** 종류 키 (첫 세그먼트). */
+  categoryKey: string;
+  /** 현재 로그 레벨 (소문자). */
+  level: string;
+}
+
+/** 정렬 대상 컬럼. */
+type SortColumn = 'category' | 'component' | 'level';
+/** 정렬 방향. */
+type SortDirection = 'asc' | 'desc';
+
+/** 종류 필터의 전체(미적용) 값. */
+const CATEGORY_FILTER_ALL = 'all';
+
+/** 알림 디스패처 타입 (uiStore.addNotification 시그니처). */
+type NotifyFn = (n: {
+  type: 'success' | 'error' | 'info' | 'warning';
+  message: string;
+}) => void;
+
+/** 레벨 심각도 인덱스 (정렬용). 알 수 없는 레벨은 맨 뒤로 보낸다. */
+function levelRank(level: string): number {
+  const idx = LOG_LEVELS.indexOf(level as (typeof LOG_LEVELS)[number]);
+  return idx === -1 ? LOG_LEVELS.length : idx;
+}
+
+/** 정렬 비교자. 컬럼/방향에 따라 두 행을 비교한다. */
+function compareRows(a: OverrideRow, b: OverrideRow, column: SortColumn): number {
+  switch (column) {
+    case 'category': {
+      // 한글 종류 라벨 기준 비교. 동률이면 컴포넌트명으로 안정 정렬한다.
+      const byLabel = getCategoryLabel(a.categoryKey).localeCompare(
+        getCategoryLabel(b.categoryKey),
+        'ko',
+      );
+      return byLabel !== 0 ? byLabel : a.component.localeCompare(b.component, 'ko');
+    }
+    case 'level': {
+      const byLevel = levelRank(a.level) - levelRank(b.level);
+      return byLevel !== 0 ? byLevel : a.component.localeCompare(b.component, 'ko');
+    }
+    case 'component':
+    default:
+      return a.component.localeCompare(b.component, 'ko');
+  }
+}
+
+/**
+ * Promise.allSettled 결과를 성공/실패 개수로 요약한다.
+ * 일괄 작업 후 사용자에게 부분 실패를 명확히 알리기 위함이다.
+ */
+function summarizeSettled(results: PromiseSettledResult<unknown>[]): {
+  fulfilled: number;
+  rejected: number;
+} {
+  let fulfilled = 0;
+  let rejected = 0;
+  for (const r of results) {
+    if (r.status === 'fulfilled') fulfilled += 1;
+    else rejected += 1;
+  }
+  return { fulfilled, rejected };
+}
+
+/** 정렬 가능한 테이블 헤더 셀. 클릭으로 정렬 토글, aria-sort 부여. */
+function SortableHeader({
+  label,
+  column,
+  sortColumn,
+  sortDirection,
+  onSort,
+  className,
+}: {
+  label: string;
+  column: SortColumn;
+  sortColumn: SortColumn;
+  sortDirection: SortDirection;
+  onSort: (column: SortColumn) => void;
+  className?: string;
+}) {
+  const isActive = sortColumn === column;
+  const ariaSort: React.AriaAttributes['aria-sort'] = isActive
+    ? sortDirection === 'asc'
+      ? 'ascending'
+      : 'descending'
+    : 'none';
+
+  return (
+    <th
+      scope="col"
+      aria-sort={ariaSort}
+      className={cn('pb-2 pr-4 font-medium text-(--color-text-muted)', className)}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className="inline-flex items-center gap-1 hover:text-(--color-text-secondary)"
+      >
+        <span>{label}</span>
+        {isActive ? (
+          sortDirection === 'asc' ? (
+            <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+          )
+        ) : (
+          <ChevronsUpDown
+            className="h-3.5 w-3.5 opacity-50"
+            aria-hidden="true"
+          />
+        )}
+      </button>
+    </th>
+  );
+}
+
+/** 종류 배지: 색상 점 + 한글 라벨. */
+function CategoryBadge({ categoryKey }: { categoryKey: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-0.5 text-xs font-medium text-(--color-text-secondary)">
+      <span
+        className={cn('h-2 w-2 shrink-0 rounded-full', getCategoryDotClass(categoryKey))}
+        aria-hidden="true"
+      />
+      {getCategoryLabel(categoryKey)}
+    </span>
+  );
+}
+
+/**
+ * 컴포넌트별 로그 레벨 오버라이드 관리.
+ *
+ * 종류(category) 배지 표시, 레벨 직접 변경, 정렬, 종류/이름 필터,
+ * 선택 기반 일괄 변경/리셋을 제공한다. viewer 역할은 전체 비활성화된다.
+ */
 function ComponentLogLevelOverrides({
   isViewer,
   addNotification,
 }: {
   isViewer: boolean;
-  addNotification: (n: { type: 'success' | 'error' | 'info' | 'warning'; message: string }) => void;
+  addNotification: NotifyFn;
 }) {
   const [logLevelInfo, setLogLevelInfo] = useState<LogLevelInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [resettingComponent, setResettingComponent] = useState<string | null>(null);
+
+  // 정렬 상태
+  const [sortColumn, setSortColumn] = useState<SortColumn>('component');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  // 필터 상태
+  const [categoryFilter, setCategoryFilter] = useState<string>(CATEGORY_FILTER_ALL);
+  const [nameFilter, setNameFilter] = useState('');
+
+  // 선택 상태 (일괄 처리 대상)
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // 진행 상태: 개별 행 변경/리셋 중인 컴포넌트 집합 + 일괄 처리 플래그
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+
+  // 일괄 변경용 선택 레벨
+  const [bulkLevel, setBulkLevel] = useState<string>(LOG_LEVELS[0]);
 
   /** 로그 레벨 정보 로드 */
   function loadLogLevels() {
@@ -468,9 +684,74 @@ function ComponentLogLevelOverrides({
     loadLogLevels();
   }, []);
 
-  /** 컴포넌트 로그 레벨 리셋 핸들러 */
+  /** 전체 오버라이드 행 (필터/정렬 전 원본). */
+  const allRows = useMemo<OverrideRow[]>(() => {
+    if (!logLevelInfo?.components) return [];
+    return Object.entries(logLevelInfo.components).map(([component, level]) => ({
+      component,
+      categoryKey: getCategoryKey(component),
+      level,
+    }));
+  }, [logLevelInfo]);
+
+  /** 존재하는 종류 키 목록 (종류 필터 옵션 구성용). */
+  const availableCategories = useMemo<string[]>(() => {
+    const keys = new Set(allRows.map((r) => r.categoryKey));
+    return Array.from(keys).sort((a, b) =>
+      getCategoryLabel(a).localeCompare(getCategoryLabel(b), 'ko'),
+    );
+  }, [allRows]);
+
+  /** 필터 + 정렬을 적용한 표시 행. */
+  const visibleRows = useMemo<OverrideRow[]>(() => {
+    const query = nameFilter.trim().toLowerCase();
+    const filtered = allRows.filter((r) => {
+      if (categoryFilter !== CATEGORY_FILTER_ALL && r.categoryKey !== categoryFilter) {
+        return false;
+      }
+      if (query && !r.component.toLowerCase().includes(query)) {
+        return false;
+      }
+      return true;
+    });
+    const sorted = [...filtered].sort((a, b) => compareRows(a, b, sortColumn));
+    return sortDirection === 'asc' ? sorted : sorted.reverse();
+  }, [allRows, categoryFilter, nameFilter, sortColumn, sortDirection]);
+
+  /** 정렬 토글: 같은 컬럼이면 방향 반전, 다른 컬럼이면 오름차순으로 시작. */
+  function handleSort(column: SortColumn) {
+    if (column === sortColumn) {
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  }
+
+  /** 단일 컴포넌트 레벨 직접 변경. */
+  async function handleLevelChange(component: string, level: string) {
+    setPending((prev) => new Set(prev).add(component));
+    try {
+      await setComponentLogLevel(component, level);
+      addNotification({
+        type: 'success',
+        message: `"${component}" 로그 레벨이 "${level}"로 변경되었습니다`,
+      });
+      loadLogLevels();
+    } catch {
+      addNotification({ type: 'error', message: '로그 레벨 변경에 실패했습니다' });
+    } finally {
+      setPending((prev) => {
+        const next = new Set(prev);
+        next.delete(component);
+        return next;
+      });
+    }
+  }
+
+  /** 단일 컴포넌트 리셋. */
   async function handleReset(component: string) {
-    setResettingComponent(component);
+    setPending((prev) => new Set(prev).add(component));
     try {
       await resetComponentLogLevel(component);
       addNotification({ type: 'success', message: `"${component}" 로그 레벨이 리셋되었습니다` });
@@ -478,13 +759,94 @@ function ComponentLogLevelOverrides({
     } catch {
       addNotification({ type: 'error', message: '로그 레벨 리셋에 실패했습니다' });
     } finally {
-      setResettingComponent(null);
+      setPending((prev) => {
+        const next = new Set(prev);
+        next.delete(component);
+        return next;
+      });
     }
   }
 
-  const overrides = logLevelInfo?.components
-    ? Object.entries(logLevelInfo.components)
-    : [];
+  /** 단일 행 선택 토글. */
+  function toggleSelected(component: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(component)) next.delete(component);
+      else next.add(component);
+      return next;
+    });
+  }
+
+  /** 표시 중인 행 전체 선택/해제 토글. */
+  function toggleSelectAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allVisibleSelected = visibleRows.every((r) => next.has(r.component));
+      if (allVisibleSelected) {
+        for (const r of visibleRows) next.delete(r.component);
+      } else {
+        for (const r of visibleRows) next.add(r.component);
+      }
+      return next;
+    });
+  }
+
+  /** 일괄 레벨 변경: 선택된 모든 컴포넌트에 적용. */
+  async function handleBulkApply() {
+    const targets = Array.from(selected);
+    if (targets.length === 0) return;
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((c) => setComponentLogLevel(c, bulkLevel)),
+      );
+      const { fulfilled, rejected } = summarizeSettled(results);
+      addNotification({
+        type: rejected === 0 ? 'success' : 'warning',
+        message:
+          rejected === 0
+            ? `${fulfilled}개 컴포넌트 레벨을 "${bulkLevel}"로 변경했습니다`
+            : `일괄 변경: 성공 ${fulfilled}개, 실패 ${rejected}개`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+      setSelected(new Set());
+      loadLogLevels();
+    }
+  }
+
+  /** 일괄 리셋: 선택된 모든 컴포넌트의 오버라이드 제거. */
+  async function handleBulkReset() {
+    const targets = Array.from(selected);
+    if (targets.length === 0) return;
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((c) => resetComponentLogLevel(c)),
+      );
+      const { fulfilled, rejected } = summarizeSettled(results);
+      addNotification({
+        type: rejected === 0 ? 'success' : 'warning',
+        message:
+          rejected === 0
+            ? `${fulfilled}개 컴포넌트를 리셋했습니다`
+            : `일괄 리셋: 성공 ${fulfilled}개, 실패 ${rejected}개`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+      setSelected(new Set());
+      loadLogLevels();
+    }
+  }
+
+  const hasOverrides = allRows.length > 0;
+  const selectedCount = selected.size;
+  const allVisibleSelected =
+    visibleRows.length > 0 && visibleRows.every((r) => selected.has(r.component));
+  const someVisibleSelected =
+    !allVisibleSelected && visibleRows.some((r) => selected.has(r.component));
+  // 컨트롤 비활성화 여부 (viewer 또는 일괄 처리 중).
+  const controlsDisabled = isViewer || isBulkProcessing;
 
   return (
     <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
@@ -492,69 +854,229 @@ function ComponentLogLevelOverrides({
         컴포넌트별 로그 레벨
       </h3>
       <p className="mt-1 text-sm text-(--color-text-muted)">
-        개별 컴포넌트에 설정된 로그 레벨 오버라이드 목록입니다
+        개별 컴포넌트의 로그 레벨을 조회·변경하고, 선택하여 일괄 처리할 수 있습니다
       </p>
 
       <div className="mt-4">
         {isLoading ? (
           <div className="space-y-2">
             {Array.from({ length: 2 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-10 animate-pulse rounded bg-(--color-bg-elevated)"
-              />
+              <div key={i} className="h-10 animate-pulse rounded bg-(--color-bg-elevated)" />
             ))}
           </div>
-        ) : overrides.length === 0 ? (
-          <p className="text-sm text-(--color-text-muted)">
-            설정된 오버라이드가 없습니다
-          </p>
+        ) : !hasOverrides ? (
+          <p className="text-sm text-(--color-text-muted)">설정된 오버라이드가 없습니다</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-(--color-border-default)">
-                  <th className="pb-2 pr-4 font-medium text-(--color-text-muted)">
-                    컴포넌트
-                  </th>
-                  <th className="pb-2 pr-4 font-medium text-(--color-text-muted)">
-                    레벨
-                  </th>
-                  <th className="pb-2 font-medium text-(--color-text-muted)">
-                    액션
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {overrides.map(([component, level]) => (
-                  <tr
-                    key={component}
-                    className="border-b border-(--color-border-subtle) last:border-0"
-                  >
-                    <td className="py-2 pr-4 text-(--color-text-primary)">
-                      {component}
-                    </td>
-                    <td className="py-2 pr-4 font-mono text-(--color-text-primary)">
+          <div className="space-y-4">
+            {/* 필터 영역: 종류 필터 + 이름 검색 */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="sm:w-48">
+                <label
+                  htmlFor="log-category-filter"
+                  className="mb-1 block text-xs font-medium text-(--color-text-muted)"
+                >
+                  종류
+                </label>
+                <select
+                  id="log-category-filter"
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  className={cn(inputClass, 'py-1.5 text-sm')}
+                >
+                  <option value={CATEGORY_FILTER_ALL}>전체</option>
+                  {availableCategories.map((key) => (
+                    <option key={key} value={key}>
+                      {getCategoryLabel(key)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex-1">
+                <label
+                  htmlFor="log-name-filter"
+                  className="mb-1 block text-xs font-medium text-(--color-text-muted)"
+                >
+                  컴포넌트 검색
+                </label>
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute inset-y-0 left-2 my-auto h-4 w-4 text-(--color-text-muted)"
+                    aria-hidden="true"
+                  />
+                  <input
+                    id="log-name-filter"
+                    type="text"
+                    value={nameFilter}
+                    onChange={(e) => setNameFilter(e.target.value)}
+                    placeholder="컴포넌트명 부분 검색"
+                    className={cn(inputClass, 'py-1.5 pl-8 text-sm')}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 일괄 작업 바: 선택된 컴포넌트에 레벨 일괄 적용 / 리셋 */}
+            <div className="flex flex-col gap-2 rounded-md border border-(--color-border-subtle) bg-(--color-bg-sunken) p-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-xs text-(--color-text-muted)">
+                {selectedCount > 0
+                  ? `${selectedCount}개 선택됨`
+                  : '체크박스로 컴포넌트를 선택하세요'}
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  aria-label="일괄 적용 레벨"
+                  value={bulkLevel}
+                  onChange={(e) => setBulkLevel(e.target.value)}
+                  disabled={controlsDisabled || selectedCount === 0}
+                  className={cn(inputClass, 'w-auto py-1.5 text-sm')}
+                >
+                  {LOG_LEVELS.map((level) => (
+                    <option key={level} value={level}>
                       {level.toUpperCase()}
-                    </td>
-                    <td className="py-2">
-                      <button
-                        type="button"
-                        onClick={() => handleReset(component)}
-                        disabled={isViewer || resettingComponent === component}
-                        className={cn(
-                          'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                          'border border-(--color-border-strong) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
-                          'disabled:cursor-not-allowed disabled:opacity-50',
-                        )}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleBulkApply}
+                  disabled={controlsDisabled || selectedCount === 0}
+                  className={cn(
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    'bg-blue-600 text-white hover:bg-blue-700',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                  )}
+                >
+                  {isBulkProcessing ? '처리 중...' : '적용'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkReset}
+                  disabled={controlsDisabled || selectedCount === 0}
+                  className={cn(
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    'border border-(--color-border-strong) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                  )}
+                >
+                  선택 리셋
+                </button>
+              </div>
+            </div>
+
+            {/* 필터 결과가 0건일 때의 빈 상태 */}
+            {visibleRows.length === 0 ? (
+              <p className="py-4 text-center text-sm text-(--color-text-muted)">
+                조건에 맞는 컴포넌트가 없습니다
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-(--color-border-default)">
+                      <th scope="col" className="pb-2 pr-2">
+                        <input
+                          type="checkbox"
+                          aria-label="표시된 컴포넌트 전체 선택"
+                          checked={allVisibleSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someVisibleSelected;
+                          }}
+                          onChange={toggleSelectAllVisible}
+                          disabled={controlsDisabled}
+                          className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                      </th>
+                      <SortableHeader
+                        label="종류"
+                        column="category"
+                        sortColumn={sortColumn}
+                        sortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                      <SortableHeader
+                        label="컴포넌트"
+                        column="component"
+                        sortColumn={sortColumn}
+                        sortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                      <SortableHeader
+                        label="레벨"
+                        column="level"
+                        sortColumn={sortColumn}
+                        sortDirection={sortDirection}
+                        onSort={handleSort}
+                      />
+                      <th
+                        scope="col"
+                        className="pb-2 font-medium text-(--color-text-muted)"
                       >
-                        {resettingComponent === component ? '리셋 중...' : '리셋'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        액션
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleRows.map((row) => {
+                      const isRowPending = pending.has(row.component);
+                      const rowDisabled = isViewer || isRowPending || isBulkProcessing;
+                      return (
+                        <tr
+                          key={row.component}
+                          className="border-b border-(--color-border-subtle) last:border-0"
+                        >
+                          <td className="py-2 pr-2">
+                            <input
+                              type="checkbox"
+                              aria-label={`${row.component} 선택`}
+                              checked={selected.has(row.component)}
+                              onChange={() => toggleSelected(row.component)}
+                              disabled={controlsDisabled}
+                              className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                            />
+                          </td>
+                          <td className="py-2 pr-4">
+                            <CategoryBadge categoryKey={row.categoryKey} />
+                          </td>
+                          <td className="py-2 pr-4 break-all text-(--color-text-primary)">
+                            {row.component}
+                          </td>
+                          <td className="py-2 pr-4">
+                            <select
+                              aria-label={`${row.component} 로그 레벨`}
+                              value={row.level}
+                              onChange={(e) => handleLevelChange(row.component, e.target.value)}
+                              disabled={rowDisabled}
+                              className={cn(inputClass, 'w-auto py-1 font-mono text-xs')}
+                            >
+                              {LOG_LEVELS.map((level) => (
+                                <option key={level} value={level}>
+                                  {level.toUpperCase()}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="py-2">
+                            <button
+                              type="button"
+                              onClick={() => handleReset(row.component)}
+                              disabled={rowDisabled}
+                              className={cn(
+                                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                                'border border-(--color-border-strong) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
+                                'disabled:cursor-not-allowed disabled:opacity-50',
+                              )}
+                            >
+                              {isRowPending ? '처리 중...' : '리셋'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

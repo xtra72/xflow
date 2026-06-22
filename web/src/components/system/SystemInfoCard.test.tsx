@@ -4,11 +4,10 @@
 // 로딩/에러/성공 상태와 필드 렌더링·모드 라벨 매핑·monospaced 칩을 검증한다.
 //
 // 커버 AC:
-//   - AC-4  Identity 전 필드 렌더 + monospaced 칩
+//   - AC-4  Identity 필드 렌더 (hostname/OS·Arch/version) + monospaced 칩
 //   - AC-5  mode 3종 한글 라벨 매핑
 //   - AC-11 영역별 독립 로딩/에러 ("다시 시도" refetch)
 //   - AC-12 "이 인스턴스 (self)" 라벨 존재
-//   - AC-14 commit 링크 href/target (Optional 채택)
 //
 // @spec SPEC-WEB-007 v0.1.0 (M2, M7, M8, M9)
 
@@ -84,7 +83,7 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────
 
 describe('SystemInfoCard — Identity 필드 (AC-4)', () => {
-  it('hostname/OS·Arch/version/commit/build_date/go_version 을 모두 표시한다', () => {
+  it('hostname/OS·Arch/version 을 모두 표시한다', () => {
     setQueryState({ data: makeVersion() });
     render(<SystemInfoCard />);
 
@@ -95,39 +94,15 @@ describe('SystemInfoCard — Identity 필드 (AC-4)', () => {
       'linux/amd64',
     );
     expect(screen.getByTestId('sysinfo-version')).toHaveTextContent('v0.18.6');
-    expect(screen.getByTestId('sysinfo-commit')).toHaveTextContent('abc1234');
-    expect(screen.getByTestId('sysinfo-build-date')).toBeInTheDocument();
-    expect(screen.getByTestId('sysinfo-go-version')).toHaveTextContent(
-      'go1.25.0',
-    );
   });
 
-  it('version/commit/hostname/OS·Arch 는 monospaced 칩(font-mono)으로 표시된다', () => {
+  it('version/hostname/OS·Arch 는 monospaced 칩(font-mono)으로 표시된다', () => {
     setQueryState({ data: makeVersion() });
     render(<SystemInfoCard />);
 
-    for (const id of [
-      'sysinfo-version',
-      'sysinfo-commit',
-      'sysinfo-hostname',
-      'sysinfo-os-arch',
-    ]) {
+    for (const id of ['sysinfo-version', 'sysinfo-hostname', 'sysinfo-os-arch']) {
       expect(screen.getByTestId(id).className).toMatch(/font-mono/);
     }
-  });
-
-  it('build_date 를 브라우저 로컬 형식으로 표시한다 (연도 토큰 포함)', () => {
-    setQueryState({ data: makeVersion({ build_date: '2026-04-30T12:00:00Z' }) });
-    render(<SystemInfoCard />);
-    expect(screen.getByTestId('sysinfo-build-date').textContent).toMatch(/2026/);
-  });
-
-  it('build_date 가 잘못된 ISO 문자열이면 원문을 그대로 표시한다', () => {
-    setQueryState({ data: makeVersion({ build_date: 'not-a-date' }) });
-    render(<SystemInfoCard />);
-    expect(screen.getByTestId('sysinfo-build-date')).toHaveTextContent(
-      'not-a-date',
-    );
   });
 });
 
@@ -172,25 +147,6 @@ describe('SystemInfoCard — self 라벨 (AC-12)', () => {
     setQueryState({ data: makeVersion({ mode: 'disabled' }) });
     render(<SystemInfoCard />);
     expect(screen.queryByTestId('sysinfo-remote-hint')).not.toBeInTheDocument();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// AC-14 — commit 링크 (Optional 채택)
-// ─────────────────────────────────────────────────────────────────────
-
-describe('SystemInfoCard — commit 링크 (AC-14)', () => {
-  it('commit 칩이 GitHub commit URL 링크로 새 탭(rel=noopener)을 연다', () => {
-    setQueryState({ data: makeVersion({ commit: 'abc1234' }) });
-    render(<SystemInfoCard />);
-
-    const link = screen.getByTestId('sysinfo-commit-link');
-    expect(link).toHaveAttribute(
-      'href',
-      'https://github.com/xtra72/xflow/commit/abc1234',
-    );
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 });
 

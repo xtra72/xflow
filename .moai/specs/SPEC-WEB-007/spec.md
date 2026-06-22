@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-007
 title: 로컬 인스턴스 시스템 정보 표출 (Self / Local Instance System Info Display)
-version: 0.2.0
+version: 0.3.0
 status: completed
 created: 2026-06-21
 updated: 2026-06-22
@@ -13,6 +13,20 @@ priority: medium
 
 ## HISTORY
 
+- **0.3.0** (2026-06-22): 초기 구현(commit ed8275c) 이후 사용자 피드백 반영. 1) **노출 위치
+  추가(M1)** — `/admin/system` 페이지로 가는 명시적 메뉴 진입점이 없어(유일 진입점이 헤더 업데이트
+  배지뿐) 사용자가 도달 불가한 문제가 발견됨. 해결을 위해 **설정(Settings) 페이지의 "시스템"
+  탭**(`SystemTab`)에 동일한 `SystemInfoCard`/`SystemRuntimeCard` 를 추가, 두 카드가
+  `/admin/system` 과 설정 시스템 탭 **양쪽에 공존**(동일 컴포넌트 재사용). 2) **표시 필드
+  축소(M2/M9)** — `SystemInfoCard` 의 렌더링에서 commit / build_date / go_version 3필드를 UI 에서
+  제거(Makefile/Dockerfile 이 `main.Version` 만 ldflags 주입하여 commit/build_date 가 항상 "unknown",
+  Go Runtime 은 운영자 불필요). 남은 식별 필드 = hostname / OS·Arch / 버전 / 원격 모드. **백엔드
+  `GET /system/version` 응답 스키마는 불변**(별개 `SystemVersionCard` 가 commit/build_date/go_version
+  을 계속 소비). 3) **룩앤필 통일(M9)** — version/commit/hostname/OS·Arch 의 monospaced "칩(chip)"
+  표시를 제거하고, 원격 노드 카드(NodeDashboard, REMOTE-001)와 시각적 통일을 위해 원격 InfoItem
+  패턴과 동일한 plain 텍스트 + 라벨(dt: uppercase tracking-wider, dd: plain) 스타일로 변경. 카드
+  컨테이너도 `bg-surface border-default p-4`(원격 카드와 동일), 헤더에 의미 아이콘(Server/Activity) +
+  `text-sm` 제목. self 배지("이 인스턴스 (self)")는 원격 노드와의 혼동 방지를 위해 유지.
 - **0.2.0** (2026-06-21): Decision Points 확정(RESOLVED). 1) Identity 데이터 소스 = 기존
   `GET /api/v1/system/version` 확장(`os/arch/hostname/mode/uptime_seconds` 추가), 신규
   `/system/info` 미생성. 2) Update 상태 카드 = 기존 `SystemVersionCard` 유지·공존. 3) Runtime
@@ -30,6 +44,7 @@ priority: medium
 
 | Version | Date       | Author | Change                                                              |
 | ------- | ---------- | ------ | ------------------------------------------------------------------- |
+| 0.3.0   | 2026-06-22 | xtra   | 구현 후 피드백 반영 — 설정 시스템 탭 노출 추가(M1) / SystemInfoCard 필드 축소: commit·build_date·go_version 제거(M2) / 칩→원격 카드와 plain 텍스트 통일(M9) |
 | 0.2.0   | 2026-06-21 | xtra   | Decision Points 확정 — version 확장 / 카드 공존 / 5s 폴링 / 페이지 통합 |
 | 0.1.0   | 2026-06-21 | xtra   | 최초 작성 — self/local 인스턴스 시스템 정보 표출 (Identity + Runtime) |
 
@@ -59,8 +74,10 @@ Web UI 에서 한눈에 확인할 수 있도록 한다. 관리 서버에 로그�
 ### 범위
 
 - **포함 (SELF / LOCAL 인스턴스 정보)**:
-  - **Identity 표시**: hostname, OS, architecture(GOOS/GOARCH), xflowd 버전 + 빌드 메타
-    (commit, build_date, go_version), `remote_management.mode` (server/client/disabled)
+  - **Identity 표시** (`SystemInfoCard`): hostname, OS, architecture(GOOS/GOARCH), xflowd 버전,
+    `remote_management.mode` (server/client/disabled). 빌드 메타(commit/build_date/go_version)는
+    `SystemInfoCard` 에서 **표시하지 않으며**(v0.3.0, M2 참조), 별개 `SystemVersionCard`(WEB-006)가
+    소비한다. 백엔드 `GET /system/version` 응답 스키마는 불변(M5)이다.
   - **Runtime 표시**: 프로세스 uptime, 실시간 CPU %, 메모리 %, goroutines, Go heap(alloc/sys) —
     기존 `GET /monitor/metrics` 폴링 재사용
   - **Update 상태 (선택, 이미 존재)**: channel + update_available + latest_version
@@ -101,6 +118,7 @@ Web UI 에서 한눈에 확인할 수 있도록 한다. 관리 서버에 로그�
   - `internal/config` `remote_management.mode` 조회 (`config.go:476`)
 - **프론트엔드 (수정 대상)**:
   - `web/src/pages/system/SystemStatusPage.tsx` (시스템 정보 영역 추가)
+  - `web/src/pages/settings/SettingsPage.tsx` `SystemTab` (v0.3.0 — 동일 카드 추가 마운트, M1)
   - `web/src/services/api/systemUpdate.ts` `VersionInfo` 타입 확장
     (`os/arch/hostname/mode/uptime_seconds`)
   - `web/src/services/api/monitorService.ts` `getMetrics()` 타입 강화 (현재 `Record<string,unknown>`)
@@ -117,6 +135,12 @@ Web UI 에서 한눈에 확인할 수 있도록 한다. 관리 서버에 로그�
 
 - **Ubiquitous**: 시스템은 로컬 인스턴스의 시스템 정보를 `/admin/system` 페이지("시스템 상태")의
   "시스템 정보(System Info)" 영역에 항상 표출해야 한다.
+- **Ubiquitous**: 시스템은 동일한 시스템 정보 카드(`SystemInfoCard`/`SystemRuntimeCard`)를
+  **설정(Settings) 페이지의 "시스템" 탭**(`web/src/pages/settings/SettingsPage.tsx` 의 `SystemTab`)
+  에도 표출해야 한다. 두 카드는 동일 컴포넌트를 재사용하며 `/admin/system` 과 설정 시스템 탭
+  **양쪽에 공존**한다.
+  - **사유(GAP)**: `/admin/system` 으로 가는 명시적 메뉴 진입점이 없어(유일 진입점이 헤더의 업데이트
+    배지뿐) 사용자가 도달 불가한 문제가 있었음. 설정 시스템 탭은 메뉴로 직접 접근 가능한 진입점이다.
 - **Ubiquitous**: 시스템 정보 영역은 `remote_management.mode` 값과 무관하게(server/client/disabled
   모두) 표시되어야 한다.
 - **State-driven**: WHILE 인증되지 않았거나 admin 권한이 없는 사용자가 접근하면, 시스템은 기존
@@ -124,18 +148,19 @@ Web UI 에서 한눈에 확인할 수 있도록 한다. 관리 서버에 로그�
 
 ### M2: Identity 정보 표시
 
-- **Ubiquitous**: 시스템 정보 영역은 다음 **아이덴티티** 정보를 항상 표시해야 한다:
+- **Ubiquitous**: `SystemInfoCard` 는 다음 **아이덴티티** 정보를 항상 표시해야 한다:
   - **hostname** (`os.Hostname()` 결과, 예: `xflow-node-01`)
   - **OS / Arch** (`runtime.GOOS` / `runtime.GOARCH`, 예: `linux/amd64`)
   - **xflowd 버전** (`version`, 예: `v0.18.6`)
-  - **빌드 커밋** (`commit`, 단축 해시)
-  - **빌드 일시** (`build_date`, 브라우저 로컬 형식)
-  - **Go 버전** (`go_version`, 예: `go1.25.0`)
   - **remote 모드** (`mode`, `server | client | disabled` — 사용자 친화 라벨 매핑)
+- **Unwanted**: `SystemInfoCard` 는 **commit / build_date / go_version 을 표시하지 않아야 한다**.
+  - **사유**: Makefile/Dockerfile 이 `main.Version` 만 ldflags 주입하고 commit/build_date 는 주입하지
+    않아 항상 "unknown" 으로 표시되어 무의미했으며, Go Runtime(go_version)은 운영자에게 불필요하다.
+  - **범위 한정**: 이 변경은 `SystemInfoCard` 의 렌더링 범위에만 한정된다. 백엔드
+    `GET /api/v1/system/version` 응답 스키마는 불변이며(M5), commit/build_date/go_version 필드는
+    별개 컴포넌트 `SystemVersionCard`(SPEC-WEB-006)가 계속 소비한다.
 - **Event-driven**: WHEN 확장된 `GET /api/v1/system/version` 이 응답을 반환하면, THEN 시스템은 위
-  필드를 즉시 렌더링해야 한다.
-- **Optional**: WHERE 운영자가 commit 또는 build_date 를 클릭하면, 시스템은 GitHub commit URL
-  (`https://github.com/xtra72/xflow/commit/{commit}`)을 새 탭으로 열 수 있다.
+  표시 대상 필드(hostname/OS·Arch/version/mode)를 즉시 렌더링해야 한다.
 
 ### M3: Runtime(실시간 리소스) 정보 표시
 
@@ -198,8 +223,15 @@ Web UI 에서 한눈에 확인할 수 있도록 한다. 관리 서버에 로그�
 
 ### M9: 표시 형식 / 가독성
 
-- **Ubiquitous**: 버전/커밋/hostname/OS/Arch 는 monospaced 폰트 칩으로 표시해야 한다
-  (`MetadataChips` 패턴).
+- **Ubiquitous**: 시스템 정보 카드는 원격 노드 카드(NodeDashboard, REMOTE-001)와 **시각적으로
+  통일된** 스타일로 표시해야 한다:
+  - **필드 표기**: 식별 필드(hostname/OS·Arch/version/mode)는 monospaced "칩(chip)" 이 아니라,
+    원격 노드 카드의 InfoItem 패턴과 동일한 **plain 텍스트 + 라벨** 스타일로 표시한다
+    (라벨 `dt`: uppercase tracking-wider, 값 `dd`: plain 텍스트).
+  - **카드 컨테이너**: 원격 카드와 동일한 `bg-surface border-default p-4` 를 사용한다.
+  - **카드 헤더**: 의미 아이콘(Identity = Server, Runtime = Activity) + `text-sm` 제목으로 통일한다.
+- **Ubiquitous**: 시스템 정보 카드는 표시 대상이 현재 접속한 인스턴스 자신임을 나타내는 self 배지
+  ("이 인스턴스 (self)")를 유지해야 한다 (원격 노드와의 혼동 방지, M8 참조).
 - **Ubiquitous**: uptime 은 초가 아니라 가독 형식("3d 4h 12m")으로, 메모리/CPU 는 소수점 1자리
   + `%`/`MB` 단위로 표시해야 한다.
 - **Optional**: WHERE remote 모드가 `server` 이면, 영역 하단에 "원격 노드 목록은 대시보드의 노드
@@ -386,6 +418,22 @@ plan.md 예정 경로 대비 분기 사항이다.
 4. **SystemMetrics 인덱스 시그니처**: 기존 소비자(`Record<string, unknown>` 기대 4곳)의
    호환을 위해 `[key: string]: unknown` 추가 (`any` 미사용). 회귀 방지 트레이드오프.
 5. **신규 외부 의존성 0**: acceptance.md 품질 게이트("신규 외부 의존성 0") 충족.
+
+### v0.3.0 후속 변경 (2026-06-22, 구현 후 피드백)
+
+- **노출 위치 추가(M1)**: 설정 시스템 탭(`SettingsPage.tsx` `SystemTab`)에 `SystemInfoCard`/
+  `SystemRuntimeCard` 동일 컴포넌트 추가 마운트. `/admin/system` 진입점 부재 문제 해결.
+- **표시 필드 축소(M2/M9)**: `SystemInfoCard` 에서 commit/build_date/go_version 제거(백엔드 응답
+  스키마 불변, `SystemVersionCard` 가 계속 소비). 남은 식별 필드 = hostname/OS·Arch/버전/원격 모드.
+- **룩앤필 통일(M9)**: monospaced 칩 → 원격 노드 카드(NodeDashboard, REMOTE-001) InfoItem 패턴과
+  통일된 plain 텍스트 + 라벨 스타일. 컨테이너 `bg-surface border-default p-4`, 헤더 의미 아이콘 +
+  `text-sm`. self 배지 유지.
+
+### 관련 후속 변경 (SPEC 범위 외, 같은 작업 단위에서 동반 수행 — 요구사항 아님)
+
+- 설정 "API 서버" 카드의 서버 URL 을 `import.meta.env.VITE_API_URL` 하드코딩에서 실제 접속
+  주소(`window.location.origin`)로 정정. 컴포넌트별 로그 레벨 UI 에 종류 분류/직접 레벨 변경/정렬/
+  필터/일괄 처리 추가. (SPEC-WEB-007 범위 밖이므로 본 SPEC 의 요구사항으로 추가하지 않음.)
 
 ### 품질 결과
 

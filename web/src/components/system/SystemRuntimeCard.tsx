@@ -14,6 +14,8 @@
 //
 // @spec SPEC-WEB-007 v0.1.0 (M3, M7, M9)
 
+import { Activity } from 'lucide-react';
+
 import { formatUptime } from '@/lib/utils/formatUptime';
 import {
   useSystemMetrics,
@@ -30,10 +32,15 @@ export function SystemRuntimeCard() {
   return (
     <section
       data-testid="runtime-card"
-      className="rounded-lg border border-(--color-border) bg-(--color-bg-elevated) p-6 shadow-sm"
+      className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-4"
     >
-      <header className="mb-4">
-        <h3 className="text-base font-semibold text-(--color-text-primary)">
+      {/* 원격 관리 노드 카드와 동일한 헤더 룩앤필: 아이콘 + 제목. */}
+      <header className="mb-3 flex items-center gap-2">
+        <Activity
+          className="h-4 w-4 text-(--color-text-muted)"
+          aria-hidden="true"
+        />
+        <h3 className="text-sm font-semibold text-(--color-text-primary)">
           런타임 메트릭
         </h3>
       </header>
@@ -58,7 +65,7 @@ function RuntimeBody({ metrics }: { metrics: SystemMetrics }) {
   const cpuUnsupported = metrics.cpu_usage_percent === 0;
 
   return (
-    <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3">
       <Field label="Uptime">
         <span
           data-testid="runtime-uptime"
@@ -126,10 +133,12 @@ function Field({
 }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-(--color-text-muted)">
+      <dt className="text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
         {label}
       </dt>
-      <dd className="mt-0.5">{children}</dd>
+      <dd className="mt-1 break-all text-sm text-(--color-text-primary)">
+        {children}
+      </dd>
     </div>
   );
 }
@@ -142,7 +151,7 @@ function RuntimeSkeleton() {
   return (
     <div
       data-testid="runtime-loading"
-      className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+      className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3"
       aria-busy="true"
       aria-label="런타임 메트릭을 불러오는 중"
     >

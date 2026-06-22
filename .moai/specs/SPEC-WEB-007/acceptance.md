@@ -1,7 +1,7 @@
 ---
 id: SPEC-WEB-007
 title: 로컬 인스턴스 시스템 정보 표출 — 인수 기준
-version: 0.2.0
+version: 0.3.0
 status: completed
 created: 2026-06-21
 updated: 2026-06-22
@@ -47,10 +47,13 @@ And 백엔드 401/403 이 최종 권한 게이트로 동작한다 (클라이언�
 
 ```gherkin
 Given 데이터 소스가 os/arch/hostname/mode + 빌드 메타를 반환할 때
-When Identity 카드가 렌더링되면
-Then hostname, OS/Arch(linux/amd64), version(v0.18.6), commit(단축), build_date(로컬 형식),
-     go_version(go1.25.0), remote 모드(한글 라벨) 가 모두 표시된다
-And 버전/커밋/hostname/OS/Arch 는 monospaced 칩으로 표시된다  # (M9)
+When SystemInfoCard 가 렌더링되면
+Then hostname, OS/Arch(linux/amd64), version(v0.18.6), remote 모드(한글 라벨) 가 표시되고
+And commit / build_date / go_version 은 SystemInfoCard 에 표시되지 않는다  # (M2, v0.3.0)
+And 식별 필드는 monospaced 칩이 아니라 원격 노드 카드와 통일된 plain 텍스트 + 라벨
+    (dt: uppercase tracking-wider, dd: plain) 스타일로 표시된다  # (M9, v0.3.0)
+And 카드 컨테이너는 bg-surface border-default p-4, 헤더는 의미 아이콘 + text-sm 제목이다  # (M9)
+And "이 인스턴스 (self)" 배지가 표시된다  # (M8, M9)
 ```
 
 ## AC-5: 모드 한글 라벨 매핑 (M2, M9)
@@ -137,19 +140,25 @@ Then REMOTE-001 heartbeat 프로토콜(internal/remote/protocol.go)은 변경되
 And 어떤 원격 보고 흐름에도 의존하지 않는다
 ```
 
-## AC-14: commit 링크 (Optional, M2)
+## AC-14: 설정 시스템 탭 노출 (M1, v0.3.0)
 
 ```gherkin
-Given Identity 카드에 commit 이 표시될 때
-When 사용자가 commit(또는 build_date)을 클릭하면
-Then https://github.com/xtra72/xflow/commit/{commit} 가 새 탭으로 열린다
+Given admin 으로 인증된 사용자가
+When 설정(Settings) 페이지의 "시스템" 탭(SystemTab)에 진입하면
+Then SystemInfoCard 와 SystemRuntimeCard 가 표시되고
+And 두 카드는 /admin/system 의 것과 동일한 컴포넌트로 양쪽에 공존한다
+And 설정 시스템 탭은 메뉴로 직접 접근 가능한 진입점이다 (헤더 업데이트 배지 외 진입점 부재 문제 해소)
 ```
+
+> 비고(v0.3.0): SystemInfoCard 가 commit/build_date 를 더 이상 표시하지 않으므로, 기존 commit
+> GitHub 링크(`https://github.com/xtra72/xflow/commit/{commit}`) 검증 AC 는 제거되었다. commit/
+> build_date/go_version 표시는 별개 `SystemVersionCard`(SPEC-WEB-006) 소관이다.
 
 ---
 
 ## Definition of Done (DoD)
 
-- [ ] AC-1 ~ AC-13 전부 통과 (AC-14 는 Optional Goal 채택 시)
+- [ ] AC-1 ~ AC-14 전부 통과 (AC-14 = v0.3.0 설정 시스템 탭 노출)
 - [ ] Decision Points 확정 반영 완료 (version 확장 / 카드 공존 / 5초 폴링 / 페이지 통합)
 - [ ] 백엔드: os/arch/hostname/mode/uptime_seconds 반환 + 기존 7개 필드 불변,
       시크릿 부재 단위 테스트 통과 (`go test -race ./...`)
