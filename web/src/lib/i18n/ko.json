@@ -913,7 +913,53 @@
     "colUpdatedAt": "수정일",
     "colAutoStart": "자동시작",
     "colName": "이름",
-    "colStatus": "상태"
+    "colStatus": "상태",
+    "detail": {
+      "emptyNodes": "노드 정보가 없습니다. 플로우를 배포하면 노드가 표시됩니다.",
+      "nodeInstances": "노드 인스턴스 ({count})",
+      "logLevel": "로그 레벨",
+      "logLevelDefault": "기본값",
+      "portIn": "입력",
+      "portOut": "출력",
+      "logLevelReset": "{node} 로그 레벨이 기본값으로 리셋되었습니다",
+      "logLevelChanged": "{node} 로그 레벨이 \"{level}\"로 변경되었습니다",
+      "logLevelChangeFailed": "로그 레벨 변경에 실패했습니다"
+    },
+    "filter": {
+      "searchPlaceholder": "플로우 검색...",
+      "statusRunning": "실행 중",
+      "statusStopped": "중지됨",
+      "statusError": "오류",
+      "statusStored": "저장됨",
+      "statusLoaded": "탑재됨"
+    },
+    "action": {
+      "start": "시작",
+      "stop": "중지",
+      "restart": "재시작",
+      "deploy": "배포",
+      "undeploy": "배포 해제",
+      "delete": "삭제",
+      "export": "내보내기",
+      "startFailed": "시작 실패",
+      "stopFailed": "중지 실패",
+      "restartFailed": "재시작 실패",
+      "deployFailed": "배포 실패",
+      "undeployFailed": "배포 해제 실패",
+      "deleteFailed": "삭제 실패",
+      "exportFailed": "내보내기 실패",
+      "deleteRunningHint": "실행 중인 플로우는 중지 후 삭제할 수 있습니다",
+      "deleteConfirm": "\"{name}\" 플로우를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
+    },
+    "create": {
+      "title": "새 플로우 만들기",
+      "namePlaceholder": "플로우 이름을 입력하세요",
+      "descriptionLabel": "설명",
+      "descriptionPlaceholder": "플로우에 대한 설명 (선택)",
+      "createError": "플로우 생성에 실패했습니다. 다시 시도해주세요.",
+      "submitting": "생성 중...",
+      "submit": "생성"
+    }
   },
   "error": {
     "somethingWentWrong": "문제가 발생했습니다",

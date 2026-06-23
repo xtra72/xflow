@@ -30,6 +30,10 @@ vi.mock('@/services/api/monitorService', () => ({
 vi.mock('@/stores/uiStore', () => ({
   useUIStore: () => vi.fn(),
 }));
+// i18n 은 키를 그대로 반환하는 stub 으로 둔다 (단언은 키로 검증).
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
 
 import FlowDetailPanel from './FlowDetailPanel';
 
@@ -80,7 +84,7 @@ describe('FlowDetailPanel — 원격 타깃 렌더링', () => {
         <FlowDetailPanel flowId="f1" />
       </TargetProvider>,
     );
-    expect(screen.queryByText('로그 레벨')).not.toBeInTheDocument();
+    expect(screen.queryByText('flows.detail.logLevel')).not.toBeInTheDocument();
   });
 
   it('로컬 타깃에서는 로그 레벨 컬럼을 표시한다(회귀 없음)', () => {
@@ -90,6 +94,6 @@ describe('FlowDetailPanel — 원격 타깃 렌더링', () => {
       </TargetProvider>,
     );
     expect(useFlowNodesTargetMock).toHaveBeenCalledWith(LOCAL_TARGET, 'f1', 3000);
-    expect(screen.getByText('로그 레벨')).toBeInTheDocument();
+    expect(screen.getByText('flows.detail.logLevel')).toBeInTheDocument();
   });
 });

@@ -77,11 +77,11 @@ describe('FlowActionMenu — 로컬', () => {
   it('실행 중 플로우는 중지/재시작이 활성, 시작은 비활성', () => {
     useFlowActionsTargetMock.mockReturnValue(makeHandle({ isRemote: false }));
     renderMenu(LOCAL_TARGET, flow({ status: 'running' }));
-    expect(screen.getByTitle('시작')).toBeDisabled();
-    expect(screen.getByTitle('중지')).not.toBeDisabled();
-    expect(screen.getByTitle('재시작')).not.toBeDisabled();
+    expect(screen.getByTitle('flows.action.start')).toBeDisabled();
+    expect(screen.getByTitle('flows.action.stop')).not.toBeDisabled();
+    expect(screen.getByTitle('flows.action.restart')).not.toBeDisabled();
     // 로컬은 내보내기 버튼이 노출된다.
-    expect(screen.getByTitle('내보내기')).toBeInTheDocument();
+    expect(screen.getByTitle('flows.action.export')).toBeInTheDocument();
   });
 });
 
@@ -95,7 +95,7 @@ describe('FlowActionMenu — 원격(노드 오프라인)', () => {
     expect(gated.length).toBeGreaterThanOrEqual(1);
     gated.forEach((b) => expect(b).toBeDisabled());
     // 내보내기는 원격에서 숨겨진다.
-    expect(screen.queryByTitle('내보내기')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('flows.action.export')).not.toBeInTheDocument();
   });
 });
 
@@ -118,7 +118,7 @@ describe('FlowActionMenu — 원격(노드 온라인)', () => {
     useTargetGatingMock.mockReturnValue(gating(true, true));
     // stored 상태여야 시작 버튼이 상태상 활성.
     renderMenu(REMOTE, flow({ status: 'stored' }));
-    fireEvent.click(screen.getByTitle('시작'));
+    fireEvent.click(screen.getByTitle('flows.action.start'));
     expect(handle.perform).toHaveBeenCalledWith('start', 'f1');
   });
 });

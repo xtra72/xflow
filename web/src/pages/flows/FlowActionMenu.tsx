@@ -68,30 +68,30 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
     } catch (err) {
       const message = remote
         ? remoteEditErrorMessage(err, t)
-        : `${errLabel}: ${err instanceof Error ? err.message : '알 수 없는 오류'}`;
+        : `${errLabel}: ${err instanceof Error ? err.message : t('error.unknownError')}`;
       addNotification({ type: 'error', message });
     }
   };
 
   const handleStart = (e: React.MouseEvent) => {
     e.stopPropagation();
-    void run('start', '시작 실패');
+    void run('start', t('flows.action.startFailed'));
   };
   const handleStop = (e: React.MouseEvent) => {
     e.stopPropagation();
-    void run('stop', '중지 실패');
+    void run('stop', t('flows.action.stopFailed'));
   };
   const handleRestart = (e: React.MouseEvent) => {
     e.stopPropagation();
-    void run('restart', '재시작 실패');
+    void run('restart', t('flows.action.restartFailed'));
   };
   const handleDeploy = (e: React.MouseEvent) => {
     e.stopPropagation();
-    void run('deploy', '배포 실패');
+    void run('deploy', t('flows.action.deployFailed'));
   };
   const handleUndeploy = (e: React.MouseEvent) => {
     e.stopPropagation();
-    void run('undeploy', '배포 해제 실패');
+    void run('undeploy', t('flows.action.undeployFailed'));
   };
 
   const handleExport = async (e: React.MouseEvent) => {
@@ -100,29 +100,29 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       const data = await exportFlow(flow.id);
       downloadJSON(data, `${flow.name}.json`);
     } catch (err) {
-      addNotification({ type: 'error', message: `내보내기 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+      addNotification({ type: 'error', message: `${t('flows.action.exportFailed')}: ${err instanceof Error ? err.message : t('error.unknownError')}` });
     }
   };
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!canDelete) {
-      addNotification({ type: 'error', message: '실행 중인 플로우는 중지 후 삭제할 수 있습니다' });
+      addNotification({ type: 'error', message: t('flows.action.deleteRunningHint') });
       return;
     }
-    if (!window.confirm(`"${flow.name}" 플로우를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
-    await run('delete', '삭제 실패');
+    if (!window.confirm(t('flows.action.deleteConfirm').replace('{name}', flow.name))) return;
+    await run('delete', t('flows.action.deleteFailed'));
   };
 
   const btnBase =
     'rounded-md p-1.5 text-gray-400 transition-colors hover:text-(--color-text-secondary) disabled:opacity-40 disabled:cursor-not-allowed';
 
-  const start = remoteState('start', '시작');
-  const stop = remoteState('stop', '중지');
-  const restart = remoteState('restart', '재시작');
-  const deploy = remoteState('deploy', '배포');
-  const undeploy = remoteState('undeploy', '배포 해제');
-  const del = remoteState('delete', '삭제');
+  const start = remoteState('start', t('flows.action.start'));
+  const stop = remoteState('stop', t('flows.action.stop'));
+  const restart = remoteState('restart', t('flows.action.restart'));
+  const deploy = remoteState('deploy', t('flows.action.deploy'));
+  const undeploy = remoteState('undeploy', t('flows.action.undeploy'));
+  const del = remoteState('delete', t('flows.action.delete'));
 
   return (
     <div className="inline-flex items-center gap-1">
@@ -185,7 +185,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
       {!remote && (
         <button
           type="button"
-          title="내보내기"
+          title={t('flows.action.export')}
           onClick={handleExport}
           className={cn(btnBase, 'hover:bg-(--color-bg-elevated)')}
         >

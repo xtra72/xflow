@@ -913,7 +913,53 @@
     "colUpdatedAt": "Updated",
     "colAutoStart": "Auto-start",
     "colName": "Name",
-    "colStatus": "Status"
+    "colStatus": "Status",
+    "detail": {
+      "emptyNodes": "No node information. Nodes appear once the flow is deployed.",
+      "nodeInstances": "Node Instances ({count})",
+      "logLevel": "Log Level",
+      "logLevelDefault": "Default",
+      "portIn": "Input",
+      "portOut": "Output",
+      "logLevelReset": "{node} log level has been reset to default",
+      "logLevelChanged": "{node} log level changed to \"{level}\"",
+      "logLevelChangeFailed": "Failed to change log level"
+    },
+    "filter": {
+      "searchPlaceholder": "Search flows...",
+      "statusRunning": "Running",
+      "statusStopped": "Stopped",
+      "statusError": "Error",
+      "statusStored": "Stored",
+      "statusLoaded": "Loaded"
+    },
+    "action": {
+      "start": "Start",
+      "stop": "Stop",
+      "restart": "Restart",
+      "deploy": "Deploy",
+      "undeploy": "Undeploy",
+      "delete": "Delete",
+      "export": "Export",
+      "startFailed": "Failed to start",
+      "stopFailed": "Failed to stop",
+      "restartFailed": "Failed to restart",
+      "deployFailed": "Failed to deploy",
+      "undeployFailed": "Failed to undeploy",
+      "deleteFailed": "Failed to delete",
+      "exportFailed": "Failed to export",
+      "deleteRunningHint": "A running flow must be stopped before it can be deleted",
+      "deleteConfirm": "Delete the \"{name}\" flow? This action cannot be undone."
+    },
+    "create": {
+      "title": "Create New Flow",
+      "namePlaceholder": "Enter a flow name",
+      "descriptionLabel": "Description",
+      "descriptionPlaceholder": "Description for the flow (optional)",
+      "createError": "Failed to create the flow. Please try again.",
+      "submitting": "Creating...",
+      "submit": "Create"
+    }
   },
   "error": {
     "somethingWentWrong": "Something went wrong",
