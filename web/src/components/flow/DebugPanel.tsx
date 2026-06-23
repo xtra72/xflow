@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Eye, Plus, Terminal, Trash2, X } from 'lucide-react';
+import { useTranslation } from '@/lib/i18n';
 import { createWSClient, type WSClient } from '@/services/ws/wsClient';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import { useAuthStore } from '@/stores/authStore';
@@ -66,6 +67,7 @@ interface TapView {
 }
 
 export function DebugPanel() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<PanelTab>('debug');
   const [entries, setEntries] = useState<DebugEntry[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -167,12 +169,13 @@ export function DebugPanel() {
   const viewLabel = useCallback(
     (node: string, port: string): string => {
       const nodePart = node === 'all' ? null : (nodeLabelById.get(node) ?? node);
-      if (node === 'all' && port === 'all') return '전체';
-      if (node !== 'all' && port === 'all') return nodePart ?? '전체';
+      if (node === 'all' && port === 'all') return t('editor.debug.viewAll');
+      if (node !== 'all' && port === 'all')
+        return nodePart ?? t('editor.debug.viewAll');
       if (node === 'all' && port !== 'all') return `*:${port}`;
       return `${nodePart}:${port}`;
     },
-    [nodeLabelById],
+    [nodeLabelById, t],
   );
 
   // --- 뷰 추가/삭제/필터 갱신 (불변 업데이트, 인메모리 전용) ---
@@ -313,7 +316,7 @@ export function DebugPanel() {
           }
         >
           <Eye className="h-3.5 w-3.5" />
-          <span>탭 출력</span>
+          <span>{t('editor.debug.tapTab')}</span>
           {tapCount > 0 && (
             <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
               {tapCount}
@@ -329,7 +332,7 @@ export function DebugPanel() {
             onClick={clearActive}
             className="rounded p-1 hover:bg-gray-200 dark:hover:bg-gray-700"
             title="Clear"
-            aria-label="출력 비우기"
+            aria-label={t('editor.debug.clearAria')}
           >
             <Trash2 className="h-3.5 w-3.5 text-gray-500" />
           </button>
@@ -338,7 +341,7 @@ export function DebugPanel() {
           type="button"
           onClick={() => setIsOpen((v) => !v)}
           className="rounded p-1 hover:bg-gray-200 dark:hover:bg-gray-700"
-          aria-label={isOpen ? '패널 접기' : '패널 펼치기'}
+          aria-label={isOpen ? t('editor.debug.collapse') : t('editor.debug.expand')}
         >
           {isOpen ? (
             <ChevronDown className="h-3.5 w-3.5 text-gray-500" />
@@ -358,7 +361,7 @@ export function DebugPanel() {
           {tab === 'debug' ? (
             entries.length === 0 ? (
               <div className="flex h-full items-center justify-center px-4 text-center text-gray-500">
-                output 노드의 출력 대상을 &quot;editor&quot;로 설정하면 여기에 메시지가 표시됩니다.
+                {t('editor.debug.debugEmpty')}
               </div>
             ) : (
               <table className="w-full">
@@ -384,7 +387,7 @@ export function DebugPanel() {
             )
           ) : tapEntries.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 text-center text-gray-500">
-              노드 카드의 눈 아이콘으로 관찰을 켜면 해당 노드의 출력이 여기에 표시됩니다.
+              {t('editor.debug.tapEmpty')}
             </div>
           ) : (
             <>
@@ -427,8 +430,11 @@ export function DebugPanel() {
                           <button
                             type="button"
                             onClick={() => removeTapView(v.id)}
-                            title="뷰 삭제"
-                            aria-label={`${label} 뷰 삭제`}
+                            title={t('editor.debug.removeViewTitle')}
+                            aria-label={t('editor.debug.removeView').replace(
+                              '{label}',
+                              label,
+                            )}
                             className="rounded px-1 py-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
                           >
                             <X className="h-3 w-3" />
@@ -440,8 +446,8 @@ export function DebugPanel() {
                   <button
                     type="button"
                     onClick={addTapView}
-                    title="뷰 추가"
-                    aria-label="뷰 추가"
+                    title={t('editor.debug.addView')}
+                    aria-label={t('editor.debug.addView')}
                     className="shrink-0 rounded px-1.5 py-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -450,14 +456,14 @@ export function DebugPanel() {
                 {/* Row 2: 활성 뷰의 노드/포트 필터 (서로 독립) */}
                 <div className="flex items-center gap-2 border-b border-gray-800 px-2 py-1">
                   <label className="flex items-center gap-1 text-gray-400">
-                    <span className="text-[10px]">노드</span>
+                    <span className="text-[10px]">{t('editor.debug.node')}</span>
                     <select
-                      aria-label="노드 필터"
+                      aria-label={t('editor.debug.nodeFilter')}
                       value={effectiveNode}
                       onChange={(e) => updateActiveView({ node: e.target.value })}
                       className="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-200"
                     >
-                      <option value="all">전체</option>
+                      <option value="all">{t('editor.debug.filterAll')}</option>
                       {tapNodeOptions.map((o) => (
                         <option key={o.id} value={o.id}>
                           {o.label}
@@ -466,14 +472,14 @@ export function DebugPanel() {
                     </select>
                   </label>
                   <label className="flex items-center gap-1 text-gray-400">
-                    <span className="text-[10px]">포트</span>
+                    <span className="text-[10px]">{t('editor.debug.port')}</span>
                     <select
-                      aria-label="포트 필터"
+                      aria-label={t('editor.debug.portFilter')}
                       value={effectivePort}
                       onChange={(e) => updateActiveView({ port: e.target.value })}
                       className="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-200"
                     >
-                      <option value="all">전체</option>
+                      <option value="all">{t('editor.debug.filterAll')}</option>
                       {tapPortOptions.map((port) => (
                         <option key={port} value={port}>
                           {port}
@@ -485,7 +491,7 @@ export function DebugPanel() {
               </div>
               {visibleTapEntries.length === 0 ? (
                 <div className="flex items-center justify-center px-4 py-6 text-center text-gray-500">
-                  해당 출력이 없습니다.
+                  {t('editor.debug.noOutput')}
                 </div>
               ) : (
                 <table className="w-full">

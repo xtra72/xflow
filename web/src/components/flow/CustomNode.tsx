@@ -120,13 +120,13 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
             // 그 외 오류(네트워크/서버 장애 등) 는 사용자에게 경고로 알린다.
             addNotification({
               type: 'warning',
-              message: '출력 설정을 실행 중 플로우에 즉시 적용하지 못했습니다. 저장 후 다시 배포하면 반영됩니다.',
+              message: t('editor.node.outputApplyFailed'),
             });
           },
         );
       }
     },
-    [id, outputEnabled, updateNodeData, currentFlowId, addNotification],
+    [id, outputEnabled, updateNodeData, currentFlowId, addNotification, t],
   );
 
   // 노드 출력 tap(관찰) 토글.
@@ -154,17 +154,17 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         if (err instanceof APIError && err.status === 404) {
           addNotification({
             type: 'warning',
-            message: '관찰을 적용하지 못했습니다. 플로우가 실행 중인지 확인하세요.',
+            message: t('editor.node.tapApplyFailedRunning'),
           });
           return;
         }
         addNotification({
           type: 'warning',
-          message: '관찰 설정을 적용하지 못했습니다.',
+          message: t('editor.node.tapApplyFailed'),
         });
       });
     },
-    [id, isTapped, currentFlowId, setTapped, addNotification],
+    [id, isTapped, currentFlowId, setTapped, addNotification, t],
   );
 
   // 필수 필드 누락 검사 (노드 카드에 경고 뱃지 표시용).
@@ -178,7 +178,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   }, [nodeData]);
   const hasValidationError = missingRequired.length > 0;
   const validationTooltip = hasValidationError
-    ? `설정 필요:\n${missingRequired.map((e) => `• ${e.label}`).join('\n')}`
+    ? `${t('editor.node.configRequired')}\n${missingRequired.map((e) => `• ${e.label}`).join('\n')}`
     : undefined;
 
   // SPEC-SUBFLOW-001 그룹 C: flow-node 는 참조하는 플로우 이름을 카드에 표시한다.
@@ -552,8 +552,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                 ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/60'
                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
             )}
-            title={outputEnabled ? '출력 ON — 클릭하여 OFF' : '출력 OFF — 클릭하여 ON'}
-            aria-label={outputEnabled ? '출력 비활성화' : '출력 활성화'}
+            title={outputEnabled ? t('editor.node.outputOnTitle') : t('editor.node.outputOffTitle')}
+            aria-label={outputEnabled ? t('editor.node.outputDisable') : t('editor.node.outputEnable')}
           >
             {outputEnabled ? (
               <Power className="h-3 w-3" />
@@ -576,8 +576,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                 ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-600 dark:hover:bg-sky-900/60'
                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
             )}
-            title={isTapped ? '관찰 ON — 클릭하여 OFF' : '관찰 OFF — 클릭하여 ON'}
-            aria-label={isTapped ? '관찰 중지' : '관찰 시작'}
+            title={isTapped ? t('editor.node.tapOnTitle') : t('editor.node.tapOffTitle')}
+            aria-label={isTapped ? t('editor.node.tapStop') : t('editor.node.tapStart')}
           >
             {isTapped ? (
               <Eye className="h-3 w-3" />
@@ -598,11 +598,11 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           {/* 노드 단위 누계 통계 — 포트별 통계 표시 비활성 시에만 노출 */}
           {stats && !displaySettings.showPortStats && (
             <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-400">
-              <span className="inline-flex items-center gap-0.5" title="입력">
+              <span className="inline-flex items-center gap-0.5" title={t('editor.node.inTooltip')}>
                 <ArrowDownToLine className="h-2.5 w-2.5" />
                 {stats.inMessages.toLocaleString()}
               </span>
-              <span className="inline-flex items-center gap-0.5" title="출력">
+              <span className="inline-flex items-center gap-0.5" title={t('editor.node.outTooltip')}>
                 <ArrowUpFromLine className="h-2.5 w-2.5" />
                 {stats.outMessages.toLocaleString()}
               </span>
@@ -654,7 +654,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                               return (
                                 <span
                                   className="tabular-nums"
-                                  title={`입력 ${count.toLocaleString()}건`}
+                                  title={t('editor.node.inputCount').replace(
+                                    '{count}',
+                                    count.toLocaleString(),
+                                  )}
                                 >
                                   {count.toLocaleString()}
                                 </span>
@@ -730,11 +733,23 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                                 return (
                                   <span
                                     className="inline-flex items-center gap-0.5"
-                                    title={`전달 ${portStat.delivered.toLocaleString()}건 / 생성 ${portStat.messages.toLocaleString()}건${
-                                      pending > 0
-                                        ? ` (큐 적체 ${pending.toLocaleString()}건)`
-                                        : ''
-                                    }`}
+                                    title={
+                                      t('editor.node.deliveredTitle')
+                                        .replace(
+                                          '{delivered}',
+                                          portStat.delivered.toLocaleString(),
+                                        )
+                                        .replace(
+                                          '{messages}',
+                                          portStat.messages.toLocaleString(),
+                                        ) +
+                                      (pending > 0
+                                        ? t('editor.node.queuedSuffix').replace(
+                                            '{pending}',
+                                            pending.toLocaleString(),
+                                          )
+                                        : '')
+                                    }
                                   >
                                     <span className="tabular-nums">
                                       {portStat.delivered.toLocaleString()}
@@ -751,7 +766,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                                 return (
                                   <span
                                     className="tabular-nums"
-                                    title={`출력 ${outMessages.toLocaleString()}건`}
+                                    title={t('editor.node.outputCount').replace(
+                                      '{count}',
+                                      outMessages.toLocaleString(),
+                                    )}
                                   >
                                     {outMessages.toLocaleString()}
                                   </span>

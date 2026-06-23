@@ -178,10 +178,10 @@ describe('EditorToolbar - 플로우 타이틀 / 전환 선택기', () => {
     // 초기에는 다른 플로우 항목이 보이지 않는다.
     expect(screen.queryByText('플로우 둘')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '다른 플로우로 전환' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.switcher.switchTo' }));
 
     // 목록(listbox)에 모든 플로우가 표시된다.
-    const listbox = screen.getByRole('listbox', { name: '플로우 목록' });
+    const listbox = screen.getByRole('listbox', { name: 'editor.switcher.listLabel' });
     expect(listbox).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /플로우 둘/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /플로우 셋/ })).toBeInTheDocument();
@@ -190,7 +190,7 @@ describe('EditorToolbar - 플로우 타이틀 / 전환 선택기', () => {
   it('다른 플로우 선택 시 해당 에디터로 이동한다', () => {
     renderToolbar();
 
-    fireEvent.click(screen.getByRole('button', { name: '다른 플로우로 전환' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.switcher.switchTo' }));
     fireEvent.click(screen.getByRole('option', { name: /플로우 둘/ }));
 
     expect(navigateMock).toHaveBeenCalledTimes(1);
@@ -200,7 +200,7 @@ describe('EditorToolbar - 플로우 타이틀 / 전환 선택기', () => {
   it('현재 플로우를 다시 선택하면 이동하지 않는다', () => {
     renderToolbar();
 
-    fireEvent.click(screen.getByRole('button', { name: '다른 플로우로 전환' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.switcher.switchTo' }));
     fireEvent.click(screen.getByRole('option', { name: /플로우 하나/ }));
 
     expect(navigateMock).not.toHaveBeenCalled();
@@ -209,11 +209,11 @@ describe('EditorToolbar - 플로우 타이틀 / 전환 선택기', () => {
   it('Escape 키로 목록을 닫는다', () => {
     renderToolbar();
 
-    fireEvent.click(screen.getByRole('button', { name: '다른 플로우로 전환' }));
-    expect(screen.getByRole('listbox', { name: '플로우 목록' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'editor.switcher.switchTo' }));
+    expect(screen.getByRole('listbox', { name: 'editor.switcher.listLabel' })).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('listbox', { name: '플로우 목록' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox', { name: 'editor.switcher.listLabel' })).not.toBeInTheDocument();
   });
 });
 
@@ -225,19 +225,19 @@ describe('EditorToolbar - 플로우 포트 패널 토글 (제어판 통합)', ()
   it('제어판에 "플로우 포트" 토글 버튼을 렌더링한다', () => {
     renderToolbar();
     expect(
-      screen.getByRole('button', { name: '플로우 포트' }),
+      screen.getByRole('button', { name: 'editor.toolbar.portPanel' }),
     ).toBeInTheDocument();
   });
 
   it('토글 버튼 클릭 시 onTogglePortPanel 을 호출한다', () => {
     renderToolbar();
-    fireEvent.click(screen.getByRole('button', { name: '플로우 포트' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.toolbar.portPanel' }));
     expect(togglePortPanelMock).toHaveBeenCalledTimes(1);
   });
 
   it('showPortPanel=true 이면 토글 버튼이 눌림(active) 상태로 표시된다', () => {
     renderToolbar({ showPortPanel: true });
-    expect(screen.getByRole('button', { name: '플로우 포트' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'editor.toolbar.portPanel' })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
@@ -251,8 +251,8 @@ describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
     useEditorStore.setState({ focusConnectionsOnSelect: true, focusDepth: 1 });
   });
 
-  const inc = () => screen.getByRole('button', { name: '연결 단계 늘리기' });
-  const dec = () => screen.getByRole('button', { name: '연결 단계 줄이기' });
+  const inc = () => screen.getByRole('button', { name: 'editor.focusDepth.increase' });
+  const dec = () => screen.getByRole('button', { name: 'editor.focusDepth.decrease' });
 
   it('초기 1 단계에서는 "1" 을 표시하고 줄이기 버튼이 비활성화된다', () => {
     renderToolbar();
@@ -272,14 +272,14 @@ describe('EditorToolbar - 연결 단계 스테퍼 (1~5~전체)', () => {
     // 5 에서 한 번 더 → 전체.
     fireEvent.click(inc());
     expect(useEditorStore.getState().focusDepth).toBe(FOCUS_DEPTH_ALL);
-    expect(screen.getByText('전체')).toBeInTheDocument();
+    expect(screen.getByText('editor.focusDepth.all')).toBeInTheDocument();
   });
 
   it('전체에서는 "전체" 라벨을 보이고 늘리기 버튼이 비활성화된다', () => {
     useEditorStore.setState({ focusDepth: FOCUS_DEPTH_ALL });
     renderToolbar();
 
-    expect(screen.getByText('전체')).toBeInTheDocument();
+    expect(screen.getByText('editor.focusDepth.all')).toBeInTheDocument();
     expect(inc()).toBeDisabled();
     expect(dec()).not.toBeDisabled();
   });
@@ -312,7 +312,7 @@ describe('EditorToolbar - 서브플로우 돌아가기', () => {
     locationStateMock = null;
     renderToolbar({ flowId: 'flow-1' });
     expect(
-      screen.queryByRole('button', { name: '돌아가기' }),
+      screen.queryByRole('button', { name: 'editor.toolbar.back' }),
     ).not.toBeInTheDocument();
   });
 
@@ -320,7 +320,7 @@ describe('EditorToolbar - 서브플로우 돌아가기', () => {
     locationStateMock = { subflowBack: ['flow-1'] };
     renderToolbar({ flowId: 'flow-2' });
     expect(
-      screen.getByRole('button', { name: '돌아가기' }),
+      screen.getByRole('button', { name: 'editor.toolbar.back' }),
     ).toBeInTheDocument();
   });
 
@@ -329,7 +329,7 @@ describe('EditorToolbar - 서브플로우 돌아가기', () => {
     locationStateMock = { subflowBack: ['flow-1', 'flow-2'] };
     renderToolbar({ flowId: 'flow-3' });
 
-    fireEvent.click(screen.getByRole('button', { name: '돌아가기' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.toolbar.back' }));
 
     // 직전 플로우 B(flow-2) 로 이동하며 남은 스택 [A] 를 location.state 로 넘긴다.
     expect(navigateMock).toHaveBeenCalledTimes(1);
@@ -342,7 +342,7 @@ describe('EditorToolbar - 서브플로우 돌아가기', () => {
     locationStateMock = { subflowBack: ['flow-1'] };
     renderToolbar({ flowId: 'flow-2' });
 
-    fireEvent.click(screen.getByRole('button', { name: '돌아가기' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.toolbar.back' }));
 
     expect(navigateMock).toHaveBeenCalledWith('/editor/flow-1', {
       state: { subflowBack: [] },
@@ -411,11 +411,11 @@ describe('EditorToolbar - 원격 타깃(통합 툴바)', () => {
 
   it('로컬과 동일한 라이프사이클 메뉴(시작/중지/배포/재시작 + 저장)를 렌더한다', () => {
     renderRemote();
-    expect(screen.getByRole('button', { name: '저장' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '배포' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '시작' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '중지' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '재시작' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'editor.save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'editor.deploy' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'editor.start' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'editor.stop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'editor.restart' })).toBeInTheDocument();
     // 상태 배지도 항상 렌더되어 레이아웃이 로컬과 일치한다.
     expect(screen.getByTestId('remote-editor-status-badge')).toBeInTheDocument();
   });
@@ -424,22 +424,22 @@ describe('EditorToolbar - 원격 타깃(통합 툴바)', () => {
     remoteStatusMock = 'stored';
     renderRemote();
     // stored: 시작 가능, 배포 가능, 중지 불가.
-    expect(screen.getByRole('button', { name: '시작' })).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: '배포' })).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: '중지' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.start' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.deploy' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.stop' })).toBeDisabled();
   });
 
   it('실행 중이면 중지가 활성화되고 시작/배포는 비활성화된다', () => {
     remoteStatusMock = 'running';
     renderRemote();
-    expect(screen.getByRole('button', { name: '중지' })).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: '시작' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '배포' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.stop' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.start' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.deploy' })).toBeDisabled();
   });
 
   it('재시작은 원격 미지원이라 비활성화 + 미지원 툴팁을 표시한다', () => {
     renderRemote();
-    const restart = screen.getByRole('button', { name: '재시작' });
+    const restart = screen.getByRole('button', { name: 'editor.restart' });
     expect(restart).toBeDisabled();
     expect(restart.getAttribute('title')).toBe('remote.edit.unsupportedOnRemote');
   });
@@ -447,14 +447,14 @@ describe('EditorToolbar - 원격 타깃(통합 툴바)', () => {
   it('노드가 미승인/오프라인이면 시작/중지/배포가 게이트 안내와 함께 비활성화된다', () => {
     canControlMock = () => false;
     renderRemote();
-    const start = screen.getByRole('button', { name: '시작' });
+    const start = screen.getByRole('button', { name: 'editor.start' });
     expect(start).toBeDisabled();
     expect(start.getAttribute('title')).toBe('remote.edit.actionGateHint');
   });
 
   it('시작 클릭 시 타깃 액션(perform("start"))으로 라우팅한다', () => {
     renderRemote({ flowId: 'flow-9' });
-    fireEvent.click(screen.getByRole('button', { name: '시작' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.start' }));
     expect(performMock).toHaveBeenCalledTimes(1);
     expect(performMock).toHaveBeenCalledWith('start', 'flow-9');
   });
@@ -462,21 +462,21 @@ describe('EditorToolbar - 원격 타깃(통합 툴바)', () => {
   it('저장 클릭 시 주입된 onSave(원격 명령 전파)를 호출한다', () => {
     const onSave = vi.fn();
     renderRemote({ onSave });
-    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.save' }));
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
   it('신규(빈 flowId) 플로우는 라이프사이클 버튼을 모두 비활성화한다', () => {
     renderRemote({ flowId: '' });
-    expect(screen.getByRole('button', { name: '시작' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '배포' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '중지' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.start' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.deploy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'editor.stop' })).toBeDisabled();
   });
 
   it('원격에서는 플로우 설정 버튼을 노출하지 않는다(명령 경로 밖)', () => {
     renderRemote();
     expect(
-      screen.queryByRole('button', { name: '플로우 설정' }),
+      screen.queryByRole('button', { name: 'editor.toolbar.flowSettings' }),
     ).not.toBeInTheDocument();
   });
 });

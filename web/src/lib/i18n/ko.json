@@ -190,6 +190,126 @@
       "embeddedBadge": "임베디드",
       "embeddedTitle": "이 노드의 통계는 instance(인라인 복제본) 임베디드 실행을 집계한 값입니다.",
       "mixedTitle": "이 노드의 통계는 공유(direct) 실행과 instance(인라인 복제본) 임베디드 실행을 합산한 값입니다."
+    },
+    "toolbar": {
+      "back": "돌아가기",
+      "addInputPort": "입력 포트 추가",
+      "addOutputPort": "출력 포트 추가",
+      "portPanel": "플로우 포트",
+      "snapOn": "그리드 스냅 켜기",
+      "snapOff": "그리드 스냅 끄기",
+      "virtualWiresShow": "가상 와이어 표시",
+      "virtualWiresHide": "가상 와이어 숨김",
+      "focusConnections": "연결 포커스",
+      "flowSettings": "플로우 설정"
+    },
+    "title": {
+      "ariaLabel": "플로우 이름",
+      "untitled": "이름 없음"
+    },
+    "switcher": {
+      "switchTo": "다른 플로우로 전환",
+      "listLabel": "플로우 목록",
+      "empty": "플로우가 없습니다"
+    },
+    "focusDepth": {
+      "all": "전체",
+      "title": "연결 단계: {depth}단계 (선택 노드로부터 {depth} hop 이내 강조)",
+      "titleAll": "연결 단계: 전체 (선택 노드의 전체 연결 체인 강조)",
+      "decrease": "연결 단계 줄이기",
+      "increase": "연결 단계 늘리기"
+    },
+    "toast": {
+      "flowNotFound": "플로우를 찾을 수 없습니다. 서버를 재시작했거나 플로우가 삭제되었을 수 있습니다.",
+      "saved": "플로우가 저장되었습니다",
+      "saveFailed": "저장 실패: {error}",
+      "deployed": "플로우가 배포되었습니다",
+      "deployFailed": "배포 실패: {error}",
+      "started": "플로우가 시작되었습니다",
+      "startFailed": "시작 실패: {error}",
+      "stopped": "플로우가 중지되었습니다",
+      "stopFailed": "중지 실패: {error}",
+      "restarted": "플로우가 재시작되었습니다",
+      "restartFailed": "재시작 실패: {error}"
+    },
+    "node": {
+      "enter": "들어가기",
+      "duplicate": "복제",
+      "delete": "삭제",
+      "configRequired": "설정 필요:",
+      "outputApplyFailed": "출력 설정을 실행 중 플로우에 즉시 적용하지 못했습니다. 저장 후 다시 배포하면 반영됩니다.",
+      "tapApplyFailedRunning": "관찰을 적용하지 못했습니다. 플로우가 실행 중인지 확인하세요.",
+      "tapApplyFailed": "관찰 설정을 적용하지 못했습니다.",
+      "outputOnTitle": "출력 ON — 클릭하여 OFF",
+      "outputOffTitle": "출력 OFF — 클릭하여 ON",
+      "outputEnable": "출력 활성화",
+      "outputDisable": "출력 비활성화",
+      "tapOnTitle": "관찰 ON — 클릭하여 OFF",
+      "tapOffTitle": "관찰 OFF — 클릭하여 ON",
+      "tapStart": "관찰 시작",
+      "tapStop": "관찰 중지",
+      "inTooltip": "입력",
+      "outTooltip": "출력",
+      "inputCount": "입력 {count}건",
+      "outputCount": "출력 {count}건",
+      "deliveredTitle": "전달 {delivered}건 / 생성 {messages}건",
+      "queuedSuffix": " (큐 적체 {pending}건)"
+    },
+    "debug": {
+      "tapTab": "탭 출력",
+      "clearAria": "출력 비우기",
+      "collapse": "패널 접기",
+      "expand": "패널 펼치기",
+      "debugEmpty": "output 노드의 출력 대상을 \"editor\"로 설정하면 여기에 메시지가 표시됩니다.",
+      "tapEmpty": "노드 카드의 눈 아이콘으로 관찰을 켜면 해당 노드의 출력이 여기에 표시됩니다.",
+      "viewAll": "전체",
+      "addView": "뷰 추가",
+      "removeViewTitle": "뷰 삭제",
+      "removeView": "{label} 뷰 삭제",
+      "node": "노드",
+      "nodeFilter": "노드 필터",
+      "port": "포트",
+      "portFilter": "포트 필터",
+      "filterAll": "전체",
+      "noOutput": "해당 출력이 없습니다."
+    },
+    "port": {
+      "panelAria": "플로우 포트 관리",
+      "closeAria": "플로우 포트 패널 닫기",
+      "inputSection": "입력 포트",
+      "outputSection": "출력 포트",
+      "empty": "포트 없음",
+      "nameAria": "포트 이름",
+      "rename": "이름 변경",
+      "renameAria": "{name} 이름 변경",
+      "deleteAria": "{name} 삭제"
+    },
+    "settings": {
+      "title": "플로우 설정",
+      "nameLabel": "플로우 이름",
+      "namePlaceholder": "플로우 이름",
+      "descLabel": "설명",
+      "descPlaceholder": "이 플로우에 대한 설명 (선택)",
+      "scopeNote": "아래 표시 설정은 본 플로우에 대해서만 적용됩니다. 다른 플로우의 표시는 영향받지 않습니다.",
+      "showPortStats": "포트별 통계 표시",
+      "showPortStatsDesc": "각 포트 옆에 메시지 통계 수치를 표시합니다. 비활성 시 노드 하단의 누계만 표시.",
+      "showPortNames": "포트 이름 표시",
+      "showPortNamesDesc": "각 포트 옆에 포트 이름 텍스트를 표시합니다 (in / out / error 등)."
+    },
+    "edge": {
+      "deleteTitle": "연결 삭제"
+    },
+    "boundary": {
+      "inputTitle": "플로우 입력",
+      "outputTitle": "플로우 출력",
+      "inputEmpty": "입력 포트 없음",
+      "outputEmpty": "출력 포트 없음"
+    },
+    "link": {
+      "unnamed": "(이름 없음)",
+      "outputHeader": "출력 링크",
+      "inputHeader": "입력 링크",
+      "indicatorTooltip": "가상 링크 {count}개"
     }
   },
   "settings": {

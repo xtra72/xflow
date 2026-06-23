@@ -7,6 +7,7 @@
 
 import { Link2 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 interface LinkIndicatorProps {
@@ -30,7 +31,11 @@ export function LinkIndicator({
   active,
   onClick,
 }: LinkIndicatorProps) {
-  const tooltip = `가상 링크 ${count}개`;
+  const { t } = useTranslation();
+  const tooltip = t('editor.link.indicatorTooltip').replace(
+    '{count}',
+    String(count),
+  );
 
   return (
     <button

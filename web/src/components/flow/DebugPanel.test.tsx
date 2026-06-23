@@ -25,6 +25,13 @@ vi.mock('@/services/ws/wsClient', () => {
   };
 });
 
+// i18n 은 키를 그대로 반환하도록 모킹한다. 정적 UI(탭/빈 안내/뷰 버튼/필터)는
+// t() 키로 노출되고, 동적 뷰 라벨(노드 라벨, *:port, 노드:port)은 실제 값 그대로
+// 도출된다. 단, 전체(all/all) 뷰 라벨만 viewAll 키로 도출된다.
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
+
 import { DebugPanel } from './DebugPanel';
 import { useTapStore, type NodeOutputPayload } from '@/stores/tapStore';
 import { useEditorStore } from '@/stores/editorStore';
@@ -64,7 +71,7 @@ function seedNodes(entries: { id: string; label: string }[]): void {
 
 /** 패널을 열고 "탭 출력" 탭으로 전환한다. */
 function openTapTab(): void {
-  fireEvent.click(screen.getByRole('button', { name: /탭 출력/ }));
+  fireEvent.click(screen.getByRole('button', { name: /editor\.debug\.tapTab/ }));
 }
 
 /**
@@ -97,9 +104,7 @@ describe('DebugPanel — 탭 출력 뷰', () => {
   it('탭 엔트리가 없으면 관찰 켜기 안내를 보여준다', () => {
     render(<DebugPanel />);
     openTapTab();
-    expect(
-      screen.getByText(/관찰을 켜면 해당 노드의 출력이 여기에 표시됩니다/),
-    ).toBeInTheDocument();
+    expect(screen.getByText('editor.debug.tapEmpty')).toBeInTheDocument();
   });
 
   it('기본 뷰 라벨은 "전체"이며 모든 엔트리를 보여준다', () => {
@@ -108,8 +113,8 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     render(<DebugPanel />);
     openTapTab();
 
-    // 기본 뷰 탭 라벨.
-    expect(screen.getByTitle('전체')).toBeInTheDocument();
+    // 기본 뷰 탭 라벨(all/all → viewAll 키).
+    expect(screen.getByTitle('editor.debug.viewAll')).toBeInTheDocument();
     // out 엔트리가 보인다(tap 뱃지 + 노드 라벨). '노드A'는 select 옵션과 엔트리 행
     // 양쪽에 등장하므로 getAllByText 로 확인한다.
     expect(screen.getAllByText('노드A').length).toBeGreaterThanOrEqual(1);
@@ -122,12 +127,12 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     openTapTab();
 
     // 초기엔 "전체" 뷰 1개.
-    expect(screen.getAllByTitle('전체')).toHaveLength(1);
+    expect(screen.getAllByTitle('editor.debug.viewAll')).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole('button', { name: '뷰 추가' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.debug.addView' }));
 
     // 새 뷰도 기본 {all, all} → "전체" 라벨이므로 2개가 된다.
-    expect(screen.getAllByTitle('전체')).toHaveLength(2);
+    expect(screen.getAllByTitle('editor.debug.viewAll')).toHaveLength(2);
   });
 
   it('✕ 버튼이 뷰를 삭제한다(단, 최소 1개는 유지)', () => {
@@ -137,17 +142,24 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     openTapTab();
 
     // 뷰가 1개일 때는 ✕(삭제) 버튼이 없다.
-    expect(screen.queryByRole('button', { name: /뷰 삭제/ })).toBeNull();
+    // removeView 키에는 {label} 자리표시자가 그대로 남아 키 문자열이 접근성 이름이 된다.
+    expect(
+      screen.queryByRole('button', { name: /editor\.debug\.removeView/ }),
+    ).toBeNull();
 
     // 뷰 2개로 늘린다.
-    fireEvent.click(screen.getByRole('button', { name: '뷰 추가' }));
-    const removeButtons = screen.getAllByRole('button', { name: /뷰 삭제/ });
+    fireEvent.click(screen.getByRole('button', { name: 'editor.debug.addView' }));
+    const removeButtons = screen.getAllByRole('button', {
+      name: /editor\.debug\.removeView/,
+    });
     expect(removeButtons).toHaveLength(2);
 
     // 하나 삭제 → 다시 1개, 삭제 버튼 사라짐.
     fireEvent.click(removeButtons[0]!);
-    expect(screen.getAllByTitle('전체')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: /뷰 삭제/ })).toBeNull();
+    expect(screen.getAllByTitle('editor.debug.viewAll')).toHaveLength(1);
+    expect(
+      screen.queryByRole('button', { name: /editor\.debug\.removeView/ }),
+    ).toBeNull();
   });
 
   it('노드 전용 필터: 선택 노드의 모든 포트만 보인다', () => {
@@ -162,7 +174,7 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     openTapTab();
 
     // 노드 필터를 A 로.
-    fireEvent.change(screen.getByLabelText('노드 필터'), { target: { value: 'A' } });
+    fireEvent.change(screen.getByLabelText('editor.debug.nodeFilter'), { target: { value: 'A' } });
 
     // A 의 두 엔트리(out, error)는 보이고 B 는 없다.
     const rows = getEntryRows();
@@ -186,7 +198,7 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     openTapTab();
 
     // 포트 필터를 out 으로.
-    fireEvent.change(screen.getByLabelText('포트 필터'), { target: { value: 'out' } });
+    fireEvent.change(screen.getByLabelText('editor.debug.portFilter'), { target: { value: 'out' } });
 
     // out 포트는 A, B 둘 다 등장. error(A)는 제외.
     const rows = getEntryRows();
@@ -209,8 +221,8 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     render(<DebugPanel />);
     openTapTab();
 
-    fireEvent.change(screen.getByLabelText('노드 필터'), { target: { value: 'A' } });
-    fireEvent.change(screen.getByLabelText('포트 필터'), { target: { value: 'error' } });
+    fireEvent.change(screen.getByLabelText('editor.debug.nodeFilter'), { target: { value: 'A' } });
+    fireEvent.change(screen.getByLabelText('editor.debug.portFilter'), { target: { value: 'error' } });
 
     // A:error 한 건만.
     const rows = getEntryRows();
@@ -226,7 +238,7 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     render(<DebugPanel />);
     openTapTab();
 
-    fireEvent.change(screen.getByLabelText('포트 필터'), { target: { value: 'out' } });
+    fireEvent.change(screen.getByLabelText('editor.debug.portFilter'), { target: { value: 'out' } });
     // out 은 존재하므로 보인다. 이제 존재하지 않는 포트를 강제로 만들 수는 없으니
     // 노드 필터만으로 0건을 유도: 빈 케이스는 아래 폴백 테스트에서 다룬다.
     expect(screen.queryByText('해당 출력이 없습니다.')).toBeNull();
@@ -243,8 +255,8 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     openTapTab();
 
     // 노드 A 선택.
-    fireEvent.change(screen.getByLabelText('노드 필터'), { target: { value: 'A' } });
-    expect((screen.getByLabelText('노드 필터') as HTMLSelectElement).value).toBe('A');
+    fireEvent.change(screen.getByLabelText('editor.debug.nodeFilter'), { target: { value: 'A' } });
+    expect((screen.getByLabelText('editor.debug.nodeFilter') as HTMLSelectElement).value).toBe('A');
 
     // A 가 옵션에서 사라지도록 출력 버퍼를 비우고 B 만 다시 적재.
     useTapStore.getState().clearOutputs();
@@ -252,9 +264,9 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     rerender(<DebugPanel />);
 
     // select 는 'all' 로 폴백, 크래시 없음.
-    expect((screen.getByLabelText('노드 필터') as HTMLSelectElement).value).toBe('all');
+    expect((screen.getByLabelText('editor.debug.nodeFilter') as HTMLSelectElement).value).toBe('all');
     // 뷰 라벨도 "전체" 로 폴백.
-    expect(screen.getByTitle('전체')).toBeInTheDocument();
+    expect(screen.getByTitle('editor.debug.viewAll')).toBeInTheDocument();
     // 남은 B 엔트리는 보인다(A 선택이 폴백되어 전체가 표시됨).
     const rows = getEntryRows();
     expect(rows).toEqual([{ label: '노드B', port: 'out' }]);
@@ -271,16 +283,16 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     openTapTab();
 
     // 뷰1: 노드 A 필터.
-    fireEvent.change(screen.getByLabelText('노드 필터'), { target: { value: 'A' } });
+    fireEvent.change(screen.getByLabelText('editor.debug.nodeFilter'), { target: { value: 'A' } });
 
     // 뷰2 추가(기본 전체).
-    fireEvent.click(screen.getByRole('button', { name: '뷰 추가' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editor.debug.addView' }));
     // 활성 뷰2는 전체 → 노드 필터 select 값은 all.
-    expect((screen.getByLabelText('노드 필터') as HTMLSelectElement).value).toBe('all');
+    expect((screen.getByLabelText('editor.debug.nodeFilter') as HTMLSelectElement).value).toBe('all');
 
     // 뷰1로 돌아가면 A 필터가 보존되어 있다.
     // 뷰 탭 버튼만 title 을 가지므로(옵션엔 없음) getByTitle 로 유일하게 찾는다.
     fireEvent.click(screen.getByTitle('노드A'));
-    expect((screen.getByLabelText('노드 필터') as HTMLSelectElement).value).toBe('A');
+    expect((screen.getByLabelText('editor.debug.nodeFilter') as HTMLSelectElement).value).toBe('A');
   });
 });

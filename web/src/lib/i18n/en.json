@@ -190,6 +190,126 @@
       "embeddedBadge": "Embedded",
       "embeddedTitle": "This node's stats aggregate instance (inline replica) embedded execution.",
       "mixedTitle": "This node's stats combine shared (direct) execution with instance (inline replica) embedded execution."
+    },
+    "toolbar": {
+      "back": "Back",
+      "addInputPort": "Add input port",
+      "addOutputPort": "Add output port",
+      "portPanel": "Flow ports",
+      "snapOn": "Enable grid snap",
+      "snapOff": "Disable grid snap",
+      "virtualWiresShow": "Show virtual wires",
+      "virtualWiresHide": "Hide virtual wires",
+      "focusConnections": "Focus connections",
+      "flowSettings": "Flow settings"
+    },
+    "title": {
+      "ariaLabel": "Flow name",
+      "untitled": "Untitled"
+    },
+    "switcher": {
+      "switchTo": "Switch flow",
+      "listLabel": "Flow list",
+      "empty": "No flows"
+    },
+    "focusDepth": {
+      "all": "All",
+      "title": "Connection depth: {depth} (highlight nodes within {depth} hops of selection)",
+      "titleAll": "Connection depth: all (highlight the entire connection chain of the selected node)",
+      "decrease": "Decrease connection depth",
+      "increase": "Increase connection depth"
+    },
+    "toast": {
+      "flowNotFound": "Flow not found. The server may have restarted or the flow may have been deleted.",
+      "saved": "Flow saved",
+      "saveFailed": "Save failed: {error}",
+      "deployed": "Flow deployed",
+      "deployFailed": "Deploy failed: {error}",
+      "started": "Flow started",
+      "startFailed": "Start failed: {error}",
+      "stopped": "Flow stopped",
+      "stopFailed": "Stop failed: {error}",
+      "restarted": "Flow restarted",
+      "restartFailed": "Restart failed: {error}"
+    },
+    "node": {
+      "enter": "Enter",
+      "duplicate": "Duplicate",
+      "delete": "Delete",
+      "configRequired": "Configuration required:",
+      "outputApplyFailed": "Could not apply the output setting to the running flow immediately. It will take effect after you save and redeploy.",
+      "tapApplyFailedRunning": "Could not apply observation. Check that the flow is running.",
+      "tapApplyFailed": "Could not apply the observation setting.",
+      "outputOnTitle": "Output ON — click to turn OFF",
+      "outputOffTitle": "Output OFF — click to turn ON",
+      "outputEnable": "Enable output",
+      "outputDisable": "Disable output",
+      "tapOnTitle": "Observation ON — click to turn OFF",
+      "tapOffTitle": "Observation OFF — click to turn ON",
+      "tapStart": "Start observation",
+      "tapStop": "Stop observation",
+      "inTooltip": "Input",
+      "outTooltip": "Output",
+      "inputCount": "{count} in",
+      "outputCount": "{count} out",
+      "deliveredTitle": "Delivered {delivered} / produced {messages}",
+      "queuedSuffix": " (queued {pending})"
+    },
+    "debug": {
+      "tapTab": "Tap output",
+      "clearAria": "Clear output",
+      "collapse": "Collapse panel",
+      "expand": "Expand panel",
+      "debugEmpty": "Set the output target of an output node to \"editor\" and messages will appear here.",
+      "tapEmpty": "Turn on observation with the eye icon on a node card and that node's output will appear here.",
+      "viewAll": "All",
+      "addView": "Add view",
+      "removeViewTitle": "Remove view",
+      "removeView": "Remove view {label}",
+      "node": "Node",
+      "nodeFilter": "Node filter",
+      "port": "Port",
+      "portFilter": "Port filter",
+      "filterAll": "All",
+      "noOutput": "No matching output."
+    },
+    "port": {
+      "panelAria": "Flow port management",
+      "closeAria": "Close flow port panel",
+      "inputSection": "Input ports",
+      "outputSection": "Output ports",
+      "empty": "No ports",
+      "nameAria": "Port name",
+      "rename": "Rename",
+      "renameAria": "Rename {name}",
+      "deleteAria": "Delete {name}"
+    },
+    "settings": {
+      "title": "Flow settings",
+      "nameLabel": "Flow name",
+      "namePlaceholder": "Flow name",
+      "descLabel": "Description",
+      "descPlaceholder": "Description for this flow (optional)",
+      "scopeNote": "The display settings below apply to this flow only. Other flows are not affected.",
+      "showPortStats": "Show per-port stats",
+      "showPortStatsDesc": "Show message stat values next to each port. When disabled, only the totals at the bottom of the node are shown.",
+      "showPortNames": "Show port names",
+      "showPortNamesDesc": "Show the port name text next to each port (in / out / error, etc.)."
+    },
+    "edge": {
+      "deleteTitle": "Delete connection"
+    },
+    "boundary": {
+      "inputTitle": "Flow input",
+      "outputTitle": "Flow output",
+      "inputEmpty": "No input ports",
+      "outputEmpty": "No output ports"
+    },
+    "link": {
+      "unnamed": "(unnamed)",
+      "outputHeader": "Output links",
+      "inputHeader": "Input links",
+      "indicatorTooltip": "{count} virtual links"
     }
   },
   "settings": {

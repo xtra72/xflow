@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeftToLine, ArrowRightToLine, Pencil, Trash2, X } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
 import type { FlowPortDef } from '@/lib/flow/boundary';
@@ -23,6 +24,7 @@ interface FlowPortPanelProps {
  * 포트별 인라인 이름 편집 + 삭제 버튼을 제공한다.
  */
 export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
+  const { t } = useTranslation();
   const flowInputs = useEditorStore((s) => s.flowInputs);
   const flowOutputs = useEditorStore((s) => s.flowOutputs);
   // 포트 추가는 에디터 툴바의 빠른 추가 버튼을 사용하므로 여기서는 제거됨
@@ -36,18 +38,18 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
         'dark:border-zinc-700 dark:bg-zinc-900',
       )}
       role="dialog"
-      aria-label="플로우 포트 관리"
+      aria-label={t('editor.port.panelAria')}
     >
       {/* 헤더 */}
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-700">
         <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-          플로우 포트
+          {t('editor.toolbar.portPanel')}
         </span>
         <button
           type="button"
           onClick={onClose}
-          title="닫기"
-          aria-label="플로우 포트 패널 닫기"
+          title={t('common.close')}
+          aria-label={t('editor.port.closeAria')}
           className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
         >
           <X className="h-4 w-4" />
@@ -56,7 +58,7 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
 
       <div className="flex flex-col gap-3 p-3">
         <PortSection
-          title="입력 포트"
+          title={t('editor.port.inputSection')}
           icon={ArrowRightToLine}
           accent="input"
           ports={flowInputs}
@@ -64,7 +66,7 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
           onRemove={(id) => removeFlowPort('input', id)}
         />
         <PortSection
-          title="출력 포트"
+          title={t('editor.port.outputSection')}
           icon={ArrowLeftToLine}
           accent="output"
           ports={flowOutputs}
@@ -94,6 +96,7 @@ function PortSection({
   onRename,
   onRemove,
 }: PortSectionProps) {
+  const { t } = useTranslation();
   const accentText =
     accent === 'input'
       ? 'text-blue-600 dark:text-blue-300'
@@ -116,7 +119,7 @@ function PortSection({
 
       {ports.length === 0 ? (
         <div className="px-1 py-0.5 text-xs italic text-zinc-400">
-          포트 없음
+          {t('editor.port.empty')}
         </div>
       ) : (
         <ul className="flex flex-col gap-1">
@@ -145,6 +148,7 @@ interface PortRowProps {
  * 이름 클릭 또는 연필 버튼으로 편집 모드 진입, Enter/blur 저장, Escape 취소.
  */
 function PortRow({ port, onRename, onRemove }: PortRowProps) {
+  const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(port.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -199,7 +203,7 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
               cancel();
             }
           }}
-          aria-label="포트 이름"
+          aria-label={t('editor.port.nameAria')}
           className={cn(
             'w-full rounded border border-blue-400 bg-white px-1.5 py-0.5 text-xs',
             'text-zinc-900 outline-none focus:ring-1 focus:ring-blue-400',
@@ -220,7 +224,7 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
       <button
         type="button"
         onClick={startEditing}
-        title="이름 변경"
+        title={t('editor.port.rename')}
         className="flex-1 truncate text-left"
       >
         {port.name}
@@ -229,8 +233,8 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
         <button
           type="button"
           onClick={startEditing}
-          title="이름 변경"
-          aria-label={`${port.name} 이름 변경`}
+          title={t('editor.port.rename')}
+          aria-label={t('editor.port.renameAria').replace('{name}', port.name)}
           className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700"
         >
           <Pencil className="h-3 w-3" />
@@ -238,8 +242,8 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
         <button
           type="button"
           onClick={onRemove}
-          title="삭제"
-          aria-label={`${port.name} 삭제`}
+          title={t('common.delete')}
+          aria-label={t('editor.port.deleteAria').replace('{name}', port.name)}
           className="rounded p-0.5 text-zinc-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40"
         >
           <Trash2 className="h-3 w-3" />

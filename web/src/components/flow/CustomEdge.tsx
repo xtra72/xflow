@@ -10,6 +10,7 @@ import {
 } from '@xyflow/react';
 import { X } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
 import { edgeLinkName, isVirtualEdge } from '@/lib/flow/virtualLinks';
@@ -44,6 +45,7 @@ export function CustomEdge({
   selected,
   markerEnd,
 }: EdgeProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const { deleteElements } = useReactFlow();
   const selectEdge = useEditorStore((s) => s.selectEdge);
@@ -189,7 +191,7 @@ export function CustomEdge({
               'bg-red-500 text-white shadow-sm',
               'hover:bg-red-600 transition-colors duration-100',
             )}
-            title="연결 삭제"
+            title={t('editor.edge.deleteTitle')}
           >
             <X className="h-3 w-3" />
           </button>

@@ -6,6 +6,7 @@
 import { useEffect, useRef } from 'react';
 import { Copy, CornerDownRight, Trash2 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 interface NodeContextMenuProps {
@@ -39,6 +40,7 @@ export function NodeContextMenu({
   onDelete,
   onClose,
 }: NodeContextMenuProps) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
 
   // 외부 클릭 및 Escape 로 메뉴를 닫는다.
@@ -75,10 +77,23 @@ export function NodeContextMenu({
     >
       {/* 참조 플로우가 지정된 flow-node 에서만 표시된다(onEnter 가 전달될 때). */}
       {onEnter && (
-        <MenuItem icon={CornerDownRight} label="들어가기" onClick={onEnter} />
+        <MenuItem
+          icon={CornerDownRight}
+          label={t('editor.node.enter')}
+          onClick={onEnter}
+        />
       )}
-      <MenuItem icon={Copy} label="복제" onClick={onDuplicate} />
-      <MenuItem icon={Trash2} label="삭제" danger onClick={onDelete} />
+      <MenuItem
+        icon={Copy}
+        label={t('editor.node.duplicate')}
+        onClick={onDuplicate}
+      />
+      <MenuItem
+        icon={Trash2}
+        label={t('editor.node.delete')}
+        danger
+        onClick={onDelete}
+      />
     </div>
   );
 }

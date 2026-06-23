@@ -80,13 +80,13 @@ const STATUS_BADGE_STYLES: Record<FlowStatus, string> = {
   error: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
 };
 
-/** 상태별 한국어 라벨 */
-const STATUS_LABELS: Record<FlowStatus, string> = {
-  stored: '저장됨',
-  loaded: '탑재됨',
-  running: '실행 중',
-  stopped: '중지됨',
-  error: '오류',
+/** 상태별 i18n 키 매핑(렌더 시 t() 로 해석 — 컴포넌트 밖에서 t() 호출 금지) */
+const STATUS_LABEL_KEYS: Record<FlowStatus, string> = {
+  stored: 'status.stored',
+  loaded: 'status.loaded',
+  running: 'status.running',
+  stopped: 'status.stopped',
+  error: 'status.error',
 };
 
 interface EditorToolbarProps {
@@ -134,6 +134,7 @@ export function EditorToolbar({
   onSave,
   isSaving,
 }: EditorToolbarProps) {
+  const { t } = useTranslation();
   const remote = isRemoteTarget(target);
   const addNotification = useUIStore((s) => s.addNotification);
   // 2026-05-31: 플로우 설정 모달 상태(이름·설명 편집 + 표시 토글)
@@ -193,10 +194,10 @@ export function EditorToolbar({
     if (err && typeof err === 'object' && 'code' in err) {
       const apiErr = err as { code: string; message: string };
       if (apiErr.code === 'NOT_FOUND') {
-        return '플로우를 찾을 수 없습니다. 서버를 재시작했거나 플로우가 삭제되었을 수 있습니다.';
+        return t('editor.toast.flowNotFound');
       }
     }
-    return err instanceof Error ? err.message : '알 수 없는 오류';
+    return err instanceof Error ? err.message : t('error.unknownError');
   };
 
   // 저장 처리
@@ -218,10 +219,13 @@ export function EditorToolbar({
       {
         onSuccess: () => {
           setDirty(false);
-          addNotification({ type: 'success', message: '플로우가 저장되었습니다' });
+          addNotification({ type: 'success', message: t('editor.toast.saved') });
         },
         onError: (err) =>
-          addNotification({ type: 'error', message: `저장 실패: ${errorMsg(err)}` }),
+          addNotification({
+            type: 'error',
+            message: t('editor.toast.saveFailed').replace('{error}', errorMsg(err)),
+          }),
       },
     );
   };
@@ -230,9 +234,12 @@ export function EditorToolbar({
   const handleDeploy = () => {
     deployFlow.mutate(flowId, {
       onSuccess: () =>
-        addNotification({ type: 'success', message: '플로우가 배포되었습니다' }),
+        addNotification({ type: 'success', message: t('editor.toast.deployed') }),
       onError: (err) =>
-        addNotification({ type: 'error', message: `배포 실패: ${errorMsg(err)}` }),
+        addNotification({
+          type: 'error',
+          message: t('editor.toast.deployFailed').replace('{error}', errorMsg(err)),
+        }),
     });
   };
 
@@ -240,9 +247,12 @@ export function EditorToolbar({
   const handleStart = () => {
     startFlow.mutate(flowId, {
       onSuccess: () =>
-        addNotification({ type: 'success', message: '플로우가 시작되었습니다' }),
+        addNotification({ type: 'success', message: t('editor.toast.started') }),
       onError: (err) =>
-        addNotification({ type: 'error', message: `시작 실패: ${errorMsg(err)}` }),
+        addNotification({
+          type: 'error',
+          message: t('editor.toast.startFailed').replace('{error}', errorMsg(err)),
+        }),
     });
   };
 
@@ -250,9 +260,12 @@ export function EditorToolbar({
   const handleStop = () => {
     stopFlow.mutate(flowId, {
       onSuccess: () =>
-        addNotification({ type: 'success', message: '플로우가 중지되었습니다' }),
+        addNotification({ type: 'success', message: t('editor.toast.stopped') }),
       onError: (err) =>
-        addNotification({ type: 'error', message: `중지 실패: ${errorMsg(err)}` }),
+        addNotification({
+          type: 'error',
+          message: t('editor.toast.stopFailed').replace('{error}', errorMsg(err)),
+        }),
     });
   };
 
@@ -260,9 +273,12 @@ export function EditorToolbar({
   const handleRestart = () => {
     restartFlow.mutate(flowId, {
       onSuccess: () =>
-        addNotification({ type: 'success', message: '플로우가 재시작되었습니다' }),
+        addNotification({ type: 'success', message: t('editor.toast.restarted') }),
       onError: (err) =>
-        addNotification({ type: 'error', message: `재시작 실패: ${errorMsg(err)}` }),
+        addNotification({
+          type: 'error',
+          message: t('editor.toast.restartFailed').replace('{error}', errorMsg(err)),
+        }),
     });
   };
 
@@ -306,7 +322,7 @@ export function EditorToolbar({
           {/* 저장 */}
           <ToolbarButton
             icon={Save}
-            label="저장"
+            label={t('editor.save')}
             onClick={onSave ?? handleSave}
             disabled={!isDirty || isMutating}
             badge={isDirty}
@@ -315,7 +331,7 @@ export function EditorToolbar({
           {/* 배포 */}
           <ToolbarButton
             icon={Rocket}
-            label="배포"
+            label={t('editor.deploy')}
             onClick={handleDeploy}
             disabled={isRunning || isMutating}
           />
@@ -325,19 +341,19 @@ export function EditorToolbar({
           {/* 실행 제어 */}
           <ToolbarButton
             icon={Play}
-            label="시작"
+            label={t('editor.start')}
             onClick={handleStart}
             disabled={isRunning || isMutating}
           />
           <ToolbarButton
             icon={Square}
-            label="중지"
+            label={t('editor.stop')}
             onClick={handleStop}
             disabled={!isRunning || isMutating}
           />
           <ToolbarButton
             icon={RotateCcw}
-            label="재시작"
+            label={t('editor.restart')}
             onClick={handleRestart}
             disabled={!isRunning || isMutating}
           />
@@ -349,13 +365,13 @@ export function EditorToolbar({
       {/* 실행 취소 / 다시 실행 */}
       <ToolbarButton
         icon={Undo2}
-        label="실행 취소"
+        label={t('editor.undo')}
         onClick={undo}
         disabled={undoStack.length === 0}
       />
       <ToolbarButton
         icon={Redo2}
-        label="다시 실행"
+        label={t('editor.redo')}
         onClick={redo}
         disabled={redoStack.length === 0}
       />
@@ -367,12 +383,12 @@ export function EditorToolbar({
           패널에서 계속 처리한다. */}
       <ToolbarButton
         icon={ArrowRightToLine}
-        label="입력 포트 추가"
+        label={t('editor.toolbar.addInputPort')}
         onClick={addFlowInput}
       />
       <ToolbarButton
         icon={ArrowLeftToLine}
-        label="출력 포트 추가"
+        label={t('editor.toolbar.addOutputPort')}
         onClick={addFlowOutput}
       />
 
@@ -381,7 +397,7 @@ export function EditorToolbar({
           패널 자체는 EditorPage 가 오버레이로 렌더한다(뷰 전용 토글 상태). */}
       <ToolbarButton
         icon={PanelLeft}
-        label="플로우 포트"
+        label={t('editor.toolbar.portPanel')}
         onClick={onTogglePortPanel}
         active={showPortPanel}
       />
@@ -391,7 +407,7 @@ export function EditorToolbar({
       {/* 그리드 스냅 토글 (v0.18.4) */}
       <ToolbarButton
         icon={Grid3x3}
-        label={editorSnapToGrid ? '그리드 스냅 끄기' : '그리드 스냅 켜기'}
+        label={editorSnapToGrid ? t('editor.toolbar.snapOff') : t('editor.toolbar.snapOn')}
         onClick={toggleEditorSnapToGrid}
         active={editorSnapToGrid}
       />
@@ -399,7 +415,7 @@ export function EditorToolbar({
       {/* 가상 와이어 표시 토글 — 켜면 가상 와이어 선을 일반 연결선처럼 그린다. */}
       <ToolbarButton
         icon={showVirtualWires ? Eye : EyeOff}
-        label={showVirtualWires ? '가상 와이어 숨김' : '가상 와이어 표시'}
+        label={showVirtualWires ? t('editor.toolbar.virtualWiresHide') : t('editor.toolbar.virtualWiresShow')}
         onClick={toggleShowVirtualWires}
         active={showVirtualWires}
       />
@@ -407,7 +423,7 @@ export function EditorToolbar({
       {/* 연결 포커스 토글 — 켜고 노드를 선택하면 연결만 강조하고 나머지를 흐리게. */}
       <ToolbarButton
         icon={Focus}
-        label="연결 포커스"
+        label={t('editor.toolbar.focusConnections')}
         onClick={toggleFocusConnections}
         active={focusConnectionsOnSelect}
       />
@@ -425,7 +441,7 @@ export function EditorToolbar({
       {!remote && (
         <ToolbarButton
           icon={Settings}
-          label="플로우 설정"
+          label={t('editor.toolbar.flowSettings')}
           onClick={() => setSettingsOpen(true)}
         />
       )}
@@ -443,7 +459,7 @@ export function EditorToolbar({
             STATUS_BADGE_STYLES[currentStatus],
           )}
         >
-          {STATUS_LABELS[currentStatus]}
+          {t(STATUS_LABEL_KEYS[currentStatus])}
         </span>
       )}
 
@@ -476,6 +492,7 @@ interface FlowTitleProps {
  *   클릭하면 설명 팝오버를 보여준다. 설명이 없으면 아이콘을 숨긴다.
  */
 function FlowTitle({ flowId }: FlowTitleProps) {
+  const { t } = useTranslation();
   const { data: flowData } = useFlow(flowId);
   const name = flowData?.name ?? '';
   const description = flowData?.description?.trim() ?? '';
@@ -483,14 +500,14 @@ function FlowTitle({ flowId }: FlowTitleProps) {
   return (
     <span className="inline-flex items-center gap-1">
       <span
-        title={name || '이름 없음'}
-        aria-label="플로우 이름"
+        title={name || t('editor.title.untitled')}
+        aria-label={t('editor.title.ariaLabel')}
         className={cn(
           'max-w-[220px] truncate px-2 py-0.5 text-sm font-semibold',
           'text-zinc-800 dark:text-zinc-100',
         )}
       >
-        {name || '이름 없음'}
+        {name || t('editor.title.untitled')}
       </span>
       {description && (
         <FieldHelp text={description} describedById={`flow-desc-${flowId}`} />
@@ -515,6 +532,7 @@ interface FlowSwitcherProps {
  * - 바깥 클릭 / Escape / 선택 시 메뉴를 닫는다.
  */
 function FlowSwitcher({ flowId }: FlowSwitcherProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { data: flowsResult } = useFlows();
   const flows = flowsResult?.data ?? [];
@@ -556,8 +574,8 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="다른 플로우로 전환"
-        aria-label="다른 플로우로 전환"
+        title={t('editor.switcher.switchTo')}
+        aria-label={t('editor.switcher.switchTo')}
         aria-haspopup="listbox"
         aria-expanded={open}
         className={cn(
@@ -574,7 +592,7 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
       {open && (
         <div
           role="listbox"
-          aria-label="플로우 목록"
+          aria-label={t('editor.switcher.listLabel')}
           className={cn(
             'absolute left-0 top-full z-50 mt-1 max-h-72 w-60 overflow-y-auto',
             'rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) py-1 shadow-lg',
@@ -582,7 +600,7 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
         >
           {flows.length === 0 ? (
             <div className="px-3 py-2 text-xs text-(--color-text-muted)">
-              플로우가 없습니다
+              {t('editor.switcher.empty')}
             </div>
           ) : (
             flows.map((flow) => {
@@ -608,7 +626,7 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
                       isCurrent ? 'text-blue-500' : 'opacity-0',
                     )}
                   />
-                  <span className="truncate">{flow.name || '이름 없음'}</span>
+                  <span className="truncate">{flow.name || t('editor.title.untitled')}</span>
                 </button>
               );
             })
@@ -630,6 +648,7 @@ function FlowSwitcher({ flowId }: FlowSwitcherProps) {
  *   여기서는 navigate 만 호출한다.
  */
 function SubflowBackButton() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const backStack = readBackStack(location.state);
@@ -647,7 +666,7 @@ function SubflowBackButton() {
 
   return (
     <>
-      <ToolbarButton icon={CornerUpLeft} label="돌아가기" onClick={handleBack} />
+      <ToolbarButton icon={CornerUpLeft} label={t('editor.toolbar.back')} onClick={handleBack} />
       <Separator />
     </>
   );
@@ -674,6 +693,7 @@ interface FocusDepthStepperProps {
  *   (실제 클램프/센티넬 처리는 스토어 setFocusDepth 가 보장한다.)
  */
 function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps) {
+  const { t } = useTranslation();
   const isAll = depth === FOCUS_DEPTH_ALL;
   const atMin = depth <= FOCUS_DEPTH_MIN;
   const atMax = isAll;
@@ -684,10 +704,10 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
   const increment = () =>
     onChange(depth >= FOCUS_DEPTH_MAX ? FOCUS_DEPTH_ALL : depth + 1);
 
-  const label = isAll ? '전체' : String(depth);
+  const label = isAll ? t('editor.focusDepth.all') : String(depth);
   const title = isAll
-    ? '연결 단계: 전체 (선택 노드의 전체 연결 체인 강조)'
-    : `연결 단계: ${depth}단계 (선택 노드로부터 ${depth} hop 이내 강조)`;
+    ? t('editor.focusDepth.titleAll')
+    : t('editor.focusDepth.title').replace(/\{depth\}/g, String(depth));
 
   return (
     <div
@@ -706,7 +726,7 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
         type="button"
         onClick={decrement}
         disabled={!enabled || atMin}
-        aria-label="연결 단계 줄이기"
+        aria-label={t('editor.focusDepth.decrease')}
         className={cn(
           'inline-flex h-4 w-4 items-center justify-center rounded',
           'hover:bg-zinc-100 dark:hover:bg-zinc-800',
@@ -729,7 +749,7 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
         type="button"
         onClick={increment}
         disabled={!enabled || atMax}
-        aria-label="연결 단계 늘리기"
+        aria-label={t('editor.focusDepth.increase')}
         className={cn(
           'inline-flex h-4 w-4 items-center justify-center rounded',
           'hover:bg-zinc-100 dark:hover:bg-zinc-800',
@@ -935,17 +955,17 @@ function RemoteFlowControls({
     }
   };
 
-  const deploy = stateFor('deploy', '배포');
-  const start = stateFor('start', '시작');
-  const stop = stateFor('stop', '중지');
-  const restart = stateFor('restart', '재시작');
+  const deploy = stateFor('deploy', t('editor.deploy'));
+  const start = stateFor('start', t('editor.start'));
+  const stop = stateFor('stop', t('editor.stop'));
+  const restart = stateFor('restart', t('editor.restart'));
 
   return (
     <>
       {/* 저장 — 원격은 PATCH(기존)/POST(신규) 명령 전파(EditorPage 소유). */}
       <ToolbarButton
         icon={Save}
-        label="저장"
+        label={t('editor.save')}
         onClick={() => onSave?.()}
         disabled={!isDirty || isSaving}
         badge={isDirty}
@@ -955,7 +975,7 @@ function RemoteFlowControls({
       {/* 배포 */}
       <ToolbarButton
         icon={Rocket}
-        label="배포"
+        label={t('editor.deploy')}
         title={deploy.title}
         onClick={() => void run('deploy')}
         disabled={!canDeploy || deploy.disabled || (actions.pending.deploy ?? false)}
@@ -966,14 +986,14 @@ function RemoteFlowControls({
       {/* 실행 제어 */}
       <ToolbarButton
         icon={Play}
-        label="시작"
+        label={t('editor.start')}
         title={start.title}
         onClick={() => void run('start')}
         disabled={!canStart || start.disabled || (actions.pending.start ?? false)}
       />
       <ToolbarButton
         icon={Square}
-        label="중지"
+        label={t('editor.stop')}
         title={stop.title}
         onClick={() => void run('stop')}
         disabled={!canStop || stop.disabled || (actions.pending.stop ?? false)}
@@ -981,7 +1001,7 @@ function RemoteFlowControls({
       {/* 재시작 — 원격 노드 미지원: 숨기지 않고 비활성+툴팁으로 메뉴 형태 일치. */}
       <ToolbarButton
         icon={RotateCcw}
-        label="재시작"
+        label={t('editor.restart')}
         title={restart.title}
         onClick={() => void run('restart')}
         disabled
@@ -1004,6 +1024,7 @@ interface RemoteStatusBadgeProps {
  * 'stored'(저장됨) 로 중립 표시해 배지 레이아웃을 항상 유지한다.
  */
 function RemoteStatusBadge({ target, flowId }: RemoteStatusBadgeProps) {
+  const { t } = useTranslation();
   const status = useFlowStatusTarget(target, flowId);
   const currentStatus = (status.data?.status as FlowStatus | undefined) ?? 'stored';
   return (
@@ -1014,7 +1035,7 @@ function RemoteStatusBadge({ target, flowId }: RemoteStatusBadgeProps) {
       )}
       data-testid="remote-editor-status-badge"
     >
-      {STATUS_LABELS[currentStatus]}
+      {t(STATUS_LABEL_KEYS[currentStatus])}
     </span>
   );
 }

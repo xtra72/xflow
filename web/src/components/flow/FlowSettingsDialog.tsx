@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
 import { useFlow, useUpdateFlow } from '@/hooks/useFlow';
+import { useTranslation } from '@/lib/i18n';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 
 interface FlowSettingsDialogProps {
@@ -25,6 +26,7 @@ interface FlowSettingsDialogProps {
 }
 
 export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDialogProps) {
+  const { t } = useTranslation();
   const settings = useUIStore(
     (state) => state.flowDisplaySettings[flowId] ?? DEFAULT_FLOW_DISPLAY_SETTINGS,
   );
@@ -106,13 +108,13 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
             id="flow-settings-dialog-title"
             className="text-base font-semibold text-(--color-text-primary)"
           >
-            플로우 설정
+            {t('editor.settings.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -126,7 +128,7 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
               htmlFor="flow-settings-name"
               className="text-xs font-medium text-(--color-text-secondary)"
             >
-              플로우 이름
+              {t('editor.settings.nameLabel')}
             </label>
             <input
               id="flow-settings-name"
@@ -142,7 +144,7 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
                   e.currentTarget.blur();
                 }
               }}
-              placeholder="플로우 이름"
+              placeholder={t('editor.settings.namePlaceholder')}
               className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
             />
           </div>
@@ -152,7 +154,7 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
               htmlFor="flow-settings-description"
               className="text-xs font-medium text-(--color-text-secondary)"
             >
-              설명
+              {t('editor.settings.descLabel')}
             </label>
             <textarea
               id="flow-settings-description"
@@ -161,7 +163,7 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
               onBlur={commitDescription}
               onKeyDown={(e) => e.stopPropagation()}
               rows={3}
-              placeholder="이 플로우에 대한 설명 (선택)"
+              placeholder={t('editor.settings.descPlaceholder')}
               className="resize-y rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
             />
           </div>
@@ -169,7 +171,7 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
           <div className="my-1 h-px bg-(--color-border-default)" />
 
           <p className="text-xs text-(--color-text-secondary)">
-            아래 표시 설정은 본 플로우에 대해서만 적용됩니다. 다른 플로우의 표시는 영향받지 않습니다.
+            {t('editor.settings.scopeNote')}
           </p>
 
           {/* 포트별 통계 표시 토글 */}
@@ -183,9 +185,9 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
               className="mt-0.5 h-4 w-4"
             />
             <div className="flex-1">
-              <div className="font-medium">포트별 통계 표시</div>
+              <div className="font-medium">{t('editor.settings.showPortStats')}</div>
               <div className="mt-0.5 text-xs text-(--color-text-secondary)">
-                각 포트 옆에 메시지 통계 수치를 표시합니다. 비활성 시 노드 하단의 누계만 표시.
+                {t('editor.settings.showPortStatsDesc')}
               </div>
             </div>
           </label>
@@ -201,9 +203,9 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
               className="mt-0.5 h-4 w-4"
             />
             <div className="flex-1">
-              <div className="font-medium">포트 이름 표시</div>
+              <div className="font-medium">{t('editor.settings.showPortNames')}</div>
               <div className="mt-0.5 text-xs text-(--color-text-secondary)">
-                각 포트 옆에 포트 이름 텍스트를 표시합니다 (in / out / error 등).
+                {t('editor.settings.showPortNamesDesc')}
               </div>
             </div>
           </label>
@@ -216,7 +218,7 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
             onClick={onClose}
             className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
           >
-            닫기
+            {t('common.close')}
           </button>
         </div>
       </div>

@@ -16,6 +16,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { ArrowRightToLine, ArrowLeftToLine } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import type { FlowBoundaryNodeData } from '@/lib/flow/boundary';
 
@@ -25,6 +26,7 @@ import type { FlowBoundaryNodeData } from '@/lib/flow/boundary';
  * data.ports(포트 이름 배열)로 핸들을 1개씩 그린다.
  */
 export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
+  const { t } = useTranslation();
   const { direction, ports } = data as FlowBoundaryNodeData;
   const isInput = direction === 'input';
 
@@ -33,11 +35,13 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
   const handleType = isInput ? 'source' : 'target';
   const handlePosition = isInput ? Position.Right : Position.Left;
 
-  const title = isInput ? '플로우 입력' : '플로우 출력';
+  const title = isInput
+    ? t('editor.boundary.inputTitle')
+    : t('editor.boundary.outputTitle');
   const Icon = isInput ? ArrowRightToLine : ArrowLeftToLine;
   const emptyHint = isInput
-    ? '입력 포트 없음'
-    : '출력 포트 없음';
+    ? t('editor.boundary.inputEmpty')
+    : t('editor.boundary.outputEmpty');
 
   return (
     <div
