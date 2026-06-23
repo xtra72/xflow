@@ -458,12 +458,12 @@ export default function DeviceListPage({
                         key={col}
                         className="px-4 py-3 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider"
                       >
-                        {DEVICE_COLUMN_LABELS[col]}
+                        {t(DEVICE_COLUMN_LABELS[col])}
                       </th>
                     ) : (
                       <SortableHeader
                         key={col}
-                        label={DEVICE_COLUMN_LABELS[col]}
+                        label={t(DEVICE_COLUMN_LABELS[col])}
                         field={col}
                         currentSort={sort}
                         onSort={handleSort}
@@ -582,7 +582,7 @@ function ColumnsSettingButton({
                   className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm text-(--color-text-primary)">
-                  {DEVICE_COLUMN_LABELS[key]}
+                  {t(DEVICE_COLUMN_LABELS[key])}
                 </span>
               </label>
             );

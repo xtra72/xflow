@@ -35,16 +35,21 @@ export const ALL_DEVICE_COLUMNS: DeviceListColumnKey[] = [
   'last_seen',
 ];
 
-/** 컬럼 키 → 한국어 라벨. */
+/**
+ * 컬럼 키 → i18n 번역 키.
+ *
+ * 순수 모듈 스코프 상수라 t() 를 직접 호출할 수 없으므로, 번역 키만 저장하고
+ * 소비 컴포넌트(DeviceListPage)에서 t(DEVICE_COLUMN_LABELS[col]) 로 변환한다.
+ */
 export const DEVICE_COLUMN_LABELS: Record<DeviceListColumnKey, string> = {
-  name: '이름',
-  id: 'ID',
-  type: '타입',
-  protocol: '프로토콜',
-  status: '상태',
-  agent: '에이전트',
-  source: '등록',
-  last_seen: '최근 확인',
+  name: 'devices.column.name',
+  id: 'devices.column.id',
+  type: 'devices.column.type',
+  protocol: 'devices.column.protocol',
+  status: 'devices.column.status',
+  agent: 'devices.column.agent',
+  source: 'devices.column.source',
+  last_seen: 'devices.column.lastSeen',
 };
 
 /** 기본 표시 컬럼 (설정 미저장/로드 실패 시 폴백). 기존 하드코딩 컬럼 + id. */

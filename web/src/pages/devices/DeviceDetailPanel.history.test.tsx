@@ -7,10 +7,20 @@
 //   - limit 셀렉트 변경 → useDeviceHistory 가 새 limit 으로 재호출
 
 import { render, screen, fireEvent } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { I18nProvider } from '@/lib/i18n';
 import { APIError } from '@/types/api';
 import type { DeviceDetail, DeviceHistoryEntry } from '@/types/device';
+
+/**
+ * DeviceDetailPanel 은 useTranslation() 을 사용하므로 I18nProvider 로 감싸 렌더한다.
+ * 기본 로케일은 ko 이므로 한국어 라벨 검증이 그대로 유효하다.
+ */
+function renderWithI18n(ui: ReactElement) {
+  return render(<I18nProvider>{ui}</I18nProvider>);
+}
 
 // ---- 상세 훅 mock (이력 섹션 외 패널 본문은 최소 데이터로 채움) ----
 const useDeviceDetailTargetMock = vi.hoisted(() => vi.fn());
@@ -88,7 +98,7 @@ describe('DeviceDetailPanel 이력 섹션', () => {
       isFetching: false,
     });
 
-    render(<DeviceDetailPanel deviceId="uuid-1" />);
+    renderWithI18n(<DeviceDetailPanel deviceId="uuid-1" />);
 
     expect(screen.getByText('최근 데이터(이력)')).toBeInTheDocument();
     expect(screen.getByText('온라인')).toBeInTheDocument();
@@ -107,7 +117,7 @@ describe('DeviceDetailPanel 이력 섹션', () => {
       isFetching: false,
     });
 
-    render(<DeviceDetailPanel deviceId="uuid-1" />);
+    renderWithI18n(<DeviceDetailPanel deviceId="uuid-1" />);
 
     // 값이 개별 셀로 렌더된다.
     expect(screen.getByText('abc123')).toBeInTheDocument();
@@ -123,7 +133,7 @@ describe('DeviceDetailPanel 이력 섹션', () => {
       isFetching: false,
     });
 
-    render(<DeviceDetailPanel deviceId="uuid-1" />);
+    renderWithI18n(<DeviceDetailPanel deviceId="uuid-1" />);
     expect(screen.getByText('최근 데이터 없음')).toBeInTheDocument();
   });
 
@@ -135,7 +145,7 @@ describe('DeviceDetailPanel 이력 섹션', () => {
       isFetching: false,
     });
 
-    render(<DeviceDetailPanel deviceId="uuid-1" />);
+    renderWithI18n(<DeviceDetailPanel deviceId="uuid-1" />);
     expect(screen.getByText('이력 기록이 비활성화되어 있습니다.')).toBeInTheDocument();
   });
 
@@ -147,7 +157,7 @@ describe('DeviceDetailPanel 이력 섹션', () => {
       isFetching: false,
     });
 
-    render(<DeviceDetailPanel deviceId="uuid-1" />);
+    renderWithI18n(<DeviceDetailPanel deviceId="uuid-1" />);
 
     // 초기 호출은 기본 limit(100) — uid 우선 식별자.
     expect(useDeviceHistoryMock).toHaveBeenCalledWith('uuid-1', 100, true);

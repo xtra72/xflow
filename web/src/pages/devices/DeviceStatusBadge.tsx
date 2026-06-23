@@ -1,5 +1,6 @@
 // 디바이스 온라인/오프라인 상태 배지 컴포넌트.
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 interface DeviceStatusBadgeProps {
@@ -8,6 +9,7 @@ interface DeviceStatusBadgeProps {
 
 /** 디바이스 온라인/오프라인 상태 배지 */
 export default function DeviceStatusBadge({ online }: DeviceStatusBadgeProps) {
+  const { t } = useTranslation();
   return (
     <span
       className={cn(
@@ -21,7 +23,7 @@ export default function DeviceStatusBadge({ online }: DeviceStatusBadgeProps) {
         className={cn('h-1.5 w-1.5 rounded-full', online ? 'bg-green-500' : 'bg-gray-400')}
         aria-hidden="true"
       />
-      {online ? '\uC628\uB77C\uC778' : '\uC624\uD504\uB77C\uC778'}
+      {online ? t('devices.status.online') : t('devices.status.offline')}
     </span>
   );
 }
