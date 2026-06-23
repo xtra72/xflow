@@ -107,7 +107,8 @@ function renderPanel(target: ResourceTarget) {
 
 /** 설정 탭으로 전환한다. */
 function openConfigTab() {
-  fireEvent.click(screen.getByRole('button', { name: '설정' }));
+  // i18n 모킹(t: k => k)으로 탭 라벨은 키 문자열로 렌더된다.
+  fireEvent.click(screen.getByRole('button', { name: 'agents.detail.tabs.config' }));
 }
 
 beforeEach(() => {

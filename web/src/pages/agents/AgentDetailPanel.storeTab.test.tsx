@@ -199,7 +199,9 @@ describe('StoreTab — 타입/태그 편집', () => {
     renderPanel(LOCAL_TARGET);
 
     // indoor:temp 행의 편집 버튼 클릭.
-    const editBtn = screen.getByLabelText('indoor:temp 키의 타입/태그 편집');
+    // i18n 모킹(t: k => k)에서는 {key} 치환이 일어나지 않아 모든 행의 편집 버튼이
+    // 동일한 키 문자열 aria-label 을 가지므로, 첫 번째(indoor:temp) 버튼을 선택한다.
+    const editBtn = screen.getAllByLabelText('agents.detail.store.editMetaAriaLabel')[0]!;
     fireEvent.click(editBtn);
 
     // 다이얼로그가 사전 채움된다.
@@ -224,7 +226,7 @@ describe('StoreTab — 원격 READ-ONLY', () => {
   it('원격 타깃에서는 편집 버튼이 노출되지 않는다', () => {
     renderPanel(REMOTE_TARGET);
     expect(
-      screen.queryByLabelText('indoor:temp 키의 타입/태그 편집'),
+      screen.queryByLabelText('agents.detail.store.editMetaAriaLabel'),
     ).not.toBeInTheDocument();
   });
 });
@@ -264,7 +266,7 @@ describe('StoreTab — 검색 필터', () => {
       target: { value: 'zzz-nomatch' },
     });
     expect(
-      screen.getByText('선택한 필터와 일치하는 항목이 없습니다'),
+      screen.getByText('agents.detail.store.emptyNoFilterMatch'),
     ).toBeInTheDocument();
   });
 });
@@ -285,7 +287,9 @@ describe('StoreTab — 컬럼 정렬', () => {
 
   it('키 헤더 클릭 시 오름차순으로 정렬된다', () => {
     renderPanel(LOCAL_TARGET);
-    fireEvent.click(screen.getByLabelText('키 기준 정렬'));
+    // i18n 모킹(t: k => k)에서는 {label} 치환이 일어나지 않아 모든 정렬 헤더가
+    // 동일한 키 문자열 aria-label 을 가지므로, 첫 번째(키 컬럼) 헤더를 선택한다.
+    fireEvent.click(screen.getAllByLabelText('agents.detail.store.sortAriaLabel')[0]!);
     expect(rowKeys()).toEqual([
       'dynamic:count',
       'indoor:temp',
@@ -295,7 +299,7 @@ describe('StoreTab — 컬럼 정렬', () => {
 
   it('키 헤더 재클릭 시 내림차순으로 토글된다', () => {
     renderPanel(LOCAL_TARGET);
-    const header = screen.getByLabelText('키 기준 정렬');
+    const header = screen.getAllByLabelText('agents.detail.store.sortAriaLabel')[0]!;
     fireEvent.click(header); // asc
     fireEvent.click(header); // desc
     expect(rowKeys()).toEqual([

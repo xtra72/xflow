@@ -16,7 +16,7 @@ import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTarg
 import { useDevicesRealtime } from '@/hooks/useDevice';
 import { useUpdateRemoteAgent } from '@/hooks/useRemote';
 import { useTargetGating } from '@/hooks/useTargetGating';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { omitMaskedSecrets } from '@/lib/remote/secretOmission';
 import { useTargetContext } from '@/lib/remote/TargetContext';
@@ -128,6 +128,7 @@ const HAS_STORE_TAB = new Set(['store']);
 const HAS_SERIES_TAB = new Set<string>(['tsdb']);
 
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
+  const { t } = useTranslation();
   const showDevices = !NO_DEVICES_TAB.has(agentType);
   const showTopics = HAS_TOPICS_TAB.has(agentType);
   const showStore = HAS_STORE_TAB.has(agentType);
@@ -144,13 +145,13 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
     <div>
       {/* 탭 헤더 */}
       <div className="flex border-b border-(--color-border-default) px-4">
-        <TabButton label="통계" active={tab === 'stats'} onClick={() => setTab('stats')} />
-        <TabButton label="설정" active={tab === 'config'} onClick={() => setTab('config')} />
-        {showTopics && <TabButton label="토픽" active={tab === 'topics'} onClick={() => setTab('topics')} />}
-        {showStore && <TabButton label="저장소" active={tab === 'store'} onClick={() => setTab('store')} />}
-        {showSeries && <TabButton label="시리즈" active={tab === 'series'} onClick={() => setTab('series')} />}
-        {showSessions && <TabButton label="세션" active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
-        {showDevices && <TabButton label="디바이스" active={tab === 'devices'} onClick={() => setTab('devices')} />}
+        <TabButton label={t('agents.detail.tabs.stats')} active={tab === 'stats'} onClick={() => setTab('stats')} />
+        <TabButton label={t('agents.detail.tabs.config')} active={tab === 'config'} onClick={() => setTab('config')} />
+        {showTopics && <TabButton label={t('agents.detail.tabs.topics')} active={tab === 'topics'} onClick={() => setTab('topics')} />}
+        {showStore && <TabButton label={t('agents.detail.tabs.store')} active={tab === 'store'} onClick={() => setTab('store')} />}
+        {showSeries && <TabButton label={t('agents.detail.tabs.series')} active={tab === 'series'} onClick={() => setTab('series')} />}
+        {showSessions && <TabButton label={t('agents.detail.tabs.sessions')} active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
+        {showDevices && <TabButton label={t('agents.detail.tabs.devices')} active={tab === 'devices'} onClick={() => setTab('devices')} />}
       </div>
 
       {/* 탭 컨텐츠 */}
@@ -186,6 +187,7 @@ function SeriesTab({
   agentType: string;
   agentName?: string;
 }) {
+  const { t } = useTranslation();
   const [modalOpen, setModalOpen] = useState(false);
 
   // 데이터 소스를 에이전트 타입에 맞춰 생성.
@@ -214,7 +216,7 @@ function SeriesTab({
     return (
       <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
         <LineChart className="h-8 w-8 opacity-40" aria-hidden="true" />
-        <p className="text-sm">원격 노드에서는 시리즈 뷰어를 제공하지 않습니다.</p>
+        <p className="text-sm">{t('agents.detail.series.remoteUnavailable')}</p>
       </div>
     );
   }
@@ -223,14 +225,14 @@ function SeriesTab({
     <>
       {/* 탭 상단 액션 바 — 데이터 뷰어를 여는 단일 트리거 (SPEC-WEB-005 v0.3.0). */}
       <div className="flex items-center justify-between border-b border-(--color-border-default) px-4 py-2">
-        <h3 className="text-sm font-medium text-(--color-text-primary)">시리즈</h3>
+        <h3 className="text-sm font-medium text-(--color-text-primary)">{t('agents.detail.series.title')}</h3>
         <button
           type="button"
           onClick={handleOpen}
           className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2.5 py-1 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
         >
           <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
-          데이터 보기
+          {t('agents.detail.series.viewData')}
         </button>
       </div>
       <TsdbSeriesListPanel dataSource={dataSource} />
@@ -276,6 +278,7 @@ function formatStatsBytes(n: number | undefined | null): string {
 function StatsTab({ agentId }: { agentId: string }) {
   // SPEC-REMOTE-001 M8 (그룹 J): 라이브 통계는 타깃에 따라 로컬 폴링 또는 원격
   // SSE 스트림(+폴백 폴링)으로 취득한다.
+  const { t } = useTranslation();
   const target = useTargetContext();
   const { data: stats, isLoading } = useAgentStatsTarget(target, agentId);
 
@@ -295,7 +298,7 @@ function StatsTab({ agentId }: { agentId: string }) {
   if (!stats) {
     return (
       <div className="p-4 text-sm text-(--color-text-muted)">
-        통계 데이터를 불러올 수 없습니다.
+        {t('agents.detail.stats.cannotLoad')}
       </div>
     );
   }
@@ -304,47 +307,47 @@ function StatsTab({ agentId }: { agentId: string }) {
     <div className="space-y-4 p-4">
       {/* 요약 통계 */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <StatCard label="총 수신" value={stats.messages_in.toLocaleString()} />
-        <StatCard label="총 송신" value={stats.messages_out.toLocaleString()} />
-        <StatCard label="에러" value={stats.error_count.toLocaleString()} />
-        <StatCard label="업타임" value={stats.uptime ?? '-'} />
+        <StatCard label={t('agents.detail.stats.totalIn')} value={stats.messages_in.toLocaleString()} />
+        <StatCard label={t('agents.detail.stats.totalOut')} value={stats.messages_out.toLocaleString()} />
+        <StatCard label={t('agents.detail.stats.error')} value={stats.error_count.toLocaleString()} />
+        <StatCard label={t('agents.detail.stats.uptime')} value={stats.uptime ?? '-'} />
       </div>
 
       {/* 외부/내부 메시지 분리 */}
       {stats.messages && (
         <div>
-          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">메시지 상세</p>
+          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.messageDetail')}</p>
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-              <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">외부 (External)</p>
+              <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">{t('agents.detail.stats.external')}</p>
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div>
-                  <p className="text-(--color-text-muted)">수신</p>
+                  <p className="text-(--color-text-muted)">{t('agents.detail.field.received')}</p>
                   <p className="font-semibold text-(--color-text-primary)">{(stats.messages.external.received ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-(--color-text-muted)">송신</p>
+                  <p className="text-(--color-text-muted)">{t('agents.detail.field.sent')}</p>
                   <p className="font-semibold text-(--color-text-primary)">{(stats.messages.external.sent ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-(--color-text-muted)">에러</p>
+                  <p className="text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
                   <p className="font-semibold text-(--color-text-primary)">{(stats.messages.external.errored ?? 0).toLocaleString()}</p>
                 </div>
               </div>
             </div>
             <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-              <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">내부 (Internal)</p>
+              <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">{t('agents.detail.stats.internal')}</p>
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div>
-                  <p className="text-(--color-text-muted)">수신</p>
+                  <p className="text-(--color-text-muted)">{t('agents.detail.field.received')}</p>
                   <p className="font-semibold text-(--color-text-primary)">{(stats.messages.internal.received ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-(--color-text-muted)">송신</p>
+                  <p className="text-(--color-text-muted)">{t('agents.detail.field.sent')}</p>
                   <p className="font-semibold text-(--color-text-primary)">{(stats.messages.internal.sent ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-(--color-text-muted)">에러</p>
+                  <p className="text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
                   <p className="font-semibold text-(--color-text-primary)">{(stats.messages.internal.errored ?? 0).toLocaleString()}</p>
                 </div>
               </div>
@@ -355,40 +358,40 @@ function StatsTab({ agentId }: { agentId: string }) {
 
       {/* 운영 통계 */}
       <div>
-        <p className="mb-2 text-xs font-medium text-(--color-text-muted)">운영 통계</p>
+        <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.operationStats')}</p>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <StatCard label="드롭 메시지" value={(stats.dropped_messages ?? 0).toLocaleString()} />
-          <StatCard label="로드 시간" value={stats.load_time || '-'} />
-          <StatCard label="재시작 횟수" value={(stats.restart_count ?? 0).toLocaleString()} />
-          <StatCard label="평균 처리 지연" value={stats.avg_processing_latency || '-'} />
+          <StatCard label={t('agents.detail.stats.droppedMessages')} value={(stats.dropped_messages ?? 0).toLocaleString()} />
+          <StatCard label={t('agents.detail.stats.loadTime')} value={stats.load_time || '-'} />
+          <StatCard label={t('agents.detail.stats.restartCount')} value={(stats.restart_count ?? 0).toLocaleString()} />
+          <StatCard label={t('agents.detail.stats.avgLatency')} value={stats.avg_processing_latency || '-'} />
         </div>
       </div>
 
       {/* 바이트 통계 */}
       <div>
-        <p className="mb-2 text-xs font-medium text-(--color-text-muted)">전송량</p>
+        <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.transfer')}</p>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <StatCard label="읽기" value={formatStatsBytes(stats.bytes?.read)} />
-          <StatCard label="쓰기" value={formatStatsBytes(stats.bytes?.written)} />
+          <StatCard label={t('agents.detail.field.read')} value={formatStatsBytes(stats.bytes?.read)} />
+          <StatCard label={t('agents.detail.field.write')} value={formatStatsBytes(stats.bytes?.written)} />
         </div>
       </div>
 
       {/* 연결 테이블 */}
       {(stats.connections?.length ?? 0) > 0 && (
         <div>
-          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">연결 ({stats.connections!.length})</p>
+          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.connections')} ({stats.connections!.length})</p>
           <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">ID</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">수신</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">송신</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">에러</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">읽기(B)</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">쓰기(B)</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">연결시각</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">최근활동</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.stats.colId')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.field.received')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.field.sent')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.field.error')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.stats.colReadB')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.stats.colWriteB')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.stats.colConnectedAt')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.stats.colLastActivity')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default)">
@@ -413,17 +416,17 @@ function StatsTab({ agentId }: { agentId: string }) {
       {/* 노드 참조 테이블 */}
       {(stats.node_refs?.length ?? 0) > 0 && (
         <div>
-          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">노드 참조 ({stats.node_refs!.length})</p>
+          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.nodeRefs')} ({stats.node_refs!.length})</p>
           <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">노드 이름</th>
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">플로우 이름</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">수신</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">송신</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">에러</th>
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">최근활동</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.stats.colNodeName')}</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.stats.colFlowName')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.field.received')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.field.sent')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.field.error')}</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.stats.colLastActivity')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default)">
@@ -452,62 +455,66 @@ function StatsTab({ agentId }: { agentId: string }) {
 // FourQuadrantConfigLayout 으로 분기되므로 여기서 제거되었다
 // (refactor/hvacr-ui-rendering-fix).
 
-/** 에이전트 타입별 좌측 컬럼 필드 및 컬럼 라벨 */
-const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabel: string; rightLabel: string }> = {
+/**
+ * 에이전트 타입별 좌측 컬럼 필드 및 컬럼 라벨.
+ * 모듈 스코프에서는 t()를 호출할 수 없으므로 라벨은 i18n 키로 보관하고
+ * 렌더 시점(TwoColumnConfigLayout)에 변환한다.
+ */
+const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; rightLabelKey: string }> = {
   'mqtt-client': {
     left: new Set(['broker', 'client_id', 'username', 'password', 'keep_alive_sec', 'connect_timeout_sec']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   'modbus-tcp': {
     left: new Set(['mode', 'read_mode', 'reconnect_interval', 'request_timeout', 'max_retries']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   'modbus-tcp-server': {
     left: new Set(['listen_address', 'listen_port']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   http: {
     left: new Set(['listen_addr', 'path', 'method']),
-    leftLabel: '수신',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.receive',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   'http-sender': {
     left: new Set(['url', 'method', 'content_type']),
-    leftLabel: '전송',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.send',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   influxdb: {
     left: new Set(['url', 'token', 'org', 'bucket', 'version']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   logger: {
     left: new Set(['output', 'output_path', 'format', 'max_size', 'max_age', 'max_backups', 'compress']),
-    leftLabel: '출력',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.output',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   lgap: {
     left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'connect_timeout', 'read_timeout']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   lg_hvacr02: {
     left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'tcp_host', 'tcp_port']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   serial: {
     left: new Set(['port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'buffer_size']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
   'tcp-server': {
     left: new Set(['host', 'port', 'buffer_size']),
-    leftLabel: '연결',
-    rightLabel: '운영',
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
   },
 };
 
@@ -522,6 +529,7 @@ function TwoColumnConfigLayout({
   agentType: string;
   logLevel?: { agentId: string; value: string; updating: boolean; onChangeLevel: (v: string) => void };
 }) {
+  const { t } = useTranslation();
   const colConfig = TWO_COL_CONFIG[agentType];
   if (!colConfig) return null;
 
@@ -545,7 +553,7 @@ function TwoColumnConfigLayout({
     <div className="grid grid-cols-2 gap-4">
       {/* 좌측 */}
       <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{colConfig.leftLabel}</h4>
+        <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{t(colConfig.leftLabelKey)}</h4>
         {filterVisible(leftFields).map((field) => (
           <FormField
             key={field.name}
@@ -558,7 +566,7 @@ function TwoColumnConfigLayout({
       </div>
       {/* 우측 */}
       <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{colConfig.rightLabel}</h4>
+        <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{t(colConfig.rightLabelKey)}</h4>
         {filterVisible(rightFields).map((field) => (
           <FormField
             key={field.name}
@@ -574,7 +582,7 @@ function TwoColumnConfigLayout({
               htmlFor={`agent-log-${logLevel.agentId}`}
               className="block text-xs font-medium text-(--color-text-secondary)"
             >
-              로그 레벨
+              {t('agents.detail.config.logLevel')}
             </label>
             <select
               id={`agent-log-${logLevel.agentId}`}
@@ -588,7 +596,7 @@ function TwoColumnConfigLayout({
                 'disabled:cursor-not-allowed disabled:opacity-50',
               )}
             >
-              <option value="">기본값</option>
+              <option value="">{t('agents.detail.config.logLevelDefault')}</option>
               <option value="debug">DEBUG</option>
               <option value="info">INFO</option>
               <option value="warn">WARN</option>
@@ -603,12 +611,15 @@ function TwoColumnConfigLayout({
 
 // ---- 4-분면 설정 레이아웃 (HVACR-01 공용: Samsung / LG / Century) ----
 
-/** HVACR 4-quadrant 분면 헤더 라벨 (한국어 고정) */
-const QUADRANT_LABELS: Record<ConfigSection, string> = {
-  transport: '연결',
-  protocol: '프로토콜',
-  operation: '운영',
-  logging: '로그',
+/**
+ * HVACR 4-quadrant 분면 헤더 라벨 i18n 키.
+ * 모듈 스코프에서는 t()를 호출할 수 없으므로 키만 보관하고 렌더 시점에 변환한다.
+ */
+const QUADRANT_LABEL_KEYS: Record<ConfigSection, string> = {
+  transport: 'agents.detail.config.transport',
+  protocol: 'agents.detail.config.protocol',
+  operation: 'agents.detail.config.operation',
+  logging: 'agents.detail.config.logging',
 };
 
 /** 4-분면 렌더 순서 (좌상 → 우상 → 좌하 → 우하 grid flow) */
@@ -639,6 +650,7 @@ function FourQuadrantConfigLayout({
   agentType: string;
   logLevel?: { agentId: string; value: string; updating: boolean; onChangeLevel: (v: string) => void };
 }) {
+  const { t } = useTranslation();
   // section 별로 필드를 분류한다. 스키마 정의 순서는 그대로 유지된다.
   const fieldsBySection: Record<ConfigSection, typeof schema.fields> = {
     transport: [],
@@ -674,10 +686,10 @@ function FourQuadrantConfigLayout({
         return (
           <div key={section} className="space-y-3">
             <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">
-              {QUADRANT_LABELS[section]}
+              {t(QUADRANT_LABEL_KEYS[section])}
             </h4>
             {visible.length === 0 && !showLogLevel && (
-              <p className="text-xs text-(--color-text-muted) italic">설정 항목 없음</p>
+              <p className="text-xs text-(--color-text-muted) italic">{t('agents.detail.config.emptySection')}</p>
             )}
             {showLogLevel && (
               <div className="space-y-1">
@@ -685,7 +697,7 @@ function FourQuadrantConfigLayout({
                   htmlFor={`agent-log-${logLevel.agentId}`}
                   className="block text-xs font-medium text-(--color-text-secondary)"
                 >
-                  로그 레벨
+                  {t('agents.detail.config.logLevel')}
                 </label>
                 <select
                   id={`agent-log-${logLevel.agentId}`}
@@ -699,7 +711,7 @@ function FourQuadrantConfigLayout({
                     'disabled:cursor-not-allowed disabled:opacity-50',
                   )}
                 >
-                  <option value="">기본값</option>
+                  <option value="">{t('agents.detail.config.logLevelDefault')}</option>
                   <option value="debug">DEBUG</option>
                   <option value="info">INFO</option>
                   <option value="warn">WARN</option>
@@ -763,6 +775,7 @@ function StoreConfigEditor({
   onValidityChange?: (valid: boolean) => void;
   readOnly?: boolean;
 }) {
+  const { t } = useTranslation();
   // 섹션별 필드 분할. `keys` 는 스키마에 없으므로 여기서 명시적으로 처리한다.
   const operationFields = schema.fields.filter((f) =>
     STORE_OPERATION_FIELDS.has(f.name),
@@ -787,7 +800,7 @@ function StoreConfigEditor({
       {/* 운영 섹션 */}
       <section>
         <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
-          운영
+          {t('agents.detail.store.operation')}
         </h4>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {operationFields.map((field) => (
@@ -805,7 +818,7 @@ function StoreConfigEditor({
       {/* 데이터 섹션 */}
       <section>
         <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
-          데이터
+          {t('agents.detail.store.data')}
         </h4>
         <div className="space-y-4">
           {dataFields.map((field) => (
@@ -819,13 +832,13 @@ function StoreConfigEditor({
           ))}
           <div>
             <p className="mb-1.5 text-xs font-medium text-(--color-text-secondary)">
-              정적 키 목록
+              {t('agents.detail.store.staticKeysTitle')}
             </p>
             <p className="mb-2 text-[11px] text-(--color-text-muted)">
-              미리 등록된 키와 태그. 태그는 필터링과 그룹화에 사용됩니다.
+              {t('agents.detail.store.staticKeysHint')}
               {registrationType === 'manual' && (
                 <span className="ml-1 text-amber-600 dark:text-amber-400">
-                  manual 모드에서는 모든 행에 data_type 입력이 필요합니다.
+                  {t('agents.detail.store.manualModeHint')}
                 </span>
               )}
             </p>
@@ -902,14 +915,14 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       if (value === '') {
         await resetComponentLogLevel(componentName);
         setComponentLogLevel_('');
-        addNotification({ type: 'success', message: '로그 레벨이 기본값으로 리셋되었습니다' });
+        addNotification({ type: 'success', message: t('agents.detail.config.logLevelResetToast') });
       } else {
         await setComponentLogLevel(componentName, value);
         setComponentLogLevel_(value);
-        addNotification({ type: 'success', message: `로그 레벨이 "${value.toUpperCase()}"로 변경되었습니다` });
+        addNotification({ type: 'success', message: t('agents.detail.config.logLevelChangedToast').replace('{level}', value.toUpperCase()) });
       }
     } catch {
-      addNotification({ type: 'error', message: '로그 레벨 변경에 실패했습니다' });
+      addNotification({ type: 'error', message: t('agents.detail.config.logLevelChangeFailed') });
     } finally {
       setIsLogLevelUpdating(false);
     }
@@ -966,9 +979,9 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       const transportKeys = ['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_host', 'tcp_port'];
       const changed = transportKeys.some((k) => String(config[k] ?? '') !== String(draft[k] ?? ''));
       if (changed) {
-        addNotification({ type: 'info', message: '연결 설정이 변경되어 에이전트가 재시작됩니다' });
+        addNotification({ type: 'info', message: t('agents.detail.config.transportChangedToast') });
       } else {
-        addNotification({ type: 'success', message: '설정이 저장되었습니다' });
+        addNotification({ type: 'success', message: t('agents.detail.config.savedToast') });
       }
     } catch {
       // 에러는 mutation 상태에서 표시
@@ -998,7 +1011,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   if (!agent) {
     return (
       <div className="p-4 text-sm text-(--color-text-muted)">
-        에이전트 정보를 불러올 수 없습니다.
+        {t('agents.detail.config.cannotLoadAgent')}
       </div>
     );
   }
@@ -1017,7 +1030,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
               className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             >
               <X className="h-3.5 w-3.5" />
-              취소
+              {t('agents.detail.config.cancel')}
             </button>
             <button
               type="button"
@@ -1031,12 +1044,12 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
                 editGated
                   ? t('remote.edit.actionGateHint')
                   : !storeKeysValid
-                  ? '정적 키 설정에 오류가 있습니다 (data_type / metric_type 확인)'
+                  ? t('agents.detail.config.storeKeysInvalid')
                   : undefined
               }
             >
               <Save className="h-3.5 w-3.5" />
-              {isSaving ? '저장 중...' : '저장'}
+              {isSaving ? t('agents.detail.config.saving') : t('agents.detail.config.save')}
             </button>
           </>
         ) : (
@@ -1049,7 +1062,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
             className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Pencil className="h-3.5 w-3.5" />
-            편집
+            {t('agents.detail.config.edit')}
           </button>
         )}
       </div>
@@ -1057,7 +1070,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       {/* 에러 메시지(로컬 저장 실패). 원격은 토스트로 안내하므로 표시하지 않는다. */}
       {!remote && configureAgent.isError && (
         <p className="mb-3 text-xs text-red-500 dark:text-red-400">
-          설정 저장에 실패했습니다. 다시 시도해주세요.
+          {t('agents.detail.config.saveFailed')}
         </p>
       )}
 
@@ -1065,14 +1078,14 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       {editing && agentType === 'samsung_hvacr01' && config.transport_type !== draft.transport_type && (
         <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          연결 방식 변경은 에이전트 재시작 후 적용됩니다.
+          {t('agents.detail.config.transportChangeWarning')}
         </div>
       )}
 
       {/* 즉시 적용 안내 (Samsung HVACR-01 편집 모드) */}
       {editing && agentType === 'samsung_hvacr01' && config.transport_type === draft.transport_type && (
         <p className="mb-3 text-xs text-(--color-text-muted)">
-          상태 확인 요청 간격, 부저, 알람 설정은 저장 즉시 적용됩니다.
+          {t('agents.detail.config.instantApplyHint')}
         </p>
       )}
 
@@ -1144,7 +1157,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
           htmlFor={`agent-log-level-${agentId}`}
           className="mb-1 block text-xs font-medium text-(--color-text-muted)"
         >
-          로그 레벨
+          {t('agents.detail.config.logLevel')}
         </label>
         <select
           id={`agent-log-level-${agentId}`}
@@ -1158,7 +1171,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
             'disabled:cursor-not-allowed disabled:opacity-50',
           )}
         >
-          <option value="">기본값(Default)</option>
+          <option value="">{t('agents.detail.config.logLevelDefaultLong')}</option>
           <option value="debug">DEBUG</option>
           <option value="info">INFO</option>
           <option value="warn">WARN</option>
@@ -1222,6 +1235,7 @@ const REGISTER_AREA_ORDER = ['coils', 'discrete_inputs', 'holding_registers', 'i
 
 /** 레지스터 맵 테이블 컴포넌트 */
 function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['register_map'] }) {
+  const { t } = useTranslation();
   const [expandedAreas, setExpandedAreas] = useState<Record<string, boolean>>({});
 
   const toggleArea = (area: string) => {
@@ -1245,7 +1259,7 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
 
   return (
     <div className="space-y-1.5">
-      <p className="text-xs font-medium text-(--color-text-muted)">레지스터 맵</p>
+      <p className="text-xs font-medium text-(--color-text-muted)">{t('agents.detail.modbus.registerMap')}</p>
       {visibleAreas.map((area) => {
         const data = registerMap[area]!;
         const entries = sortedEntries(data);
@@ -1277,9 +1291,9 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="bg-(--color-bg-primary) text-left text-(--color-text-muted)">
-                      <th className="px-2 py-1 font-medium">주소</th>
+                      <th className="px-2 py-1 font-medium">{t('agents.detail.modbus.colAddress')}</th>
                       {isBooleanArea(area) ? (
-                        <th className="px-2 py-1 font-medium">값</th>
+                        <th className="px-2 py-1 font-medium">{t('agents.detail.modbus.colValue')}</th>
                       ) : (
                         <>
                           <th className="px-2 py-1 font-medium">Dec</th>
@@ -1331,6 +1345,7 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
 }
 
 function ModbusDevicesSection({ agentId }: { agentId: string }) {
+  const { t } = useTranslation();
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
@@ -1375,11 +1390,11 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         },
         onError: () => {
           setIsLoadingDevices(false);
-          addNotification({ type: 'error', message: '디바이스 목록을 불러올 수 없습니다' });
+          addNotification({ type: 'error', message: t('agents.detail.modbus.loadDevicesError') });
         },
       },
     );
-  }, [agentId, execAgent, addNotification]);
+  }, [agentId, execAgent, addNotification, t]);
 
   useEffect(() => {
     fetchDevices();
@@ -1415,7 +1430,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const handleAddDevice = useCallback(() => {
     const unitId = parseInt(addUnitId, 10);
     if (isNaN(unitId) || unitId < 1 || unitId > 247) {
-      addNotification({ type: 'error', message: '유닛 ID는 1~247 범위여야 합니다' });
+      addNotification({ type: 'error', message: t('agents.detail.modbus.unitIdRangeError') });
       return;
     }
 
@@ -1431,7 +1446,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         const start = parseInt(blk.start, 10);
         const cnt = parseInt(blk.count, 10);
         if (isNaN(start) || isNaN(cnt) || cnt <= 0) {
-          addNotification({ type: 'error', message: `${REGISTER_AREA_LABELS[area] ?? area}: 올바른 주소와 개수를 입력하세요` });
+          addNotification({ type: 'error', message: t('agents.detail.modbus.blockInputError').replace('{area}', REGISTER_AREA_LABELS[area] ?? area) });
           return;
         }
         parsed.push({ start_address: start, count: cnt });
@@ -1440,7 +1455,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
       regMap[area] = parsed.length === 1 ? parsed[0] : parsed;
     }
     if (Object.keys(regMap).length === 0) {
-      addNotification({ type: 'error', message: '최소 하나의 레지스터 영역을 활성화하세요' });
+      addNotification({ type: 'error', message: t('agents.detail.modbus.noRegisterArea') });
       return;
     }
     params.register_map = regMap;
@@ -1452,9 +1467,9 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         onSuccess: (res) => {
           const result = res as { result?: { success?: boolean; error?: string } };
           if (result?.result?.success === false) {
-            addNotification({ type: 'error', message: result.result.error ?? '디바이스 추가 실패' });
+            addNotification({ type: 'error', message: result.result.error ?? t('agents.detail.modbus.addDeviceFailed') });
           } else {
-            addNotification({ type: 'success', message: `디바이스 (Unit ${unitId})가 추가되었습니다` });
+            addNotification({ type: 'success', message: t('agents.detail.modbus.addDeviceSuccess').replace('{unit}', String(unitId)) });
             setShowAddModal(false);
             setAddUnitId('');
             setAddName('');
@@ -1469,12 +1484,12 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
           setIsAdding(false);
         },
         onError: (err) => {
-          addNotification({ type: 'error', message: `디바이스 추가 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+          addNotification({ type: 'error', message: t('agents.detail.modbus.addDeviceError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.modbus.unknownError')) });
           setIsAdding(false);
         },
       },
     );
-  }, [agentId, addUnitId, addName, addRegAreas, execAgent, addNotification, fetchDevices]);
+  }, [agentId, addUnitId, addName, addRegAreas, execAgent, addNotification, fetchDevices, t]);
 
   // 디바이스 삭제
   const handleDeleteDevice = useCallback((unitId: number) => {
@@ -1484,9 +1499,9 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         onSuccess: (res) => {
           const result = res as { result?: { success?: boolean; error?: string } };
           if (result?.result?.success === false) {
-            addNotification({ type: 'error', message: result.result.error ?? '디바이스 제거 실패' });
+            addNotification({ type: 'error', message: result.result.error ?? t('agents.detail.modbus.removeDeviceFailed') });
           } else {
-            addNotification({ type: 'success', message: `디바이스 (Unit ${unitId})가 제거되었습니다` });
+            addNotification({ type: 'success', message: t('agents.detail.modbus.removeDeviceSuccess').replace('{unit}', String(unitId)) });
             if (selectedUnitId === unitId) {
               setSelectedUnitId(null);
               setDeviceDetail(null);
@@ -1496,12 +1511,12 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
           setDeleteTarget(null);
         },
         onError: (err) => {
-          addNotification({ type: 'error', message: `디바이스 제거 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+          addNotification({ type: 'error', message: t('agents.detail.modbus.removeDeviceError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.modbus.unknownError')) });
           setDeleteTarget(null);
         },
       },
     );
-  }, [agentId, selectedUnitId, execAgent, addNotification, fetchDevices]);
+  }, [agentId, selectedUnitId, execAgent, addNotification, fetchDevices, t]);
 
   const canDelete = useMemo(() => devices.length > 1, [devices.length]);
 
@@ -1523,7 +1538,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-(--color-text-muted)">
-          {devices.length}개 디바이스
+          {t('agents.detail.modbus.devicesCount').replace('{count}', String(devices.length))}
         </span>
         <button
           type="button"
@@ -1531,17 +1546,17 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
           className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
         >
           <Plus className="h-3.5 w-3.5" />
-          디바이스 추가
+          {t('agents.detail.modbus.addDevice')}
         </button>
       </div>
 
       {/* 추가 모달 */}
       {showAddModal && (
         <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
-          <div className="text-sm font-medium text-(--color-text-primary)">디바이스 추가</div>
+          <div className="text-sm font-medium text-(--color-text-primary)">{t('agents.detail.modbus.addDevice')}</div>
           <div>
             <label htmlFor="modbus-add-unit-id" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-              유닛 ID (1-247) *
+              {t('agents.detail.modbus.unitId')}
             </label>
             <input
               id="modbus-add-unit-id"
@@ -1556,12 +1571,12 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
           </div>
           <div>
             <label htmlFor="modbus-add-name" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-              이름 (선택)
+              {t('agents.detail.modbus.name')}
             </label>
             <input
               id="modbus-add-name"
               type="text"
-              placeholder="예: 센서 디바이스 1"
+              placeholder={t('agents.detail.modbus.namePlaceholder')}
               value={addName}
               onChange={(e) => setAddName(e.target.value)}
               className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
@@ -1569,7 +1584,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
           </div>
           <div>
             <p className="mb-1.5 text-xs font-medium text-(--color-text-muted)">
-              레지스터 맵
+              {t('agents.detail.modbus.registerMap')}
             </p>
             <div className="space-y-1.5">
               {REGISTER_AREA_ORDER.map((area) => {
@@ -1615,7 +1630,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                           }}
                           className="text-[10px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                         >
-                          + 블록 추가
+                          {t('agents.detail.modbus.addBlock')}
                         </button>
                       )}
                     </div>
@@ -1668,7 +1683,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                                   });
                                 }}
                                 className="rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
-                                title="블록 삭제"
+                                title={t('agents.detail.modbus.deleteBlock')}
                               >
                                 <X className="h-3 w-3" />
                               </button>
@@ -1689,7 +1704,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               disabled={!addUnitId.trim() || isAdding}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
             >
-              {isAdding ? '추가 중...' : '추가'}
+              {isAdding ? t('agents.detail.modbus.adding') : t('agents.detail.modbus.add')}
             </button>
             <button
               type="button"
@@ -1706,7 +1721,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               }}
               className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
             >
-              취소
+              {t('agents.detail.modbus.cancel')}
             </button>
           </div>
         </div>
@@ -1718,7 +1733,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
           <AlertTriangle className="h-4 w-4 flex-shrink-0 text-red-500" />
           <div className="flex-1">
             <p className="text-sm text-red-700 dark:text-red-300">
-              Unit {deleteTarget} 디바이스를 삭제하시겠습니까?
+              {t('agents.detail.modbus.confirmDelete').replace('{unit}', String(deleteTarget))}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1727,14 +1742,14 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               onClick={() => handleDeleteDevice(deleteTarget)}
               className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
             >
-              삭제
+              {t('agents.detail.modbus.delete')}
             </button>
             <button
               type="button"
               onClick={() => setDeleteTarget(null)}
               className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
             >
-              취소
+              {t('agents.detail.modbus.cancel')}
             </button>
           </div>
         </div>
@@ -1745,7 +1760,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         <div className="p-6 text-center">
           <Server className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
           <p className="mt-2 text-sm text-(--color-text-muted)">
-            등록된 디바이스가 없습니다
+            {t('agents.detail.modbus.noDevices')}
           </p>
         </div>
       ) : (
@@ -1794,7 +1809,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                         d.status === 'active' ? 'bg-green-500' : 'bg-gray-400',
                       )}
                     />
-                    {d.status === 'active' ? '활성' : '비활성'}
+                    {d.status === 'active' ? t('agents.detail.modbus.active') : t('agents.detail.modbus.inactive')}
                   </span>
                   <button
                     type="button"
@@ -1809,7 +1824,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
                         ? 'text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950'
                         : 'cursor-not-allowed text-gray-300 dark:text-gray-600',
                     )}
-                    title={canDelete ? '디바이스 삭제' : '마지막 디바이스는 삭제할 수 없습니다'}
+                    title={canDelete ? t('agents.detail.modbus.deleteTooltip') : t('agents.detail.modbus.lastDeviceTooltip')}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -1854,7 +1869,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-4">
           <div className="mb-3 flex items-center justify-between">
             <h4 className="text-sm font-medium text-(--color-text-primary)">
-              Unit {selectedUnitId} 상세 정보
+              {t('agents.detail.modbus.unitDetail').replace('{unit}', String(selectedUnitId))}
             </h4>
             <button
               type="button"
@@ -1876,18 +1891,18 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             <div className="space-y-3">
               {/* 요청 통계 */}
               <div>
-                <p className="mb-1 text-xs font-medium text-(--color-text-muted)">요청 통계</p>
+                <p className="mb-1 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.modbus.requestStats')}</p>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">읽기</p>
+                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.read')}</p>
                     <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.read_count}</p>
                   </div>
                   <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">쓰기</p>
+                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.write')}</p>
                     <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.write_count}</p>
                   </div>
                   <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">에러</p>
+                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
                     <p className={cn(
                       'text-sm font-semibold',
                       deviceDetail.stats.error_count > 0 ? 'text-red-500' : 'text-(--color-text-primary)',
@@ -1904,13 +1919,13 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
               {/* 생성 시간 */}
               {deviceDetail.created_at && (
                 <p className="text-xs text-(--color-text-muted)">
-                  생성: {new Date(deviceDetail.created_at).toLocaleString('ko-KR')}
+                  {t('agents.detail.modbus.createdAt').replace('{date}', new Date(deviceDetail.created_at).toLocaleString('ko-KR'))}
                 </p>
               )}
             </div>
           ) : (
             <p className="text-xs text-(--color-text-muted)">
-              상세 정보를 불러올 수 없습니다.
+              {t('agents.detail.modbus.detailLoadError')}
             </p>
           )}
         </div>
@@ -1947,6 +1962,7 @@ interface SubscribedTopicEntry {
 }
 
 function TopicsTab({ agentId }: { agentId: string }) {
+  const { t } = useTranslation();
   const target = useTargetContext();
   const { data: agent, isLoading: agentLoading } = useAgentDetailTarget(target, agentId, 'full');
   const { data: stats } = useAgentStatsTarget(target, agentId);
@@ -1978,10 +1994,10 @@ function TopicsTab({ agentId }: { agentId: string }) {
     <div className="space-y-4 p-4">
       {/* 통계 요약 */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="구독 토픽" value={subscribedTopics.length} />
-        <StatCard label="수신 토픽" value={totalReceivedCount} />
-        <StatCard label="발행 토픽" value={pubTopics.length} />
-        <StatCard label="수신 메시지" value={stats?.messages_in.toLocaleString() ?? '-'} />
+        <StatCard label={t('agents.detail.topics.subscribedCount')} value={subscribedTopics.length} />
+        <StatCard label={t('agents.detail.topics.receivedCount')} value={totalReceivedCount} />
+        <StatCard label={t('agents.detail.topics.publishedCount')} value={pubTopics.length} />
+        <StatCard label={t('agents.detail.topics.messagesIn')} value={stats?.messages_in.toLocaleString() ?? '-'} />
       </div>
 
       {/* 구독/수신 토픽 트리 */}
@@ -1992,9 +2008,13 @@ function TopicsTab({ agentId }: { agentId: string }) {
 
       {/* 발행 토픽 */}
       <TopicStatsTable
-        title={`발행 토픽${state?.max_pub_topics ? ` (최대 ${state.max_pub_topics})` : ''}`}
+        title={
+          state?.max_pub_topics
+            ? t('agents.detail.topics.publishedTopicsMax').replace('{max}', String(state.max_pub_topics))
+            : t('agents.detail.topics.publishedTopics')
+        }
         topics={pubTopics}
-        emptyMessage="발행된 토픽이 없습니다."
+        emptyMessage={t('agents.detail.topics.noPublishedTopics')}
       />
     </div>
   );
@@ -2008,6 +2028,7 @@ function SubscriptionTree({
   subscriptions: SubscribedTopicEntry[];
   unmatchedTopics: TopicStatEntry[];
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
     // 기본: 모두 펼침
     const init: Record<string, boolean> = {};
@@ -2040,9 +2061,9 @@ function SubscriptionTree({
   if (subscriptions.length === 0 && unmatchedTopics.length === 0) {
     return (
       <div>
-        <h4 className="mb-2 text-sm font-medium text-(--color-text-primary)">구독 토픽</h4>
+        <h4 className="mb-2 text-sm font-medium text-(--color-text-primary)">{t('agents.detail.topics.subscribedTopics')}</h4>
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-4 text-center">
-          <p className="text-xs text-(--color-text-muted)">구독 중인 토픽이 없습니다.</p>
+          <p className="text-xs text-(--color-text-muted)">{t('agents.detail.topics.noSubscribedTopics')}</p>
         </div>
       </div>
     );
@@ -2051,23 +2072,23 @@ function SubscriptionTree({
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <h4 className="text-sm font-medium text-(--color-text-primary)">구독 / 수신 토픽</h4>
+        <h4 className="text-sm font-medium text-(--color-text-primary)">{t('agents.detail.topics.subscribedReceived')}</h4>
         <button
           onClick={toggleAll}
           className="text-xs text-(--color-text-muted) hover:text-(--color-text-primary)"
         >
-          {allExpanded ? '모두 접기' : '모두 펼치기'}
+          {allExpanded ? t('agents.detail.topics.collapseAll') : t('agents.detail.topics.expandAll')}
         </button>
       </div>
       <div className="overflow-hidden rounded-lg border border-(--color-border-default)">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
-              <th className="px-4 py-2 text-left text-xs font-medium text-(--color-text-muted)">토픽</th>
-              <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">메시지 수</th>
-              <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">데이터량</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colTopic')}</th>
+              <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colMessageCount')}</th>
+              <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colDataSize')}</th>
               <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">QoS</th>
-              <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">최근 활동</th>
+              <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colLastActivity')}</th>
             </tr>
           </thead>
           <tbody>
@@ -2166,6 +2187,7 @@ function UnmatchedRow({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
+  const { t: translate } = useTranslation();
   const sorted = [...topics].sort((a, b) => b.count - a.count);
   const totalCount = topics.reduce((s, t) => s + t.count, 0);
   const totalBytes = topics.reduce((s, t) => s + t.bytes, 0);
@@ -2180,7 +2202,7 @@ function UnmatchedRow({
           <span className="mr-1.5 inline-block w-3 text-center">
             {isExpanded ? '\u25BC' : '\u25B6'}
           </span>
-          (기타 수신 토픽)
+          {translate('agents.detail.topics.otherReceived')}
           <span className="ml-2">({topics.length})</span>
         </td>
         <td className="px-4 py-2 text-right text-xs font-medium text-(--color-text-primary)">
@@ -2221,6 +2243,7 @@ function TopicStatsTable({
   topics: TopicStatEntry[];
   emptyMessage: string;
 }) {
+  const { t } = useTranslation();
   const sorted = [...topics].sort((a, b) => b.count - a.count);
 
   return (
@@ -2235,10 +2258,10 @@ function TopicStatsTable({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
-                <th className="px-4 py-2 text-left text-xs font-medium text-(--color-text-muted)">토픽</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">메시지 수</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">데이터량</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">최근 활동</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colTopic')}</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colMessageCount')}</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colDataSize')}</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-(--color-text-muted)">{t('agents.detail.topics.colLastActivity')}</th>
               </tr>
             </thead>
             <tbody>
@@ -2268,15 +2291,16 @@ function TopicStatsTable({
 
 // ---- 저장소 탭 ----
 
-function formatTimeAgo(date: Date): string {
+// 모듈 스코프에서는 t()를 호출할 수 없으므로 번역 함수를 인자로 받는다.
+function formatTimeAgo(date: Date, t: TranslationFn): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return `${seconds}초 전`;
+  if (seconds < 60) return t('agents.detail.time.secondsAgo').replace('{n}', String(seconds));
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}분 전`;
+  if (minutes < 60) return t('agents.detail.time.minutesAgo').replace('{n}', String(minutes));
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}시간 전`;
+  if (hours < 24) return t('agents.detail.time.hoursAgo').replace('{n}', String(hours));
   const days = Math.floor(hours / 24);
-  return `${days}일 전`;
+  return t('agents.detail.time.daysAgo').replace('{n}', String(days));
 }
 
 /**
@@ -2299,6 +2323,7 @@ function SortableHeader({
   onSort: (column: SortColumn) => void;
   align?: 'left' | 'right';
 }) {
+  const { t } = useTranslation();
   const active = sort.column === column;
   const ariaSort: React.AriaAttributes['aria-sort'] = active
     ? sort.direction === 'asc'
@@ -2321,7 +2346,7 @@ function SortableHeader({
           align === 'right' && 'flex-row-reverse',
           active && 'text-(--color-text-primary)',
         )}
-        aria-label={`${label} 기준 정렬`}
+        aria-label={t('agents.detail.store.sortAriaLabel').replace('{label}', label)}
       >
         {label}
         {active ? (
@@ -2410,6 +2435,7 @@ function StoreEntryRow({
    */
   onEditMeta: (key: string) => void;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyData, setHistoryData] = useState<Array<{ value: unknown; timestamp: string }> | null>(null);
@@ -2421,7 +2447,7 @@ function StoreEntryRow({
   const displayValue = truncated && !expanded ? valueStr.slice(0, 60) + '...' : valueStr;
 
   const updatedAt = entry.updated_at ? new Date(entry.updated_at as string) : null;
-  const timeAgo = updatedAt ? formatTimeAgo(updatedAt) : '-';
+  const timeAgo = updatedAt ? formatTimeAgo(updatedAt, t) : '-';
 
   const stateHistoryCount = (entry.history_count as number) || 0;
   const historyCount = historyData !== null ? historyData.length : stateHistoryCount;
@@ -2546,17 +2572,17 @@ function StoreEntryRow({
           {isStatic ? (
             <span
               className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-              title="설정에 등록된 정적 키"
+              title={t('agents.detail.store.staticTooltip')}
             >
               <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-              정적
+              {t('agents.detail.store.static')}
             </span>
           ) : (
             <span
               className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-              title="설정에 없는 동적 키"
+              title={t('agents.detail.store.dynamicTooltip')}
             >
-              동적
+              {t('agents.detail.store.dynamic')}
             </span>
           )}
         </td>
@@ -2569,7 +2595,7 @@ function StoreEntryRow({
                 ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
                 : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
             )}
-            title={`메트릭 타입: ${metricTypeLabel}`}
+            title={t('agents.detail.store.metricTypeTooltip').replace('{type}', metricTypeLabel)}
           >
             <span className="truncate">{metricTypeLabel}</span>
           </span>
@@ -2629,8 +2655,8 @@ function StoreEntryRow({
                 type="button"
                 onClick={handleEditMetaClick}
                 className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400"
-                title="타입 / 태그 편집"
-                aria-label={`${entry.key as string} 키의 타입/태그 편집`}
+                title={t('agents.detail.store.editMetaTooltip')}
+                aria-label={t('agents.detail.store.editMetaAriaLabel').replace('{key}', entry.key as string)}
               >
                 <Tag className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
@@ -2640,8 +2666,8 @@ function StoreEntryRow({
                 type="button"
                 onClick={handlePromoteClick}
                 className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                title="정적으로 변환"
-                aria-label={`${entry.key as string} 키를 정적으로 변환`}
+                title={t('agents.detail.store.promoteTooltip')}
+                aria-label={t('agents.detail.store.promoteAriaLabel').replace('{key}', entry.key as string)}
               >
                 <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
@@ -2651,8 +2677,8 @@ function StoreEntryRow({
                 type="button"
                 onClick={handleResetClick}
                 className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                title={isStatic ? '히스토리 초기화' : '항목 삭제'}
-                aria-label={`${entry.key as string} 키 초기화`}
+                title={isStatic ? t('agents.detail.store.resetHistoryTooltip') : t('agents.detail.store.deleteEntryTooltip')}
+                aria-label={t('agents.detail.store.resetAriaLabel').replace('{key}', entry.key as string)}
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
@@ -2665,11 +2691,11 @@ function StoreEntryRow({
         <tr>
           <td colSpan={colSpan} className="bg-(--color-bg-secondary)/30 px-6 py-3">
             {historyLoading ? (
-              <p className="text-xs text-(--color-text-muted)">로딩 중...</p>
+              <p className="text-xs text-(--color-text-muted)">{t('agents.detail.store.loading')}</p>
             ) : historyData && historyData.length > 0 ? (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-(--color-text-muted) mb-2">
-                  히스토리 ({historyData.length}건)
+                  {t('agents.detail.store.historyTitle').replace('{count}', String(historyData.length))}
                 </p>
                 <div className="space-y-1">
                   {historyData.map((h, i) => (
@@ -2685,7 +2711,7 @@ function StoreEntryRow({
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-(--color-text-muted)">히스토리가 없습니다</p>
+              <p className="text-xs text-(--color-text-muted)">{t('agents.detail.store.historyEmpty')}</p>
             )}
           </td>
         </tr>
@@ -2709,6 +2735,7 @@ type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
  * 부모에서 전달받는다.
  */
 function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // SPEC-REMOTE-001 M8 (그룹 J): 저장소 엔트리 읽기는 타깃 전환. 원격 타깃은
   // READ-ONLY(REQ-J03) — 변환/초기화/데이터뷰어(local store 서비스 기반)는
@@ -3006,7 +3033,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       if (staticKeyNames.has(promotingKey)) {
         addNotification({
           type: 'info',
-          message: `'${promotingKey}' 키는 이미 정적 키입니다`,
+          message: t('agents.detail.store.promoteAlreadyStatic').replace('{key}', promotingKey),
         });
         setPromotingKey(null);
         return;
@@ -3028,7 +3055,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         });
         addNotification({
           type: 'success',
-          message: `'${promotingKey}' 키가 정적으로 변환되었습니다`,
+          message: t('agents.detail.store.promoteSuccess').replace('{key}', promotingKey),
         });
         setPromotingKey(null);
         // 즉시 최신 config/state 를 반영하기 위해 캐시 무효화.
@@ -3039,7 +3066,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         const mapped = mapStoreError(err);
         addNotification({
           type: 'error',
-          message: `변환 실패: ${mapped.userMessage}`,
+          message: t('agents.detail.store.promoteFailed').replace('{message}', mapped.userMessage),
         });
       }
     },
@@ -3051,6 +3078,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       agentId,
       addNotification,
       queryClient,
+      t,
     ],
   );
 
@@ -3125,7 +3153,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         });
         addNotification({
           type: 'success',
-          message: `'${editingDisplayKey}' 타입/태그가 저장되었습니다`,
+          message: t('agents.detail.store.editMetaSuccess').replace('{key}', editingDisplayKey),
         });
         setEditingKey(null);
         // State 엔트리(metric_type/tags 표시 출처)를 즉시 갱신.
@@ -3135,11 +3163,11 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         const mapped = mapStoreError(err);
         addNotification({
           type: 'error',
-          message: `저장 실패: ${mapped.userMessage}`,
+          message: t('agents.detail.store.editMetaFailed').replace('{message}', mapped.userMessage),
         });
       }
     },
-    [editingKey, editingDisplayKey, agentName, setKeyMeta, addNotification, queryClient, agentId],
+    [editingKey, editingDisplayKey, agentName, setKeyMeta, addNotification, queryClient, agentId, t],
   );
 
   // --- 초기화 핸들러 (SPEC-STORE-003) ---
@@ -3164,10 +3192,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     try {
       const result = await resetStoreKey(agentName, resettingKey);
       const action =
-        result.action === 'history_cleared' ? '히스토리 삭제' : '항목 삭제';
+        result.action === 'history_cleared'
+          ? t('agents.detail.store.resetHistoryAction')
+          : t('agents.detail.store.deleteEntryAction');
       addNotification({
         type: 'success',
-        message: `'${resettingKey}' ${action} 완료`,
+        message: t('agents.detail.store.perKeyResetSuccess')
+          .replace('{key}', resettingKey)
+          .replace('{action}', action),
       });
       setResettingKey(null);
       // store / agents 캐시를 모두 무효화하여 즉시 UI 반영.
@@ -3181,12 +3213,12 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     } catch (err) {
       addNotification({
         type: 'error',
-        message: `초기화 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+        message: t('agents.detail.store.resetFailed').replace('{message}', err instanceof Error ? err.message : t('agents.detail.store.unknownError')),
       });
     } finally {
       setIsResettingKey(false);
     }
-  }, [resettingKey, agentName, addNotification, queryClient, agentId]);
+  }, [resettingKey, agentName, addNotification, queryClient, agentId, t]);
 
   // 전체 초기화 모달 트리거 / 닫기.
   const handleOpenBulkReset = useCallback(() => {
@@ -3206,7 +3238,9 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       const result = await resetAllStoreKeys(agentName);
       addNotification({
         type: 'success',
-        message: `초기화 완료: 정적 키 ${result.history_cleared}건 history 삭제, 동적 키 ${result.entries_deleted}건 삭제됨`,
+        message: t('agents.detail.store.bulkResetSuccess')
+          .replace('{cleared}', String(result.history_cleared))
+          .replace('{deleted}', String(result.entries_deleted)),
       });
       setBulkResetOpen(false);
       await Promise.all([
@@ -3218,17 +3252,17 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     } catch (err) {
       addNotification({
         type: 'error',
-        message: `초기화 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
+        message: t('agents.detail.store.resetFailed').replace('{message}', err instanceof Error ? err.message : t('agents.detail.store.unknownError')),
       });
     } finally {
       setIsBulkResetting(false);
     }
-  }, [agentName, addNotification, queryClient, agentId]);
+  }, [agentName, addNotification, queryClient, agentId, t]);
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8 text-(--color-text-muted)">
-        로딩 중...
+        {t('agents.detail.store.loading')}
       </div>
     );
   }
@@ -3243,14 +3277,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <p className="text-sm text-(--color-text-muted)">
-            전체 <span className="font-semibold text-(--color-text-primary)">{totalKeys}</span>개 키
+            {t('agents.detail.store.totalKeys').replace('{count}', String(totalKeys))}
             {maxHistorySize > 0 && (
-              <> · 히스토리 <span className="font-semibold text-(--color-text-primary)">{totalHistoryEntries}</span>건</>
+              <> · {t('agents.detail.store.historyCount').replace('{count}', String(totalHistoryEntries))}</>
             )}
           </p>
           {/* 페이지 크기 선택 */}
           <label className="flex items-center gap-1.5 text-xs text-(--color-text-muted)">
-            페이지 크기
+            {t('agents.detail.store.pageSize')}
             <select
               value={pageSize}
               onChange={handlePageSizeChange}
@@ -3272,7 +3306,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
           >
             <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
-            데이터 보기
+            {t('agents.detail.store.viewData')}
           </button>
           {/* 전체 초기화 버튼 (SPEC-STORE-003).
               스타일: 다른 헤더 버튼(데이터 보기/새로고침)과 동일한 중립 톤.
@@ -3286,7 +3320,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            전체 초기화
+            {t('agents.detail.store.bulkReset')}
           </button>
           <button
             type="button"
@@ -3295,7 +3329,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
-            새로고침
+            {t('agents.detail.store.refresh')}
           </button>
         </div>
       </div>
@@ -3311,8 +3345,8 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
           type="text"
           value={searchQuery}
           onChange={handleSearchChange}
-          placeholder="키 / 메트릭 / 태그 검색"
-          aria-label="저장소 키 검색"
+          placeholder={t('agents.detail.store.searchPlaceholder')}
+          aria-label={t('agents.detail.store.searchAriaLabel')}
           data-testid="store-search-input"
           className="w-full rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) py-1.5 pl-8 pr-8 text-xs text-(--color-text-primary) placeholder:text-(--color-text-muted) focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
@@ -3320,7 +3354,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
           <button
             type="button"
             onClick={handleClearSearch}
-            aria-label="검색어 지우기"
+            aria-label={t('agents.detail.store.clearSearch')}
             className="absolute right-2 top-1/2 inline-flex -translate-y-1/2 items-center rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -3337,7 +3371,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             className="flex items-center gap-1.5 text-xs font-medium text-(--color-text-muted)"
           >
             <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-            메트릭 타입
+            {t('agents.detail.store.metricType')}
           </label>
           <select
             id="store-metric-type-filter"
@@ -3346,7 +3380,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             data-testid="store-metric-type-filter"
             className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
-            <option value="">전체</option>
+            <option value="">{t('agents.detail.store.all')}</option>
             {metricTypeOptions.map((mt) => (
               <option key={mt} value={mt}>
                 {mt}
@@ -3362,7 +3396,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
               }}
               className="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
             >
-              해제
+              {t('agents.detail.store.clearFilter')}
             </button>
           )}
         </div>
@@ -3384,10 +3418,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       {entries.length === 0 ? (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-8 text-center text-sm text-(--color-text-muted)">
           {allEntries.length === 0
-            ? '저장된 데이터가 없습니다'
+            ? t('agents.detail.store.emptyNoData')
             : hasActiveFilter
-              ? '선택한 필터와 일치하는 항목이 없습니다'
-              : '선택한 태그와 일치하는 항목이 없습니다'}
+              ? t('agents.detail.store.emptyNoFilterMatch')
+              : t('agents.detail.store.emptyNoTagMatch')}
         </div>
       ) : (
         <>
@@ -3396,22 +3430,22 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
                   {/* 정렬 가능한 컬럼은 타이틀 클릭으로 asc/desc 토글. */}
-                  <SortableHeader column="key" label="키" sort={sort} onSort={handleSort} />
+                  <SortableHeader column="key" label={t('agents.detail.store.colKey')} sort={sort} onSort={handleSort} />
                   {/* 바인딩(정적/동적) 과 메트릭(metric_type) 을 별도 컬럼으로 분리. */}
-                  <SortableHeader column="binding" label="바인딩" sort={sort} onSort={handleSort} />
-                  <SortableHeader column="metric" label="메트릭" sort={sort} onSort={handleSort} />
-                  <SortableHeader column="value" label="값" sort={sort} onSort={handleSort} />
-                  <SortableHeader column="namespace" label="네임스페이스" sort={sort} onSort={handleSort} />
+                  <SortableHeader column="binding" label={t('agents.detail.store.colBinding')} sort={sort} onSort={handleSort} />
+                  <SortableHeader column="metric" label={t('agents.detail.store.colMetric')} sort={sort} onSort={handleSort} />
+                  <SortableHeader column="value" label={t('agents.detail.store.colValue')} sort={sort} onSort={handleSort} />
+                  <SortableHeader column="namespace" label={t('agents.detail.store.colNamespace')} sort={sort} onSort={handleSort} />
                   {showTagsColumn && (
-                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">태그</th>
+                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.store.colTags')}</th>
                   )}
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">TTL</th>
+                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.store.colTtl')}</th>
                   {maxHistorySize > 0 && (
-                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">히스토리</th>
+                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.store.colHistory')}</th>
                   )}
-                  <SortableHeader column="updated" label="갱신" sort={sort} onSort={handleSort} />
+                  <SortableHeader column="updated" label={t('agents.detail.store.colUpdated')} sort={sort} onSort={handleSort} />
                   {/* 액션 컬럼 (SPEC-STORE-003): 행별 액션 버튼들. 항상 표시. */}
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">액션</th>
+                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.store.colActions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default)">
@@ -3442,10 +3476,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                 disabled={currentPage === 1}
                 className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
               >
-                이전
+                {t('agents.detail.store.prev')}
               </button>
               <span className="text-xs text-(--color-text-muted)">
-                {currentPage} / {totalPages} 페이지
+                {t('agents.detail.store.pageIndicator').replace('{current}', String(currentPage)).replace('{total}', String(totalPages))}
               </span>
               <button
                 type="button"
@@ -3453,7 +3487,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                 disabled={currentPage === totalPages}
                 className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary) disabled:opacity-50"
               >
-                다음
+                {t('agents.detail.store.next')}
               </button>
             </div>
           )}
@@ -3498,26 +3532,26 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         isOpen={resettingKey !== null}
         onClose={handleCloseReset}
         onConfirm={handlePerKeyReset}
-        title="키 초기화"
+        title={t('agents.detail.store.resetDialogTitle')}
         message={
           <div className="space-y-2">
             <p>
-              키:{' '}
+              {t('agents.detail.store.resetDialogKey')}{' '}
               <code className="font-mono text-(--color-text-primary)">
                 {resettingKey}
               </code>
             </p>
             <p>
               {resettingKey && staticKeyNames.has(resettingKey)
-                ? '정적 키입니다 — 히스토리만 삭제됩니다 (현재 값은 유지).'
-                : '동적 키입니다 — 항목 자체가 삭제됩니다 (다음 쓰기 시 재생성).'}
+                ? t('agents.detail.store.resetDialogStaticDesc')
+                : t('agents.detail.store.resetDialogDynamicDesc')}
             </p>
             <p className="text-xs text-red-600 dark:text-red-400">
-              이 작업은 되돌릴 수 없습니다.
+              {t('agents.detail.store.irreversible')}
             </p>
           </div>
         }
-        confirmLabel="초기화"
+        confirmLabel={t('agents.detail.store.resetConfirmLabel')}
         variant="danger"
         isSubmitting={isResettingKey}
       />
@@ -3527,27 +3561,26 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         isOpen={bulkResetOpen}
         onClose={handleCloseBulkReset}
         onConfirm={handleBulkReset}
-        title="저장소 전체 초기화"
+        title={t('agents.detail.store.bulkResetDialogTitle')}
         message={
           <div className="space-y-2">
             <p>
-              총{' '}
               <strong className="text-(--color-text-primary)">
-                {totalEntries}개 키
+                {t('agents.detail.store.bulkResetCountKeys').replace('{count}', String(totalEntries))}
               </strong>
-              {maxHistorySize > 0 ? `, ${totalHistoryEntries}건 히스토리` : ''}{' '}
-              가 영향을 받습니다.
+              {maxHistorySize > 0 ? t('agents.detail.store.bulkResetCountHistory').replace('{count}', String(totalHistoryEntries)) : ''}{' '}
+              {t('agents.detail.store.bulkResetAffected')}
             </p>
             <ul className="ml-4 list-disc text-xs text-(--color-text-muted)">
-              <li>정적 키: 히스토리만 삭제 (현재 값은 유지)</li>
-              <li>동적 키: 항목 자체 삭제 (다음 쓰기 시 재생성)</li>
+              <li>{t('agents.detail.store.bulkResetStaticLi')}</li>
+              <li>{t('agents.detail.store.bulkResetDynamicLi')}</li>
             </ul>
             <p className="text-xs text-red-600 dark:text-red-400">
-              이 작업은 되돌릴 수 없습니다.
+              {t('agents.detail.store.irreversible')}
             </p>
           </div>
         }
-        confirmLabel="초기화"
+        confirmLabel={t('agents.detail.store.resetConfirmLabel')}
         variant="danger"
         isSubmitting={isBulkResetting}
       />
@@ -3567,22 +3600,23 @@ interface ConnectionSession {
   packets_received: number;
 }
 
-/** 연결 경과 시간 표시 */
-function formatDuration(connectedAt: string): string {
+/** 연결 경과 시간 표시. 모듈 스코프이므로 번역 함수를 인자로 받는다. */
+function formatDuration(connectedAt: string, t: TranslationFn): string {
   const diff = Date.now() - new Date(connectedAt).getTime();
   const sec = Math.floor(diff / 1000);
-  if (sec < 60) return `${sec}초`;
+  if (sec < 60) return t('agents.detail.time.seconds').replace('{n}', String(sec));
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}분 ${sec % 60}초`;
+  if (min < 60) return t('agents.detail.time.minutesSeconds').replace('{m}', String(min)).replace('{s}', String(sec % 60));
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}시간 ${min % 60}분`;
+  if (hr < 24) return t('agents.detail.time.hoursMinutes').replace('{h}', String(hr)).replace('{m}', String(min % 60));
   const d = Math.floor(hr / 24);
-  return `${d}일 ${hr % 24}시간`;
+  return t('agents.detail.time.daysHours').replace('{d}', String(d)).replace('{h}', String(hr % 24));
 }
 
 function SessionsTab({ agentId }: { agentId: string }) {
   // SPEC-REMOTE-001 M8 (그룹 J): 세션 목록은 exec(list_connections) 기반이라
   // 원격 READ 프록시 매핑이 없다. 원격 타깃에서는 안내만 표시한다(graceful).
+  const { t } = useTranslation();
   const target = useTargetContext();
   const remote = isRemoteTarget(target);
   const [sessions, setSessions] = useState<ConnectionSession[]>([]);
@@ -3625,7 +3659,7 @@ function SessionsTab({ agentId }: { agentId: string }) {
     return (
       <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
         <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
-        <p className="text-sm">원격 노드에서는 세션 정보를 제공하지 않습니다.</p>
+        <p className="text-sm">{t('agents.detail.sessions.remoteUnavailable')}</p>
       </div>
     );
   }
@@ -3633,7 +3667,7 @@ function SessionsTab({ agentId }: { agentId: string }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-(--color-text-muted)">
-        로딩 중...
+        {t('agents.detail.sessions.loading')}
       </div>
     );
   }
@@ -3645,7 +3679,7 @@ function SessionsTab({ agentId }: { agentId: string }) {
         <div className="flex items-center gap-2">
           <Server className="h-4 w-4 text-(--color-text-muted)" aria-hidden="true" />
           <span className="text-sm font-medium text-(--color-text-primary)">
-            {sessions.length}개 연결
+            {t('agents.detail.sessions.connectionsCount').replace('{count}', String(sessions.length))}
           </span>
         </div>
         <button
@@ -3654,27 +3688,27 @@ function SessionsTab({ agentId }: { agentId: string }) {
           className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
         >
           <RefreshCw className="h-3 w-3" aria-hidden="true" />
-          새로고침
+          {t('agents.detail.sessions.refresh')}
         </button>
       </div>
 
       {sessions.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
           <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
-          <p className="text-sm">연결된 세션이 없습니다</p>
+          <p className="text-sm">{t('agents.detail.sessions.noSessions')}</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-(--color-border-default)">
-                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">IP</th>
-                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">포트</th>
-                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">연결 시간</th>
-                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">수신 패킷</th>
-                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">송신 패킷</th>
-                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">수신 데이터</th>
-                <th className="py-2 text-right font-medium text-(--color-text-muted)">송신 데이터</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.sessions.colIp')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.sessions.colPort')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.sessions.colConnectedTime')}</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">{t('agents.detail.sessions.colPacketsReceived')}</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">{t('agents.detail.sessions.colPacketsSent')}</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">{t('agents.detail.sessions.colDataReceived')}</th>
+                <th className="py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.sessions.colDataSent')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
@@ -3689,7 +3723,7 @@ function SessionsTab({ agentId }: { agentId: string }) {
                     <td className="py-2 pr-4 font-mono text-(--color-text-primary)">{ip}</td>
                     <td className="py-2 pr-4 font-mono text-(--color-text-muted)">{port}</td>
                     <td className="py-2 pr-4 text-(--color-text-muted)" title={new Date(s.connected_at).toLocaleString()}>
-                      {formatDuration(s.connected_at)}
+                      {formatDuration(s.connected_at, t)}
                     </td>
                     <td className="py-2 pr-4 text-right font-mono text-(--color-text-muted)">
                       {(s.packets_received ?? 0).toLocaleString()}
@@ -3718,24 +3752,27 @@ function SessionsTab({ agentId }: { agentId: string }) {
 
 // 디바이스 source 값을 사용자 친화적 라벨/색상으로 매핑.
 // 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
-function sourceVariant(source: string): { label: string; manual: boolean } | null {
+// 모듈 스코프이므로 라벨은 i18n 키(labelKey)로 보관하고, 알 수 없는 source 는
+// 원문(rawLabel)을 그대로 표시한다. 렌더 시점(DevicesTab)에 변환한다.
+function sourceVariant(source: string): { labelKey: string | null; rawLabel: string | null; manual: boolean } | null {
   switch (source) {
     case 'config':
-      return { label: '설정', manual: true };
+      return { labelKey: 'agents.detail.devices.sourceConfig', rawLabel: null, manual: true };
     case 'pinned':
-      return { label: '고정', manual: true };
+      return { labelKey: 'agents.detail.devices.sourcePinned', rawLabel: null, manual: true };
     case 'auto':
-      return { label: '자동', manual: false };
+      return { labelKey: 'agents.detail.devices.sourceAuto', rawLabel: null, manual: false };
     case 'bridge':
-      return { label: '브리지', manual: false };
+      return { labelKey: 'agents.detail.devices.sourceBridge', rawLabel: null, manual: false };
     default:
-      return source ? { label: source, manual: false } : null;
+      return source ? { labelKey: null, rawLabel: source, manual: false } : null;
   }
 }
 
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
   // SPEC-REMOTE-001 M8 (그룹 J): 디바이스 탭은 exec(list_devices/add/remove)
   // 기반이라 원격 READ 프록시 매핑이 제한적이다. 원격 타깃은 안내만 표시한다.
+  const { t } = useTranslation();
   const detailTarget = useTargetContext();
   const detailRemote = isRemoteTarget(detailTarget);
   const { data: agent } = useAgent(detailRemote ? '' : agentId);
@@ -3807,7 +3844,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     return (
       <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
         <HardDrive className="h-8 w-8 opacity-40" aria-hidden="true" />
-        <p className="text-sm">원격 노드의 디바이스는 디바이스 페이지에서 제어합니다.</p>
+        <p className="text-sm">{t('agents.detail.devices.remoteUnavailable')}</p>
       </div>
     );
   }
@@ -3821,7 +3858,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     if (isLgap) {
       const zoneVal = parseInt(newZone.trim(), 0);
       if (isNaN(zoneVal) || zoneVal < 0 || zoneVal > 255) {
-        addNotification({ type: 'error', message: '존 주소는 0~255 범위여야 합니다 (0x00~0xFF)' });
+        addNotification({ type: 'error', message: t('agents.detail.devices.zoneRangeError') });
         return;
       }
       execAgent.mutate(
@@ -3842,10 +3879,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             setNewZone('');
             setNewLgapDeviceId('');
             setNewDeviceName('');
-            addNotification({ type: 'success', message: 'LGAP 디바이스가 추가되었습니다' });
+            addNotification({ type: 'success', message: t('agents.detail.devices.lgapAddSuccess') });
           },
           onError: (err) => {
-            addNotification({ type: 'error', message: `디바이스 추가 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+            addNotification({ type: 'error', message: t('agents.detail.devices.addError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.devices.unknownError')) });
           },
         },
       );
@@ -3873,10 +3910,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
           setNewDeviceId('');
           setNewDeviceType('');
           setNewDeviceName('');
-          addNotification({ type: 'success', message: '디바이스가 추가되었습니다' });
+          addNotification({ type: 'success', message: t('agents.detail.devices.addSuccess') });
         },
         onError: (err) => {
-          addNotification({ type: 'error', message: `디바이스 추가 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+          addNotification({ type: 'error', message: t('agents.detail.devices.addError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.devices.unknownError')) });
         },
       },
     );
@@ -3890,10 +3927,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
       { id: agentId, req: { command: 'remove_device', params } },
       {
         onSuccess: () => {
-          addNotification({ type: 'success', message: '디바이스가 제거되었습니다' });
+          addNotification({ type: 'success', message: t('agents.detail.devices.removeSuccess') });
         },
         onError: (err) => {
-          addNotification({ type: 'error', message: `디바이스 제거 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+          addNotification({ type: 'error', message: t('agents.detail.devices.removeError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.devices.unknownError')) });
         },
       },
     );
@@ -3963,7 +4000,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
       {(isNasa || isLgap) && (
         <div className="flex items-center justify-between">
           <span className="text-xs text-(--color-text-muted)">
-            {devices.length}개 디바이스
+            {t('agents.detail.devices.devicesCount').replace('{count}', String(devices.length))}
           </span>
           <button
             type="button"
@@ -3971,7 +4008,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             <Plus className="h-3.5 w-3.5" />
-            디바이스 추가
+            {t('agents.detail.devices.addDevice')}
           </button>
         </div>
       )}
@@ -3984,27 +4021,27 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             onClick={(e) => e.stopPropagation()}
           >
             <div className="border-b border-(--color-border-default) px-4 py-3">
-              <h3 className="text-sm font-semibold text-(--color-text-primary)">디바이스 추가</h3>
+              <h3 className="text-sm font-semibold text-(--color-text-primary)">{t('agents.detail.devices.addDevice')}</h3>
             </div>
             <div className="space-y-3 p-4">
               {isLgap ? (
                 <>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">존 주소</label>
+                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">{t('agents.detail.devices.zoneAddress')}</label>
                     <input
                       type="text"
-                      placeholder="예: 0x11 또는 17"
+                      placeholder={t('agents.detail.devices.zoneAddressPlaceholder')}
                       value={newZone}
                       onChange={(e) => setNewZone(e.target.value)}
                       className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
                     />
-                    <p className="mt-1 text-xs text-(--color-text-muted)">상위 니블=그룹, 하위 니블=유닛 (예: 0x11 = 그룹1 유닛1)</p>
+                    <p className="mt-1 text-xs text-(--color-text-muted)">{t('agents.detail.devices.zoneAddressHint')}</p>
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">디바이스 ID (선택)</label>
+                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">{t('agents.detail.devices.deviceId')}</label>
                     <input
                       type="text"
-                      placeholder="디바이스 ID"
+                      placeholder={t('agents.detail.devices.deviceIdPlaceholder')}
                       value={newLgapDeviceId}
                       onChange={(e) => setNewLgapDeviceId(e.target.value)}
                       className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
@@ -4014,51 +4051,51 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
               ) : (
                 <>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">주소</label>
+                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">{t('agents.detail.devices.address')}</label>
                     <input
                       type="text"
-                      placeholder="예: 20 00 03"
+                      placeholder={t('agents.detail.devices.addressPlaceholder')}
                       value={newAddress}
                       onChange={(e) => setNewAddress(e.target.value)}
                       className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">디바이스 ID (선택)</label>
+                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">{t('agents.detail.devices.deviceId')}</label>
                     <input
                       type="text"
-                      placeholder="디바이스 ID"
+                      placeholder={t('agents.detail.devices.deviceIdPlaceholder')}
                       value={newDeviceId}
                       onChange={(e) => setNewDeviceId(e.target.value)}
                       className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">디바이스 종류</label>
+                    <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">{t('agents.detail.devices.deviceType')}</label>
                     <select
                       value={newDeviceType}
                       onChange={(e) => setNewDeviceType(e.target.value)}
                       className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
                     >
-                      <option value="">자동 감지</option>
-                      <option value="HVACR.IDU">실내기</option>
-                      <option value="HVACR.ODU">실외기</option>
+                      <option value="">{t('agents.detail.devices.autoDetect')}</option>
+                      <option value="HVACR.IDU">{t('agents.detail.devices.indoorUnit')}</option>
+                      <option value="HVACR.ODU">{t('agents.detail.devices.outdoorUnit')}</option>
                     </select>
                   </div>
                 </>
               )}
               {/* 이름 (공통, 선택) */}
               <div>
-                <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">이름 (선택)</label>
+                <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">{t('agents.detail.devices.name')}</label>
                 <input
                   type="text"
-                  placeholder="디바이스 이름"
+                  placeholder={t('agents.detail.devices.namePlaceholder')}
                   value={newDeviceName}
                   onChange={(e) => setNewDeviceName(e.target.value)}
                   className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
                 />
               </div>
-              <p className="text-xs text-(--color-text-muted)">동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.</p>
+              <p className="text-xs text-(--color-text-muted)">{t('agents.detail.devices.dynamicHint')}</p>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-(--color-border-default) px-4 py-3">
               <button
@@ -4066,7 +4103,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                 onClick={() => setShowAddForm(false)}
                 className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
               >
-                취소
+                {t('agents.detail.devices.cancel')}
               </button>
               <button
                 type="button"
@@ -4074,7 +4111,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                 disabled={(isLgap ? !newZone.trim() : !newAddress.trim()) || execAgent.isPending}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
               >
-                {execAgent.isPending ? '추가 중...' : '추가'}
+                {execAgent.isPending ? t('agents.detail.devices.adding') : t('agents.detail.devices.add')}
               </button>
             </div>
           </div>
@@ -4086,7 +4123,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
         <div className="p-6 text-center">
           <HardDrive className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
           <p className="mt-2 text-sm text-(--color-text-muted)">
-            등록된 디바이스가 없습니다
+            {t('agents.detail.devices.noDevices')}
           </p>
         </div>
       ) : (
@@ -4094,11 +4131,11 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-(--color-border-default) text-left text-xs text-(--color-text-muted)">
-                <th className="pb-2 pr-3 font-medium">이름</th>
-                <th className="pb-2 pr-3 font-medium">ID</th>
-                <th className="pb-2 pr-3 font-medium">종류</th>
-                <th className="pb-2 pr-3 font-medium">연결</th>
-                <th className="pb-2 pr-3 font-medium">소스</th>
+                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colName')}</th>
+                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colId')}</th>
+                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colType')}</th>
+                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colConnection')}</th>
+                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colSource')}</th>
                 {(isNasa || isLgap) && <th className="pb-2 font-medium" />}
               </tr>
             </thead>
@@ -4129,10 +4166,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                                 ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
                                 : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
                             )}
-                            title={isManual ? '수동 등록 (설정/고정)' : '자동 등록 (발견/브리지)'}
+                            title={isManual ? t('agents.detail.devices.manualTooltip') : t('agents.detail.devices.autoTooltip')}
                           >
                             {isManual && <Lock className="h-2.5 w-2.5" />}
-                            {variant.label}
+                            {variant.labelKey ? t(variant.labelKey) : variant.rawLabel}
                           </span>
                         )}
                       </td>
@@ -4147,7 +4184,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                               }}
                               disabled={execAgent.isPending}
                               className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
-                              title="디바이스 제거"
+                              title={t('agents.detail.devices.removeTooltip')}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>

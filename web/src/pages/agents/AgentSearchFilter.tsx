@@ -8,6 +8,8 @@ import {
   Search,
 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
+
 interface AgentSearchFilterProps {
   search: string;
   onSearchChange: (v: string) => void;
@@ -15,11 +17,14 @@ interface AgentSearchFilterProps {
   onStatusFilterChange: (v: string) => void;
 }
 
-/** 상태 필터 옵션 (아이콘 기반) */
+/**
+ * 상태 필터 옵션 (아이콘 기반).
+ * 모듈 스코프에서는 t()를 호출할 수 없으므로 labelKey만 보관하고 렌더 시점에 변환한다.
+ */
 const STATUS_OPTIONS = [
-  { value: 'connected', label: '연결됨', icon: <Activity className="h-3.5 w-3.5" />, color: 'text-green-600 dark:text-green-400', activeColor: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
-  { value: 'disconnected', label: '연결 해제', icon: <CircleStop className="h-3.5 w-3.5" />, color: 'text-gray-500 dark:text-gray-400', activeColor: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-300' },
-  { value: 'error', label: '오류', icon: <AlertTriangle className="h-3.5 w-3.5" />, color: 'text-red-500 dark:text-red-400', activeColor: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+  { value: 'connected', labelKey: 'agents.connected', icon: <Activity className="h-3.5 w-3.5" />, color: 'text-green-600 dark:text-green-400', activeColor: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
+  { value: 'disconnected', labelKey: 'agents.disconnected', icon: <CircleStop className="h-3.5 w-3.5" />, color: 'text-gray-500 dark:text-gray-400', activeColor: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-300' },
+  { value: 'error', labelKey: 'status.error', icon: <AlertTriangle className="h-3.5 w-3.5" />, color: 'text-red-500 dark:text-red-400', activeColor: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
 ];
 
 /**
@@ -32,6 +37,8 @@ export default function AgentSearchFilter({
   statusFilter,
   onStatusFilterChange,
 }: AgentSearchFilterProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex items-center gap-3">
       {/* 검색 입력 */}
@@ -41,7 +48,7 @@ export default function AgentSearchFilter({
           type="text"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="에이전트 검색..."
+          placeholder={t('agents.filter.searchPlaceholder')}
           className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) py-2 pl-9 pr-3 text-sm text-(--color-text-primary) placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </div>
@@ -50,6 +57,7 @@ export default function AgentSearchFilter({
       <div className="flex items-center gap-1.5">
         {STATUS_OPTIONS.map((opt) => {
           const isActive = statusFilter === opt.value;
+          const label = t(opt.labelKey);
           return (
             <button
               key={opt.value}
@@ -60,10 +68,10 @@ export default function AgentSearchFilter({
                   ? opt.activeColor
                   : `${opt.color} hover:bg-(--color-bg-elevated)`
               }`}
-              title={opt.label}
+              title={label}
             >
               {opt.icon}
-              {opt.label}
+              {label}
             </button>
           );
         })}

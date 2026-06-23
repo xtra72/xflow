@@ -73,7 +73,7 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
     e.stopPropagation();
     if (!remote && !isEnabled) {
       // disabled 에이전트의 일시 시작 안내 (R6.6)
-      if (!window.confirm('비활성화된 에이전트를 일시 시작합니다. 다음 데몬 재시작 시에는 자동으로 시작되지 않습니다.\n계속하시겠습니까?')) {
+      if (!window.confirm(t('agents.action.confirmTempStart'))) {
         return;
       }
     }
@@ -131,19 +131,19 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
   /** 에이전트 삭제 (확인 다이얼로그 표시) */
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm(`에이전트 "${agent.name}"을(를) 삭제하시겠습니까?`)) return;
+    if (!window.confirm(t('agents.action.confirmDelete').replace('{name}', agent.name))) return;
     await run('delete');
   };
 
   const btnBase =
     'rounded-md p-1.5 text-gray-400 transition-colors hover:text-(--color-text-secondary) disabled:opacity-40 disabled:cursor-not-allowed';
 
-  const start = remoteState('start', '시작');
-  const stop = remoteState('stop', '중지');
-  const restart = remoteState('restart', '재시작');
-  const enable = remoteState('enable', '활성화 (자동 시작 복원)');
-  const disable = remoteState('disable', '비활성화 (자동 시작 제외)');
-  const del = remoteState('delete', '삭제');
+  const start = remoteState('start', t('agents.start'));
+  const stop = remoteState('stop', t('agents.stop'));
+  const restart = remoteState('restart', t('agents.restart'));
+  const enable = remoteState('enable', t('agents.action.enableTooltip'));
+  const disable = remoteState('disable', t('agents.action.disableTooltip'));
+  const del = remoteState('delete', t('agents.delete'));
 
   return (
     <div className="flex items-center justify-end gap-1">
@@ -207,7 +207,7 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
       {!remote && (
         <button
           type="button"
-          title="내보내기"
+          title={t('agents.action.export')}
           onClick={handleExport}
           className={cn(btnBase, 'hover:bg-(--color-bg-elevated)')}
         >
