@@ -20,16 +20,18 @@
 
 import { Server } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { useSystemVersion, type VersionInfo } from '@/services/api/systemUpdate';
 
 // ─────────────────────────────────────────────────────────────────────
-// 모드 한글 라벨 매핑 (M2, M9 / AC-5)
+// 모드 라벨 i18n 키 매핑 (M2, M9 / AC-5)
+// 렌더 시 t(key) 로 변환한다.
 // ─────────────────────────────────────────────────────────────────────
 
-const MODE_LABEL: Record<VersionInfo['mode'], string> = {
-  server: '관리 서버',
-  client: '클라이언트 노드',
-  disabled: '독립 실행 (standalone)',
+const MODE_LABEL_KEY: Record<VersionInfo['mode'], string> = {
+  server: 'system.info.modeServer',
+  client: 'system.info.modeClient',
+  disabled: 'system.info.modeDisabled',
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -37,6 +39,7 @@ const MODE_LABEL: Record<VersionInfo['mode'], string> = {
 // ─────────────────────────────────────────────────────────────────────
 
 export function SystemInfoCard() {
+  const { t } = useTranslation();
   const { data, isLoading, isError, refetch } = useSystemVersion();
 
   return (
@@ -52,16 +55,16 @@ export function SystemInfoCard() {
             aria-hidden="true"
           />
           <h3 className="text-sm font-semibold text-(--color-text-primary)">
-            인스턴스 정보
+            {t('system.info.cardTitle')}
           </h3>
         </div>
         {/* self 명시 라벨 — 원격 노드 목록과 혼동 방지 (M8/AC-12). */}
         <span
           data-testid="sysinfo-self-badge"
           className="rounded bg-(--color-bg-base) px-2 py-0.5 text-xs font-medium text-(--color-text-muted)"
-          title="현재 접속 중인 인스턴스 자신"
+          title={t('system.info.selfBadgeTitle')}
         >
-          이 인스턴스 (self)
+          {t('system.info.selfBadge')}
         </span>
       </header>
 
@@ -81,12 +84,13 @@ export function SystemInfoCard() {
 // ─────────────────────────────────────────────────────────────────────
 
 function IdentityBody({ version }: { version: VersionInfo }) {
+  const { t } = useTranslation();
   return (
     <>
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3">
         {/* 식별자성 값(hostname/os·arch/version/commit)은 칩 없이 plain 텍스트 +
             가독을 위한 font-mono 만 유지한다 (레퍼런스 InfoItem 톤). */}
-        <Field label="Hostname">
+        <Field label={t('system.info.hostname')}>
           <span
             data-testid="sysinfo-hostname"
             className="font-mono text-(--color-text-primary)"
@@ -95,7 +99,7 @@ function IdentityBody({ version }: { version: VersionInfo }) {
           </span>
         </Field>
 
-        <Field label="OS / Arch">
+        <Field label={t('system.info.osArch')}>
           <span
             data-testid="sysinfo-os-arch"
             className="font-mono text-(--color-text-primary)"
@@ -104,7 +108,7 @@ function IdentityBody({ version }: { version: VersionInfo }) {
           </span>
         </Field>
 
-        <Field label="버전">
+        <Field label={t('system.info.version')}>
           <span
             data-testid="sysinfo-version"
             className="font-mono text-(--color-text-primary)"
@@ -113,12 +117,12 @@ function IdentityBody({ version }: { version: VersionInfo }) {
           </span>
         </Field>
 
-        <Field label="원격 모드">
+        <Field label={t('system.info.remoteMode')}>
           <span
             data-testid="sysinfo-mode"
             className="text-(--color-text-primary)"
           >
-            {MODE_LABEL[version.mode]}
+            {t(MODE_LABEL_KEY[version.mode])}
           </span>
         </Field>
       </dl>
@@ -129,7 +133,7 @@ function IdentityBody({ version }: { version: VersionInfo }) {
           data-testid="sysinfo-remote-hint"
           className="mt-4 text-xs text-(--color-text-muted)"
         >
-          원격 노드 목록은 대시보드 노드 뷰에서 확인하세요.
+          {t('system.info.remoteHint')}
         </p>
       ) : null}
     </>
@@ -161,12 +165,13 @@ function Field({
 // ─────────────────────────────────────────────────────────────────────
 
 function IdentitySkeleton() {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="sysinfo-loading"
       className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3"
       aria-busy="true"
-      aria-label="인스턴스 정보를 불러오는 중"
+      aria-label={t('system.info.loadingAria')}
     >
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="space-y-1">
@@ -183,20 +188,21 @@ function IdentitySkeleton() {
 // ─────────────────────────────────────────────────────────────────────
 
 function IdentityError({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="sysinfo-error"
       role="alert"
       className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
     >
-      <p className="font-medium">인스턴스 정보를 불러오지 못했습니다</p>
+      <p className="font-medium">{t('system.info.loadError')}</p>
       <button
         type="button"
         data-testid="sysinfo-retry"
         onClick={onRetry}
         className="mt-3 inline-flex items-center gap-1 rounded border border-red-300 bg-white px-3 py-1 text-xs font-medium text-red-800 hover:bg-red-100 dark:border-red-700 dark:bg-red-900 dark:text-red-100 dark:hover:bg-red-800"
       >
-        다시 시도
+        {t('system.info.retry')}
       </button>
     </div>
   );

@@ -49,6 +49,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import {
   datetimeLocalToEpochMs,
   estimateBucketCount,
@@ -102,25 +103,31 @@ const INTERVAL_PRESETS = [
 
 type IntervalValue = (typeof INTERVAL_PRESETS)[number] | 'custom';
 
-/** 집계 라디오 옵션. */
-const AGGREGATION_OPTIONS: { value: TsdbAggregation; label: string }[] = [
-  { value: 'min', label: '최소 (min)' },
-  { value: 'max', label: '최대 (max)' },
-  { value: 'average', label: '평균 (average)' },
-  { value: 'first', label: '첫번째 (first)' },
-  { value: 'last', label: '마지막 (last)' },
+/** 집계 라디오 옵션. label 은 i18n 키이며 렌더 시 t(labelKey) 로 해석한다. */
+const AGGREGATION_OPTIONS: { value: TsdbAggregation; labelKey: string }[] = [
+  { value: 'min', labelKey: 'tsdb.aggMin' },
+  { value: 'max', labelKey: 'tsdb.aggMax' },
+  { value: 'average', labelKey: 'tsdb.aggAverage' },
+  { value: 'first', labelKey: 'tsdb.aggFirst' },
+  { value: 'last', labelKey: 'tsdb.aggLast' },
 ];
 
 /** 빈 버킷 채우기(gap-fill) 전략 옵션. 인터벌 구간에 값이 없을 때 적용. */
-const FILL_OPTIONS: { value: TsdbFill; label: string }[] = [
-  { value: '', label: '비움(생략)' },
-  { value: 'null', label: '빈 값(null)' },
-  { value: 'previous', label: '이전값' },
-  { value: 'avg', label: '전/후 평균' },
-  { value: 'zero', label: '0' },
+const FILL_OPTIONS: { value: TsdbFill; labelKey: string }[] = [
+  { value: '', labelKey: 'tsdb.fillNone' },
+  { value: 'null', labelKey: 'tsdb.fillNull' },
+  { value: 'previous', labelKey: 'tsdb.fillPrevious' },
+  { value: 'avg', labelKey: 'tsdb.fillAvg' },
+  { value: 'zero', labelKey: 'tsdb.fillZero' },
 ];
 
-/** 상대 범위 프리셋 (지속 시간 ms). */
+/**
+ * 상대 범위 프리셋 (지속 시간 ms).
+ *
+ * `label` 은 `RelativeSelectValue` 타입 식별자 겸 select value 로 사용되므로
+ * 한국어 리터럴을 그대로 유지한다(기능 식별자). 화면 표시는 `RELATIVE_LABEL_KEY`
+ * 의 i18n 키로 t() 해석한다.
+ */
 const RELATIVE_RANGE_PRESETS: { label: string; durationMs: number }[] = [
   { label: '지난 1시간', durationMs: 60 * 60 * 1000 },
   { label: '지난 6시간', durationMs: 6 * 60 * 60 * 1000 },
@@ -128,6 +135,15 @@ const RELATIVE_RANGE_PRESETS: { label: string; durationMs: number }[] = [
   { label: '지난 7일', durationMs: 7 * ONE_DAY_MS },
   { label: '지난 30일', durationMs: 30 * ONE_DAY_MS },
 ];
+
+/** 상대 범위 프리셋 label → 표시용 i18n 키 매핑. */
+const RELATIVE_LABEL_KEY: Record<string, string> = {
+  '지난 1시간': 'tsdb.relLast1h',
+  '지난 6시간': 'tsdb.relLast6h',
+  '지난 1일': 'tsdb.relLast1d',
+  '지난 7일': 'tsdb.relLast7d',
+  '지난 30일': 'tsdb.relLast30d',
+};
 
 /**
  * 상대 모드 드롭다운 선택 값. 프리셋 문자열은 `RELATIVE_RANGE_PRESETS` 의 label 과
@@ -424,6 +440,7 @@ function SeriesDataViewerModalImpl({
   dataSource,
   agentName,
 }: SeriesDataViewerModalProps) {
+  const { t } = useTranslation();
   // --- 폼 상태 ---
   // 시리즈별 선택(저장소 기준 분류 #2): 선택 단위는 key 가 아니라
   // SeriesID(key + metric + tags). 단일 시리즈 key 는 SeriesID 가 곧 그 시리즈를
@@ -864,8 +881,8 @@ function SeriesDataViewerModalImpl({
     if (!mutation.isError) return null;
     const err = mutation.error;
     if (err instanceof Error) return err.message;
-    return '쿼리 실행에 실패했습니다';
-  }, [mutation.isError, mutation.error]);
+    return t('tsdb.queryFailed');
+  }, [mutation.isError, mutation.error, t]);
 
   if (!isOpen) return null;
 
@@ -894,12 +911,12 @@ function SeriesDataViewerModalImpl({
               id="tsdb-viewer-title"
               className="text-lg font-semibold text-(--color-text-primary)"
             >
-              TSDB 데이터 뷰어
+              {t('tsdb.title')}
             </h2>
             {mutation.isPending && (
               <Loader2
                 className="h-4 w-4 animate-spin text-blue-500"
-                aria-label="쿼리 실행 중"
+                aria-label={t('tsdb.queryRunningAria')}
               />
             )}
           </div>
@@ -908,7 +925,7 @@ function SeriesDataViewerModalImpl({
             onClick={onClose}
             disabled={mutation.isPending}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -927,7 +944,10 @@ function SeriesDataViewerModalImpl({
           */}
           <fieldset data-testid="series-select-fieldset">
             <legend className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
-              시리즈 선택 ({selectedSeriesIds.length}개 선택됨)
+              {t('tsdb.seriesSelect').replace(
+                '{count}',
+                String(selectedSeriesIds.length),
+              )}
             </legend>
             <SeriesSelectTable
               rows={allRows}
@@ -949,10 +969,13 @@ function SeriesDataViewerModalImpl({
             <div
               className="inline-flex rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) p-0.5"
               role="tablist"
-              aria-label="시간 범위 모드"
+              aria-label={t('tsdb.rangeModeAria')}
             >
               {(['absolute', 'relative'] as const).map((mode) => {
-                const label = mode === 'absolute' ? '절대' : '상대';
+                const label =
+                  mode === 'absolute'
+                    ? t('tsdb.rangeAbsolute')
+                    : t('tsdb.rangeRelative');
                 const selected = rangeMode === mode;
                 return (
                   <button
@@ -995,9 +1018,11 @@ function SeriesDataViewerModalImpl({
                     <div
                       className="flex flex-wrap items-center gap-1.5"
                       role="group"
-                      aria-label="상대 범위 빠른 선택"
+                      aria-label={t('tsdb.quickRangeAria')}
                     >
-                      <span className="mr-1 text-xs text-(--color-text-muted)">빠른 선택:</span>
+                      <span className="mr-1 text-xs text-(--color-text-muted)">
+                        {t('tsdb.quickSelect')}
+                      </span>
                       {RELATIVE_RANGE_PRESETS.map((preset) => (
                         <button
                           key={preset.label}
@@ -1005,7 +1030,7 @@ function SeriesDataViewerModalImpl({
                           onClick={() => handleRelativeRange(preset.durationMs)}
                           className="rounded-full border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-0.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
                         >
-                          {preset.label}
+                          {t(RELATIVE_LABEL_KEY[preset.label] ?? preset.label)}
                         </button>
                       ))}
                     </div>
@@ -1015,7 +1040,7 @@ function SeriesDataViewerModalImpl({
                           htmlFor="tsdb-start"
                           className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                         >
-                          시작 시각 (Local)
+                          {t('tsdb.startTime')}
                         </label>
                         <input
                           id="tsdb-start"
@@ -1030,7 +1055,7 @@ function SeriesDataViewerModalImpl({
                           htmlFor="tsdb-end"
                           className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                         >
-                          종료 시각 (Local)
+                          {t('tsdb.endTime')}
                         </label>
                         <input
                           id="tsdb-end"
@@ -1043,7 +1068,7 @@ function SeriesDataViewerModalImpl({
                     </div>
                     {startLocal && endLocal && !timeRangeValid && (
                       <p className="text-xs text-red-600 dark:text-red-400">
-                        종료 시각은 시작 시각 이후여야 합니다.
+                        {t('tsdb.endAfterStart')}
                       </p>
                     )}
                   </div>
@@ -1056,7 +1081,7 @@ function SeriesDataViewerModalImpl({
                           htmlFor="tsdb-relative-range"
                           className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                         >
-                          범위
+                          {t('tsdb.range')}
                         </label>
                         <select
                           id="tsdb-relative-range"
@@ -1068,10 +1093,10 @@ function SeriesDataViewerModalImpl({
                         >
                           {RELATIVE_RANGE_PRESETS.map((p) => (
                             <option key={p.label} value={p.label}>
-                              {p.label}
+                              {t(RELATIVE_LABEL_KEY[p.label] ?? p.label)}
                             </option>
                           ))}
-                          <option value="custom">커스텀</option>
+                          <option value="custom">{t('tsdb.custom')}</option>
                         </select>
                       </div>
                       {relativeSelect === 'custom' && (
@@ -1080,26 +1105,26 @@ function SeriesDataViewerModalImpl({
                             htmlFor="tsdb-relative-custom"
                             className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                           >
-                            커스텀 duration
+                            {t('tsdb.customDuration')}
                           </label>
                           <input
                             id="tsdb-relative-custom"
                             type="text"
-                            placeholder="예: 2h, 45m, 30s"
+                            placeholder={t('tsdb.durationPlaceholder')}
                             value={relativeCustom}
                             onChange={(e) => setRelativeCustom(e.target.value)}
                             className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                           {!relativeCustomValid && relativeCustom.trim() !== '' && (
                             <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                              Go duration 문법 (ms/s/m/h) 을 사용하세요.
+                              {t('tsdb.goDurationSyntax')}
                             </p>
                           )}
                         </div>
                       )}
                     </div>
                     <p className="text-xs text-(--color-text-muted)">
-                      실행 시각 기준 지난 기간을 조회합니다 (실행 시점에 현재 시각이 사용됩니다).
+                      {t('tsdb.relativeHint')}
                     </p>
                   </div>
                 )}
@@ -1111,7 +1136,7 @@ function SeriesDataViewerModalImpl({
                     htmlFor="tsdb-interval"
                     className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                   >
-                    인터벌
+                    {t('tsdb.interval')}
                   </label>
                   <select
                     id="tsdb-interval"
@@ -1124,20 +1149,20 @@ function SeriesDataViewerModalImpl({
                         {p}
                       </option>
                     ))}
-                    <option value="custom">사용자 지정</option>
+                    <option value="custom">{t('tsdb.intervalCustom')}</option>
                   </select>
                   {intervalSelect === 'custom' && (
                     <div className="mt-1.5">
                       <input
                         type="text"
-                        placeholder="예: 2m, 45s, 100ms"
+                        placeholder={t('tsdb.intervalPlaceholder')}
                         value={customInterval}
                         onChange={(e) => setCustomInterval(e.target.value)}
                         className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                       {!intervalValid && customInterval.trim() !== '' && (
                         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                          Go duration 문법 (ms/s/m/h) 을 사용하세요.
+                          {t('tsdb.goDurationSyntax')}
                         </p>
                       )}
                     </div>
@@ -1148,7 +1173,7 @@ function SeriesDataViewerModalImpl({
               {/* 우측: 집계 함수 + 소수점 자릿수 */}
               <fieldset>
                 <legend className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                  집계 함수
+                  {t('tsdb.aggregation')}
                 </legend>
                 <div className="flex items-center gap-3">
                   {AGGREGATION_OPTIONS.map((opt) => (
@@ -1164,7 +1189,7 @@ function SeriesDataViewerModalImpl({
                         onChange={() => setAggregation(opt.value)}
                         className="h-3.5 w-3.5 border-gray-300 text-blue-600"
                       />
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </label>
                   ))}
                 </div>
@@ -1178,7 +1203,7 @@ function SeriesDataViewerModalImpl({
                       htmlFor="tsdb-decimal-precision"
                       className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
                     >
-                      소수점 자릿수
+                      {t('tsdb.decimalPrecision')}
                     </label>
                     <input
                       id="tsdb-decimal-precision"
@@ -1198,7 +1223,7 @@ function SeriesDataViewerModalImpl({
                       className="block w-24 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-xs text-(--color-text-muted)">
-                      평균 집계 시 표시할 소수점 자릿수 (0-6)
+                      {t('tsdb.decimalPrecisionHint')}
                     </p>
                   </div>
                 )}
@@ -1209,7 +1234,7 @@ function SeriesDataViewerModalImpl({
                     htmlFor="tsdb-fill"
                     className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
                   >
-                    빈 구간 채우기
+                    {t('tsdb.fill')}
                   </label>
                   <select
                     id="tsdb-fill"
@@ -1220,12 +1245,12 @@ function SeriesDataViewerModalImpl({
                   >
                     {FILL_OPTIONS.map((opt) => (
                       <option key={opt.value || 'none'} value={opt.value}>
-                        {opt.label}
+                        {t(opt.labelKey)}
                       </option>
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-(--color-text-muted)">
-                    인터벌 구간에 값이 없을 때: 이전값/전후 평균/0/빈 값으로 채우거나 생략
+                    {t('tsdb.fillHint')}
                   </p>
                 </div>
               </fieldset>
@@ -1239,10 +1264,15 @@ function SeriesDataViewerModalImpl({
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                 <div className="flex-1">
                   <p className="font-medium text-amber-800 dark:text-amber-200">
-                    결과 행 수가 많아 렌더링이 느릴 수 있습니다
+                    {t('tsdb.warningManyRows')}
                   </p>
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-                    예상 행 수: {expectedBuckets.toLocaleString()}행 (임계치 {MATRIX_ROW_WARNING_THRESHOLD.toLocaleString()} 초과)
+                    {t('tsdb.warningRowCount')
+                      .replace('{count}', expectedBuckets.toLocaleString())
+                      .replace(
+                        '{threshold}',
+                        MATRIX_ROW_WARNING_THRESHOLD.toLocaleString(),
+                      )}
                   </p>
                   <div className="mt-2 flex items-center gap-2">
                     <button
@@ -1250,14 +1280,14 @@ function SeriesDataViewerModalImpl({
                       onClick={handleConfirmWarning}
                       className="rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700"
                     >
-                      계속 실행
+                      {t('tsdb.warningContinue')}
                     </button>
                     <button
                       type="button"
                       onClick={handleCancelWarning}
                       className="rounded-md border border-amber-400 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-600 dark:text-amber-300 dark:hover:bg-amber-900"
                     >
-                      취소
+                      {t('tsdb.warningCancel')}
                     </button>
                   </div>
                 </div>
@@ -1286,9 +1316,9 @@ function SeriesDataViewerModalImpl({
           data-testid="tsdb-viewer-result-scroll"
         >
           {mutation.isSuccess && mutation.data && mutation.data.columns.length > 0 ? (
-            <section aria-label="쿼리 결과">
+            <section aria-label={t('tsdb.resultAria')}>
               <h3 className="mb-2 text-sm font-semibold text-(--color-text-primary)">
-                결과 매트릭스
+                {t('tsdb.resultMatrix')}
               </h3>
               <SeriesResultMatrix
                 matrix={mutation.data}
@@ -1303,7 +1333,7 @@ function SeriesDataViewerModalImpl({
             </section>
           ) : (
             <p className="text-center text-xs text-(--color-text-muted)">
-              조건을 설정하고 실행하면 결과가 여기에 표시됩니다.
+              {t('tsdb.emptyState')}
             </p>
           )}
         </div>
@@ -1316,7 +1346,7 @@ function SeriesDataViewerModalImpl({
             disabled={mutation.isPending}
             className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
           >
-            닫기
+            {t('tsdb.close')}
           </button>
           <button
             type="button"
@@ -1327,17 +1357,17 @@ function SeriesDataViewerModalImpl({
             {mutation.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                실행 중…
+                {t('tsdb.running')}
               </>
             ) : mutation.isSuccess ? (
               <>
                 <Check className="h-4 w-4" />
-                다시 실행
+                {t('tsdb.rerun')}
               </>
             ) : (
               <>
                 <Play className="h-4 w-4" />
-                실행
+                {t('tsdb.run')}
               </>
             )}
           </button>

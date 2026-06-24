@@ -16,6 +16,7 @@
 
 import { Activity } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { formatUptime } from '@/lib/utils/formatUptime';
 import {
   useSystemMetrics,
@@ -27,6 +28,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────
 
 export function SystemRuntimeCard() {
+  const { t } = useTranslation();
   const { data, isLoading, isError, refetch } = useSystemMetrics();
 
   return (
@@ -41,7 +43,7 @@ export function SystemRuntimeCard() {
           aria-hidden="true"
         />
         <h3 className="text-sm font-semibold text-(--color-text-primary)">
-          런타임 메트릭
+          {t('system.runtime.cardTitle')}
         </h3>
       </header>
 
@@ -61,12 +63,13 @@ export function SystemRuntimeCard() {
 // ─────────────────────────────────────────────────────────────────────
 
 function RuntimeBody({ metrics }: { metrics: SystemMetrics }) {
+  const { t } = useTranslation();
   // v1 백엔드는 CPU 샘플링 미지원으로 0 고정 → "측정 미지원" 안내로 0% 오인 방지.
   const cpuUnsupported = metrics.cpu_usage_percent === 0;
 
   return (
     <dl className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3">
-      <Field label="Uptime">
+      <Field label={t('system.runtime.uptime')}>
         <span
           data-testid="runtime-uptime"
           className="font-mono text-(--color-text-primary)"
@@ -75,7 +78,7 @@ function RuntimeBody({ metrics }: { metrics: SystemMetrics }) {
         </span>
       </Field>
 
-      <Field label="CPU 사용률">
+      <Field label={t('system.runtime.cpu')}>
         <span
           data-testid="runtime-cpu"
           className="text-(--color-text-primary)"
@@ -86,14 +89,14 @@ function RuntimeBody({ metrics }: { metrics: SystemMetrics }) {
           <span
             data-testid="runtime-cpu-unsupported"
             className="ml-2 text-xs text-(--color-text-muted)"
-            title="현재 런타임은 프로세스 CPU 샘플링을 지원하지 않습니다"
+            title={t('system.runtime.cpuUnsupportedTitle')}
           >
-            (측정 미지원)
+            {t('system.runtime.cpuUnsupported')}
           </span>
         ) : null}
       </Field>
 
-      <Field label="메모리 사용률">
+      <Field label={t('system.runtime.memory')}>
         <span
           data-testid="runtime-memory"
           className="text-(--color-text-primary)"
@@ -102,7 +105,7 @@ function RuntimeBody({ metrics }: { metrics: SystemMetrics }) {
         </span>
       </Field>
 
-      <Field label="Goroutines">
+      <Field label={t('system.runtime.goroutines')}>
         <span
           data-testid="runtime-goroutines"
           className="font-mono text-(--color-text-primary)"
@@ -111,7 +114,7 @@ function RuntimeBody({ metrics }: { metrics: SystemMetrics }) {
         </span>
       </Field>
 
-      <Field label="Go Heap (alloc / sys)">
+      <Field label={t('system.runtime.goHeap')}>
         <span
           data-testid="runtime-heap"
           className="font-mono text-(--color-text-primary)"
@@ -148,12 +151,13 @@ function Field({
 // ─────────────────────────────────────────────────────────────────────
 
 function RuntimeSkeleton() {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="runtime-loading"
       className="grid grid-cols-2 gap-x-6 gap-y-2.5 sm:grid-cols-3"
       aria-busy="true"
-      aria-label="런타임 메트릭을 불러오는 중"
+      aria-label={t('system.runtime.loadingAria')}
     >
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="space-y-1">
@@ -170,20 +174,21 @@ function RuntimeSkeleton() {
 // ─────────────────────────────────────────────────────────────────────
 
 function RuntimeError({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="runtime-error"
       role="alert"
       className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
     >
-      <p className="font-medium">런타임 메트릭을 불러오지 못했습니다</p>
+      <p className="font-medium">{t('system.runtime.loadError')}</p>
       <button
         type="button"
         data-testid="runtime-retry"
         onClick={onRetry}
         className="mt-3 inline-flex items-center gap-1 rounded border border-red-300 bg-white px-3 py-1 text-xs font-medium text-red-800 hover:bg-red-100 dark:border-red-700 dark:bg-red-900 dark:text-red-100 dark:hover:bg-red-800"
       >
-        다시 시도
+        {t('system.runtime.retry')}
       </button>
     </div>
   );

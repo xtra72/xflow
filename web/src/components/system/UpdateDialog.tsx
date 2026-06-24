@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, X, XCircle } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { mapUpdateError } from '@/lib/errors/updaterErrorMapper';
 import {
@@ -102,6 +103,7 @@ function statusToVariant(status: OperationStatus): ResultVariant | null {
 // ─────────────────────────────────────────────────────────────────────
 
 export function UpdateDialog({ open, onClose, version, isAdmin = false }: UpdateDialogProps) {
+  const { t } = useTranslation();
   // v0.2.0 (M9, M14): isAdmin 미지정 시 false (v0.1.0 호환).
   // 향후 confirm step 의 target dropdown + auto_restart checkbox 활성화에 사용.
   // 현재 phase E 에서는 prop 만 정의 + 통합 테스트 검증 가능 상태로 유지.
@@ -256,14 +258,14 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
         {/* 헤더 */}
         <header className="flex items-center justify-between border-b border-(--color-border) px-5 py-3">
           <h2 id="update-dialog-title" className="text-base font-semibold">
-            xflowd 업데이트
+            {t('system.update.title')}
           </h2>
           {step !== 'progress' && step !== 'apply' ? (
             <button
               type="button"
               onClick={onClose}
               className="rounded-md p-1 text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
-              aria-label="닫기"
+              aria-label={t('common.close')}
             >
               <X className="h-4 w-4" />
             </button>
@@ -319,14 +321,14 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
                 variant="secondary"
                 onClick={onClose}
               >
-                취소
+                {t('common.cancel')}
               </FooterButton>
               <FooterButton
                 testId="update-dialog-next"
                 variant="primary"
                 onClick={() => setStep('confirm')}
               >
-                다음
+                {t('system.update.next')}
               </FooterButton>
             </>
           ) : null}
@@ -338,7 +340,7 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
                 variant="secondary"
                 onClick={() => setStep('info')}
               >
-                이전
+                {t('system.update.back')}
               </FooterButton>
               <FooterButton
                 testId="update-dialog-apply"
@@ -346,7 +348,7 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
                 onClick={handleApply}
                 disabled={downgrade && !forceDowngrade}
               >
-                업데이트 적용
+                {t('system.update.apply')}
               </FooterButton>
             </>
           ) : null}
@@ -357,7 +359,7 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
               variant="secondary"
               onClick={onClose}
             >
-              닫기 (백그라운드 계속)
+              {t('system.update.progressCloseBackground')}
             </FooterButton>
           ) : null}
 
@@ -381,17 +383,15 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
 // ─────────────────────────────────────────────────────────────────────
 
 function InfoStep({ version }: { version: VersionInfo }) {
+  const { t } = useTranslation();
   return (
     <div data-testid="update-dialog-step-info" className="space-y-3 text-sm">
-      <p className="text-(--color-text-muted)">
-        새로운 xflowd 버전이 사용 가능합니다. 자세한 내용을 확인하고 적용 여부를
-        결정하세요.
-      </p>
+      <p className="text-(--color-text-muted)">{t('system.update.info.desc')}</p>
 
       <dl className="grid grid-cols-2 gap-3 rounded border border-(--color-border) bg-(--color-bg-base) p-3 text-sm">
         <div>
           <dt className="text-xs uppercase tracking-wide text-(--color-text-muted)">
-            현재 버전
+            {t('system.update.info.currentVersion')}
           </dt>
           <dd className="mt-0.5 font-mono text-base font-semibold">
             {version.version}
@@ -399,22 +399,22 @@ function InfoStep({ version }: { version: VersionInfo }) {
         </div>
         <div>
           <dt className="text-xs uppercase tracking-wide text-(--color-text-muted)">
-            대상 버전
+            {t('system.update.info.targetVersion')}
           </dt>
           <dd className="mt-0.5 font-mono text-base font-semibold text-(--color-text-primary)">
-            {version.latest_version ?? '(채널 최신)'}
+            {version.latest_version ?? t('system.update.info.channelLatest')}
           </dd>
         </div>
         <div className="col-span-2">
           <dt className="text-xs uppercase tracking-wide text-(--color-text-muted)">
-            업데이트 채널
+            {t('system.update.info.channel')}
           </dt>
           <dd className="mt-0.5 font-mono">{version.channel}</dd>
         </div>
       </dl>
 
       <p className="text-xs text-(--color-text-muted)">
-        다음 단계에서 다운그레이드 여부, 재시작 안내 등을 확인합니다.
+        {t('system.update.info.nextStepHint')}
       </p>
     </div>
   );
@@ -445,6 +445,7 @@ function ConfirmStep({
   target: 'xflowd' | 'xflow-agent' | 'xflow';
   onTargetChange: (value: 'xflowd' | 'xflow-agent' | 'xflow') => void;
 }) {
+  const { t } = useTranslation();
   // v0.2.0 (Scenario 11): xflow CLI 는 one-shot 도구라 auto_restart 의미 없음.
   const autoRestartDisabled = target === 'xflow';
 
@@ -460,15 +461,20 @@ function ConfirmStep({
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <div className="space-y-1 text-xs leading-relaxed">
-            <p className="font-medium">업데이트 적용 시 재시작이 필요합니다.</p>
+            <p className="font-medium">{t('system.update.confirm.restartWarning')}</p>
             <p>
-              아래 <span className="font-mono">자동 재시작</span> 옵션을 켜면
-              백엔드가 graceful drain → in-process exec 를 통해 새 버전을
-              자동 적용합니다 (M-1).
+              {t('system.update.confirm.autoRestartLinePre')}{' '}
+              <span className="font-mono">
+                {t('system.update.confirm.autoRestartTerm')}
+              </span>{' '}
+              {t('system.update.confirm.autoRestartLinePost')}
             </p>
             <p>
-              실패 시 <span className="font-mono">Rollback</span> 으로 이전
-              버전으로 즉시 되돌릴 수 있습니다.
+              {t('system.update.confirm.rollbackLinePre')}{' '}
+              <span className="font-mono">
+                {t('system.update.confirm.rollbackTerm')}
+              </span>{' '}
+              {t('system.update.confirm.rollbackLinePost')}
             </p>
           </div>
         </div>
@@ -478,7 +484,7 @@ function ConfirmStep({
       {isAdmin ? (
         <label className="flex items-center gap-2 rounded-md border border-(--color-border) bg-(--color-bg-base) p-3 text-xs">
           <span className="font-medium text-(--color-text-primary)">
-            업데이트 대상:
+            {t('system.update.confirm.targetLabel')}
           </span>
           <select
             data-testid="update-dialog-target-select"
@@ -493,9 +499,15 @@ function ConfirmStep({
               'text-(--color-text-primary)',
             )}
           >
-            <option value="xflowd">xflowd (서버 데몬, default)</option>
-            <option value="xflow-agent">xflow-agent (사이트 게이트웨이)</option>
-            <option value="xflow">xflow (CLI 도구, 재시작 불필요)</option>
+            <option value="xflowd">
+              {t('system.update.confirm.targetOptionXflowd')}
+            </option>
+            <option value="xflow-agent">
+              {t('system.update.confirm.targetOptionAgent')}
+            </option>
+            <option value="xflow">
+              {t('system.update.confirm.targetOptionXflow')}
+            </option>
           </select>
         </label>
       ) : null}
@@ -518,12 +530,12 @@ function ConfirmStep({
         />
         <span className="space-y-1">
           <span className="block font-medium">
-            자동 재시작 (auto_restart)
+            {t('system.update.confirm.autoRestartTitle')}
           </span>
           <span className="block text-(--color-text-muted)">
             {autoRestartDisabled
-              ? 'xflow CLI 는 one-shot 도구이므로 재시작이 필요하지 않습니다.'
-              : '체크 시 백엔드가 graceful drain → in-process exec 로 새 바이너리를 자동 적용합니다.'}
+              ? t('system.update.confirm.autoRestartDisabledDesc')
+              : t('system.update.confirm.autoRestartEnabledDesc')}
           </span>
         </span>
       </label>
@@ -545,19 +557,22 @@ function ConfirmStep({
           />
           <span className="space-y-1">
             <span className="block font-medium">
-              다운그레이드 강제 적용 (--force)
+              {t('system.update.confirm.forceTitle')}
             </span>
             <span className="block">
-              {version.latest_version} 은(는) 현재 {version.version} 보다 낮은
-              버전입니다. 이 옵션을 활성화하지 않으면 백엔드가 거부합니다.
+              {t('system.update.confirm.forceDesc')
+                .replace('{latest}', version.latest_version ?? '')
+                .replace('{current}', version.version)}
             </span>
           </span>
         </label>
       ) : null}
 
       <p className="text-xs text-(--color-text-muted)">
-        대상 버전:{' '}
-        <span className="font-mono">{version.latest_version ?? '(채널 최신)'}</span>
+        {t('system.update.confirm.targetVersionLabel')}{' '}
+        <span className="font-mono">
+          {version.latest_version ?? t('system.update.info.channelLatest')}
+        </span>
       </p>
     </div>
   );
@@ -568,6 +583,7 @@ function ConfirmStep({
 // ─────────────────────────────────────────────────────────────────────
 
 function ApplyStep() {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="update-dialog-step-apply"
@@ -575,7 +591,7 @@ function ApplyStep() {
       aria-busy="true"
     >
       <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
-      <p>업데이트 작업을 시작하는 중...</p>
+      <p>{t('system.update.apply_.starting')}</p>
     </div>
   );
 }
@@ -591,13 +607,14 @@ function ProgressStep({
   status: OperationStatus;
   operationId: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="update-dialog-step-progress"
       className="space-y-3 text-sm"
     >
       <p className="text-(--color-text-muted)">
-        업데이트가 진행 중입니다. 진행 상황은 1초마다 자동 갱신됩니다.
+        {t('system.update.progress.running')}
       </p>
       <UpdateProgressStepper
         currentStatus={status}
@@ -609,26 +626,15 @@ function ProgressStep({
 }
 
 function StatusLabel({ status }: { status: OperationStatus }) {
+  const { t } = useTranslation();
   // @spec SPEC-UPDATE-002 v0.1.0 (M1): 11-state machine — restarting / health_checking 신규.
-  const text: Record<OperationStatus, string> = {
-    idle: '대기',
-    starting: '작업 시작 중...',
-    checking: '버전 확인 중...',
-    downloading: '다운로드 중...',
-    verifying: '검증 중...',
-    applying: '적용 중...',
-    ready_to_restart: '재시작 대기',
-    restarting: '재시작 중 (graceful drain → exec)...',
-    health_checking: 'Health check 중...',
-    completed: '완료',
-    failed: '실패',
-  };
+  // 상태별 라벨은 system.update.statusLabel.<status> 키로 해석한다.
   return (
     <p
       className="rounded border border-(--color-border) bg-(--color-bg-base) px-3 py-2 text-xs font-medium"
       aria-live="polite"
     >
-      {text[status]}
+      {t(`system.update.statusLabel.${status}`)}
     </p>
   );
 }
@@ -646,6 +652,7 @@ function ResultStep({
   error?: unknown;
   operationId?: string;
 }) {
+  const { t } = useTranslation();
   if (variant === 'success') {
     return (
       <div
@@ -658,10 +665,12 @@ function ResultStep({
       >
         <div className="flex items-center gap-2">
           <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-          <h3 className="text-sm font-semibold">업데이트 완료</h3>
+          <h3 className="text-sm font-semibold">
+            {t('system.update.result.successTitle')}
+          </h3>
         </div>
         <p className="text-xs leading-relaxed">
-          xflowd 가 새 버전으로 업데이트되었습니다.
+          {t('system.update.result.successDesc')}
         </p>
         {operationId ? (
           <p className="font-mono text-[11px] opacity-70">
@@ -696,7 +705,9 @@ function ResultStep({
     >
       <div className="flex items-center gap-2">
         <XCircle className="h-5 w-5" aria-hidden="true" />
-        <h3 className="text-sm font-semibold">업데이트 실패</h3>
+        <h3 className="text-sm font-semibold">
+          {t('system.update.result.failureTitle')}
+        </h3>
       </div>
       <p className="text-xs leading-relaxed">{mapped.userMessage}</p>
       {operationId ? (
@@ -725,6 +736,7 @@ function ResultFooter({
   onRollback: () => void;
   rollbackPending: boolean;
 }) {
+  const { t } = useTranslation();
   if (variant === 'success' || variant === 'restart') {
     return (
       <FooterButton
@@ -732,7 +744,7 @@ function ResultFooter({
         variant="primary"
         onClick={onClose}
       >
-        닫기
+        {t('common.close')}
       </FooterButton>
     );
   }
@@ -745,21 +757,21 @@ function ResultFooter({
         onClick={onRollback}
         disabled={rollbackPending}
       >
-        Rollback 시도
+        {t('system.update.rollback')}
       </FooterButton>
       <FooterButton
         testId="update-dialog-result-retry"
         variant="secondary"
         onClick={onRetry}
       >
-        다시 시도
+        {t('system.update.retry')}
       </FooterButton>
       <FooterButton
         testId="update-dialog-result-close"
         variant="primary"
         onClick={onClose}
       >
-        닫기
+        {t('common.close')}
       </FooterButton>
     </>
   );

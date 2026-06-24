@@ -15,6 +15,7 @@
 
 import { RefreshCw } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 /** UpdateAvailableBadge 의 외부 인터페이스. */
@@ -39,20 +40,21 @@ export function UpdateAvailableBadge({
   onClick,
   disabled = false,
 }: UpdateAvailableBadgeProps): React.ReactElement {
+  const { t } = useTranslation();
   // null/undefined 모두 fallback 문자열로 치환한다 (UI 일관성 + 메시지 길이 안정).
-  const versionLabel = latestVersion ?? '확인 필요';
+  const versionLabel = latestVersion ?? t('system.badge.versionFallback');
 
   // disabled 가 가장 우선 → 권한 안내 라벨 노출.
   const ariaLabel = disabled
-    ? '관리자 권한 필요'
+    ? t('system.badge.adminRequired')
     : available
-      ? `업데이트 가능: ${versionLabel}`
-      : '시스템 상태 (최신 버전)';
+      ? t('system.badge.updateAvailableLabel').replace('{version}', versionLabel)
+      : t('system.badge.statusLatest');
 
   // 툴팁 (브라우저 기본 title) — 호버 시 자세한 설명.
   const titleText = available
-    ? `새 버전 ${versionLabel} 사용 가능`
-    : '최신 버전입니다';
+    ? t('system.badge.newVersionAvailable').replace('{version}', versionLabel)
+    : t('system.badge.upToDate');
 
   return (
     <button
