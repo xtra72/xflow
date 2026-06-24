@@ -32,12 +32,12 @@ interface HvacControlPanelProps {
   onTitleChange?: (title: string) => void;
 }
 
-/** 환기 모드 목록 */
+/** 환기 모드 목록 (label 은 i18n 키, 렌더 시 t(key) 로 변환) */
 const VENT_MODES = [
-  { key: 'auto', label: '자동환기' },
-  { key: 'supply', label: '급기' },
-  { key: 'exhaust', label: '배기' },
-  { key: 'heat-exchange', label: '전열교환' },
+  { key: 'auto', labelKey: 'dashboard.hvacPanel.autoVent' },
+  { key: 'supply', labelKey: 'dashboard.hvacPanel.supply' },
+  { key: 'exhaust', labelKey: 'dashboard.hvacPanel.exhaust' },
+  { key: 'heat-exchange', labelKey: 'dashboard.hvacPanel.heatExchange' },
 ] as const;
 
 type VentMode = (typeof VENT_MODES)[number]['key'];
@@ -148,7 +148,7 @@ export default function HvacControlPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg bg-(--color-bg-surface) p-4 shadow">
         <Wind className="mb-2 h-6 w-6 text-(--color-text-muted)" />
-        <p className="text-xs text-(--color-text-muted)">디바이스가 설정되지 않았습니다.</p>
+        <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.deviceNotConfigured')}</p>
       </div>
     );
   }
@@ -197,7 +197,7 @@ export default function HvacControlPanel({
                 : 'bg-gray-100 text-gray-500 dark:bg-gray-700/30 dark:text-gray-400',
             )}
           >
-            {powerOn ? '운전 중' : '정지'}
+            {powerOn ? t('dashboard.hvacPanel.operating') : t('dashboard.hvacControl.stopped')}
           </span>
           <button
             type="button"
@@ -223,22 +223,22 @@ export default function HvacControlPanel({
       <div className="flex shrink-0 gap-2">
         <SensorCard
           icon={<Thermometer className="h-4 w-4" />}
-          label="실내 온도"
+          label={t('dashboard.hvacPanel.indoorTemp')}
           value={`${indoorTemp.toFixed(1)}\u00B0C`}
         />
         <SensorCard
           icon={<Droplets className="h-4 w-4" />}
-          label="습도"
+          label={t('dashboard.hvacPanel.humidity')}
           value={`${humidity}%`}
         />
         <SensorCard
           icon={<Wind className="h-4 w-4" />}
-          label="CO2"
+          label={t('dashboard.hvacPanel.co2')}
           value={`${co2}ppm`}
         />
         <SensorCard
           icon={<Zap className="h-4 w-4" />}
-          label="전력"
+          label={t('dashboard.hvacPanel.power')}
           value={`${powerUsage.toFixed(1)}kW`}
         />
       </div>
@@ -258,7 +258,7 @@ export default function HvacControlPanel({
                 : 'bg-(--color-bg-elevated) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80',
             )}
           >
-            {mode.label}
+            {t(mode.labelKey)}
           </button>
         ))}
       </div>
@@ -266,7 +266,7 @@ export default function HvacControlPanel({
       {/* 4) 온도·습도 설정 */}
       <div className="flex shrink-0 gap-3">
         <ValueAdjuster
-          label="온도 설정"
+          label={t('dashboard.hvacPanel.tempSetting')}
           value={targetTemp.toFixed(1)}
           unit={'\u00B0C'}
           disabled={isPending}
@@ -274,7 +274,7 @@ export default function HvacControlPanel({
           onIncrement={() => execute('target_temperature', { target_temperature: Math.min(30, +(targetTemp + 0.5).toFixed(1)) })}
         />
         <ValueAdjuster
-          label="습도 설정"
+          label={t('dashboard.hvacPanel.humiditySetting')}
           value={`${targetHumidity}`}
           unit="%"
           disabled={isPending}
@@ -287,7 +287,7 @@ export default function HvacControlPanel({
       <div className="flex shrink-0 items-center justify-between rounded-lg bg-(--color-bg-elevated) px-3 py-2">
         <div className="flex items-center gap-2">
           <Clock className="h-3.5 w-3.5 text-(--color-text-muted)" />
-          <span className="text-xs text-(--color-text-secondary)">08:00 - 18:00 (평일)</span>
+          <span className="text-xs text-(--color-text-secondary)">{t('dashboard.hvacControl.scheduleTime').replace('{weekday}', t('dashboard.hvacPanel.weekday'))}</span>
         </div>
         <button
           type="button"

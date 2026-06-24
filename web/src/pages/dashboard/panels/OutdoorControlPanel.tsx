@@ -6,6 +6,7 @@ import { Activity, Cpu, Eye, Gauge, HardDrive, Moon } from 'lucide-react';
 
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useDeviceRealtime } from '@/hooks/useDevice';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
@@ -32,29 +33,29 @@ const MODE_COLORS: Record<OpMode, string> = {
   fan: 'bg-slate-50 text-slate-500 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-600',
 };
 
-/** 모드 라벨 */
-const MODE_LABELS: Record<OpMode, string> = {
-  cool: '냉방',
-  heat: '난방',
-  auto: '자동',
-  dry: '제습',
-  fan: '팬',
+/** 모드 라벨 i18n 키 (렌더 시 t(key) 로 변환) */
+const MODE_LABEL_KEYS: Record<OpMode, string> = {
+  cool: 'dashboard.acPanel.cooling',
+  heat: 'dashboard.acPanel.heating',
+  auto: 'dashboard.acPanel.auto',
+  dry: 'dashboard.acPanel.dehumidify',
+  fan: 'dashboard.acControl.fan',
 };
 
 // ---- 상태 인디케이터 설정 ----
 
 interface StatusIndicator {
   key: string;
-  label: string;
+  labelKey: string;
   activeColor: string;
   activeBg: string;
 }
 
 const STATUS_INDICATORS: StatusIndicator[] = [
-  { key: 'compressor_run', label: '압축기', activeColor: 'bg-green-500', activeBg: 'bg-green-50 dark:bg-green-900/20' },
-  { key: 'outdoor_active', label: '실외기', activeColor: 'bg-green-500', activeBg: 'bg-green-50 dark:bg-green-900/20' },
-  { key: 'refrigerant_on', label: '냉매', activeColor: 'bg-blue-500', activeBg: 'bg-blue-50 dark:bg-blue-900/20' },
-  { key: 'heat_demand', label: '난방 요구', activeColor: 'bg-orange-500', activeBg: 'bg-orange-50 dark:bg-orange-900/20' },
+  { key: 'compressor_run', labelKey: 'dashboard.outdoor.compressor', activeColor: 'bg-green-500', activeBg: 'bg-green-50 dark:bg-green-900/20' },
+  { key: 'outdoor_active', labelKey: 'dashboard.outdoor.outdoorUnit', activeColor: 'bg-green-500', activeBg: 'bg-green-50 dark:bg-green-900/20' },
+  { key: 'refrigerant_on', labelKey: 'dashboard.outdoor.refrigerant', activeColor: 'bg-blue-500', activeBg: 'bg-blue-50 dark:bg-blue-900/20' },
+  { key: 'heat_demand', labelKey: 'dashboard.outdoor.heatDemand', activeColor: 'bg-orange-500', activeBg: 'bg-orange-50 dark:bg-orange-900/20' },
 ];
 
 const COMPRESSOR_CAP_MAX = 15;
@@ -67,6 +68,7 @@ export default function OutdoorControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: OutdoorControlPanelProps) {
+  const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 현재 값 (압축기 주파수 / 토출 온도) 표시 색상 — 패널 설정에서 지정 가능.
   // 미지정 시 text-primary (라이트/다크모드 자동 대응).
@@ -86,7 +88,7 @@ export default function OutdoorControlPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
         <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
-        <p className="text-xs text-(--color-text-muted)">디바이스가 설정되지 않았습니다.</p>
+        <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.deviceNotConfigured')}</p>
       </div>
     );
   }
@@ -109,7 +111,7 @@ export default function OutdoorControlPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
         <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
-        <p className="text-xs text-(--color-text-muted)">디바이스를 찾을 수 없습니다.</p>
+        <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.deviceNotFound')}</p>
       </div>
     );
   }
@@ -120,7 +122,7 @@ export default function OutdoorControlPanel({
 
   // LG ICP-01 ODU 전용 레이아웃
   if (protocol === 'lg_icp01') {
-    return <LgIcp01OutdoorLayout title={title} online={online} rawProps={rawProps} currentValueColor={currentValueColor} />;
+    return <LgIcp01OutdoorLayout title={title} online={online} rawProps={rawProps} currentValueColor={currentValueColor} t={t} />;
   }
 
   // 기본 (LG ICP-02 등): 압축기 주파수 + 상태 인디케이터
@@ -138,7 +140,7 @@ export default function OutdoorControlPanel({
           <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
+          <span title={t('dashboard.panel.monitorOnly')}><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label={t('dashboard.panel.monitorOnly')} /></span>
           <span className={cn(
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
             online
@@ -146,14 +148,14 @@ export default function OutdoorControlPanel({
               : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
           )}>
             {online
-              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
-              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+              ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>
+              : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
           </span>
           <span className={cn(
             'inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium ring-1',
             MODE_COLORS[opMode] ?? MODE_COLORS.auto,
           )}>
-            {MODE_LABELS[opMode] ?? opMode}
+            {MODE_LABEL_KEYS[opMode] ? t(MODE_LABEL_KEYS[opMode]) : opMode}
           </span>
         </div>
       </div>
@@ -174,7 +176,7 @@ export default function OutdoorControlPanel({
             Hz
           </span>
         </div>
-        <span className="text-xs font-medium text-(--color-text-muted)">압축기 주파수</span>
+        <span className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.outdoor.compressorFreq')}</span>
       </div>
 
       {/* ---- 구분선 ---- */}
@@ -182,7 +184,7 @@ export default function OutdoorControlPanel({
 
       {/* ---- 상태 인디케이터 (2x2 그리드) ---- */}
       <div className="grid shrink-0 grid-cols-2 gap-2">
-        {STATUS_INDICATORS.map(({ key, label, activeColor, activeBg }) => {
+        {STATUS_INDICATORS.map(({ key, labelKey, activeColor, activeBg }) => {
           const active = !!rawProps[key];
           return (
             <div
@@ -200,7 +202,7 @@ export default function OutdoorControlPanel({
                 'text-xs font-medium',
                 active ? 'text-(--color-text-primary)' : 'text-(--color-text-muted)',
               )}>
-                {label}
+                {t(labelKey)}
               </span>
             </div>
           );
@@ -215,7 +217,7 @@ export default function OutdoorControlPanel({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <Cpu className="h-3.5 w-3.5 text-(--color-text-muted)" />
-            <span className="text-xs font-medium text-(--color-text-secondary)">압축기 용량</span>
+            <span className="text-xs font-medium text-(--color-text-secondary)">{t('dashboard.outdoor.compressorCap')}</span>
           </div>
           <span className="text-xs font-semibold text-(--color-text-primary)">
             {compressorCap} / {COMPRESSOR_CAP_MAX}
@@ -234,14 +236,14 @@ export default function OutdoorControlPanel({
 
 // ---- LG ICP-01 ODU 전용 레이아웃 ----
 
-/** LG ICP-01 ODU 온도 항목 정의 */
-const LG_ICP01_ODU_TEMPS: { key: string; label: string; icon: string }[] = [
-  { key: 'outdoor_temperature', label: '외기 온도', icon: '🌡' },
-  { key: 'compressor_suction_temperature', label: '압축기 흡입', icon: '❄' },
-  { key: 'compressor_discharge_temperature', label: '압축기 토출', icon: '🔥' },
-  { key: 'condenser_temperature_a', label: '응축기 A', icon: '💧' },
-  { key: 'condenser_temperature_b', label: '응축기 B', icon: '💧' },
-  { key: 'avg_temperature', label: '운전 평균', icon: '📊' },
+/** LG ICP-01 ODU 온도 항목 정의 (label 은 i18n 키, 렌더 시 t(key) 로 변환) */
+const LG_ICP01_ODU_TEMPS: { key: string; labelKey: string; icon: string }[] = [
+  { key: 'outdoor_temperature', labelKey: 'dashboard.outdoor.outdoorTemp', icon: '🌡' },
+  { key: 'compressor_suction_temperature', labelKey: 'dashboard.outdoor.compressorSuction', icon: '❄' },
+  { key: 'compressor_discharge_temperature', labelKey: 'dashboard.outdoor.compressorDischarge', icon: '🔥' },
+  { key: 'condenser_temperature_a', labelKey: 'dashboard.outdoor.condenserA', icon: '💧' },
+  { key: 'condenser_temperature_b', labelKey: 'dashboard.outdoor.condenserB', icon: '💧' },
+  { key: 'avg_temperature', labelKey: 'dashboard.outdoor.avgTemp', icon: '📊' },
 ];
 
 function LgIcp01OutdoorLayout({
@@ -249,11 +251,13 @@ function LgIcp01OutdoorLayout({
   online,
   rawProps,
   currentValueColor,
+  t,
 }: {
   title: string;
   online: boolean;
   rawProps: Record<string, unknown>;
   currentValueColor?: string;
+  t: TranslationFn;
 }) {
   const outdoorTemp = typeof rawProps['outdoor_temperature'] === 'number' ? rawProps['outdoor_temperature'] : null;
 
@@ -266,7 +270,7 @@ function LgIcp01OutdoorLayout({
           <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
+          <span title={t('dashboard.panel.monitorOnly')}><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label={t('dashboard.panel.monitorOnly')} /></span>
           <span className={cn(
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
             online
@@ -274,8 +278,8 @@ function LgIcp01OutdoorLayout({
               : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
           )}>
             {online
-              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
-              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+              ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>
+              : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
           </span>
         </div>
       </div>
@@ -296,14 +300,14 @@ function LgIcp01OutdoorLayout({
             °C
           </span>
         </div>
-        <span className="text-xs font-medium text-(--color-text-muted)">외기 온도</span>
+        <span className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.outdoor.outdoorTemp')}</span>
       </div>
 
       <div className="border-t border-(--color-border-default)" />
 
       {/* 냉동 사이클 온도 그리드 */}
       <div className="grid shrink-0 grid-cols-2 gap-2">
-        {LG_ICP01_ODU_TEMPS.filter(t => t.key !== 'outdoor_temperature').map(({ key, label, icon }) => {
+        {LG_ICP01_ODU_TEMPS.filter(item => item.key !== 'outdoor_temperature').map(({ key, labelKey, icon }) => {
           const val = typeof rawProps[key] === 'number' ? rawProps[key] as number : null;
           const available = val !== null;
           return (
@@ -320,7 +324,7 @@ function LgIcp01OutdoorLayout({
                   'text-xs font-medium',
                   available ? 'text-(--color-text-secondary)' : 'text-(--color-text-muted)',
                 )}>
-                  {label}
+                  {t(labelKey)}
                 </span>
               </div>
               <span className={cn(

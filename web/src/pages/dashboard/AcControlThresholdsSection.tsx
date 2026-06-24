@@ -10,6 +10,7 @@
 
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 import ColorSwatchButton from './colorSwatchPalette';
@@ -24,6 +25,7 @@ export default function AcControlThresholdsSection({
   config,
   onChange,
 }: AcControlThresholdsSectionProps) {
+  const { t } = useTranslation();
   const cfg: ValueColorConfig = config ?? {};
   const ranges: ValueColorRange[] = Array.isArray(cfg.ranges) ? cfg.ranges : [];
   const mode = cfg.mode ?? 'individual';
@@ -73,7 +75,7 @@ export default function AcControlThresholdsSection({
               : 'text-(--color-text-muted) hover:text-(--color-text-secondary)',
           )}
         >
-          개별 지정
+          {t('dashboard.thresholds.individual')}
         </button>
         <button
           type="button"
@@ -85,7 +87,7 @@ export default function AcControlThresholdsSection({
               : 'text-(--color-text-muted) hover:text-(--color-text-secondary)',
           )}
         >
-          연속 컬러
+          {t('dashboard.thresholds.continuous')}
         </button>
       </div>
 
@@ -94,7 +96,7 @@ export default function AcControlThresholdsSection({
         <>
           {ranges.length === 0 ? (
             <p className="px-1 text-[10px] text-(--color-text-muted)">
-              임계값이 없습니다. + 임계값 추가 로 시작하세요.
+              {t('dashboard.thresholds.empty')}
             </p>
           ) : (
             <div className="space-y-1.5">
@@ -104,16 +106,16 @@ export default function AcControlThresholdsSection({
                     <ColorSwatchButton
                       color={r.color}
                       onChange={(c) => updateRange(idx, { color: c ?? '#3b82f6' })}
-                      ariaLabel={`임계값 ${idx + 1} 컬러`}
+                      ariaLabel={t('dashboard.thresholds.colorAria').replace('{index}', String(idx + 1))}
                     />
                   </span>
                   <input
                     type="text"
                     value={r.name ?? ''}
                     onChange={(e) => updateRange(idx, { name: e.target.value })}
-                    placeholder="이름"
+                    placeholder={t('dashboard.thresholds.namePlaceholder')}
                     className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
-                    aria-label={`임계값 ${idx + 1} 이름`}
+                    aria-label={t('dashboard.thresholds.nameAria').replace('{index}', String(idx + 1))}
                   />
                   <input
                     type="number"
@@ -122,7 +124,7 @@ export default function AcControlThresholdsSection({
                     onChange={(e) => updateRange(idx, { min: parseBound(e.target.value) })}
                     placeholder="-∞"
                     className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 text-center text-[11px] tabular-nums text-(--color-text-primary) outline-none focus:border-blue-500"
-                    aria-label={`임계값 ${idx + 1} 하한`}
+                    aria-label={t('dashboard.thresholds.minAria').replace('{index}', String(idx + 1))}
                   />
                   <span className="shrink-0 text-[10px] text-(--color-text-muted)">~</span>
                   <input
@@ -132,14 +134,14 @@ export default function AcControlThresholdsSection({
                     onChange={(e) => updateRange(idx, { max: parseBound(e.target.value) })}
                     placeholder="+∞"
                     className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 text-center text-[11px] tabular-nums text-(--color-text-primary) outline-none focus:border-blue-500"
-                    aria-label={`임계값 ${idx + 1} 상한`}
+                    aria-label={t('dashboard.thresholds.maxAria').replace('{index}', String(idx + 1))}
                   />
                   <button
                     type="button"
                     onClick={() => moveRange(idx, -1)}
                     disabled={idx === 0}
                     className="shrink-0 text-(--color-text-muted) hover:text-(--color-text-secondary) disabled:opacity-30"
-                    aria-label={`임계값 ${idx + 1} 위로`}
+                    aria-label={t('dashboard.thresholds.moveUpAria').replace('{index}', String(idx + 1))}
                     data-testid={`thresholds-move-up-${idx}`}
                   >
                     <ChevronUp className="h-3 w-3" />
@@ -149,7 +151,7 @@ export default function AcControlThresholdsSection({
                     onClick={() => moveRange(idx, 1)}
                     disabled={idx === ranges.length - 1}
                     className="shrink-0 text-(--color-text-muted) hover:text-(--color-text-secondary) disabled:opacity-30"
-                    aria-label={`임계값 ${idx + 1} 아래로`}
+                    aria-label={t('dashboard.thresholds.moveDownAria').replace('{index}', String(idx + 1))}
                     data-testid={`thresholds-move-down-${idx}`}
                   >
                     <ChevronDown className="h-3 w-3" />
@@ -158,7 +160,7 @@ export default function AcControlThresholdsSection({
                     type="button"
                     onClick={() => removeRange(idx)}
                     className="shrink-0 text-(--color-text-muted) hover:text-red-500"
-                    aria-label={`임계값 ${idx + 1} 삭제`}
+                    aria-label={t('dashboard.thresholds.deleteAria').replace('{index}', String(idx + 1))}
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
@@ -175,7 +177,7 @@ export default function AcControlThresholdsSection({
             data-testid="thresholds-add-range"
           >
             <Plus className="h-3 w-3" />
-            임계값 추가
+            {t('dashboard.thresholds.addThreshold')}
           </button>
         </>
       )}
@@ -183,7 +185,7 @@ export default function AcControlThresholdsSection({
       {/* 연속 컬러 모드 — 향후 테마 프리셋 추가 가능 */}
       {mode === 'continuous' && (
         <p className="px-1 text-[10px] text-(--color-text-muted)">
-          연속 컬러 모드는 곧 지원됩니다. 임계값 사이의 색상을 부드럽게 보간합니다.
+          {t('dashboard.thresholds.continuousHint')}
         </p>
       )}
     </div>

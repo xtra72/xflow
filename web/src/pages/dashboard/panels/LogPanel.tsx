@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 
 import { useWebSocket } from '@/hooks';
 import { useRemoteStream } from '@/hooks/useRemoteStream';
+import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { remoteLogsStreamUrl } from '@/services/api/remoteService';
@@ -78,6 +79,7 @@ export default function LogPanel({
   onConfigChange,
   onTitleChange,
 }: LogPanelProps) {
+  const { t } = useTranslation();
   const maxLines = (config.maxLines as number) || 100;
   const panelColor = config.panelColor as string | undefined;
   const accentElements = (config.accentElements as Record<string, string | boolean>) ?? {};
@@ -294,7 +296,7 @@ export default function LogPanel({
             onChange={(e) => setLevelFilter(e.target.value)}
             className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-secondary) focus:border-blue-500 focus:outline-none"
           >
-            <option value="">전체 레벨</option>
+            <option value="">{t('dashboard.logPanel.allLevels')}</option>
             {ALL_LEVELS.map((level) => (
               <option key={level} value={level}>{level}</option>
             ))}
@@ -306,7 +308,7 @@ export default function LogPanel({
             onChange={(e) => setSourceFilter(e.target.value)}
             className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-secondary) focus:border-blue-500 focus:outline-none"
           >
-            <option value="">전체 소스</option>
+            <option value="">{t('dashboard.logPanel.allSources')}</option>
             {uniqueSources.map((source) => (
               <option key={source} value={source}>{source}</option>
             ))}
@@ -328,7 +330,7 @@ export default function LogPanel({
                 : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
             }`}
           >
-            실시간 {autoScroll ? 'ON' : 'OFF'}
+            {t('dashboard.realtime')} {autoScroll ? 'ON' : 'OFF'}
           </button>
 
           {/* 설정 버튼 */}
@@ -338,7 +340,7 @@ export default function LogPanel({
             onClick={() => setSettingsOpen(!settingsOpen)}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
             style={acColor('header') ? { color: acColor('header')! } : undefined}
-            aria-label="패널 설정"
+            aria-label={t('dashboard.logPanel.settingsAria')}
           >
             <Settings className="h-4 w-4" />
           </button>
@@ -349,10 +351,12 @@ export default function LogPanel({
       <div className="mb-2 flex shrink-0 items-center justify-between text-xs text-(--color-text-muted)">
         <span>
           {filteredLogs.length === logs.length
-            ? `${logs.length}건`
-            : `${filteredLogs.length} / ${logs.length}건`}
+            ? t('dashboard.logPanel.count').replace('{count}', String(logs.length))
+            : t('dashboard.logPanel.countFiltered')
+                .replace('{filtered}', String(filteredLogs.length))
+                .replace('{total}', String(logs.length))}
         </span>
-        <span>최대 {maxLines}줄</span>
+        <span>{t('dashboard.logPanel.maxLines').replace('{max}', String(maxLines))}</span>
       </div>
 
       {/* 로그 스트림 */}
@@ -363,7 +367,7 @@ export default function LogPanel({
       >
         {filteredLogs.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-sm text-(--color-text-muted)">
-            {logs.length === 0 ? '수신된 로그가 없습니다' : '필터 조건에 맞는 로그가 없습니다'}
+            {logs.length === 0 ? t('dashboard.logPanel.empty') : t('dashboard.logPanel.emptyFiltered')}
           </div>
         ) : (
           filteredLogs.map((entry) => (
@@ -410,7 +414,7 @@ export default function LogPanel({
             {/* 타이틀 편집 */}
             <div className="px-3 pb-2">
               <label className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-                타이틀
+                {t('dashboard.logPanel.titleLabel')}
               </label>
               <input
                 type="text"
@@ -429,7 +433,7 @@ export default function LogPanel({
             {/* 최대 라인 수 설정 */}
             <div className="px-3 pt-1">
               <label className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-                최대 라인 수
+                {t('dashboard.logPanel.maxLinesLabel')}
               </label>
               <input
                 type="number"
@@ -449,7 +453,7 @@ export default function LogPanel({
             <div className="my-1 border-t border-(--color-border-default)" />
             <div className="px-3 pt-1 pb-1">
               <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
-                패널 컬러
+                {t('dashboard.logPanel.panelColor')}
               </span>
               <div className="flex flex-wrap items-center gap-1.5">
                 {LOG_COLOR_PRESETS.map((color) => (
@@ -476,7 +480,7 @@ export default function LogPanel({
                       ? { backgroundColor: panelColor }
                       : undefined
                   }
-                  title="직접 선택"
+                  title={t('dashboard.logPanel.pickCustom')}
                 >
                   {!(panelColor && !LOG_COLOR_PRESETS.includes(panelColor)) && (
                     <Palette className="h-2.5 w-2.5 text-gray-400" />
@@ -494,7 +498,7 @@ export default function LogPanel({
                     type="button"
                     onClick={() => handlePanelColorChange(undefined)}
                     className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-gray-300 text-gray-400 transition-transform hover:scale-110 dark:border-gray-600"
-                    title="초기화"
+                    title={t('dashboard.logPanel.reset')}
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>

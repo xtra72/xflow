@@ -5,6 +5,7 @@ import { Activity, HardDrive, Moon } from 'lucide-react';
 
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useDeviceRealtime } from '@/hooks/useDevice';
+import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
@@ -25,6 +26,7 @@ export default function PropertiesGridPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: PropertiesGridPanelProps) {
+  const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   const gridCols = (config.gridCols as number | undefined) ?? 3;
   const visibleProperties = (config.visibleProperties as string[] | undefined) ?? [];
@@ -52,7 +54,7 @@ export default function PropertiesGridPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg bg-(--color-bg-surface) p-4 shadow">
         <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
-        <p className="text-xs text-(--color-text-muted)">디바이스가 설정되지 않았습니다.</p>
+        <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.deviceNotConfigured')}</p>
       </div>
     );
   }
@@ -78,7 +80,7 @@ export default function PropertiesGridPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg bg-(--color-bg-surface) p-4 shadow">
         <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
-        <p className="text-xs text-(--color-text-muted)">디바이스를 찾을 수 없습니다.</p>
+        <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.deviceNotFound')}</p>
       </div>
     );
   }
@@ -96,12 +98,12 @@ export default function PropertiesGridPanel({
               : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
           )}>
             {device.online
-              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
-              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+              ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>
+              : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
           </span>
         </div>
         <div className="flex flex-1 items-center justify-center">
-          <p className="text-xs text-(--color-text-muted)">속성 정보가 없습니다.</p>
+          <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.noProperties')}</p>
         </div>
       </div>
     );
@@ -144,8 +146,8 @@ export default function PropertiesGridPanel({
             : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
         )}>
           {device.online
-            ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
-            : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+            ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>
+            : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
         </span>
       </div>
 

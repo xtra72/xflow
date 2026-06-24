@@ -20,6 +20,7 @@ import { useAgents } from '@/hooks';
 import { useAgentActionsTarget } from '@/hooks/useResourceActions';
 import { useAgentsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import {
@@ -39,6 +40,7 @@ interface AgentPanelProps {
 
 /** 에이전트 패널 - 자체적으로 useAgents 훅으로 데이터 관리 */
 export default function AgentPanel({ panelConfig }: AgentPanelProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
 
@@ -57,7 +59,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
-  const title = panelConfig?.title ?? '에이전트 현황';
+  const title = panelConfig?.title ?? t('dashboard.agents');
   const visibleColumns = (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS];
   const panelColor = panelConfig?.config?.panelColor as string | undefined;
   const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
@@ -156,7 +158,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
       const action =
         agent.status === 'error' ? 'restart' : isConnected ? 'stop' : 'start';
       const Icon = action === 'restart' ? RotateCcw : action === 'stop' ? Pause : Play;
-      const labelSuffix = action === 'restart' ? '재시작' : action === 'stop' ? '중지' : '시작';
+      const labelSuffix = action === 'restart' ? t('dashboard.action.restart') : action === 'stop' ? t('dashboard.action.stop') : t('dashboard.action.start');
       const disabled =
         !remoteActions.supports(action) ||
         !gating.canControl() ||
@@ -190,7 +192,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
           }}
           disabled={isPending}
           className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
-          aria-label={`${agent.name} 재시작`}
+          aria-label={`${agent.name} ${t('dashboard.action.restart')}`}
         >
           <RotateCcw className="h-4 w-4" />
         </button>
@@ -207,7 +209,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
           }}
           disabled={isPending}
           className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
-          aria-label={`${agent.name} 중지`}
+          aria-label={`${agent.name} ${t('dashboard.action.stop')}`}
         >
           <Pause className="h-4 w-4" />
         </button>
@@ -223,7 +225,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
         }}
         disabled={isPending}
         className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
-        aria-label={`${agent.name} 시작`}
+        aria-label={`${agent.name} ${t('dashboard.action.start')}`}
       >
         <Play className="h-4 w-4" />
       </button>
@@ -259,26 +261,26 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
               className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
-              전체 {summary.total}
+              {t('dashboard.panel.total')} {summary.total}
             </span>
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
-              활성 {summary.active}
+              {t('dashboard.panel.active')} {summary.active}
             </span>
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400"
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
-              비활성 {summary.inactive}
+              {t('dashboard.panel.inactive')} {summary.inactive}
             </span>
           </div>
 
           {/* 에이전트 리스트 테이블 */}
           {sortedAgents.length === 0 ? (
             <p className="text-sm text-(--color-text-muted)">
-              등록된 에이전트가 없습니다.
+              {t('dashboard.agentPanel.empty')}
             </p>
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -288,7 +290,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                     <tr className="border-b border-(--color-border-default)">
                       {show('name') && (
                         <SortableHeader
-                          label="이름"
+                          label={t('dashboard.col.name')}
                           field="name"
                           currentSort={sort}
                           onSort={handleSort}
@@ -301,7 +303,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                           style={acColor('table') ? { color: acColor('table')! } : undefined}
                         >
-                          타입
+                          {t('dashboard.col.type')}
                         </th>
                       )}
                       {show('status') && (
@@ -309,7 +311,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                           style={acColor('table') ? { color: acColor('table')! } : undefined}
                         >
-                          상태
+                          {t('dashboard.col.status')}
                         </th>
                       )}
                       {show('uptime') && (
@@ -317,7 +319,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                           style={acColor('table') ? { color: acColor('table')! } : undefined}
                         >
-                          업타임
+                          {t('dashboard.col.uptime')}
                         </th>
                       )}
                       {show('messages') && (
@@ -325,7 +327,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                           style={acColor('table') ? { color: acColor('table')! } : undefined}
                         >
-                          메시지 IN/OUT
+                          {t('dashboard.col.messages')}
                         </th>
                       )}
                       {show('actions') && (
@@ -333,7 +335,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                           className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                           style={acColor('table') ? { color: acColor('table')! } : undefined}
                         >
-                          액션
+                          {t('dashboard.col.actions')}
                         </th>
                       )}
                     </tr>
@@ -359,18 +361,18 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                             {(() => {
                               if (agent.status === 'error') {
                                 return (
-                                  <span className="inline-flex items-center text-red-600 dark:text-red-400" title="오류">
+                                  <span className="inline-flex items-center text-red-600 dark:text-red-400" title={t('dashboard.error')}>
                                     <AlertTriangle className="h-4 w-4" />
                                   </span>
                                 );
                               }
                               const isConnected = agent.connected === true;
                               return isConnected ? (
-                                <span className="inline-flex items-center text-green-600 dark:text-green-400" title="연결됨">
+                                <span className="inline-flex items-center text-green-600 dark:text-green-400" title={t('dashboard.panel.connected')}>
                                   <Activity className="h-4 w-4" />
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title="연결 해제">
+                                <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title={t('dashboard.panel.disconnected')}>
                                   <CircleStop className="h-4 w-4" />
                                 </span>
                               );
@@ -405,7 +407,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                     to="/agents"
                     className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                   >
-                    더 보기
+                    {t('dashboard.panel.more')}
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                 </div>

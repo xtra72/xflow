@@ -146,6 +146,145 @@
       "day": "Light",
       "night": "Dark",
       "custom": "Custom"
+    },
+    "panel": {
+      "deviceNotConfigured": "No device configured.",
+      "deviceNotFound": "Device not found.",
+      "noProperties": "No properties available.",
+      "monitorOnly": "Monitoring only",
+      "loading": "Loading",
+      "more": "View more",
+      "total": "Total",
+      "active": "Active",
+      "inactive": "Inactive",
+      "online": "Online",
+      "offline": "Offline",
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "loadingAria": "Loading"
+    },
+    "col": {
+      "name": "Name",
+      "type": "Type",
+      "status": "Status",
+      "uptime": "Uptime",
+      "messages": "Messages IN/OUT",
+      "actions": "Actions",
+      "nodeCount": "Nodes",
+      "agent": "Agent",
+      "lastSeen": "Last seen"
+    },
+    "action": {
+      "start": "Start",
+      "stop": "Stop",
+      "restart": "Restart"
+    },
+    "acControl": {
+      "fan": "Fan",
+      "fanQuiet": "Quiet",
+      "fanTurbo": "Turbo",
+      "fanSpeed": "Airflow",
+      "currentTemp": "Current temp",
+      "setLabel": "Set",
+      "powerOff": "Power off",
+      "powerOffAria": "Turn power off",
+      "powerOnAria": "Turn power on",
+      "tempDown": "Decrease temperature",
+      "tempUp": "Increase temperature",
+      "modeAria": "Mode: {label}",
+      "fanSpeedAria": "Airflow: {label}",
+      "swing": "Swing",
+      "filterReplace": "Filter replacement needed"
+    },
+    "outdoor": {
+      "compressor": "Compressor",
+      "outdoorUnit": "Outdoor unit",
+      "refrigerant": "Refrigerant",
+      "heatDemand": "Heat demand",
+      "compressorFreq": "Compressor frequency",
+      "compressorCap": "Compressor capacity",
+      "outdoorTemp": "Outdoor temp",
+      "compressorSuction": "Compressor suction",
+      "compressorDischarge": "Compressor discharge",
+      "condenserA": "Condenser A",
+      "condenserB": "Condenser B",
+      "avgTemp": "Operating avg"
+    },
+    "agentPanel": {
+      "empty": "No registered agents."
+    },
+    "flowPanel": {
+      "empty": "No registered flows."
+    },
+    "devicePanel": {
+      "empty": "No registered devices."
+    },
+    "logPanel": {
+      "allLevels": "All levels",
+      "allSources": "All sources",
+      "count": "{count} entries",
+      "countFiltered": "{filtered} / {total} entries",
+      "maxLines": "Max {max} lines",
+      "empty": "No logs received",
+      "emptyFiltered": "No logs match the filter",
+      "settingsAria": "Panel settings",
+      "titleLabel": "Title",
+      "maxLinesLabel": "Max lines",
+      "panelColor": "Panel color",
+      "pickCustom": "Pick custom",
+      "reset": "Reset"
+    },
+    "hvacControl": {
+      "stopped": "Stopped",
+      "scheduleTime": "08:00 - 18:00 ({weekday})"
+    },
+    "acStyle": {
+      "controlButton": "Control buttons",
+      "unselected": "Unselected",
+      "selected": "Selected",
+      "unified": "Unified",
+      "individual": "Individual",
+      "selectedColor": "Selected color",
+      "perButtonColor": "Per-button color",
+      "airflow": "Airflow",
+      "overallColor": "Overall color",
+      "title": "Title",
+      "statusBadge": "Status badge",
+      "currentValue": "Current value",
+      "powerButton": "Power button",
+      "label": "Label",
+      "border": "Border",
+      "unselectedColorAria": "Unselected color",
+      "selectedColorAria": "Selected color",
+      "modeColorAria": "{label} color",
+      "fanUnselectedAria": "Airflow unselected color",
+      "fanLevelColorAria": "Airflow {label} color"
+    },
+    "thresholds": {
+      "individual": "Individual",
+      "continuous": "Continuous",
+      "empty": "No thresholds. Start by adding one.",
+      "namePlaceholder": "Name",
+      "addThreshold": "Add threshold",
+      "continuousHint": "Continuous color mode is coming soon. It interpolates colors smoothly between thresholds.",
+      "colorAria": "Threshold {index} color",
+      "nameAria": "Threshold {index} name",
+      "minAria": "Threshold {index} lower bound",
+      "maxAria": "Threshold {index} upper bound",
+      "moveUpAria": "Move threshold {index} up",
+      "moveDownAria": "Move threshold {index} down",
+      "deleteAria": "Delete threshold {index}"
+    },
+    "createDashboard": {
+      "title": "Add dashboard",
+      "closeAria": "Close",
+      "nameLabel": "Dashboard name",
+      "namePlaceholder": "New dashboard"
+    },
+    "colorSwatch": {
+      "paletteAria": "{label} palette",
+      "defaultAria": "Default (unset)",
+      "unsetTitle": "Unset"
     }
   },
   "monitoring": {

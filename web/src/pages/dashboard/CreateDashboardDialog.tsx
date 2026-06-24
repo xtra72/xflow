@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { useUIStore } from '@/stores/uiStore';
 
 interface CreateDashboardDialogProps {
@@ -13,6 +14,7 @@ interface CreateDashboardDialogProps {
 
 /** 대시보드 생성 모달 */
 export default function CreateDashboardDialog({ open, onClose }: CreateDashboardDialogProps) {
+  const { t } = useTranslation();
   const addDashboardPage = useUIStore((s) => s.addDashboardPage);
   const [name, setName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -72,13 +74,13 @@ export default function CreateDashboardDialog({ open, onClose }: CreateDashboard
             id="create-dashboard-dialog-title"
             className="text-lg font-semibold text-(--color-text-primary)"
           >
-            대시보드 추가
+            {t('dashboard.createDashboard.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('dashboard.createDashboard.closeAria')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -91,7 +93,7 @@ export default function CreateDashboardDialog({ open, onClose }: CreateDashboard
               htmlFor="dashboard-name-input"
               className="mb-1.5 block text-sm font-medium text-(--color-text-secondary)"
             >
-              대시보드 이름
+              {t('dashboard.createDashboard.nameLabel')}
             </label>
             <input
               ref={inputRef}
@@ -99,7 +101,7 @@ export default function CreateDashboardDialog({ open, onClose }: CreateDashboard
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="새 대시보드"
+              placeholder={t('dashboard.createDashboard.namePlaceholder')}
               className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder:text-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
@@ -111,14 +113,14 @@ export default function CreateDashboardDialog({ open, onClose }: CreateDashboard
               onClick={onClose}
               className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
             >
-              취소
+              {t('dashboard.cancel')}
             </button>
             <button
               type="submit"
               disabled={!name.trim()}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
-              생성
+              {t('dashboard.create')}
             </button>
           </div>
         </form>

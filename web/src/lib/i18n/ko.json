@@ -146,6 +146,145 @@
       "day": "라이트",
       "night": "다크",
       "custom": "커스텀"
+    },
+    "panel": {
+      "deviceNotConfigured": "디바이스가 설정되지 않았습니다.",
+      "deviceNotFound": "디바이스를 찾을 수 없습니다.",
+      "noProperties": "속성 정보가 없습니다.",
+      "monitorOnly": "모니터링 전용",
+      "loading": "로딩 중",
+      "more": "더 보기",
+      "total": "전체",
+      "active": "활성",
+      "inactive": "비활성",
+      "online": "온라인",
+      "offline": "오프라인",
+      "connected": "연결됨",
+      "disconnected": "연결 해제",
+      "loadingAria": "로딩 중"
+    },
+    "col": {
+      "name": "이름",
+      "type": "타입",
+      "status": "상태",
+      "uptime": "업타임",
+      "messages": "메시지 IN/OUT",
+      "actions": "액션",
+      "nodeCount": "노드 수",
+      "agent": "에이전트",
+      "lastSeen": "최근 통신"
+    },
+    "action": {
+      "start": "시작",
+      "stop": "중지",
+      "restart": "재시작"
+    },
+    "acControl": {
+      "fan": "팬",
+      "fanQuiet": "미풍",
+      "fanTurbo": "터보",
+      "fanSpeed": "풍량",
+      "currentTemp": "현재 온도",
+      "setLabel": "설정",
+      "powerOff": "전원 꺼짐",
+      "powerOffAria": "전원 끄기",
+      "powerOnAria": "전원 켜기",
+      "tempDown": "온도 내리기",
+      "tempUp": "온도 올리기",
+      "modeAria": "모드: {label}",
+      "fanSpeedAria": "풍량: {label}",
+      "swing": "스윙",
+      "filterReplace": "필터 교체 필요"
+    },
+    "outdoor": {
+      "compressor": "압축기",
+      "outdoorUnit": "실외기",
+      "refrigerant": "냉매",
+      "heatDemand": "난방 요구",
+      "compressorFreq": "압축기 주파수",
+      "compressorCap": "압축기 용량",
+      "outdoorTemp": "외기 온도",
+      "compressorSuction": "압축기 흡입",
+      "compressorDischarge": "압축기 토출",
+      "condenserA": "응축기 A",
+      "condenserB": "응축기 B",
+      "avgTemp": "운전 평균"
+    },
+    "agentPanel": {
+      "empty": "등록된 에이전트가 없습니다."
+    },
+    "flowPanel": {
+      "empty": "등록된 플로우가 없습니다."
+    },
+    "devicePanel": {
+      "empty": "등록된 디바이스가 없습니다."
+    },
+    "logPanel": {
+      "allLevels": "전체 레벨",
+      "allSources": "전체 소스",
+      "count": "{count}건",
+      "countFiltered": "{filtered} / {total}건",
+      "maxLines": "최대 {max}줄",
+      "empty": "수신된 로그가 없습니다",
+      "emptyFiltered": "필터 조건에 맞는 로그가 없습니다",
+      "settingsAria": "패널 설정",
+      "titleLabel": "타이틀",
+      "maxLinesLabel": "최대 라인 수",
+      "panelColor": "패널 컬러",
+      "pickCustom": "직접 선택",
+      "reset": "초기화"
+    },
+    "hvacControl": {
+      "stopped": "정지",
+      "scheduleTime": "08:00 - 18:00 ({weekday})"
+    },
+    "acStyle": {
+      "controlButton": "제어 버튼",
+      "unselected": "미선택",
+      "selected": "선택",
+      "unified": "통일",
+      "individual": "개별",
+      "selectedColor": "선택 컬러",
+      "perButtonColor": "버튼별 컬러",
+      "airflow": "풍량",
+      "overallColor": "전체 색상",
+      "title": "타이틀",
+      "statusBadge": "상태 배지",
+      "currentValue": "현재 값",
+      "powerButton": "전원 버튼",
+      "label": "라벨",
+      "border": "보더",
+      "unselectedColorAria": "미선택 컬러",
+      "selectedColorAria": "선택 컬러",
+      "modeColorAria": "{label} 컬러",
+      "fanUnselectedAria": "풍량 미선택 컬러",
+      "fanLevelColorAria": "풍량 {label} 컬러"
+    },
+    "thresholds": {
+      "individual": "개별 지정",
+      "continuous": "연속 컬러",
+      "empty": "임계값이 없습니다. + 임계값 추가 로 시작하세요.",
+      "namePlaceholder": "이름",
+      "addThreshold": "임계값 추가",
+      "continuousHint": "연속 컬러 모드는 곧 지원됩니다. 임계값 사이의 색상을 부드럽게 보간합니다.",
+      "colorAria": "임계값 {index} 컬러",
+      "nameAria": "임계값 {index} 이름",
+      "minAria": "임계값 {index} 하한",
+      "maxAria": "임계값 {index} 상한",
+      "moveUpAria": "임계값 {index} 위로",
+      "moveDownAria": "임계값 {index} 아래로",
+      "deleteAria": "임계값 {index} 삭제"
+    },
+    "createDashboard": {
+      "title": "대시보드 추가",
+      "closeAria": "닫기",
+      "nameLabel": "대시보드 이름",
+      "namePlaceholder": "새 대시보드"
+    },
+    "colorSwatch": {
+      "paletteAria": "{label} 팔레트",
+      "defaultAria": "기본값(미설정)",
+      "unsetTitle": "미설정"
     }
   },
   "monitoring": {

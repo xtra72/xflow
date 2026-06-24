@@ -78,8 +78,8 @@ describe('AcControlPanel — 원격 명령 라우팅', () => {
       </TargetProvider>,
     );
 
-    // 전원 끄기 버튼(현재 ON) 클릭.
-    fireEvent.click(screen.getByLabelText('전원 끄기'));
+    // 전원 끄기 버튼(현재 ON) 클릭. i18n mock 은 키를 그대로 반환하므로 키로 조회.
+    fireEvent.click(screen.getByLabelText('dashboard.acControl.powerOffAria'));
 
     expect(sendCommandMutateMock).toHaveBeenCalledWith({
       instanceID: 'node-1',

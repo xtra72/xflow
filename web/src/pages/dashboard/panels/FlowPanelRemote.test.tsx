@@ -32,6 +32,10 @@ vi.mock('@/hooks/useTargetGating', () => ({
     canControl: () => true,
   }),
 }));
+// i18n: 키를 그대로 반환하는 스텁 (단언은 데이터 텍스트만 검사하므로 무관).
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
 
 import { TargetProvider } from '@/lib/remote/TargetContext';
 import { LOCAL_TARGET } from '@/lib/remote/target';
