@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Check, Plus, RotateCcw, Settings2, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 import { computePortsForNode, getConfigSchema, getNodeDescription, getNodeIODesc, getRequiredFieldErrors, type PortDef } from '@/config/nodeSchemas';
 import { useAgents } from '@/hooks/useAgent';
@@ -29,6 +30,7 @@ interface PortSectionProps {
 }
 
 function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
+  const { t } = useTranslation();
   const [adding, setAdding] = useState(false);
   const [newDirection, setNewDirection] = useState<'input' | 'output'>('input');
   const [newName, setNewName] = useState('');
@@ -66,7 +68,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1">
           <span className="text-xs font-medium text-(--color-text-secondary)">
-            포트
+            {t('property.panel.ports')}
           </span>
           {portsHelpText && (
             <FieldHelp text={portsHelpText} describedById="ports-desc" />
@@ -80,7 +82,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
             'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
             'dark:hover:bg-gray-800 dark:hover:text-gray-300',
           )}
-          aria-label="포트 추가"
+          aria-label={t('property.panel.addPortAria')}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
@@ -88,7 +90,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
 
       {/* 포트 목록 */}
       {ports.length === 0 && !adding && (
-        <p className="text-xs text-(--color-text-muted)">포트 없음</p>
+        <p className="text-xs text-(--color-text-muted)">{t('property.panel.portsEmpty')}</p>
       )}
       {ports.map((port, idx) => (
         <div key={idx} className="flex items-center gap-1.5">
@@ -118,7 +120,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
               'text-gray-400 hover:bg-red-50 hover:text-red-500',
               'dark:hover:bg-red-900/20 dark:hover:text-red-400',
             )}
-            aria-label={`포트 ${port.name} 삭제`}
+            aria-label={t('property.panel.deletePortAria').replace('{name}', port.name)}
           >
             <Trash2 className="h-3 w-3" />
           </button>
@@ -137,8 +139,8 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
               'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
             )}
           >
-            <option value="input">입력</option>
-            <option value="output">출력</option>
+            <option value="input">{t('property.panel.portInput')}</option>
+            <option value="output">{t('property.panel.portOutput')}</option>
           </select>
           <input
             type="text"
@@ -148,7 +150,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
               if (e.key === 'Enter') handleAdd();
               if (e.key === 'Escape') setAdding(false);
             }}
-            placeholder="포트 이름"
+            placeholder={t('property.panel.portNamePlaceholder')}
             autoFocus
             className={cn(
               'min-w-0 flex-1 rounded border px-1.5 py-0.5 text-xs',
@@ -166,7 +168,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
               'dark:bg-blue-600 dark:hover:bg-blue-700',
             )}
           >
-            추가
+            {t('property.panel.addPort')}
           </button>
         </div>
       )}
@@ -182,6 +184,7 @@ interface PropertyPanelProps {
 }
 
 export function PropertyPanel({ width }: PropertyPanelProps) {
+  const { t } = useTranslation();
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId);
   const nodes = useEditorStore((s) => s.nodes);
   const updateNodeData = useEditorStore((s) => s.updateNodeData);
@@ -338,7 +341,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
       >
         <Settings2 className="mb-2 h-8 w-8 text-gray-300 dark:text-gray-600" />
         <p className="text-sm text-(--color-text-muted)">
-          노드를 선택하면 속성을 볼 수 있습니다
+          {t('editor.selectNode')}
         </p>
       </aside>
     );
@@ -394,7 +397,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           <div className="min-w-0">
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
-                타입
+                {t('property.panel.type')}
               </span>
               {typeDescription && (
                 <FieldHelp text={typeDescription} describedById="node-type-desc" />
@@ -407,7 +410,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           {/* 아이디: 라벨 + 노드 id */}
           <div className="min-w-0">
             <span className="text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
-              아이디
+              {t('property.panel.id')}
             </span>
             <p className="truncate text-xs text-(--color-text-secondary)" title={selectedNode.id}>
               {selectedNode.id}
@@ -419,7 +422,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
           onClick={() => selectNode(null)}
           className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
             dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
-          aria-label="속성 패널 닫기"
+          aria-label={t('property.panel.closeAria')}
         >
           <X className="h-4 w-4" />
         </button>
@@ -437,7 +440,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div className="space-y-0.5">
-            <p className="font-medium">설정이 필요합니다</p>
+            <p className="font-medium">{t('property.panel.missingRequired')}</p>
             <ul className="list-disc pl-4">
               {missingRequired.map((e) => (
                 <li key={e.name}>{e.label}</li>
@@ -455,14 +458,14 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             htmlFor="node-label"
             className="block text-xs font-medium text-(--color-text-secondary)"
           >
-            라벨
+            {t('property.panel.label')}
           </label>
           <input
             id="node-label"
             type="text"
             value={nodeLabel}
             onChange={(e) => handleDraftChange({ label: e.target.value })}
-            placeholder="노드 이름 입력..."
+            placeholder={t('property.panel.labelPlaceholder')}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5
               text-sm text-(--color-text-primary) placeholder:text-gray-400
               focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400
@@ -476,7 +479,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             htmlFor="node-enabled"
             className="text-xs font-medium text-(--color-text-secondary)"
           >
-            활성화
+            {t('property.panel.enabled')}
           </label>
           <button
             id="node-enabled"
@@ -509,10 +512,10 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
               htmlFor="node-suppress-unconnected-warning"
               className="text-xs font-medium text-(--color-text-secondary)"
             >
-              출력 미연결 경고 끄기
+              {t('property.panel.suppressUnconnectedWarning')}
             </label>
             <FieldHelp
-              text="이 노드의 연결되지 않은 출력 포트 경고(메시지 폐기)를 로그에서 끕니다. 의도적으로 출력을 연결하지 않은 writer 노드 등에 사용."
+              text={t('property.panel.suppressUnconnectedWarningHelp')}
               describedById="node-suppress-unconnected-warning-desc"
             />
           </span>
@@ -571,7 +574,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             type="button"
             onClick={handleApply}
             disabled={hasMissingRequired}
-            title={hasMissingRequired ? '필수 항목을 입력해야 적용할 수 있습니다' : undefined}
+            title={hasMissingRequired ? t('property.panel.applyDisabledReason') : undefined}
             className={cn(
               'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5',
               'text-sm font-medium transition-colors',
@@ -581,7 +584,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             )}
           >
             <Check className="h-3.5 w-3.5" />
-            적용
+            {t('property.panel.apply')}
           </button>
           <button
             type="button"
@@ -594,7 +597,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             )}
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            취소
+            {t('property.panel.cancel')}
           </button>
         </div>
       )}

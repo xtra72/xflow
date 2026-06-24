@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 const DATA_TYPES = ['', 'int', 'float', 'string', 'boolean', 'bytes', 'json'] as const;
 
@@ -77,6 +78,7 @@ const cellInput =
 const readOnlyInput = 'cursor-not-allowed opacity-60';
 
 export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps) {
+  const { t } = useTranslation();
   // rows 를 내부 상태로 유지하여 편집 중 행 key 가 안정적으로 보존되게 한다.
   // useMemo(toRows(value)) 로 매 렌더 재생성하면 nextKey() 가 새 key 를 발급해
   // input 이 리마운트되어 한 글자 입력 후 포커스가 빠지는 문제가 있었다.
@@ -133,22 +135,22 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
           <thead>
             <tr className="bg-(--color-bg-primary)">
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                메트릭
+                {t('property.metrics.metric')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                값 키 ($.)
+                {t('property.metrics.valueKey')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                타입
+                {t('property.metrics.type')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                억제 간격
+                {t('property.metrics.suppressInterval')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                변화(절대)
+                {t('property.metrics.changeAbsolute')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                변화(%)
+                {t('property.metrics.changePercent')}
               </th>
               {!readOnly && <th className="w-10 px-2 py-1.5" />}
             </tr>
@@ -160,7 +162,7 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
                   colSpan={readOnly ? 6 : 7}
                   className="px-2 py-4 text-center text-xs text-(--color-text-muted)"
                 >
-                  메트릭이 없습니다. "메트릭 추가"로 측정값을 추가하세요.
+                  {t('property.metrics.empty')}
                 </td>
               </tr>
             )}
@@ -195,7 +197,7 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
                   >
                     {DATA_TYPES.map((dt) => (
                       <option key={dt} value={dt}>
-                        {dt === '' ? '(자동)' : dt}
+                        {dt === '' ? t('property.metrics.auto') : dt}
                       </option>
                     ))}
                   </select>
@@ -236,7 +238,7 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
                       type="button"
                       onClick={() => handleRemove(row.key)}
                       className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                      aria-label="삭제"
+                      aria-label={t('property.metrics.deleteAria')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -255,7 +257,7 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          메트릭 추가
+          {t('property.metrics.add')}
         </button>
       )}
     </div>

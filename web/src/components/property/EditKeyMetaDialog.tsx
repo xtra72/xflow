@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'r
 import { Loader2, Plus, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import { validateMetricType } from './storeKeysValidation';
 
 // ---- Props ----
@@ -127,6 +128,7 @@ export function EditKeyMetaDialog({
   onConfirm,
   isSubmitting = false,
 }: EditKeyMetaDialogProps) {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<TagRow[]>([]);
   const [metricType, setMetricType] = useState<string>('');
 
@@ -200,10 +202,10 @@ export function EditKeyMetaDialog({
 
   const disabledReason = useMemo(() => {
     if (!metricTypeValidation.valid)
-      return metricTypeValidation.error ?? 'metric_type 형식을 확인해주세요';
-    if (!allRowsValid) return '태그 입력을 확인해주세요';
+      return metricTypeValidation.error ?? t('property.meta.metricTypeFormatCheck');
+    if (!allRowsValid) return t('property.meta.tagInputCheck');
     return undefined;
-  }, [metricTypeValidation, allRowsValid]);
+  }, [metricTypeValidation, allRowsValid, t]);
 
   // 저장 실행 — 비어있지 않은 행만 모아 태그 맵을 구성하고 부모에 전체 전달.
   const handleConfirm = useCallback(async () => {
@@ -253,14 +255,14 @@ export function EditKeyMetaDialog({
             id="edit-key-meta-title"
             className="text-base font-semibold text-(--color-text-primary)"
           >
-            타입 / 태그 편집
+            {t('property.editMeta.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('property.meta.closeAria')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -270,7 +272,7 @@ export function EditKeyMetaDialog({
         <div className="space-y-4 px-5 py-4">
           {/* 키 표시 (읽기 전용) */}
           <div>
-            <p className="mb-1 text-xs font-medium text-(--color-text-muted)">키</p>
+            <p className="mb-1 text-xs font-medium text-(--color-text-muted)">{t('property.meta.key')}</p>
             <p className="break-all rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 font-mono text-sm text-(--color-text-primary)">
               {keyName}
             </p>
@@ -282,10 +284,10 @@ export function EditKeyMetaDialog({
               htmlFor="edit-metric-type"
               className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
             >
-              메트릭 타입 (선택)
+              {t('property.meta.metricTypeOptional')}
             </label>
             <p className="mb-1.5 text-[11px] text-(--color-text-muted)">
-              지표 분류용 라벨 (예: gauge, counter). 비워두면 "unknown" 으로 처리됩니다.
+              {t('property.editMeta.metricTypeHelp')}
             </p>
             <input
               id="edit-metric-type"
@@ -319,15 +321,15 @@ export function EditKeyMetaDialog({
           {/* 태그 편집 (전체 교체) */}
           <div>
             <p className="mb-1 text-xs font-medium text-(--color-text-secondary)">
-              태그 (선택)
+              {t('property.tag.optional')}
             </p>
             <p className="mb-2 text-[11px] text-(--color-text-muted)">
-              기존 태그를 불러왔습니다. 추가/삭제 후 저장하면 태그 전체가 교체됩니다.
+              {t('property.editMeta.tagsLoadedHelp')}
             </p>
 
             {rows.length === 0 ? (
               <p className="rounded-md border border-dashed border-(--color-border-default) px-3 py-3 text-center text-xs text-(--color-text-muted)">
-                태그가 없습니다
+                {t('property.tag.empty')}
               </p>
             ) : (
               <div className="space-y-1.5">
@@ -347,9 +349,9 @@ export function EditKeyMetaDialog({
                           value={row.k}
                           onChange={(e) => handleRowChange(row.id, 'k', e.target.value)}
                           onKeyDown={handleInputKeyDown}
-                          placeholder="태그 키 (예: room)"
+                          placeholder={t('property.tag.keyPlaceholder')}
                           disabled={isSubmitting}
-                          aria-label="태그 키"
+                          aria-label={t('property.tag.keyAria')}
                           aria-invalid={keyInvalid || orphanValue || undefined}
                           className={cn(
                             inputCls,
@@ -364,9 +366,9 @@ export function EditKeyMetaDialog({
                           value={row.v}
                           onChange={(e) => handleRowChange(row.id, 'v', e.target.value)}
                           onKeyDown={handleInputKeyDown}
-                          placeholder="태그 값"
+                          placeholder={t('property.tag.valuePlaceholder')}
                           disabled={isSubmitting}
-                          aria-label="태그 값"
+                          aria-label={t('property.tag.valueAria')}
                           aria-invalid={valueInvalid || undefined}
                           className={cn(
                             inputCls,
@@ -380,29 +382,29 @@ export function EditKeyMetaDialog({
                           onClick={() => handleRemoveRow(row.id)}
                           disabled={isSubmitting}
                           className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                          aria-label="태그 삭제"
+                          aria-label={t('property.tag.deleteAria')}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
                       {keyInvalid && (
                         <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                          태그 키는 영문/숫자/언더스코어/하이픈만 허용됩니다
+                          {t('property.tag.keyInvalid')}
                         </p>
                       )}
                       {valueInvalid && (
                         <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                          태그 값을 입력하세요
+                          {t('property.tag.valueRequired')}
                         </p>
                       )}
                       {orphanValue && (
                         <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                          태그 키를 입력하세요
+                          {t('property.tag.keyRequired')}
                         </p>
                       )}
                       {isDuplicate && !keyInvalid && !valueInvalid && (
                         <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                          중복된 태그 키입니다 (마지막 값이 적용됩니다)
+                          {t('property.tag.duplicate')}
                         </p>
                       )}
                     </div>
@@ -418,7 +420,7 @@ export function EditKeyMetaDialog({
               className="mt-2 inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:border-blue-500 dark:hover:text-blue-400"
             >
               <Plus className="h-3.5 w-3.5" />
-              태그 추가
+              {t('property.tag.add')}
             </button>
           </div>
         </div>
@@ -431,7 +433,7 @@ export function EditKeyMetaDialog({
             disabled={isSubmitting}
             className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
           >
-            취소
+            {t('property.editMeta.cancel')}
           </button>
           <button
             type="button"
@@ -442,7 +444,7 @@ export function EditKeyMetaDialog({
             className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {isSubmitting ? '저장 중...' : '저장'}
+            {isSubmitting ? t('property.editMeta.saving') : t('property.editMeta.save')}
           </button>
         </div>
       </div>

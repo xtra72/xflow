@@ -34,6 +34,7 @@ import {
 import { Plus, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import type { DataType, RegistrationSource } from '@/services/api/store';
 import { MetadataChips } from './MetadataChips';
 import {
@@ -229,6 +230,7 @@ export function StoreKeysEditor({
   onValidityChange,
   readOnly,
 }: StoreKeysEditorProps) {
+  const { t } = useTranslation();
   // 내부 상태로 행을 관리해 안정적 key 를 보장한다.
   // 외부 value 가 완전히 다른 객체로 교체되면(새 에이전트 로드, 취소 등) 동기화한다.
   const lastExternalRef = useRef<unknown>(undefined);
@@ -399,16 +401,16 @@ export function StoreKeysEditor({
           <thead>
             <tr className="bg-(--color-bg-primary)">
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                키
+                {t('property.store.key')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                데이터 타입
+                {t('property.store.dataType')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                메트릭 타입
+                {t('property.store.metricType')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                태그
+                {t('property.store.tags')}
               </th>
               {!readOnly && <th className="px-2 py-1.5" />}
             </tr>
@@ -420,7 +422,7 @@ export function StoreKeysEditor({
                   colSpan={readOnly ? 4 : 5}
                   className="px-2 py-4 text-center text-xs text-(--color-text-muted)"
                 >
-                  정적 키가 없습니다
+                  {t('property.store.empty')}
                 </td>
               </tr>
             )}
@@ -453,7 +455,7 @@ export function StoreKeysEditor({
                         )}
                         placeholder="indoor/1/temperature"
                         aria-invalid={isDuplicate || undefined}
-                        aria-label="Store 키"
+                        aria-label={t('property.store.keyAria')}
                       />
                       <MetadataChips
                         registration="manual"
@@ -463,7 +465,7 @@ export function StoreKeysEditor({
                     </div>
                     {isDuplicate && (
                       <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
-                        중복된 키입니다
+                        {t('property.store.duplicateKey')}
                       </p>
                     )}
                   </td>
@@ -482,10 +484,12 @@ export function StoreKeysEditor({
                         dataTypeError && errorInputCls,
                       )}
                       aria-invalid={Boolean(dataTypeError) || undefined}
-                      aria-label="데이터 타입"
+                      aria-label={t('property.store.dataType')}
                     >
                       <option value="">
-                        {registrationType === 'manual' ? '선택 (필수)' : '선택'}
+                        {registrationType === 'manual'
+                          ? t('property.store.dataTypeSelectRequired')
+                          : t('property.store.dataTypeSelect')}
                       </option>
                       {DATA_TYPE_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>
@@ -514,9 +518,9 @@ export function StoreKeysEditor({
                         readOnly && readOnlyCls,
                         metricTypeError && errorInputCls,
                       )}
-                      placeholder="unknown"
+                      placeholder={t('property.store.metricTypePlaceholder')}
                       aria-invalid={Boolean(metricTypeError) || undefined}
-                      aria-label="메트릭 타입"
+                      aria-label={t('property.store.metricType')}
                     />
                     {metricTypeError && (
                       <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
@@ -542,7 +546,7 @@ export function StoreKeysEditor({
                         type="button"
                         onClick={() => handleRemoveRow(row.id)}
                         className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                        aria-label="행 삭제"
+                        aria-label={t('property.store.deleteRowAria')}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -563,7 +567,7 @@ export function StoreKeysEditor({
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          행 추가
+          {t('property.store.addRow')}
         </button>
       )}
     </div>
@@ -599,6 +603,7 @@ function TagChipsEditor({
   onRemoveTag: (tagId: string) => void;
   onAddTag: (k: string, v: string) => void;
 }) {
+  const { t } = useTranslation();
   const [keyInput, setKeyInput] = useState('');
   const [valInput, setValInput] = useState('');
   // 폼 영역 ref — blur 시 relatedTarget 이 폼 안의 다른 요소인지 판별하는 데 사용.
@@ -642,21 +647,21 @@ function TagChipsEditor({
       {/* 태그 칩 리스트 */}
       <div className="flex flex-wrap gap-1">
         {tags.length === 0 && (
-          <span className="text-[11px] text-(--color-text-muted)">태그 없음</span>
+          <span className="text-[11px] text-(--color-text-muted)">{t('property.store.tagsEmpty')}</span>
         )}
-        {tags.map((t) => {
-          const valid = isValidTagKey(t.k);
+        {tags.map((tag) => {
+          const valid = isValidTagKey(tag.k);
           return (
-            <span key={t.tagId} className={valid ? chipCls : chipWarnCls}>
+            <span key={tag.tagId} className={valid ? chipCls : chipWarnCls}>
               <span className="font-mono">
-                {t.k}={t.v}
+                {tag.k}={tag.v}
               </span>
               {!readOnly && (
                 <button
                   type="button"
-                  onClick={() => onRemoveTag(t.tagId)}
+                  onClick={() => onRemoveTag(tag.tagId)}
                   className="rounded-full p-0.5 hover:bg-black/10 dark:hover:bg-white/10"
-                  aria-label={`${t.k} 태그 삭제`}
+                  aria-label={t('property.store.tagDeleteAria').replace('{key}', tag.k)}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -675,9 +680,9 @@ function TagChipsEditor({
             onChange={(e) => setKeyInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onBlur={handleBlur}
-            placeholder="태그 키 (예: room)"
+            placeholder={t('property.tag.keyPlaceholder')}
             className={cn(inputCls, 'max-w-[9rem]')}
-            aria-label="태그 키"
+            aria-label={t('property.tag.keyAria')}
           />
           <span className="text-(--color-text-muted)">=</span>
           <input
@@ -686,9 +691,9 @@ function TagChipsEditor({
             onChange={(e) => setValInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onBlur={handleBlur}
-            placeholder="태그 값"
+            placeholder={t('property.tag.valuePlaceholder')}
             className={cn(inputCls, 'max-w-[9rem]')}
-            aria-label="태그 값"
+            aria-label={t('property.tag.valueAria')}
           />
           <button
             type="button"
@@ -701,7 +706,7 @@ function TagChipsEditor({
             )}
           >
             <Plus className="h-3 w-3" />
-            태그 추가
+            {t('property.tag.add')}
           </button>
         </div>
       )}

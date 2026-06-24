@@ -73,6 +73,7 @@ const errorInputClass = cn(
 const readOnlyClass = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 export function FormField({ field, value, onChange, error, agentName, flowName, onFlowPortsRefresh, readOnly }: FormFieldProps) {
+  const { t } = useTranslation();
   const id = useId();
   const descriptionId = `${id}-desc`;
   const errorId = `${id}-error`;
@@ -230,7 +231,7 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
           className={cn(inputClass, error && errorInputClass, readOnly && readOnlyClass)}
           {...ariaProps}
         >
-          <option value="">선택...</option>
+          <option value="">{t('property.field.selectPlaceholder')}</option>
           {field.options?.map((opt) => (
             <option key={opt} value={opt}>
               {opt}
@@ -404,6 +405,7 @@ function SensitiveStringInput({
   readOnly?: boolean;
   ariaProps: Record<string, unknown>;
 }) {
+  const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
 
   return (
@@ -430,7 +432,7 @@ function SensitiveStringInput({
           type="button"
           onClick={() => setRevealed((v) => !v)}
           tabIndex={-1}
-          aria-label={revealed ? '값 숨기기' : '값 표시'}
+          aria-label={revealed ? t('property.field.hideValue') : t('property.field.revealValue')}
           className={cn(
             'absolute inset-y-0 right-0 flex items-center px-2.5',
             'text-(--color-text-muted) hover:text-(--color-text-primary)',
@@ -467,6 +469,7 @@ function AgentSelectInput({
   ariaProps: Record<string, unknown>;
   readOnly?: boolean;
 }) {
+  const { t } = useTranslation();
   const { data: agentsResult, isLoading } = useAgents();
   const allAgents = agentsResult?.data ?? [];
   const agents = agentTypes?.length
@@ -500,7 +503,7 @@ function AgentSelectInput({
       {...ariaProps}
     >
       <option value="">
-        {isLoading ? '로딩 중...' : '에이전트 선택...'}
+        {isLoading ? t('property.field.agentLoading') : t('property.field.agentSelectPlaceholder')}
       </option>
       {agents.map((agent) => (
         <option key={agent.id} value={agent.id}>
@@ -705,17 +708,15 @@ function FlowPickerInput({
         >
           <option value="">
             {optionsLoading
-              ? '로딩 중...'
+              ? t('property.field.flowLoading')
               : remoteNodeSelected
                 ? t('flowPicker.remoteFlowSelect')
-                : '플로우 선택...'}
+                : t('property.field.flowSelectPlaceholder')}
           </option>
           {/* 끊어진 참조도 현재 값을 유지해 사용자가 인지할 수 있게 표시한다. */}
           {isDangling && (
             <option value={selectValue}>
-              {flowName
-                ? `${flowName} (참조 끊김)`
-                : `${selectValue} (참조 끊김)`}
+              {`${flowName || selectValue} ${t('property.field.danglingSuffix')}`}
             </option>
           )}
           {optionFlows.map((flow) => (
@@ -731,8 +732,8 @@ function FlowPickerInput({
             type="button"
             onClick={onRefresh}
             disabled={value === ''}
-            title="참조 플로우의 포트를 다시 불러옵니다"
-            aria-label="포트 갱신"
+            title={t('property.field.refreshPortsTitle')}
+            aria-label={t('property.field.refreshPortsAria')}
             className={cn(
               'flex shrink-0 items-center justify-center rounded-md border px-2 py-1.5',
               'border-(--color-border-default) bg-(--color-bg-surface)',
@@ -754,7 +755,7 @@ function FlowPickerInput({
         <p className="text-xs text-amber-600 dark:text-amber-400">
           {remoteNodeSelected
             ? t('flowPicker.remoteFlowMissing')
-            : '참조 플로우를 찾을 수 없습니다. 삭제되었거나 접근할 수 없습니다.'}
+            : t('property.field.flowMissing')}
         </p>
       )}
     </div>
