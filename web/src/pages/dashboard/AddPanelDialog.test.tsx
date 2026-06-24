@@ -43,6 +43,18 @@ vi.mock('@/stores/uiStore', () => ({
     }),
 }));
 
+// i18n 스텁 — 키를 그대로 반환하되, 보간 슬롯을 가진 키는 템플릿을 반환하여
+// .replace('{slot}', value) 흐름이 실제 값을 만들어내도록 한다.
+vi.mock('@/lib/i18n', () => {
+  const templates: Record<string, string> = {
+    'dashboard.addPanel.channelOption': '{name} — flow {flow} ({count} subs)',
+    'dashboard.chart.channelNameError': '유효한 채널 이름이 아닙니다',
+  };
+  return {
+    useTranslation: () => ({ t: (k: string) => templates[k] ?? k }),
+  };
+});
+
 import AddPanelDialog from './AddPanelDialog';
 
 describe('AddPanelDialog', () => {
@@ -58,20 +70,20 @@ describe('AddPanelDialog', () => {
   describe('기존 non-chart 동작 (characterization)', () => {
     it('열려있으면 "패널 추가" 타이틀 표시', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      expect(screen.getByText('패널 추가')).toBeInTheDocument();
+      expect(screen.getByText('dashboard.addPanel.title')).toBeInTheDocument();
     });
 
     it('닫혀있으면 아무것도 렌더링하지 않음', () => {
       render(<AddPanelDialog open={false} onClose={() => {}} />);
-      expect(screen.queryByText('패널 추가')).toBeNull();
+      expect(screen.queryByText('dashboard.addPanel.title')).toBeNull();
     });
 
     it('카테고리 탭이 표시됨 (데이터, 차트, 콘텐츠, 제어)', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      expect(screen.getByRole('button', { name: '데이터' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '차트' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '콘텐츠' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '제어' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'dashboard.panelCategories.data' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'dashboard.panelCategories.content' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'dashboard.panelCategories.control' })).toBeInTheDocument();
     });
 
     it('차트 외 non-device 패널 (텍스트) 선택 시 addPanel 즉시 호출 + 닫힘', () => {
@@ -79,9 +91,9 @@ describe('AddPanelDialog', () => {
       render(<AddPanelDialog open={true} onClose={onClose} />);
 
       // 콘텐츠 탭으로 이동
-      fireEvent.click(screen.getByRole('button', { name: '콘텐츠' }));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.content' }));
       // "텍스트" 패널 선택
-      fireEvent.click(screen.getByText('텍스트'));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.text'));
 
       expect(storeState.addPanelCalls).toEqual([{ type: 'text' }]);
       expect(onClose).toHaveBeenCalledTimes(1);
@@ -93,11 +105,11 @@ describe('AddPanelDialog', () => {
   describe('차트 패널 channel_name 단계 (REQ-M5-01/02/04)', () => {
     it('차트 타입 선택 시 채널 선택 step 으로 진입 (REQ-M5-01)', async () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('라인 차트'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.lineChart'));
 
       await waitFor(() => {
-        expect(screen.getByText(/채널 선택$/)).toBeInTheDocument();
+        expect(screen.getByText(/dashboard\.addPanel\.channelSuffix$/)).toBeInTheDocument();
       });
       expect(screen.getByTestId('chart-channel-select')).toBeInTheDocument();
       // 즉시 addPanel 호출되지 않음
@@ -127,8 +139,8 @@ describe('AddPanelDialog', () => {
       ]);
 
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('통계'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.stat'));
 
       await waitFor(() => {
         expect(listChartChannelsMock).toHaveBeenCalledTimes(1);
@@ -143,8 +155,8 @@ describe('AddPanelDialog', () => {
 
     it('"Custom..." 선택 시 수동 입력 필드 표시 (REQ-M5-02)', async () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('바 차트'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.barChart'));
 
       const select = await screen.findByTestId('chart-channel-select');
       fireEvent.change(select, { target: { value: '__custom__' } });
@@ -153,8 +165,8 @@ describe('AddPanelDialog', () => {
 
     it('유효하지 않은 channel_name 은 에러 메시지 + 저장 비활성 (REQ-M5-04)', async () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('파이 차트'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.pieChart'));
 
       const select = await screen.findByTestId('chart-channel-select');
       fireEvent.change(select, { target: { value: '__custom__' } });
@@ -173,8 +185,8 @@ describe('AddPanelDialog', () => {
       render(<AddPanelDialog open={true} onClose={onClose} />);
       // table 은 카탈로그 상 '데이터' 카테고리에 있음 (UI 분류).
       // 하지만 isChartPanelType(table) === true 이므로 chart-config 스텝으로 라우팅된다.
-      fireEvent.click(screen.getByRole('button', { name: '데이터' }));
-      fireEvent.click(screen.getByText('테이블'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
 
       const select = await screen.findByTestId('chart-channel-select');
       fireEvent.change(select, { target: { value: '__custom__' } });
@@ -193,8 +205,8 @@ describe('AddPanelDialog', () => {
 
     it('빈 입력은 에러 메시지 숨김 + 저장 비활성 (초기 상태)', async () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('통계'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.stat'));
 
       const select = await screen.findByTestId('chart-channel-select');
       // 초기 빈 상태
@@ -218,8 +230,8 @@ describe('AddPanelDialog', () => {
       ]);
 
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('라인 차트'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.lineChart'));
 
       const select = await screen.findByTestId('chart-channel-select');
       await waitFor(() => {
@@ -240,11 +252,11 @@ describe('AddPanelDialog', () => {
       listChartChannelsMock.mockRejectedValueOnce(new Error('network down'));
 
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('통계'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.stat'));
 
       await waitFor(() => {
-        expect(screen.getByText(/채널 목록 조회에 실패/)).toBeInTheDocument();
+        expect(screen.getByText(/dashboard\.addPanel\.loadErrorCustom/)).toBeInTheDocument();
       });
       // Custom 경로는 여전히 사용 가능
       const select = await screen.findByTestId('chart-channel-select');
@@ -262,15 +274,15 @@ describe('AddPanelDialog', () => {
   describe('multi-channel line-chart preset', () => {
     it('차트 카테고리에 "다채널 비교" 옵션 노출', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      expect(screen.getByText('다채널 비교')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      expect(screen.getByText('dashboard.addPanel.labels.multiChannel')).toBeInTheDocument();
     });
 
     it('"다채널 비교" 선택 시 channels=[빈x2] 로 즉시 추가 + 닫힘 (channel-config 스킵)', () => {
       const onClose = vi.fn();
       render(<AddPanelDialog open={true} onClose={onClose} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('다채널 비교'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.addPanel.labels.multiChannel'));
 
       expect(storeState.addPanelWithConfigCalls).toHaveLength(1);
       const call = storeState.addPanelWithConfigCalls[0]!;
@@ -284,17 +296,18 @@ describe('AddPanelDialog', () => {
 
     it('"다채널 비교" 추가 시 chart-config 스텝(채널 선택 화면) 미진입', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '차트' }));
-      fireEvent.click(screen.getByText('다채널 비교'));
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.chart' }));
+      fireEvent.click(screen.getByText('dashboard.addPanel.labels.multiChannel'));
       // chart-config 스텝의 채널 선택 select 가 나타나지 않아야 함
       expect(screen.queryByTestId('chart-channel-select')).toBeNull();
     });
 
     it('"다채널 비교" 검색으로 찾을 수 있음', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      const search = screen.getByPlaceholderText('패널 검색...');
-      fireEvent.change(search, { target: { value: '다채널' } });
-      expect(screen.getByText('다채널 비교')).toBeInTheDocument();
+      const search = screen.getByPlaceholderText('dashboard.addPanel.searchPlaceholder');
+      // 검색은 번역된 라벨/설명(여기선 키 문자열) 기준으로 필터링되므로 키 substring 으로 검색.
+      fireEvent.change(search, { target: { value: 'multiChannel' } });
+      expect(screen.getByText('dashboard.addPanel.labels.multiChannel')).toBeInTheDocument();
     });
   });
 });

@@ -33,6 +33,12 @@ vi.mock('react-grid-layout', () => ({
 vi.mock('./renderDashboardPanel', () => ({
   renderDashboardPanel: () => null,
 }));
+// i18n 스텁 — 키를 그대로 반환하되 {value} 보간은 유지하여 옵션을 구분 가능하게 한다.
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({
+    t: (k: string) => (k === 'dashboard.refreshOption' ? '{value}' : k),
+  }),
+}));
 
 // authStore — 일반 사용자(admin) 주입. selector/직접 호출 모두 지원.
 const authState = { user: { name: 'admin', role: 'admin' as const } };
@@ -67,19 +73,19 @@ beforeEach(() => {
 describe('DashboardPage 갱신 주기 드롭다운', () => {
   it('헤더에 현재 갱신 주기를 표시한다', () => {
     renderPage();
-    expect(screen.getByRole('button', { name: '갱신 주기' })).toHaveTextContent('10초');
+    expect(screen.getByRole('button', { name: 'dashboard.header.refreshAria' })).toHaveTextContent('10');
   });
 
   it('항목 선택 시 store 갱신 주기가 변경된다', () => {
     renderPage();
 
-    fireEvent.click(screen.getByRole('button', { name: '갱신 주기' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.header.refreshAria' }));
 
-    const listbox = screen.getByRole('listbox', { name: '갱신 주기 선택' });
-    fireEvent.click(within(listbox).getByRole('option', { name: '30초' }));
+    const listbox = screen.getByRole('listbox', { name: 'dashboard.header.refreshSelectAria' });
+    fireEvent.click(within(listbox).getByRole('option', { name: '30' }));
 
     expect(useUIStore.getState().dashboardRefreshInterval).toBe(30);
     // 선택 후 드롭다운이 닫힌다.
-    expect(screen.queryByRole('listbox', { name: '갱신 주기 선택' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox', { name: 'dashboard.header.refreshSelectAria' })).not.toBeInTheDocument();
   });
 });

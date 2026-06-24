@@ -32,6 +32,7 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
+import { useTranslation } from '@/lib/i18n';
 import { useDashboardSync } from '@/hooks/useDashboardSync';
 import { isRemoteTarget, LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { getMetrics } from '@/services/api/monitorService';
@@ -73,25 +74,26 @@ export default function DashboardPage({
   );
 }
 
-/** 대시보드 자동 갱신 주기 옵션 (초 단위). 설정 페이지에서 헤더로 이동. */
+/** 대시보드 자동 갱신 주기 옵션 (초 단위). 라벨은 t('dashboard.refreshOption') 로 렌더. */
 const REFRESH_INTERVALS = [
-  { value: 5, label: '5초' },
-  { value: 10, label: '10초' },
-  { value: 15, label: '15초' },
-  { value: 30, label: '30초' },
-  { value: 60, label: '60초' },
+  { value: 5 },
+  { value: 10 },
+  { value: 15 },
+  { value: 30 },
+  { value: 60 },
 ] as const;
 
-/** 테마 모드 라벨 (Pencil 디자인 매칭) */
-const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string; icon: React.ReactNode; iconColor: string }[] = [
-  { value: 'system', label: '시스템', desc: 'OS 설정에 따라 자동 전환', icon: <Monitor className="h-4 w-4" />, iconColor: 'text-blue-500' },
-  { value: 'day', label: '데이', desc: '밝은 배경, 어두운 텍스트', icon: <Sun className="h-4 w-4" />, iconColor: 'text-amber-500' },
-  { value: 'night', label: '나이트', desc: '어두운 배경, 밝은 텍스트', icon: <Moon className="h-4 w-4" />, iconColor: 'text-indigo-500' },
-  { value: 'custom', label: '커스텀', desc: '사용자 정의 색상 테마', icon: <Paintbrush className="h-4 w-4" />, iconColor: 'text-violet-500' },
+/** 테마 모드 옵션 (Pencil 디자인 매칭). labelKey/descKey 는 i18n 키. */
+const THEME_OPTIONS: { value: ThemeMode; labelKey: string; descKey: string; icon: React.ReactNode; iconColor: string }[] = [
+  { value: 'system', labelKey: 'dashboard.theme.system', descKey: 'dashboard.themeDesc.system', icon: <Monitor className="h-4 w-4" />, iconColor: 'text-blue-500' },
+  { value: 'day', labelKey: 'dashboard.theme.day', descKey: 'dashboard.themeDesc.day', icon: <Sun className="h-4 w-4" />, iconColor: 'text-amber-500' },
+  { value: 'night', labelKey: 'dashboard.theme.night', descKey: 'dashboard.themeDesc.night', icon: <Moon className="h-4 w-4" />, iconColor: 'text-indigo-500' },
+  { value: 'custom', labelKey: 'dashboard.theme.custom', descKey: 'dashboard.themeDesc.custom', icon: <Paintbrush className="h-4 w-4" />, iconColor: 'text-violet-500' },
 ];
 
 /** 로컬 대시보드 뷰 — 기존 DashboardPage 본문(편집/sync 포함). 회귀 없이 동일하다. */
 function LocalDashboardView() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 훅.
@@ -317,21 +319,21 @@ function LocalDashboardView() {
   const hasError = flowsError;
 
   // 현재 활성 대시보드 이름
-  const activePageName = activePage?.name ?? '대시보드';
+  const activePageName = activePage?.name ?? t('dashboard.fallbackName');
 
   return (
     <div className="-m-6 flex flex-1 flex-col" ref={containerRef}>
       {/* SPEC-DASHBOARD-001 v0.2.0: 공유/내 대시보드 탭 토글 (헤더 위) */}
       <div
         role="tablist"
-        aria-label="대시보드 스코프"
+        aria-label={t('dashboard.scope.aria')}
         className="flex h-9 shrink-0 items-center gap-1 border-b border-(--color-border-default) bg-(--color-bg-surface) px-6"
       >
         <button
           type="button"
           role="tab"
           aria-selected={activeDashboardScope === 'shared'}
-          aria-label="공유 대시보드"
+          aria-label={t('dashboard.scope.sharedAria')}
           onClick={() => setActiveDashboardScope('shared')}
           className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
             activeDashboardScope === 'shared'
@@ -339,13 +341,13 @@ function LocalDashboardView() {
               : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
           }`}
         >
-          공유
+          {t('dashboard.scope.shared')}
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={activeDashboardScope === 'mine'}
-          aria-label="내 대시보드"
+          aria-label={t('dashboard.scope.mineAria')}
           onClick={() => setActiveDashboardScope('mine')}
           className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
             activeDashboardScope === 'mine'
@@ -353,16 +355,16 @@ function LocalDashboardView() {
               : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
           }`}
         >
-          내 대시보드
+          {t('dashboard.scope.mine')}
         </button>
         {/* 동기화 인디케이터 + 읽기 전용 뱃지 */}
         <div className="ml-auto flex items-center gap-3">
           {sharedReadOnly && (
             <span
               className="text-[11px] text-(--color-text-muted)"
-              title="관리자만 편집 가능"
+              title={t('dashboard.scope.adminOnly')}
             >
-              읽기 전용 (admin 만 편집)
+              {t('dashboard.scope.readOnly')}
             </span>
           )}
           {pendingSync && (
@@ -370,7 +372,7 @@ function LocalDashboardView() {
               className="text-[11px] text-(--color-text-muted)"
               aria-live="polite"
             >
-              동기화 중…
+              {t('dashboard.scope.syncing')}
             </span>
           )}
         </div>
@@ -385,7 +387,7 @@ function LocalDashboardView() {
               {activePageName}
             </span>
             <span className="inline-flex items-center rounded-md bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-500 dark:bg-amber-900/30 dark:text-amber-400">
-              편집 모드
+              {t('dashboard.editMode')}
             </span>
           </div>
         ) : (
@@ -445,7 +447,7 @@ function LocalDashboardView() {
                             ? 'text-yellow-500'
                             : 'text-(--color-text-muted) hover:text-yellow-400'
                         }`}
-                        title={sharedReadOnly ? '관리자만 편집 가능' : page.isDefault ? '기본 대시보드' : '기본 대시보드로 설정'}
+                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
                       >
                         <Star className={`h-3.5 w-3.5 ${page.isDefault ? 'fill-current' : ''}`} />
                       </button>
@@ -459,7 +461,7 @@ function LocalDashboardView() {
                             ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                             : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                         }`}
-                        title={sharedReadOnly ? '관리자만 편집 가능' : '이름 변경'}
+                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.header.rename')}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
@@ -469,10 +471,10 @@ function LocalDashboardView() {
                 <div className="border-t border-(--color-border-default)">
                   <button
                     type="button"
-                    onClick={() => { addDashboardPage('새 대시보드'); setDashboardDropdownOpen(false); }}
+                    onClick={() => { addDashboardPage(t('dashboard.header.newDashboardName')); setDashboardDropdownOpen(false); }}
                     disabled={sharedReadOnly}
                     aria-disabled={sharedReadOnly}
-                    title={sharedReadOnly ? '관리자만 편집 가능' : undefined}
+                    title={sharedReadOnly ? t('dashboard.scope.adminOnly') : undefined}
                     className={`flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm transition-colors ${
                       sharedReadOnly
                         ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
@@ -480,7 +482,7 @@ function LocalDashboardView() {
                     }`}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    새 대시보드 추가
+                    {t('dashboard.addDashboard')}
                   </button>
                 </div>
               </div>
@@ -501,7 +503,7 @@ function LocalDashboardView() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
                 >
                   <PaletteIcon className="h-3.5 w-3.5" />
-                  테마
+                  {t('dashboard.header.theme')}
                   <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
                 </button>
 
@@ -509,7 +511,7 @@ function LocalDashboardView() {
                 {themeDropdownOpen && (
                   <div className="absolute right-0 top-full z-50 mt-1 w-[280px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg">
                     <div className="px-4 py-2.5">
-                      <span className="text-[13px] font-semibold text-(--color-text-primary)">대시보드 테마</span>
+                      <span className="text-[13px] font-semibold text-(--color-text-primary)">{t('dashboard.header.themeTitle')}</span>
                     </div>
                     <div className="h-px bg-(--color-border-default)" />
                     <div className="flex flex-col gap-0.5 p-1.5">
@@ -528,9 +530,9 @@ function LocalDashboardView() {
                             <span className={opt.iconColor}>{opt.icon}</span>
                             <div className="flex flex-col items-start gap-0.5">
                               <span className={`text-[13px] font-medium ${theme === opt.value ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-primary)'}`}>
-                                {opt.label}
+                                {t(opt.labelKey)}
                               </span>
-                              <span className="text-[11px] text-(--color-text-muted)">{opt.desc}</span>
+                              <span className="text-[11px] text-(--color-text-muted)">{t(opt.descKey)}</span>
                             </div>
                           </div>
                           {theme === opt.value ? (
@@ -555,20 +557,20 @@ function LocalDashboardView() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
                 >
                   <Grid3X3 className="h-3.5 w-3.5" />
-                  그리드
+                  {t('dashboard.header.grid')}
                   <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
                 </button>
 
                 {gridDropdownOpen && (
                   <div className="absolute right-0 top-full z-50 mt-1 w-[200px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg">
                     <div className="px-4 py-2.5">
-                      <span className="text-[13px] font-semibold text-(--color-text-primary)">그리드 설정</span>
+                      <span className="text-[13px] font-semibold text-(--color-text-primary)">{t('dashboard.grid.title')}</span>
                     </div>
                     <div className="h-px bg-(--color-border-default)" />
                     <div className="flex flex-col gap-3 p-3">
                       {/* 칼럼 수 입력 */}
                       <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] font-medium text-(--color-text-muted)">칼럼 수 (4 - 100)</span>
+                        <span className="text-[11px] font-medium text-(--color-text-muted)">{t('dashboard.grid.colsLabel')}</span>
                         <div className="flex">
                           <div className="flex flex-1 items-center justify-center rounded-l-lg border border-(--color-border-default) bg-(--color-bg-surface)">
                             <input
@@ -605,13 +607,13 @@ function LocalDashboardView() {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                           <Grid3X3 className="h-3.5 w-3.5 text-(--color-text-muted)" />
-                          <span className="text-xs font-medium text-(--color-text-secondary)">그리드 라인 표시</span>
+                          <span className="text-xs font-medium text-(--color-text-secondary)">{t('dashboard.grid.showGridLines')}</span>
                         </div>
                         <button
                           type="button"
                           onClick={() => setShowGridLines(!showGridLines)}
                           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${showGridLines ? 'bg-blue-500' : 'bg-(--color-border-default)'}`}
-                          aria-label="그리드 라인 표시 토글"
+                          aria-label={t('dashboard.grid.showGridLinesAria')}
                         >
                           <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${showGridLines ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                         </button>
@@ -628,7 +630,7 @@ function LocalDashboardView() {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
               >
                 <Plus className="h-3.5 w-3.5" />
-                패널 추가
+                {t('dashboard.addPanel')}
               </button>
 
               {/* 취소 (Pencil: m5m4p) */}
@@ -638,7 +640,7 @@ function LocalDashboardView() {
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) px-4 py-2 text-[13px] font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <X className="h-3.5 w-3.5 text-(--color-text-muted)" />
-                취소
+                {t('common.cancel')}
               </button>
 
               {/* 저장 (Pencil: NjZlk) */}
@@ -648,7 +650,7 @@ function LocalDashboardView() {
                 className="inline-flex items-center gap-1.5 rounded-md bg-blue-500 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-600"
               >
                 <Save className="h-3.5 w-3.5" />
-                저장
+                {t('common.save')}
               </button>
             </>
           ) : (
@@ -659,7 +661,7 @@ function LocalDashboardView() {
                 <span className="inline-flex items-center gap-1.5">
                   <span className={`h-2 w-2 rounded-full ${wsState === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`} />
                   <span className={`text-xs ${wsState === 'connected' ? 'text-green-500' : 'text-(--color-text-muted)'}`}>
-                    {wsState === 'connected' ? '연결됨' : '오프라인'}
+                    {wsState === 'connected' ? t('dashboard.header.connected') : t('dashboard.offline')}
                   </span>
                 </span>
 
@@ -669,23 +671,23 @@ function LocalDashboardView() {
                     type="button"
                     onClick={() => setRefreshDropdownOpen((prev) => !prev)}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-2.5 py-1.5 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
-                    aria-label="갱신 주기"
+                    aria-label={t('dashboard.header.refreshAria')}
                     aria-haspopup="listbox"
                     aria-expanded={refreshDropdownOpen}
                   >
                     <Clock className="h-3.5 w-3.5" />
-                    {refreshInterval}초
+                    {refreshInterval}{t('dashboard.header.refreshSuffix')}
                     <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
                   </button>
 
                   {refreshDropdownOpen && (
                     <div
                       role="listbox"
-                      aria-label="갱신 주기 선택"
+                      aria-label={t('dashboard.header.refreshSelectAria')}
                       className="absolute right-0 top-full z-50 mt-1 w-[160px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg"
                     >
                       <div className="px-4 py-2.5">
-                        <span className="text-[13px] font-semibold text-(--color-text-primary)">갱신 주기</span>
+                        <span className="text-[13px] font-semibold text-(--color-text-primary)">{t('dashboard.header.refreshTitle')}</span>
                       </div>
                       <div className="h-px bg-(--color-border-default)" />
                       <div className="flex flex-col gap-0.5 p-1.5">
@@ -705,7 +707,7 @@ function LocalDashboardView() {
                               }`}
                             >
                               <span className={`text-[13px] font-medium ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-primary)'}`}>
-                                {opt.label}
+                                {t('dashboard.refreshOption').replace('{value}', String(opt.value))}
                               </span>
                               {isSelected && <Check className="h-3.5 w-3.5 text-blue-500" />}
                             </button>
@@ -722,7 +724,7 @@ function LocalDashboardView() {
                   onClick={handleRefresh}
                   disabled={isLoading}
                   className="text-(--color-text-muted) transition-colors hover:text-(--color-text-primary) disabled:opacity-50"
-                  aria-label="새로고침"
+                  aria-label={t('dashboard.header.refresh')}
                 >
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
@@ -733,13 +735,13 @@ function LocalDashboardView() {
                   onClick={() => setEditMode(true)}
                   disabled={sharedReadOnly}
                   aria-disabled={sharedReadOnly}
-                  title={sharedReadOnly ? '관리자만 편집 가능' : '레이아웃 편집'}
+                  title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.editLayout')}
                   className={`transition-colors ${
                     sharedReadOnly
                       ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                       : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                   }`}
-                  aria-label="레이아웃 편집"
+                  aria-label={t('dashboard.editLayout')}
                 >
                   <Pencil className="h-4 w-4" />
                 </button>
@@ -754,7 +756,7 @@ function LocalDashboardView() {
         {/* 에러 배너 */}
         {hasError && (
           <div className="mx-6 mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
-            데이터를 불러오는 중 오류가 발생했습니다. 새로고침을 시도해주세요.
+            {t('dashboard.loadError')}
           </div>
         )}
 
@@ -763,7 +765,7 @@ function LocalDashboardView() {
           <div className="mx-6 mt-4 flex h-9 items-center gap-2 rounded-lg bg-blue-50 px-4 dark:bg-blue-900/20">
             <Info className="h-3.5 w-3.5 shrink-0 text-blue-500" />
             <span className="text-[11px] text-blue-500">
-              {gridCols}칸 그리드 | 타이틀 바 드래그로 이동 | 우측 하단 모서리로 크기 조절 | 최소 2칸, 최대 {gridCols}칸
+              {t('dashboard.editInfo').replace(/\{cols\}/g, String(gridCols))}
             </span>
           </div>
         )}
@@ -833,8 +835,8 @@ function LocalDashboardView() {
                           type="button"
                           onClick={() => setSettingsPanelId(panel.id)}
                           className="rounded-full bg-(--color-bg-elevated) p-0.5 text-(--color-text-muted) shadow transition-colors hover:bg-(--color-bg-surface) hover:text-(--color-text-primary)"
-                          aria-label="패널 설정"
-                          title="패널 설정"
+                          aria-label={t('dashboard.settings.title')}
+                          title={t('dashboard.settings.title')}
                         >
                           <Settings className="h-3.5 w-3.5" />
                         </button>
@@ -842,8 +844,8 @@ function LocalDashboardView() {
                           type="button"
                           onClick={() => removePanel(panel.id)}
                           className="rounded-full bg-red-500 p-0.5 text-white shadow transition-colors hover:bg-red-600"
-                          aria-label="패널 삭제"
-                          title="패널 삭제"
+                          aria-label={t('dashboard.settings.deletePanelAria')}
+                          title={t('dashboard.settings.deletePanelAria')}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>

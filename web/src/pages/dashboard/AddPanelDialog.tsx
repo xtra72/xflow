@@ -33,6 +33,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useUIStore, type PanelType } from '@/stores/uiStore';
 import { useDevices } from '@/hooks/useDevice';
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import {
   listChartChannels,
@@ -44,9 +45,8 @@ import {
 /** SPEC-CHART-001 REQ-M1-02 / REQ-M5-04: channel_name 정규식 */
 const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 
-/** 채널 이름 검증 에러 메시지 (사용자 대화 언어: 한국어) */
-const CHANNEL_NAME_ERROR_MESSAGE =
-  '유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).';
+/** 채널 이름 검증 에러 메시지 키 (렌더 시 t() 로 변환) */
+const CHANNEL_NAME_ERROR_KEY = 'dashboard.chart.channelNameError';
 
 /** 차트 계열 패널 타입 집합 */
 const CHART_PANEL_TYPES: ReadonlySet<PanelType> = new Set<PanelType>([
@@ -67,8 +67,10 @@ function isChartPanelType(type: PanelType): boolean {
 interface PanelOption {
   type: PanelType;
   icon: LucideIcon;
-  label: string;
-  description: string;
+  /** 라벨 i18n 키 (렌더 시 t() 로 변환) */
+  labelKey: string;
+  /** 설명 i18n 키 (렌더 시 t() 로 변환) */
+  descriptionKey: string;
   /** 디바이스 선택 스텝이 필요한 유형 */
   needsDevice?: boolean;
   /**
@@ -78,45 +80,53 @@ interface PanelOption {
   presetConfig?: Record<string, unknown>;
 }
 
-/** 카테고리 정의 */
-type Category = '데이터' | '차트' | '콘텐츠' | '제어';
+/** 카테고리 정의 (안정적인 식별자, 표시 라벨은 t() 로 변환) */
+type Category = 'data' | 'chart' | 'content' | 'control';
 
-const CATEGORIES: Category[] = ['데이터', '차트', '콘텐츠', '제어'];
+const CATEGORIES: Category[] = ['data', 'chart', 'content', 'control'];
+
+/** 카테고리 표시 라벨 키 (기존 dashboard.panelCategories 재사용) */
+const CATEGORY_LABEL_KEY: Record<Category, string> = {
+  data: 'dashboard.panelCategories.data',
+  chart: 'dashboard.panelCategories.chart',
+  content: 'dashboard.panelCategories.content',
+  control: 'dashboard.panelCategories.control',
+};
 
 /** 카테고리별 패널 옵션 */
 const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
-  데이터: [
-    { type: 'flows', icon: GitBranch, label: '플로우 현황', description: '플로우 목록과 실행 상태' },
-    { type: 'agents', icon: Bot, label: '에이전트 현황', description: '에이전트 목록과 상태' },
-    { type: 'resource', icon: Activity, label: '프로세스 리소스', description: 'CPU, 메모리 등 시스템 메트릭' },
-    { type: 'devices', icon: HardDrive, label: '디바이스 목록', description: '등록된 디바이스 목록과 상태' },
-    { type: 'device', icon: HardDrive, label: '디바이스 제어', description: '개별 디바이스 리모컨', needsDevice: true },
-    { type: 'logs', icon: ScrollText, label: '로그', description: '실시간 로그 스트림' },
-    { type: 'table', icon: Table, label: '테이블', description: '데이터 테이블 뷰' },
-    { type: 'properties-grid', icon: LayoutGrid, label: '속성 그리드', description: '디바이스 속성을 항목별 그리드로 표시', needsDevice: true },
+  data: [
+    { type: 'flows', icon: GitBranch, labelKey: 'dashboard.panelTypes.flows', descriptionKey: 'dashboard.addPanel.descriptions.flows' },
+    { type: 'agents', icon: Bot, labelKey: 'dashboard.panelTypes.agents', descriptionKey: 'dashboard.addPanel.descriptions.agents' },
+    { type: 'resource', icon: Activity, labelKey: 'dashboard.panelTypes.resource', descriptionKey: 'dashboard.addPanel.descriptions.resource' },
+    { type: 'devices', icon: HardDrive, labelKey: 'dashboard.panelTypes.devices', descriptionKey: 'dashboard.addPanel.descriptions.devices' },
+    { type: 'device', icon: HardDrive, labelKey: 'dashboard.panelTypes.device', descriptionKey: 'dashboard.addPanel.descriptions.device', needsDevice: true },
+    { type: 'logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.logs', descriptionKey: 'dashboard.addPanel.descriptions.logs' },
+    { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
+    { type: 'properties-grid', icon: LayoutGrid, labelKey: 'dashboard.addPanel.labels.propertiesGrid', descriptionKey: 'dashboard.addPanel.descriptions.propertiesGrid', needsDevice: true },
   ],
-  차트: [
-    { type: 'stat', icon: Hash, label: '통계', description: '단일 수치 통계 카드' },
-    { type: 'gauge', icon: CircleDot, label: '게이지', description: '원형 게이지 차트' },
-    { type: 'line-chart', icon: TrendingUp, label: '라인 차트', description: '시계열 라인 차트' },
+  chart: [
+    { type: 'stat', icon: Hash, labelKey: 'dashboard.panelTypes.stat', descriptionKey: 'dashboard.addPanel.descriptions.stat' },
+    { type: 'gauge', icon: CircleDot, labelKey: 'dashboard.panelTypes.gauge', descriptionKey: 'dashboard.addPanel.descriptions.gauge' },
+    { type: 'line-chart', icon: TrendingUp, labelKey: 'dashboard.panelTypes.lineChart', descriptionKey: 'dashboard.addPanel.descriptions.lineChart' },
     {
       type: 'line-chart',
       icon: TrendingUp,
-      label: '다채널 비교',
-      description: '여러 chart-emitter 채널을 한 라인 차트에서 동시 비교',
+      labelKey: 'dashboard.addPanel.labels.multiChannel',
+      descriptionKey: 'dashboard.addPanel.descriptions.multiChannel',
       presetConfig: { channels: [{ name: '' }, { name: '' }] },
     },
-    { type: 'bar-chart', icon: BarChart2, label: '바 차트', description: '막대 차트' },
-    { type: 'pie-chart', icon: PieChart, label: '파이 차트', description: '원형 비율 차트' },
+    { type: 'bar-chart', icon: BarChart2, labelKey: 'dashboard.panelTypes.barChart', descriptionKey: 'dashboard.addPanel.descriptions.barChart' },
+    { type: 'pie-chart', icon: PieChart, labelKey: 'dashboard.panelTypes.pieChart', descriptionKey: 'dashboard.addPanel.descriptions.pieChart' },
   ],
-  콘텐츠: [
-    { type: 'text', icon: FileText, label: '텍스트', description: '마크다운 텍스트 블록' },
+  content: [
+    { type: 'text', icon: FileText, labelKey: 'dashboard.panelTypes.text', descriptionKey: 'dashboard.addPanel.descriptions.text' },
   ],
-  제어: [
-    { type: 'ac-control', icon: Thermometer, label: '에어컨 제어', description: '에어컨 온도/모드 제어', needsDevice: true },
-    { type: 'hvac-control', icon: Wind, label: '공조기 제어', description: '공조기 통합 제어', needsDevice: true },
-    { type: 'outdoor-control', icon: Cpu, label: '실외기 모니터링', description: '실외기/제어기 압축기 상태', needsDevice: true },
-    { type: 'custom-control', icon: Settings, label: '커스텀 제어', description: '사용자 정의 제어', needsDevice: true },
+  control: [
+    { type: 'ac-control', icon: Thermometer, labelKey: 'dashboard.panelTypes.acControl', descriptionKey: 'dashboard.addPanel.descriptions.acControl', needsDevice: true },
+    { type: 'hvac-control', icon: Wind, labelKey: 'dashboard.panelTypes.hvacControl', descriptionKey: 'dashboard.addPanel.descriptions.hvacControl', needsDevice: true },
+    { type: 'outdoor-control', icon: Cpu, labelKey: 'dashboard.addPanel.labels.outdoorControl', descriptionKey: 'dashboard.addPanel.descriptions.outdoorControl', needsDevice: true },
+    { type: 'custom-control', icon: Settings, labelKey: 'dashboard.panelTypes.customControl', descriptionKey: 'dashboard.addPanel.descriptions.customControl', needsDevice: true },
   ],
 };
 
@@ -255,7 +265,8 @@ function TypeStep({
   onSelect: (option: PanelOption) => void;
   onClose: () => void;
 }) {
-  const [activeCategory, setActiveCategory] = useState<Category>('데이터');
+  const { t } = useTranslation();
+  const [activeCategory, setActiveCategory] = useState<Category>('data');
   const [searchQuery, setSearchQuery] = useState('');
 
   // 검색 결과 (검색어가 있으면 전체 카테고리에서 필터링)
@@ -264,13 +275,13 @@ function TypeStep({
     if (!query) {
       return PANEL_OPTIONS_BY_CATEGORY[activeCategory];
     }
-    // 검색 시 전체에서 필터링
+    // 검색 시 전체에서 필터링 (번역된 라벨/설명 기준)
     return ALL_PANEL_OPTIONS.filter(
       (opt) =>
-        opt.label.toLowerCase().includes(query) ||
-        opt.description.toLowerCase().includes(query),
+        t(opt.labelKey).toLowerCase().includes(query) ||
+        t(opt.descriptionKey).toLowerCase().includes(query),
     );
-  }, [activeCategory, searchQuery]);
+  }, [activeCategory, searchQuery, t]);
 
   const isSearching = searchQuery.trim().length > 0;
 
@@ -283,13 +294,13 @@ function TypeStep({
             id="add-panel-dialog-title"
             className="text-lg font-semibold text-(--color-text-primary)"
           >
-            패널 추가
+            {t('dashboard.addPanel.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('dashboard.addPanel.closeAria')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -302,7 +313,7 @@ function TypeStep({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="패널 검색..."
+            placeholder={t('dashboard.addPanel.searchPlaceholder')}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) py-2 pr-3 pl-9 text-sm text-(--color-text-primary) placeholder:text-(--color-text-muted) focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
           />
         </div>
@@ -322,7 +333,7 @@ function TypeStep({
                     : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)',
                 )}
               >
-                {cat}
+                {t(CATEGORY_LABEL_KEY[cat])}
               </button>
             ))}
           </div>
@@ -333,7 +344,7 @@ function TypeStep({
       <div className="max-h-80 overflow-y-auto px-5 py-4">
         {filteredOptions.length === 0 ? (
           <p className="py-8 text-center text-sm text-(--color-text-muted)">
-            검색 결과가 없습니다.
+            {t('dashboard.addPanel.noResults')}
           </p>
         ) : (
           <div className="grid grid-cols-2 gap-3">
@@ -341,7 +352,7 @@ function TypeStep({
               const Icon = option.icon;
               return (
                 <button
-                  key={`${option.type}:${option.label}`}
+                  key={`${option.type}:${option.labelKey}`}
                   type="button"
                   onClick={() => onSelect(option)}
                   className="flex items-start gap-3 rounded-lg border border-(--color-border-default) p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-600 dark:hover:bg-blue-900/20"
@@ -351,10 +362,10 @@ function TypeStep({
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-(--color-text-primary)">
-                      {option.label}
+                      {t(option.labelKey)}
                     </p>
                     <p className="mt-0.5 text-xs leading-relaxed text-(--color-text-muted)">
-                      {option.description}
+                      {t(option.descriptionKey)}
                     </p>
                   </div>
                 </button>
@@ -378,6 +389,7 @@ function DeviceStep({
   onBack: () => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { data: devicesData, isLoading } = useDevices();
   const devices = devicesData?.data ?? [];
 
@@ -389,19 +401,19 @@ function DeviceStep({
             type="button"
             onClick={onBack}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label="뒤로"
+            aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
           </button>
           <h2 className="text-lg font-semibold text-(--color-text-primary)">
-            디바이스 선택
+            {t('dashboard.addPanel.selectDevice')}
           </h2>
         </div>
         <button
           type="button"
           onClick={onClose}
           className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-          aria-label="닫기"
+          aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
         </button>
@@ -413,7 +425,7 @@ function DeviceStep({
           </div>
         ) : devices.length === 0 ? (
           <p className="py-8 text-center text-sm text-(--color-text-muted)">
-            등록된 디바이스가 없습니다.
+            {t('dashboard.addPanel.noDevices')}
           </p>
         ) : (
           <div className="space-y-2">
@@ -457,27 +469,13 @@ function DeviceStep({
 /** "Custom..." 수동 입력 표시용 sentinel */
 const CUSTOM_CHANNEL_SENTINEL = '__custom__';
 
-/** 차트 패널 타입별 표시 라벨 */
-const CHART_TYPE_LABEL: Record<PanelType, string> = {
-  stat: '통계',
-  'line-chart': '라인 차트',
-  'bar-chart': '바 차트',
-  'pie-chart': '파이 차트',
-  table: '테이블',
-  // 아래는 차트 외 타입이지만 Record 완전성을 위해 포함 (사용되지 않음)
-  flows: '',
-  agents: '',
-  resource: '',
-  devices: '',
-  device: '',
-  logs: '',
-  gauge: '',
-  text: '',
-  'ac-control': '',
-  'hvac-control': '',
-  'custom-control': '',
-  'outdoor-control': '',
-  'properties-grid': '',
+/** 차트 패널 타입별 표시 라벨 키 (기존 dashboard.panelTypes 재사용) */
+const CHART_TYPE_LABEL_KEY: Partial<Record<PanelType, string>> = {
+  stat: 'dashboard.panelTypes.stat',
+  'line-chart': 'dashboard.panelTypes.lineChart',
+  'bar-chart': 'dashboard.panelTypes.barChart',
+  'pie-chart': 'dashboard.panelTypes.pieChart',
+  table: 'dashboard.panelTypes.table',
 };
 
 function ChartConfigStep({
@@ -491,6 +489,7 @@ function ChartConfigStep({
   onBack: () => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   // 드롭다운 선택 상태: 채널 이름 OR '__custom__' OR '' (초기)
   const [selectedOption, setSelectedOption] = useState<string>('');
   // Custom 모드일 때 수동 입력 값
@@ -546,7 +545,7 @@ function ChartConfigStep({
             type="button"
             onClick={onBack}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label="뒤로"
+            aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
           </button>
@@ -554,14 +553,14 @@ function ChartConfigStep({
             id="add-panel-dialog-title"
             className="text-lg font-semibold text-(--color-text-primary)"
           >
-            {CHART_TYPE_LABEL[panelType] || '차트'} 채널 선택
+            {(CHART_TYPE_LABEL_KEY[panelType] ? t(CHART_TYPE_LABEL_KEY[panelType]!) : t('dashboard.addPanel.chartFallback'))} {t('dashboard.addPanel.channelSuffix')}
           </h2>
         </div>
         <button
           type="button"
           onClick={onClose}
           className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-          aria-label="닫기"
+          aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
         </button>
@@ -575,7 +574,7 @@ function ChartConfigStep({
             htmlFor="chart-channel-select"
             className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
           >
-            채널 이름 <span className="text-red-500">*</span>
+            {t('dashboard.addPanel.channelNameLabel')} <span className="text-red-500">*</span>
           </label>
           <select
             id="chart-channel-select"
@@ -592,21 +591,24 @@ function ChartConfigStep({
           >
             <option value="">
               {loadState === 'loading'
-                ? '활성 채널 목록 불러오는 중...'
+                ? t('dashboard.addPanel.loadingChannels')
                 : channels.length === 0
-                  ? '활성 채널이 없습니다 (Custom 으로 수동 입력)'
-                  : '채널을 선택하세요'}
+                  ? t('dashboard.addPanel.noActiveChannelsCustom')
+                  : t('dashboard.addPanel.selectChannel')}
             </option>
             {channels.map((ch) => (
               <option key={ch.name} value={ch.name}>
-                {ch.name} — flow {ch.flow_id} ({ch.subscriber_count} subs)
+                {t('dashboard.addPanel.channelOption')
+                  .replace('{name}', ch.name)
+                  .replace('{flow}', String(ch.flow_id))
+                  .replace('{count}', String(ch.subscriber_count))}
               </option>
             ))}
-            <option value={CUSTOM_CHANNEL_SENTINEL}>Custom... (직접 입력)</option>
+            <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.addPanel.customOption')}</option>
           </select>
           {loadState === 'error' && (
             <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-              채널 목록 조회에 실패했습니다. 수동 입력을 사용하세요.
+              {t('dashboard.addPanel.loadErrorCustom')}
               {loadError ? ` (${loadError})` : ''}
             </p>
           )}
@@ -619,7 +621,7 @@ function ChartConfigStep({
               htmlFor="chart-channel-custom"
               className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
             >
-              수동 입력 채널 이름
+              {t('dashboard.addPanel.customLabel')}
             </label>
             <input
               id="chart-channel-custom"
@@ -630,7 +632,7 @@ function ChartConfigStep({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && canSave) handleConfirm();
               }}
-              placeholder="예: room1_temp"
+              placeholder={t('dashboard.addPanel.customPlaceholder')}
               autoFocus
               className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             />
@@ -640,7 +642,7 @@ function ChartConfigStep({
         {/* 인라인 에러 (REQ-M5-04) */}
         {showError && (
           <p data-testid="chart-channel-error" className="text-xs text-red-500">
-            {CHANNEL_NAME_ERROR_MESSAGE}
+            {t(CHANNEL_NAME_ERROR_KEY)}
           </p>
         )}
       </div>
@@ -652,7 +654,7 @@ function ChartConfigStep({
           onClick={onBack}
           className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-4 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default)"
         >
-          이전
+          {t('dashboard.addPanel.previous')}
         </button>
         <button
           type="button"
@@ -666,7 +668,7 @@ function ChartConfigStep({
               : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
           )}
         >
-          저장
+          {t('dashboard.addPanel.save')}
         </button>
       </div>
     </>

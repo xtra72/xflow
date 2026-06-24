@@ -10,6 +10,7 @@ import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-re
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
+import { useTranslation } from '@/lib/i18n';
 
 import type {
   TableColumn,
@@ -30,9 +31,8 @@ const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 /** Custom (수동 입력) 드롭다운 옵션 sentinel */
 const CUSTOM_CHANNEL_SENTINEL = '__custom__';
 
-/** 인라인 에러 메시지 (한국어 UI) */
-const CHANNEL_NAME_ERROR_MESSAGE =
-  '유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).';
+/** 인라인 에러 메시지 i18n 키 (렌더 시 t() 로 변환) */
+const CHANNEL_NAME_ERROR_KEY = 'dashboard.chart.channelNameError';
 
 type OnConfig = (config: Record<string, unknown>) => void;
 
@@ -78,6 +78,7 @@ export function ChartChannelSection({
   onConfigChange: OnConfig;
   fetchChannels?: () => Promise<ChartChannelSummary[]>;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const currentName = (panel.config?.channel_name as string | undefined) ?? '';
 
   // 드롭다운 선택 상태. 초기값은 현재 저장된 채널 이름 (없으면 '')
@@ -157,8 +158,8 @@ export function ChartChannelSection({
 
   return (
     <LabeledField
-      label="채널 이름 (channel_name)"
-      hint="활성 chart-emitter 채널을 선택하거나, Custom 을 눌러 배포 예정인 채널 이름을 직접 입력하세요."
+      label={t('dashboard.chart.channelNameLabel')}
+      hint={t('dashboard.chart.channelNameHint')}
     >
       <select
         data-testid="chart-channel-name-select"
@@ -169,27 +170,30 @@ export function ChartChannelSection({
       >
         <option value="">
           {loadState === 'loading'
-            ? '활성 채널 목록 불러오는 중...'
+            ? t('dashboard.chart.loadingChannels')
             : channels.length === 0
-              ? '활성 채널 없음 (Custom 으로 수동 입력)'
-              : '채널을 선택하세요'}
+              ? t('dashboard.chart.noChannelsCustom')
+              : t('dashboard.chart.selectChannel')}
         </option>
         {currentIsInactive && (
           <option value={currentName}>
-            {currentName} — (현재 선택, 비활성)
+            {t('dashboard.chart.channelInactive').replace('{name}', currentName)}
           </option>
         )}
         {channels.map((ch) => (
           <option key={ch.name} value={ch.name}>
-            {ch.name} — flow {ch.flow_id || '?'} ({ch.subscriber_count} subs)
+            {t('dashboard.chart.channelOption')
+              .replace('{name}', ch.name)
+              .replace('{flow}', ch.flow_id || '?')
+              .replace('{count}', String(ch.subscriber_count))}
           </option>
         ))}
-        <option value={CUSTOM_CHANNEL_SENTINEL}>Custom... (직접 입력)</option>
+        <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.chart.customOption')}</option>
       </select>
 
       {loadState === 'error' && (
         <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-          채널 목록 조회 실패. Custom 으로 수동 입력을 사용하세요.
+          {t('dashboard.chart.loadErrorCustom')}
           {loadError ? ` (${loadError})` : ''}
         </p>
       )}
@@ -204,7 +208,7 @@ export function ChartChannelSection({
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           }}
-          placeholder="예: room1_temp"
+          placeholder={t('dashboard.chart.customPlaceholder')}
           autoFocus
           className={`${inputClass()} mt-2`}
         />
@@ -215,7 +219,7 @@ export function ChartChannelSection({
           data-testid="chart-channel-name-error"
           className="mt-1 text-xs text-red-500"
         >
-          {CHANNEL_NAME_ERROR_MESSAGE}
+          {t(CHANNEL_NAME_ERROR_KEY)}
         </p>
       )}
     </LabeledField>
@@ -231,6 +235,7 @@ export function StatChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const unit = (config.unit as string | undefined) ?? '';
@@ -257,8 +262,8 @@ export function StatChartSection({
   return (
     <div className="space-y-3">
       <LabeledField
-        label="표시 필드 (display_field)"
-        hint="payload 에서 값으로 사용할 필드 경로. 예: value, labels.temperature"
+        label={t('dashboard.chart.displayField')}
+        hint={t('dashboard.chart.displayFieldHint')}
       >
         <input
           type="text"
@@ -267,16 +272,16 @@ export function StatChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="단위 (unit)">
+      <LabeledField label={t('dashboard.chart.unit')}>
         <input
           type="text"
           value={unit}
           onChange={(e) => onConfigChange({ unit: e.target.value })}
-          placeholder="예: °C, %, kWh"
+          placeholder={t('dashboard.chart.unitPlaceholder')}
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="소수점 자릿수 (decimal_places)">
+      <LabeledField label={t('dashboard.chart.decimalPlaces')}>
         <input
           type="number"
           min={0}
@@ -292,14 +297,14 @@ export function StatChartSection({
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-(--color-text-muted)">
-            임계값 색상 규칙
+            {t('dashboard.chart.thresholdColorRules')}
           </label>
           <button
             type="button"
             onClick={addRule}
             className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
           >
-            <Plus className="h-3 w-3" /> 추가
+            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
         <div className="space-y-1.5">
@@ -328,13 +333,15 @@ export function StatChartSection({
                 />
               </label>
               <span className="flex-1 text-[11px] text-(--color-text-muted)">
-                값 ≥ {r.min} → {r.color}
+                {t('dashboard.chart.ruleHint')
+                  .replace('{min}', String(r.min))
+                  .replace('{color}', r.color)}
               </span>
               <button
                 type="button"
                 onClick={() => removeRule(i)}
                 className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500"
-                aria-label="규칙 삭제"
+                aria-label={t('dashboard.chart.deleteRuleAria')}
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -373,6 +380,7 @@ function ChannelRow({
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const currentName = channel.name ?? '';
@@ -420,7 +428,7 @@ function ChannelRow({
           draggable
           onDragStart={onDragStart}
           data-testid={`line-chart-channel-drag-${idx}`}
-          title="드래그하여 순서 변경"
+          title={t('dashboard.chart.dragOrderTitle')}
           className="flex h-5 w-4 cursor-grab items-center justify-center text-(--color-text-muted) active:cursor-grabbing"
         >
           <GripVertical className="h-3 w-3" />
@@ -429,7 +437,7 @@ function ChannelRow({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           className="flex items-center gap-1 text-(--color-text-muted)"
-          aria-label={expanded ? '접기' : '펼치기'}
+          aria-label={expanded ? t('dashboard.chart.collapseAria') : t('dashboard.chart.expandAria')}
         >
           {expanded
             ? <ChevronDown className="h-3 w-3" />
@@ -438,7 +446,7 @@ function ChannelRow({
         <span
           className="h-3 w-3 shrink-0 cursor-pointer rounded-full ring-1 ring-(--color-border-default)"
           style={{ backgroundColor: effectiveColor }}
-          title="색상 변경"
+          title={t('dashboard.chart.colorChangeTitle')}
           onClick={() => {
             const input = document.getElementById(`ch-color-${idx}`);
             input?.click();
@@ -456,15 +464,15 @@ function ChannelRow({
           type="text"
           value={channel.alias ?? ''}
           onChange={(e) => onPatch({ alias: e.target.value || undefined })}
-          placeholder={currentName || '(미지정)'}
+          placeholder={currentName || t('dashboard.chart.unspecified')}
           className="min-w-0 flex-1 truncate border-0 bg-transparent px-0 text-xs font-medium text-(--color-text-primary) outline-none placeholder:text-(--color-text-muted) focus:ring-0"
-          aria-label="표시 이름"
+          aria-label={t('dashboard.chart.displayNameAria')}
         />
         {canDelete && (
           <button
             type="button"
             onClick={onRemove}
-            aria-label="채널 삭제"
+            aria-label={t('dashboard.chart.deleteChannelAria')}
             className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
           >
             <Trash2 className="h-3 w-3" />
@@ -483,22 +491,22 @@ function ChannelRow({
               onChange={(e) => handleSelect(e.target.value)}
               disabled={channelsLoadState === 'loading'}
               className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
-              aria-label="채널 선택"
+              aria-label={t('dashboard.chart.selectChannelAria')}
             >
               <option value="">
                 {channelsLoadState === 'loading'
-                  ? '로딩...'
+                  ? t('dashboard.chart.loading')
                   : activeChannels.length === 0
-                    ? '활성 채널 없음'
-                    : '채널 선택'}
+                    ? t('dashboard.chart.noActiveChannels')
+                    : t('dashboard.chart.selectChannelAria')}
               </option>
               {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
-                <option value={currentName}>{currentName} — (비활성)</option>
+                <option value={currentName}>{t('dashboard.chart.channelInactiveShort').replace('{name}', currentName)}</option>
               )}
               {activeChannels.map((ch) => (
                 <option key={ch.name} value={ch.name}>{ch.name}</option>
               ))}
-              <option value={CUSTOM_CHANNEL_SENTINEL}>Custom...</option>
+              <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.chart.customShort')}</option>
             </select>
             <input
               type="text"
@@ -506,9 +514,9 @@ function ChannelRow({
               onChange={(e) =>
                 onPatch({ display_field: e.target.value || undefined })
               }
-              placeholder="필드 (기본: value)"
+              placeholder={t('dashboard.chart.displayFieldShort')}
               className="w-28 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-              aria-label="표시 필드"
+              aria-label={t('dashboard.chart.displayFieldAria')}
             />
           </div>
           {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
@@ -521,7 +529,7 @@ function ChannelRow({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
               }}
-              placeholder="배포 예정 채널명"
+              placeholder={t('dashboard.chart.customDeployPlaceholder')}
               autoFocus
               className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
             />
@@ -535,14 +543,14 @@ function ChannelRow({
                 onPatch({ stroke_style: e.target.value as StrokeStyle })
               }
               className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-              aria-label="라인 스타일"
+              aria-label={t('dashboard.chart.lineStyleAria')}
             >
-              <option value="solid">실선</option>
-              <option value="dashed">파선</option>
-              <option value="dotted">점선</option>
+              <option value="solid">{t('dashboard.chart.lineSolid')}</option>
+              <option value="dashed">{t('dashboard.chart.lineDashed')}</option>
+              <option value="dotted">{t('dashboard.chart.lineDotted')}</option>
             </select>
             <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
-              두께
+              {t('dashboard.chart.thickness')}
               <input
                 type="number"
                 min={1}
@@ -562,7 +570,7 @@ function ChannelRow({
                 onChange={(e) => onPatch({ smooth: e.target.checked })}
                 className="h-3 w-3 rounded border-gray-300"
               />
-              곡선
+              {t('dashboard.chart.curve')}
             </label>
           </div>
         </div>
@@ -582,6 +590,7 @@ export function LineChartSection({
   onConfigChange: OnConfig;
   fetchChannels?: () => Promise<ChartChannelSummary[]>;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const maxPoints = (config.max_points as number | undefined) ?? 100;
   const xLabel = (config.x_label as string | undefined) ?? '';
@@ -675,7 +684,7 @@ export function LineChartSection({
       <div data-testid="line-chart-channels-editor">
         <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-(--color-text-muted)">
-            채널 (channels)
+            {t('dashboard.chart.channels')}
           </label>
           <button
             type="button"
@@ -683,11 +692,11 @@ export function LineChartSection({
             data-testid="line-chart-add-channel"
             className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
           >
-            <Plus className="h-3 w-3" /> 추가
+            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
         <p className="mb-1 text-[10px] leading-snug text-(--color-text-muted)">
-          채널을 추가하면 한 패널에서 여러 라인을 비교합니다. 최소 1개 이상.
+          {t('dashboard.chart.channelsHint')}
         </p>
         <div className="space-y-2">
           {channels.map((c, idx) => (
@@ -723,11 +732,11 @@ export function LineChartSection({
 
       {/* ═══ 차트 스타일 ═══ */}
       <div className="border-t border-(--color-border-default) pt-3">
-        <label className="mb-2 block text-xs font-semibold text-(--color-text-primary)">차트 스타일</label>
+        <label className="mb-2 block text-xs font-semibold text-(--color-text-primary)">{t('dashboard.chart.chartStyle')}</label>
 
         {/* X축 */}
         <div className="flex items-end gap-2">
-          <LabeledField label="X축">
+          <LabeledField label={t('dashboard.chart.xAxis')}>
             <select
               value={timeWindowMode}
               onChange={(e) =>
@@ -735,24 +744,24 @@ export function LineChartSection({
               }
               className={inputClass()}
             >
-              <option value="points">포인트 개수</option>
-              <option value="recent">최근 N초</option>
-              <option value="fixed">특정 구간</option>
+              <option value="points">{t('dashboard.chart.xWindowPoints')}</option>
+              <option value="recent">{t('dashboard.chart.xWindowRecent')}</option>
+              <option value="fixed">{t('dashboard.chart.xWindowFixed')}</option>
             </select>
           </LabeledField>
-          <LabeledField label="레이블">
+          <LabeledField label={t('dashboard.chart.label')}>
             <input
               type="text"
               value={xLabel}
               onChange={(e) => onConfigChange({ x_label: e.target.value || undefined })}
-              placeholder="예: 시간"
+              placeholder={t('dashboard.chart.xLabelPlaceholder')}
               className={inputClass()}
             />
           </LabeledField>
         </div>
 
         {timeWindowMode === 'points' && (
-          <LabeledField label="최대 포인트">
+          <LabeledField label={t('dashboard.chart.maxPoints')}>
             <input
               type="number"
               min={1}
@@ -769,7 +778,7 @@ export function LineChartSection({
 
         {timeWindowMode === 'recent' && (
           <div className="flex gap-2">
-            <LabeledField label="윈도우 크기(초)">
+            <LabeledField label={t('dashboard.chart.windowSizeSec')}>
               <input
                 type="number"
                 min={1}
@@ -782,7 +791,7 @@ export function LineChartSection({
                 className={inputClass()}
               />
             </LabeledField>
-            <LabeledField label="갱신 주기(ms)">
+            <LabeledField label={t('dashboard.chart.refreshMs')}>
               <input
                 type="number"
                 min={200}
@@ -801,7 +810,7 @@ export function LineChartSection({
 
         {timeWindowMode === 'fixed' && (
           <div className="flex gap-2">
-            <LabeledField label="시작(epoch ms)">
+            <LabeledField label={t('dashboard.chart.startMs')}>
               <input
                 type="number"
                 value={fixedStartMs ?? ''}
@@ -814,7 +823,7 @@ export function LineChartSection({
                 className={inputClass()}
               />
             </LabeledField>
-            <LabeledField label="끝(epoch ms)">
+            <LabeledField label={t('dashboard.chart.endMs')}>
               <input
                 type="number"
                 value={fixedEndMs ?? ''}
@@ -832,32 +841,32 @@ export function LineChartSection({
 
         {/* Y축 */}
         <div className="flex items-end gap-2">
-          <LabeledField label="Y축">
+          <LabeledField label={t('dashboard.chart.yAxis')}>
             <select
               value={yAxisMode}
               onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
               className={inputClass()}
             >
-              <option value="auto">자동</option>
-              <option value="manual">수동</option>
-              <option value="auto_padded">자동 + 여백</option>
+              <option value="auto">{t('dashboard.chart.yAuto')}</option>
+              <option value="manual">{t('dashboard.chart.yManual')}</option>
+              <option value="auto_padded">{t('dashboard.chart.yAutoPadded')}</option>
             </select>
           </LabeledField>
-          <LabeledField label="레이블">
+          <LabeledField label={t('dashboard.chart.label')}>
             <input
               type="text"
               value={yLabel}
               onChange={(e) => onConfigChange({ y_label: e.target.value || undefined })}
-              placeholder="예: 온도"
+              placeholder={t('dashboard.chart.yLabelPlaceholder')}
               className={inputClass()}
             />
           </LabeledField>
-          <LabeledField label="단위">
+          <LabeledField label={t('dashboard.chart.unit')}>
             <input
               type="text"
               value={yUnit}
               onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
-              placeholder="예: °C"
+              placeholder={t('dashboard.chart.yUnitPlaceholder')}
               className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             />
           </LabeledField>
@@ -865,7 +874,7 @@ export function LineChartSection({
 
         {yAxisMode === 'manual' && (
           <div className="flex gap-2">
-            <LabeledField label="최소">
+            <LabeledField label={t('dashboard.chart.min')}>
               <input
                 type="number"
                 value={yMin ?? ''}
@@ -876,7 +885,7 @@ export function LineChartSection({
                 className={inputClass()}
               />
             </LabeledField>
-            <LabeledField label="최대">
+            <LabeledField label={t('dashboard.chart.max')}>
               <input
                 type="number"
                 value={yMax ?? ''}
@@ -891,7 +900,7 @@ export function LineChartSection({
         )}
 
         {yAxisMode === 'auto_padded' && (
-          <LabeledField label="여백(%)">
+          <LabeledField label={t('dashboard.chart.paddingPct')}>
             <input
               type="number"
               min={0}
@@ -908,7 +917,7 @@ export function LineChartSection({
         )}
 
         {/* 범례 */}
-        <LabeledField label="범례 위치">
+        <LabeledField label={t('dashboard.chart.legendPosition')}>
           <select
             value={(config.legend as Record<string, unknown> | undefined)?.position as string ?? 'bottom'}
             onChange={(e) =>
@@ -921,14 +930,18 @@ export function LineChartSection({
             }
             className={inputClass()}
           >
-            <option value="bottom">하단</option>
-            <option value="left">좌측</option>
-            <option value="right">우측</option>
+            <option value="bottom">{t('dashboard.chart.legendBottom')}</option>
+            <option value="left">{t('dashboard.chart.legendLeft')}</option>
+            <option value="right">{t('dashboard.chart.legendRight')}</option>
           </select>
         </LabeledField>
         <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
           {(['show_name', 'show_line', 'show_last_value'] as const).map((field) => {
-            const labels = { show_name: '이름', show_line: '라인', show_last_value: '마지막 값' };
+            const labelKeys = {
+              show_name: 'dashboard.chart.legendShowName',
+              show_line: 'dashboard.chart.legendShowLine',
+              show_last_value: 'dashboard.chart.legendShowLastValue',
+            } as const;
             const defaults = { show_name: true, show_line: true, show_last_value: false };
             return (
               <label key={field} className="flex cursor-pointer items-center gap-1">
@@ -945,19 +958,19 @@ export function LineChartSection({
                   }
                   className="h-3 w-3 rounded border-gray-300"
                 />
-                {labels[field]}
+                {t(labelKeys[field])}
               </label>
             );
           })}
         </div>
 
         {/* 다중 시리즈 */}
-        <LabeledField label="다중 시리즈 필드" hint="라벨 값별로 라인 분리 (예: labels.room)">
+        <LabeledField label={t('dashboard.chart.multiSeriesField')} hint={t('dashboard.chart.multiSeriesHint')}>
           <input
             type="text"
             value={multiSeriesField}
             onChange={(e) => onConfigChange({ multi_series_field: e.target.value || undefined })}
-            placeholder="비워두면 단일 시리즈"
+            placeholder={t('dashboard.chart.multiSeriesPlaceholder')}
             className={inputClass()}
           />
         </LabeledField>
@@ -966,23 +979,23 @@ export function LineChartSection({
       {/* ═══ 경계 설정 ═══ */}
       <div data-testid="line-chart-thresholds-editor" className="border-t border-(--color-border-default) pt-3">
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-semibold text-(--color-text-primary)">경계 설정</label>
+          <label className="text-xs font-semibold text-(--color-text-primary)">{t('dashboard.chart.boundarySettings')}</label>
           <button
             type="button"
             onClick={addThreshold}
             data-testid="line-chart-add-threshold"
             className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
           >
-            <Plus className="h-3 w-3" /> 추가
+            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
         {thresholds.length === 0 ? (
           <p className="text-[10px] leading-snug text-(--color-text-muted)">
-            경계가 없습니다. 추가하면 Y축 수평선과 범위 채우기를 표시합니다.
+            {t('dashboard.chart.boundaryEmpty')}
           </p>
         ) : (
           <div className="space-y-2">
-            {thresholds.map((t, idx) => (
+            {thresholds.map((th, idx) => (
               <div
                 key={idx}
                 data-testid={`line-chart-threshold-row-${idx}`}
@@ -990,19 +1003,19 @@ export function LineChartSection({
               >
                 <input
                   type="number"
-                  value={t.value}
+                  value={th.value}
                   onChange={(e) => {
                     const n = parseFloat(e.target.value);
                     if (!Number.isNaN(n)) patchThreshold(idx, { value: n });
                   }}
                   className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-                  placeholder="값"
-                  aria-label="경계 값"
+                  placeholder={t('dashboard.chart.boundaryValuePlaceholder')}
+                  aria-label={t('dashboard.chart.boundaryValueAria')}
                 />
                 <span
                   className="h-5 w-5 shrink-0 cursor-pointer rounded ring-1 ring-(--color-border-default)"
-                  style={{ backgroundColor: t.color }}
-                  title="색상 변경"
+                  style={{ backgroundColor: th.color }}
+                  title={t('dashboard.chart.colorChangeTitle')}
                   onClick={() => {
                     document.getElementById(`th-color-${idx}`)?.click();
                   }}
@@ -1010,13 +1023,13 @@ export function LineChartSection({
                 <input
                   id={`th-color-${idx}`}
                   type="color"
-                  value={t.color}
+                  value={th.color}
                   onChange={(e) => patchThreshold(idx, { color: e.target.value })}
                   className="invisible absolute h-0 w-0"
                   tabIndex={-1}
                 />
                 <select
-                  value={t.fill_direction ?? ''}
+                  value={th.fill_direction ?? ''}
                   onChange={(e) => {
                     const v = e.target.value;
                     patchThreshold(idx, {
@@ -1025,16 +1038,16 @@ export function LineChartSection({
                     });
                   }}
                   className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-                  aria-label="채우기"
+                  aria-label={t('dashboard.chart.fillAria')}
                 >
-                  <option value="">채우기 없음</option>
-                  <option value="below">경계 이하</option>
-                  <option value="above">경계 이상</option>
+                  <option value="">{t('dashboard.chart.fillNone')}</option>
+                  <option value="below">{t('dashboard.chart.fillBelow')}</option>
+                  <option value="above">{t('dashboard.chart.fillAbove')}</option>
                 </select>
                 <button
                   type="button"
                   onClick={() => removeThreshold(idx)}
-                  aria-label="경계 삭제"
+                  aria-label={t('dashboard.chart.deleteBoundaryAria')}
                   className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -1057,6 +1070,7 @@ export function BarChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const labelField = (config.label_field as string | undefined) ?? 'labels.name';
@@ -1067,7 +1081,7 @@ export function BarChartSection({
 
   return (
     <div className="space-y-3">
-      <LabeledField label="표시 필드 (display_field)">
+      <LabeledField label={t('dashboard.chart.displayField')}>
         <input
           type="text"
           value={displayField}
@@ -1075,20 +1089,20 @@ export function BarChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="모드 (mode)">
+      <LabeledField label={t('dashboard.chart.modeField')}>
         <select
           value={mode}
           onChange={(e) => onConfigChange({ mode: e.target.value as BarChartMode })}
           className={inputClass()}
         >
-          <option value="category">카테고리 (category)</option>
-          <option value="time_bin">시간 bin (time_bin)</option>
+          <option value="category">{t('dashboard.chart.modeCategory')}</option>
+          <option value="time_bin">{t('dashboard.chart.modeTimeBin')}</option>
         </select>
       </LabeledField>
       {mode === 'category' && (
         <LabeledField
-          label="라벨 필드 (label_field)"
-          hint="카테고리로 사용할 필드 경로. 예: labels.room"
+          label={t('dashboard.chart.labelField')}
+          hint={t('dashboard.chart.labelFieldHintBar')}
         >
           <input
             type="text"
@@ -1099,7 +1113,7 @@ export function BarChartSection({
         </LabeledField>
       )}
       {mode === 'time_bin' && (
-        <LabeledField label="bin 간격 (초)">
+        <LabeledField label={t('dashboard.chart.binSec')}>
           <input
             type="number"
             min={1}
@@ -1112,7 +1126,7 @@ export function BarChartSection({
           />
         </LabeledField>
       )}
-      <LabeledField label="집계 함수 (agg_func)">
+      <LabeledField label={t('dashboard.chart.aggFunc')}>
         <select
           value={aggFunc}
           onChange={(e) => onConfigChange({ agg_func: e.target.value as AggFunc })}
@@ -1123,7 +1137,7 @@ export function BarChartSection({
           <option value="avg">avg</option>
         </select>
       </LabeledField>
-      <LabeledField label="최대 포인트 (max_points)">
+      <LabeledField label={t('dashboard.chart.maxPoints')}>
         <input
           type="number"
           min={1}
@@ -1148,6 +1162,7 @@ export function PieChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const labelField = (config.label_field as string | undefined) ?? 'labels.name';
@@ -1158,7 +1173,7 @@ export function PieChartSection({
 
   return (
     <div className="space-y-3">
-      <LabeledField label="표시 필드 (display_field)">
+      <LabeledField label={t('dashboard.chart.displayField')}>
         <input
           type="text"
           value={displayField}
@@ -1167,8 +1182,8 @@ export function PieChartSection({
         />
       </LabeledField>
       <LabeledField
-        label="라벨 필드 (label_field)"
-        hint="파이 슬라이스 그룹화 기준. 예: labels.category"
+        label={t('dashboard.chart.labelField')}
+        hint={t('dashboard.chart.labelFieldHintPie')}
       >
         <input
           type="text"
@@ -1177,7 +1192,7 @@ export function PieChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="집계 함수 (agg_func)">
+      <LabeledField label={t('dashboard.chart.aggFunc')}>
         <select
           value={aggFunc}
           onChange={(e) => onConfigChange({ agg_func: e.target.value as AggFunc })}
@@ -1195,7 +1210,7 @@ export function PieChartSection({
           onChange={(e) => onConfigChange({ show_legend: e.target.checked })}
           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
-        <span className="text-sm text-(--color-text-primary)">범례 표시 (show_legend)</span>
+        <span className="text-sm text-(--color-text-primary)">{t('dashboard.chart.showLegend')}</span>
       </label>
       <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)">
         <input
@@ -1205,10 +1220,10 @@ export function PieChartSection({
           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm text-(--color-text-primary)">
-          비율(%) 표시 (show_percentage)
+          {t('dashboard.chart.showPercentage')}
         </span>
       </label>
-      <LabeledField label="최대 포인트 (max_points)">
+      <LabeledField label={t('dashboard.chart.maxPoints')}>
         <input
           type="number"
           min={1}
@@ -1233,11 +1248,12 @@ export function TableChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const columns =
     (config.columns as TableColumn[] | undefined) ?? [
-      { field: 'timestamp', header: '시간', format: 'datetime' as TableColumnFormat },
-      { field: 'value', header: '값', format: 'number' as TableColumnFormat },
+      { field: 'timestamp', header: t('dashboard.chart.colTime'), format: 'datetime' as TableColumnFormat },
+      { field: 'value', header: t('dashboard.chart.colValue'), format: 'number' as TableColumnFormat },
     ];
   const rowsPerPage = (config.rows_per_page as number | undefined) ?? 20;
   const maxPoints = (config.max_points as number | undefined) ?? 200;
@@ -1250,7 +1266,7 @@ export function TableChartSection({
     });
   };
   const addColumn = (): void => {
-    onConfigChange({ columns: [...columns, { field: 'value', header: '새 열' }] });
+    onConfigChange({ columns: [...columns, { field: 'value', header: t('dashboard.chart.newColumn') }] });
   };
   const removeColumn = (i: number): void => {
     if (columns.length <= 1) return;
@@ -1261,13 +1277,13 @@ export function TableChartSection({
     <div className="space-y-3">
       <div>
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-medium text-(--color-text-muted)">열 (columns)</label>
+          <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.chart.columns')}</label>
           <button
             type="button"
             onClick={addColumn}
             className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
           >
-            <Plus className="h-3 w-3" /> 추가
+            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
         <div className="space-y-1.5">
@@ -1277,14 +1293,14 @@ export function TableChartSection({
                 type="text"
                 value={c.field}
                 onChange={(e) => updateColumn(i, { field: e.target.value })}
-                placeholder="field"
+                placeholder={t('dashboard.chart.displayFieldPlaceholder')}
                 className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
               />
               <input
                 type="text"
                 value={c.header}
                 onChange={(e) => updateColumn(i, { header: e.target.value })}
-                placeholder="header"
+                placeholder={t('dashboard.chart.headerPlaceholder')}
                 className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
               />
               <select
@@ -1303,7 +1319,7 @@ export function TableChartSection({
                 onClick={() => removeColumn(i)}
                 disabled={columns.length <= 1}
                 className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500 disabled:opacity-40"
-                aria-label="열 삭제"
+                aria-label={t('dashboard.chart.deleteColumnAria')}
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -1311,7 +1327,7 @@ export function TableChartSection({
           ))}
         </div>
       </div>
-      <LabeledField label="페이지 당 행 수 (rows_per_page)">
+      <LabeledField label={t('dashboard.chart.rowsPerPage')}>
         <input
           type="number"
           min={1}
@@ -1323,7 +1339,7 @@ export function TableChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="최대 포인트 (max_points)">
+      <LabeledField label={t('dashboard.chart.maxPoints')}>
         <input
           type="number"
           min={1}
@@ -1337,7 +1353,7 @@ export function TableChartSection({
       </LabeledField>
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          기본 정렬 (default_sort)
+          {t('dashboard.chart.defaultSort')}
         </label>
         <div className="flex gap-1.5">
           <input
@@ -1353,7 +1369,7 @@ export function TableChartSection({
                 });
               }
             }}
-            placeholder="정렬 필드"
+            placeholder={t('dashboard.chart.sortFieldPlaceholder')}
             className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
           />
           <select
