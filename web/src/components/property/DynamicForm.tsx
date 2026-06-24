@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import {
   parseRemoteFlowRef,
   resolveFlowNodePorts,
@@ -26,6 +27,7 @@ interface DynamicFormProps {
 }
 
 export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: DynamicFormProps) {
+  const { t } = useTranslation();
   // 로컬 폼 상태 관리 (nodeId 변경 시 리셋)
   const [localData, setLocalData] = useState<Record<string, unknown>>(data);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -170,7 +172,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         setLocalData(updated);
         onChange(updated);
         if (field.required && flowId === '') {
-          setErrors((prev) => ({ ...prev, [fieldName]: '필수 항목입니다' }));
+          setErrors((prev) => ({ ...prev, [fieldName]: t('property.dynamicForm.required') }));
         } else {
           setErrors((prev) => {
             const next = { ...prev };
@@ -193,7 +195,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
             ? (value as Record<string, unknown>).agent_id
             : value;
         if (checkValue === '' || checkValue == null) {
-          setErrors((prev) => ({ ...prev, [fieldName]: '필수 항목입니다' }));
+          setErrors((prev) => ({ ...prev, [fieldName]: t('property.dynamicForm.required') }));
         } else {
           setErrors((prev) => {
             const next = { ...prev };
@@ -211,7 +213,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
       onChange(updated);
     },
-    [localData, onChange, schema, denormalizeFlowNodePorts],
+    [localData, onChange, schema, denormalizeFlowNodePorts, t],
   );
 
   /** flow_picker "포트 갱신": 현재 flow_id 로 참조 플로우 포트를 재조회한다. */
@@ -276,7 +278,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
   if (entries.length === 0) {
     return (
       <p className="text-xs text-(--color-text-muted)">
-        설정 항목이 없습니다
+        {t('property.dynamicForm.noConfig')}
       </p>
     );
   }
@@ -304,6 +306,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
 /** 고급 필드를 감싸는 접을 수 있는 섹션. 기본 접힘 상태로 표시된다. */
 function AdvancedSection({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
   return (
@@ -323,7 +326,7 @@ function AdvancedSection({ children }: { children: React.ReactNode }) {
         ) : (
           <ChevronRight className="h-3.5 w-3.5" />
         )}
-        고급 설정
+        {t('property.dynamicForm.advanced')}
       </button>
       {open && (
         <div className="space-y-3 border-t border-(--color-border-default) px-2 py-3">

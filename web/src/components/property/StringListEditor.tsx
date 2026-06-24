@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 interface StringListRow {
   key: string;
@@ -48,6 +49,7 @@ const cellInput = cn(
 const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 export function StringListEditor({ value, onChange, readOnly, placeholder }: StringListEditorProps) {
+  const { t } = useTranslation();
   // 내부 행 상태 (빈 행 포함)
   const [rows, setRows] = useState<StringListRow[]>(() => toRows(value));
   const internalUpdate = useRef(false);
@@ -100,14 +102,14 @@ export function StringListEditor({ value, onChange, readOnly, placeholder }: Str
                 readOnly={readOnly}
                 onChange={(e) => handleChange(row.key, e.target.value)}
                 className={cn(cellInput, readOnly && readOnlyInput)}
-                placeholder={placeholder ?? '값 입력'}
+                placeholder={placeholder ?? t('property.stringList.placeholder')}
               />
               {!readOnly && (
                 <button
                   type="button"
                   onClick={() => handleRemove(row.key)}
                   className="shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                  aria-label="삭제"
+                  aria-label={t('property.common.deleteAria')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -119,7 +121,7 @@ export function StringListEditor({ value, onChange, readOnly, placeholder }: Str
 
       {rows.length === 0 && (
         <p className="py-2 text-center text-xs text-(--color-text-muted)">
-          항목이 없습니다
+          {t('property.stringList.empty')}
         </p>
       )}
 
@@ -130,7 +132,7 @@ export function StringListEditor({ value, onChange, readOnly, placeholder }: Str
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          추가
+          {t('property.stringList.add')}
         </button>
       )}
     </div>

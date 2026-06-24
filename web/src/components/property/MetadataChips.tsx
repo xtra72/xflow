@@ -16,6 +16,7 @@
 // @spec SPEC-WEB-005 v0.7.0 (M16)
 // @spec SPEC-STORE-003 v0.3.0
 
+import { useTranslation } from '@/lib/i18n';
 import type { DataType, RegistrationSource } from '@/services/api/store';
 
 interface MetadataChipsProps {
@@ -57,6 +58,7 @@ export function MetadataChips({
   showAutoBadge = false,
   className,
 }: MetadataChipsProps) {
+  const { t } = useTranslation();
   const wrapperClass = `inline-flex flex-wrap items-center gap-1 ${className ?? ''}`;
   return (
     <span className={wrapperClass} data-testid="metadata-chips">
@@ -64,7 +66,7 @@ export function MetadataChips({
         <span
           className={`${chipBase} ${DATA_TYPE_COLOR[dataType]}`}
           data-testid="metadata-data-type"
-          title={`데이터 타입: ${dataType}`}
+          title={t('property.metadataChips.dataTypeTitle').replace('{type}', dataType)}
         >
           {dataType}
         </span>
@@ -73,7 +75,7 @@ export function MetadataChips({
         <span
           className={`${chipBase} bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200`}
           data-testid="metadata-metric-type"
-          title={`메트릭 타입: ${metricType}`}
+          title={t('property.metadataChips.metricTypeTitle').replace('{type}', metricType)}
         >
           {metricType}
         </span>
@@ -82,7 +84,7 @@ export function MetadataChips({
         <span
           className={`${chipBase} bg-(--color-bg-elevated) text-(--color-text-muted) opacity-70`}
           data-testid="metadata-metric-type-unknown"
-          title="메트릭 타입 미지정 (런타임 자동 등록)"
+          title={t('property.metadataChips.metricUnknownTitle')}
         >
           unknown
         </span>
@@ -91,8 +93,8 @@ export function MetadataChips({
         <span
           className={`${chipBase} border border-yellow-400 bg-yellow-50 text-yellow-800 dark:border-yellow-600 dark:bg-yellow-900 dark:text-yellow-200`}
           data-testid="metadata-registration-auto"
-          title="런타임에 자동 등록된 키"
-          aria-label="자동 등록"
+          title={t('property.metadataChips.autoTitle')}
+          aria-label={t('property.metadataChips.autoAria')}
         >
           auto
         </span>
@@ -101,8 +103,8 @@ export function MetadataChips({
         <span
           className={`${chipBase} border border-slate-400 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300`}
           data-testid="metadata-registration-manual"
-          title="설정 파일에 정의된 정적 키"
-          aria-label="수동 등록"
+          title={t('property.metadataChips.manualTitle')}
+          aria-label={t('property.metadataChips.manualAria')}
         >
           manual
         </span>

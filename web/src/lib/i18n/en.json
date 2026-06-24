@@ -1714,6 +1714,71 @@
       "addRow": "Add row",
       "tagsEmpty": "No tags",
       "tagDeleteAria": "Delete tag {key}"
+    },
+    "common": {
+      "deleteAria": "Delete"
+    },
+    "transform": {
+      "modeSelect": "Select (pick fields)",
+      "modeMerge": "Merge (merge fields)",
+      "modeExclude": "Exclude (drop fields)",
+      "excludeFields": "Excluded fields",
+      "fieldName": "Field name",
+      "valueOrExpr": "Value / expression",
+      "excludeEmpty": "No fields to exclude",
+      "fieldsEmpty": "No transform fields",
+      "addField": "Add field"
+    },
+    "keyValue": {
+      "keyLabel": "Key",
+      "valueLabel": "Value",
+      "empty": "No mapping entries",
+      "quickInsert": "Quick insert:",
+      "addItem": "Add item"
+    },
+    "tagFilter": {
+      "label": "Filter",
+      "activeLabel": "Filters:",
+      "clearAll": "Clear all",
+      "separatorTitle": "Applied to all series keys instantly (merged with auto-extraction when static tags exist).",
+      "separator": "Separator",
+      "separatorAria": "Segment separator (applied instantly)"
+    },
+    "routes": {
+      "condition": "Condition",
+      "outputPort": "Output port",
+      "empty": "No routes — input is passed straight through to the out port",
+      "addRoute": "Add route"
+    },
+    "metadataChips": {
+      "dataTypeTitle": "Data type: {type}",
+      "metricTypeTitle": "Metric type: {type}",
+      "metricUnknownTitle": "Metric type unspecified (auto-registered at runtime)",
+      "autoTitle": "Key auto-registered at runtime",
+      "autoAria": "Auto-registered",
+      "manualTitle": "Static key defined in config file",
+      "manualAria": "Manually registered"
+    },
+    "compareFields": {
+      "fieldName": "Field name",
+      "tolerance": "Tolerance",
+      "namePlaceholder": "e.g. current_temperature",
+      "tolerancePlaceholder": "0 (exact match)",
+      "empty": "No compare fields — compares the entire payload",
+      "addField": "Add field"
+    },
+    "stringList": {
+      "placeholder": "Enter value",
+      "empty": "No items",
+      "add": "Add"
+    },
+    "dynamicForm": {
+      "required": "This field is required",
+      "noConfig": "No configuration items",
+      "advanced": "Advanced settings"
+    },
+    "fieldHelp": {
+      "viewDescription": "View description"
     }
   }
 }

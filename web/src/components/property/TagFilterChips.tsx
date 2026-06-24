@@ -13,6 +13,7 @@
 import { useCallback } from 'react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import type { StoreTagPair } from '@/services/api/store';
 
 // ---- Props ----
@@ -74,10 +75,13 @@ export function TagFilterChips({
   selected,
   onToggle,
   onClearAll,
-  label = '필터링',
+  label,
   separator,
   onSeparatorChange,
 }: TagFilterChipsProps) {
+  const { t } = useTranslation();
+  // label 미지정 시 기본 프롬프트 텍스트를 i18n 으로 해석한다.
+  const promptLabel = label ?? t('property.tagFilter.label');
   // 활성 필터 요약 (key=value pairs).
   const activeFilters = Array.from(selected);
   // 구분자 입력은 separator 와 onSeparatorChange 가 모두 제공될 때만 노출.
@@ -99,27 +103,27 @@ export function TagFilterChips({
           {activeFilters.length > 0 ? (
             <>
               <span className="font-medium text-(--color-text-secondary)">
-                필터:
+                {t('property.tagFilter.activeLabel')}
               </span>{' '}
               {activeFilters.join(', ')}
             </>
           ) : (
-            label
+            promptLabel
           )}
         </p>
         <div className="flex items-center gap-2">
           {showSeparatorInput && (
             <label
               className="flex items-center gap-1 text-[11px] text-(--color-text-muted)"
-              title="입력 즉시 모든 시리즈 키에 적용됩니다 (정적 태그가 있는 경우 자동 추출과 병합)."
+              title={t('property.tagFilter.separatorTitle')}
             >
-              <span>구분자</span>
+              <span>{t('property.tagFilter.separator')}</span>
               <input
                 type="text"
                 value={separator}
                 onChange={(e) => onSeparatorChange(e.target.value.slice(0, 4))}
                 maxLength={4}
-                aria-label="세그먼트 구분자 (입력 즉시 적용)"
+                aria-label={t('property.tagFilter.separatorAria')}
                 data-testid="tag-segment-separator"
                 className="w-9 rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-1.5 py-0.5 text-center font-mono text-[11px] text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
@@ -131,7 +135,7 @@ export function TagFilterChips({
               onClick={onClearAll}
               className="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
             >
-              전체 해제
+              {t('property.tagFilter.clearAll')}
             </button>
           )}
         </div>

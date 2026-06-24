@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 // ---- 내부 행 타입 ----
 
@@ -91,6 +92,7 @@ export function KeyValueMapEditor({
   valuePlaceholder,
   pathHelper,
 }: KeyValueMapEditorProps) {
+  const { t } = useTranslation();
   // 내부 상태로 행을 관리하여 key 안정성을 보장한다.
   // 외부 value는 초기화 시에만 반영한다.
   const lastExternalRef = useRef<unknown>(undefined);
@@ -101,10 +103,10 @@ export function KeyValueMapEditor({
   const valueInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
   // 라벨/placeholder 기본값 (미지정 시 기존 "키"/"값" 유지).
-  const thKeyLabel = keyLabel ?? '키';
-  const thValueLabel = valueLabel ?? '값';
-  const phKey = keyPlaceholder ?? '키';
-  const phValue = valuePlaceholder ?? '값';
+  const thKeyLabel = keyLabel ?? t('property.keyValue.keyLabel');
+  const thValueLabel = valueLabel ?? t('property.keyValue.valueLabel');
+  const phKey = keyPlaceholder ?? t('property.keyValue.keyLabel');
+  const phValue = valuePlaceholder ?? t('property.keyValue.valueLabel');
 
   // 외부 value가 완전히 다른 객체로 교체되면 내부 상태를 동기화한다.
   // (단, 자체 emit으로 인한 변경은 무시)
@@ -227,7 +229,7 @@ export function KeyValueMapEditor({
                   colSpan={readOnly ? 2 : 3}
                   className="px-2 py-4 text-center text-xs text-(--color-text-muted)"
                 >
-                  매핑 항목이 없습니다
+                  {t('property.keyValue.empty')}
                 </td>
               </tr>
             )}
@@ -275,7 +277,7 @@ export function KeyValueMapEditor({
                       type="button"
                       onClick={() => handleRemove(row.key)}
                       className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                      aria-label="삭제"
+                      aria-label={t('property.common.deleteAria')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -290,7 +292,7 @@ export function KeyValueMapEditor({
       {/* `$.` JSONPath 빠른 삽입 칩 (pathHelper 이고 읽기 전용이 아닐 때만) */}
       {pathHelper && !readOnly && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="path-helper-chips">
-          <span className="text-xs text-(--color-text-muted)">빠른 삽입:</span>
+          <span className="text-xs text-(--color-text-muted)">{t('property.keyValue.quickInsert')}</span>
           {PATH_HELPER_CHIPS.map((chip) => (
             <button
               key={chip}
@@ -315,7 +317,7 @@ export function KeyValueMapEditor({
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          항목 추가
+          {t('property.keyValue.addItem')}
         </button>
       )}
     </div>

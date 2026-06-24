@@ -1714,6 +1714,71 @@
       "addRow": "행 추가",
       "tagsEmpty": "태그 없음",
       "tagDeleteAria": "{key} 태그 삭제"
+    },
+    "common": {
+      "deleteAria": "삭제"
+    },
+    "transform": {
+      "modeSelect": "Select (필드 선택)",
+      "modeMerge": "Merge (필드 병합)",
+      "modeExclude": "Exclude (필드 제외)",
+      "excludeFields": "제외 필드",
+      "fieldName": "필드명",
+      "valueOrExpr": "값 / 표현식",
+      "excludeEmpty": "제외할 필드가 없습니다",
+      "fieldsEmpty": "변환 필드가 없습니다",
+      "addField": "필드 추가"
+    },
+    "keyValue": {
+      "keyLabel": "키",
+      "valueLabel": "값",
+      "empty": "매핑 항목이 없습니다",
+      "quickInsert": "빠른 삽입:",
+      "addItem": "항목 추가"
+    },
+    "tagFilter": {
+      "label": "필터링",
+      "activeLabel": "필터:",
+      "clearAll": "전체 해제",
+      "separatorTitle": "입력 즉시 모든 시리즈 키에 적용됩니다 (정적 태그가 있는 경우 자동 추출과 병합).",
+      "separator": "구분자",
+      "separatorAria": "세그먼트 구분자 (입력 즉시 적용)"
+    },
+    "routes": {
+      "condition": "조건식",
+      "outputPort": "출력 포트명",
+      "empty": "라우트 없음 — 입력이 그대로 out 포트로 전달됩니다",
+      "addRoute": "라우트 추가"
+    },
+    "metadataChips": {
+      "dataTypeTitle": "데이터 타입: {type}",
+      "metricTypeTitle": "메트릭 타입: {type}",
+      "metricUnknownTitle": "메트릭 타입 미지정 (런타임 자동 등록)",
+      "autoTitle": "런타임에 자동 등록된 키",
+      "autoAria": "자동 등록",
+      "manualTitle": "설정 파일에 정의된 정적 키",
+      "manualAria": "수동 등록"
+    },
+    "compareFields": {
+      "fieldName": "필드명",
+      "tolerance": "허용오차",
+      "namePlaceholder": "예: current_temperature",
+      "tolerancePlaceholder": "0 (일치)",
+      "empty": "비교 필드 없음 — 전체 페이로드 비교",
+      "addField": "필드 추가"
+    },
+    "stringList": {
+      "placeholder": "값 입력",
+      "empty": "항목이 없습니다",
+      "add": "추가"
+    },
+    "dynamicForm": {
+      "required": "필수 항목입니다",
+      "noConfig": "설정 항목이 없습니다",
+      "advanced": "고급 설정"
+    },
+    "fieldHelp": {
+      "viewDescription": "설명 보기"
     }
   }
 }
