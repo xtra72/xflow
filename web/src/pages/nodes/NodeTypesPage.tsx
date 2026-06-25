@@ -7,6 +7,7 @@ import { Search } from 'lucide-react';
 
 import { useNodeTypes } from '@/hooks/useNodeTypes';
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import NodeCategoryTabs from '@/pages/nodes/NodeCategoryTabs';
 import NodeTypeCard from '@/pages/nodes/NodeTypeCard';
 import NodeTypeDetailPanel from '@/pages/nodes/NodeTypeDetailPanel';
@@ -19,9 +20,12 @@ const GRID_COLS = 3;
  * 검색, 카테고리 탭 필터, 카드 그리드로 구성된다.
  */
 export default function NodeTypesPage() {
+  const { t } = useTranslation();
   const { data: nodeTypes, isLoading, error, refetch } = useNodeTypes();
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('전체');
+  // 'allCategories' 번역값을 초기 선택 상태 및 필터 비교에 사용한다.
+  const ALL_CATEGORIES = t('nodes.allCategories');
+  const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORIES);
   const [expandedType, setExpandedType] = useState<string | null>(null);
 
   // 고유 카테고리 목록 추출
@@ -38,7 +42,7 @@ export default function NodeTypesPage() {
 
     return nodeTypes.filter((node) => {
       // 카테고리 필터
-      if (selectedCategory !== '전체' && node.category !== selectedCategory) {
+      if (selectedCategory !== ALL_CATEGORIES && node.category !== selectedCategory) {
         return false;
       }
       // 검색어 필터 (type, description 대상)
@@ -50,7 +54,7 @@ export default function NodeTypesPage() {
       }
       return true;
     });
-  }, [nodeTypes, search, selectedCategory]);
+  }, [nodeTypes, search, selectedCategory, ALL_CATEGORIES]);
 
   /** 카드 클릭 시 상세 패널 토글 */
   const toggleExpand = (type: string) => {
@@ -62,10 +66,10 @@ export default function NodeTypesPage() {
       {/* 페이지 헤더 */}
       <div>
         <h2 className="text-2xl font-bold text-(--color-text-primary)">
-          노드 타입
+          {t('nodes.title')}
         </h2>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          등록된 노드 타입을 탐색합니다
+          {t('nodes.subtitle')}
         </p>
       </div>
 
@@ -79,7 +83,7 @@ export default function NodeTypesPage() {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="노드 검색..."
+          placeholder={t('nodes.search')}
           className={cn(
             'block w-full rounded-md border border-(--color-border-strong) py-2 pl-10 pr-3 text-sm',
             'placeholder:text-gray-400',
@@ -105,7 +109,7 @@ export default function NodeTypesPage() {
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-6 text-center">
           <p className="text-sm text-red-600 dark:text-red-400">
-            노드 타입을 불러오는 데 실패했습니다
+            {t('nodes.loadError')}
           </p>
           <button
             type="button"
@@ -115,7 +119,7 @@ export default function NodeTypesPage() {
               'hover:bg-red-700 transition-colors',
             )}
           >
-            다시 시도
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -152,7 +156,7 @@ export default function NodeTypesPage() {
       {!isLoading && !error && nodeTypes && filteredNodes.length === 0 && (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-12 text-center">
           <p className="text-sm text-(--color-text-muted)">
-            일치하는 노드 타입이 없습니다
+            {t('nodes.noMatch')}
           </p>
         </div>
       )}

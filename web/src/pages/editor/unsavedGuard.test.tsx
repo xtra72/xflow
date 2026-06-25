@@ -12,6 +12,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
+// i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
+// ConfirmDialog 가 fallback 라벨/aria-label 용으로 useTranslation 을 호출한다.
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
+
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 
 // EditorPage 의 blocker → ConfirmDialog 배선을 그대로 옮긴 테스트용 컴포넌트.

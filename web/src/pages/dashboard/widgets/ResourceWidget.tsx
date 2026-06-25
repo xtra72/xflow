@@ -6,6 +6,7 @@ import { AlertTriangle, Cpu, HardDrive, Zap } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer } from 'recharts';
 
 import { useMetricsTarget } from '@/hooks/useMetricsTarget';
+import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { useUIStore } from '@/stores/uiStore';
@@ -101,8 +102,10 @@ export default function ResourceWidget({ metrics: localMetrics, panelConfig }: R
   const remoteMetrics = useMetricsTarget(target, refreshMs, remote);
   const metrics = remote ? remoteMetrics.metrics : localMetrics;
 
+  const { t } = useTranslation();
+
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
-  const title = panelConfig?.title ?? '프로세스 리소스';
+  const title = panelConfig?.title ?? t('dashboard.panelTypes.resource');
   const visibleMetrics = (panelConfig?.config?.visibleMetrics as MetricKey[]) ?? ['cpu', 'memory', 'throughput', 'errorRate'];
   const panelColor = panelConfig?.config?.panelColor as string | undefined;
   const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
@@ -163,7 +166,7 @@ export default function ResourceWidget({ metrics: localMetrics, panelConfig }: R
         {visibleMetrics.includes('cpu') && (
           <MetricCard
             icon={<Cpu className="h-4 w-4" />}
-            label="CPU 사용률"
+            label={t('dashboard.cpuUsage')}
             display={cpuPercent !== null ? `${cpuPercent.toFixed(1)}%` : '-'}
             history={cpuHistory.current}
             color="#3b82f6"
@@ -173,7 +176,7 @@ export default function ResourceWidget({ metrics: localMetrics, panelConfig }: R
         {visibleMetrics.includes('memory') && (
           <MetricCard
             icon={<HardDrive className="h-4 w-4" />}
-            label="메모리 사용률"
+            label={t('dashboard.memoryUsage')}
             display={memPercent !== null ? `${memPercent.toFixed(1)}%` : '-'}
             history={memHistory.current}
             color="#8b5cf6"
@@ -183,7 +186,7 @@ export default function ResourceWidget({ metrics: localMetrics, panelConfig }: R
         {visibleMetrics.includes('throughput') && (
           <MetricCard
             icon={<Zap className="h-4 w-4" />}
-            label="처리량 (msg/s)"
+            label={t('dashboard.widget.throughputLabel')}
             display={throughput !== null ? throughput.toLocaleString() : '-'}
             history={throughputHistory.current}
             color="#10b981"
@@ -193,7 +196,7 @@ export default function ResourceWidget({ metrics: localMetrics, panelConfig }: R
         {visibleMetrics.includes('errorRate') && (
           <MetricCard
             icon={<AlertTriangle className="h-4 w-4" />}
-            label="에러율"
+            label={t('dashboard.settings.metricLabels.errorRate')}
             display={errorRate !== null ? `${errorRate.toFixed(1)}%` : '-'}
             history={errorRateHistory.current}
             color="#ef4444"

@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Database } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import type { SeriesDataSource } from '@/services/api/seriesDataSource';
 
 /** 페이지 크기 옵션. 기본값은 10. */
@@ -22,6 +23,7 @@ interface SeriesListPanelProps {
 }
 
 function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
+  const { t } = useTranslation();
   // 페이지네이션 상태 — 기본 페이지 크기는 10.
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(10);
@@ -52,15 +54,25 @@ function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
         <div className="flex items-center gap-2 text-xs text-(--color-text-muted)">
           <Database className="h-3.5 w-3.5" aria-hidden="true" />
           {isLoading ? (
-            <span>시리즈 불러오는 중…</span>
+            <span>{t('series.loadingSeries')}</span>
           ) : (
-            <span>
-              총 <span className="font-semibold text-(--color-text-primary)">{total}</span>개 시리즈
-            </span>
+            // 총 개수는 강조 span 으로 분리 렌더 — {count} 슬롯 기준으로 좌우 텍스트를 나눈다.
+            (() => {
+              const [before, after] = t('series.seriesCount').split('{count}');
+              return (
+                <span>
+                  {before}
+                  <span className="font-semibold text-(--color-text-primary)">
+                    {total}
+                  </span>
+                  {after}
+                </span>
+              );
+            })()
           )}
         </div>
         <div className="flex items-center gap-2 text-xs text-(--color-text-muted)">
-          <label htmlFor="tsdb-series-page-size">페이지당</label>
+          <label htmlFor="tsdb-series-page-size">{t('series.perPage')}</label>
           <select
             id="tsdb-series-page-size"
             value={pageSize}
@@ -80,13 +92,13 @@ function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
       {/* 에러 상태 */}
       {isError && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
-          <p>시리즈 목록을 불러오지 못했습니다.</p>
+          <p>{t('series.loadError')}</p>
           <button
             type="button"
             onClick={() => refetch()}
             className="mt-2 rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 dark:bg-red-500"
           >
-            다시 시도
+            {t('series.retry')}
           </button>
         </div>
       )}
@@ -108,7 +120,7 @@ function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
       {isEmpty && (
         <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) py-10 text-center">
           <Database className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
-          <p className="mt-2 text-sm text-(--color-text-muted)">저장된 시리즈가 없습니다</p>
+          <p className="mt-2 text-sm text-(--color-text-muted)">{t('series.noStoredSeries')}</p>
         </div>
       )}
 
@@ -122,7 +134,7 @@ function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
                   scope="col"
                   className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                 >
-                  시리즈 키
+                  {t('series.seriesKey')}
                 </th>
               </tr>
             </thead>
@@ -143,14 +155,14 @@ function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
       {!isLoading && !isError && totalPages > 0 && (
         <div className="flex items-center justify-between text-xs text-(--color-text-muted)">
           <span>
-            페이지 {page} / {totalPages}
+            {t('series.pageIndicator').replace('{page}', String(page)).replace('{total}', String(totalPages))}
           </span>
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={!canGoPrev}
-              aria-label="이전 페이지"
+              aria-label={t('series.prevPage')}
               className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -159,7 +171,7 @@ function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
               type="button"
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={!canGoNext}
-              aria-label="다음 페이지"
+              aria-label={t('series.nextPage')}
               className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ChevronRight className="h-4 w-4" />

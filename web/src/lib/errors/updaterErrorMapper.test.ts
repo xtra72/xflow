@@ -10,6 +10,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { APIError } from '@/types/api';
+import type { TranslationFn } from '@/lib/i18n';
+import ko from '@/lib/i18n/ko.json';
 
 import {
   classifyUpdateError,
@@ -18,18 +20,30 @@ import {
   type UpdateErrorMapped,
 } from './updaterErrorMapper';
 
+// 실제 ko.json 을 사용해 키를 한글 메시지로 해석하는 테스트용 t.
+// {message} 보간은 매퍼 내부에서 .replace 로 처리하므로 여기서는 키 해석만 한다.
+const t: TranslationFn = (key: string) => {
+  const parts = key.split('.');
+  let cur: unknown = ko;
+  for (const p of parts) {
+    if (cur === null || typeof cur !== 'object') return key;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return typeof cur === 'string' ? cur : key;
+};
+
 describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateChannelInvalid ────────────────────────────────────
   describe('channel_invalid', () => {
     it('"channel" 키워드로 분류한다', () => {
       const err = new Error('updater: invalid channel configuration');
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.kind).toBe<UpdateErrorKind>('channel_invalid');
       expect(result.userMessage).toContain('업데이트 채널');
     });
 
     it('ErrUpdateChannelInvalid 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateChannelInvalid'));
+      const result = mapUpdateError(new Error('ErrUpdateChannelInvalid'), t);
       expect(result.kind).toBe('channel_invalid');
     });
   });
@@ -37,13 +51,13 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateChecksumMismatch ──────────────────────────────────
   describe('checksum_mismatch', () => {
     it('"checksum" 키워드로 분류한다', () => {
-      const result = mapUpdateError(new Error('updater: checksum mismatch'));
+      const result = mapUpdateError(new Error('updater: checksum mismatch'), t);
       expect(result.kind).toBe('checksum_mismatch');
       expect(result.userMessage).toContain('체크섬');
     });
 
     it('ErrUpdateChecksumMismatch 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateChecksumMismatch'));
+      const result = mapUpdateError(new Error('ErrUpdateChecksumMismatch'), t);
       expect(result.kind).toBe('checksum_mismatch');
     });
   });
@@ -51,14 +65,14 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateSignatureInvalid ──────────────────────────────────
   describe('signature_invalid', () => {
     it('"signature" 키워드로 분류한다', () => {
-      const result = mapUpdateError(new Error('updater: signature verification failed'));
+      const result = mapUpdateError(new Error('updater: signature verification failed'), t);
       expect(result.kind).toBe('signature_invalid');
       expect(result.userMessage).toContain('디지털 서명');
       expect(result.userMessage).toContain('신뢰할 수 없는');
     });
 
     it('ErrUpdateSignatureInvalid 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateSignatureInvalid'));
+      const result = mapUpdateError(new Error('ErrUpdateSignatureInvalid'), t);
       expect(result.kind).toBe('signature_invalid');
     });
   });
@@ -66,14 +80,14 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateDownloadFailed ────────────────────────────────────
   describe('download_failed', () => {
     it('"download" 키워드로 분류한다', () => {
-      const result = mapUpdateError(new Error('updater: download failed network error'));
+      const result = mapUpdateError(new Error('updater: download failed network error'), t);
       expect(result.kind).toBe('download_failed');
       expect(result.userMessage).toContain('다운로드');
       expect(result.userMessage).toContain('네트워크');
     });
 
     it('ErrUpdateDownloadFailed 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateDownloadFailed'));
+      const result = mapUpdateError(new Error('ErrUpdateDownloadFailed'), t);
       expect(result.kind).toBe('download_failed');
     });
   });
@@ -81,13 +95,13 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateRollbackFailed ────────────────────────────────────
   describe('rollback_failed', () => {
     it('"rollback" 키워드로 분류한다', () => {
-      const result = mapUpdateError(new Error('updater: rollback failed'));
+      const result = mapUpdateError(new Error('updater: rollback failed'), t);
       expect(result.kind).toBe('rollback_failed');
       expect(result.userMessage).toContain('롤백');
     });
 
     it('ErrUpdateRollbackFailed 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateRollbackFailed'));
+      const result = mapUpdateError(new Error('ErrUpdateRollbackFailed'), t);
       expect(result.kind).toBe('rollback_failed');
     });
 
@@ -97,7 +111,7 @@ describe('mapUpdateError — backend error 분류', () => {
         'rollback failed: no backup available',
         409,
       );
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.kind).toBe('rollback_failed');
     });
   });
@@ -105,15 +119,13 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateInsufficientDiskSpace ─────────────────────────────
   describe('insufficient_disk', () => {
     it('"disk" 키워드로 분류한다', () => {
-      const result = mapUpdateError(
-        new Error('updater: insufficient disk space'),
-      );
+      const result = mapUpdateError(new Error('updater: insufficient disk space'), t);
       expect(result.kind).toBe('insufficient_disk');
       expect(result.userMessage).toContain('디스크');
     });
 
     it('ErrUpdateInsufficientDiskSpace 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateInsufficientDiskSpace'));
+      const result = mapUpdateError(new Error('ErrUpdateInsufficientDiskSpace'), t);
       expect(result.kind).toBe('insufficient_disk');
     });
   });
@@ -121,16 +133,14 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateDowngradeRefused ──────────────────────────────────
   describe('downgrade_refused', () => {
     it('"downgrade" 키워드로 분류한다', () => {
-      const result = mapUpdateError(
-        new Error('updater: downgrade refused without --force'),
-      );
+      const result = mapUpdateError(new Error('updater: downgrade refused without --force'), t);
       expect(result.kind).toBe('downgrade_refused');
       expect(result.userMessage).toContain('다운그레이드');
       expect(result.userMessage).toContain('force');
     });
 
     it('ErrDowngradeRequiresForce 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrDowngradeRequiresForce'));
+      const result = mapUpdateError(new Error('ErrDowngradeRequiresForce'), t);
       expect(result.kind).toBe('downgrade_refused');
     });
   });
@@ -138,14 +148,14 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateApplyFailed ───────────────────────────────────────
   describe('apply_failed', () => {
     it('"apply" 키워드로 분류한다', () => {
-      const result = mapUpdateError(new Error('updater: apply failed'));
+      const result = mapUpdateError(new Error('updater: apply failed'), t);
       expect(result.kind).toBe('apply_failed');
       expect(result.userMessage).toContain('적용');
       expect(result.userMessage).toContain('백업');
     });
 
     it('ErrUpdateApplyFailed 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateApplyFailed'));
+      const result = mapUpdateError(new Error('ErrUpdateApplyFailed'), t);
       expect(result.kind).toBe('apply_failed');
     });
   });
@@ -153,13 +163,13 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── ErrUpdateInvalidInput ──────────────────────────────────────
   describe('invalid_input', () => {
     it('"invalid" 키워드로 분류한다', () => {
-      const result = mapUpdateError(new Error('updater: invalid version'));
+      const result = mapUpdateError(new Error('updater: invalid version'), t);
       expect(result.kind).toBe('invalid_input');
       expect(result.userMessage).toContain('잘못된 요청');
     });
 
     it('ErrUpdateInvalidInput 식별자도 분류한다', () => {
-      const result = mapUpdateError(new Error('ErrUpdateInvalidInput'));
+      const result = mapUpdateError(new Error('ErrUpdateInvalidInput'), t);
       expect(result.kind).toBe('invalid_input');
     });
   });
@@ -172,15 +182,13 @@ describe('mapUpdateError — backend error 분류', () => {
         'another update operation is in progress',
         409,
       );
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.kind).toBe('in_progress');
       expect(result.userMessage).toContain('진행 중');
     });
 
     it('"in progress" 단순 메시지(Error)도 분류한다', () => {
-      const result = mapUpdateError(
-        new Error('update operation in progress'),
-      );
+      const result = mapUpdateError(new Error('update operation in progress'), t);
       expect(result.kind).toBe('in_progress');
     });
   });
@@ -189,7 +197,7 @@ describe('mapUpdateError — backend error 분류', () => {
   describe('unauthorized', () => {
     it('APIError status=401 은 본문 무관하게 unauthorized 로 분류한다', () => {
       const err = new APIError('UNAUTHORIZED', 'invalid metric_type', 401);
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.kind).toBe('unauthorized');
       expect(result.userMessage).toContain('권한');
     });
@@ -197,7 +205,7 @@ describe('mapUpdateError — backend error 분류', () => {
     it('일반 Error 의 "unauthorized" 메시지는 fallback (status 정보 없음)', () => {
       // status 가 없는 일반 Error 는 특별 처리하지 않는다.
       // 본문에 다른 키워드가 없으면 unknown 으로 떨어진다.
-      const result = mapUpdateError(new Error('totally unrelated message'));
+      const result = mapUpdateError(new Error('totally unrelated message'), t);
       expect(result.kind).toBe('unknown');
     });
   });
@@ -205,42 +213,42 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── unknown (fallback) ─────────────────────────────────────────
   describe('unknown (fallback)', () => {
     it('알 수 없는 메시지는 fallback 으로 처리한다', () => {
-      const result = mapUpdateError(new Error('mysterious failure'));
+      const result = mapUpdateError(new Error('mysterious failure'), t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('mysterious failure');
     });
 
     it('빈 메시지는 "Unknown error" fallback 을 표시한다', () => {
-      const result = mapUpdateError(new Error(''));
+      const result = mapUpdateError(new Error(''), t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('Unknown error');
     });
 
     it('null 입력은 unknown + "Unknown error" 로 처리한다', () => {
-      const result = mapUpdateError(null);
+      const result = mapUpdateError(null, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('Unknown error');
     });
 
     it('undefined 입력은 unknown + "Unknown error" 로 처리한다', () => {
-      const result = mapUpdateError(undefined);
+      const result = mapUpdateError(undefined, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('Unknown error');
     });
 
     it('숫자 등 비정형 입력도 unknown 으로 처리한다', () => {
-      const result = mapUpdateError(42 as unknown);
+      const result = mapUpdateError(42 as unknown, t);
       expect(result.kind).toBe('unknown');
     });
 
     it('object with non-string message 필드는 String() 변환 후 매핑한다', () => {
-      const result = mapUpdateError({ message: 42 });
+      const result = mapUpdateError({ message: 42 }, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('42');
     });
 
     it('object with string message 필드는 그대로 매핑한다', () => {
-      const result = mapUpdateError({ message: 'updater: checksum mismatch' });
+      const result = mapUpdateError({ message: 'updater: checksum mismatch' }, t);
       expect(result.kind).toBe('checksum_mismatch');
     });
   });
@@ -248,18 +256,18 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── 입력 형식 다양성 ─────────────────────────────────────────
   describe('입력 형식 다양성', () => {
     it('대소문자 무관 매칭', () => {
-      const result = mapUpdateError(new Error('UPDATER: CHECKSUM MISMATCH'));
+      const result = mapUpdateError(new Error('UPDATER: CHECKSUM MISMATCH'), t);
       expect(result.kind).toBe('checksum_mismatch');
     });
 
     it('문자열 입력도 직접 매핑한다', () => {
-      const result = mapUpdateError('signature invalid');
+      const result = mapUpdateError('signature invalid', t);
       expect(result.kind).toBe('signature_invalid');
     });
 
     it('raw 필드는 원본 에러 객체를 보존한다', () => {
       const err = new Error('checksum mismatch');
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.raw).toBe(err);
     });
   });
@@ -273,7 +281,7 @@ describe('mapUpdateError — backend error 분류', () => {
         'checksum mismatch but unauthorized',
         401,
       );
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.kind).toBe('unauthorized');
     });
 
@@ -284,7 +292,7 @@ describe('mapUpdateError — backend error 분류', () => {
         'rollback failed: no backup file present',
         409,
       );
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.kind).toBe('rollback_failed');
     });
 
@@ -294,15 +302,13 @@ describe('mapUpdateError — backend error 분류', () => {
         'update in progress',
         409,
       );
-      const result = mapUpdateError(err);
+      const result = mapUpdateError(err, t);
       expect(result.kind).toBe('in_progress');
     });
 
     it('여러 키워드가 충돌하면 사전 정의 순서가 우선', () => {
       // checksum + signature 동시 포함 → checksum 우선 (사전 정의 순서).
-      const result = mapUpdateError(
-        new Error('updater: checksum mismatch with signature problem'),
-      );
+      const result = mapUpdateError(new Error('updater: checksum mismatch with signature problem'), t);
       expect(result.kind).toBe('checksum_mismatch');
     });
   });

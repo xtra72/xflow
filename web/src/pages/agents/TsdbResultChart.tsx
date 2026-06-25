@@ -22,6 +22,7 @@ import {
   YAxis,
 } from 'recharts';
 
+import { useTranslation } from '@/lib/i18n';
 import { formatLocalTimestamp } from '@/services/api/tsdb';
 import type { SeriesMatrix, SeriesMatrixQuery } from '@/services/api/seriesDataSource';
 
@@ -87,6 +88,7 @@ export default function TsdbResultChart({
   aggregation,
   decimalPrecision = 1,
 }: TsdbResultChartProps) {
+  const { t } = useTranslation();
   const { columns, rows } = matrix;
 
   // SPEC-WEB-005 v0.5.0: 결측값 처리 모드.
@@ -129,7 +131,7 @@ export default function TsdbResultChart({
   if (columns.length === 0) {
     return (
       <div className="p-4 text-center text-sm text-(--color-text-muted)">
-        선택된 시리즈가 없습니다.
+        {t('series.noSelectedSeries')}
       </div>
     );
   }
@@ -137,7 +139,7 @@ export default function TsdbResultChart({
   if (rows.length === 0) {
     return (
       <div className="p-4 text-center text-sm text-(--color-text-muted)">
-        쿼리 결과가 비어 있습니다.
+        {t('series.emptyResult')}
       </div>
     );
   }
@@ -160,7 +162,7 @@ export default function TsdbResultChart({
           htmlFor="tsdb-chart-null-mode"
           className="font-medium text-(--color-text-muted)"
         >
-          결측값 처리:
+          {t('series.nullHandling')}
         </label>
         <select
           id="tsdb-chart-null-mode"
@@ -169,14 +171,14 @@ export default function TsdbResultChart({
           onChange={(e) => setNullMode(e.target.value as NullHandlingMode)}
           className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-0.5 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
-          <option value="gap">빈칸 (라인 끊김)</option>
-          <option value="previous">이전 값</option>
-          <option value="value">지정값</option>
-          <option value="interpolate">선형 보간 (이전 값에서 추론)</option>
+          <option value="gap">{t('series.nullGap')}</option>
+          <option value="previous">{t('series.nullPrevious')}</option>
+          <option value="value">{t('series.nullValue')}</option>
+          <option value="interpolate">{t('series.nullInterpolate')}</option>
         </select>
         {nullMode === 'value' && (
           <label className="inline-flex items-center gap-1.5 text-(--color-text-muted)">
-            <span>대체 값:</span>
+            <span>{t('series.nullFillValue')}</span>
             <input
               type="number"
               data-testid="tsdb-chart-null-fill-value"

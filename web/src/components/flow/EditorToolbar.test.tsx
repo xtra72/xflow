@@ -154,21 +154,23 @@ describe('EditorToolbar - 플로우 타이틀 / 전환 선택기', () => {
   it('설명이 있으면 이름 뒤에 도움말(?) 아이콘을 표시한다', () => {
     renderToolbar({ flowId: 'flow-1' });
     expect(
-      screen.getByRole('button', { name: '설명 보기' }),
+      screen.getByRole('button', { name: 'property.fieldHelp.viewDescription' }),
     ).toBeInTheDocument();
   });
 
   it('도움말(?) 클릭 시 설명 팝오버를 보여준다', () => {
     renderToolbar({ flowId: 'flow-1' });
 
-    fireEvent.click(screen.getByRole('button', { name: '설명 보기' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'property.fieldHelp.viewDescription' }),
+    );
     expect(screen.getByRole('tooltip')).toHaveTextContent('첫 번째 플로우 설명');
   });
 
   it('설명이 없으면 도움말(?) 아이콘을 표시하지 않는다', () => {
     renderToolbar({ flowId: 'flow-2' });
     expect(
-      screen.queryByRole('button', { name: '설명 보기' }),
+      screen.queryByRole('button', { name: 'property.fieldHelp.viewDescription' }),
     ).not.toBeInTheDocument();
   });
 

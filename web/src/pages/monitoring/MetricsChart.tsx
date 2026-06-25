@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useTranslation } from '@/lib/i18n';
 
 /** 차트 데이터 포인트 */
 export interface MetricDataPoint {
@@ -90,30 +91,32 @@ interface MetricsChartProps {
 
 /** 2x2 그리드의 실시간 메트릭 차트 패널 */
 export default function MetricsChart({ data }: MetricsChartProps) {
+  const { t } = useTranslation();
+
   const charts: ChartConfig[] = [
     {
-      title: 'CPU 사용률',
+      title: t('monitoring.cpu'),
       data: data.cpu,
       color: '#3b82f6',
       unit: '%',
       domain: [0, 100],
     },
     {
-      title: '메모리 사용률',
+      title: t('monitoring.memory'),
       data: data.memory,
       color: '#8b5cf6',
       unit: '%',
       domain: [0, 100],
     },
     {
-      title: '처리량 (msg/s)',
+      title: t('monitoring.throughputLabel'),
       data: data.throughput,
       color: '#10b981',
       unit: '',
       domain: [0, 'auto'] as unknown as [number, number],
     },
     {
-      title: '에러율',
+      title: t('monitoring.errorRate'),
       data: data.errorRate,
       color: '#ef4444',
       unit: '%',

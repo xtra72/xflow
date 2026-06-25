@@ -3063,7 +3063,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       } catch (err) {
         // 다이얼로그를 닫지 않고 사용자가 재시도할 수 있도록 한다.
         // v0.7.0 (M15): mapStoreError 로 백엔드 에러를 사용자 친화 메시지로 변환.
-        const mapped = mapStoreError(err);
+        const mapped = mapStoreError(err, t);
         addNotification({
           type: 'error',
           message: t('agents.detail.store.promoteFailed').replace('{message}', mapped.userMessage),
@@ -3160,7 +3160,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
       } catch (err) {
         // 다이얼로그를 닫지 않고 재시도 가능하게 한다.
-        const mapped = mapStoreError(err);
+        const mapped = mapStoreError(err, t);
         addNotification({
           type: 'error',
           message: t('agents.detail.store.editMetaFailed').replace('{message}', mapped.userMessage),

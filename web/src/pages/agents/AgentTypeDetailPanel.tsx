@@ -1,6 +1,8 @@
 // 에이전트 타입 상세 패널.
 // 카드 아래에 확장되어 설정 필드, 설정 예제를 표시한다.
 
+import { useTranslation } from '@/lib/i18n';
+
 import { AGENT_TYPE_META } from './agentTypeMeta';
 
 interface AgentTypeDetailPanelProps {
@@ -9,12 +11,13 @@ interface AgentTypeDetailPanelProps {
 
 /** 에이전트 타입 상세 정보 패널 */
 export default function AgentTypeDetailPanel({ agentType }: AgentTypeDetailPanelProps) {
+  const { t } = useTranslation();
   const meta = AGENT_TYPE_META[agentType];
 
   if (!meta) {
     return (
       <div className="p-4 text-sm text-(--color-text-muted)">
-        상세 정보가 없습니다.
+        {t('agents.types.noDetail')}
       </div>
     );
   }
@@ -24,7 +27,7 @@ export default function AgentTypeDetailPanel({ agentType }: AgentTypeDetailPanel
       {/* 기능 설명 */}
       <section>
         <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-          기능
+          {t('agents.types.featureSection')}
         </h4>
         <p className="text-sm text-(--color-text-muted) leading-relaxed">
           {meta.description}
@@ -35,26 +38,26 @@ export default function AgentTypeDetailPanel({ agentType }: AgentTypeDetailPanel
       {meta.configFields.length > 0 ? (
         <section>
           <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-            설정 필드
+            {t('agents.types.configFields')}
           </h4>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-(--color-border-default)">
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    이름
+                    {t('agents.types.colName')}
                   </th>
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    타입
+                    {t('agents.types.colType')}
                   </th>
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    필수
+                    {t('agents.types.colRequired')}
                   </th>
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    기본값
+                    {t('agents.types.colDefault')}
                   </th>
                   <th className="py-2 text-left font-medium text-(--color-text-muted)">
-                    설명
+                    {t('agents.types.colDescription')}
                   </th>
                 </tr>
               </thead>
@@ -89,10 +92,10 @@ export default function AgentTypeDetailPanel({ agentType }: AgentTypeDetailPanel
       ) : (
         <section>
           <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-            설정 필드
+            {t('agents.types.configFields')}
           </h4>
           <p className="text-sm text-(--color-text-muted)">
-            설정 스키마가 아직 준비되지 않았습니다.
+            {t('agents.types.configFieldsEmpty')}
           </p>
         </section>
       )}
@@ -100,7 +103,7 @@ export default function AgentTypeDetailPanel({ agentType }: AgentTypeDetailPanel
       {/* 설정 예제 */}
       <section>
         <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-          설정 예제
+          {t('agents.types.configExample')}
         </h4>
         <pre className="overflow-x-auto rounded-md bg-gray-900 p-4 text-xs text-gray-100 dark:bg-gray-950">
           {JSON.stringify(meta.configExample, null, 2)}

@@ -9,6 +9,22 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { SeriesSelectTable, type SeriesRow } from './SeriesSelectTable';
 import { makeSeriesId, SERIES_ID_SEPARATOR } from '@/services/api/seriesLabels';
 
+// i18n: ko.json 을 점 표기 키로 해석하는 mock. 컴포넌트가 useTranslation 을
+// 쓰지만 I18nProvider 로 감싸지 않으므로 키를 한국어로 해석해 단언을 통과시킨다.
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolve = (key: string): string => {
+    const v = key.split('.').reduce<unknown>(
+      (o, p) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[p] : undefined),
+      ko,
+    );
+    return typeof v === 'string' ? v : key;
+  };
+  return {
+    useTranslation: () => ({ t: resolve, locale: 'ko' as const, setLocale: () => {} }),
+  };
+});
+
 /** SeriesID → 행/체크박스 testid 접미사(NUL → '~'). */
 function safe(id: string): string {
   return id.split(SERIES_ID_SEPARATOR).join('~');

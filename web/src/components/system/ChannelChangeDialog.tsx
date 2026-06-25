@@ -114,7 +114,7 @@ export function ChannelChangeDialog({
       }
       onClose();
     } catch (err) {
-      const mapped = mapUpdateError(err);
+      const mapped = mapUpdateError(err, t);
       addNotification({
         type: 'error',
         message: mapped.userMessage,

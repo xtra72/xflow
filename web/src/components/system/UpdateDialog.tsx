@@ -693,7 +693,7 @@ function ResultStep({
   }
 
   // failure
-  const mapped = mapUpdateError(error);
+  const mapped = mapUpdateError(error, t);
   return (
     <div
       data-testid="update-dialog-result-failure"

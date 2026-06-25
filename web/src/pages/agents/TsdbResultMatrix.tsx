@@ -22,6 +22,7 @@ import {
   Table as TableIcon,
 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { formatLocalTimestamp } from '@/services/api/tsdb';
 import type { SeriesMatrix, SeriesMatrixQuery } from '@/services/api/seriesDataSource';
 
@@ -110,6 +111,7 @@ function SeriesResultMatrixImpl({
   viewMode: viewModeProp,
   onViewModeChange,
 }: SeriesResultMatrixProps) {
+  const { t } = useTranslation();
   const { columns, rows } = matrix;
 
   // 페이지네이션 상태.
@@ -184,7 +186,7 @@ function SeriesResultMatrixImpl({
   if (columns.length === 0) {
     return (
       <div className="p-4 text-center text-sm text-(--color-text-muted)">
-        선택된 시리즈가 없습니다.
+        {t('series.noSelectedSeries')}
       </div>
     );
   }
@@ -196,7 +198,7 @@ function SeriesResultMatrixImpl({
   const headerBar = (
     <div className="mb-2 flex items-center justify-between gap-2">
       <h4 className="text-xs font-medium text-(--color-text-muted)">
-        {hasRows ? `행 ${total.toLocaleString()}개` : '결과 없음'}
+        {hasRows ? t('series.rowCount').replace('{count}', total.toLocaleString()) : t('series.noRows')}
       </h4>
       <div className="flex items-center gap-2">
         {/*
@@ -205,13 +207,13 @@ function SeriesResultMatrixImpl({
         */}
         <div
           role="tablist"
-          aria-label="결과 표시 모드"
+          aria-label={t('series.resultViewMode')}
           className="inline-flex rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) p-0.5"
         >
           {(['table', 'chart'] as const).map((mode) => {
             const selected = viewMode === mode;
             const Icon = mode === 'table' ? TableIcon : LineChartIcon;
-            const label = mode === 'table' ? '테이블' : '차트';
+            const label = mode === 'table' ? t('series.viewTable') : t('series.viewChart');
             return (
               <button
                 key={mode}
@@ -240,7 +242,7 @@ function SeriesResultMatrixImpl({
             data-testid="tsdb-result-csv-export"
           >
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
-            CSV 내보내기
+            {t('series.csvExport')}
           </button>
         )}
       </div>
@@ -252,7 +254,7 @@ function SeriesResultMatrixImpl({
       <div>
         {headerBar}
         <div className="p-4 text-center text-sm text-(--color-text-muted)">
-          쿼리 결과가 비어 있습니다.
+          {t('series.emptyResult')}
         </div>
       </div>
     );
@@ -284,7 +286,7 @@ function SeriesResultMatrixImpl({
                   scope="col"
                   className="sticky left-0 z-10 border-b border-r border-(--color-border-default) bg-(--color-bg-primary) px-3 py-2 text-left font-medium text-(--color-text-muted)"
                 >
-                  타임스탬프 (Local)
+                  {t('series.timestampLocal')}
                 </th>
                 {columns.map((k) => (
                   <th
@@ -340,7 +342,7 @@ function SeriesResultMatrixImpl({
               htmlFor="tsdb-page-size"
               className="inline-flex items-center gap-1.5"
             >
-              <span>페이지 크기:</span>
+              <span>{t('series.pageSize')}</span>
               <select
                 id="tsdb-page-size"
                 data-testid="tsdb-page-size"
@@ -359,7 +361,7 @@ function SeriesResultMatrixImpl({
           <div className="flex items-center gap-2">
             <span data-testid="tsdb-page-range">
               {(startIdx + 1).toLocaleString()}-{endIdx.toLocaleString()} /{' '}
-              {total.toLocaleString()} 행
+              {t('series.rowsTotal').replace('{count}', total.toLocaleString())}
             </span>
             <button
               type="button"
@@ -368,7 +370,7 @@ function SeriesResultMatrixImpl({
               data-testid="tsdb-page-prev"
               className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-0.5 text-xs font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-50"
             >
-              이전
+              {t('agents.detail.store.prev')}
             </button>
             <span data-testid="tsdb-page-indicator">
               {page} / {Math.max(1, totalPages)}
@@ -380,7 +382,7 @@ function SeriesResultMatrixImpl({
               data-testid="tsdb-page-next"
               className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-0.5 text-xs font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-50"
             >
-              다음
+              {t('agents.detail.store.next')}
             </button>
           </div>
         </div>

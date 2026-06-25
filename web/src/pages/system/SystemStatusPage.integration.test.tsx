@@ -155,6 +155,28 @@ vi.mock('@/stores/uiStore', async () => {
   };
 });
 
+// i18n 모킹: I18nProvider 없이 렌더하기 위해 useTranslation 을 교체한다.
+// 인라인 실패 메시지/토스트가 실제 한국어(mapUpdateError → t(key))를 검사하므로
+// ko.json 을 해석해 반환한다. (async factory 내부 import 로 호이스팅 회피.)
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolveKo = (key: string): string => {
+    const value = key
+      .split('.')
+      .reduce<unknown>(
+        (obj, part) =>
+          obj != null && typeof obj === 'object'
+            ? (obj as Record<string, unknown>)[part]
+            : undefined,
+        ko,
+      );
+    return typeof value === 'string' ? value : key;
+  };
+  return {
+    useTranslation: () => ({ t: (k: string) => resolveKo(k) }),
+  };
+});
+
 // 통합 테스트는 AppLayout 의 헤더/사이드바를 거치지 않는다 (테스트 router 직접 정의).
 
 import AuthGuard from '@/components/layout/AuthGuard';

@@ -13,6 +13,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, Filter, Search } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { MetadataChips } from '@/components/property/MetadataChips';
 import { SERIES_ID_SEPARATOR } from '@/services/api/seriesLabels';
 import type {
@@ -94,6 +95,7 @@ export function SeriesSelectTable({
   onClearMany,
   showRegistration,
 }: SeriesSelectTableProps) {
+  const { t } = useTranslation();
   const [sort, setSort] = useState<{ column: SortColumn; direction: SortDirection }>(
     { column: 'key', direction: 'asc' },
   );
@@ -237,7 +239,7 @@ export function SeriesSelectTable({
             onClick={() => handleSort(column)}
             className="flex items-center gap-1 hover:text-(--color-text-primary)"
             data-testid={`series-sort-${column}`}
-            aria-label={`${label} 정렬`}
+            aria-label={t('series.sortAriaLabel').replace('{label}', label)}
           >
             {label}
             {sortIcon(column)}
@@ -249,7 +251,7 @@ export function SeriesSelectTable({
               facetActive ? 'text-blue-600' : 'text-(--color-text-muted)'
             }`}
             data-testid={`series-filter-${column}`}
-            aria-label={`${label} 필터`}
+            aria-label={t('series.filterAriaLabel').replace('{label}', label)}
             aria-expanded={openFilter === facet}
           >
             <Filter className="h-3 w-3" aria-hidden="true" />
@@ -269,7 +271,7 @@ export function SeriesSelectTable({
                 <input
                   type="text"
                   autoFocus
-                  placeholder="키 검색"
+                  placeholder={t('series.keySearchPlaceholder')}
                   value={keySearch}
                   onChange={(e) => setKeySearch(e.target.value)}
                   data-testid="series-filter-key-input"
@@ -304,7 +306,7 @@ export function SeriesSelectTable({
           data-testid="tsdb-select-all"
           className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
         >
-          전체 선택 ({filteredIds.length})
+          {t('series.selectAll').replace('{count}', String(filteredIds.length))}
         </button>
         <button
           type="button"
@@ -313,7 +315,7 @@ export function SeriesSelectTable({
           data-testid="tsdb-clear-all"
           className="rounded border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated) disabled:opacity-50"
         >
-          전체 해제
+          {t('series.clearAll')}
         </button>
         {openFilter !== null && (
           // 팝오버 바깥 클릭 닫기용 투명 백드롭.
@@ -332,12 +334,12 @@ export function SeriesSelectTable({
         <table className="w-full border-collapse text-xs">
           <thead className="sticky top-0 z-[1] bg-(--color-bg-surface)">
             <tr className="border-b border-(--color-border-default)">
-              <th scope="col" className="w-8 px-2 py-1.5" aria-label="선택" />
-              {headerCell('key', '키', 'key')}
-              {headerCell('metric', '메트릭', 'metric')}
-              {headerCell('dataType', '데이터 타입', 'dataType')}
-              {headerCell('tags', '태그', 'tags')}
-              {showRegistration && headerCell('registration', '등록', 'registration')}
+              <th scope="col" className="w-8 px-2 py-1.5" aria-label={t('series.colSelect')} />
+              {headerCell('key', t('series.seriesKey'), 'key')}
+              {headerCell('metric', t('series.metric'), 'metric')}
+              {headerCell('dataType', t('series.dataType'), 'dataType')}
+              {headerCell('tags', t('series.tags'), 'tags')}
+              {showRegistration && headerCell('registration', t('series.registration'), 'registration')}
             </tr>
           </thead>
           <tbody>
@@ -347,7 +349,7 @@ export function SeriesSelectTable({
                   colSpan={colCount}
                   className="p-3 text-center text-(--color-text-muted)"
                 >
-                  일치하는 시리즈가 없습니다.
+                  {t('series.noMatchingSeries')}
                 </td>
               </tr>
             ) : (
@@ -368,7 +370,7 @@ export function SeriesSelectTable({
                         checked={checked}
                         onChange={() => onToggle(r.id)}
                         data-testid={`series-select-${safeId}`}
-                        aria-label={`${r.key} 선택`}
+                        aria-label={t('series.selectRowAriaLabel').replace('{key}', r.key)}
                         className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
                       />
                     </td>
@@ -439,8 +441,9 @@ function FacetList({
   onToggle: (value: string) => void;
   onClear: () => void;
 }) {
+  const { t } = useTranslation();
   if (options.length === 0) {
-    return <p className="px-1 py-2 text-(--color-text-muted)">값 없음</p>;
+    return <p className="px-1 py-2 text-(--color-text-muted)">{t('series.facetNoValues')}</p>;
   }
   return (
     <div className="flex flex-col gap-1">
@@ -451,7 +454,7 @@ function FacetList({
         data-testid={`series-filter-clear-${column}`}
         className="self-start rounded px-1 py-0.5 text-[11px] text-blue-600 hover:underline disabled:text-(--color-text-muted) disabled:no-underline"
       >
-        전체 ({options.length})
+        {t('series.facetAll').replace('{count}', String(options.length))}
       </button>
       {options.map((opt) => (
         <label

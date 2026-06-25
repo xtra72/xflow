@@ -192,7 +192,9 @@
       "system": "시스템",
       "day": "라이트",
       "night": "다크",
-      "custom": "커스텀"
+      "custom": "커스텀",
+      "editTitle": "커스텀 테마 편집",
+      "reset": "초기화"
     },
     "panel": {
       "deviceNotConfigured": "디바이스가 설정되지 않았습니다.",
@@ -703,7 +705,23 @@
       "showLegend": "범례 표시 (show_legend)",
       "showPercentage": "비율(%) 표시 (show_percentage)",
       "colTime": "시간",
-      "colValue": "값"
+      "colValue": "값",
+      "exportCsv": "CSV 내보내기",
+      "pause": "일시정지",
+      "resume": "재개",
+      "statusConnecting": "연결 중",
+      "statusDisconnected": "연결 끊김",
+      "statusClosed": "채널 종료",
+      "statusIdle": "대기"
+    },
+    "widget": {
+      "throughputLabel": "처리량 (msg/s)"
+    },
+    "sync": {
+      "migrationToast": "이번 업데이트(v0.2.0)로 대시보드 구성이 서버 저장으로 전환되었습니다. 기존 로컬 구성은 초기화됩니다. 공유 대시보드는 관리자가 다시 구성해 주세요.",
+      "forbiddenShared": "공유 대시보드 편집 권한이 없습니다.",
+      "conflictResolved": "다른 브라우저에서 변경이 있어 동기화했습니다.",
+      "networkError": "대시보드 저장에 실패했습니다. 잠시 후 다시 시도해 주세요."
     }
   },
   "monitoring": {
@@ -725,7 +743,23 @@
     "totalFlows": "전체 플로우",
     "runningFlows": "실행 중",
     "logsReceived": "로그 수신",
-    "eventsReceived": "이벤트 수"
+    "eventsReceived": "이벤트 수",
+    "systemLog": "시스템 로그",
+    "countUnit": "건",
+    "allLevels": "전체",
+    "realtime": "실시간",
+    "componentFilter": "컴포넌트 필터...",
+    "display": "표시",
+    "colTime": "시간",
+    "colLevel": "레벨",
+    "colSource": "소스",
+    "colType": "타입",
+    "colName": "이름",
+    "colMessage": "메시지",
+    "noFilteredLogs": "필터 조건에 맞는 로그가 없습니다",
+    "wsConnecting": "연결 중...",
+    "systemEvent": "시스템 이벤트",
+    "throughputLabel": "처리량 (msg/s)"
   },
   "editor": {
     "save": "저장",
@@ -1283,6 +1317,22 @@
         "hoursMinutes": "{h}시간 {m}분",
         "daysHours": "{d}일 {h}시간"
       }
+    },
+    "types": {
+      "title": "에이전트 타입",
+      "subtitle": "등록된 에이전트 타입을 탐색합니다",
+      "searchPlaceholder": "에이전트 검색...",
+      "noResults": "일치하는 에이전트 타입이 없습니다",
+      "noDetail": "상세 정보가 없습니다.",
+      "featureSection": "기능",
+      "configFields": "설정 필드",
+      "configFieldsEmpty": "설정 스키마가 아직 준비되지 않았습니다.",
+      "configExample": "설정 예제",
+      "colName": "이름",
+      "colType": "타입",
+      "colRequired": "필수",
+      "colDefault": "기본값",
+      "colDescription": "설명"
     }
   },
   "series": {
@@ -1299,7 +1349,41 @@
     "unknownMetric": "미지정",
     "noMatchingSeries": "일치하는 시리즈가 없습니다.",
     "resultMatrix": "결과 매트릭스",
-    "multiSeriesHint": "이 키를 선택하면 metric/tag 별 시리즈가 각각 별도 라인으로 표시됩니다."
+    "multiSeriesHint": "이 키를 선택하면 metric/tag 별 시리즈가 각각 별도 라인으로 표시됩니다.",
+    "noSelectedSeries": "선택된 시리즈가 없습니다.",
+    "noRows": "결과 없음",
+    "rowCount": "행 {count}개",
+    "rowsTotal": "{count} 행",
+    "resultViewMode": "결과 표시 모드",
+    "viewTable": "테이블",
+    "viewChart": "차트",
+    "csvExport": "CSV 내보내기",
+    "emptyResult": "쿼리 결과가 비어 있습니다.",
+    "timestampLocal": "타임스탬프 (Local)",
+    "pageSize": "페이지 크기:",
+    "sortAriaLabel": "{label} 정렬",
+    "filterAriaLabel": "{label} 필터",
+    "keySearchPlaceholder": "키 검색",
+    "selectAll": "전체 선택 ({count})",
+    "clearAll": "전체 해제",
+    "colSelect": "선택",
+    "selectRowAriaLabel": "{key} 선택",
+    "facetNoValues": "값 없음",
+    "facetAll": "전체 ({count})",
+    "loadingSeries": "시리즈 불러오는 중…",
+    "perPage": "페이지당",
+    "loadError": "시리즈 목록을 불러오지 못했습니다.",
+    "retry": "다시 시도",
+    "noStoredSeries": "저장된 시리즈가 없습니다",
+    "pageIndicator": "페이지 {page} / {total}",
+    "prevPage": "이전 페이지",
+    "nextPage": "다음 페이지",
+    "nullHandling": "결측값 처리:",
+    "nullGap": "빈칸 (라인 끊김)",
+    "nullPrevious": "이전 값",
+    "nullValue": "지정값",
+    "nullInterpolate": "선형 보간 (이전 값에서 추론)",
+    "nullFillValue": "대체 값:"
   },
   "nodes": {
     "title": "노드 타입",
@@ -1313,7 +1397,29 @@
     "output": "출력",
     "process": "프로세스",
     "bridge": "브릿지",
-    "special": "특수"
+    "special": "특수",
+    "subtitle": "등록된 노드 타입을 탐색합니다",
+    "loadError": "노드 타입을 불러오는 데 실패했습니다",
+    "detail": {
+      "noMeta": "상세 정보가 없습니다.",
+      "function": "기능",
+      "ports": "포트",
+      "configFields": "설정 필드",
+      "colName": "이름",
+      "colType": "타입",
+      "colRequired": "필수",
+      "colDefault": "기본값",
+      "colDescription": "설명",
+      "configExample": "설정 예제",
+      "inputFormat": "입력 메시지 형식",
+      "outputFormat": "출력 메시지 형식",
+      "instances": "현재 인스턴스",
+      "noInstances": "실행 중인 플로우에서 사용 중인 인스턴스가 없습니다.",
+      "colFlow": "플로우",
+      "colNode": "노드",
+      "colProcessed": "처리",
+      "colErrors": "에러"
+    }
   },
   "common": {
     "loading": "로딩 중...",
@@ -1391,7 +1497,15 @@
     "button": "가져오기 ({count}건)",
     "parseFailed": "파일 파싱에 실패했습니다.",
     "importFailed": "가져오기 중 오류가 발생했습니다.",
-    "secretsMissingWarning": "비밀 값이 입력되지 않은 에이전트가 있습니다: {agents}. 에이전트 설정에서 값을 입력해 주세요."
+    "secretsMissingWarning": "비밀 값이 입력되지 않은 에이전트가 있습니다: {agents}. 에이전트 설정에서 값을 입력해 주세요.",
+    "validate": {
+      "fileReadError": "파일을 읽을 수 없습니다.",
+      "notObject": "유효한 JSON/YAML 객체가 아닙니다.",
+      "itemNotObject": "항목 {index}: 객체가 아닙니다.",
+      "itemNameRequired": "항목 {index}: name 필드가 필요합니다.",
+      "itemDefinitionRequired": "항목 {index}: definition 또는 nodes 필드가 필요합니다.",
+      "itemTypeRequired": "항목 {index}: type 필드가 필요합니다."
+    }
   },
   "panel": {
     "settings": {
@@ -1642,7 +1756,31 @@
   "error": {
     "somethingWentWrong": "문제가 발생했습니다",
     "unknownError": "알 수 없는 오류",
-    "reload": "페이지 새로고침"
+    "reload": "페이지 새로고침",
+    "update": {
+      "unauthorized": "이 작업을 수행할 권한이 없습니다 (관리자만 가능).",
+      "inProgress": "다른 업데이트 작업이 진행 중입니다. 완료 후 다시 시도하세요.",
+      "channelInvalid": "잘못된 업데이트 채널 설정입니다 (HTTPS URL + manual/auto).",
+      "checksumMismatch": "다운로드한 파일의 체크섬이 일치하지 않습니다. 다시 시도하세요.",
+      "signatureInvalid": "디지털 서명 검증에 실패했습니다. 신뢰할 수 없는 바이너리입니다.",
+      "downloadFailed": "업데이트 다운로드에 실패했습니다. 네트워크를 확인하세요.",
+      "rollbackFailed": "롤백에 실패했습니다. 백업이 없거나 복원 중 오류가 발생했습니다.",
+      "insufficientDisk": "디스크 여유 공간이 부족합니다 (다운로드 크기의 3배 권장).",
+      "downgradeRefused": "다운그레이드는 거부되었습니다. 강제 적용하려면 force 옵션을 사용하세요.",
+      "applyFailed": "업데이트 적용에 실패했습니다. 백업이 보존되었으니 롤백을 검토하세요.",
+      "invalidInput": "잘못된 요청입니다. 입력 값을 확인하세요.",
+      "unknown": "오류가 발생했습니다: {message}"
+    },
+    "store": {
+      "migrationRequired": "에이전트 설정 마이그레이션이 필요합니다. allow_dynamic_keys → registration_type 변경 후 재시작하세요.",
+      "typeMismatch": "키의 등록된 타입과 일치하지 않습니다. 다른 타입으로 쓰려면 키를 삭제 후 재등록하세요.",
+      "typeMismatchPrefix": "키 '{key}' 의 ",
+      "typeMismatchPrefixWithType": "키 '{key}' (등록 타입: {type}) 의 ",
+      "unsupportedValueType": "지원하지 않는 값 타입입니다 (nil, 채널, 함수는 저장할 수 없습니다).",
+      "invalidDataType": "data_type 값이 잘못되었습니다. 허용 값: int, float, string, boolean, bytes, json.",
+      "invalidMetricType": "metric_type 형식이 잘못되었습니다. 영문, 숫자, 언더스코어(_), 하이픈(-)만 사용 가능합니다.",
+      "unknown": "오류가 발생했습니다: {message}"
+    }
   },
   "remote": {
     "title": "관리 노드",
@@ -2488,6 +2626,14 @@
       "loadingAria": "런타임 메트릭을 불러오는 중",
       "loadError": "런타임 메트릭을 불러오지 못했습니다",
       "retry": "다시 시도"
+    },
+    "status": {
+      "title": "시스템 상태",
+      "subtitle": "xflowd 데몬의 버전 정보와 업데이트 상태를 확인합니다.",
+      "sectionTitle": "시스템 정보",
+      "sectionSubtitle": "현재 접속한 인스턴스(self)의 식별 정보와 런타임 메트릭입니다.",
+      "futurePlaceholder": "업데이트 이력 및 changelog — 곧 추가 예정",
+      "checkSuccess": "업데이트 채널을 확인했습니다."
     }
   },
   "tsdb": {

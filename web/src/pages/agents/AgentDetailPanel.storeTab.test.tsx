@@ -207,7 +207,9 @@ describe('StoreTab — 타입/태그 편집', () => {
     // 다이얼로그가 사전 채움된다.
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('indoor:temp')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText(/메트릭 타입/)).toHaveValue('temperature');
+    expect(within(dialog).getByLabelText(/property\.meta\.metricTypeOptional/)).toHaveValue(
+      'temperature',
+    );
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('edit-key-meta-confirm'));

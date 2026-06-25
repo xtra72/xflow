@@ -192,7 +192,9 @@
       "system": "System",
       "day": "Light",
       "night": "Dark",
-      "custom": "Custom"
+      "custom": "Custom",
+      "editTitle": "Edit Custom Theme",
+      "reset": "Reset"
     },
     "panel": {
       "deviceNotConfigured": "No device configured.",
@@ -703,7 +705,23 @@
       "showLegend": "Show legend (show_legend)",
       "showPercentage": "Show percentage (show_percentage)",
       "colTime": "Time",
-      "colValue": "Value"
+      "colValue": "Value",
+      "exportCsv": "Export CSV",
+      "pause": "Pause",
+      "resume": "Resume",
+      "statusConnecting": "Connecting",
+      "statusDisconnected": "Disconnected",
+      "statusClosed": "Channel closed",
+      "statusIdle": "Idle"
+    },
+    "widget": {
+      "throughputLabel": "Throughput (msg/s)"
+    },
+    "sync": {
+      "migrationToast": "With this update (v0.2.0), dashboard configuration is now stored on the server. Your existing local configuration will be reset. Administrators should reconfigure shared dashboards.",
+      "forbiddenShared": "You do not have permission to edit the shared dashboard.",
+      "conflictResolved": "Changes from another browser were detected and synchronized.",
+      "networkError": "Failed to save the dashboard. Please try again shortly."
     }
   },
   "monitoring": {
@@ -725,7 +743,23 @@
     "totalFlows": "Total Flows",
     "runningFlows": "Running",
     "logsReceived": "Logs Received",
-    "eventsReceived": "Events"
+    "eventsReceived": "Events",
+    "systemLog": "System Log",
+    "countUnit": "items",
+    "allLevels": "All",
+    "realtime": "Realtime",
+    "componentFilter": "Filter by component...",
+    "display": "Show",
+    "colTime": "Time",
+    "colLevel": "Level",
+    "colSource": "Source",
+    "colType": "Type",
+    "colName": "Name",
+    "colMessage": "Message",
+    "noFilteredLogs": "No logs match the filter",
+    "wsConnecting": "Connecting...",
+    "systemEvent": "System Event",
+    "throughputLabel": "Throughput (msg/s)"
   },
   "editor": {
     "save": "Save",
@@ -1283,6 +1317,22 @@
         "hoursMinutes": "{h}h {m}m",
         "daysHours": "{d}d {h}h"
       }
+    },
+    "types": {
+      "title": "Agent Types",
+      "subtitle": "Browse registered agent types",
+      "searchPlaceholder": "Search agents...",
+      "noResults": "No matching agent types",
+      "noDetail": "No detail information available.",
+      "featureSection": "Features",
+      "configFields": "Config Fields",
+      "configFieldsEmpty": "Config schema is not yet available.",
+      "configExample": "Config Example",
+      "colName": "Name",
+      "colType": "Type",
+      "colRequired": "Required",
+      "colDefault": "Default",
+      "colDescription": "Description"
     }
   },
   "series": {
@@ -1299,7 +1349,41 @@
     "unknownMetric": "unknown",
     "noMatchingSeries": "No matching series.",
     "resultMatrix": "Result Matrix",
-    "multiSeriesHint": "Selecting this key plots each metric/tag series as a separate line."
+    "multiSeriesHint": "Selecting this key plots each metric/tag series as a separate line.",
+    "noSelectedSeries": "No series selected.",
+    "noRows": "No results",
+    "rowCount": "{count} rows",
+    "rowsTotal": "{count} rows",
+    "resultViewMode": "Result view mode",
+    "viewTable": "Table",
+    "viewChart": "Chart",
+    "csvExport": "Export CSV",
+    "emptyResult": "Query result is empty.",
+    "timestampLocal": "Timestamp (Local)",
+    "pageSize": "Page size:",
+    "sortAriaLabel": "Sort by {label}",
+    "filterAriaLabel": "Filter {label}",
+    "keySearchPlaceholder": "Search key",
+    "selectAll": "Select all ({count})",
+    "clearAll": "Clear all",
+    "colSelect": "Select",
+    "selectRowAriaLabel": "Select {key}",
+    "facetNoValues": "No values",
+    "facetAll": "All ({count})",
+    "loadingSeries": "Loading series…",
+    "perPage": "Per page",
+    "loadError": "Failed to load series list.",
+    "retry": "Retry",
+    "noStoredSeries": "No stored series",
+    "pageIndicator": "Page {page} / {total}",
+    "prevPage": "Previous page",
+    "nextPage": "Next page",
+    "nullHandling": "Null handling:",
+    "nullGap": "Gap (line break)",
+    "nullPrevious": "Previous value",
+    "nullValue": "Specified value",
+    "nullInterpolate": "Linear interpolation (inferred from previous)",
+    "nullFillValue": "Fill value:"
   },
   "nodes": {
     "title": "Node Types",
@@ -1313,7 +1397,29 @@
     "output": "Output",
     "process": "Process",
     "bridge": "Bridge",
-    "special": "Special"
+    "special": "Special",
+    "subtitle": "Browse registered node types",
+    "loadError": "Failed to load node types",
+    "detail": {
+      "noMeta": "No details available.",
+      "function": "Function",
+      "ports": "Ports",
+      "configFields": "Configuration Fields",
+      "colName": "Name",
+      "colType": "Type",
+      "colRequired": "Required",
+      "colDefault": "Default",
+      "colDescription": "Description",
+      "configExample": "Configuration Example",
+      "inputFormat": "Input Message Format",
+      "outputFormat": "Output Message Format",
+      "instances": "Active Instances",
+      "noInstances": "No instances in use by running flows.",
+      "colFlow": "Flow",
+      "colNode": "Node",
+      "colProcessed": "Processed",
+      "colErrors": "Errors"
+    }
   },
   "common": {
     "loading": "Loading...",
@@ -1391,7 +1497,15 @@
     "button": "Import ({count})",
     "parseFailed": "Failed to parse file.",
     "importFailed": "An error occurred during import.",
-    "secretsMissingWarning": "Some agents were created without secret values: {agents}. Please enter the values in agent settings."
+    "secretsMissingWarning": "Some agents were created without secret values: {agents}. Please enter the values in agent settings.",
+    "validate": {
+      "fileReadError": "Could not read the file.",
+      "notObject": "Not a valid JSON/YAML object.",
+      "itemNotObject": "Item {index}: not an object.",
+      "itemNameRequired": "Item {index}: a name field is required.",
+      "itemDefinitionRequired": "Item {index}: a definition or nodes field is required.",
+      "itemTypeRequired": "Item {index}: a type field is required."
+    }
   },
   "panel": {
     "settings": {
@@ -1642,7 +1756,31 @@
   "error": {
     "somethingWentWrong": "Something went wrong",
     "unknownError": "Unknown error",
-    "reload": "Reload Page"
+    "reload": "Reload Page",
+    "update": {
+      "unauthorized": "You do not have permission to perform this action (administrators only).",
+      "inProgress": "Another update operation is in progress. Please try again after it completes.",
+      "channelInvalid": "Invalid update channel configuration (HTTPS URL + manual/auto).",
+      "checksumMismatch": "The checksum of the downloaded file does not match. Please try again.",
+      "signatureInvalid": "Digital signature verification failed. This is an untrusted binary.",
+      "downloadFailed": "Update download failed. Please check your network.",
+      "rollbackFailed": "Rollback failed. No backup was available or an error occurred during restore.",
+      "insufficientDisk": "Insufficient disk space (3x the download size is recommended).",
+      "downgradeRefused": "Downgrade was refused. Use the force option to apply it anyway.",
+      "applyFailed": "Failed to apply the update. The backup is preserved, so consider a rollback.",
+      "invalidInput": "Invalid request. Please check your input.",
+      "unknown": "An error occurred: {message}"
+    },
+    "store": {
+      "migrationRequired": "Agent configuration migration is required. Change allow_dynamic_keys to registration_type and restart.",
+      "typeMismatch": "does not match the registered type for the key. To use a different type, delete the key and re-register it.",
+      "typeMismatchPrefix": "Key '{key}': ",
+      "typeMismatchPrefixWithType": "Key '{key}' (registered type: {type}): ",
+      "unsupportedValueType": "Unsupported value type (nil, channels, and functions cannot be stored).",
+      "invalidDataType": "Invalid data_type value. Allowed values: int, float, string, boolean, bytes, json.",
+      "invalidMetricType": "Invalid metric_type format. Only letters, digits, underscores (_), and hyphens (-) are allowed.",
+      "unknown": "An error occurred: {message}"
+    }
   },
   "remote": {
     "title": "Managed Nodes",
@@ -2488,6 +2626,14 @@
       "loadingAria": "Loading runtime metrics",
       "loadError": "Failed to load runtime metrics",
       "retry": "Retry"
+    },
+    "status": {
+      "title": "System Status",
+      "subtitle": "View version information and update status for the xflowd daemon.",
+      "sectionTitle": "System Information",
+      "sectionSubtitle": "Identity and runtime metrics for the currently connected instance (self).",
+      "futurePlaceholder": "Update history and changelog — coming soon",
+      "checkSuccess": "Update channel checked successfully."
     }
   },
   "tsdb": {

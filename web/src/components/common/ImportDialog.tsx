@@ -119,10 +119,10 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     setSecretInputs(new Map());
 
     try {
-      const data = await parseImportFile(file);
+      const data = await parseImportFile(file, t);
       const result = type === 'flow'
-        ? validateFlowImport(data)
-        : validateAgentImport(data);
+        ? validateFlowImport(data, t)
+        : validateAgentImport(data, t);
 
       setErrors(result.errors);
       setItems(result.items);
@@ -274,8 +274,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     const parsed: RequiredAgent[] = [];
     for (const file of Array.from(files)) {
       try {
-        const data = await parseImportFile(file);
-        const result = validateAgentImport(data);
+        const data = await parseImportFile(file, t);
+        const result = validateAgentImport(data, t);
         for (const item of result.items) {
           parsed.push({ name: item.name, type: item.type, config: item.config });
         }
