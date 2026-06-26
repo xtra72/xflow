@@ -49,6 +49,28 @@ func (c *Client) Get(path string, result any) error {
 	return c.handleResponse(resp, result)
 }
 
+// PaginationMeta 는 목록 응답의 페이지네이션 메타데이터이다.
+// 서버 응답 엔벨로프의 meta.pagination 필드와 매핑된다.
+type PaginationMeta struct {
+	Page       int   `json:"page"`
+	Size       int   `json:"size"`
+	Total      int64 `json:"total"`
+	TotalPages int   `json:"total_pages"`
+}
+
+// GetWithMeta 는 GET 요청을 수행하고 응답 데이터와 함께 페이지네이션 메타를 반환한다.
+// 목록 엔드포인트(예: /api/v1/flows, /api/v1/agents)의 전체 개수(total)가 필요할 때 사용한다.
+// 메타가 없으면 meta 는 nil 이다.
+func (c *Client) GetWithMeta(path string, result any) (*PaginationMeta, error) {
+	resp, err := c.doRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, c.wrapConnectionError(err)
+	}
+	defer resp.Body.Close()
+
+	return c.handleResponseWithMeta(resp, result)
+}
+
 // Post performs a POST request with a JSON body and decodes the response data into result.
 func (c *Client) Post(path string, body any, result any) error {
 	var bodyReader io.Reader
@@ -183,9 +205,52 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 
 // apiResponse is the internal structure for parsing API response envelopes.
 type apiResponse struct {
-	Success bool            `json:"success"`
-	Data    json.RawMessage `json:"data,omitempty"`
-	Error   *apiErrorDetail `json:"error,omitempty"`
+	Success bool             `json:"success"`
+	Data    json.RawMessage  `json:"data,omitempty"`
+	Error   *apiErrorDetail  `json:"error,omitempty"`
+	Meta    *apiResponseMeta `json:"meta,omitempty"`
+}
+
+// apiResponseMeta 는 응답 엔벨로프의 meta 필드를 파싱하기 위한 내부 구조이다.
+type apiResponseMeta struct {
+	Pagination *PaginationMeta `json:"pagination,omitempty"`
+}
+
+// handleResponseWithMeta 는 응답 엔벨로프를 파싱하여 데이터를 result 에 디코딩하고,
+// 페이지네이션 메타를 함께 반환한다. handleResponse 와 동일한 에러 매핑을 따른다.
+func (c *Client) handleResponseWithMeta(resp *http.Response, result any) (*PaginationMeta, error) {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("응답 읽기 실패: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, MapAPIError(resp.StatusCode, bodyBytes)
+	}
+
+	if len(bodyBytes) == 0 {
+		return nil, nil
+	}
+
+	var apiResp apiResponse
+	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
+		return nil, fmt.Errorf("응답 파싱 실패: %w", err)
+	}
+
+	if !apiResp.Success {
+		return nil, MapAPIError(resp.StatusCode, bodyBytes)
+	}
+
+	if result != nil && apiResp.Data != nil {
+		if err := json.Unmarshal(apiResp.Data, result); err != nil {
+			return nil, fmt.Errorf("데이터 디코딩 실패: %w", err)
+		}
+	}
+
+	if apiResp.Meta != nil {
+		return apiResp.Meta.Pagination, nil
+	}
+	return nil, nil
 }
 
 // handleResponse parses the API response envelope and maps errors.
