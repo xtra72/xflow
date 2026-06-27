@@ -2,9 +2,9 @@
 id: SPEC-CLI-004
 title: "CLI–Web UI 기능 패리티 — 구현 계획"
 version: 0.2.0
-status: planned
+status: completed
 created: 2026-06-26
-updated: 2026-06-26
+updated: 2026-06-27
 author: xtra
 priority: high
 ---

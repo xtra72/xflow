@@ -1,10 +1,10 @@
 ---
 id: SPEC-CLI-004
 title: "CLI–Web UI 기능 패리티 (xflow CLI Full Parity with Web UI / Backend API)"
-version: 0.2.0
-status: planned
+version: 0.3.0
+status: completed
 created: 2026-06-26
-updated: 2026-06-26
+updated: 2026-06-27
 author: xtra
 priority: high
 related_specs:
@@ -43,6 +43,12 @@ tags:
 
 ## HISTORY
 
+- **0.3.0** (2026-06-27): 구현 완료 — P0~P4 전 단계 구현·검증 완료, `status` 를 `planned` →
+  `completed` 로 전환. 단계별 신규 명령 그룹(remote node/group/token/release/version/command/
+  audit/inventory, dashboard, chart, influxdb)을 기존 client/output/errors/resolve 스택 재사용
+  으로 추가(신규 의존성 0). CLI 패키지 커버리지 85.3%, 전 게이트(build/vet/test-race/gofmt/
+  golangci-lint) 통과, 회귀 0. 상세는 §8 "구현 노트" 참조. 일부 심화 항목은 후속 하위 SPEC
+  후보로 명시(§8).
 - **0.2.0** (2026-06-26): plugin 처리 방향 확정 반영 — 코드 조사 결과 plugin 백엔드는 **미구현
   시스템 전체**임이 확인됨(`internal/config/types.go` 의 `PluginConfig`(Directory/WASMEnabled/
   GoEnabled) 설정 타입만 존재, 매니저/레지스트리/동적 로딩(WASM/Go)/`/api/v1/plugins` 핸들러/
@@ -63,11 +69,12 @@ tags:
 
 | Version | Date       | Author | Change                                                       |
 | ------- | ---------- | ------ | ------------------------------------------------------------ |
+| 0.3.0   | 2026-06-27 | xtra   | 구현 완료 — P0~P4 전 단계 구현·검증, status planned→completed. 신규 명령 그룹 추가(신규 의존성 0), 커버리지 85.3%·전 게이트 통과·회귀 0. 후속 하위 SPEC 후보 명시(§8) |
 | 0.2.0   | 2026-06-26 | xtra   | plugin 처리 확정 — plugin 시스템 구축을 SPEC-PLUGIN-001 로 분리, P0 plugin 교정을 hidden+미지원 안내+코드 보존으로 변경; status 재배선·status logs 재정의 확정 |
 | 0.1.0   | 2026-06-26 | xtra   | 최초 작성 — CLI–Web UI 기능 패리티 EARS SPEC (갭 매트릭스 + 도메인 매핑 + P0~P4 단계 + plugin/status 교정) |
 
-> **상태(Status)** — `planned`. 본 SPEC 은 PLAN 단계 산출물이며 구현 코드를 포함하지 않는다.
-> `/moai run SPEC-CLI-004` 로 단계(P0~P4) 단위 증분 구현한다.
+> **상태(Status)** — `completed`. P0~P4 전 단계가 단계 단위로 증분 구현·검증 완료되었다.
+> 구현 요약과 후속 과제는 §8 "구현 노트(Implementation Notes)" 참조.
 
 ---
 
@@ -619,3 +626,61 @@ API)로 노출해야 하며, 실시간 follow 는 본 SPEC 의 필수 요구가 
 - 분리 SPEC: `SPEC-PLUGIN-001`(향후 작성) — plugin 시스템 구축(매니저/레지스트리/WASM·Go 동적
   로딩/보안 샌드박스/노드 타입 등록 통합/`/api/v1/plugins` 핸들러/배포·검증) 전담. 본 SPEC 의 P0 는
   plugin CLI 의 hidden 처리·미지원 안내·죽은 호출 제거만 담당한다(§1.6, §4.2 REQ-CLI-P0-01).
+
+---
+
+## 8. 구현 노트 (Implementation Notes)
+
+> 구현 완료(2026-06-27). P0~P4 전 단계를 단계 단위로 증분 구현·검증했다. 본 절은 구현 결과 요약과
+> 후속 과제를 기록한다.
+
+### 8.1 단계별 구현 결과 (P0~P4)
+
+P0~P2 는 선행 완료되었고(역방향 불일치 교정 + auth/device/store/tsdb/monitor/system/settings 신규
+그룹 + flow/agent 보완), 본 동기화는 새로 완료된 P3·P4 까지 포함한 전 단계를 반영한다.
+
+| 단계 | 구현 내용 | 신규 파일(`internal/cli/`) | 커밋 |
+| --- | --- | --- | --- |
+| P0 | `plugin *` hidden + 미지원 안내(코드 보존), `status`/`status metrics` 재배선, `status logs` 재정의 | (기존 plugin.go/status.go 교정) | (선행) |
+| P1 | `auth`/`device`/`store`/`tsdb`/`monitor`/`system`/`settings` 신규 명령 그룹 | (선행) | (선행) |
+| P2 | `flow undeploy/config/subflow-stats/node-configure/tap/taps`, `agent enable/disable/config/stats` 보완 | (선행) | (선행) |
+| P3a | `xflow remote node`(list/get/approve/reject/revoke/pre-register) | `remote.go` | `23a5f58`, `c998a58`(get 교정) |
+| P3b | `xflow remote group`(list/set/clear/rename/delete/update/command) + `xflow remote token`(create/list/revoke) | `remote_group.go`, `remote_token.go` | `5fbf308` |
+| P3c | `xflow remote release`(list/create/delete/delete-asset) + `xflow remote version`(target get·set/source get·set/history/update) | `remote_release.go`, `remote_version.go` | `77c81b2` |
+| P3d | `xflow remote command` / `xflow remote audit` / `xflow remote inventory`(flows\|agents\|devices, mirror+live) | `remote_inventory.go` | `4c135ad` |
+| P4 | `xflow dashboard`(shared/mine get·set), `xflow chart channels`, `xflow influxdb query` | `dashboard.go`, `chart.go`, `influxdb.go` | `0846ee8` |
+
+신규 명령 파일에는 각각 대응 `*_test.go` 가 동반된다.
+
+### 8.2 재사용 및 의존성
+
+- 모든 신규/보완 명령은 기존 스택을 재사용한다 — `client.go`(HTTP Get/Post/Put/Delete),
+  `output.go`(`PrintResult` 포맷터), `errors.go`(`MapAPIError`/`wrapConnectionError`),
+  `resolve.go`(이름→ID 해석), `root.go`(글로벌 플래그·서버/토큰 해석). **신규 외부 의존성 0**
+  (cobra/viper/표준 net/http 만 — NFR-02 충족).
+- 파괴적 작업(release/version 등)은 확인 프롬프트(`confirmAction`) + `--yes` 우회 플래그로 게이트
+  한다. enrollment 토큰은 생성 직후 1회만 표시한다(시크릿 안전 — NFR-06).
+
+### 8.3 P3a `get` 개선
+
+P3a 초기 구현(`23a5f58`) 이후 `remote node get` 을 실제 단건 조회 엔드포인트
+`GET /remote/nodes/{id}` 로 재배선(`c998a58`)했다. 기존에는 목록 조회 후 클라이언트 측에서 필터링
+했으나, 전용 GET 엔드포인트 직접 호출로 정확성과 응답 효율을 개선했다.
+
+### 8.4 품질 상태
+
+- CLI 패키지(`internal/cli`) 커버리지 **85.3%**(목표 85%+ 충족 — NFR-05).
+- 전 품질 게이트 통과: `go build`, `go vet`, `go test -race ./...`, `gofmt`, `golangci-lint`.
+- 정상 동작하는 기존 명령(flow/agent/node/config/modbus/interactive/script)에 **회귀 0**
+  (NFR-07 충족).
+
+### 8.5 후속 과제 (별도 하위 SPEC 후보)
+
+아래 항목은 본 SPEC 범위에서 **의도적으로 제외**되었으며, 후속 하위 SPEC 후보로 남긴다.
+
+- **remote 심화 per-resource 조회**: flow status/logs/nodes, agent stats/config/devices/topics/
+  store/sessions/series, device state/commands/metadata 등 원격 노드의 자원별 상세 읽기.
+- **remote 편집 CRUD**: 원격 노드 상의 flow/agent 생성·수정·삭제(create/update/delete).
+- **SSE/WS 실시간 스트림**: `--follow`(로그 tail), chart WebSocket, 로그 스트림 등 실시간 스트림의
+  완전 CLI 재현(§4.14 STREAM 그룹의 선택적 후속 — REQ-CLI-STREAM-02).
+- **dashboard delete 라우트**: `DELETE /dashboards/{shared,mine}` 대응 CLI(현재는 get/set 만 구현).
