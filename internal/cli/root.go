@@ -92,6 +92,9 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newDeviceCmd(&client, confirmAction))
 	rootCmd.AddCommand(newStoreCmd(&client, confirmAction))
 	rootCmd.AddCommand(newTsdbCmd(&client, confirmAction))
+	rootCmd.AddCommand(newMonitorCmd(&client, confirmAction))
+	rootCmd.AddCommand(newSystemCmd(&client, confirmAction))
+	rootCmd.AddCommand(newSettingsCmd(&client))
 
 	return rootCmd
 }
