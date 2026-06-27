@@ -87,6 +87,11 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newInteractiveCmd(rootCmd, &client))
 	rootCmd.AddCommand(newScriptCmd(rootCmd, &client))
 	rootCmd.AddCommand(newModbusCmd(&client))
+	// SPEC-CLI-004 P1: Web UI 패리티 신규 도메인 명령
+	rootCmd.AddCommand(newAuthCmd(&client, confirmAction))
+	rootCmd.AddCommand(newDeviceCmd(&client, confirmAction))
+	rootCmd.AddCommand(newStoreCmd(&client, confirmAction))
+	rootCmd.AddCommand(newTsdbCmd(&client, confirmAction))
 
 	return rootCmd
 }
