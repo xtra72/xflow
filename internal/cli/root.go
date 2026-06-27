@@ -97,6 +97,10 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newSettingsCmd(&client))
 	// SPEC-CLI-004 P3a: 원격 노드 관리 명령
 	rootCmd.AddCommand(newRemoteCmd(&client, confirmAction))
+	// SPEC-CLI-004 P4: 대시보드·차트·InfluxDB 명령
+	rootCmd.AddCommand(newDashboardCmd(&client))
+	rootCmd.AddCommand(newChartCmd(&client))
+	rootCmd.AddCommand(newInfluxdbCmd(&client))
 
 	return rootCmd
 }
