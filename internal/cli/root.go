@@ -95,6 +95,8 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newMonitorCmd(&client, confirmAction))
 	rootCmd.AddCommand(newSystemCmd(&client, confirmAction))
 	rootCmd.AddCommand(newSettingsCmd(&client))
+	// SPEC-CLI-004 P3a: 원격 노드 관리 명령
+	rootCmd.AddCommand(newRemoteCmd(&client, confirmAction))
 
 	return rootCmd
 }
