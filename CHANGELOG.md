@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 추가 — xflow CLI–Web UI 기능 패리티 (remote 관리 + dashboard/chart/influxdb)
+
+- **`xflow` CLI 가 백엔드 `/api/v1/*` API 도메인을 동등하게 커버하도록 명령 그룹을 확충 (Non-breaking)**
+
+  Web UI 가 소비하는 모든 기능은 `/api/v1/*` REST 라우트로 노출되므로, CLI 가 동일 라우트를 호출하면 동일 기능을 수행한다는 전제 아래 도메인 갭을 메웠다. 본 변경은 SPEC-CLI-004 의 P3(원격 관리)·P4(저우선 도메인)를 다룬다. P0(죽은 명령 교정)·P1(auth/device/store/tsdb/monitor/system/settings 신규 그룹)·P2(flow/agent 보완)는 선행 완료되었다.
+
+  - **원격 관리(P3)**: `xflow remote node`(list/get/approve/reject/revoke/pre-register), `xflow remote group`(list/set/clear/rename/delete/update/command) + `xflow remote token`(create/list/revoke), `xflow remote release`(list/create/delete/delete-asset) + `xflow remote version`(target get·set / source get·set / history / update), `xflow remote command` / `xflow remote audit` / `xflow remote inventory`(flows|agents|devices, mirror+live) 명령군을 신설했다.
+  - **저우선 도메인(P4)**: `xflow dashboard`(shared/mine get·set), `xflow chart channels`, `xflow influxdb query` 를 신설했다.
+  - **기존 스택 재사용 + 신규 의존성 0**: 모든 신규 명령은 기존 client/output/errors/resolve 스택(HTTP 클라이언트, `PrintResult` 포맷터, `MapAPIError`, 이름→ID 해석, 글로벌 플래그)을 재사용한다. 파괴적 작업은 확인 프롬프트 + `--yes` 로 게이트하고, enrollment 토큰은 생성 직후 1회만 표시한다.
+  - **품질**: `internal/cli` 커버리지 85.3%, 전 게이트(build/vet/test-race/gofmt/golangci-lint) 통과, 기존 명령 회귀 0.
+  - **후속 과제(별도 하위 SPEC 후보)**: remote 심화 per-resource 조회(flow status/logs/nodes, agent stats/config/devices/topics/store/sessions/series, device state/commands/metadata), remote 편집 CRUD, SSE/WS 실시간 스트림(`--follow`/chart WS/로그 스트림), dashboard delete 라우트는 범위에서 제외했다.
+  - **관련**: SPEC-CLI-004 v0.3.0(P0~P4 완료), SPEC-REMOTE-001, SPEC-AUTH-001/003, SPEC-DEVICE-001, SPEC-STORE-001, SPEC-TSDB-001, SPEC-CHART-001, SPEC-UPDATE-001, SPEC-WEB-006/007.
+
 ### 추가 — 로컬 인스턴스 시스템 정보 표출 (self/local Identity + Runtime)
 
 - **접속한 xflowd 인스턴스 자신의 시스템 정보를 `/admin/system` 및 설정 "시스템" 탭에 표출 (Non-breaking)**
