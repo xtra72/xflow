@@ -123,60 +123,92 @@ func newRemoteNodeListCmd(client **Client) *cobra.Command {
 	return cmd
 }
 
-// remoteNodeDetailFieldOrder 는 노드 상세 출력의 필드 순서이다.
+// remoteNodeDetailFieldOrder 는 노드 상세(NodeDetailDTO) 출력의 필드 순서이다.
+// pre-register 응답(ManagedNodeDTO)도 같은 포맷터를 재사용하며, 누락 필드는 건너뛴다.
 var remoteNodeDetailFieldOrder = []string{
 	"instance_id", "hostname", "version", "status",
-	"online", "group_name", "last_seen", "outdated",
+	"online", "group_name", "outdated",
+	"os", "arch", "started_at", "uptime",
+	"display_width", "display_height",
+	"display_override_width", "display_override_height",
+	"display_reported_width", "display_reported_height",
+	"last_seen", "summary",
 }
 
 // remoteNodeDetailLabelMap 는 노드 상세 출력의 필드 라벨 매핑이다.
 var remoteNodeDetailLabelMap = map[string]string{
-	"instance_id": "Instance ID",
-	"hostname":    "Hostname",
-	"version":     "Version",
-	"status":      "Status",
-	"online":      "Online",
-	"group_name":  "Group",
-	"last_seen":   "Last Seen",
-	"outdated":    "Outdated",
+	"instance_id":             "Instance ID",
+	"hostname":                "Hostname",
+	"version":                 "Version",
+	"status":                  "Status",
+	"online":                  "Online",
+	"group_name":              "Group",
+	"outdated":                "Outdated",
+	"os":                      "OS",
+	"arch":                    "Arch",
+	"started_at":              "Started At",
+	"uptime":                  "Uptime (ms)",
+	"display_width":           "Display W",
+	"display_height":          "Display H",
+	"display_override_width":  "Override W",
+	"display_override_height": "Override H",
+	"display_reported_width":  "Reported W",
+	"display_reported_height": "Reported H",
+	"last_seen":               "Last Seen",
+	"summary":                 "Summary",
+}
+
+// remoteNodeDetailSectionKeys 는 별도 섹션으로 출력할 노드 상세 키 목록이다.
+// summary(중첩 객체)는 device.go 의 metadata/state/commands 섹션 처리와 동일하게
+// 별도 섹션으로 렌더링한다(deviceDetailSectionKeys 패턴 참고).
+var remoteNodeDetailSectionKeys = map[string]bool{
+	"summary": true,
 }
 
 // printRemoteNodeDetail 은 단일 노드 상세를 포맷에 맞게 출력한다.
+//
+// table/text 는 epoch-ms 필드(started_at/last_seen)와 uptime 을 정수 문자열로
+// 변환한 표시용 사본을 사용한다(JSON 디코딩 float64 의 과학표기 방지). 원본 node 는
+// json/yaml passthrough 를 위해 보존한다.
 func printRemoteNodeDetail(cmd *cobra.Command, node map[string]any) error {
 	format := getFormat(cmd)
 	w := cmd.OutOrStdout()
 
 	if format == "table" || format == "text" {
-		df := NewDetailFormatter(remoteNodeDetailFieldOrder, remoteNodeDetailLabelMap, nil)
-		return df.Format(node, w)
+		df := NewDetailFormatter(remoteNodeDetailFieldOrder, remoteNodeDetailLabelMap, remoteNodeDetailSectionKeys)
+		return df.Format(remoteNodeDetailDisplay(node), w)
 	}
 	return PrintResult(w, format, node, nil, nil)
 }
 
-// findNodeByID 는 노드 목록에서 instance_id 가 일치하는 노드를 찾는다.
-// 일치 항목이 없으면 (nil, false)를 반환한다.
-func findNodeByID(nodes []map[string]any, id string) (map[string]any, bool) {
-	for _, n := range nodes {
-		if v, ok := n["instance_id"].(string); ok && v == id {
-			return n, true
+// remoteNodeDetailDisplay 는 table/text 출력을 위한 표시용 사본을 만든다.
+// epoch-ms 필드(started_at/last_seen)와 uptime 을 formatEpochValue 로 정수 문자열화하고,
+// 존재할 때만 변환한다(pre-register 응답처럼 일부 필드가 없을 수 있음). 원본은 변경하지 않는다.
+func remoteNodeDetailDisplay(node map[string]any) map[string]any {
+	out := make(map[string]any, len(node))
+	for k, v := range node {
+		out[k] = v
+	}
+	// epoch-ms 필드: float64 과학표기 방지를 위해 정수 문자열로 변환(nil-safe).
+	for _, k := range []string{"started_at", "last_seen", "uptime"} {
+		if v, ok := out[k]; ok {
+			// uptime 은 started_at==0 시 JSON null → formatEpochValue 가 ""(미표시)로 처리.
+			out[k] = formatEpochValue(v)
 		}
 	}
-	return nil, false
+	return out
 }
 
 // newRemoteNodeGetCmd 는 remote node get 서브커맨드를 생성한다.
 //
-// 백엔드에는 단일 노드 GET 엔드포인트가 없으므로(라우트는 list/pending/approve/
-// reject/revoke/command 만 존재), GET /api/v1/remote/nodes 로 전체 목록을 받아
-// instance_id 가 일치하는 노드를 클라이언트 측에서 필터링한다.
+// GET /api/v1/remote/nodes/{instance_id} (NodeDetail 핸들러)로 단일 노드 상세를
+// 조회한다. 노드가 없으면 서버가 404(not-found)를 반환하며, 클라이언트의
+// MapAPIError 가 이를 에러 메시지로 surface 한다(클라이언트 측 필터링 없음).
 func newRemoteNodeGetCmd(client **Client) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <instance_id>",
 		Short: "원격 노드 상세 조회",
-		Long: `원격 노드의 상세 정보를 조회합니다.
-
-백엔드에 단일 노드 조회 엔드포인트가 없어, 전체 목록을 받아
-instance_id 로 클라이언트 측에서 필터링합니다.
+		Long: `원격 노드의 상세 정보(시스템 정보, uptime, 운영 요약 포함)를 조회합니다.
 
 예시:
   xflow remote node get node-01`,
@@ -187,14 +219,10 @@ instance_id 로 클라이언트 측에서 필터링합니다.
 				return ErrInvalidInput("instance_id 를 지정해야 합니다")
 			}
 
-			var nodes []map[string]any
-			if err := (*client).Get("/api/v1/remote/nodes", &nodes); err != nil {
+			var node map[string]any
+			path := fmt.Sprintf("/api/v1/remote/nodes/%s", url.PathEscape(id))
+			if err := (*client).Get(path, &node); err != nil {
 				return err
-			}
-
-			node, ok := findNodeByID(nodes, id)
-			if !ok {
-				return ErrInvalidInput(fmt.Sprintf("원격 노드를 찾을 수 없습니다: %s", id))
 			}
 
 			return printRemoteNodeDetail(cmd, node)

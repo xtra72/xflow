@@ -156,35 +156,100 @@ func TestRemoteNodeList_JSONFormat(t *testing.T) {
 
 // --- remote node get ---
 
-func TestRemoteNodeGet_FiltersList(t *testing.T) {
-	var gotPath string
+// sampleNodeDetail 은 테스트용 단일 노드 상세(NodeDetailDTO)를 반환한다.
+// 운영 요약(summary)과 시스템 정보(os/arch), uptime 을 포함한다.
+func sampleNodeDetail() map[string]any {
+	return map[string]any{
+		"instance_id":             testInstanceID,
+		"hostname":                "edge-a",
+		"version":                 "v0.18.6",
+		"status":                  "approved",
+		"online":                  true,
+		"group_name":              "1f",
+		"os":                      "linux",
+		"arch":                    "arm64",
+		"started_at":              float64(1700000000000),
+		"uptime":                  float64(3600000),
+		"display_width":           float64(1920),
+		"display_height":          float64(1080),
+		"display_override_width":  float64(0),
+		"display_override_height": float64(0),
+		"display_reported_width":  float64(1920),
+		"display_reported_height": float64(1080),
+		"last_seen":               float64(1700000003600),
+		"summary": map[string]any{
+			"flows":   map[string]any{"total": float64(3), "running": float64(2), "stopped": float64(1)},
+			"agents":  map[string]any{"total": float64(2), "connected": float64(2)},
+			"devices": map[string]any{"total": float64(5), "online": float64(4)},
+		},
+	}
+}
+
+func TestRemoteNodeGet(t *testing.T) {
+	var gotPath, gotMethod string
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
 		gotPath = r.URL.Path
+		gotMethod = r.Method
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(remoteEnvelope(sampleNodes()))
+		w.Write(remoteEnvelope(sampleNodeDetail()))
 	})
 
 	buf, cmd, cleanup := setupRemoteTest(t, handler)
 	defer cleanup()
 
-	cmd.SetArgs([]string{"remote", "node", "get", testInstanceID2})
+	cmd.SetArgs([]string{"remote", "node", "get", testInstanceID})
 	require.NoError(t, cmd.Execute())
 
-	// get 은 단일 노드 GET 엔드포인트가 없어 목록을 클라이언트 측에서 필터링한다.
-	assert.Equal(t, "/api/v1/remote/nodes", gotPath)
+	// get 은 단일 노드 GET 엔드포인트를 호출한다(목록+필터링 아님).
+	assert.Equal(t, http.MethodGet, gotMethod)
+	assert.Equal(t, "/api/v1/remote/nodes/"+testInstanceID, gotPath)
+
 	out := buf.String()
-	assert.Contains(t, out, testInstanceID2)
-	assert.Contains(t, out, "edge-b")
-	// 다른 노드는 출력에 포함되지 않아야 한다.
-	assert.NotContains(t, out, "edge-a")
+	// 스칼라 필드(시스템 정보 포함)가 표시되어야 한다.
+	assert.Contains(t, out, testInstanceID)
+	assert.Contains(t, out, "edge-a")
+	assert.Contains(t, out, "linux")
+	assert.Contains(t, out, "arm64")
+	// epoch-ms 필드는 정수 문자열로 표시된다(과학표기 금지).
+	assert.Contains(t, out, "1700000000000")
+	assert.Contains(t, out, "1700000003600")
+	// uptime 도 정수 문자열로 표시된다.
+	assert.Contains(t, out, "3600000")
+	// summary 중첩 객체는 별도 섹션으로 렌더링된다.
+	assert.Contains(t, out, "Summary")
+	assert.Contains(t, out, "flows")
+	assert.Contains(t, out, "agents")
+	assert.Contains(t, out, "devices")
+}
+
+// TestRemoteNodeGet_EscapesID 는 instance_id 가 URL 경로로 이스케이프되는지 검증한다.
+func TestRemoteNodeGet_EscapesID(t *testing.T) {
+	var gotRawPath string
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// EscapedPath 로 원본 인코딩을 확인한다.
+		gotRawPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(remoteEnvelope(sampleNodeDetail()))
+	})
+
+	_, cmd, cleanup := setupRemoteTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"remote", "node", "get", "node 01"})
+	require.NoError(t, cmd.Execute())
+
+	// 공백이 %20 으로 이스케이프되어야 한다.
+	assert.Equal(t, "/api/v1/remote/nodes/node%2001", gotRawPath)
 }
 
 func TestRemoteNodeGet_NotFound(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 서버는 미존재 노드에 404(not-found)를 반환한다(NodeDetail → ErrManagedNodeNotFound).
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(remoteEnvelope(sampleNodes()))
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"원격 노드를 찾을 수 없습니다"}}`))
 	})
 
 	_, cmd, cleanup := setupRemoteTest(t, handler)
@@ -193,6 +258,7 @@ func TestRemoteNodeGet_NotFound(t *testing.T) {
 	cmd.SetArgs([]string{"remote", "node", "get", "no-such-node"})
 	err := cmd.Execute()
 	require.Error(t, err)
+	// MapAPIError 가 서버의 not-found 메시지를 surface 한다(클라이언트 필터링 없음).
 	assert.Contains(t, err.Error(), "찾을 수 없습니다")
 }
 
@@ -210,8 +276,9 @@ func TestRemoteNodeGet_EmptyID(t *testing.T) {
 
 func TestRemoteNodeGet_JSONFormat(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/remote/nodes/"+testInstanceID, r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(remoteEnvelope(sampleNodes()))
+		w.Write(remoteEnvelope(sampleNodeDetail()))
 	})
 
 	buf, cmd, cleanup := setupRemoteTest(t, handler)
@@ -220,9 +287,13 @@ func TestRemoteNodeGet_JSONFormat(t *testing.T) {
 	cmd.SetArgs([]string{"--format", "json", "remote", "node", "get", testInstanceID})
 	require.NoError(t, cmd.Execute())
 
+	// json 포맷은 전체 객체를 그대로 통과시킨다(summary 중첩 객체 포함).
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &parsed))
 	assert.Equal(t, testInstanceID, parsed["instance_id"])
+	assert.Equal(t, "linux", parsed["os"])
+	_, hasSummary := parsed["summary"]
+	assert.True(t, hasSummary, "json passthrough 는 summary 를 포함해야 합니다")
 }
 
 // --- remote node approve ---
@@ -464,35 +535,4 @@ func TestRemoteNodePreRegister_EmptyID(t *testing.T) {
 
 	cmd.SetArgs([]string{"remote", "node", "pre-register", "   "})
 	require.Error(t, cmd.Execute())
-}
-
-// --- findNodeByID 단위 테스트 ---
-
-func TestFindNodeByID(t *testing.T) {
-	nodes := []map[string]any{
-		{"instance_id": "a", "hostname": "ha"},
-		{"instance_id": "b", "hostname": "hb"},
-	}
-
-	tests := []struct {
-		name   string
-		id     string
-		want   bool
-		wantHN string
-	}{
-		{"found first", "a", true, "ha"},
-		{"found second", "b", true, "hb"},
-		{"not found", "c", false, ""},
-		{"empty", "", false, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := findNodeByID(nodes, tt.id)
-			assert.Equal(t, tt.want, ok)
-			if tt.want {
-				assert.Equal(t, tt.wantHN, got["hostname"])
-			}
-		})
-	}
 }
