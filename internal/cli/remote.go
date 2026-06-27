@@ -15,18 +15,22 @@ import (
 //
 // 서브그룹:
 //
-//	node  원격 노드 조회/승인/거부/폐기/사전등록
+//	node   원격 노드 조회/승인/거부/폐기/사전등록
+//	group  원격 노드 그룹 관리(배정/해제/이름변경/삭제/일괄 업데이트·명령)
+//	token  등록 토큰 발급/목록/폐기
 //
-// confirmFn 은 revoke(폐기) 같은 파괴적 작업의 확인 프롬프트에 사용된다
-// (device metadata delete 패턴 참고).
+// confirmFn 은 revoke(폐기)/group delete/group update 같은 파괴적 작업의 확인
+// 프롬프트에 사용된다(device metadata delete 패턴 참고).
 func newRemoteCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remote",
 		Short: "원격 노드 관리",
-		Long:  "원격(엣지) 노드의 조회, 승인, 거부, 폐기, 사전 등록을 수행합니다.",
+		Long:  "원격(엣지) 노드의 조회, 승인, 거부, 폐기, 사전 등록, 그룹 관리, 등록 토큰 관리를 수행합니다.",
 	}
 
 	cmd.AddCommand(newRemoteNodeCmd(client, confirmFn))
+	cmd.AddCommand(newRemoteGroupCmd(client, confirmFn))
+	cmd.AddCommand(newRemoteTokenCmd(client, confirmFn))
 
 	return cmd
 }
