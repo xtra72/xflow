@@ -59,14 +59,17 @@ func NewRootCmd() *cobra.Command {
 			// verbose 플래그 확인
 			verbose, _ := cmd.Flags().GetBool("verbose")
 
+			// insecure 플래그 확인 (TLS 인증서 검증 건너뛰기)
+			insecure, _ := cmd.Flags().GetBool("insecure")
+
 			// 클라이언트 생성
-			client = NewClient(serverURL, token, 30*time.Second, verbose)
+			client = NewClient(serverURL, token, 30*time.Second, verbose, WithInsecure(insecure))
 
 			return nil
 		},
 	}
 
-	// 글로벌 플래그 등록 (7개)
+	// 글로벌 플래그 등록 (8개)
 	pflags := rootCmd.PersistentFlags()
 	pflags.String("config", "", "설정 파일 경로 (기본값: ~/.xflow/config.yaml)")
 	pflags.String("server", "", "xflowd 서버 URL")
@@ -75,6 +78,7 @@ func NewRootCmd() *cobra.Command {
 	pflags.Bool("verbose", false, "상세 출력 모드")
 	pflags.Bool("quiet", false, "조용한 출력 모드")
 	pflags.Bool("no-color", false, "색상 출력 비활성화")
+	pflags.BoolP("insecure", "k", false, "TLS 인증서 검증 건너뛰기 (자체 서명 인증서 전용)")
 
 	// 서브커맨드 등록
 	rootCmd.AddCommand(newVersionCmd())

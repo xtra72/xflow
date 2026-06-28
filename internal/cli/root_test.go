@@ -45,7 +45,7 @@ func TestNewRootCmd_HasVersionSubcommand(t *testing.T) {
 
 // --- 글로벌 플래그 테스트 ---
 
-// TestGlobalFlags - 7개 글로벌 플래그 등록 및 기본값 검증
+// TestGlobalFlags - 8개 글로벌 플래그 등록 및 기본값 검증
 func TestGlobalFlags(t *testing.T) {
 	cmd := NewRootCmd()
 	pflags := cmd.PersistentFlags()
@@ -62,6 +62,7 @@ func TestGlobalFlags(t *testing.T) {
 		{"verbose 플래그", "verbose", "false"},
 		{"quiet 플래그", "quiet", "false"},
 		{"no-color 플래그", "no-color", "false"},
+		{"insecure 플래그", "insecure", "false"},
 	}
 
 	for _, tt := range tests {
