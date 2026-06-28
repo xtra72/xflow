@@ -133,18 +133,21 @@ func newAuthCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.
 }
 
 // newAuthLoginCmd 는 auth login 서브커맨드를 생성한다.
-// POST /api/v1/auth/login 으로 인증 후 발급된 토큰을 로컬 config(auth.token)에 저장한다.
+// POST /api/v1/auth/login 으로 인증 후 발급된 토큰을 프로세스 메모리(sessionToken)에 보관한다.
+// 기본적으로 디스크에 저장하지 않으므로 프로세스 재시작 시 재로그인이 필요하며,
+// --save 플래그를 지정하면 로컬 config(auth.token)에도 영구 저장한다.
 // --username/--password 미제공 시 대화형으로 입력받으며, 비밀번호는 마스킹된다.
 func newAuthLoginCmd(client **Client) *cobra.Command {
 	var (
 		username string
 		password string
+		save     bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "로그인 및 토큰 발급",
-		Long:  "사용자 인증 후 JWT 토큰을 발급받아 로컬 설정에 저장합니다.",
+		Long:  "사용자 인증 후 JWT 토큰을 발급받아 현재 세션에 적용합니다. --save 지정 시 로컬 설정에 영구 저장합니다.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// 사용자명: 플래그 미제공 시 프롬프트
 			if username == "" {
@@ -188,23 +191,32 @@ func newAuthLoginCmd(client **Client) *cobra.Command {
 				}
 			}
 
-			// 발급된 토큰을 로컬 config 에 저장하여 이후 명령이 인증되게 한다.
-			if err := saveTokenToConfig(cmd, token); err != nil {
-				return err
-			}
+			// 발급된 토큰을 프로세스 메모리(sessionToken)에 보관하여 동일 세션 내
+			// 후속 명령이 인증되게 한다. 디스크에는 기본적으로 저장하지 않는다.
+			sessionToken = token
 
 			// 메모리상 클라이언트에도 토큰을 반영하여 동일 세션 내 후속 호출이 인증되게 한다.
 			(*client).token = token
 
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "로그인 성공: %s (%s)\n", result.User.Username, result.User.Role)
-			fmt.Fprintln(w, "토큰이 설정에 저장되었습니다.")
+
+			// --save 지정 시에만 로컬 config 에 영구 저장한다.
+			if save {
+				if err := saveTokenToConfig(cmd, token); err != nil {
+					return err
+				}
+				fmt.Fprintln(w, "토큰이 설정에 저장되었습니다.")
+			} else {
+				fmt.Fprintln(w, "토큰이 현재 세션에 적용되었습니다 (디스크에 저장하지 않음 — 재시작 시 재로그인 필요).")
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVarP(&username, "username", "u", "", "사용자명")
 	cmd.Flags().StringVarP(&password, "password", "p", "", "비밀번호 (비권장: 평문 노출 위험, 미입력 시 마스킹 프롬프트 사용)")
+	cmd.Flags().BoolVar(&save, "save", false, "토큰을 설정 파일에 영구 저장 (기본: 세션 메모리에만 보관)")
 
 	return cmd
 }
@@ -224,6 +236,8 @@ func newAuthLogoutCmd(client **Client) *cobra.Command {
 			err := (*client).Post("/api/v1/auth/logout", nil, &result)
 
 			// 서버 호출 결과와 무관하게 로컬 토큰은 제거한다.
+			// 세션 메모리 토큰과 --save 로 저장된 config 토큰을 모두 비운다.
+			sessionToken = ""
 			if clearErr := clearTokenFromConfig(cmd); clearErr != nil {
 				return clearErr
 			}
@@ -338,15 +352,19 @@ func newAuthPasswdCmd(client **Client) *cobra.Command {
 }
 
 // newAuthRefreshCmd 는 auth refresh 서브커맨드를 생성한다.
-// POST /api/v1/auth/refresh 로 토큰을 갱신하고 새 액세스 토큰을 로컬 config 에 저장한다.
+// POST /api/v1/auth/refresh 로 토큰을 갱신하고 새 액세스 토큰을 프로세스 메모리에 반영한다.
+// login 과 동일하게 기본적으로 디스크에 저장하지 않으며, --save 지정 시 config 에 영구 저장한다.
 // --refresh-token 플래그로 리프레시 토큰을 직접 전달할 수 있다.
 func newAuthRefreshCmd(client **Client) *cobra.Command {
-	var refreshToken string
+	var (
+		refreshToken string
+		save         bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "refresh",
 		Short: "토큰 갱신",
-		Long:  "리프레시 토큰으로 새 액세스 토큰을 발급받아 로컬 설정에 저장합니다.",
+		Long:  "리프레시 토큰으로 새 액세스 토큰을 발급받아 현재 세션에 적용합니다. --save 지정 시 로컬 설정에 영구 저장합니다.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if refreshToken == "" {
 				return ErrInvalidInput("리프레시 토큰(--refresh-token)이 필요합니다")
@@ -369,17 +387,25 @@ func newAuthRefreshCmd(client **Client) *cobra.Command {
 				}
 			}
 
-			if err := saveTokenToConfig(cmd, token); err != nil {
-				return err
-			}
+			// 새 토큰을 세션 메모리와 라이브 클라이언트에 반영한다 (디스크 미저장 기본).
+			sessionToken = token
 			(*client).token = token
 
-			fmt.Fprintln(cmd.OutOrStdout(), "토큰이 갱신되어 설정에 저장되었습니다.")
+			w := cmd.OutOrStdout()
+			if save {
+				if err := saveTokenToConfig(cmd, token); err != nil {
+					return err
+				}
+				fmt.Fprintln(w, "토큰이 갱신되어 설정에 저장되었습니다.")
+			} else {
+				fmt.Fprintln(w, "토큰이 갱신되어 현재 세션에 적용되었습니다 (디스크에 저장하지 않음 — 재시작 시 재로그인 필요).")
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&refreshToken, "refresh-token", "", "갱신에 사용할 리프레시 토큰")
+	cmd.Flags().BoolVar(&save, "save", false, "토큰을 설정 파일에 영구 저장 (기본: 세션 메모리에만 보관)")
 
 	return cmd
 }

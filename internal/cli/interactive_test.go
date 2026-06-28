@@ -1308,6 +1308,9 @@ func writeTempConfig(t *testing.T, serverURL string) string {
 //
 // 수정 후: --config 가 세션 내내 보존되어 login 이 저장한 토큰을 flow list 가 사용 → 200.
 func TestREPL_AuthLoginThenFlowListPersistsContext(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
 	srv, tokenSeen := authFlowTestServer(t)
 	configPath := writeTempConfig(t, srv.URL)
 
@@ -1345,6 +1348,43 @@ func TestREPL_AuthLoginThenFlowListPersistsContext(t *testing.T) {
 	require.NoError(t, gerr)
 	assert.Equal(t, configPath, gotConfig,
 		"명령 실행 후에도 루트 --config 퍼시스턴트 플래그가 런치 값으로 유지되어야 합니다")
+}
+
+// TestREPL_AuthLoginMemoryOnlyAuthenticatesAndDoesNotPersist 는 신규 정책을 재현한다.
+// 동일 프로세스/세션에서 --save 없는 auth login 후 flow list 가
+// 세션 메모리 토큰(sessionToken)으로 인증되며, config 파일은 수정되지 않아야 한다.
+func TestREPL_AuthLoginMemoryOnlyAuthenticatesAndDoesNotPersist(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
+	srv, tokenSeen := authFlowTestServer(t)
+	configPath := writeTempConfig(t, srv.URL)
+
+	rootCmd := NewRootCmd()
+	require.NoError(t, rootCmd.PersistentFlags().Set("config", configPath))
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+	session.pingFn = func() error { return nil }
+
+	// 1) auth login (--save 없음): 토큰은 세션 메모리에만 보관된다.
+	require.NoError(t, session.executeCommand("auth login -u x -p y"))
+	require.Contains(t, buf.String(), "로그인 성공")
+	assert.Equal(t, "TOK123", sessionToken, "로그인 후 sessionToken 에 토큰이 보관되어야 합니다")
+
+	// 2) flow list: 같은 세션 메모리 토큰으로 인증되어야 한다.
+	buf.Reset()
+	require.NoError(t, session.executeCommand("flow list"))
+	listOut := buf.String()
+	assert.NotContains(t, listOut, "오류:",
+		"flow list 가 세션 메모리 토큰으로 인증되어야 합니다. 출력: %s", listOut)
+	assert.True(t, *tokenSeen,
+		"flow list 요청이 세션 메모리 토큰(Bearer TOK123)을 전송해야 합니다")
+
+	// 3) config 파일은 수정되지 않아야 한다 (디스크 미저장 정책).
+	assert.Equal(t, "", readConfigToken(t, configPath),
+		"--save 없는 로그인은 config 파일을 수정하면 안 됩니다")
 }
 
 // TestREPL_GlobalInsecureFlagPersists 는 -k(--insecure) 가 세션 전체에 보존되는지 검증한다.

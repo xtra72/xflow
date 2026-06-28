@@ -104,37 +104,49 @@ func stubSecret(t *testing.T, responses ...string) {
 
 func TestAuthLogin(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []string
-		secrets   []string
-		respToken string
-		wantPath  string
-		wantUser  string
-		wantPass  string
-		wantErr   bool
-		wantSaved string
-		checkBody bool
+		name        string
+		args        []string
+		secrets     []string
+		respToken   string
+		wantPath    string
+		wantUser    string
+		wantPass    string
+		wantErr     bool
+		save        bool // --save 지정 여부 (config 저장 기대치)
+		wantSession string
+		checkBody   bool
 	}{
 		{
-			name:      "플래그로 로그인 성공 및 토큰 저장",
-			args:      []string{"auth", "login", "--username", "admin", "--password", "secret"},
-			respToken: "issued-access-token",
-			wantPath:  "/api/v1/auth/login",
-			wantUser:  "admin",
-			wantPass:  "secret",
-			wantSaved: "issued-access-token",
-			checkBody: true,
+			name:        "플래그로 로그인 성공 및 세션 메모리 적용",
+			args:        []string{"auth", "login", "--username", "admin", "--password", "secret"},
+			respToken:   "issued-access-token",
+			wantPath:    "/api/v1/auth/login",
+			wantUser:    "admin",
+			wantPass:    "secret",
+			wantSession: "issued-access-token",
+			checkBody:   true,
 		},
 		{
-			name:      "비밀번호 프롬프트로 로그인",
-			args:      []string{"auth", "login", "--username", "operator"},
-			secrets:   []string{"prompt-pass"},
-			respToken: "tok-2",
-			wantPath:  "/api/v1/auth/login",
-			wantUser:  "operator",
-			wantPass:  "prompt-pass",
-			wantSaved: "tok-2",
-			checkBody: true,
+			name:        "비밀번호 프롬프트로 로그인 (세션 메모리)",
+			args:        []string{"auth", "login", "--username", "operator"},
+			secrets:     []string{"prompt-pass"},
+			respToken:   "tok-2",
+			wantPath:    "/api/v1/auth/login",
+			wantUser:    "operator",
+			wantPass:    "prompt-pass",
+			wantSession: "tok-2",
+			checkBody:   true,
+		},
+		{
+			name:        "--save 로그인은 config 에도 저장",
+			args:        []string{"auth", "login", "--username", "admin", "--password", "secret", "--save"},
+			respToken:   "saved-tok",
+			wantPath:    "/api/v1/auth/login",
+			wantUser:    "admin",
+			wantPass:    "secret",
+			save:        true,
+			wantSession: "saved-tok",
+			checkBody:   true,
 		},
 		{
 			name:      "토큰 없는 응답은 에러",
@@ -146,6 +158,10 @@ func TestAuthLogin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// 세션 메모리 토큰 격리
+			sessionToken = ""
+			defer func() { sessionToken = "" }()
+
 			var captured *capturedRequest
 			buf, rootCmd, configPath, closeFn := setupAuthTest(t, "", func(c *capturedRequest, w http.ResponseWriter, r *http.Request) {
 				captured = c
@@ -183,8 +199,18 @@ func TestAuthLogin(t *testing.T) {
 				assert.Equal(t, tt.wantPass, captured.body["password"])
 			}
 
-			// 토큰이 config 에 저장되었는지 검증
-			assert.Equal(t, tt.wantSaved, readConfigToken(t, configPath))
+			// 토큰이 세션 메모리에 반영되었는지 검증
+			assert.Equal(t, tt.wantSession, sessionToken,
+				"로그인 후 sessionToken 에 토큰이 보관되어야 합니다")
+
+			// config 저장 여부는 --save 지정 시에만 기대한다.
+			if tt.save {
+				assert.Equal(t, tt.wantSession, readConfigToken(t, configPath),
+					"--save 로그인은 config 에 토큰을 저장해야 합니다")
+			} else {
+				assert.Equal(t, "", readConfigToken(t, configPath),
+					"--save 없는 로그인은 config 를 수정하면 안 됩니다")
+			}
 
 			// 비밀번호가 출력에 평문 노출되지 않았는지 검증
 			assert.NotContains(t, buf.String(), tt.wantPass)
@@ -341,19 +367,28 @@ func TestAuthPasswd(t *testing.T) {
 
 func TestAuthRefresh(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		respToken  string
-		wantErr    bool
-		wantSaved  string
-		wantBodyRT string
+		name        string
+		args        []string
+		respToken   string
+		wantErr     bool
+		save        bool // --save 지정 여부 (config 저장 기대치)
+		wantSession string
+		wantBodyRT  string
 	}{
 		{
-			name:       "리프레시 토큰으로 갱신 및 저장",
-			args:       []string{"auth", "refresh", "--refresh-token", "rt-123"},
-			respToken:  "new-access-token",
-			wantSaved:  "new-access-token",
-			wantBodyRT: "rt-123",
+			name:        "리프레시 토큰으로 갱신 (세션 메모리)",
+			args:        []string{"auth", "refresh", "--refresh-token", "rt-123"},
+			respToken:   "new-access-token",
+			wantSession: "new-access-token",
+			wantBodyRT:  "rt-123",
+		},
+		{
+			name:        "--save 갱신은 config 에도 저장",
+			args:        []string{"auth", "refresh", "--refresh-token", "rt-123", "--save"},
+			respToken:   "new-saved-token",
+			save:        true,
+			wantSession: "new-saved-token",
+			wantBodyRT:  "rt-123",
 		},
 		{
 			name:    "리프레시 토큰 미제공은 에러",
@@ -364,6 +399,10 @@ func TestAuthRefresh(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// 세션 메모리 토큰 격리
+			sessionToken = ""
+			defer func() { sessionToken = "" }()
+
 			var captured *capturedRequest
 			_, rootCmd, configPath, closeFn := setupAuthTest(t, "tok", func(c *capturedRequest, w http.ResponseWriter, r *http.Request) {
 				captured = c
@@ -390,9 +429,158 @@ func TestAuthRefresh(t *testing.T) {
 			assert.Equal(t, http.MethodPost, captured.method)
 			assert.Equal(t, "/api/v1/auth/refresh", captured.path)
 			assert.Equal(t, tt.wantBodyRT, captured.body["refresh_token"])
-			assert.Equal(t, tt.wantSaved, readConfigToken(t, configPath))
+
+			// 새 토큰이 세션 메모리에 반영되었는지 검증
+			assert.Equal(t, tt.wantSession, sessionToken)
+
+			// config 저장 여부는 --save 지정 시에만 기대한다.
+			if tt.save {
+				assert.Equal(t, tt.wantSession, readConfigToken(t, configPath))
+			} else {
+				assert.Equal(t, "", readConfigToken(t, configPath),
+					"--save 없는 refresh 는 config 를 수정하면 안 됩니다")
+			}
 		})
 	}
+}
+
+// TestAuthLoginDefaultDoesNotWriteConfig 는 --save 없는 로그인이
+// 설정 파일에 토큰을 쓰지 않고 세션 메모리(sessionToken)와 라이브 클라이언트에만
+// 토큰을 반영하는지 검증한다. (재현 테스트: 자동 디스크 저장 정책 제거)
+func TestAuthLoginDefaultDoesNotWriteConfig(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
+	var captured *capturedRequest
+	buf, rootCmd, configPath, closeFn := setupAuthTest(t, "", func(c *capturedRequest, w http.ResponseWriter, r *http.Request) {
+		captured = c
+		writeAuthEnvelope(w, map[string]any{
+			"user": map[string]any{"username": "admin", "role": "admin"},
+			"tokens": map[string]any{
+				"access_token":  "mem-token",
+				"refresh_token": "refresh-xyz",
+				"expires_at":    int64(1234567890),
+				"token_type":    "Bearer",
+			},
+		})
+	})
+	defer closeFn()
+
+	// 라이브 클라이언트 포인터를 검증하기 위해 명령에 연결된 client 를 추적한다.
+	// setupAuthTest 는 clientPtr 를 내부에 보관하므로, 명령 실행 후
+	// resolveToken 대신 sessionToken 과 client.token 을 직접 확인한다.
+	rootCmd.SetArgs([]string{"auth", "login", "--username", "admin", "--password", "secret"})
+	require.NoError(t, rootCmd.Execute())
+
+	require.NotNil(t, captured)
+	assert.Equal(t, "/api/v1/auth/login", captured.path)
+
+	// 설정 파일에는 토큰이 기록되지 않아야 한다 (디스크 미저장 정책).
+	assert.Equal(t, "", readConfigToken(t, configPath),
+		"--save 없는 로그인은 config 에 토큰을 쓰면 안 됩니다")
+
+	// 세션 메모리에는 토큰이 반영되어야 한다.
+	assert.Equal(t, "mem-token", sessionToken,
+		"로그인 후 sessionToken 에 토큰이 보관되어야 합니다")
+
+	// 사용자 안내 메시지: 디스크 미저장 안내가 포함되어야 한다.
+	assert.Contains(t, buf.String(), "재시작",
+		"디스크 미저장(재로그인 필요) 안내 메시지가 있어야 합니다")
+	assert.NotContains(t, buf.String(), "secret")
+}
+
+// TestAuthLoginSaveWritesConfig 는 --save 플래그가 주어지면
+// 토큰이 설정 파일에 영구 저장되는지 검증한다.
+func TestAuthLoginSaveWritesConfig(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
+	buf, rootCmd, configPath, closeFn := setupAuthTest(t, "", func(c *capturedRequest, w http.ResponseWriter, r *http.Request) {
+		writeAuthEnvelope(w, map[string]any{
+			"user": map[string]any{"username": "admin", "role": "admin"},
+			"tokens": map[string]any{
+				"access_token":  "saved-token",
+				"refresh_token": "refresh-xyz",
+				"expires_at":    int64(1234567890),
+				"token_type":    "Bearer",
+			},
+		})
+	})
+	defer closeFn()
+
+	rootCmd.SetArgs([]string{"auth", "login", "--username", "admin", "--password", "secret", "--save"})
+	require.NoError(t, rootCmd.Execute())
+
+	// --save 시 설정 파일에 토큰이 저장되어야 한다.
+	assert.Equal(t, "saved-token", readConfigToken(t, configPath),
+		"--save 로그인은 config 에 토큰을 저장해야 합니다")
+	assert.Equal(t, "saved-token", sessionToken,
+		"--save 로그인도 sessionToken 에 토큰을 반영해야 합니다")
+	assert.Contains(t, buf.String(), "설정에 저장")
+}
+
+// TestAuthLogoutClearsSessionToken 은 logout 이 세션 메모리 토큰을 비우는지 검증한다.
+func TestAuthLogoutClearsSessionToken(t *testing.T) {
+	sessionToken = "live-mem-token"
+	defer func() { sessionToken = "" }()
+
+	_, rootCmd, _, closeFn := setupAuthTest(t, "live-mem-token", func(c *capturedRequest, w http.ResponseWriter, r *http.Request) {
+		writeAuthEnvelope(w, map[string]any{"message": "로그아웃 성공"})
+	})
+	defer closeFn()
+
+	rootCmd.SetArgs([]string{"auth", "logout"})
+	require.NoError(t, rootCmd.Execute())
+
+	assert.Equal(t, "", sessionToken, "로그아웃 후 sessionToken 이 비워져야 합니다")
+}
+
+// TestAuthRefreshDefaultDoesNotWriteConfig 는 --save 없는 refresh 가
+// 세션 메모리에만 새 토큰을 반영하고 config 에는 쓰지 않는지 검증한다.
+func TestAuthRefreshDefaultDoesNotWriteConfig(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
+	_, rootCmd, configPath, closeFn := setupAuthTest(t, "tok", func(c *capturedRequest, w http.ResponseWriter, r *http.Request) {
+		writeAuthEnvelope(w, map[string]any{
+			"access_token":  "refreshed-mem",
+			"refresh_token": "rt-next",
+			"expires_at":    int64(999),
+			"token_type":    "Bearer",
+		})
+	})
+	defer closeFn()
+
+	rootCmd.SetArgs([]string{"auth", "refresh", "--refresh-token", "rt-123"})
+	require.NoError(t, rootCmd.Execute())
+
+	assert.Equal(t, "", readConfigToken(t, configPath),
+		"--save 없는 refresh 는 config 에 토큰을 쓰면 안 됩니다")
+	assert.Equal(t, "refreshed-mem", sessionToken,
+		"refresh 후 sessionToken 에 새 토큰이 반영되어야 합니다")
+}
+
+// TestAuthRefreshSaveWritesConfig 는 --save refresh 가 config 에 저장하는지 검증한다.
+func TestAuthRefreshSaveWritesConfig(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
+	_, rootCmd, configPath, closeFn := setupAuthTest(t, "tok", func(c *capturedRequest, w http.ResponseWriter, r *http.Request) {
+		writeAuthEnvelope(w, map[string]any{
+			"access_token":  "refreshed-saved",
+			"refresh_token": "rt-next",
+			"expires_at":    int64(999),
+			"token_type":    "Bearer",
+		})
+	})
+	defer closeFn()
+
+	rootCmd.SetArgs([]string{"auth", "refresh", "--refresh-token", "rt-123", "--save"})
+	require.NoError(t, rootCmd.Execute())
+
+	assert.Equal(t, "refreshed-saved", readConfigToken(t, configPath),
+		"--save refresh 는 config 에 토큰을 저장해야 합니다")
+	assert.Equal(t, "refreshed-saved", sessionToken)
 }
 
 func TestAuthCmdStructure(t *testing.T) {
