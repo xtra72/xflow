@@ -77,6 +77,12 @@ type readlineInterface interface {
 	SaveHistory(cmd string) error
 }
 
+// globalFlagState 는 루트 퍼시스턴트(전역) 플래그의 값과 Changed 상태 스냅샷이다.
+type globalFlagState struct {
+	value   string
+	changed bool
+}
+
 // InteractiveSession 은 REPL 대화형 세션을 관리한다.
 // readline 통합, 명령어 파싱, 세션 생명주기를 담당한다.
 type InteractiveSession struct {
@@ -87,6 +93,12 @@ type InteractiveSession struct {
 	readlineFn readlineInterface
 	pingFn     func() error // 서버 연결 확인 함수 (테스트 주입용)
 	history    []string     // 인메모리 히스토리
+
+	// globalFlagBaseline 은 세션 런치 시점의 루트 퍼시스턴트 플래그 스냅샷이다.
+	// 매 명령 실행 후 이 값으로 전역 플래그를 복원하여, 런치 시점의 연결
+	// 컨텍스트(--server/--config/--token/--insecure/--format 등)를 세션 전체에
+	// 보존한다. 개별 명령의 전역 플래그 오버라이드는 다음 명령으로 누수되지 않는다.
+	globalFlagBaseline map[string]globalFlagState
 }
 
 // NewInteractiveSession 은 새로운 REPL 세션을 생성한다.
@@ -334,6 +346,11 @@ func (s *InteractiveSession) executeCommand(input string) error {
 		return nil
 	}
 
+	// 첫 명령 실행 직전, 런치 시점의 전역 플래그 컨텍스트를 한 번만 스냅샷한다.
+	// 이 시점에는 아직 어떤 명령도 실행되지 않았으므로, 현재 전역 플래그 값은
+	// 곧 런치 시 전달된 --server/--config/--token/--insecure/--format 값과 같다.
+	s.captureGlobalFlagBaseline()
+
 	// REPL 출력 설정
 	s.rootCmd.SetArgs(args)
 	s.rootCmd.SetOut(s.writer)
@@ -373,10 +390,47 @@ func (s *InteractiveSession) executeCommand(input string) error {
 	return nil
 }
 
-// resetFlags 는 루트 커맨드와 모든 서브커맨드의 플래그를 기본값으로 리셋한다.
-// REPL 에서 각 명령어 실행이 독립적으로 동작하도록 보장한다.
+// captureGlobalFlagBaseline 은 루트 퍼시스턴트(전역) 플래그의 런치 시점 상태를
+// 단 한 번만 스냅샷한다. 이미 캡처되었거나 rootCmd 가 nil 이면 아무것도 하지 않는다.
+func (s *InteractiveSession) captureGlobalFlagBaseline() {
+	if s.globalFlagBaseline != nil || s.rootCmd == nil {
+		return
+	}
+	s.globalFlagBaseline = make(map[string]globalFlagState)
+	s.rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		s.globalFlagBaseline[f.Name] = globalFlagState{value: f.Value.String(), changed: f.Changed}
+	})
+}
+
+// resetFlags 는 서브커맨드 로컬 플래그를 기본값으로 리셋하되,
+// 루트 커맨드의 퍼시스턴트(전역) 플래그는 세션 런치 시점 값으로 복원한다.
+//
+// REPL 은 매 명령마다 rootCmd.Execute() 를 호출하고, 그때마다 PersistentPreRunE 가
+// --server/--config/--token/--insecure 를 다시 읽어 클라이언트를 재생성한다.
+// 따라서 전역 플래그까지 기본값으로 되돌리면 두 번째 명령부터 런치 시점의 연결
+// 컨텍스트(서버/설정/토큰/insecure/format)가 사라진다. 이를 막기 위해 전체 리셋 후
+// 런치 시점 스냅샷(globalFlagBaseline)으로 전역 플래그를 복원한다.
+//
+// 복원 기준이 "직전 명령이 남긴 값"이 아니라 "런치 시점 값"이므로, 개별 명령의
+// 전역 플래그 오버라이드(예: version --format json)는 다음 명령으로 누수되지 않으며,
+// 동시에 런치 시 전달한 전역 컨텍스트는 세션 내내 유지된다.
+// 서브커맨드 로컬 플래그는 그대로 리셋되어 명령 간 누수를 방지한다.
 func (s *InteractiveSession) resetFlags() {
+	// 안전장치: 베이스라인이 아직 없으면 현재 상태를 런치 시점으로 간주해 캡처한다.
+	s.captureGlobalFlagBaseline()
+
+	// 1) 기존 동작대로 전체 플래그 리셋 (로컬 플래그 누수 방지 포함)
 	resetCommandFlags(s.rootCmd)
+
+	// 2) 루트 퍼시스턴트 플래그를 런치 시점 값으로 복원하여 세션 전역 컨텍스트를 유지
+	s.rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		base, ok := s.globalFlagBaseline[f.Name]
+		if !ok {
+			return
+		}
+		_ = f.Value.Set(base.value)
+		f.Changed = base.changed
+	})
 }
 
 // resetCommandFlags 는 지정된 커맨드와 하위 서브커맨드의 플래그를 재귀적으로 리셋한다.

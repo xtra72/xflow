@@ -14,6 +14,7 @@
 import { forwardRef } from 'react';
 import { NodeToolbar, Position, type Align } from '@xyflow/react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useEditorStore } from '@/stores/editorStore';
 import type { LinkListEntry } from '@/lib/flow/virtualLinks';
@@ -33,8 +34,8 @@ interface LinkListPopoverProps {
   onClose: () => void;
 }
 
-/** 빈 이름 표시용 폴백 라벨. */
-const UNNAMED_LABEL = '(이름 없음)';
+/** 빈 이름 표시용 폴백 라벨 i18n 키(렌더 시 t() 로 해석). */
+const UNNAMED_LABEL_KEY = 'editor.link.unnamed';
 
 /**
  * 노드 측면에 떠오르는 가상 링크 목록 팝오버.
@@ -45,13 +46,16 @@ export const LinkListPopover = forwardRef<HTMLDivElement, LinkListPopoverProps>(
     { nodeId, direction, port, align, entries, onClose },
     ref,
   ) {
+    const { t } = useTranslation();
     const highlightedLinkName = useEditorStore((s) => s.highlightedLinkName);
     const setHighlightedLinkName = useEditorStore(
       (s) => s.setHighlightedLinkName,
     );
 
     const isOutput = direction === 'output';
-    const header = isOutput ? '출력 링크' : '입력 링크';
+    const header = isOutput
+      ? t('editor.link.outputHeader')
+      : t('editor.link.inputHeader');
     // 출력 포트는 오른쪽, 입력 포트는 왼쪽에 띄운다.
     const toolbarPosition = isOutput ? Position.Right : Position.Left;
 
@@ -87,7 +91,8 @@ export const LinkListPopover = forwardRef<HTMLDivElement, LinkListPopoverProps>(
           {/* 항목 목록: 이름 그룹별 1행. 상대 끝점은 노드:포트 로 표시한다. */}
           <ul className="flex flex-col gap-px">
             {entries.map((entry) => {
-              const display = entry.name === '' ? UNNAMED_LABEL : entry.name;
+              const display =
+                entry.name === '' ? t(UNNAMED_LABEL_KEY) : entry.name;
               const highlighted =
                 entry.name !== '' && highlightedLinkName === entry.name;
 

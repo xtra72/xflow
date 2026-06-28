@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Settings } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
+
 export interface ColumnOption<T extends string> {
   key: T;
   label: string;
@@ -47,6 +49,7 @@ export default function PanelSettingsDropdown<T extends string>({
   onPanelColorChange,
   children,
 }: PanelSettingsDropdownProps<T>) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(title);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -126,7 +129,7 @@ export default function PanelSettingsDropdown<T extends string>({
         onClick={() => setOpen(!open)}
         className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
         style={panelColor ? { color: panelColor } : undefined}
-        aria-label="패널 설정"
+        aria-label={t('panel.settings.aria')}
       >
         <Settings className="h-4 w-4" />
       </button>
@@ -141,7 +144,7 @@ export default function PanelSettingsDropdown<T extends string>({
             {/* 타이틀 편집 */}
             <div className="px-3 pb-2">
               <label className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-                타이틀
+                {t('panel.settings.title')}
               </label>
               <input
                 type="text"
@@ -161,7 +164,7 @@ export default function PanelSettingsDropdown<T extends string>({
                 <div className="my-1 border-t border-(--color-border-default)" />
                 <div className="px-3 pt-1">
                   <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
-                    표시 항목
+                    {t('panel.settings.visibleColumns')}
                   </span>
                   {columns.map((col) => {
                     const checked = visibleColumns.includes(col.key);
@@ -197,7 +200,7 @@ export default function PanelSettingsDropdown<T extends string>({
                 <div className="my-1 border-t border-(--color-border-default)" />
                 <div className="px-3 pt-1 pb-1">
                   <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
-                    패널 컬러
+                    {t('panel.settings.panelColor')}
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {PANEL_COLORS.map((color) => (
@@ -219,7 +222,7 @@ export default function PanelSettingsDropdown<T extends string>({
                       onClick={() => onPanelColorChange(undefined)}
                       className="mt-1.5 w-full rounded px-2 py-0.5 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
                     >
-                      초기화
+                      {t('panel.settings.reset')}
                     </button>
                   )}
                 </div>

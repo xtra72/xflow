@@ -8,6 +8,25 @@ import (
 	"sync"
 )
 
+// logTimeFormat 은 로그 타임스탬프를 소수점 6자리(마이크로초) 고정으로 출력하는
+// 포맷이다. slog 기본 RFC3339Nano 는 뒤따르는 0 을 제거해 자릿수가 들쭉날쭉하므로
+// (예: .974887 vs .97492), 항상 6자리로 고정해 정렬·파싱을 일관되게 한다.
+const logTimeFormat = "2006-01-02T15:04:05.000000Z07:00"
+
+// logHandlerOpts 는 모든 slog 핸들러에 공통 적용하는 옵션이다(읽기 전용 공유).
+// time 속성을 logTimeFormat(소수점 6자리 고정)으로 재포맷한다.
+var logHandlerOpts = &slog.HandlerOptions{
+	ReplaceAttr: replaceLogTime,
+}
+
+// replaceLogTime 은 최상위 time 속성을 소수점 6자리 고정 문자열로 바꾼다.
+func replaceLogTime(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+		a.Value = slog.StringValue(a.Value.Time().Format(logTimeFormat))
+	}
+	return a
+}
+
 // ComponentLogger 는 컴포넌트별 구조화된 로거 인터페이스이다.
 // 모든 로그 출력에 "component" 속성이 자동으로 포함된다.
 type ComponentLogger interface {
@@ -150,7 +169,7 @@ func (lf *loggerFactory) NewLogger(component string) ComponentLogger {
 	if lf.streamRouter != nil {
 		handler = lf.streamRouter.Handler()
 	} else {
-		handler = slog.NewJSONHandler(os.Stdout, nil)
+		handler = slog.NewJSONHandler(os.Stdout, logHandlerOpts)
 	}
 
 	// component 는 내부 라우팅용, type/name 은 출력용 속성이다

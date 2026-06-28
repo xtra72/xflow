@@ -180,7 +180,7 @@ func (n *DebugNode) Process(ctx context.Context, msg message.Message) ([]message
 					"error", err)
 			}
 			formatted = fmt.Sprintf("message id=%s payload=%v metadata=%v",
-				msg.ID(), payload, msg.Metadata().All())
+				msg.ID(), payload, msg.Metadata().Raw())
 		} else {
 			formatted = buf.String()
 		}
@@ -230,6 +230,13 @@ func (n *DebugNode) formatProcess(msg message.Message, prop, format string, disp
 			// display_fields 미지정: 기본 로그 라인 (시간 레벨 이름 메시지값)
 			// 메시지값 = property로 추출한 값
 			if len(dispFields) == 0 {
+				// P2: property=.metadata(전체) 는 단일 키여도 전체 맵(키 포함)을 보여준다.
+				// flattenValue 의 단일 키 평탄화는 .payload.X 같은 값 추출용이며,
+				// metadata 루트에는 적용하지 않는다(이전엔 map[string]string 타입이라 우연히
+				// 평탄화를 피했음 — Raw() 로 전환하며 동작 보존을 명시화).
+				if prop == ".metadata" {
+					return buildLogLineWithValue(n, msg, format, formatValue(target, format))
+				}
 				return buildLogLineWithValue(n, msg, format, flattenValue(target, format))
 			}
 			return formatValue(target, format)
@@ -287,7 +294,8 @@ func (n *DebugNode) buildMessageMap(msg message.Message, dispFields []string) ma
 		"level":     lvl,
 		"name":      n.Name(),
 		"payload":   msg.Payload().ToMap(),
-		"metadata":  msg.Metadata().All(),
+		// P2: Raw() 로 nested group 을 중첩 객체로 노출(flat 키는 문자열 유지).
+		"metadata": msg.Metadata().Raw(),
 	}
 
 	if len(dispFields) == 0 {
@@ -343,7 +351,8 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 		case "payload":
 			return formatValue(msg.Payload().ToMap(), format)
 		case "metadata":
-			return formatValue(msg.Metadata().All(), format)
+			// P2: Raw() 로 nested group 포함.
+			return formatValue(msg.Metadata().Raw(), format)
 		default:
 			// payload 내 키 직접 참조
 			if v, ok := msg.Payload().Get(key); ok {
@@ -363,7 +372,8 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 			"type":      msg.Type(),
 			"timestamp": msg.Timestamp().UnixMilli(),
 			"payload":   msg.Payload().ToMap(),
-			"metadata":  msg.Metadata().All(),
+			// P2: Raw() 로 nested group 포함.
+			"metadata": msg.Metadata().Raw(),
 		}
 		return resolveField("time") + " " +
 			resolveField("level") + " " +
@@ -402,7 +412,8 @@ func extractProperty(msg message.Message, prop string) any {
 		return val
 	case "metadata":
 		if len(parts) == 1 {
-			return msg.Metadata().All()
+			// P2: Raw() 로 nested group 까지 노출(property=.metadata 가 group 을 보여준다).
+			return msg.Metadata().Raw()
 		}
 		// 특정 메타데이터 키
 		if v, ok := msg.Metadata().Get(parts[1]); ok {

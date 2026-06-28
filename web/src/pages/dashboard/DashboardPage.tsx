@@ -25,77 +25,75 @@ import {
   Check,
   Grid3X3,
   ChevronUp,
-  BarChart3,
-  PieChart,
-  LineChart,
-  Gauge,
-  Type,
-  Table,
-  Gamepad2,
-  Hash,
+  Clock,
 } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
+import { useTranslation } from '@/lib/i18n';
 import { useDashboardSync } from '@/hooks/useDashboardSync';
+import { isRemoteTarget, LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { getMetrics } from '@/services/api/monitorService';
 import { useAuthStore } from '@/stores/authStore';
 import {
   useUIStore,
   type DashboardLayoutItem,
   type PanelConfig,
-  type PanelType,
   type ThemeMode,
 } from '@/stores/uiStore';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
-import AgentPanel from './panels/AgentPanel';
-import DevicePanel from './panels/DevicePanel';
-import FlowPanel from './panels/FlowPanel';
-import LogPanel from './panels/LogPanel';
-import SingleDevicePanel from './panels/SingleDevicePanel';
-import AcControlPanel from './panels/AcControlPanel';
-import GaugePanel from './panels/GaugePanel';
-import PropertiesGridPanel from './panels/PropertiesGridPanel';
-import HvacControlPanel from './panels/HvacControlPanel';
-import OutdoorControlPanel from './panels/OutdoorControlPanel';
-import StatPanel from './panels/charts/StatPanel';
-import LineChartPanel from './panels/charts/LineChartPanel';
-import BarChartPanel from './panels/charts/BarChartPanel';
-import PieChartPanel from './panels/charts/PieChartPanel';
-import TablePanel from './panels/charts/TablePanel';
-import ResourceWidget from './widgets/ResourceWidget';
+import { renderDashboardPanel } from './renderDashboardPanel';
+import RemoteDashboardView from './RemoteDashboardView';
 import AddPanelDialog from './AddPanelDialog';
 import PanelSettingsDialog from './PanelSettingsDialog';
 
 /** 그리드 설정 */
 const GRID_MARGIN: [number, number] = [16, 16];
 
-/** 패널 타입별 아이콘 매핑 */
-const PANEL_TYPE_ICONS: Partial<Record<PanelType, React.ReactNode>> = {
-  stat: <Hash className="h-6 w-6 text-(--color-text-muted)" />,
-  gauge: <Gauge className="h-6 w-6 text-(--color-text-muted)" />,
-  'line-chart': <LineChart className="h-6 w-6 text-(--color-text-muted)" />,
-  'bar-chart': <BarChart3 className="h-6 w-6 text-(--color-text-muted)" />,
-  'pie-chart': <PieChart className="h-6 w-6 text-(--color-text-muted)" />,
-  text: <Type className="h-6 w-6 text-(--color-text-muted)" />,
-  table: <Table className="h-6 w-6 text-(--color-text-muted)" />,
-  'custom-control': <Gamepad2 className="h-6 w-6 text-(--color-text-muted)" />,
-};
+/**
+ * 대시보드 페이지 — 로컬/원격 디스패처 (SPEC-REMOTE-001 M10, 그룹 L, REQ-L09/L10).
+ *
+ * target 이 원격이면 읽기 전용 RemoteDashboardView 로, 로컬(미지정)이면 기존
+ * LocalDashboardView 로 라우팅한다. 디스패처 자체는 훅을 호출하지 않으므로 두 뷰는
+ * 각자 독립된 훅 트리를 가진다(Rules of Hooks 안전). 로컬 경로는 회귀 없이 동일하다.
+ */
+export default function DashboardPage({
+  target = LOCAL_TARGET,
+}: {
+  /** 자원 타깃(미지정=로컬). 노드 대시보드가 remote 타깃을 주입한다(REQ-L10). */
+  target?: ResourceTarget;
+}): React.JSX.Element {
+  return isRemoteTarget(target) ? (
+    <RemoteDashboardView target={target} />
+  ) : (
+    <LocalDashboardView />
+  );
+}
 
-/** 테마 모드 라벨 (Pencil 디자인 매칭) */
-const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string; icon: React.ReactNode; iconColor: string }[] = [
-  { value: 'system', label: '시스템', desc: 'OS 설정에 따라 자동 전환', icon: <Monitor className="h-4 w-4" />, iconColor: 'text-blue-500' },
-  { value: 'day', label: '데이', desc: '밝은 배경, 어두운 텍스트', icon: <Sun className="h-4 w-4" />, iconColor: 'text-amber-500' },
-  { value: 'night', label: '나이트', desc: '어두운 배경, 밝은 텍스트', icon: <Moon className="h-4 w-4" />, iconColor: 'text-indigo-500' },
-  { value: 'custom', label: '커스텀', desc: '사용자 정의 색상 테마', icon: <Paintbrush className="h-4 w-4" />, iconColor: 'text-violet-500' },
+/** 대시보드 자동 갱신 주기 옵션 (초 단위). 라벨은 t('dashboard.refreshOption') 로 렌더. */
+const REFRESH_INTERVALS = [
+  { value: 5 },
+  { value: 10 },
+  { value: 15 },
+  { value: 30 },
+  { value: 60 },
+] as const;
+
+/** 테마 모드 옵션 (Pencil 디자인 매칭). labelKey/descKey 는 i18n 키. */
+const THEME_OPTIONS: { value: ThemeMode; labelKey: string; descKey: string; icon: React.ReactNode; iconColor: string }[] = [
+  { value: 'system', labelKey: 'dashboard.theme.system', descKey: 'dashboard.themeDesc.system', icon: <Monitor className="h-4 w-4" />, iconColor: 'text-blue-500' },
+  { value: 'day', labelKey: 'dashboard.theme.day', descKey: 'dashboard.themeDesc.day', icon: <Sun className="h-4 w-4" />, iconColor: 'text-amber-500' },
+  { value: 'night', labelKey: 'dashboard.theme.night', descKey: 'dashboard.themeDesc.night', icon: <Moon className="h-4 w-4" />, iconColor: 'text-indigo-500' },
+  { value: 'custom', labelKey: 'dashboard.theme.custom', descKey: 'dashboard.themeDesc.custom', icon: <Paintbrush className="h-4 w-4" />, iconColor: 'text-violet-500' },
 ];
 
-/** 대시보드 페이지 컴포넌트 */
-export default function DashboardPage() {
+/** 로컬 대시보드 뷰 — 기존 DashboardPage 본문(편집/sync 포함). 회귀 없이 동일하다. */
+function LocalDashboardView() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 훅.
@@ -111,6 +109,7 @@ export default function DashboardPage() {
 
   // UI store
   const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
+  const setRefreshInterval = useUIStore((s) => s.setDashboardRefreshInterval);
 
   const dashboardPages = useUIStore((s) => s.dashboardPages);
   const activeDashboardId = useUIStore((s) => s.activeDashboardId);
@@ -150,6 +149,9 @@ export default function DashboardPage() {
   // 그리드 드롭다운
   const [gridDropdownOpen, setGridDropdownOpen] = useState(false);
   const gridDropdownRef = useRef<HTMLDivElement>(null);
+  // 갱신 주기 드롭다운 (일반 모드 헤더)
+  const [refreshDropdownOpen, setRefreshDropdownOpen] = useState(false);
+  const refreshDropdownRef = useRef<HTMLDivElement>(null);
   // 패널 추가 다이얼로그
   const [addPanelOpen, setAddPanelOpen] = useState(false);
   // 패널 설정 다이얼로그 (열린 패널 ID)
@@ -196,7 +198,7 @@ export default function DashboardPage() {
 
   // 드롭다운 외부 클릭 닫기
   useEffect(() => {
-    if (!dashboardDropdownOpen && !themeDropdownOpen && !gridDropdownOpen) return;
+    if (!dashboardDropdownOpen && !themeDropdownOpen && !gridDropdownOpen && !refreshDropdownOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (dashboardDropdownOpen && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDashboardDropdownOpen(false);
@@ -207,10 +209,13 @@ export default function DashboardPage() {
       if (gridDropdownOpen && gridDropdownRef.current && !gridDropdownRef.current.contains(e.target as Node)) {
         setGridDropdownOpen(false);
       }
+      if (refreshDropdownOpen && refreshDropdownRef.current && !refreshDropdownRef.current.contains(e.target as Node)) {
+        setRefreshDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [dashboardDropdownOpen, themeDropdownOpen, gridDropdownOpen]);
+  }, [dashboardDropdownOpen, themeDropdownOpen, gridDropdownOpen, refreshDropdownOpen]);
 
   // 데이터 로드
   const {
@@ -304,147 +309,31 @@ export default function DashboardPage() {
     setEditingName('');
   };
 
-  /** 패널 타입에 따라 적절한 위젯 컴포넌트를 렌더링 */
-  const renderPanel = (panel: PanelConfig, flowsList: FlowInfo[], metricsData: typeof metrics) => {
-    const onCfg = configChangeFor(panel.id);
-    const onTitle = titleChangeFor(panel.id);
-
-    switch (panel.type) {
-      case 'flows':
-        return <FlowPanel flows={flowsList} panelConfig={panel} />;
-      case 'agents':
-        return <AgentPanel panelConfig={panel} />;
-      case 'resource':
-        return <ResourceWidget metrics={metricsData} panelConfig={panel} />;
-      case 'devices':
-        return (
-          <DevicePanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            refreshMs={refreshMs}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'device':
-        return (
-          <SingleDevicePanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'logs':
-        return (
-          <LogPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'ac-control':
-        return (
-          <AcControlPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'hvac-control':
-        return (
-          <HvacControlPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'outdoor-control':
-        return (
-          <OutdoorControlPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'gauge':
-        return (
-          <GaugePanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      case 'properties-grid':
-        return (
-          <PropertiesGridPanel
-            panelId={panel.id}
-            title={panel.title}
-            config={panel.config}
-            onConfigChange={onCfg}
-            onTitleChange={onTitle}
-          />
-        );
-      // SPEC-CHART-001 M4: 5종 차트 패널
-      case 'stat':
-        return <StatPanel panelId={panel.id} config={panel.config} />;
-      case 'line-chart':
-        return <LineChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
-      case 'bar-chart':
-        return <BarChartPanel panelId={panel.id} config={panel.config} />;
-      case 'pie-chart':
-        return <PieChartPanel panelId={panel.id} config={panel.config} />;
-      case 'table':
-        return <TablePanel panelId={panel.id} config={panel.config} />;
-      // 잔여 플레이스홀더 패널 타입들 (text, custom-control)
-      case 'text':
-      case 'custom-control':
-        return (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg bg-(--color-bg-surface) p-6 shadow">
-            {PANEL_TYPE_ICONS[panel.type] ?? null}
-            <span className="text-sm font-medium text-(--color-text-primary)">{panel.title}</span>
-            <span className="text-xs text-(--color-text-muted)">{panel.type}</span>
-          </div>
-        );
-      default:
-        return (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg bg-(--color-bg-surface) p-6 shadow">
-            <span className="text-sm text-(--color-text-muted)">{panel.title}</span>
-          </div>
-        );
-    }
-  };
+  /** 패널 타입에 따라 적절한 위젯 컴포넌트를 렌더링(공유 렌더러 재사용 — REQ-L09). */
+  const renderPanel = (panel: PanelConfig, flowsList: FlowInfo[], metricsData: typeof metrics) =>
+    renderDashboardPanel(panel, flowsList, metricsData, refreshMs, (panelId) => ({
+      onConfigChange: configChangeFor(panelId),
+      onTitleChange: titleChangeFor(panelId),
+    }));
 
   const hasError = flowsError;
 
   // 현재 활성 대시보드 이름
-  const activePageName = activePage?.name ?? '대시보드';
+  const activePageName = activePage?.name ?? t('dashboard.fallbackName');
 
   return (
     <div className="-m-6 flex flex-1 flex-col" ref={containerRef}>
       {/* SPEC-DASHBOARD-001 v0.2.0: 공유/내 대시보드 탭 토글 (헤더 위) */}
       <div
         role="tablist"
-        aria-label="대시보드 스코프"
+        aria-label={t('dashboard.scope.aria')}
         className="flex h-9 shrink-0 items-center gap-1 border-b border-(--color-border-default) bg-(--color-bg-surface) px-6"
       >
         <button
           type="button"
           role="tab"
           aria-selected={activeDashboardScope === 'shared'}
-          aria-label="공유 대시보드"
+          aria-label={t('dashboard.scope.sharedAria')}
           onClick={() => setActiveDashboardScope('shared')}
           className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
             activeDashboardScope === 'shared'
@@ -452,13 +341,13 @@ export default function DashboardPage() {
               : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
           }`}
         >
-          공유
+          {t('dashboard.scope.shared')}
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={activeDashboardScope === 'mine'}
-          aria-label="내 대시보드"
+          aria-label={t('dashboard.scope.mineAria')}
           onClick={() => setActiveDashboardScope('mine')}
           className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
             activeDashboardScope === 'mine'
@@ -466,16 +355,16 @@ export default function DashboardPage() {
               : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
           }`}
         >
-          내 대시보드
+          {t('dashboard.scope.mine')}
         </button>
         {/* 동기화 인디케이터 + 읽기 전용 뱃지 */}
         <div className="ml-auto flex items-center gap-3">
           {sharedReadOnly && (
             <span
               className="text-[11px] text-(--color-text-muted)"
-              title="관리자만 편집 가능"
+              title={t('dashboard.scope.adminOnly')}
             >
-              읽기 전용 (admin 만 편집)
+              {t('dashboard.scope.readOnly')}
             </span>
           )}
           {pendingSync && (
@@ -483,7 +372,7 @@ export default function DashboardPage() {
               className="text-[11px] text-(--color-text-muted)"
               aria-live="polite"
             >
-              동기화 중…
+              {t('dashboard.scope.syncing')}
             </span>
           )}
         </div>
@@ -498,7 +387,7 @@ export default function DashboardPage() {
               {activePageName}
             </span>
             <span className="inline-flex items-center rounded-md bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-500 dark:bg-amber-900/30 dark:text-amber-400">
-              편집 모드
+              {t('dashboard.editMode')}
             </span>
           </div>
         ) : (
@@ -558,7 +447,7 @@ export default function DashboardPage() {
                             ? 'text-yellow-500'
                             : 'text-(--color-text-muted) hover:text-yellow-400'
                         }`}
-                        title={sharedReadOnly ? '관리자만 편집 가능' : page.isDefault ? '기본 대시보드' : '기본 대시보드로 설정'}
+                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
                       >
                         <Star className={`h-3.5 w-3.5 ${page.isDefault ? 'fill-current' : ''}`} />
                       </button>
@@ -572,7 +461,7 @@ export default function DashboardPage() {
                             ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                             : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                         }`}
-                        title={sharedReadOnly ? '관리자만 편집 가능' : '이름 변경'}
+                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.header.rename')}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
@@ -582,10 +471,10 @@ export default function DashboardPage() {
                 <div className="border-t border-(--color-border-default)">
                   <button
                     type="button"
-                    onClick={() => { addDashboardPage('새 대시보드'); setDashboardDropdownOpen(false); }}
+                    onClick={() => { addDashboardPage(t('dashboard.header.newDashboardName')); setDashboardDropdownOpen(false); }}
                     disabled={sharedReadOnly}
                     aria-disabled={sharedReadOnly}
-                    title={sharedReadOnly ? '관리자만 편집 가능' : undefined}
+                    title={sharedReadOnly ? t('dashboard.scope.adminOnly') : undefined}
                     className={`flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm transition-colors ${
                       sharedReadOnly
                         ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
@@ -593,7 +482,7 @@ export default function DashboardPage() {
                     }`}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    새 대시보드 추가
+                    {t('dashboard.addDashboard')}
                   </button>
                 </div>
               </div>
@@ -614,7 +503,7 @@ export default function DashboardPage() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
                 >
                   <PaletteIcon className="h-3.5 w-3.5" />
-                  테마
+                  {t('dashboard.header.theme')}
                   <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
                 </button>
 
@@ -622,7 +511,7 @@ export default function DashboardPage() {
                 {themeDropdownOpen && (
                   <div className="absolute right-0 top-full z-50 mt-1 w-[280px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg">
                     <div className="px-4 py-2.5">
-                      <span className="text-[13px] font-semibold text-(--color-text-primary)">대시보드 테마</span>
+                      <span className="text-[13px] font-semibold text-(--color-text-primary)">{t('dashboard.header.themeTitle')}</span>
                     </div>
                     <div className="h-px bg-(--color-border-default)" />
                     <div className="flex flex-col gap-0.5 p-1.5">
@@ -641,9 +530,9 @@ export default function DashboardPage() {
                             <span className={opt.iconColor}>{opt.icon}</span>
                             <div className="flex flex-col items-start gap-0.5">
                               <span className={`text-[13px] font-medium ${theme === opt.value ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-primary)'}`}>
-                                {opt.label}
+                                {t(opt.labelKey)}
                               </span>
-                              <span className="text-[11px] text-(--color-text-muted)">{opt.desc}</span>
+                              <span className="text-[11px] text-(--color-text-muted)">{t(opt.descKey)}</span>
                             </div>
                           </div>
                           {theme === opt.value ? (
@@ -668,20 +557,20 @@ export default function DashboardPage() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
                 >
                   <Grid3X3 className="h-3.5 w-3.5" />
-                  그리드
+                  {t('dashboard.header.grid')}
                   <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
                 </button>
 
                 {gridDropdownOpen && (
                   <div className="absolute right-0 top-full z-50 mt-1 w-[200px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg">
                     <div className="px-4 py-2.5">
-                      <span className="text-[13px] font-semibold text-(--color-text-primary)">그리드 설정</span>
+                      <span className="text-[13px] font-semibold text-(--color-text-primary)">{t('dashboard.grid.title')}</span>
                     </div>
                     <div className="h-px bg-(--color-border-default)" />
                     <div className="flex flex-col gap-3 p-3">
                       {/* 칼럼 수 입력 */}
                       <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] font-medium text-(--color-text-muted)">칼럼 수 (4 - 100)</span>
+                        <span className="text-[11px] font-medium text-(--color-text-muted)">{t('dashboard.grid.colsLabel')}</span>
                         <div className="flex">
                           <div className="flex flex-1 items-center justify-center rounded-l-lg border border-(--color-border-default) bg-(--color-bg-surface)">
                             <input
@@ -718,13 +607,13 @@ export default function DashboardPage() {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                           <Grid3X3 className="h-3.5 w-3.5 text-(--color-text-muted)" />
-                          <span className="text-xs font-medium text-(--color-text-secondary)">그리드 라인 표시</span>
+                          <span className="text-xs font-medium text-(--color-text-secondary)">{t('dashboard.grid.showGridLines')}</span>
                         </div>
                         <button
                           type="button"
                           onClick={() => setShowGridLines(!showGridLines)}
                           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${showGridLines ? 'bg-blue-500' : 'bg-(--color-border-default)'}`}
-                          aria-label="그리드 라인 표시 토글"
+                          aria-label={t('dashboard.grid.showGridLinesAria')}
                         >
                           <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${showGridLines ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                         </button>
@@ -741,7 +630,7 @@ export default function DashboardPage() {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
               >
                 <Plus className="h-3.5 w-3.5" />
-                패널 추가
+                {t('dashboard.addPanel')}
               </button>
 
               {/* 취소 (Pencil: m5m4p) */}
@@ -751,7 +640,7 @@ export default function DashboardPage() {
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) px-4 py-2 text-[13px] font-medium text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <X className="h-3.5 w-3.5 text-(--color-text-muted)" />
-                취소
+                {t('common.cancel')}
               </button>
 
               {/* 저장 (Pencil: NjZlk) */}
@@ -761,7 +650,7 @@ export default function DashboardPage() {
                 className="inline-flex items-center gap-1.5 rounded-md bg-blue-500 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-600"
               >
                 <Save className="h-3.5 w-3.5" />
-                저장
+                {t('common.save')}
               </button>
             </>
           ) : (
@@ -772,9 +661,62 @@ export default function DashboardPage() {
                 <span className="inline-flex items-center gap-1.5">
                   <span className={`h-2 w-2 rounded-full ${wsState === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`} />
                   <span className={`text-xs ${wsState === 'connected' ? 'text-green-500' : 'text-(--color-text-muted)'}`}>
-                    {wsState === 'connected' ? '연결됨' : '오프라인'}
+                    {wsState === 'connected' ? t('dashboard.header.connected') : t('dashboard.offline')}
                   </span>
                 </span>
+
+                {/* 갱신 주기 셀렉터 — 개인/뷰 설정이므로 편집 권한과 무관하게 항상 사용 가능 */}
+                <div className="relative" ref={refreshDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setRefreshDropdownOpen((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-2.5 py-1.5 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
+                    aria-label={t('dashboard.header.refreshAria')}
+                    aria-haspopup="listbox"
+                    aria-expanded={refreshDropdownOpen}
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                    {refreshInterval}{t('dashboard.header.refreshSuffix')}
+                    <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
+                  </button>
+
+                  {refreshDropdownOpen && (
+                    <div
+                      role="listbox"
+                      aria-label={t('dashboard.header.refreshSelectAria')}
+                      className="absolute right-0 top-full z-50 mt-1 w-[160px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg"
+                    >
+                      <div className="px-4 py-2.5">
+                        <span className="text-[13px] font-semibold text-(--color-text-primary)">{t('dashboard.header.refreshTitle')}</span>
+                      </div>
+                      <div className="h-px bg-(--color-border-default)" />
+                      <div className="flex flex-col gap-0.5 p-1.5">
+                        {REFRESH_INTERVALS.map((opt) => {
+                          const isSelected = refreshInterval === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              role="option"
+                              aria-selected={isSelected}
+                              onClick={() => { setRefreshInterval(opt.value); setRefreshDropdownOpen(false); }}
+                              className={`flex items-center justify-between rounded-md px-3 py-2 transition-colors ${
+                                isSelected
+                                  ? 'bg-blue-50 dark:bg-blue-900/20'
+                                  : 'hover:bg-(--color-bg-elevated)'
+                              }`}
+                            >
+                              <span className={`text-[13px] font-medium ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-primary)'}`}>
+                                {t('dashboard.refreshOption').replace('{value}', String(opt.value))}
+                              </span>
+                              {isSelected && <Check className="h-3.5 w-3.5 text-blue-500" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* 새로고침 */}
                 <button
@@ -782,7 +724,7 @@ export default function DashboardPage() {
                   onClick={handleRefresh}
                   disabled={isLoading}
                   className="text-(--color-text-muted) transition-colors hover:text-(--color-text-primary) disabled:opacity-50"
-                  aria-label="새로고침"
+                  aria-label={t('dashboard.header.refresh')}
                 >
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
@@ -793,13 +735,13 @@ export default function DashboardPage() {
                   onClick={() => setEditMode(true)}
                   disabled={sharedReadOnly}
                   aria-disabled={sharedReadOnly}
-                  title={sharedReadOnly ? '관리자만 편집 가능' : '레이아웃 편집'}
+                  title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.editLayout')}
                   className={`transition-colors ${
                     sharedReadOnly
                       ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                       : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                   }`}
-                  aria-label="레이아웃 편집"
+                  aria-label={t('dashboard.editLayout')}
                 >
                   <Pencil className="h-4 w-4" />
                 </button>
@@ -814,7 +756,7 @@ export default function DashboardPage() {
         {/* 에러 배너 */}
         {hasError && (
           <div className="mx-6 mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
-            데이터를 불러오는 중 오류가 발생했습니다. 새로고침을 시도해주세요.
+            {t('dashboard.loadError')}
           </div>
         )}
 
@@ -823,7 +765,7 @@ export default function DashboardPage() {
           <div className="mx-6 mt-4 flex h-9 items-center gap-2 rounded-lg bg-blue-50 px-4 dark:bg-blue-900/20">
             <Info className="h-3.5 w-3.5 shrink-0 text-blue-500" />
             <span className="text-[11px] text-blue-500">
-              {gridCols}칸 그리드 | 타이틀 바 드래그로 이동 | 우측 하단 모서리로 크기 조절 | 최소 2칸, 최대 {gridCols}칸
+              {t('dashboard.editInfo').replace(/\{cols\}/g, String(gridCols))}
             </span>
           </div>
         )}
@@ -893,8 +835,8 @@ export default function DashboardPage() {
                           type="button"
                           onClick={() => setSettingsPanelId(panel.id)}
                           className="rounded-full bg-(--color-bg-elevated) p-0.5 text-(--color-text-muted) shadow transition-colors hover:bg-(--color-bg-surface) hover:text-(--color-text-primary)"
-                          aria-label="패널 설정"
-                          title="패널 설정"
+                          aria-label={t('dashboard.settings.title')}
+                          title={t('dashboard.settings.title')}
                         >
                           <Settings className="h-3.5 w-3.5" />
                         </button>
@@ -902,8 +844,8 @@ export default function DashboardPage() {
                           type="button"
                           onClick={() => removePanel(panel.id)}
                           className="rounded-full bg-red-500 p-0.5 text-white shadow transition-colors hover:bg-red-600"
-                          aria-label="패널 삭제"
-                          title="패널 삭제"
+                          aria-label={t('dashboard.settings.deletePanelAria')}
+                          title={t('dashboard.settings.deletePanelAria')}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>

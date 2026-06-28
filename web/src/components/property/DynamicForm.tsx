@@ -6,6 +6,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
+import {
+  parseRemoteFlowRef,
+  resolveFlowNodePorts,
+  resolveRemoteFlowNodePorts,
+} from '@/lib/flow/subflowPorts';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import type { ConfigSchema } from '@/types/node';
 
 import { FormField } from './FormField';
@@ -19,15 +27,65 @@ interface DynamicFormProps {
 }
 
 export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: DynamicFormProps) {
+  const { t } = useTranslation();
   // 로컬 폼 상태 관리 (nodeId 변경 시 리셋)
   const [localData, setLocalData] = useState<Record<string, unknown>>(data);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // 타깃 인지 포트 비정규화 소스(SPEC-REMOTE-001): 원격 노드 플로우 편집 시 참조
+  // 플로우 포트는 그 노드의 flow READ 프록시에서 가져와야 한다(매니저 로컬 GET 아님).
+  // Provider 미설정 시 로컬 기본값이므로 로컬 편집은 기존 동작 그대로다.
+  const target = useTargetContext();
 
   // 노드 변경 또는 취소(원본 복원) 시 로컬 상태 동기화
   useEffect(() => {
     setLocalData(data);
     setErrors({});
   }, [nodeId, data]);
+
+  /**
+   * flow-node (flow_picker) 의 참조 플로우 포트를 비정규화하여 병합한다.
+   * 참조 플로우 정의를 조회해 input_ports / output_ports / flow_name 을 채운다.
+   * 이 값들은 핸들 렌더링(computePortsForNode) 에만 쓰이는 에디터 표시 전용 캐시이며,
+   * 백엔드는 배포 시점에 참조 플로우 정의에서 포트를 재해석한다(SPEC-SUBFLOW-001).
+   */
+  const denormalizeFlowNodePorts = useCallback(
+    async (flowId: string, base: Record<string, unknown>) => {
+      if (!flowId) return;
+      try {
+        // 포트 소스 결정(우선순위):
+        //   1) flow_id 가 `remote://{instanceId}/{flowId}` 정규화 참조면, 에디터
+        //      타깃과 무관하게 그 참조가 가리키는 노드의 flow 정의에서 해석한다
+        //      (SPEC-SUBFLOW-001 v1.2 그룹 RU — 로컬 편집 → 원격 노드 플로우 참조).
+        //   2) 그 외에는 기존 동작: 원격 편집(same-node)이면 대상 노드, 로컬이면
+        //      매니저 로컬 플로우 정의에서 해석한다.
+        // 셋 다 config 최상위 inputs/outputs 가 포트 소스다(동형).
+        const ref = parseRemoteFlowRef(flowId);
+        const resolved = ref
+          ? await resolveRemoteFlowNodePorts(ref.instanceId, ref.flowId)
+          : isRemoteTarget(target)
+            ? await resolveRemoteFlowNodePorts(target.instanceId, flowId)
+            : await resolveFlowNodePorts(flowId);
+        // 조회 도중 다른 플로우로 선택이 바뀌었으면 무시한다(stale 방지).
+        setLocalData((prev) => {
+          if ((prev.flow_id as string) !== flowId) return prev;
+          const merged = { ...prev, ...resolved };
+          onChange(merged);
+          return merged;
+        });
+      } catch {
+        // 조회 실패(삭제/네트워크 등) 시 포트 캐시를 비워 dangling 으로 둔다.
+        setLocalData((prev) => {
+          if ((prev.flow_id as string) !== flowId) return prev;
+          const merged = { ...prev, input_ports: [], output_ports: [] };
+          onChange(merged);
+          return merged;
+        });
+      }
+      void base;
+    },
+    [onChange, target],
+  );
 
   /** 필드 값 변경 핸들러 */
   const handleFieldChange = useCallback(
@@ -50,6 +108,80 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
           agent_name: compound.agent_name ?? '',
           agent_type: compound.agent_type ?? '',
         };
+      } else if (
+        field?.type === 'flow_picker' &&
+        typeof value === 'object' &&
+        value !== null
+      ) {
+        // flow_picker 는 { flow_id, flow_name } 복합 객체를 반환한다.
+        // flow_id 를 저장하고, 이전 포트 캐시는 즉시 비워(핸들 깜빡임 방지) 후
+        // 비동기로 참조 플로우 포트를 비정규화한다.
+        const compound = value as Record<string, unknown>;
+        const flowId = (compound.flow_id as string) ?? '';
+        const flowName = (compound.flow_name as string) ?? '';
+        // 원격 노드 라벨(호스트명, 예 "xagent04")은 라벨 산출에만 쓰는 임시 키다.
+        // 저장 데이터(updated)에는 절대 남기지 않는다(라벨 계산 후 폐기).
+        const remoteNodeLabel =
+          typeof compound.remote_node_label === 'string'
+            ? compound.remote_node_label
+            : '';
+        // 원격 여부 판정: 정규화된 remote:// 참조이거나 remote_node_label 존재.
+        const isRemote = flowId.startsWith('remote://') || remoteNodeLabel !== '';
+        updated = {
+          ...localData,
+          [fieldName]: flowId,
+          flow_name: flowName,
+          input_ports: [],
+          output_ports: [],
+        };
+        // 노드 라벨 자동 설정(변경 1): 사용자가 라벨을 직접 바꾸지 않은 경우에만
+        // 자동 라벨로 덮어쓴다(수동 커스텀 라벨 보존). 자동 라벨 산출 규칙:
+        //   - 원격: `{호스트}.{플로우}`(예 "xagent04.Serial"), 호스트 미해석 시 플로우명 폴백.
+        //   - 로컬: 플로우명(기존 동작).
+        // 아래 중 하나면 "자동 라벨"(=사용자 미변경)로 간주한다:
+        //   - 현재 label 이 비어있음('' / undefined)
+        //   - 현재 label 이 직전 flow_name 과 동일(이전에 로컬 자동 설정된 라벨)
+        //   - 현재 label 이 `*.{직전 flow_name}` 형태(이전에 원격 자동 설정된 라벨,
+        //     예 직전이 "xagent04.Serial" 이고 직전 flow_name 이 "Serial")
+        //   - 현재 label 이 flow-node 기본 생성 라벨(= nodeType, EditorPage 드롭 시
+        //     data.label = canonicalType)과 동일(신규 드롭 직후 상태)
+        // flow_name 이 빈 문자열이면(플로우 해제) 라벨을 덮어쓰지 않는다.
+        if (flowName !== '') {
+          const currentLabel = localData.label;
+          const prevFlowName = localData.flow_name;
+          const defaultLabel = localData.nodeType;
+          const matchesPrevFlowName =
+            typeof prevFlowName === 'string' &&
+            prevFlowName !== '' &&
+            typeof currentLabel === 'string' &&
+            (currentLabel === prevFlowName ||
+              // 원격 과거 자동 라벨(`호스트.직전플로우`)도 자동으로 인정한다.
+              currentLabel.endsWith(`.${prevFlowName}`));
+          const isAutoLabel =
+            currentLabel === '' ||
+            currentLabel == null ||
+            matchesPrevFlowName ||
+            (typeof defaultLabel === 'string' && currentLabel === defaultLabel);
+          if (isAutoLabel) {
+            updated.label =
+              isRemote && remoteNodeLabel !== ''
+                ? `${remoteNodeLabel}.${flowName}`
+                : flowName;
+          }
+        }
+        setLocalData(updated);
+        onChange(updated);
+        if (field.required && flowId === '') {
+          setErrors((prev) => ({ ...prev, [fieldName]: t('property.dynamicForm.required') }));
+        } else {
+          setErrors((prev) => {
+            const next = { ...prev };
+            delete next[fieldName];
+            return next;
+          });
+        }
+        void denormalizeFlowNodePorts(flowId, updated);
+        return;
       } else {
         updated = { ...localData, [fieldName]: value };
       }
@@ -63,7 +195,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
             ? (value as Record<string, unknown>).agent_id
             : value;
         if (checkValue === '' || checkValue == null) {
-          setErrors((prev) => ({ ...prev, [fieldName]: '필수 항목입니다' }));
+          setErrors((prev) => ({ ...prev, [fieldName]: t('property.dynamicForm.required') }));
         } else {
           setErrors((prev) => {
             const next = { ...prev };
@@ -81,8 +213,14 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
       onChange(updated);
     },
-    [localData, onChange, schema],
+    [localData, onChange, schema, denormalizeFlowNodePorts, t],
   );
+
+  /** flow_picker "포트 갱신": 현재 flow_id 로 참조 플로우 포트를 재조회한다. */
+  const handleFlowPortsRefresh = useCallback(() => {
+    const flowId = (localData.flow_id as string) ?? '';
+    void denormalizeFlowNodePorts(flowId, localData);
+  }, [localData, denormalizeFlowNodePorts]);
 
   // 스키마가 있는 경우: 스키마 필드 기반 렌더링
   if (schema && schema.fields.length > 0) {
@@ -108,6 +246,8 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         field={field}
         value={localData[field.name]}
         agentName={field.type === 'agent_select' ? (localData['agent_name'] as string) : undefined}
+        flowName={field.type === 'flow_picker' ? (localData['flow_name'] as string) : undefined}
+        onFlowPortsRefresh={field.type === 'flow_picker' ? handleFlowPortsRefresh : undefined}
         onChange={(v) => handleFieldChange(field.name, v)}
         error={errors[field.name]}
         readOnly={readOnly}
@@ -138,7 +278,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
   if (entries.length === 0) {
     return (
       <p className="text-xs text-(--color-text-muted)">
-        설정 항목이 없습니다
+        {t('property.dynamicForm.noConfig')}
       </p>
     );
   }
@@ -166,6 +306,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
 /** 고급 필드를 감싸는 접을 수 있는 섹션. 기본 접힘 상태로 표시된다. */
 function AdvancedSection({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
   return (
@@ -185,7 +326,7 @@ function AdvancedSection({ children }: { children: React.ReactNode }) {
         ) : (
           <ChevronRight className="h-3.5 w-3.5" />
         )}
-        고급 설정
+        {t('property.dynamicForm.advanced')}
       </button>
       {open && (
         <div className="space-y-3 border-t border-(--color-border-default) px-2 py-3">

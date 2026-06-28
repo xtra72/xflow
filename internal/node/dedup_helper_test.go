@@ -25,31 +25,33 @@ func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {
 		},
 	}
 
-	// v0.18.26: UnitID / SlotNum 필드 삭제. 남은 옵션 (NodeID / DeviceType /
-	// Name / NodeSource) 만 ON.
-	promotePayloadMetadata(msg, payload, MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true})
+	// v0.18.26: UnitID / SlotNum 필드 삭제. Device=true 로 device 그룹 emit.
+	promotePayloadMetadata(msg, payload, MetadataEmitOptions{NodeID: true, DeviceType: true, Name: true, NodeSource: true, Device: true})
 
 	if _, exists := payload["metadata"]; exists {
 		t.Fatalf("payload['metadata'] 가 제거되어야 하지만 남아 있음: %v", payload["metadata"])
 	}
 
-	// v0.18.26: slot_num 은 출력 metadata 에서 제거.
-	cases := map[string]string{
-		"device_type": "rac",
-		"name":        "Living Room",
+	// device_type / name 은 flat 이 아니라 device 그룹의 type / name 으로 들어간다.
+	dg, ok := msg.Metadata().GetGroup("device")
+	if !ok {
+		t.Fatalf("device 그룹이 emit 되어야 함")
 	}
-	for k, want := range cases {
-		got, ok := msg.Metadata().Get(k)
-		if !ok {
-			t.Errorf("metadata[%q] 가 promote 되지 않음", k)
-			continue
-		}
-		if got != want {
-			t.Errorf("metadata[%q] = %q; want %q", k, got, want)
+	if dg["type"] != "rac" {
+		t.Errorf("device.type = %q; want %q", dg["type"], "rac")
+	}
+	if dg["name"] != "Living Room" {
+		t.Errorf("device.name = %q; want %q", dg["name"], "Living Room")
+	}
+
+	// flat device_type / name 은 더 이상 쓰지 않는다 (그룹 전용).
+	for _, k := range []string{"device_type", "name"} {
+		if v, ok := msg.Metadata().Get(k); ok {
+			t.Errorf("flat metadata %q 는 제거되어야 함: got %q", k, v)
 		}
 	}
 
-	// slot_num 은 v0.18.26 부터 metadata 로 promote 되지 않아야 한다.
+	// slot_num 은 v0.18.26 부터 출력 metadata 에서 제거.
 	if _, ok := msg.Metadata().Get("slot_num"); ok {
 		t.Errorf("slot_num 은 v0.18.26 부터 output metadata 에서 제거되어야 함")
 	}

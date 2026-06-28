@@ -36,6 +36,28 @@ vi.mock('@/services/api/dashboardService', async () => {
   };
 });
 
+// i18n 모킹: I18nProvider 없이 렌더하기 위해 useTranslation 을 교체한다.
+// 토스트 메시지 단언이 실제 한국어 문자열을 검사하므로 ko.json 을 해석해 반환한다.
+// (async factory 내부 import 로 호이스팅 문제를 회피한다.)
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolveKo = (key: string): string => {
+    const value = key
+      .split('.')
+      .reduce<unknown>(
+        (obj, part) =>
+          obj != null && typeof obj === 'object'
+            ? (obj as Record<string, unknown>)[part]
+            : undefined,
+        ko,
+      );
+    return typeof value === 'string' ? value : key;
+  };
+  return {
+    useTranslation: () => ({ t: (k: string) => resolveKo(k) }),
+  };
+});
+
 // ─────────────────────────────────────────────────────────────────────
 // LocalStorage / SessionStorage helpers
 // ─────────────────────────────────────────────────────────────────────

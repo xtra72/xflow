@@ -47,8 +47,18 @@ export interface TsdbSeriesListParams {
 
 // ---- Types: Query (UI-friendly) ----
 
-/** UI 에서 노출하는 집계 함수 옵션. */
-export type TsdbAggregation = 'min' | 'max' | 'average';
+/** UI 에서 노출하는 집계 함수 옵션. first/last 는 버킷 내 첫/마지막 원시값. */
+export type TsdbAggregation = 'min' | 'max' | 'average' | 'first' | 'last';
+
+/**
+ * 빈 버킷(인터벌 구간에 값이 없을 때) 채우기 전략.
+ * - '' : 빈 버킷 생략(기본)
+ * - 'null' : 비우기(버킷은 존재, 값은 null)
+ * - 'zero' : 0
+ * - 'previous' : 직전 값 carry-forward
+ * - 'avg' : 전/후 값의 평균
+ */
+export type TsdbFill = '' | 'null' | 'zero' | 'previous' | 'avg';
 
 /**
  * 매트릭스 쿼리 요청 (UI 계층).
@@ -64,6 +74,8 @@ export interface TsdbQueryRequest {
   endMs: number;
   interval: string;
   aggregation: TsdbAggregation;
+  /** 빈 버킷 채우기 전략. 생략 시 ''(빈 버킷 생략). */
+  fill?: TsdbFill;
   agentId?: string;
 }
 
@@ -97,6 +109,7 @@ interface BackendQueryRequest {
   end: string;
   bucket: string;
   aggregation: string;
+  fill?: string;
 }
 
 interface BackendQueryPoint {
@@ -299,6 +312,9 @@ export async function queryTsdbMatrix(
         bucket: req.interval,
         aggregation,
       };
+      if (req.fill) {
+        body.fill = req.fill;
+      }
       return post<BackendQueryResponse>('/tsdb/query', body);
     }),
   );
@@ -386,6 +402,7 @@ async function queryTsdbMatrixPivoted(
     endMs: params.endMs,
     interval: intervalStr,
     aggregation: params.aggregation,
+    fill: params.fill,
     agentId,
   });
 
@@ -402,9 +419,14 @@ async function queryTsdbMatrixPivoted(
     return m;
   });
 
+  // 버킷 시간축 union 은 *모든* 반환 포인트의 타임스탬프에서 구성한다(값이 null 인
+  // 포인트 포함). fill='null'(비우기)은 백엔드가 null 값 버킷을 반환하므로, 이 버킷도
+  // 행(시간축)에는 나타나되 셀은 비어(null) 보여야 한다.
   const allBuckets = new Set<number>();
-  for (const m of perKeyBuckets) {
-    for (const ts of m.keys()) allBuckets.add(ts);
+  for (const r of resp.results) {
+    for (const p of r.points) {
+      if (Number.isFinite(p.timestampMs)) allBuckets.add(p.timestampMs);
+    }
   }
   const sorted = Array.from(allBuckets).sort((a, b) => a - b);
 

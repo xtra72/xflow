@@ -1,13 +1,15 @@
 // 디바이스 상세 패널 컴포넌트.
 // 디바이스 상태 속성, 명령 실행, 메타데이터 편집 기능을 제공한다.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ChevronsUpDown,
+  Clock,
   Droplets,
   Edit2,
   Flame,
+  History,
   Loader2,
   Lock,
   MapPin,
@@ -25,12 +27,17 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { useDeviceRealtime, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
+import { useDeviceHistory, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
+import { useTranslation } from '@/lib/i18n';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
+import { useTargetContext } from '@/lib/remote/TargetContext';
+import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { normalizeAcMode, normalizeFanSpeed } from '@/pages/dashboard/panels/acControlTypes';
-import type { CommandSpec, ParamSpec } from '@/types/device';
+import { APIError } from '@/types/api';
+import type { CommandSpec, DeviceHistoryEntry, ParamSpec } from '@/types/device';
 
 interface DeviceDetailPanelProps {
   deviceId: string;
@@ -41,7 +48,12 @@ interface DeviceDetailPanelProps {
 
 /** 디바이스 행 확장 시 표시되는 상세 패널 */
 export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode }: DeviceDetailPanelProps) {
-  const { data: device, isLoading, error } = useDeviceRealtime(deviceId);
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃에 따라 상세/실시간 상태 소스를 전환한다.
+  // 로컬은 useDeviceRealtime 위임(회귀 없음), 원격은 get(정적)+state(SSE/폴백).
+  const { t } = useTranslation();
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const { data: device, isLoading, error } = useDeviceDetailTarget(target, deviceId);
 
   // 패널 레벨 편집 상태 관리 (훅은 조기 리턴 전에 호출해야 한다)
   const [editing, setEditing] = useState(initialEditMode ?? false);
@@ -58,7 +70,7 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
       <div className="flex items-center justify-center py-8">
         <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
         <span className="ml-2 text-sm text-(--color-text-muted)">
-          불러오는 중...
+          {t('devices.detail.loading')}
         </span>
       </div>
     );
@@ -68,7 +80,7 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
     return (
       <div className="flex items-center justify-center py-8 text-sm text-red-500 dark:text-red-400">
         <AlertCircle className="mr-2 h-4 w-4" />
-        디바이스 정보를 불러올 수 없습니다.
+        {t('devices.detail.loadFailed')}
       </div>
     );
   }
@@ -83,34 +95,36 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
         <h3 className="text-sm font-semibold text-(--color-text-primary)">
           {getDeviceDisplayName(device)}
         </h3>
-        {!editing && (
+        {/* 원격 타깃은 READ-ONLY(REQ-J03) — 편집/명령은 디바이스 페이지의 그룹 D
+            경로에서만 수행하므로 편집 버튼을 숨긴다. */}
+        {!editing && !remote && (
           <button
             type="button"
             onClick={() => setEditing(true)}
             className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
           >
             <Edit2 className="h-3 w-3" />
-            디바이스 편집
+            {t('devices.detail.editDevice')}
           </button>
         )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* 좌측: 상태 속성 */}
+        {/* 좌측: 상태 속성. 원격은 deviceId 미전달로 비대화형(읽기 전용)으로 만든다. */}
         <div>
           {hasState && (
             <StatePropertiesSection
               properties={device.state!.properties}
               protocol={device.protocol}
               type={device.type}
-              deviceId={deviceId}
+              deviceId={remote ? undefined : deviceId}
             />
           )}
         </div>
 
-        {/* 우측: 제어 + 메타데이터 */}
+        {/* 우측: 제어 + 메타데이터. 원격은 명령 섹션을 숨기고 메타데이터는 읽기 전용. */}
         <div className="space-y-6">
-          {hasCommands && (
+          {hasCommands && !remote && (
             <CommandsSection deviceId={deviceId} commands={device.commands!} powerState={device.state?.properties?.['power'] as boolean | undefined} />
           )}
           <MetadataSection
@@ -124,12 +138,205 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
               labels: device.metadata?.labels ?? {},
               pinned: device.metadata?.pinned,
             }}
-            editing={editing}
+            editing={editing && !remote}
             onEditChange={setEditing}
+            readOnly={remote}
           />
         </div>
       </div>
+
+      {/* 최근 데이터(이력) 섹션 — 전체 너비. uid(1급 식별자) 우선 사용. */}
+      <DeviceHistorySection
+        deviceId={device.uid || deviceId}
+        protocol={device.protocol}
+        type={device.type}
+      />
     </div>
+  );
+}
+
+// ---- Section 4: 최근 데이터(이력) ----
+
+/** limit 선택 옵션 (서버가 max 로 clamp 하므로 상한 초과는 안전). */
+const HISTORY_LIMIT_OPTIONS = [50, 100, 200] as const;
+
+/** epoch milliseconds → 사람이 읽는 로컬 시간 문자열. */
+function formatTimestamp(ms: number): string {
+  if (!ms || ms <= 0) return '-';
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '-';
+  return d.toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function DeviceHistorySection({
+  deviceId,
+  protocol,
+  type,
+}: {
+  deviceId: string;
+  protocol: string;
+  type: string;
+}) {
+  const { t } = useTranslation();
+  const [limit, setLimit] = useState<number>(100);
+  const { data, isLoading, error, isFetching } = useDeviceHistory(deviceId, limit, true);
+
+  // 이력 비활성(404) 안내. 그 외 오류는 일반 오류 안내.
+  const disabled = error instanceof APIError && error.status === 404;
+  const entries: DeviceHistoryEntry[] = data?.entries ?? [];
+
+  // 속성을 개별 컬럼으로 분리한다. 컬럼 키 집합은 최신 엔트리 기준 순서로
+  // 합집합을 구성한다(최신 엔트리에 없는 옛 키도 뒤에 추가해 누락 방지).
+  const propColumns = useMemo<string[]>(() => {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    for (const e of entries) {
+      for (const k of Object.keys(e.properties ?? {})) {
+        if (!seen.has(k)) {
+          seen.add(k);
+          ordered.push(k);
+        }
+      }
+    }
+    return ordered;
+  }, [entries]);
+
+  return (
+    <div className="mt-6 border-t border-(--color-border-default) pt-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h4 className="flex items-center gap-1.5 text-sm font-semibold text-(--color-text-primary)">
+          <History className="h-4 w-4" />
+          {t('devices.detail.historyTitle')}
+        </h4>
+        <div className="flex items-center gap-2">
+          {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
+          <label className="text-xs text-(--color-text-muted)">{t('devices.detail.count')}</label>
+          <select
+            value={limit}
+            onChange={(e) => setLimit(Number(e.target.value))}
+            disabled={disabled}
+            className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          >
+            {HISTORY_LIMIT_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {disabled ? (
+        <p className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-6 text-center text-sm text-(--color-text-muted)">
+          {t('devices.detail.historyDisabled')}
+        </p>
+      ) : error ? (
+        <p className="flex items-center justify-center gap-2 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-6 text-center text-sm text-red-500 dark:text-red-400">
+          <AlertCircle className="h-4 w-4" />
+          {t('devices.detail.historyLoadFailed')}
+        </p>
+      ) : isLoading ? (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+          <span className="ml-2 text-sm text-(--color-text-muted)">{t('devices.detail.loading')}</span>
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-6 text-center text-sm text-(--color-text-muted)">
+          {t('devices.detail.noHistory')}
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+          <table className="min-w-full divide-y divide-(--color-border-default)">
+            <thead className="bg-(--color-bg-primary)">
+              <tr>
+                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                  {t('devices.detail.time')}
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                  {t('devices.detail.status')}
+                </th>
+                {/* 속성을 키별 개별 컬럼으로 분리 */}
+                {propColumns.map((k) => (
+                  <th
+                    key={k}
+                    className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider"
+                  >
+                    {getPropertyLabel(k, protocol, type)}
+                  </th>
+                ))}
+                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                  {t('devices.detail.lastSeen')}
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+              {entries.map((entry, idx) => (
+                <HistoryRow
+                  key={`${entry.timestamp}-${idx}`}
+                  entry={entry}
+                  propColumns={propColumns}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 이력 단일 행. 속성은 propColumns 순서대로 개별 셀로 표시한다. */
+function HistoryRow({
+  entry,
+  propColumns,
+}: {
+  entry: DeviceHistoryEntry;
+  propColumns: string[];
+}) {
+  const { t } = useTranslation();
+  const props = entry.properties ?? {};
+
+  return (
+    <tr className="hover:bg-(--color-bg-elevated)">
+      <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
+        <span className="inline-flex items-center gap-1">
+          <Clock className="h-3 w-3 text-gray-400" />
+          {formatTimestamp(entry.timestamp)}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2">
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-[10px] font-medium',
+            entry.online
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+          )}
+        >
+          {entry.online ? t('devices.detail.online') : t('devices.detail.offline')}
+        </span>
+      </td>
+      {/* 속성별 개별 셀. 해당 엔트리에 키가 없으면 '-'. */}
+      {propColumns.map((k) => (
+        <td
+          key={k}
+          className="whitespace-nowrap px-3 py-2 text-xs font-medium text-(--color-text-primary)"
+        >
+          {k in props ? formatPropertyValue(k, props[k]) : '-'}
+        </td>
+      ))}
+      <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
+        {formatTimestamp(entry.last_seen)}
+      </td>
+    </tr>
   );
 }
 
@@ -155,39 +362,49 @@ export function StatePropertiesSection({ properties, protocol, type, compact, de
   return <GenericPropertiesGrid properties={properties} protocol={protocol} type={type} compact={compact} accentColor={accentColor} accentElements={accentElements} />;
 }
 
-const MODE_CONFIG: Record<string, { label: string; Icon: typeof Snowflake; active: string }> = {
+// 운전 모드 설정. labelKey 는 i18n 키로 저장하고 렌더 시 t() 로 변환한다.
+const MODE_CONFIG: Record<string, { labelKey: string; Icon: typeof Snowflake; active: string }> = {
   cool: {
-    label: '냉방',
+    labelKey: 'devices.mode.cool',
     Icon: Snowflake,
     active: 'border-blue-300 bg-blue-100 text-blue-700 dark:border-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
   },
   heat: {
-    label: '난방',
+    labelKey: 'devices.mode.heat',
     Icon: Flame,
     active: 'border-orange-300 bg-orange-100 text-orange-700 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
   },
   auto: {
-    label: '자동',
+    labelKey: 'devices.mode.auto',
     Icon: RefreshCw,
     active: 'border-green-300 bg-green-100 text-green-700 dark:border-green-700 dark:bg-green-900/40 dark:text-green-300',
   },
   dry: {
-    label: '제습',
+    labelKey: 'devices.mode.dry',
     Icon: Droplets,
     active: 'border-cyan-300 bg-cyan-100 text-cyan-700 dark:border-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
   },
   fan: {
-    label: '팬',
+    labelKey: 'devices.mode.fan',
     Icon: Wind,
     active: 'border-purple-300 bg-purple-100 text-purple-700 dark:border-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
   },
 };
 
-const LGAP_FAN_LABELS: Record<string, string> = { auto: '자동', low: '약', medium: '중', high: '강', slow: '미풍', turbo: '터보' };
+// LGAP 풍량 라벨. 값은 i18n 키이며 렌더 시 t() 로 변환한다.
+const LGAP_FAN_LABELS: Record<string, string> = {
+  auto: 'devices.lgapFan.auto',
+  low: 'devices.lgapFan.low',
+  medium: 'devices.lgapFan.medium',
+  high: 'devices.lgapFan.high',
+  slow: 'devices.lgapFan.slow',
+  turbo: 'devices.lgapFan.turbo',
+};
 
 // ---- LGAP 리모컨 레이아웃 ----
 
 function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentElements }: { properties: Record<string, unknown>; compact?: boolean; deviceId?: string; accentColor?: string; accentElements?: Record<string, string | boolean> }) {
+  const { t } = useTranslation();
   const executeMutation = useExecuteCommand();
   const interactive = !!deviceId;
 
@@ -231,7 +448,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
 
   return (
     <div>
-      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)" style={labelText ? { color: labelText } : undefined}>상태</h4>}
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)" style={labelText ? { color: labelText } : undefined}>{t('devices.detail.state')}</h4>}
       <div
         className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)')}
         style={acColor('borders') ? { borderColor: `${acColor('borders')}40` } : undefined}
@@ -254,19 +471,19 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
             )}
           >
             {isPending ? <Loader2 className="h-5 w-5 animate-spin" style={acColor('indicators') ? { color: acColor('indicators')! } : undefined} /> : <Power className="h-5 w-5" />}
-            {isPending ? '적용 중...' : power ? 'ON' : 'OFF'}
+            {isPending ? t('devices.detail.applying') : power ? 'ON' : 'OFF'}
           </button>
           <div className="flex items-center gap-3">
             {locked && (
               <div className="flex items-center gap-1 text-xs font-medium text-amber-500 dark:text-amber-400">
                 <Lock className="h-3.5 w-3.5" />
-                잠금
+                {t('devices.detail.lock')}
               </div>
             )}
             {errorCode != null && errorCode !== 0 && (
               <div className="flex items-center gap-1 text-xs font-medium text-red-500 dark:text-red-400">
                 <AlertCircle className="h-3.5 w-3.5" />
-                에러 {errorCode}
+                {t('devices.detail.errorPrefix')}{errorCode}
               </div>
             )}
           </div>
@@ -297,7 +514,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                   }}
                 >
                   <Icon className="h-3 w-3" />
-                  {cfg.label}
+                  {t(cfg.labelKey)}
                 </button>
               );
             })}
@@ -315,7 +532,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                 {currentTemp}
                 <span className="text-2xl font-normal text-gray-400">&deg;C</span>
               </p>
-              <p className="mt-1 text-xs text-gray-400" style={acColor('temperature') ? { color: `${acColor('temperature')}90` } : undefined}>현재 온도</p>
+              <p className="mt-1 text-xs text-gray-400" style={acColor('temperature') ? { color: `${acColor('temperature')}90` } : undefined}>{t('devices.detail.currentTemperature')}</p>
             </>
           ) : (
             <p className="text-2xl text-gray-300 dark:text-gray-600">--</p>
@@ -335,7 +552,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                   <Minus className="h-3.5 w-3.5" />
                 </button>
               )}
-              <span className="min-w-[4rem] text-center font-medium" style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}>설정 {targetTemp}&deg;C</span>
+              <span className="min-w-[4rem] text-center font-medium" style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}>{t('devices.detail.targetPrefix')}{targetTemp}&deg;C</span>
               {interactive && (
                 <button
                   type="button"
@@ -355,7 +572,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <div className="flex items-center gap-3">
             <Wind className="h-4 w-4 shrink-0 text-gray-400" style={acColor('controls') ? { color: acColor('controls')! } : undefined} />
-            <span className="min-w-fit text-xs text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined}>풍량</span>
+            <span className="min-w-fit text-xs text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined}>{t('devices.detail.fanSpeed')}</span>
             <div className="flex gap-1.5">
               {(['auto', 'low', 'medium', 'high', 'slow', 'turbo'] as const).map((speed) => (
                 <button
@@ -374,7 +591,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                   )}
                   style={!isOff && fanSpeed === speed && acColor('controls') ? { backgroundColor: acColor('controls')!, color: '#fff' } : undefined}
                 >
-                  {LGAP_FAN_LABELS[speed]}
+                  {t(LGAP_FAN_LABELS[speed] ?? '')}
                 </button>
               ))}
             </div>
@@ -391,7 +608,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
             style={swingAuto && acColor('indicators') ? { color: acColor('indicators')! } : undefined}
           >
             <ChevronsUpDown className="h-3.5 w-3.5" />
-            스윙 {swingAuto ? 'ON' : 'OFF'}
+            {t('devices.detail.swing')} {swingAuto ? 'ON' : 'OFF'}
           </div>
           <div
             className={cn(
@@ -400,7 +617,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
             )}
           >
             <Zap className="h-3.5 w-3.5" />
-            플라즈마 {plasma ? 'ON' : 'OFF'}
+            {t('devices.detail.plasma')} {plasma ? 'ON' : 'OFF'}
           </div>
         </div>
       </div>
@@ -425,6 +642,7 @@ function GenericPropertiesGrid({
   accentColor?: string;
   accentElements?: Record<string, string | boolean>;
 }) {
+  const { t } = useTranslation();
   const acColor = (group: string): string | undefined => {
     if (!accentElements) return accentColor;
     const val = accentElements[group];
@@ -436,7 +654,7 @@ function GenericPropertiesGrid({
 
   return (
     <div className={compact ? 'px-4 py-3' : ''}>
-      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">상태 속성</h4>}
+      {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">{t('devices.detail.stateProperties')}</h4>}
       <div className={cn('grid gap-3', compact ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5')}>
         {entries.map(([key, value]) => (
           <div
@@ -468,6 +686,7 @@ function CommandsSection({
   commands: CommandSpec[];
   powerState?: boolean;
 }) {
+  const { t } = useTranslation();
   const executeMutation = useExecuteCommand();
   const sorted = sortCommands(commands);
   const powerCmd = sorted.find((c) => c.name === 'set_power');
@@ -509,7 +728,7 @@ function CommandsSection({
   return (
     <div>
       <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">
-        제어
+        {t('devices.detail.control')}
       </h4>
       <div className="space-y-3">
         {/* 전원 슬라이드 스위치 */}
@@ -518,7 +737,7 @@ function CommandsSection({
             <div className="flex items-center gap-2">
               {hasPending && !isOn && (
                 <span className="text-xs text-amber-500 dark:text-amber-400">
-                  {Object.keys(pendingChanges).length}건 대기
+                  {t('devices.detail.pendingCount').replace('{n}', String(Object.keys(pendingChanges).length))}
                 </span>
               )}
               <button
@@ -572,6 +791,7 @@ function CommandControl({
   onExecute?: (cmdName: string, params?: Record<string, unknown>) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const executeMutation = useExecuteCommand();
   const isPending = executeMutation.isPending;
 
@@ -599,7 +819,7 @@ function CommandControl({
           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
         >
           {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
-          실행
+          {t('devices.detail.execute')}
         </button>
       </CommandRow>
     );
@@ -748,6 +968,7 @@ function EnumSelectControl({
   isPending: boolean;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <CommandRow label={getCommandLabel(command.name)} description={command.description}>
       <div className="flex items-center gap-2">
@@ -762,7 +983,7 @@ function EnumSelectControl({
           disabled={isPending || disabled}
           className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
         >
-          <option value="">선택...</option>
+          <option value="">{t('devices.detail.selectPlaceholder')}</option>
           {param.enum!.map((opt) => (
             <option key={opt} value={opt}>{getEnumLabel(opt)}</option>
           ))}
@@ -787,6 +1008,7 @@ function NumericCommandControl({
   isPending: boolean;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const hasRange = param.min != null && param.max != null;
   const step = param.type === 'float' ? 0.5 : 1;
   const [value, setValue] = useState(param.min ?? 0);
@@ -852,7 +1074,7 @@ function NumericCommandControl({
               disabled={isPending || disabled}
               className="inline-flex items-center rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : '적용'}
+              {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : t('devices.detail.apply')}
             </button>
           </>
         )}
@@ -872,6 +1094,7 @@ function MultiParamCommandControl({
   command: CommandSpec;
   onExecute?: (cmdName: string, params?: Record<string, unknown>) => void;
 }) {
+  const { t } = useTranslation();
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
   const [result, setResult] = useState<{ success: boolean; error?: string } | null>(null);
   const executeMutation = useExecuteCommand();
@@ -897,7 +1120,7 @@ function MultiParamCommandControl({
     } catch (err) {
       setResult({
         success: false,
-        error: err instanceof Error ? err.message : '명령 실행에 실패했습니다.',
+        error: err instanceof Error ? err.message : t('devices.detail.commandFailed'),
       });
     }
   };
@@ -926,11 +1149,11 @@ function MultiParamCommandControl({
           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
           {executeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
-          실행
+          {t('devices.detail.execute')}
         </button>
         {result && (
           <span className={cn('text-xs', result.success ? 'text-green-600' : 'text-red-600')}>
-            {result.success ? '완료' : result.error}
+            {result.success ? t('devices.detail.done') : result.error}
           </span>
         )}
       </div>
@@ -948,6 +1171,7 @@ function InlineParamInput({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
   const inputBase =
     'w-full rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white';
 
@@ -956,7 +1180,7 @@ function InlineParamInput({
       <div>
         <label className="mb-0.5 block text-xs text-(--color-text-muted)">{getParamLabel(param.name)}</label>
         <select value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} className={inputBase}>
-          <option value="">선택...</option>
+          <option value="">{t('devices.detail.selectPlaceholder')}</option>
           {param.enum.map((opt) => (
             <option key={opt} value={opt}>{getEnumLabel(opt)}</option>
           ))}
@@ -1036,12 +1260,18 @@ interface MetadataSectionProps {
     labels: Record<string, string>;
     pinned?: boolean;
   };
-  /** 부모에서 제어하는 편집 상태 */
+  /** 부모에서 제어하는 편집 상태. 원격 타깃에서는 부모가 항상 false 를 전달한다. */
   editing: boolean;
   onEditChange: (editing: boolean) => void;
+  /**
+   * READ-ONLY(원격 타깃) 표식. 읽기 모드 고정은 부모가 editing=false 로 보장하며,
+   * 본 플래그는 읽기 전용 안내 표시 등 향후 확장을 위해 받는다.
+   */
+  readOnly?: boolean;
 }
 
-function MetadataSection({ deviceId, source, name, metadata, editing, onEditChange }: MetadataSectionProps) {
+function MetadataSection({ deviceId, source, name, metadata, editing, onEditChange, readOnly: _readOnly }: MetadataSectionProps) {
+  const { t } = useTranslation();
   // config 소스 디바이스는 기본 고정 설치 (체크 해제 → 재시작시 삭제)
   const effectivePinned = metadata.pinned ?? (source === 'config' || source === 'pinned');
   const [form, setForm] = useState({
@@ -1115,8 +1345,14 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
     });
   };
 
+  // 입력 필드 스타일.
+  // 다크모드 가시성: Tailwind v4 에서 `dark:` 변형은 기본적으로
+  // `prefers-color-scheme` 미디어쿼리에 묶이므로, OS 가 라이트인데 앱 테마만
+  // night 로 바꾼 경우 `dark:bg-*`/`dark:text-*` 가 적용되지 않아 입력 글자가
+  // 어두운 패널 위에서 안 보였다. 데이터 소스인 `data-theme` 기반 CSS 변수
+  // (--color-*)로 통일하여 day/night/custom 모든 테마에서 또렷하게 보이도록 한다.
   const inputBase =
-    'block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400';
+    'block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   return (
     <div>
@@ -1124,8 +1360,8 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
       <div className="mb-4 flex items-center gap-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-3">
         <Pin className={cn('h-4 w-4 shrink-0', (editing ? form.pinned : effectivePinned) ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400')} />
         <div className="flex-1">
-          <p className="text-sm font-medium text-(--color-text-primary)">고정 설치</p>
-          <p className="text-xs text-(--color-text-muted)">재시작 시에도 디바이스를 유지합니다</p>
+          <p className="text-sm font-medium text-(--color-text-primary)">{t('devices.detail.pinnedInstall')}</p>
+          <p className="text-xs text-(--color-text-muted)">{t('devices.detail.pinnedInstallDesc')}</p>
         </div>
         {editing ? (
           <button
@@ -1150,14 +1386,14 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
               : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
           )}>
-            {effectivePinned ? '고정' : '미고정'}
+            {effectivePinned ? t('devices.detail.pinned') : t('devices.detail.unpinned')}
           </span>
         )}
       </div>
 
       <div className="mb-3 flex items-center justify-between">
         <h4 className="text-sm font-semibold text-(--color-text-primary)">
-          메타데이터
+          {t('devices.detail.metadata')}
         </h4>
       </div>
 
@@ -1167,25 +1403,25 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
           <tbody className="divide-y divide-(--color-border-default)">
             {name && (
               <tr>
-                <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">이름</td>
+                <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">{t('devices.detail.name')}</td>
                 <td className="py-1.5 text-(--color-text-primary)">{name}</td>
               </tr>
             )}
             <tr>
               <td className="flex items-center gap-1 py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">
                 <MapPin className="h-3 w-3" />
-                위치
+                {t('devices.detail.location')}
               </td>
               <td className="py-1.5 text-(--color-text-primary)">{metadata.location || '-'}</td>
             </tr>
             <tr>
-              <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">그룹</td>
+              <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">{t('devices.detail.group')}</td>
               <td className="py-1.5 text-(--color-text-primary)">{metadata.group || '-'}</td>
             </tr>
             <tr>
               <td className="flex items-center gap-1 py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">
                 <Tag className="h-3 w-3" />
-                태그
+                {t('devices.detail.tags')}
               </td>
               <td className="py-1.5 text-(--color-text-primary)">
                 {metadata.tags.length > 0 ? metadata.tags.join(', ') : '-'}
@@ -1205,51 +1441,51 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
           {/* 이름 */}
           <div>
             <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
-              이름
+              {t('devices.detail.name')}
             </label>
             <input
               type="text"
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
               className={inputBase}
-              placeholder="디바이스 표시명"
+              placeholder={t('devices.detail.namePlaceholder')}
             />
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
-                위치
+                {t('devices.detail.location')}
               </label>
               <input
                 type="text"
                 value={form.location}
                 onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value }))}
                 className={inputBase}
-                placeholder="예: 1층 로비"
+                placeholder={t('devices.detail.locationPlaceholder')}
               />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
-                그룹
+                {t('devices.detail.group')}
               </label>
               <input
                 type="text"
                 value={form.group}
                 onChange={(e) => setForm((prev) => ({ ...prev, group: e.target.value }))}
                 className={inputBase}
-                placeholder="예: zone-a"
+                placeholder={t('devices.detail.groupPlaceholder')}
               />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
-                태그 (콤마 구분)
+                {t('devices.detail.tagsCommaSeparated')}
               </label>
               <input
                 type="text"
                 value={form.tagsStr}
                 onChange={(e) => setForm((prev) => ({ ...prev, tagsStr: e.target.value }))}
                 className={inputBase}
-                placeholder="예: hvac, 1층, 로비"
+                placeholder={t('devices.detail.tagsPlaceholder')}
               />
             </div>
           </div>
@@ -1257,13 +1493,13 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
           {/* 라벨 목록 */}
           <div>
             <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
-              라벨
+              {t('devices.detail.labels')}
             </label>
             {Object.entries(form.labels).length > 0 && (
               <div className="mb-2 space-y-1">
                 {Object.entries(form.labels).map(([k, v]) => (
                   <div key={k} className="flex items-center gap-2">
-                    <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                    <span className="rounded bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary)">
                       {k}: {v}
                     </span>
                     <button
@@ -1283,21 +1519,21 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
                 value={newLabelKey}
                 onChange={(e) => setNewLabelKey(e.target.value)}
                 className={cn(inputBase, 'w-32')}
-                placeholder="키"
+                placeholder={t('devices.detail.keyPlaceholder')}
               />
               <input
                 type="text"
                 value={newLabelValue}
                 onChange={(e) => setNewLabelValue(e.target.value)}
                 className={cn(inputBase, 'w-32')}
-                placeholder="값"
+                placeholder={t('devices.detail.valuePlaceholder')}
               />
               <button
                 type="button"
                 onClick={handleAddLabel}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
-                추가
+                {t('devices.detail.add')}
               </button>
             </div>
           </div>
@@ -1311,14 +1547,14 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               {updateMutation.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-              저장
+              {t('devices.detail.save')}
             </button>
             <button
               type="button"
               onClick={() => onEditChange(false)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
             >
-              취소
+              {t('devices.detail.cancel')}
             </button>
           </div>
         </div>

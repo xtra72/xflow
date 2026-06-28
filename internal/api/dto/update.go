@@ -30,6 +30,14 @@ type VersionResponse struct {
 	UpdateAvailable bool `json:"update_available"`
 	// LatestVersion 은 마지막 Check 에서 발견된 최신 버전 (없으면 빈 문자열).
 	LatestVersion string `json:"latest_version,omitempty"`
+
+	// --- SPEC-WEB-007 추가 (SELF identity + uptime) ---
+	// 접속한 xflowd 인스턴스 자신(self/local)의 시스템 정보. 기존 7개 필드와 함께 반환된다.
+	OS            string  `json:"os"`             // runtime.GOOS
+	Arch          string  `json:"arch"`           // runtime.GOARCH
+	Hostname      string  `json:"hostname"`       // os.Hostname()
+	Mode          string  `json:"mode"`           // remote_management.mode: server|client|disabled
+	UptimeSeconds float64 `json:"uptime_seconds"` // 프로세스 uptime(초)
 }
 
 // ChannelInfoResponse 는 GET /api/v1/system/update/channel 응답 페이로드이다.

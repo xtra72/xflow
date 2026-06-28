@@ -90,11 +90,23 @@ func parseExpression(expr string) ([]expressionField, error) {
 //	  "metadata":  { "key": "value", ... }
 //	}
 func messageToMap(msg message.Message) map[string]any {
-	// metadata를 map[string]any로 변환 (GetPath가 map[string]any를 기대함)
-	metaAll := msg.Metadata().All()
-	metaMap := make(map[string]any, len(metaAll))
-	for k, v := range metaAll {
-		metaMap[k] = v
+	// metadata를 map[string]any로 변환 (GetPath가 map[string]any를 기대함).
+	// P2: Raw() 로 flat 키(string) + nested group(map[string]string)을 모두 노출한다.
+	// group 은 map[string]any 로 변환하여 expression 이 metadata.agent.type 처럼
+	// 중첩 경로로 접근할 수 있게 한다(GetPath 는 map[string]any 만 순회).
+	raw := msg.Metadata().Raw()
+	metaMap := make(map[string]any, len(raw))
+	for k, v := range raw {
+		switch val := v.(type) {
+		case map[string]string:
+			g := make(map[string]any, len(val))
+			for gk, gv := range val {
+				g[gk] = gv
+			}
+			metaMap[k] = g
+		default:
+			metaMap[k] = v
+		}
 	}
 
 	// v0.16.2: timestamp 는 epoch ms (int64) — store-write/influxdb-write 의
@@ -190,7 +202,10 @@ func compileExclude(fieldNames string) (TransformFunc, error) {
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))
 		}
-		return message.New(opts...), nil
+		out := message.New(opts...)
+		// P2: nested group 보존(All() 은 string 만 반환).
+		message.CopyMetadataGroups(out.Metadata(), msg.Metadata())
+		return out, nil
 	}, nil
 }
 
@@ -288,6 +303,9 @@ func compileExpression(expr string, mode TransformMode) (TransformFunc, error) {
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))
 		}
-		return message.New(opts...), nil
+		out := message.New(opts...)
+		// P2: nested group 보존(All() 은 string 만 반환).
+		message.CopyMetadataGroups(out.Metadata(), msg.Metadata())
+		return out, nil
 	}, nil
 }

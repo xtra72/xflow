@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { HelpCircle } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 interface FieldHelpProps {
   /** 표시할 설명 텍스트 */
@@ -18,6 +19,7 @@ interface FieldHelpProps {
 }
 
 export function FieldHelp({ text, describedById }: FieldHelpProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
@@ -45,7 +47,7 @@ export function FieldHelp({ text, describedById }: FieldHelpProps) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label="설명 보기"
+        aria-label={t('property.fieldHelp.viewDescription')}
         aria-expanded={open}
         className={cn(
           'inline-flex h-4 w-4 items-center justify-center rounded-full',

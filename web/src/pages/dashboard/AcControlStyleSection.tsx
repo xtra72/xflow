@@ -20,17 +20,35 @@ import {
   Type,
 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 import ColorSwatchButton from './colorSwatchPalette';
 import {
   AC_MODE_KEYS,
-  AC_MODE_LABELS,
   FAN_SPEED_KEYS,
-  FAN_SPEED_LABELS,
   type AcMode,
   type FanSpeed,
 } from './panels/acControlTypes';
+
+// AC 모드/풍량 라벨 i18n 키 매핑 (acControlTypes 의 한국어 상수 대신 사용).
+// AcControlPanel 과 동일한 키를 재사용해 일관성을 유지한다.
+const AC_MODE_LABEL_KEYS: Record<AcMode, string> = {
+  cool: 'dashboard.acPanel.cooling',
+  heat: 'dashboard.acPanel.heating',
+  auto: 'dashboard.acPanel.auto',
+  dry: 'dashboard.acPanel.dehumidify',
+  fan: 'dashboard.acControl.fan',
+};
+
+const FAN_SPEED_LABEL_KEYS: Record<FanSpeed, string> = {
+  auto: 'dashboard.acPanel.auto',
+  quiet: 'dashboard.acControl.fanQuiet',
+  low: 'dashboard.acPanel.low',
+  medium: 'dashboard.acPanel.medium',
+  high: 'dashboard.acPanel.high',
+  turbo: 'dashboard.acControl.fanTurbo',
+};
 import type {
   ControlButtonColorConfig,
   FanLevelColorConfig,
@@ -101,6 +119,7 @@ function ControlButtonColorEditor({
   config: ControlButtonColorConfig | undefined;
   onChange: (next: ControlButtonColorConfig | undefined) => void;
 }) {
+  const { t } = useTranslation();
   const cfg: ControlButtonColorConfig = config ?? {};
   const mode = cfg.selectedMode ?? 'unified';
 
@@ -130,23 +149,23 @@ function ControlButtonColorEditor({
   return (
     <ExpandableCard
       icon={<SquareDashed className="h-3 w-3" />}
-      title="제어 버튼"
+      title={t('dashboard.acStyle.controlButton')}
       rightSummary={summary}
     >
       <div className="space-y-2">
         {/* 미선택 */}
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-(--color-text-secondary)">미선택</span>
+          <span className="text-[11px] text-(--color-text-secondary)">{t('dashboard.acStyle.unselected')}</span>
           <ColorSwatchButton
             color={cfg.unselected}
             onChange={setUnselected}
-            ariaLabel="미선택 컬러"
+            ariaLabel={t('dashboard.acStyle.unselectedColorAria')}
           />
         </div>
 
         {/* 선택 모드 토글 */}
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-(--color-text-secondary)">선택</span>
+          <span className="text-[11px] text-(--color-text-secondary)">{t('dashboard.acStyle.selected')}</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -158,7 +177,7 @@ function ControlButtonColorEditor({
                   : 'border-(--color-border-default) text-(--color-text-muted)',
               )}
             >
-              통일
+              {t('dashboard.acStyle.unified')}
             </button>
             <button
               type="button"
@@ -170,7 +189,7 @@ function ControlButtonColorEditor({
                   : 'border-(--color-border-default) text-(--color-text-muted)',
               )}
             >
-              개별
+              {t('dashboard.acStyle.individual')}
             </button>
           </div>
         </div>
@@ -178,11 +197,11 @@ function ControlButtonColorEditor({
         {/* 통일 모드: 단일 컬러 */}
         {mode === 'unified' && (
           <div className="flex items-center justify-between pl-2">
-            <span className="text-[10px] text-(--color-text-muted)">선택 컬러</span>
+            <span className="text-[10px] text-(--color-text-muted)">{t('dashboard.acStyle.selectedColor')}</span>
             <ColorSwatchButton
               color={cfg.selectedColor}
               onChange={setSelectedColor}
-              ariaLabel="선택 컬러"
+              ariaLabel={t('dashboard.acStyle.selectedColorAria')}
             />
           </div>
         )}
@@ -190,16 +209,16 @@ function ControlButtonColorEditor({
         {/* 개별 모드: 모드별 컬러 */}
         {mode === 'individual' && (
           <div className="space-y-1 border-t border-(--color-border-subtle) pt-1.5">
-            <span className="text-[10px] text-(--color-text-muted)">버튼별 컬러</span>
+            <span className="text-[10px] text-(--color-text-muted)">{t('dashboard.acStyle.perButtonColor')}</span>
             {AC_MODE_KEYS.map((key) => (
               <div key={key} className="flex items-center justify-between">
                 <span className="text-[11px] text-(--color-text-secondary)">
-                  {AC_MODE_LABELS[key]}
+                  {t(AC_MODE_LABEL_KEYS[key])}
                 </span>
                 <ColorSwatchButton
                   color={cfg.perButton?.[key]}
                   onChange={(c) => setPerButton(key, c)}
-                  ariaLabel={`${AC_MODE_LABELS[key]} 컬러`}
+                  ariaLabel={t('dashboard.acStyle.modeColorAria').replace('{label}', t(AC_MODE_LABEL_KEYS[key]))}
                 />
               </div>
             ))}
@@ -219,6 +238,7 @@ function FanLevelColorEditor({
   config: FanLevelColorConfig | undefined;
   onChange: (next: FanLevelColorConfig | undefined) => void;
 }) {
+  const { t } = useTranslation();
   const cfg: FanLevelColorConfig = config ?? {};
   const setUnselected = (c: string | undefined) => onChange({ ...cfg, unselected: c });
   const setLevel = (key: FanSpeed, c: string | undefined) => {
@@ -229,26 +249,26 @@ function FanLevelColorEditor({
   };
 
   return (
-    <ExpandableCard icon={<Fan className="h-3 w-3" />} title="풍량">
+    <ExpandableCard icon={<Fan className="h-3 w-3" />} title={t('dashboard.acStyle.airflow')}>
       <div className="space-y-1">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-(--color-text-secondary)">미선택</span>
+          <span className="text-[11px] text-(--color-text-secondary)">{t('dashboard.acStyle.unselected')}</span>
           <ColorSwatchButton
             color={cfg.unselected}
             onChange={setUnselected}
-            ariaLabel="풍량 미선택 컬러"
+            ariaLabel={t('dashboard.acStyle.fanUnselectedAria')}
           />
         </div>
         <div className="border-t border-(--color-border-subtle) pt-1" />
         {FAN_SPEED_KEYS.map((key) => (
           <div key={key} className="flex items-center justify-between">
             <span className="text-[11px] text-(--color-text-secondary)">
-              {FAN_SPEED_LABELS[key]}
+              {t(FAN_SPEED_LABEL_KEYS[key])}
             </span>
             <ColorSwatchButton
               color={cfg.perLevel?.[key]}
               onChange={(c) => setLevel(key, c)}
-              ariaLabel={`풍량 ${FAN_SPEED_LABELS[key]} 컬러`}
+              ariaLabel={t('dashboard.acStyle.fanLevelColorAria').replace('{label}', t(FAN_SPEED_LABEL_KEYS[key]))}
             />
           </div>
         ))}
@@ -297,6 +317,7 @@ export default function AcControlStyleSection({
   onAccentChange,
   onConfigChange,
 }: AcControlStyleSectionProps) {
+  const { t } = useTranslation();
   const controlButtonColor = config.controlButtonColor as
     | ControlButtonColorConfig
     | undefined;
@@ -319,28 +340,28 @@ export default function AcControlStyleSection({
       {/* 단순: 전체 색상 (panelColor 직접 제어) */}
       <SimpleStyleRow
         icon={<Square className="h-3 w-3" />}
-        label="전체 색상"
+        label={t('dashboard.acStyle.overallColor')}
         color={panelColor}
         onChange={onPanelColorChange}
       />
       {/* 단순: 타이틀 */}
       <SimpleStyleRow
         icon={<Type className="h-3 w-3" />}
-        label="타이틀"
+        label={t('dashboard.acStyle.title')}
         color={readAccent(AC_STYLE_KEYS.title)}
         onChange={(c) => writeAccent(AC_STYLE_KEYS.title, c)}
       />
       {/* 단순: 상태 배지 */}
       <SimpleStyleRow
         icon={<Activity className="h-3 w-3" />}
-        label="상태 배지"
+        label={t('dashboard.acStyle.statusBadge')}
         color={readAccent(AC_STYLE_KEYS.statusBadge)}
         onChange={(c) => writeAccent(AC_STYLE_KEYS.statusBadge, c)}
       />
       {/* 단순: 현재 값 (강조 라벨 톤) */}
       <SimpleStyleRow
         icon={<Thermometer className="h-3 w-3" />}
-        label="현재 값"
+        label={t('dashboard.acStyle.currentValue')}
         color={readAccent(AC_STYLE_KEYS.currentValue)}
         onChange={(c) => writeAccent(AC_STYLE_KEYS.currentValue, c)}
       />
@@ -352,7 +373,7 @@ export default function AcControlStyleSection({
       {/* 단순: 전원 버튼 */}
       <SimpleStyleRow
         icon={<Power className="h-3 w-3" />}
-        label="전원 버튼"
+        label={t('dashboard.acStyle.powerButton')}
         color={readAccent(AC_STYLE_KEYS.power)}
         onChange={(c) => writeAccent(AC_STYLE_KEYS.power, c)}
       />
@@ -364,14 +385,14 @@ export default function AcControlStyleSection({
       {/* 단순: 라벨 */}
       <SimpleStyleRow
         icon={<Tag className="h-3 w-3" />}
-        label="라벨"
+        label={t('dashboard.acStyle.label')}
         color={readAccent(AC_STYLE_KEYS.labels)}
         onChange={(c) => writeAccent(AC_STYLE_KEYS.labels, c)}
       />
       {/* 단순: 보더 */}
       <SimpleStyleRow
         icon={<AlignLeft className="h-3 w-3 -rotate-90" />}
-        label="보더"
+        label={t('dashboard.acStyle.border')}
         color={readAccent(AC_STYLE_KEYS.borders)}
         onChange={(c) => writeAccent(AC_STYLE_KEYS.borders, c)}
       />

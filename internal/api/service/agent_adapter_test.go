@@ -1295,3 +1295,148 @@ func TestAgentStats_ConnectionStatsProvider(t *testing.T) {
 	assert.Equal(t, "flow-1", stats.NodeRefs[0].FlowID)
 	assert.Equal(t, int64(5), stats.NodeRefs[0].MessagesReceived)
 }
+
+// TestAgentToHandlerInfo_DefaultDetail_PopulatesUptimeAndStats 는 detail="" (목록
+// 엔드포인트가 사용하는 기본값)일 때도 실행 중 에이전트의 Uptime 과 Stats(메시지 통계)가
+// 채워지는지 검증한다. 이는 GET /agents 및 원격 agent/list 목록의 Uptime/Messages 컬럼이
+// '-' 로만 표시되던 회귀를 막기 위한 핵심 테스트다.
+//
+// 다른 필드(Type/Status/Connected/Enabled/Config/State)는 영향받지 않아야 한다.
+func TestAgentToHandlerInfo_DefaultDetail_PopulatesUptimeAndStats(t *testing.T) {
+	now := time.Now()
+	mock := &mockStatefulAgent{
+		info: agent.AgentInfo{
+			ID:    "list-stats-id",
+			Name:  "list-stats",
+			Type:  "mock",
+			State: lifecycle.StateRunning,
+			Config: agent.AgentConfig{
+				ID:   "list-stats-id",
+				Name: "list-stats",
+				Type: "mock",
+			},
+			Stats: agent.StatsSnapshot{
+				MessagesReceived: 42,
+				MessagesSent:     17,
+				MessagesErrored:  3,
+			},
+			StartedAt: now.Add(-90 * time.Second),
+			Uptime:    90 * time.Second,
+		},
+		state: map[string]any{"k": "v"},
+	}
+
+	// detail="" — 목록 엔드포인트와 동일한 기본 호출
+	result := agentToHandlerInfo(mock, "")
+
+	// Uptime 이 채워져야 한다 (실행 중)
+	if result.Uptime == "" {
+		t.Error("기본 detail 에서도 실행 중 에이전트의 Uptime 이 채워져야 함 (목록 표시용)")
+	}
+
+	// Stats 가 채워져야 하며 메시지 카운트가 일치해야 한다
+	if result.Stats == nil {
+		t.Fatal("기본 detail 에서도 Stats 가 채워져야 함 (web stats.messages_in/out 소비)")
+	}
+	if result.Stats.MessagesIn != 42 {
+		t.Errorf("Stats.MessagesIn 불일치: got=%d, want=42", result.Stats.MessagesIn)
+	}
+	if result.Stats.MessagesOut != 17 {
+		t.Errorf("Stats.MessagesOut 불일치: got=%d, want=17", result.Stats.MessagesOut)
+	}
+
+	// 다른 필드는 변경되지 않아야 한다
+	if result.Type != "mock" {
+		t.Errorf("Type 변경됨: got=%q, want=mock", result.Type)
+	}
+	if result.Status != string(lifecycle.StateRunning) {
+		t.Errorf("Status 변경됨: got=%q", result.Status)
+	}
+	if result.Connected == nil || !*result.Connected {
+		t.Error("실행 중 에이전트의 Connected 는 true 여야 함")
+	}
+	if result.State == nil {
+		t.Error("State 는 기존과 동일하게 유지되어야 함")
+	}
+	// detail="" 이므로 summary 전용 필드(Health/StartedAt/CreatedAt)는 채워지지 않아야 한다
+	if result.Health != nil {
+		t.Error("detail='' 일 때 Health 는 nil 이어야 함 (목록 페이로드 최소화)")
+	}
+	if result.StartedAt != nil {
+		t.Error("detail='' 일 때 StartedAt 는 nil 이어야 함")
+	}
+}
+
+// TestAgentToHandlerInfo_DefaultDetail_NotRunning_EmptyUptime 은 실행 중이 아닌
+// 에이전트는 Uptime 이 비어 있어야 함을 검증한다 (web 에서 '-' 로 표시됨).
+func TestAgentToHandlerInfo_DefaultDetail_NotRunning_EmptyUptime(t *testing.T) {
+	mock := &mockStatefulAgent{
+		info: agent.AgentInfo{
+			ID:    "stopped-id",
+			Name:  "stopped",
+			Type:  "mock",
+			State: lifecycle.StateStopped,
+			Config: agent.AgentConfig{
+				ID: "stopped-id",
+			},
+			Stats: agent.StatsSnapshot{
+				MessagesReceived: 5,
+				MessagesSent:     2,
+			},
+		},
+	}
+
+	result := agentToHandlerInfo(mock, "")
+
+	if result.Uptime != "" {
+		t.Errorf("정지된 에이전트의 Uptime 은 비어 있어야 함: got=%q", result.Uptime)
+	}
+	// Stats 는 정지 상태에서도 누적 카운트를 노출한다
+	if result.Stats == nil {
+		t.Fatal("Stats 는 정지 상태에서도 채워져야 함")
+	}
+	if result.Stats.MessagesIn != 5 || result.Stats.MessagesOut != 2 {
+		t.Errorf("Stats 불일치: in=%d out=%d", result.Stats.MessagesIn, result.Stats.MessagesOut)
+	}
+}
+
+// TestAgentServiceAdapter_ListAgents_EnrichesUptimeAndStats 는 실제 Manager 로 생성한
+// 실행 중 에이전트가 ListAgents (GET /agents 및 원격 agent/list 의 공통 소스) 응답에서
+// Uptime 과 Stats 를 포함하는지 종단 검증한다.
+func TestAgentServiceAdapter_ListAgents_EnrichesUptimeAndStats(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	created, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "list-enrich",
+		Type: "",
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 기본 detail (목록 엔드포인트와 동일) — 필터/정렬 없음
+	agents, total, err := adapter.ListAgents(context.Background(), dto.ListOptions{
+		PaginationParams: dto.PaginationParams{Page: 1, Size: 20},
+	})
+	if err != nil {
+		t.Fatalf("목록 조회 실패: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("1개여야 함: total=%d", total)
+	}
+
+	got := agents[0]
+	if got.ID != created.ID {
+		t.Fatalf("ID 불일치: got=%q want=%q", got.ID, created.ID)
+	}
+
+	// BaseAgent.Init 후 StateRunning 이므로 Uptime 이 채워져야 한다
+	if got.Uptime == "" {
+		t.Error("목록 응답의 실행 중 에이전트 Uptime 이 비어있으면 안 됨 (web Uptime 컬럼)")
+	}
+	// Stats 가 채워져야 한다 (web stats.messages_in/out 컬럼)
+	if got.Stats == nil {
+		t.Error("목록 응답의 Stats 가 nil 이면 안 됨 (web Messages 컬럼)")
+	}
+}

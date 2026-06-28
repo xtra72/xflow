@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router';
 import { X } from 'lucide-react';
 
 import { useCreateFlow } from '@/hooks';
+import { useTranslation } from '@/lib/i18n';
 
 interface CreateFlowModalProps {
   open: boolean;
@@ -15,6 +16,7 @@ interface CreateFlowModalProps {
 
 /** 플로우 생성 모달 오버레이 */
 export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const createFlow = useCreateFlow();
   const nameRef = useRef<HTMLInputElement>(null);
@@ -88,13 +90,13 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
             id="create-flow-title"
             className="text-lg font-semibold text-(--color-text-primary)"
           >
-            새 플로우 만들기
+            {t('flows.create.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
-            aria-label="닫기"
+            aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -108,7 +110,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
               htmlFor="flow-name"
               className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
-              이름 <span className="text-red-500">*</span>
+              {t('common.name')} <span className="text-red-500">*</span>
             </label>
             <input
               ref={nameRef}
@@ -117,7 +119,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="플로우 이름을 입력하세요"
+              placeholder={t('flows.create.namePlaceholder')}
               className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
@@ -128,14 +130,14 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
               htmlFor="flow-description"
               className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
-              설명
+              {t('flows.create.descriptionLabel')}
             </label>
             <textarea
               id="flow-description"
               rows={3}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="플로우에 대한 설명 (선택)"
+              placeholder={t('flows.create.descriptionPlaceholder')}
               className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
@@ -143,7 +145,7 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
           {/* 에러 메시지 */}
           {createFlow.isError && (
             <p className="text-sm text-red-600 dark:text-red-400">
-              플로우 생성에 실패했습니다. 다시 시도해주세요.
+              {t('flows.create.createError')}
             </p>
           )}
 
@@ -155,14 +157,14 @@ export default function CreateFlowModal({ open, onClose }: CreateFlowModalProps)
               disabled={createFlow.isPending}
               className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             >
-              취소
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
               disabled={createFlow.isPending || !name.trim()}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
-              {createFlow.isPending ? '생성 중...' : '생성'}
+              {createFlow.isPending ? t('flows.create.submitting') : t('flows.create.submit')}
             </button>
           </div>
         </form>

@@ -12,11 +12,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
+const putMock = vi.hoisted(() => vi.fn());
 const delWithMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./client', () => ({
   get: getMock,
   post: postMock,
+  put: putMock,
   delWith: delWithMock,
 }));
 
@@ -31,6 +33,7 @@ import {
   queryStoreMatrix,
   resetAllStoreKeys,
   resetStoreKey,
+  setStoreKeyMeta,
   sliceKeysPage,
 } from './store';
 
@@ -539,6 +542,195 @@ describe('queryStoreMatrix: server aggregation and fallback', () => {
   });
 });
 
+// ---- 다중 시리즈 분리 (SPEC-STORE-004 M5) ----
+
+describe('queryStoreMatrix: 다중 시리즈 분리 (labels)', () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it('한 key 의 metric/tags 별 다중 시리즈를 독립 컬럼으로 분리한다', async () => {
+    // 백엔드가 같은 key 에 대해 2개 시리즈(서로 다른 room)를 평탄화해 반환.
+    // 같은 버킷(1000)에 두 시리즈 값이 섞여 있어도 labels 로 분리되어야 한다.
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 1_000, value: 21, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 1_000, value: 22, labels: { __metric__: 'temp', room: '2' } },
+        { timestamp: 4_000, value: 23, labels: { __metric__: 'temp', room: '1' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      startMs: 1_000,
+      endMs: 7_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // 시리즈 2개 → 라벨이 덧붙은 2개 컬럼.
+    expect(m.columns).toEqual([
+      'sensor · temp{room=1}',
+      'sensor · temp{room=2}',
+    ]);
+    expect(m.rows).toEqual([
+      { bucketStartMs: 1_000, values: [21, 22] },
+      { bucketStartMs: 4_000, values: [23, null] },
+    ]);
+  });
+
+  it('한 key 에서 단일 시리즈면 라벨을 붙이지 않고 key 만 컬럼명으로 쓴다', async () => {
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 1_000, value: 5, labels: { __metric__: 'temp', room: '1' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      startMs: 1_000,
+      endMs: 7_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // 단일 시리즈 → 기존 동작 보존(키만 표기).
+    expect(m.columns).toEqual(['sensor']);
+    expect(m.rows).toEqual([{ bucketStartMs: 1_000, values: [5] }]);
+  });
+
+  it('여러 key 가 각각 다중 시리즈를 가지면 key 순서 → 시리즈 순서로 평탄화', async () => {
+    postMock.mockImplementation(async (_url, body) => {
+      const req = body as { key: string };
+      if (req.key === 'A') {
+        return {
+          entries: [
+            { timestamp: 0, value: 1, labels: { __metric__: 'm', t: 'x' } },
+            { timestamp: 0, value: 2, labels: { __metric__: 'm', t: 'y' } },
+          ],
+        };
+      }
+      // B 는 라벨 없는 단일 시리즈.
+      return { entries: [{ timestamp: 0, value: 9 }] };
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['A', 'B'],
+      startMs: 0,
+      endMs: 1_000,
+      intervalMs: 1_000,
+      aggregation: 'average',
+    });
+
+    expect(m.columns).toEqual(['A · m{t=x}', 'A · m{t=y}', 'B']);
+    expect(m.rows).toEqual([{ bucketStartMs: 0, values: [1, 2, 9] }]);
+  });
+
+  it('폴백(4xx) 경로에서도 labels 기준으로 시리즈를 분리해 클라이언트 집계', async () => {
+    // 1차 서버 집계 시도 → 400, 2차 폴백 → 원본 엔트리(라벨 포함) 반환.
+    // epoch-zero 정렬: 1500/2500 → bucket 0. 두 시리즈를 각각 평균낸다.
+    postMock.mockImplementationOnce(async () => {
+      throw new APIError('UNSUPPORTED', 'aggregation not supported', 400);
+    });
+    postMock.mockImplementationOnce(async () => ({
+      entries: [
+        { timestamp: 1_500, value: 10, labels: { __metric__: 'm', s: 'a' } },
+        { timestamp: 2_500, value: 20, labels: { __metric__: 'm', s: 'a' } },
+        { timestamp: 1_500, value: 100, labels: { __metric__: 'm', s: 'b' } },
+      ],
+    }));
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['k'],
+      startMs: 1_000,
+      endMs: 4_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    expect(postMock).toHaveBeenCalledTimes(2);
+    expect(m.columns).toEqual(['k · m{s=a}', 'k · m{s=b}']);
+    // s=a: (10+20)/2 = 15, s=b: 100.
+    expect(m.rows).toEqual([{ bucketStartMs: 0, values: [15, 100] }]);
+  });
+});
+
+describe('queryStoreMatrix: seriesFilters 시리즈별 조회 (#2)', () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it('seriesFilters 로 한 key 의 응답을 지정한 시리즈로만 좁힌다', async () => {
+    // 백엔드는 key 의 모든 시리즈를 평탄화해 반환하지만, filter 서명과
+    // 일치하는 시리즈(temp/room=2)만 남아 단일 컬럼이 된다.
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 1_000, value: 21, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 1_000, value: 22, labels: { __metric__: 'temp', room: '2' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      seriesFilters: [{ metricType: 'temp', tags: { room: '2' } }],
+      startMs: 1_000,
+      endMs: 4_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // filter 일치 시리즈 1개. 같은 key 가 1회만 요청되었으므로 라벨 미부착.
+    expect(m.columns).toEqual(['sensor']);
+    expect(m.rows).toEqual([{ bucketStartMs: 1_000, values: [22] }]);
+  });
+
+  it('같은 key 를 두 시리즈 필터로 중복 요청하면 각각 분리된 라벨 컬럼이 된다', async () => {
+    // 두 번 요청되므로 매번 같은 응답을 반환(각 호출에서 서로 다른 시리즈로 좁혀짐).
+    postMock.mockResolvedValue({
+      entries: [
+        { timestamp: 0, value: 21, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 0, value: 22, labels: { __metric__: 'temp', room: '2' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor', 'sensor'],
+      seriesFilters: [
+        { metricType: 'temp', tags: { room: '1' } },
+        { metricType: 'temp', tags: { room: '2' } },
+      ],
+      startMs: 0,
+      endMs: 3_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    // 같은 key 가 2회 요청 → 라벨 강제 부착으로 컬럼명 충돌 방지.
+    expect(m.columns).toEqual(['sensor · temp{room=1}', 'sensor · temp{room=2}']);
+    expect(m.rows).toEqual([{ bucketStartMs: 0, values: [21, 22] }]);
+  });
+
+  it('filter 미지정(undefined)이면 모든 시리즈를 반환한다 (기존 동작 보존)', async () => {
+    postMock.mockResolvedValueOnce({
+      entries: [
+        { timestamp: 0, value: 1, labels: { __metric__: 'temp', room: '1' } },
+        { timestamp: 0, value: 2, labels: { __metric__: 'temp', room: '2' } },
+      ],
+    });
+
+    const m = await queryStoreMatrix('store', {
+      keys: ['sensor'],
+      seriesFilters: [undefined],
+      startMs: 0,
+      endMs: 3_000,
+      intervalMs: 3_000,
+      aggregation: 'average',
+    });
+
+    expect(m.columns).toEqual(['sensor · temp{room=1}', 'sensor · temp{room=2}']);
+  });
+});
+
 // ---- fetchStoreTagPairs / fetchStoreKeysWithTags (SPEC-STORE-003) ----
 
 describe('fetchStoreTagPairs', () => {
@@ -853,5 +1045,55 @@ describe('fetchStoreKeyObjects (v0.7.0 신규 API)', () => {
   it('keys 필드가 생략되면 빈 배열 반환', async () => {
     getMock.mockResolvedValueOnce({});
     expect(await fetchStoreKeyObjects('agent-a')).toEqual([]);
+  });
+});
+
+// ---- setStoreKeyMeta (SPEC-STORE-003 v0.4.0) ----
+
+describe('setStoreKeyMeta', () => {
+  beforeEach(() => {
+    putMock.mockReset();
+  });
+
+  it('metric_type/tags 를 meta 엔드포인트로 PUT 한다', async () => {
+    const resp = {
+      key: 'outdoor:humidity',
+      metric_type: 'humidity',
+      tags: { room: 'kitchen' },
+    };
+    putMock.mockResolvedValueOnce(resp);
+
+    const result = await setStoreKeyMeta('agent-a', 'outdoor:humidity', {
+      metric_type: 'humidity',
+      tags: { room: 'kitchen' },
+    });
+
+    // 키의 콜론은 encodeURIComponent 로 %3A 인코딩되어야 한다.
+    expect(putMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys/outdoor%3Ahumidity/meta',
+      { metric_type: 'humidity', tags: { room: 'kitchen' } },
+    );
+    expect(result).toEqual(resp);
+  });
+
+  it('agent 이름과 키를 모두 URL 인코딩한다', async () => {
+    putMock.mockResolvedValueOnce({ key: 'k', metric_type: 'unknown', tags: {} });
+
+    await setStoreKeyMeta('agent a/b', 'ns:key with space', { tags: {} });
+
+    expect(putMock).toHaveBeenCalledWith(
+      `/store/${encodeURIComponent('agent a/b')}/keys/${encodeURIComponent('ns:key with space')}/meta`,
+      { tags: {} },
+    );
+  });
+
+  it('metric_type 생략 시 tags 만 전송한다 (백엔드가 unknown normalize)', async () => {
+    putMock.mockResolvedValueOnce({ key: 'k', metric_type: 'unknown', tags: { a: '1' } });
+
+    await setStoreKeyMeta('agent-a', 'k', { tags: { a: '1' } });
+
+    expect(putMock).toHaveBeenCalledWith('/store/agent-a/keys/k/meta', {
+      tags: { a: '1' },
+    });
   });
 });

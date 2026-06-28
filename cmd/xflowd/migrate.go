@@ -40,6 +40,8 @@ SPEC-DEVICE-IDENTITY-001 Phase C 의 운영 도구로, 모든 서브명령은:
 
 	cmd.AddCommand(newMigrateDeviceIDsCmd())
 	cmd.AddCommand(newMigrateTSDBTagsCmd())
+	// @spec SPEC-STORE-004 (O3): 영속 store 의 bare key → 기본 시리즈 인코딩 키 변환.
+	cmd.AddCommand(newMigrateStoreSeriesCmd())
 
 	return cmd
 }

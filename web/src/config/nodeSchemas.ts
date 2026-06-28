@@ -2,6 +2,7 @@
 // 백엔드 Configure() 메서드의 config 키에 매핑된다.
 
 import type { ConfigField, ConfigSchema } from '@/types/node';
+import { normalizeNodeType } from '@/lib/flow/nodeType';
 import { getBridgeAdapterFields } from './bridgeAdapterSchemas';
 
 export type PortDef = { name: string; direction: 'input' | 'output' | 'error' };
@@ -108,9 +109,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '중복이 아닌 메시지만 통과 (값 변경 또는 window 초과 시)',
     configSchema: {
       fields: [
-        { name: 'key', type: 'string', label: '그룹핑 키', description: '메시지를 그룹핑할 페이로드 필드명 (예: idu_num). 비어있으면 전체 메시지 기준' },
+        { name: 'key', type: 'string', label: '그룹핑 키', description: '메시지를 그룹핑할 키. $. prefix 필수 — $.-경로(예: $.payload.idu_num, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
         { name: 'window', type: 'string', label: '억제 시간', default: '30s', description: '중복 억제 시간 창 (예: 30s, 1m). 초과 시 동일 값도 강제 통과' },
-        { name: 'compare_fields', type: 'compare_fields', label: '비교 필드', description: '비교 대상 필드 목록. 빈 목록이면 전체 페이로드 비교. 허용오차(0 이상)를 지정하면 |현재-이전| ≤ 오차 일 때만 동일로 판정.' },
+        { name: 'compare_fields', type: 'compare_fields', label: '비교 필드', description: '비교 대상 필드 목록. 빈 목록이면 전체 페이로드 비교. 각 필드는 $. prefix 필수 — $.-경로(예: $.payload.current_temperature, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다. 허용오차(0 이상)를 지정하면 |현재-이전| ≤ 오차 일 때만 동일로 판정.' },
         { name: 'missing_field_as_different', type: 'boolean', label: '필드 부재 시 다름으로 처리', default: false, description: '활성화 시 신규 메시지에 비교 필드 중 하나라도 부재하면 즉시 통과 (중복 판정 안 함). 비활성 시 부재 필드는 nil 로 비교됨 (v0.18.4).' },
         { name: 'on_duplicate', type: 'select', label: '중복 시 처리', options: ['drop', 'reject_port'], default: 'drop', description: 'drop: 폐기, reject_port: reject 포트로 전달' },
       ],
@@ -241,19 +242,56 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   'select-field': {
     description:
-      '메시지에서 지정한 필드만 남깁니다. payload / metadata / 메시지 레벨(id·type·timestamp) 그룹별로 화이트리스트를 지정하고, 누락 필드는 무시/드랍/채움 처리합니다.',
-    inputDesc: '모든 메시지. payload / metadata / 메시지 레벨 필드를 화이트리스트로 필터링',
+      '메시지에서 지정한 경로의 필드만 남깁니다. payload / metadata / type 을 `$.` 경로 화이트리스트로 통합 지정합니다. 선택 필드(fields)는 "있으면 포함, 없어도 무방", 필수 필드(required_fields)는 "반드시 있어야 함, 없으면 on_required_missing 동작". 화이트리스트 = 선택 필드 ∪ 필수 필드. 선택 필드의 누락은 유지/드랍/채움 처리합니다.',
+    inputDesc: '모든 메시지. `$.` 경로 화이트리스트로 payload·metadata·type 을 통합 필터링',
     outputDesc:
-      '지정한 필드만 남긴 메시지(out). on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 drop 포트로.',
+      '선택 필드(fields)와 필수 필드(required_fields)의 합집합만 남긴 메시지(out). 필수 필드 누락 시 on_required_missing=error_port 면 원본을 error 포트로 보냅니다. on_missing=drop + drop 포트 전송 옵션이 켜지면 드랍된 메시지는 drop 포트로.',
     configSchema: {
       fields: [
+        {
+          name: 'required_fields',
+          type: 'key_value_map',
+          label: '필수 필드(경로)',
+          description:
+            '반드시 존재해야 하는 경로(필수). 없으면 on_required_missing 동작. 출력에도 유지됨. 경로 문법은 선택 필드와 동일. 값 칼럼은 미사용.',
+          keyLabel: '경로 ($.payload.x / $.metadata.device.id)',
+          valueLabel: '(미사용)',
+          keyPlaceholder: '예: $.payload.temperature',
+        },
+        {
+          name: 'on_required_missing',
+          type: 'select',
+          label: '필수 누락 시',
+          options: ['error_port', 'drop', 'error'],
+          default: 'error_port',
+          description:
+            '필수 필드 누락 시: error_port(원본을 error 포트로) / drop(폐기) / error(노드 에러).',
+        },
+        {
+          name: 'fields',
+          type: 'key_value_map',
+          label: '선택 필드(경로)',
+          description:
+            '남길 필드의 `$.` 경로 화이트리스트입니다(store/mqtt 노드와 동일한 경로 문법).\n' +
+            '• `$.payload.<dotpath>` — 임의 깊이의 payload 필드 ($.payload.temperature, 중첩 $.payload.state.mode, 서브트리 전체 $.payload.state)\n' +
+            '• `$.metadata.<key>` — 최상위 metadata 문자열 또는 그룹 전체 ($.metadata.node_id, 그룹 전체 $.metadata.device)\n' +
+            '• `$.metadata.<group>.<field>` — 그룹 내 한 필드 ($.metadata.device.id)\n' +
+            '• `$.type` — 메시지 타입 유지(미지정 시 type 은 제거됨)\n' +
+            '• `$.id`, `$.timestamp` — 항상 보존(나열해도 무동작)\n' +
+            '화이트리스트 의미: fields 가 비어있지 않으면 나열되지 않은 모든 것(나열 안 된 payload 키, metadata 키/그룹, 그리고 $.type 미지정 시 type)이 제거됩니다. fields 가 비어있으면 그대로 통과(pass-through)합니다.\n' +
+            '값은 on_missing=fill 모드일 때만 채울 기본값으로 사용됩니다.',
+          keyLabel: '경로 ($.payload.x / $.metadata.device.id / $.type)',
+          valueLabel: '채울 값 (fill 모드)',
+          keyPlaceholder: '예: $.payload.temperature',
+          valuePlaceholder: '예: 0',
+        },
         {
           name: 'on_missing',
           type: 'select',
           label: '누락 필드 처리',
-          options: ['ignore', 'drop', 'fill'],
-          default: 'ignore',
-          description: 'ignore: 필드 생략 / drop: 메시지 전체 드랍 / fill: 지정한 기본값으로 채움',
+          options: ['keep', 'drop', 'fill'],
+          default: 'keep',
+          description: 'keep: 필드 생략 / drop: 메시지 전체 드랍 / fill: 지정한 기본값으로 채움',
         },
         {
           name: 'drop_to_port',
@@ -263,60 +301,6 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description:
             'on_missing=drop 으로 메시지가 드랍될 때, 버리지 않고 drop 출력 포트로 전송합니다. 끄면 메시지를 폐기합니다.',
           visibleWhen: { field: 'on_missing', value: 'drop' },
-        },
-        // --- payload 필터링 ---
-        {
-          name: 'payload_filter',
-          type: 'boolean',
-          label: 'payload 필터링',
-          default: false,
-          description: 'payload 필드 화이트리스트 필터링 사용 여부',
-        },
-        {
-          name: 'payload_fields',
-          type: 'key_value_map',
-          label: 'payload 필드',
-          description:
-            '남길 payload 필드명(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
-          keyLabel: '필드명',
-          valueLabel: '채울 값 (fill 모드)',
-          valuePlaceholder: '예: 0',
-          visibleWhen: { field: 'payload_filter', value: true },
-        },
-        // --- metadata 필터링 ---
-        {
-          name: 'metadata_filter',
-          type: 'boolean',
-          label: 'metadata 필터링',
-          default: false,
-          description: 'metadata 키 화이트리스트 필터링 사용 여부',
-        },
-        {
-          name: 'metadata_fields',
-          type: 'key_value_map',
-          label: 'metadata 필드',
-          description:
-            '남길 metadata 키(화이트리스트). 값은 on_missing=fill 모드일 때 채울 기본값으로 사용됩니다.',
-          keyLabel: '필드명',
-          valueLabel: '채울 값 (fill 모드)',
-          valuePlaceholder: '예: unknown',
-          visibleWhen: { field: 'metadata_filter', value: true },
-        },
-        // --- 메시지 레벨 필터링 (id / type / timestamp) ---
-        {
-          name: 'message_filter',
-          type: 'boolean',
-          label: '메시지 레벨 필터링',
-          default: false,
-          description: 'id / type / timestamp 등 메시지 레벨 필드 필터링 사용 여부',
-        },
-        {
-          name: 'message_fields',
-          type: 'string_list',
-          label: '메시지 레벨 필드',
-          description:
-            '남길 메시지 레벨 필드 (id, type, timestamp 중). 안내: id / timestamp 는 구조상 항상 유지되며 실질적으로 type 만 제거 가능합니다.',
-          visibleWhen: { field: 'message_filter', value: true },
         },
       ],
     },
@@ -524,16 +508,16 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: Samsung HVACR-01 (Samsung NASA 프로토콜) ---
-  'samsung_hvacr01_status': {
+  'samsung-hvacr01-status': {
     description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
-    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -584,6 +568,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
@@ -595,7 +582,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'samsung_hvacr01_control': {
+  'samsung-hvacr01-control': {
     description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨을 제어합니다. 전원, 온도, 풍량, 모드 등을 설정합니다.',
     inputDesc: 'payload: {device_id, command, ...params} (예: {device_id:"01", command:"set_power", power:true})',
     outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
@@ -604,7 +591,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -633,6 +620,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
@@ -644,7 +634,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  samsung_hvacr01: {
+  'samsung-hvacr01': {
     description: 'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 에어컨 상태 수신 + 제어 통합 노드입니다. push 모델로 동작하며, 무수신 임계 시간 초과 시 request_state 자동 전송.',
     inputDesc: '상태 조회 트리거 또는 제어 명령. payload 에 제어 키(power, mode, temperature 등) 가 있으면 제어, 없으면 즉시 drain.',
     outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
@@ -653,7 +643,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Samsung HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['samsung_hvacr01'],
           description: '연결할 Samsung HVACR-01 에이전트를 선택합니다',
@@ -704,6 +694,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
@@ -725,7 +718,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -769,6 +762,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
@@ -789,7 +785,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -818,6 +814,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
@@ -838,7 +837,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LGAP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lgap'],
           description: '연결할 LG LGAP 에이전트를 선택합니다',
@@ -874,6 +873,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
@@ -886,16 +888,16 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: LG HVACR-02 (ICP-02 protocol) ---
-  'lg_hvacr02_status': {
+  'lg-hvacr02-status': {
     description: 'LG HVACR-02 에이전트(LG ICP-02 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 FrameNotifyCh 신호 수신 시 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다. (2026-05-30 LG HVACR-01 통일 패턴)',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
-    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -939,6 +941,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (push / inactivity_request 등) 포함', advanced: true },
       ],
@@ -950,7 +955,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'lg_hvacr02_control': {
+  'lg-hvacr02-control': {
     description: 'LG ICP-02 프로토콜로 실내기를 제어합니다. 전원, 온도, 풍량, 모드를 설정합니다.',
     inputDesc: 'payload: {address, command, ...params} (예: {address:"67", command:"set_power", power:true})',
     outputDesc: 'payload: 에이전트 응답 (성공/실패 상태, 제어 결과)',
@@ -959,7 +964,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -988,6 +993,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
@@ -999,7 +1007,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  lg_hvacr02: {
+  'lg-hvacr02': {
     description: 'LG HVACR-02 실내기 상태 조회 + 제어 통합 노드입니다.',
     inputDesc: 'payload.address (조회/제어 대상), payload.command + params (제어 시)',
     outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
@@ -1008,7 +1016,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-02 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr02'],
           description: '연결할 LG HVACR-02 에이전트를 선택합니다',
@@ -1059,6 +1067,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // v0.18.12: unit_id / node_id 도 옵션화 (이전엔 unit_id 필수 + node_id 자동).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (poll / poll_bulk 등) 포함', advanced: true },
       ],
@@ -1071,16 +1082,16 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: LG HVACR-01 (LG ICP-01 protocol) ---
-  'lg_hvacr01_status': {
+  'lg-hvacr01-status': {
     description: 'LG HVACR-01 에이전트(LG ICP-01 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
-    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'LG HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['lg_hvacr01'],
           description: '연결할 LG HVACR-01 에이전트를 선택합니다',
@@ -1124,6 +1135,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
@@ -1135,11 +1149,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'lg_hvacr01_control': {
+  'lg-hvacr01-control': {
     description: 'LG HVACR-01 디바이스 제어 (현재 미지원 - 프로토콜 분석 진행 중)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
       ],
     },
@@ -1150,11 +1164,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  lg_hvacr01: {
-    description: 'LG HVACR-01 상태 수신 + 제어 통합 노드. push 모델 (lg_hvacr01_status 와 동일). 제어는 현재 미지원.',
+  'lg-hvacr01': {
+    description: 'LG HVACR-01 상태 수신 + 제어 통합 노드. push 모델 (lg-hvacr01-status 와 동일). 제어는 현재 미지원.',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'LG HVACR-01 에이전트', required: true, options: ['lg_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['lg_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1164,6 +1178,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
@@ -1176,16 +1193,16 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: Century HVACR-01 (SPEC-CENTURY-HVACR-001) ---
-  'century_hvacr01_status': {
+  'century-hvacr01-status': {
     description: 'Century HVACR-01 에이전트(Century ICP-01 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 NotifyInterval 마다 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
     inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
-    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: device_id 필수, 옵션 토글로 추가 메타데이터 포함 가능',
+    outputDesc: 'payload: 디바이스 상태 (전원, 모드, 온도, 풍량 등). metadata: agent:{type,id} 그룹 (기본) + device:{type,id} 그룹 (디바이스 노드, 기본) + device_id 평탄 키 필수 + node_id (옵션). 그룹은 emit_agent/emit_device 토글로 끌 수 있음',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Century HVACR-01 에이전트',
+          label: '에이전트',
           required: true,
           options: ['century_hvacr01'],
           description: '연결할 Century HVACR-01 에이전트를 선택합니다',
@@ -1229,6 +1246,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
         // 디버그/분석 (Century 전용 — 출력 폭주 우려, 운영 환경 비활성 권장):
@@ -1249,11 +1269,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  'century_hvacr01_control': {
+  'century-hvacr01-control': {
     description: 'Century HVACR-01 디바이스 제어 (미지원 — 패시브 전용)',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['century_hvacr01'] },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '5s' },
       ],
     },
@@ -1264,11 +1284,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  century_hvacr01: {
+  'century-hvacr01': {
     description: 'Century HVACR-01 상태 수신 + 제어 통합 노드 (제어는 항상 not_supported 반환). push 모델.',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'Century 에이전트', required: true, options: ['century_hvacr01'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['century_hvacr01'] },
         { name: 'inactivity_timeout', type: 'string', label: '무수신 임계 시간', default: '90s', description: '이 시간 동안 에이전트로부터 메시지가 오지 않으면 request_state 명령을 전송' },
         { name: 'timeout', type: 'string', label: 'Process 타임아웃', default: '5s', description: 'Agent Process 호출 타임아웃' },
         { name: 'batch_size', type: 'number', label: '배치 크기', default: 32, description: 'drain 시 한 번에 가져올 최대 프레임 수' },
@@ -1279,6 +1299,9 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // 고급: 메타데이터 토글 (device_id 는 항상 emit, 나머지는 default OFF).
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함 (예: HVACR.IDU / HVACR.ODU)', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
         { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 (notify / inactivity_request 등) 포함', advanced: true },
       ],
@@ -1300,7 +1323,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1361,6 +1384,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: 1,
           description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1464,13 +1489,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'mqtt-subscriber': {
     description: 'MQTT 토픽을 구독하여 메시지를 수신합니다. 소스 노드로 플로우의 시작점이 됩니다.',
     inputDesc: '없음 (소스 노드). 에이전트가 구독한 토픽에서 자동 수신',
-    outputDesc: 'payload: 수신 데이터 (json: 파싱된 객체, raw: {raw: []byte}). metadata: mqtt.topic, mqtt.qos',
+    outputDesc: 'payload: 수신 데이터 (json: 파싱된 객체, raw: {raw: []byte}). metadata: agent:{type,id} 그룹 (기본, emit_agent 토글로 OFF) + mqtt.topic + mqtt.qos',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MQTT 에이전트',
+          label: '에이전트',
           required: true,
           options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
@@ -1497,6 +1522,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: 64,
           description: '수신 메시지 버퍼 크기',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1514,7 +1541,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1559,7 +1586,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MODBUS 에이전트',
+          label: '에이전트',
           required: true,
           options: ['modbus-rtu', 'modbus-tcp', 'modbus-tcp-server'],
           description: '연결할 MODBUS 에이전트를 선택합니다',
@@ -1602,6 +1629,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: 1,
           description: 'MODBUS Client 에이전트 전용 디바이스 ID',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1620,7 +1649,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'MQTT 에이전트',
+          label: '에이전트',
           required: true,
           options: ['mqtt-client'],
           description: '연결할 MQTT 에이전트',
@@ -1629,7 +1658,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'default_topic',
           type: 'string',
           label: '기본 토픽',
-          description: '기본 발행 토픽. {expr} 형식으로 메시지 필드 보간 지원 — JSONPath ($.payload.X, $.metadata.X, $.type, $.timestamp) 또는 페이로드 직접 키. 예: `xflow/{$.metadata.device_type}/{$.metadata.device_id}/status`. 메시지의 metadata.mqtt.topic 으로 오버라이드 가능.',
+          description: '기본 발행 토픽. {expr} 형식으로 메시지 필드 보간 지원 — JSONPath ($.payload.X, $.metadata.X, 그룹 중첩 $.metadata.device.X, $.type, $.timestamp) 또는 페이로드 직접 키. 예: `xflow/{$.metadata.device.type}/{$.metadata.device.id}/status`. 메시지의 metadata.mqtt.topic 으로 오버라이드 가능.',
         },
         {
           name: 'default_qos',
@@ -1654,6 +1683,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           default: 'json',
           description: '발행 메시지 페이로드 형식',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1672,7 +1703,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TSDB 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tsdb'],
           description: '연결할 TSDB 에이전트를 선택합니다',
@@ -1719,7 +1750,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TSDB 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tsdb'],
           description: '연결할 TSDB 에이전트를 선택합니다',
@@ -1790,7 +1821,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '원본 메시지 pass-through',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
         { name: 'measurement', type: 'string', label: 'Measurement', description: '고정 measurement 이름. 비어있으면 measurement_key 사용' },
         {
           name: 'measurement_key',
@@ -1834,8 +1865,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '쿼리 결과의 각 행이 개별 메시지로 출력',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
-        { name: 'query', type: 'string', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
+        { name: 'query', type: 'multiline', label: '쿼리', required: true, description: 'Flux, SQL, 또는 InfluxQL 쿼리' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '30s', description: '쿼리 실행 간격 (예: 10s, 1m, 5m)' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
@@ -1853,8 +1884,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     outputDesc: '쿼리 결과를 result_key에 담은 새 메시지',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: 'InfluxDB 에이전트', required: true, options: ['influxdb'] },
-        { name: 'query', type: 'string', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
+        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
+        { name: 'query', type: 'multiline', label: '쿼리', description: 'Flux/SQL/InfluxQL 쿼리. $variable로 payload 값 치환 가능. 비어있으면 payload의 query 키 사용' },
         { name: 'language', type: 'select', label: '쿼리 언어', options: ['flux', 'sql', 'influxql'], default: 'flux' },
         { name: 'timeout', type: 'string', label: '타임아웃', default: '10s' },
         { name: 'result_key', type: 'string', label: '결과 키', default: 'results', description: '쿼리 결과를 저장할 payload 키' },
@@ -1875,23 +1906,10 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Store 에이전트',
+          label: '에이전트',
           required: true,
           options: ['store'],
           description: '연결할 Store 에이전트를 선택합니다',
-        },
-        {
-          name: 'key_template',
-          type: 'string',
-          label: '키 템플릿',
-          required: true,
-          description: '{field} 형식 플레이스홀더를 payload 값으로 치환 (예: {location}:{point}:{sensor_type})',
-        },
-        {
-          name: 'value_key',
-          type: 'string',
-          label: '값 키',
-          description: 'payload에서 저장할 값의 키 (비워두면 전체 payload 저장)',
         },
         {
           name: 'namespace',
@@ -1901,10 +1919,47 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: 'Store 네임스페이스',
         },
         {
+          name: 'key_template',
+          type: 'string',
+          label: '키 템플릿',
+          description: '저장 키. {field} 형식 플레이스홀더를 메시지 값으로 치환 (예: {$.metadata.device_id}:{$.payload.sensor}). 이 키에 아래 "메트릭"별로 측정값이 기록됩니다. 키 템플릿 또는 키 매핑 중 하나 이상 필요.',
+        },
+        {
+          name: 'key_mappings',
+          type: 'key_value_map',
+          label: '키 매핑 (다중 키)',
+          description:
+            '한 메시지에서 서로 다른 키에 값을 기록합니다. 키(왼쪽)는 키 템플릿({...} 보간 또는 리터럴), 값(오른쪽)은 저장할 값의 $. 경로(비우면 전체 payload). 네임스페이스·TTL·태그는 모든 키에 동일 적용됩니다. (메트릭별 분류가 필요하면 아래 "메트릭"을 사용하세요.)',
+          keyLabel: '키 템플릿',
+          valueLabel: '값 경로 ($.)',
+          keyPlaceholder: '{$.metadata.device_id}:power',
+          valuePlaceholder: '$.payload.power',
+          pathHelper: true,
+        },
+        {
+          name: 'tags',
+          type: 'key_value_map',
+          label: '태그',
+          description:
+            '기록되는 키에 부여할 태그(키=값). 모든 메트릭/키에 공유 적용됩니다. 태그 키는 영문/숫자/밑줄/하이픈. 값은 직접 입력(리터럴) 또는 $. 경로로 메시지 필드 선택($.payload.room / $.metadata.x). Store 탭에서 태그로 검색·필터됩니다.',
+          keyLabel: '태그 키',
+          valueLabel: '값 (리터럴 또는 $. 경로)',
+          valuePlaceholder: '값 또는 $.payload.room',
+          pathHelper: true,
+        },
+        {
+          name: 'metrics',
+          type: 'metrics_editor',
+          label: '메트릭 (다중 값)',
+          description:
+            '키 템플릿의 키에 여러 측정값을 metric_type 별 시리즈로 저장합니다. 각 메트릭은 자체 값 키(기본 $.payload.value)·데이터 타입·미세변화 억제(억제 간격/절대 변화/퍼센트 변화)를 가집니다. 같은 키라도 metric_type·태그가 다르면 독립 시리즈로 분류됩니다. 미세변화 억제(dead-band)는 억제 간격이 설정된 메트릭에만 적용되며, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
+        },
+        {
           name: 'ttl',
           type: 'string',
           label: 'TTL',
-          description: '만료 시간 (예: 5m, 1h, 24h). 비워두면 만료 없음',
+          description: '만료 시간 (예: 5m, 1h, 24h). 모든 메트릭/키에 공유 적용. 비워두면 만료 없음',
+          advanced: true,
         },
       ],
     },
@@ -1983,17 +2038,19 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'serial-in': {
     description: '시리얼 포트에서 데이터를 수신합니다. 에이전트의 프레이밍 설정에 따라 프레임 단위로 전달합니다.',
     inputDesc: '없음 (소스 노드). 시리얼 에이전트가 프레이밍된 데이터를 자동 수신',
-    outputDesc: 'out: payload {raw: []byte, data: string}. raw_out: 프레이밍 이전 원시 바이트 {raw: []byte}',
+    outputDesc: 'out: payload {raw: []byte, data: string}. raw_out: 프레이밍 이전 원시 바이트 {raw: []byte}. metadata: agent:{type,id} 그룹 (기본, emit_agent 토글로 OFF)',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: '시리얼 에이전트',
+          label: '에이전트',
           required: true,
           options: ['serial'],
           description: '연결할 시리얼 에이전트를 선택합니다',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -2006,13 +2063,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'serial-out': {
     description: '시리얼 포트로 데이터를 전송합니다. payload의 raw 또는 data 필드를 바이트로 전송합니다.',
     inputDesc: 'payload.raw ([]byte, 우선) 또는 payload.data (string). 없으면 payload 전체 JSON 전송',
-    outputDesc: '원본 메시지 clone 패스스루. metadata: serial.node_id 추가',
+    outputDesc: '원본 메시지 clone 패스스루. metadata: agent:{type,id} 그룹 (기본, emit_agent 토글로 OFF) + node_id 추가',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: '시리얼 에이전트',
+          label: '에이전트',
           required: true,
           options: ['serial'],
           description: '연결할 시리얼 에이전트를 선택합니다',
@@ -2026,6 +2083,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description:
             'data/raw 문자열 페이로드를 바이트로 변환하는 방식. auto: hex 추론(하위호환), hex: 항상 hex 디코딩, text: 평문 그대로, base64: base64 디코딩',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -2039,17 +2098,19 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'tcp-in': {
     description: 'TCP 에이전트로부터 메시지를 수신합니다. 서버 모드에서는 클라이언트 연결 정보를 포함합니다.',
     inputDesc: '없음 (소스 노드). TCP 에이전트가 수신한 데이터를 자동 전달',
-    outputDesc: 'payload: {raw: []byte, data: string}. metadata: tcp.remote_addr (서버 모드), tcp.agent_type',
+    outputDesc: 'payload: {raw: []byte, data: string}. metadata: agent:{type,id} 그룹 (기본, emit_agent 토글로 OFF) + tcp.remote_addr (서버 모드) + tcp.agent_type',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TCP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tcp-server', 'tcp-client'],
           description: '연결할 TCP 에이전트를 선택합니다',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -2061,17 +2122,19 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   'tcp-out': {
     description: 'TCP 에이전트를 통해 데이터를 전송합니다. 특정 클라이언트 또는 브로드캐스트로 전송합니다.',
     inputDesc: 'payload.raw ([]byte, 우선) 또는 payload.data (string). metadata.tcp.remote_addr: 대상 클라이언트 (없으면 브로드캐스트)',
-    outputDesc: '원본 메시지 clone 패스스루. metadata: tcp.node_id 추가',
+    outputDesc: '원본 메시지 clone 패스스루. metadata: agent:{type,id} 그룹 (기본, emit_agent 토글로 OFF) + tcp.node_id 추가',
     configSchema: {
       fields: [
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'TCP 에이전트',
+          label: '에이전트',
           required: true,
           options: ['tcp-server', 'tcp-client'],
           description: '연결할 TCP 에이전트를 선택합니다',
         },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -2091,7 +2154,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         {
           name: 'agent_ref',
           type: 'agent_select',
-          label: 'Store 에이전트',
+          label: '에이전트',
           required: true,
           options: ['store'],
           description: '연결할 Store 에이전트를 선택합니다',
@@ -2193,12 +2256,12 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   // --- Inventory (SPEC-INVENTORY-001) ---
   inventory: {
     description:
-      '디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit. trigger 와 체이닝하여 주기적 상태 동기화에 사용합니다. 4종 source × 2종 emit_shape × 선택적 DeviceFilter 매트릭스를 지원합니다.',
+      '디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit. trigger 와 체이닝하여 주기적 상태 동기화에 사용합니다. 4종 source 를 조건식 필터·필드 화이트리스트·청크 분할과 함께 지원합니다.',
     inputDesc:
-      '임의의 트리거 메시지 (페이로드 무시). 보통 trigger 노드의 출력을 입력으로 사용합니다. 입력 metadata 는 출력에 얕은 복사로 보존됩니다.',
+      '스냅샷을 트리거하는 입력 메시지 (payload 무시). 보통 trigger 노드의 출력을 입력으로 사용합니다. 입력 metadata 는 출력에 얕은 복사로 보존됩니다.',
     outputDesc:
-      'array 모드: payload { source, count, items[] } 의 단일 메시지. per_item 모드: payload 가 단일 item 객체인 N 개 메시지 fan-out. ' +
-      'metadata: inventory.source, inventory.count. per_item 모드에서 추가로 inventory.index, inventory.total. ' +
+      'payload { items: [ {항목}, {항목}, ... ] } 형태의 메시지. max_items=0 이면 전체 항목을 한 메시지로, N 이면 N 개씩 분할하여 여러 메시지로 출력합니다. ' +
+      'metadata: type (source 단수형 — devices→device, agents→agent, nodes→node, flows→flow), total_count (필터 후 전체 개수), offset (이 메시지의 시작 인덱스), count (이 메시지의 항목 수). 메타데이터 값은 모두 문자열입니다. ' +
       'devices 항목은 id (composite key, address 역할) 외에 uid (글로벌 UUID, identity 역할, v1.0 1급 키) 를 함께 노출하며, UUID 매핑이 없으면 uid 키는 생략됩니다. ' +
       '시계열 tag 키 / MQTT topic 에는 uid 권장. ' +
       'v0.2.0 호환 alias device_uuid 는 v1.0 (Phase D § D-T18) 에서 제거되었습니다.',
@@ -2213,34 +2276,26 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '스냅샷 대상 인벤토리 종류',
         },
         {
-          name: 'emit_shape',
-          type: 'select',
-          label: 'emit 형태',
-          options: ['array', 'per_item'],
-          default: 'array',
+          name: 'condition',
+          type: 'multiline',
+          label: '필터 조건식',
           description:
-            'array: 단일 메시지에 배열을 담음 / per_item: 항목별 N 개 메시지 fan-out (inventory.index/total metadata 포함)',
+            'filter 노드와 동일한 조건식 문법으로 항목을 필터링합니다. 각 항목을 메시지로 감싸 평가하므로 항목 필드는 $.payload.<필드> 로 참조합니다 (예: $.payload.online == true, exists($.payload.uid)). ' +
+            '== != > < >= <=, && || !, exists(path) 를 지원합니다. 비우면 필터 없이 전체 항목을 출력합니다. 모든 source 에 적용됩니다.',
         },
         {
-          name: 'include_metadata',
-          type: 'boolean',
-          label: '메타데이터 포함',
-          default: true,
-          description:
-            'true: 풍부한 메타데이터(device.metadata/state, agent.info/stats, flow.extra 등) 포함 / false: 핵심 식별 필드만',
+          name: 'fields',
+          type: 'string',
+          label: '포함 필드',
+          placeholder: 'id, name, online',
+          description: '쉼표로 구분한 항목 필드 화이트리스트. 비우면 전체 필드.',
         },
-        // DeviceFilter — source=devices 한정. JSON 객체 직접 편집.
-        // 백엔드 device.DeviceFilter 와 동일 schema (protocol/agent_name/type/online/group/tags).
-        // ConfigField 의 'object' 타입은 nested 평면 필드 표현을 지원하지 않으므로 단일 JSON 편집기로 노출.
         {
-          name: 'filter',
-          type: 'object',
-          label: '디바이스 필터 (JSON)',
-          description:
-            'source=devices 일 때만 적용. DeviceFilter 와 동일 스키마.\n' +
-            '예: {"protocol": "lg_icp01", "online": true, "group": "production", "tags": ["critical"]}\n' +
-            '지원 필드: protocol (string), agent_name (string), type (string), online (bool), group (string), tags (string array).',
-          visibleWhen: { field: 'source', value: 'devices' },
+          name: 'max_items',
+          type: 'number',
+          label: '메시지당 최대 요소 수',
+          default: 0,
+          description: '0 이면 전체를 한 메시지로, N 이면 N 개씩 분할 출력합니다.',
         },
       ],
     },
@@ -2366,7 +2421,89 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'in', direction: 'input' as const },
     ],
   },
+
+  // --- Composition: flow-node (SPEC-SUBFLOW-001 그룹 C) ---
+  // 다른 플로우를 참조하여 합성하는 특수 노드.
+  // - flow_id: 참조 플로우 id (flow_picker 로 선택, 현재 편집 중 플로우는 후보에서 제외).
+  // - flow_name: 참조 플로우 표시 이름 (denormalize, 노드 카드 표시 전용).
+  // - input_ports / output_ports: 참조 플로우의 플로우 레벨 포트 이름 배열.
+  //   flow_id 선택 시 참조 플로우 정의를 조회하여 비정규화(denormalize)한 값으로,
+  //   핸들 렌더링(computePortsForNode) 에만 사용되는 에디터 표시 전용 캐시이다.
+  //   백엔드는 배포 시점에 참조 플로우의 실제 정의에서 포트를 재해석하므로
+  //   config 의 input_ports / output_ports 는 무시한다(REQ-SUBFLOW-C03/D04).
+  'flow-node': {
+    description:
+      '다른 플로우를 참조하여 서브플로우로 합성합니다. 참조 플로우의 입출력 포트가 이 노드의 핸들로 표시됩니다. 핸들은 배포 시점에 참조 플로우의 현재 정의로 항상 최신화됩니다.',
+    inputDesc: '참조 플로우의 입력 포트로 라우팅됩니다.',
+    outputDesc: '참조 플로우의 출력 포트에서 나옵니다.',
+    configSchema: {
+      fields: [
+        {
+          name: 'flow_id',
+          type: 'flow_picker',
+          label: '참조 플로우',
+          required: true,
+          description:
+            '서브플로우로 참조할 플로우를 선택합니다. 현재 편집 중인 플로우는 자기참조 방지를 위해 후보에서 제외됩니다. 선택하면 참조 플로우의 입출력 포트가 이 노드의 핸들로 표시됩니다.',
+        },
+        // SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W01/W03): 참조 실행 모드 토글.
+        //   shared(기본) = 실행 중인 단일 인스턴스에 라이브 연결(미확장, 여러 곳에서 공유).
+        //   instance     = 이 노드 전용 복제본(네임스페이스 인라인 확장).
+        //   미지정 → shared 로 해석(getFlowNodeMode). 핸들 파생은 mode 와 무관(REQ-SUBFLOW2-P01).
+        // remote:// 참조는 mode 와 직교하므로(항상 원격 라이브 브리지) 토글의 select 표시는
+        //   동일하되 백엔드가 원격 종류를 우선한다(REQ-SUBFLOW2-M04).
+        {
+          name: 'mode',
+          type: 'select',
+          label: '참조 방식',
+          options: ['shared', 'instance'],
+          default: 'shared',
+          description:
+            '공유(shared): 리스트의 실행 중 플로우에 연결합니다. 여러 곳에서 같은 인스턴스를 공유하며, 참조 플로우가 실행 중이어야 데이터가 흐릅니다(미실행 시 오프라인 대기). 참조 플로우를 편집한 변경은 그 플로우를 재시작(재배포)해야 반영됩니다.\n' +
+            '인스턴스(instance): 이 노드 전용 복제본을 생성합니다. 부모 배포 시 함께 실행되며 상태를 공유하지 않습니다(기존 인라인 확장 동작).',
+        },
+      ],
+    },
+    // 초기(미해결) 기본 포트는 없음 — flow_id 선택 후 참조 플로우 포트로 채워진다.
+    defaultPorts: [],
+  },
 };
+
+/** flow-node 참조 실행 모드. */
+export type FlowNodeMode = 'shared' | 'instance';
+
+/**
+ * flow-node config 의 `mode` 값을 결정적으로 정규화한다(SPEC-SUBFLOW-002 REQ-SUBFLOW2-M02/M03).
+ *
+ * 미지정·빈 값·알 수 없는 값은 기본 `shared` 로 해석한다(저장·렌더·인디케이터 전 경로 일관).
+ * 백엔드 배포 분기와 동일 규약(미지정→shared)이다.
+ *
+ * @param mode - flow-node config 의 `mode` 값(보통 string | undefined).
+ * @returns 정규화된 모드(`shared` | `instance`).
+ */
+export function getFlowNodeMode(mode: unknown): FlowNodeMode {
+  return mode === 'instance' ? 'instance' : 'shared';
+}
+
+/**
+ * 비정규화된 참조 플로우 포트 이름 배열을 PortDef 로 변환한다.
+ * 문자열 배열 안의 비문자열/빈 문자열/중복은 안전하게 걸러낸다.
+ */
+function flowNodePortDefs(
+  names: unknown,
+  direction: 'input' | 'output',
+): PortDef[] {
+  if (!Array.isArray(names)) return [];
+  const seen = new Set<string>();
+  const ports: PortDef[] = [];
+  for (const raw of names) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (name === '' || seen.has(name)) continue;
+    seen.add(name);
+    ports.push({ name, direction });
+  }
+  return ports;
+}
 
 /**
  * 노드 타입에 해당하는 설정 스키마를 반환한다.
@@ -2379,7 +2516,8 @@ export function getNodeSchema(nodeType: string, agentType?: string): NodeTypeSch
       defaultPorts: BRIDGE_DEFAULT_PORTS,
     };
   }
-  return NODE_SCHEMAS[nodeType];
+  // 저장된 플로우의 옛 `_` HVAC 타입도 canonical 키로 스키마를 찾도록 정규화.
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)];
 }
 
 /**
@@ -2388,7 +2526,8 @@ export function getNodeSchema(nodeType: string, agentType?: string): NodeTypeSch
  */
 export function getDefaultPorts(nodeType: string): PortDef[] {
   if (nodeType === 'bridge') return BRIDGE_DEFAULT_PORTS;
-  return NODE_SCHEMAS[nodeType]?.defaultPorts ?? [
+  // 저장된 플로우의 옛 `_` HVAC 타입도 canonical 키로 기본 포트를 찾도록 정규화.
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)]?.defaultPorts ?? [
     { name: 'in', direction: 'input' },
     { name: 'out', direction: 'output' },
   ];
@@ -2463,6 +2602,19 @@ export function computePortsForNode(nodeType: string, config?: Record<string, un
     return ports;
   }
 
+  if (nodeType === 'flow-node') {
+    // SPEC-SUBFLOW-001 REQ-SUBFLOW-C02: flow-node 핸들 = 참조 플로우의 플로우 레벨 포트.
+    //   입력 핸들 ← 참조 플로우 inputs, 출력 핸들 ← 참조 플로우 outputs.
+    // computePortsForNode 는 동기(sync) 이고 노드 config 만 가지므로, flow_id 선택 시점에
+    // 참조 플로우 정의를 조회해 input_ports / output_ports (string[]) 로 비정규화해 둔다.
+    // 이 값들은 에디터 표시 전용 캐시이며, 백엔드는 배포 시점에 참조 플로우의 실제
+    // 정의에서 포트를 재해석하므로 config 의 input_ports / output_ports 를 무시한다.
+    const inputPorts = flowNodePortDefs(config?.input_ports, 'input');
+    const outputPorts = flowNodePortDefs(config?.output_ports, 'output');
+    // 아직 미해결(flow_id 미선택 또는 포트 0개)이면 핸들 없이 둔다(REQ-SUBFLOW-C05 dangling 방지).
+    return [...inputPorts, ...outputPorts];
+  }
+
   return getDefaultPorts(nodeType);
 }
 
@@ -2477,14 +2629,14 @@ export function getNodeDescription(nodeType: string): string | undefined {
   if (nodeType === 'bridge') {
     return '외부 에이전트와 메시지를 송수신하는 브릿지 노드입니다.';
   }
-  return NODE_SCHEMAS[nodeType]?.description;
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)]?.description;
 }
 
 export function getConfigSchema(nodeType: string, agentType?: string): ConfigSchema | undefined {
   if (nodeType === 'bridge') {
     return { fields: getBridgeConfigFields(agentType) };
   }
-  return NODE_SCHEMAS[nodeType]?.configSchema;
+  return NODE_SCHEMAS[normalizeNodeType(nodeType)]?.configSchema;
 }
 
 /**
@@ -2518,7 +2670,7 @@ export function getNodeIODesc(nodeType: string, direction?: string): { inputDesc
         return {};
     }
   }
-  const schema = NODE_SCHEMAS[nodeType];
+  const schema = NODE_SCHEMAS[normalizeNodeType(nodeType)];
   return { inputDesc: schema?.inputDesc, outputDesc: schema?.outputDesc };
 }
 

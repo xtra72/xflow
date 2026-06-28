@@ -16,9 +16,11 @@ import { ChevronDown, Key, LogOut, Pencil, Plus, Trash2, Star } from 'lucide-rea
 import { useLocation, useNavigate } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
+import { useRemoteNodeDetail } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { cn } from '@/lib/utils/cn';
+import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { useSystemVersion } from '@/services/api/systemUpdate';
 import { useUIStore } from '@/stores/uiStore';
 import { ThemeSelector } from '@/components/theme/ThemeSelector';
@@ -27,6 +29,17 @@ import { UpdateAvailableBadge } from '@/components/system/UpdateAvailableBadge';
 import CreateDashboardDialog from '@/pages/dashboard/CreateDashboardDialog';
 import ChangePasswordDialog from '@/pages/auth/ChangePasswordDialog';
 import type { ConnectionState } from '@/services/ws/wsClient';
+
+/**
+ * 원격 노드 컨텍스트 경로에서 instanceId 를 추출한다.
+ *
+ * 원격 노드 하위 경로(`/admin/remote/nodes/:instanceId/...`, 원격 플로우 편집기
+ * 포함)에서만 instanceId 를 돌려준다. 그 외 경로는 null 을 반환한다.
+ */
+function extractRemoteInstanceId(pathname: string): string | null {
+  const match = pathname.match(/^\/admin\/remote\/nodes\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]!) : null;
+}
 
 /** 라우트 경로에 따른 페이지 제목 번역 키 매핑 */
 const PAGE_TITLE_KEYS: Record<string, string> = {
@@ -82,6 +95,22 @@ export default function Header() {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // 원격 노드 컨텍스트 제목 — 원격 노드 하위 경로(원격 플로우 편집기 포함)에서는
+  // 사이드바 브랜드("XFlow")와 중복되는 폴백 대신 대상 노드 이름을 보여준다.
+  // 호스트명은 노드 상세에서 해석하고, 미조회/지연 시 단축 instanceId 로 폴백한다
+  // (원시 UUID 전체는 제목에 노출하지 않음). 상세 조회는 렌더를 막지 않는다.
+  const remoteInstanceId = extractRemoteInstanceId(location.pathname);
+  const { data: remoteNodeDetail } = useRemoteNodeDetail(
+    remoteInstanceId ?? '',
+    remoteInstanceId !== null,
+  );
+  const remoteTitle = remoteInstanceId
+    ? `${t('remote.header.titlePrefix')} · ${resolveRemoteNodeLabel(
+        remoteNodeDetail?.hostname,
+        remoteInstanceId,
+      )}`
+    : null;
 
   // 대시보드 관리 상태
   const isDashboardRoute = location.pathname === '/';
@@ -154,15 +183,16 @@ export default function Header() {
   const handleDelete = () => {
     if (isOnlyPage) return;
     const confirmed = window.confirm(
-      `"${activePage?.name}" 대시보드를 삭제하시겠습니까?`,
+      t('header.dashboard.deleteConfirm').replace('{name}', activePage?.name ?? ''),
     );
     if (confirmed) {
       removeDashboardPage(activeDashboardId);
     }
   };
 
-  // 현재 라우트에서 페이지 제목 결정
-  const pageTitle = derivePageTitle(location.pathname, t);
+  // 현재 라우트에서 페이지 제목 결정. 원격 노드 컨텍스트에서는 노드 이름을
+  // 우선 사용한다(폴백 'XFlow' 가 사이드바 브랜드와 중복되지 않도록).
+  const pageTitle = remoteTitle ?? derivePageTitle(location.pathname, t);
   const connectionStyle = CONNECTION_STYLES[wsState];
 
   // 대시보드 라우트에서는 DashboardPage가 자체 헤더를 렌더링하므로 앱 헤더를 숨긴다.
@@ -183,14 +213,14 @@ export default function Header() {
               onBlur={handleConfirmRename}
               onKeyDown={handleRenameKeyDown}
               className="rounded-md border border-blue-500 bg-(--color-bg-surface) px-2 py-1 text-sm font-semibold text-(--color-text-primary) outline-none ring-1 ring-blue-500"
-              aria-label="대시보드 이름 편집"
+              aria-label={t('header.dashboard.renameAria')}
             />
           ) : (
             <select
               value={activeDashboardId}
               onChange={(e) => setActiveDashboard(e.target.value)}
               className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm font-semibold text-(--color-text-primary)"
-              aria-label="대시보드 선택"
+              aria-label={t('header.dashboard.selectAria')}
             >
               {dashboardPages.map((page) => (
                 <option key={page.id} value={page.id}>
@@ -206,8 +236,8 @@ export default function Header() {
             onClick={handleStartRename}
             disabled={renaming}
             className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-40"
-            aria-label="대시보드 이름 편집"
-            title="대시보드 이름 편집"
+            aria-label={t('header.dashboard.renameAria')}
+            title={t('header.dashboard.renameAria')}
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -217,8 +247,8 @@ export default function Header() {
             type="button"
             onClick={() => setCreateOpen(true)}
             className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
-            aria-label="대시보드 추가"
-            title="대시보드 추가"
+            aria-label={t('header.dashboard.add')}
+            title={t('header.dashboard.add')}
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -229,8 +259,8 @@ export default function Header() {
             onClick={handleDelete}
             disabled={isOnlyPage}
             className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="대시보드 삭제"
-            title="대시보드 삭제"
+            aria-label={t('header.dashboard.delete')}
+            title={t('header.dashboard.delete')}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -247,8 +277,8 @@ export default function Header() {
                 : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)',
               'disabled:cursor-not-allowed disabled:opacity-40',
             )}
-            aria-label="기본 대시보드로 설정"
-            title="기본 대시보드로 설정"
+            aria-label={t('header.dashboard.setDefault')}
+            title={t('header.dashboard.setDefault')}
           >
             <Star className={cn('h-3.5 w-3.5', isDefaultPage && 'fill-current')} />
           </button>

@@ -21,6 +21,23 @@ import { fireEvent, render, screen } from '@testing-library/react';
 
 import { StoreKeysEditor, type StoreKeyEntry } from './StoreKeysEditor';
 
+// i18n: 실제 ko 번역을 반환하는 mock — 컴포넌트가 useTranslation 을 쓰지만
+// 이 테스트는 I18nProvider 로 감싸지 않으므로, ko.json 을 점 표기 키로 해석해
+// 기존 한국어 단언을 그대로 통과시킨다.
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolve = (key: string): string => {
+    const v = key.split('.').reduce<unknown>(
+      (o, p) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[p] : undefined),
+      ko,
+    );
+    return typeof v === 'string' ? v : key;
+  };
+  return {
+    useTranslation: () => ({ t: resolve, locale: 'ko' as const, setLocale: () => {} }),
+  };
+});
+
 describe('StoreKeysEditor', () => {
   it('초기 value 가 없으면 "정적 키가 없습니다" 표시', () => {
     render(<StoreKeysEditor value={undefined} onChange={vi.fn()} />);

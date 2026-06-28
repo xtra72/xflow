@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 type ValueType = 'string' | 'number' | 'boolean' | 'array' | 'json';
 
@@ -83,6 +84,7 @@ const inputClass = cn(
 );
 
 export function TypedKeyValueMapEditor({ value, onChange, readOnly }: TypedKeyValueMapEditorProps) {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<TypedRow[]>(() => toRows(value));
 
   const commit = useCallback(
@@ -109,9 +111,9 @@ export function TypedKeyValueMapEditor({ value, onChange, readOnly }: TypedKeyVa
     <div className="space-y-1.5">
       {/* 헤더 */}
       <div className="flex items-center gap-1.5 text-[10px] font-medium text-(--color-text-muted)">
-        <span className="flex-1">키</span>
-        <span className="w-20">타입</span>
-        <span className="flex-[2]">값</span>
+        <span className="flex-1">{t('property.typedMap.key')}</span>
+        <span className="w-20">{t('property.typedMap.type')}</span>
+        <span className="flex-[2]">{t('property.typedMap.value')}</span>
         <span className="w-6" />
       </div>
 
@@ -134,11 +136,11 @@ export function TypedKeyValueMapEditor({ value, onChange, readOnly }: TypedKeyVa
             disabled={readOnly}
             className={cn(inputClass, 'w-20')}
           >
-            <option value="string">문자열</option>
-            <option value="number">숫자</option>
-            <option value="boolean">참/거짓</option>
-            <option value="array">배열</option>
-            <option value="json">JSON</option>
+            <option value="string">{t('property.typedMap.typeString')}</option>
+            <option value="number">{t('property.typedMap.typeNumber')}</option>
+            <option value="boolean">{t('property.typedMap.typeBoolean')}</option>
+            <option value="array">{t('property.typedMap.typeArray')}</option>
+            <option value="json">{t('property.typedMap.typeJson')}</option>
           </select>
 
           {/* 값 입력 — 타입별 UI */}
@@ -167,7 +169,7 @@ export function TypedKeyValueMapEditor({ value, onChange, readOnly }: TypedKeyVa
               value={row.rawValue}
               onChange={(e) => patchRow(row.id, { rawValue: e.target.value })}
               readOnly={readOnly}
-              placeholder={row.valueType === 'number' ? '0' : '값'}
+              placeholder={row.valueType === 'number' ? '0' : t('property.typedMap.valuePlaceholder')}
               className={cn(inputClass, 'flex-[2]')}
             />
           )}
@@ -191,7 +193,7 @@ export function TypedKeyValueMapEditor({ value, onChange, readOnly }: TypedKeyVa
           onClick={addRow}
           className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
         >
-          <Plus className="h-3 w-3" /> 추가
+          <Plus className="h-3 w-3" /> {t('property.typedMap.add')}
         </button>
       )}
     </div>

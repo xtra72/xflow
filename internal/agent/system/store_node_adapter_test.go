@@ -242,7 +242,8 @@ func TestNodeStoreAdapter_SetWithTTL(t *testing.T) {
 	val, found, err := adapter.Get(ctx, "ephemeral")
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Equal(t, 42, val)
+	// @spec v0.4.0: auto 모드 동적 키는 string 으로 변환되어 저장된다.
+	assert.Equal(t, "42", val)
 
 	// 만료 대기. 조회 시 lazy expiration 으로 사라진다.
 	time.Sleep(40 * time.Millisecond)
@@ -301,7 +302,8 @@ func TestNodeStoreAdapter_QueryHistory(t *testing.T) {
 	results, err := adapter.QueryHistory(ctx, "k", HistoryQuery{Mode: QueryModeLatest})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
-	assert.Equal(t, 2, results[0]["value"])
+	// @spec v0.4.0: auto 모드 동적 키는 string 으로 변환되어 저장된다.
+	assert.Equal(t, "2", results[0]["value"])
 
 	ts, ok := results[0]["timestamp"].(int64)
 	require.True(t, ok, "timestamp 는 epoch millis(int64) 로 직렬화되어야 한다")

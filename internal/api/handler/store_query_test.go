@@ -65,9 +65,11 @@ func TestStoreQueryHandler_RegisterRoutes(t *testing.T) {
 
 	// @spec SPEC-STORE-003:
 	//   POST   /query, GET /keys, GET /tags,
-	//   DELETE /keys/{key}, DELETE /keys (신규)
-	// 총 5개.
-	assert.Equal(t, 5, after-before)
+	//   DELETE /keys/{key}, DELETE /keys
+	// @spec SPEC-STORE-003 v0.4.0:
+	//   PUT    /keys/{key}/meta (신규)
+	// 총 6개.
+	assert.Equal(t, 6, after-before)
 }
 
 func TestStoreQueryHandler_각모드_성공(t *testing.T) {
@@ -157,6 +159,38 @@ func TestStoreQueryHandler_키없음_400(t *testing.T) {
 	router.Handler().ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestStoreQueryHandler_키없음_빈결과_200 은 QueryHistory 가 system.ErrKeyNotFound 를
+// 반환할 때(키 미존재) 핸들러가 500(INTERNAL_ERROR)이 아니라 빈 결과 200 으로
+// 응답하는지 검증한다. device_id 변경으로 옛 키를 조회하거나 첫 데이터 전 차트가
+// 정상 렌더되도록 하기 위함이다.
+func TestStoreQueryHandler_키없음_빈결과_200(t *testing.T) {
+	agentFake := &fakeStoreAgent{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		queryFn: func(_ context.Context, _, _ string, _ system.HistoryQuery) ([]system.HistoryEntry, error) {
+			return nil, system.ErrKeyNotFound
+		},
+	}
+	router := setupStoreQueryRouter(t, agentFake)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/store/store-a/query",
+		strings.NewReader(`{"key":"gone-after-migration","mode":"latest"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code, "키 미존재는 500 이 아니라 빈 결과 200 이어야 한다")
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Count int `json:"count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.True(t, resp.Success)
+	assert.Equal(t, 0, resp.Data.Count)
 }
 
 func TestStoreQueryHandler_에이전트없음_404(t *testing.T) {

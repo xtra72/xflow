@@ -5,8 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1242,6 +1246,263 @@ func TestREPL_ModbusSubcommandFlagReset(t *testing.T) {
 
 	secondOutput := buf.String()
 	assert.NotEmpty(t, secondOutput, "두 번째 실행의 출력이 있어야 합니다")
+}
+
+// =============================================================================
+// TestREPL_GlobalFlagPersistence - REPL 세션 전역 플래그 보존 재현 테스트
+// 회귀: resetFlags 가 루트 퍼시스턴트 플래그(--config 등)까지 기본값으로 되돌려
+// 두 번째 명령부터 런치 시점의 연결 컨텍스트(서버/설정/토큰)가 사라지는 버그.
+// =============================================================================
+
+// authFlowTestServer 는 auth login 및 flow list 핸들러를 갖춘 테스트 서버를 만든다.
+// /flows 는 Bearer TOK123 헤더가 있을 때만 200 을 반환한다.
+// tokenSeen 은 올바른 토큰으로 /flows 가 호출되었는지를 기록한다.
+func authFlowTestServer(t *testing.T) (*httptest.Server, *bool) {
+	t.Helper()
+	var mu sync.Mutex
+	tokenSeen := false
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"success":true,"data":{"user":{"username":"x","role":"admin"},"tokens":{"access_token":"TOK123","token_type":"Bearer","expires_in":3600}}}`)
+	})
+	mux.HandleFunc("/api/v1/flows", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") == "Bearer TOK123" {
+			mu.Lock()
+			tokenSeen = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"success":true,"data":[]}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"success":false,"error":{"code":"unauthorized","message":"no token"}}`)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &tokenSeen
+}
+
+// writeTempConfig 는 server.url 과 빈 auth.token 을 가진 임시 config 파일을 생성하고
+// 그 경로를 반환한다.
+func writeTempConfig(t *testing.T, serverURL string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := "server:\n  url: " + serverURL + "\nauth:\n  token: \"\"\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	return path
+}
+
+// TestREPL_AuthLoginThenFlowListPersistsContext 는 핵심 회귀 시나리오를 재현한다.
+// 런치 시 --config 로 지정한 서버/설정이 auth login 이후의 flow list 에서도
+// 그대로 사용되어 인증된 요청이 되는지 검증한다.
+//
+// 수정 전: resetFlags 가 --config 를 기본값으로 되돌려 두 번째 명령(flow list)이
+//
+//	기본 config(~/.xflow)를 읽고 토큰 없이 요청 → 401/오류.
+//
+// 수정 후: --config 가 세션 내내 보존되어 login 이 저장한 토큰을 flow list 가 사용 → 200.
+func TestREPL_AuthLoginThenFlowListPersistsContext(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
+	srv, tokenSeen := authFlowTestServer(t)
+	configPath := writeTempConfig(t, srv.URL)
+
+	rootCmd := NewRootCmd()
+
+	// 런치 시뮬레이션: xflow --config <path> interactive 와 동일하게
+	// 루트 퍼시스턴트 --config 플래그를 설정한다.
+	require.NoError(t, rootCmd.PersistentFlags().Set("config", configPath))
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+	// 프롬프트 빌드 시 네트워크 핑을 막는다.
+	session.pingFn = func() error { return nil }
+
+	// 1) auth login: 토큰을 임시 config 에 저장하고 세션 클라이언트에 반영한다.
+	err := session.executeCommand("auth login -u x -p y")
+	require.NoError(t, err)
+	loginOut := buf.String()
+	require.Contains(t, loginOut, "로그인 성공", "auth login 이 성공해야 합니다. 출력: %s", loginOut)
+
+	// 2) flow list: 같은 세션 컨텍스트(임시 config + 저장된 토큰)로 인증되어야 한다.
+	buf.Reset()
+	err = session.executeCommand("flow list")
+	require.NoError(t, err)
+	listOut := buf.String()
+
+	assert.NotContains(t, listOut, "오류:",
+		"flow list 가 인증 컨텍스트를 유지하여 오류 없이 실행되어야 합니다. 출력: %s", listOut)
+	assert.True(t, *tokenSeen,
+		"flow list 요청이 런치 config 에 저장된 Bearer TOK123 토큰을 전송해야 합니다")
+
+	// 3) 런치 시점 --config 값이 명령 실행 후에도 보존되어야 한다.
+	gotConfig, gerr := rootCmd.PersistentFlags().GetString("config")
+	require.NoError(t, gerr)
+	assert.Equal(t, configPath, gotConfig,
+		"명령 실행 후에도 루트 --config 퍼시스턴트 플래그가 런치 값으로 유지되어야 합니다")
+}
+
+// TestREPL_AuthLoginMemoryOnlyAuthenticatesAndDoesNotPersist 는 신규 정책을 재현한다.
+// 동일 프로세스/세션에서 --save 없는 auth login 후 flow list 가
+// 세션 메모리 토큰(sessionToken)으로 인증되며, config 파일은 수정되지 않아야 한다.
+func TestREPL_AuthLoginMemoryOnlyAuthenticatesAndDoesNotPersist(t *testing.T) {
+	sessionToken = ""
+	defer func() { sessionToken = "" }()
+
+	srv, tokenSeen := authFlowTestServer(t)
+	configPath := writeTempConfig(t, srv.URL)
+
+	rootCmd := NewRootCmd()
+	require.NoError(t, rootCmd.PersistentFlags().Set("config", configPath))
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+	session.pingFn = func() error { return nil }
+
+	// 1) auth login (--save 없음): 토큰은 세션 메모리에만 보관된다.
+	require.NoError(t, session.executeCommand("auth login -u x -p y"))
+	require.Contains(t, buf.String(), "로그인 성공")
+	assert.Equal(t, "TOK123", sessionToken, "로그인 후 sessionToken 에 토큰이 보관되어야 합니다")
+
+	// 2) flow list: 같은 세션 메모리 토큰으로 인증되어야 한다.
+	buf.Reset()
+	require.NoError(t, session.executeCommand("flow list"))
+	listOut := buf.String()
+	assert.NotContains(t, listOut, "오류:",
+		"flow list 가 세션 메모리 토큰으로 인증되어야 합니다. 출력: %s", listOut)
+	assert.True(t, *tokenSeen,
+		"flow list 요청이 세션 메모리 토큰(Bearer TOK123)을 전송해야 합니다")
+
+	// 3) config 파일은 수정되지 않아야 한다 (디스크 미저장 정책).
+	assert.Equal(t, "", readConfigToken(t, configPath),
+		"--save 없는 로그인은 config 파일을 수정하면 안 됩니다")
+}
+
+// TestREPL_GlobalInsecureFlagPersists 는 -k(--insecure) 가 세션 전체에 보존되는지 검증한다.
+// 수정 전: resetFlags 가 insecure 를 false 로 되돌려 다음 명령부터 TLS 검증이 다시 켜진다.
+func TestREPL_GlobalInsecureFlagPersists(t *testing.T) {
+	rootCmd := NewRootCmd()
+	require.NoError(t, rootCmd.PersistentFlags().Set("insecure", "true"))
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+	session.pingFn = func() error { return nil }
+
+	// 임의의 명령 실행 후 insecure 플래그가 유지되는지 확인한다.
+	_ = session.executeCommand("version")
+
+	insecure, err := rootCmd.PersistentFlags().GetBool("insecure")
+	require.NoError(t, err)
+	assert.True(t, insecure,
+		"명령 실행 후에도 --insecure 퍼시스턴트 플래그가 보존되어야 합니다")
+
+	changed := rootCmd.PersistentFlags().Lookup("insecure").Changed
+	assert.True(t, changed,
+		"--insecure 의 Changed 상태도 보존되어 PersistentPreRunE 가 런치 값을 인식해야 합니다")
+}
+
+// TestREPL_InsecureHonoredAcrossCommandsTLS 는 자체 서명 TLS 서버에 대해
+// 런치 -k 가 첫 명령과 후속 명령 모두에서 PersistentPreRunE 를 통해 클라이언트에
+// 반영되는지(= 재생성된 클라이언트가 TLS 검증을 건너뛰는지)를 종단 간 검증한다.
+// 이는 단순 플래그 상태 보존을 넘어 플래그 상속 경로까지 확인한다.
+func TestREPL_InsecureHonoredAcrossCommandsTLS(t *testing.T) {
+	var mu sync.Mutex
+	flowsHits := 0
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/flows", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		flowsHits++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"success":true,"data":[]}`)
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	// server.url 만 가진 임시 config (HTTPS 자체 서명 서버)
+	configPath := writeTempConfig(t, srv.URL)
+
+	rootCmd := NewRootCmd()
+	// 런치 시뮬레이션: xflow --config <path> -k interactive
+	require.NoError(t, rootCmd.PersistentFlags().Set("config", configPath))
+	require.NoError(t, rootCmd.PersistentFlags().Set("insecure", "true"))
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+	session.pingFn = func() error { return nil }
+
+	// 첫 번째 명령: -k 가 적용되어 자체 서명 인증서를 수용해야 한다.
+	_ = session.executeCommand("flow list")
+	first := buf.String()
+	assert.NotContains(t, first, "오류:",
+		"첫 REPL 명령에서 -k 가 적용되어 TLS 오류 없이 실행되어야 합니다. 출력: %s", first)
+
+	// 두 번째 명령: 리셋 이후에도 -k 가 보존되어 동일하게 동작해야 한다.
+	buf.Reset()
+	_ = session.executeCommand("flow list")
+	second := buf.String()
+	assert.NotContains(t, second, "오류:",
+		"두 번째 REPL 명령에서도 -k 가 보존되어 TLS 오류가 없어야 합니다. 출력: %s", second)
+
+	mu.Lock()
+	hits := flowsHits
+	mu.Unlock()
+	assert.Equal(t, 2, hits,
+		"두 번의 flow list 가 모두 자체 서명 TLS 서버에 도달해야 합니다")
+}
+
+// TestREPL_SubcommandLocalFlagDoesNotLeak 는 서브커맨드 로컬 플래그가
+// 다음 명령으로 누수되지 않는(= 기존 리셋 동작이 보존되는) 것을 검증한다.
+func TestREPL_SubcommandLocalFlagDoesNotLeak(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "xflow"}
+	rootCmd.PersistentFlags().String("config", "", "설정 파일")
+	rootCmd.PersistentFlags().String("server", "", "서버 URL")
+	rootCmd.PersistentFlags().String("token", "", "인증 토큰")
+	rootCmd.PersistentFlags().String("format", "table", "출력 형식")
+	rootCmd.PersistentFlags().BoolP("insecure", "k", false, "TLS 검증 건너뛰기")
+
+	var filterVal string
+	listCmd := &cobra.Command{
+		Use: "list",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "filter=%q\n", filterVal)
+			return nil
+		},
+	}
+	listCmd.Flags().StringVar(&filterVal, "filter", "", "이름 필터")
+	flowCmd := &cobra.Command{Use: "flow"}
+	flowCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(flowCmd)
+
+	var client *Client
+	var buf bytes.Buffer
+	session := NewInteractiveSession(rootCmd, &client, &buf)
+	session.pingFn = func() error { return nil }
+
+	// 1) 로컬 플래그와 함께 실행
+	_ = session.executeCommand("flow list --filter prod")
+	first := buf.String()
+	assert.Contains(t, first, `filter="prod"`, "첫 실행에서 --filter 가 파싱되어야 합니다")
+
+	// 2) 로컬 플래그 없이 실행 - 이전 값이 누수되면 안 된다.
+	buf.Reset()
+	_ = session.executeCommand("flow list")
+	second := buf.String()
+	assert.Contains(t, second, `filter=""`,
+		"서브커맨드 로컬 플래그(--filter)는 다음 명령으로 누수되면 안 됩니다. 출력: %s", second)
 }
 
 // TestREPL_RequiredFlagMissing 은 필수 플래그 누락 시 에러 메시지를 검증한다.

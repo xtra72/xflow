@@ -145,7 +145,7 @@ func TestStoreWriteNode_Configure(t *testing.T) {
 
 	err = n.Configure(map[string]any{
 		"key_template": "{location}:{sensor}",
-		"value_key":    "temperature",
+		"value_key":    "$.payload.temperature",
 		"namespace":    "sensors",
 		"ttl":          "5m",
 	})
@@ -153,7 +153,7 @@ func TestStoreWriteNode_Configure(t *testing.T) {
 
 	sw := n.(*StoreWriteNode)
 	assert.Equal(t, "{location}:{sensor}", sw.keyTemplate)
-	assert.Equal(t, "temperature", sw.valueKey)
+	assert.Equal(t, "$.payload.temperature", sw.valueKey)
 	assert.Equal(t, "sensors", sw.namespace)
 	assert.Equal(t, 5*time.Minute, sw.ttl)
 }
@@ -167,7 +167,7 @@ func TestStoreWriteNode_Process_BasicSet(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "my_key",
-		"value_key":    "data",
+		"value_key":    "$.payload.data",
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
@@ -197,7 +197,7 @@ func TestStoreWriteNode_Process_KeyTemplate(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "{location}:{point}:{type}",
-		"value_key":    "value",
+		"value_key":    "$.payload.value",
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
@@ -230,7 +230,7 @@ func TestStoreWriteNode_Process_WithTTL(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "ttl_key",
-		"value_key":    "data",
+		"value_key":    "$.payload.data",
 		"ttl":          "1h",
 	})
 	require.NoError(t, err)
@@ -263,7 +263,7 @@ func TestStoreWriteNode_Process_ValueKey(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "specific_key",
-		"value_key":    "temperature",
+		"value_key":    "$.payload.temperature",
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
@@ -412,7 +412,7 @@ func TestStoreWriteNode_Process_PassThrough(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "pt_key",
-		"value_key":    "data",
+		"value_key":    "$.payload.data",
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))
@@ -464,7 +464,7 @@ func TestStoreWriteNode_Process_MissingKeyField(t *testing.T) {
 	err = n.Configure(map[string]any{
 		"_store":       store,
 		"key_template": "{location}:{missing_field}",
-		"value_key":    "data",
+		"value_key":    "$.payload.data",
 	})
 	require.NoError(t, err)
 	require.NoError(t, n.Init(context.Background()))

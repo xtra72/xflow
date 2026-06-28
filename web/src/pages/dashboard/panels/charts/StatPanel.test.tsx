@@ -19,6 +19,11 @@ vi.mock('./useChartChannel', () => ({
   useChartChannel: () => mockResult.current,
 }));
 
+// i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
+
 // 동적 import 는 vi.mock 을 먼저 평가한 뒤 이루어짐
 import StatPanel from './StatPanel';
 

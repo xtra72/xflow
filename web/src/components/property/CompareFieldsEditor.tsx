@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 interface CompareFieldRow {
   key: string;
@@ -90,6 +91,7 @@ const cellInput = cn(
 const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 export function CompareFieldsEditor({ value, onChange, readOnly }: CompareFieldsEditorProps) {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<CompareFieldRow[]>(() => toRows(value));
   const internalUpdate = useRef(false);
 
@@ -140,8 +142,8 @@ export function CompareFieldsEditor({ value, onChange, readOnly }: CompareFields
         <>
           {/* 헤더 */}
           <div className="flex items-center gap-1 px-1 text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
-            <span className="flex-1">필드명</span>
-            <span className="w-24">허용오차</span>
+            <span className="flex-1">{t('property.compareFields.fieldName')}</span>
+            <span className="w-24">{t('property.compareFields.tolerance')}</span>
             {!readOnly && <span className="w-6" />}
           </div>
           <div className="space-y-1">
@@ -153,7 +155,7 @@ export function CompareFieldsEditor({ value, onChange, readOnly }: CompareFields
                   readOnly={readOnly}
                   onChange={(e) => handleNameChange(row.key, e.target.value)}
                   className={cn(cellInput, 'flex-1', readOnly && readOnlyInput)}
-                  placeholder="예: current_temperature"
+                  placeholder={t('property.compareFields.namePlaceholder')}
                 />
                 <input
                   type="number"
@@ -163,14 +165,14 @@ export function CompareFieldsEditor({ value, onChange, readOnly }: CompareFields
                   readOnly={readOnly}
                   onChange={(e) => handleToleranceChange(row.key, e.target.value)}
                   className={cn(cellInput, 'w-24', readOnly && readOnlyInput)}
-                  placeholder="0 (일치)"
+                  placeholder={t('property.compareFields.tolerancePlaceholder')}
                 />
                 {!readOnly && (
                   <button
                     type="button"
                     onClick={() => handleRemove(row.key)}
                     className="shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                    aria-label="삭제"
+                    aria-label={t('property.common.deleteAria')}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -183,7 +185,7 @@ export function CompareFieldsEditor({ value, onChange, readOnly }: CompareFields
 
       {rows.length === 0 && (
         <p className="py-2 text-center text-xs text-(--color-text-muted)">
-          비교 필드 없음 — 전체 페이로드 비교
+          {t('property.compareFields.empty')}
         </p>
       )}
 
@@ -194,7 +196,7 @@ export function CompareFieldsEditor({ value, onChange, readOnly }: CompareFields
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          필드 추가
+          {t('property.compareFields.addField')}
         </button>
       )}
     </div>

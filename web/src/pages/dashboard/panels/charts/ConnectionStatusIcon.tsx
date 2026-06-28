@@ -4,6 +4,7 @@
 import { clsx } from 'clsx';
 import { AlertTriangle, CircleDashed, PlugZap, Wifi, WifiOff } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import type { ChartConnectionStatus } from './chartChannelTypes';
 
 interface ConnectionStatusIconProps {
@@ -12,6 +13,7 @@ interface ConnectionStatusIconProps {
 }
 
 export function ConnectionStatusIcon({ status, className }: ConnectionStatusIconProps) {
+  const { t } = useTranslation();
   const base = clsx('h-4 w-4', className);
   switch (status) {
     case 'connected':
@@ -20,7 +22,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
           data-testid="chart-status-icon"
           data-status="connected"
           className={clsx(base, 'text-emerald-500')}
-          aria-label="연결됨"
+          aria-label={t('dashboard.panel.connected')}
         />
       );
     case 'connecting':
@@ -29,7 +31,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
           data-testid="chart-status-icon"
           data-status="connecting"
           className={clsx(base, 'animate-spin text-amber-500')}
-          aria-label="연결 중"
+          aria-label={t('dashboard.chart.statusConnecting')}
         />
       );
     case 'disconnected':
@@ -38,7 +40,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
           data-testid="chart-status-icon"
           data-status="disconnected"
           className={clsx(base, 'text-gray-400')}
-          aria-label="연결 끊김"
+          aria-label={t('dashboard.chart.statusDisconnected')}
         />
       );
     case 'closed':
@@ -47,7 +49,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
           data-testid="chart-status-icon"
           data-status="closed"
           className={clsx(base, 'text-gray-500')}
-          aria-label="채널 종료"
+          aria-label={t('dashboard.chart.statusClosed')}
         />
       );
     case 'error':
@@ -56,7 +58,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
           data-testid="chart-status-icon"
           data-status="error"
           className={clsx(base, 'text-rose-500')}
-          aria-label="오류"
+          aria-label={t('dashboard.error')}
         />
       );
     case 'idle':
@@ -66,7 +68,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
           data-testid="chart-status-icon"
           data-status="idle"
           className={clsx(base, 'text-gray-300')}
-          aria-label="대기"
+          aria-label={t('dashboard.chart.statusIdle')}
         />
       );
   }

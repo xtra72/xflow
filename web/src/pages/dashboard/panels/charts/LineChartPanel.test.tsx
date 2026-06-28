@@ -42,6 +42,11 @@ vi.mock('./useChartChannels', () => ({
   useChartChannels: () => multiMockResult.current,
 }));
 
+// i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
+
 vi.mock('./csvExport', async () => {
   const actual = await vi.importActual<typeof import('./csvExport')>('./csvExport');
   return { ...actual, downloadCsv: csvMocks.downloadCsv };

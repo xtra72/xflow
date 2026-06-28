@@ -30,17 +30,38 @@ export interface SeriesKeysPage {
 }
 
 /** 매트릭스 쿼리 파라미터. 시간은 UTC epoch milliseconds(int64). */
+/**
+ * 시리즈별 조회 필터(저장소 기준 분류 — key + metric_type + tags).
+ * `keys[i]` 와 같은 인덱스로 짝지어, 해당 key 의 조회를 특정 metric/tags 시리즈로 좁힌다.
+ * 미지정(undefined)이면 그 key 의 모든 시리즈를 조회한다(기존 동작).
+ */
+export interface SeriesSelectorFilter {
+  metricType?: string;
+  tags?: Record<string, string>;
+}
+
 export interface SeriesMatrixQuery {
-  /** 요청 순서대로 컬럼을 구성할 시리즈/스토어 키 배열. */
+  /**
+   * 요청 순서대로 컬럼을 구성할 시리즈/스토어 키 배열.
+   * 시리즈별 선택 시 같은 key 가 metric/tags 가 다른 채로 중복될 수 있으며,
+   * 그 경우 `seriesFilters` 로 각 시리즈를 구분한다.
+   */
   keys: string[];
+  /** `keys` 와 같은 인덱스의 시리즈 필터(선택). 시리즈별 분류/선택에 사용. */
+  seriesFilters?: Array<SeriesSelectorFilter | undefined>;
   /** 시작 시각 — UTC epoch ms. */
   startMs: number;
   /** 종료 시각 — UTC epoch ms (exclusive 로 가정). */
   endMs: number;
   /** 버킷 크기 — milliseconds. Go duration 파서 결과를 전달받는다. */
   intervalMs: number;
-  /** 집계 함수 — UI 표기(`average`) 그대로 전달한다. */
-  aggregation: 'min' | 'max' | 'average';
+  /** 집계 함수 — UI 표기(`average`) 그대로 전달한다. first/last 는 버킷 내 첫/마지막 값. */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /**
+   * 빈 버킷 채우기 전략(인터벌 구간에 값이 없을 때). 생략/'' 이면 빈 버킷 생략.
+   * TSDB 소스는 백엔드에서 계산한다. Store 소스는 현재 미지원(무시).
+   */
+  fill?: '' | 'null' | 'zero' | 'previous' | 'avg';
 }
 
 /**
@@ -149,6 +170,10 @@ export function aggregateValues(
       for (const v of values) sum += v;
       return sum / values.length;
     }
+    case 'first':
+      return values[0]!;
+    case 'last':
+      return values[values.length - 1]!;
     default: {
       // 타입 가드: exhaustive switch 를 컴파일 시 강제.
       const _exhaustive: never = aggregation;

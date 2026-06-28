@@ -24,6 +24,23 @@ import { StringListEditor } from './StringListEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
 
+// i18n: 실제 ko 번역을 반환하는 mock — 일부 컴포넌트가 useTranslation 을 쓰지만
+// 이 테스트는 I18nProvider 로 감싸지 않으므로, ko.json 을 점 표기 키로 해석해
+// 기존 한국어 단언을 그대로 통과시킨다.
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolve = (key: string): string => {
+    const v = key.split('.').reduce<unknown>(
+      (o, p) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[p] : undefined),
+      ko,
+    );
+    return typeof v === 'string' ? v : key;
+  };
+  return {
+    useTranslation: () => ({ t: resolve, locale: 'ko' as const, setLocale: () => {} }),
+  };
+});
+
 // 텍스트성 input 이 readOnly attr 를 사용하는지 확인하는 헬퍼.
 // readOnly === true 이고 disabled === false 여야 한다.
 function expectTextInputsReadOnly(container: HTMLElement, types: string[]) {

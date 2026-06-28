@@ -392,11 +392,11 @@ func (n *LGHvacr01StatusNode) receiveLoop() {
 		timer.Reset(n.inactivityTimeout)
 	}
 
-	// 첫 진입: 이전에 누적된 frame 이 있을 수 있으므로 drain.
-	n.mu.RLock()
-	cfg := n.lgHvacr01Cfg
-	n.mu.RUnlock()
-	n.drainNewFrames(cfg)
+	// 첫 진입(Init/Reinit): ring 의 과거 프레임을 재방출하지 않고 현재 최신 seq 로만
+	// 시킹한다. 이후 새 프레임만 stream 된다. (노드 (재)시작마다 ring 버퍼가 통째로
+	// 재방출되어 같은 report 가 수십 개 동시 발행되던 결함 방지.) 현재 상태는 다음 주기
+	// report 또는 변경 시 change 로 채워진다.
+	n.seekToLatestSeq()
 
 	for {
 		select {
@@ -452,6 +452,36 @@ func (n *LGHvacr01StatusNode) requestStateRefresh(cfg LGHvacr01NodeConfig) {
 //
 // v0.18.26: cfg.UnitID 가 비어있지 않으면 payload.unit_id 가 매칭되는 프레임만
 // emit (hex byte 비교). 빈 값이면 모든 프레임 emit (이전 동작).
+// seekToLatestSeq 는 ring 의 프레임을 재방출하지 않고 현재 최신 seq 로 lastSeq 만
+// 전진시킨다(only-advance). 노드 (재)시작 시 누적된 과거 프레임을 다시 흘려보내지
+// 않기 위함이다. agent 의 get_recent 는 last_seq 를 반환하므로 그 값으로 전진한다.
+func (n *LGHvacr01StatusNode) seekToLatestSeq() {
+	cmdBytes, err := json.Marshal(map[string]any{
+		"command":  "get_recent",
+		"count":    1,
+		"node_id":  n.ID(),
+		"last_seq": n.lastSeq,
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	resp, err := n.lgHvacr01NodeBase.callAgentProcess(ctx, cmdBytes)
+	cancel()
+	if err != nil {
+		return
+	}
+	var result struct {
+		LastSeq int64 `json:"last_seq"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return
+	}
+	if result.LastSeq > n.lastSeq {
+		n.lastSeq = result.LastSeq
+	}
+}
+
 func (n *LGHvacr01StatusNode) drainNewFrames(cfg LGHvacr01NodeConfig) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
@@ -510,6 +540,7 @@ func (n *LGHvacr01StatusNode) drainNewFrames(cfg LGHvacr01NodeConfig) {
 		if cfg.EmitMetadata.NodeID {
 			msg.Metadata().Set("node_id", n.ID())
 		}
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -582,6 +613,7 @@ func (n *LGHvacr01StatusNode) Process(ctx context.Context, msg message.Message) 
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	// v0.10.0: lgcnp_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
@@ -898,6 +930,7 @@ func (n *LGHvacr01Node) drainNewFrames(cfg LGHvacr01NodeConfig) {
 		if cfg.EmitMetadata.NodeID {
 			msg.Metadata().Set("node_id", n.ID())
 		}
+		emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 		select {
 		case n.sourceCh <- msg:
@@ -968,6 +1001,7 @@ func (n *LGHvacr01Node) Process(ctx context.Context, msg message.Message) ([]mes
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil

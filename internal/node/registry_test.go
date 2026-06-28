@@ -34,7 +34,7 @@ func dummyFactory(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 func TestNewRegistry_기본생성_빌트인포함(t *testing.T) {
 	r := NewRegistry()
 
-	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "samsung_hvacr01_status", "samsung_hvacr01_control", "samsung_hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lg_hvacr02_status", "lg_hvacr02_control", "lg_hvacr02", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
+	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "samsung-hvacr01-status", "samsung-hvacr01-control", "samsung-hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lg-hvacr02-status", "lg-hvacr02-control", "lg-hvacr02", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
 	for _, typ := range builtins {
 		assert.True(t, r.Has(typ), "빌트인 타입 %q가 등록되어 있어야 한다", typ)
 	}
@@ -157,9 +157,9 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"output":                  {"io", "메시지를 포맷팅하여 출력", "builtin"},
 		"deadletter":              {"error", "처리 실패 메시지를 보관", "builtin"},
 		"modbus":                  {"processing", "MODBUS 레지스터 읽기/쓰기", "builtin"},
-		"samsung_hvacr01_status":  {"io", "Samsung HVACR-01 (NASA) 디바이스 상태 조회", "builtin"},
-		"samsung_hvacr01_control": {"io", "Samsung HVACR-01 (NASA) 디바이스 제어", "builtin"},
-		"samsung_hvacr01":         {"io", "Samsung HVACR-01 (NASA) 상태 조회 + 제어 통합", "builtin"},
+		"samsung-hvacr01-status":  {"io", "Samsung HVACR-01 (NASA) 디바이스 상태 조회", "builtin"},
+		"samsung-hvacr01-control": {"io", "Samsung HVACR-01 (NASA) 디바이스 제어", "builtin"},
+		"samsung-hvacr01":         {"io", "Samsung HVACR-01 (NASA) 상태 조회 + 제어 통합", "builtin"},
 		"mqtt-subscriber":         {"io", "MQTT 토픽 구독 및 메시지 수신", "builtin"},
 		"mqtt-publisher":          {"io", "MQTT 토픽으로 메시지 발행", "builtin"},
 		"modbus-poller":           {"io", "MODBUS 레지스터를 주기적으로 폴링 읽기", "builtin"},
@@ -167,9 +167,9 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"lgap-status":             {"io", "LG LGAP 디바이스 상태 조회", "builtin"},
 		"lgap-control":            {"io", "LG LGAP 디바이스 제어", "builtin"},
 		"lgap":                    {"io", "LG LGAP 상태 조회 + 제어 통합", "builtin"},
-		"lg_hvacr02_status":       {"io", "LG HVACR-02 (LG ICP-02) 디바이스 상태 조회", "builtin"},
-		"lg_hvacr02_control":      {"io", "LG HVACR-02 (LG ICP-02) 디바이스 제어", "builtin"},
-		"lg_hvacr02":              {"io", "LG HVACR-02 (LG ICP-02) 상태 조회 + 제어 통합", "builtin"},
+		"lg-hvacr02-status":       {"io", "LG HVACR-02 (LG ICP-02) 디바이스 상태 조회", "builtin"},
+		"lg-hvacr02-control":      {"io", "LG HVACR-02 (LG ICP-02) 디바이스 제어", "builtin"},
+		"lg-hvacr02":              {"io", "LG HVACR-02 (LG ICP-02) 상태 조회 + 제어 통합", "builtin"},
 		"tsdb-write":              {"storage", "메시지를 시계열 DB에 기록", "builtin"},
 		"tsdb-query":              {"storage", "시계열 DB에서 데이터를 조회", "builtin"},
 		"store-write":             {"storage", "메시지 데이터를 키-값 저장소에 기록", "builtin"},
@@ -199,12 +199,95 @@ func TestRegistry_TypeMeta_미등록(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// --- HVAC 노드 타입 canonical(-) 이름 + deprecated(_) 별칭 테스트 ---
+// SPEC: HVAC 노드 타입 식별자를 `_` 에서 canonical `-` 로 변경하되,
+// 기존 저장/실행 중인 플로우가 깨지지 않도록 `_` 이름을 DEPRECATED 별칭으로 유지한다.
+
+// TestRegistry_HVACCanonical_새이름등록 은 12개 HVAC 노드 타입의 canonical(-) 이름이
+// 모두 등록되어 있는지 확인한다.
+func TestRegistry_HVACCanonical_새이름등록(t *testing.T) {
+	r := NewRegistry()
+
+	canonical := []string{
+		"samsung-hvacr01", "samsung-hvacr01-status", "samsung-hvacr01-control",
+		"lg-hvacr01", "lg-hvacr01-status", "lg-hvacr01-control",
+		"lg-hvacr02", "lg-hvacr02-status", "lg-hvacr02-control",
+		"century-hvacr01", "century-hvacr01-status", "century-hvacr01-control",
+	}
+	for _, typ := range canonical {
+		assert.True(t, r.Has(typ), "canonical 타입 %q가 등록되어 있어야 한다", typ)
+		meta, ok := r.TypeMeta(typ)
+		assert.True(t, ok, "canonical 타입 %q의 메타데이터가 있어야 한다", typ)
+		assert.Equal(t, typ, meta.Type)
+		assert.Equal(t, "io", meta.Category)
+		assert.Equal(t, "builtin", meta.Source)
+	}
+}
+
+// TestRegistry_HVACDeprecated_별칭등록 은 기존 `_` 이름이 DEPRECATED 별칭으로
+// 여전히 등록되어 있어 하위 호환성을 보장하는지 확인한다.
+func TestRegistry_HVACDeprecated_별칭등록(t *testing.T) {
+	r := NewRegistry()
+
+	deprecated := []string{
+		"samsung_hvacr01", "samsung_hvacr01_status", "samsung_hvacr01_control",
+		"lg_hvacr01", "lg_hvacr01_status", "lg_hvacr01_control",
+		"lg_hvacr02", "lg_hvacr02_status", "lg_hvacr02_control",
+		"century_hvacr01", "century_hvacr01_status", "century_hvacr01_control",
+	}
+	for _, typ := range deprecated {
+		assert.True(t, r.Has(typ), "deprecated 별칭 %q가 등록되어 있어야 한다", typ)
+		meta, ok := r.TypeMeta(typ)
+		assert.True(t, ok, "deprecated 별칭 %q의 메타데이터가 있어야 한다", typ)
+		assert.Equal(t, typ, meta.Type)
+		assert.Equal(t, "builtin-deprecated", meta.Source,
+			"deprecated 별칭 %q는 canonical 과 구분되는 Source 를 가져야 한다", typ)
+	}
+}
+
+// TestRegistry_HVACAlias_상태제어쌍_양쪽해석 은 대표적인 status/control 쌍에 대해
+// canonical(-) 과 deprecated(_) 이름이 모두 노드로 해석되는지 확인한다.
+func TestRegistry_HVACAlias_상태제어쌍_양쪽해석(t *testing.T) {
+	r := NewRegistry()
+
+	pairs := [][2]string{
+		{"samsung-hvacr01-status", "samsung_hvacr01_status"},
+		{"samsung-hvacr01-control", "samsung_hvacr01_control"},
+		{"lg-hvacr01-status", "lg_hvacr01_status"},
+		{"lg-hvacr01-control", "lg_hvacr01_control"},
+	}
+	for _, p := range pairs {
+		assert.True(t, r.Has(p[0]), "canonical %q 해석 가능해야 한다", p[0])
+		assert.True(t, r.Has(p[1]), "deprecated %q 해석 가능해야 한다", p[1])
+	}
+}
+
+// TestRegistry_HVACAlias_Create_저장플로우호환 은 저장된 플로우가 deprecated(_) 타입으로
+// 노드를 생성(배포)할 수 있고, canonical(-) 타입도 동일하게 생성됨을 확인한다.
+func TestRegistry_HVACAlias_Create_저장플로우호환(t *testing.T) {
+	r := NewRegistry()
+
+	// 기존 저장 플로우: Type:"lg_hvacr01"
+	defOld := flow.NewNodeDef("hvac-old", "lg_hvacr01")
+	nodeOld, err := r.Create(defOld)
+	require.NoError(t, err, "deprecated 별칭 lg_hvacr01 으로 노드 생성이 가능해야 한다")
+	require.NotNil(t, nodeOld)
+	assert.Equal(t, "lg_hvacr01", nodeOld.Type())
+
+	// 신규 플로우: Type:"lg-hvacr01"
+	defNew := flow.NewNodeDef("hvac-new", "lg-hvacr01")
+	nodeNew, err := r.Create(defNew)
+	require.NoError(t, err, "canonical lg-hvacr01 으로 노드 생성이 가능해야 한다")
+	require.NotNil(t, nodeNew)
+	assert.Equal(t, "lg-hvacr01", nodeNew.Type())
+}
+
 // TestRegistry_AllTypeMeta_정렬 은 AllTypeMeta가 정렬된 목록을 반환하는지 확인한다.
 func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 47) // +3 century 노드 (raw-frame 통합) + 1 inventory (SPEC-INVENTORY-001) + 1 select-field
+	assert.Len(t, metas, 60) // 48 canonical builtins + 12 deprecated HVAC `_` 별칭 (하위 호환)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

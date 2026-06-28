@@ -16,6 +16,7 @@ import {
   YAxis,
 } from 'recharts';
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 import {
   getByPath,
@@ -235,13 +236,13 @@ function CustomLegend({
   legendCfg: LegendConfig;
   chartData: Array<Record<string, unknown>>;
 }): React.ReactElement | null {
-  if (seriesKeys.length === 0) return null;
   const isVert = legendCfg.position === 'left' || legendCfg.position === 'right';
   const showName = legendCfg.show_name !== false;
   const showLine = legendCfg.show_line !== false;
   const showLastValue = legendCfg.show_last_value === true;
 
   // 각 시리즈별 마지막 유효 값 (역순 탐색)
+  // Hooks 규칙 준수: 조건부 early-return 보다 먼저 호출한다.
   const lastValues = useMemo(() => {
     if (!showLastValue || chartData.length === 0) return {};
     const result: Record<string, number | undefined> = {};
@@ -256,6 +257,8 @@ function CustomLegend({
     }
     return result;
   }, [showLastValue, chartData, seriesKeys]);
+
+  if (seriesKeys.length === 0) return null;
 
   return (
     <div
@@ -320,6 +323,7 @@ function CustomLegend({
 }
 
 export default function LineChartPanel({ panelId: _panelId, title, config }: LineChartPanelProps) {
+  const { t } = useTranslation();
   const cfg = parseConfig(config);
   const isMultiMode = (cfg.channels?.length ?? 0) > 0;
   // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
@@ -621,8 +625,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           onClick={() => handleExportCsv(chartData as Array<Record<string, unknown>>, seriesKeys)}
           data-testid="line-chart-csv-button"
           className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-          aria-label="CSV 내보내기"
-          title="CSV 내보내기"
+          aria-label={t('dashboard.chart.exportCsv')}
+          title={t('dashboard.chart.exportCsv')}
         >
           <Download className="h-3.5 w-3.5" />
         </button>
@@ -631,8 +635,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           onClick={togglePause}
           data-testid="line-chart-pause-button"
           className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-          aria-label={isPaused ? '재개' : '일시정지'}
-          title={isPaused ? '재개' : '일시정지'}
+          aria-label={isPaused ? t('dashboard.chart.resume') : t('dashboard.chart.pause')}
+          title={isPaused ? t('dashboard.chart.resume') : t('dashboard.chart.pause')}
         >
           {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
         </button>
@@ -646,8 +650,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
             ? cfg
                 .channels!.map((c) => c.alias ?? c.name)
                 .filter((n) => !!n)
-                .join(', ') || '채널 미지정'
-            : cfg.channel_name || '채널 미지정')}
+                .join(', ') || t('dashboard.settings.preview.channelUnset')
+            : cfg.channel_name || t('dashboard.settings.preview.channelUnset'))}
         </span>
       </div>
 

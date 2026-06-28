@@ -13,6 +13,7 @@
 // @spec SPEC-WEB-005 v0.7.0 (M15)
 
 import { APIError } from '@/types/api';
+import type { TranslationFn } from '@/lib/i18n';
 
 // ─────────────────────────────────────────────────────────────────────
 // Public types
@@ -104,7 +105,7 @@ const REGISTERED_TYPE_REGEX = /registered\s*=\s*([a-z_]+)/i;
  *              plain object, null, undefined 등).
  * @returns 매핑 결과. 매칭에 실패하면 `kind: 'unknown'` + 원본 메시지를 노출한다.
  */
-export function mapStoreError(err: unknown): StoreErrorMapped {
+export function mapStoreError(err: unknown, t: TranslationFn): StoreErrorMapped {
   const raw = err;
   const message = getErrorMessage(err);
   const normalized = message.toLowerCase();
@@ -116,8 +117,7 @@ export function mapStoreError(err: unknown): StoreErrorMapped {
   ) {
     return {
       kind: 'migration_required',
-      userMessage:
-        '에이전트 설정 마이그레이션이 필요합니다. allow_dynamic_keys → registration_type 변경 후 재시작하세요.',
+      userMessage: t('error.store.migrationRequired'),
       guideLink: MIGRATION_GUIDE_LINK,
       raw,
     };
@@ -126,14 +126,17 @@ export function mapStoreError(err: unknown): StoreErrorMapped {
   // 2. 4종 신규 에러.
   for (const entry of ERROR_KEYWORDS) {
     if (entry.patterns.some((p) => normalized.includes(p))) {
-      return buildKnownError(entry.kind, message, raw);
+      return buildKnownError(entry.kind, message, raw, t);
     }
   }
 
   // 3. fallback.
   return {
     kind: 'unknown',
-    userMessage: `오류가 발생했습니다: ${message || 'Unknown error'}`,
+    userMessage: t('error.store.unknown').replace(
+      '{message}',
+      message || 'Unknown error',
+    ),
     raw,
   };
 }
@@ -141,11 +144,27 @@ export function mapStoreError(err: unknown): StoreErrorMapped {
 /**
  * 에러 분류만 필요한 호출자용 (메시지 생성 비용 절약).
  *
+ * 분류만 수행하므로 메시지 생성을 위한 t 가 필요 없다.
+ *
  * @param err - 어떤 형태의 에러든 안전하게 받는다.
  * @returns 에러 분류 enum.
  */
 export function classifyStoreError(err: unknown): StoreErrorKind {
-  return mapStoreError(err).kind;
+  const message = getErrorMessage(err);
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('allow_dynamic_keys') &&
+    normalized.includes('removed')
+  ) {
+    return 'migration_required';
+  }
+  for (const entry of ERROR_KEYWORDS) {
+    if (entry.patterns.some((p) => normalized.includes(p))) {
+      return entry.kind;
+    }
+  }
+  return 'unknown';
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -159,17 +178,20 @@ function buildKnownError(
   kind: Exclude<StoreErrorKind, 'unknown' | 'migration_required'>,
   rawMessage: string,
   raw: unknown,
+  t: TranslationFn,
 ): StoreErrorMapped {
   switch (kind) {
     case 'type_mismatch': {
       const keyName = extractKeyFromMessage(rawMessage);
       const registeredType = extractRegisteredTypeFromMessage(rawMessage);
-      const baseMessage =
-        '키의 등록된 타입과 일치하지 않습니다. 다른 타입으로 쓰려면 키를 삭제 후 재등록하세요.';
+      const baseMessage = t('error.store.typeMismatch');
+      // 키 이름/등록 타입이 추출되면 접두 문구를 덧붙인다.
       const prefix = keyName
         ? registeredType
-          ? `키 '${keyName}' (등록 타입: ${registeredType}) 의 `
-          : `키 '${keyName}' 의 `
+          ? t('error.store.typeMismatchPrefixWithType')
+              .replace('{key}', keyName)
+              .replace('{type}', registeredType)
+          : t('error.store.typeMismatchPrefix').replace('{key}', keyName)
         : '';
       return {
         kind,
@@ -180,22 +202,19 @@ function buildKnownError(
     case 'unsupported_value_type':
       return {
         kind,
-        userMessage:
-          '지원하지 않는 값 타입입니다 (nil, 채널, 함수는 저장할 수 없습니다).',
+        userMessage: t('error.store.unsupportedValueType'),
         raw,
       };
     case 'invalid_data_type':
       return {
         kind,
-        userMessage:
-          'data_type 값이 잘못되었습니다. 허용 값: int, float, string, boolean, bytes, json.',
+        userMessage: t('error.store.invalidDataType'),
         raw,
       };
     case 'invalid_metric_type':
       return {
         kind,
-        userMessage:
-          'metric_type 형식이 잘못되었습니다. 영문, 숫자, 언더스코어(_), 하이픈(-)만 사용 가능합니다.',
+        userMessage: t('error.store.invalidMetricType'),
         raw,
       };
   }

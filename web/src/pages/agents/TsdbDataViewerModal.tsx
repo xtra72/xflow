@@ -46,37 +46,33 @@ import {
   Check,
   Loader2,
   Play,
-  Search,
   X,
 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import {
   datetimeLocalToEpochMs,
   estimateBucketCount,
   isValidInterval,
   parseIntervalToMs,
   type TsdbAggregation,
+  type TsdbFill,
 } from '@/services/api/tsdb';
 import type {
   SeriesDataSource,
   SeriesMatrix,
   SeriesMatrixQuery,
+  SeriesSelectorFilter,
 } from '@/services/api/seriesDataSource';
+import { makeSeriesId } from '@/services/api/seriesLabels';
+import { SeriesSelectTable, type SeriesRow } from './SeriesSelectTable';
 import {
   useStoreKeysWithTags,
   useStoreTagPairs,
   type StoreKeyObject,
   type StoreKeyTagsMap,
   type StoreTagPair,
-  type DataType,
-  type RegistrationSource,
 } from '@/services/api/store';
-import {
-  TagFilterChips,
-  matchesTagFilter,
-} from '@/components/property/TagFilterChips';
-import { MetadataChips } from '@/components/property/MetadataChips';
-import { DATA_TYPE_OPTIONS } from '@/components/property/storeKeysValidation';
 
 import SeriesResultMatrix from './TsdbResultMatrix';
 import {
@@ -107,14 +103,31 @@ const INTERVAL_PRESETS = [
 
 type IntervalValue = (typeof INTERVAL_PRESETS)[number] | 'custom';
 
-/** 집계 라디오 옵션. */
-const AGGREGATION_OPTIONS: { value: TsdbAggregation; label: string }[] = [
-  { value: 'min', label: '최소 (min)' },
-  { value: 'max', label: '최대 (max)' },
-  { value: 'average', label: '평균 (average)' },
+/** 집계 라디오 옵션. label 은 i18n 키이며 렌더 시 t(labelKey) 로 해석한다. */
+const AGGREGATION_OPTIONS: { value: TsdbAggregation; labelKey: string }[] = [
+  { value: 'min', labelKey: 'tsdb.aggMin' },
+  { value: 'max', labelKey: 'tsdb.aggMax' },
+  { value: 'average', labelKey: 'tsdb.aggAverage' },
+  { value: 'first', labelKey: 'tsdb.aggFirst' },
+  { value: 'last', labelKey: 'tsdb.aggLast' },
 ];
 
-/** 상대 범위 프리셋 (지속 시간 ms). */
+/** 빈 버킷 채우기(gap-fill) 전략 옵션. 인터벌 구간에 값이 없을 때 적용. */
+const FILL_OPTIONS: { value: TsdbFill; labelKey: string }[] = [
+  { value: '', labelKey: 'tsdb.fillNone' },
+  { value: 'null', labelKey: 'tsdb.fillNull' },
+  { value: 'previous', labelKey: 'tsdb.fillPrevious' },
+  { value: 'avg', labelKey: 'tsdb.fillAvg' },
+  { value: 'zero', labelKey: 'tsdb.fillZero' },
+];
+
+/**
+ * 상대 범위 프리셋 (지속 시간 ms).
+ *
+ * `label` 은 `RelativeSelectValue` 타입 식별자 겸 select value 로 사용되므로
+ * 한국어 리터럴을 그대로 유지한다(기능 식별자). 화면 표시는 `RELATIVE_LABEL_KEY`
+ * 의 i18n 키로 t() 해석한다.
+ */
 const RELATIVE_RANGE_PRESETS: { label: string; durationMs: number }[] = [
   { label: '지난 1시간', durationMs: 60 * 60 * 1000 },
   { label: '지난 6시간', durationMs: 6 * 60 * 60 * 1000 },
@@ -122,6 +135,15 @@ const RELATIVE_RANGE_PRESETS: { label: string; durationMs: number }[] = [
   { label: '지난 7일', durationMs: 7 * ONE_DAY_MS },
   { label: '지난 30일', durationMs: 30 * ONE_DAY_MS },
 ];
+
+/** 상대 범위 프리셋 label → 표시용 i18n 키 매핑. */
+const RELATIVE_LABEL_KEY: Record<string, string> = {
+  '지난 1시간': 'tsdb.relLast1h',
+  '지난 6시간': 'tsdb.relLast6h',
+  '지난 1일': 'tsdb.relLast1d',
+  '지난 7일': 'tsdb.relLast7d',
+  '지난 30일': 'tsdb.relLast30d',
+};
 
 /**
  * 상대 모드 드롭다운 선택 값. 프리셋 문자열은 `RELATIVE_RANGE_PRESETS` 의 label 과
@@ -217,9 +239,22 @@ interface StoreTagFilterState {
    * TSDB/그 외 모드에서는 빈 객체를 반환한다. v0.7.0 (M16) 메타데이터 칩
    * 표시와 data_type/metric_type/registration 필터 적용에 사용된다.
    *
+   * 같은 key 에 다중 시리즈가 있으면 마지막 시리즈가 대표값으로 들어간다.
+   * 시리즈별 구분 표시는 `seriesByKey` 를 사용한다.
+   *
    * @spec SPEC-WEB-005 v0.7.0 (M16)
    */
   keyMetaByKey: Record<string, StoreKeyObject>;
+  /**
+   * 키 → 해당 key 의 모든 시리즈(metric/tags 별) 배열.
+   *
+   * @spec SPEC-STORE-004 (M5)
+   * 백엔드 GET /keys 는 같은 key 를 metric/tags 별 다중 행으로 반환한다. 시리즈
+   * 풀 리스트에서 한 key 아래 여러 시리즈를 "구분된 행" 으로 표시하기 위해, key
+   * 단위로 그 key 의 모든 StoreKeyObject 를 모아둔다. Store 모드는 백엔드 응답을
+   * 그대로 그룹화하고, TSDB/그 외 모드는 합성 메타 1개를 단일 원소 배열로 채운다.
+   */
+  seriesByKey: Record<string, StoreKeyObject[]>;
 }
 
 /**
@@ -287,6 +322,15 @@ function useStoreTagFilterStateImpl(
     }
     return map;
   }, [keysWithTagsQuery.data]);
+  // SPEC-STORE-004 (M5): key → 다중 시리즈 그룹. 백엔드 keyObjects 는 같은 key 를
+  // metric/tags 별 여러 행으로 반환하므로, key 단위로 모아 "구분된 시리즈 행" 표시에 쓴다.
+  const seriesByKey = useMemo<Record<string, StoreKeyObject[]>>(() => {
+    const map: Record<string, StoreKeyObject[]> = {};
+    for (const obj of keysWithTagsQuery.data?.keyObjects ?? []) {
+      (map[obj.key] ??= []).push(obj);
+    }
+    return map;
+  }, [keysWithTagsQuery.data]);
   // 모달은 부모로부터 받은 `allSeriesKeys` 를 정렬 기준 풀로 사용한다.
   // 서버의 keys 와 부모 풀이 다를 수 있으므로 양쪽 합집합을 채택한다.
   const allKeys = useMemo(() => {
@@ -318,7 +362,7 @@ function useStoreTagFilterStateImpl(
 
   const clearAll = useCallback(() => setSelected(new Set()), []);
 
-  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey };
+  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey, seriesByKey };
 }
 
 /**
@@ -376,7 +420,16 @@ function useExtractedTagFilterState(
     }
     return out;
   }, [allSeriesKeys, separator, tagsByKey]);
-  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey };
+  // SPEC-STORE-004 (M5): TSDB/그 외 모드는 키당 합성 시리즈 1개. keyMetaByKey 의
+  // 각 항목을 단일 원소 배열로 감싸 Store 모드와 동일한 seriesByKey 형상을 제공한다.
+  const seriesByKey = useMemo<Record<string, StoreKeyObject[]>>(() => {
+    const out: Record<string, StoreKeyObject[]> = {};
+    for (const [k, meta] of Object.entries(keyMetaByKey)) {
+      out[k] = [meta];
+    }
+    return out;
+  }, [keyMetaByKey]);
+  return { pairs, tagsByKey, selected, toggle, clearAll, keyMetaByKey, seriesByKey };
 }
 
 function SeriesDataViewerModalImpl({
@@ -387,14 +440,19 @@ function SeriesDataViewerModalImpl({
   dataSource,
   agentName,
 }: SeriesDataViewerModalProps) {
+  const { t } = useTranslation();
   // --- 폼 상태 ---
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
-  const [keySearch, setKeySearch] = useState('');
+  // 시리즈별 선택(저장소 기준 분류 #2): 선택 단위는 key 가 아니라
+  // SeriesID(key + metric + tags). 단일 시리즈 key 는 SeriesID 가 곧 그 시리즈를
+  // 가리키고, 다중 시리즈 key 는 각 시리즈가 독립적으로 선택된다.
+  const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const [startLocal, setStartLocal] = useState('');
   const [endLocal, setEndLocal] = useState('');
   const [intervalSelect, setIntervalSelect] = useState<IntervalValue>('1m');
   const [customInterval, setCustomInterval] = useState('');
   const [aggregation, setAggregation] = useState<TsdbAggregation>('average');
+  // 빈 버킷 채우기(gap-fill) 전략. ''=빈 버킷 생략(기본). 인터벌 적용 시에만 의미.
+  const [fill, setFill] = useState<TsdbFill>('');
   // SPEC-WEB-005: 평균 집계 시 표시할 소수점 자릿수 (0-6, 기본 1).
   // min/max 집계에서는 무시되며 원본 값이 그대로 표시된다.
   const [decimalPrecision, setDecimalPrecision] = useState<number>(1);
@@ -411,8 +469,8 @@ function SeriesDataViewerModalImpl({
   const [relativeCustom, setRelativeCustom] = useState('');
 
   // 세그먼트 구분자 — 키 패턴에서 태그를 자동 추출할 때 사용한다.
-  // 모달 오픈 시 기본값 (':') 으로 리셋되며, 사용자가 헤더에서 변경 가능하다.
-  const [separator, setSeparator] = useState<string>(DEFAULT_SEGMENT_SEPARATOR);
+  // 구분자 필터링 UI 는 제거되었고(#3), 표준 기본 구분자로 고정한다.
+  const separator = DEFAULT_SEGMENT_SEPARATOR;
 
   // 결과 표시 모드 (테이블/차트). 모달에서 보유하여 "다시 실행" 시
   // 결과 컴포넌트가 unmount/remount 되어도 사용자 선택이 보존되도록 한다.
@@ -422,15 +480,7 @@ function SeriesDataViewerModalImpl({
   // 5,000행 경고 확인 상태: pending 은 "경고 표시됨, 사용자 확정 대기 중".
   const [warningPending, setWarningPending] = useState(false);
 
-  // SPEC-WEB-005 v0.7.0 (M16, Task 13): 메타데이터 기반 신규 필터.
-  //   - data_type: '' (전체) | DataType (int/float/...).
-  //   - metric_type: 빈 문자열 = 전체, 비어있지 않으면 정확히 일치(부분 일치 X).
-  //   - registration: '' (전체) | 'manual' | 'auto'.
-  // 신규 필터는 Store 모드 + 부모로부터 받은 keyObjects 가 있을 때만 의미 있으며,
-  // TSDB/그 외 모드에서는 UI 가 노출되지 않는다 (메타데이터 소스 없음).
-  const [dataTypeFilter, setDataTypeFilter] = useState<'' | DataType>('');
-  const [metricTypeFilter, setMetricTypeFilter] = useState<string>('');
-  const [registrationFilter, setRegistrationFilter] = useState<'' | RegistrationSource>('');
+  // 메타데이터/태그/검색 필터는 SeriesSelectTable 내부 상태로 이동했다(컬럼별 정렬+필터).
 
   // 매트릭스 쿼리 mutation — dataSource.queryMatrix 를 호출한다.
   const mutation = useMutation<SeriesMatrix, Error, SeriesMatrixQuery>({
@@ -447,16 +497,87 @@ function SeriesDataViewerModalImpl({
     separator,
   );
 
+  /**
+   * SeriesID 인덱스 (#2 저장소 기준 분류).
+   *
+   * - `byId`: SeriesID → { key, obj? }. obj 는 StoreKeyObject(메타데이터가 있을 때).
+   * - `idsByKey`: key → 그 key 에 속한 SeriesID 목록(렌더/일괄선택 순서 보존).
+   *
+   * 메타데이터가 전혀 없는 key 는 "암묵적 단일 시리즈"로 취급하여 SeriesID = key
+   * 로 둔다(필터 없이 key 단위 조회 → 기존 동작 보존).
+   */
+  const seriesIndex = useMemo(() => {
+    const byId = new Map<string, { key: string; obj?: StoreKeyObject }>();
+    const idsByKey = new Map<string, string[]>();
+    const keysUnion = new Set<string>([
+      ...allSeriesKeys,
+      ...Object.keys(tagFilter.seriesByKey),
+    ]);
+    for (const k of keysUnion) {
+      const arr = tagFilter.seriesByKey[k] ?? [];
+      const ids: string[] = [];
+      if (arr.length === 0) {
+        // 메타데이터 없는 key → 암묵적 단일 시리즈(SeriesID = key).
+        byId.set(k, { key: k });
+        ids.push(k);
+      } else {
+        for (const o of arr) {
+          const id = makeSeriesId(o.key, o.metric_type, o.tags);
+          byId.set(id, { key: o.key, obj: o });
+          ids.push(id);
+        }
+      }
+      idsByKey.set(k, ids);
+    }
+    return { byId, idsByKey };
+  }, [allSeriesKeys, tagFilter.seriesByKey]);
+
+  const seriesIdsForKey = useCallback(
+    (key: string): string[] => seriesIndex.idsByKey.get(key) ?? [key],
+    [seriesIndex],
+  );
+
+  // 시리즈 선택 테이블 행 — seriesIndex 와 동일한 SeriesID 를 사용해 선택 정합성을 보장한다.
+  // 메타데이터(metric/data_type/registration/tags)는 StoreKeyObject 또는 합성 keyMeta 에서 채운다.
+  const allRows = useMemo<SeriesRow[]>(() => {
+    const rows: SeriesRow[] = [];
+    for (const [id, { key, obj }] of seriesIndex.byId) {
+      const meta = obj ?? tagFilter.keyMetaByKey[key];
+      rows.push({
+        id,
+        key,
+        metric: meta?.metric_type ?? '',
+        dataType: meta?.data_type ?? '',
+        registration: meta?.registration ?? '',
+        tags: meta?.tags ?? {},
+      });
+    }
+    return rows;
+  }, [seriesIndex, tagFilter.keyMetaByKey]);
+
+  // 일괄 선택/해제 — 테이블이 필터링한 id 목록을 받아 선택 집합에 가감한다.
+  const selectManyIds = useCallback((ids: string[]) => {
+    setSelectedSeriesIds((prev) => Array.from(new Set([...prev, ...ids])));
+  }, []);
+  const clearManyIds = useCallback((ids: string[]) => {
+    setSelectedSeriesIds((prev) => prev.filter((id) => !ids.includes(id)));
+  }, []);
+
   const modalRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
 
   // --- 모달 오픈 시 상태 초기화 ---
   // 시간 범위는 매번 "지난 1일" 로 리셋한다 (사용자 입력은 오픈 중에만 보존).
   // 모드는 매번 'absolute' 로 리셋되어 기존 기본 동작을 보존한다.
+  // initialSeriesKey(키 문자열)를 SeriesID 로 해석하기 위한 대기 표식.
+  // 모달 오픈 시점에는 Store 메타데이터(seriesByKey)가 아직 로드되지 않았을 수
+  // 있으므로, 즉시 해석을 시도하되 실패하면 아래 resolver 가 뒤늦게 채운다.
+  const pendingInitialKeyRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     if (!isOpen) return;
-    setSelectedKeys(initialSeriesKey ? [initialSeriesKey] : []);
-    setKeySearch('');
+    pendingInitialKeyRef.current = initialSeriesKey;
+    setSelectedSeriesIds(initialSeriesKey ? seriesIdsForKey(initialSeriesKey) : []);
     const nowMs = Date.now();
     setEndLocal(epochMsToDatetimeLocal(nowMs));
     setStartLocal(epochMsToDatetimeLocal(nowMs - ONE_DAY_MS));
@@ -467,17 +588,28 @@ function SeriesDataViewerModalImpl({
     setRangeMode('relative');
     setRelativeSelect(RELATIVE_DEFAULT);
     setRelativeCustom('');
-    setSeparator(DEFAULT_SEGMENT_SEPARATOR);
+    setFill('');
     setResultViewMode('table');
     setWarningPending(false);
-    // SPEC-WEB-005 v0.7.0 (M16): 메타데이터 필터도 초기화한다.
-    setDataTypeFilter('');
-    setMetricTypeFilter('');
-    setRegistrationFilter('');
     mutation.reset();
     // mutation 은 ref-stable 해야 하지만 완벽히 안전하진 않으므로 exhaustive-deps 무시.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialSeriesKey]);
+
+  // initialSeriesKey resolver: 오픈 직후 Store 메타데이터가 비어 SeriesID 해석에
+  // 실패했다면, seriesByKey 가 로드되는 시점에 한 번 더 시도해 초기 선택을 채운다.
+  useEffect(() => {
+    if (!isOpen) return;
+    const k = pendingInitialKeyRef.current;
+    if (!k) return;
+    const ids = seriesIdsForKey(k);
+    // 암묵적 단일 시리즈(ids === [k]) 는 이미 오픈 시 반영되었으므로,
+    // 메타데이터 기반 SeriesID 가 새로 확보되었을 때만 갱신한다.
+    if (ids.length > 0 && !(ids.length === 1 && ids[0] === k)) {
+      setSelectedSeriesIds(ids);
+      pendingInitialKeyRef.current = undefined;
+    }
+  }, [isOpen, seriesIdsForKey]);
 
   // --- Esc 키 / 배경 클릭 닫기 ---
   useEffect(() => {
@@ -611,119 +743,21 @@ function SeriesDataViewerModalImpl({
   ]);
 
   const canExecute =
-    selectedKeys.length > 0 &&
+    selectedSeriesIds.length > 0 &&
     timeRangeValid &&
     intervalValid &&
     !mutation.isPending;
 
-  /**
-   * 검색어 + (Store 전용) 태그 필터 + (Store 전용) 메타데이터 필터로 필터링된
-   * 시리즈 키 옵션. 모든 필터는 AND 로직으로 결합된다.
-   *
-   * - 태그 필터: 정적 키가 아닌 키(tagsByKey 에 없음) 는 태그 필터 활성 시 모두 제외.
-   * - 메타데이터 필터: keyMetaByKey 에 없는 키(TSDB 모드 또는 메타 미수신) 는
-   *   data_type/metric_type/registration 어떤 값이든 매치하지 않으므로 필터가
-   *   활성화되면 제외된다 (보수적 정책 — 알 수 없는 키는 보여주지 않음).
-   *
-   * @spec SPEC-STORE-003
-   * @spec SPEC-WEB-005 v0.7.0 (M16)
-   */
-  const filteredKeys = useMemo(() => {
-    const q = keySearch.trim().toLowerCase();
-    const tagActive = tagFilter.selected.size > 0;
-    const metaActive =
-      dataTypeFilter !== '' || metricTypeFilter !== '' || registrationFilter !== '';
-    const trimmedMetric = metricTypeFilter.trim();
-    return allSeriesKeys.filter((k) => {
-      if (q && !k.toLowerCase().includes(q)) return false;
-      if (tagActive) {
-        const tagsForKey = tagFilter.tagsByKey[k];
-        if (!matchesTagFilter(tagsForKey, tagFilter.selected)) return false;
-      }
-      if (metaActive) {
-        const meta = tagFilter.keyMetaByKey[k];
-        if (!meta) return false;
-        if (dataTypeFilter !== '' && meta.data_type !== dataTypeFilter) return false;
-        if (trimmedMetric !== '' && meta.metric_type !== trimmedMetric) return false;
-        if (registrationFilter !== '' && meta.registration !== registrationFilter) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }, [
-    allSeriesKeys,
-    keySearch,
-    tagFilter.selected,
-    tagFilter.tagsByKey,
-    tagFilter.keyMetaByKey,
-    dataTypeFilter,
-    metricTypeFilter,
-    registrationFilter,
-  ]);
-
-  /**
-   * 메타데이터 필터 UI 노출 여부.
-   *
-   * v0.7.0 (M16): 초기에는 Store 모드에만 노출되었다.
-   * v0.7.0 (Option A): TSDB 모드에서도 키 이름 기반 합성 메타데이터를 사용해
-   *   metric_type / data_type 필터를 제공한다 (registration 은 숨김).
-   *   `useExtractedTagFilterState` 가 합성 `keyMetaByKey` 를 채우므로
-   *   기존 필터 매칭 로직 (`filteredKeys`) 은 변경 없이 양쪽에서 동작한다.
-   *
-   * @spec SPEC-WEB-005 v0.7.0 (M16, Task 13)
-   * @spec SPEC-WEB-005 v0.7.0 (Option A)
-   */
-  const showMetaFilters = true;
-  /**
-   * registration 필터 노출 여부.
-   *
-   * registration (manual / auto) 은 Store 의 정적 vs 동적 키 분류 개념이며,
-   * TSDB 시계열에는 적용되지 않는 메타데이터다. 따라서 Store 모드에서만 노출한다.
-   *
-   * @spec SPEC-WEB-005 v0.7.0 (Option A)
-   */
-  const showRegistrationFilter = dataSource.kind === 'store';
-
-  /**
-   * 현재 keyObjects 풀에서 관찰된 metric_type 후보 목록.
-   * 신규 메트릭 타입 필터의 자동완성/드롭다운 옵션으로 사용된다.
-   * unknown 도 후보로 포함되며, 사용자가 명시적으로 선택할 수 있다.
-   *
-   * @spec SPEC-WEB-005 v0.7.0 (M16, Task 13)
-   */
-  const observedMetricTypes = useMemo(() => {
-    const set = new Set<string>();
-    for (const obj of Object.values(tagFilter.keyMetaByKey)) {
-      const mt = obj.metric_type;
-      if (mt !== undefined && mt !== null && mt !== '') set.add(mt);
-    }
-    return [...set].sort();
-  }, [tagFilter.keyMetaByKey]);
-
   // --- 핸들러 ---
+  // 검색/태그/메타 필터링은 SeriesSelectTable 내부로 이동했다. 모달은 선택 토글과
+  // 일괄 선택/해제(selectManyIds/clearManyIds, 위에서 정의)만 보유한다.
 
-  const toggleKey = useCallback((key: string) => {
-    setSelectedKeys((prev) => {
-      if (prev.includes(key)) return prev.filter((k) => k !== key);
-      return [...prev, key];
+  const toggleSeries = useCallback((id: string) => {
+    setSelectedSeriesIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      return [...prev, id];
     });
   }, []);
-
-  /**
-   * 세그먼트 구분자 변경 핸들러.
-   *
-   * 구분자가 바뀌면 키에서 추출되는 태그 키 (`seg0`, `seg1`, ...) 가 달라지거나
-   * 사라질 수 있으므로 기존에 선택해둔 태그 필터(`tagFilter.selected`)는 더 이상
-   * 유효하지 않다. 혼란을 방지하기 위해 변경 즉시 선택을 초기화한다.
-   */
-  const handleSeparatorChange = useCallback(
-    (next: string) => {
-      setSeparator(next);
-      tagFilter.clearAll();
-    },
-    [tagFilter],
-  );
 
   /**
    * 절대 모드의 상대 범위 프리셋 버튼 핸들러.
@@ -776,7 +810,25 @@ function SeriesDataViewerModalImpl({
 
   const performQuery = useCallback(() => {
     if (!canExecute) return;
-    const orderedKeys = [...selectedKeys];
+    // 선택된 SeriesID 를 (key, seriesFilter) 쌍으로 환원한다(#2 저장소 기준 분류).
+    //   - 단일 시리즈 key: filter 없이 key 단위 조회(기존 동작 보존).
+    //   - 다중 시리즈 key: 같은 key 가 여러 번 등장하며 각자 metric/tags 필터로 구분.
+    const orderedKeys: string[] = [];
+    const seriesFilters: Array<SeriesSelectorFilter | undefined> = [];
+    for (const id of selectedSeriesIds) {
+      const entry = seriesIndex.byId.get(id);
+      if (!entry) continue;
+      const arr = tagFilter.seriesByKey[entry.key] ?? [];
+      const isMulti = arr.length > 1;
+      orderedKeys.push(entry.key);
+      seriesFilters.push(
+        isMulti && entry.obj
+          ? { metricType: entry.obj.metric_type, tags: entry.obj.tags }
+          : undefined,
+      );
+    }
+    if (orderedKeys.length === 0) return;
+    const anyFilter = seriesFilters.some((f) => f !== undefined);
     // Go duration 을 milliseconds 로 역환산. 유효성은 위에서 이미 확인됨.
     const intervalMs = parseIntervalToMs(effectiveInterval);
     // 상대 모드는 실행 시점의 now 로 재계산된다.
@@ -785,17 +837,22 @@ function SeriesDataViewerModalImpl({
     setLastQueryRange({ startMs: resolvedStart, endMs: resolvedEnd });
     mutation.mutate({
       keys: orderedKeys,
+      ...(anyFilter ? { seriesFilters } : {}),
       startMs: resolvedStart,
       endMs: resolvedEnd,
       intervalMs,
       aggregation,
+      fill,
     });
   }, [
     canExecute,
-    selectedKeys,
+    selectedSeriesIds,
+    seriesIndex,
+    tagFilter.seriesByKey,
     resolveQueryRange,
     effectiveInterval,
     aggregation,
+    fill,
     mutation,
   ]);
 
@@ -824,8 +881,8 @@ function SeriesDataViewerModalImpl({
     if (!mutation.isError) return null;
     const err = mutation.error;
     if (err instanceof Error) return err.message;
-    return '쿼리 실행에 실패했습니다';
-  }, [mutation.isError, mutation.error]);
+    return t('tsdb.queryFailed');
+  }, [mutation.isError, mutation.error, t]);
 
   if (!isOpen) return null;
 
@@ -854,12 +911,12 @@ function SeriesDataViewerModalImpl({
               id="tsdb-viewer-title"
               className="text-lg font-semibold text-(--color-text-primary)"
             >
-              TSDB 데이터 뷰어
+              {t('tsdb.title')}
             </h2>
             {mutation.isPending && (
               <Loader2
                 className="h-4 w-4 animate-spin text-blue-500"
-                aria-label="쿼리 실행 중"
+                aria-label={t('tsdb.queryRunningAria')}
               />
             )}
           </div>
@@ -868,7 +925,7 @@ function SeriesDataViewerModalImpl({
             onClick={onClose}
             disabled={mutation.isPending}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -880,212 +937,26 @@ function SeriesDataViewerModalImpl({
           `flex-shrink-0` 을 제거해 부모 flex-col 에서 공간 부족 시 줄어들 수 있게 한다.
         */}
         <div className="min-h-0 shrink overflow-y-auto space-y-4 border-b border-(--color-border-default) px-6 py-4">
-          {/* 시리즈 멀티셀렉트 */}
-          <fieldset>
+          {/*
+            시리즈 선택 — 저장소(StoreTab) 스타일의 정렬/필터 테이블.
+            각 컬럼에 정렬 + 다중선택 필터(facet)가 있고, 행 체크박스로 조회 대상을
+            선택한다. 필터/정렬 상태는 SeriesSelectTable 내부에서 관리한다.
+          */}
+          <fieldset data-testid="series-select-fieldset">
             <legend className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
-              시리즈 선택 ({selectedKeys.length}개 선택됨)
+              {t('tsdb.seriesSelect').replace(
+                '{count}',
+                String(selectedSeriesIds.length),
+              )}
             </legend>
-            {/*
-              2열 레이아웃: 좌측 = 검색 + 체크박스 리스트, 우측 = 태그 필터링.
-              선택된 시리즈는 별도 pill 표시 없이 리스트의 체크 표시로만 확인.
-              시리즈 키가 존재하는 한 우측 영역은 항상 노출 — 페어가 비어 있어도
-              세그먼트 구분자를 조정해 자동 추출을 활성화할 수 있도록 한다.
-            */}
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {/* 좌측: 검색 입력 + 체크박스 리스트 */}
-              <div className="flex flex-col gap-2">
-                <div className="relative">
-                  <Search
-                    className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
-                    aria-hidden="true"
-                  />
-                  <input
-                    ref={firstFocusRef}
-                    type="text"
-                    placeholder="시리즈 키 검색"
-                    value={keySearch}
-                    onChange={(e) => setKeySearch(e.target.value)}
-                    className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) pl-7 pr-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                {/*
-                  체크박스 옵션 리스트.
-                  체크 상태만으로 선택을 표현하여 시각 노이즈 최소화.
-                  최대 높이 40vh 로 제한하여 폼 영역의 다른 섹션을 침범하지 않게 한다.
-                */}
-                <div className="max-h-[40vh] overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
-              {filteredKeys.length === 0 ? (
-                <p className="p-3 text-xs text-(--color-text-muted)">
-                  일치하는 시리즈가 없습니다.
-                </p>
-              ) : (
-                <ul>
-                  {filteredKeys.map((k) => {
-                    const checked = selectedKeys.includes(k);
-                    // 행 우측에 표시할 태그 값 목록 (자동 추출 또는 정적 태그).
-                    // 표시 영역을 과점유하지 않도록 최대 3개까지만 노출한다.
-                    const rowTags = tagFilter.tagsByKey[k];
-                    const tagValues = rowTags
-                      ? Object.values(rowTags).slice(0, 3)
-                      : [];
-                    // SPEC-WEB-005 v0.7.0 (M16): Store 모드에서 키별 메타데이터 칩 (data_type/metric_type/auto badge).
-                    const meta = tagFilter.keyMetaByKey[k];
-                    return (
-                      <li key={k}>
-                        <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-(--color-bg-elevated)">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleKey(k)}
-                            className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600"
-                          />
-                          <span className="flex-1 truncate font-mono text-(--color-text-primary)">
-                            {k}
-                          </span>
-                          {meta && (
-                            <MetadataChips
-                              dataType={meta.data_type}
-                              metricType={meta.metric_type}
-                              registration={meta.registration}
-                              showAutoBadge
-                              className="shrink-0"
-                            />
-                          )}
-                          {tagValues.length > 0 && (
-                            <span
-                              className="flex shrink-0 items-center gap-1"
-                              data-testid={`series-row-tags-${k}`}
-                            >
-                              {tagValues.map((v, i) => (
-                                <span
-                                  key={`${k}-tag-${i}`}
-                                  className="rounded bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-medium text-(--color-text-muted)"
-                                >
-                                  {v}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-                </div>
-              </div>
-              {/* 우측: 태그 필터링 (구분자 + 칩 그룹) */}
-              {allSeriesKeys.length > 0 && (
-                <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5">
-                  <TagFilterChips
-                    pairs={tagFilter.pairs}
-                    selected={tagFilter.selected}
-                    onToggle={tagFilter.toggle}
-                    onClearAll={tagFilter.clearAll}
-                    separator={separator}
-                    onSeparatorChange={handleSeparatorChange}
-                  />
-                </div>
-              )}
-            </div>
-            {/*
-              SPEC-WEB-005 v0.7.0 (M16, Task 13): 메타데이터 기반 신규 필터 행.
-              v0.7.0 (Option A): Store 모드 + TSDB 모드 모두 노출된다.
-                - Store: 백엔드 keyObjects 메타데이터 사용.
-                - TSDB: 키 이름 기반 합성 메타데이터 사용 (registration 은 숨김).
-              필터는 기존 태그 필터 + 검색과 AND 결합된다.
-            */}
-            {showMetaFilters && (
-              <div
-                className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-2 text-xs"
-                data-testid="series-meta-filters"
-              >
-                <span className="font-medium text-(--color-text-secondary)">
-                  메타데이터 필터:
-                </span>
-                <label className="flex items-center gap-1.5">
-                  <span className="text-(--color-text-muted)">data_type</span>
-                  <select
-                    data-testid="meta-filter-data-type"
-                    aria-label="data_type 필터"
-                    value={dataTypeFilter}
-                    onChange={(e) =>
-                      setDataTypeFilter(e.target.value as '' | DataType)
-                    }
-                    className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="">전체</option>
-                    {/*
-                      v0.7.0 (Option A): TSDB 모드는 합성 data_type 이 항상 'float'
-                      이므로 다른 옵션을 노출해도 0개 매칭이 되어 사용자 혼란을 유발한다.
-                      Store 모드는 백엔드 메타에 따라 모든 옵션을 노출한다.
-                    */}
-                    {(dataSource.kind === 'store'
-                      ? DATA_TYPE_OPTIONS
-                      : (['float'] as const)
-                    ).map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex items-center gap-1.5">
-                  <span className="text-(--color-text-muted)">metric_type</span>
-                  <input
-                    list="meta-filter-metric-options"
-                    data-testid="meta-filter-metric-type"
-                    aria-label="metric_type 필터"
-                    type="text"
-                    placeholder="전체"
-                    value={metricTypeFilter}
-                    onChange={(e) => setMetricTypeFilter(e.target.value)}
-                    className="w-32 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 font-mono text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <datalist id="meta-filter-metric-options">
-                    {observedMetricTypes.map((mt) => (
-                      <option key={mt} value={mt} />
-                    ))}
-                  </datalist>
-                </label>
-                {/*
-                  v0.7.0 (Option A): registration 필터는 Store 모드에만 노출.
-                  TSDB 시계열에는 manual/auto 분류 개념이 없다.
-                */}
-                {showRegistrationFilter && (
-                  <div
-                    className="inline-flex items-center gap-1.5"
-                    role="group"
-                    aria-label="registration 필터"
-                  >
-                    <span className="text-(--color-text-muted)">registration</span>
-                    <div className="inline-flex overflow-hidden rounded-md border border-(--color-border-strong)">
-                      {(['', 'manual', 'auto'] as const).map((opt) => {
-                        const label =
-                          opt === '' ? '전체' : opt === 'manual' ? 'manual' : 'auto';
-                        const selected = registrationFilter === opt;
-                        return (
-                          <button
-                            key={opt || 'all'}
-                            type="button"
-                            aria-pressed={selected}
-                            data-testid={`meta-filter-registration-${opt || 'all'}`}
-                            onClick={() => setRegistrationFilter(opt)}
-                            className={`px-2 py-1 text-xs font-medium transition-colors ${
-                              selected
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-(--color-bg-surface) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            <SeriesSelectTable
+              rows={allRows}
+              selectedIds={selectedSeriesIds}
+              onToggle={toggleSeries}
+              onSelectMany={selectManyIds}
+              onClearMany={clearManyIds}
+              showRegistration={dataSource.kind === 'store'}
+            />
           </fieldset>
 
           {/*
@@ -1098,10 +969,13 @@ function SeriesDataViewerModalImpl({
             <div
               className="inline-flex rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) p-0.5"
               role="tablist"
-              aria-label="시간 범위 모드"
+              aria-label={t('tsdb.rangeModeAria')}
             >
               {(['absolute', 'relative'] as const).map((mode) => {
-                const label = mode === 'absolute' ? '절대' : '상대';
+                const label =
+                  mode === 'absolute'
+                    ? t('tsdb.rangeAbsolute')
+                    : t('tsdb.rangeRelative');
                 const selected = rangeMode === mode;
                 return (
                   <button
@@ -1144,9 +1018,11 @@ function SeriesDataViewerModalImpl({
                     <div
                       className="flex flex-wrap items-center gap-1.5"
                       role="group"
-                      aria-label="상대 범위 빠른 선택"
+                      aria-label={t('tsdb.quickRangeAria')}
                     >
-                      <span className="mr-1 text-xs text-(--color-text-muted)">빠른 선택:</span>
+                      <span className="mr-1 text-xs text-(--color-text-muted)">
+                        {t('tsdb.quickSelect')}
+                      </span>
                       {RELATIVE_RANGE_PRESETS.map((preset) => (
                         <button
                           key={preset.label}
@@ -1154,7 +1030,7 @@ function SeriesDataViewerModalImpl({
                           onClick={() => handleRelativeRange(preset.durationMs)}
                           className="rounded-full border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-0.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
                         >
-                          {preset.label}
+                          {t(RELATIVE_LABEL_KEY[preset.label] ?? preset.label)}
                         </button>
                       ))}
                     </div>
@@ -1164,7 +1040,7 @@ function SeriesDataViewerModalImpl({
                           htmlFor="tsdb-start"
                           className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                         >
-                          시작 시각 (Local)
+                          {t('tsdb.startTime')}
                         </label>
                         <input
                           id="tsdb-start"
@@ -1179,7 +1055,7 @@ function SeriesDataViewerModalImpl({
                           htmlFor="tsdb-end"
                           className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                         >
-                          종료 시각 (Local)
+                          {t('tsdb.endTime')}
                         </label>
                         <input
                           id="tsdb-end"
@@ -1192,7 +1068,7 @@ function SeriesDataViewerModalImpl({
                     </div>
                     {startLocal && endLocal && !timeRangeValid && (
                       <p className="text-xs text-red-600 dark:text-red-400">
-                        종료 시각은 시작 시각 이후여야 합니다.
+                        {t('tsdb.endAfterStart')}
                       </p>
                     )}
                   </div>
@@ -1205,7 +1081,7 @@ function SeriesDataViewerModalImpl({
                           htmlFor="tsdb-relative-range"
                           className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                         >
-                          범위
+                          {t('tsdb.range')}
                         </label>
                         <select
                           id="tsdb-relative-range"
@@ -1217,10 +1093,10 @@ function SeriesDataViewerModalImpl({
                         >
                           {RELATIVE_RANGE_PRESETS.map((p) => (
                             <option key={p.label} value={p.label}>
-                              {p.label}
+                              {t(RELATIVE_LABEL_KEY[p.label] ?? p.label)}
                             </option>
                           ))}
-                          <option value="custom">커스텀</option>
+                          <option value="custom">{t('tsdb.custom')}</option>
                         </select>
                       </div>
                       {relativeSelect === 'custom' && (
@@ -1229,26 +1105,26 @@ function SeriesDataViewerModalImpl({
                             htmlFor="tsdb-relative-custom"
                             className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                           >
-                            커스텀 duration
+                            {t('tsdb.customDuration')}
                           </label>
                           <input
                             id="tsdb-relative-custom"
                             type="text"
-                            placeholder="예: 2h, 45m, 30s"
+                            placeholder={t('tsdb.durationPlaceholder')}
                             value={relativeCustom}
                             onChange={(e) => setRelativeCustom(e.target.value)}
                             className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                           {!relativeCustomValid && relativeCustom.trim() !== '' && (
                             <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                              Go duration 문법 (ms/s/m/h) 을 사용하세요.
+                              {t('tsdb.goDurationSyntax')}
                             </p>
                           )}
                         </div>
                       )}
                     </div>
                     <p className="text-xs text-(--color-text-muted)">
-                      실행 시각 기준 지난 기간을 조회합니다 (실행 시점에 현재 시각이 사용됩니다).
+                      {t('tsdb.relativeHint')}
                     </p>
                   </div>
                 )}
@@ -1260,7 +1136,7 @@ function SeriesDataViewerModalImpl({
                     htmlFor="tsdb-interval"
                     className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
                   >
-                    인터벌
+                    {t('tsdb.interval')}
                   </label>
                   <select
                     id="tsdb-interval"
@@ -1273,20 +1149,20 @@ function SeriesDataViewerModalImpl({
                         {p}
                       </option>
                     ))}
-                    <option value="custom">사용자 지정</option>
+                    <option value="custom">{t('tsdb.intervalCustom')}</option>
                   </select>
                   {intervalSelect === 'custom' && (
                     <div className="mt-1.5">
                       <input
                         type="text"
-                        placeholder="예: 2m, 45s, 100ms"
+                        placeholder={t('tsdb.intervalPlaceholder')}
                         value={customInterval}
                         onChange={(e) => setCustomInterval(e.target.value)}
                         className="block w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 font-mono text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                       {!intervalValid && customInterval.trim() !== '' && (
                         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                          Go duration 문법 (ms/s/m/h) 을 사용하세요.
+                          {t('tsdb.goDurationSyntax')}
                         </p>
                       )}
                     </div>
@@ -1297,7 +1173,7 @@ function SeriesDataViewerModalImpl({
               {/* 우측: 집계 함수 + 소수점 자릿수 */}
               <fieldset>
                 <legend className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                  집계 함수
+                  {t('tsdb.aggregation')}
                 </legend>
                 <div className="flex items-center gap-3">
                   {AGGREGATION_OPTIONS.map((opt) => (
@@ -1313,7 +1189,7 @@ function SeriesDataViewerModalImpl({
                         onChange={() => setAggregation(opt.value)}
                         className="h-3.5 w-3.5 border-gray-300 text-blue-600"
                       />
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </label>
                   ))}
                 </div>
@@ -1327,7 +1203,7 @@ function SeriesDataViewerModalImpl({
                       htmlFor="tsdb-decimal-precision"
                       className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
                     >
-                      소수점 자릿수
+                      {t('tsdb.decimalPrecision')}
                     </label>
                     <input
                       id="tsdb-decimal-precision"
@@ -1347,10 +1223,36 @@ function SeriesDataViewerModalImpl({
                       className="block w-24 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-xs text-(--color-text-muted)">
-                      평균 집계 시 표시할 소수점 자릿수 (0-6)
+                      {t('tsdb.decimalPrecisionHint')}
                     </p>
                   </div>
                 )}
+
+                {/* 빈 버킷 채우기(gap-fill): 인터벌 구간에 값이 없을 때 처리 방법 */}
+                <div className="mt-3">
+                  <label
+                    htmlFor="tsdb-fill"
+                    className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
+                  >
+                    {t('tsdb.fill')}
+                  </label>
+                  <select
+                    id="tsdb-fill"
+                    data-testid="tsdb-fill"
+                    value={fill}
+                    onChange={(e) => setFill(e.target.value as TsdbFill)}
+                    className="block w-44 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-1.5 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    {FILL_OPTIONS.map((opt) => (
+                      <option key={opt.value || 'none'} value={opt.value}>
+                        {t(opt.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-(--color-text-muted)">
+                    {t('tsdb.fillHint')}
+                  </p>
+                </div>
               </fieldset>
             </div>
           </div>
@@ -1362,10 +1264,15 @@ function SeriesDataViewerModalImpl({
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                 <div className="flex-1">
                   <p className="font-medium text-amber-800 dark:text-amber-200">
-                    결과 행 수가 많아 렌더링이 느릴 수 있습니다
+                    {t('tsdb.warningManyRows')}
                   </p>
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-                    예상 행 수: {expectedBuckets.toLocaleString()}행 (임계치 {MATRIX_ROW_WARNING_THRESHOLD.toLocaleString()} 초과)
+                    {t('tsdb.warningRowCount')
+                      .replace('{count}', expectedBuckets.toLocaleString())
+                      .replace(
+                        '{threshold}',
+                        MATRIX_ROW_WARNING_THRESHOLD.toLocaleString(),
+                      )}
                   </p>
                   <div className="mt-2 flex items-center gap-2">
                     <button
@@ -1373,14 +1280,14 @@ function SeriesDataViewerModalImpl({
                       onClick={handleConfirmWarning}
                       className="rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700"
                     >
-                      계속 실행
+                      {t('tsdb.warningContinue')}
                     </button>
                     <button
                       type="button"
                       onClick={handleCancelWarning}
                       className="rounded-md border border-amber-400 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-600 dark:text-amber-300 dark:hover:bg-amber-900"
                     >
-                      취소
+                      {t('tsdb.warningCancel')}
                     </button>
                   </div>
                 </div>
@@ -1409,9 +1316,9 @@ function SeriesDataViewerModalImpl({
           data-testid="tsdb-viewer-result-scroll"
         >
           {mutation.isSuccess && mutation.data && mutation.data.columns.length > 0 ? (
-            <section aria-label="쿼리 결과">
+            <section aria-label={t('tsdb.resultAria')}>
               <h3 className="mb-2 text-sm font-semibold text-(--color-text-primary)">
-                결과 매트릭스
+                {t('tsdb.resultMatrix')}
               </h3>
               <SeriesResultMatrix
                 matrix={mutation.data}
@@ -1426,7 +1333,7 @@ function SeriesDataViewerModalImpl({
             </section>
           ) : (
             <p className="text-center text-xs text-(--color-text-muted)">
-              조건을 설정하고 실행하면 결과가 여기에 표시됩니다.
+              {t('tsdb.emptyState')}
             </p>
           )}
         </div>
@@ -1439,7 +1346,7 @@ function SeriesDataViewerModalImpl({
             disabled={mutation.isPending}
             className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
           >
-            닫기
+            {t('tsdb.close')}
           </button>
           <button
             type="button"
@@ -1450,17 +1357,17 @@ function SeriesDataViewerModalImpl({
             {mutation.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                실행 중…
+                {t('tsdb.running')}
               </>
             ) : mutation.isSuccess ? (
               <>
                 <Check className="h-4 w-4" />
-                다시 실행
+                {t('tsdb.rerun')}
               </>
             ) : (
               <>
                 <Play className="h-4 w-4" />
-                실행
+                {t('tsdb.run')}
               </>
             )}
           </button>

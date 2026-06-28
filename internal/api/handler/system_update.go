@@ -243,6 +243,16 @@ type UpdateServiceConfig struct {
 
 	// HealthCheckInterval 은 self-probe 폴링 주기 (default 1초).
 	HealthCheckInterval time.Duration
+
+	// @SPEC:SPEC-WEB-007
+	// Mode 는 remote_management.mode ("server" | "client" | "disabled").
+	// Version() 응답의 self identity 표출에 사용된다. 빈 문자열도 허용 (display 만).
+	Mode string
+
+	// @SPEC:SPEC-WEB-007
+	// StartedAt 은 프로세스 시작 시각이다. zero 가 아니면 Version() 응답의
+	// UptimeSeconds 를 time.Since(StartedAt) 로 계산한다. zero 면 0 을 반환한다.
+	StartedAt time.Time
 }
 
 // RestartOrchestratorRunner 는 handler 가 의존하는 orchestrator 의 최소 인터페이스이다.
@@ -289,15 +299,40 @@ func NewUpdateService(cfg UpdateServiceConfig, logger *slog.Logger) *UpdateServi
 //
 // 락 비용을 최소화하기 위해 RLock 만 사용한다.
 func (s *UpdateService) Version() dto.VersionResponse {
+	// @SPEC:SPEC-WEB-007
+	// 락 불필요 값(self identity + uptime)은 RLock 진입 전에 미리 계산한다.
+	// project memory(project_hvac_agent_lock_pattern.md): 락 보유 구간을 최소화하고
+	// RWMutex 재귀/대기 위험을 줄이기 위해 cfg 읽기만 RLock 안에서 수행한다.
+	// os.Hostname() 은 가벼운 syscall 이며 락과 무관하다.
+	hostname, hostErr := os.Hostname()
+	if hostErr != nil {
+		// BuildDate 의 "unknown" 컨벤션을 따른다 (빈 문자열 대신 표식).
+		hostname = "unknown"
+	}
+	osName := runtime.GOOS
+	arch := runtime.GOARCH
+	goVersion := runtime.Version()
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// UptimeSeconds: StartedAt 이 zero 가 아니면 경과 초, zero 면 0.
+	var uptimeSeconds float64
+	if !s.cfg.StartedAt.IsZero() {
+		uptimeSeconds = time.Since(s.cfg.StartedAt).Seconds()
+	}
+
 	resp := dto.VersionResponse{
-		Version:   s.cfg.CurrentVersion,
-		Commit:    s.cfg.Commit,
-		BuildDate: s.cfg.BuildDate,
-		GoVersion: runtime.Version(),
-		Channel:   string(s.cfg.Config.Channel),
+		Version:       s.cfg.CurrentVersion,
+		Commit:        s.cfg.Commit,
+		BuildDate:     s.cfg.BuildDate,
+		GoVersion:     goVersion,
+		Channel:       string(s.cfg.Config.Channel),
+		OS:            osName,
+		Arch:          arch,
+		Hostname:      hostname,
+		Mode:          s.cfg.Mode,
+		UptimeSeconds: uptimeSeconds,
 	}
 	if s.currentOp != nil && s.currentOp.ToVersion != "" {
 		resp.LatestVersion = string(s.currentOp.ToVersion)

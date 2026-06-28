@@ -70,6 +70,13 @@ type portCounter struct {
 	// warnedUnconnected 는 "연결된 와이어 없음" 경고를 포트당 1회만 로깅하기 위한
 	// 디둡(dedupe) 가드이다. 메시지마다 경고가 반복되는 로그 스팸을 방지한다.
 	warnedUnconnected atomic.Bool
+
+	// suppressUnconnected 가 true 이면 이 포트의 미연결 출력 경고를 완전히
+	// 억제한다. influxdb-write, store-write 같은 터미널/라이터 노드는 미연결
+	// pass-through "out" 이 의도된 동작이므로 경고가 노이즈가 된다. 노드 config
+	// "suppress_unconnected_warning" 으로 옵트인하며 배포 시 설정된다.
+	// 불변(immutable) 값으로 배포 시점에 한 번만 설정되므로 atomic 이 아니다.
+	suppressUnconnected bool
 }
 
 // Record 는 노드가 이 포트로 메시지를 생산(emit)했음을 기록한다.

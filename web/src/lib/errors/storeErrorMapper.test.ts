@@ -7,6 +7,8 @@
 import { describe, it, expect } from 'vitest';
 
 import { APIError } from '@/types/api';
+import type { TranslationFn } from '@/lib/i18n';
+import ko from '@/lib/i18n/ko.json';
 
 import {
   classifyStoreError,
@@ -15,6 +17,18 @@ import {
   type StoreErrorMapped,
 } from './storeErrorMapper';
 
+// 실제 ko.json 을 사용해 키를 한글 메시지로 해석하는 테스트용 t.
+// {slot} 보간은 호출부(매퍼)에서 .replace 로 처리하므로 여기서는 키 해석만 한다.
+const t: TranslationFn = (key: string) => {
+  const parts = key.split('.');
+  let cur: unknown = ko;
+  for (const p of parts) {
+    if (cur === null || typeof cur !== 'object') return key;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return typeof cur === 'string' ? cur : key;
+};
+
 describe('mapStoreError', () => {
   // ── ErrTypeMismatch ────────────────────────────────────────────
   describe('ErrTypeMismatch', () => {
@@ -22,7 +36,7 @@ describe('mapStoreError', () => {
       const err = new Error(
         'store: value type does not match registered data_type for key',
       );
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe<StoreErrorKind>('type_mismatch');
       expect(result.userMessage).toContain('등록된 타입과 일치하지 않습니다');
       expect(result.userMessage).toContain('삭제 후 재등록');
@@ -30,7 +44,7 @@ describe('mapStoreError', () => {
 
     it('ErrTypeMismatch 식별자를 포함한 메시지도 매핑한다', () => {
       const err = new Error('lg_hvacr02/store.ErrTypeMismatch occurred');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('type_mismatch');
     });
 
@@ -38,7 +52,7 @@ describe('mapStoreError', () => {
       const err = new Error(
         "store: value type does not match registered data_type for key 'sensor1' (registered=int)",
       );
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('type_mismatch');
       // 키가 추출되면 "키 'sensor1' 의" 같은 prefix 가 메시지에 포함된다.
       expect(result.userMessage).toMatch(/sensor1/);
@@ -46,7 +60,7 @@ describe('mapStoreError', () => {
 
     it('키 이름 추출 실패 시에도 일반 메시지로 매핑된다', () => {
       const err = new Error('value type does not match registered data_type');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('type_mismatch');
       expect(result.userMessage).toContain('등록된 타입과 일치하지 않습니다');
     });
@@ -56,7 +70,7 @@ describe('mapStoreError', () => {
       const err = new Error(
         "store: value type does not match registered data_type for key 'sensor2'",
       );
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('type_mismatch');
       expect(result.userMessage).toMatch(/sensor2/);
       // 등록 타입 정보가 없으면 "(등록 타입: …)" 부분은 빠진다.
@@ -68,7 +82,7 @@ describe('mapStoreError', () => {
   describe('ErrUnsupportedValueType', () => {
     it('표준 메시지를 매핑한다', () => {
       const err = new Error('store: unsupported value type for key');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('unsupported_value_type');
       expect(result.userMessage).toContain('지원하지 않는 값 타입');
       expect(result.userMessage).toContain('nil');
@@ -76,7 +90,7 @@ describe('mapStoreError', () => {
 
     it('ErrUnsupportedValueType 식별자도 매핑한다', () => {
       const err = new Error('Got ErrUnsupportedValueType from backend');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('unsupported_value_type');
     });
   });
@@ -85,7 +99,7 @@ describe('mapStoreError', () => {
   describe('ErrInvalidDataType', () => {
     it('표준 메시지를 매핑한다', () => {
       const err = new Error('store: invalid or missing data_type');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('invalid_data_type');
       expect(result.userMessage).toContain('data_type');
       expect(result.userMessage).toContain('int, float, string, boolean, bytes, json');
@@ -93,7 +107,7 @@ describe('mapStoreError', () => {
 
     it('ErrInvalidDataType 식별자도 매핑한다', () => {
       const err = new Error('lg_hvacr02.ErrInvalidDataType: missing data_type field');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('invalid_data_type');
     });
   });
@@ -102,7 +116,7 @@ describe('mapStoreError', () => {
   describe('ErrInvalidMetricType', () => {
     it('표준 메시지를 매핑한다', () => {
       const err = new Error('store: invalid metric_type "sensor!@#"');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('invalid_metric_type');
       expect(result.userMessage).toContain('metric_type');
       expect(result.userMessage).toContain('영문');
@@ -110,7 +124,7 @@ describe('mapStoreError', () => {
 
     it('ErrInvalidMetricType 식별자도 매핑한다', () => {
       const err = new Error('ErrInvalidMetricType: contains invalid characters');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('invalid_metric_type');
     });
   });
@@ -121,7 +135,7 @@ describe('mapStoreError', () => {
       const err = new Error(
         'config: allow_dynamic_keys is removed in v0.3.0, use registration_type instead',
       );
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('migration_required');
       expect(result.userMessage).toContain('마이그레이션');
       expect(result.userMessage).toContain('registration_type');
@@ -130,7 +144,7 @@ describe('mapStoreError', () => {
 
     it('removed 키워드(단순)도 마이그레이션으로 분류한다', () => {
       const err = new Error('legacy field allow_dynamic_keys removed');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('migration_required');
       expect(result.guideLink).toBe('/docs/migration/v0.3.0-store-keys.md');
     });
@@ -138,7 +152,7 @@ describe('mapStoreError', () => {
     it('allow_dynamic_keys 만 있고 removed 가 없으면 unknown 으로 분류한다', () => {
       // 마이그레이션 매칭은 두 키워드가 모두 있어야 한다.
       const err = new Error('allow_dynamic_keys is set to true');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('unknown');
     });
   });
@@ -147,7 +161,7 @@ describe('mapStoreError', () => {
   describe('unknown (fallback)', () => {
     it('알 수 없는 백엔드 에러에 대해 fallback 메시지를 반환한다', () => {
       const err = new Error('something completely unexpected went wrong');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('오류가 발생했습니다');
       expect(result.userMessage).toContain('something completely unexpected');
@@ -155,25 +169,25 @@ describe('mapStoreError', () => {
 
     it('빈 문자열 에러는 fallback + Unknown error 로 처리한다', () => {
       const err = new Error('');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('Unknown error');
     });
 
     it('null 입력은 fallback 으로 처리한다', () => {
-      const result = mapStoreError(null);
+      const result = mapStoreError(null, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('Unknown error');
     });
 
     it('undefined 입력은 fallback 으로 처리한다', () => {
-      const result = mapStoreError(undefined);
+      const result = mapStoreError(undefined, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('Unknown error');
     });
 
     it('숫자 등 비정형 입력은 fallback 으로 처리한다', () => {
-      const result = mapStoreError(42 as unknown);
+      const result = mapStoreError(42 as unknown, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('Unknown error');
     });
@@ -187,43 +201,43 @@ describe('mapStoreError', () => {
         'value type does not match registered data_type',
         400,
       );
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('type_mismatch');
     });
 
     it('APIError + unknown message 는 fallback + 원본 메시지를 노출한다', () => {
       const err = new APIError('UNKNOWN_FAILURE', 'database connection lost', 500);
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('database connection lost');
     });
 
     it('일반 Error 인스턴스는 message 만 사용해 매핑한다', () => {
       const err = new Error('store: unsupported value type');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('unsupported_value_type');
     });
 
     it('문자열 입력도 message 로 직접 사용한다', () => {
-      const result = mapStoreError('invalid metric_type detected');
+      const result = mapStoreError('invalid metric_type detected', t);
       expect(result.kind).toBe('invalid_metric_type');
     });
 
     it('object with message 필드(plain object) 도 메시지를 추출한다', () => {
-      const result = mapStoreError({ message: 'invalid or missing data_type' });
+      const result = mapStoreError({ message: 'invalid or missing data_type' }, t);
       expect(result.kind).toBe('invalid_data_type');
     });
 
     it('object with non-string message 필드는 String 화 후 매핑한다', () => {
       // message 가 string 이 아닐 때 (예: 숫자) String() 으로 변환하는 분기.
-      const result = mapStoreError({ message: 42 });
+      const result = mapStoreError({ message: 42 }, t);
       expect(result.kind).toBe('unknown');
       expect(result.userMessage).toContain('42');
     });
 
     it('raw 필드는 원본 에러 객체를 보존한다', () => {
       const err = new Error('store: unsupported value type');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.raw).toBe(err);
     });
   });
@@ -232,7 +246,7 @@ describe('mapStoreError', () => {
   describe('입력 형식 다양성', () => {
     it('대소문자 무관 매칭: 대문자 메시지', () => {
       const err = new Error('STORE: VALUE TYPE DOES NOT MATCH REGISTERED DATA_TYPE');
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('type_mismatch');
     });
 
@@ -240,7 +254,7 @@ describe('mapStoreError', () => {
       const err = new Error(
         'Backend response: 400 Bad Request — store: invalid metric_type "abc!"; please retry',
       );
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('invalid_metric_type');
     });
   });
@@ -252,7 +266,7 @@ describe('mapStoreError', () => {
       const err = new Error(
         'allow_dynamic_keys is removed; also invalid or missing data_type',
       );
-      const result = mapStoreError(err);
+      const result = mapStoreError(err, t);
       expect(result.kind).toBe('migration_required');
     });
   });

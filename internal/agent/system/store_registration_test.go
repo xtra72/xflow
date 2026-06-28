@@ -184,7 +184,8 @@ func TestRegistration_AutoMode_RegistersNewKey(t *testing.T) {
 	require.Contains(t, snap, "outdoor:temperature")
 	meta := snap["outdoor:temperature"]
 	assert.Equal(t, SourceAuto, meta.Source, "Source 는 SourceAuto")
-	assert.Equal(t, DataTypeFloat, meta.DataType, "data_type 은 추론된 float")
+	// @spec v0.4.0: 동적 키는 추론 없이 항상 data_type=string.
+	assert.Equal(t, DataTypeString, meta.DataType, "data_type 은 string")
 	assert.Equal(t, "unknown", meta.MetricType, "metric_type default 는 'unknown'")
 	require.NotNil(t, meta.Tags, "Tags 는 nil 이 아닌 빈 맵")
 	assert.Empty(t, meta.Tags, "auto 등록 키의 Tags 는 빈 맵")
@@ -222,10 +223,10 @@ func TestRegistration_AutoMode_PreservesManualKeyMetadata(t *testing.T) {
 	assert.Equal(t, "temperature", manual.MetricType)
 	assert.Equal(t, "1", manual.Tags["room"])
 
-	// Auto 키 메타.
+	// Auto 키 메타. @spec v0.4.0: 동적 키는 항상 data_type=string.
 	auto := snap["outdoor:temperature"]
 	assert.Equal(t, SourceAuto, auto.Source, "자동 등록 키는 Source=SourceAuto")
-	assert.Equal(t, DataTypeFloat, auto.DataType)
+	assert.Equal(t, DataTypeString, auto.DataType, "동적 키는 data_type=string")
 	assert.Equal(t, "unknown", auto.MetricType)
 	assert.Empty(t, auto.Tags)
 }
@@ -234,72 +235,82 @@ func TestRegistration_AutoMode_PreservesManualKeyMetadata(t *testing.T) {
 // D. Type pinning (Scenario 8 / M7 unwanted)
 // =============================================================================
 
-// @spec SPEC-STORE-003 v0.3.0 / Scenario 8 / M7 unwanted
-// TestRegistration_TypeMismatchAfterAutoRegister 는 auto 모드 자동 등록 후
-// 다른 타입 쓰기가 ErrTypeMismatch 로 거부됨을 검증한다 (M7 type pinning).
-func TestRegistration_TypeMismatchAfterAutoRegister(t *testing.T) {
+// @spec SPEC-STORE-003 v0.4.0 (동적=string 정책 도입에 따른 갱신)
+// TestRegistration_DynamicKeyCoercedToString 은 auto 모드 자동 등록된 동적 키가
+// data_type=string 으로 등록되고, 첫 쓰기 값(int)이 string 으로 변환되어 저장됨을 검증한다.
+// 후속으로 다른 타입을 써도 ErrTypeMismatch 없이 모두 string 으로 변환되어 허용된다.
+//
+// 이전(v0.3.0)에는 inferDataType 으로 int 가 추론되고 type pinning 으로 다른 타입이
+// 거부되었으나, v0.4.0 에서 "동적 키는 항상 string 으로 보관" 정책으로 변경되었다.
+func TestRegistration_DynamicKeyCoercedToString(t *testing.T) {
 	options := map[string]any{
 		"registration_type": "auto",
 	}
 	u := makeStoreAgentForRegistration(t, options)
 	store := u.inner.ForNamespace("default")
 
-	// 첫 쓰기: int 자동 등록.
+	// 첫 쓰기: int 42 → 동적 string 키로 등록 + 값은 "42" 로 저장.
 	require.NoError(t, store.Set(context.Background(), "sensor1", 42))
 
-	// 후속 쓰기: 다른 타입 (string) 거부.
-	err := store.Set(context.Background(), "sensor1", "broken")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrTypeMismatch,
-		"등록된 후 다른 타입 쓰기는 ErrTypeMismatch")
-
-	// 등록 메타는 변경되지 않음.
 	snap := u.StaticKeysSnapshot()
-	assert.Equal(t, DataTypeInt, snap["sensor1"].DataType,
-		"data_type 은 첫 쓰기 시 결정된 int 로 영구 고정")
+	assert.Equal(t, DataTypeString, snap["sensor1"].DataType,
+		"동적 키는 data_type=string 으로 등록")
+	assert.Equal(t, SourceAuto, snap["sensor1"].Source)
+	assert.Equal(t, "unknown", snap["sensor1"].MetricType)
+
+	entry, err := store.Get(context.Background(), "sensor1")
+	require.NoError(t, err)
+	assert.Equal(t, "42", entry.Value, "int 값은 string 으로 변환되어 저장")
+
+	// 후속 쓰기: 다른 타입(string)도 거부되지 않고 그대로 string 저장.
+	require.NoError(t, store.Set(context.Background(), "sensor1", "broken"))
+	entry, err = store.Get(context.Background(), "sensor1")
+	require.NoError(t, err)
+	assert.Equal(t, "broken", entry.Value)
 }
 
-// @spec SPEC-STORE-003 v0.3.0 / Scenario 8 / M7 unwanted
-// TestRegistration_TypePinning_Permanent 는 auto 등록 후 동일 키에 대한 모든 후속
-// 타입 변경이 거부됨을 검증한다 (data_type pinning per M7).
-func TestRegistration_TypePinning_Permanent(t *testing.T) {
+// @spec SPEC-STORE-003 v0.4.0 (동적=string 정책 도입에 따른 갱신)
+// TestRegistration_DynamicKeyAlwaysString 은 auto 등록된 동적 키가 어떤 타입의
+// 후속 쓰기든 string 으로 변환하여 허용함을 검증한다 (type mismatch 없음).
+func TestRegistration_DynamicKeyAlwaysString(t *testing.T) {
 	options := map[string]any{
 		"registration_type": "auto",
 	}
 	u := makeStoreAgentForRegistration(t, options)
 	store := u.inner.ForNamespace("default")
 
-	// 첫 쓰기: int 등록.
+	// 첫 쓰기: int → 동적 string 키 등록.
 	require.NoError(t, store.Set(context.Background(), "k", 1))
 	snap := u.StaticKeysSnapshot()
-	assert.Equal(t, DataTypeInt, snap["k"].DataType)
+	assert.Equal(t, DataTypeString, snap["k"].DataType)
 
-	// 동일 타입 후속 쓰기 → 통과.
-	require.NoError(t, store.Set(context.Background(), "k", 100))
-
-	// 다른 enum 타입 시도들 → 모두 ErrTypeMismatch.
+	// 다양한 타입 후속 쓰기 → 모두 허용되고 string 으로 변환되어 저장.
 	cases := []struct {
 		name  string
 		value any
+		want  string
 	}{
-		{"float", 3.14},
-		{"string", "hello"},
-		{"bool", true},
-		{"bytes", []byte{0x01}},
-		{"json", map[string]any{"a": 1}},
+		{"int", 100, "100"},
+		{"float", 3.14, "3.14"},
+		{"string", "hello", "hello"},
+		{"bool", true, "true"},
+		{"bytes", []byte("ab"), "ab"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := store.Set(context.Background(), "k", tc.value)
-			assert.ErrorIs(t, err, ErrTypeMismatch,
-				"%s 타입 후속 쓰기는 ErrTypeMismatch", tc.name)
+			require.NoError(t, store.Set(context.Background(), "k", tc.value),
+				"%s 타입 후속 쓰기는 허용", tc.name)
+			entry, err := store.Get(context.Background(), "k")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, entry.Value,
+				"%s 값은 string 으로 변환되어 저장", tc.name)
 		})
 	}
 
-	// 등록된 DataType 은 변경 없음.
+	// 등록된 DataType 은 string 으로 유지.
 	snap = u.StaticKeysSnapshot()
-	assert.Equal(t, DataTypeInt, snap["k"].DataType,
-		"data_type 은 첫 쓰기 후 영구 고정")
+	assert.Equal(t, DataTypeString, snap["k"].DataType,
+		"data_type 은 string 으로 고정")
 }
 
 // =============================================================================

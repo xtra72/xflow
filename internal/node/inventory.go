@@ -1,36 +1,30 @@
-// Package node - inventory.go: SPEC-INVENTORY-001 Inventory 노드 구현
+// Package node - inventory.go: Inventory 노드 (재설계)
 //
 // Inventory 노드는 in-process 디바이스/에이전트/노드/플로우 레지스트리의
-// 스냅샷을 메시지로 emit 한다. 4종 source × 2종 emit_shape 매트릭스를 지원하며
-// devices source 에 대해서는 기존 device.DeviceFilter 재사용 형태로 필터링한다.
+// 스냅샷을 메시지로 emit 한다. 4종 source 를 지원하며, 항목 단위의 조건식
+// 필터(condition)·필드 화이트리스트 투영(fields)·메시지당 항목 수 청킹
+// (max_items) 을 제공한다.
 //
 // 의존성은 NodeOption 4종 (WithDeviceRegistryFunc, WithAgentManagerFunc,
 // WithFlowRegistryFunc, WithNodeRegistryFunc) 으로 함수형 resolver 패턴으로
 // 주입한다. 함수형 resolver 는 cmd/xflowd/main.go 에서 engine 자기 참조 등
-// 순환 초기화 순서 문제를 회피하기 위한 채택이다 (plan.md 결정 (c3)).
+// 순환 초기화 순서 문제를 회피하기 위한 채택이다.
 //
 // 본 노드는 어떠한 레지스트리도 변경하지 않는다 (read-only). List/Get 계열
 // 메서드만 호출하며, 변경 메서드는 호출하지 않는다.
 //
-// 버전 이력:
-//   - v0.1.0 (2026-05-25): 최초 구현 — 4종 source × 2종 shape 매트릭스.
-//   - v0.2.0 (2026-05-25): devices source 의 payload 에 `device_uuid` 필드 추가.
-//     agent.ResolveDeviceID(ctx, agentName, localID) 로 글로벌 UUID 를 조회하여
-//     composite key (id) 와 함께 노출. UUID 가 없으면 device_uuid 키 자체를 생략
-//     (graceful degradation). 사용 사례: 에이전트 rename 에도 안정적인 시계열
-//     tag 키 / MQTT topic 식별자.
-//   - v0.3.0 (2026-05-26): SPEC-DEVICE-IDENTITY-001 Phase B § B-T8 정규화 —
-//     `device_uuid` 키를 `uid` 로 정규화 (`device_uuid` alias 함께 emit).
-//   - v1.0 (2026-05-26): SPEC-DEVICE-IDENTITY-001 Phase D § D-T18 — `device_uuid`
-//     호환 alias 완전 제거. `uid` 만 emit 한다 (greenfield xflowd v1.0).
+// 재설계(breaking): 구 키 emit_shape / include_metadata / filter(struct) 는
+// 제거되었다. 항목 직렬화는 항상 풍부한(rich) 필드를 노출하며, 필터링은
+// filter 노드와 동일한 compileCondition 조건식으로 모든 source 에 적용된다.
+// 출력 payload 는 항상 "items" 키 아래 청크 배열을 담고, metadata 는
+// type/total_count/offset/count 4키만 설정한다 (입력 메타 복사 없음).
 package node
 
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -41,7 +35,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Source / Shape enum 상수
+// Source enum 상수
 // ---------------------------------------------------------------------------
 
 const (
@@ -54,19 +48,14 @@ const (
 	// InventorySourceFlows 는 플로우 레지스트리 스냅샷을 emit 하는 source 값이다.
 	InventorySourceFlows = "flows"
 
-	// InventoryShapeArray 는 단일 메시지에 배열을 담는 emit 형태이다 (기본).
-	InventoryShapeArray = "array"
-	// InventoryShapePerItem 는 항목별 N 개 메시지로 fan-out 하는 emit 형태이다.
-	InventoryShapePerItem = "per_item"
-
-	// inventoryMetaSource 는 출력 메타데이터에 추가되는 source 키 이름이다.
-	inventoryMetaSource = "inventory.source"
-	// inventoryMetaCount 는 출력 메타데이터에 추가되는 전체 항목 수 키 이름이다.
-	inventoryMetaCount = "inventory.count"
-	// inventoryMetaIndex 는 per_item 출력 메타데이터의 0-based 인덱스 키이다.
-	inventoryMetaIndex = "inventory.index"
-	// inventoryMetaTotal 는 per_item 출력 메타데이터의 전체 항목 수 키이다 (count alias).
-	inventoryMetaTotal = "inventory.total"
+	// inventoryMetaType 은 출력 메타데이터의 source 단수형 키 이름이다.
+	inventoryMetaType = "type"
+	// inventoryMetaTotalCount 는 출력 메타데이터의 전체(필터 후) 항목 수 키 이름이다.
+	inventoryMetaTotalCount = "total_count"
+	// inventoryMetaOffset 은 출력 메타데이터의 청크 첫 항목 0-based 인덱스 키 이름이다.
+	inventoryMetaOffset = "offset"
+	// inventoryMetaCount 는 출력 메타데이터의 이 메시지 항목 수 키 이름이다.
+	inventoryMetaCount = "count"
 
 	// inventoryDeviceRegistryFnKey 는 NodeOption 으로 주입된 DeviceRegistry resolver 의 config 키이다.
 	inventoryDeviceRegistryFnKey = "_inventory_device_registry_fn"
@@ -85,10 +74,8 @@ const (
 var (
 	// ErrInventoryInvalidSource 는 source 가 누락 또는 4종 enum 외 값일 때 반환된다.
 	ErrInventoryInvalidSource = fmt.Errorf("inventory: %w: invalid source (must be one of: devices, agents, nodes, flows)", ErrInvalidConfig)
-	// ErrInventoryInvalidEmitShape 는 emit_shape 가 2종 enum 외 값일 때 반환된다.
-	ErrInventoryInvalidEmitShape = fmt.Errorf("inventory: %w: invalid emit_shape (must be one of: array, per_item)", ErrInvalidConfig)
-	// ErrInventoryInvalidFilter 는 filter 의 필드 타입이 device.DeviceFilter 와 호환되지 않을 때 반환된다.
-	ErrInventoryInvalidFilter = fmt.Errorf("inventory: %w: invalid filter", ErrInvalidConfig)
+	// ErrInventoryInvalidConfig 는 fields/max_items 등 설정 타입이 잘못되었을 때 반환된다.
+	ErrInventoryInvalidConfig = fmt.Errorf("inventory: %w: invalid config", ErrInvalidConfig)
 
 	// ErrInventoryDeviceRegistryNotAvailable 는 source=devices 인데 DeviceRegistry 가 주입되지 않았을 때 Init 에서 반환된다.
 	ErrInventoryDeviceRegistryNotAvailable = fmt.Errorf("inventory: %w: device registry not configured (use WithDeviceRegistryFunc)", ErrNodeNotInitialized)
@@ -117,7 +104,7 @@ type FlowSummary struct {
 }
 
 // FlowRegistry 는 inventory 노드가 flow 목록을 조회하는 최소 인터페이스이다.
-// engine.Engine 이 이를 만족한다 (Phase 5 에서 어댑터 메서드 추가).
+// engine.Engine 이 이를 만족한다.
 type FlowRegistry interface {
 	// FlowSummaries 는 배포된 모든 플로우의 요약 정보를 반환한다.
 	FlowSummaries() []FlowSummary
@@ -176,27 +163,25 @@ func WithNodeRegistryFunc(fn func() *Registry) NodeOption {
 // ---------------------------------------------------------------------------
 
 // InventoryNode 는 in-process 인벤토리 스냅샷을 emit 하는 처리 노드이다.
-// 4종 source (devices/agents/nodes/flows) × 2종 emit_shape (array/per_item) 매트릭스를 지원한다.
+// 4종 source (devices/agents/nodes/flows) 를 지원하며, 항목 단위의 조건식
+// 필터·필드 투영·청킹을 제공한다.
 type InventoryNode struct {
 	*BaseNode
 
 	// 노드 설정 (immutable after factory)
-	source          string
-	emitShape       string
-	includeMetadata bool
-
-	// 필터 (devices source 한정)
-	filter          device.DeviceFilter
-	filterSpecified bool
+	source string
+	fields []string // 필드 화이트리스트 (빈 슬라이스면 전체 필드)
+	// cond 는 항목 조건식 필터이다 (nil 이면 필터 없음). 항목 맵을 직접 평가하는
+	// zero-copy 변형(compileConditionData)을 사용해 항목당 메시지 래핑/깊은 복사를
+	// 피한다. 호출 시 {"payload": item} 형태로 data 를 구성한다.
+	cond     func(map[string]any) bool
+	maxItems int // 메시지당 최대 항목 수 (<=0 이면 무제한)
 
 	// 의존성 resolver (NodeOption 으로 주입, Init 에서 검증)
 	deviceRegistryFn func() device.DeviceRegistry
 	agentManagerFn   func() agent.Manager
 	flowRegistryFn   func() FlowRegistry
 	nodeRegistryFn   func() *Registry
-
-	// 비-device source 에서 filter 가 무시되었음을 1회만 로깅하기 위한 가드
-	filterIgnoredWarnOnce sync.Once
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -210,16 +195,19 @@ var _ Node = (*InventoryNode)(nil)
 //
 // config 키:
 //   - source (string, required): "devices" | "agents" | "nodes" | "flows"
-//   - emit_shape (string, default "array"): "array" | "per_item"
-//   - include_metadata (bool, default true): metadata/state/info 등 풍부 필드 포함 여부
-//   - filter (object, devices 한정): protocol/agent_name/type/online/group/tags
+//   - fields (string | []any | []string, optional): 포함할 항목 필드 화이트리스트.
+//     쉼표 구분 string 또는 슬라이스 모두 허용 (공백 trim, 빈 항목 제거).
+//     비었거나 미지정이면 전체 필드. 항목에 없는 키는 그냥 생략한다 (에러 아님).
+//   - condition (string, optional): 항목 조건식 필터. filter 노드와 동일한
+//     compileCondition 으로 컴파일하며, 각 항목을 payload 로 감싸 평가한다.
+//     모든 source 에 적용된다. 컴파일 실패 시 에러를 반환한다.
+//   - max_items (number, optional, default 0): 메시지당 최대 항목 수.
+//     <=0 이면 무제한 (전체 1개 메시지), >0 이면 N개씩 분할한다.
 //
 // 의존성은 NodeOption 4종 (WithDeviceRegistryFunc 등) 으로 주입한다.
 // Init 시 선택된 source 에 필요한 resolver 가 없으면 sentinel 에러를 반환한다.
 func NewInventoryNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	base := NewBaseNode(def, opts...)
-
-	// config 정규화 (factory 시점에 validate)
 	cfg := def.Config
 
 	// source 검증 (필수)
@@ -228,42 +216,30 @@ func NewInventoryNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 		return nil, err
 	}
 
-	// emit_shape 검증 (default array)
-	emitShape, err := extractInventoryEmitShape(cfg)
+	// fields 파싱 (선택)
+	fields, err := parseInventoryFields(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// include_metadata (default true)
-	includeMetadata := true
-	if v, ok := cfg["include_metadata"]; ok {
-		if b, ok := v.(bool); ok {
-			includeMetadata = b
-		}
+	// condition 컴파일 (선택, filter 노드 정책과 동일)
+	cond, err := compileInventoryCondition(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	// filter 파싱 (devices 한정, 비-devices 일 때는 파싱하되 적용은 안 함)
-	var deviceFilter device.DeviceFilter
-	var filterSpecified bool
-	if rawFilter, ok := cfg["filter"]; ok && rawFilter != nil {
-		// 빈 map 이면 무시
-		if m, ok := rawFilter.(map[string]any); ok && len(m) > 0 {
-			parsed, err := parseInventoryDeviceFilter(m)
-			if err != nil {
-				return nil, err
-			}
-			deviceFilter = parsed
-			filterSpecified = true
-		}
+	// max_items 파싱 (선택, default 0)
+	maxItems, err := parseInventoryMaxItems(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	n := &InventoryNode{
-		BaseNode:        base,
-		source:          source,
-		emitShape:       emitShape,
-		includeMetadata: includeMetadata,
-		filter:          deviceFilter,
-		filterSpecified: filterSpecified,
+		BaseNode: base,
+		source:   source,
+		fields:   fields,
+		cond:     cond,
+		maxItems: maxItems,
 	}
 
 	// base.config 에서 NodeOption 으로 주입된 resolver 들을 추출
@@ -280,14 +256,6 @@ func NewInventoryNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 		if fn, ok := base.config[inventoryNodeRegistryFnKey].(func() *Registry); ok {
 			n.nodeRegistryFn = fn
 		}
-	}
-
-	// 비-device source 에서 filter 가 명시된 경우 경고 (1회)
-	if filterSpecified && source != InventorySourceDevices {
-		n.filterIgnoredWarnOnce.Do(func() {
-			slog.Warn("inventory: filter ignored for non-device source",
-				"node", n.ID(), "source", source)
-		})
 	}
 
 	return n, nil
@@ -312,93 +280,88 @@ func extractInventorySource(cfg map[string]any) (string, error) {
 	}
 }
 
-// extractInventoryEmitShape 는 config 에서 emit_shape 키를 추출한다. 미지정 시 기본 "array".
-func extractInventoryEmitShape(cfg map[string]any) (string, error) {
-	raw, ok := cfg["emit_shape"]
-	if !ok {
-		return InventoryShapeArray, nil
-	}
-	s, ok := raw.(string)
-	if !ok {
-		return "", fmt.Errorf("%w: 'emit_shape' must be string, got %T", ErrInventoryInvalidEmitShape, raw)
-	}
-	switch s {
-	case InventoryShapeArray, InventoryShapePerItem:
-		return s, nil
-	default:
-		return "", fmt.Errorf("%w: unknown emit_shape %q", ErrInventoryInvalidEmitShape, s)
-	}
-}
-
-// parseInventoryDeviceFilter 는 yaml/json 표현의 filter map 을 device.DeviceFilter 로 변환한다.
-// 타입 불일치 시 ErrInventoryInvalidFilter 를 반환한다.
-func parseInventoryDeviceFilter(raw map[string]any) (device.DeviceFilter, error) {
-	var f device.DeviceFilter
-
-	if v, ok := raw["protocol"]; ok && v != nil {
-		s, ok := v.(string)
-		if !ok {
-			return f, fmt.Errorf("%w: filter.protocol must be string, got %T", ErrInventoryInvalidFilter, v)
-		}
-		f.Protocol = s
-	}
-	if v, ok := raw["agent_name"]; ok && v != nil {
-		s, ok := v.(string)
-		if !ok {
-			return f, fmt.Errorf("%w: filter.agent_name must be string, got %T", ErrInventoryInvalidFilter, v)
-		}
-		f.AgentName = s
-	}
-	if v, ok := raw["type"]; ok && v != nil {
-		s, ok := v.(string)
-		if !ok {
-			return f, fmt.Errorf("%w: filter.type must be string, got %T", ErrInventoryInvalidFilter, v)
-		}
-		f.Type = s
-	}
-	if v, ok := raw["online"]; ok && v != nil {
-		b, ok := v.(bool)
-		if !ok {
-			return f, fmt.Errorf("%w: filter.online must be bool, got %T", ErrInventoryInvalidFilter, v)
-		}
-		f.Online = &b
-	}
-	if v, ok := raw["group"]; ok && v != nil {
-		s, ok := v.(string)
-		if !ok {
-			return f, fmt.Errorf("%w: filter.group must be string, got %T", ErrInventoryInvalidFilter, v)
-		}
-		f.Group = s
-	}
-	if v, ok := raw["tags"]; ok && v != nil {
-		tags, err := coerceStringSlice(v)
-		if err != nil {
-			return f, fmt.Errorf("%w: filter.tags %s", ErrInventoryInvalidFilter, err.Error())
-		}
-		f.Tags = tags
+// parseInventoryFields 는 config 의 fields 키를 []string 으로 파싱한다.
+// 쉼표 구분 string 또는 []any/[]string 을 허용하며, 각 항목을 trim 하고
+// 빈 항목은 제거한다. 미지정/빈 결과는 nil (전체 필드)을 반환한다.
+func parseInventoryFields(cfg map[string]any) ([]string, error) {
+	raw, ok := cfg["fields"]
+	if !ok || raw == nil {
+		return nil, nil
 	}
 
-	return f, nil
-}
-
-// coerceStringSlice 는 임의의 슬라이스를 []string 으로 변환한다.
-// yaml/json 역직렬화 결과는 []any 가 흔하므로 element 타입을 엄격히 검증한다.
-func coerceStringSlice(v any) ([]string, error) {
-	switch s := v.(type) {
+	var parts []string
+	switch v := raw.(type) {
+	case string:
+		parts = strings.Split(v, ",")
 	case []string:
-		return s, nil
+		parts = v
 	case []any:
-		out := make([]string, 0, len(s))
-		for i, el := range s {
-			str, ok := el.(string)
+		parts = make([]string, 0, len(v))
+		for i, el := range v {
+			s, ok := el.(string)
 			if !ok {
-				return nil, fmt.Errorf("element[%d] must be string, got %T", i, el)
+				return nil, fmt.Errorf("%w: fields[%d] must be string, got %T", ErrInventoryInvalidConfig, i, el)
 			}
-			out = append(out, str)
+			parts = append(parts, s)
 		}
-		return out, nil
 	default:
-		return nil, fmt.Errorf("must be string slice, got %T", v)
+		return nil, fmt.Errorf("%w: 'fields' must be string or string slice, got %T", ErrInventoryInvalidConfig, raw)
+	}
+
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// compileInventoryCondition 은 config 의 condition 키를 항목 맵 평가 함수로 컴파일한다.
+// filter 노드와 동일한 조건식 문법을 쓰되, zero-copy 변형(compileConditionData)을
+// 사용해 대량 항목 평가 시 항목당 메시지 래핑/깊은 복사를 피한다. 미지정/빈 문자열
+// 이면 nil (필터 없음)을 반환한다. 타입 불일치/컴파일 실패 시 에러를 반환한다.
+func compileInventoryCondition(cfg map[string]any) (func(map[string]any) bool, error) {
+	raw, ok := cfg["condition"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	expr, ok := raw.(string)
+	if !ok {
+		return nil, fmt.Errorf("%w: 'condition' must be string, got %T", ErrInventoryInvalidConfig, raw)
+	}
+	if strings.TrimSpace(expr) == "" {
+		return nil, nil
+	}
+	cond, err := compileConditionData(expr)
+	if err != nil {
+		return nil, fmt.Errorf("inventory configure: %w", err)
+	}
+	return cond, nil
+}
+
+// parseInventoryMaxItems 는 config 의 max_items 키를 int 로 파싱한다.
+// JSON number (float64) 또는 int 를 허용한다. 미지정이면 0 (무제한)을 반환한다.
+func parseInventoryMaxItems(cfg map[string]any) (int, error) {
+	raw, ok := cfg["max_items"]
+	if !ok || raw == nil {
+		return 0, nil
+	}
+	switch v := raw.(type) {
+	case int:
+		return v, nil
+	case int64:
+		return int(v), nil
+	case float64:
+		return int(v), nil
+	case float32:
+		return int(v), nil
+	default:
+		return 0, fmt.Errorf("%w: 'max_items' must be a number, got %T", ErrInventoryInvalidConfig, raw)
 	}
 }
 
@@ -454,53 +417,99 @@ func (n *InventoryNode) Shutdown(_ context.Context) error {
 // ---------------------------------------------------------------------------
 
 // Process 는 입력 메시지(트리거) 1개당 선택된 source 의 스냅샷을 emit 한다.
-// emit_shape 에 따라 단일 array 메시지 또는 항목별 N개 메시지로 fan-out 한다.
-// 입력 메시지의 payload 는 무시되며, metadata 는 출력에 얕은 복사로 보존된다
-// (단 inventory.* 키는 노드 설정 값으로 덮어쓴다).
+// 처리 순서는 (1) 수집 → (2) condition 필터 → (3) fields 투영 → (4) max_items
+// 청킹 이다. 입력 메시지의 payload/metadata 는 모두 무시된다.
 //
-// v0.2.0: source=devices 인 경우 ctx 는 agent.ResolveDeviceID 호출에 사용되어
-// 각 디바이스의 글로벌 UUID (device_uuid) 를 조회하는 데 쓰인다. 다른 source 에는
-// ctx 가 사용되지 않는다.
-func (n *InventoryNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+// 청킹 경계:
+//   - total==0: 빈 메시지 1개 (items=[], total_count=0, offset=0, count=0).
+//     트리거당 1메시지 보장을 위해 무방출이 아니라 빈 메시지를 방출한다.
+//   - max_items<=0: 전체 항목으로 메시지 1개 (offset=0, count=total).
+//   - max_items>0: offset = 0, max, 2max, … 각 청크마다 메시지 1개.
+//
+// ctx 는 devices source 에서 deviceToItem 의 UUID resolve 호출에 사용된다.
+func (n *InventoryNode) Process(ctx context.Context, _ message.Message) ([]message.Message, error) {
 	items, err := n.collectItems(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	inputMeta := snapshotInputMetadata(msg)
+	// (2) condition 필터 적용 (있으면)
+	if n.cond != nil {
+		items = n.applyCondition(items)
+	}
+
+	// (3) fields 투영 적용 (있으면)
+	if len(n.fields) > 0 {
+		items = n.applyFieldProjection(items)
+	}
+
 	total := len(items)
 
 	if n.logger != nil {
 		n.logger.Debug("inventory: emitted snapshot",
-			"source", n.source, "shape", n.emitShape, "count", total)
+			"source", n.source, "total", total, "max_items", n.maxItems)
 	}
 
-	switch n.emitShape {
-	case InventoryShapeArray:
-		out := buildInventoryArrayMessage(n.source, items, inputMeta)
+	typeLabel := singularSource(n.source)
+
+	// (4) 청킹 → 메시지 생성
+	// total==0 또는 max_items<=0 이면 단일 메시지.
+	if total == 0 || n.maxItems <= 0 {
+		out := buildInventoryMessage(typeLabel, items, total, 0)
 		return []message.Message{out}, nil
-
-	case InventoryShapePerItem:
-		if total == 0 {
-			return nil, nil
-		}
-		results := make([]message.Message, 0, total)
-		for i, item := range items {
-			results = append(results, buildInventoryPerItemMessage(n.source, item, i, total, inputMeta))
-		}
-		return results, nil
-
-	default:
-		// 팩토리에서 검증되었으므로 이론적으로 도달 불가
-		return nil, fmt.Errorf("%w: unexpected emit_shape %q", ErrInventoryInvalidEmitShape, n.emitShape)
 	}
+
+	results := make([]message.Message, 0, (total+n.maxItems-1)/n.maxItems)
+	for offset := 0; offset < total; offset += n.maxItems {
+		end := offset + n.maxItems
+		if end > total {
+			end = total
+		}
+		chunk := items[offset:end]
+		results = append(results, buildInventoryMessage(typeLabel, chunk, total, offset))
+	}
+	return results, nil
+}
+
+// applyCondition 은 각 항목을 {"payload": item} data 맵으로 평가하고, 통과한
+// 항목만 남긴다. compileConditionData 의 zero-copy 평가를 사용하므로 항목당
+// 메시지 래핑이나 깊은 복사가 없다($.payload.X 가 항목의 키 X 를 가리킨다).
+// data 맵 1개는 항목당 재사용하지 않고 새로 만들되, item 은 복사하지 않고
+// 참조만 한다(평가는 읽기 전용).
+func (n *InventoryNode) applyCondition(items []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	data := map[string]any{}
+	for _, item := range items {
+		data["payload"] = item
+		if n.cond(data) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// applyFieldProjection 은 각 항목을 fields 화이트리스트 키들로만 재구성한다.
+// 항목에 없는 키는 그냥 생략한다 (에러 아님).
+func (n *InventoryNode) applyFieldProjection(items []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		projected := make(map[string]any, len(n.fields))
+		for _, key := range n.fields {
+			if v, ok := item[key]; ok {
+				projected[key] = v
+			}
+		}
+		out = append(out, projected)
+	}
+	return out
 }
 
 // collectItems 는 source 에 따른 항목 슬라이스를 수집한다.
 // 각 source 별 resolver 함수를 호출하여 in-process 객체에서 데이터를 가져온다.
+// devices source 는 빈 device.DeviceFilter{} 로 List 를 호출하며, 필터링은
+// 상위의 condition 조건식으로 통일된다.
 //
-// v0.2.0: ctx 는 devices source 에서 agent.ResolveDeviceID 호출에 사용된다.
-// 다른 source 에서는 사용되지 않는다.
+// ctx 는 devices source 에서 deviceToItem 의 UUID resolve 호출에 사용된다.
 func (n *InventoryNode) collectItems(ctx context.Context) ([]map[string]any, error) {
 	switch n.source {
 	case InventorySourceDevices:
@@ -508,10 +517,10 @@ func (n *InventoryNode) collectItems(ctx context.Context) ([]map[string]any, err
 		if reg == nil {
 			return nil, ErrInventoryDeviceRegistryNotAvailable
 		}
-		devices := reg.List(n.filter)
+		devices := reg.List(device.DeviceFilter{})
 		items := make([]map[string]any, 0, len(devices))
 		for _, d := range devices {
-			items = append(items, deviceToItem(ctx, d, n.includeMetadata))
+			items = append(items, deviceToItem(ctx, d))
 		}
 		return items, nil
 
@@ -523,7 +532,7 @@ func (n *InventoryNode) collectItems(ctx context.Context) ([]map[string]any, err
 		agents := mgr.List()
 		items := make([]map[string]any, 0, len(agents))
 		for _, a := range agents {
-			items = append(items, agentToItem(a, n.includeMetadata))
+			items = append(items, agentToItem(a))
 		}
 		return items, nil
 
@@ -535,7 +544,7 @@ func (n *InventoryNode) collectItems(ctx context.Context) ([]map[string]any, err
 		flows := reg.FlowSummaries()
 		items := make([]map[string]any, 0, len(flows))
 		for _, f := range flows {
-			items = append(items, flowSummaryToItem(f, n.includeMetadata))
+			items = append(items, flowSummaryToItem(f))
 		}
 		return items, nil
 
@@ -556,19 +565,33 @@ func (n *InventoryNode) collectItems(ctx context.Context) ([]map[string]any, err
 	}
 }
 
+// singularSource 는 source 의 복수형을 metadata.type 의 단수형으로 변환한다.
+func singularSource(source string) string {
+	switch source {
+	case InventorySourceDevices:
+		return "device"
+	case InventorySourceAgents:
+		return "agent"
+	case InventorySourceNodes:
+		return "node"
+	case InventorySourceFlows:
+		return "flow"
+	default:
+		return source
+	}
+}
+
 // ---------------------------------------------------------------------------
-// Item serializers - source 별 항목 객체 생성
+// Item serializers - source 별 항목 객체 생성 (항상 rich)
 // ---------------------------------------------------------------------------
 
 // deviceToItem 은 device.Device 를 inventory 항목 map 으로 직렬화한다.
-// includeMeta=false 일 때 metadata/state 키를 생략하고 핵심 식별 필드만 노출한다.
+// metadata/state 등 풍부 필드를 항상 포함한다.
 //
-// v0.2.0: agent.ResolveDeviceID(ctx, agentName, localID) 를 호출하여 글로벌 UUID
-// (device_uuid) 를 함께 노출한다. UUID 가 비어 있으면 (저장소 미설정 / 매핑 없음 /
-// 에러) device_uuid 키 자체를 생략하여 downstream 이 키 존재 여부로 graceful
-// degradation 을 판단할 수 있게 한다. localID 는 composite id ("agent_name:local_id")
-// 에서 "agent_name:" 접두사를 제거하여 추출한다.
-func deviceToItem(ctx context.Context, d device.Device, includeMeta bool) map[string]any {
+// SPEC-DEVICE-IDENTITY-001 Phase D (v1.0): Device.ID() 자체가 UUID 를 반환하므로
+// payload 의 "id" 키 (= d.ID() = UUID) 만 노출한다. ctx 는 향후 UUID resolve
+// 확장 지점으로 유지한다.
+func deviceToItem(_ context.Context, d device.Device) map[string]any {
 	item := map[string]any{
 		"id":           d.ID(),
 		"name":         d.Name(),
@@ -579,14 +602,6 @@ func deviceToItem(ctx context.Context, d device.Device, includeMeta bool) map[st
 		"last_seen":    formatRFC3339(d.LastSeen()),
 		"source":       d.Source(),
 		"capabilities": stringSliceOrEmpty(d.Capabilities()),
-	}
-
-	// SPEC-DEVICE-IDENTITY-001 Phase D (v1.0): Device.ID() 자체가 UUID 를 반환하므로
-	// 별도 "uid" 필드는 중복. payload 의 "id" 키 (= d.ID() = UUID) 만 노출한다.
-	// 호환 alias (device_uuid, uid) 모두 제거됨.
-
-	if !includeMeta {
-		return item
 	}
 
 	// metadata 객체
@@ -619,17 +634,14 @@ func deviceToItem(ctx context.Context, d device.Device, includeMeta bool) map[st
 }
 
 // agentToItem 은 agent.Agent 를 inventory 항목 map 으로 직렬화한다.
-// includeMeta=true 일 때 AgentInfo/StatsSnapshot 의 안전한 일부 필드를 첨부한다.
-func agentToItem(a agent.Agent, includeMeta bool) map[string]any {
+// AgentInfo/StatsSnapshot 의 안전한 일부 필드를 항상 첨부한다.
+func agentToItem(a agent.Agent) map[string]any {
 	info := a.Info()
 	item := map[string]any{
 		"id":    a.ID(),
 		"name":  a.Name(),
 		"type":  a.Type(),
 		"state": string(info.State),
-	}
-	if !includeMeta {
-		return item
 	}
 
 	// info 객체 — config 등 민감 정보는 생략하고 안전한 필드만 노출
@@ -661,23 +673,18 @@ func agentToItem(a agent.Agent, includeMeta bool) map[string]any {
 }
 
 // flowSummaryToItem 은 FlowSummary 를 inventory 항목 map 으로 직렬화한다.
-func flowSummaryToItem(f FlowSummary, includeMeta bool) map[string]any {
-	item := map[string]any{
+func flowSummaryToItem(f FlowSummary) map[string]any {
+	return map[string]any{
 		"id":         f.ID,
 		"name":       f.Name,
 		"state":      f.State,
 		"node_count": f.NodeCount,
 		"wire_count": f.WireCount,
+		"extra":      anyMapOrEmpty(f.Extra),
 	}
-	if !includeMeta {
-		return item
-	}
-	item["extra"] = anyMapOrEmpty(f.Extra)
-	return item
 }
 
 // nodeTypeMetaToItem 은 NodeTypeMeta 를 inventory 항목 map 으로 직렬화한다.
-// include_metadata 영향 없이 항상 동일 4개 필드를 노출한다 (이미 메타데이터 자체).
 func nodeTypeMetaToItem(m NodeTypeMeta) map[string]any {
 	return map[string]any{
 		"type":        m.Type,
@@ -688,69 +695,24 @@ func nodeTypeMetaToItem(m NodeTypeMeta) map[string]any {
 }
 
 // ---------------------------------------------------------------------------
-// Message builders - array / per_item 출력 메시지 생성
+// Message builder - 단일 청크 출력 메시지 생성
 // ---------------------------------------------------------------------------
 
-// buildInventoryArrayMessage 는 array shape 의 단일 출력 메시지를 생성한다.
-// 입력 metadata 는 얕은 복사로 보존하되 inventory.* 키는 노드 설정 값으로 덮어쓴다.
-// SPEC-MESSAGE-TYPE-001 § T1 / AC1-3: 1급 Type() 으로 "inventory.event" 설정.
-func buildInventoryArrayMessage(source string, items []map[string]any, inputMeta map[string]string) message.Message {
+// buildInventoryMessage 는 청크 항목을 담은 단일 출력 메시지를 생성한다.
+// payload 는 "items" 키 아래 청크 배열을 담고, metadata 는 type/total_count/
+// offset/count 4키만 설정한다 (입력 메타 복사 없음).
+// SPEC-MESSAGE-TYPE-001 § T1: 1급 Type() 으로 "inventory.event" 설정.
+func buildInventoryMessage(typeLabel string, chunk []map[string]any, total, offset int) message.Message {
 	out := message.New()
 	out.SetType("inventory.event")
-	out.Payload().Set("source", source)
-	out.Payload().Set("count", len(items))
-	out.Payload().Set("items", items)
+	out.Payload().Set("items", chunk)
 
-	applyMetadata(out, inputMeta, map[string]string{
-		inventoryMetaSource: source,
-		inventoryMetaCount:  strconv.Itoa(len(items)),
-	})
+	md := out.Metadata()
+	md.Set(inventoryMetaType, typeLabel)
+	md.Set(inventoryMetaTotalCount, strconv.Itoa(total))
+	md.Set(inventoryMetaOffset, strconv.Itoa(offset))
+	md.Set(inventoryMetaCount, strconv.Itoa(len(chunk)))
 	return out
-}
-
-// buildInventoryPerItemMessage 는 per_item shape 의 단일 항목 메시지를 생성한다.
-// payload 는 item map 자체를 키-값으로 풀어서 노출 (wrapper 없음).
-// SPEC-MESSAGE-TYPE-001 § T1 / AC1-3: 1급 Type() 으로 "inventory.event" 설정.
-func buildInventoryPerItemMessage(source string, item map[string]any, index, total int, inputMeta map[string]string) message.Message {
-	out := message.New()
-	out.SetType("inventory.event")
-	for k, v := range item {
-		out.Payload().Set(k, v)
-	}
-
-	applyMetadata(out, inputMeta, map[string]string{
-		inventoryMetaSource: source,
-		inventoryMetaCount:  strconv.Itoa(total),
-		inventoryMetaIndex:  strconv.Itoa(index),
-		inventoryMetaTotal:  strconv.Itoa(total),
-	})
-	return out
-}
-
-// applyMetadata 는 입력 metadata 의 얕은 복사 후 inventory.* override 키들을 덮어쓴다.
-// 결정 (d3) 의 정책 구현이다 — 입력 trigger 의 컨텍스트 (schedule_id 등)는
-// downstream 에서 활용 가능하도록 보존된다.
-func applyMetadata(msg message.Message, inputMeta map[string]string, overrides map[string]string) {
-	md := msg.Metadata()
-	for k, v := range inputMeta {
-		md.Set(k, v)
-	}
-	for k, v := range overrides {
-		md.Set(k, v)
-	}
-}
-
-// snapshotInputMetadata 는 입력 메시지의 metadata 를 얕은 복사한다.
-// nil-safe: msg.Metadata() 가 nil 이거나 빈 map 이면 빈 map 을 반환한다.
-func snapshotInputMetadata(msg message.Message) map[string]string {
-	if msg == nil {
-		return map[string]string{}
-	}
-	md := msg.Metadata()
-	if md == nil {
-		return map[string]string{}
-	}
-	return md.All()
 }
 
 // ---------------------------------------------------------------------------

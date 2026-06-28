@@ -20,8 +20,15 @@ import {
   Moon,
 } from 'lucide-react';
 
-import { useDeviceRealtime, useExecuteCommand } from '@/hooks/useDevice';
+import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
+import { useDeviceRealtime } from '@/hooks/useDevice';
+import { useDeviceCommandTarget } from '@/hooks/useDeviceCommandTarget';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTranslation } from '@/lib/i18n';
+import { remoteEditErrorMessage } from '@/lib/remote/editError';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 import {
   readControlButtonColorConfig,
@@ -68,21 +75,22 @@ interface AcControlPanelProps {
 
 // ---- 모드/풍량 설정 ----
 
-const MODE_CONFIG: { key: AcMode; label: string; icon: React.ReactNode }[] = [
-  { key: 'cool', label: '냉방', icon: <Snowflake className="h-4 w-4" /> },
-  { key: 'heat', label: '난방', icon: <Flame className="h-4 w-4" /> },
-  { key: 'auto', label: '자동', icon: <RefreshCw className="h-4 w-4" /> },
-  { key: 'dry',  label: '제습', icon: <Droplets className="h-4 w-4" /> },
-  { key: 'fan',  label: '팬',   icon: <Fan className="h-4 w-4" /> },
+// 모듈 스코프 상수에는 i18n 키만 저장하고, 렌더 시 t(labelKey) 로 변환한다.
+const MODE_CONFIG: { key: AcMode; labelKey: string; icon: React.ReactNode }[] = [
+  { key: 'cool', labelKey: 'dashboard.acPanel.cooling', icon: <Snowflake className="h-4 w-4" /> },
+  { key: 'heat', labelKey: 'dashboard.acPanel.heating', icon: <Flame className="h-4 w-4" /> },
+  { key: 'auto', labelKey: 'dashboard.acPanel.auto', icon: <RefreshCw className="h-4 w-4" /> },
+  { key: 'dry',  labelKey: 'dashboard.acPanel.dehumidify', icon: <Droplets className="h-4 w-4" /> },
+  { key: 'fan',  labelKey: 'dashboard.acControl.fan',   icon: <Fan className="h-4 w-4" /> },
 ];
 
-const ALL_FAN_SPEEDS: { key: FanSpeed; label: string }[] = [
-  { key: 'auto', label: '자동' },
-  { key: 'quiet', label: '미풍' },
-  { key: 'low', label: '약' },
-  { key: 'medium', label: '중' },
-  { key: 'high', label: '강' },
-  { key: 'turbo', label: '터보' },
+const ALL_FAN_SPEEDS: { key: FanSpeed; labelKey: string }[] = [
+  { key: 'auto', labelKey: 'dashboard.acPanel.auto' },
+  { key: 'quiet', labelKey: 'dashboard.acControl.fanQuiet' },
+  { key: 'low', labelKey: 'dashboard.acPanel.low' },
+  { key: 'medium', labelKey: 'dashboard.acPanel.medium' },
+  { key: 'high', labelKey: 'dashboard.acPanel.high' },
+  { key: 'turbo', labelKey: 'dashboard.acControl.fanTurbo' },
 ];
 
 /** 프로토콜별 지원 풍량 */
@@ -95,7 +103,7 @@ const FAN_SPEEDS_BY_PROTOCOL: Record<string, Set<FanSpeed>> = {
 
 const DEFAULT_FAN_SPEEDS = new Set<FanSpeed>(['auto', 'low', 'medium', 'high']);
 
-function getFanSpeedConfig(protocol?: string): { key: FanSpeed; label: string }[] {
+function getFanSpeedConfig(protocol?: string): { key: FanSpeed; labelKey: string }[] {
   const allowed = (protocol && FAN_SPEEDS_BY_PROTOCOL[protocol]) || DEFAULT_FAN_SPEEDS;
   return ALL_FAN_SPEEDS.filter(({ key }) => allowed.has(key));
 }
@@ -111,6 +119,7 @@ export default function AcControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: AcControlPanelProps) {
+  const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 레거시: 단일 currentValueColor 만 지정하던 시절의 호환 경로.
   // 신규: valueColor (default + ranges) 로 값 범위별 컬러 지정.
@@ -119,21 +128,26 @@ export default function AcControlPanel({
   const valueColorConfig = readValueColorConfig(config);
   const controlButtonColorConfig = readControlButtonColorConfig(config);
   const fanLevelColorConfig = readFanLevelColorConfig(config);
-  const { data: device, isLoading } = useDeviceRealtime(deviceId ?? '');
 
-  // 디바이스 제어 명령 실행
-  const executeMutation = useExecuteCommand();
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L08): 원격이면 device.state(그룹 J)
+  // 로 실시간 상태를 읽고, 명령 쓰기는 그룹 D(execute)로 라우팅한다(REQ-D04/J03).
+  // config 의 bare deviceId 는 그 노드 디바이스로 해석된다(REQ-L03). 로컬은 불변.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const gating = useTargetGating(target);
+  const localDevice = useDeviceRealtime(remote ? '' : deviceId ?? '');
+  const remoteDevice = useDeviceDetailTarget(target, deviceId ?? '');
+  const device = remote ? remoteDevice.data : localDevice.data;
+  const isLoading = remote ? remoteDevice.isLoading : localDevice.isLoading;
+
+  // 디바이스 제어 명령 실행(로컬: /execute, 원격: 그룹 D execute).
+  const commandTarget = useDeviceCommandTarget(target);
 
   const execute = (command: string, params: Record<string, unknown>) => {
     if (!deviceId) return;
-    executeMutation.mutate(
-      { id: deviceId, req: { command, params } },
-      {
-        onError: (err) => {
-          console.error('[AcControl] execute failed:', command, params, err);
-        },
-      },
-    );
+    // 원격: 노드 미승인/오프라인이면 명령을 막는다(게이팅 — REQ-L11).
+    if (remote && !gating.canControl()) return;
+    commandTarget.execute(deviceId, command, params);
   };
 
   // 디바이스 상태에서 읽기 (백엔드에서 속성명 통일됨)
@@ -146,10 +160,11 @@ export default function AcControlPanel({
   const { displayValue: power, setOptimistic: setOptimisticPower, isPendingConfirmation } =
     useOptimisticToggle(serverPower);
 
-  const isPending = executeMutation.isPending || isPendingConfirmation;
+  const isPending = commandTarget.isPending || isPendingConfirmation;
 
-  // passive-monitor 디바이스는 제어 불가
-  const controlDisabled = isPassive || !power || isPending;
+  // passive-monitor 디바이스는 제어 불가. 원격은 노드 ready(승인∧온라인) 아닐 때도 비활성.
+  const remoteBlocked = remote && !gating.canControl();
+  const controlDisabled = isPassive || !power || isPending || remoteBlocked;
 
   // TODO: swing 속성이 디바이스에 없을 경우 로컬 상태로 유지
   const [swing, setSwing] = useState(false);
@@ -159,7 +174,7 @@ export default function AcControlPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
         <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
-        <p className="text-xs text-(--color-text-muted)">디바이스가 설정되지 않았습니다.</p>
+        <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.deviceNotConfigured')}</p>
       </div>
     );
   }
@@ -182,7 +197,7 @@ export default function AcControlPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
         <HardDrive className="mb-2 h-6 w-6 text-(--color-text-muted)" />
-        <p className="text-xs text-(--color-text-muted)">디바이스를 찾을 수 없습니다.</p>
+        <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.deviceNotFound')}</p>
       </div>
     );
   }
@@ -205,7 +220,7 @@ export default function AcControlPanel({
         </div>
         <div className="flex items-center gap-2">
           {isPassive && (
-            <span title="모니터링 전용"><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label="모니터링 전용" /></span>
+            <span title={t('dashboard.panel.monitorOnly')}><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label={t('dashboard.panel.monitorOnly')} /></span>
           )}
           <span className={cn(
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
@@ -214,25 +229,25 @@ export default function AcControlPanel({
               : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
           )}>
             {power
-              ? <span title="가동 중"><Activity className="h-3.5 w-3.5" aria-label="가동 중" /></span>
-              : <span title="대기"><Moon className="h-3.5 w-3.5" aria-label="대기" /></span>}
+              ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>
+              : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
           </span>
           {!isPassive && (
             <button
               type="button"
               onClick={() => {
-                const target = !power;
-                setOptimisticPower(target);
-                execute('set_power', { power: target });
+                const nextPower = !power;
+                setOptimisticPower(nextPower);
+                execute('set_power', { power: nextPower });
               }}
-              disabled={isPending}
+              disabled={isPending || remoteBlocked}
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
                 power
                   ? 'bg-blue-500 text-white hover:bg-blue-600'
                   : 'bg-slate-200 text-slate-500 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-400 dark:hover:bg-slate-600',
               )}
-              aria-label={power ? '전원 끄기' : '전원 켜기'}
+              aria-label={power ? t('dashboard.acControl.powerOffAria') : t('dashboard.acControl.powerOnAria')}
             >
               <Power className="h-4 w-4" />
             </button>
@@ -244,7 +259,7 @@ export default function AcControlPanel({
       {power === false && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6">
           <Power className="h-10 w-10 text-slate-300 dark:text-slate-600" />
-          <span className="text-sm font-medium text-slate-400 dark:text-slate-500">전원 꺼짐</span>
+          <span className="text-sm font-medium text-slate-400 dark:text-slate-500">{t('dashboard.acControl.powerOff')}</span>
         </div>
       )}
 
@@ -269,7 +284,7 @@ export default function AcControlPanel({
             °C
           </span>
         </div>
-        <span className="text-xs font-medium text-(--color-text-muted)">현재 온도</span>
+        <span className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.acControl.currentTemp')}</span>
       </div>
       )}
 
@@ -283,19 +298,19 @@ export default function AcControlPanel({
           onClick={handleTempDown}
           disabled={controlDisabled || targetTemp <= TEMP_MIN}
           className="flex h-7 w-7 items-center justify-center rounded-md bg-(--color-bg-elevated) text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default) disabled:opacity-40"
-          aria-label="온도 내리기"
+          aria-label={t('dashboard.acControl.tempDown')}
         >
           <Minus className="h-3.5 w-3.5" />
         </button>
         <span className="text-sm font-semibold text-(--color-text-primary)">
-          설정 {targetTemp}°C
+          {t('dashboard.acControl.setLabel')} {targetTemp}°C
         </span>
         <button
           type="button"
           onClick={handleTempUp}
           disabled={controlDisabled || targetTemp >= TEMP_MAX}
           className="flex h-7 w-7 items-center justify-center rounded-md bg-(--color-bg-elevated) text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default) disabled:opacity-40"
-          aria-label="온도 올리기"
+          aria-label={t('dashboard.acControl.tempUp')}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
@@ -308,7 +323,8 @@ export default function AcControlPanel({
       {power !== false && (
       <>
       <div className="flex shrink-0 gap-1.5">
-        {MODE_CONFIG.map(({ key, label, icon }) => {
+        {MODE_CONFIG.map(({ key, labelKey, icon }) => {
+          const label = t(labelKey);
           // 사용자 지정 컬러 해석. selected 일 때만 배경색을 inline 으로 적용한다.
           // unselected 컬러는 ring 으로 적용 (배경은 surface 토큰 유지).
           const { active, color } = resolveControlButtonColor(mode, key, controlButtonColorConfig);
@@ -332,7 +348,7 @@ export default function AcControlPanel({
                   : 'bg-(--color-bg-surface) text-(--color-text-secondary) ring-1 ring-(--color-border-default) hover:bg-(--color-bg-elevated)',
               )}
               style={styleOverride}
-              aria-label={`모드: ${label}`}
+              aria-label={t('dashboard.acControl.modeAria').replace('{label}', label)}
               aria-pressed={active}
             >
               {icon}
@@ -345,9 +361,10 @@ export default function AcControlPanel({
       <div className="flex shrink-0 items-center gap-2">
         <div className="flex items-center gap-1">
           <Fan className="h-3.5 w-3.5 text-blue-600" />
-          <span className="text-xs font-semibold text-blue-600">풍량</span>
+          <span className="text-xs font-semibold text-blue-600">{t('dashboard.acControl.fanSpeed')}</span>
         </div>
-        {getFanSpeedConfig(device?.protocol).map(({ key, label }) => {
+        {getFanSpeedConfig(device?.protocol).map(({ key, labelKey }) => {
+          const label = t(labelKey);
           const { active, color } = resolveFanLevelColor(fanSpeed, key, fanLevelColorConfig);
           const styleOverride: React.CSSProperties = {};
           if (active && color) {
@@ -372,7 +389,7 @@ export default function AcControlPanel({
                   : 'bg-(--color-bg-surface) text-(--color-text-secondary) ring-1 ring-(--color-border-default) hover:bg-(--color-bg-elevated)',
               )}
               style={styleOverride}
-              aria-label={`풍량: ${label}`}
+              aria-label={t('dashboard.acControl.fanSpeedAria').replace('{label}', label)}
               aria-pressed={active}
             >
               {label}
@@ -383,12 +400,14 @@ export default function AcControlPanel({
       </>
       )}
 
-      {/* ---- 에러 표시 ---- */}
-      {executeMutation.error && (
+      {/* ---- 에러 표시 ---- 원격은 503/504/502/404 를 editError 로 매핑(REQ-L11). ---- */}
+      {commandTarget.error ? (
         <div className="shrink-0 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
-          {String((executeMutation.error as Error)?.message ?? executeMutation.error)}
+          {remote
+            ? remoteEditErrorMessage(commandTarget.error, t)
+            : String((commandTarget.error as Error)?.message ?? commandTarget.error)}
         </div>
-      )}
+      ) : null}
 
       {/* ---- 하단: 스윙 + 필터 (ON 시에만) ---- */}
       {power !== false && (
@@ -402,11 +421,11 @@ export default function AcControlPanel({
           className="flex items-center gap-1 text-(--color-text-muted) transition-colors hover:text-(--color-text-secondary) disabled:opacity-40"
         >
           <ArrowUpDown className="h-3.5 w-3.5" />
-          <span className="font-medium">스윙 {swing ? 'ON' : 'OFF'}</span>
+          <span className="font-medium">{t('dashboard.acControl.swing')} {swing ? 'ON' : 'OFF'}</span>
         </button>
         <div className="flex items-center gap-1 text-amber-500">
           <AlertTriangle className="h-3.5 w-3.5" />
-          <span className="font-medium">필터 교체 필요</span>
+          <span className="font-medium">{t('dashboard.acControl.filterReplace')}</span>
         </div>
       </div>
       </>

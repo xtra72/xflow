@@ -14,6 +14,23 @@ import { render, screen } from '@testing-library/react';
 import { FormField } from './FormField';
 import type { ConfigField } from '@/types/node';
 
+// i18n: 실제 ko 번역을 반환하는 mock — 컴포넌트가 useTranslation 을 쓰지만
+// 이 테스트는 I18nProvider 로 감싸지 않으므로, ko.json 을 점 표기 키로 해석해
+// 기존 한국어 단언을 그대로 통과시킨다.
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolve = (key: string): string => {
+    const v = key.split('.').reduce<unknown>(
+      (o, p) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[p] : undefined),
+      ko,
+    );
+    return typeof v === 'string' ? v : key;
+  };
+  return {
+    useTranslation: () => ({ t: resolve, locale: 'ko' as const, setLocale: () => {} }),
+  };
+});
+
 const boolField = (defaultValue?: unknown): ConfigField => ({
   name: 'allow_dynamic_keys',
   type: 'boolean',
@@ -181,6 +198,60 @@ describe('FormField readOnly visibility', () => {
     const select = container.querySelector('select') as HTMLSelectElement;
     expect(select).not.toBeNull();
     expect(select.disabled).toBe(true);
+  });
+});
+
+// SPEC-SUBFLOW-002 W01/AC-1: select 의 default fallback.
+//   값 미지정이고 비어있지 않은 default 가 있으면 그 default 가 선택값으로 표시된다
+//   (flow-node mode 토글이 미지정 시 shared 로 표시됨). default 가 없거나 ''이면
+//   기존 "선택..." 동작을 유지한다(회귀 0).
+describe('FormField select default fallback', () => {
+  it('value 미지정 + 비어있지 않은 default 면 default 가 선택값으로 표시된다', () => {
+    const { container } = render(
+      <FormField
+        field={{
+          name: 'mode',
+          type: 'select',
+          label: '참조 방식',
+          options: ['shared', 'instance'],
+          default: 'shared',
+        }}
+        value={undefined}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = container.querySelector('select') as HTMLSelectElement;
+    expect(select.value).toBe('shared');
+  });
+
+  it('명시값이 있으면 default 가 아니라 명시값이 선택된다', () => {
+    const { container } = render(
+      <FormField
+        field={{
+          name: 'mode',
+          type: 'select',
+          label: '참조 방식',
+          options: ['shared', 'instance'],
+          default: 'shared',
+        }}
+        value="instance"
+        onChange={vi.fn()}
+      />,
+    );
+    const select = container.querySelector('select') as HTMLSelectElement;
+    expect(select.value).toBe('instance');
+  });
+
+  it('default 가 없으면 value 미지정 시 "선택..."(빈 값)을 유지한다(회귀 0)', () => {
+    const { container } = render(
+      <FormField
+        field={{ name: 'x', type: 'select', label: 'X', options: ['a', 'b'] }}
+        value={undefined}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = container.querySelector('select') as HTMLSelectElement;
+    expect(select.value).toBe('');
   });
 });
 

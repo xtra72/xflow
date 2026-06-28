@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,18 @@ type MetadataRepository interface {
 	Save(ctx context.Context, deviceID string, metadata device.DeviceMetadata) error
 	Get(ctx context.Context, deviceID string) (device.DeviceMetadata, error)
 	Delete(ctx context.Context, deviceID string) error
+}
+
+// DeviceHistoryProvider 는 디바이스 수신 데이터 이력(주기 스냅샷) 조회 인터페이스이다.
+//
+// device.DeviceHistoryRecorder 가 이를 만족한다. nil 허용(이력 비활성 구성)이며,
+// 이 경우 history 라우트는 등록되지 않는다.
+type DeviceHistoryProvider interface {
+	// History 는 deviceID(UUID)의 스냅샷을 최신순으로 최대 limit 개 반환한다.
+	// 없으면 빈 슬라이스를 반환한다(에러 아님). limit clamp 는 구현이 담당한다.
+	History(deviceID string, limit int) []device.HistorySnapshot
+	// MaxEntries 는 링버퍼 상한이다(핸들러의 limit 기본/clamp 산출용).
+	MaxEntries() int
 }
 
 // DeviceResponse 는 디바이스 목록 응답 DTO이다.
@@ -75,7 +88,8 @@ type ExecuteRequest struct {
 type DeviceHandler struct {
 	registry     DeviceRegistry
 	metadataRepo MetadataRepository
-	events       *ws.EventPublisher // nil 허용
+	history      DeviceHistoryProvider // nil 허용 (이력 비활성 시 history 라우트 미등록)
+	events       *ws.EventPublisher    // nil 허용
 	logger       *slog.Logger
 }
 
@@ -86,6 +100,14 @@ type DeviceHandlerOption func(*DeviceHandler)
 func WithDeviceEventPublisher(ep *ws.EventPublisher) DeviceHandlerOption {
 	return func(h *DeviceHandler) {
 		h.events = ep
+	}
+}
+
+// WithDeviceHistory 는 DeviceHandler 에 이력 제공자를 설정한다.
+// nil 을 전달하면 history 라우트가 등록되지 않는다(이력 비활성 구성 호환).
+func WithDeviceHistory(p DeviceHistoryProvider) DeviceHandlerOption {
+	return func(h *DeviceHandler) {
+		h.history = p
 	}
 }
 
@@ -133,6 +155,13 @@ func (h *DeviceHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/devices/{id}/execute", h.Execute)
 	g.PUT("/devices/{id}/metadata", h.UpdateMetadata)
 	g.DELETE("/devices/{id}/metadata", h.DeleteMetadata)
+
+	// 디바이스 수신 데이터 이력(주기 스냅샷). 이력 제공자가 주입된 경우에만 등록한다.
+	// "/devices/{id}/history" 는 execute/metadata 와 동일하게 2 세그먼트 + 액션
+	// 리터럴이라 "/devices/{ref}" 보다 우선한다(Go 1.22 ServeMux precedence).
+	if h.history != nil {
+		g.GET("/devices/{id}/history", h.History)
+	}
 }
 
 // List 는 필터를 적용하여 디바이스 목록을 반환한다.
@@ -231,6 +260,72 @@ func looksLikeComposite(ref string) bool {
 		return false
 	}
 	return strings.Contains(ref, ":")
+}
+
+// HistoryResponse 는 디바이스 이력 조회 응답 DTO 이다.
+type HistoryResponse struct {
+	DeviceID string                   `json:"device_id"`
+	Count    int                      `json:"count"`
+	Entries  []device.HistorySnapshot `json:"entries"`
+}
+
+// History 는 디바이스 수신 데이터 이력(주기 스냅샷)을 최신순으로 반환한다.
+// GET /devices/{id}/history?limit=N
+//
+// 식별자 해석은 기존 Get 과 동일하게 ResolveDevice(UUID/agent-name)를 재사용한다.
+// 디바이스가 없거나 이력이 없으면 빈 배열(200)을 반환한다(이력은 best-effort 관측
+// 데이터이므로 미존재를 404 로 다루지 않는다). limit 기본값은 MaxEntries 이며 상한도
+// MaxEntries 로 clamp 된다(레코더가 최종 clamp 수행).
+func (h *DeviceHandler) History(ctx api.Context) error {
+	if h.history == nil {
+		return api.ErrNotFound.WithMessage("device history is not enabled")
+	}
+
+	id := ctx.Param("id")
+	if id == "" {
+		return api.ErrBadRequest.WithMessage("device id is required")
+	}
+
+	// limit 파싱(미지정/무효 → 0 → 레코더가 MaxEntries 로 clamp).
+	limit := 0
+	if limitStr := ctx.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	// 식별자를 UUID 로 해석하여 레코더의 버퍼 키(UUID)와 일치시킨다.
+	// composite 는 더 이상 1급이 아니므로 Get 과 동일하게 명시 안내한다.
+	if looksLikeComposite(id) {
+		return api.ErrNotFound.WithMessage(fmt.Sprintf(
+			"device reference %q not found: composite reference is removed in xflowd v1.0; use UUID or agent/name",
+			id,
+		))
+	}
+
+	deviceID := id
+	if d, kind, err := h.registry.ResolveDevice(id); err == nil && d != nil {
+		// 해석 성공 시 UUID 를 버퍼 키로 사용한다.
+		deviceID = d.ID()
+	} else if kind == device.DeviceRefUnknown {
+		// 형식 자체가 UUID/agent-name 어느 것도 아니면 400.
+		return api.ErrBadRequest.WithMessage(fmt.Sprintf(
+			"device reference %q is invalid; expected UUID or agent/name", id,
+		))
+	}
+	// 디바이스가 현재 레지스트리에 없어도(오프라인/제거) UUID 형태면 그대로 조회 —
+	// 버퍼가 GC 되기 전이면 이력이 남아 있을 수 있다(graceful).
+
+	entries := h.history.History(deviceID, limit)
+	if entries == nil {
+		entries = []device.HistorySnapshot{}
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(HistoryResponse{
+		DeviceID: deviceID,
+		Count:    len(entries),
+		Entries:  entries,
+	}))
 }
 
 // GetByAgentName 은 (agent, name) 쌍으로 디바이스를 조회한다 (Phase B 신규).

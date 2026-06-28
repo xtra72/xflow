@@ -9,9 +9,9 @@ server:
   host: "0.0.0.0"
   mode: "development"       # "development" 또는 "production"
   tls:
-    enabled: false
-    cert_file: ""
-    key_file: ""
+    enabled: true
+    cert_file: "./certs/cert.pem"
+    key_file: "./certs/key.pem"
   cors:
     enabled: true
     allowed_origins:
@@ -89,3 +89,76 @@ plugin:
     enabled: true
   go:
     enabled: true
+
+# --- 원격 관리 설정 (SPEC-REMOTE-001) ---
+# mode: server | client | disabled(기본)
+#   server  : 다른 xflow(클라이언트)를 등록·승인·원격 제어하는 관리 서버.
+#             관리 WS(/api/remote/ws) + admin REST(/api/v1/remote/*) 활성화.
+#   client  : 아래 server_url 로 dial 하여 등록 요청하는 관리 대상 장비.
+#   disabled: 원격 관리 비활성(기존 동작과 동일).
+remote_management:
+  mode: server
+  # bootstrap_secret: ""          # (선택) 사전 공유 시크릿. 설정 시 클라이언트도 동일 값이어야 등록 1차 통과.
+  # require_secure: false         # true 면 평문 ws 거절(wss 강제).
+
+  # --- server 모드: 서버 호스팅 프로그램 이미지(버전 관리) ---
+  # 서버가 아키텍처별 xflowd 바이너리 + Ed25519 .sig 를 보관하고, GitHub-Releases 호환
+  # HTTP 피드(/api/v1/updates/releases*)로 노드에 서빙한다. 노드 업데이트 소스(update_url)
+  # 를 https://{public_base_url}/api/v1/updates 로 지정하면 기존 노드 updater 가 무변경 동작한다.
+  # 공개키는 노드 로컬에만 둔다(서버는 관리자 사전 서명 .sig 와 바이너리 바이트만 저장).
+  #
+  # public_base_url: ""           # (선택) asset 다운로드 URL 의 공개 base (예: https://mgmt.example.com).
+  #                               # 비우면 들어오는 요청 Host(+X-Forwarded-Host)에서 유도하되 scheme 은
+  #                               # 항상 https 로 강제한다(노드 Downloader 의 https 강제 충족).
+  # releases_dir: ""              # (선택) 바이너리+.sig 저장 디렉토리. 비우면 {dir(sqlite_path)}/releases.
+  #                               # nightly 채널 버전은 tag_name 에 "-nightly" 식별자를 포함해야 한다
+  #                               # (예: v1.2.3-nightly.20260620). beta 는 채널만 beta 로 지정하면 된다.
+
+  # --- client 모드일 때만 사용하는 항목 ---
+  # server_url: "wss://<관리서버-주소>:8081/api/remote/ws"  # 운영은 wss:// 필수(서버 TLS 시)
+  # insecure_skip_verify: false   # (선택) 관리 WS(wss) 인증서 검증 건너뛰기. 관리 서버가
+  #                               # 자체 서명 인증서/사설망일 때만 true(테스트/사설망 전용).
+  #                               # 운영에서는 신뢰 CA 인증서를 쓰고 false 유지.
+  # instance_id: ""               # 비우면 최초 기동 시 자동 생성·영속(노드 고유 식별자)
+  # auto_register: true           # 미등록 시 자동으로 등록 요청 전송
+  # heartbeat_interval: "30s"     # 연결 생존성 heartbeat 주기
+  # exposure:                     # 서버에 노출(미러링)할 자원 범위: all | none | [이름 목록]
+  #   flows: all
+  #   agents: all
+  #   devices: all
+
+# --- 프로그램 자가 업데이트 (SPEC-UPDATE-001) ---
+# 노드가 새 xflowd 바이너리를 내려받아 무결성 검증 후 원자적으로 교체한다.
+#
+# [중요] 이 update 섹션은 업데이트를 "받는" 노드, 즉 remote_management.mode: client
+# 인 장비의 설정에 둔다. 관리 서버(mode: server)에는 적용되지 않는다 — 업데이트를
+# 실행하는 commander 는 client 모드에서만 구성되기 때문이다(cmd/xflowd/main.go).
+# 따라서 관리 서버에서 원격 업데이트가 "public_key_path 미설정"으로 거부되면, 값을
+# 서버가 아니라 "대상 client 노드"의 설정 파일에 넣고 그 노드를 재시작해야 한다.
+#
+# 관리 서버가 Web UI 로 원격 업데이트를 지시하는 경우, client 노드는 아래
+# public_key_path 만 설정하면 된다 — update_url/channel 은 서버가 명령에 주입한다.
+update:
+  # [필수] Ed25519 공개키 파일 경로(PEM 또는 hex). 다운로드한 바이너리의 .sig 서명을
+  # 이 공개키로 검증한다. 미설정 시 원격 업데이트가 거부된다
+  # ("public_key_path 미설정 — Ed25519 검증에 필수"). 공개키는 릴리스 담당자가
+  # `make keygen`(또는 xflowd update keygen)으로 생성한 .pub 를 각 노드에 배포한 것이다.
+  # 개인키(.key)는 절대 노드에 두지 않는다. 자세한 내용: deploy/RELEASE_IMAGES.md
+  public_key_path: "./examples/config/xflow-release.pub"
+
+  # (선택) 다운로드 소스. 관리 서버가 명령에 update_url 을 주입하면 그 값이 우선한다.
+  # 자체 호스팅 스토어 예: https://{관리서버}/api/v1/updates
+  # update_url: "https://api.github.com/repos/xtra72/xflow"
+
+  # (선택) 릴리스 채널: stable | beta | nightly. 서버가 채널을 주입하면 그 값이 우선.
+  # channel: "stable"
+
+  # (선택) 노드 자체 주기 자동 체크(원격 명령과 별개). 기본 false.
+  # enabled: false
+  # check_interval: "24h"
+  # auto_apply: false
+
+  # (선택) 관리 서버가 자체 서명(self-signed) TLS 인증서면 true 로 설정한다. 노드
+  # Downloader 는 https 를 강제하므로, 신뢰되지 않은 인증서면 검증을 건너뛰어야 한다
+  # (운영에서는 신뢰 CA 인증서 사용을 권장 — 테스트/사설망 전용 옵션).
+  # insecure_skip_verify: false 

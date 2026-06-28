@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -35,8 +37,13 @@ type Engine struct {
 	nodeOpts        []node.NodeOption
 	debugSink       node.DebugSink // output 노드의 editor 출력용 싱크
 	config          map[string]any
-	onAgentStart    func(agent.Agent) // 에이전트 자동 시작 후 콜백
-	agentManager    agent.Manager     // 플로우 배포 시 에이전트 참조 검증용 (선택)
+
+	// outputObserver 는 노드 출력 메시지 관측용 옵저버를 보관한다 (선택).
+	// atomic.Value 에 outputObserverHolder 를 저장하여 핫 패스에서 lock-free 로
+	// 읽는다. 미설정 시 Load() 는 nil 을 반환한다. notifyOutputObserver 참조.
+	outputObserver atomic.Value
+	onAgentStart   func(agent.Agent) // 에이전트 자동 시작 후 콜백
+	agentManager   agent.Manager     // 플로우 배포 시 에이전트 참조 검증용 (선택)
 
 	// unconnectedWarned 는 portCounter 가 없는 경로(주로 테스트)에서 미연결 포트
 	// 경고를 (nodeID, portName)당 1회로 제한하기 위한 폴백 dedupe 맵이다.
@@ -210,21 +217,31 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		}
 	}
 
+	// 노드별 미연결 출력 경고 억제(opt-out) 플래그를 config 에서 읽어 둔다.
+	// 배포 시점에 한 번만 파싱하며, 해당 노드의 모든 portCounter 에 전파한다.
+	suppressByNode := make(map[string]bool, len(runtimeNodes))
+	for _, nd := range f.Nodes() {
+		if parseSuppressUnconnected(nd.Config) {
+			suppressByNode[nd.ID] = true
+		}
+	}
+
 	// 노드가 선언한 모든 포트에 대해 카운터를 초기화한다.
 	// 와이어 연결 여부와 관계없이 모든 포트의 카운터가 존재해야
 	// 엔진의 "in"/"out"/"error" 기록이 누락되지 않는다.
 	for id, n := range runtimeNodes {
 		nc := counters[id]
+		suppress := suppressByNode[id]
 		for _, p := range n.Ports() {
 			name := p.Name
 			// 에러 포트는 노드에서 "_error"로 선언되지만
 			// 엔진은 "error"로 기록하므로 둘 다 초기화한다.
 			if _, ok := nc.portCounters[name]; !ok {
-				nc.portCounters[name] = &portCounter{}
+				nc.portCounters[name] = &portCounter{suppressUnconnected: suppress}
 			}
 			if p.Direction == flow.PortError {
 				if _, ok := nc.portCounters["error"]; !ok {
-					nc.portCounters["error"] = &portCounter{}
+					nc.portCounters["error"] = &portCounter{suppressUnconnected: suppress}
 				}
 			}
 		}
@@ -1185,6 +1202,48 @@ type nodeWithLogger interface {
 	Logger() observe.ComponentLogger
 }
 
+// nodeDeclaresOutputPort 는 노드가 portName 을 출력 포트로 선언했는지 보고한다.
+//
+// 판정은 보수적(OR 결합)으로 수행하여 하위호환을 최대한 보장한다:
+//   - Ports() 목록(node.Node 핵심 인터페이스, 항상 구현됨)에 Direction==PortOutput
+//     이고 Name==portName 인 포트가 있으면 선언된 것으로 본다. switch 처럼 라우트
+//     포트를 동적으로 계산하는 노드의 출력 포트도 이 경로로 정확히 인식된다.
+//   - 추가로 선택적 GetOutputPort 조회 인터페이스(BaseNode 구현)가 선언을 보고하면
+//     역시 선언된 것으로 본다(정적 outputs 기준).
+//
+// 두 출처 중 어느 쪽도 선언을 보고하지 않을 때에만 미선언(false)으로 판정하므로,
+// 동적/정적 포트 모두에 대해 안전하다. 두 인터페이스를 모두 구현하지 않는 노드는
+// 게이트 대상이 아니다(true 반환, 기존 동작 유지).
+func nodeDeclaresOutputPort(n node.Node, portName string) bool {
+	type outputPortGetter interface {
+		GetOutputPort(name string) (*node.NodePort, bool)
+	}
+
+	declaredViaPorts := false
+	type portsLister interface {
+		Ports() []node.NodePort
+	}
+	if pl, ok := n.(portsLister); ok {
+		for _, p := range pl.Ports() {
+			if p.Direction == flow.PortOutput && p.Name == portName {
+				declaredViaPorts = true
+				break
+			}
+		}
+	} else {
+		// Ports() 를 구현하지 않으면 선언 여부를 알 수 없으므로 게이트하지 않는다.
+		return true
+	}
+
+	if g, ok := n.(outputPortGetter); ok {
+		if _, declared := g.GetOutputPort(portName); declared {
+			return true
+		}
+	}
+
+	return declaredViaPorts
+}
+
 // debugPortLog 는 노드 로그 레벨이 Debug일 때 포트 입출력 메시지를 로깅한다.
 // slog.Logger.Enabled() 체크로 불필요한 Payload.ToMap() 비용을 방지한다.
 func debugPortLog(ctx context.Context, logger observe.ComponentLogger, direction string, nodeID string, msg message.Message) {
@@ -1241,6 +1300,13 @@ func (e *Engine) warnUnconnectedPort(nodeID, nodeName, portName string, pc *port
 		return
 	}
 	if pc != nil {
+		// 노드별 옵트아웃: suppress 설정 시 미연결 경고를 완전히 억제한다.
+		// once-guard CAS 보다 먼저 검사하여 guard 를 소비하지 않는다.
+		// 주의: pc == nil 경로(아래 단위 테스트 폴백)는 노드별 플래그가 없으므로
+		// 억제할 수 없다. 억제는 실제 배포 경로(pc != nil)에서만 동작한다.
+		if pc.suppressUnconnected {
+			return
+		}
 		// portCounter 기반 1회 가드 (정상 경로).
 		if !pc.warnedUnconnected.CompareAndSwap(false, true) {
 			return // 이미 경고함
@@ -1257,6 +1323,35 @@ func (e *Engine) warnUnconnectedPort(nodeID, nodeName, portName string, pc *port
 		"nodeName", nodeName,
 		"port", portName,
 	)
+}
+
+// suppressUnconnectedWarningKey 는 노드 미연결 출력 경고 억제 옵트인 config 키이다.
+const suppressUnconnectedWarningKey = "suppress_unconnected_warning"
+
+// parseSuppressUnconnected 는 노드 config 에서 suppress_unconnected_warning 값을
+// 관대하게(tolerant) 파싱한다. Go bool 과 문자열("true"/"false"/"1"/"0" 등,
+// strconv.ParseBool 규칙) 을 모두 허용하며, 키가 없거나 파싱 불가하면 false 를
+// 반환한다 (기본 비활성).
+func parseSuppressUnconnected(cfg map[string]any) bool {
+	if cfg == nil {
+		return false
+	}
+	v, ok := cfg[suppressUnconnectedWarningKey]
+	if !ok {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		b, err := strconv.ParseBool(strings.TrimSpace(val))
+		if err != nil {
+			return false
+		}
+		return b
+	default:
+		return false
+	}
 }
 
 // sendErrorToWires 는 에러가 발생한 원본 메시지에 에러 메타데이터를 추가하여 에러 와이어로 전송한다.
@@ -1289,6 +1384,8 @@ func (e *Engine) runNode(
 	}
 
 	nodeID := n.ID()
+	// flowID 는 OutputObserver(노드 출력 tap) 통지에 사용된다.
+	flowID := rt.flow.ID()
 
 	// 비활성화된 노드: 메시지를 소비만 하고 처리/전달하지 않는다.
 	if rt.disabledNodes[nodeID] {
@@ -1391,6 +1488,8 @@ func (e *Engine) runNode(
 										pc.Record() // emitted (생산)
 									}
 								}
+								// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+								e.notifyOutputObserver(flowID, n.ID(), portName, msg)
 								// 이 고루틴은 len(wires) > 0 인 포트에 대해서만 시작되므로
 								// 항상 연결된 와이어가 존재한다.
 								if e.sendToWires(ctx, msg, wires, n.ID()) > 0 && pc != nil {
@@ -1447,6 +1546,17 @@ func (e *Engine) runNode(
 						)
 					}
 					debugPortLog(ctx, nodeLogger, "source", n.ID(), msg)
+					// 미선언 출력 포트 emit 게이트(SourceNode "out" 경로, 보수적 적용):
+					// "out" 와이어가 없고 노드가 "out" 출력 포트를 선언하지 않았다면
+					// tap 통지와 미연결 경고를 생략한다. emit 카운트(pc.Record())는 위에서
+					// 이미 기록되었으므로 source 경로에서는 동작을 깨지 않도록 통지+경고만
+					// 게이트한다("out" 은 절대 "error" 포트가 아니므로 조건 2는 항상 참).
+					if len(outWires) == 0 && !nodeDeclaresOutputPort(n, "out") {
+						// 미선언+미연결: 조용히 폐기(통지·경고 생략).
+						continue
+					}
+					// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+					e.notifyOutputObserver(flowID, n.ID(), "out", msg)
 					if len(outWires) == 0 {
 						e.warnUnconnectedPort(n.ID(), n.Name(), "out", pc)
 					} else if e.sendToWires(ctx, msg, outWires, n.ID()) > 0 && pc != nil {
@@ -1559,7 +1669,21 @@ func (e *Engine) runNode(
 				if portName == "" {
 					portName = "out"
 				}
+				// 미선언 출력 포트 emit 게이트:
+				// (1) 연결된 와이어가 없고 (2) 에러 포트가 아니며 (3) 노드가 해당
+				// 포트를 출력 포트로 선언하지 않았다면, 결과를 조용히 폐기한다.
+				// emit·tap 통지·포트 카운트(pc.Record())·미연결 경고를 모두 생략하기
+				// 위해 debugPortLog/notifyOutputObserver/pc 로직 이전에 게이트한다.
+				// 사용자가 에디터에서 출력 포트를 삭제한 경우(def.Outputs 에서 빠짐)의
+				// 노이즈(폐기 경고/유령 카운트)를 제거한다. 와이어가 있는 포트(조건 1)와
+				// 선언된 포트(조건 3)는 게이트되지 않아 하위호환을 보장한다.
+				if len(targetWires) == 0 && portName != "error" &&
+					!nodeDeclaresOutputPort(n, portName) {
+					continue
+				}
 				debugPortLog(ctx, nodeLogger, "output", n.ID(), result)
+				// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+				e.notifyOutputObserver(flowID, n.ID(), portName, result)
 				var pc *portCounter
 				if nc := rt.nodeCounters[n.ID()]; nc != nil {
 					if pc = nc.portCounters[portName]; pc != nil {

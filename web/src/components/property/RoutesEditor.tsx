@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 interface RouteRow {
   /** React 렌더링용 안정 키 (config 에는 포함되지 않음). */
@@ -75,6 +76,7 @@ const cellInput = cn(
 const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
 export function RoutesEditor({ value, onChange, readOnly }: RoutesEditorProps) {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<RouteRow[]>(() => toRows(value));
   const internalUpdate = useRef(false);
 
@@ -125,8 +127,8 @@ export function RoutesEditor({ value, onChange, readOnly }: RoutesEditorProps) {
         <>
           {/* 헤더 */}
           <div className="flex items-center gap-1 px-1 text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
-            <span className="flex-1">조건식</span>
-            <span className="w-28">출력 포트명</span>
+            <span className="flex-1">{t('property.routes.condition')}</span>
+            <span className="w-28">{t('property.routes.outputPort')}</span>
             {!readOnly && <span className="w-6" />}
           </div>
           <div className="space-y-1">
@@ -139,7 +141,7 @@ export function RoutesEditor({ value, onChange, readOnly }: RoutesEditorProps) {
                   onChange={(e) => handleConditionChange(row.key, e.target.value)}
                   className={cn(cellInput, 'flex-1 font-mono text-xs', readOnly && readOnlyInput)}
                   placeholder="$.payload.temp >= 30"
-                  aria-label="조건식"
+                  aria-label={t('property.routes.condition')}
                 />
                 <input
                   type="text"
@@ -148,14 +150,14 @@ export function RoutesEditor({ value, onChange, readOnly }: RoutesEditorProps) {
                   onChange={(e) => handleNameChange(row.key, e.target.value)}
                   className={cn(cellInput, 'w-28', readOnly && readOnlyInput)}
                   placeholder="hot"
-                  aria-label="출력 포트명"
+                  aria-label={t('property.routes.outputPort')}
                 />
                 {!readOnly && (
                   <button
                     type="button"
                     onClick={() => handleRemove(row.key)}
                     className="shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                    aria-label="삭제"
+                    aria-label={t('property.common.deleteAria')}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -168,7 +170,7 @@ export function RoutesEditor({ value, onChange, readOnly }: RoutesEditorProps) {
 
       {rows.length === 0 && (
         <p className="py-2 text-center text-xs text-(--color-text-muted)">
-          라우트 없음 — 입력이 그대로 out 포트로 전달됩니다
+          {t('property.routes.empty')}
         </p>
       )}
 
@@ -179,7 +181,7 @@ export function RoutesEditor({ value, onChange, readOnly }: RoutesEditorProps) {
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          라우트 추가
+          {t('property.routes.addRoute')}
         </button>
       )}
     </div>

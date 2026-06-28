@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -100,6 +102,11 @@ func (r *Router) PUT(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	r.addRoute("PUT", path, handler, mw...)
 }
 
+// PATCH 는 PATCH 라우트를 등록한다(부분 갱신 — @SPEC:SPEC-REMOTE-001 M7 원격 자원 수정).
+func (r *Router) PATCH(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	r.addRoute("PATCH", path, handler, mw...)
+}
+
 // DELETE 는 DELETE 라우트를 등록한다.
 func (r *Router) DELETE(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	r.addRoute("DELETE", path, handler, mw...)
@@ -178,6 +185,11 @@ func (g *RouteGroup) PUT(path string, handler HandlerFunc, mw ...MiddlewareFunc)
 	g.addRoute("PUT", path, handler, mw...)
 }
 
+// PATCH 는 PATCH 라우트를 그룹에 등록한다(부분 갱신 — @SPEC:SPEC-REMOTE-001 M7).
+func (g *RouteGroup) PATCH(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	g.addRoute("PATCH", path, handler, mw...)
+}
+
 // DELETE 는 DELETE 라우트를 그룹에 등록한다.
 func (g *RouteGroup) DELETE(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	g.addRoute("DELETE", path, handler, mw...)
@@ -214,7 +226,7 @@ func applyMiddleware(handler HandlerFunc, middlewares []MiddlewareFunc) HandlerF
 
 // handleError 는 핸들러 에러를 적절한 JSON 응답으로 변환한다.
 func handleError(ctx *httpContext, err error) {
-	if ctx.written {
+	if ctx.isWritten() {
 		return
 	}
 
@@ -241,10 +253,21 @@ func handleError(ctx *httpContext, err error) {
 }
 
 // httpContext 는 Context의 net/http 구현이다.
+//
+// 동시성 주의: Timeout 미들웨어는 핸들러를 별도 goroutine 에서 실행한다.
+// 타임아웃/취소 시 메인 경로가 먼저 반환되어 net/http 가 핸들러를 완료 처리하는데,
+// 이때 백그라운드 핸들러 goroutine 이 뒤늦게 ResponseWriter 에 접근하면
+// "Header called after Handler finished" 패닉이 발생한다.
+// 따라서 written/w/finished 접근을 mu 로 동기화하고, finished 이후의 응답 write 를
+// no-op 으로 차단한다.
 type httpContext struct {
+	mu      sync.Mutex
 	w       http.ResponseWriter
 	r       *http.Request
 	written bool
+	// finished 는 메인 핸들러 경로가 종료(타임아웃/취소)되어 net/http 가
+	// 핸들러를 완료 처리했음을 의미한다. true 이면 ResponseWriter 접근이 금지된다.
+	finished bool
 }
 
 // newHTTPContext 는 새 httpContext를 생성한다.
@@ -253,6 +276,37 @@ func newHTTPContext(w http.ResponseWriter, r *http.Request) *httpContext {
 		w: w,
 		r: r,
 	}
+}
+
+// finish 는 메인 핸들러 경로가 종료되었음을 표시한다.
+// 호출 이후 JSON/NoContent/SetHeader 등 ResponseWriter 쓰기 메서드는 no-op 이 된다.
+// Timeout 미들웨어가 백그라운드 goroutine 의 뒤늦은 write 를 차단하기 위해 사용한다.
+func (c *httpContext) finish() {
+	c.mu.Lock()
+	c.finished = true
+	c.mu.Unlock()
+}
+
+// isWritten 은 응답이 이미 작성되었는지 동기화하여 반환한다.
+func (c *httpContext) isWritten() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.written
+}
+
+// setWriter 는 기본 ResponseWriter 를 교체한다 (Logger/Compress 미들웨어용).
+// 백그라운드 goroutine 의 w 읽기와의 data race 를 막기 위해 mu 로 보호한다.
+func (c *httpContext) setWriter(w http.ResponseWriter) {
+	c.mu.Lock()
+	c.w = w
+	c.mu.Unlock()
+}
+
+// getWriter 는 기본 ResponseWriter 를 동기화하여 반환한다 (미들웨어용).
+func (c *httpContext) getWriter() http.ResponseWriter {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.w
 }
 
 // Param 은 경로 파라미터를 반환한다 (Go 1.22+ PathValue 사용).
@@ -298,8 +352,24 @@ func (c *httpContext) Bind(v any) error {
 }
 
 // JSON 은 JSON 응답을 작성한다.
+//
+// 동시성: finished(메인 핸들러 종료) 또는 written(이미 응답함) 이면 no-op 으로
+// 안전 반환한다. body 인코딩은 lock 밖에서 수행하여 lock 보유 시간을 최소화하고,
+// finished/written 가드 및 헤더/WriteHeader/Write 는 lock 안에서 원자적으로 수행하여
+// 타임아웃 경로(finish)와의 경합으로 인한 "Header called after Handler finished"
+// 패닉을 방지한다.
 func (c *httpContext) JSON(code int, v any) error {
-	if c.written {
+	// body 인코딩은 ResponseWriter 접근과 무관하므로 lock 밖에서 수행한다.
+	var buf bytes.Buffer
+	if v != nil {
+		if err := json.NewEncoder(&buf).Encode(v); err != nil {
+			return err
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finished || c.written {
 		return nil
 	}
 	c.written = true
@@ -308,12 +378,15 @@ func (c *httpContext) JSON(code int, v any) error {
 	if v == nil {
 		return nil
 	}
-	return json.NewEncoder(c.w).Encode(v)
+	_, err := c.w.Write(buf.Bytes())
+	return err
 }
 
 // NoContent 는 빈 응답을 작성한다.
 func (c *httpContext) NoContent(code int) error {
-	if c.written {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finished || c.written {
 		return nil
 	}
 	c.written = true
@@ -351,7 +424,16 @@ func (c *httpContext) Context() context.Context {
 }
 
 // SetHeader 는 응답 헤더를 설정한다.
+//
+// 동시성: finished(메인 핸들러 종료) 또는 written(헤더가 이미 커밋됨) 이면
+// no-op 으로 안전 반환한다. 이미 응답한 뒤의 헤더 변경은 효과가 없고,
+// finished 이후의 접근은 패닉을 유발하기 때문이다.
 func (c *httpContext) SetHeader(key, value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finished || c.written {
+		return
+	}
 	c.w.Header().Set(key, value)
 }
 
@@ -398,7 +480,7 @@ func (c *httpContext) setRequest(r *http.Request) {
 
 // responseWriter 는 기본 http.ResponseWriter를 반환한다 (미들웨어에서 사용).
 func (c *httpContext) responseWriter() http.ResponseWriter {
-	return c.w
+	return c.getWriter()
 }
 
 // request 는 기본 *http.Request를 반환한다 (미들웨어에서 사용).

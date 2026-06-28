@@ -22,6 +22,7 @@ tags:
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
 | 1.0.0 | 2026-06-03 | xtra | 초기 SPEC 작성 (PLAN 단계) |
+| 1.1.0 | 2026-06-04 | xtra | 구현 반영 — `pass_mode`(copy/original) 설정 추가 (요구사항 4.7, 설정 키 계약, 인수 기준 보강) |
 
 # SPEC-SWITCH-001: Switch Node 완성 — 문자열 조건 기반 다중 포트 라우팅
 
@@ -87,6 +88,7 @@ tags:
 - **A5**: 조건식 컴파일은 Configure 시점에 1회 수행하고, 컴파일된 클로저를 Process에서 재사용한다.
 - **A6**: 기존 동작(Go 함수 `[]SwitchRoute` 직접 주입, 테스트에서 사용)은 보존한다 — 문자열 경로는 추가 경로이다.
 - **A7**: `default_port`가 비어 있거나 미설정이면 미매칭 메시지는 드롭된다(기존 동작 보존).
+- **A8**: `pass_mode`는 문자열로 전달되며 `copy`(기본) 또는 `original`이다. 미설정·빈값·미인식 값은 `copy`로 폴백한다(관대 처리). `copy`는 라우팅 시 메시지를 Clone(새 ID 생성)하고, `original`은 단일 방출 경로에서 원본 객체를 그대로 전달하여 메시지 ID/식별성을 하류로 보존한다.
 
 ## 4. 요구사항
 
@@ -159,6 +161,20 @@ tags:
 **REQ-SWITCH-050**: 기존 플로우 보존
 **WHERE** 기존 플로우의 switch 노드가 `routes`를 갖지 않거나 빈 배열을 가지면, 시스템은 기존 동작([in, out] 패스스루/기본 포트)을 유지해야 한다.
 
+### 4.7 전달 모드 (pass_mode) — 메시지 복제 vs 원본 보존
+
+**REQ-SWITCH-060**: 전달 모드 설정
+시스템은 **항상** `config["pass_mode"]` 값을 `copy` 또는 `original`로 해석하며, 미설정·빈값·미인식 값일 경우 `copy`를 기본값으로 사용해야 한다 (관대 처리).
+
+**REQ-SWITCH-061**: copy 모드 — 라우팅 시 Clone (기본)
+**WHILE** `pass_mode`가 `copy`인 동안, **WHEN** 메시지를 라우팅하면, 시스템은 라우팅 전에 메시지를 Clone하여 전달해야 한다. Clone은 새 메시지 ID를 생성하므로 방출된 메시지는 입력과 다른 식별성을 가져야 한다 (원본 불변). 이는 기존 동작이다.
+
+**REQ-SWITCH-062**: original 모드 — 단일 방출 경로에서 원본 보존
+**WHILE** `pass_mode`가 `original`인 동안, **WHEN** 단 1건만 방출하는 경로(first 모드 매칭, all 모드에서 정확히 1건 매칭, default_port 경로)로 라우팅하면, 시스템은 Clone 없이 원본 메시지 객체에 직접 `_target_port`를 설정하여 그대로 전달해야 한다. 메시지 ID/식별성이 하류로 보존되어야 한다.
+
+**REQ-SWITCH-063**: original 모드 — all 모드 다중 매칭은 Clone 강제
+**WHILE** `pass_mode`가 `original`인 동안, **IF** all 모드에서 2건 이상의 라우트가 매칭되면, **THEN** 시스템은 `pass_mode`와 무관하게 각 방출마다 메시지를 강제로 Clone해야 한다. 단일 메시지 객체는 서로 다른 포트의 `_target_port` 값을 동시에 가질 수 없기 때문이다 (제약).
+
 ## 5. 명세 (설정 키 계약)
 
 ### 5.1 설정 키 (config map)
@@ -168,6 +184,7 @@ tags:
 | `routes` | `[]any` (각 `{name: string, condition: string}`) 또는 `[]SwitchRoute` | 아니오 | `[]` | 라우팅 규칙 배열. 비면 `[in, out]` 폴백. |
 | `match_mode` | `string` (`first` \| `all`) | 아니오 | `first` | 매칭 처리 모드. |
 | `default_port` | `string` | 아니오 | `""` | 미매칭 시 포트. 비면 드롭. |
+| `pass_mode` | `string` (`copy` \| `original`) | 아니오 | `copy` | 메시지 전달 모드. `copy`=라우팅 시 Clone(새 ID). `original`=단일 방출 경로(first 매칭/all 단일 매칭/default)에서 원본 그대로 전달(ID 보존). all 모드 2건 이상 매칭은 `pass_mode`와 무관하게 Clone 강제. 미설정·빈값·미인식 값은 `copy`로 폴백. |
 
 ### 5.2 라우트 원소 스키마
 
@@ -186,7 +203,9 @@ tags:
 
 ### 5.4 라우팅 메타데이터
 
-- 매칭된 메시지는 Clone되어 `_target_port` 메타데이터에 대상 포트 이름이 설정된다.
+- 매칭된 메시지에는 `_target_port` 메타데이터에 대상 포트 이름이 설정된다.
+- `pass_mode=copy`(기본): 메시지를 Clone한 뒤 Clone에 `_target_port`를 설정하여 방출한다(원본 불변, 새 ID).
+- `pass_mode=original`: 단일 방출 경로(first 매칭/all 단일 매칭/default)에서는 원본 메시지에 직접 `_target_port`를 설정하여 그대로 방출한다(ID 보존). all 모드에서 2건 이상 매칭되면 `pass_mode`와 무관하게 각 방출마다 Clone한다(단일 객체가 서로 다른 `_target_port`를 동시에 가질 수 없음).
 - 엔진은 `_target_port`를 와이어의 `SourcePort`와 매칭하여 포트별로 전달한다.
 
 ## 6. 추적성 (Traceability)
@@ -199,5 +218,6 @@ tags:
 | REQ-SWITCH-030..033 | `switch.go: Ports` | AC-SWITCH-030..033 |
 | REQ-SWITCH-040..043 | `nodeSchemas.ts`, `CustomNode.tsx` | AC-SWITCH-040..043 |
 | REQ-SWITCH-050 | `switch.go`, `computePortsForNode` | AC-SWITCH-050 |
+| REQ-SWITCH-060..063 | `switch.go: Configure/Process/routeDefault` | AC-SWITCH-060..063 |
 
 세부 계획은 `plan.md`, 인수 기준은 `acceptance.md`를 참조한다.

@@ -8,13 +8,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 // ---- 상수 ----
 
+// label 은 모듈 스코프이므로 i18n 키만 저장하고 렌더 시 t(labelKey) 로 해석한다.
 const MODES = [
-  { value: 'select', label: 'Select (필드 선택)' },
-  { value: 'merge', label: 'Merge (필드 병합)' },
-  { value: 'exclude', label: 'Exclude (필드 제외)' },
+  { value: 'select', labelKey: 'property.transform.modeSelect' },
+  { value: 'merge', labelKey: 'property.transform.modeMerge' },
+  { value: 'exclude', labelKey: 'property.transform.modeExclude' },
 ] as const;
 
 type PipelineMode = (typeof MODES)[number]['value'];
@@ -262,6 +264,7 @@ const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 // ---- 컴포넌트 ----
 
 export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode = 'select' }: TransformPipelineEditorProps) {
+  const { t } = useTranslation();
   // 로컬 상태 (커서 위치 보존을 위해 ref 기반 동기화 사용)
   const [mode, setMode] = useState<PipelineMode>(() => {
     const parsed = parseInput(value);
@@ -327,7 +330,7 @@ export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode
       >
         {MODES.map((m) => (
           <option key={m.value} value={m.value}>
-            {m.label}
+            {t(m.labelKey)}
           </option>
         ))}
       </select>
@@ -338,11 +341,11 @@ export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode
           <thead>
             <tr className="bg-(--color-bg-primary)">
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                {isExclude ? '제외 필드' : '필드명'}
+                {isExclude ? t('property.transform.excludeFields') : t('property.transform.fieldName')}
               </th>
               {!isExclude && (
                 <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                  값 / 표현식
+                  {t('property.transform.valueOrExpr')}
                 </th>
               )}
               {!readOnly && <th className="w-10 px-2 py-1.5" />}
@@ -355,7 +358,7 @@ export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode
                   colSpan={readOnly ? (isExclude ? 1 : 2) : (isExclude ? 2 : 3)}
                   className="px-2 py-4 text-center text-xs text-(--color-text-muted)"
                 >
-                  {isExclude ? '제외할 필드가 없습니다' : '변환 필드가 없습니다'}
+                  {isExclude ? t('property.transform.excludeEmpty') : t('property.transform.fieldsEmpty')}
                 </td>
               </tr>
             )}
@@ -396,7 +399,7 @@ export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode
                       type="button"
                       onClick={() => handleRemove(row.key)}
                       className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                      aria-label="삭제"
+                      aria-label={t('property.common.deleteAria')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -416,7 +419,7 @@ export function TransformPipelineEditor({ value, onChange, readOnly, defaultMode
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          필드 추가
+          {t('property.transform.addField')}
         </button>
       )}
     </div>

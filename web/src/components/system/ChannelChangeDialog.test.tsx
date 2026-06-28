@@ -70,6 +70,29 @@ import type {
   ChannelInfo,
 } from '@/services/api/systemUpdate';
 
+// i18n: t() 를 ko.json 키 해석으로 모킹해 한국어 단언을 유지한다.
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<
+    string,
+    unknown
+  >;
+  const resolve = (key: string): string => {
+    const v = key.split('.').reduce<unknown>(
+      (o, p) =>
+        o && typeof o === 'object' ? (o as Record<string, unknown>)[p] : undefined,
+      ko,
+    );
+    return typeof v === 'string' ? v : key;
+  };
+  return {
+    useTranslation: () => ({
+      t: resolve,
+      locale: 'ko' as const,
+      setLocale: () => {},
+    }),
+  };
+});
+
 import { ChannelChangeDialog } from './ChannelChangeDialog';
 
 // ─────────────────────────────────────────────────────────────────────

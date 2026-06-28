@@ -77,6 +77,28 @@ vi.mock('@/stores/uiStore', async () => {
   };
 });
 
+// i18n 모킹: I18nProvider 없이 렌더하기 위해 useTranslation 을 교체한다.
+// 에러 토스트 메시지가 실제 한국어(mapUpdateError → t(key))를 검사하므로
+// ko.json 을 해석해 반환한다. (async factory 내부 import 로 호이스팅 회피.)
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolveKo = (key: string): string => {
+    const value = key
+      .split('.')
+      .reduce<unknown>(
+        (obj, part) =>
+          obj != null && typeof obj === 'object'
+            ? (obj as Record<string, unknown>)[part]
+            : undefined,
+        ko,
+      );
+    return typeof value === 'string' ? value : key;
+  };
+  return {
+    useTranslation: () => ({ t: (k: string) => resolveKo(k) }),
+  };
+});
+
 import type { VersionInfo } from '@/services/api/systemUpdate';
 
 import { SystemStatusPage } from './SystemStatusPage';
@@ -94,6 +116,12 @@ function makeVersion(overrides: Partial<VersionInfo> = {}): VersionInfo {
     channel: 'stable',
     update_available: false,
     latest_version: null,
+    // SPEC-WEB-007 추가 필드.
+    os: 'linux',
+    arch: 'amd64',
+    hostname: 'xflow-node-01',
+    mode: 'server',
+    uptime_seconds: 3600,
     ...overrides,
   };
 }

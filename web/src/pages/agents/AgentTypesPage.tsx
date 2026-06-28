@@ -6,6 +6,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import { AGENT_TYPES } from '@/config/agentSchemas';
 
 import { AGENT_TYPE_META } from './agentTypeMeta';
@@ -34,13 +35,13 @@ const AGENT_CATEGORY: Record<string, string> = {
   logger: 'utility',
 };
 
-/** 카테고리 라벨 */
-const CATEGORY_LABELS: Record<string, string> = {
-  전체: '전체',
-  protocol: '프로토콜',
-  device: '디바이스',
-  storage: '저장소',
-  utility: '유틸리티',
+/** 카테고리 라벨 i18n 키 */
+const CATEGORY_LABEL_KEYS: Record<string, string> = {
+  전체: 'agents.types.catAll',
+  protocol: 'agents.types.catProtocol',
+  device: 'agents.types.catDevice',
+  storage: 'agents.types.catStorage',
+  utility: 'agents.types.catUtility',
 };
 
 /** 카테고리별 배지 스타일 */
@@ -56,6 +57,7 @@ const CATEGORY_BADGE_STYLES: Record<string, string> = {
  * 검색, 카테고리 탭, 카드 그리드로 구성된다.
  */
 export default function AgentTypesPage() {
+  const { t } = useTranslation();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('전체');
   const [expandedType, setExpandedType] = useState<string | null>(null);
@@ -93,10 +95,10 @@ export default function AgentTypesPage() {
       {/* 페이지 헤더 */}
       <div>
         <h2 className="text-2xl font-bold text-(--color-text-primary)">
-          에이전트 타입
+          {t('agents.types.title')}
         </h2>
         <p className="mt-1 text-sm text-(--color-text-muted)">
-          등록된 에이전트 타입을 탐색합니다
+          {t('agents.types.subtitle')}
         </p>
       </div>
 
@@ -110,7 +112,7 @@ export default function AgentTypesPage() {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="에이전트 검색..."
+          placeholder={t('agents.types.searchPlaceholder')}
           className={cn(
             'block w-full rounded-md border border-(--color-border-strong) py-2 pl-10 pr-3 text-sm',
             'placeholder:text-gray-400',
@@ -134,7 +136,7 @@ export default function AgentTypesPage() {
                 : 'text-(--color-text-muted) hover:text-(--color-text-secondary)',
             )}
           >
-            {CATEGORY_LABELS[cat] ?? cat}
+            {t(CATEGORY_LABEL_KEYS[cat] ?? 'agents.types.catUtility')}
           </button>
         ))}
       </div>
@@ -185,7 +187,7 @@ export default function AgentTypesPage() {
                         CATEGORY_BADGE_STYLES[category] ?? CATEGORY_BADGE_STYLES.utility,
                       )}
                     >
-                      {CATEGORY_LABELS[category] ?? category}
+                      {t(CATEGORY_LABEL_KEYS[category] ?? 'agents.types.catUtility')}
                     </span>
                   </div>
                   <p className="text-xs font-mono text-(--color-text-muted) mt-1">
@@ -211,7 +213,7 @@ export default function AgentTypesPage() {
       ) : (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-12 text-center">
           <p className="text-sm text-(--color-text-muted)">
-            일치하는 에이전트 타입이 없습니다
+            {t('agents.types.noResults')}
           </p>
         </div>
       )}

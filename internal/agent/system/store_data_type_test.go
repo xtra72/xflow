@@ -430,24 +430,22 @@ func TestCheckKeyAllowed_AutoRegister_Concurrent_SameType(t *testing.T) {
 		"동일 타입 동시 쓰기는 에러 없어야 한다")
 
 	// 정확히 한 번만 등록되었는지 확인.
+	// @spec v0.4.0: 동적 키는 항상 data_type=string 으로 등록된다.
 	snap := sa.StaticKeysSnapshot()
 	require.Len(t, snap, 1, "정적 키는 정확히 1개만 등록되어야 한다")
 	meta, ok := snap[key]
 	require.True(t, ok)
-	assert.Equal(t, DataTypeInt, meta.DataType)
+	assert.Equal(t, DataTypeString, meta.DataType)
 	assert.Equal(t, SourceAuto, meta.Source)
 	assert.Equal(t, "unknown", meta.MetricType)
 }
 
-// @spec SPEC-STORE-003 v0.3.0
+// @spec SPEC-STORE-003 v0.4.0 (동적=string 정책 도입에 따른 갱신)
 // TestCheckKeyAllowed_AutoRegister_Concurrent_MixedTypes 는 auto 모드에서 동일 키에 대해
-// 100 goroutine 이 int 와 string 을 섞어 쓰는 경우 race winner 가 결정한 타입을 기준으로
-// 일치하는 쪽은 성공하고 불일치는 ErrTypeMismatch 로 거부됨을 검증한다.
+// 100 goroutine 이 int 와 string 을 섞어 쓰는 경우 모두 성공함을 검증한다.
 //
-// 검증 항목:
-//   - 정확히 1개 키 등록
-//   - 등록된 DataType 은 int 또는 string 둘 중 하나 (race winner)
-//   - winner 와 동일 타입 쓰기 카운트 + ErrTypeMismatch 카운트 == 100
+// v0.4.0: 동적 키는 data_type=string 으로 등록되어 어떤 타입이든 string 으로 변환되므로
+// ErrTypeMismatch 가 발생하지 않는다. 정확히 1개 키만 등록되고 DataType=string 이다.
 func TestCheckKeyAllowed_AutoRegister_Concurrent_MixedTypes(t *testing.T) {
 	sa := NewStoreAgent(WithRegistrationType(RegistrationAuto))
 	require.NoError(t, sa.Init(context.Background()))
@@ -459,10 +457,8 @@ func TestCheckKeyAllowed_AutoRegister_Concurrent_MixedTypes(t *testing.T) {
 	const key = "concurrent_mixed"
 
 	var wg sync.WaitGroup
-	var intSuccess atomic.Int32
-	var strSuccess atomic.Int32
-	var typeMismatch atomic.Int32
-	var otherErr atomic.Int32
+	var success atomic.Int32
+	var failure atomic.Int32
 
 	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
@@ -472,83 +468,55 @@ func TestCheckKeyAllowed_AutoRegister_Concurrent_MixedTypes(t *testing.T) {
 			var err error
 			if i%2 == 0 {
 				err = as.checkKeyAllowed(key, 42) // int
-				switch {
-				case err == nil:
-					intSuccess.Add(1)
-				case errors.Is(err, ErrTypeMismatch):
-					typeMismatch.Add(1)
-				default:
-					otherErr.Add(1)
-				}
 			} else {
 				err = as.checkKeyAllowed(key, "hello") // string
-				switch {
-				case err == nil:
-					strSuccess.Add(1)
-				case errors.Is(err, ErrTypeMismatch):
-					typeMismatch.Add(1)
-				default:
-					otherErr.Add(1)
-				}
+			}
+			if err == nil {
+				success.Add(1)
+			} else {
+				failure.Add(1)
 			}
 		}()
 	}
 	wg.Wait()
 
-	// 다른 종류 에러 없음.
-	assert.Equal(t, int32(0), otherErr.Load(), "예기치 못한 에러는 없어야 한다")
+	// 동적 string 정책: int/string 혼합이어도 모두 성공해야 한다.
+	assert.Equal(t, int32(goroutines), success.Load(),
+		"동적 string 키는 타입 혼합이어도 모두 허용")
+	assert.Equal(t, int32(0), failure.Load(), "ErrTypeMismatch 등 실패는 없어야 한다")
 
-	// 정확히 1개 키 등록.
+	// 정확히 1개 키 등록 + data_type=string.
 	snap := sa.StaticKeysSnapshot()
 	require.Len(t, snap, 1)
 	meta := snap[key]
 	assert.Equal(t, SourceAuto, meta.Source)
-
-	// 결과 분포 검증: winner 의 타입에 따라 성공 카운트가 갈라진다.
-	totalSuccess := intSuccess.Load() + strSuccess.Load()
-	assert.Equal(t, int32(goroutines), totalSuccess+typeMismatch.Load(),
-		"성공 + ErrTypeMismatch 합계는 전체 goroutine 수와 같아야 한다")
-
-	switch meta.DataType {
-	case DataTypeInt:
-		// int 가 winner: int 쓰기 50건 모두 성공, string 50건은 ErrTypeMismatch.
-		assert.Equal(t, int32(50), intSuccess.Load(), "int winner 시 int 성공은 50")
-		assert.Equal(t, int32(0), strSuccess.Load(), "int winner 시 string 성공은 0")
-		assert.Equal(t, int32(50), typeMismatch.Load(), "int winner 시 ErrTypeMismatch 50")
-	case DataTypeString:
-		// string 이 winner: string 쓰기 50건 모두 성공, int 50건은 ErrTypeMismatch.
-		assert.Equal(t, int32(50), strSuccess.Load(), "string winner 시 string 성공은 50")
-		assert.Equal(t, int32(0), intSuccess.Load(), "string winner 시 int 성공은 0")
-		assert.Equal(t, int32(50), typeMismatch.Load(), "string winner 시 ErrTypeMismatch 50")
-	default:
-		t.Fatalf("예상치 못한 winner DataType: %s", meta.DataType)
-	}
+	assert.Equal(t, DataTypeString, meta.DataType, "동적 키는 data_type=string")
 }
 
-// @spec SPEC-STORE-003 v0.3.0
-// TestCheckKeyAllowed_PostAutoRegister_TypeMismatch 는 auto 모드에서 한 번 자동 등록된
-// 키에 대해 이후 다른 타입의 쓰기는 ErrTypeMismatch 로 거부됨을 검증한다 (Scenario 8: type pinning).
-func TestCheckKeyAllowed_PostAutoRegister_TypeMismatch(t *testing.T) {
+// @spec SPEC-STORE-003 v0.4.0 (동적=string 정책 도입에 따른 갱신)
+// TestCheckKeyAllowed_PostAutoRegister_AcceptsAnyType 는 auto 모드에서 한 번 자동
+// 등록된 동적 string 키에 대해 이후 어떤 타입의 쓰기도 ErrTypeMismatch 없이
+// 허용됨을 검증한다 (동적=string 정책: 모든 값이 string 으로 변환됨).
+func TestCheckKeyAllowed_PostAutoRegister_AcceptsAnyType(t *testing.T) {
 	sa := NewStoreAgent(WithRegistrationType(RegistrationAuto))
 	require.NoError(t, sa.Init(context.Background()))
 	t.Cleanup(func() { _ = sa.Stop(context.Background()) })
 
 	as := &agentStore{agent: sa}
 
-	// 1차 쓰기: int 자동 등록.
+	// 1차 쓰기: int → 동적 string 키 자동 등록.
 	require.NoError(t, as.checkKeyAllowed("pinned", 100))
 
-	// 2차 쓰기: 같은 키에 string → ErrTypeMismatch.
-	err := as.checkKeyAllowed("pinned", "different type")
-	assert.ErrorIs(t, err, ErrTypeMismatch)
+	// 2차 쓰기: 같은 키에 string → 허용 (mismatch 없음).
+	assert.NoError(t, as.checkKeyAllowed("pinned", "different type"))
 
-	// 3차 쓰기: 같은 타입(int) → 정상 통과.
-	assert.NoError(t, as.checkKeyAllowed("pinned", 200))
+	// 3차 쓰기: bool → 허용.
+	assert.NoError(t, as.checkKeyAllowed("pinned", true))
 
-	// 등록 메타는 변경되지 않아야 한다.
+	// 등록 메타: data_type=string 으로 고정, Source=auto 보존.
 	snap := sa.StaticKeysSnapshot()
 	require.Len(t, snap, 1)
-	assert.Equal(t, DataTypeInt, snap["pinned"].DataType)
+	assert.Equal(t, DataTypeString, snap["pinned"].DataType)
 	assert.Equal(t, SourceAuto, snap["pinned"].Source)
 }
 

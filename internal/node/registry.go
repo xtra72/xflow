@@ -31,12 +31,18 @@ func WithoutBuiltins() RegistryOption {
 
 // Registry 는 노드 타입별 팩토리를 관리하는 레지스트리이다.
 // 빌트인 노드 타입(filter, transform, switch, bridge, script, catch,
-// aggregate, mapping, modbus, output, deadletter, samsung_hvacr01_status, samsung_hvacr01_control, samsung_hvacr01,
+// aggregate, mapping, modbus, output, deadletter, samsung-hvacr01-status, samsung-hvacr01-control, samsung-hvacr01,
 // mqtt-subscriber, mqtt-publisher, modbus-poller, modbus-writer, lgap-status, lgap-control, lgap,
-// lgcp-status, lgcp-control, lgcp, lg_hvacr01_status, lg_hvacr01_control, lg_hvacr01,
+// lgcp-status, lgcp-control, lgcp, lg-hvacr01-status, lg-hvacr01-control, lg-hvacr01,
+// lg-hvacr02-status, lg-hvacr02-control, lg-hvacr02, century-hvacr01-status, century-hvacr01-control, century-hvacr01,
 // tsdb-write, tsdb-query, influxdb-write, influxdb-read, influxdb-query,
 // store-write, store-read, serial-in, serial-out, tcp-in, tcp-out,
-// framer, deduplicate, trigger, chart-emitter, inventory, select-field)을 자동 등록한다.
+// framer, deduplicate, trigger, chart-emitter, inventory, select-field, flow-node)을 자동 등록한다.
+//
+// DEPRECATED: HVAC 노드 타입의 기존 `_` 식별자(samsung_hvacr01, lg_hvacr01,
+// lg_hvacr02, century_hvacr01 및 각 _status/_control)는 하위 호환을 위해
+// canonical `-` 이름의 별칭으로 함께 등록된다. 저장/실행 중인 플로우는
+// `_` 이름으로 계속 배포되지만, 신규 플로우는 `-` 이름을 사용해야 한다.
 type Registry struct {
 	mu           sync.RWMutex
 	factories    map[string]NodeFactory
@@ -45,7 +51,7 @@ type Registry struct {
 }
 
 // NewRegistry 는 새로운 Registry를 생성한다.
-// WithoutBuiltins 옵션이 없으면 41개의 빌트인 노드 타입이 자동 등록된다.
+// WithoutBuiltins 옵션이 없으면 48개의 빌트인 노드 타입이 자동 등록된다.
 func NewRegistry(opts ...RegistryOption) *Registry {
 	r := &Registry{
 		factories: make(map[string]NodeFactory),
@@ -83,9 +89,9 @@ func (r *Registry) registerBuiltins() {
 		{"modbus", NewModbusNode, "processing", "MODBUS 레지스터 읽기/쓰기"},
 		{"output", NewDebugNode, "io", "메시지를 포맷팅하여 출력"},
 		{"deadletter", NewDeadLetterNode, "error", "처리 실패 메시지를 보관"},
-		{"samsung_hvacr01_status", NewSamsungHvacr01StatusNode, "io", "Samsung HVACR-01 (NASA) 디바이스 상태 조회"},
-		{"samsung_hvacr01_control", NewSamsungHvacr01ControlNode, "io", "Samsung HVACR-01 (NASA) 디바이스 제어"},
-		{"samsung_hvacr01", NewSamsungHvacr01Node, "io", "Samsung HVACR-01 (NASA) 상태 조회 + 제어 통합"},
+		{"samsung-hvacr01-status", NewSamsungHvacr01StatusNode, "io", "Samsung HVACR-01 (NASA) 디바이스 상태 조회"},
+		{"samsung-hvacr01-control", NewSamsungHvacr01ControlNode, "io", "Samsung HVACR-01 (NASA) 디바이스 제어"},
+		{"samsung-hvacr01", NewSamsungHvacr01Node, "io", "Samsung HVACR-01 (NASA) 상태 조회 + 제어 통합"},
 		{"mqtt-subscriber", NewMQTTSubNode, "io", "MQTT 토픽 구독 및 메시지 수신"},
 		{"mqtt-publisher", NewMQTTPublisherNode, "io", "MQTT 토픽으로 메시지 발행"},
 		{"modbus-poller", NewModbusPollerNode, "io", "MODBUS 레지스터를 주기적으로 폴링 읽기"},
@@ -93,15 +99,15 @@ func (r *Registry) registerBuiltins() {
 		{"lgap-status", NewLGAPStatusNode, "io", "LG LGAP 디바이스 상태 조회"},
 		{"lgap-control", NewLGAPControlNode, "io", "LG LGAP 디바이스 제어"},
 		{"lgap", NewLGAPNode, "io", "LG LGAP 상태 조회 + 제어 통합"},
-		{"lg_hvacr02_status", NewLGHvacr02StatusNode, "io", "LG HVACR-02 (LG ICP-02) 디바이스 상태 조회"},
-		{"lg_hvacr02_control", NewLGHvacr02ControlNode, "io", "LG HVACR-02 (LG ICP-02) 디바이스 제어"},
-		{"lg_hvacr02", NewLGHvacr02Node, "io", "LG HVACR-02 (LG ICP-02) 상태 조회 + 제어 통합"},
-		{"lg_hvacr01_status", NewLGHvacr01StatusNode, "io", "LG HVACR-01 (LG ICP-01) 디바이스 상태 조회"},
-		{"lg_hvacr01_control", NewLGHvacr01ControlNode, "io", "LG HVACR-01 (LG ICP-01) 디바이스 제어 (미지원)"},
-		{"lg_hvacr01", NewLGHvacr01Node, "io", "LG HVACR-01 (LG ICP-01) 상태 조회 + 제어 통합"},
-		{"century_hvacr01_status", NewCenturyHvacr01StatusNode, "io", "Century HVACR-01 디바이스 상태 조회 (패시브 캡처)"},
-		{"century_hvacr01_control", NewCenturyHvacr01ControlNode, "io", "Century HVACR-01 디바이스 제어 (미지원, 패시브 전용)"},
-		{"century_hvacr01", NewCenturyHvacr01Node, "io", "Century HVACR-01 상태 조회 + 제어 통합 (emit_raw_frames 옵션 지원)"},
+		{"lg-hvacr02-status", NewLGHvacr02StatusNode, "io", "LG HVACR-02 (LG ICP-02) 디바이스 상태 조회"},
+		{"lg-hvacr02-control", NewLGHvacr02ControlNode, "io", "LG HVACR-02 (LG ICP-02) 디바이스 제어"},
+		{"lg-hvacr02", NewLGHvacr02Node, "io", "LG HVACR-02 (LG ICP-02) 상태 조회 + 제어 통합"},
+		{"lg-hvacr01-status", NewLGHvacr01StatusNode, "io", "LG HVACR-01 (LG ICP-01) 디바이스 상태 조회"},
+		{"lg-hvacr01-control", NewLGHvacr01ControlNode, "io", "LG HVACR-01 (LG ICP-01) 디바이스 제어 (미지원)"},
+		{"lg-hvacr01", NewLGHvacr01Node, "io", "LG HVACR-01 (LG ICP-01) 상태 조회 + 제어 통합"},
+		{"century-hvacr01-status", NewCenturyHvacr01StatusNode, "io", "Century HVACR-01 디바이스 상태 조회 (패시브 캡처)"},
+		{"century-hvacr01-control", NewCenturyHvacr01ControlNode, "io", "Century HVACR-01 디바이스 제어 (미지원, 패시브 전용)"},
+		{"century-hvacr01", NewCenturyHvacr01Node, "io", "Century HVACR-01 상태 조회 + 제어 통합 (emit_raw_frames 옵션 지원)"},
 		{"tsdb-write", NewTSDBWriteNode, "storage", "메시지를 시계열 DB에 기록"},
 		{"tsdb-query", NewTSDBQueryNode, "storage", "시계열 DB에서 데이터를 조회"},
 		{"influxdb-write", NewInfluxDBWriteNode, "storage", "메시지를 InfluxDB에 기록"},
@@ -117,7 +123,8 @@ func (r *Registry) registerBuiltins() {
 		{"trigger", NewTriggerNode, "input", "스케줄 기반 데이터 자동 생성"},
 		{"chart-emitter", NewChartEmitterNode, "output", "차트 패널용 WebSocket 채널로 메시지 발행"},
 		{"inventory", NewInventoryNode, "processing", "in-process 디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit"},
-		{"select-field", NewSelectFieldNode, "processing", "메시지에서 지정한 필드만 남깁니다 (payload/metadata/message 그룹별 화이트리스트, 누락 시 무시/드랍/채움)"},
+		{"select-field", NewSelectFieldNode, "processing", "메시지에서 지정한 경로($.payload/$.metadata/$.type)만 남깁니다 (통합 화이트리스트, 누락 시 keep/drop/fill)"},
+		{"flow-node", NewFlowNodePlaceholder, "composition", "다른 플로우를 참조하는 서브플로우 노드 (배포 시 확장됨)"},
 	}
 	for _, b := range builtins {
 		r.factories[b.typeName] = b.factory
@@ -127,6 +134,50 @@ func (r *Registry) registerBuiltins() {
 			Description: b.description,
 			Source:      "builtin",
 		}
+	}
+
+	r.registerDeprecatedHVACAliases()
+}
+
+// deprecatedHVACAliases 는 HVAC 노드 타입의 DEPRECATED `_` 식별자를
+// canonical `-` 이름으로 매핑한다.
+//
+// DEPRECATED: 신규 플로우는 canonical `-` 이름을 사용해야 한다. 이 별칭은
+// 기존에 저장/실행 중인 플로우(예: Type:"lg_hvacr01")가 계속 배포될 수 있도록
+// 하위 호환을 위해서만 유지된다.
+var deprecatedHVACAliases = map[string]string{
+	"samsung_hvacr01":         "samsung-hvacr01",
+	"samsung_hvacr01_status":  "samsung-hvacr01-status",
+	"samsung_hvacr01_control": "samsung-hvacr01-control",
+	"lg_hvacr01":              "lg-hvacr01",
+	"lg_hvacr01_status":       "lg-hvacr01-status",
+	"lg_hvacr01_control":      "lg-hvacr01-control",
+	"lg_hvacr02":              "lg-hvacr02",
+	"lg_hvacr02_status":       "lg-hvacr02-status",
+	"lg_hvacr02_control":      "lg-hvacr02-control",
+	"century_hvacr01":         "century-hvacr01",
+	"century_hvacr01_status":  "century-hvacr01-status",
+	"century_hvacr01_control": "century-hvacr01-control",
+}
+
+// registerDeprecatedHVACAliases 는 deprecatedHVACAliases 의 각 `_` 이름을
+// canonical `-` 노드와 동일한 팩토리/메타데이터로 등록한다.
+//
+// DEPRECATED: canonical 빌트인 테이블 등록 이후에 호출되어야 하며, 별칭의
+// 메타데이터 Source 는 "builtin-deprecated" 로 표시되어 canonical 과 구분된다.
+func (r *Registry) registerDeprecatedHVACAliases() {
+	for oldName, canonical := range deprecatedHVACAliases {
+		factory, ok := r.factories[canonical]
+		if !ok {
+			// canonical 이 등록되어 있지 않으면 별칭을 만들 수 없다 (방어적 처리).
+			continue
+		}
+		r.factories[oldName] = factory
+
+		meta := r.metadata[canonical]
+		meta.Type = oldName
+		meta.Source = "builtin-deprecated"
+		r.metadata[oldName] = meta
 	}
 }
 

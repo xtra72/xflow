@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/auth"
 	"github.com/xtra/xflow/internal/config"
 )
@@ -81,14 +82,14 @@ func Logger(logger *slog.Logger) MiddlewareFunc {
 			}
 
 			start := time.Now()
-			srw := &statusRecorderWriter{ResponseWriter: hctx.w, statusCode: http.StatusOK}
-			originalWriter := hctx.w
-			hctx.w = srw
+			originalWriter := hctx.getWriter()
+			srw := &statusRecorderWriter{ResponseWriter: originalWriter, statusCode: http.StatusOK}
+			hctx.setWriter(srw)
 
 			err := next(hctx)
 
 			duration := time.Since(start)
-			hctx.w = originalWriter
+			hctx.setWriter(originalWriter)
 
 			logger.Debug("HTTP 요청",
 				slog.String("method", hctx.Method()),
@@ -218,11 +219,24 @@ func Timeout(d time.Duration) MiddlewareFunc {
 
 			select {
 			case err := <-done:
+				// 핸들러가 정상 완료(또는 자체 에러 반환)된 경우.
 				return err
 			case <-timeoutCtx.Done():
+				// 타임아웃 또는 취소(클라이언트 끊김)로 메인 경로가 먼저 종료된다.
+				// 백그라운드 핸들러 goroutine 은 여전히 실행 중일 수 있으므로,
+				// finished 로 마킹하여 이후의 hctx.JSON()/Write() 를 no-op 으로 차단한다.
+				// 이로써 "Header called after Handler finished" 패닉을 방지한다.
+				//
+				// deadline 초과 시: 백그라운드가 아직 응답하지 않았다면 408 을 직접 쓴다
+				// (written 가드로 중복 write 차단). finished 마킹 전에 써야 하므로
+				// JSON() 을 먼저 호출한 뒤 finish() 한다.
+				// 취소(클라이언트 끊김) 시: 쓸 대상이 없으므로 응답하지 않는다.
 				if timeoutCtx.Err() == context.DeadlineExceeded {
-					return ErrRequestTimeout
+					_ = hctx.JSON(ErrRequestTimeout.HTTPCode, dto.NewErrorResponse(
+						ErrRequestTimeout.Code, ErrRequestTimeout.Message, nil))
 				}
+				hctx.finish()
+				// 응답을 직접 처리했으므로 nil 을 반환하여 handleError 의 중복 렌더를 막는다.
 				return nil
 			}
 		}
@@ -242,28 +256,28 @@ func Compress() MiddlewareFunc {
 				return next(hctx)
 			}
 
-			gw, err := gzip.NewWriterLevel(hctx.w, gzip.DefaultCompression)
+			preGzipWriter := hctx.getWriter()
+			gw, err := gzip.NewWriterLevel(preGzipWriter, gzip.DefaultCompression)
 			if err != nil {
 				return next(hctx)
 			}
 
 			grw := &gzipResponseWriter{
-				ResponseWriter: hctx.w,
+				ResponseWriter: preGzipWriter,
 				writer:         gw,
 			}
-			preGzipWriter := hctx.w
-			hctx.w = grw
+			hctx.setWriter(grw)
 			hctx.SetHeader("Content-Encoding", "gzip")
 			// Content-Length는 압축 후 달라지므로 삭제
-			hctx.w.Header().Del("Content-Length")
+			grw.Header().Del("Content-Length")
 
 			handlerErr := next(hctx)
 
 			if handlerErr != nil {
 				// 에러 경로: gzip 래핑을 되돌려서 handleError 가 비압축 응답을 쓸 수 있게 한다.
 				// gw.Close() 를 호출하지 않아 gzip 바이트가 기록되지 않는다.
-				hctx.w = preGzipWriter
-				hctx.w.Header().Del("Content-Encoding")
+				hctx.setWriter(preGzipWriter)
+				preGzipWriter.Header().Del("Content-Encoding")
 				return handlerErr
 			}
 

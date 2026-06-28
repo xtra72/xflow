@@ -12,6 +12,10 @@ import { Link } from 'react-router';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useDevicesTarget } from '@/hooks/useResourceTargets';
+import { useTranslation } from '@/lib/i18n';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
 import { type DeviceColumnKey, ALL_DEVICE_COLUMNS } from '@/stores/uiStore';
 
@@ -60,8 +64,18 @@ export default function DevicePanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: DevicePanelProps) {
-  const { data, isLoading } = useDevicesRealtime();
-  const devices = data?.data ?? [];
+  const { t } = useTranslation();
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
+  // 소스로 쓴다(useDevicesTarget). 로컬은 기존 useDevicesRealtime 그대로(회귀 없음).
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const localQuery = useDevicesRealtime();
+  const remoteQuery = useDevicesTarget(target);
+  const devices = useMemo(
+    () => (remote ? (remoteQuery.data?.data ?? []) : (localQuery.data?.data ?? [])),
+    [remote, remoteQuery.data, localQuery.data],
+  );
+  const isLoading = remote ? remoteQuery.isLoading : localQuery.isLoading;
 
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
@@ -180,28 +194,28 @@ export default function DevicePanel({
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
               <HardDrive className="h-4 w-4" />
-              전체 {summary.total}
+              {t('dashboard.panel.total')} {summary.total}
             </span>
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
               <Wifi className="h-4 w-4" />
-              온라인 {summary.online}
+              {t('dashboard.panel.online')} {summary.online}
             </span>
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400"
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
               <WifiOff className="h-4 w-4" />
-              오프라인 {summary.offline}
+              {t('dashboard.panel.offline')} {summary.offline}
             </span>
           </div>
 
           {/* 디바이스 리스트 테이블 */}
           {sortedDevices.length === 0 ? (
             <p className="text-sm text-(--color-text-muted)">
-              등록된 디바이스가 없습니다.
+              {t('dashboard.devicePanel.empty')}
             </p>
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -211,7 +225,7 @@ export default function DevicePanel({
                     <tr className="border-b border-(--color-border-default)">
                       {show('name') && (
                         <SortableHeader
-                          label="이름"
+                          label={t('dashboard.col.name')}
                           field="name"
                           currentSort={sort}
                           onSort={handleSort}
@@ -221,7 +235,7 @@ export default function DevicePanel({
                       )}
                       {show('type') && (
                         <SortableHeader
-                          label="타입"
+                          label={t('dashboard.col.type')}
                           field="type"
                           currentSort={sort}
                           onSort={handleSort}
@@ -234,12 +248,12 @@ export default function DevicePanel({
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                           style={acColor('table') ? { color: acColor('table')! } : undefined}
                         >
-                          상태
+                          {t('dashboard.col.status')}
                         </th>
                       )}
                       {show('agent') && (
                         <SortableHeader
-                          label="에이전트"
+                          label={t('dashboard.col.agent')}
                           field="agent"
                           currentSort={sort}
                           onSort={handleSort}
@@ -249,7 +263,7 @@ export default function DevicePanel({
                       )}
                       {show('last_seen') && (
                         <SortableHeader
-                          label="최근 통신"
+                          label={t('dashboard.col.lastSeen')}
                           field="last_seen"
                           currentSort={sort}
                           onSort={handleSort}
@@ -280,11 +294,11 @@ export default function DevicePanel({
                         {show('status') && (
                           <td className="px-4 py-3">
                             {device.online ? (
-                              <span className="inline-flex items-center text-green-600 dark:text-green-400" title="온라인">
+                              <span className="inline-flex items-center text-green-600 dark:text-green-400" title={t('dashboard.panel.online')}>
                                 <Wifi className="h-4 w-4" />
                               </span>
                             ) : (
-                              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title="오프라인">
+                              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title={t('dashboard.panel.offline')}>
                                 <WifiOff className="h-4 w-4" />
                               </span>
                             )}
@@ -306,14 +320,14 @@ export default function DevicePanel({
                 </table>
               </div>
 
-              {/* 더 보기 링크 */}
-              {devices.length > 10 && (
+              {/* 더 보기 링크 — 원격은 로컬 `/devices` 로 이탈하므로 숨긴다. */}
+              {!remote && devices.length > 10 && (
                 <div className="mt-4 text-right">
                   <Link
                     to="/devices"
                     className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                   >
-                    더 보기
+                    {t('dashboard.panel.more')}
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                 </div>

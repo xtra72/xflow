@@ -36,6 +36,11 @@ type serialNodeConfig struct {
 	// 바이트로 변환하는 방식을 지정한다. SerialOutNode 에서만 사용한다.
 	// 허용 값: "auto"(기본, hex 추론 후 평문 폴백), "hex", "text", "base64".
 	InputEncoding string `json:"input_encoding"`
+
+	// EmitMetadata 는 metadata 그룹 emit 정책을 제어한다 (P3).
+	// serial 은 디바이스 노드가 아니므로 사실상 Agent(에이전트 그룹)만 사용한다.
+	// parseEmitMetadata 가 Agent 를 기본 ON 으로 설정 — emit_agent:false 로 비활성화.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // 허용되는 input_encoding 값.
@@ -122,6 +127,9 @@ func (sb *serialNodeBase) configure(config map[string]any) error {
 	default:
 		return fmt.Errorf("serial: 알 수 없는 input_encoding %q (허용: auto, hex, text, base64)", cfg.InputEncoding)
 	}
+
+	// P3: emit_metadata — agent 그룹 emit 정책 (기본 ON).
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	sb.mu.Lock()
 	sb.serialCfg = cfg
@@ -294,6 +302,7 @@ func (n *SerialInNode) receiveLoop() {
 		// receiver가 설정되지 않으면 (에이전트 미사용 가능), 대기
 		n.mu.RLock()
 		receiver := n.receiver
+		emitOpts := n.serialCfg.EmitMetadata
 		n.mu.RUnlock()
 
 		if receiver == nil {
@@ -330,10 +339,10 @@ func (n *SerialInNode) receiveLoop() {
 		copy(rawCopy, data)
 		msg.Payload().Set("raw", rawCopy)
 		msg.Payload().Set("data", hex.EncodeToString(data))
-		msg.Metadata().Set("serial.node_id", n.ID())
-		if n.agent != nil {
-			msg.Metadata().Set("serial.agent_type", n.agent.Type())
-		}
+		msg.Metadata().Set("node_id", n.ID())
+		// P3: flat agent_type → agent:{type,id} 그룹 (기본 ON). agent_type 메타데이터의
+		// 로직/표시 소비자가 없음을 확인하여 flat 키를 그룹으로 대체.
+		emitAgentGroup(msg, n.agent, emitOpts)
 		msg.SetType("event")
 
 		select {
@@ -429,8 +438,13 @@ func (n *SerialInNode) rawReceiveLoop(rawCh <-chan []byte) {
 			rawCopy := make([]byte, len(data))
 			copy(rawCopy, data)
 			msg.Payload().Set("raw", rawCopy)
-			msg.Metadata().Set("serial.node_id", n.ID())
-			msg.Metadata().Set("serial.port", "raw_out")
+			msg.Metadata().Set("node_id", n.ID())
+			msg.Metadata().Set("port", "raw_out")
+			// P3: agent:{type,id} 그룹 (기본 ON). node_id/port 는 flat 유지.
+			n.mu.RLock()
+			emitOpts := n.serialCfg.EmitMetadata
+			n.mu.RUnlock()
+			emitAgentGroup(msg, n.agent, emitOpts)
 			msg.SetType("event")
 
 			select {
@@ -572,9 +586,9 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 	if agent == nil {
 		// 에이전트가 아직 활성화되지 않음: 메시지를 패스스루만 함 (데이터 손실 방지)
 		out := msg.Clone()
-		out.Metadata().Set("serial.node_id", n.ID())
+		out.Metadata().Set("node_id", n.ID())
 		out.SetType("response")
-		out.Metadata().Set("serial.warning", "agent not available, message not sent to serial port")
+		out.Metadata().Set("warning", "agent not available, message not sent to serial port")
 		return []message.Message{out}, nil
 	}
 
@@ -584,7 +598,7 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 
 	// 패스스루: 입력 메시지를 출력으로 전달
 	out := msg.Clone()
-	out.Metadata().Set("serial.node_id", n.ID())
+	out.Metadata().Set("node_id", n.ID())
 	out.SetType("response")
 
 	return []message.Message{out}, nil

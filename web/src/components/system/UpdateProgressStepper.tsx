@@ -30,6 +30,7 @@
 
 import { Check, Loader2, X } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import type { OperationStatus } from '@/services/api/systemUpdate';
 
@@ -63,16 +64,17 @@ type StepState = 'pending' | 'active' | 'complete' | 'failed';
 
 interface StepDefinition {
   key: StepKey;
-  label: string;
+  /** 라벨 i18n 키. 렌더 시 t(labelKey) 로 변환한다. */
+  labelKey: string;
 }
 
 const STEPS: ReadonlyArray<StepDefinition> = [
-  { key: 'checking', label: '확인' },
-  { key: 'downloading', label: '다운로드' },
-  { key: 'verifying', label: '검증' },
-  { key: 'applying', label: '적용' },
-  { key: 'restarting', label: '재시작' },
-  { key: 'health_checking', label: '헬스체크' },
+  { key: 'checking', labelKey: 'system.update.stepper.checking' },
+  { key: 'downloading', labelKey: 'system.update.stepper.downloading' },
+  { key: 'verifying', labelKey: 'system.update.stepper.verifying' },
+  { key: 'applying', labelKey: 'system.update.stepper.applying' },
+  { key: 'restarting', labelKey: 'system.update.stepper.restarting' },
+  { key: 'health_checking', labelKey: 'system.update.stepper.health_checking' },
 ];
 
 // applying 단계의 인덱스 — ready_to_restart 매핑 시 사용 (1-4 complete 후 정지).
@@ -173,6 +175,7 @@ export function UpdateProgressStepper({
   currentStatus,
   operationId,
 }: UpdateProgressStepperProps) {
+  const { t } = useTranslation();
   const isFailed = currentStatus === 'failed';
   const isReadyToRestart = currentStatus === 'ready_to_restart';
   const currentIdx = statusToStepIndex(currentStatus);
@@ -185,7 +188,7 @@ export function UpdateProgressStepper({
     >
       <ol
         className="flex items-center gap-1"
-        aria-label="업데이트 진행 단계"
+        aria-label={t('system.update.progressAria')}
       >
         {STEPS.map((step, idx) => {
           const state = deriveStepState(
@@ -215,7 +218,7 @@ export function UpdateProgressStepper({
                     state === 'failed' && 'text-red-600 dark:text-red-300',
                   )}
                 >
-                  {step.label}
+                  {t(step.labelKey)}
                 </span>
               </div>
               {!isLast ? (
@@ -251,6 +254,7 @@ export function UpdateProgressStepper({
 // ─────────────────────────────────────────────────────────────────────
 
 function StepBadge({ state, index }: { state: StepState; index: number }) {
+  const { t } = useTranslation();
   const base =
     'inline-flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-mono';
 
@@ -262,7 +266,7 @@ function StepBadge({ state, index }: { state: StepState; index: number }) {
           'border-emerald-400 bg-emerald-100 text-emerald-700',
           'dark:border-emerald-600 dark:bg-emerald-900 dark:text-emerald-200',
         )}
-        aria-label="완료"
+        aria-label={t('system.update.stepper.complete')}
       >
         <Check className="h-3 w-3" aria-hidden="true" />
       </span>
@@ -276,7 +280,7 @@ function StepBadge({ state, index }: { state: StepState; index: number }) {
           'border-blue-400 bg-blue-100 text-blue-700',
           'dark:border-blue-600 dark:bg-blue-900 dark:text-blue-200',
         )}
-        aria-label="진행 중"
+        aria-label={t('system.update.stepper.active')}
       >
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
       </span>
@@ -290,7 +294,7 @@ function StepBadge({ state, index }: { state: StepState; index: number }) {
           'border-red-400 bg-red-100 text-red-700',
           'dark:border-red-600 dark:bg-red-900 dark:text-red-200',
         )}
-        aria-label="실패"
+        aria-label={t('system.update.stepper.failed')}
       >
         <X className="h-3 w-3" aria-hidden="true" />
       </span>
@@ -303,7 +307,7 @@ function StepBadge({ state, index }: { state: StepState; index: number }) {
         base,
         'border-(--color-border) bg-(--color-bg-base) text-(--color-text-muted)',
       )}
-      aria-label="대기"
+      aria-label={t('system.update.stepper.pending')}
     >
       {index + 1}
     </span>

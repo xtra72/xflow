@@ -5,11 +5,13 @@ import { useCallback, useMemo } from 'react';
 import { X } from 'lucide-react';
 
 import { useEditorStore } from '@/stores/editorStore';
+import { useTranslation } from '@/lib/i18n';
 
+// 각 모드의 라벨은 i18n 키만 보관하고, 렌더 시 컴포넌트 내부에서 t(labelKey) 로 변환한다.
 const WIRE_MODE_OPTIONS = [
-  { value: 'buffer', label: '큐(가득 차면 대기)' },
-  { value: 'drop_oldest', label: '큐(가득 차면 오래된 것 드랍)' },
-  { value: 'bypass', label: '무버퍼(즉시 전달)' },
+  { value: 'buffer', labelKey: 'property.edge.modeBuffer' },
+  { value: 'drop_oldest', labelKey: 'property.edge.modeDropOldest' },
+  { value: 'bypass', labelKey: 'property.edge.modeBypass' },
 ] as const;
 
 /** 새 엣지/큐 모드 전환 시 사용하는 기본 큐 용량. */
@@ -20,6 +22,7 @@ interface EdgePropertyPanelProps {
 }
 
 export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.ReactElement | null {
+  const { t } = useTranslation();
   const selectedEdgeId = useEditorStore((s) => s.selectedEdgeId);
   const edges = useEditorStore((s) => s.edges);
   const nodes = useEditorStore((s) => s.nodes);
@@ -119,7 +122,7 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
           onClick={() => selectEdge(null)}
           className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
             dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
-          aria-label="속성 패널 닫기"
+          aria-label={t('property.panel.closeAria')}
         >
           <X className="h-4 w-4" />
         </button>
@@ -132,14 +135,14 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
             htmlFor="wire-name"
             className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
           >
-            링크 이름
+            {t('property.edge.linkName')}
           </label>
           <input
             id="wire-name"
             type="text"
             value={wireName}
             onChange={(e) => handleNameChange(e.target.value)}
-            placeholder="링크 이름"
+            placeholder={t('property.edge.linkNamePlaceholder')}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5
               text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
@@ -150,26 +153,26 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
         <div>
           <label className="flex cursor-pointer items-center justify-between gap-2">
             <span className="text-xs font-medium text-(--color-text-secondary)">
-              가상 링크
+              {t('property.edge.virtualLink')}
             </span>
             <input
               type="checkbox"
               role="switch"
               checked={isVirtual}
               onChange={(e) => handleVirtualToggle(e.target.checked)}
-              aria-label="가상 링크"
+              aria-label={t('property.edge.virtualLink')}
               className="h-4 w-4 cursor-pointer accent-blue-500"
             />
           </label>
           <p className="mt-1 text-xs text-(--color-text-muted)">
-            켜면 연결선을 숨기고 양 끝 포트에 링크 배지로 표시합니다(라우팅 불변).
+            {t('property.edge.virtualLinkHelp')}
           </p>
         </div>
 
         {/* Source -> Target (읽기 전용) */}
         <div>
           <label className="mb-1 block text-xs font-medium text-(--color-text-secondary)">
-            연결
+            {t('property.edge.connection')}
           </label>
           <p className="text-xs text-(--color-text-primary)">
             {sourceNodeLabel}
@@ -184,7 +187,7 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
             htmlFor="wire-mode"
             className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
           >
-            모드
+            {t('property.edge.mode')}
           </label>
           <select
             id="wire-mode"
@@ -195,7 +198,7 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
           >
             {WIRE_MODE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
-                {opt.label}
+                {t(opt.labelKey)}
               </option>
             ))}
           </select>
@@ -207,7 +210,7 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
             htmlFor="wire-buffer-size"
             className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
           >
-            큐 용량
+            {t('property.edge.bufferSize')}
           </label>
           <input
             id="wire-buffer-size"
@@ -220,10 +223,10 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
           />
           <p className="mt-1 text-xs text-(--color-text-muted)">
             {mode === 'bypass'
-              ? '무버퍼: 메시지를 큐에 쌓지 않고 즉시 전달합니다(0).'
+              ? t('property.edge.bufferHelpBypass')
               : mode === 'buffer'
-                ? '큐가 가득 차면 송신 측이 대기합니다.'
-                : '큐가 가득 차면 가장 오래된 메시지가 삭제됩니다.'}
+                ? t('property.edge.bufferHelpBuffer')
+                : t('property.edge.bufferHelpDropOldest')}
           </p>
         </div>
       </div>

@@ -38,6 +38,25 @@ export type {
 } from './node';
 
 export type {
+  SettingResponse,
+  DeviceColumnsSetting,
+} from './settings';
+
+export type {
+  DeviceInfo,
+  DeviceDetail,
+  DeviceState,
+  DeviceMetadata,
+  DeviceListParams,
+  DeviceExecuteRequest,
+  DeviceMetadataUpdateRequest,
+  DeviceHistoryEntry,
+  DeviceHistoryResponse,
+  CommandSpec,
+  ParamSpec,
+} from './device';
+
+export type {
   AgentHealthInfo,
   AgentStatsResponse,
   AgentSharedInfo,

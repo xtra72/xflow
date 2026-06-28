@@ -11,6 +11,7 @@ import { useCallback, useEffect, type ReactNode } from 'react';
 import { Loader2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 // ---- Props ----
 
@@ -55,11 +56,15 @@ export function ConfirmDialog({
   onConfirm,
   title,
   message,
-  confirmLabel = '확인',
-  cancelLabel = '취소',
+  confirmLabel,
+  cancelLabel,
   variant = 'default',
   isSubmitting = false,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+  // 라벨 미지정 시 기본값을 i18n 으로 해석한다.
+  const resolvedConfirmLabel = confirmLabel ?? t('common.confirm');
+  const resolvedCancelLabel = cancelLabel ?? t('common.cancel');
   // Esc 키로 닫기 (제출 중에는 무시).
   useEffect(() => {
     if (!isOpen) return;
@@ -117,7 +122,7 @@ export function ConfirmDialog({
             onClick={onClose}
             disabled={isSubmitting}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -136,7 +141,7 @@ export function ConfirmDialog({
             disabled={isSubmitting}
             className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
           >
-            {cancelLabel}
+            {resolvedCancelLabel}
           </button>
           <button
             type="button"
@@ -148,7 +153,7 @@ export function ConfirmDialog({
             )}
           >
             {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {confirmLabel}
+            {resolvedConfirmLabel}
           </button>
         </div>
       </div>

@@ -57,4 +57,9 @@ var (
 	// @spec SPEC-STORE-003 v0.3.0
 	// ErrInvalidMetricType 은 yaml 의 metric_type 이 정규식 ^[a-zA-Z0-9_-]+$ 를 위반할 때 반환된다.
 	ErrInvalidMetricType = errors.New("store: invalid metric_type (must match ^[a-zA-Z0-9_-]+$)")
+
+	// @spec SPEC-STORE-004
+	// ErrInvalidSeriesKey 는 인코딩된 시리즈 키를 DecodeSeriesKey 로 역직렬화할 때
+	// 인코딩 프레임 구분자(`|`)나 태그 KV 구분자(`=`)가 부족하여 분해에 실패한 경우 반환된다.
+	ErrInvalidSeriesKey = errors.New("store: invalid encoded series key")
 )

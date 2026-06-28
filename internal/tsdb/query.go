@@ -20,6 +20,17 @@ const (
 	AggLast  AggregateFunc = "last"
 )
 
+// FillStrategy 는 버킷 다운샘플링 시 값이 없는(빈) 버킷을 채우는 방법이다.
+type FillStrategy string
+
+const (
+	FillNone     FillStrategy = ""         // 빈 버킷 생략 (기본, 하위호환)
+	FillNull     FillStrategy = "null"     // 빈 버킷을 null 값으로 표시 (비우기)
+	FillZero     FillStrategy = "zero"     // 0 으로 채움
+	FillPrevious FillStrategy = "previous" // 직전 비어있지 않은 값으로 carry-forward
+	FillAvg      FillStrategy = "avg"      // 전/후 비어있지 않은 값의 평균 (양쪽 없으면 한쪽, 둘 다 없으면 null)
+)
+
 // Query 는 시계열 쿼리를 정의한다.
 type Query struct {
 	SeriesKey      string            // 특정 시리즈 키 (빈 문자열이면 필터 사용)
@@ -30,6 +41,7 @@ type Query struct {
 	Field          string            // 집계할 필드 이름 (빈 문자열이면 모든 필드)
 	Aggregation    AggregateFunc     // 집계 함수 (빈 문자열이면 raw 반환)
 	BucketInterval time.Duration     // 다운샘플링 버킷 간격 (0이면 전체 범위)
+	Fill           FillStrategy      // 빈 버킷 채우기 전략 (BucketInterval>0 일 때만 의미. ""=빈 버킷 생략)
 	Limit          int               // 최대 반환 포인트 수 (0이면 config 기본값)
 }
 
@@ -107,8 +119,12 @@ func (db *defaultTSDB) Execute(q Query) ([]QueryResult, error) {
 			// raw 반환
 			resultPoints = rawPoints
 		} else if q.BucketInterval > 0 {
-			// 다운샘플링
-			resultPoints = downsample(rawPoints, q.Field, q.Aggregation, q.BucketInterval)
+			// 다운샘플링. Fill 이 설정되면 [Start,End] 전 구간 버킷을 생성하고 빈 버킷을 채운다.
+			if q.Fill == FillNone {
+				resultPoints = downsample(rawPoints, q.Field, q.Aggregation, q.BucketInterval)
+			} else {
+				resultPoints = downsampleFilled(rawPoints, q.Field, q.Aggregation, q.BucketInterval, q.Start, q.End, q.Fill)
+			}
 		} else {
 			// 전체 범위 집계
 			val, err := aggregate(rawPoints, q.Field, q.Aggregation)
@@ -342,6 +358,96 @@ func aggregateBucket(bucket []DataPoint, field string, fn AggregateFunc, bucketS
 		Timestamp: bucketStart,
 		Fields:    map[string]any{fieldName: val},
 	}
+}
+
+// downsampleFilled 는 [start,end] 전 구간에 대해 버킷을 생성하고, 값이 없는 빈 버킷을
+// fill 전략으로 채운다. 빈 버킷이 결과에 포함되므로 시간축이 균일해진다.
+//
+//	previous: 직전 비어있지 않은 값으로 carry-forward (선두 빈 버킷은 null)
+//	avg:      전/후 비어있지 않은 값의 평균 (한쪽만 있으면 그 값, 둘 다 없으면 null)
+//	zero:     0
+//	null:     null 값 (비우기 — 버킷은 존재, 값은 비어 있음)
+func downsampleFilled(points []DataPoint, field string, fn AggregateFunc, interval time.Duration, start, end time.Time, fill FillStrategy) []DataPoint {
+	if interval <= 0 || !start.Before(end) {
+		return nil
+	}
+
+	fieldName := field
+	if fieldName == "" {
+		fieldName = "value"
+	}
+
+	// 1) 포인트를 버킷(truncated timestamp)별로 모아 집계한다.
+	buckets := make(map[int64][]DataPoint)
+	for _, p := range points {
+		k := p.Timestamp.Truncate(interval).UnixNano()
+		buckets[k] = append(buckets[k], p)
+	}
+	aggVal := make(map[int64]float64, len(buckets))
+	for k, bkt := range buckets {
+		if v, err := aggregate(bkt, field, fn); err == nil {
+			aggVal[k] = v
+		}
+	}
+
+	// 2) [start,end] 의 버킷 시작 목록을 만든다.
+	var starts []time.Time
+	for b := start.Truncate(interval); b.Before(end); b = b.Add(interval) {
+		starts = append(starts, b)
+	}
+	n := len(starts)
+	if n == 0 {
+		return nil
+	}
+
+	// 3) avg 용으로 각 위치의 "다음(이후) 비어있지 않은 값"을 미리 계산한다.
+	nextVal := make([]*float64, n)
+	var nv *float64
+	for i := n - 1; i >= 0; i-- {
+		if v, ok := aggVal[starts[i].UnixNano()]; ok {
+			vv := v
+			nv = &vv
+		}
+		nextVal[i] = nv
+	}
+
+	// 4) 버킷을 순회하며 값/채움을 적용한다.
+	result := make([]DataPoint, 0, n)
+	var prevVal *float64
+	for i, b := range starts {
+		if v, ok := aggVal[b.UnixNano()]; ok {
+			result = append(result, DataPoint{Timestamp: b, Fields: map[string]any{fieldName: v}})
+			vv := v
+			prevVal = &vv
+			continue
+		}
+		var filled any // nil = null
+		switch fill {
+		case FillNull:
+			filled = nil
+		case FillZero:
+			filled = float64(0)
+		case FillPrevious:
+			if prevVal != nil {
+				filled = *prevVal
+			}
+		case FillAvg:
+			switch {
+			case prevVal != nil && nextVal[i] != nil:
+				filled = (*prevVal + *nextVal[i]) / 2
+			case prevVal != nil:
+				filled = *prevVal
+			case nextVal[i] != nil:
+				filled = *nextVal[i]
+			}
+		default:
+			// 알 수 없는 전략은 null 로 안전 처리
+			filled = nil
+		}
+		result = append(result, DataPoint{Timestamp: b, Fields: map[string]any{fieldName: filled}})
+	}
+
+	return result
 }
 
 // toFloat64 는 any 타입을 float64로 변환한다.

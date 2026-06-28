@@ -35,6 +35,11 @@ type MQTTNodeConfig struct {
 	QoS          int      `json:"qos"`           // 기본 QoS 레벨 (0, 1, 2)
 	Retained     bool     `json:"retained"`      // 기본 Retained 플래그
 	PublishTopic string   `json:"publish_topic"` // 발행 토픽 템플릿 (Publisher 전용)
+
+	// EmitMetadata 는 metadata 그룹 emit 정책을 제어한다 (P3).
+	// MQTT 는 디바이스 노드가 아니므로 Agent(에이전트 그룹)만 사용한다.
+	// parseEmitMetadata 가 Agent 기본 ON — emit_agent:false 로 비활성화.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +123,9 @@ func (mb *mqttNodeBase) configure(config map[string]any) error {
 			cfg.Retained = b
 		}
 	}
+
+	// P3: emit_metadata — agent 그룹 emit 정책 (기본 ON).
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	mb.mu.Lock()
 	mb.mqttCfg = cfg
@@ -293,6 +301,8 @@ func (n *MQTTSubNode) receiveLoop() {
 		if n.mqttCfg.QoS != 0 {
 			msg.Metadata().Set("mqtt.qos", strconv.Itoa(n.mqttCfg.QoS))
 		}
+		// P3: agent:{type,id} 그룹 (기본 ON). node_id/mqtt.qos 는 flat 유지.
+		emitAgentGroup(msg, n.agent, n.mqttCfg.EmitMetadata)
 		msg.SetType("event")
 
 		select {
@@ -496,6 +506,8 @@ func (n *MQTTPublisherNode) Process(_ context.Context, msg message.Message) ([]m
 	out := msg.Clone()
 	out.Metadata().Set("node_id", n.ID())
 	out.Metadata().Set("mqtt_published_topic", topic)
+	// P3: agent:{type,id} 그룹 (기본 ON). node_id/mqtt_published_topic 는 flat 유지.
+	emitAgentGroup(out, n.agent, n.mqttCfg.EmitMetadata)
 	out.SetType("response")
 
 	return []message.Message{out}, nil

@@ -114,6 +114,11 @@ type ModbusConfig struct {
 	ByteOrder    string `json:"byte_order"`    // "big_endian" | "little_endian"
 	DeviceID     uint8  `json:"device_id"`     // Client Agent 전용 (기본값 1)
 	Timeout      string `json:"timeout"`       // Process 호출 타임아웃 (기본값 "5s")
+
+	// EmitMetadata 는 metadata 그룹 emit 정책을 제어한다 (P3).
+	// modbus 는 디바이스 노드가 아니므로 Agent(에이전트 그룹)만 사용한다.
+	// parseEmitMetadata 가 Agent 기본 ON — emit_agent:false 로 비활성화.
+	EmitMetadata MetadataEmitOptions `json:"emit_metadata"`
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +260,9 @@ func (n *ModbusNode) Configure(config map[string]any) error {
 		}
 	}
 	cfg.Timeout = n.timeout.String()
+
+	// P3: emit_metadata — agent 그룹 emit 정책 (기본 ON).
+	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	// 원자적 설정 적용
 	n.mu.Lock()
@@ -457,6 +465,8 @@ func (n *ModbusNode) processRead(ctx context.Context, msg message.Message, cfg M
 	outMsg.Payload().Set("count", cfg.Count)
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("agent_type", n.agentType)
+	// P3: agent:{type,id} 그룹 (기본 ON). payload.agent_type 는 별개 데이터 필드로 유지.
+	emitAgentGroup(outMsg, n.agent, cfg.EmitMetadata)
 	outMsg.SetType("response")
 
 	return []message.Message{outMsg}, nil
@@ -602,6 +612,8 @@ func (n *ModbusNode) processWrite(ctx context.Context, msg message.Message, cfg 
 	outMsg.Payload().Set("data_type", cfg.DataType)
 	outMsg.Payload().Set("byte_order", cfg.ByteOrder)
 	outMsg.Payload().Set("agent_type", n.agentType)
+	// P3: agent:{type,id} 그룹 (기본 ON). payload.agent_type 는 별개 데이터 필드로 유지.
+	emitAgentGroup(outMsg, n.agent, cfg.EmitMetadata)
 	outMsg.SetType("response")
 
 	return []message.Message{outMsg}, nil

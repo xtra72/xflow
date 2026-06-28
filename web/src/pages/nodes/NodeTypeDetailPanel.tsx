@@ -5,7 +5,9 @@ import { ArrowDownToLine, ArrowUpFromLine, AlertTriangle, Activity } from 'lucid
 import { Link } from 'react-router';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import { useNodeTypeInstances } from '@/hooks/useNodeTypeInstances';
+import { FieldHelp } from '@/components/property/FieldHelp';
 
 import { NODE_TYPE_META } from './nodeTypeMeta';
 import type { PortMeta } from './nodeTypeMeta';
@@ -30,7 +32,7 @@ const PORT_STYLES: Record<string, { icon: React.ReactNode; color: string }> = {
   },
 };
 
-/** 포트 항목 렌더링 */
+/** 포트 항목 렌더링. 설명은 포트 타이틀 뒤 `?` 도움말로 표시한다(인라인 텍스트 대신). */
 function PortItem({ port }: { port: PortMeta }) {
   const style = PORT_STYLES[port.direction] ?? PORT_STYLES.output!;
   return (
@@ -42,22 +44,26 @@ function PortItem({ port }: { port: PortMeta }) {
       <span className="text-xs text-(--color-text-muted)">
         ({port.direction})
       </span>
-      <span className="text-xs text-(--color-text-muted)">
-        - {port.description}
-      </span>
+      {port.description && (
+        <FieldHelp
+          text={port.description}
+          describedById={`nodetype-port-desc-${port.direction}-${port.name}`}
+        />
+      )}
     </div>
   );
 }
 
 /** 노드 타입 상세 정보 패널 */
 export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelProps) {
+  const { t } = useTranslation();
   const meta = NODE_TYPE_META[nodeType];
   const { instances, isLoading: instancesLoading } = useNodeTypeInstances(nodeType);
 
   if (!meta) {
     return (
       <div className="p-4 text-sm text-(--color-text-muted)">
-        상세 정보가 없습니다.
+        {t('nodes.detail.noMeta')}
       </div>
     );
   }
@@ -67,7 +73,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       {/* 기능 설명 */}
       <section>
         <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-          기능
+          {t('nodes.detail.function')}
         </h4>
         <p className="text-sm text-(--color-text-muted) leading-relaxed">
           {meta.description}
@@ -77,7 +83,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       {/* 포트 */}
       <section>
         <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-          포트
+          {t('nodes.detail.ports')}
         </h4>
         <div className="space-y-0.5">
           {meta.ports.map((port) => (
@@ -90,26 +96,26 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       {meta.configFields.length > 0 && (
         <section>
           <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-            설정 필드
+            {t('nodes.detail.configFields')}
           </h4>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-(--color-border-default)">
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    이름
+                    {t('nodes.detail.colName')}
                   </th>
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    타입
+                    {t('nodes.detail.colType')}
                   </th>
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    필수
+                    {t('nodes.detail.colRequired')}
                   </th>
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    기본값
+                    {t('nodes.detail.colDefault')}
                   </th>
                   <th className="py-2 text-left font-medium text-(--color-text-muted)">
-                    설명
+                    {t('nodes.detail.colDescription')}
                   </th>
                 </tr>
               </thead>
@@ -146,7 +152,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       {/* 설정 예제 */}
       <section>
         <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-          설정 예제
+          {t('nodes.detail.configExample')}
         </h4>
         <pre className="overflow-x-auto rounded-md bg-gray-900 p-4 text-xs text-gray-100 dark:bg-gray-950">
           {JSON.stringify(meta.configExample, null, 2)}
@@ -157,7 +163,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       {meta.inputExamples && (
         <section>
           <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-            입력 메시지 형식
+            {t('nodes.detail.inputFormat')}
           </h4>
           {Object.entries(meta.inputExamples).map(([label, example]) => (
             <div key={label} className="mb-3">
@@ -176,7 +182,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       {meta.outputExamples && (
         <section>
           <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2">
-            출력 메시지 형식
+            {t('nodes.detail.outputFormat')}
           </h4>
           {Object.entries(meta.outputExamples).map(([portName, example]) => (
             <div key={portName} className="mb-3">
@@ -195,16 +201,16 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
       <section>
         <h4 className="text-sm font-semibold text-(--color-text-primary) mb-2 flex items-center gap-2">
           <Activity className="h-4 w-4" />
-          현재 인스턴스
+          {t('nodes.detail.instances')}
         </h4>
         {instancesLoading ? (
           <div className="flex items-center gap-2 py-2">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
-            <span className="text-sm text-(--color-text-muted)">로딩 중...</span>
+            <span className="text-sm text-(--color-text-muted)">{t('common.loading')}</span>
           </div>
         ) : instances.length === 0 ? (
           <p className="text-sm text-(--color-text-muted)">
-            실행 중인 플로우에서 사용 중인 인스턴스가 없습니다.
+            {t('nodes.detail.noInstances')}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -212,16 +218,16 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
               <thead>
                 <tr className="border-b border-(--color-border-default)">
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    플로우
+                    {t('nodes.detail.colFlow')}
                   </th>
                   <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">
-                    노드
+                    {t('nodes.detail.colNode')}
                   </th>
                   <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">
-                    처리
+                    {t('nodes.detail.colProcessed')}
                   </th>
                   <th className="py-2 text-right font-medium text-(--color-text-muted)">
-                    에러
+                    {t('nodes.detail.colErrors')}
                   </th>
                 </tr>
               </thead>

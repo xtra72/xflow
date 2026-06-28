@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -59,25 +60,25 @@ const (
 type AggregateNode struct {
 	*BaseNode
 	windowType      WindowType
-	windowSize      int              // 카운트 윈도우 크기
-	windowDur       time.Duration    // 타임 윈도우 지속시간
-	windowSizeRaw   any              // 출력용 원본 윈도우 크기 값
-	aggregateFns    []AggregateFn    // 집계 함수 목록 (다중 함수 지원)
-	fields          []string         // 집계 대상 필드 목록 (다중 필드 지원)
+	windowSize      int           // 카운트 윈도우 크기
+	windowDur       time.Duration // 타임 윈도우 지속시간
+	windowSizeRaw   any           // 출력용 원본 윈도우 크기 값
+	aggregateFns    []AggregateFn // 집계 함수 목록 (다중 함수 지원)
+	fields          []string      // 집계 대상 필드 목록 (다중 필드 지원)
 	buffer          []message.Message
 	mu              sync.Mutex
 	timer           *time.Timer
 	lastFlushResult []message.Message // 타이머 플러시 결과 저장
 
 	// SPEC-AGG-002: 그룹별 파티셔닝 필드
-	groupByKeys  []string                        // 그룹 분류 기준 필드명 목록 (nil = 비그룹 모드)
-	maxGroups    int                              // 최대 허용 그룹 수 (기본값: 100)
-	groupBuffers map[string][]message.Message     // 그룹별 독립 버퍼 맵
+	groupByKeys  []string                     // 그룹 분류 기준 필드명 목록 (nil = 비그룹 모드)
+	maxGroups    int                          // 최대 허용 그룹 수 (기본값: 100)
+	groupBuffers map[string][]message.Message // 그룹별 독립 버퍼 맵
 
 	// SPEC-AGG-002 M6: 슬라이딩 윈도우 필드
-	slideDuration  time.Duration                          // slide_interval 파싱 결과
-	tsBuffer       []timestampedMessage                   // sliding 비그룹 모드 타임스탬프 버퍼
-	groupTsBuffers map[string][]timestampedMessage         // sliding 그룹별 타임스탬프 버퍼
+	slideDuration  time.Duration                   // slide_interval 파싱 결과
+	tsBuffer       []timestampedMessage            // sliding 비그룹 모드 타임스탬프 버퍼
+	groupTsBuffers map[string][]timestampedMessage // sliding 그룹별 타임스탬프 버퍼
 }
 
 // NewAggregateNode 는 새로운 AggregateNode를 생성하는 팩토리 함수이다.
@@ -506,6 +507,11 @@ func toFloat64(v any) (float64, bool) {
 		return float64(val), true
 	case uint64:
 		return float64(val), true
+	case json.Number:
+		// UseNumber() 디코딩 시 숫자는 string 밑바탕의 json.Number 로 들어온다.
+		// Float64() 변환에 성공하면 숫자로 취급한다.
+		f, err := val.Float64()
+		return f, err == nil
 	default:
 		return 0, false
 	}

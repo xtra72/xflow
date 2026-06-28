@@ -4,6 +4,7 @@
 import { useId } from 'react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 // --- 상수 ---
 
@@ -43,6 +44,7 @@ interface BridgeHttpConfigProps {
 // --- 컴포넌트 ---
 
 export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigProps) {
+  const { t } = useTranslation();
   const contentTypeId = useId();
   const urlTemplateId = useId();
   const timeoutId = useId();
@@ -61,7 +63,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
       <div className="flex items-center gap-2">
         <div className="h-px flex-1 bg-(--color-border-default)" />
         <span className="text-xs font-medium text-(--color-text-muted)">
-          HTTP 설정
+          {t('bridge.httpSettings')}
         </span>
         <div className="h-px flex-1 bg-(--color-border-default)" />
       </div>
@@ -72,7 +74,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           htmlFor={contentTypeId}
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
-          Content-Type
+          {t('bridge.contentType')}
         </label>
         <select
           id={contentTypeId}
@@ -88,7 +90,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           ))}
         </select>
         <p className="text-xs text-(--color-text-muted)">
-          요청/응답 본문 형식
+          {t('bridge.contentTypeDescription')}
         </p>
       </div>
 
@@ -98,7 +100,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           htmlFor={urlTemplateId}
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
-          URL 템플릿
+          {t('bridge.urlTemplate')}
         </label>
         <input
           id={urlTemplateId}
@@ -107,11 +109,11 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
           readOnly={readOnly}
           onChange={(e) => handleChange('url_template', e.target.value)}
-          placeholder="/api/{resource}/{id}"
+          placeholder={t('bridge.urlTemplatePlaceholder')}
           className={cn(inputClass, readOnly && readOnlyClass)}
         />
         <p className="text-xs text-(--color-text-muted)">
-          {'URL 경로 템플릿 ({필드명} 형식으로 동적 치환)'}
+          {t('bridge.urlTemplateDescription')}
         </p>
       </div>
 
@@ -121,7 +123,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           htmlFor={timeoutId}
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
-          타임아웃 (ms)
+          {t('bridge.timeout')}
         </label>
         <input
           id={timeoutId}
@@ -143,7 +145,7 @@ export function BridgeHttpConfig({ data, onChange, readOnly }: BridgeHttpConfigP
           className={cn(inputClass, 'w-32', readOnly && readOnlyClass)}
         />
         <p className="text-xs text-(--color-text-muted)">
-          HTTP 요청 타임아웃 (밀리초)
+          {t('bridge.timeoutDescription')}
         </p>
       </div>
     </div>

@@ -264,8 +264,18 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 		}
 	} else {
 		// 기본: 모든 metadata 를 tags 로.
-		for k, v := range msg.Metadata().All() {
-			tags[k] = v
+		// P2: Flux 태그는 평면 string key=value 이므로 nested group 은 단일 태그가 될 수
+		// 없다. group 값은 "{group}.{field}" 평면 태그로 펼친다(예: agent.type, agent.id).
+		// flat string 키는 그대로 사용한다.
+		for k, v := range msg.Metadata().Raw() {
+			switch val := v.(type) {
+			case string:
+				tags[k] = val
+			case map[string]string:
+				for fk, fv := range val {
+					tags[k+"."+fk] = fv
+				}
+			}
 		}
 	}
 

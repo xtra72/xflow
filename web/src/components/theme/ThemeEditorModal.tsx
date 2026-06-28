@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 
 import { TOKEN_CATEGORIES, DAY_PRESET, ALL_TOKEN_VARS } from '@/lib/theme/tokens';
 import type { ThemeTokens } from '@/lib/theme/tokens';
+import { useTranslation } from '@/lib/i18n';
 import { useUIStore } from '@/stores/uiStore';
 import { ColorTokenInput } from '@/components/theme/ColorTokenInput';
 import { cn } from '@/lib/utils/cn';
@@ -16,6 +17,7 @@ interface ThemeEditorModalProps {
 }
 
 export function ThemeEditorModal({ isOpen, onClose }: ThemeEditorModalProps) {
+  const { t } = useTranslation();
   const customThemeTokens = useUIStore((s) => s.customThemeTokens);
   const setCustomThemeTokens = useUIStore((s) => s.setCustomThemeTokens);
 
@@ -94,7 +96,7 @@ export function ThemeEditorModal({ isOpen, onClose }: ThemeEditorModalProps) {
         {/* 헤더 */}
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            커스텀 테마 편집
+            {t('dashboard.theme.editTitle')}
           </h2>
           <button
             type="button"
@@ -131,7 +133,7 @@ export function ThemeEditorModal({ isOpen, onClose }: ThemeEditorModalProps) {
             onClick={handleReset}
             className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
           >
-            초기화
+            {t('dashboard.theme.reset')}
           </button>
           <div className="flex gap-2">
             <button
@@ -143,14 +145,14 @@ export function ThemeEditorModal({ isOpen, onClose }: ThemeEditorModalProps) {
                 'dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700',
               )}
             >
-              취소
+              {t('common.cancel')}
             </button>
             <button
               type="button"
               onClick={handleSave}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
             >
-              저장
+              {t('common.save')}
             </button>
           </div>
         </div>

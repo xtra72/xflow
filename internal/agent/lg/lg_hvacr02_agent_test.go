@@ -121,6 +121,7 @@ func newTestHvacr02Agent(t *testing.T, transport LGAPTransport) *Hvacr02Agent {
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
 		recentFrames:  make([]icp02FrameRecord, hvacr02RecentBufferSize),
+		lastEmitted:   make(map[string]map[string]any),
 	}
 
 	return a

@@ -17,12 +17,13 @@ import (
 // DeduplicateNode 는 지정 시간 창(window) 내에서 동일한 메시지를 제거하는 노드이다.
 //
 // 설정:
-//   - key: 메시지 그룹핑 키 (페이로드 필드명). 빈 문자열이면 전체 메시지 기준.
+//   - key: 메시지 그룹핑 키 ($.-경로 필수, 예: $.payload.idu_num / $.metadata.device.id).
+//     빈 문자열이면 전체 메시지 기준("_all"). bare name 은 Configure 에서 거부된다.
 //   - window: 중복 억제 시간 (예: "30s"). 기본값 30초.
-//   - compare_fields: 비교 대상 필드 목록. 두 가지 형식 지원:
-//   - 레거시 string: "room_temp:0.5, set_temp, op_mode" (콤마 구분, :tol 옵션)
-//   - 신규 array (v0.18.4): [{name: "room_temp", tolerance: 0.5}, {name: "set_temp"}]
-//     비어있으면 전체 페이로드 비교.
+//   - compare_fields: 비교 대상 필드 목록 (각 필드명 $.-경로 필수). 두 가지 형식 지원:
+//   - string: "$.payload.room_temp:0.5, $.payload.set_temp" (콤마 구분, :tol 옵션)
+//   - array (v0.18.4): [{name: "$.payload.room_temp", tolerance: 0.5}, {name: "$.payload.set_temp"}]
+//     비어있으면 전체 페이로드 비교 (allFields — named-field path 가 아니므로 $.-검증 제외).
 //   - on_duplicate: 중복 시 처리. "drop"(기본, 폐기) 또는 "reject_port"(reject 포트로 전달).
 //   - missing_field_as_different: bool (v0.18.4, 기본 false). true 면 신규 메시지의
 //     비교 필드 중 하나라도 부재 시 "다름" 으로 판정하여 통과시킴. false 면 부재 필드를
@@ -91,16 +92,19 @@ func (n *DeduplicateNode) Process(_ context.Context, msg message.Message) ([]mes
 	missingDiff := n.missingFieldAsDifferent
 	n.mu.RUnlock()
 
-	// 그룹핑 키 추출
+	// 그룹핑 키 추출.
+	//   keyField 는 Configure 에서 `$.` prefix 가 강제되었으므로, 항상 전체 메시지 대상
+	//   JSONPath ($.payload.x / $.metadata.device.id / ...) 로 resolveTemplateExpr 로 해석한다.
+	//   해석 실패(부재/잘못된 경로)는 에러 없이 "_all" 폴백한다.
 	groupKey := "_all"
 	if keyField != "" {
-		if v, ok := msg.Payload().Get(keyField); ok {
+		if v, err := resolveTemplateExpr(keyField, msg); err == nil {
 			groupKey = fmt.Sprintf("%v", v)
 		}
 	}
 
 	// 현재 메시지의 비교 값 추출 + 부재 필드 감지 (v0.18.4)
-	currentValues, hasMissing := extractValuesWithMissing(msg.Payload(), fields, allFields)
+	currentValues, hasMissing := extractValuesWithMissing(msg, fields, allFields)
 
 	now := time.Now()
 
@@ -153,6 +157,12 @@ func (n *DeduplicateNode) Configure(config map[string]any) error {
 
 	if v, ok := config["key"]; ok {
 		if s, ok := v.(string); ok {
+			// key 는 단일 message-field-path 선택자이므로 `$.` prefix 를 강제한다.
+			// 빈 문자열은 전체 메시지 기준("_all")으로 허용한다.
+			if s != "" && !strings.HasPrefix(s, "$.") {
+				return fmt.Errorf(
+					"deduplicate: key %q must be a $.-path (e.g. $.payload.idu_num, $.metadata.device.id)", s)
+			}
 			n.key = s
 		}
 	}
@@ -176,6 +186,9 @@ func (n *DeduplicateNode) Configure(config map[string]any) error {
 				if err != nil {
 					return fmt.Errorf("deduplicate: %w", err)
 				}
+				if err := validateCompareFieldPaths(parsed); err != nil {
+					return err
+				}
 				n.fields = parsed
 				n.allFields = false
 			}
@@ -184,6 +197,9 @@ func (n *DeduplicateNode) Configure(config map[string]any) error {
 				parsed, err := parseCompareFieldsArray(raw)
 				if err != nil {
 					return fmt.Errorf("deduplicate: %w", err)
+				}
+				if err := validateCompareFieldPaths(parsed); err != nil {
+					return err
 				}
 				n.fields = parsed
 				n.allFields = false
@@ -243,6 +259,20 @@ func parseCompareFieldsArray(arr []any) ([]compareField, error) {
 	return result, nil
 }
 
+// validateCompareFieldPaths 는 파싱된 비교 필드 이름이 모두 `$.` prefix 를 갖는지 검증한다.
+// compare_fields 의 각 엔트리는 단일 message-field-path 선택자이므로 bare name 은 거부한다.
+// (allFields 모드 — 빈 compare_fields — 는 named-field path 가 아니므로 이 함수를 호출하지 않는다.)
+func validateCompareFieldPaths(fields []compareField) error {
+	for i, f := range fields {
+		if !strings.HasPrefix(f.name, "$.") {
+			return fmt.Errorf(
+				"deduplicate: compare_fields[%d] %q must be a $.-path (e.g. $.payload.current_temperature, $.metadata.device.id)",
+				i, f.name)
+		}
+	}
+	return nil
+}
+
 // parseCompareFields 는 "room_temp:0.5, set_temp, op_mode" 형식을 파싱한다.
 func parseCompareFields(s string) ([]compareField, error) {
 	parts := strings.Split(s, ",")
@@ -269,18 +299,27 @@ func parseCompareFields(s string) ([]compareField, error) {
 	return result, nil
 }
 
-// extractValues 는 페이로드에서 비교 대상 값을 추출한다.
-func extractValues(payload message.Payload, fields []compareField, allFields bool) map[string]any {
-	result, _ := extractValuesWithMissing(payload, fields, allFields)
+// extractValues 는 메시지에서 비교 대상 값을 추출한다.
+func extractValues(msg message.Message, fields []compareField, allFields bool) map[string]any {
+	result, _ := extractValuesWithMissing(msg, fields, allFields)
 	return result
 }
 
 // extractValuesWithMissing 는 비교 대상 값과 부재 필드 존재 여부를 함께 반환한다 (v0.18.4).
-// hasMissing=true 면 fields 중 페이로드에 존재하지 않는 키가 하나 이상 있음.
-// allFields 모드에서는 hasMissing 이 항상 false (모든 키가 페이로드에서 추출됨).
-func extractValuesWithMissing(payload message.Payload, fields []compareField, allFields bool) (map[string]any, bool) {
+// hasMissing=true 면 fields 중 해석되지 않는(부재/잘못된 경로) 키가 하나 이상 있음.
+//
+// 비교 필드 형식 (SPEC-AGENT-METADATA-GROUPING):
+//   - 각 필드 이름은 Configure 에서 `$.` prefix 가 강제되었으므로, 전체 메시지 대상 경로
+//     ($.payload.x / $.metadata.device.id / $.id ...) 를 resolveTemplateExpr 로 해석한다.
+//     해석 실패(부재/잘못된 경로)는 hasMissing=true 로 표시하고 nil 을 저장한다.
+//
+// 결과 map 은 f.name(경로 문자열 그대로)을 키로 사용한다. valuesEqual 도 동일하게
+// f.name 으로 prev/curr 를 조회하므로 추가 변경이 필요 없다.
+//
+// allFields 모드(fields 비어있음)는 기존 동작 그대로: payload 전체에서 skipFields 를 제외.
+func extractValuesWithMissing(msg message.Message, fields []compareField, allFields bool) (map[string]any, bool) {
 	if allFields {
-		m := payload.ToMap()
+		m := msg.Payload().ToMap()
 		result := make(map[string]any, len(m))
 		for k, v := range m {
 			if !skipFields[k] {
@@ -292,9 +331,12 @@ func extractValuesWithMissing(payload message.Payload, fields []compareField, al
 	result := make(map[string]any, len(fields))
 	hasMissing := false
 	for _, f := range fields {
-		v, ok := payload.Get(f.name)
-		if !ok {
+		// 전체 메시지 대상 $.-경로 — 해석 실패는 missing 으로 간주.
+		v, err := resolveTemplateExpr(f.name, msg)
+		if err != nil {
 			hasMissing = true
+			result[f.name] = nil
+			continue
 		}
 		result[f.name] = v
 	}

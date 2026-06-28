@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, Check, FileJson, KeyRound, Loader2, Upload, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 import {
   parseImportFile,
   validateFlowImport,
@@ -47,6 +48,7 @@ interface ImportDialogProps {
  * 파일 업로드 -> 파싱 -> 미리보기 -> 생성 플로우를 제공한다.
  */
 export default function ImportDialog({ open, onClose, type, onImportSuccess }: ImportDialogProps) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const agentFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -69,8 +71,6 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
   const [secretInputs, setSecretInputs] = useState<Map<string, Record<string, string>>>(new Map());
 
   const addNotification = useUIStore((s) => s.addNotification);
-
-  const typeLabel = type === 'flow' ? '플로우' : '에이전트';
 
   // 모달이 열릴 때 상태 초기화
   useEffect(() => {
@@ -119,10 +119,10 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     setSecretInputs(new Map());
 
     try {
-      const data = await parseImportFile(file);
+      const data = await parseImportFile(file, t);
       const result = type === 'flow'
-        ? validateFlowImport(data)
-        : validateAgentImport(data);
+        ? validateFlowImport(data, t)
+        : validateAgentImport(data, t);
 
       setErrors(result.errors);
       setItems(result.items);
@@ -182,7 +182,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : '파일 파싱에 실패했습니다.';
+      const message = err instanceof Error ? err.message : t('import.parseFailed');
       setErrors([message]);
     }
   };
@@ -274,8 +274,8 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
     const parsed: RequiredAgent[] = [];
     for (const file of Array.from(files)) {
       try {
-        const data = await parseImportFile(file);
-        const result = validateAgentImport(data);
+        const data = await parseImportFile(file, t);
+        const result = validateAgentImport(data, t);
         for (const item of result.items) {
           parsed.push({ name: item.name, type: item.type, config: item.config });
         }
@@ -398,14 +398,17 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
       if (agentsMissingSecrets.length > 0) {
         addNotification({
           type: 'warning',
-          message: `비밀 값이 입력되지 않은 에이전트가 있습니다: ${agentsMissingSecrets.join(', ')}. 에이전트 설정에서 값을 입력해 주세요.`,
+          message: t('import.secretsMissingWarning').replace(
+            '{agents}',
+            agentsMissingSecrets.join(', '),
+          ),
         });
       }
 
       onImportSuccess();
       onClose();
     } catch (err) {
-      const message = err instanceof Error ? err.message : '가져오기 중 오류가 발생했습니다.';
+      const message = err instanceof Error ? err.message : t('import.importFailed');
       setImportError(message);
     } finally {
       setIsImporting(false);
@@ -432,14 +435,14 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             id="import-dialog-title"
             className="text-lg font-semibold text-(--color-text-primary)"
           >
-            {typeLabel} 가져오기
+            {type === 'flow' ? t('import.title.flow') : t('import.title.agent')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             disabled={isImporting}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -463,10 +466,10 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             <Upload className="h-8 w-8 text-(--color-text-muted)" />
             <div>
               <p className="text-sm font-medium text-(--color-text-secondary)">
-                파일을 드래그하거나 클릭하여 선택
+                {t('import.dropzone')}
               </p>
               <p className="mt-1 text-xs text-(--color-text-muted)">
-                .json, .yaml, .yml 파일 지원
+                {t('import.dropzoneHint')}
               </p>
             </div>
             <input
@@ -506,7 +509,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
           {items.length > 0 && (
             <div className="space-y-2">
               <p className="text-sm font-medium text-(--color-text-secondary)">
-                미리보기 ({items.length}건)
+                {t('import.preview').replace('{count}', String(items.length))}
               </p>
               <div className="max-h-48 space-y-2 overflow-y-auto">
                 {items.map((item, index) => (
@@ -524,7 +527,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                       />
                       {item.type && (
                         <p className="mt-1 text-xs text-(--color-text-muted)">
-                          타입: {item.type}
+                          {t('import.typePrefix')} {item.type}
                         </p>
                       )}
                       {item.description && (
@@ -545,11 +548,11 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
               <div className="flex items-center gap-1.5">
                 <AlertTriangle className="h-4 w-4 text-amber-500" />
                 <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                  누락된 에이전트 ({missingAgents.length}건)
+                  {t('import.missingAgents').replace('{count}', String(missingAgents.length))}
                 </p>
               </div>
               <p className="text-xs text-(--color-text-muted)">
-                플로우에서 참조하지만 서버에 없는 에이전트입니다. 각 에이전트의 처리 방식을 선택하세요.
+                {t('import.missingAgentsDesc')}
               </p>
               <div className="max-h-40 space-y-1.5 overflow-y-auto">
                 {missingAgents.map((agent, index) => {
@@ -602,21 +605,21 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                           >
                             {options.map((opt) => (
                               <option key={opt.name} value={opt.name}>
-                                {opt.name} (대체)
+                                {opt.name} ({t('import.substitute')})
                               </option>
                             ))}
-                            <option value="__create__">새로 생성</option>
-                            <option value="__skip__">건너뛰기</option>
+                            <option value="__create__">{t('import.create')}</option>
+                            <option value="__skip__">{t('import.skip')}</option>
                           </select>
                         ) : agent.type ? (
                           /* 타입 정보가 있지만 같은 타입의 에이전트가 없으면 자동 생성 표시 */
                           <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                            자동 생성됩니다
+                            {t('import.autoCreate')}
                           </p>
                         ) : (
                           /* 타입 정보 없음 */
                           <p className="mt-1 text-xs text-red-500 dark:text-red-400">
-                            타입 정보 없음 - 수동 생성 필요
+                            {t('import.noTypeInfo')}
                           </p>
                         )}
                       </div>
@@ -644,7 +647,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                 )}
               >
                 <Upload className="h-3.5 w-3.5" />
-                에이전트 파일 드래그 또는 클릭하여 추가
+                {t('import.addAgentFile')}
                 <input
                   ref={agentFileInputRef}
                   type="file"
@@ -668,12 +671,11 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
               <div className="flex items-center gap-1.5">
                 <KeyRound className="h-4 w-4 text-blue-500" />
                 <p className="text-sm font-medium text-(--color-text-primary)">
-                  비밀 값 입력 ({secretPrompts.length}건)
+                  {t('import.secretInput').replace('{count}', String(secretPrompts.length))}
                 </p>
               </div>
               <p className="text-xs text-(--color-text-muted)">
-                내보내기 시 비밀번호/토큰 등의 값이 제거되었습니다. 생성 전에 값을 입력하세요.
-                비워두면 에이전트는 비밀 값 없이 생성됩니다.
+                {t('import.secretInputDesc')}
               </p>
               <div className="max-h-56 space-y-2 overflow-y-auto">
                 {secretPrompts.map(({ agent, fields }) => (
@@ -731,7 +733,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             disabled={isImporting}
             className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
           >
-            취소
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -742,12 +744,12 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             {isImporting ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                가져오는 중...
+                {t('import.importing')}
               </>
             ) : (
               <>
                 <Upload className="h-4 w-4" />
-                가져오기 ({items.length}건)
+                {t('import.button').replace('{count}', String(items.length))}
               </>
             )}
           </button>

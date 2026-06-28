@@ -30,6 +30,7 @@ import {
   putMyDashboard,
   putSharedDashboard,
 } from '@/services/api/dashboardService';
+import { useTranslation } from '@/lib/i18n';
 import { useAuthStore } from '@/stores/authStore';
 import {
   buildDefaultSnapshot,
@@ -43,13 +44,13 @@ import type { DashboardPayload, DashboardSnapshot } from '@/types/dashboard';
 /** 500 ms — SPEC ASM-005. */
 const DEBOUNCE_MS = 500;
 
-/** 마이그레이션 안내 토스트 메시지 (SPEC §비고). */
-const MIGRATION_TOAST_MESSAGE =
-  '이번 업데이트(v0.2.0)로 대시보드 구성이 서버 저장으로 전환되었습니다. 기존 로컬 구성은 초기화됩니다. 공유 대시보드는 관리자가 다시 구성해 주세요.';
-
-const FORBIDDEN_SHARED_TOAST = '공유 대시보드 편집 권한이 없습니다.';
-const CONFLICT_RESOLVED_TOAST = '다른 브라우저에서 변경이 있어 동기화했습니다.';
-const NETWORK_ERROR_TOAST = '대시보드 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.';
+// 토스트 메시지 i18n 키 (SPEC §비고). 모듈 스코프 상수에는 키만 저장하고
+// 실제 문자열은 훅 내부에서 t(key) 로 해석한다.
+/** 마이그레이션 안내 토스트 메시지 키. */
+const MIGRATION_TOAST_KEY = 'dashboard.sync.migrationToast';
+const FORBIDDEN_SHARED_TOAST_KEY = 'dashboard.sync.forbiddenShared';
+const CONFLICT_RESOLVED_TOAST_KEY = 'dashboard.sync.conflictResolved';
+const NETWORK_ERROR_TOAST_KEY = 'dashboard.sync.networkError';
 
 /** useDashboardSync 반환값 — DashboardPage 가 UI 인디케이터에 사용. */
 export interface DashboardSyncStatus {
@@ -81,6 +82,7 @@ function getSnapshotForScope(scope: Scope): DashboardSnapshot | null {
  * 여러 곳에서 호출하면 부팅 GET 과 PUT 이 중복 발생할 수 있다.
  */
 export function useDashboardSync(): DashboardSyncStatus {
+  const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [pendingSync, setPendingSync] = useState(false);
@@ -185,7 +187,7 @@ export function useDashboardSync(): DashboardSyncStatus {
           if (retried) {
             // 두 번째 409 — 무한 루프 방지, 서버 상태로 강제 동기.
             applyServerSnapshot(scope, conflict.serverSnapshot);
-            showToast('warning', CONFLICT_RESOLVED_TOAST);
+            showToast('warning', t(CONFLICT_RESOLVED_TOAST_KEY));
           } else {
             // 1차 409: 사용자가 보내려던 payload 는 `payload` 인자에 그대로 있다.
             // 서버 snapshot 의 메타데이터(version) 만 받아 If-Match 를 갱신하고 1회 재시도.
@@ -216,14 +218,14 @@ export function useDashboardSync(): DashboardSyncStatus {
           // 403 — shared PUT 시 admin 아님. 토스트 1회 노출.
           if (scope === 'shared' && !forbiddenToastShownRef.current) {
             forbiddenToastShownRef.current = true;
-            showToast('warning', FORBIDDEN_SHARED_TOAST);
+            showToast('warning', t(FORBIDDEN_SHARED_TOAST_KEY));
           }
         } else if (err instanceof DashboardUnauthorizedError) {
           // 401 — interceptor (`interceptors.ts`) 가 refresh 흐름을 처리하므로
           // 여기서는 별도 redirect 하지 않는다. 에러만 보관.
           if (mountedRef.current) setError(err);
         } else if (err instanceof DashboardServerError || err instanceof Error) {
-          showToast('error', NETWORK_ERROR_TOAST);
+          showToast('error', t(NETWORK_ERROR_TOAST_KEY));
           if (mountedRef.current) setError(err);
         }
       } finally {
@@ -247,7 +249,7 @@ export function useDashboardSync(): DashboardSyncStatus {
         }
       }
     },
-    [applyServerSnapshot, showToast],
+    [applyServerSnapshot, showToast, t],
   );
 
   /** 변경 감지 시 debounce 후 PUT 을 예약한다. */
@@ -289,7 +291,7 @@ export function useDashboardSync(): DashboardSyncStatus {
     // (1) 마이그레이션 토스트 (v0.2 첫 부팅 1회 한정 — uiStore 모듈 로드 시 LS 정리 완료).
     if (consumeMigrationToastFlag()) {
       // info 로 표시 (안내 성격). 사용자가 이미 토스트를 본 뒤에는 LS 플래그가 있어 다시 안 뜸.
-      addNotification({ type: 'info', message: MIGRATION_TOAST_MESSAGE });
+      addNotification({ type: 'info', message: t(MIGRATION_TOAST_KEY) });
     }
 
     // (2) 병렬 GET. 인증되지 않은 경우 호출은 401 을 받고 interceptor 가 처리한다.

@@ -715,15 +715,17 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 	assert.Equal(t, "builtin", meta.Source)
 }
 
-// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 47개인지 확인한다.
+// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 60개인지 확인한다.
 //
-// 추가 항목: chart-emitter + century_hvacr01_status / century_hvacr01_control / century_hvacr01 (3종, raw-frame 통합됨)
+// 48개 canonical 빌트인 + 12개 DEPRECATED HVAC `_` 별칭 (하위 호환) = 60.
+// canonical 추가 항목: chart-emitter + century-hvacr01-status / century-hvacr01-control / century-hvacr01 (3종, raw-frame 통합됨)
 // + inventory (SPEC-INVENTORY-001, processing 카테고리)
 // + select-field (SPEC-SELECT-FIELD, processing 카테고리)
+// + flow-node (SPEC-SUBFLOW-001, composition 카테고리 — 배포 시 확장됨)
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 47, len(types))
+	assert.Equal(t, 60, len(types))
 }
 
 // ===========================================================================
@@ -764,6 +766,11 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 	msg.Payload().Set("room", "living")
 	msg.Payload().Set("state", map[string]any{"power": true, "mode": "cool"})
 	msg.Metadata().Set("device_type", "HVACR.IDU")
+	msg.Metadata().SetGroup("device", map[string]string{
+		"type": "controller",
+		"id":   "uuid-abc",
+		"name": "Living Room",
+	})
 	msg.SetType("device_state.change")
 
 	tests := []struct {
@@ -782,6 +789,10 @@ func TestMQTTInterpolateTemplate(t *testing.T) {
 		{"$.type", "ev/{$.type}", "ev/device_state.change"},
 		{"$.payload nested", "x/{$.payload.state.mode}", "x/cool"},
 		{"JSONPath 키 없음", "out/{$.metadata.absent}/x", "out/{$.metadata.absent}/x"},
+		// nested metadata group path (flat 키 제거 후 대체 경로)
+		{"$.metadata.device.type", "xflow/{$.metadata.device.type}/{$.metadata.device.id}/status", "xflow/controller/uuid-abc/status"},
+		{"$.metadata.device.name", "out/{$.metadata.device.name}/x", "out/Living Room/x"},
+		{"nested group 키 없음", "out/{$.metadata.device.absent}/x", "out/{$.metadata.device.absent}/x"},
 	}
 
 	for _, tt := range tests {

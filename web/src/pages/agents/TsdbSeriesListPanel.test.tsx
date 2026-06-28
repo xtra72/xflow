@@ -16,6 +16,22 @@ import type {
 
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
 
+// i18n: ko.json 을 점 표기 키로 해석하는 mock. 컴포넌트가 useTranslation 을
+// 쓰지만 I18nProvider 로 감싸지 않으므로 키를 한국어로 해석해 단언을 통과시킨다.
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolve = (key: string): string => {
+    const v = key.split('.').reduce<unknown>(
+      (o, p) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[p] : undefined),
+      ko,
+    );
+    return typeof v === 'string' ? v : key;
+  };
+  return {
+    useTranslation: () => ({ t: resolve, locale: 'ko' as const, setLocale: () => {} }),
+  };
+});
+
 /**
  * useKeys 를 수동으로 스텁할 수 있는 가벼운 SeriesDataSource 페이크.
  * 테스트마다 서로 다른 결과를 반환하고 호출 인자를 검사할 수 있다.

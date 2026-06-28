@@ -49,7 +49,8 @@ func TestUserStoreAgent_QueryHistory_latest(t *testing.T) {
 	entries, err := a.QueryHistory(ctx, "default", "k1", HistoryQuery{Mode: QueryModeLatest})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, 20, entries[0].Value)
+	// @spec v0.4.0: auto 모드 동적 키는 string 으로 변환되어 저장된다.
+	assert.Equal(t, "20", entries[0].Value)
 }
 
 // TestUserStoreAgent_QueryHistory_last_n 는 last_n 모드에서 최신 N 개를 반환하는지
@@ -109,7 +110,8 @@ func TestUserStoreAgent_QueryHistory_빈네임스페이스_default(t *testing.T)
 	entries, err := a.QueryHistory(ctx, "", "x", HistoryQuery{Mode: QueryModeLatest})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, 42, entries[0].Value)
+	// @spec v0.4.0: auto 모드 동적 키는 string 으로 변환되어 저장된다.
+	assert.Equal(t, "42", entries[0].Value)
 }
 
 // TestUserStoreAgent_QueryHistory_미존재키 는 존재하지 않는 키에 대해

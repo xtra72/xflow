@@ -5,7 +5,22 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { computePortsForNode, type PortDef } from './nodeSchemas';
+import {
+  computePortsForNode,
+  getConfigSchema,
+  getDefaultPorts,
+  getFlowNodeMode,
+  getNodeDescription,
+  getNodeIODesc,
+  getNodeSchema,
+  type PortDef,
+} from './nodeSchemas';
+import type { ConfigField } from '@/types/node';
+
+/** nodeType 의 config 필드 중 name 으로 하나를 찾는다. */
+function findField(nodeType: string, name: string): ConfigField | undefined {
+  return getConfigSchema(nodeType)?.fields.find((f) => f.name === name);
+}
 
 /** 출력 포트 이름 집합(순서 무시)을 추출한다. */
 function outputNames(ports: PortDef[]): string[] {
@@ -115,5 +130,245 @@ describe('computePortsForNode — switch 동적 포트 (SPEC-SWITCH-001)', () =>
       default_port: '  other  ',
     });
     expect(outputNames(ports)).toEqual(['hot', 'other']);
+  });
+});
+
+// computePortsForNode 의 flow-node 동적 포트 파생 테스트 (SPEC-SUBFLOW-001 그룹 C).
+//   핸들 = 참조 플로우의 플로우 레벨 포트 (input_ports → 입력 핸들, output_ports → 출력 핸들).
+//   값들은 flow_id 선택 시 참조 플로우 정의에서 비정규화된 에디터 표시 전용 캐시이다.
+
+/** 입력 포트 이름 집합(순서 유지)을 추출한다. */
+function inputNames(ports: PortDef[]): string[] {
+  return ports.filter((p) => p.direction === 'input').map((p) => p.name);
+}
+
+describe('computePortsForNode — flow-node 동적 포트 (SPEC-SUBFLOW-001)', () => {
+  it('input_ports → 입력 핸들, output_ports → 출력 핸들로 파생한다 (REQ-SUBFLOW-C02)', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'flow-abc',
+      input_ports: ['in1', 'in2'],
+      output_ports: ['out1'],
+    });
+    expect(inputNames(ports)).toEqual(['in1', 'in2']);
+    expect(outputNames(ports)).toEqual(['out1']);
+    expect(ports).toContainEqual({ name: 'in1', direction: 'input' });
+    expect(ports).toContainEqual({ name: 'out1', direction: 'output' });
+  });
+
+  it('flow_id 미선택(미해결)이면 핸들 없이 빈 배열을 반환한다 (기본값)', () => {
+    expect(computePortsForNode('flow-node')).toEqual([]);
+    expect(computePortsForNode('flow-node', {})).toEqual([]);
+    expect(computePortsForNode('flow-node', { flow_id: 'flow-abc' })).toEqual([]);
+  });
+
+  it('포트가 0개로 해결되면 핸들 없이 빈 배열을 반환한다', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'flow-abc',
+      input_ports: [],
+      output_ports: [],
+    });
+    expect(ports).toEqual([]);
+  });
+
+  it('입력만/출력만 있는 참조 플로우도 처리한다', () => {
+    const inOnly = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      input_ports: ['trigger'],
+    });
+    expect(inOnly).toEqual([{ name: 'trigger', direction: 'input' }]);
+
+    const outOnly = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      output_ports: ['result'],
+    });
+    expect(outOnly).toEqual([{ name: 'result', direction: 'output' }]);
+  });
+
+  it('빈 문자열/공백/중복/비문자열 포트 이름은 안전하게 걸러낸다', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      input_ports: ['in1', '', '  ', 'in1', '  in2  ', 42, null],
+      output_ports: ['out1', 'out1'],
+    });
+    expect(inputNames(ports)).toEqual(['in1', 'in2']);
+    expect(outputNames(ports)).toEqual(['out1']);
+  });
+
+  it('input_ports / output_ports 가 배열이 아니면 무시한다', () => {
+    const ports = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      input_ports: 'in1' as unknown as string[],
+      output_ports: { a: 1 } as unknown as string[],
+    });
+    expect(ports).toEqual([]);
+  });
+
+  // SPEC-SUBFLOW-002 REQ-SUBFLOW2-P01: 핸들 파생은 mode 와 무관하다.
+  it('mode(shared/instance) 와 무관하게 핸들 파생 규칙이 동일하다', () => {
+    const shared = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      mode: 'shared',
+      input_ports: ['in1'],
+      output_ports: ['out1'],
+    });
+    const instance = computePortsForNode('flow-node', {
+      flow_id: 'f',
+      mode: 'instance',
+      input_ports: ['in1'],
+      output_ports: ['out1'],
+    });
+    expect(shared).toEqual(instance);
+    expect(inputNames(shared)).toEqual(['in1']);
+    expect(outputNames(shared)).toEqual(['out1']);
+  });
+});
+
+// SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W01) + M (M02/M03): flow-node mode 토글.
+describe('flow-node mode 토글 / 정규화 (SPEC-SUBFLOW-002)', () => {
+  it('flow-node 스키마에 mode select 필드(shared/instance, 기본 shared)가 존재한다', () => {
+    const field = findField('flow-node', 'mode');
+    expect(field).toBeDefined();
+    expect(field?.type).toBe('select');
+    expect(field?.options).toEqual(['shared', 'instance']);
+    expect(field?.default).toBe('shared');
+    // 편집 반영 안내(W03)가 설명에 포함되어 있다.
+    expect(field?.description).toContain('재시작');
+  });
+
+  it('flow_id picker 필드는 보존된다(회귀 0)', () => {
+    const field = findField('flow-node', 'flow_id');
+    expect(field?.type).toBe('flow_picker');
+    expect(field?.required).toBe(true);
+  });
+
+  it('getFlowNodeMode 는 미지정/빈/알 수 없는 값을 shared 로 정규화한다 (M02/M03)', () => {
+    expect(getFlowNodeMode(undefined)).toBe('shared');
+    expect(getFlowNodeMode(null)).toBe('shared');
+    expect(getFlowNodeMode('')).toBe('shared');
+    expect(getFlowNodeMode('bogus')).toBe('shared');
+    expect(getFlowNodeMode('shared')).toBe('shared');
+  });
+
+  it('getFlowNodeMode 는 instance 명시만 instance 로 판별한다 (MG02)', () => {
+    expect(getFlowNodeMode('instance')).toBe('instance');
+  });
+});
+
+// 중첩 메타데이터 그룹 emit 토글 (P4 / SPEC nested-metadata-group).
+//   - agent / device 그룹은 기본 ON: 스키마 default=true 로 직렬화 시 OFF 만 false 를 보낸다.
+//   - HVACR/디바이스 노드는 emit_agent + emit_device 둘 다, 그 외 에이전트 노드(serial/tcp/mqtt/modbus)는 emit_agent 만.
+describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
+  // emit_agent 가 default ON 으로 노출되는 노드 — HVACR(디바이스) + 그 외 에이전트 IO 노드.
+  const AGENT_TOGGLE_NODES = [
+    'samsung-hvacr01-status',
+    'samsung-hvacr01-control',
+    'samsung-hvacr01',
+    'lgap',
+    'lg-hvacr02-status',
+    'lg-hvacr02-control',
+    'lg-hvacr02',
+    'lg-hvacr01-status',
+    'lg-hvacr01',
+    'century-hvacr01-status',
+    'century-hvacr01',
+    'modbus',
+    'modbus-writer',
+    'mqtt-subscriber',
+    'mqtt-publisher',
+    'serial-in',
+    'serial-out',
+    'tcp-in',
+    'tcp-out',
+  ] as const;
+
+  // emit_device 까지 노출되는 노드 — HVACR/디바이스 그룹만.
+  const DEVICE_TOGGLE_NODES = [
+    'samsung-hvacr01-status',
+    'samsung-hvacr01-control',
+    'samsung-hvacr01',
+    'lgap',
+    'lg-hvacr02-status',
+    'lg-hvacr02-control',
+    'lg-hvacr02',
+    'lg-hvacr01-status',
+    'lg-hvacr01',
+    'century-hvacr01-status',
+    'century-hvacr01',
+  ] as const;
+
+  // emit_agent 만 노출하고 emit_device 는 노출하지 않는 노드(디바이스 아님).
+  const AGENT_ONLY_NODES = [
+    'modbus',
+    'modbus-writer',
+    'mqtt-subscriber',
+    'mqtt-publisher',
+    'serial-in',
+    'serial-out',
+    'tcp-in',
+    'tcp-out',
+  ] as const;
+
+  it.each(AGENT_TOGGLE_NODES)('%s 는 emit_agent 토글을 default=true / advanced 로 노출한다', (nodeType) => {
+    const field = findField(nodeType, 'emit_agent');
+    expect(field, `${nodeType} 에 emit_agent 필드가 있어야 함`).toBeDefined();
+    expect(field?.type).toBe('boolean');
+    // 기본 ON: default=true 여야 폼이 미변경 시 아무것도 보내지 않고(absent=ON), OFF 시에만 false 직렬화.
+    expect(field?.default).toBe(true);
+    expect(field?.advanced).toBe(true);
+  });
+
+  it.each(DEVICE_TOGGLE_NODES)('%s 는 emit_device 토글을 default=true / advanced 로 노출한다', (nodeType) => {
+    const field = findField(nodeType, 'emit_device');
+    expect(field, `${nodeType} 에 emit_device 필드가 있어야 함`).toBeDefined();
+    expect(field?.type).toBe('boolean');
+    expect(field?.default).toBe(true);
+    expect(field?.advanced).toBe(true);
+  });
+
+  it.each(AGENT_ONLY_NODES)('%s 는 emit_device 토글을 노출하지 않는다 (디바이스 노드 아님)', (nodeType) => {
+    expect(findField(nodeType, 'emit_device')).toBeUndefined();
+  });
+
+  it('modbus-poller 는 agent 그룹을 emit 하지 않으므로 emit_agent 토글이 없다', () => {
+    expect(findField('modbus-poller', 'emit_agent')).toBeUndefined();
+  });
+});
+
+// 옛 `_` HVAC 타입이 스키마/포트/설명 조회에서 canonical `-` 키로 해석되는지 검증.
+// 저장된 플로우가 옛 `_` 타입을 들고 있어도 에디터가 정상 동작해야 한다.
+describe('옛 `_` HVAC 타입의 스키마/메타 정규화 해석', () => {
+  // [옛 `_` 타입, 대응 canonical `-` 타입]
+  const pairs: Array<[string, string]> = [
+    ['samsung_hvacr01_status', 'samsung-hvacr01-status'],
+    ['samsung_hvacr01_control', 'samsung-hvacr01-control'],
+    ['samsung_hvacr01', 'samsung-hvacr01'],
+    ['lg_hvacr01_status', 'lg-hvacr01-status'],
+    ['lg_hvacr02', 'lg-hvacr02'],
+    ['century_hvacr01_status', 'century-hvacr01-status'],
+  ];
+
+  it.each(pairs)('%s 의 configSchema 가 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    const legacySchema = getConfigSchema(legacy);
+    const canonicalSchema = getConfigSchema(canonical);
+    expect(legacySchema).toBeDefined();
+    expect(legacySchema).toEqual(canonicalSchema);
+  });
+
+  it.each(pairs)('%s 의 NodeTypeSchema 가 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    expect(getNodeSchema(legacy)).toEqual(getNodeSchema(canonical));
+  });
+
+  it.each(pairs)('%s 의 기본 포트가 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    const ports = getDefaultPorts(legacy);
+    expect(ports.length).toBeGreaterThan(0);
+    expect(ports).toEqual(getDefaultPorts(canonical));
+    // computePortsForNode 도 fallback 경로에서 동일하게 정규화된다.
+    expect(computePortsForNode(legacy)).toEqual(computePortsForNode(canonical));
+  });
+
+  it.each(pairs)('%s 의 설명/입출력 설명이 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
+    expect(getNodeDescription(legacy)).toBe(getNodeDescription(canonical));
+    expect(getNodeDescription(legacy)).toBeTruthy();
+    expect(getNodeIODesc(legacy)).toEqual(getNodeIODesc(canonical));
   });
 });
