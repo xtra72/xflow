@@ -85,8 +85,8 @@ func ErrConfigNotInitialized() *CLIError {
 
 // apiErrorResponse is the internal structure for parsing API error bodies.
 type apiErrorResponse struct {
-	Success bool             `json:"success"`
-	Error   *apiErrorDetail  `json:"error,omitempty"`
+	Success bool            `json:"success"`
+	Error   *apiErrorDetail `json:"error,omitempty"`
 }
 
 // apiErrorDetail holds the error code and message from API responses.
@@ -103,6 +103,16 @@ func MapAPIError(statusCode int, body []byte) *CLIError {
 		return ErrAuthenticationFailed()
 	case 403:
 		return ErrPermissionDenied()
+	}
+
+	// HTTPS 서버에 평문 HTTP 요청을 보낸 경우 서버는 평문 본문으로 응답한다.
+	// 이 경우 일반 "서버 에러 (코드: ...)" 폴백보다 우선하여 명확한 안내를 제공한다.
+	if strings.Contains(string(body), "HTTP request to an HTTPS server") {
+		return &CLIError{
+			Message:  "서버가 HTTPS 를 사용하지만 http:// 요청이 전송되었습니다",
+			Hint:     "--server https://... 를 사용하거나 설정의 server.url 을 https URL 로 변경하세요",
+			ExitCode: 1,
+		}
 	}
 
 	// Try to parse the error body

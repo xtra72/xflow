@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -363,6 +364,125 @@ func TestClient_Post_NilBody(t *testing.T) {
 	c := NewClient(srv.URL, "", 5*time.Second, false)
 	err := c.Post("/api/action", nil, nil)
 	assert.NoError(t, err, "nil body POST 요청에 에러가 없어야 합니다")
+}
+
+// --- TLS / insecure tests ---
+
+// TestClient_WithInsecure_SkipsTLSVerification - WithInsecure(true) 적용 시
+// 자체 서명 인증서 검증을 건너뛰어 요청이 성공하는지 검증한다.
+// 동시에 WithInsecure 없이는 x509 검증 실패로 에러가 발생하는지 검증한다.
+func TestClient_WithInsecure_SkipsTLSVerification(t *testing.T) {
+	// httptest.NewTLSServer 는 자체 서명 인증서를 사용한다.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSuccessResponse(w, map[string]string{"status": "ok"})
+	}))
+	defer srv.Close()
+
+	// 1) WithInsecure 미적용: 기본 트랜스포트는 자체 서명 인증서를 신뢰하지 않으므로
+	//    TLS/cert 에러가 발생해야 한다.
+	secureClient := NewClient(srv.URL, "", 5*time.Second, false)
+	var secureResult map[string]string
+	secureErr := secureClient.Get("/test", &secureResult)
+	require.Error(t, secureErr,
+		"WithInsecure 없이 자체 서명 HTTPS 서버 요청은 TLS 에러를 반환해야 합니다")
+
+	cliErr, ok := secureErr.(*CLIError)
+	require.True(t, ok, "에러가 CLIError 타입이어야 합니다")
+	assert.Contains(t, cliErr.Hint, "--insecure",
+		"TLS 검증 실패 에러의 힌트는 --insecure 사용을 안내해야 합니다")
+
+	// 2) WithInsecure(true) 적용: 인증서 검증을 건너뛰므로 요청이 성공해야 한다.
+	insecureClient := NewClient(srv.URL, "", 5*time.Second, false, WithInsecure(true))
+	var insecureResult map[string]string
+	insecureErr := insecureClient.Get("/test", &insecureResult)
+	require.NoError(t, insecureErr,
+		"WithInsecure(true) 적용 시 자체 서명 HTTPS 서버 요청이 성공해야 합니다")
+	assert.Equal(t, "ok", insecureResult["status"])
+}
+
+// TestClient_WithInsecure_False_KeepsDefaultTransport - WithInsecure(false) 는
+// 기본 트랜스포트를 유지하여 평문 HTTP 서버 통신에 영향이 없는지 검증한다.
+func TestClient_WithInsecure_False_KeepsDefaultTransport(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSuccessResponse(w, map[string]string{"status": "ok"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "", 5*time.Second, false, WithInsecure(false))
+	var result map[string]string
+	err := c.Get("/test", &result)
+	require.NoError(t, err,
+		"WithInsecure(false) 는 평문 HTTP 통신에 영향을 주지 않아야 합니다")
+	assert.Equal(t, "ok", result["status"])
+}
+
+// TestClient_WrapConnectionError_TLSHint - wrapConnectionError 가 x509 인증서
+// 검증 실패 에러에 대해 --insecure 힌트를 포함한 CLIError 를 생성하는지 검증한다.
+func TestClient_WrapConnectionError_TLSHint(t *testing.T) {
+	c := NewClient("https://localhost:8443", "", 5*time.Second, false)
+	synthetic := errors.New("Get \"https://localhost:8443/health\": x509: certificate signed by unknown authority")
+
+	err := c.wrapConnectionError(synthetic)
+	cliErr, ok := err.(*CLIError)
+	require.True(t, ok, "에러가 CLIError 타입이어야 합니다")
+	assert.Contains(t, cliErr.Message, "TLS 인증서",
+		"TLS 검증 실패 메시지가 포함되어야 합니다")
+	assert.Contains(t, cliErr.Hint, "--insecure",
+		"힌트가 --insecure 옵션을 안내해야 합니다")
+	assert.Equal(t, synthetic, cliErr.Cause,
+		"원인 에러가 보존되어야 합니다")
+	assert.Equal(t, 1, cliErr.ExitCode,
+		"종료 코드는 1 이어야 합니다")
+}
+
+// TestClient_WrapConnectionError_NonTLS - wrapConnectionError 가 일반 연결 에러에
+// 대해 기존 서버 연결 실패 메시지를 유지하는지 검증한다.
+func TestClient_WrapConnectionError_NonTLS(t *testing.T) {
+	c := NewClient("http://localhost:8080", "", 5*time.Second, false)
+	synthetic := errors.New("dial tcp 127.0.0.1:8080: connect: connection refused")
+
+	err := c.wrapConnectionError(synthetic)
+	cliErr, ok := err.(*CLIError)
+	require.True(t, ok, "에러가 CLIError 타입이어야 합니다")
+	assert.Contains(t, cliErr.Message, "서버에 연결할 수 없습니다",
+		"일반 연결 에러는 기존 메시지를 유지해야 합니다")
+	assert.NotContains(t, cliErr.Hint, "--insecure",
+		"일반 연결 에러 힌트에는 --insecure 안내가 없어야 합니다")
+}
+
+// TestClient_WrapConnectionError_TLSPrefix - "tls:" 프리픽스 에러도 TLS 에러로
+// 판별하여 --insecure 힌트를 제공하는지 검증한다.
+func TestClient_WrapConnectionError_TLSPrefix(t *testing.T) {
+	c := NewClient("https://localhost:8443", "", 5*time.Second, false)
+	synthetic := errors.New("remote error: tls: handshake failure")
+
+	err := c.wrapConnectionError(synthetic)
+	cliErr, ok := err.(*CLIError)
+	require.True(t, ok)
+	assert.Contains(t, cliErr.Hint, "--insecure",
+		"tls: 프리픽스 에러도 --insecure 힌트를 제공해야 합니다")
+}
+
+// TestIsTLSError_Nil - nil 에러는 TLS 에러가 아님을 검증한다.
+func TestIsTLSError_Nil(t *testing.T) {
+	assert.False(t, isTLSError(nil),
+		"nil 에러는 TLS 에러로 판별되지 않아야 합니다")
+}
+
+// TestWithInsecure_SetsTransport - WithInsecure(true) 가 InsecureSkipVerify 트랜스포트를
+// 설정하고, false 는 기본(nil) 트랜스포트를 유지하는지 검증한다.
+func TestWithInsecure_SetsTransport(t *testing.T) {
+	insecure := NewClient("https://localhost", "", 5*time.Second, false, WithInsecure(true))
+	transport, ok := insecure.httpClient.Transport.(*http.Transport)
+	require.True(t, ok, "insecure 클라이언트는 *http.Transport 를 가져야 합니다")
+	require.NotNil(t, transport.TLSClientConfig,
+		"TLSClientConfig 가 설정되어야 합니다")
+	assert.True(t, transport.TLSClientConfig.InsecureSkipVerify,
+		"InsecureSkipVerify 가 true 여야 합니다")
+
+	secure := NewClient("https://localhost", "", 5*time.Second, false, WithInsecure(false))
+	assert.Nil(t, secure.httpClient.Transport,
+		"WithInsecure(false) 는 기본 트랜스포트(nil)를 유지해야 합니다")
 }
 
 // --- Helper functions ---

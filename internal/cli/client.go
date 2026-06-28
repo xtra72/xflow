@@ -2,11 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -21,14 +23,37 @@ type Client struct {
 	verbose    bool
 }
 
+// ClientOption 은 Client 생성 시 동작을 조정하는 함수형 옵션이다.
+// NewClient 의 가변 인자로 전달되어 기본 구성 이후에 적용된다.
+type ClientOption func(*Client)
+
+// WithInsecure 는 insecure 가 true 일 때 TLS 인증서 검증을 건너뛰도록 설정한다.
+// http.DefaultTransport 를 복제하여 InsecureSkipVerify 를 활성화한 tls.Config 를 적용한다.
+// insecure 가 false 이면 기본 트랜스포트를 그대로 유지한다.
+//
+// 이 옵션은 명시적 opt-in 이며 자체 서명 인증서나 사설망 전용으로,
+// 서버의 기존 insecure_skip_verify 패턴과 동일한 취지를 가진다.
+func WithInsecure(insecure bool) ClientOption {
+	return func(c *Client) {
+		if !insecure {
+			return
+		}
+		// http.DefaultTransport 를 복제하여 커넥션 풀 등 기본 설정을 보존한다.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // 옵트인(자체 서명/사설망 전용); 서버의 insecure_skip_verify 패턴과 동일.
+		c.httpClient.Transport = transport
+	}
+}
+
 // NewClient creates a new API client.
 // If timeout is 0, the default timeout of 30 seconds is used.
-func NewClient(baseURL, token string, timeout time.Duration, verbose bool) *Client {
+// 가변 인자 opts 로 ClientOption 을 전달하여 동작을 조정할 수 있다.
+func NewClient(baseURL, token string, timeout time.Duration, verbose bool, opts ...ClientOption) *Client {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
 
-	return &Client{
+	c := &Client{
 		baseURL: baseURL,
 		token:   token,
 		httpClient: &http.Client{
@@ -36,6 +61,13 @@ func NewClient(baseURL, token string, timeout time.Duration, verbose bool) *Clie
 		},
 		verbose: verbose,
 	}
+
+	// 각 옵션을 기본 구성 이후에 순서대로 적용한다.
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
 }
 
 // Get performs a GET request and decodes the response data into result.
@@ -292,11 +324,34 @@ func (c *Client) handleResponse(resp *http.Response, result any) error {
 }
 
 // wrapConnectionError wraps a raw network error into a CLIError.
+// TLS/인증서 검증 실패가 감지되면 --insecure 사용을 안내하는 전용 에러를 반환하고,
+// 그 외에는 기존 서버 연결 실패 메시지를 유지한다.
 func (c *Client) wrapConnectionError(err error) error {
+	// TLS/인증서 관련 에러인지 에러 문자열로 판별한다.
+	if isTLSError(err) {
+		return &CLIError{
+			Message:  fmt.Sprintf("TLS 인증서를 검증할 수 없습니다: %s", c.baseURL),
+			Hint:     "자체 서명 인증서라면 --insecure (-k) 옵션으로 검증을 건너뛸 수 있습니다",
+			Cause:    err,
+			ExitCode: 1,
+		}
+	}
+
 	return &CLIError{
 		Message:  fmt.Sprintf("서버에 연결할 수 없습니다: %s", c.baseURL),
 		Hint:     "xflow config server <url> 명령어로 서버 주소를 확인하세요",
 		Cause:    err,
 		ExitCode: 1,
 	}
+}
+
+// isTLSError 는 에러 문자열을 검사하여 TLS/인증서 검증 관련 실패인지 판별한다.
+func isTLSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "x509:") ||
+		strings.Contains(msg, "certificate signed by unknown authority") ||
+		strings.Contains(msg, "tls:")
 }
