@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -116,7 +117,7 @@ type NasaSerialTransport struct {
 	parity   string
 	conn     io.ReadWriteCloser
 	mu       sync.Mutex
-	open     bool
+	open     atomic.Bool // 연결 상태 (Available 에서 lock-free 조회)
 }
 
 // Open 은 시리얼 포트를 열고 연결을 설정한다.
@@ -135,7 +136,7 @@ func (s *NasaSerialTransport) Open() error {
 	}
 
 	s.conn = conn
-	s.open = true
+	s.open.Store(true)
 	return nil
 }
 
@@ -144,13 +145,13 @@ func (s *NasaSerialTransport) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.open || s.conn == nil {
+	if !s.open.Load() || s.conn == nil {
 		return nil
 	}
 
 	err := s.conn.Close()
 	s.conn = nil
-	s.open = false
+	s.open.Store(false)
 	return err
 }
 
@@ -160,13 +161,13 @@ func (s *NasaSerialTransport) Send(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.open || s.conn == nil {
+	if !s.open.Load() || s.conn == nil {
 		return ErrTransportNotConnected
 	}
 
 	_, err := s.conn.Write(prependPreamble(data))
 	if err != nil && isConnectionError(err) {
-		s.open = false
+		s.open.Store(false)
 		s.conn = nil
 	}
 	return err
@@ -177,23 +178,24 @@ func (s *NasaSerialTransport) Receive(buf []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.open || s.conn == nil {
+	if !s.open.Load() || s.conn == nil {
 		return 0, ErrTransportNotConnected
 	}
 
 	n, err := s.conn.Read(buf)
 	if err != nil && isConnectionError(err) {
-		s.open = false
+		s.open.Store(false)
 		s.conn = nil
 	}
 	return n, err
 }
 
 // Available 은 시리얼 포트가 열려 있는지 반환한다.
+// lock-free: API 에서 TransportConnected() 를 호출할 때 Send/Receive 의
+// 블로킹 시리얼 I/O 에 영향받지 않도록 atomic 으로 읽는다. mu 를 잡으면
+// 진행 중인 Read/Write 가 완료될 때까지 블록되어 `agent list` 가 멈춘다.
 func (s *NasaSerialTransport) Available() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.open
+	return s.open.Load()
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +209,7 @@ type NasaTCPTransport struct {
 	readTimeout    time.Duration
 	conn           net.Conn
 	mu             sync.Mutex
-	open           bool
+	open           atomic.Bool // 연결 상태 (Available 에서 lock-free 조회)
 }
 
 // Open 은 TCP 연결을 설정한다.
@@ -230,7 +232,7 @@ func (t *NasaTCPTransport) Open() error {
 	}
 
 	t.conn = conn
-	t.open = true
+	t.open.Store(true)
 	return nil
 }
 
@@ -239,13 +241,13 @@ func (t *NasaTCPTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if !t.open || t.conn == nil {
+	if !t.open.Load() || t.conn == nil {
 		return nil
 	}
 
 	err := t.conn.Close()
 	t.conn = nil
-	t.open = false
+	t.open.Store(false)
 	return err
 }
 
@@ -255,13 +257,13 @@ func (t *NasaTCPTransport) Send(data []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if !t.open || t.conn == nil {
+	if !t.open.Load() || t.conn == nil {
 		return ErrTransportNotConnected
 	}
 
 	_, err := t.conn.Write(prependPreamble(data))
 	if err != nil && isConnectionError(err) {
-		t.open = false
+		t.open.Store(false)
 		t.conn = nil
 	}
 	return err
@@ -272,7 +274,7 @@ func (t *NasaTCPTransport) Receive(buf []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if !t.open || t.conn == nil {
+	if !t.open.Load() || t.conn == nil {
 		return 0, ErrTransportNotConnected
 	}
 
@@ -282,17 +284,18 @@ func (t *NasaTCPTransport) Receive(buf []byte) (int, error) {
 
 	n, err := t.conn.Read(buf)
 	if err != nil && isConnectionError(err) {
-		t.open = false
+		t.open.Store(false)
 		t.conn = nil
 	}
 	return n, err
 }
 
 // Available 은 TCP 연결이 열려 있는지 반환한다.
+// lock-free: API 에서 TransportConnected() 를 호출할 때 Send/Receive 의
+// 블로킹 TCP I/O 에 영향받지 않도록 atomic 으로 읽는다. mu 를 잡으면
+// 진행 중인 Read/Write 가 완료될 때까지 블록되어 `agent list` 가 멈춘다.
 func (t *NasaTCPTransport) Available() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.open
+	return t.open.Load()
 }
 
 // ---------------------------------------------------------------------------
@@ -319,7 +322,7 @@ type NasaTCPServerTransport struct {
 	mu       sync.Mutex
 	listener net.Listener
 	conn     net.Conn
-	open     bool // listener 가 살아있고 (또는 active conn 보유) Available 신호 — Available 은 mutex 보호
+	open     atomic.Bool // listener 가 살아있고 (또는 active conn 보유) Available 신호 — Available 은 lock-free atomic 조회
 	doneCh   chan struct{}
 
 	logger serverInfoLogger // INFO 이벤트 (연결 교체 등) 용 — 미연결 시 noopServerLogger
@@ -388,7 +391,7 @@ func (s *NasaTCPServerTransport) Open() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.open {
+	if s.open.Load() {
 		return nil
 	}
 
@@ -400,7 +403,7 @@ func (s *NasaTCPServerTransport) Open() error {
 
 	s.listener = ln
 	s.doneCh = make(chan struct{})
-	s.open = true
+	s.open.Store(true)
 
 	go s.acceptLoop(s.doneCh)
 	return nil
@@ -431,9 +434,7 @@ func (s *NasaTCPServerTransport) acceptLoop(doneCh chan struct{}) {
 				continue
 			}
 			// 영구 에러: accept loop 종료.
-			s.mu.Lock()
-			s.open = false
-			s.mu.Unlock()
+			s.open.Store(false)
 			return
 		}
 
@@ -462,7 +463,7 @@ func (s *NasaTCPServerTransport) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.open {
+	if !s.open.Load() {
 		return nil
 	}
 
@@ -488,7 +489,7 @@ func (s *NasaTCPServerTransport) Close() error {
 		}
 		s.conn = nil
 	}
-	s.open = false
+	s.open.Store(false)
 	return firstErr
 }
 
@@ -498,7 +499,7 @@ func (s *NasaTCPServerTransport) Send(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.open || s.conn == nil {
+	if !s.open.Load() || s.conn == nil {
 		return ErrTransportNotConnected
 	}
 
@@ -516,7 +517,7 @@ func (s *NasaTCPServerTransport) Send(data []byte) error {
 // 연결 에러 시 conn 만 정리하고 (리스너는 유지) 에러를 반환한다.
 func (s *NasaTCPServerTransport) Receive(buf []byte) (int, error) {
 	s.mu.Lock()
-	if !s.open {
+	if !s.open.Load() {
 		s.mu.Unlock()
 		return 0, ErrTransportNotConnected
 	}
@@ -556,10 +557,12 @@ func (s *NasaTCPServerTransport) Receive(buf []byte) (int, error) {
 // Available 은 리스너가 살아있는지 반환한다.
 // tcp-server 는 클라이언트 미연결 상태에서도 listener 가 살아있으면 true 를 반환하여
 // receiveLoop 가 reconnectLoop 로 진입하지 않도록 한다 (수동 대기 모드).
+//
+// lock-free: API 에서 TransportConnected() 를 호출할 때 Send 의 블로킹 TCP I/O 에
+// 영향받지 않도록 atomic 으로 읽는다. mu 를 잡으면 진행 중인 Write 가 완료될 때까지
+// 블록되어 `agent list` 가 멈춘다.
 func (s *NasaTCPServerTransport) Available() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.open
+	return s.open.Load()
 }
 
 // ---------------------------------------------------------------------------
