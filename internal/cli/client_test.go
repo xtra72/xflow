@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -483,6 +484,121 @@ func TestWithInsecure_SetsTransport(t *testing.T) {
 	secure := NewClient("https://localhost", "", 5*time.Second, false, WithInsecure(false))
 	assert.Nil(t, secure.httpClient.Transport,
 		"WithInsecure(false) 는 기본 트랜스포트(nil)를 유지해야 합니다")
+}
+
+// --- HTTP -> HTTPS auto-upgrade tests ---
+
+// TestClient_AutoUpgrade_HTTPToHTTPS_WithInsecure - http:// 로 HTTPS 서버에 요청 시
+// 서버가 반환하는 400 "Client sent an HTTP request to an HTTPS server" 본문을 감지하여
+// 동일 호스트/포트로 https:// 재시도가 투명하게 수행되고 성공하는지 검증한다.
+// 또한 업그레이드가 클라이언트 수명 동안 유지되어 baseURL 이 https:// 로 변경되는지 확인한다.
+func TestClient_AutoUpgrade_HTTPToHTTPS_WithInsecure(t *testing.T) {
+	// httptest.NewTLSServer 는 자체 서명 인증서를 사용한다.
+	// Go 의 TLS 서버는 평문 HTTP 요청에 대해 자동으로 400 +
+	// "Client sent an HTTP request to an HTTPS server" 본문을 응답한다.
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSuccessResponse(w, map[string]bool{"ok": true})
+	}))
+	defer ts.Close()
+
+	// TLS 서버의 포트로 향하는 http:// URL 을 만든다.
+	httpURL := strings.Replace(ts.URL, "https://", "http://", 1)
+
+	// 자체 서명 인증서이므로 insecure 로 검증을 건너뛴다.
+	c := NewClient(httpURL, "", 5*time.Second, false, WithInsecure(true))
+
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	err := c.Get("/health", &result)
+	require.NoError(t, err,
+		"http:// 요청은 https:// 로 투명하게 재시도되어 성공해야 합니다")
+	assert.True(t, result.OK,
+		"재시도된 https:// 응답의 데이터가 올바르게 디코딩되어야 합니다")
+	assert.True(t, strings.HasPrefix(c.baseURL, "https://"),
+		"업그레이드가 유지되어 baseURL 이 https:// 로 변경되어야 합니다")
+}
+
+// TestClient_AutoUpgrade_WithoutInsecure_FailsWithTLSHint - WithInsecure 없이
+// 동일 시나리오에서는 업그레이드는 수행되지만 자체 서명 인증서 검증 실패로
+// --insecure 힌트를 포함한 에러가 반환되는지 검증한다.
+func TestClient_AutoUpgrade_WithoutInsecure_FailsWithTLSHint(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSuccessResponse(w, map[string]bool{"ok": true})
+	}))
+	defer ts.Close()
+
+	httpURL := strings.Replace(ts.URL, "https://", "http://", 1)
+
+	c := NewClient(httpURL, "", 5*time.Second, false)
+
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	err := c.Get("/health", &result)
+	require.Error(t, err,
+		"WithInsecure 없이는 https:// 재시도에서 인증서 검증 실패로 에러가 발생해야 합니다")
+
+	cliErr, ok := err.(*CLIError)
+	require.True(t, ok, "에러가 CLIError 타입이어야 합니다")
+	assert.Contains(t, cliErr.Hint, "--insecure",
+		"인증서 검증 실패 에러의 힌트는 --insecure 사용을 안내해야 합니다")
+}
+
+// TestClient_AutoUpgrade_Normal400NotUpgraded - 일반 400 응답(HTTPS 불일치 마커가
+// 없는 경우)은 업그레이드되지 않으며, 소비한 본문이 복원되어 호출자가 정상적으로
+// 읽고 에러로 매핑할 수 있는지 검증한다.
+func TestClient_AutoUpgrade_Normal400NotUpgraded(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "잘못된 요청입니다"},
+		})
+	}))
+	defer ts.Close()
+
+	c := NewClient(ts.URL, "", 5*time.Second, false)
+
+	var result any
+	err := c.Get("/api/invalid", &result)
+	require.Error(t, err, "일반 400 응답은 에러를 반환해야 합니다")
+
+	cliErr, ok := err.(*CLIError)
+	require.True(t, ok, "에러가 CLIError 타입이어야 합니다")
+	assert.Contains(t, cliErr.Message, "잘못된 요청입니다",
+		"본문이 복원되어 호출자가 에러 메시지를 읽을 수 있어야 합니다")
+	assert.Equal(t, ts.URL, c.baseURL,
+		"일반 400 은 업그레이드를 트리거하지 않아야 합니다")
+}
+
+// TestClient_AutoUpgrade_400BodyReadError_FallsBack - http:// 400 응답의 본문 읽기가
+// 실패하면(예: Content-Length 보다 짧은 본문 후 연결 단절) 업그레이드 판단을 포기하고
+// 원본 응답을 안전하게 반환하는지 검증한다. 호출자는 빈 본문으로 인해 에러로 매핑된다.
+func TestClient_AutoUpgrade_400BodyReadError_FallsBack(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 실제 본문보다 큰 Content-Length 를 선언한 뒤 일부만 쓰고 연결을 끊어
+		// 클라이언트의 io.ReadAll 이 unexpected EOF 로 실패하도록 유도한다.
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("short"))
+		if hj, ok := w.(http.Hijacker); ok {
+			conn, _, hijErr := hj.Hijack()
+			if hijErr == nil {
+				_ = conn.Close()
+			}
+		}
+	}))
+	defer ts.Close()
+
+	c := NewClient(ts.URL, "", 5*time.Second, false)
+
+	var result any
+	err := c.Get("/api/truncated", &result)
+	require.Error(t, err,
+		"본문 읽기 실패 후 빈 본문으로 400 이 반환되어 에러로 매핑되어야 합니다")
+	assert.Equal(t, ts.URL, c.baseURL,
+		"본문 읽기 실패 시 업그레이드는 수행되지 않아야 합니다")
 }
 
 // --- Helper functions ---

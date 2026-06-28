@@ -200,11 +200,75 @@ func (c *Client) Ping() error {
 	return nil
 }
 
+// httpsMismatchMarker 는 HTTPS 서버가 평문 HTTP 요청을 받았을 때 응답 본문에
+// 포함하는 표식이다. Go 표준 라이브러리 서버(net/http)가 이 문구로 400 을 반환한다.
+const httpsMismatchMarker = "HTTP request to an HTTPS server"
+
 // doRequest performs the actual HTTP request with headers.
+//
+// http:// 로 전송한 요청에 대해 서버가 "HTTPS 서버에 평문 HTTP 요청" 을 의미하는
+// 400 응답을 보내면, 동일 호스트/포트로 https:// 재시도를 1회 투명하게 수행한다.
+// 성공 시 c.baseURL 을 https:// 로 갱신하여 이후 호출은 재시도 없이 곧장 https 를 사용한다.
 func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response, error) {
+	// 재시도 시 본문을 다시 보낼 수 있도록 전체를 버퍼로 읽어 둔다.
+	var bodyBytes []byte
+	hasBody := body != nil
+	if hasBody {
+		b, err := io.ReadAll(body)
+		if err != nil {
+			return nil, fmt.Errorf("요청 본문 읽기 실패: %w", err)
+		}
+		bodyBytes = b
+	}
+
+	resp, err := c.sendOnce(method, path, bodyBytes, hasBody)
+	if err != nil {
+		return nil, err
+	}
+
+	// http:// 이고 400 인 경우에만 HTTPS 불일치 가능성을 점검한다.
+	// 그 외(https 이거나 400 이 아님)에는 본문을 건드리지 않고 그대로 반환한다.
+	if !strings.HasPrefix(c.baseURL, "http://") || resp.StatusCode != http.StatusBadRequest {
+		return resp, nil
+	}
+
+	// 400 본문을 읽어 HTTPS 불일치 표식을 확인한다.
+	peeked, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		// 본문을 읽지 못하면 업그레이드 판단이 불가하므로 원본 응답을 그대로 반환한다.
+		// 이미 소비/종료된 본문은 빈 리더로 복원하여 호출자의 디코딩 단계가 안전하게 동작하도록 한다.
+		resp.Body = io.NopCloser(bytes.NewReader(nil))
+		return resp, nil
+	}
+
+	if !bytes.Contains(peeked, []byte(httpsMismatchMarker)) {
+		// HTTPS 불일치가 아닌 일반 400 — 소비한 본문을 복원하여 호출자가 읽을 수 있게 한다.
+		resp.Body = io.NopCloser(bytes.NewReader(peeked))
+		return resp, nil
+	}
+
+	// HTTPS 불일치 확정 — baseURL 을 https:// 로 승격하고 1회 재시도한다(루프 금지).
+	c.baseURL = "https://" + strings.TrimPrefix(c.baseURL, "http://")
+	if c.verbose {
+		fmt.Fprintf(os.Stderr, "[HTTP] 서버가 HTTPS 를 사용하여 https:// 로 자동 전환합니다: %s\n", c.baseURL)
+	}
+
+	return c.sendOnce(method, path, bodyBytes, hasBody)
+}
+
+// sendOnce 는 현재 c.baseURL 기준으로 단일 HTTP 요청을 빌드/전송한다.
+// hasBody 가 true 이면 bodyBytes 를 새 리더로 감싸 본문으로 사용하고, false 이면 본문 없이 전송한다.
+// 표준 헤더(Content-Type, Accept)와 토큰이 있으면 Authorization 헤더를 설정하며, verbose 로깅을 수행한다.
+func (c *Client) sendOnce(method, path string, bodyBytes []byte, hasBody bool) (*http.Response, error) {
 	url := c.baseURL + path
 
-	req, err := http.NewRequest(method, url, body)
+	var bodyReader io.Reader
+	if hasBody {
+		bodyReader = bytes.NewReader(bodyBytes)
+	}
+
+	req, err := http.NewRequest(method, url, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("요청 생성 실패: %w", err)
 	}
