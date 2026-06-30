@@ -1,5 +1,16 @@
 // 차트 패널 공통 타입 + 값 추출 유틸.
 // SPEC-CHART-001 §4.1 / §4.2.2 참조.
+//
+// SPEC-WEB-005 (차트 Store 소스): 차트 패널이 chart-emitter 채널 대신
+// Store 에이전트에서 데이터를 가져올 수 있도록 `data_source` / `store_source`
+// config 를 추가했다. 두 소스는 공존하며, `data_source` 미지정(undefined)은
+// 기존 채널 경로('channel')로 해석되어 하위 호환을 보존한다.
+// @spec SPEC-WEB-005
+
+// Store 키 데이터 타입(int/float/string/boolean/bytes/json). type-only import 이므로
+// 컴파일 시 erase 되어 런타임 순환 의존을 만들지 않는다(store.ts 는 chartChannelTypes 를
+// import 하지 않는다).
+import type { DataType } from '@/services/api/store';
 
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
 export interface ChartEntry {
@@ -22,6 +33,84 @@ export type ChartConnectionStatus =
   | 'closed'
   | 'error';
 
+/**
+ * 차트 패널의 데이터 소스 종류.
+ *
+ * - `channel`: 기존 chart-emitter WebSocket 채널 경로(기본값).
+ * - `store`: Store 에이전트의 시리즈 매트릭스 폴링 경로.
+ *
+ * @spec SPEC-WEB-005
+ */
+export type ChartDataSourceKind = 'channel' | 'store';
+
+/**
+ * Store 소스에서 조회할 단일 시리즈 참조.
+ *
+ * `key` 는 Store 키 이름이고, `metric_type`/`tags` 가 지정되면 해당 key 의
+ * 특정 시리즈(저장소 기준 분류)로 좁혀 조회한다. 미지정이면 그 key 의 모든
+ * 시리즈를 조회한다. `alias`/`color` 는 표시 전용이다.
+ *
+ * @spec SPEC-WEB-005
+ */
+export interface StoreSeriesRef {
+  /** Store 키 이름. */
+  key: string;
+  /** 시리즈별 선택 시 metric_type 필터(선택). */
+  metric_type?: string;
+  /** 시리즈별 선택 시 tag 필터(선택). */
+  tags?: Record<string, string>;
+  /** 키 데이터 타입(표시/필터 메타데이터). */
+  data_type?: DataType;
+  /** 표시 별칭(미지정 시 key). */
+  alias?: string;
+  /** 라인/카테고리 색상(미지정 시 자동 팔레트). */
+  color?: string;
+  /**
+   * 라인 차트 전용 per-line 스타일 (SPEC-WEB-005, ChannelRefConfig 와 동일 형상).
+   * 채널 시리즈와 스토어 시리즈의 라인 스타일을 하나의 편집기로 통합하기 위해
+   * StoreSeriesRef 에도 동일 필드를 둔다. 라인 차트가 아닌 패널에서는 무시된다.
+   */
+  /** 라인 스타일(solid/dashed/dotted). 기본 'solid'. */
+  stroke_style?: StrokeStyle;
+  /** 라인 두께(px). 기본 2. */
+  stroke_width?: number;
+  /** 부드러운 곡선. 기본 false. */
+  smooth?: boolean;
+  /**
+   * 값 추출 필드(dot-path). 채널 시리즈와 형상 통일을 위해 둔다.
+   * 단, 스토어 소스는 매트릭스가 이미 시리즈별 단일 숫자 값을 제공하므로
+   * 렌더에는 영향을 주지 않는다(메타데이터/전방 호환 목적).
+   */
+  display_field?: string;
+}
+
+/**
+ * 차트 패널 Store 소스 설정 블록(모든 차트 config 가 공유).
+ *
+ * 시간 윈도우는 "지금(now) 기준 상대 윈도우" 로 해석된다:
+ *   endMs = now, startMs = now - time_window_ms.
+ * 매트릭스는 `interval_ms` 버킷으로 서버/클라이언트 집계(`aggregation`)되어
+ * 시리즈별 타임라인으로 변환된다.
+ *
+ * @spec SPEC-WEB-005
+ */
+export interface StoreSourceConfig {
+  /** Store 에이전트 이름(백엔드 라우트가 name 기반). */
+  agent_name: string;
+  /** Store 네임스페이스(미지정 시 'default'). */
+  namespace?: string;
+  /** 조회할 시리즈 목록. 비어있으면 store 소스는 비활성으로 취급한다. */
+  series: StoreSeriesRef[];
+  /** 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각. */
+  time_window_ms: number;
+  /** 버킷 크기(ms). */
+  interval_ms: number;
+  /** 집계 함수(UI 표기 그대로). */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
+  refresh_interval_ms?: number;
+}
+
 /** 모든 차트 패널이 공유하는 공통 config (REQ-M4-02) */
 export interface ChartPanelConfigBase {
   channel_name: string;
@@ -29,6 +118,13 @@ export interface ChartPanelConfigBase {
   label_field?: string;
   max_points?: number;
   refresh_on_reconnect?: boolean;
+  /**
+   * 데이터 소스 종류. 미지정/undefined 는 'channel'(기존 채널 경로)로
+   * 해석되어 하위 호환을 보존한다. @spec SPEC-WEB-005
+   */
+  data_source?: ChartDataSourceKind;
+  /** Store 소스 설정(data_source === 'store' 일 때 사용). @spec SPEC-WEB-005 */
+  store_source?: StoreSourceConfig;
 }
 
 // --- 차트 타입별 config (SPEC-CHART-001 §4.2.2) ---

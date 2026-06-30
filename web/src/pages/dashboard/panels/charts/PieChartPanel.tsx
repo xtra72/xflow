@@ -12,10 +12,14 @@ import {
   Tooltip,
 } from 'recharts';
 
-import { type PiePanelConfig } from './chartChannelTypes';
+import {
+  type PiePanelConfig,
+  type StoreSourceConfig,
+} from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { aggregateByLabel } from './chartChannelUtils';
 import { useChartChannel } from './useChartChannel';
+import { useStoreChartData } from './useStoreChartData';
 
 interface PieChartPanelProps {
   panelId: string;
@@ -52,10 +56,20 @@ function parseConfig(config: Record<string, unknown>): PiePanelConfig {
 
 export default function PieChartPanel({ panelId: _panelId, title, config }: PieChartPanelProps) {
   const cfg = parseConfig(config);
-  const { entries, status, closedReason, errorReason } = useChartChannel(
-    cfg.channel_name || undefined,
+  // SPEC-WEB-005: data_source 에 따라 Store 소스 또는 채널 소스를 사용한다(공존).
+  const storeSource = config.store_source as StoreSourceConfig | undefined;
+  const isStore =
+    config.data_source === 'store' && (storeSource?.series?.length ?? 0) > 0;
+
+  const channelRes = useChartChannel(
+    isStore ? undefined : cfg.channel_name || undefined,
     { maxPoints: Math.max(cfg.max_points ?? DEFAULT_MAX_POINTS, 100) },
   );
+  const storeRes = useStoreChartData(isStore ? storeSource : undefined, isStore);
+
+  const { entries, status, closedReason, errorReason } = isStore
+    ? storeRes
+    : channelRes;
 
   const chartData = useMemo(() => {
     const recent =

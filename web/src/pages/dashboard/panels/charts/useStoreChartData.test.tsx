@@ -1,0 +1,306 @@
+// useStoreChartData 훅 + matrixToEntries 변환 테스트.
+// queryMatrixFn 을 주입해 네트워크 없이 매트릭스 응답을 시뮬레이션한다.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+
+/** 마이크로태스크 큐를 비워 resolved/rejected 프로미스 핸들러를 실행시킨다. */
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+import type { SeriesMatrix } from '@/services/api/seriesDataSource';
+import type { StoreSourceConfig } from './chartChannelTypes';
+import {
+  matrixToEntries,
+  useStoreChartData,
+  type QueryMatrixFn,
+} from './useStoreChartData';
+
+/** 기본 store 소스 설정 헬퍼. */
+function makeConfig(overrides: Partial<StoreSourceConfig> = {}): StoreSourceConfig {
+  return {
+    agent_name: 'store-1',
+    namespace: 'default',
+    series: [{ key: 'room:temp', alias: 'Temp' }],
+    time_window_ms: 60_000,
+    interval_ms: 10_000,
+    aggregation: 'average',
+    refresh_interval_ms: 5_000,
+    ...overrides,
+  };
+}
+
+/** 두 컬럼 × 두 행 매트릭스. */
+const sampleMatrix: SeriesMatrix = {
+  columns: ['room:temp', 'room:humidity'],
+  rows: [
+    { bucketStartMs: 1000, values: [21.5, 40] },
+    { bucketStartMs: 2000, values: [22.0, null] },
+  ],
+};
+
+describe('matrixToEntries', () => {
+  it('컬럼 수와 시리즈 수가 일치하면 alias/tags 를 정렬 매핑한다', () => {
+    const config = makeConfig({
+      series: [
+        { key: 'room:temp', alias: 'Temp', tags: { room: '1' } },
+        { key: 'room:humidity', alias: 'Humidity' },
+      ],
+    });
+    const { entries, seriesEntries, seriesNames } = matrixToEntries(
+      sampleMatrix,
+      config,
+    );
+
+    // 시리즈 이름은 alias 로 매핑된다.
+    expect(seriesNames).toEqual(['Temp', 'Humidity']);
+
+    // 평탄화 entries 는 null 을 제외한 숫자 값만 포함하고 timestamp 오름차순.
+    expect(entries.map((e) => e.value)).toEqual([21.5, 40, 22.0]);
+    expect(entries.map((e) => e.timestamp)).toEqual([1000, 1000, 2000]);
+
+    // labels.name 으로 시리즈를 구분, tags 도 병합된다.
+    const temp1000 = entries.find(
+      (e) => e.timestamp === 1000 && e.labels?.name === 'Temp',
+    );
+    expect(temp1000?.labels).toMatchObject({ name: 'Temp', room: '1' });
+
+    // 시리즈별 타임라인은 null 도 포함(라인 gap).
+    expect(seriesEntries.get('Humidity')?.map((e) => e.value)).toEqual([40, null]);
+    expect(seriesEntries.get('Temp')?.map((e) => e.value)).toEqual([21.5, 22.0]);
+  });
+
+  it('컬럼 수가 시리즈 수와 다르면 컬럼명을 시리즈 이름으로 사용한다', () => {
+    // 시리즈 1개를 요청했지만 매트릭스가 2개 컬럼으로 확장된 경우.
+    const config = makeConfig({ series: [{ key: 'room:temp', alias: 'Ignored' }] });
+    const { seriesNames } = matrixToEntries(sampleMatrix, config);
+    expect(seriesNames).toEqual(['room:temp', 'room:humidity']);
+  });
+
+  it('alias 가 설정된 시리즈는 커스텀 이름으로 렌더된다(범례/라인/카테고리 라벨)', () => {
+    // 단일 컬럼 매트릭스 + alias 지정 → 표시 이름/labels.name 모두 alias 로 매핑된다.
+    const matrix: SeriesMatrix = {
+      columns: ['room:temp'],
+      rows: [{ bucketStartMs: 1000, values: [21.5] }],
+    };
+    const config = makeConfig({ series: [{ key: 'room:temp', alias: '실내 온도' }] });
+    const { seriesNames, seriesEntries, entries } = matrixToEntries(matrix, config);
+
+    // 시리즈 이름(범례/라인 dataKey)이 alias 다.
+    expect(seriesNames).toEqual(['실내 온도']);
+    expect([...seriesEntries.keys()]).toEqual(['실내 온도']);
+    // Bar/Pie 카테고리 라벨로 쓰이는 labels.name 도 alias 다.
+    expect(entries[0]!.labels?.name).toBe('실내 온도');
+  });
+
+  it('alias 가 비어있으면 컬럼/키 이름으로 폴백한다(하위 호환)', () => {
+    const matrix: SeriesMatrix = {
+      columns: ['room:temp'],
+      rows: [{ bucketStartMs: 1000, values: [21.5] }],
+    };
+    // 공백 alias 는 key/컬럼명으로 폴백.
+    const config = makeConfig({ series: [{ key: 'room:temp', alias: '   ' }] });
+    const { seriesNames } = matrixToEntries(matrix, config);
+    expect(seriesNames).toEqual(['room:temp']);
+  });
+
+  it('per-line 스타일을 시리즈 표시 이름 기준 seriesStyles 로 노출한다(SPEC-WEB-005)', () => {
+    const matrix: SeriesMatrix = {
+      columns: ['room:temp'],
+      rows: [{ bucketStartMs: 1000, values: [21.5] }],
+    };
+    const config = makeConfig({
+      series: [
+        {
+          key: 'room:temp',
+          alias: 'Temp',
+          color: '#ff0000',
+          stroke_style: 'dashed',
+          stroke_width: 4,
+          smooth: true,
+        },
+      ],
+    });
+    const { seriesStyles } = matrixToEntries(matrix, config);
+    expect(seriesStyles.get('Temp')).toEqual({
+      color: '#ff0000',
+      stroke_style: 'dashed',
+      stroke_width: 4,
+      smooth: true,
+    });
+  });
+
+  it('alias 의 태그 토큰을 시리즈 태그 값으로 해석해 표시 이름에 반영한다(SPEC-WEB-005)', () => {
+    const matrix: SeriesMatrix = {
+      columns: ['room:1:temp'],
+      rows: [{ bucketStartMs: 1000, values: [21.5] }],
+    };
+    const config = makeConfig({
+      series: [
+        {
+          key: 'room:1:temp',
+          alias: '{$.name}-{$.type}',
+          tags: { name: 'TempSensor', type: 'inside' },
+        },
+      ],
+    });
+    const { seriesNames, seriesEntries, entries } = matrixToEntries(matrix, config);
+    // 토큰이 태그 값으로 해석된 이름이 시리즈/라벨/평탄화 entries 에 반영된다.
+    expect(seriesNames).toEqual(['TempSensor-inside']);
+    expect([...seriesEntries.keys()]).toEqual(['TempSensor-inside']);
+    expect(entries[0]!.labels?.name).toBe('TempSensor-inside');
+  });
+
+  it('누락 태그 토큰은 빈 문자열로 해석된다', () => {
+    const matrix: SeriesMatrix = {
+      columns: ['k'],
+      rows: [{ bucketStartMs: 1000, values: [1] }],
+    };
+    const config = makeConfig({
+      series: [{ key: 'k', alias: '{$.name}-{$.missing}', tags: { name: 'A' } }],
+    });
+    const { seriesNames } = matrixToEntries(matrix, config);
+    expect(seriesNames).toEqual(['A-']);
+  });
+});
+
+describe('useStoreChartData', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('비활성(enabled=false) 이면 idle 을 유지하고 쿼리하지 않는다', () => {
+    const queryFn = vi.fn<QueryMatrixFn>();
+    const { result } = renderHook(() =>
+      useStoreChartData(makeConfig(), false, { queryMatrixFn: queryFn }),
+    );
+    expect(result.current.status).toBe('idle');
+    expect(result.current.entries).toEqual([]);
+    expect(queryFn).not.toHaveBeenCalled();
+  });
+
+  it('series 가 비어있으면 idle 을 유지한다', () => {
+    const queryFn = vi.fn<QueryMatrixFn>();
+    const { result } = renderHook(() =>
+      useStoreChartData(makeConfig({ series: [] }), true, {
+        queryMatrixFn: queryFn,
+      }),
+    );
+    expect(result.current.status).toBe('idle');
+    expect(queryFn).not.toHaveBeenCalled();
+  });
+
+  it('활성화 시 즉시 1회 조회하고 connected 로 entries 를 채운다', async () => {
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
+    const { result } = renderHook(() =>
+      useStoreChartData(makeConfig(), true, {
+        queryMatrixFn: queryFn,
+        nowFn: () => 100_000,
+      }),
+    );
+
+    // 즉시 호출됨(connecting → connected).
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    // now=100000, window=60000 → startMs=40000, endMs=100000, interval=10000.
+    const callArgs = queryFn.mock.calls[0]!;
+    expect(callArgs[0]).toBe('store-1');
+    expect(callArgs[1]).toMatchObject({
+      keys: ['room:temp'],
+      startMs: 40_000,
+      endMs: 100_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+    });
+
+    await flushMicrotasks();
+    expect(result.current.status).toBe('connected');
+    expect(result.current.entries.length).toBeGreaterThan(0);
+  });
+
+  it('refresh_interval_ms 주기로 폴링한다', async () => {
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
+    renderHook(() =>
+      useStoreChartData(makeConfig({ refresh_interval_ms: 5_000 }), true, {
+        queryMatrixFn: queryFn,
+      }),
+    );
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    expect(queryFn).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    expect(queryFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('쿼리 실패 시 error 상태와 사유를 노출한다', async () => {
+    const queryFn = vi
+      .fn<QueryMatrixFn>()
+      .mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() =>
+      useStoreChartData(makeConfig(), true, { queryMatrixFn: queryFn }),
+    );
+    await flushMicrotasks();
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorReason).toBe('boom');
+  });
+
+  it('언마운트 시 진행 중 요청을 abort 하고 폴링을 멈춘다', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const queryFn = vi.fn<QueryMatrixFn>((_, __, signal) => {
+      capturedSignal = signal;
+      return new Promise(() => {
+        // 영원히 pending — abort 만 관찰한다.
+      });
+    });
+    const { unmount } = renderHook(() =>
+      useStoreChartData(makeConfig(), true, { queryMatrixFn: queryFn }),
+    );
+    expect(capturedSignal?.aborted).toBe(false);
+    unmount();
+    expect(capturedSignal?.aborted).toBe(true);
+
+    // 언마운트 후에는 추가 폴링이 없어야 한다.
+    const callsAfterUnmount = queryFn.mock.calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+      await Promise.resolve();
+    });
+    expect(queryFn).toHaveBeenCalledTimes(callsAfterUnmount);
+  });
+
+  it('시리즈에 metric_type/tags 가 있으면 seriesFilters 를 전송한다', async () => {
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
+    renderHook(() =>
+      useStoreChartData(
+        makeConfig({
+          series: [
+            { key: 'room:temp', metric_type: 'gauge', tags: { room: '1' } },
+          ],
+        }),
+        true,
+        { queryMatrixFn: queryFn },
+      ),
+    );
+    const params = queryFn.mock.calls[0]![1];
+    expect(params.seriesFilters).toEqual([
+      { metricType: 'gauge', tags: { room: '1' } },
+    ]);
+    // 즉시 쿼리가 resolve 되며 발생하는 상태 업데이트를 flush 한다(act 경고 제거).
+    await flushMicrotasks();
+  });
+});

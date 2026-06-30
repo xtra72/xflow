@@ -26,6 +26,7 @@ import {
   type ChartEntry,
   type LegendConfig,
   type LineChartPanelConfig,
+  type StoreSourceConfig,
   type TimeWindowMode,
   type YThreshold,
   type YAxisMode,
@@ -41,6 +42,7 @@ import type { ChartConnectionStatus } from '@/services/ws/chartChannel';
 import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
+import { useStoreChartData } from './useStoreChartData';
 
 interface LineChartPanelProps {
   panelId: string;
@@ -325,19 +327,24 @@ function CustomLegend({
 export default function LineChartPanel({ panelId: _panelId, title, config }: LineChartPanelProps) {
   const { t } = useTranslation();
   const cfg = parseConfig(config);
-  const isMultiMode = (cfg.channels?.length ?? 0) > 0;
+  // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서 시리즈를 가져온다(공존).
+  const storeSource = config.store_source as StoreSourceConfig | undefined;
+  const isStore =
+    config.data_source === 'store' && (storeSource?.series?.length ?? 0) > 0;
+  const isMultiMode = !isStore && (cfg.channels?.length ?? 0) > 0;
   // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
   const effectiveMaxPoints = resolveMaxPoints(cfg);
 
-  // 두 hook 모두 항상 호출 (React hook 규칙). 비활성 모드는 idle 상태로 유지.
+  // 세 hook 모두 항상 호출 (React hook 규칙). 비활성 경로는 idle 상태로 유지.
   const singleResult = useChartChannel(
-    isMultiMode ? undefined : cfg.channel_name || undefined,
+    isStore || isMultiMode ? undefined : cfg.channel_name || undefined,
     { maxPoints: effectiveMaxPoints },
   );
   const multiResult = useChartChannels(
-    isMultiMode ? cfg.channels! : [],
+    !isStore && isMultiMode ? cfg.channels! : [],
     { maxPoints: effectiveMaxPoints },
   );
+  const storeResult = useStoreChartData(isStore ? storeSource : undefined, isStore);
 
   // 모드별 채널 정규화
   const channelStates: NormalizedChannel[] = useMemo(
@@ -377,12 +384,16 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     ],
   );
 
-  // 통합 상태 (가장 심각한 status 우세)
-  const status = aggregateStatus(channelStates.map((c) => c.state.status));
-  const closedReason = channelStates.find((c) => c.state.closedReason)?.state
-    .closedReason;
-  const errorReason = channelStates.find((c) => c.state.errorReason)?.state
-    .errorReason;
+  // 통합 상태 (가장 심각한 status 우세). store 모드는 storeResult 상태를 사용한다.
+  const status = isStore
+    ? storeResult.status
+    : aggregateStatus(channelStates.map((c) => c.state.status));
+  const closedReason = isStore
+    ? storeResult.closedReason
+    : channelStates.find((c) => c.state.closedReason)?.state.closedReason;
+  const errorReason = isStore
+    ? storeResult.errorReason
+    : channelStates.find((c) => c.state.errorReason)?.state.errorReason;
 
   // 시간 윈도우 설정
   const timeWindowMode: TimeWindowMode = cfg.time_window_mode ?? 'points';
@@ -423,6 +434,29 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       cfg.fixed_start_ms,
       cfg.fixed_end_ms,
     ] as const;
+
+    // SPEC-WEB-005: Store 모드 — 시리즈별 타임라인을 timestamp 기준으로 병합한다.
+    // 각 시리즈 이름이 하나의 라인(컬럼)이 되며, 시간 윈도우 필터는 store_source 의
+    // time_window_ms 로 백엔드 조회 시 이미 적용되므로 클라이언트 재필터는 생략한다.
+    if (isStore) {
+      const rows = new Map<number, Record<string, unknown>>();
+      const seen: string[] = [];
+      for (const [name, seriesArr] of storeResult.seriesEntries) {
+        if (!seen.includes(name)) seen.push(name);
+        for (const e of seriesArr) {
+          if (!rows.has(e.timestamp)) {
+            rows.set(e.timestamp, { timestamp: e.timestamp });
+          }
+          // store 엔트리 value 는 number|null. null 은 connectNulls 로 이어진다.
+          rows.get(e.timestamp)![name] =
+            typeof e.value === 'number' ? e.value : null;
+        }
+      }
+      const data = Array.from(rows.values()).sort(
+        (a, b) => (a.timestamp as number) - (b.timestamp as number),
+      );
+      return { chartData: data, seriesKeys: seen };
+    }
 
     if (isMultiMode) {
       // 다채널: 채널마다 alias 기반 시리즈 키 (multi_series_field 시 alias::label)
@@ -485,6 +519,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     );
     return { chartData: data, seriesKeys: Array.from(seen) };
   }, [
+    isStore,
+    storeResult.seriesEntries,
     isMultiMode,
     channelStates,
     cfg.display_field,
@@ -767,7 +803,18 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               let strokeWidth = 2;
               let lineSmooth = globalSmooth;
 
-              if (isMultiMode) {
+              if (isStore) {
+                // SPEC-WEB-005: store 시리즈는 seriesStyles(시리즈 표시 이름 기준)에서
+                // per-line 스타일을 적용한다. 미지정 필드는 기본값을 유지한다.
+                const st = storeResult.seriesStyles.get(key);
+                if (st) {
+                  if (st.color) stroke = st.color;
+                  if (st.stroke_width) strokeWidth = st.stroke_width;
+                  if (st.smooth != null) lineSmooth = st.smooth;
+                  const dash = STROKE_DASHARRAY[st.stroke_style ?? 'solid'];
+                  if (dash) strokeDasharray = dash;
+                }
+              } else if (isMultiMode) {
                 const baseKey = key.includes('::') ? key.split('::')[0]! : key;
                 const ref = cfg.channels!.find(
                   (c) => (c.alias ?? c.name) === baseKey,
@@ -803,6 +850,12 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         <CustomLegend
           seriesKeys={seriesKeys}
           seriesColors={seriesKeys.map((key, i) => {
+            if (isStore) {
+              return (
+                storeResult.seriesStyles.get(key)?.color ??
+                SERIES_COLORS[i % SERIES_COLORS.length]!
+              );
+            }
             if (isMultiMode) {
               const baseKey = key.includes('::') ? key.split('::')[0]! : key;
               const ref = cfg.channels!.find(

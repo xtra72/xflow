@@ -6,7 +6,11 @@ import { useMemo } from 'react';
 import { clsx } from 'clsx';
 import { Hash } from 'lucide-react';
 
-import { getByPath, type StatPanelConfig } from './chartChannelTypes';
+import {
+  getByPath,
+  type StatPanelConfig,
+  type StoreSourceConfig,
+} from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import {
   formatNumber,
@@ -14,6 +18,7 @@ import {
   toNumber,
 } from './chartChannelUtils';
 import { useChartChannel } from './useChartChannel';
+import { useStoreChartData } from './useStoreChartData';
 
 interface StatPanelProps {
   panelId: string;
@@ -36,10 +41,21 @@ function parseConfig(config: Record<string, unknown>): StatPanelConfig {
 
 export default function StatPanel({ panelId: _panelId, title, config }: StatPanelProps) {
   const cfg = parseConfig(config);
-  const { entries, status, closedReason, errorReason } = useChartChannel(
-    cfg.channel_name || undefined,
+  // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서, 그 외에는 기존 채널에서
+  // 데이터를 가져온다. 두 훅 모두 항상 호출하고(React 규칙) 비활성 쪽은 idle 로 유지한다.
+  const storeSource = config.store_source as StoreSourceConfig | undefined;
+  const isStore =
+    config.data_source === 'store' && (storeSource?.series?.length ?? 0) > 0;
+
+  const channelRes = useChartChannel(
+    isStore ? undefined : cfg.channel_name || undefined,
     { maxPoints: Math.max(cfg.max_points ?? 2, 2) },
   );
+  const storeRes = useStoreChartData(isStore ? storeSource : undefined, isStore);
+
+  const { entries, status, closedReason, errorReason } = isStore
+    ? storeRes
+    : channelRes;
 
   const { currentValue, deltaText, arrow, color } = useMemo(() => {
     if (entries.length === 0) {

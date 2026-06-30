@@ -79,11 +79,28 @@ export function PieChart({ children }: ChildrenProps) {
   );
 }
 
-export function Line({ dataKey }: { dataKey?: string | number }) {
+export function Line({
+  dataKey,
+  stroke,
+  strokeWidth,
+  strokeDasharray,
+  type,
+}: {
+  dataKey?: string | number;
+  stroke?: string;
+  strokeWidth?: number;
+  strokeDasharray?: string;
+  type?: string;
+}) {
+  // 스타일 props 를 data-* 로 노출해 테스트에서 per-line 스타일을 검증한다.
   return (
     <div
       data-testid="rc-line"
       data-line-key={String(dataKey)}
+      data-line-stroke={stroke ?? ''}
+      data-line-width={strokeWidth ?? ''}
+      data-line-dash={strokeDasharray ?? ''}
+      data-line-type={type ?? ''}
       className="recharts-line"
     />
   );

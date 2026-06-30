@@ -21,6 +21,7 @@ import {
   ChartChannelSection,
   StatChartSection,
   LineChartSection,
+  ChannelSeriesEditor,
   BarChartSection,
   PieChartSection,
   TableChartSection,
@@ -212,7 +213,7 @@ describe('LineChartSection', () => {
   describe('multi-channel rows: channel dropdown', () => {
     it('채널 추가 시 행에 채널 드롭다운 노출', async () => {
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', { channels: [{ name: '' }] })}
           onConfigChange={vi.fn()}
           fetchChannels={twoChannels}
@@ -229,7 +230,7 @@ describe('LineChartSection', () => {
     it('드롭다운 선택 시 해당 채널 row 의 name 만 갱신', async () => {
       const onConfigChange = vi.fn();
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', {
             channels: [
               { name: '', alias: 'A' },
@@ -261,7 +262,7 @@ describe('LineChartSection', () => {
 
     it('Custom 옵션 선택 시 수동 입력 input 표시', async () => {
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', { channels: [{ name: '' }] })}
           onConfigChange={vi.fn()}
           fetchChannels={twoChannels}
@@ -278,7 +279,7 @@ describe('LineChartSection', () => {
     it('Custom 입력 blur 시 channels 배열 갱신', async () => {
       const onConfigChange = vi.fn();
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', { channels: [{ name: '', alias: 'X' }] })}
           onConfigChange={onConfigChange}
           fetchChannels={emptyChannels}
@@ -298,7 +299,7 @@ describe('LineChartSection', () => {
 
     it('각 행에 drag handle 노출', async () => {
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', {
             channels: [{ name: 'a' }, { name: 'b' }],
           })}
@@ -313,7 +314,7 @@ describe('LineChartSection', () => {
     it('drop 으로 첫 행을 끝으로 이동 시 channels 순서 변경', async () => {
       const onConfigChange = vi.fn();
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', {
             channels: [
               { name: 'a', alias: 'A' },
@@ -355,7 +356,7 @@ describe('LineChartSection', () => {
     it('같은 위치로 drop 은 무시', async () => {
       const onConfigChange = vi.fn();
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', {
             channels: [{ name: 'a' }, { name: 'b' }],
           })}
@@ -382,7 +383,7 @@ describe('LineChartSection', () => {
 
     it('현재 row name 이 활성 목록에 없으면 (비활성) 옵션으로 표시', async () => {
       render(
-        <LineChartSection
+        <ChannelSeriesEditor
           panel={makePanel('line-chart', {
             channels: [{ name: 'undeployed_ch' }],
           })}
@@ -397,12 +398,72 @@ describe('LineChartSection', () => {
       });
       expect(inactiveOption).toBeInTheDocument();
     });
+
+    it('채널 추가 버튼이 channels[] 에 새 채널을 추가한다(ChannelRow 제거 후에도 동작)', async () => {
+      const onConfigChange = vi.fn();
+      render(
+        <ChannelSeriesEditor
+          panel={makePanel('line-chart', { channels: [{ name: 'a', alias: 'A' }] })}
+          onConfigChange={onConfigChange}
+          fetchChannels={emptyChannels}
+        />,
+      );
+      fireEvent.click(await screen.findByTestId('line-chart-add-channel'));
+      expect(onConfigChange).toHaveBeenCalledWith({
+        channels: [{ name: 'a', alias: 'A' }, { name: '' }],
+        channel_name: undefined,
+      });
+    });
+
+    it('채널이 2개 이상이면 삭제 버튼으로 제거된다', async () => {
+      const onConfigChange = vi.fn();
+      render(
+        <ChannelSeriesEditor
+          panel={makePanel('line-chart', {
+            channels: [{ name: 'a', alias: 'A' }, { name: 'b', alias: 'B' }],
+          })}
+          onConfigChange={onConfigChange}
+          fetchChannels={emptyChannels}
+        />,
+      );
+      const delBtns = await screen.findAllByLabelText('dashboard.chart.deleteChannelAria');
+      fireEvent.click(delBtns[0]!);
+      expect(onConfigChange).toHaveBeenCalledWith({
+        channels: [{ name: 'b', alias: 'B' }],
+        channel_name: undefined,
+      });
+    });
+
+    it('channel_name 만 있는 기존 패널은 channels[] 로 마이그레이션된다(하위 호환)', async () => {
+      render(
+        <ChannelSeriesEditor
+          panel={makePanel('line-chart', { channel_name: 'legacy_ch' })}
+          onConfigChange={vi.fn()}
+          fetchChannels={emptyChannels}
+        />,
+      );
+      // 마이그레이션된 채널 행이 렌더되고 alias placeholder 로 legacy_ch 가 표시된다.
+      expect(await screen.findByTestId('line-chart-channel-row-0')).toBeInTheDocument();
+    });
+  });
+
+  it('LineChartSection 은 채널 편집기를 더 이상 렌더하지 않는다(전역 스타일만)', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { channels: [{ name: 'a' }] })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('line-chart-channels-editor')).toBeNull();
+    expect(screen.queryByTestId('line-chart-add-channel')).toBeNull();
+    // 전역 컨트롤(예: maxPoints)은 유지된다.
+    expect(screen.getByText(/dashboard.chart.maxPoints/)).toBeInTheDocument();
   });
 
   it('채널 행 펼치면 라인 스타일 옵션(곡선 체크박스) 노출', () => {
     const onConfigChange = vi.fn();
     render(
-      <LineChartSection
+      <ChannelSeriesEditor
         panel={makePanel('line-chart', {
           channels: [{ name: 'a', smooth: false }],
         })}

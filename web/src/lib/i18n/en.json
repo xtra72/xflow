@@ -600,7 +600,8 @@
         "tagLevels": "Level",
         "tagSource": "Source",
         "dragOrderTitle": "Drag to reorder"
-      }
+      },
+      "dataSource": "Data source"
     },
     "chart": {
       "channelNameError": "Invalid channel name. Must start with a letter and contain only letters, digits, hyphens, or underscores (max 64 chars).",
@@ -712,7 +713,40 @@
       "statusConnecting": "Connecting",
       "statusDisconnected": "Disconnected",
       "statusClosed": "Channel closed",
-      "statusIdle": "Idle"
+      "statusIdle": "Idle",
+      "dataSourceLabel": "Data source",
+      "dataSourceChannel": "Channel",
+      "dataSourceStore": "Store",
+      "storeAgent": "Store agent",
+      "storeAgentSelect": "Select store agent...",
+      "storeAgentInactive": "{name} (inactive)",
+      "storeKeySearch": "Search key name...",
+      "storeAllMetrics": "All metrics",
+      "storeAllDataTypes": "All types",
+      "storeKeysLoading": "Loading keys...",
+      "storeKeysError": "Failed to load keys.",
+      "storeKeysEmpty": "No keys match the filters.",
+      "storeSelectedCount": "{count} series selected",
+      "storeTimeWindowSec": "Time window (sec)",
+      "storeTimeWindowHint": "Queries the last N seconds relative to now.",
+      "storeIntervalSec": "Interval (sec)",
+      "storeAggregation": "Aggregation",
+      "storeRefreshSec": "Refresh (sec)",
+      "storeSelectedSeries": "Selected series",
+      "storeSeriesNameAria": "Display name for {key}",
+      "storeSeriesColorAria": "Color for {key}",
+      "storeSeriesRemoveAria": "Remove {key}",
+      "storeColSelect": "Select",
+      "storeColKey": "Key",
+      "storeColMetric": "Metric type",
+      "storeColDataType": "Data type",
+      "storeColTags": "Tags",
+      "storeRowSelectAria": "Select {key}",
+      "storeTagKeySelect": "Select tag key",
+      "storeTagKeyPlaceholder": "Tag key...",
+      "storeTagRemoveAria": "Remove tag filter {key}: {value}",
+      "storeAliasInsertToken": "Insert tag:",
+      "storeAliasPreview": "Preview:"
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"

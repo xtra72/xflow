@@ -35,6 +35,7 @@ import {
 } from './panels/charts/chartChannelTypes';
 import {
   ChartChannelSection,
+  StoreSourceSection,
   StatChartSection,
   LineChartSection,
   BarChartSection,
@@ -308,6 +309,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
   if (!panel) return null;
 
+  // SPEC-WEB-005: 차트 패널이면 데이터 소스 섹션을 좌측 프리뷰 아래에 넓게 배치한다.
+  // 프리뷰가 접혀도 데이터 소스 섹션은 좌측 영역에 계속 노출된다.
+  const isChartPanel = CHART_PANEL_TYPES.has(panel.type);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -354,10 +359,15 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           className="relative flex min-h-0 flex-1 gap-3 px-5 pb-5 pt-4"
         >
           <div
-            style={{ width: previewCollapsed ? '100%' : `${leftWidth}px` }}
+            style={{
+              // 차트 패널은 접힘 상태에서도 좌측 데이터 소스 영역이 남으므로
+              // 설정 컬럼을 고정 폭으로 유지한다. 그 외에는 접힘 시 전체 폭.
+              width:
+                previewCollapsed && !isChartPanel ? '100%' : `${leftWidth}px`,
+            }}
             className={cn(
               'order-3 shrink-0 space-y-0.5 overflow-y-auto pr-1',
-              previewCollapsed && 'flex-1',
+              previewCollapsed && !isChartPanel && 'flex-1',
             )}
           >
             {/*
@@ -440,7 +450,11 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
 
-            {/* 차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨) */}
+            {/*
+              차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨).
+              data_source === 'store' 인 경우에도 채널 설정은 유지된다(공존, 하위 호환).
+              데이터 소스 섹션(StoreSourceSection)은 좌측 프리뷰 아래로 이동했다(SPEC-WEB-005).
+            */}
             {CHART_PANEL_TYPES.has(panel.type) && panel.type !== 'line-chart' && (
               <CollapsibleSection title={t('dashboard.settings.channel')}>
                 <ChartChannelSection
@@ -587,8 +601,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             미리보기 자체는 mx-auto + zoom 으로 가운데 정렬되며 사용자가 ± 버튼이나
             Ctrl+휠 로 확대/축소 할 수 있다.
           */}
-          {!previewCollapsed && (
+          {(!previewCollapsed || isChartPanel) && (
           <div className="order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start gap-3 overflow-y-auto">
+            {/*
+              프리뷰 영역(툴바 + 미리보기 블록)은 접히면 숨긴다. 차트 패널의
+              데이터 소스 섹션은 이 아래에 별도로 항상 노출된다(SPEC-WEB-005).
+            */}
+            {!previewCollapsed && (
+            <>
             <div className="flex shrink-0 items-center justify-between gap-2">
               <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.settings.previewLabel')}</label>
               <div className="flex items-center gap-1">
@@ -737,6 +757,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </div>
             )}
             {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
+            </>
+            )}
+
+            {/*
+              데이터 소스 섹션(채널/Store 토글 + Store 테이블/필터 + 선택 시리즈) —
+              SPEC-WEB-005: 넓은 좌측 공간을 활용해 프리뷰 아래에 배치한다. 프리뷰가
+              접혀도 차트 패널이면 이 섹션은 계속 노출된다.
+            */}
+            {isChartPanel && (
+              <div data-testid="panel-settings-data-source" className="shrink-0">
+                <CollapsibleSection title={t('dashboard.settings.dataSource')}>
+                  <StoreSourceSection
+                    panel={panel}
+                    onConfigChange={(c) => handleConfigChange(c)}
+                  />
+                </CollapsibleSection>
+              </div>
+            )}
           </div>
           )}
         </div>
