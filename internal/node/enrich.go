@@ -151,26 +151,34 @@ func (n *EnrichNode) Shutdown(_ context.Context) error {
 // Process 는 메시지를 보강하여 통과시킨다.
 //
 // 동작:
-//  1. id_source 로 id 를 해석한다. 실패/빈 값이면 passthrough(원본 그대로).
-//  2. 레지스트리에서 조회한다. 실패(not-found)면 passthrough.
-//  3. to_metadata 면 그룹 재수화, to_payload 면 payload 키 기록. id 는 항상 보존.
+//  1. to_metadata 이면 즉시 _slimKeep 마커를 설정한다 (조회 성공 여부와 무관).
+//  2. id_source 로 id 를 해석한다. 실패/빈 값이면 passthrough(원본 그대로).
+//  3. 레지스트리에서 조회한다. 실패(not-found)면 passthrough.
+//  4. 조회 성공 시: to_metadata 면 그룹 재수화, to_payload 면 payload 키 기록. id 는 항상 보존.
 //
 // enrich 는 in-place 로 동일 메시지를 반환한다(내부 흐름의 다른 노드와 동일한
-// 통과 규약). 룩업 실패 시 아무 변형도 하지 않는다.
+// 통과 규약). to_metadata=true 일 때 마커는 항상 설정되어 egress 슬림이 기존 그룹을
+// 보존하도록 한다. 룩업 실패 시 fill(type/name) 만 건너뛴다.
 func (n *EnrichNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
 	if msg == nil {
 		return nil, nil
 	}
 
+	// to_metadata 이면 마커를 즉시 설정하여 조회 실패 시에도 기존 그룹이 보존되도록 한다
+	// (marker 는 idempotent 이므로 중복 설정은 no-op).
+	if n.toMetadata {
+		addSlimKeep(msg.Metadata(), string(n.source))
+	}
+
 	id := n.resolveID(msg)
 	if id == "" {
-		// id 를 얻지 못하면 보강 불가 → 그대로 통과(에러 아님).
+		// id 를 얻지 못하면 보강 불가 → 그대로 통과(마커는 이미 설정됨).
 		return []message.Message{msg}, nil
 	}
 
 	meta, ok := n.lookup(id)
 	if !ok {
-		// 레지스트리에 없음 → 그대로 통과(변형 없음).
+		// 레지스트리에 없음 → 그대로 통과(마커는 이미 설정됨, fill 만 생략).
 		return []message.Message{msg}, nil
 	}
 
