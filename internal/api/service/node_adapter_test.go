@@ -25,8 +25,8 @@ func TestNodeServiceAdapter_ListNodeTypes(t *testing.T) {
 
 	types, err := a.ListNodeTypes(context.Background())
 	require.NoError(t, err)
-	// 48개 canonical 빌트인 노드 타입 + 12개 DEPRECATED HVAC `_` 별칭 (하위 호환) = 60
-	assert.Len(t, types, 60)
+	// 49개 canonical 빌트인 노드 타입 (+enrich) + 12개 DEPRECATED HVAC `_` 별칭 (하위 호환) = 61
+	assert.Len(t, types, 61)
 
 	// 정렬 확인 (AllTypeMeta가 정렬된 결과를 반환)
 	for i := 1; i < len(types); i++ {

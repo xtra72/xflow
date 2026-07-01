@@ -141,6 +141,65 @@ func TestTapObserver_TappedNodeBroadcasts(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestTapObserver_EgressSlimsGroupsByDefault 는 expander 미설정(기본) 시 node.output
+// egress 메타데이터의 agent / device 그룹이 id-only 로 슬림화됨을 검증한다
+// (message-slim-metadata). group 형태는 유지되고 type/name 만 wire 에서 제거된다.
+func TestTapObserver_EgressSlimsGroupsByDefault(t *testing.T) {
+	reg := NewTapRegistry()
+	bc := &countingBroadcaster{}
+	obs := NewTapObserver(reg, bc)
+	reg.SetTap("flow-1", "node-1", true)
+
+	msg := message.New(message.WithID("m1"), message.WithType("event"))
+	msg.Metadata().SetGroup("agent", map[string]string{"type": "serial", "id": "a-1", "name": "reader"})
+	msg.Metadata().SetGroup("device", map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"})
+
+	obs.OnNodeOutput("flow-1", "node-1", "out", msg)
+
+	_, payload := bc.snapshot()
+	np := payload.(NodeOutputPayload)
+	md := np.Message["metadata"].(map[string]any)
+
+	agent := md["agent"].(map[string]string)
+	assert.Equal(t, map[string]string{"id": "a-1"}, agent, "agent 그룹은 id-only 슬림")
+	device := md["device"].(map[string]string)
+	assert.Equal(t, map[string]string{"id": "d-1"}, device, "device 그룹은 id-only 슬림")
+
+	// 원본 메시지는 변형되지 않아야 한다(내부 흐름 무영향).
+	origAgent, _ := msg.Metadata().GetGroup("agent")
+	assert.Equal(t, "serial", origAgent["type"], "원본 agent 그룹은 full 유지")
+}
+
+// TestTapObserver_EgressExpandsWhenExpanderSet 는 expander 설정(expand opt-in) 시
+// node.output egress 메타데이터의 그룹이 레지스트리 조회로 type/name 까지 역-수화됨을
+// 검증한다 (message-slim-metadata).
+func TestTapObserver_EgressExpandsWhenExpanderSet(t *testing.T) {
+	reg := NewTapRegistry()
+	bc := &countingBroadcaster{}
+	obs := NewTapObserver(reg, bc).WithExpander(&message.GroupExpander{
+		Agent: func(id string) (map[string]string, bool) {
+			if id == "a-1" {
+				return map[string]string{"type": "serial", "name": "reader"}, true
+			}
+			return nil, false
+		},
+	})
+	reg.SetTap("flow-1", "node-1", true)
+
+	msg := message.New(message.WithID("m1"), message.WithType("event"))
+	msg.Metadata().SetGroup("agent", map[string]string{"id": "a-1"})
+
+	obs.OnNodeOutput("flow-1", "node-1", "out", msg)
+
+	_, payload := bc.snapshot()
+	np := payload.(NodeOutputPayload)
+	md := np.Message["metadata"].(map[string]any)
+	agent := md["agent"].(map[string]string)
+	assert.Equal(t, "a-1", agent["id"])
+	assert.Equal(t, "serial", agent["type"], "expand=true 시 type 역-수화")
+	assert.Equal(t, "reader", agent["name"], "expand=true 시 name 역-수화")
+}
+
 func TestTapObserver_UntappedNodeNoBroadcast(t *testing.T) {
 	reg := NewTapRegistry()
 	bc := &countingBroadcaster{}

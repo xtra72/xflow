@@ -429,6 +429,31 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	inventoryNodeRegOpt := node.WithNodeRegistryFunc(func() *node.Registry { return registry })
 	inventoryFlowRegOpt := node.WithFlowRegistryFunc(func() node.FlowRegistry { return eng })
 
+	// message-slim-metadata / enrich (C): agent / device 정규 정보 룩업.
+	// enrich 노드, expression 빌트인(agentInfo/deviceInfo), 그리고 WS slim-expand 가
+	// 동일한 룩업 경로를 공유하도록 여기서 1회 구성한다. agentMgr.Get / deviceRegistry.Get
+	// 을 감싸 id → {type,name} 을 반환한다(미존재 시 ok=false).
+	agentInfoLookup := node.AgentLookupFunc(func(id string) (node.RegistryMeta, bool) {
+		a, err := agentMgr.Get(id)
+		if err != nil || a == nil {
+			return node.RegistryMeta{}, false
+		}
+		return node.RegistryMeta{Type: a.Type(), ID: a.ID(), Name: a.Name()}, true
+	})
+	deviceInfoLookup := node.DeviceLookupFunc(func(id string) (node.RegistryMeta, bool) {
+		d, err := deviceRegistry.Get(id)
+		if err != nil || d == nil {
+			return node.RegistryMeta{}, false
+		}
+		return node.RegistryMeta{Type: string(d.Type()), ID: d.ID(), Name: d.Name()}, true
+	})
+	enrichAgentOpt := node.WithAgentInfoLookup(agentInfoLookup)
+	enrichDeviceOpt := node.WithDeviceInfoLookup(deviceInfoLookup)
+
+	// expression 빌트인(agentInfo/deviceInfo)용 프로세스 전역 룩업 1회 설정.
+	// 미설정이면 두 빌트인이 노출되지 않으므로(기존 동작), 여기서 명시 설정한다.
+	node.SetExprLookups(agentInfoLookup, deviceInfoLookup)
+
 	eng = engine.NewEngine(
 		engine.WithNodeRegistry(registry),
 		engine.WithLogger(engineLogger),
@@ -443,6 +468,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			inventoryAgentMgrOpt,
 			inventoryNodeRegOpt,
 			inventoryFlowRegOpt,
+			// message-slim-metadata / enrich (C): enrich 노드 룩업 주입.
+			enrichAgentOpt,
+			enrichDeviceOpt,
 		),
 		engine.WithAgentManager(agentMgr),
 		engine.WithOnAgentStart(func(a agent.Agent) {
@@ -647,6 +675,30 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// tapRegistry 는 런타임 전용 (flowID,nodeID) 관측 집합이고, TapObserver 는
 	// tap 된 노드의 출력만 node.output 으로 브로드캐스트한다 (미관측 노드는 zero-overhead).
 	// 플로우 시작 이전에 주입하므로 핫 패스 atomic 읽기와 경쟁하지 않는다.
+	//
+	// message-slim-metadata: 기본 egress 정책은 슬림 — node.output 메타데이터의
+	// agent / device 그룹은 id-only 로 나간다(type/name 은 레지스트리 정규 데이터이므로
+	// 중복 운반하지 않는다). 클라이언트가 type/name 까지 한 번에 받길 원하면(expand opt-in)
+	// 아래 expander 를 .WithExpander(...) 로 주입하면 된다 — 레지스트리(agentMgr/deviceRegistry)
+	// 에서 type/name 을 역-수화한다.
+	//
+	// 기본은 슬림 유지(behavior: 정규 데이터 중복 제거). expand 가 필요하면 enrich/
+	// expression 과 동일한 룩업(agentInfoLookup/deviceInfoLookup, 위에서 구성)을 재사용해
+	// ws expander 를 구성하고 .WithExpander(...) 로 주입하면 된다:
+	//
+	//	expander := ws.NewGroupExpander(
+	//	    func(id string) (map[string]string, bool) {
+	//	        m, ok := agentInfoLookup.LookupAgent(id)
+	//	        if !ok { return nil, false }
+	//	        return map[string]string{"type": m.Type, "name": m.Name}, true
+	//	    },
+	//	    func(id string) (map[string]string, bool) {
+	//	        m, ok := deviceInfoLookup.LookupDevice(id)
+	//	        if !ok { return nil, false }
+	//	        return map[string]string{"type": m.Type, "name": m.Name}, true
+	//	    },
+	//	)
+	//	eng.SetOutputObserver(ws.NewTapObserver(tapRegistry, wsHub).WithExpander(expander))
 	tapRegistry := ws.NewTapRegistry()
 	eng.SetOutputObserver(ws.NewTapObserver(tapRegistry, wsHub))
 

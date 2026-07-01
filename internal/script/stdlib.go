@@ -23,6 +23,11 @@ type StdlibOptions struct {
 	EnableMath   bool
 	EnableStore  bool
 	EnableEvent  bool
+	// EnableAgent 는 xflow.agent 모듈(agent.get) 활성화 여부이다
+	// (message-slim-metadata / enrich).
+	EnableAgent bool
+	// EnableDevice 는 xflow.device 모듈(device.get) 활성화 여부이다.
+	EnableDevice bool
 }
 
 // DefaultStdlibOptions 는 기본 표준 라이브러리 옵션을 반환한다.
@@ -36,13 +41,33 @@ func DefaultStdlibOptions() StdlibOptions {
 		EnableMath:   true,
 		EnableStore:  true,
 		EnableEvent:  false,
+		EnableAgent:  true,
+		EnableDevice: true,
 	}
 }
+
+// AgentInfo 는 xflow.agent.get / xflow.device.get 이 반환하는 정규 식별 정보이다.
+// script 패키지는 internal/node 를 import 하지 않으므로(레이어링) 자체 값 타입을 둔다.
+type AgentInfo struct {
+	Type string
+	ID   string
+	Name string
+}
+
+// AgentInfoLookup 은 id 로 agent 정보를 조회하는 함수 타입이다. 매칭 없으면 ok=false.
+type AgentInfoLookup func(id string) (AgentInfo, bool)
+
+// DeviceInfoLookup 은 id 로 device 정보를 조회하는 함수 타입이다. 매칭 없으면 ok=false.
+type DeviceInfoLookup func(id string) (AgentInfo, bool)
 
 // StdlibDeps 는 표준 라이브러리 모듈의 외부 의존성이다.
 type StdlibDeps struct {
 	Store  StoreAccessor
 	Logger LogFunc
+	// Agent 는 xflow.agent.get 이 사용하는 룩업이다(nil 이면 get 은 nil 반환).
+	Agent AgentInfoLookup
+	// Device 는 xflow.device.get 이 사용하는 룩업이다(nil 이면 get 은 nil 반환).
+	Device DeviceInfoLookup
 }
 
 // RegisterStdlib 는 xflow 표준 라이브러리를 Lua 상태에 등록한다.
@@ -74,8 +99,67 @@ func RegisterStdlib(L *lua.LState, opts StdlibOptions, deps StdlibDeps) error {
 	if opts.EnableStore {
 		registerStore(L, xflowTbl, deps.Store)
 	}
+	if opts.EnableAgent {
+		registerAgentInfo(L, xflowTbl, deps.Agent)
+	}
+	if opts.EnableDevice {
+		registerDeviceInfo(L, xflowTbl, deps.Device)
+	}
 
 	return nil
+}
+
+// ============================================================
+// xflow.agent / xflow.device 모듈 (message-slim-metadata / enrich)
+// ============================================================
+
+// registerAgentInfo 는 xflow.agent 모듈을 등록한다.
+//
+// xflow.agent.get(id) -> {type=..., id=..., name=...} 테이블 또는 nil.
+//
+// 룩업 미주입(nil) 또는 not-found 시 nil 을 반환한다(에러 아님) — store.get 과
+// 동일한 방어적 정책. id 는 항상 소스 인자 우선.
+func registerAgentInfo(L *lua.LState, xflow *lua.LTable, lookup AgentInfoLookup) {
+	mod := L.NewTable()
+	L.SetField(mod, "get", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lookupInfoToLua(L, lookup, L.CheckString(1)))
+		return 1
+	}))
+	L.SetField(xflow, "agent", mod)
+}
+
+// registerDeviceInfo 는 xflow.device 모듈을 등록한다.
+//
+// xflow.device.get(id) -> {type=..., id=..., name=...} 테이블 또는 nil.
+func registerDeviceInfo(L *lua.LState, xflow *lua.LTable, lookup DeviceInfoLookup) {
+	mod := L.NewTable()
+	L.SetField(mod, "get", L.NewFunction(func(L *lua.LState) int {
+		L.Push(lookupInfoToLua(L, lookup, L.CheckString(1)))
+		return 1
+	}))
+	L.SetField(xflow, "device", mod)
+}
+
+// lookupInfoToLua 는 룩업을 수행하여 Lua 테이블 또는 nil 을 반환한다.
+// lookup 이 nil 이거나 not-found 또는 빈 id 이면 lua.LNil 을 반환한다.
+// 비어있지 않은 필드만 테이블에 포함하며, id 는 소스 인자를 우선 사용한다.
+func lookupInfoToLua(L *lua.LState, lookup func(string) (AgentInfo, bool), id string) lua.LValue {
+	if lookup == nil || id == "" {
+		return lua.LNil
+	}
+	info, ok := lookup(id)
+	if !ok {
+		return lua.LNil
+	}
+	tbl := L.NewTable()
+	if info.Type != "" {
+		L.SetField(tbl, "type", lua.LString(info.Type))
+	}
+	L.SetField(tbl, "id", lua.LString(id))
+	if info.Name != "" {
+		L.SetField(tbl, "name", lua.LString(info.Name))
+	}
+	return tbl
 }
 
 // ============================================================

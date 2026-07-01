@@ -11,10 +11,11 @@ import (
 	"github.com/xtra/xflow/pkg/message"
 )
 
-// TestInfluxDBWriteNode_DefaultTags_FlattensGroups 는 tag_mappings 미지정(기본) 시
-// nested group metadata 가 "{group}.{field}" 평면 태그로 펼쳐지는지 검증한다
-// (P2 Class C: influxdb_write.go — Flux 태그는 평면 string 이므로 flatten).
-func TestInfluxDBWriteNode_DefaultTags_FlattensGroups(t *testing.T) {
+// TestInfluxDBWriteNode_DefaultTags_SlimsGroupsToID 는 tag_mappings 미지정(기본) 시
+// nested group metadata 가 외부 스토리지 egress 정책에 따라 id-only 로 슬림화된 뒤
+// "{group}.id" 평면 태그로 펼쳐지는지 검증한다 (message-slim-metadata).
+// type/name 은 레지스트리의 정규 데이터이므로 스토리지에 중복 기록하지 않는다.
+func TestInfluxDBWriteNode_DefaultTags_SlimsGroupsToID(t *testing.T) {
 	var captured influxdbWriteData
 	mock := &mockInfluxDBAgent{
 		processFunc: func(data []byte) ([]byte, error) {
@@ -42,7 +43,9 @@ func TestInfluxDBWriteNode_DefaultTags_FlattensGroups(t *testing.T) {
 
 	// flat 키는 그대로
 	assert.Equal(t, "server-01", captured.Tags["host"])
-	// group 은 "{group}.{field}" 태그로 flatten
-	assert.Equal(t, "serial", captured.Tags["agent.type"], "agent group 의 type 이 agent.type 태그로 flatten 되어야 한다")
+	// group 은 id-only 슬림 후 "{group}.id" 태그로만 flatten
 	assert.Equal(t, "node-1", captured.Tags["agent.id"], "agent group 의 id 가 agent.id 태그로 flatten 되어야 한다")
+	// type/name 은 스토리지 egress 에서 제거되어 태그로 기록되지 않는다.
+	_, hasType := captured.Tags["agent.type"]
+	assert.False(t, hasType, "스토리지 egress 슬림 후 agent.type 태그는 기록되지 않아야 한다")
 }

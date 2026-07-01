@@ -124,6 +124,7 @@ func (r *Registry) registerBuiltins() {
 		{"chart-emitter", NewChartEmitterNode, "output", "차트 패널용 WebSocket 채널로 메시지 발행"},
 		{"inventory", NewInventoryNode, "processing", "in-process 디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit"},
 		{"select-field", NewSelectFieldNode, "processing", "메시지에서 지정한 경로($.payload/$.metadata/$.type)만 남깁니다 (통합 화이트리스트, 누락 시 keep/drop/fill)"},
+		{"enrich", NewEnrichNode, "processing", "id 로 agent/device 레지스트리를 조회하여 메타데이터 그룹 재수화 또는 payload 키 기록"},
 		{"flow-node", NewFlowNodePlaceholder, "composition", "다른 플로우를 참조하는 서브플로우 노드 (배포 시 확장됨)"},
 	}
 	for _, b := range builtins {
