@@ -192,6 +192,14 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           required: true,
           description: '실행할 Lua 스크립트 코드. 입력: 전역 `msg` (id, timestamp, payload, metadata). 반환: 변환된 msg 테이블. 예: `msg.payload.x = msg.payload.x * 2; return msg`',
         },
+        {
+          name: 'on_error',
+          type: 'select',
+          label: '오류 처리',
+          options: ['error', 'ignore', 'drop'],
+          default: 'error',
+          description: 'error: 실패 시 오류 발생 · ignore: 실패 시 원본 메시지 통과(로그 없음) · drop: 실패 시 출력 없음',
+        },
       ],
     },
     defaultPorts: [

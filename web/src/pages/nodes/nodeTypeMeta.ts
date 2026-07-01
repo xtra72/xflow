@@ -267,9 +267,17 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         required: true,
         description: '실행할 스크립트 소스 코드',
       },
+      {
+        name: 'on_error',
+        type: 'string',
+        required: false,
+        description: 'error: 실패 시 오류 발생 · ignore: 실패 시 원본 메시지 통과(로그 없음) · drop: 실패 시 출력 없음',
+        default: 'error',
+      },
     ],
     configExample: {
       script: 'return { ...msg, payload: { ...msg.payload, processed: true } }',
+      on_error: 'error',
     },
   },
 
