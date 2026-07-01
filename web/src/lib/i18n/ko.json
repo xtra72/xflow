@@ -600,7 +600,8 @@
         "tagLevels": "레벨",
         "tagSource": "소스",
         "dragOrderTitle": "드래그하여 순서 변경"
-      }
+      },
+      "dataSource": "데이터 소스"
     },
     "chart": {
       "channelNameError": "유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).",
@@ -712,7 +713,40 @@
       "statusConnecting": "연결 중",
       "statusDisconnected": "연결 끊김",
       "statusClosed": "채널 종료",
-      "statusIdle": "대기"
+      "statusIdle": "대기",
+      "dataSourceLabel": "데이터 소스",
+      "dataSourceChannel": "채널",
+      "dataSourceStore": "Store",
+      "storeAgent": "Store 에이전트",
+      "storeAgentSelect": "Store 에이전트 선택...",
+      "storeAgentInactive": "{name} (비활성)",
+      "storeKeySearch": "키 이름 검색...",
+      "storeAllMetrics": "전체 메트릭",
+      "storeAllDataTypes": "전체 타입",
+      "storeKeysLoading": "키 목록 로딩 중...",
+      "storeKeysError": "키 목록을 불러오지 못했습니다.",
+      "storeKeysEmpty": "조건에 맞는 키가 없습니다.",
+      "storeSelectedCount": "{count}개 시리즈 선택됨",
+      "storeTimeWindowSec": "시간 윈도우(초)",
+      "storeTimeWindowHint": "현재 시각 기준 지난 N초 구간을 조회합니다.",
+      "storeIntervalSec": "인터벌(초)",
+      "storeAggregation": "집계",
+      "storeRefreshSec": "갱신 주기(초)",
+      "storeSelectedSeries": "선택된 시리즈",
+      "storeSeriesNameAria": "{key} 표시 이름",
+      "storeSeriesColorAria": "{key} 색상",
+      "storeSeriesRemoveAria": "{key} 제거",
+      "storeColSelect": "선택",
+      "storeColKey": "키",
+      "storeColMetric": "메트릭 타입",
+      "storeColDataType": "데이터 타입",
+      "storeColTags": "태그",
+      "storeRowSelectAria": "{key} 선택",
+      "storeTagKeySelect": "태그 키 선택",
+      "storeTagKeyPlaceholder": "태그 키...",
+      "storeTagRemoveAria": "태그 필터 {key}: {value} 제거",
+      "storeAliasInsertToken": "태그 삽입:",
+      "storeAliasPreview": "미리보기:"
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"

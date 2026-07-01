@@ -34,12 +34,38 @@ const csvMocks = vi.hoisted(() => ({
   downloadCsv: vi.fn(),
 }));
 
+// SPEC-WEB-005: store 소스 훅 모킹. seriesEntries/seriesStyles 를 주입해
+// store 모드 라인 렌더 + per-line 스타일 적용을 검증한다.
+const storeMockResult = vi.hoisted(() => ({
+  current: {
+    entries: [] as ChartEntry[],
+    seriesEntries: new Map<string, ChartEntry[]>(),
+    seriesStyles: new Map<
+      string,
+      {
+        color?: string;
+        stroke_style?: 'solid' | 'dashed' | 'dotted';
+        stroke_width?: number;
+        smooth?: boolean;
+      }
+    >(),
+    seriesNames: [] as string[],
+    status: 'connected' as const,
+    closedReason: undefined as string | undefined,
+    errorReason: undefined as string | undefined,
+  },
+}));
+
 vi.mock('./useChartChannel', () => ({
   useChartChannel: () => mockResult.current,
 }));
 
 vi.mock('./useChartChannels', () => ({
   useChartChannels: () => multiMockResult.current,
+}));
+
+vi.mock('./useStoreChartData', () => ({
+  useStoreChartData: () => storeMockResult.current,
 }));
 
 // i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
@@ -65,6 +91,15 @@ describe('LineChartPanel', () => {
       errorReason: undefined,
     };
     multiMockResult.current = { channels: new Map() };
+    storeMockResult.current = {
+      entries: [],
+      seriesEntries: new Map(),
+      seriesStyles: new Map(),
+      seriesNames: [],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
     csvMocks.downloadCsv.mockReset();
   });
 
@@ -884,6 +919,68 @@ describe('LineChartPanel', () => {
       const header = csv.split('\n')[0]!;
       expect(header).toContain('A');
       expect(header).toContain('B');
+    });
+  });
+
+  // SPEC-WEB-005: store 데이터 소스 모드 — 시리즈별 라인 + per-line 스타일.
+  describe('store 데이터 소스 모드', () => {
+    const storeConfig = {
+      data_source: 'store',
+      store_source: {
+        agent_name: 'store-1',
+        series: [
+          { key: 'room:1:temp', alias: 'Temp' },
+          { key: 'room:2:temp', alias: 'Hum' },
+        ],
+        time_window_ms: 60000,
+        interval_ms: 10000,
+        aggregation: 'average',
+      },
+    };
+
+    it('store 시리즈가 각각 라인으로 렌더된다(시리즈 표시 이름 기준)', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['Temp', [{ timestamp: 1000, value: 21 }, { timestamp: 2000, value: 22 }]],
+        ['Hum', [{ timestamp: 1000, value: 40 }, { timestamp: 2000, value: 41 }]],
+      ]);
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      const lines = screen.getAllByTestId('rc-line');
+      const keys = lines.map((l) => l.getAttribute('data-line-key'));
+      expect(keys).toContain('Temp');
+      expect(keys).toContain('Hum');
+    });
+
+    it('seriesStyles 의 per-line 스타일(색/두께/대시/곡선)이 라인에 적용된다', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['Temp', [{ timestamp: 1000, value: 21 }, { timestamp: 2000, value: 22 }]],
+      ]);
+      storeMockResult.current.seriesStyles = new Map([
+        ['Temp', { color: '#ff0000', stroke_style: 'dashed', stroke_width: 4, smooth: true }],
+      ]);
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      const line = screen
+        .getAllByTestId('rc-line')
+        .find((l) => l.getAttribute('data-line-key') === 'Temp')!;
+      expect(line.getAttribute('data-line-stroke')).toBe('#ff0000');
+      expect(line.getAttribute('data-line-width')).toBe('4');
+      // dashed → STROKE_DASHARRAY['dashed'] = '8 4'
+      expect(line.getAttribute('data-line-dash')).toBe('8 4');
+      // smooth=true → type 'monotone'
+      expect(line.getAttribute('data-line-type')).toBe('monotone');
+    });
+
+    it('스타일 미지정 시 기본값(팔레트 색/두께 2/실선/linear)을 사용한다', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['Temp', [{ timestamp: 1000, value: 21 }]],
+      ]);
+      // seriesStyles 비어있음.
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      const line = screen
+        .getAllByTestId('rc-line')
+        .find((l) => l.getAttribute('data-line-key') === 'Temp')!;
+      expect(line.getAttribute('data-line-width')).toBe('2');
+      expect(line.getAttribute('data-line-dash')).toBe('');
+      expect(line.getAttribute('data-line-type')).toBe('linear');
     });
   });
 });

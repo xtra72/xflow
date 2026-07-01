@@ -5,11 +5,17 @@
 // 편집 UI 를 제공한다. 상위 PanelSettingsDialog 는 panel.type 에 따라
 // 분기하여 해당 Section 을 렌더링한다.
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, ChevronUp, GripVertical, Plus, Trash2, X } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
+import { useAgents } from '@/hooks/useAgent';
+import {
+  useStoreKeysWithTags,
+  type DataType,
+  type StoreKeyObject,
+} from '@/services/api/store';
 import { useTranslation } from '@/lib/i18n';
 
 import type {
@@ -23,7 +29,23 @@ import type {
   YThreshold,
   ChannelRefConfig,
   StrokeStyle,
+  ChartDataSourceKind,
+  StoreSeriesRef,
+  StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
+import {
+  distinctDataTypes,
+  distinctMetricTypes,
+  filterStoreKeyObjects,
+  makeTagFilterId,
+  sortStoreKeyObjects,
+  type StoreSortField,
+  type StoreSortState,
+} from './panels/charts/storeSourceFilter';
+import {
+  makeAliasToken,
+  resolveSeriesAlias,
+} from './panels/charts/aliasTemplate';
 
 /** REQ-M5-04: channel_name 정규식 */
 const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -223,6 +245,1092 @@ export function ChartChannelSection({
         </p>
       )}
     </LabeledField>
+  );
+}
+
+// --- 1.5 데이터 소스 토글 + Store 소스 선택 (SPEC-WEB-005) ---
+
+/** 집계 옵션(UI 표기). tsdb 모달과 동일한 라벨 키를 재사용한다. */
+const STORE_AGG_OPTIONS: { value: StoreSourceConfig['aggregation']; labelKey: string }[] = [
+  { value: 'min', labelKey: 'tsdb.aggMin' },
+  { value: 'max', labelKey: 'tsdb.aggMax' },
+  { value: 'average', labelKey: 'tsdb.aggAverage' },
+  { value: 'first', labelKey: 'tsdb.aggFirst' },
+  { value: 'last', labelKey: 'tsdb.aggLast' },
+];
+
+/** data_type 필터 옵션(전체 + 6종). */
+const DATA_TYPE_OPTIONS: DataType[] = ['int', 'float', 'string', 'boolean', 'bytes', 'json'];
+
+/** 기본 Store 소스 설정(처음 store 모드로 전환 시 사용). */
+function defaultStoreSource(): StoreSourceConfig {
+  return {
+    agent_name: '',
+    namespace: 'default',
+    series: [],
+    time_window_ms: 60 * 60 * 1000, // 지난 1시간
+    interval_ms: 60 * 1000, // 1분 버킷
+    aggregation: 'average',
+    refresh_interval_ms: 5000,
+  };
+}
+
+/**
+ * 차트 패널 공통 데이터 소스 섹션.
+ *
+ * - 데이터 소스 토글(채널 / Store)을 제공한다.
+ * - store 선택 시: Store 에이전트 선택 → 키 필터(이름/metric_type/tag/data_type)
+ *   → 키 멀티셀렉트로 store_source.series[] 를 채운다.
+ * - 시간 윈도우 / 인터벌 / 집계 입력을 제공한다(tsdb 모달 컨트롤과 형상 일치).
+ *
+ * 두 소스는 공존하며 data_source 미지정은 'channel' 로 해석된다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+export function StoreSourceSection({
+  panel,
+  onConfigChange,
+  fetchChannels = listChartChannels,
+}: {
+  panel: PanelConfig;
+  onConfigChange: OnConfig;
+  /** 채널 모드 시리즈 편집기에 주입할 활성 채널 조회기(테스트용). */
+  fetchChannels?: () => Promise<ChartChannelSummary[]>;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const config = panel.config ?? {};
+  const dataSource = (config.data_source as ChartDataSourceKind | undefined) ?? 'channel';
+  const storeSource =
+    (config.store_source as StoreSourceConfig | undefined) ?? defaultStoreSource();
+  // 라인 차트 패널은 per-line 스타일 통합 편집(채널/스토어 시리즈 양쪽)을 노출한다.
+  const isLineChart = panel.type === 'line-chart';
+
+  const setDataSource = (kind: ChartDataSourceKind): void => {
+    if (kind === 'store' && !config.store_source) {
+      // 처음 store 로 전환 시 기본 설정을 함께 채운다.
+      onConfigChange({ data_source: 'store', store_source: defaultStoreSource() });
+    } else {
+      onConfigChange({ data_source: kind });
+    }
+  };
+
+  const patchStore = (patch: Partial<StoreSourceConfig>): void => {
+    onConfigChange({ store_source: { ...storeSource, ...patch } });
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* 데이터 소스 토글 */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.chart.dataSourceLabel')}
+        </label>
+        <div
+          className="inline-flex rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-0.5"
+          role="tablist"
+          aria-label={t('dashboard.chart.dataSourceLabel')}
+        >
+          {(['channel', 'store'] as const).map((kind) => {
+            const selected = dataSource === kind;
+            return (
+              <button
+                key={kind}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                data-testid={`chart-data-source-${kind}`}
+                onClick={() => setDataSource(kind)}
+                className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                  selected
+                    ? 'bg-blue-600 text-white'
+                    : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
+                }`}
+              >
+                {kind === 'channel'
+                  ? t('dashboard.chart.dataSourceChannel')
+                  : t('dashboard.chart.dataSourceStore')}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Store 소스 상세 (store 선택 시) */}
+      {dataSource === 'store' && (
+        <StoreSourceEditor
+          storeSource={storeSource}
+          onPatch={patchStore}
+          isLineChart={isLineChart}
+        />
+      )}
+
+      {/*
+        채널 모드 + 라인 차트: 채널 시리즈 편집기(채널 추가/선택/순서 + per-line 스타일).
+        다른 차트 타입은 채널 모드에서 단일 channel_name 을 ChartChannelSection(우측 컬럼)
+        으로 편집하므로 여기서는 렌더하지 않는다.
+      */}
+      {dataSource === 'channel' && isLineChart && (
+        <ChannelSeriesEditor
+          panel={panel}
+          onConfigChange={onConfigChange}
+          fetchChannels={fetchChannels}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Store 소스 상세 편집기(에이전트/키 선택 + 시간/인터벌/집계). */
+function StoreSourceEditor({
+  storeSource,
+  onPatch,
+  isLineChart,
+}: {
+  storeSource: StoreSourceConfig;
+  onPatch: (patch: Partial<StoreSourceConfig>) => void;
+  isLineChart: boolean;
+}): React.ReactElement {
+  const { t } = useTranslation();
+
+  // Store 에이전트 목록(type === 'store').
+  const { data: agentsResult } = useAgents();
+  const storeAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a: { type: string }) => a.type === 'store'),
+    [agentsResult],
+  );
+
+  return (
+    <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
+      {/* 에이전트 선택 */}
+      <LabeledField label={t('dashboard.chart.storeAgent')}>
+        <select
+          data-testid="chart-store-agent-select"
+          value={storeSource.agent_name}
+          onChange={(e) => onPatch({ agent_name: e.target.value, series: [] })}
+          className={inputClass()}
+        >
+          <option value="">{t('dashboard.chart.storeAgentSelect')}</option>
+          {storeAgents.map((a: { name: string }) => (
+            <option key={a.name} value={a.name}>
+              {a.name}
+            </option>
+          ))}
+          {/* 현재 저장된 에이전트가 목록에 없으면(비활성 등) 선택 유지 */}
+          {storeSource.agent_name &&
+            !storeAgents.some((a: { name: string }) => a.name === storeSource.agent_name) && (
+              <option value={storeSource.agent_name}>
+                {t('dashboard.chart.storeAgentInactive').replace(
+                  '{name}',
+                  storeSource.agent_name,
+                )}
+              </option>
+            )}
+        </select>
+      </LabeledField>
+
+      {/* 키 선택기(4 필터 + 멀티셀렉트) */}
+      {storeSource.agent_name && (
+        <StoreKeySelector
+          agentName={storeSource.agent_name}
+          series={storeSource.series}
+          onChange={(series) => onPatch({ series })}
+        />
+      )}
+
+      {/* 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
+      {storeSource.series.length > 0 && (
+        <SelectedSeriesList
+          series={storeSource.series}
+          onChange={(series) => onPatch({ series })}
+          isLineChart={isLineChart}
+        />
+      )}
+
+      {/* 시간 윈도우 / 인터벌 / 집계 */}
+      <div className="grid grid-cols-2 gap-2">
+        <LabeledField
+          label={t('dashboard.chart.storeTimeWindowSec')}
+          hint={t('dashboard.chart.storeTimeWindowHint')}
+        >
+          <input
+            type="number"
+            min={1}
+            data-testid="chart-store-time-window"
+            value={Math.round(storeSource.time_window_ms / 1000)}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n) && n > 0) onPatch({ time_window_ms: n * 1000 });
+            }}
+            className={inputClass()}
+          />
+        </LabeledField>
+        <LabeledField label={t('dashboard.chart.storeIntervalSec')}>
+          <input
+            type="number"
+            min={1}
+            data-testid="chart-store-interval"
+            value={Math.round(storeSource.interval_ms / 1000)}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n) && n > 0) onPatch({ interval_ms: n * 1000 });
+            }}
+            className={inputClass()}
+          />
+        </LabeledField>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <LabeledField label={t('dashboard.chart.storeAggregation')}>
+          <select
+            value={storeSource.aggregation}
+            data-testid="chart-store-aggregation"
+            onChange={(e) =>
+              onPatch({ aggregation: e.target.value as StoreSourceConfig['aggregation'] })
+            }
+            className={inputClass()}
+          >
+            {STORE_AGG_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {t(opt.labelKey)}
+              </option>
+            ))}
+          </select>
+        </LabeledField>
+        <LabeledField label={t('dashboard.chart.storeRefreshSec')}>
+          <input
+            type="number"
+            min={1}
+            value={Math.round((storeSource.refresh_interval_ms ?? 5000) / 1000)}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n) && n > 0) onPatch({ refresh_interval_ms: n * 1000 });
+            }}
+            className={inputClass()}
+          />
+        </LabeledField>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 통합 per-line 스타일 컨트롤 (SPEC-WEB-005).
+ *
+ * stroke_style / stroke_width / smooth / display_field 를 편집한다. 채널 시리즈
+ * (ChannelRefConfig)와 스토어 시리즈(StoreSeriesRef)가 동일한 스타일 필드를 가지므로
+ * 하나의 컴포넌트로 양쪽 라인 차트 시리즈 스타일을 통합한다. 라인 차트 패널에서만
+ * 노출된다.
+ *
+ * `display_field` 는 채널 시리즈에서만 렌더에 영향을 주며, 스토어 시리즈는 매트릭스가
+ * 이미 단일 숫자 값을 제공하므로 표시는 되지만 렌더 결과에는 영향을 주지 않는다.
+ */
+interface LineStyleValue {
+  stroke_style?: StrokeStyle;
+  stroke_width?: number;
+  smooth?: boolean;
+  display_field?: string;
+}
+
+function LineStyleControls({
+  value,
+  onPatch,
+  testIdPrefix,
+}: {
+  value: LineStyleValue;
+  onPatch: (patch: LineStyleValue) => void;
+  testIdPrefix: string;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid={`${testIdPrefix}-line-style`}>
+      <select
+        value={value.stroke_style ?? 'solid'}
+        onChange={(e) => onPatch({ stroke_style: e.target.value as StrokeStyle })}
+        aria-label={t('dashboard.chart.lineStyleAria')}
+        data-testid={`${testIdPrefix}-stroke-style`}
+        className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
+      >
+        <option value="solid">{t('dashboard.chart.lineSolid')}</option>
+        <option value="dashed">{t('dashboard.chart.lineDashed')}</option>
+        <option value="dotted">{t('dashboard.chart.lineDotted')}</option>
+      </select>
+      <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
+        {t('dashboard.chart.thickness')}
+        <input
+          type="number"
+          min={1}
+          max={6}
+          value={value.stroke_width ?? 2}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            if (!Number.isNaN(n)) onPatch({ stroke_width: n });
+          }}
+          data-testid={`${testIdPrefix}-stroke-width`}
+          className="w-12 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
+        />
+      </label>
+      <label className="flex cursor-pointer items-center gap-1 text-xs text-(--color-text-muted)">
+        <input
+          type="checkbox"
+          checked={value.smooth ?? false}
+          onChange={(e) => onPatch({ smooth: e.target.checked })}
+          data-testid={`${testIdPrefix}-smooth`}
+          className="h-3 w-3 rounded border-gray-300"
+        />
+        {t('dashboard.chart.curve')}
+      </label>
+      <input
+        type="text"
+        value={value.display_field ?? ''}
+        onChange={(e) => onPatch({ display_field: e.target.value || undefined })}
+        placeholder={t('dashboard.chart.displayFieldShort')}
+        aria-label={t('dashboard.chart.displayFieldAria')}
+        data-testid={`${testIdPrefix}-display-field`}
+        className="w-28 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+      />
+    </div>
+  );
+}
+
+/**
+ * 시리즈 alias 텍스트 입력(인라인). 토큰 삽입을 위해 DOM 참조를 상위로 전달한다.
+ * 빈 값은 alias=undefined 로 저장해 키명 폴백을 유지한다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+function SeriesAliasInput({
+  index,
+  seriesKey,
+  alias,
+  onAliasChange,
+  inputRef,
+}: {
+  index: number;
+  seriesKey: string;
+  alias: string | undefined;
+  onAliasChange: (alias: string | undefined) => void;
+  inputRef: (el: HTMLInputElement | null) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={alias ?? ''}
+      onChange={(e) => {
+        const v = e.target.value;
+        onAliasChange(v.trim() === '' ? undefined : v);
+      }}
+      placeholder={seriesKey}
+      aria-label={t('dashboard.chart.storeSeriesNameAria').replace('{key}', seriesKey)}
+      data-testid={`chart-store-series-alias-${index}`}
+      className="w-32 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+    />
+  );
+}
+
+/**
+ * 시리즈 alias 태그 토큰 삽입 버튼 + 실시간 미리보기 서브행 (SPEC-WEB-005).
+ *
+ * - 태그가 있는 시리즈에만 노출된다(채널 시리즈/태그 없는 시리즈는 plain 텍스트 유지).
+ * - 각 태그 키마다 `{$.key}` 삽입 버튼을 제공하고, 클릭 시 입력 커서 위치(없으면 끝)에
+ *   토큰을 삽입한다.
+ * - 미리보기는 resolveSeriesAlias(alias, tags) 결과를 보여준다. alias 가 비어있으면
+ *   키명으로 폴백(현재 렌더 동작과 동일).
+ */
+function SeriesAliasTokens({
+  index,
+  seriesKey,
+  alias,
+  tags,
+  onAliasChange,
+  getInput,
+}: {
+  index: number;
+  seriesKey: string;
+  alias: string | undefined;
+  tags: Record<string, string>;
+  onAliasChange: (alias: string | undefined) => void;
+  getInput: () => HTMLInputElement | null;
+}): React.ReactElement | null {
+  const { t } = useTranslation();
+  const tagKeys = Object.keys(tags);
+  if (tagKeys.length === 0) return null;
+
+  // 커서 위치(없으면 끝)에 토큰을 삽입한다.
+  const insertToken = (tagKey: string): void => {
+    const token = makeAliasToken(tagKey);
+    const current = alias ?? '';
+    const el = getInput();
+    let next: string;
+    if (el && el.selectionStart != null && el.selectionEnd != null) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      next = current.slice(0, start) + token + current.slice(end);
+    } else {
+      next = current + token;
+    }
+    onAliasChange(next.trim() === '' ? undefined : next);
+    // 삽입 후 커서를 토큰 끝으로 이동(가능할 때).
+    if (el) {
+      const caret =
+        (el.selectionStart ?? current.length) + token.length;
+      requestAnimationFrame(() => {
+        try {
+          el.focus();
+          el.setSelectionRange(caret, caret);
+        } catch {
+          // jsdom 등에서 setSelectionRange 미지원 시 무시.
+        }
+      });
+    }
+  };
+
+  // 미리보기: alias 비어있으면 키명 폴백(렌더 동작과 일치).
+  const preview =
+    alias && alias.trim() !== '' ? resolveSeriesAlias(alias, tags) : seriesKey;
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1 px-1.5 pb-1"
+      data-testid={`chart-store-series-tokens-${index}`}
+    >
+      <span className="text-[9px] text-(--color-text-muted)">
+        {t('dashboard.chart.storeAliasInsertToken')}
+      </span>
+      {tagKeys.map((k) => (
+        <button
+          key={k}
+          type="button"
+          onClick={() => insertToken(k)}
+          data-testid={`chart-store-series-token-${index}-${k}`}
+          className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 font-mono text-[9px] text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+        >
+          {makeAliasToken(k)}
+        </button>
+      ))}
+      {/* 미리보기: 라벨(i18n) + 해석값(raw). 값은 별도 노드로 두어 항상 확인 가능. */}
+      <span
+        className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-[9px] text-(--color-text-muted)"
+        data-testid={`chart-store-series-preview-${index}`}
+      >
+        <span>{t('dashboard.chart.storeAliasPreview')}</span>
+        <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 선택된 스토어 시리즈 목록 + 시리즈별 표시 이름(alias)/색상/라인 스타일 편집기.
+ *
+ * store_source.series[] 의 각 항목을 행으로 표시한다. 항상 alias + color 를 편집하고,
+ * 라인 차트 패널(`isLineChart`)에서는 펼침 시 통합 라인 스타일(stroke_style/width/
+ * smooth/display_field)도 편집한다. alias 빈 값은 undefined 로 저장해 key/컬럼명으로
+ * 폴백한다. 모든 필드는 useStoreChartData 의 매핑 경로(store_source.series 직접 읽음)를
+ * 통해 차트 범례/라인 스타일에 반영된다.
+ *
+ * @spec SPEC-WEB-005
+ */
+function SelectedSeriesList({
+  series,
+  onChange,
+  isLineChart,
+}: {
+  series: StoreSeriesRef[];
+  onChange: (series: StoreSeriesRef[]) => void;
+  isLineChart: boolean;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  // 펼친 행 인덱스(라인 스타일 편집용).
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  // 행별 alias 입력 DOM 참조(토큰 삽입 시 커서 위치 사용).
+  const aliasInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // 인덱스 i 의 시리즈에 patch 를 적용한다(불변 갱신).
+  const patchSeries = (i: number, patch: Partial<StoreSeriesRef>): void => {
+    onChange(series.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  };
+
+  const removeSeries = (i: number): void => {
+    onChange(series.filter((_, idx) => idx !== i));
+  };
+
+  const toggleExpand = (i: number): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-1.5" data-testid="chart-store-selected-series">
+      <label className="block text-[10px] font-medium text-(--color-text-muted)">
+        {t('dashboard.chart.storeSelectedSeries')}
+      </label>
+      {series.map((s, i) => {
+        const tagStr = Object.entries(s.tags ?? {})
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ');
+        const isExpanded = expanded.has(i);
+        return (
+          <div
+            key={`${s.key}-${s.metric_type ?? ''}-${i}`}
+            data-testid={`chart-store-series-row-${i}`}
+            className="rounded border border-(--color-border-default) bg-(--color-bg-surface)"
+          >
+            <div className="flex items-center gap-1.5 px-1.5 py-1">
+              {/* 라인 차트: 펼침 토글 */}
+              {isLineChart && (
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(i)}
+                  data-testid={`chart-store-series-expand-${i}`}
+                  aria-label={
+                    isExpanded
+                      ? t('dashboard.chart.collapseAria')
+                      : t('dashboard.chart.expandAria')
+                  }
+                  className="flex items-center text-(--color-text-muted)"
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )}
+                </button>
+              )}
+              {/* 키 + (metric/tags) 식별 표시 */}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate font-mono text-[11px] text-(--color-text-primary)">
+                  {s.key}
+                </span>
+                {(s.metric_type || tagStr) && (
+                  <span className="truncate text-[9px] text-(--color-text-muted)">
+                    {[s.metric_type, tagStr].filter(Boolean).join(' · ')}
+                  </span>
+                )}
+              </span>
+              {/*
+                표시 이름(alias) 입력 + 태그 토큰 삽입/미리보기 (SPEC-WEB-005).
+                빈 값은 undefined 로 저장(키명 폴백). `{$.tagKey}` 토큰 지원.
+                입력 필드만 인라인에 두고, 토큰 버튼/미리보기는 아래 서브행에 렌더한다.
+              */}
+              <SeriesAliasInput
+                index={i}
+                seriesKey={s.key}
+                alias={s.alias}
+                onAliasChange={(alias) => patchSeries(i, { alias })}
+                inputRef={(el) => {
+                  aliasInputRefs.current[i] = el;
+                }}
+              />
+              {/* 색상 선택(선택) */}
+              <input
+                type="color"
+                value={s.color ?? '#3b82f6'}
+                onChange={(e) => patchSeries(i, { color: e.target.value })}
+                aria-label={t('dashboard.chart.storeSeriesColorAria').replace('{key}', s.key)}
+                data-testid={`chart-store-series-color-${i}`}
+                className="h-5 w-5 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+              />
+              {/* 제거 */}
+              <button
+                type="button"
+                onClick={() => removeSeries(i)}
+                aria-label={t('dashboard.chart.storeSeriesRemoveAria').replace('{key}', s.key)}
+                data-testid={`chart-store-series-remove-${i}`}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-(--color-text-muted) transition-colors hover:text-red-500"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+
+            {/*
+              태그 토큰 삽입 버튼 + 미리보기 서브행 — 태그가 있는 시리즈에만 노출.
+              토큰 클릭 시 입력 커서 위치(없으면 끝)에 `{$.tagKey}` 를 삽입한다.
+            */}
+            <SeriesAliasTokens
+              index={i}
+              seriesKey={s.key}
+              alias={s.alias}
+              tags={s.tags ?? {}}
+              onAliasChange={(alias) => patchSeries(i, { alias })}
+              getInput={() => aliasInputRefs.current[i] ?? null}
+            />
+            {/* 라인 차트: 펼침 시 통합 라인 스타일 편집 */}
+            {isLineChart && isExpanded && (
+              <div className="border-t border-(--color-border-default) px-1.5 py-1.5">
+                <LineStyleControls
+                  value={s}
+                  onPatch={(patch) => patchSeries(i, patch)}
+                  testIdPrefix={`chart-store-series-${i}`}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Store 키 선택기 — 키 이름/metric_type/tag/data_type 4가지 필터 + 멀티셀렉트.
+ *
+ * 백엔드 keyObjects(useStoreKeysWithTags)에서 메타데이터를 받아 필터링하고,
+ * 체크된 키를 store_source.series[] 로 변환한다. 같은 key 가 metric/tags 별 다중
+ * 시리즈로 올 수 있으므로, 선택 단위는 (key + metric_type + tags) 조합이다.
+ */
+function StoreKeySelector({
+  agentName,
+  series,
+  onChange,
+}: {
+  agentName: string;
+  series: StoreSeriesRef[];
+  onChange: (series: StoreSeriesRef[]) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const { data, isLoading, isError } = useStoreKeysWithTags(agentName);
+  const keyObjects = useMemo<StoreKeyObject[]>(() => data?.keyObjects ?? [], [data]);
+
+  // 필터 상태(컬럼 헤더에 인라인으로 배치된다).
+  const [search, setSearch] = useState('');
+  const [metricType, setMetricType] = useState('');
+  const [dataType, setDataType] = useState<DataType | ''>('');
+  const [tagFilters, setTagFilters] = useState<Set<string>>(() => new Set());
+
+  // 정렬 상태: 컬럼별 asc → desc → none 순환.
+  const [sort, setSort] = useState<StoreSortState>(null);
+
+  const metricTypes = useMemo(() => distinctMetricTypes(keyObjects), [keyObjects]);
+  const dataTypes = useMemo(() => distinctDataTypes(keyObjects), [keyObjects]);
+
+  // 사용 가능한 tag 페어(키→값 목록) — keyObjects 의 tags 에서 수집.
+  const tagPairs = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const obj of keyObjects) {
+      for (const [k, v] of Object.entries(obj.tags ?? {})) {
+        let set = map.get(k);
+        if (!set) {
+          set = new Set();
+          map.set(k, set);
+        }
+        set.add(v);
+      }
+    }
+    return [...map.entries()].map(([k, values]) => ({ key: k, values: [...values].sort() }));
+  }, [keyObjects]);
+
+  const filtered = useMemo(
+    () =>
+      filterStoreKeyObjects(keyObjects, {
+        search,
+        metricType,
+        dataType: dataType || undefined,
+        tagFilters,
+      }),
+    [keyObjects, search, metricType, dataType, tagFilters],
+  );
+
+  // 정렬 적용(필터 결과를 컬럼 기준으로 정렬). none 이면 원래 순서 보존.
+  const sortedRows = useMemo(
+    () => sortStoreKeyObjects(filtered, sort),
+    [filtered, sort],
+  );
+
+  // 선택 식별: (key + metric_type + tags 직렬화).
+  const seriesId = (key: string, metric: string, tags: Record<string, string>): string => {
+    const tagPart = Object.keys(tags)
+      .sort()
+      .map((k) => `${k}=${tags[k]}`)
+      .join(',');
+    return `${key} ${metric} ${tagPart}`;
+  };
+  const selectedIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of series) {
+      set.add(seriesId(s.key, s.metric_type ?? '', s.tags ?? {}));
+    }
+    return set;
+  }, [series]);
+
+  const toggleKey = (obj: StoreKeyObject): void => {
+    const id = seriesId(obj.key, obj.metric_type ?? '', obj.tags ?? {});
+    if (selectedIds.has(id)) {
+      onChange(
+        series.filter(
+          (s) => seriesId(s.key, s.metric_type ?? '', s.tags ?? {}) !== id,
+        ),
+      );
+    } else {
+      onChange([
+        ...series,
+        {
+          key: obj.key,
+          metric_type: obj.metric_type || undefined,
+          tags: Object.keys(obj.tags ?? {}).length > 0 ? obj.tags : undefined,
+          data_type: obj.data_type,
+          alias: obj.key,
+        },
+      ]);
+    }
+  };
+
+  // 정렬 토글: 같은 컬럼 재클릭 시 asc → desc → none, 다른 컬럼이면 asc 로 시작.
+  const toggleSort = (field: StoreSortField): void => {
+    setSort((prev) => {
+      if (!prev || prev.field !== field) return { field, order: 'asc' };
+      if (prev.order === 'asc') return { field, order: 'desc' };
+      return null;
+    });
+  };
+
+  const toggleTag = (tagKey: string, value: string): void => {
+    const id = makeTagFilterId(tagKey, value);
+    setTagFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 정렬 방향 표시 아이콘(헤더 클릭 가능 영역에 표시).
+  const sortIndicator = (field: StoreSortField): React.ReactNode => {
+    if (!sort || sort.field !== field) return null;
+    return sort.order === 'asc' ? (
+      <ChevronUp className="h-3 w-3" aria-hidden="true" />
+    ) : (
+      <ChevronDown className="h-3 w-3" aria-hidden="true" />
+    );
+  };
+
+  // 로딩/에러 상태는 테이블 대신 메시지로 일찍 반환한다.
+  if (isLoading) {
+    return (
+      <p className="py-2 text-center text-[11px] text-(--color-text-muted)">
+        {t('dashboard.chart.storeKeysLoading')}
+      </p>
+    );
+  }
+  if (isError) {
+    return (
+      <p className="py-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
+        {t('dashboard.chart.storeKeysError')}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2" data-testid="chart-store-key-selector">
+      {/*
+        스토어 아이템(키 후보) 테이블 — 정렬 가능한 컬럼 헤더 + 헤더 내 인라인 필터.
+        컬럼: 선택 / 키 / 메트릭 타입 / 데이터 타입 / 태그.
+        TablePanel 의 테이블 패턴(sticky thead, th/td, divide 보더)을 재사용한다.
+      */}
+      <div className="max-h-72 overflow-auto rounded border border-(--color-border-default)">
+        <table className="w-full text-left text-[11px]" data-testid="chart-store-key-table">
+          <thead className="sticky top-0 z-10 bg-(--color-bg-surface)">
+            {/* 헤더 행 1: 정렬 가능한 컬럼 제목 */}
+            <tr>
+              <th
+                scope="col"
+                className="w-8 border-b border-(--color-border-default) px-2 py-1.5 text-(--color-text-muted)"
+              >
+                <span className="sr-only">{t('dashboard.chart.storeColSelect')}</span>
+              </th>
+              <SortableHeader
+                label={t('dashboard.chart.storeColKey')}
+                field="key"
+                indicator={sortIndicator('key')}
+                onSort={toggleSort}
+              />
+              <SortableHeader
+                label={t('dashboard.chart.storeColMetric')}
+                field="metric_type"
+                indicator={sortIndicator('metric_type')}
+                onSort={toggleSort}
+              />
+              <SortableHeader
+                label={t('dashboard.chart.storeColDataType')}
+                field="data_type"
+                indicator={sortIndicator('data_type')}
+                onSort={toggleSort}
+              />
+              <SortableHeader
+                label={t('dashboard.chart.storeColTags')}
+                field="tags"
+                indicator={sortIndicator('tags')}
+                onSort={toggleSort}
+              />
+            </tr>
+            {/* 헤더 행 2: 컬럼별 인라인 필터 */}
+            <tr>
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1" />
+              {/* 키 검색 */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t('dashboard.chart.storeKeySearch')}
+                  aria-label={t('dashboard.chart.storeKeySearch')}
+                  data-testid="chart-store-key-search"
+                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+                />
+              </th>
+              {/* 메트릭 타입 셀렉터 */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <select
+                  value={metricType}
+                  onChange={(e) => setMetricType(e.target.value)}
+                  aria-label={t('dashboard.chart.storeColMetric')}
+                  data-testid="chart-store-metric-filter"
+                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+                >
+                  <option value="">{t('dashboard.chart.storeAllMetrics')}</option>
+                  {metricTypes.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              {/* 데이터 타입 셀렉터 */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <select
+                  value={dataType}
+                  onChange={(e) => setDataType(e.target.value as DataType | '')}
+                  aria-label={t('dashboard.chart.storeColDataType')}
+                  data-testid="chart-store-datatype-filter"
+                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+                >
+                  <option value="">{t('dashboard.chart.storeAllDataTypes')}</option>
+                  {(dataTypes.length > 0 ? dataTypes : DATA_TYPE_OPTIONS).map((dt) => (
+                    <option key={dt} value={dt}>
+                      {dt}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              {/* 태그 구조화 필터(키 선택 → 값 칩) */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <TagFilterControl
+                  tagPairs={tagPairs}
+                  selected={tagFilters}
+                  onToggle={toggleTag}
+                />
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedRows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="px-2 py-3 text-center text-[11px] text-(--color-text-muted)"
+                >
+                  {t('dashboard.chart.storeKeysEmpty')}
+                </td>
+              </tr>
+            ) : (
+              sortedRows.map((obj, i) => {
+                const id = seriesId(obj.key, obj.metric_type ?? '', obj.tags ?? {});
+                const checked = selectedIds.has(id);
+                const tagEntries = Object.entries(obj.tags ?? {});
+                return (
+                  <tr
+                    key={`${id}-${i}`}
+                    data-testid={`chart-store-key-row-${i}`}
+                    onClick={() => toggleKey(obj)}
+                    className="cursor-pointer border-b border-(--color-border-subtle) last:border-b-0 hover:bg-(--color-bg-elevated)"
+                  >
+                    <td className="px-2 py-1 align-middle">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        // 행 클릭과 중복 토글되지 않도록 체크박스 onChange 는 no-op 으로 두고
+                        // 클릭 이벤트 전파만 막는다(행의 onClick 이 단일 토글 소스).
+                        onChange={() => {}}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleKey(obj);
+                        }}
+                        className="h-3 w-3 rounded border-gray-300 text-blue-600"
+                        aria-label={t('dashboard.chart.storeRowSelectAria').replace(
+                          '{key}',
+                          obj.key,
+                        )}
+                        data-testid={`chart-store-key-checkbox-${obj.key}`}
+                      />
+                    </td>
+                    <td className="max-w-0 truncate px-2 py-1 font-mono text-(--color-text-primary)">
+                      {obj.key}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 text-(--color-text-muted)">
+                      {obj.metric_type || '—'}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 text-(--color-text-muted)">
+                      {obj.data_type || '—'}
+                    </td>
+                    <td className="px-2 py-1">
+                      {tagEntries.length === 0 ? (
+                        <span className="text-(--color-text-muted)">—</span>
+                      ) : (
+                        // 태그를 항목별 "키: 값" 칩으로 렌더(연결 문자열 아님).
+                        <span className="flex flex-wrap gap-0.5">
+                          {tagEntries.map(([k, v]) => (
+                            <span
+                              key={k}
+                              className="rounded bg-(--color-bg-elevated) px-1 text-[9px] text-(--color-text-muted)"
+                            >
+                              {k}: {v}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+            </tbody>
+          </table>
+        </div>
+
+      {/* 선택 요약 */}
+      <p className="text-[10px] text-(--color-text-muted)">
+        {t('dashboard.chart.storeSelectedCount').replace('{count}', String(series.length))}
+      </p>
+    </div>
+  );
+}
+
+/** 정렬 가능한 컬럼 헤더 셀(클릭 시 정렬 순환 + 방향 인디케이터). */
+function SortableHeader({
+  label,
+  field,
+  indicator,
+  onSort,
+}: {
+  label: string;
+  field: StoreSortField;
+  indicator: React.ReactNode;
+  onSort: (field: StoreSortField) => void;
+}): React.ReactElement {
+  return (
+    <th
+      scope="col"
+      className="border-b border-(--color-border-default) px-2 py-1.5 font-medium text-(--color-text-muted)"
+    >
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        data-testid={`chart-store-sort-${field}`}
+        className="inline-flex items-center gap-0.5 hover:text-(--color-text-primary)"
+      >
+        {label}
+        {indicator}
+      </button>
+    </th>
+  );
+}
+
+/**
+ * 태그 구조화 필터 — 사용자가 태그 키를 고른 뒤 그 키의 값들을 개별 칩으로 토글한다.
+ * 내부 필터 식별자(makeTagFilterId)는 "key=value" 로 유지되어 storeSourceFilter
+ * 의미를 보존한다("key=value" 텍스트를 직접 입력하지 않고 항목별로 추가한다).
+ *
+ * @spec SPEC-WEB-005
+ */
+function TagFilterControl({
+  tagPairs,
+  selected,
+  onToggle,
+}: {
+  tagPairs: { key: string; values: string[] }[];
+  selected: Set<string>;
+  onToggle: (tagKey: string, value: string) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  // 현재 값 칩을 표시할 태그 키(드롭다운 선택).
+  const [activeKey, setActiveKey] = useState('');
+
+  if (tagPairs.length === 0) {
+    return <span className="text-[9px] text-(--color-text-muted)">—</span>;
+  }
+
+  const active = tagPairs.find((p) => p.key === activeKey);
+
+  return (
+    <div className="space-y-1" data-testid="chart-store-tag-filter">
+      {/* 태그 키 선택 */}
+      <select
+        value={activeKey}
+        onChange={(e) => setActiveKey(e.target.value)}
+        aria-label={t('dashboard.chart.storeTagKeySelect')}
+        data-testid="chart-store-tag-key-select"
+        className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+      >
+        <option value="">{t('dashboard.chart.storeTagKeyPlaceholder')}</option>
+        {tagPairs.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.key}
+          </option>
+        ))}
+      </select>
+      {/* 선택한 태그 키의 값 칩(개별 토글) */}
+      {active && (
+        <div className="flex flex-wrap gap-0.5">
+          {active.values.map((v) => {
+            const id = makeTagFilterId(active.key, v);
+            const on = selected.has(id);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onToggle(active.key, v)}
+                data-testid={`chart-store-tag-value-${active.key}-${v}`}
+                className={`rounded-full border px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                  on
+                    ? 'border-blue-500 bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
+                }`}
+              >
+                {v}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {/* 선택된 태그 필터 요약 칩("키: 값", 클릭 시 해제) */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap gap-0.5" data-testid="chart-store-tag-selected">
+          {[...selected].map((id) => {
+            const eq = id.indexOf('=');
+            const k = id.slice(0, eq);
+            const v = id.slice(eq + 1);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onToggle(k, v)}
+                aria-label={t('dashboard.chart.storeTagRemoveAria')
+                  .replace('{key}', k)
+                  .replace('{value}', v)}
+                className="inline-flex items-center gap-0.5 rounded-full border border-blue-500 bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+              >
+                {k}: {v}
+                <X className="h-2.5 w-2.5" aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -483,7 +1591,7 @@ function ChannelRow({
       {/* 펼친 상태 */}
       {expanded && (
         <div className="space-y-2 border-t border-(--color-border-default) px-2 pt-2 pb-2">
-          {/* 줄 1: 채널 선택 + display field */}
+          {/* 줄 1: 채널 선택 */}
           <div className="flex items-center gap-1.5">
             <select
               data-testid={`line-chart-channel-row-select-${idx}`}
@@ -508,16 +1616,6 @@ function ChannelRow({
               ))}
               <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.chart.customShort')}</option>
             </select>
-            <input
-              type="text"
-              value={channel.display_field ?? ''}
-              onChange={(e) =>
-                onPatch({ display_field: e.target.value || undefined })
-              }
-              placeholder={t('dashboard.chart.displayFieldShort')}
-              className="w-28 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-              aria-label={t('dashboard.chart.displayFieldAria')}
-            />
           </div>
           {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
             <input
@@ -535,53 +1633,28 @@ function ChannelRow({
             />
           )}
 
-          {/* 줄 2: 라인 스타일 */}
-          <div className="flex items-center gap-2">
-            <select
-              value={channel.stroke_style ?? 'solid'}
-              onChange={(e) =>
-                onPatch({ stroke_style: e.target.value as StrokeStyle })
-              }
-              className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-              aria-label={t('dashboard.chart.lineStyleAria')}
-            >
-              <option value="solid">{t('dashboard.chart.lineSolid')}</option>
-              <option value="dashed">{t('dashboard.chart.lineDashed')}</option>
-              <option value="dotted">{t('dashboard.chart.lineDotted')}</option>
-            </select>
-            <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
-              {t('dashboard.chart.thickness')}
-              <input
-                type="number"
-                min={1}
-                max={6}
-                value={channel.stroke_width ?? 2}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10);
-                  if (!Number.isNaN(n)) onPatch({ stroke_width: n });
-                }}
-                className="w-12 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-              />
-            </label>
-            <label className="flex cursor-pointer items-center gap-1 text-xs text-(--color-text-muted)">
-              <input
-                type="checkbox"
-                checked={channel.smooth ?? false}
-                onChange={(e) => onPatch({ smooth: e.target.checked })}
-                className="h-3 w-3 rounded border-gray-300"
-              />
-              {t('dashboard.chart.curve')}
-            </label>
-          </div>
+          {/* 줄 2: 통합 라인 스타일(stroke/width/smooth/display_field) */}
+          <LineStyleControls
+            value={channel}
+            onPatch={(patch) => onPatch(patch)}
+            testIdPrefix={`line-chart-channel-row-${idx}`}
+          />
         </div>
       )}
     </div>
   );
 }
 
-// --- 3. line-chart 패널 설정 (SPEC §4.2.2 line-chart) ---
-
-export function LineChartSection({
+/**
+ * 채널 모드 시리즈 편집기 (SPEC-WEB-005).
+ *
+ * 라인 차트 패널의 채널(channels[]) 추가/선택/순서변경 + per-line 스타일을 데이터
+ * 소스 영역에서 편집한다. 기존 LineChartSection 의 채널 편집 블록을 이곳으로 이전했다.
+ * channel_name 만 있는 기존 패널은 channels[] 로 자동 마이그레이션된다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+export function ChannelSeriesEditor({
   panel,
   onConfigChange,
   fetchChannels = listChartChannels,
@@ -592,25 +1665,9 @@ export function LineChartSection({
 }): React.ReactElement {
   const { t } = useTranslation();
   const config = panel.config ?? {};
-  const maxPoints = (config.max_points as number | undefined) ?? 100;
-  const xLabel = (config.x_label as string | undefined) ?? '';
-  const yMin = config.y_min as number | undefined;
-  const yMax = config.y_max as number | undefined;
-  const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
-  const yPadPct = (config.y_axis_padding_pct as number | undefined) ?? 5;
-  const yLabel = (config.y_label as string | undefined) ?? '';
-  const yUnit = (config.y_unit as string | undefined) ?? '';
-  const timeWindowMode =
-    (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
-  const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
-  const fixedStartMs = config.fixed_start_ms as number | undefined;
-  const fixedEndMs = config.fixed_end_ms as number | undefined;
-  const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
-  const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
-  const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
   const legacyChannelName = (config.channel_name as string | undefined) ?? '';
 
-  // channel_name 만 있고 channels 가 없는 기존 패널 → 자동 마이그레이션
+  // channel_name 만 있고 channels 가 없는 기존 패널 → 자동 마이그레이션.
   const channels: ChannelRefConfig[] = useMemo(() => {
     const raw = config.channels as ChannelRefConfig[] | undefined;
     if (raw && raw.length > 0) return raw;
@@ -618,21 +1675,8 @@ export function LineChartSection({
     return [{ name: '' }];
   }, [config.channels, legacyChannelName]);
 
-  function updateThresholds(next: YThreshold[]): void {
-    onConfigChange({ y_thresholds: next.length === 0 ? undefined : next });
-  }
-  function addThreshold(): void {
-    updateThresholds([...thresholds, { value: 0, color: '#f59e0b' }]);
-  }
-  function removeThreshold(idx: number): void {
-    updateThresholds(thresholds.filter((_, i) => i !== idx));
-  }
-  function patchThreshold(idx: number, patch: Partial<YThreshold>): void {
-    updateThresholds(thresholds.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
-  }
-
   function updateChannels(next: ChannelRefConfig[]): void {
-    // channels 로 통합: channel_name 은 제거
+    // channels 로 통합: channel_name 은 제거.
     onConfigChange({ channels: next.length === 0 ? [{ name: '' }] : next, channel_name: undefined });
   }
   function addChannel(): void {
@@ -654,7 +1698,7 @@ export function LineChartSection({
     updateChannels(next);
   }
 
-  // 활성 채널 fetch (다채널 모드 행 드롭다운에서 사용)
+  // 활성 채널 fetch (행 드롭다운에서 사용).
   const [activeChannels, setActiveChannels] = useState<ChartChannelSummary[]>([]);
   const [channelsLoadState, setChannelsLoadState] = useState<
     'idle' | 'loading' | 'error'
@@ -679,56 +1723,107 @@ export function LineChartSection({
   const activeNameSet = new Set(activeChannels.map((c) => c.name));
 
   return (
-    <div className="space-y-3">
-      {/* --- 채널 (channels) --- */}
-      <div data-testid="line-chart-channels-editor">
-        <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-medium text-(--color-text-muted)">
-            {t('dashboard.chart.channels')}
-          </label>
-          <button
-            type="button"
-            onClick={addChannel}
-            data-testid="line-chart-add-channel"
-            className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
-          >
-            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
-          </button>
-        </div>
-        <p className="mb-1 text-[10px] leading-snug text-(--color-text-muted)">
-          {t('dashboard.chart.channelsHint')}
-        </p>
-        <div className="space-y-2">
-          {channels.map((c, idx) => (
-            <ChannelRow
-              key={idx}
-              idx={idx}
-              channel={c}
-              activeChannels={activeChannels}
-              activeNameSet={activeNameSet}
-              channelsLoadState={channelsLoadState}
-              canDelete={channels.length > 1}
-              onPatch={(patch) => patchChannel(idx, patch)}
-              onRemove={() => removeChannel(idx)}
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/x-channel-idx', String(idx));
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const raw = e.dataTransfer.getData('text/x-channel-idx');
-                const from = parseInt(raw, 10);
-                if (Number.isNaN(from)) return;
-                moveChannel(from, idx);
-              }}
-            />
-          ))}
-        </div>
+    <div
+      className="space-y-2 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5"
+      data-testid="line-chart-channels-editor"
+    >
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.chart.channels')}
+        </label>
+        <button
+          type="button"
+          onClick={addChannel}
+          data-testid="line-chart-add-channel"
+          className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
+        >
+          <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
+        </button>
       </div>
+      <p className="text-[10px] leading-snug text-(--color-text-muted)">
+        {t('dashboard.chart.channelsHint')}
+      </p>
+      <div className="space-y-2">
+        {channels.map((c, idx) => (
+          <ChannelRow
+            key={idx}
+            idx={idx}
+            channel={c}
+            activeChannels={activeChannels}
+            activeNameSet={activeNameSet}
+            channelsLoadState={channelsLoadState}
+            canDelete={channels.length > 1}
+            onPatch={(patch) => patchChannel(idx, patch)}
+            onRemove={() => removeChannel(idx)}
+            onDragStart={(e) => {
+              e.dataTransfer.setData('text/x-channel-idx', String(idx));
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const raw = e.dataTransfer.getData('text/x-channel-idx');
+              const from = parseInt(raw, 10);
+              if (Number.isNaN(from)) return;
+              moveChannel(from, idx);
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- 3. line-chart 패널 설정 — 전역 스타일만 (채널/시리즈 편집은 데이터 소스 영역) ---
+
+export function LineChartSection({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: OnConfig;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const config = panel.config ?? {};
+  const maxPoints = (config.max_points as number | undefined) ?? 100;
+  const xLabel = (config.x_label as string | undefined) ?? '';
+  const yMin = config.y_min as number | undefined;
+  const yMax = config.y_max as number | undefined;
+  const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
+  const yPadPct = (config.y_axis_padding_pct as number | undefined) ?? 5;
+  const yLabel = (config.y_label as string | undefined) ?? '';
+  const yUnit = (config.y_unit as string | undefined) ?? '';
+  const timeWindowMode =
+    (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
+  const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
+  const fixedStartMs = config.fixed_start_ms as number | undefined;
+  const fixedEndMs = config.fixed_end_ms as number | undefined;
+  const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
+  const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
+  const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
+
+  function updateThresholds(next: YThreshold[]): void {
+    onConfigChange({ y_thresholds: next.length === 0 ? undefined : next });
+  }
+  function addThreshold(): void {
+    updateThresholds([...thresholds, { value: 0, color: '#f59e0b' }]);
+  }
+  function removeThreshold(idx: number): void {
+    updateThresholds(thresholds.filter((_, i) => i !== idx));
+  }
+  function patchThreshold(idx: number, patch: Partial<YThreshold>): void {
+    updateThresholds(thresholds.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
+  }
+
+  return (
+    <div className="space-y-3">
+      {/*
+        채널/시리즈 편집은 데이터 소스 영역(ChannelSeriesEditor / SelectedSeriesList)으로
+        이전되었다. 본 섹션은 전역 스타일(X/Y축·임계선·범례·다중시리즈)만 다룬다.
+      */}
 
       {/* ═══ 차트 스타일 ═══ */}
       <div className="border-t border-(--color-border-default) pt-3">
