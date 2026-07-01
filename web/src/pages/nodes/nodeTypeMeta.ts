@@ -129,60 +129,61 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
 
   enrich: {
     description:
-      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화하는 노드입니다. id_source 로 얻은 id 를 레지스트리에서 조회하여 type/name 을 얻고, to_metadata 로 메타데이터 그룹을 재수화하거나 to_payload 로 {type,id,name} 객체를 payload 키에 기록합니다. 두 출력은 독립적으로/동시에 활성화할 수 있으며 최소 하나는 필요합니다. id 를 얻지 못하거나 레지스트리에 없으면 원본 그대로 통과합니다(에러 아님, no-op). id 는 소스 값을 항상 보존합니다.',
+      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화하는 노드입니다. agent 와 device 는 독립 블록으로, 둘 다(또는 하나만) 동시에 보강할 수 있습니다. 각 블록은 id_source 로 얻은 id 를 레지스트리에서 조회하여 type/name 을 얻고, to_metadata 로 해당 메타데이터 그룹을 재수화하거나 to_payload 로 {type,id,name} 객체를 payload 키에 기록합니다. 한 블록은 to_metadata=true 또는 to_payload 값이 있어야 활성화되며, 최소 한 블록이 활성이어야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 그 블록만 원본 그대로 통과합니다(에러 아님, no-op). id 는 소스 값을 항상 보존합니다.',
     ports: [
-      { name: 'in', direction: 'input', description: '보강할 메시지 입력. id_source 로 id 를 해석합니다.' },
-      { name: 'out', direction: 'output', description: '보강된 메시지 출력. 룩업 실패/누락 id 는 원본 그대로 통과(pass-through).' },
+      { name: 'in', direction: 'input', description: '보강할 메시지 입력. 각 블록의 id_source 로 id 를 해석합니다.' },
+      { name: 'out', direction: 'output', description: '보강된 메시지 출력. 룩업 실패/누락 id 는 해당 블록만 원본 유지(pass-through).' },
     ],
     configFields: [
       {
-        name: 'source',
-        type: 'select',
-        required: true,
-        description: '재수화할 그룹 종류: agent | device. agent 는 agent 레지스트리, device 는 device 레지스트리를 조회합니다.',
+        name: 'agent',
+        type: 'object_fields',
+        required: false,
+        description:
+          'agent 레지스트리 룩업 블록(선택, 중첩 오브젝트 — 에디터에서 네이티브 위젯으로 편집). 하위 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.agent.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
       },
       {
-        name: 'id_source',
-        type: 'string',
+        name: 'device',
+        type: 'object_fields',
         required: false,
-        description: 'id 를 얻는 JSONPath/템플릿. 미지정 시 source 에 따라 $.metadata.agent.id 또는 $.metadata.device.id 를 사용합니다.',
-        default: '$.metadata.<source>.id',
-      },
-      {
-        name: 'to_metadata',
-        type: 'boolean',
-        required: false,
-        description: 'true 면 source 그룹(agent/device)을 {type,name} 으로 재수화합니다(id 보존).',
-        default: 'false',
-      },
-      {
-        name: 'to_payload',
-        type: 'string',
-        required: false,
-        description: '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다.',
+        description:
+          'device 레지스트리 룩업 블록(선택, 중첩 오브젝트 — 에디터에서 네이티브 위젯으로 편집). 하위 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.device.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
       },
     ],
     configExample: {
-      source: 'device',
-      id_source: '$.metadata.device.id',
-      to_metadata: true,
-      to_payload: 'device_info',
+      agent: {
+        enabled: true,
+        id_source: '$.metadata.agent.id',
+        to_metadata: true,
+        to_payload: 'agent_info',
+      },
+      device: {
+        enabled: true,
+        id_source: '$.metadata.device.id',
+        to_metadata: true,
+        to_payload: 'device_info',
+      },
     },
     inputExamples: {
       in: {
-        _comment: 'slim 된 메시지 — device 그룹은 id 만 존재',
+        _comment: 'slim 된 메시지 — agent/device 그룹은 id 만 존재',
         payload: { current_temperature: 25.5 },
-        metadata: { device: { id: 'lg_icp01:1' } },
+        metadata: { agent: { id: 'lg_icp01' }, device: { id: 'lg_icp01:1' } },
       },
     },
     outputExamples: {
-      'out (to_metadata=true, to_payload="device_info")': {
-        _comment: 'device 그룹이 type/name 으로 재수화되고, device_info 키에 {type,id,name} 기록',
+      'out (agent + device 블록 모두 활성)': {
+        _comment:
+          'agent/device 그룹이 각각 type/name 으로 재수화되고, agent_info / device_info 키에 {type,id,name} 기록. 두 블록은 독립 적용.',
         payload: {
           current_temperature: 25.5,
+          agent_info: { type: 'lg_hvacr01', id: 'lg_icp01', name: 'LG 캡처 에이전트' },
           device_info: { type: 'HVACR.IDU', id: 'lg_icp01:1', name: 'IDU-1' },
         },
-        metadata: { device: { type: 'HVACR.IDU', id: 'lg_icp01:1', name: 'IDU-1' } },
+        metadata: {
+          agent: { type: 'lg_hvacr01', id: 'lg_icp01', name: 'LG 캡처 에이전트' },
+          device: { type: 'HVACR.IDU', id: 'lg_icp01:1', name: 'IDU-1' },
+        },
       },
     },
   },
@@ -266,9 +267,17 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         required: true,
         description: '실행할 스크립트 소스 코드',
       },
+      {
+        name: 'on_error',
+        type: 'string',
+        required: false,
+        description: 'error: 실패 시 오류 발생 · ignore: 실패 시 원본 메시지 통과(로그 없음) · drop: 실패 시 출력 없음',
+        default: 'error',
+      },
     ],
     configExample: {
       script: 'return { ...msg, payload: { ...msg.payload, processed: true } }',
+      on_error: 'error',
     },
   },
 

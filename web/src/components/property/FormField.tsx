@@ -293,6 +293,23 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
         />
       )}
 
+      {/* object_fields: 중첩 객체를 네이티브 위젯 섹션으로 편집한다(JSON textarea 아님).
+          - 값은 이 필드의 name 키 아래 중첩 객체(config[name] = {sub.name: value, ...}).
+          - 각 하위 필드는 최상위와 동일한 FormField 로 재귀 렌더링된다(boolean→체크박스,
+            string→텍스트, select→드롭다운 등). 하위 필드의 visibleWhen 은 중첩 객체
+            기준으로 평가한다.
+          - 하위 값 변경 시 전체 객체를 불변(immutable) 복제해 onChange 로 올린다.
+            → DynamicForm 의 기존 flat 쓰기(config[name] = 객체)가 그대로 중첩을 만든다.
+            dotted 키를 절대 만들지 않는다. */}
+      {field.type === 'object_fields' && (
+        <ObjectFieldsGroup
+          value={value}
+          fields={field.fields ?? []}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
       {field.type === 'register_map' && (
         <RegisterMapEditor
           value={value}
@@ -758,6 +775,67 @@ function FlowPickerInput({
             : t('property.field.flowMissing')}
         </p>
       )}
+    </div>
+  );
+}
+
+// 중첩 객체(object_fields)를 네이티브 위젯 섹션으로 편집하는 컴포넌트.
+//
+// 값은 하나의 객체({ <sub.name>: value, ... })이며, 이 컴포넌트는 각 하위 필드를
+// 최상위와 동일한 FormField 로 재귀 렌더링한다. 하위 값 변경 시 전체 객체를 불변
+// 복제해 상위 onChange 로 올리므로, DynamicForm 의 기존 flat 쓰기가 그대로
+// config[name] = { ... } 중첩 객체를 만든다(dotted 키 없음).
+//
+// 하위 필드 하나를 지우면(빈 문자열 등) 해당 키만 갱신되고 객체는 유효하게 유지된다.
+function ObjectFieldsGroup({
+  value,
+  fields,
+  onChange,
+  readOnly,
+}: {
+  value: unknown;
+  fields: ConfigField[];
+  onChange: (value: unknown) => void;
+  readOnly?: boolean;
+}) {
+  // 현재 중첩 객체(없거나 객체가 아니면 빈 객체로 취급 — backward compat: 기존 노드는
+  // 이미 객체를 들고 있으므로 그대로 읽힌다).
+  const obj: Record<string, unknown> =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+
+  // 하위 필드 값 변경: 전체 객체를 불변 복제해 한 키만 갱신 후 상위로 올린다.
+  const handleSubChange = (subName: string, subValue: unknown) => {
+    onChange({ ...obj, [subName]: subValue });
+  };
+
+  // 하위 visibleWhen 은 중첩 객체 기준으로 평가한다(최상위 data 가 아니라 obj).
+  const visibleSubFields = fields.filter((sub) => {
+    if (!sub.visibleWhen) return true;
+    const actual = obj[sub.visibleWhen.field];
+    if (sub.visibleWhen.notEmpty) return actual != null && actual !== '';
+    const expected = sub.visibleWhen.value;
+    if (Array.isArray(expected)) return expected.includes(actual);
+    return actual === expected;
+  });
+
+  return (
+    <div
+      className={cn(
+        'space-y-3 rounded-md border border-(--color-border-default)',
+        'bg-(--color-bg-surface) p-3',
+      )}
+    >
+      {visibleSubFields.map((sub) => (
+        <FormField
+          key={sub.name}
+          field={sub}
+          value={obj[sub.name]}
+          onChange={(v) => handleSubChange(sub.name, v)}
+          readOnly={readOnly}
+        />
+      ))}
     </div>
   );
 }

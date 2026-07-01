@@ -192,6 +192,14 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           required: true,
           description: '실행할 Lua 스크립트 코드. 입력: 전역 `msg` (id, timestamp, payload, metadata). 반환: 변환된 msg 테이블. 예: `msg.payload.x = msg.payload.x * 2; return msg`',
         },
+        {
+          name: 'on_error',
+          type: 'select',
+          label: '오류 처리',
+          options: ['error', 'ignore', 'drop'],
+          default: 'error',
+          description: 'error: 실패 시 오류 발생 · ignore: 실패 시 원본 메시지 통과(로그 없음) · drop: 실패 시 출력 없음',
+        },
       ],
     },
     defaultPorts: [
@@ -313,44 +321,92 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   enrich: {
     description:
-      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화합니다. id 소스로 레지스트리에서 type/name 을 조회하여 (a) 메타데이터 그룹을 재수화하거나 (b) payload 키에 {type,id,name} 객체를 기록합니다. to_metadata / to_payload 는 조합 가능하며, 최소 하나는 설정해야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 원본 그대로 통과합니다(에러 아님, no-op).',
+      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화합니다. agent 와 device 는 독립 블록으로, 둘 다(또는 하나만) 동시에 보강할 수 있습니다. 각 블록은 id_source(JSONPath/템플릿)로 얻은 id 를 레지스트리에서 조회하여 type/name 을 얻고, to_metadata 로 메타데이터 그룹을 재수화하거나 to_payload 로 payload 키에 {type,id,name} 객체를 기록합니다. 한 블록은 to_metadata=true 또는 to_payload 값이 있어야 활성화되며, 최소 한 블록이 활성이어야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 해당 블록만 원본 그대로 통과합니다(에러 아님, no-op).',
     inputDesc:
-      '모든 메시지. id_source(JSONPath/템플릿)로 id 를 해석합니다 (예: $.metadata.device.id, $.payload.device_id).',
+      '모든 메시지. 각 블록의 id_source(JSONPath/템플릿)로 id 를 해석합니다 (예: $.metadata.device.id, $.payload.device_id).',
     outputDesc:
-      '보강된 메시지 패스스루. to_metadata 시 source 그룹(agent/device)이 {type,name} 으로 재수화됨(id 보존). to_payload 시 해당 payload 키에 {type,id,name} 객체 기록. 룩업 실패/누락 id 는 원본 그대로 통과.',
+      '보강된 메시지 패스스루. 활성 블록마다 독립 적용됨 — to_metadata 시 해당 그룹(agent/device)이 {type,name} 으로 재수화됨(id 보존), to_payload 시 해당 payload 키에 {type,id,name} 객체 기록. 룩업 실패/누락 id 는 그 블록만 no-op(원본 유지).',
     configSchema: {
       fields: [
         {
-          name: 'source',
-          type: 'select',
-          label: '소스',
-          required: true,
-          options: ['agent', 'device'],
-          description: '재수화할 그룹 종류. agent: agent 레지스트리 룩업 / device: device 레지스트리 룩업.',
+          // 중첩 블록(네이티브 위젯): config.agent = { enabled, id_source, to_metadata, to_payload }.
+          // object_fields 는 JSON textarea 가 아니라 하위 필드별 네이티브 입력(체크박스/텍스트)
+          // 으로 편집되며, DynamicForm 의 flat 쓰기로 config.agent 중첩 객체가 그대로 저장된다.
+          // device 블록과 독립적이며, 백엔드 parseEnrichBlock(cfg, "agent") 와 매칭된다.
+          name: 'agent',
+          type: 'object_fields',
+          label: '에이전트 (agent)',
+          description:
+            'agent 레지스트리 룩업 블록(선택). to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. device 블록과 함께 사용할 수 있습니다.',
+          fields: [
+            {
+              name: 'enabled',
+              type: 'boolean',
+              label: '활성화',
+              default: true,
+              description: '블록 사용 여부. 끄면 이 블록은 무시됩니다(블록 존재 시 기본 켜짐).',
+            },
+            {
+              name: 'id_source',
+              type: 'string',
+              label: 'ID 소스',
+              placeholder: '$.metadata.agent.id',
+              description:
+                'id 를 얻는 JSONPath/템플릿. 미지정 시 $.metadata.agent.id 를 사용합니다. 예: $.metadata.agent.id, $.payload.agent_id.',
+            },
+            {
+              name: 'to_metadata',
+              type: 'boolean',
+              label: '메타데이터 보강',
+              default: false,
+              description: 'agent 그룹을 {type,name} 으로 재수화합니다(id 보존).',
+            },
+            {
+              name: 'to_payload',
+              type: 'string',
+              label: 'Payload 키',
+              description: '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다. 예: agent_info.',
+            },
+          ],
         },
         {
-          name: 'id_source',
-          type: 'string',
-          label: 'ID 소스',
+          // 중첩 블록(네이티브 위젯): config.device = { ... }. agent 블록과 독립.
+          // 백엔드 parseEnrichBlock(cfg, "device") 와 매칭된다.
+          name: 'device',
+          type: 'object_fields',
+          label: '디바이스 (device)',
           description:
-            'id 를 얻는 JSONPath/템플릿. 미지정 시 source 에 따라 $.metadata.agent.id 또는 $.metadata.device.id 를 기본값으로 사용합니다. 예: $.metadata.device.id, $.payload.device_id.',
-          placeholder: '$.metadata.device.id',
-        },
-        {
-          name: 'to_metadata',
-          type: 'boolean',
-          label: '메타데이터 보강',
-          default: false,
-          description:
-            'source 그룹(agent/device)을 {type,name} 으로 재수화합니다(id 는 보존). to_payload 와 함께 사용할 수 있으며, 둘 중 최소 하나는 설정해야 합니다.',
-        },
-        {
-          name: 'to_payload',
-          type: 'string',
-          label: 'Payload 키',
-          default: '',
-          description:
-            '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다. to_metadata 와 함께 사용할 수 있으며, 둘 중 최소 하나는 설정해야 합니다.',
+            'device 레지스트리 룩업 블록(선택). to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. agent 블록과 함께 사용할 수 있습니다.',
+          fields: [
+            {
+              name: 'enabled',
+              type: 'boolean',
+              label: '활성화',
+              default: true,
+              description: '블록 사용 여부. 끄면 이 블록은 무시됩니다(블록 존재 시 기본 켜짐).',
+            },
+            {
+              name: 'id_source',
+              type: 'string',
+              label: 'ID 소스',
+              placeholder: '$.metadata.device.id',
+              description:
+                'id 를 얻는 JSONPath/템플릿. 미지정 시 $.metadata.device.id 를 사용합니다. 예: $.metadata.device.id, $.payload.device_id.',
+            },
+            {
+              name: 'to_metadata',
+              type: 'boolean',
+              label: '메타데이터 보강',
+              default: false,
+              description: 'device 그룹을 {type,name} 으로 재수화합니다(id 보존).',
+            },
+            {
+              name: 'to_payload',
+              type: 'string',
+              label: 'Payload 키',
+              description: '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다. 예: device_info.',
+            },
+          ],
         },
       ],
     },
@@ -2741,17 +2797,28 @@ export function getRequiredFieldErrors(
 
   const errors: { name: string; label: string }[] = [];
   for (const field of schema.fields) {
+    // object_fields: 중첩 객체 내부의 required 하위 필드를 검증한다.
+    // 하위 필드의 값/visibleWhen 은 중첩 객체(data[field.name]) 기준으로 평가한다.
+    // (enrich 는 하위 필드가 모두 optional 이지만 일반적으로 지원한다.)
+    if (field.type === 'object_fields') {
+      const nested =
+        data[field.name] && typeof data[field.name] === 'object' && !Array.isArray(data[field.name])
+          ? (data[field.name] as Record<string, unknown>)
+          : {};
+      for (const sub of field.fields ?? []) {
+        if (!sub.required) continue;
+        if (!isFieldVisible(sub, nested)) continue;
+        if (isEmptyFieldValue(nested[sub.name])) {
+          errors.push({ name: `${field.name}.${sub.name}`, label: sub.label });
+        }
+      }
+      continue;
+    }
+
     if (!field.required) continue;
 
     // visibleWhen 조건에 맞지 않으면 검증 대상에서 제외
-    if (field.visibleWhen) {
-      const actual = data[field.visibleWhen.field];
-      const expected = field.visibleWhen.value;
-      const isVisible = Array.isArray(expected)
-        ? expected.includes(actual)
-        : actual === expected;
-      if (!isVisible) continue;
-    }
+    if (!isFieldVisible(field, data)) continue;
 
     const value = data[field.name];
     if (isEmptyFieldValue(value)) {
@@ -2759,6 +2826,16 @@ export function getRequiredFieldErrors(
     }
   }
   return errors;
+}
+
+/** field.visibleWhen 조건을 주어진 데이터 컨텍스트로 평가한다(미설정이면 항상 표시). */
+function isFieldVisible(field: ConfigField, ctx: Record<string, unknown>): boolean {
+  if (!field.visibleWhen) return true;
+  const actual = ctx[field.visibleWhen.field];
+  if (field.visibleWhen.notEmpty) return actual != null && actual !== '';
+  const expected = field.visibleWhen.value;
+  if (Array.isArray(expected)) return expected.includes(actual);
+  return actual === expected;
 }
 
 /** 필드 값이 "없음" 으로 간주되는지 판정한다. */
