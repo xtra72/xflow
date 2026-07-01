@@ -407,32 +407,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// AgentResolver 경로로는 접근할 수 없어 직접 주입한다.
 	timerNodeOpt := node.WithTimer(sysMgr.Timer())
 
-	// Lua 스크립트 엔진 초기화. 단일 엔진을 모든 script 노드가 공유하되,
-	// 노드별 어댑터(자체 scriptID 보관)를 통해 격리한다.
-	scriptEngine := script.NewScriptEngine()
-	if err := scriptEngine.Init(context.Background()); err != nil {
-		return fmt.Errorf("스크립트 엔진 초기화 실패: %w", err)
-	}
-	defer func() {
-		_ = scriptEngine.Shutdown(context.Background())
-	}()
-	scriptFactoryOpt := node.WithScriptEngineFactory(func(nodeID string) node.ScriptEngine {
-		return script.NewNodeEngineAdapter(scriptEngine, nodeID)
-	})
-
-	// SPEC-INVENTORY-001: inventory 노드용 4종 의존성 resolver.
-	// 함수형 resolver 는 eng 자기 참조(FlowRegistry) 의 초기화 순서 문제를 회피한다.
-	// eng 가 채워진 후 inventory 노드 Init 시점에 함수가 호출되어 실제 인스턴스를 획득한다.
-	var eng *engine.Engine
-	inventoryDeviceRegOpt := node.WithDeviceRegistryFunc(func() device.DeviceRegistry { return deviceRegistry })
-	inventoryAgentMgrOpt := node.WithAgentManagerFunc(func() agent.Manager { return agentMgr })
-	inventoryNodeRegOpt := node.WithNodeRegistryFunc(func() *node.Registry { return registry })
-	inventoryFlowRegOpt := node.WithFlowRegistryFunc(func() node.FlowRegistry { return eng })
-
 	// message-slim-metadata / enrich (C): agent / device 정규 정보 룩업.
-	// enrich 노드, expression 빌트인(agentInfo/deviceInfo), 그리고 WS slim-expand 가
-	// 동일한 룩업 경로를 공유하도록 여기서 1회 구성한다. agentMgr.Get / deviceRegistry.Get
-	// 을 감싸 id → {type,name} 을 반환한다(미존재 시 ok=false).
+	// enrich 노드, expression 빌트인(agentInfo/deviceInfo), Lua stdlib(xflow.agent/device),
+	// 그리고 WS slim-expand 가 동일한 룩업 경로를 공유하도록 여기서 1회 구성한다.
+	// agentMgr.Get / deviceRegistry.Get 을 감싸 id → {type,name} 을 반환한다(미존재 시 ok=false).
+	//
+	// 주의: 스크립트 엔진이 stdlib deps 로 이 룩업들을 참조하므로, 엔진 생성보다 먼저 구성한다.
 	agentInfoLookup := node.AgentLookupFunc(func(id string) (node.RegistryMeta, bool) {
 		a, err := agentMgr.Get(id)
 		if err != nil || a == nil {
@@ -453,6 +433,51 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// expression 빌트인(agentInfo/deviceInfo)용 프로세스 전역 룩업 1회 설정.
 	// 미설정이면 두 빌트인이 노출되지 않으므로(기존 동작), 여기서 명시 설정한다.
 	node.SetExprLookups(agentInfoLookup, deviceInfoLookup)
+
+	// Lua 스크립트 엔진 초기화. 단일 엔진을 모든 script 노드가 공유하되,
+	// 노드별 어댑터(자체 scriptID 보관)를 통해 격리한다.
+	//
+	// Follow-up 1: 프로덕션 VM 에 xflow stdlib 를 등록한다(WithStdlib). agent/device
+	// 모듈은 위 룩업을 재사용하여 xflow.agent.get / xflow.device.get 이 실제 동작한다.
+	// store 모듈은 네임스페이스(per-node/per-flow) 해석이 VM 풀 생성 시점에 불가능하므로
+	// 여기서 주입하지 않는다(Store=nil, EnableStore=false) → xflow.store 는 현재처럼 nil
+	// 반환. 별도 per-node store 배선은 후속 작업으로 남긴다.
+	scriptStdlibOpts := script.StdlibOptions{EnableAgent: true, EnableDevice: true}
+	scriptStdlibDeps := script.StdlibDeps{
+		Agent: func(id string) (script.AgentInfo, bool) {
+			m, ok := agentInfoLookup.LookupAgent(id)
+			if !ok {
+				return script.AgentInfo{}, false
+			}
+			return script.AgentInfo{Type: m.Type, ID: m.ID, Name: m.Name}, true
+		},
+		Device: func(id string) (script.AgentInfo, bool) {
+			m, ok := deviceInfoLookup.LookupDevice(id)
+			if !ok {
+				return script.AgentInfo{}, false
+			}
+			return script.AgentInfo{Type: m.Type, ID: m.ID, Name: m.Name}, true
+		},
+	}
+	scriptEngine := script.NewScriptEngine(script.WithStdlib(scriptStdlibOpts, scriptStdlibDeps))
+	if err := scriptEngine.Init(context.Background()); err != nil {
+		return fmt.Errorf("스크립트 엔진 초기화 실패: %w", err)
+	}
+	defer func() {
+		_ = scriptEngine.Shutdown(context.Background())
+	}()
+	scriptFactoryOpt := node.WithScriptEngineFactory(func(nodeID string) node.ScriptEngine {
+		return script.NewNodeEngineAdapter(scriptEngine, nodeID)
+	})
+
+	// SPEC-INVENTORY-001: inventory 노드용 4종 의존성 resolver.
+	// 함수형 resolver 는 eng 자기 참조(FlowRegistry) 의 초기화 순서 문제를 회피한다.
+	// eng 가 채워진 후 inventory 노드 Init 시점에 함수가 호출되어 실제 인스턴스를 획득한다.
+	var eng *engine.Engine
+	inventoryDeviceRegOpt := node.WithDeviceRegistryFunc(func() device.DeviceRegistry { return deviceRegistry })
+	inventoryAgentMgrOpt := node.WithAgentManagerFunc(func() agent.Manager { return agentMgr })
+	inventoryNodeRegOpt := node.WithNodeRegistryFunc(func() *node.Registry { return registry })
+	inventoryFlowRegOpt := node.WithFlowRegistryFunc(func() node.FlowRegistry { return eng })
 
 	eng = engine.NewEngine(
 		engine.WithNodeRegistry(registry),

@@ -79,6 +79,15 @@ type engineConfig struct {
 	maxExecutionTime time.Duration
 	sandboxConfig    SandboxConfig
 	maxVMUses        int
+
+	// stdlibEnabled 는 VM 생성 시 xflow 표준 라이브러리를 등록할지 여부이다.
+	// WithStdlib 옵션으로만 true 가 된다. 미설정(false) 시 createVM 은
+	// RegisterStdlib 를 호출하지 않아 기존 동작(xflow 글로벌 미노출)을 그대로 유지한다.
+	stdlibEnabled bool
+	// stdlibOptions 는 활성화할 xflow 모듈 집합이다 (stdlibEnabled 일 때만 사용).
+	stdlibOptions StdlibOptions
+	// stdlibDeps 는 xflow 모듈의 외부 의존성이다 (agent/device 룩업 등).
+	stdlibDeps StdlibDeps
 }
 
 // EngineOption 은 엔진 생성 옵션 함수 타입이다.
@@ -117,6 +126,21 @@ func WithMaxVMUses(n int) EngineOption {
 	}
 }
 
+// WithStdlib 는 프로덕션 VM 에 xflow 표준 라이브러리를 등록하도록 설정한다.
+//
+// 이 옵션이 주어지면 풀의 모든 VM(초기 생성 및 maxUses 재활용 포함)이 생성 직후
+// (샌드박스 적용 이후) RegisterStdlib(L, opts, deps) 를 1회 실행하여 xflow.* 모듈을
+// 노출한다. 옵션 미사용 시 xflow 글로벌이 노출되지 않아 기존 동작이 그대로 유지된다.
+//
+// 성능: 등록은 VM 생성 시점에 1회만 수행되며 실행(Execute)마다 반복되지 않는다.
+func WithStdlib(opts StdlibOptions, deps StdlibDeps) EngineOption {
+	return func(c *engineConfig) {
+		c.stdlibEnabled = true
+		c.stdlibOptions = opts
+		c.stdlibDeps = deps
+	}
+}
+
 // DefaultScriptEngine 은 ScriptEngine 인터페이스의 기본 구현체이다.
 type DefaultScriptEngine struct {
 	config engineConfig
@@ -152,7 +176,11 @@ func (e *DefaultScriptEngine) Init(ctx context.Context) error {
 		return nil
 	}
 
-	e.pool = newVMPool(e.config.poolSize, e.config.maxVMUses, e.config.sandboxConfig)
+	e.pool = newVMPool(e.config.poolSize, e.config.maxVMUses, e.config.sandboxConfig, stdlibConfig{
+		enabled: e.config.stdlibEnabled,
+		options: e.config.stdlibOptions,
+		deps:    e.config.stdlibDeps,
+	})
 	e.inited = true
 	return nil
 }
@@ -365,20 +393,29 @@ func generateScriptID(source ScriptSource) string {
 // vmPool - 내부 VM 풀 구현
 // ============================================================
 
+// stdlibConfig 는 VM 생성 시 xflow 표준 라이브러리 등록 설정을 묶는다.
+type stdlibConfig struct {
+	enabled bool
+	options StdlibOptions
+	deps    StdlibDeps
+}
+
 type vmPool struct {
 	pool    chan *lua.LState
 	size    int
 	maxUses int
 	sandbox SandboxConfig
+	stdlib  stdlibConfig
 	uses    sync.Map // map[*lua.LState]int
 }
 
-func newVMPool(size, maxUses int, sandbox SandboxConfig) *vmPool {
+func newVMPool(size, maxUses int, sandbox SandboxConfig, stdlib stdlibConfig) *vmPool {
 	p := &vmPool{
 		pool:    make(chan *lua.LState, size),
 		size:    size,
 		maxUses: maxUses,
 		sandbox: sandbox,
+		stdlib:  stdlib,
 	}
 	// 풀 초기화
 	for i := 0; i < size; i++ {
@@ -420,10 +457,21 @@ func (p *vmPool) release(L *lua.LState) {
 	}
 }
 
-// createVM 은 새 LState를 생성하고 샌드박스를 적용한다.
+// createVM 은 새 LState를 생성하고 샌드박스를 적용한 뒤, 활성화된 경우 xflow
+// 표준 라이브러리를 등록한다.
+//
+// 순서 주의: RegisterStdlib 는 반드시 ApplySandbox 이후에 호출한다. 샌드박스가
+// 위험 전역(os/io/load 등)을 제거한 다음 xflow 모듈을 얹어야, 샌드박스 제약이
+// xflow 등록으로 약화되지 않는다. 등록은 VM 생성 시 1회만 수행되며 실행마다
+// 반복되지 않는다(성능 보존).
 func (p *vmPool) createVM() *lua.LState {
 	L := lua.NewState()
 	ApplySandbox(L, p.sandbox) //nolint:errcheck
+	if p.stdlib.enabled {
+		// 등록 실패는 치명적이지 않다(모듈 부재와 동일 — 스크립트가 xflow.* 를
+		// 쓰지 않으면 무해). 방어적으로 무시하되, VM 자체는 정상 사용 가능하다.
+		_ = RegisterStdlib(L, p.stdlib.options, p.stdlib.deps)
+	}
 	return L
 }
 
