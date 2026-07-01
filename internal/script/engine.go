@@ -79,6 +79,15 @@ type engineConfig struct {
 	maxExecutionTime time.Duration
 	sandboxConfig    SandboxConfig
 	maxVMUses        int
+
+	// stdlibEnabled 는 VM 생성 시 xflow 표준 라이브러리를 등록할지 여부이다.
+	// WithStdlib 옵션으로만 true 가 된다. 미설정(false) 시 createVM 은
+	// RegisterStdlib 를 호출하지 않아 기존 동작(xflow 글로벌 미노출)을 그대로 유지한다.
+	stdlibEnabled bool
+	// stdlibOptions 는 활성화할 xflow 모듈 집합이다 (stdlibEnabled 일 때만 사용).
+	stdlibOptions StdlibOptions
+	// stdlibDeps 는 xflow 모듈의 외부 의존성이다 (agent/device 룩업 등).
+	stdlibDeps StdlibDeps
 }
 
 // EngineOption 은 엔진 생성 옵션 함수 타입이다.
@@ -117,6 +126,21 @@ func WithMaxVMUses(n int) EngineOption {
 	}
 }
 
+// WithStdlib 는 프로덕션 VM 에 xflow 표준 라이브러리를 등록하도록 설정한다.
+//
+// 이 옵션이 주어지면 풀의 모든 VM(초기 생성 및 maxUses 재활용 포함)이 생성 직후
+// (샌드박스 적용 이후) RegisterStdlib(L, opts, deps) 를 1회 실행하여 xflow.* 모듈을
+// 노출한다. 옵션 미사용 시 xflow 글로벌이 노출되지 않아 기존 동작이 그대로 유지된다.
+//
+// 성능: 등록은 VM 생성 시점에 1회만 수행되며 실행(Execute)마다 반복되지 않는다.
+func WithStdlib(opts StdlibOptions, deps StdlibDeps) EngineOption {
+	return func(c *engineConfig) {
+		c.stdlibEnabled = true
+		c.stdlibOptions = opts
+		c.stdlibDeps = deps
+	}
+}
+
 // DefaultScriptEngine 은 ScriptEngine 인터페이스의 기본 구현체이다.
 type DefaultScriptEngine struct {
 	config engineConfig
@@ -125,6 +149,40 @@ type DefaultScriptEngine struct {
 	stats  ScriptEngineStats
 	inited bool
 	mu     sync.Mutex
+
+	// storeBindings 는 실행별(per-Execute) 스토어 바인딩이다.
+	// 키는 *lua.LState, 값은 StoreAccessor. 실행 직전 바인딩하고 실행 후 해제한다.
+	//
+	// 동시성: VM 은 pool.acquire ~ release 구간에서 한 고루틴이 배타적으로 소유하므로
+	// (acquire 는 채널에서 VM 을 꺼내고 release 가 되돌린다), 특정 *lua.LState 에 대한
+	// 바인딩 set/clear/read 는 그 구간 안에서만 발생하여 경쟁이 없다. sync.Map 은
+	// 서로 다른 LState 항목에 대한 동시 접근(다른 VM 을 쓰는 병렬 Execute)만 처리한다.
+	storeBindings sync.Map // map[*lua.LState]StoreAccessor
+}
+
+// resolveBoundStore 는 주어진 LState 에 현재 바인딩된 StoreAccessor 를 반환한다.
+// stdlib 의 xflow.store 모듈이 StoreProvider 로 사용한다. 바인딩이 없으면 nil.
+func (e *DefaultScriptEngine) resolveBoundStore(L *lua.LState) StoreAccessor {
+	if v, ok := e.storeBindings.Load(L); ok {
+		if s, ok := v.(StoreAccessor); ok {
+			return s
+		}
+	}
+	return nil
+}
+
+// bindStore 는 실행 직전 LState 에 스토어를 바인딩한다(store 가 nil 이면 no-op).
+func (e *DefaultScriptEngine) bindStore(L *lua.LState, store StoreAccessor) {
+	if store == nil {
+		return
+	}
+	e.storeBindings.Store(L, store)
+}
+
+// unbindStore 는 실행 후 LState 의 스토어 바인딩을 해제한다.
+// error/panic 여부와 무관하게 반드시 호출되어야 한다(VM 이 풀로 반환되기 때문).
+func (e *DefaultScriptEngine) unbindStore(L *lua.LState) {
+	e.storeBindings.Delete(L)
 }
 
 // NewScriptEngine 은 새 DefaultScriptEngine을 생성한다.
@@ -152,7 +210,21 @@ func (e *DefaultScriptEngine) Init(ctx context.Context) error {
 		return nil
 	}
 
-	e.pool = newVMPool(e.config.poolSize, e.config.maxVMUses, e.config.sandboxConfig)
+	// 실행별 스토어 바인딩(Follow-up A): stdlib 이 활성화되어 있으면 엔진 자신의
+	// per-L 바인딩 해석자를 StoreProvider 로 주입한다. 이렇게 하면 풀링된 VM 의
+	// xflow.store 가 고정 스토어가 아니라 "이번 실행에 바인딩된" 네임스페이스 스토어를
+	// 매 호출 조회한다. 호출 측(cmd)이 별도 StoreProvider 를 주지 않아도 되도록
+	// 여기서 엔진이 자동으로 연결한다(기존 고정 Store 는 폴백으로 보존).
+	deps := e.config.stdlibDeps
+	if e.config.stdlibEnabled && deps.StoreProvider == nil {
+		deps.StoreProvider = e.resolveBoundStore
+	}
+
+	e.pool = newVMPool(e.config.poolSize, e.config.maxVMUses, e.config.sandboxConfig, stdlibConfig{
+		enabled: e.config.stdlibEnabled,
+		options: e.config.stdlibOptions,
+		deps:    deps,
+	})
 	e.inited = true
 	return nil
 }
@@ -220,8 +292,21 @@ func (e *DefaultScriptEngine) Compile(ctx context.Context, source ScriptSource) 
 	return scriptID, nil
 }
 
-// Execute 는 컴파일된 스크립트를 실행한다.
+// Execute 는 컴파일된 스크립트를 실행한다(스토어 바인딩 없음).
+// 하위 호환을 위해 유지하며, ExecuteWithStore(store=nil) 로 위임한다.
 func (e *DefaultScriptEngine) Execute(ctx context.Context, scriptID string, input any) (any, error) {
+	return e.ExecuteWithStore(ctx, scriptID, input, nil)
+}
+
+// ExecuteWithStore 는 이번 실행에 한정된 StoreAccessor 를 바인딩하여 스크립트를
+// 실행한다(Follow-up A). store 가 nil 이면 바인딩 없이 실행하며(=Execute 와 동일),
+// xflow.store 는 nil-safe 로 동작한다.
+//
+// 바인딩 수명: VM 획득(acquire) 직후 bindStore, 반환(release) 전 defer unbindStore
+// 로 반드시 해제한다. error/timeout/panic 어느 경로에서도 defer 가 실행되어 VM 이
+// 다음 실행으로 스토어를 누출하지 않는다. VM 은 acquire~release 구간에서 배타적이므로
+// per-L 바인딩은 경쟁이 없다.
+func (e *DefaultScriptEngine) ExecuteWithStore(ctx context.Context, scriptID string, input any, store StoreAccessor) (any, error) {
 	e.stats.TotalExecutions.Add(1)
 
 	// 캐시에서 FunctionProto 조회
@@ -253,6 +338,10 @@ func (e *DefaultScriptEngine) Execute(ctx context.Context, scriptID string, inpu
 
 	// 실행 완료 후 VM 반환
 	defer e.pool.release(L)
+
+	// 이번 실행의 스토어를 이 VM 에 바인딩하고, 실행 후 반드시 해제한다.
+	e.bindStore(L, store)
+	defer e.unbindStore(L)
 
 	// input을 전역 "msg"로 설정
 	if input != nil {
@@ -365,20 +454,29 @@ func generateScriptID(source ScriptSource) string {
 // vmPool - 내부 VM 풀 구현
 // ============================================================
 
+// stdlibConfig 는 VM 생성 시 xflow 표준 라이브러리 등록 설정을 묶는다.
+type stdlibConfig struct {
+	enabled bool
+	options StdlibOptions
+	deps    StdlibDeps
+}
+
 type vmPool struct {
 	pool    chan *lua.LState
 	size    int
 	maxUses int
 	sandbox SandboxConfig
+	stdlib  stdlibConfig
 	uses    sync.Map // map[*lua.LState]int
 }
 
-func newVMPool(size, maxUses int, sandbox SandboxConfig) *vmPool {
+func newVMPool(size, maxUses int, sandbox SandboxConfig, stdlib stdlibConfig) *vmPool {
 	p := &vmPool{
 		pool:    make(chan *lua.LState, size),
 		size:    size,
 		maxUses: maxUses,
 		sandbox: sandbox,
+		stdlib:  stdlib,
 	}
 	// 풀 초기화
 	for i := 0; i < size; i++ {
@@ -420,10 +518,21 @@ func (p *vmPool) release(L *lua.LState) {
 	}
 }
 
-// createVM 은 새 LState를 생성하고 샌드박스를 적용한다.
+// createVM 은 새 LState를 생성하고 샌드박스를 적용한 뒤, 활성화된 경우 xflow
+// 표준 라이브러리를 등록한다.
+//
+// 순서 주의: RegisterStdlib 는 반드시 ApplySandbox 이후에 호출한다. 샌드박스가
+// 위험 전역(os/io/load 등)을 제거한 다음 xflow 모듈을 얹어야, 샌드박스 제약이
+// xflow 등록으로 약화되지 않는다. 등록은 VM 생성 시 1회만 수행되며 실행마다
+// 반복되지 않는다(성능 보존).
 func (p *vmPool) createVM() *lua.LState {
 	L := lua.NewState()
 	ApplySandbox(L, p.sandbox) //nolint:errcheck
+	if p.stdlib.enabled {
+		// 등록 실패는 치명적이지 않다(모듈 부재와 동일 — 스크립트가 xflow.* 를
+		// 쓰지 않으면 무해). 방어적으로 무시하되, VM 자체는 정상 사용 가능하다.
+		_ = RegisterStdlib(L, p.stdlib.options, p.stdlib.deps)
+	}
 	return L
 }
 

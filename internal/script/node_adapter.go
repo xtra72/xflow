@@ -71,7 +71,18 @@ func (a *NodeEngineAdapter) Compile(source string) error {
 // Execute 는 컴파일된 script 를 msg 에 대해 실행하고 변환된 message 를 반환한다.
 // script 가 nil 또는 nil 반환 시 입력 msg 그대로 통과.
 // script 가 테이블 반환 시 payload/metadata 를 추출해 새 message 빌드.
+//
+// 스토어 바인딩 없이 실행하며, ExecuteWithStore(store=nil) 로 위임한다.
 func (a *NodeEngineAdapter) Execute(ctx context.Context, msg message.Message) (message.Message, error) {
+	return a.ExecuteWithStore(ctx, msg, nil)
+}
+
+// ExecuteWithStore 는 이번 실행에 한정된 store 를 xflow.store 에 바인딩하여 script 를
+// 실행한다(Follow-up A). store 가 nil 이면 바인딩 없이 실행한다(=Execute 와 동일).
+//
+// 노드 계층(node.ScriptNode)이 자신의 네임스페이스 스토어를 script.StoreAccessor 로
+// 감싸 전달하며, 엔진이 이 실행 동안만 VM 에 바인딩한다.
+func (a *NodeEngineAdapter) ExecuteWithStore(ctx context.Context, msg message.Message, store StoreAccessor) (message.Message, error) {
 	a.mu.RLock()
 	sid := a.scriptID
 	a.mu.RUnlock()
@@ -81,7 +92,7 @@ func (a *NodeEngineAdapter) Execute(ctx context.Context, msg message.Message) (m
 		return msg, nil
 	}
 
-	result, err := a.engine.Execute(ctx, sid, msg)
+	result, err := a.engine.ExecuteWithStore(ctx, sid, msg, store)
 	if err != nil {
 		return nil, fmt.Errorf("script: execute %q: %w", a.nodeName, err)
 	}

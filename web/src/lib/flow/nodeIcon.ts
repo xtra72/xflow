@@ -147,6 +147,7 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   filter: Filter,
   script: Code,
   framer: Layers,
+  enrich: Sparkles,
   inventory: Boxes,
 
   // --- 라우팅 ---

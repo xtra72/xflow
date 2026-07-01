@@ -311,6 +311,55 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  enrich: {
+    description:
+      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화합니다. id 소스로 레지스트리에서 type/name 을 조회하여 (a) 메타데이터 그룹을 재수화하거나 (b) payload 키에 {type,id,name} 객체를 기록합니다. to_metadata / to_payload 는 조합 가능하며, 최소 하나는 설정해야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 원본 그대로 통과합니다(에러 아님, no-op).',
+    inputDesc:
+      '모든 메시지. id_source(JSONPath/템플릿)로 id 를 해석합니다 (예: $.metadata.device.id, $.payload.device_id).',
+    outputDesc:
+      '보강된 메시지 패스스루. to_metadata 시 source 그룹(agent/device)이 {type,name} 으로 재수화됨(id 보존). to_payload 시 해당 payload 키에 {type,id,name} 객체 기록. 룩업 실패/누락 id 는 원본 그대로 통과.',
+    configSchema: {
+      fields: [
+        {
+          name: 'source',
+          type: 'select',
+          label: '소스',
+          required: true,
+          options: ['agent', 'device'],
+          description: '재수화할 그룹 종류. agent: agent 레지스트리 룩업 / device: device 레지스트리 룩업.',
+        },
+        {
+          name: 'id_source',
+          type: 'string',
+          label: 'ID 소스',
+          description:
+            'id 를 얻는 JSONPath/템플릿. 미지정 시 source 에 따라 $.metadata.agent.id 또는 $.metadata.device.id 를 기본값으로 사용합니다. 예: $.metadata.device.id, $.payload.device_id.',
+          placeholder: '$.metadata.device.id',
+        },
+        {
+          name: 'to_metadata',
+          type: 'boolean',
+          label: '메타데이터 보강',
+          default: false,
+          description:
+            'source 그룹(agent/device)을 {type,name} 으로 재수화합니다(id 는 보존). to_payload 와 함께 사용할 수 있으며, 둘 중 최소 하나는 설정해야 합니다.',
+        },
+        {
+          name: 'to_payload',
+          type: 'string',
+          label: 'Payload 키',
+          default: '',
+          description:
+            '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다. to_metadata 와 함께 사용할 수 있으며, 둘 중 최소 하나는 설정해야 합니다.',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   framer: {
     description: '바이트 스트림에서 프로토콜 프레임을 분리하여 완성된 프레임을 출력합니다.',
     inputDesc: 'payload.raw ([]byte): 프레이밍할 바이트 스트림. metadata의 stream key로 다중 스트림 분리',

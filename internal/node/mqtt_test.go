@@ -722,10 +722,11 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 // + inventory (SPEC-INVENTORY-001, processing 카테고리)
 // + select-field (SPEC-SELECT-FIELD, processing 카테고리)
 // + flow-node (SPEC-SUBFLOW-001, composition 카테고리 — 배포 시 확장됨)
+// + enrich (message-slim-metadata / enrich, processing 카테고리)
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 60, len(types))
+	assert.Equal(t, 61, len(types))
 }
 
 // ===========================================================================

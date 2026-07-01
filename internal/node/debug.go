@@ -180,7 +180,7 @@ func (n *DebugNode) Process(ctx context.Context, msg message.Message) ([]message
 					"error", err)
 			}
 			formatted = fmt.Sprintf("message id=%s payload=%v metadata=%v",
-				msg.ID(), payload, msg.Metadata().Raw())
+				msg.ID(), payload, slimEgressMetadata(msg))
 		} else {
 			formatted = buf.String()
 		}
@@ -295,7 +295,8 @@ func (n *DebugNode) buildMessageMap(msg message.Message, dispFields []string) ma
 		"name":      n.Name(),
 		"payload":   msg.Payload().ToMap(),
 		// P2: Raw() 로 nested group 을 중첩 객체로 노출(flat 키는 문자열 유지).
-		"metadata": msg.Metadata().Raw(),
+		// message-slim-metadata: 외부 egress 이므로 agent/device 그룹은 id-only 슬림.
+		"metadata": slimEgressMetadata(msg),
 	}
 
 	if len(dispFields) == 0 {
@@ -352,7 +353,8 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 			return formatValue(msg.Payload().ToMap(), format)
 		case "metadata":
 			// P2: Raw() 로 nested group 포함.
-			return formatValue(msg.Metadata().Raw(), format)
+			// message-slim-metadata: 외부 egress 이므로 agent/device 그룹 id-only 슬림.
+			return formatValue(slimEgressMetadata(msg), format)
 		default:
 			// payload 내 키 직접 참조
 			if v, ok := msg.Payload().Get(key); ok {
@@ -373,7 +375,8 @@ func buildLogLine(n *DebugNode, msg message.Message, format string, dispFields [
 			"timestamp": msg.Timestamp().UnixMilli(),
 			"payload":   msg.Payload().ToMap(),
 			// P2: Raw() 로 nested group 포함.
-			"metadata": msg.Metadata().Raw(),
+			// message-slim-metadata: 외부 egress 이므로 agent/device 그룹 id-only 슬림.
+			"metadata": slimEgressMetadata(msg),
 		}
 		return resolveField("time") + " " +
 			resolveField("level") + " " +
@@ -413,7 +416,8 @@ func extractProperty(msg message.Message, prop string) any {
 	case "metadata":
 		if len(parts) == 1 {
 			// P2: Raw() 로 nested group 까지 노출(property=.metadata 가 group 을 보여준다).
-			return msg.Metadata().Raw()
+			// message-slim-metadata: 외부 egress 이므로 agent/device 그룹 id-only 슬림.
+			return slimEgressMetadata(msg)
 		}
 		// 특정 메타데이터 키
 		if v, ok := msg.Metadata().Get(parts[1]); ok {
