@@ -9,7 +9,7 @@
 // @spec SPEC-STORE-003
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import { FormField } from './FormField';
 import type { ConfigField } from '@/types/node';
@@ -295,5 +295,106 @@ describe('FormField string placeholder', () => {
     );
     const input = container.querySelector('input[type="text"]') as HTMLInputElement;
     expect(input.placeholder).toBe('');
+  });
+});
+
+// object_fields: 중첩 객체를 네이티브 위젯으로 편집하고, 하위 값 변경 시 전체
+// 중첩 객체를 불변으로 갱신해 상위 onChange 로 올린다(dotted 키 없음, config[name]={...}).
+// enrich 노드(agent/device 블록)가 이 타입을 사용한다.
+describe('FormField object_fields (nested native widgets)', () => {
+  const agentField: ConfigField = {
+    name: 'agent',
+    type: 'object_fields',
+    label: '에이전트 (agent)',
+    fields: [
+      { name: 'enabled', type: 'boolean', label: '활성화', default: true },
+      { name: 'id_source', type: 'string', label: 'ID 소스', placeholder: '$.metadata.agent.id' },
+      { name: 'to_metadata', type: 'boolean', label: '메타데이터 보강', default: false },
+      { name: 'to_payload', type: 'string', label: 'Payload 키' },
+    ],
+  };
+
+  it('하위 필드를 네이티브 위젯(체크박스/텍스트)으로 렌더한다 — JSON textarea 아님', () => {
+    const { container } = render(
+      <FormField field={agentField} value={{}} onChange={vi.fn()} />,
+    );
+    // 하위 boolean 2개(enabled, to_metadata) → 체크박스 2개
+    expect(container.querySelectorAll('input[type="checkbox"]').length).toBe(2);
+    // 하위 string 2개(id_source, to_payload) → 텍스트 입력 2개
+    expect(container.querySelectorAll('input[type="text"]').length).toBe(2);
+    // object_fields 는 JSON textarea 를 만들지 않는다
+    expect(container.querySelector('textarea')).toBeNull();
+    // 하위 라벨이 노출된다
+    expect(screen.getByText('ID 소스')).toBeInTheDocument();
+    expect(screen.getByText('Payload 키')).toBeInTheDocument();
+  });
+
+  it('하위 string 편집 시 전체 중첩 객체를 갱신해 onChange 로 올린다 (dotted 키 아님)', () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <FormField
+        field={agentField}
+        value={{ enabled: true }}
+        onChange={onChange}
+      />,
+    );
+    // id_source 텍스트 입력(placeholder 로 식별)에 값 입력
+    const idSource = container.querySelector(
+      'input[placeholder="$.metadata.agent.id"]',
+    ) as HTMLInputElement;
+    expect(idSource).not.toBeNull();
+    fireEvent.change(idSource, { target: { value: '$.payload.agent_id' } });
+
+    // onChange 는 전체 중첩 객체를 받는다(기존 키 보존 + 신규 키, dotted 키 없음)
+    expect(onChange).toHaveBeenCalledWith({
+      enabled: true,
+      id_source: '$.payload.agent_id',
+    });
+  });
+
+  it('하위 boolean 토글 시 전체 중첩 객체를 갱신한다', () => {
+    const onChange = vi.fn();
+    render(
+      <FormField
+        field={agentField}
+        value={{ id_source: '$.metadata.agent.id' }}
+        onChange={onChange}
+      />,
+    );
+    // to_metadata 체크박스 토글 (라벨로 접근)
+    const toMetadata = screen.getByLabelText('메타데이터 보강') as HTMLInputElement;
+    fireEvent.click(toMetadata);
+    expect(onChange).toHaveBeenCalledWith({
+      id_source: '$.metadata.agent.id',
+      to_metadata: true,
+    });
+  });
+
+  it('backward compat: 기존 노드의 중첩 객체 값을 하위 위젯에 정확히 로드한다', () => {
+    const { container } = render(
+      <FormField
+        field={agentField}
+        value={{ enabled: true, id_source: '$.payload.x', to_metadata: true, to_payload: 'agent_info' }}
+        onChange={vi.fn()}
+      />,
+    );
+    const texts = container.querySelectorAll('input[type="text"]');
+    const values = Array.from(texts).map((el) => (el as HTMLInputElement).value);
+    expect(values).toContain('$.payload.x');
+    expect(values).toContain('agent_info');
+    const checks = container.querySelectorAll('input[type="checkbox"]');
+    // enabled=true, to_metadata=true → 둘 다 checked
+    expect(Array.from(checks).every((c) => (c as HTMLInputElement).checked)).toBe(true);
+  });
+
+  it('value 가 없으면(undefined) 빈 객체로 취급하고 하위 default 를 표시한다', () => {
+    const { container } = render(
+      <FormField field={agentField} value={undefined} onChange={vi.fn()} />,
+    );
+    const checks = container.querySelectorAll('input[type="checkbox"]');
+    // enabled(default true) → checked, to_metadata(default false) → unchecked
+    const checkedStates = Array.from(checks).map((c) => (c as HTMLInputElement).checked);
+    expect(checkedStates).toContain(true);
+    expect(checkedStates).toContain(false);
   });
 });

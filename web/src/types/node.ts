@@ -33,12 +33,17 @@ export type ConfigSection = 'transport' | 'protocol' | 'operation' | 'logging';
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor' | 'metrics_editor';
+  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor' | 'metrics_editor';
   label: string;
   required?: boolean;
   default?: unknown;
   options?: string[];
   description?: string;
+  /** object_fields 타입 전용: 중첩 객체의 하위 필드 스키마.
+   *  값은 이 필드의 `name` 키 아래 중첩 객체로 저장된다
+   *  (config[name] = { <sub.name>: value, ... }). dotted 키를 만들지 않는다.
+   *  하위 필드는 최상위 필드와 동일한 위젯(FormField)으로 렌더링된다. */
+  fields?: ConfigField[];
   /** 다른 필드 값에 따라 조건부 표시.
    *  value: 값 일치 / notEmpty: 비어있지 않을 때 표시 */
   visibleWhen?: { field: string; value?: unknown | unknown[]; notEmpty?: boolean };

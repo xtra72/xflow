@@ -137,17 +137,17 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     configFields: [
       {
         name: 'agent',
-        type: 'object',
+        type: 'object_fields',
         required: false,
         description:
-          'agent 레지스트리 룩업 블록(선택, 중첩 오브젝트). 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.agent.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
+          'agent 레지스트리 룩업 블록(선택, 중첩 오브젝트 — 에디터에서 네이티브 위젯으로 편집). 하위 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.agent.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
       },
       {
         name: 'device',
-        type: 'object',
+        type: 'object_fields',
         required: false,
         description:
-          'device 레지스트리 룩업 블록(선택, 중첩 오브젝트). 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.device.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
+          'device 레지스트리 룩업 블록(선택, 중첩 오브젝트 — 에디터에서 네이티브 위젯으로 편집). 하위 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.device.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
       },
     ],
     configExample: {

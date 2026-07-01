@@ -321,23 +321,84 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     configSchema: {
       fields: [
         {
-          // 중첩 블록: 이 필드는 config.agent 에 { enabled, id_source, to_metadata, to_payload }
-          // 객체를 통째로 기록한다(폼은 object 타입 = JSON 오브젝트 에디터로 렌더링).
+          // 중첩 블록(네이티브 위젯): config.agent = { enabled, id_source, to_metadata, to_payload }.
+          // object_fields 는 JSON textarea 가 아니라 하위 필드별 네이티브 입력(체크박스/텍스트)
+          // 으로 편집되며, DynamicForm 의 flat 쓰기로 config.agent 중첩 객체가 그대로 저장된다.
           // device 블록과 독립적이며, 백엔드 parseEnrichBlock(cfg, "agent") 와 매칭된다.
           name: 'agent',
-          type: 'object',
-          label: '에이전트 블록 (agent)',
+          type: 'object_fields',
+          label: '에이전트 (agent)',
           description:
-            'agent 레지스트리 룩업 블록(선택). JSON 오브젝트로 편집합니다. 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 미지정 시 $.metadata.agent.id), to_metadata(bool), to_payload(string, payload 키). 예: {"enabled": true, "id_source": "$.metadata.agent.id", "to_metadata": true, "to_payload": "agent_info"}. to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. device 블록과 함께 사용할 수 있으며, 사용하지 않으려면 비워 두세요({} 또는 빈 값).',
+            'agent 레지스트리 룩업 블록(선택). to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. device 블록과 함께 사용할 수 있습니다.',
+          fields: [
+            {
+              name: 'enabled',
+              type: 'boolean',
+              label: '활성화',
+              default: true,
+              description: '블록 사용 여부. 끄면 이 블록은 무시됩니다(블록 존재 시 기본 켜짐).',
+            },
+            {
+              name: 'id_source',
+              type: 'string',
+              label: 'ID 소스',
+              placeholder: '$.metadata.agent.id',
+              description:
+                'id 를 얻는 JSONPath/템플릿. 미지정 시 $.metadata.agent.id 를 사용합니다. 예: $.metadata.agent.id, $.payload.agent_id.',
+            },
+            {
+              name: 'to_metadata',
+              type: 'boolean',
+              label: '메타데이터 보강',
+              default: false,
+              description: 'agent 그룹을 {type,name} 으로 재수화합니다(id 보존).',
+            },
+            {
+              name: 'to_payload',
+              type: 'string',
+              label: 'Payload 키',
+              description: '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다. 예: agent_info.',
+            },
+          ],
         },
         {
-          // 중첩 블록: config.device 에 동일 형태의 객체를 기록한다. agent 블록과 독립.
+          // 중첩 블록(네이티브 위젯): config.device = { ... }. agent 블록과 독립.
           // 백엔드 parseEnrichBlock(cfg, "device") 와 매칭된다.
           name: 'device',
-          type: 'object',
-          label: '디바이스 블록 (device)',
+          type: 'object_fields',
+          label: '디바이스 (device)',
           description:
-            'device 레지스트리 룩업 블록(선택). JSON 오브젝트로 편집합니다. 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 미지정 시 $.metadata.device.id), to_metadata(bool), to_payload(string, payload 키). 예: {"enabled": true, "id_source": "$.metadata.device.id", "to_metadata": true, "to_payload": "device_info"}. to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. agent 블록과 함께 사용할 수 있으며, 사용하지 않으려면 비워 두세요({} 또는 빈 값).',
+            'device 레지스트리 룩업 블록(선택). to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. agent 블록과 함께 사용할 수 있습니다.',
+          fields: [
+            {
+              name: 'enabled',
+              type: 'boolean',
+              label: '활성화',
+              default: true,
+              description: '블록 사용 여부. 끄면 이 블록은 무시됩니다(블록 존재 시 기본 켜짐).',
+            },
+            {
+              name: 'id_source',
+              type: 'string',
+              label: 'ID 소스',
+              placeholder: '$.metadata.device.id',
+              description:
+                'id 를 얻는 JSONPath/템플릿. 미지정 시 $.metadata.device.id 를 사용합니다. 예: $.metadata.device.id, $.payload.device_id.',
+            },
+            {
+              name: 'to_metadata',
+              type: 'boolean',
+              label: '메타데이터 보강',
+              default: false,
+              description: 'device 그룹을 {type,name} 으로 재수화합니다(id 보존).',
+            },
+            {
+              name: 'to_payload',
+              type: 'string',
+              label: 'Payload 키',
+              description: '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다. 예: device_info.',
+            },
+          ],
         },
       ],
     },
@@ -2728,17 +2789,28 @@ export function getRequiredFieldErrors(
 
   const errors: { name: string; label: string }[] = [];
   for (const field of schema.fields) {
+    // object_fields: 중첩 객체 내부의 required 하위 필드를 검증한다.
+    // 하위 필드의 값/visibleWhen 은 중첩 객체(data[field.name]) 기준으로 평가한다.
+    // (enrich 는 하위 필드가 모두 optional 이지만 일반적으로 지원한다.)
+    if (field.type === 'object_fields') {
+      const nested =
+        data[field.name] && typeof data[field.name] === 'object' && !Array.isArray(data[field.name])
+          ? (data[field.name] as Record<string, unknown>)
+          : {};
+      for (const sub of field.fields ?? []) {
+        if (!sub.required) continue;
+        if (!isFieldVisible(sub, nested)) continue;
+        if (isEmptyFieldValue(nested[sub.name])) {
+          errors.push({ name: `${field.name}.${sub.name}`, label: sub.label });
+        }
+      }
+      continue;
+    }
+
     if (!field.required) continue;
 
     // visibleWhen 조건에 맞지 않으면 검증 대상에서 제외
-    if (field.visibleWhen) {
-      const actual = data[field.visibleWhen.field];
-      const expected = field.visibleWhen.value;
-      const isVisible = Array.isArray(expected)
-        ? expected.includes(actual)
-        : actual === expected;
-      if (!isVisible) continue;
-    }
+    if (!isFieldVisible(field, data)) continue;
 
     const value = data[field.name];
     if (isEmptyFieldValue(value)) {
@@ -2746,6 +2818,16 @@ export function getRequiredFieldErrors(
     }
   }
   return errors;
+}
+
+/** field.visibleWhen 조건을 주어진 데이터 컨텍스트로 평가한다(미설정이면 항상 표시). */
+function isFieldVisible(field: ConfigField, ctx: Record<string, unknown>): boolean {
+  if (!field.visibleWhen) return true;
+  const actual = ctx[field.visibleWhen.field];
+  if (field.visibleWhen.notEmpty) return actual != null && actual !== '';
+  const expected = field.visibleWhen.value;
+  if (Array.isArray(expected)) return expected.includes(actual);
+  return actual === expected;
 }
 
 /** 필드 값이 "없음" 으로 간주되는지 판정한다. */
