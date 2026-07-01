@@ -60,10 +60,24 @@ type AgentInfoLookup func(id string) (AgentInfo, bool)
 // DeviceInfoLookup 은 id 로 device 정보를 조회하는 함수 타입이다. 매칭 없으면 ok=false.
 type DeviceInfoLookup func(id string) (AgentInfo, bool)
 
+// StoreProvider 는 현재 실행(Execute)에 바인딩된 StoreAccessor 를 LState 기준으로
+// 동적으로 해석하는 함수이다 (message-slim-metadata / Follow-up A).
+//
+// 풀링된 VM 은 여러 스크립트 노드/플로우가 공유하므로, 올바른 네임스페이스 스토어는
+// 실행 단위로 달라진다. 따라서 xflow.store 모듈은 고정 Store 대신 이 provider 로
+// "이번 실행의 스토어"를 매 호출 해석한다. 엔진이 실행 직전 LState 에 스토어를
+// 바인딩하고 실행 후 해제하며, provider 는 그 바인딩을 조회한다. 바인딩이 없으면
+// nil 을 반환하여 xflow.store 가 기존처럼 nil/false 로 graceful 하게 동작한다.
+type StoreProvider func(L *lua.LState) StoreAccessor
+
 // StdlibDeps 는 표준 라이브러리 모듈의 외부 의존성이다.
 type StdlibDeps struct {
-	Store  StoreAccessor
-	Logger LogFunc
+	// Store 는 고정 StoreAccessor 이다(하위 호환 — 손수 만든 LState 테스트 등).
+	// StoreProvider 가 설정되면 그쪽이 우선한다.
+	Store StoreAccessor
+	// StoreProvider 는 실행별 동적 스토어 해석자이다(설정 시 Store 보다 우선).
+	StoreProvider StoreProvider
+	Logger        LogFunc
 	// Agent 는 xflow.agent.get 이 사용하는 룩업이다(nil 이면 get 은 nil 반환).
 	Agent AgentInfoLookup
 	// Device 는 xflow.device.get 이 사용하는 룩업이다(nil 이면 get 은 nil 반환).
@@ -97,7 +111,7 @@ func RegisterStdlib(L *lua.LState, opts StdlibOptions, deps StdlibDeps) error {
 		registerMath(L, xflowTbl)
 	}
 	if opts.EnableStore {
-		registerStore(L, xflowTbl, deps.Store)
+		registerStore(L, xflowTbl, deps.Store, deps.StoreProvider)
 	}
 	if opts.EnableAgent {
 		registerAgentInfo(L, xflowTbl, deps.Agent)
@@ -389,80 +403,90 @@ func registerMath(L *lua.LState, xflow *lua.LTable) {
 // xflow.store 모듈
 // ============================================================
 
-func registerStore(L *lua.LState, xflow *lua.LTable, store StoreAccessor) {
+// registerStore 는 xflow.store 모듈을 등록한다.
+//
+// 스토어 해석(message-slim-metadata / Follow-up A): provider 가 있으면 매 호출마다
+// provider(L) 로 "이번 실행에 바인딩된" 스토어를 얻고(실행별 네임스페이스 스코프),
+// 없으면 고정 store 로 폴백한다. 둘 다 없거나 바인딩 미설정이면 graceful:
+//   - get → nil, has → false, set/delete → no-op (에러를 raise 하지 않는다).
+//
+// 과거에는 store 가 nil 일 때 RaiseError 했으나, per-execution 바인딩 모델에서는
+// "스토어 미구성 노드"가 정상 시나리오이므로 nil-safe 로 전환한다(스크립트 중단 방지).
+func registerStore(L *lua.LState, xflow *lua.LTable, store StoreAccessor, provider StoreProvider) {
 	mod := L.NewTable()
+
+	// resolve 는 현재 호출 컨텍스트(L)의 유효한 스토어를 반환한다(없으면 nil).
+	resolve := func(L *lua.LState) StoreAccessor {
+		if provider != nil {
+			if s := provider(L); s != nil {
+				return s
+			}
+		}
+		return store
+	}
 
 	// xflow.store.get(key) -> 값 또는 nil
 	L.SetField(mod, "get", L.NewFunction(func(L *lua.LState) int {
-		if store == nil {
-			L.RaiseError("store accessor not configured")
-			return 0
-		}
+		s := resolve(L)
 		key := L.CheckString(1)
-
-		val, err := store.Get(context.Background(), key)
+		if s == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+		val, err := s.Get(context.Background(), key)
 		if err != nil {
 			L.Push(lua.LNil)
 			return 1
 		}
-
 		L.Push(ToLuaValue(L, val))
 		return 1
 	}))
 
 	// xflow.store.set(key, value)
 	L.SetField(mod, "set", L.NewFunction(func(L *lua.LState) int {
-		if store == nil {
-			L.RaiseError("store accessor not configured")
-			return 0
-		}
+		s := resolve(L)
 		key := L.CheckString(1)
 		val := L.CheckAny(2)
-
+		if s == nil {
+			// 바인딩 미설정 → no-op (graceful).
+			return 0
+		}
 		goVal := FromLuaValue(val)
-		if err := store.Set(context.Background(), key, goVal); err != nil {
+		if err := s.Set(context.Background(), key, goVal); err != nil {
 			L.RaiseError("store set failed: %s", err.Error())
 			return 0
 		}
-
 		return 0
 	}))
 
 	// xflow.store.delete(key)
 	L.SetField(mod, "delete", L.NewFunction(func(L *lua.LState) int {
-		if store == nil {
-			L.RaiseError("store accessor not configured")
+		s := resolve(L)
+		key := L.CheckString(1)
+		if s == nil {
 			return 0
 		}
-		key := L.CheckString(1)
-
-		if err := store.Delete(context.Background(), key); err != nil {
+		if err := s.Delete(context.Background(), key); err != nil {
 			L.RaiseError("store delete failed: %s", err.Error())
 			return 0
 		}
-
 		return 0
 	}))
 
 	// xflow.store.has(key) -> bool
 	L.SetField(mod, "has", L.NewFunction(func(L *lua.LState) int {
-		if store == nil {
-			L.RaiseError("store accessor not configured")
-			return 0
-		}
+		s := resolve(L)
 		key := L.CheckString(1)
-
-		exists, err := store.Has(context.Background(), key)
-		if err != nil {
+		if s == nil {
 			L.Push(lua.LFalse)
 			return 1
 		}
-
-		if exists {
-			L.Push(lua.LTrue)
-		} else {
+		exists, err := s.Has(context.Background(), key)
+		if err != nil || !exists {
 			L.Push(lua.LFalse)
+			return 1
 		}
+		L.Push(lua.LTrue)
 		return 1
 	}))
 

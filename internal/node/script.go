@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
@@ -37,6 +38,17 @@ type ScriptNode struct {
 	scriptSource  string
 	scriptTimeout time.Duration
 	mu            sync.RWMutex
+
+	// 스토어 바인딩(Follow-up A): agent_ref + namespace 가 설정되면 xflow.store 가
+	// 이 네임스페이스 스토어에 실행별로 바인딩된다. 미설정이면 xflow.store 는 nil-safe.
+	resolver  AgentResolver  // AgentResolver (옵션 _agent_resolver 에서 추출)
+	agentRef  *flow.AgentRef // Store 에이전트 참조 (def.AgentRef)
+	namespace string         // Store 네임스페이스 (기본 "default")
+	// storeOnce/scriptStore 는 네임스페이스 스토어 해석을 1회로 캐시한다.
+	// 스토어 어댑터는 lazy resolver 를 감싸 에이전트 재시작에도 안전하므로 캐시가 안전하다.
+	storeOnce   sync.Once
+	scriptStore script.StoreAccessor
+	storeErr    error
 }
 
 // WithScriptEngine 은 ScriptNode에 ScriptEngine을 설정하는 옵션을 반환한다.
@@ -82,6 +94,8 @@ func NewScriptNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	n := &ScriptNode{
 		BaseNode:      base,
 		scriptTimeout: 5 * time.Second,
+		agentRef:      def.AgentRef, // Follow-up A: 스토어 에이전트 참조(선택).
+		namespace:     "default",
 	}
 
 	// 옵션에서 engine과 timeout 추출
@@ -108,6 +122,25 @@ func NewScriptNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 		if s, ok := base.config["script"]; ok {
 			if src, ok := s.(string); ok {
 				n.scriptSource = src
+			}
+		}
+		// Follow-up A: 스토어 네임스페이스(선택, 기본 "default").
+		if ns, ok := base.config["namespace"]; ok {
+			if s, ok := ns.(string); ok && s != "" {
+				n.namespace = s
+			}
+		}
+		// Follow-up A: AgentResolver 주입(store-read/write 와 동일한 _agent_resolver 키).
+		if r, ok := base.config["_agent_resolver"]; ok {
+			if resolver, ok := r.(AgentResolver); ok {
+				n.resolver = resolver
+			}
+		}
+		// 테스트/직접 주입 경로: 미리 만들어진 script.StoreAccessor 를 그대로 사용한다.
+		if s, ok := base.config["_script_store"]; ok {
+			if sa, ok := s.(script.StoreAccessor); ok {
+				n.scriptStore = sa
+				n.storeOnce.Do(func() {}) // 이미 해석됨 표시(재해석 방지).
 			}
 		}
 	}
@@ -157,7 +190,17 @@ func (n *ScriptNode) Process(ctx context.Context, msg message.Message) ([]messag
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	result, err := engine.Execute(timeoutCtx, msg)
+	// Follow-up A: 엔진이 실행별 스토어 바인딩을 지원하면(구조적 인터페이스 만족),
+	// 이 노드의 네임스페이스 스토어를 해석하여 이번 실행에 한해 xflow.store 에 바인딩한다.
+	// 스토어 미구성(agent_ref 없음)이면 store 는 nil → xflow.store 는 nil-safe.
+	var result message.Message
+	var err error
+	if binder, ok := engine.(scriptEngineWithStore); ok {
+		store := n.resolveScriptStore(timeoutCtx)
+		result, err = binder.ExecuteWithStore(timeoutCtx, msg, store)
+	} else {
+		result, err = engine.Execute(timeoutCtx, msg)
+	}
 	if err != nil {
 		if timeoutCtx.Err() == context.DeadlineExceeded {
 			return nil, ErrScriptTimeout
@@ -165,6 +208,24 @@ func (n *ScriptNode) Process(ctx context.Context, msg message.Message) ([]messag
 		return nil, ErrScriptExecutionFailed
 	}
 	return []message.Message{result}, nil
+}
+
+// resolveScriptStore 는 이 노드의 네임스페이스 스토어를 1회 해석하여 캐시한다.
+// agent_ref 미설정이거나 해석 실패 시 nil 을 반환한다(스토어 바인딩 없음 → nil-safe).
+// 해석 오류는 로깅만 하고 nil 로 폴백하여 스크립트 실행 자체는 계속되게 한다.
+func (n *ScriptNode) resolveScriptStore(ctx context.Context) script.StoreAccessor {
+	n.storeOnce.Do(func() {
+		sa, err := resolveNamespacedScriptStore(ctx, n.resolver, n.agentRef, n.namespace)
+		n.scriptStore = sa
+		n.storeErr = err
+		if err != nil {
+			if logger := n.BaseNode.Logger(); logger != nil {
+				logger.Warn("script: 스토어 해석 실패 — xflow.store 는 비활성(nil)로 동작",
+					"node", n.ID(), "error", err)
+			}
+		}
+	})
+	return n.scriptStore
 }
 
 // Shutdown 은 ScriptNode를 종료하고 엔진 리소스를 해제한다.
@@ -184,6 +245,16 @@ func (n *ScriptNode) Shutdown(ctx context.Context) error {
 func (n *ScriptNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
+	}
+
+	// Follow-up A: 스토어 네임스페이스(선택, 기본 "default"). def.Config 경로로
+	// 전달되므로 Configure 에서 읽는다(BaseNode.Configure 가 base.config 를 교체하기 때문).
+	if ns, ok := config["namespace"]; ok {
+		if s, ok := ns.(string); ok && s != "" {
+			n.mu.Lock()
+			n.namespace = s
+			n.mu.Unlock()
+		}
 	}
 
 	if src, ok := config["script"]; ok {

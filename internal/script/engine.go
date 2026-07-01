@@ -149,6 +149,40 @@ type DefaultScriptEngine struct {
 	stats  ScriptEngineStats
 	inited bool
 	mu     sync.Mutex
+
+	// storeBindings 는 실행별(per-Execute) 스토어 바인딩이다.
+	// 키는 *lua.LState, 값은 StoreAccessor. 실행 직전 바인딩하고 실행 후 해제한다.
+	//
+	// 동시성: VM 은 pool.acquire ~ release 구간에서 한 고루틴이 배타적으로 소유하므로
+	// (acquire 는 채널에서 VM 을 꺼내고 release 가 되돌린다), 특정 *lua.LState 에 대한
+	// 바인딩 set/clear/read 는 그 구간 안에서만 발생하여 경쟁이 없다. sync.Map 은
+	// 서로 다른 LState 항목에 대한 동시 접근(다른 VM 을 쓰는 병렬 Execute)만 처리한다.
+	storeBindings sync.Map // map[*lua.LState]StoreAccessor
+}
+
+// resolveBoundStore 는 주어진 LState 에 현재 바인딩된 StoreAccessor 를 반환한다.
+// stdlib 의 xflow.store 모듈이 StoreProvider 로 사용한다. 바인딩이 없으면 nil.
+func (e *DefaultScriptEngine) resolveBoundStore(L *lua.LState) StoreAccessor {
+	if v, ok := e.storeBindings.Load(L); ok {
+		if s, ok := v.(StoreAccessor); ok {
+			return s
+		}
+	}
+	return nil
+}
+
+// bindStore 는 실행 직전 LState 에 스토어를 바인딩한다(store 가 nil 이면 no-op).
+func (e *DefaultScriptEngine) bindStore(L *lua.LState, store StoreAccessor) {
+	if store == nil {
+		return
+	}
+	e.storeBindings.Store(L, store)
+}
+
+// unbindStore 는 실행 후 LState 의 스토어 바인딩을 해제한다.
+// error/panic 여부와 무관하게 반드시 호출되어야 한다(VM 이 풀로 반환되기 때문).
+func (e *DefaultScriptEngine) unbindStore(L *lua.LState) {
+	e.storeBindings.Delete(L)
 }
 
 // NewScriptEngine 은 새 DefaultScriptEngine을 생성한다.
@@ -176,10 +210,20 @@ func (e *DefaultScriptEngine) Init(ctx context.Context) error {
 		return nil
 	}
 
+	// 실행별 스토어 바인딩(Follow-up A): stdlib 이 활성화되어 있으면 엔진 자신의
+	// per-L 바인딩 해석자를 StoreProvider 로 주입한다. 이렇게 하면 풀링된 VM 의
+	// xflow.store 가 고정 스토어가 아니라 "이번 실행에 바인딩된" 네임스페이스 스토어를
+	// 매 호출 조회한다. 호출 측(cmd)이 별도 StoreProvider 를 주지 않아도 되도록
+	// 여기서 엔진이 자동으로 연결한다(기존 고정 Store 는 폴백으로 보존).
+	deps := e.config.stdlibDeps
+	if e.config.stdlibEnabled && deps.StoreProvider == nil {
+		deps.StoreProvider = e.resolveBoundStore
+	}
+
 	e.pool = newVMPool(e.config.poolSize, e.config.maxVMUses, e.config.sandboxConfig, stdlibConfig{
 		enabled: e.config.stdlibEnabled,
 		options: e.config.stdlibOptions,
-		deps:    e.config.stdlibDeps,
+		deps:    deps,
 	})
 	e.inited = true
 	return nil
@@ -248,8 +292,21 @@ func (e *DefaultScriptEngine) Compile(ctx context.Context, source ScriptSource) 
 	return scriptID, nil
 }
 
-// Execute 는 컴파일된 스크립트를 실행한다.
+// Execute 는 컴파일된 스크립트를 실행한다(스토어 바인딩 없음).
+// 하위 호환을 위해 유지하며, ExecuteWithStore(store=nil) 로 위임한다.
 func (e *DefaultScriptEngine) Execute(ctx context.Context, scriptID string, input any) (any, error) {
+	return e.ExecuteWithStore(ctx, scriptID, input, nil)
+}
+
+// ExecuteWithStore 는 이번 실행에 한정된 StoreAccessor 를 바인딩하여 스크립트를
+// 실행한다(Follow-up A). store 가 nil 이면 바인딩 없이 실행하며(=Execute 와 동일),
+// xflow.store 는 nil-safe 로 동작한다.
+//
+// 바인딩 수명: VM 획득(acquire) 직후 bindStore, 반환(release) 전 defer unbindStore
+// 로 반드시 해제한다. error/timeout/panic 어느 경로에서도 defer 가 실행되어 VM 이
+// 다음 실행으로 스토어를 누출하지 않는다. VM 은 acquire~release 구간에서 배타적이므로
+// per-L 바인딩은 경쟁이 없다.
+func (e *DefaultScriptEngine) ExecuteWithStore(ctx context.Context, scriptID string, input any, store StoreAccessor) (any, error) {
 	e.stats.TotalExecutions.Add(1)
 
 	// 캐시에서 FunctionProto 조회
@@ -281,6 +338,10 @@ func (e *DefaultScriptEngine) Execute(ctx context.Context, scriptID string, inpu
 
 	// 실행 완료 후 VM 반환
 	defer e.pool.release(L)
+
+	// 이번 실행의 스토어를 이 VM 에 바인딩하고, 실행 후 반드시 해제한다.
+	e.bindStore(L, store)
+	defer e.unbindStore(L)
 
 	// input을 전역 "msg"로 설정
 	if input != nil {

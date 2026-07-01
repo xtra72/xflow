@@ -190,6 +190,13 @@ func (a *NodeStoreAdapter) Has(ctx context.Context, key string) (bool, error) {
 	return a.resolver().Has(ctx, key)
 }
 
+// Delete 는 키를 삭제한다(Follow-up A: xflow.store.delete 지원).
+// 현재 유효한 네임스페이스 스토어로 위임한다. 존재하지 않는 키 삭제 동작은
+// 하위 Store 구현의 규약을 따른다.
+func (a *NodeStoreAdapter) Delete(ctx context.Context, key string) error {
+	return a.resolver().Delete(ctx, key)
+}
+
 // GetHistory 는 주어진 키의 값 변경 히스토리를 반환한다.
 // 반환 값은 []any 형태로 이전 값들만 담는다 (최신순).
 func (a *NodeStoreAdapter) GetHistory(ctx context.Context, key string) ([]any, error) {

@@ -439,10 +439,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	//
 	// Follow-up 1: 프로덕션 VM 에 xflow stdlib 를 등록한다(WithStdlib). agent/device
 	// 모듈은 위 룩업을 재사용하여 xflow.agent.get / xflow.device.get 이 실제 동작한다.
-	// store 모듈은 네임스페이스(per-node/per-flow) 해석이 VM 풀 생성 시점에 불가능하므로
-	// 여기서 주입하지 않는다(Store=nil, EnableStore=false) → xflow.store 는 현재처럼 nil
-	// 반환. 별도 per-node store 배선은 후속 작업으로 남긴다.
-	scriptStdlibOpts := script.StdlibOptions{EnableAgent: true, EnableDevice: true}
+	//
+	// Follow-up A: store 모듈을 활성화한다(EnableStore). 고정 Store 를 주입하지 않고
+	// (Store=nil), 엔진이 실행별(per-Execute) StoreProvider 를 자동 연결한다. 스크립트
+	// 노드가 자신의 agent_ref/namespace 로 해석한 네임스페이스 스토어를 실행 시점에만
+	// 바인딩하므로, 풀링된 VM 을 공유해도 네임스페이스가 섞이지 않는다. 스토어 미구성
+	// 노드는 바인딩이 없어 xflow.store 가 nil-safe(nil/false/no-op) 로 동작한다.
+	scriptStdlibOpts := script.StdlibOptions{EnableAgent: true, EnableDevice: true, EnableStore: true}
 	scriptStdlibDeps := script.StdlibDeps{
 		Agent: func(id string) (script.AgentInfo, bool) {
 			m, ok := agentInfoLookup.LookupAgent(id)
