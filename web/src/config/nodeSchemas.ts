@@ -313,44 +313,31 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   enrich: {
     description:
-      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화합니다. id 소스로 레지스트리에서 type/name 을 조회하여 (a) 메타데이터 그룹을 재수화하거나 (b) payload 키에 {type,id,name} 객체를 기록합니다. to_metadata / to_payload 는 조합 가능하며, 최소 하나는 설정해야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 원본 그대로 통과합니다(에러 아님, no-op).',
+      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화합니다. agent 와 device 는 독립 블록으로, 둘 다(또는 하나만) 동시에 보강할 수 있습니다. 각 블록은 id_source(JSONPath/템플릿)로 얻은 id 를 레지스트리에서 조회하여 type/name 을 얻고, to_metadata 로 메타데이터 그룹을 재수화하거나 to_payload 로 payload 키에 {type,id,name} 객체를 기록합니다. 한 블록은 to_metadata=true 또는 to_payload 값이 있어야 활성화되며, 최소 한 블록이 활성이어야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 해당 블록만 원본 그대로 통과합니다(에러 아님, no-op).',
     inputDesc:
-      '모든 메시지. id_source(JSONPath/템플릿)로 id 를 해석합니다 (예: $.metadata.device.id, $.payload.device_id).',
+      '모든 메시지. 각 블록의 id_source(JSONPath/템플릿)로 id 를 해석합니다 (예: $.metadata.device.id, $.payload.device_id).',
     outputDesc:
-      '보강된 메시지 패스스루. to_metadata 시 source 그룹(agent/device)이 {type,name} 으로 재수화됨(id 보존). to_payload 시 해당 payload 키에 {type,id,name} 객체 기록. 룩업 실패/누락 id 는 원본 그대로 통과.',
+      '보강된 메시지 패스스루. 활성 블록마다 독립 적용됨 — to_metadata 시 해당 그룹(agent/device)이 {type,name} 으로 재수화됨(id 보존), to_payload 시 해당 payload 키에 {type,id,name} 객체 기록. 룩업 실패/누락 id 는 그 블록만 no-op(원본 유지).',
     configSchema: {
       fields: [
         {
-          name: 'source',
-          type: 'select',
-          label: '소스',
-          required: true,
-          options: ['agent', 'device'],
-          description: '재수화할 그룹 종류. agent: agent 레지스트리 룩업 / device: device 레지스트리 룩업.',
+          // 중첩 블록: 이 필드는 config.agent 에 { enabled, id_source, to_metadata, to_payload }
+          // 객체를 통째로 기록한다(폼은 object 타입 = JSON 오브젝트 에디터로 렌더링).
+          // device 블록과 독립적이며, 백엔드 parseEnrichBlock(cfg, "agent") 와 매칭된다.
+          name: 'agent',
+          type: 'object',
+          label: '에이전트 블록 (agent)',
+          description:
+            'agent 레지스트리 룩업 블록(선택). JSON 오브젝트로 편집합니다. 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 미지정 시 $.metadata.agent.id), to_metadata(bool), to_payload(string, payload 키). 예: {"enabled": true, "id_source": "$.metadata.agent.id", "to_metadata": true, "to_payload": "agent_info"}. to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. device 블록과 함께 사용할 수 있으며, 사용하지 않으려면 비워 두세요({} 또는 빈 값).',
         },
         {
-          name: 'id_source',
-          type: 'string',
-          label: 'ID 소스',
+          // 중첩 블록: config.device 에 동일 형태의 객체를 기록한다. agent 블록과 독립.
+          // 백엔드 parseEnrichBlock(cfg, "device") 와 매칭된다.
+          name: 'device',
+          type: 'object',
+          label: '디바이스 블록 (device)',
           description:
-            'id 를 얻는 JSONPath/템플릿. 미지정 시 source 에 따라 $.metadata.agent.id 또는 $.metadata.device.id 를 기본값으로 사용합니다. 예: $.metadata.device.id, $.payload.device_id.',
-          placeholder: '$.metadata.device.id',
-        },
-        {
-          name: 'to_metadata',
-          type: 'boolean',
-          label: '메타데이터 보강',
-          default: false,
-          description:
-            'source 그룹(agent/device)을 {type,name} 으로 재수화합니다(id 는 보존). to_payload 와 함께 사용할 수 있으며, 둘 중 최소 하나는 설정해야 합니다.',
-        },
-        {
-          name: 'to_payload',
-          type: 'string',
-          label: 'Payload 키',
-          default: '',
-          description:
-            '비어있지 않으면 이 payload 키에 {type,id,name} 객체를 기록합니다. to_metadata 와 함께 사용할 수 있으며, 둘 중 최소 하나는 설정해야 합니다.',
+            'device 레지스트리 룩업 블록(선택). JSON 오브젝트로 편집합니다. 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 미지정 시 $.metadata.device.id), to_metadata(bool), to_payload(string, payload 키). 예: {"enabled": true, "id_source": "$.metadata.device.id", "to_metadata": true, "to_payload": "device_info"}. to_metadata=true 또는 to_payload 값이 있어야 이 블록이 활성화됩니다. agent 블록과 함께 사용할 수 있으며, 사용하지 않으려면 비워 두세요({} 또는 빈 값).',
         },
       ],
     },

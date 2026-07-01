@@ -18,7 +18,7 @@ import (
 // 수정 전: slimEgressMetadata → SlimGroupsToID 가 device 를 id-only 로 되돌림 → 실패.
 func TestEnrichThenSlim_KeepsEnrichedGroup(t *testing.T) {
 	// device={id:d-1} 슬림 메시지에 enrich(to_metadata) 적용 → device={type,id,name}.
-	n := newEnrichNode(t, map[string]any{"source": "device", "to_metadata": true})
+	n := newEnrichNode(t, deviceBlock(map[string]any{"to_metadata": true}))
 	msg := deviceGroupMsg("d-1")
 	out, err := n.Process(context.Background(), msg)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestEnrichThenSlim_KeepsEnrichedGroup(t *testing.T) {
 // TestEnrichThenTapEgress_KeepsEnrichedGroup 는 WS tap egress(EgressMetadata, expander nil)
 // 경로에서도 enrich 된 그룹이 보존됨을 검증한다.
 func TestEnrichThenTapEgress_KeepsEnrichedGroup(t *testing.T) {
-	n := newEnrichNode(t, map[string]any{"source": "agent", "to_metadata": true})
+	n := newEnrichNode(t, agentBlock(map[string]any{"to_metadata": true}))
 	out, err := n.Process(context.Background(), agentGroupMsg("a-1"))
 	if err != nil {
 		t.Fatalf("enrich Process 에러: %v", err)
@@ -72,7 +72,7 @@ func TestEnrichThenTapEgress_KeepsEnrichedGroup(t *testing.T) {
 // enrich 는 _slimKeep 마커를 설정하지 않으며, (원래 그룹이 있었다면) egress 에서 여전히
 // 슬림됨을 검증한다.
 func TestEnrichPayloadOnly_DoesNotPreserve(t *testing.T) {
-	n := newEnrichNode(t, map[string]any{"source": "device", "to_payload": "device_info"})
+	n := newEnrichNode(t, deviceBlock(map[string]any{"to_payload": "device_info"}))
 	// device={id:d-1} 그룹을 가진 메시지에 payload-only enrich.
 	out, err := n.Process(context.Background(), deviceGroupMsg("d-1"))
 	if err != nil {
@@ -111,7 +111,7 @@ func TestEnrichLookupFails_ButPreservesExistingGroup(t *testing.T) {
 	})
 
 	// enrich(device, to_metadata) 적용 — lookup 은 실패할 것.
-	n := newEnrichNode(t, map[string]any{"source": "device", "to_metadata": true})
+	n := newEnrichNode(t, deviceBlock(map[string]any{"to_metadata": true}))
 	out, err := n.Process(context.Background(), msg)
 	if err != nil {
 		t.Fatalf("enrich Process 에러: %v", err)
