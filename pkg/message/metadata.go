@@ -16,6 +16,12 @@ const (
 	MetaKeyError = "_error"
 	// MetaKeyErrorNodeID 는 에러가 발생한 노드 식별자를 나타내는 키이다.
 	MetaKeyErrorNodeID = "_errorNodeID"
+	// MetaKeySlimKeep 은 egress 슬림화(SlimGroupsToID)에서 보존할 그룹 이름 목록을
+	// 담는 키이다. 값은 쉼표 구분 문자열(예: "agent,device")이다. enrich 노드가
+	// to_metadata 로 그룹을 재수화할 때 해당 그룹 이름을 이 마커에 누적하며,
+	// SlimGroupsToID 는 나열된 그룹을 슬림하지 않고 full(type/name)로 유지한다.
+	// 마커 자체는 egress 출력에서 항상 제거된다(외부 클라이언트로 누출 금지).
+	MetaKeySlimKeep = "_slimKeep"
 )
 
 // Metadata 는 메시지 메타데이터 접근을 위한 인터페이스이다.
