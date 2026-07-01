@@ -157,3 +157,88 @@ func deepCopyRaw(src map[string]any) map[string]any {
 	}
 	return dst
 }
+
+// TestSlimGroupsToID_KeepMarkerPreservesGroup 는 버그 재현/수정 검증이다:
+// enrich 노드가 설정한 _slimKeep 마커에 나열된 그룹은 슬림되지 않고 type/name 을
+// 유지해야 하며, 마커 자체는 egress 출력에서 제거되어야 한다.
+//
+// 수정 전: SlimGroupsToID 가 마커를 무시하고 device 를 id-only 로 축소 → 실패.
+func TestSlimGroupsToID_KeepMarkerPreservesGroup(t *testing.T) {
+	in := map[string]any{
+		"agent":         map[string]string{"type": "serial", "id": "a-1", "name": "reader"},
+		"device":        map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"},
+		MetaKeySlimKeep: "device", // device 만 보존 대상
+		"flatKey":       "flatVal",
+	}
+	got := SlimGroupsToID(in)
+
+	// device 는 full 로 보존
+	device, ok := got["device"].(map[string]string)
+	if !ok {
+		t.Fatalf("device 그룹이 없다: %#v", got["device"])
+	}
+	if device["type"] != "HVACR.IDU" || device["name"] != "room1" || device["id"] != "d-1" {
+		t.Errorf("보존 대상 device 는 full 이어야 한다: %#v", device)
+	}
+
+	// agent 는 마커에 없으므로 여전히 슬림
+	agent, ok := got["agent"].(map[string]string)
+	if !ok {
+		t.Fatalf("agent 그룹이 없다: %#v", got["agent"])
+	}
+	if _, hasType := agent["type"]; hasType {
+		t.Errorf("비보존 agent 는 id-only 로 슬림되어야 한다: %#v", agent)
+	}
+	if agent["id"] != "a-1" {
+		t.Errorf("agent.id 는 보존: %#v", agent)
+	}
+
+	// 마커 자체는 egress 출력에서 제거되어야 한다
+	if _, leaked := got[MetaKeySlimKeep]; leaked {
+		t.Errorf("_slimKeep 마커가 egress 출력에 누출되었다: %#v", got)
+	}
+
+	// flat 키는 그대로
+	if got["flatKey"] != "flatVal" {
+		t.Errorf("flatKey = %v", got["flatKey"])
+	}
+}
+
+// TestSlimGroupsToID_KeepMarkerMultipleGroups 는 두 그룹 모두 보존 대상일 때
+// 둘 다 full 로 유지되고 마커가 제거됨을 검증한다.
+func TestSlimGroupsToID_KeepMarkerMultipleGroups(t *testing.T) {
+	in := map[string]any{
+		"agent":         map[string]string{"type": "serial", "id": "a-1", "name": "reader"},
+		"device":        map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"},
+		MetaKeySlimKeep: "agent,device",
+	}
+	got := SlimGroupsToID(in)
+
+	agent := got["agent"].(map[string]string)
+	device := got["device"].(map[string]string)
+	if agent["type"] != "serial" || agent["name"] != "reader" {
+		t.Errorf("agent 보존 실패: %#v", agent)
+	}
+	if device["type"] != "HVACR.IDU" || device["name"] != "room1" {
+		t.Errorf("device 보존 실패: %#v", device)
+	}
+	if _, leaked := got[MetaKeySlimKeep]; leaked {
+		t.Errorf("마커 누출: %#v", got)
+	}
+}
+
+// TestSlimGroupsToID_MarkerStrippedEvenWithNoGroups 는 그룹이 없어도 마커가
+// 출력에서 제거됨을 검증한다(마커 누출 방지).
+func TestSlimGroupsToID_MarkerStrippedEvenWithNoGroups(t *testing.T) {
+	in := map[string]any{
+		"flatKey":       "flatVal",
+		MetaKeySlimKeep: "device",
+	}
+	got := SlimGroupsToID(in)
+	if _, leaked := got[MetaKeySlimKeep]; leaked {
+		t.Errorf("그룹이 없어도 마커는 제거되어야 한다: %#v", got)
+	}
+	if got["flatKey"] != "flatVal" {
+		t.Errorf("flatKey 보존 실패: %#v", got)
+	}
+}

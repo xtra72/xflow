@@ -225,6 +225,11 @@ func (n *EnrichNode) lookup(id string) (RegistryMeta, bool) {
 
 // applyToMetadata 는 source 그룹(agent/device)을 type/id/name 으로 재수화한다.
 // 비어있지 않은 필드만 설정하며, 기존 그룹 위에 병합한다(id 보존).
+//
+// 버그 수정(message-slim-metadata): 재수화한 그룹이 egress 슬림 경계에서 되돌려
+// 지워지지 않도록, 해당 그룹 이름을 _slimKeep 보존 마커에 누적한다. SlimGroupsToID
+// 가 이 마커를 읽어 나열된 그룹을 full 로 유지한다. payload-only enrich(applyToPayload)
+// 에서는 마커를 설정하지 않는다.
 func (n *EnrichNode) applyToMetadata(msg message.Message, meta RegistryMeta) {
 	group, _ := msg.Metadata().GetGroup(string(n.source))
 	if group == nil {
@@ -240,6 +245,25 @@ func (n *EnrichNode) applyToMetadata(msg message.Message, meta RegistryMeta) {
 		group["name"] = meta.Name
 	}
 	msg.Metadata().SetGroup(string(n.source), group)
+
+	// 보존 마커에 이 그룹 이름을 누적(merge/de-dupe, 기존 값 clobber 금지).
+	addSlimKeep(msg.Metadata(), string(n.source))
+}
+
+// addSlimKeep 은 _slimKeep 마커(쉼표 구분 그룹 이름 목록)에 groupName 을 추가한다.
+// 이미 존재하면 no-op(중복 방지). 기존 목록을 보존하며 append 한다.
+func addSlimKeep(md message.Metadata, groupName string) {
+	existing, _ := md.Get(message.MetaKeySlimKeep)
+	if existing == "" {
+		md.Set(message.MetaKeySlimKeep, groupName)
+		return
+	}
+	for _, name := range strings.Split(existing, ",") {
+		if strings.TrimSpace(name) == groupName {
+			return // 이미 포함 — no-op.
+		}
+	}
+	md.Set(message.MetaKeySlimKeep, existing+","+groupName)
 }
 
 // applyToPayload 는 {type,id,name} 객체를 to_payload 키에 기록한다.
