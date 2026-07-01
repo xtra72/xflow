@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -205,7 +206,9 @@ func (n *ScriptNode) Process(ctx context.Context, msg message.Message) ([]messag
 		if timeoutCtx.Err() == context.DeadlineExceeded {
 			return nil, ErrScriptTimeout
 		}
-		return nil, ErrScriptExecutionFailed
+		// 하위 에러(엔진의 ScriptError.Detail = Lua PCall 오류)를 감싸 실제 원인이
+		// 로그에 드러나게 한다. errors.Is(err, ErrScriptExecutionFailed) 는 유지된다.
+		return nil, fmt.Errorf("%w: %v", ErrScriptExecutionFailed, err)
 	}
 	return []message.Message{result}, nil
 }
