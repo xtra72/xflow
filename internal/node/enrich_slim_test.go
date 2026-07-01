@@ -96,6 +96,48 @@ func TestEnrichPayloadOnly_DoesNotPreserve(t *testing.T) {
 	}
 }
 
+// TestEnrichLookupFails_ButPreservesExistingGroup 은 버그 재현/수정 검증이다:
+// enrich(to_metadata) 를 적용하되 lookup 이 실패(not-found)한 경우, 메시지가 원래
+// 가지고 있던 device 그룹의 type/name 을 egress 슬림 후에도 보존해야 한다.
+//
+// 수정 전: lookup 실패 → marker 미설정 → slimEgressMetadata 에서 type/name 제거 → 실패.
+func TestEnrichLookupFails_ButPreservesExistingGroup(t *testing.T) {
+	// 내부 메시지에 full device={type,id,name} 를 갖고 시작 (예: 에미터의 mergeDeviceGroup 에서).
+	msg := message.New(message.WithID("m1"))
+	msg.Metadata().SetGroup("device", map[string]string{
+		"type": "HVACR.IDU",
+		"id":   "unknown-device-xyz", // 레지스트리에 없는 id
+		"name": "internal-room",
+	})
+
+	// enrich(device, to_metadata) 적용 — lookup 은 실패할 것.
+	n := newEnrichNode(t, map[string]any{"source": "device", "to_metadata": true})
+	out, err := n.Process(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("enrich Process 에러: %v", err)
+	}
+	enriched := out[0]
+
+	// lookup 실패했더라도 to_metadata 가 활성이면 marker 가 설정되어야 한다.
+	keep, _ := enriched.Metadata().Get(message.MetaKeySlimKeep)
+	if keep != "device" {
+		t.Fatalf("lookup 실패해도 to_metadata 는 _slimKeep 마커를 설정해야 한다: %q", keep)
+	}
+
+	// egress 슬림 후: marker 덕분에 device 그룹은 full 로 유지되어야 한다.
+	md := slimEgressMetadata(enriched)
+	device, ok := md["device"].(map[string]string)
+	if !ok {
+		t.Fatalf("device 그룹이 없다: %#v", md["device"])
+	}
+	if device["type"] != "HVACR.IDU" || device["name"] != "internal-room" {
+		t.Errorf("lookup 실패해도 egress 후 type/name 은 보존되어야 한다: %#v", device)
+	}
+	if device["id"] != "unknown-device-xyz" {
+		t.Errorf("id 는 항상 보존: %#v", device)
+	}
+}
+
 // TestNonEnriched_StillSlimmed 는 enrich 를 거치지 않은 메시지는 종전처럼 슬림됨을 검증한다.
 func TestNonEnriched_StillSlimmed(t *testing.T) {
 	msg := message.New(message.WithID("m1"))
