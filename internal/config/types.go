@@ -112,6 +112,7 @@ type ObserveConfig struct {
 	TraceEnabled   bool
 	Format         string // "json" 또는 "text"
 	Output         string // "stdout", 파일 경로, 또는 "stdout+파일경로"
+	IDStyle        string // 로그 식별자 표시 방식: "name", "id", "both" (기본 "both")
 }
 
 // ScriptConfig - 스크립트 설정

@@ -80,6 +80,41 @@ export async function resetComponentLogLevel(component: string): Promise<void> {
   await del(`/monitor/loglevel/${component}`);
 }
 
+// --- 로그 출력 식별자 표시 방식 ---
+
+/**
+ * 로그 출력에서 agent/device/node 식별자를 표시하는 방식.
+ *
+ * - `name`: 사람이 읽기 좋은 이름만 표시(가독성 우선).
+ * - `id`: UUID·composite ID만 표시(로그 파싱·자동화 우선).
+ * - `both`: 이름과 ID를 함께 표시(디버깅 시 상관관계 추적).
+ */
+export type LogStyle = 'name' | 'id' | 'both';
+
+/**
+ * 백엔드 `GET/PUT /api/v1/monitor/logstyle` 응답 payload
+ * (envelope 인터셉터가 `data` 를 풀어준 뒤의 형태).
+ */
+export interface LogStyleInfo {
+  style: LogStyle;
+}
+
+/**
+ * 현재 로그 출력 식별자 표시 방식을 조회한다
+ * (envelope 인터셉터가 풀어준 payload).
+ */
+export async function getLogStyle(): Promise<LogStyleInfo> {
+  return get<LogStyleInfo>('/monitor/logstyle');
+}
+
+/**
+ * 로그 출력 식별자 표시 방식을 변경한다.
+ * 잘못된 값은 백엔드가 400(INVALID_LOG_STYLE)으로 거부한다.
+ */
+export async function setLogStyle(style: LogStyle): Promise<void> {
+  await put<void>('/monitor/logstyle', { style });
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // SPEC-WEB-007 — 시스템 메트릭 폴링 훅
 // ─────────────────────────────────────────────────────────────────────

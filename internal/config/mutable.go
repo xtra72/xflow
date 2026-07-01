@@ -10,6 +10,7 @@ var mutableKeys = map[string]bool{
 	"observe.default_level":                 true,
 	"observe.metrics.enabled":               true,
 	"observe.trace.enabled":                 true,
+	"observe.id_style":                      true,
 	"server.cors.allowed_origins":           true,
 	"server.rate_limit.requests_per_second": true,
 	"auth.jwt.access_ttl":                   true,

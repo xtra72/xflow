@@ -18,6 +18,7 @@ func Validate(v *viper.Viper) error {
 	validateLogLevel(v, &ve)
 	validateLogFormat(v, &ve)
 	validateLogOutput(v, &ve)
+	validateIDStyle(v, &ve)
 	validatePositiveValues(v, &ve)
 	validateDurations(v, &ve)
 	validateTLS(v, &ve)
@@ -59,6 +60,18 @@ func validateLogLevel(v *viper.Viper, ve *ValidationErrors) {
 		// 유효한 레벨
 	default:
 		ve.Add(fmt.Errorf("%w: observe.default_level=%q", ErrInvalidLogLevel, level))
+	}
+}
+
+// validateIDStyle - observe.id_style이 유효한 값인지 검증
+// 빈 문자열은 기본 "both"로 처리되므로 허용한다 (구버전 설정 무회귀).
+func validateIDStyle(v *viper.Viper, ve *ValidationErrors) {
+	style := v.GetString("observe.id_style")
+	switch style {
+	case "", "name", "id", "both":
+		// 유효한 스타일 (빈 값은 both 로 fallback)
+	default:
+		ve.Add(fmt.Errorf("%w: observe.id_style=%q", ErrInvalidIDStyle, style))
 	}
 }
 

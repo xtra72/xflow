@@ -355,12 +355,17 @@ func (c *viperConfig) Auth() AuthConfig {
 func (c *viperConfig) Observe() ObserveConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	idStyle := c.v.GetString("observe.id_style")
+	if idStyle == "" {
+		idStyle = "both" // 빈 값이면 기본 "both" (현행 무회귀)
+	}
 	return ObserveConfig{
 		DefaultLevel:   c.v.GetString("observe.default_level"),
 		MetricsEnabled: c.v.GetBool("observe.metrics.enabled"),
 		TraceEnabled:   c.v.GetBool("observe.trace.enabled"),
 		Format:         c.v.GetString("observe.format"),
 		Output:         c.v.GetString("observe.output"),
+		IDStyle:        idStyle,
 	}
 }
 
@@ -707,6 +712,18 @@ func validateKeyValue(key string, value any) error {
 			return nil
 		default:
 			return fmt.Errorf("%w: observe.default_level=%q", ErrInvalidLogLevel, s)
+		}
+
+	case "observe.id_style":
+		s, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("%w: observe.id_style는 문자열이어야 합니다", ErrInvalidIDStyle)
+		}
+		switch s {
+		case "name", "id", "both":
+			return nil
+		default:
+			return fmt.Errorf("%w: observe.id_style=%q", ErrInvalidIDStyle, s)
 		}
 
 	case "engine.backpressure_threshold", "engine.max_concurrent_flows":

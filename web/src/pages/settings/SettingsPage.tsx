@@ -28,8 +28,10 @@ import {
   getLogLevels,
   setComponentLogLevel,
   resetComponentLogLevel,
+  getLogStyle,
+  setLogStyle,
 } from '@/services/api/monitorService';
-import type { LogLevelInfo } from '@/services/api/monitorService';
+import type { LogLevelInfo, LogStyle } from '@/services/api/monitorService';
 import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import { cn } from '@/lib/utils/cn';
@@ -75,6 +77,20 @@ const THEME_OPTIONS: ThemeOption[] = [
 // --- 로그 레벨 옵션 ---
 
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+
+// --- 로그 출력 식별자 표시 방식 옵션 ---
+
+/**
+ * 로그 표시 방식 옵션 메타데이터.
+ *
+ * `labelKey`/`hintKey` 는 i18n 키이며 렌더 시 t()로 변환한다
+ * (컴포넌트 밖에서 t() 를 호출하지 않기 위해 키만 보관).
+ */
+const LOG_STYLES: { value: LogStyle; labelKey: string }[] = [
+  { value: 'name', labelKey: 'settings.logStyleName' },
+  { value: 'id', labelKey: 'settings.logStyleId' },
+  { value: 'both', labelKey: 'settings.logStyleBoth' },
+];
 
 // --- 컴포넌트 종류(category) 매핑 ---
 
@@ -407,7 +423,21 @@ function SystemTab() {
   const addNotification = useUIStore((s) => s.addNotification);
   const { t } = useTranslation();
   const [logLevel, setLogLevelState] = useState<string>('info');
+  const [logStyle, setLogStyleState] = useState<LogStyle>('both');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isStyleUpdating, setIsStyleUpdating] = useState(false);
+
+  // 마운트 시 현재 로그 표시 방식을 로드해 셀렉트를 초기화한다.
+  // 컴포넌트별 로그 레벨 카드(loadLogLevels)와 동일한 then/catch 패턴을 따른다.
+  useEffect(() => {
+    getLogStyle()
+      .then((info) => {
+        setLogStyleState(info.style);
+      })
+      .catch(() => {
+        // 조회 실패 시 기본값(both)을 유지한다.
+      });
+  }, []);
 
   const isViewer = user?.role === 'viewer';
   // API client(client.ts)는 상대경로 `/api/v1`를 사용하므로 백엔드는 브라우저가
@@ -429,6 +459,20 @@ function SystemTab() {
       addNotification({ type: 'error', message: t('settings.logLevelError') });
     } finally {
       setIsUpdating(false);
+    }
+  }
+
+  /** 로그 출력 식별자 표시 방식 변경 핸들러 */
+  async function handleLogStyleChange(style: LogStyle) {
+    setIsStyleUpdating(true);
+    try {
+      await setLogStyle(style);
+      setLogStyleState(style);
+      addNotification({ type: 'success', message: t('settings.logStyleChanged') });
+    } catch {
+      addNotification({ type: 'error', message: t('settings.logStyleError') });
+    } finally {
+      setIsStyleUpdating(false);
     }
   }
 
@@ -480,6 +524,33 @@ function SystemTab() {
               </option>
             ))}
           </select>
+        </div>
+
+        {/* 로그 출력 식별자 표시 방식 (이름/ID/둘 다) */}
+        <div className="mt-6 max-w-xs">
+          <label
+            htmlFor="log-style"
+            className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
+          >
+            {t('settings.logStyle')}
+          </label>
+          <select
+            id="log-style"
+            value={logStyle}
+            onChange={(e) => handleLogStyleChange(e.target.value as LogStyle)}
+            disabled={isViewer || isStyleUpdating}
+            className={cn(
+              inputClass,
+              'appearance-none bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%236b7280%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.22%208.22a.75.75%200%20011.06%200L10%2011.94l3.72-3.72a.75.75%200%20111.06%201.06l-4.25%204.25a.75.75%200%2001-1.06%200L5.22%209.28a.75.75%200%20010-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E")] bg-[length:1.25rem] bg-[right_0.5rem_center] bg-no-repeat pr-8',
+            )}
+          >
+            {LOG_STYLES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {t(option.labelKey)}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-sm text-(--color-text-muted)">{t('settings.logStyleHint')}</p>
         </div>
       </div>
 

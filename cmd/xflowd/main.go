@@ -158,6 +158,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 
 	obs := observe.New(obsOpts...)
+
+	// 2-4. 로그 식별자 표시 스타일 설정 (config observe.id_style, 기본 "both").
+	//      로그 레벨과 마찬가지로 런타임에 API(PUT /monitor/logstyle)로 변경 가능하다.
+	observe.SetLogIDStyle(obsCfg.IDStyle)
+
 	logger := obs.Loggers.NewLogger("xflowd")
 
 	logger.Info("xflowd 시작",

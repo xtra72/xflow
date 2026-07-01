@@ -68,6 +68,12 @@ auth:
 # --- 관측 설정 ---
 observe:
   default_level: "info"       # "debug", "info", "warn", "error"
+  # 로그 출력 식별자 표시 방식:
+  #   "both" (기본) - agent/device/node 의 이름과 UUID·composite ID 를 모두 노출
+  #   "name"        - 이름만 노출하고 id 계열(UUID/composite) 필드를 생략 (가독성 우선)
+  #   "id"          - id 계열만 노출하고 이름 계열 필드를 생략
+  # 런타임에 API(PUT /monitor/logstyle)로 재시작 없이 변경 가능.
+  id_style: "both"
   metrics:
     enabled: true
   trace:

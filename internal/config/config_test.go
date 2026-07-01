@@ -98,6 +98,7 @@ func TestLoad_DefaultValues(t *testing.T) {
 	assert.False(t, cfg.Observe().TraceEnabled)
 	assert.Equal(t, "json", cfg.Observe().Format)
 	assert.Equal(t, "stdout", cfg.Observe().Output)
+	assert.Equal(t, "both", cfg.Observe().IDStyle)
 
 	// 스크립트 기본값 확인
 	assert.Equal(t, "5s", cfg.Script().Timeout)

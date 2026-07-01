@@ -18,6 +18,8 @@ var (
 	ErrConfigNotLoaded      = errors.New("config: configuration not loaded")
 	ErrInvalidLogFormat     = errors.New("config: invalid log format (must be 'json' or 'text')")
 	ErrInvalidLogOutput     = errors.New("config: invalid log output target")
+	// ErrInvalidIDStyle 는 observe.id_style 가 name|id|both 가 아닐 때 반환된다.
+	ErrInvalidIDStyle = errors.New("config: invalid id style (must be 'name', 'id', or 'both')")
 	// ErrInvalidRemoteMode 는 remote_management.mode 가 server|client|disabled 가
 	// 아닐 때 반환된다 (@SPEC:SPEC-REMOTE-001 M1, REQ-A01).
 	ErrInvalidRemoteMode = errors.New("config: invalid remote_management.mode (must be 'server', 'client', or 'disabled')")
