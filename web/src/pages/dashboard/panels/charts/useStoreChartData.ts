@@ -77,6 +77,11 @@ export interface UseStoreChartDataResult {
   seriesStyles: Map<string, StoreSeriesStyle>;
   /** 컬럼(시리즈) 표시 이름 순서(요청/응답 순서 보존). */
   seriesNames: string[];
+  /**
+   * data_type='boolean' 인 시리즈의 표시 이름 집합. LineChart 가 해당 시리즈를
+   * true/false(0/1 축·툴팁)로 표시하는 데 사용한다. 값은 store 변환 시 이미 1/0 이다.
+   */
+  booleanSeries: Set<string>;
   /** 연결/조회 상태. idle | connecting | connected | error 만 사용한다. */
   status: ChartConnectionStatus;
   /** error 상태일 때의 사유 메시지. */
@@ -137,9 +142,11 @@ export function matrixToEntries(
   seriesEntries: Map<string, ChartEntry[]>;
   seriesStyles: Map<string, StoreSeriesStyle>;
   seriesNames: string[];
+  booleanSeries: Set<string>;
 } {
   const seriesEntries = new Map<string, ChartEntry[]>();
   const seriesStyles = new Map<string, StoreSeriesStyle>();
+  const booleanSeries = new Set<string>();
   const flat: ChartEntry[] = [];
   // 컬럼 수가 요청 시리즈 수와 같을 때만 alias/tags/스타일 메타데이터를 정렬 매핑한다.
   const aligned = matrix.columns.length === config.series.length;
@@ -163,6 +170,8 @@ export function matrixToEntries(
     const baseLabels: Record<string, string> = { ...(ref?.tags ?? {}), name };
     // per-line 스타일을 시리즈 이름 기준으로 노출(LineChart 렌더용). 같은 이름이 둘
     // 이상이면 처음 등장한 시리즈의 스타일을 유지한다.
+    // data_type='boolean' 시리즈는 true/false 표시 대상으로 표기(값은 store 변환에서 1/0).
+    if (ref?.data_type === 'boolean') booleanSeries.add(name);
     if (ref && !seriesStyles.has(name)) {
       seriesStyles.set(name, {
         color: ref.color,
@@ -196,7 +205,7 @@ export function matrixToEntries(
   // 평탄화 타임라인을 timestamp 오름차순으로 정렬(여러 시리즈가 섞이므로).
   flat.sort((a, b) => a.timestamp - b.timestamp);
 
-  return { entries: flat, seriesEntries, seriesStyles, seriesNames };
+  return { entries: flat, seriesEntries, seriesStyles, seriesNames, booleanSeries };
 }
 
 const EMPTY_RESULT: UseStoreChartDataResult = {
@@ -204,6 +213,7 @@ const EMPTY_RESULT: UseStoreChartDataResult = {
   seriesEntries: new Map(),
   seriesStyles: new Map(),
   seriesNames: [],
+  booleanSeries: new Set(),
   status: 'idle',
 };
 
@@ -294,6 +304,7 @@ export function useStoreChartData(
           seriesEntries: converted.seriesEntries,
           seriesStyles: converted.seriesStyles,
           seriesNames: converted.seriesNames,
+          booleanSeries: converted.booleanSeries,
           status: 'connected',
         });
       } catch (err) {
@@ -324,5 +335,47 @@ export function useStoreChartData(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollKey]);
 
-  return result;
+  // per-line 스타일(color/stroke_style/stroke_width/smooth)은 순수 config 표현값이므로
+  // 데이터 재조회 없이도 즉시 반영되어야 한다. 폴링 effect 는 pollKey(키/필터/시간 파라미터)
+  // 변경만 감지하므로, style-only 변경(예: 곡선 토글)은 pollKey 를 바꾸지 않아 fetch 시점에
+  // 계산된 seriesStyles 가 stale 로 남는다(다음 조회/리마운트 전까지 미반영).
+  // 따라서 마지막으로 알려진 시리즈 이름(result.seriesNames)에 현재 config 의 스타일을
+  // 재매핑해 반환한다. 정렬 매핑 가능한 경우(컬럼 수 == 시리즈 수)에만 매핑하며, 그 외에는
+  // 조회 시점 결과를 그대로 사용한다(matrixToEntries 의 aligned 규칙과 동일).
+  const reactiveSeriesStyles = useMemo(() => {
+    if (!config?.series || result.seriesNames.length !== config.series.length) {
+      return result.seriesStyles;
+    }
+    const styles = new Map<string, StoreSeriesStyle>();
+    result.seriesNames.forEach((name, j) => {
+      const ref = config.series[j];
+      if (ref && !styles.has(name)) {
+        styles.set(name, {
+          color: ref.color,
+          stroke_style: ref.stroke_style,
+          stroke_width: ref.stroke_width,
+          smooth: ref.smooth,
+        });
+      }
+    });
+    return styles;
+  }, [config, result.seriesNames, result.seriesStyles]);
+
+  // booleanSeries 도 순수 config(data_type) 파생값이므로 재조회 없이 반응적으로 계산한다.
+  const reactiveBooleanSeries = useMemo(() => {
+    if (!config?.series || result.seriesNames.length !== config.series.length) {
+      return result.booleanSeries;
+    }
+    const set = new Set<string>();
+    result.seriesNames.forEach((name, j) => {
+      if (config.series[j]?.data_type === 'boolean') set.add(name);
+    });
+    return set;
+  }, [config, result.seriesNames, result.booleanSeries]);
+
+  return {
+    ...result,
+    seriesStyles: reactiveSeriesStyles,
+    booleanSeries: reactiveBooleanSeries,
+  };
 }

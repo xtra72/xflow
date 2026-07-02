@@ -5,6 +5,19 @@ import { describe, it, expect } from 'vitest';
 import { chartDataToCsv } from './csvExport';
 
 describe('chartDataToCsv', () => {
+  it('booleanKeys 시리즈는 0/1 을 true/false 로 내보낸다', () => {
+    const rows = [
+      { timestamp: 1000, power: 1, temp: 21.5 },
+      { timestamp: 2000, power: 0, temp: 22.0 },
+    ];
+    const csv = chartDataToCsv(rows, ['power', 'temp'], new Set(['power']));
+    const lines = csv.trim().split('\n');
+    expect(lines[0]).toBe('timestamp,iso,power,temp');
+    // power 는 true/false, temp 는 숫자 그대로.
+    expect(lines[1]).toMatch(/,true,21\.5$/);
+    expect(lines[2]).toMatch(/,false,22$/);
+  });
+
   it('단일 시리즈: 헤더 + 행', () => {
     const rows = [
       { timestamp: 1000, value: 10 },

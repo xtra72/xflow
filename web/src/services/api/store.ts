@@ -282,6 +282,23 @@ export async function fetchStoreTagPairs(
  * - 비숫자 값(value 가 number 가 아닌 경우)은 해당 버킷에서 스킵한다.
  * - 엔트리가 전혀 없는 버킷은 결과에 포함되지 않는다 (매트릭스 병합 단계에서 처리).
  */
+/**
+ * 스토어 원시 값을 차트 숫자값으로 변환한다(데이터 타입 기반).
+ *
+ *   - number (int/float) → 그대로 (비유한 값은 제외)
+ *   - boolean → 1(true) / 0(false)
+ *   - string 을 포함한 그 외 타입 → null (차트에서 제외)
+ *
+ * 라인 차트 데이터 소스 규칙(스트링 타입 제외 · int/float 혼합 · boolean 은 0/1)과
+ * 동일하게 store 소스 값도 처리한다. boolean 시리즈의 true/false 표시는 렌더 측이
+ * 시리즈 data_type 으로 판별한다.
+ */
+export function storeChartValue(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  return null;
+}
+
 export function bucketAndAggregate(
   entries: StoreQueryEntry[],
   startMs: number,
@@ -294,7 +311,10 @@ export function bucketAndAggregate(
     const t = e.timestamp;
     if (!Number.isFinite(t)) continue;
     if (t < startMs || t >= endMs) continue;
-    if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
+    // 데이터 타입에 따라 변환: number(int/float) 그대로, boolean → 1/0,
+    // string 등은 제외(null). 라인 차트 값 규칙과 동일하게 store 소스도 처리한다.
+    const num = storeChartValue(e.value);
+    if (num === null) continue;
     // epoch-zero 정렬: 사용자 시작 시각과 무관하게 벽시계 경계에 맞춘다.
     const bucketStart = Math.floor(t / intervalMs) * intervalMs;
     let arr = bucketValues.get(bucketStart);
@@ -302,7 +322,7 @@ export function bucketAndAggregate(
       arr = [];
       bucketValues.set(bucketStart, arr);
     }
-    arr.push(e.value);
+    arr.push(num);
   }
 
   const result = new Map<number, number>();
@@ -406,9 +426,12 @@ function groupEntriesBySeries(
 function collectAggregatedBuckets(entries: StoreQueryEntry[]): Map<number, number> {
   const result = new Map<number, number>();
   for (const e of entries) {
-    if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
+    // 데이터 타입에 따라 변환(boolean → 1/0, string 등 제외). 서버 집계가 boolean 을
+    // 원시 그대로 돌려주는 경우에도 라인 차트에 표시할 수 있게 한다.
+    const num = storeChartValue(e.value);
+    if (num === null) continue;
     if (!Number.isFinite(e.timestamp)) continue;
-    result.set(e.timestamp, e.value);
+    result.set(e.timestamp, num);
   }
   return result;
 }

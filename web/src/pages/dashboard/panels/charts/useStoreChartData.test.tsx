@@ -134,6 +134,22 @@ describe('matrixToEntries', () => {
     });
   });
 
+  it('data_type=boolean 시리즈를 booleanSeries 로 노출한다', () => {
+    const matrix: SeriesMatrix = {
+      columns: ['room:temp', 'room:power'],
+      rows: [{ bucketStartMs: 1000, values: [21.5, 1] }],
+    };
+    const config = makeConfig({
+      series: [
+        { key: 'room:temp', alias: 'Temp', data_type: 'float' },
+        { key: 'room:power', alias: 'Power', data_type: 'boolean' },
+      ],
+    });
+    const { booleanSeries } = matrixToEntries(matrix, config);
+    expect(booleanSeries.has('Power')).toBe(true);
+    expect(booleanSeries.has('Temp')).toBe(false);
+  });
+
   it('alias 의 태그 토큰을 시리즈 태그 값으로 해석해 표시 이름에 반영한다(SPEC-WEB-005)', () => {
     const matrix: SeriesMatrix = {
       columns: ['room:1:temp'],
@@ -223,6 +239,36 @@ describe('useStoreChartData', () => {
     await flushMicrotasks();
     expect(result.current.status).toBe('connected');
     expect(result.current.entries.length).toBeGreaterThan(0);
+  });
+
+  it('스타일(smooth)만 변경 시 재조회 없이 seriesStyles 가 즉시 갱신된다 (곡선 적용 회귀)', async () => {
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue({
+      columns: ['room:temp'],
+      rows: [{ bucketStartMs: 1000, values: [21.5] }],
+    });
+    const cfgFalse = makeConfig({
+      series: [{ key: 'room:temp', alias: 'Temp', smooth: false }],
+    });
+    const cfgTrue = makeConfig({
+      series: [{ key: 'room:temp', alias: 'Temp', smooth: true }],
+    });
+    const { result, rerender } = renderHook(
+      ({ cfg }) =>
+        useStoreChartData(cfg, true, {
+          queryMatrixFn: queryFn,
+          nowFn: () => 100_000,
+        }),
+      { initialProps: { cfg: cfgFalse } },
+    );
+    await flushMicrotasks();
+    expect(result.current.seriesStyles.get('Temp')?.smooth).toBe(false);
+
+    // smooth 만 변경 — key/tags/window 동일 → pollKey 불변 → 재조회 발생하면 안 된다.
+    rerender({ cfg: cfgTrue });
+    await flushMicrotasks();
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    // 데이터 재조회 없이도 스타일은 즉시 반영되어야 한다.
+    expect(result.current.seriesStyles.get('Temp')?.smooth).toBe(true);
   });
 
   it('refresh_interval_ms 주기로 폴링한다', async () => {

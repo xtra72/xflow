@@ -50,6 +50,7 @@ const storeMockResult = vi.hoisted(() => ({
       }
     >(),
     seriesNames: [] as string[],
+    booleanSeries: new Set<string>(),
     status: 'connected' as const,
     closedReason: undefined as string | undefined,
     errorReason: undefined as string | undefined,
@@ -96,6 +97,7 @@ describe('LineChartPanel', () => {
       seriesEntries: new Map(),
       seriesStyles: new Map(),
       seriesNames: [],
+      booleanSeries: new Set(),
       status: 'connected',
       closedReason: undefined,
       errorReason: undefined,
@@ -179,6 +181,87 @@ describe('LineChartPanel', () => {
       { timestamp: 1000, value: 10 },
       { timestamp: 2000, value: 20 },
     ]);
+  });
+
+  // --- 값 타입 처리: 스트링 제외 / int·float 혼합 / boolean true-false ---
+  describe('데이터 소스 값 타입', () => {
+    const values = () =>
+      (
+        JSON.parse(
+          screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
+        ) as Array<{ value: unknown }>
+      ).map((r) => r.value);
+
+    it('int 와 float 를 혼합해서 그대로 표시한다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 3.14 },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(values()).toEqual([10, 3.14]);
+    });
+
+    it('string 값은 숫자 모양("3.14")이어도 제외한다(NaN→JSON null)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: '3.14' },
+        { timestamp: 2000, value: 'cool' },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      // JSON.stringify(NaN) === 'null' → 라인에서 빠진다.
+      expect(values()).toEqual([null, null]);
+    });
+
+    it('boolean 은 true=1 / false=0 으로 그린다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(values()).toEqual([1, 0]);
+    });
+
+    it('순수 boolean 시리즈는 Y축을 false/true(0~1) 범위로 고정한다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual([-0.1, 1.1]);
+    });
+
+    it('숫자 시리즈는 boolean 축을 쓰지 않는다(auto 유지)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 20 },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual(['auto', 'auto']);
+    });
+
+    it('boolean 시리즈는 수동 Y축 범위를 무시하고 false/true 축을 쓴다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_axis_mode: 'manual',
+            y_min: -50,
+            y_max: 50,
+          }}
+        />,
+      );
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual([-0.1, 1.1]);
+    });
   });
 
   // --- Y축 모드 ---
@@ -948,6 +1031,18 @@ describe('LineChartPanel', () => {
       const keys = lines.map((l) => l.getAttribute('data-line-key'));
       expect(keys).toContain('Temp');
       expect(keys).toContain('Hum');
+    });
+
+    it('booleanSeries(store data_type=boolean)는 Y축을 false/true 로 표시한다', () => {
+      // store 값은 이미 1/0 로 변환되어 도달하며, booleanSeries 로 표시 대상을 판별한다.
+      storeMockResult.current.seriesEntries = new Map([
+        ['Power', [{ timestamp: 1000, value: 1 }, { timestamp: 2000, value: 0 }]],
+      ]);
+      storeMockResult.current.booleanSeries = new Set(['Power']);
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual([-0.1, 1.1]);
     });
 
     it('seriesStyles 의 per-line 스타일(색/두께/대시/곡선)이 라인에 적용된다', () => {

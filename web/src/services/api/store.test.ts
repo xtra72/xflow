@@ -26,6 +26,7 @@ import { APIError } from '@/types/api';
 
 import {
   bucketAndAggregate,
+  storeChartValue,
   fetchStoreKeyObjects,
   fetchStoreKeys,
   fetchStoreKeysWithTags,
@@ -78,12 +79,45 @@ describe('sliceKeysPage', () => {
 
 // ---- bucketAndAggregate ----
 
+describe('storeChartValue (데이터 타입 변환)', () => {
+  it('number(int/float)는 그대로', () => {
+    expect(storeChartValue(42)).toBe(42);
+    expect(storeChartValue(3.14)).toBeCloseTo(3.14);
+  });
+  it('boolean 은 1/0 으로', () => {
+    expect(storeChartValue(true)).toBe(1);
+    expect(storeChartValue(false)).toBe(0);
+  });
+  it('string 등은 제외(null)', () => {
+    expect(storeChartValue('3.14')).toBeNull();
+    expect(storeChartValue('cool')).toBeNull();
+    expect(storeChartValue(null)).toBeNull();
+    expect(storeChartValue(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+});
+
 describe('bucketAndAggregate', () => {
   // epoch-zero 정렬: 버킷 경계는 0, 3000, 6000, 9000, ... (intervalMs=3000 기준)
   // 범위 필터 [startMs, endMs) 는 그대로 적용된다.
   const startMs = 1_000;
   const endMs = 10_000;
   const intervalMs = 3_000;
+
+  it('boolean 값은 1/0 으로 변환해 집계하고, string 은 제외한다', () => {
+    const m = bucketAndAggregate(
+      [
+        { timestamp: 1_500, value: true },
+        { timestamp: 2_000, value: false },
+        { timestamp: 2_500, value: '문자열' as unknown as number },
+      ],
+      startMs,
+      endMs,
+      intervalMs,
+      'average',
+    );
+    // true(1)+false(0) 평균 = 0.5, 문자열은 제외.
+    expect(m.get(0)).toBe(0.5);
+  });
 
   it('단일 버킷 내 값들을 평균으로 집계', () => {
     // 모든 엔트리가 [0, 3000) 버킷에 들어가도록 배치.
