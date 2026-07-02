@@ -17,9 +17,7 @@ import { create } from 'zustand';
 export interface NodeOutputMessage {
   id: string;
   type: string;
-  /** human-readable RFC3339 문자열. */
-  time: string;
-  /** epoch milliseconds. */
+  /** epoch milliseconds. 표시용 시각은 이 값으로 포맷한다(중복 time 필드 폐기). */
   timestamp: number;
   payload: Record<string, unknown>;
   metadata: Record<string, unknown>;

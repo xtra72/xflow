@@ -19,10 +19,10 @@ const TypeNodeOutput = "node.output"
 
 // NodeOutputPayload 는 node.output WebSocket 메시지의 페이로드이다.
 //
-// Message 는 debug 노드의 buildMessageMap 과 동일한 whole-message 맵 형태로,
+// Message 는 브리지 봉투(messageToJSON) 와 동일한 whole-message 맵 형태로,
 // DebugPanel 이 기존 debug.message 와 일관되게 렌더링할 수 있도록 한다.
-// 포함 필드: id, type, time(RFC3339 string), timestamp(epoch ms int64),
-// name, payload(map), metadata(map, nested group 보존을 위해 Raw()).
+// 포함 필드: id, type, timestamp(epoch ms int64),
+// payload(map), metadata(map, nested group 보존을 위해 Raw()).
 type NodeOutputPayload struct {
 	FlowID  string         `json:"flow_id"`
 	NodeID  string         `json:"node_id"`
@@ -157,9 +157,9 @@ func (o *TapObserver) OnNodeOutput(flowID, nodeID, port string, msg message.Mess
 	_ = o.broadcaster.BroadcastMessage(TypeNodeOutput, payload)
 }
 
-// buildNodeOutputMessage 는 메시지를 debug 노드(buildMessageMap)와 동일한
-// whole-message 맵으로 구성한다. timestamp 는 epoch ms (int64), time 은
-// human-readable RFC3339 문자열이다.
+// buildNodeOutputMessage 는 메시지를 브리지 봉투(messageToJSON)와 동일한
+// whole-message 맵으로 구성한다. timestamp 는 epoch ms (int64) 단일 필드로
+// 노출한다(중복되는 human-readable time 필드는 폐기 — timestamp 로 통일).
 //
 // metadata (message-slim-metadata): 외부 경계 egress 이므로 agent / device 그룹을
 // 기본 슬림화(id-only)한다. exp 가 주어지면(expand opt-in) 레지스트리에서 type/name 을
@@ -168,7 +168,6 @@ func buildNodeOutputMessage(msg message.Message, exp *message.GroupExpander) map
 	return map[string]any{
 		"id":        msg.ID(),
 		"type":      msg.Type(),
-		"time":      msg.Timestamp().Format("2006-01-02T15:04:05.999Z07:00"),
 		"timestamp": msg.Timestamp().UnixMilli(),
 		"payload":   msg.Payload().ToMap(),
 		"metadata":  EgressMetadata(msg, exp),

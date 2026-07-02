@@ -49,7 +49,6 @@ function makePayload(
     message: {
       id: `${nodeId}-${port}-${Math.random()}`,
       type: 'node.output',
-      time: new Date().toISOString(),
       timestamp: Date.now(),
       payload,
       metadata: {},

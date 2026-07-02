@@ -119,16 +119,17 @@ func TestTapObserver_TappedNodeBroadcasts(t *testing.T) {
 	assert.Equal(t, "node-1", np.NodeID)
 	assert.Equal(t, "out", np.Port)
 
-	// Message 는 debug 노드(buildMessageMap)와 동일한 whole-message 맵 형태이다:
-	// id / type / time(RFC3339) / timestamp(epoch ms) / name / payload / metadata.
+	// Message 는 브리지 봉투(messageToJSON)와 동일한 whole-message 맵 형태이다:
+	// id / type / timestamp(epoch ms) / payload / metadata.
 	mm := np.Message
 	assert.Equal(t, "msg-123", mm["id"])
 	assert.Equal(t, "device.state", mm["type"])
-	assert.Contains(t, mm, "time")
 	assert.Contains(t, mm, "timestamp")
 	assert.Contains(t, mm, "payload")
 	assert.Contains(t, mm, "metadata")
-	// timestamp 는 epoch ms (int64) — debug 노드와 동일.
+	// time(중복 RFC3339) 필드는 폐기 — timestamp(epoch ms) 로 통일.
+	assert.NotContains(t, mm, "time")
+	// timestamp 는 epoch ms (int64).
 	_, isInt64 := mm["timestamp"].(int64)
 	assert.True(t, isInt64, "timestamp는 epoch ms(int64)여야 한다")
 	// payload 내용 보존

@@ -121,7 +121,7 @@ func FromLuaValue(value lua.LValue) any {
 }
 
 // MessageToLuaTable 는 message.Message를 Lua 테이블로 변환한다.
-// 필드: id(string), type(string), timestamp(string), payload(table), metadata(table)
+// 필드: id(string), type(string), timestamp(number, epoch ms), payload(table), metadata(table)
 //
 // SPEC-MESSAGE-TYPE-001 § T3 / M4 (v1.0): 1급 Message.Type() 값을 Lua 의
 // top-level `msg.type` 키로 노출. 이전 metadata.message_type 컨벤션은 폐기.
@@ -131,7 +131,11 @@ func MessageToLuaTable(L *lua.LState, msg message.Message) *lua.LTable {
 
 	tbl.RawSetString("id", lua.LString(msg.ID()))
 	tbl.RawSetString("type", lua.LString(msg.Type()))
-	tbl.RawSetString("timestamp", lua.LString(msg.Timestamp().Format("2006-01-02T15:04:05.999999999Z07:00")))
+	// timestamp 는 epoch milliseconds (int64) 로 노출한다. 프로젝트 전역의
+	// timestamp 컨벤션(epoch ms)과 일치하며, Lua 스크립트가
+	// msg.payload.timestamp = msg.timestamp 로 복사해도 egress 의 top-level
+	// timestamp 와 동일한 epoch ms 값을 유지한다(이전 RFC3339 문자열 노출 폐기).
+	tbl.RawSetString("timestamp", lua.LNumber(msg.Timestamp().UnixMilli()))
 
 	// payload 변환
 	payloadData := msg.Payload().ToMap()

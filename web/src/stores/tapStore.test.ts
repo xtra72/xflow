@@ -27,7 +27,6 @@ function makePayload(
     message: {
       id: `msg-${nodeId}-${value}`,
       type: 'data',
-      time: '2026-01-01T00:00:00.000Z',
       timestamp: 1_700_000_000_000 + value,
       payload: { value },
       metadata: {},
