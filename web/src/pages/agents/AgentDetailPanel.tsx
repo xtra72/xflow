@@ -63,6 +63,7 @@ import {
   type EditKeyMetaPayload,
 } from '@/components/property/EditKeyMetaDialog';
 import RenameKeyDialog from '@/components/property/RenameKeyDialog';
+import SelectStaticKeyDialog from '@/components/property/SelectStaticKeyDialog';
 import {
   TagFilterChips,
   matchesTagFilter,
@@ -2793,6 +2794,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
 
+  // --- 정적 키 등록(키 선택) 모달 상태 ---
+  // 자동 검색된 키에서 등록 대상을 고르는 1단계 모달. true 이면 표시.
+  const [selectingStaticKey, setSelectingStaticKey] = useState(false);
+
   // --- 초기화 모달 상태 (SPEC-STORE-003) ---
   // 행별 초기화 대상 키 이름. null 이면 모달 닫힘.
   const [resettingKey, setResettingKey] = useState<string | null>(null);
@@ -2864,6 +2869,16 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     }
     return set;
   }, [agent?.config]);
+
+  // 정적 키 등록 후보 — 자동 검색(registration=auto)되었고 아직 정적이 아닌 키들.
+  // 선택 다이얼로그에 노출하며, 수동 입력으로 목록에 없는 키도 등록할 수 있다.
+  const promotableCandidates = useMemo(
+    () =>
+      storeKeyObjects.filter(
+        (o) => o.registration === 'auto' && !staticKeyNames.has(o.key),
+      ),
+    [storeKeyObjects, staticKeyNames],
+  );
 
   const totalKeys = (agent?.state as { total_keys?: number } | undefined)?.total_keys ?? 0;
   const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
@@ -3031,6 +3046,16 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const handleOpenPromote = useCallback((key: string) => {
     setPromotingKey(key);
   }, []);
+
+  // 정적 키 등록: 1단계(키 선택) → 2단계(기존 정적 변환 다이얼로그).
+  // 선택된 키로 promote 모달을 열면 default data_type 등 기존 파이프라인을 그대로 재사용한다.
+  const handleSelectStaticKey = useCallback(
+    (key: string) => {
+      setSelectingStaticKey(false);
+      handleOpenPromote(key);
+    },
+    [handleOpenPromote],
+  );
 
   const handleClosePromote = useCallback(() => {
     // 진행 중일 때는 무시 (PromoteToStaticDialog 자체가 isSubmitting=true 인 동안
@@ -3378,6 +3403,16 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setSelectingStaticKey(true)}
+            disabled={!agentName}
+            data-testid="store-register-static-key"
+            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('agents.detail.store.registerStaticKey')}
+          </button>
+          <button
+            type="button"
             onClick={handleOpenModal}
             disabled={!canOpenViewer}
             className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
@@ -3582,6 +3617,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
           agentName={agentName}
         />
       )}
+
+      {/* 정적 키 등록 1단계: 자동 검색된 키 선택(또는 수동 입력). 선택 시 promote 모달로 이어짐. */}
+      <SelectStaticKeyDialog
+        isOpen={selectingStaticKey}
+        onClose={() => setSelectingStaticKey(false)}
+        candidates={promotableCandidates}
+        onSelect={handleSelectStaticKey}
+      />
 
       {/* 동적→정적 변환 모달 (SPEC-STORE-003 v0.3.0, SPEC-WEB-005 v0.7.0 M14) */}
       <PromoteToStaticDialog
