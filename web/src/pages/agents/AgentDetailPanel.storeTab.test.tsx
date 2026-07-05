@@ -174,9 +174,10 @@ describe('StoreTab — 메트릭 타입 필터', () => {
     fireEvent.change(filter, { target: { value: 'temperature' } });
 
     // temperature 엔트리만 남고 humidity 행은 사라진다.
-    expect(screen.getByText('indoor:temp')).toBeInTheDocument();
-    expect(screen.queryByText('outdoor:humidity')).not.toBeInTheDocument();
-    expect(screen.queryByText('dynamic:count')).not.toBeInTheDocument();
+    // 키 컬럼은 8자 초과 시 축약되므로 전체 키가 담긴 title 로 조회한다.
+    expect(screen.getByTitle('indoor:temp')).toBeInTheDocument();
+    expect(screen.queryByTitle('outdoor:humidity')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('dynamic:count')).not.toBeInTheDocument();
   });
 
   it('필터를 unknown 으로 선택하면 동적 엔트리만 표시된다', () => {
@@ -184,8 +185,8 @@ describe('StoreTab — 메트릭 타입 필터', () => {
     fireEvent.change(screen.getByTestId('store-metric-type-filter'), {
       target: { value: 'unknown' },
     });
-    expect(screen.getByText('dynamic:count')).toBeInTheDocument();
-    expect(screen.queryByText('indoor:temp')).not.toBeInTheDocument();
+    expect(screen.getByTitle('dynamic:count')).toBeInTheDocument();
+    expect(screen.queryByTitle('indoor:temp')).not.toBeInTheDocument();
   });
 });
 
@@ -239,9 +240,9 @@ describe('StoreTab — 검색 필터', () => {
     fireEvent.change(screen.getByTestId('store-search-input'), {
       target: { value: 'indoor' },
     });
-    expect(screen.getByText('indoor:temp')).toBeInTheDocument();
-    expect(screen.queryByText('outdoor:humidity')).not.toBeInTheDocument();
-    expect(screen.queryByText('dynamic:count')).not.toBeInTheDocument();
+    expect(screen.getByTitle('indoor:temp')).toBeInTheDocument();
+    expect(screen.queryByTitle('outdoor:humidity')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('dynamic:count')).not.toBeInTheDocument();
   });
 
   it('metric_type 으로도 검색된다 (key 에 없는 텍스트)', () => {
@@ -249,8 +250,8 @@ describe('StoreTab — 검색 필터', () => {
     fireEvent.change(screen.getByTestId('store-search-input'), {
       target: { value: 'humidity' },
     });
-    expect(screen.getByText('outdoor:humidity')).toBeInTheDocument();
-    expect(screen.queryByText('indoor:temp')).not.toBeInTheDocument();
+    expect(screen.getByTitle('outdoor:humidity')).toBeInTheDocument();
+    expect(screen.queryByTitle('indoor:temp')).not.toBeInTheDocument();
   });
 
   it('태그(room=1)로도 검색된다', () => {
@@ -258,8 +259,8 @@ describe('StoreTab — 검색 필터', () => {
     fireEvent.change(screen.getByTestId('store-search-input'), {
       target: { value: 'room=1' },
     });
-    expect(screen.getByText('indoor:temp')).toBeInTheDocument();
-    expect(screen.queryByText('outdoor:humidity')).not.toBeInTheDocument();
+    expect(screen.getByTitle('indoor:temp')).toBeInTheDocument();
+    expect(screen.queryByTitle('outdoor:humidity')).not.toBeInTheDocument();
   });
 
   it('매칭이 없으면 필터 안내 문구를 표시한다', () => {
@@ -282,8 +283,11 @@ describe('StoreTab — 컬럼 정렬', () => {
       // 헤더 행(th 포함) 제외.
       .filter((r) => within(r).queryAllByRole('cell').length > 0);
     return bodyRows.map((r) => {
+      // 키 컬럼은 8자 초과 시 표시 텍스트를 축약하므로, 전체 키가 담긴
+      // title 속성으로 행 키를 읽는다(축약/확장 무관하게 안정적).
       const firstCell = within(r).getAllByRole('cell')[0];
-      return firstCell?.textContent?.trim() ?? '';
+      const keyEl = firstCell?.querySelector('[title]');
+      return keyEl?.getAttribute('title') ?? firstCell?.textContent?.trim() ?? '';
     });
   }
 

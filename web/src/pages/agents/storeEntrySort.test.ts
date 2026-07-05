@@ -3,9 +3,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyColumnFilters,
+  columnCellValues,
+  entryPassesColumnFilter,
   filterEntries,
+  isColumnFilterActive,
   nextSortState,
   sortEntries,
+  uniqueColumnValues,
+  type ColumnFilter,
+  type FilterContext,
   type SortState,
   type StoreEntry,
 } from './storeEntrySort';
@@ -216,5 +223,187 @@ describe('nextSortState', () => {
       column: 'key',
       direction: 'asc',
     });
+  });
+});
+
+// --- Excel 유사 컬럼 필터 순수 함수 ---
+
+const FILTER_CTX: FilterContext = {
+  staticKeyNames: new Set<string>(['indoor:temp']),
+  bindingLabels: { static: '정적', dynamic: '동적' },
+};
+
+const FILTER_ENTRIES: StoreEntry[] = [
+  {
+    key: 'indoor:temp',
+    value: 21.5,
+    namespace: 'zone-a',
+    metric_type: 'temperature',
+    tags: { room: '1', floor: '2' },
+    ttl: '10m',
+  },
+  {
+    key: 'outdoor:humidity',
+    value: 55,
+    namespace: 'default',
+    metric_type: 'humidity',
+    tags: { room: '2' },
+  },
+  {
+    key: 'dynamic:count',
+    value: 7,
+    namespace: '',
+    metric_type: 'unknown',
+    tags: {},
+  },
+];
+
+function filter(partial: Partial<ColumnFilter>): ColumnFilter {
+  return { text: '', values: new Set<string>(), ...partial };
+}
+
+// noUncheckedIndexedAccess 대응: 인덱스 접근을 non-null 로 좁힌다.
+function at(i: number): StoreEntry {
+  const e = FILTER_ENTRIES[i];
+  if (!e) throw new Error(`no entry at ${i}`);
+  return e;
+}
+
+describe('columnCellValues', () => {
+  it('key/metric/value/namespace 단일 값을 반환한다', () => {
+    const e = at(0);
+    expect(columnCellValues(e, 'key', FILTER_CTX)).toEqual(['indoor:temp']);
+    expect(columnCellValues(e, 'metric', FILTER_CTX)).toEqual(['temperature']);
+    expect(columnCellValues(e, 'value', FILTER_CTX)).toEqual(['21.5']);
+    expect(columnCellValues(e, 'namespace', FILTER_CTX)).toEqual(['zone-a']);
+  });
+
+  it('metric 누락은 unknown 으로 정규화된다', () => {
+    expect(columnCellValues(at(2), 'metric', FILTER_CTX)).toEqual([
+      'unknown',
+    ]);
+  });
+
+  it('binding 은 정적/동적 라벨을 셀 값으로 반환한다', () => {
+    expect(columnCellValues(at(0), 'binding', FILTER_CTX)).toEqual([
+      '정적',
+    ]);
+    expect(columnCellValues(at(1), 'binding', FILTER_CTX)).toEqual([
+      '동적',
+    ]);
+  });
+
+  it('tags 는 정렬된 "k=v" 배열을 반환한다', () => {
+    expect(columnCellValues(at(0), 'tags', FILTER_CTX)).toEqual([
+      'floor=2',
+      'room=1',
+    ]);
+    expect(columnCellValues(at(2), 'tags', FILTER_CTX)).toEqual([]);
+  });
+
+  it('ttl 은 값이 없으면 무한대 기호를 반환한다', () => {
+    expect(columnCellValues(at(0), 'ttl', FILTER_CTX)).toEqual([
+      '10m',
+    ]);
+    expect(columnCellValues(at(1), 'ttl', FILTER_CTX)).toEqual([
+      '∞',
+    ]);
+  });
+});
+
+describe('uniqueColumnValues', () => {
+  it('metric 고유 값을 정렬해 반환한다', () => {
+    expect(uniqueColumnValues(FILTER_ENTRIES, 'metric', FILTER_CTX)).toEqual([
+      'humidity',
+      'temperature',
+      'unknown',
+    ]);
+  });
+
+  it('binding 고유 값(정적/동적)을 반환한다', () => {
+    const vals = uniqueColumnValues(FILTER_ENTRIES, 'binding', FILTER_CTX);
+    expect(new Set(vals)).toEqual(new Set(['정적', '동적']));
+  });
+
+  it('tags 고유 값은 모든 k=v 를 합쳐 반환한다', () => {
+    expect(uniqueColumnValues(FILTER_ENTRIES, 'tags', FILTER_CTX)).toEqual([
+      'floor=2',
+      'room=1',
+      'room=2',
+    ]);
+  });
+});
+
+describe('entryPassesColumnFilter', () => {
+  it('텍스트 부분일치(대소문자 무시)', () => {
+    const f = filter({ text: 'TEMP' });
+    expect(entryPassesColumnFilter(at(0), 'metric', f, FILTER_CTX)).toBe(true);
+    expect(entryPassesColumnFilter(at(1), 'metric', f, FILTER_CTX)).toBe(false);
+  });
+
+  it('값 체크박스: 선택 없으면 전체 통과', () => {
+    const f = filter({});
+    expect(entryPassesColumnFilter(at(0), 'metric', f, FILTER_CTX)).toBe(true);
+  });
+
+  it('값 체크박스: 선택된 값 집합에 포함될 때만 통과', () => {
+    const f = filter({ values: new Set(['humidity']) });
+    expect(entryPassesColumnFilter(at(0), 'metric', f, FILTER_CTX)).toBe(false);
+    expect(entryPassesColumnFilter(at(1), 'metric', f, FILTER_CTX)).toBe(true);
+  });
+
+  it('텍스트 AND 값: 둘 다 만족해야 통과', () => {
+    // text 는 room 매칭이지만 값 집합이 room=1 만 허용 → outdoor(room=2) 는 탈락.
+    const f = filter({ text: 'room', values: new Set(['room=1']) });
+    expect(entryPassesColumnFilter(at(0), 'tags', f, FILTER_CTX)).toBe(true);
+    expect(entryPassesColumnFilter(at(1), 'tags', f, FILTER_CTX)).toBe(false);
+  });
+
+  it('tags: 다중 값 중 하나라도 체크 집합에 있으면 통과', () => {
+    const f = filter({ values: new Set(['floor=2']) });
+    expect(entryPassesColumnFilter(at(0), 'tags', f, FILTER_CTX)).toBe(true);
+    expect(entryPassesColumnFilter(at(1), 'tags', f, FILTER_CTX)).toBe(false);
+  });
+});
+
+describe('isColumnFilterActive', () => {
+  it('undefined/빈 필터는 비활성', () => {
+    expect(isColumnFilterActive(undefined)).toBe(false);
+    expect(isColumnFilterActive(filter({}))).toBe(false);
+    expect(isColumnFilterActive(filter({ text: '   ' }))).toBe(false);
+  });
+
+  it('텍스트 또는 값 선택이 있으면 활성', () => {
+    expect(isColumnFilterActive(filter({ text: 'x' }))).toBe(true);
+    expect(isColumnFilterActive(filter({ values: new Set(['a']) }))).toBe(true);
+  });
+});
+
+describe('applyColumnFilters', () => {
+  it('활성 필터가 없으면 원본 복사본을 반환한다', () => {
+    const out = applyColumnFilters(FILTER_ENTRIES, {}, FILTER_CTX);
+    expect(out).toHaveLength(FILTER_ENTRIES.length);
+    expect(out).not.toBe(FILTER_ENTRIES);
+  });
+
+  it('여러 컬럼 필터를 AND 로 결합한다', () => {
+    const out = applyColumnFilters(
+      FILTER_ENTRIES,
+      {
+        binding: filter({ values: new Set(['정적']) }),
+        metric: filter({ text: 'temp' }),
+      },
+      FILTER_CTX,
+    );
+    expect(out.map((e) => e.key)).toEqual(['indoor:temp']);
+  });
+
+  it('빈(비활성) 필터는 무시된다', () => {
+    const out = applyColumnFilters(
+      FILTER_ENTRIES,
+      { metric: filter({}), namespace: filter({ text: 'zone' }) },
+      FILTER_CTX,
+    );
+    expect(out.map((e) => e.key)).toEqual(['indoor:temp']);
   });
 });
