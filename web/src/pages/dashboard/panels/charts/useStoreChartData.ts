@@ -26,7 +26,9 @@ import type {
   SeriesSelectorFilter,
 } from '@/services/api/seriesDataSource';
 import { storeSeriesDataSource } from '@/services/api/store';
+import { useAgents } from '@/hooks/useAgent';
 import { resolveSeriesAlias } from './aliasTemplate';
+import { resolveStoreAgentName } from './storeAgentResolve';
 import type {
   ChartConnectionStatus,
   ChartEntry,
@@ -235,6 +237,18 @@ export function useStoreChartData(
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
+  // SPEC-WEB-006: 저장된 agent_id 를 현재 에이전트 이름으로 해석한다. 에이전트
+  // 이름이 바뀌어도 id 는 불변이므로 항상 현재 이름으로 조회된다. agent_id 가
+  // 없는 구 config 는 저장된 agent_name 을 그대로 사용(하위호환).
+  const { data: agentsResult } = useAgents();
+  const resolvedAgentName = config
+    ? resolveStoreAgentName(config.agent_id, config.agent_name, agentsResult?.data)
+    : '';
+  // effect 내부(run)에서 참조하되 pollKey 재계산 없이 최신값을 쓰도록 ref 로 안정화한다.
+  // 단, 이름 변경 시에는 재조회가 필요하므로 pollKey 에도 resolvedAgentName 을 포함한다.
+  const resolvedAgentNameRef = useRef(resolvedAgentName);
+  resolvedAgentNameRef.current = resolvedAgentName;
+
   // 폴링 재시작을 결정하는 키 — config 의 의미있는 필드만 직렬화한다.
   // series 의 순서/필터/시간 파라미터가 바뀌면 재구독한다.
   const pollKey = useMemo(() => {
@@ -253,7 +267,8 @@ export function useStoreChartData(
       })
       .join('');
     return [
-      config.agent_name,
+      // 해석된 현재 이름을 키에 포함해, 에이전트 이름 변경 시 재조회되게 한다.
+      resolvedAgentName,
       config.namespace ?? 'default',
       config.time_window_ms,
       config.interval_ms,
@@ -261,7 +276,7 @@ export function useStoreChartData(
       config.refresh_interval_ms ?? DEFAULT_REFRESH_MS,
       seriesPart,
     ].join('|');
-  }, [enabled, config]);
+  }, [enabled, config, resolvedAgentName]);
 
   useEffect(() => {
     // 비활성/무효 설정: idle 로 리셋하고 폴링하지 않는다.
@@ -296,7 +311,8 @@ export function useStoreChartData(
       controller = new AbortController();
       const signal = controller.signal;
       try {
-        const matrix = await queryFn(config.agent_name, query, signal);
+        // SPEC-WEB-006: 저장된 이름이 아닌 해석된 현재 에이전트 이름으로 조회한다.
+        const matrix = await queryFn(resolvedAgentNameRef.current, query, signal);
         if (cancelled || signal.aborted) return;
         const converted = matrixToEntries(matrix, config);
         setResult({

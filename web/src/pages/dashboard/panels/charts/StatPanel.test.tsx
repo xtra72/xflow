@@ -19,6 +19,13 @@ vi.mock('./useChartChannel', () => ({
   useChartChannel: () => mockResult.current,
 }));
 
+// useStoreChartData 가 내부에서 useAgents(React Query)를 호출하므로, QueryClient
+// 없이 렌더 가능하도록 빈 목록으로 모킹한다. 목록이 비면 store 소스는 저장된
+// 이름을 그대로 사용(fallback)해 기존 동작이 유지된다. (SPEC-WEB-006)
+vi.mock('@/hooks/useAgent', () => ({
+  useAgents: () => ({ data: { data: [] } }),
+}));
+
 // i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
 vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
