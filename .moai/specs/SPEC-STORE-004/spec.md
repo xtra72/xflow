@@ -1,10 +1,10 @@
 ---
 id: SPEC-STORE-004
 title: Store 에이전트 복합 식별(시리즈) 모델 — (key, metric_type, tags) 통일
-version: 0.1.0
+version: 0.2.0
 status: draft
 created: 2026-06-15
-updated: 2026-06-15
+updated: 2026-07-05
 author: xtra
 priority: high
 lifecycle: spec-anchored
@@ -18,6 +18,7 @@ related: [SPEC-STORE-001, SPEC-STORE-002, SPEC-STORE-003, SPEC-TSDB-001, SPEC-CH
 | Version | Date       | Author | Change                                                                 |
 | ------- | ---------- | ------ | ---------------------------------------------------------------------- |
 | 0.1.0   | 2026-06-15 | xtra   | 최초 작성 — 저장 아이템 식별을 `(key, metric_type, sorted(tags))` 복합 식별(시리즈)로 통일. data_type 은 식별에서 제외. 키 조회 시 전체 시리즈 반환 + metric/tags 필터로 단일 시리즈 선택. 마이그레이션 경로 및 tsdb 역할 구분 포함. |
+| 0.2.0   | 2026-07-05 | xtra   | 시리즈 키 관리 3종 확장 — (1) `key_tag`: 자동 요소 생성 시 지정 태그 값을 시리즈 key 로 사용(없으면 생성된 id 폴백, 원래 id 는 `id` 태그로 보존). (2) 시리즈 rename: 키(그 키의 모든 시리즈)를 값+히스토리+메타 보존하며 새 키로 이동(`POST /keys/{key}/rename`). (3) `GET /keys` 데이터 없는 시리즈 필터: 실데이터 있는 시리즈만 반환(데이터 없는 auto 유령 + bare 정적 정의 제외)하여 라인차트 선택기 ↔ 저장소 탭 일치. 「확장 명세 (v0.2.0)」 절 참조. |
 
 ## 개요 (Overview)
 
@@ -314,6 +315,84 @@ SeriesID = (key, metric_type, sorted(tags))
 > tsdb 위임으로 통합할지. 본 SPEC 은 **두 에이전트를 독립 유지**하되 식별 모델 규약(시리즈 키
 > 인코딩 O1)을 공유하는 방향을 제안한다. 통합 여부는 별도 결정 사항으로 남긴다.
 
+## 확장 명세 (v0.2.0): 시리즈 키 관리 3종
+
+시리즈 모델(v0.1.0) 위에서 운영 중 드러난 요구를 반영한 확장이다. 시리즈 식별자 정의와
+인코딩 규칙은 그대로 유지하며, 키 파생/이동/노출 정책만 보강한다.
+
+### 1. key_tag — 자동 요소 생성 시 키로 사용할 속성 지정
+
+**배경**: HVAC 등 에이전트가 디바이스(요소)를 자동 생성할 때, 관리용으로 반드시 생성되는
+UUID(`device_id`)가 시리즈 key 로 사용된다. 사용자가 사람이 읽는 속성(예: `name` 태그)을
+key 로 쓰고 싶어도 방법이 없었다.
+
+**요구사항 (EARS)**:
+
+- (Optional) WHERE store 에이전트에 `key_tag` 가 설정되어 있고, 쓰기 태그에 그 태그가
+  비어있지 않은 값으로 존재하면, 시스템은 해당 태그 값을 시리즈 key 로 사용해야 한다.
+- (Event-Driven) WHEN key_tag 로 key 를 오버라이드하면, 시스템은 원래 key(생성된 id)를
+  `id` 태그로 보존해야 한다(관리용 식별 유지 + 동명 요소가 하나의 시리즈로 병합되는 것 방지).
+- (State-Driven) WHILE 지정 태그가 없거나 값이 비어있으면, 시스템은 기존 key(호출자 제공,
+  예: 생성된 device_id)로 폴백해야 한다(현재 방식 보존).
+
+**명세**:
+
+- `store` 설정 옵션 `key_tag: string`(태그 key 형식 `^[a-zA-Z0-9_-]+$`). 빈 값이면 비활성(기존 동작).
+- 단일 쓰기 진입점 `NodeStoreAdapter.SetWithMeta` 에서, SeriesID 인코딩 **이전에** 키를
+  오버라이드한다: `opts.Tags[key_tag]` 이 비어있지 않으면 `key = 그 값`, 그리고 `opts.Tags["id"]`
+  가 없으면 원래 key 를 주입한다.
+- `key_tag` 는 값 동반 쓰기(SetWithMeta)에만 적용된다. 태그 없는 순수 `Set` 경로는 대상 아님.
+- 런타임 재설정(Configure) 시 즉시 전파된다(`StoreAgent.SetKeyTag`).
+
+### 2. 시리즈 rename — 키(그 키의 모든 시리즈)를 새 키로 이동
+
+**배경**: 디바이스와 스토어 시리즈는 직접적 관계가 없고 사용상으로만 연관된다. key_tag 로
+이름 기반 key 를 쓰다 이름이 바뀌면 새 시리즈가 생기는 등, 시리즈 key 자체를 사용자가
+변경할 수 있어야 한다.
+
+**요구사항 (EARS)**:
+
+- (Event-Driven) WHEN 사용자가 키 이름 변경을 요청하면, 시스템은 (namespace, oldKey) 아래
+  **모든 시리즈**(metric/tags 조합 전체)를 newKey 로 이동하고, 각 시리즈의 **값 + 히스토리 +
+  레지스트리 메타(DataType/MetricType/Tags/Source)** 를 보존해야 한다.
+- (Unwanted) IF 대상(newKey 인코딩) 시리즈가 하나라도 이미 존재하면, 시스템은 이동을
+  거부(`ErrKeyExists`, HTTP 409)하고 **아무것도 변경하지 않아야** 한다(사전 검사).
+- (Unwanted) IF newKey 가 비어있거나 oldKey 와 동일하면, 400 으로 거부해야 한다.
+- (State-Driven) WHILE oldKey 에 일치하는 시리즈가 0개이면, 404(변경 없음)를 반환해야 한다.
+
+**명세**:
+
+- `Store` 인터페이스에 `Rename(ctx, oldKey, newKey)` 원시 연산 추가.
+  - VolatileStore: 인메모리 아이템 참조 이동(히스토리 포함 완전 보존).
+  - PersistentStore: `GetEntry→SetEntry→DeleteEntry`(히스토리 체인 미보관 — 값/TTL 이동).
+  - NamespacedStore/agentStore 래퍼가 네임스페이스 prefix / paused·closed 검사 위임.
+- `UserStoreAgent.RenameKey(namespace, oldKey, newKey) (moved int, err error)`: 시리즈 열거 →
+  newKey 로 재인코딩 → 값(`Store.Rename`) + 메타(`MoveStaticKeyMeta`) 이동. 충돌은 전체 사전 거부.
+- API: `POST /store/{agent_name}/keys/{key}/rename` body `{"new_key": "..."}` → 200 `{old_key, new_key, moved}` / 409 / 404 / 400.
+- 웹: `RenameKeyDialog` + StoreTab 동적 키 행 "이름 변경" 액션(정적 키는 config 정의라 대상 제외).
+
+### 3. GET /keys — 데이터 없는 시리즈 필터
+
+**배경**: `GET /keys` 는 레지스트리(`StaticKeysSnapshot`)를 반환하는데, 실데이터 없는 항목이
+섞여 라인차트 Store 선택기가 저장소 탭(실데이터 기준)과 불일치했다. 두 종류가 문제:
+(a) auto 유령 — 과거 만료/삭제로 store 아이템은 사라졌으나 레지스트리에 남은 항목,
+(b) bare 정적 정의 — config `keys[]` 로 정의(태그 없음)됐으나 실데이터는 태그 붙은 별도 auto
+시리즈로 저장되어, 정의 자체엔 데이터가 없는 경우.
+
+**요구사항 (EARS)**:
+
+- (Ubiquitous) `GET /keys` 는 **실데이터가 존재하는 시리즈만** 반환해야 한다(manual/auto 무관).
+- (State-Driven) WHILE 에이전트가 실데이터 시리즈 집합을 제공하지 못하면(원격 등 미구현),
+  시스템은 필터 없이 기존 동작(레지스트리 전체 노출)으로 폴백해야 한다.
+
+**명세**:
+
+- `StoreAgent.LiveSeriesKeys() map[string]struct{}` — 현재 저장 데이터(비만료)가 있는 시리즈
+  키(네임스페이스 접두사 제거, 인코딩 시리즈 키) 집합. `UserStoreAgent` 패스스루.
+- API 핸들러는 선택적 인터페이스 `storeLiveKeyLister` 로 이 집합을 얻어, 레지스트리 항목 중
+  `regKey ∉ liveKeys` 인 것을 제외한다. 미구현 에이전트는 폴백.
+- 저장소 탭의 정적 배지는 `config.keys[]` 로 판정하므로 이 필터의 영향을 받지 않는다.
+
 ## 영향 파일 (Impact Surface — 요약)
 
 - `internal/agent/system/store_volatile.go` (저장 키잉, history 단위)
@@ -324,9 +403,22 @@ SeriesID = (key, metric_type, sorted(tags))
 - `internal/node/store_write.go` (다중 시리즈 쓰기 검증; 코드 변경 최소)
 - `internal/agent/system/store_query.go` (QueryHistory 다중 시리즈, ListStoreKeys, IsStaticKey)
 - `internal/api/handler/store_query.go` (POST /query metric/tags 필터, GET /keys 시리즈 행, DELETE 시리즈 대상)
-- `internal/agent/system/store_persistent.go` (시리즈 인코딩 정합; 1차는 규칙만)
+- `internal/agent/system/store_persistent.go` (시리즈 인코딩 정합; 1차는 규칙만 / v0.2.0: `Rename`)
 - `internal/tsdb/series.go` (BuildSeriesKey 규약 공유 — 참조/재사용)
 - `web/src/**` (TSDB 데이터 뷰어 시리즈 행/차트 라인 분리)
+
+v0.2.0 추가:
+
+- `internal/agent/system/store_options.go` (`key_tag` 설정 + `WithKeyTag`)
+- `internal/agent/system/store.go` (`KeyTag/SetKeyTag`, `Store.Rename`/`agentStore.Rename`, `MoveStaticKeyMeta`, `LiveSeriesKeys`)
+- `internal/agent/system/store_node_adapter.go` (`SetWithMeta` key_tag 오버라이드)
+- `internal/agent/system/store_namespace.go` · `store_volatile.go` · `store_persistent.go` (`Rename` 원시 연산)
+- `internal/agent/system/store_errors.go` (`ErrKeyExists`)
+- `internal/agent/system/store_series_rename.go` (`UserStoreAgent.RenameKey`)
+- `internal/agent/system/store_user_agent.go` (`key_tag` 파싱/전파, `LiveSeriesKeys` 패스스루)
+- `internal/api/handler/store_query.go` (`POST .../rename` 핸들러, `GET /keys` 데이터 없는 시리즈 필터)
+- `web/src/services/api/store.ts` (`renameStoreKey`)
+- `web/src/components/property/RenameKeyDialog.tsx` · `web/src/pages/agents/AgentDetailPanel.tsx` (rename UI)
 
 ## 트레이서빌리티 (Traceability)
 

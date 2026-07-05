@@ -1,10 +1,10 @@
 ---
 id: SPEC-STORE-004
 title: 수용 기준 — Store 복합 식별(시리즈) 모델
-version: 0.1.0
+version: 0.2.0
 status: draft
 created: 2026-06-15
-updated: 2026-06-15
+updated: 2026-07-05
 author: xtra
 related_spec: SPEC-STORE-004
 ---
@@ -170,6 +170,46 @@ related_spec: SPEC-STORE-004
 - **When** 각 식별자를 `EncodeSeriesKey` 로 인코딩한다
 - **Then** 서로 다른 식별자는 항상 서로 다른 인코딩을 생성한다(단사성).
 - **And** 동일 식별자(tags 순서만 다른 경우 포함)는 항상 동일 인코딩을 생성한다(결정성, U4/U2).
+
+## 확장 수용 기준 (v0.2.0)
+
+### AC-KT1 — key_tag 로 지정 태그 값을 키로 사용
+
+- **Given** store 에이전트에 `key_tag: "name"` 설정
+- **When** 쓰기 태그 `{name: "livingroom"}` 로 `SetWithMeta("dev-uuid", ...)` 실행
+- **Then** 시리즈 key 는 `"livingroom"` 이 되고, 원래 key(`"dev-uuid"`)는 `id` 태그로 보존된다.
+
+### AC-KT2 — key_tag 폴백
+
+- **Given** `key_tag: "name"` 설정
+- **When** 쓰기 태그에 `name` 이 없거나 값이 빈 문자열
+- **Then** 시리즈 key 는 호출자 제공 key(생성된 id)로 유지되고 `id` 태그 주입은 없다.
+
+### AC-RN1 — 키의 모든 시리즈를 새 키로 이동(값+히스토리+메타 보존)
+
+- **Given** key `A` 아래 metric 이 다른 여러 시리즈(값+히스토리 존재)
+- **When** `POST /store/{agent}/keys/A/rename` body `{"new_key":"B"}`
+- **Then** 모든 시리즈가 key `B` 로 이동하며 값·히스토리·메타(data_type/metric/tags/source)가 보존되고, key `A` 는 사라진다. 응답 `{old_key, new_key, moved}` (200).
+
+### AC-RN2 — 대상 키 충돌 시 전체 거부
+
+- **Given** key `B` 에 이동 대상과 동일한 시리즈가 이미 존재
+- **When** `A → B` rename 요청
+- **Then** 409(`ErrKeyExists`)를 반환하고 **아무 시리즈도 이동하지 않는다**(사전 검사).
+- **And** 빈 `new_key` 또는 `new_key == oldKey` 는 400, 일치 시리즈 0개는 404.
+
+### AC-LK1 — GET /keys 데이터 없는 시리즈 제외
+
+- **Given** 레지스트리에 실데이터 있는 시리즈 + 데이터 없는 항목(auto 유령 / bare 정적 정의) 혼재
+- **When** `GET /store/{agent}/keys`
+- **Then** **실데이터 있는 시리즈만** 반환된다(manual/auto 무관, 데이터 없는 항목 제외).
+- **And** 라인차트 Store 선택기 목록이 저장소 탭(실데이터 기준)과 일치한다.
+
+### AC-LK2 — 미구현 에이전트 폴백
+
+- **Given** `LiveSeriesKeys` 를 구현하지 않는 store 에이전트(원격 등)
+- **When** `GET /keys`
+- **Then** 필터 없이 기존 동작(레지스트리 전체 노출)으로 폴백한다(400 없음).
 
 ## Definition of Done
 
