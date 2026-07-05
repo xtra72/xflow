@@ -256,6 +256,33 @@ func (s *PersistentStore) Delete(ctx context.Context, key string) error {
 	return s.repo.DeleteEntry(ctx, key)
 }
 
+// Rename 은 oldKey 의 엔트리를 newKey 로 이동한다.
+// PersistentStore 는 히스토리 체인을 보관하지 않으므로 값 + TTL/타임스탬프만 이동한다.
+//   - oldKey 없음 → ErrKeyNotFound.
+//   - newKey 이미 존재 → ErrKeyExists.
+func (s *PersistentStore) Rename(ctx context.Context, oldKey, newKey string) error {
+	if err := s.validateKey(newKey); err != nil {
+		return err
+	}
+	if exists, _ := s.Has(ctx, newKey); exists {
+		return ErrKeyExists
+	}
+	repoEntry, err := s.repo.GetEntry(ctx, oldKey)
+	if err != nil || repoEntry == nil {
+		return ErrKeyNotFound
+	}
+	if !repoEntry.ExpiresAt.IsZero() && time.Now().After(repoEntry.ExpiresAt) {
+		s.cache.Delete(oldKey)
+		_ = s.repo.DeleteEntry(ctx, oldKey)
+		return ErrKeyNotFound
+	}
+	if err := s.repo.SetEntry(ctx, newKey, repoEntry); err != nil {
+		return err
+	}
+	s.cache.Delete(oldKey)
+	return s.repo.DeleteEntry(ctx, oldKey)
+}
+
 // Has 는 주어진 키가 존재하고 만료되지 않았는지 확인한다.
 // 캐시를 먼저 확인하고, 캐시 미스 시 리포지토리에서 확인한다.
 func (s *PersistentStore) Has(ctx context.Context, key string) (bool, error) {

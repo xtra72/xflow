@@ -22,7 +22,16 @@ import (
 // agent.Agent 인터페이스도 구현하여 agent.List() 결과로 동작한다.
 type fakeStoreAgent struct {
 	*fakeAgentCommon
-	queryFn func(ctx context.Context, namespace, key string, q system.HistoryQuery) ([]system.HistoryEntry, error)
+	queryFn  func(ctx context.Context, namespace, key string, q system.HistoryQuery) ([]system.HistoryEntry, error)
+	renameFn func(ctx context.Context, namespace, oldKey, newKey string) (int, error)
+}
+
+// RenameKey 는 storeKeyRenamer 계약을 만족한다(테스트용). renameFn 미지정이면 (0, nil).
+func (f *fakeStoreAgent) RenameKey(ctx context.Context, namespace, oldKey, newKey string) (int, error) {
+	if f.renameFn != nil {
+		return f.renameFn(ctx, namespace, oldKey, newKey)
+	}
+	return 0, nil
 }
 
 func (f *fakeStoreAgent) QueryHistory(
@@ -68,8 +77,10 @@ func TestStoreQueryHandler_RegisterRoutes(t *testing.T) {
 	//   DELETE /keys/{key}, DELETE /keys
 	// @spec SPEC-STORE-003 v0.4.0:
 	//   PUT    /keys/{key}/meta (신규)
-	// 총 6개.
-	assert.Equal(t, 6, after-before)
+	// @spec SPEC-STORE-004:
+	//   POST   /keys/{key}/rename (신규)
+	// 총 7개.
+	assert.Equal(t, 7, after-before)
 }
 
 func TestStoreQueryHandler_각모드_성공(t *testing.T) {

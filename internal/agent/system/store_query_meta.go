@@ -31,3 +31,15 @@ func (a *UserStoreAgent) StaticKeysSnapshot() map[string]StaticKeyMeta {
 	}
 	return inner.StaticKeysSnapshot()
 }
+
+// LiveSeriesKeys 는 현재 저장 데이터가 있는 시리즈 키 집합을 반환한다(inner 패스스루).
+// GET /keys 핸들러가 실데이터 없는 auto 유령 시리즈를 걸러내는 데 사용한다.
+func (a *UserStoreAgent) LiveSeriesKeys() map[string]struct{} {
+	a.mu.RLock()
+	inner := a.inner
+	a.mu.RUnlock()
+	if inner == nil {
+		return map[string]struct{}{}
+	}
+	return inner.LiveSeriesKeys()
+}

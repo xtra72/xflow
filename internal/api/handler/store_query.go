@@ -88,6 +88,13 @@ type storeKeyMetaLister interface {
 	StaticKeysSnapshot() map[string]system.StaticKeyMeta
 }
 
+// storeLiveKeyLister 는 실데이터가 있는 시리즈 키 집합을 제공하는 선택적 계약이다.
+// 구현하는 에이전트(로컬 UserStoreAgent)에서만 GET /keys 가 유령 auto 시리즈를 필터링한다.
+// 미구현 에이전트(원격 등)는 필터 없이 기존 동작(레지스트리 전체 노출)으로 폴백한다.
+type storeLiveKeyLister interface {
+	LiveSeriesKeys() map[string]struct{}
+}
+
 // @spec SPEC-STORE-003 v0.4.0
 // storeKeyMetaSetter 는 임의 엔트리(정적 + 동적)의 metric_type/tags 를 설정하는
 // 에이전트 계약이다. system.UserStoreAgent 가 이 인터페이스를 만족한다.
@@ -128,6 +135,13 @@ type storeSeriesResetter interface {
 	ResetSeries(ctx context.Context, namespace, key, metricFilter string, tagsFilter map[string]string) (historyCleared, entriesDeleted int, err error)
 }
 
+// storeKeyRenamer 는 키(그 키의 모든 시리즈) 를 새 키로 이동하는 에이전트 계약이다.
+// system.UserStoreAgent 가 이 인터페이스를 만족한다.
+// POST /store/{name}/keys/{key}/rename 핸들러가 사용한다.
+type storeKeyRenamer interface {
+	RenameKey(ctx context.Context, namespace, oldKey, newKey string) (moved int, err error)
+}
+
 // StoreQueryHandler 는 SPEC-CHART-001 REQ-M3-01 를 구현한다.
 //
 // 라우트:
@@ -159,6 +173,8 @@ func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	//   DELETE /store/{agent_name}/keys       → 전체 키 reset (벌크)
 	g.DELETE("/store/{agent_name}/keys/{key}", h.ResetKey)
 	g.DELETE("/store/{agent_name}/keys", h.ResetAll)
+	// 키(그 키의 모든 시리즈) 이름 변경. body: {"new_key": "..."}
+	g.POST("/store/{agent_name}/keys/{key}/rename", h.RenameKey)
 }
 
 // storeQueryRequest 는 REQ-M3-01 요청 바디 형식이다.
@@ -846,6 +862,18 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	// 일관된 스냅샷 (manual + auto-registered 모두 포함, deep copy).
 	snapshot := metaLister.StaticKeysSnapshot()
 
+	// 실데이터가 있는 시리즈 키 집합(선택적). 실데이터 없는 시리즈는 GET /keys 에서 제외해
+	// 저장소 탭(실데이터 기준) 및 라인차트 선택기와 일치시킨다. 대상 두 가지:
+	//   1. auto 유령 시리즈: 과거 만료/삭제로 store 아이템은 사라졌으나 레지스트리에 남은 항목.
+	//   2. bare 정적 정의: config keys[] 로 정의됐으나(태그 없음) 실데이터는 태그가 붙은
+	//      별도(auto) 시리즈로 저장되어, 정적 정의 자체엔 데이터가 없는 경우.
+	// 둘 다 "그릴 데이터가 없는" 항목이므로 선택기/뷰어에서 노출할 이유가 없다.
+	// LiveSeriesKeys 미구현 에이전트(원격 등)는 필터 없이 기존 동작으로 폴백한다.
+	var liveKeys map[string]struct{}
+	if ll, ok := ag.(storeLiveKeyLister); ok {
+		liveKeys = ll.LiveSeriesKeys()
+	}
+
 	// @spec SPEC-STORE-004
 	// 필터 적용 + 시리즈 행 빌드 (E7/AC-13).
 	// 레지스트리 키는 시리즈 인코딩(SetWithMeta 경로) 또는 bare key(yaml 정적/plain Set)이다.
@@ -856,6 +884,13 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	for regKey, meta := range snapshot {
 		if !filter.matches(meta) {
 			continue
+		}
+		// 실데이터가 있는 시리즈만 노출(manual/auto 무관). 데이터 없는 유령/bare 정적 정의 제외.
+		// liveKeys 가 nil(미구현 에이전트)이면 필터하지 않는다.
+		if liveKeys != nil {
+			if _, live := liveKeys[regKey]; !live {
+				continue
+			}
 		}
 		userKey := regKey
 		if sid, derr := system.DecodeSeriesKey(regKey); derr == nil {
@@ -1169,6 +1204,79 @@ func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
 		"action": action,
 		"key":    decodedKey,
 	}))
+}
+
+// RenameKey 는 키(그 키의 모든 시리즈)를 새 키로 이동한다.
+//
+//	POST /store/{agent_name}/keys/{key}/rename?namespace=default
+//	body: {"new_key": "living_room"}
+//
+// 값 + 히스토리 + 레지스트리 메타를 보존한다. 대상 키가 이미 존재하면 409(Conflict),
+// oldKey 에 시리즈가 없으면 404(Not Found), 그 외 검증 실패는 400 이다.
+// 키 경로 파라미터는 url.PathUnescape 로 디코딩한다.
+func (h *StoreQueryHandler) RenameKey(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+	rawKey := ctx.Param("key")
+	if rawKey == "" {
+		return api.ErrBadRequest.WithMessage("key is required")
+	}
+	decodedKey, derr := url.PathUnescape(rawKey)
+	if derr != nil {
+		return api.ErrBadRequest.WithMessage("invalid key encoding")
+	}
+
+	var req renameKeyRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+	if req.NewKey == "" {
+		return api.ErrBadRequest.WithMessage("new_key is required")
+	}
+
+	namespace := ctx.Query("namespace")
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	renamer, ok := ag.(storeKeyRenamer)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName).
+			WithDetails(map[string]string{"error": "not_a_store_agent"})
+	}
+
+	moved, err := renamer.RenameKey(ctx.Context(), namespace, decodedKey, req.NewKey)
+	if err != nil {
+		if errors.Is(err, system.ErrKeyExists) {
+			return api.ErrConflict.
+				WithMessage(err.Error()).
+				WithDetails(map[string]string{"error": "key_exists"})
+		}
+		return api.ErrBadRequest.WithMessage(err.Error())
+	}
+	if moved == 0 {
+		return api.ErrNotFound.
+			WithMessage("key_not_found: " + decodedKey).
+			WithDetails(map[string]string{"error": "key_not_found"})
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"old_key": decodedKey,
+		"new_key": req.NewKey,
+		"moved":   moved,
+	}))
+}
+
+// renameKeyRequest 는 RenameKey 요청 바디이다.
+type renameKeyRequest struct {
+	NewKey string `json:"new_key"`
 }
 
 // @spec SPEC-STORE-004

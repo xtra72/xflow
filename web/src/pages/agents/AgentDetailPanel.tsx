@@ -27,6 +27,7 @@ import {
 } from '@/services/api/seriesDataSource';
 import * as agentService from '@/services/api/agentService';
 import {
+  renameStoreKey,
   resetAllStoreKeys,
   resetStoreKey,
   useSetStoreKeyMeta,
@@ -61,6 +62,7 @@ import {
   EditKeyMetaDialog,
   type EditKeyMetaPayload,
 } from '@/components/property/EditKeyMetaDialog';
+import RenameKeyDialog from '@/components/property/RenameKeyDialog';
 import {
   TagFilterChips,
   matchesTagFilter,
@@ -2400,6 +2402,7 @@ function StoreEntryRow({
   showTagsColumn,
   isStatic,
   onPromote,
+  onRename,
   onReset,
   onEditMeta,
   readOnly = false,
@@ -2422,6 +2425,11 @@ function StoreEntryRow({
    * @spec SPEC-STORE-003
    */
   onPromote: (key: string) => void;
+  /**
+   * 동적 키(그 키의 모든 시리즈)를 새 키로 이동하는 핸들러. 동적 키에서만 노출된다.
+   * @spec SPEC-STORE-004
+   */
+  onRename: (key: string) => void;
   /**
    * 행별 초기화 핸들러. 정적/동적 모두에서 노출되며 클릭 시 부모가
    * 확인 다이얼로그를 띄운다.
@@ -2524,6 +2532,16 @@ function StoreEntryRow({
       onPromote(entry.key as string);
     },
     [entry.key, onPromote],
+  );
+
+  // 동적 키 "이름 변경" 버튼 클릭 핸들러. 사용자 관점 key(그 키의 모든 시리즈)를 대상으로 한다.
+  // @spec SPEC-STORE-004
+  const handleRenameClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onRename(entry.key as string);
+    },
+    [entry.key, onRename],
   );
 
   // 행별 초기화 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
@@ -2672,6 +2690,17 @@ function StoreEntryRow({
                 <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             )}
+            {!readOnly && !isStatic && (
+              <button
+                type="button"
+                onClick={handleRenameClick}
+                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/20 dark:hover:text-amber-400"
+                title={t('agents.detail.store.renameTooltip')}
+                aria-label={t('agents.detail.store.renameAriaLabel').replace('{key}', entry.key as string)}
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
             {!readOnly && (
               <button
                 type="button"
@@ -2758,6 +2787,11 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   // --- 동적→정적 변환 모달 상태 (SPEC-STORE-003) ---
   // 변환 대상 키 이름. null 이면 모달 닫힘.
   const [promotingKey, setPromotingKey] = useState<string | null>(null);
+
+  // --- 키 이름 변경 모달 상태 (SPEC-STORE-004) ---
+  // 이름 변경 대상 키. null 이면 모달 닫힘.
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false);
 
   // --- 초기화 모달 상태 (SPEC-STORE-003) ---
   // 행별 초기화 대상 키 이름. null 이면 모달 닫힘.
@@ -3004,6 +3038,49 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     if (configureAgent.isPending) return;
     setPromotingKey(null);
   }, [configureAgent.isPending]);
+
+  // --- 키 이름 변경 (SPEC-STORE-004) ---
+  const handleOpenRename = useCallback((key: string) => {
+    setRenamingKey(key);
+  }, []);
+
+  const handleCloseRename = useCallback(() => {
+    if (isRenaming) return;
+    setRenamingKey(null);
+  }, [isRenaming]);
+
+  const handleRenameConfirm = useCallback(
+    async (newKey: string) => {
+      if (!renamingKey || !agentName) return;
+      setIsRenaming(true);
+      try {
+        const result = await renameStoreKey(agentName, renamingKey, newKey);
+        addNotification({
+          type: 'success',
+          message: t('agents.detail.store.renameSuccess')
+            .replace('{key}', renamingKey)
+            .replace('{newKey}', newKey)
+            .replace('{count}', String(result.moved)),
+        });
+        setRenamingKey(null);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['agents', agentId] }),
+          queryClient.invalidateQueries({ queryKey: ['store', 'tags', agentName] }),
+          queryClient.invalidateQueries({ queryKey: ['store', 'keys', agentName] }),
+          queryClient.invalidateQueries({ queryKey: ['store', 'keys-with-tags', agentName] }),
+        ]);
+      } catch (err) {
+        const mapped = mapStoreError(err, t);
+        addNotification({
+          type: 'error',
+          message: t('agents.detail.store.renameFailed').replace('{message}', mapped.userMessage),
+        });
+      } finally {
+        setIsRenaming(false);
+      }
+    },
+    [renamingKey, agentName, agentId, addNotification, queryClient, t],
+  );
 
   /**
    * 동적 키를 정적으로 변환한다.
@@ -3458,6 +3535,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                     showTagsColumn={showTagsColumn}
                     isStatic={staticKeyNames.has(entry.key as string)}
                     onPromote={handleOpenPromote}
+                    onRename={handleOpenRename}
                     onReset={handleOpenReset}
                     onEditMeta={handleOpenEditMeta}
                     readOnly={remote}
@@ -3513,6 +3591,15 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         onConfirm={handlePromoteConfirm}
         isSubmitting={configureAgent.isPending}
         defaultDataType={promotingKeyDefaultDataType}
+      />
+
+      {/* 키 이름 변경 모달 (SPEC-STORE-004). 그 키의 모든 시리즈를 새 키로 이동한다. */}
+      <RenameKeyDialog
+        isOpen={renamingKey !== null}
+        onClose={handleCloseRename}
+        currentKey={renamingKey ?? ''}
+        onConfirm={handleRenameConfirm}
+        isSubmitting={isRenaming}
       />
 
       {/* 타입/태그 편집 모달 (SPEC-STORE-003 v0.4.0). 임의 엔트리(동적 포함)의
