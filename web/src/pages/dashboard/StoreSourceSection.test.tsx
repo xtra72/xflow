@@ -1,7 +1,7 @@
 // StoreSourceSection 의 시리즈 표시 이름(alias) 편집 테스트 (SPEC-WEB-005).
 // useAgents / useStoreKeysWithTags 를 모킹해 네트워크 없이 렌더한다.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import type { PanelConfig } from '@/stores/uiStore';
@@ -14,10 +14,14 @@ vi.mock('@/lib/i18n', () => ({
   }),
 }));
 
-// 에이전트 목록 — store 에이전트 1개.
+// 에이전트 목록 — store 에이전트 1개. 각 테스트가 필요 시 mockAgents 를 바꿔
+// 이름/ID 매핑(리네임 시나리오)을 시뮬레이션한다. (SPEC-WEB-006)
+let mockAgents: Array<{ id: string; name: string; type: string }> = [
+  { id: 'store-uuid-1', name: 'store-1', type: 'store' },
+];
 vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({
-    data: { data: [{ name: 'store-1', type: 'store' }] },
+    data: { data: mockAgents },
   }),
 }));
 
@@ -464,5 +468,81 @@ describe('StoreSourceSection alias 태그 토큰 템플릿(SPEC-WEB-005)', () =>
       />,
     );
     expect(screen.queryByTestId('chart-store-series-tokens-0')).toBeNull();
+  });
+});
+
+/**
+ * agent_id 정본 저장 + 리네임 자동 반영 (SPEC-WEB-006).
+ *
+ * 에이전트 선택 시 안정적인 agent_id 를 정본으로, 현재 이름을 스냅샷으로 함께
+ * 저장한다. 에이전트 이름이 바뀌어도 저장된 id 로 현재 이름을 해석해 선택이
+ * 유지되고 현재 이름이 표시되어야 한다.
+ */
+describe('StoreSourceSection agent_id 정본 저장(SPEC-WEB-006)', () => {
+  const originalAgents = mockAgents;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAgents = [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }];
+  });
+  afterEach(() => {
+    mockAgents = originalAgents;
+  });
+
+  /** 에이전트 미선택 store config(에이전트 셀렉트가 빈 상태). */
+  function noAgentConfig(): Record<string, unknown> {
+    const store_source: StoreSourceConfig = {
+      agent_name: '',
+      namespace: 'default',
+      series: [],
+      time_window_ms: 60_000,
+      interval_ms: 10_000,
+      aggregation: 'average',
+      refresh_interval_ms: 5_000,
+    };
+    return { data_source: 'store', store_source };
+  }
+
+  it('에이전트 선택 시 agent_id(정본)와 agent_name(스냅샷)을 함께 저장한다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection panel={makePanel(noAgentConfig())} onConfigChange={onConfigChange} />,
+    );
+    const select = screen.getByTestId('chart-store-agent-select');
+    // 옵션 value 는 agent id 기준이다.
+    fireEvent.change(select, { target: { value: 'store-uuid-1' } });
+
+    expect(onConfigChange).toHaveBeenCalledTimes(1);
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.agent_id).toBe('store-uuid-1');
+    expect(patch.store_source.agent_name).toBe('store-1');
+    // 에이전트 변경 시 시리즈는 초기화된다.
+    expect(patch.store_source.series).toEqual([]);
+  });
+
+  it('저장된 이름이 옛 이름이어도 agent_id 로 현재 이름을 셀렉트에 표시한다', () => {
+    // 저장 config: agent_id 는 불변, 저장된 이름은 옛 이름('store-1').
+    // 현재 목록: 같은 id 의 이름이 'renamed-store' 로 변경됨.
+    mockAgents = [{ id: 'store-uuid-1', name: 'renamed-store', type: 'store' }];
+    const store_source: StoreSourceConfig = {
+      agent_id: 'store-uuid-1',
+      agent_name: 'store-1',
+      namespace: 'default',
+      series: [],
+      time_window_ms: 60_000,
+      interval_ms: 10_000,
+      aggregation: 'average',
+      refresh_interval_ms: 5_000,
+    };
+    render(
+      <StoreSourceSection
+        panel={makePanel({ data_source: 'store', store_source })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const select = screen.getByTestId('chart-store-agent-select') as HTMLSelectElement;
+    // 셀렉트 선택값은 id 이며, 유효한(비활성 아님) 옵션으로 유지된다.
+    expect(select.value).toBe('store-uuid-1');
+    // 현재 이름 옵션이 렌더된다(옛 이름이 아닌 현재 이름).
+    expect(screen.getByRole('option', { name: 'renamed-store' })).toBeInTheDocument();
   });
 });

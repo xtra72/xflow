@@ -8,11 +8,13 @@ import { Gauge as GaugeIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import { post } from '@/services/api/client';
+import { useAgents } from '@/hooks/useAgent';
 
 import { getByPath } from './charts/chartChannelTypes';
 import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
 import { toNumber } from './charts/chartChannelUtils';
 import { useChartChannel } from './charts/useChartChannel';
+import { resolveStoreAgentName } from './charts/storeAgentResolve';
 
 // ---- 타입 정의 ----
 
@@ -48,6 +50,9 @@ interface GaugeDataSource {
   dataField?: string;
   channelName?: string;
   displayField?: string;
+  /** store 소스 전용: Store 에이전트의 안정적 ID(정본). @spec SPEC-WEB-006 */
+  storeAgentId?: string;
+  /** store 소스 전용: Store 에이전트 이름(표시/폴백). @spec SPEC-WEB-006 */
   storeAgent?: string;
   storeKey?: string;
   storeNamespace?: string;
@@ -62,7 +67,10 @@ function pickChartEmitterSource(config: Record<string, unknown>): GaugeDataSourc
 function pickStoreSource(config: Record<string, unknown>): GaugeDataSource | undefined {
   const list = config.dataSources as GaugeDataSource[] | undefined;
   if (!Array.isArray(list)) return undefined;
-  return list.find((d) => d?.sourceType === 'store' && !!d.storeAgent && !!d.storeKey);
+  // SPEC-WEB-006: storeAgentId(정본) 또는 storeAgent(구 config 이름) 중 하나로 바인딩 판별.
+  return list.find(
+    (d) => d?.sourceType === 'store' && (!!d.storeAgentId || !!d.storeAgent) && !!d.storeKey,
+  );
 }
 
 /** Store 최신 값 폴링 훅 (5초 주기) */
@@ -71,12 +79,22 @@ function useStoreLatestValue(
 ): number | undefined {
   const [value, setValue] = useState<number | undefined>(undefined);
 
+  // SPEC-WEB-006: 저장된 storeAgentId 를 현재 에이전트 이름으로 해석해 호출한다.
+  // 에이전트 이름이 바뀌어도 id 는 불변이므로 항상 현재 이름으로 조회된다.
+  // 구 config(storeAgentId 부재)는 저장된 storeAgent 이름을 그대로 사용(하위호환).
+  const { data: agentsResult } = useAgents();
+  const resolvedAgentName = resolveStoreAgentName(
+    source?.storeAgentId,
+    source?.storeAgent ?? '',
+    agentsResult?.data,
+  );
+
   const fetchValue = useCallback(async () => {
-    if (!source?.storeAgent || !source?.storeKey) return;
+    if (!resolvedAgentName || !source?.storeKey) return;
     try {
       const resp = await post<{
         entries: Array<{ value: unknown; timestamp: number }>;
-      }>(`/store/${encodeURIComponent(source.storeAgent)}/query`, {
+      }>(`/store/${encodeURIComponent(resolvedAgentName)}/query`, {
         key: source.storeKey,
         mode: 'latest',
         namespace: source.storeNamespace ?? 'default',
@@ -92,17 +110,17 @@ function useStoreLatestValue(
     } catch {
       // 조회 실패 시 이전 값 유지
     }
-  }, [source?.storeAgent, source?.storeKey, source?.storeNamespace, source?.displayField]);
+  }, [resolvedAgentName, source?.storeKey, source?.storeNamespace, source?.displayField]);
 
   useEffect(() => {
-    if (!source?.storeAgent || !source?.storeKey) {
+    if (!resolvedAgentName || !source?.storeKey) {
       setValue(undefined);
       return;
     }
     fetchValue();
     const id = window.setInterval(fetchValue, 5000);
     return () => window.clearInterval(id);
-  }, [source?.storeAgent, source?.storeKey, fetchValue]);
+  }, [resolvedAgentName, source?.storeKey, fetchValue]);
 
   return value;
 }
