@@ -7,7 +7,7 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Activity, AlertTriangle, ArrowDown, ArrowUp, ArrowUpCircle, ArrowUpDown, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -80,12 +80,27 @@ import { useUIStore } from '@/stores/uiStore';
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
 import {
+  applyColumnFilters,
   filterEntries,
-  nextSortState,
+  isColumnFilterActive,
   sortEntries,
-  type SortColumn,
+  uniqueColumnValues,
+  type ColumnFilter,
+  type ColumnFilterMap,
+  type FilterColumnId,
+  type FilterContext,
   type SortState,
 } from './storeEntrySort';
+import {
+  ColumnHeader,
+  ColumnSettingsMenu,
+  loadVisibleColumns,
+  relevantColumns,
+  renderedColumns as computeRenderedColumns,
+  saveVisibleColumns,
+  type StoreColumn,
+  type StoreColumnId,
+} from './storeColumns';
 
 interface AgentDetailPanelProps {
   agentId: string;
@@ -2307,66 +2322,6 @@ function formatTimeAgo(date: Date, t: TranslationFn): string {
 }
 
 /**
- * 정렬 가능한 테이블 헤더 셀.
- *
- * 타이틀 클릭 시 onSort(column) 을 호출하고, 현재 활성 컬럼이면 방향 화살표를
- * 표시한다(비활성 컬럼은 중립 양방향 아이콘). 기존 헤더 스타일(텍스트 muted)을
- * 유지하면서 클릭 가능한 버튼으로 감싼다.
- */
-function SortableHeader({
-  column,
-  label,
-  sort,
-  onSort,
-  align = 'left',
-}: {
-  column: SortColumn;
-  label: string;
-  sort: SortState;
-  onSort: (column: SortColumn) => void;
-  align?: 'left' | 'right';
-}) {
-  const { t } = useTranslation();
-  const active = sort.column === column;
-  const ariaSort: React.AriaAttributes['aria-sort'] = active
-    ? sort.direction === 'asc'
-      ? 'ascending'
-      : 'descending'
-    : 'none';
-  return (
-    <th
-      className={cn(
-        'px-3 py-2 font-medium text-(--color-text-muted)',
-        align === 'right' ? 'text-right' : 'text-left',
-      )}
-      aria-sort={ariaSort}
-    >
-      <button
-        type="button"
-        onClick={() => onSort(column)}
-        className={cn(
-          'inline-flex items-center gap-1 transition-colors hover:text-(--color-text-primary)',
-          align === 'right' && 'flex-row-reverse',
-          active && 'text-(--color-text-primary)',
-        )}
-        aria-label={t('agents.detail.store.sortAriaLabel').replace('{label}', label)}
-      >
-        {label}
-        {active ? (
-          sort.direction === 'asc' ? (
-            <ArrowUp className="h-3 w-3" aria-hidden="true" />
-          ) : (
-            <ArrowDown className="h-3 w-3" aria-hidden="true" />
-          )
-        ) : (
-          <ArrowUpDown className="h-3 w-3 opacity-40" aria-hidden="true" />
-        )}
-      </button>
-    </th>
-  );
-}
-
-/**
  * 엔트리의 `tags` 필드에서 태그 맵을 추출한다.
  * 정적 키가 아닌 동적 키 엔트리는 `tags` 를 가지지 않아 null 을 반환한다.
  *
@@ -2398,9 +2353,10 @@ function extractEntryMetricType(entry: Record<string, unknown>): string {
 
 function StoreEntryRow({
   entry,
+  columns,
+  keyExpanded,
   maxHistorySize,
   agentId,
-  showTagsColumn,
   isStatic,
   onPromote,
   onRename,
@@ -2409,10 +2365,18 @@ function StoreEntryRow({
   readOnly = false,
 }: {
   entry: Record<string, unknown>;
+  /**
+   * 렌더할(보이는) 컬럼 목록. 헤더(thead)와 동일한 단일 출처를 공유하여 숨김 컬럼이
+   * 헤더/본문에서 함께 사라지고, 히스토리 확장 행의 colSpan 이 항상 일치하도록 한다.
+   */
+  columns: readonly StoreColumn[];
+  /**
+   * 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더에서 일괄 제어한다.
+   * true 면 전체 키를, false 면 앞 8자만 표시한다.
+   */
+  keyExpanded: boolean;
   maxHistorySize: number;
   agentId: string;
-  /** 태그 컬럼을 렌더링할지 여부. 어떤 엔트리도 태그를 갖지 않으면 부모가 false 전달. */
-  showTagsColumn: boolean;
   /** READ-ONLY(원격 타깃): 변환/초기화/히스토리(exec) 어포던스를 숨긴다. */
   readOnly?: boolean;
   /**
@@ -2515,13 +2479,16 @@ function StoreEntryRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyOpen, entry.history_count, entry.updated_at, entry.value]);
 
-  // 히스토리 확장 행의 colSpan 계산:
-  //   key + 바인딩 + 메트릭 + value + ns + (선택적 tags) + ttl + (선택적 history) + updated + 액션
-  // 항상 렌더링되는 컬럼 8개(key/바인딩/메트릭/value/ns/ttl/updated/액션) 기준.
-  const colSpan =
-    8 + (maxHistorySize > 0 ? 1 : 0) + (showTagsColumn ? 1 : 0);
+  // 히스토리 확장 행의 colSpan 은 실제 렌더된 컬럼 개수와 항상 일치한다(단일 출처).
+  const colSpan = columns.length;
 
   const entryTags = extractEntryTags(entry);
+
+  // 키 컬럼 표시: 키 컬럼 헤더의 전체 확장 토글(keyExpanded)로 일괄 제어한다.
+  // 축약 시 앞 8자만, 확장 시 전체 키를 노출한다(전체 키는 title 로도 유지).
+  const fullKey = entry.key as string;
+  const displayKey =
+    !keyExpanded && fullKey.length > 8 ? fullKey.slice(0, 8) : fullKey;
 
   // 동적 키의 "정적으로 변환" 버튼 클릭 핸들러.
   // 행 클릭(히스토리 토글)과 분리하기 위해 이벤트 전파를 막는다.
@@ -2572,41 +2539,41 @@ function StoreEntryRow({
   const metricTypeLabel = metricType || 'unknown';
   const isUnknownMetric = metricTypeLabel === 'unknown';
 
-  return (
-    <>
-      <tr
-        className={cn('hover:bg-(--color-bg-secondary)/50', hasHistory && 'cursor-pointer')}
-        onClick={handleRowClick}
-      >
-        <td className="px-3 py-2 font-mono text-xs text-(--color-text-primary) max-w-[200px] truncate" title={entry.key as string}>
+  // 컬럼 id → 셀 내용 렌더 함수. 헤더/본문이 공유하는 컬럼 목록을 매핑하며,
+  // 각 셀의 JSX(이름/키8자/바인딩 배지/메트릭 배지/값 확장/태그 칩/TTL ∞/히스토리/갱신/액션)를
+  // 여기서 반환한다. td 래퍼(정렬/키)는 아래 map 에서 부여한다.
+  function renderCell(columnId: StoreColumnId): React.ReactNode {
+    switch (columnId) {
+      case 'key':
+        return (
           <span className="inline-flex items-center gap-1">
             {hasHistory && (
               <ChevronRight className={cn('h-3 w-3 text-(--color-text-muted) transition-transform', historyOpen && 'rotate-90')} />
             )}
-            {entry.key as string}
+            <span className={keyExpanded ? 'break-all' : 'truncate'} title={fullKey}>
+              {displayKey}
+            </span>
           </span>
-        </td>
-        {/* 바인딩 컬럼: 정적/동적(metric 과 분리). */}
-        <td className="px-3 py-2 text-xs">
-          {isStatic ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-              title={t('agents.detail.store.staticTooltip')}
-            >
-              <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-              {t('agents.detail.store.static')}
-            </span>
-          ) : (
-            <span
-              className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-              title={t('agents.detail.store.dynamicTooltip')}
-            >
-              {t('agents.detail.store.dynamic')}
-            </span>
-          )}
-        </td>
-        {/* 메트릭 컬럼: metric_type. unknown 은 중립 톤, 그 외는 인디고 톤. */}
-        <td className="px-3 py-2 text-xs">
+        );
+      case 'binding':
+        return isStatic ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+            title={t('agents.detail.store.staticTooltip')}
+          >
+            <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+            {t('agents.detail.store.static')}
+          </span>
+        ) : (
+          <span
+            className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            title={t('agents.detail.store.dynamicTooltip')}
+          >
+            {t('agents.detail.store.dynamic')}
+          </span>
+        );
+      case 'metric':
+        return (
           <span
             className={cn(
               'inline-flex max-w-[120px] items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium',
@@ -2618,8 +2585,9 @@ function StoreEntryRow({
           >
             <span className="truncate">{metricTypeLabel}</span>
           </span>
-        </td>
-        <td className="px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]">
+        );
+      case 'value':
+        return (
           <span
             className={truncated ? 'cursor-pointer hover:text-(--color-text-primary)' : ''}
             onClick={(e) => {
@@ -2631,43 +2599,35 @@ function StoreEntryRow({
           >
             {displayValue}
           </span>
-        </td>
-        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-          {(entry.namespace as string) || '-'}
-        </td>
-        {showTagsColumn && (
-          <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-            {entryTags ? (
-              <div className="flex flex-wrap gap-1">
-                {Object.entries(entryTags).map(([k, v]) => (
-                  <span
-                    key={k}
-                    className="inline-flex items-center rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-[10px] font-medium text-(--color-text-secondary)"
-                  >
-                    {k}={v}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <span className="text-(--color-text-muted)">-</span>
-            )}
-          </td>
-        )}
-        <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-          {(entry.ttl as string) || '\u221E'}
-        </td>
-        {maxHistorySize > 0 && (
-          <td className="px-3 py-2 text-xs text-(--color-text-muted)">
-            {historyCount}
-          </td>
-        )}
-        <td className="px-3 py-2 text-xs text-(--color-text-muted)" title={entry.updated_at as string}>
-          {timeAgo}
-        </td>
-        {/* 액션 컬럼 (SPEC-STORE-003): 타입/태그 편집 + 정적으로 변환 + 초기화 버튼.
-            동적 키: [편집] [정적으로 변환] [초기화]
-            정적 키: [편집] [초기화] */}
-        <td className="px-3 py-2 text-right text-xs">
+        );
+      case 'namespace':
+        return (entry.namespace as string) || '-';
+      case 'tags':
+        return entryTags ? (
+          <div className="flex flex-wrap gap-1">
+            {Object.entries(entryTags).map(([k, v]) => (
+              <span
+                key={k}
+                className="inline-flex items-center rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-[10px] font-medium text-(--color-text-secondary)"
+              >
+                {k}={v}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="text-(--color-text-muted)">-</span>
+        );
+      case 'ttl':
+        return (entry.ttl as string) || '\u221E';
+      case 'history':
+        return historyCount;
+      case 'updated':
+        return timeAgo;
+      case 'actions':
+        // 액션 컬럼 (SPEC-STORE-003): 타입/태그 편집 + 정적으로 변환 + 이름변경 + 초기화.
+        //   동적 키: [편집] [정적으로 변환] [이름변경] [초기화]
+        //   정적 키: [편집] [초기화]
+        return (
           <span className="inline-flex items-center gap-1">
             {!readOnly && (
               <button
@@ -2715,7 +2675,45 @@ function StoreEntryRow({
             )}
             {readOnly && <span className="text-(--color-text-muted)">-</span>}
           </span>
-        </td>
+        );
+      default:
+        return null;
+    }
+  }
+
+  // 컬럼별 td 래퍼 클래스. 기존 셀 스타일을 컬럼 id 로 매핑하여 보존한다.
+  function cellClassName(column: StoreColumn): string {
+    switch (column.id) {
+      case 'key':
+        // 폭은 column.widthClass(min-w-[260px])가 관리한다.
+        return 'px-3 py-2 font-mono text-xs text-(--color-text-primary)';
+      case 'binding':
+      case 'metric':
+        return 'px-3 py-2 text-xs';
+      case 'value':
+        return 'px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]';
+      case 'actions':
+        return 'px-3 py-2 text-right text-xs';
+      default:
+        return 'px-3 py-2 text-xs text-(--color-text-muted)';
+    }
+  }
+
+  return (
+    <>
+      <tr
+        className={cn('hover:bg-(--color-bg-secondary)/50', hasHistory && 'cursor-pointer')}
+        onClick={handleRowClick}
+      >
+        {columns.map((column) => (
+          <td
+            key={column.id}
+            className={cn(cellClassName(column), column.widthClass)}
+            title={column.id === 'updated' ? (entry.updated_at as string) : undefined}
+          >
+            {renderCell(column.id)}
+          </td>
+        ))}
       </tr>
       {historyOpen && (
         <tr>
@@ -2753,6 +2751,17 @@ function StoreEntryRow({
 /** 저장소 탭의 페이지네이션 옵션 값. */
 const STORE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
+
+/** Excel 유사 필터가 가능한 컬럼 id 목록(고유 값 사전 계산 대상). */
+const STORE_COLUMNS_WITH_FILTER: readonly FilterColumnId[] = [
+  'key',
+  'metric',
+  'value',
+  'namespace',
+  'binding',
+  'tags',
+  'ttl',
+];
 
 /**
  * 저장소 탭.
@@ -2830,6 +2839,26 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     column: null,
     direction: 'asc',
   }));
+
+  // --- 컬럼 가시성 상태 (per-agent localStorage 영속) ---
+  // 마운트 시 localStorage 에서 로드하고, 변경 시 저장한다. 저장값이 없으면 전체 표시.
+  // @spec SPEC-WEB-005
+  const [visibleColumns, setVisibleColumns] = useState<Set<StoreColumnId>>(() =>
+    loadVisibleColumns(agentId),
+  );
+  // agentId 가 바뀌면(다른 에이전트로 전환) 그 에이전트의 저장값을 다시 로드한다.
+  useEffect(() => {
+    setVisibleColumns(loadVisibleColumns(agentId));
+  }, [agentId]);
+
+  // --- Excel 유사 컬럼별 필터 상태 (store key 테이블) ---
+  // 컬럼 id → { text, values }. AND 결합으로 태그/메트릭/검색 필터와 함께 적용한다.
+  // @spec SPEC-WEB-005
+  const [columnFilters, setColumnFilters] = useState<ColumnFilterMap>(() => ({}));
+
+  // 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더의 토글로 일괄 제어한다.
+  // false(기본): 앞 8자만 표시, true: 전체 키 표시.
+  const [keyColumnExpanded, setKeyColumnExpanded] = useState(false);
 
   // 태그 쌍 목록 조회 (구버전 서버/태그 없음 은 빈 배열로 폴백).
   const tagPairsQuery = useStoreTagPairs(agentName);
@@ -2913,13 +2942,28 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     });
   }, [allEntries, selectedTags, selectedMetricType]);
 
-  // 검색 필터(key/metric_type/tags 부분일치, 대소문자 무시) → 컬럼 정렬을 차례로 적용.
-  // 파이프라인: 태그/메트릭 필터(filteredEntries) → 검색 → 정렬.
+  // Excel 유사 컬럼 필터/정렬용 컨텍스트. binding 컬럼은 정적/동적 라벨을 셀 값으로
+  // 사용하므로 i18n 라벨을 주입한다. (t 는 안정적이나 방어적으로 deps 에 포함.)
+  const filterCtx = useMemo<FilterContext>(
+    () => ({
+      staticKeyNames,
+      bindingLabels: {
+        static: t('agents.detail.store.static'),
+        dynamic: t('agents.detail.store.dynamic'),
+      },
+    }),
+    [staticKeyNames, t],
+  );
+
+  // 검색·컬럼 필터·정렬을 차례로 적용.
+  // 파이프라인: 태그/메트릭 필터(filteredEntries) → 컬럼별 Excel 필터 → 검색 → 정렬.
+  // 모두 AND 결합이므로 순서는 결과에 영향을 주지 않는다.
   // binding(정적/동적) 정렬은 staticKeyNames 집합을 사용한다.
   const entries = useMemo(() => {
-    const searched = filterEntries(filteredEntries, searchQuery);
+    const byColumn = applyColumnFilters(filteredEntries, columnFilters, filterCtx);
+    const searched = filterEntries(byColumn, searchQuery);
     return sortEntries(searched, sort, { staticKeyNames });
-  }, [filteredEntries, searchQuery, sort, staticKeyNames]);
+  }, [filteredEntries, columnFilters, filterCtx, searchQuery, sort, staticKeyNames]);
 
   // 태그 컬럼 표시 여부: 필터링 전 전체 엔트리 중 하나라도 태그가 있으면 표시.
   // (필터링 후 엔트리만 기준으로 하면, 필터 해제 시 컬럼이 사라지는 UX 문제가 발생)
@@ -2927,11 +2971,41 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     return allEntries.some((e) => extractEntryTags(e) !== null);
   }, [allEntries]);
 
+  // 히스토리 컬럼 관련성(maxHistorySize > 0)과 태그 컬럼 관련성으로 렌더 컬럼을 계산한다.
+  // 헤더(thead)와 본문(StoreEntryRow)이 동일한 목록을 공유하는 단일 출처.
+  const orderedColumns = useMemo(
+    () =>
+      computeRenderedColumns(
+        { showTagsColumn, hasHistory: maxHistorySize > 0 },
+        visibleColumns,
+      ),
+    [showTagsColumn, maxHistorySize, visibleColumns],
+  );
+
+  // 컬럼 설정 메뉴에 노출할(숨김 가능) 관련 컬럼 목록.
+  const relevantCols = useMemo(
+    () => relevantColumns({ showTagsColumn, hasHistory: maxHistorySize > 0 }),
+    [showTagsColumn, maxHistorySize],
+  );
+
+  // 각 필터 가능한 컬럼의 고유 값 목록(전체 엔트리 기준 — 필터해도 옵션 유지).
+  const uniqueValuesByColumn = useMemo(() => {
+    const map = new Map<FilterColumnId, string[]>();
+    for (const col of STORE_COLUMNS_WITH_FILTER) {
+      map.set(col, uniqueColumnValues(allEntries, col, filterCtx));
+    }
+    return map;
+  }, [allEntries, filterCtx]);
+
   // 활성 필터 존재 여부 (빈 결과 안내 문구 분기에 사용).
+  const anyColumnFilterActive = Object.values(columnFilters).some((f) =>
+    isColumnFilterActive(f),
+  );
   const hasActiveFilter =
     selectedTags.size > 0 ||
     selectedMetricType !== '' ||
-    searchQuery.trim() !== '';
+    searchQuery.trim() !== '' ||
+    anyColumnFilterActive;
 
   // --- 페이지네이션 파생 값 ---
   // 현재 페이지가 총 페이지 수를 초과할 때 (예: 새로고침 후 항목이 줄어든 경우)
@@ -2992,11 +3066,44 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   }, []);
 
   // --- 정렬 핸들러 (store key 테이블) ---
-  // 헤더 클릭 시 컬럼별 asc/desc 토글. 정렬 변경 시 1페이지로 리셋.
-  const handleSort = useCallback((column: SortColumn) => {
-    setSort((prev) => nextSortState(prev, column));
+  // ColumnHeader 가 다음 정렬 상태를 계산해 전달한다. 정렬 변경 시 1페이지로 리셋.
+  const handleSort = useCallback((next: SortState) => {
+    setSort(next);
     setPage(1);
   }, []);
+
+  // --- 컬럼 가시성 핸들러 (per-agent localStorage 영속) ---
+  // actions 는 숨길 수 없으므로 토글 대상에서 제외된다(메뉴에 미노출).
+  const handleToggleColumn = useCallback(
+    (id: StoreColumnId) => {
+      setVisibleColumns((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        saveVisibleColumns(agentId, next);
+        return next;
+      });
+    },
+    [agentId],
+  );
+
+  // --- Excel 유사 컬럼 필터 핸들러 ---
+  // 필터 변경 시 1페이지로 리셋(다른 필터 핸들러와 동일). 빈 필터는 맵에서 제거한다.
+  const handleColumnFilterChange = useCallback(
+    (columnId: FilterColumnId, next: ColumnFilter) => {
+      setColumnFilters((prev) => {
+        const updated: ColumnFilterMap = { ...prev };
+        if (isColumnFilterActive(next)) {
+          updated[columnId] = next;
+        } else {
+          delete updated[columnId];
+        }
+        return updated;
+      });
+      setPage(1);
+    },
+    [],
+  );
 
   // --- 데이터 뷰어 모달용 데이터 소스 (Store 전용) ---
   // agentName 이 없는 에지 케이스 (이전 콜사이트 호환) 에서는 데이터 소스를 생성하지 않고
@@ -3434,6 +3541,13 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             {t('agents.detail.store.bulkReset')}
           </button>
+          {/* 컬럼 표시/숨김 설정 (SPEC-WEB-005). per-agent localStorage 영속. */}
+          <ColumnSettingsMenu
+            columns={relevantCols}
+            visible={visibleColumns}
+            onToggle={handleToggleColumn}
+            t={t}
+          />
           <button
             type="button"
             onClick={handleRefresh}
@@ -3541,23 +3655,29 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
-                  {/* 정렬 가능한 컬럼은 타이틀 클릭으로 asc/desc 토글. */}
-                  <SortableHeader column="key" label={t('agents.detail.store.colKey')} sort={sort} onSort={handleSort} />
-                  {/* 바인딩(정적/동적) 과 메트릭(metric_type) 을 별도 컬럼으로 분리. */}
-                  <SortableHeader column="binding" label={t('agents.detail.store.colBinding')} sort={sort} onSort={handleSort} />
-                  <SortableHeader column="metric" label={t('agents.detail.store.colMetric')} sort={sort} onSort={handleSort} />
-                  <SortableHeader column="value" label={t('agents.detail.store.colValue')} sort={sort} onSort={handleSort} />
-                  <SortableHeader column="namespace" label={t('agents.detail.store.colNamespace')} sort={sort} onSort={handleSort} />
-                  {showTagsColumn && (
-                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.store.colTags')}</th>
-                  )}
-                  <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.store.colTtl')}</th>
-                  {maxHistorySize > 0 && (
-                    <th className="px-3 py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.store.colHistory')}</th>
-                  )}
-                  <SortableHeader column="updated" label={t('agents.detail.store.colUpdated')} sort={sort} onSort={handleSort} />
-                  {/* 액션 컬럼 (SPEC-STORE-003): 행별 액션 버튼들. 항상 표시. */}
-                  <th className="px-3 py-2 text-right font-medium text-(--color-text-muted)">{t('agents.detail.store.colActions')}</th>
+                  {/* 헤더/본문이 동일한 orderedColumns 를 매핑 — 숨김 컬럼이 함께 사라진다. */}
+                  {orderedColumns.map((column) => (
+                    <ColumnHeader
+                      key={column.id}
+                      column={column}
+                      sort={sort}
+                      onSort={handleSort}
+                      filter={column.filterColumn ? columnFilters[column.filterColumn] : undefined}
+                      uniqueValues={
+                        column.filterColumn
+                          ? uniqueValuesByColumn.get(column.filterColumn) ?? []
+                          : []
+                      }
+                      onFilterChange={handleColumnFilterChange}
+                      keyExpanded={column.id === 'key' ? keyColumnExpanded : undefined}
+                      onToggleKeyExpanded={
+                        column.id === 'key'
+                          ? () => setKeyColumnExpanded((v) => !v)
+                          : undefined
+                      }
+                      t={t}
+                    />
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default)">
@@ -3565,9 +3685,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
                   <StoreEntryRow
                     key={entry.key as string}
                     entry={entry}
+                    columns={orderedColumns}
+                    keyExpanded={keyColumnExpanded}
                     maxHistorySize={maxHistorySize}
                     agentId={agentId}
-                    showTagsColumn={showTagsColumn}
                     isStatic={staticKeyNames.has(entry.key as string)}
                     onPromote={handleOpenPromote}
                     onRename={handleOpenRename}
