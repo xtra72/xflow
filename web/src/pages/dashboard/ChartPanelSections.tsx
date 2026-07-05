@@ -25,6 +25,9 @@ import type {
   AggFunc,
   SortOrder,
   YAxisMode,
+  YAxisDataType,
+  YEnumLabel,
+  AxisFontStyle,
   TimeWindowMode,
   YThreshold,
   ChannelRefConfig,
@@ -33,6 +36,7 @@ import type {
   StoreSeriesRef,
   StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
+import { pickSeriesColor } from './panels/charts/chartChannelTypes';
 import {
   distinctDataTypes,
   distinctMetricTypes,
@@ -829,7 +833,7 @@ function SelectedSeriesList({
               {/* 색상 선택(선택) */}
               <input
                 type="color"
-                value={s.color ?? '#3b82f6'}
+                value={s.color ?? pickSeriesColor(i)}
                 onChange={(e) => patchSeries(i, { color: e.target.value })}
                 aria-label={t('dashboard.chart.storeSeriesColorAria').replace('{key}', s.key)}
                 data-testid={`chart-store-series-color-${i}`}
@@ -974,6 +978,9 @@ function StoreKeySelector({
           tags: Object.keys(obj.tags ?? {}).length > 0 ? obj.tags : undefined,
           data_type: obj.data_type,
           alias: obj.key,
+          // 데이터 소스 선택 시 시리즈 인덱스별로 서로 다른 색을 자동 배정한다.
+          // 사용자는 이후 색상 스와치로 변경할 수 있다.
+          color: pickSeriesColor(series.length),
         },
       ]);
     }
@@ -1521,7 +1528,7 @@ function ChannelRow({
     }
   };
 
-  const effectiveColor = channel.color ?? '#3b82f6';
+  const effectiveColor = channel.color ?? pickSeriesColor(idx);
 
   return (
     <div
@@ -1680,7 +1687,8 @@ export function ChannelSeriesEditor({
     onConfigChange({ channels: next.length === 0 ? [{ name: '' }] : next, channel_name: undefined });
   }
   function addChannel(): void {
-    updateChannels([...channels, { name: '' }]);
+    // 시리즈 인덱스별 팔레트 색을 자동 배정(사용자 변경 가능).
+    updateChannels([...channels, { name: '', color: pickSeriesColor(channels.length) }]);
   }
   function removeChannel(idx: number): void {
     if (channels.length <= 1) return;
@@ -1779,6 +1787,65 @@ export function ChannelSeriesEditor({
 
 // --- 3. line-chart 패널 설정 — 전역 스타일만 (채널/시리즈 편집은 데이터 소스 영역) ---
 
+/**
+ * 축 폰트(레이블/눈금) 한 줄 편집기. 크기(px)·색상·굵기(보통/굵게)를 조절한다.
+ * 미지정 필드는 렌더 기본값(size 10, #9ca3af, normal)으로 폴백하므로, 입력 placeholder
+ * 로 기본값을 안내한다.
+ */
+function AxisFontRow({
+  label,
+  font,
+  onChange,
+}: {
+  label: string;
+  font: AxisFontStyle | undefined;
+  onChange: (patch: Partial<AxisFontStyle>) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const isBold = (font?.weight ?? 'normal') === 'bold';
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-20 shrink-0 truncate text-[11px] text-(--color-text-secondary)">
+        {label}
+      </span>
+      <input
+        type="number"
+        min={6}
+        max={40}
+        value={font?.size ?? ''}
+        onChange={(e) => {
+          const v = e.target.value;
+          onChange({ size: v === '' ? undefined : parseInt(v, 10) || undefined });
+        }}
+        placeholder="10"
+        aria-label={`${label} ${t('dashboard.chart.fontSize')}`}
+        className="w-14 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+      />
+      <input
+        type="color"
+        value={font?.color ?? '#9ca3af'}
+        onChange={(e) => onChange({ color: e.target.value })}
+        aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
+        className="h-6 w-6 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+      />
+      <button
+        type="button"
+        onClick={() => onChange({ weight: isBold ? 'normal' : 'bold' })}
+        aria-pressed={isBold}
+        aria-label={`${label} ${t('dashboard.chart.fontBold')}`}
+        title={t('dashboard.chart.fontBold')}
+        className={`h-6 w-6 shrink-0 rounded border text-[11px] font-bold transition-colors ${
+          isBold
+            ? 'border-blue-500 bg-blue-500/10 text-blue-500'
+            : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-hover)'
+        }`}
+      >
+        B
+      </button>
+    </div>
+  );
+}
+
 export function LineChartSection({
   panel,
   onConfigChange,
@@ -1796,6 +1863,39 @@ export function LineChartSection({
   const yPadPct = (config.y_axis_padding_pct as number | undefined) ?? 5;
   const yLabel = (config.y_label as string | undefined) ?? '';
   const yUnit = (config.y_unit as string | undefined) ?? '';
+  const yAxisType = (config.y_axis_type as YAxisDataType | undefined) ?? 'numeric';
+  const enumLabels = (config.y_enum_labels as YEnumLabel[] | undefined) ?? [];
+
+  // 축 폰트(레이블/눈금) — 축별 독립. patch 병합 후 빈 객체는 undefined 로 정리한다.
+  type FontField = 'x_label_font' | 'x_tick_font' | 'y_label_font' | 'y_tick_font';
+  function patchFont(field: FontField, patch: Partial<AxisFontStyle>): void {
+    const cur = (config[field] as AxisFontStyle | undefined) ?? {};
+    const next: AxisFontStyle = { ...cur, ...patch };
+    // 값이 모두 비면(undefined) 필드를 제거해 config 를 깔끔히 유지한다.
+    const cleaned: AxisFontStyle = {};
+    if (next.size !== undefined) cleaned.size = next.size;
+    if (next.color !== undefined) cleaned.color = next.color;
+    if (next.weight !== undefined) cleaned.weight = next.weight;
+    onConfigChange({
+      [field]: Object.keys(cleaned).length > 0 ? cleaned : undefined,
+    });
+  }
+
+  function updateEnumLabels(next: YEnumLabel[]): void {
+    onConfigChange({ y_enum_labels: next.length === 0 ? undefined : next });
+  }
+  function addEnumLabel(): void {
+    // 다음 정수 값을 기본값으로 제안(마지막 값 + 1, 없으면 0).
+    const nextValue =
+      enumLabels.length > 0 ? (enumLabels[enumLabels.length - 1]!.value ?? -1) + 1 : 0;
+    updateEnumLabels([...enumLabels, { value: nextValue, label: '' }]);
+  }
+  function removeEnumLabel(idx: number): void {
+    updateEnumLabels(enumLabels.filter((_, i) => i !== idx));
+  }
+  function patchEnumLabel(idx: number, patch: Partial<YEnumLabel>): void {
+    updateEnumLabels(enumLabels.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  }
   const timeWindowMode =
     (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
   const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
@@ -1934,17 +2034,18 @@ export function LineChartSection({
           </div>
         )}
 
-        {/* Y축 */}
+        {/* Y축 데이터 타입 (숫자형 / 열거형) */}
         <div className="flex items-end gap-2">
-          <LabeledField label={t('dashboard.chart.yAxis')}>
+          <LabeledField label={t('dashboard.chart.yAxisType')}>
             <select
-              value={yAxisMode}
-              onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
+              value={yAxisType}
+              onChange={(e) =>
+                onConfigChange({ y_axis_type: e.target.value as YAxisDataType })
+              }
               className={inputClass()}
             >
-              <option value="auto">{t('dashboard.chart.yAuto')}</option>
-              <option value="manual">{t('dashboard.chart.yManual')}</option>
-              <option value="auto_padded">{t('dashboard.chart.yAutoPadded')}</option>
+              <option value="numeric">{t('dashboard.chart.yTypeNumeric')}</option>
+              <option value="enum">{t('dashboard.chart.yTypeEnum')}</option>
             </select>
           </LabeledField>
           <LabeledField label={t('dashboard.chart.label')}>
@@ -1956,18 +2057,35 @@ export function LineChartSection({
               className={inputClass()}
             />
           </LabeledField>
-          <LabeledField label={t('dashboard.chart.unit')}>
-            <input
-              type="text"
-              value={yUnit}
-              onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
-              placeholder={t('dashboard.chart.yUnitPlaceholder')}
-              className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            />
-          </LabeledField>
+          {yAxisType === 'numeric' && (
+            <LabeledField label={t('dashboard.chart.unit')}>
+              <input
+                type="text"
+                value={yUnit}
+                onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
+                placeholder={t('dashboard.chart.yUnitPlaceholder')}
+                className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              />
+            </LabeledField>
+          )}
         </div>
 
-        {yAxisMode === 'manual' && (
+        {/* 숫자형: Y축 범위(자동/수동/자동+여백) */}
+        {yAxisType === 'numeric' && (
+          <LabeledField label={t('dashboard.chart.yAxis')}>
+            <select
+              value={yAxisMode}
+              onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
+              className={inputClass()}
+            >
+              <option value="auto">{t('dashboard.chart.yAuto')}</option>
+              <option value="manual">{t('dashboard.chart.yManual')}</option>
+              <option value="auto_padded">{t('dashboard.chart.yAutoPadded')}</option>
+            </select>
+          </LabeledField>
+        )}
+
+        {yAxisType === 'numeric' && yAxisMode === 'manual' && (
           <div className="flex gap-2">
             <LabeledField label={t('dashboard.chart.min')}>
               <input
@@ -1994,7 +2112,7 @@ export function LineChartSection({
           </div>
         )}
 
-        {yAxisMode === 'auto_padded' && (
+        {yAxisType === 'numeric' && yAxisMode === 'auto_padded' && (
           <LabeledField label={t('dashboard.chart.paddingPct')}>
             <input
               type="number"
@@ -2010,6 +2128,93 @@ export function LineChartSection({
             />
           </LabeledField>
         )}
+
+        {/* 열거형: 값→라벨 매핑 편집기 */}
+        {yAxisType === 'enum' && (
+          <div className="space-y-1.5 rounded-md border border-(--color-border-default) p-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-(--color-text-secondary)">
+                {t('dashboard.chart.enumLabels')}
+              </span>
+              <button
+                type="button"
+                onClick={addEnumLabel}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-blue-500 hover:bg-blue-500/10"
+              >
+                <Plus className="h-3 w-3" />
+                {t('dashboard.chart.enumAdd')}
+              </button>
+            </div>
+            {enumLabels.length === 0 ? (
+              <p className="py-1 text-[11px] text-(--color-text-muted)">
+                {t('dashboard.chart.enumEmpty')}
+              </p>
+            ) : (
+              enumLabels.map((row, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    value={Number.isFinite(row.value) ? row.value : ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      patchEnumLabel(i, {
+                        value: v === '' ? Number.NaN : parseFloat(v),
+                      });
+                    }}
+                    placeholder={t('dashboard.chart.enumValuePlaceholder')}
+                    className="w-16 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                  <span className="text-[11px] text-(--color-text-muted)">→</span>
+                  <input
+                    type="text"
+                    value={row.label}
+                    onChange={(e) => patchEnumLabel(i, { label: e.target.value })}
+                    placeholder={t('dashboard.chart.enumLabelPlaceholder')}
+                    className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeEnumLabel(i)}
+                    aria-label={t('dashboard.chart.enumRemove')}
+                    className="shrink-0 rounded p-1 text-(--color-text-muted) hover:bg-red-500/10 hover:text-red-500"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* 축 폰트 (레이블/값, 축별 독립) */}
+        <div className="space-y-1.5 rounded-md border border-(--color-border-default) p-2">
+          <div className="flex items-center gap-2 text-[11px] text-(--color-text-muted)">
+            <span className="w-20 shrink-0">{t('dashboard.chart.axisFont')}</span>
+            <span className="w-14 text-center">{t('dashboard.chart.fontSize')}</span>
+            <span className="w-6 text-center">{t('dashboard.chart.fontColorShort')}</span>
+            <span className="w-6 text-center">{t('dashboard.chart.fontBoldShort')}</span>
+          </div>
+          <AxisFontRow
+            label={t('dashboard.chart.xAxisLabelFont')}
+            font={config.x_label_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('x_label_font', p)}
+          />
+          <AxisFontRow
+            label={t('dashboard.chart.xAxisTickFont')}
+            font={config.x_tick_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('x_tick_font', p)}
+          />
+          <AxisFontRow
+            label={t('dashboard.chart.yAxisLabelFont')}
+            font={config.y_label_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('y_label_font', p)}
+          />
+          <AxisFontRow
+            label={t('dashboard.chart.yAxisTickFont')}
+            font={config.y_tick_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('y_tick_font', p)}
+          />
+        </div>
 
         {/* 범례 */}
         <LabeledField label={t('dashboard.chart.legendPosition')}>

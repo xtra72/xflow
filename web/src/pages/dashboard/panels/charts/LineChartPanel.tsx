@@ -19,15 +19,22 @@ import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 
 import {
+  buildEnumLabelMap,
+  formatEnumValue,
   getByPath,
+  resolveAxisFont,
+  SERIES_PALETTE,
   STROKE_DASHARRAY,
   THRESHOLD_DEFAULT_COLORS,
+  type AxisFontStyle,
   type ChannelRefConfig,
   type ChartEntry,
   type LegendConfig,
   type LineChartPanelConfig,
   type StoreSourceConfig,
   type TimeWindowMode,
+  type YAxisDataType,
+  type YEnumLabel,
   type YThreshold,
   type YAxisMode,
 } from './chartChannelTypes';
@@ -75,16 +82,8 @@ const DEFAULT_Y_PAD_PCT = 5;
 const MAX_Y_PAD_PCT = 50;
 
 /** multi-series 색상 팔레트 */
-const SERIES_COLORS = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#06b6d4',
-  '#ec4899',
-  '#84cc16',
-];
+// 시리즈 자동 색상 팔레트(설정 편집기와 공유). @see chartChannelTypes.SERIES_PALETTE
+const SERIES_COLORS = SERIES_PALETTE;
 
 function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
   return {
@@ -93,6 +92,12 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     display_field: (config.display_field as string) ?? 'value',
     max_points: (config.max_points as number) ?? DEFAULT_MAX_POINTS,
     x_label: config.x_label as string | undefined,
+    x_label_font: config.x_label_font as AxisFontStyle | undefined,
+    x_tick_font: config.x_tick_font as AxisFontStyle | undefined,
+    y_label_font: config.y_label_font as AxisFontStyle | undefined,
+    y_tick_font: config.y_tick_font as AxisFontStyle | undefined,
+    y_axis_type: config.y_axis_type as YAxisDataType | undefined,
+    y_enum_labels: config.y_enum_labels as YEnumLabel[] | undefined,
     y_min: config.y_min as number | undefined,
     y_max: config.y_max as number | undefined,
     y_axis_mode: config.y_axis_mode as YAxisMode | undefined,
@@ -230,6 +235,7 @@ function CustomLegend({
   isMultiMode,
   legendCfg,
   chartData,
+  formatValue,
 }: {
   seriesKeys: string[];
   seriesColors: string[];
@@ -237,6 +243,8 @@ function CustomLegend({
   isMultiMode: boolean;
   legendCfg: LegendConfig;
   chartData: Array<Record<string, unknown>>;
+  /** 시리즈 마지막값 표시 포맷터. enum/boolean 은 라벨로, 그 외는 숫자로 표기한다. */
+  formatValue: (key: string, value: number) => string;
 }): React.ReactElement | null {
   const isVert = legendCfg.position === 'left' || legendCfg.position === 'right';
   const showName = legendCfg.show_name !== false;
@@ -285,7 +293,7 @@ function CustomLegend({
               ? 'bg-rose-400'
               : 'bg-gray-400';
         const lastVal = lastValues[key];
-        const lastStr = lastVal !== undefined ? lastVal.toFixed(1) : '—';
+        const lastStr = lastVal !== undefined ? formatValue(key, lastVal) : '—';
         return (
           <span
             key={key}
@@ -650,10 +658,31 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // Y축 도메인
   const yAxisMode: YAxisMode = cfg.y_axis_mode ?? 'auto';
   const yPadPct = clamp(cfg.y_axis_padding_pct ?? DEFAULT_Y_PAD_PCT, 0, MAX_Y_PAD_PCT);
+
+  // 열거형 Y축(패널 단위): y_axis_type==='enum' + 유효 매핑이 있으면 값→라벨로 표시한다.
+  // enum 이 우선하며, 미설정 boolean 시리즈는 아래 boolAxis 자동 처리로 폴백한다.
+  const enumMap = useMemo(
+    () => buildEnumLabelMap(cfg.y_enum_labels),
+    [cfg.y_enum_labels],
+  );
+  const enumMode = cfg.y_axis_type === 'enum' && enumMap.size > 0;
+  // 눈금은 매핑된 값들을 오름차순으로 사용한다.
+  const enumTicks = useMemo(
+    () => (enumMode ? [...enumMap.keys()].sort((a, b) => a - b) : undefined),
+    [enumMode, enumMap],
+  );
+
   // boolean 시리즈: Y축을 [0,1] 두 눈금(false/true)으로 고정한다. boolean 값은 0/1 이
   // 유일한 의미이므로 수동 Y축 범위(manual)도 적용하지 않는다.
-  const boolAxis = allBoolean;
+  // 단, 명시적 열거형(enumMode)이 설정되면 그쪽이 우선하므로 boolAxis 는 끈다.
+  const boolAxis = allBoolean && !enumMode;
   const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
+    // 열거형 축: 매핑된 최소/최대 값 ±0.5 여백으로 고정(모든 눈금이 보이도록).
+    if (enumMode && enumTicks && enumTicks.length > 0) {
+      const lo = enumTicks[0]!;
+      const hi = enumTicks[enumTicks.length - 1]!;
+      return [lo - 0.5, hi + 0.5];
+    }
     if (boolAxis) {
       return [-0.1, 1.1];
     }
@@ -681,11 +710,17 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     }
     // 'auto'
     return ['auto', 'auto'];
-  }, [boolAxis, yAxisMode, cfg.y_min, cfg.y_max, yPadPct, chartData, seriesKeys]);
+  }, [enumMode, enumTicks, boolAxis, yAxisMode, cfg.y_min, cfg.y_max, yPadPct, chartData, seriesKeys]);
 
   // 글로벌 smooth fallback (하위 호환)
   const globalSmooth = cfg.smooth ?? false;
   const legendCfg: LegendConfig = (cfg.legend as LegendConfig | undefined) ?? {};
+
+  // 축 폰트(레이블/눈금) — 미지정 필드는 기본값(size 10, #9ca3af, normal)으로 폴백.
+  const xTickFont = resolveAxisFont(cfg.x_tick_font);
+  const xLabelFont = resolveAxisFont(cfg.x_label_font);
+  const yTickFont = resolveAxisFont(cfg.y_tick_font);
+  const yLabelFont = resolveAxisFont(cfg.y_label_font);
 
   const criticalBreached = useMemo(
     () =>
@@ -774,36 +809,48 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               allowDataOverflow={timeWindowMode !== 'points'}
               ticks={xTicks}
               tickFormatter={(v: number) => formatTimeShort(v)}
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: xTickFont.fontSize, fill: xTickFont.fill, fontWeight: xTickFont.fontWeight }}
               stroke="#9ca3af"
-              label={cfg.x_label ? { value: cfg.x_label, position: 'insideBottomRight', offset: -4, style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
-              height={cfg.x_label ? 40 : 30}
+              // insideBottom 은 y = 축상단 + height - offset (verticalAnchor 'end') 로 계산되므로
+              // offset 을 양수로 주어 텍스트를 축 하단(=SVG 경계)에서 위로 띄워 잘림을 방지한다.
+              label={cfg.x_label ? { value: cfg.x_label, position: 'insideBottom', offset: 6, style: { textAnchor: 'middle', fontSize: xLabelFont.fontSize, fill: xLabelFont.fill, fontWeight: xLabelFont.fontWeight } } : undefined}
+              height={cfg.x_label ? 48 : 30}
             />
             <YAxis
               domain={yDomain}
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: yTickFont.fontSize, fill: yTickFont.fill, fontWeight: yTickFont.fontWeight }}
               stroke="#9ca3af"
               width={cfg.y_label || cfg.y_unit ? 56 : 50}
-              label={cfg.y_label || cfg.y_unit ? { value: [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' '), angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
-              // boolean 축은 0/1 두 눈금을 false/true 로 표시한다.
-              ticks={boolAxis ? [0, 1] : undefined}
+              label={cfg.y_label || cfg.y_unit ? { value: [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' '), angle: -90, position: 'insideLeft', style: { fontSize: yLabelFont.fontSize, fill: yLabelFont.fill, fontWeight: yLabelFont.fontWeight } } : undefined}
+              // 열거형 축은 매핑된 값 눈금을 라벨로, boolean 축은 0/1 을 false/true 로 표시한다.
+              ticks={enumMode ? enumTicks : boolAxis ? [0, 1] : undefined}
               tickFormatter={
-                boolAxis
-                  ? (v: number) => (v === 1 ? 'true' : v === 0 ? 'false' : '')
-                  : cfg.y_unit
-                    ? (v: number) => `${v}${cfg.y_unit}`
-                    : undefined
+                enumMode
+                  ? (v: number) => formatEnumValue(v, enumMap)
+                  : boolAxis
+                    ? (v: number) => (v === 1 ? 'true' : v === 0 ? 'false' : '')
+                    : cfg.y_unit
+                      ? (v: number) => `${v}${cfg.y_unit}`
+                      : undefined
               }
             />
             <Tooltip
-              // boolean 시리즈 값은 툴팁에서 true/false 로 표시(혼합 차트에서도 시리즈별 적용).
+              // 열거형 축(패널 단위)이면 모든 시리즈 값을 라벨로 표시한다.
+              // 그 외에는 boolean 시리즈 값만 true/false 로 표시(혼합 차트에서도 시리즈별 적용).
               formatter={
-                booleanKeys.size > 0
-                  ? (value, name) =>
-                      booleanKeys.has(String(name))
-                        ? [value === 1 ? 'true' : 'false', name]
-                        : [value, name]
-                  : undefined
+                enumMode
+                  ? (value, name) => [
+                      typeof value === 'number'
+                        ? formatEnumValue(value, enumMap)
+                        : value,
+                      name,
+                    ]
+                  : booleanKeys.size > 0
+                    ? (value, name) =>
+                        booleanKeys.has(String(name))
+                          ? [value === 1 ? 'true' : 'false', name]
+                          : [value, name]
+                    : undefined
               }
               labelFormatter={(v) => {
                 const n = typeof v === 'number' ? v : Number(v);
@@ -935,6 +982,13 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           isMultiMode={isMultiMode}
           legendCfg={legendCfg}
           chartData={chartData}
+          // 범례 마지막값도 축/툴팁과 동일하게 표시한다.
+          // enum 축이면 라벨로, boolean 시리즈면 true/false, 그 외는 소수 1자리.
+          formatValue={(key, v) => {
+            if (enumMode) return formatEnumValue(v, enumMap);
+            if (booleanKeys.has(key)) return v === 1 ? 'true' : v === 0 ? 'false' : String(v);
+            return v.toFixed(1);
+          }}
         />
       </div>
 

@@ -482,6 +482,12 @@ func resolveAggregationOriginMs(req *storeQueryRequest, q system.HistoryQuery) (
 func toFloat64(v any) (float64, bool) {
 	var f float64
 	switch x := v.(type) {
+	case bool:
+		// boolean data_type 시리즈: true→1 / false→0 으로 변환해 라인 차트에 표시한다.
+		if x {
+			return 1, true
+		}
+		return 0, true
 	case float64:
 		f = x
 	case float32:

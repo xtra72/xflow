@@ -563,6 +563,29 @@ func TestStoreQueryHandler_집계_정수값_변환(t *testing.T) {
 	assert.Equal(t, float64(25), resp.Data.Entries[0].Value)
 }
 
+func TestStoreQueryHandler_집계_boolean값_1_0_변환(t *testing.T) {
+	// boolean data_type 시리즈는 서버 집계 경로에서도 true→1 / false→0 으로
+	// 변환되어 라인 차트에 표시되어야 한다. 이전에는 toFloat64 가 bool 을 처리하지
+	// 못해 엔트리가 통째로 스킵되어 "boolean 타입 선택 시 출력 안 됨" 버그가 있었다.
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: true},
+		{Timestamp: time.UnixMilli(5000), Value: false},
+		{Timestamp: time.UnixMilli(10_000), Value: true},
+		{Timestamp: time.UnixMilli(20_000), Value: true},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":61000,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	// (1 + 0 + 1 + 1) / 4 = 0.75
+	assert.InDelta(t, 0.75, resp.Data.Entries[0].Value, 1e-9)
+}
+
 // ---------------------------------------------------------------------------
 // 벽시계 정렬 (epoch-zero alignment) 테스트.
 //
@@ -675,7 +698,8 @@ func TestToFloat64_숫자타입_테이블(t *testing.T) {
 		{"uint64", uint64(2), 2, true},
 		{"string은_실패", "abc", 0, false},
 		{"nil은_실패", nil, 0, false},
-		{"bool은_실패", true, 0, false},
+		{"bool_true는_1", true, 1, true},
+		{"bool_false는_0", false, 0, true},
 		{"NaN_실패", math.NaN(), 0, false},
 		{"Inf_실패", math.Inf(1), 0, false},
 		{"NegInf_실패", math.Inf(-1), 0, false},

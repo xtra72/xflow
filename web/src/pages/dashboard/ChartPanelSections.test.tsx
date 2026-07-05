@@ -26,6 +26,7 @@ import {
   PieChartSection,
   TableChartSection,
 } from './ChartPanelSections';
+import { pickSeriesColor } from './panels/charts/chartChannelTypes';
 import type { PanelConfig } from '@/stores/uiStore';
 import type { ChartChannelSummary } from '@/services/api/charts';
 
@@ -409,8 +410,9 @@ describe('LineChartSection', () => {
         />,
       );
       fireEvent.click(await screen.findByTestId('line-chart-add-channel'));
+      // 새 채널은 시리즈 인덱스별 팔레트 색이 자동 배정된다(인덱스 1).
       expect(onConfigChange).toHaveBeenCalledWith({
-        channels: [{ name: 'a', alias: 'A' }, { name: '' }],
+        channels: [{ name: 'a', alias: 'A' }, { name: '', color: pickSeriesColor(1) }],
         channel_name: undefined,
       });
     });

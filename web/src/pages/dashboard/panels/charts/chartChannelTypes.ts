@@ -138,6 +138,22 @@ export interface StatPanelConfig extends ChartPanelConfigBase {
 /** Y축 도메인 결정 방식 (line-chart) */
 export type YAxisMode = 'auto' | 'manual' | 'auto_padded';
 
+/**
+ * Y축 데이터 타입 (line-chart).
+ * - `numeric`(기본): 숫자 축. y_axis_mode(auto/manual/auto_padded) + y_min/y_max 로 범위 결정.
+ * - `enum`: 열거형 축. y_enum_labels 의 값→라벨 매핑으로 눈금/툴팁을 문자열로 표시한다.
+ *   (기존 boolean 자동 표시 0→false / 1→true 를 사용자 정의로 일반화한 것)
+ */
+export type YAxisDataType = 'numeric' | 'enum';
+
+/** 열거형 Y축의 값→라벨 매핑 항목 (line-chart). 예: { value: 0, label: '정지' } */
+export interface YEnumLabel {
+  /** 매핑할 숫자 값. */
+  value: number;
+  /** 해당 값에 표시할 문자열. */
+  label: string;
+}
+
 /** X축 시간 윈도우 결정 방식 (line-chart) */
 export type TimeWindowMode = 'points' | 'recent' | 'fixed';
 
@@ -162,6 +178,63 @@ export interface YThreshold {
   severity?: ThresholdSeverity;
   /** 하위 호환: label */
   label?: string;
+}
+
+/**
+ * 시리즈 자동 색상 팔레트. 데이터 소스 선택 시 시리즈 인덱스별로 서로 다른 색을
+ * 자동 배정하는 데 사용한다(사용자가 개별 색을 지정하면 그 값이 우선).
+ * LineChartPanel 렌더와 설정 편집기(스와치 기본값)가 동일 팔레트를 공유한다.
+ */
+export const SERIES_PALETTE: readonly string[] = [
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#06b6d4',
+  '#ec4899',
+  '#84cc16',
+];
+
+/** 시리즈 인덱스에 대응하는 팔레트 색을 반환한다(팔레트 길이로 순환). */
+export function pickSeriesColor(index: number): string {
+  const n = SERIES_PALETTE.length;
+  const i = ((Math.trunc(index) % n) + n) % n;
+  return SERIES_PALETTE[i]!;
+}
+
+/**
+ * 축 텍스트(레이블/눈금) 폰트 스타일. 미지정 필드는 렌더 측 기본값으로 폴백한다.
+ * 라인 차트의 X/Y 축 레이블(제목)과 값(눈금) 폰트를 축별로 독립 설정한다.
+ */
+export interface AxisFontStyle {
+  /** 글자 크기(px). */
+  size?: number;
+  /** 글자 색상(hex). */
+  color?: string;
+  /** 굵기. */
+  weight?: 'normal' | 'bold';
+}
+
+/** 축 폰트 기본값(기존 하드코딩 값과 동일). */
+export const DEFAULT_AXIS_FONT: Required<AxisFontStyle> = {
+  size: 10,
+  color: '#9ca3af',
+  weight: 'normal',
+};
+
+/**
+ * AxisFontStyle 을 recharts 텍스트 props(fontSize/fill/fontWeight)로 변환한다.
+ * 미지정 필드는 DEFAULT_AXIS_FONT 로 채운다.
+ */
+export function resolveAxisFont(
+  font: AxisFontStyle | undefined,
+): { fontSize: number; fill: string; fontWeight: 'normal' | 'bold' } {
+  return {
+    fontSize: font?.size ?? DEFAULT_AXIS_FONT.size,
+    fill: font?.color ?? DEFAULT_AXIS_FONT.color,
+    fontWeight: font?.weight ?? DEFAULT_AXIS_FONT.weight,
+  };
 }
 
 /** 라인 스타일 — 채널별로 적용 */
@@ -206,8 +279,24 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   // X축
   /** X축 레이블 (예: "시간", "Time") */
   x_label?: string;
+  /** X축 레이블(제목) 폰트. */
+  x_label_font?: AxisFontStyle;
+  /** X축 값(눈금) 폰트. */
+  x_tick_font?: AxisFontStyle;
+  /** Y축 레이블(제목) 폰트. */
+  y_label_font?: AxisFontStyle;
+  /** Y축 값(눈금) 폰트. */
+  y_tick_font?: AxisFontStyle;
 
   // Y축
+  /**
+   * Y축 데이터 타입. 'numeric'(기본) 또는 'enum'.
+   * 'enum' 이면 y_enum_labels 로 값→라벨 매핑을 표시하며, 숫자 범위(y_axis_mode/min/max)는
+   * 무시된다(축 도메인은 enum 값 범위로 고정).
+   */
+  y_axis_type?: YAxisDataType;
+  /** 열거형 값→라벨 매핑 (y_axis_type === 'enum' 일 때 사용). */
+  y_enum_labels?: YEnumLabel[];
   y_min?: number;
   y_max?: number;
   y_axis_mode?: YAxisMode;
@@ -277,6 +366,34 @@ export interface TablePanelConfig extends ChartPanelConfigBase {
   columns: TableColumn[];
   rows_per_page?: number;
   default_sort?: { field: string; order: SortOrder };
+}
+
+/**
+ * 유효한 열거형 매핑만 추려 값→라벨 Map 을 만든다.
+ * value 가 유한 숫자이고 label 이 비어있지 않은 항목만 포함한다.
+ * 같은 value 가 중복되면 뒤 항목이 앞 항목을 덮어쓴다(마지막 정의 우선).
+ */
+export function buildEnumLabelMap(
+  labels: YEnumLabel[] | undefined,
+): Map<number, string> {
+  const map = new Map<number, string>();
+  if (!labels) return map;
+  for (const item of labels) {
+    if (typeof item.value !== 'number' || !Number.isFinite(item.value)) continue;
+    const label = (item.label ?? '').trim();
+    if (label === '') continue;
+    map.set(item.value, label);
+  }
+  return map;
+}
+
+/**
+ * 열거형 축에서 숫자 값을 라벨로 변환한다. 매핑에 없으면 숫자 문자열로 폴백한다.
+ * 값이 숫자가 아니면 빈 문자열을 반환한다(눈금 사이 보간값 등).
+ */
+export function formatEnumValue(value: number, map: Map<number, string>): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+  return map.get(value) ?? String(value);
 }
 
 /**

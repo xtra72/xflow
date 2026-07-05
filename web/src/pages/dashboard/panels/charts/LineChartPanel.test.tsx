@@ -919,6 +919,46 @@ describe('LineChartPanel', () => {
       expect(screen.getByTestId('line-chart-legend')).toBeInTheDocument();
     });
 
+    it('범례 마지막값: boolean 시리즈는 true/false 로 표시(0.0 아님)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{ channel_name: 'c', legend: { show_last_value: true } }}
+        />,
+      );
+      const legend = screen.getByTestId('line-chart-legend');
+      expect(legend.textContent).toContain('false');
+      expect(legend.textContent).not.toContain('0.0');
+    });
+
+    it('범례 마지막값: 열거형 축은 라벨로 표시(원시 숫자 아님)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 0 },
+        { timestamp: 2000, value: 1 },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            legend: { show_last_value: true },
+            y_axis_type: 'enum',
+            y_enum_labels: [
+              { value: 0, label: 'off' },
+              { value: 1, label: 'on' },
+            ],
+          }}
+        />,
+      );
+      const legend = screen.getByTestId('line-chart-legend');
+      expect(legend.textContent).toContain('on');
+      expect(legend.textContent).not.toContain('1.0');
+    });
+
     it('한 채널이라도 critical 임계 초과면 깜빡임', () => {
       multiMockResult.current.channels = new Map([
         [

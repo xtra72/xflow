@@ -27,11 +27,17 @@ import { listStoreKeys } from '@/services/api/storeService';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
 import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
+  buildEnumLabelMap,
+  formatEnumValue,
+  resolveAxisFont,
   STROKE_DASHARRAY,
   THRESHOLD_DEFAULT_COLORS,
+  type AxisFontStyle,
   type ChannelRefConfig,
   type YThreshold,
   type YAxisMode,
+  type YAxisDataType,
+  type YEnumLabel,
 } from './panels/charts/chartChannelTypes';
 import {
   ChartChannelSection,
@@ -2185,6 +2191,18 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
   const xLabel = (config.x_label as string | undefined) ?? '';
   const yLabel = (config.y_label as string | undefined) ?? '';
   const yUnit = (config.y_unit as string | undefined) ?? '';
+  const xTickFont = resolveAxisFont(config.x_tick_font as AxisFontStyle | undefined);
+  const xLabelFont = resolveAxisFont(config.x_label_font as AxisFontStyle | undefined);
+  const yTickFont = resolveAxisFont(config.y_tick_font as AxisFontStyle | undefined);
+  const yLabelFont = resolveAxisFont(config.y_label_font as AxisFontStyle | undefined);
+  const yAxisType = (config.y_axis_type as YAxisDataType | undefined) ?? 'numeric';
+  const rawEnumLabels = config.y_enum_labels as YEnumLabel[] | undefined;
+  const enumMap = useMemo(() => buildEnumLabelMap(rawEnumLabels), [rawEnumLabels]);
+  const enumMode = yAxisType === 'enum' && enumMap.size > 0;
+  const enumTicks = useMemo(
+    () => (enumMode ? [...enumMap.keys()].sort((a, b) => a - b) : undefined),
+    [enumMode, enumMap],
+  );
   const rawThresholds = config.y_thresholds as YThreshold[] | undefined;
   const thresholds = useMemo(() => rawThresholds ?? [], [rawThresholds]);
   const channelName = (config.channel_name as string | undefined) ?? '';
@@ -2213,6 +2231,18 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
   const data = useMemo(() => {
     const points = 30;
     const rows: Array<Record<string, number>> = [];
+    // 열거형 미리보기: 각 시리즈가 매핑된 값들을 계단식으로 순회하도록 합성한다.
+    if (enumMode && enumTicks && enumTicks.length > 0) {
+      for (let i = 0; i < points; i++) {
+        const row: Record<string, number> = { t: i };
+        series.forEach((s, idx) => {
+          const step = Math.floor(i / Math.max(1, Math.floor(points / enumTicks.length)));
+          row[s.key] = enumTicks[(step + idx) % enumTicks.length]!;
+        });
+        rows.push(row);
+      }
+      return rows;
+    }
     for (let i = 0; i < points; i++) {
       const row: Record<string, number> = { t: i };
       series.forEach((s, idx) => {
@@ -2222,15 +2252,18 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
       rows.push(row);
     }
     return rows;
-  }, [series]);
+  }, [series, enumMode, enumTicks]);
 
   const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
+    if (enumMode && enumTicks && enumTicks.length > 0) {
+      return [enumTicks[0]! - 0.5, enumTicks[enumTicks.length - 1]! + 0.5];
+    }
     if (yAxisMode === 'manual') return [yMin ?? 'auto', yMax ?? 'auto'];
     return [0, 100];
-  }, [yAxisMode, yMin, yMax]);
+  }, [enumMode, enumTicks, yAxisMode, yMin, yMax]);
 
   const yAxisLabel = yLabel || yUnit
-    ? { value: [yLabel, yUnit].filter(Boolean).join(' '), angle: -90, position: 'insideLeft' as const, style: { fontSize: 10, fill: '#9ca3af' } }
+    ? { value: [yLabel, yUnit].filter(Boolean).join(' '), angle: -90, position: 'insideLeft' as const, style: { fontSize: yLabelFont.fontSize, fill: yLabelFont.fill, fontWeight: yLabelFont.fontWeight } }
     : undefined;
 
   return (
@@ -2251,19 +2284,37 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
               dataKey="t"
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: xTickFont.fontSize, fill: xTickFont.fill, fontWeight: xTickFont.fontWeight }}
               stroke="#9ca3af"
-              label={xLabel ? { value: xLabel, position: 'insideBottomRight', offset: -4, style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
+              height={xLabel ? 40 : undefined}
+              label={xLabel ? { value: xLabel, position: 'insideBottom', offset: 6, style: { textAnchor: 'middle', fontSize: xLabelFont.fontSize, fill: xLabelFont.fill, fontWeight: xLabelFont.fontWeight } } : undefined}
             />
             <YAxis
               domain={yDomain}
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: yTickFont.fontSize, fill: yTickFont.fill, fontWeight: yTickFont.fontWeight }}
               stroke="#9ca3af"
               width={yAxisLabel ? 48 : 36}
               label={yAxisLabel}
-              tickFormatter={yUnit ? (v: number) => `${v}${yUnit}` : undefined}
+              ticks={enumMode ? enumTicks : undefined}
+              tickFormatter={
+                enumMode
+                  ? (v: number) => formatEnumValue(v, enumMap)
+                  : yUnit
+                    ? (v: number) => `${v}${yUnit}`
+                    : undefined
+              }
             />
-            <Tooltip contentStyle={{ fontSize: '0.7rem' }} />
+            <Tooltip
+              contentStyle={{ fontSize: '0.7rem' }}
+              formatter={
+                enumMode
+                  ? (value, name) => [
+                      typeof value === 'number' ? formatEnumValue(value, enumMap) : value,
+                      name,
+                    ]
+                  : undefined
+              }
+            />
             {series.length > 1 && (
               <Legend
                 wrapperStyle={{ fontSize: '0.7rem' }}
