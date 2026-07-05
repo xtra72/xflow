@@ -264,8 +264,23 @@ func (n *InfluxDBWriteNode) Process(_ context.Context, msg message.Message) ([]m
 		}
 	} else {
 		// 기본: 모든 metadata 를 tags 로.
-		for k, v := range msg.Metadata().All() {
-			tags[k] = v
+		// P2: Flux 태그는 평면 string key=value 이므로 nested group 은 단일 태그가 될 수
+		// 없다. group 값은 "{group}.{field}" 평면 태그로 펼친다(예: agent.id, device.id).
+		// flat string 키는 그대로 사용한다.
+		//
+		// message-slim-metadata: 스토리지 write 는 외부 경계이므로 agent / device 그룹을
+		// id-only 로 슬림화한다(type/name 은 레지스트리의 정규 데이터로 중복 저장하지
+		// 않음). 내부 메시지 흐름은 영향받지 않는다 — 여기서는 Raw() 복사본을 슬림화한
+		// DTO 위에서만 동작한다. 결과적으로 agent.id / device.id 태그만 기록된다.
+		for k, v := range message.SlimGroupsToID(msg.Metadata().Raw()) {
+			switch val := v.(type) {
+			case string:
+				tags[k] = val
+			case map[string]string:
+				for fk, fv := range val {
+					tags[k+"."+fk] = fv
+				}
+			}
 		}
 	}
 

@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search } from 'lucide-react';
+import { useTranslation } from '@/lib/i18n';
 
 /** 로그 레벨 타입 */
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
@@ -55,6 +56,7 @@ interface LogViewerProps {
 
 /** 로그 뷰어 컴포넌트 (페이지네이션) */
 export default function LogViewer({ entries }: LogViewerProps) {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState<LogLevel | null>(null);
   const [sourceFilter, setSourceFilter] = useState<Set<SourceType>>(new Set());
   const [componentSearch, setComponentSearch] = useState('');
@@ -160,12 +162,12 @@ export default function LogViewer({ entries }: LogViewerProps) {
       {/* 타이틀 + 건수 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-(--color-border-default)">
         <h3 className="text-sm font-semibold text-(--color-text-primary)">
-          시스템 로그
+          {t('monitoring.systemLog')}
         </h3>
         <span className="text-xs text-(--color-text-muted)">
           {filtered.length === entries.length
-            ? `${entries.length.toLocaleString()}건`
-            : `${filtered.length.toLocaleString()} / ${entries.length.toLocaleString()}건`}
+            ? `${entries.length.toLocaleString()}${t('monitoring.countUnit')}`
+            : `${filtered.length.toLocaleString()} / ${entries.length.toLocaleString()}${t('monitoring.countUnit')}`}
         </span>
       </div>
 
@@ -182,7 +184,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
                 : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
             }`}
           >
-            전체
+            {t('monitoring.allLevels')}
           </button>
           {ALL_LEVELS.map((level) => (
             <button
@@ -227,7 +229,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
               : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
           }`}
         >
-          실시간 {autoScroll ? 'ON' : 'OFF'}
+          {t('monitoring.realtime')} {autoScroll ? 'ON' : 'OFF'}
         </button>
       </div>
 
@@ -238,7 +240,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
           type="text"
           value={componentSearch}
           onChange={(e) => setComponentSearch(e.target.value)}
-          placeholder="컴포넌트 필터..."
+          placeholder={t('monitoring.componentFilter')}
           className="w-48 px-2 py-1 text-xs bg-transparent border border-(--color-border-default) rounded text-(--color-text-primary) placeholder-(--color-text-muted) focus:outline-none focus:border-blue-400"
         />
       </div>
@@ -247,7 +249,7 @@ export default function LogViewer({ entries }: LogViewerProps) {
       <div className="flex items-center justify-between px-3 py-2 border-b border-(--color-border-default) bg-(--color-bg-sunken)">
         {/* 페이지 크기 선택 */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-(--color-text-muted)">표시</span>
+          <span className="text-[10px] text-(--color-text-muted)">{t('monitoring.display')}</span>
           {PAGE_SIZE_OPTIONS.map((size) => (
             <button
               key={size}
@@ -323,19 +325,19 @@ export default function LogViewer({ entries }: LogViewerProps) {
 
       {/* 테이블 헤더 */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-(--color-border-default) bg-(--color-bg-sunken) font-mono text-[10px] font-semibold text-(--color-text-muted) uppercase tracking-wider">
-        <span className="shrink-0 w-[140px]">시간</span>
-        <span className="shrink-0 w-[50px] text-center">레벨</span>
-        <span className="shrink-0 w-[55px] text-center">소스</span>
-        <span className="shrink-0 w-[100px]">타입</span>
-        <span className="shrink-0 w-[100px]">이름</span>
-        <span className="flex-1">메시지</span>
+        <span className="shrink-0 w-[140px]">{t('monitoring.colTime')}</span>
+        <span className="shrink-0 w-[50px] text-center">{t('monitoring.colLevel')}</span>
+        <span className="shrink-0 w-[55px] text-center">{t('monitoring.colSource')}</span>
+        <span className="shrink-0 w-[100px]">{t('monitoring.colType')}</span>
+        <span className="shrink-0 w-[100px]">{t('monitoring.colName')}</span>
+        <span className="flex-1">{t('monitoring.colMessage')}</span>
       </div>
 
       {/* 로그 목록 */}
       <div className="overflow-auto font-mono text-xs" style={{ maxHeight: 500 }}>
         {pageEntries.length === 0 ? (
           <div className="flex items-center justify-center py-12 text-sm text-(--color-text-muted)">
-            {entries.length === 0 ? '수신된 로그가 없습니다' : '필터 조건에 맞는 로그가 없습니다'}
+            {entries.length === 0 ? t('monitoring.noLogs') : t('monitoring.noFilteredLogs')}
           </div>
         ) : (
           pageEntries.map((entry) => (

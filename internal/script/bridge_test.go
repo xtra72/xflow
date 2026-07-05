@@ -395,9 +395,10 @@ func TestMessageToLuaTable(t *testing.T) {
 	assert.IsType(t, lua.LString(""), idStr)
 	assert.NotEmpty(t, string(idStr.(lua.LString)))
 
-	// timestamp
-	tsStr := tbl.RawGetString("timestamp")
-	assert.IsType(t, lua.LString(""), tsStr)
+	// timestamp 는 epoch milliseconds (number) 로 노출된다.
+	tsNum := tbl.RawGetString("timestamp")
+	assert.IsType(t, lua.LNumber(0), tsNum)
+	assert.Equal(t, msg.Timestamp().UnixMilli(), int64(tsNum.(lua.LNumber)))
 
 	// payload
 	payload := tbl.RawGetString("payload")

@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, RotateCw } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -31,26 +32,26 @@ export interface RestartGuideProps {
 interface CommandEntry {
   /** 내부 식별자. data-testid 와 상태 키로 사용. */
   id: 'systemd' | 'manual';
-  /** 사용자 노출 라벨. */
-  label: string;
+  /** 사용자 노출 라벨 i18n 키. 렌더 시 t(labelKey). */
+  labelKey: string;
   /** 실제 복사될 명령어 문자열. */
   command: string;
-  /** 부가 설명 (선택). */
-  hint?: string;
+  /** 부가 설명 i18n 키 (선택). */
+  hintKey?: string;
 }
 
 const COMMANDS: ReadonlyArray<CommandEntry> = [
   {
     id: 'systemd',
-    label: 'systemd 서비스 재시작 (권장)',
+    labelKey: 'system.restart.systemdLabel',
     command: 'sudo systemctl restart xflowd',
-    hint: 'systemd 로 관리되는 환경에서 사용합니다.',
+    hintKey: 'system.restart.systemdHint',
   },
   {
     id: 'manual',
-    label: '수동 재시작',
+    labelKey: 'system.restart.manualLabel',
     command: 'sudo pkill xflowd && sudo xflowd start',
-    hint: 'systemd 가 없는 환경 또는 수동 운영 시 사용합니다.',
+    hintKey: 'system.restart.manualHint',
   },
 ];
 
@@ -62,6 +63,7 @@ const COPIED_BADGE_TTL_MS = 3000;
 // ─────────────────────────────────────────────────────────────────────
 
 export function RestartGuide({ operationId }: RestartGuideProps) {
+  const { t } = useTranslation();
   // id → boolean 형태로 각 버튼의 "방금 복사됨" 상태를 독립적으로 추적한다.
   const [copiedMap, setCopiedMap] = useState<Record<string, boolean>>({});
   // 각 버튼의 reset timer (재클릭 시 이전 timer 취소).
@@ -113,14 +115,11 @@ export function RestartGuide({ operationId }: RestartGuideProps) {
           data-testid="restart-guide-title"
           className="text-sm font-semibold"
         >
-          재시작이 필요합니다
+          {t('system.restart.title')}
         </h3>
       </header>
 
-      <p className="text-xs leading-relaxed">
-        업데이트 바이너리가 준비되었습니다. xflowd 데몬을 직접 재시작해야 변경
-        사항이 반영됩니다. 아래 명령어 중 환경에 맞는 것을 실행하세요.
-      </p>
+      <p className="text-xs leading-relaxed">{t('system.restart.desc')}</p>
 
       <ul className="space-y-2">
         {COMMANDS.map((cmd) => {
@@ -133,7 +132,7 @@ export function RestartGuide({ operationId }: RestartGuideProps) {
                 'border-yellow-200 dark:border-yellow-800 dark:bg-yellow-900/40',
               )}
             >
-              <div className="mb-1 font-medium">{cmd.label}</div>
+              <div className="mb-1 font-medium">{t(cmd.labelKey)}</div>
               <div className="flex items-center gap-1">
                 <code
                   data-testid={`restart-guide-cmd-${cmd.id}`}
@@ -155,7 +154,10 @@ export function RestartGuide({ operationId }: RestartGuideProps) {
                     'dark:border-yellow-700 dark:bg-yellow-900 dark:text-yellow-200',
                     'dark:hover:bg-yellow-800',
                   )}
-                  aria-label={`${cmd.label} 명령어 복사`}
+                  aria-label={t('system.restart.copyAria').replace(
+                    '{label}',
+                    t(cmd.labelKey),
+                  )}
                 >
                   <Copy className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
@@ -169,12 +171,12 @@ export function RestartGuide({ operationId }: RestartGuideProps) {
                     )}
                   >
                     <Check className="h-3 w-3" aria-hidden="true" />
-                    복사됨
+                    {t('system.restart.copied')}
                   </span>
                 ) : null}
               </div>
-              {cmd.hint ? (
-                <p className="mt-1 text-[11px] opacity-80">{cmd.hint}</p>
+              {cmd.hintKey ? (
+                <p className="mt-1 text-[11px] opacity-80">{t(cmd.hintKey)}</p>
               ) : null}
             </li>
           );

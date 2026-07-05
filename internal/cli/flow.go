@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
 // newFlowCmd 는 플로우 관리 커맨드 그룹을 생성한다.
-// 12개의 서브커맨드(list, get, create, update, delete,
-// deploy, start, stop, restart, export, import, status)를 등록한다.
+// 18개의 서브커맨드(list, get, create, update, delete,
+// deploy, start, stop, restart, undeploy, export, import, status,
+// config, subflow-stats, tap, taps, node-configure)를 등록한다.
 func newFlowCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.Command {
 	flowCmd := &cobra.Command{
 		Use:   "flow",
@@ -29,9 +31,15 @@ func newFlowCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra.
 	flowCmd.AddCommand(newFlowStartCmd(client))
 	flowCmd.AddCommand(newFlowStopCmd(client))
 	flowCmd.AddCommand(newFlowRestartCmd(client))
+	flowCmd.AddCommand(newFlowUndeployCmd(client))
 	flowCmd.AddCommand(newFlowExportCmd(client))
 	flowCmd.AddCommand(newFlowImportCmd(client))
 	flowCmd.AddCommand(newFlowStatusCmd(client))
+	flowCmd.AddCommand(newFlowConfigCmd(client))
+	flowCmd.AddCommand(newFlowSubflowStatsCmd(client))
+	flowCmd.AddCommand(newFlowTapCmd(client))
+	flowCmd.AddCommand(newFlowTapsCmd(client))
+	flowCmd.AddCommand(newFlowNodeConfigureCmd(client))
 
 	return flowCmd
 }
@@ -310,6 +318,296 @@ func newFlowStopCmd(client **Client) *cobra.Command {
 // newFlowRestartCmd 는 flow restart <id> 서브커맨드를 생성한다.
 func newFlowRestartCmd(client **Client) *cobra.Command {
 	return newFlowActionCmd(client, "restart", "플로우 재시작")
+}
+
+// newFlowUndeployCmd 는 flow undeploy <id> 서브커맨드를 생성한다.
+// POST /api/v1/flows/:id/undeploy 로 플로우 배포를 해제한다.
+func newFlowUndeployCmd(client **Client) *cobra.Command {
+	return newFlowActionCmd(client, "undeploy", "플로우 배포 해제")
+}
+
+// newFlowConfigCmd 는 flow config <id|name> [-f file | key=value ...] 서브커맨드를 생성한다.
+// PUT /api/v1/flows/:id/config 로 플로우 구성(런타임 설정값)을 수정한다.
+// 요청 본문은 {"config": {...}} 형식이다 (dto.ConfigUpdateRequest).
+//
+// 설정값은 파일(-f) 또는 key=value 인자로 전달할 수 있다.
+//
+//	xflow flow config <id|name> -f config.json
+//	xflow flow config <id|name> key=value [key=value ...]
+func newFlowConfigCmd(client **Client) *cobra.Command {
+	var filePath string
+
+	cmd := &cobra.Command{
+		Use:   "config <id|name> [key=value ...]",
+		Short: "플로우 구성 수정",
+		Long: `플로우의 구성(설정값)을 수정합니다.
+
+설정값은 파일(-f) 또는 key=value 인자로 전달할 수 있습니다.
+
+예시:
+  xflow flow config my-flow -f config.json
+  xflow flow config my-flow log_level=debug max_retries=3`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
+
+			config, err := buildConfigFromArgs(filePath, args[1:])
+			if err != nil {
+				return err
+			}
+
+			// 요청 본문: ConfigUpdateRequest = {"config": {...}}
+			body := map[string]any{"config": config}
+
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/flows/%s/config", id)
+			if err := (*client).Put(path, body, &result); err != nil {
+				return err
+			}
+
+			format := getFormat(cmd)
+			w := cmd.OutOrStdout()
+			if format == "table" || format == "text" {
+				fmt.Fprintf(w, "플로우 '%s' 구성이 수정되었습니다.\n", id)
+				return nil
+			}
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+
+	cmd.Flags().StringVarP(&filePath, "file", "f", "", "구성 정의 파일 경로 (JSON/YAML)")
+
+	return cmd
+}
+
+// newFlowSubflowStatsCmd 는 flow subflow-stats <id|name> 서브커맨드를 생성한다.
+// GET /api/v1/flows/:id/subflow-stats 로 서브플로우의 LIVE per-original-node 통계를 조회한다.
+func newFlowSubflowStatsCmd(client **Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "subflow-stats <id|name>",
+		Short: "서브플로우 통계 조회",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
+
+			var stats map[string]any
+			path := fmt.Sprintf("/api/v1/flows/%s/subflow-stats", id)
+			if err := (*client).Get(path, &stats); err != nil {
+				return err
+			}
+
+			format := getFormat(cmd)
+			w := cmd.OutOrStdout()
+
+			if format == "table" || format == "text" {
+				df := NewDetailFormatter(subflowStatsFieldOrder, subflowStatsLabelMap, subflowStatsSectionKeys)
+				return df.Format(stats, w)
+			}
+			return PrintResult(w, format, stats, nil, nil)
+		},
+	}
+}
+
+// newFlowTapCmd 는 flow tap <id|name> <nodeID> [--disable] 서브커맨드를 생성한다.
+// POST /api/v1/flows/:id/nodes/:nodeID/tap 으로 노드 출력 tap(라이브 데이터 캡처)을 토글한다.
+// 요청 본문은 {"enabled": bool} 형식이다 (dto.NodeTapRequest).
+//
+// 기본값은 tap 활성화(enabled=true)이며, --disable 플래그로 비활성화한다.
+func newFlowTapCmd(client **Client) *cobra.Command {
+	var disable bool
+
+	cmd := &cobra.Command{
+		Use:   "tap <id|name> <nodeID>",
+		Short: "노드 출력 탭(라이브 데이터 캡처)",
+		Long: `노드 출력 tap 을 토글하여 라이브 데이터 캡처를 시작/중지합니다.
+
+기본값은 tap 활성화이며, --disable 플래그로 비활성화합니다.
+
+예시:
+  xflow flow tap my-flow node-123
+  xflow flow tap my-flow node-123 --disable`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
+			nodeID := args[1]
+
+			// 요청 본문: NodeTapRequest = {"enabled": bool}
+			body := map[string]any{"enabled": !disable}
+
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/flows/%s/nodes/%s/tap", id, nodeID)
+			if err := (*client).Post(path, body, &result); err != nil {
+				return err
+			}
+
+			format := getFormat(cmd)
+			w := cmd.OutOrStdout()
+			if format == "table" || format == "text" {
+				state := "활성화"
+				if disable {
+					state = "비활성화"
+				}
+				fmt.Fprintf(w, "플로우 '%s' 노드 '%s' tap %s 완료.\n", id, nodeID, state)
+				return nil
+			}
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+
+	cmd.Flags().BoolVar(&disable, "disable", false, "tap 비활성화 (기본값: 활성화)")
+
+	return cmd
+}
+
+// newFlowTapsCmd 는 flow taps <id|name> 서브커맨드를 생성한다.
+// GET /api/v1/flows/:id/taps 로 현재 tap(관측) 중인 노드 ID 목록을 조회한다.
+func newFlowTapsCmd(client **Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "taps <id|name>",
+		Short: "활성 탭 목록 조회",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
+
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/flows/%s/taps", id)
+			if err := (*client).Get(path, &result); err != nil {
+				return err
+			}
+
+			format := getFormat(cmd)
+			w := cmd.OutOrStdout()
+
+			if format == "table" || format == "text" {
+				df := NewDetailFormatter(flowTapsFieldOrder, flowTapsLabelMap, flowTapsSectionKeys)
+				return df.Format(result, w)
+			}
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+}
+
+// newFlowNodeConfigureCmd 는 flow node-configure <id|name> <nodeID> [-f file | key=value ...]
+// 서브커맨드를 생성한다.
+// POST /api/v1/flows/:id/nodes/:nodeID/configure 로 실행 중인 노드에 부분 설정을 즉시 적용한다.
+// 요청 본문은 {"config": {...}} 형식이다 (dto.NodeConfigureRequest).
+//
+// 설정값은 파일(-f) 또는 key=value 인자로 전달할 수 있다.
+//
+//	xflow flow node-configure <id|name> <nodeID> -f config.json
+//	xflow flow node-configure <id|name> <nodeID> output_enabled=false
+func newFlowNodeConfigureCmd(client **Client) *cobra.Command {
+	var filePath string
+
+	cmd := &cobra.Command{
+		Use:   "node-configure <id|name> <nodeID> [key=value ...]",
+		Short: "노드 구성 수정",
+		Long: `실행 중인 플로우 내 특정 노드의 구성을 라이브로 수정합니다.
+
+설정값은 파일(-f) 또는 key=value 인자로 전달할 수 있습니다.
+
+예시:
+  xflow flow node-configure my-flow node-123 -f config.json
+  xflow flow node-configure my-flow node-123 output_enabled=false`,
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := resolveFlowID(*client, args[0])
+			if err != nil {
+				return err
+			}
+			nodeID := args[1]
+
+			config, err := buildConfigFromArgs(filePath, args[2:])
+			if err != nil {
+				return err
+			}
+
+			// 요청 본문: NodeConfigureRequest = {"config": {...}}
+			body := map[string]any{"config": config}
+
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/flows/%s/nodes/%s/configure", id, nodeID)
+			if err := (*client).Post(path, body, &result); err != nil {
+				return err
+			}
+
+			format := getFormat(cmd)
+			w := cmd.OutOrStdout()
+			if format == "table" || format == "text" {
+				fmt.Fprintf(w, "플로우 '%s' 노드 '%s' 구성이 수정되었습니다.\n", id, nodeID)
+				return nil
+			}
+			return PrintResult(w, format, result, nil, nil)
+		},
+	}
+
+	cmd.Flags().StringVarP(&filePath, "file", "f", "", "구성 정의 파일 경로 (JSON/YAML)")
+
+	return cmd
+}
+
+// buildConfigFromArgs 는 config 맵을 구성한다.
+// filePath 가 지정되면 파일(-f)을 우선하고, 아니면 key=value 인자를 파싱한다.
+// 둘 다 없으면 에러를 반환한다.
+// 파일/인자 처리 규칙은 agent config 커맨드(parseConfigFile, parseParamValue)와 동일하다.
+func buildConfigFromArgs(filePath string, kvArgs []string) (map[string]any, error) {
+	if filePath != "" {
+		return parseConfigFile(filePath)
+	}
+
+	if len(kvArgs) == 0 {
+		return nil, ErrInvalidInput("설정값을 지정해주세요 (-f 파일 또는 key=value 인자)")
+	}
+
+	config := make(map[string]any, len(kvArgs))
+	for _, arg := range kvArgs {
+		k, v, ok := strings.Cut(arg, "=")
+		if !ok {
+			return nil, ErrInvalidInput(fmt.Sprintf("잘못된 파라미터 형식: %q (key=value 형식 필요)", arg))
+		}
+		config[k] = parseParamValue(v)
+	}
+	return config, nil
+}
+
+// subflowStatsFieldOrder 는 서브플로우 통계 출력의 필드 순서이다.
+var subflowStatsFieldOrder = []string{"flow_id", "nodes"}
+
+// subflowStatsLabelMap 는 서브플로우 통계 출력의 필드 라벨 매핑이다.
+var subflowStatsLabelMap = map[string]string{
+	"flow_id": "Flow ID",
+	"nodes":   "Node Stats",
+}
+
+// subflowStatsSectionKeys 는 별도 섹션으로 출력할 키 목록이다.
+var subflowStatsSectionKeys = map[string]bool{
+	"nodes": true,
+}
+
+// flowTapsFieldOrder 는 활성 탭 목록 출력의 필드 순서이다.
+var flowTapsFieldOrder = []string{"flow_id", "node_ids"}
+
+// flowTapsLabelMap 는 활성 탭 목록 출력의 필드 라벨 매핑이다.
+var flowTapsLabelMap = map[string]string{
+	"flow_id":  "Flow ID",
+	"node_ids": "Tapped Nodes",
+}
+
+// flowTapsSectionKeys 는 별도 섹션으로 출력할 키 목록이다.
+var flowTapsSectionKeys = map[string]bool{
+	"node_ids": true,
 }
 
 // newFlowExportCmd 는 flow export <id> -o <file> 서브커맨드를 생성한다.

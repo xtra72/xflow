@@ -1,7 +1,11 @@
-// Package node - inventory_test.go: SPEC-INVENTORY-001 인수 테스트
+// Package node - inventory_test.go: inventory 노드 재설계 단위 테스트
 //
-// 본 파일은 Inventory 노드 (devices/agents/nodes/flows 인벤토리 스냅샷 emit)의
-// TDD 단위 테스트를 제공한다. Phase 1~4 의 acceptance.md 시나리오와 1:1 매핑된다.
+// 본 파일은 재설계된 Inventory 노드 (devices/agents/nodes/flows 스냅샷 emit)의
+// 단위 테스트를 제공한다. 신규 동작(조건식 필터, fields 투영, max_items 청킹,
+// 새 metadata, payload.items)은 reproduction-first 로 먼저 작성되었다.
+//
+// 구 동작(emit_shape / include_metadata / filter struct)은 breaking 재설계로
+// 제거되었으므로 관련 테스트도 함께 제거되었다.
 package node
 
 import (
@@ -44,13 +48,7 @@ type fakeDevice struct {
 func (d *fakeDevice) ID() string { return d.id }
 
 // UID 는 production 어댑터 패턴 (agent.ResolveDeviceID 를 통한 UUID 조회) 을
-// 재현한다. d.uid 가 명시적으로 채워져 있으면 그 값을 우선 사용 (테스트가
-// agent.SetDeviceIDRepository 를 호출하지 않은 경우의 단순화 경로).
-// 그렇지 않으면 composite id 에서 prefix 를 제거한 localID 로
-// agent.ResolveDeviceID 를 호출하여 fakeDeviceIDRepo 로부터 UUID 를 얻는다.
-//
-// SPEC-DEVICE-IDENTITY-001 Phase A 의 invariant: UID() 는 emit 경로의
-// ResolveDeviceID 호출과 동일한 UUID 를 반환해야 한다.
+// 재현한다. d.uid 가 명시적으로 채워져 있으면 그 값을 우선 사용한다.
 func (d *fakeDevice) UID() string {
 	if d.uid != "" {
 		return d.uid
@@ -128,7 +126,6 @@ func (r *fakeDeviceRegistry) Execute(context.Context, string, string, map[string
 }
 
 // GetByUID 는 SPEC-DEVICE-IDENTITY-001 Phase B 의 1급 lookup 경로 (fake).
-// Device.UID() 와 일치하는 첫 디바이스를 반환한다.
 func (r *fakeDeviceRegistry) GetByUID(uid string) (device.Device, error) {
 	if uid == "" {
 		return nil, device.ErrDeviceNotFound
@@ -141,8 +138,7 @@ func (r *fakeDeviceRegistry) GetByUID(uid string) (device.Device, error) {
 	return nil, device.ErrDeviceNotFound
 }
 
-// GetByAgentName 은 SPEC-DEVICE-IDENTITY-001 Phase B 의 (agent, name) lookup
-// 경로 (fake).
+// GetByAgentName 은 (agent, name) lookup 경로 (fake).
 func (r *fakeDeviceRegistry) GetByAgentName(agent, name string) (device.Device, error) {
 	if agent == "" || name == "" {
 		return nil, device.ErrDeviceNotFound
@@ -177,141 +173,7 @@ func (r *fakeDeviceRegistry) ResolveDevice(ref string) (device.Device, device.De
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Phase 1 RED — Factory 검증 (M1, M2 일부)
-// ---------------------------------------------------------------------------
-
-// AC1.3: source 누락 시 ErrInventoryInvalidSource
-func TestInventoryNode_FactoryWithMissingSource_ReturnsError(t *testing.T) {
-	def := flow.NodeDef{
-		ID:     "n1",
-		Name:   "inv",
-		Type:   "inventory",
-		Config: map[string]any{},
-	}
-	n, err := NewInventoryNode(def)
-	if n != nil {
-		t.Fatalf("expected nil node when source missing, got %v", n)
-	}
-	if !errors.Is(err, ErrInventoryInvalidSource) {
-		t.Fatalf("expected ErrInventoryInvalidSource, got %v", err)
-	}
-}
-
-// AC1.4: 알 수 없는 source enum
-func TestInventoryNode_FactoryWithInvalidSource_ReturnsError(t *testing.T) {
-	def := flow.NodeDef{
-		ID:     "n1",
-		Type:   "inventory",
-		Config: map[string]any{"source": "unknown_kind"},
-	}
-	_, err := NewInventoryNode(def)
-	if !errors.Is(err, ErrInventoryInvalidSource) {
-		t.Fatalf("expected ErrInventoryInvalidSource, got %v", err)
-	}
-}
-
-// AC1.5: 4종 source 모두 팩토리 통과
-func TestInventoryNode_FactoryAllValidSources_ReturnsNode(t *testing.T) {
-	sources := []string{
-		InventorySourceDevices, InventorySourceAgents,
-		InventorySourceNodes, InventorySourceFlows,
-	}
-	for _, src := range sources {
-		t.Run(src, func(t *testing.T) {
-			def := flow.NodeDef{
-				ID:     "n-" + src,
-				Type:   "inventory",
-				Config: map[string]any{"source": src},
-			}
-			n, err := NewInventoryNode(def)
-			if err != nil {
-				t.Fatalf("source=%s: unexpected error: %v", src, err)
-			}
-			inv, ok := n.(*InventoryNode)
-			if !ok {
-				t.Fatalf("source=%s: expected *InventoryNode, got %T", src, n)
-			}
-			if inv.source != src {
-				t.Fatalf("source=%s: internal source mismatch: %s", src, inv.source)
-			}
-		})
-	}
-}
-
-// AC2.1: 기본 emit_shape 는 array
-func TestInventoryNode_DefaultEmitShape_IsArray(t *testing.T) {
-	def := flow.NodeDef{
-		ID:     "n1",
-		Type:   "inventory",
-		Config: map[string]any{"source": "devices"},
-	}
-	n, err := NewInventoryNode(def)
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	inv := n.(*InventoryNode)
-	if inv.emitShape != InventoryShapeArray {
-		t.Fatalf("expected default emit_shape=array, got %s", inv.emitShape)
-	}
-}
-
-// AC2.7: 잘못된 emit_shape
-func TestInventoryNode_FactoryWithInvalidEmitShape_ReturnsError(t *testing.T) {
-	def := flow.NodeDef{
-		ID:   "n1",
-		Type: "inventory",
-		Config: map[string]any{
-			"source":     "devices",
-			"emit_shape": "batch",
-		},
-	}
-	_, err := NewInventoryNode(def)
-	if !errors.Is(err, ErrInventoryInvalidEmitShape) {
-		t.Fatalf("expected ErrInventoryInvalidEmitShape, got %v", err)
-	}
-}
-
-// AC1.2: 기본 포트 정의 확인 (in, out, error)
-func TestInventoryNode_DefaultPorts(t *testing.T) {
-	def := flow.NodeDef{
-		ID:   "n1",
-		Type: "inventory",
-		Config: map[string]any{
-			"source": "devices",
-		},
-		Inputs:  []flow.Port{{ID: "p1", Name: "in", Direction: flow.PortInput}},
-		Outputs: []flow.Port{{ID: "p2", Name: "out", Direction: flow.PortOutput}},
-	}
-	n, err := NewInventoryNode(def)
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	ports := n.Ports()
-	if len(ports) < 3 {
-		t.Fatalf("expected at least 3 ports (in/out/error), got %d", len(ports))
-	}
-
-	var hasIn, hasOut, hasError bool
-	for _, p := range ports {
-		switch p.Name {
-		case "in":
-			hasIn = true
-		case "out":
-			hasOut = true
-		case "_error":
-			hasError = true
-		}
-	}
-	if !hasIn || !hasOut || !hasError {
-		t.Fatalf("missing ports: in=%v out=%v error=%v", hasIn, hasOut, hasError)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Phase 1 RED — devices/array shape (M2, M3, M5 일부)
-// ---------------------------------------------------------------------------
-
+// makeDevice 는 표준 fakeDevice 를 생성한다.
 func makeDevice(id, name, protocol, agentName string, online bool) *fakeDevice {
 	now := time.Date(2026, 5, 25, 10, 30, 0, 0, time.UTC)
 	return &fakeDevice{
@@ -341,6 +203,7 @@ func makeDevice(id, name, protocol, agentName string, online bool) *fakeDevice {
 	}
 }
 
+// newInventoryNode 는 테스트 헬퍼: 팩토리 + Configure 를 수행한다.
 func newInventoryNode(t *testing.T, cfg map[string]any, opts ...NodeOption) *InventoryNode {
 	t.Helper()
 	def := flow.NodeDef{
@@ -359,14 +222,148 @@ func newInventoryNode(t *testing.T, cfg map[string]any, opts ...NodeOption) *Inv
 	return n.(*InventoryNode)
 }
 
-// AC2.2: devices/array - 단일 메시지 emit
-func TestInventoryNode_DevicesArrayShape_EmitsSingleMessage(t *testing.T) {
+// getItems 는 출력 메시지의 payload.items 를 []map[string]any 로 추출한다.
+func getItems(t *testing.T, m message.Message) []map[string]any {
+	t.Helper()
+	raw, ok := m.Payload().Get("items")
+	if !ok {
+		t.Fatalf("payload.items missing")
+	}
+	items, ok := raw.([]map[string]any)
+	if !ok {
+		t.Fatalf("payload.items must be []map[string]any, got %T", raw)
+	}
+	return items
+}
+
+// metaStr 는 출력 메시지의 metadata 문자열 키를 읽는다.
+func metaStr(t *testing.T, m message.Message, key string) string {
+	t.Helper()
+	v, _ := m.Metadata().Get(key)
+	return v
+}
+
+// ---------------------------------------------------------------------------
+// Factory - source 검증
+// ---------------------------------------------------------------------------
+
+func TestInventoryNode_FactoryWithMissingSource_ReturnsError(t *testing.T) {
+	def := flow.NodeDef{ID: "n1", Type: "inventory", Config: map[string]any{}}
+	n, err := NewInventoryNode(def)
+	if n != nil {
+		t.Fatalf("expected nil node when source missing, got %v", n)
+	}
+	if !errors.Is(err, ErrInventoryInvalidSource) {
+		t.Fatalf("expected ErrInventoryInvalidSource, got %v", err)
+	}
+}
+
+func TestInventoryNode_FactoryWithInvalidSource_ReturnsError(t *testing.T) {
+	def := flow.NodeDef{ID: "n1", Type: "inventory", Config: map[string]any{"source": "unknown_kind"}}
+	_, err := NewInventoryNode(def)
+	if !errors.Is(err, ErrInventoryInvalidSource) {
+		t.Fatalf("expected ErrInventoryInvalidSource, got %v", err)
+	}
+}
+
+func TestInventoryNode_FactoryAllValidSources_ReturnsNode(t *testing.T) {
+	sources := []string{
+		InventorySourceDevices, InventorySourceAgents,
+		InventorySourceNodes, InventorySourceFlows,
+	}
+	for _, src := range sources {
+		t.Run(src, func(t *testing.T) {
+			def := flow.NodeDef{ID: "n-" + src, Type: "inventory", Config: map[string]any{"source": src}}
+			n, err := NewInventoryNode(def)
+			if err != nil {
+				t.Fatalf("source=%s: unexpected error: %v", src, err)
+			}
+			inv, ok := n.(*InventoryNode)
+			if !ok {
+				t.Fatalf("source=%s: expected *InventoryNode, got %T", src, n)
+			}
+			if inv.source != src {
+				t.Fatalf("source=%s: internal source mismatch: %s", src, inv.source)
+			}
+		})
+	}
+}
+
+func TestInventoryNode_DefaultPorts(t *testing.T) {
+	def := flow.NodeDef{
+		ID:      "n1",
+		Type:    "inventory",
+		Config:  map[string]any{"source": "devices"},
+		Inputs:  []flow.Port{{ID: "p1", Name: "in", Direction: flow.PortInput}},
+		Outputs: []flow.Port{{ID: "p2", Name: "out", Direction: flow.PortOutput}},
+	}
+	n, err := NewInventoryNode(def)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	ports := n.Ports()
+	if len(ports) < 3 {
+		t.Fatalf("expected at least 3 ports (in/out/error), got %d", len(ports))
+	}
+	var hasIn, hasOut, hasError bool
+	for _, p := range ports {
+		switch p.Name {
+		case "in":
+			hasIn = true
+		case "out":
+			hasOut = true
+		case "_error":
+			hasError = true
+		}
+	}
+	if !hasIn || !hasOut || !hasError {
+		t.Fatalf("missing ports: in=%v out=%v error=%v", hasIn, hasOut, hasError)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Source 의존성 미주입 시 Init 에러
+// ---------------------------------------------------------------------------
+
+func TestInventoryNode_DevicesSource_WithoutRegistryOption_InitError(t *testing.T) {
+	n := newInventoryNode(t, map[string]any{"source": "devices"})
+	if err := n.Init(context.Background()); !errors.Is(err, ErrInventoryDeviceRegistryNotAvailable) {
+		t.Fatalf("expected ErrInventoryDeviceRegistryNotAvailable, got %v", err)
+	}
+}
+
+func TestInventoryNode_AgentsSource_WithoutManagerOption_InitError(t *testing.T) {
+	n := newInventoryNode(t, map[string]any{"source": "agents"})
+	if err := n.Init(context.Background()); !errors.Is(err, ErrInventoryAgentManagerNotAvailable) {
+		t.Fatalf("expected ErrInventoryAgentManagerNotAvailable, got %v", err)
+	}
+}
+
+func TestInventoryNode_FlowsSource_WithoutRegistryOption_InitError(t *testing.T) {
+	n := newInventoryNode(t, map[string]any{"source": "flows"})
+	if err := n.Init(context.Background()); !errors.Is(err, ErrInventoryFlowRegistryNotAvailable) {
+		t.Fatalf("expected ErrInventoryFlowRegistryNotAvailable, got %v", err)
+	}
+}
+
+func TestInventoryNode_NodesSource_WithoutNodeRegistryOption_InitError(t *testing.T) {
+	n := newInventoryNode(t, map[string]any{"source": "nodes"})
+	if err := n.Init(context.Background()); !errors.Is(err, ErrInventoryNodeRegistryNotAvailable) {
+		t.Fatalf("expected ErrInventoryNodeRegistryNotAvailable, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// devices source - 기본 emit (payload.items + 새 metadata)
+// ---------------------------------------------------------------------------
+
+func TestInventoryNode_Devices_EmitsSingleMessageWithItems(t *testing.T) {
 	reg := newFakeDeviceRegistry(
 		makeDevice("ag1:0.0.16", "Indoor A", "lg_icp01", "ag1", true),
 		makeDevice("ag1:0.0.17", "Indoor B", "lg_icp01", "ag1", true),
 	)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
+		map[string]any{"source": "devices"},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -378,42 +375,42 @@ func TestInventoryNode_DevicesArrayShape_EmitsSingleMessage(t *testing.T) {
 		t.Fatalf("process error: %v", err)
 	}
 	if len(out) != 1 {
-		t.Fatalf("expected 1 message in array mode, got %d", len(out))
+		t.Fatalf("expected 1 message, got %d", len(out))
 	}
 
-	payload := out[0].Payload()
-	if v, _ := payload.Get("source"); v != "devices" {
-		t.Fatalf("payload.source mismatch: %v", v)
-	}
-	if v, _ := payload.Get("count"); v != 2 {
-		t.Fatalf("payload.count mismatch: %v", v)
-	}
-	items, ok := payload.Get("items")
-	if !ok {
-		t.Fatalf("payload.items missing")
-	}
-	itemsList, ok := items.([]map[string]any)
-	if !ok {
-		t.Fatalf("payload.items must be []map[string]any, got %T", items)
-	}
-	if len(itemsList) != 2 {
-		t.Fatalf("items length mismatch: %d", len(itemsList))
+	items := getItems(t, out[0])
+	if len(items) != 2 {
+		t.Fatalf("items length mismatch: %d", len(items))
 	}
 
-	// metadata 확인
-	if v, _ := out[0].Metadata().Get("inventory.source"); v != "devices" {
-		t.Fatalf("metadata.inventory.source mismatch: %s", v)
+	// 구 payload 키 (source/count) 는 제거되었다 — items 키만 존재.
+	if _, ok := out[0].Payload().Get("source"); ok {
+		t.Fatalf("payload.source must be removed")
 	}
-	if v, _ := out[0].Metadata().Get("inventory.count"); v != "2" {
-		t.Fatalf("metadata.inventory.count mismatch: %s", v)
+	if _, ok := out[0].Payload().Get("count"); ok {
+		t.Fatalf("payload.count must be removed")
+	}
+
+	// 새 metadata: type(단수형)/total_count/offset/count
+	if got := metaStr(t, out[0], "type"); got != "device" {
+		t.Fatalf("metadata.type expected 'device', got %q", got)
+	}
+	if got := metaStr(t, out[0], "total_count"); got != "2" {
+		t.Fatalf("metadata.total_count expected 2, got %q", got)
+	}
+	if got := metaStr(t, out[0], "offset"); got != "0" {
+		t.Fatalf("metadata.offset expected 0, got %q", got)
+	}
+	if got := metaStr(t, out[0], "count"); got != "2" {
+		t.Fatalf("metadata.count expected 2, got %q", got)
 	}
 }
 
-// AC2.3: devices/array - 빈 레지스트리에서 count=0
-func TestInventoryNode_DevicesArrayShape_EmptyRegistry_EmitsCountZero(t *testing.T) {
+// 빈 레지스트리 → 빈 메시지 1개 (트리거당 1메시지 보장)
+func TestInventoryNode_Devices_EmptyRegistry_EmitsSingleEmptyMessage(t *testing.T) {
 	reg := newFakeDeviceRegistry()
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
+		map[string]any{"source": "devices"},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -424,64 +421,31 @@ func TestInventoryNode_DevicesArrayShape_EmptyRegistry_EmitsCountZero(t *testing
 		t.Fatalf("process: %v", err)
 	}
 	if len(out) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(out))
+		t.Fatalf("expected exactly 1 empty message, got %d", len(out))
 	}
-	if v, _ := out[0].Payload().Get("count"); v != 0 {
-		t.Fatalf("count=0 expected, got %v", v)
+	items := getItems(t, out[0])
+	if items == nil || len(items) != 0 {
+		t.Fatalf("items must be empty non-nil slice, got %v", items)
 	}
-	items, _ := out[0].Payload().Get("items")
-	il, ok := items.([]map[string]any)
-	if !ok {
-		t.Fatalf("items must be slice, got %T", items)
+	if got := metaStr(t, out[0], "total_count"); got != "0" {
+		t.Fatalf("total_count expected 0, got %q", got)
 	}
-	if il == nil || len(il) != 0 {
-		t.Fatalf("items must be empty non-nil slice, got %v", il)
+	if got := metaStr(t, out[0], "offset"); got != "0" {
+		t.Fatalf("offset expected 0, got %q", got)
 	}
-}
-
-// AC3.1: filter 가 DeviceRegistry.List 에 전달됨
-func TestInventoryNode_Devices_WithFilter_AppliesDeviceFilter(t *testing.T) {
-	d1 := makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true)
-	d2 := makeDevice("ag1:0.0.17", "B", "modbus", "ag1", true)
-	reg := newFakeDeviceRegistry(d1, d2)
-
-	onlineTrue := true
-	n := newInventoryNode(t,
-		map[string]any{
-			"source":     "devices",
-			"emit_shape": "array",
-			"filter": map[string]any{
-				"protocol": "lg_icp01",
-				"online":   true,
-			},
-		},
-		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
-	)
-	if err := n.Init(context.Background()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	_, err := n.Process(context.Background(), message.New())
-	if err != nil {
-		t.Fatalf("process: %v", err)
-	}
-
-	// fake registry 의 lastFilter 확인
-	if reg.lastFilter.Protocol != "lg_icp01" {
-		t.Fatalf("filter.protocol expected lg_icp01, got %s", reg.lastFilter.Protocol)
-	}
-	if reg.lastFilter.Online == nil || *reg.lastFilter.Online != onlineTrue {
-		t.Fatalf("filter.online expected *true, got %v", reg.lastFilter.Online)
+	if got := metaStr(t, out[0], "count"); got != "0" {
+		t.Fatalf("count expected 0, got %q", got)
 	}
 }
 
-// AC3.2: filter 누락 시 zero-value 필터 사용 (모든 디바이스 반환)
-func TestInventoryNode_Devices_WithoutFilter_UsesEmptyFilter(t *testing.T) {
+// devices source 는 항상 빈 device.DeviceFilter 로 List 를 호출한다 (조건식으로 통일).
+func TestInventoryNode_Devices_AlwaysUsesEmptyDeviceFilter(t *testing.T) {
 	d1 := makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true)
 	d2 := makeDevice("ag1:0.0.17", "B", "modbus", "ag1", false)
 	reg := newFakeDeviceRegistry(d1, d2)
 
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
+		map[string]any{"source": "devices"},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -491,8 +455,8 @@ func TestInventoryNode_Devices_WithoutFilter_UsesEmptyFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if v, _ := out[0].Payload().Get("count"); v != 2 {
-		t.Fatalf("expected all 2 devices, got %v", v)
+	if got := metaStr(t, out[0], "total_count"); got != "2" {
+		t.Fatalf("expected all 2 devices, got total_count=%q", got)
 	}
 	f := reg.lastFilter
 	if f.Protocol != "" || f.AgentName != "" || f.Type != "" ||
@@ -501,24 +465,12 @@ func TestInventoryNode_Devices_WithoutFilter_UsesEmptyFilter(t *testing.T) {
 	}
 }
 
-// AC4.1: devices source 인데 DeviceRegistry 미주입 시 Init 에러
-func TestInventoryNode_DevicesSource_WithoutRegistryOption_InitError(t *testing.T) {
-	n := newInventoryNode(t,
-		map[string]any{"source": "devices"},
-		// no WithDeviceRegistryFunc
-	)
-	err := n.Init(context.Background())
-	if !errors.Is(err, ErrInventoryDeviceRegistryNotAvailable) {
-		t.Fatalf("expected ErrInventoryDeviceRegistryNotAvailable, got %v", err)
-	}
-}
-
-// AC5.3: devices 항목 스키마 (include_metadata=true 기본)
-func TestInventoryNode_DevicesArrayShape_ItemSchema_FullMetadata(t *testing.T) {
+// 항목 스키마는 항상 rich (metadata/state 포함)
+func TestInventoryNode_Devices_ItemSchema_AlwaysRich(t *testing.T) {
 	d := makeDevice("ag1:0.0.16", "Indoor A", "lg_icp01", "ag1", true)
 	reg := newFakeDeviceRegistry(d)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
+		map[string]any{"source": "devices"},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -528,11 +480,7 @@ func TestInventoryNode_DevicesArrayShape_ItemSchema_FullMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	itemsRaw, _ := out[0].Payload().Get("items")
-	items := itemsRaw.([]map[string]any)
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
-	}
+	items := getItems(t, out[0])
 	item := items[0]
 	if item["id"] != "ag1:0.0.16" {
 		t.Fatalf("id mismatch: %v", item["id"])
@@ -543,31 +491,126 @@ func TestInventoryNode_DevicesArrayShape_ItemSchema_FullMetadata(t *testing.T) {
 	if item["online"] != true {
 		t.Fatalf("online mismatch: %v", item["online"])
 	}
-	caps, ok := item["capabilities"].([]string)
-	if !ok || len(caps) != 2 {
-		t.Fatalf("capabilities mismatch: %v", item["capabilities"])
-	}
 	if _, hasMeta := item["metadata"]; !hasMeta {
-		t.Fatalf("expected metadata key when include_metadata=true")
+		t.Fatalf("expected metadata key (always rich)")
 	}
 	if _, hasState := item["state"]; !hasState {
-		t.Fatalf("expected state key when include_metadata=true")
+		t.Fatalf("expected state key (always rich)")
 	}
-	// last_seen 은 RFC3339 string
 	if _, ok := item["last_seen"].(string); !ok {
-		t.Fatalf("last_seen expected string (RFC3339), got %T", item["last_seen"])
+		t.Fatalf("last_seen expected RFC3339 string, got %T", item["last_seen"])
 	}
 }
 
-// AC5.4: include_metadata=false → metadata/state 생략
-func TestInventoryNode_DevicesArrayShape_ItemSchema_NoMetadata(t *testing.T) {
-	d := makeDevice("ag1:0.0.16", "Indoor A", "lg_icp01", "ag1", true)
-	reg := newFakeDeviceRegistry(d)
+// Type() 은 항상 "inventory.event"
+func TestInventoryNode_Emit_SetsInventoryEventType(t *testing.T) {
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "lg_icp01", "ag", true))
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if got := out[0].Type(); got != "inventory.event" {
+		t.Fatalf("msg.Type() mismatch: got %q, want %q", got, "inventory.event")
+	}
+	if _, ok := out[0].Metadata().Get("message_type"); ok {
+		t.Fatalf("metadata.message_type 키는 부재해야 한다")
+	}
+}
+
+// 입력 메시지의 metadata 는 출력에 복사되지 않는다.
+func TestInventoryNode_DoesNotCopyInputMetadata(t *testing.T) {
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "x", "ag", true))
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices"},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	inMsg := message.New(
+		message.WithMetadata("trigger.schedule_id", "sched-1"),
+		message.WithMetadata("inventory.source", "should_not_appear"),
+	)
+	out, err := n.Process(context.Background(), inMsg)
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if _, ok := out[0].Metadata().Get("trigger.schedule_id"); ok {
+		t.Fatalf("input metadata trigger.schedule_id must NOT be copied")
+	}
+	if _, ok := out[0].Metadata().Get("inventory.source"); ok {
+		t.Fatalf("legacy inventory.source key must NOT exist")
+	}
+	// 새 metadata 만 존재
+	if got := metaStr(t, out[0], "type"); got != "device" {
+		t.Fatalf("metadata.type expected 'device', got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// metadata.type 단수형 매핑 (모든 source)
+// ---------------------------------------------------------------------------
+
+func TestInventoryNode_MetadataType_SingularPerSource(t *testing.T) {
+	devReg := newFakeDeviceRegistry(makeDevice("d1", "A", "x", "ag", true))
+	agtMgr := &fakeAgentManager{agents: []agent.Agent{&fakeAgent{id: "a1", name: "ag1", agType: "serial", state: lifecycle.StateRunning}}}
+	flowReg := &fakeFlowRegistry{flows: []FlowSummary{{ID: "f1", Name: "flow-1", State: "running"}}}
+	nodeReg := NewRegistry()
+
+	opts := []NodeOption{
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return devReg }),
+		WithAgentManagerFunc(func() agent.Manager { return agtMgr }),
+		WithFlowRegistryFunc(func() FlowRegistry { return flowReg }),
+		WithNodeRegistryFunc(func() *Registry { return nodeReg }),
+	}
+
+	cases := map[string]string{
+		"devices": "device",
+		"agents":  "agent",
+		"nodes":   "node",
+		"flows":   "flow",
+	}
+	for src, wantType := range cases {
+		t.Run(src, func(t *testing.T) {
+			n := newInventoryNode(t, map[string]any{"source": src}, opts...)
+			if err := n.Init(context.Background()); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+			out, err := n.Process(context.Background(), message.New())
+			if err != nil {
+				t.Fatalf("process: %v", err)
+			}
+			if len(out) != 1 {
+				t.Fatalf("expected 1 message, got %d", len(out))
+			}
+			if got := metaStr(t, out[0], "type"); got != wantType {
+				t.Fatalf("metadata.type expected %q, got %q", wantType, got)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// condition - 조건식 필터 (모든 source)
+// ---------------------------------------------------------------------------
+
+func TestInventoryNode_Condition_FiltersDevices(t *testing.T) {
+	reg := newFakeDeviceRegistry(
+		makeDevice("d1", "A", "lg_icp01", "ag", true),
+		makeDevice("d2", "B", "modbus", "ag", false),
+		makeDevice("d3", "C", "lg_icp01", "ag", true),
+	)
 	n := newInventoryNode(t,
 		map[string]any{
-			"source":           "devices",
-			"emit_shape":       "array",
-			"include_metadata": false,
+			"source":    "devices",
+			"condition": "$.payload.online == true",
 		},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
@@ -578,35 +621,243 @@ func TestInventoryNode_DevicesArrayShape_ItemSchema_NoMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	itemsRaw, _ := out[0].Payload().Get("items")
-	items := itemsRaw.([]map[string]any)
+	items := getItems(t, out[0])
+	if len(items) != 2 {
+		t.Fatalf("condition online==true expected 2 items, got %d", len(items))
+	}
+	for _, it := range items {
+		if it["online"] != true {
+			t.Fatalf("filtered item must be online, got %v", it["online"])
+		}
+	}
+	if got := metaStr(t, out[0], "total_count"); got != "2" {
+		t.Fatalf("total_count must reflect post-filter count 2, got %q", got)
+	}
+}
+
+func TestInventoryNode_Condition_AppliesToNonDeviceSource(t *testing.T) {
+	mgr := &fakeAgentManager{
+		agents: []agent.Agent{
+			&fakeAgent{id: "a1", name: "serial-agent", agType: "serial", state: lifecycle.StateRunning},
+			&fakeAgent{id: "a2", name: "mqtt-agent", agType: "mqtt", state: lifecycle.StateStopped},
+		},
+	}
+	n := newInventoryNode(t,
+		map[string]any{
+			"source":    "agents",
+			"condition": "$.payload.type == 'serial'",
+		},
+		WithAgentManagerFunc(func() agent.Manager { return mgr }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	items := getItems(t, out[0])
+	if len(items) != 1 {
+		t.Fatalf("condition type=='serial' expected 1 agent, got %d", len(items))
+	}
+	if items[0]["name"] != "serial-agent" {
+		t.Fatalf("expected serial-agent, got %v", items[0]["name"])
+	}
+}
+
+// 조건식이 모든 항목을 제거하면 빈 메시지 1개를 방출한다.
+func TestInventoryNode_Condition_AllFilteredOut_EmitsEmptyMessage(t *testing.T) {
+	reg := newFakeDeviceRegistry(
+		makeDevice("d1", "A", "x", "ag", false),
+		makeDevice("d2", "B", "x", "ag", false),
+	)
+	n := newInventoryNode(t,
+		map[string]any{
+			"source":    "devices",
+			"condition": "$.payload.online == true",
+		},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 empty message, got %d", len(out))
+	}
+	items := getItems(t, out[0])
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(items))
+	}
+	if got := metaStr(t, out[0], "total_count"); got != "0" {
+		t.Fatalf("total_count expected 0, got %q", got)
+	}
+}
+
+// 조건식 컴파일 실패 → NewInventoryNode 에서 에러
+func TestInventoryNode_Condition_CompileError_FactoryError(t *testing.T) {
+	def := flow.NodeDef{
+		ID:   "n1",
+		Type: "inventory",
+		Config: map[string]any{
+			"source":    "devices",
+			"condition": "this is not a valid (( expression",
+		},
+	}
+	_, err := NewInventoryNode(def)
+	if err == nil {
+		t.Fatalf("expected compile error for invalid condition, got nil")
+	}
+}
+
+// 빈 condition 문자열 → 필터 없음 (전체 통과)
+func TestInventoryNode_Condition_Empty_NoFilter(t *testing.T) {
+	reg := newFakeDeviceRegistry(
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", false),
+	)
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "condition": ""},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	items := getItems(t, out[0])
+	if len(items) != 2 {
+		t.Fatalf("empty condition must pass all, got %d", len(items))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fields - 화이트리스트 투영
+// ---------------------------------------------------------------------------
+
+func TestInventoryNode_Fields_CommaSeparatedString(t *testing.T) {
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "lg_icp01", "ag", true))
+	n := newInventoryNode(t,
+		map[string]any{
+			"source": "devices",
+			"fields": " id , name ",
+		},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	items := getItems(t, out[0])
 	item := items[0]
-	if _, hasMeta := item["metadata"]; hasMeta {
-		t.Fatalf("metadata must be omitted when include_metadata=false")
+	if len(item) != 2 {
+		t.Fatalf("projection expected 2 keys (id,name), got %d: %v", len(item), item)
 	}
-	if _, hasState := item["state"]; hasState {
-		t.Fatalf("state must be omitted when include_metadata=false")
+	if item["id"] != "d1" || item["name"] != "A" {
+		t.Fatalf("projected values mismatch: %v", item)
 	}
-	// 핵심 필드는 여전히 존재해야 함
-	if item["id"] != "ag1:0.0.16" {
+	if _, ok := item["protocol"]; ok {
+		t.Fatalf("non-whitelisted key 'protocol' must be omitted")
+	}
+}
+
+func TestInventoryNode_Fields_SliceForm(t *testing.T) {
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "lg_icp01", "ag", true))
+	n := newInventoryNode(t,
+		map[string]any{
+			"source": "devices",
+			"fields": []any{"id", "protocol"},
+		},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	item := getItems(t, out[0])[0]
+	if len(item) != 2 {
+		t.Fatalf("projection expected 2 keys, got %d: %v", len(item), item)
+	}
+	if item["id"] != "d1" || item["protocol"] != "lg_icp01" {
+		t.Fatalf("projected values mismatch: %v", item)
+	}
+}
+
+// fields 에 존재하지 않는 키는 그냥 생략 (에러 아님)
+func TestInventoryNode_Fields_MissingKeySkipped(t *testing.T) {
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "x", "ag", true))
+	n := newInventoryNode(t,
+		map[string]any{
+			"source": "devices",
+			"fields": "id,nonexistent_key",
+		},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	item := getItems(t, out[0])[0]
+	if len(item) != 1 {
+		t.Fatalf("missing key must be skipped, expected 1 key, got %d: %v", len(item), item)
+	}
+	if item["id"] != "d1" {
+		t.Fatalf("id must remain: %v", item)
+	}
+}
+
+// 빈 fields 는 전체 필드 유지
+func TestInventoryNode_Fields_EmptyKeepsAll(t *testing.T) {
+	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "x", "ag", true))
+	n := newInventoryNode(t,
+		map[string]any{"source": "devices", "fields": "  ,  "},
+		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
+	)
+	if err := n.Init(context.Background()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	item := getItems(t, out[0])[0]
+	if _, ok := item["metadata"]; !ok {
+		t.Fatalf("empty fields must keep all keys (metadata present)")
+	}
+	if item["id"] != "d1" {
 		t.Fatalf("id must remain")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 RED — per_item, agents/nodes/flows source (M2 per_item, M5 항목 스키마)
+// max_items - 청킹
 // ---------------------------------------------------------------------------
 
-// AC2.4: per_item - N개 메시지 emit
-func TestInventoryNode_DevicesPerItem_EmitsNMessages(t *testing.T) {
+func TestInventoryNode_MaxItems_ChunksMessages(t *testing.T) {
 	devs := []device.Device{
-		makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true),
-		makeDevice("ag1:0.0.17", "B", "lg_icp01", "ag1", true),
-		makeDevice("ag1:0.0.18", "C", "lg_icp01", "ag1", true),
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", true),
+		makeDevice("d3", "C", "x", "ag", true),
+		makeDevice("d4", "D", "x", "ag", true),
+		makeDevice("d5", "E", "x", "ag", true),
 	}
 	reg := newFakeDeviceRegistry(devs...)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		map[string]any{"source": "devices", "max_items": 2},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -617,52 +868,38 @@ func TestInventoryNode_DevicesPerItem_EmitsNMessages(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	if len(out) != 3 {
-		t.Fatalf("expected 3 per_item messages, got %d", len(out))
+		t.Fatalf("5 items max_items=2 expected 3 messages, got %d", len(out))
 	}
-
-	// per_item payload 는 단일 item 객체 (wrapper 없음): id 키가 직접 노출
+	wantCounts := []string{"2", "2", "1"}
+	wantOffsets := []string{"0", "2", "4"}
 	for i, m := range out {
-		if v, ok := m.Payload().Get("id"); !ok || v == nil {
-			t.Fatalf("per_item[%d] missing payload.id", i)
+		if got := metaStr(t, m, "total_count"); got != "5" {
+			t.Fatalf("msg[%d] total_count expected 5, got %q", i, got)
 		}
-		if _, ok := m.Payload().Get("count"); ok {
-			t.Fatalf("per_item[%d] must NOT have wrapper key 'count'", i)
+		if got := metaStr(t, m, "offset"); got != wantOffsets[i] {
+			t.Fatalf("msg[%d] offset expected %s, got %q", i, wantOffsets[i], got)
 		}
-		if _, ok := m.Payload().Get("items"); ok {
-			t.Fatalf("per_item[%d] must NOT have wrapper key 'items'", i)
+		if got := metaStr(t, m, "count"); got != wantCounts[i] {
+			t.Fatalf("msg[%d] count expected %s, got %q", i, wantCounts[i], got)
+		}
+		items := getItems(t, m)
+		cnt, _ := strconv.Atoi(wantCounts[i])
+		if len(items) != cnt {
+			t.Fatalf("msg[%d] items length expected %d, got %d", i, cnt, len(items))
 		}
 	}
 }
 
-// AC2.5: per_item, 빈 레지스트리 → 0개 메시지
-func TestInventoryNode_DevicesPerItem_EmptyRegistry_EmitsZeroMessages(t *testing.T) {
-	reg := newFakeDeviceRegistry()
-	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "per_item"},
-		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
-	)
-	if err := n.Init(context.Background()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	out, err := n.Process(context.Background(), message.New())
-	if err != nil {
-		t.Fatalf("process: %v", err)
-	}
-	if len(out) != 0 {
-		t.Fatalf("expected 0 messages for empty registry in per_item mode, got %d", len(out))
-	}
-}
-
-// AC2.6: per_item - inventory.index/total metadata 정확
-func TestInventoryNode_DevicesPerItem_IndexMetadataCorrect(t *testing.T) {
+// max_items 가 number(float64)로 들어와도 파싱
+func TestInventoryNode_MaxItems_FloatParsing(t *testing.T) {
 	devs := []device.Device{
-		makeDevice("ag1:0.0.16", "A", "lg_icp01", "ag1", true),
-		makeDevice("ag1:0.0.17", "B", "lg_icp01", "ag1", true),
-		makeDevice("ag1:0.0.18", "C", "lg_icp01", "ag1", true),
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", true),
+		makeDevice("d3", "C", "x", "ag", true),
 	}
 	reg := newFakeDeviceRegistry(devs...)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		map[string]any{"source": "devices", "max_items": float64(2)},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -672,49 +909,46 @@ func TestInventoryNode_DevicesPerItem_IndexMetadataCorrect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process: %v", err)
 	}
-
-	for i, m := range out {
-		idx, _ := m.Metadata().Get("inventory.index")
-		if idx != strconv.Itoa(i) {
-			t.Fatalf("message[%d].inventory.index expected %d, got %s", i, i, idx)
-		}
-		if v, _ := m.Metadata().Get("inventory.total"); v != "3" {
-			t.Fatalf("message[%d].inventory.total expected 3, got %s", i, v)
-		}
-		if v, _ := m.Metadata().Get("inventory.count"); v != "3" {
-			t.Fatalf("message[%d].inventory.count expected 3, got %s", i, v)
-		}
+	if len(out) != 2 {
+		t.Fatalf("3 items max_items=2 expected 2 messages, got %d", len(out))
 	}
-
-	// array 모드 출력에는 inventory.index/total 가 없어야 한다 → 별도 검증.
 }
 
-// AC5.9: array 모드는 index/total metadata 없음
-func TestInventoryNode_DevicesArrayShape_HasNoIndexTotalMetadata(t *testing.T) {
-	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "x", "ag", true))
+// max_items<=0 → 무제한 (1개 메시지)
+func TestInventoryNode_MaxItems_ZeroUnlimited(t *testing.T) {
+	devs := []device.Device{
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", true),
+		makeDevice("d3", "C", "x", "ag", true),
+	}
+	reg := newFakeDeviceRegistry(devs...)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
+		map[string]any{"source": "devices", "max_items": 0},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	out, _ := n.Process(context.Background(), message.New())
-	if _, ok := out[0].Metadata().Get("inventory.index"); ok {
-		t.Fatalf("array mode must NOT have inventory.index")
+	out, err := n.Process(context.Background(), message.New())
+	if err != nil {
+		t.Fatalf("process: %v", err)
 	}
-	if _, ok := out[0].Metadata().Get("inventory.total"); ok {
-		t.Fatalf("array mode must NOT have inventory.total")
+	if len(out) != 1 {
+		t.Fatalf("max_items=0 expected 1 message, got %d", len(out))
+	}
+	if got := metaStr(t, out[0], "count"); got != "3" {
+		t.Fatalf("count expected 3, got %q", got)
 	}
 }
 
-// SPEC-MESSAGE-TYPE-001 AC1-3: inventory 노드 emit 의 1급 type 설정 검증.
-// array shape / per_item shape 모두 msg.Type() == "inventory.event" 이어야 한다.
-// 기존 결함: type="" + metadata.message_type 부재 → top-level 분류 식별 누락.
-func TestInventoryNode_Emit_SetsInventoryEventType_ArrayShape(t *testing.T) {
-	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "lg_icp01", "ag", true))
+// max_items 가 항목 수보다 클 때 → 1개 메시지 전체
+func TestInventoryNode_MaxItems_LargerThanTotal(t *testing.T) {
+	reg := newFakeDeviceRegistry(
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", true),
+	)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
+		map[string]any{"source": "devices", "max_items": 100},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -727,26 +961,26 @@ func TestInventoryNode_Emit_SetsInventoryEventType_ArrayShape(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(out))
 	}
-
-	// AC1-3: msg.Type() == "inventory.event".
-	if got := out[0].Type(); got != "inventory.event" {
-		t.Fatalf("msg.Type() mismatch: got %q, want %q", got, "inventory.event")
-	}
-
-	// AC1-3 / AC2-2: metadata 에 message_type 키 부재.
-	if _, ok := out[0].Metadata().Get("message_type"); ok {
-		t.Fatalf("metadata.message_type 키는 부재해야 한다 (1급 Type 채널 단일화)")
+	if got := metaStr(t, out[0], "count"); got != "2" {
+		t.Fatalf("count expected 2, got %q", got)
 	}
 }
 
-// SPEC-MESSAGE-TYPE-001 AC1-3: per_item shape 의 각 메시지가 type="inventory.event".
-func TestInventoryNode_Emit_SetsInventoryEventType_PerItemShape(t *testing.T) {
+// condition + fields + max_items 조합 동작 (순서: condition → fields → chunk)
+func TestInventoryNode_CombinedConditionFieldsMaxItems(t *testing.T) {
 	reg := newFakeDeviceRegistry(
-		makeDevice("d1", "A", "lg_icp01", "ag", true),
-		makeDevice("d2", "B", "lg_icp01", "ag", true),
+		makeDevice("d1", "A", "x", "ag", true),
+		makeDevice("d2", "B", "x", "ag", false),
+		makeDevice("d3", "C", "x", "ag", true),
+		makeDevice("d4", "D", "x", "ag", true),
 	)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		map[string]any{
+			"source":    "devices",
+			"condition": "$.payload.online == true",
+			"fields":    "id",
+			"max_items": 2,
+		},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -756,80 +990,27 @@ func TestInventoryNode_Emit_SetsInventoryEventType_PerItemShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(out))
-	}
-
-	for i, m := range out {
-		if got := m.Type(); got != "inventory.event" {
-			t.Fatalf("per_item[%d] msg.Type() mismatch: got %q, want %q", i, got, "inventory.event")
-		}
-		if _, ok := m.Metadata().Get("message_type"); ok {
-			t.Fatalf("per_item[%d] metadata.message_type 키는 부재해야 한다", i)
-		}
-	}
-}
-
-// AC5.10: per_item 모드 — 입력 metadata 보존 (얕은 복사)
-func TestInventoryNode_PerItem_PreservesInputMetadata(t *testing.T) {
-	devs := []device.Device{
-		makeDevice("d1", "A", "lg_icp01", "ag", true),
-		makeDevice("d2", "B", "lg_icp01", "ag", true),
-	}
-	reg := newFakeDeviceRegistry(devs...)
-	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "per_item"},
-		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
-	)
-	if err := n.Init(context.Background()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-
-	// 입력 메시지에 trigger 컨텍스트 metadata 부착
-	inMsg := message.New(
-		message.WithMetadata("trigger.schedule_id", "sched-1"),
-		message.WithMetadata("trigger.tick_count", "42"),
-	)
-	out, err := n.Process(context.Background(), inMsg)
-	if err != nil {
-		t.Fatalf("process: %v", err)
-	}
+	// online==true 3개 → max_items=2 → 2 메시지 (2,1)
 	if len(out) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(out))
 	}
 	for i, m := range out {
-		if v, _ := m.Metadata().Get("trigger.schedule_id"); v != "sched-1" {
-			t.Fatalf("message[%d] trigger.schedule_id lost: got %q", i, v)
+		if got := metaStr(t, m, "total_count"); got != "3" {
+			t.Fatalf("msg[%d] total_count expected 3, got %q", i, got)
 		}
-		if v, _ := m.Metadata().Get("trigger.tick_count"); v != "42" {
-			t.Fatalf("message[%d] trigger.tick_count lost: got %q", i, v)
+		for _, it := range getItems(t, m) {
+			if len(it) != 1 {
+				t.Fatalf("msg[%d] item must be projected to 1 key (id), got %v", i, it)
+			}
+			if _, ok := it["id"]; !ok {
+				t.Fatalf("msg[%d] item must have id key", i)
+			}
 		}
-		// inventory.* 도 함께 존재
-		if v, _ := m.Metadata().Get("inventory.source"); v != "devices" {
-			t.Fatalf("message[%d] inventory.source missing", i)
-		}
-	}
-}
-
-// AC5.11: 입력의 inventory.* 키는 노드 설정으로 덮어쓰기
-func TestInventoryNode_InputInventoryKeys_Overwritten(t *testing.T) {
-	reg := newFakeDeviceRegistry(makeDevice("d1", "A", "x", "ag", true))
-	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
-		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
-	)
-	if err := n.Init(context.Background()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	inMsg := message.New(message.WithMetadata("inventory.source", "should_be_overwritten"))
-	out, _ := n.Process(context.Background(), inMsg)
-	if v, _ := out[0].Metadata().Get("inventory.source"); v != "devices" {
-		t.Fatalf("inventory.source must be overwritten by node config, got %s", v)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 - agents source
+// agents / flows / nodes 항목 스키마
 // ---------------------------------------------------------------------------
 
 // fakeAgent implements agent.Agent for tests.
@@ -885,8 +1066,7 @@ func (m *fakeAgentManager) Shutdown(context.Context) error        { return nil }
 func (m *fakeAgentManager) Summary() agent.ManagerSummary         { return agent.ManagerSummary{} }
 func (m *fakeAgentManager) SetAgentLogLevel(string, string) error { return nil }
 
-// AC5.5: agents 항목 스키마
-func TestInventoryNode_AgentsArray_EmitsAgentList(t *testing.T) {
+func TestInventoryNode_Agents_EmitsAgentList(t *testing.T) {
 	mgr := &fakeAgentManager{
 		agents: []agent.Agent{
 			&fakeAgent{id: "a1", name: "serial-agent", agType: "serial", state: lifecycle.StateRunning},
@@ -894,7 +1074,7 @@ func TestInventoryNode_AgentsArray_EmitsAgentList(t *testing.T) {
 		},
 	}
 	n := newInventoryNode(t,
-		map[string]any{"source": "agents", "emit_shape": "array"},
+		map[string]any{"source": "agents"},
 		WithAgentManagerFunc(func() agent.Manager { return mgr }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -905,13 +1085,12 @@ func TestInventoryNode_AgentsArray_EmitsAgentList(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	if len(out) != 1 {
-		t.Fatalf("expected 1 array message, got %d", len(out))
+		t.Fatalf("expected 1 message, got %d", len(out))
 	}
-	if v, _ := out[0].Payload().Get("count"); v != 2 {
-		t.Fatalf("count expected 2, got %v", v)
+	if got := metaStr(t, out[0], "total_count"); got != "2" {
+		t.Fatalf("total_count expected 2, got %q", got)
 	}
-	itemsRaw, _ := out[0].Payload().Get("items")
-	items := itemsRaw.([]map[string]any)
+	items := getItems(t, out[0])
 	if items[0]["id"] != "a1" || items[0]["name"] != "serial-agent" {
 		t.Fatalf("first item mismatch: %+v", items[0])
 	}
@@ -919,24 +1098,9 @@ func TestInventoryNode_AgentsArray_EmitsAgentList(t *testing.T) {
 		t.Fatalf("state must be lifecycle string, got %v", items[0]["state"])
 	}
 	if _, hasInfo := items[0]["info"]; !hasInfo {
-		t.Fatalf("info key expected with include_metadata=true")
+		t.Fatalf("info key expected (always rich)")
 	}
 }
-
-// AC4.2: agents source 인데 AgentManager 미주입 시 Init 에러
-func TestInventoryNode_AgentsSource_WithoutManagerOption_InitError(t *testing.T) {
-	n := newInventoryNode(t,
-		map[string]any{"source": "agents"},
-	)
-	err := n.Init(context.Background())
-	if !errors.Is(err, ErrInventoryAgentManagerNotAvailable) {
-		t.Fatalf("expected ErrInventoryAgentManagerNotAvailable, got %v", err)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Phase 2 - flows / nodes source
-// ---------------------------------------------------------------------------
 
 type fakeFlowRegistry struct {
 	flows []FlowSummary
@@ -944,23 +1108,21 @@ type fakeFlowRegistry struct {
 
 func (f *fakeFlowRegistry) FlowSummaries() []FlowSummary { return f.flows }
 
-// AC5.6: flows 항목 스키마
-func TestInventoryNode_FlowsArray_EmitsFlowSummary(t *testing.T) {
+func TestInventoryNode_Flows_EmitsFlowSummary(t *testing.T) {
 	freg := &fakeFlowRegistry{
 		flows: []FlowSummary{
 			{ID: "f1", Name: "my-flow", State: "running", NodeCount: 5, WireCount: 4, Extra: map[string]any{"uptime_seconds": 120}},
 		},
 	}
 	n := newInventoryNode(t,
-		map[string]any{"source": "flows", "emit_shape": "array"},
+		map[string]any{"source": "flows"},
 		WithFlowRegistryFunc(func() FlowRegistry { return freg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	out, _ := n.Process(context.Background(), message.New())
-	itemsRaw, _ := out[0].Payload().Get("items")
-	items := itemsRaw.([]map[string]any)
+	items := getItems(t, out[0])
 	if items[0]["id"] != "f1" || items[0]["name"] != "my-flow" {
 		t.Fatalf("flow item mismatch: %+v", items[0])
 	}
@@ -971,27 +1133,12 @@ func TestInventoryNode_FlowsArray_EmitsFlowSummary(t *testing.T) {
 		t.Fatalf("wire_count mismatch: %v", items[0]["wire_count"])
 	}
 	if _, hasExtra := items[0]["extra"]; !hasExtra {
-		t.Fatalf("extra expected when include_metadata=true")
+		t.Fatalf("extra expected (always rich)")
 	}
 }
 
-// AC4.3: flows source 인데 FlowRegistry 미주입 시 Init 에러
-func TestInventoryNode_FlowsSource_WithoutRegistryOption_InitError(t *testing.T) {
-	n := newInventoryNode(t,
-		map[string]any{"source": "flows"},
-	)
-	err := n.Init(context.Background())
-	if !errors.Is(err, ErrInventoryFlowRegistryNotAvailable) {
-		t.Fatalf("expected ErrInventoryFlowRegistryNotAvailable, got %v", err)
-	}
-}
-
-// AC5.7: nodes 항목 스키마
-func TestInventoryNode_NodesArray_EmitsNodeTypeMeta(t *testing.T) {
-	// 실제 Registry (빌트인 + inventory) 사용은 Phase 5 등록 후에만 가능.
-	// 여기서는 별도 Registry 인스턴스에 inventory 를 추가 등록한 뒤 검증.
+func TestInventoryNode_Nodes_EmitsNodeTypeMeta(t *testing.T) {
 	reg := NewRegistry()
-	// inventory 가 registerBuiltins 에 추가되지 않은 단계여도 별도 등록 가능
 	if !reg.Has("inventory") {
 		_ = reg.RegisterWithMeta("inventory", NewInventoryNode, NodeTypeMeta{
 			Type:        "inventory",
@@ -1001,19 +1148,17 @@ func TestInventoryNode_NodesArray_EmitsNodeTypeMeta(t *testing.T) {
 		})
 	}
 	n := newInventoryNode(t,
-		map[string]any{"source": "nodes", "emit_shape": "array"},
+		map[string]any{"source": "nodes"},
 		WithNodeRegistryFunc(func() *Registry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	out, _ := n.Process(context.Background(), message.New())
-	itemsRaw, _ := out[0].Payload().Get("items")
-	items := itemsRaw.([]map[string]any)
+	items := getItems(t, out[0])
 	if len(items) == 0 {
 		t.Fatalf("expected at least one node type")
 	}
-	// 항목은 type/category/description/origin 키를 가져야 함
 	var foundInventory bool
 	for _, it := range items {
 		if it["type"] == "inventory" {
@@ -1031,138 +1176,10 @@ func TestInventoryNode_NodesArray_EmitsNodeTypeMeta(t *testing.T) {
 	}
 }
 
-// AC4.4: nodes source 인데 NodeRegistry 미주입 시 Init 에러
-func TestInventoryNode_NodesSource_WithoutNodeRegistryOption_InitError(t *testing.T) {
-	n := newInventoryNode(t,
-		map[string]any{"source": "nodes"},
-	)
-	err := n.Init(context.Background())
-	if !errors.Is(err, ErrInventoryNodeRegistryNotAvailable) {
-		t.Fatalf("expected ErrInventoryNodeRegistryNotAvailable, got %v", err)
-	}
-}
-
 // ---------------------------------------------------------------------------
-// Phase 3 - Filter 검증 강화
+// Registry / read-only / concurrency / shutdown
 // ---------------------------------------------------------------------------
 
-// AC3.5: filter.tags 가 비-string 슬라이스 → ErrInventoryInvalidFilter
-func TestInventoryNode_FilterWithInvalidTagsType_FactoryError(t *testing.T) {
-	def := flow.NodeDef{
-		ID:   "n1",
-		Type: "inventory",
-		Config: map[string]any{
-			"source": "devices",
-			"filter": map[string]any{
-				"tags": []any{1, 2, 3},
-			},
-		},
-	}
-	_, err := NewInventoryNode(def)
-	if !errors.Is(err, ErrInventoryInvalidFilter) {
-		t.Fatalf("expected ErrInventoryInvalidFilter, got %v", err)
-	}
-}
-
-// AC3.6: filter.online 의 타입 검증 (string 이지 bool 아님)
-func TestInventoryNode_FilterWithInvalidOnlineType_FactoryError(t *testing.T) {
-	def := flow.NodeDef{
-		ID:   "n1",
-		Type: "inventory",
-		Config: map[string]any{
-			"source": "devices",
-			"filter": map[string]any{
-				"online": "yes",
-			},
-		},
-	}
-	_, err := NewInventoryNode(def)
-	if !errors.Is(err, ErrInventoryInvalidFilter) {
-		t.Fatalf("expected ErrInventoryInvalidFilter, got %v", err)
-	}
-}
-
-// AC3.3: DeviceFilter 의 모든 필드 매핑
-func TestInventoryNode_FilterAllFieldsMapping(t *testing.T) {
-	reg := newFakeDeviceRegistry()
-	n := newInventoryNode(t,
-		map[string]any{
-			"source": "devices",
-			"filter": map[string]any{
-				"protocol":   "modbus",
-				"agent_name": "ag1",
-				"type":       "HVACR.IDU",
-				"online":     false,
-				"group":      "prod",
-				"tags":       []any{"critical", "v2"},
-			},
-		},
-		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
-	)
-	if err := n.Init(context.Background()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	_, _ = n.Process(context.Background(), message.New())
-
-	f := reg.lastFilter
-	if f.Protocol != "modbus" {
-		t.Fatalf("Protocol: %s", f.Protocol)
-	}
-	if f.AgentName != "ag1" {
-		t.Fatalf("AgentName: %s", f.AgentName)
-	}
-	if f.Type != "HVACR.IDU" {
-		t.Fatalf("Type: %s", f.Type)
-	}
-	if f.Online == nil || *f.Online != false {
-		t.Fatalf("Online: %v", f.Online)
-	}
-	if f.Group != "prod" {
-		t.Fatalf("Group: %s", f.Group)
-	}
-	if len(f.Tags) != 2 || f.Tags[0] != "critical" || f.Tags[1] != "v2" {
-		t.Fatalf("Tags: %v", f.Tags)
-	}
-}
-
-// AC3.4: 비-device source 에서 filter 무시 + 경고 (팩토리는 성공)
-func TestInventoryNode_FilterOnNonDeviceSource_LoggedAndIgnored(t *testing.T) {
-	mgr := &fakeAgentManager{
-		agents: []agent.Agent{
-			&fakeAgent{id: "a1", name: "agent-1", agType: "serial", state: lifecycle.StateRunning},
-		},
-	}
-	def := flow.NodeDef{
-		ID:   "n1",
-		Type: "inventory",
-		Config: map[string]any{
-			"source": "agents",
-			"filter": map[string]any{"protocol": "lg_icp01"},
-		},
-	}
-	n, err := NewInventoryNode(def, WithAgentManagerFunc(func() agent.Manager { return mgr }))
-	if err != nil {
-		t.Fatalf("factory must succeed even with filter on non-device source, got %v", err)
-	}
-	if err := n.(*InventoryNode).Configure(def.Config); err != nil {
-		t.Fatalf("configure: %v", err)
-	}
-	if err := n.(*InventoryNode).Init(context.Background()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	out, err := n.(*InventoryNode).Process(context.Background(), message.New())
-	if err != nil {
-		t.Fatalf("process: %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("agents array mode should emit 1 message regardless of filter, got %d", len(out))
-	}
-	if v, _ := out[0].Payload().Get("count"); v != 1 {
-		t.Fatalf("filter must be ignored, expected count=1, got %v", v)
-	}
-}
-
-// AC1.1: Registry 에 inventory 타입이 빌트인으로 등록되었는지 확인
 func TestInventoryNode_RegisteredAsBuiltin(t *testing.T) {
 	reg := NewRegistry()
 	if !reg.Has("inventory") {
@@ -1181,26 +1198,23 @@ func TestInventoryNode_RegisteredAsBuiltin(t *testing.T) {
 	if meta.Source != "builtin" {
 		t.Fatalf("Source expected 'builtin', got %s", meta.Source)
 	}
-	// description 은 한국어이며 "인벤토리" 또는 "스냅샷" 키워드 포함
 	if !strings.Contains(meta.Description, "인벤토리") && !strings.Contains(meta.Description, "스냅샷") {
 		t.Fatalf("description must contain '인벤토리' or '스냅샷', got %s", meta.Description)
 	}
 }
 
-// AC8.2: inventory 노드는 read-only 동작 (1000회 Process 후에도 registry 의 mutate 없음)
 func TestInventoryNode_ReadOnly_NoMutation(t *testing.T) {
 	reg := newFakeDeviceRegistry(
 		makeDevice("d1", "A", "x", "ag", true),
 		makeDevice("d2", "B", "x", "ag", true),
 	)
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "array"},
+		map[string]any{"source": "devices"},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-
 	initialCount := reg.Count()
 	for i := 0; i < 1000; i++ {
 		if _, err := n.Process(context.Background(), message.New()); err != nil {
@@ -1215,15 +1229,15 @@ func TestInventoryNode_ReadOnly_NoMutation(t *testing.T) {
 	}
 }
 
-// AC8.3: 동시성 안전 — 10개 goroutine 동시 Process
 func TestInventoryNode_ConcurrentProcess_RaceSafe(t *testing.T) {
 	reg := newFakeDeviceRegistry(
 		makeDevice("d1", "A", "x", "ag", true),
 		makeDevice("d2", "B", "x", "ag", true),
 		makeDevice("d3", "C", "x", "ag", true),
 	)
+	// max_items=1 → 항목당 1메시지 (3개) fan-out 으로 동시성 부하 검증
 	n := newInventoryNode(t,
-		map[string]any{"source": "devices", "emit_shape": "per_item"},
+		map[string]any{"source": "devices", "max_items": 1},
 		WithDeviceRegistryFunc(func() device.DeviceRegistry { return reg }),
 	)
 	if err := n.Init(context.Background()); err != nil {
@@ -1259,7 +1273,6 @@ func TestInventoryNode_ConcurrentProcess_RaceSafe(t *testing.T) {
 	}
 }
 
-// Shutdown 은 idempotent 하며 stateless read-only 노드이므로 추가 정리가 없다.
 func TestInventoryNode_Shutdown_Idempotent(t *testing.T) {
 	reg := newFakeDeviceRegistry()
 	n := newInventoryNode(t,
@@ -1272,13 +1285,11 @@ func TestInventoryNode_Shutdown_Idempotent(t *testing.T) {
 	if err := n.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown 1st: %v", err)
 	}
-	// 두 번째 호출은 no-op (already Stopped)
 	if err := n.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown 2nd: %v", err)
 	}
 }
 
-// AC4.6: 모든 옵션 주입 시 4종 source 모두 정상
 func TestInventoryNode_AllSources_WithAllOptionsInjected_ProcessSucceeds(t *testing.T) {
 	devReg := newFakeDeviceRegistry(makeDevice("d1", "A", "x", "ag", true))
 	agtMgr := &fakeAgentManager{agents: []agent.Agent{&fakeAgent{id: "a1", name: "ag1", agType: "serial", state: lifecycle.StateRunning}}}
@@ -1303,21 +1314,20 @@ func TestInventoryNode_AllSources_WithAllOptionsInjected_ProcessSucceeds(t *test
 				t.Fatalf("process: %v", err)
 			}
 			if len(out) != 1 {
-				t.Fatalf("array mode expected 1 message, got %d", len(out))
+				t.Fatalf("expected 1 message, got %d", len(out))
 			}
-			if v, _ := out[0].Payload().Get("source"); v != src {
-				t.Fatalf("payload.source mismatch: %v", v)
+			if _, ok := out[0].Payload().Get("items"); !ok {
+				t.Fatalf("payload.items missing for source %s", src)
 			}
 		})
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Phase v0.2.0 — device_uuid (UUID) 필드 노출 (SPEC-INVENTORY-001 v0.2.0)
+// device_uuid 테스트 헬퍼 (production UID resolve 경로 재현)
 // ---------------------------------------------------------------------------
 
 // fakeDeviceIDRepo 는 agent.DeviceIDRepository 의 테스트용 구현이다.
-// (agentName, unitID) → UUID 의 정적 매핑을 제공한다.
 type fakeDeviceIDRepo struct {
 	mu       sync.Mutex
 	mapping  map[string]string // key: "agentName/unitID" → UUID
@@ -1349,8 +1359,7 @@ func (r *fakeDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (str
 	return "", nil
 }
 
-// withDeviceIDRepo 는 테스트 동안 패키지-레벨 DeviceIDRepository 를 임시 주입하고
-// t.Cleanup 으로 원상복구한다. 병렬 테스트 사용 금지 (싱글톤 mutation).
+// withDeviceIDRepo 는 테스트 동안 패키지-레벨 DeviceIDRepository 를 임시 주입한다.
 func withDeviceIDRepo(t *testing.T, repo agent.DeviceIDRepository) {
 	t.Helper()
 	prev := agent.GetDeviceIDRepository()

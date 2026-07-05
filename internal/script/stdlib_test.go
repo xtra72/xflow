@@ -406,11 +406,21 @@ func TestStdlib_Store_GetNonexistent(t *testing.T) {
 }
 
 func TestStdlib_Store_NilStore(t *testing.T) {
-	// Store가 nil이면 에러 반환
+	// Follow-up A: per-execution 바인딩 모델에서 스토어 미구성은 정상 시나리오이므로
+	// xflow.store 는 에러를 raise 하지 않고 nil-safe 로 동작한다:
+	//   get → nil, has → false, set/delete → no-op(에러 없음).
 	L := newTestState(t, DefaultStdlibOptions(), StdlibDeps{})
 
-	err := L.DoString(`xflow.store.get("key1")`)
-	assert.Error(t, err)
+	// get → nil (에러 아님)
+	got := runLua(t, L, `local v = xflow.store.get("key1"); if v == nil then return "nil" end; return "not-nil"`)
+	assert.Equal(t, "nil", got)
+
+	// has → false
+	has := runLua(t, L, `return xflow.store.has("key1")`)
+	assert.Equal(t, false, has)
+
+	// set/delete → no-op, 에러 없이 통과
+	assert.NoError(t, L.DoString(`xflow.store.set("key1", "v"); xflow.store.delete("key1")`))
 }
 
 // ============================================================

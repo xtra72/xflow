@@ -14,6 +14,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMain - 테스트 격리 보장.
+//
+// config.Load() 는 기본 검색 경로 [".", "$HOME/.xflow", "/etc/xflow"] 에서
+// xflow.yaml 을 탐색한다. 옵션 없는 Load() 를 호출하는 기본값 검증 테스트들은
+// 실행 머신의 개인 설정 파일(예: ~/.xflow/xflow.yaml)을 의도치 않게 읽어들여
+// defaults.go 의 코드 기본값 대신 그 파일 값이 적용되는 환경 의존적 실패를 일으킨다.
+//
+// 여기서 HOME 과 작업 디렉터리를 빈 임시 디렉터리로 고정해, 패키지 내 모든 테스트가
+// 주변 설정 파일을 발견하지 못하도록 격리한다(환경 비의존, 프로덕션 코드 불변).
+// 명시적으로 WithConfigPaths(...) 를 지정하는 테스트는 영향을 받지 않는다.
+func TestMain(m *testing.M) {
+	tmpHome, err := os.MkdirTemp("", "xflow-config-test-home-*")
+	if err != nil {
+		panic("config test: 임시 HOME 생성 실패: " + err.Error())
+	}
+	tmpCwd, err := os.MkdirTemp("", "xflow-config-test-cwd-*")
+	if err != nil {
+		panic("config test: 임시 CWD 생성 실패: " + err.Error())
+	}
+
+	origHome := os.Getenv("HOME")
+	origWd, _ := os.Getwd()
+
+	_ = os.Setenv("HOME", tmpHome)
+	_ = os.Chdir(tmpCwd)
+
+	code := m.Run()
+
+	// 원복 (best-effort) 후 임시 디렉터리 정리
+	if origWd != "" {
+		_ = os.Chdir(origWd)
+	}
+	_ = os.Setenv("HOME", origHome)
+	_ = os.RemoveAll(tmpHome)
+	_ = os.RemoveAll(tmpCwd)
+
+	os.Exit(code)
+}
+
 // writeTestYAML - 임시 YAML 파일을 생성하고 경로를 반환
 func writeTestYAML(t *testing.T, content string) string {
 	t.Helper()
@@ -59,6 +98,7 @@ func TestLoad_DefaultValues(t *testing.T) {
 	assert.False(t, cfg.Observe().TraceEnabled)
 	assert.Equal(t, "json", cfg.Observe().Format)
 	assert.Equal(t, "stdout", cfg.Observe().Output)
+	assert.Equal(t, "both", cfg.Observe().IDStyle)
 
 	// 스크립트 기본값 확인
 	assert.Equal(t, "5s", cfg.Script().Timeout)

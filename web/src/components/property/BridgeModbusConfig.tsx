@@ -6,6 +6,7 @@
 import { useId } from 'react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 import { RegisterMapEditor } from './RegisterMapEditor';
 
@@ -37,6 +38,7 @@ interface BridgeModbusConfigProps {
 // --- 컴포넌트 ---
 
 export function BridgeModbusConfig({ data, onChange, readOnly }: BridgeModbusConfigProps) {
+  const { t } = useTranslation();
   const unitIdField = useId();
 
   const unitId = data.unit_id != null ? Number(data.unit_id) : 1;
@@ -51,7 +53,7 @@ export function BridgeModbusConfig({ data, onChange, readOnly }: BridgeModbusCon
       <div className="flex items-center gap-2">
         <div className="h-px flex-1 bg-(--color-border-default)" />
         <span className="text-xs font-medium text-(--color-text-muted)">
-          Modbus 설정
+          {t('bridge.modbusSettings')}
         </span>
         <div className="h-px flex-1 bg-(--color-border-default)" />
       </div>
@@ -62,7 +64,7 @@ export function BridgeModbusConfig({ data, onChange, readOnly }: BridgeModbusCon
           htmlFor={unitIdField}
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
-          Unit ID
+          {t('bridge.unitId')}
         </label>
         <input
           id={unitIdField}
@@ -84,14 +86,14 @@ export function BridgeModbusConfig({ data, onChange, readOnly }: BridgeModbusCon
           className={cn(inputClass, 'w-28', readOnly && readOnlyClass)}
         />
         <p className="text-xs text-(--color-text-muted)">
-          Modbus 슬레이브 주소 (1-247)
+          {t('bridge.unitIdDescription')}
         </p>
       </div>
 
       {/* 레지스터 맵 */}
       <div className="space-y-1">
         <span className="block text-xs font-medium text-(--color-text-secondary)">
-          레지스터 맵
+          {t('bridge.registerMap')}
         </span>
         <RegisterMapEditor
           value={data.register_map}
@@ -99,7 +101,7 @@ export function BridgeModbusConfig({ data, onChange, readOnly }: BridgeModbusCon
           readOnly={readOnly}
         />
         <p className="text-xs text-(--color-text-muted)">
-          읽기/쓰기 대상 레지스터 영역 정의
+          {t('bridge.registerMapDescription')}
         </p>
       </div>
     </div>

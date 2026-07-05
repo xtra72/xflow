@@ -24,6 +24,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { mapUpdateError } from '@/lib/errors/updaterErrorMapper';
 import {
   useChangeChannel,
@@ -64,6 +65,7 @@ export function ChannelChangeDialog({
   onClose,
   currentChannel,
 }: ChannelChangeDialogProps) {
+  const { t } = useTranslation();
   const channelInfo = useChannelInfo();
   const changeMutation = useChangeChannel();
   const addNotification = useUIStore((s) => s.addNotification);
@@ -99,7 +101,9 @@ export function ChannelChangeDialog({
       });
       addNotification({
         type: 'success',
-        message: `채널 변경 완료: ${result.previous} → ${result.current}`,
+        message: t('system.channel.changeDone')
+          .replace('{prev}', result.previous)
+          .replace('{cur}', result.current),
       });
       // v0.2.0 백엔드는 yaml 영구 저장 안내 등을 message 로 내려준다.
       if (result.message) {
@@ -110,7 +114,7 @@ export function ChannelChangeDialog({
       }
       onClose();
     } catch (err) {
-      const mapped = mapUpdateError(err);
+      const mapped = mapUpdateError(err, t);
       addNotification({
         type: 'error',
         message: mapped.userMessage,
@@ -132,13 +136,13 @@ export function ChannelChangeDialog({
             id="channel-dialog-title"
             className="text-lg font-semibold text-(--color-text-primary)"
           >
-            업데이트 채널 변경
+            {t('system.channel.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             disabled={isPending}
-            aria-label="닫기"
+            aria-label={t('common.close')}
             data-testid="channel-dialog-close"
             className="rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-hover) disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -149,7 +153,7 @@ export function ChannelChangeDialog({
         {/* 현재 채널 + 새 채널 dropdown */}
         <div className="mb-4">
           <p className="mb-2 text-sm text-(--color-text-muted)">
-            현재 채널:{' '}
+            {t('system.channel.currentChannel')}{' '}
             <strong
               className="font-mono text-(--color-text-primary)"
               data-testid="channel-dialog-current"
@@ -161,7 +165,7 @@ export function ChannelChangeDialog({
             htmlFor="channel-select"
             className="mb-1 block text-sm font-medium text-(--color-text-primary)"
           >
-            새 채널
+            {t('system.channel.newChannel')}
           </label>
           <select
             id="channel-select"
@@ -197,13 +201,11 @@ export function ChannelChangeDialog({
             aria-hidden="true"
           />
           <div className="space-y-1">
-            <p>
-              채널을 변경하면 다음 업데이트 확인부터 새 채널의 버전이 노출됩니다.
-            </p>
+            <p>{t('system.channel.warningApply')}</p>
             <p className="text-xs opacity-90">
-              본 변경은 in-memory 만 적용됩니다. 영구 저장은{' '}
+              {t('system.channel.warningInMemoryPre')}{' '}
               <code className="font-mono">xflowd update channel &lt;name&gt;</code>{' '}
-              CLI 를 사용하세요.
+              {t('system.channel.warningInMemoryPost')}
             </p>
           </div>
         </div>
@@ -222,7 +224,7 @@ export function ChannelChangeDialog({
               'disabled:cursor-not-allowed disabled:opacity-50',
             )}
           >
-            취소
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -235,7 +237,7 @@ export function ChannelChangeDialog({
               'disabled:cursor-not-allowed disabled:opacity-50',
             )}
           >
-            {isPending ? '변경 중...' : '변경'}
+            {isPending ? t('system.channel.changing') : t('system.channel.change')}
           </button>
         </div>
       </div>

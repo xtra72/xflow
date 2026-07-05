@@ -1,16 +1,24 @@
 // 노드 우클릭 컨텍스트 메뉴.
 // 화면 좌표(x/y)에 고정 위치로 표시되는 작은 팝업 메뉴이며,
-// "복제" / "삭제" 액션을 제공한다. 외부 클릭 / Escape / 액션 실행 시 닫힌다.
+// "들어가기"(서브플로우 진입, 선택적) / "복제" / "삭제" 액션을 제공한다.
+// 외부 클릭 / Escape / 액션 실행 시 닫힌다.
 
 import { useEffect, useRef } from 'react';
-import { Copy, Trash2 } from 'lucide-react';
+import { Copy, CornerDownRight, Trash2 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 interface NodeContextMenuProps {
   /** 메뉴 표시 화면 좌표 (clientX/clientY) */
   x: number;
   y: number;
+  /**
+   * 서브플로우 "들어가기" 실행 콜백 (선택적).
+   * flow-node(참조 플로우가 지정된)에서만 전달되며, 전달될 때만 메뉴 최상단에
+   * "들어가기" 항목을 렌더한다. 일반 노드에서는 undefined 로 전달되어 숨겨진다.
+   */
+  onEnter?: () => void;
   /** 복제 실행 콜백 */
   onDuplicate: () => void;
   /** 삭제 실행 콜백 */
@@ -27,10 +35,12 @@ interface NodeContextMenuProps {
 export function NodeContextMenu({
   x,
   y,
+  onEnter,
   onDuplicate,
   onDelete,
   onClose,
 }: NodeContextMenuProps) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
 
   // 외부 클릭 및 Escape 로 메뉴를 닫는다.
@@ -65,8 +75,25 @@ export function NodeContextMenu({
         'border-(--color-border-default) bg-(--color-bg-elevated) shadow-lg',
       )}
     >
-      <MenuItem icon={Copy} label="복제" onClick={onDuplicate} />
-      <MenuItem icon={Trash2} label="삭제" danger onClick={onDelete} />
+      {/* 참조 플로우가 지정된 flow-node 에서만 표시된다(onEnter 가 전달될 때). */}
+      {onEnter && (
+        <MenuItem
+          icon={CornerDownRight}
+          label={t('editor.node.enter')}
+          onClick={onEnter}
+        />
+      )}
+      <MenuItem
+        icon={Copy}
+        label={t('editor.node.duplicate')}
+        onClick={onDuplicate}
+      />
+      <MenuItem
+        icon={Trash2}
+        label={t('editor.node.delete')}
+        danger
+        onClick={onDelete}
+      />
     </div>
   );
 }

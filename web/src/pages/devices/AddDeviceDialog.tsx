@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, X } from 'lucide-react';
 
 import { useAgents, useExecAgent } from '@/hooks/useAgent';
+import { useTranslation } from '@/lib/i18n';
 import { useUIStore } from '@/stores/uiStore';
 
 /** 레지스터 영역 라벨 */
@@ -26,6 +27,7 @@ const DEFAULT_REG_AREAS: Record<string, RegBlock[]> = {
 };
 
 export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const { data: agentsData } = useAgents();
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);
@@ -89,18 +91,18 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
         },
         {
           onSuccess: () => {
-            addNotification({ type: 'success', message: '디바이스가 추가되었습니다' });
+            addNotification({ type: 'success', message: t('devices.add.successAdded') });
             onClose();
           },
           onError: (err) => {
-            addNotification({ type: 'error', message: `디바이스 추가 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+            addNotification({ type: 'error', message: `${t('devices.add.addFailedPrefix')}${err instanceof Error ? err.message : t('devices.add.unknownError')}` });
           },
         },
       );
     } else if (selectedAgentType === 'modbus-tcp-server') {
       const unitId = parseInt(modbusUnitId, 10);
       if (isNaN(unitId) || unitId < 1 || unitId > 247) {
-        addNotification({ type: 'error', message: '유닛 ID는 1~247 범위여야 합니다' });
+        addNotification({ type: 'error', message: t('devices.add.unitIdRange') });
         return;
       }
 
@@ -116,7 +118,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           const start = parseInt(blk.start, 10);
           const cnt = parseInt(blk.count, 10);
           if (isNaN(start) || isNaN(cnt) || cnt <= 0) {
-            addNotification({ type: 'error', message: `${MODBUS_AREA_LABELS[area] ?? area}: 올바른 주소와 개수를 입력하세요` });
+            addNotification({ type: 'error', message: t('devices.add.invalidAddressCount').replace('{area}', MODBUS_AREA_LABELS[area] ?? area) });
             return;
           }
           parsed.push({ start_address: start, count: cnt });
@@ -124,7 +126,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
         regMap[area] = parsed.length === 1 ? parsed[0] : parsed;
       }
       if (Object.keys(regMap).length === 0) {
-        addNotification({ type: 'error', message: '최소 하나의 레지스터 영역을 활성화하세요' });
+        addNotification({ type: 'error', message: t('devices.add.atLeastOneArea') });
         return;
       }
       params.register_map = regMap;
@@ -135,14 +137,14 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           onSuccess: (res) => {
             const result = res as { result?: { success?: boolean; error?: string } };
             if (result?.result?.success === false) {
-              addNotification({ type: 'error', message: result.result.error ?? '디바이스 추가 실패' });
+              addNotification({ type: 'error', message: result.result.error ?? t('devices.add.addFailed') });
             } else {
-              addNotification({ type: 'success', message: `Modbus 디바이스 (Unit ${unitId})가 추가되었습니다` });
+              addNotification({ type: 'success', message: t('devices.add.modbusSuccess').replace('{unit}', String(unitId)) });
               onClose();
             }
           },
           onError: (err) => {
-            addNotification({ type: 'error', message: `디바이스 추가 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}` });
+            addNotification({ type: 'error', message: `${t('devices.add.addFailedPrefix')}${err instanceof Error ? err.message : t('devices.add.unknownError')}` });
           },
         },
       );
@@ -167,7 +169,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
       {/* 다이얼로그 */}
       <div className="fixed inset-x-0 top-1/2 z-50 mx-auto w-full max-w-lg -translate-y-1/2 rounded-xl border border-(--color-border-default) bg-(--color-bg-surface) p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-(--color-text-primary)">디바이스 추가</h3>
+          <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('devices.add.title')}</h3>
           <button
             type="button"
             onClick={onClose}
@@ -181,7 +183,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           {/* 에이전트 선택 */}
           <div>
             <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-              에이전트
+              {t('devices.add.agent')}
             </label>
             <select
               value={selectedAgentId}
@@ -191,18 +193,18 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               }}
               className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
             >
-              <option value="">에이전트 선택...</option>
+              <option value="">{t('devices.add.agentPlaceholder')}</option>
               {supportedAgents.map((a) => {
                 const typeLabel = a.type === 'modbus-tcp-server' ? 'Modbus' : 'Samsung HVACR-01';
                 return (
                   <option key={a.id} value={a.id}>
-                    {a.name} [{typeLabel}] ({a.status === 'running' ? '실행 중' : '중지'})
+                    {a.name} [{typeLabel}] ({a.status === 'running' ? t('devices.add.agentRunning') : t('devices.add.agentStopped')})
                   </option>
                 );
               })}
             </select>
             {supportedAgents.length === 0 && (
-              <p className="mt-1 text-xs text-gray-500">디바이스 추가를 지원하는 에이전트가 없습니다</p>
+              <p className="mt-1 text-xs text-gray-500">{t('devices.add.noSupportedAgent')}</p>
             )}
           </div>
 
@@ -211,11 +213,11 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             <>
               <div>
                 <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                  디바이스 주소
+                  {t('devices.add.deviceAddress')}
                 </label>
                 <input
                   type="text"
-                  placeholder="예: 20.00.03"
+                  placeholder={t('devices.add.deviceAddressPlaceholder')}
                   value={samsungHvacr01Address}
                   onChange={(e) => setSamsungHvacr01Address(e.target.value)}
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
@@ -223,11 +225,11 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                  디바이스 ID (선택)
+                  {t('devices.add.deviceIdOptional')}
                 </label>
                 <input
                   type="text"
-                  placeholder="고유 식별자"
+                  placeholder={t('devices.add.deviceIdPlaceholder')}
                   value={samsungHvacr01DeviceId}
                   onChange={(e) => setSamsungHvacr01DeviceId(e.target.value)}
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
@@ -235,20 +237,20 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                  디바이스 타입
+                  {t('devices.add.deviceType')}
                 </label>
                 <select
                   value={samsungHvacr01DeviceType}
                   onChange={(e) => setSamsungHvacr01DeviceType(e.target.value)}
                   className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                 >
-                  <option value="">자동 감지</option>
-                  <option value="HVACR.IDU">실내기</option>
-                  <option value="HVACR.ODU">실외기</option>
+                  <option value="">{t('devices.add.autoDetect')}</option>
+                  <option value="HVACR.IDU">{t('devices.add.indoor')}</option>
+                  <option value="HVACR.ODU">{t('devices.add.outdoor')}</option>
                 </select>
               </div>
               <p className="text-xs text-(--color-text-muted)">
-                동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.
+                {t('devices.add.dynamicNotice')}
               </p>
             </>
           )}
@@ -259,7 +261,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                    Unit ID (1~247)
+                    {t('devices.add.unitId')}
                   </label>
                   <input
                     type="number"
@@ -273,7 +275,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-(--color-text-secondary)">
-                    이름 (선택)
+                    {t('devices.add.nameOptional')}
                   </label>
                   <input
                     type="text"
@@ -288,7 +290,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               {/* 레지스터 맵 설정 */}
               <div>
                 <label className="mb-2 block text-sm font-medium text-(--color-text-secondary)">
-                  레지스터 맵
+                  {t('devices.add.registerMap')}
                 </label>
                 <div className="space-y-2">
                   {MODBUS_AREA_ORDER.map((area) => {
@@ -323,7 +325,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                           >
                             {enabled && (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
                             {MODBUS_AREA_LABELS[area]}
-                            {enabled && <span className="ml-auto text-[10px] text-gray-400">{blocks.length}개 블록</span>}
+                            {enabled && <span className="ml-auto text-[10px] text-gray-400">{blocks.length}{t('devices.add.blocksUnit')}</span>}
                           </button>
                         </div>
 
@@ -336,7 +338,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                                 <input
                                   type="number"
                                   min={0}
-                                  placeholder="시작"
+                                  placeholder={t('devices.add.startPlaceholder')}
                                   value={blk.start}
                                   onChange={(e) => {
                                     const v = e.target.value;
@@ -352,7 +354,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                                 <input
                                   type="number"
                                   min={1}
-                                  placeholder="개수"
+                                  placeholder={t('devices.add.countPlaceholder')}
                                   value={blk.count}
                                   onChange={(e) => {
                                     const v = e.target.value;
@@ -364,7 +366,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                                   }}
                                   className="w-20 rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                                 />
-                                <span className="text-[10px] text-gray-400">개</span>
+                                <span className="text-[10px] text-gray-400">{t('devices.add.countUnit')}</span>
                                 {blocks.length > 1 && (
                                   <button
                                     type="button"
@@ -394,7 +396,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                               }}
                               className="mt-1 text-[10px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400"
                             >
-                              + 블록 추가
+                              {t('devices.add.addBlock')}
                             </button>
                           </div>
                         )}
@@ -405,7 +407,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               </div>
 
               <p className="text-xs text-(--color-text-muted)">
-                동적으로 추가된 디바이스는 에이전트 재시작 시 초기화됩니다.
+                {t('devices.add.dynamicNotice')}
               </p>
             </>
           )}
@@ -417,7 +419,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-(--color-text-secondary) hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
           >
-            취소
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -425,7 +427,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             disabled={!canSubmit}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
           >
-            {execAgent.isPending ? '추가 중...' : '추가'}
+            {execAgent.isPending ? t('devices.add.submitting') : t('devices.add.submit')}
           </button>
         </div>
       </div>

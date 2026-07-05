@@ -595,12 +595,12 @@ func TestUserStoreAgent_StaticTagPairs_정적키없음_빈맵(t *testing.T) {
 // UserStoreAgent.State(): 정적 키 엔트리에 tags 첨부 확인
 // ---------------------------------------------------------------------------
 
-// @spec SPEC-STORE-003 v0.3.0
-// v0.2.0 와 동일 의도: State() 의 entries 에서 정적 키 엔트리는 tags 맵을 포함하고,
-// 동적(자동 등록) 키 엔트리는 tags 필드를 포함하지 않는다. v0.3.0 진화: 자동 등록된 키도
-// 내부적으로 staticKeys 맵에 추가되지만 Tags 가 빈 맵이므로 State() 의 `len(meta.Tags) > 0`
-// 가드에 의해 tags 필드가 생략된다 (v0.2.0 동작과 일치).
-func TestUserStoreAgent_State_정적키_tags_포함(t *testing.T) {
+// @spec SPEC-STORE-003 v0.4.0 (모든 엔트리 type/tags 노출 정책에 따른 갱신)
+// State() 의 entries 는 정적 키와 동적 키 모두에 metric_type 과 tags 를 포함한다.
+// 정적 키는 yaml 에 정의된 tags/metric_type 을, 동적(자동 등록) 키는 기본값
+// metric_type="unknown" + 빈 tags 객체를 노출한다. 이로써 프론트가 모든 엔트리를
+// 일관되게 필터/표시할 수 있다 (v0.3.0 의 "동적 키 tags 생략" 동작에서 변경).
+func TestUserStoreAgent_State_모든엔트리_type_tags_포함(t *testing.T) {
 	a := newStaticKeysAgent(t, true)
 
 	// 정적 키 + 동적 키 각각 쓰기.
@@ -621,15 +621,23 @@ func TestUserStoreAgent_State_정적키_tags_포함(t *testing.T) {
 			foundDyn = e
 		}
 	}
+
+	// 정적 키: yaml tags + metric_type 노출.
 	require.NotNil(t, found, "정적 키 엔트리가 존재해야 한다")
 	tags, ok := found["tags"].(map[string]string)
 	require.True(t, ok, "정적 키 엔트리는 tags 맵을 포함해야 한다")
 	assert.Equal(t, "1", tags["room"])
 	assert.Equal(t, "temperature", tags["type"])
+	_, hasMetric := found["metric_type"]
+	assert.True(t, hasMetric, "정적 키 엔트리는 metric_type 을 포함해야 한다")
 
+	// 동적 키: metric_type="unknown" + 빈 tags 객체 노출.
 	require.NotNil(t, foundDyn, "동적 키 엔트리가 존재해야 한다")
-	_, hasTags := foundDyn["tags"]
-	assert.False(t, hasTags, "동적 키 엔트리는 tags 필드를 포함하지 않아야 한다")
+	dynTags, ok := foundDyn["tags"].(map[string]string)
+	require.True(t, ok, "동적 키 엔트리도 tags 맵(빈 객체)을 포함해야 한다")
+	assert.Empty(t, dynTags, "동적 키의 tags 는 빈 맵")
+	assert.Equal(t, "unknown", foundDyn["metric_type"],
+		"동적 키의 metric_type 은 'unknown'")
 }
 
 // ---------------------------------------------------------------------------

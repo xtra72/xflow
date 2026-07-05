@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 export const COLOR_PALETTE = [
@@ -37,6 +38,7 @@ export default function ColorSwatchButton({
   onChange,
   ariaLabel,
 }: ColorSwatchButtonProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
     <span className="relative inline-flex">
@@ -53,7 +55,7 @@ export default function ColorSwatchButton({
       {open && (
         <span
           role="dialog"
-          aria-label={`${ariaLabel} 팔레트`}
+          aria-label={t('dashboard.colorSwatch.paletteAria').replace('{label}', ariaLabel)}
           className="absolute right-0 top-full z-20 mt-1 flex w-[156px] flex-wrap gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-2 shadow-lg"
         >
           {COLOR_PALETTE.map((c) => (
@@ -81,8 +83,8 @@ export default function ColorSwatchButton({
               setOpen(false);
             }}
             className="flex h-5 w-5 items-center justify-center rounded-full border border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
-            aria-label="기본값(미설정)"
-            title="미설정"
+            aria-label={t('dashboard.colorSwatch.defaultAria')}
+            title={t('dashboard.colorSwatch.unsetTitle')}
           >
             <X className="h-3 w-3" />
           </button>

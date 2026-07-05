@@ -307,7 +307,10 @@ func compileExpressionV2(expr string, mode TransformMode, vars map[string]any) (
 		for k, v := range msg.Metadata().All() {
 			opts = append(opts, message.WithMetadata(k, v))
 		}
-		return message.New(opts...), nil
+		out := message.New(opts...)
+		// P2: nested group 보존(All() 은 string 만 반환).
+		message.CopyMetadataGroups(out.Metadata(), msg.Metadata())
+		return out, nil
 	}, nil
 }
 
@@ -379,6 +382,9 @@ func compileMetadataExpressionV2(expr string, mode TransformMode, vars map[strin
 		for k, v := range flat {
 			opts = append(opts, message.WithMetadata(k, v))
 		}
-		return message.New(opts...), nil
+		out := message.New(opts...)
+		// P2: nested group 보존(merge base 인 msg 의 group 을 운반).
+		message.CopyMetadataGroups(out.Metadata(), msg.Metadata())
+		return out, nil
 	}, nil
 }

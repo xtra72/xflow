@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, FileText, Radio, Wifi, WifiOff } from 'lucide-react';
+import { useTranslation } from '@/lib/i18n';
 
 import { useWebSocket } from '@/hooks';
 import { useFlows } from '@/hooks';
@@ -15,11 +16,11 @@ import EventTimeline, { type SystemEvent } from './EventTimeline';
 /** 탭 유형 */
 type Tab = 'metrics' | 'logs' | 'events';
 
-/** 탭 설정 */
-const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { key: 'metrics', label: '메트릭', icon: Activity },
-  { key: 'logs', label: '로그', icon: FileText },
-  { key: 'events', label: '이벤트', icon: Radio },
+/** 탭 설정 (label은 i18n 키) */
+const TABS: { key: Tab; labelKey: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { key: 'metrics', labelKey: 'monitoring.metrics', icon: Activity },
+  { key: 'logs', labelKey: 'monitoring.logs', icon: FileText },
+  { key: 'events', labelKey: 'monitoring.events', icon: Radio },
 ];
 
 // 메트릭 데이터 보관 기간 (5분 = 300초)
@@ -59,6 +60,7 @@ function nextId(): string {
  * WebSocket 연결을 관리하고 실시간 데이터를 하위 컴포넌트에 전달한다.
  */
 export default function MonitoringPage() {
+  const { t } = useTranslation();
   const { state: wsState, client } = useWebSocket();
   const { data: flowsData } = useFlows();
 
@@ -126,12 +128,12 @@ export default function MonitoringPage() {
     const event: SystemEvent = {
       id: nextId(),
       type: (d.type as SystemEvent['type']) ?? 'system',
-      message: d.message ?? '시스템 이벤트',
+      message: d.message ?? t('monitoring.systemEvent'),
       timestamp: d.timestamp ?? new Date().toISOString(),
       details: d.details,
     };
     setEvents((prev) => [...prev, event]);
-  }, []);
+  }, [t]);
 
   // WebSocket 핸들러 등록 및 정리 (REQ-07-02, REQ-07-06)
   useEffect(() => {
@@ -165,20 +167,20 @@ export default function MonitoringPage() {
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-(--color-text-primary)">
-          모니터링
+          {t('monitoring.title')}
         </h2>
         <div className="flex items-center gap-2">
           {wsState === 'connected' ? (
             <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
               <Wifi className="w-3.5 h-3.5" />
-              연결됨
+              {t('monitoring.wsConnected')}
             </span>
           ) : (
             <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
               <WifiOff className="w-3.5 h-3.5" />
               {wsState === 'connecting' || wsState === 'reconnecting'
-                ? '연결 중...'
-                : '연결 끊김'}
+                ? t('monitoring.wsConnecting')
+                : t('monitoring.wsDisconnected')}
             </span>
           )}
         </div>
@@ -186,16 +188,16 @@ export default function MonitoringPage() {
 
       {/* 플로우 상태 요약 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SummaryCard label="전체 플로우" value={flows.length} />
-        <SummaryCard label="실행 중" value={runningFlows} accent />
-        <SummaryCard label="로그 수신" value={logs.length} />
-        <SummaryCard label="이벤트" value={events.length} />
+        <SummaryCard label={t('monitoring.totalFlows')} value={flows.length} />
+        <SummaryCard label={t('monitoring.runningFlows')} value={runningFlows} accent />
+        <SummaryCard label={t('monitoring.logsReceived')} value={logs.length} />
+        <SummaryCard label={t('monitoring.eventsReceived')} value={events.length} />
       </div>
 
       {/* 탭 헤더 */}
       <div className="border-b border-(--color-border-default)">
         <div className="flex gap-4">
-          {TABS.map(({ key, label, icon: Icon }) => (
+          {TABS.map(({ key, labelKey, icon: Icon }) => (
             <button
               key={key}
               type="button"
@@ -207,7 +209,7 @@ export default function MonitoringPage() {
               }`}
             >
               <Icon className="w-4 h-4" />
-              {label}
+              {t(labelKey)}
             </button>
           ))}
         </div>

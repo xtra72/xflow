@@ -2,18 +2,31 @@
 // 에이전트 페이지와 동일한 테이블 리스트 형식으로 디바이스를 표시한다.
 // 행 클릭으로 상세 패널을 토글하고, 검색/필터/페이지네이션을 지원한다.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Columns3,
   HardDrive,
   Lock,
   Plus,
 } from 'lucide-react';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
-import { useDevicesRealtime } from '@/hooks/useDevice';
+import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
+import {
+  ALL_DEVICE_COLUMNS,
+  DEVICE_COLUMN_LABELS,
+  useDeviceColumns,
+  type DeviceListColumnKey,
+} from '@/hooks/useDeviceColumns';
+import { useDevicesTarget } from '@/hooks/useResourceTargets';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTargetParam } from '@/hooks/useTargetParam';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
+import { TargetProvider } from '@/lib/remote/TargetContext';
+import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { getDeviceTypeLabel, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
 import type { DeviceInfo, DeviceListParams } from '@/types/device';
@@ -28,18 +41,22 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 // 디바이스 source 값을 사용자 친화적 라벨로 매핑.
 // 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
-function sourceVariant(source: string): { label: string; manual: boolean } | null {
+// `labelKey`가 있으면 i18n 키(`devices.source.*`)이고, 없으면 원본 source 문자열을
+// 그대로 표시한다(미지정 종류). 렌더 시 t()로 변환한다(컴포넌트 밖 t() 호출 금지).
+function sourceVariant(
+  source: string,
+): { labelKey?: string; rawLabel?: string; manual: boolean } | null {
   switch (source) {
     case 'config':
-      return { label: '설정', manual: true };
+      return { labelKey: 'devices.source.config', manual: true };
     case 'pinned':
-      return { label: '고정', manual: true };
+      return { labelKey: 'devices.source.pinned', manual: true };
     case 'auto':
-      return { label: '자동', manual: false };
+      return { labelKey: 'devices.source.auto', manual: false };
     case 'bridge':
-      return { label: '브리지', manual: false };
+      return { labelKey: 'devices.source.bridge', manual: false };
     default:
-      return source ? { label: source, manual: false } : null;
+      return source ? { rawLabel: source, manual: false } : null;
   }
 }
 
@@ -50,8 +67,8 @@ const PROTOCOL_COLORS: Record<string, string> = {
   modbus: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
 };
 
-/** 상대 시간 포맷 (예: "3분 전") */
-function formatRelativeTime(dateStr: string): string {
+/** 상대 시간 포맷 (예: "3분 전"). t()를 인자로 받아 컴포넌트 밖 호출을 피한다. */
+function formatRelativeTime(dateStr: string, t: TranslationFn): string {
   if (!dateStr) return '-';
   const date = new Date(dateStr);
   const then = date.getTime();
@@ -60,28 +77,57 @@ function formatRelativeTime(dateStr: string): string {
 
   const now = Date.now();
   const diffMs = now - then;
-  if (diffMs < 0) return '방금';
+  if (diffMs < 0) return t('devices.relativeTime.justNow');
 
   const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${seconds}초 전`;
+  if (seconds < 60) return t('devices.relativeTime.secondsAgo').replace('{n}', String(seconds));
 
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}분 전`;
+  if (minutes < 60) return t('devices.relativeTime.minutesAgo').replace('{n}', String(minutes));
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}시간 전`;
+  if (hours < 24) return t('devices.relativeTime.hoursAgo').replace('{n}', String(hours));
 
   const days = Math.floor(hours / 24);
-  return `${days}일 전`;
+  return t('devices.relativeTime.daysAgo').replace('{n}', String(days));
 }
 
-export default function DeviceListPage() {
+/** 디바이스 목록 페이지 props. */
+interface DeviceListPageProps {
+  /**
+   * 자원 타깃 오버라이드 (SPEC-REMOTE-001 M9, 그룹 K). 주어지면 URL `?target=`
+   * 대신 이 값을 사용한다(노드 대시보드 서브탭 임베드용). 미지정 시 기존처럼
+   * URL `?target=` 를 읽으므로 로컬 사용은 회귀 없이 동일하게 동작한다.
+   */
+  target?: ResourceTarget;
+  /**
+   * 원격 타깃 배너 숨김 여부 (SPEC-REMOTE-001 M9, 그룹 K). 노드 대시보드가
+   * 서브탭에 임베드할 때 true 로 주입한다(디렉토리+대시보드 헤더가 이미 선택
+   * 노드를 표시 → 배너 중복, "로컬로 돌아가기" 무의미). 미지정/false 면 기존처럼
+   * 배너를 렌더한다(단독 `?target=` 딥링크 회귀 없음, 로컬은 null).
+   */
+  hideRemoteBanner?: boolean;
+}
+
+export default function DeviceListPage({
+  target: targetProp,
+  hideRemoteBanner = false,
+}: DeviceListPageProps = {}) {
+  const { t } = useTranslation();
   // 필터 상태
   const [filters, setFilters] = useState<DeviceListParams>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const { data, isLoading, error, refetch } = useDevicesRealtime(filters);
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃에 따라 데이터 소스를 전환한다(로컬은 기존
+  // useDevicesRealtime(filters) 동작과 동일 — 회귀 없음). M9(그룹 K)에서 노드
+  // 대시보드가 targetProp 로 원격 타깃을 주입할 수 있다(URL 대신 prop 우선).
+  const paramTarget = useTargetParam();
+  const target = targetProp ?? paramTarget;
+  const remote = isRemoteTarget(target);
+  const { data, isLoading, error, refetch } = useDevicesTarget(target, filters);
+  const gating = useTargetGating(target);
+  const showLocalWrites = !remote;
 
   // 정렬 상태
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
@@ -95,6 +141,10 @@ export default function DeviceListPage() {
 
   // 디바이스 추가 다이얼로그
   const [showAddDialog, setShowAddDialog] = useState(false);
+
+  // 컬럼 구성(서버 영속, 전역 1벌). 토글 변경 시 PUT 으로 저장된다.
+  const { columns: visibleColumns, setColumns } = useDeviceColumns();
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
 
   const devices: DeviceInfo[] = data?.data ?? [];
 
@@ -141,6 +191,11 @@ export default function DeviceListPage() {
         case 'name':
           va = (a.name || a.id).toLowerCase();
           vb = (b.name || b.id).toLowerCase();
+          break;
+        case 'id':
+          // uid(1급 UUID 식별자) 우선, 없으면 id 로 정렬.
+          va = (a.uid || a.id).toLowerCase();
+          vb = (b.uid || b.id).toLowerCase();
           break;
         case 'type':
           va = a.type.toLowerCase();
@@ -258,14 +313,14 @@ export default function DeviceListPage() {
       <div className="space-y-6">
         <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
           <p className="text-sm text-red-700 dark:text-red-400">
-            디바이스 목록을 불러오는 중 오류가 발생했습니다.
+            {t('devices.loadError')}
           </p>
           <button
             type="button"
             onClick={() => refetch()}
             className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
           >
-            다시 시도
+            {t('common.retry')}
           </button>
         </div>
       </div>
@@ -273,17 +328,37 @@ export default function DeviceListPage() {
   }
 
   return (
+    <TargetProvider target={target}>
     <div className="space-y-6">
-      {/* 액션 버튼 */}
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={() => setShowAddDialog(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-4 w-4" />
-          디바이스 추가
-        </button>
+      {/* 원격 타깃 배너(로컬이면 null). 대시보드 임베드 시 중복이므로 숨김. */}
+      {!hideRemoteBanner && (
+        <RemoteTargetBanner
+          target={target}
+          nodeLabel={gating.nodeLabel}
+          nodeReady={gating.nodeReady}
+          localHref="/devices"
+        />
+      )}
+
+      {/* 툴바: 컬럼 설정(항상 표시) + 디바이스 추가(로컬 전용). 원격 타깃에서는
+          로컬 추가 어포던스를 숨긴다(디바이스 추가는 그룹 D 명령 경로). */}
+      <div className="flex items-center justify-end gap-2">
+        <ColumnsSettingButton
+          open={showColumnsMenu}
+          onOpenChange={setShowColumnsMenu}
+          visibleColumns={visibleColumns}
+          onChange={setColumns}
+        />
+        {showLocalWrites && (
+          <button
+            type="button"
+            onClick={() => setShowAddDialog(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-4 w-4" />
+            {t('devices.addDevice')}
+          </button>
+        )}
       </div>
 
       {/* 검색 및 필터 */}
@@ -304,17 +379,17 @@ export default function DeviceListPage() {
           <HardDrive className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
           <p className="mt-4 text-sm text-(--color-text-muted)">
             {devices.length === 0
-              ? '등록된 디바이스가 없습니다. 에이전트를 시작하면 디바이스가 자동으로 검색됩니다.'
-              : '검색 결과가 없습니다.'}
+              ? t('devices.emptyTitle')
+              : t('devices.noSearchResults')}
           </p>
-          {devices.length === 0 && (
+          {devices.length === 0 && showLocalWrites && (
             <button
               type="button"
               onClick={() => setShowAddDialog(true)}
               className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
-              디바이스 추가
+              {t('devices.addDevice')}
             </button>
           )}
         </div>
@@ -323,7 +398,7 @@ export default function DeviceListPage() {
           {/* 페이지네이션 */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-(--color-text-muted)">
-              <span>페이지당</span>
+              <span>{t('common.pagination.perPage')}</span>
               <select
                 value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
@@ -335,11 +410,13 @@ export default function DeviceListPage() {
                   </option>
                 ))}
               </select>
-              <span>건</span>
+              <span>{t('common.pagination.unit')}</span>
               <span className="ml-2 text-gray-400">|</span>
               <span className="ml-2">
-                총 {totalItems}건 중 {startIndex + 1}-
-                {Math.min(startIndex + pageSize, totalItems)}건
+                {t('common.pagination.range')
+                  .replace('{total}', String(totalItems))
+                  .replace('{start}', String(startIndex + 1))
+                  .replace('{end}', String(Math.min(startIndex + pageSize, totalItems)))}
               </span>
             </div>
 
@@ -349,7 +426,7 @@ export default function DeviceListPage() {
                 disabled={safePage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="이전 페이지"
+                aria-label={t('common.pagination.prev')}
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -361,26 +438,39 @@ export default function DeviceListPage() {
                 disabled={safePage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="다음 페이지"
+                aria-label={t('common.pagination.next')}
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
           </div>
 
-          {/* 디바이스 테이블 */}
+          {/* 디바이스 테이블 (선택된 컬럼만 헤더/셀 렌더) */}
           <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
             <table className="min-w-full divide-y divide-(--color-border-default)">
               <thead className="bg-(--color-bg-primary)">
                 <tr>
                   <th className="w-8 px-3 py-3" />
-                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="타입" field="type" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="프로토콜" field="protocol" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="에이전트" field="agent" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <th className="px-4 py-3 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">등록</th>
-                  <SortableHeader label="최근 확인" field="last_seen" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  {visibleColumns.map((col) =>
+                    col === 'source' ? (
+                      // '등록' 컬럼은 정렬 비대상 (기존 동작 보존)
+                      <th
+                        key={col}
+                        className="px-4 py-3 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider"
+                      >
+                        {t(DEVICE_COLUMN_LABELS[col])}
+                      </th>
+                    ) : (
+                      <SortableHeader
+                        key={col}
+                        label={t(DEVICE_COLUMN_LABELS[col])}
+                        field={col}
+                        currentSort={sort}
+                        onSort={handleSort}
+                        className="px-4 py-3"
+                      />
+                    ),
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
@@ -390,8 +480,10 @@ export default function DeviceListPage() {
                     <DeviceRow
                       key={device.id}
                       device={device}
+                      columns={visibleColumns}
                       isExpanded={isExpanded}
                       onToggle={() => toggleExpand(device.id)}
+                      t={t}
                     />
                   );
                 })}
@@ -401,9 +493,101 @@ export default function DeviceListPage() {
         </>
       )}
 
-      {/* 디바이스 추가 다이얼로그 */}
-      {showAddDialog && (
+      {/* 디바이스 추가 다이얼로그 (로컬 전용) */}
+      {showLocalWrites && showAddDialog && (
         <AddDeviceDialog onClose={() => setShowAddDialog(false)} />
+      )}
+    </div>
+    </TargetProvider>
+  );
+}
+
+// ---- 컬럼 설정 버튼 (체크박스 토글 팝오버) ----
+
+interface ColumnsSettingButtonProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  visibleColumns: DeviceListColumnKey[];
+  onChange: (cols: DeviceListColumnKey[]) => void;
+}
+
+/** 목록 상단 "컬럼 설정" 버튼 + 체크박스 토글 팝오버 (최소 1개 강제). */
+function ColumnsSettingButton({
+  open,
+  onOpenChange,
+  visibleColumns,
+  onChange,
+}: ColumnsSettingButtonProps) {
+  const { t } = useTranslation();
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭 시 팝오버 닫기
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onOpenChange(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, onOpenChange]);
+
+  const toggle = (key: DeviceListColumnKey) => {
+    if (visibleColumns.includes(key)) {
+      // 최소 1개 강제 — 마지막 1개는 해제 불가
+      if (visibleColumns.length > 1) {
+        onChange(visibleColumns.filter((c) => c !== key));
+      }
+    } else {
+      onChange([...visibleColumns, key]);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        className="inline-flex items-center gap-2 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+      >
+        <Columns3 className="h-4 w-4" />
+        {t('devices.columnsSetting')}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-1 shadow-lg"
+        >
+          {ALL_DEVICE_COLUMNS.map((key) => {
+            const checked = visibleColumns.includes(key);
+            const lastOne = checked && visibleColumns.length === 1;
+            return (
+              <label
+                key={key}
+                className={cn(
+                  'flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors',
+                  lastOne
+                    ? 'cursor-not-allowed opacity-60'
+                    : 'cursor-pointer hover:bg-(--color-bg-elevated)',
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={lastOne}
+                  onChange={() => toggle(key)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-(--color-text-primary)">
+                  {t(DEVICE_COLUMN_LABELS[key])}
+                </span>
+              </label>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -413,13 +597,108 @@ export default function DeviceListPage() {
 
 interface DeviceRowProps {
   device: DeviceInfo;
+  columns: DeviceListColumnKey[];
   isExpanded: boolean;
   onToggle: () => void;
+  /** 번역 함수(상위에서 주입). */
+  t: TranslationFn;
 }
 
-function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
-  const protocolColor = PROTOCOL_COLORS[device.protocol] ?? 'bg-(--color-bg-elevated) text-(--color-text-muted)';
+/** 단일 컬럼 셀 렌더 (컬럼 키별). */
+function DeviceCell({
+  column,
+  device,
+  t,
+}: {
+  column: DeviceListColumnKey;
+  device: DeviceInfo;
+  t: TranslationFn;
+}) {
+  switch (column) {
+    case 'name':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
+          {getDeviceDisplayName(device)}
+        </td>
+      );
+    case 'id': {
+      // uid 우선. 공간이 남으면 전체 표시 — 잘라내지 않고 한 줄로 노출(전체값 툴팁 유지).
+      const idValue = device.uid || device.id;
+      return (
+        <td className="px-4 py-3">
+          <span
+            title={idValue}
+            className="block whitespace-nowrap font-mono text-xs text-(--color-text-muted)"
+          >
+            {idValue || '-'}
+          </span>
+        </td>
+      );
+    }
+    case 'type':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+          {getDeviceTypeLabel(device.type)}
+        </td>
+      );
+    case 'protocol': {
+      const protocolColor =
+        PROTOCOL_COLORS[device.protocol] ?? 'bg-(--color-bg-elevated) text-(--color-text-muted)';
+      return (
+        <td className="whitespace-nowrap px-4 py-3">
+          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', protocolColor)}>
+            {device.protocol.toUpperCase()}
+          </span>
+        </td>
+      );
+    }
+    case 'status':
+      return (
+        <td className="whitespace-nowrap px-4 py-3">
+          <DeviceStatusBadge online={device.online} />
+        </td>
+      );
+    case 'agent':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+          {device.agent_name}
+        </td>
+      );
+    case 'source': {
+      const variant = sourceVariant(device.source);
+      return (
+        <td className="whitespace-nowrap px-4 py-3">
+          {!variant ? (
+            <span className="text-xs text-(--color-text-muted)">-</span>
+          ) : (
+            <span
+              className={cn(
+                'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                variant.manual
+                  ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
+                  : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
+              )}
+              title={variant.manual ? t('devices.source.manualTitle') : t('devices.source.autoTitle')}
+            >
+              {variant.manual && <Lock className="h-2.5 w-2.5" />}
+              {variant.labelKey ? t(variant.labelKey) : variant.rawLabel}
+            </span>
+          )}
+        </td>
+      );
+    }
+    case 'last_seen':
+      return (
+        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+          {formatRelativeTime(device.last_seen, t)}
+        </td>
+      );
+    default:
+      return null;
+  }
+}
 
+function DeviceRow({ device, columns, isExpanded, onToggle, t }: DeviceRowProps) {
   return (
     <>
       <tr
@@ -435,66 +714,15 @@ function DeviceRow({ device, isExpanded, onToggle }: DeviceRowProps) {
           )}
         </td>
 
-        {/* 이름 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
-          {getDeviceDisplayName(device)}
-        </td>
-
-        {/* 타입 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {getDeviceTypeLabel(device.type)}
-        </td>
-
-        {/* 프로토콜 */}
-        <td className="whitespace-nowrap px-4 py-3">
-          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', protocolColor)}>
-            {device.protocol.toUpperCase()}
-          </span>
-        </td>
-
-        {/* 상태 */}
-        <td className="whitespace-nowrap px-4 py-3">
-          <DeviceStatusBadge online={device.online} />
-        </td>
-
-        {/* 에이전트 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {device.agent_name}
-        </td>
-
-        {/* 등록 (자동/수동) */}
-        <td className="whitespace-nowrap px-4 py-3">
-          {(() => {
-            const variant = sourceVariant(device.source);
-            if (!variant) return <span className="text-xs text-(--color-text-muted)">-</span>;
-            return (
-              <span
-                className={cn(
-                  'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
-                  variant.manual
-                    ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                    : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
-                )}
-                title={variant.manual ? '수동 등록 (설정/고정)' : '자동 등록 (발견/브리지)'}
-              >
-                {variant.manual && <Lock className="h-2.5 w-2.5" />}
-                {variant.label}
-              </span>
-            );
-          })()}
-        </td>
-
-        {/* 최근 확인 */}
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {formatRelativeTime(device.last_seen)}
-        </td>
-
+        {columns.map((col) => (
+          <DeviceCell key={col} column={col} device={device} t={t} />
+        ))}
       </tr>
 
-      {/* 확장된 상세 패널 */}
+      {/* 확장된 상세 패널 (colspan = 확장 아이콘 1 + 표시 컬럼 수) */}
       {isExpanded && (
         <tr>
-          <td colSpan={8} className="bg-(--color-bg-sunken)">
+          <td colSpan={columns.length + 1} className="bg-(--color-bg-sunken)">
             <DeviceDetailPanel deviceId={device.id} />
           </td>
         </tr>

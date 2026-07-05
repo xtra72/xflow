@@ -11,6 +11,7 @@ import {
   formatTimestamp,
   pickThresholdColor,
   toNumber,
+  toLineValue,
 } from './chartChannelUtils';
 import type { ChartEntry } from './chartChannelTypes';
 
@@ -42,6 +43,30 @@ describe('toNumber', () => {
   });
   it('객체는 NaN', () => {
     expect(Number.isNaN(toNumber({ a: 1 }))).toBe(true);
+  });
+});
+
+describe('toLineValue', () => {
+  it('int/float 은 그대로 (혼합 표시)', () => {
+    expect(toLineValue(42)).toBe(42);
+    expect(toLineValue(3.14)).toBeCloseTo(3.14);
+    expect(toLineValue(-0.5)).toBe(-0.5);
+  });
+  it('boolean 은 1/0 으로', () => {
+    expect(toLineValue(true)).toBe(1);
+    expect(toLineValue(false)).toBe(0);
+  });
+  it('문자열은 숫자 모양이어도 제외(NaN)', () => {
+    expect(Number.isNaN(toLineValue('3.14'))).toBe(true);
+    expect(Number.isNaN(toLineValue('cool'))).toBe(true);
+    expect(Number.isNaN(toLineValue(''))).toBe(true);
+  });
+  it('null/undefined/객체/비유한 숫자는 NaN', () => {
+    expect(Number.isNaN(toLineValue(null))).toBe(true);
+    expect(Number.isNaN(toLineValue(undefined))).toBe(true);
+    expect(Number.isNaN(toLineValue({ a: 1 }))).toBe(true);
+    expect(Number.isNaN(toLineValue(Number.POSITIVE_INFINITY))).toBe(true);
+    expect(Number.isNaN(toLineValue(NaN))).toBe(true);
   });
 });
 

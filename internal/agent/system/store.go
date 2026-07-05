@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +64,13 @@ type Store interface {
 	// 정책 분기(정적 키는 ClearHistory, 동적 키는 Delete) 는 핸들러 계층의 책임이며,
 	// 이 메서드 자체는 정적/동적을 구분하지 않는다.
 	ClearHistory(ctx context.Context, key string) error
+
+	// Rename 은 oldKey 의 엔트리(값 + 히스토리 + TTL/타임스탬프)를 newKey 로 이동한다.
+	//   - oldKey 가 없으면 ErrKeyNotFound 를 반환한다.
+	//   - newKey 가 이미 존재하면 ErrKeyExists 를 반환하고 아무것도 변경하지 않는다(덮어쓰기 금지).
+	//   - 성공 시 oldKey 는 삭제되고 newKey 로 이동한다.
+	// 시리즈 레지스트리(staticKeys) 메타 이동은 상위 계층(StoreAgent/RenameKey)의 책임이다.
+	Rename(ctx context.Context, oldKey, newKey string) error
 }
 
 // QueryMode 는 HistoryQuery 의 조회 모드를 나타낸다.
@@ -367,6 +375,7 @@ func (s *StoreAgent) GetConfig() map[string]any {
 		"max_key_length":   s.config.maxKeyLength,
 		"max_history_size": s.config.maxHistorySize,
 		"history_ttl":      s.config.historyTTL,
+		"key_tag":          s.config.keyTag,
 	}
 }
 
@@ -498,6 +507,130 @@ func (s *StoreAgent) SetStaticKeys(keys map[string]StaticKeyMeta) {
 	s.config.staticKeys = cloned
 }
 
+// @spec SPEC-STORE-004
+// RemoveStaticKey 는 레지스트리(staticKeys)에서 주어진 키를 제거한다.
+// 동적(auto) 키를 reset/삭제할 때 값 엔트리뿐 아니라 등록 메타까지 지워 키가 완전히
+// 사라지게 하기 위함이다. 키가 없으면 no-op. 내부 VolatileStore 값에는 영향이 없다.
+func (s *StoreAgent) RemoveStaticKey(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.config.staticKeys, key)
+}
+
+// MoveStaticKeyMeta 는 레지스트리에서 oldKey 의 메타(StaticKeyMeta)를 newKey 로 이동한다.
+// DataType/MetricType/Tags/Source 를 그대로 보존한다. oldKey 가 미등록이면 no-op(false 반환).
+// 값/히스토리 이동은 Store.Rename 이, 충돌 사전검사는 상위 RenameKey 가 담당한다.
+func (s *StoreAgent) MoveStaticKeyMeta(oldKey, newKey string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, ok := s.config.staticKeys[oldKey]
+	if !ok {
+		return false
+	}
+	if s.config.staticKeys == nil {
+		s.config.staticKeys = make(map[string]StaticKeyMeta)
+	}
+	s.config.staticKeys[newKey] = meta
+	delete(s.config.staticKeys, oldKey)
+	return true
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 metric_type 과 tags 를 설정한다.
+// 사용자가 Web UI 등에서 동적으로 등록된 키에도 타입/태그를 나중에 부여할 수 있게 한다.
+//
+// 동작:
+//   - key 가 이미 staticKeys 에 있으면 metric_type/tags 만 갱신하고 DataType/Source 는 보존한다
+//     (정적 키의 명시 data_type, 동적 키의 string data_type 모두 보존 — PRESERVE).
+//   - key 가 미등록이면 동적 string 키(DataType=string, Source=auto)로 신규 등록한 뒤 메타를 적용한다.
+//     이로써 아직 값이 쓰여지지 않은 키에도 사전에 타입/태그를 지정할 수 있다.
+//
+// 입력 검증(metric_type 정규식, tags key/value)은 호출자(핸들러) 책임이며, 본 메서드는
+// 전달된 값을 신뢰하고 깊은 복사하여 저장한다. metricType 이 빈 문자열이면 "unknown" 으로 normalize 한다.
+//
+// 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 값(value/ttl/history)에는 영향을 주지 않는다.
+func (s *StoreAgent) SetKeyMeta(key string, metricType string, tags map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if metricType == "" {
+		metricType = MetricTypeUnknown
+	}
+	tagsCopy := make(map[string]string, len(tags))
+	for tk, tv := range tags {
+		tagsCopy[tk] = tv
+	}
+
+	if s.config.staticKeys == nil {
+		s.config.staticKeys = make(map[string]StaticKeyMeta)
+	}
+
+	if existing, ok := s.config.staticKeys[key]; ok {
+		// 기존 메타 보존(DataType/Source) + metric_type/tags 갱신.
+		existing.MetricType = metricType
+		existing.Tags = tagsCopy
+		s.config.staticKeys[key] = existing
+		return
+	}
+
+	// 미등록 키: 동적 string 키로 신규 등록.
+	s.config.staticKeys[key] = StaticKeyMeta{
+		DataType:   DataTypeString,
+		MetricType: metricType,
+		Tags:       tagsCopy,
+		Source:     SourceAuto,
+	}
+}
+
+// @spec SPEC-STORE-003 (store-write 노드 data_type/tags 지정)
+// SetKeyDataType 은 지정된 key 를 명시 data_type 으로 등록/갱신한다.
+// store-write 노드가 config 의 data_type 을 통해 동적 키를 특정 타입으로 고정(pin)할 때 사용한다.
+//
+// data_type 적용 정책 (PRESERVE 우선):
+//   - 미등록 키: 지정 dataType + Source=auto 로 신규 등록한다. 이후 쓰기는 해당 타입으로 검증된다.
+//   - 동적 string 키(Source=auto && data_type=string): 지정 dataType 으로 덮어쓴다.
+//     (동적 키는 사용자가 노드 설정으로 타입을 명시한 것이므로 그 의도를 반영한다.)
+//     단, 지정 dataType 도 string 이면 동적 string 그대로 유지된다.
+//   - 정적/명시 data_type 키(Source=manual 또는 non-dynamic): DataType/Source 를 보존한다.
+//     yaml 로 선언된 타입 계약을 노드 설정이 침범하지 못하도록 한다 (PRESERVE).
+//
+// metric_type 은 이 메서드의 범위가 아니다. 기존 키의 metric_type 은 보존되고,
+// 신규 등록 키에는 "unknown" 이 부여된다.
+//
+// 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 값(value/ttl/history)에는 영향을 주지 않는다.
+func (s *StoreAgent) SetKeyDataType(key string, dataType DataType) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.config.staticKeys == nil {
+		s.config.staticKeys = make(map[string]StaticKeyMeta)
+	}
+
+	if existing, ok := s.config.staticKeys[key]; ok {
+		// 동적 string 키만 지정 타입으로 덮어쓴다. 그 외(정적/명시 타입)는 보존.
+		if isDynamicStringMeta(existing) {
+			// @spec SPEC-STORE-004: 명시 타입을 부여하되 Source 는 보존(auto)한다.
+			// 타입 검증(strict/coercion 우회)은 isDynamicStringMeta(DataType==string)로
+			// 결정되므로 Source 승격은 불필요하다. 또한 Source 는 "키의 출처"(config 정의
+			// =manual / 런타임 자동=auto)를 의미하며 reset 정책(manual 보존/auto 삭제)에
+			// 쓰이므로, 런타임에 명시 타입이 부여된 동적 키를 manual 로 승격하면 전체 초기화
+			// 시 자동 등록 키가 정적으로 오인되어 삭제되지 않는 버그가 생긴다.
+			existing.DataType = dataType
+			s.config.staticKeys[key] = existing
+		}
+		return
+	}
+
+	// 미등록 키: 지정 data_type 으로 신규 등록한다. 런타임 등록이므로 Source=auto.
+	// (명시 타입이어도 출처는 런타임 자동이며, 타입 검증은 DataType 으로 동작한다.)
+	s.config.staticKeys[key] = StaticKeyMeta{
+		DataType:   dataType,
+		MetricType: MetricTypeUnknown,
+		Tags:       map[string]string{},
+		Source:     SourceAuto,
+	}
+}
+
 // @spec SPEC-STORE-003 v0.3.0
 // StaticKeysSnapshot 은 (사용자 키 → StaticKeyMeta) 전체 깊은 복사본을 반환한다.
 // 정적 키가 하나도 없으면 빈 맵을 반환한다.
@@ -524,6 +657,35 @@ func (s *StoreAgent) StaticKeysSnapshot() map[string]StaticKeyMeta {
 		}
 	}
 	return out
+}
+
+// LiveSeriesKeys 는 현재 저장 데이터(비만료)가 존재하는 시리즈 키 집합을 반환한다.
+// 키는 네임스페이스 접두사를 제거한 인코딩 시리즈 키(레지스트리 키와 동일 형식)이다.
+//
+// GET /keys 가 실데이터 없는 auto 유령 시리즈(과거 TTL 만료/삭제로 store 아이템은
+// 사라졌으나 staticKeys 레지스트리에 남은 항목)를 걸러내는 데 사용한다. 이로써
+// 라인차트 Store 선택기가 저장소 탭(실데이터 기준)과 일치한다.
+func (s *StoreAgent) LiveSeriesKeys() map[string]struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	live := make(map[string]struct{})
+	if s.store == nil {
+		return live
+	}
+	now := time.Now()
+	s.store.data.Range(func(key, value any) bool {
+		item, ok := value.(*storeItem)
+		if !ok {
+			return true
+		}
+		if !item.expiresAt.IsZero() && item.expiresAt.Before(now) {
+			return true
+		}
+		rawKey, _ := key.(string)
+		live[strings.TrimPrefix(rawKey, item.namespace+":")] = struct{}{}
+		return true
+	})
+	return live
 }
 
 // @spec SPEC-STORE-003 v0.3.0
@@ -607,6 +769,21 @@ func (s *StoreAgent) SetMaxKeyLength(n int) {
 	if s.store != nil {
 		s.store.maxKeyLength = n
 	}
+}
+
+// KeyTag 는 자동 요소 생성 시 키로 사용할 태그 이름을 반환한다(빈 문자열이면 미설정).
+// SetWithMeta 어댑터가 쓰기 태그에서 이 태그 값을 찾아 시리즈 키로 사용한다.
+func (s *StoreAgent) KeyTag() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config.keyTag
+}
+
+// SetKeyTag 는 키 태그를 런타임에 변경한다. 동시 호출에 안전하다.
+func (s *StoreAgent) SetKeyTag(tag string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.keyTag = tag
 }
 
 // ---------------------------------------------------------------------------
@@ -704,7 +881,14 @@ func (as *agentStore) checkKeyAllowed(key string, value any) error {
 	as.agent.mu.RUnlock()
 
 	if exists {
-		// 등록된 키 (manual 명시 또는 이전 auto 등록): DataType 일치만 검증.
+		// 등록된 키.
+		// @spec SPEC-STORE-003 v0.4.0: 동적(SourceAuto) string 키는 어떤 값이든 허용한다.
+		// 후속 쓰기는 coerceWriteValue 에서 string 으로 변환되므로 타입 불일치가 없다.
+		// 이로써 동적 키는 사용자가 어떤 타입을 써도 항상 string 으로 보관된다.
+		if isDynamicStringMeta(meta) {
+			return nil
+		}
+		// manual 명시 또는 명시 data_type 으로 등록된 키: DataType 일치 검증 (type pinning).
 		if !matchesDataType(value, meta.DataType) {
 			return ErrTypeMismatch
 		}
@@ -717,10 +901,12 @@ func (as *agentStore) checkKeyAllowed(key string, value any) error {
 		return ErrKeyNotAllowed
 	}
 
-	// auto 모드 + 미등록: DataType 추론 → 실패 시 거부, 성공 시 자동 등록 (M6 / Scenario 3).
-	dt, err := inferDataType(value)
-	if err != nil {
-		return err // ErrUnsupportedValueType
+	// @spec SPEC-STORE-003 v0.4.0
+	// auto 모드 + 미등록: 값 타입과 무관하게 data_type=string 으로 자동 등록한다 (동적=string 정책).
+	// 단, nil 및 의미 있는 문자열 표현이 없는 타입(channel, func)은 거부한다
+	// (기존 ErrUnsupportedValueType 동작 보존). 그 외 모든 값은 stringifyValue 로 문자열화된다.
+	if !isStringifiableValue(value) {
+		return ErrUnsupportedValueType
 	}
 
 	// Slow path: 쓰기 락으로 자동 등록.
@@ -728,25 +914,103 @@ func (as *agentStore) checkKeyAllowed(key string, value any) error {
 	defer as.agent.mu.Unlock()
 
 	// Double-check: 다른 goroutine 이 RLock 해제 ~ Lock 취득 사이에 같은 키를 등록했을 수 있다.
-	// 이 경우 winner 의 DataType 을 기준으로 우리 value 를 재검증한다 (race-safe).
 	if existing, raced := as.agent.config.staticKeys[key]; raced {
+		// race winner 가 동적 string 키로 등록했다면 그대로 허용 (값은 coerce 단계에서 변환).
+		if isDynamicStringMeta(existing) {
+			return nil
+		}
 		if !matchesDataType(value, existing.DataType) {
 			return ErrTypeMismatch
 		}
 		return nil
 	}
 
-	// 자동 등록 수행.
+	// 자동 등록 수행: 항상 data_type=string, metric_type=unknown, 빈 태그, SourceAuto.
 	if as.agent.config.staticKeys == nil {
 		as.agent.config.staticKeys = make(map[string]StaticKeyMeta)
 	}
 	as.agent.config.staticKeys[key] = StaticKeyMeta{
-		DataType:   dt,
-		MetricType: "unknown", // M8: auto 등록 시 metric_type 은 "unknown" default.
+		DataType:   DataTypeString,
+		MetricType: MetricTypeUnknown,
 		Tags:       map[string]string{},
 		Source:     SourceAuto,
 	}
 	return nil
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// isDynamicStringMeta 는 메타데이터가 "동적 string 키"인지 판별한다.
+// 동적 string 키는 auto 모드에서 런타임 자동 등록된 키로, data_type=string + Source=auto 이다.
+// 이런 키는 어떤 값이든 string 으로 변환되어 저장되므로 쓰기 시 타입 검증을 건너뛴다.
+func isDynamicStringMeta(meta StaticKeyMeta) bool {
+	return meta.Source == SourceAuto && meta.DataType == DataTypeString
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// coerceWriteValue 는 쓰기 직전 값을 정책에 맞게 변환한다.
+// 동적 string 키(isDynamicStringMeta)에 대해서는 값을 string 으로 변환하여 반환하고,
+// 그 외(명시 data_type 키, 미등록 키)는 원본 값을 그대로 반환한다.
+//
+// NamespacedStore.Set/SetWithTTL 이 checkKeyAllowed 통과 후 이 메서드를 호출한다.
+// checkKeyAllowed 가 미등록 키를 동적 string 으로 등록한 뒤이므로, 첫 쓰기 값도 여기서 string 화된다.
+func (as *agentStore) coerceWriteValue(key string, value any) any {
+	as.agent.mu.RLock()
+	meta, ok := as.agent.config.staticKeys[key]
+	as.agent.mu.RUnlock()
+	if !ok {
+		return value
+	}
+	if isDynamicStringMeta(meta) {
+		return stringifyValue(value)
+	}
+	// 숫자 타입 정규화: 선언 data_type 에 맞춰 저장값을 변환한다(JSON float64 호환).
+	//  - int  선언 + 정수값 float64(2.0) → int64(2)
+	//  - float 선언 + 정수(int 계열)     → float64
+	// 그 외에는 원본 값을 그대로 둔다.
+	return coerceNumericToDeclared(value, meta.DataType)
+}
+
+// coerceNumericToDeclared 는 값을 선언된 숫자 data_type 에 맞춰 정규화한다.
+// matchesDataType 의 JSON 숫자 호환(정수값 float ↔ int)과 짝을 이루어, 검증을 통과한
+// 값이 선언 타입으로 저장되게 한다. 대상이 아니면 원본을 반환한다.
+func coerceNumericToDeclared(value any, dt DataType) any {
+	switch dt {
+	case DataTypeInt:
+		switch v := value.(type) {
+		case float64:
+			if isIntegralFloat(v) {
+				return int64(v)
+			}
+		case float32:
+			if isIntegralFloat(v) {
+				return int64(v)
+			}
+		}
+	case DataTypeFloat:
+		switch v := value.(type) {
+		case int:
+			return float64(v)
+		case int8:
+			return float64(v)
+		case int16:
+			return float64(v)
+		case int32:
+			return float64(v)
+		case int64:
+			return float64(v)
+		case uint:
+			return float64(v)
+		case uint8:
+			return float64(v)
+		case uint16:
+			return float64(v)
+		case uint32:
+			return float64(v)
+		case uint64:
+			return float64(v)
+		}
+	}
+	return value
 }
 
 // @spec SPEC-STORE-003 v0.3.0
@@ -775,6 +1039,14 @@ func (as *agentStore) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return as.agent.store.Delete(ctx, key)
+}
+
+// Rename 은 쓰기 연산이므로 paused/closed 를 확인한 뒤 내부 저장소로 위임한다.
+func (as *agentStore) Rename(ctx context.Context, oldKey, newKey string) error {
+	if err := as.checkWrite(); err != nil {
+		return err
+	}
+	return as.agent.store.Rename(ctx, oldKey, newKey)
 }
 
 // Has 는 읽기 연산이므로 closed만 확인한다 (paused에서도 읽기 허용).

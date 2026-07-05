@@ -128,24 +128,24 @@ func TestErrConfigNotInitialized(t *testing.T) {
 // TestMapAPIError - HTTP 상태 코드와 응답 본문을 CLIError 로 매핑하는지 검증
 func TestMapAPIError(t *testing.T) {
 	tests := []struct {
-		name           string
-		statusCode     int
-		body           []byte
-		expectedMsg    string
-		expectedHint   string
-		checkContains  bool
+		name          string
+		statusCode    int
+		body          []byte
+		expectedMsg   string
+		expectedHint  string
+		checkContains bool
 	}{
 		{
-			name:       "401 인증 실패",
-			statusCode: 401,
-			body:       makeErrorBody("UNAUTHORIZED", "인증 토큰이 만료되었습니다"),
-			expectedMsg: "인증에 실패했습니다. 토큰을 확인해주세요",
+			name:         "401 인증 실패",
+			statusCode:   401,
+			body:         makeErrorBody("UNAUTHORIZED", "인증 토큰이 만료되었습니다"),
+			expectedMsg:  "인증에 실패했습니다. 토큰을 확인해주세요",
 			expectedHint: "xflow config token <token> 명령어로 토큰을 설정하세요",
 		},
 		{
-			name:       "403 권한 거부",
-			statusCode: 403,
-			body:       makeErrorBody("FORBIDDEN", "관리자 권한이 필요합니다"),
+			name:        "403 권한 거부",
+			statusCode:  403,
+			body:        makeErrorBody("FORBIDDEN", "관리자 권한이 필요합니다"),
 			expectedMsg: "이 작업을 수행할 권한이 없습니다",
 		},
 		{
@@ -204,6 +204,24 @@ func TestMapAPIError(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMapAPIError_HTTPToHTTPSMismatch - HTTPS 서버에 평문 HTTP 요청을 보낸 경우
+// 서버가 반환하는 평문 본문을 감지하여 --server https:// 안내 힌트를 제공하는지 검증한다.
+func TestMapAPIError_HTTPToHTTPSMismatch(t *testing.T) {
+	body := []byte("Client sent an HTTP request to an HTTPS server")
+
+	cliErr := MapAPIError(400, body)
+	require.NotNil(t, cliErr, "MapAPIError 는 nil 을 반환하면 안됩니다")
+
+	assert.Contains(t, cliErr.Message, "HTTPS",
+		"메시지는 서버가 HTTPS 를 사용한다는 점을 설명해야 합니다")
+	assert.NotContains(t, cliErr.Message, "서버 에러 (코드: 400)",
+		"일반 서버 에러 폴백보다 우선해야 합니다")
+	assert.Contains(t, cliErr.Hint, "--server https://",
+		"힌트는 --server https:// 사용을 안내해야 합니다")
+	assert.Equal(t, 1, cliErr.ExitCode,
+		"종료 코드는 1 이어야 합니다")
 }
 
 // TestFormatError_Basic - 기본 에러 포맷팅 검증

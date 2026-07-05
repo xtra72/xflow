@@ -45,7 +45,7 @@ func TestNewRootCmd_HasVersionSubcommand(t *testing.T) {
 
 // --- 글로벌 플래그 테스트 ---
 
-// TestGlobalFlags - 7개 글로벌 플래그 등록 및 기본값 검증
+// TestGlobalFlags - 8개 글로벌 플래그 등록 및 기본값 검증
 func TestGlobalFlags(t *testing.T) {
 	cmd := NewRootCmd()
 	pflags := cmd.PersistentFlags()
@@ -62,6 +62,7 @@ func TestGlobalFlags(t *testing.T) {
 		{"verbose 플래그", "verbose", "false"},
 		{"quiet 플래그", "quiet", "false"},
 		{"no-color 플래그", "no-color", "false"},
+		{"insecure 플래그", "insecure", "false"},
 	}
 
 	for _, tt := range tests {
@@ -226,6 +227,85 @@ func TestTokenPriority(t *testing.T) {
 			cmd.SetErr(&buf)
 			err := cmd.Execute()
 			require.NoError(t, err, "커맨드 실행 에러가 없어야 합니다")
+
+			result := resolveToken(cmd, configPath)
+			assert.Equal(t, tt.expected, result,
+				"토큰이 '%s' 여야 합니다", tt.expected)
+		})
+	}
+}
+
+// TestResolveTokenSessionPriority - 세션 메모리 토큰 우선순위 검증
+// 우선순위: --token 플래그 > XFLOW_TOKEN 환경변수 > sessionToken(메모리) > 설정 파일
+func TestResolveTokenSessionPriority(t *testing.T) {
+	tests := []struct {
+		name         string
+		flagValue    string
+		envValue     string
+		sessionValue string
+		configValue  string
+		expected     string
+	}{
+		{
+			name:         "세션 메모리가 설정보다 우선",
+			sessionValue: "MEM",
+			configValue:  "CFG",
+			expected:     "MEM",
+		},
+		{
+			name:         "환경변수가 세션 메모리보다 우선",
+			envValue:     "ENV",
+			sessionValue: "MEM",
+			configValue:  "CFG",
+			expected:     "ENV",
+		},
+		{
+			name:         "플래그가 최우선",
+			flagValue:    "FLG",
+			envValue:     "ENV",
+			sessionValue: "MEM",
+			configValue:  "CFG",
+			expected:     "FLG",
+		},
+		{
+			name:        "세션 메모리가 비면 설정 파일 사용",
+			configValue: "CFG",
+			expected:    "CFG",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 세션 메모리 토큰 격리
+			origSession := sessionToken
+			sessionToken = tt.sessionValue
+			defer func() { sessionToken = origSession }()
+
+			if tt.envValue != "" {
+				t.Setenv("XFLOW_TOKEN", tt.envValue)
+			}
+
+			configDir := t.TempDir()
+			configPath := filepath.Join(configDir, "config.yaml")
+			if tt.configValue != "" {
+				content := "auth:\n  token: " + tt.configValue + "\n"
+				require.NoError(t, os.WriteFile(configPath, []byte(content), 0644))
+			}
+
+			cmd := NewRootCmd()
+			args := []string{"version"}
+			if tt.configValue != "" {
+				args = append([]string{"--config", configPath}, args...)
+			}
+			if tt.flagValue != "" {
+				args = append([]string{"--token", tt.flagValue}, args...)
+			}
+			cmd.SetArgs(args)
+
+			var buf bytes.Buffer
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			require.NoError(t, cmd.Execute())
 
 			result := resolveToken(cmd, configPath)
 			assert.Equal(t, tt.expected, result,

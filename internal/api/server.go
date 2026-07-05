@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -28,19 +29,21 @@ type HealthChecker interface {
 
 // Server 는 HTTP 서버의 라이프사이클을 관리한다.
 type Server struct {
-	config       *config.ServerConfig
-	router       *Router
-	httpServer   *http.Server
-	logger       *slog.Logger
-	observer     *observe.Observer
-	stats        *statsCollector
-	listener     net.Listener
-	healthDeps   map[string]HealthChecker
-	mu           sync.RWMutex
-	state        lifecycle.State
-	startedAt    time.Time
-	authEnabled  bool
-	jwtSvc       *auth.JWTService
+	config         *config.ServerConfig
+	router         *Router
+	httpServer     *http.Server
+	redirectServer *http.Server           // TLS 활성 시 평문 HTTP→HTTPS 308 리다이렉트용 경량 서버
+	tlsDispatcher  *tlsRedirectDispatcher // TLS 활성 시 단일 포트에서 TLS/평문 트래픽을 분기
+	logger         *slog.Logger
+	observer       *observe.Observer
+	stats          *statsCollector
+	listener       net.Listener
+	healthDeps     map[string]HealthChecker
+	mu             sync.RWMutex
+	state          lifecycle.State
+	startedAt      time.Time
+	authEnabled    bool
+	jwtSvc         *auth.JWTService
 }
 
 // ServerOption 은 Server 구성을 위한 함수 옵션이다.
@@ -243,16 +246,31 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.mu.Unlock()
 
+	// TLS 활성화 여부는 설정 옵션(server.tls.enabled)으로 결정한다.
+	// cert/key 파일 존재는 config 로드 시 validateTLS 에서 이미 보장된다.
+	tlsEnabled := s.config.TLS.Enabled
+	scheme := "http"
+	if tlsEnabled {
+		scheme = "https"
+	}
+
 	s.logger.Info("서버 시작",
 		slog.String("addr", ln.Addr().String()),
+		slog.String("scheme", scheme),
 		slog.String("mode", s.config.Mode),
 	)
 
-	// Serve는 블로킹이므로 고루틴에서 실행한다
+	// Serve는 블로킹이므로 고루틴에서 실행한다.
+	if tlsEnabled {
+		return s.startTLS(ctx, ln)
+	}
+
+	// 평문 HTTP 경로: 디스패처 없이 기존과 동일하게 단일 Serve 로 서빙한다(동작 변경 없음).
 	errCh := make(chan error, 1)
 	go func() {
-		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
-			errCh <- err
+		serveErr := s.httpServer.Serve(ln)
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- serveErr
 		}
 		close(errCh)
 	}()
@@ -266,6 +284,74 @@ func (s *Server) Start(ctx context.Context) error {
 			s.mu.Unlock()
 			return fmt.Errorf("server: serve error: %w", err)
 		}
+		return nil
+	case <-ctx.Done():
+		return s.Stop(context.Background())
+	}
+}
+
+// startTLS 는 TLS 활성 시의 서빙을 담당한다.
+// 단일 포트에서 디스패처가 TLS/평문 트래픽을 분기하여:
+//   - TLS 연결은 기존과 동일하게 httpServer.ServeTLS 로 전체 앱을 서빙하고,
+//   - 평문 HTTP 연결은 redirectServer 가 308 로 https:// 동일 URL 로 리다이렉트한다.
+//
+// 이로써 평문 요청이 TLS 핸드셰이크 단계에서 실패하며 남기던 로그 노이즈가 사라지고,
+// 요청 본문이 평문으로 처리되는 일 없이 안전하게 HTTPS 로 유도된다.
+func (s *Server) startTLS(ctx context.Context, ln net.Listener) error {
+	dispatcher := newTLSRedirectDispatcher(ln)
+
+	redirectServer := &http.Server{
+		Handler:           newHTTPSRedirectHandler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	s.mu.Lock()
+	s.tlsDispatcher = dispatcher
+	s.redirectServer = redirectServer
+	s.mu.Unlock()
+
+	// 첫 바이트 peek 기반 분기 루프 시작(블로킹이므로 고루틴).
+	go dispatcher.run()
+
+	// 두 서버를 각각 고루틴에서 서빙하고 치명적 에러만 errCh 로 전파한다.
+	// http.ErrServerClosed(그레이스풀 셧다운) 와 errListenerClosed(분기 리스너 종료) 는
+	// 정상 종료이므로 무시한다. 두 고루틴이 모두 종료되면 doneCh 를 닫아
+	// (그레이스풀 셧다운으로 인한) 정상 종료를 select 에 알린다.
+	errCh := make(chan error, 2)
+	doneCh := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		serveErr := s.httpServer.ServeTLS(dispatcher.tlsListener(), s.config.TLS.CertFile, s.config.TLS.KeyFile)
+		if serveErr != nil && serveErr != http.ErrServerClosed && !errors.Is(serveErr, errListenerClosed) {
+			errCh <- serveErr
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		serveErr := redirectServer.Serve(dispatcher.redirectListener())
+		if serveErr != nil && serveErr != http.ErrServerClosed && !errors.Is(serveErr, errListenerClosed) {
+			errCh <- serveErr
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(doneCh)
+	}()
+
+	select {
+	case err := <-errCh:
+		// 치명적 serve 에러: 디스패처/리다이렉트 서버 자원을 정리한 뒤 에러를 반환한다.
+		_ = redirectServer.Close()
+		_ = dispatcher.Close()
+		s.mu.Lock()
+		s.state = lifecycle.StateError
+		s.mu.Unlock()
+		return fmt.Errorf("server: serve error: %w", err)
+	case <-doneCh:
+		// 외부 Stop() 에 의한 그레이스풀 셧다운 등 정상 종료.
 		return nil
 	case <-ctx.Done():
 		return s.Stop(context.Background())
@@ -286,6 +372,8 @@ func (s *Server) Stop(ctx context.Context) error {
 	}
 	s.state = lifecycle.StateStopping
 	httpSrv := s.httpServer
+	redirectSrv := s.redirectServer
+	dispatcher := s.tlsDispatcher
 	s.mu.Unlock()
 
 	s.logger.Info("서버 정지 시작")
@@ -294,11 +382,25 @@ func (s *Server) Stop(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+	// 메인(TLS/평문) 서버를 그레이스풀하게 종료한다.
+	shutdownErr := httpSrv.Shutdown(shutdownCtx)
+
+	// TLS 활성 시: 리다이렉트 서버도 그레이스풀 종료하고, 마지막으로 디스패처를 닫아
+	// 실제 리스너와 분기 채널 리스너, Accept 루프 고루틴이 깔끔히 정리되도록 한다.
+	if redirectSrv != nil {
+		if err := redirectSrv.Shutdown(shutdownCtx); err != nil && shutdownErr == nil {
+			shutdownErr = err
+		}
+	}
+	if dispatcher != nil {
+		_ = dispatcher.Close()
+	}
+
+	if shutdownErr != nil {
 		s.mu.Lock()
 		s.state = lifecycle.StateError
 		s.mu.Unlock()
-		return fmt.Errorf("server: shutdown error: %w", err)
+		return fmt.Errorf("server: shutdown error: %w", shutdownErr)
 	}
 
 	s.mu.Lock()

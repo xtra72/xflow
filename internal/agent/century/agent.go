@@ -79,6 +79,10 @@ type Hvacr01Agent struct {
 	centuryConfig Hvacr01Config
 
 	transport io.ReadWriteCloser // RX-only 사용; Write 는 절대 호출하지 않음
+	// transportReady 는 a.transport 가 non-nil 인지를 나타내는 lock-free 미러이다.
+	// TransportConnected() 가 a.mu 를 잡지 않고 transport 보유 여부를 조회하기 위해 사용한다.
+	// a.transport 를 set/clear 하는 모든 경로에서 함께 갱신한다 (mu 보유 구간 안에서 Store 해도 무방).
+	transportReady atomic.Bool
 	// transportProvider 는 (re-)Open 가능한 transport 를 생성한다.
 	// production 에서는 serial dial, test 에서는 recordingTransport 를 반환.
 	transportProvider func() (io.ReadWriteCloser, error)
@@ -215,6 +219,7 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 func newHvacr01AgentForTest(config agent.AgentConfig, centuryCfg Hvacr01Config, transport io.ReadWriteCloser) *Hvacr01Agent {
 	a := newHvacr01AgentWithConfig(config, centuryCfg)
 	a.transport = transport
+	a.transportReady.Store(transport != nil)
 	a.transportProvider = func() (io.ReadWriteCloser, error) {
 		return transport, nil
 	}
@@ -398,6 +403,7 @@ func (a *Hvacr01Agent) Start(_ context.Context) error {
 			return fmt.Errorf("century start: %w", err)
 		}
 		a.transport = t
+		a.transportReady.Store(true)
 		// Wire agent slog into tcp-server wrapper so secondary-rejection INFO
 		// events use the same structured logger as the rest of the agent.
 		if srv, ok := t.(*tcpServerTransport); ok && a.logger != nil {
@@ -1012,13 +1018,16 @@ func (a *Hvacr01Agent) listDevicesForState() []map[string]any {
 
 // TransportConnected 는 트랜스포트가 살아있는지 여부를 반환한다.
 //
-// reconnectWithBackoff 가 a.transport 를 nil 로 잠시 비웠다가 새 객체로 교체할 수 있으므로
-// a.mu 로 동기화한다.
+// lock-free: `agent list` 가 server.ListAgents → agentToHandlerInfo 경로로 본 메서드를
+// 호출할 때 a.mu 를 잡으면, 처리 루프/reconnectWithBackoff 가 a.transport 를 교체하느라
+// a.mu 를 보유 중인 동안 블록되어 `agent list` 가 멈춘다. 따라서 a.transport 보유 여부는
+// a.mu 대신 transportReady atomic 미러로 조회한다. reconnectWithBackoff 가 a.transport 를
+// nil 로 비웠다가 교체할 때 transportReady 도 함께 갱신되므로 의미는 동일하다.
+//
+// CurrentState() 는 lifecycle.BaseLifecycle 의 별도 mu (a.mu 와 무관) 를 잠시만 잡으며
+// 블로킹 I/O 경로에서 보유되지 않으므로 본 메서드를 막지 않는다.
 func (a *Hvacr01Agent) TransportConnected() bool {
-	a.mu.RLock()
-	hasT := a.transport != nil
-	a.mu.RUnlock()
-	return hasT && a.CurrentState() == lifecycle.StateRunning
+	return a.transportReady.Load() && a.CurrentState() == lifecycle.StateRunning
 }
 
 // FrameNotifyCh 는 새 프레임 도착 알림 채널을 반환한다 (AC-C8 의 즉시 반응 용).
@@ -2058,6 +2067,7 @@ func (a *Hvacr01Agent) reconnectWithBackoff(ctx context.Context, cfg Hvacr01Conf
 	a.mu.Lock()
 	oldTransport := a.transport
 	a.transport = nil
+	a.transportReady.Store(false)
 	a.mu.Unlock()
 	if oldTransport != nil {
 		_ = oldTransport.Close()
@@ -2096,6 +2106,7 @@ func (a *Hvacr01Agent) reconnectWithBackoff(ctx context.Context, cfg Hvacr01Conf
 		// Success.
 		a.mu.Lock()
 		a.transport = t
+		a.transportReady.Store(true)
 		a.scanner = NewFrameScanner(t)
 		a.mu.Unlock()
 		a.logger.Info("century_hvacr01: TCP-client reconnected")

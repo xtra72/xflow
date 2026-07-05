@@ -163,9 +163,10 @@ func TestConfigure_PreservesExistingEntries_AfterRuntimeUpdate(t *testing.T) {
 	}))
 
 	// 기존 데이터 보존 확인
+	// @spec v0.4.0: auto 모드 동적 키는 string 으로 변환되어 저장된다.
 	entry, err := store.Get(ctx, "k1")
 	require.NoError(t, err)
-	assert.Equal(t, 200, entry.Value)
+	assert.Equal(t, "200", entry.Value)
 
 	history, err := store.GetHistory(ctx, "k1")
 	require.NoError(t, err)

@@ -30,6 +30,10 @@ func newAgentCmd(client **Client, confirmFn func(string, io.Reader) bool) *cobra
 	cmd.AddCommand(newAgentStartCmd(client))
 	cmd.AddCommand(newAgentStopCmd(client))
 	cmd.AddCommand(newAgentRestartCmd(client))
+	cmd.AddCommand(newAgentEnableCmd(client))
+	cmd.AddCommand(newAgentDisableCmd(client))
+	cmd.AddCommand(newAgentConfigCmd(client))
+	cmd.AddCommand(newAgentStatsCmd(client))
 	cmd.AddCommand(newAgentDeleteCmd(client, confirmFn))
 	cmd.AddCommand(newAgentExportCmd(client))
 	cmd.AddCommand(newAgentImportCmd(client))
@@ -268,6 +272,229 @@ func newAgentLifecycleCmd(client **Client, action, short string) *cobra.Command 
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "에이전트 %s: %s 완료\n", id, short)
 			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
+}
+
+// newAgentEnableCmd 는 에이전트 자동 시작 활성화 커맨드를 생성한다.
+// POST /api/v1/agents/:id/enable
+func newAgentEnableCmd(client **Client) *cobra.Command {
+	return newAgentToggleCmd(client, "enable", "에이전트 활성화")
+}
+
+// newAgentDisableCmd 는 에이전트 자동 시작 비활성화 커맨드를 생성한다.
+// POST /api/v1/agents/:id/disable
+func newAgentDisableCmd(client **Client) *cobra.Command {
+	return newAgentToggleCmd(client, "disable", "에이전트 비활성화")
+}
+
+// newAgentToggleCmd 는 에이전트 활성화/비활성화 (enable/disable) 커맨드의 공통 팩토리이다.
+// POST /api/v1/agents/:id/{action}
+// 응답으로 갱신된 에이전트 정보를 반환하므로 결과를 출력한다.
+// positional 인자 또는 --name 플래그로 에이전트를 지정할 수 있다.
+func newAgentToggleCmd(client **Client, action, short string) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   action + " [id|name]",
+		Short: short,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/agents/%s/%s", id, action)
+			if err := (*client).Post(path, nil, &result); err != nil {
+				return err
+			}
+
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "에이전트 %s: %s 완료\n", id, short)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+
+	return cmd
+}
+
+// newAgentConfigCmd 는 에이전트 구성(설정) 수정 커맨드를 생성한다.
+// PUT /api/v1/agents/:id/config
+//
+// 설정값은 파일(-f) 또는 key=value 인자로 전달할 수 있다.
+// 요청 본문은 {"config": {...}} 형식이다 (dto.ConfigUpdateRequest).
+//
+// 사용법:
+//
+//	xflow agent config <id|name> -f config.json
+//	xflow agent config <id|name> key=value [key=value ...]
+func newAgentConfigCmd(client **Client) *cobra.Command {
+	var (
+		name     string
+		filePath string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "config [id|name] [key=value ...]",
+		Short: "에이전트 구성 수정",
+		Long: `에이전트의 구성(설정값)을 수정합니다.
+
+설정값은 파일(-f) 또는 key=value 인자로 전달할 수 있습니다.
+
+예시:
+  xflow agent config my-agent -f config.json
+  xflow agent config my-agent host=localhost port=1883
+  xflow agent config my-agent --name my-agent interval=5`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// 첫 번째 인자는 id|name 으로 사용하고, 나머지는 key=value 로 처리한다.
+			idOrName, err := resolveEntityArg(args[:1], name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			// config 맵 구성: 파일(-f) 우선, 없으면 key=value 인자 파싱
+			var config map[string]any
+			if filePath != "" {
+				config, err = parseConfigFile(filePath)
+				if err != nil {
+					return err
+				}
+			} else {
+				if len(args) < 2 {
+					return ErrInvalidInput("설정값을 지정해주세요 (-f 파일 또는 key=value 인자)")
+				}
+				config = make(map[string]any, len(args)-1)
+				for _, arg := range args[1:] {
+					k, v, ok := strings.Cut(arg, "=")
+					if !ok {
+						return ErrInvalidInput(fmt.Sprintf("잘못된 파라미터 형식: %q (key=value 형식 필요)", arg))
+					}
+					config[k] = parseParamValue(v)
+				}
+			}
+
+			// 요청 본문: ConfigUpdateRequest = {"config": {...}}
+			body := map[string]any{"config": config}
+
+			var result map[string]any
+			path := fmt.Sprintf("/api/v1/agents/%s/config", id)
+			if err := (*client).Put(path, body, &result); err != nil {
+				return err
+			}
+
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "에이전트 %s: 구성이 수정되었습니다.\n", id)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "에이전트 이름으로 지정")
+	cmd.Flags().StringVarP(&filePath, "file", "f", "", "설정 정의 파일 경로 (JSON/YAML)")
+
+	return cmd
+}
+
+// parseConfigFile 은 설정 파일을 읽고 파싱하여 config 맵을 반환한다.
+// 파일이 {"config": {...}} 형식이면 내부의 config 를 추출하고,
+// 그렇지 않으면 파일 전체를 config 로 사용한다.
+func parseConfigFile(path string) (map[string]any, error) {
+	body, err := parseAgentFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// 파일이 {"config": {...}} 래퍼 형식이면 내부 config 를 사용한다.
+	if inner, ok := body["config"].(map[string]any); ok {
+		return inner, nil
+	}
+	return body, nil
+}
+
+// newAgentStatsCmd 는 에이전트 통계 조회 커맨드를 생성한다.
+// GET /api/v1/agents/:id/stats
+//
+//	xflow agent stats <id|name>
+func newAgentStatsCmd(client **Client) *cobra.Command {
+	var name string
+
+	cmd := &cobra.Command{
+		Use:   "stats [id|name]",
+		Short: "에이전트 통계 조회",
+		Long: `에이전트의 메시지/연결/버퍼 통계를 표시합니다.
+
+예시:
+  xflow agent stats my-agent
+  xflow agent stats --name my-agent`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			idOrName, err := resolveEntityArg(args, name)
+			if err != nil {
+				return err
+			}
+
+			id, err := resolveAgentID(*client, idOrName)
+			if err != nil {
+				return err
+			}
+
+			var stats map[string]any
+			path := fmt.Sprintf("/api/v1/agents/%s/stats", id)
+			if err := (*client).Get(path, &stats); err != nil {
+				return err
+			}
+
+			format, _ := cmd.Flags().GetString("format")
+			w := cmd.OutOrStdout()
+
+			// table 포맷이면 DetailFormatter 로 중첩 구조를 가독성 있게 출력
+			if format == "table" {
+				df := NewDetailFormatter(
+					[]string{"id", "status", "uptime", "connected", "messages_in", "messages_out", "error_count", "buffer_pending", "buffer_capacity", "messages", "bytes", "buffer", "connections", "node_refs"},
+					map[string]string{
+						"id":              "ID",
+						"status":          "Status",
+						"uptime":          "Uptime",
+						"connected":       "Connected",
+						"messages_in":     "Messages In",
+						"messages_out":    "Messages Out",
+						"error_count":     "Error Count",
+						"buffer_pending":  "Buffer Pending",
+						"buffer_capacity": "Buffer Capacity",
+						"messages":        "Messages",
+						"bytes":           "Bytes",
+						"buffer":          "Buffer",
+						"connections":     "Connections",
+						"node_refs":       "Node Refs",
+					},
+					map[string]bool{
+						"messages":    true,
+						"bytes":       true,
+						"buffer":      true,
+						"connections": true,
+						"node_refs":   true,
+					},
+				)
+				return df.Format(stats, w)
+			}
+			return PrintResult(w, format, stats, nil, nil)
 		},
 	}
 

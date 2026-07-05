@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
@@ -26,14 +27,21 @@ import { listStoreKeys } from '@/services/api/storeService';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
 import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
+  buildEnumLabelMap,
+  formatEnumValue,
+  resolveAxisFont,
   STROKE_DASHARRAY,
   THRESHOLD_DEFAULT_COLORS,
+  type AxisFontStyle,
   type ChannelRefConfig,
   type YThreshold,
   type YAxisMode,
+  type YAxisDataType,
+  type YEnumLabel,
 } from './panels/charts/chartChannelTypes';
 import {
   ChartChannelSection,
+  StoreSourceSection,
   StatChartSection,
   LineChartSection,
   BarChartSection,
@@ -75,37 +83,37 @@ const COLOR_PRESETS = [
   '#0f172a', // dark
 ];
 
-/** 컬럼 라벨 매핑 */
-const FLOW_COLUMN_LABELS: Record<FlowColumnKey, string> = {
-  name: '이름',
-  status: '상태',
-  node_count: '노드 수',
-  updated_at: '수정일',
-  actions: '액션',
+/** 컬럼 라벨 i18n 키 매핑 (기존 dashboard.col.* 재사용) */
+const FLOW_COLUMN_LABEL_KEYS: Record<FlowColumnKey, string> = {
+  name: 'dashboard.col.name',
+  status: 'dashboard.col.status',
+  node_count: 'dashboard.col.nodeCount',
+  updated_at: 'dashboard.col.updatedAt',
+  actions: 'dashboard.col.actions',
 };
 
-const AGENT_COLUMN_LABELS: Record<AgentColumnKey, string> = {
-  name: '이름',
-  type: '타입',
-  status: '상태',
-  uptime: '업타임',
-  messages: '메시지 IN/OUT',
-  actions: '액션',
+const AGENT_COLUMN_LABEL_KEYS: Record<AgentColumnKey, string> = {
+  name: 'dashboard.col.name',
+  type: 'dashboard.col.type',
+  status: 'dashboard.col.status',
+  uptime: 'dashboard.col.uptime',
+  messages: 'dashboard.col.messages',
+  actions: 'dashboard.col.actions',
 };
 
-const DEVICE_COLUMN_LABELS: Record<DeviceColumnKey, string> = {
-  name: '이름',
-  type: '타입',
-  status: '상태',
-  agent: '에이전트',
-  last_seen: '최근 통신',
+const DEVICE_COLUMN_LABEL_KEYS: Record<DeviceColumnKey, string> = {
+  name: 'dashboard.col.name',
+  type: 'dashboard.col.type',
+  status: 'dashboard.col.status',
+  agent: 'dashboard.col.agent',
+  last_seen: 'dashboard.col.lastSeen',
 };
 
-const METRIC_LABELS: Record<MetricKey, string> = {
-  cpu: 'CPU',
-  memory: '메모리',
-  throughput: '처리량',
-  errorRate: '에러율',
+const METRIC_LABEL_KEYS: Record<MetricKey, string> = {
+  cpu: 'dashboard.settings.metricLabels.cpu',
+  memory: 'dashboard.settings.metricLabels.memory',
+  throughput: 'dashboard.settings.metricLabels.throughput',
+  errorRate: 'dashboard.settings.metricLabels.errorRate',
 };
 
 interface PanelSettingsDialogProps {
@@ -115,6 +123,7 @@ interface PanelSettingsDialogProps {
 
 /** 패널 상세 설정 모달 */
 export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsDialogProps) {
+  const { t } = useTranslation();
   const activePage = useUIStore((s) =>
     s.dashboardPages.find((p) => p.id === s.activeDashboardId),
   );
@@ -275,16 +284,16 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     };
   }, [isDragging]);
 
-  // 악센트 라벨 결정
-  const accentLabels = panel?.type === 'device' || panel?.type === 'ac-control' || panel?.type === 'hvac-control' || panel?.type === 'properties-grid'
-    ? ACCENT_ELEMENT_LABELS
+  // 악센트 라벨 키 결정 (값은 i18n 키, 렌더 시 t() 로 변환)
+  const accentLabelKeys = panel?.type === 'device' || panel?.type === 'ac-control' || panel?.type === 'hvac-control' || panel?.type === 'properties-grid'
+    ? ACCENT_ELEMENT_LABEL_KEYS
     : panel?.type === 'resource'
-    ? RESOURCE_ACCENT_LABELS
+    ? RESOURCE_ACCENT_LABEL_KEYS
     : panel?.type === 'logs'
-    ? LOG_ACCENT_LABELS
+    ? LOG_ACCENT_LABEL_KEYS
     : panel?.type === 'gauge'
-    ? GAUGE_ACCENT_LABELS
-    : LIST_ACCENT_LABELS;
+    ? GAUGE_ACCENT_LABEL_KEYS
+    : LIST_ACCENT_LABEL_KEYS;
 
   // ESC 키로 닫기
   useEffect(() => {
@@ -306,6 +315,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
   if (!panel) return null;
 
+  // SPEC-WEB-005: 차트 패널이면 데이터 소스 섹션을 좌측 프리뷰 아래에 넓게 배치한다.
+  // 프리뷰가 접혀도 데이터 소스 섹션은 좌측 영역에 계속 노출된다.
+  const isChartPanel = CHART_PANEL_TYPES.has(panel.type);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -321,13 +334,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             id="panel-settings-dialog-title"
             className="text-base font-semibold text-(--color-text-primary)"
           >
-            패널 설정
+            {t('dashboard.settings.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label="닫기"
+            aria-label={t('dashboard.settings.closeAria')}
           >
             <X className="h-4.5 w-4.5" />
           </button>
@@ -352,19 +365,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           className="relative flex min-h-0 flex-1 gap-3 px-5 pb-5 pt-4"
         >
           <div
-            style={{ width: previewCollapsed ? '100%' : `${leftWidth}px` }}
+            style={{
+              // 차트 패널은 접힘 상태에서도 좌측 데이터 소스 영역이 남으므로
+              // 설정 컬럼을 고정 폭으로 유지한다. 그 외에는 접힘 시 전체 폭.
+              width:
+                previewCollapsed && !isChartPanel ? '100%' : `${leftWidth}px`,
+            }}
             className={cn(
               'order-3 shrink-0 space-y-0.5 overflow-y-auto pr-1',
-              previewCollapsed && 'flex-1',
+              previewCollapsed && !isChartPanel && 'flex-1',
             )}
           >
             {/*
               공통: 타이틀 / 디바이스 — "패널 옵션" CollapsibleSection 으로 그룹화 (Grafana 패턴).
               디바이스 필드는 패널 타입별 조건부.
             */}
-            <CollapsibleSection title="패널 옵션">
+            <CollapsibleSection title={t('dashboard.settings.panelOptions')}>
               <div className="space-y-3">
-                <TitleSection panel={panel} onTitleChange={(t) => handleTitleChange(t)} />
+                <TitleSection panel={panel} onTitleChange={(v) => handleTitleChange(v)} />
                 {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control' || panel.type === 'properties-grid') && (
                   <DeviceSection
                     panel={panel}
@@ -376,37 +394,37 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
             {/* 타입별 설정 */}
             {panel.type === 'flows' && (
-              <CollapsibleSection title="컬럼">
+              <CollapsibleSection title={t('dashboard.settings.columns')}>
                 <ColumnsSection<FlowColumnKey>
                   allColumns={[...ALL_FLOW_COLUMNS]}
-                  labels={FLOW_COLUMN_LABELS}
+                  labels={Object.fromEntries(ALL_FLOW_COLUMNS.map((k) => [k, t(FLOW_COLUMN_LABEL_KEYS[k])])) as Record<FlowColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as FlowColumnKey[]) ?? [...ALL_FLOW_COLUMNS]}
                   onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
                 />
               </CollapsibleSection>
             )}
             {panel.type === 'agents' && (
-              <CollapsibleSection title="컬럼">
+              <CollapsibleSection title={t('dashboard.settings.columns')}>
                 <ColumnsSection<AgentColumnKey>
                   allColumns={[...ALL_AGENT_COLUMNS]}
-                  labels={AGENT_COLUMN_LABELS}
+                  labels={Object.fromEntries(ALL_AGENT_COLUMNS.map((k) => [k, t(AGENT_COLUMN_LABEL_KEYS[k])])) as Record<AgentColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS]}
                   onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
                 />
               </CollapsibleSection>
             )}
             {panel.type === 'devices' && (
-              <CollapsibleSection title="컬럼">
+              <CollapsibleSection title={t('dashboard.settings.columns')}>
                 <ColumnsSection<DeviceColumnKey>
                   allColumns={[...ALL_DEVICE_COLUMNS]}
-                  labels={DEVICE_COLUMN_LABELS}
+                  labels={Object.fromEntries(ALL_DEVICE_COLUMNS.map((k) => [k, t(DEVICE_COLUMN_LABEL_KEYS[k])])) as Record<DeviceColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as DeviceColumnKey[]) ?? [...ALL_DEVICE_COLUMNS]}
                   onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
                 />
               </CollapsibleSection>
             )}
             {panel.type === 'resource' && (
-              <CollapsibleSection title="리소스">
+              <CollapsibleSection title={t('dashboard.settings.resource')}>
                 <ResourceSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -414,7 +432,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
             {panel.type === 'logs' && (
-              <CollapsibleSection title="로그">
+              <CollapsibleSection title={t('dashboard.settings.logs')}>
                 <LogsSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -422,7 +440,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
             {panel.type === 'gauge' && (
-              <CollapsibleSection title="게이지">
+              <CollapsibleSection title={t('dashboard.settings.gauge')}>
                 <GaugeSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -430,7 +448,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
             {panel.type === 'properties-grid' && (
-              <CollapsibleSection title="속성 그리드">
+              <CollapsibleSection title={t('dashboard.settings.propertiesGrid')}>
                 <PropertiesGridSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -438,9 +456,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
 
-            {/* 차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨) */}
+            {/*
+              차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨).
+              data_source === 'store' 인 경우에도 채널 설정은 유지된다(공존, 하위 호환).
+              데이터 소스 섹션(StoreSourceSection)은 좌측 프리뷰 아래로 이동했다(SPEC-WEB-005).
+            */}
             {CHART_PANEL_TYPES.has(panel.type) && panel.type !== 'line-chart' && (
-              <CollapsibleSection title="채널">
+              <CollapsibleSection title={t('dashboard.settings.channel')}>
                 <ChartChannelSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -450,7 +472,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
             {/* 차트 타입별 세부 설정 (SPEC-CHART-001 §4.2.2 / REQ-M5-03) */}
             {panel.type === 'stat' && (
-              <CollapsibleSection title="Stat 설정">
+              <CollapsibleSection title={t('dashboard.settings.statSettings')}>
                 <StatChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -458,7 +480,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
             {panel.type === 'line-chart' && (
-              <CollapsibleSection title="라인 차트 설정">
+              <CollapsibleSection title={t('dashboard.settings.lineChartSettings')}>
                 <LineChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -466,7 +488,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
             {panel.type === 'bar-chart' && (
-              <CollapsibleSection title="바 차트 설정">
+              <CollapsibleSection title={t('dashboard.settings.barChartSettings')}>
                 <BarChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -474,7 +496,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
             {panel.type === 'pie-chart' && (
-              <CollapsibleSection title="파이 차트 설정">
+              <CollapsibleSection title={t('dashboard.settings.pieChartSettings')}>
                 <PieChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -482,7 +504,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
             {panel.type === 'table' && (
-              <CollapsibleSection title="테이블 설정">
+              <CollapsibleSection title={t('dashboard.settings.tableSettings')}>
                 <TableChartSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
@@ -495,7 +517,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               구간(range) 기반 색상 매핑: 빈 입력은 -∞/+∞ 의미.
             */}
             {panel.type === 'ac-control' && (
-              <CollapsibleSection title="임계값" defaultOpen={true}>
+              <CollapsibleSection title={t('dashboard.settings.thresholds')} defaultOpen={true}>
                 <AcControlThresholdsSection
                   config={panel.config?.valueColor as ValueColorConfig | undefined}
                   onChange={(next) => handleConfigChange({ valueColor: next })}
@@ -509,7 +531,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               - 그 외 패널은 미리보기에서 그룹 선택 시 표시되는 AccentGroupControls 를 사용한다.
             */}
             {panel.type === 'ac-control' ? (
-              <CollapsibleSection title="스타일" defaultOpen={true}>
+              <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
                 <AcControlStyleSection
                   panelColor={panelColor}
                   accentElements={accentElements}
@@ -520,10 +542,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 />
               </CollapsibleSection>
             ) : selectedGroup ? (
-              <CollapsibleSection title="스타일" defaultOpen={true}>
+              <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
                 <AccentGroupControls
                   selected={selectedGroup}
-                  labels={accentLabels}
+                  labelKeys={accentLabelKeys}
                   accentElements={accentElements}
                   panelColor={panelColor}
                   onChange={(elements) => handleConfigChange({ accentElements: elements })}
@@ -543,8 +565,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               type="button"
               onClick={() => setPreviewCollapsed(false)}
               data-testid="panel-settings-preview-expand"
-              aria-label="미리보기 펼치기"
-              title="미리보기 펼치기"
+              aria-label={t('dashboard.settings.previewExpandAria')}
+              title={t('dashboard.settings.previewExpandAria')}
               className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
             >
               <ChevronRight className="h-4 w-4" />
@@ -556,7 +578,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             <div
               role="separator"
               aria-orientation="vertical"
-              aria-label="설정/미리보기 너비 조절"
+              aria-label={t('dashboard.settings.splitterAria')}
               data-testid="panel-settings-splitter"
               onMouseDown={(e) => {
                 e.preventDefault();
@@ -585,10 +607,16 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             미리보기 자체는 mx-auto + zoom 으로 가운데 정렬되며 사용자가 ± 버튼이나
             Ctrl+휠 로 확대/축소 할 수 있다.
           */}
-          {!previewCollapsed && (
+          {(!previewCollapsed || isChartPanel) && (
           <div className="order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start gap-3 overflow-y-auto">
+            {/*
+              프리뷰 영역(툴바 + 미리보기 블록)은 접히면 숨긴다. 차트 패널의
+              데이터 소스 섹션은 이 아래에 별도로 항상 노출된다(SPEC-WEB-005).
+            */}
+            {!previewCollapsed && (
+            <>
             <div className="flex shrink-0 items-center justify-between gap-2">
-              <label className="text-xs font-medium text-(--color-text-muted)">패널 스타일 미리보기</label>
+              <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.settings.previewLabel')}</label>
               <div className="flex items-center gap-1">
                 {/* 줌 컨트롤 */}
                 <button
@@ -596,8 +624,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   onClick={zoomOut}
                   disabled={previewZoom <= PREVIEW_ZOOM_MIN + 1e-6}
                   data-testid="panel-settings-preview-zoom-out"
-                  aria-label="미리보기 축소"
-                  title="축소 (Ctrl+휠)"
+                  aria-label={t('dashboard.settings.zoomOutAria')}
+                  title={t('dashboard.settings.zoomOutTitle')}
                   className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
                 >
                   <Minus className="h-3 w-3" />
@@ -606,8 +634,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   type="button"
                   onClick={zoomReset}
                   data-testid="panel-settings-preview-zoom-reset"
-                  aria-label="줌 리셋"
-                  title="줌 리셋 (100%)"
+                  aria-label={t('dashboard.settings.zoomResetAria')}
+                  title={t('dashboard.settings.zoomResetTitle')}
                   className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
                 >
                   {Math.round(previewZoom * 100)}%
@@ -617,8 +645,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   onClick={zoomIn}
                   disabled={previewZoom >= PREVIEW_ZOOM_MAX - 1e-6}
                   data-testid="panel-settings-preview-zoom-in"
-                  aria-label="미리보기 확대"
-                  title="확대 (Ctrl+휠)"
+                  aria-label={t('dashboard.settings.zoomInAria')}
+                  title={t('dashboard.settings.zoomInTitle')}
                   className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
                 >
                   <Plus className="h-3 w-3" />
@@ -628,8 +656,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   type="button"
                   onClick={() => setPreviewCollapsed(true)}
                   data-testid="panel-settings-preview-collapse"
-                  aria-label="미리보기 접기"
-                  title="미리보기 접기"
+                  aria-label={t('dashboard.settings.previewCollapseAria')}
+                  title={t('dashboard.settings.previewCollapseAria')}
                   className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
@@ -735,6 +763,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </div>
             )}
             {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
+            </>
+            )}
+
+            {/*
+              데이터 소스 섹션(채널/Store 토글 + Store 테이블/필터 + 선택 시리즈) —
+              SPEC-WEB-005: 넓은 좌측 공간을 활용해 프리뷰 아래에 배치한다. 프리뷰가
+              접혀도 차트 패널이면 이 섹션은 계속 노출된다.
+            */}
+            {isChartPanel && (
+              <div data-testid="panel-settings-data-source" className="shrink-0">
+                <CollapsibleSection title={t('dashboard.settings.dataSource')}>
+                  <StoreSourceSection
+                    panel={panel}
+                    onConfigChange={(c) => handleConfigChange(c)}
+                  />
+                </CollapsibleSection>
+              </div>
+            )}
           </div>
           )}
         </div>
@@ -746,14 +792,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             onClick={onClose}
             className="rounded-md px-4 py-1.5 text-sm font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
           >
-            취소
+            {t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={handleApplyAndClose}
             className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
           >
-            적용
+            {t('dashboard.settings.apply')}
           </button>
         </div>
       </div>
@@ -805,6 +851,7 @@ function TitleSection({
   panel: PanelConfig;
   onTitleChange: (title: string) => void;
 }) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState(panel.title);
 
   useEffect(() => {
@@ -823,7 +870,7 @@ function TitleSection({
   return (
     <div>
       <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        타이틀
+        {t('dashboard.settings.titleLabel')}
       </label>
       <input
         type="text"
@@ -850,6 +897,7 @@ function ColumnsSection<T extends string>({
   visibleColumns: T[];
   onChange: (cols: T[]) => void;
 }) {
+  const { t } = useTranslation();
   const toggle = (key: T) => {
     if (visibleColumns.includes(key)) {
       if (visibleColumns.length > 1) {
@@ -863,7 +911,7 @@ function ColumnsSection<T extends string>({
   return (
     <div>
       <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        표시 항목
+        {t('dashboard.settings.visibleColumns')}
       </label>
       <div className="space-y-1">
         {allColumns.map((key) => (
@@ -893,6 +941,7 @@ function ResourceSection({
   panel: PanelConfig;
   onConfigChange: (config: Record<string, unknown>) => void;
 }) {
+  const { t } = useTranslation();
   const visibleMetrics = (panel.config?.visibleMetrics as MetricKey[]) ?? [...ALL_METRIC_KEYS];
   const gridCols = (panel.config?.gridCols as number | undefined) ?? visibleMetrics.length;
 
@@ -910,7 +959,7 @@ function ResourceSection({
     <>
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          표시 메트릭
+          {t('dashboard.settings.visibleMetrics')}
         </label>
         <div className="space-y-1">
           {ALL_METRIC_KEYS.map((key) => (
@@ -924,14 +973,14 @@ function ResourceSection({
                 onChange={() => toggleMetric(key)}
                 className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
-              <span className="text-sm text-(--color-text-primary)">{METRIC_LABELS[key]}</span>
+              <span className="text-sm text-(--color-text-primary)">{t(METRIC_LABEL_KEYS[key])}</span>
             </label>
           ))}
         </div>
       </div>
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          열 수
+          {t('dashboard.settings.columnCount')}
         </label>
         <div className="flex gap-1">
           {[1, 2, 3, 4].map((n) => (
@@ -962,6 +1011,7 @@ function DeviceSection({
   panel: PanelConfig;
   onConfigChange: (config: Record<string, unknown>) => void;
 }) {
+  const { t } = useTranslation();
   const currentDeviceId = panel.config?.deviceId as string | undefined;
   const { data: devicesData, isLoading } = useDevices();
   const allDevices = devicesData?.data ?? [];
@@ -974,21 +1024,21 @@ function DeviceSection({
   return (
     <div>
       <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        디바이스
+        {t('dashboard.settings.device')}
       </label>
       {isLoading ? (
         <div className="flex items-center justify-center py-4">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600" />
         </div>
       ) : devices.length === 0 ? (
-        <p className="py-2 text-sm text-(--color-text-muted)">등록된 디바이스가 없습니다.</p>
+        <p className="py-2 text-sm text-(--color-text-muted)">{t('dashboard.settings.noDevices')}</p>
       ) : (
         <select
           value={currentDeviceId ?? ''}
           onChange={(e) => onConfigChange({ deviceId: e.target.value || undefined })}
           className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
         >
-          <option value="">선택하세요</option>
+          <option value="">{t('dashboard.settings.selectDevice')}</option>
           {devices.map((device) => (
             <option key={device.uid ?? device.id} value={device.id}>
               {getDeviceDisplayName(device)} ({getDeviceTypeLabel(device.type)})
@@ -1008,6 +1058,7 @@ function PropertiesGridSection({
   panel: PanelConfig;
   onConfigChange: (config: Record<string, unknown>) => void;
 }) {
+  const { t } = useTranslation();
   const gridCols = (panel.config?.gridCols as number | undefined) ?? 3;
   const visibleProperties = (panel.config?.visibleProperties as string[] | undefined) ?? [];
   const deviceId = panel.config?.deviceId as string | undefined;
@@ -1030,7 +1081,7 @@ function PropertiesGridSection({
     <>
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          열 수
+          {t('dashboard.settings.columnCount')}
         </label>
         <div className="flex gap-1">
           {[1, 2, 3, 4, 5, 6].map((n) => (
@@ -1052,7 +1103,7 @@ function PropertiesGridSection({
       {allKeys.length > 0 && (
         <div>
           <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-            표시 항목
+            {t('dashboard.settings.visibleColumns')}
           </label>
           <div className="space-y-1">
             <label
@@ -1064,7 +1115,7 @@ function PropertiesGridSection({
                 onChange={() => onConfigChange({ visibleProperties: [] })}
                 className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
-              <span className="text-sm font-medium text-(--color-text-primary)">전체</span>
+              <span className="text-sm font-medium text-(--color-text-primary)">{t('dashboard.settings.selectAll')}</span>
             </label>
             {allKeys.map((key) => (
               <label
@@ -1102,6 +1153,7 @@ function LogsSection({
   panel: PanelConfig;
   onConfigChange: (config: Record<string, unknown>) => void;
 }) {
+  const { t } = useTranslation();
   const maxLines = (panel.config?.maxLines as number) || 100;
   const [draft, setDraft] = useState(String(maxLines));
 
@@ -1121,7 +1173,7 @@ function LogsSection({
   return (
     <div>
       <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        최대 줄 수
+        {t('dashboard.settings.maxLines')}
       </label>
       <input
         type="number"
@@ -1137,134 +1189,134 @@ function LogsSection({
   );
 }
 
-/** 악센트 적용 요소 그룹 (디바이스 리모컨) */
-const ACCENT_ELEMENT_LABELS: Record<string, string> = {
-  _base: '전체 색상',
-  temperature: '온도 표시',
-  controls: '제어 버튼',
-  labels: '라벨/텍스트',
-  borders: '테두리/구분선',
-  indicators: '상태 표시',
+/** 악센트 적용 요소 그룹 (디바이스 리모컨) — 값은 i18n 키 */
+const ACCENT_ELEMENT_LABEL_KEYS: Record<string, string> = {
+  _base: 'dashboard.settings.accent.base',
+  temperature: 'dashboard.settings.accent.temperature',
+  controls: 'dashboard.settings.accent.controls',
+  labels: 'dashboard.settings.accent.labels',
+  borders: 'dashboard.settings.accent.borders',
+  indicators: 'dashboard.settings.accent.indicators',
 };
 
-/** 리스트 패널 (flows/agents/devices) 악센트 그룹 */
-const LIST_ACCENT_LABELS: Record<string, string> = {
-  _base: '전체 색상',
-  header: '타이틀',
-  badges: '요약 배지',
-  table: '테이블 헤더',
+/** 리스트 패널 (flows/agents/devices) 악센트 그룹 — 값은 i18n 키 */
+const LIST_ACCENT_LABEL_KEYS: Record<string, string> = {
+  _base: 'dashboard.settings.accent.base',
+  header: 'dashboard.settings.accent.header',
+  badges: 'dashboard.settings.accent.badges',
+  table: 'dashboard.settings.accent.table',
 };
 
-/** 리소스 패널 악센트 그룹 */
-const RESOURCE_ACCENT_LABELS: Record<string, string> = {
-  _base: '전체 색상',
-  header: '타이틀',
-  cpu: 'CPU 카드',
-  memory: '메모리 카드',
-  throughput: '처리량 카드',
-  errorRate: '에러율 카드',
+/** 리소스 패널 악센트 그룹 — 값은 i18n 키 */
+const RESOURCE_ACCENT_LABEL_KEYS: Record<string, string> = {
+  _base: 'dashboard.settings.accent.base',
+  header: 'dashboard.settings.accent.header',
+  cpu: 'dashboard.settings.accent.cpuCard',
+  memory: 'dashboard.settings.accent.memoryCard',
+  throughput: 'dashboard.settings.accent.throughputCard',
+  errorRate: 'dashboard.settings.accent.errorRateCard',
 };
 
-/** 로그 패널 악센트 그룹 */
-const LOG_ACCENT_LABELS: Record<string, string> = {
-  _base: '전체 색상',
-  header: '타이틀',
-  levels: '레벨 배지',
-  timestamp: '타임스탬프',
-  source: '소스 라벨',
+/** 로그 패널 악센트 그룹 — 값은 i18n 키 */
+const LOG_ACCENT_LABEL_KEYS: Record<string, string> = {
+  _base: 'dashboard.settings.accent.base',
+  header: 'dashboard.settings.accent.header',
+  levels: 'dashboard.settings.accent.levels',
+  timestamp: 'dashboard.settings.accent.timestamp',
+  source: 'dashboard.settings.accent.source',
 };
 
-/** 게이지 패널 악센트 그룹 */
-const GAUGE_ACCENT_LABELS: Record<string, string> = {
-  _base: '전체 색상',
-  header: '타이틀',
-  arc: '게이지 호',
-  value: '값 텍스트',
+/** 게이지 패널 악센트 그룹 — 값은 i18n 키 */
+const GAUGE_ACCENT_LABEL_KEYS: Record<string, string> = {
+  _base: 'dashboard.settings.accent.base',
+  header: 'dashboard.settings.accent.header',
+  arc: 'dashboard.settings.accent.arc',
+  value: 'dashboard.settings.accent.value',
 };
 
-/** 게이지 유형 메타 */
-const UNIT_OPTIONS: { label: string; units: { value: string; label: string }[] }[] = [
+/** 게이지 단위 옵션 — labelKey/unitLabelKey 는 i18n 키. 키가 없으면 value 를 그대로 표시. */
+const UNIT_OPTIONS: { labelKey: string; units: { value: string; labelKey?: string }[] }[] = [
   {
-    label: '비율',
+    labelKey: 'dashboard.settings.unitGroups.ratio',
     units: [
-      { value: '%', label: '% (퍼센트)' },
-      { value: '‰', label: '‰ (퍼밀)' },
+      { value: '%', labelKey: 'dashboard.settings.units.percent' },
+      { value: '‰', labelKey: 'dashboard.settings.units.permille' },
     ],
   },
   {
-    label: '온도',
+    labelKey: 'dashboard.settings.unitGroups.temperature',
     units: [
-      { value: '°C', label: '°C (섭씨)' },
-      { value: '°F', label: '°F (화씨)' },
-      { value: 'K', label: 'K (켈빈)' },
+      { value: '°C', labelKey: 'dashboard.settings.units.celsius' },
+      { value: '°F', labelKey: 'dashboard.settings.units.fahrenheit' },
+      { value: 'K', labelKey: 'dashboard.settings.units.kelvin' },
     ],
   },
   {
-    label: '전기',
+    labelKey: 'dashboard.settings.unitGroups.electric',
     units: [
-      { value: 'V', label: 'V (볼트)' },
-      { value: 'A', label: 'A (암페어)' },
-      { value: 'W', label: 'W (와트)' },
-      { value: 'kW', label: 'kW (킬로와트)' },
-      { value: 'kWh', label: 'kWh (킬로와트시)' },
-      { value: 'Ω', label: 'Ω (옴)' },
-      { value: 'Hz', label: 'Hz (헤르츠)' },
+      { value: 'V', labelKey: 'dashboard.settings.units.volt' },
+      { value: 'A', labelKey: 'dashboard.settings.units.ampere' },
+      { value: 'W', labelKey: 'dashboard.settings.units.watt' },
+      { value: 'kW', labelKey: 'dashboard.settings.units.kilowatt' },
+      { value: 'kWh', labelKey: 'dashboard.settings.units.kilowattHour' },
+      { value: 'Ω', labelKey: 'dashboard.settings.units.ohm' },
+      { value: 'Hz', labelKey: 'dashboard.settings.units.hertz' },
     ],
   },
   {
-    label: '압력/유량',
+    labelKey: 'dashboard.settings.unitGroups.pressureFlow',
     units: [
-      { value: 'Pa', label: 'Pa (파스칼)' },
-      { value: 'kPa', label: 'kPa' },
-      { value: 'bar', label: 'bar (바)' },
-      { value: 'psi', label: 'psi' },
-      { value: 'L/min', label: 'L/min (리터/분)' },
-      { value: 'm³/h', label: 'm³/h' },
+      { value: 'Pa', labelKey: 'dashboard.settings.units.pascal' },
+      { value: 'kPa' },
+      { value: 'bar', labelKey: 'dashboard.settings.units.bar' },
+      { value: 'psi' },
+      { value: 'L/min', labelKey: 'dashboard.settings.units.litersPerMin' },
+      { value: 'm³/h' },
     ],
   },
   {
-    label: '속도/회전',
+    labelKey: 'dashboard.settings.unitGroups.speedRotation',
     units: [
-      { value: 'm/s', label: 'm/s (미터/초)' },
-      { value: 'km/h', label: 'km/h' },
-      { value: 'rpm', label: 'rpm (회전/분)' },
+      { value: 'm/s', labelKey: 'dashboard.settings.units.meterPerSec' },
+      { value: 'km/h' },
+      { value: 'rpm', labelKey: 'dashboard.settings.units.rpm' },
     ],
   },
   {
-    label: '무게/부피',
+    labelKey: 'dashboard.settings.unitGroups.weightVolume',
     units: [
-      { value: 'kg', label: 'kg (킬로그램)' },
-      { value: 'L', label: 'L (리터)' },
-      { value: 'mL', label: 'mL (밀리리터)' },
+      { value: 'kg', labelKey: 'dashboard.settings.units.kilogram' },
+      { value: 'L', labelKey: 'dashboard.settings.units.liter' },
+      { value: 'mL', labelKey: 'dashboard.settings.units.milliliter' },
     ],
   },
   {
-    label: '길이',
+    labelKey: 'dashboard.settings.unitGroups.length',
     units: [
-      { value: 'mm', label: 'mm (밀리미터)' },
-      { value: 'cm', label: 'cm (센티미터)' },
-      { value: 'm', label: 'm (미터)' },
+      { value: 'mm', labelKey: 'dashboard.settings.units.millimeter' },
+      { value: 'cm', labelKey: 'dashboard.settings.units.centimeter' },
+      { value: 'm', labelKey: 'dashboard.settings.units.meter' },
     ],
   },
   {
-    label: '기타',
+    labelKey: 'dashboard.settings.unitGroups.etc',
     units: [
-      { value: 'dB', label: 'dB (데시벨)' },
-      { value: 'lux', label: 'lux (럭스)' },
-      { value: 'ppm', label: 'ppm' },
-      { value: '', label: '(없음)' },
+      { value: 'dB', labelKey: 'dashboard.settings.units.decibel' },
+      { value: 'lux', labelKey: 'dashboard.settings.units.lux' },
+      { value: 'ppm' },
+      { value: '', labelKey: 'dashboard.settings.units.none' },
     ],
   },
 ];
 
-const GAUGE_TYPE_META: { type: GaugeType; label: string; icon: string }[] = [
-  { type: 'simple', label: '심플', icon: 'O' },
-  { type: 'half', label: '반원', icon: 'U' },
-  { type: 'multi-ring', label: '멀티링', icon: '(O)' },
-  { type: 'needle', label: '니들', icon: '>' },
-  { type: 'needle-rainbow', label: '니들 RB', icon: '>>' },
-  { type: 'vertical-bar', label: '세로 바', icon: '|' },
-  { type: 'half-rainbow', label: '반원 RB', icon: 'U+' },
+const GAUGE_TYPE_META: { type: GaugeType; labelKey: string; icon: string }[] = [
+  { type: 'simple', labelKey: 'dashboard.settings.gaugeTypes.simple', icon: 'O' },
+  { type: 'half', labelKey: 'dashboard.settings.gaugeTypes.half', icon: 'U' },
+  { type: 'multi-ring', labelKey: 'dashboard.settings.gaugeTypes.multiRing', icon: '(O)' },
+  { type: 'needle', labelKey: 'dashboard.settings.gaugeTypes.needle', icon: '>' },
+  { type: 'needle-rainbow', labelKey: 'dashboard.settings.gaugeTypes.needleRainbow', icon: '>>' },
+  { type: 'vertical-bar', labelKey: 'dashboard.settings.gaugeTypes.verticalBar', icon: '|' },
+  { type: 'half-rainbow', labelKey: 'dashboard.settings.gaugeTypes.halfRainbow', icon: 'U+' },
 ];
 
 /** 데이터 소스 바인딩 */
@@ -1285,22 +1337,22 @@ interface DataSourceBinding {
   storeNamespace?: string;
 }
 
-/** 연속 컬러 테마 프리셋 */
+/** 연속 컬러 테마 프리셋 — labelKey 는 i18n 키 */
 const COLOR_THEME_PRESETS = [
-  { id: 'green-red', label: '초록-노랑-빨강', colors: ['#10b981', '#f59e0b', '#ef4444'] },
-  { id: 'blue-purple', label: '파랑-보라', colors: ['#3b82f6', '#8b5cf6', '#a855f7'] },
-  { id: 'cyan-blue', label: '시안-파랑', colors: ['#06b6d4', '#3b82f6', '#1e40af'] },
+  { id: 'green-red', labelKey: 'dashboard.settings.colorThemes.greenRed', colors: ['#10b981', '#f59e0b', '#ef4444'] },
+  { id: 'blue-purple', labelKey: 'dashboard.settings.colorThemes.bluePurple', colors: ['#3b82f6', '#8b5cf6', '#a855f7'] },
+  { id: 'cyan-blue', labelKey: 'dashboard.settings.colorThemes.cyanBlue', colors: ['#06b6d4', '#3b82f6', '#1e40af'] },
 ];
 
 /** 서브 속성용 색상 프리셋 (흰/검 포함) */
 const SUB_COLOR_PRESETS = ['#ffffff', '#000000', ...COLOR_PRESETS];
 
-/** 라운드 프리셋 */
+/** 라운드 프리셋 — labelKey 는 i18n 키 */
 const RADIUS_PRESETS = [
-  { value: '0', label: '각진' },
-  { value: '4', label: '약간' },
-  { value: '8', label: '보통' },
-  { value: '9999', label: '원형' },
+  { value: '0', labelKey: 'dashboard.settings.radiusPresets.sharp' },
+  { value: '4', labelKey: 'dashboard.settings.radiusPresets.small' },
+  { value: '8', labelKey: 'dashboard.settings.radiusPresets.medium' },
+  { value: '9999', labelKey: 'dashboard.settings.radiusPresets.round' },
 ];
 
 /** 서브 속성 색상 팔레트 행 */
@@ -1313,6 +1365,7 @@ function SubColorRow({
   color: string | undefined;
   onColorChange: (c: string | undefined) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div>
       <div className="mb-1 flex items-center gap-1.5">
@@ -1350,7 +1403,7 @@ function SubColorRow({
                 ? 'border-blue-500 bg-(--color-bg-surface) text-(--color-text-secondary)'
                 : 'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-muted)',
             )}
-            title="기본"
+            title={t('dashboard.settings.accent.default')}
           >
             <X className="h-2.5 w-2.5" />
           </button>
@@ -1382,19 +1435,22 @@ function SubColorRow({
 /** 범용 악센트 그룹 컨트롤 패널 — 체크박스 + 색상 팔레트 */
 function AccentGroupControls({
   selected,
-  labels,
+  labelKeys,
   accentElements,
   panelColor,
   onChange,
   onPanelColorChange,
 }: {
   selected: string;
-  labels: Record<string, string>;
+  labelKeys: Record<string, string>;
   accentElements: Record<string, string | boolean>;
   panelColor: string | undefined;
   onChange: (elements: Record<string, string | boolean>) => void;
   onPanelColorChange?: (color: string | undefined) => void;
 }) {
+  const { t } = useTranslation();
+  // 선택된 그룹의 표시 라벨 (키 → 번역)
+  const selectedLabel = labelKeys[selected] ? t(labelKeys[selected]!) : selected;
   // _base 그룹은 panelColor를 직접 제어
   const isBase = selected === '_base';
   const isEnabled = isBase ? true : accentElements[selected] !== false;
@@ -1433,25 +1489,25 @@ function AccentGroupControls({
     <div className="mt-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
       <div className="mb-2 flex items-center gap-2">
         {!isBase && <input type="checkbox" checked={isEnabled} onChange={toggle} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />}
-        <span className="text-sm font-medium text-(--color-text-primary)">{labels[selected]}</span>
+        <span className="text-sm font-medium text-(--color-text-primary)">{selectedLabel}</span>
         {isEnabled && hasSubProps ? (
           <div className="ml-auto flex gap-1">
-            {getSubProp('labels', 'bg') && <span className="h-3 w-3 rounded-sm border border-white/50" style={{ backgroundColor: getSubProp('labels', 'bg') }} title="배경" />}
-            {getSubProp('labels', 'text') && <span className="h-3 w-3 rounded-sm border border-white/50" style={{ backgroundColor: getSubProp('labels', 'text') }} title="글자" />}
+            {getSubProp('labels', 'bg') && <span className="h-3 w-3 rounded-sm border border-white/50" style={{ backgroundColor: getSubProp('labels', 'bg') }} title={t('dashboard.settings.accent.background')} />}
+            {getSubProp('labels', 'text') && <span className="h-3 w-3 rounded-sm border border-white/50" style={{ backgroundColor: getSubProp('labels', 'text') }} title={t('dashboard.settings.accent.text')} />}
           </div>
         ) : isEnabled && gc ? (
           <span className="ml-auto h-3.5 w-3.5 rounded-full border border-white/50" style={{ backgroundColor: gc }} />
         ) : isEnabled ? (
-          <span className="ml-auto text-[10px] text-(--color-text-muted)">패널 색상</span>
+          <span className="ml-auto text-[10px] text-(--color-text-muted)">{t('dashboard.settings.accent.panelColor')}</span>
         ) : null}
       </div>
 
       {isEnabled && hasSubProps ? (
         <div className="space-y-3">
-          <SubColorRow label="배경" color={getSubProp('labels', 'bg')} onColorChange={(c) => setSubProp('labels', 'bg', c)} />
-          <SubColorRow label="글자" color={getSubProp('labels', 'text')} onColorChange={(c) => setSubProp('labels', 'text', c)} />
+          <SubColorRow label={t('dashboard.settings.accent.background')} color={getSubProp('labels', 'bg')} onColorChange={(c) => setSubProp('labels', 'bg', c)} />
+          <SubColorRow label={t('dashboard.settings.accent.text')} color={getSubProp('labels', 'text')} onColorChange={(c) => setSubProp('labels', 'text', c)} />
           <div>
-            <span className="mb-1 block text-[11px] text-(--color-text-muted)">라운드</span>
+            <span className="mb-1 block text-[11px] text-(--color-text-muted)">{t('dashboard.settings.accent.radius')}</span>
             <div className="flex gap-1">
               {RADIUS_PRESETS.map((r) => (
                 <button key={r.value} type="button"
@@ -1459,7 +1515,7 @@ function AccentGroupControls({
                   className={cn('rounded px-2.5 py-1 text-[11px] font-medium transition-colors',
                     getSubProp('labels', 'radius') === r.value ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
                       : 'bg-(--color-bg-surface) text-(--color-text-secondary) hover:bg-(--color-bg-surface)/80')}
-                >{r.label}</button>
+                >{t(r.labelKey)}</button>
               ))}
             </div>
           </div>
@@ -1470,14 +1526,14 @@ function AccentGroupControls({
             {COLOR_PRESETS.map((color) => (
               <button key={color} type="button" onClick={() => setColor(color)}
                 className="relative h-5 w-5 rounded-full transition-transform hover:scale-110"
-                style={{ backgroundColor: color }} aria-label={`${labels[selected]} ${color}`}>
+                style={{ backgroundColor: color }} aria-label={`${selectedLabel} ${color}`}>
                 {gc === color && <Check className="absolute inset-0 m-auto h-3 w-3 text-white drop-shadow" />}
               </button>
             ))}
             <button type="button" onClick={() => setColor(undefined)}
               className={cn('flex h-5 w-5 items-center justify-center rounded-full border-2 transition-transform hover:scale-110',
                 !gc ? 'border-blue-500 bg-(--color-bg-surface) text-(--color-text-secondary)' : 'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-muted)')}
-              title="패널 색상"><X className="h-2.5 w-2.5" /></button>
+              title={t('dashboard.settings.accent.panelColor')}><X className="h-2.5 w-2.5" /></button>
           </div>
           <div className="flex items-center gap-1.5">
             <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-(--color-bg-elevated) transition-colors hover:bg-(--color-border-default)">
@@ -1507,6 +1563,7 @@ function GaugeSection({
   panel: PanelConfig;
   onConfigChange: (config: Record<string, unknown>) => void;
 }) {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const gaugeType = (config.gaugeType as GaugeType) ?? 'simple';
   const min = (config.min as number) ?? 0;
@@ -1516,9 +1573,9 @@ function GaugeSection({
   const colorMode = (config.colorMode as 'individual' | 'continuous') ?? 'individual';
   const colorTheme = (config.colorTheme as string) ?? 'green-red';
   const thresholds = (config.thresholds as { name: string; color: string; from: number; to: number }[]) ?? [
-    { name: '정상', color: '#10b981', from: 0, to: 60 },
-    { name: '주의', color: '#f59e0b', from: 60, to: 80 },
-    { name: '위험', color: '#ef4444', from: 80, to: 100 },
+    { name: t('dashboard.settings.gaugeSection.thresholdNormal'), color: '#10b981', from: 0, to: 60 },
+    { name: t('dashboard.settings.gaugeSection.thresholdCaution'), color: '#f59e0b', from: 60, to: 80 },
+    { name: t('dashboard.settings.gaugeSection.thresholdDanger'), color: '#ef4444', from: 80, to: 100 },
   ];
 
   // 플로우 목록 (데이터 소스 선택용)
@@ -1593,10 +1650,10 @@ function GaugeSection({
       {/* A. 게이지 유형 */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          게이지 유형
+          {t('dashboard.settings.gaugeSection.type')}
         </label>
         <div className="grid grid-cols-4 gap-1">
-          {GAUGE_TYPE_META.map(({ type, label }) => (
+          {GAUGE_TYPE_META.map(({ type, labelKey }) => (
             <button
               key={type}
               type="button"
@@ -1609,7 +1666,7 @@ function GaugeSection({
               )}
             >
               <GaugeTypeIcon type={type} size={18} active={gaugeType === type} />
-              <span className="leading-tight">{label}</span>
+              <span className="leading-tight">{t(labelKey)}</span>
             </button>
           ))}
         </div>
@@ -1618,7 +1675,7 @@ function GaugeSection({
       {/* B. 값 범위 */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          값 범위
+          {t('dashboard.settings.gaugeSection.valueRange')}
         </label>
         <div className="flex items-center gap-2">
           <input
@@ -1628,7 +1685,7 @@ function GaugeSection({
             onBlur={commitRange}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2.5 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            placeholder="최소"
+            placeholder={t('dashboard.settings.gaugeSection.min')}
           />
           <span className="shrink-0 text-xs text-(--color-text-muted)">~</span>
           <input
@@ -1638,7 +1695,7 @@ function GaugeSection({
             onBlur={commitRange}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2.5 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            placeholder="최대"
+            placeholder={t('dashboard.settings.gaugeSection.max')}
           />
         </div>
       </div>
@@ -1646,7 +1703,7 @@ function GaugeSection({
       {/* C. 단위 */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          단위
+          {t('dashboard.settings.gaugeSection.unit')}
         </label>
         <div className="flex gap-2">
           <select
@@ -1660,13 +1717,13 @@ function GaugeSection({
             className="flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
           >
             {UNIT_OPTIONS.map((group) => (
-              <optgroup key={group.label} label={group.label}>
+              <optgroup key={group.labelKey} label={t(group.labelKey)}>
                 {group.units.map((u) => (
-                  <option key={u.value} value={u.value}>{u.label}</option>
+                  <option key={u.value} value={u.value}>{u.labelKey ? t(u.labelKey) : u.value}</option>
                 ))}
               </optgroup>
             ))}
-            <option value="__custom__">커스텀</option>
+            <option value="__custom__">{t('dashboard.settings.gaugeSection.custom')}</option>
           </select>
           <input
             type="text"
@@ -1675,7 +1732,7 @@ function GaugeSection({
             onBlur={() => { if (unitDraft !== unit) onConfigChange({ unit: unitDraft }); }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             className="w-20 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
-            placeholder="직접 입력"
+            placeholder={t('dashboard.settings.gaugeSection.customInput')}
           />
         </div>
       </div>
@@ -1683,7 +1740,7 @@ function GaugeSection({
       {/* D. 값 지정 (데이터 소스) */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          값 지정
+          {t('dashboard.settings.gaugeSection.valueBinding')}
         </label>
         <div className="space-y-1.5">
           {dataSources.map((ds, idx) => (
@@ -1708,10 +1765,10 @@ function GaugeSection({
                   data-testid={`gauge-source-type-${idx}`}
                   className="w-[72px] shrink-0 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
                 >
-                  <option value="resource">리소스</option>
-                  <option value="flow">플로우</option>
-                  <option value="chart-emitter">차트 채널</option>
-                  <option value="store">Store</option>
+                  <option value="resource">{t('dashboard.settings.gaugeSection.sourceResource')}</option>
+                  <option value="flow">{t('dashboard.settings.gaugeSection.sourceFlow')}</option>
+                  <option value="chart-emitter">{t('dashboard.settings.gaugeSection.sourceChart')}</option>
+                  <option value="store">{t('dashboard.settings.gaugeSection.sourceStore')}</option>
                 </select>
                 {ds.sourceType === 'resource' && (
                   <select
@@ -1719,8 +1776,8 @@ function GaugeSection({
                     onChange={(e) => updateDataSource(idx, { resource: e.target.value })}
                     className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
                   >
-                    <option value="cpu">CPU 사용률</option>
-                    <option value="memory">메모리 사용률</option>
+                    <option value="cpu">{t('dashboard.settings.gaugeSection.resourceCpu')}</option>
+                    <option value="memory">{t('dashboard.settings.gaugeSection.resourceMemory')}</option>
                   </select>
                 )}
                 {ds.sourceType === 'flow' && (
@@ -1729,7 +1786,7 @@ function GaugeSection({
                     onChange={(e) => updateDataSource(idx, { flowId: e.target.value || undefined })}
                     className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
                   >
-                    <option value="">플로우 선택</option>
+                    <option value="">{t('dashboard.settings.gaugeSection.selectFlow')}</option>
                     {flows.map((f) => (
                       <option key={f.id} value={f.id}>{f.name || f.id}</option>
                     ))}
@@ -1742,7 +1799,7 @@ function GaugeSection({
                     data-testid={`gauge-channel-select-${idx}`}
                     className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
                   >
-                    <option value="">채널 선택</option>
+                    <option value="">{t('dashboard.settings.gaugeSection.selectChannel')}</option>
                     {chartChannels.map((c) => (
                       <option key={c.name} value={c.name}>
                         {c.name}
@@ -1750,7 +1807,7 @@ function GaugeSection({
                     ))}
                     {/* 현재 저장된 채널이 목록에 없으면 (비활성 등) 선택 상태 유지 */}
                     {ds.channelName && !chartChannels.some((c) => c.name === ds.channelName) && (
-                      <option value={ds.channelName}>{ds.channelName} (비활성)</option>
+                      <option value={ds.channelName}>{t('dashboard.settings.gaugeSection.channelInactive').replace('{name}', ds.channelName)}</option>
                     )}
                   </select>
                 )}
@@ -1765,7 +1822,7 @@ function GaugeSection({
                     type="button"
                     onClick={() => removeDataSource(idx)}
                     className="shrink-0 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-red-500"
-                    aria-label="데이터 소스 삭제"
+                    aria-label={t('dashboard.settings.gaugeSection.deleteSourceAria')}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -1777,7 +1834,7 @@ function GaugeSection({
                   type="text"
                   value={ds.displayField ?? ''}
                   onChange={(e) => updateDataSource(idx, { displayField: e.target.value || undefined })}
-                  placeholder="표시 필드 (기본 value, dot-path 지원 예: labels.temp)"
+                  placeholder={t('dashboard.settings.gaugeSection.displayFieldPlaceholder')}
                   data-testid={`gauge-display-field-${idx}`}
                   className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
                 />
@@ -1791,7 +1848,7 @@ function GaugeSection({
               className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
             >
               <Plus className="h-3 w-3" />
-              데이터 소스 추가
+              {t('dashboard.settings.gaugeSection.addSource')}
             </button>
           )}
         </div>
@@ -1800,7 +1857,7 @@ function GaugeSection({
       {/* E. 임계값 및 컬러 설정 */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          임계값 및 컬러
+          {t('dashboard.settings.gaugeSection.thresholdAndColor')}
         </label>
         {/* 모드 토글 */}
         <div className="mb-2 flex gap-1">
@@ -1814,7 +1871,7 @@ function GaugeSection({
                 : 'bg-(--color-bg-elevated) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80',
             )}
           >
-            개별 지정
+            {t('dashboard.settings.gaugeSection.modeIndividual')}
           </button>
           <button
             type="button"
@@ -1826,7 +1883,7 @@ function GaugeSection({
                 : 'bg-(--color-bg-elevated) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80',
             )}
           >
-            연속 컬러
+            {t('dashboard.settings.gaugeSection.modeContinuous')}
           </button>
         </div>
 
@@ -1849,42 +1906,42 @@ function GaugeSection({
             className="h-4 w-4 rounded border-(--color-border-default) text-blue-600 focus:ring-blue-500"
             data-testid="gauge-show-threshold-zones"
           />
-          <span>임계값 영역 표시 (파이)</span>
+          <span>{t('dashboard.settings.gaugeSection.showThresholdZones')}</span>
         </label>
 
         {colorMode === 'individual' ? (
           <div className="space-y-1.5">
-            {thresholds.map((t, idx) => (
+            {thresholds.map((th, idx) => (
               <div key={idx} className="flex w-full items-center gap-1.5">
                 <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
                   <span
                     className="h-4 w-4 rounded-sm border border-gray-200 dark:border-gray-600"
-                    style={{ backgroundColor: t.color }}
+                    style={{ backgroundColor: th.color }}
                   />
                   <input
                     type="color"
-                    value={t.color}
+                    value={th.color}
                     onChange={(e) => updateThreshold(idx, { color: e.target.value })}
                     className="absolute inset-0 cursor-pointer opacity-0"
                   />
                 </label>
                 <input
                   type="text"
-                  value={t.name}
+                  value={th.name}
                   onChange={(e) => updateThreshold(idx, { name: e.target.value })}
-                  placeholder="이름"
+                  placeholder={t('dashboard.settings.gaugeSection.thresholdNamePlaceholder')}
                   className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
                 />
                 <input
                   type="number"
-                  value={t.from}
+                  value={th.from}
                   onChange={(e) => updateThreshold(idx, { from: parseFloat(e.target.value) || 0 })}
                   className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
                 />
                 <span className="shrink-0 text-[10px] text-(--color-text-muted)">~</span>
                 <input
                   type="number"
-                  value={t.to}
+                  value={th.to}
                   onChange={(e) => updateThreshold(idx, { to: parseFloat(e.target.value) || 0 })}
                   className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
                 />
@@ -1892,7 +1949,7 @@ function GaugeSection({
                   type="button"
                   onClick={() => removeThreshold(idx)}
                   className="shrink-0 rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500"
-                  aria-label="임계값 삭제"
+                  aria-label={t('dashboard.settings.gaugeSection.deleteThresholdAria')}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -1904,7 +1961,7 @@ function GaugeSection({
               className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
             >
               <Plus className="h-3 w-3" />
-              임계값 추가
+              {t('dashboard.settings.gaugeSection.addThreshold')}
             </button>
           </div>
         ) : (
@@ -1926,7 +1983,7 @@ function GaugeSection({
                     <span key={i} className="h-3 w-3 rounded-full" style={{ backgroundColor: c }} />
                   ))}
                 </div>
-                <span className="text-[9px] text-(--color-text-muted) leading-tight">{theme.label}</span>
+                <span className="text-[9px] text-(--color-text-muted) leading-tight">{t(theme.labelKey)}</span>
               </button>
             ))}
           </div>
@@ -2008,6 +2065,7 @@ function StoreSourceSelector({
   ds: DataSourceBinding;
   onChange: (patch: Partial<DataSourceBinding>) => void;
 }) {
+  const { t } = useTranslation();
   const { data: agentsResult } = useAgents();
   const storeAgents = useMemo(
     () => (agentsResult?.data ?? []).filter((a) => a.type === 'store'),
@@ -2046,7 +2104,7 @@ function StoreSourceSelector({
           onChange={(e) => onChange({ storeAgent: e.target.value || undefined, storeKey: undefined })}
           className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
         >
-          <option value="">Store 선택</option>
+          <option value="">{t('dashboard.settings.gaugeSection.selectStore')}</option>
           {storeAgents.map((a: { name: string }) => (
             <option key={a.name} value={a.name}>{a.name}</option>
           ))}
@@ -2058,13 +2116,17 @@ function StoreSourceSelector({
           className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500 disabled:opacity-60"
         >
           <option value="">
-            {keysLoading ? '로딩...' : keys.length === 0 ? '키 없음' : '키 선택'}
+            {keysLoading
+              ? t('dashboard.settings.gaugeSection.keyLoading')
+              : keys.length === 0
+                ? t('dashboard.settings.gaugeSection.keyEmpty')
+                : t('dashboard.settings.gaugeSection.selectKey')}
           </option>
           {keys.map((k) => (
             <option key={k} value={k}>{k}</option>
           ))}
           {ds.storeKey && !keys.includes(ds.storeKey) && (
-            <option value={ds.storeKey}>{ds.storeKey} (현재)</option>
+            <option value={ds.storeKey}>{t('dashboard.settings.gaugeSection.keyCurrent').replace('{key}', ds.storeKey)}</option>
           )}
         </select>
       </div>
@@ -2073,6 +2135,7 @@ function StoreSourceSelector({
 }
 
 function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const min = (config.min as number) ?? 0;
   const max = (config.max as number) ?? 100;
@@ -2086,7 +2149,7 @@ function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
       style={{ overflow: 'hidden' }}
     >
       <span className="mb-1 text-center text-[10px] font-medium text-(--color-text-muted)">
-        미리보기 (샘플: {sampleValue})
+        {t('dashboard.settings.gaugeSection.previewSample').replace('{value}', String(sampleValue))}
       </span>
       <div className="min-h-0 flex-1">
         <GaugePanel
@@ -2116,6 +2179,7 @@ const PREVIEW_FALLBACK_PALETTE = [
 ];
 
 function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const rawChannels = config.channels as ChannelRefConfig[] | undefined;
   const channels = useMemo(() => rawChannels ?? [], [rawChannels]);
@@ -2127,6 +2191,18 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
   const xLabel = (config.x_label as string | undefined) ?? '';
   const yLabel = (config.y_label as string | undefined) ?? '';
   const yUnit = (config.y_unit as string | undefined) ?? '';
+  const xTickFont = resolveAxisFont(config.x_tick_font as AxisFontStyle | undefined);
+  const xLabelFont = resolveAxisFont(config.x_label_font as AxisFontStyle | undefined);
+  const yTickFont = resolveAxisFont(config.y_tick_font as AxisFontStyle | undefined);
+  const yLabelFont = resolveAxisFont(config.y_label_font as AxisFontStyle | undefined);
+  const yAxisType = (config.y_axis_type as YAxisDataType | undefined) ?? 'numeric';
+  const rawEnumLabels = config.y_enum_labels as YEnumLabel[] | undefined;
+  const enumMap = useMemo(() => buildEnumLabelMap(rawEnumLabels), [rawEnumLabels]);
+  const enumMode = yAxisType === 'enum' && enumMap.size > 0;
+  const enumTicks = useMemo(
+    () => (enumMode ? [...enumMap.keys()].sort((a, b) => a - b) : undefined),
+    [enumMode, enumMap],
+  );
   const rawThresholds = config.y_thresholds as YThreshold[] | undefined;
   const thresholds = useMemo(() => rawThresholds ?? [], [rawThresholds]);
   const channelName = (config.channel_name as string | undefined) ?? '';
@@ -2136,7 +2212,7 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
   const series = useMemo(() => {
     if (isMultiMode) {
       return channels.map((c, i) => ({
-        key: c.alias ?? (c.name || `채널 ${i + 1}`),
+        key: c.alias ?? (c.name || t('dashboard.settings.preview.channelFallback').replace('{index}', String(i + 1))),
         color: c.color ?? PREVIEW_FALLBACK_PALETTE[i % PREVIEW_FALLBACK_PALETTE.length]!,
         smooth: c.smooth ?? globalSmooth,
         strokeWidth: c.stroke_width ?? 2,
@@ -2144,17 +2220,29 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
       }));
     }
     return [{
-      key: channelName || '샘플',
+      key: channelName || t('dashboard.settings.preview.sample'),
       color: PREVIEW_FALLBACK_PALETTE[0]!,
       smooth: globalSmooth,
       strokeWidth: 2,
       strokeDasharray: '',
     }];
-  }, [isMultiMode, channels, channelName, globalSmooth]);
+  }, [isMultiMode, channels, channelName, globalSmooth, t]);
 
   const data = useMemo(() => {
     const points = 30;
     const rows: Array<Record<string, number>> = [];
+    // 열거형 미리보기: 각 시리즈가 매핑된 값들을 계단식으로 순회하도록 합성한다.
+    if (enumMode && enumTicks && enumTicks.length > 0) {
+      for (let i = 0; i < points; i++) {
+        const row: Record<string, number> = { t: i };
+        series.forEach((s, idx) => {
+          const step = Math.floor(i / Math.max(1, Math.floor(points / enumTicks.length)));
+          row[s.key] = enumTicks[(step + idx) % enumTicks.length]!;
+        });
+        rows.push(row);
+      }
+      return rows;
+    }
     for (let i = 0; i < points; i++) {
       const row: Record<string, number> = { t: i };
       series.forEach((s, idx) => {
@@ -2164,15 +2252,18 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
       rows.push(row);
     }
     return rows;
-  }, [series]);
+  }, [series, enumMode, enumTicks]);
 
   const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
+    if (enumMode && enumTicks && enumTicks.length > 0) {
+      return [enumTicks[0]! - 0.5, enumTicks[enumTicks.length - 1]! + 0.5];
+    }
     if (yAxisMode === 'manual') return [yMin ?? 'auto', yMax ?? 'auto'];
     return [0, 100];
-  }, [yAxisMode, yMin, yMax]);
+  }, [enumMode, enumTicks, yAxisMode, yMin, yMax]);
 
   const yAxisLabel = yLabel || yUnit
-    ? { value: [yLabel, yUnit].filter(Boolean).join(' '), angle: -90, position: 'insideLeft' as const, style: { fontSize: 10, fill: '#9ca3af' } }
+    ? { value: [yLabel, yUnit].filter(Boolean).join(' '), angle: -90, position: 'insideLeft' as const, style: { fontSize: yLabelFont.fontSize, fill: yLabelFont.fill, fontWeight: yLabelFont.fontWeight } }
     : undefined;
 
   return (
@@ -2181,10 +2272,10 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
     >
       <div className="mb-1 flex items-center justify-between">
         <span className="text-[10px] font-medium text-(--color-text-muted)">
-          미리보기
+          {t('dashboard.settings.preview.label')}
         </span>
         <span className="text-[10px] text-(--color-text-muted)">
-          {isMultiMode ? `${channels.length}개 채널` : channelName || '채널 미지정'}
+          {isMultiMode ? t('dashboard.settings.preview.channelCount').replace('{count}', String(channels.length)) : channelName || t('dashboard.settings.preview.channelUnset')}
         </span>
       </div>
       <div className="min-h-0 flex-1">
@@ -2193,19 +2284,37 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
               dataKey="t"
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: xTickFont.fontSize, fill: xTickFont.fill, fontWeight: xTickFont.fontWeight }}
               stroke="#9ca3af"
-              label={xLabel ? { value: xLabel, position: 'insideBottomRight', offset: -4, style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
+              height={xLabel ? 40 : undefined}
+              label={xLabel ? { value: xLabel, position: 'insideBottom', offset: 6, style: { textAnchor: 'middle', fontSize: xLabelFont.fontSize, fill: xLabelFont.fill, fontWeight: xLabelFont.fontWeight } } : undefined}
             />
             <YAxis
               domain={yDomain}
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: yTickFont.fontSize, fill: yTickFont.fill, fontWeight: yTickFont.fontWeight }}
               stroke="#9ca3af"
               width={yAxisLabel ? 48 : 36}
               label={yAxisLabel}
-              tickFormatter={yUnit ? (v: number) => `${v}${yUnit}` : undefined}
+              ticks={enumMode ? enumTicks : undefined}
+              tickFormatter={
+                enumMode
+                  ? (v: number) => formatEnumValue(v, enumMap)
+                  : yUnit
+                    ? (v: number) => `${v}${yUnit}`
+                    : undefined
+              }
             />
-            <Tooltip contentStyle={{ fontSize: '0.7rem' }} />
+            <Tooltip
+              contentStyle={{ fontSize: '0.7rem' }}
+              formatter={
+                enumMode
+                  ? (value, name) => [
+                      typeof value === 'number' ? formatEnumValue(value, enumMap) : value,
+                      name,
+                    ]
+                  : undefined
+              }
+            />
             {series.length > 1 && (
               <Legend
                 wrapperStyle={{ fontSize: '0.7rem' }}
@@ -2265,6 +2374,7 @@ function NasaMiniPreview({
   getSubProp: (group: string, prop: string) => string | undefined;
   panelColor: string | undefined;
 }) {
+  const { t } = useTranslation();
   const zoneClass = (group: string, extra?: string) =>
     cn(
       'cursor-pointer transition-all relative',
@@ -2309,24 +2419,24 @@ function NasaMiniPreview({
         className={zoneClass('_base', 'flex items-center gap-1.5 px-3 py-1')}
         onClick={() => onSelectGroup('_base')}
       >
-        {tag('_base', '전체 색상')}
+        {tag('_base', t('dashboard.settings.preview.tagBase'))}
         <span
           className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
           style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }}
         />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? '기본'}</span>
+        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
       </div>
 
       {/* 헤더: 아이콘+타이틀 | 상태뱃지+전원 — indicators */}
       <div className={zoneClass('indicators')} onClick={() => onSelectGroup('indicators')}>
-        {tag('indicators', '상태 표시')}
+        {tag('indicators', t('dashboard.settings.preview.tagIndicators'))}
         <div className="flex items-center justify-between px-3 py-1.5">
           <div className="flex items-center gap-1.5">
             <Snowflake
               className="h-3.5 w-3.5 text-blue-500"
               style={effectiveColor('indicators') ? { color: effectiveColor('indicators')! } : undefined}
             />
-            <span className="text-[11px] font-bold text-(--color-text-primary)">living-room</span>
+            <span className="text-[11px] font-bold text-(--color-text-primary)">{t('dashboard.settings.preview.livingRoom')}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span
@@ -2334,7 +2444,7 @@ function NasaMiniPreview({
               style={effectiveColor('indicators') ? { color: effectiveColor('indicators')!, backgroundColor: `${effectiveColor('indicators')}15` } : undefined}
             >
               <span className="h-1 w-1 rounded-full bg-blue-500" style={effectiveColor('indicators') ? { backgroundColor: effectiveColor('indicators')! } : undefined} />
-              가동 중
+              {t('dashboard.settings.preview.operating')}
             </span>
             <span
               className="flex h-5 w-5 items-center justify-center rounded-md bg-blue-500 text-white"
@@ -2348,7 +2458,7 @@ function NasaMiniPreview({
 
       {/* 현재 온도 — temperature */}
       <div className={zoneClass('temperature')} onClick={() => onSelectGroup('temperature')}>
-        {tag('temperature', '온도 표시')}
+        {tag('temperature', t('dashboard.settings.preview.tagTemperature'))}
         <div className="flex flex-col items-center py-2">
           <div className="flex items-end">
             <span
@@ -2363,13 +2473,13 @@ function NasaMiniPreview({
           <span
             className="text-[9px] text-blue-300"
             style={effectiveColor('temperature') ? { color: `${effectiveColor('temperature')}60` } : undefined}
-          >현재 온도</span>
+          >{t('dashboard.settings.preview.currentTemp')}</span>
         </div>
         {/* 설정 온도 */}
         <div className="flex items-center justify-center gap-1.5 pb-2">
           <Thermometer className="h-3 w-3 text-(--color-text-muted)" style={effectiveColor('temperature') ? { color: effectiveColor('temperature')! } : undefined} />
           <span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-(--color-bg-elevated)"><Minus className="h-2.5 w-2.5 text-(--color-text-muted)" /></span>
-          <span className="text-[10px] font-semibold text-(--color-text-primary)">설정 24°C</span>
+          <span className="text-[10px] font-semibold text-(--color-text-primary)">{t('dashboard.settings.preview.setLabel')}</span>
           <span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-(--color-bg-elevated)"><Plus className="h-2.5 w-2.5 text-(--color-text-muted)" /></span>
         </div>
       </div>
@@ -2378,14 +2488,14 @@ function NasaMiniPreview({
 
       {/* 모드 선택 (5버튼) — labels */}
       <div className={zoneClass('labels')} onClick={() => onSelectGroup('labels')}>
-        {tag('labels', '모드/라벨')}
+        {tag('labels', t('dashboard.settings.preview.tagModeLabel'))}
         <div className="flex gap-1 px-3 py-2">
           {[
-            { label: '냉방', icon: <Snowflake className="h-3 w-3" />, active: true },
-            { label: '난방', active: false },
-            { label: '자동', active: false },
-            { label: '제습', active: false },
-            { label: '팬', active: false },
+            { label: t('dashboard.settings.preview.modeCooling'), icon: <Snowflake className="h-3 w-3" />, active: true },
+            { label: t('dashboard.settings.preview.modeHeating'), active: false },
+            { label: t('dashboard.settings.preview.modeAuto'), active: false },
+            { label: t('dashboard.settings.preview.modeDehumidify'), active: false },
+            { label: t('dashboard.settings.preview.modeFan'), active: false },
           ].map(({ label, icon, active }) => (
             <span
               key={label}
@@ -2411,7 +2521,7 @@ function NasaMiniPreview({
 
       {/* 풍량 — controls */}
       <div className={zoneClass('controls')} onClick={() => onSelectGroup('controls')}>
-        {tag('controls', '제어 버튼')}
+        {tag('controls', t('dashboard.settings.preview.tagControls'))}
         <div className="flex items-center gap-1.5 px-3 py-1.5">
           <Fan
             className="h-3 w-3 shrink-0 text-blue-600"
@@ -2420,8 +2530,8 @@ function NasaMiniPreview({
           <span
             className="text-[10px] font-semibold text-blue-600"
             style={effectiveColor('controls') ? { color: effectiveColor('controls')! } : undefined}
-          >풍량</span>
-          {['자동', '약', '중', '강'].map((s, i) => (
+          >{t('dashboard.settings.preview.airflow')}</span>
+          {[t('dashboard.settings.preview.fanAuto'), t('dashboard.settings.preview.fanLow'), t('dashboard.settings.preview.fanMid'), t('dashboard.settings.preview.fanHigh')].map((s, i) => (
             <span
               key={s}
               className={cn(
@@ -2448,10 +2558,10 @@ function NasaMiniPreview({
             style={effectiveColor('indicators') ? { color: effectiveColor('indicators')! } : undefined}
           >
             <ArrowUpDown className="h-3 w-3" />
-            스윙 ON
+            {t('dashboard.settings.preview.swingOn')}
           </span>
           <span className="flex items-center gap-0.5 text-[10px] text-amber-500">
-            필터 정상
+            {t('dashboard.settings.preview.filterNormal')}
           </span>
         </div>
       </div>
@@ -2473,32 +2583,37 @@ function ListMiniPreview({
   panelColor: string | undefined;
   variant: 'flows' | 'agents' | 'devices';
 }) {
+  const { t } = useTranslation();
   const zone = (group: string, extra?: string) =>
     cn('cursor-pointer transition-all relative',
       selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
   const tag = (group: string, label: string) =>
     selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
 
-  const titles = { flows: '플로우 현황', agents: '에이전트 현황', devices: '디바이스 목록' };
+  const titles = {
+    flows: t('dashboard.settings.preview.flowsTitle'),
+    agents: t('dashboard.settings.preview.agentsTitle'),
+    devices: t('dashboard.settings.preview.devicesTitle'),
+  };
   const badgeLabels = variant === 'flows'
-    ? [{ l: '실행중 3', c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }, { l: '중지 2', c: 'bg-gray-100 text-gray-500 dark:bg-gray-700/30 dark:text-gray-400' }]
+    ? [{ l: t('dashboard.settings.preview.flowsRunning'), c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }, { l: t('dashboard.settings.preview.flowsStopped'), c: 'bg-gray-100 text-gray-500 dark:bg-gray-700/30 dark:text-gray-400' }]
     : variant === 'agents'
-    ? [{ l: '전체 5', c: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' }, { l: '활성 3', c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }]
-    : [{ l: '전체 8', c: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' }, { l: '온라인 6', c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }];
+    ? [{ l: t('dashboard.settings.preview.agentsTotal'), c: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' }, { l: t('dashboard.settings.preview.agentsActive'), c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }]
+    : [{ l: t('dashboard.settings.preview.devicesTotal'), c: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' }, { l: t('dashboard.settings.preview.devicesOnline'), c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }];
 
   return (
     <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 - _base */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', '전체 색상')}
+        {tag('_base', t('dashboard.settings.preview.tagBase'))}
         <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
           style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? '기본'}</span>
+        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
       {/* 타이틀 */}
       <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', '타이틀')}
+        {tag('header', t('dashboard.settings.preview.tagHeader'))}
         <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
           {titles[variant]}
         </span>
@@ -2506,7 +2621,7 @@ function ListMiniPreview({
       <div className="border-t border-gray-100 dark:border-gray-700" />
       {/* 요약 배지 */}
       <div className={zone('badges', 'flex gap-1.5 px-3 py-2')} onClick={() => onSelectGroup('badges')}>
-        {tag('badges', '배지')}
+        {tag('badges', t('dashboard.settings.preview.tagBadges'))}
         {badgeLabels.map((b) => (
           <span key={b.l} className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-medium', b.c)}
             style={effectiveColor('badges') ? { backgroundColor: `${effectiveColor('badges')}20`, color: effectiveColor('badges')! } : undefined}>
@@ -2517,21 +2632,21 @@ function ListMiniPreview({
       <div className="border-t border-gray-100 dark:border-gray-700" />
       {/* 테이블 헤더 */}
       <div className={zone('table', 'px-3 py-2')} onClick={() => onSelectGroup('table')}>
-        {tag('table', '헤더')}
+        {tag('table', t('dashboard.settings.preview.tagTableHeader'))}
         <div className="flex gap-4 text-[10px] font-medium uppercase tracking-wider text-(--color-text-muted)"
           style={effectiveColor('table') ? { color: effectiveColor('table')! } : undefined}>
-          <span className="flex-1">이름</span><span>상태</span><span>업데이트</span>
+          <span className="flex-1">{t('dashboard.settings.preview.colName')}</span><span>{t('dashboard.settings.preview.colStatus')}</span><span>{t('dashboard.settings.preview.colUpdated')}</span>
         </div>
       </div>
       {/* 더미 행 */}
       <div className="border-t border-gray-100 px-3 py-1.5 dark:border-gray-700">
         <div className="flex gap-4 text-[10px] text-(--color-text-muted)">
-          <span className="flex-1 text-blue-500">sample-1</span><span>●</span><span>2분 전</span>
+          <span className="flex-1 text-blue-500">sample-1</span><span>●</span><span>{t('dashboard.settings.preview.ago2min')}</span>
         </div>
       </div>
       <div className="border-t border-gray-100 px-3 py-1.5 dark:border-gray-700">
         <div className="flex gap-4 text-[10px] text-(--color-text-muted)">
-          <span className="flex-1 text-blue-500">sample-2</span><span>○</span><span>5분 전</span>
+          <span className="flex-1 text-blue-500">sample-2</span><span>○</span><span>{t('dashboard.settings.preview.ago5min')}</span>
         </div>
       </div>
     </div>
@@ -2553,6 +2668,7 @@ function GridMiniPreview({
   panelColor: string | undefined;
   gridCols: number;
 }) {
+  const { t } = useTranslation();
   const zone = (group: string, extra?: string) =>
     cn('cursor-pointer transition-all relative',
       selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
@@ -2560,12 +2676,12 @@ function GridMiniPreview({
     selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
 
   const items = [
-    { key: 'power', label: '전원', value: 'ON' },
-    { key: 'mode', label: '운전 모드', value: 'cooling' },
-    { key: 'target_temperature', label: '설정 온도', value: '24°C' },
-    { key: 'current_temperature', label: '현재 온도', value: '25.5°C' },
-    { key: 'fan_speed', label: '풍량', value: 'auto' },
-    { key: 'valve_open', label: '밸브 개도', value: 'ON' },
+    { key: 'power', label: t('dashboard.settings.preview.propPower'), value: 'ON' },
+    { key: 'mode', label: t('dashboard.settings.preview.propMode'), value: 'cooling' },
+    { key: 'target_temperature', label: t('dashboard.settings.preview.propTargetTemp'), value: '24°C' },
+    { key: 'current_temperature', label: t('dashboard.settings.preview.propCurrentTemp'), value: '25.5°C' },
+    { key: 'fan_speed', label: t('dashboard.settings.preview.propFanSpeed'), value: 'auto' },
+    { key: 'valve_open', label: t('dashboard.settings.preview.propValve'), value: 'ON' },
   ];
 
   const cols = Math.min(gridCols, 3);
@@ -2575,18 +2691,18 @@ function GridMiniPreview({
     <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', '전체 색상')}
+        {tag('_base', t('dashboard.settings.preview.tagBase'))}
         <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
           style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? '기본'}</span>
+        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
       {/* 인디케이터 + 라벨 */}
       <div className={zone('labels', 'flex items-center gap-2 px-3 py-2')} onClick={() => onSelectGroup('labels')}>
-        {tag('labels', '라벨')}
+        {tag('labels', t('dashboard.settings.preview.tagLabels'))}
         <span className="h-2 w-2 rounded-full bg-green-500" style={effectiveColor('indicators') ? { backgroundColor: effectiveColor('indicators')! } : undefined} />
         <span className="text-sm font-medium text-(--color-text-primary)" style={effectiveColor('labels') ? { color: effectiveColor('labels')! } : undefined}>
-          속성 그리드
+          {t('dashboard.settings.preview.propertiesGrid')}
         </span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
@@ -2599,7 +2715,7 @@ function GridMiniPreview({
             onClick={() => onSelectGroup('borders')}
             style={effectiveColor('borders') ? { borderColor: `${effectiveColor('borders')}30` } : undefined}
           >
-            {tag('borders', '테두리')}
+            {tag('borders', t('dashboard.settings.preview.tagBorders'))}
             <p className="text-[10px] text-(--color-text-muted)" style={effectiveColor('labels') ? { color: effectiveColor('labels')! } : undefined}>
               {item.label}
             </p>
@@ -2622,6 +2738,7 @@ function ResourceMiniPreview({
   effectiveColor: (g: string) => string | undefined;
   panelColor: string | undefined;
 }) {
+  const { t } = useTranslation();
   const zone = (group: string, extra?: string) =>
     cn('cursor-pointer transition-all relative',
       selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
@@ -2639,17 +2756,17 @@ function ResourceMiniPreview({
     <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 - _base */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', '전체 색상')}
+        {tag('_base', t('dashboard.settings.preview.tagBase'))}
         <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
           style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? '기본'}</span>
+        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
       {/* 타이틀 */}
       <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', '타이틀')}
+        {tag('header', t('dashboard.settings.preview.tagHeader'))}
         <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          프로세스 리소스
+          {t('dashboard.settings.preview.processResource')}
         </span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
@@ -2695,6 +2812,7 @@ function LogMiniPreview({
   effectiveColor: (g: string) => string | undefined;
   panelColor: string | undefined;
 }) {
+  const { t } = useTranslation();
   const zone = (group: string, extra?: string) =>
     cn('cursor-pointer transition-all relative',
       selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
@@ -2711,17 +2829,17 @@ function LogMiniPreview({
     <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
       {/* 전체 색상 - _base */}
       <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', '전체 색상')}
+        {tag('_base', t('dashboard.settings.preview.tagBase'))}
         <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
           style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? '기본'}</span>
+        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
       {/* 타이틀 */}
       <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', '타이틀')}
+        {tag('header', t('dashboard.settings.preview.tagHeader'))}
         <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          시스템 로그
+          {t('dashboard.settings.preview.systemLog')}
         </span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
@@ -2730,18 +2848,18 @@ function LogMiniPreview({
         {rows.map((r, i) => (
           <div key={i} className="flex items-center gap-1.5 border-b border-(--color-border-subtle) px-2 py-1">
             <span className={zone('timestamp', 'shrink-0 text-[9px]')} onClick={(e) => { e.stopPropagation(); onSelectGroup('timestamp'); }}>
-              {i === 0 && tag('timestamp', '시간')}
+              {i === 0 && tag('timestamp', t('dashboard.settings.preview.tagTimestamp'))}
               <span style={effectiveColor('timestamp') ? { color: effectiveColor('timestamp')! } : undefined} className="text-(--color-text-muted)">{r.time}</span>
             </span>
             <span className={zone('levels', 'shrink-0')} onClick={(e) => { e.stopPropagation(); onSelectGroup('levels'); }}>
-              {i === 0 && tag('levels', '레벨')}
+              {i === 0 && tag('levels', t('dashboard.settings.preview.tagLevels'))}
               <span className={cn('rounded px-1 py-px text-[8px] font-semibold', r.lvCls)}
                 style={effectiveColor('levels') ? { backgroundColor: `${effectiveColor('levels')}20`, color: effectiveColor('levels')! } : undefined}>
                 {r.level}
               </span>
             </span>
             <span className={zone('source', 'shrink-0')} onClick={(e) => { e.stopPropagation(); onSelectGroup('source'); }}>
-              {i === 0 && tag('source', '소스')}
+              {i === 0 && tag('source', t('dashboard.settings.preview.tagSource'))}
               <span className="text-[9px] text-purple-600 dark:text-purple-400" style={effectiveColor('source') ? { color: effectiveColor('source')! } : undefined}>{r.src}</span>
             </span>
             <span className="flex-1 truncate text-[9px] text-(--color-text-primary)">{r.msg}</span>

@@ -9,14 +9,37 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
 const configureNodeMock = vi.hoisted(() => vi.fn());
+const setNodeTapMock = vi.hoisted(() => vi.fn());
+const useManagedNodesMock = vi.hoisted(() => vi.fn());
+const useRemoteModeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/nodeService', () => ({
   configureNode: configureNodeMock,
 }));
 
+// CustomNode 는 tap 토글에서 flowService.setNodeTap 을 호출한다. 그 외
+// flowService export 를 사용하지 않으므로 setNodeTap 만 모킹한다.
+vi.mock('@/services/api/flowService', () => ({
+  setNodeTap: setNodeTapMock,
+}));
+
+// 원격 브릿지 표시명({hostname}.{flowName}) 해석에 쓰이는 원격 훅을 모킹한다.
+// CustomNode 는 이 훅들을 무조건 호출(enabled 게이팅)하므로 QueryClientProvider
+// 없이도 렌더되도록 반환값을 직접 제어한다.
+vi.mock('@/hooks/useRemote', () => ({
+  useManagedNodes: (...args: unknown[]) => useManagedNodesMock(...args),
+  useRemoteMode: () => useRemoteModeMock(),
+}));
+
 import { APIError } from '@/types/api';
+import { I18nProvider } from '@/lib/i18n';
+import {
+  RuntimeStatsContext,
+  type NodeRuntimeStats,
+} from '@/contexts/RuntimeStatsContext';
 import { useEditorStore } from '@/stores/editorStore';
 import { useUIStore } from '@/stores/uiStore';
+import { useTapStore } from '@/stores/tapStore';
 import { CustomNode } from './CustomNode';
 
 const NODE_ID = 'out-1';
@@ -53,7 +76,67 @@ function renderOutputNode(outputEnabled: boolean) {
 
   return render(
     <MemoryRouter>
-      <CustomNode {...props} />
+      <I18nProvider>
+        <CustomNode {...props} />
+      </I18nProvider>
+    </MemoryRouter>,
+  );
+}
+
+/** flow-node 를 (선택적 런타임 state 와 함께) 렌더한다 — 원격 브릿지 인디케이터 검증용. */
+function renderFlowNode(
+  flowId: string,
+  opts: {
+    flowName?: string;
+    runtimeState?: string;
+    mode?: string;
+    statSource?: NodeRuntimeStats['statSource'];
+  } = {},
+) {
+  const data = {
+    label: 'sub',
+    nodeType: 'flow-node',
+    category: 'special',
+    flow_id: flowId,
+    ...(opts.flowName ? { flow_name: opts.flowName } : {}),
+    ...(opts.mode ? { mode: opts.mode } : {}),
+  };
+  useEditorStore.setState({
+    nodes: [
+      {
+        id: NODE_ID,
+        type: 'custom',
+        position: { x: 0, y: 0 },
+        data,
+      },
+    ],
+  });
+  const props = {
+    id: NODE_ID,
+    data,
+    selected: false,
+  } as unknown as React.ComponentProps<typeof CustomNode>;
+
+  const statsMap: Record<string, NodeRuntimeStats> =
+    opts.runtimeState !== undefined
+      ? {
+          [NODE_ID]: {
+            inMessages: 0,
+            outMessages: 0,
+            state: opts.runtimeState,
+            ports: [],
+            ...(opts.statSource ? { statSource: opts.statSource } : {}),
+          },
+        }
+      : {};
+
+  return render(
+    <MemoryRouter>
+      <I18nProvider>
+        <RuntimeStatsContext.Provider value={statsMap}>
+          <CustomNode {...props} />
+        </RuntimeStatsContext.Provider>
+      </I18nProvider>
     </MemoryRouter>,
   );
 }
@@ -63,6 +146,9 @@ describe('CustomNode output ON/OFF 라이브 제어', () => {
     configureNodeMock.mockReset();
     useEditorStore.getState().resetEditor();
     useUIStore.getState().clearNotifications();
+    // output 노드 렌더에서도 원격 훅이 (게이트되어) 호출되므로 안전한 기본값을 둔다.
+    useManagedNodesMock.mockReset().mockReturnValue({ data: [] });
+    useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'disabled' } });
   });
 
   it('currentFlowId 가 있으면 toggleOutput 이 configureNode 를 next 값으로 호출한다', async () => {
@@ -130,5 +216,330 @@ describe('CustomNode output ON/OFF 라이브 제어', () => {
       expect(useUIStore.getState().notifications).toHaveLength(1);
     });
     expect(useUIStore.getState().notifications[0]?.type).toBe('warning');
+  });
+});
+
+// SPEC-SUBFLOW-001 v1.3 (REQ-RU06): flow-node 원격 브릿지 인디케이터.
+describe('CustomNode flow-node 원격 브릿지 인디케이터', () => {
+  beforeEach(() => {
+    useEditorStore.getState().resetEditor();
+    useUIStore.getState().clearNotifications();
+    // 기본: 관리 노드 없음(호스트명 미해석) + server 모드.
+    useManagedNodesMock.mockReset().mockReturnValue({ data: [] });
+    useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'server' } });
+  });
+
+  it('hostname 과 flow_name 이 있으면 `{hostname}.{flowName}` 표시명을 툴팁에 담는다', () => {
+    // 변경: 호스트.플로우 식별 정보는 이제 노드 라벨에 들어가고, 브릿지 인디케이터는
+    // 텍스트 없는 상태 점(+툴팁)으로 축소됐다. 표시명은 title 속성으로 검증한다.
+    useManagedNodesMock.mockReturnValue({
+      data: [{ instance_id: 'inst-uuid-1234', hostname: 'xagent04' }],
+    });
+    renderFlowNode('remote://inst-uuid-1234/flow-9', {
+      flowName: 'HVACR Control',
+    });
+
+    const indicator = document.querySelector('[data-remote-bridge]');
+    expect(indicator).not.toBeNull();
+    // 해석된 표시명(hostname.flowName)이 툴팁(title)에 포함된다.
+    expect(indicator?.getAttribute('title')).toContain(
+      'xagent04.HVACR Control',
+    );
+  });
+
+  it('hostname 미해석 시 단축 instanceId 로, flow_name 부재 시 단축 flowId 로 폴백한다', () => {
+    // 관리 노드 없음(기본) → hostname 폴백; flow_name 미지정 → flowId 폴백.
+    renderFlowNode('remote://inst-uuid-1234/flow-uuid-5678');
+
+    const indicator = document.querySelector('[data-remote-bridge]');
+    expect(indicator).not.toBeNull();
+    // hostname 폴백: 단축 instanceId(앞 8자 + 생략부호) = "inst-uui…".
+    // flowId 폴백: 단축 flowId(앞 8자 + 생략부호) = "flow-uui…". (툴팁으로 검증)
+    expect(indicator?.getAttribute('title')).toContain('inst-uui….flow-uui…');
+  });
+
+  it('hostname 은 있으나 flow_name 이 없으면 `{hostname}.{단축 flowId}` 로 표시한다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [{ instance_id: 'inst-uuid-1234', hostname: 'xagent04' }],
+    });
+    renderFlowNode('remote://inst-uuid-1234/flow-9');
+
+    // flow-9 는 8자 이하라 단축되지 않는다. (툴팁으로 검증)
+    const indicator = document.querySelector('[data-remote-bridge]');
+    expect(indicator?.getAttribute('title')).toContain('xagent04.flow-9');
+  });
+
+  it('평문(local) flow_id 면 원격 브릿지 인디케이터를 표시하지 않는다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우' });
+
+    // 로컬(평문) flow_id 는 원격 브릿지 대상이 아니므로 인디케이터가 없어야 한다.
+    // 로컬 서브플로우 참조 플로우 이름 배지는 제거됨(변경 2): 라벨이 곧 플로우 이름.
+    expect(
+      document.querySelector('[data-remote-bridge]'),
+    ).toBeNull();
+  });
+
+  it('런타임 state 가 없으면(플로우 미실행) 상태 점 없이 정적 인디케이터만 표시한다', () => {
+    renderFlowNode('remote://inst-uuid-1234/flow-9');
+
+    // 텍스트 없는 인디케이터(상태 점/Radio)는 존재하되 상태 점은 없어야 한다.
+    expect(document.querySelector('[data-remote-bridge]')).not.toBeNull();
+    expect(document.querySelector('[data-bridge-status]')).toBeNull();
+  });
+
+  it('런타임 state=running 이면 running 상태 점을 반영한다', () => {
+    renderFlowNode('remote://inst-uuid-1234/flow-9', {
+      runtimeState: 'running',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot).not.toBeNull();
+    expect(dot?.getAttribute('data-bridge-status')).toBe('running');
+  });
+
+  it('런타임 state=error 이면 error 상태 점을 반영한다', () => {
+    renderFlowNode('remote://inst-uuid-1234/flow-9', {
+      runtimeState: 'error',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot?.getAttribute('data-bridge-status')).toBe('error');
+  });
+});
+
+// SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W01/W02/W04): 로컬 shared flow-node 의
+// 공유 연결 인디케이터. 원격 브릿지와 일관된 상태 점 메커니즘을 재사용하되
+// 로컬(공유)임을 data-local-bridge 로 구분한다.
+describe('CustomNode flow-node 로컬 shared 연결 인디케이터', () => {
+  beforeEach(() => {
+    useEditorStore.getState().resetEditor();
+    useUIStore.getState().clearNotifications();
+    useManagedNodesMock.mockReset().mockReturnValue({ data: [] });
+    useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'disabled' } });
+  });
+
+  it('mode 미지정(기본 shared)인 로컬 flow-node 는 공유 인디케이터를 표시한다(원격 아님)', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우' });
+
+    // 로컬 공유 인디케이터는 표시되고, 원격 인디케이터는 표시되지 않는다.
+    expect(document.querySelector('[data-local-bridge]')).not.toBeNull();
+    expect(document.querySelector('[data-remote-bridge]')).toBeNull();
+  });
+
+  it('mode=shared 명시 로컬 flow-node 도 공유 인디케이터를 표시한다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우', mode: 'shared' });
+    expect(document.querySelector('[data-local-bridge]')).not.toBeNull();
+  });
+
+  it('mode=instance 인 로컬 flow-node 는 공유 인디케이터를 표시하지 않는다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우', mode: 'instance' });
+
+    expect(document.querySelector('[data-local-bridge]')).toBeNull();
+    expect(document.querySelector('[data-remote-bridge]')).toBeNull();
+  });
+
+  it('런타임 state 가 없으면(미실행=오프라인 대기) 상태 점 없이 정적 공유 아이콘만 표시한다', () => {
+    renderFlowNode('flow-9', { flowName: '로컬 서브플로우' });
+
+    // W04: 미실행 시 상태 점은 없고(오프라인·무출력), 정적 공유 인디케이터만 노출.
+    expect(document.querySelector('[data-local-bridge]')).not.toBeNull();
+    expect(document.querySelector('[data-bridge-status]')).toBeNull();
+  });
+
+  it('런타임 state=running 이면 running 상태 점을 반영한다', () => {
+    renderFlowNode('flow-9', {
+      flowName: '로컬 서브플로우',
+      runtimeState: 'running',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot?.getAttribute('data-bridge-status')).toBe('running');
+  });
+
+  it('런타임 state=stopped 면 offline 상태 점을 반영한다(연결 끊김)', () => {
+    renderFlowNode('flow-9', {
+      flowName: '로컬 서브플로우',
+      runtimeState: 'stopped',
+    });
+
+    const dot = document.querySelector('[data-bridge-status]');
+    expect(dot?.getAttribute('data-bridge-status')).toBe('offline');
+  });
+
+  it('flow_id 미선택(빈 값) flow-node 는 공유 인디케이터를 표시하지 않는다', () => {
+    renderFlowNode('', { flowName: '' });
+    expect(document.querySelector('[data-local-bridge]')).toBeNull();
+  });
+
+  it('원격 참조 flow-node 는 로컬 공유 인디케이터를 표시하지 않는다(원격 인디케이터만)', () => {
+    useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
+    renderFlowNode('remote://inst-uuid-1234/flow-9', { flowName: 'HVACR' });
+
+    expect(document.querySelector('[data-local-bridge]')).toBeNull();
+    expect(document.querySelector('[data-remote-bridge]')).not.toBeNull();
+  });
+});
+
+// 노드 출력 tap(관찰) 토글: 플로우 실행 중(런타임 stats 존재)일 때만 노출되며,
+// 클릭 시 setNodeTap 을 호출하고 눈 인디케이터(data-tapped)가 상태를 반영한다.
+describe('CustomNode 출력 tap(관찰) 토글', () => {
+  const TAP_NODE_ID = 'proc-1';
+
+  beforeEach(() => {
+    setNodeTapMock.mockReset();
+    useEditorStore.getState().resetEditor();
+    useUIStore.getState().clearNotifications();
+    useTapStore.getState().reset();
+    useManagedNodesMock.mockReset().mockReturnValue({ data: [] });
+    useRemoteModeMock.mockReset().mockReturnValue({ data: { mode: 'disabled' } });
+  });
+
+  /** 일반 노드를 (선택적 런타임 stats 와 함께) 렌더한다. stats 존재 = 실행 중. */
+  function renderTapNode(opts: { running: boolean }) {
+    const data = {
+      label: 'transform',
+      nodeType: 'function',
+      category: 'processing',
+    };
+    useEditorStore.setState({
+      nodes: [
+        { id: TAP_NODE_ID, type: 'custom', position: { x: 0, y: 0 }, data },
+      ],
+    });
+    const props = {
+      id: TAP_NODE_ID,
+      data,
+      selected: false,
+    } as unknown as React.ComponentProps<typeof CustomNode>;
+
+    const statsMap: Record<string, NodeRuntimeStats> = opts.running
+      ? {
+          [TAP_NODE_ID]: {
+            inMessages: 0,
+            outMessages: 0,
+            state: 'running',
+            ports: [],
+          },
+        }
+      : {};
+
+    return render(
+      <MemoryRouter>
+        <I18nProvider>
+          <RuntimeStatsContext.Provider value={statsMap}>
+            <CustomNode {...props} />
+          </RuntimeStatsContext.Provider>
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('플로우 미실행(런타임 stats 없음)이면 관찰 토글을 렌더하지 않는다', () => {
+    renderTapNode({ running: false });
+    expect(screen.queryByRole('button', { name: '관찰 시작' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '관찰 중지' })).toBeNull();
+  });
+
+  it('실행 중이면 관찰 토글이 OFF 상태로 렌더된다', () => {
+    renderTapNode({ running: true });
+    expect(screen.getByRole('button', { name: '관찰 시작' })).toBeInTheDocument();
+  });
+
+  it('클릭 시 setNodeTap 을 enabled=true 로 호출하고 인디케이터가 ON 으로 바뀐다', async () => {
+    setNodeTapMock.mockResolvedValueOnce({
+      flow_id: 'flow-1',
+      node_id: TAP_NODE_ID,
+      enabled: true,
+    });
+    useEditorStore.getState().setCurrentFlowId('flow-1');
+
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 시작' }));
+
+    // 낙관적 갱신: 스토어와 인디케이터가 즉시 ON.
+    await waitFor(() => {
+      expect(useTapStore.getState().tappedNodeIds[TAP_NODE_ID]).toBe(true);
+    });
+    expect(setNodeTapMock).toHaveBeenCalledWith('flow-1', TAP_NODE_ID, true);
+    expect(screen.getByRole('button', { name: '관찰 중지' })).toBeInTheDocument();
+    const toggle = document.querySelector('[data-tap-toggle]');
+    expect(toggle?.getAttribute('data-tapped')).toBe('true');
+  });
+
+  it('이미 관찰 중이면 클릭 시 setNodeTap 을 enabled=false 로 호출한다', async () => {
+    setNodeTapMock.mockResolvedValueOnce({
+      flow_id: 'flow-1',
+      node_id: TAP_NODE_ID,
+      enabled: false,
+    });
+    useEditorStore.getState().setCurrentFlowId('flow-1');
+    useTapStore.getState().setTapped(TAP_NODE_ID, true);
+
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 중지' }));
+
+    await waitFor(() => {
+      expect(setNodeTapMock).toHaveBeenCalledWith('flow-1', TAP_NODE_ID, false);
+    });
+    await waitFor(() => {
+      expect(useTapStore.getState().tappedNodeIds[TAP_NODE_ID]).toBeUndefined();
+    });
+  });
+
+  it('서버 적용 실패 시 낙관적 갱신을 되돌리고 경고를 띄운다', async () => {
+    setNodeTapMock.mockRejectedValueOnce(new APIError('INTERNAL', 'boom', 500));
+    useEditorStore.getState().setCurrentFlowId('flow-1');
+
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 시작' }));
+
+    // 실패 후 롤백: 관찰 집합에서 제거되고 경고 알림이 추가된다.
+    await waitFor(() => {
+      expect(useUIStore.getState().notifications).toHaveLength(1);
+    });
+    expect(useTapStore.getState().tappedNodeIds[TAP_NODE_ID]).toBeUndefined();
+    expect(useUIStore.getState().notifications[0]?.type).toBe('warning');
+  });
+
+  it('currentFlowId 가 없으면 setNodeTap 을 호출하지 않는다', () => {
+    // resetEditor 로 currentFlowId 는 null.
+    renderTapNode({ running: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '관찰 시작' }));
+
+    expect(setNodeTapMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('CustomNode 통계 출처 배지 (SPEC-SUBFLOW-002 S03)', () => {
+  it("statSource='embedded' 면 임베디드 배지를 표시한다", () => {
+    renderFlowNode('flow-9', { runtimeState: 'running', statSource: 'embedded' });
+    const badge = document.querySelector('[data-stat-source="embedded"]');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('임베디드');
+  });
+
+  it("statSource='direct+embedded' 면 임베디드 배지를 표시한다", () => {
+    renderFlowNode('flow-9', {
+      runtimeState: 'running',
+      statSource: 'direct+embedded',
+    });
+    expect(
+      document.querySelector('[data-stat-source="direct+embedded"]'),
+    ).not.toBeNull();
+  });
+
+  it("statSource='direct' 면 배지를 표시하지 않는다", () => {
+    renderFlowNode('flow-9', { runtimeState: 'running', statSource: 'direct' });
+    expect(document.querySelector('[data-stat-source]')).toBeNull();
+  });
+
+  it('런타임 통계가 없으면(미실행) 배지를 표시하지 않는다', () => {
+    // runtimeState 미지정 → statsMap 비어 statSource 도 없음.
+    renderFlowNode('flow-9', { statSource: 'embedded' });
+    expect(document.querySelector('[data-stat-source]')).toBeNull();
   });
 });

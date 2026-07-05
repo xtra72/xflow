@@ -604,6 +604,24 @@ func compareBools(val any, lit bool, op string) (bool, error) {
 //   - exists($.payload.error)
 //   - !exists($.payload.error) && $.payload.value > 0
 func compileCondition(expr string) (FilterCondition, error) {
+	eval, err := compileConditionData(expr)
+	if err != nil {
+		return nil, err
+	}
+	return func(msg message.Message) bool {
+		return eval(messageToMap(msg))
+	}, nil
+}
+
+// compileConditionData 는 조건식을 data 맵에 직접 평가하는 함수로 컴파일한다.
+// compileCondition 과 달리 message 래핑/messageToMap 깊은 복사 없이, 호출자가
+// 구성한 data 맵({"payload": item} 등)을 그대로 AST 에 평가한다. 평가는 맵을
+// 읽기만 하므로(GetPath) 복사가 불필요하다. inventory 처럼 대량 항목을 항목당
+// 평가할 때 항목당 2회 깊은 복사를 제거하기 위해 사용한다.
+//
+// 호출자는 $. 루트에 맞춰 data 를 구성해야 한다(예: 항목 필드를 $.payload.X 로
+// 참조하려면 data = {"payload": item}).
+func compileConditionData(expr string) (func(map[string]any) bool, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil, fmt.Errorf("%w: empty condition expression", ErrInvalidExpression)
@@ -619,8 +637,7 @@ func compileCondition(expr string) (FilterCondition, error) {
 		return nil, err
 	}
 
-	return func(msg message.Message) bool {
-		data := messageToMap(msg)
+	return func(data map[string]any) bool {
 		result, err := ast.evaluate(data)
 		if err != nil {
 			return false

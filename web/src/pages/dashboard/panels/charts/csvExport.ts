@@ -10,8 +10,14 @@ export interface ChartCsvRow {
  * RFC 4180 부분 호환 CSV 생성.
  * 컬럼: timestamp, iso, ...seriesKeys
  * 누락/비유한 숫자는 빈 문자열.
+ *
+ * booleanKeys 에 포함된 시리즈는 값(0/1)을 true/false 문자열로 내보낸다.
  */
-export function chartDataToCsv(rows: ChartCsvRow[], seriesKeys: string[]): string {
+export function chartDataToCsv(
+  rows: ChartCsvRow[],
+  seriesKeys: string[],
+  booleanKeys?: Set<string>,
+): string {
   const header = ['timestamp', 'iso', ...seriesKeys].map(escapeCell).join(',');
   const body = rows.map((row) => {
     const cells: string[] = [
@@ -19,15 +25,19 @@ export function chartDataToCsv(rows: ChartCsvRow[], seriesKeys: string[]): strin
       new Date(row.timestamp).toISOString(),
     ];
     for (const key of seriesKeys) {
-      cells.push(formatValue(row[key]));
+      cells.push(formatValue(row[key], booleanKeys?.has(key) ?? false));
     }
     return cells.map(escapeCell).join(',');
   });
   return [header, ...body].join('\n') + '\n';
 }
 
-function formatValue(v: unknown): string {
+function formatValue(v: unknown, isBoolean = false): string {
   if (v == null) return '';
+  if (isBoolean) {
+    if (v === 1 || v === true) return 'true';
+    if (v === 0 || v === false) return 'false';
+  }
   if (typeof v === 'number') {
     return Number.isFinite(v) ? String(v) : '';
   }

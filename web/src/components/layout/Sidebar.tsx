@@ -11,14 +11,20 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDrive,
+  Layers,
   LayoutDashboard,
   Monitor,
+  Network,
+  Package,
   Settings,
+  SlidersHorizontal,
+  UserPlus,
   Workflow,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
+import { useRemoteMode } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
@@ -99,6 +105,39 @@ const NAV_ENTRIES: NavEntry[] = [
       },
     ],
   },
+  // SPEC-REMOTE-001 M9 (그룹 K, REQ-K11): admin 전용 원격 관리 그룹.
+  //   노드 관리(운영) + 등록 관리(온보딩) — 기존 관리 노드 + 원격 노드 제어 대체.
+  {
+    labelKey: 'nav.remote',
+    icon: Network,
+    roles: ['admin'],
+    children: [
+      {
+        labelKey: 'nav.nodeManagement',
+        path: '/admin/remote',
+        icon: SlidersHorizontal,
+        roles: ['admin'],
+      },
+      {
+        labelKey: 'nav.groupManagement',
+        path: '/admin/remote/groups',
+        icon: Layers,
+        roles: ['admin'],
+      },
+      {
+        labelKey: 'nav.enrollmentManagement',
+        path: '/admin/remote/enrollment',
+        icon: UserPlus,
+        roles: ['admin'],
+      },
+      {
+        labelKey: 'nav.releaseStore',
+        path: '/admin/remote/releases',
+        icon: Package,
+        roles: ['admin'],
+      },
+    ],
+  },
   {
     labelKey: 'nav.settings',
     path: '/settings',
@@ -111,9 +150,15 @@ const NAV_ENTRIES: NavEntry[] = [
  * 앱 사이드바 네비게이션.
  * 접기/펼치기 토글, 활성 메뉴 하이라이트, RBAC 필터링, 그룹 메뉴를 지원한다.
  */
+/** 원격 관리 그룹 식별용 라벨 키 (server 모드에서만 노출). */
+const REMOTE_GROUP_LABEL_KEY = 'nav.remote';
+
 export default function Sidebar() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  // 원격 관리 그룹은 server 모드에서만 노출한다. 로딩 중/비 server 모드면 숨긴다.
+  const { data: remoteMode } = useRemoteMode();
+  const isRemoteServer = remoteMode?.mode === 'server';
   const location = useLocation();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -149,6 +194,10 @@ export default function Sidebar() {
   // 사용자 역할에 따른 메뉴 필터링
   const filteredEntries = NAV_ENTRIES.filter((entry) => {
     if (!hasAccess(entry.roles)) return false;
+    // 원격 관리 그룹은 admin 권한 + server 모드를 모두 충족할 때만 노출한다.
+    if (isNavGroup(entry) && entry.labelKey === REMOTE_GROUP_LABEL_KEY && !isRemoteServer) {
+      return false;
+    }
     // 그룹의 경우 접근 가능한 하위 항목이 하나라도 있으면 표시
     if (isNavGroup(entry)) {
       return entry.children.some((child) => hasAccess(child.roles));
@@ -266,27 +315,36 @@ function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGr
     return userRole ? child.roles.includes(userRole) : false;
   });
 
-  // 사이드바가 접힌 상태에서는 첫 번째 하위 항목 경로로 직접 이동
+  // 사이드바가 접힌 상태에서는 그룹의 각 하위 항목을 개별 아이콘으로 렌더한다
+  // (접힘에서도 모든 항목 접근 가능 — 예: 노드 관리/등록 관리).
   if (collapsed) {
-    const firstChild = visibleChildren[0];
-    if (!firstChild) return null;
+    if (visibleChildren.length === 0) return null;
 
     return (
-      <NavLink
-        to={firstChild.path}
-        className={({ isActive }) =>
-          cn(
-            'flex items-center justify-center rounded-md px-2 py-2 text-sm font-medium transition-colors',
-            'hover:bg-(--color-bg-elevated)',
-            isActive
-              ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'text-(--color-text-secondary)',
-          )
-        }
-        title={t(group.labelKey)}
-      >
-        <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
-      </NavLink>
+      <>
+        {visibleChildren.map((child) => {
+          const ChildIcon = child.icon;
+          return (
+            <NavLink
+              key={child.path}
+              to={child.path}
+              end
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center justify-center rounded-md px-2 py-2 text-sm font-medium transition-colors',
+                  'hover:bg-(--color-bg-elevated)',
+                  isActive
+                    ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'text-(--color-text-secondary)',
+                )
+              }
+              title={t(child.labelKey)}
+            >
+              <ChildIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
+            </NavLink>
+          );
+        })}
+      </>
     );
   }
 
@@ -324,6 +382,7 @@ function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGr
               <NavLink
                 key={child.path}
                 to={child.path}
+                end
                 className={({ isActive }) =>
                   cn(
                     'flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',

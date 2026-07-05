@@ -63,6 +63,25 @@ type keyGatekeeper interface {
 	checkKeyAllowed(key string, value any) error
 }
 
+// @spec SPEC-STORE-003 v0.4.0
+// writeValueCoercer 는 쓰기 직전 값을 정책에 맞게 변환하는 훅이다.
+// agentStore 가 구현하며, NamespacedStore 가 checkKeyAllowed 통과 후 호출한다.
+//
+// 동적(auto) string 키의 경우 어떤 값이든 string 으로 변환되어 저장된다 (동적=string 정책).
+// 명시 data_type 키나 미등록 키(거부됨)는 원본 값이 그대로 반환된다.
+type writeValueCoercer interface {
+	coerceWriteValue(key string, value any) any
+}
+
+// applyCoercion 은 inner 가 writeValueCoercer 를 구현하면 값 변환을 적용하고,
+// 아니면 원본 값을 그대로 반환한다. Set/SetWithTTL 공통 헬퍼이다.
+func (ns *NamespacedStore) applyCoercion(key string, value any) any {
+	if c, ok := ns.inner.(writeValueCoercer); ok {
+		return c.coerceWriteValue(key, value)
+	}
+	return value
+}
+
 // Set 은 주어진 키에 값을 저장한다.
 // 내부적으로 네임스페이스 접두사를 붙여 저장한다.
 // @spec SPEC-STORE-003 v0.3.0: 네임스페이스 접두사가 붙기 전 사용자 관점 (key, value) 로
@@ -74,6 +93,8 @@ func (ns *NamespacedStore) Set(ctx context.Context, key string, value any) error
 			return err
 		}
 	}
+	// @spec SPEC-STORE-003 v0.4.0: 동적 string 키는 값을 string 으로 변환하여 저장한다.
+	value = ns.applyCoercion(key, value)
 	fullKey := ns.prefixKey(key)
 	if err := ns.inner.Set(ctx, fullKey, value); err != nil {
 		return err
@@ -91,6 +112,8 @@ func (ns *NamespacedStore) SetWithTTL(ctx context.Context, key string, value any
 			return err
 		}
 	}
+	// @spec SPEC-STORE-003 v0.4.0: 동적 string 키는 값을 string 으로 변환하여 저장한다.
+	value = ns.applyCoercion(key, value)
 	fullKey := ns.prefixKey(key)
 	if err := ns.inner.SetWithTTL(ctx, fullKey, value, ttl); err != nil {
 		return err
@@ -115,6 +138,11 @@ func (ns *NamespacedStore) setNamespace(fullKey string) {
 // 내부적으로 네임스페이스 접두사를 붙여 삭제한다.
 func (ns *NamespacedStore) Delete(ctx context.Context, key string) error {
 	return ns.inner.Delete(ctx, ns.prefixKey(key))
+}
+
+// Rename 은 oldKey 를 newKey 로 이동한다(동일 네임스페이스 내). 두 키 모두 접두사를 붙여 위임한다.
+func (ns *NamespacedStore) Rename(ctx context.Context, oldKey, newKey string) error {
+	return ns.inner.Rename(ctx, ns.prefixKey(oldKey), ns.prefixKey(newKey))
 }
 
 // Has 는 주어진 키가 존재하고 만료되지 않았는지 확인한다.

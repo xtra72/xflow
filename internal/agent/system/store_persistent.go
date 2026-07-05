@@ -11,6 +11,15 @@ import (
 
 // PersistentStore 는 리포지토리 기반 영속 저장소이다.
 // sync.Map 캐시와 StoreRepository 백엔드를 조합한 Write-Through 캐시 패턴을 사용한다.
+//
+// @spec SPEC-STORE-004 (M6 영속 정합)
+// 시리즈 정합: PersistentStore/StoreRepository 는 시리즈를 "전혀 모른 채" 불투명한
+// string 키만 다룬다. 시리즈 인코딩(metric|tags|key)은 상위 system 계층(SetWithMeta)이
+// EncodeSeriesKey 로 산출하며, 그 결과 문자열이 namespace prefix 와 결합되어
+// (`namespace:metric|tags|key`) 본 저장소의 Set/Get/Delete 키로 그대로 전달된다.
+// 따라서 영속 계층은 시리즈 키를 byte-perfect 로 저장/조회/삭제하기만 하면 정합하며,
+// 시리즈 도입으로 인한 인터페이스/시그니처 변경은 없다. (회귀 방지:
+// store_persistent_series_test.go 의 characterization 테스트가 이 계약을 고정한다.)
 type PersistentStore struct {
 	cache        sync.Map
 	repo         StoreRepository
@@ -245,6 +254,33 @@ func (s *PersistentStore) SetWithTTL(ctx context.Context, key string, value any,
 func (s *PersistentStore) Delete(ctx context.Context, key string) error {
 	s.cache.Delete(key)
 	return s.repo.DeleteEntry(ctx, key)
+}
+
+// Rename 은 oldKey 의 엔트리를 newKey 로 이동한다.
+// PersistentStore 는 히스토리 체인을 보관하지 않으므로 값 + TTL/타임스탬프만 이동한다.
+//   - oldKey 없음 → ErrKeyNotFound.
+//   - newKey 이미 존재 → ErrKeyExists.
+func (s *PersistentStore) Rename(ctx context.Context, oldKey, newKey string) error {
+	if err := s.validateKey(newKey); err != nil {
+		return err
+	}
+	if exists, _ := s.Has(ctx, newKey); exists {
+		return ErrKeyExists
+	}
+	repoEntry, err := s.repo.GetEntry(ctx, oldKey)
+	if err != nil || repoEntry == nil {
+		return ErrKeyNotFound
+	}
+	if !repoEntry.ExpiresAt.IsZero() && time.Now().After(repoEntry.ExpiresAt) {
+		s.cache.Delete(oldKey)
+		_ = s.repo.DeleteEntry(ctx, oldKey)
+		return ErrKeyNotFound
+	}
+	if err := s.repo.SetEntry(ctx, newKey, repoEntry); err != nil {
+		return err
+	}
+	s.cache.Delete(oldKey)
+	return s.repo.DeleteEntry(ctx, oldKey)
 }
 
 // Has 는 주어진 키가 존재하고 만료되지 않았는지 확인한다.

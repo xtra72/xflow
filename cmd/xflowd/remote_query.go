@@ -1,0 +1,618 @@
+// remote_query.go 는 M8(그룹 J) 원격 관리 클라이언트의 READ/QUERY 프록시 + 스트림
+// 소스 어댑터를 정의한다(@SPEC:SPEC-REMOTE-001 M8, spec §5.5/§5.10, REQ-J01/J04/J06/J08).
+//
+// internal/remote 는 import cycle 회피를 위해 중립 remote.QuerySource /
+// remote.StreamSource 인터페이스만 정의한다. 본 파일이 그 인터페이스를 로컬 read
+// 어댑터(FlowServiceAdapter 의 FlowStatus/ListFlowNodes/GetFlowNode/GetFlow,
+// AgentServiceAdapter 의 AgentStats/GetAgent, device 레지스트리의 Get→State/Commands/
+// Metadata)에 바인딩한다(A10 — 노드의 기존 로컬 read 핸들러 재실행).
+//
+// READ-ONLY(REQ-J03): query-action 은 read 매핑만 수행한다. 변경 의미 action 은 remote
+// client 가 allowlist 로 거부하므로 본 브리지에 도달하지 않는다.
+//
+// redaction(REQ-J06): 본 브리지는 원본 JSON 을 반환하고, remote client 가
+// ClientConfig.QueryRedactor(newQueryRedactor)로 전송 전 마스킹한다. 리댁터는
+// secret_fields SoT(handler.RedactSensitiveConfig)를 임의 JSON 형태에 재귀 적용한다.
+//
+// 미가용 데이터(스토어/토픽/세션/시리즈/로그 등 어댑터로 cheaply 노출 불가)는 패닉
+// 대신 remote.ErrQueryActionUnsupported 를 반환한다(서버가 502 node-error 로 매핑 —
+// REQ-J07). 향후 해당 read 핸들러가 어댑터로 노출되면 매핑을 추가한다(seam).
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/api/handler"
+	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/remote"
+	"github.com/xtra/xflow/internal/storage"
+)
+
+// queryFlowReader 는 flow read query-action 에 필요한 FlowServiceAdapter 의 좁은
+// 인터페이스이다(*service.FlowServiceAdapter 가 만족).
+type queryFlowReader interface {
+	FlowStatus(ctx context.Context, id string) (*handler.FlowStatusInfo, error)
+	ListFlowNodes(ctx context.Context, flowID string) ([]handler.FlowNodeInfo, error)
+	GetFlowNode(ctx context.Context, flowID, nodeID string) (*handler.FlowNodeInfo, error)
+	GetFlow(ctx context.Context, id string) (*handler.FlowInfo, error)
+	// ListFlows 는 flow/list query-action 의 라이브 목록 소스이다(GET /flows 와 동일
+	// 소스 — status/node_count/uptime 요약 운반). 페이지네이션으로 전체를 수집한다.
+	ListFlows(ctx context.Context, opts dto.ListOptions) ([]handler.FlowInfo, int64, error)
+}
+
+// queryAgentReader 는 agent read query-action 에 필요한 AgentServiceAdapter 의 좁은
+// 인터페이스이다.
+//
+// ExecAgent 는 에이전트에 read 전용 명령(list_connections 등)을 전달해 결과 JSON 을
+// 받는다. agent/sessions 가 로컬 SessionsTab 과 동일하게 list_connections 결과를
+// 반환하는 데 사용된다(REQ-J04). 변경 의미 명령은 query allowlist 밖이므로 도달하지
+// 않는다(READ-ONLY — REQ-J03).
+type queryAgentReader interface {
+	AgentStats(ctx context.Context, id string) (*handler.AgentStatsInfo, error)
+	GetAgent(ctx context.Context, id string, detail string) (*handler.AgentInfo, error)
+	ExecAgent(ctx context.Context, id string, data []byte) (json.RawMessage, error)
+	// ListAgents 는 agent/list query-action 의 라이브 목록 소스이다(GET /agents 와 동일
+	// 소스 — connected/uptime/stats runtime 필드 운반). 페이지네이션으로 전체를 수집한다.
+	ListAgents(ctx context.Context, opts dto.ListOptions) ([]handler.AgentInfo, int64, error)
+}
+
+// queryDeviceReader 는 device read query-action 에 필요한 레지스트리의 좁은
+// 인터페이스이다(*device.Registry 의 Get/List 를 만족).
+//
+// List 는 agent/devices 가 에이전트 이름으로 연결 디바이스를 조회하는 데 사용된다
+// (로컬 useDevices({agent}) 와 동일 소스 — REQ-J04).
+type queryDeviceReader interface {
+	Get(id string) (device.Device, error)
+	List(filter device.DeviceFilter) []device.Device
+}
+
+// queryStoreReader 는 agent/store query-action 에 필요한 store keys 조회 인터페이스이다
+// (GET /store/{agent}/keys 와 동일 소스 — StoreQueryHandler.ListKeys 매핑).
+//
+// agentName 으로 store 시스템 에이전트를 찾아 StaticKeysSnapshot 을 응답 형상으로
+// 변환한다(구현은 remote_agent_data.go 의 agentManagerStoreReader).
+type queryStoreReader interface {
+	StoreKeys(ctx context.Context, agentName string) (*handler.StoreKeysListResponse, error)
+}
+
+// querySeriesReader 는 agent/series query-action 에 필요한 시리즈 키 목록 조회
+// 인터페이스이다(GET /tsdb/series 와 동일 소스 — TSDBAgent.TSDB().SeriesKeys 매핑).
+type querySeriesReader interface {
+	SeriesList(ctx context.Context, agentName string) ([]string, error)
+}
+
+// dashboardReader 는 M10(그룹 L) dashboard.get_shared/get_mine query-action 에 필요한
+// 노드-로컬 대시보드 config read 인터페이스이다(REQ-L01 — GET /dashboards/{shared,mine}
+// 와 동일 소스, storage.DashboardRepository.Get 을 만족). config 는 노드 권위이며
+// (A17) 서버는 READ-ONLY 로만 취득한다(변경은 v1.5 비목표 — REQ-L12).
+type dashboardReader interface {
+	Get(ctx context.Context, scope, owner string) (*storage.DashboardSnapshot, error)
+}
+
+// metricsReader 는 M10(그룹 L) monitor.metrics query-action 에 필요한 노드-로컬 시스템
+// 메트릭 read 인터페이스이다(REQ-L05 — GET /monitor/metrics 와 동일 소스,
+// handler.MonitorManager.GetMetrics 를 만족). 완만 변동이므로 서버는 단기 TTL 캐시한다
+// (REQ-J16). 장기 시계열/상시 폴링은 신설하지 않는다(그룹 K BASIC 비목표 일관).
+type metricsReader interface {
+	GetMetrics(ctx context.Context) (*handler.MetricsResponse, error)
+}
+
+// remoteQuerySource 는 로컬 read 어댑터를 remote.QuerySource 로 어댑트한다(REQ-J01/J04).
+//
+// M10(그룹 L): dashboard/metrics 필드는 노드-로컬 대시보드 config·시스템 메트릭 read
+// 소스이다(REQ-L01/L05). 미바인딩(nil)이면 해당 도메인 질의는 ErrQueryActionUnsupported
+// 를 반환한다(서버가 502 node-error 로 매핑 — REQ-L02).
+type remoteQuerySource struct {
+	flows     queryFlowReader
+	agents    queryAgentReader
+	devices   queryDeviceReader
+	store     queryStoreReader
+	series    querySeriesReader
+	dashboard dashboardReader // M10: dashboard.get_shared/get_mine (REQ-L01)
+	metrics   metricsReader   // M10: monitor.metrics (REQ-L05)
+}
+
+var _ remote.QuerySource = (*remoteQuerySource)(nil)
+
+// newRemoteQuerySource 는 read 어댑터를 바인딩한 query 소스를 생성한다.
+func newRemoteQuerySource(flows queryFlowReader, agents queryAgentReader, devices queryDeviceReader, store queryStoreReader, series querySeriesReader) *remoteQuerySource {
+	return &remoteQuerySource{flows: flows, agents: agents, devices: devices, store: store, series: series}
+}
+
+// Query 는 domain/queryAction 을 로컬 read 핸들러로 매핑하여 결과 JSON 을 반환한다
+// (REQ-J04 매핑 표). 미가용 action 은 remote.ErrQueryActionUnsupported 를 반환한다.
+func (s *remoteQuerySource) Query(ctx context.Context, domain, action string, args json.RawMessage) (json.RawMessage, error) {
+	switch domain {
+	case remote.DomainFlow:
+		return s.queryFlow(ctx, action, args)
+	case remote.DomainAgent:
+		return s.queryAgent(ctx, action, args)
+	case remote.DomainDevice:
+		return s.queryDevice(ctx, action, args)
+	case remote.DomainDashboard:
+		return s.queryDashboard(ctx, action, args)
+	case remote.DomainMonitor:
+		return s.queryMonitor(ctx, action)
+	default:
+		return nil, fmt.Errorf("%w: domain %q", remote.ErrQueryActionUnsupported, domain)
+	}
+}
+
+// queryDashboard 는 M10(그룹 L) dashboard.get_shared/get_mine 를 노드-로컬 대시보드
+// config read(storage.DashboardRepository.Get)로 매핑한다(REQ-L01, READ-ONLY).
+//
+//   - get_shared → scope=global, owner="" (GET /dashboards/shared).
+//   - get_mine   → scope=user,   owner=args.owner (GET /dashboards/mine, 노드-로컬 사용자).
+//
+// 변경 의미 action(put/delete 등)은 client allowlist 가 먼저 거부하나, 본 브리지도
+// 미열거 action 을 ErrQueryActionUnsupported 로 거부해 변경을 수행하지 않는다(REQ-J03/L12).
+//
+// config 미설정(ErrDashboardNotFound)은 오류가 아니라 정상 EMPTY 상태로 환원한다
+// (REQ-L02). 로컬 GET /dashboards/{shared,mine} 이 404 → UI 기본값을 쓰는 것과 동형으로,
+// 원격 프록시도 not-found 를 502 로 전파하지 않고 (nil, nil) 성공 결과를 반환한다. 노드는
+// query_result{ok:true, data:null} 을 전송하고 서버는 200 {data:null} 로 응답하여 프런트가
+// 빈/기본 대시보드를 렌더한다. 그 외 실제 리더 오류는 그대로 전파된다(서버가 502 로 매핑).
+func (s *remoteQuerySource) queryDashboard(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	if s.dashboard == nil {
+		return nil, fmt.Errorf("%w: dashboard reader 미바인딩", remote.ErrQueryActionUnsupported)
+	}
+	var scope, owner string
+	switch action {
+	case remote.QueryActionGetShared:
+		scope, owner = "global", ""
+	case remote.QueryActionGetMine:
+		// 노드-로컬 사용자 대시보드: args.owner 로 그 노드의 사용자 스코프를 지정한다
+		// (A17 — config 는 노드 권위, deviceId 는 그 노드 기준 해석). owner 누락 시 빈값.
+		scope = "user"
+		owner = dashboardOwner(args)
+	default:
+		// 변경 의미/미열거 action 거부(READ-ONLY — REQ-J03/L01).
+		return nil, fmt.Errorf("%w: dashboard/%s", remote.ErrQueryActionUnsupported, action)
+	}
+	snap, err := s.dashboard.Get(ctx, scope, owner)
+	if err != nil {
+		// not-found 는 "대시보드 미설정" 정상 빈 상태 — EMPTY 성공으로 환원(REQ-L02).
+		// 그 외 오류는 전파해 서버가 502 로 매핑하도록 한다.
+		if errors.Is(err, storage.ErrDashboardNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	// RAW storage 구조체(capitalized 키, Payload=base64 문자열) 대신 로컬 GET
+	// /dashboards/{shared,mine} 와 IDENTICAL 한 DTO 형상으로 직렬화한다(REQ-L01 —
+	// 프런트 data.payload(소문자, object) 호환). global 시 owner=null, payload 는
+	// raw JSON object 로 직렬화된다. redaction 은 client 가 전송 전 적용한다(REQ-J06).
+	d := handler.DashboardSnapshotToDTO(snap)
+	return json.Marshal(d)
+}
+
+// queryMonitor 는 M10(그룹 L) monitor.metrics 를 노드-로컬 시스템 메트릭 스냅샷
+// (handler.MonitorManager.GetMetrics)으로 매핑한다(REQ-L05, GET /monitor/metrics 동형).
+func (s *remoteQuerySource) queryMonitor(ctx context.Context, action string) (json.RawMessage, error) {
+	if s.metrics == nil {
+		return nil, fmt.Errorf("%w: metrics reader 미바인딩", remote.ErrQueryActionUnsupported)
+	}
+	switch action {
+	case remote.QueryActionMetrics:
+		m, err := s.metrics.GetMetrics(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(m)
+	default:
+		return nil, fmt.Errorf("%w: monitor/%s", remote.ErrQueryActionUnsupported, action)
+	}
+}
+
+// dashboardOwner 는 dashboard.get_mine args 에서 owner 를 추출한다(노드-로컬 사용자
+// 스코프 지정). 누락/디코드 불가는 빈 문자열로 처리한다(graceful).
+func dashboardOwner(args json.RawMessage) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var p struct {
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return ""
+	}
+	return p.Owner
+}
+
+func (s *remoteQuerySource) queryFlow(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	switch action {
+	case remote.QueryActionStatus:
+		id, err := queryID(args)
+		if err != nil {
+			return nil, err
+		}
+		info, err := s.flows.FlowStatus(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(info)
+	case remote.QueryActionNodes:
+		id, err := queryID(args)
+		if err != nil {
+			return nil, err
+		}
+		nodes, err := s.flows.ListFlowNodes(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(map[string]any{"nodes": nodes})
+	case remote.QueryActionNode:
+		var p flowNodeArgs
+		if err := json.Unmarshal(args, &p); err != nil {
+			return nil, fmt.Errorf("flow node args: %w", err)
+		}
+		if p.ID == "" || p.NodeID == "" {
+			return nil, fmt.Errorf("flow node: id 와 node_id 는 필수입니다")
+		}
+		node, err := s.flows.GetFlowNode(ctx, p.ID, p.NodeID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(node)
+	case remote.QueryActionGet:
+		id, err := queryID(args)
+		if err != nil {
+			return nil, err
+		}
+		info, err := s.flows.GetFlow(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(info)
+	case remote.QueryActionList:
+		return s.queryFlowList(ctx)
+	case remote.QueryActionLogs:
+		// logs 는 어댑터로 노출되지 않음 → 미지원(monitor.go 는 로그 레벨 관리만 제공).
+		return nil, fmt.Errorf("%w: flow/%s", remote.ErrQueryActionUnsupported, action)
+	default:
+		return nil, fmt.Errorf("%w: flow/%s", remote.ErrQueryActionUnsupported, action)
+	}
+}
+
+// queryFlowList 는 flow/list 를 노드의 라이브 로컬 목록(GET /flows 와 동일 소스 —
+// FlowServiceAdapter.ListFlows)으로 매핑한다(REQ-J04 보강). FlowInfo 요약(status/
+// node_count/uptime)을 {data:[…]} 로 반환한다(목록 뷰에는 요약으로 충분 — 단건 전체
+// 정의는 flow/get 이 담당). 페이지네이션으로 전체를 수집한다. redaction 은 client 가
+// 전송 전 적용한다(REQ-J06).
+func (s *remoteQuerySource) queryFlowList(ctx context.Context) (json.RawMessage, error) {
+	var flows []handler.FlowInfo
+	for page := 1; ; page++ {
+		batch, total, err := s.flows.ListFlows(ctx, queryListPageOpts(page))
+		if err != nil {
+			return nil, err
+		}
+		flows = append(flows, batch...)
+		if len(batch) == 0 || int64(len(flows)) >= total {
+			break
+		}
+	}
+	if flows == nil {
+		flows = []handler.FlowInfo{}
+	}
+	return marshalQuery(map[string]any{"data": flows})
+}
+
+func (s *remoteQuerySource) queryAgent(ctx context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	switch action {
+	case remote.QueryActionStats:
+		id, err := queryID(args)
+		if err != nil {
+			return nil, err
+		}
+		info, err := s.agents.AgentStats(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(info)
+	case remote.QueryActionGet, remote.QueryActionConfig, remote.QueryActionTopics:
+		id, err := queryID(args)
+		if err != nil {
+			return nil, err
+		}
+		// get/config/topics 는 모두 GetAgent(detail=full) 의 동일 소스를 사용한다.
+		//   - config: get 의 Config 섹션과 동일 소스(full 상세).
+		//   - topics: 토픽 데이터는 AgentInfo.State 에 존재한다(로컬 TopicsTab 이
+		//     agent.state.{subscribed_topics,pub_topics,…} 를 읽음). 동일 full 페이로드를
+		//     반환하여 로컬 패널과 IDENTICAL 형상을 보장한다(REQ-J04).
+		info, err := s.agents.GetAgent(ctx, id, "full")
+		if err != nil {
+			return nil, err
+		}
+		return marshalQuery(info)
+	case remote.QueryActionDevices:
+		return s.queryAgentDevices(ctx, args)
+	case remote.QueryActionSessions:
+		return s.queryAgentSessions(ctx, args)
+	case remote.QueryActionStore:
+		return s.queryAgentStore(ctx, args)
+	case remote.QueryActionSeries:
+		return s.queryAgentSeries(ctx, args)
+	case remote.QueryActionList:
+		return s.queryAgentList(ctx)
+	default:
+		return nil, fmt.Errorf("%w: agent/%s", remote.ErrQueryActionUnsupported, action)
+	}
+}
+
+// queryAgentList 는 agent/list 를 노드의 라이브 로컬 목록(GET /agents 와 동일 소스 —
+// AgentServiceAdapter.ListAgents)으로 매핑한다(REQ-J04 보강). 미러 요약과 달리
+// connected/uptime/stats 런타임 필드를 포함한 FULL AgentInfo 목록을 {data:[…]} 로
+// 반환한다(로컬 useAgents 가 소비하는 envelope 과 동형). 페이지네이션으로 전체를
+// 수집한다(인벤토리 소스와 동일 — 대규모 목록 대응). redaction 은 client 가 전송 전
+// 적용한다(REQ-J06 — config 가 시크릿 운반 가능).
+func (s *remoteQuerySource) queryAgentList(ctx context.Context) (json.RawMessage, error) {
+	var agents []handler.AgentInfo
+	for page := 1; ; page++ {
+		batch, total, err := s.agents.ListAgents(ctx, queryListPageOpts(page))
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, batch...)
+		if len(batch) == 0 || int64(len(agents)) >= total {
+			break
+		}
+	}
+	if agents == nil {
+		agents = []handler.AgentInfo{}
+	}
+	return marshalQuery(map[string]any{"data": agents})
+}
+
+// queryAgentDevices 는 agent/devices 를 디바이스 레지스트리 List(AgentName) 로 매핑한다
+// (로컬 useDevices({agent}) 와 동일 소스 — REQ-J04). 응답은 {data:[…]} 형상으로
+// 로컬 useDevices 가 소비하는 envelope 과 동일하다.
+func (s *remoteQuerySource) queryAgentDevices(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+	id, err := queryID(args)
+	if err != nil {
+		return nil, err
+	}
+	// 디바이스 필터는 agent NAME 기반이므로 먼저 id→name 을 해소한다.
+	info, err := s.agents.GetAgent(ctx, id, "")
+	if err != nil {
+		return nil, err
+	}
+	devs := s.devices.List(device.DeviceFilter{AgentName: info.Name})
+	items := make([]map[string]any, 0, len(devs))
+	for _, d := range devs {
+		items = append(items, deviceListItem(d))
+	}
+	return marshalQuery(map[string]any{"data": items})
+}
+
+// queryAgentSessions 는 agent/sessions 를 read 전용 list_connections 명령으로 매핑한다
+// (로컬 SessionsTab 과 동일 소스 — REQ-J04). 결과는 그대로 반환하며(로컬 패널이
+// connections 를 언랩), redaction 은 client 가 전송 전 수행한다(REQ-J06).
+func (s *remoteQuerySource) queryAgentSessions(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+	id, err := queryID(args)
+	if err != nil {
+		return nil, err
+	}
+	cmd := json.RawMessage(`{"command":"list_connections"}`)
+	res, err := s.agents.ExecAgent(ctx, id, cmd)
+	if err != nil {
+		return nil, err
+	}
+	if len(res) == 0 {
+		return json.RawMessage("{}"), nil
+	}
+	return res, nil
+}
+
+// queryAgentStore 는 agent/store 를 store 시스템 에이전트의 keys snapshot 으로 매핑한다
+// (GET /store/{agent}/keys 와 동일 형상 — REQ-J04). store 는 agent NAME 기반이므로
+// 먼저 id→name 을 해소한다.
+func (s *remoteQuerySource) queryAgentStore(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+	id, err := queryID(args)
+	if err != nil {
+		return nil, err
+	}
+	info, err := s.agents.GetAgent(ctx, id, "")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.store.StoreKeys(ctx, info.Name)
+	if err != nil {
+		return nil, err
+	}
+	return marshalQuery(resp)
+}
+
+// queryAgentSeries 는 agent/series 를 TSDB 시리즈 키 목록으로 매핑한다(GET /tsdb/series
+// 와 동일 형상 {series:[…], count} — REQ-J04). series 는 agent NAME 기반이므로 먼저
+// id→name 을 해소한다.
+func (s *remoteQuerySource) queryAgentSeries(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+	id, err := queryID(args)
+	if err != nil {
+		return nil, err
+	}
+	info, err := s.agents.GetAgent(ctx, id, "")
+	if err != nil {
+		return nil, err
+	}
+	keys, err := s.series.SeriesList(ctx, info.Name)
+	if err != nil {
+		return nil, err
+	}
+	if keys == nil {
+		keys = []string{}
+	}
+	return marshalQuery(map[string]any{"series": keys, "count": len(keys)})
+}
+
+// deviceListItem 은 디바이스를 로컬 DeviceResponse(GET /devices) 와 동일 키 집합의
+// map 으로 변환한다(REQ-J04 — 로컬 useDevices 가 소비하는 형상). 레지스트리
+// 메타데이터 병합은 query 경로에서 생략한다(목록 표시에는 기본 필드로 충분).
+func deviceListItem(d device.Device) map[string]any {
+	return map[string]any{
+		"id":           d.ID(),
+		"name":         d.Name(),
+		"type":         string(d.Type()),
+		"protocol":     d.Protocol(),
+		"agent_name":   d.AgentName(),
+		"online":       d.Online(),
+		"last_seen":    d.LastSeen(),
+		"source":       d.Source(),
+		"capabilities": d.Capabilities(),
+	}
+}
+
+func (s *remoteQuerySource) queryDevice(_ context.Context, action string, args json.RawMessage) (json.RawMessage, error) {
+	// list 는 자원 id 가 없으므로 id 추출 전에 처리한다(전체 레지스트리 열거).
+	if action == remote.QueryActionList {
+		return s.queryDeviceList()
+	}
+	id, err := queryID(args)
+	if err != nil {
+		return nil, err
+	}
+	dev, err := s.devices.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	switch action {
+	case remote.QueryActionGet:
+		return marshalQuery(map[string]any{
+			"id":         dev.ID(),
+			"name":       dev.Name(),
+			"protocol":   dev.Protocol(),
+			"type":       string(dev.Type()),
+			"agent_name": dev.AgentName(),
+			"online":     dev.Online(),
+			"state":      dev.State(),
+			"metadata":   dev.Metadata(),
+		})
+	case remote.QueryActionState:
+		return marshalQuery(dev.State())
+	case remote.QueryActionMetadata:
+		return marshalQuery(dev.Metadata())
+	case remote.QueryActionCommands:
+		// 명령 스펙은 ControllableDevice 만 보유한다. 비제어 디바이스는 빈 목록.
+		if cd, ok := dev.(device.ControllableDevice); ok {
+			return marshalQuery(map[string]any{"commands": cd.Commands()})
+		}
+		return marshalQuery(map[string]any{"commands": []any{}})
+	default:
+		return nil, fmt.Errorf("%w: device/%s", remote.ErrQueryActionUnsupported, action)
+	}
+}
+
+// queryDeviceList 는 device/list 를 노드의 라이브 디바이스 레지스트리 전체 열거(GET
+// /devices 와 동일 소스 — Registry.List)로 매핑한다(REQ-J04 보강). agent/devices 와
+// 동일한 deviceListItem 형상으로 {data:[…]} 를 반환한다(로컬 useDevices 와 동형).
+// 필터 없이 전체를 반환한다(노출 범위 게이팅은 서버 핸들러가 수행 — 본 노드는 권위).
+// redaction 은 client 가 전송 전 적용한다(REQ-J06).
+func (s *remoteQuerySource) queryDeviceList() (json.RawMessage, error) {
+	devs := s.devices.List(device.DeviceFilter{})
+	items := make([]map[string]any, 0, len(devs))
+	for _, d := range devs {
+		items = append(items, deviceListItem(d))
+	}
+	return marshalQuery(map[string]any{"data": items})
+}
+
+// queryListPageSize 는 list query-action 의 페이지 크기이다(dto.ListOptions.Normalize
+// 가 maxSize 로 클램프하므로 페이지네이션으로 전체를 수집한다 — 대규모 목록 대응).
+const queryListPageSize = 100
+
+// queryListPageOpts 는 page 번호로 list query-action 의 조회 옵션을 만든다(필터 없음,
+// 기본 detail — connected/uptime/stats 등 runtime 필드 포함). 인벤토리 소스와 동일 패턴.
+func queryListPageOpts(page int) dto.ListOptions {
+	opts := dto.ListOptions{}
+	opts.Page = page
+	opts.Size = queryListPageSize
+	opts.Normalize()
+	return opts
+}
+
+// flowNodeArgs 는 flow.node query-action 의 인자({id, node_id})이다.
+type flowNodeArgs struct {
+	ID     string `json:"id"`
+	NodeID string `json:"node_id"`
+}
+
+// queryArgs 는 단일 id 기반 query-action 의 공통 인자이다.
+type queryArgs struct {
+	ID string `json:"id"`
+}
+
+// queryID 는 {"id": "..."} args 에서 ID 를 추출한다. 누락 시 오류.
+func queryID(args json.RawMessage) (string, error) {
+	var p queryArgs
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("decode query id args: %w", err)
+	}
+	if p.ID == "" {
+		return "", fmt.Errorf("query: id 는 필수입니다")
+	}
+	return p.ID, nil
+}
+
+// marshalQuery 는 read 결과를 json.RawMessage 로 직렬화한다. nil 은 빈 객체로 처리한다.
+func marshalQuery(v any) (json.RawMessage, error) {
+	if v == nil {
+		return json.RawMessage("{}"), nil
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("marshal query result: %w", err)
+	}
+	return data, nil
+}
+
+// queryRedactor 는 임의 JSON 본문에 secret_fields redaction 정책을 재귀 적용하는
+// remote.QueryRedactor 구현이다(REQ-J06 — secret_fields SoT 재사용).
+type queryRedactor struct{}
+
+var _ remote.QueryRedactor = (*queryRedactor)(nil)
+
+// newQueryRedactor 는 query/stream 응답용 리댁터를 생성한다.
+func newQueryRedactor() remote.QueryRedactor {
+	return &queryRedactor{}
+}
+
+// Redact 는 JSON 을 디코드하여 시크릿 필드를 재귀 제거한 뒤 재직렬화한다(REQ-J06).
+//
+//   - 객체({...}): handler.RedactSensitiveConfig(재귀 — 중첩 맵/배열 포함).
+//   - 배열([...]): 각 요소를 재귀 redaction.
+//   - 스칼라/디코드 불가: 그대로 통과(graceful — 비시크릿 데이터).
+func (r *queryRedactor) Redact(data json.RawMessage) json.RawMessage {
+	if len(data) == 0 {
+		return data
+	}
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return data // 디코드 불가 → 보수적으로 원본 통과.
+	}
+	out, err := json.Marshal(redactJSONValue(v))
+	if err != nil {
+		return data
+	}
+	return out
+}
+
+// redactJSONValue 는 임의 JSON 값(map/slice/scalar)에 시크릿 redaction 을 재귀 적용한다.
+// handler.RedactSensitiveConfig 와 동일 정책(SoT 재사용)을 map 에 적용하고, 배열은
+// 요소별로 재귀한다.
+func redactJSONValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return handler.RedactSensitiveConfig(t)
+	case []any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = redactJSONValue(item)
+		}
+		return out
+	default:
+		return v
+	}
+}

@@ -2,9 +2,13 @@ package node
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/xtra/xflow/internal/observe"
+	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/pkg/flow"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
@@ -29,6 +33,21 @@ type ScriptEngine interface {
 // nodeID 는 디버깅 / 추적 용도로 전달된다.
 type ScriptEngineFactory func(nodeID string) ScriptEngine
 
+// scriptErrorMode 는 스크립트 실행 실패 시 노드의 처리 정책이다(config: on_error).
+type scriptErrorMode string
+
+const (
+	// scriptErrorModeError 는 기본값이다: 실패 시 래핑된 에러를 반환하여 엔진이
+	// ERROR 로그를 남기고 에러 와이어로 전송한다(기존 동작, 하위 호환).
+	scriptErrorModeError scriptErrorMode = "error"
+	// scriptErrorModeIgnore 는 실패 시 에러를 반환하지 않고(ERROR 로그 없음)
+	// 원본 입력 메시지를 그대로 통과시켜 흐름을 유지한다. 원인은 DEBUG 로그.
+	scriptErrorModeIgnore scriptErrorMode = "ignore"
+	// scriptErrorModeDrop 은 실패 시 에러를 반환하지 않고(ERROR 로그 없음)
+	// 출력을 내지 않는다(메시지 드롭). 원인은 DEBUG 로그.
+	scriptErrorModeDrop scriptErrorMode = "drop"
+)
+
 // ScriptNode 는 스크립트 기반으로 메시지를 처리하는 노드이다.
 // ScriptEngine 인터페이스를 통해 다양한 스크립트 언어를 지원할 수 있다.
 type ScriptNode struct {
@@ -36,7 +55,20 @@ type ScriptNode struct {
 	engine        ScriptEngine
 	scriptSource  string
 	scriptTimeout time.Duration
-	mu            sync.RWMutex
+	// onError 는 스크립트 실행 실패 시 처리 정책이다(config: on_error). 기본 "error".
+	onError scriptErrorMode
+	mu      sync.RWMutex
+
+	// 스토어 바인딩(Follow-up A): agent_ref + namespace 가 설정되면 xflow.store 가
+	// 이 네임스페이스 스토어에 실행별로 바인딩된다. 미설정이면 xflow.store 는 nil-safe.
+	resolver  AgentResolver  // AgentResolver (옵션 _agent_resolver 에서 추출)
+	agentRef  *flow.AgentRef // Store 에이전트 참조 (def.AgentRef)
+	namespace string         // Store 네임스페이스 (기본 "default")
+	// storeOnce/scriptStore 는 네임스페이스 스토어 해석을 1회로 캐시한다.
+	// 스토어 어댑터는 lazy resolver 를 감싸 에이전트 재시작에도 안전하므로 캐시가 안전하다.
+	storeOnce   sync.Once
+	scriptStore script.StoreAccessor
+	storeErr    error
 }
 
 // WithScriptEngine 은 ScriptNode에 ScriptEngine을 설정하는 옵션을 반환한다.
@@ -82,6 +114,9 @@ func NewScriptNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	n := &ScriptNode{
 		BaseNode:      base,
 		scriptTimeout: 5 * time.Second,
+		agentRef:      def.AgentRef, // Follow-up A: 스토어 에이전트 참조(선택).
+		namespace:     "default",
+		onError:       scriptErrorModeError, // 기본: 기존 동작(에러 반환).
 	}
 
 	// 옵션에서 engine과 timeout 추출
@@ -108,6 +143,30 @@ func NewScriptNode(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 		if s, ok := base.config["script"]; ok {
 			if src, ok := s.(string); ok {
 				n.scriptSource = src
+			}
+		}
+		// on_error 정책(선택, 기본 "error"). 알 수 없는 값은 tolerant 하게 "error" 로
+		// 폴백하고 DEBUG 로그를 남긴다(플로우 배포 중단 방지).
+		if v, ok := base.config["on_error"]; ok {
+			n.onError = parseScriptErrorMode(v, base.Logger(), def.ID)
+		}
+		// Follow-up A: 스토어 네임스페이스(선택, 기본 "default").
+		if ns, ok := base.config["namespace"]; ok {
+			if s, ok := ns.(string); ok && s != "" {
+				n.namespace = s
+			}
+		}
+		// Follow-up A: AgentResolver 주입(store-read/write 와 동일한 _agent_resolver 키).
+		if r, ok := base.config["_agent_resolver"]; ok {
+			if resolver, ok := r.(AgentResolver); ok {
+				n.resolver = resolver
+			}
+		}
+		// 테스트/직접 주입 경로: 미리 만들어진 script.StoreAccessor 를 그대로 사용한다.
+		if s, ok := base.config["_script_store"]; ok {
+			if sa, ok := s.(script.StoreAccessor); ok {
+				n.scriptStore = sa
+				n.storeOnce.Do(func() {}) // 이미 해석됨 표시(재해석 방지).
 			}
 		}
 	}
@@ -147,6 +206,7 @@ func (n *ScriptNode) Process(ctx context.Context, msg message.Message) ([]messag
 	n.mu.RLock()
 	engine := n.engine
 	timeout := n.scriptTimeout
+	onError := n.onError
 	n.mu.RUnlock()
 
 	if engine == nil {
@@ -157,14 +217,78 @@ func (n *ScriptNode) Process(ctx context.Context, msg message.Message) ([]messag
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	result, err := engine.Execute(timeoutCtx, msg)
+	// Follow-up A: 엔진이 실행별 스토어 바인딩을 지원하면(구조적 인터페이스 만족),
+	// 이 노드의 네임스페이스 스토어를 해석하여 이번 실행에 한해 xflow.store 에 바인딩한다.
+	// 스토어 미구성(agent_ref 없음)이면 store 는 nil → xflow.store 는 nil-safe.
+	var result message.Message
+	var err error
+	if binder, ok := engine.(scriptEngineWithStore); ok {
+		store := n.resolveScriptStore(timeoutCtx)
+		result, err = binder.ExecuteWithStore(timeoutCtx, msg, store)
+	} else {
+		result, err = engine.Execute(timeoutCtx, msg)
+	}
 	if err != nil {
-		if timeoutCtx.Err() == context.DeadlineExceeded {
-			return nil, ErrScriptTimeout
-		}
-		return nil, ErrScriptExecutionFailed
+		return n.handleProcessError(msg, timeoutCtx, err, onError)
 	}
 	return []message.Message{result}, nil
+}
+
+// handleProcessError 는 스크립트 실행/타임아웃 실패를 on_error 정책에 따라 처리한다.
+//
+//   - "error" (기본): 래핑된 에러를 반환한다(엔진이 ERROR 로그 + 에러 와이어 처리).
+//     타임아웃은 ErrScriptTimeout, 실행 실패는 ErrScriptExecutionFailed 를 감싼다.
+//   - "ignore": 에러를 반환하지 않고(ERROR 로그 없음) 원본 입력 메시지를 통과시킨다.
+//     원인은 DEBUG 로 남긴다.
+//   - "drop": 에러를 반환하지 않고 출력을 내지 않는다(메시지 드롭). 원인은 DEBUG.
+//
+// wrappedErr 는 "error" 모드에서 반환할 에러이다(타임아웃/실행 실패 구분).
+func (n *ScriptNode) handleProcessError(msg message.Message, execCtx context.Context, err error, onError scriptErrorMode) ([]message.Message, error) {
+	// "error" 모드에서 반환할 에러를 먼저 계산한다(타임아웃 우선 판정).
+	var wrappedErr error
+	if execCtx.Err() == context.DeadlineExceeded {
+		wrappedErr = ErrScriptTimeout
+	} else {
+		// 하위 에러(엔진의 ScriptError.Detail = Lua PCall 오류)를 감싸 실제 원인이
+		// 로그에 드러나게 한다. errors.Is(err, ErrScriptExecutionFailed) 는 유지된다.
+		wrappedErr = fmt.Errorf("%w: %v", ErrScriptExecutionFailed, err)
+	}
+
+	switch onError {
+	case scriptErrorModeIgnore:
+		n.debugLogScriptError("script 실행 실패 — on_error=ignore, 원본 통과", err)
+		return []message.Message{msg}, nil // 원본 통과, 에러 없음.
+	case scriptErrorModeDrop:
+		n.debugLogScriptError("script 실행 실패 — on_error=drop, 메시지 드롭", err)
+		return nil, nil // 출력 없음, 에러 없음.
+	default: // scriptErrorModeError (기본)
+		return nil, wrappedErr
+	}
+}
+
+// debugLogScriptError 는 실패 원인을 DEBUG 로 남긴다(ERROR/WARN 아님). logger nil 방어.
+func (n *ScriptNode) debugLogScriptError(msg string, err error) {
+	if logger := n.BaseNode.Logger(); logger != nil {
+		logger.Debug(msg, "node", n.ID(), "error", err)
+	}
+}
+
+// resolveScriptStore 는 이 노드의 네임스페이스 스토어를 1회 해석하여 캐시한다.
+// agent_ref 미설정이거나 해석 실패 시 nil 을 반환한다(스토어 바인딩 없음 → nil-safe).
+// 해석 오류는 로깅만 하고 nil 로 폴백하여 스크립트 실행 자체는 계속되게 한다.
+func (n *ScriptNode) resolveScriptStore(ctx context.Context) script.StoreAccessor {
+	n.storeOnce.Do(func() {
+		sa, err := resolveNamespacedScriptStore(ctx, n.resolver, n.agentRef, n.namespace)
+		n.scriptStore = sa
+		n.storeErr = err
+		if err != nil {
+			if logger := n.BaseNode.Logger(); logger != nil {
+				logger.Warn("script: 스토어 해석 실패 — xflow.store 는 비활성(nil)로 동작",
+					"node", n.ID(), "error", err)
+			}
+		}
+	})
+	return n.scriptStore
 }
 
 // Shutdown 은 ScriptNode를 종료하고 엔진 리소스를 해제한다.
@@ -186,6 +310,24 @@ func (n *ScriptNode) Configure(config map[string]any) error {
 		return err
 	}
 
+	// Follow-up A: 스토어 네임스페이스(선택, 기본 "default"). def.Config 경로로
+	// 전달되므로 Configure 에서 읽는다(BaseNode.Configure 가 base.config 를 교체하기 때문).
+	if ns, ok := config["namespace"]; ok {
+		if s, ok := ns.(string); ok && s != "" {
+			n.mu.Lock()
+			n.namespace = s
+			n.mu.Unlock()
+		}
+	}
+
+	// on_error 정책(선택, 기본 "error"). Configure 경로에서도 파싱한다.
+	if v, ok := config["on_error"]; ok {
+		mode := parseScriptErrorMode(v, n.BaseNode.Logger(), n.ID())
+		n.mu.Lock()
+		n.onError = mode
+		n.mu.Unlock()
+	}
+
 	if src, ok := config["script"]; ok {
 		if source, ok := src.(string); ok {
 			n.mu.Lock()
@@ -201,4 +343,34 @@ func (n *ScriptNode) Configure(config map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// parseScriptErrorMode 는 on_error config 값을 scriptErrorMode 로 파싱한다.
+//
+// 허용 값: "error"(기본) | "ignore" | "drop". 대소문자/공백은 정규화한다.
+// 비문자열이거나 알 수 없는 값이면 tolerant 하게 "error" 로 폴백하고 DEBUG 로그를
+// 남긴다(플로우 배포를 중단시키지 않기 위함 — ErrInvalidConfig 대신 관대한 기본값).
+func parseScriptErrorMode(v any, logger observe.ComponentLogger, nodeID string) scriptErrorMode {
+	s, ok := v.(string)
+	if !ok {
+		if logger != nil {
+			logger.Debug("script: on_error 가 문자열이 아님 — 기본값 error 적용",
+				"node", nodeID, "value", v)
+		}
+		return scriptErrorModeError
+	}
+	switch scriptErrorMode(strings.ToLower(strings.TrimSpace(s))) {
+	case scriptErrorModeError:
+		return scriptErrorModeError
+	case scriptErrorModeIgnore:
+		return scriptErrorModeIgnore
+	case scriptErrorModeDrop:
+		return scriptErrorModeDrop
+	default:
+		if logger != nil {
+			logger.Debug("script: 알 수 없는 on_error 값 — 기본값 error 적용",
+				"node", nodeID, "value", s)
+		}
+		return scriptErrorModeError
+	}
 }

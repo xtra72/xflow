@@ -114,6 +114,9 @@ func newUpdateCmd(deps updateDeps) *cobra.Command {
 	cmd.AddCommand(newUpdateStatusCmd(deps))
 	cmd.AddCommand(newUpdateRollbackCmd(deps))
 	cmd.AddCommand(newUpdateChannelCmd(deps))
+	// @SPEC:SPEC-UPDATE-001 v0.1.0 — 릴리스 이미지 생성 도구 (운영자/CI 전용).
+	cmd.AddCommand(newUpdateKeygenCmd(defaultImageDeps()))
+	cmd.AddCommand(newUpdateSignCmd(defaultImageDeps()))
 	return cmd
 }
 

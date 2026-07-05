@@ -1,6 +1,7 @@
 import yaml from 'js-yaml';
 
 import { generateUUID } from '@/lib/utils/uuid';
+import type { TranslationFn } from '@/lib/i18n';
 
 /**
  * 가져오기 대상 항목 하나를 나타낸다.
@@ -96,11 +97,11 @@ export function remapAgentNames(
  * 파일을 읽어서 JSON 또는 YAML로 파싱한다.
  * 확장자에 따라 자동으로 파서를 선택한다.
  */
-export async function parseImportFile(file: File): Promise<unknown> {
+export async function parseImportFile(file: File, t: TranslationFn): Promise<unknown> {
   const text = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('파일을 읽을 수 없습니다.'));
+    reader.onerror = () => reject(new Error(t('import.validate.fileReadError')));
     reader.readAsText(file);
   });
 
@@ -126,12 +127,12 @@ export async function parseImportFile(file: File): Promise<unknown> {
  * 플로우 가져오기 데이터를 검증한다.
  * 단일 객체 또는 배열을 모두 지원한다.
  */
-export function validateFlowImport(data: unknown): ValidationResult {
+export function validateFlowImport(data: unknown, t: TranslationFn): ValidationResult {
   const errors: string[] = [];
   const items: ImportItem[] = [];
 
   if (data == null || typeof data !== 'object') {
-    return { valid: false, errors: ['유효한 JSON/YAML 객체가 아닙니다.'], items: [] };
+    return { valid: false, errors: [t('import.validate.notObject')], items: [] };
   }
 
   const arr = Array.isArray(data) ? data : [data];
@@ -139,14 +140,14 @@ export function validateFlowImport(data: unknown): ValidationResult {
   for (let i = 0; i < arr.length; i++) {
     const item = arr[i];
     if (item == null || typeof item !== 'object') {
-      errors.push(`항목 ${i + 1}: 객체가 아닙니다.`);
+      errors.push(t('import.validate.itemNotObject').replace('{index}', String(i + 1)));
       continue;
     }
 
     const record = item as Record<string, unknown>;
 
     if (!record.name || typeof record.name !== 'string') {
-      errors.push(`항목 ${i + 1}: name 필드가 필요합니다.`);
+      errors.push(t('import.validate.itemNameRequired').replace('{index}', String(i + 1)));
       continue;
     }
 
@@ -157,7 +158,9 @@ export function validateFlowImport(data: unknown): ValidationResult {
       if (Array.isArray(record.nodes)) {
         definition = { nodes: record.nodes, wires: record.wires ?? record.edges ?? [] };
       } else {
-        errors.push(`항목 ${i + 1}: definition 또는 nodes 필드가 필요합니다.`);
+        errors.push(
+          t('import.validate.itemDefinitionRequired').replace('{index}', String(i + 1)),
+        );
         continue;
       }
     }
@@ -183,12 +186,12 @@ export function validateFlowImport(data: unknown): ValidationResult {
  * 에이전트 가져오기 데이터를 검증한다.
  * 단일 객체 또는 배열을 모두 지원한다.
  */
-export function validateAgentImport(data: unknown): ValidationResult {
+export function validateAgentImport(data: unknown, t: TranslationFn): ValidationResult {
   const errors: string[] = [];
   const items: ImportItem[] = [];
 
   if (data == null || typeof data !== 'object') {
-    return { valid: false, errors: ['유효한 JSON/YAML 객체가 아닙니다.'], items: [] };
+    return { valid: false, errors: [t('import.validate.notObject')], items: [] };
   }
 
   const arr = Array.isArray(data) ? data : [data];
@@ -196,19 +199,19 @@ export function validateAgentImport(data: unknown): ValidationResult {
   for (let i = 0; i < arr.length; i++) {
     const item = arr[i];
     if (item == null || typeof item !== 'object') {
-      errors.push(`항목 ${i + 1}: 객체가 아닙니다.`);
+      errors.push(t('import.validate.itemNotObject').replace('{index}', String(i + 1)));
       continue;
     }
 
     const record = item as Record<string, unknown>;
 
     if (!record.name || typeof record.name !== 'string') {
-      errors.push(`항목 ${i + 1}: name 필드가 필요합니다.`);
+      errors.push(t('import.validate.itemNameRequired').replace('{index}', String(i + 1)));
       continue;
     }
 
     if (!record.type || typeof record.type !== 'string') {
-      errors.push(`항목 ${i + 1}: type 필드가 필요합니다.`);
+      errors.push(t('import.validate.itemTypeRequired').replace('{index}', String(i + 1)));
       continue;
     }
 

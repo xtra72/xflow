@@ -43,6 +43,27 @@ export function useDevice(uid: string, refetchInterval?: number) {
   });
 }
 
+/**
+ * 디바이스 수신 데이터 이력(주기 스냅샷) 조회.
+ *
+ * 상세 섹션 진입(enabled) 시 또는 limit 변경 시 조회한다. 이력은 best-effort
+ * 관측 데이터이므로 짧은 staleTime 으로 캐싱한다(과도한 폴링 회피, 수동 재조회 위주).
+ *
+ * @param id - 디바이스 식별자 (uid/UUID 우선)
+ * @param limit - 조회 개수 (서버가 max 로 clamp). 기본 100.
+ * @param enabled - 섹션이 보일 때만 조회하도록 게이팅.
+ */
+export function useDeviceHistory(id: string, limit = 100, enabled = true) {
+  return useQuery({
+    queryKey: ['devices', id, 'history', limit],
+    queryFn: () => deviceService.getDeviceHistory(id, limit),
+    enabled: enabled && !!id,
+    // 이력 비활성(404)은 한 번만 시도(반복 재시도 무의미).
+    retry: false,
+    staleTime: 10_000,
+  });
+}
+
 /** useDevices + WebSocket 실시간 갱신. device.status 수신 시 자동 refetch. */
 export function useDevicesRealtime(params?: DeviceListParams) {
   const queryClient = useQueryClient();

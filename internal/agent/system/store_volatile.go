@@ -144,6 +144,35 @@ func (s *VolatileStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+// Rename 은 oldKey 의 storeItem(값 + 히스토리 + TTL/타임스탬프)을 newKey 로 이동한다.
+// 인메모리 맵에서 아이템 참조를 그대로 옮기므로 히스토리를 포함해 완전히 보존된다.
+//   - oldKey 없음/만료 → ErrKeyNotFound.
+//   - newKey 이미 존재(비만료) → ErrKeyExists (덮어쓰기 금지).
+func (s *VolatileStore) Rename(_ context.Context, oldKey, newKey string) error {
+	if err := s.validateKey(newKey); err != nil {
+		return err
+	}
+	raw, ok := s.data.Load(oldKey)
+	if !ok {
+		return ErrKeyNotFound
+	}
+	item := raw.(*storeItem)
+	if s.isExpired(item) {
+		s.data.Delete(oldKey)
+		return ErrKeyNotFound
+	}
+	// 대상 키 충돌 검사(비만료 항목이 있으면 거부). 만료 항목은 정리 후 진행.
+	if existingRaw, exists := s.data.Load(newKey); exists {
+		if !s.isExpired(existingRaw.(*storeItem)) {
+			return ErrKeyExists
+		}
+		s.data.Delete(newKey)
+	}
+	s.data.Store(newKey, item)
+	s.data.Delete(oldKey)
+	return nil
+}
+
 // Has 는 주어진 키가 존재하고 만료되지 않았는지 확인한다.
 func (s *VolatileStore) Has(_ context.Context, key string) (bool, error) {
 	raw, ok := s.data.Load(key)

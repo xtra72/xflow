@@ -22,7 +22,16 @@ import (
 // agent.Agent 인터페이스도 구현하여 agent.List() 결과로 동작한다.
 type fakeStoreAgent struct {
 	*fakeAgentCommon
-	queryFn func(ctx context.Context, namespace, key string, q system.HistoryQuery) ([]system.HistoryEntry, error)
+	queryFn  func(ctx context.Context, namespace, key string, q system.HistoryQuery) ([]system.HistoryEntry, error)
+	renameFn func(ctx context.Context, namespace, oldKey, newKey string) (int, error)
+}
+
+// RenameKey 는 storeKeyRenamer 계약을 만족한다(테스트용). renameFn 미지정이면 (0, nil).
+func (f *fakeStoreAgent) RenameKey(ctx context.Context, namespace, oldKey, newKey string) (int, error) {
+	if f.renameFn != nil {
+		return f.renameFn(ctx, namespace, oldKey, newKey)
+	}
+	return 0, nil
 }
 
 func (f *fakeStoreAgent) QueryHistory(
@@ -65,9 +74,13 @@ func TestStoreQueryHandler_RegisterRoutes(t *testing.T) {
 
 	// @spec SPEC-STORE-003:
 	//   POST   /query, GET /keys, GET /tags,
-	//   DELETE /keys/{key}, DELETE /keys (신규)
-	// 총 5개.
-	assert.Equal(t, 5, after-before)
+	//   DELETE /keys/{key}, DELETE /keys
+	// @spec SPEC-STORE-003 v0.4.0:
+	//   PUT    /keys/{key}/meta (신규)
+	// @spec SPEC-STORE-004:
+	//   POST   /keys/{key}/rename (신규)
+	// 총 7개.
+	assert.Equal(t, 7, after-before)
 }
 
 func TestStoreQueryHandler_각모드_성공(t *testing.T) {
@@ -157,6 +170,38 @@ func TestStoreQueryHandler_키없음_400(t *testing.T) {
 	router.Handler().ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestStoreQueryHandler_키없음_빈결과_200 은 QueryHistory 가 system.ErrKeyNotFound 를
+// 반환할 때(키 미존재) 핸들러가 500(INTERNAL_ERROR)이 아니라 빈 결과 200 으로
+// 응답하는지 검증한다. device_id 변경으로 옛 키를 조회하거나 첫 데이터 전 차트가
+// 정상 렌더되도록 하기 위함이다.
+func TestStoreQueryHandler_키없음_빈결과_200(t *testing.T) {
+	agentFake := &fakeStoreAgent{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		queryFn: func(_ context.Context, _, _ string, _ system.HistoryQuery) ([]system.HistoryEntry, error) {
+			return nil, system.ErrKeyNotFound
+		},
+	}
+	router := setupStoreQueryRouter(t, agentFake)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/store/store-a/query",
+		strings.NewReader(`{"key":"gone-after-migration","mode":"latest"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code, "키 미존재는 500 이 아니라 빈 결과 200 이어야 한다")
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Count int `json:"count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.True(t, resp.Success)
+	assert.Equal(t, 0, resp.Data.Count)
 }
 
 func TestStoreQueryHandler_에이전트없음_404(t *testing.T) {
@@ -518,6 +563,29 @@ func TestStoreQueryHandler_집계_정수값_변환(t *testing.T) {
 	assert.Equal(t, float64(25), resp.Data.Entries[0].Value)
 }
 
+func TestStoreQueryHandler_집계_boolean값_1_0_변환(t *testing.T) {
+	// boolean data_type 시리즈는 서버 집계 경로에서도 true→1 / false→0 으로
+	// 변환되어 라인 차트에 표시되어야 한다. 이전에는 toFloat64 가 bool 을 처리하지
+	// 못해 엔트리가 통째로 스킵되어 "boolean 타입 선택 시 출력 안 됨" 버그가 있었다.
+	entries := []system.HistoryEntry{
+		{Timestamp: time.UnixMilli(1000), Value: true},
+		{Timestamp: time.UnixMilli(5000), Value: false},
+		{Timestamp: time.UnixMilli(10_000), Value: true},
+		{Timestamp: time.UnixMilli(20_000), Value: true},
+	}
+	router := setupStoreQueryRouter(t, makeAggFake(t, entries))
+
+	body := `{"key":"k","mode":"time_range","start_ms":1000,"end_ms":61000,` +
+		`"interval_ms":60000,"aggregation":"avg"}`
+	rec := doAggPOST(t, router, body)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	// (1 + 0 + 1 + 1) / 4 = 0.75
+	assert.InDelta(t, 0.75, resp.Data.Entries[0].Value, 1e-9)
+}
+
 // ---------------------------------------------------------------------------
 // 벽시계 정렬 (epoch-zero alignment) 테스트.
 //
@@ -630,7 +698,8 @@ func TestToFloat64_숫자타입_테이블(t *testing.T) {
 		{"uint64", uint64(2), 2, true},
 		{"string은_실패", "abc", 0, false},
 		{"nil은_실패", nil, 0, false},
-		{"bool은_실패", true, 0, false},
+		{"bool_true는_1", true, 1, true},
+		{"bool_false는_0", false, 0, true},
 		{"NaN_실패", math.NaN(), 0, false},
 		{"Inf_실패", math.Inf(1), 0, false},
 		{"NegInf_실패", math.Inf(-1), 0, false},

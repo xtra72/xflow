@@ -27,21 +27,35 @@ type MonitorManager interface {
 	SetComponentLogLevel(ctx context.Context, component, level string) error
 	// ResetComponentLogLevel 은 특정 컴포넌트의 로그 레벨을 기본값으로 초기화한다.
 	ResetComponentLogLevel(ctx context.Context, component string) error
+	// GetLogIDStyle 은 현재 로그 식별자 표시 스타일을 반환한다.
+	GetLogIDStyle(ctx context.Context) string
+	// SetLogIDStyle 은 로그 식별자 표시 스타일을 변경한다.
+	SetLogIDStyle(ctx context.Context, style string) error
 }
 
 // MetricsResponse 는 시스템 메트릭 응답을 나타낸다.
 type MetricsResponse struct {
-	CPUUsagePercent  float64 `json:"cpu_usage_percent"`
-	MemoryUsagePct   float64 `json:"memory_usage_percent"`
-	GoRoutines       int     `json:"go_routines"`
-	GoMemAllocMB     float64 `json:"go_mem_alloc_mb"`
-	GoMemSysMB       float64 `json:"go_mem_sys_mb"`
-	UptimeSeconds    float64 `json:"uptime_seconds"`
+	CPUUsagePercent float64 `json:"cpu_usage_percent"`
+	MemoryUsagePct  float64 `json:"memory_usage_percent"`
+	GoRoutines      int     `json:"go_routines"`
+	GoMemAllocMB    float64 `json:"go_mem_alloc_mb"`
+	GoMemSysMB      float64 `json:"go_mem_sys_mb"`
+	UptimeSeconds   float64 `json:"uptime_seconds"`
 }
 
 // logLevelRequest 는 로그 레벨 변경 요청을 나타낸다.
 type logLevelRequest struct {
 	Level string `json:"level"`
+}
+
+// logStyleRequest 는 로그 식별자 표시 스타일 변경 요청을 나타낸다.
+type logStyleRequest struct {
+	Style string `json:"style"`
+}
+
+// logStyleResponse 는 로그 식별자 표시 스타일 응답을 나타낸다.
+type logStyleResponse struct {
+	Style string `json:"style"`
 }
 
 // LogLevelsResponse 는 컴포넌트별 로그 레벨 목록 응답을 나타낸다.
@@ -82,12 +96,16 @@ func NewMonitorHandler(monitor MonitorManager, logger *slog.Logger) *MonitorHand
 //	PUT    /monitor/loglevel               -> SetLogLevel (글로벌)
 //	PUT    /monitor/loglevel/{component}   -> SetComponentLogLevel
 //	DELETE /monitor/loglevel/{component}   -> ResetComponentLogLevel
+//	GET    /monitor/logstyle               -> GetLogStyle
+//	PUT    /monitor/logstyle               -> SetLogStyle
 func (h *MonitorHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/monitor/metrics", h.Metrics)
 	g.GET("/monitor/loglevel", h.ListLogLevels)
 	g.PUT("/monitor/loglevel", h.SetLogLevel)
 	g.PUT("/monitor/loglevel/{component}", h.SetComponentLogLevel)
 	g.DELETE("/monitor/loglevel/{component}", h.ResetComponentLogLevel)
+	g.GET("/monitor/logstyle", h.GetLogStyle)
+	g.PUT("/monitor/logstyle", h.SetLogStyle)
 }
 
 // Metrics 는 시스템 메트릭을 반환한다.
@@ -188,6 +206,38 @@ func (h *MonitorHandler) ResetComponentLogLevel(ctx api.Context) error {
 	}))
 }
 
+// GetLogStyle 은 현재 로그 식별자 표시 스타일을 반환한다.
+// GET /monitor/logstyle
+func (h *MonitorHandler) GetLogStyle(ctx api.Context) error {
+	style := h.monitor.GetLogIDStyle(ctx.Context())
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(logStyleResponse{
+		Style: style,
+	}))
+}
+
+// SetLogStyle 은 로그 식별자 표시 스타일을 변경한다.
+// PUT /monitor/logstyle
+func (h *MonitorHandler) SetLogStyle(ctx api.Context) error {
+	var req logStyleRequest
+	if err := ctx.Bind(&req); err != nil {
+		return ctx.JSON(http.StatusBadRequest,
+			dto.NewErrorResponse("INVALID_REQUEST", "요청 본문을 파싱할 수 없습니다"))
+	}
+
+	if err := h.monitor.SetLogIDStyle(ctx.Context(), req.Style); err != nil {
+		h.logger.Warn("로그 식별자 스타일 변경 실패", "style", req.Style, "error", err)
+		return ctx.JSON(http.StatusBadRequest,
+			dto.NewErrorResponse("INVALID_LOG_STYLE", err.Error()))
+	}
+
+	// 정규화된 실제 적용값을 응답한다.
+	applied := h.monitor.GetLogIDStyle(ctx.Context())
+	h.logger.Info("로그 식별자 스타일 변경 완료", "style", applied)
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(logStyleResponse{
+		Style: applied,
+	}))
+}
+
 // --- defaultMonitorManager: 기본 모니터링 매니저 구현 ---
 
 // validLogLevels 는 허용되는 로그 레벨 목록이다.
@@ -196,6 +246,13 @@ var validLogLevels = map[string]bool{
 	"info":  true,
 	"warn":  true,
 	"error": true,
+}
+
+// validLogStyles 는 허용되는 로그 식별자 표시 스타일 목록이다.
+var validLogStyles = map[string]bool{
+	"name": true,
+	"id":   true,
+	"both": true,
 }
 
 // defaultMonitorManager 는 Go runtime 기반의 기본 모니터링 매니저이다.
@@ -226,12 +283,12 @@ func (m *defaultMonitorManager) GetMetrics(_ context.Context) (*MetricsResponse,
 	uptime := time.Since(m.startedAt).Seconds()
 
 	return &MetricsResponse{
-		CPUUsagePercent:  0, // CPU 사용률은 샘플링이 필요하므로 v1 에서는 미지원
-		MemoryUsagePct:   float64(mem.Alloc) / float64(mem.Sys) * 100,
-		GoRoutines:       runtime.NumGoroutine(),
-		GoMemAllocMB:     float64(mem.Alloc) / 1024 / 1024,
-		GoMemSysMB:       float64(mem.Sys) / 1024 / 1024,
-		UptimeSeconds:    uptime,
+		CPUUsagePercent: 0, // CPU 사용률은 샘플링이 필요하므로 v1 에서는 미지원
+		MemoryUsagePct:  float64(mem.Alloc) / float64(mem.Sys) * 100,
+		GoRoutines:      runtime.NumGoroutine(),
+		GoMemAllocMB:    float64(mem.Alloc) / 1024 / 1024,
+		GoMemSysMB:      float64(mem.Sys) / 1024 / 1024,
+		UptimeSeconds:   uptime,
 	}, nil
 }
 
@@ -324,5 +381,26 @@ func (m *defaultMonitorManager) ResetComponentLogLevel(_ context.Context, compon
 
 	m.levels.SetLevel(component, m.levels.DefaultLevel())
 	m.logger.Info("컴포넌트 로그 레벨 초기화됨", "component", component)
+	return nil
+}
+
+// GetLogIDStyle 은 현재 로그 식별자 표시 스타일을 반환한다.
+// observe 패키지의 전역 상태를 조회한다 (로그 레벨과 동일한 런타임 전용 철학).
+func (m *defaultMonitorManager) GetLogIDStyle(_ context.Context) string {
+	return observe.GetLogIDStyle()
+}
+
+// SetLogIDStyle 은 로그 식별자 표시 스타일을 변경한다.
+// "name"/"id"/"both" 만 허용한다. 로그 레벨과 마찬가지로 런타임 전용이며
+// 설정 파일에는 기록하지 않는다 (재시작 시 config observe.id_style 로 복원됨).
+func (m *defaultMonitorManager) SetLogIDStyle(_ context.Context, style string) error {
+	style = strings.ToLower(strings.TrimSpace(style))
+
+	if !validLogStyles[style] {
+		return fmt.Errorf("유효하지 않은 로그 식별자 스타일: %q (허용: name, id, both)", style)
+	}
+
+	observe.SetLogIDStyle(style)
+	m.logger.Info("로그 식별자 스타일 변경됨", "style", style)
 	return nil
 }

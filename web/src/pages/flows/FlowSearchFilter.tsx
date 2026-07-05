@@ -10,6 +10,8 @@ import {
   Search,
 } from 'lucide-react';
 
+import { useTranslation } from '@/lib/i18n';
+
 interface FlowSearchFilterProps {
   search: string;
   onSearchChange: (v: string) => void;
@@ -17,13 +19,13 @@ interface FlowSearchFilterProps {
   onStatusFilterChange: (v: string) => void;
 }
 
-/** 상태 필터 옵션 (아이콘 기반) */
+/** 상태 필터 옵션 (아이콘 기반) — label 은 i18n 키로 저장하고 렌더 시 t() 변환 */
 const STATUS_OPTIONS = [
-  { value: 'running', label: '실행 중', icon: <Activity className="h-3.5 w-3.5" />, color: 'text-green-600 dark:text-green-400', activeColor: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
-  { value: 'stopped', label: '중지됨', icon: <CircleStop className="h-3.5 w-3.5" />, color: 'text-gray-500 dark:text-gray-400', activeColor: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-300' },
-  { value: 'error', label: '오류', icon: <AlertTriangle className="h-3.5 w-3.5" />, color: 'text-red-500 dark:text-red-400', activeColor: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
-  { value: 'stored', label: '저장됨', icon: <FileText className="h-3.5 w-3.5" />, color: 'text-blue-500 dark:text-blue-400', activeColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-  { value: 'loaded', label: '탑재됨', icon: <Rocket className="h-3.5 w-3.5" />, color: 'text-yellow-500 dark:text-yellow-400', activeColor: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
+  { value: 'running', labelKey: 'flows.filter.statusRunning', icon: <Activity className="h-3.5 w-3.5" />, color: 'text-green-600 dark:text-green-400', activeColor: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
+  { value: 'stopped', labelKey: 'flows.filter.statusStopped', icon: <CircleStop className="h-3.5 w-3.5" />, color: 'text-gray-500 dark:text-gray-400', activeColor: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-300' },
+  { value: 'error', labelKey: 'flows.filter.statusError', icon: <AlertTriangle className="h-3.5 w-3.5" />, color: 'text-red-500 dark:text-red-400', activeColor: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+  { value: 'stored', labelKey: 'flows.filter.statusStored', icon: <FileText className="h-3.5 w-3.5" />, color: 'text-blue-500 dark:text-blue-400', activeColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
+  { value: 'loaded', labelKey: 'flows.filter.statusLoaded', icon: <Rocket className="h-3.5 w-3.5" />, color: 'text-yellow-500 dark:text-yellow-400', activeColor: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
 ];
 
 /**
@@ -36,6 +38,7 @@ export default function FlowSearchFilter({
   statusFilter,
   onStatusFilterChange,
 }: FlowSearchFilterProps) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-3">
       {/* 검색 입력 */}
@@ -45,7 +48,7 @@ export default function FlowSearchFilter({
           type="text"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="플로우 검색..."
+          placeholder={t('flows.filter.searchPlaceholder')}
           className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) py-2 pl-9 pr-3 text-sm text-(--color-text-primary) placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </div>
@@ -54,6 +57,7 @@ export default function FlowSearchFilter({
       <div className="flex items-center gap-1.5">
         {STATUS_OPTIONS.map((opt) => {
           const isActive = statusFilter === opt.value;
+          const label = t(opt.labelKey);
           return (
             <button
               key={opt.value}
@@ -64,10 +68,10 @@ export default function FlowSearchFilter({
                   ? opt.activeColor
                   : `${opt.color} hover:bg-(--color-bg-elevated)`
               }`}
-              title={opt.label}
+              title={label}
             >
               {opt.icon}
-              {opt.label}
+              {label}
             </button>
           );
         })}

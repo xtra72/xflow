@@ -34,12 +34,44 @@ const csvMocks = vi.hoisted(() => ({
   downloadCsv: vi.fn(),
 }));
 
+// SPEC-WEB-005: store 소스 훅 모킹. seriesEntries/seriesStyles 를 주입해
+// store 모드 라인 렌더 + per-line 스타일 적용을 검증한다.
+const storeMockResult = vi.hoisted(() => ({
+  current: {
+    entries: [] as ChartEntry[],
+    seriesEntries: new Map<string, ChartEntry[]>(),
+    seriesStyles: new Map<
+      string,
+      {
+        color?: string;
+        stroke_style?: 'solid' | 'dashed' | 'dotted';
+        stroke_width?: number;
+        smooth?: boolean;
+      }
+    >(),
+    seriesNames: [] as string[],
+    booleanSeries: new Set<string>(),
+    status: 'connected' as const,
+    closedReason: undefined as string | undefined,
+    errorReason: undefined as string | undefined,
+  },
+}));
+
 vi.mock('./useChartChannel', () => ({
   useChartChannel: () => mockResult.current,
 }));
 
 vi.mock('./useChartChannels', () => ({
   useChartChannels: () => multiMockResult.current,
+}));
+
+vi.mock('./useStoreChartData', () => ({
+  useStoreChartData: () => storeMockResult.current,
+}));
+
+// i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
 }));
 
 vi.mock('./csvExport', async () => {
@@ -60,6 +92,16 @@ describe('LineChartPanel', () => {
       errorReason: undefined,
     };
     multiMockResult.current = { channels: new Map() };
+    storeMockResult.current = {
+      entries: [],
+      seriesEntries: new Map(),
+      seriesStyles: new Map(),
+      seriesNames: [],
+      booleanSeries: new Set(),
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
     csvMocks.downloadCsv.mockReset();
   });
 
@@ -139,6 +181,87 @@ describe('LineChartPanel', () => {
       { timestamp: 1000, value: 10 },
       { timestamp: 2000, value: 20 },
     ]);
+  });
+
+  // --- 값 타입 처리: 스트링 제외 / int·float 혼합 / boolean true-false ---
+  describe('데이터 소스 값 타입', () => {
+    const values = () =>
+      (
+        JSON.parse(
+          screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
+        ) as Array<{ value: unknown }>
+      ).map((r) => r.value);
+
+    it('int 와 float 를 혼합해서 그대로 표시한다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 3.14 },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(values()).toEqual([10, 3.14]);
+    });
+
+    it('string 값은 숫자 모양("3.14")이어도 제외한다(NaN→JSON null)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: '3.14' },
+        { timestamp: 2000, value: 'cool' },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      // JSON.stringify(NaN) === 'null' → 라인에서 빠진다.
+      expect(values()).toEqual([null, null]);
+    });
+
+    it('boolean 은 true=1 / false=0 으로 그린다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(values()).toEqual([1, 0]);
+    });
+
+    it('순수 boolean 시리즈는 Y축을 false/true(0~1) 범위로 고정한다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual([-0.1, 1.1]);
+    });
+
+    it('숫자 시리즈는 boolean 축을 쓰지 않는다(auto 유지)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 10 },
+        { timestamp: 2000, value: 20 },
+      ];
+      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual(['auto', 'auto']);
+    });
+
+    it('boolean 시리즈는 수동 Y축 범위를 무시하고 false/true 축을 쓴다', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            y_axis_mode: 'manual',
+            y_min: -50,
+            y_max: 50,
+          }}
+        />,
+      );
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual([-0.1, 1.1]);
+    });
   });
 
   // --- Y축 모드 ---
@@ -796,6 +919,46 @@ describe('LineChartPanel', () => {
       expect(screen.getByTestId('line-chart-legend')).toBeInTheDocument();
     });
 
+    it('범례 마지막값: boolean 시리즈는 true/false 로 표시(0.0 아님)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: true },
+        { timestamp: 2000, value: false },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{ channel_name: 'c', legend: { show_last_value: true } }}
+        />,
+      );
+      const legend = screen.getByTestId('line-chart-legend');
+      expect(legend.textContent).toContain('false');
+      expect(legend.textContent).not.toContain('0.0');
+    });
+
+    it('범례 마지막값: 열거형 축은 라벨로 표시(원시 숫자 아님)', () => {
+      mockResult.current.entries = [
+        { timestamp: 1000, value: 0 },
+        { timestamp: 2000, value: 1 },
+      ];
+      render(
+        <LineChartPanel
+          panelId="p1"
+          config={{
+            channel_name: 'c',
+            legend: { show_last_value: true },
+            y_axis_type: 'enum',
+            y_enum_labels: [
+              { value: 0, label: 'off' },
+              { value: 1, label: 'on' },
+            ],
+          }}
+        />,
+      );
+      const legend = screen.getByTestId('line-chart-legend');
+      expect(legend.textContent).toContain('on');
+      expect(legend.textContent).not.toContain('1.0');
+    });
+
     it('한 채널이라도 critical 임계 초과면 깜빡임', () => {
       multiMockResult.current.channels = new Map([
         [
@@ -879,6 +1042,80 @@ describe('LineChartPanel', () => {
       const header = csv.split('\n')[0]!;
       expect(header).toContain('A');
       expect(header).toContain('B');
+    });
+  });
+
+  // SPEC-WEB-005: store 데이터 소스 모드 — 시리즈별 라인 + per-line 스타일.
+  describe('store 데이터 소스 모드', () => {
+    const storeConfig = {
+      data_source: 'store',
+      store_source: {
+        agent_name: 'store-1',
+        series: [
+          { key: 'room:1:temp', alias: 'Temp' },
+          { key: 'room:2:temp', alias: 'Hum' },
+        ],
+        time_window_ms: 60000,
+        interval_ms: 10000,
+        aggregation: 'average',
+      },
+    };
+
+    it('store 시리즈가 각각 라인으로 렌더된다(시리즈 표시 이름 기준)', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['Temp', [{ timestamp: 1000, value: 21 }, { timestamp: 2000, value: 22 }]],
+        ['Hum', [{ timestamp: 1000, value: 40 }, { timestamp: 2000, value: 41 }]],
+      ]);
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      const lines = screen.getAllByTestId('rc-line');
+      const keys = lines.map((l) => l.getAttribute('data-line-key'));
+      expect(keys).toContain('Temp');
+      expect(keys).toContain('Hum');
+    });
+
+    it('booleanSeries(store data_type=boolean)는 Y축을 false/true 로 표시한다', () => {
+      // store 값은 이미 1/0 로 변환되어 도달하며, booleanSeries 로 표시 대상을 판별한다.
+      storeMockResult.current.seriesEntries = new Map([
+        ['Power', [{ timestamp: 1000, value: 1 }, { timestamp: 2000, value: 0 }]],
+      ]);
+      storeMockResult.current.booleanSeries = new Set(['Power']);
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      expect(
+        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
+      ).toEqual([-0.1, 1.1]);
+    });
+
+    it('seriesStyles 의 per-line 스타일(색/두께/대시/곡선)이 라인에 적용된다', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['Temp', [{ timestamp: 1000, value: 21 }, { timestamp: 2000, value: 22 }]],
+      ]);
+      storeMockResult.current.seriesStyles = new Map([
+        ['Temp', { color: '#ff0000', stroke_style: 'dashed', stroke_width: 4, smooth: true }],
+      ]);
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      const line = screen
+        .getAllByTestId('rc-line')
+        .find((l) => l.getAttribute('data-line-key') === 'Temp')!;
+      expect(line.getAttribute('data-line-stroke')).toBe('#ff0000');
+      expect(line.getAttribute('data-line-width')).toBe('4');
+      // dashed → STROKE_DASHARRAY['dashed'] = '8 4'
+      expect(line.getAttribute('data-line-dash')).toBe('8 4');
+      // smooth=true → type 'monotone'
+      expect(line.getAttribute('data-line-type')).toBe('monotone');
+    });
+
+    it('스타일 미지정 시 기본값(팔레트 색/두께 2/실선/linear)을 사용한다', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['Temp', [{ timestamp: 1000, value: 21 }]],
+      ]);
+      // seriesStyles 비어있음.
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      const line = screen
+        .getAllByTestId('rc-line')
+        .find((l) => l.getAttribute('data-line-key') === 'Temp')!;
+      expect(line.getAttribute('data-line-width')).toBe('2');
+      expect(line.getAttribute('data-line-dash')).toBe('');
+      expect(line.getAttribute('data-line-type')).toBe('linear');
     });
   });
 });

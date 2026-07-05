@@ -9,4 +9,6 @@ export * as authService from './authService';
 export * as flowService from './flowService';
 export * as nodeService from './nodeService';
 export * as agentService from './agentService';
+export * as deviceService from './deviceService';
+export * as settingsService from './settingsService';
 export * as monitorService from './monitorService';

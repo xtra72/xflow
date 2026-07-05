@@ -16,6 +16,7 @@
 // @spec SPEC-WEB-006 v0.1.0 (M12)
 
 import { APIError } from '@/types/api';
+import type { TranslationFn } from '@/lib/i18n';
 
 // ─────────────────────────────────────────────────────────────────────
 // Public types
@@ -122,7 +123,7 @@ const BODY_KEYWORD_RULES: ReadonlyArray<{
  *              plain object, null, undefined 등).
  * @returns 매핑 결과. 매칭에 실패하면 `kind: 'unknown'` + 원본 메시지를 노출한다.
  */
-export function mapUpdateError(err: unknown): UpdateErrorMapped {
+export function mapUpdateError(err: unknown, t: TranslationFn): UpdateErrorMapped {
   const raw = err;
   const message = getErrorMessage(err);
   const normalized = message.toLowerCase();
@@ -132,7 +133,7 @@ export function mapUpdateError(err: unknown): UpdateErrorMapped {
   if (status === 401) {
     return {
       kind: 'unauthorized',
-      userMessage: '이 작업을 수행할 권한이 없습니다 (관리자만 가능).',
+      userMessage: t('error.update.unauthorized'),
       raw,
     };
   }
@@ -143,14 +144,13 @@ export function mapUpdateError(err: unknown): UpdateErrorMapped {
   if (status === 409) {
     for (const entry of BODY_KEYWORD_RULES) {
       if (entry.patterns.some((p) => normalized.includes(p))) {
-        return buildKnownError(entry.kind, raw);
+        return buildKnownError(entry.kind, raw, t);
       }
     }
     if (normalized.includes('in progress')) {
       return {
         kind: 'in_progress',
-        userMessage:
-          '다른 업데이트 작업이 진행 중입니다. 완료 후 다시 시도하세요.',
+        userMessage: t('error.update.inProgress'),
         raw,
       };
     }
@@ -160,31 +160,50 @@ export function mapUpdateError(err: unknown): UpdateErrorMapped {
   if (normalized.includes('in progress')) {
     return {
       kind: 'in_progress',
-      userMessage:
-        '다른 업데이트 작업이 진행 중입니다. 완료 후 다시 시도하세요.',
+      userMessage: t('error.update.inProgress'),
       raw,
     };
   }
 
   for (const entry of BODY_KEYWORD_RULES) {
     if (entry.patterns.some((p) => normalized.includes(p))) {
-      return buildKnownError(entry.kind, raw);
+      return buildKnownError(entry.kind, raw, t);
     }
   }
 
   // 4. fallback.
   return {
     kind: 'unknown',
-    userMessage: `오류가 발생했습니다: ${message || 'Unknown error'}`,
+    userMessage: t('error.update.unknown').replace(
+      '{message}',
+      message || 'Unknown error',
+    ),
     raw,
   };
 }
 
 /**
  * 에러 분류만 필요한 호출자용 (메시지 생성 비용 절약).
+ *
+ * 분류만 수행하므로 메시지 생성을 위한 t 가 필요 없다.
  */
 export function classifyUpdateError(err: unknown): UpdateErrorKind {
-  return mapUpdateError(err).kind;
+  const message = getErrorMessage(err);
+  const normalized = message.toLowerCase();
+  const status = err instanceof APIError ? err.status : null;
+
+  if (status === 401) return 'unauthorized';
+  if (status === 409) {
+    for (const entry of BODY_KEYWORD_RULES) {
+      if (entry.patterns.some((p) => normalized.includes(p))) return entry.kind;
+    }
+    if (normalized.includes('in progress')) return 'in_progress';
+  }
+  if (normalized.includes('in progress')) return 'in_progress';
+  for (const entry of BODY_KEYWORD_RULES) {
+    if (entry.patterns.some((p) => normalized.includes(p))) return entry.kind;
+  }
+  return 'unknown';
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -199,70 +218,27 @@ export function classifyUpdateError(err: unknown): UpdateErrorKind {
 function buildKnownError(
   kind: Exclude<UpdateErrorKind, 'unknown' | 'unauthorized' | 'in_progress'>,
   raw: unknown,
+  t: TranslationFn,
 ): UpdateErrorMapped {
   switch (kind) {
     case 'channel_invalid':
-      return {
-        kind,
-        userMessage:
-          '잘못된 업데이트 채널 설정입니다 (HTTPS URL + manual/auto).',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.channelInvalid'), raw };
     case 'checksum_mismatch':
-      return {
-        kind,
-        userMessage:
-          '다운로드한 파일의 체크섬이 일치하지 않습니다. 다시 시도하세요.',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.checksumMismatch'), raw };
     case 'signature_invalid':
-      return {
-        kind,
-        userMessage:
-          '디지털 서명 검증에 실패했습니다. 신뢰할 수 없는 바이너리입니다.',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.signatureInvalid'), raw };
     case 'download_failed':
-      return {
-        kind,
-        userMessage:
-          '업데이트 다운로드에 실패했습니다. 네트워크를 확인하세요.',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.downloadFailed'), raw };
     case 'rollback_failed':
-      return {
-        kind,
-        userMessage:
-          '롤백에 실패했습니다. 백업이 없거나 복원 중 오류가 발생했습니다.',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.rollbackFailed'), raw };
     case 'insufficient_disk':
-      return {
-        kind,
-        userMessage:
-          '디스크 여유 공간이 부족합니다 (다운로드 크기의 3배 권장).',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.insufficientDisk'), raw };
     case 'downgrade_refused':
-      return {
-        kind,
-        userMessage:
-          '다운그레이드는 거부되었습니다. 강제 적용하려면 force 옵션을 사용하세요.',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.downgradeRefused'), raw };
     case 'apply_failed':
-      return {
-        kind,
-        userMessage:
-          '업데이트 적용에 실패했습니다. 백업이 보존되었으니 롤백을 검토하세요.',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.applyFailed'), raw };
     case 'invalid_input':
-      return {
-        kind,
-        userMessage: '잘못된 요청입니다. 입력 값을 확인하세요.',
-        raw,
-      };
+      return { kind, userMessage: t('error.update.invalidInput'), raw };
   }
 }
 

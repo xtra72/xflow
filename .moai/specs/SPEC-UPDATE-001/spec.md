@@ -1,10 +1,10 @@
 ---
 id: SPEC-UPDATE-001
 title: xflowd 애플리케이션 바이너리 자동 업데이트 메커니즘
-version: 0.1.0
+version: 0.2.0
 status: draft
 created: 2026-05-05
-updated: 2026-05-05
+updated: 2026-06-21
 author: xtra
 priority: high
 ---
@@ -13,10 +13,12 @@ priority: high
 
 ## HISTORY
 
+- **0.2.0** (2026-06-21): v0.2 확장 — 릴리스 이미지 생성·서명 도구 및 운영 요구사항 명세(M15~M18). (M15) **릴리스 이미지 생성·서명 도구** — `xflowd update keygen`(Ed25519 키쌍, `.key` 0600 + `.pub`)·`xflowd update sign --key K BIN`(바이너리 본문 → `.sig`), `make keygen`·`make release-images VERSION SIGN_KEY`(6 타깃 교차컴파일+서명+`checksum.txt`), CI(`release.yml`) `release-images` 잡(태그 푸시 시 서명 이미지 산출·GitHub Release 첨부, 시크릿 `XFLOW_RELEASE_PRIVATE_KEY`). (M16) **노드 설정 요구사항** — `update.public_key_path` 가 원격 업데이트 필수(미설정 시 거부 — 내장 핀닝 키 없음), `update.insecure_skip_verify` 를 원격 업데이트 다운로드(Checker/Downloader)에 연결, 채널 불일치/자산 누락 시 구체적 진단. (M17) **배포(systemd)** — 자가 업데이트가 설치 디렉토리에 원자 교체하므로 `ReadWritePaths=/opt/xflow` 필요. (M18) **버전 stamp** — 빌드 시 `-X main.Version=$(VERSION)`(대문자) 로 노드 보고 버전 결정.
 - **0.1.0** (2026-05-05): 최초 작성 — xflowd 자가 교체 자동 업데이트 메커니즘. GitHub Releases 기본 채널, Ed25519 디지털 서명 + SHA256 검증, 원자적 바이너리 교체, 그레이스풀 재시작(in-flight 메시지 drain), 자동 롤백(health check 실패 감지), CLI 명령(check/apply/status/rollback/channel), REST API 엔드포인트 3종, 다운그레이드 방지(--force 옵션), 채널 선택(stable/beta/nightly), 구조화 로깅, 멀티 OS 호환(Linux/macOS) 도입.
 
 | Version | Date       | Author | Change                                                                            |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------- |
+| 0.2.0   | 2026-06-21 | xtra   | v0.2 확장 — 릴리스 이미지 생성·서명 도구(keygen/sign, make keygen/release-images, CI release-images 잡), 노드 설정 요구사항(public_key_path 필수·insecure_skip_verify 연결·진단 메시지), systemd ReadWritePaths, 버전 stamp(-X main.Version) 명세. M15~M18 추가 |
 | 0.1.0   | 2026-05-05 | xtra   | 최초 작성 — 자가 교체 업데이트, GitHub Releases 채널, Ed25519 서명, 그레이스풀 재시작, 자동 롤백, CLI/API 통합 |
 
 ## 개요 (Overview)
@@ -86,7 +88,7 @@ xflow는 3개 바이너리로 구성된다:
 
 ## EARS 요구사항 (EARS Requirements)
 
-본 SPEC은 14개 EARS 모듈로 구성된다.
+본 SPEC은 18개 EARS 모듈로 구성된다(M1~M14 자가 업데이트 메커니즘, M15~M18 v0.2 릴리스 도구·운영 요구사항).
 
 ---
 
@@ -268,6 +270,41 @@ xflow는 3개 바이너리로 구성된다:
 
 ---
 
+### M15: 릴리스 이미지 생성·서명 도구 (Release Image Build & Signing) — v0.2
+
+- **Event-driven**: WHEN 운영자가 `xflowd update keygen [--out-dir DIR] [--name BASENAME] [--force]` 를 실행하면, THEN 시스템은 Ed25519 키쌍을 생성해 비공개키 `{dir}/{name}.key`(권한 `0600`)와 공개키 `{dir}/{name}.pub` 를 저장해야 한다.
+- **Event-driven**: WHEN 운영자가 `xflowd update sign --key KEYFILE [--out FILE] BINARY` 를 실행하면, THEN 시스템은 BINARY 바이트를 읽어 Ed25519 로 서명하고 raw 64-byte 서명 파일 `{BINARY}.sig`(또는 `--out`)를 생성해야 한다.
+- **Ubiquitous**: 빌드 시스템은 `make keygen`(키쌍 생성, 비공개 `.key` `0600` + 공개 `.pub`)과 `make release-images VERSION=<v> SIGN_KEY=<keyfile>`(6 교차컴파일 타깃 — linux/darwin × amd64/arm64 등 — 바이너리 + Ed25519 `.sig` + 버전별 `checksum.txt` 산출)을 제공해야 한다. `VERSION`·`SIGN_KEY` 미지정 시 명시적 에러로 실패해야 한다(가드).
+- **Ubiquitous**: CI(`release.yml`)는 `release-images` 잡을 제공해 태그 푸시 시 서명된 릴리스 이미지를 산출하고 GitHub Release 에 추가 첨부해야 한다. 서명 비공개키는 시크릿 `XFLOW_RELEASE_PRIVATE_KEY`(128-hex)에서만 주입되며, 시크릿 미설정 시 서명 이미지 발행을 건너뛴다(명시 notice).
+- **Unwanted**: 시스템은 비공개키를 코드/저장소/로그/아티팩트에 노출하지 않아야 한다. 비공개키는 릴리스 담당자(`make keygen` 산출) 또는 CI 시크릿에만 존재하고, 공개키만 노드로 배포된다(M16 `public_key_path`).
+
+---
+
+### M16: 노드 설정 요구사항 (Node Configuration Requirements) — v0.2
+
+- **Unwanted**: WHEN 원격 업데이트(서버 디스패치 `system/update`)를 수행하는데 `update.public_key_path` 가 설정되어 있지 않으면, THEN 시스템은 업데이트를 거부해야 한다. **내장(핀닝) 공개키는 없으며**, 노드는 운영자가 배치한 로컬 공개키 파일을 신뢰 앵커로 명시 설정해야 한다(M13 공개키 핀닝의 운영 형태).
+- **Ubiquitous**: 시스템은 `update.insecure_skip_verify` 설정을 원격 업데이트 다운로드 경로(Checker/Downloader)에 연결해야 한다. true 이면 채널/다운로드 서버의 TLS 인증서 검증을 건너뛰되(자체 서명/사설망 전용 옵트인), **Ed25519 서명 검증은 그대로 수행**하여 바이너리 무결성을 유지해야 한다(M13 일관).
+- **Unwanted**: WHEN 채널이 일치하지 않거나(예: 노드 채널 ≠ 릴리스 채널) 현재 OS/Arch 에 맞는 자산이 릴리스에 없으면, THEN 시스템은 구체적 진단 메시지(불일치 채널/누락 OS·Arch 자산명)를 포함한 에러를 반환해야 한다.
+- **Ubiquitous**: 공개키는 **노드 로컬 신뢰 앵커**(`update.public_key_path`)로만 존재하며, 관리 서버·릴리스 피드·업데이트 소스·명령 어디에서도 노드로 전송되지 않는다(SPEC-REMOTE-001 그룹 O / REQ-O09 일관).
+
+---
+
+### M17: 배포 — systemd ReadWritePaths (Deployment) — v0.2
+
+- **Ubiquitous**: 자가 업데이트는 설치 디렉토리(예: `/opt/xflow`)의 현재 실행 바이너리를 원자 교체(M5)하므로, systemd 유닛은 설치 디렉토리에 대한 쓰기 권한 `ReadWritePaths=/opt/xflow` 를 부여해야 한다.
+- **Unwanted**: WHEN systemd 유닛이 데이터 디렉토리만(`ReadWritePaths=/opt/xflow/data`) 허용하면, THEN 바이너리 교체(M5 `rename(2)`)가 `read-only file system` 으로 실패한다. 설치 디렉토리 전체(또는 바이너리 경로 + `.previous` 백업 경로를 포함하는 상위 경로)를 쓰기 가능하게 해야 한다.
+- **Ubiquitous**: 배포 문서/유닛 템플릿은 `ReadWritePaths` 가 바이너리 교체 경로 + `.previous` 백업 경로를 포함하도록 명시해야 한다(M5/M7 일관).
+
+---
+
+### M18: 버전 stamp (Version Stamp) — v0.2
+
+- **Ubiquitous**: 빌드 시스템은 빌드 시점에 `-X main.Version=$(VERSION)`(대문자 `Version` — `cmd/{name}/main.go` 의 빌드 변수)로 버전을 주입해야 한다. 노드가 보고하는 버전(원격 관리 시스템 정보·`--version`·버전 표시·업데이트 이력 갱신)은 이 값으로 결정된다.
+- **Unwanted**: WHEN ldflag 의 심볼 대소문자가 빌드 변수와 불일치하면(예: `main.version` vs 코드 `main.Version`), THEN 주입이 무시되어 버전이 기본값(`dev`)으로 보고된다. 빌드 LDFLAGS 의 심볼 대소문자는 코드의 빌드 변수와 정확히 일치해야 한다(`-X main.Version=`).
+- **Ubiquitous**: 버전 stamp 는 다운그레이드 방지(M8 semver 비교)·버전 확인(M2)·원격 노드 버전 표시(SPEC-REMOTE-001 그룹 K BASIC 시스템 정보)의 전제이다.
+
+---
+
 ## 명세 (Specifications)
 
 ### Config 스키마 (xflowd config)
@@ -279,12 +316,14 @@ update:
   check_interval: "24h"            # 0 = 자동 확인 비활성
   auto_apply: false                # true면 새 버전 발견 시 자동 적용
   notify_only: true                # true면 알림만 (auto_apply와 상호 배타)
-  update_url: ""                   # 빈 문자열 = 기본 GitHub Releases 사용
-  public_key_path: ""              # 빈 문자열 = 임베드된 공개키 사용
+  update_url: ""                   # 빈 문자열 = 기본 GitHub Releases 사용(원격 관리 시 서버가 주입)
+  public_key_path: ""              # (M16) 원격 업데이트 필수 — 내장 핀닝 키 없음. 미설정 시 원격 업데이트 거부
   drain_timeout: "30s"             # graceful shutdown 시 drain 최대 대기
   health_check_timeout: "5s"       # 새 프로세스 health check 대기
-  insecure_skip_verify: false      # 개발용; production 절대 true 금지
+  insecure_skip_verify: false      # (M16) 다운로드 TLS 검증 스킵 옵트인(자체 서명/사설망 전용); Ed25519 검증은 유지
 ```
+
+> **(M16) `public_key_path` 운영 규칙** — v0.1 의 "빈 문자열 = 임베드된 공개키 사용" 은 **원격 업데이트 경로에서는 적용되지 않는다**. 노드에 내장 핀닝 키가 없으므로, 원격 업데이트를 사용하려면 운영자가 릴리스 공개키(`make keygen` 산출 `.pub`)를 노드 로컬에 배치하고 `update.public_key_path` 로 명시해야 한다(미설정 시 거부). 공개키는 노드 로컬 신뢰 앵커이며 서버로부터 전송받지 않는다.
 
 ### CLI 명령 시그니처
 
@@ -304,6 +343,27 @@ xflowd update rollback [--yes] [--json]
 
 xflowd update channel <stable|beta|nightly>
   → 런타임 채널 변경. 다음 check부터 적용. exit 0 (성공) / 1 (잘못된 값)
+
+xflowd update keygen [--out-dir DIR] [--name BASENAME] [--force]            # (M15)
+  → Ed25519 키쌍 생성. {dir}/{name}.key (0600, 비공개) + {dir}/{name}.pub (공개)
+
+xflowd update sign --key KEYFILE [--out FILE] BINARY                        # (M15)
+  → BINARY 바이트를 Ed25519 서명 → {BINARY}.sig (raw 64-byte). 노드는 public_key_path 로 검증
+```
+
+### 빌드/CI 명령 (M15/M18)
+
+```text
+make keygen [KEY_OUT_DIR=DIR] [KEY_NAME=NAME] [FORCE=1]
+  → 릴리스 서명 키쌍 생성(비공개 .key 0600 + 공개 .pub)
+
+make release-images VERSION=<v> SIGN_KEY=<keyfile>
+  → 6 타깃 교차컴파일 + Ed25519 서명(.sig) + checksum.txt. VERSION/SIGN_KEY 필수(미지정 시 실패)
+  → LDFLAGS: -s -w -X main.Version=$(VERSION)  (M18 — 대문자 main.Version)
+
+CI release.yml: release-images 잡
+  → 태그 푸시 시 서명 이미지 산출·GitHub Release 첨부. 시크릿 XFLOW_RELEASE_PRIVATE_KEY(128-hex) 주입
+  → 시크릿 미설정 시 발행 스킵(notice)
 ```
 
 ### REST API 엔드포인트
@@ -413,6 +473,7 @@ xflowd update channel <stable|beta|nightly>
 - **SPEC-OBS-001 / -002**: 관찰성 + 구조화 로깅 (slog 통합)
 - **SPEC-LIFE-001**: 런타임 생명주기 (graceful shutdown 패턴 재사용)
 - **SPEC-WEB-005 v0.6.0 (예정)**: SystemStatusPanel UI에 버전 정보 + 업데이트 인디케이터 통합 (별도 프론트엔드 SPEC)
+- **SPEC-REMOTE-001 (그룹 O, v1.7)**: 원격 프로그램 버전 관리 — 관리 서버가 노드용 릴리스 이미지를 호스팅(익명 GitHub-Releases 호환 피드)하고 업데이트 소스를 명령에 주입하며 아키텍처-aware 그룹 일괄 업데이트를 디스패치한다. 본 SPEC 의 자가 업데이트 파이프라인·릴리스 도구(M15)·서명을 **무변경 소비**한다. 공개키는 노드 로컬(M16), 서버는 사전 서명 `.sig` 만 배포.
 - **SPEC-UPDATE-002 (미래)**: xflow-agent 자가 업데이트 (본 SPEC 패턴 재사용)
 - **SPEC-UPDATE-003 (미래)**: xflow CLI 자가 업데이트
 
@@ -434,6 +495,13 @@ xflowd update channel <stable|beta|nightly>
   - `internal/api/handler/system_update.go` (REST API 핸들러)
   - `internal/api/dto/update.go` (요청/응답 DTO)
   - `internal/config/update.go` (설정 섹션 + 검증)
+  - (v0.2 / M15) `cmd/xflowd/update_image.go` (`update keygen` / `update sign` 서브커맨드 — Ed25519 키쌍·바이너리 서명)
+  - (v0.2 / M15) `Makefile` (`keygen`·`release-images`·`release-images-guard` 타깃 — 6 타깃 교차컴파일+서명+`checksum.txt`)
+  - (v0.2 / M15) `.github/workflows/release.yml` (`release-images` 잡 — 시크릿 `XFLOW_RELEASE_PRIVATE_KEY` 주입·서명 이미지 GitHub Release 첨부)
+  - (v0.2 / M16) `internal/updater/checker.go`·`downloader.go`·`types.go`/`internal/config/update.go` (`public_key_path` 필수 검증·`insecure_skip_verify` 연결·채널/자산 진단)
+  - (v0.2 / M16) `cmd/xflowd/remote_system_update.go` (원격 업데이트 실행 — `public_key_path` 미설정 거부·`insecure_skip_verify` 적용·Ed25519 검증 유지)
+  - (v0.2 / M17) systemd 유닛 템플릿 (`ReadWritePaths=/opt/xflow`)
+  - (v0.2 / M18) `Makefile` LDFLAGS (`-X main.Version=$(VERSION)`)
 
 ## Implementation Notes
 
@@ -474,6 +542,17 @@ xflowd update channel <stable|beta|nightly>
 | Linux (x86_64, arm64) | Primary | systemd Type=notify 기본 지원, POSIX rename atomic |
 | macOS (x86_64, arm64) | Secondary | launchd 환경 호환, Apple notarization은 별도 SPEC (서명 + entitlement) |
 | Windows | Out of scope | 별도 SPEC에서 `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` + Service Control Manager 통합 필요 |
+
+### systemd ReadWritePaths (M17)
+
+자가 업데이트는 설치 디렉토리(예: `/opt/xflow`)의 현재 바이너리를 원자 교체(M5)하고 `.previous` 백업을 둔다. systemd 하드닝(`ProtectSystem=strict` 등)에서는 **설치 디렉토리 전체에 쓰기 권한**을 부여해야 한다:
+
+- 올바름: `ReadWritePaths=/opt/xflow` (바이너리 교체 + `.previous` 백업 경로 포함)
+- 잘못됨: `ReadWritePaths=/opt/xflow/data` 만 → 바이너리 교체가 `read-only file system` 으로 실패
+
+### 버전 stamp 대소문자 (M18)
+
+빌드 변수는 `cmd/{name}/main.go` 의 `Version`(대문자)이다. LDFLAGS 의 심볼은 정확히 `-X main.Version=$(VERSION)` 이어야 하며, `main.version`(소문자) 등 대소문자 불일치 시 주입이 무시되어 버전이 `dev` 로 보고된다.
 
 ### Future Extensions (본 SPEC 범위 외)
 

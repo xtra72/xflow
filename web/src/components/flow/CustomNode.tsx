@@ -8,25 +8,33 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
-  Bug,
-  Cable,
-  Cog,
-  Database,
-  GitBranch,
+  Eye,
+  EyeOff,
   Power,
   PowerOff,
-  ShieldAlert,
-  Sparkles,
-  type LucideIcon,
+  Radio,
+  Share2,
 } from 'lucide-react';
 
 import { useParams } from 'react-router';
 
-import { getRequiredFieldErrors } from '@/config/nodeSchemas';
+import { getFlowNodeMode, getRequiredFieldErrors } from '@/config/nodeSchemas';
 import { useNodeRuntimeStats } from '@/contexts/RuntimeStatsContext';
+import { useManagedNodes, useRemoteMode } from '@/hooks/useRemote';
+import { useTranslation } from '@/lib/i18n';
+import { parseRemoteFlowRef } from '@/lib/flow/subflowPorts';
+import { getNodeIcon } from '@/lib/flow/nodeIcon';
+import {
+  BRIDGE_STATUS_DOT_CLASS,
+  BRIDGE_STATUS_I18N_KEY,
+  mapRuntimeStateToBridgeStatus,
+} from '@/lib/flow/remoteBridgeStatus';
+import { resolveRemoteNodeLabel, shortenInstanceId } from '@/lib/remote/nodeLabel';
 import { cn } from '@/lib/utils/cn';
 import { configureNode } from '@/services/api/nodeService';
+import { setNodeTap } from '@/services/api/flowService';
 import { useEditorStore } from '@/stores/editorStore';
+import { useTapStore } from '@/stores/tapStore';
 import { DEFAULT_FLOW_DISPLAY_SETTINGS, useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
 import { computeLinkList, DEFAULT_PORT } from '@/lib/flow/virtualLinks';
@@ -34,22 +42,6 @@ import { getConnectedElements } from '@/lib/flow/connectionFocus';
 import { LinkIndicator } from './LinkIndicator';
 import { LinkListPopover } from './LinkListPopover';
 import { NodeHandle } from './NodeHandle';
-
-/** 카테고리별 아이콘 매핑 */
-const CATEGORY_ICONS: Record<string, LucideIcon> = {
-  processing: Cog,
-  routing: GitBranch,
-  io: Cable,
-  error: ShieldAlert,
-  debug: Bug,
-  storage: Database,
-  // 레거시 호환
-  input: ArrowDownToLine,
-  output: ArrowUpFromLine,
-  process: Cog,
-  bridge: Cable,
-  special: Sparkles,
-};
 
 /** 노드 data에 전달되는 속성 */
 interface CustomNodeData {
@@ -73,7 +65,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as CustomNodeData;
   const disabled = nodeData.enabled === false;
   const stats = useNodeRuntimeStats(id);
-  const Icon = CATEGORY_ICONS[nodeData.category] ?? Cog;
+  const Icon = getNodeIcon(nodeData.nodeType, nodeData.category);
+  const { t } = useTranslation();
 
   // 2026-05-31: 플로우 단위 표시 설정 (showPortStats / showPortNames).
   // 노드 단위 inMessages / outMessages 만 backend 가 제공하므로, input 핸들에
@@ -127,13 +120,51 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
             // 그 외 오류(네트워크/서버 장애 등) 는 사용자에게 경고로 알린다.
             addNotification({
               type: 'warning',
-              message: '출력 설정을 실행 중 플로우에 즉시 적용하지 못했습니다. 저장 후 다시 배포하면 반영됩니다.',
+              message: t('editor.node.outputApplyFailed'),
             });
           },
         );
       }
     },
-    [id, outputEnabled, updateNodeData, currentFlowId, addNotification],
+    [id, outputEnabled, updateNodeData, currentFlowId, addNotification, t],
+  );
+
+  // 노드 출력 tap(관찰) 토글.
+  //
+  // 와이어 연결 없이 이 노드의 출력 메시지를 WebSocket(node.output)으로
+  // 스트리밍하도록 런타임에 설정한다. tap 은 런타임 전용이므로 플로우가
+  // 실행 중일 때(런타임 통계 stats 존재)만 의미가 있다 — output 토글이
+  // 항상 노출되는 것과 달리, 이 토글은 실행 중 게이팅한다.
+  const isFlowRunning = stats !== undefined;
+  const isTapped = useTapStore((s) => s.tappedNodeIds[id] === true);
+  const setTapped = useTapStore((s) => s.setTapped);
+  const toggleTap = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!currentFlowId) return;
+      const next = !isTapped;
+
+      // 1) 낙관적 UI 갱신 — 즉시 눈 인디케이터에 반영.
+      setTapped(id, next);
+
+      // 2) 서버에 tap 상태 적용 (fire-and-forget). 실패 시 UI 를 되돌리고 알림.
+      setNodeTap(currentFlowId, id, next).catch((err: unknown) => {
+        setTapped(id, !next);
+        // 플로우 미실행 등으로 적용 실패 — 경고로 안내한다.
+        if (err instanceof APIError && err.status === 404) {
+          addNotification({
+            type: 'warning',
+            message: t('editor.node.tapApplyFailedRunning'),
+          });
+          return;
+        }
+        addNotification({
+          type: 'warning',
+          message: t('editor.node.tapApplyFailed'),
+        });
+      });
+    },
+    [id, isTapped, currentFlowId, setTapped, addNotification, t],
   );
 
   // 필수 필드 누락 검사 (노드 카드에 경고 뱃지 표시용).
@@ -147,8 +178,106 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   }, [nodeData]);
   const hasValidationError = missingRequired.length > 0;
   const validationTooltip = hasValidationError
-    ? `설정 필요:\n${missingRequired.map((e) => `• ${e.label}`).join('\n')}`
+    ? `${t('editor.node.configRequired')}\n${missingRequired.map((e) => `• ${e.label}`).join('\n')}`
     : undefined;
+
+  // SPEC-SUBFLOW-001 그룹 C: flow-node 는 참조하는 플로우 이름을 카드에 표시한다.
+  // flow_name 은 flow_id 선택 시 비정규화된 표시 전용 캐시이며, 없으면 flow_id 로 폴백한다.
+  const isFlowNode = nodeData.nodeType === 'flow-node';
+
+  // SPEC-SUBFLOW-001 v1.3 (REQ-RU06): flow_id 가 `remote://{instanceId}/{flowId}` 면
+  // 이 flow-node 는 LIVE BRIDGE 다 — 캔버스에서 한눈에 구분되도록 정적 원격 브릿지
+  // 인디케이터를 항상 표시한다. 평문(bare) flow_id 인 로컬 서브플로우는 그대로 둔다.
+  const flowIdValue = isFlowNode ? String(nodeData.flow_id ?? '') : '';
+  const remoteRef = isFlowNode ? parseRemoteFlowRef(flowIdValue) : null;
+  const isRemoteBridge = remoteRef !== null;
+
+  // REQ-RU06 가독성 개선: 원격 브릿지 표시명을 단축 instanceId 대신
+  // `{hostname}.{flowName}` (예: xagent04.HVACR Control) 로 해석한다.
+  //
+  // hostname 은 관리 노드 목록(useManagedNodes)에서 instance_id 로 조회한다.
+  // 비-원격 에디터/클라이언트 모드에서 불필요한 폴링을 막기 위해 isRemoteBridge
+  // (∧ server 모드) 로 쿼리를 게이트한다. React Query 는 queryKey 로 dedupe 하므로
+  // 노드마다 구독해도 단일 쿼리로 합쳐진다.
+  const { data: remoteMode } = useRemoteMode();
+  const isServerMode = remoteMode?.mode === 'server';
+  const { data: managedNodes } = useManagedNodes(
+    undefined,
+    isRemoteBridge && isServerMode,
+  );
+
+  // hostname: 관리 노드 매칭 → hostname, 없으면 단축 instanceId 로 폴백.
+  const remoteHostname = remoteRef
+    ? (managedNodes ?? []).find((n) => n.instance_id === remoteRef.instanceId)
+        ?.hostname || ''
+    : '';
+  const remoteHostLabel = remoteRef
+    ? resolveRemoteNodeLabel(remoteHostname, remoteRef.instanceId)
+    : '';
+
+  // flowName: config 의 flow_name 캐시(픽커 선택 시 비정규화) → 단축 flowId 폴백.
+  const cachedFlowName =
+    typeof nodeData.flow_name === 'string' ? nodeData.flow_name : '';
+  const remoteFlowLabel = remoteRef
+    ? cachedFlowName || shortenInstanceId(remoteRef.flowId)
+    : '';
+
+  // 원격 노드 표시명: `{hostname}.{flowName}`. 둘 다 폴백이면
+  // `{단축 instanceId}.{단축 flowId}` 가 되며 허용된다.
+  const remoteNodeLabel = remoteRef
+    ? `${remoteHostLabel}.${remoteFlowLabel}`
+    : '';
+
+  // 라이브 브릿지 상태(REQ-RU06): 캔버스에 이미 도달한 노드 런타임 state 를
+  // 매핑한다(플로우 미실행 시 state 없음 → 'unknown' → 상태 점 미표시).
+  // 백엔드 status 엔드포인트는 추가하지 않는다.
+  const bridgeStatus = isRemoteBridge
+    ? mapRuntimeStateToBridgeStatus(stats?.state)
+    : 'unknown';
+  const showBridgeStatusDot = isRemoteBridge && bridgeStatus !== 'unknown';
+  const bridgeStatusTerm = t(BRIDGE_STATUS_I18N_KEY[bridgeStatus]);
+  const remoteBridgeTooltip = t('remote.bridge.tooltip').replace(
+    '{node}',
+    remoteNodeLabel,
+  );
+  const remoteBridgeStatusTooltip = showBridgeStatusDot
+    ? t('remote.bridge.statusTooltip')
+        .replace('{node}', remoteNodeLabel)
+        .replace('{status}', bridgeStatusTerm)
+    : remoteBridgeTooltip;
+
+  // SPEC-SUBFLOW-002 그룹 W (REQ-SUBFLOW2-W02/W04): 로컬 `shared` flow-node 의 공유
+  // 연결 상태 인디케이터. flow_id 가 평문(bare) 로컬 id 이고(=원격 브릿지 아님) mode 가
+  // shared(미지정 기본)이면, 참조 플로우의 단일 실행 인스턴스에 라이브 연결되는
+  // 로컬 브릿지다 — 원격 브릿지와 일관된 시각 언어(노드 타입 뒤 상태 점)로,
+  // 단 색/아이콘으로 로컬(공유)임을 구분해 표시한다.
+  //   instance 모드(인라인 확장)·미선택 flow-node 는 인디케이터를 표시하지 않는다.
+  // 상태 매핑은 원격과 동일한 mapRuntimeStateToBridgeStatus(런타임 state 기반)를
+  // 재사용한다(미실행 → 'unknown' → 오프라인 의미의 정적 인디케이터).
+  const flowNodeMode = isFlowNode ? getFlowNodeMode(nodeData.mode) : 'shared';
+  const isLocalShared =
+    isFlowNode && !isRemoteBridge && flowIdValue !== '' && flowNodeMode === 'shared';
+
+  // 로컬 공유 표시명: flow_name 캐시(픽커 선택 시 비정규화) → 단축 flowId 폴백.
+  const localSharedLabel = isLocalShared
+    ? cachedFlowName || shortenInstanceId(flowIdValue)
+    : '';
+  // 로컬 공유도 동일한 브릿지 상태 매핑을 사용한다. 런타임 state 부재(미실행)는
+  // 'unknown' → 상태 점 대신 정적 공유 아이콘(오프라인 대기 의미, W04)으로 표시.
+  const localBridgeStatus = isLocalShared
+    ? mapRuntimeStateToBridgeStatus(stats?.state)
+    : 'unknown';
+  const showLocalStatusDot = isLocalShared && localBridgeStatus !== 'unknown';
+  const localBridgeStatusTerm = t(BRIDGE_STATUS_I18N_KEY[localBridgeStatus]);
+  const localSharedTooltip = t('remote.bridge.localTooltip').replace(
+    '{node}',
+    localSharedLabel,
+  );
+  const localSharedStatusTooltip = showLocalStatusDot
+    ? t('remote.bridge.localStatusTooltip')
+        .replace('{node}', localSharedLabel)
+        .replace('{status}', localBridgeStatusTerm)
+    : localSharedTooltip;
 
   // 입력/출력/에러 포트 분리
   const inputPorts = nodeData.ports?.filter((p) => p.direction === 'input') ?? [];
@@ -289,6 +418,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
 
   return (
     <div
+      data-tapped={isTapped ? 'true' : 'false'}
       className={cn(
         'relative flex flex-col rounded-lg border bg-white px-3 py-2 shadow-sm',
         'dark:bg-zinc-900 dark:border-zinc-700',
@@ -299,6 +429,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         selected
           ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
           : 'border-zinc-200 hover:shadow-md',
+        // 관찰 중인 노드는 subtle sky ring 으로 시각화 (선택 상태가 우선).
+        !selected && isTapped && 'ring-2 ring-sky-400/70 dark:ring-sky-500/60',
         // 필수 설정이 누락된 경우 호박색 테두리로 시각화 (선택 상태가 우선)
         !selected && hasValidationError && 'border-amber-400 dark:border-amber-600',
         disabled && 'opacity-45',
@@ -332,9 +464,81 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
             {nodeData.label}
           </p>
-          <p className="truncate text-[10px] text-zinc-400">
-            {nodeData.nodeType}
-          </p>
+          {/* 노드 타입 + (flow-node 원격 브릿지) 라이브 상태 점.
+              REQ-RU06: 텍스트 배지 제거 — 호스트.플로우 식별 정보는 노드 라벨
+              (`xagent04.Serial`)에 들어가므로 중복이다. 브릿지 연결 상태는 노드
+              타입 텍스트 바로 뒤에 작은 상태 점(실행 중) 또는 Radio 아이콘으로
+              보존한다. data-remote-bridge/title/aria-label(접근성·테스트)은 유지. */}
+          <div className="flex items-center gap-1 text-[10px] text-zinc-400">
+            <span className="truncate">{nodeData.nodeType}</span>
+            {isFlowNode && isRemoteBridge && (
+              <span
+                data-remote-bridge="true"
+                className="inline-flex shrink-0 items-center text-sky-500 dark:text-sky-400"
+                title={remoteBridgeStatusTooltip}
+                aria-label={remoteBridgeStatusTooltip}
+              >
+                {showBridgeStatusDot ? (
+                  <span
+                    data-bridge-status={bridgeStatus}
+                    className={cn(
+                      'h-1.5 w-1.5 shrink-0 rounded-full',
+                      BRIDGE_STATUS_DOT_CLASS[bridgeStatus],
+                    )}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Radio className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                )}
+              </span>
+            )}
+            {/* SPEC-SUBFLOW-002 W02/W04: 로컬 shared flow-node 의 공유 연결 상태.
+                원격 브릿지와 동일한 상태 점(BRIDGE_STATUS_DOT_CLASS) 메커니즘을
+                재사용하되, 색(violet)·아이콘(Share2)으로 로컬 공유임을 구분한다.
+                data-local-bridge/title/aria-label 은 접근성·테스트용으로 유지한다.
+                원격 케이스(isRemoteBridge)와는 상호 배타적이라 회귀가 없다. */}
+            {isLocalShared && (
+              <span
+                data-local-bridge="true"
+                className="inline-flex shrink-0 items-center text-violet-500 dark:text-violet-400"
+                title={localSharedStatusTooltip}
+                aria-label={localSharedStatusTooltip}
+              >
+                {showLocalStatusDot ? (
+                  <span
+                    data-bridge-status={localBridgeStatus}
+                    className={cn(
+                      'h-1.5 w-1.5 shrink-0 rounded-full',
+                      BRIDGE_STATUS_DOT_CLASS[localBridgeStatus],
+                    )}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Share2 className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                )}
+              </span>
+            )}
+            {/* SPEC-SUBFLOW-002 S03: 통계 출처 배지. 이 노드의 통계가 instance
+                (인라인 복제본) 임베디드 실행을 집계한 값이면 작은 "임베디드" 배지로
+                출처를 알린다. 'direct'(공유/단독)·미표식은 기본이라 배지 없음.
+                statSource 는 런타임 통계가 있을 때(실행 중)만 존재한다. */}
+            {(stats?.statSource === 'embedded' ||
+              stats?.statSource === 'direct+embedded') && (
+              <span
+                data-stat-source={stats.statSource}
+                className="inline-flex shrink-0 items-center rounded-sm bg-amber-100 px-1 text-[9px] font-medium leading-tight text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                title={
+                  stats.statSource === 'direct+embedded'
+                    ? t('editor.statSource.mixedTitle')
+                    : t('editor.statSource.embeddedTitle')
+                }
+              >
+                {t('editor.statSource.embeddedBadge')}
+              </span>
+            )}
+          </div>
+          {/* flow-node 로컬 서브플로우 참조 플로우 이름 배지 제거:
+              노드 라벨이 이제 선택한 플로우 이름이 되므로 중복 표시 불필요(변경 2). */}
         </div>
         {/* v0.18.9: output 노드 ON/OFF 토글 버튼 */}
         {isOutputNode && (
@@ -348,13 +552,37 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                 ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/60'
                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
             )}
-            title={outputEnabled ? '출력 ON — 클릭하여 OFF' : '출력 OFF — 클릭하여 ON'}
-            aria-label={outputEnabled ? '출력 비활성화' : '출력 활성화'}
+            title={outputEnabled ? t('editor.node.outputOnTitle') : t('editor.node.outputOffTitle')}
+            aria-label={outputEnabled ? t('editor.node.outputDisable') : t('editor.node.outputEnable')}
           >
             {outputEnabled ? (
               <Power className="h-3 w-3" />
             ) : (
               <PowerOff className="h-3 w-3" />
+            )}
+          </button>
+        )}
+        {/* 노드 출력 tap(관찰) 토글 버튼 — 플로우 실행 중일 때만 노출. */}
+        {isFlowRunning && (
+          <button
+            type="button"
+            data-tap-toggle
+            data-tapped={isTapped ? 'true' : 'false'}
+            onClick={toggleTap}
+            onMouseDown={(e) => e.stopPropagation()}
+            className={cn(
+              'flex-shrink-0 rounded-md p-1 transition-colors',
+              isTapped
+                ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-600 dark:hover:bg-sky-900/60'
+                : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
+            )}
+            title={isTapped ? t('editor.node.tapOnTitle') : t('editor.node.tapOffTitle')}
+            aria-label={isTapped ? t('editor.node.tapStop') : t('editor.node.tapStart')}
+          >
+            {isTapped ? (
+              <Eye className="h-3 w-3" />
+            ) : (
+              <EyeOff className="h-3 w-3" />
             )}
           </button>
         )}
@@ -370,11 +598,11 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           {/* 노드 단위 누계 통계 — 포트별 통계 표시 비활성 시에만 노출 */}
           {stats && !displaySettings.showPortStats && (
             <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-400">
-              <span className="inline-flex items-center gap-0.5" title="입력">
+              <span className="inline-flex items-center gap-0.5" title={t('editor.node.inTooltip')}>
                 <ArrowDownToLine className="h-2.5 w-2.5" />
                 {stats.inMessages.toLocaleString()}
               </span>
-              <span className="inline-flex items-center gap-0.5" title="출력">
+              <span className="inline-flex items-center gap-0.5" title={t('editor.node.outTooltip')}>
                 <ArrowUpFromLine className="h-2.5 w-2.5" />
                 {stats.outMessages.toLocaleString()}
               </span>
@@ -426,7 +654,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                               return (
                                 <span
                                   className="tabular-nums"
-                                  title={`입력 ${count.toLocaleString()}건`}
+                                  title={t('editor.node.inputCount').replace(
+                                    '{count}',
+                                    count.toLocaleString(),
+                                  )}
                                 >
                                   {count.toLocaleString()}
                                 </span>
@@ -502,11 +733,23 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                                 return (
                                   <span
                                     className="inline-flex items-center gap-0.5"
-                                    title={`전달 ${portStat.delivered.toLocaleString()}건 / 생성 ${portStat.messages.toLocaleString()}건${
-                                      pending > 0
-                                        ? ` (큐 적체 ${pending.toLocaleString()}건)`
-                                        : ''
-                                    }`}
+                                    title={
+                                      t('editor.node.deliveredTitle')
+                                        .replace(
+                                          '{delivered}',
+                                          portStat.delivered.toLocaleString(),
+                                        )
+                                        .replace(
+                                          '{messages}',
+                                          portStat.messages.toLocaleString(),
+                                        ) +
+                                      (pending > 0
+                                        ? t('editor.node.queuedSuffix').replace(
+                                            '{pending}',
+                                            pending.toLocaleString(),
+                                          )
+                                        : '')
+                                    }
                                   >
                                     <span className="tabular-nums">
                                       {portStat.delivered.toLocaleString()}
@@ -523,7 +766,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                                 return (
                                   <span
                                     className="tabular-nums"
-                                    title={`출력 ${outMessages.toLocaleString()}건`}
+                                    title={t('editor.node.outputCount').replace(
+                                      '{count}',
+                                      outMessages.toLocaleString(),
+                                    )}
                                   >
                                     {outMessages.toLocaleString()}
                                   </span>

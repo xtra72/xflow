@@ -375,6 +375,7 @@ func (n *LGAPStatusNode) pollLoop() {
 					msg.Metadata().Set("node_id", n.ID())
 				}
 			}
+			emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 			select {
 			case n.sourceCh <- msg:
@@ -428,6 +429,7 @@ func (n *LGAPStatusNode) Process(ctx context.Context, msg message.Message) ([]me
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	// v0.10.0: lgap_source="request" 제거 (message_type="device_state.response" 와 중복).
 	out.SetType("device_state.response")
 
@@ -582,6 +584,7 @@ func (n *LGAPControlNode) Process(ctx context.Context, msg message.Message) ([]m
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil
@@ -753,6 +756,7 @@ func (n *LGAPNode) pollLoop() {
 					msg.Metadata().Set("node_id", n.ID())
 				}
 			}
+			emitAgentGroup(msg, n.agent, cfg.EmitMetadata)
 
 			select {
 			case n.sourceCh <- msg:
@@ -818,6 +822,7 @@ func (n *LGAPNode) Process(ctx context.Context, msg message.Message) ([]message.
 	if cfg.EmitMetadata.NodeID {
 		out.Metadata().Set("node_id", n.ID())
 	}
+	emitAgentGroup(out, n.agent, cfg.EmitMetadata)
 	out.SetType("device_state.response")
 
 	return []message.Message{out}, nil

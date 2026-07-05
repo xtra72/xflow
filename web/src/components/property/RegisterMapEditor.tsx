@@ -6,14 +6,16 @@ import { useCallback, useMemo } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 // ---- 상수 ----
 
+// 각 영역 타입의 라벨은 i18n 키만 보관하고, 렌더 시 컴포넌트 내부에서 t(labelKey) 로 변환한다.
 const AREA_TYPES = [
-  { value: 'coils', label: '코일 (FC01/05/15)' },
-  { value: 'discrete_inputs', label: '이산 입력 (FC02)' },
-  { value: 'holding_registers', label: '보유 레지스터 (FC03/06/16)' },
-  { value: 'input_registers', label: '입력 레지스터 (FC04)' },
+  { value: 'coils', labelKey: 'property.register.areaCoils' },
+  { value: 'discrete_inputs', labelKey: 'property.register.areaDiscreteInputs' },
+  { value: 'holding_registers', labelKey: 'property.register.areaHoldingRegisters' },
+  { value: 'input_registers', labelKey: 'property.register.areaInputRegisters' },
 ] as const;
 
 type AreaType = (typeof AREA_TYPES)[number]['value'];
@@ -111,6 +113,7 @@ const readOnlyInput = 'cursor-not-allowed bg-(--color-bg-elevated)';
 // ---- 컴포넌트 ----
 
 export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEditorProps) {
+  const { t } = useTranslation();
   const rows = useMemo(() => toRows(value), [value]);
 
   const emit = useCallback(
@@ -152,16 +155,16 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
           <thead>
             <tr className="bg-(--color-bg-primary)">
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                영역 타입
+                {t('property.register.areaType')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                시작 주소
+                {t('property.register.startAddress')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                개수
+                {t('property.register.count')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                데이터 타입
+                {t('property.register.dataType')}
               </th>
               {!readOnly && (
                 <th className="w-10 px-2 py-1.5" />
@@ -175,7 +178,7 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
                   colSpan={readOnly ? 4 : 5}
                   className="px-2 py-4 text-center text-xs text-(--color-text-muted)"
                 >
-                  레지스터 영역이 없습니다
+                  {t('property.register.empty')}
                 </td>
               </tr>
             )}
@@ -189,9 +192,9 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
                     onChange={(e) => handleChange(row.key, 'areaType', e.target.value)}
                     className={cn(cellInput, readOnly && readOnlyInput)}
                   >
-                    {AREA_TYPES.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
+                    {AREA_TYPES.map((area) => (
+                      <option key={area.value} value={area.value}>
+                        {t(area.labelKey)}
                       </option>
                     ))}
                   </select>
@@ -248,7 +251,7 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
                       type="button"
                       onClick={() => handleRemove(row.key)}
                       className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                      aria-label="삭제"
+                      aria-label={t('property.register.deleteAria')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -268,7 +271,7 @@ export function RegisterMapEditor({ value, onChange, readOnly }: RegisterMapEdit
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400"
         >
           <Plus className="h-3.5 w-3.5" />
-          영역 추가
+          {t('property.register.addArea')}
         </button>
       )}
     </div>

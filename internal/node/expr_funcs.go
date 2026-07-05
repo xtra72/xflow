@@ -15,7 +15,7 @@ import (
 // defaultBuiltinFuncs 는 기본 내장 함수 레지스트리를 반환한다.
 // 시간, 수학, 문자열, 타입 변환 함수를 포함한다.
 func defaultBuiltinFuncs() map[string]BuiltinFunc {
-	return map[string]BuiltinFunc{
+	funcs := map[string]BuiltinFunc{
 		// 시간 함수
 		"now": builtinNow,
 		// 수학 함수
@@ -36,6 +36,10 @@ func defaultBuiltinFuncs() map[string]BuiltinFunc {
 		"string": builtinString,
 		"bool":   builtinBool,
 	}
+	// message-slim-metadata / enrich: 룩업이 설정되어 있으면 agentInfo/deviceInfo
+	// 빌트인을 추가한다(미설정 시 등록되지 않아 기존 동작 불변).
+	registerLookupBuiltins(funcs)
+	return funcs
 }
 
 // =============================================================================

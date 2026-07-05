@@ -17,7 +17,11 @@ LimitNOFILE=65536
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/xflow/data
+# 자가 업데이트(원격 버전 관리, SPEC-UPDATE-001)는 설치 디렉토리에서 새 바이너리를
+# 원자적으로 교체(.xflowd.new → xflowd)하고 .previous 백업을 남긴다. 따라서 데이터
+# 디렉토리뿐 아니라 설치 디렉토리(/opt/xflow) 전체가 서비스에 쓰기 가능해야 한다.
+# (자가 업데이트가 불필요하면 /opt/xflow/data 로만 좁혀도 되나, 원격 업데이트는 불가.)
+ReadWritePaths=/opt/xflow
 PrivateTmp=true
 
 # Environment

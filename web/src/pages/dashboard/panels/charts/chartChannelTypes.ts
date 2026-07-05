@@ -1,5 +1,16 @@
 // 차트 패널 공통 타입 + 값 추출 유틸.
 // SPEC-CHART-001 §4.1 / §4.2.2 참조.
+//
+// SPEC-WEB-005 (차트 Store 소스): 차트 패널이 chart-emitter 채널 대신
+// Store 에이전트에서 데이터를 가져올 수 있도록 `data_source` / `store_source`
+// config 를 추가했다. 두 소스는 공존하며, `data_source` 미지정(undefined)은
+// 기존 채널 경로('channel')로 해석되어 하위 호환을 보존한다.
+// @spec SPEC-WEB-005
+
+// Store 키 데이터 타입(int/float/string/boolean/bytes/json). type-only import 이므로
+// 컴파일 시 erase 되어 런타임 순환 의존을 만들지 않는다(store.ts 는 chartChannelTypes 를
+// import 하지 않는다).
+import type { DataType } from '@/services/api/store';
 
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
 export interface ChartEntry {
@@ -22,6 +33,84 @@ export type ChartConnectionStatus =
   | 'closed'
   | 'error';
 
+/**
+ * 차트 패널의 데이터 소스 종류.
+ *
+ * - `channel`: 기존 chart-emitter WebSocket 채널 경로(기본값).
+ * - `store`: Store 에이전트의 시리즈 매트릭스 폴링 경로.
+ *
+ * @spec SPEC-WEB-005
+ */
+export type ChartDataSourceKind = 'channel' | 'store';
+
+/**
+ * Store 소스에서 조회할 단일 시리즈 참조.
+ *
+ * `key` 는 Store 키 이름이고, `metric_type`/`tags` 가 지정되면 해당 key 의
+ * 특정 시리즈(저장소 기준 분류)로 좁혀 조회한다. 미지정이면 그 key 의 모든
+ * 시리즈를 조회한다. `alias`/`color` 는 표시 전용이다.
+ *
+ * @spec SPEC-WEB-005
+ */
+export interface StoreSeriesRef {
+  /** Store 키 이름. */
+  key: string;
+  /** 시리즈별 선택 시 metric_type 필터(선택). */
+  metric_type?: string;
+  /** 시리즈별 선택 시 tag 필터(선택). */
+  tags?: Record<string, string>;
+  /** 키 데이터 타입(표시/필터 메타데이터). */
+  data_type?: DataType;
+  /** 표시 별칭(미지정 시 key). */
+  alias?: string;
+  /** 라인/카테고리 색상(미지정 시 자동 팔레트). */
+  color?: string;
+  /**
+   * 라인 차트 전용 per-line 스타일 (SPEC-WEB-005, ChannelRefConfig 와 동일 형상).
+   * 채널 시리즈와 스토어 시리즈의 라인 스타일을 하나의 편집기로 통합하기 위해
+   * StoreSeriesRef 에도 동일 필드를 둔다. 라인 차트가 아닌 패널에서는 무시된다.
+   */
+  /** 라인 스타일(solid/dashed/dotted). 기본 'solid'. */
+  stroke_style?: StrokeStyle;
+  /** 라인 두께(px). 기본 2. */
+  stroke_width?: number;
+  /** 부드러운 곡선. 기본 false. */
+  smooth?: boolean;
+  /**
+   * 값 추출 필드(dot-path). 채널 시리즈와 형상 통일을 위해 둔다.
+   * 단, 스토어 소스는 매트릭스가 이미 시리즈별 단일 숫자 값을 제공하므로
+   * 렌더에는 영향을 주지 않는다(메타데이터/전방 호환 목적).
+   */
+  display_field?: string;
+}
+
+/**
+ * 차트 패널 Store 소스 설정 블록(모든 차트 config 가 공유).
+ *
+ * 시간 윈도우는 "지금(now) 기준 상대 윈도우" 로 해석된다:
+ *   endMs = now, startMs = now - time_window_ms.
+ * 매트릭스는 `interval_ms` 버킷으로 서버/클라이언트 집계(`aggregation`)되어
+ * 시리즈별 타임라인으로 변환된다.
+ *
+ * @spec SPEC-WEB-005
+ */
+export interface StoreSourceConfig {
+  /** Store 에이전트 이름(백엔드 라우트가 name 기반). */
+  agent_name: string;
+  /** Store 네임스페이스(미지정 시 'default'). */
+  namespace?: string;
+  /** 조회할 시리즈 목록. 비어있으면 store 소스는 비활성으로 취급한다. */
+  series: StoreSeriesRef[];
+  /** 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각. */
+  time_window_ms: number;
+  /** 버킷 크기(ms). */
+  interval_ms: number;
+  /** 집계 함수(UI 표기 그대로). */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
+  refresh_interval_ms?: number;
+}
+
 /** 모든 차트 패널이 공유하는 공통 config (REQ-M4-02) */
 export interface ChartPanelConfigBase {
   channel_name: string;
@@ -29,6 +118,13 @@ export interface ChartPanelConfigBase {
   label_field?: string;
   max_points?: number;
   refresh_on_reconnect?: boolean;
+  /**
+   * 데이터 소스 종류. 미지정/undefined 는 'channel'(기존 채널 경로)로
+   * 해석되어 하위 호환을 보존한다. @spec SPEC-WEB-005
+   */
+  data_source?: ChartDataSourceKind;
+  /** Store 소스 설정(data_source === 'store' 일 때 사용). @spec SPEC-WEB-005 */
+  store_source?: StoreSourceConfig;
 }
 
 // --- 차트 타입별 config (SPEC-CHART-001 §4.2.2) ---
@@ -41,6 +137,22 @@ export interface StatPanelConfig extends ChartPanelConfigBase {
 
 /** Y축 도메인 결정 방식 (line-chart) */
 export type YAxisMode = 'auto' | 'manual' | 'auto_padded';
+
+/**
+ * Y축 데이터 타입 (line-chart).
+ * - `numeric`(기본): 숫자 축. y_axis_mode(auto/manual/auto_padded) + y_min/y_max 로 범위 결정.
+ * - `enum`: 열거형 축. y_enum_labels 의 값→라벨 매핑으로 눈금/툴팁을 문자열로 표시한다.
+ *   (기존 boolean 자동 표시 0→false / 1→true 를 사용자 정의로 일반화한 것)
+ */
+export type YAxisDataType = 'numeric' | 'enum';
+
+/** 열거형 Y축의 값→라벨 매핑 항목 (line-chart). 예: { value: 0, label: '정지' } */
+export interface YEnumLabel {
+  /** 매핑할 숫자 값. */
+  value: number;
+  /** 해당 값에 표시할 문자열. */
+  label: string;
+}
 
 /** X축 시간 윈도우 결정 방식 (line-chart) */
 export type TimeWindowMode = 'points' | 'recent' | 'fixed';
@@ -66,6 +178,63 @@ export interface YThreshold {
   severity?: ThresholdSeverity;
   /** 하위 호환: label */
   label?: string;
+}
+
+/**
+ * 시리즈 자동 색상 팔레트. 데이터 소스 선택 시 시리즈 인덱스별로 서로 다른 색을
+ * 자동 배정하는 데 사용한다(사용자가 개별 색을 지정하면 그 값이 우선).
+ * LineChartPanel 렌더와 설정 편집기(스와치 기본값)가 동일 팔레트를 공유한다.
+ */
+export const SERIES_PALETTE: readonly string[] = [
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#06b6d4',
+  '#ec4899',
+  '#84cc16',
+];
+
+/** 시리즈 인덱스에 대응하는 팔레트 색을 반환한다(팔레트 길이로 순환). */
+export function pickSeriesColor(index: number): string {
+  const n = SERIES_PALETTE.length;
+  const i = ((Math.trunc(index) % n) + n) % n;
+  return SERIES_PALETTE[i]!;
+}
+
+/**
+ * 축 텍스트(레이블/눈금) 폰트 스타일. 미지정 필드는 렌더 측 기본값으로 폴백한다.
+ * 라인 차트의 X/Y 축 레이블(제목)과 값(눈금) 폰트를 축별로 독립 설정한다.
+ */
+export interface AxisFontStyle {
+  /** 글자 크기(px). */
+  size?: number;
+  /** 글자 색상(hex). */
+  color?: string;
+  /** 굵기. */
+  weight?: 'normal' | 'bold';
+}
+
+/** 축 폰트 기본값(기존 하드코딩 값과 동일). */
+export const DEFAULT_AXIS_FONT: Required<AxisFontStyle> = {
+  size: 10,
+  color: '#9ca3af',
+  weight: 'normal',
+};
+
+/**
+ * AxisFontStyle 을 recharts 텍스트 props(fontSize/fill/fontWeight)로 변환한다.
+ * 미지정 필드는 DEFAULT_AXIS_FONT 로 채운다.
+ */
+export function resolveAxisFont(
+  font: AxisFontStyle | undefined,
+): { fontSize: number; fill: string; fontWeight: 'normal' | 'bold' } {
+  return {
+    fontSize: font?.size ?? DEFAULT_AXIS_FONT.size,
+    fill: font?.color ?? DEFAULT_AXIS_FONT.color,
+    fontWeight: font?.weight ?? DEFAULT_AXIS_FONT.weight,
+  };
 }
 
 /** 라인 스타일 — 채널별로 적용 */
@@ -110,8 +279,24 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   // X축
   /** X축 레이블 (예: "시간", "Time") */
   x_label?: string;
+  /** X축 레이블(제목) 폰트. */
+  x_label_font?: AxisFontStyle;
+  /** X축 값(눈금) 폰트. */
+  x_tick_font?: AxisFontStyle;
+  /** Y축 레이블(제목) 폰트. */
+  y_label_font?: AxisFontStyle;
+  /** Y축 값(눈금) 폰트. */
+  y_tick_font?: AxisFontStyle;
 
   // Y축
+  /**
+   * Y축 데이터 타입. 'numeric'(기본) 또는 'enum'.
+   * 'enum' 이면 y_enum_labels 로 값→라벨 매핑을 표시하며, 숫자 범위(y_axis_mode/min/max)는
+   * 무시된다(축 도메인은 enum 값 범위로 고정).
+   */
+  y_axis_type?: YAxisDataType;
+  /** 열거형 값→라벨 매핑 (y_axis_type === 'enum' 일 때 사용). */
+  y_enum_labels?: YEnumLabel[];
   y_min?: number;
   y_max?: number;
   y_axis_mode?: YAxisMode;
@@ -181,6 +366,34 @@ export interface TablePanelConfig extends ChartPanelConfigBase {
   columns: TableColumn[];
   rows_per_page?: number;
   default_sort?: { field: string; order: SortOrder };
+}
+
+/**
+ * 유효한 열거형 매핑만 추려 값→라벨 Map 을 만든다.
+ * value 가 유한 숫자이고 label 이 비어있지 않은 항목만 포함한다.
+ * 같은 value 가 중복되면 뒤 항목이 앞 항목을 덮어쓴다(마지막 정의 우선).
+ */
+export function buildEnumLabelMap(
+  labels: YEnumLabel[] | undefined,
+): Map<number, string> {
+  const map = new Map<number, string>();
+  if (!labels) return map;
+  for (const item of labels) {
+    if (typeof item.value !== 'number' || !Number.isFinite(item.value)) continue;
+    const label = (item.label ?? '').trim();
+    if (label === '') continue;
+    map.set(item.value, label);
+  }
+  return map;
+}
+
+/**
+ * 열거형 축에서 숫자 값을 라벨로 변환한다. 매핑에 없으면 숫자 문자열로 폴백한다.
+ * 값이 숫자가 아니면 빈 문자열을 반환한다(눈금 사이 보간값 등).
+ */
+export function formatEnumValue(value: number, map: Map<number, string>): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+  return map.get(value) ?? String(value);
 }
 
 /**

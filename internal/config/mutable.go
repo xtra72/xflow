@@ -10,10 +10,18 @@ var mutableKeys = map[string]bool{
 	"observe.default_level":                 true,
 	"observe.metrics.enabled":               true,
 	"observe.trace.enabled":                 true,
+	"observe.id_style":                      true,
 	"server.cors.allowed_origins":           true,
 	"server.rate_limit.requests_per_second": true,
 	"auth.jwt.access_ttl":                   true,
 	"auth.jwt.refresh_ttl":                  true,
+	// 원격 관리 핫리로드 키 (@SPEC:SPEC-REMOTE-001 M1, REQ-A06/A07).
+	// mode/server_url/exposure 변경을 런타임에 감지·반영하기 위해 mutable 로 둔다.
+	"remote_management.mode":             true,
+	"remote_management.server_url":       true,
+	"remote_management.exposure.flows":   true,
+	"remote_management.exposure.agents":  true,
+	"remote_management.exposure.devices": true,
 }
 
 // immutablePrefixes - 와일드카드 패턴으로 immutable 처리되는 접두사

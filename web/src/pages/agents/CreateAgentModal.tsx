@@ -7,6 +7,7 @@ import { X } from 'lucide-react';
 import { useCreateAgent } from '@/hooks/useAgent';
 import { AGENT_TYPES, getAgentConfigDefaults, getAgentConfigSchema } from '@/config/agentSchemas';
 import { DynamicForm } from '@/components/property/DynamicForm';
+import { useTranslation } from '@/lib/i18n';
 
 interface CreateAgentModalProps {
   open: boolean;
@@ -15,6 +16,7 @@ interface CreateAgentModalProps {
 
 /** 에이전트 생성 모달 오버레이 */
 export default function CreateAgentModal({ open, onClose }: CreateAgentModalProps) {
+  const { t } = useTranslation();
   const createAgent = useCreateAgent();
   const nameRef = useRef<HTMLInputElement>(null);
 
@@ -109,13 +111,13 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
             id="create-agent-title"
             className="text-lg font-semibold text-(--color-text-primary)"
           >
-            새 에이전트 만들기
+            {t('agents.createModal.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
-            aria-label="닫기"
+            aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -129,7 +131,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
               htmlFor="agent-name"
               className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
-              이름 <span className="text-red-500">*</span>
+              {t('common.name')} <span className="text-red-500">*</span>
             </label>
             <input
               ref={nameRef}
@@ -138,7 +140,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="에이전트 이름을 입력하세요"
+              placeholder={t('agents.createModal.namePlaceholder')}
               className={inputClass}
             />
           </div>
@@ -149,7 +151,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
               htmlFor="agent-type"
               className="mb-1 block text-sm font-medium text-(--color-text-secondary)"
             >
-              타입 <span className="text-red-500">*</span>
+              {t('agents.type')} <span className="text-red-500">*</span>
             </label>
             <select
               id="agent-type"
@@ -170,7 +172,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
           {schema && (
             <div>
               <p className="mb-2 text-sm font-medium text-(--color-text-secondary)">
-                설정
+                {t('agents.config')}
               </p>
               <div className="rounded-md border border-(--color-border-default) p-3">
                 <DynamicForm
@@ -186,7 +188,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
           {/* 에러 메시지 */}
           {createAgent.isError && (
             <p className="text-sm text-red-600 dark:text-red-400">
-              에이전트 생성에 실패했습니다. 다시 시도해주세요.
+              {t('agents.createModal.error')}
             </p>
           )}
 
@@ -198,14 +200,14 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
               disabled={createAgent.isPending}
               className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-50"
             >
-              취소
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
               disabled={createAgent.isPending || !name.trim()}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
-              {createAgent.isPending ? '생성 중...' : '생성'}
+              {createAgent.isPending ? t('agents.creating') : t('agents.create')}
             </button>
           </div>
         </form>

@@ -18,6 +18,12 @@ import {
 import { Link } from 'react-router';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
+import { useFlowActionsTarget } from '@/hooks/useResourceActions';
+import { useFlowsTarget } from '@/hooks/useResourceTargets';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTranslation } from '@/lib/i18n';
+import { isRemoteTarget } from '@/lib/remote/target';
+import { useTargetContext } from '@/lib/remote/TargetContext';
 import { formatDate } from '@/lib/utils/format';
 import { startFlow, stopFlow, restartFlow } from '@/services/api/flowService';
 import {
@@ -26,30 +32,30 @@ import {
 } from '@/stores/uiStore';
 import type { FlowInfo } from '@/types/flow';
 
-/** 상태별 색상 및 아이콘 매핑 */
-const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+/** 상태별 색상 및 아이콘 매핑 (label 은 i18n 키, 렌더 시 t(key) 로 변환) */
+const STATUS_CONFIG: Record<string, { labelKey: string; color: string; icon: React.ReactNode }> = {
   running: {
-    label: '실행 중',
+    labelKey: 'dashboard.running',
     color: 'text-green-600 bg-green-100 dark:text-green-400 dark:bg-green-900/30',
     icon: <Activity className="h-4 w-4" />,
   },
   stopped: {
-    label: '중지됨',
+    labelKey: 'dashboard.stopped',
     color: 'text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-700/30',
     icon: <CircleStop className="h-4 w-4" />,
   },
   error: {
-    label: '오류',
+    labelKey: 'dashboard.error',
     color: 'text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-900/30',
     icon: <AlertTriangle className="h-4 w-4" />,
   },
   stored: {
-    label: '저장됨',
+    labelKey: 'dashboard.stored',
     color: 'text-blue-600 bg-blue-100 dark:text-blue-400 dark:bg-blue-900/30',
     icon: <FileText className="h-4 w-4" />,
   },
   loaded: {
-    label: '탑재됨',
+    labelKey: 'dashboard.loaded',
     color: 'text-yellow-600 bg-yellow-100 dark:text-yellow-400 dark:bg-yellow-900/30',
     icon: <Rocket className="h-4 w-4" />,
   },
@@ -68,12 +74,24 @@ interface FlowPanelProps {
 }
 
 /** 플로우 상태 요약 + 플로우 리스트 테이블 패널 */
-export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
+export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
+  // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
+  // 소스로 쓴다(useFlowsTarget — 그룹 J/E 재사용). 로컬은 prop 의 flows 를 그대로
+  // 사용해 회귀 없이 동일 렌더한다.
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const remoteFlows = useFlowsTarget(target);
+  const flows = useMemo<FlowInfo[]>(
+    () => (remote ? (remoteFlows.data?.data ?? []) : localFlows),
+    [remote, remoteFlows.data, localFlows],
+  );
+
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
-  const title = panelConfig?.title ?? '플로우 현황';
+  const title = panelConfig?.title ?? t('dashboard.panelTypes.flows');
   const visibleColumns = (panelConfig?.config?.visibleColumns as FlowColumnKey[]) ?? [...ALL_FLOW_COLUMNS];
   const panelColor = panelConfig?.config?.panelColor as string | undefined;
   const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
@@ -149,7 +167,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
     }));
   };
 
-  // 플로우 액션 뮤테이션
+  // 플로우 액션 뮤테이션(로컬). 원격은 그룹 D 명령으로 라우팅한다(REQ-L12/J12).
   const startMutation = useMutation({
     mutationFn: startFlow,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['flows'] }),
@@ -165,8 +183,40 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['flows'] }),
   });
 
+  // 원격 라이프사이클: 그룹 D 명령(REQ-L12). 노드 ready 가 아니면 게이팅된다.
+  const remoteActions = useFlowActionsTarget(target);
+  const gating = useTargetGating(target);
+
   /** 플로우 상태에 따른 액션 버튼 렌더링 */
   const renderActionButton = (flow: FlowInfo) => {
+    // 원격: 그룹 D 명령 + 게이팅(노드 승인∧온라인 ∧ 자원 online). 미지원 액션
+    // (restart)은 supports=false 로 비활성. 로컬은 기존 동작 불변.
+    if (remote) {
+      const action =
+        flow.status === 'running' ? 'stop' : flow.status === 'error' ? 'restart' : 'start';
+      const Icon = action === 'stop' ? Pause : action === 'restart' ? RotateCcw : Play;
+      const labelSuffix = action === 'stop' ? t('dashboard.action.stop') : action === 'restart' ? t('dashboard.action.restart') : t('dashboard.action.start');
+      const supported = remoteActions.supports(action);
+      const canControl = gating.canControl(
+        flow.status === 'running' || flow.status === 'error' || flow.status === 'stopped',
+      );
+      const disabled = !supported || !canControl || remoteActions.pending[action] === true;
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void remoteActions.perform(action, flow.id).catch(() => {});
+          }}
+          disabled={disabled}
+          className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
+          aria-label={`${flow.name} ${labelSuffix}`}
+        >
+          <Icon className="h-4 w-4" />
+        </button>
+      );
+    }
+
     const isPending =
       startMutation.isPending || stopMutation.isPending || restartMutation.isPending;
 
@@ -180,7 +230,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
           }}
           disabled={isPending}
           className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
-          aria-label={`${flow.name} 중지`}
+          aria-label={`${flow.name} ${t('dashboard.action.stop')}`}
         >
           <Pause className="h-4 w-4" />
         </button>
@@ -197,7 +247,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
           }}
           disabled={isPending}
           className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
-          aria-label={`${flow.name} 재시작`}
+          aria-label={`${flow.name} ${t('dashboard.action.restart')}`}
         >
           <RotateCcw className="h-4 w-4" />
         </button>
@@ -214,7 +264,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
         }}
         disabled={isPending}
         className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
-        aria-label={`${flow.name} 시작`}
+        aria-label={`${flow.name} ${t('dashboard.action.start')}`}
       >
         <Play className="h-4 w-4" />
       </button>
@@ -250,7 +300,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
             >
               {config.icon}
-              {config.label} {count}
+              {t(config.labelKey)} {count}
             </span>
           );
         })}
@@ -259,7 +309,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
       {/* 플로우 리스트 테이블 */}
       {sortedFlows.length === 0 ? (
         <p className="text-sm text-(--color-text-muted)">
-          등록된 플로우가 없습니다.
+          {t('dashboard.flowPanel.empty')}
         </p>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -269,7 +319,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                 <tr className="border-b border-(--color-border-default)">
                   {show('name') && (
                     <SortableHeader
-                      label="이름"
+                      label={t('dashboard.col.name')}
                       field="name"
                       currentSort={sort}
                       onSort={handleSort}
@@ -282,7 +332,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                       className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                       style={acColor('table') ? { color: acColor('table')! } : undefined}
                     >
-                      상태
+                      {t('dashboard.col.status')}
                     </th>
                   )}
                   {show('node_count') && (
@@ -290,7 +340,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                       className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                       style={acColor('table') ? { color: acColor('table')! } : undefined}
                     >
-                      노드 수
+                      {t('dashboard.col.nodeCount')}
                     </th>
                   )}
                   {show('updated_at') && (
@@ -298,7 +348,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                       className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                       style={acColor('table') ? { color: acColor('table')! } : undefined}
                     >
-                      업타임
+                      {t('dashboard.col.uptime')}
                     </th>
                   )}
                   {show('actions') && (
@@ -306,7 +356,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                       className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
                       style={acColor('table') ? { color: acColor('table')! } : undefined}
                     >
-                      액션
+                      {t('dashboard.col.actions')}
                     </th>
                   )}
                 </tr>
@@ -322,12 +372,20 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                     >
                       {show('name') && (
                         <td className="px-4 py-3">
-                          <Link
-                            to={`/editor/${flow.id}`}
-                            className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                          >
-                            {flow.name}
-                          </Link>
+                          {remote ? (
+                            // 원격: 에디터 딥링크는 노드 컨텍스트 밖이므로 단순 텍스트로
+                            // 표시한다(편집은 노드 대시보드 플로우 서브탭 — REQ-L12).
+                            <span className="text-sm font-medium text-(--color-text-primary)">
+                              {flow.name}
+                            </span>
+                          ) : (
+                            <Link
+                              to={`/editor/${flow.id}`}
+                              className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                            >
+                              {flow.name}
+                            </Link>
+                          )}
                         </td>
                       )}
                       {show('status') && (
@@ -335,7 +393,7 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
                           {(() => {
                             const cfg = STATUS_CONFIG[flow.status];
                             return cfg ? (
-                              <span className={`inline-flex items-center ${cfg.color.split(' ').filter(c => c.startsWith('text-')).join(' ')}`} title={cfg.label}>
+                              <span className={`inline-flex items-center ${cfg.color.split(' ').filter(c => c.startsWith('text-')).join(' ')}`} title={t(cfg.labelKey)}>
                                 {cfg.icon}
                               </span>
                             ) : (
@@ -366,14 +424,14 @@ export default function FlowPanel({ flows, panelConfig }: FlowPanelProps) {
             </table>
           </div>
 
-          {/* 더 보기 링크 */}
-          {flows.length > 10 && (
+          {/* 더 보기 링크 — 원격은 로컬 `/flows` 로 이탈하므로 숨긴다(노드 서브탭 사용). */}
+          {!remote && flows.length > 10 && (
             <div className="mt-4 text-right">
               <Link
                 to="/flows"
                 className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
               >
-                더 보기
+                {t('dashboard.panel.more')}
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>

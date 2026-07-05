@@ -26,6 +26,7 @@
 
 import { CheckCircle2, RefreshCw } from 'lucide-react';
 
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import type { Channel, VersionInfo } from '@/services/api/systemUpdate';
 
@@ -110,7 +111,7 @@ function formatBuildDate(iso: string): string {
 }
 
 /**
- * lastCheckedAt 을 한국어 상대 시간으로 변환한다.
+ * lastCheckedAt 을 상대 시간으로 변환한다. 표시 문자열은 i18n t() 로 해석한다.
  *
  * 임계값:
  *   - undefined          → "확인 안 됨"
@@ -119,18 +120,20 @@ function formatBuildDate(iso: string): string {
  *   - 24시간 미만        → "{n}시간 전"
  *   - 그 외              → "{n}일 전"
  */
-function formatLastChecked(at: Date | undefined): string {
+function formatLastChecked(at: Date | undefined, t: TranslationFn): string {
   if (!at) {
-    return '확인 안 됨';
+    return t('system.version.lastCheckedNever');
   }
   const diffSec = Math.floor((Date.now() - at.getTime()) / 1000);
-  if (diffSec < 60) return '방금 전';
+  if (diffSec < 60) return t('system.version.relativeJustNow');
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}분 전`;
+  if (diffMin < 60)
+    return t('system.version.relativeMinutesAgo').replace('{n}', String(diffMin));
   const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour}시간 전`;
+  if (diffHour < 24)
+    return t('system.version.relativeHoursAgo').replace('{n}', String(diffHour));
   const diffDay = Math.floor(diffHour / 24);
-  return `${diffDay}일 전`;
+  return t('system.version.relativeDaysAgo').replace('{n}', String(diffDay));
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -146,6 +149,7 @@ export function SystemVersionCard({
   isAdmin = false,
   onChannelClick,
 }: SystemVersionCardProps) {
+  const { t } = useTranslation();
   const showStartButton =
     version.update_available && typeof onUpdate === 'function';
 
@@ -170,15 +174,21 @@ export function SystemVersionCard({
     >
       <header className="mb-4 flex items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold text-(--color-text-primary)">
-          xflowd 시스템 정보
+          {t('system.version.cardTitle')}
         </h2>
         {channelInteractive ? (
           <button
             type="button"
             data-testid="system-version-channel"
             className={channelClass}
-            title={`업데이트 채널: ${version.channel} (클릭하여 변경)`}
-            aria-label={`채널 변경: 클릭하여 다이얼로그 열기 (현재 ${version.channel})`}
+            title={t('system.version.channelTitleClickable').replace(
+              '{channel}',
+              version.channel,
+            )}
+            aria-label={t('system.version.channelAria').replace(
+              '{channel}',
+              version.channel,
+            )}
             onClick={onChannelClick}
           >
             {CHANNEL_LABEL[version.channel]}
@@ -187,7 +197,10 @@ export function SystemVersionCard({
           <span
             data-testid="system-version-channel"
             className={channelClass}
-            title={`업데이트 채널: ${version.channel}`}
+            title={t('system.version.channelTitleRead').replace(
+              '{channel}',
+              version.channel,
+            )}
           >
             {CHANNEL_LABEL[version.channel]}
           </span>
@@ -197,7 +210,7 @@ export function SystemVersionCard({
       {/* 현재 버전 (강조) */}
       <div className="mb-4">
         <div className="text-xs uppercase tracking-wide text-(--color-text-muted)">
-          현재 버전
+          {t('system.version.currentVersion')}
         </div>
         <div
           data-testid="system-version-current"
@@ -244,13 +257,13 @@ export function SystemVersionCard({
         </div>
         <div>
           <dt className="text-xs uppercase tracking-wide text-(--color-text-muted)">
-            마지막 확인
+            {t('system.version.lastChecked')}
           </dt>
           <dd
             data-testid="system-last-checked"
             className="mt-0.5 text-(--color-text-primary)"
           >
-            {formatLastChecked(lastCheckedAt)}
+            {formatLastChecked(lastCheckedAt, t)}
           </dd>
         </div>
       </dl>
@@ -272,7 +285,7 @@ export function SystemVersionCard({
               aria-hidden="true"
             />
             <span data-testid="system-update-available">
-              업데이트 가능
+              {t('system.version.updateAvailable')}
               {version.latest_version ? (
                 <>
                   {' '}
@@ -284,7 +297,7 @@ export function SystemVersionCard({
         ) : (
           <>
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            <span>최신 버전입니다</span>
+            <span>{t('system.version.upToDate')}</span>
           </>
         )}
       </div>
@@ -307,7 +320,9 @@ export function SystemVersionCard({
             className={cn('h-3.5 w-3.5', isChecking && 'animate-spin')}
             aria-hidden="true"
           />
-          {isChecking ? '확인 중...' : '업데이트 확인'}
+          {isChecking
+            ? t('system.version.checking')
+            : t('system.version.checkUpdate')}
         </button>
 
         {showStartButton ? (
@@ -321,7 +336,7 @@ export function SystemVersionCard({
               'dark:bg-yellow-600 dark:hover:bg-yellow-700',
             )}
           >
-            업데이트 시작
+            {t('system.version.startUpdate')}
           </button>
         ) : null}
       </div>

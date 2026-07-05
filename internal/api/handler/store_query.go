@@ -44,6 +44,17 @@ type storeHistoryQueryer interface {
 	QueryHistory(ctx context.Context, namespace, key string, q system.HistoryQuery) ([]system.HistoryEntry, error)
 }
 
+// @spec SPEC-STORE-004
+// storeSeriesQueryer 는 key → 다중 시리즈 fan-out 조회 계약이다 (M3).
+// system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로 옵셔널하게
+// 시리즈 조회를 사용하며, 미구현 에이전트는 기존 단일 QueryHistory 경로로 폴백한다.
+//
+// metricFilter/tagsFilter 가 모두 비어있으면 해당 key 의 모든 시리즈를 반환하고(E4),
+// 필터가 주어지면 일치하는 부분집합만 반환한다(E5/S3). 미일치 시 빈 슬라이스(S4).
+type storeSeriesQueryer interface {
+	QuerySeries(ctx context.Context, namespace, key, metricFilter string, tagsFilter map[string]string, q system.HistoryQuery) ([]system.SeriesResult, error)
+}
+
 type storeKeyLister interface {
 	ListStoreKeys(ctx context.Context, namespace, pattern string) ([]string, error)
 }
@@ -77,6 +88,25 @@ type storeKeyMetaLister interface {
 	StaticKeysSnapshot() map[string]system.StaticKeyMeta
 }
 
+// storeLiveKeyLister 는 실데이터가 있는 시리즈 키 집합을 제공하는 선택적 계약이다.
+// 구현하는 에이전트(로컬 UserStoreAgent)에서만 GET /keys 가 유령 auto 시리즈를 필터링한다.
+// 미구현 에이전트(원격 등)는 필터 없이 기존 동작(레지스트리 전체 노출)으로 폴백한다.
+type storeLiveKeyLister interface {
+	LiveSeriesKeys() map[string]struct{}
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// storeKeyMetaSetter 는 임의 엔트리(정적 + 동적)의 metric_type/tags 를 설정하는
+// 에이전트 계약이다. system.UserStoreAgent 가 이 인터페이스를 만족한다.
+//
+// PUT /store/{name}/keys/{key}/meta 핸들러가 사용하며, 동적으로 등록된 키에도
+// 사용자가 나중에 타입/태그를 부여할 수 있게 한다. 미등록 키이면 동적 string 키로
+// 신규 등록된다. 입력 검증(metric_type 정규식, tag key 정규식)은 구현체가 수행하며,
+// 검증 실패 시 system.ErrInvalidMetricType / system.ErrInvalidTagKey 를 반환한다.
+type storeKeyMetaSetter interface {
+	SetKeyMeta(key string, metricType string, tags map[string]string) error
+}
+
 // @spec SPEC-STORE-003
 // storeResetter 는 reset 엔드포인트(DELETE /keys, DELETE /keys/{key}) 가 요구하는 에이전트 계약이다.
 // 정책(정적 키 → 히스토리만 / 동적 키 → 엔트리 삭제) 는 핸들러가 IsStaticKey 결과로 분기한다.
@@ -91,6 +121,25 @@ type storeResetter interface {
 	DeleteEntry(ctx context.Context, namespace, key string) error
 	// IsStaticKey 는 사용자 관점 key 가 정적 키 목록에 정의되어 있는지 검사한다.
 	IsStaticKey(key string) bool
+}
+
+// @spec SPEC-STORE-004
+// storeSeriesResetter 는 단일/부분 시리즈 reset 계약이다 (E8, M4).
+// system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로 옵셔널하게
+// 시리즈 reset 을 사용하며, 미구현(레거시/페이크) 에이전트는 기존 bare-key reset 경로로 폴백한다.
+//
+// ResetSeries 는 (namespace, key, metricFilter, tagsFilter) 에 일치하는 시리즈만 reset 하고,
+// 시리즈별로 정적 → ClearHistory(historyCleared++), 동적 → DeleteEntry(entriesDeleted++)
+// 정책을 적용한다. 필터가 모두 비어있으면 해당 key 의 모든 시리즈가 대상이다(식별자 누락 정책).
+type storeSeriesResetter interface {
+	ResetSeries(ctx context.Context, namespace, key, metricFilter string, tagsFilter map[string]string) (historyCleared, entriesDeleted int, err error)
+}
+
+// storeKeyRenamer 는 키(그 키의 모든 시리즈) 를 새 키로 이동하는 에이전트 계약이다.
+// system.UserStoreAgent 가 이 인터페이스를 만족한다.
+// POST /store/{name}/keys/{key}/rename 핸들러가 사용한다.
+type storeKeyRenamer interface {
+	RenameKey(ctx context.Context, namespace, oldKey, newKey string) (moved int, err error)
 }
 
 // StoreQueryHandler 는 SPEC-CHART-001 REQ-M3-01 를 구현한다.
@@ -115,6 +164,8 @@ func NewStoreQueryHandler(agents AgentLookup, logger *slog.Logger) *StoreQueryHa
 func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.POST("/store/{agent_name}/query", h.Query)
 	g.GET("/store/{agent_name}/keys", h.ListKeys)
+	// @spec SPEC-STORE-003 v0.4.0: 임의 엔트리(동적 포함)의 metric_type/tags 설정.
+	g.PUT("/store/{agent_name}/keys/{key}/meta", h.SetKeyMeta)
 	// @spec SPEC-STORE-003
 	g.GET("/store/{agent_name}/tags", h.ListTags)
 	// @spec SPEC-STORE-003: reset 엔드포인트.
@@ -122,6 +173,8 @@ func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
 	//   DELETE /store/{agent_name}/keys       → 전체 키 reset (벌크)
 	g.DELETE("/store/{agent_name}/keys/{key}", h.ResetKey)
 	g.DELETE("/store/{agent_name}/keys", h.ResetAll)
+	// 키(그 키의 모든 시리즈) 이름 변경. body: {"new_key": "..."}
+	g.POST("/store/{agent_name}/keys/{key}/rename", h.RenameKey)
 }
 
 // storeQueryRequest 는 REQ-M3-01 요청 바디 형식이다.
@@ -154,6 +207,13 @@ type storeQueryRequest struct {
 	// SPEC-WEB-005: 서버측 집계 파라미터 (선택).
 	IntervalMs  int64  `json:"interval_ms,omitempty"`
 	Aggregation string `json:"aggregation,omitempty"`
+
+	// @spec SPEC-STORE-004: 시리즈 필터 (선택).
+	//   - MetricType 만 주면 그 metric 의 모든 tags 시리즈 (S3).
+	//   - MetricType+Tags 주면 단일/부분집합 시리즈 (E5).
+	//   - 둘 다 생략하면 해당 key 의 모든 시리즈 (E4).
+	MetricType string            `json:"metric_type,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
 }
 
 // chartQueryEntry 는 표준 응답(REQ-M3-04) 의 entries 항목이다.
@@ -204,7 +264,14 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 			WithDetails(map[string]string{"error": "agent_not_found"})
 	}
 
-	// 타입 단언: Store 계열 에이전트만 QueryHistory 를 구현한다.
+	// @spec SPEC-STORE-004
+	// 시리즈 fan-out 경로: 에이전트가 QuerySeries 를 구현하면 key → 다중 시리즈로 조회한다.
+	// metric/tags 필터로 부분집합을 좁히고, 각 엔트리에 labels(metric_type + tags)를 채운다.
+	if seriesAgent, ok := ag.(storeSeriesQueryer); ok {
+		return h.querySeries(ctx, seriesAgent, &req, q, aggEnabled)
+	}
+
+	// 타입 단언: Store 계열 에이전트만 QueryHistory 를 구현한다 (시리즈 미지원 폴백).
 	storeAgent, ok := ag.(storeHistoryQueryer)
 	if !ok {
 		return api.ErrBadRequest.
@@ -214,7 +281,15 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 
 	entries, err := storeAgent.QueryHistory(ctx.Context(), req.Namespace, req.Key, q)
 	if err != nil {
-		return api.MapDomainError(err)
+		// 키가 존재하지 않는 경우(아직 데이터가 쓰이기 전, 또는 device_id 변경으로
+		// 옛 키를 조회하는 등)는 에러가 아니라 빈 결과(200)로 응답한다. 차트가
+		// "데이터 없음" 으로 정상 렌더되며, 과거 ErrKeyNotFound 가 INTERNAL_ERROR(500)
+		// 로 새어 나가던 회귀를 막는다.
+		if errors.Is(err, system.ErrKeyNotFound) {
+			entries = nil
+		} else {
+			return api.MapDomainError(err)
+		}
 	}
 
 	// 집계 경로: time_range / duration 에서만 도달한다 (validateAggregationParams 가 보장).
@@ -238,6 +313,76 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 		Truncated: false,
 	}
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(resp))
+}
+
+// @spec SPEC-STORE-004
+// querySeries 는 key → 다중 시리즈 fan-out 조회 결과를 표준 응답으로 직렬화한다.
+//
+// 동작:
+//   - QuerySeries 로 (namespace, key, metric/tags 필터) 에 일치하는 모든 시리즈를 조회한다.
+//   - 각 시리즈의 엔트리에 labels(metric_type + tags)를 부여하여 출처를 식별 가능하게 한다(E4).
+//   - 집계가 활성화되면 시리즈별로 bucketAggregate 를 적용하고, 라벨을 유지한다.
+//   - 미일치(빈 결과)는 HTTP 200 + entries 0개로 응답한다(S4).
+//
+// 다중 시리즈의 엔트리는 단일 entries 배열로 평탄화되며, 각 엔트리의 labels 로 시리즈를 구분한다.
+func (h *StoreQueryHandler) querySeries(
+	ctx api.Context,
+	agent storeSeriesQueryer,
+	req *storeQueryRequest,
+	q system.HistoryQuery,
+	aggEnabled bool,
+) error {
+	seriesList, err := agent.QuerySeries(ctx.Context(), req.Namespace, req.Key, req.MetricType, req.Tags, q)
+	if err != nil {
+		// 키/시리즈 부재는 빈 결과(200)로 흡수한다(S4, ErrKeyNotFound→200 정책 보존).
+		if errors.Is(err, system.ErrKeyNotFound) {
+			seriesList = nil
+		} else {
+			return api.MapDomainError(err)
+		}
+	}
+
+	entries := make([]chartQueryEntry, 0)
+	for _, sr := range seriesList {
+		labels := seriesLabels(sr.Series)
+		if aggEnabled {
+			originMs, aerr := resolveAggregationOriginMs(req, q)
+			if aerr != nil {
+				return api.ErrBadRequest.WithMessage(aerr.Error())
+			}
+			bucketed := bucketAggregate(sr.Entries, originMs, req.IntervalMs, req.Aggregation)
+			for i := range bucketed {
+				bucketed[i].Labels = labels
+			}
+			entries = append(entries, bucketed...)
+			continue
+		}
+		for _, e := range sr.Entries {
+			entries = append(entries, chartQueryEntry{
+				Timestamp: e.Timestamp.UnixMilli(),
+				Value:     e.Value,
+				Labels:    labels,
+			})
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(chartQueryResponse{
+		Entries:   entries,
+		Count:     len(entries),
+		Truncated: false,
+	}))
+}
+
+// @spec SPEC-STORE-004
+// seriesLabels 는 시리즈 식별자를 응답 labels(metric_type + tags) 맵으로 변환한다.
+// metric_type 은 "__metric__" 키로, 각 tag 는 tag key 그대로 담는다. 항상 non-nil 을 반환한다.
+func seriesLabels(sid system.SeriesID) map[string]string {
+	labels := make(map[string]string, len(sid.Tags)+1)
+	labels["__metric__"] = sid.MetricType
+	for k, v := range sid.Tags {
+		labels[k] = v
+	}
+	return labels
 }
 
 // validateAggregationParams 는 SPEC-WEB-005 집계 파라미터를 검증한다.
@@ -337,6 +482,12 @@ func resolveAggregationOriginMs(req *storeQueryRequest, q system.HistoryQuery) (
 func toFloat64(v any) (float64, bool) {
 	var f float64
 	switch x := v.(type) {
+	case bool:
+		// boolean data_type 시리즈: true→1 / false→0 으로 변환해 라인 차트에 표시한다.
+		if x {
+			return 1, true
+		}
+		return 0, true
 	case float64:
 		f = x
 	case float32:
@@ -539,6 +690,30 @@ func mapHistoryEntriesToDTO(entries []system.HistoryEntry) []chartQueryEntry {
 	return out
 }
 
+// @spec SPEC-STORE-004
+// encodeTagsForSort 는 tags 를 tag-key 사전순 "k1=v1,k2=v2" 문자열로 직렬화한다.
+// GET /keys 시리즈 행의 결정적 정렬 보조 키로만 사용된다(저장 인코딩과 무관).
+func encodeTagsForSort(tags map[string]string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(tags[k])
+	}
+	return b.String()
+}
+
 // @spec SPEC-STORE-003 v0.3.0
 // StoreKeyResponse 는 GET /store/{name}/keys 응답 배열의 단일 키 객체이다.
 // v0.2.0 의 단순 string 배열에서 객체 배열로 BREAKING 변경되었다 (M9).
@@ -693,11 +868,39 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	// 일관된 스냅샷 (manual + auto-registered 모두 포함, deep copy).
 	snapshot := metaLister.StaticKeysSnapshot()
 
-	// 필터 적용 + 응답 객체 빌드.
+	// 실데이터가 있는 시리즈 키 집합(선택적). 실데이터 없는 시리즈는 GET /keys 에서 제외해
+	// 저장소 탭(실데이터 기준) 및 라인차트 선택기와 일치시킨다. 대상 두 가지:
+	//   1. auto 유령 시리즈: 과거 만료/삭제로 store 아이템은 사라졌으나 레지스트리에 남은 항목.
+	//   2. bare 정적 정의: config keys[] 로 정의됐으나(태그 없음) 실데이터는 태그가 붙은
+	//      별도(auto) 시리즈로 저장되어, 정적 정의 자체엔 데이터가 없는 경우.
+	// 둘 다 "그릴 데이터가 없는" 항목이므로 선택기/뷰어에서 노출할 이유가 없다.
+	// LiveSeriesKeys 미구현 에이전트(원격 등)는 필터 없이 기존 동작으로 폴백한다.
+	var liveKeys map[string]struct{}
+	if ll, ok := ag.(storeLiveKeyLister); ok {
+		liveKeys = ll.LiveSeriesKeys()
+	}
+
+	// @spec SPEC-STORE-004
+	// 필터 적용 + 시리즈 행 빌드 (E7/AC-13).
+	// 레지스트리 키는 시리즈 인코딩(SetWithMeta 경로) 또는 bare key(yaml 정적/plain Set)이다.
+	// DecodeSeriesKey 로 디코드하여 행의 key 를 사용자 관점 key 로 복원한다. 디코드 실패(bare)
+	// 시 raw 를 그대로 key 로 쓴다(레거시 호환). metric_type/tags 는 메타에 저장된 라벨을 쓰되,
+	// 디코드 성공 시 시리즈 식별자와 일치한다.
 	objects := make([]StoreKeyResponse, 0, len(snapshot))
-	for key, meta := range snapshot {
+	for regKey, meta := range snapshot {
 		if !filter.matches(meta) {
 			continue
+		}
+		// 실데이터가 있는 시리즈만 노출(manual/auto 무관). 데이터 없는 유령/bare 정적 정의 제외.
+		// liveKeys 가 nil(미구현 에이전트)이면 필터하지 않는다.
+		if liveKeys != nil {
+			if _, live := liveKeys[regKey]; !live {
+				continue
+			}
+		}
+		userKey := regKey
+		if sid, derr := system.DecodeSeriesKey(regKey); derr == nil {
+			userKey = sid.Key
 		}
 		// Tags 는 항상 non-nil 보장 (M9: "빈 tags 객체로 표시").
 		// snapshot 이 깊은 복사를 보장하므로 그대로 사용해도 안전하지만, nil 가능성을
@@ -707,7 +910,7 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 			tags = map[string]string{}
 		}
 		objects = append(objects, StoreKeyResponse{
-			Key:          key,
+			Key:          userKey,
 			Registration: string(meta.Source),
 			DataType:     string(meta.DataType),
 			MetricType:   meta.MetricType,
@@ -715,12 +918,111 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 		})
 	}
 
-	// 알파벳순 정렬 (M9 안정성 요구). 결정적 응답 순서를 보장한다.
-	sort.Slice(objects, func(i, j int) bool { return objects[i].Key < objects[j].Key })
+	// @spec SPEC-STORE-004
+	// 결정적 정렬: key → metric_type → tags 인코딩 순. 같은 key 의 여러 시리즈 행이
+	// 안정적 순서로 노출된다(M9 안정성 + 시리즈 다중 행).
+	sort.Slice(objects, func(i, j int) bool {
+		if objects[i].Key != objects[j].Key {
+			return objects[i].Key < objects[j].Key
+		}
+		if objects[i].MetricType != objects[j].MetricType {
+			return objects[i].MetricType < objects[j].MetricType
+		}
+		return encodeTagsForSort(objects[i].Tags) < encodeTagsForSort(objects[j].Tags)
+	})
 
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(StoreKeysListResponse{
 		Count: len(objects),
 		Keys:  objects,
+	}))
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// setKeyMetaRequest 는 PUT /store/{name}/keys/{key}/meta 요청 바디이다.
+//
+// 필드:
+//   - MetricType: 설정할 metric_type (생략/빈 문자열 → "unknown" 으로 normalize).
+//   - Tags:       설정할 태그 맵 전체(replace 시맨틱). 생략하면 빈 맵으로 간주되어 기존 태그가 비워진다.
+//
+// 주의: Tags 는 부분 갱신(merge)이 아니라 전체 교체(replace)이다. 일부만 바꾸려면
+// 클라이언트가 기존 태그를 포함한 전체 맵을 보내야 한다 (단순하고 예측 가능한 시맨틱).
+type setKeyMetaRequest struct {
+	MetricType string            `json:"metric_type"`
+	Tags       map[string]string `json:"tags"`
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 metric_type 과 tags 를 설정한다.
+//
+//	PUT /store/{agent_name}/keys/{key}/meta
+//	body: {"metric_type": "temperature", "tags": {"room": "1"}}
+//
+// 동작:
+//   - 정적 키: DataType/Source 보존, metric_type/tags 만 갱신.
+//   - 동적 키: data_type=string/Source=auto 보존, metric_type/tags 갱신.
+//   - 미등록 키: 동적 string 키로 신규 등록 후 메타 적용(사전 타입/태그 지정).
+//
+// 검증 실패 매핑:
+//   - metric_type 정규식 위반 → 400 (system.ErrInvalidMetricType)
+//   - tag key 정규식 위반     → 400 (system.ErrInvalidTagKey)
+//
+// 키 경로 파라미터는 url.PathUnescape 로 디코딩되어 콜론(%3A) 등 특수문자를 안전히 처리한다.
+// 응답: 200 OK 와 함께 적용된 {key, metric_type, tags} 를 반환한다.
+func (h *StoreQueryHandler) SetKeyMeta(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+
+	rawKey := ctx.Param("key")
+	if rawKey == "" {
+		return api.ErrBadRequest.WithMessage("key is required")
+	}
+	decodedKey, derr := url.PathUnescape(rawKey)
+	if derr != nil {
+		return api.ErrBadRequest.WithMessage("invalid key encoding")
+	}
+
+	var req setKeyMetaRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	setter, ok := ag.(storeKeyMetaSetter)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName).
+			WithDetails(map[string]string{"error": "not_a_store_agent"})
+	}
+
+	if err := setter.SetKeyMeta(decodedKey, req.MetricType, req.Tags); err != nil {
+		// 검증 에러는 400 으로 매핑한다 (그 외는 그대로 메시지 노출).
+		if errors.Is(err, system.ErrInvalidMetricType) || errors.Is(err, system.ErrInvalidTagKey) {
+			return api.ErrBadRequest.WithMessage(err.Error())
+		}
+		return api.ErrBadRequest.WithMessage(err.Error())
+	}
+
+	// 응답: 적용 결과(normalize 된 metric_type/tags) 를 일관되게 반환한다.
+	metricType := req.MetricType
+	if metricType == "" {
+		metricType = system.MetricTypeUnknown
+	}
+	tags := req.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"key":         decodedKey,
+		"metric_type": metricType,
+		"tags":        tags,
 	}))
 }
 
@@ -819,19 +1121,27 @@ func findAgentByName(lookup AgentLookup, name string) agent.Agent {
 }
 
 // @spec SPEC-STORE-003
+// @spec SPEC-STORE-004
 // ResetKey 는 단일 키 reset 을 처리한다.
 //
 //	DELETE /store/{agent_name}/keys/{key}?namespace=default
+//	DELETE /store/{agent_name}/keys/{key}?metric_type=temperature&tag=room:1   (단일 시리즈, E8)
 //
-// 정책:
-//   - 정적 키(IsStaticKey=true)  → ClearHistory(엔트리 보존, 히스토리만 비움)
-//     응답: action=history_cleared
-//   - 동적 키(IsStaticKey=false) → DeleteEntry(엔트리+히스토리 모두 삭제)
-//     응답: action=entry_deleted
+// 시리즈 모델(M4) — 에이전트가 storeSeriesResetter 를 구현하면 시리즈 단위 reset 을 수행한다:
+//   - ?metric_type= / ?tag=key:value 식별자로 대상 시리즈를 좁힌다.
+//   - 식별자(metric/tags) 가 모두 생략되면 **해당 key 의 모든 시리즈**가 대상이다(식별자
+//     누락 정책 — 사용자 직관 "이 키 삭제" = 그 키의 전 시리즈, ResetSeries 주석 참조).
+//   - 시리즈별 정책: 정적 → ClearHistory, 동적 → DeleteEntry. 응답은 카운트
+//     {key, history_cleared, entries_deleted} 이다(다중 시리즈 가능하므로 단일 action 대신 카운트).
+//   - 다른 시리즈에 영향을 주지 않는다(AC-15).
+//
+// 레거시/시리즈 미지원 폴백 (storeSeriesResetter 미구현 에이전트):
+//   - 기존 SPEC-STORE-003 동작을 byte-identical 하게 유지한다.
+//   - 정적 키(IsStaticKey=true)  → ClearHistory, 응답 action=history_cleared.
+//   - 동적 키(IsStaticKey=false) → DeleteEntry, 응답 action=entry_deleted.
+//   - 정적 키 ClearHistory 가 ErrKeyNotFound → 404.
 //
 // 키 경로 파라미터는 url.PathUnescape 로 디코딩되어 콜론(%3A) 등 특수문자가 안전히 처리된다.
-// 정적 키에 대해 ClearHistory 가 ErrKeyNotFound 를 반환하면 404 로 응답한다.
-// (동적 키에 대해 DeleteEntry 는 키 부재를 에러로 보고하지 않으므로 항상 200 entry_deleted.)
 func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
 	agentName := ctx.Param("agent_name")
 	if agentName == "" {
@@ -857,6 +1167,12 @@ func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
 		return api.ErrNotFound.
 			WithMessage("agent_not_found: " + agentName).
 			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	// @spec SPEC-STORE-004
+	// 시리즈 reset 경로: 에이전트가 ResetSeries 를 구현하면 시리즈 단위로 처리한다.
+	if seriesResetter, ok := ag.(storeSeriesResetter); ok {
+		return h.resetSeries(ctx, seriesResetter, namespace, decodedKey)
 	}
 
 	resetter, ok := ag.(storeResetter)
@@ -893,6 +1209,121 @@ func (h *StoreQueryHandler) ResetKey(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
 		"action": action,
 		"key":    decodedKey,
+	}))
+}
+
+// RenameKey 는 키(그 키의 모든 시리즈)를 새 키로 이동한다.
+//
+//	POST /store/{agent_name}/keys/{key}/rename?namespace=default
+//	body: {"new_key": "living_room"}
+//
+// 값 + 히스토리 + 레지스트리 메타를 보존한다. 대상 키가 이미 존재하면 409(Conflict),
+// oldKey 에 시리즈가 없으면 404(Not Found), 그 외 검증 실패는 400 이다.
+// 키 경로 파라미터는 url.PathUnescape 로 디코딩한다.
+func (h *StoreQueryHandler) RenameKey(ctx api.Context) error {
+	agentName := ctx.Param("agent_name")
+	if agentName == "" {
+		return api.ErrBadRequest.WithMessage("agent_name is required")
+	}
+	rawKey := ctx.Param("key")
+	if rawKey == "" {
+		return api.ErrBadRequest.WithMessage("key is required")
+	}
+	decodedKey, derr := url.PathUnescape(rawKey)
+	if derr != nil {
+		return api.ErrBadRequest.WithMessage("invalid key encoding")
+	}
+
+	var req renameKeyRequest
+	if err := ctx.Bind(&req); err != nil {
+		return err
+	}
+	if req.NewKey == "" {
+		return api.ErrBadRequest.WithMessage("new_key is required")
+	}
+
+	namespace := ctx.Query("namespace")
+
+	ag := findAgentByName(h.agents, agentName)
+	if ag == nil {
+		return api.ErrNotFound.
+			WithMessage("agent_not_found: " + agentName).
+			WithDetails(map[string]string{"error": "agent_not_found"})
+	}
+
+	renamer, ok := ag.(storeKeyRenamer)
+	if !ok {
+		return api.ErrBadRequest.
+			WithMessage("not_a_store_agent: " + agentName).
+			WithDetails(map[string]string{"error": "not_a_store_agent"})
+	}
+
+	moved, err := renamer.RenameKey(ctx.Context(), namespace, decodedKey, req.NewKey)
+	if err != nil {
+		if errors.Is(err, system.ErrKeyExists) {
+			return api.ErrConflict.
+				WithMessage(err.Error()).
+				WithDetails(map[string]string{"error": "key_exists"})
+		}
+		return api.ErrBadRequest.WithMessage(err.Error())
+	}
+	if moved == 0 {
+		return api.ErrNotFound.
+			WithMessage("key_not_found: " + decodedKey).
+			WithDetails(map[string]string{"error": "key_not_found"})
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"old_key": decodedKey,
+		"new_key": req.NewKey,
+		"moved":   moved,
+	}))
+}
+
+// renameKeyRequest 는 RenameKey 요청 바디이다.
+type renameKeyRequest struct {
+	NewKey string `json:"new_key"`
+}
+
+// @spec SPEC-STORE-004
+// resetSeries 는 시리즈 모델 reset(E8)을 수행한다. ResetKey 가 에이전트의 ResetSeries
+// 구현을 발견했을 때 호출한다.
+//
+// 식별자 파싱:
+//   - ?metric_type= : 단일 값. 빈 문자열이면 metric 축 필터 미적용.
+//   - ?tag=key:value : 다중 허용(AND). 잘못된 형식(콜론 없음)은 400.
+//   - 둘 다 생략 시 해당 key 의 모든 시리즈가 대상(식별자 누락 정책).
+//
+// 응답: {key, history_cleared, entries_deleted}. 일치 시리즈가 0개여도 200 + 카운트 0 이다
+// (S4 정합 — 존재하지 않는 시리즈 삭제는 에러가 아니다). 도메인 에러만 매핑한다.
+func (h *StoreQueryHandler) resetSeries(
+	ctx api.Context,
+	resetter storeSeriesResetter,
+	namespace, key string,
+) error {
+	metricFilter := ctx.Query("metric_type")
+
+	tagFilters, perr := parseTagFilters(ctx.QueryValues("tag"))
+	if perr != nil {
+		return api.ErrBadRequest.WithMessage(perr.Error())
+	}
+	var tagsFilter map[string]string
+	if len(tagFilters) > 0 {
+		tagsFilter = make(map[string]string, len(tagFilters))
+		for _, tf := range tagFilters {
+			tagsFilter[tf.key] = tf.value
+		}
+	}
+
+	historyCleared, entriesDeleted, err := resetter.ResetSeries(ctx.Context(), namespace, key, metricFilter, tagsFilter)
+	if err != nil {
+		return api.MapDomainError(err)
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"key":             key,
+		"history_cleared": historyCleared,
+		"entries_deleted": entriesDeleted,
 	}))
 }
 

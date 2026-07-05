@@ -22,7 +22,13 @@ import {
 
 import ImportDialog from '@/components/common/ImportDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
-import { useFlows } from '@/hooks';
+import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
+import { useFlowsTarget } from '@/hooks/useResourceTargets';
+import { useTargetGating } from '@/hooks/useTargetGating';
+import { useTargetParam } from '@/hooks/useTargetParam';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
+import { TargetProvider } from '@/lib/remote/TargetContext';
+import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllFlows, updateFlow } from '@/services/api/flowService';
 import type { FlowInfo } from '@/types/flow';
@@ -32,30 +38,33 @@ import FlowActionMenu from './FlowActionMenu';
 import FlowDetailPanel from './FlowDetailPanel';
 import FlowSearchFilter from './FlowSearchFilter';
 
-/** 상태별 색상 및 아이콘 매핑 (대시보드 FlowPanel과 동일) */
-const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+/**
+ * 상태별 색상 및 아이콘 매핑 (대시보드 FlowPanel과 동일).
+ * `labelKey`는 i18n 키(`status.*`)이며 렌더 시 t()로 변환한다(컴포넌트 밖 t() 호출 금지).
+ */
+const STATUS_CONFIG: Record<string, { labelKey: string; color: string; icon: React.ReactNode }> = {
   running: {
-    label: '실행 중',
+    labelKey: 'status.running',
     color: 'text-green-600 dark:text-green-400',
     icon: <Activity className="h-4 w-4" />,
   },
   stopped: {
-    label: '중지됨',
+    labelKey: 'status.stopped',
     color: 'text-gray-600 dark:text-gray-400',
     icon: <CircleStop className="h-4 w-4" />,
   },
   error: {
-    label: '오류',
+    labelKey: 'status.error',
     color: 'text-red-600 dark:text-red-400',
     icon: <AlertTriangle className="h-4 w-4" />,
   },
   stored: {
-    label: '저장됨',
+    labelKey: 'status.stored',
     color: 'text-blue-600 dark:text-blue-400',
     icon: <FileText className="h-4 w-4" />,
   },
   loaded: {
-    label: '탑재됨',
+    labelKey: 'status.loaded',
     color: 'text-yellow-600 dark:text-yellow-400',
     icon: <Rocket className="h-4 w-4" />,
   },
@@ -64,14 +73,48 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.
 /** 페이지 크기 옵션 */
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
+/** 플로우 목록 페이지 props. */
+interface FlowListPageProps {
+  /**
+   * 자원 타깃 오버라이드 (SPEC-REMOTE-001 M9, 그룹 K). 주어지면 URL `?target=`
+   * 대신 이 값을 사용한다. 노드 대시보드가 페이지를 서브탭에 임베드하며 원격
+   * 타깃을 주입하기 위함이다. 미지정 시(로컬 라우트 `/flows`) 기존처럼 URL 의
+   * `?target=` 를 읽으므로 로컬 사용은 회귀 없이 동일하게 동작한다.
+   */
+  target?: ResourceTarget;
+  /**
+   * 원격 타깃 배너 숨김 여부 (SPEC-REMOTE-001 M9, 그룹 K). 노드 대시보드가
+   * 페이지를 서브탭에 임베드할 때 true 로 주입한다. 디렉토리+대시보드 헤더가
+   * 이미 선택 노드를 표시하므로 임베드 컨텍스트에서 배너는 중복이며,
+   * "로컬로 돌아가기" 도 무의미하다. 미지정/false 면 기존처럼 배너를 렌더한다
+   * (단독 `?target=` 딥링크는 회귀 없음, 로컬은 null).
+   */
+  hideRemoteBanner?: boolean;
+}
+
 /**
  * 플로우 목록 페이지.
  * 테이블 형태로 플로우를 표시하며 검색, 필터, 페이지네이션을 지원한다.
  */
-export default function FlowListPage() {
+export default function FlowListPage({
+  target: targetProp,
+  hideRemoteBanner = false,
+}: FlowListPageProps = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: flowsData, isLoading, error, refetch } = useFlows();
+  const { t } = useTranslation();
+  // SPEC-REMOTE-001 M8 (그룹 J): 타깃(로컬 | 원격 노드)에 따라 데이터 소스를
+  // 전환한다. 로컬이면 기존 useFlows 동작과 동일하다(회귀 없음). M9(그룹 K)에서
+  // 노드 대시보드가 targetProp 로 원격 타깃을 주입할 수 있다(URL 대신 prop 우선).
+  const paramTarget = useTargetParam();
+  const target = targetProp ?? paramTarget;
+  const remote = isRemoteTarget(target);
+  const { data: flowsData, isLoading, error, refetch } = useFlowsTarget(target);
+  const gating = useTargetGating(target);
+  // 가져오기/전체 내보내기/자동시작 토글은 로컬 전용 어포던스이다(원격 미러는
+  // redaction 정의만 보유하며 자동시작 토글은 전체 정의 갱신이 필요). 라이프사이클
+  // 액션(시작/중지/배포/삭제)과 생성은 원격에서도 제공한다(REQ-J03/J12, M8 확장).
+  const showLocalWrites = !remote;
 
   // 모달 상태
   const [modalOpen, setModalOpen] = useState(false);
@@ -253,14 +296,14 @@ export default function FlowListPage() {
       <div className="space-y-6">
         <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
           <p className="text-sm text-red-700 dark:text-red-400">
-            플로우 목록을 불러오는 중 오류가 발생했습니다.
+            {t('flows.loadError')}
           </p>
           <button
             type="button"
             onClick={() => refetch()}
             className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
           >
-            다시 시도
+            {t('common.retry')}
           </button>
         </div>
       </div>
@@ -268,33 +311,57 @@ export default function FlowListPage() {
   }
 
   return (
+    <TargetProvider target={target}>
     <div className="space-y-6">
-      {/* 액션 버튼 */}
+      {/* 원격 타깃 배너(로컬이면 null). 대시보드 임베드 시 중복이므로 숨김. */}
+      {!hideRemoteBanner && (
+        <RemoteTargetBanner
+          target={target}
+          nodeLabel={gating.nodeLabel}
+          nodeReady={gating.nodeReady}
+          localHref="/flows"
+        />
+      )}
+
+      {/* 액션 버튼. 가져오기/전체 내보내기는 로컬 전용, 생성은 타깃 인지. */}
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
+          {showLocalWrites && (
+            <>
+              <button
+                type="button"
+                onClick={() => setImportDialogOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+              >
+                <Upload className="h-4 w-4" />
+                {t('common.import')}
+              </button>
+              <button
+                type="button"
+                onClick={handleExportAll}
+                className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+              >
+                <Download className="h-4 w-4" />
+                {t('common.exportAll')}
+              </button>
+            </>
+          )}
+          {/* 생성: 로컬은 모달, 원격은 시각 편집기 신규 라우트(노드 채번 — REQ-I08). */}
           <button
             type="button"
-            onClick={() => setImportDialogOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
-          >
-            <Upload className="h-4 w-4" />
-            가져오기
-          </button>
-          <button
-            type="button"
-            onClick={handleExportAll}
-            className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
-          >
-            <Download className="h-4 w-4" />
-            전체 내보내기
-          </button>
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+            disabled={remote && !gating.nodeReady}
+            title={remote && !gating.nodeReady ? t('remote.edit.createGateHint') : undefined}
+            onClick={() => {
+              if (remote && isRemoteTarget(target)) {
+                navigate(`/admin/remote/nodes/${target.instanceId}/flows/new`);
+              } else {
+                setModalOpen(true);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             <Plus className="h-4 w-4" />
-            새 플로우
+            {t('flows.newFlow')}
           </button>
         </div>
       </div>
@@ -313,17 +380,23 @@ export default function FlowListPage() {
           <Workflow className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
           <p className="mt-4 text-sm text-(--color-text-muted)">
             {allFlows.length === 0
-              ? '등록된 플로우가 없습니다. 새 플로우를 만들어 보세요.'
-              : '검색 결과가 없습니다.'}
+              ? t('flows.emptyTitle')
+              : t('flows.noSearchResults')}
           </p>
-          {allFlows.length === 0 && (
+          {allFlows.length === 0 && (showLocalWrites || gating.nodeReady) && (
             <button
               type="button"
-              onClick={() => setModalOpen(true)}
+              onClick={() => {
+                if (remote && isRemoteTarget(target)) {
+                  navigate(`/admin/remote/nodes/${target.instanceId}/flows/new`);
+                } else {
+                  setModalOpen(true);
+                }
+              }}
               className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
-              새 플로우
+              {t('flows.newFlow')}
             </button>
           )}
         </div>
@@ -333,7 +406,7 @@ export default function FlowListPage() {
           <div className="flex items-center justify-between">
             {/* 페이지 크기 선택 */}
             <div className="flex items-center gap-2 text-sm text-(--color-text-muted)">
-              <span>페이지당</span>
+              <span>{t('common.pagination.perPage')}</span>
               <select
                 value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
@@ -345,11 +418,13 @@ export default function FlowListPage() {
                   </option>
                 ))}
               </select>
-              <span>건</span>
+              <span>{t('common.pagination.unit')}</span>
               <span className="ml-2 text-gray-400">|</span>
               <span className="ml-2">
-                총 {totalItems}건 중 {startIndex + 1}-
-                {Math.min(startIndex + pageSize, totalItems)}건
+                {t('common.pagination.range')
+                  .replace('{total}', String(totalItems))
+                  .replace('{start}', String(startIndex + 1))
+                  .replace('{end}', String(Math.min(startIndex + pageSize, totalItems)))}
               </span>
             </div>
 
@@ -360,7 +435,7 @@ export default function FlowListPage() {
                 disabled={safePage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="이전 페이지"
+                aria-label={t('common.pagination.prev')}
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -372,7 +447,7 @@ export default function FlowListPage() {
                 disabled={safePage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="rounded-md border border-(--color-border-strong) p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="다음 페이지"
+                aria-label={t('common.pagination.next')}
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -385,21 +460,21 @@ export default function FlowListPage() {
               <thead className="bg-(--color-bg-primary)">
                 <tr>
                   <th className="w-8 px-3 py-3" />
-                  <SortableHeader label="이름" field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="상태" field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colName')} field="name" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colStatus')} field="status" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    노드
+                    {t('flows.colNode')}
                   </th>
-                  <SortableHeader label="생성일" field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
-                  <SortableHeader label="수정일" field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colCreatedAt')} field="created_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
+                  <SortableHeader label={t('flows.colUpdatedAt')} field="updated_at" currentSort={sort} onSort={handleSort} className="px-4 py-3" />
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    업타임
+                    {t('common.uptime')}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    자동시작
+                    {t('flows.colAutoStart')}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-                    액션
+                    {t('common.actions')}
                   </th>
                 </tr>
               </thead>
@@ -412,9 +487,17 @@ export default function FlowListPage() {
                       flow={flow}
                       isExpanded={isExpanded}
                       onToggle={() => setExpandedId((prev) => (prev === flow.id ? null : flow.id))}
-                      onNavigate={() => navigate(`/editor/${flow.id}`)}
+                      onNavigate={() =>
+                        navigate(
+                          remote && isRemoteTarget(target)
+                            ? `/admin/remote/nodes/${target.instanceId}/flows/${flow.id}/edit`
+                            : `/editor/${flow.id}`,
+                        )
+                      }
                       formatDate={formatDate}
                       onAutoStartToggle={handleAutoStartToggle}
+                      showLocalWrites={showLocalWrites}
+                      t={t}
                     />
                   );
                 })}
@@ -424,17 +507,22 @@ export default function FlowListPage() {
         </>
       )}
 
-      {/* 플로우 생성 모달 */}
-      <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      {/* 플로우 생성 모달 (로컬 전용) */}
+      {showLocalWrites && (
+        <CreateFlowModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      )}
 
-      {/* 가져오기 대화 상자 */}
-      <ImportDialog
-        open={importDialogOpen}
-        onClose={() => setImportDialogOpen(false)}
-        type="flow"
-        onImportSuccess={handleImportSuccess}
-      />
+      {/* 가져오기 대화 상자 (로컬 전용) */}
+      {showLocalWrites && (
+        <ImportDialog
+          open={importDialogOpen}
+          onClose={() => setImportDialogOpen(false)}
+          type="flow"
+          onImportSuccess={handleImportSuccess}
+        />
+      )}
     </div>
+    </TargetProvider>
   );
 }
 
@@ -447,10 +535,14 @@ interface FlowRowProps {
   onNavigate: () => void;
   formatDate: (dateStr?: string) => string;
   onAutoStartToggle: (flow: FlowInfo) => void;
+  /** 로컬 쓰기 어포던스(자동시작 토글·액션 메뉴) 표시 여부(원격은 숨김). */
+  showLocalWrites: boolean;
+  /** 번역 함수(상위에서 주입). */
+  t: TranslationFn;
 }
 
 /** 플로우 테이블 행 (확장 가능) */
-function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoStartToggle }: FlowRowProps) {
+function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoStartToggle, showLocalWrites, t }: FlowRowProps) {
   return (
     <>
       <tr
@@ -489,7 +581,7 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoSta
           {(() => {
             const cfg = STATUS_CONFIG[flow.status];
             return cfg ? (
-              <span className={`inline-flex items-center ${cfg.color}`} title={cfg.label}>
+              <span className={`inline-flex items-center ${cfg.color}`} title={t(cfg.labelKey)}>
                 {cfg.icon}
               </span>
             ) : (
@@ -510,24 +602,31 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoSta
           {flow.status === 'running' && flow.uptime ? flow.uptime : '-'}
         </td>
         <td className="whitespace-nowrap px-4 py-3">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAutoStartToggle(flow);
-            }}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              flow.auto_start ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
-            }`}
-          >
-            <span
-              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                flow.auto_start ? 'translate-x-4.5' : 'translate-x-0.5'
+          {showLocalWrites ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAutoStartToggle(flow);
+              }}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                flow.auto_start ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
               }`}
-            />
-          </button>
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  flow.auto_start ? 'translate-x-4.5' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          ) : (
+            <span className="text-xs text-(--color-text-muted)">
+              {flow.auto_start ? 'ON' : 'OFF'}
+            </span>
+          )}
         </td>
         <td className="whitespace-nowrap px-4 py-3 text-right">
+          {/* 액션 메뉴는 타깃 인지(원격은 그룹 D/M7 경로). 자동시작 토글만 로컬 전용. */}
           <FlowActionMenu flow={flow} />
         </td>
       </tr>

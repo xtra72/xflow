@@ -5,10 +5,27 @@
 //
 // @spec SPEC-WEB-005 v0.7.0 (M16)
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import { MetadataChips } from './MetadataChips';
+
+// i18n: 실제 ko 번역을 반환하는 mock — 컴포넌트가 useTranslation 을 쓰지만
+// 이 테스트는 I18nProvider 로 감싸지 않으므로, ko.json 을 점 표기 키로 해석해
+// 기존 한국어 단언을 그대로 통과시킨다.
+vi.mock('@/lib/i18n', async () => {
+  const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
+  const resolve = (key: string): string => {
+    const v = key.split('.').reduce<unknown>(
+      (o, p) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[p] : undefined),
+      ko,
+    );
+    return typeof v === 'string' ? v : key;
+  };
+  return {
+    useTranslation: () => ({ t: resolve, locale: 'ko' as const, setLocale: () => {} }),
+  };
+});
 
 describe('MetadataChips', () => {
   it('모든 prop 미지정 시 컨테이너만 렌더된다 (자식 없음)', () => {

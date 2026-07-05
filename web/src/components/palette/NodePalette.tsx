@@ -28,18 +28,25 @@ export function NodePalette() {
   const [search, setSearch] = useState('');
   const { data: nodeTypes, isLoading } = useNodeTypes();
 
+  // 노드 타입 레지스트리 API(/nodes)는 옛 `_` HVAC 별칭을 deprecated 로 함께
+  // 반환한다(source === 'builtin-deprecated'). 팔레트에는 canonical `-` 타입만
+  // 노출하여 중복을 제거한다.
+  const canonicalTypes = useMemo(
+    () => (nodeTypes ?? []).filter((n) => n.source !== 'builtin-deprecated'),
+    [nodeTypes],
+  );
+
   // 검색어로 노드 타입 필터링 (type, description 모두 매칭)
   const filtered = useMemo(() => {
-    if (!nodeTypes) return [];
-    if (!search.trim()) return nodeTypes;
+    if (!search.trim()) return canonicalTypes;
 
     const q = search.toLowerCase();
-    return nodeTypes.filter(
+    return canonicalTypes.filter(
       (n) =>
         n.type.toLowerCase().includes(q) ||
         n.description.toLowerCase().includes(q),
     );
-  }, [nodeTypes, search]);
+  }, [canonicalTypes, search]);
 
   // 카테고리별 그룹화
   const grouped = useMemo(() => groupByCategory(filtered), [filtered]);

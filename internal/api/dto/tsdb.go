@@ -18,11 +18,12 @@ type TSDBQueryRequest struct {
 	SeriesKey   string            `json:"series_key,omitempty"`
 	Measurement string            `json:"measurement,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
-	Start       *string           `json:"start,omitempty"`       // RFC3339Nano
-	End         *string           `json:"end,omitempty"`         // RFC3339Nano
+	Start       *string           `json:"start,omitempty"` // RFC3339Nano
+	End         *string           `json:"end,omitempty"`   // RFC3339Nano
 	Field       string            `json:"field,omitempty"`
 	Aggregation string            `json:"aggregation,omitempty"` // min,max,avg,sum,count,first,last
 	Bucket      string            `json:"bucket,omitempty"`      // duration 문자열: "5m", "1h"
+	Fill        string            `json:"fill,omitempty"`        // 빈 버킷 채우기: ""(생략)|null|zero|previous|avg
 	Limit       int               `json:"limit,omitempty"`
 }
 

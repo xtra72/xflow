@@ -16,16 +16,25 @@ import {
   YAxis,
 } from 'recharts';
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 import {
+  buildEnumLabelMap,
+  formatEnumValue,
   getByPath,
+  resolveAxisFont,
+  SERIES_PALETTE,
   STROKE_DASHARRAY,
   THRESHOLD_DEFAULT_COLORS,
+  type AxisFontStyle,
   type ChannelRefConfig,
   type ChartEntry,
   type LegendConfig,
   type LineChartPanelConfig,
+  type StoreSourceConfig,
   type TimeWindowMode,
+  type YAxisDataType,
+  type YEnumLabel,
   type YThreshold,
   type YAxisMode,
 } from './chartChannelTypes';
@@ -34,12 +43,13 @@ import {
   computeNiceTimeTicks,
   formatTimeShort,
   formatTimestamp,
-  toNumber,
+  toLineValue,
 } from './chartChannelUtils';
 import type { ChartConnectionStatus } from '@/services/ws/chartChannel';
 import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
+import { useStoreChartData } from './useStoreChartData';
 
 interface LineChartPanelProps {
   panelId: string;
@@ -72,16 +82,8 @@ const DEFAULT_Y_PAD_PCT = 5;
 const MAX_Y_PAD_PCT = 50;
 
 /** multi-series 색상 팔레트 */
-const SERIES_COLORS = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#06b6d4',
-  '#ec4899',
-  '#84cc16',
-];
+// 시리즈 자동 색상 팔레트(설정 편집기와 공유). @see chartChannelTypes.SERIES_PALETTE
+const SERIES_COLORS = SERIES_PALETTE;
 
 function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
   return {
@@ -90,6 +92,12 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     display_field: (config.display_field as string) ?? 'value',
     max_points: (config.max_points as number) ?? DEFAULT_MAX_POINTS,
     x_label: config.x_label as string | undefined,
+    x_label_font: config.x_label_font as AxisFontStyle | undefined,
+    x_tick_font: config.x_tick_font as AxisFontStyle | undefined,
+    y_label_font: config.y_label_font as AxisFontStyle | undefined,
+    y_tick_font: config.y_tick_font as AxisFontStyle | undefined,
+    y_axis_type: config.y_axis_type as YAxisDataType | undefined,
+    y_enum_labels: config.y_enum_labels as YEnumLabel[] | undefined,
     y_min: config.y_min as number | undefined,
     y_max: config.y_max as number | undefined,
     y_axis_mode: config.y_axis_mode as YAxisMode | undefined,
@@ -227,6 +235,7 @@ function CustomLegend({
   isMultiMode,
   legendCfg,
   chartData,
+  formatValue,
 }: {
   seriesKeys: string[];
   seriesColors: string[];
@@ -234,14 +243,16 @@ function CustomLegend({
   isMultiMode: boolean;
   legendCfg: LegendConfig;
   chartData: Array<Record<string, unknown>>;
+  /** 시리즈 마지막값 표시 포맷터. enum/boolean 은 라벨로, 그 외는 숫자로 표기한다. */
+  formatValue: (key: string, value: number) => string;
 }): React.ReactElement | null {
-  if (seriesKeys.length === 0) return null;
   const isVert = legendCfg.position === 'left' || legendCfg.position === 'right';
   const showName = legendCfg.show_name !== false;
   const showLine = legendCfg.show_line !== false;
   const showLastValue = legendCfg.show_last_value === true;
 
   // 각 시리즈별 마지막 유효 값 (역순 탐색)
+  // Hooks 규칙 준수: 조건부 early-return 보다 먼저 호출한다.
   const lastValues = useMemo(() => {
     if (!showLastValue || chartData.length === 0) return {};
     const result: Record<string, number | undefined> = {};
@@ -256,6 +267,8 @@ function CustomLegend({
     }
     return result;
   }, [showLastValue, chartData, seriesKeys]);
+
+  if (seriesKeys.length === 0) return null;
 
   return (
     <div
@@ -280,7 +293,7 @@ function CustomLegend({
               ? 'bg-rose-400'
               : 'bg-gray-400';
         const lastVal = lastValues[key];
-        const lastStr = lastVal !== undefined ? lastVal.toFixed(1) : '—';
+        const lastStr = lastVal !== undefined ? formatValue(key, lastVal) : '—';
         return (
           <span
             key={key}
@@ -320,20 +333,26 @@ function CustomLegend({
 }
 
 export default function LineChartPanel({ panelId: _panelId, title, config }: LineChartPanelProps) {
+  const { t } = useTranslation();
   const cfg = parseConfig(config);
-  const isMultiMode = (cfg.channels?.length ?? 0) > 0;
+  // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서 시리즈를 가져온다(공존).
+  const storeSource = config.store_source as StoreSourceConfig | undefined;
+  const isStore =
+    config.data_source === 'store' && (storeSource?.series?.length ?? 0) > 0;
+  const isMultiMode = !isStore && (cfg.channels?.length ?? 0) > 0;
   // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
   const effectiveMaxPoints = resolveMaxPoints(cfg);
 
-  // 두 hook 모두 항상 호출 (React hook 규칙). 비활성 모드는 idle 상태로 유지.
+  // 세 hook 모두 항상 호출 (React hook 규칙). 비활성 경로는 idle 상태로 유지.
   const singleResult = useChartChannel(
-    isMultiMode ? undefined : cfg.channel_name || undefined,
+    isStore || isMultiMode ? undefined : cfg.channel_name || undefined,
     { maxPoints: effectiveMaxPoints },
   );
   const multiResult = useChartChannels(
-    isMultiMode ? cfg.channels! : [],
+    !isStore && isMultiMode ? cfg.channels! : [],
     { maxPoints: effectiveMaxPoints },
   );
+  const storeResult = useStoreChartData(isStore ? storeSource : undefined, isStore);
 
   // 모드별 채널 정규화
   const channelStates: NormalizedChannel[] = useMemo(
@@ -373,12 +392,16 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     ],
   );
 
-  // 통합 상태 (가장 심각한 status 우세)
-  const status = aggregateStatus(channelStates.map((c) => c.state.status));
-  const closedReason = channelStates.find((c) => c.state.closedReason)?.state
-    .closedReason;
-  const errorReason = channelStates.find((c) => c.state.errorReason)?.state
-    .errorReason;
+  // 통합 상태 (가장 심각한 status 우세). store 모드는 storeResult 상태를 사용한다.
+  const status = isStore
+    ? storeResult.status
+    : aggregateStatus(channelStates.map((c) => c.state.status));
+  const closedReason = isStore
+    ? storeResult.closedReason
+    : channelStates.find((c) => c.state.closedReason)?.state.closedReason;
+  const errorReason = isStore
+    ? storeResult.errorReason
+    : channelStates.find((c) => c.state.errorReason)?.state.errorReason;
 
   // 시간 윈도우 설정
   const timeWindowMode: TimeWindowMode = cfg.time_window_mode ?? 'points';
@@ -410,7 +433,11 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   }, [timeWindowMode, refreshMs, isPaused]);
 
   // raw 데이터 계산 (모드별 분기)
-  const { chartData: rawChartData, seriesKeys: rawSeriesKeys } = useMemo(() => {
+  const {
+    chartData: rawChartData,
+    seriesKeys: rawSeriesKeys,
+    booleanKeys,
+  } = useMemo(() => {
     const seriesField = cfg.multi_series_field;
     const filterArgs = [
       timeWindowMode,
@@ -419,6 +446,48 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       cfg.fixed_start_ms,
       cfg.fixed_end_ms,
     ] as const;
+
+    // 라인 차트 데이터 소스 값 규칙(SPEC): number(int/float 혼합)은 그대로, boolean 은
+    // 1/0 으로, string 등 그 외 타입은 제외(NaN). 시리즈별로 boolean/number 원시 타입을
+    // 추적해, 순수 boolean 시리즈는 Y축/툴팁을 true/false 로 표시한다.
+    const boolSeen = new Set<string>();
+    const numSeen = new Set<string>();
+    const coerce = (raw: unknown, key: string): number => {
+      if (typeof raw === 'boolean') boolSeen.add(key);
+      else if (typeof raw === 'number' && Number.isFinite(raw)) numSeen.add(key);
+      return toLineValue(raw);
+    };
+    // boolean 원시값만 있고 숫자 원시값은 없는 시리즈 = boolean 시리즈.
+    const computeBoolKeys = (): Set<string> =>
+      new Set([...boolSeen].filter((k) => !numSeen.has(k)));
+
+    // SPEC-WEB-005: Store 모드 — 시리즈별 타임라인을 timestamp 기준으로 병합한다.
+    // 각 시리즈 이름이 하나의 라인(컬럼)이 되며, 시간 윈도우 필터는 store_source 의
+    // time_window_ms 로 백엔드 조회 시 이미 적용되므로 클라이언트 재필터는 생략한다.
+    if (isStore) {
+      const rows = new Map<number, Record<string, unknown>>();
+      const seen: string[] = [];
+      for (const [name, seriesArr] of storeResult.seriesEntries) {
+        if (!seen.includes(name)) seen.push(name);
+        for (const e of seriesArr) {
+          if (!rows.has(e.timestamp)) {
+            rows.set(e.timestamp, { timestamp: e.timestamp });
+          }
+          // store 엔트리 value 는 number|null. null 은 connectNulls 로 이어진다.
+          rows.get(e.timestamp)![name] =
+            typeof e.value === 'number' ? e.value : null;
+        }
+      }
+      const data = Array.from(rows.values()).sort(
+        (a, b) => (a.timestamp as number) - (b.timestamp as number),
+      );
+      // store 값은 number|null 로 집계됨(boolean 은 storeChartValue 로 1/0 변환).
+      // data_type='boolean' 시리즈는 storeResult.booleanSeries 로 true/false 표시한다.
+      const boolKeys = new Set(
+        seen.filter((name) => storeResult.booleanSeries.has(name)),
+      );
+      return { chartData: data, seriesKeys: seen, booleanKeys: boolKeys };
+    }
 
     if (isMultiMode) {
       // 다채널: 채널마다 alias 기반 시리즈 키 (multi_series_field 시 alias::label)
@@ -438,7 +507,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
             key = baseKey;
           }
           seen.add(key);
-          const v = toNumber(getByPath(e, channelField));
+          const v = coerce(getByPath(e, channelField), key);
           if (!rows.has(e.timestamp)) {
             rows.set(e.timestamp, { timestamp: e.timestamp });
           }
@@ -448,7 +517,11 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       const data = Array.from(rows.values()).sort(
         (a, b) => (a.timestamp as number) - (b.timestamp as number),
       );
-      return { chartData: data, seriesKeys: Array.from(seen) };
+      return {
+        chartData: data,
+        seriesKeys: Array.from(seen),
+        booleanKeys: computeBoolKeys(),
+      };
     }
 
     // 단일 채널 (기존 동작 유지)
@@ -460,9 +533,13 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     if (!seriesField) {
       const data = filtered.map((e) => ({
         timestamp: e.timestamp,
-        value: toNumber(getByPath(e, displayField)),
+        value: coerce(getByPath(e, displayField), 'value'),
       }));
-      return { chartData: data, seriesKeys: ['value'] };
+      return {
+        chartData: data,
+        seriesKeys: ['value'],
+        booleanKeys: computeBoolKeys(),
+      };
     }
     const rows = new Map<number, Record<string, unknown>>();
     const seen = new Set<string>();
@@ -470,7 +547,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       const sRaw = getByPath(e, seriesField);
       const s = sRaw == null ? 'default' : String(sRaw);
       seen.add(s);
-      const v = toNumber(getByPath(e, displayField));
+      const v = coerce(getByPath(e, displayField), s);
       if (!rows.has(e.timestamp)) {
         rows.set(e.timestamp, { timestamp: e.timestamp });
       }
@@ -479,8 +556,15 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     const data = Array.from(rows.values()).sort(
       (a, b) => (a.timestamp as number) - (b.timestamp as number),
     );
-    return { chartData: data, seriesKeys: Array.from(seen) };
+    return {
+      chartData: data,
+      seriesKeys: Array.from(seen),
+      booleanKeys: computeBoolKeys(),
+    };
   }, [
+    isStore,
+    storeResult.seriesEntries,
+    storeResult.booleanSeries,
     isMultiMode,
     channelStates,
     cfg.display_field,
@@ -496,6 +580,11 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   const chartData = pauseSnapshot ? pauseSnapshot.chartData : rawChartData;
   const seriesKeys = pauseSnapshot ? pauseSnapshot.seriesKeys : rawSeriesKeys;
   const effectiveNow = pauseSnapshot ? pauseSnapshot.now : now;
+
+  // 렌더 중인 시리즈가 모두 boolean 이면 Y축/툴팁을 true/false 로 표시한다.
+  // (혼합 시엔 숫자 축을 유지하되 boolean 시리즈 값만 툴팁에서 true/false 로 표기)
+  const allBoolean =
+    seriesKeys.length > 0 && seriesKeys.every((k) => booleanKeys.has(k));
 
   const togglePause = useCallback(() => {
     setPauseSnapshot((prev) =>
@@ -514,6 +603,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       const csv = chartDataToCsv(
         rows.map((r) => r as { timestamp: number; [k: string]: unknown }),
         keys,
+        // boolean 시리즈는 CSV 에도 true/false 로 내보낸다.
+        booleanKeys,
       );
       const baseName =
         isMultiMode && cfg.channels && cfg.channels.length > 0
@@ -522,7 +613,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       downloadCsv(csv, `${baseName}-${ts}.csv`);
     },
-    [cfg.channel_name, cfg.channels, isMultiMode],
+    [cfg.channel_name, cfg.channels, isMultiMode, booleanKeys],
   );
 
   // X축 도메인
@@ -567,7 +658,34 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // Y축 도메인
   const yAxisMode: YAxisMode = cfg.y_axis_mode ?? 'auto';
   const yPadPct = clamp(cfg.y_axis_padding_pct ?? DEFAULT_Y_PAD_PCT, 0, MAX_Y_PAD_PCT);
+
+  // 열거형 Y축(패널 단위): y_axis_type==='enum' + 유효 매핑이 있으면 값→라벨로 표시한다.
+  // enum 이 우선하며, 미설정 boolean 시리즈는 아래 boolAxis 자동 처리로 폴백한다.
+  const enumMap = useMemo(
+    () => buildEnumLabelMap(cfg.y_enum_labels),
+    [cfg.y_enum_labels],
+  );
+  const enumMode = cfg.y_axis_type === 'enum' && enumMap.size > 0;
+  // 눈금은 매핑된 값들을 오름차순으로 사용한다.
+  const enumTicks = useMemo(
+    () => (enumMode ? [...enumMap.keys()].sort((a, b) => a - b) : undefined),
+    [enumMode, enumMap],
+  );
+
+  // boolean 시리즈: Y축을 [0,1] 두 눈금(false/true)으로 고정한다. boolean 값은 0/1 이
+  // 유일한 의미이므로 수동 Y축 범위(manual)도 적용하지 않는다.
+  // 단, 명시적 열거형(enumMode)이 설정되면 그쪽이 우선하므로 boolAxis 는 끈다.
+  const boolAxis = allBoolean && !enumMode;
   const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
+    // 열거형 축: 매핑된 최소/최대 값 ±0.5 여백으로 고정(모든 눈금이 보이도록).
+    if (enumMode && enumTicks && enumTicks.length > 0) {
+      const lo = enumTicks[0]!;
+      const hi = enumTicks[enumTicks.length - 1]!;
+      return [lo - 0.5, hi + 0.5];
+    }
+    if (boolAxis) {
+      return [-0.1, 1.1];
+    }
     if (yAxisMode === 'manual') {
       return [cfg.y_min ?? 'auto', cfg.y_max ?? 'auto'];
     }
@@ -592,11 +710,17 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     }
     // 'auto'
     return ['auto', 'auto'];
-  }, [yAxisMode, cfg.y_min, cfg.y_max, yPadPct, chartData, seriesKeys]);
+  }, [enumMode, enumTicks, boolAxis, yAxisMode, cfg.y_min, cfg.y_max, yPadPct, chartData, seriesKeys]);
 
   // 글로벌 smooth fallback (하위 호환)
   const globalSmooth = cfg.smooth ?? false;
   const legendCfg: LegendConfig = (cfg.legend as LegendConfig | undefined) ?? {};
+
+  // 축 폰트(레이블/눈금) — 미지정 필드는 기본값(size 10, #9ca3af, normal)으로 폴백.
+  const xTickFont = resolveAxisFont(cfg.x_tick_font);
+  const xLabelFont = resolveAxisFont(cfg.x_label_font);
+  const yTickFont = resolveAxisFont(cfg.y_tick_font);
+  const yLabelFont = resolveAxisFont(cfg.y_label_font);
 
   const criticalBreached = useMemo(
     () =>
@@ -621,8 +745,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           onClick={() => handleExportCsv(chartData as Array<Record<string, unknown>>, seriesKeys)}
           data-testid="line-chart-csv-button"
           className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-          aria-label="CSV 내보내기"
-          title="CSV 내보내기"
+          aria-label={t('dashboard.chart.exportCsv')}
+          title={t('dashboard.chart.exportCsv')}
         >
           <Download className="h-3.5 w-3.5" />
         </button>
@@ -631,8 +755,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           onClick={togglePause}
           data-testid="line-chart-pause-button"
           className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-          aria-label={isPaused ? '재개' : '일시정지'}
-          title={isPaused ? '재개' : '일시정지'}
+          aria-label={isPaused ? t('dashboard.chart.resume') : t('dashboard.chart.pause')}
+          title={isPaused ? t('dashboard.chart.resume') : t('dashboard.chart.pause')}
         >
           {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
         </button>
@@ -646,8 +770,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
             ? cfg
                 .channels!.map((c) => c.alias ?? c.name)
                 .filter((n) => !!n)
-                .join(', ') || '채널 미지정'
-            : cfg.channel_name || '채널 미지정')}
+                .join(', ') || t('dashboard.settings.preview.channelUnset')
+            : cfg.channel_name || t('dashboard.settings.preview.channelUnset'))}
         </span>
       </div>
 
@@ -685,20 +809,49 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               allowDataOverflow={timeWindowMode !== 'points'}
               ticks={xTicks}
               tickFormatter={(v: number) => formatTimeShort(v)}
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: xTickFont.fontSize, fill: xTickFont.fill, fontWeight: xTickFont.fontWeight }}
               stroke="#9ca3af"
-              label={cfg.x_label ? { value: cfg.x_label, position: 'insideBottomRight', offset: -4, style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
-              height={cfg.x_label ? 40 : 30}
+              // insideBottom 은 y = 축상단 + height - offset (verticalAnchor 'end') 로 계산되므로
+              // offset 을 양수로 주어 텍스트를 축 하단(=SVG 경계)에서 위로 띄워 잘림을 방지한다.
+              label={cfg.x_label ? { value: cfg.x_label, position: 'insideBottom', offset: 6, style: { textAnchor: 'middle', fontSize: xLabelFont.fontSize, fill: xLabelFont.fill, fontWeight: xLabelFont.fontWeight } } : undefined}
+              height={cfg.x_label ? 48 : 30}
             />
             <YAxis
               domain={yDomain}
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: yTickFont.fontSize, fill: yTickFont.fill, fontWeight: yTickFont.fontWeight }}
               stroke="#9ca3af"
               width={cfg.y_label || cfg.y_unit ? 56 : 50}
-              label={cfg.y_label || cfg.y_unit ? { value: [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' '), angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9ca3af' } } : undefined}
-              tickFormatter={cfg.y_unit ? (v: number) => `${v}${cfg.y_unit}` : undefined}
+              label={cfg.y_label || cfg.y_unit ? { value: [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' '), angle: -90, position: 'insideLeft', style: { fontSize: yLabelFont.fontSize, fill: yLabelFont.fill, fontWeight: yLabelFont.fontWeight } } : undefined}
+              // 열거형 축은 매핑된 값 눈금을 라벨로, boolean 축은 0/1 을 false/true 로 표시한다.
+              ticks={enumMode ? enumTicks : boolAxis ? [0, 1] : undefined}
+              tickFormatter={
+                enumMode
+                  ? (v: number) => formatEnumValue(v, enumMap)
+                  : boolAxis
+                    ? (v: number) => (v === 1 ? 'true' : v === 0 ? 'false' : '')
+                    : cfg.y_unit
+                      ? (v: number) => `${v}${cfg.y_unit}`
+                      : undefined
+              }
             />
             <Tooltip
+              // 열거형 축(패널 단위)이면 모든 시리즈 값을 라벨로 표시한다.
+              // 그 외에는 boolean 시리즈 값만 true/false 로 표시(혼합 차트에서도 시리즈별 적용).
+              formatter={
+                enumMode
+                  ? (value, name) => [
+                      typeof value === 'number'
+                        ? formatEnumValue(value, enumMap)
+                        : value,
+                      name,
+                    ]
+                  : booleanKeys.size > 0
+                    ? (value, name) =>
+                        booleanKeys.has(String(name))
+                          ? [value === 1 ? 'true' : 'false', name]
+                          : [value, name]
+                    : undefined
+              }
               labelFormatter={(v) => {
                 const n = typeof v === 'number' ? v : Number(v);
                 return Number.isFinite(n) ? formatTimestamp(n) : String(v ?? '');
@@ -763,7 +916,18 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               let strokeWidth = 2;
               let lineSmooth = globalSmooth;
 
-              if (isMultiMode) {
+              if (isStore) {
+                // SPEC-WEB-005: store 시리즈는 seriesStyles(시리즈 표시 이름 기준)에서
+                // per-line 스타일을 적용한다. 미지정 필드는 기본값을 유지한다.
+                const st = storeResult.seriesStyles.get(key);
+                if (st) {
+                  if (st.color) stroke = st.color;
+                  if (st.stroke_width) strokeWidth = st.stroke_width;
+                  if (st.smooth != null) lineSmooth = st.smooth;
+                  const dash = STROKE_DASHARRAY[st.stroke_style ?? 'solid'];
+                  if (dash) strokeDasharray = dash;
+                }
+              } else if (isMultiMode) {
                 const baseKey = key.includes('::') ? key.split('::')[0]! : key;
                 const ref = cfg.channels!.find(
                   (c) => (c.alias ?? c.name) === baseKey,
@@ -799,6 +963,12 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         <CustomLegend
           seriesKeys={seriesKeys}
           seriesColors={seriesKeys.map((key, i) => {
+            if (isStore) {
+              return (
+                storeResult.seriesStyles.get(key)?.color ??
+                SERIES_COLORS[i % SERIES_COLORS.length]!
+              );
+            }
             if (isMultiMode) {
               const baseKey = key.includes('::') ? key.split('::')[0]! : key;
               const ref = cfg.channels!.find(
@@ -812,6 +982,13 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           isMultiMode={isMultiMode}
           legendCfg={legendCfg}
           chartData={chartData}
+          // 범례 마지막값도 축/툴팁과 동일하게 표시한다.
+          // enum 축이면 라벨로, boolean 시리즈면 true/false, 그 외는 소수 1자리.
+          formatValue={(key, v) => {
+            if (enumMode) return formatEnumValue(v, enumMap);
+            if (booleanKeys.has(key)) return v === 1 ? 'true' : v === 0 ? 'false' : String(v);
+            return v.toFixed(1);
+          }}
         />
       </div>
 

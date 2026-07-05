@@ -6,7 +6,160 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
+
+// logTimeFormat 은 로그 타임스탬프를 소수점 6자리(마이크로초) 고정으로 출력하는
+// 포맷이다. slog 기본 RFC3339Nano 는 뒤따르는 0 을 제거해 자릿수가 들쭉날쭉하므로
+// (예: .974887 vs .97492), 항상 6자리로 고정해 정렬·파싱을 일관되게 한다.
+const logTimeFormat = "2006-01-02T15:04:05.000000Z07:00"
+
+// --- 로그 식별자 표시 스타일 (IDStyle) ---
+//
+// 로그 라인에 붙는 식별자 필드(UUID·composite id 계열, name 계열)를 어떻게
+// 노출할지 런타임에 전환한다. 로그 레벨과 마찬가지로 재시작 없이 API 로 변경할
+// 수 있다. slog 핸들러의 ReplaceAttr 훅에서 중앙 집중식으로 필터링한다.
+//
+// 스타일:
+//   - "both" (기본): 모든 식별자 필드를 그대로 노출 (현행 무회귀).
+//   - "name": 이름 계열은 유지하고 id 계열 필드를 생략한다.
+//   - "id":   id 계열은 유지하고 이름 계열 필드를 생략한다.
+const (
+	// IDStyleBoth 는 이름·id 계열을 모두 노출한다 (기본값, 무회귀).
+	IDStyleBoth = "both"
+	// IDStyleName 은 이름 계열만 노출하고 id 계열을 생략한다.
+	IDStyleName = "name"
+	// IDStyleID 는 id 계열만 노출하고 이름 계열을 생략한다.
+	IDStyleID = "id"
+)
+
+// 내부 표현: atomic.Int32 로 스타일 코드를 보관한다 (동시성 안전, lock-free).
+// 0=both, 1=name, 2=id. 기본값 0(both) 이므로 초기 상태는 현행과 동일하다.
+const (
+	idStyleCodeBoth int32 = iota
+	idStyleCodeName
+	idStyleCodeID
+)
+
+// logIDStyle 은 현재 로그 식별자 표시 스타일 코드를 보관한다.
+// zero value(0)가 both 이므로 별도 초기화 없이도 무회귀가 보장된다.
+var logIDStyle atomic.Int32
+
+// idFamilyKeys 는 id 계열(UUID·composite id·불투명 식별자) 구조화 필드 key 집합이다.
+// "name" 모드에서 생략된다. 전수조사(internal/**/*.go)로 확정된 목록이다.
+var idFamilyKeys = map[string]bool{
+	"device_uid":      true,
+	"device_id":       true,
+	"instance_id":     true,
+	"bridge_id":       true,
+	"flow_id":         true,
+	"node_id":         true,
+	"sub_dev_id":      true,
+	"query_id":        true,
+	"command_id":      true,
+	"subscription_id": true,
+	"parent_id":       true,
+	"token_id":        true,
+	"request_id":      true,
+	"global_id":       true,
+	"globalID":        true,
+	"agent_id":        true,
+	"agentID":         true,
+	"id":              true,
+}
+
+// nameFamilyKeys 는 이름 계열(사람이 읽는 이름) 구조화 필드 key 집합이다.
+// "id" 모드에서 생략된다.
+//
+// 주의: 자동 속성 중 "component"(점 구분 경로)와 "type"(범주), 그리고 행위자
+// 식별자인 "actor"/"username"(대응하는 id 필드가 없음)은 어떤 모드에서도
+// 생략하지 않는다. 자동 속성 "name" 은 component 경로에 이미 이름이 포함되어
+// 있으므로 id 모드에서 생략해도 라인의 식별성이 유지된다.
+var nameFamilyKeys = map[string]bool{
+	"name":         true,
+	"device":       true,
+	"device_agent": true,
+	"device_name":  true,
+}
+
+// SetLogIDStyle 은 로그 식별자 표시 스타일을 런타임에 변경한다.
+// "name"/"id"/"both" 만 허용하며, 빈 값이나 알 수 없는 값은 "both" 로 처리한다.
+// 동시성 안전(atomic store)하며 재시작 없이 즉시 반영된다.
+func SetLogIDStyle(style string) {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case IDStyleName:
+		logIDStyle.Store(idStyleCodeName)
+	case IDStyleID:
+		logIDStyle.Store(idStyleCodeID)
+	default:
+		logIDStyle.Store(idStyleCodeBoth)
+	}
+}
+
+// GetLogIDStyle 은 현재 로그 식별자 표시 스타일을 문자열로 반환한다.
+func GetLogIDStyle() string {
+	switch logIDStyle.Load() {
+	case idStyleCodeName:
+		return IDStyleName
+	case idStyleCodeID:
+		return IDStyleID
+	default:
+		return IDStyleBoth
+	}
+}
+
+// logHandlerOpts 는 모든 slog 핸들러에 공통 적용하는 옵션이다(읽기 전용 공유).
+// time 재포맷과 식별자 스타일 필터링을 합성한 ReplaceAttr 훅을 사용한다.
+var logHandlerOpts = &slog.HandlerOptions{
+	ReplaceAttr: replaceLogAttr,
+}
+
+// replaceLogTime 은 최상위 time 속성을 소수점 6자리 고정 문자열로 바꾼다.
+func replaceLogTime(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+		a.Value = slog.StringValue(a.Value.Time().Format(logTimeFormat))
+	}
+	return a
+}
+
+// replaceLogAttr 은 time 재포맷과 식별자 스타일 필터링을 합성한 ReplaceAttr 훅이다.
+//
+// ReplaceAttr 는 모든 속성마다 호출되므로 성능이 중요하다:
+//   - both 모드(기본): atomic load 1회 후 즉시 time 처리만 하고 반환한다.
+//     key 비교를 전혀 하지 않으므로 현행 대비 오버헤드가 사실상 없다(무회귀).
+//   - name/id 모드: 최상위 그룹(len(groups)==0)에서만 key 를 map lookup 하여
+//     생략 대상이면 slog.Attr{}(zero value)를 반환한다. slog 가 zero-value
+//     속성을 자동 생략하므로 이것이 곧 "필드 제거" 가 된다.
+func replaceLogAttr(groups []string, a slog.Attr) slog.Attr {
+	// 1) time 재포맷은 스타일과 무관하게 항상 적용한다.
+	a = replaceLogTime(groups, a)
+
+	// 2) both 모드는 필터링 없이 그대로 반환 (fast path, 무회귀).
+	code := logIDStyle.Load()
+	if code == idStyleCodeBoth {
+		return a
+	}
+
+	// 3) 최상위 그룹에서만 식별자 필드를 필터링한다.
+	//    중첩 그룹 내부 속성은 드물고 과도 필터링을 피하기 위해 건드리지 않는다.
+	if len(groups) != 0 {
+		return a
+	}
+
+	switch code {
+	case idStyleCodeName:
+		// name 모드: id 계열을 생략한다.
+		if idFamilyKeys[a.Key] {
+			return slog.Attr{}
+		}
+	case idStyleCodeID:
+		// id 모드: 이름 계열을 생략한다.
+		if nameFamilyKeys[a.Key] {
+			return slog.Attr{}
+		}
+	}
+	return a
+}
 
 // ComponentLogger 는 컴포넌트별 구조화된 로거 인터페이스이다.
 // 모든 로그 출력에 "component" 속성이 자동으로 포함된다.
@@ -150,7 +303,7 @@ func (lf *loggerFactory) NewLogger(component string) ComponentLogger {
 	if lf.streamRouter != nil {
 		handler = lf.streamRouter.Handler()
 	} else {
-		handler = slog.NewJSONHandler(os.Stdout, nil)
+		handler = slog.NewJSONHandler(os.Stdout, logHandlerOpts)
 	}
 
 	// component 는 내부 라우팅용, type/name 은 출력용 속성이다

@@ -129,12 +129,39 @@ func (a *UserStoreAgent) DeleteEntry(ctx context.Context, namespace, key string)
 	}
 
 	store := inner.ForNamespace(namespace)
-	return store.Delete(ctx, key)
+	if err := store.Delete(ctx, key); err != nil {
+		return err
+	}
+	// @spec SPEC-STORE-004: 값 엔트리뿐 아니라 레지스트리 메타(staticKeys)도 제거하여
+	// 동적 키가 완전히 사라지게 한다(전체 초기화 시 동적 키 삭제 요구). manual 정적 키는
+	// reset 정책상 DeleteEntry 경로를 타지 않으므로(IsStaticKey=true → ClearHistory) 영향 없다.
+	inner.RemoveStaticKey(key)
+	return nil
 }
 
 // @spec SPEC-STORE-003
-// IsStaticKey 는 사용자 관점 key 가 정적 키 목록에 정의되어 있는지 검사한다.
-// HTTP 핸들러가 reset 정책을 결정할 때 사용한다.
+// @spec SPEC-STORE-004
+// IsStaticKey 는 입력 key 가 정적(레지스트리 등록) 키인지 검사한다. reset 정책 분기
+// (정적 → ClearHistory / 동적 → DeleteEntry) 에 사용된다.
+//
+// 시리즈 모델(M2 이후)에서의 의미 — 두 단계 판정:
+//
+//  1. 직접 조회(primary): key 가 레지스트리(staticKeys)에 그대로 존재하면 true.
+//     레지스트리 키는 (a) 시리즈 인코딩 키(SetWithMeta 경로) 또는 (b) bare key(yaml 정적/
+//     plain Set 으로 등록된 키)이다. ResetAll/ResetSeries 가 저장 키(인코딩 또는 bare)를
+//     그대로 넘기면 이 경로가 적중한다. 이 동작은 SPEC-STORE-003 시절과 byte-identical 하게
+//     보존된다(회귀 0).
+//
+//  2. 사용자 관점 보조 의미(fallback): 직접 조회가 빗나가면 key 를 "사용자 관점 key" 로 보고,
+//     레지스트리에 디코드 후 SeriesID.Key == key 인 시리즈가 하나라도 존재하면 true 를
+//     반환한다. 즉 "그 key 의 어떤 시리즈라도 정적이면 true". 이는 시리즈 인코딩을 모르는
+//     호출자(예: 사용자 key 만 가진 코드)가 정적 여부를 물을 수 있게 하는 가산적 의미이며,
+//     primary 경로를 침범하지 않는다(직접 적중 시 fallback 미실행).
+//
+// 정적성 정의(SPEC-STORE-004 수정): 정적 = Source=manual(yaml/수동 정의) 인 키만이다.
+// 동적(Source=auto, 런타임 자동 등록) 키는 정적이 아니며, reset 시 DeleteEntry 경로로
+// 값과 레지스트리 메타가 함께 제거된다("전체 초기화 시 동적 키 삭제" 요구). 과거에는
+// 레지스트리 존재 여부로 판정해 동적 키도 정적으로 취급(ClearHistory 보존)되던 버그가 있었다.
 func (a *UserStoreAgent) IsStaticKey(key string) bool {
 	a.mu.RLock()
 	inner := a.inner
@@ -142,15 +169,26 @@ func (a *UserStoreAgent) IsStaticKey(key string) bool {
 	if inner == nil {
 		return false
 	}
-	tags := inner.StaticTagsFor(key)
-	// StaticTagsFor 는 정적 키가 아니면 빈 맵을 반환하지만, 정적 키가 빈 태그 맵을
-	// 가질 수도 있으므로 별도 확인이 필요하다.
-	if len(tags) > 0 {
-		return true
+
+	// 1) 직접 조회(primary): key 가 레지스트리에 그대로 있으면 그 Source 로 판정.
+	//    (ResetAll/ResetSeries 는 저장 키 — 인코딩 또는 bare — 를 그대로 넘긴다.)
+	if meta, ok := inner.StaticKeyMetaFor(key); ok {
+		return meta.Source == SourceManual
 	}
-	all := inner.StaticKeyTags()
-	_, ok := all[key]
-	return ok
+
+	// 2) fallback(사용자 관점): 미등록 key 면, 그 key 의 어떤 시리즈라도 manual 이면 true.
+	if key == "" {
+		return false
+	}
+	for regKey, meta := range inner.StaticKeysSnapshot() {
+		if meta.Source != SourceManual {
+			continue
+		}
+		if regKey == key || decodeStorageKeyToSeries(regKey).Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // @spec SPEC-STORE-003

@@ -6,6 +6,90 @@
 
 ## [Unreleased]
 
+### 추가 — 라인 차트 스타일 옵션 (Y축 데이터 타입 · 축 폰트 · 자동 색상)
+
+- **대시보드 라인 차트에 Y축 데이터 타입(숫자형/열거형)·축 폰트·시리즈 자동 색상 설정을 추가 (Non-breaking)**
+
+  기존 boolean 시리즈의 `true`/`false` 축 표시 로직을 사용자 정의 값→라벨 매핑으로 일반화하고, 축 텍스트 폰트와 시리즈 색상 배정을 설정 가능하게 했다. 모든 신규 config 필드는 선택값이며 미지정 시 기존 동작을 유지한다.
+
+  - **Y축 데이터 타입(패널 단위)**: `y_axis_type`(`numeric`/`enum`) + `y_enum_labels`(값→라벨 매핑) 추가. 열거형이면 Y축 눈금·툴팁·범례 현재값을 라벨로 표시한다(예: `0→정지`, `1→운전`). 열거형 미설정 시 boolean 시리즈는 기존 `true`/`false` 자동 표시를 유지한다. 숫자형 min/max 고정·자동은 기존 `y_axis_mode`/`y_min`/`y_max` 를 그대로 사용한다.
+  - **축 폰트(축별 독립)**: X/Y 축의 레이블(제목)·값(눈금) 4종에 대해 폰트 크기·색상·굵기를 개별 설정하는 `x_label_font`/`x_tick_font`/`y_label_font`/`y_tick_font` 추가. 미지정 필드는 기본값(size 10, `#9ca3af`, normal)으로 폴백한다.
+  - **시리즈 자동 색상**: 데이터 소스(Store 키·채널) 선택 시 공용 팔레트에서 시리즈 인덱스별로 서로 다른 색을 자동 배정한다. 이전에는 색상 미지정으로 편집기 스와치가 모두 동일 색으로 보였다. 사용자는 색상 스와치로 개별 변경할 수 있다.
+  - **관련**: SPEC-WEB-005, SPEC-CHART-001, SPEC-STORE-004.
+
+### 수정 — 라인 차트 Store 소스 · 축 렌더링 결함
+
+- **Store boolean 시리즈 집계 유실 수정**: 백엔드 서버 집계 경로(`toFloat64`)가 Go `bool` 타입을 처리하지 못해 boolean 데이터가 집계 전에 누락되어 라인 차트에 표시되지 않던 문제를 수정했다(`true→1`/`false→0` 변환 추가). 프론트엔드는 이미 1/0 을 처리하고 있었으나 서버가 값을 버려 표시되지 않았다.
+- **X축 타이틀 잘림 수정**: X축 제목이 `insideBottomRight` 로 오른쪽 끝에 앵커되어 컨테이너 경계에서 잘리던 문제를 하단 중앙 정렬 + 양수 offset 으로 수정했다.
+- **범례 현재값 포맷 수정**: 범례의 마지막값이 원시 숫자(`0.0`)로 표시되던 것을 축·툴팁과 동일하게 열거형 라벨/boolean(`true`·`false`) 로 표시하도록 수정했다.
+
+### 추가 — xflow CLI–Web UI 기능 패리티 (remote 관리 + dashboard/chart/influxdb)
+
+- **`xflow` CLI 가 백엔드 `/api/v1/*` API 도메인을 동등하게 커버하도록 명령 그룹을 확충 (Non-breaking)**
+
+  Web UI 가 소비하는 모든 기능은 `/api/v1/*` REST 라우트로 노출되므로, CLI 가 동일 라우트를 호출하면 동일 기능을 수행한다는 전제 아래 도메인 갭을 메웠다. 본 변경은 SPEC-CLI-004 의 P3(원격 관리)·P4(저우선 도메인)를 다룬다. P0(죽은 명령 교정)·P1(auth/device/store/tsdb/monitor/system/settings 신규 그룹)·P2(flow/agent 보완)는 선행 완료되었다.
+
+  - **원격 관리(P3)**: `xflow remote node`(list/get/approve/reject/revoke/pre-register), `xflow remote group`(list/set/clear/rename/delete/update/command) + `xflow remote token`(create/list/revoke), `xflow remote release`(list/create/delete/delete-asset) + `xflow remote version`(target get·set / source get·set / history / update), `xflow remote command` / `xflow remote audit` / `xflow remote inventory`(flows|agents|devices, mirror+live) 명령군을 신설했다.
+  - **저우선 도메인(P4)**: `xflow dashboard`(shared/mine get·set), `xflow chart channels`, `xflow influxdb query` 를 신설했다.
+  - **기존 스택 재사용 + 신규 의존성 0**: 모든 신규 명령은 기존 client/output/errors/resolve 스택(HTTP 클라이언트, `PrintResult` 포맷터, `MapAPIError`, 이름→ID 해석, 글로벌 플래그)을 재사용한다. 파괴적 작업은 확인 프롬프트 + `--yes` 로 게이트하고, enrollment 토큰은 생성 직후 1회만 표시한다.
+  - **품질**: `internal/cli` 커버리지 85.3%, 전 게이트(build/vet/test-race/gofmt/golangci-lint) 통과, 기존 명령 회귀 0.
+  - **후속 과제(별도 하위 SPEC 후보)**: remote 심화 per-resource 조회(flow status/logs/nodes, agent stats/config/devices/topics/store/sessions/series, device state/commands/metadata), remote 편집 CRUD, SSE/WS 실시간 스트림(`--follow`/chart WS/로그 스트림), dashboard delete 라우트는 범위에서 제외했다.
+  - **관련**: SPEC-CLI-004 v0.3.0(P0~P4 완료), SPEC-REMOTE-001, SPEC-AUTH-001/003, SPEC-DEVICE-001, SPEC-STORE-001, SPEC-TSDB-001, SPEC-CHART-001, SPEC-UPDATE-001, SPEC-WEB-006/007.
+
+### 추가 — 로컬 인스턴스 시스템 정보 표출 (self/local Identity + Runtime)
+
+- **접속한 xflowd 인스턴스 자신의 시스템 정보를 `/admin/system` 및 설정 "시스템" 탭에 표출 (Non-breaking)**
+
+  관리 서버·client 노드·standalone 어디에 로그인하든 **그 인스턴스 자신(self)** 의 hostname / OS·Arch / 버전 / remote 모드 / uptime / 실시간 리소스를 한눈에 확인한다. 관리 서버가 원격 노드 보고를 표시하는 NodeDashboard(REMOTE-001)와는 별개의 SELF/로컬 케이스로, 원격 프로토콜은 변경하지 않는다.
+
+  - **Identity 백엔드 확장**: 기존 `GET /api/v1/system/version` 응답에 `os`(GOOS)·`arch`(GOARCH)·`hostname`·`mode`(remote_management.mode)·`uptime_seconds` 5필드를 추가(기존 7필드 불변, SystemVersionCard 회귀 없음). 신규 `/system/info` 엔드포인트는 만들지 않음. uptime 기준 시각은 프로세스 부팅 시각(epoch ms)을 재사용해 정확도 확보.
+  - **시크릿 비노출**: 확장 응답은 jwt_secret·bootstrap_secret·enrollment_token·키 등 어떤 비밀 값도 포함하지 않음(단위 테스트로 강제).
+  - **Runtime 표시**: 기존 `GET /api/v1/monitor/metrics` 재사용(신규 백엔드 0), TanStack Query 5초 폴링(`refetchIntervalInBackground: false`, 기존 대시보드 메트릭과 캐시 공유). uptime 가독 형식("3d 4h 12m"), CPU 0%는 "측정 미지원" 안내(v1 샘플링 미지원).
+  - **노출 위치 추가**: 시스템 정보 카드를 `/admin/system` 외에 **설정(Settings) → "시스템" 탭에도 추가**(동일 컴포넌트 재사용, 양쪽 공존). `/admin/system` 으로 가는 명시적 메뉴 진입점이 없어 사용자가 도달하기 어려웠던 문제를 해소한다.
+  - **표시 필드 축소**: 인스턴스 정보 카드(`SystemInfoCard`)에서 **Commit / Build Date / Go Runtime 필드를 UI 에서 제거**. Makefile/Dockerfile 이 `main.Version` 만 ldflags 주입하여 commit/build_date 가 항상 "unknown" 이고 Go Runtime 은 운영자에게 불필요하기 때문. 남은 식별 필드: hostname, OS/Arch, 버전, 원격 모드. 백엔드 `GET /system/version` 응답 스키마는 불변이며, 별개 `SystemVersionCard` 가 commit/build_date/go_version 을 계속 소비한다.
+  - **룩앤필 통일**: 시스템 정보/런타임 카드를 원격 노드 카드(NodeDashboard, REMOTE-001)와 시각 통일 — 기존 "monospaced 칩" 표기를 제거하고 plain 텍스트 + 라벨 스타일로, 카드 컨테이너/헤더 아이콘/제목 크기를 원격 카드와 일치시켰다. "이 인스턴스 (self)" 배지는 유지. mode 한글 라벨 매핑(관리 서버/클라이언트 노드/독립 실행), 영역별 독립 로딩/에러 처리, mode 무관 동작, 기존 admin 게이팅 재사용.
+  - **신규 외부 의존성 0**.
+  - **관련**: SPEC-WEB-007 v0.3.0, SPEC-WEB-006(공존), SPEC-UPDATE-001·SPEC-OBS-001(데이터 출처).
+
+### 변경 — 설정 "시스템" 탭 부수 개선 (API 서버 주소 / 로그 레벨 UI)
+
+- **설정 시스템 탭의 API 서버 주소 표시 정정 (Non-breaking)**: "API 서버" 카드가 보여주던 서버 URL 을 `import.meta.env.VITE_API_URL` 하드코딩(`localhost:8080`)에서 **실제 접속 주소(`window.location.origin`)** 로 정정했다. API client 가 상대경로 `/api/v1` 를 사용하므로 origin 이 곧 백엔드 주소이며, HTTPS 보안 접속 시에도 자동 반영된다.
+- **컴포넌트별 로그 레벨 UI 개선 (Non-breaking)**: 컴포넌트명 첫 세그먼트를 기준으로 종류 분류 표시(에이전트/플로우/노드/원격/엔진/API/DB 등), 레벨 직접 변경(select), 종류·컴포넌트·레벨 정렬, 종류 필터 + 이름 검색, 선택 기반 일괄 레벨 변경·일괄 리셋을 추가했다.
+
+### 변경 — 대시보드 자동 갱신 주기 컨트롤 위치 이동
+
+- **자동 갱신 주기 컨트롤을 설정 페이지에서 대시보드 페이지 헤더로 이동 (Non-breaking)**: 설정의 "대시보드" 탭을 제거하고, 대시보드 자동 갱신 주기 컨트롤을 대시보드 페이지 우측 상단 헤더(일반/읽기 모드의 새로고침 옆)에 컴팩트 드롭다운(5/10/15/30/60초)으로 배치했다. 값은 기존 전역 상태(`dashboardRefreshInterval`)를 그대로 사용하여 동작은 동일하며(폴링 `refetchInterval` 에 즉시 반영), 위치만 이동했다. 편집 권한과 무관하게 항상 사용 가능하다.
+
+### 추가 — 원격 프로그램 버전 관리 (릴리스 호스팅 + 업데이트 소스 + 아키텍처-aware 그룹 일괄 업데이트)
+
+- **관리 서버가 노드용 프로그램 이미지를 호스팅하고 원격 자가 업데이트를 오케스트레이션 (Non-breaking)**
+
+  관리 서버(`xflowd` 서버 모드)가 아키텍처별 `xflowd` 바이너리 + 사전 서명된 Ed25519 `.sig` 를 저장·배포하고, 노드의 기존 자가 업데이트(SPEC-UPDATE-001)를 **무변경**으로 구동한다. 공개키는 노드 로컬에만 존재하고(서버 비전송), 서버는 서명을 생성하지 않으며 무결성은 노드 Ed25519 검증으로 보장된다.
+
+  - **릴리스 저장소**: SQLite 메타(`releases`/`release_assets`) + 디스크 `{data}/releases/{version}/`. 업로드 시 SHA256 자동 계산·`checksum.txt` 자동 생성.
+  - **노드용 익명 GitHub-Releases 호환 피드** (인증 없음, 노드 updater 무변경 소비): `GET /api/v1/updates/releases/latest`·`/releases`·`/releases/download/{version}/{filename}`. asset `browser_download_url` 은 https 강제(`remote_management.public_base_url` 설정 또는 요청 Host 유도).
+  - **admin 릴리스 관리 API**: `GET/POST /remote/releases`, `DELETE /remote/releases/{version}`, `DELETE /remote/releases/{version}/assets/{os}/{arch}`, multipart 업로드 `POST /remote/releases/{version}/assets`(os/arch/binary/signature).
+  - **업데이트 소스 서버 저장**: `update_url`+채널을 SettingsRepository(`remote.update_source`)에 1회 저장하고 필요시에만 변경. `GET/PUT /remote/update-source`(admin). 원격 업데이트 명령(UpdateNode/UpdateGroup)에 서버가 자동 주입(요청 명시 시 우선). `update_url` 은 빈 값 또는 `https://` 만 허용. 공개키는 절대 전송하지 않음.
+  - **아키텍처/OS-aware 그룹 일괄 업데이트**: 서버가 각 노드의 보고된 OS/Arch 로 per-node 타깃 버전을 계산해 per-node `system/update` 디스패치. 전략 3종 — `latest`(채널 내 각 os/arch 최고 semver)·`pin`(단일 버전, 기존 호환)·`per_arch`((os/arch)→버전 맵). 자산 없는 노드는 사유와 함께 건너뜀(부분 성공).
+  - **client WS insecure_skip_verify**: `remote_management.insecure_skip_verify`(기본 false) — 관리 WS(wss) TLS 인증서 검증 스킵(자체 서명/사설망 전용 옵트인). 전송 무결성 보장과 무관(명령=토큰·자가 업데이트=Ed25519).
+  - **신규 설정**: `remote_management.public_base_url`·`remote_management.releases_dir`·`remote_management.insecure_skip_verify`.
+  - **관련**: SPEC-REMOTE-001 v1.7(그룹 O).
+
+### 추가 — 릴리스 이미지 생성·서명 도구 및 원격 업데이트 운영 요구사항
+
+- **xflowd 릴리스 이미지 빌드·서명 도구와 노드 운영 요구사항 명세 (Non-breaking)**
+
+  - **서명 도구**: `xflowd update keygen`(Ed25519 키쌍, 비공개 `.key` `0600` + 공개 `.pub`), `xflowd update sign --key K BIN`(바이너리 본문 서명 → raw 64-byte `.sig`).
+  - **빌드/CI**: `make keygen`, `make release-images VERSION=<v> SIGN_KEY=<key>`(6 타깃 교차컴파일+서명+`checksum.txt`, 인자 미지정 시 가드 실패). CI `release.yml` `release-images` 잡 — 태그 푸시 시 서명 이미지 산출·GitHub Release 첨부, 시크릿 `XFLOW_RELEASE_PRIVATE_KEY`(미설정 시 스킵). 공개키는 노드 로컬, 비공개키는 릴리스 담당자/CI 만.
+  - **노드 설정 요구사항**: `update.public_key_path` 가 원격 업데이트 필수(미설정 시 거부 — 내장 핀닝 키 없음), `update.insecure_skip_verify` 를 원격 업데이트 다운로드(Checker/Downloader)에 연결(Ed25519 검증 유지). 채널 불일치/자산 누락 시 구체적 진단 메시지.
+  - **배포(systemd)**: 자가 업데이트가 설치 디렉토리에 새 바이너리를 원자 교체하므로 `ReadWritePaths=/opt/xflow` 필요(`/opt/xflow/data` 만으로는 `read-only file system` 실패).
+  - **관련**: SPEC-UPDATE-001 v0.2.0(M15~M18).
+
+### 수정 — 원격 자가 업데이트 빌드/업로드 정합성
+
+- **버전 ldflag 대소문자 정정 (Non-breaking)**: 빌드 LDFLAGS 의 버전 주입 심볼을 코드 빌드 변수와 일치하는 `-X main.Version=$(VERSION)`(대문자 `Version`)로 정정. 불일치 시 노드 보고 버전이 기본값(`dev`)으로 떨어지던 문제를 해결 — 버전 표시·다운그레이드 방지·버전 이력 갱신의 전제(SPEC-UPDATE-001 M18).
+- **릴리스 자산 multipart 업로드 FormData 정정 (Non-breaking)**: 웹 admin 의 릴리스 자산 업로드를 axios FormData(multipart, os/arch/binary/signature 필드)로 전송하도록 정정해 `POST /remote/releases/{version}/assets` 와 정합(SPEC-REMOTE-001 REQ-O04).
+
 ### 추가 — Switch 노드 완성 (문자열 조건 라우팅 / first·all / default_port·드롭 / 동적 포트)
 
 - **Switch 노드를 에디터에서 사용 가능하도록 완성 (Non-breaking)**

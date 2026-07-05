@@ -4,13 +4,15 @@
 import { useId } from 'react';
 
 import { cn } from '@/lib/utils/cn';
+import { useTranslation } from '@/lib/i18n';
 
 // --- 상수 ---
 
+// 각 옵션의 라벨은 i18n 키만 보관하고, 렌더 시 컴포넌트 내부에서 t(labelKey) 로 변환한다.
 const QOS_OPTIONS = [
-  { value: '0', label: 'QoS 0 - 최대 1회 전송' },
-  { value: '1', label: 'QoS 1 - 최소 1회 전송' },
-  { value: '2', label: 'QoS 2 - 정확히 1회 전송' },
+  { value: '0', labelKey: 'bridge.qos0' },
+  { value: '1', labelKey: 'bridge.qos1' },
+  { value: '2', labelKey: 'bridge.qos2' },
 ] as const;
 
 // --- 스타일 ---
@@ -42,6 +44,7 @@ interface BridgeMqttConfigProps {
 // --- 컴포넌트 ---
 
 export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigProps) {
+  const { t } = useTranslation();
   const qosId = useId();
   const retainedId = useId();
   const topicId = useId();
@@ -60,7 +63,7 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
       <div className="flex items-center gap-2">
         <div className="h-px flex-1 bg-(--color-border-default)" />
         <span className="text-xs font-medium text-(--color-text-muted)">
-          MQTT 설정
+          {t('bridge.mqttSettings')}
         </span>
         <div className="h-px flex-1 bg-(--color-border-default)" />
       </div>
@@ -71,7 +74,7 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
           htmlFor={qosId}
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
-          QoS 레벨
+          {t('bridge.qosLevel')}
         </label>
         <select
           id={qosId}
@@ -82,12 +85,12 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
         >
           {QOS_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
-              {opt.label}
+              {t(opt.labelKey)}
             </option>
           ))}
         </select>
         <p className="text-xs text-(--color-text-muted)">
-          메시지 전달 보장 수준
+          {t('bridge.qosDescription')}
         </p>
       </div>
 
@@ -111,11 +114,11 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
             )}
           />
           <span className="text-xs font-medium text-(--color-text-secondary)">
-            Retained 메시지
+            {t('bridge.retained')}
           </span>
         </label>
         <p className="text-xs text-(--color-text-muted)">
-          브로커에 마지막 메시지를 유지합니다
+          {t('bridge.retainedDescription')}
         </p>
       </div>
 
@@ -125,7 +128,7 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
           htmlFor={topicId}
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
-          발행 토픽
+          {t('bridge.publishTopic')}
         </label>
         <input
           id={topicId}
@@ -134,11 +137,11 @@ export function BridgeMqttConfig({ data, onChange, readOnly }: BridgeMqttConfigP
           // readOnly attr 사용 — disabled 는 다크모드에서 텍스트를 흐리게 렌더링한다 (commit b4ad829 참조).
           readOnly={readOnly}
           onChange={(e) => handleChange('publish_topic', e.target.value)}
-          placeholder="devices/{device_id}/data"
+          placeholder={t('bridge.publishTopicPlaceholder')}
           className={cn(inputClass, readOnly && readOnlyClass)}
         />
         <p className="text-xs text-(--color-text-muted)">
-          {'토픽 템플릿 ({필드명} 형식으로 동적 치환)'}
+          {t('bridge.publishTopicDescription')}
         </p>
       </div>
     </div>

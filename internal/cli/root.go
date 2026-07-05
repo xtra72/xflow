@@ -24,6 +24,12 @@ var (
 // defaultServerURL 은 서버 URL 의 기본값이다.
 const defaultServerURL = "http://localhost:8080"
 
+// sessionToken 은 auth login 으로 발급된 토큰을 프로세스 메모리에만 보관한다.
+// 디스크에 저장하지 않으므로 프로세스 종료(재시작) 시 사라져 재로그인이 필요하다.
+// 한 xflow 프로세스 = 한 세션이며, interactive REPL 은 단일 프로세스에서 동작하므로
+// REPL 명령 간에는 이 값이 유지되지만, 새 xflow 실행은 빈 값으로 시작한다.
+var sessionToken string
+
 // NewRootCmd 는 xflow CLI 의 루트 커맨드를 생성한다.
 // 모든 서브커맨드는 이 루트 커맨드에 등록된다.
 func NewRootCmd() *cobra.Command {
@@ -59,14 +65,17 @@ func NewRootCmd() *cobra.Command {
 			// verbose 플래그 확인
 			verbose, _ := cmd.Flags().GetBool("verbose")
 
+			// insecure 플래그 확인 (TLS 인증서 검증 건너뛰기)
+			insecure, _ := cmd.Flags().GetBool("insecure")
+
 			// 클라이언트 생성
-			client = NewClient(serverURL, token, 30*time.Second, verbose)
+			client = NewClient(serverURL, token, 30*time.Second, verbose, WithInsecure(insecure))
 
 			return nil
 		},
 	}
 
-	// 글로벌 플래그 등록 (7개)
+	// 글로벌 플래그 등록 (8개)
 	pflags := rootCmd.PersistentFlags()
 	pflags.String("config", "", "설정 파일 경로 (기본값: ~/.xflow/config.yaml)")
 	pflags.String("server", "", "xflowd 서버 URL")
@@ -75,6 +84,7 @@ func NewRootCmd() *cobra.Command {
 	pflags.Bool("verbose", false, "상세 출력 모드")
 	pflags.Bool("quiet", false, "조용한 출력 모드")
 	pflags.Bool("no-color", false, "색상 출력 비활성화")
+	pflags.BoolP("insecure", "k", false, "TLS 인증서 검증 건너뛰기 (자체 서명 인증서 전용)")
 
 	// 서브커맨드 등록
 	rootCmd.AddCommand(newVersionCmd())
@@ -87,6 +97,20 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newInteractiveCmd(rootCmd, &client))
 	rootCmd.AddCommand(newScriptCmd(rootCmd, &client))
 	rootCmd.AddCommand(newModbusCmd(&client))
+	// SPEC-CLI-004 P1: Web UI 패리티 신규 도메인 명령
+	rootCmd.AddCommand(newAuthCmd(&client, confirmAction))
+	rootCmd.AddCommand(newDeviceCmd(&client, confirmAction))
+	rootCmd.AddCommand(newStoreCmd(&client, confirmAction))
+	rootCmd.AddCommand(newTsdbCmd(&client, confirmAction))
+	rootCmd.AddCommand(newMonitorCmd(&client, confirmAction))
+	rootCmd.AddCommand(newSystemCmd(&client, confirmAction))
+	rootCmd.AddCommand(newSettingsCmd(&client))
+	// SPEC-CLI-004 P3a: 원격 노드 관리 명령
+	rootCmd.AddCommand(newRemoteCmd(&client, confirmAction))
+	// SPEC-CLI-004 P4: 대시보드·차트·InfluxDB 명령
+	rootCmd.AddCommand(newDashboardCmd(&client))
+	rootCmd.AddCommand(newChartCmd(&client))
+	rootCmd.AddCommand(newInfluxdbCmd(&client))
 
 	return rootCmd
 }
@@ -212,7 +236,11 @@ func resolveServerURL(cmd *cobra.Command, configPath string) string {
 }
 
 // resolveToken 은 인증 토큰을 우선순위에 따라 결정한다.
-// 우선순위: 1) --token 플래그 2) XFLOW_TOKEN 환경변수 3) 설정 파일
+// 우선순위: 1) --token 플래그 2) XFLOW_TOKEN 환경변수 3) sessionToken(프로세스 메모리) 4) 설정 파일
+//
+// sessionToken 은 auth login(--save 미지정)으로 발급된 토큰을 메모리에만 보관하는 값이며,
+// 설정 파일(auth.token)보다 우선한다. 설정 파일은 --save 로 영구 저장한 토큰을 위해
+// 마지막 우선순위로 계속 읽으므로, 재시작 후에도 --save'd 토큰은 그대로 동작한다.
 func resolveToken(cmd *cobra.Command, configPath string) string {
 	// 1. --token 플래그
 	if flagVal, _ := cmd.Flags().GetString("token"); flagVal != "" {
@@ -224,7 +252,12 @@ func resolveToken(cmd *cobra.Command, configPath string) string {
 		return envVal
 	}
 
-	// 3. 설정 파일의 auth.token
+	// 3. 세션 메모리 토큰 (디스크 미저장 로그인)
+	if sessionToken != "" {
+		return sessionToken
+	}
+
+	// 4. 설정 파일의 auth.token (--save 로 영구 저장된 토큰)
 	return configValue(configPath, "auth.token")
 }
 

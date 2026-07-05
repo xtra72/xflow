@@ -25,8 +25,8 @@ func TestNodeServiceAdapter_ListNodeTypes(t *testing.T) {
 
 	types, err := a.ListNodeTypes(context.Background())
 	require.NoError(t, err)
-	// 47개 빌트인 노드 타입 (기본 40 + trigger + chart-emitter + century 3종 (raw-frame 통합) + inventory + select-field)
-	assert.Len(t, types, 47)
+	// 49개 canonical 빌트인 노드 타입 (+enrich) + 12개 DEPRECATED HVAC `_` 별칭 (하위 호환) = 61
+	assert.Len(t, types, 61)
 
 	// 정렬 확인 (AllTypeMeta가 정렬된 결과를 반환)
 	for i := 1; i < len(types); i++ {
@@ -34,12 +34,12 @@ func TestNodeServiceAdapter_ListNodeTypes(t *testing.T) {
 			"타입이 정렬되어 있어야 한다: %s < %s", types[i-1].Type, types[i].Type)
 	}
 
-	// 필수 필드 확인
+	// 필수 필드 확인 (canonical 은 "builtin", 별칭은 "builtin-deprecated")
 	for _, nt := range types {
 		assert.NotEmpty(t, nt.Type)
 		assert.NotEmpty(t, nt.Category)
 		assert.NotEmpty(t, nt.Description)
-		assert.Equal(t, "builtin", nt.Source)
+		assert.Contains(t, []string{"builtin", "builtin-deprecated"}, nt.Source)
 	}
 }
 

@@ -98,6 +98,23 @@ export function toNumber(value: unknown): number {
   return NaN;
 }
 
+/**
+ * 라인 차트 전용 값 변환.
+ *
+ * 라인 차트 데이터 소스 규칙:
+ *   - number (int/float 혼합) → 그대로 표시
+ *   - boolean → 1(true)/0(false) 로 그린다 (표시는 true/false — 렌더 측에서 처리)
+ *   - string 을 포함한 그 외 타입 → NaN (제외; connectNulls 로 이어지거나 라인에서 빠진다)
+ *
+ * toNumber 와 달리 숫자 모양 문자열("3.14")도 제외한다(스트링 타입 제외). bar/pie/stat
+ * 등 다른 차트의 집계 의미를 바꾸지 않도록 라인 차트에서만 사용한다.
+ */
+export function toLineValue(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  return NaN;
+}
+
 /** 소수 자리수 포맷, undefined 면 원본 숫자 */
 export function formatNumber(n: number, decimals?: number): string {
   if (!Number.isFinite(n)) return '—';

@@ -121,7 +121,7 @@ func FromLuaValue(value lua.LValue) any {
 }
 
 // MessageToLuaTable 는 message.Message를 Lua 테이블로 변환한다.
-// 필드: id(string), type(string), timestamp(string), payload(table), metadata(table)
+// 필드: id(string), type(string), timestamp(number, epoch ms), payload(table), metadata(table)
 //
 // SPEC-MESSAGE-TYPE-001 § T3 / M4 (v1.0): 1급 Message.Type() 값을 Lua 의
 // top-level `msg.type` 키로 노출. 이전 metadata.message_type 컨벤션은 폐기.
@@ -131,17 +131,32 @@ func MessageToLuaTable(L *lua.LState, msg message.Message) *lua.LTable {
 
 	tbl.RawSetString("id", lua.LString(msg.ID()))
 	tbl.RawSetString("type", lua.LString(msg.Type()))
-	tbl.RawSetString("timestamp", lua.LString(msg.Timestamp().Format("2006-01-02T15:04:05.999999999Z07:00")))
+	// timestamp 는 epoch milliseconds (int64) 로 노출한다. 프로젝트 전역의
+	// timestamp 컨벤션(epoch ms)과 일치하며, Lua 스크립트가
+	// msg.payload.timestamp = msg.timestamp 로 복사해도 egress 의 top-level
+	// timestamp 와 동일한 epoch ms 값을 유지한다(이전 RFC3339 문자열 노출 폐기).
+	tbl.RawSetString("timestamp", lua.LNumber(msg.Timestamp().UnixMilli()))
 
 	// payload 변환
 	payloadData := msg.Payload().ToMap()
 	tbl.RawSetString("payload", mapToLuaTable(L, payloadData))
 
 	// metadata 변환
-	metaData := msg.Metadata().All()
+	// P2: Raw() 로 flat 키(string) + nested group(map[string]string)을 모두 노출한다.
+	// flat 키는 Lua 문자열로(기존 동작 동일), group 은 중첩 Lua 테이블로 매핑하여
+	// 스크립트가 msg.metadata.agent.type 처럼 접근할 수 있게 한다(additive).
 	metaTbl := L.NewTable()
-	for k, v := range metaData {
-		metaTbl.RawSetString(k, lua.LString(v))
+	for k, v := range msg.Metadata().Raw() {
+		switch val := v.(type) {
+		case string:
+			metaTbl.RawSetString(k, lua.LString(val))
+		case map[string]string:
+			groupTbl := L.NewTable()
+			for gk, gv := range val {
+				groupTbl.RawSetString(gk, lua.LString(gv))
+			}
+			metaTbl.RawSetString(k, groupTbl)
+		}
 	}
 	tbl.RawSetString("metadata", metaTbl)
 
@@ -175,18 +190,43 @@ func LuaTableToMessage(L *lua.LState, tbl *lua.LTable) (message.Message, error) 
 	}
 
 	// metadata 추출
+	// P2: 문자열 값은 flat 메타데이터로(기존 동작), 중첩 테이블(문자열 필드)은
+	// nested group 으로 재구성한다. group 은 WithMetadata 로 표현 불가하므로
+	// 메시지 생성 후 SetGroup 으로 적용한다.
+	groupEntries := make(map[string]map[string]string)
 	metaVal := tbl.RawGetString("metadata")
 	if metaTbl, ok := metaVal.(*lua.LTable); ok {
 		metaTbl.ForEach(func(key, val lua.LValue) {
-			if ks, ok := key.(lua.LString); ok {
-				if vs, ok := val.(lua.LString); ok {
-					opts = append(opts, message.WithMetadata(string(ks), string(vs)))
+			ks, ok := key.(lua.LString)
+			if !ok {
+				return
+			}
+			switch v := val.(type) {
+			case lua.LString:
+				opts = append(opts, message.WithMetadata(string(ks), string(v)))
+			case *lua.LTable:
+				fields := make(map[string]string)
+				v.ForEach(func(gk, gv lua.LValue) {
+					gks, ok := gk.(lua.LString)
+					if !ok {
+						return
+					}
+					if gvs, ok := gv.(lua.LString); ok {
+						fields[string(gks)] = string(gvs)
+					}
+				})
+				if len(fields) > 0 {
+					groupEntries[string(ks)] = fields
 				}
 			}
 		})
 	}
 
-	return message.New(opts...), nil
+	msg := message.New(opts...)
+	for k, fields := range groupEntries {
+		msg.Metadata().SetGroup(k, fields)
+	}
+	return msg, nil
 }
 
 // LuaStringToBytes 는 LString을 []byte로 변환한다.

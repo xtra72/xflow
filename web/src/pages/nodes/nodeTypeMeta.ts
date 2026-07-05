@@ -37,15 +37,15 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       { name: 'error', direction: 'error', description: '처리 중 에러 발생 시 출력' },
     ],
     configFields: [
-      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키 필드명 (예: idu_num). 비어있으면 전체 메시지 기준' },
+      { name: 'key', type: 'string', required: false, description: '메시지 그룹핑 키. $. prefix 필수 — $.-경로(예: $.payload.idu_num, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다. 비어있거나 경로 해석 실패 시 전체 메시지 기준' },
       { name: 'window', type: 'string', required: false, description: '중복 억제 시간 창 (예: 30s, 1m)', default: '30s' },
-      { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외)' },
+      { name: 'compare_fields', type: 'string', required: false, description: '비교 대상 필드 (콤마 구분). 비어있으면 전체 페이로드 비교 (timestamp/seq/raw_hex 제외). 각 필드는 $. prefix 필수 — $.-경로(예: $.payload.current_temperature, $.payload.state.mode, $.metadata.device.id)로 메시지 전체를 대상으로 합니다' },
       { name: 'on_duplicate', type: 'string', required: false, description: '중복 시 처리: drop (기본, 폐기) 또는 reject_port (reject 포트로 전달)', default: 'drop' },
     ],
     configExample: {
-      key: 'idu_num',
+      key: '$.payload.idu_num',
       window: '30s',
-      compare_fields: 'current_temperature,target_temperature,op_mode,fan_byte',
+      compare_fields: '$.payload.current_temperature,$.payload.target_temperature,$.payload.op_mode,$.payload.fan_byte',
       on_duplicate: 'drop',
     },
   },
@@ -123,6 +123,67 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       out: {
         _comment: 'select 모드: 지정 경로의 값만 추출',
         payload: { temperature: 25.5 },
+      },
+    },
+  },
+
+  enrich: {
+    description:
+      'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화하는 노드입니다. agent 와 device 는 독립 블록으로, 둘 다(또는 하나만) 동시에 보강할 수 있습니다. 각 블록은 id_source 로 얻은 id 를 레지스트리에서 조회하여 type/name 을 얻고, to_metadata 로 해당 메타데이터 그룹을 재수화하거나 to_payload 로 {type,id,name} 객체를 payload 키에 기록합니다. 한 블록은 to_metadata=true 또는 to_payload 값이 있어야 활성화되며, 최소 한 블록이 활성이어야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 그 블록만 원본 그대로 통과합니다(에러 아님, no-op). id 는 소스 값을 항상 보존합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '보강할 메시지 입력. 각 블록의 id_source 로 id 를 해석합니다.' },
+      { name: 'out', direction: 'output', description: '보강된 메시지 출력. 룩업 실패/누락 id 는 해당 블록만 원본 유지(pass-through).' },
+    ],
+    configFields: [
+      {
+        name: 'agent',
+        type: 'object_fields',
+        required: false,
+        description:
+          'agent 레지스트리 룩업 블록(선택, 중첩 오브젝트 — 에디터에서 네이티브 위젯으로 편집). 하위 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.agent.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
+      },
+      {
+        name: 'device',
+        type: 'object_fields',
+        required: false,
+        description:
+          'device 레지스트리 룩업 블록(선택, 중첩 오브젝트 — 에디터에서 네이티브 위젯으로 편집). 하위 필드: enabled(bool, 블록 존재 시 기본 true), id_source(string, 기본 $.metadata.device.id), to_metadata(bool), to_payload(string). to_metadata=true 또는 to_payload 값이 있어야 활성화됩니다.',
+      },
+    ],
+    configExample: {
+      agent: {
+        enabled: true,
+        id_source: '$.metadata.agent.id',
+        to_metadata: true,
+        to_payload: 'agent_info',
+      },
+      device: {
+        enabled: true,
+        id_source: '$.metadata.device.id',
+        to_metadata: true,
+        to_payload: 'device_info',
+      },
+    },
+    inputExamples: {
+      in: {
+        _comment: 'slim 된 메시지 — agent/device 그룹은 id 만 존재',
+        payload: { current_temperature: 25.5 },
+        metadata: { agent: { id: 'lg_icp01' }, device: { id: 'lg_icp01:1' } },
+      },
+    },
+    outputExamples: {
+      'out (agent + device 블록 모두 활성)': {
+        _comment:
+          'agent/device 그룹이 각각 type/name 으로 재수화되고, agent_info / device_info 키에 {type,id,name} 기록. 두 블록은 독립 적용.',
+        payload: {
+          current_temperature: 25.5,
+          agent_info: { type: 'lg_hvacr01', id: 'lg_icp01', name: 'LG 캡처 에이전트' },
+          device_info: { type: 'HVACR.IDU', id: 'lg_icp01:1', name: 'IDU-1' },
+        },
+        metadata: {
+          agent: { type: 'lg_hvacr01', id: 'lg_icp01', name: 'LG 캡처 에이전트' },
+          device: { type: 'HVACR.IDU', id: 'lg_icp01:1', name: 'IDU-1' },
+        },
       },
     },
   },
@@ -206,9 +267,17 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         required: true,
         description: '실행할 스크립트 소스 코드',
       },
+      {
+        name: 'on_error',
+        type: 'string',
+        required: false,
+        description: 'error: 실패 시 오류 발생 · ignore: 실패 시 원본 메시지 통과(로그 없음) · drop: 실패 시 출력 없음',
+        default: 'error',
+      },
     ],
     configExample: {
       script: 'return { ...msg, payload: { ...msg.payload, processed: true } }',
+      on_error: 'error',
     },
   },
 
@@ -414,7 +483,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'samsung_hvacr01_status': {
+  'samsung-hvacr01-status': {
     description:
       'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 push 메시지를 수신하는 노드입니다. 에이전트가 NotifyInterval 마다 디바이스별 상태를 emit 하고, 노드는 ring buffer 를 drain 합니다. inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다. group_id / unit_id 로 특정 외기/내기를 필터링할 수 있습니다.',
     ports: [
@@ -471,7 +540,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'samsung_hvacr01_control': {
+  'samsung-hvacr01-control': {
     description:
       'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)에 제어 명령을 전송하는 노드입니다. 직접 명령 형식(command 키 포함)과 간편 형식(power, mode 등 제어 키)을 모두 지원합니다. 간편 형식은 자동으로 set_multiple 명령으로 변환됩니다. 모든 설정값(device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
     ports: [
@@ -507,7 +576,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  samsung_hvacr01: {
+  'samsung-hvacr01': {
     description:
       'Samsung HVACR-01 에이전트(Samsung NASA 프로토콜)의 상태 수신과 제어를 하나의 노드에서 처리하는 복합 노드입니다. 입력 메시지에 제어 키(power, mode, temperature, target_temperature, fan_speed)가 있으면 제어 명령으로, 없으면 즉시 drain 으로 동작합니다. 무수신 임계 시간(inactivity_timeout) 초과 시 request_state 자동 전송. group_id / unit_id 로 외기/내기 어드레싱 가능.',
     ports: [
@@ -1077,18 +1146,6 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         description: '연결할 Store 에이전트의 이름 또는 ID입니다.',
       },
       {
-        name: 'key_template',
-        type: 'string',
-        required: true,
-        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다 (예: "{location}:{point}:{sensor_type}").',
-      },
-      {
-        name: 'value_key',
-        type: 'string',
-        required: false,
-        description: 'payload에서 저장할 값의 키입니다. 비워두면 전체 payload를 저장합니다.',
-      },
-      {
         name: 'namespace',
         type: 'string',
         required: false,
@@ -1096,18 +1153,46 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         default: 'default',
       },
       {
+        name: 'key_template',
+        type: 'string',
+        required: true,
+        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다 (예: "{location}:{point}"). 이 키에 metrics 의 각 메트릭이 metric_type 별 시리즈로 기록됩니다.',
+      },
+      {
+        name: 'key_mappings',
+        type: 'object',
+        required: false,
+        description: '한 메시지에서 서로 다른 키에 값을 기록합니다(키 템플릿 → 값 $.경로). 네임스페이스·TTL·태그는 공유 적용됩니다.',
+      },
+      {
+        name: 'tags',
+        type: 'object',
+        required: false,
+        description: '모든 메트릭/키에 공유 적용되는 태그(키=값). 값은 리터럴 또는 $. 경로.',
+      },
+      {
+        name: 'metrics',
+        type: 'array',
+        required: false,
+        description:
+          '다중 메트릭 배열. 각 항목은 { metric_type, value_key(기본 $.payload.value), data_type, min_interval, min_change, min_change_percent } 를 가집니다. 같은 key_template 키에 metric_type 별 시리즈로 저장되며, 메트릭마다 독립적인 미세변화 억제(dead-band)가 적용됩니다. min_interval 이 설정된 메트릭만 억제되고, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
+      },
+      {
         name: 'ttl',
         type: 'string',
         required: false,
-        description: 'TTL 기간입니다 (예: "5m", "1h", "24h"). 비워두면 만료 없음.',
+        description: 'TTL 기간입니다 (예: "5m", "1h", "24h"). 모든 메트릭/키에 공유 적용. 비워두면 만료 없음.',
       },
     ],
     configExample: {
       agent_ref: 'store-engine',
-      key_template: '{location}:{point}:{sensor_type}',
-      value_key: 'value',
       namespace: 'sensors',
+      key_template: '{location}:{device_id}',
       ttl: '1h',
+      metrics: [
+        { metric_type: 'temperature', value_key: '$.payload.temperature', data_type: 'float', min_interval: '30s', min_change: 0.5 },
+        { metric_type: 'humidity', value_key: '$.payload.humidity', data_type: 'float', min_interval: '1m', min_change: 2 },
+      ],
     },
   },
 
@@ -1279,11 +1364,11 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           raw: '[]byte (바이너리 원본)',
           data: '562d04445500670445500000204...',
         },
-        metadata: { 'serial.node_id': 'node-abc-123', 'serial.agent_type': 'serial' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123' },
       },
       raw_out: {
         payload: { raw: '[]byte (프레이밍 이전 원본)' },
-        metadata: { 'serial.node_id': 'node-abc-123', 'serial.port': 'raw_out' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123', port: 'raw_out' },
       },
     },
   },
@@ -1314,7 +1399,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
       out: {
         payload: { raw: '[56 2d 04 44 55 ...]', data: 'V-\\u0004DU...' },
-        metadata: { 'serial.node_id': 'node-abc-123' },
+        metadata: { agent: { type: 'serial', id: 'agent-1' }, node_id: 'node-abc-123' },
       },
     },
   },
@@ -1343,14 +1428,14 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           raw: '[]byte (바이너리 원본)',
           data: '48656c6c6f2066726f6d20636c69656e74',
         },
-        metadata: { 'tcp.remote_addr': '192.168.1.100:5678', 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-server' },
+        metadata: { agent: { type: 'tcp-server', id: 'agent-1' }, 'tcp.remote_addr': '192.168.1.100:5678', 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-server' },
       },
       'out (tcp-client)': {
         payload: {
           raw: '[]byte (바이너리 원본)',
           data: '48656c6c6f2066726f6d20736572766572',
         },
-        metadata: { 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-client' },
+        metadata: { agent: { type: 'tcp-client', id: 'agent-1' }, 'tcp.node_id': 'node-abc', 'tcp.agent_type': 'tcp-client' },
       },
     },
   },
@@ -1382,12 +1467,12 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
       out: {
         payload: { raw: '[4f 4b]', data: 'OK' },
-        metadata: { 'tcp.node_id': 'node-abc', 'tcp.remote_addr': '192.168.1.100:5678' },
+        metadata: { agent: { type: 'tcp-server', id: 'agent-1' }, 'tcp.node_id': 'node-abc', 'tcp.remote_addr': '192.168.1.100:5678' },
       },
     },
   },
 
-  'lg_hvacr02_status': {
+  'lg-hvacr02-status': {
     description:
       'LG HVACR-02 에이전트에 연결하여 RS-485 버스에서 캡처된 실내기 상태를 조회하는 노드입니다. 주소를 지정하면 해당 실내기만, 미지정 시 전체 실내기를 조회합니다. poll_interval 설정 시 주기적으로 자동 폴링합니다.',
     ports: [
@@ -1411,7 +1496,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lg_hvacr02_control': {
+  'lg-hvacr02-control': {
     description:
       'LG ICP-02 프로토콜로 실내기를 제어하는 노드입니다. 전원, 온도, 풍량, 운전모드를 설정합니다. control_enabled가 활성화된 LG HVACR-02 에이전트가 필요합니다.',
     ports: [
@@ -1431,7 +1516,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  lg_hvacr02: {
+  'lg-hvacr02': {
     description:
       'LG HVACR-02 실내기 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키(power, temperature, fan_speed, mode)가 있으면 제어, 없으면 상태 조회로 동작합니다.',
     ports: [
@@ -1454,7 +1539,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lg_hvacr01_status': {
+  'lg-hvacr01-status': {
     description:
       'LG ICP-01 프로토콜로 에어컨 상태를 push 수신하는 노드입니다. 에이전트가 NotifyInterval 마다 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 emit, 노드는 ring buffer drain. 무수신 임계 시간(inactivity_timeout) 초과 시 request_state 자동 전송. unit_id(STX hex)로 ODU/IDU 단독 필터링 가능.',
     ports: [
@@ -1477,7 +1562,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'lg_hvacr01_control': {
+  'lg-hvacr01-control': {
     description:
       'LG HVACR-01 디바이스 제어 노드입니다. 현재 LG ICP-01 프로토콜의 쓰기 명령이 확인되지 않아 모든 제어 요청에 미지원 응답을 반환합니다.',
     ports: [
@@ -1494,7 +1579,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  lg_hvacr01: {
+  'lg-hvacr01': {
     description:
       'LG HVACR-01 상태 수신 + 제어 통합 노드입니다. 입력 메시지에 제어 키가 있으면 미지원 응답을 반환하고, 없으면 즉시 drain. push 모델로 무수신 임계 시간 초과 시 request_state 자동 전송.',
     ports: [
@@ -1675,6 +1760,77 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     outputExamples: {
       _note:
         '출력 포트 없음 (sink). WebSocket 프레임 예: { type: "chart.append", channel: "room1_temp", entry: { timestamp: 1713312000000, value: 25.5, labels: { room: "room1" } } }. 배치 모드에서는 각 엔트리가 개별 chart.append 로 브로드캐스트됩니다.',
+    },
+  },
+
+  inventory: {
+    description:
+      '디바이스/에이전트/노드/플로우 인벤토리 스냅샷을 emit 합니다. trigger 노드와 체이닝하여 주기적 상태 동기화에 사용합니다. condition(조건식 필터), fields(필드 화이트리스트), max_items(청크 분할) 로 출력을 다듬을 수 있습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '스냅샷을 트리거하는 입력 메시지 (payload 무시). 입력 metadata 는 출력에 얕은 복사로 보존됩니다.' },
+      { name: 'out', direction: 'output', description: 'payload { items: [...] } 형태의 스냅샷 메시지. max_items 분할 시 여러 메시지로 출력됩니다.' },
+      { name: 'error', direction: 'error', description: '인벤토리 수집/조건식 평가 중 에러 발생 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'source',
+        type: 'select',
+        required: true,
+        description: '스냅샷 대상 인벤토리 종류: devices | agents | nodes | flows',
+      },
+      {
+        name: 'condition',
+        type: 'multiline',
+        required: false,
+        description:
+          'filter 노드와 동일한 조건식 문법으로 항목을 필터링합니다. 각 항목을 메시지로 감싸 평가하므로 항목 필드는 $.payload.<필드> 로 참조합니다 (예: $.payload.online == true, exists($.payload.uid)). == != > < >= <=, && || !, exists(path) 지원. 비우면 전체 항목 출력. 모든 source 적용.',
+      },
+      {
+        name: 'fields',
+        type: 'string',
+        required: false,
+        description: '쉼표로 구분한 항목 필드 화이트리스트 (예: id, name, online). 비우면 전체 필드.',
+      },
+      {
+        name: 'max_items',
+        type: 'number',
+        required: false,
+        description: '메시지당 최대 항목 수. 0 이면 전체를 한 메시지로, N 이면 N 개씩 분할 출력.',
+        default: '0',
+      },
+    ],
+    configExample: {
+      source: 'devices',
+      condition: '$.payload.online == true',
+      fields: 'id, name, online',
+      max_items: 2,
+    },
+    inputExamples: {
+      '트리거 (payload 무시 — trigger 노드 출력 연결)': {
+        trigger_time: 1713312000000,
+      },
+    },
+    outputExamples: {
+      'out · max_items=2 첫 번째 청크 (devices)': {
+        _comment:
+          'payload.items 는 청크별 항목 배열. metadata.type 은 source 단수형, total_count/offset/count 는 모두 문자열.',
+        payload: {
+          items: [
+            { id: 'lg_icp01:1', name: 'IDU-1', online: true },
+            { id: 'lg_icp01:2', name: 'IDU-2', online: true },
+          ],
+        },
+        metadata: { type: 'device', total_count: '5', offset: '0', count: '2' },
+      },
+      'out · max_items=0 전체를 한 메시지로 (agents)': {
+        payload: {
+          items: [
+            { id: 'agent-mqtt', name: 'MQTT Bridge' },
+            { id: 'agent-modbus', name: 'Modbus Poller' },
+          ],
+        },
+        metadata: { type: 'agent', total_count: '2', offset: '0', count: '2' },
+      },
     },
   },
 };

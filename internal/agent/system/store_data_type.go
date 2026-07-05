@@ -2,8 +2,16 @@ package system
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"regexp"
 )
+
+// @spec SPEC-STORE-003 v0.4.0
+// MetricTypeUnknown 은 metric_type 미지정 시 적용되는 기본값이다.
+// auto 등록 키 및 yaml 에서 metric_type 을 생략한 키에 일관되게 부여된다.
+// 정규식 ^[a-zA-Z0-9_-]+$ 를 만족하므로 ErrInvalidMetricType 과 충돌하지 않는다.
+const MetricTypeUnknown = "unknown"
 
 // @spec SPEC-STORE-003 v0.3.0
 // store_data_type.go — Store 의 v0.3.0 진화에서 도입된 타입 시스템 기반.
@@ -125,6 +133,54 @@ func inferDataType(value any) (DataType, error) {
 }
 
 // =============================================================================
+// stringifyValue: 동적(auto) string 키의 값 변환 helper
+// =============================================================================
+
+// @spec SPEC-STORE-003 v0.4.0
+// isStringifiableValue 는 값이 동적 string 키로 저장될 수 있는지(의미 있는 문자열
+// 표현을 가지는지) 판별한다. nil, channel, func 은 false 를 반환한다.
+//
+// 이는 기존 auto 모드의 ErrUnsupportedValueType 거부 동작을 보존하기 위함이다.
+// v0.3.0 에서는 inferDataType 이 channel/func 을 거부했으나, v0.4.0 에서 동적 키가
+// 무조건 string 으로 저장되도록 바뀌면서 거부 책임이 이 함수로 이동했다.
+func isStringifiableValue(value any) bool {
+	if value == nil {
+		return false
+	}
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Chan, reflect.Func:
+		return false
+	default:
+		return true
+	}
+}
+
+// @spec SPEC-STORE-003 v0.4.0
+// stringifyValue 는 임의의 Go 값을 string 으로 변환한다.
+// auto 모드에서 미등록 키가 처음 쓰일 때, 해당 키는 data_type=string 으로 등록되고
+// 이후 모든 쓰기 값이 이 함수로 string 화되어 저장된다 (동적=string 정책).
+//
+// 변환 규칙:
+//   - string  → 그대로 반환 (불필요한 따옴표 회피)
+//   - []byte  → string(b) (바이트 슬라이스를 그대로 문자열로)
+//   - 그 외   → fmt.Sprintf("%v", v) (숫자/불리언/맵/슬라이스/구조체 등)
+//
+// nil 은 호출 전 단계(checkKeyAllowed)에서 이미 거부되므로 여기 도달하지 않지만,
+// 방어적으로 빈 문자열을 반환한다.
+func stringifyValue(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// =============================================================================
 // matchesDataType: 쓰기 검증 helper
 // =============================================================================
 
@@ -137,7 +193,40 @@ func matchesDataType(value any, dt DataType) bool {
 	if err != nil {
 		return false
 	}
-	return inferred == dt
+	if inferred == dt {
+		return true
+	}
+	// JSON 경유 숫자 호환: JSON 디코딩은 모든 숫자를 float64 로 만들기 때문에,
+	// 서브플로우 브리지 등 JSON 직렬화를 거친 정수 값이 float64 로 도착한다.
+	//  - data_type=int  : 소수부가 없는 정수값 float(2.0) 를 허용한다.
+	//  - data_type=float: 정수(int 계열)를 허용한다(정수는 유효한 실수).
+	switch dt {
+	case DataTypeInt:
+		return inferred == DataTypeFloat && isIntegralFloat(value)
+	case DataTypeFloat:
+		return inferred == DataTypeInt
+	default:
+		return false
+	}
+}
+
+// isIntegralFloat 은 값이 소수부 없는 float(예: 2.0) 인지 판별한다.
+// float32/float64 만 대상으로 하며, 정수값이고 int64 범위 안이면 true 를 반환한다.
+func isIntegralFloat(value any) bool {
+	var f float64
+	switch v := value.(type) {
+	case float64:
+		f = v
+	case float32:
+		f = float64(v)
+	default:
+		return false
+	}
+	// NaN/Inf 및 소수부 존재 시 false. int64 범위 밖도 false.
+	if f != f || f > 9.223372036854776e18 || f < -9.223372036854776e18 {
+		return false
+	}
+	return f == float64(int64(f))
 }
 
 // =============================================================================

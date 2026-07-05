@@ -571,7 +571,7 @@ func TestTCPTransport_OpenCloseCycle(t *testing.T) {
 	// conn 을 직접 주입하여 실제 다이얼 없이 테스트
 	tcp.mu.Lock()
 	tcp.conn = client
-	tcp.open = true
+	tcp.open.Store(true)
 	tcp.mu.Unlock()
 
 	if !tcp.Available() {
@@ -604,7 +604,7 @@ func TestTCPTransport_SendReceive(t *testing.T) {
 	// readTimeout 을 0 으로 설정하여 SetReadDeadline 을 스킵 (net.Pipe 호환)
 	tcp.mu.Lock()
 	tcp.conn = client
-	tcp.open = true
+	tcp.open.Store(true)
 	tcp.readTimeout = 0
 	tcp.mu.Unlock()
 

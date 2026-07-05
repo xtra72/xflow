@@ -1417,3 +1417,385 @@ func TestBuildAgentCreateRequest_WithoutConfig(t *testing.T) {
 	assert.False(t, hasName, "config 에 name 이 포함되면 안됩니다")
 	assert.False(t, hasType, "config 에 type 이 포함되면 안됩니다")
 }
+
+// --- TestAgentToggle: enable/disable 활성화/비활성화 ---
+
+func TestAgentToggle(t *testing.T) {
+	tests := []struct {
+		name       string
+		subcommand string
+		apiPath    string
+	}{
+		{
+			name:       "agent enable",
+			subcommand: "enable",
+			apiPath:    "/api/v1/agents/agent-1/enable",
+		},
+		{
+			name:       "agent disable",
+			subcommand: "disable",
+			apiPath:    "/api/v1/agents/agent-1/disable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var called bool
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method,
+					"%s 는 POST 메서드를 사용해야 합니다", tt.subcommand)
+				assert.Equal(t, tt.apiPath, r.URL.Path,
+					"%s 의 API 경로가 올바라야 합니다", tt.subcommand)
+				called = true
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{
+					"success": true,
+					"data": map[string]any{
+						"id":      "agent-1",
+						"name":    "워커-A",
+						"type":    "worker",
+						"status":  "running",
+						"enabled": tt.subcommand == "enable",
+					},
+				})
+			})
+
+			_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
+			rootCmd.SetArgs([]string{"agent", tt.subcommand, "agent-1"})
+
+			err := rootCmd.Execute()
+			require.NoError(t, err,
+				"agent %s 실행 에러가 없어야 합니다", tt.subcommand)
+			assert.True(t, called, "%s 요청이 실행되어야 합니다", tt.subcommand)
+
+			output := buf.String()
+			assert.NotEmpty(t, output,
+				"agent %s 의 출력이 비어있으면 안됩니다", tt.subcommand)
+		})
+	}
+}
+
+// TestAgentToggle_MissingID - enable/disable ID 미지정 시 에러 검증
+func TestAgentToggle_MissingID(t *testing.T) {
+	subcommands := []string{"enable", "disable"}
+
+	for _, sub := range subcommands {
+		t.Run(fmt.Sprintf("agent %s ID 미지정", sub), func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("ID 가 없으면 서버에 요청하면 안됩니다")
+			})
+
+			_, rootCmd, _ := setupAgentTest(t, handler)
+			rootCmd.SetArgs([]string{"agent", sub})
+
+			err := rootCmd.Execute()
+			require.Error(t, err,
+				"ID 없이 agent %s 을 실행하면 에러가 발생해야 합니다", sub)
+		})
+	}
+}
+
+// TestAgentToggle_ByName - 이름으로 enable/disable 시 ID 로 resolve 되는지 검증
+func TestAgentToggle_ByName(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// resolveAgentID 의 이름 검색 요청
+		if r.URL.Path == "/api/v1/agents" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": []map[string]any{
+					{"id": "agent-uuid-1", "name": "워커-A"},
+				},
+			})
+			return
+		}
+		// enable 요청은 resolve 된 ID 경로로 들어와야 한다
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/agents/agent-uuid-1/enable", r.URL.Path,
+			"이름이 ID 로 resolve 되어 경로에 반영되어야 합니다")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data":    map[string]any{"id": "agent-uuid-1", "enabled": true},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "enable", "--name", "워커-A"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "이름으로 agent enable 실행 에러가 없어야 합니다")
+	assert.NotEmpty(t, buf.String(), "출력이 비어있으면 안됩니다")
+}
+
+// --- TestAgentConfig: 에이전트 구성 수정 ---
+
+// TestAgentConfig_KeyValue - key=value 인자로 구성 수정 시 경로/메서드/바디 검증
+func TestAgentConfig_KeyValue(t *testing.T) {
+	var gotBody map[string]any
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method,
+			"config 는 PUT 메서드를 사용해야 합니다")
+		assert.Equal(t, "/api/v1/agents/agent-1/config", r.URL.Path,
+			"config 의 API 경로가 올바라야 합니다")
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &gotBody))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data":    map[string]any{"id": "agent-1", "status": "configured"},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
+	rootCmd.SetArgs([]string{"agent", "config", "agent-1", "host=localhost", "port=1883", "enabled=true"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "agent config 실행 에러가 없어야 합니다")
+	assert.NotEmpty(t, buf.String(), "출력이 비어있으면 안됩니다")
+
+	// 요청 본문은 {"config": {...}} 형식이어야 한다
+	config, ok := gotBody["config"].(map[string]any)
+	require.True(t, ok, "요청 본문에 config 객체가 있어야 합니다")
+	assert.Equal(t, "localhost", config["host"], "host 값이 전달되어야 합니다")
+	// 숫자/불리언은 파싱되어 적절한 타입으로 전달된다 (JSON 직렬화 후 float64/bool)
+	assert.Equal(t, float64(1883), config["port"], "port 가 정수로 파싱되어야 합니다")
+	assert.Equal(t, true, config["enabled"], "enabled 가 불리언으로 파싱되어야 합니다")
+}
+
+// TestAgentConfig_File - 파일(-f)로 구성 수정 시 바디 검증
+func TestAgentConfig_File(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"host":"broker","port":1883}`), 0644))
+
+	var gotBody map[string]any
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/api/v1/agents/agent-1/config", r.URL.Path)
+
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &gotBody))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data":    map[string]any{"id": "agent-1", "status": "configured"},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
+	rootCmd.SetArgs([]string{"agent", "config", "agent-1", "-f", cfgPath})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "파일로 agent config 실행 에러가 없어야 합니다")
+	assert.NotEmpty(t, buf.String())
+
+	config, ok := gotBody["config"].(map[string]any)
+	require.True(t, ok, "요청 본문에 config 객체가 있어야 합니다")
+	assert.Equal(t, "broker", config["host"], "파일의 host 값이 전달되어야 합니다")
+	assert.Equal(t, float64(1883), config["port"], "파일의 port 값이 전달되어야 합니다")
+}
+
+// TestAgentConfig_FileWithWrapper - {"config": {...}} 래퍼 형식 파일의 내부 config 추출 검증
+func TestAgentConfig_FileWithWrapper(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"config":{"interval":5}}`), 0644))
+
+	var gotBody map[string]any
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data":    map[string]any{"id": "agent-1", "status": "configured"},
+		})
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, withResolveSupport(handler))
+	rootCmd.SetArgs([]string{"agent", "config", "agent-1", "-f", cfgPath})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err)
+
+	config, ok := gotBody["config"].(map[string]any)
+	require.True(t, ok, "요청 본문에 config 객체가 있어야 합니다")
+	assert.Equal(t, float64(5), config["interval"],
+		"래퍼 파일의 내부 config 가 추출되어야 합니다")
+	// 이중 래핑(config.config)이 되면 안된다
+	_, doubleWrapped := config["config"]
+	assert.False(t, doubleWrapped, "config 가 이중 래핑되면 안됩니다")
+}
+
+// TestAgentConfig_MissingValues - 설정값(파일/key=value) 미지정 시 에러 검증
+func TestAgentConfig_MissingValues(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/agents" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": []map[string]any{}})
+			return
+		}
+		t.Fatal("설정값이 없으면 config 요청을 보내면 안됩니다")
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "config", "agent-1"})
+
+	err := rootCmd.Execute()
+	require.Error(t, err, "설정값 없이 config 실행하면 에러가 발생해야 합니다")
+}
+
+// TestAgentConfig_InvalidKeyValue - 잘못된 key=value 형식 시 에러 검증
+func TestAgentConfig_InvalidKeyValue(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/agents" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": []map[string]any{}})
+			return
+		}
+		t.Fatal("잘못된 형식이면 config 요청을 보내면 안됩니다")
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "config", "agent-1", "invalidpair"})
+
+	err := rootCmd.Execute()
+	require.Error(t, err, "잘못된 key=value 형식이면 에러가 발생해야 합니다")
+}
+
+// --- TestAgentStats: 에이전트 통계 조회 ---
+
+// TestAgentStats - 경로/메서드 및 통계 출력 검증
+func TestAgentStats(t *testing.T) {
+	var called bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method,
+			"stats 는 GET 메서드를 사용해야 합니다")
+		assert.Equal(t, "/api/v1/agents/agent-1/stats", r.URL.Path,
+			"stats 의 API 경로가 올바라야 합니다")
+		called = true
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":              "agent-1",
+				"status":          "running",
+				"uptime":          "1h2m",
+				"connected":       true,
+				"messages_in":     100,
+				"messages_out":    95,
+				"error_count":     2,
+				"buffer_pending":  3,
+				"buffer_capacity": 1024,
+			},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
+	rootCmd.SetArgs([]string{"agent", "stats", "agent-1"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "agent stats 실행 에러가 없어야 합니다")
+	assert.True(t, called, "stats 요청이 실행되어야 합니다")
+
+	output := buf.String()
+	assert.NotEmpty(t, output, "stats 출력이 비어있으면 안됩니다")
+	assert.Contains(t, output, "agent-1", "출력에 ID 가 포함되어야 합니다")
+}
+
+// TestAgentStats_JSONFormat - JSON 포맷 출력 검증
+func TestAgentStats_JSONFormat(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/agents/agent-1/stats", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"id":           "agent-1",
+				"messages_in":  10,
+				"messages_out": 8,
+			},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, withResolveSupport(handler))
+	rootCmd.SetArgs([]string{"agent", "stats", "agent-1", "--format", "json"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "agent stats --format json 실행 에러가 없어야 합니다")
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &result),
+		"JSON 포맷 출력이 유효한 JSON 이어야 합니다")
+	assert.Equal(t, "agent-1", result["id"])
+}
+
+// TestAgentStats_ByName - 이름으로 stats 조회 시 ID 로 resolve 되는지 검증
+func TestAgentStats_ByName(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/agents" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": []map[string]any{
+					{"id": "agent-uuid-9", "name": "통계-에이전트"},
+				},
+			})
+			return
+		}
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/v1/agents/agent-uuid-9/stats", r.URL.Path,
+			"이름이 ID 로 resolve 되어 경로에 반영되어야 합니다")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data":    map[string]any{"id": "agent-uuid-9"},
+		})
+	})
+
+	_, rootCmd, buf := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "stats", "--name", "통계-에이전트"})
+
+	err := rootCmd.Execute()
+	require.NoError(t, err, "이름으로 agent stats 실행 에러가 없어야 합니다")
+	assert.NotEmpty(t, buf.String())
+}
+
+// TestAgentStats_MissingID - ID 미지정 시 에러 검증
+func TestAgentStats_MissingID(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("ID 가 없으면 서버에 요청하면 안됩니다")
+	})
+
+	_, rootCmd, _ := setupAgentTest(t, handler)
+	rootCmd.SetArgs([]string{"agent", "stats"})
+
+	err := rootCmd.Execute()
+	require.Error(t, err, "ID 없이 agent stats 를 실행하면 에러가 발생해야 합니다")
+}
+
+// TestAgentCommand_HasNewSubcommands - 신규 서브커맨드 등록 검증
+func TestAgentCommand_HasNewSubcommands(t *testing.T) {
+	client := NewClient("http://localhost", "", 5*time.Second, false)
+	confirmFn := func(string, io.Reader) bool { return false }
+	cmd := newAgentCmd(&client, confirmFn)
+
+	want := map[string]bool{"enable": false, "disable": false, "config": false, "stats": false}
+	for _, sub := range cmd.Commands() {
+		if _, ok := want[sub.Name()]; ok {
+			want[sub.Name()] = true
+		}
+	}
+	for name, found := range want {
+		assert.True(t, found, "%q 서브커맨드가 등록되어야 합니다", name)
+	}
+}

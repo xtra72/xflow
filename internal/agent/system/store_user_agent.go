@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -106,6 +107,22 @@ func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 		if d, err := time.ParseDuration(v); err == nil {
 			opts = append(opts, WithHistoryTTL(d))
 		}
+	}
+
+	// key_tag (string, 선택) — 자동 요소 생성 시 키로 사용할 태그 이름.
+	// 예: "name" → 쓰기 태그에 name 이 있으면 그 값을 키로, 없으면 기존 키(생성된 id).
+	// 태그 key 형식(^[a-zA-Z0-9_-]+$)을 따른다.
+	if raw, ok := options["key_tag"]; ok {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("store config: key_tag must be string, got %T", raw)
+		}
+		if s != "" && !tagKeyPattern.MatchString(s) {
+			return nil, fmt.Errorf(
+				"store config: key_tag %q must match pattern ^[a-zA-Z0-9_-]+$", s,
+			)
+		}
+		opts = append(opts, WithKeyTag(s))
 	}
 
 	// @spec SPEC-STORE-003 v0.3.0
@@ -344,11 +361,28 @@ func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
 // 뷰로 라우팅된다. 생성 시점 스냅샷을 잡으면 재시작 후 옛 inner 로 향해
 // 모든 쓰기/읽기가 실패하는 회귀가 발생한다.
 func (a *UserStoreAgent) NodeStoreForNamespace(namespace string) any {
-	return NewLazyNodeStoreAdapter(func() Store {
+	// 빈 네임스페이스는 읽기 경로(QueryHistory/ListStoreKeys 등)와 동일하게
+	// defaultStoreNamespace 로 정규화한다. 이렇게 하지 않으면 store-write 노드가
+	// namespace="" 로 쓴 값(":key")을 API 쿼리(""→"default" 기본값, "default:key")가
+	// 찾지 못해, 등록된 키인데도 "store: key not found" 가 발생한다.
+	if namespace == "" {
+		namespace = defaultStoreNamespace
+	}
+	// store resolver: 매 호출마다 현재 inner 의 네임스페이스 뷰를 반환.
+	storeResolver := func() Store {
 		a.mu.RLock()
 		defer a.mu.RUnlock()
 		return a.inner.ForNamespace(namespace)
-	})
+	}
+	// agent resolver: data_type/tags 메타 설정에 필요한 현재 *StoreAgent(inner) 를 반환.
+	// store-write 노드의 SetWithMeta 경로에서 사용된다. 에이전트 재시작에 안전하도록
+	// 호출 시점의 inner 를 lazy 하게 돌려준다.
+	agentResolver := func() *StoreAgent {
+		a.mu.RLock()
+		defer a.mu.RUnlock()
+		return a.inner
+	}
+	return NewLazyNodeStoreAdapterWithAgent(storeResolver, agentResolver, namespace)
 }
 
 // Init 은 에이전트를 초기화하고 내부 StoreAgent를 시작한다.
@@ -484,10 +518,12 @@ func (a *UserStoreAgent) processGetHistory(params map[string]any) ([]byte, error
 		return nil, fmt.Errorf("store get_history: key is required")
 	}
 
+	// 네임스페이스 라운드트립 버그 수정 (v0.7.0 M14):
+	// 빈 네임스페이스("")로 저장된 키를 조회하려면 "default"로 강제하면 안 됨.
+	// 웹 UI에서 전송한 namespace("")를 그대로 사용하여 저장된 실제 네임스페이스와 일치시킴.
 	namespace, _ := params["namespace"].(string)
-	if namespace == "" {
-		namespace = "default"
-	}
+	// 빈 네임스페이스도 그대로 사용하고, 강제하지 않음
+	// (이전: if namespace == "" { namespace = "default" })
 
 	a.mu.RLock()
 	inner := a.inner
@@ -500,6 +536,18 @@ func (a *UserStoreAgent) processGetHistory(params map[string]any) ([]byte, error
 	store := inner.ForNamespace(namespace)
 	entries, err := store.GetHistory(context.Background(), key)
 	if err != nil {
+		// 키가 없거나 만료된 경우(ErrKeyNotFound)는 에러가 아니라 빈 이력으로
+		// 응답한다. 목록 조회와 행 클릭 사이에 TTL 만료로 키가 사라질 수 있으며,
+		// 이는 500 INTERNAL_ERROR 가 아니라 graceful 한 빈 결과여야 한다.
+		if errors.Is(err, ErrKeyNotFound) {
+			return json.Marshal(map[string]any{
+				"key":       key,
+				"namespace": namespace,
+				"count":     0,
+				"history":   []map[string]any{},
+				"found":     false,
+			})
+		}
 		return nil, fmt.Errorf("store get_history: %w", err)
 	}
 
@@ -551,6 +599,7 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 	newScanInterval := allCfg.scanInterval
 	newDefaultTTL := allCfg.defaultTTL
 	newMaxKeyLength := allCfg.maxKeyLength
+	newKeyTag := allCfg.keyTag
 
 	// 3) a.agentConfig 갱신 및 inner 스냅샷을 락 안에서, inner 에의 setter 호출은
 	//    락 밖에서 수행한다(이중 락 교착 회피: a.mu 와 inner.mu 는 서로 독립적).
@@ -572,6 +621,9 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 		// v0.3.0 신규 필드
 		inner.SetRegistrationType(newRegistrationType)
 		inner.SetStaticKeys(newStaticKeys)
+
+		// key_tag 런타임 전파.
+		inner.SetKeyTag(newKeyTag)
 	}
 
 	return nil
@@ -652,15 +704,24 @@ func (a *UserStoreAgent) State() map[string]any {
 		// 내부 키에서 네임스페이스 접두사를 분리한다.
 		// VolatileStore에는 "sensors:factory-A/line-3:device_id" 형태로 저장되지만,
 		// 사용자에게는 key_template 기준의 키("factory-A/line-3:device_id")만 표시한다.
+		// prefixKey 는 ns="" 라도 ":"+key 로 저장하므로, ns+":" 접두사 제거는 ns=""
+		// (= ":") 경우에도 항상 적용해야 displayKey 가 라운드트립된다.
+		// (버그: 이전엔 ns!="" 일 때만 strip 해 ns="" 키가 ":09a..." 로 표시됐다.)
 		rawKey, _ := key.(string)
-		displayKey := rawKey
 		ns := item.namespace
-		if ns != "" {
-			displayKey = strings.TrimPrefix(rawKey, ns+":")
-		}
+		// 네임스페이스 접두사를 제거한 저장 키(= 시리즈 인코딩 키, 또는 레거시 bare 키).
+		// @spec SPEC-STORE-004: 레지스트리/저장 키는 EncodeSeriesKey("metric|tags|key") 로
+		// 키잉되므로, 메타 조회는 이 인코딩 키로 하고, 표시용 key 는 디코드된 사용자 key 로 한다.
+		encodedKey := strings.TrimPrefix(rawKey, ns+":")
+		userKey := decodeStorageKeyToSeries(encodedKey).Key
 
 		entry := map[string]any{
-			"key":           displayKey,
+			"key": userKey,
+			// @spec SPEC-STORE-004: storage_key 는 인코딩 시리즈 키(저장/레지스트리 키)이다.
+			// 표시·정렬·필터는 디코드된 key 를 쓰지만, 직접 저장 키로 동작하는 행 작업
+			// (get_history, 메타 편집/승격 등)은 이 storage_key 를 사용해야 한다. 디코드된
+			// key 로 조회하면 인코딩 키로 저장된 값을 못 찾는다(예: 히스토리 0).
+			"storage_key":   encodedKey,
 			"value":         item.value,
 			"namespace":     ns,
 			"created_at":    item.createdAt.Format(time.RFC3339),
@@ -668,16 +729,22 @@ func (a *UserStoreAgent) State() map[string]any {
 			"history_count": len(item.history),
 		}
 
-		// @spec SPEC-STORE-003 v0.3.0: 정적 키로 선언된 키에 대해서는 태그 맵을 첨부한다.
-		// 동적으로 쓰여진 키(정적 목록에 없음)는 tags 필드를 생략한다.
-		// v0.3.0: staticKeys value 가 StaticKeyMeta 로 진화했으므로 .Tags 필드를 추출한다.
-		if meta, ok := inner.config.staticKeys[displayKey]; ok && len(meta.Tags) > 0 {
-			copied := make(map[string]string, len(meta.Tags))
-			for tk, tv := range meta.Tags {
-				copied[tk] = tv
+		// @spec SPEC-STORE-003 v0.4.0: 모든 엔트리(정적 + 동적)에 metric_type 과 tags 를 노출한다.
+		// @spec SPEC-STORE-004: 메타 조회는 인코딩 시리즈 키(encodedKey)로 한다(staticKeys 는
+		// 인코딩 키로 키잉됨). 표시용 key 는 위에서 디코드한 사용자 key(userKey)이므로,
+		// 같은 key 의 서로 다른 metric/tags 시리즈는 각각의 행으로 metric_type/tags 가 노출된다.
+		metricType := MetricTypeUnknown
+		tagsCopy := map[string]string{}
+		if meta, ok := inner.config.staticKeys[encodedKey]; ok {
+			if meta.MetricType != "" {
+				metricType = meta.MetricType
 			}
-			entry["tags"] = copied
+			for tk, tv := range meta.Tags {
+				tagsCopy[tk] = tv
+			}
 		}
+		entry["metric_type"] = metricType
+		entry["tags"] = tagsCopy
 
 		if item.expiresAt.IsZero() {
 			entry["expires_at"] = ""

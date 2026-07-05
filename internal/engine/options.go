@@ -85,6 +85,15 @@ func (e *Engine) SetDebugSink(sink node.DebugSink) {
 	e.mu.Unlock()
 }
 
+// WithOutputObserver 는 Engine에 OutputObserver를 설정하는 옵션을 반환한다.
+// 설정하면 노드가 출력 포트로 메시지를 방출할 때마다 OnNodeOutput이 호출된다.
+// 와이어 연결 여부와 무관하게 호출되며, 미설정 시 핫 패스 오버헤드는 없다.
+func WithOutputObserver(obs OutputObserver) EngineOption {
+	return func(e *Engine) {
+		e.SetOutputObserver(obs)
+	}
+}
+
 // WithOnAgentStart 는 엔진이 에이전트를 자동 시작한 후 호출되는 콜백을 등록한다.
 // 매니저의 OnStart 훅이 실행되지 않는 autoStartAgents 경로를 보완한다.
 func WithOnAgentStart(fn func(agent.Agent)) EngineOption {

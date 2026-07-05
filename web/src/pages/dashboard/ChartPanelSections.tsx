@@ -5,11 +5,18 @@
 // 편집 UI 를 제공한다. 상위 PanelSettingsDialog 는 panel.type 에 따라
 // 분기하여 해당 Section 을 렌더링한다.
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, ChevronUp, GripVertical, Plus, Trash2, X } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
+import { useAgents } from '@/hooks/useAgent';
+import {
+  useStoreKeysWithTags,
+  type DataType,
+  type StoreKeyObject,
+} from '@/services/api/store';
+import { useTranslation } from '@/lib/i18n';
 
 import type {
   TableColumn,
@@ -18,11 +25,31 @@ import type {
   AggFunc,
   SortOrder,
   YAxisMode,
+  YAxisDataType,
+  YEnumLabel,
+  AxisFontStyle,
   TimeWindowMode,
   YThreshold,
   ChannelRefConfig,
   StrokeStyle,
+  ChartDataSourceKind,
+  StoreSeriesRef,
+  StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
+import { pickSeriesColor } from './panels/charts/chartChannelTypes';
+import {
+  distinctDataTypes,
+  distinctMetricTypes,
+  filterStoreKeyObjects,
+  makeTagFilterId,
+  sortStoreKeyObjects,
+  type StoreSortField,
+  type StoreSortState,
+} from './panels/charts/storeSourceFilter';
+import {
+  makeAliasToken,
+  resolveSeriesAlias,
+} from './panels/charts/aliasTemplate';
 
 /** REQ-M5-04: channel_name 정규식 */
 const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -30,9 +57,8 @@ const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 /** Custom (수동 입력) 드롭다운 옵션 sentinel */
 const CUSTOM_CHANNEL_SENTINEL = '__custom__';
 
-/** 인라인 에러 메시지 (한국어 UI) */
-const CHANNEL_NAME_ERROR_MESSAGE =
-  '유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).';
+/** 인라인 에러 메시지 i18n 키 (렌더 시 t() 로 변환) */
+const CHANNEL_NAME_ERROR_KEY = 'dashboard.chart.channelNameError';
 
 type OnConfig = (config: Record<string, unknown>) => void;
 
@@ -78,6 +104,7 @@ export function ChartChannelSection({
   onConfigChange: OnConfig;
   fetchChannels?: () => Promise<ChartChannelSummary[]>;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const currentName = (panel.config?.channel_name as string | undefined) ?? '';
 
   // 드롭다운 선택 상태. 초기값은 현재 저장된 채널 이름 (없으면 '')
@@ -157,8 +184,8 @@ export function ChartChannelSection({
 
   return (
     <LabeledField
-      label="채널 이름 (channel_name)"
-      hint="활성 chart-emitter 채널을 선택하거나, Custom 을 눌러 배포 예정인 채널 이름을 직접 입력하세요."
+      label={t('dashboard.chart.channelNameLabel')}
+      hint={t('dashboard.chart.channelNameHint')}
     >
       <select
         data-testid="chart-channel-name-select"
@@ -169,27 +196,30 @@ export function ChartChannelSection({
       >
         <option value="">
           {loadState === 'loading'
-            ? '활성 채널 목록 불러오는 중...'
+            ? t('dashboard.chart.loadingChannels')
             : channels.length === 0
-              ? '활성 채널 없음 (Custom 으로 수동 입력)'
-              : '채널을 선택하세요'}
+              ? t('dashboard.chart.noChannelsCustom')
+              : t('dashboard.chart.selectChannel')}
         </option>
         {currentIsInactive && (
           <option value={currentName}>
-            {currentName} — (현재 선택, 비활성)
+            {t('dashboard.chart.channelInactive').replace('{name}', currentName)}
           </option>
         )}
         {channels.map((ch) => (
           <option key={ch.name} value={ch.name}>
-            {ch.name} — flow {ch.flow_id || '?'} ({ch.subscriber_count} subs)
+            {t('dashboard.chart.channelOption')
+              .replace('{name}', ch.name)
+              .replace('{flow}', ch.flow_id || '?')
+              .replace('{count}', String(ch.subscriber_count))}
           </option>
         ))}
-        <option value={CUSTOM_CHANNEL_SENTINEL}>Custom... (직접 입력)</option>
+        <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.chart.customOption')}</option>
       </select>
 
       {loadState === 'error' && (
         <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-          채널 목록 조회 실패. Custom 으로 수동 입력을 사용하세요.
+          {t('dashboard.chart.loadErrorCustom')}
           {loadError ? ` (${loadError})` : ''}
         </p>
       )}
@@ -204,7 +234,7 @@ export function ChartChannelSection({
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           }}
-          placeholder="예: room1_temp"
+          placeholder={t('dashboard.chart.customPlaceholder')}
           autoFocus
           className={`${inputClass()} mt-2`}
         />
@@ -215,10 +245,1099 @@ export function ChartChannelSection({
           data-testid="chart-channel-name-error"
           className="mt-1 text-xs text-red-500"
         >
-          {CHANNEL_NAME_ERROR_MESSAGE}
+          {t(CHANNEL_NAME_ERROR_KEY)}
         </p>
       )}
     </LabeledField>
+  );
+}
+
+// --- 1.5 데이터 소스 토글 + Store 소스 선택 (SPEC-WEB-005) ---
+
+/** 집계 옵션(UI 표기). tsdb 모달과 동일한 라벨 키를 재사용한다. */
+const STORE_AGG_OPTIONS: { value: StoreSourceConfig['aggregation']; labelKey: string }[] = [
+  { value: 'min', labelKey: 'tsdb.aggMin' },
+  { value: 'max', labelKey: 'tsdb.aggMax' },
+  { value: 'average', labelKey: 'tsdb.aggAverage' },
+  { value: 'first', labelKey: 'tsdb.aggFirst' },
+  { value: 'last', labelKey: 'tsdb.aggLast' },
+];
+
+/** data_type 필터 옵션(전체 + 6종). */
+const DATA_TYPE_OPTIONS: DataType[] = ['int', 'float', 'string', 'boolean', 'bytes', 'json'];
+
+/** 기본 Store 소스 설정(처음 store 모드로 전환 시 사용). */
+function defaultStoreSource(): StoreSourceConfig {
+  return {
+    agent_name: '',
+    namespace: 'default',
+    series: [],
+    time_window_ms: 60 * 60 * 1000, // 지난 1시간
+    interval_ms: 60 * 1000, // 1분 버킷
+    aggregation: 'average',
+    refresh_interval_ms: 5000,
+  };
+}
+
+/**
+ * 차트 패널 공통 데이터 소스 섹션.
+ *
+ * - 데이터 소스 토글(채널 / Store)을 제공한다.
+ * - store 선택 시: Store 에이전트 선택 → 키 필터(이름/metric_type/tag/data_type)
+ *   → 키 멀티셀렉트로 store_source.series[] 를 채운다.
+ * - 시간 윈도우 / 인터벌 / 집계 입력을 제공한다(tsdb 모달 컨트롤과 형상 일치).
+ *
+ * 두 소스는 공존하며 data_source 미지정은 'channel' 로 해석된다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+export function StoreSourceSection({
+  panel,
+  onConfigChange,
+  fetchChannels = listChartChannels,
+}: {
+  panel: PanelConfig;
+  onConfigChange: OnConfig;
+  /** 채널 모드 시리즈 편집기에 주입할 활성 채널 조회기(테스트용). */
+  fetchChannels?: () => Promise<ChartChannelSummary[]>;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const config = panel.config ?? {};
+  const dataSource = (config.data_source as ChartDataSourceKind | undefined) ?? 'channel';
+  const storeSource =
+    (config.store_source as StoreSourceConfig | undefined) ?? defaultStoreSource();
+  // 라인 차트 패널은 per-line 스타일 통합 편집(채널/스토어 시리즈 양쪽)을 노출한다.
+  const isLineChart = panel.type === 'line-chart';
+
+  const setDataSource = (kind: ChartDataSourceKind): void => {
+    if (kind === 'store' && !config.store_source) {
+      // 처음 store 로 전환 시 기본 설정을 함께 채운다.
+      onConfigChange({ data_source: 'store', store_source: defaultStoreSource() });
+    } else {
+      onConfigChange({ data_source: kind });
+    }
+  };
+
+  const patchStore = (patch: Partial<StoreSourceConfig>): void => {
+    onConfigChange({ store_source: { ...storeSource, ...patch } });
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* 데이터 소스 토글 */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.chart.dataSourceLabel')}
+        </label>
+        <div
+          className="inline-flex rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-0.5"
+          role="tablist"
+          aria-label={t('dashboard.chart.dataSourceLabel')}
+        >
+          {(['channel', 'store'] as const).map((kind) => {
+            const selected = dataSource === kind;
+            return (
+              <button
+                key={kind}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                data-testid={`chart-data-source-${kind}`}
+                onClick={() => setDataSource(kind)}
+                className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                  selected
+                    ? 'bg-blue-600 text-white'
+                    : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
+                }`}
+              >
+                {kind === 'channel'
+                  ? t('dashboard.chart.dataSourceChannel')
+                  : t('dashboard.chart.dataSourceStore')}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Store 소스 상세 (store 선택 시) */}
+      {dataSource === 'store' && (
+        <StoreSourceEditor
+          storeSource={storeSource}
+          onPatch={patchStore}
+          isLineChart={isLineChart}
+        />
+      )}
+
+      {/*
+        채널 모드 + 라인 차트: 채널 시리즈 편집기(채널 추가/선택/순서 + per-line 스타일).
+        다른 차트 타입은 채널 모드에서 단일 channel_name 을 ChartChannelSection(우측 컬럼)
+        으로 편집하므로 여기서는 렌더하지 않는다.
+      */}
+      {dataSource === 'channel' && isLineChart && (
+        <ChannelSeriesEditor
+          panel={panel}
+          onConfigChange={onConfigChange}
+          fetchChannels={fetchChannels}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Store 소스 상세 편집기(에이전트/키 선택 + 시간/인터벌/집계). */
+function StoreSourceEditor({
+  storeSource,
+  onPatch,
+  isLineChart,
+}: {
+  storeSource: StoreSourceConfig;
+  onPatch: (patch: Partial<StoreSourceConfig>) => void;
+  isLineChart: boolean;
+}): React.ReactElement {
+  const { t } = useTranslation();
+
+  // Store 에이전트 목록(type === 'store').
+  const { data: agentsResult } = useAgents();
+  const storeAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a: { type: string }) => a.type === 'store'),
+    [agentsResult],
+  );
+
+  return (
+    <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
+      {/* 에이전트 선택 */}
+      <LabeledField label={t('dashboard.chart.storeAgent')}>
+        <select
+          data-testid="chart-store-agent-select"
+          value={storeSource.agent_name}
+          onChange={(e) => onPatch({ agent_name: e.target.value, series: [] })}
+          className={inputClass()}
+        >
+          <option value="">{t('dashboard.chart.storeAgentSelect')}</option>
+          {storeAgents.map((a: { name: string }) => (
+            <option key={a.name} value={a.name}>
+              {a.name}
+            </option>
+          ))}
+          {/* 현재 저장된 에이전트가 목록에 없으면(비활성 등) 선택 유지 */}
+          {storeSource.agent_name &&
+            !storeAgents.some((a: { name: string }) => a.name === storeSource.agent_name) && (
+              <option value={storeSource.agent_name}>
+                {t('dashboard.chart.storeAgentInactive').replace(
+                  '{name}',
+                  storeSource.agent_name,
+                )}
+              </option>
+            )}
+        </select>
+      </LabeledField>
+
+      {/* 키 선택기(4 필터 + 멀티셀렉트) */}
+      {storeSource.agent_name && (
+        <StoreKeySelector
+          agentName={storeSource.agent_name}
+          series={storeSource.series}
+          onChange={(series) => onPatch({ series })}
+        />
+      )}
+
+      {/* 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
+      {storeSource.series.length > 0 && (
+        <SelectedSeriesList
+          series={storeSource.series}
+          onChange={(series) => onPatch({ series })}
+          isLineChart={isLineChart}
+        />
+      )}
+
+      {/* 시간 윈도우 / 인터벌 / 집계 */}
+      <div className="grid grid-cols-2 gap-2">
+        <LabeledField
+          label={t('dashboard.chart.storeTimeWindowSec')}
+          hint={t('dashboard.chart.storeTimeWindowHint')}
+        >
+          <input
+            type="number"
+            min={1}
+            data-testid="chart-store-time-window"
+            value={Math.round(storeSource.time_window_ms / 1000)}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n) && n > 0) onPatch({ time_window_ms: n * 1000 });
+            }}
+            className={inputClass()}
+          />
+        </LabeledField>
+        <LabeledField label={t('dashboard.chart.storeIntervalSec')}>
+          <input
+            type="number"
+            min={1}
+            data-testid="chart-store-interval"
+            value={Math.round(storeSource.interval_ms / 1000)}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n) && n > 0) onPatch({ interval_ms: n * 1000 });
+            }}
+            className={inputClass()}
+          />
+        </LabeledField>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <LabeledField label={t('dashboard.chart.storeAggregation')}>
+          <select
+            value={storeSource.aggregation}
+            data-testid="chart-store-aggregation"
+            onChange={(e) =>
+              onPatch({ aggregation: e.target.value as StoreSourceConfig['aggregation'] })
+            }
+            className={inputClass()}
+          >
+            {STORE_AGG_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {t(opt.labelKey)}
+              </option>
+            ))}
+          </select>
+        </LabeledField>
+        <LabeledField label={t('dashboard.chart.storeRefreshSec')}>
+          <input
+            type="number"
+            min={1}
+            value={Math.round((storeSource.refresh_interval_ms ?? 5000) / 1000)}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n) && n > 0) onPatch({ refresh_interval_ms: n * 1000 });
+            }}
+            className={inputClass()}
+          />
+        </LabeledField>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 통합 per-line 스타일 컨트롤 (SPEC-WEB-005).
+ *
+ * stroke_style / stroke_width / smooth / display_field 를 편집한다. 채널 시리즈
+ * (ChannelRefConfig)와 스토어 시리즈(StoreSeriesRef)가 동일한 스타일 필드를 가지므로
+ * 하나의 컴포넌트로 양쪽 라인 차트 시리즈 스타일을 통합한다. 라인 차트 패널에서만
+ * 노출된다.
+ *
+ * `display_field` 는 채널 시리즈에서만 렌더에 영향을 주며, 스토어 시리즈는 매트릭스가
+ * 이미 단일 숫자 값을 제공하므로 표시는 되지만 렌더 결과에는 영향을 주지 않는다.
+ */
+interface LineStyleValue {
+  stroke_style?: StrokeStyle;
+  stroke_width?: number;
+  smooth?: boolean;
+  display_field?: string;
+}
+
+function LineStyleControls({
+  value,
+  onPatch,
+  testIdPrefix,
+}: {
+  value: LineStyleValue;
+  onPatch: (patch: LineStyleValue) => void;
+  testIdPrefix: string;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid={`${testIdPrefix}-line-style`}>
+      <select
+        value={value.stroke_style ?? 'solid'}
+        onChange={(e) => onPatch({ stroke_style: e.target.value as StrokeStyle })}
+        aria-label={t('dashboard.chart.lineStyleAria')}
+        data-testid={`${testIdPrefix}-stroke-style`}
+        className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
+      >
+        <option value="solid">{t('dashboard.chart.lineSolid')}</option>
+        <option value="dashed">{t('dashboard.chart.lineDashed')}</option>
+        <option value="dotted">{t('dashboard.chart.lineDotted')}</option>
+      </select>
+      <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
+        {t('dashboard.chart.thickness')}
+        <input
+          type="number"
+          min={1}
+          max={6}
+          value={value.stroke_width ?? 2}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            if (!Number.isNaN(n)) onPatch({ stroke_width: n });
+          }}
+          data-testid={`${testIdPrefix}-stroke-width`}
+          className="w-12 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
+        />
+      </label>
+      <label className="flex cursor-pointer items-center gap-1 text-xs text-(--color-text-muted)">
+        <input
+          type="checkbox"
+          checked={value.smooth ?? false}
+          onChange={(e) => onPatch({ smooth: e.target.checked })}
+          data-testid={`${testIdPrefix}-smooth`}
+          className="h-3 w-3 rounded border-gray-300"
+        />
+        {t('dashboard.chart.curve')}
+      </label>
+      <input
+        type="text"
+        value={value.display_field ?? ''}
+        onChange={(e) => onPatch({ display_field: e.target.value || undefined })}
+        placeholder={t('dashboard.chart.displayFieldShort')}
+        aria-label={t('dashboard.chart.displayFieldAria')}
+        data-testid={`${testIdPrefix}-display-field`}
+        className="w-28 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+      />
+    </div>
+  );
+}
+
+/**
+ * 시리즈 alias 텍스트 입력(인라인). 토큰 삽입을 위해 DOM 참조를 상위로 전달한다.
+ * 빈 값은 alias=undefined 로 저장해 키명 폴백을 유지한다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+function SeriesAliasInput({
+  index,
+  seriesKey,
+  alias,
+  onAliasChange,
+  inputRef,
+}: {
+  index: number;
+  seriesKey: string;
+  alias: string | undefined;
+  onAliasChange: (alias: string | undefined) => void;
+  inputRef: (el: HTMLInputElement | null) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={alias ?? ''}
+      onChange={(e) => {
+        const v = e.target.value;
+        onAliasChange(v.trim() === '' ? undefined : v);
+      }}
+      placeholder={seriesKey}
+      aria-label={t('dashboard.chart.storeSeriesNameAria').replace('{key}', seriesKey)}
+      data-testid={`chart-store-series-alias-${index}`}
+      className="w-32 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+    />
+  );
+}
+
+/**
+ * 시리즈 alias 태그 토큰 삽입 버튼 + 실시간 미리보기 서브행 (SPEC-WEB-005).
+ *
+ * - 태그가 있는 시리즈에만 노출된다(채널 시리즈/태그 없는 시리즈는 plain 텍스트 유지).
+ * - 각 태그 키마다 `{$.key}` 삽입 버튼을 제공하고, 클릭 시 입력 커서 위치(없으면 끝)에
+ *   토큰을 삽입한다.
+ * - 미리보기는 resolveSeriesAlias(alias, tags) 결과를 보여준다. alias 가 비어있으면
+ *   키명으로 폴백(현재 렌더 동작과 동일).
+ */
+function SeriesAliasTokens({
+  index,
+  seriesKey,
+  alias,
+  tags,
+  onAliasChange,
+  getInput,
+}: {
+  index: number;
+  seriesKey: string;
+  alias: string | undefined;
+  tags: Record<string, string>;
+  onAliasChange: (alias: string | undefined) => void;
+  getInput: () => HTMLInputElement | null;
+}): React.ReactElement | null {
+  const { t } = useTranslation();
+  const tagKeys = Object.keys(tags);
+  if (tagKeys.length === 0) return null;
+
+  // 커서 위치(없으면 끝)에 토큰을 삽입한다.
+  const insertToken = (tagKey: string): void => {
+    const token = makeAliasToken(tagKey);
+    const current = alias ?? '';
+    const el = getInput();
+    let next: string;
+    if (el && el.selectionStart != null && el.selectionEnd != null) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      next = current.slice(0, start) + token + current.slice(end);
+    } else {
+      next = current + token;
+    }
+    onAliasChange(next.trim() === '' ? undefined : next);
+    // 삽입 후 커서를 토큰 끝으로 이동(가능할 때).
+    if (el) {
+      const caret =
+        (el.selectionStart ?? current.length) + token.length;
+      requestAnimationFrame(() => {
+        try {
+          el.focus();
+          el.setSelectionRange(caret, caret);
+        } catch {
+          // jsdom 등에서 setSelectionRange 미지원 시 무시.
+        }
+      });
+    }
+  };
+
+  // 미리보기: alias 비어있으면 키명 폴백(렌더 동작과 일치).
+  const preview =
+    alias && alias.trim() !== '' ? resolveSeriesAlias(alias, tags) : seriesKey;
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1 px-1.5 pb-1"
+      data-testid={`chart-store-series-tokens-${index}`}
+    >
+      <span className="text-[9px] text-(--color-text-muted)">
+        {t('dashboard.chart.storeAliasInsertToken')}
+      </span>
+      {tagKeys.map((k) => (
+        <button
+          key={k}
+          type="button"
+          onClick={() => insertToken(k)}
+          data-testid={`chart-store-series-token-${index}-${k}`}
+          className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 font-mono text-[9px] text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+        >
+          {makeAliasToken(k)}
+        </button>
+      ))}
+      {/* 미리보기: 라벨(i18n) + 해석값(raw). 값은 별도 노드로 두어 항상 확인 가능. */}
+      <span
+        className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-[9px] text-(--color-text-muted)"
+        data-testid={`chart-store-series-preview-${index}`}
+      >
+        <span>{t('dashboard.chart.storeAliasPreview')}</span>
+        <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 선택된 스토어 시리즈 목록 + 시리즈별 표시 이름(alias)/색상/라인 스타일 편집기.
+ *
+ * store_source.series[] 의 각 항목을 행으로 표시한다. 항상 alias + color 를 편집하고,
+ * 라인 차트 패널(`isLineChart`)에서는 펼침 시 통합 라인 스타일(stroke_style/width/
+ * smooth/display_field)도 편집한다. alias 빈 값은 undefined 로 저장해 key/컬럼명으로
+ * 폴백한다. 모든 필드는 useStoreChartData 의 매핑 경로(store_source.series 직접 읽음)를
+ * 통해 차트 범례/라인 스타일에 반영된다.
+ *
+ * @spec SPEC-WEB-005
+ */
+function SelectedSeriesList({
+  series,
+  onChange,
+  isLineChart,
+}: {
+  series: StoreSeriesRef[];
+  onChange: (series: StoreSeriesRef[]) => void;
+  isLineChart: boolean;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  // 펼친 행 인덱스(라인 스타일 편집용).
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  // 행별 alias 입력 DOM 참조(토큰 삽입 시 커서 위치 사용).
+  const aliasInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // 인덱스 i 의 시리즈에 patch 를 적용한다(불변 갱신).
+  const patchSeries = (i: number, patch: Partial<StoreSeriesRef>): void => {
+    onChange(series.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  };
+
+  const removeSeries = (i: number): void => {
+    onChange(series.filter((_, idx) => idx !== i));
+  };
+
+  const toggleExpand = (i: number): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-1.5" data-testid="chart-store-selected-series">
+      <label className="block text-[10px] font-medium text-(--color-text-muted)">
+        {t('dashboard.chart.storeSelectedSeries')}
+      </label>
+      {series.map((s, i) => {
+        const tagStr = Object.entries(s.tags ?? {})
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ');
+        const isExpanded = expanded.has(i);
+        return (
+          <div
+            key={`${s.key}-${s.metric_type ?? ''}-${i}`}
+            data-testid={`chart-store-series-row-${i}`}
+            className="rounded border border-(--color-border-default) bg-(--color-bg-surface)"
+          >
+            <div className="flex items-center gap-1.5 px-1.5 py-1">
+              {/* 라인 차트: 펼침 토글 */}
+              {isLineChart && (
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(i)}
+                  data-testid={`chart-store-series-expand-${i}`}
+                  aria-label={
+                    isExpanded
+                      ? t('dashboard.chart.collapseAria')
+                      : t('dashboard.chart.expandAria')
+                  }
+                  className="flex items-center text-(--color-text-muted)"
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )}
+                </button>
+              )}
+              {/* 키 + (metric/tags) 식별 표시 */}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate font-mono text-[11px] text-(--color-text-primary)">
+                  {s.key}
+                </span>
+                {(s.metric_type || tagStr) && (
+                  <span className="truncate text-[9px] text-(--color-text-muted)">
+                    {[s.metric_type, tagStr].filter(Boolean).join(' · ')}
+                  </span>
+                )}
+              </span>
+              {/*
+                표시 이름(alias) 입력 + 태그 토큰 삽입/미리보기 (SPEC-WEB-005).
+                빈 값은 undefined 로 저장(키명 폴백). `{$.tagKey}` 토큰 지원.
+                입력 필드만 인라인에 두고, 토큰 버튼/미리보기는 아래 서브행에 렌더한다.
+              */}
+              <SeriesAliasInput
+                index={i}
+                seriesKey={s.key}
+                alias={s.alias}
+                onAliasChange={(alias) => patchSeries(i, { alias })}
+                inputRef={(el) => {
+                  aliasInputRefs.current[i] = el;
+                }}
+              />
+              {/* 색상 선택(선택) */}
+              <input
+                type="color"
+                value={s.color ?? pickSeriesColor(i)}
+                onChange={(e) => patchSeries(i, { color: e.target.value })}
+                aria-label={t('dashboard.chart.storeSeriesColorAria').replace('{key}', s.key)}
+                data-testid={`chart-store-series-color-${i}`}
+                className="h-5 w-5 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+              />
+              {/* 제거 */}
+              <button
+                type="button"
+                onClick={() => removeSeries(i)}
+                aria-label={t('dashboard.chart.storeSeriesRemoveAria').replace('{key}', s.key)}
+                data-testid={`chart-store-series-remove-${i}`}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-(--color-text-muted) transition-colors hover:text-red-500"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+
+            {/*
+              태그 토큰 삽입 버튼 + 미리보기 서브행 — 태그가 있는 시리즈에만 노출.
+              토큰 클릭 시 입력 커서 위치(없으면 끝)에 `{$.tagKey}` 를 삽입한다.
+            */}
+            <SeriesAliasTokens
+              index={i}
+              seriesKey={s.key}
+              alias={s.alias}
+              tags={s.tags ?? {}}
+              onAliasChange={(alias) => patchSeries(i, { alias })}
+              getInput={() => aliasInputRefs.current[i] ?? null}
+            />
+            {/* 라인 차트: 펼침 시 통합 라인 스타일 편집 */}
+            {isLineChart && isExpanded && (
+              <div className="border-t border-(--color-border-default) px-1.5 py-1.5">
+                <LineStyleControls
+                  value={s}
+                  onPatch={(patch) => patchSeries(i, patch)}
+                  testIdPrefix={`chart-store-series-${i}`}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Store 키 선택기 — 키 이름/metric_type/tag/data_type 4가지 필터 + 멀티셀렉트.
+ *
+ * 백엔드 keyObjects(useStoreKeysWithTags)에서 메타데이터를 받아 필터링하고,
+ * 체크된 키를 store_source.series[] 로 변환한다. 같은 key 가 metric/tags 별 다중
+ * 시리즈로 올 수 있으므로, 선택 단위는 (key + metric_type + tags) 조합이다.
+ */
+function StoreKeySelector({
+  agentName,
+  series,
+  onChange,
+}: {
+  agentName: string;
+  series: StoreSeriesRef[];
+  onChange: (series: StoreSeriesRef[]) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const { data, isLoading, isError } = useStoreKeysWithTags(agentName);
+  const keyObjects = useMemo<StoreKeyObject[]>(() => data?.keyObjects ?? [], [data]);
+
+  // 필터 상태(컬럼 헤더에 인라인으로 배치된다).
+  const [search, setSearch] = useState('');
+  const [metricType, setMetricType] = useState('');
+  const [dataType, setDataType] = useState<DataType | ''>('');
+  const [tagFilters, setTagFilters] = useState<Set<string>>(() => new Set());
+
+  // 정렬 상태: 컬럼별 asc → desc → none 순환.
+  const [sort, setSort] = useState<StoreSortState>(null);
+
+  const metricTypes = useMemo(() => distinctMetricTypes(keyObjects), [keyObjects]);
+  const dataTypes = useMemo(() => distinctDataTypes(keyObjects), [keyObjects]);
+
+  // 사용 가능한 tag 페어(키→값 목록) — keyObjects 의 tags 에서 수집.
+  const tagPairs = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const obj of keyObjects) {
+      for (const [k, v] of Object.entries(obj.tags ?? {})) {
+        let set = map.get(k);
+        if (!set) {
+          set = new Set();
+          map.set(k, set);
+        }
+        set.add(v);
+      }
+    }
+    return [...map.entries()].map(([k, values]) => ({ key: k, values: [...values].sort() }));
+  }, [keyObjects]);
+
+  const filtered = useMemo(
+    () =>
+      filterStoreKeyObjects(keyObjects, {
+        search,
+        metricType,
+        dataType: dataType || undefined,
+        tagFilters,
+      }),
+    [keyObjects, search, metricType, dataType, tagFilters],
+  );
+
+  // 정렬 적용(필터 결과를 컬럼 기준으로 정렬). none 이면 원래 순서 보존.
+  const sortedRows = useMemo(
+    () => sortStoreKeyObjects(filtered, sort),
+    [filtered, sort],
+  );
+
+  // 선택 식별: (key + metric_type + tags 직렬화).
+  const seriesId = (key: string, metric: string, tags: Record<string, string>): string => {
+    const tagPart = Object.keys(tags)
+      .sort()
+      .map((k) => `${k}=${tags[k]}`)
+      .join(',');
+    return `${key} ${metric} ${tagPart}`;
+  };
+  const selectedIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of series) {
+      set.add(seriesId(s.key, s.metric_type ?? '', s.tags ?? {}));
+    }
+    return set;
+  }, [series]);
+
+  const toggleKey = (obj: StoreKeyObject): void => {
+    const id = seriesId(obj.key, obj.metric_type ?? '', obj.tags ?? {});
+    if (selectedIds.has(id)) {
+      onChange(
+        series.filter(
+          (s) => seriesId(s.key, s.metric_type ?? '', s.tags ?? {}) !== id,
+        ),
+      );
+    } else {
+      onChange([
+        ...series,
+        {
+          key: obj.key,
+          metric_type: obj.metric_type || undefined,
+          tags: Object.keys(obj.tags ?? {}).length > 0 ? obj.tags : undefined,
+          data_type: obj.data_type,
+          alias: obj.key,
+          // 데이터 소스 선택 시 시리즈 인덱스별로 서로 다른 색을 자동 배정한다.
+          // 사용자는 이후 색상 스와치로 변경할 수 있다.
+          color: pickSeriesColor(series.length),
+        },
+      ]);
+    }
+  };
+
+  // 정렬 토글: 같은 컬럼 재클릭 시 asc → desc → none, 다른 컬럼이면 asc 로 시작.
+  const toggleSort = (field: StoreSortField): void => {
+    setSort((prev) => {
+      if (!prev || prev.field !== field) return { field, order: 'asc' };
+      if (prev.order === 'asc') return { field, order: 'desc' };
+      return null;
+    });
+  };
+
+  const toggleTag = (tagKey: string, value: string): void => {
+    const id = makeTagFilterId(tagKey, value);
+    setTagFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 정렬 방향 표시 아이콘(헤더 클릭 가능 영역에 표시).
+  const sortIndicator = (field: StoreSortField): React.ReactNode => {
+    if (!sort || sort.field !== field) return null;
+    return sort.order === 'asc' ? (
+      <ChevronUp className="h-3 w-3" aria-hidden="true" />
+    ) : (
+      <ChevronDown className="h-3 w-3" aria-hidden="true" />
+    );
+  };
+
+  // 로딩/에러 상태는 테이블 대신 메시지로 일찍 반환한다.
+  if (isLoading) {
+    return (
+      <p className="py-2 text-center text-[11px] text-(--color-text-muted)">
+        {t('dashboard.chart.storeKeysLoading')}
+      </p>
+    );
+  }
+  if (isError) {
+    return (
+      <p className="py-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
+        {t('dashboard.chart.storeKeysError')}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2" data-testid="chart-store-key-selector">
+      {/*
+        스토어 아이템(키 후보) 테이블 — 정렬 가능한 컬럼 헤더 + 헤더 내 인라인 필터.
+        컬럼: 선택 / 키 / 메트릭 타입 / 데이터 타입 / 태그.
+        TablePanel 의 테이블 패턴(sticky thead, th/td, divide 보더)을 재사용한다.
+      */}
+      <div className="max-h-72 overflow-auto rounded border border-(--color-border-default)">
+        <table className="w-full text-left text-[11px]" data-testid="chart-store-key-table">
+          <thead className="sticky top-0 z-10 bg-(--color-bg-surface)">
+            {/* 헤더 행 1: 정렬 가능한 컬럼 제목 */}
+            <tr>
+              <th
+                scope="col"
+                className="w-8 border-b border-(--color-border-default) px-2 py-1.5 text-(--color-text-muted)"
+              >
+                <span className="sr-only">{t('dashboard.chart.storeColSelect')}</span>
+              </th>
+              <SortableHeader
+                label={t('dashboard.chart.storeColKey')}
+                field="key"
+                indicator={sortIndicator('key')}
+                onSort={toggleSort}
+              />
+              <SortableHeader
+                label={t('dashboard.chart.storeColMetric')}
+                field="metric_type"
+                indicator={sortIndicator('metric_type')}
+                onSort={toggleSort}
+              />
+              <SortableHeader
+                label={t('dashboard.chart.storeColDataType')}
+                field="data_type"
+                indicator={sortIndicator('data_type')}
+                onSort={toggleSort}
+              />
+              <SortableHeader
+                label={t('dashboard.chart.storeColTags')}
+                field="tags"
+                indicator={sortIndicator('tags')}
+                onSort={toggleSort}
+              />
+            </tr>
+            {/* 헤더 행 2: 컬럼별 인라인 필터 */}
+            <tr>
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1" />
+              {/* 키 검색 */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t('dashboard.chart.storeKeySearch')}
+                  aria-label={t('dashboard.chart.storeKeySearch')}
+                  data-testid="chart-store-key-search"
+                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+                />
+              </th>
+              {/* 메트릭 타입 셀렉터 */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <select
+                  value={metricType}
+                  onChange={(e) => setMetricType(e.target.value)}
+                  aria-label={t('dashboard.chart.storeColMetric')}
+                  data-testid="chart-store-metric-filter"
+                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+                >
+                  <option value="">{t('dashboard.chart.storeAllMetrics')}</option>
+                  {metricTypes.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              {/* 데이터 타입 셀렉터 */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <select
+                  value={dataType}
+                  onChange={(e) => setDataType(e.target.value as DataType | '')}
+                  aria-label={t('dashboard.chart.storeColDataType')}
+                  data-testid="chart-store-datatype-filter"
+                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+                >
+                  <option value="">{t('dashboard.chart.storeAllDataTypes')}</option>
+                  {(dataTypes.length > 0 ? dataTypes : DATA_TYPE_OPTIONS).map((dt) => (
+                    <option key={dt} value={dt}>
+                      {dt}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              {/* 태그 구조화 필터(키 선택 → 값 칩) */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
+                <TagFilterControl
+                  tagPairs={tagPairs}
+                  selected={tagFilters}
+                  onToggle={toggleTag}
+                />
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedRows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="px-2 py-3 text-center text-[11px] text-(--color-text-muted)"
+                >
+                  {t('dashboard.chart.storeKeysEmpty')}
+                </td>
+              </tr>
+            ) : (
+              sortedRows.map((obj, i) => {
+                const id = seriesId(obj.key, obj.metric_type ?? '', obj.tags ?? {});
+                const checked = selectedIds.has(id);
+                const tagEntries = Object.entries(obj.tags ?? {});
+                return (
+                  <tr
+                    key={`${id}-${i}`}
+                    data-testid={`chart-store-key-row-${i}`}
+                    onClick={() => toggleKey(obj)}
+                    className="cursor-pointer border-b border-(--color-border-subtle) last:border-b-0 hover:bg-(--color-bg-elevated)"
+                  >
+                    <td className="px-2 py-1 align-middle">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        // 행 클릭과 중복 토글되지 않도록 체크박스 onChange 는 no-op 으로 두고
+                        // 클릭 이벤트 전파만 막는다(행의 onClick 이 단일 토글 소스).
+                        onChange={() => {}}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleKey(obj);
+                        }}
+                        className="h-3 w-3 rounded border-gray-300 text-blue-600"
+                        aria-label={t('dashboard.chart.storeRowSelectAria').replace(
+                          '{key}',
+                          obj.key,
+                        )}
+                        data-testid={`chart-store-key-checkbox-${obj.key}`}
+                      />
+                    </td>
+                    <td className="max-w-0 truncate px-2 py-1 font-mono text-(--color-text-primary)">
+                      {obj.key}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 text-(--color-text-muted)">
+                      {obj.metric_type || '—'}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 text-(--color-text-muted)">
+                      {obj.data_type || '—'}
+                    </td>
+                    <td className="px-2 py-1">
+                      {tagEntries.length === 0 ? (
+                        <span className="text-(--color-text-muted)">—</span>
+                      ) : (
+                        // 태그를 항목별 "키: 값" 칩으로 렌더(연결 문자열 아님).
+                        <span className="flex flex-wrap gap-0.5">
+                          {tagEntries.map(([k, v]) => (
+                            <span
+                              key={k}
+                              className="rounded bg-(--color-bg-elevated) px-1 text-[9px] text-(--color-text-muted)"
+                            >
+                              {k}: {v}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+            </tbody>
+          </table>
+        </div>
+
+      {/* 선택 요약 */}
+      <p className="text-[10px] text-(--color-text-muted)">
+        {t('dashboard.chart.storeSelectedCount').replace('{count}', String(series.length))}
+      </p>
+    </div>
+  );
+}
+
+/** 정렬 가능한 컬럼 헤더 셀(클릭 시 정렬 순환 + 방향 인디케이터). */
+function SortableHeader({
+  label,
+  field,
+  indicator,
+  onSort,
+}: {
+  label: string;
+  field: StoreSortField;
+  indicator: React.ReactNode;
+  onSort: (field: StoreSortField) => void;
+}): React.ReactElement {
+  return (
+    <th
+      scope="col"
+      className="border-b border-(--color-border-default) px-2 py-1.5 font-medium text-(--color-text-muted)"
+    >
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        data-testid={`chart-store-sort-${field}`}
+        className="inline-flex items-center gap-0.5 hover:text-(--color-text-primary)"
+      >
+        {label}
+        {indicator}
+      </button>
+    </th>
+  );
+}
+
+/**
+ * 태그 구조화 필터 — 사용자가 태그 키를 고른 뒤 그 키의 값들을 개별 칩으로 토글한다.
+ * 내부 필터 식별자(makeTagFilterId)는 "key=value" 로 유지되어 storeSourceFilter
+ * 의미를 보존한다("key=value" 텍스트를 직접 입력하지 않고 항목별로 추가한다).
+ *
+ * @spec SPEC-WEB-005
+ */
+function TagFilterControl({
+  tagPairs,
+  selected,
+  onToggle,
+}: {
+  tagPairs: { key: string; values: string[] }[];
+  selected: Set<string>;
+  onToggle: (tagKey: string, value: string) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  // 현재 값 칩을 표시할 태그 키(드롭다운 선택).
+  const [activeKey, setActiveKey] = useState('');
+
+  if (tagPairs.length === 0) {
+    return <span className="text-[9px] text-(--color-text-muted)">—</span>;
+  }
+
+  const active = tagPairs.find((p) => p.key === activeKey);
+
+  return (
+    <div className="space-y-1" data-testid="chart-store-tag-filter">
+      {/* 태그 키 선택 */}
+      <select
+        value={activeKey}
+        onChange={(e) => setActiveKey(e.target.value)}
+        aria-label={t('dashboard.chart.storeTagKeySelect')}
+        data-testid="chart-store-tag-key-select"
+        className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
+      >
+        <option value="">{t('dashboard.chart.storeTagKeyPlaceholder')}</option>
+        {tagPairs.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.key}
+          </option>
+        ))}
+      </select>
+      {/* 선택한 태그 키의 값 칩(개별 토글) */}
+      {active && (
+        <div className="flex flex-wrap gap-0.5">
+          {active.values.map((v) => {
+            const id = makeTagFilterId(active.key, v);
+            const on = selected.has(id);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onToggle(active.key, v)}
+                data-testid={`chart-store-tag-value-${active.key}-${v}`}
+                className={`rounded-full border px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                  on
+                    ? 'border-blue-500 bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
+                }`}
+              >
+                {v}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {/* 선택된 태그 필터 요약 칩("키: 값", 클릭 시 해제) */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap gap-0.5" data-testid="chart-store-tag-selected">
+          {[...selected].map((id) => {
+            const eq = id.indexOf('=');
+            const k = id.slice(0, eq);
+            const v = id.slice(eq + 1);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onToggle(k, v)}
+                aria-label={t('dashboard.chart.storeTagRemoveAria')
+                  .replace('{key}', k)
+                  .replace('{value}', v)}
+                className="inline-flex items-center gap-0.5 rounded-full border border-blue-500 bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+              >
+                {k}: {v}
+                <X className="h-2.5 w-2.5" aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -231,6 +1350,7 @@ export function StatChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const unit = (config.unit as string | undefined) ?? '';
@@ -257,8 +1377,8 @@ export function StatChartSection({
   return (
     <div className="space-y-3">
       <LabeledField
-        label="표시 필드 (display_field)"
-        hint="payload 에서 값으로 사용할 필드 경로. 예: value, labels.temperature"
+        label={t('dashboard.chart.displayField')}
+        hint={t('dashboard.chart.displayFieldHint')}
       >
         <input
           type="text"
@@ -267,16 +1387,16 @@ export function StatChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="단위 (unit)">
+      <LabeledField label={t('dashboard.chart.unit')}>
         <input
           type="text"
           value={unit}
           onChange={(e) => onConfigChange({ unit: e.target.value })}
-          placeholder="예: °C, %, kWh"
+          placeholder={t('dashboard.chart.unitPlaceholder')}
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="소수점 자릿수 (decimal_places)">
+      <LabeledField label={t('dashboard.chart.decimalPlaces')}>
         <input
           type="number"
           min={0}
@@ -292,14 +1412,14 @@ export function StatChartSection({
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-(--color-text-muted)">
-            임계값 색상 규칙
+            {t('dashboard.chart.thresholdColorRules')}
           </label>
           <button
             type="button"
             onClick={addRule}
             className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
           >
-            <Plus className="h-3 w-3" /> 추가
+            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
         <div className="space-y-1.5">
@@ -328,13 +1448,15 @@ export function StatChartSection({
                 />
               </label>
               <span className="flex-1 text-[11px] text-(--color-text-muted)">
-                값 ≥ {r.min} → {r.color}
+                {t('dashboard.chart.ruleHint')
+                  .replace('{min}', String(r.min))
+                  .replace('{color}', r.color)}
               </span>
               <button
                 type="button"
                 onClick={() => removeRule(i)}
                 className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500"
-                aria-label="규칙 삭제"
+                aria-label={t('dashboard.chart.deleteRuleAria')}
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -373,6 +1495,7 @@ function ChannelRow({
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const currentName = channel.name ?? '';
@@ -405,7 +1528,7 @@ function ChannelRow({
     }
   };
 
-  const effectiveColor = channel.color ?? '#3b82f6';
+  const effectiveColor = channel.color ?? pickSeriesColor(idx);
 
   return (
     <div
@@ -420,7 +1543,7 @@ function ChannelRow({
           draggable
           onDragStart={onDragStart}
           data-testid={`line-chart-channel-drag-${idx}`}
-          title="드래그하여 순서 변경"
+          title={t('dashboard.chart.dragOrderTitle')}
           className="flex h-5 w-4 cursor-grab items-center justify-center text-(--color-text-muted) active:cursor-grabbing"
         >
           <GripVertical className="h-3 w-3" />
@@ -429,7 +1552,7 @@ function ChannelRow({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           className="flex items-center gap-1 text-(--color-text-muted)"
-          aria-label={expanded ? '접기' : '펼치기'}
+          aria-label={expanded ? t('dashboard.chart.collapseAria') : t('dashboard.chart.expandAria')}
         >
           {expanded
             ? <ChevronDown className="h-3 w-3" />
@@ -438,7 +1561,7 @@ function ChannelRow({
         <span
           className="h-3 w-3 shrink-0 cursor-pointer rounded-full ring-1 ring-(--color-border-default)"
           style={{ backgroundColor: effectiveColor }}
-          title="색상 변경"
+          title={t('dashboard.chart.colorChangeTitle')}
           onClick={() => {
             const input = document.getElementById(`ch-color-${idx}`);
             input?.click();
@@ -456,15 +1579,15 @@ function ChannelRow({
           type="text"
           value={channel.alias ?? ''}
           onChange={(e) => onPatch({ alias: e.target.value || undefined })}
-          placeholder={currentName || '(미지정)'}
+          placeholder={currentName || t('dashboard.chart.unspecified')}
           className="min-w-0 flex-1 truncate border-0 bg-transparent px-0 text-xs font-medium text-(--color-text-primary) outline-none placeholder:text-(--color-text-muted) focus:ring-0"
-          aria-label="표시 이름"
+          aria-label={t('dashboard.chart.displayNameAria')}
         />
         {canDelete && (
           <button
             type="button"
             onClick={onRemove}
-            aria-label="채널 삭제"
+            aria-label={t('dashboard.chart.deleteChannelAria')}
             className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
           >
             <Trash2 className="h-3 w-3" />
@@ -475,7 +1598,7 @@ function ChannelRow({
       {/* 펼친 상태 */}
       {expanded && (
         <div className="space-y-2 border-t border-(--color-border-default) px-2 pt-2 pb-2">
-          {/* 줄 1: 채널 선택 + display field */}
+          {/* 줄 1: 채널 선택 */}
           <div className="flex items-center gap-1.5">
             <select
               data-testid={`line-chart-channel-row-select-${idx}`}
@@ -483,33 +1606,23 @@ function ChannelRow({
               onChange={(e) => handleSelect(e.target.value)}
               disabled={channelsLoadState === 'loading'}
               className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
-              aria-label="채널 선택"
+              aria-label={t('dashboard.chart.selectChannelAria')}
             >
               <option value="">
                 {channelsLoadState === 'loading'
-                  ? '로딩...'
+                  ? t('dashboard.chart.loading')
                   : activeChannels.length === 0
-                    ? '활성 채널 없음'
-                    : '채널 선택'}
+                    ? t('dashboard.chart.noActiveChannels')
+                    : t('dashboard.chart.selectChannelAria')}
               </option>
               {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
-                <option value={currentName}>{currentName} — (비활성)</option>
+                <option value={currentName}>{t('dashboard.chart.channelInactiveShort').replace('{name}', currentName)}</option>
               )}
               {activeChannels.map((ch) => (
                 <option key={ch.name} value={ch.name}>{ch.name}</option>
               ))}
-              <option value={CUSTOM_CHANNEL_SENTINEL}>Custom...</option>
+              <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.chart.customShort')}</option>
             </select>
-            <input
-              type="text"
-              value={channel.display_field ?? ''}
-              onChange={(e) =>
-                onPatch({ display_field: e.target.value || undefined })
-              }
-              placeholder="필드 (기본: value)"
-              className="w-28 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-              aria-label="표시 필드"
-            />
           </div>
           {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
             <input
@@ -521,59 +1634,34 @@ function ChannelRow({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
               }}
-              placeholder="배포 예정 채널명"
+              placeholder={t('dashboard.chart.customDeployPlaceholder')}
               autoFocus
               className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
             />
           )}
 
-          {/* 줄 2: 라인 스타일 */}
-          <div className="flex items-center gap-2">
-            <select
-              value={channel.stroke_style ?? 'solid'}
-              onChange={(e) =>
-                onPatch({ stroke_style: e.target.value as StrokeStyle })
-              }
-              className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-              aria-label="라인 스타일"
-            >
-              <option value="solid">실선</option>
-              <option value="dashed">파선</option>
-              <option value="dotted">점선</option>
-            </select>
-            <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
-              두께
-              <input
-                type="number"
-                min={1}
-                max={6}
-                value={channel.stroke_width ?? 2}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10);
-                  if (!Number.isNaN(n)) onPatch({ stroke_width: n });
-                }}
-                className="w-12 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-              />
-            </label>
-            <label className="flex cursor-pointer items-center gap-1 text-xs text-(--color-text-muted)">
-              <input
-                type="checkbox"
-                checked={channel.smooth ?? false}
-                onChange={(e) => onPatch({ smooth: e.target.checked })}
-                className="h-3 w-3 rounded border-gray-300"
-              />
-              곡선
-            </label>
-          </div>
+          {/* 줄 2: 통합 라인 스타일(stroke/width/smooth/display_field) */}
+          <LineStyleControls
+            value={channel}
+            onPatch={(patch) => onPatch(patch)}
+            testIdPrefix={`line-chart-channel-row-${idx}`}
+          />
         </div>
       )}
     </div>
   );
 }
 
-// --- 3. line-chart 패널 설정 (SPEC §4.2.2 line-chart) ---
-
-export function LineChartSection({
+/**
+ * 채널 모드 시리즈 편집기 (SPEC-WEB-005).
+ *
+ * 라인 차트 패널의 채널(channels[]) 추가/선택/순서변경 + per-line 스타일을 데이터
+ * 소스 영역에서 편집한다. 기존 LineChartSection 의 채널 편집 블록을 이곳으로 이전했다.
+ * channel_name 만 있는 기존 패널은 channels[] 로 자동 마이그레이션된다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+export function ChannelSeriesEditor({
   panel,
   onConfigChange,
   fetchChannels = listChartChannels,
@@ -582,26 +1670,11 @@ export function LineChartSection({
   onConfigChange: OnConfig;
   fetchChannels?: () => Promise<ChartChannelSummary[]>;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
-  const maxPoints = (config.max_points as number | undefined) ?? 100;
-  const xLabel = (config.x_label as string | undefined) ?? '';
-  const yMin = config.y_min as number | undefined;
-  const yMax = config.y_max as number | undefined;
-  const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
-  const yPadPct = (config.y_axis_padding_pct as number | undefined) ?? 5;
-  const yLabel = (config.y_label as string | undefined) ?? '';
-  const yUnit = (config.y_unit as string | undefined) ?? '';
-  const timeWindowMode =
-    (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
-  const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
-  const fixedStartMs = config.fixed_start_ms as number | undefined;
-  const fixedEndMs = config.fixed_end_ms as number | undefined;
-  const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
-  const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
-  const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
   const legacyChannelName = (config.channel_name as string | undefined) ?? '';
 
-  // channel_name 만 있고 channels 가 없는 기존 패널 → 자동 마이그레이션
+  // channel_name 만 있고 channels 가 없는 기존 패널 → 자동 마이그레이션.
   const channels: ChannelRefConfig[] = useMemo(() => {
     const raw = config.channels as ChannelRefConfig[] | undefined;
     if (raw && raw.length > 0) return raw;
@@ -609,25 +1682,13 @@ export function LineChartSection({
     return [{ name: '' }];
   }, [config.channels, legacyChannelName]);
 
-  function updateThresholds(next: YThreshold[]): void {
-    onConfigChange({ y_thresholds: next.length === 0 ? undefined : next });
-  }
-  function addThreshold(): void {
-    updateThresholds([...thresholds, { value: 0, color: '#f59e0b' }]);
-  }
-  function removeThreshold(idx: number): void {
-    updateThresholds(thresholds.filter((_, i) => i !== idx));
-  }
-  function patchThreshold(idx: number, patch: Partial<YThreshold>): void {
-    updateThresholds(thresholds.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
-  }
-
   function updateChannels(next: ChannelRefConfig[]): void {
-    // channels 로 통합: channel_name 은 제거
+    // channels 로 통합: channel_name 은 제거.
     onConfigChange({ channels: next.length === 0 ? [{ name: '' }] : next, channel_name: undefined });
   }
   function addChannel(): void {
-    updateChannels([...channels, { name: '' }]);
+    // 시리즈 인덱스별 팔레트 색을 자동 배정(사용자 변경 가능).
+    updateChannels([...channels, { name: '', color: pickSeriesColor(channels.length) }]);
   }
   function removeChannel(idx: number): void {
     if (channels.length <= 1) return;
@@ -645,7 +1706,7 @@ export function LineChartSection({
     updateChannels(next);
   }
 
-  // 활성 채널 fetch (다채널 모드 행 드롭다운에서 사용)
+  // 활성 채널 fetch (행 드롭다운에서 사용).
   const [activeChannels, setActiveChannels] = useState<ChartChannelSummary[]>([]);
   const [channelsLoadState, setChannelsLoadState] = useState<
     'idle' | 'loading' | 'error'
@@ -670,64 +1731,207 @@ export function LineChartSection({
   const activeNameSet = new Set(activeChannels.map((c) => c.name));
 
   return (
-    <div className="space-y-3">
-      {/* --- 채널 (channels) --- */}
-      <div data-testid="line-chart-channels-editor">
-        <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-medium text-(--color-text-muted)">
-            채널 (channels)
-          </label>
-          <button
-            type="button"
-            onClick={addChannel}
-            data-testid="line-chart-add-channel"
-            className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
-          >
-            <Plus className="h-3 w-3" /> 추가
-          </button>
-        </div>
-        <p className="mb-1 text-[10px] leading-snug text-(--color-text-muted)">
-          채널을 추가하면 한 패널에서 여러 라인을 비교합니다. 최소 1개 이상.
-        </p>
-        <div className="space-y-2">
-          {channels.map((c, idx) => (
-            <ChannelRow
-              key={idx}
-              idx={idx}
-              channel={c}
-              activeChannels={activeChannels}
-              activeNameSet={activeNameSet}
-              channelsLoadState={channelsLoadState}
-              canDelete={channels.length > 1}
-              onPatch={(patch) => patchChannel(idx, patch)}
-              onRemove={() => removeChannel(idx)}
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/x-channel-idx', String(idx));
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const raw = e.dataTransfer.getData('text/x-channel-idx');
-                const from = parseInt(raw, 10);
-                if (Number.isNaN(from)) return;
-                moveChannel(from, idx);
-              }}
-            />
-          ))}
-        </div>
+    <div
+      className="space-y-2 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5"
+      data-testid="line-chart-channels-editor"
+    >
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.chart.channels')}
+        </label>
+        <button
+          type="button"
+          onClick={addChannel}
+          data-testid="line-chart-add-channel"
+          className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
+        >
+          <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
+        </button>
       </div>
+      <p className="text-[10px] leading-snug text-(--color-text-muted)">
+        {t('dashboard.chart.channelsHint')}
+      </p>
+      <div className="space-y-2">
+        {channels.map((c, idx) => (
+          <ChannelRow
+            key={idx}
+            idx={idx}
+            channel={c}
+            activeChannels={activeChannels}
+            activeNameSet={activeNameSet}
+            channelsLoadState={channelsLoadState}
+            canDelete={channels.length > 1}
+            onPatch={(patch) => patchChannel(idx, patch)}
+            onRemove={() => removeChannel(idx)}
+            onDragStart={(e) => {
+              e.dataTransfer.setData('text/x-channel-idx', String(idx));
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const raw = e.dataTransfer.getData('text/x-channel-idx');
+              const from = parseInt(raw, 10);
+              if (Number.isNaN(from)) return;
+              moveChannel(from, idx);
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- 3. line-chart 패널 설정 — 전역 스타일만 (채널/시리즈 편집은 데이터 소스 영역) ---
+
+/**
+ * 축 폰트(레이블/눈금) 한 줄 편집기. 크기(px)·색상·굵기(보통/굵게)를 조절한다.
+ * 미지정 필드는 렌더 기본값(size 10, #9ca3af, normal)으로 폴백하므로, 입력 placeholder
+ * 로 기본값을 안내한다.
+ */
+function AxisFontRow({
+  label,
+  font,
+  onChange,
+}: {
+  label: string;
+  font: AxisFontStyle | undefined;
+  onChange: (patch: Partial<AxisFontStyle>) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const isBold = (font?.weight ?? 'normal') === 'bold';
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-20 shrink-0 truncate text-[11px] text-(--color-text-secondary)">
+        {label}
+      </span>
+      <input
+        type="number"
+        min={6}
+        max={40}
+        value={font?.size ?? ''}
+        onChange={(e) => {
+          const v = e.target.value;
+          onChange({ size: v === '' ? undefined : parseInt(v, 10) || undefined });
+        }}
+        placeholder="10"
+        aria-label={`${label} ${t('dashboard.chart.fontSize')}`}
+        className="w-14 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+      />
+      <input
+        type="color"
+        value={font?.color ?? '#9ca3af'}
+        onChange={(e) => onChange({ color: e.target.value })}
+        aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
+        className="h-6 w-6 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+      />
+      <button
+        type="button"
+        onClick={() => onChange({ weight: isBold ? 'normal' : 'bold' })}
+        aria-pressed={isBold}
+        aria-label={`${label} ${t('dashboard.chart.fontBold')}`}
+        title={t('dashboard.chart.fontBold')}
+        className={`h-6 w-6 shrink-0 rounded border text-[11px] font-bold transition-colors ${
+          isBold
+            ? 'border-blue-500 bg-blue-500/10 text-blue-500'
+            : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-hover)'
+        }`}
+      >
+        B
+      </button>
+    </div>
+  );
+}
+
+export function LineChartSection({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: OnConfig;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const config = panel.config ?? {};
+  const maxPoints = (config.max_points as number | undefined) ?? 100;
+  const xLabel = (config.x_label as string | undefined) ?? '';
+  const yMin = config.y_min as number | undefined;
+  const yMax = config.y_max as number | undefined;
+  const yAxisMode = (config.y_axis_mode as YAxisMode | undefined) ?? 'auto';
+  const yPadPct = (config.y_axis_padding_pct as number | undefined) ?? 5;
+  const yLabel = (config.y_label as string | undefined) ?? '';
+  const yUnit = (config.y_unit as string | undefined) ?? '';
+  const yAxisType = (config.y_axis_type as YAxisDataType | undefined) ?? 'numeric';
+  const enumLabels = (config.y_enum_labels as YEnumLabel[] | undefined) ?? [];
+
+  // 축 폰트(레이블/눈금) — 축별 독립. patch 병합 후 빈 객체는 undefined 로 정리한다.
+  type FontField = 'x_label_font' | 'x_tick_font' | 'y_label_font' | 'y_tick_font';
+  function patchFont(field: FontField, patch: Partial<AxisFontStyle>): void {
+    const cur = (config[field] as AxisFontStyle | undefined) ?? {};
+    const next: AxisFontStyle = { ...cur, ...patch };
+    // 값이 모두 비면(undefined) 필드를 제거해 config 를 깔끔히 유지한다.
+    const cleaned: AxisFontStyle = {};
+    if (next.size !== undefined) cleaned.size = next.size;
+    if (next.color !== undefined) cleaned.color = next.color;
+    if (next.weight !== undefined) cleaned.weight = next.weight;
+    onConfigChange({
+      [field]: Object.keys(cleaned).length > 0 ? cleaned : undefined,
+    });
+  }
+
+  function updateEnumLabels(next: YEnumLabel[]): void {
+    onConfigChange({ y_enum_labels: next.length === 0 ? undefined : next });
+  }
+  function addEnumLabel(): void {
+    // 다음 정수 값을 기본값으로 제안(마지막 값 + 1, 없으면 0).
+    const nextValue =
+      enumLabels.length > 0 ? (enumLabels[enumLabels.length - 1]!.value ?? -1) + 1 : 0;
+    updateEnumLabels([...enumLabels, { value: nextValue, label: '' }]);
+  }
+  function removeEnumLabel(idx: number): void {
+    updateEnumLabels(enumLabels.filter((_, i) => i !== idx));
+  }
+  function patchEnumLabel(idx: number, patch: Partial<YEnumLabel>): void {
+    updateEnumLabels(enumLabels.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  }
+  const timeWindowMode =
+    (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
+  const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
+  const fixedStartMs = config.fixed_start_ms as number | undefined;
+  const fixedEndMs = config.fixed_end_ms as number | undefined;
+  const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
+  const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
+  const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
+
+  function updateThresholds(next: YThreshold[]): void {
+    onConfigChange({ y_thresholds: next.length === 0 ? undefined : next });
+  }
+  function addThreshold(): void {
+    updateThresholds([...thresholds, { value: 0, color: '#f59e0b' }]);
+  }
+  function removeThreshold(idx: number): void {
+    updateThresholds(thresholds.filter((_, i) => i !== idx));
+  }
+  function patchThreshold(idx: number, patch: Partial<YThreshold>): void {
+    updateThresholds(thresholds.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
+  }
+
+  return (
+    <div className="space-y-3">
+      {/*
+        채널/시리즈 편집은 데이터 소스 영역(ChannelSeriesEditor / SelectedSeriesList)으로
+        이전되었다. 본 섹션은 전역 스타일(X/Y축·임계선·범례·다중시리즈)만 다룬다.
+      */}
 
       {/* ═══ 차트 스타일 ═══ */}
       <div className="border-t border-(--color-border-default) pt-3">
-        <label className="mb-2 block text-xs font-semibold text-(--color-text-primary)">차트 스타일</label>
+        <label className="mb-2 block text-xs font-semibold text-(--color-text-primary)">{t('dashboard.chart.chartStyle')}</label>
 
         {/* X축 */}
         <div className="flex items-end gap-2">
-          <LabeledField label="X축">
+          <LabeledField label={t('dashboard.chart.xAxis')}>
             <select
               value={timeWindowMode}
               onChange={(e) =>
@@ -735,24 +1939,24 @@ export function LineChartSection({
               }
               className={inputClass()}
             >
-              <option value="points">포인트 개수</option>
-              <option value="recent">최근 N초</option>
-              <option value="fixed">특정 구간</option>
+              <option value="points">{t('dashboard.chart.xWindowPoints')}</option>
+              <option value="recent">{t('dashboard.chart.xWindowRecent')}</option>
+              <option value="fixed">{t('dashboard.chart.xWindowFixed')}</option>
             </select>
           </LabeledField>
-          <LabeledField label="레이블">
+          <LabeledField label={t('dashboard.chart.label')}>
             <input
               type="text"
               value={xLabel}
               onChange={(e) => onConfigChange({ x_label: e.target.value || undefined })}
-              placeholder="예: 시간"
+              placeholder={t('dashboard.chart.xLabelPlaceholder')}
               className={inputClass()}
             />
           </LabeledField>
         </div>
 
         {timeWindowMode === 'points' && (
-          <LabeledField label="최대 포인트">
+          <LabeledField label={t('dashboard.chart.maxPoints')}>
             <input
               type="number"
               min={1}
@@ -769,7 +1973,7 @@ export function LineChartSection({
 
         {timeWindowMode === 'recent' && (
           <div className="flex gap-2">
-            <LabeledField label="윈도우 크기(초)">
+            <LabeledField label={t('dashboard.chart.windowSizeSec')}>
               <input
                 type="number"
                 min={1}
@@ -782,7 +1986,7 @@ export function LineChartSection({
                 className={inputClass()}
               />
             </LabeledField>
-            <LabeledField label="갱신 주기(ms)">
+            <LabeledField label={t('dashboard.chart.refreshMs')}>
               <input
                 type="number"
                 min={200}
@@ -801,7 +2005,7 @@ export function LineChartSection({
 
         {timeWindowMode === 'fixed' && (
           <div className="flex gap-2">
-            <LabeledField label="시작(epoch ms)">
+            <LabeledField label={t('dashboard.chart.startMs')}>
               <input
                 type="number"
                 value={fixedStartMs ?? ''}
@@ -814,7 +2018,7 @@ export function LineChartSection({
                 className={inputClass()}
               />
             </LabeledField>
-            <LabeledField label="끝(epoch ms)">
+            <LabeledField label={t('dashboard.chart.endMs')}>
               <input
                 type="number"
                 value={fixedEndMs ?? ''}
@@ -830,42 +2034,60 @@ export function LineChartSection({
           </div>
         )}
 
-        {/* Y축 */}
+        {/* Y축 데이터 타입 (숫자형 / 열거형) */}
         <div className="flex items-end gap-2">
-          <LabeledField label="Y축">
+          <LabeledField label={t('dashboard.chart.yAxisType')}>
+            <select
+              value={yAxisType}
+              onChange={(e) =>
+                onConfigChange({ y_axis_type: e.target.value as YAxisDataType })
+              }
+              className={inputClass()}
+            >
+              <option value="numeric">{t('dashboard.chart.yTypeNumeric')}</option>
+              <option value="enum">{t('dashboard.chart.yTypeEnum')}</option>
+            </select>
+          </LabeledField>
+          <LabeledField label={t('dashboard.chart.label')}>
+            <input
+              type="text"
+              value={yLabel}
+              onChange={(e) => onConfigChange({ y_label: e.target.value || undefined })}
+              placeholder={t('dashboard.chart.yLabelPlaceholder')}
+              className={inputClass()}
+            />
+          </LabeledField>
+          {yAxisType === 'numeric' && (
+            <LabeledField label={t('dashboard.chart.unit')}>
+              <input
+                type="text"
+                value={yUnit}
+                onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
+                placeholder={t('dashboard.chart.yUnitPlaceholder')}
+                className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              />
+            </LabeledField>
+          )}
+        </div>
+
+        {/* 숫자형: Y축 범위(자동/수동/자동+여백) */}
+        {yAxisType === 'numeric' && (
+          <LabeledField label={t('dashboard.chart.yAxis')}>
             <select
               value={yAxisMode}
               onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
               className={inputClass()}
             >
-              <option value="auto">자동</option>
-              <option value="manual">수동</option>
-              <option value="auto_padded">자동 + 여백</option>
+              <option value="auto">{t('dashboard.chart.yAuto')}</option>
+              <option value="manual">{t('dashboard.chart.yManual')}</option>
+              <option value="auto_padded">{t('dashboard.chart.yAutoPadded')}</option>
             </select>
           </LabeledField>
-          <LabeledField label="레이블">
-            <input
-              type="text"
-              value={yLabel}
-              onChange={(e) => onConfigChange({ y_label: e.target.value || undefined })}
-              placeholder="예: 온도"
-              className={inputClass()}
-            />
-          </LabeledField>
-          <LabeledField label="단위">
-            <input
-              type="text"
-              value={yUnit}
-              onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
-              placeholder="예: °C"
-              className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            />
-          </LabeledField>
-        </div>
+        )}
 
-        {yAxisMode === 'manual' && (
+        {yAxisType === 'numeric' && yAxisMode === 'manual' && (
           <div className="flex gap-2">
-            <LabeledField label="최소">
+            <LabeledField label={t('dashboard.chart.min')}>
               <input
                 type="number"
                 value={yMin ?? ''}
@@ -876,7 +2098,7 @@ export function LineChartSection({
                 className={inputClass()}
               />
             </LabeledField>
-            <LabeledField label="최대">
+            <LabeledField label={t('dashboard.chart.max')}>
               <input
                 type="number"
                 value={yMax ?? ''}
@@ -890,8 +2112,8 @@ export function LineChartSection({
           </div>
         )}
 
-        {yAxisMode === 'auto_padded' && (
-          <LabeledField label="여백(%)">
+        {yAxisType === 'numeric' && yAxisMode === 'auto_padded' && (
+          <LabeledField label={t('dashboard.chart.paddingPct')}>
             <input
               type="number"
               min={0}
@@ -907,8 +2129,95 @@ export function LineChartSection({
           </LabeledField>
         )}
 
+        {/* 열거형: 값→라벨 매핑 편집기 */}
+        {yAxisType === 'enum' && (
+          <div className="space-y-1.5 rounded-md border border-(--color-border-default) p-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-(--color-text-secondary)">
+                {t('dashboard.chart.enumLabels')}
+              </span>
+              <button
+                type="button"
+                onClick={addEnumLabel}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-blue-500 hover:bg-blue-500/10"
+              >
+                <Plus className="h-3 w-3" />
+                {t('dashboard.chart.enumAdd')}
+              </button>
+            </div>
+            {enumLabels.length === 0 ? (
+              <p className="py-1 text-[11px] text-(--color-text-muted)">
+                {t('dashboard.chart.enumEmpty')}
+              </p>
+            ) : (
+              enumLabels.map((row, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    value={Number.isFinite(row.value) ? row.value : ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      patchEnumLabel(i, {
+                        value: v === '' ? Number.NaN : parseFloat(v),
+                      });
+                    }}
+                    placeholder={t('dashboard.chart.enumValuePlaceholder')}
+                    className="w-16 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                  <span className="text-[11px] text-(--color-text-muted)">→</span>
+                  <input
+                    type="text"
+                    value={row.label}
+                    onChange={(e) => patchEnumLabel(i, { label: e.target.value })}
+                    placeholder={t('dashboard.chart.enumLabelPlaceholder')}
+                    className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeEnumLabel(i)}
+                    aria-label={t('dashboard.chart.enumRemove')}
+                    className="shrink-0 rounded p-1 text-(--color-text-muted) hover:bg-red-500/10 hover:text-red-500"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* 축 폰트 (레이블/값, 축별 독립) */}
+        <div className="space-y-1.5 rounded-md border border-(--color-border-default) p-2">
+          <div className="flex items-center gap-2 text-[11px] text-(--color-text-muted)">
+            <span className="w-20 shrink-0">{t('dashboard.chart.axisFont')}</span>
+            <span className="w-14 text-center">{t('dashboard.chart.fontSize')}</span>
+            <span className="w-6 text-center">{t('dashboard.chart.fontColorShort')}</span>
+            <span className="w-6 text-center">{t('dashboard.chart.fontBoldShort')}</span>
+          </div>
+          <AxisFontRow
+            label={t('dashboard.chart.xAxisLabelFont')}
+            font={config.x_label_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('x_label_font', p)}
+          />
+          <AxisFontRow
+            label={t('dashboard.chart.xAxisTickFont')}
+            font={config.x_tick_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('x_tick_font', p)}
+          />
+          <AxisFontRow
+            label={t('dashboard.chart.yAxisLabelFont')}
+            font={config.y_label_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('y_label_font', p)}
+          />
+          <AxisFontRow
+            label={t('dashboard.chart.yAxisTickFont')}
+            font={config.y_tick_font as AxisFontStyle | undefined}
+            onChange={(p) => patchFont('y_tick_font', p)}
+          />
+        </div>
+
         {/* 범례 */}
-        <LabeledField label="범례 위치">
+        <LabeledField label={t('dashboard.chart.legendPosition')}>
           <select
             value={(config.legend as Record<string, unknown> | undefined)?.position as string ?? 'bottom'}
             onChange={(e) =>
@@ -921,14 +2230,18 @@ export function LineChartSection({
             }
             className={inputClass()}
           >
-            <option value="bottom">하단</option>
-            <option value="left">좌측</option>
-            <option value="right">우측</option>
+            <option value="bottom">{t('dashboard.chart.legendBottom')}</option>
+            <option value="left">{t('dashboard.chart.legendLeft')}</option>
+            <option value="right">{t('dashboard.chart.legendRight')}</option>
           </select>
         </LabeledField>
         <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
           {(['show_name', 'show_line', 'show_last_value'] as const).map((field) => {
-            const labels = { show_name: '이름', show_line: '라인', show_last_value: '마지막 값' };
+            const labelKeys = {
+              show_name: 'dashboard.chart.legendShowName',
+              show_line: 'dashboard.chart.legendShowLine',
+              show_last_value: 'dashboard.chart.legendShowLastValue',
+            } as const;
             const defaults = { show_name: true, show_line: true, show_last_value: false };
             return (
               <label key={field} className="flex cursor-pointer items-center gap-1">
@@ -945,19 +2258,19 @@ export function LineChartSection({
                   }
                   className="h-3 w-3 rounded border-gray-300"
                 />
-                {labels[field]}
+                {t(labelKeys[field])}
               </label>
             );
           })}
         </div>
 
         {/* 다중 시리즈 */}
-        <LabeledField label="다중 시리즈 필드" hint="라벨 값별로 라인 분리 (예: labels.room)">
+        <LabeledField label={t('dashboard.chart.multiSeriesField')} hint={t('dashboard.chart.multiSeriesHint')}>
           <input
             type="text"
             value={multiSeriesField}
             onChange={(e) => onConfigChange({ multi_series_field: e.target.value || undefined })}
-            placeholder="비워두면 단일 시리즈"
+            placeholder={t('dashboard.chart.multiSeriesPlaceholder')}
             className={inputClass()}
           />
         </LabeledField>
@@ -966,23 +2279,23 @@ export function LineChartSection({
       {/* ═══ 경계 설정 ═══ */}
       <div data-testid="line-chart-thresholds-editor" className="border-t border-(--color-border-default) pt-3">
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-semibold text-(--color-text-primary)">경계 설정</label>
+          <label className="text-xs font-semibold text-(--color-text-primary)">{t('dashboard.chart.boundarySettings')}</label>
           <button
             type="button"
             onClick={addThreshold}
             data-testid="line-chart-add-threshold"
             className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
           >
-            <Plus className="h-3 w-3" /> 추가
+            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
         {thresholds.length === 0 ? (
           <p className="text-[10px] leading-snug text-(--color-text-muted)">
-            경계가 없습니다. 추가하면 Y축 수평선과 범위 채우기를 표시합니다.
+            {t('dashboard.chart.boundaryEmpty')}
           </p>
         ) : (
           <div className="space-y-2">
-            {thresholds.map((t, idx) => (
+            {thresholds.map((th, idx) => (
               <div
                 key={idx}
                 data-testid={`line-chart-threshold-row-${idx}`}
@@ -990,19 +2303,19 @@ export function LineChartSection({
               >
                 <input
                   type="number"
-                  value={t.value}
+                  value={th.value}
                   onChange={(e) => {
                     const n = parseFloat(e.target.value);
                     if (!Number.isNaN(n)) patchThreshold(idx, { value: n });
                   }}
                   className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-                  placeholder="값"
-                  aria-label="경계 값"
+                  placeholder={t('dashboard.chart.boundaryValuePlaceholder')}
+                  aria-label={t('dashboard.chart.boundaryValueAria')}
                 />
                 <span
                   className="h-5 w-5 shrink-0 cursor-pointer rounded ring-1 ring-(--color-border-default)"
-                  style={{ backgroundColor: t.color }}
-                  title="색상 변경"
+                  style={{ backgroundColor: th.color }}
+                  title={t('dashboard.chart.colorChangeTitle')}
                   onClick={() => {
                     document.getElementById(`th-color-${idx}`)?.click();
                   }}
@@ -1010,13 +2323,13 @@ export function LineChartSection({
                 <input
                   id={`th-color-${idx}`}
                   type="color"
-                  value={t.color}
+                  value={th.color}
                   onChange={(e) => patchThreshold(idx, { color: e.target.value })}
                   className="invisible absolute h-0 w-0"
                   tabIndex={-1}
                 />
                 <select
-                  value={t.fill_direction ?? ''}
+                  value={th.fill_direction ?? ''}
                   onChange={(e) => {
                     const v = e.target.value;
                     patchThreshold(idx, {
@@ -1025,16 +2338,16 @@ export function LineChartSection({
                     });
                   }}
                   className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
-                  aria-label="채우기"
+                  aria-label={t('dashboard.chart.fillAria')}
                 >
-                  <option value="">채우기 없음</option>
-                  <option value="below">경계 이하</option>
-                  <option value="above">경계 이상</option>
+                  <option value="">{t('dashboard.chart.fillNone')}</option>
+                  <option value="below">{t('dashboard.chart.fillBelow')}</option>
+                  <option value="above">{t('dashboard.chart.fillAbove')}</option>
                 </select>
                 <button
                   type="button"
                   onClick={() => removeThreshold(idx)}
-                  aria-label="경계 삭제"
+                  aria-label={t('dashboard.chart.deleteBoundaryAria')}
                   className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -1057,6 +2370,7 @@ export function BarChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const labelField = (config.label_field as string | undefined) ?? 'labels.name';
@@ -1067,7 +2381,7 @@ export function BarChartSection({
 
   return (
     <div className="space-y-3">
-      <LabeledField label="표시 필드 (display_field)">
+      <LabeledField label={t('dashboard.chart.displayField')}>
         <input
           type="text"
           value={displayField}
@@ -1075,20 +2389,20 @@ export function BarChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="모드 (mode)">
+      <LabeledField label={t('dashboard.chart.modeField')}>
         <select
           value={mode}
           onChange={(e) => onConfigChange({ mode: e.target.value as BarChartMode })}
           className={inputClass()}
         >
-          <option value="category">카테고리 (category)</option>
-          <option value="time_bin">시간 bin (time_bin)</option>
+          <option value="category">{t('dashboard.chart.modeCategory')}</option>
+          <option value="time_bin">{t('dashboard.chart.modeTimeBin')}</option>
         </select>
       </LabeledField>
       {mode === 'category' && (
         <LabeledField
-          label="라벨 필드 (label_field)"
-          hint="카테고리로 사용할 필드 경로. 예: labels.room"
+          label={t('dashboard.chart.labelField')}
+          hint={t('dashboard.chart.labelFieldHintBar')}
         >
           <input
             type="text"
@@ -1099,7 +2413,7 @@ export function BarChartSection({
         </LabeledField>
       )}
       {mode === 'time_bin' && (
-        <LabeledField label="bin 간격 (초)">
+        <LabeledField label={t('dashboard.chart.binSec')}>
           <input
             type="number"
             min={1}
@@ -1112,7 +2426,7 @@ export function BarChartSection({
           />
         </LabeledField>
       )}
-      <LabeledField label="집계 함수 (agg_func)">
+      <LabeledField label={t('dashboard.chart.aggFunc')}>
         <select
           value={aggFunc}
           onChange={(e) => onConfigChange({ agg_func: e.target.value as AggFunc })}
@@ -1123,7 +2437,7 @@ export function BarChartSection({
           <option value="avg">avg</option>
         </select>
       </LabeledField>
-      <LabeledField label="최대 포인트 (max_points)">
+      <LabeledField label={t('dashboard.chart.maxPoints')}>
         <input
           type="number"
           min={1}
@@ -1148,6 +2462,7 @@ export function PieChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const labelField = (config.label_field as string | undefined) ?? 'labels.name';
@@ -1158,7 +2473,7 @@ export function PieChartSection({
 
   return (
     <div className="space-y-3">
-      <LabeledField label="표시 필드 (display_field)">
+      <LabeledField label={t('dashboard.chart.displayField')}>
         <input
           type="text"
           value={displayField}
@@ -1167,8 +2482,8 @@ export function PieChartSection({
         />
       </LabeledField>
       <LabeledField
-        label="라벨 필드 (label_field)"
-        hint="파이 슬라이스 그룹화 기준. 예: labels.category"
+        label={t('dashboard.chart.labelField')}
+        hint={t('dashboard.chart.labelFieldHintPie')}
       >
         <input
           type="text"
@@ -1177,7 +2492,7 @@ export function PieChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="집계 함수 (agg_func)">
+      <LabeledField label={t('dashboard.chart.aggFunc')}>
         <select
           value={aggFunc}
           onChange={(e) => onConfigChange({ agg_func: e.target.value as AggFunc })}
@@ -1195,7 +2510,7 @@ export function PieChartSection({
           onChange={(e) => onConfigChange({ show_legend: e.target.checked })}
           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
-        <span className="text-sm text-(--color-text-primary)">범례 표시 (show_legend)</span>
+        <span className="text-sm text-(--color-text-primary)">{t('dashboard.chart.showLegend')}</span>
       </label>
       <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)">
         <input
@@ -1205,10 +2520,10 @@ export function PieChartSection({
           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm text-(--color-text-primary)">
-          비율(%) 표시 (show_percentage)
+          {t('dashboard.chart.showPercentage')}
         </span>
       </label>
-      <LabeledField label="최대 포인트 (max_points)">
+      <LabeledField label={t('dashboard.chart.maxPoints')}>
         <input
           type="number"
           min={1}
@@ -1233,11 +2548,12 @@ export function TableChartSection({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }): React.ReactElement {
+  const { t } = useTranslation();
   const config = panel.config ?? {};
   const columns =
     (config.columns as TableColumn[] | undefined) ?? [
-      { field: 'timestamp', header: '시간', format: 'datetime' as TableColumnFormat },
-      { field: 'value', header: '값', format: 'number' as TableColumnFormat },
+      { field: 'timestamp', header: t('dashboard.chart.colTime'), format: 'datetime' as TableColumnFormat },
+      { field: 'value', header: t('dashboard.chart.colValue'), format: 'number' as TableColumnFormat },
     ];
   const rowsPerPage = (config.rows_per_page as number | undefined) ?? 20;
   const maxPoints = (config.max_points as number | undefined) ?? 200;
@@ -1250,7 +2566,7 @@ export function TableChartSection({
     });
   };
   const addColumn = (): void => {
-    onConfigChange({ columns: [...columns, { field: 'value', header: '새 열' }] });
+    onConfigChange({ columns: [...columns, { field: 'value', header: t('dashboard.chart.newColumn') }] });
   };
   const removeColumn = (i: number): void => {
     if (columns.length <= 1) return;
@@ -1261,13 +2577,13 @@ export function TableChartSection({
     <div className="space-y-3">
       <div>
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-medium text-(--color-text-muted)">열 (columns)</label>
+          <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.chart.columns')}</label>
           <button
             type="button"
             onClick={addColumn}
             className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
           >
-            <Plus className="h-3 w-3" /> 추가
+            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
         <div className="space-y-1.5">
@@ -1277,14 +2593,14 @@ export function TableChartSection({
                 type="text"
                 value={c.field}
                 onChange={(e) => updateColumn(i, { field: e.target.value })}
-                placeholder="field"
+                placeholder={t('dashboard.chart.displayFieldPlaceholder')}
                 className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
               />
               <input
                 type="text"
                 value={c.header}
                 onChange={(e) => updateColumn(i, { header: e.target.value })}
-                placeholder="header"
+                placeholder={t('dashboard.chart.headerPlaceholder')}
                 className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
               />
               <select
@@ -1303,7 +2619,7 @@ export function TableChartSection({
                 onClick={() => removeColumn(i)}
                 disabled={columns.length <= 1}
                 className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500 disabled:opacity-40"
-                aria-label="열 삭제"
+                aria-label={t('dashboard.chart.deleteColumnAria')}
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -1311,7 +2627,7 @@ export function TableChartSection({
           ))}
         </div>
       </div>
-      <LabeledField label="페이지 당 행 수 (rows_per_page)">
+      <LabeledField label={t('dashboard.chart.rowsPerPage')}>
         <input
           type="number"
           min={1}
@@ -1323,7 +2639,7 @@ export function TableChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label="최대 포인트 (max_points)">
+      <LabeledField label={t('dashboard.chart.maxPoints')}>
         <input
           type="number"
           min={1}
@@ -1337,7 +2653,7 @@ export function TableChartSection({
       </LabeledField>
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          기본 정렬 (default_sort)
+          {t('dashboard.chart.defaultSort')}
         </label>
         <div className="flex gap-1.5">
           <input
@@ -1353,7 +2669,7 @@ export function TableChartSection({
                 });
               }
             }}
-            placeholder="정렬 필드"
+            placeholder={t('dashboard.chart.sortFieldPlaceholder')}
             className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
           />
           <select

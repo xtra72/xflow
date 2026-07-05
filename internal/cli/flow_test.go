@@ -768,8 +768,9 @@ func TestFlowSubcommands(t *testing.T) {
 
 	expectedSubcommands := []string{
 		"list", "get", "create", "update", "delete",
-		"deploy", "start", "stop", "restart",
+		"deploy", "start", "stop", "restart", "undeploy",
 		"export", "import", "status",
+		"config", "subflow-stats", "tap", "taps", "node-configure",
 	}
 
 	subNames := make(map[string]bool)
@@ -1349,6 +1350,421 @@ func TestExtractDefinition_Unit(t *testing.T) {
 		nodes, _ := def["nodes"].([]any)
 		assert.Len(t, nodes, 1, "definition 이 map 이 아니면 flat 형식으로 처리해야 합니다")
 	})
+}
+
+// --- flow undeploy 테스트 ---
+
+// TestFlowUndeploy - undeploy 서브커맨드 경로/메서드 검증
+func TestFlowUndeploy(t *testing.T) {
+	result := map[string]any{
+		"id":     testFlowUUID,
+		"status": "undeployed",
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/undeploy", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(result))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "undeploy", testFlowUUID, "--format", "json"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow undeploy 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, testFlowUUID, "출력에 flow ID 가 포함되어야 합니다")
+}
+
+// TestFlowUndeploy_ByName - 이름 기반 undeploy 검증 (id|name resolve)
+func TestFlowUndeploy_ByName(t *testing.T) {
+	flowUUID := "eeee1111-2222-3333-4444-555566667777"
+	flows := []map[string]any{
+		{"id": flowUUID, "name": "my-pipeline"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/flows":
+			w.Write(apiEnvelope(flows))
+		case "/api/v1/flows/" + flowUUID + "/undeploy":
+			assert.Equal(t, http.MethodPost, r.Method)
+			w.Write(apiEnvelope(map[string]any{"id": flowUUID, "status": "undeployed"}))
+		default:
+			t.Errorf("예상치 못한 경로: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "undeploy", "my-pipeline"})
+	err := cmd.Execute()
+	require.NoError(t, err, "이름 기반 undeploy 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.NotEmpty(t, output, "undeploy 성공 시 출력이 있어야 합니다")
+}
+
+// --- flow config 테스트 ---
+
+// TestFlowConfig_KeyValue - key=value 인자로 플로우 구성 수정 검증
+func TestFlowConfig_KeyValue(t *testing.T) {
+	var captured map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/config", r.URL.Path)
+		assert.Equal(t, http.MethodPut, r.Method)
+		data, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(data, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(map[string]any{"id": testFlowUUID, "status": "configured"}))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "config", testFlowUUID, "log_level=debug", "max_retries=3"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow config (key=value) 실행 에러가 없어야 합니다")
+
+	// 요청 본문은 {"config": {...}} 형식이어야 한다
+	config, ok := captured["config"].(map[string]any)
+	require.True(t, ok, "요청 본문에 config 키가 있어야 합니다")
+	assert.Equal(t, "debug", config["log_level"], "log_level 값이 전달되어야 합니다")
+	assert.Equal(t, float64(3), config["max_retries"], "max_retries 정수 값이 전달되어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "구성", "출력에 구성 수정 메시지가 포함되어야 합니다")
+}
+
+// TestFlowConfig_File - 파일(-f)로 플로우 구성 수정 검증
+func TestFlowConfig_File(t *testing.T) {
+	var captured map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/config", r.URL.Path)
+		assert.Equal(t, http.MethodPut, r.Method)
+		data, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(data, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(map[string]any{"id": testFlowUUID, "status": "configured"}))
+	})
+
+	tmpDir := t.TempDir()
+	cfgFile := filepath.Join(tmpDir, "config.json")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(`{"log_level": "info", "buffer_size": 100}`), 0644))
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "config", testFlowUUID, "-f", cfgFile})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow config (-f) 실행 에러가 없어야 합니다")
+
+	config, ok := captured["config"].(map[string]any)
+	require.True(t, ok, "요청 본문에 config 키가 있어야 합니다")
+	assert.Equal(t, "info", config["log_level"], "파일의 log_level 이 전달되어야 합니다")
+	assert.Equal(t, float64(100), config["buffer_size"], "파일의 buffer_size 가 전달되어야 합니다")
+}
+
+// TestFlowConfig_NoValue - 설정값 없이 호출 시 에러 검증
+func TestFlowConfig_NoValue(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("설정값 없으면 서버에 요청하지 않아야 합니다")
+	})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "config", testFlowUUID})
+	err := cmd.Execute()
+	require.Error(t, err, "설정값 누락 시 에러를 반환해야 합니다")
+}
+
+// TestFlowConfig_InvalidKeyValue - 잘못된 key=value 형식 에러 검증
+func TestFlowConfig_InvalidKeyValue(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("잘못된 형식이면 서버에 요청하지 않아야 합니다")
+	})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "config", testFlowUUID, "invalid-no-equals"})
+	err := cmd.Execute()
+	require.Error(t, err, "key=value 형식이 아니면 에러를 반환해야 합니다")
+}
+
+// --- flow subflow-stats 테스트 ---
+
+// TestFlowSubflowStats - 서브플로우 통계 조회 검증 (JSON)
+func TestFlowSubflowStats(t *testing.T) {
+	stats := map[string]any{
+		"flow_id": testFlowUUID,
+		"nodes": []any{
+			map[string]any{"node_id": "n1", "name": "필터", "type": "filter", "processed": float64(10), "errors": float64(0)},
+			map[string]any{"node_id": "n2", "name": "변환", "type": "transform", "processed": float64(5), "errors": float64(1)},
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/subflow-stats", r.URL.Path)
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(stats))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "subflow-stats", testFlowUUID, "--format", "json"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow subflow-stats 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, testFlowUUID, "출력에 flow ID 가 포함되어야 합니다")
+	assert.Contains(t, output, "filter", "출력에 노드 타입이 포함되어야 합니다")
+}
+
+// TestFlowSubflowStats_TableFormat - 서브플로우 통계 테이블 출력 검증
+func TestFlowSubflowStats_TableFormat(t *testing.T) {
+	stats := map[string]any{
+		"flow_id": testFlowUUID,
+		"nodes":   []any{},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(stats))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "subflow-stats", testFlowUUID})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow subflow-stats (table) 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, testFlowUUID, "출력에 flow ID 가 포함되어야 합니다")
+}
+
+// --- flow tap 테스트 ---
+
+// TestFlowTap_Enable - tap 활성화(기본값) 검증
+func TestFlowTap_Enable(t *testing.T) {
+	const nodeID = "node-abc"
+	var captured map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/nodes/"+nodeID+"/tap", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		data, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(data, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(map[string]any{"flow_id": testFlowUUID, "node_id": nodeID, "enabled": true}))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "tap", testFlowUUID, nodeID})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow tap 실행 에러가 없어야 합니다")
+
+	// 기본값은 enabled=true 여야 한다
+	assert.Equal(t, true, captured["enabled"], "기본값으로 tap 이 활성화되어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "활성화", "출력에 tap 활성화 메시지가 포함되어야 합니다")
+}
+
+// TestFlowTap_Disable - --disable 플래그로 tap 비활성화 검증
+func TestFlowTap_Disable(t *testing.T) {
+	const nodeID = "node-abc"
+	var captured map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/nodes/"+nodeID+"/tap", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		data, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(data, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(map[string]any{"flow_id": testFlowUUID, "node_id": nodeID, "enabled": false}))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "tap", testFlowUUID, nodeID, "--disable"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow tap --disable 실행 에러가 없어야 합니다")
+
+	assert.Equal(t, false, captured["enabled"], "--disable 시 tap 이 비활성화되어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "비활성화", "출력에 tap 비활성화 메시지가 포함되어야 합니다")
+}
+
+// TestFlowTap_MissingNodeID - nodeID 인자 누락 시 에러 검증
+func TestFlowTap_MissingNodeID(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("인자 누락 시 서버 요청이 없어야 합니다")
+	})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "tap", testFlowUUID})
+	err := cmd.Execute()
+	require.Error(t, err, "nodeID 인자 누락 시 에러를 반환해야 합니다")
+}
+
+// --- flow taps 테스트 ---
+
+// TestFlowTaps - 활성 탭 목록 조회 검증 (JSON)
+func TestFlowTaps(t *testing.T) {
+	taps := map[string]any{
+		"flow_id":  testFlowUUID,
+		"node_ids": []any{"node-1", "node-2"},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/taps", r.URL.Path)
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(taps))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "taps", testFlowUUID, "--format", "json"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow taps 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "node-1", "출력에 tap 중인 노드가 포함되어야 합니다")
+	assert.Contains(t, output, "node-2", "출력에 tap 중인 노드가 포함되어야 합니다")
+}
+
+// TestFlowTaps_TableFormat - 활성 탭 목록 테이블 출력 검증
+func TestFlowTaps_TableFormat(t *testing.T) {
+	taps := map[string]any{
+		"flow_id":  testFlowUUID,
+		"node_ids": []any{},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(taps))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "taps", testFlowUUID})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow taps (table) 실행 에러가 없어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, testFlowUUID, "출력에 flow ID 가 포함되어야 합니다")
+}
+
+// --- flow node-configure 테스트 ---
+
+// TestFlowNodeConfigure_KeyValue - key=value 인자로 노드 구성 수정 검증
+func TestFlowNodeConfigure_KeyValue(t *testing.T) {
+	const nodeID = "node-xyz"
+	var captured map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/nodes/"+nodeID+"/configure", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		data, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(data, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(map[string]any{"id": testFlowUUID, "node_id": nodeID, "status": "configured"}))
+	})
+
+	buf, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "node-configure", testFlowUUID, nodeID, "output_enabled=false"})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow node-configure (key=value) 실행 에러가 없어야 합니다")
+
+	// 요청 본문은 {"config": {...}} 형식이어야 한다
+	config, ok := captured["config"].(map[string]any)
+	require.True(t, ok, "요청 본문에 config 키가 있어야 합니다")
+	assert.Equal(t, false, config["output_enabled"], "output_enabled bool 값이 전달되어야 합니다")
+
+	output := buf.String()
+	assert.Contains(t, output, "구성", "출력에 구성 수정 메시지가 포함되어야 합니다")
+}
+
+// TestFlowNodeConfigure_File - 파일(-f)로 노드 구성 수정 검증
+func TestFlowNodeConfigure_File(t *testing.T) {
+	const nodeID = "node-xyz"
+	var captured map[string]any
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/flows/"+testFlowUUID+"/nodes/"+nodeID+"/configure", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		data, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(data, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(apiEnvelope(map[string]any{"id": testFlowUUID, "node_id": nodeID, "status": "configured"}))
+	})
+
+	tmpDir := t.TempDir()
+	cfgFile := filepath.Join(tmpDir, "node.json")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(`{"threshold": 50}`), 0644))
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "node-configure", testFlowUUID, nodeID, "-f", cfgFile})
+	err := cmd.Execute()
+	require.NoError(t, err, "flow node-configure (-f) 실행 에러가 없어야 합니다")
+
+	config, ok := captured["config"].(map[string]any)
+	require.True(t, ok, "요청 본문에 config 키가 있어야 합니다")
+	assert.Equal(t, float64(50), config["threshold"], "파일의 threshold 가 전달되어야 합니다")
+}
+
+// TestFlowNodeConfigure_MissingNodeID - nodeID 인자 누락 시 에러 검증
+func TestFlowNodeConfigure_MissingNodeID(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("인자 누락 시 서버 요청이 없어야 합니다")
+	})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "node-configure", testFlowUUID})
+	err := cmd.Execute()
+	require.Error(t, err, "nodeID 인자 누락 시 에러를 반환해야 합니다")
+}
+
+// TestFlowNodeConfigure_NoValue - 설정값 없이 호출 시 에러 검증
+func TestFlowNodeConfigure_NoValue(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("설정값 없으면 서버에 요청하지 않아야 합니다")
+	})
+
+	_, cmd, cleanup := setupFlowTest(t, handler)
+	defer cleanup()
+
+	cmd.SetArgs([]string{"flow", "node-configure", testFlowUUID, "node-xyz"})
+	err := cmd.Execute()
+	require.Error(t, err, "설정값 누락 시 에러를 반환해야 합니다")
 }
 
 // TestFlowList_AllFormats - list 의 4가지 출력 형식 검증
