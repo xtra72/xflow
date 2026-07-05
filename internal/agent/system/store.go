@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +64,13 @@ type Store interface {
 	// 정책 분기(정적 키는 ClearHistory, 동적 키는 Delete) 는 핸들러 계층의 책임이며,
 	// 이 메서드 자체는 정적/동적을 구분하지 않는다.
 	ClearHistory(ctx context.Context, key string) error
+
+	// Rename 은 oldKey 의 엔트리(값 + 히스토리 + TTL/타임스탬프)를 newKey 로 이동한다.
+	//   - oldKey 가 없으면 ErrKeyNotFound 를 반환한다.
+	//   - newKey 가 이미 존재하면 ErrKeyExists 를 반환하고 아무것도 변경하지 않는다(덮어쓰기 금지).
+	//   - 성공 시 oldKey 는 삭제되고 newKey 로 이동한다.
+	// 시리즈 레지스트리(staticKeys) 메타 이동은 상위 계층(StoreAgent/RenameKey)의 책임이다.
+	Rename(ctx context.Context, oldKey, newKey string) error
 }
 
 // QueryMode 는 HistoryQuery 의 조회 모드를 나타낸다.
@@ -367,6 +375,7 @@ func (s *StoreAgent) GetConfig() map[string]any {
 		"max_key_length":   s.config.maxKeyLength,
 		"max_history_size": s.config.maxHistorySize,
 		"history_ttl":      s.config.historyTTL,
+		"key_tag":          s.config.keyTag,
 	}
 }
 
@@ -508,6 +517,24 @@ func (s *StoreAgent) RemoveStaticKey(key string) {
 	delete(s.config.staticKeys, key)
 }
 
+// MoveStaticKeyMeta 는 레지스트리에서 oldKey 의 메타(StaticKeyMeta)를 newKey 로 이동한다.
+// DataType/MetricType/Tags/Source 를 그대로 보존한다. oldKey 가 미등록이면 no-op(false 반환).
+// 값/히스토리 이동은 Store.Rename 이, 충돌 사전검사는 상위 RenameKey 가 담당한다.
+func (s *StoreAgent) MoveStaticKeyMeta(oldKey, newKey string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, ok := s.config.staticKeys[oldKey]
+	if !ok {
+		return false
+	}
+	if s.config.staticKeys == nil {
+		s.config.staticKeys = make(map[string]StaticKeyMeta)
+	}
+	s.config.staticKeys[newKey] = meta
+	delete(s.config.staticKeys, oldKey)
+	return true
+}
+
 // @spec SPEC-STORE-003 v0.4.0
 // SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 metric_type 과 tags 를 설정한다.
 // 사용자가 Web UI 등에서 동적으로 등록된 키에도 타입/태그를 나중에 부여할 수 있게 한다.
@@ -632,6 +659,35 @@ func (s *StoreAgent) StaticKeysSnapshot() map[string]StaticKeyMeta {
 	return out
 }
 
+// LiveSeriesKeys 는 현재 저장 데이터(비만료)가 존재하는 시리즈 키 집합을 반환한다.
+// 키는 네임스페이스 접두사를 제거한 인코딩 시리즈 키(레지스트리 키와 동일 형식)이다.
+//
+// GET /keys 가 실데이터 없는 auto 유령 시리즈(과거 TTL 만료/삭제로 store 아이템은
+// 사라졌으나 staticKeys 레지스트리에 남은 항목)를 걸러내는 데 사용한다. 이로써
+// 라인차트 Store 선택기가 저장소 탭(실데이터 기준)과 일치한다.
+func (s *StoreAgent) LiveSeriesKeys() map[string]struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	live := make(map[string]struct{})
+	if s.store == nil {
+		return live
+	}
+	now := time.Now()
+	s.store.data.Range(func(key, value any) bool {
+		item, ok := value.(*storeItem)
+		if !ok {
+			return true
+		}
+		if !item.expiresAt.IsZero() && item.expiresAt.Before(now) {
+			return true
+		}
+		rawKey, _ := key.(string)
+		live[strings.TrimPrefix(rawKey, item.namespace+":")] = struct{}{}
+		return true
+	})
+	return live
+}
+
 // @spec SPEC-STORE-003 v0.3.0
 // StaticKeyTags 는 (사용자 키 → 태그 맵) 전체 복사본을 반환한다.
 // 정적 키가 하나도 없으면 빈 맵을 반환한다.
@@ -713,6 +769,21 @@ func (s *StoreAgent) SetMaxKeyLength(n int) {
 	if s.store != nil {
 		s.store.maxKeyLength = n
 	}
+}
+
+// KeyTag 는 자동 요소 생성 시 키로 사용할 태그 이름을 반환한다(빈 문자열이면 미설정).
+// SetWithMeta 어댑터가 쓰기 태그에서 이 태그 값을 찾아 시리즈 키로 사용한다.
+func (s *StoreAgent) KeyTag() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config.keyTag
+}
+
+// SetKeyTag 는 키 태그를 런타임에 변경한다. 동시 호출에 안전하다.
+func (s *StoreAgent) SetKeyTag(tag string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.keyTag = tag
 }
 
 // ---------------------------------------------------------------------------
@@ -968,6 +1039,14 @@ func (as *agentStore) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return as.agent.store.Delete(ctx, key)
+}
+
+// Rename 은 쓰기 연산이므로 paused/closed 를 확인한 뒤 내부 저장소로 위임한다.
+func (as *agentStore) Rename(ctx context.Context, oldKey, newKey string) error {
+	if err := as.checkWrite(); err != nil {
+		return err
+	}
+	return as.agent.store.Rename(ctx, oldKey, newKey)
 }
 
 // Has 는 읽기 연산이므로 closed만 확인한다 (paused에서도 읽기 허용).

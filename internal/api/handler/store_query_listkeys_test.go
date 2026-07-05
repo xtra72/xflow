@@ -61,6 +61,8 @@ func keyByName(keys []StoreKeyResponse, name string) *StoreKeyResponse {
 type fakeKeyMetaLister struct {
 	*fakeAgentCommon
 	staticKeys map[string]system.StaticKeyMeta
+	// liveKeys 가 nil 이면 모든 등록 키를 live 로 간주한다(auto 유령 필터 미적용).
+	liveKeys map[string]struct{}
 }
 
 func (f *fakeKeyMetaLister) StaticKeysSnapshot() map[string]system.StaticKeyMeta {
@@ -82,6 +84,19 @@ func (f *fakeKeyMetaLister) StaticKeysSnapshot() map[string]system.StaticKeyMeta
 		}
 	}
 	return out
+}
+
+// LiveSeriesKeys 는 실데이터가 있는 시리즈 키 집합을 반환한다.
+// liveKeys 가 nil 이면 모든 등록 키를 live 로 간주한다(auto 유령 필터 미적용 — 기존 테스트 호환).
+func (f *fakeKeyMetaLister) LiveSeriesKeys() map[string]struct{} {
+	if f.liveKeys != nil {
+		return f.liveKeys
+	}
+	all := make(map[string]struct{}, len(f.staticKeys))
+	for k := range f.staticKeys {
+		all[k] = struct{}{}
+	}
+	return all
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +156,46 @@ func TestStoreQueryHandler_ListKeys_성공(t *testing.T) {
 		assert.Equal(t, "unknown", k.MetricType)
 		assert.NotNil(t, k.Tags, "tags 는 nil 이 아닌 빈 객체여야 한다 (M9)")
 	}
+}
+
+// 실데이터 없는 시리즈(auto 유령 + bare 정적 정의)는 제외하고, 실데이터 있는 시리즈만
+// 노출한다. (라인차트 Store 선택기 ↔ 저장소 탭 일치)
+func TestStoreQueryHandler_ListKeys_필터_데이터없는시리즈제외(t *testing.T) {
+	agentFake := &fakeKeyMetaLister{
+		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
+		staticKeys: map[string]system.StaticKeyMeta{
+			"m-empty": { // manual(bare 정적 정의) + 실데이터 없음: 제외.
+				DataType: system.DataTypeBoolean, MetricType: "power",
+				Tags: map[string]string{}, Source: system.SourceManual,
+			},
+			"m-live": { // manual + 실데이터 있음: 노출.
+				DataType: system.DataTypeBoolean, MetricType: "power",
+				Tags: map[string]string{}, Source: system.SourceManual,
+			},
+			"a-live": { // auto + 실데이터 있음: 노출.
+				DataType: system.DataTypeBoolean, MetricType: "power",
+				Tags: map[string]string{}, Source: system.SourceAuto,
+			},
+			"a-phantom": { // auto + 실데이터 없음: 유령 → 제외.
+				DataType: system.DataTypeBoolean, MetricType: "power",
+				Tags: map[string]string{}, Source: system.SourceAuto,
+			},
+		},
+		liveKeys: map[string]struct{}{"m-live": {}, "a-live": {}},
+	}
+	router := setupStoreQueryRouter(t, agentFake)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/store/store-a/keys", nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeListKeys(t, rec)
+	assert.Equal(t, 2, resp.Data.Count, "실데이터 있는 m-live + a-live 만 노출")
+	assert.NotNil(t, keyByName(resp.Data.Keys, "m-live"), "실데이터 있는 manual 노출")
+	assert.NotNil(t, keyByName(resp.Data.Keys, "a-live"), "실데이터 있는 auto 노출")
+	assert.Nil(t, keyByName(resp.Data.Keys, "m-empty"), "데이터 없는 bare 정적 정의 제외")
+	assert.Nil(t, keyByName(resp.Data.Keys, "a-phantom"), "유령 auto 제외")
 }
 
 // @spec SPEC-STORE-003 v0.3.0

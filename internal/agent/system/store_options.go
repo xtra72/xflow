@@ -31,6 +31,13 @@ type storeConfig struct {
 	// v0.2.0 의 `map[string]map[string]string` (key → tags) 모델을
 	// `map[string]StaticKeyMeta` (key → DataType + MetricType + Tags + Source) 로 진화시켰다.
 	staticKeys map[string]StaticKeyMeta
+
+	// keyTag 는 자동 요소 생성(SetWithMeta) 시 키로 사용할 태그 이름이다.
+	// 빈 문자열이면 기존 동작(호출자가 제공한 key, 예: 생성된 device_id)을 그대로 사용한다.
+	// 값이 지정되면(예: "name") 쓰기 태그에 그 태그가 있고 값이 비어있지 않을 때
+	// 해당 태그 값을 시리즈 키로 사용하고, 원래 키(생성된 id)는 "id" 태그로 보존한다.
+	// 지정 태그가 없거나 값이 비면 기존 키로 폴백한다.
+	keyTag string
 }
 
 // defaultConfig 는 기본 설정 값을 반환한다.
@@ -126,5 +133,13 @@ func WithRegistrationType(rt RegistrationType) StoreOption {
 func WithStaticKeys(keys map[string]StaticKeyMeta) StoreOption {
 	return func(c *storeConfig) {
 		c.staticKeys = keys
+	}
+}
+
+// WithKeyTag 는 자동 요소 생성 시 키로 사용할 태그 이름을 설정한다.
+// 빈 문자열이면 기존 동작(호출자 제공 키)을 유지한다.
+func WithKeyTag(tag string) StoreOption {
+	return func(c *storeConfig) {
+		c.keyTag = tag
 	}
 }

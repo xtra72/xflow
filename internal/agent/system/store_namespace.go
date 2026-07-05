@@ -140,6 +140,11 @@ func (ns *NamespacedStore) Delete(ctx context.Context, key string) error {
 	return ns.inner.Delete(ctx, ns.prefixKey(key))
 }
 
+// Rename 은 oldKey 를 newKey 로 이동한다(동일 네임스페이스 내). 두 키 모두 접두사를 붙여 위임한다.
+func (ns *NamespacedStore) Rename(ctx context.Context, oldKey, newKey string) error {
+	return ns.inner.Rename(ctx, ns.prefixKey(oldKey), ns.prefixKey(newKey))
+}
+
 // Has 는 주어진 키가 존재하고 만료되지 않았는지 확인한다.
 // 내부적으로 네임스페이스 접두사를 붙여 확인한다.
 func (ns *NamespacedStore) Has(ctx context.Context, key string) (bool, error) {

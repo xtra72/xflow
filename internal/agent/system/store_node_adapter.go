@@ -130,6 +130,27 @@ func (a *NodeStoreAdapter) SetWithMeta(ctx context.Context, key string, value an
 
 	ag := a.agentResolver()
 
+	// 0) key_tag: 자동 요소 생성 시 지정 태그 값을 키로 사용한다(store 에이전트 설정).
+	//    - 쓰기 태그에 지정 태그(예: "name")가 있고 값이 비어있지 않으면 그 값을 키로 사용.
+	//    - 지정 태그가 없거나 값이 비면 기존 키(호출자 제공, 예: 생성된 device_id)로 폴백.
+	//    - 오버라이드 시 원래 키(생성된 id)를 "id" 태그로 보존한다: 관리용 식별 유지 +
+	//      동명(name 중복) 요소가 하나의 시리즈로 잘못 병합되는 것을 방지(id 가 시리즈 차원).
+	if ag != nil {
+		if kt := ag.KeyTag(); kt != "" {
+			if tv, ok := opts.Tags[kt]; ok && tv != "" {
+				newTags := make(map[string]string, len(opts.Tags)+1)
+				for k, v := range opts.Tags {
+					newTags[k] = v
+				}
+				if _, exists := newTags["id"]; !exists {
+					newTags["id"] = key
+				}
+				opts.Tags = newTags
+				key = tv
+			}
+		}
+	}
+
 	// 1) SeriesID 구성·정규화·인코딩. metric/tags 가 식별 차원이 된다.
 	//    이후 모든 키 연산(등록/쓰기/메타)은 이 인코딩 키를 사용자 key 로 사용한다.
 	series := SeriesID{Key: key, MetricType: opts.MetricType, Tags: opts.Tags}.Normalize()

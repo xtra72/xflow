@@ -109,6 +109,22 @@ func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 		}
 	}
 
+	// key_tag (string, 선택) — 자동 요소 생성 시 키로 사용할 태그 이름.
+	// 예: "name" → 쓰기 태그에 name 이 있으면 그 값을 키로, 없으면 기존 키(생성된 id).
+	// 태그 key 형식(^[a-zA-Z0-9_-]+$)을 따른다.
+	if raw, ok := options["key_tag"]; ok {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("store config: key_tag must be string, got %T", raw)
+		}
+		if s != "" && !tagKeyPattern.MatchString(s) {
+			return nil, fmt.Errorf(
+				"store config: key_tag %q must match pattern ^[a-zA-Z0-9_-]+$", s,
+			)
+		}
+		opts = append(opts, WithKeyTag(s))
+	}
+
 	// @spec SPEC-STORE-003 v0.3.0
 	// registration_type (string, default "auto") — "manual" 또는 "auto" enum.
 	// manual 모드는 staticKeys 의 모든 엔트리에 data_type 명시를 요구한다 (parseStaticKeysRaw 에서 강제).
@@ -583,6 +599,7 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 	newScanInterval := allCfg.scanInterval
 	newDefaultTTL := allCfg.defaultTTL
 	newMaxKeyLength := allCfg.maxKeyLength
+	newKeyTag := allCfg.keyTag
 
 	// 3) a.agentConfig 갱신 및 inner 스냅샷을 락 안에서, inner 에의 setter 호출은
 	//    락 밖에서 수행한다(이중 락 교착 회피: a.mu 와 inner.mu 는 서로 독립적).
@@ -604,6 +621,9 @@ func (a *UserStoreAgent) Configure(config agent.AgentConfig) error {
 		// v0.3.0 신규 필드
 		inner.SetRegistrationType(newRegistrationType)
 		inner.SetStaticKeys(newStaticKeys)
+
+		// key_tag 런타임 전파.
+		inner.SetKeyTag(newKeyTag)
 	}
 
 	return nil

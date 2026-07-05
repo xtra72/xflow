@@ -28,6 +28,9 @@ var (
 	// ErrKeyTooLong 은 키 길이가 최대 허용 길이를 초과할 때 반환된다.
 	ErrKeyTooLong = errors.New("store: key exceeds maximum length")
 
+	// ErrKeyExists 는 Rename 대상 키가 이미 존재해 덮어쓰기가 거부될 때 반환된다.
+	ErrKeyExists = errors.New("store: destination key already exists")
+
 	// @spec SPEC-STORE-003
 	// ErrKeyNotAllowed 는 registration_type=manual 모드에서
 	// 정적 키 목록에 없는 키를 쓰려고 할 때 반환된다.

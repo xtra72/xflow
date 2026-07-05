@@ -805,6 +805,39 @@ export async function resetAllStoreKeys(
   return delWith<StoreResetAllResult>(url);
 }
 
+// ---- Key rename ----
+
+/** 키 이름 변경 응답 형상. */
+export interface StoreRenameResult {
+  old_key: string;
+  new_key: string;
+  /** 이동된 시리즈 수(그 키의 metric/tags 조합 전체). */
+  moved: number;
+}
+
+/**
+ * 키(그 키의 모든 시리즈)를 새 키로 이동한다.
+ *
+ * `POST /api/v1/store/{agent_name}/keys/{key}/rename` 를 호출한다.
+ * 값 + 히스토리 + 레지스트리 메타를 보존한다.
+ *
+ * - 대상 키가 이미 존재하면 409 → `APIError` 로 전파된다.
+ * - 대상 키에 시리즈가 없으면 404 → `APIError`.
+ * - 키는 URL 인코딩된다 (`:` → `%3A`).
+ *
+ * @spec SPEC-STORE-004
+ */
+export async function renameStoreKey(
+  agentName: string,
+  key: string,
+  newKey: string,
+  namespace?: string,
+): Promise<StoreRenameResult> {
+  const ns = namespace ?? 'default';
+  const url = `/store/${encodeURIComponent(agentName)}/keys/${encodeURIComponent(key)}/rename?namespace=${encodeURIComponent(ns)}`;
+  return post<StoreRenameResult>(url, { new_key: newKey });
+}
+
 // ---- Key meta (metric_type / tags) ----
 
 /**
