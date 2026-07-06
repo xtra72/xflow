@@ -57,6 +57,8 @@ var (
 	ErrValidationFailed   = &APIError{HTTPCode: 422, Code: "VALIDATION_FAILED", Message: "validation failed"}
 	ErrRateLimitExceeded  = &APIError{HTTPCode: 429, Code: "RATE_LIMIT_EXCEEDED", Message: "rate limit exceeded"}
 	ErrInternalServer     = &APIError{HTTPCode: 500, Code: "INTERNAL_ERROR", Message: "internal server error"}
+	ErrNotImplemented     = &APIError{HTTPCode: 501, Code: "NOT_IMPLEMENTED", Message: "not implemented"}
+	ErrBadGateway         = &APIError{HTTPCode: 502, Code: "BAD_GATEWAY", Message: "bad gateway"}
 	ErrServiceUnavailable = &APIError{HTTPCode: 503, Code: "SERVICE_UNAVAILABLE", Message: "service unavailable"}
 )
 

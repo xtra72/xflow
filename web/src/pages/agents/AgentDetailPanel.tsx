@@ -77,6 +77,7 @@ import {
 } from '@/services/api/monitorService';
 import { useUIStore } from '@/stores/uiStore';
 
+import InfluxdbManagementPanel from './InfluxdbManagementPanel';
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
 import {
@@ -113,7 +114,7 @@ interface AgentDetailPanelProps {
   agentName?: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -145,6 +146,12 @@ const HAS_STORE_TAB = new Set(['store']);
  */
 const HAS_SERIES_TAB = new Set<string>(['tsdb']);
 
+/**
+ * 관리 탭을 표시하는 에이전트 타입.
+ * InfluxDB 에이전트는 bucket / measurement 관리 UI 를 '관리' 탭으로 노출한다.
+ */
+const HAS_MANAGEMENT_TAB = new Set<string>(['influxdb']);
+
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
   const showDevices = !NO_DEVICES_TAB.has(agentType);
@@ -152,6 +159,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
   const showStore = HAS_STORE_TAB.has(agentType);
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
   const showSeries = HAS_SERIES_TAB.has(agentType);
+  const showManagement = HAS_MANAGEMENT_TAB.has(agentType);
 
   // TSDB 에이전트는 기본 탭을 '시리즈', Store 에이전트는 '저장소',
   // 그 외에는 '통계' 를 기본 탭으로 선택한다.
@@ -165,6 +173,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       <div className="flex border-b border-(--color-border-default) px-4">
         <TabButton label={t('agents.detail.tabs.stats')} active={tab === 'stats'} onClick={() => setTab('stats')} />
         <TabButton label={t('agents.detail.tabs.config')} active={tab === 'config'} onClick={() => setTab('config')} />
+        {showManagement && <TabButton label={t('agents.detail.tabs.management')} active={tab === 'management'} onClick={() => setTab('management')} />}
         {showTopics && <TabButton label={t('agents.detail.tabs.topics')} active={tab === 'topics'} onClick={() => setTab('topics')} />}
         {showStore && <TabButton label={t('agents.detail.tabs.store')} active={tab === 'store'} onClick={() => setTab('store')} />}
         {showSeries && <TabButton label={t('agents.detail.tabs.series')} active={tab === 'series'} onClick={() => setTab('series')} />}
@@ -175,6 +184,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       {/* 탭 컨텐츠 */}
       {tab === 'stats' && <StatsTab agentId={agentId} />}
       {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
+      {tab === 'management' && showManagement && <InfluxdbManagementPanel agentName={agentName} />}
       {tab === 'topics' && showTopics && <TopicsTab agentId={agentId} />}
       {tab === 'store' && showStore && <StoreTab agentId={agentId} agentName={agentName} />}
       {tab === 'series' && showSeries && (
