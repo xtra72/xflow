@@ -133,3 +133,39 @@ func (c *influxV3Client) Health(_ context.Context) error {
 func (c *influxV3Client) Close() error {
 	return c.client.Close()
 }
+
+// --- 관리 조작 (InfluxDB 3.x 미지원) ---
+//
+// InfluxDB 3.x 는 v2 의 BucketsAPI / DeleteAPI 에 대응하는 관리 API 를 제공하지
+// 않는다. 관리 조작은 서버 CLI / 별도 관리 인터페이스로 수행해야 하므로, 여기서는
+// 모두 ErrManagementNotSupported 를 반환하는 스텁으로 구현한다.
+
+// ListBuckets 는 v3 에서 지원하지 않는다.
+func (c *influxV3Client) ListBuckets(_ context.Context) ([]BucketInfo, error) {
+	return nil, ErrManagementNotSupported
+}
+
+// CreateBucket 은 v3 에서 지원하지 않는다.
+func (c *influxV3Client) CreateBucket(_ context.Context, _ string, _ int64) (BucketInfo, error) {
+	return BucketInfo{}, ErrManagementNotSupported
+}
+
+// DeleteBucket 은 v3 에서 지원하지 않는다.
+func (c *influxV3Client) DeleteBucket(_ context.Context, _ string) error {
+	return ErrManagementNotSupported
+}
+
+// TruncateBucket 은 v3 에서 지원하지 않는다.
+func (c *influxV3Client) TruncateBucket(_ context.Context, _ string) error {
+	return ErrManagementNotSupported
+}
+
+// ListMeasurements 는 v3 에서 지원하지 않는다.
+func (c *influxV3Client) ListMeasurements(_ context.Context, _ string) ([]string, error) {
+	return nil, ErrManagementNotSupported
+}
+
+// DeleteMeasurement 는 v3 에서 지원하지 않는다.
+func (c *influxV3Client) DeleteMeasurement(_ context.Context, _, _ string) error {
+	return ErrManagementNotSupported
+}

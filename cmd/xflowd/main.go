@@ -767,6 +767,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("api.handler.store_query").Logger())
 	influxdbQueryHandler := handler.NewInfluxDBQueryHandler(agentMgr,
 		obs.Loggers.NewLogger("api.handler.influxdb_query").Logger())
+	influxdbManagementHandler := handler.NewInfluxDBManagementHandler(agentMgr,
+		obs.Loggers.NewLogger("api.handler.influxdb_management").Logger())
 	monitorMgr := handler.NewDefaultMonitorManager(obs.Loggers.NewLogger("api.handler.monitor").Logger(), obs.Levels)
 	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
@@ -839,6 +841,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		chartHandler.RegisterRoutes(g)
 		storeQueryHandler.RegisterRoutes(g)
 		influxdbQueryHandler.RegisterRoutes(g)
+		influxdbManagementHandler.RegisterRoutes(g)
 
 		// SPEC-UPDATE-001 v0.1.0 M10: 시스템 / 업데이트 라우트.
 		systemHandler.RegisterRoutes(g)
