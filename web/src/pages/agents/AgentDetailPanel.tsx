@@ -32,10 +32,8 @@ import {
   resetStoreKey,
   useSetStoreKeyMeta,
   useStoreKeysWithTags,
-  useStoreTagPairs,
   type DataType,
   type StoreKeyObject,
-  type StoreTagPair,
 } from '@/services/api/store';
 import { mapStoreError } from '@/lib/errors/storeErrorMapper';
 import { cn } from '@/lib/utils/cn';
@@ -64,10 +62,6 @@ import {
 } from '@/components/property/EditKeyMetaDialog';
 import RenameKeyDialog from '@/components/property/RenameKeyDialog';
 import SelectStaticKeyDialog from '@/components/property/SelectStaticKeyDialog';
-import {
-  TagFilterChips,
-  matchesTagFilter,
-} from '@/components/property/TagFilterChips';
 import DeviceDetailPanel from '@/pages/devices/DeviceDetailPanel';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
 import {
@@ -2831,14 +2825,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<StorePageSize>(10);
 
-  // --- 태그 필터 상태 (SPEC-STORE-003) ---
-  // "tagKey=tagValue" 문자열 집합. AND 로직 (모두 일치하는 엔트리만 표시).
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set());
-
-  // --- 메트릭 타입 필터 상태 (SPEC-STORE-003 v0.4.0) ---
-  // 빈 문자열 = 전체. 엔트리에 모두 metric_type 이 포함되므로 클라이언트 측 필터.
-  const [selectedMetricType, setSelectedMetricType] = useState<string>('');
-
   // --- 검색 필터 상태 (store key 테이블) ---
   // key / metric_type / tags 에 대한 부분일치(대소문자 무시) 검색어.
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -2869,10 +2855,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   // 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더의 토글로 일괄 제어한다.
   // false(기본): 앞 8자만 표시, true: 전체 키 표시.
   const [keyColumnExpanded, setKeyColumnExpanded] = useState(false);
-
-  // 태그 쌍 목록 조회 (구버전 서버/태그 없음 은 빈 배열로 폴백).
-  const tagPairsQuery = useStoreTagPairs(agentName);
-  const tagPairs: StoreTagPair[] = tagPairsQuery.data ?? [];
 
   // v0.7.0 (M14, Phase D): 백엔드에서 자동 등록된 키의 메타데이터(data_type 포함)를
   // 가져온다. PromoteToStaticDialog 가 defaultDataType 으로 사전 채움하기 위함이다.
@@ -2923,35 +2905,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
   const maxHistorySize = (agent?.state as { max_history_size?: number } | undefined)?.max_history_size ?? 0;
 
-  // 사용 중인 메트릭 타입 목록 (필터 셀렉트 옵션). 빈 값은 "unknown" 으로 정규화.
-  // 필터링 전 전체 엔트리 기준으로 계산하여, 필터 적용 후에도 옵션이 사라지지 않게 한다.
-  // @spec SPEC-STORE-003 v0.4.0
-  const metricTypeOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const e of allEntries) {
-      set.add(extractEntryMetricType(e) || 'unknown');
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [allEntries]);
-
-  // 태그 + 메트릭 타입 필터 적용 (AND 로직). 선택이 없으면 원본 그대로.
-  // @spec SPEC-STORE-003 v0.4.0
-  const filteredEntries = useMemo(() => {
-    const tagActive = selectedTags.size > 0;
-    const metricActive = selectedMetricType !== '';
-    if (!tagActive && !metricActive) return allEntries;
-    return allEntries.filter((e) => {
-      if (tagActive && !matchesTagFilter(extractEntryTags(e), selectedTags)) {
-        return false;
-      }
-      if (metricActive) {
-        const mt = extractEntryMetricType(e) || 'unknown';
-        if (mt !== selectedMetricType) return false;
-      }
-      return true;
-    });
-  }, [allEntries, selectedTags, selectedMetricType]);
-
   // Excel 유사 컬럼 필터/정렬용 컨텍스트. binding 컬럼은 정적/동적 라벨을 셀 값으로
   // 사용하므로 i18n 라벨을 주입한다. (t 는 안정적이나 방어적으로 deps 에 포함.)
   const filterCtx = useMemo<FilterContext>(
@@ -2966,14 +2919,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   );
 
   // 검색·컬럼 필터·정렬을 차례로 적용.
-  // 파이프라인: 태그/메트릭 필터(filteredEntries) → 컬럼별 Excel 필터 → 검색 → 정렬.
+  // 파이프라인: 전체 엔트리 → 컬럼별 Excel 필터 → 검색 → 정렬.
   // 모두 AND 결합이므로 순서는 결과에 영향을 주지 않는다.
   // binding(정적/동적) 정렬은 staticKeyNames 집합을 사용한다.
   const entries = useMemo(() => {
-    const byColumn = applyColumnFilters(filteredEntries, columnFilters, filterCtx);
+    const byColumn = applyColumnFilters(allEntries, columnFilters, filterCtx);
     const searched = filterEntries(byColumn, searchQuery);
     return sortEntries(searched, sort, { staticKeyNames });
-  }, [filteredEntries, columnFilters, filterCtx, searchQuery, sort, staticKeyNames]);
+  }, [allEntries, columnFilters, filterCtx, searchQuery, sort, staticKeyNames]);
 
   // 태그 컬럼 표시 여부: 필터링 전 전체 엔트리 중 하나라도 태그가 있으면 표시.
   // (필터링 후 엔트리만 기준으로 하면, 필터 해제 시 컬럼이 사라지는 UX 문제가 발생)
@@ -3012,8 +2965,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     isColumnFilterActive(f),
   );
   const hasActiveFilter =
-    selectedTags.size > 0 ||
-    selectedMetricType !== '' ||
     searchQuery.trim() !== '' ||
     anyColumnFilterActive;
 
@@ -3027,37 +2978,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const visibleEntries = useMemo(
     () => entries.slice(startIdx, startIdx + pageSize),
     [entries, startIdx, pageSize],
-  );
-
-  // --- 태그 필터 핸들러 ---
-
-  const handleToggleTag = useCallback((filterId: string) => {
-    setSelectedTags((prev) => {
-      const next = new Set(prev);
-      if (next.has(filterId)) {
-        next.delete(filterId);
-      } else {
-        next.add(filterId);
-      }
-      return next;
-    });
-    // 필터 변경 시 1페이지로 리셋.
-    setPage(1);
-  }, []);
-
-  const handleClearTags = useCallback(() => {
-    setSelectedTags(new Set());
-    setPage(1);
-  }, []);
-
-  // --- 메트릭 타입 필터 핸들러 (SPEC-STORE-003 v0.4.0) ---
-  const handleMetricTypeFilterChange = useCallback(
-    (e: ChangeEvent<HTMLSelectElement>) => {
-      setSelectedMetricType(e.target.value);
-      // 필터 변경 시 1페이지로 리셋.
-      setPage(1);
-    },
-    [],
   );
 
   // --- 검색 핸들러 (store key 테이블) ---
@@ -3597,58 +3517,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
           </button>
         )}
       </div>
-
-      {/* 메트릭 타입 필터 (SPEC-STORE-003 v0.4.0): 사용 중인 타입이 2종 이상일 때만 노출.
-          (단일 종류뿐이면 필터 의미가 없으므로 숨겨 노이즈를 줄인다.) */}
-      {metricTypeOptions.length > 1 && (
-        <div className="flex items-center gap-2 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-          <label
-            htmlFor="store-metric-type-filter"
-            className="flex items-center gap-1.5 text-xs font-medium text-(--color-text-muted)"
-          >
-            <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('agents.detail.store.metricType')}
-          </label>
-          <select
-            id="store-metric-type-filter"
-            value={selectedMetricType}
-            onChange={handleMetricTypeFilterChange}
-            data-testid="store-metric-type-filter"
-            className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="">{t('agents.detail.store.all')}</option>
-            {metricTypeOptions.map((mt) => (
-              <option key={mt} value={mt}>
-                {mt}
-              </option>
-            ))}
-          </select>
-          {selectedMetricType !== '' && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedMetricType('');
-                setPage(1);
-              }}
-              className="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-            >
-              {t('agents.detail.store.clearFilter')}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 태그 필터 섹션 (SPEC-STORE-003): 태그 쌍이 하나도 없으면 전체를 숨긴다. */}
-      {tagPairs.length > 0 && (
-        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-          <TagFilterChips
-            pairs={tagPairs}
-            selected={selectedTags}
-            onToggle={handleToggleTag}
-            onClearAll={handleClearTags}
-          />
-        </div>
-      )}
 
       {/* 테이블 */}
       {entries.length === 0 ? (

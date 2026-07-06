@@ -8,7 +8,7 @@
 //
 // @spec SPEC-WEB-005 (store key 테이블 구성 가능 컬럼)
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -297,12 +297,18 @@ export function ColumnFilterButton({
   uniqueValues,
   filter,
   onChange,
+  grouped = false,
   t,
 }: {
   label: string;
   uniqueValues: readonly string[];
   filter: ColumnFilter | undefined;
   onChange: (next: ColumnFilter) => void;
+  /**
+   * true 이면 값들을 "키=값" 의 키(= 앞부분) 기준으로 그룹핑해 표시한다.
+   * 태그 컬럼처럼 값이 "tagKey=tagValue" 형태일 때 태그 종류별 선택을 지원한다.
+   */
+  grouped?: boolean;
   t: TranslationFn;
 }) {
   const [open, setOpen] = useState(false);
@@ -312,6 +318,21 @@ export function ColumnFilterButton({
   const current = filter ?? emptyColumnFilter();
   const active = isColumnFilterActive(filter);
 
+  // grouped 모드: "키=값" 을 키(= 앞부분) 기준으로 묶는다. `=` 가 없으면 값 전체를 키로 쓴다.
+  // 필터 매칭은 여전히 전체 "키=값" 문자열 기준이므로, 그룹핑은 표시/선택 편의만 제공한다.
+  const groups = useMemo(() => {
+    if (!grouped) return null;
+    const map = new Map<string, string[]>();
+    for (const v of uniqueValues) {
+      const eq = v.indexOf('=');
+      const gk = eq >= 0 ? v.slice(0, eq) : v;
+      const arr = map.get(gk);
+      if (arr) arr.push(v);
+      else map.set(gk, [v]);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [grouped, uniqueValues]);
+
   const setText = (text: string) => {
     onChange({ text, values: new Set(current.values) });
   };
@@ -320,6 +341,16 @@ export function ColumnFilterButton({
     const next = new Set(current.values);
     if (next.has(value)) next.delete(value);
     else next.add(value);
+    onChange({ text: current.text, values: next });
+  };
+
+  // 그룹(태그 종류) 단위 전체 선택/해제. 그룹이 모두 선택돼 있으면 해제, 아니면 전체 선택.
+  const toggleGroup = (pairs: string[], allSelected: boolean) => {
+    const next = new Set(current.values);
+    for (const p of pairs) {
+      if (allSelected) next.delete(p);
+      else next.add(p);
+    }
     onChange({ text: current.text, values: next });
   };
 
@@ -361,7 +392,13 @@ export function ColumnFilterButton({
         )}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg">
+        <div
+          className={cn(
+            'absolute left-0 top-full z-30 mt-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg',
+            // 태그처럼 "키=값" 이 긴 그룹 모드는 전체 값이 보이도록 폭을 넓힌다.
+            grouped ? 'w-80' : 'w-56',
+          )}
+        >
           <div className="relative mb-2">
             <input
               type="text"
@@ -398,11 +435,75 @@ export function ColumnFilterButton({
               {t('agents.detail.store.filterClearValues')}
             </button>
           </div>
-          <div className="max-h-40 overflow-y-auto">
+          <div className={cn('overflow-y-auto', grouped ? 'max-h-64' : 'max-h-40')}>
             {uniqueValues.length === 0 ? (
               <p className="px-1 py-1 text-[11px] text-(--color-text-muted)">
                 {t('agents.detail.store.filterNoValues')}
               </p>
+            ) : groups ? (
+              // 그룹 모드(태그): 태그 종류(키)별로 묶고, 그룹 헤더에서 종류 단위 선택을 지원한다.
+              // 각 값은 "값" 부분만 표시하되(키는 그룹 헤더가 대신함) 전체 "키=값" 은 title 로 노출한다.
+              groups.map(([groupKey, pairs]) => {
+                const selCount = pairs.reduce(
+                  (n, p) => n + (current.values.has(p) ? 1 : 0),
+                  0,
+                );
+                const allSel = selCount === pairs.length;
+                const someSel = selCount > 0 && !allSel;
+                return (
+                  <div key={groupKey} className="mb-1.5 last:mb-0">
+                    {/* 그룹 헤더: 태그 종류(키) + 종류 단위 전체 선택/해제 (indeterminate 지원) */}
+                    <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-(--color-bg-secondary)">
+                      <input
+                        type="checkbox"
+                        checked={allSel}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someSel;
+                        }}
+                        onChange={() => toggleGroup(pairs, allSel)}
+                        className="h-3 w-3 shrink-0"
+                      />
+                      <span
+                        className="truncate font-mono text-[11px] font-semibold text-(--color-text-primary)"
+                        title={groupKey}
+                      >
+                        {groupKey === ''
+                          ? t('agents.detail.store.filterEmptyValue')
+                          : groupKey}
+                      </span>
+                      <span className="ml-auto shrink-0 text-[10px] text-(--color-text-muted)">
+                        {selCount}/{pairs.length}
+                      </span>
+                    </label>
+                    {/* 그룹 값 목록 */}
+                    <div className="ml-2 border-l border-(--color-border-default) pl-1.5">
+                      {pairs.map((p) => {
+                        const eq = p.indexOf('=');
+                        const valPart = eq >= 0 ? p.slice(eq + 1) : p;
+                        const checked = current.values.has(p);
+                        return (
+                          <label
+                            key={p}
+                            className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-secondary)"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleValue(p)}
+                              className="mt-0.5 h-3 w-3 shrink-0"
+                            />
+                            <span className="break-all font-mono text-[11px]" title={p}>
+                              {valPart === ''
+                                ? t('agents.detail.store.filterEmptyValue')
+                                : valPart}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
               uniqueValues.map((v) => {
                 const checked = current.values.has(v);
@@ -530,6 +631,7 @@ export function ColumnHeader({
             uniqueValues={uniqueValues}
             filter={filter}
             onChange={(next) => onFilterChange(column.filterColumn!, next)}
+            grouped={column.filterColumn === 'tags'}
             t={t}
           />
         )}

@@ -167,29 +167,6 @@ describe('StoreTab — 타입/태그 표시', () => {
   });
 });
 
-describe('StoreTab — 메트릭 타입 필터', () => {
-  it('필터 선택 시 해당 타입의 엔트리만 표시된다', () => {
-    renderPanel(LOCAL_TARGET);
-    const filter = screen.getByTestId('store-metric-type-filter');
-    fireEvent.change(filter, { target: { value: 'temperature' } });
-
-    // temperature 엔트리만 남고 humidity 행은 사라진다.
-    // 키 컬럼은 8자 초과 시 축약되므로 전체 키가 담긴 title 로 조회한다.
-    expect(screen.getByTitle('indoor:temp')).toBeInTheDocument();
-    expect(screen.queryByTitle('outdoor:humidity')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('dynamic:count')).not.toBeInTheDocument();
-  });
-
-  it('필터를 unknown 으로 선택하면 동적 엔트리만 표시된다', () => {
-    renderPanel(LOCAL_TARGET);
-    fireEvent.change(screen.getByTestId('store-metric-type-filter'), {
-      target: { value: 'unknown' },
-    });
-    expect(screen.getByTitle('dynamic:count')).toBeInTheDocument();
-    expect(screen.queryByTitle('indoor:temp')).not.toBeInTheDocument();
-  });
-});
-
 describe('StoreTab — 타입/태그 편집', () => {
   it('편집 버튼 → 다이얼로그 → 저장 시 useSetStoreKeyMeta 가 전체 교체 payload 로 호출된다', async () => {
     setKeyMetaMutateAsync.mockResolvedValueOnce({
