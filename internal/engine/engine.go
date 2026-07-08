@@ -1047,9 +1047,19 @@ func (e *Engine) autoStartAgents(ctx context.Context, rt *flowRuntime) []agent.A
 	started := make(map[string]bool)
 	var autoStarted []agent.Agent
 
-	for _, n := range rt.nodes {
+	for nodeID, n := range rt.nodes {
 		provider, ok := n.(connectedAgentProvider)
 		if !ok {
+			continue
+		}
+		// 비활성화된 노드는 연결 에이전트를 자동 시작하지 않는다.
+		// dedup(started) 이전에 건너뛰어, 같은 에이전트를 참조하는 다른 활성 노드는
+		// 정상적으로 에이전트를 시작할 수 있게 한다.
+		if rt.disabledNodes[nodeID] {
+			if e.logger != nil {
+				e.logger.Info("engine: 비활성화된 노드의 에이전트 자동 시작 건너뜀",
+					"nodeID", nodeID)
+			}
 			continue
 		}
 		ag := provider.ConnectedAgent()

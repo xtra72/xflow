@@ -131,6 +131,58 @@ func TestAutoStartAgents_StartsEnabledAgent(t *testing.T) {
 	}
 }
 
+// newRuntimeWithDisabledNodes 는 주어진 노드들과 비활성화 노드 ID 집합으로
+// 최소한의 flowRuntime 을 구성한다.
+func newRuntimeWithDisabledNodes(disabledIDs []string, nodes ...*fakeConnectedNode) *flowRuntime {
+	m := make(map[string]node.Node, len(nodes))
+	for _, n := range nodes {
+		m[n.ID()] = n
+	}
+	disabled := make(map[string]bool, len(disabledIDs))
+	for _, id := range disabledIDs {
+		disabled[id] = true
+	}
+	return &flowRuntime{nodes: m, disabledNodes: disabled}
+}
+
+// TestAutoStartAgents_SkipsDisabledNode 는 노드가 비활성화된 경우, 연결된
+// 에이전트가 (활성화 상태여도) 자동 시작되지 않음을 검증한다.
+// 수정 전(RED): 비활성화 노드의 에이전트도 Start 가 호출된다.
+func TestAutoStartAgents_SkipsDisabledNode(t *testing.T) {
+	ag := newFakeStartAgent("agent-1", "enabled-agent", boolPtr(true))
+	rt := newRuntimeWithDisabledNodes(
+		[]string{"node-1"},
+		newFakeConnectedNode("node-1", "bridge-1", ag),
+	)
+
+	e := &Engine{}
+	started := e.autoStartAgents(context.Background(), rt)
+
+	assert.Equal(t, int32(0), ag.startCalls.Load(),
+		"비활성화된 노드의 에이전트에 Start() 를 호출하면 안 된다")
+	assert.Empty(t, started, "반환 슬라이스는 비어 있어야 한다")
+}
+
+// TestAutoStartAgents_EnabledNodeStartsSharedAgent 는 같은 에이전트를 참조하는
+// 비활성화 노드와 활성화 노드가 함께 있을 때, 활성화 노드를 통해 에이전트가
+// 시작됨을 검증한다 (노드 스킵이 dedup 이전에 일어나야 함).
+func TestAutoStartAgents_EnabledNodeStartsSharedAgent(t *testing.T) {
+	ag := newFakeStartAgent("agent-shared", "shared-agent", boolPtr(true))
+	rt := newRuntimeWithDisabledNodes(
+		[]string{"node-disabled"},
+		newFakeConnectedNode("node-disabled", "bridge-disabled", ag),
+		newFakeConnectedNode("node-enabled", "bridge-enabled", ag),
+	)
+
+	e := &Engine{}
+	started := e.autoStartAgents(context.Background(), rt)
+
+	assert.Equal(t, int32(1), ag.startCalls.Load(),
+		"활성화 노드를 통해 공유 에이전트는 한 번 시작되어야 한다")
+	require.Len(t, started, 1)
+	assert.Same(t, ag, started[0].(*fakeStartAgent))
+}
+
 // TestAutoStartAgents_MixedEnabledDisabled 는 활성화/비활성화 에이전트가 혼재된
 // 경우 활성화된 에이전트만 시작됨을 검증한다.
 func TestAutoStartAgents_MixedEnabledDisabled(t *testing.T) {
