@@ -47,23 +47,34 @@ const (
 
 // ThingsBoard Gateway MQTT API 토픽 상수 (v1/gateway/*).
 //
-// NOTE(Device API 전환): 아래 게이트웨이 토픽은 Device API 흐름에서는 사용되지
-// 않는다(dormant). connectDevice/disconnectDevice/reconnectKnownDevices 및 RPC
-// 다운링크 경로가 여전히 참조하므로 코드/테스트 일관성을 위해 남겨 둔다. 텔레메트리/
-// 속성 업링크와 공유 속성 다운링크 구독은 모두 Device API 토픽을 사용한다.
+// api_mode="gateway" 일 때 활성화된다. 게이트웨이 API 는 하나의 연결로 다수의 하위
+// 디바이스를 다중화(connect/disconnect)하며, 텔레메트리/속성/RPC 를 NAME 으로 감싼다.
+// api_mode="device"(기본) 에서는 이 토픽들을 사용하지 않고 Device API(v1/devices/me/*)
+// 를 사용한다.
 const (
 	// topicGatewayConnect 는 하위 디바이스를 게이트웨이에 연결(및 서버 측 자동 생성)하는 토픽이다.
 	topicGatewayConnect = "v1/gateway/connect"
 	// topicGatewayDisconnect 는 하위 디바이스 연결을 해제하는 토픽이다.
 	topicGatewayDisconnect = "v1/gateway/disconnect"
-	// topicGatewayAttributes 는 게이트웨이 클라이언트 속성 업링크 / 공유 속성 다운링크 토픽이다 (dormant).
+	// topicGatewayTelemetry 는 게이트웨이 텔레메트리 업링크 토픽이다 (gateway 모드).
+	// 페이로드: {"<NAME>":[{"ts":<epoch_ms>,"values":{<kv>}}]}
+	topicGatewayTelemetry = "v1/gateway/telemetry"
+	// topicGatewayAttributes 는 게이트웨이 클라이언트 속성 업링크 / 공유 속성 다운링크 토픽이다 (gateway 모드).
 	topicGatewayAttributes = "v1/gateway/attributes"
-	// topicGatewayRPC 는 게이트웨이 RPC 다운링크 및 RPC 응답 업링크 토픽이다 (dormant).
+	// topicGatewayRPC 는 게이트웨이 RPC 다운링크 및 RPC 응답 업링크 토픽이다 (gateway 모드).
 	topicGatewayRPC = "v1/gateway/rpc"
 )
 
 // ThingplusConfig 는 thingplus-gateway 에이전트 설정이다.
 type ThingplusConfig struct {
+	// APIMode 는 ThingsBoard MQTT API 모드이다: "device" | "gateway".
+	//   - "device"(기본): Device API(v1/devices/me/*). 단일 액세스 토큰으로 하나의
+	//     디바이스("me")를 인증한다. sub-device connect 개념이 없어 텔레메트리를 곧바로 발행한다.
+	//   - "gateway": Gateway API(v1/gateway/*). 하나의 연결로 다수의 하위 디바이스를
+	//     connect/disconnect 로 다중화하며, 텔레메트리/속성/RPC 를 NAME 으로 감싼다.
+	// 알 수 없거나 빈 값은 "device" 로 보정한다.
+	APIMode string `json:"api_mode"`
+
 	// Broker 는 MQTT 브로커 주소이다 (예: "localhost" 또는 "tcp://localhost:1883").
 	Broker string `json:"broker"`
 
@@ -475,6 +486,7 @@ var (
 // KeepAliveSec=60, AutoReconnect=true, BufferSize=256.
 func parseThingplusConfig(cfg agent.AgentConfig) ThingplusConfig {
 	tc := ThingplusConfig{
+		APIMode:           "device",
 		Broker:            "localhost",
 		Port:              1883,
 		DeviceNamePath:    "$.device",
@@ -492,6 +504,11 @@ func parseThingplusConfig(cfg agent.AgentConfig) ThingplusConfig {
 	opts := cfg.Transport.Options
 	if opts == nil {
 		return tc
+	}
+
+	// api_mode: "gateway" 또는 "device" 만 허용하며, 그 외/빈 값은 기본 "device" 를 유지한다.
+	if v, ok := opts["api_mode"].(string); ok && (v == "gateway" || v == "device") {
+		tc.APIMode = v
 	}
 
 	if v, ok := opts["broker"].(string); ok && v != "" {
@@ -766,28 +783,41 @@ func (a *ThingplusGatewayAgent) onConnect(c mqtt.Client) {
 		"access_token", maskSecret(cfg.AccessToken),
 	)
 
-	// 다운링크 토픽 구독 (Device API 공유 속성).
+	// 다운링크 토픽 구독 (모드별 토픽).
 	a.subscribeDownlink(c)
 
-	// Device API 전환: sub-device gateway connect 개념이 없으므로 재연결 시
-	// reconnectKnownDevices(=v1/gateway/connect 재발행)를 호출하지 않는다.
+	// gateway 모드에서는 이전에 connected 였던 하위 디바이스를 재connect 한다
+	// (v1/gateway/connect 재발행, REQ-map-reconnect). device 모드는 sub-device connect
+	// 개념이 없으므로 재connect 하지 않는다.
+	if cfg.APIMode == "gateway" {
+		a.reconnectKnownDevices(c)
+	}
 
 	// 재연결 후 버퍼링된 업링크를 flush 한다 (REQ-up-nolost / AC-05).
 	a.flushUplinkBuffer(c)
 }
 
-// subscribeDownlink 는 Device API 다운링크 토픽을 구독한다.
+// subscribeDownlink 는 현재 api_mode 에 맞는 다운링크 토픽을 구독한다.
 //
-// Device API 다운링크 구독 대상:
+// device 모드(기본):
 //   - v1/devices/me/attributes         : 공유 속성 변경 push
 //   - v1/devices/me/rpc/request/+       : 서버→디바이스 RPC 요청(+ 로 모든 requestId 수신)
 //
-// 게이트웨이 RPC(v1/gateway/rpc) 는 dormant 이므로 구독하지 않는다.
+// gateway 모드:
+//   - v1/gateway/rpc                    : 게이트웨이 RPC 요청/응답
+//   - v1/gateway/attributes             : 게이트웨이 공유 속성 변경 push
+//
 // c 는 mqttSubscriber 인터페이스로 받아 테스트에서 fake 구독자 주입이 가능하다
 // (실제 mqtt.Client 가 이를 만족한다).
 func (a *ThingplusGatewayAgent) subscribeDownlink(c mqttSubscriber) {
-	qos := a.snapshotConfig().QoS
-	topics := []string{topicDeviceAttributes, topicDeviceRPCRequestSub}
+	cfg := a.snapshotConfig()
+	qos := cfg.QoS
+	var topics []string
+	if cfg.APIMode == "gateway" {
+		topics = []string{topicGatewayRPC, topicGatewayAttributes}
+	} else {
+		topics = []string{topicDeviceAttributes, topicDeviceRPCRequestSub}
+	}
 	for _, topic := range topics {
 		token := c.Subscribe(topic, qos, a.downlinkHandler)
 		token.Wait()
@@ -850,14 +880,14 @@ func (a *ThingplusGatewayAgent) routeDownlink(topic string, data []byte) {
 			a.logger.Warn("thingplus: device 공유 속성 다운링크 파싱 실패, 원시 fallback", "error", err)
 		}
 	case topicGatewayRPC:
-		// dormant(게이트웨이 RPC) — 현재 구독하지 않으나 경로/테스트 일관성을 위해 유지.
+		// 게이트웨이 RPC 다운링크 (gateway 모드). id 는 payload 에 담긴다.
 		if built, err := a.buildRPCDownlinkMessage(data); err == nil {
 			out = built
 		} else {
 			a.logger.Warn("thingplus: RPC 다운링크 파싱 실패, 원시 fallback", "error", err)
 		}
 	case topicGatewayAttributes:
-		// dormant(게이트웨이 공유 속성) — 현재 구독하지 않으나 경로/테스트 일관성을 위해 유지.
+		// 게이트웨이 공유 속성 다운링크 (gateway 모드).
 		if built, err := a.buildSharedAttrDownlinkMessage(data); err == nil {
 			out = built
 		} else {
@@ -1306,20 +1336,16 @@ func (a *ThingplusGatewayAgent) Process(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("thingplus process: 인입 메시지 파싱 실패: %w", err)
 	}
 
-	// Device API RPC 응답 분기: Type 이 thingplus.rpc.response 이면 Device API 경로로
-	// 처리한다. Device API 에서는 requestId 가 토픽에 담기고 응답을 곧바로
-	// v1/devices/me/rpc/response/{id} 로 발행한다("me" 게이팅 없음).
-	// dormant 게이트웨이 handleRPCReply(payload.device 기반 게이팅+v1/gateway/rpc)와
-	// 충돌하지 않도록, Type 이 명시된 응답은 반드시 NEW device 발행 경로로 라우팅한다.
+	// RPC 응답 분기: Type 이 thingplus.rpc.response 이면 모드에 맞는 발행자로 라우팅한다.
+	//   - device 모드: requestId 가 토픽에 담기고 v1/devices/me/rpc/response/{id} 로 발행("me" 게이팅 없음).
+	//   - gateway 모드: id 가 payload 에 담기고 device connected 게이팅 후 v1/gateway/rpc 로 발행.
 	if msgType == "thingplus.rpc.response" {
-		return nil, a.handleDeviceRPCResponse(a.rpcResponsePublisherOrClient(), payload)
+		return nil, a.routeRPCResponse(payload)
 	}
 
-	// RPC 응답 분기(Type 미지정 fallback): payload 에 rpc id 가 있으면 device RPC
-	// 응답으로 처리한다. Device API 는 requestId 를 토픽에 담으므로 payload 의 id 를
-	// 그대로 응답 토픽 suffix 로 사용한다.
+	// RPC 응답 분기(Type 미지정 fallback): payload 에 rpc id 가 있으면 RPC 응답으로 처리한다.
 	if looksLikeRPCReply(payload) {
-		return nil, a.handleDeviceRPCResponse(a.rpcResponsePublisherOrClient(), payload)
+		return nil, a.routeRPCResponse(payload)
 	}
 
 	// 그 외는 업링크(텔레메트리/속성)로 처리.
@@ -1351,6 +1377,13 @@ func (a *ThingplusGatewayAgent) snapshotConfig() ThingplusConfig {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.cfg
+}
+
+// isGatewayMode 는 현재 설정이 Gateway API 모드(api_mode="gateway")인지 반환한다.
+// 그 외(기본 "device" 포함)는 false 이다. 런타임 Configure() 레이스 방지를 위해
+// snapshotConfig() 로 스냅샷한 값을 사용한다.
+func (a *ThingplusGatewayAgent) isGatewayMode() bool {
+	return a.snapshotConfig().APIMode == "gateway"
 }
 
 // decodeInbound 는 인입 바이트를 (msgType, msg, payload map) 으로 복원한다.
@@ -1388,7 +1421,18 @@ func looksLikeRPCReply(payload map[string]any) bool {
 	return false
 }
 
-// rpcResponsePublisherOrClient 는 Device API RPC 응답 발행에 사용할 mqttPublisher 를
+// routeRPCResponse 는 플로우로부터 온 RPC 응답을 현재 api_mode 에 맞는 발행 경로로 라우팅한다.
+//   - gateway 모드: handleRPCReply → device connected 게이팅 후 v1/gateway/rpc 로 발행.
+//   - device 모드(기본): handleDeviceRPCResponse → v1/devices/me/rpc/response/{id} 로 발행.
+func (a *ThingplusGatewayAgent) routeRPCResponse(payload map[string]any) error {
+	pub := a.rpcResponsePublisherOrClient()
+	if a.isGatewayMode() {
+		return a.handleRPCReply(pub, payload)
+	}
+	return a.handleDeviceRPCResponse(pub, payload)
+}
+
+// rpcResponsePublisherOrClient 는 RPC 응답 발행에 사용할 mqttPublisher 를
 // 반환한다. 테스트 주입(rpcResponsePublisher)이 있으면 그것을, 없으면 실제 client 를 쓴다.
 func (a *ThingplusGatewayAgent) rpcResponsePublisherOrClient() mqttPublisher {
 	a.mu.RLock()
@@ -1607,20 +1651,26 @@ func (a *ThingplusGatewayAgent) handleUplinkFromMessage(pub mqttPublisher, msg m
 
 	connected := pub != nil && pub.IsConnected()
 
-	// Device API 전환: sub-device gateway connect 가 없다. auto-connect(connectDevice)
-	// 를 수행하지 않고 텔레메트리를 곧바로 발행한다. 연결 끊김 시에는 무손실 버퍼링하고
-	// 재연결 시 flush 한다(REQ-up-nolost 유지).
+	if cfg.APIMode == "gateway" {
+		return a.handleUplinkGateway(pub, name, values, attrs, connected, cfg.QoS)
+	}
+	return a.handleUplinkDevice(pub, name, values, attrs, connected, cfg.QoS)
+}
 
+// handleUplinkDevice 는 Device API(v1/devices/me/*) 업링크를 처리한다.
+//
+// sub-device gateway connect 가 없으므로 auto-connect 를 수행하지 않고 텔레메트리를 곧바로
+// 발행한다. 연결 끊김 시에는 무손실 버퍼링하고 재연결 시 flush 한다(REQ-up-nolost 유지).
+func (a *ThingplusGatewayAgent) handleUplinkDevice(pub mqttPublisher, name string, values, attrs map[string]any, connected bool, qos byte) error {
 	// 텔레메트리 발행 (값이 있을 때). Device API 형식:
-	// {"ts":<UnixMilli>,"values":{"<name>":{<kv>}}}. ts 는 서버 시각 사용을 위해
-	// 현재 시각으로 채운다.
+	// {"ts":<UnixMilli>,"values":{"<name>":{<kv>}}}. ts 는 현재 시각으로 채운다.
 	if len(values) > 0 {
 		ts := time.Now()
 		telemetry, err := buildDeviceTelemetry(name, &ts, values)
 		if err != nil {
 			return err
 		}
-		if err := a.publishOrBuffer(pub, topicDeviceTelemetry, telemetry, connected, cfg.QoS); err != nil {
+		if err := a.publishOrBuffer(pub, topicDeviceTelemetry, telemetry, connected, qos); err != nil {
 			return err
 		}
 	}
@@ -1632,7 +1682,59 @@ func (a *ThingplusGatewayAgent) handleUplinkFromMessage(pub mqttPublisher, msg m
 		if err != nil {
 			return err
 		}
-		if err := a.publishOrBuffer(pub, topicDeviceAttributes, clientAttr, connected, cfg.QoS); err != nil {
+		if err := a.publishOrBuffer(pub, topicDeviceAttributes, clientAttr, connected, qos); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// handleUplinkGateway 는 Gateway API(v1/gateway/*) 업링크를 처리한다.
+//
+// 흐름: 연결 상태이고 디바이스가 아직 connected 가 아니면 auto-connect(connectDevice) 하여
+// 텔레메트리 발행 전에 게이팅(A6/A7)한다. 그 후 텔레메트리({"<NAME>":[{ts,values}]})를
+// v1/gateway/telemetry 로, 클라이언트 속성({"<NAME>":{...}})을 v1/gateway/attributes 로
+// 발행한다. 브로커 연결이 끊겨 있으면 무손실 버퍼링하고 재연결 시 flush 한다.
+func (a *ThingplusGatewayAgent) handleUplinkGateway(pub mqttPublisher, name string, values, attrs map[string]any, connected bool, qos byte) error {
+	// auto-connect: 연결 상태에서 디바이스가 아직 connected 가 아니면 connect 한다.
+	// connect 발행이 실패하면 디바이스는 connected 로 전이하지 않으며, 아래 게이팅으로
+	// 텔레메트리는 버퍼링된다(무손실).
+	if connected {
+		if e, ok := a.devices.get(name); !ok || e.state != deviceConnected {
+			if err := a.connectDevice(pub, name); err != nil {
+				a.logger.Warn("thingplus: gateway auto-connect 실패 — 텔레메트리 버퍼링",
+					"device", name,
+					"error", err,
+				)
+			}
+		}
+	}
+
+	// A6/A7 게이팅: connected(브로커) + 디바이스 connected 일 때만 즉시 발행하고,
+	// 그렇지 않으면 무손실 버퍼링한다.
+	e, ok := a.devices.get(name)
+	deviceReady := connected && ok && e.state == deviceConnected
+
+	// 텔레메트리 발행 (값이 있을 때). Gateway 형식: {"<NAME>":[{"ts":<ms>,"values":{...}}]}.
+	if len(values) > 0 {
+		ts := time.Now()
+		telemetry, err := buildTelemetry(name, &ts, values)
+		if err != nil {
+			return err
+		}
+		if err := a.publishOrBuffer(pub, topicGatewayTelemetry, telemetry, deviceReady, qos); err != nil {
+			return err
+		}
+	}
+
+	// 클라이언트 속성 발행 (있을 때). Gateway 형식: {"<NAME>":{"<k>":<v>}}.
+	if len(attrs) > 0 {
+		clientAttr, err := buildClientAttributes(name, attrs)
+		if err != nil {
+			return err
+		}
+		if err := a.publishOrBuffer(pub, topicGatewayAttributes, clientAttr, deviceReady, qos); err != nil {
 			return err
 		}
 	}
@@ -1873,6 +1975,7 @@ func (a *ThingplusGatewayAgent) State() map[string]any {
 	pending, capacity := a.BufferInfo()
 
 	return map[string]any{
+		"api_mode":              cfg.APIMode,
 		"broker":                thingplusBrokerURL(cfg),
 		"tls":                   cfg.TLS,
 		"connected":             connected,

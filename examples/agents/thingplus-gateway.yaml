@@ -26,6 +26,13 @@ type: "thingplus-gateway"
 
 # 에이전트 설정
 config:
+  # API 모드: "device"(기본) 또는 "gateway"
+  #   - device : v1/devices/me/* (단일 디바이스). 텔레메트리를 곧바로 발행한다.
+  #   - gateway: v1/gateway/* (다중 디바이스 다중화). connect/disconnect 로 하위
+  #              디바이스를 관리하고 텔레메트리/속성/RPC 를 NAME 으로 감싼다.
+  # 게이트웨이 모드로 전환하려면 아래 값을 "gateway" 로 바꾸세요.
+  # api_mode: "device"
+
   # ThingsBoard/Thingplus 브로커 주소
   broker: "tcp://thingsboard.example.com:1883"
 

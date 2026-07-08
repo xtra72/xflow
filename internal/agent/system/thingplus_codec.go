@@ -141,9 +141,8 @@ func parseDeviceSharedAttributes(data []byte) (map[string]any, error) {
 // buildTelemetry 는 단일 텔레메트리 항목을 게이트웨이 텔레메트리 페이로드로 조립한다
 // (REQ-up-telemetry / REQ-up-ts).
 //
-// NOTE(Device API 전환): 이 게이트웨이 빌더는 dormant 이다. 업링크 경로는
-// buildDeviceTelemetry 를 사용한다. connect/RPC 등 dormant 게이트웨이 경로 및
-// 관련 테스트와의 일관성을 위해 유지한다.
+// NOTE(모드): 이 게이트웨이 빌더는 api_mode="gateway" 업링크 경로에서 사용된다.
+// api_mode="device"(기본) 에서는 buildDeviceTelemetry 를 사용한다.
 //
 // 출력 형식: {"<NAME>":[{"ts":<UnixMilli>,"values":{...}}]}
 //

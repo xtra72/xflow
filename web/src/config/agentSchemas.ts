@@ -46,11 +46,13 @@ const MQTT_FIELDS: ConfigField[] = [
 // Thingplus Gateway (SPEC-THINGPLUS-001, REQ-THINGPLUS-001-web-schema)
 // ThingsBoard Gateway MQTT API 를 프록시하는 시스템 에이전트. broker/port/tls/token
 // 설정과 device_name_path(JSONPath) 로 인입 메시지에서 디바이스 NAME 을 추출한다.
+// api_mode 로 Device API(v1/devices/me/*) 와 Gateway API(v1/gateway/*) 를 선택한다(기본 device).
 // 백엔드 ThingplusConfig json 태그와 1:1 매핑:
-//   broker, port, tls, ca_cert, access_token, client_id, device_name_path,
+//   api_mode, broker, port, tls, ca_cert, access_token, client_id, device_name_path,
 //   qos, keep_alive_sec, auto_reconnect, buffer_size.
 // ──────────────────────────────────────────────────────────────────────────
 const THINGPLUS_FIELDS: ConfigField[] = [
+  { name: 'api_mode', type: 'select', label: 'API 모드', options: ['device', 'gateway'], default: 'device', description: 'device: v1/devices/me/* (단일 디바이스), gateway: v1/gateway/* (다중 디바이스 다중화)' },
   { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883). TLS 사용 시 ssl:// 스킴 사용' },
   { name: 'port', type: 'number', label: '포트', default: 1883, description: '평문 1883, TLS 8883' },
   { name: 'tls', type: 'boolean', label: 'TLS 사용', default: false },
