@@ -47,8 +47,8 @@ const MQTT_FIELDS: ConfigField[] = [
 // ThingsBoard Gateway MQTT API 를 프록시하는 시스템 에이전트. broker/port/tls/token
 // 설정과 device_name_path(JSONPath) 로 인입 메시지에서 디바이스 NAME 을 추출한다.
 // 백엔드 ThingplusConfig json 태그와 1:1 매핑:
-//   broker, port, tls, ca_cert, access_token, device_name_path, qos,
-//   keep_alive_sec, auto_reconnect, buffer_size.
+//   broker, port, tls, ca_cert, access_token, client_id, device_name_path,
+//   qos, keep_alive_sec, auto_reconnect, buffer_size.
 // ──────────────────────────────────────────────────────────────────────────
 const THINGPLUS_FIELDS: ConfigField[] = [
   { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883). TLS 사용 시 ssl:// 스킴 사용' },
@@ -56,6 +56,7 @@ const THINGPLUS_FIELDS: ConfigField[] = [
   { name: 'tls', type: 'boolean', label: 'TLS 사용', default: false },
   { name: 'ca_cert', type: 'multiline', label: 'CA 인증서', description: 'TLS CA 인증서 PEM 또는 경로', visibleWhen: { field: 'tls', value: true } },
   { name: 'access_token', type: 'string', label: '액세스 토큰', sensitive: true, description: 'MQTT username 으로 사용되는 게이트웨이 토큰' },
+  { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성 (xflow-thingplus-<uuid>). 인스턴스마다 고유해야 하며, 고정 값 공유 시 브로커가 세션을 끊어 재연결이 반복될 수 있음' },
   { name: 'device_name_path', type: 'string', label: '디바이스 이름 경로', default: '$.device', description: 'JSONPath 로 인입 메시지에서 디바이스 NAME 추출 (예: $.device, $.metadata.device_id)' },
   { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1' },
   { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },

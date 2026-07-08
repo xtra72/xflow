@@ -154,6 +154,95 @@ func TestParseThingplusConfig_Custom(t *testing.T) {
 	assert.Equal(t, 512, tc.BufferSize)
 }
 
+// === client_id 충돌(EOF flapping) 회귀 테스트 ===
+
+// TestParseThingplusConfig_ClientIDUnique_SameConfigID 는 client_id 충돌 버그의 핵심 재현이다.
+// 동일 config.ID(또는 빈 ID)로 두 에이전트 설정을 파싱해도 각각 서로 다른
+// client_id가 자동 생성되어야 한다. 결정적 client_id를 쓰면 동일 값이 되어
+// 브로커가 한쪽 연결을 EOF로 끊는 flapping이 발생한다.
+func TestParseThingplusConfig_ClientIDUnique_SameConfigID(t *testing.T) {
+	// 두 config 모두 동일한 config.ID를 가진다 (또는 빈 ID여도 동일하게 재현된다).
+	cfg := newThingplusTestConfig(map[string]any{
+		"broker":       "localhost",
+		"access_token": "SECRET_TOKEN",
+	})
+
+	tc1 := parseThingplusConfig(cfg)
+	tc2 := parseThingplusConfig(cfg)
+
+	assert.NotEmpty(t, tc1.ClientID, "client_id는 비어 있으면 안 된다")
+	assert.NotEmpty(t, tc2.ClientID, "client_id는 비어 있으면 안 된다")
+	assert.NotEqual(t, tc1.ClientID, tc2.ClientID,
+		"동일 config로 파싱한 두 인스턴스의 client_id는 서로 달라야 한다 (충돌 방지)")
+}
+
+// TestParseThingplusConfig_ClientIDUnique_EmptyID 는 config.ID가 빈 문자열이어도
+// 자동 생성된 client_id가 고유함을 확인한다 (config.ID에 의존하지 않는다).
+func TestParseThingplusConfig_ClientIDUnique_EmptyID(t *testing.T) {
+	cfg := agent.AgentConfig{
+		ID:   "", // 빈 ID — 결정적 방식이었다면 "xflow-thingplus-" 로 충돌했을 것이다.
+		Name: "test-thingplus",
+		Type: "thingplus-gateway",
+		Transport: agent.TransportConfig{
+			Type:    "thingplus",
+			Options: map[string]any{"broker": "localhost"},
+		},
+	}
+
+	tc1 := parseThingplusConfig(cfg)
+	tc2 := parseThingplusConfig(cfg)
+
+	assert.True(t, strings.HasPrefix(tc1.ClientID, "xflow-thingplus-"),
+		"자동 생성 client_id는 xflow-thingplus- 프리픽스를 가져야 한다")
+	assert.NotEqual(t, tc1.ClientID, tc2.ClientID,
+		"빈 config.ID여도 두 인스턴스의 client_id는 서로 달라야 한다")
+}
+
+// TestParseThingplusConfig_ClientIDDefaultPrefix 는 자동 생성된 client_id가
+// xflow-thingplus- 프리픽스를 가지며 비어 있지 않음을 확인한다.
+func TestParseThingplusConfig_ClientIDDefaultPrefix(t *testing.T) {
+	cfg := newThingplusTestConfig(map[string]any{
+		"broker": "localhost",
+	})
+
+	tc := parseThingplusConfig(cfg)
+
+	assert.NotEmpty(t, tc.ClientID)
+	assert.True(t, strings.HasPrefix(tc.ClientID, "xflow-thingplus-"),
+		"자동 생성 client_id는 xflow-thingplus- 프리픽스를 가져야 한다, got=%q", tc.ClientID)
+	// "xflow-thingplus-" 뒤에 실제 UUID가 붙어 있어야 한다 (프리픽스만 있으면 안 된다).
+	assert.Greater(t, len(tc.ClientID), len("xflow-thingplus-"),
+		"client_id는 프리픽스 뒤에 고유 식별자를 포함해야 한다")
+}
+
+// TestParseThingplusConfig_ClientIDOverride 는 사용자가 client_id를 명시하면
+// 자동 생성 대신 그 값이 사용됨을 확인한다 (override 동작).
+func TestParseThingplusConfig_ClientIDOverride(t *testing.T) {
+	cfg := newThingplusTestConfig(map[string]any{
+		"broker":    "localhost",
+		"client_id": "my-fixed-gateway-id",
+	})
+
+	tc := parseThingplusConfig(cfg)
+
+	assert.Equal(t, "my-fixed-gateway-id", tc.ClientID,
+		"사용자가 지정한 client_id가 그대로 사용되어야 한다")
+}
+
+// TestParseThingplusConfig_ClientIDEmptyOverrideIgnored 는 client_id가 빈 문자열로
+// 주어지면 무시하고 자동 생성 값을 유지함을 확인한다.
+func TestParseThingplusConfig_ClientIDEmptyOverrideIgnored(t *testing.T) {
+	cfg := newThingplusTestConfig(map[string]any{
+		"broker":    "localhost",
+		"client_id": "",
+	})
+
+	tc := parseThingplusConfig(cfg)
+
+	assert.True(t, strings.HasPrefix(tc.ClientID, "xflow-thingplus-"),
+		"빈 client_id override는 무시되고 자동 생성 값이 유지되어야 한다")
+}
+
 func TestParseThingplusConfig_TLSDefaultPort(t *testing.T) {
 	// TLS 활성 시 포트를 명시하지 않으면 8883 이 사용된다.
 	cfg := newThingplusTestConfig(map[string]any{

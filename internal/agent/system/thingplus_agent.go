@@ -14,6 +14,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/pkg/lifecycle"
 	"github.com/xtra/xflow/pkg/message"
@@ -50,6 +51,12 @@ type ThingplusConfig struct {
 	// AccessToken 은 게이트웨이 access token이다. MQTT username으로 전달되며 민감 정보이다.
 	// 평문으로 로그/State에 노출하지 않는다 (REQ-core-nocred-log).
 	AccessToken string `json:"access_token"`
+
+	// ClientID 는 MQTT 클라이언트 식별자이다.
+	// 비우면 "xflow-thingplus-<uuid>" 형태로 자동 생성되어 게이트웨이 인스턴스마다 고유해진다.
+	// 고정 값을 지정하면 여러 인스턴스가 동일 client_id를 공유해 브로커가 한쪽을 끊는
+	// (EOF flapping) 충돌이 발생할 수 있으므로 인스턴스마다 고유해야 한다.
+	ClientID string `json:"client_id"`
 
 	// DeviceNamePath 는 인입 메시지에서 디바이스 NAME을 추출하는 JSONPath이다 (기본 "$.device").
 	DeviceNamePath string `json:"device_name_path"`
@@ -428,6 +435,10 @@ func parseThingplusConfig(cfg agent.AgentConfig) ThingplusConfig {
 		AutoReconnect:     true,
 		BufferSize:        256,
 		ConnectTimeoutSec: 10,
+		// client_id 기본값은 인스턴스마다 고유하게 자동 생성한다.
+		// 결정적(config.ID 기반) 값을 쓰면 동일 config에서 두 번 생성될 때
+		// 동일 client_id로 충돌하여 브로커가 EOF로 한쪽을 끊는 flapping이 발생한다.
+		ClientID: "xflow-thingplus-" + uuid.New().String(),
 	}
 
 	opts := cfg.Transport.Options
@@ -456,6 +467,9 @@ func parseThingplusConfig(cfg agent.AgentConfig) ThingplusConfig {
 	}
 	if v, ok := opts["access_token"].(string); ok {
 		tc.AccessToken = v
+	}
+	if v, ok := opts["client_id"].(string); ok && v != "" {
+		tc.ClientID = v
 	}
 	if v, ok := opts["device_name_path"].(string); ok && v != "" {
 		tc.DeviceNamePath = v
@@ -510,6 +524,21 @@ func maskSecret(s string) string {
 func NewThingplusGatewayAgent(config agent.AgentConfig) (agent.Agent, error) {
 	tc := parseThingplusConfig(config)
 
+	// client_id 자동 생성 여부 확인 및 로깅.
+	// 사용자가 명시하지 않은 경우에만 자동 생성되었음을 로깅한다 (mqtt_agent 패턴).
+	// access_token은 로그에 노출하지 않는다.
+	userSetClientID := false
+	if opts := config.Transport.Options; opts != nil {
+		if v, ok := opts["client_id"].(string); ok && v != "" {
+			userSetClientID = true
+		}
+	}
+	if !userSetClientID {
+		slog.Info("thingplus: client_id 자동 생성됨",
+			"client_id", tc.ClientID,
+		)
+	}
+
 	a := &ThingplusGatewayAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("thingplus-gateway")),
 		cfg:           tc,
@@ -558,11 +587,12 @@ func (a *ThingplusGatewayAgent) Init(config agent.AgentConfig) error {
 	// access token은 MQTT username으로 전달하고 password는 비운다 (A10).
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID("xflow-thingplus-" + config.ID).
+		SetClientID(a.cfg.ClientID).
 		SetUsername(a.cfg.AccessToken).
 		SetPassword("").
 		SetKeepAlive(time.Duration(a.cfg.KeepAliveSec) * time.Second).
 		SetAutoReconnect(a.cfg.AutoReconnect).
+		SetCleanSession(true).
 		SetConnectTimeout(time.Duration(a.cfg.ConnectTimeoutSec) * time.Second).
 		SetOrderMatters(false)
 
