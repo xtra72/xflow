@@ -1070,21 +1070,23 @@ func (a *ThingplusGatewayAgent) Process(data []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	// message.Message JSON 이면 우선 복원하여 Type/payload 를 활용한다.
-	// 아니면 raw JSON payload 로 간주하여 map 을 직접 파싱한다.
-	msgType, payload, err := decodeInbound(data)
+	// message.Message JSON 이면 우선 복원하여 Type/metadata/payload 를 활용한다.
+	// 아니면 raw JSON payload 로 간주하여 map 을 직접 파싱한다(메타데이터 없음).
+	msgType, msg, payload, err := decodeInbound(data)
 	if err != nil {
 		return nil, fmt.Errorf("thingplus process: 인입 메시지 파싱 실패: %w", err)
 	}
 
 	// RPC 응답 분기: type 이 rpc.response 이거나 payload 에 rpc id 가 있으면 응답으로 처리.
+	// RPC 응답은 payload["device"] 기반이므로 metadata 를 사용하지 않는다.
 	if msgType == "thingplus.rpc.response" || looksLikeRPCReply(payload) {
 		return nil, a.handleRPCReply(a.uplinkPublisher(), payload)
 	}
 
 	// 그 외는 업링크(텔레메트리/속성)로 처리.
 	// 발행자는 실제 클라이언트(nil 가능)를 주입한다. nil 이면 미연결로 간주하여 버퍼링한다.
-	return nil, a.handleUplink(a.uplinkPublisher(), payload)
+	// msg 를 전달하여 메타데이터 스코프 device_name_path 추출을 지원한다(msg==nil 이면 payload 스코프만).
+	return nil, a.handleUplinkFromMessage(a.uplinkPublisher(), msg, payload)
 }
 
 // uplinkPublisher 는 업링크 발행에 사용할 mqttPublisher 를 반환한다.
@@ -1112,20 +1114,24 @@ func (a *ThingplusGatewayAgent) snapshotConfig() ThingplusConfig {
 	return a.cfg
 }
 
-// decodeInbound 는 인입 바이트를 (msgType, payload map) 으로 복원한다.
+// decodeInbound 는 인입 바이트를 (msgType, msg, payload map) 으로 복원한다.
 //
-// 우선 message.Message JSON(FromJSON) 을 시도하여 성공하면 top-level Type 과 payload 맵을
-// 반환한다. 실패하면 raw JSON 객체로 간주하여 그대로 payload 맵으로 사용한다.
-func decodeInbound(data []byte) (string, map[string]any, error) {
+// 우선 message.Message JSON(FromJSON) 을 시도하여 성공하면 top-level Type, 복원된 메시지(msg),
+// 그리고 payload 맵을 반환한다. 복원된 msg 는 메타데이터(그룹 포함)를 보존하므로
+// 메타데이터 스코프 device_name_path 추출에 사용된다.
+//
+// FromJSON 이 실패하면 raw JSON 객체로 간주하여 payload 맵으로 사용하며, 이 경우 msg 는 nil 이다
+// (메타데이터 없음 → 메타데이터 스코프 경로는 해석 불가).
+func decodeInbound(data []byte) (string, message.Message, map[string]any, error) {
 	if m, err := message.FromJSON(data); err == nil {
-		return m.Type(), m.Payload().ToMap(), nil
+		return m.Type(), m, m.Payload().ToMap(), nil
 	}
 
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
-	return "", raw, nil
+	return "", nil, raw, nil
 }
 
 // looksLikeRPCReply 는 payload 가 RPC 응답 형태(rpc id 를 보유)인지 판별한다.
@@ -1222,12 +1228,27 @@ func extractRPCReplyData(payload map[string]any) map[string]any {
 //
 // pub 이 nil 이거나 IsConnected()==false 이면 미연결로 간주하여 무손실 버퍼링한다.
 // 발행자를 주입받으므로 테스트에서 fakePublisher 로 검증 가능하다.
+//
+// 이 오버로드는 메타데이터 없이(payload 스코프 device_name_path 만) 처리한다.
+// message.Message 로 인입되어 메타데이터 스코프 경로를 지원하려면
+// handleUplinkFromMessage 를 사용한다(Process 경로).
 func (a *ThingplusGatewayAgent) handleUplink(pub mqttPublisher, payload map[string]any) error {
+	return a.handleUplinkFromMessage(pub, nil, payload)
+}
+
+// handleUplinkFromMessage 는 handleUplink 의 메타데이터 인지(metadata-aware) 코어이다.
+//
+// msg 가 non-nil 이면 메타데이터 스코프 device_name_path
+// ("$.metadata.device.name", "$.metadata.device_id" 등)를 지원한다.
+// msg 가 nil 이면(raw JSON 인입) payload 스코프 경로("$.device", "$.payload.dev" 등)만
+// 해석 가능하며 메타데이터 스코프 경로는 명확한 에러를 반환한다.
+func (a *ThingplusGatewayAgent) handleUplinkFromMessage(pub mqttPublisher, msg message.Message, payload map[string]any) error {
 	// 런타임 Configure() 와의 레이스 방지: 필요한 설정 필드를 함수 진입 시 한 번 스냅샷한다.
 	cfg := a.snapshotConfig()
 
 	// device NAME 추출 (cfg.DeviceNamePath, 기본 "$.device").
-	name, err := extractDeviceName(message.NewPayload(payload), cfg.DeviceNamePath)
+	// 경로 스코프(metadata/payload/bare)에 따라 메시지 또는 payload 에서 해석한다.
+	name, err := resolveDeviceNameFromMessage(msg, payload, cfg.DeviceNamePath)
 	if err != nil {
 		return err
 	}

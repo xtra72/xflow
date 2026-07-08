@@ -189,8 +189,18 @@
 
 ## 5. 참고
 
-- **device_name_path**: 인입 메시지에서 디바이스 NAME을 추출하는 JSONPath. 기본 `$.device`,
-  `$.metadata.device_id` 등으로 설정 가능(에이전트 설정).
+- **device_name_path**: 인입 메시지에서 디바이스 NAME을 추출하는 경로(에이전트 설정, 기본 `$.device`).
+  다음 네 가지 형태를 지원한다:
+  | 형태 | 예 | 해석 대상 |
+  |------|-----|-----------|
+  | 기본(payload) | `$.device` | payload의 해당 키 (하위호환 기본값) |
+  | 명시적 payload | `$.payload.device` | payload의 해당 키 |
+  | metadata 그룹 | `$.metadata.device.name` | metadata 그룹 `device`의 `name` 필드 |
+  | flat metadata | `$.metadata.device_id` | metadata의 flat 키 |
+
+  > metadata 경로(`$.metadata.*`)는 인입 메시지가 `message.Message`로 전달될 때만 해석된다
+  > (thingplus-uplink 노드는 전체 메시지를 마샬하여 전달하므로 metadata가 보존된다). raw JSON
+  > payload만 전달되는 경우 metadata 경로는 해석되지 않으므로 payload 경로를 사용한다.
 - **타임스탬프 규약**: 텔레메트리 `ts`는 epoch milliseconds(int64). 부재 시 생략.
 - **agent 메타 그룹**: 두 노드 모두 기본적으로 `agent:{type,id}` 그룹을 metadata에 부착한다
   (`emit_agent: false`로 해제).

@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -96,4 +97,72 @@ func extractDeviceName(p message.Payload, path string) (string, error) {
 		return "", fmt.Errorf("thingplus: device name이 비어 있음 (path=%q)", path)
 	}
 	return name, nil
+}
+
+// validateDeviceName 는 추출된 NAME 값이 비어 있지 않은 유효한 문자열인지 검증한다.
+// extractDeviceName 의 empty 검증 규칙과 동일한 에러 메시지 형식을 재사용한다.
+func validateDeviceName(name, path string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("thingplus: device name이 비어 있음 (path=%q)", path)
+	}
+	return name, nil
+}
+
+// resolveDeviceNameFromMessage 는 재구성된 메시지에서 device_name_path 로 디바이스 NAME을
+// 스코프에 맞게 해석한다. 다음 네 가지 경로 형태를 지원한다.
+//
+//   - "$.metadata.<group>.<key>" → m.Metadata().GetGroup(group)[key] (예: "$.metadata.device.name")
+//   - "$.metadata.<key>"         → m.Metadata().Get(key) (flat 메타데이터, 예: "$.metadata.device_id")
+//   - "$.payload.<rest>"         → payload 에서 "$.<rest>" 로 조회 (명시적 payload 스코프)
+//   - bare "$.<rest>"            → payload 에서 path 그대로 조회 (기본/하위 호환, 예: "$.device")
+//
+// m 이 nil(raw JSON, 메타데이터 없음)이면 메타데이터 스코프 경로는 명확한 에러를 반환하고,
+// payload 스코프 경로는 payload 로 정상 동작한다.
+func resolveDeviceNameFromMessage(m message.Message, payload map[string]any, path string) (string, error) {
+	const metaPrefix = "$.metadata."
+	const payloadPrefix = "$.payload."
+
+	switch {
+	case strings.HasPrefix(path, metaPrefix):
+		if m == nil {
+			return "", fmt.Errorf("thingplus: device name 추출 실패 (path=%q): 메타데이터 없음 (raw JSON 인입)", path)
+		}
+		rest := path[len(metaPrefix):]
+		if rest == "" {
+			return "", fmt.Errorf("thingplus: 잘못된 device_name_path (path=%q)", path)
+		}
+		md := m.Metadata()
+		if dot := strings.IndexByte(rest, '.'); dot >= 0 {
+			// "$.metadata.<group>.<key>" → nested group 조회.
+			group := rest[:dot]
+			key := rest[dot+1:]
+			g, ok := md.GetGroup(group)
+			if !ok {
+				return "", fmt.Errorf("thingplus: device name 추출 실패 (path=%q): 메타데이터 그룹 %q 없음", path, group)
+			}
+			v, ok := g[key]
+			if !ok {
+				return "", fmt.Errorf("thingplus: device name 추출 실패 (path=%q): 그룹 %q 에 키 %q 없음", path, group, key)
+			}
+			return validateDeviceName(v, path)
+		}
+		// "$.metadata.<key>" → flat 메타데이터 조회.
+		v, ok := md.Get(rest)
+		if !ok {
+			return "", fmt.Errorf("thingplus: device name 추출 실패 (path=%q): flat 메타데이터 키 %q 없음", path, rest)
+		}
+		return validateDeviceName(v, path)
+
+	case strings.HasPrefix(path, payloadPrefix):
+		// 명시적 payload 스코프: "$.payload.<rest>" → payload 에서 "$.<rest>" 로 조회.
+		rest := path[len(payloadPrefix):]
+		if rest == "" {
+			return "", fmt.Errorf("thingplus: 잘못된 device_name_path (path=%q)", path)
+		}
+		return extractDeviceName(message.NewPayload(payload), "$."+rest)
+
+	default:
+		// bare "$.<rest>" (기본/하위 호환): payload 에서 path 그대로 조회.
+		return extractDeviceName(message.NewPayload(payload), path)
+	}
 }
