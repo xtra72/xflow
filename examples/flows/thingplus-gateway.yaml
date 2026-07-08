@@ -2,8 +2,8 @@
 # Thingplus(ThingsBoard) Device API 양방향 연동 플로우
 #
 # thingplus-gateway 에이전트는 ThingsBoard Device API(v1/devices/me/*)로
-# 텔레메트리를 업링크하고 공유 속성을 다운링크로 수신한다. 본 플로우는
-# 업링크(텔레메트리)와 다운링크(공유 속성)를 양방향으로 중계하는 구성을 보여준다.
+# 텔레메트리를 업링크하고, 공유 속성과 RPC 요청을 다운링크로 수신한다. 본 플로우는
+# 업링크(텔레메트리)와 다운링크(공유 속성/RPC)를 양방향으로 중계하는 구성을 보여준다.
 #
 # ┌──────────────────────────────────────────────────────────────────┐
 # │                        데이터 흐름                                 │
@@ -15,7 +15,8 @@
 # │                                                                    │
 # │  [다운링크: 플랫폼 → 에이전트 → 플로우]                            │
 # │    gateway-downlink(thingplus-downlink, source) ──→ type-router    │
-# │      └─ thingplus.attr.update  ──→ attr-logger                     │
+# │      ├─ thingplus.attr.update  ──→ attr-logger                     │
+# │      └─ thingplus.rpc.request  ──→ rpc-logger                      │
 # │                                                                    │
 # └──────────────────────────────────────────────────────────────────┘
 #
@@ -27,10 +28,18 @@
 #
 # 다운링크 방출 메시지:
 #   Type "thingplus.attr.update"  — 공유 속성 변경 push (data: {"key":value,...})
+#   Type "thingplus.rpc.request"  — 서버→디바이스 RPC 요청 (payload: {"id":"<requestId>","method":..,"params":..})
 #
-# NOTE: Device API 에는 게이트웨이 sub-device connect/disconnect 및 RPC 구독이
-#   없다. 아래 rpc-filter/rpc-logger 노드는 dormant 이며(현재 RPC 미구독) 참고용으로만
-#   남겨 둔다. Device API RPC(v1/devices/me/rpc/*)가 필요하면 별도 구현이 필요하다.
+# Device API RPC (v1/devices/me/rpc/*):
+#   - 요청(다운링크): 에이전트가 v1/devices/me/rpc/request/+ 를 자동 구독한다.
+#       토픽 v1/devices/me/rpc/request/{requestId} 의 {requestId}(정수)는 토픽에 담기고,
+#       페이로드는 {"method":..,"params":..} 이다. 방출 페이로드의 "id" 에 requestId 가
+#       문자열로 담긴다.
+#   - 응답(업링크): 플로우가 Type "thingplus.rpc.response" 메시지를 보내며 요청의 "id"
+#       를 그대로 echo 하면, 에이전트가 v1/devices/me/rpc/response/{id} 로 응답 본문을
+#       발행한다(id 는 토픽에만, 본문에는 미포함). 응답 본문은 payload.data / payload.result
+#       또는 id 등 식별 키를 제외한 나머지에서 추출된다.
+#   NOTE: 게이트웨이 sub-device connect/disconnect 및 v1/gateway/rpc 는 dormant 이다.
 #
 # 사용법:
 #   xflow agent import -f examples/agents/thingplus-gateway.yaml
@@ -40,7 +49,7 @@
 #   xflow flow start   thingplus-gateway
 
 name: "thingplus-gateway"
-description: "Thingplus 게이트웨이 양방향 연동 - 텔레메트리 업링크 + RPC/속성 다운링크"
+description: "Thingplus Device API 양방향 연동 - 텔레메트리 업링크 + RPC/공유 속성 다운링크"
 config:
   track_history: true
   max_history_size: 200
@@ -102,9 +111,9 @@ nodes:
   # ── 다운링크: thingplus-downlink 로 공유 속성 수신 ──
   # 전용 소스 노드(source, out 전용). 에이전트의 다운링크 채널을 드레인하여
   # 메시지 Type("thingplus.attr.update")을 보존한 채 방출한다.
-  # 에이전트가 onConnect 에서 v1/devices/me/attributes 를 자동 구독하므로
-  # topics 설정은 선택 사항이다(생략 시 노드가 별도로 Subscribe 하지 않음).
-  # (RPC 는 Device API 에서 미구독이므로 아래 rpc-filter/rpc-logger 는 dormant.)
+  # 에이전트가 onConnect 에서 v1/devices/me/attributes 및 v1/devices/me/rpc/request/+
+  # 를 자동 구독하므로 topics 설정은 선택 사항이다(생략 시 노드가 별도로 Subscribe 하지 않음).
+  # 따라서 아래 rpc-filter/rpc-logger 는 Device API RPC 요청을 수신하는 활성 경로이다.
   - name: "gateway-downlink"
     type: "thingplus-downlink"
     config:
@@ -117,7 +126,7 @@ nodes:
     errors:
       - "error"
 
-  # ── RPC 요청 필터 ──
+  # ── RPC 요청 필터 (Device API: thingplus.rpc.request, id 는 토픽 requestId) ──
   - name: "rpc-filter"
     type: "filter"
     config:

@@ -32,6 +32,17 @@ const (
 	// topicDeviceAttributes 는 클라이언트 속성 업링크 및 공유 속성 다운링크 토픽이다 (Device API).
 	// 업링크(클라이언트 속성) / 다운링크(공유 속성) 모두 flat {"key":value} 형식이다.
 	topicDeviceAttributes = "v1/devices/me/attributes"
+
+	// topicDeviceRPCRequestPrefix 는 서버→디바이스 RPC 요청(다운링크) 토픽 접두사이다.
+	// 실제 토픽은 v1/devices/me/rpc/request/{requestId} 이며, {requestId}(정수)는
+	// 페이로드가 아닌 토픽에 담긴다. 페이로드는 {"method":..,"params":..} 형식이다.
+	topicDeviceRPCRequestPrefix = "v1/devices/me/rpc/request/"
+	// topicDeviceRPCRequestSub 는 RPC 요청 구독 필터이다(+ 와일드카드로 모든 requestId 수신).
+	topicDeviceRPCRequestSub = "v1/devices/me/rpc/request/+"
+	// topicDeviceRPCResponsePrefix 는 디바이스→서버 RPC 응답(업링크) 토픽 접두사이다.
+	// 응답은 v1/devices/me/rpc/response/{requestId} 로 발행하며, requestId 는 요청
+	// 토픽에서 받은 값을 그대로 사용한다. 본문은 응답 바디(예: {"result":...})이다.
+	topicDeviceRPCResponsePrefix = "v1/devices/me/rpc/response/"
 )
 
 // ThingsBoard Gateway MQTT API 토픽 상수 (v1/gateway/*).
@@ -99,6 +110,12 @@ type ThingplusConfig struct {
 type mqttPublisher interface {
 	Publish(topic string, qos byte, retained bool, payload interface{}) mqtt.Token
 	IsConnected() bool
+}
+
+// mqttSubscriber 는 다운링크 토픽 구독에 필요한 최소 인터페이스이다.
+// 실제 mqtt.Client 가 이를 만족하며, 테스트에서는 fake 구독자를 주입한다.
+type mqttSubscriber interface {
+	Subscribe(topic string, qos byte, callback mqtt.MessageHandler) mqtt.Token
 }
 
 // deviceState 는 게이트웨이 하위 디바이스의 연결 상태를 나타낸다.
@@ -263,6 +280,10 @@ type ThingplusGatewayAgent struct {
 	pendingRPC *pendingRPCMap
 	// pendingRPCEvicted 는 상한 초과로 evict 된 상관 항목 수이다(관찰 가능한 드롭, State 노출).
 	pendingRPCEvicted atomic.Int64
+
+	// rpcResponsePublisher 는 Device API RPC 응답 발행자 override 이다(테스트 주입용).
+	// nil 이면 실제 client(uplinkPublisher)를 사용한다. 프로덕션 경로에서는 항상 nil 이다.
+	rpcResponsePublisher mqttPublisher
 }
 
 // bufferedUplink 는 재연결 시 재발행할 업링크 항목이다.
@@ -755,14 +776,18 @@ func (a *ThingplusGatewayAgent) onConnect(c mqtt.Client) {
 	a.flushUplinkBuffer(c)
 }
 
-// subscribeDownlink 는 Device API 다운링크 토픽(공유 속성)을 구독한다.
+// subscribeDownlink 는 Device API 다운링크 토픽을 구독한다.
 //
-// Device API 전환: gateway RPC(v1/gateway/rpc) 구독을 제거했다(요청 스펙에 RPC 없음).
-// Device API RPC 는 v1/devices/me/rpc/request/+ 이나 현재 요구되지 않으므로 구독하지 않는다.
-// 공유 속성 다운링크만 v1/devices/me/attributes 로 구독한다.
-func (a *ThingplusGatewayAgent) subscribeDownlink(c mqtt.Client) {
+// Device API 다운링크 구독 대상:
+//   - v1/devices/me/attributes         : 공유 속성 변경 push
+//   - v1/devices/me/rpc/request/+       : 서버→디바이스 RPC 요청(+ 로 모든 requestId 수신)
+//
+// 게이트웨이 RPC(v1/gateway/rpc) 는 dormant 이므로 구독하지 않는다.
+// c 는 mqttSubscriber 인터페이스로 받아 테스트에서 fake 구독자 주입이 가능하다
+// (실제 mqtt.Client 가 이를 만족한다).
+func (a *ThingplusGatewayAgent) subscribeDownlink(c mqttSubscriber) {
 	qos := a.snapshotConfig().QoS
-	topics := []string{topicDeviceAttributes}
+	topics := []string{topicDeviceAttributes, topicDeviceRPCRequestSub}
 	for _, topic := range topics {
 		token := c.Subscribe(topic, qos, a.downlinkHandler)
 		token.Wait()
@@ -796,6 +821,25 @@ func (a *ThingplusGatewayAgent) downlinkHandler(_ mqtt.Client, msg mqtt.Message)
 // downlinkHandler 와 통합 테스트가 공통으로 사용하는 순수(브로커 비의존) 라우팅 경로이다.
 func (a *ThingplusGatewayAgent) routeDownlink(topic string, data []byte) {
 	var out []byte
+
+	// Device API RPC 요청: 토픽 v1/devices/me/rpc/request/{requestId} (동적 suffix).
+	// switch(정적 토픽) 이전에 접두사로 먼저 판별한다.
+	if strings.HasPrefix(topic, topicDeviceRPCRequestPrefix) {
+		requestID := strings.TrimPrefix(topic, topicDeviceRPCRequestPrefix)
+		if built, err := a.buildDeviceRPCRequestMessage(requestID, data); err == nil {
+			out = built
+		} else {
+			a.logger.Warn("thingplus: device RPC 요청 다운링크 파싱 실패, 원시 fallback",
+				"request_id", requestID,
+				"error", err,
+			)
+		}
+		if out == nil {
+			out = data
+		}
+		a.emitDownlink(topic, out)
+		return
+	}
 
 	switch topic {
 	case topicDeviceAttributes:
@@ -917,6 +961,29 @@ func (a *ThingplusGatewayAgent) buildDeviceSharedAttrDownlinkMessage(data []byte
 		"data":      attrs,
 	}
 	return a.buildFlowMessageJSON("thingplus.attr.update", "", "", payload)
+}
+
+// buildDeviceRPCRequestMessage 는 Device API RPC 요청 다운링크를 파싱하여
+// Type "thingplus.rpc.request" 플로우 메시지 JSON 을 조립한다.
+//
+// requestID 는 토픽 v1/devices/me/rpc/request/{requestId} 의 suffix 이다. 방출 페이로드
+// 의 "id" 에는 이 토픽 값을 문자열 원본 그대로 담아, 플로우가 echo 한 응답이 정확히
+// v1/devices/me/rpc/response/{id} 로 라우팅되도록 보장한다(id-in-topic 계약).
+// 페이로드는 {"method":..,"params":..} 이며 requestId 는 페이로드에 없다.
+func (a *ThingplusGatewayAgent) buildDeviceRPCRequestMessage(requestID string, data []byte) ([]byte, error) {
+	method, params, err := parseDeviceRPCRequest(data)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := map[string]any{
+		// id 는 토픽 suffix 문자열을 그대로 보존한다(응답 토픽 라우팅 정확성 보장).
+		"id":     requestID,
+		"method": method,
+		"params": params,
+	}
+	// Device API RPC 는 "me" 대상이므로 device/device_id 메타데이터는 비운다.
+	return a.buildFlowMessageJSON("thingplus.rpc.request", "", "", payload)
 }
 
 // buildFlowMessageJSON 은 지정 Type 과 페이로드로 message.Message 를 조립하여
@@ -1239,10 +1306,20 @@ func (a *ThingplusGatewayAgent) Process(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("thingplus process: 인입 메시지 파싱 실패: %w", err)
 	}
 
-	// RPC 응답 분기: type 이 rpc.response 이거나 payload 에 rpc id 가 있으면 응답으로 처리.
-	// RPC 응답은 payload["device"] 기반이므로 metadata 를 사용하지 않는다.
-	if msgType == "thingplus.rpc.response" || looksLikeRPCReply(payload) {
-		return nil, a.handleRPCReply(a.uplinkPublisher(), payload)
+	// Device API RPC 응답 분기: Type 이 thingplus.rpc.response 이면 Device API 경로로
+	// 처리한다. Device API 에서는 requestId 가 토픽에 담기고 응답을 곧바로
+	// v1/devices/me/rpc/response/{id} 로 발행한다("me" 게이팅 없음).
+	// dormant 게이트웨이 handleRPCReply(payload.device 기반 게이팅+v1/gateway/rpc)와
+	// 충돌하지 않도록, Type 이 명시된 응답은 반드시 NEW device 발행 경로로 라우팅한다.
+	if msgType == "thingplus.rpc.response" {
+		return nil, a.handleDeviceRPCResponse(a.rpcResponsePublisherOrClient(), payload)
+	}
+
+	// RPC 응답 분기(Type 미지정 fallback): payload 에 rpc id 가 있으면 device RPC
+	// 응답으로 처리한다. Device API 는 requestId 를 토픽에 담으므로 payload 의 id 를
+	// 그대로 응답 토픽 suffix 로 사용한다.
+	if looksLikeRPCReply(payload) {
+		return nil, a.handleDeviceRPCResponse(a.rpcResponsePublisherOrClient(), payload)
 	}
 
 	// 그 외는 업링크(텔레메트리/속성)로 처리.
@@ -1309,6 +1386,109 @@ func looksLikeRPCReply(payload map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// rpcResponsePublisherOrClient 는 Device API RPC 응답 발행에 사용할 mqttPublisher 를
+// 반환한다. 테스트 주입(rpcResponsePublisher)이 있으면 그것을, 없으면 실제 client 를 쓴다.
+func (a *ThingplusGatewayAgent) rpcResponsePublisherOrClient() mqttPublisher {
+	a.mu.RLock()
+	override := a.rpcResponsePublisher
+	a.mu.RUnlock()
+	if override != nil {
+		return override
+	}
+	return a.uplinkPublisher()
+}
+
+// extractDeviceRPCResponseID 는 응답 페이로드에서 requestId(응답 토픽 suffix)를 추출한다.
+//
+// Device API 에서 requestId 는 요청 토픽에서 전달되어 방출 페이로드의 "id" 로 담겼고,
+// 플로우가 이를 echo 하므로 문자열로 보존된다. 다만 플로우 구현에 따라 숫자로 올 수도
+// 있어 문자열/숫자 모두 수용한다("rpc_id" 도 fallback 으로 허용).
+func extractDeviceRPCResponseID(payload map[string]any) (string, bool) {
+	for _, key := range []string{"id", "rpc_id"} {
+		v, ok := payload[key]
+		if !ok {
+			continue
+		}
+		switch n := v.(type) {
+		case string:
+			if n != "" {
+				return n, true
+			}
+		case float64:
+			// JSON 숫자는 float64 로 언마샬된다. 정수 형태로 문자열화한다.
+			return fmt.Sprintf("%d", int64(n)), true
+		case int:
+			return fmt.Sprintf("%d", n), true
+		case int64:
+			return fmt.Sprintf("%d", n), true
+		}
+	}
+	return "", false
+}
+
+// extractDeviceRPCResponseBody 는 응답 발행 본문을 추출한다.
+//
+// 규칙: payload.data(맵) 또는 payload.result 가 있으면 그것을 우선 사용하고, 없으면
+// 상관/식별 키(id/rpc_id/device/device_id)를 제외한 나머지를 본문으로 사용한다.
+// requestId 는 토픽에 담기므로 본문에 포함되지 않는다.
+func extractDeviceRPCResponseBody(payload map[string]any) map[string]any {
+	if d, ok := payload["data"].(map[string]any); ok {
+		return d
+	}
+	if r, ok := payload["result"]; ok {
+		// result 는 임의 값일 수 있으므로 {"result":<v>} 형태로 감싼다.
+		return map[string]any{"result": r}
+	}
+	body := make(map[string]any, len(payload))
+	for k, v := range payload {
+		switch k {
+		case "id", "rpc_id", "device", "device_id":
+			continue
+		default:
+			body[k] = v
+		}
+	}
+	return body
+}
+
+// handleDeviceRPCResponse 는 플로우로부터 온 Device API RPC 응답을
+// v1/devices/me/rpc/response/{id} 로 발행한다.
+//
+// requestId(id)는 방출된 요청 페이로드에서 echo 되어 payload["id"] 에 담긴다. 이를
+// 토픽 suffix 로 사용하여 서버가 원래 요청과 상관(correlate)할 수 있게 한다. 응답 본문은
+// extractDeviceRPCResponseBody 로 추출하며, id 등 식별 키는 본문에서 제외된다.
+//
+// Device API 에는 "me" connect 게이팅이 없으므로 브로커 연결 시 곧바로 발행한다.
+// pub 이 nil 또는 미연결이면 발행할 수 없어 에러를 반환한다.
+func (a *ThingplusGatewayAgent) handleDeviceRPCResponse(pub mqttPublisher, payload map[string]any) error {
+	id, ok := extractDeviceRPCResponseID(payload)
+	if !ok {
+		return fmt.Errorf("thingplus device rpc response: requestId(id) 를 찾을 수 없음")
+	}
+
+	if pub == nil || !pub.IsConnected() {
+		return fmt.Errorf("thingplus device rpc response: 브로커에 연결되어 있지 않음")
+	}
+
+	body := extractDeviceRPCResponseBody(payload)
+	out, err := buildDeviceRPCResponse(body)
+	if err != nil {
+		return err
+	}
+
+	topic := topicDeviceRPCResponsePrefix + id
+	token := pub.Publish(topic, a.snapshotConfig().QoS, false, out)
+	token.Wait()
+	if token.Error() != nil {
+		a.stats.IncrExternalMessagesErrored()
+		return fmt.Errorf("thingplus device rpc response: 발행 실패: %w", token.Error())
+	}
+	a.uplinkCount.Add(1)
+	a.stats.IncrExternalMessagesSent()
+	a.logger.Info("thingplus: device RPC 응답 발행 완료", "topic", topic)
+	return nil
 }
 
 // handleRPCReply 는 플로우로부터 온 RPC 응답을 게이트웨이 RPC 토픽으로 발행한다

@@ -76,6 +76,35 @@ func (f *fakePublisher) Publish(topic string, qos byte, retained bool, payload i
 
 func (f *fakePublisher) IsConnected() bool { return f.connected }
 
+// subscribeCapture 는 mqttSubscriber 인터페이스를 만족하는 테스트용 구독자이다.
+// 실제 브로커 없이 Subscribe 호출 토픽을 기록한다.
+type subscribeCapture struct {
+	mu     sync.Mutex
+	topics []string
+}
+
+func newSubscribeCapture() *subscribeCapture {
+	return &subscribeCapture{}
+}
+
+func (s *subscribeCapture) Subscribe(topic string, _ byte, _ mqtt.MessageHandler) mqtt.Token {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.topics = append(s.topics, topic)
+	return &fakeToken{}
+}
+
+func (s *subscribeCapture) subscribed(topic string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.topics {
+		if t == topic {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *fakePublisher) records() []publishRecord {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -889,6 +918,98 @@ func TestDownlink_SharedAttributesEmit(t *testing.T) {
 	// 방출 페이로드에 속성 데이터 포함
 	data := pm["data"].(map[string]any)
 	assert.Equal(t, "1.0", data["fw"])
+}
+
+// === Device API RPC 테스트 ===
+
+// TestDownlink_DeviceRPCRequestEmit 는 Device API RPC 요청 다운링크를 검증한다:
+//   - 토픽 v1/devices/me/rpc/request/{requestId} 로 {"method":..,"params":..} 인입
+//   - requestId 는 토픽 suffix 에서 추출되어 방출 페이로드 id 로 담긴다(문자열 원본 보존).
+//   - Type "thingplus.rpc.request" 로 방출된다.
+func TestDownlink_DeviceRPCRequestEmit(t *testing.T) {
+	a := newTestAgent(t)
+
+	// 브로커가 v1/devices/me/rpc/request/42 로 RPC 요청 주입 (requestId 는 토픽에 있음).
+	rpcBytes := []byte(`{"method":"setValue","params":{"v":10}}`)
+	a.routeDownlink(topicDeviceRPCRequestPrefix+"42", rpcBytes)
+
+	emitted := drainRecv(t, a)
+	msg, err := message.FromJSON(emitted)
+	require.NoError(t, err)
+	assert.Equal(t, "thingplus.rpc.request", msg.Type(), "Device RPC 요청은 thingplus.rpc.request Type 으로 방출되어야 한다")
+
+	pm := msg.Payload().ToMap()
+	// id 는 토픽 suffix "42" 를 문자열로 보존해야 응답이 올바른 토픽으로 라우팅된다.
+	assert.Equal(t, "42", pm["id"], "requestId 는 토픽 suffix 문자열 42 여야 한다")
+	assert.Equal(t, "setValue", pm["method"])
+	params, ok := pm["params"].(map[string]any)
+	require.True(t, ok, "params 가 방출 페이로드에 포함되어야 한다")
+	assert.EqualValues(t, 10, params["v"])
+}
+
+// TestProcess_DeviceRPCResponsePublishesToTopic 는 플로우가 보낸
+// thingplus.rpc.response 메시지가 v1/devices/me/rpc/response/{id} 로 발행됨을 검증한다.
+// requestId 는 토픽에 담기며 본문에는 포함되지 않는다.
+func TestProcess_DeviceRPCResponsePublishesToTopic(t *testing.T) {
+	a := newTestAgent(t)
+	pub := newFakePublisher() // connected==true
+
+	require.NoError(t, a.handleDeviceRPCResponse(pub, map[string]any{
+		"id":     "42",
+		"result": true,
+	}))
+
+	rec, ok := pub.findPublish(topicDeviceRPCResponsePrefix + "42")
+	require.True(t, ok, "RPC 응답이 v1/devices/me/rpc/response/42 로 발행되어야 한다")
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Payload, &resp))
+	assert.Equal(t, true, resp["result"])
+	// id 는 토픽에만 존재하고 본문에는 없어야 한다.
+	_, hasID := resp["id"]
+	assert.False(t, hasID, "응답 본문에 id 가 포함되면 안 된다(토픽에만 존재)")
+}
+
+// TestProcess_DeviceRPCResponseViaProcess 는 Process 진입점이 thingplus.rpc.response
+// 타입 메시지를 device RPC 응답으로 분기하여 올바른 토픽에 발행함을 검증한다.
+func TestProcess_DeviceRPCResponseViaProcess(t *testing.T) {
+	a := newTestAgent(t)
+	pub := newFakePublisher()
+	a.mu.Lock()
+	a.rpcResponsePublisher = pub // 테스트 발행자 주입(실제 client 는 nil).
+	a.mu.Unlock()
+
+	replyMsg := message.New(
+		message.WithType("thingplus.rpc.response"),
+		message.WithPayload(message.NewPayload(map[string]any{
+			"id":     "7",
+			"result": map[string]any{"ok": true},
+		})),
+	)
+	replyBytes, err := replyMsg.MarshalJSON()
+	require.NoError(t, err)
+
+	_, procErr := a.Process(replyBytes)
+	require.NoError(t, procErr)
+
+	rec, ok := pub.findPublish(topicDeviceRPCResponsePrefix + "7")
+	require.True(t, ok, "Process 가 device RPC 응답을 v1/devices/me/rpc/response/7 로 발행해야 한다")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Payload, &resp))
+	inner := resp["result"].(map[string]any)
+	assert.Equal(t, true, inner["ok"])
+}
+
+// TestSubscribeDownlink_SubscribesRPCRequest 는 subscribeDownlink 가 공유 속성과 함께
+// v1/devices/me/rpc/request/+ 를 구독함을 검증한다.
+func TestSubscribeDownlink_SubscribesRPCRequest(t *testing.T) {
+	a := newTestAgent(t)
+	sc := newSubscribeCapture()
+
+	a.subscribeDownlink(sc)
+
+	assert.True(t, sc.subscribed(topicDeviceAttributes), "공유 속성 토픽을 구독해야 한다")
+	assert.True(t, sc.subscribed(topicDeviceRPCRequestSub), "v1/devices/me/rpc/request/+ 를 구독해야 한다")
 }
 
 // 미지원/미인식 토픽은 원시 fallback 으로 방출된다.

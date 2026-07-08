@@ -12,6 +12,45 @@ import (
 // 코덱은 무상태(stateless)이며 브로커나 에이전트 상태에 의존하지 않는다.
 // 상태 머신/매핑/버퍼링 등 상태 로직은 thingplus_agent.go 에 둔다 (관심사 분리).
 
+// === Device API RPC 코덱 (v1/devices/me/rpc/*) ===
+
+// parseDeviceRPCRequest 는 Device API RPC 요청 다운링크 페이로드를 tolerant 하게 파싱한다.
+//
+// 입력 형식: {"method":"<methodName>","params":<any>}
+//
+// requestId 는 토픽(v1/devices/me/rpc/request/{requestId})에 담기므로 페이로드에 없다.
+// method 는 필수이며, params 는 선택이다(없으면 nil 반환). params 는 임의 JSON 값을
+// 그대로 보존하기 위해 any 로 반환한다(객체/배열/스칼라 모두 허용).
+func parseDeviceRPCRequest(data []byte) (method string, params any, err error) {
+	var req struct {
+		Method string `json:"method"`
+		Params any    `json:"params"`
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		return "", nil, fmt.Errorf("thingplus codec: device RPC 요청 파싱 실패: %w", err)
+	}
+	if req.Method == "" {
+		return "", nil, fmt.Errorf("thingplus codec: device RPC 요청에 method 가 없음")
+	}
+	return req.Method, req.Params, nil
+}
+
+// buildDeviceRPCResponse 는 Device API RPC 응답 발행 본문을 조립한다.
+//
+// requestId 는 발행 토픽(v1/devices/me/rpc/response/{requestId})에 담기므로 본문에는
+// 포함되지 않는다. 따라서 이 함수는 응답 본문 맵을 그대로 직렬화하기만 한다
+// (예: {"result":...}). body 가 nil 이면 빈 객체로 직렬화한다.
+func buildDeviceRPCResponse(body map[string]any) ([]byte, error) {
+	if body == nil {
+		body = map[string]any{}
+	}
+	out, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("thingplus codec: device RPC 응답 직렬화 실패: %w", err)
+	}
+	return out, nil
+}
+
 // === 업링크 빌더 (플로우 → 게이트웨이) ===
 
 // telemetryEntry 는 텔레메트리 배열의 단일 항목이다.

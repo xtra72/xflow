@@ -114,6 +114,65 @@ func TestParseDeviceSharedAttributes_Invalid(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// === Device API RPC 파서/빌더 테스트 ===
+
+// TestParseDeviceRPCRequest 는 Device API RPC 요청 페이로드를 파싱한다.
+// 입력 형식: {"method":"<m>","params":<any>} — requestId 는 토픽에 있으므로 페이로드에 없다.
+func TestParseDeviceRPCRequest(t *testing.T) {
+	method, params, err := parseDeviceRPCRequest([]byte(`{"method":"setValue","params":{"v":10}}`))
+	require.NoError(t, err)
+	assert.Equal(t, "setValue", method)
+	pm, ok := params.(map[string]any)
+	require.True(t, ok, "params 는 객체로 파싱되어야 한다")
+	assert.EqualValues(t, 10, pm["v"])
+}
+
+// TestParseDeviceRPCRequest_ParamsOptional 는 params 가 없어도 파싱됨을 검증한다(tolerant).
+func TestParseDeviceRPCRequest_ParamsOptional(t *testing.T) {
+	method, params, err := parseDeviceRPCRequest([]byte(`{"method":"reboot"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "reboot", method)
+	assert.Nil(t, params, "params 가 없으면 nil 이어야 한다")
+}
+
+// TestParseDeviceRPCRequest_Invalid 는 비-JSON 또는 method 누락 시 에러를 반환함을 검증한다.
+func TestParseDeviceRPCRequest_Invalid(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"비-JSON", "not-json"},
+		{"method 누락", `{"params":{"v":1}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := parseDeviceRPCRequest([]byte(tt.raw))
+			assert.Error(t, err)
+		})
+	}
+}
+
+// TestBuildDeviceRPCResponse 는 Device API RPC 응답 본문을 그대로 직렬화함을 검증한다.
+// requestId 는 토픽에 있으므로 본문에 포함되지 않는다.
+func TestBuildDeviceRPCResponse(t *testing.T) {
+	data, err := buildDeviceRPCResponse(map[string]any{"result": true})
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	assert.Equal(t, true, parsed["result"])
+	// id 가 본문에 포함되지 않아야 한다(토픽에만 존재).
+	_, hasID := parsed["id"]
+	assert.False(t, hasID, "응답 본문에 id 가 포함되면 안 된다(토픽에만 존재)")
+}
+
+// TestBuildDeviceRPCResponse_Nil 는 nil 본문을 빈 객체로 직렬화함을 검증한다.
+func TestBuildDeviceRPCResponse_Nil(t *testing.T) {
+	data, err := buildDeviceRPCResponse(nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, "{}", string(data))
+}
+
 // === 게이트웨이 텔레메트리/속성 빌더 테스트 (dormant, 하위 호환 유지) ===
 
 func TestBuildTelemetry_WithTimestamp(t *testing.T) {
