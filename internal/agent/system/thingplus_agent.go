@@ -577,16 +577,33 @@ func (a *ThingplusGatewayAgent) Init(config agent.AgentConfig) error {
 	}
 
 	// 재시작 경로(Start: Stopped→Created→Init)에서 stopped 가드를 해제하여
-	// 정상적으로 재연결/재구독이 가능하게 한다.
+	// 정상적으로 재연결/재구독이 가능하게 한다. 비활성화 경로에서도 항상 리셋하여
+	// 이후 enable→Start 재-Init 시 stopped 가드가 남아 연결을 막지 않게 한다.
 	a.stopped.Store(false)
+
+	// agentConfig 를 먼저 저장한다. 비활성화 게이트에서 조기 반환하더라도, 이후
+	// enable→Start 경로가 a.agentConfig 를 읽어 Init 을 재호출할 수 있어야 하기 때문이다.
+	a.mu.Lock()
+	a.agentConfig = config
+	a.mu.Unlock()
+
+	// 비활성화 게이트 (SPEC-AGENT-005): 데몬 부팅 시 restoreAgents 는 List API 노출을
+	// 위해 disabled 에이전트도 Create(=Init) 한다. 이때 게이트웨이 브로커에 연결하면 안
+	// 되므로, Connect() 와 StateRunning 전이를 건너뛴다. lifecycle 은 Initializing→Stopped
+	// 가 invalid 하므로(Created→Initializing 만 허용) 전이 없이 StateCreated 에 머문다.
+	// 결과: Running 아님, 미연결(client 미생성이므로 TransportConnected()==false),
+	// 등록됨(List API 노출 가능). 이후 enable→Start 가 Init 을 재호출해 연결한다.
+	if !config.IsEnabled() {
+		a.logger.Info("thingplus: 비활성화 상태로 생성됨 — 연결 건너뜀",
+			"broker", thingplusBrokerURL(a.cfg),
+			"client_id", a.cfg.ClientID,
+		)
+		return nil
+	}
 
 	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return fmt.Errorf("thingplus init: %w", err)
 	}
-
-	a.mu.Lock()
-	a.agentConfig = config
-	a.mu.Unlock()
 
 	// TLS 설정 구성 (활성 시 CA 로드)
 	tlsConfig, err := a.buildTLSConfig()
@@ -1024,6 +1041,15 @@ func (a *ThingplusGatewayAgent) Start(_ context.Context) error {
 	switch a.CurrentState() {
 	case lifecycle.StateRunning:
 		return nil
+	case lifecycle.StateCreated:
+		// 비활성화 상태로 생성된 에이전트(Init 비활성화 게이트가 StateCreated 에 남김)를
+		// 시작하는 경로이다. 이미 Created 이므로 리셋 없이 Init() 을 재호출한다.
+		// enable 이후라면 agentConfig.IsEnabled()==true 이므로 Init 이 연결하며,
+		// 여전히 비활성화라면 게이트가 다시 조기 반환하여 연결하지 않는다(no-op).
+		a.mu.RLock()
+		cfg := a.agentConfig
+		a.mu.RUnlock()
+		return a.Init(cfg)
 	case lifecycle.StateStopped:
 		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
 			return fmt.Errorf("thingplus start: reset to created: %w", err)
