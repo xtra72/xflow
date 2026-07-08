@@ -1,7 +1,7 @@
 ---
 id: SPEC-THINGPLUS-001
-version: "1.0.0"
-status: planned
+version: "1.1.0"
+status: completed
 created: "2026-07-08"
 updated: "2026-07-08"
 author: xtra
@@ -14,6 +14,7 @@ lifecycle_level: spec-first
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
 | 2026-07-08 | 1.0.0 | 초기 SPEC 작성 |
+| 2026-07-08 | 1.1.0 | 구현 완료 (M1~M5), Implementation Notes 추가 |
 
 ---
 
@@ -427,3 +428,48 @@ connected --(disconnect 발행)--> disconnected
 | REQ-THINGPLUS-001-up-* | M3 Telemetry/Attributes Uplink | thingplus_codec.go, thingplus_agent.go | P0 |
 | REQ-THINGPLUS-001-dn-* | M4 RPC/Shared-attr Downlink | thingplus_codec.go, thingplus_agent.go | P0 |
 | REQ-THINGPLUS-001-web-*, obs-* | M5 Config Schema & Observability | agentSchemas.ts, thingplus_agent.go, examples/ | P1 |
+
+---
+
+## Implementation Notes (구현 완료)
+
+**상태**: `completed` · **구현 커밋**: `eda584a` (2026-07-08)
+
+M1~M5 마일스톤이 모두 구현되어 `thingplus-gateway` 시스템 에이전트가 ThingsBoard Gateway MQTT API(`v1/gateway/*`)를 양방향으로 프록시한다. 단일 MQTT 연결로 다수 하위 디바이스를 다중화하며, 업링크(텔레메트리/속성)와 다운링크(RPC/공유 속성)를 중계하고 NAME↔device_id 매핑을 관리한다.
+
+### 구현 범위 (마일스톤별)
+
+- **M1 (코어/연결)**: `"thingplus-gateway"` 타입 등록, 설정 파싱, access token 기반 MQTT username 인증, TLS(8883/CA), `State()`, 재연결 골격.
+- **M2 (매핑/connect)**: NAME↔device_id 양방향 매핑, JSONPath 기반 디바이스 NAME 추출, 디바이스 상태 머신(`disconnected→connecting→connected`), 자동 connect/auto-provision, 재연결 시 알려진 디바이스 재connect, repo-nil fallback(NAME을 device_id로 사용).
+- **M3 (업링크)**: 텔레메트리(`ts=UnixMilli`, 부재 시 생략) 및 클라이언트 속성 발행, 배치 조립, 경계가 있는 무손실 업링크 버퍼(연결 끊김 시 버퍼링, 재연결 시 flush, 초과 시 관찰 가능).
+- **M4 (다운링크)**: `v1/gateway/rpc` 및 `v1/gateway/attributes` 구독 → `Type()`이 `thingplus.rpc.request` / `thingplus.attr.update`인 플로우 메시지 방출, RPC 응답 발행, 디바이스별 `pendingRPC` 상관.
+- **M5 (스키마/관찰성)**: 웹 설정 스키마(`agentSchemas.ts`), `ConnectionStats`/`BufferInfo` 관찰성, 예제 agent/flow YAML.
+
+### 구현 파일 (14개)
+
+- `internal/agent/system/thingplus_agent.go`, `thingplus_codec.go`, `thingplus_mapping.go`, `thingplus_register.go` (+ 3 테스트: `thingplus_agent_test.go`, `thingplus_codec_test.go`, `thingplus_mapping_test.go`)
+- `internal/node/adapter/thingplus.go` (+ `thingplus_test.go`, adapter `register.go`)
+- `web/src/config/agentSchemas.ts`, `web/src/pages/agents/AgentTypesPage.tsx`
+- `examples/agents/thingplus-gateway.yaml`, `examples/flows/thingplus-gateway.yaml`
+
+### SPEC 대비 분기 (Divergence)
+
+- **구조체 임베딩 변경 (승인됨)**: §4.2 스케치의 `*agent.BaseAgent` 대신, 기존 `mqtt_agent.go`와 동일하게 `*lifecycle.BaseLifecycle`를 임베딩했다. 기존 시스템 에이전트 패턴과의 일관성을 위한 사용자 승인 결정.
+- **stateless Bridge 어댑터 추가 (범위 내)**: §4.1 파일 목록에는 없던 `internal/node/adapter/thingplus.go`(+등록)를 추가했다. 플로우 경계를 넘어 메시지 `Type()`을 보존하기 위한 얇은 무상태 어댑터이며, Bridge 코어 변경이 없으므로 §1.4 스코프("어댑터 추가만 수행, 코어는 변경하지 않음") 내에 해당한다.
+- **Process 기반 인바운드 통합**: 플로우→에이전트 업링크/RPC 응답은 `bridge.go`가 보장 호출하는 진입점인 에이전트 `Process([]byte)`로 라우팅했다. 다운링크는 `Type()`을 실어 나르기 위해 완전 마샬된 `message.Message`를 `recvCh`로 방출한다.
+- **A8 속성 요청/응답 (선택, 이연)**: `v1/gateway/attributes/request`/`response` 빌더·파서는 구현했으나, 라이브 브로커 인코딩 검증 전까지 tolerant/deferred 상태로 둔다.
+
+### 이연 항목 (라이브 브로커 스모크 테스트 — acceptance.md DoD 기준)
+
+- **A7**: MQTT v5 PUBACK 타이밍 (connect PUBACK 게이팅) — 라이브 브로커 스모크 테스트 대기.
+- **A8**: `v1/gateway/attributes/response` 다중 키(client/shared) 인코딩 확정 — 라이브 브로커 스모크 테스트 대기.
+
+### 의존성/구조
+
+- **신규 외부 의존성 0** (기존 Eclipse Paho 재사용). **신규 디렉토리 0** (`internal/node/adapter/`는 기존 존재).
+
+### 품질/커버리지 결과
+
+- 전체 회귀: 11개 패키지 0 FAIL. `go test -race` 통과. `golangci-lint` 0 issues.
+- 커버리지: codec 92.6% / mapping 96.6% / adapter 95.0% / 에이전트 코어 80.4% (브로커 전용 경로 제외 시 >90%).
+- 품질 findings 3건 수정: (1) lint unused-const → 실사용 연결, (2) `a.cfg` 런타임 재설정 데이터 레이스 → RLock 스냅샷, (3) `pendingRPC` 무한 증가/충돌 → 복합 키 + 경계 있는 축출(bounded eviction).

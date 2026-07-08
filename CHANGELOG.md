@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 추가 — thingplus-gateway 에이전트 (ThingsBoard Gateway MQTT 양방향 IoT 연동)
+
+- **`thingplus-gateway` 시스템 에이전트 신설 — 단일 MQTT 연결로 다수 하위 디바이스를 프록시하는 양방향 게이트웨이 (Non-breaking)**
+
+  ThingsBoard Gateway MQTT API(`v1/gateway/*`)를 지원하는 신규 시스템 에이전트를 추가했다. 하나의 게이트웨이 MQTT 연결이 다수의 논리 디바이스를 다중화(multiplexing)하며, 업링크(텔레메트리/속성)와 다운링크(RPC/공유 속성)를 양방향으로 중계하고 xflow `device_id`↔ThingsBoard 디바이스 NAME 매핑을 관리한다. 기존 `mqtt-client` 에이전트 및 Eclipse Paho 스택을 재사용하며 신규 외부 의존성은 없다.
+
+  - **코어/연결(M1)**: `"thingplus-gateway"` 타입 등록, 설정 파싱, access token 기반 MQTT username 인증, TLS(8883/CA), `State()`, 재연결. access token은 로그/`State()`에서 마스킹된다.
+  - **매핑/connect(M2)**: JSONPath 기반 디바이스 NAME 추출(기본 `$.device`), NAME↔device_id 양방향 매핑, 디바이스 상태 머신(`disconnected→connecting→connected`), 미등록 디바이스 자동 connect/auto-provision, 재연결 시 알려진 디바이스 재connect, repo-nil fallback(NAME을 device_id로 사용).
+  - **업링크(M3)**: 텔레메트리(`ts=epoch ms`, 부재 시 생략) 및 클라이언트 속성 발행, 배치 조립, 경계가 있는 무손실 버퍼(연결 끊김 시 버퍼링, 재연결 시 flush, 초과 시 관찰 가능).
+  - **다운링크(M4)**: `v1/gateway/rpc`·`v1/gateway/attributes` 구독 → `Type()`이 `thingplus.rpc.request` / `thingplus.attr.update`인 플로우 메시지 방출, RPC 응답 발행, 디바이스별 `pendingRPC` 상관.
+  - **스키마/관찰성(M5)**: 웹 설정 스키마(`agentSchemas.ts`), `ConnectionStats`/`BufferInfo` 관찰성, 예제 agent/flow YAML(`examples/agents/thingplus-gateway.yaml`, `examples/flows/thingplus-gateway.yaml`).
+  - **Bridge 어댑터(stateless)**: 플로우 경계를 넘어 메시지 `Type()`을 보존하기 위한 얇은 무상태 어댑터(`internal/node/adapter/thingplus.go`)를 추가했다. Bridge 코어는 변경하지 않는다.
+  - **이연(라이브 브로커)**: A7(MQTT v5 PUBACK 타이밍), A8(`attributes/response` 다중 키 인코딩)은 라이브 브로커 스모크 테스트로 이연했다. 빌더/파서는 구현되었으나 tolerant/deferred 상태.
+  - **품질**: 전체 회귀 11개 패키지 0 FAIL, `go test -race` 통과, `golangci-lint` 0 issues. 커버리지 codec 92.6% / mapping 96.6% / adapter 95.0% / 에이전트 코어 80.4%(브로커 전용 경로 제외 시 >90%). 신규 외부 의존성 0.
+  - **관련**: SPEC-THINGPLUS-001 v1.1.0(구현 완료, `eda584a`).
+
 ### 변경 — 저장소 탭 필터 UI 정리
 
 - **저장소 탭에서 "메트릭 타입" 필터 드롭다운과 태그 필터 칩을 제거 (기능·데이터 무영향, Non-breaking)**

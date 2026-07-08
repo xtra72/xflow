@@ -186,6 +186,7 @@ xflow/
 | [modbus-monitoring.yaml](examples/flows/modbus-monitoring.yaml) | MODBUS/TCP PLC 레지스터 모니터링. PLC 수신 → 센서 값 추출 → 온도 임계값 필터(80도 초과) → 알람 출력 | bridge → transform → filter → bridge(x2) |
 | [serial-to-ethernet-server.yaml](examples/flows/serial-to-ethernet-server.yaml) | 범용 시리얼 ↔ TCP 서버 양방향 게이트웨이. 시리얼 수신 → 프레임 변환 → TCP 서버 송신 (역방향 포함) | bridge(x2) → transform(x2) → bridge(x2) |
 | [serial-to-ethernet-client.yaml](examples/flows/serial-to-ethernet-client.yaml) | 범용 시리얼 ↔ TCP 클라이언트 양방향 게이트웨이. 시리얼 수신 → 프레임 변환 → TCP 클라이언트 송신 (역방향 포함) | bridge(x2) → transform(x2) → bridge(x2) |
+| [thingplus-gateway.yaml](examples/flows/thingplus-gateway.yaml) | ThingsBoard Gateway MQTT 양방향 IoT 게이트웨이. 텔레메트리/속성 업링크 + RPC/공유 속성 다운링크 (`thingplus.rpc.request` / `thingplus.attr.update`) | bridge ↔ thingplus-gateway |
 
 ### 에이전트 예제 (`examples/agents/`)
 
@@ -202,6 +203,7 @@ xflow/
 | [serial-gateway.yaml](examples/agents/serial-gateway.yaml) | `serial` | 범용 시리얼 게이트웨이 에이전트. serial-to-ethernet 예제용 (9600bps, newline 프레이밍) |
 | [tcp-server-gateway.yaml](examples/agents/tcp-server-gateway.yaml) | `tcp-server` | TCP 서버 게이트웨이 에이전트. 외부 클라이언트 접속 대기 (0.0.0.0:8899) |
 | [tcp-client-gateway.yaml](examples/agents/tcp-client-gateway.yaml) | `tcp-client` | TCP 클라이언트 게이트웨이 에이전트. 원격 서버 접속, 자동 재연결 |
+| [thingplus-gateway.yaml](examples/agents/thingplus-gateway.yaml) | `thingplus-gateway` | ThingsBoard Gateway MQTT(`v1/gateway/*`) 양방향 게이트웨이. 단일 연결로 다수 하위 디바이스 프록시, access token 인증, NAME↔device_id 매핑, 업링크/다운링크 중계 |
 
 ### 설정 예제 (`examples/config/`)
 

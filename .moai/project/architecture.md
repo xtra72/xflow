@@ -319,6 +319,12 @@ Node-A                Wire                 Node-B
                           +--------+                 +---------------+
 ```
 
+### 게이트웨이 다중화 패턴 (Thingplus Gateway, SPEC-THINGPLUS-001)
+
+`thingplus-gateway` 에이전트는 하나의 MQTT 연결을 다수의 논리 디바이스에 프록시하는 다중화(multiplexing) 패턴을 구현한다. 디바이스마다 별도 연결을 만들지 않고, ThingsBoard Gateway MQTT API(`v1/gateway/*`)의 디바이스 다중화 규약으로 단일 연결에서 업링크(텔레메트리/속성)와 다운링크(RPC/공유 속성)를 양방향 중계한다. NAME↔device_id 매핑 계층이 양쪽에서 일관된 식별자를 유지한다.
+
+플로우 경계에서는 메시지 `Type()`(예: `thingplus.rpc.request`, `thingplus.attr.update`)을 보존해야 하므로, Bridge 코어를 변경하지 않고 얇은 **stateless 어댑터**(`internal/node/adapter/thingplus.go`)를 두어 완전 마샬된 `message.Message`를 그대로 전달한다. 플로우→에이전트 방향은 `bridge.go`가 보장 호출하는 에이전트 `Process([]byte)` 진입점으로 라우팅된다.
+
 ---
 
 ## 7. 생명주기 아키텍처
