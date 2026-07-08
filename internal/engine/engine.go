@@ -1058,6 +1058,20 @@ func (e *Engine) autoStartAgents(ctx context.Context, rt *flowRuntime) []agent.A
 		}
 		started[ag.ID()] = true
 
+		// SPEC-AGENT-005: Enabled=false 는 "실행 금지" 의도이므로 자동 시작에서 제외한다.
+		// 부팅 시 restoreAgents(cmd/xflowd/main.go)가 비활성화 에이전트를 건너뛰는 것과
+		// 동일하게, 플로우 트리거 경로에서도 사용자의 비활성화 의도를 존중해야 한다.
+		// 결과적으로 비활성화 에이전트는 재활성화 전까지 시작되지 않는다.
+		// Info().Config 는 값 복사본이며 IsEnabled 는 포인터 리시버이므로 지역 변수에 담아 호출한다.
+		agCfg := ag.Info().Config
+		if !agCfg.IsEnabled() {
+			if e.logger != nil {
+				e.logger.Info("engine: 비활성화된 에이전트 자동 시작 건너뜀",
+					"agentID", ag.ID(), "agentName", ag.Name())
+			}
+			continue
+		}
+
 		// Init() 후 StateRunning 상태여도 Start()를 호출한다.
 		// 각 에이전트가 자체 멱등성을 보장한다 (이미 시작된 경우 no-op).
 		if err := ag.Start(ctx); err != nil {
