@@ -218,11 +218,20 @@ type ThingplusGatewayAgent struct {
 	recvCh      chan []byte     // 다운링크 수신 버퍼 (mqtt_agent recvCh 패턴)
 	done        chan struct{}
 	doneOnce    sync.Once
-	stats       *agent.AgentStats
-	logger      *slog.Logger
-	mu          sync.RWMutex
-	startedAt   time.Time
-	createdAt   time.Time
+	// stopped 는 Stop() 이 호출되었음을 나타내는 가드 플래그이다.
+	// Paho 는 SetAutoReconnect(true)+SetConnectRetry(true) 로 백그라운드 재연결
+	// goroutine 을 유지하며, Disconnect() 만으로는 flapping 중에 이 재연결 루프가
+	// 확실히 취소되지 않아 Stop 이후에도 재연결에 성공할 수 있다. 재연결이 성공하면
+	// onConnect 가 다운링크 토픽을 재구독하고 디바이스를 재connect 하여 세션이 부활한다.
+	// 이를 방지하기 위해 Stop() 에서 stopped=true 로 설정하고, onConnect 가 stopped
+	// 상태이면 즉시 Disconnect 후 재구독 없이 반환하여 부활을 무력화한다.
+	// Init()/재시작 경로에서 stopped=false 로 리셋되어 정상 재시작이 가능하다.
+	stopped   atomic.Bool
+	stats     *agent.AgentStats
+	logger    *slog.Logger
+	mu        sync.RWMutex
+	startedAt time.Time
+	createdAt time.Time
 
 	// 업링크/다운링크 관찰 카운터 (State() 노출용)
 	uplinkCount   atomic.Int64
@@ -420,6 +429,7 @@ var (
 	_ agent.SubscriberAgent         = (*ThingplusGatewayAgent)(nil)
 	_ agent.BufferInfoProvider      = (*ThingplusGatewayAgent)(nil)
 	_ agent.ConnectionStatsProvider = (*ThingplusGatewayAgent)(nil)
+	_ agent.TransportChecker        = (*ThingplusGatewayAgent)(nil)
 )
 
 // parseThingplusConfig 는 AgentConfig에서 ThingplusConfig를 파싱한다.
@@ -566,6 +576,10 @@ func (a *ThingplusGatewayAgent) Init(config agent.AgentConfig) error {
 		return fmt.Errorf("thingplus init: %w", err)
 	}
 
+	// 재시작 경로(Start: Stopped→Created→Init)에서 stopped 가드를 해제하여
+	// 정상적으로 재연결/재구독이 가능하게 한다.
+	a.stopped.Store(false)
+
 	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
 		return fmt.Errorf("thingplus init: %w", err)
 	}
@@ -679,6 +693,17 @@ func (a *ThingplusGatewayAgent) buildTLSConfig() (*tls.Config, error) {
 // onConnect 는 브로커 연결(및 재연결) 성공 시 호출된다.
 // 다운링크 토픽을 구독하고, 이전에 연결되어 있던 알려진 디바이스들을 재connect한다.
 func (a *ThingplusGatewayAgent) onConnect(c mqtt.Client) {
+	// stopped-guard: Stop() 이후 Paho 의 connect-retry/auto-reconnect goroutine 이
+	// 살아남아 재연결에 성공하면 onConnect 가 다시 호출된다. 이때 다운링크 재구독 및
+	// 디바이스 재connect 를 수행하면 세션이 부활하고 중복 세션이 게이트웨이를 EOF 로
+	// kick 하는 상황이 지속되므로, stopped 상태이면 즉시 연결을 끊고 반환한다.
+	// (Disconnect 만으로는 flapping 중 재연결 루프가 확실히 취소되지 않는 Paho 특성 대응.)
+	if a.stopped.Load() {
+		a.logger.Info("thingplus: Stop 이후 재연결 감지 — 재구독/재connect 없이 즉시 종료(세션 부활 방지)")
+		c.Disconnect(0)
+		return
+	}
+
 	// 콜백 goroutine 에서 실행되므로 런타임 Configure() 와의 레이스를 방지하기 위해 스냅샷한다.
 	cfg := a.snapshotConfig()
 	a.logger.Info("thingplus: 게이트웨이 브로커에 연결됨",
@@ -1013,9 +1038,20 @@ func (a *ThingplusGatewayAgent) Start(_ context.Context) error {
 }
 
 // Stop 은 게이트웨이 연결을 종료한다.
+// idempotent: 이미 Stopped 상태에서 재호출되어도 에러 없이 항상 Disconnect 하여
+// 연결 끊김을 보장한다 (manager 가 desync 감지 시 강제 disconnect 목적으로 재호출).
 func (a *ThingplusGatewayAgent) Stop(_ context.Context) error {
-	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
-		return fmt.Errorf("thingplus stop: %w", err)
+	// stopped 가드를 먼저 설정한다. Stop 이후 Paho 가 재연결에 성공해 onConnect 가
+	// 호출되더라도, 가드가 즉시 Disconnect 하고 재구독/재connect 하지 않아 세션 부활을 막는다.
+	a.stopped.Store(true)
+
+	// 이미 Stopped 상태이면 lifecycle 전이(Stopped→Stopping 은 invalid)를 건너뛴다.
+	// 그래도 아래에서 Disconnect 는 항상 호출하여 연결 끊김을 보장한다.
+	transition := a.CurrentState() != lifecycle.StateStopped
+	if transition {
+		if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
+			return fmt.Errorf("thingplus stop: %w", err)
+		}
 	}
 
 	// Disconnect 는 IsConnected() 여부와 무관하게 항상 호출한다.
@@ -1037,8 +1073,11 @@ func (a *ThingplusGatewayAgent) Stop(_ context.Context) error {
 		select {
 		case <-a.recvCh:
 		default:
-			if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
-				return fmt.Errorf("thingplus stop: %w", err)
+			// idempotent: 이미 Stopped 이면 전이를 건너뛴다(Stopped→Stopped 는 invalid).
+			if transition {
+				if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
+					return fmt.Errorf("thingplus stop: %w", err)
+				}
 			}
 			return nil
 		}
@@ -1053,6 +1092,17 @@ func (a *ThingplusGatewayAgent) Pause(_ context.Context) error {
 // Resume 은 Paused -> Running 전이한다.
 func (a *ThingplusGatewayAgent) Resume(_ context.Context) error {
 	return a.TransitionTo(lifecycle.StateRunning)
+}
+
+// TransportConnected 는 실제 Paho 클라이언트의 연결 여부를 반환한다.
+// agent.TransportChecker 인터페이스 구현. 이를 통해 API 의 connected 필드가
+// 라이프사이클 상태가 아닌 실제 브로커 연결 상태를 반영하고, manager 가
+// State/트랜스포트 desync 를 감지할 수 있다.
+func (a *ThingplusGatewayAgent) TransportConnected() bool {
+	a.mu.RLock()
+	client := a.client
+	a.mu.RUnlock()
+	return client != nil && client.IsConnected()
 }
 
 // Health 는 에이전트의 건강 상태를 반환한다.

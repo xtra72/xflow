@@ -186,8 +186,19 @@ func (m *DefaultManager) Stop(ctx context.Context, agentID string) error {
 	if err != nil {
 		return err
 	}
+	// StateStopped 만으로 early-return 하면, Paho 가 이전 Stop 이후 재연결에 성공해
+	// 트랜스포트는 살아있는데 라이프사이클만 Stopped 로 남은 desync 상황에서 UI Stop 이
+	// no-op 이 되어 에이전트를 끊을 수 없게 된다. 따라서 트랜스포트가 여전히 연결되어
+	// 있는지 TransportChecker 로 확인하여, 진짜 정지(State==Stopped && !연결)일 때만
+	// early-return 하고, 연결이 남아 있으면 agent.Stop() 을 호출해 강제 disconnect 한다.
 	if agent.Info().State == lifecycle.StateStopped {
-		return nil
+		stillConnected := false
+		if tc, ok := agent.(TransportChecker); ok {
+			stillConnected = tc.TransportConnected()
+		}
+		if !stillConnected {
+			return nil
+		}
 	}
 	for _, fn := range m.onStop {
 		fn(agent)
