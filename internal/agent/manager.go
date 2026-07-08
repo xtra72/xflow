@@ -234,13 +234,27 @@ func (m *DefaultManager) Restart(ctx context.Context, agentID string) error {
 	for _, fn := range m.onStop {
 		fn(old)
 	}
-	// 기존 에이전트 정지 (이미 Stopped 상태면 Stop 호출 생략 — invalid lifecycle 전이 방지)
-	// 2026-05-14 hotfix: Stopped → Stopping 전이가 invalid 라서 사용자가 설정 변경 후
-	// 정지된 에이전트를 Restart 시 stop 단계에서 회귀 발생하던 문제 해소.
-	if old.Info().State != lifecycle.StateStopped {
-		if err := old.Stop(ctx); err != nil {
-			return fmt.Errorf("manager restart: stop failed: %w", err)
-		}
+	// 기존 에이전트 트랜스포트를 항상 teardown 한다 (orphan 연결 방지).
+	//
+	// old.Stop() 은 반드시 무조건 호출해야 한다. 이유:
+	// State==Stopped 이더라도 flapping 중 Paho 가 이전 Stop 이후 재연결에 성공하면
+	// 라이프사이클은 Stopped 인데 트랜스포트는 살아있는 desync 가 발생한다. 이때
+	// old.Stop() 을 건너뛰면 아래에서 새 인스턴스를 만들고 registry.Unregister(old) 하는
+	// 순간, old 의 Paho 클라이언트가 레지스트리/UI 에서 사라진 채 백그라운드
+	// auto-reconnect(ConnectRetry) 로 영원히 재연결하는 orphan 이 된다.
+	// (manager.Stop 이 ceb100f 에서 TransportChecker 로 고친 것과 동일한 skip-when-Stopped
+	// 패턴이 Restart 에도 남아 있던 버그.)
+	//
+	// 2026-05-14 hotfix 는 Stopped→Stopping 전이가 invalid 라서 Stop 을 건너뛰었으나,
+	// ceb100f 로 agent.Stop() 이 idempotent(이미 Stopped 면 전이를 건너뛰고 Disconnect 만
+	// 수행) 해졌으므로 State==Stopped 에서 old.Stop() 을 호출해도 회귀하지 않는다.
+	//
+	// Stop 이 에러를 반환하더라도 return 하지 않고 로그만 남기고 재생성으로 진행한다.
+	// 여기서 return 하면 old(잠재적 orphan)를 정리하지도, 새 인스턴스를 만들지도 못한 채
+	// Restart 가 실패해 오히려 orphan 을 방치하게 되기 때문이다.
+	if err := old.Stop(ctx); err != nil {
+		slog.Warn("manager restart: old agent stop failed, proceeding with re-create",
+			"agentID", agentID, "error", err)
 	}
 
 	// 3. lock 없이 새 인스턴스 생성 (Init 의 헬스체크 등 외부 I/O 발생 가능).
