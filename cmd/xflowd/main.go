@@ -365,6 +365,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := system.RegisterMQTTTypes(agentMgr); err != nil {
 		return fmt.Errorf("MQTT agent type registration failed: %w", err)
 	}
+	if err := system.RegisterThingplusTypes(agentMgr); err != nil {
+		return fmt.Errorf("Thingplus gateway agent type registration failed: %w", err)
+	}
 	// SPEC-DEVICE-IDENTITY-001 Phase D § D-T17: dual-tag 부착 기능이 제거되어
 	// RegisterInfluxDBTypesWithResolver 가 RegisterInfluxDBTypes 로 단일화됨.
 	if err := system.RegisterInfluxDBTypes(agentMgr); err != nil {
