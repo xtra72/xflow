@@ -444,13 +444,21 @@ func (a *MQTTAgent) Stop(_ context.Context) error {
 		return fmt.Errorf("mqtt stop: %w", err)
 	}
 
-	// 1. 토픽 구독 해제
-	if a.client != nil && a.client.IsConnected() {
-		for _, topic := range a.mqttConfig.Topics {
-			token := a.client.Unsubscribe(topic)
-			token.Wait()
+	// 1. 토픽 구독 해제 및 연결 종료
+	if a.client != nil {
+		// 구독 해제는 연결된 상태에서만 가능하다 (미연결 시 브로커로 UNSUBSCRIBE 전송 불가).
+		if a.client.IsConnected() {
+			for _, topic := range a.mqttConfig.Topics {
+				token := a.client.Unsubscribe(topic)
+				token.Wait()
+			}
 		}
-		// 250ms 대기 후 연결 종료
+		// Disconnect 는 IsConnected() 여부와 무관하게 항상 호출한다.
+		// Paho 는 SetAutoReconnect(true)+SetConnectRetry(true) 로 백그라운드 재연결
+		// goroutine 을 유지하는데, 이 재연결 machinery 를 취소하는 유일한 방법이 Disconnect() 이다.
+		// flapping(현재 연결 끊김) 중에 Stop 이 호출되면 IsConnected()==false 이므로 예전에는
+		// Disconnect 를 건너뛰어 auto-reconnect 가 살아남아 계속 재연결했다. 이를 방지하기 위해
+		// 연결 상태와 무관하게 Disconnect 를 호출한다.
 		a.client.Disconnect(250)
 	}
 

@@ -1018,7 +1018,14 @@ func (a *ThingplusGatewayAgent) Stop(_ context.Context) error {
 		return fmt.Errorf("thingplus stop: %w", err)
 	}
 
-	if a.client != nil && a.client.IsConnected() {
+	// Disconnect 는 IsConnected() 여부와 무관하게 항상 호출한다.
+	// Paho 는 SetAutoReconnect(true)+SetConnectRetry(true) 로 백그라운드 재연결
+	// goroutine 을 유지하는데, 이 재연결 machinery 를 취소하는 유일한 방법이 Disconnect() 이다.
+	// flapping(현재 연결 끊김) 중에 Stop 이 호출되면 IsConnected()==false 이므로 예전에는
+	// Disconnect 를 건너뛰어 auto-reconnect 가 살아남아 계속 재연결했고, 그 중복 세션이
+	// thingplus-gateway 를 EOF 로 kick 하는 상황을 지속시켰다. 이를 방지하기 위해
+	// 연결 상태와 무관하게 Disconnect 를 호출한다.
+	if a.client != nil {
 		a.client.Disconnect(250)
 	}
 
