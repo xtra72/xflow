@@ -699,66 +699,73 @@ func drainRecv(t *testing.T, a *ThingplusGatewayAgent) []byte {
 	}
 }
 
-// AC-THINGPLUS-001-01: 미등록 디바이스 업링크 auto-connect + 텔레메트리 (REQ-map-connect, up-telemetry, up-ts)
-func TestUplink_AutoConnectAndTelemetry(t *testing.T) {
+// TestUplink_DeviceTelemetryNoConnect 는 Device API 업링크의 핵심 계약을 검증한다:
+//   - 텔레메트리가 v1/devices/me/telemetry 로 Device API 형식으로 발행된다:
+//     {"ts":<UnixMilli>,"values":{"unit-1":{...}}}
+//   - v1/gateway/connect 발행이 전혀 없어야 한다(Device API 는 sub-device connect 없음).
+func TestUplink_DeviceTelemetryNoConnect(t *testing.T) {
 	a := newTestAgent(t)
-	pub := newFakePublisher() // connected==true (fake PUBACK 즉시 완료)
+	pub := newFakePublisher() // connected==true
 
 	before := time.Now().UnixMilli()
-	payload := map[string]any{"device": "Device A", "temperature": 42}
+	payload := map[string]any{
+		"device":              "unit-1",
+		"current_temperature": 24,
+		"target_temperature":  20,
+	}
 	require.NoError(t, a.handleUplink(pub, payload))
 	after := time.Now().UnixMilli()
 
-	// 1) v1/gateway/connect 로 {"device":"Device A"} 발행
-	connRec, ok := pub.findPublish(topicGatewayConnect)
-	require.True(t, ok, "auto-connect 가 v1/gateway/connect 로 발행되어야 한다")
-	var connPayload map[string]any
-	require.NoError(t, json.Unmarshal(connRec.Payload, &connPayload))
-	assert.Equal(t, "Device A", connPayload["device"])
+	// CRITICAL: v1/gateway/connect 발행이 없어야 한다.
+	_, hasConnect := pub.findPublish(topicGatewayConnect)
+	assert.False(t, hasConnect, "Device API 는 gateway connect 를 발행하면 안 된다")
 
-	// 2) PUBACK(fake) 후 connected 전이
-	e, ok := a.devices.get("Device A")
-	require.True(t, ok)
-	assert.Equal(t, deviceConnected, e.state)
+	// 텔레메트리가 v1/devices/me/telemetry 로 발행되어야 한다.
+	telRec, ok := pub.findPublish(topicDeviceTelemetry)
+	require.True(t, ok, "텔레메트리가 v1/devices/me/telemetry 로 발행되어야 한다")
 
-	// 3) v1/gateway/telemetry 로 {"Device A":[{"ts,values}]} 발행
-	telRec, ok := pub.findPublish(topicGatewayTelemetry)
-	require.True(t, ok, "텔레메트리가 v1/gateway/telemetry 로 발행되어야 한다")
-
-	var tel map[string][]map[string]any
+	var tel map[string]any
 	require.NoError(t, json.Unmarshal(telRec.Payload, &tel))
-	arr := tel["Device A"]
-	require.Len(t, arr, 1)
 
-	// ts 는 int64 epoch milliseconds (UnixMilli 범위 내)
-	tsVal := int64(arr[0]["ts"].(float64))
+	// ts 는 최상위, int64 epoch milliseconds (UnixMilli 범위 내).
+	tsVal := int64(tel["ts"].(float64))
 	assert.GreaterOrEqual(t, tsVal, before)
 	assert.LessOrEqual(t, tsVal, after)
 
-	values := arr[0]["values"].(map[string]any)
-	assert.EqualValues(t, 42, values["temperature"])
+	// values 는 디바이스 NAME 을 키로 가진다.
+	values := tel["values"].(map[string]any)
+	unit, ok := values["unit-1"].(map[string]any)
+	require.True(t, ok, "values 는 unit-1 을 키로 가져야 한다")
+	assert.EqualValues(t, 24, unit["current_temperature"])
+	assert.EqualValues(t, 20, unit["target_temperature"])
 	// device 식별 키는 텔레메트리 values 에서 제외되어야 한다.
-	_, hasDevice := values["device"]
+	_, hasDevice := unit["device"]
 	assert.False(t, hasDevice)
 }
 
-// 클라이언트 속성 업링크 (REQ-up-attributes)
-func TestUplink_ClientAttributes(t *testing.T) {
+// TestUplink_DeviceClientAttributes 는 클라이언트 속성이 Device API flat 형식으로
+// v1/devices/me/attributes 로 발행됨을 검증한다.
+func TestUplink_DeviceClientAttributes(t *testing.T) {
 	a := newTestAgent(t)
 	pub := newFakePublisher()
 
 	payload := map[string]any{
-		"device":     "Device A",
+		"device":     "unit-1",
 		"attributes": map[string]any{"fw": "1.0"},
 	}
 	require.NoError(t, a.handleUplink(pub, payload))
 
-	attrRec, ok := pub.findPublish(topicGatewayAttributes)
-	require.True(t, ok, "클라이언트 속성이 v1/gateway/attributes 로 발행되어야 한다")
+	// connect 발행이 없어야 한다.
+	_, hasConnect := pub.findPublish(topicGatewayConnect)
+	assert.False(t, hasConnect, "Device API 는 gateway connect 를 발행하면 안 된다")
 
-	var parsed map[string]map[string]any
+	attrRec, ok := pub.findPublish(topicDeviceAttributes)
+	require.True(t, ok, "클라이언트 속성이 v1/devices/me/attributes 로 발행되어야 한다")
+
+	// flat {"fw":"1.0"} — NAME 래핑 없음.
+	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(attrRec.Payload, &parsed))
-	assert.Equal(t, "1.0", parsed["Device A"]["fw"])
+	assert.Equal(t, "1.0", parsed["fw"])
 }
 
 // AC-THINGPLUS-001-02: 다운링크 RPC → thingplus.rpc.request 방출 → 플로우 응답 → RPC 발행
@@ -826,7 +833,46 @@ func TestDownlink_RPCReplyGatedWhenNotConnected(t *testing.T) {
 	assert.False(t, ok, "게이팅 시 RPC 발행이 없어야 한다")
 }
 
-// AC-THINGPLUS-001-04: 공유 속성 push → thingplus.attr.update 방출
+// TestDownlink_DeviceSharedAttributesEmit 는 Device API 공유 속성 다운링크
+// (v1/devices/me/attributes, flat 형식)가 thingplus.attr.update 로 방출됨을 검증한다.
+func TestDownlink_DeviceSharedAttributesEmit(t *testing.T) {
+	a := newTestAgent(t)
+
+	// Device API 공유 속성: flat {"key":val} — 최상위 device 필드 없음("me" 대상).
+	attrBytes := []byte(`{"target_temperature":21,"mode":"cool"}`)
+	a.routeDownlink(topicDeviceAttributes, attrBytes)
+
+	emitted := drainRecv(t, a)
+	msg, err := message.FromJSON(emitted)
+	require.NoError(t, err)
+	assert.Equal(t, "thingplus.attr.update", msg.Type(), "공유 속성은 thingplus.attr.update Type 으로 방출되어야 한다")
+
+	pm := msg.Payload().ToMap()
+	// 방출 페이로드에 속성 데이터 포함
+	data := pm["data"].(map[string]any)
+	assert.EqualValues(t, 21, data["target_temperature"])
+	assert.Equal(t, "cool", data["mode"])
+}
+
+// TestDownlink_DeviceSharedAttributesSharedWrapper 는 {"shared":{...}} 래핑 형식도
+// tolerant 하게 처리됨을 검증한다.
+func TestDownlink_DeviceSharedAttributesSharedWrapper(t *testing.T) {
+	a := newTestAgent(t)
+
+	attrBytes := []byte(`{"shared":{"target_temperature":19}}`)
+	a.routeDownlink(topicDeviceAttributes, attrBytes)
+
+	emitted := drainRecv(t, a)
+	msg, err := message.FromJSON(emitted)
+	require.NoError(t, err)
+	assert.Equal(t, "thingplus.attr.update", msg.Type())
+
+	data := msg.Payload().ToMap()["data"].(map[string]any)
+	assert.EqualValues(t, 19, data["target_temperature"])
+}
+
+// AC-THINGPLUS-001-04 (dormant gateway): 게이트웨이 공유 속성 push → thingplus.attr.update 방출.
+// gateway 다운링크 경로는 dormant 이나 routeDownlink 코드/테스트 일관성을 위해 유지한다.
 func TestDownlink_SharedAttributesEmit(t *testing.T) {
 	a := newTestAgent(t)
 
@@ -871,12 +917,14 @@ func TestUplink_BufferOnDisconnectAndFlushOnReconnect(t *testing.T) {
 	a.flushUplinkBuffer(pub)
 
 	assert.Equal(t, 0, a.upBuf.len(), "flush 후 버퍼가 비어야 한다")
-	telRec, ok := pub.findPublish(topicGatewayTelemetry)
-	require.True(t, ok, "버퍼링된 텔레메트리가 재연결 시 발행되어야 한다")
+	telRec, ok := pub.findPublish(topicDeviceTelemetry)
+	require.True(t, ok, "버퍼링된 텔레메트리가 재연결 시 v1/devices/me/telemetry 로 발행되어야 한다")
 
-	var tel map[string][]map[string]any
+	// Device API 형식: {"ts","values":{"Device A":{"temperature":7}}}
+	var tel map[string]any
 	require.NoError(t, json.Unmarshal(telRec.Payload, &tel))
-	assert.EqualValues(t, 7, tel["Device A"][0]["values"].(map[string]any)["temperature"])
+	values := tel["values"].(map[string]any)
+	assert.EqualValues(t, 7, values["Device A"].(map[string]any)["temperature"])
 }
 
 // 버퍼 초과 시 관찰 가능한 드롭 (silent drop 금지)
@@ -979,11 +1027,13 @@ func TestUplink_ExplicitValuesKey(t *testing.T) {
 	}
 	require.NoError(t, a.handleUplink(pub, payload))
 
-	telRec, ok := pub.findPublish(topicGatewayTelemetry)
+	telRec, ok := pub.findPublish(topicDeviceTelemetry)
 	require.True(t, ok)
-	var tel map[string][]map[string]any
+	// Device API 형식: {"ts","values":{"Device A":{"power":100}}}
+	var tel map[string]any
 	require.NoError(t, json.Unmarshal(telRec.Payload, &tel))
-	assert.EqualValues(t, 100, tel["Device A"][0]["values"].(map[string]any)["power"])
+	values := tel["values"].(map[string]any)
+	assert.EqualValues(t, 100, values["Device A"].(map[string]any)["power"])
 }
 
 // handleUplink: NAME 추출 실패 시 에러 (device 키 없음).
@@ -1025,7 +1075,7 @@ func TestUplink_NilAttributes_NoAttrPublish(t *testing.T) {
 	a := newTestAgent(t)
 	pub := newFakePublisher()
 	require.NoError(t, a.handleUplink(pub, map[string]any{"device": "A", "x": 1}))
-	_, ok := pub.findPublish(topicGatewayAttributes)
+	_, ok := pub.findPublish(topicDeviceAttributes)
 	assert.False(t, ok, "속성이 없으면 attributes 발행이 없어야 한다")
 }
 

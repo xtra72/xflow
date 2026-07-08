@@ -27,8 +27,84 @@ type telemetryEntry struct {
 	Values map[string]any
 }
 
+// buildDeviceTelemetry 는 ThingsBoard Device API 텔레메트리 페이로드를 조립한다.
+//
+// 출력 형식(Device API): {"ts":<UnixMilli>,"values":{"<name>":{<telemetry kv>}}}
+//
+//   - name 은 유닛/디바이스 NAME 으로, values 맵의 키가 된다. 인입 메시지 하나당
+//     values 에 하나의 유닛 항목만 담긴다(형식 자체는 다중 유닛을 지원한다).
+//   - ts 가 nil 이면 "ts" 키를 생략하여 서버 시각을 사용하도록 한다(Device API 기본).
+//   - ts 가 non-nil 이면 time.Time.UnixMilli() (epoch milliseconds int64) 로 직렬화한다.
+//
+// Gateway API 의 buildTelemetry({"<NAME>":[{ts,values}]}) 와 달리 최상위에 ts 를 두고
+// values 를 NAME→kv 맵으로 구성한다.
+func buildDeviceTelemetry(name string, ts *time.Time, values map[string]any) ([]byte, error) {
+	if name == "" {
+		return nil, fmt.Errorf("thingplus codec: device telemetry name 이 비어 있음")
+	}
+	// values 가 nil 이면 빈 객체로 직렬화하여 서버 파싱 오류를 방지한다.
+	if values == nil {
+		values = map[string]any{}
+	}
+
+	payload := map[string]any{
+		"values": map[string]any{name: values},
+	}
+	if ts != nil {
+		payload["ts"] = ts.UnixMilli()
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("thingplus codec: device telemetry 직렬화 실패: %w", err)
+	}
+	return data, nil
+}
+
+// buildDeviceClientAttributes 는 ThingsBoard Device API 클라이언트 속성 업링크
+// 페이로드를 조립한다.
+//
+// 출력 형식(Device API): {"<k>":<v>} — flat 객체. Gateway API 의
+// buildClientAttributes({"<NAME>":{...}}) 와 달리 NAME 으로 감싸지 않는다.
+func buildDeviceClientAttributes(attrs map[string]any) ([]byte, error) {
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
+	data, err := json.Marshal(attrs)
+	if err != nil {
+		return nil, fmt.Errorf("thingplus codec: device client attributes 직렬화 실패: %w", err)
+	}
+	return data, nil
+}
+
+// parseDeviceSharedAttributes 는 ThingsBoard Device API 공유 속성 다운링크 페이로드를
+// tolerant 하게 파싱하여 속성 맵을 반환한다.
+//
+// Device API 공유 속성 업데이트는 "me" 를 대상으로 하므로 최상위 "device" 필드가 없다.
+// 브로커/버전에 따라 두 가지 형태가 관찰되므로 모두 수용한다:
+//   - flat:            {"<k>":<v>, ...}
+//   - shared 래핑:     {"shared":{"<k>":<v>, ...}}
+//
+// 둘 다 아니면(그러나 유효한 JSON 객체이면) flat 으로 간주하여 그대로 반환한다.
+func parseDeviceSharedAttributes(data []byte) (map[string]any, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("thingplus codec: device 공유 속성 파싱 실패: %w", err)
+	}
+	// "shared" 키가 객체이면 그 내부를 속성으로 사용한다.
+	if shared, ok := raw["shared"].(map[string]any); ok {
+		return shared, nil
+	}
+	// 그 외에는 flat 객체 전체를 속성으로 간주한다.
+	return raw, nil
+}
+
 // buildTelemetry 는 단일 텔레메트리 항목을 게이트웨이 텔레메트리 페이로드로 조립한다
 // (REQ-up-telemetry / REQ-up-ts).
+//
+// NOTE(Device API 전환): 이 게이트웨이 빌더는 dormant 이다. 업링크 경로는
+// buildDeviceTelemetry 를 사용한다. connect/RPC 등 dormant 게이트웨이 경로 및
+// 관련 테스트와의 일관성을 위해 유지한다.
 //
 // 출력 형식: {"<NAME>":[{"ts":<UnixMilli>,"values":{...}}]}
 //

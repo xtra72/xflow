@@ -9,7 +9,112 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// === 텔레메트리 빌더 테스트 ===
+// === Device API 텔레메트리 빌더 테스트 ===
+
+// TestBuildDeviceTelemetry_WithTimestamp 는 Device API 텔레메트리 형식을 검증한다:
+// {"ts":<UnixMilli>,"values":{"<name>":{<kv>}}}.
+func TestBuildDeviceTelemetry_WithTimestamp(t *testing.T) {
+	ts := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	data, err := buildDeviceTelemetry("unit-1", &ts, map[string]any{
+		"current_temperature": 24,
+		"target_temperature":  20,
+	})
+	require.NoError(t, err)
+
+	// {"ts":<UnixMilli>,"values":{"unit-1":{"current_temperature":24,"target_temperature":20}}}
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+
+	// ts 는 최상위, int64 epoch milliseconds (UnixMilli).
+	tsVal, ok := parsed["ts"].(float64) // JSON 숫자는 float64 로 언마샬됨
+	require.True(t, ok, "최상위 ts 키가 존재해야 한다")
+	assert.Equal(t, ts.UnixMilli(), int64(tsVal), "ts 는 time.Time.UnixMilli() 여야 한다")
+
+	values, ok := parsed["values"].(map[string]any)
+	require.True(t, ok, "values 맵이 존재해야 한다")
+	unit, ok := values["unit-1"].(map[string]any)
+	require.True(t, ok, "values 는 디바이스 NAME 을 키로 가져야 한다")
+	assert.EqualValues(t, 24, unit["current_temperature"])
+	assert.EqualValues(t, 20, unit["target_temperature"])
+}
+
+// TestBuildDeviceTelemetry_TimestampOmitted 는 ts 가 nil 이면 "ts" 키가 생략됨을
+// 검증한다(서버 시각 사용).
+func TestBuildDeviceTelemetry_TimestampOmitted(t *testing.T) {
+	data, err := buildDeviceTelemetry("unit-2", nil, map[string]any{"humidity": 55})
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+
+	_, hasTS := parsed["ts"]
+	assert.False(t, hasTS, "ts 미지정 시 최상위 ts 키가 생략되어야 한다")
+
+	values := parsed["values"].(map[string]any)
+	unit := values["unit-2"].(map[string]any)
+	assert.EqualValues(t, 55, unit["humidity"])
+}
+
+func TestBuildDeviceTelemetry_EmptyName(t *testing.T) {
+	_, err := buildDeviceTelemetry("", nil, map[string]any{"x": 1})
+	assert.Error(t, err, "빈 NAME 은 에러여야 한다")
+}
+
+// TestBuildDeviceTelemetry_NilValues 는 nil values 가 빈 객체로 직렬화됨을 검증한다.
+func TestBuildDeviceTelemetry_NilValues(t *testing.T) {
+	data, err := buildDeviceTelemetry("unit-1", nil, nil)
+	require.NoError(t, err)
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	values := parsed["values"].(map[string]any)
+	unit, ok := values["unit-1"].(map[string]any)
+	require.True(t, ok, "nil values 는 빈 객체로 직렬화되어야 한다")
+	assert.Empty(t, unit)
+}
+
+// === Device API 클라이언트 속성 빌더 테스트 ===
+
+// TestBuildDeviceClientAttributes 는 flat {"<k>":<v>} 형식을 검증한다(NAME 래핑 없음).
+func TestBuildDeviceClientAttributes(t *testing.T) {
+	data, err := buildDeviceClientAttributes(map[string]any{"fw": "1.0", "model": "X"})
+	require.NoError(t, err)
+
+	// {"fw":"1.0","model":"X"} — flat
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	assert.Equal(t, "1.0", parsed["fw"])
+	assert.Equal(t, "X", parsed["model"])
+}
+
+func TestBuildDeviceClientAttributes_Nil(t *testing.T) {
+	data, err := buildDeviceClientAttributes(nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, "{}", string(data), "nil attrs 는 빈 객체로 직렬화되어야 한다")
+}
+
+// === Device API 공유 속성 파서 테스트 ===
+
+// TestParseDeviceSharedAttributes_Flat 는 flat {"key":val} 형식을 파싱한다.
+func TestParseDeviceSharedAttributes_Flat(t *testing.T) {
+	attrs, err := parseDeviceSharedAttributes([]byte(`{"target_temperature":21,"mode":"cool"}`))
+	require.NoError(t, err)
+	assert.EqualValues(t, 21, attrs["target_temperature"])
+	assert.Equal(t, "cool", attrs["mode"])
+}
+
+// TestParseDeviceSharedAttributes_SharedWrapper 는 {"shared":{...}} 래핑 형식을 파싱한다.
+func TestParseDeviceSharedAttributes_SharedWrapper(t *testing.T) {
+	attrs, err := parseDeviceSharedAttributes([]byte(`{"shared":{"target_temperature":19}}`))
+	require.NoError(t, err)
+	assert.EqualValues(t, 19, attrs["target_temperature"], "shared 래핑 내부 속성을 추출해야 한다")
+}
+
+func TestParseDeviceSharedAttributes_Invalid(t *testing.T) {
+	_, err := parseDeviceSharedAttributes([]byte("not-json"))
+	assert.Error(t, err)
+}
+
+// === 게이트웨이 텔레메트리/속성 빌더 테스트 (dormant, 하위 호환 유지) ===
 
 func TestBuildTelemetry_WithTimestamp(t *testing.T) {
 	ts := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
@@ -89,7 +194,7 @@ func TestBuildTelemetry_NilValues(t *testing.T) {
 	assert.Empty(t, values)
 }
 
-// === 클라이언트 속성 빌더 테스트 ===
+// === 게이트웨이 클라이언트 속성 빌더 테스트 (dormant) ===
 
 func TestBuildClientAttributes(t *testing.T) {
 	data, err := buildClientAttributes("Device A", map[string]any{"fw": "1.0", "model": "X"})

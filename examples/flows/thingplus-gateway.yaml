@@ -1,35 +1,36 @@
 # thingplus-gateway.yaml
-# Thingplus(ThingsBoard) 게이트웨이 양방향 연동 플로우
+# Thingplus(ThingsBoard) Device API 양방향 연동 플로우
 #
-# thingplus-gateway 에이전트는 단일 게이트웨이 MQTT 연결로 다수 디바이스를
-# 프록시한다. 본 플로우는 업링크(텔레메트리)와 다운링크(RPC/공유 속성)를
-# 양방향으로 중계하는 구성을 보여준다.
+# thingplus-gateway 에이전트는 ThingsBoard Device API(v1/devices/me/*)로
+# 텔레메트리를 업링크하고 공유 속성을 다운링크로 수신한다. 본 플로우는
+# 업링크(텔레메트리)와 다운링크(공유 속성)를 양방향으로 중계하는 구성을 보여준다.
 #
 # ┌──────────────────────────────────────────────────────────────────┐
 # │                        데이터 흐름                                 │
 # ├──────────────────────────────────────────────────────────────────┤
 # │                                                                    │
-# │  [업링크: 센서 → 게이트웨이 → 플랫폼]                              │
+# │  [업링크: 센서 → 에이전트 → 플랫폼]                                │
 # │    sensor-in ──→ gateway-uplink(thingplus-uplink)                  │
-# │      → v1/gateway/connect + v1/gateway/telemetry 발행              │
+# │      → v1/devices/me/telemetry 발행 (connect 없음)                 │
 # │                                                                    │
-# │  [다운링크: 플랫폼 → 게이트웨이 → 플로우]                          │
+# │  [다운링크: 플랫폼 → 에이전트 → 플로우]                            │
 # │    gateway-downlink(thingplus-downlink, source) ──→ type-router    │
-# │      ├─ thingplus.rpc.request  ──→ rpc-logger                      │
 # │      └─ thingplus.attr.update  ──→ attr-logger                     │
 # │                                                                    │
 # └──────────────────────────────────────────────────────────────────┘
 #
 # 업링크 인입 메시지 형식 (device_name_path "$.device" 기준):
-#   { "device": "Device A", "temperature": 42 }
-#     → v1/gateway/telemetry: {"Device A":[{"ts":<epoch_ms>,"values":{"temperature":42}}]}
+#   { "device": "unit-1", "current_temperature": 24, "target_temperature": 20 }
+#     → v1/devices/me/telemetry:
+#         {"ts":<epoch_ms>,"values":{"unit-1":{"current_temperature":24,"target_temperature":20}}}
+#     (ts 생략 시 서버 시각 사용)
 #
 # 다운링크 방출 메시지:
-#   Type "thingplus.rpc.request"  — 플랫폼 RPC 요청 (device_id, id, method, params)
-#   Type "thingplus.attr.update"  — 공유 속성 변경 push (device_id, data)
+#   Type "thingplus.attr.update"  — 공유 속성 변경 push (data: {"key":value,...})
 #
-# RPC 응답: Type "thingplus.rpc.response" 메시지를 게이트웨이로 보내면
-#   v1/gateway/rpc: {"device":"Device A","id":<n>,"data":{...}} 로 발행된다.
+# NOTE: Device API 에는 게이트웨이 sub-device connect/disconnect 및 RPC 구독이
+#   없다. 아래 rpc-filter/rpc-logger 노드는 dormant 이며(현재 RPC 미구독) 참고용으로만
+#   남겨 둔다. Device API RPC(v1/devices/me/rpc/*)가 필요하면 별도 구현이 필요하다.
 #
 # 사용법:
 #   xflow agent import -f examples/agents/thingplus-gateway.yaml
@@ -78,10 +79,9 @@ nodes:
     errors:
       - "error"
 
-  # ── 게이트웨이 업링크: thingplus-uplink 로 텔레메트리 전달 ──
-  # 전용 업링크 노드(processing). 인입 메시지를 게이트웨이 에이전트의 업링크 경로로
-  # 전달한다. 미등록 디바이스는 자동 connect 후 v1/gateway/telemetry로 발행되며,
-  # Type "thingplus.rpc.response" 메시지는 RPC 응답으로 인식되어 v1/gateway/rpc 로 발행된다.
+  # ── 업링크: thingplus-uplink 로 텔레메트리 전달 ──
+  # 전용 업링크 노드(processing). 인입 메시지를 에이전트의 업링크 경로로 전달한다.
+  # 텔레메트리는 connect 없이 곧바로 v1/devices/me/telemetry 로 발행된다(Device API).
   # 발행 토픽은 에이전트가 내부적으로 결정하므로 노드에 토픽 설정이 필요 없다.
   - name: "gateway-uplink"
     type: "thingplus-uplink"
@@ -96,14 +96,15 @@ nodes:
       - "error"
 
   # ═══════════════════════════════════════════════════════════════
-  # 다운링크 경로: 플랫폼 RPC/속성 → 게이트웨이 → 플로우
+  # 다운링크 경로: 플랫폼 공유 속성 → 에이전트 → 플로우
   # ═══════════════════════════════════════════════════════════════
 
-  # ── 게이트웨이 다운링크: thingplus-downlink 로 RPC/공유 속성 수신 ──
+  # ── 다운링크: thingplus-downlink 로 공유 속성 수신 ──
   # 전용 소스 노드(source, out 전용). 에이전트의 다운링크 채널을 드레인하여
-  # 메시지 Type("thingplus.rpc.request" / "thingplus.attr.update")을 보존한 채 방출한다.
-  # 에이전트가 onConnect 에서 v1/gateway/rpc + v1/gateway/attributes 를 자동 구독하므로
+  # 메시지 Type("thingplus.attr.update")을 보존한 채 방출한다.
+  # 에이전트가 onConnect 에서 v1/devices/me/attributes 를 자동 구독하므로
   # topics 설정은 선택 사항이다(생략 시 노드가 별도로 Subscribe 하지 않음).
+  # (RPC 는 Device API 에서 미구독이므로 아래 rpc-filter/rpc-logger 는 dormant.)
   - name: "gateway-downlink"
     type: "thingplus-downlink"
     config:

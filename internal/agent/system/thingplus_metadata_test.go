@@ -89,28 +89,24 @@ func TestProcess_MetadataGroupPath_ExtractsDeviceName(t *testing.T) {
 	// 텔레메트리 ts 는 handleUplinkFromMessage 내부에서 생성되므로 호출 이후에 상한을 캡처한다.
 	after := time.Now().UnixMilli()
 
-	// device auto-connect 발행 검증
-	connRec, ok := pub.findPublish(topicGatewayConnect)
-	require.True(t, ok, "auto-connect 가 v1/gateway/connect 로 발행되어야 한다")
-	var connPayload map[string]any
-	require.NoError(t, json.Unmarshal(connRec.Payload, &connPayload))
-	assert.Equal(t, "Device A", connPayload["device"], "메타데이터 그룹에서 NAME 이 추출되어야 한다")
+	// Device API: gateway connect 발행이 없어야 한다.
+	_, hasConnect := pub.findPublish(topicGatewayConnect)
+	assert.False(t, hasConnect, "Device API 는 gateway connect 를 발행하면 안 된다")
 
-	// 텔레메트리 발행 검증: {"Device A":[{"ts","values":{"temperature":42}}]}
-	telRec, ok := pub.findPublish(topicGatewayTelemetry)
-	require.True(t, ok, "텔레메트리가 v1/gateway/telemetry 로 발행되어야 한다")
+	// 텔레메트리 발행 검증(Device API): {"ts","values":{"Device A":{"temperature":42}}}
+	telRec, ok := pub.findPublish(topicDeviceTelemetry)
+	require.True(t, ok, "텔레메트리가 v1/devices/me/telemetry 로 발행되어야 한다")
 
-	var tel map[string][]map[string]any
+	var tel map[string]any
 	require.NoError(t, json.Unmarshal(telRec.Payload, &tel))
-	arr := tel["Device A"]
-	require.Len(t, arr, 1)
 
-	tsVal := int64(arr[0]["ts"].(float64))
+	tsVal := int64(tel["ts"].(float64))
 	assert.GreaterOrEqual(t, tsVal, before)
 	assert.LessOrEqual(t, tsVal, after)
 
-	values := arr[0]["values"].(map[string]any)
-	assert.EqualValues(t, 42, values["temperature"])
+	values := tel["values"].(map[string]any)
+	unit := values["Device A"].(map[string]any)
+	assert.EqualValues(t, 42, unit["temperature"])
 }
 
 // TestProcess_MetadataGroupPath_EndToEnd 는 Process() 전체 경로(decodeInbound 포함)를
@@ -159,11 +155,13 @@ func TestProcess_MetadataFlatPath_ExtractsDeviceName(t *testing.T) {
 
 	require.NoError(t, a.handleUplinkFromMessage(pub, msg, payload))
 
-	connRec, ok := pub.findPublish(topicGatewayConnect)
+	// Device API: NAME 은 텔레메트리 values 의 키로 확인한다(connect 발행 없음).
+	telRec, ok := pub.findPublish(topicDeviceTelemetry)
 	require.True(t, ok)
-	var connPayload map[string]any
-	require.NoError(t, json.Unmarshal(connRec.Payload, &connPayload))
-	assert.Equal(t, "Device Flat", connPayload["device"])
+	var tel map[string]any
+	require.NoError(t, json.Unmarshal(telRec.Payload, &tel))
+	_, ok = tel["values"].(map[string]any)["Device Flat"]
+	assert.True(t, ok, "메타데이터 flat 키에서 NAME 이 추출되어 values 키가 되어야 한다")
 }
 
 // TestProcess_PayloadScopedExplicitPath 는 명시적 payload 스코프
@@ -184,12 +182,13 @@ func TestProcess_PayloadScopedExplicitPath(t *testing.T) {
 
 	require.NoError(t, a.handleUplinkFromMessage(pub, msg, payload))
 
-	connRec, ok := pub.findPublish(topicGatewayConnect)
+	// Device API: payload 스코프 경로에서 추출한 NAME 이 텔레메트리 values 키가 되어야 한다.
+	telRec, ok := pub.findPublish(topicDeviceTelemetry)
 	require.True(t, ok)
-	var connPayload map[string]any
-	require.NoError(t, json.Unmarshal(connRec.Payload, &connPayload))
-	assert.Equal(t, "Device Payload", connPayload["device"],
-		"payload 스코프 경로는 payload 에서 NAME 을 추출해야 한다")
+	var tel map[string]any
+	require.NoError(t, json.Unmarshal(telRec.Payload, &tel))
+	_, ok = tel["values"].(map[string]any)["Device Payload"]
+	assert.True(t, ok, "payload 스코프 경로는 payload 에서 NAME 을 추출해야 한다")
 }
 
 // TestProcess_DefaultBarePath_BackwardCompatible 는 기본값 "$.device" (payload 스코프)
@@ -211,11 +210,13 @@ func TestProcess_DefaultBarePath_BackwardCompatible(t *testing.T) {
 
 	require.NoError(t, a.handleUplinkFromMessage(pub, msg, payload))
 
-	connRec, ok := pub.findPublish(topicGatewayConnect)
+	// Device API: bare 경로(기본 $.device)에서 추출한 NAME 이 텔레메트리 values 키가 되어야 한다.
+	telRec, ok := pub.findPublish(topicDeviceTelemetry)
 	require.True(t, ok)
-	var connPayload map[string]any
-	require.NoError(t, json.Unmarshal(connRec.Payload, &connPayload))
-	assert.Equal(t, "Device Bare", connPayload["device"])
+	var tel map[string]any
+	require.NoError(t, json.Unmarshal(telRec.Payload, &tel))
+	_, ok = tel["values"].(map[string]any)["Device Bare"]
+	assert.True(t, ok, "bare 경로에서 payload NAME 이 추출되어 values 키가 되어야 한다")
 }
 
 // TestProcess_MetadataPath_RawJSONFallback 는 raw JSON(메타데이터 없음)에 대해

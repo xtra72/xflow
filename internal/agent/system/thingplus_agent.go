@@ -20,17 +20,34 @@ import (
 	"github.com/xtra/xflow/pkg/message"
 )
 
+// ThingsBoard DEVICE MQTT API 토픽 상수 (v1/devices/me/*).
+//
+// 이 에이전트는 단일 액세스 토큰으로 하나의 디바이스("me")를 인증하는
+// Device API 를 사용한다. Gateway API (v1/gateway/*) 와 달리 하위 디바이스
+// connect/disconnect 개념이 없으며, 텔레메트리는 곧바로 발행한다.
+const (
+	// topicDeviceTelemetry 는 텔레메트리 업링크 토픽이다 (Device API).
+	// 페이로드: {"ts":<epoch_ms>,"values":{"<unit>":{<kv>}}}
+	topicDeviceTelemetry = "v1/devices/me/telemetry"
+	// topicDeviceAttributes 는 클라이언트 속성 업링크 및 공유 속성 다운링크 토픽이다 (Device API).
+	// 업링크(클라이언트 속성) / 다운링크(공유 속성) 모두 flat {"key":value} 형식이다.
+	topicDeviceAttributes = "v1/devices/me/attributes"
+)
+
 // ThingsBoard Gateway MQTT API 토픽 상수 (v1/gateway/*).
+//
+// NOTE(Device API 전환): 아래 게이트웨이 토픽은 Device API 흐름에서는 사용되지
+// 않는다(dormant). connectDevice/disconnectDevice/reconnectKnownDevices 및 RPC
+// 다운링크 경로가 여전히 참조하므로 코드/테스트 일관성을 위해 남겨 둔다. 텔레메트리/
+// 속성 업링크와 공유 속성 다운링크 구독은 모두 Device API 토픽을 사용한다.
 const (
 	// topicGatewayConnect 는 하위 디바이스를 게이트웨이에 연결(및 서버 측 자동 생성)하는 토픽이다.
 	topicGatewayConnect = "v1/gateway/connect"
 	// topicGatewayDisconnect 는 하위 디바이스 연결을 해제하는 토픽이다.
 	topicGatewayDisconnect = "v1/gateway/disconnect"
-	// topicGatewayTelemetry 는 텔레메트리 업링크 토픽이다 (M3).
-	topicGatewayTelemetry = "v1/gateway/telemetry"
-	// topicGatewayAttributes 는 클라이언트 속성 업링크 / 공유 속성 다운링크 토픽이다.
+	// topicGatewayAttributes 는 게이트웨이 클라이언트 속성 업링크 / 공유 속성 다운링크 토픽이다 (dormant).
 	topicGatewayAttributes = "v1/gateway/attributes"
-	// topicGatewayRPC 는 RPC 다운링크 및 RPC 응답 업링크 토픽이다 (M4).
+	// topicGatewayRPC 는 게이트웨이 RPC 다운링크 및 RPC 응답 업링크 토픽이다 (dormant).
 	topicGatewayRPC = "v1/gateway/rpc"
 )
 
@@ -728,21 +745,24 @@ func (a *ThingplusGatewayAgent) onConnect(c mqtt.Client) {
 		"access_token", maskSecret(cfg.AccessToken),
 	)
 
-	// 다운링크 토픽 구독 (RPC, 공유 속성).
+	// 다운링크 토픽 구독 (Device API 공유 속성).
 	a.subscribeDownlink(c)
 
-	// 재연결 시 이전에 connected 였던 디바이스들을 다시 connect한다 (REQ-map-reconnect).
-	a.reconnectKnownDevices(c)
+	// Device API 전환: sub-device gateway connect 개념이 없으므로 재연결 시
+	// reconnectKnownDevices(=v1/gateway/connect 재발행)를 호출하지 않는다.
 
 	// 재연결 후 버퍼링된 업링크를 flush 한다 (REQ-up-nolost / AC-05).
 	a.flushUplinkBuffer(c)
 }
 
-// subscribeDownlink 는 게이트웨이 다운링크 토픽(RPC, 공유 속성)을 구독한다.
-// 현재 핸들러는 수신 로깅 및 카운팅만 수행하며, 전체 파싱/방출은 M4에서 구현한다.
+// subscribeDownlink 는 Device API 다운링크 토픽(공유 속성)을 구독한다.
+//
+// Device API 전환: gateway RPC(v1/gateway/rpc) 구독을 제거했다(요청 스펙에 RPC 없음).
+// Device API RPC 는 v1/devices/me/rpc/request/+ 이나 현재 요구되지 않으므로 구독하지 않는다.
+// 공유 속성 다운링크만 v1/devices/me/attributes 로 구독한다.
 func (a *ThingplusGatewayAgent) subscribeDownlink(c mqtt.Client) {
 	qos := a.snapshotConfig().QoS
-	topics := []string{topicGatewayRPC, topicGatewayAttributes}
+	topics := []string{topicDeviceAttributes}
 	for _, topic := range topics {
 		token := c.Subscribe(topic, qos, a.downlinkHandler)
 		token.Wait()
@@ -778,13 +798,22 @@ func (a *ThingplusGatewayAgent) routeDownlink(topic string, data []byte) {
 	var out []byte
 
 	switch topic {
+	case topicDeviceAttributes:
+		// Device API 공유 속성 다운링크 (현재 경로).
+		if built, err := a.buildDeviceSharedAttrDownlinkMessage(data); err == nil {
+			out = built
+		} else {
+			a.logger.Warn("thingplus: device 공유 속성 다운링크 파싱 실패, 원시 fallback", "error", err)
+		}
 	case topicGatewayRPC:
+		// dormant(게이트웨이 RPC) — 현재 구독하지 않으나 경로/테스트 일관성을 위해 유지.
 		if built, err := a.buildRPCDownlinkMessage(data); err == nil {
 			out = built
 		} else {
 			a.logger.Warn("thingplus: RPC 다운링크 파싱 실패, 원시 fallback", "error", err)
 		}
 	case topicGatewayAttributes:
+		// dormant(게이트웨이 공유 속성) — 현재 구독하지 않으나 경로/테스트 일관성을 위해 유지.
 		if built, err := a.buildSharedAttrDownlinkMessage(data); err == nil {
 			out = built
 		} else {
@@ -868,6 +897,26 @@ func (a *ThingplusGatewayAgent) buildSharedAttrDownlinkMessage(data []byte) ([]b
 		"data":      msg.Data,
 	}
 	return a.buildFlowMessageJSON("thingplus.attr.update", msg.Device, deviceID, payload)
+}
+
+// buildDeviceSharedAttrDownlinkMessage 는 Device API 공유 속성 다운링크 페이로드를
+// 파싱하여 Type "thingplus.attr.update" 플로우 메시지 JSON 을 조립한다.
+//
+// Device API 공유 속성은 "me" 를 대상으로 하므로 페이로드에 device NAME 이 없다.
+// 따라서 device/device_id 메타데이터는 확보 가능한 범위에서만 채운다(현재는 비어 있음).
+// 속성 데이터는 payload["data"] 에 담아 기존 방출 계약(thingplus.attr.update)을 보존한다.
+func (a *ThingplusGatewayAgent) buildDeviceSharedAttrDownlinkMessage(data []byte) ([]byte, error) {
+	attrs, err := parseDeviceSharedAttributes(data)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := map[string]any{
+		"device":    "",
+		"device_id": "",
+		"data":      attrs,
+	}
+	return a.buildFlowMessageJSON("thingplus.attr.update", "", "", payload)
 }
 
 // buildFlowMessageJSON 은 지정 Type 과 페이로드로 message.Message 를 조립하여
@@ -1367,6 +1416,8 @@ func (a *ThingplusGatewayAgent) handleUplinkFromMessage(pub mqttPublisher, msg m
 	}
 
 	// device_id 해석 및 기록 (REQ-map-resolve / REQ-map-fallback).
+	// Device API 에서는 sub-device connect 개념이 없으나, NAME↔device_id 매핑은
+	// 관찰(observability) 목적으로 계속 유지한다(무해).
 	deviceID := a.mapping.resolveDeviceID(context.Background(), a.Name(), name)
 	a.devices.ensure(name)
 	a.devices.setDeviceID(name, deviceID)
@@ -1376,34 +1427,32 @@ func (a *ThingplusGatewayAgent) handleUplinkFromMessage(pub mqttPublisher, msg m
 
 	connected := pub != nil && pub.IsConnected()
 
-	// A6/A7: 미연결 디바이스는 텔레메트리 발행 전 auto-connect 한다(브로커 연결 시).
-	if connected {
-		if e, ok := a.devices.get(name); !ok || e.state != deviceConnected {
-			if err := a.connectDevice(pub, name); err != nil {
-				return fmt.Errorf("thingplus uplink: auto-connect 실패: %w", err)
-			}
-		}
-	}
+	// Device API 전환: sub-device gateway connect 가 없다. auto-connect(connectDevice)
+	// 를 수행하지 않고 텔레메트리를 곧바로 발행한다. 연결 끊김 시에는 무손실 버퍼링하고
+	// 재연결 시 flush 한다(REQ-up-nolost 유지).
 
-	// 텔레메트리 발행 (값이 있을 때).
+	// 텔레메트리 발행 (값이 있을 때). Device API 형식:
+	// {"ts":<UnixMilli>,"values":{"<name>":{<kv>}}}. ts 는 서버 시각 사용을 위해
+	// 현재 시각으로 채운다.
 	if len(values) > 0 {
 		ts := time.Now()
-		telemetry, err := buildTelemetry(name, &ts, values)
+		telemetry, err := buildDeviceTelemetry(name, &ts, values)
 		if err != nil {
 			return err
 		}
-		if err := a.publishOrBuffer(pub, topicGatewayTelemetry, telemetry, connected, cfg.QoS); err != nil {
+		if err := a.publishOrBuffer(pub, topicDeviceTelemetry, telemetry, connected, cfg.QoS); err != nil {
 			return err
 		}
 	}
 
-	// 클라이언트 속성 발행 (있을 때, REQ-up-attributes).
+	// 클라이언트 속성 발행 (있을 때). Device API 형식: flat {"<k>":<v>} 를
+	// v1/devices/me/attributes 로 발행한다.
 	if len(attrs) > 0 {
-		clientAttr, err := buildClientAttributes(name, attrs)
+		clientAttr, err := buildDeviceClientAttributes(attrs)
 		if err != nil {
 			return err
 		}
-		if err := a.publishOrBuffer(pub, topicGatewayAttributes, clientAttr, connected, cfg.QoS); err != nil {
+		if err := a.publishOrBuffer(pub, topicDeviceAttributes, clientAttr, connected, cfg.QoS); err != nil {
 			return err
 		}
 	}
