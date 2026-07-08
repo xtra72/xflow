@@ -7,6 +7,7 @@ import type { ConfigField, ConfigSchema } from '@/types/node';
 /** 백엔드에 등록된 에이전트 타입 목록 */
 export const AGENT_TYPES = [
   { value: 'mqtt-client', label: 'MQTT' },
+  { value: 'thingplus-gateway', label: 'Thingplus Gateway' },
   { value: 'modbus-tcp', label: 'Modbus TCP' },
   { value: 'modbus-tcp-server', label: 'Modbus TCP Server' },
   { value: 'http', label: 'HTTP Receiver' },
@@ -39,6 +40,27 @@ const MQTT_FIELDS: ConfigField[] = [
   { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256 },
   { name: 'max_pub_topics', type: 'number', label: '발행 토픽 최대 추적 수', default: 100, description: '초과 시 가장 오래된 토픽 삭제' },
+];
+
+// ──────────────────────────────────────────────────────────────────────────
+// Thingplus Gateway (SPEC-THINGPLUS-001, REQ-THINGPLUS-001-web-schema)
+// ThingsBoard Gateway MQTT API 를 프록시하는 시스템 에이전트. broker/port/tls/token
+// 설정과 device_name_path(JSONPath) 로 인입 메시지에서 디바이스 NAME 을 추출한다.
+// 백엔드 ThingplusConfig json 태그와 1:1 매핑:
+//   broker, port, tls, ca_cert, access_token, device_name_path, qos,
+//   keep_alive_sec, auto_reconnect, buffer_size.
+// ──────────────────────────────────────────────────────────────────────────
+const THINGPLUS_FIELDS: ConfigField[] = [
+  { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883). TLS 사용 시 ssl:// 스킴 사용' },
+  { name: 'port', type: 'number', label: '포트', default: 1883, description: '평문 1883, TLS 8883' },
+  { name: 'tls', type: 'boolean', label: 'TLS 사용', default: false },
+  { name: 'ca_cert', type: 'multiline', label: 'CA 인증서', description: 'TLS CA 인증서 PEM 또는 경로', visibleWhen: { field: 'tls', value: true } },
+  { name: 'access_token', type: 'string', label: '액세스 토큰', sensitive: true, description: 'MQTT username 으로 사용되는 게이트웨이 토큰' },
+  { name: 'device_name_path', type: 'string', label: '디바이스 이름 경로', default: '$.device', description: 'JSONPath 로 인입 메시지에서 디바이스 NAME 추출 (예: $.device, $.metadata.device_id)' },
+  { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1' },
+  { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },
+  { name: 'auto_reconnect', type: 'boolean', label: '자동 재연결', default: true },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256, description: '업링크 무손실 버퍼 크기' },
 ];
 
 const MODBUS_TCP_FIELDS: ConfigField[] = [
@@ -475,6 +497,7 @@ export const HVACR_QUADRANT_AGENT_TYPES = new Set([
 /** 에이전트 타입별 설정 스키마 레지스트리 */
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'mqtt-client': MQTT_FIELDS,
+  'thingplus-gateway': THINGPLUS_FIELDS,
   'modbus-tcp': MODBUS_TCP_FIELDS,
   'modbus-tcp-server': MODBUS_TCP_SERVER_FIELDS,
   'http': HTTP_RECEIVER_FIELDS,

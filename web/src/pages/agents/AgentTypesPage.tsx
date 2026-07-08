@@ -18,6 +18,7 @@ const GRID_COLS = 3;
 /** 에이전트 타입별 카테고리 */
 const AGENT_CATEGORY: Record<string, string> = {
   'mqtt-client': 'protocol',
+  'thingplus-gateway': 'protocol',
   'modbus-tcp': 'protocol',
   'modbus-tcp-server': 'protocol',
   http: 'protocol',

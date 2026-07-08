@@ -1,0 +1,170 @@
+# thingplus-gateway.yaml
+# Thingplus(ThingsBoard) 게이트웨이 양방향 연동 플로우
+#
+# thingplus-gateway 에이전트는 단일 게이트웨이 MQTT 연결로 다수 디바이스를
+# 프록시한다. 본 플로우는 업링크(텔레메트리)와 다운링크(RPC/공유 속성)를
+# 양방향으로 중계하는 구성을 보여준다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                 │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                    │
+# │  [업링크: 센서 → 게이트웨이 → 플랫폼]                              │
+# │    sensor-in ──→ gateway-uplink(bridge out)                        │
+# │      → v1/gateway/connect + v1/gateway/telemetry 발행              │
+# │                                                                    │
+# │  [다운링크: 플랫폼 → 게이트웨이 → 플로우]                          │
+# │    gateway-downlink(bridge in) ──→ type-router                     │
+# │      ├─ thingplus.rpc.request  ──→ rpc-logger                      │
+# │      └─ thingplus.attr.update  ──→ attr-logger                     │
+# │                                                                    │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# 업링크 인입 메시지 형식 (device_name_path "$.device" 기준):
+#   { "device": "Device A", "temperature": 42 }
+#     → v1/gateway/telemetry: {"Device A":[{"ts":<epoch_ms>,"values":{"temperature":42}}]}
+#
+# 다운링크 방출 메시지:
+#   Type "thingplus.rpc.request"  — 플랫폼 RPC 요청 (device_id, id, method, params)
+#   Type "thingplus.attr.update"  — 공유 속성 변경 push (device_id, data)
+#
+# RPC 응답: Type "thingplus.rpc.response" 메시지를 게이트웨이로 보내면
+#   v1/gateway/rpc: {"device":"Device A","id":<n>,"data":{...}} 로 발행된다.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/thingplus-gateway.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow flow import  -f examples/flows/thingplus-gateway.yaml
+#   xflow flow deploy  thingplus-gateway
+#   xflow flow start   thingplus-gateway
+
+name: "thingplus-gateway"
+description: "Thingplus 게이트웨이 양방향 연동 - 텔레메트리 업링크 + RPC/속성 다운링크"
+config:
+  track_history: true
+  max_history_size: 200
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-gateway"
+
+required_agents:
+  - name: "thingplus-gateway-agent"
+    type: "thingplus-gateway"
+  - name: "sensor-source"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 업링크 경로: 센서 데이터 → 게이트웨이 → 플랫폼
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 센서 수신: 로컬 센서 브로커에서 디바이스 텔레메트리 구독 ──
+  # 각 메시지는 device_name_path("$.device")로 식별될 device 필드를 포함한다.
+  - name: "sensor-in"
+    type: "mqtt-subscriber"
+    config:
+      agent_ref: "sensor-source"
+      topics:
+        - "sensor/+/telemetry"
+      payload_format: "json"
+      buffer_size: 128
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 게이트웨이 업링크: bridge out 으로 텔레메트리 전달 ──
+  # 미등록 디바이스는 자동 connect 후 v1/gateway/telemetry로 발행된다.
+  - name: "gateway-uplink"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "thingplus-gateway-agent"
+      direction: "out"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 다운링크 경로: 플랫폼 RPC/속성 → 게이트웨이 → 플로우
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 게이트웨이 다운링크: bridge in 으로 RPC/공유 속성 수신 ──
+  # thingplus.rpc.request / thingplus.attr.update 타입 메시지를 방출한다.
+  - name: "gateway-downlink"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "thingplus-gateway-agent"
+      direction: "in"
+
+  # ── RPC 요청 필터 ──
+  - name: "rpc-filter"
+    type: "filter"
+    config:
+      condition: "$.type == 'thingplus.rpc.request'"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 공유 속성 변경 필터 ──
+  - name: "attr-filter"
+    type: "filter"
+    config:
+      condition: "$.type == 'thingplus.attr.update'"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── RPC 요청 로깅 ──
+  - name: "rpc-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 공유 속성 로깅 ──
+  - name: "attr-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+wires:
+  # 업링크: 센서 → 게이트웨이
+  - source: "sensor-in:out"
+    target: "gateway-uplink:in"
+
+  # 다운링크: 게이트웨이 → 타입별 라우팅
+  - source: "gateway-downlink:out"
+    target: "rpc-filter:in"
+  - source: "gateway-downlink:out"
+    target: "attr-filter:in"
+
+  # 타입별 로깅
+  - source: "rpc-filter:out"
+    target: "rpc-logger:in"
+  - source: "attr-filter:out"
+    target: "attr-logger:in"
