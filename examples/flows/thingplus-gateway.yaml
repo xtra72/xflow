@@ -10,11 +10,11 @@
 # ├──────────────────────────────────────────────────────────────────┤
 # │                                                                    │
 # │  [업링크: 센서 → 게이트웨이 → 플랫폼]                              │
-# │    sensor-in ──→ gateway-uplink(bridge out)                        │
+# │    sensor-in ──→ gateway-uplink(thingplus-uplink)                  │
 # │      → v1/gateway/connect + v1/gateway/telemetry 발행              │
 # │                                                                    │
 # │  [다운링크: 플랫폼 → 게이트웨이 → 플로우]                          │
-# │    gateway-downlink(bridge in) ──→ type-router                     │
+# │    gateway-downlink(thingplus-downlink, source) ──→ type-router    │
 # │      ├─ thingplus.rpc.request  ──→ rpc-logger                      │
 # │      └─ thingplus.attr.update  ──→ attr-logger                     │
 # │                                                                    │
@@ -78,33 +78,43 @@ nodes:
     errors:
       - "error"
 
-  # ── 게이트웨이 업링크: bridge out 으로 텔레메트리 전달 ──
-  # 미등록 디바이스는 자동 connect 후 v1/gateway/telemetry로 발행된다.
+  # ── 게이트웨이 업링크: thingplus-uplink 로 텔레메트리 전달 ──
+  # 전용 업링크 노드(processing). 인입 메시지를 게이트웨이 에이전트의 업링크 경로로
+  # 전달한다. 미등록 디바이스는 자동 connect 후 v1/gateway/telemetry로 발행되며,
+  # Type "thingplus.rpc.response" 메시지는 RPC 응답으로 인식되어 v1/gateway/rpc 로 발행된다.
+  # 발행 토픽은 에이전트가 내부적으로 결정하므로 노드에 토픽 설정이 필요 없다.
   - name: "gateway-uplink"
-    type: "bridge"
+    type: "thingplus-uplink"
+    config:
+      agent_ref: "thingplus-gateway-agent"
+      # emit_agent: true  # (기본값) agent:{type,id} 그룹 메타데이터 emit
     inputs:
       - "in"
     outputs:
       - "out"
-    agent_ref:
-      agent_name: "thingplus-gateway-agent"
-      direction: "out"
+    errors:
+      - "error"
 
   # ═══════════════════════════════════════════════════════════════
   # 다운링크 경로: 플랫폼 RPC/속성 → 게이트웨이 → 플로우
   # ═══════════════════════════════════════════════════════════════
 
-  # ── 게이트웨이 다운링크: bridge in 으로 RPC/공유 속성 수신 ──
-  # thingplus.rpc.request / thingplus.attr.update 타입 메시지를 방출한다.
+  # ── 게이트웨이 다운링크: thingplus-downlink 로 RPC/공유 속성 수신 ──
+  # 전용 소스 노드(source, out 전용). 에이전트의 다운링크 채널을 드레인하여
+  # 메시지 Type("thingplus.rpc.request" / "thingplus.attr.update")을 보존한 채 방출한다.
+  # 에이전트가 onConnect 에서 v1/gateway/rpc + v1/gateway/attributes 를 자동 구독하므로
+  # topics 설정은 선택 사항이다(생략 시 노드가 별도로 Subscribe 하지 않음).
   - name: "gateway-downlink"
-    type: "bridge"
-    inputs:
-      - "in"
+    type: "thingplus-downlink"
+    config:
+      agent_ref: "thingplus-gateway-agent"
+      buffer_size: 64
+      # topics: []       # (선택) 추가 구독 토픽. 비우면 에이전트 자동 구독에 의존.
+      # emit_agent: true # (기본값) agent:{type,id} 그룹 메타데이터 emit
     outputs:
       - "out"
-    agent_ref:
-      agent_name: "thingplus-gateway-agent"
-      direction: "in"
+    errors:
+      - "error"
 
   # ── RPC 요청 필터 ──
   - name: "rpc-filter"

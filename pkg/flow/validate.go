@@ -147,6 +147,9 @@ var agentRefRequiredTypes = map[string]struct{}{
 	"tsdb-query":      {},
 	"mqtt-subscriber": {},
 	"mqtt-publisher":  {},
+	// Thingplus 게이트웨이 노드 (agent_ref 필수)
+	"thingplus-uplink":   {},
+	"thingplus-downlink": {},
 	// HVAC 노드 canonical(-) 이름
 	// 주의: century 노드는 agent_ref 를 config 필드로 처리하므로 (기존부터)
 	// 이 집합에 포함되지 않는다. 동작 보존을 위해 추가하지 않는다.
