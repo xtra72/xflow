@@ -470,7 +470,22 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			return script.AgentInfo{Type: m.Type, ID: m.ID, Name: m.Name}, true
 		},
 	}
-	scriptEngine := script.NewScriptEngine(script.WithStdlib(scriptStdlibOpts, scriptStdlibDeps))
+	// dead-config 수정: 그동안 script: 섹션(cfg.Script())이 엔진/노드에 전혀
+	// 반영되지 않아 timeout·vm_pool_size·sandbox 설정이 무시됐다. 여기서 실효
+	// 설정으로 해석하여 엔진 옵션과 노드 타임아웃을 실제로 연결한다.
+	scriptLog := obs.Loggers.NewLogger("script").Logger()
+	effScript := effectiveScriptSettings(cfg.Script(), scriptLog)
+	scriptLog.Info("스크립트 엔진 설정 적용",
+		"timeout", effScript.Timeout,
+		"vm_pool_size", effScript.PoolSize,
+		"sandbox_enabled", effScript.Sandbox.Enabled,
+		"sandbox_max_memory_mb", effScript.Sandbox.MaxMemoryMB,
+		"sandbox_max_execution_ms", effScript.Sandbox.MaxExecutionTime.Milliseconds(),
+	)
+	// WithStdlib 를 먼저 적용한 뒤, config 기반 옵션(타임아웃/풀크기/샌드박스)을 얹는다.
+	scriptEngine := script.NewScriptEngine(
+		append([]script.EngineOption{script.WithStdlib(scriptStdlibOpts, scriptStdlibDeps)}, effScript.engineOptions()...)...,
+	)
 	if err := scriptEngine.Init(context.Background()); err != nil {
 		return fmt.Errorf("스크립트 엔진 초기화 실패: %w", err)
 	}
@@ -499,6 +514,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			node.WithAgentResolver(agentResolver),
 			timerNodeOpt,
 			scriptFactoryOpt,
+			// dead-config 수정: 스크립트 노드 타임아웃을 config(script.timeout)에서
+			// 연결한다. 이전에는 노드가 하드코딩된 5s 만 사용했다.
+			node.WithScriptTimeout(effScript.Timeout),
 			// SPEC-INVENTORY-001: inventory 노드 의존성 (4종 source 별 read-only resolver)
 			inventoryDeviceRegOpt,
 			inventoryAgentMgrOpt,
