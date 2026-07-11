@@ -1169,6 +1169,28 @@ func (a *Hvacr01Agent) resolveDevice(req *processRequest) (NasaAddress, *NasaDev
 	return addr, dev, nil
 }
 
+// GetPersistableDevices 는 현재 메모리의 디바이스 중 영속 저장할 대상 디바이스만 반환한다.
+// 자동 발견("auto") 디바이스는 제외한다 — 재시작 시 다시 발견되므로 설정에 쌓을 필요가 없다.
+// 반환 형식은 ParseDevices() 와 round-trip 되도록 DeviceEntry 로 맞춘다.
+// 중요: Name 필드는 항상 dev.UnitID 를 사용한다. ParseDevices() 시 entry.Name → UnitID 로
+// 매핑되므로, 역으로 저장할 때는 UnitID → Name 으로 써야 device_id(UUID) 안정성이 보존된다.
+func (a *Hvacr01Agent) GetPersistableDevices() []agent.DeviceEntry {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var result []agent.DeviceEntry
+	for addr, dev := range a.devices {
+		if dev.Source == "auto" {
+			continue
+		}
+		result = append(result, agent.DeviceEntry{
+			Address: addr.String(),
+			Name:    dev.UnitID,
+		})
+	}
+	return result
+}
+
 // sendControlCommand 는 제어 프레임을 빌드하고 트랜스포트로 전송한다.
 // 부저 메시지셋(0x4050)을 자동 추가한다 (On=0x00, Off=0x01).
 func (a *Hvacr01Agent) sendControlCommand(addr NasaAddress, sets []NasaMessageSet) error {

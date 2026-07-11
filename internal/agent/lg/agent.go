@@ -1705,6 +1705,31 @@ func (a *LGAPAgent) State() map[string]any {
 	return result
 }
 
+// GetPersistableDevices 는 현재 메모리의 디바이스 중 영속 저장할 대상 디바이스만 반환한다.
+// LGAP 는 auto-discovery 개념이 없으므로 "config" 또는 "bridge"(runtime 추가) Source 인 모든 디바이스를 반환한다.
+// 반환된 DeviceEntry 배열은 agent.ParseDevices() 를 통해 다시 파싱할 수 있는 형식이다.
+//
+// 이 메서드는 add_device/remove_device 명령 후 저장소에 디바이스 목록을 persist 하기 위해
+// internal/api/service/agent_adapter.go 의 ExecAgent 에서 호출된다.
+func (a *LGAPAgent) GetPersistableDevices() []agent.DeviceEntry {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var result []agent.DeviceEntry
+	for zone, dev := range a.devices {
+		// LGAP 는 auto 개념이 없으므로 모든 non-config 디바이스를 포함
+		// (config 와 bridge/runtime-added 모두 영속화)
+		// 중요: Name 필드는 항상 dev.UnitID 를 사용한다.
+		// ParseDevices() 시 entry.Name → UnitID 로 매핑되므로,
+		// 역으로 저장할 때는 UnitID → Name 으로 써야 round-trip 이 보존된다.
+		result = append(result, agent.DeviceEntry{
+			Address: fmt.Sprintf("0x%x", zone),
+			Name:    dev.UnitID,
+		})
+	}
+	return result
+}
+
 // ReceiveMessage 는 msgCh 에서 메시지를 수신한다.
 // agent.MessageReceiver 인터페이스 구현.
 func (a *LGAPAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
