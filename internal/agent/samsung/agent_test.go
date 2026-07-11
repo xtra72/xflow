@@ -229,6 +229,7 @@ func newTestAgent(t *testing.T) (*Hvacr01Agent, *mockTransport, *mockProtocol) {
 			SerialPort:          "/dev/ttyTest",
 			PollInterval:        30 * time.Second,
 			MsgChannelSize:      256,
+			OfflineTimeout:      -1, // production 기본값(미설정) 미러 → staleOfflineThreshold 파생 경로
 			ReconnectInterval:   10 * time.Millisecond,
 			MaxReconnectBackoff: 50 * time.Millisecond,
 			ControlEnabled:      true, // 테스트는 능동 제어 명령을 검증하므로 명시적으로 활성화

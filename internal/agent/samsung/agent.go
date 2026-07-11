@@ -249,6 +249,16 @@ func (a *Hvacr01Agent) Start(ctx context.Context) error {
 	}
 	a.mu.Unlock()
 
+	// SPEC-HVACR-CONNSTATE-001: 비동기 startup probe + 주기 connection-report 루프.
+	// 기존 a.wg 패턴을 그대로 사용하여 Stop 시 join 된다(§7.2). Start 는 probe 완료를
+	// 기다리지 않고 즉시 반환한다(E6/AC-8).
+	a.wg.Add(1)
+	go a.startupProbeLoop()
+	if a.hvacr01Config.ConnectionReportInterval > 0 {
+		a.wg.Add(1)
+		go a.connectionReportLoop()
+	}
+
 	a.logger.Info("samsung_hvacr01: 에이전트 시작 완료")
 	return nil
 }
@@ -1317,6 +1327,39 @@ func (a *Hvacr01Agent) sendEvent(eventType string, data map[string]any) {
 	}
 }
 
+// markOfflineLocked 는 online 디바이스를 오프라인으로 전환하고 관련 이벤트를 방출한다.
+// 호출 전제: a.mu 보유. incrementErrorCount(ErrorCount threshold 도달)와 checkStaleDevices
+// (LastSeen 경과), setAllDevicesOffline(트랜스포트 끊김)이 이 단일 helper 를 공유하여
+// online→offline 전이 동작이 절대 어긋나지 않도록 한다.
+//
+// reason 은 진단용 사유 문자열이다("error_threshold" / "stale" / "transport_disconnected").
+// 기존 device_offline 이벤트 페이로드는 그대로 보존하고 reason 은 로그에만 남긴다.
+//
+// 주의(N1/§7.1): RWMutex 비재진입 트랩을 피하기 위해 a.Name()/a.ID() 를 절대 호출하지
+// 않고 a.agentConfig.Name 을 직접 읽는다.
+func (a *Hvacr01Agent) markOfflineLocked(addr NasaAddress, dev *NasaDevice, reason string) {
+	if !dev.Online {
+		return
+	}
+	dev.Online = false
+	a.sendEventLocked("device_offline", map[string]any{
+		"address":   addr.String(),
+		"unit_id":   dev.UnitID,
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+	})
+	// SPEC-HVACR-CONNSTATE-001 E2: online→offline 전이 즉시 change 방출(tick 독립).
+	// initial 미방출 device 는 순서 보장(E9)을 위해 skip.
+	if dev.connInitialEmitted {
+		a.emitConnectionLocked(addr, dev, connTriggerChange, time.Now().UnixMilli())
+	}
+	a.logger.Warn("samsung_hvacr01: 디바이스 오프라인",
+		"address", addr.String(),
+		"device_id", dev.UnitID,
+		"error_count", dev.ErrorCount,
+		"reason", reason,
+	)
+}
+
 // incrementErrorCount 는 디바이스의 에러 카운트를 증가시키고,
 // OfflineThreshold 에 도달하면 디바이스를 오프라인으로 전환한다.
 func (a *Hvacr01Agent) incrementErrorCount(addr NasaAddress) {
@@ -1330,17 +1373,112 @@ func (a *Hvacr01Agent) incrementErrorCount(addr NasaAddress) {
 
 	dev.ErrorCount++
 	if dev.ErrorCount >= a.hvacr01Config.OfflineThreshold && dev.Online {
-		dev.Online = false
-		a.sendEventLocked("device_offline", map[string]any{
-			"address":   addr.String(),
-			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
-		})
-		a.logger.Warn("samsung_hvacr01: 디바이스 오프라인",
-			"address", addr.String(),
-			"device_id", dev.UnitID,
-			"error_count", dev.ErrorCount,
-		)
+		a.markOfflineLocked(addr, dev, "error_threshold")
+	}
+}
+
+// staleOfflineThreshold 은 LastSeen 기반 offline 판정 임계값을 계산한다 (offline_timeout 3-way).
+//   - OfflineTimeout > 0: 그 값을 verbatim 사용 (명시적 임계값이 파생값을 이긴다).
+//   - OfflineTimeout == 0: 비활성. 방어적으로 0 을 반환하나, 호출측(checkStaleDevices)이
+//     disabled 를 먼저 early-return 으로 처리하므로 이 경로는 실사용되지 않는다.
+//   - OfflineTimeout < 0 (sentinel: 미설정): OfflineThreshold × PollInterval 파생.
+//     PollInterval<=0 이면 30s, OfflineThreshold<=0 이면 3 으로 방어 대체 (기본 3×30s=90s).
+func (a *Hvacr01Agent) staleOfflineThreshold() time.Duration {
+	ot := a.hvacr01Config.OfflineTimeout
+	switch {
+	case ot > 0:
+		return ot
+	case ot == 0:
+		return 0
+	default:
+		poll := a.hvacr01Config.PollInterval
+		if poll <= 0 {
+			poll = 30 * time.Second
+		}
+		n := a.hvacr01Config.OfflineThreshold
+		if n <= 0 {
+			n = 3
+		}
+		return time.Duration(n) * poll
+	}
+}
+
+// checkStaleDevices 는 pollLoop ticker 마다 호출되어, LastSeen 이 staleOfflineThreshold
+// 를 초과해 갱신되지 않은 online 디바이스를 오프라인으로 전환한다.
+//
+// Samsung 폴링은 비동기(요청/응답 미매칭)이므로, 이 LastSeen 경과 검사가 실내기 정전/
+// 응답없음을 감지하는 유일한 경로이다. status_query_enabled=false(passive sniff) 모드에서도
+// 동작한다 — pollLoop 가 이 함수를 능동 쿼리 송신 skip(continue) 이전에 호출하기 때문이다.
+//
+// never-seen 규칙: LastSeen 이 zero 인 디바이스는 stale 판정하지 않는다. online 디바이스는
+// handleMessage 가 LastSeen 을 반드시 갱신했으므로 online && zero 조합은 발생하지 않지만
+// 방어적으로 skip 한다. 최초 통신 전 디바이스는 이미 Online=false(startup probe 또는 초기
+// 상태)이므로 아래 online 게이트에서 걸러진다.
+//
+// ErrorCount 는 건드리지 않는다: ErrorCount 는 send/build 연속 실패용 threshold 카운터로,
+// LastSeen 경과와는 독립된 감지 축이다. 두 메커니즘을 뒤섞지 않도록 stale 경로에서 리셋하지
+// 않으며, 복구는 handleMessage 가 ErrorCount=0 으로 초기화하므로 영향받지 않는다.
+func (a *Hvacr01Agent) checkStaleDevices() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// offline_timeout == 0 (명시적) → staleness 감지 비활성 (3-way 규칙).
+	// transport-disconnect bulk offline(setAllDevicesOffline)은 이와 무관하게 동작한다.
+	if a.hvacr01Config.OfflineTimeout == 0 {
+		return
+	}
+
+	// Stop 이후에는 방출 금지 (emitConnectionReports 선례, N10).
+	select {
+	case <-a.stopCh:
+		return
+	default:
+	}
+
+	threshold := a.staleOfflineThreshold()
+	now := time.Now()
+	for addr, dev := range a.devices {
+		if !dev.Online {
+			continue
+		}
+		if dev.LastSeen.IsZero() {
+			continue
+		}
+		if now.Sub(dev.LastSeen) > threshold {
+			a.markOfflineLocked(addr, dev, "stale")
+		}
+	}
+}
+
+// setAllDevicesOffline 은 모든 online 디바이스를 즉시 오프라인으로 전환한다.
+// 트랜스포트 연결이 끊어졌을 때(reconnectLoop 진입 시) 호출된다 — LGAP setAllDevicesOffline
+// 대칭. device 당 개별 change 를 방출하며(배칭 금지), 두 번째 initial 을 방출하지 않고(N9),
+// initial 미방출 device 는 순서 보장(E9)을 위해 skip 한다(markOfflineLocked 게이트).
+//
+// 의도된 LGAP 비대칭(사용자 승인): Samsung 은 markOfflineLocked 를 재사용하므로 device 당
+// legacy device_offline 이벤트도 함께 방출한다. LGAP 의 inline setAllDevicesOffline 은
+// device_offline 을 방출하지 않는다. 이 차이는 additive/더 정확한 것으로 수용되었으며,
+// 단일 offline 전이 helper 공유(drift 방지)를 위한 의도적 선택이다. LGAP 은 수정하지 않는다.
+func (a *Hvacr01Agent) setAllDevicesOffline() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Stop 이후에는 방출 금지 (N10).
+	select {
+	case <-a.stopCh:
+		return
+	default:
+	}
+
+	var offlined int
+	for addr, dev := range a.devices {
+		if dev.Online {
+			offlined++
+			a.markOfflineLocked(addr, dev, "transport_disconnected")
+		}
+	}
+	if offlined > 0 {
+		a.logger.Info("samsung_hvacr01: 통신 끊김, 디바이스 오프라인 전환", "count", offlined)
 	}
 }
 
@@ -1420,6 +1558,11 @@ func (a *Hvacr01Agent) reconnectLoop() {
 		a.reconnectAttempts = 0
 		a.reconnectMu.Unlock()
 	}()
+
+	// 통신 끊김 → 모든 디바이스 즉시 오프라인 전환 (LGAP reconnectLoop 대칭).
+	// receiveLoop 가 Available()==false 를 감지해 reconnectLoop 를 기동하는 유일한
+	// disconnect 경로이므로, isReconnecting 게이트 직후 이 지점이 정확한 hook 이다.
+	a.setAllDevicesOffline()
 
 	// 재연결 시작 이벤트
 	a.sendEvent("transport_reconnecting", map[string]any{
@@ -1537,6 +1680,11 @@ func (a *Hvacr01Agent) pollLoop() {
 			if paused {
 				continue
 			}
+
+			// LastSeen 경과 기반 stale offline 검사. StatusQueryEnabled 여부와 무관하게
+			// 매 tick 실행되어야 하므로 아래 passive-mode continue 이전에 호출한다.
+			// Samsung 비동기 폴링에서 실내기 정전/응답없음을 감지하는 유일한 경로.
+			a.checkStaleDevices()
 
 			// v0.6.1: status_query_enabled=false 면 능동적 상태 쿼리 송신 skip
 			// (passive sniff only). ticker 는 계속 동작하나 query 만 안 보냄 —
@@ -1737,6 +1885,17 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 		}
 		a.sendEventLocked("device_online", onlineData)
 		snapshotShouldPush = true
+	}
+
+	// SPEC-HVACR-CONNSTATE-001 E3: 첫 통신 도착 시 device당 1회 initial(online)을,
+	// 이후 offline→online 복구 시 change 를 방출한다. connInitialEmitted 게이트가
+	// per-device 순서 보장(E9)과 프로세스당 1회 initial(N9)을 동시에 만족시킨다.
+	// (RWMutex 비재진입: 이 경로는 a.mu 보유 중이므로 a.Name() 대신 agentName 사용.)
+	if !dev.connInitialEmitted {
+		dev.connInitialEmitted = true
+		a.emitConnectionLocked(srcAddr, dev, connTriggerInitial, time.Now().UnixMilli())
+	} else if wasOffline {
+		a.emitConnectionLocked(srcAddr, dev, connTriggerChange, time.Now().UnixMilli())
 	}
 
 	// 실내기 상태 업데이트

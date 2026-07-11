@@ -23,6 +23,13 @@ type NasaDevice struct {
 	State      *NasaDeviceState // 현재 상태 (실내기 전용)
 	ErrorCount int
 	Source     string // "config", "bridge", "auto", "discovery"
+
+	// connInitialEmitted 는 device_connection.initial 이 이 device 에 대해 이미
+	// 방출되었는지를 나타낸다 (SPEC-HVACR-CONNSTATE-001 §4.6.5/§4.6.6).
+	// 프로세스 수명당 device 별 1회 initial 을 보장(N9)하고, per-device 순서 보장
+	// (initial 이 첫 change/report 보다 먼저, E9/S5)의 게이트로 사용된다.
+	// a.mu 하에서만 접근한다.
+	connInitialEmitted bool
 }
 
 // HexKeyByteMap 는 uint16 키를 16진수 문자열("0x0402")로 직렬화하는 바이트맵이다.

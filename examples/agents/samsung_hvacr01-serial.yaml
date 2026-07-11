@@ -40,8 +40,17 @@ config:
   # 기본값: true — 명시는 선택이며 비활성화하려면 false 로 설정.
   auto_discovery: true
 
-  # 오프라인 판정 임계값 (연속 N회 응답 실패 시 오프라인)
+  # 오프라인 판정 임계값 (연속 N회 send/build 실패 시 오프라인)
   offline_threshold: 3
+
+  # LastSeen 기반 stale offline 판정 임계값 (device 가 이 시간 동안 프레임을 보내지
+  # 않으면 오프라인 전환). Samsung 폴링은 비동기라 이 검사가 실내기 정전/응답없음을
+  # 감지하는 유일한 경로다. 3-way 의미:
+  #   - 미설정(키 자체를 생략): offline_threshold × poll_interval 파생 (기본 3×30s=90s)
+  #   - 양수(예: "90s"): 그 값을 임계값으로 그대로 사용 (파생값을 덮어씀)
+  #   - "0s": staleness 감지 완전 비활성 (단, 트랜스포트 연결 끊김 시 일괄 오프라인은 계속 동작)
+  # 아래는 파생 기본값(미설정)과 동일한 90s 를 명시한 예시다. 주석 처리하면 파생을 사용한다.
+  # offline_timeout: "90s"
 
   # 메시지 채널 버퍼 크기
   msg_channel_size: 256
@@ -67,6 +76,21 @@ config:
   # 정기 keepalive emit 주기 (기본값: "60s", 0=비활성)
   # v1.19.0+ 부터 기본값이 "0s" → "60s" 로 변경. 변경 감지만 원하면 "0s" 명시.
   report_interval: "60s"
+
+  # 연결 상태(online/offline) 리포팅 (SPEC-HVACR-CONNSTATE-001)
+  # device_connection.<trigger> 메시지를 device 당 개별로 방출한다.
+  #   - trigger=initial: Start 직후 startup probe 로 확정한 초기 상태 (device 당 프로세스 수명 1회)
+  #   - trigger=change : online↔offline 전이 즉시 (아래 interval 과 무관하게 항상 방출)
+  #   - trigger=report : 아래 주기마다 등록된 모든 device (offline 포함)
+  # 동작 상태 report_interval 과 완전히 독립적이다.
+  #
+  # 주기 연결 리포트 간격 (기본값: "60s", "0s"=주기 리포트 비활성 — 단 initial/change 는 항상 방출)
+  connection_report_interval: "60s"
+
+  # startup probe 의 bounded timeout (선택).
+  # 미설정 시 poll_interval 에서 파생: min(2×poll_interval, 30s) (poll_interval=0 이면 10s).
+  # 명시하면 그 값을 그대로 존중한다(30s 캡 미적용 — 느린 대형 버스 등에서 의도적으로 더 길게).
+  # startup_probe_timeout: "30s"
 
   # 로그 옵션 (3종 HVACR-01 에이전트 통일, default false)
   log_decode_errors: false

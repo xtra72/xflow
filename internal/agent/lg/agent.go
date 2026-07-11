@@ -41,6 +41,15 @@ type LGAPAgent struct {
 	isReconnecting    bool       // 재연결 진행 중 여부
 	reconnectAttempts int        // 현재 재연결 시도 횟수
 
+	// connWg 는 SPEC-HVACR-CONNSTATE-001 이 도입한 신규 connection-state goroutine
+	// (비동기 startup probe + 주기 connection-report 루프) 전용 WaitGroup 이다.
+	// Stop 에서 join 되어 leak 을 방지한다(§7.2/N10).
+	//
+	// [수용된 비대칭] LGAP 의 기존 bare goroutine(pollLoop/notifyLoop/reconnectLoop)은
+	// 본 SPEC 범위 밖이라 connWg 에 편입하지 않는다. 이 수명주기 비대칭의 전면 해소는
+	// 후속 리팩터링 SPEC 의 몫이다(§7.2 참조).
+	connWg sync.WaitGroup
+
 	// v0.7.2: get_recent 용 cumulative snapshot buffer (NASA recentSnapshots 패턴).
 	// emit (change/report) 시마다 push 되며 lastSeq 이후 entry 만 반환.
 	recentMu        sync.Mutex
@@ -207,6 +216,16 @@ func (a *LGAPAgent) Start(_ context.Context) error {
 		go a.notifyLoop()
 	}
 
+	// SPEC-HVACR-CONNSTATE-001: 비동기 startup probe + 주기 connection-report 루프.
+	// 기존 bare goroutine 과 달리 connWg 로 join 하여 Stop 시 leak 을 방지한다(§7.2).
+	// Start 는 probe 완료를 기다리지 않고 즉시 반환한다(E6/AC-8).
+	a.connWg.Add(1)
+	go a.startupProbeLoop()
+	if a.lgapConfig.ConnectionReportInterval > 0 {
+		a.connWg.Add(1)
+		go a.connectionReportLoop()
+	}
+
 	a.logger.Info("lgap: 에이전트 시작 완료")
 	return nil
 }
@@ -371,6 +390,12 @@ func (a *LGAPAgent) Stop(_ context.Context) error {
 		a.pollTicker = nil
 	}
 	a.mu.Unlock()
+
+	// SPEC-HVACR-CONNSTATE-001 §7.2/N10: 신규 connection-state goroutine(startup probe +
+	// 주기 리포트)을 msgCh 드레인 이전에 join 한다. 이로써 (a) goroutine leak 이 없고,
+	// (b) Stop 시작 이후 방출된 메시지가 남지 않는다(join 이후 드레인이 모두 청소).
+	// 기존 bare goroutine(pollLoop 등)은 본 SPEC 범위 밖이라 join 하지 않는다(수용된 비대칭).
+	a.connWg.Wait()
 
 	// 트랜스포트 닫기
 	if err := a.transport.Close(); err != nil {
@@ -1097,6 +1122,17 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 	dev.LastSeen = time.Now()
 	dev.ErrorCount = 0
 
+	// SPEC-HVACR-CONNSTATE-001: 첫 성공 통신을 initial=online baseline 으로 확정한다.
+	// 아직 initial 이 방출되지 않았다면 여기서 initial=online 을 먼저 방출해 per-device
+	// 순서(E9)를 보장한다. 이미 initial 이 방출된 뒤의 offline→online 복구는 change(E3).
+	connNow := time.Now().UnixMilli()
+	if !dev.connInitialEmitted {
+		dev.connInitialEmitted = true
+		a.emitConnectionLocked(dev, connTriggerInitial, connNow)
+	} else if wasOffline {
+		a.emitConnectionLocked(dev, connTriggerChange, connNow)
+	}
+
 	if wasOffline {
 		a.sendEventLocked("device_online", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
@@ -1409,6 +1445,12 @@ func (a *LGAPAgent) incrementErrorCount(zone byte) {
 			"unit_id":   dev.UnitID,
 			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
+		// SPEC-HVACR-CONNSTATE-001 E2: online→offline 전이 즉시 change 방출(tick 독립).
+		// initial 미방출 device 는 순서 보장(E9)을 위해 skip — offline 은 online 상태에서만
+		// 발생하므로(=initial online 방출됨) 이 게이트는 방어적이다.
+		if dev.connInitialEmitted {
+			a.emitConnectionLocked(dev, connTriggerChange, time.Now().UnixMilli())
+		}
 		a.logger.Warn("lgap: 디바이스 오프라인",
 			"zone", fmt.Sprintf("0x%02X", zone),
 			"device_id", dev.UnitID,
@@ -1450,10 +1492,17 @@ func (a *LGAPAgent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
 func (a *LGAPAgent) setAllDevicesOffline() {
 	a.mu.Lock()
 	var offlined int
+	now := time.Now().UnixMilli()
 	for _, dev := range a.devices {
 		if dev.Online {
 			dev.Online = false
 			offlined++
+			// SPEC-HVACR-CONNSTATE-001 E4/AC-15: bulk offline 은 device 당 개별 change
+			// (offline) 메시지를 방출한다(배칭 금지, 두 번째 initial 아님, N9).
+			// initial 미방출 device 는 순서 보장(E9)을 위해 skip.
+			if dev.connInitialEmitted {
+				a.emitConnectionLocked(dev, connTriggerChange, now)
+			}
 		}
 	}
 	a.mu.Unlock()
