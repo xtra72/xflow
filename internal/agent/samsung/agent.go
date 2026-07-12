@@ -292,7 +292,12 @@ func (a *Hvacr01Agent) notifyLoop() {
 }
 
 // emitPeriodicReport 는 모든 등록된 디바이스를 순회하며 trigger="report" 스냅샷을
-// 송신한다 (v0.6.8). 5 core observed 안 된 디바이스는 skip (불완전 상태 노출 방지).
+// 송신한다 (v0.6.8).
+//
+// 실외기(ODU)·offline 디바이스 포함: 이전에는 dev.State==nil(실외기 등 운전상태가
+// 없는 디바이스)을 skip 해 실외기 상태 전송이 누락됐다. State 유무·online 여부와
+// 무관하게 등록된 모든 디바이스를 보고한다 — 실외기는 online/ready, offline
+// 디바이스는 online=false 로 전송된다(연결 상태 가시성).
 func (a *Hvacr01Agent) emitPeriodicReport() {
 	a.mu.Lock()
 	addrs := make([]NasaAddress, 0, len(a.devices))
@@ -304,7 +309,7 @@ func (a *Hvacr01Agent) emitPeriodicReport() {
 	for _, addr := range addrs {
 		a.mu.Lock()
 		dev := a.devices[addr]
-		if dev == nil || dev.State == nil {
+		if dev == nil {
 			a.mu.Unlock()
 			continue
 		}
@@ -842,6 +847,10 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 				}
 			}
 		}
+	} else {
+		// 운전상태가 없는 디바이스(실외기 ODU 등)는 통신 준비(ready) 를 상태로 노출한다.
+		// 실외기는 online + ready 가 유일한 의미있는 상태이다.
+		state["ready"] = dev.Ready
 	}
 
 	// metadata 그룹 빌드 (v0.6.4: label fallback chain — Name → DeviceID → address).
@@ -1406,6 +1415,17 @@ func (a *Hvacr01Agent) markOfflineLocked(addr NasaAddress, dev *NasaDevice, reas
 	if dev.connInitialEmitted {
 		a.emitConnectionLocked(addr, dev, connTriggerChange, time.Now().UnixMilli())
 	}
+
+	// 오프라인 전환도 device_state 스냅샷으로 전송한다(online→offline 대칭). online 전환은
+	// pushRecentSnapshot 하지만 offline 은 connection change 만 방출해, report_interval 이
+	// 0(주기 report 비활성)이면 device_state 스트림에 오프라인(online=false)이 영영 실리지
+	// 않던 문제 수정. 호출측이 a.mu 를 보유하므로 여기서 push + notify 한다.
+	a.pushRecentSnapshotWithTrigger(addr, "change")
+	select {
+	case a.stateNotify <- struct{}{}:
+	default:
+	}
+
 	a.logger.Warn("samsung_hvacr01: 디바이스 오프라인",
 		"address", addr.String(),
 		"device_id", dev.UnitID,

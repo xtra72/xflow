@@ -16,6 +16,107 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
+// TestMarkOfflineLocked_PushesOfflineStateSnapshot 는 online→offline 전환 시
+// device_state 스냅샷(online=false)이 push 되는지 검증한다.
+//
+// 회귀 배경: 오프라인 전환은 connection change 만 방출하고 device_state 스냅샷은
+// push 하지 않아, report_interval=0(주기 report 비활성)이면 device_state 스트림에
+// 오프라인 상태가 실리지 않았다. online 전환(pushRecentSnapshot)과 대칭이어야 한다.
+func TestMarkOfflineLocked_PushesOfflineStateSnapshot(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+	addr, _ := ParseNasaAddress("200002") // bedroom, IDU(State 있음)
+
+	a.recentMu.Lock()
+	before := len(a.recentSnapshots)
+	a.recentMu.Unlock()
+
+	a.mu.Lock()
+	dev := a.devices[addr]
+	dev.Online = true
+	dev.connInitialEmitted = true
+	dev.LastSeen = time.Now()
+	a.markOfflineLocked(addr, dev, "stale")
+	a.mu.Unlock()
+
+	a.recentMu.Lock()
+	snaps := append([]recentStateEntry(nil), a.recentSnapshots...)
+	a.recentMu.Unlock()
+
+	if len(snaps) <= before {
+		t.Fatalf("오프라인 전환 시 device_state 스냅샷이 push 되어야 함: %d→%d", before, len(snaps))
+	}
+	var d map[string]any
+	if err := json.Unmarshal(snaps[len(snaps)-1].Data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	st, _ := d["state"].(map[string]any)
+	if st == nil || st["online"] != false {
+		t.Errorf("오프라인 스냅샷의 state.online 이 false 여야 함: %v", st)
+	}
+}
+
+// TestEmitPeriodicReport_IncludesOutdoorAndOffline 는 실외기(ODU, State=nil)와
+// offline 디바이스도 주기 상태 report 에 포함되는지 검증한다.
+//
+// 회귀 배경: emitPeriodicReport 가 dev.State==nil(실외기) 을 skip 해 실외기 상태
+// 전송이 누락됐다. State 유무·online 여부와 무관하게 등록된 모든 디바이스를 보고해야
+// 한다(실외기: online+ready, offline: online=false).
+func TestEmitPeriodicReport_IncludesOutdoorAndOffline(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+
+	oduAddr, _ := ParseNasaAddress("100000") // 0x10 → HVACR.ODU
+	offlineAddr, _ := ParseNasaAddress("200005")
+	a.mu.Lock()
+	a.devices[oduAddr] = &NasaDevice{
+		Address: oduAddr, UnitID: "odu-1", Type: "HVACR.ODU",
+		Online: true, Ready: true, LastSeen: time.Now(), Source: "config",
+		// State: nil (실외기)
+	}
+	a.devices[offlineAddr] = &NasaDevice{
+		Address: offlineAddr, UnitID: "idu-off", Type: "HVACR.IDU",
+		Online: false, LastSeen: time.Now(), Source: "config",
+		State: &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+	}
+	a.mu.Unlock()
+
+	a.emitPeriodicReport()
+
+	a.recentMu.Lock()
+	snaps := append([]recentStateEntry(nil), a.recentSnapshots...)
+	a.recentMu.Unlock()
+
+	oduReported, offlineReported := false, false
+	for _, s := range snaps {
+		var d map[string]any
+		if json.Unmarshal(s.Data, &d) != nil {
+			continue
+		}
+		st, _ := d["state"].(map[string]any)
+		md, _ := d["metadata"].(map[string]any)
+		if md != nil && md["device_type"] == "HVACR.ODU" {
+			oduReported = true
+			if st == nil || st["online"] != true {
+				t.Errorf("실외기 state.online 이 true 여야: %v", st)
+			}
+			if _, ok := st["ready"]; !ok {
+				t.Errorf("실외기 state 에 ready 가 있어야: %v", st)
+			}
+		}
+		if md != nil && md["name"] == "idu-off" {
+			offlineReported = true
+			if st == nil || st["online"] != false {
+				t.Errorf("offline 디바이스 state.online 이 false 여야: %v", st)
+			}
+		}
+	}
+	if !oduReported {
+		t.Errorf("실외기(ODU) 상태 report 가 emit 되어야 함")
+	}
+	if !offlineReported {
+		t.Errorf("offline 디바이스 상태 report 가 emit 되어야 함")
+	}
+}
+
 // TestSendFrame_LogsTxWhenEnabled 는 log_messages 옵션에 따라 송신(TX) 프레임이
 // hex 로 로그되는지, 그리고 프레임이 실제 전송되는지 검증한다.
 func TestSendFrame_LogsTxWhenEnabled(t *testing.T) {
