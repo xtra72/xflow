@@ -30,6 +30,26 @@ vi.mock('./DeviceDetailPanel', () => ({
   default: () => <div data-testid="detail-panel" />,
 }));
 
+// ---- 삭제 관련 훅/스토어 mock ----
+// DeviceListPage 는 useAgents(에이전트 타입 맵) 와 useDeleteDevice(삭제 오케스트레이션),
+// useUIStore(알림) 를 사용한다. QueryClient 없이 렌더하므로 모두 mock 한다.
+const useAgentsMock = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useAgent', () => ({
+  useAgents: useAgentsMock,
+}));
+
+const deleteDeviceMutateMock = vi.hoisted(() => vi.fn());
+const useDeleteDeviceMock = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useDevice', () => ({
+  useDeleteDevice: useDeleteDeviceMock,
+}));
+
+const addNotificationMock = vi.hoisted(() => vi.fn());
+vi.mock('@/stores/uiStore', () => ({
+  useUIStore: (selector: (s: { addNotification: typeof addNotificationMock }) => unknown) =>
+    selector({ addNotification: addNotificationMock }),
+}));
+
 // ---- useDeviceColumns mock ----
 const setColumnsMock = vi.hoisted(() => vi.fn());
 const useDeviceColumnsMock = vi.hoisted(() => vi.fn());
@@ -74,12 +94,19 @@ beforeEach(() => {
   setColumnsMock.mockReset();
   useDeviceColumnsMock.mockReset();
   useDevicesTargetMock.mockReset();
+  useAgentsMock.mockReset();
+  useDeleteDeviceMock.mockReset();
+  deleteDeviceMutateMock.mockReset();
+  addNotificationMock.mockReset();
   useDevicesTargetMock.mockReturnValue({
     data: { data: [makeDevice()] },
     isLoading: false,
     error: null,
     refetch: vi.fn(),
   });
+  // 기본: 매칭되는 에이전트 없음 → 삭제 아이콘 비노출.
+  useAgentsMock.mockReturnValue({ data: { data: [] } });
+  useDeleteDeviceMock.mockReturnValue({ mutate: deleteDeviceMutateMock, isPending: false });
 });
 
 describe('DeviceListPage 컬럼 구성', () => {
@@ -148,5 +175,95 @@ describe('DeviceListPage 컬럼 구성', () => {
     // 클릭해도 setColumns 가 호출되지 않는다
     fireEvent.click(nameCheckbox);
     expect(setColumnsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('DeviceListPage 디바이스 삭제', () => {
+  beforeEach(() => {
+    // 삭제 아이콘 노출과 무관한 컬럼 구성(액션 컬럼은 항상 존재).
+    useDeviceColumnsMock.mockReturnValue({
+      columns: ['name', 'status'],
+      setColumns: setColumnsMock,
+      isLoading: false,
+      isSaving: false,
+    });
+  });
+
+  it('config 소스 디바이스에도 삭제 아이콘을 표시한다 (보호 제거)', () => {
+    useAgentsMock.mockReturnValue({
+      data: { data: [{ id: 'agent-id-1', name: 'agent-a', type: 'samsung_hvacr01' }] },
+    });
+    useDevicesTargetMock.mockReturnValue({
+      data: { data: [makeDevice({ source: 'config', agent_name: 'agent-a' })] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    expect(screen.getByRole('button', { name: '디바이스 삭제' })).toBeTruthy();
+  });
+
+  it('remove_device 미지원 에이전트 타입에는 삭제 아이콘을 표시하지 않는다', () => {
+    useAgentsMock.mockReturnValue({
+      data: { data: [{ id: 'agent-id-1', name: 'agent-a', type: 'century' }] },
+    });
+    useDevicesTargetMock.mockReturnValue({
+      data: { data: [makeDevice({ source: 'bridge', agent_name: 'agent-a' })] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    expect(screen.queryByRole('button', { name: '디바이스 삭제' })).toBeNull();
+  });
+
+  it('소유 에이전트를 찾지 못하면 삭제 아이콘을 표시하지 않는다', () => {
+    // 에이전트 목록에 device.agent_name 과 매칭되는 항목이 없음.
+    useAgentsMock.mockReturnValue({ data: { data: [] } });
+    useDevicesTargetMock.mockReturnValue({
+      data: { data: [makeDevice({ source: 'bridge', agent_name: 'agent-a' })] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    expect(screen.queryByRole('button', { name: '디바이스 삭제' })).toBeNull();
+  });
+
+  it('samsung_hvacr01 bridge 디바이스에는 삭제 아이콘을 표시하고, 확인 시 올바른 인자로 삭제를 호출한다', () => {
+    useAgentsMock.mockReturnValue({
+      data: { data: [{ id: 'agent-id-1', name: 'agent-a', type: 'samsung_hvacr01' }] },
+    });
+    useDevicesTargetMock.mockReturnValue({
+      data: {
+        data: [
+          makeDevice({ uid: 'uuid-9', id: 'uuid-9', source: 'bridge', agent_name: 'agent-a' }),
+        ],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    // 삭제 아이콘 노출 → 클릭 시 확인 다이얼로그 오픈.
+    const trash = screen.getByRole('button', { name: '디바이스 삭제' });
+    fireEvent.click(trash);
+
+    // 다이얼로그의 '삭제' 확인 버튼 클릭.
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: '삭제' }));
+
+    // remove_device 오케스트레이션 훅을 올바른 agentId + deviceId(UUID)로 호출.
+    expect(deleteDeviceMutateMock).toHaveBeenCalledTimes(1);
+    const vars = deleteDeviceMutateMock.mock.calls[0]?.[0];
+    expect(vars).toEqual({ agentId: 'agent-id-1', deviceId: 'uuid-9' });
   });
 });

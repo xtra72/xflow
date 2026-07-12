@@ -41,6 +41,15 @@ type LGAPAgent struct {
 	isReconnecting    bool       // 재연결 진행 중 여부
 	reconnectAttempts int        // 현재 재연결 시도 횟수
 
+	// connWg 는 SPEC-HVACR-CONNSTATE-001 이 도입한 신규 connection-state goroutine
+	// (비동기 startup probe + 주기 connection-report 루프) 전용 WaitGroup 이다.
+	// Stop 에서 join 되어 leak 을 방지한다(§7.2/N10).
+	//
+	// [수용된 비대칭] LGAP 의 기존 bare goroutine(pollLoop/notifyLoop/reconnectLoop)은
+	// 본 SPEC 범위 밖이라 connWg 에 편입하지 않는다. 이 수명주기 비대칭의 전면 해소는
+	// 후속 리팩터링 SPEC 의 몫이다(§7.2 참조).
+	connWg sync.WaitGroup
+
 	// v0.7.2: get_recent 용 cumulative snapshot buffer (NASA recentSnapshots 패턴).
 	// emit (change/report) 시마다 push 되며 lastSeq 이후 entry 만 반환.
 	recentMu        sync.Mutex
@@ -127,12 +136,18 @@ func NewLGAPAgent(config agent.AgentConfig) (agent.Agent, error) {
 	for _, entry := range lgapConfig.Devices {
 		zone := toInt(parseZoneKey(entry.Address))
 		zoneByte := byte(zone)
+		// source 보존: 런타임("bridge") 디바이스가 영속화 왕복 후에도 출처를 유지해
+		// 삭제 가능성이 보존되도록 entry.Source 를 우선한다. 비어 있으면 "config".
+		source := entry.Source
+		if source == "" {
+			source = "config"
+		}
 		dev := &LGAPDevice{
 			Zone:   zoneByte,
 			UnitID: entry.Name,
 			Online: false,
 			State:  &LGAPDeviceState{},
-			Source: "config",
+			Source: source,
 		}
 		a.devices[zoneByte] = dev
 		if entry.Name != "" {
@@ -205,6 +220,16 @@ func (a *LGAPAgent) Start(_ context.Context) error {
 	// v0.6.8: 정기 상태 보고 루프 (NotifyInterval > 0 일 때만 시작).
 	if a.lgapConfig.NotifyInterval > 0 {
 		go a.notifyLoop()
+	}
+
+	// SPEC-HVACR-CONNSTATE-001: 비동기 startup probe + 주기 connection-report 루프.
+	// 기존 bare goroutine 과 달리 connWg 로 join 하여 Stop 시 leak 을 방지한다(§7.2).
+	// Start 는 probe 완료를 기다리지 않고 즉시 반환한다(E6/AC-8).
+	a.connWg.Add(1)
+	go a.startupProbeLoop()
+	if a.lgapConfig.ConnectionReportInterval > 0 {
+		a.connWg.Add(1)
+		go a.connectionReportLoop()
 	}
 
 	a.logger.Info("lgap: 에이전트 시작 완료")
@@ -371,6 +396,12 @@ func (a *LGAPAgent) Stop(_ context.Context) error {
 		a.pollTicker = nil
 	}
 	a.mu.Unlock()
+
+	// SPEC-HVACR-CONNSTATE-001 §7.2/N10: 신규 connection-state goroutine(startup probe +
+	// 주기 리포트)을 msgCh 드레인 이전에 join 한다. 이로써 (a) goroutine leak 이 없고,
+	// (b) Stop 시작 이후 방출된 메시지가 남지 않는다(join 이후 드레인이 모두 청소).
+	// 기존 bare goroutine(pollLoop 등)은 본 SPEC 범위 밖이라 join 하지 않는다(수용된 비대칭).
+	a.connWg.Wait()
 
 	// 트랜스포트 닫기
 	if err := a.transport.Close(); err != nil {
@@ -857,9 +888,8 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	if dev.Source == "config" {
-		return nil, ErrConfigDeviceProtected
-	}
+	// config 소스 디바이스도 UI 에서 삭제 가능하게 한다(보호 제거). 수동 추가 후
+	// 재시작으로 "config" 로 굳은 디바이스를 사용자가 직접 삭제할 수 있어야 하기 때문이다.
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -922,6 +952,15 @@ func (a *LGAPAgent) resolveDevice(req *processRequest) (byte, *LGAPDevice, error
 	if req.DeviceID != "" {
 		resolved, ok := a.deviceIDs[req.DeviceID]
 		if !ok {
+			// UUID 폴백: 전역 device.List / REST 응답은 UUID(1급 식별자) 만 노출하므로
+			// (zone/UnitID 미노출), 삭제/실행 경로가 device_id 로 UUID 를 전달한다.
+			// deviceIDs 는 UnitID 로만 키잉되므로, UUID 는 각 디바이스의 emit-경로 UUID
+			// (ResolveDeviceID(name, dev.UnitID)) 와 대조해 역매칭한다.
+			if byUUID, ok2 := a.zoneByDeviceUUID(req.DeviceID); ok2 {
+				resolved, ok = byUUID, true
+			}
+		}
+		if !ok {
 			return 0, nil, ErrDeviceIDNotFound
 		}
 		zone = resolved
@@ -939,6 +978,34 @@ func (a *LGAPAgent) resolveDevice(req *processRequest) (byte, *LGAPDevice, error
 	return zone, dev, nil
 }
 
+// zoneByDeviceUUID 는 글로벌 UUID(device_id) 를 각 디바이스의 레지스트리 UUID 와
+// 대조해 해당 zone 을 역매칭한다. 매칭 실패 시 (0, false).
+//
+// localID 는 반드시 어댑터(SamsungNasaDeviceInfo.Address = formatZone(zone)) 와 동일한
+// formatZone(zone) 을 사용한다 — 프론트엔드/REST 가 받는 device.uid 는 레지스트리
+// 어댑터의 UID() (ResolveDeviceID(name, formatZone(zone))) 이기 때문이다. dev.UnitID 를
+// 쓰면 emit 경로 UUID 와는 맞아도 레지스트리 UUID 와 어긋날 수 있다.
+//
+// 주의(RWMutex 비재진입): 호출자(resolveDevice) 가 a.mu 를 보유한 상태에서 호출하므로
+// 여기서 a.mu 를 재-lock 하지 않으며 a.Name() 도 호출하지 않는다(재진입 deadlock 회피).
+func (a *LGAPAgent) zoneByDeviceUUID(uuid string) (byte, bool) {
+	for zone := range a.devices {
+		if agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, formatZone(zone)) == uuid {
+			return zone, true
+		}
+	}
+	return 0, false
+}
+
+// msgLogLevel 은 송/수신(TX/RX) 프레임 로그 레벨을 반환한다. log_messages 옵션이
+// 켜져 있으면 INFO(기본 레벨에서 보임), 아니면 기존 Debug 레벨을 유지한다.
+func (a *LGAPAgent) msgLogLevel() slog.Level {
+	if a.lgapConfig.LogMessages {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
+}
+
 // sendControlCommand 는 제어 패킷을 빌드하고 트랜스포트로 전송한다.
 // pollMu 를 사용하여 시리얼 포트 동시 접근을 방지한다.
 func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, temp byte) error {
@@ -947,7 +1014,7 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 
 	pkt := a.protocol.BuildControlCommand(zone, flags, modeCombo, temp)
 
-	a.logger.Debug("lgap: 제어 명령 전송",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 제어 명령 전송",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"flags", fmt.Sprintf("0x%02X", flags),
 		"tx", hex.EncodeToString(pkt),
@@ -974,7 +1041,7 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
-	a.logger.Debug("lgap: 제어 응답 수신",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 제어 응답 수신",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"rx", hex.EncodeToString(buf[:n]),
 		"bytes", n,
@@ -1096,6 +1163,17 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 	dev.Online = true
 	dev.LastSeen = time.Now()
 	dev.ErrorCount = 0
+
+	// SPEC-HVACR-CONNSTATE-001: 첫 성공 통신을 initial=online baseline 으로 확정한다.
+	// 아직 initial 이 방출되지 않았다면 여기서 initial=online 을 먼저 방출해 per-device
+	// 순서(E9)를 보장한다. 이미 initial 이 방출된 뒤의 offline→online 복구는 change(E3).
+	connNow := time.Now().UnixMilli()
+	if !dev.connInitialEmitted {
+		dev.connInitialEmitted = true
+		a.emitConnectionLocked(dev, connTriggerInitial, connNow)
+	} else if wasOffline {
+		a.emitConnectionLocked(dev, connTriggerChange, connNow)
+	}
 
 	if wasOffline {
 		a.sendEventLocked("device_online", map[string]any{
@@ -1321,7 +1399,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 
 	pkt := a.protocol.BuildStatusQuery(zone)
 
-	a.logger.Debug("lgap: 상태 쿼리 전송",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 상태 쿼리 전송",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"tx", hex.EncodeToString(pkt),
 	)
@@ -1373,7 +1451,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
-	a.logger.Debug("lgap: 상태 응답 수신",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 상태 응답 수신",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"rx", hex.EncodeToString(buf[:n]),
 		"bytes", n,
@@ -1409,6 +1487,12 @@ func (a *LGAPAgent) incrementErrorCount(zone byte) {
 			"unit_id":   dev.UnitID,
 			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
+		// SPEC-HVACR-CONNSTATE-001 E2: online→offline 전이 즉시 change 방출(tick 독립).
+		// initial 미방출 device 는 순서 보장(E9)을 위해 skip — offline 은 online 상태에서만
+		// 발생하므로(=initial online 방출됨) 이 게이트는 방어적이다.
+		if dev.connInitialEmitted {
+			a.emitConnectionLocked(dev, connTriggerChange, time.Now().UnixMilli())
+		}
 		a.logger.Warn("lgap: 디바이스 오프라인",
 			"zone", fmt.Sprintf("0x%02X", zone),
 			"device_id", dev.UnitID,
@@ -1450,10 +1534,17 @@ func (a *LGAPAgent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
 func (a *LGAPAgent) setAllDevicesOffline() {
 	a.mu.Lock()
 	var offlined int
+	now := time.Now().UnixMilli()
 	for _, dev := range a.devices {
 		if dev.Online {
 			dev.Online = false
 			offlined++
+			// SPEC-HVACR-CONNSTATE-001 E4/AC-15: bulk offline 은 device 당 개별 change
+			// (offline) 메시지를 방출한다(배칭 금지, 두 번째 initial 아님, N9).
+			// initial 미방출 device 는 순서 보장(E9)을 위해 skip.
+			if dev.connInitialEmitted {
+				a.emitConnectionLocked(dev, connTriggerChange, now)
+			}
 		}
 	}
 	a.mu.Unlock()
@@ -1653,6 +1744,32 @@ func (a *LGAPAgent) State() map[string]any {
 	result["reconnect_attempts"] = a.reconnectAttempts
 	a.reconnectMu.Unlock()
 
+	return result
+}
+
+// GetPersistableDevices 는 현재 메모리의 디바이스 중 영속 저장할 대상 디바이스만 반환한다.
+// LGAP 는 auto-discovery 개념이 없으므로 "config" 또는 "bridge"(runtime 추가) Source 인 모든 디바이스를 반환한다.
+// 반환된 DeviceEntry 배열은 agent.ParseDevices() 를 통해 다시 파싱할 수 있는 형식이다.
+//
+// 이 메서드는 add_device/remove_device 명령 후 저장소에 디바이스 목록을 persist 하기 위해
+// internal/api/service/agent_adapter.go 의 ExecAgent 에서 호출된다.
+func (a *LGAPAgent) GetPersistableDevices() []agent.DeviceEntry {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var result []agent.DeviceEntry
+	for zone, dev := range a.devices {
+		// LGAP 는 auto 개념이 없으므로 모든 non-config 디바이스를 포함
+		// (config 와 bridge/runtime-added 모두 영속화)
+		// 중요: Name 필드는 항상 dev.UnitID 를 사용한다.
+		// ParseDevices() 시 entry.Name → UnitID 로 매핑되므로,
+		// 역으로 저장할 때는 UnitID → Name 으로 써야 round-trip 이 보존된다.
+		result = append(result, agent.DeviceEntry{
+			Address: fmt.Sprintf("0x%x", zone),
+			Name:    dev.UnitID,
+			Source:  dev.Source, // source 보존: 재시작 후에도 "bridge" 유지 → 삭제 가능
+		})
+	}
 	return result
 }
 

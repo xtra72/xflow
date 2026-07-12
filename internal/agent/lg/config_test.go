@@ -1,11 +1,48 @@
 package lg
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
 )
+
+// TestParseLGAPConfig_LogMessages 는 log_messages 옵션 파싱(기본 false, 명시 true)을 검증한다.
+func TestParseLGAPConfig_LogMessages(t *testing.T) {
+	base := map[string]any{"serial_port": "/dev/ttyUSB0"}
+
+	cfg, err := parseLGAPConfig(base)
+	if err != nil {
+		t.Fatalf("parseLGAPConfig: %v", err)
+	}
+	if cfg.LogMessages {
+		t.Errorf("log_messages 기본값은 false 여야 함")
+	}
+
+	base["log_messages"] = true
+	cfg, err = parseLGAPConfig(base)
+	if err != nil {
+		t.Fatalf("parseLGAPConfig: %v", err)
+	}
+	if !cfg.LogMessages {
+		t.Errorf("log_messages=true 가 파싱되어야 함")
+	}
+}
+
+// TestLGAP_MsgLogLevel 은 log_messages 옵션에 따라 TX/RX 로그 레벨이 INFO/Debug 로
+// 결정되는지 검증한다.
+func TestLGAP_MsgLogLevel(t *testing.T) {
+	a := &LGAPAgent{}
+	a.lgapConfig.LogMessages = false
+	if a.msgLogLevel() != slog.LevelDebug {
+		t.Errorf("log_messages=false 면 Debug 레벨이어야 함: got %v", a.msgLogLevel())
+	}
+	a.lgapConfig.LogMessages = true
+	if a.msgLogLevel() != slog.LevelInfo {
+		t.Errorf("log_messages=true 면 Info 레벨이어야 함: got %v", a.msgLogLevel())
+	}
+}
 
 // TestParseLGAPConfig_FullValid verifies all fields are correctly parsed.
 func TestParseLGAPConfig_FullValid(t *testing.T) {
@@ -372,5 +409,83 @@ func TestToInt(t *testing.T) {
 				t.Errorf("toInt(%v) = %d, want %d", tt.val, got, tt.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-HVACR-CONNSTATE-001: LGAP connection-state 설정 파싱 테스트
+// ---------------------------------------------------------------------------
+
+// TestParseLGAPConfig_ConnectionDefaults (AC-1/AC-12): 기본값.
+func TestParseLGAPConfig_ConnectionDefaults(t *testing.T) {
+	opts := map[string]any{"serial_port": "/dev/ttyUSB0"}
+	cfg, err := parseLGAPConfig(opts)
+	if err != nil {
+		t.Fatalf("parseLGAPConfig() unexpected error: %v", err)
+	}
+	if cfg.ConnectionReportInterval != 60*time.Second {
+		t.Errorf("ConnectionReportInterval = %v, want 60s", cfg.ConnectionReportInterval)
+	}
+	// poll_interval 기본 30s → min(60s,30s)=30s.
+	if cfg.StartupProbeTimeout != 30*time.Second {
+		t.Errorf("StartupProbeTimeout = %v, want 30s", cfg.StartupProbeTimeout)
+	}
+}
+
+// TestParseLGAPConfig_ConnectionReportInterval (AC-1/AC-2).
+func TestParseLGAPConfig_ConnectionReportInterval(t *testing.T) {
+	opts := map[string]any{"serial_port": "/dev/ttyUSB0", "connection_report_interval": "0s"}
+	cfg, err := parseLGAPConfig(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ConnectionReportInterval != 0 {
+		t.Errorf("ConnectionReportInterval = %v, want 0", cfg.ConnectionReportInterval)
+	}
+}
+
+// TestParseLGAPConfig_StartupProbeTimeout (AC-12): 파생 캡 + 명시 override.
+func TestParseLGAPConfig_StartupProbeTimeout(t *testing.T) {
+	// poll=20s → 파생 min(40s,30s)=30s.
+	cfg, err := parseLGAPConfig(map[string]any{"serial_port": "/dev/ttyUSB0", "poll_interval": "20s"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.StartupProbeTimeout != 30*time.Second {
+		t.Errorf("derived = %v, want 30s", cfg.StartupProbeTimeout)
+	}
+	// 명시 60s → 캡 미적용.
+	cfg, err = parseLGAPConfig(map[string]any{"serial_port": "/dev/ttyUSB0", "poll_interval": "20s", "startup_probe_timeout": "60s"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.StartupProbeTimeout != 60*time.Second {
+		t.Errorf("explicit = %v, want 60s (no cap)", cfg.StartupProbeTimeout)
+	}
+}
+
+// TestDeriveStartupProbeTimeoutLG (AC-12): poll=0 fallback 10s.
+func TestDeriveStartupProbeTimeoutLG(t *testing.T) {
+	if got := deriveStartupProbeTimeout(0); got != 10*time.Second {
+		t.Errorf("poll=0 → %v, want 10s", got)
+	}
+	if got := deriveStartupProbeTimeout(5 * time.Second); got != 10*time.Second {
+		t.Errorf("poll=5s → %v, want 10s", got)
+	}
+	if got := deriveStartupProbeTimeout(20 * time.Second); got != 30*time.Second {
+		t.Errorf("poll=20s → %v, want 30s", got)
+	}
+}
+
+// TestParseLGAPConfig_ConnectionHardErrors (AC-18): 잘못된 값/legacy alias hard error.
+func TestParseLGAPConfig_ConnectionHardErrors(t *testing.T) {
+	if _, err := parseLGAPConfig(map[string]any{"serial_port": "/dev/ttyUSB0", "connection_report_interval": "bogus"}); err == nil {
+		t.Error("잘못된 connection_report_interval 은 hard error 여야 한다")
+	}
+	if _, err := parseLGAPConfig(map[string]any{"serial_port": "/dev/ttyUSB0", "connection_notify_interval": "30s"}); err == nil {
+		t.Error("legacy alias connection_notify_interval 은 hard error 여야 한다")
+	}
+	if _, err := parseLGAPConfig(map[string]any{"serial_port": "/dev/ttyUSB0", "startup_probe_timeout": "zzz"}); err == nil {
+		t.Error("잘못된 startup_probe_timeout 은 hard error 여야 한다")
 	}
 }

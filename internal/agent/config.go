@@ -71,6 +71,11 @@ func (c *AgentConfig) Validate() error {
 type DeviceEntry struct {
 	Address string // 프로토콜별 주소 (NASA: "200001", LGCP: "44550067", LGAP: "0x10")
 	Name    string // 사람이 읽을 수 있는 이름 (선택)
+	// Source 는 디바이스 등록 출처("config"/"bridge"/"auto")이다. 비어 있으면
+	// 로더가 "config"(yaml 선언 디바이스) 로 간주한다. 런타임 등록("bridge") 디바이스가
+	// 영속화 왕복 후에도 출처를 유지해 삭제 가능성이 보존되도록 한다(삭제 보호는
+	// "config" 에만 적용). 후방호환: source 키가 없는 기존 항목은 "config" 로 로드된다.
+	Source string
 }
 
 // ParseDevices 는 에이전트 설정 옵션에서 "devices" 배열을 파싱한다.
@@ -95,6 +100,9 @@ func ParseDevices(opts map[string]any) []DeviceEntry {
 		}
 		if name, ok := m["name"]; ok {
 			entry.Name = fmt.Sprintf("%v", name)
+		}
+		if src, ok := m["source"]; ok {
+			entry.Source = fmt.Sprintf("%v", src)
 		}
 		if entry.Address != "" {
 			devices = append(devices, entry)

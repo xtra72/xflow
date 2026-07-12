@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -151,12 +153,18 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 			return nil, fmt.Errorf("samsung_hvacr01 agent: invalid device address %q: %w", entry.Address, parseErr)
 		}
 		devType := DetectDeviceType(addr)
+		// source 보존: 영속화 왕복에서 런타임("bridge") 디바이스가 출처를 유지하도록
+		// entry.Source 를 우선한다. 비어 있으면(yaml 선언 또는 구 포맷) "config".
+		source := entry.Source
+		if source == "" {
+			source = "config"
+		}
 		dev := &NasaDevice{
 			Address: addr,
 			Type:    devType,
 			UnitID:  entry.Name,
 			Online:  false,
-			Source:  "config",
+			Source:  source,
 		}
 		if devType == "HVACR.IDU" {
 			dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
@@ -249,6 +257,16 @@ func (a *Hvacr01Agent) Start(ctx context.Context) error {
 	}
 	a.mu.Unlock()
 
+	// SPEC-HVACR-CONNSTATE-001: 비동기 startup probe + 주기 connection-report 루프.
+	// 기존 a.wg 패턴을 그대로 사용하여 Stop 시 join 된다(§7.2). Start 는 probe 완료를
+	// 기다리지 않고 즉시 반환한다(E6/AC-8).
+	a.wg.Add(1)
+	go a.startupProbeLoop()
+	if a.hvacr01Config.ConnectionReportInterval > 0 {
+		a.wg.Add(1)
+		go a.connectionReportLoop()
+	}
+
 	a.logger.Info("samsung_hvacr01: 에이전트 시작 완료")
 	return nil
 }
@@ -274,7 +292,12 @@ func (a *Hvacr01Agent) notifyLoop() {
 }
 
 // emitPeriodicReport 는 모든 등록된 디바이스를 순회하며 trigger="report" 스냅샷을
-// 송신한다 (v0.6.8). 5 core observed 안 된 디바이스는 skip (불완전 상태 노출 방지).
+// 송신한다 (v0.6.8).
+//
+// 실외기(ODU)·offline 디바이스 포함: 이전에는 dev.State==nil(실외기 등 운전상태가
+// 없는 디바이스)을 skip 해 실외기 상태 전송이 누락됐다. State 유무·online 여부와
+// 무관하게 등록된 모든 디바이스를 보고한다 — 실외기는 online/ready, offline
+// 디바이스는 online=false 로 전송된다(연결 상태 가시성).
 func (a *Hvacr01Agent) emitPeriodicReport() {
 	a.mu.Lock()
 	addrs := make([]NasaAddress, 0, len(a.devices))
@@ -286,7 +309,7 @@ func (a *Hvacr01Agent) emitPeriodicReport() {
 	for _, addr := range addrs {
 		a.mu.Lock()
 		dev := a.devices[addr]
-		if dev == nil || dev.State == nil || !dev.State.AllCoreObserved() {
+		if dev == nil {
 			a.mu.Unlock()
 			continue
 		}
@@ -476,7 +499,7 @@ func (a *Hvacr01Agent) processRequestState(req *processRequest) ([]byte, error) 
 	for _, addr := range addrs {
 		a.mu.Lock()
 		dev := a.devices[addr]
-		if dev == nil || dev.State == nil || !dev.State.AllCoreObserved() {
+		if dev == nil || dev.State == nil {
 			a.mu.Unlock()
 			continue
 		}
@@ -824,6 +847,10 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 				}
 			}
 		}
+	} else {
+		// 운전상태가 없는 디바이스(실외기 ODU 등)는 통신 준비(ready) 를 상태로 노출한다.
+		// 실외기는 online + ready 가 유일한 의미있는 상태이다.
+		state["ready"] = dev.Ready
 	}
 
 	// metadata 그룹 빌드 (v0.6.4: label fallback chain — Name → DeviceID → address).
@@ -1018,8 +1045,8 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	// 이벤트 전송 (락 밖에서 하면 좋지만 non-blocking 이므로 무방)
 	regData := map[string]any{
 		"address":     addr.String(),
-		"unit_id":     deviceID,
-		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
+		"unit_id":     addr.String(),
+		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
 		"name":        name,
 		"device_type": devType,
 	}
@@ -1063,9 +1090,9 @@ func (a *Hvacr01Agent) processRemoveDevice(req *processRequest) ([]byte, error) 
 		return nil, err
 	}
 
-	if dev.Source == "config" {
-		return nil, ErrConfigDeviceProtected
-	}
+	// config 소스 디바이스도 UI 에서 삭제 가능하게 한다(보호 제거). 수동 추가 후
+	// 재시작으로 "config" 로 굳은 디바이스를 사용자가 직접 삭제할 수 있어야 하기 때문이다.
+	// yaml 파일에 선언된 디바이스는 삭제해도 재시작 시 yaml 에서 다시 로드된다.
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1078,8 +1105,8 @@ func (a *Hvacr01Agent) processRemoveDevice(req *processRequest) ([]byte, error) 
 
 	unregData := map[string]any{
 		"address":   addr.String(),
-		"unit_id":   dev.UnitID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+		"unit_id":   addr.String(),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
 	}
 	if dev.State != nil {
 		unregData["state"] = dev.State.StateForJSON(false)
@@ -1109,8 +1136,8 @@ func (a *Hvacr01Agent) processListDevices() ([]byte, error) {
 	for addr, dev := range a.devices {
 		devices = append(devices, map[string]any{
 			"address":     addr.String(),
-			"unit_id":     dev.UnitID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+			"unit_id":     addr.String(),
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 			"source":      dev.Source,
@@ -1138,6 +1165,15 @@ func (a *Hvacr01Agent) resolveDevice(req *processRequest) (NasaAddress, *NasaDev
 	if req.DeviceID != "" {
 		resolved, ok := a.deviceIDs[req.DeviceID]
 		if !ok {
+			// UUID 폴백: 전역 device.List / REST 응답은 UUID(1급 식별자) 만 노출하고
+			// bus address 를 노출하지 않으므로, 삭제/실행 경로가 device_id 로 UUID 를
+			// 전달한다. deviceIDs 는 UnitID 로만 키잉되므로, UUID 는 각 디바이스의
+			// emit-경로 UUID (ResolveDeviceID(name, addr.String())) 와 대조해 역매칭한다.
+			if byUUID, ok2 := a.addrByDeviceUUID(req.DeviceID); ok2 {
+				resolved, ok = byUUID, true
+			}
+		}
+		if !ok {
 			return NasaAddress{}, nil, ErrDeviceIDNotFound
 		}
 		addr = resolved
@@ -1157,6 +1193,45 @@ func (a *Hvacr01Agent) resolveDevice(req *processRequest) (NasaAddress, *NasaDev
 	}
 
 	return addr, dev, nil
+}
+
+// addrByDeviceUUID 는 글로벌 UUID(device_id) 를 각 디바이스의 emit-경로 UUID
+// (ResolveDeviceID(name, addr.String())) 와 대조해 해당 주소를 역매칭한다.
+// 매칭 실패 시 (zero, false).
+//
+// 주의(RWMutex 비재진입): 호출자(resolveDevice) 가 a.mu 를 보유한 상태에서 호출하므로
+// 여기서 a.mu 를 재-lock 하지 않으며 a.Name() 도 호출하지 않는다(재진입 deadlock 회피).
+// ResolveDeviceID 는 a.mu 와 무관한 별도 저장소를 사용하므로 재진입 위험이 없다.
+func (a *Hvacr01Agent) addrByDeviceUUID(uuid string) (NasaAddress, bool) {
+	for addr := range a.devices {
+		if agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()) == uuid {
+			return addr, true
+		}
+	}
+	return NasaAddress{}, false
+}
+
+// GetPersistableDevices 는 현재 메모리의 디바이스 중 영속 저장할 대상 디바이스만 반환한다.
+// 자동 발견("auto") 디바이스는 제외한다 — 재시작 시 다시 발견되므로 설정에 쌓을 필요가 없다.
+// 반환 형식은 ParseDevices() 와 round-trip 되도록 DeviceEntry 로 맞춘다.
+// 중요: Name 필드는 항상 dev.UnitID 를 사용한다. ParseDevices() 시 entry.Name → UnitID 로
+// 매핑되므로, 역으로 저장할 때는 UnitID → Name 으로 써야 device_id(UUID) 안정성이 보존된다.
+func (a *Hvacr01Agent) GetPersistableDevices() []agent.DeviceEntry {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var result []agent.DeviceEntry
+	for addr, dev := range a.devices {
+		if dev.Source == "auto" {
+			continue
+		}
+		result = append(result, agent.DeviceEntry{
+			Address: addr.String(),
+			Name:    dev.UnitID,
+			Source:  dev.Source, // source 보존: 재시작 후에도 "bridge" 유지 → 삭제 가능
+		})
+	}
+	return result
 }
 
 // sendControlCommand 는 제어 프레임을 빌드하고 트랜스포트로 전송한다.
@@ -1194,7 +1269,7 @@ func (a *Hvacr01Agent) sendControlCommand(addr NasaAddress, sets []NasaMessageSe
 		return fmt.Errorf("samsung_hvacr01: build control command failed: %w", err)
 	}
 
-	if err := a.transport.Send(frame); err != nil {
+	if err := a.sendFrame(addr.String(), frame); err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("samsung_hvacr01: 제어 명령 전송 실패", "addr", addr.String(), "error", err)
 		return fmt.Errorf("samsung_hvacr01: send failed: %w", err)
@@ -1238,7 +1313,7 @@ func (a *Hvacr01Agent) sendImmediateStatusQuery(addr NasaAddress) {
 				a.logger.Debug("samsung_hvacr01: 즉시 상태 조회 빌드 실패", "addr", addr.String(), "error", err)
 				return
 			}
-			if err := a.transport.Send(frame); err != nil {
+			if err := a.sendFrame(addr.String(), frame); err != nil {
 				a.logger.Debug("samsung_hvacr01: 즉시 상태 조회 전송 실패", "addr", addr.String(), "error", err)
 				return
 			}
@@ -1248,15 +1323,13 @@ func (a *Hvacr01Agent) sendImmediateStatusQuery(addr NasaAddress) {
 	}()
 }
 
-// effectiveDeviceID 는 JSON 출력용 device_id 값을 결정한다.
-// 사용자 지정 deviceID 가 비어 있으면(자동 발견 디바이스 등) 주소의
-// 점 없는 16진수 표현(NasaAddress.Hex())으로 대체한다.
-// deviceID 가 지정되어 있으면 그대로 사용한다.
+// effectiveDeviceID 는 emit/state/telemetry 메시지의 unit_id 로 사용할 localID 를 결정한다.
+// SPEC-DEVICE-IDENTITY-001 M1/M2: adapter (및 V2 callback) 의 localID 와 일관되도록
+// 항상 주소의 점으로 구분된 16진수 표현(NasaAddress.String())을 반환한다.
+// 이는 device registry/list 와 emit side 의 UUID 일관성을 보장한다.
+// deviceID 파라미터는 사용되지 않으며(legacy), 항상 addr.String() 을 반환한다.
 func effectiveDeviceID(addr NasaAddress, deviceID string) string {
-	if deviceID == "" {
-		return addr.Hex()
-	}
-	return deviceID
+	return addr.String()
 }
 
 // buildSuccessResponse 는 제어 명령 성공 응답 JSON 을 생성한다.
@@ -1317,6 +1390,50 @@ func (a *Hvacr01Agent) sendEvent(eventType string, data map[string]any) {
 	}
 }
 
+// markOfflineLocked 는 online 디바이스를 오프라인으로 전환하고 관련 이벤트를 방출한다.
+// 호출 전제: a.mu 보유. incrementErrorCount(ErrorCount threshold 도달)와 checkStaleDevices
+// (LastSeen 경과), setAllDevicesOffline(트랜스포트 끊김)이 이 단일 helper 를 공유하여
+// online→offline 전이 동작이 절대 어긋나지 않도록 한다.
+//
+// reason 은 진단용 사유 문자열이다("error_threshold" / "stale" / "transport_disconnected").
+// 기존 device_offline 이벤트 페이로드는 그대로 보존하고 reason 은 로그에만 남긴다.
+//
+// 주의(N1/§7.1): RWMutex 비재진입 트랩을 피하기 위해 a.Name()/a.ID() 를 절대 호출하지
+// 않고 a.agentConfig.Name 을 직접 읽는다.
+func (a *Hvacr01Agent) markOfflineLocked(addr NasaAddress, dev *NasaDevice, reason string) {
+	if !dev.Online {
+		return
+	}
+	dev.Online = false
+	a.sendEventLocked("device_offline", map[string]any{
+		"address":   addr.String(),
+		"unit_id":   addr.String(),
+		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
+	})
+	// SPEC-HVACR-CONNSTATE-001 E2: online→offline 전이 즉시 change 방출(tick 독립).
+	// initial 미방출 device 는 순서 보장(E9)을 위해 skip.
+	if dev.connInitialEmitted {
+		a.emitConnectionLocked(addr, dev, connTriggerChange, time.Now().UnixMilli())
+	}
+
+	// 오프라인 전환도 device_state 스냅샷으로 전송한다(online→offline 대칭). online 전환은
+	// pushRecentSnapshot 하지만 offline 은 connection change 만 방출해, report_interval 이
+	// 0(주기 report 비활성)이면 device_state 스트림에 오프라인(online=false)이 영영 실리지
+	// 않던 문제 수정. 호출측이 a.mu 를 보유하므로 여기서 push + notify 한다.
+	a.pushRecentSnapshotWithTrigger(addr, "change")
+	select {
+	case a.stateNotify <- struct{}{}:
+	default:
+	}
+
+	a.logger.Warn("samsung_hvacr01: 디바이스 오프라인",
+		"address", addr.String(),
+		"device_id", dev.UnitID,
+		"error_count", dev.ErrorCount,
+		"reason", reason,
+	)
+}
+
 // incrementErrorCount 는 디바이스의 에러 카운트를 증가시키고,
 // OfflineThreshold 에 도달하면 디바이스를 오프라인으로 전환한다.
 func (a *Hvacr01Agent) incrementErrorCount(addr NasaAddress) {
@@ -1330,17 +1447,162 @@ func (a *Hvacr01Agent) incrementErrorCount(addr NasaAddress) {
 
 	dev.ErrorCount++
 	if dev.ErrorCount >= a.hvacr01Config.OfflineThreshold && dev.Online {
-		dev.Online = false
-		a.sendEventLocked("device_offline", map[string]any{
-			"address":   addr.String(),
-			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
-		})
-		a.logger.Warn("samsung_hvacr01: 디바이스 오프라인",
-			"address", addr.String(),
-			"device_id", dev.UnitID,
-			"error_count", dev.ErrorCount,
-		)
+		a.markOfflineLocked(addr, dev, "error_threshold")
+	}
+}
+
+// staleOfflineThreshold 은 LastSeen 기반 offline 판정 임계값을 계산한다 (offline_timeout 3-way).
+//   - OfflineTimeout > 0: 그 값을 verbatim 사용 (명시적 임계값이 파생값을 이긴다).
+//   - OfflineTimeout == 0: 비활성. 방어적으로 0 을 반환하나, 호출측(checkStaleDevices)이
+//     disabled 를 먼저 early-return 으로 처리하므로 이 경로는 실사용되지 않는다.
+//   - OfflineTimeout < 0 (sentinel: 미설정): OfflineThreshold × PollInterval 파생.
+//     PollInterval<=0 이면 30s, OfflineThreshold<=0 이면 3 으로 방어 대체 (기본 3×30s=90s).
+func (a *Hvacr01Agent) staleOfflineThreshold() time.Duration {
+	ot := a.hvacr01Config.OfflineTimeout
+	switch {
+	case ot > 0:
+		return ot
+	case ot == 0:
+		return 0
+	default:
+		poll := a.hvacr01Config.PollInterval
+		if poll <= 0 {
+			poll = 30 * time.Second
+		}
+		n := a.hvacr01Config.OfflineThreshold
+		if n <= 0 {
+			n = 3
+		}
+		return time.Duration(n) * poll
+	}
+}
+
+// checkStaleDevices 는 pollLoop ticker 마다 호출되어, LastSeen 이 staleOfflineThreshold
+// 를 초과해 갱신되지 않은 online 디바이스를 오프라인으로 전환한다.
+//
+// Samsung 폴링은 비동기(요청/응답 미매칭)이므로, 이 LastSeen 경과 검사가 실내기 정전/
+// 응답없음을 감지하는 유일한 경로이다. status_query_enabled=false(passive sniff) 모드에서도
+// 동작한다 — pollLoop 가 이 함수를 능동 쿼리 송신 skip(continue) 이전에 호출하기 때문이다.
+//
+// never-seen 규칙: LastSeen 이 zero 인 디바이스는 stale 판정하지 않는다. online 디바이스는
+// handleMessage 가 LastSeen 을 반드시 갱신했으므로 online && zero 조합은 발생하지 않지만
+// 방어적으로 skip 한다. 최초 통신 전 디바이스는 이미 Online=false(startup probe 또는 초기
+// 상태)이므로 아래 online 게이트에서 걸러진다.
+//
+// ErrorCount 는 건드리지 않는다: ErrorCount 는 send/build 연속 실패용 threshold 카운터로,
+// LastSeen 경과와는 독립된 감지 축이다. 두 메커니즘을 뒤섞지 않도록 stale 경로에서 리셋하지
+// 않으며, 복구는 handleMessage 가 ErrorCount=0 으로 초기화하므로 영향받지 않는다.
+func (a *Hvacr01Agent) checkStaleDevices() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// offline_timeout == 0 (명시적) → staleness 감지 비활성 (3-way 규칙).
+	// transport-disconnect bulk offline(setAllDevicesOffline)은 이와 무관하게 동작한다.
+	if a.hvacr01Config.OfflineTimeout == 0 {
+		return
+	}
+
+	// Stop 이후에는 방출 금지 (emitConnectionReports 선례, N10).
+	select {
+	case <-a.stopCh:
+		return
+	default:
+	}
+
+	threshold := a.staleOfflineThreshold()
+	now := time.Now()
+	for addr, dev := range a.devices {
+		if !dev.Online {
+			continue
+		}
+		if dev.LastSeen.IsZero() {
+			continue
+		}
+		if now.Sub(dev.LastSeen) > threshold {
+			a.markOfflineLocked(addr, dev, "stale")
+		}
+	}
+}
+
+// probeSilentDevices 는 마지막 수신 후 PollInterval 이상 조용한 online 디바이스에
+// 상태 쿼리(확인 probe)를 보내 응답을 유도한다.
+//
+// 설계(사용자): "상태 확인"과 "offline 판정"은 별개 축이다. passive 모드
+// (status_query_enabled=false)는 블랭킷 폴을 하지 않으므로, 디바이스가 자체
+// 브로드캐스트 주기(> offline 임계값)로만 통신하면 정상 online 인데도 주기적으로
+// offline 오탐되어 online/offline 플래핑이 발생한다. 이를 막기 위해 침묵한 online
+// 디바이스에 targeted 쿼리를 보내 응답을 유도한다:
+//   - online 이면 응답 → handleMessage 가 LastSeen 갱신 → online 유지
+//   - 실제 offline 이면 무응답 → checkStaleDevices 가 90초(임계값)에 offline
+//
+// PollInterval 간격(pollLoop tick)마다 재-probe 되어 "설정 간격으로 재요청"을 구현한다.
+// offline 감지가 비활성(offline_timeout==0)이면 probe 도 불필요하므로 skip 한다.
+// 주의(nextSeqNum 은 a.mu.Lock): 락을 잡지 않은 상태에서 호출한다.
+func (a *Hvacr01Agent) probeSilentDevices() {
+	if a.hvacr01Config.OfflineTimeout == 0 || !a.transport.Available() {
+		return
+	}
+
+	a.mu.RLock()
+	probeAfter := a.hvacr01Config.PollInterval
+	if probeAfter <= 0 {
+		probeAfter = 30 * time.Second
+	}
+	now := time.Now()
+	var toProbe []NasaAddress
+	for addr, dev := range a.devices {
+		if !dev.Online || dev.LastSeen.IsZero() {
+			continue
+		}
+		if now.Sub(dev.LastSeen) >= probeAfter {
+			toProbe = append(toProbe, addr)
+		}
+	}
+	a.mu.RUnlock()
+
+	for _, addr := range toProbe {
+		seq := a.nextSeqNum()
+		frame, err := a.protocol.BuildStatusQuery(addr, seq)
+		if err != nil {
+			continue
+		}
+		if err := a.sendFrame(addr.String(), frame); err != nil {
+			continue
+		}
+		a.stats.IncrExternalMessagesSent()
+		a.logger.Debug("samsung_hvacr01: 침묵 디바이스 확인 probe 전송", "addr", addr.String(), "seq", seq)
+	}
+}
+
+// setAllDevicesOffline 은 모든 online 디바이스를 즉시 오프라인으로 전환한다.
+// 트랜스포트 연결이 끊어졌을 때(reconnectLoop 진입 시) 호출된다 — LGAP setAllDevicesOffline
+// 대칭. device 당 개별 change 를 방출하며(배칭 금지), 두 번째 initial 을 방출하지 않고(N9),
+// initial 미방출 device 는 순서 보장(E9)을 위해 skip 한다(markOfflineLocked 게이트).
+//
+// 의도된 LGAP 비대칭(사용자 승인): Samsung 은 markOfflineLocked 를 재사용하므로 device 당
+// legacy device_offline 이벤트도 함께 방출한다. LGAP 의 inline setAllDevicesOffline 은
+// device_offline 을 방출하지 않는다. 이 차이는 additive/더 정확한 것으로 수용되었으며,
+// 단일 offline 전이 helper 공유(drift 방지)를 위한 의도적 선택이다. LGAP 은 수정하지 않는다.
+func (a *Hvacr01Agent) setAllDevicesOffline() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Stop 이후에는 방출 금지 (N10).
+	select {
+	case <-a.stopCh:
+		return
+	default:
+	}
+
+	var offlined int
+	for addr, dev := range a.devices {
+		if dev.Online {
+			offlined++
+			a.markOfflineLocked(addr, dev, "transport_disconnected")
+		}
+	}
+	if offlined > 0 {
+		a.logger.Info("samsung_hvacr01: 통신 끊김, 디바이스 오프라인 전환", "count", offlined)
 	}
 }
 
@@ -1420,6 +1682,11 @@ func (a *Hvacr01Agent) reconnectLoop() {
 		a.reconnectAttempts = 0
 		a.reconnectMu.Unlock()
 	}()
+
+	// 통신 끊김 → 모든 디바이스 즉시 오프라인 전환 (LGAP reconnectLoop 대칭).
+	// receiveLoop 가 Available()==false 를 감지해 reconnectLoop 를 기동하는 유일한
+	// disconnect 경로이므로, isReconnecting 게이트 직후 이 지점이 정확한 hook 이다.
+	a.setAllDevicesOffline()
 
 	// 재연결 시작 이벤트
 	a.sendEvent("transport_reconnecting", map[string]any{
@@ -1538,11 +1805,20 @@ func (a *Hvacr01Agent) pollLoop() {
 				continue
 			}
 
+			// LastSeen 경과 기반 stale offline 검사. StatusQueryEnabled 여부와 무관하게
+			// 매 tick 실행되어야 하므로 아래 passive-mode continue 이전에 호출한다.
+			// Samsung 비동기 폴링에서 실내기 정전/응답없음을 감지하는 유일한 경로.
+			a.checkStaleDevices()
+
 			// v0.6.1: status_query_enabled=false 면 능동적 상태 쿼리 송신 skip
 			// (passive sniff only). ticker 는 계속 동작하나 query 만 안 보냄 —
 			// 다른 ticker 기반 housekeeping 작업이 향후 추가될 여지를 남긴다.
 			if !a.hvacr01Config.StatusQueryEnabled {
-				a.logger.Debug("samsung_hvacr01: 폴링 skip (status_query_enabled=false)", "devices", len(addrs))
+				// passive: 능동적 블랭킷 폴은 skip 하되, 침묵한 online 디바이스에 한해
+				// 연결 확인 probe 를 전송한다(설계: "상태 확인"은 offline 판정과 별개 축).
+				// 자체 브로드캐스트 주기가 offline 임계값보다 긴 디바이스의 플래핑 방지.
+				a.probeSilentDevices()
+				a.logger.Debug("samsung_hvacr01: 블랭킷 폴 skip (passive), 침묵 디바이스 probe 수행", "devices", len(addrs))
 				continue
 			}
 
@@ -1555,7 +1831,7 @@ func (a *Hvacr01Agent) pollLoop() {
 					a.incrementErrorCount(addr)
 					continue
 				}
-				if err := a.transport.Send(frame); err != nil {
+				if err := a.sendFrame(addr.String(), frame); err != nil {
 					a.logger.Warn("samsung_hvacr01: send status query failed", "addr", addr.String(), "error", err)
 					a.incrementErrorCount(addr)
 					continue
@@ -1565,6 +1841,27 @@ func (a *Hvacr01Agent) pollLoop() {
 			}
 		}
 	}
+}
+
+// sendFrame 은 프레임을 트랜스포트로 전송한다. log_messages 옵션이 켜져 있으면
+// 송신(TX) 프레임을 hex 로 INFO 로그한다(디바이스 송/수신 진단용). 반환 error 는
+// 호출측이 기존과 동일하게 처리한다.
+func (a *Hvacr01Agent) sendFrame(addr string, frame []byte) error {
+	if a.hvacr01Config.LogMessages {
+		a.logger.Info("samsung_hvacr01: TX", "addr", addr, "len", len(frame), "hex", hex.EncodeToString(frame))
+	}
+	return a.transport.Send(frame)
+}
+
+// isReadTimeout 은 err 가 읽기 데드라인 초과(i/o timeout, 즉 "수신 메시지 없음")
+// 인지 판별한다. TCP read deadline 만료는 net.Error.Timeout()==true 이거나
+// os.ErrDeadlineExceeded 로 나타난다. 정상 상황이므로 로그에서 제외하는 데 쓴다.
+func isReadTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	return (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 // receiveLoop 는 트랜스포트에서 데이터를 수신하고 디바이스 상태를 업데이트한다.
@@ -1610,7 +1907,12 @@ func (a *Hvacr01Agent) receiveLoop() {
 				return
 			}
 
-			// 타임아웃 등 일시적 에러 — 계속 수신
+			// 읽기 데드라인 초과(i/o timeout)는 "수신 메시지 없음" 의 정상 상황이므로
+			// 로그하지 않는다(주기적 timeout 이 로그를 도배하는 문제). 연결은 살아 있고
+			// 다음 read 를 계속 시도한다. 그 외 일시적 에러만 Debug 로 남긴다.
+			if isReadTimeout(err) {
+				continue
+			}
 			a.logger.Debug("samsung_hvacr01: receive error (transient)", "error", err)
 			continue
 		}
@@ -1627,6 +1929,10 @@ func (a *Hvacr01Agent) receiveLoop() {
 			frame, ok := scanner.Next()
 			if !ok {
 				break
+			}
+
+			if a.hvacr01Config.LogMessages {
+				a.logger.Info("samsung_hvacr01: RX", "len", len(frame), "hex", hex.EncodeToString(frame))
 			}
 
 			// a.logger.Debug("samsung_hvacr01: 프레임 추출 완료",
@@ -1696,8 +2002,8 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 			a.devices[srcAddr] = dev
 			evtData := map[string]any{
 				"address":     srcAddr.String(),
-				"unit_id":     dev.UnitID,
-				"device_id":   agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID),
+				"unit_id":     srcAddr.String(),
+				"device_id":   agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String()),
 				"device_type": devType,
 			}
 			if dev.State != nil {
@@ -1729,14 +2035,25 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 	if wasOffline {
 		onlineData := map[string]any{
 			"address":   srcAddr.String(),
-			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID),
+			"unit_id":   srcAddr.String(),
+			"device_id": agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String()),
 		}
 		if dev.State != nil {
 			onlineData["state"] = dev.State.StateForJSON(false)
 		}
 		a.sendEventLocked("device_online", onlineData)
 		snapshotShouldPush = true
+	}
+
+	// SPEC-HVACR-CONNSTATE-001 E3: 첫 통신 도착 시 device당 1회 initial(online)을,
+	// 이후 offline→online 복구 시 change 를 방출한다. connInitialEmitted 게이트가
+	// per-device 순서 보장(E9)과 프로세스당 1회 initial(N9)을 동시에 만족시킨다.
+	// (RWMutex 비재진입: 이 경로는 a.mu 보유 중이므로 a.Name() 대신 agentName 사용.)
+	if !dev.connInitialEmitted {
+		dev.connInitialEmitted = true
+		a.emitConnectionLocked(srcAddr, dev, connTriggerInitial, time.Now().UnixMilli())
+	} else if wasOffline {
+		a.emitConnectionLocked(srcAddr, dev, connTriggerChange, time.Now().UnixMilli())
 	}
 
 	// 실내기 상태 업데이트
@@ -1775,14 +2092,10 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 			)
 		}
 
-		// 사용자 보고 "초기값 0/빈 string 노출" fix:
-		// 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed) 가 모두
-		// 적어도 한 번 관측되기 전에는 emit 보류한다. 첫 emit 부터 완전한 상태 노출.
-		// observedCore bitmask 가 UpdateFromMessageSets 에서 각 핵심 필드 처리 시
-		// 누적 set 되며, AllCoreObserved() 가 모든 5 bit set 여부를 반환.
-		if !dev.State.AllCoreObserved() {
-			return
-		}
+		// 상태 변화 발생 시 현재 상태를 그대로 노드로 전송한다.
+		// (이전에는 5 핵심 필드가 모두 관측될 때까지 emit 을 보류했으나, 핵심 필드를
+		// 보내지 않는 디바이스는 영영 전송되지 않는 문제가 있어 게이트를 제거함.
+		// 관측되지 않은 필드는 zero-value 로 노출된다.)
 
 		// 변경 감지
 		currentState := *dev.State
@@ -1803,8 +2116,8 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
 			a.sendEventLocked("device_state_changed", map[string]any{
 				"address":   srcAddr.String(),
-				"unit_id":   dev.UnitID,
-				"device_id": agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID),
+				"unit_id":   srcAddr.String(),
+				"device_id": agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String()),
 				"state":     (&currentState).StateForJSON(false),
 			})
 			snapshotShouldPush = true
@@ -2025,8 +2338,8 @@ func (a *Hvacr01Agent) State() map[string]any {
 		}
 		d := map[string]any{
 			"address":     addr.String(),
-			"unit_id":     dev.UnitID,
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+			"unit_id":     addr.String(),
+			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
 			"device_type": dev.Type,
 			"online":      dev.Online,
 		}

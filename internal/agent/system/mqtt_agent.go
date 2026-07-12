@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -128,12 +129,21 @@ func parseMQTTConfig(cfg agent.AgentConfig) MQTTConfig {
 // 구독(MessageReceiver, SubscriberAgent)과 발행(MessagePublisher)을 모두 지원한다.
 type MQTTAgent struct {
 	*lifecycle.BaseLifecycle
-	agentConfig      agent.AgentConfig
-	mqttConfig       MQTTConfig
-	client           mqtt.Client
-	recvCh           chan []byte
-	done             chan struct{}
-	doneOnce         sync.Once
+	agentConfig agent.AgentConfig
+	mqttConfig  MQTTConfig
+	client      mqtt.Client
+	recvCh      chan []byte
+	done        chan struct{}
+	doneOnce    sync.Once
+	// stopped 는 Stop() 이 호출되었음을 나타내는 가드 플래그이다.
+	// Paho 는 SetAutoReconnect(true)+SetConnectRetry(true) 로 백그라운드 재연결
+	// goroutine 을 유지하며, Disconnect() 만으로는 flapping 중에 이 재연결 루프가
+	// 확실히 취소되지 않아 Stop 이후에도 재연결에 성공할 수 있다. 재연결이 성공하면
+	// OnConnectHandler(subscribe)가 다시 토픽을 구독하여 세션이 부활한다.
+	// 이를 방지하기 위해 Stop() 에서 stopped=true 로 설정하고, subscribe()가
+	// stopped 상태이면 즉시 Disconnect 후 재구독 없이 반환하여 부활을 무력화한다.
+	// Init()/재시작 경로에서 stopped=false 로 리셋되어 정상 재시작이 가능하다.
+	stopped          atomic.Bool
 	stats            *agent.AgentStats
 	logger           *slog.Logger
 	mu               sync.RWMutex
@@ -153,6 +163,7 @@ var _ agent.SubscriberAgent = (*MQTTAgent)(nil)
 var _ agent.StatefulAgent = (*MQTTAgent)(nil)
 var _ agent.BufferInfoProvider = (*MQTTAgent)(nil)
 var _ agent.MessagePublisher = (*MQTTAgent)(nil)
+var _ agent.TransportChecker = (*MQTTAgent)(nil)
 
 // NewMQTTAgent 는 MQTTAgent 팩토리 함수이다.
 func NewMQTTAgent(config agent.AgentConfig) (agent.Agent, error) {
@@ -196,13 +207,34 @@ func (a *MQTTAgent) Init(config agent.AgentConfig) error {
 		return fmt.Errorf("mqtt init: %w", err)
 	}
 
-	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
-		return fmt.Errorf("mqtt init: %w", err)
-	}
+	// 재시작 경로(Start: Stopped→Created→Init)에서 stopped 가드를 해제하여
+	// 정상적으로 재연결/재구독이 가능하게 한다. 비활성화 경로에서도 항상 리셋하여
+	// 이후 enable→Start 재-Init 시 stopped 가드가 남아 연결을 막지 않게 한다.
+	a.stopped.Store(false)
 
+	// agentConfig 를 먼저 저장한다. 비활성화 게이트에서 조기 반환하더라도, 이후
+	// enable→Start 경로가 a.agentConfig 를 읽어 Init 을 재호출할 수 있어야 하기 때문이다.
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
+
+	// 비활성화 게이트 (SPEC-AGENT-005): 데몬 부팅 시 restoreAgents 는 List API 노출을
+	// 위해 disabled 에이전트도 Create(=Init) 한다. 이때 브로커에 연결하면 안 되므로,
+	// Connect() 와 StateRunning 전이를 건너뛴다. lifecycle 은 Initializing→Stopped 가
+	// invalid 하므로(Created→Initializing 만 허용) 전이 없이 StateCreated 에 머문다.
+	// 결과: Running 아님, 미연결(client 미생성이므로 TransportConnected()==false),
+	// 등록됨(List API 노출 가능). 이후 enable→Start 가 Init 을 재호출해 연결한다.
+	if !config.IsEnabled() {
+		a.logger.Info("mqtt: 비활성화 상태로 생성됨 — 연결 건너뜀",
+			"broker", a.mqttConfig.Broker,
+			"client_id", a.mqttConfig.ClientID,
+		)
+		return nil
+	}
+
+	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return fmt.Errorf("mqtt init: %w", err)
+	}
 
 	// MQTT 클라이언트 옵션 구성
 	opts := mqtt.NewClientOptions().
@@ -286,6 +318,16 @@ func (a *MQTTAgent) Init(config agent.AgentConfig) error {
 // 초기 연결 시에는 설정 토픽으로 subscribedTopics를 초기화하고,
 // 재연결 시에는 subscribedTopics의 모든 토픽(Bridge가 추가한 토픽 포함)을 복원한다.
 func (a *MQTTAgent) subscribe(c mqtt.Client) {
+	// stopped-guard: Stop() 이후 Paho 의 connect-retry/auto-reconnect goroutine 이
+	// 살아남아 재연결에 성공하면 OnConnectHandler(=subscribe)가 다시 호출된다. 이때
+	// 재구독하면 세션이 부활하므로, stopped 상태이면 즉시 연결을 끊고 재구독 없이 반환한다.
+	// (Disconnect 만으로는 flapping 중 재연결 루프가 확실히 취소되지 않는 Paho 특성 대응.)
+	if a.stopped.Load() {
+		a.logger.Info("mqtt: Stop 이후 재연결 감지 — 재구독 없이 즉시 종료(세션 부활 방지)")
+		c.Disconnect(0)
+		return
+	}
+
 	a.topicsMu.Lock()
 	if len(a.subscribedTopics) == 0 && len(a.mqttConfig.Topics) > 0 {
 		// 초기 연결: 설정 토픽으로 초기화
@@ -424,6 +466,15 @@ func (a *MQTTAgent) Start(_ context.Context) error {
 	switch a.CurrentState() {
 	case lifecycle.StateRunning:
 		return nil
+	case lifecycle.StateCreated:
+		// 비활성화 상태로 생성된 에이전트(Init 비활성화 게이트가 StateCreated 에 남김)를
+		// 시작하는 경로이다. 이미 Created 이므로 리셋 없이 Init() 을 재호출한다.
+		// enable 이후라면 agentConfig.IsEnabled()==true 이므로 Init 이 연결하며,
+		// 여전히 비활성화라면 게이트가 다시 조기 반환하여 연결하지 않는다(no-op).
+		a.mu.RLock()
+		cfg := a.agentConfig
+		a.mu.RUnlock()
+		return a.Init(cfg)
 	case lifecycle.StateStopped:
 		// Stopped → Created → Init() 재호출
 		if err := a.TransitionTo(lifecycle.StateCreated); err != nil {
@@ -439,18 +490,37 @@ func (a *MQTTAgent) Start(_ context.Context) error {
 }
 
 // Stop 은 MQTT 구독을 해제하고, 클라이언트 연결을 종료한다.
+// idempotent: 이미 Stopped 상태에서 재호출되어도 에러 없이 항상 Disconnect 하여
+// 연결 끊김을 보장한다 (manager 가 desync 감지 시 강제 disconnect 목적으로 재호출).
 func (a *MQTTAgent) Stop(_ context.Context) error {
-	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
-		return fmt.Errorf("mqtt stop: %w", err)
+	// stopped 가드를 먼저 설정한다. Stop 이후 Paho 가 재연결에 성공해 OnConnectHandler
+	// (subscribe)가 호출되더라도, 가드가 즉시 Disconnect 하고 재구독하지 않아 세션 부활을 막는다.
+	a.stopped.Store(true)
+
+	// 이미 Stopped 상태이면 lifecycle 전이(Stopped→Stopping 은 invalid)를 건너뛴다.
+	// 그래도 아래에서 Disconnect 는 항상 호출하여 연결 끊김을 보장한다.
+	transition := a.CurrentState() != lifecycle.StateStopped
+	if transition {
+		if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
+			return fmt.Errorf("mqtt stop: %w", err)
+		}
 	}
 
-	// 1. 토픽 구독 해제
-	if a.client != nil && a.client.IsConnected() {
-		for _, topic := range a.mqttConfig.Topics {
-			token := a.client.Unsubscribe(topic)
-			token.Wait()
+	// 1. 토픽 구독 해제 및 연결 종료
+	if a.client != nil {
+		// 구독 해제는 연결된 상태에서만 가능하다 (미연결 시 브로커로 UNSUBSCRIBE 전송 불가).
+		if a.client.IsConnected() {
+			for _, topic := range a.mqttConfig.Topics {
+				token := a.client.Unsubscribe(topic)
+				token.Wait()
+			}
 		}
-		// 250ms 대기 후 연결 종료
+		// Disconnect 는 IsConnected() 여부와 무관하게 항상 호출한다.
+		// Paho 는 SetAutoReconnect(true)+SetConnectRetry(true) 로 백그라운드 재연결
+		// goroutine 을 유지하는데, 이 재연결 machinery 를 취소하는 유일한 방법이 Disconnect() 이다.
+		// flapping(현재 연결 끊김) 중에 Stop 이 호출되면 IsConnected()==false 이므로 예전에는
+		// Disconnect 를 건너뛰어 auto-reconnect 가 살아남아 계속 재연결했다. 이를 방지하기 위해
+		// 연결 상태와 무관하게 Disconnect 를 호출한다.
 		a.client.Disconnect(250)
 	}
 
@@ -463,8 +533,11 @@ func (a *MQTTAgent) Stop(_ context.Context) error {
 		case <-a.recvCh:
 			// 드레인
 		default:
-			if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
-				return fmt.Errorf("mqtt stop: %w", err)
+			// idempotent: 이미 Stopped 이면 전이를 건너뛴다(Stopped→Stopped 는 invalid).
+			if transition {
+				if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
+					return fmt.Errorf("mqtt stop: %w", err)
+				}
 			}
 			return nil
 		}
@@ -479,6 +552,17 @@ func (a *MQTTAgent) Pause(_ context.Context) error {
 // Resume 은 Paused -> Running 전이한다.
 func (a *MQTTAgent) Resume(_ context.Context) error {
 	return a.TransitionTo(lifecycle.StateRunning)
+}
+
+// TransportConnected 는 실제 Paho 클라이언트의 연결 여부를 반환한다.
+// agent.TransportChecker 인터페이스 구현. 이를 통해 API 의 connected 필드가
+// 라이프사이클 상태가 아닌 실제 브로커 연결 상태를 반영하고, manager 가
+// State/트랜스포트 desync 를 감지할 수 있다.
+func (a *MQTTAgent) TransportConnected() bool {
+	a.mu.RLock()
+	client := a.client
+	a.mu.RUnlock()
+	return client != nil && client.IsConnected()
 }
 
 // Health 는 에이전트의 건강 상태를 반환한다.

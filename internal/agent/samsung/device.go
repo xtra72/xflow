@@ -23,6 +23,13 @@ type NasaDevice struct {
 	State      *NasaDeviceState // 현재 상태 (실내기 전용)
 	ErrorCount int
 	Source     string // "config", "bridge", "auto", "discovery"
+
+	// connInitialEmitted 는 device_connection.initial 이 이 device 에 대해 이미
+	// 방출되었는지를 나타낸다 (SPEC-HVACR-CONNSTATE-001 §4.6.5/§4.6.6).
+	// 프로세스 수명당 device 별 1회 initial 을 보장(N9)하고, per-device 순서 보장
+	// (initial 이 첫 change/report 보다 먼저, E9/S5)의 게이트로 사용된다.
+	// a.mu 하에서만 접근한다.
+	connInitialEmitted bool
 }
 
 // HexKeyByteMap 는 uint16 키를 16진수 문자열("0x0402")로 직렬화하는 바이트맵이다.
@@ -74,65 +81,83 @@ type NasaDeviceState struct {
 	ErrorCode      uint16        `json:"error_code"`
 	RawMessageSets HexKeyByteMap `json:"raw_message_sets"` // 수신된 모든 메시지 세트
 
-	// observedCore 는 5 핵심 필드의 관측 여부를 나타내는 bitmask 이다 (json 미직렬화).
+	// observedCore 는 각 상태 필드의 관측 여부를 나타내는 bitmask 이다 (json 미직렬화).
 	//
-	// 사용자 보고 "초기값 0, 빈 string 이 emit 되는 결함" 의 fix —
-	// 5 핵심 필드 모두 observed (== observedAllCore) 되기 전에는 emit 보류한다.
-	// UpdateFromMessageSets 가 각 메시지 셋 처리 시 해당 bit 를 set 한다.
+	// 관측 기반 emit: 디바이스 메시지 셋으로 한 번이라도 관측된 필드만 노드로
+	// 전송한다("확인된 값만 전송"). 관측되지 않은 필드는 zero-value("" / 0)로 채워
+	// 보내지 않고 payload 에서 생략한다. UpdateFromMessageSets 가 각 메시지 셋 처리
+	// 시 해당 bit 를 set 하고, StateForJSON 이 set 된 필드만 출력한다.
 	observedCore uint8 `json:"-"`
 }
 
-// 5 핵심 필드의 observedCore bitmask. AllCoreObserved 는 모두 set 된 값이다.
+// 상태 필드별 observedCore bitmask. AllCoreObserved 는 5 핵심 필드가 모두 set 된 값이다.
 const (
 	observedPower       uint8 = 1 << 0 // 0x01
 	observedMode        uint8 = 1 << 1 // 0x02
 	observedTargetTemp  uint8 = 1 << 2 // 0x04
 	observedCurrentTemp uint8 = 1 << 3 // 0x08
 	observedFanSpeed    uint8 = 1 << 4 // 0x10
+	observedSwing       uint8 = 1 << 5 // 0x20
+	observedFilter      uint8 = 1 << 6 // 0x40
+	observedError       uint8 = 1 << 7 // 0x80
 	observedAllCore     uint8 = observedPower | observedMode | observedTargetTemp |
 		observedCurrentTemp | observedFanSpeed
 )
 
 // AllCoreObserved 는 5 핵심 필드 (power/mode/target_temp/current_temp/fan_speed)
-// 가 모두 적어도 한 번 관측되었는지 반환한다. emit gate 에 사용 (v0.x — NASA dedup fix).
+// 가 모두 적어도 한 번 관측되었는지 반환한다.
 func (s *NasaDeviceState) AllCoreObserved() bool {
-	return s.observedCore == observedAllCore
+	return s.observedCore&observedAllCore == observedAllCore
 }
 
-// stateOutput 은 노드로 송신되는 JSON 직렬화용 상태 구조체이다 (v0.7.5).
-// Mode / FanSpeed 는 hvac 패키지의 통일 ID (int) 로 변환되어 출력된다.
-// 키는 NasaDeviceState 와 동일하게 snake_case.
-type stateOutput struct {
-	Power          bool          `json:"power"`
-	Mode           int           `json:"mode"` // v0.7.5: 통일 ID (off/auto=0, cool=1, heat=2, dry=3, fan=4)
-	TargetTemp     float32       `json:"target_temperature"`
-	CurrentTemp    float32       `json:"current_temperature"`
-	FanSpeed       int           `json:"fan_speed"` // v0.7.5: 통일 ID (off=0, auto=1, quiet=2, low=3, medium=4, high=5, turbo=6)
-	SwingVertical  bool          `json:"swing_vertical"`
-	FilterAlarm    bool          `json:"filter_alarm"`
-	ErrorCode      uint16        `json:"error_code"`
-	RawMessageSets HexKeyByteMap `json:"raw_message_sets,omitempty"`
+// observed 는 지정한 필드 bit 가 관측되었는지 반환한다.
+func (s *NasaDeviceState) observed(bit uint8) bool {
+	return s.observedCore&bit != 0
 }
 
-// StateForJSON 은 includeRaw 여부에 따라 JSON 직렬화용 상태를 반환한다 (v0.7.5).
-// Mode / FanSpeed 는 hvac 통일 ID 로 변환. Power=false 면 mode=0, fan_speed=0.
+// StateForJSON 은 관측된 상태 필드만 담은 JSON 직렬화용 map 을 반환한다.
+//
+// 관측 기반 emit("확인된 값만 전송"): 디바이스 메시지 셋으로 한 번이라도 관측된
+// 필드만 포함한다. 관측되지 않은 필드는 zero-value("" / 0)로 채워 보내지 않고
+// payload 에서 아예 생략한다(예: power off 로 mode/온도/풍량을 보고하지 않는
+// 디바이스는 power 만 emit). Mode / FanSpeed 는 hvac 통일 ID(int)로 변환하며,
+// Power=false 면 mode=off/auto(0), fan_speed=off(0) 로 정규화한다.
 func (s *NasaDeviceState) StateForJSON(includeRaw bool) any {
-	out := &stateOutput{
-		Power:         s.Power,
-		Mode:          hvac.ModeFromName(s.Mode),
-		TargetTemp:    s.TargetTemp,
-		CurrentTemp:   s.CurrentTemp,
-		FanSpeed:      hvac.FanSpeedFromName(s.FanSpeed),
-		SwingVertical: s.SwingVertical,
-		FilterAlarm:   s.FilterAlarm,
-		ErrorCode:     s.ErrorCode,
+	out := make(map[string]any, 8)
+	if s.observed(observedPower) {
+		out["power"] = s.Power
 	}
-	if !s.Power {
-		out.Mode = hvac.ModeOffOrAuto
-		out.FanSpeed = hvac.FanOff
+	if s.observed(observedMode) {
+		mode := hvac.ModeFromName(s.Mode)
+		if !s.Power {
+			mode = hvac.ModeOffOrAuto
+		}
+		out["mode"] = mode
 	}
-	if includeRaw {
-		out.RawMessageSets = s.RawMessageSets
+	if s.observed(observedTargetTemp) {
+		out["target_temperature"] = s.TargetTemp
+	}
+	if s.observed(observedCurrentTemp) {
+		out["current_temperature"] = s.CurrentTemp
+	}
+	if s.observed(observedFanSpeed) {
+		fan := hvac.FanSpeedFromName(s.FanSpeed)
+		if !s.Power {
+			fan = hvac.FanOff
+		}
+		out["fan_speed"] = fan
+	}
+	if s.observed(observedSwing) {
+		out["swing_vertical"] = s.SwingVertical
+	}
+	if s.observed(observedFilter) {
+		out["filter_alarm"] = s.FilterAlarm
+	}
+	if s.observed(observedError) {
+		out["error_code"] = s.ErrorCode
+	}
+	if includeRaw && len(s.RawMessageSets) > 0 {
+		out["raw_message_sets"] = s.RawMessageSets
 	}
 	return out
 }
@@ -259,11 +284,14 @@ func (s *NasaDeviceState) UpdateFromMessageSets(sets []NasaMessageSet) {
 			}
 		case MsgSwingVertical:
 			s.SwingVertical = ms.Value[0] != 0
+			s.observedCore |= observedSwing
 		case MsgFilterCleanAlarm:
 			s.FilterAlarm = ms.Value[0] != 0
+			s.observedCore |= observedFilter
 		case MsgErrorCode:
 			if len(ms.Value) >= 2 {
 				s.ErrorCode = binary.BigEndian.Uint16(ms.Value[:2])
+				s.observedCore |= observedError
 			}
 		}
 	}

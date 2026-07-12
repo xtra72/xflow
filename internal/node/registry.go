@@ -94,6 +94,8 @@ func (r *Registry) registerBuiltins() {
 		{"samsung-hvacr01", NewSamsungHvacr01Node, "io", "Samsung HVACR-01 (NASA) 상태 조회 + 제어 통합"},
 		{"mqtt-subscriber", NewMQTTSubNode, "io", "MQTT 토픽 구독 및 메시지 수신"},
 		{"mqtt-publisher", NewMQTTPublisherNode, "io", "MQTT 토픽으로 메시지 발행"},
+		{"thingplus-uplink", NewThingplusUplinkNode, "io", "Thingplus 게이트웨이 업링크: 텔레메트리/속성 발행"},
+		{"thingplus-downlink", NewThingplusDownlinkNode, "io", "Thingplus 게이트웨이 다운링크: RPC/공유속성 수신"},
 		{"modbus-poller", NewModbusPollerNode, "io", "MODBUS 레지스터를 주기적으로 폴링 읽기"},
 		{"modbus-writer", NewModbusWriterNode, "io", "MODBUS 레지스터 쓰기 전용"},
 		{"lgap-status", NewLGAPStatusNode, "io", "LG LGAP 디바이스 상태 조회"},

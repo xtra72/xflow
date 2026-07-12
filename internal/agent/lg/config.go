@@ -27,11 +27,24 @@ type LGAPConfig struct {
 	NotifyInterval time.Duration // report_interval 의 backing field — 주기적 상태보고 간격
 	ReportMode     string        // "relative" (default) 또는 "absolute"
 	IncludeRawHex  bool          // raw_hex 출력 옵션 (기본 false)
+	LogMessages    bool          // 디바이스와의 송/수신(TX/RX) 프레임 hex 를 INFO 로그 (기본 false, opt-in 진단용). false 면 기존 Debug 레벨 유지.
 
 	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
 	// 온도(RoomTemp)만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
 	// 기본 1.0℃. 0 이하면 게이트 비활성.
 	EventTempThreshold float64
+
+	// ConnectionReportInterval 은 device_connection.report 주기 방출 간격이다
+	// (SPEC-HVACR-CONNSTATE-001 §4.2). 옵션 키: connection_report_interval.
+	// 기본 60s. 0 이면 주기 연결 리포트 비활성(단 initial/change 이벤트는 항상 방출).
+	// report_interval(동작 상태) 과 완전히 독립적이다.
+	ConnectionReportInterval time.Duration
+
+	// StartupProbeTimeout 은 startup probe(첫 poll 라운드 await)의 bounded timeout 이다
+	// (SPEC-HVACR-CONNSTATE-001 §4.2, §4.6). 옵션 키: startup_probe_timeout.
+	// 명시값은 캡 없이 그대로 존중하고, 미설정이면 poll_interval 에서 파생한다:
+	// min(2×poll_interval, 30s), poll_interval 이 0 이면 fallback 10s.
+	StartupProbeTimeout time.Duration
 }
 
 // parseLGAPConfig 는 Transport.Options 맵에서 LGAPConfig 를 파싱한다.
@@ -174,6 +187,13 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		}
 	}
 
+	// log_messages — 송/수신(TX/RX) 프레임 hex 를 INFO 로 출력 (기본 false, opt-in 진단용).
+	if v, ok := opts["log_messages"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogMessages = b
+		}
+	}
+
 	// event_temp_threshold (v0.6.6) — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
@@ -183,7 +203,57 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		cfg.EventTempThreshold = f
 	}
 
+	// connection_report_interval (SPEC-HVACR-CONNSTATE-001 §4.2) — device_connection.report
+	// 주기 간격. 기본 60s. report_interval 과 독립. 잘못된 legacy alias 는 hard error
+	// (notify_interval → report_interval 선례를 따른다, N4/AC-18).
+	cfg.ConnectionReportInterval = 60 * time.Second
+	if _, ok := opts["connection_notify_interval"]; ok {
+		return LGAPConfig{}, fmt.Errorf("lgap: deprecated option 'connection_notify_interval' is not supported; use 'connection_report_interval' instead")
+	}
+	if v, ok := opts["connection_report_interval"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return LGAPConfig{}, fmt.Errorf("lgap: connection_report_interval must be a duration string")
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return LGAPConfig{}, fmt.Errorf("lgap: invalid connection_report_interval: %w", err)
+		}
+		cfg.ConnectionReportInterval = d
+	}
+
+	// startup_probe_timeout (SPEC-HVACR-CONNSTATE-001 §4.2, OQ-A) — startup probe 의
+	// bounded timeout. 명시값은 캡 없이 존중, 미설정이면 poll_interval 에서 파생한다.
+	if v, ok := opts["startup_probe_timeout"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return LGAPConfig{}, fmt.Errorf("lgap: startup_probe_timeout must be a duration string")
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return LGAPConfig{}, fmt.Errorf("lgap: invalid startup_probe_timeout: %w", err)
+		}
+		// 명시 override — 30s 캡 미적용(운영자 의도 존중).
+		cfg.StartupProbeTimeout = d
+	} else {
+		cfg.StartupProbeTimeout = deriveStartupProbeTimeout(cfg.PollInterval)
+	}
+
 	return cfg, nil
+}
+
+// deriveStartupProbeTimeout 은 startup_probe_timeout 미설정 시 파생 기본값을 계산한다
+// (SPEC-HVACR-CONNSTATE-001 §4.2, OQ-A). poll_interval 이 0/미설정이면 절대 fallback
+// 10s 를, 아니면 min(2×poll_interval, 30s) 를 반환한다.
+func deriveStartupProbeTimeout(pollInterval time.Duration) time.Duration {
+	if pollInterval <= 0 {
+		return 10 * time.Second
+	}
+	d := 2 * pollInterval
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
 }
 
 // toFloat64 는 수치 후보를 float64 로 변환한다 (v0.6.6, lg 패키지 공통 헬퍼).

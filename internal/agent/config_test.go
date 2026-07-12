@@ -9,6 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseDevices_Source 는 devices 항목의 "source" 키가 DeviceEntry.Source 로
+// 파싱되고, 없으면 빈 문자열(로더가 "config" 로 간주)로 남는지 검증한다.
+func TestParseDevices_Source(t *testing.T) {
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{"address": "200001", "name": "runtime", "source": "bridge"},
+			map[string]any{"address": "200002", "name": "declared"}, // source 미지정
+		},
+	}
+	got := ParseDevices(opts)
+	require.Len(t, got, 2)
+	assert.Equal(t, "bridge", got[0].Source, "source 키가 보존되어야 함")
+	assert.Equal(t, "", got[1].Source, "source 미지정은 빈 문자열(로더가 config 처리)")
+}
+
 func TestAgentConfig_Validate_Valid(t *testing.T) {
 	cfg := AgentConfig{
 		ID:                  "agent-1",

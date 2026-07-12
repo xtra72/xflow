@@ -13,6 +13,9 @@ func init() {
 	// MQTT 프로토콜 어댑터 등록
 	node.RegisterAdapter("mqtt-client", NewMQTTAdapter())
 
+	// Thingplus(ThingsBoard Gateway) 프로토콜 어댑터 등록
+	node.RegisterAdapter("thingplus-gateway", NewThingplusAdapter())
+
 	// HTTP 프로토콜 어댑터 등록
 	node.RegisterAdapter("http", NewHTTPAdapter())
 

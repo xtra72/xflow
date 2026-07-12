@@ -1436,6 +1436,8 @@
         "manualTooltip": "Manual registration (config/pinned)",
         "autoTooltip": "Auto registration (discovered/bridged)",
         "removeTooltip": "Remove device",
+        "removeConfirmTitle": "Remove device",
+        "removeConfirmMessage": "Remove device '{name}'? Saved user metadata such as the name and tags will also be deleted.",
         "zoneRangeError": "Zone address must be between 0 and 255 (0x00-0xFF)",
         "lgapAddSuccess": "LGAP device added",
         "addSuccess": "Device added",
@@ -1696,6 +1698,14 @@
       "bridge": "Bridge",
       "manualTitle": "Manual registration (config/pinned)",
       "autoTitle": "Auto registration (discovery/bridge)"
+    },
+    "list": {
+      "deleteTooltip": "Delete device",
+      "deleteTitle": "Delete device",
+      "deleteMessage": "Delete device '{name}'? Saved user metadata such as the name and tags will also be deleted.",
+      "deleteSuccess": "Device deleted",
+      "deleteError": "Failed to delete device: {message}",
+      "unknownError": "Unknown error"
     },
     "relativeTime": {
       "justNow": "just now",

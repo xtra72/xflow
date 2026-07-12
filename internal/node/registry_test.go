@@ -287,7 +287,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 61) // 49 canonical builtins (+enrich) + 12 deprecated HVAC `_` 별칭 (하위 호환)
+	assert.Len(t, metas, 63) // 51 canonical builtins (+enrich +thingplus-uplink/downlink) + 12 deprecated HVAC `_` 별칭 (하위 호환)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

@@ -168,6 +168,48 @@ func promoteDevIDWithUUID(msg message.Message, payload map[string]any, agentName
 		}
 	}
 	promoteDevIDToMetadata(msg, payload, opts)
+
+	// 전 계층 이름 통일 (SPEC-DEVICE-IDENTITY-001 name unification): device 그룹의
+	// id(UUID) 로 레지스트리 metadata 를 역참조해, 에이전트 payload 폴백(dev.Name→
+	// UnitID→address) 대신 사용자 지정 이름을 권위 소스로 덮어쓴다. lookup 미설정
+	// (테스트 등) 이면 no-op 이라 폴백 동작을 보존한다.
+	if _, deviceLookup := currentExprLookups(); deviceLookup != nil {
+		applyRegistryDeviceName(msg, deviceLookup, opts)
+	}
+}
+
+// applyRegistryDeviceName 은 device 그룹의 id(UUID) 로 device lookup 을 수행해 name 을
+// 권위 소스(레지스트리 metadata 의 사용자 지정 이름)로 오버라이드한다.
+//
+// 배경: 에이전트의 device_state.report 는 사용자 지정 이름을 모르고 폴백 체인
+// (dev.Name → dev.UnitID → address) 으로 metadata.name 을 채운다. 그 결과 UI 목록
+// (레지스트리 metadata 를 병합) 과 in-flow payload 의 이름이 어긋난다. 본 헬퍼는
+// device 그룹의 id 가 곧 UUID 라는 점을 이용해 동일한 레지스트리 metadata 를 참조,
+// 모든 egress 가 단일 이름을 쓰도록 통일한다.
+//
+// 정책:
+//   - opts.Device 가 OFF 이거나 lookup 이 nil 이면 no-op.
+//   - device 그룹에 id 가 없으면 no-op (UUID 미해석 디바이스).
+//   - lookup 이 non-empty Name 을 반환할 때만 덮어쓴다. 빈 이름이면 폴백 값을 보존.
+//   - type 은 건드리지 않는다 — lookup 의 type 은 device.DeviceType 상수("indoor" 등)
+//     이므로 payload 의 프로토콜 type("HVACR.IDU") 을 clobber 하지 않도록 name 만 통일.
+func applyRegistryDeviceName(msg message.Message, lookup DeviceInfoLookup, opts MetadataEmitOptions) {
+	if !opts.Device || lookup == nil {
+		return
+	}
+	group, ok := msg.Metadata().GetGroup("device")
+	if !ok || group == nil {
+		return
+	}
+	uuid := group["id"]
+	if uuid == "" {
+		return
+	}
+	meta, ok := lookup.LookupDevice(uuid)
+	if !ok || meta.Name == "" {
+		return
+	}
+	mergeDeviceGroup(msg, opts, "", "", meta.Name)
 }
 
 // applyPowerOffFilter 는 power=false 일 때 신뢰할 수 없는 상태 필드
