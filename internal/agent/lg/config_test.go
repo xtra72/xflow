@@ -1,11 +1,48 @@
 package lg
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
 )
+
+// TestParseLGAPConfig_LogMessages 는 log_messages 옵션 파싱(기본 false, 명시 true)을 검증한다.
+func TestParseLGAPConfig_LogMessages(t *testing.T) {
+	base := map[string]any{"serial_port": "/dev/ttyUSB0"}
+
+	cfg, err := parseLGAPConfig(base)
+	if err != nil {
+		t.Fatalf("parseLGAPConfig: %v", err)
+	}
+	if cfg.LogMessages {
+		t.Errorf("log_messages 기본값은 false 여야 함")
+	}
+
+	base["log_messages"] = true
+	cfg, err = parseLGAPConfig(base)
+	if err != nil {
+		t.Fatalf("parseLGAPConfig: %v", err)
+	}
+	if !cfg.LogMessages {
+		t.Errorf("log_messages=true 가 파싱되어야 함")
+	}
+}
+
+// TestLGAP_MsgLogLevel 은 log_messages 옵션에 따라 TX/RX 로그 레벨이 INFO/Debug 로
+// 결정되는지 검증한다.
+func TestLGAP_MsgLogLevel(t *testing.T) {
+	a := &LGAPAgent{}
+	a.lgapConfig.LogMessages = false
+	if a.msgLogLevel() != slog.LevelDebug {
+		t.Errorf("log_messages=false 면 Debug 레벨이어야 함: got %v", a.msgLogLevel())
+	}
+	a.lgapConfig.LogMessages = true
+	if a.msgLogLevel() != slog.LevelInfo {
+		t.Errorf("log_messages=true 면 Info 레벨이어야 함: got %v", a.msgLogLevel())
+	}
+}
 
 // TestParseLGAPConfig_FullValid verifies all fields are correctly parsed.
 func TestParseLGAPConfig_FullValid(t *testing.T) {

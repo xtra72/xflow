@@ -102,6 +102,31 @@ func TestParseHvacr01Config_FullValid(t *testing.T) {
 	}
 }
 
+// TestParseHvacr01Config_LogMessages 는 log_messages 옵션 파싱(기본 false, 명시 true)을 검증한다.
+func TestParseHvacr01Config_LogMessages(t *testing.T) {
+	base := map[string]any{
+		"transport_type": "serial",
+		"devices":        []any{map[string]any{"address": "200001"}},
+	}
+
+	cfg, err := parseHvacr01Config(base)
+	if err != nil {
+		t.Fatalf("parseHvacr01Config: %v", err)
+	}
+	if cfg.LogMessages {
+		t.Errorf("log_messages 기본값은 false 여야 함")
+	}
+
+	base["log_messages"] = true
+	cfg, err = parseHvacr01Config(base)
+	if err != nil {
+		t.Fatalf("parseHvacr01Config: %v", err)
+	}
+	if !cfg.LogMessages {
+		t.Errorf("log_messages=true 가 파싱되어야 함")
+	}
+}
+
 // TestParseHvacr01Config_MinimalValid 는 필수 필드만으로 기본값이 올바르게 적용되는지 검증한다.
 func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	opts := map[string]any{

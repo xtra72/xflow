@@ -27,6 +27,7 @@ type LGAPConfig struct {
 	NotifyInterval time.Duration // report_interval 의 backing field — 주기적 상태보고 간격
 	ReportMode     string        // "relative" (default) 또는 "absolute"
 	IncludeRawHex  bool          // raw_hex 출력 옵션 (기본 false)
+	LogMessages    bool          // 디바이스와의 송/수신(TX/RX) 프레임 hex 를 INFO 로그 (기본 false, opt-in 진단용). false 면 기존 Debug 레벨 유지.
 
 	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
 	// 온도(RoomTemp)만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
@@ -183,6 +184,13 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 	if v, ok := opts["include_raw_hex"]; ok {
 		if b, isBool := v.(bool); isBool {
 			cfg.IncludeRawHex = b
+		}
+	}
+
+	// log_messages — 송/수신(TX/RX) 프레임 hex 를 INFO 로 출력 (기본 false, opt-in 진단용).
+	if v, ok := opts["log_messages"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogMessages = b
 		}
 	}
 

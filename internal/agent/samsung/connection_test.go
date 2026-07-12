@@ -3,6 +3,9 @@ package samsung
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -427,6 +430,23 @@ func assertConnEnvelope(t *testing.T, m map[string]any, wantTrigger string) {
 	require.True(t, ok)
 	assert.Equal(t, "device_connection."+wantTrigger, md["message_type"])
 	assert.True(t, strings.HasPrefix(md["message_type"].(string), "device_connection."))
+}
+
+// timeoutErr 은 net.Error(Timeout()==true) 를 구현하는 테스트용 에러이다.
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// TestIsReadTimeout 은 읽기 데드라인 초과(수신 메시지 없음)만 timeout 으로 분류하고,
+// 그 외 에러는 로그 대상으로 남기는지 검증한다.
+func TestIsReadTimeout(t *testing.T) {
+	assert.True(t, isReadTimeout(timeoutErr{}), "net.Error Timeout()==true 는 read timeout")
+	assert.True(t, isReadTimeout(os.ErrDeadlineExceeded), "os.ErrDeadlineExceeded 는 read timeout")
+	assert.True(t, isReadTimeout(fmt.Errorf("wrap: %w", timeoutErr{})), "래핑된 timeout 도 감지")
+	assert.False(t, isReadTimeout(nil), "nil 은 timeout 아님")
+	assert.False(t, isReadTimeout(errors.New("connection reset")), "일반 에러는 timeout 아님(로그 대상)")
 }
 
 // TestProbeSilentDevices_PassiveMode 는 passive 모드에서 침묵한 online 디바이스에

@@ -4312,28 +4312,26 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                       </td>
                       {(isNasa || isLgap) && (
                         <td className="py-2 text-right">
-                          {/* 모든 소스(config 포함)에 삭제 버튼을 노출한다. 수동 추가 후
-                              재시작으로 config 로 굳은 디바이스도 사용자가 직접 삭제할 수
-                              있도록 보호를 제거했다(서버도 동일). */}
-                          {variant && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRemoveTarget({
-                                  deviceId: d.uid ?? d.id,
-                                  address: addressLabel,
-                                  name: d.name || addressLabel,
-                                });
-                              }}
-                              disabled={deleteDevice.isPending}
-                              className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
-                              title={t('agents.detail.devices.removeTooltip')}
-                              aria-label={t('agents.detail.devices.removeTooltip')}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          {/* 모든 디바이스(config 포함, source 미해석 무관)에 삭제 버튼을
+                              노출한다. source 배지(variant)가 없어도 삭제는 가능해야 하므로
+                              variant 게이트에 의존하지 않는다(전역 디바이스 목록과 동일). */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRemoveTarget({
+                                deviceId: d.uid ?? d.id,
+                                address: addressLabel,
+                                name: d.name || addressLabel,
+                              });
+                            }}
+                            disabled={deleteDevice.isPending}
+                            className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                            title={t('agents.detail.devices.removeTooltip')}
+                            aria-label={t('agents.detail.devices.removeTooltip')}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </td>
                       )}
                     </tr>

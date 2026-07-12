@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1258,7 +1260,7 @@ func (a *Hvacr01Agent) sendControlCommand(addr NasaAddress, sets []NasaMessageSe
 		return fmt.Errorf("samsung_hvacr01: build control command failed: %w", err)
 	}
 
-	if err := a.transport.Send(frame); err != nil {
+	if err := a.sendFrame(addr.String(), frame); err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		a.logger.Error("samsung_hvacr01: 제어 명령 전송 실패", "addr", addr.String(), "error", err)
 		return fmt.Errorf("samsung_hvacr01: send failed: %w", err)
@@ -1302,7 +1304,7 @@ func (a *Hvacr01Agent) sendImmediateStatusQuery(addr NasaAddress) {
 				a.logger.Debug("samsung_hvacr01: 즉시 상태 조회 빌드 실패", "addr", addr.String(), "error", err)
 				return
 			}
-			if err := a.transport.Send(frame); err != nil {
+			if err := a.sendFrame(addr.String(), frame); err != nil {
 				a.logger.Debug("samsung_hvacr01: 즉시 상태 조회 전송 실패", "addr", addr.String(), "error", err)
 				return
 			}
@@ -1544,7 +1546,7 @@ func (a *Hvacr01Agent) probeSilentDevices() {
 		if err != nil {
 			continue
 		}
-		if err := a.transport.Send(frame); err != nil {
+		if err := a.sendFrame(addr.String(), frame); err != nil {
 			continue
 		}
 		a.stats.IncrExternalMessagesSent()
@@ -1809,7 +1811,7 @@ func (a *Hvacr01Agent) pollLoop() {
 					a.incrementErrorCount(addr)
 					continue
 				}
-				if err := a.transport.Send(frame); err != nil {
+				if err := a.sendFrame(addr.String(), frame); err != nil {
 					a.logger.Warn("samsung_hvacr01: send status query failed", "addr", addr.String(), "error", err)
 					a.incrementErrorCount(addr)
 					continue
@@ -1819,6 +1821,27 @@ func (a *Hvacr01Agent) pollLoop() {
 			}
 		}
 	}
+}
+
+// sendFrame 은 프레임을 트랜스포트로 전송한다. log_messages 옵션이 켜져 있으면
+// 송신(TX) 프레임을 hex 로 INFO 로그한다(디바이스 송/수신 진단용). 반환 error 는
+// 호출측이 기존과 동일하게 처리한다.
+func (a *Hvacr01Agent) sendFrame(addr string, frame []byte) error {
+	if a.hvacr01Config.LogMessages {
+		a.logger.Info("samsung_hvacr01: TX", "addr", addr, "len", len(frame), "hex", hex.EncodeToString(frame))
+	}
+	return a.transport.Send(frame)
+}
+
+// isReadTimeout 은 err 가 읽기 데드라인 초과(i/o timeout, 즉 "수신 메시지 없음")
+// 인지 판별한다. TCP read deadline 만료는 net.Error.Timeout()==true 이거나
+// os.ErrDeadlineExceeded 로 나타난다. 정상 상황이므로 로그에서 제외하는 데 쓴다.
+func isReadTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	return (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 // receiveLoop 는 트랜스포트에서 데이터를 수신하고 디바이스 상태를 업데이트한다.
@@ -1864,7 +1887,12 @@ func (a *Hvacr01Agent) receiveLoop() {
 				return
 			}
 
-			// 타임아웃 등 일시적 에러 — 계속 수신
+			// 읽기 데드라인 초과(i/o timeout)는 "수신 메시지 없음" 의 정상 상황이므로
+			// 로그하지 않는다(주기적 timeout 이 로그를 도배하는 문제). 연결은 살아 있고
+			// 다음 read 를 계속 시도한다. 그 외 일시적 에러만 Debug 로 남긴다.
+			if isReadTimeout(err) {
+				continue
+			}
 			a.logger.Debug("samsung_hvacr01: receive error (transient)", "error", err)
 			continue
 		}
@@ -1881,6 +1909,10 @@ func (a *Hvacr01Agent) receiveLoop() {
 			frame, ok := scanner.Next()
 			if !ok {
 				break
+			}
+
+			if a.hvacr01Config.LogMessages {
+				a.logger.Info("samsung_hvacr01: RX", "len", len(frame), "hex", hex.EncodeToString(frame))
 			}
 
 			// a.logger.Debug("samsung_hvacr01: 프레임 추출 완료",

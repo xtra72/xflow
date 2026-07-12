@@ -42,6 +42,7 @@ type Hvacr01Config struct {
 	LogDecodeErrors       bool            // 일반 decode error 로그 출력 여부 (기본값 false — 운영 환경 noise 억제)
 	LogDrops              bool            // 2026-05-29: msgCh full 로 인한 event drop 을 WARN 로그로 출력 (기본 false, Century / LG 통일).
 	LogStateUpdates       bool            // 2026-05-29: 디바이스 state 갱신마다 핵심 필드 + raw payload INFO 로그 (Century logDecodedState 패턴).
+	LogMessages           bool            // 디바이스와의 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 (기본 false, opt-in 진단용).
 	IncludeRawHex         bool            // 2026-05-29: 이전 IncludeRawMessageSets — RawMessageSets (원본 NASA 메시지 전체) 포함 여부 (기본 false, opt-in). LG IncludeRawHex 와 명칭 통일.
 	ReconnectInterval     time.Duration   // 재연결 기본 간격 (기본값 5s)
 	MaxReconnectBackoff   time.Duration   // 재연결 최대 백오프 (기본값 5m)
@@ -355,6 +356,14 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	if v, ok := opts["log_state_updates"]; ok {
 		if b, ok := v.(bool); ok {
 			cfg.LogStateUpdates = b
+		}
+	}
+
+	// log_messages (기본값: false) — 디바이스와의 송/수신(TX/RX) 프레임을 hex 로
+	// INFO 로그로 출력. 진단용 opt-in (버스 트래픽 확인, 통신 문제 추적).
+	if v, ok := opts["log_messages"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogMessages = b
 		}
 	}
 

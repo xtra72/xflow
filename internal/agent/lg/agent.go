@@ -997,6 +997,15 @@ func (a *LGAPAgent) zoneByDeviceUUID(uuid string) (byte, bool) {
 	return 0, false
 }
 
+// msgLogLevel 은 송/수신(TX/RX) 프레임 로그 레벨을 반환한다. log_messages 옵션이
+// 켜져 있으면 INFO(기본 레벨에서 보임), 아니면 기존 Debug 레벨을 유지한다.
+func (a *LGAPAgent) msgLogLevel() slog.Level {
+	if a.lgapConfig.LogMessages {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
+}
+
 // sendControlCommand 는 제어 패킷을 빌드하고 트랜스포트로 전송한다.
 // pollMu 를 사용하여 시리얼 포트 동시 접근을 방지한다.
 func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, temp byte) error {
@@ -1005,7 +1014,7 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 
 	pkt := a.protocol.BuildControlCommand(zone, flags, modeCombo, temp)
 
-	a.logger.Debug("lgap: 제어 명령 전송",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 제어 명령 전송",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"flags", fmt.Sprintf("0x%02X", flags),
 		"tx", hex.EncodeToString(pkt),
@@ -1032,7 +1041,7 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
-	a.logger.Debug("lgap: 제어 응답 수신",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 제어 응답 수신",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"rx", hex.EncodeToString(buf[:n]),
 		"bytes", n,
@@ -1390,7 +1399,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 
 	pkt := a.protocol.BuildStatusQuery(zone)
 
-	a.logger.Debug("lgap: 상태 쿼리 전송",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 상태 쿼리 전송",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"tx", hex.EncodeToString(pkt),
 	)
@@ -1442,7 +1451,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
-	a.logger.Debug("lgap: 상태 응답 수신",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 상태 응답 수신",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"rx", hex.EncodeToString(buf[:n]),
 		"bytes", n,

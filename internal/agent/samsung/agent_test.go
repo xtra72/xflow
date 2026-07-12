@@ -1,11 +1,13 @@
 package samsung
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +15,37 @@ import (
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
+
+// TestSendFrame_LogsTxWhenEnabled 는 log_messages 옵션에 따라 송신(TX) 프레임이
+// hex 로 로그되는지, 그리고 프레임이 실제 전송되는지 검증한다.
+func TestSendFrame_LogsTxWhenEnabled(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+	var buf bytes.Buffer
+	a.logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// log_messages=true → TX 로그 + 전송.
+	a.hvacr01Config.LogMessages = true
+	before := len(mt.getSentData())
+	if err := a.sendFrame("20.00.00", []byte{0x32, 0xAB}); err != nil {
+		t.Fatalf("sendFrame: %v", err)
+	}
+	if len(mt.getSentData()) != before+1 {
+		t.Errorf("프레임이 전송되어야 함: sent %d→%d", before, len(mt.getSentData()))
+	}
+	if !strings.Contains(buf.String(), "TX") || !strings.Contains(buf.String(), "32ab") {
+		t.Errorf("log_messages=true 면 TX hex 로그가 있어야 함: %s", buf.String())
+	}
+
+	// log_messages=false → 로그 없음(전송은 유지).
+	buf.Reset()
+	a.hvacr01Config.LogMessages = false
+	if err := a.sendFrame("20.00.00", []byte{0x32}); err != nil {
+		t.Fatalf("sendFrame: %v", err)
+	}
+	if strings.Contains(buf.String(), "TX") {
+		t.Errorf("log_messages=false 면 TX 로그가 없어야 함: %s", buf.String())
+	}
+}
 
 // ---------------------------------------------------------------------------
 // mockTransport 는 NasaTransport 인터페이스의 테스트 구현체이다.
