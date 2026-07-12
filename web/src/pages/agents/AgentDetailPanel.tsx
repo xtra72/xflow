@@ -13,7 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { useAgent, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
-import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useDeleteDevice, useDevicesRealtime } from '@/hooks/useDevice';
 import { useUpdateRemoteAgent } from '@/hooks/useRemote';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -3914,7 +3914,12 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // 클릭 시 상세 패널 expand. 동시 1개만 펼침.
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const execAgent = useExecAgent();
+  const deleteDevice = useDeleteDevice();
   const addNotification = useUIStore((s) => s.addNotification);
+  // 삭제 확인 다이얼로그 대상(1개). null 이면 닫힌 상태.
+  const [removeTarget, setRemoveTarget] = useState<
+    { deviceId: string; address: string; name: string } | null
+  >(null);
 
   const devices = data?.data ?? [];
   const isNasa = agentType === 'samsung_hvacr01';
@@ -4048,17 +4053,20 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   }
 
-  function handleRemoveDevice(deviceId: string, address?: string) {
-    const params: Record<string, unknown> = {};
-    if (deviceId) params.device_id = deviceId;
-    else if (address) params.address = address;
-    execAgent.mutate(
-      { id: agentId, req: { command: 'remove_device', params } },
+  // 삭제 확인 다이얼로그에서 확인 클릭 시 실행. remove_device 성공 후 저장된
+  // 메타데이터(이름/태그/pin)를 정리한다(useDeleteDevice 가 오케스트레이션).
+  function confirmRemoveDevice() {
+    if (!removeTarget) return;
+    const target = removeTarget;
+    deleteDevice.mutate(
+      { agentId, deviceId: target.deviceId, address: target.address },
       {
         onSuccess: () => {
+          setRemoveTarget(null);
           addNotification({ type: 'success', message: t('agents.detail.devices.removeSuccess') });
         },
         onError: (err) => {
+          setRemoveTarget(null);
           addNotification({ type: 'error', message: t('agents.detail.devices.removeError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.devices.unknownError')) });
         },
       },
@@ -4304,16 +4312,24 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                       </td>
                       {(isNasa || isLgap) && (
                         <td className="py-2 text-right">
-                          {!isManual && variant && (
+                          {/* 모든 소스(config 포함)에 삭제 버튼을 노출한다. 수동 추가 후
+                              재시작으로 config 로 굳은 디바이스도 사용자가 직접 삭제할 수
+                              있도록 보호를 제거했다(서버도 동일). */}
+                          {variant && (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleRemoveDevice(d.name || '', addressLabel);
+                                setRemoveTarget({
+                                  deviceId: d.uid ?? d.id,
+                                  address: addressLabel,
+                                  name: d.name || addressLabel,
+                                });
                               }}
-                              disabled={execAgent.isPending}
+                              disabled={deleteDevice.isPending}
                               className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
                               title={t('agents.detail.devices.removeTooltip')}
+                              aria-label={t('agents.detail.devices.removeTooltip')}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -4334,6 +4350,23 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* 디바이스 제거 확인 다이얼로그 */}
+      {removeTarget && (
+        <ConfirmDialog
+          isOpen
+          onClose={() => setRemoveTarget(null)}
+          onConfirm={confirmRemoveDevice}
+          title={t('agents.detail.devices.removeConfirmTitle')}
+          message={t('agents.detail.devices.removeConfirmMessage').replace(
+            '{name}',
+            removeTarget.name,
+          )}
+          confirmLabel={t('common.delete')}
+          variant="danger"
+          isSubmitting={deleteDevice.isPending}
+        />
       )}
     </div>
   );

@@ -136,12 +136,18 @@ func NewLGAPAgent(config agent.AgentConfig) (agent.Agent, error) {
 	for _, entry := range lgapConfig.Devices {
 		zone := toInt(parseZoneKey(entry.Address))
 		zoneByte := byte(zone)
+		// source 보존: 런타임("bridge") 디바이스가 영속화 왕복 후에도 출처를 유지해
+		// 삭제 가능성이 보존되도록 entry.Source 를 우선한다. 비어 있으면 "config".
+		source := entry.Source
+		if source == "" {
+			source = "config"
+		}
 		dev := &LGAPDevice{
 			Zone:   zoneByte,
 			UnitID: entry.Name,
 			Online: false,
 			State:  &LGAPDeviceState{},
-			Source: "config",
+			Source: source,
 		}
 		a.devices[zoneByte] = dev
 		if entry.Name != "" {
@@ -882,9 +888,8 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	if dev.Source == "config" {
-		return nil, ErrConfigDeviceProtected
-	}
+	// config 소스 디바이스도 UI 에서 삭제 가능하게 한다(보호 제거). 수동 추가 후
+	// 재시작으로 "config" 로 굳은 디바이스를 사용자가 직접 삭제할 수 있어야 하기 때문이다.
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -947,6 +952,15 @@ func (a *LGAPAgent) resolveDevice(req *processRequest) (byte, *LGAPDevice, error
 	if req.DeviceID != "" {
 		resolved, ok := a.deviceIDs[req.DeviceID]
 		if !ok {
+			// UUID 폴백: 전역 device.List / REST 응답은 UUID(1급 식별자) 만 노출하므로
+			// (zone/UnitID 미노출), 삭제/실행 경로가 device_id 로 UUID 를 전달한다.
+			// deviceIDs 는 UnitID 로만 키잉되므로, UUID 는 각 디바이스의 emit-경로 UUID
+			// (ResolveDeviceID(name, dev.UnitID)) 와 대조해 역매칭한다.
+			if byUUID, ok2 := a.zoneByDeviceUUID(req.DeviceID); ok2 {
+				resolved, ok = byUUID, true
+			}
+		}
+		if !ok {
 			return 0, nil, ErrDeviceIDNotFound
 		}
 		zone = resolved
@@ -962,6 +976,25 @@ func (a *LGAPAgent) resolveDevice(req *processRequest) (byte, *LGAPDevice, error
 	}
 
 	return zone, dev, nil
+}
+
+// zoneByDeviceUUID 는 글로벌 UUID(device_id) 를 각 디바이스의 레지스트리 UUID 와
+// 대조해 해당 zone 을 역매칭한다. 매칭 실패 시 (0, false).
+//
+// localID 는 반드시 어댑터(SamsungNasaDeviceInfo.Address = formatZone(zone)) 와 동일한
+// formatZone(zone) 을 사용한다 — 프론트엔드/REST 가 받는 device.uid 는 레지스트리
+// 어댑터의 UID() (ResolveDeviceID(name, formatZone(zone))) 이기 때문이다. dev.UnitID 를
+// 쓰면 emit 경로 UUID 와는 맞아도 레지스트리 UUID 와 어긋날 수 있다.
+//
+// 주의(RWMutex 비재진입): 호출자(resolveDevice) 가 a.mu 를 보유한 상태에서 호출하므로
+// 여기서 a.mu 를 재-lock 하지 않으며 a.Name() 도 호출하지 않는다(재진입 deadlock 회피).
+func (a *LGAPAgent) zoneByDeviceUUID(uuid string) (byte, bool) {
+	for zone := range a.devices {
+		if agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, formatZone(zone)) == uuid {
+			return zone, true
+		}
+	}
+	return 0, false
 }
 
 // sendControlCommand 는 제어 패킷을 빌드하고 트랜스포트로 전송한다.
@@ -1725,6 +1758,7 @@ func (a *LGAPAgent) GetPersistableDevices() []agent.DeviceEntry {
 		result = append(result, agent.DeviceEntry{
 			Address: fmt.Sprintf("0x%x", zone),
 			Name:    dev.UnitID,
+			Source:  dev.Source, // source 보존: 재시작 후에도 "bridge" 유지 → 삭제 가능
 		})
 	}
 	return result

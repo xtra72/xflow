@@ -321,3 +321,45 @@ func TestConnLG_NoDeadlockUnderLock(t *testing.T) {
 		t.Fatal("deadlock 의심: lock 보유 중 a.Name()/a.ID() 호출 회귀 (N1/AC-19)")
 	}
 }
+
+// fakeLGDeviceIDRepo 는 agent.DeviceIDRepository 의 테스트 구현체이다.
+type fakeLGDeviceIDRepo struct{ m map[string]string }
+
+func (r *fakeLGDeviceIDRepo) GetOrCreate(_ context.Context, agentName, unitID string) (string, error) {
+	k := agentName + ":" + unitID
+	if v, ok := r.m[k]; ok {
+		return v, nil
+	}
+	v := "uuid-" + agentName + "-" + unitID
+	r.m[k] = v
+	return v, nil
+}
+
+func (r *fakeLGDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (string, error) {
+	return r.m[agentName+":"+unitID], nil
+}
+
+// TestLGAPAgent_RemoveDevice_ByUUID 는 remove_device 가 UUID(1급 식별자)로도 디바이스를
+// 제거하는지 검증한다. localID 는 레지스트리 어댑터와 동일한 formatZone(zone) 을 사용한다
+// (프론트엔드/REST 가 받는 device.uid 의 근거).
+func TestLGAPAgent_RemoveDevice_ByUUID(t *testing.T) {
+	prev := agent.GetDeviceIDRepository()
+	agent.SetDeviceIDRepository(&fakeLGDeviceIDRepo{m: make(map[string]string)})
+	t.Cleanup(func() { agent.SetDeviceIDRepository(prev) })
+
+	a, _ := newConnLGAPAgent(t, 0, 0, 0x01)
+	a.devices[0x01].Source = "bridge" // config 는 삭제 보호되므로 bridge 로 변경
+
+	uuid := agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, formatZone(0x01))
+	if uuid == "" {
+		t.Fatalf("precondition: UUID 해석 실패")
+	}
+
+	req, _ := json.Marshal(map[string]any{"command": "remove_device", "device_id": uuid})
+	if _, err := a.Process(req); err != nil {
+		t.Fatalf("remove_device by UUID: %v", err)
+	}
+	if _, ok := a.devices[0x01]; ok {
+		t.Errorf("zone 0x01 디바이스가 UUID 삭제 후 제거되어야 함")
+	}
+}

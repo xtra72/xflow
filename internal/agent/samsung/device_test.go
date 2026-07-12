@@ -467,6 +467,7 @@ func TestStateForJSON_IncludeRaw(t *testing.T) {
 		TargetTemp:     24,
 		CurrentTemp:    25.5,
 		RawMessageSets: HexKeyByteMap{0x4000: {0x01}},
+		observedCore:   observedPower | observedMode | observedTargetTemp | observedCurrentTemp,
 	}
 
 	result := s.StateForJSON(true)
@@ -490,6 +491,7 @@ func TestStateForJSON_ExcludeRaw(t *testing.T) {
 		TargetTemp:     24,
 		CurrentTemp:    25.5,
 		RawMessageSets: HexKeyByteMap{0x4000: {0x01}},
+		observedCore:   observedPower | observedMode | observedTargetTemp | observedCurrentTemp,
 	}
 
 	result := s.StateForJSON(false)
@@ -503,11 +505,70 @@ func TestStateForJSON_ExcludeRaw(t *testing.T) {
 	if _, ok := m["raw_message_sets"]; ok {
 		t.Error("raw_message_sets should not be included when includeRaw=false")
 	}
-	// 다른 필드는 존재해야 함
+	// 관측된 필드는 존재해야 함
 	if _, ok := m["power"]; !ok {
 		t.Error("power field should be present")
 	}
 	if _, ok := m["mode"]; !ok {
 		t.Error("mode field should be present")
+	}
+}
+
+// TestStateForJSON_OmitsUnobserved 는 관측되지 않은 필드가 emit 에서 생략되는지
+// 검증한다("확인된 값만 전송"). 재현: power 만 관측된 디바이스(예: off 로 mode/온도/
+// 풍량을 보고하지 않는 디바이스)는 payload 에 power 만 담기고 나머지는 생략된다.
+func TestStateForJSON_OmitsUnobserved(t *testing.T) {
+	// power 만 관측(sets_count=1, 재현 로그와 동일). 나머지는 zero-value 이나 미관측.
+	s := &NasaDeviceState{
+		Power:        false,
+		observedCore: observedPower,
+	}
+
+	result := s.StateForJSON(false)
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if v, ok := m["power"]; !ok || v != false {
+		t.Errorf("power 는 관측되었으므로 present(false) 여야: got %v (present=%v)", v, ok)
+	}
+	for _, k := range []string{"mode", "target_temperature", "current_temperature", "fan_speed", "swing_vertical", "filter_alarm", "error_code"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("관측되지 않은 필드 %q 는 생략되어야 함: got %v", k, m[k])
+		}
+	}
+}
+
+// TestUpdateFromMessageSets_ObservationDrivesEmit 는 메시지 셋으로 관측된 필드만
+// StateForJSON 에 나타나는지(관측 파이프라인 통합) 검증한다.
+func TestUpdateFromMessageSets_ObservationDrivesEmit(t *testing.T) {
+	s := &NasaDeviceState{RawMessageSets: make(HexKeyByteMap)}
+	// power 와 target_temp 만 관측시킨다.
+	s.UpdateFromMessageSets([]NasaMessageSet{
+		{Index: MsgPower, Value: []byte{0x01}},
+		{Index: MsgTargetTemp, Value: []byte{0x00, 0xF0}}, // 24.0℃
+	})
+
+	result := s.StateForJSON(false)
+	data, _ := json.Marshal(result)
+	var m map[string]any
+	_ = json.Unmarshal(data, &m)
+
+	if _, ok := m["power"]; !ok {
+		t.Error("관측된 power 는 present 여야 함")
+	}
+	if _, ok := m["target_temperature"]; !ok {
+		t.Error("관측된 target_temperature 는 present 여야 함")
+	}
+	if _, ok := m["mode"]; ok {
+		t.Error("미관측 mode 는 생략되어야 함")
+	}
+	if _, ok := m["current_temperature"]; ok {
+		t.Error("미관측 current_temperature 는 생략되어야 함")
 	}
 }

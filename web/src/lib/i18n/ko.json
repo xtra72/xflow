@@ -1436,6 +1436,8 @@
         "manualTooltip": "수동 등록 (설정/고정)",
         "autoTooltip": "자동 등록 (발견/브리지)",
         "removeTooltip": "디바이스 제거",
+        "removeConfirmTitle": "디바이스 제거",
+        "removeConfirmMessage": "'{name}' 디바이스를 제거하시겠습니까? 저장된 이름·태그 등 사용자 메타데이터도 함께 삭제됩니다.",
         "zoneRangeError": "존 주소는 0~255 범위여야 합니다 (0x00~0xFF)",
         "lgapAddSuccess": "LGAP 디바이스가 추가되었습니다",
         "addSuccess": "디바이스가 추가되었습니다",
@@ -1696,6 +1698,14 @@
       "bridge": "브리지",
       "manualTitle": "수동 등록 (설정/고정)",
       "autoTitle": "자동 등록 (발견/브리지)"
+    },
+    "list": {
+      "deleteTooltip": "디바이스 삭제",
+      "deleteTitle": "디바이스 삭제",
+      "deleteMessage": "'{name}' 디바이스를 삭제하시겠습니까? 저장된 이름·태그 등 사용자 메타데이터도 함께 삭제됩니다.",
+      "deleteSuccess": "디바이스가 삭제되었습니다",
+      "deleteError": "디바이스 삭제 실패: {message}",
+      "unknownError": "알 수 없는 오류"
     },
     "relativeTime": {
       "justNow": "방금",

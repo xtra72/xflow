@@ -661,6 +661,9 @@ func (a *AgentServiceAdapter) buildDevicesList(devices []agent.DeviceEntry) []an
 		if dev.Name != "" {
 			entry["name"] = dev.Name
 		}
+		if dev.Source != "" {
+			entry["source"] = dev.Source // source 보존: 재시작 후 삭제 가능성 유지
+		}
 		result = append(result, entry)
 	}
 	return result

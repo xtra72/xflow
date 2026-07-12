@@ -127,30 +127,18 @@ func TestHvacr01Agent_PushRecentSnapshot_OutdoorOnlyOnTransitions(t *testing.T) 
 	}
 }
 
-// TestHvacr01Agent_IndoorEmitGatedByAllCoreObserved 는 사용자 보고
-// "초기값 0, fan_speed:\"\" 등 미수신 필드의 zero value 가 점진적으로 채워지면서
-// 매 단계 emit 되는 결함" 의 회귀 테스트이다.
+// TestHvacr01Agent_PartialStateEmitsOnChange 는 5 핵심 필드가 모두 관측되지
+// 않았더라도 상태 변화가 발생하면 현재 상태를 그대로 emit 함을 검증한다.
 //
-// 수정: NasaDeviceState.observedCore bitmask 가 5 핵심 필드 (power/mode/
-// target_temp/current_temp/fan_speed) 의 관측 여부를 추적. handleMessage 가
-// `!dev.State.AllCoreObserved()` 시 early return 으로 emit 보류.
-//
-// 시나리오 (사용자 실제 출력 재현):
-//
-//	Frame 1: power+mode → 부분 상태 (fan_speed:"", current_temp:0, target_temp:0)
-//	Frame 2: fan_speed+filter_alarm 추가 → 여전히 current_temp/target_temp 미설정
-//	Frame 3: current_temp+target_temp 추가 → 5 핵심 모두 관측됨
-//
-// 수정 전: 3 회 모두 emit (3 개의 부분 상태)
-// 수정 후: Frame 3 에서만 첫 emit (완전한 상태)
-func TestHvacr01Agent_IndoorEmitGatedByAllCoreObserved(t *testing.T) {
+// 이전에는 AllCoreObserved() 게이트로 5 핵심 필드(power/mode/target_temp/
+// current_temp/fan_speed)가 모두 관측될 때까지 emit 을 보류했으나, 핵심 필드를
+// 보내지 않는 디바이스는 상태가 영영 노드로 전송되지 않는 문제가 있어 게이트를
+// 제거했다. 이제 변화 시 현재 상태(미관측 필드는 zero value)를 즉시 전송한다.
+func TestHvacr01Agent_PartialStateEmitsOnChange(t *testing.T) {
 	a, _, _ := newTestAgent(t)
 	addr, _ := ParseNasaAddress("200001")
 
-	// 디바이스를 offline 상태로 두지 않아 device_online 이벤트와 분리한다.
-	// (online transition 은 wasOffline 경로에서 별도 처리됨)
-
-	// Frame 1: power + mode 만 (5 핵심 중 2개)
+	// Frame 1: power + mode 만 (5 핵심 중 2개) — 부분 상태.
 	msg1 := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
@@ -165,52 +153,7 @@ func TestHvacr01Agent_IndoorEmitGatedByAllCoreObserved(t *testing.T) {
 	a.recentMu.Lock()
 	afterMsg1 := len(a.recentSnapshots)
 	a.recentMu.Unlock()
-	if afterMsg1 > 0 {
-		t.Errorf("Frame 1 (power+mode only): recentSnapshots count=%d, want 0 (5 핵심 미완)", afterMsg1)
-	}
-
-	// Frame 2: fan_speed 추가 (3개)
-	msg2 := &NasaMessage{
-		SourceAddr:  addr,
-		DestAddr:    AddrController,
-		CommandCode: CmdNormalRequest,
-		MessageSets: []NasaMessageSet{
-			{Index: MsgFanSpeed, Value: []byte{0x02}}, // medium
-		},
-	}
-	a.handleMessage(msg2)
-
-	a.recentMu.Lock()
-	afterMsg2 := len(a.recentSnapshots)
-	a.recentMu.Unlock()
-	if afterMsg2 > 0 {
-		t.Errorf("Frame 2 (+ fan_speed): recentSnapshots count=%d, want 0 (current/target_temp 미수신)", afterMsg2)
-	}
-
-	// Frame 3: current_temp + target_temp 추가 → 5 핵심 모두 완료
-	msg3 := &NasaMessage{
-		SourceAddr:  addr,
-		DestAddr:    AddrController,
-		CommandCode: CmdNormalRequest,
-		MessageSets: []NasaMessageSet{
-			{Index: MsgTargetTemp, Value: []byte{0x00, 0xFA}},  // 25.0
-			{Index: MsgCurrentTemp, Value: []byte{0x00, 0xF0}}, // 24.0
-		},
-	}
-	a.handleMessage(msg3)
-
-	a.recentMu.Lock()
-	afterMsg3 := len(a.recentSnapshots)
-	a.recentMu.Unlock()
-	if afterMsg3 < 1 {
-		t.Fatalf("Frame 3 (5 핵심 완료): recentSnapshots count=%d, want >=1", afterMsg3)
-	}
-
-	// 상태 검증: dev.State 의 observedCore 가 모두 set 되어 AllCoreObserved=true.
-	a.mu.RLock()
-	dev := a.devices[addr]
-	a.mu.RUnlock()
-	if !dev.State.AllCoreObserved() {
-		t.Errorf("AllCoreObserved() = false, want true (5 핵심 모두 처리 후)")
+	if afterMsg1 < 1 {
+		t.Fatalf("Frame 1 (power+mode, 부분 상태): recentSnapshots count=%d, want >=1 (게이트 제거 후 즉시 emit)", afterMsg1)
 	}
 }

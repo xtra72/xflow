@@ -323,6 +323,40 @@ func TestPromoteDevIDWithUUID_EmitsDeviceGroup(t *testing.T) {
 	}
 }
 
+// TestPromoteDevIDWithUUID_UnifiesRegistryName 는 promoteDevIDWithUUID 가 device
+// 그룹 promote 직후 프로세스 전역 device lookup 을 통해 사용자 지정 이름으로 name 을
+// 통일하는 배선을 검증한다 (전 계층 이름 통일 회귀 방지). payload 폴백 name("1") 이
+// 레지스트리 이름("대표실-실내기") 으로 덮어써져야 한다.
+func TestPromoteDevIDWithUUID_UnifiesRegistryName(t *testing.T) {
+	const uuid = "uuid-xyz"
+	prevA, prevD := currentExprLookups()
+	SetExprLookups(prevA, DeviceLookupFunc(func(id string) (RegistryMeta, bool) {
+		if id == uuid {
+			return RegistryMeta{ID: id, Name: "대표실-실내기"}, true
+		}
+		return RegistryMeta{}, false
+	}))
+	t.Cleanup(func() { SetExprLookups(prevA, prevD) })
+
+	msg := message.New()
+	// pushRecentSnapshot 폴백 재현: payload metadata.name 이 UnitID "1".
+	msg.Metadata().SetGroup("device", map[string]string{"name": "1"})
+	payload := map[string]any{"device_id": uuid}
+
+	promoteDevIDWithUUID(msg, payload, "", MetadataEmitOptions{Device: true})
+
+	g, ok := msg.Metadata().GetGroup("device")
+	if !ok {
+		t.Fatalf("device 그룹이 emit 되어야 함")
+	}
+	if g["id"] != uuid {
+		t.Errorf("device.id = %q; want %q", g["id"], uuid)
+	}
+	if g["name"] != "대표실-실내기" {
+		t.Errorf("device.name = %q; want 통일된 사용자 이름 %q", g["name"], "대표실-실내기")
+	}
+}
+
 // TestPromoteDevIDWithUUID_DeviceDisabledNoGroup 는 Device=false 면 device 그룹을
 // emit 하지 않고 flat device_id 도 쓰지 않으며 payload 에서만 제거하는지 검증한다.
 func TestPromoteDevIDWithUUID_DeviceDisabledNoGroup(t *testing.T) {

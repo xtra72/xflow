@@ -211,7 +211,7 @@ func TestConn_ReportSkipsUnemittedInitial(t *testing.T) {
 
 	require.Len(t, msgs, 1, "initial 방출된 device 만 report 대상 (S5)")
 	assert.Equal(t, "report", msgs[0]["trigger"])
-	assert.Equal(t, "200001", msgs[0]["unit_id"])
+	assert.Equal(t, "20.00.01", msgs[0]["unit_id"]) // SPEC-DEVICE-IDENTITY-001: dotted address
 }
 
 // AC-10: in-flight probe 중 Stop → leak 없음, Stop 이후 방출 없음.
@@ -252,7 +252,8 @@ func TestConn_ReportIncludesOfflineDevices(t *testing.T) {
 		assert.Equal(t, "report", m["trigger"])
 		states[m["unit_id"].(string)] = m["connection_state"].(string)
 	}
-	assert.Equal(t, "offline", states["200003"], "offline device 도 report 에 포함 (S2/N5)")
+	// SPEC-DEVICE-IDENTITY-001: unit_id 는 dotted address format
+	assert.Equal(t, "offline", states["20.00.03"], "offline device 도 report 에 포함 (S2/N5)")
 }
 
 // AC-14: 개별 메시지 (배칭 금지).
@@ -426,4 +427,68 @@ func assertConnEnvelope(t *testing.T, m map[string]any, wantTrigger string) {
 	require.True(t, ok)
 	assert.Equal(t, "device_connection."+wantTrigger, md["message_type"])
 	assert.True(t, strings.HasPrefix(md["message_type"].(string), "device_connection."))
+}
+
+// TestProbeSilentDevices_PassiveMode 는 passive 모드에서 침묵한 online 디바이스에
+// 확인 probe(status query)가 전송되는지 검증한다.
+//
+// 회귀 배경: passive(status_query_enabled=false)는 블랭킷 폴을 안 하므로, 디바이스가
+// 자체 브로드캐스트 주기(> offline 임계값)로만 통신하면 정상 online 인데도 90초 임계에
+// 걸려 online/offline 플래핑했다. 침묵 시 확인 probe 로 응답을 유도하면 online 이
+// 유지되어 플래핑이 사라진다.
+func TestProbeSilentDevices_PassiveMode(t *testing.T) {
+	a, mt := newConnAgent(t, 0, 0, "200001")
+	a.hvacr01Config.StatusQueryEnabled = false // passive
+	// staleness 활성 유지(OfflineTimeout=-1 파생). PollInterval(30s) 이 probe 임계.
+
+	addr, err := ParseNasaAddress("200001")
+	require.NoError(t, err)
+	a.mu.Lock()
+	a.devices[addr].Online = true
+	a.devices[addr].LastSeen = time.Now().Add(-40 * time.Second) // 30초 이상 침묵
+	a.mu.Unlock()
+
+	before := len(mt.getSentData())
+	a.probeSilentDevices()
+	assert.Greater(t, len(mt.getSentData()), before,
+		"침묵한 online 디바이스에 확인 probe 가 전송되어야 함")
+}
+
+// TestProbeSilentDevices_FreshDeviceNotProbed 는 최근 수신한(침묵 아님) 디바이스는
+// probe 하지 않는지 검증한다(불필요한 버스 트래픽 방지).
+func TestProbeSilentDevices_FreshDeviceNotProbed(t *testing.T) {
+	a, mt := newConnAgent(t, 0, 0, "200001")
+	a.hvacr01Config.StatusQueryEnabled = false
+
+	addr, err := ParseNasaAddress("200001")
+	require.NoError(t, err)
+	a.mu.Lock()
+	a.devices[addr].Online = true
+	a.devices[addr].LastSeen = time.Now() // 방금 수신 → 침묵 아님
+	a.mu.Unlock()
+
+	before := len(mt.getSentData())
+	a.probeSilentDevices()
+	assert.Equal(t, before, len(mt.getSentData()),
+		"최근 수신 디바이스는 probe 하지 않아야 함")
+}
+
+// TestProbeSilentDevices_DisabledWhenStalenessOff 는 offline_timeout==0(staleness 비활성)
+// 이면 probe 도 하지 않는지 검증한다.
+func TestProbeSilentDevices_DisabledWhenStalenessOff(t *testing.T) {
+	a, mt := newConnAgent(t, 0, 0, "200001")
+	a.hvacr01Config.StatusQueryEnabled = false
+	a.hvacr01Config.OfflineTimeout = 0 // staleness 비활성
+
+	addr, err := ParseNasaAddress("200001")
+	require.NoError(t, err)
+	a.mu.Lock()
+	a.devices[addr].Online = true
+	a.devices[addr].LastSeen = time.Now().Add(-40 * time.Second)
+	a.mu.Unlock()
+
+	before := len(mt.getSentData())
+	a.probeSilentDevices()
+	assert.Equal(t, before, len(mt.getSentData()),
+		"staleness 비활성이면 probe 도 불필요")
 }

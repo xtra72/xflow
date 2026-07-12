@@ -241,7 +241,8 @@ func TestStale_SetAllDevicesOffline_SkipsUnemittedInitial(t *testing.T) {
 
 	msgs := drainConnMsgs(t, a)
 	require.Len(t, msgs, 1, "initial 방출된 device 만 change 방출")
-	require.Equal(t, "200001", msgs[0]["unit_id"])
+	// SPEC-DEVICE-IDENTITY-001: unit_id 는 dotted address format
+	require.Equal(t, "20.00.01", msgs[0]["unit_id"])
 }
 
 // ---------------------------------------------------------------------------

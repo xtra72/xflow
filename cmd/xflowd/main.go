@@ -429,11 +429,22 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		return node.RegistryMeta{Type: a.Type(), ID: a.ID(), Name: a.Name()}, true
 	})
 	deviceInfoLookup := node.DeviceLookupFunc(func(id string) (node.RegistryMeta, bool) {
-		d, err := deviceRegistry.Get(id)
-		if err != nil || d == nil {
+		var meta node.RegistryMeta
+		if d, err := deviceRegistry.Get(id); err == nil && d != nil {
+			meta = node.RegistryMeta{Type: string(d.Type()), ID: d.ID(), Name: d.Name()}
+		}
+		// 전 계층 이름 통일: 사용자 지정 이름(레지스트리 metadata) 을 권위 소스로
+		// 우선한다. 디바이스가 오프라인/미등록이어도 metadata 는 남아 있으므로,
+		// Get 실패와 무관하게 GetMetadata 로 사용자 이름을 병합한다. 이로써 REST
+		// 목록·enrich 노드·expression·in-flow device_state 가 단일 이름을 공유한다.
+		if m, err := deviceRegistry.GetMetadata(id); err == nil && m.Name != "" {
+			meta.Name = m.Name
+			meta.ID = id
+		}
+		if meta.ID == "" && meta.Name == "" && meta.Type == "" {
 			return node.RegistryMeta{}, false
 		}
-		return node.RegistryMeta{Type: string(d.Type()), ID: d.ID(), Name: d.Name()}, true
+		return meta, true
 	})
 	enrichAgentOpt := node.WithAgentInfoLookup(agentInfoLookup)
 	enrichDeviceOpt := node.WithDeviceInfoLookup(deviceInfoLookup)
