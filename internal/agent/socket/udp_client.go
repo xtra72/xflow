@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -29,6 +30,9 @@ type UDPClientAgent struct {
 	mu          sync.RWMutex
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
+
+	// logMessages 는 log_messages 활성 여부의 lock-free 미러이다 (Configure 로 즉시 갱신).
+	logMessages atomic.Bool
 }
 
 // 컴파일 타임 인터페이스 구현 확인.
@@ -65,6 +69,7 @@ func NewUDPClientAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		createdAt:     time.Now(),
 		stopCh:        make(chan struct{}),
 	}
+	a.logMessages.Store(cfg.LogMessages)
 
 	if err := a.init(agentConfig); err != nil {
 		return nil, err
@@ -230,6 +235,8 @@ func (a *UDPClientAgent) processSend(cmd udpClientProcessCommand) ([]byte, error
 	a.stats.AddBytesWritten(int64(n))
 	a.stats.UpdateLastActivity()
 
+	logPacket(a.logger, a.logMessages.Load(), "udp-client", "TX", "", payload)
+
 	return json.Marshal(map[string]any{"status": "sent"})
 }
 
@@ -241,6 +248,10 @@ func (a *UDPClientAgent) Configure(config agent.AgentConfig) error {
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
+	// log_messages 는 재시작 없이 즉시 반영한다.
+	if newCfg, perr := ParseUDPClientConfig(config.Transport.Options); perr == nil {
+		a.logMessages.Store(newCfg.LogMessages)
+	}
 	return nil
 }
 
@@ -370,6 +381,8 @@ func (a *UDPClientAgent) recvLoop() {
 		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(n))
 		a.stats.UpdateLastActivity()
+
+		logPacket(a.logger, a.logMessages.Load(), "udp-client", "RX", "", data)
 
 		select {
 		case a.msgCh <- data:
