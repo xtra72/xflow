@@ -842,14 +842,19 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 	}
 
 	// state 그룹 빌드: online 을 시작으로 NasaDeviceState 의 필드 흡수.
-	// 연결 진단 부가 필드(error_count/offline_threshold/transport_connected)는 online 옆에
-	// 함께 실어 device_state 단일 스트림으로 일원화한다(별도 device_connection 스트림 제거).
+	// 연결 진단 부가 필드(error_count/offline_threshold)는 online 옆에 함께 실어
+	// device_state 단일 스트림으로 일원화한다(별도 device_connection 스트림 제거).
 	// LG 에이전트도 동일 키로 맞추므로 키 이름을 그대로 사용한다.
 	state := map[string]any{
-		"online":              dev.Online,
-		"error_count":         dev.ErrorCount,
-		"offline_threshold":   a.hvacr01Config.OfflineThreshold,
-		"transport_connected": a.transport.Available(),
+		"online":            dev.Online,
+		"error_count":       dev.ErrorCount,
+		"offline_threshold": a.hvacr01Config.OfflineThreshold,
+	}
+	// transport_connected 는 online=true 이면 항상 true 라 정보량이 없다. online=false 일
+	// 때만 실어 필드 존재 자체가 "버스(포트/TCP) 문제인지 디바이스 침묵인지" 판별 신호가
+	// 되게 한다(관측/의미 기반 emit). LGAP 도 동일 규칙을 적용한다.
+	if !dev.Online {
+		state["transport_connected"] = a.transport.Available()
 	}
 	if dev.State != nil {
 		// StateForJSON 결과를 unmarshal 해 state 맵에 평탄화 — online 과 함께 단일 그룹.

@@ -80,6 +80,15 @@ func TestStale_DirectCheck_OfflineChangeEmitted(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, false, online)
 
+	// online=false 일 때는 transport_connected 를 실어 "버스 문제인지 디바이스 침묵인지"
+	// 판별 신호로 쓴다(online=true 이면 생략).
+	if state, ok := msgs[0]["state"].(map[string]any); ok {
+		require.Contains(t, state, "transport_connected",
+			"offline device_state 는 transport_connected 를 포함해야 한다")
+	} else {
+		t.Fatal("state 그룹이 있어야 한다")
+	}
+
 	// 이미 offline 이므로 재호출 시 중복 방출 없어야 한다.
 	a.checkStaleDevices()
 	require.Empty(t, drainStateMsgs(t, a), "이미 offline 인 device 는 재방출하지 않는다")

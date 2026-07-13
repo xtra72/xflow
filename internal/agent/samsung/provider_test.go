@@ -192,6 +192,47 @@ func TestHvacr01DeviceProvider_DeviceWithoutState(t *testing.T) {
 	}
 }
 
+// TestHvacr01DeviceProvider_OutdoorProperties 는 실외기(ODU)의 디코드된 텔레메트리가
+// device.State().Properties 로 노출되는지 검증한다. Outdoor.Fields 의 관측 필드가
+// ExtraProperties 를 거쳐 어댑터 State() 에 평탄화되어야 UI 디바이스 상세에 표시된다.
+func TestHvacr01DeviceProvider_OutdoorProperties(t *testing.T) {
+	odu := &NasaDevice{
+		Address: NasaAddress{0x10, 0x00, 0x00},
+		Type:    "HVACR.ODU",
+		Online:  true,
+		Outdoor: &OutdoorState{
+			Fields: map[string]any{
+				"outdoor_temperature":    float32(28.5),
+				"out_operation_odu_mode": 2,
+				"wattmeter_1min_sum":     int64(1234),
+			},
+		},
+	}
+	devices := map[NasaAddress]*NasaDevice{odu.Address: odu}
+
+	a := newTestHvacr01AgentForProvider("samsung-hvacr01-agent", devices)
+	provider := NewHvacr01DeviceProvider(a)
+
+	devs := provider.Devices()
+	if len(devs) != 1 {
+		t.Fatalf("expected 1 device, got %d", len(devs))
+	}
+
+	state := devs[0].State()
+	if state.Properties == nil {
+		t.Fatal("expected outdoor telemetry in Properties, got nil")
+	}
+	if got, ok := state.Properties["outdoor_temperature"].(float32); !ok || got != 28.5 {
+		t.Errorf("Properties[outdoor_temperature] = %v, want 28.5", state.Properties["outdoor_temperature"])
+	}
+	if got, ok := state.Properties["out_operation_odu_mode"].(int); !ok || got != 2 {
+		t.Errorf("Properties[out_operation_odu_mode] = %v, want 2", state.Properties["out_operation_odu_mode"])
+	}
+	if got, ok := state.Properties["wattmeter_1min_sum"].(int64); !ok || got != 1234 {
+		t.Errorf("Properties[wattmeter_1min_sum] = %v, want 1234", state.Properties["wattmeter_1min_sum"])
+	}
+}
+
 func TestNasaAddressDotFormat(t *testing.T) {
 	tests := []struct {
 		addr NasaAddress
