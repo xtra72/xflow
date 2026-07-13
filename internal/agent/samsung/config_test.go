@@ -666,90 +666,23 @@ func TestParseHvacr01Config_TCPClientRequiresHost(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SPEC-HVACR-CONNSTATE-001: connection-state 설정 파싱 테스트
+// 연결 정보 device_state 일원화: deprecated connection 옵션은 조용히 무시된다.
 // ---------------------------------------------------------------------------
 
-// TestParseHvacr01Config_ConnectionDefaults (AC-1/AC-2 기본값): 미설정 시 60s.
-func TestParseHvacr01Config_ConnectionDefaults(t *testing.T) {
-	opts := map[string]any{"transport_type": "serial", "serial_port": "/dev/ttyUSB0"}
-	cfg, err := parseHvacr01Config(opts)
-	require.NoError(t, err)
-	assert.Equal(t, 60*time.Second, cfg.ConnectionReportInterval, "기본 60s (AC-1)")
-	// poll_interval 기본 30s → 파생 timeout min(60s,30s)=30s (AC-12).
-	assert.Equal(t, 30*time.Second, cfg.StartupProbeTimeout)
-}
-
-// TestParseHvacr01Config_ConnectionReportInterval (AC-1): 명시값 반영.
-func TestParseHvacr01Config_ConnectionReportInterval(t *testing.T) {
-	opts := map[string]any{"transport_type": "serial", "serial_port": "/dev/ttyUSB0", "connection_report_interval": "30s"}
-	cfg, err := parseHvacr01Config(opts)
-	require.NoError(t, err)
-	assert.Equal(t, 30*time.Second, cfg.ConnectionReportInterval)
-}
-
-// TestParseHvacr01Config_ConnectionReportZero (AC-2): 0 허용.
-func TestParseHvacr01Config_ConnectionReportZero(t *testing.T) {
-	opts := map[string]any{"transport_type": "serial", "serial_port": "/dev/ttyUSB0", "connection_report_interval": "0s"}
-	cfg, err := parseHvacr01Config(opts)
-	require.NoError(t, err)
-	assert.Equal(t, time.Duration(0), cfg.ConnectionReportInterval)
-}
-
-// TestParseHvacr01Config_StartupProbeDerivedCap (AC-12): 파생 30s 캡.
-func TestParseHvacr01Config_StartupProbeDerivedCap(t *testing.T) {
-	opts := map[string]any{"transport_type": "serial", "serial_port": "/dev/ttyUSB0", "poll_interval": "20s"}
-	cfg, err := parseHvacr01Config(opts)
-	require.NoError(t, err)
-	assert.Equal(t, 30*time.Second, cfg.StartupProbeTimeout, "min(2*20s,30s)=30s")
-
-	opts["poll_interval"] = "5s"
-	cfg, err = parseHvacr01Config(opts)
-	require.NoError(t, err)
-	assert.Equal(t, 10*time.Second, cfg.StartupProbeTimeout, "min(2*5s,30s)=10s")
-}
-
-// TestParseHvacr01Config_StartupProbeExplicitNoCap (AC-12): 명시 override 는 캡 없음.
-func TestParseHvacr01Config_StartupProbeExplicitNoCap(t *testing.T) {
-	opts := map[string]any{"transport_type": "serial", "serial_port": "/dev/ttyUSB0", "poll_interval": "20s", "startup_probe_timeout": "60s"}
-	cfg, err := parseHvacr01Config(opts)
-	require.NoError(t, err)
-	assert.Equal(t, 60*time.Second, cfg.StartupProbeTimeout, "명시 60s 는 30s 캡 미적용")
-}
-
-// TestDeriveStartupProbeTimeout_PollZeroFallback (AC-12): poll=0 → 10s.
-func TestDeriveStartupProbeTimeout_PollZeroFallback(t *testing.T) {
-	assert.Equal(t, 10*time.Second, deriveStartupProbeTimeout(0))
-	assert.Equal(t, 10*time.Second, deriveStartupProbeTimeout(5*time.Second))
-	assert.Equal(t, 30*time.Second, deriveStartupProbeTimeout(20*time.Second))
-}
-
-// TestParseHvacr01Config_ConnectionHardErrors (AC-18): 잘못된 값/legacy alias 는 hard error.
-func TestParseHvacr01Config_ConnectionHardErrors(t *testing.T) {
-	base := map[string]any{"transport_type": "serial", "serial_port": "/dev/ttyUSB0"}
-
-	bad := map[string]any{}
-	for k, v := range base {
-		bad[k] = v
+// TestParseHvacr01Config_DeprecatedConnectionOptionsIgnored 는 device_connection 스트림
+// 제거 후 관련 옵션 키(connection_report_interval / startup_probe_timeout /
+// connection_notify_interval)가 config 에 남아 있어도 hard-error 없이 조용히 무시되는지
+// 검증한다(알 수 없는 키 무시 정책). 잘못된 값이어도 파싱 대상이 아니므로 에러가 없다.
+func TestParseHvacr01Config_DeprecatedConnectionOptionsIgnored(t *testing.T) {
+	opts := map[string]any{
+		"transport_type":             "serial",
+		"serial_port":                "/dev/ttyUSB0",
+		"connection_report_interval": "notaduration", // 무시되므로 값이 잘못돼도 무방
+		"startup_probe_timeout":      "xyz",          // 무시
+		"connection_notify_interval": "30s",          // deprecated, 더 이상 hard-error 아님
 	}
-	bad["connection_report_interval"] = "notaduration"
-	_, err := parseHvacr01Config(bad)
-	require.Error(t, err, "잘못된 duration 값은 hard error")
-
-	legacy := map[string]any{}
-	for k, v := range base {
-		legacy[k] = v
-	}
-	legacy["connection_notify_interval"] = "30s"
-	_, err = parseHvacr01Config(legacy)
-	require.Error(t, err, "legacy alias 는 hard error")
-
-	badProbe := map[string]any{}
-	for k, v := range base {
-		badProbe[k] = v
-	}
-	badProbe["startup_probe_timeout"] = "xyz"
-	_, err = parseHvacr01Config(badProbe)
-	require.Error(t, err, "잘못된 startup_probe_timeout 은 hard error")
+	_, err := parseHvacr01Config(opts)
+	require.NoError(t, err, "deprecated connection 옵션은 조용히 무시되어야 한다")
 }
 
 // TestParseHvacr01Config_OfflineTimeout3Way 는 offline_timeout 의 3-way 파싱을 검증한다:

@@ -24,7 +24,7 @@ import {
   type DeviceListColumnKey,
 } from '@/hooks/useDeviceColumns';
 import { useAgents } from '@/hooks/useAgent';
-import { useDeleteDevice } from '@/hooks/useDevice';
+import { useDeleteDevice, useSetDeviceReport } from '@/hooks/useDevice';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
@@ -50,6 +50,12 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
  * (Century/system/modbus 미지원).
  */
 const REMOVABLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap']);
+
+/**
+ * `set_device` exec 를 지원하는 에이전트 타입 집합 (디바이스별 상태 전송 on/off).
+ * Samsung HVACR / LGAP 만 디바이스별 report_enabled 게이트를 지원한다.
+ */
+const REPORT_TOGGLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap']);
 
 // 디바이스 source 값을 사용자 친화적 라벨로 매핑.
 // 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
@@ -154,6 +160,7 @@ export default function DeviceListPage({
   }, [agentsData]);
 
   const deleteDevice = useDeleteDevice();
+  const setDeviceReport = useSetDeviceReport();
   const addNotification = useUIStore((s) => s.addNotification);
   // 삭제 확인 다이얼로그 대상(1개). null 이면 닫힌 상태.
   const [deleteTarget, setDeleteTarget] = useState<DeviceInfo | null>(null);
@@ -355,6 +362,37 @@ export default function DeviceListPage({
     );
   };
 
+  /**
+   * 디바이스가 상태 전송 토글 가능하면 소유 에이전트 ID 를 반환하고, 아니면 null.
+   * 조건: 로컬 타깃 + 소유 에이전트 타입이 set_device 지원(samsung_hvacr01/lgap).
+   */
+  const resolveReportTogglableAgentId = (device: DeviceInfo): string | null => {
+    if (!showLocalWrites) return null;
+    const meta = agentMap.get(device.agent_name);
+    if (!meta || !REPORT_TOGGLE_AGENT_TYPES.has(meta.type)) return null;
+    return meta.id;
+  };
+
+  /** 상태 전송 on/off 토글. 낙관적 업데이트는 훅이 처리하며 실패 시 알림. */
+  const handleToggleReport = (device: DeviceInfo, next: boolean) => {
+    const agentId = resolveReportTogglableAgentId(device);
+    if (!agentId) return;
+    setDeviceReport.mutate(
+      { agentId, deviceId: device.uid ?? device.id, reportEnabled: next },
+      {
+        onError: (err) => {
+          addNotification({
+            type: 'error',
+            message: t('devices.list.reportError').replace(
+              '{message}',
+              err instanceof Error ? err.message : t('devices.list.unknownError'),
+            ),
+          });
+        },
+      },
+    );
+  };
+
 
   // --- 로딩 상태 ---
   if (isLoading && !data) {
@@ -543,14 +581,15 @@ export default function DeviceListPage({
                       />
                     ),
                   )}
-                  {/* 액션(삭제) 컬럼 — 정렬 비대상 빈 헤더. */}
-                  <th className="w-10 px-3 py-3" />
+                  {/* 액션(상태 전송 토글 + 삭제) 컬럼 — 정렬 비대상 빈 헤더. */}
+                  <th className="w-24 px-3 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
                 {pagedDevices.map((device) => {
                   const isExpanded = expandedId === device.id;
                   const canDelete = resolveDeletableAgentId(device) !== null;
+                  const canToggleReport = resolveReportTogglableAgentId(device) !== null;
                   return (
                     <DeviceRow
                       key={device.id}
@@ -559,6 +598,11 @@ export default function DeviceListPage({
                       isExpanded={isExpanded}
                       onToggle={() => toggleExpand(device.id)}
                       onDelete={canDelete ? () => setDeleteTarget(device) : undefined}
+                      onToggleReport={
+                        canToggleReport
+                          ? (next) => handleToggleReport(device, next)
+                          : undefined
+                      }
                       t={t}
                     />
                   );
@@ -698,8 +742,50 @@ interface DeviceRowProps {
    * 이 경우 휴지통 아이콘을 렌더하지 않는다.
    */
   onDelete?: () => void;
+  /**
+   * 상태 전송 on/off 토글 핸들러. 토글 미지원 디바이스(미지원 에이전트/원격)면 undefined 이며,
+   * 이 경우 스위치를 렌더하지 않는다. `next` 는 전환할 목표 값이다.
+   */
+  onToggleReport?: (next: boolean) => void;
   /** 번역 함수(상위에서 주입). */
   t: TranslationFn;
+}
+
+/** 상태 전송 on/off 스위치. 디바이스 행 액션 셀에서 사용한다. */
+function ReportToggleSwitch({
+  enabled,
+  onToggle,
+  t,
+}: {
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+  t: TranslationFn;
+}) {
+  const label = enabled ? t('devices.list.reportOn') : t('devices.list.reportOff');
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={t('devices.list.reportToggle')}
+      title={`${t('devices.list.reportToggle')}: ${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle(!enabled);
+      }}
+      className={cn(
+        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
+        enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600',
+      )}
+    >
+      <span
+        className={cn(
+          'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200',
+          enabled ? 'translate-x-4' : 'translate-x-0.5',
+        )}
+      />
+    </button>
+  );
 }
 
 /** 단일 컬럼 셀 렌더 (컬럼 키별). */
@@ -796,7 +882,15 @@ function DeviceCell({
   }
 }
 
-function DeviceRow({ device, columns, isExpanded, onToggle, onDelete, t }: DeviceRowProps) {
+function DeviceRow({
+  device,
+  columns,
+  isExpanded,
+  onToggle,
+  onDelete,
+  onToggleReport,
+  t,
+}: DeviceRowProps) {
   return (
     <>
       <tr
@@ -816,23 +910,32 @@ function DeviceRow({ device, columns, isExpanded, onToggle, onDelete, t }: Devic
           <DeviceCell key={col} column={col} device={device} t={t} />
         ))}
 
-        {/* 액션(삭제) 셀. 삭제 가능한 디바이스에만 휴지통 아이콘을 렌더한다.
-            행 클릭(확장)과 겹치지 않도록 stopPropagation 한다. */}
-        <td className="px-3 py-3 text-right">
-          {onDelete && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
-              title={t('devices.list.deleteTooltip')}
-              aria-label={t('devices.list.deleteTooltip')}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
+        {/* 액션 셀. 상태 전송 토글(지원 디바이스) + 삭제(삭제 가능 디바이스)를 렌더한다.
+            행 클릭(확장)과 겹치지 않도록 각 컨트롤에서 stopPropagation 한다. */}
+        <td className="px-3 py-3">
+          <div className="flex items-center justify-end gap-2">
+            {onToggleReport && (
+              <ReportToggleSwitch
+                enabled={device.report_enabled ?? true}
+                onToggle={onToggleReport}
+                t={t}
+              />
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                title={t('devices.list.deleteTooltip')}
+                aria-label={t('devices.list.deleteTooltip')}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </td>
       </tr>
 

@@ -39,6 +39,7 @@ type SamsungNasaDeviceInfo struct {
 	Protocol        string         // Override protocol name (empty defaults to "samsung_nasa")
 	ExtraProperties map[string]any // Additional protocol-specific state properties
 	DeviceSource    string         // "config" 또는 "auto"/"bridge"
+	ReportEnabled   bool           // 디바이스별 상태 전송 on/off (기본 true=on). REST DTO 노출용.
 }
 
 // SamsungNasaDeviceAdapter wraps NASA device data into the unified Device interface.
@@ -209,6 +210,14 @@ func (a *SamsungNasaDeviceAdapter) Source() string {
 		return a.info.DeviceSource
 	}
 	return "auto"
+}
+
+// ReportEnabled 는 디바이스별 상태 전송 on/off 설정을 반환한다(기본 true=on).
+// REST DTO(GET /devices, GET /devices/{id}) 가 optional-interface 로 이 값을 노출해,
+// 웹 목록 새로고침/WebSocket 재조회 시에도 off 로 영속된 디바이스가 on 으로 되돌아가지
+// 않도록 한다. device.Device 인터페이스에는 넣지 않고 별도 메서드로 둔다(구현체 파급 방지).
+func (a *SamsungNasaDeviceAdapter) ReportEnabled() bool {
+	return a.info.ReportEnabled
 }
 
 // Capabilities returns the list of supported capabilities based on device type.

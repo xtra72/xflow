@@ -1717,6 +1717,43 @@ func TestExecAgent_ParseDevicesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBuildDevicesList_ReportEnabledRoundTrip 는 report_enabled(*bool) 가
+// buildDevicesList → ParseDevices 왕복에서 보존되는지 검증한다. false 는 유지되고,
+// nil(미지정) 은 키가 생략되어 재파싱 시 nil(기본 enabled) 로 남는다(후방호환).
+func TestBuildDevicesList_ReportEnabledRoundTrip(t *testing.T) {
+	off := false
+	on := true
+	original := []agent.DeviceEntry{
+		{Address: "20.00.01", Name: "off-dev", ReportEnabled: &off},
+		{Address: "20.00.02", Name: "on-dev", ReportEnabled: &on},
+		{Address: "20.00.03", Name: "unset-dev"}, // ReportEnabled nil
+	}
+
+	adapter := &AgentServiceAdapter{}
+	built := adapter.buildDevicesList(original)
+	opts := map[string]any{"devices": built}
+	parsed := agent.ParseDevices(opts)
+
+	if len(parsed) != 3 {
+		t.Fatalf("라운드트립 길이 불일치: got %d, want 3", len(parsed))
+	}
+
+	byName := map[string]agent.DeviceEntry{}
+	for _, e := range parsed {
+		byName[e.Name] = e
+	}
+
+	if e := byName["off-dev"]; e.ReportEnabled == nil || *e.ReportEnabled != false {
+		t.Errorf("off-dev report_enabled 미보존: got %v", e.ReportEnabled)
+	}
+	if e := byName["on-dev"]; e.ReportEnabled == nil || *e.ReportEnabled != true {
+		t.Errorf("on-dev report_enabled 미보존: got %v", e.ReportEnabled)
+	}
+	if e := byName["unset-dev"]; e.ReportEnabled != nil {
+		t.Errorf("unset-dev report_enabled 는 nil 유지여야 함: got %v", *e.ReportEnabled)
+	}
+}
+
 // spyAgentRepository 는 Save 호출을 추적하는 테스트용 저장소
 type spyAgentRepository struct {
 	saveCallCount int

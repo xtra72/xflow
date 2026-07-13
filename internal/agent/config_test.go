@@ -24,6 +24,29 @@ func TestParseDevices_Source(t *testing.T) {
 	assert.Equal(t, "", got[1].Source, "source 미지정은 빈 문자열(로더가 config 처리)")
 }
 
+// TestParseDevices_ReportEnabled 는 devices 항목의 "report_enabled" 키가
+// DeviceEntry.ReportEnabled(*bool) 로 파싱되는지 검증한다. present 이면 포인터로
+// 캡처(true/false), absent 이면 nil(기본 enabled) 로 남는다.
+func TestParseDevices_ReportEnabled(t *testing.T) {
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{"address": "200001", "report_enabled": false},
+			map[string]any{"address": "200002", "report_enabled": true},
+			map[string]any{"address": "200003"}, // report_enabled 미지정
+		},
+	}
+	got := ParseDevices(opts)
+	require.Len(t, got, 3)
+
+	require.NotNil(t, got[0].ReportEnabled, "report_enabled=false 는 non-nil 포인터")
+	assert.False(t, *got[0].ReportEnabled)
+
+	require.NotNil(t, got[1].ReportEnabled, "report_enabled=true 는 non-nil 포인터")
+	assert.True(t, *got[1].ReportEnabled)
+
+	assert.Nil(t, got[2].ReportEnabled, "report_enabled 미지정은 nil(기본 enabled)")
+}
+
 func TestAgentConfig_Validate_Valid(t *testing.T) {
 	cfg := AgentConfig{
 		ID:                  "agent-1",

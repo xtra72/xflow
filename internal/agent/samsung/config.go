@@ -60,18 +60,6 @@ type Hvacr01Config struct {
 	//
 	// 기본 1.0℃. 0 이하면 게이트 비활성. report 시점에도 lastReportTemp 갱신.
 	EventTempThreshold float64
-
-	// ConnectionReportInterval 은 device_connection.report 주기 방출 간격이다
-	// (SPEC-HVACR-CONNSTATE-001 §4.2). 옵션 키: connection_report_interval.
-	// 기본 60s. 0 이면 주기 연결 리포트 비활성(단 initial/change 이벤트는 항상 방출).
-	// report_interval(동작 상태) 과 완전히 독립적이다.
-	ConnectionReportInterval time.Duration
-
-	// StartupProbeTimeout 은 startup probe(첫 poll 사이클 await)의 bounded timeout 이다
-	// (SPEC-HVACR-CONNSTATE-001 §4.2, §4.6). 옵션 키: startup_probe_timeout.
-	// 명시값은 캡 없이 그대로 존중하고, 미설정이면 poll_interval 에서 파생한다:
-	// min(2×poll_interval, 30s), poll_interval 이 0 이면 fallback 10s.
-	StartupProbeTimeout time.Duration
 }
 
 // parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
@@ -420,58 +408,12 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		cfg.EventTempThreshold = f
 	}
 
-	// connection_report_interval (SPEC-HVACR-CONNSTATE-001 §4.2) — device_connection.report
-	// 주기 간격. 기본 60s. report_interval 과 독립. 잘못된 legacy alias 는 hard error
-	// (notify_interval → report_interval 선례를 따른다, N4/AC-18).
-	cfg.ConnectionReportInterval = 60 * time.Second
-	if _, ok := opts["connection_notify_interval"]; ok {
-		return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: deprecated option 'connection_notify_interval' is not supported; use 'connection_report_interval' instead")
-	}
-	if v, ok := opts["connection_report_interval"]; ok {
-		s, sok := v.(string)
-		if !sok {
-			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: connection_report_interval must be a duration string")
-		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid connection_report_interval: %w", err)
-		}
-		cfg.ConnectionReportInterval = d
-	}
-
-	// startup_probe_timeout (SPEC-HVACR-CONNSTATE-001 §4.2, OQ-A) — startup probe 의
-	// bounded timeout. 명시값은 캡 없이 존중, 미설정이면 poll_interval 에서 파생한다.
-	// poll_interval 파싱 이후여야 cfg.PollInterval 이 반영된다.
-	if v, ok := opts["startup_probe_timeout"]; ok {
-		s, sok := v.(string)
-		if !sok {
-			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: startup_probe_timeout must be a duration string")
-		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid startup_probe_timeout: %w", err)
-		}
-		// 명시 override — 30s 캡 미적용(운영자 의도 존중).
-		cfg.StartupProbeTimeout = d
-	} else {
-		cfg.StartupProbeTimeout = deriveStartupProbeTimeout(cfg.PollInterval)
-	}
+	// 연결 정보는 device_state 단일 스트림으로 일원화되었으므로 별도 connection 옵션
+	// (connection_report_interval / startup_probe_timeout / deprecated connection_notify_interval)
+	// 은 더 이상 파싱하지 않는다. 기존 config 에 이 키들이 남아 있어도 hard-error 없이 조용히
+	// 무시된다(알 수 없는 키 무시 정책). 주기 보고는 report_interval(device_state) 로 수렴한다.
 
 	return cfg, nil
-}
-
-// deriveStartupProbeTimeout 은 startup_probe_timeout 미설정 시 파생 기본값을 계산한다
-// (SPEC-HVACR-CONNSTATE-001 §4.2, OQ-A). poll_interval 이 0/미설정이면 절대 fallback
-// 10s 를, 아니면 min(2×poll_interval, 30s) 를 반환한다.
-func deriveStartupProbeTimeout(pollInterval time.Duration) time.Duration {
-	if pollInterval <= 0 {
-		return 10 * time.Second
-	}
-	d := 2 * pollInterval
-	if d > 30*time.Second {
-		d = 30 * time.Second
-	}
-	return d
 }
 
 // toFloat64 는 수치 후보를 float64 로 변환한다 (v0.6.6).

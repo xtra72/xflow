@@ -1705,6 +1705,10 @@
       "deleteMessage": "Delete device '{name}'? Saved user metadata such as the name and tags will also be deleted.",
       "deleteSuccess": "Device deleted",
       "deleteError": "Failed to delete device: {message}",
+      "reportToggle": "Reporting",
+      "reportOn": "On",
+      "reportOff": "Off",
+      "reportError": "Failed to change reporting setting: {message}",
       "unknownError": "Unknown error"
     },
     "relativeTime": {
@@ -1754,6 +1758,8 @@
       "autoDetect": "Auto-detect",
       "indoor": "Indoor unit",
       "outdoor": "Outdoor unit",
+      "reportEnabled": "Reporting",
+      "reportEnabledDesc": "When off, this device does not send status messages to nodes.",
       "dynamicNotice": "Dynamically added devices are reset when the agent restarts.",
       "unitId": "Unit ID (1-247)",
       "nameOptional": "Name (optional)",

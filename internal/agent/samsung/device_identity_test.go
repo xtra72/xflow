@@ -66,14 +66,14 @@ func TestDeviceIdentity_EmitUsesAddress(t *testing.T) {
 		require.Equal(t, "20.00.01", addr.String(), "parsed address should be dotted format")
 
 		a.devices[addr] = &NasaDevice{
-			Address:            addr,
-			UnitID:             "indoor-x", // config name (다른 format)
-			Type:               "HVACR.IDU",
-			Online:             true,
-			LastSeen:           time.Now(),
-			State:              &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-			Source:             "config",
-			connInitialEmitted: true, // handleMessage 에서 initial 미방출하도록 (이미 발행됨)
+			Address:       addr,
+			UnitID:        "indoor-x", // config name (다른 format)
+			Type:          "HVACR.IDU",
+			Online:        true,
+			LastSeen:      time.Now(),
+			State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+			Source:        "config",
+			ReportEnabled: true,
 		}
 		a.deviceIDs["indoor-x"] = addr
 
@@ -173,13 +173,14 @@ func TestDeviceIdentity_EmitUsesAddress(t *testing.T) {
 
 		a.mu.Lock()
 		a.devices[addr] = &NasaDevice{
-			Address:  addr,
-			UnitID:   "testdev",
-			Type:     "HVACR.IDU",
-			Online:   true,
-			LastSeen: time.Now(),
-			State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-			Source:   "bridge",
+			Address:       addr,
+			UnitID:        "testdev",
+			Type:          "HVACR.IDU",
+			Online:        true,
+			LastSeen:      time.Now(),
+			State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+			Source:        "bridge",
+			ReportEnabled: true,
 		}
 		a.deviceIDs["testdev"] = addr
 
@@ -223,8 +224,8 @@ func TestDeviceIdentity_EmitUsesAddress(t *testing.T) {
 	})
 }
 
-// TestDeviceIdentity_ConnectionPayloadUsesAddress 는 device_connection 메시지에서
-// unit_id 가 dotted address 를 사용함을 검증한다.
+// TestDeviceIdentity_ConnectionPayloadUsesAddress 는 device_state 스냅샷(연결 정보 일원화)
+// 에서 unit_id 가 dotted address 를 사용함을 검증한다.
 func TestDeviceIdentity_ConnectionPayloadUsesAddress(t *testing.T) {
 	a := &Hvacr01Agent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("samsung_hvacr01")),
@@ -266,18 +267,18 @@ func TestDeviceIdentity_ConnectionPayloadUsesAddress(t *testing.T) {
 	require.NoError(t, err)
 
 	a.devices[addr] = &NasaDevice{
-		Address:            addr,
-		UnitID:             "kitchen-unit",
-		Type:               "HVACR.IDU",
-		Online:             true,
-		LastSeen:           time.Now(),
-		State:              &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-		Source:             "config",
-		connInitialEmitted: false, // initial 방출을 유도
+		Address:       addr,
+		UnitID:        "kitchen-unit",
+		Type:          "HVACR.IDU",
+		Online:        false, // online 전이(→device_state change)를 유도
+		LastSeen:      time.Now(),
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:        "config",
+		ReportEnabled: true,
 	}
 	a.deviceIDs["kitchen-unit"] = addr
 
-	// 상태 변경으로 initial + connection 메시지 유도
+	// 상태 변경으로 device_state 스냅샷 유도
 	msg := &NasaMessage{
 		SourceAddr:  addr,
 		DestAddr:    AddrController,
@@ -292,33 +293,29 @@ func TestDeviceIdentity_ConnectionPayloadUsesAddress(t *testing.T) {
 	}
 	a.handleMessage(msg)
 
-	// device_connection 메시지 찾기 (initial)
-	var connPayload map[string]any
+	// device_state 스냅샷 찾기 — 연결 정보 일원화 후 recentSnapshots 링버퍼에 device_state 만 실린다.
+	var statePayload map[string]any
 	found := false
-	for i := 0; i < 30; i++ {
-		select {
-		case data := <-a.msgCh:
-			var payload map[string]any
-			err := json.Unmarshal(data, &payload)
-			require.NoError(t, err)
-
-			// metadata.message_type 으로 device_connection 확인
-			if metadata, ok := payload["metadata"].(map[string]any); ok {
-				if msgType, ok := metadata["message_type"].(string); ok && msgType == "device_connection.initial" {
-					connPayload = payload
-					found = true
-					break
-				}
-			}
-		default:
+	a.recentMu.Lock()
+	snaps := append([]recentStateEntry(nil), a.recentSnapshots...)
+	a.recentMu.Unlock()
+	for _, s := range snaps {
+		var payload map[string]any
+		if json.Unmarshal(s.Data, &payload) != nil {
+			continue
+		}
+		if _, ok := payload["state"].(map[string]any); ok {
+			statePayload = payload
+			found = true
+			break
 		}
 	}
-	require.True(t, found, "device_connection.initial should be emitted")
+	require.True(t, found, "device_state snapshot should be emitted")
 
 	// 검증: unit_id 가 dotted address 여야 함
-	emittedUnitID, ok := connPayload["unit_id"].(string)
+	emittedUnitID, ok := statePayload["unit_id"].(string)
 	require.True(t, ok, "unit_id should be a string")
 
 	assert.Equal(t, "25.00.03", emittedUnitID,
-		"connection payload unit_id must use dotted address for consistent device identity")
+		"device_state payload unit_id must use dotted address for consistent device identity")
 }

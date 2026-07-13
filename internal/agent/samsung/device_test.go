@@ -514,15 +514,13 @@ func TestStateForJSON_ExcludeRaw(t *testing.T) {
 	}
 }
 
-// TestStateForJSON_OmitsUnobserved 는 관측되지 않은 필드가 emit 에서 생략되는지
-// 검증한다("확인된 값만 전송"). 재현: power 만 관측된 디바이스(예: off 로 mode/온도/
-// 풍량을 보고하지 않는 디바이스)는 payload 에 power 만 담기고 나머지는 생략된다.
+// TestStateForJSON_OmitsUnobserved 는 mode/온도/fan 등 관측되지 않은 필드가 emit 에서
+// 생략되고, power 는 관측 여부와 무관하게 항상 present 인지 검증한다.
+// 재현: 아무 필드도 관측 안 된(관측 비트 0) 디바이스 — 재시작 직후 등 — 도 power 는
+// 근본 상태이므로 present(기본 false), 나머지는 생략.
 func TestStateForJSON_OmitsUnobserved(t *testing.T) {
-	// power 만 관측(sets_count=1, 재현 로그와 동일). 나머지는 zero-value 이나 미관측.
-	s := &NasaDeviceState{
-		Power:        false,
-		observedCore: observedPower,
-	}
+	// 아무것도 관측 안 됨(재시작 직후, power 프레임 미수신).
+	s := &NasaDeviceState{Power: false, observedCore: 0}
 
 	result := s.StateForJSON(false)
 	data, err := json.Marshal(result)
@@ -534,8 +532,9 @@ func TestStateForJSON_OmitsUnobserved(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
+	// power 는 관측 안 됐어도 항상 present.
 	if v, ok := m["power"]; !ok || v != false {
-		t.Errorf("power 는 관측되었으므로 present(false) 여야: got %v (present=%v)", v, ok)
+		t.Errorf("power 는 관측 여부와 무관하게 present(false) 여야: got %v (present=%v)", v, ok)
 	}
 	for _, k := range []string{"mode", "target_temperature", "current_temperature", "fan_speed", "swing_vertical", "filter_alarm", "error_code"} {
 		if _, ok := m[k]; ok {

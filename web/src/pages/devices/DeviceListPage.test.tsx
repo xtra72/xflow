@@ -40,8 +40,11 @@ vi.mock('@/hooks/useAgent', () => ({
 
 const deleteDeviceMutateMock = vi.hoisted(() => vi.fn());
 const useDeleteDeviceMock = vi.hoisted(() => vi.fn());
+const setDeviceReportMutateMock = vi.hoisted(() => vi.fn());
+const useSetDeviceReportMock = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/useDevice', () => ({
   useDeleteDevice: useDeleteDeviceMock,
+  useSetDeviceReport: useSetDeviceReportMock,
 }));
 
 const addNotificationMock = vi.hoisted(() => vi.fn());
@@ -97,6 +100,8 @@ beforeEach(() => {
   useAgentsMock.mockReset();
   useDeleteDeviceMock.mockReset();
   deleteDeviceMutateMock.mockReset();
+  useSetDeviceReportMock.mockReset();
+  setDeviceReportMutateMock.mockReset();
   addNotificationMock.mockReset();
   useDevicesTargetMock.mockReturnValue({
     data: { data: [makeDevice()] },
@@ -107,6 +112,7 @@ beforeEach(() => {
   // 기본: 매칭되는 에이전트 없음 → 삭제 아이콘 비노출.
   useAgentsMock.mockReturnValue({ data: { data: [] } });
   useDeleteDeviceMock.mockReturnValue({ mutate: deleteDeviceMutateMock, isPending: false });
+  useSetDeviceReportMock.mockReturnValue({ mutate: setDeviceReportMutateMock, isPending: false });
 });
 
 describe('DeviceListPage 컬럼 구성', () => {
@@ -265,5 +271,108 @@ describe('DeviceListPage 디바이스 삭제', () => {
     expect(deleteDeviceMutateMock).toHaveBeenCalledTimes(1);
     const vars = deleteDeviceMutateMock.mock.calls[0]?.[0];
     expect(vars).toEqual({ agentId: 'agent-id-1', deviceId: 'uuid-9' });
+  });
+});
+
+describe('DeviceListPage 상태 전송 토글', () => {
+  beforeEach(() => {
+    useDeviceColumnsMock.mockReturnValue({
+      columns: ['name', 'status'],
+      setColumns: setColumnsMock,
+      isLoading: false,
+      isSaving: false,
+    });
+  });
+
+  it('set_device 미지원 에이전트 타입에는 상태 전송 스위치를 표시하지 않는다', () => {
+    useAgentsMock.mockReturnValue({
+      data: { data: [{ id: 'agent-id-1', name: 'agent-a', type: 'century' }] },
+    });
+    useDevicesTargetMock.mockReturnValue({
+      data: { data: [makeDevice({ agent_name: 'agent-a' })] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    expect(screen.queryByRole('switch', { name: '상태 전송' })).toBeNull();
+  });
+
+  it('samsung_hvacr01 디바이스에 스위치를 표시하고, report_enabled=false 값을 반영한다', () => {
+    useAgentsMock.mockReturnValue({
+      data: { data: [{ id: 'agent-id-1', name: 'agent-a', type: 'samsung_hvacr01' }] },
+    });
+    useDevicesTargetMock.mockReturnValue({
+      data: {
+        data: [
+          makeDevice({
+            uid: 'uuid-9',
+            id: 'uuid-9',
+            agent_name: 'agent-a',
+            report_enabled: false,
+          }),
+        ],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    const toggle = screen.getByRole('switch', { name: '상태 전송' });
+    // report_enabled=false → aria-checked=false
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('스위치 클릭 시 set_device 를 올바른 agentId + deviceId + 반전된 값으로 호출한다', () => {
+    useAgentsMock.mockReturnValue({
+      data: { data: [{ id: 'agent-id-1', name: 'agent-a', type: 'lgap' }] },
+    });
+    useDevicesTargetMock.mockReturnValue({
+      data: {
+        data: [
+          makeDevice({
+            uid: 'uuid-9',
+            id: 'uuid-9',
+            agent_name: 'agent-a',
+            report_enabled: true,
+          }),
+        ],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    const toggle = screen.getByRole('switch', { name: '상태 전송' });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+
+    // 현재 on → off 로 반전 요청.
+    expect(setDeviceReportMutateMock).toHaveBeenCalledTimes(1);
+    const vars = setDeviceReportMutateMock.mock.calls[0]?.[0];
+    expect(vars).toEqual({ agentId: 'agent-id-1', deviceId: 'uuid-9', reportEnabled: false });
+  });
+
+  it('report_enabled 미지정(undefined)이면 기본 on 으로 표시한다', () => {
+    useAgentsMock.mockReturnValue({
+      data: { data: [{ id: 'agent-id-1', name: 'agent-a', type: 'samsung_hvacr01' }] },
+    });
+    useDevicesTargetMock.mockReturnValue({
+      data: { data: [makeDevice({ agent_name: 'agent-a' })] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    const toggle = screen.getByRole('switch', { name: '상태 전송' });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
   });
 });

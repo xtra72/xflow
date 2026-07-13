@@ -234,6 +234,19 @@ func TestSamsungNasaDeviceAdapter_OnlineAndLastSeen(t *testing.T) {
 	assert.False(t, d2.Online())
 }
 
+// TestSamsungNasaDeviceAdapter_ReportEnabled 는 ReportEnabled() 가 info 필드를
+// 그대로 반영하는지 검증한다(REST DTO 노출 경로).
+func TestSamsungNasaDeviceAdapter_ReportEnabled(t *testing.T) {
+	info := fullIndoorInfo()
+	info.ReportEnabled = true
+	d := NewSamsungNasaDevice("agent", info)
+	assert.True(t, d.ReportEnabled())
+
+	info.ReportEnabled = false
+	d2 := NewSamsungNasaDevice("agent", info)
+	assert.False(t, d2.ReportEnabled())
+}
+
 // ---------------------------------------------------------------------------
 // Test: State with populated fields
 // ---------------------------------------------------------------------------

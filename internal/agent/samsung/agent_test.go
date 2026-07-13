@@ -33,7 +33,6 @@ func TestMarkOfflineLocked_PushesOfflineStateSnapshot(t *testing.T) {
 	a.mu.Lock()
 	dev := a.devices[addr]
 	dev.Online = true
-	dev.connInitialEmitted = true
 	dev.LastSeen = time.Now()
 	a.markOfflineLocked(addr, dev, "stale")
 	a.mu.Unlock()
@@ -70,12 +69,14 @@ func TestEmitPeriodicReport_IncludesOutdoorAndOffline(t *testing.T) {
 	a.devices[oduAddr] = &NasaDevice{
 		Address: oduAddr, UnitID: "odu-1", Type: "HVACR.ODU",
 		Online: true, Ready: true, LastSeen: time.Now(), Source: "config",
+		ReportEnabled: true,
 		// State: nil (실외기)
 	}
 	a.devices[offlineAddr] = &NasaDevice{
 		Address: offlineAddr, UnitID: "idu-off", Type: "HVACR.IDU",
 		Online: false, LastSeen: time.Now(), Source: "config",
-		State: &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		ReportEnabled: true,
 	}
 	a.mu.Unlock()
 
@@ -396,22 +397,24 @@ func newTestAgent(t *testing.T) (*Hvacr01Agent, *mockTransport, *mockProtocol) {
 	addr2, _ := ParseNasaAddress("200002")
 
 	a.devices[addr1] = &NasaDevice{
-		Address:  addr1,
-		UnitID:   "living-room",
-		Type:     "HVACR.IDU",
-		Online:   true,
-		LastSeen: time.Now(),
-		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-		Source:   "config",
+		Address:       addr1,
+		UnitID:        "living-room",
+		Type:          "HVACR.IDU",
+		Online:        true,
+		LastSeen:      time.Now(),
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:        "config",
+		ReportEnabled: true,
 	}
 	a.devices[addr2] = &NasaDevice{
-		Address:  addr2,
-		UnitID:   "bedroom",
-		Type:     "HVACR.IDU",
-		Online:   true,
-		LastSeen: time.Now(),
-		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-		Source:   "bridge",
+		Address:       addr2,
+		UnitID:        "bedroom",
+		Type:          "HVACR.IDU",
+		Online:        true,
+		LastSeen:      time.Now(),
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:        "bridge",
+		ReportEnabled: true,
 	}
 	a.deviceIDs["living-room"] = addr1
 	a.deviceIDs["bedroom"] = addr2
@@ -929,13 +932,14 @@ func TestHvacr01Agent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	// DeviceID 가 비어 있는 자동 발견 디바이스 등록
 	addr, _ := ParseNasaAddress("200003")
 	a.devices[addr] = &NasaDevice{
-		Address:  addr,
-		UnitID:   "", // 자동 발견 디바이스: 사용자 지정 ID 없음
-		Type:     "HVACR.IDU",
-		Online:   true,
-		LastSeen: time.Now(),
-		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-		Source:   "auto",
+		Address:       addr,
+		UnitID:        "", // 자동 발견 디바이스: 사용자 지정 ID 없음
+		Type:          "HVACR.IDU",
+		Online:        true,
+		LastSeen:      time.Now(),
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:        "auto",
+		ReportEnabled: true,
 	}
 
 	resp, err := processJSON(t, a, map[string]any{

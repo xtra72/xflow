@@ -165,6 +165,8 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 			UnitID:  entry.Name,
 			Online:  false,
 			Source:  source,
+			// report_enabled: nil(미지정) 이면 기본 on. 명시 false 만 off.
+			ReportEnabled: entry.ReportEnabled == nil || *entry.ReportEnabled,
 		}
 		if devType == "HVACR.IDU" {
 			dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
@@ -256,16 +258,6 @@ func (a *Hvacr01Agent) Start(ctx context.Context) error {
 		go func() { defer a.wg.Done(); a.notifyLoop() }()
 	}
 	a.mu.Unlock()
-
-	// SPEC-HVACR-CONNSTATE-001: 비동기 startup probe + 주기 connection-report 루프.
-	// 기존 a.wg 패턴을 그대로 사용하여 Stop 시 join 된다(§7.2). Start 는 probe 완료를
-	// 기다리지 않고 즉시 반환한다(E6/AC-8).
-	a.wg.Add(1)
-	go a.startupProbeLoop()
-	if a.hvacr01Config.ConnectionReportInterval > 0 {
-		a.wg.Add(1)
-		go a.connectionReportLoop()
-	}
 
 	a.logger.Info("samsung_hvacr01: 에이전트 시작 완료")
 	return nil
@@ -468,6 +460,8 @@ func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 		return a.processAddDevice(&req)
 	case "remove_device":
 		return a.processRemoveDevice(&req)
+	case "set_device":
+		return a.processSetDevice(&req)
 	case "list_devices":
 		return a.processListDevices()
 	default:
@@ -757,12 +751,13 @@ func (a *Hvacr01Agent) processGetState(req *processRequest) ([]byte, error) {
 	}
 
 	resp := map[string]any{
-		"status":      "ok",
-		"address":     addr.String(),
-		"unit_id":     effectiveDeviceID(addr, dev.UnitID),
-		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
-		"device_type": dev.Type,
-		"online":      dev.Online,
+		"status":         "ok",
+		"address":        addr.String(),
+		"unit_id":        effectiveDeviceID(addr, dev.UnitID),
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
+		"device_type":    dev.Type,
+		"online":         dev.Online,
+		"report_enabled": dev.ReportEnabled,
 	}
 
 	if dev.State != nil {
@@ -793,11 +788,12 @@ func (a *Hvacr01Agent) buildAllStatesJSON() ([]byte, error) {
 	var devices []map[string]any
 	for addr, dev := range a.devices {
 		d := map[string]any{
-			"address":     addr.String(),
-			"unit_id":     effectiveDeviceID(addr, dev.UnitID),
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
-			"device_type": dev.Type,
-			"online":      dev.Online,
+			"address":        addr.String(),
+			"unit_id":        effectiveDeviceID(addr, dev.UnitID),
+			"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
+			"device_type":    dev.Type,
+			"online":         dev.Online,
+			"report_enabled": dev.ReportEnabled,
 		}
 		if dev.State != nil {
 			d["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawHex)
@@ -834,9 +830,21 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 	if !ok {
 		return
 	}
+	// report_enabled 게이트: off 인 디바이스는 device_state 스냅샷을 방출하지 않는다.
+	if !dev.ReportEnabled {
+		return
+	}
 
 	// state 그룹 빌드: online 을 시작으로 NasaDeviceState 의 필드 흡수.
-	state := map[string]any{"online": dev.Online}
+	// 연결 진단 부가 필드(error_count/offline_threshold/transport_connected)는 online 옆에
+	// 함께 실어 device_state 단일 스트림으로 일원화한다(별도 device_connection 스트림 제거).
+	// LG 에이전트도 동일 키로 맞추므로 키 이름을 그대로 사용한다.
+	state := map[string]any{
+		"online":              dev.Online,
+		"error_count":         dev.ErrorCount,
+		"offline_threshold":   a.hvacr01Config.OfflineThreshold,
+		"transport_connected": a.transport.Available(),
+	}
 	if dev.State != nil {
 		// StateForJSON 결과를 unmarshal 해 state 맵에 평탄화 — online 과 함께 단일 그룹.
 		if raw, err := json.Marshal(dev.State.StateForJSON(a.hvacr01Config.IncludeRawHex)); err == nil {
@@ -891,6 +899,14 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 		return
 	}
 
+	a.pushSnapshotData(b)
+}
+
+// pushSnapshotData 는 직렬화된 스냅샷 JSON 을 recentSnapshots 링버퍼에 append 한다.
+// 모든 device_state 스냅샷(운전 상태 + 연결 정보)이 소스 노드가 get_recent 로 소비하는
+// 단일 진입점이다. 링버퍼가 가득 차면 가장 오래된 항목을 밀어낸다
+// (drop-newest 대신 drop-oldest — 소비자 watermark 가 최신을 놓치지 않음).
+func (a *Hvacr01Agent) pushSnapshotData(b []byte) {
 	a.recentMu.Lock()
 	a.recentSeq++
 	entry := recentStateEntry{Seq: a.recentSeq, Data: b}
@@ -999,6 +1015,12 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 		name = v
 	}
 
+	// report_enabled 파라미터: present 이면 반영, absent 면 기본 on(true).
+	reportEnabled := true
+	if v, ok := req.Params["report_enabled"].(bool); ok {
+		reportEnabled = v
+	}
+
 	if address == "" {
 		return nil, fmt.Errorf("samsung_hvacr01: address is required for add_device")
 	}
@@ -1026,12 +1048,13 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	dev := &NasaDevice{
-		Address: addr,
-		UnitID:  deviceID,
-		Name:    name,
-		Type:    devType,
-		Online:  false,
-		Source:  "bridge",
+		Address:       addr,
+		UnitID:        deviceID,
+		Name:          name,
+		Type:          devType,
+		Online:        false,
+		Source:        "bridge",
+		ReportEnabled: reportEnabled,
 	}
 	if devType == "HVACR.IDU" {
 		dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
@@ -1053,7 +1076,7 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	if dev.State != nil {
 		regData["state"] = dev.State.StateForJSON(false)
 	}
-	a.sendEventLocked("device_registered", regData)
+	a.sendDeviceEventLocked(dev, "device_registered", regData)
 
 	// 디바이스 추가 후 캐시 갱신
 	if b, err := a.buildAllStatesJSON(); err == nil {
@@ -1061,12 +1084,13 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	resp := map[string]any{
-		"status":      "ok",
-		"address":     addr.String(),
-		"unit_id":     deviceID,
-		"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
-		"name":        name,
-		"device_type": devType,
+		"status":         "ok",
+		"address":        addr.String(),
+		"unit_id":        deviceID,
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
+		"name":           name,
+		"device_type":    devType,
+		"report_enabled": dev.ReportEnabled,
 	}
 	return json.Marshal(resp)
 }
@@ -1111,7 +1135,8 @@ func (a *Hvacr01Agent) processRemoveDevice(req *processRequest) ([]byte, error) 
 	if dev.State != nil {
 		unregData["state"] = dev.State.StateForJSON(false)
 	}
-	a.sendEventLocked("device_unregistered", unregData)
+	// 삭제 전 캡처된 dev 포인터로 report_enabled 게이트 적용(맵에서 delete 됐어도 유효).
+	a.sendDeviceEventLocked(dev, "device_unregistered", unregData)
 
 	// 디바이스 제거 후 캐시 갱신
 	if b, err := a.buildAllStatesJSON(); err == nil {
@@ -1127,6 +1152,58 @@ func (a *Hvacr01Agent) processRemoveDevice(req *processRequest) ([]byte, error) 
 	return json.Marshal(resp)
 }
 
+// processSetDevice 는 디바이스별 설정(report_enabled/name)을 갱신한다 (set_device).
+// address 또는 device_id 로 디바이스를 찾아 params 에 present 한 필드만 갱신한다.
+// report_enabled=false 로 갱신하면 이후 이 디바이스의 device_state 및
+// 디바이스 이벤트 방출이 모두 억제된다. cachedAllStates 를 갱신해 get_all 이 최신 값을
+// 반영하게 한다.
+func (a *Hvacr01Agent) processSetDevice(req *processRequest) ([]byte, error) {
+	// API exec DTO 폴백: params 내 address/device_id 도 허용 (add_device 패턴).
+	if req.Address == "" {
+		if v, ok := req.Params["address"].(string); ok {
+			req.Address = v
+		}
+	}
+	if req.DeviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			req.DeviceID = v
+		}
+	}
+
+	addr, dev, err := a.resolveDevice(req)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// report_enabled: present(bool) 일 때만 갱신.
+	if v, ok := req.Params["report_enabled"].(bool); ok {
+		dev.ReportEnabled = v
+	}
+	// name: present(string) 일 때만 갱신.
+	if v, ok := req.Params["name"].(string); ok {
+		dev.Name = v
+	}
+
+	// get_all 캐시 갱신 (write lock 보유 중이므로 buildAllStatesJSON 안전).
+	if b, err := a.buildAllStatesJSON(); err == nil {
+		a.cachedAllStates.Store(b)
+	}
+
+	resp := map[string]any{
+		"status":         "ok",
+		"address":        addr.String(),
+		"unit_id":        effectiveDeviceID(addr, dev.UnitID),
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, effectiveDeviceID(addr, dev.UnitID)),
+		"name":           dev.Name,
+		"device_type":    dev.Type,
+		"report_enabled": dev.ReportEnabled,
+	}
+	return json.Marshal(resp)
+}
+
 // processListDevices 는 디바이스 목록 조회 명령을 처리한다.
 func (a *Hvacr01Agent) processListDevices() ([]byte, error) {
 	a.mu.RLock()
@@ -1135,12 +1212,13 @@ func (a *Hvacr01Agent) processListDevices() ([]byte, error) {
 	var devices []map[string]any
 	for addr, dev := range a.devices {
 		devices = append(devices, map[string]any{
-			"address":     addr.String(),
-			"unit_id":     addr.String(),
-			"device_id":   agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
-			"device_type": dev.Type,
-			"online":      dev.Online,
-			"source":      dev.Source,
+			"address":        addr.String(),
+			"unit_id":        addr.String(),
+			"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
+			"device_type":    dev.Type,
+			"online":         dev.Online,
+			"source":         dev.Source,
+			"report_enabled": dev.ReportEnabled,
 		})
 	}
 
@@ -1225,10 +1303,12 @@ func (a *Hvacr01Agent) GetPersistableDevices() []agent.DeviceEntry {
 		if dev.Source == "auto" {
 			continue
 		}
+		re := dev.ReportEnabled
 		result = append(result, agent.DeviceEntry{
-			Address: addr.String(),
-			Name:    dev.UnitID,
-			Source:  dev.Source, // source 보존: 재시작 후에도 "bridge" 유지 → 삭제 가능
+			Address:       addr.String(),
+			Name:          dev.UnitID,
+			Source:        dev.Source, // source 보존: 재시작 후에도 "bridge" 유지 → 삭제 가능
+			ReportEnabled: &re,        // report_enabled 왕복 보존(off 설정이 재시작 후에도 유지)
 		})
 	}
 	return result
@@ -1405,21 +1485,14 @@ func (a *Hvacr01Agent) markOfflineLocked(addr NasaAddress, dev *NasaDevice, reas
 		return
 	}
 	dev.Online = false
-	a.sendEventLocked("device_offline", map[string]any{
+	a.sendDeviceEventLocked(dev, "device_offline", map[string]any{
 		"address":   addr.String(),
 		"unit_id":   addr.String(),
 		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
 	})
-	// SPEC-HVACR-CONNSTATE-001 E2: online→offline 전이 즉시 change 방출(tick 독립).
-	// initial 미방출 device 는 순서 보장(E9)을 위해 skip.
-	if dev.connInitialEmitted {
-		a.emitConnectionLocked(addr, dev, connTriggerChange, time.Now().UnixMilli())
-	}
-
-	// 오프라인 전환도 device_state 스냅샷으로 전송한다(online→offline 대칭). online 전환은
-	// pushRecentSnapshot 하지만 offline 은 connection change 만 방출해, report_interval 이
-	// 0(주기 report 비활성)이면 device_state 스트림에 오프라인(online=false)이 영영 실리지
-	// 않던 문제 수정. 호출측이 a.mu 를 보유하므로 여기서 push + notify 한다.
+	// online→offline 전이를 device_state change 로 즉시 방출한다(tick 독립). 연결 정보는
+	// device_state 단일 스트림으로 일원화되었으므로 별도 connection 메시지는 방출하지 않는다.
+	// 호출측이 a.mu 를 보유하므로 여기서 push + notify 한다.
 	a.pushRecentSnapshotWithTrigger(addr, "change")
 	select {
 	case a.stateNotify <- struct{}{}:
@@ -1621,6 +1694,18 @@ func (a *Hvacr01Agent) sendEventLocked(eventType string, data map[string]any) {
 	default:
 		// 드롭
 	}
+}
+
+// sendDeviceEventLocked 는 디바이스별 이벤트를 방출하되 report_enabled=false 인
+// 디바이스는 억제한다. 디바이스 이벤트(device_registered/unregistered/offline/
+// discovered/online/state_changed) 6곳의 공통 게이트 진입점이다. 트랜스포트 단위
+// 이벤트(transport_*)는 이 헬퍼를 거치지 않으므로 게이트 대상이 아니다.
+// 호출 전제: a.mu 보유. dev.ReportEnabled 단순 읽기이므로 재진입 트랩 없음.
+func (a *Hvacr01Agent) sendDeviceEventLocked(dev *NasaDevice, eventType string, data map[string]any) {
+	if dev == nil || !dev.ReportEnabled {
+		return
+	}
+	a.sendEventLocked(eventType, data)
 }
 
 // ListDevices 는 등록된 디바이스 목록을 반환한다.
@@ -1990,11 +2075,12 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 		if a.hvacr01Config.AutoDiscovery {
 			devType := DetectDeviceType(srcAddr)
 			dev = &NasaDevice{
-				Address:  srcAddr,
-				Type:     devType,
-				Online:   true,
-				LastSeen: time.Now(),
-				Source:   "auto",
+				Address:       srcAddr,
+				Type:          devType,
+				Online:        true,
+				LastSeen:      time.Now(),
+				Source:        "auto",
+				ReportEnabled: true, // 자동 발견 디바이스는 기본 on
 			}
 			if devType == "HVACR.IDU" {
 				dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
@@ -2009,7 +2095,7 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 			if dev.State != nil {
 				evtData["state"] = dev.State.StateForJSON(false)
 			}
-			a.sendEventLocked("device_discovered", evtData)
+			a.sendDeviceEventLocked(dev, "device_discovered", evtData)
 		} else {
 			if !a.warnedUnknown[srcAddr] {
 				a.warnedUnknown[srcAddr] = true
@@ -2041,20 +2127,13 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 		if dev.State != nil {
 			onlineData["state"] = dev.State.StateForJSON(false)
 		}
-		a.sendEventLocked("device_online", onlineData)
+		a.sendDeviceEventLocked(dev, "device_online", onlineData)
 		snapshotShouldPush = true
 	}
 
-	// SPEC-HVACR-CONNSTATE-001 E3: 첫 통신 도착 시 device당 1회 initial(online)을,
-	// 이후 offline→online 복구 시 change 를 방출한다. connInitialEmitted 게이트가
-	// per-device 순서 보장(E9)과 프로세스당 1회 initial(N9)을 동시에 만족시킨다.
-	// (RWMutex 비재진입: 이 경로는 a.mu 보유 중이므로 a.Name() 대신 agentName 사용.)
-	if !dev.connInitialEmitted {
-		dev.connInitialEmitted = true
-		a.emitConnectionLocked(srcAddr, dev, connTriggerInitial, time.Now().UnixMilli())
-	} else if wasOffline {
-		a.emitConnectionLocked(srcAddr, dev, connTriggerChange, time.Now().UnixMilli())
-	}
+	// offline→online 복구는 위 wasOffline 분기에서 device_online 이벤트 + snapshotShouldPush
+	// 로 이미 device_state change 를 방출한다. 연결 정보는 device_state 단일 스트림으로
+	// 일원화되었으므로 별도 connection 메시지(initial/change)는 방출하지 않는다.
 
 	// 실내기 상태 업데이트
 	if dev.State != nil && len(msg.MessageSets) > 0 {
@@ -2114,7 +2193,7 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 				"device", dev.UnitID, "addr", srcAddr.String(),
 				"power", currentState.Power, "mode", currentState.Mode,
 				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
-			a.sendEventLocked("device_state_changed", map[string]any{
+			a.sendDeviceEventLocked(dev, "device_state_changed", map[string]any{
 				"address":   srcAddr.String(),
 				"unit_id":   srcAddr.String(),
 				"device_id": agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String()),

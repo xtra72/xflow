@@ -71,15 +71,16 @@ func (p *Hvacr01DeviceProvider) createExecutor(addr NasaAddress) adapter.Command
 // hvacr01DeviceToInfo converts a NasaDevice to adapter.SamsungNasaDeviceInfo.
 func hvacr01DeviceToInfo(dev *NasaDevice) adapter.SamsungNasaDeviceInfo {
 	info := adapter.SamsungNasaDeviceInfo{
-		Address:      dev.Address.String(),
-		DeviceID:     dev.UnitID, // v0.18.7: NasaDevice.UnitID 가 adapter SamsungNasaDeviceInfo.DeviceID (사용자 식별자) 로 매핑
-		Name:         dev.Name,
-		DeviceType:   dev.Type,
-		Online:       dev.Online,
-		Ready:        dev.Ready,
-		LastSeen:     dev.LastSeen,
-		ErrorCount:   dev.ErrorCount,
-		DeviceSource: dev.Source,
+		Address:       dev.Address.String(),
+		DeviceID:      dev.UnitID, // v0.18.7: NasaDevice.UnitID 가 adapter SamsungNasaDeviceInfo.DeviceID (사용자 식별자) 로 매핑
+		Name:          dev.Name,
+		DeviceType:    dev.Type,
+		Online:        dev.Online,
+		Ready:         dev.Ready,
+		LastSeen:      dev.LastSeen,
+		ErrorCount:    dev.ErrorCount,
+		DeviceSource:  dev.Source,
+		ReportEnabled: dev.ReportEnabled,
 	}
 
 	if dev.State != nil {

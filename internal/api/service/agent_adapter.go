@@ -602,8 +602,9 @@ func (a *AgentServiceAdapter) ExecAgent(ctx context.Context, id string, data []b
 		return nil, fmt.Errorf("agent exec: %w", err)
 	}
 
-	// add_device/remove_device 커맨드 성공 후 디바이스 목록 영속 저장
-	if (cmdName == "add_device" || cmdName == "remove_device") && a.repo != nil {
+	// add_device/remove_device/set_device 커맨드 성공 후 디바이스 목록 영속 저장
+	// set_device 는 report_enabled 변경을 재시작 후에도 보존하기 위해 포함한다.
+	if (cmdName == "add_device" || cmdName == "remove_device" || cmdName == "set_device") && a.repo != nil {
 		if err := a.persistDeviceRosterAfterExec(ctx, ag); err != nil {
 			// 저장 실패는 경고로만 기록하고 응답은 반환 (in-memory 는 이미 성공)
 			a.logger.Warn("디바이스 목록 영속 저장 실패", "agentID", id, "command", cmdName, "error", err)
@@ -663,6 +664,10 @@ func (a *AgentServiceAdapter) buildDevicesList(devices []agent.DeviceEntry) []an
 		}
 		if dev.Source != "" {
 			entry["source"] = dev.Source // source 보존: 재시작 후 삭제 가능성 유지
+		}
+		// report_enabled: non-nil 일 때만 기록(nil=미지정→기본 on, 키 생략으로 후방호환).
+		if dev.ReportEnabled != nil {
+			entry["report_enabled"] = *dev.ReportEnabled
 		}
 		result = append(result, entry)
 	}

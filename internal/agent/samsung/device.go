@@ -23,13 +23,11 @@ type NasaDevice struct {
 	State      *NasaDeviceState // 현재 상태 (실내기 전용)
 	ErrorCount int
 	Source     string // "config", "bridge", "auto", "discovery"
-
-	// connInitialEmitted 는 device_connection.initial 이 이 device 에 대해 이미
-	// 방출되었는지를 나타낸다 (SPEC-HVACR-CONNSTATE-001 §4.6.5/§4.6.6).
-	// 프로세스 수명당 device 별 1회 initial 을 보장(N9)하고, per-device 순서 보장
-	// (initial 이 첫 change/report 보다 먼저, E9/S5)의 게이트로 사용된다.
-	// a.mu 하에서만 접근한다.
-	connInitialEmitted bool
+	// ReportEnabled 는 디바이스별 상태 전송 on/off 이다(기본 true=on). false 면 이 디바이스에
+	// 대한 device_state 리포트/변경(연결 정보 포함)과 모든 디바이스 이벤트를 노드로 방출하지
+	// 않는다. 트랜스포트 단위 이벤트(transport_*)는 게이트하지 않는다.
+	// a.mu 하에서만 접근한다(단순 필드 읽기이므로 기존 락 하에서 안전).
+	ReportEnabled bool
 }
 
 // HexKeyByteMap 는 uint16 키를 16진수 문자열("0x0402")로 직렬화하는 바이트맵이다.
@@ -124,9 +122,11 @@ func (s *NasaDeviceState) observed(bit uint8) bool {
 // Power=false 면 mode=off/auto(0), fan_speed=off(0) 로 정규화한다.
 func (s *NasaDeviceState) StateForJSON(includeRaw bool) any {
 	out := make(map[string]any, 8)
-	if s.observed(observedPower) {
-		out["power"] = s.Power
-	}
+	// power 는 디바이스의 근본 on/off 상태이므로 관측 여부와 무관하게 항상 emit 한다
+	// (online 도 pushRecentSnapshot 에서 항상 포함). 아직 power 프레임(0x4000)을 받지
+	// 못했으면 기본값(false)이 나간다 — 재시작 직후 등 짧은 창. mode/온도/fan 은 관측된
+	// 값만 emit(off 로 미보고 시 생략) 하는 규칙을 유지한다.
+	out["power"] = s.Power
 	if s.observed(observedMode) {
 		mode := hvac.ModeFromName(s.Mode)
 		if !s.Power {

@@ -76,6 +76,12 @@ type DeviceEntry struct {
 	// 영속화 왕복 후에도 출처를 유지해 삭제 가능성이 보존되도록 한다(삭제 보호는
 	// "config" 에만 적용). 후방호환: source 키가 없는 기존 항목은 "config" 로 로드된다.
 	Source string
+	// ReportEnabled 는 디바이스별 상태 전송 on/off 설정이다(포인터: nil=미지정→기본 on).
+	// off(=false)인 디바이스는 노드로 device_state 및 디바이스 이벤트를
+	// 어떤 것도 방출하지 않는다(트랜스포트 단위 이벤트는 게이트 대상 아님). 포인터로 둔 이유는
+	// zero-value(false)가 실수로 disable 로 해석되는 것을 방지하기 위함이다. 후방호환:
+	// report_enabled 키가 없는 기존 항목은 nil 로 로드되어 기본 enabled 로 동작한다.
+	ReportEnabled *bool
 }
 
 // ParseDevices 는 에이전트 설정 옵션에서 "devices" 배열을 파싱한다.
@@ -103,6 +109,12 @@ func ParseDevices(opts map[string]any) []DeviceEntry {
 		}
 		if src, ok := m["source"]; ok {
 			entry.Source = fmt.Sprintf("%v", src)
+		}
+		// report_enabled: present 이면 포인터로 캡처(bool), absent 면 nil 유지(기본 enabled).
+		if re, ok := m["report_enabled"]; ok {
+			if b, ok2 := re.(bool); ok2 {
+				entry.ReportEnabled = &b
+			}
 		}
 		if entry.Address != "" {
 			devices = append(devices, entry)

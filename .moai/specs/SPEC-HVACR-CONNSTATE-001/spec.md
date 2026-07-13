@@ -1,9 +1,10 @@
 ---
 id: SPEC-HVACR-CONNSTATE-001
 title: Device Connection-State Reporting for Samsung/LG HVACR Agents
-status: Planned
+status: Deprecated
 priority: High
 created: 2026-07-10
+deprecated: 2026-07-13
 lifecycle: spec-anchored
 related:
   - SPEC-SAMSUNG-HVACR-001
@@ -12,6 +13,14 @@ related:
   - SPEC-MESSAGE-TYPE-001
   - SPEC-DEVICE-IDENTITY-001
 ---
+
+> **DEPRECATED (2026-07-13).** 별도 `device_connection.<trigger>` 메시지 타입은 폐지되었다.
+> 연결 상태는 `device_state` 스트림으로 **일원화**되었다(century 에이전트의 단일 스트림 모델과 정렬).
+> `device_state` 의 `state` 그룹이 `online` 과 함께 `error_count` / `offline_threshold` /
+> `transport_connected` 를 싣고, online↔offline 전이 시 `device_state` change 로, 주기 보고는
+> `report_interval` 로 방출된다. 폐지된 요소: `device_connection.*` 메시지, `connection_report_interval`,
+> `startup_probe_timeout`, `trigger="initial"`(startup probe baseline). 아래 원문은 역사적 기록으로만
+>보존한다.
 
 # SPEC-HVACR-CONNSTATE-001: Device Connection-State Reporting for Samsung/LG HVACR Agents
 
@@ -90,7 +99,7 @@ xflow의 HVACR 에이전트(Samsung / LG)는 각 device의 **동작 상태(opera
 
 ### 4.6 Startup Probe와 `trigger="initial"` (신규, Q3 결정 반영)
 
-**결정: 에이전트 Start 시 각 등록 device에 대해 1회성 startup probe로 초기 연결 상태를 확정하고, 그 결과를 device당 `device_connection.initial` 메시지로 방출한다. `connection_state`는 `online`/`offline` 2-값을 유지하며 `unknown` 상태를 도입하지 않는다. Probe는 비동기(background)로 실행된다(OQ-B 결정).**
+**결정: 에이전트 Start 시 각 등록 device에 대해 1회성 startup probe로 초기 연결 상태를 확정하고, 그 결과를 device당 `device_connection.initial` 메시지로 방출한다. 연결 상태는 `online` boolean 단일 필드(`true`=online, `false`=offline)로 전송하며 `unknown` 상태를 도입하지 않는다. Probe는 비동기(background)로 실행된다(OQ-B 결정).**
 
 사용자 결정 원문 의도: "기동 직후 확인해서 전송. 확인이 안될 경우, offline."
 
@@ -162,17 +171,17 @@ Start가 완료되었으나 transport가 아직 연결되지 않은 경우(예: 
 - **U2**: The system **shall** emit one message **per device** (individual messages), never a batched array of devices.
 - **U3**: The system **shall** set `metadata.message_type` to `device_connection.<trigger>` where `<trigger>` is one of `change`, `report`, or `initial`.
 - **U4**: The system **shall** represent all timestamps as epoch milliseconds (`int64`, via `.UnixMilli()`).
-- **U5**: The system **shall** include the boolean/normalized connection state (`connected`, `connection_state`) as first-class top-level payload fields, where `connection_state` is a two-value set (`online` | `offline`) with no `unknown` value.
+- **U5**: The system **shall** include the connection state as a single first-class top-level boolean payload field `online` (`true`=online, `false`=offline), unified with the system-wide `online` convention. The prior dual `connected`/`connection_state` fields are removed; there is no `unknown` value.
 
 ### 5.2 Event-Driven (WHEN ... THEN)
 
 - **E1**: **When** a device's connection state transitions between `online` and `offline`, **the** agent **shall** emit a `device_connection.change` message immediately, independent of any periodic tick.
-- **E2**: **When** a device's `ErrorCount` reaches `OfflineThreshold`, **the** agent **shall** transition the device to `offline` and emit a `device_connection.change` message with `connection_state="offline"`.
-- **E3**: **When** an offline device resumes successful communication, **the** agent **shall** transition the device to `online` and emit a `device_connection.change` message with `connection_state="online"`. (This adds the missing symmetric online-recovery event to the Samsung agent.)
+- **E2**: **When** a device's `ErrorCount` reaches `OfflineThreshold`, **the** agent **shall** transition the device to `offline` and emit a `device_connection.change` message with `online=false`.
+- **E3**: **When** an offline device resumes successful communication, **the** agent **shall** transition the device to `online` and emit a `device_connection.change` message with `online=true`. (This adds the missing symmetric online-recovery event to the Samsung agent.)
 - **E4**: **When** the transport disconnects and all devices are bulk-marked offline (e.g. LGAP `setAllDevicesOffline()`), **the** agent **shall** emit an individual `device_connection.change` (offline) message for each affected device.
 - **E5**: **When** the `connection_report_interval` tick fires, **the** agent **shall** emit a `device_connection.report` message for **every registered device**.
 - **E6**: **When** the agent starts (`Start`), **the** agent **shall** launch the startup probe asynchronously (in a background goroutine) and **shall** return from `Start` without waiting for probe completion. The background probe performs a one-shot determination per registered device — expressed as the first poll cycle awaited within `startup_probe_timeout` — and emits an `device_connection.initial` message per device carrying the determined state.
-- **E7**: **When** a startup probe confirms communication within `startup_probe_timeout`, **the** agent **shall** set that device's initial `connection_state` to `online`; **when** the probe fails, times out, or the transport is unavailable, **the** agent **shall** set the initial `connection_state` to `offline`.
+- **E7**: **When** a startup probe confirms communication within `startup_probe_timeout`, **the** agent **shall** set that device's initial `online` field to `true`; **when** the probe fails, times out, or the transport is unavailable, **the** agent **shall** set the initial `online` field to `false`.
 - **E8**: **When** `Start` completes while the transport is not yet connected, **the** agent **shall** emit an initial `offline` message for every registered device.
 - **E9**: **When** the agent emits any `change` or `report` message for a device, **the** agent **shall** have already emitted that device's `initial` message first (per-device ordering guarantee). Inter-device ordering of `initial` messages is explicitly not guaranteed.
 
@@ -197,7 +206,7 @@ Start가 완료되었으나 transport가 아직 연결되지 않은 경우(예: 
 - **N4**: **If** an invalid or legacy alias config key is supplied for the connection interval, **then** parsing **shall** fail as a hard error and **shall not** be silently ignored (consistent with the `notify_interval` → `report_interval` precedent).
 - **N5**: **The** agent **shall not** exclude offline devices from periodic reports.
 - **N6**: **The** agent **shall not** default a device silently to `offline` at startup without first attempting the bounded startup probe; the initial state **shall** be the determined result of that probe.
-- **N7**: **The** system **shall not** introduce an `unknown` value into `connection_state`; the set **shall** remain `online` | `offline`.
+- **N7**: **The** system **shall not** introduce an `unknown` connection value; the `online` boolean field **shall** remain two-valued (`true`=online, `false`=offline).
 - **N8**: **At** startup, a single failed probe **shall** yield initial `offline` and **shall not** require exhausting `OfflineThreshold` (deliberate asymmetry with the steady-state threshold rule).
 - **N9**: **The** agent **shall not** emit more than one `device_connection.initial` message for the same device within one process lifetime; late transport connects and every reconnect **shall** be reported as ordinary `change` events (E1/E3), never as a second `initial`.
 - **N10**: **If** `Stop` is called while a startup probe is in flight, **then** the probe goroutine **shall** be joined via the `WaitGroup` (no leak) and **shall not** emit any message after `Stop` has begun.
@@ -211,8 +220,7 @@ Start가 완료되었으나 transport가 아직 연결되지 않은 경우(예: 
   "unit_id": "<string>",
   "device_id": "<string>",
   "trigger": "change | report | initial",
-  "connected": true,
-  "connection_state": "online | offline",
+  "online": true,
   "error_count": 0,
   "offline_threshold": 3,
   "transport_connected": true,
@@ -231,8 +239,7 @@ Start가 완료되었으나 transport가 아직 연결되지 않은 경우(예: 
 | `unit_id` | string | 기존 봉투와 동일 (device unit 식별자) |
 | `device_id` | string | `effectiveDeviceID`/`ResolveDeviceID`로 해석된 device_id (기존 규약) |
 | `trigger` | string | `change`(전이 즉시), `report`(주기 tick), 또는 `initial`(Start 시 startup probe 확정, §4.6). 다운스트림 파서는 세 값을 모두 tolerate해야 한다 |
-| `connected` | bool | `Online` 필드의 boolean 값 |
-| `connection_state` | string | `connected`의 정규화 문자열. **2-값 집합 `online` \| `offline`만 사용하며 `unknown`은 없다** |
+| `online` | bool | `Online` 필드의 boolean 값. **연결 상태는 이 단일 필드로 전송하며(시스템 전체 `online` 컨벤션과 통일), 이전의 `connected`/`connection_state` 이중 필드는 폐기했다.** `unknown` 값은 없다(`true`=online, `false`=offline) |
 | `error_count` | int | 현재 `ErrorCount` |
 | `offline_threshold` | int | 적용 중인 `OfflineThreshold` (관제 임계 노출용) |
 | `transport_connected` | bool | `TransportConnected()` = `a.transport.Available()` |
@@ -246,8 +253,7 @@ Startup 메시지 예 (`trigger="initial"`, probe 실패 → offline):
   "unit_id": "<string>",
   "device_id": "<string>",
   "trigger": "initial",
-  "connected": false,
-  "connection_state": "offline",
+  "online": false,
   "error_count": 0,
   "offline_threshold": 3,
   "transport_connected": false,
@@ -325,19 +331,19 @@ Startup 메시지 예 (`trigger="initial"`, probe 실패 → offline):
 ### AC-5: startup probe 성공 → 초기 online 방출
 - Given 등록된 device에 대해 transport가 연결되어 있고 첫 poll이 `startup_probe_timeout` 내에 유효 응답을 반환,
 - When 에이전트가 `Start`되면,
-- Then 해당 device에 대해 `trigger="initial"`, `connection_state="online"`인 `device_connection.initial` 메시지가 device당 정확히 1개 방출된다.
+- Then 해당 device에 대해 `trigger="initial"`, `online=true`인 `device_connection.initial` 메시지가 device당 정확히 1개 방출된다.
 
 ### AC-6: startup probe 실패 → 초기 offline (offline_threshold 대기 없음)
 - Given 등록된 device의 첫 poll이 `startup_probe_timeout` 내에 응답하지 않음(단 1회 실패),
 - When 에이전트가 `Start`되면,
-- Then 해당 device에 대해 `trigger="initial"`, `connection_state="offline"`인 메시지가 즉시 방출된다.
+- Then 해당 device에 대해 `trigger="initial"`, `online=false`인 메시지가 즉시 방출된다.
 - And `OfflineThreshold` 소진을 기다리지 않는다(단일 실패 → 즉시 offline).
 - And 이후 첫 성공 poll이 도착하면 `device_connection.change` (online)가 방출된다(S4/E3).
 
 ### AC-7: Start 시 transport 미가용 → 전체 device 초기 offline
 - Given `Start` 완료 시점에 transport가 아직 연결되지 않음(reconnect loop 진행 중),
 - When startup probe가 수행되면,
-- Then 모든 등록 device에 대해 `trigger="initial"`, `connection_state="offline"` 메시지가 device당 1개씩 방출된다.
+- Then 모든 등록 device에 대해 `trigger="initial"`, `online=false` 메시지가 device당 1개씩 방출된다.
 
 ### AC-8: `Start`는 probe 완료를 기다리지 않고 즉시 반환 (비동기)
 - Given 첫 poll이 `startup_probe_timeout`에 가깝게 느리게 응답하는 device를 다수 보유한 에이전트,
@@ -377,7 +383,7 @@ Startup 메시지 예 (`trigger="initial"`, probe 실패 → offline):
 ### AC-13: offline device가 주기 리포트에 포함
 - Given 등록된 device 3개 중 1개가 offline(`AllCoreObserved()==false`), 모두 `initial` 방출 완료,
 - When `connection_report_interval` tick이 발생하면,
-- Then 3개 device 모두에 대해 `device_connection.report`가 방출되며, offline device도 `connection_state="offline"`로 포함된다.
+- Then 3개 device 모두에 대해 `device_connection.report`가 방출되며, offline device도 `online=false`로 포함된다.
 
 ### AC-14: 개별 메시지 (배칭 금지)
 - Given 등록된 device N개,
@@ -395,7 +401,7 @@ Startup 메시지 예 (`trigger="initial"`, probe 실패 → offline):
 
 ### AC-17: 봉투 규약 준수 (trigger 3-값 포함)
 - Given 임의의 connection-state 메시지,
-- Then payload는 `unit_id`, `device_id`, `trigger`, `metadata.message_type`를 포함하고, `trigger ∈ {change, report, initial}`, `connection_state ∈ {online, offline}`이며, 모든 타임스탬프는 epoch-ms int64(최상위 `event_ms` 포함)이고, 최상위 `type` 필드는 없다.
+- Then payload는 `unit_id`, `device_id`, `trigger`, `metadata.message_type`를 포함하고, `trigger ∈ {change, report, initial}`, `online ∈ {true(online), false(offline)}`이며, 모든 타임스탬프는 epoch-ms int64(최상위 `event_ms` 포함)이고, 최상위 `type` 필드는 없다.
 
 ### AC-18: 잘못된 config 키는 hard error
 - Given connection interval 또는 `startup_probe_timeout`에 대한 잘못된/legacy alias 키,
@@ -437,7 +443,7 @@ Startup 메시지 예 (`trigger="initial"`, probe 실패 → offline):
 
 1. **[해결] `event_ms` 필드 위치 → 최상위 필드 유지.** `event_ms`는 `last_seen_ms`와 나란히 최상위 필드로 유지한다. 다운스트림 파서는 신규 최상위 필드를 tolerate해야 하며, `metadata`로 이동하지 않는다. (§6 반영)
 2. **[해결] `connection_report_interval` 기본값 → 60s 유지.** 기존 `report_interval`과 일관되게 60s를 유지한다. (§4.2 반영)
-3. **[해결] 초기 상태 → `unknown` 상태 없음, startup probe 도입.** `connection_state`는 `online`/`offline` 2-값을 유지한다. Start 시 각 device에 대해 bounded startup probe(첫 poll 사이클, `startup_probe_timeout`)로 초기 상태를 확정하고 device당 `device_connection.initial`(신규 `trigger="initial"`)로 방출한다. 단일 probe 실패/timeout/transport 미가용 → 즉시 `offline`(threshold 우회). (§4.6, E6~E8, S4, N6~N8, AC-5~AC-7 반영)
+3. **[해결] 초기 상태 → `unknown` 상태 없음, startup probe 도입.** 연결 상태는 `online` boolean 단일 필드(`true`=online, `false`=offline)로 전송한다. Start 시 각 device에 대해 bounded startup probe(첫 poll 사이클, `startup_probe_timeout`)로 초기 상태를 확정하고 device당 `device_connection.initial`(신규 `trigger="initial"`)로 방출한다. 단일 probe 실패/timeout/transport 미가용 → 즉시 `offline`(threshold 우회). (§4.6, E6~E8, S4, N6~N8, AC-5~AC-7 반영)
 4. **[해결] LGAP goroutine 수명주기 → 신규 루프만 join.** 신규 connection-state 루프에만 `sync.WaitGroup` join-on-Stop을 적용한다. 기존 LGAP bare goroutine은 그대로 두며, 남는 수명주기 비대칭은 알려진·수용된 상태로 두고 후속 리팩터링 SPEC에서 해소한다. (§7.2, AC-15 반영)
 
 ### 해결됨 — 2차 (RESOLVED, startup probe 설계에서 파생)

@@ -59,16 +59,17 @@ type DeviceHistoryProvider interface {
 // 별도 UID 필드는 중복. ID 단일 필드만 노출 (외부 클라이언트는 ID 를 UUID 로
 // 사용).
 type DeviceResponse struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	Type         string                 `json:"type"`
-	Protocol     string                 `json:"protocol"`
-	AgentName    string                 `json:"agent_name"`
-	Online       bool                   `json:"online"`
-	LastSeen     time.Time              `json:"last_seen"`
-	Source       string                 `json:"source"`
-	Capabilities []string               `json:"capabilities"`
-	Metadata     *device.DeviceMetadata `json:"metadata,omitempty"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Type          string                 `json:"type"`
+	Protocol      string                 `json:"protocol"`
+	AgentName     string                 `json:"agent_name"`
+	Online        bool                   `json:"online"`
+	ReportEnabled bool                   `json:"report_enabled"`
+	LastSeen      time.Time              `json:"last_seen"`
+	Source        string                 `json:"source"`
+	Capabilities  []string               `json:"capabilities"`
+	Metadata      *device.DeviceMetadata `json:"metadata,omitempty"`
 }
 
 // DeviceDetailResponse 는 디바이스 상세 조회 응답 DTO이다.
@@ -536,6 +537,14 @@ func mapDeviceError(err error) *api.APIError {
 	}
 }
 
+// reportEnabledCarrier 는 디바이스별 상태 전송 on/off 를 노출하는 optional 인터페이스이다.
+// samsung/lgap 어댑터(SamsungNasaDeviceAdapter) 만 구현하며, 미구현 어댑터(modbus/
+// lg_icp/century 등)는 기본 true 로 안전하게 처리된다. device.Device 인터페이스를 건드리지
+// 않아 모든 구현체 파급을 피한다.
+type reportEnabledCarrier interface {
+	ReportEnabled() bool
+}
+
 // deviceToResponse 는 device.Device를 DeviceResponse로 변환한다.
 //
 // SPEC-DEVICE-IDENTITY-001 Phase D (v1.0): ID 가 곧 UUID 이므로 별도 UID 필드는
@@ -552,6 +561,12 @@ func deviceToResponse(d device.Device) DeviceResponse {
 		LastSeen:     d.LastSeen(),
 		Source:       d.Source(),
 		Capabilities: d.Capabilities(),
+	}
+
+	// report_enabled: optional-interface 로 채운다. 미구현 어댑터는 기본 true(안전).
+	resp.ReportEnabled = true
+	if rc, ok := d.(reportEnabledCarrier); ok {
+		resp.ReportEnabled = rc.ReportEnabled()
 	}
 
 	if meta.Name != "" || meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {

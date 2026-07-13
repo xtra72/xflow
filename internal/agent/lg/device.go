@@ -16,13 +16,11 @@ type LGAPDevice struct {
 	State      *LGAPDeviceState // 현재 상태
 	ErrorCount int
 	Source     string // "config", "bridge"
-
-	// connInitialEmitted 는 device_connection.initial 이 이 device 에 대해 이미
-	// 방출되었는지를 나타낸다 (SPEC-HVACR-CONNSTATE-001 §4.6.5/§4.6.6).
-	// 프로세스 수명당 device 별 1회 initial 을 보장(N9)하고, per-device 순서 보장
-	// (initial 이 첫 change/report 보다 먼저, E9/S5)의 게이트로 사용된다.
-	// a.mu 하에서만 접근한다.
-	connInitialEmitted bool
+	// ReportEnabled 는 디바이스별 상태 전송 on/off 이다(기본 true=on). false 면 이 디바이스에
+	// 대한 device_state 리포트/변경 및 모든 디바이스 이벤트를 노드로 방출하지 않는다.
+	// 트랜스포트 단위 이벤트(transport_*)는 게이트하지 않는다.
+	// a.mu 하에서만 접근한다(단순 필드 읽기이므로 기존 락 하에서 안전).
+	ReportEnabled bool
 }
 
 // LGAPDeviceState 는 실내기의 현재 운전 상태를 나타낸다.

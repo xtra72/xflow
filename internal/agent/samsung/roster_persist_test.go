@@ -2,7 +2,6 @@ package samsung
 
 import (
 	"testing"
-	"time"
 )
 
 // TestGetPersistableDevices_ExcludesAutoDiscovered 는 auto-discovery 로 발견된
@@ -12,7 +11,7 @@ import (
 // 영구히 쌓인다. auto device 는 재시작 후 device 가 다시 송신하면 스스로 복구되므로
 // 저장할 이유가 없다.
 func TestGetPersistableDevices_ExcludesAutoDiscovered(t *testing.T) {
-	a, _ := newConnAgent(t, time.Hour, time.Hour, "200001")
+	a, _ := newConnAgent(t, "200001")
 	a.hvacr01Config.AutoDiscovery = true
 
 	cfgAddr, err := ParseNasaAddress("200001")
@@ -65,7 +64,7 @@ func TestGetPersistableDevices_ExcludesAutoDiscovered(t *testing.T) {
 // Name 이 비어 있어(이름은 UnitID 에 저장됨) unit id 가 통째로 소실됐다.
 // UnitID 는 ResolveDeviceID 의 입력이므로 소실되면 재시작 후 device_id(UUID)가 바뀐다.
 func TestGetPersistableDevices_PreservesConfigUnitID(t *testing.T) {
-	a, _ := newConnAgent(t, time.Hour, time.Hour, "200001")
+	a, _ := newConnAgent(t, "200001")
 
 	addr, err := ParseNasaAddress("200001")
 	if err != nil {
@@ -89,7 +88,7 @@ func TestGetPersistableDevices_PreservesConfigUnitID(t *testing.T) {
 // TestGetPersistableDevices_EmptyUnitID 는 이름 없는 config device 가
 // 빈 Name 으로 일관되게 왕복하는지 검증한다.
 func TestGetPersistableDevices_EmptyUnitID(t *testing.T) {
-	a, _ := newConnAgent(t, time.Hour, time.Hour, "200001")
+	a, _ := newConnAgent(t, "200001")
 
 	addr, err := ParseNasaAddress("200001")
 	if err != nil {
