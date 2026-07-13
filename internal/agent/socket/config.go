@@ -8,9 +8,10 @@ import (
 
 // SocketConfig 는 모든 소켓 에이전트의 공통 설정이다.
 type SocketConfig struct {
-	Host       string // 바인드/연결 호스트 주소
-	Port       int    // 포트 번호 (필수)
-	BufferSize int    // 읽기 버퍼 크기 (바이트)
+	Host        string // 바인드/연결 호스트 주소
+	Port        int    // 포트 번호 (필수)
+	BufferSize  int    // 읽기 버퍼 크기 (바이트)
+	LogMessages bool   // 송/수신(RX/TX) 패킷을 hex 로 INFO 로그 (기본 false, opt-in 진단용)
 }
 
 // TCPConfig 는 TCP 소켓의 공통 설정이다.
@@ -137,6 +138,9 @@ func parseSocketConfig(opts map[string]any, defaultHost string) (SocketConfig, e
 	}
 	if v, ok := opts["buffer_size"]; ok {
 		cfg.BufferSize = toInt(v)
+	}
+	if v, ok := opts["log_messages"]; ok {
+		cfg.LogMessages = toBool(v)
 	}
 	return cfg, nil
 }

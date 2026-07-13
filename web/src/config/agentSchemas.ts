@@ -23,6 +23,8 @@ export const AGENT_TYPES = [
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
   { value: 'tcp-client', label: 'TCP Client' },
+  { value: 'udp-server', label: 'UDP Server' },
+  { value: 'udp-client', label: 'UDP Client' },
 ] as const;
 
 // ---- 타입별 ConfigField 정의 ----
@@ -395,6 +397,7 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 0, description: '0 = 무제한' },
   { name: 'broadcast', type: 'boolean', label: '브로드캐스트', default: false, description: '활성화 시 송신 데이터를 연결된 모든 클라이언트에 전송 (특정 대상 무시). 한 소스를 여러 클라이언트가 동시에 수신할 때 사용.' },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 패킷을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
@@ -412,10 +415,28 @@ const TCP_CLIENT_FIELDS: ConfigField[] = [
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격 (예: 5s)' },
   { name: 'max_retries', type: 'number', label: '최대 재시도 횟수', default: 0, description: '0 = 무한 재시도' },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 패킷을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
   { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
+];
+
+// UDP Server 에이전트 필드 정의 (백엔드 socket.ParseUDPServerConfig 키와 1:1 매핑).
+// UDP 는 데이터그램 기반이라 프레이밍 설정이 없다 (수신 데이터그램 = 1 패킷).
+const UDP_SERVER_FIELDS: ConfigField[] = [
+  { name: 'host', type: 'string', label: '호스트', default: '0.0.0.0', description: '바인드 주소 (0.0.0.0 = 모든 인터페이스)' },
+  { name: 'port', type: 'number', label: '포트', required: true, description: 'UDP 수신 포트' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096, description: '데이터그램 읽기 버퍼 크기' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 데이터그램을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
+];
+
+// UDP Client 에이전트 필드 정의 (백엔드 socket.ParseUDPClientConfig 키와 1:1 매핑).
+const UDP_CLIENT_FIELDS: ConfigField[] = [
+  { name: 'host', type: 'string', label: '호스트', required: true, description: '전송 대상 서버 IP' },
+  { name: 'port', type: 'number', label: '포트', required: true, description: '전송 대상 서버 UDP 포트' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096, description: '응답 데이터그램 읽기 버퍼 크기' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 데이터그램을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
 ];
 
 /**
@@ -515,6 +536,8 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
   'tcp-client': TCP_CLIENT_FIELDS,
+  'udp-server': UDP_SERVER_FIELDS,
+  'udp-client': UDP_CLIENT_FIELDS,
   'store': STORE_FIELDS,
 };
 
