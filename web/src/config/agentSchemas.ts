@@ -166,6 +166,7 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   // ── Protocol-specific (Samsung NASA) ──
   { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)', section: 'protocol' },
   { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신', section: 'protocol' },
+  { name: 'inter_command_delay', type: 'string', label: '요청 간 딜레이', default: '1s', description: '한 폴링 주기에서 여러 디바이스에 상태 확인 요청을 연속 전송할 때 프레임 간 최소 간격. 요청이 너무 가깝게 나가 컨트롤러/버스에서 겹치는 것을 방지 (예: 1s, 500ms, 0s=딜레이 없음)', section: 'protocol' },
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: true, description: '실내기 능동 제어 (set_power / set_mode / target_temperature / set_fan_speed / set_multiple). false 면 제어 명령 거부', section: 'protocol' },
   { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false, description: '제어 명령 시 실내기 부저 울림 (control_enabled=true 일 때만 의미 있음)', section: 'protocol' },
   // ── Device discovery ──
