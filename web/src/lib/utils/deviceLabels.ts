@@ -33,6 +33,35 @@ const SAMSUNG_NASA_OUTDOOR_LABELS: Record<string, string> = {
   power: '전원',
   current_temperature: '현재 온도',
   error_code: '에러 코드',
+  // 실외기(ODU) 텔레메트리 — internal/agent/samsung/outdoor.go outdoorFieldRegistry 와 대응.
+  // 온도(°C) 계열
+  outdoor_temperature: '실외 온도',
+  compressor_discharge_temperature: '압축기 토출 온도',
+  out_sensor_pipein3: '파이프 입구 온도 3',
+  out_sensor_pipein4: '파이프 입구 온도 4',
+  out_sensor_pipein5: '파이프 입구 온도 5',
+  out_sensor_pipeout1: '파이프 출구 온도 1',
+  out_sensor_pipeout2: '파이프 출구 온도 2',
+  out_sensor_pipeout3: '파이프 출구 온도 3',
+  out_sensor_pipeout4: '파이프 출구 온도 4',
+  out_sensor_pipeout5: '파이프 출구 온도 5',
+  // 운전 상태(ENUM)
+  out_operation_odu_mode: '실외기 운전 상태',
+  out_operation_heatcool: '냉난방',
+  out_load_comp1: '압축기1',
+  out_load_comp2: '압축기2',
+  out_load_comp3: '압축기3',
+  out_load_4way: '4-way 밸브',
+  out_deice_step: '제상 단계',
+  // 압축기 주파수(raw Hz)
+  out_control_order_cfreq_comp2: '압축기2 지령 주파수',
+  out_control_target_cfreq_comp2: '압축기2 목표 주파수',
+  // 전기/전력(raw)
+  out_sensor_ct1: '실외기 전류(CT1)',
+  out_phase_current: '상 전류',
+  out_sensor_voltage: '공급 전압',
+  wattmeter_1min_sum: '순시 소비전력',
+  wattmeter_all_unit_accum: '누적 전력량',
 };
 
 const MODBUS_LABELS: Record<string, string> = {
@@ -246,6 +275,31 @@ const PROPERTY_ORDER: string[] = [
   'heat_demand',
   'refrigerant_on',
   'op_mode',
+  // Samsung 실외기(ODU) 텔레메트리 — outdoorFieldRegistry 순서.
+  'out_operation_odu_mode',
+  'out_operation_heatcool',
+  'out_load_comp1',
+  'out_load_comp2',
+  'out_load_comp3',
+  'out_load_4way',
+  'out_deice_step',
+  'outdoor_temperature',
+  'compressor_discharge_temperature',
+  'out_sensor_pipein3',
+  'out_sensor_pipein4',
+  'out_sensor_pipein5',
+  'out_sensor_pipeout1',
+  'out_sensor_pipeout2',
+  'out_sensor_pipeout3',
+  'out_sensor_pipeout4',
+  'out_sensor_pipeout5',
+  'out_control_order_cfreq_comp2',
+  'out_control_target_cfreq_comp2',
+  'out_sensor_ct1',
+  'out_phase_current',
+  'out_sensor_voltage',
+  'wattmeter_1min_sum',
+  'wattmeter_all_unit_accum',
   // 에러
   'error_code',
 ];
@@ -261,7 +315,24 @@ const FAN_SPEED_ID_TO_ENUM: Record<number, string> = {
   0: 'auto', 1: 'auto', 2: 'quiet', 3: 'low', 4: 'medium', 5: 'high', 6: 'turbo',
 };
 
-export function formatPropertyValue(key: string, value: unknown): string {
+// 전원 OFF 시 값이 신뢰할 수 없는(자동/0°C 등으로 정규화된 기본값) 운전 계열 속성 키.
+// power=false 이면 이 필드들은 실제 값이 아니므로 '-' 로 표시한다. 진단 필드
+// (filter_alarm/error_code)와 전원(power) 자체는 전원과 무관한 상태라 그대로 표시한다.
+const POWER_OFF_UNRELIABLE_KEYS = new Set<string>([
+  'mode',
+  'target_temperature',
+  'current_temperature',
+  'fan_speed',
+  'swing_vertical',
+]);
+
+export function formatPropertyValue(
+  key: string,
+  value: unknown,
+  opts?: { powerOff?: boolean },
+): string {
+  // 전원 OFF 시 운전 계열 값은 정규화된 기본값이라 실제 값이 아니므로 '-' 로 표시.
+  if (opts?.powerOff && POWER_OFF_UNRELIABLE_KEYS.has(key)) return '-';
   if (value === null || value === undefined) return '-';
   if (typeof value === 'number') {
     // mode / fan_speed 는 hvac 통일 ID (int) — enum 키로 변환 후 라벨링.

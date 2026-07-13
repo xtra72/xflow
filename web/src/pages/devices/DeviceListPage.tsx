@@ -38,6 +38,7 @@ import type { DeviceInfo, DeviceListParams } from '@/types/device';
 
 import DeviceDetailPanel from './DeviceDetailPanel';
 import DeviceStatusBadge from './DeviceStatusBadge';
+import { ReportToggleSwitch } from './ReportToggleSwitch';
 import DeviceSearchFilter from './DeviceSearchFilter';
 import AddDeviceDialog from './AddDeviceDialog';
 
@@ -752,42 +753,6 @@ interface DeviceRowProps {
 }
 
 /** 상태 전송 on/off 스위치. 디바이스 행 액션 셀에서 사용한다. */
-function ReportToggleSwitch({
-  enabled,
-  onToggle,
-  t,
-}: {
-  enabled: boolean;
-  onToggle: (next: boolean) => void;
-  t: TranslationFn;
-}) {
-  const label = enabled ? t('devices.list.reportOn') : t('devices.list.reportOff');
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
-      aria-label={t('devices.list.reportToggle')}
-      title={`${t('devices.list.reportToggle')}: ${label}`}
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle(!enabled);
-      }}
-      className={cn(
-        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
-        enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600',
-      )}
-    >
-      <span
-        className={cn(
-          'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200',
-          enabled ? 'translate-x-4' : 'translate-x-0.5',
-        )}
-      />
-    </button>
-  );
-}
-
 /** 단일 컬럼 셀 렌더 (컬럼 키별). */
 function DeviceCell({
   column,
