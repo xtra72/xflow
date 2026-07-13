@@ -7,7 +7,7 @@
 
 ## **주소 체계**
 
-![주소체계.png](%EC%82%BC%EC%84%B1%20%EC%8B%9C%EC%8A%A4%ED%85%9C%20%EC%97%90%EC%96%B4%EC%BB%A8%20%ED%86%B5%EC%8B%A0%20%ED%94%84%EB%A1%9C%ED%86%A0%EC%BD%9C%20%EB%B6%84%EC%84%9D%20%EC%A0%95%EB%A6%AC/%E1%84%8C%E1%85%AE%E1%84%89%E1%85%A9%E1%84%8E%E1%85%A6%E1%84%80%E1%85%A8.png)
+![주소 체계](address_topology.svg)
 
 - 외부제어기: 전체 구성에서 1대만 연결 가능
 - 실외기: 최대 16대
@@ -314,6 +314,62 @@
 32 00 11 10 02 00 6A EE FF C0 15 01 01 20 10 58 C2 1A 34: 실외기 2번 Ready 상태 아님
 32 00 11 10 03 00 6A EE FF C0 15 01 01 20 10 A8 2E 70 34: 실외기 3번 Ready 상태
 ```
+
+## **실외기 상태 정보**
+
+- 실외기는 자기 상태를 버스에 **Notification(C0 14)으로 브로드캐스트**하므로, 외부제어기가 SA가 `10 xx 00`(실외기)인 C0 14 패킷의 Message Set을 파싱하면 별도 요청 없이 수동 수집 가능
+- 실내기 상태(`0x40xx`, `0x42xx`)와 달리 실외기 상태는 **`0x80xx`(ENUM 1byte), `0x82xx`(VAR 2byte), `0x84xx`(LVAR 4byte)** 대역에 위치
+- 아래 값은 Samsung SNET Pro 서비스 소프트웨어 디컴파일 기반 오픈소스(esphome_samsung_hvac_bus, pysamsungnasa) 리버스 엔지니어링 결과이며, **모델별로 존재 여부·의미·스케일이 다를 수 있어 실측 검증 필요**
+
+### **타입 판별**
+
+- 문서의 "2번째 니블" 근사보다 정확한 규칙: `type = (Index & 0x0600) >> 9`
+    - 0 → ENUM (1 byte)
+    - 1 → VARIABLE (2 byte)
+    - 2 → LONG VARIABLE (4 byte)
+- 예: `0x8204 & 0x0600 = 0x0200 → VAR(2B)`, `0x8413 & 0x0600 = 0x0400 → LVAR(4B)`
+
+### **온도 센서 (VAR, 2byte)**
+
+| Index | 이름 | 설명 | 스케일 |
+| --- | --- | --- | --- |
+| 8204 | out_sensor_airout | 실외 외기(대기) 온도 | 값/10 = °C (부호 있음) |
+| 8280 | out_sensor_top1 | 압축기 토출(Discharge) 온도 | 값/10 = °C |
+
+> emit 필드명(LG HVACR 통일): `8204 → outdoor_temperature`, `8280 → compressor_discharge_temperature`. 표의 이름은 리버스 엔지니어링 상의 원본 인덱스명이며, xflow 가 노드로 방출하는 JSON 키는 LG 실외기 필드명과 통일한다.
+| 8261~8263 | out_sensor_pipein3~5 | 열교환기 파이프 입구 온도 | 값/10 = °C |
+| 8264~8268 | out_sensor_pipeout1~5 | 파이프 출구 온도 | 값/10 = °C |
+
+### **압축기 / 운전 상태**
+
+| Index | 이름 | 크기 | 설명 |
+| --- | --- | --- | --- |
+| 8001 | out_operation_odu_mode | ENUM 1B | 실외기 운전 상태 (0=정지, 2=정상, 5=제상 등) |
+| 8003 | out_operation_heatcool | ENUM 1B | 냉방/난방 모드 (1=냉방, 2=난방) |
+| 8010~8012 | out_load_comp1~3 | ENUM 1B | 압축기 1~3 On/Off |
+| 801A | out_load_4way | ENUM 1B | 4-way(사방) 밸브 On/Off |
+| 8061 | out_deice_step | ENUM 1B | 제상(defrost) 단계 |
+| 8274 | out_control_order_cfreq_comp2 | VAR 2B | 압축기2 지령 주파수 (Hz) |
+| 8275 | out_control_target_cfreq_comp2 | VAR 2B | 압축기2 목표 주파수 (Hz) |
+
+### **전기 / 전력**
+
+| Index | 이름 | 크기 | 설명 |
+| --- | --- | --- | --- |
+| 8217 | out_sensor_ct1 | VAR 2B | 실외기 전류 (CT1, A) |
+| 82DB | out_phase_current | VAR 2B | 상(Phase) 전류 |
+| 24FC | out_sensor_voltage | LVAR 4B | 공급 전압 (V) |
+| 8413 | wattmeter_1min_sum | LVAR 4B | 순시 소비전력 (W) |
+| 8414 | wattmeter_all_unit_accum | LVAR 4B | 누적 전력량 |
+| 8235 | out_error_code | VAR 2B | 실외기 에러 코드 (emit: `error_code`, LG/실내기 통일) |
+
+- **주의**: 온도는 `/10`으로 확인되나, 전류·전압·전력은 소스에서 raw 값으로만 전달되어 **나눗셈 계수·단위는 모델별 실측 확인 필요**
+- 고압/저압 센서는 참고한 코드베이스에 매핑이 없어 미확인
+
+### **참고 자료**
+
+- esphome_samsung_hvac_bus: https://github.com/omerfaruk-aran/esphome_samsung_hvac_bus
+- pysamsungnasa: https://github.com/pantherale0/pysamsungnasa
 
 ## **실내기 주소 확인 요청**
 

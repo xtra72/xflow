@@ -48,8 +48,13 @@ type Hvacr01Config struct {
 	MaxReconnectBackoff   time.Duration   // 재연결 최대 백오프 (기본값 5m)
 	StatusQueryDelay      time.Duration   // 제어 후 상태 조회 간격 (기본값 3s)
 	StatusQueryRetries    int             // 제어 후 상태 조회 횟수 (기본값 3)
-	BuzzerOnControl       bool            // 제어 명령 시 실내기 부저 울림 (기본값 false)
-	ControlEnabled        bool            // 능동 제어 (set_multiple) 활성 여부 (기본값 true). false 면 제어 명령 거부.
+	// InterCommandDelay 는 pollLoop 에서 여러 디바이스에 status query 를 연속 전송할 때
+	// 프레임 간 최소 간격이다 (inter_command_delay 키, 기본 1s). 디바이스가 2개 이상이면
+	// 이 간격 없이는 요청들이 수 μs 간격으로 나가 컨트롤러/버스에서 겹칠 수 있다.
+	// LG InterCommandDelay(존 간 딜레이)와 명칭 통일. 0 이면 딜레이 없음(기존 동작).
+	InterCommandDelay time.Duration
+	BuzzerOnControl   bool // 제어 명령 시 실내기 부저 울림 (기본값 false)
+	ControlEnabled    bool // 능동 제어 (set_multiple) 활성 여부 (기본값 true). false 면 제어 명령 거부.
 
 	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
 	//
@@ -96,7 +101,8 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		MaxReconnectBackoff: 5 * time.Minute,
 		StatusQueryDelay:    3 * time.Second,
 		StatusQueryRetries:  3,
-		ControlEnabled:      true, // 2026-05-29: 능동 제어 (set_multiple) 기본 활성 (기존 동작 보존)
+		InterCommandDelay:   1 * time.Second, // 폴링 시 디바이스 간 요청 최소 간격 (기본 1s).
+		ControlEnabled:      true,            // 2026-05-29: 능동 제어 (set_multiple) 기본 활성 (기존 동작 보존)
 		EventTempThreshold:  1.0,
 	}
 
@@ -385,6 +391,22 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	// status_query_retries
 	if v, ok := opts["status_query_retries"]; ok {
 		cfg.StatusQueryRetries = toInt(v)
+	}
+
+	// inter_command_delay — pollLoop 에서 디바이스 간 status query 전송 최소 간격 (기본 1s).
+	// 여러 디바이스에 요청이 너무 가깝게 나가는 것을 방지한다. 0 이면 딜레이 없음.
+	if v, ok := opts["inter_command_delay"]; ok {
+		s, sok := v.(string)
+		if sok {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid inter_command_delay: %w", err)
+			}
+			if d < 0 {
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: inter_command_delay must be >= 0, got %s", d)
+			}
+			cfg.InterCommandDelay = d
+		}
 	}
 
 	// control_enabled (선택, 기본값 true)

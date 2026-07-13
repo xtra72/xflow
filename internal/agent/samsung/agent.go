@@ -170,6 +170,8 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 		}
 		if devType == "HVACR.IDU" {
 			dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
+		} else if devType == "HVACR.ODU" {
+			dev.Outdoor = NewOutdoorState()
 		}
 		a.devices[addr] = dev
 		if entry.Name != "" {
@@ -762,6 +764,8 @@ func (a *Hvacr01Agent) processGetState(req *processRequest) ([]byte, error) {
 
 	if dev.State != nil {
 		resp["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawHex)
+	} else if dev.Outdoor != nil {
+		resp["state"] = dev.Outdoor.StateForJSON(a.hvacr01Config.IncludeRawHex)
 	}
 	if !dev.LastSeen.IsZero() {
 		resp["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -797,6 +801,8 @@ func (a *Hvacr01Agent) buildAllStatesJSON() ([]byte, error) {
 		}
 		if dev.State != nil {
 			d["state"] = dev.State.StateForJSON(a.hvacr01Config.IncludeRawHex)
+		} else if dev.Outdoor != nil {
+			d["state"] = dev.Outdoor.StateForJSON(a.hvacr01Config.IncludeRawHex)
 		}
 		if !dev.LastSeen.IsZero() {
 			d["last_seen_ms"] = dev.LastSeen.UnixMilli()
@@ -855,9 +861,20 @@ func (a *Hvacr01Agent) pushRecentSnapshotWithTrigger(addr NasaAddress, trigger s
 				}
 			}
 		}
+	} else if dev.Outdoor != nil {
+		// 실외기(ODU): 통신 준비(ready) + 디코드된 실외기 텔레메트리(out_* 필드)를
+		// online 과 함께 단일 그룹으로 평탄화한다.
+		state["ready"] = dev.Ready
+		if raw, err := json.Marshal(dev.Outdoor.StateForJSON(a.hvacr01Config.IncludeRawHex)); err == nil {
+			var inner map[string]any
+			if json.Unmarshal(raw, &inner) == nil {
+				for k, v := range inner {
+					state[k] = v
+				}
+			}
+		}
 	} else {
-		// 운전상태가 없는 디바이스(실외기 ODU 등)는 통신 준비(ready) 를 상태로 노출한다.
-		// 실외기는 online + ready 가 유일한 의미있는 상태이다.
+		// 운전상태가 없는 디바이스(controller 등)는 통신 준비(ready) 를 상태로 노출한다.
 		state["ready"] = dev.Ready
 	}
 
@@ -1058,6 +1075,8 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 	if devType == "HVACR.IDU" {
 		dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
+	} else if devType == "HVACR.ODU" {
+		dev.Outdoor = NewOutdoorState()
 	}
 
 	a.devices[addr] = dev
@@ -1075,6 +1094,8 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 	if dev.State != nil {
 		regData["state"] = dev.State.StateForJSON(false)
+	} else if dev.Outdoor != nil {
+		regData["state"] = dev.Outdoor.StateForJSON(false)
 	}
 	a.sendDeviceEventLocked(dev, "device_registered", regData)
 
@@ -1134,6 +1155,8 @@ func (a *Hvacr01Agent) processRemoveDevice(req *processRequest) ([]byte, error) 
 	}
 	if dev.State != nil {
 		unregData["state"] = dev.State.StateForJSON(false)
+	} else if dev.Outdoor != nil {
+		unregData["state"] = dev.Outdoor.StateForJSON(false)
 	}
 	// 삭제 전 캡처된 dev 포인터로 report_enabled 게이트 적용(맵에서 delete 됐어도 유효).
 	a.sendDeviceEventLocked(dev, "device_unregistered", unregData)
@@ -1633,7 +1656,16 @@ func (a *Hvacr01Agent) probeSilentDevices() {
 	}
 	a.mu.RUnlock()
 
-	for _, addr := range toProbe {
+	for i, addr := range toProbe {
+		// probe 간 최소 간격. 첫 probe 이전에는 딜레이하지 않는다.
+		// 셧다운 시 즉시 반환하도록 인터럽트 가능하게 대기한다.
+		if i > 0 && a.hvacr01Config.InterCommandDelay > 0 {
+			select {
+			case <-a.stopCh:
+				return
+			case <-time.After(a.hvacr01Config.InterCommandDelay):
+			}
+		}
 		seq := a.nextSeqNum()
 		frame, err := a.protocol.BuildStatusQuery(addr, seq)
 		if err != nil {
@@ -1908,7 +1940,19 @@ func (a *Hvacr01Agent) pollLoop() {
 			}
 
 			a.logger.Debug("samsung_hvacr01: 폴링 시작", "devices", len(addrs))
-			for _, addr := range addrs {
+			for i, addr := range addrs {
+				// 디바이스 간 요청 최소 간격. 첫 요청 이전에는 딜레이하지 않는다.
+				// 셧다운/연결 끊김 시 즉시 반환하도록 인터럽트 가능하게 대기한다.
+				if i > 0 && a.hvacr01Config.InterCommandDelay > 0 {
+					select {
+					case <-a.stopCh:
+						return
+					case <-disconnectCh:
+						a.logger.Debug("samsung_hvacr01: pollLoop 연결 끊김으로 종료 (inter-command delay)")
+						return
+					case <-time.After(a.hvacr01Config.InterCommandDelay):
+					}
+				}
 				seq := a.nextSeqNum()
 				frame, err := a.protocol.BuildStatusQuery(addr, seq)
 				if err != nil {
@@ -2084,6 +2128,8 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 			}
 			if devType == "HVACR.IDU" {
 				dev.State = &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)}
+			} else if devType == "HVACR.ODU" {
+				dev.Outdoor = NewOutdoorState()
 			}
 			a.devices[srcAddr] = dev
 			evtData := map[string]any{
@@ -2094,6 +2140,8 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 			}
 			if dev.State != nil {
 				evtData["state"] = dev.State.StateForJSON(false)
+			} else if dev.Outdoor != nil {
+				evtData["state"] = dev.Outdoor.StateForJSON(false)
 			}
 			a.sendDeviceEventLocked(dev, "device_discovered", evtData)
 		} else {
@@ -2126,6 +2174,8 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 		}
 		if dev.State != nil {
 			onlineData["state"] = dev.State.StateForJSON(false)
+		} else if dev.Outdoor != nil {
+			onlineData["state"] = dev.Outdoor.StateForJSON(false)
 		}
 		a.sendDeviceEventLocked(dev, "device_online", onlineData)
 		snapshotShouldPush = true
@@ -2208,6 +2258,53 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String())
 				a.logger.Debug("samsung_hvacr01: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
 				go v2(agentName, deviceUID, globalID)
+			}
+		}
+	}
+
+	// 실외기(ODU) 상태 업데이트. 실외기는 자기 상태를 C0 14 로 버스에 브로드캐스트하므로
+	// SA 가 10 xx 00 인 프레임의 out_* 메시지 셋을 수동 디코드한다. 이산 필드(운전상태·
+	// 압축기 On/Off·에러코드)가 바뀔 때만 즉시 emit 하고, 연속 센서(온도·주파수·전력)는
+	// 정기 보고(emitPeriodicReport) 주기에만 실어 emit 폭주를 방지한다.
+	if dev.Outdoor != nil && len(msg.MessageSets) > 0 {
+		sets := msg.MessageSets
+		if len(a.hvacr01Config.UnsupportedMsgSets) > 0 {
+			sets = a.filterMessageSets(sets, srcAddr)
+		}
+		if len(sets) > 0 {
+			discreteChanged := dev.Outdoor.UpdateFromMessageSets(sets)
+
+			if a.hvacr01Config.LogStateUpdates {
+				payloadHex := ""
+				if len(msg.Raw) > 0 {
+					payloadHex = hex.EncodeToString(msg.Raw)
+				}
+				a.logger.Info("samsung_hvacr01: outdoor state update",
+					"address", srcAddr.String(),
+					"unit_id", dev.UnitID,
+					"fields", len(dev.Outdoor.Fields),
+					"discrete_changed", discreteChanged,
+					"sets_count", len(sets),
+					"payload_hex", payloadHex,
+				)
+			}
+
+			if discreteChanged {
+				a.logger.Debug("samsung_hvacr01: 실외기 이산 상태 변경 감지",
+					"device", dev.UnitID, "addr", srcAddr.String(), "fields", len(dev.Outdoor.Fields))
+				a.sendDeviceEventLocked(dev, "device_state_changed", map[string]any{
+					"address":   srcAddr.String(),
+					"unit_id":   srcAddr.String(),
+					"device_id": agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String()),
+					"state":     dev.Outdoor.StateForJSON(false),
+				})
+				snapshotShouldPush = true
+				// WebSocket 브로드캐스트 콜백 (실내기 경로와 동일).
+				if v2 := a.onDeviceStateChangeV2; v2 != nil {
+					globalID := fmt.Sprintf("%s:%s", agentName, srcAddr.String())
+					deviceUID := agent.ResolveDeviceID(context.Background(), agentName, srcAddr.String())
+					go v2(agentName, deviceUID, globalID)
+				}
 			}
 		}
 	}

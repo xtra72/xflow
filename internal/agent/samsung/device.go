@@ -20,7 +20,8 @@ type NasaDevice struct {
 	Online     bool
 	Ready      bool // 통신 준비 완료 (실외기: C015 0xAx)
 	LastSeen   time.Time
-	State      *NasaDeviceState // 현재 상태 (실내기 전용)
+	State      *NasaDeviceState // 현재 상태 (실내기 IDU 전용)
+	Outdoor    *OutdoorState    // 현재 상태 (실외기 ODU 전용) — IDU 는 nil, ODU 는 State 가 nil
 	ErrorCount int
 	Source     string // "config", "bridge", "auto", "discovery"
 	// ReportEnabled 는 디바이스별 상태 전송 on/off 이다(기본 true=on). false 면 이 디바이스에
