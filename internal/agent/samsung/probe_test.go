@@ -247,10 +247,13 @@ func TestProbeSilentDevices_DisabledWhenStalenessOff(t *testing.T) {
 }
 
 // TestDeviceState_IncludesConnectionFields 는 device_state 스냅샷의 state 그룹에
-// online 과 함께 연결 진단 필드(error_count/offline_threshold/transport_connected)가
-// 포함되는지 검증한다(device_connection 일원화의 핵심 계약).
+// online 과 함께 연결 진단 필드(error_count/offline_threshold)가 포함되는지 검증한다
+// (device_connection 일원화의 핵심 계약).
+//
+// transport_connected 는 online=true 일 때 항상 true 라 정보량이 없으므로 생략한다
+// (offline 일 때만 emit — TestStale_DirectCheck_OfflineChangeEmitted 참조).
 func TestDeviceState_IncludesConnectionFields(t *testing.T) {
-	a, mt := newConnAgent(t, "200001")
+	a, _ := newConnAgent(t, "200001")
 	addr, _ := ParseNasaAddress("200001")
 
 	// 첫 online 프레임 → device_state change 방출(online=false→true 전이).
@@ -272,7 +275,7 @@ func TestDeviceState_IncludesConnectionFields(t *testing.T) {
 	require.Contains(t, state, "offline_threshold")
 	assert.Equal(t, float64(a.hvacr01Config.OfflineThreshold), state["offline_threshold"])
 
-	// transport_connected: mockTransport available=true.
-	require.Contains(t, state, "transport_connected")
-	assert.Equal(t, mt.Available(), state["transport_connected"])
+	// transport_connected: online=true 이면 생략된다(정보량 없음).
+	assert.NotContains(t, state, "transport_connected",
+		"online=true 이면 transport_connected 를 생략해야 한다")
 }

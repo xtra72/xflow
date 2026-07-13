@@ -94,5 +94,16 @@ func hvacr01DeviceToInfo(dev *NasaDevice) adapter.SamsungNasaDeviceInfo {
 		info.ErrorCode = &dev.State.ErrorCode
 	}
 
+	// 실외기(ODU): State=nil, Outdoor 에 디코드된 텔레메트리(out_* / outdoor_temperature 등)를
+	// 보유한다. 관측된 필드만 ExtraProperties 로 노출해 device.State().Properties 에 평탄화한다
+	// — 어댑터가 이를 병합하므로 UI 디바이스 상세에 실외기 상태 속성이 표시된다.
+	if dev.Outdoor != nil && len(dev.Outdoor.Fields) > 0 {
+		extra := make(map[string]any, len(dev.Outdoor.Fields))
+		for k, v := range dev.Outdoor.Fields {
+			extra[k] = v
+		}
+		info.ExtraProperties = extra
+	}
+
 	return info
 }

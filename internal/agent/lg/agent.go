@@ -292,7 +292,12 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 	}
 	state["error_count"] = dev.ErrorCount
 	state["offline_threshold"] = a.lgapConfig.OfflineThreshold
-	state["transport_connected"] = a.transport.Available()
+	// transport_connected 는 online=true 이면 항상 true 라 정보량이 없다. online=false 일
+	// 때만 실어 필드 존재 자체가 버스 문제(포트/TCP) 판별 신호가 되게 한다(samsung device_state
+	// 와 동일 규칙 — 관측/의미 기반 emit).
+	if !dev.Online {
+		state["transport_connected"] = a.transport.Available()
+	}
 
 	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
 	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.

@@ -13,7 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { useAgent, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
-import { useDeleteDevice, useDevicesRealtime } from '@/hooks/useDevice';
+import { useDeleteDevice, useDevicesRealtime, useSetDeviceReport } from '@/hooks/useDevice';
 import { useUpdateRemoteAgent } from '@/hooks/useRemote';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -64,6 +64,7 @@ import RenameKeyDialog from '@/components/property/RenameKeyDialog';
 import SelectStaticKeyDialog from '@/components/property/SelectStaticKeyDialog';
 import DeviceDetailPanel from '@/pages/devices/DeviceDetailPanel';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
+import { ReportToggleSwitch } from '@/pages/devices/ReportToggleSwitch';
 import {
   getLogLevels,
   setComponentLogLevel,
@@ -3915,6 +3916,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const execAgent = useExecAgent();
   const deleteDevice = useDeleteDevice();
+  const setDeviceReport = useSetDeviceReport();
   const addNotification = useUIStore((s) => s.addNotification);
   // 삭제 확인 다이얼로그 대상(1개). null 이면 닫힌 상태.
   const [removeTarget, setRemoveTarget] = useState<
@@ -4068,6 +4070,25 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
         onError: (err) => {
           setRemoveTarget(null);
           addNotification({ type: 'error', message: t('agents.detail.devices.removeError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.devices.unknownError')) });
+        },
+      },
+    );
+  }
+
+  // 상태 전송(report_enabled) on/off 토글. 낙관적 업데이트는 훅이 처리하며 실패 시 알림.
+  // samsung_hvacr01 / lgap 만 디바이스별 report 게이트를 지원한다(액션 열과 동일 조건).
+  function handleToggleReport(device: { id: string; uid?: string }, next: boolean) {
+    setDeviceReport.mutate(
+      { agentId, deviceId: device.uid ?? device.id, reportEnabled: next },
+      {
+        onError: (err) => {
+          addNotification({
+            type: 'error',
+            message: t('devices.list.reportError').replace(
+              '{message}',
+              err instanceof Error ? err.message : t('devices.list.unknownError'),
+            ),
+          });
         },
       },
     );
@@ -4312,26 +4333,33 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                       </td>
                       {(isNasa || isLgap) && (
                         <td className="py-2 text-right">
-                          {/* 모든 디바이스(config 포함, source 미해석 무관)에 삭제 버튼을
-                              노출한다. source 배지(variant)가 없어도 삭제는 가능해야 하므로
-                              variant 게이트에 의존하지 않는다(전역 디바이스 목록과 동일). */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRemoveTarget({
-                                deviceId: d.uid ?? d.id,
-                                address: addressLabel,
-                                name: d.name || addressLabel,
-                              });
-                            }}
-                            disabled={deleteDevice.isPending}
-                            className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
-                            title={t('agents.detail.devices.removeTooltip')}
-                            aria-label={t('agents.detail.devices.removeTooltip')}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {/* 상태 전송 토글(report_enabled) + 삭제 버튼. 전역 디바이스 목록과
+                              동일한 액션 세트다. 모든 디바이스(config 포함, source 미해석 무관)에
+                              노출하며 variant 게이트에 의존하지 않는다. */}
+                          <div className="flex items-center justify-end gap-2">
+                            <ReportToggleSwitch
+                              enabled={d.report_enabled ?? true}
+                              onToggle={(next) => handleToggleReport(d, next)}
+                              t={t}
+                            />
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRemoveTarget({
+                                  deviceId: d.uid ?? d.id,
+                                  address: addressLabel,
+                                  name: d.name || addressLabel,
+                                });
+                              }}
+                              disabled={deleteDevice.isPending}
+                              className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                              title={t('agents.detail.devices.removeTooltip')}
+                              aria-label={t('agents.detail.devices.removeTooltip')}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       )}
                     </tr>

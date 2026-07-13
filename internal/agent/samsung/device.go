@@ -123,11 +123,13 @@ func (s *NasaDeviceState) observed(bit uint8) bool {
 // Power=false 면 mode=off/auto(0), fan_speed=off(0) 로 정규화한다.
 func (s *NasaDeviceState) StateForJSON(includeRaw bool) any {
 	out := make(map[string]any, 8)
-	// power 는 디바이스의 근본 on/off 상태이므로 관측 여부와 무관하게 항상 emit 한다
-	// (online 도 pushRecentSnapshot 에서 항상 포함). 아직 power 프레임(0x4000)을 받지
-	// 못했으면 기본값(false)이 나간다 — 재시작 직후 등 짧은 창. mode/온도/fan 은 관측된
-	// 값만 emit(off 로 미보고 시 생략) 하는 규칙을 유지한다.
-	out["power"] = s.Power
+	// power 도 다른 필드와 동일하게 관측 기반으로만 emit 한다("확인된 값만 전송").
+	// power 프레임(0x4000)을 아직 받지 못한 상태(재시작 직후 등)에서 기본값 false 를
+	// 방출하면, 대시보드가 실제 on 상태를 default off 로 덮어써 "꺼졌다 켜진" 것처럼
+	// 보이는 회귀가 발생한다. 미관측 시 payload 에서 생략해 마지막 확인값을 보존한다.
+	if s.observed(observedPower) {
+		out["power"] = s.Power
+	}
 	if s.observed(observedMode) {
 		mode := hvac.ModeFromName(s.Mode)
 		if !s.Power {

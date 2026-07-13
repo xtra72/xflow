@@ -1,15 +1,16 @@
 # SPEC-LGAP-001: LG LGAP HVAC Agent
 
-**Version**: 1.18.13
+**Version**: 1.18.14
 **Status**: Done
 **Created**: 2026-03-17
-**Updated**: 2026-05-26
+**Updated**: 2026-07-13
 **Completed**: 2026-03-17
 
 ## 변경 이력 (Change History)
 
 | 날짜 | 버전 | 변경 내용 |
 |------|------|----------|
+| 2026-07-13 | 1.18.14 | **transport_connected 조건부 emit (schema)**. device_state `state` 그룹의 `transport_connected` 를 `online=true` 이면 생략하고 `online=false` 일 때만 실는다(`emitDeviceStateLocked`). online 이면 트랜스포트가 항상 열려 있어(=true) 정보량이 없으므로, 필드 존재 자체를 버스(포트/TCP) 문제 판별 신호로 쓴다. `error_count`/`offline_threshold` 는 상시 유지. 에이전트 전역 `get_stats`/status 의 `transport_connected` 는 불변. Samsung(SPEC-SAMSUNG-HVACR-001 v1.21.0)과 동일 규칙. 다운스트림: 상시 존재를 가정한 소비자는 online 디바이스에서 값 부재(=연결됨)를 처리해야 한다. |
 | 2026-05-26 | 1.18.13 | **`mode`/`fan_speed` 통일 ID 정합 — agent direct emit (v0.7.5 후속)**. LGAP adapter (lg/device.go) 의 hvac.ModeFromName 변환은 v0.7.5 에 적용됐으나, `lg/agent.go:1629 processGetAllStates` 의 direct emit 이 raw `dev.State.Mode`/`dev.State.FanSpeed` 그대로 emit → inventory/REST 와 schema 분기. Century/NASA 의 동일 결함 발견 시점에 LGAP 도 함께 발견. 수정: `hvac.ModeFromName` + `hvac.FanSpeedFromName` wrap. 영향: 브릿지 명령 `get_all_states` 응답이 inventory/REST 와 일치. |
 | 2026-05-24 | 1.18.12 | **BREAKING — node_id / unit_id 옵션화**. `MetadataEmitOptions` 에 `UnitID` / `NodeID` 필드 추가, default OFF. 이전엔 unit_id 가 필수 + node_id 가 자동 emit 이었으나 v0.18.12 부터 명시 토글 필요. Web UI nodeSchemas 에 `emit_unit_id` / `emit_node_id` boolean 노출. 노드 id 자체도 Web UI 에서 `crypto.randomUUID()` 로 생성. 다운스트림 마이그레이션: `metadata.node_id` / `metadata.unit_id` 가 자동 emit 되지 않으므로 옵션 명시적 활성화 필요. |
 | 2026-05-24 | 1.18.8 | **메타데이터 emit 옵션 (`emit_metadata`)**. `device_type` / `label` / `node_source` / `slot_num` 가 default OFF 로 변경 (breaking). `device_id` / `unit_id` 는 항상 emit (필수). `lgap-status` / `lgap-control` / `lgap` 노드에 `emit_metadata` 또는 평탄 `emit_*` 키 추가. `promotePayloadMetadata` / `promoteDevIDWithUUID` 에 `opts MetadataEmitOptions` 파라미터 추가. Web UI nodeSchemas 에 4개 boolean 필드 (advanced) 노출. |

@@ -303,6 +303,8 @@ function HistoryRow({
 }) {
   const { t } = useTranslation();
   const props = entry.properties ?? {};
+  // 히스토리 엔트리도 당시 전원 OFF 였다면 운전 계열 값은 실제 값이 아니므로 '-'.
+  const powerOff = props['power'] === false;
 
   return (
     <tr className="hover:bg-(--color-bg-elevated)">
@@ -330,7 +332,7 @@ function HistoryRow({
           key={k}
           className="whitespace-nowrap px-3 py-2 text-xs font-medium text-(--color-text-primary)"
         >
-          {k in props ? formatPropertyValue(k, props[k]) : '-'}
+          {k in props ? formatPropertyValue(k, props[k], { powerOff }) : '-'}
         </td>
       ))}
       <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
@@ -651,6 +653,9 @@ function GenericPropertiesGrid({
     return accentColor;
   };
   const entries = sortProperties(Object.entries(properties));
+  // 전원 OFF 시 운전 계열 속성(모드/온도/풍량/스윙)은 정규화된 기본값이라 실제 값이
+  // 아니므로 '-' 로 표시한다(formatPropertyValue 의 powerOff 옵션).
+  const powerOff = properties['power'] === false;
 
   return (
     <div className={compact ? 'px-4 py-3' : ''}>
@@ -666,7 +671,7 @@ function GenericPropertiesGrid({
               {getPropertyLabel(key, protocol, type)}
             </p>
             <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
-              {formatPropertyValue(key, value)}
+              {formatPropertyValue(key, value, { powerOff })}
             </p>
           </div>
         ))}

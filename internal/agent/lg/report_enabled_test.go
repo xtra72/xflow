@@ -92,7 +92,8 @@ func TestReportEnabledLG_True_Emits(t *testing.T) {
 			assert.Equal(t, true, s["online"], "device_state.state.online=true (online 전이)")
 			assert.Contains(t, s, "error_count", "state 그룹에 error_count 포함")
 			assert.Contains(t, s, "offline_threshold", "state 그룹에 offline_threshold 포함")
-			assert.Contains(t, s, "transport_connected", "state 그룹에 transport_connected 포함")
+			// transport_connected 는 online=true 이면 정보량이 없어 생략한다(offline 일 때만 emit).
+			assert.NotContains(t, s, "transport_connected", "online=true 이면 transport_connected 생략")
 		}
 		if t, _ := m["type"].(string); t == "device_online" {
 			sawOnline = true
