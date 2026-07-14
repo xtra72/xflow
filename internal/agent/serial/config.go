@@ -23,6 +23,7 @@ type SerialConfig struct {
 	FixedSize      int           // 고정 크기 (framing=fixed_size 시)
 	MaxMessageSize int           // 최대 메시지 크기 (0=무제한)
 	LogDrops       bool          // 수신 버퍼 가득 참으로 메시지 드롭 시 WARN 로그 출력 여부 (기본값 false — 운영 환경 noise 억제)
+	LogMessages    bool          // 송/수신(TX/RX) 메시지를 hex 로 INFO 로그 출력 여부 (기본값 false, opt-in 진단용)
 
 	// frame 프레이밍 설정 (framing=frame 시)
 	STX                  []byte // 프레임 시작 마커 (hex 문자열에서 파싱)
@@ -155,6 +156,12 @@ func ParseSerialConfig(opts map[string]any) (SerialConfig, error) {
 	// 발생해 로그 폭주로 이어지므로 옵션으로 끌 수 있게 한다.
 	if v, ok := opts["log_drops"]; ok {
 		cfg.LogDrops = toBool(v)
+	}
+
+	// log_messages (기본값: false) — 송/수신(TX/RX) 메시지를 hex 로 INFO 로그 출력.
+	// opt-in 진단용이며 운영 환경에서는 로그 폭주 우려로 비활성 권장.
+	if v, ok := opts["log_messages"]; ok {
+		cfg.LogMessages = toBool(v)
 	}
 
 	// frame 프레이밍 전용 설정

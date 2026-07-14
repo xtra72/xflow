@@ -28,7 +28,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -56,7 +56,7 @@ func TestParseSerialConfig(t *testing.T) {
 				Framing:        FramingNewline,
 				Delimiter:      '\t',
 				MaxMessageSize: 2048,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -156,7 +156,7 @@ func TestParseSerialConfig(t *testing.T) {
 				Framing:        FramingFixedSize,
 				FixedSize:      256,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -175,7 +175,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -205,7 +205,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     2048,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -225,7 +225,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -244,7 +244,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingLengthPrefix,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -262,7 +262,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -281,7 +281,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -300,7 +300,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		{
@@ -358,7 +358,7 @@ func TestParseSerialConfig(t *testing.T) {
 				BufferSize:     DefaultBufferSize,
 				Framing:        FramingRaw,
 				MaxMessageSize: DefaultMaxMessageSize,
-			IdleTimeout:    DefaultIdleTimeout,
+				IdleTimeout:    DefaultIdleTimeout,
 			},
 		},
 		// --- frame 프레이밍 테스트 ---
@@ -391,15 +391,15 @@ func TestParseSerialConfig(t *testing.T) {
 			name: "frame 프레이밍 모든 필드 설정",
 			opts: map[string]any{
 				"port":                   "/dev/ttyUSB0",
-				"framing":               "frame",
-				"stx":                   "AA55",
-				"etx":                   "03",
-				"length_offset":         float64(3),
-				"length_size":           float64(2),
-				"length_endian":         "little",
+				"framing":                "frame",
+				"stx":                    "AA55",
+				"etx":                    "03",
+				"length_offset":          float64(3),
+				"length_size":            float64(2),
+				"length_endian":          "little",
 				"length_includes_header": true,
 				"length_adjustment":      float64(-1),
-				"checksum":              "sum8",
+				"checksum":               "sum8",
 			},
 			want: SerialConfig{
 				Port:                 "/dev/ttyUSB0",
@@ -423,7 +423,7 @@ func TestParseSerialConfig(t *testing.T) {
 			},
 		},
 		{
-			name:    "frame 프레이밍 STX 미지정 오류",
+			name: "frame 프레이밍 STX 미지정 오류",
 			opts: map[string]any{
 				"port":    "/dev/ttyUSB0",
 				"framing": "frame",
@@ -431,7 +431,7 @@ func TestParseSerialConfig(t *testing.T) {
 			wantErr: ErrInvalidSTX,
 		},
 		{
-			name:    "frame 프레이밍 잘못된 STX hex 오류",
+			name: "frame 프레이밍 잘못된 STX hex 오류",
 			opts: map[string]any{
 				"port":    "/dev/ttyUSB0",
 				"framing": "frame",
@@ -440,7 +440,7 @@ func TestParseSerialConfig(t *testing.T) {
 			wantErr: ErrInvalidSTX,
 		},
 		{
-			name:    "frame 프레이밍 빈 STX 오류",
+			name: "frame 프레이밍 빈 STX 오류",
 			opts: map[string]any{
 				"port":    "/dev/ttyUSB0",
 				"framing": "frame",
@@ -449,7 +449,7 @@ func TestParseSerialConfig(t *testing.T) {
 			wantErr: ErrInvalidSTX,
 		},
 		{
-			name:    "frame 프레이밍 잘못된 length_size 오류",
+			name: "frame 프레이밍 잘못된 length_size 오류",
 			opts: map[string]any{
 				"port":        "/dev/ttyUSB0",
 				"framing":     "frame",
@@ -459,9 +459,9 @@ func TestParseSerialConfig(t *testing.T) {
 			wantErr: ErrInvalidLengthSize,
 		},
 		{
-			name:    "frame 프레이밍 잘못된 length_endian 오류",
+			name: "frame 프레이밍 잘못된 length_endian 오류",
 			opts: map[string]any{
-				"port":           "/dev/ttyUSB0",
+				"port":          "/dev/ttyUSB0",
 				"framing":       "frame",
 				"stx":           "02",
 				"length_endian": "middle",
@@ -469,7 +469,7 @@ func TestParseSerialConfig(t *testing.T) {
 			wantErr: ErrInvalidEndian,
 		},
 		{
-			name:    "frame 프레이밍 잘못된 checksum 오류",
+			name: "frame 프레이밍 잘못된 checksum 오류",
 			opts: map[string]any{
 				"port":     "/dev/ttyUSB0",
 				"framing":  "frame",
@@ -595,5 +595,24 @@ func assertSerialConfig(t *testing.T, want, got SerialConfig) {
 	}
 	if got.Checksum != want.Checksum {
 		t.Errorf("Checksum: 기대값 %q, 실제값 %q", want.Checksum, got.Checksum)
+	}
+}
+
+// TestParseSerialConfig_LogMessages 는 log_messages 옵션의 기본값(false)과 파싱을 검증한다.
+func TestParseSerialConfig_LogMessages(t *testing.T) {
+	def, err := ParseSerialConfig(map[string]any{"port": "/dev/ttyUSB0"})
+	if err != nil {
+		t.Fatalf("parse(default) error: %v", err)
+	}
+	if def.LogMessages {
+		t.Errorf("LogMessages = true, want false (default)")
+	}
+
+	on, err := ParseSerialConfig(map[string]any{"port": "/dev/ttyUSB0", "log_messages": true})
+	if err != nil {
+		t.Fatalf("parse(log_messages=true) error: %v", err)
+	}
+	if !on.LogMessages {
+		t.Errorf("LogMessages = false, want true")
 	}
 }

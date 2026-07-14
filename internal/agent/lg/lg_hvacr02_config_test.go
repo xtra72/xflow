@@ -350,7 +350,7 @@ func TestParseHvacr02Config_UnknownTransportType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := map[string]any{
 				"transport_type": tt.transportType,
-				"serial_port":   "/dev/ttyUSB0",
+				"serial_port":    "/dev/ttyUSB0",
 			}
 
 			_, err := parseHvacr02Config(opts)
@@ -486,5 +486,24 @@ func TestParseHvacr02Config_TCPClientNoSerialPortRequired(t *testing.T) {
 	}
 	if cfg.SerialPort != "" {
 		t.Errorf("SerialPort = %q, want empty", cfg.SerialPort)
+	}
+}
+
+// TestParseHvacr02Config_LogMessages 는 log_messages 옵션의 기본값(false)과 파싱을 검증한다.
+func TestParseHvacr02Config_LogMessages(t *testing.T) {
+	def, err := parseHvacr02Config(map[string]any{"serial_port": "/dev/ttyUSB0"})
+	if err != nil {
+		t.Fatalf("parse(default) error: %v", err)
+	}
+	if def.LogMessages {
+		t.Errorf("LogMessages = true, want false (default)")
+	}
+
+	on, err := parseHvacr02Config(map[string]any{"serial_port": "/dev/ttyUSB0", "log_messages": true})
+	if err != nil {
+		t.Fatalf("parse(log_messages=true) error: %v", err)
+	}
+	if !on.LogMessages {
+		t.Errorf("LogMessages = false, want true")
 	}
 }

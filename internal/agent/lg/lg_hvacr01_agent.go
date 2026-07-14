@@ -1032,6 +1032,19 @@ func (a *Hvacr01Agent) captureLoop() {
 		a.stats.UpdateLastActivity()
 		a.stats.RecordFirstMessage()
 
+		// log_messages: 수신(RX) 프레임을 hex 로 INFO 로그 (opt-in 진단용, Samsung/LGAP 통일).
+		// capture 라 송신(TX)은 없다. frameType 에 따라 해당 프레임의 raw 를 기록한다.
+		if a.hvacr01Config.LogMessages {
+			var raw []byte
+			switch frameType {
+			case 'A':
+				raw = oduFrame.Raw[:]
+			case 'B':
+				raw = iduFrame.Raw[:]
+			}
+			a.logger.Info("lg_hvacr01: RX", "type", string(frameType), "len", len(raw), "hex", hex.EncodeToString(raw))
+		}
+
 		switch frameType {
 		case 'A':
 			if a.hvacr01Config.LogIO {

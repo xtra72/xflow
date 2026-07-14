@@ -120,6 +120,10 @@ type Hvacr01Config struct {
 	// LogDrops 는 ring buffer drop 을 per-drop WARN 로그로 출력할지 여부이다.
 	LogDrops bool
 
+	// LogMessages 는 디바이스와의 송/수신(TX/RX) 프레임을 hex 로 INFO 로그로 출력할지
+	// 여부이다 (기본 false, opt-in 진단용). Century 는 passive capture 라 수신(RX)만 기록한다.
+	LogMessages bool
+
 	// LogUnconfirmedFields 는 미확정 필드의 새 관측값을 DEBUG 로그로 출력할지 여부이다.
 	LogUnconfirmedFields bool
 
@@ -459,6 +463,13 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	if v, ok := opts["log_drops"]; ok {
 		if b, bok := v.(bool); bok {
 			cfg.LogDrops = b
+		}
+	}
+	// log_messages (기본값: false) — 디바이스와의 송/수신(TX/RX) 프레임을 hex 로 INFO
+	// 로그로 출력. Century 는 passive capture 라 수신(RX)만 기록된다.
+	if v, ok := opts["log_messages"]; ok {
+		if b, bok := v.(bool); bok {
+			cfg.LogMessages = b
 		}
 	}
 	if v, ok := opts["log_unconfirmed_fields"]; ok {

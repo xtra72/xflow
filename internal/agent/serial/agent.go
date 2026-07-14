@@ -303,6 +303,11 @@ func (a *SerialAgent) readLoop() {
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
 
+		// log_messages: 수신(RX) 메시지를 hex 로 INFO 로그 (opt-in 진단용).
+		if a.config.LogMessages {
+			a.logger.Info("serial: RX", "port", a.config.Port, "len", len(data), "hex", hex.EncodeToString(data))
+		}
+
 		// 일시 정지 상태이면 데이터를 버린다
 		if a.paused.Load() {
 			continue
@@ -451,10 +456,15 @@ func (a *SerialAgent) Process(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("serial agent: write failed: %w", err)
 	}
 
-	a.logger.Debug("시리얼 포트 출력",
-		"port", a.config.Port,
-		"len", len(data),
-		"hex", hex.EncodeToString(data))
+	// log_messages: 송신(TX) 메시지를 hex 로 INFO 로그 (opt-in 진단용). 비활성 시 기존 Debug 유지.
+	if a.config.LogMessages {
+		a.logger.Info("serial: TX", "port", a.config.Port, "len", len(data), "hex", hex.EncodeToString(data))
+	} else {
+		a.logger.Debug("시리얼 포트 출력",
+			"port", a.config.Port,
+			"len", len(data),
+			"hex", hex.EncodeToString(data))
+	}
 
 	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(data)))

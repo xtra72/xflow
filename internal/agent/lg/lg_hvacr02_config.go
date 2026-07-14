@@ -57,6 +57,7 @@ type Hvacr02Config struct {
 	LogDecodeErrors bool // 프레임 파싱 실패를 WARN 로그로 출력할지 여부.
 	LogDrops        bool // msgCh full 로 인한 frame drop 을 per-drop WARN 로그로 출력할지 여부.
 	LogStateUpdates bool // 디바이스 state 갱신마다 핵심 필드 + raw payload hex 를 INFO 로그로 출력 (Century/LG01 logDecodedState 패턴).
+	LogMessages     bool // 디바이스와의 송/수신(TX/RX) 프레임 hex 를 INFO 로그로 출력 (Samsung/LGAP 와 통일). capture 라 수신(RX)만 기록.
 }
 
 // parseHvacr02Config 는 Transport.Options 맵에서 Hvacr02Config 를 파싱한다.
@@ -84,6 +85,7 @@ func parseHvacr02Config(opts map[string]any) (Hvacr02Config, error) {
 		EventTempThreshold:   1.0,
 		LogDecodeErrors:      false,
 		LogDrops:             false,
+		LogMessages:          false,
 		LogStateUpdates:      false,
 	}
 
@@ -318,6 +320,13 @@ func parseHvacr02Config(opts map[string]any) (Hvacr02Config, error) {
 	if v, ok := opts["log_drops"]; ok {
 		if b, isBool := v.(bool); isBool {
 			cfg.LogDrops = b
+		}
+	}
+	// log_messages — 디바이스와의 송/수신(TX/RX) 프레임 hex 를 INFO 로그 (기본 false,
+	// Samsung/LGAP 와 통일). capture 라 수신(RX)만 기록된다.
+	if v, ok := opts["log_messages"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogMessages = b
 		}
 	}
 	if v, ok := opts["log_state_updates"]; ok {

@@ -1405,6 +1405,12 @@ func (a *Hvacr02Agent) captureLoop() {
 		a.stats.UpdateLastActivity()
 		a.stats.RecordFirstMessage()
 
+		// log_messages: 수신(RX) 프레임을 hex 로 INFO 로그 (opt-in 진단용, Samsung/LGAP 통일).
+		// capture 라 송신(TX)은 없다. 에코 프레임은 위에서 이미 제외됐다.
+		if a.hvacr02Config.LogMessages {
+			a.logger.Info("lg_hvacr02: RX", "len", len(frame.Raw), "hex", hex.EncodeToString(frame.Raw))
+		}
+
 		// 프레임 이벤트 생성 및 전송
 		a.handleCapturedFrame(frame)
 	}

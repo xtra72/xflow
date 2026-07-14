@@ -149,6 +149,7 @@ const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
 // 키 이름은 그대로 유지한다.
 // ──────────────────────────────────────────────────────────────────────────
 const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '디바이스와 주고받는 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장 — 로그 폭주 우려)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -189,6 +190,7 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
 ];
 
 const LG_LGAP_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '디바이스와 주고받는 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장 — 로그 폭주 우려)' },
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial'], required: true, default: 'serial', description: 'RS-485 시리얼 통신' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', description: '시리얼 포트 (예: /dev/ttyUSB0)' },
   { name: 'baud_rate', type: 'number', label: '보 레이트', default: 4800, description: '통신 속도 (LGAP 기본값: 4800)' },
@@ -217,6 +219,7 @@ const LG_LGAP_FIELDS: ConfigField[] = [
 //   logging  : include_raw_hex, log_decode_errors, log_drops, log_state_updates
 // ──────────────────────────────────────────────────────────────────────────
 const LG_HVACR02_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '수신 프레임 로그', default: false, description: '디바이스로부터 수신한(RX) 프레임을 hex 로 INFO 로그 (passive capture 라 수신만; 진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -269,6 +272,7 @@ const LG_HVACR02_FIELDS: ConfigField[] = [
 // 모두 파싱한다 — 따라서 UI 에 그대로 노출한다.
 // ──────────────────────────────────────────────────────────────────────────
 const LG_HVACR01_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '수신 프레임 로그', default: false, description: '디바이스로부터 수신한(RX) 프레임을 hex 로 INFO 로그 (passive capture 라 수신만; 진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -319,6 +323,7 @@ const LG_HVACR01_FIELDS: ConfigField[] = [
 //   logging  : include_raw_hex, include_register_info, log_*
 // ──────────────────────────────────────────────────────────────────────────
 const CENTURY_HVACR01_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '수신 프레임 로그', default: false, description: '디바이스로부터 수신한(RX) 프레임을 hex 로 INFO 로그 (passive capture 라 수신만; 진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -371,7 +376,8 @@ const SERIAL_FIELDS: ConfigField[] = [
   { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '1s', description: 'Go duration 형식 (예: 500ms, 1s)' },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
-  { name: 'log_drops', type: 'boolean', label: '드롭 로그 출력', default: false, description: '수신 버퍼가 가득 차 메시지를 드롭할 때 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장 — 로그 폭주 방지' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장 — 로그 폭주 우려)', section: 'logging' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그 출력', default: false, description: '수신 버퍼가 가득 차 메시지를 드롭할 때 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장 — 로그 폭주 방지', section: 'logging' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size', 'stream', 'frame'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
@@ -398,7 +404,7 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 0, description: '0 = 무제한' },
   { name: 'broadcast', type: 'boolean', label: '브로드캐스트', default: false, description: '활성화 시 송신 데이터를 연결된 모든 클라이언트에 전송 (특정 대상 무시). 한 소스를 여러 클라이언트가 동시에 수신할 때 사용.' },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
-  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 패킷을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.', section: 'logging' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },

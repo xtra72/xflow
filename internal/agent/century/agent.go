@@ -1155,6 +1155,12 @@ func (a *Hvacr01Agent) captureLoop() {
 		// Snapshot config under lock to avoid races with Configure().
 		cfg := a.snapshotConfig()
 
+		// log_messages: 수신(RX) 프레임을 hex 로 INFO 로그 (opt-in 진단용). Century 는
+		// passive capture 라 송신(TX)은 없으므로 RX 만 기록한다.
+		if cfg.LogMessages {
+			a.logger.Info("century_hvacr01: RX", "len", len(rawCopy), "hex", hex.EncodeToString(rawCopy))
+		}
+
 		// Decode.
 		decoded, decodeErr := Decode(f, now.UnixMilli())
 		if decodeErr != nil {
