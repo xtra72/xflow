@@ -15,6 +15,7 @@ import {
   Moon,
   Palette,
   Search,
+  Server,
   Shield,
   Sun,
   User,
@@ -34,12 +35,13 @@ import {
 import type { LogLevelInfo, LogStyle } from '@/services/api/monitorService';
 import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
+import RemoteManagementTab from '@/pages/settings/RemoteManagementTab';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation, type Locale, type TranslationFn } from '@/lib/i18n';
 
 // --- 탭 정의 ---
 
-type TabId = 'profile' | 'system' | 'theme' | 'language';
+type TabId = 'profile' | 'system' | 'remote' | 'theme' | 'language';
 
 interface TabItem {
   /** 탭 식별자 */
@@ -53,6 +55,7 @@ interface TabItem {
 const TABS: TabItem[] = [
   { id: 'profile', labelKey: 'settings.profile', icon: User },
   { id: 'system', labelKey: 'settings.system', icon: Shield },
+  { id: 'remote', labelKey: 'settings.remote.tab', icon: Server },
   { id: 'theme', labelKey: 'settings.theme', icon: Palette },
   { id: 'language', labelKey: 'settings.language', icon: Globe },
 ];
@@ -216,6 +219,7 @@ export default function SettingsPage() {
         <div className="min-w-0 flex-1">
           {activeTab === 'profile' && <ProfileTab />}
           {activeTab === 'system' && <SystemTab />}
+          {activeTab === 'remote' && <RemoteManagementTab />}
           {activeTab === 'theme' && <ThemeTab />}
           {activeTab === 'language' && <LanguageTab />}
         </div>

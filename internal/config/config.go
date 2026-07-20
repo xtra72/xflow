@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,6 +62,11 @@ type Config interface {
 
 	// 런타임 변경
 	Set(key string, value any) error
+	// SetPersistent 은 값을 오버라이드 레이어에 영속화하고(원본 config 파일은 보존),
+	// 실행 중인 config 에도 반영한다. mutable 키는 변경 콜백을 발화해 즉시 적용되고,
+	// 비-mutable 키는 GET 에 반영되되 재시작 후 완전히 적용된다. key 는 IsOverridable
+	// 대상(allowlist)이어야 한다. @SPEC:SPEC-REMOTE-001 (원격 관리 클라이언트 설정 UI)
+	SetPersistent(key string, value any) error
 	OnChange(key string, fn ChangeCallback) UnsubscribeFunc
 	ChangeHistory() []ChangeEvent
 
@@ -94,8 +100,9 @@ type viperConfig struct {
 	watching    bool
 	watchCtx    context.Context
 	watchCancel context.CancelFunc
-	lastChange  time.Time  // 디바운스를 위한 마지막 변경 시각
-	debounceMu  sync.Mutex // 디바운스 시간 보호
+	lastChange  time.Time      // 디바운스를 위한 마지막 변경 시각
+	debounceMu  sync.Mutex     // 디바운스 시간 보호
+	overrides   *OverrideStore // 원본 config 보존형 오버라이드 레이어 (SetPersistent 용)
 }
 
 // --- LoadOption 타입 및 옵션 함수 ---
@@ -217,6 +224,15 @@ func Load(opts ...LoadOption) (Config, error) {
 		}
 	}
 
+	// 6.5 오버라이드 레이어 병합 (원본 config 파일은 보존; env/flag 보다 낮은 우선순위).
+	// UI 로 편집·영속화한 값을 baseline config 위에 얹는다. 파일 손상 시 무시(원본 복원).
+	overrideStore := NewOverrideStore(resolveOverrideDir(lc, v), lc.logger)
+	if ov := overrideStore.Values(); len(ov) > 0 {
+		if err := v.MergeConfigMap(ov); err != nil {
+			return nil, fmt.Errorf("config: 오버라이드 병합 에러: %w", err)
+		}
+	}
+
 	// 7. 환경 변수 (파일보다 우선)
 	v.SetEnvPrefix(lc.envPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -240,9 +256,38 @@ func Load(opts ...LoadOption) (Config, error) {
 		logger:     lc.logger,
 		callbacks:  make(map[string][]callbackEntry),
 		maxHistory: 100,
+		overrides:  overrideStore,
 	}
 
 	return vc, nil
+}
+
+// resolveOverrideDir 은 오버라이드 파일을 둘 디렉토리를 결정한다.
+//
+// 우선순위: 앱 데이터 디렉토리(sqlite DB 위치) → config 파일 디렉토리 →
+// 첫 검색 경로($HOME/.xflow 등) → 현재 디렉토리.
+//
+// 오버라이드는 런타임 상태이므로, 읽기 전용일 수 있는 config 디렉토리(/etc/xflow 등)보다
+// 앱이 DB 를 쓰는 쓰기 가능한 데이터 디렉토리를 우선한다. config 파일이 읽기 전용 위치에
+// 있어도 저장이 실패하지 않도록 하는 것이 목적이다(원본 config 파일은 어차피 보존).
+func resolveOverrideDir(lc *loadConfig, v *viper.Viper) string {
+	if dbPath := v.GetString("storage.sqlite.path"); dbPath != "" {
+		if d := filepath.Dir(dbPath); d != "" {
+			return d
+		}
+	}
+	if lc.configFile != "" {
+		return filepath.Dir(lc.configFile)
+	}
+	if used := v.ConfigFileUsed(); used != "" {
+		return filepath.Dir(used)
+	}
+	for _, p := range lc.configPaths {
+		if expanded := os.ExpandEnv(p); expanded != "" {
+			return expanded
+		}
+	}
+	return "."
 }
 
 // --- 카테고리 접근자 (항상 Viper에서 최신 값을 RLock으로 읽기) ---
@@ -540,16 +585,52 @@ func (c *viperConfig) Set(key string, value any) error {
 	c.v.Set(key, value)
 	c.mu.Unlock()
 
-	// 변경 이벤트 생성
+	c.emitChange(key, oldValue, value)
+	return nil
+}
+
+// SetPersistent 은 값을 오버라이드 레이어에 영속화하고(원본 config 파일 보존), 실행 중인
+// config viper 에도 반영한다. key 는 IsOverridable(allowlist) 대상이어야 한다. mutable
+// 키는 변경 콜백을 발화해 즉시 적용되고, 비-mutable 키는 GET 에 반영되되 완전한 적용은
+// 재시작 후 이뤄진다(런타임 부작용 없이 값만 반영).
+func (c *viperConfig) SetPersistent(key string, value any) error {
+	if !IsOverridable(key) {
+		return fmt.Errorf("%w: %s (오버라이드 대상 아님)", ErrImmutableKey, key)
+	}
+	if err := validateKeyValue(key, value); err != nil {
+		return err
+	}
+	if c.overrides == nil {
+		return fmt.Errorf("config: 오버라이드 스토어가 초기화되지 않음")
+	}
+	// 1) 오버라이드 파일에 영속화(히스토리 회전 포함).
+	if err := c.overrides.Set(key, value); err != nil {
+		return err
+	}
+	// 2) 실행 중 viper 에 반영(GET 이 저장값을 즉시 반영하도록).
+	c.mu.Lock()
+	oldValue := c.v.Get(key)
+	c.v.Set(key, value)
+	c.mu.Unlock()
+
+	// 3) mutable 키만 변경 콜백을 발화(런타임 즉시 적용). 비-mutable 은 값만 반영하고
+	//    재시작 후 완전 적용된다.
+	if IsMutable(key) {
+		c.emitChange(key, oldValue, value)
+	}
+	return nil
+}
+
+// emitChange 는 변경 이벤트를 이력에 기록하고 등록된 콜백을 발화한다(panic 복구 포함).
+func (c *viperConfig) emitChange(key string, oldValue, newValue any) {
 	event := ChangeEvent{
 		Key:       key,
 		OldValue:  oldValue,
-		NewValue:  value,
+		NewValue:  newValue,
 		Source:    "api",
 		Timestamp: time.Now(),
 	}
 
-	// 이력 기록
 	c.historyMu.Lock()
 	if len(c.history) >= c.maxHistory {
 		c.history = c.history[1:]
@@ -557,10 +638,8 @@ func (c *viperConfig) Set(key string, value any) error {
 	c.history = append(c.history, event)
 	c.historyMu.Unlock()
 
-	// 콜백 호출 (panic 복구 포함)
 	c.callbacksMu.RLock()
 	entries := c.callbacks[key]
-	// 슬라이스 복사하여 락 해제 후 안전하게 호출
 	copied := make([]callbackEntry, len(entries))
 	copy(copied, entries)
 	c.callbacksMu.RUnlock()
@@ -570,18 +649,13 @@ func (c *viperConfig) Set(key string, value any) error {
 			defer func() {
 				if r := recover(); r != nil {
 					if c.logger != nil {
-						c.logger.Error("config: 콜백 panic 복구됨",
-							"key", key,
-							"panic", r,
-						)
+						c.logger.Error("config: 콜백 panic 복구됨", "key", key, "panic", r)
 					}
 				}
 			}()
 			entry.fn(event)
 		}()
 	}
-
-	return nil
 }
 
 // OnChange - 특정 키의 변경 콜백 등록, 구독 해제 함수 반환

@@ -831,6 +831,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 기준 시각을 가장 이른 시점으로 맞춘다 (buildSystemHandler 내 time.Now() 보다 정확).
 	systemHandler := buildSystemHandler(cfg, obs, time.UnixMilli(daemonStartedAtMs))
 
+	// 원격 관리 클라이언트 설정 핸들러 (SPEC-REMOTE-001 원격 관리 클라이언트 설정 UI).
+	// 이 인스턴스의 client 모드 설정을 조회/편집하며, config 오버라이드 레이어에 영속화한다.
+	remoteConfigHandler := handler.NewRemoteConfigHandler(cfg, obs.Loggers.NewLogger("api.handler.remote_config").Logger())
+
 	// 9.4. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
 	// Dashboard API 핸들러 등록 — 공유/개인 snapshot 영속화.
 	// authDashboardDB 는 7.2 에서 열린 공유 *sql.DB (credentials 와 공유).
@@ -877,6 +881,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// SPEC-UPDATE-001 v0.1.0 M10: 시스템 / 업데이트 라우트.
 		systemHandler.RegisterRoutes(g)
+
+		// SPEC-REMOTE-001: 원격 관리 클라이언트 설정 라우트 (admin 전용).
+		remoteConfigHandler.RegisterRoutes(g)
 
 		// SPEC-DASHBOARD-001 v0.2.0 M-8: 대시보드 라우트 (shared / mine).
 		dashboardHandler.RegisterRoutes(g)
