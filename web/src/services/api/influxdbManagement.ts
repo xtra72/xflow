@@ -2,7 +2,7 @@
 //
 // 백엔드 REST 계약 (응답은 { data: ... } envelope — apiClient 인터셉터가 벗겨준다):
 //   GET    /api/v1/influxdb/{agent_name}/buckets
-//     → [{ id, name, orgId, retentionSeconds }]
+//     → { buckets: [{ id, name, orgId, retentionSeconds }] }
 //   POST   /api/v1/influxdb/{agent_name}/buckets   body { name, retentionSeconds? }
 //     → { id, name, orgId, retentionSeconds }
 //   DELETE /api/v1/influxdb/{agent_name}/buckets/{bucket}
@@ -10,7 +10,7 @@
 //   POST   /api/v1/influxdb/{agent_name}/buckets/{bucket}/truncate
 //     → { truncated: true }
 //   GET    /api/v1/influxdb/{agent_name}/measurements?bucket={name}
-//     → ["m1", "m2"]
+//     → { measurements: ["m1", "m2"], count }
 //   DELETE /api/v1/influxdb/{agent_name}/measurements/{name}?bucket={name}
 //     → { deleted: true }
 //
@@ -41,11 +41,14 @@ export interface CreateBucketRequest {
 export async function fetchInfluxBuckets(
   agentName: string,
 ): Promise<InfluxBucket[]> {
-  const data = await get<InfluxBucket[]>(
+  // 백엔드는 { buckets: [...] } 객체로 응답한다(envelope 언래핑 후). 이를 배열로 가정하면
+  // 소비 측 `.map()` 이 크래시하므로 nested 배열을 추출한다. 구버전/직접 배열 응답과
+  // null·빈 객체도 방어적으로 빈 배열로 폴백한다.
+  const data = await get<{ buckets?: InfluxBucket[] } | InfluxBucket[] | null>(
     `/influxdb/${encodeURIComponent(agentName)}/buckets`,
   );
-  // 백엔드가 null/미정의를 반환할 가능성에 대비해 빈 배열로 폴백한다.
-  return data ?? [];
+  if (Array.isArray(data)) return data;
+  return data?.buckets ?? [];
 }
 
 /** `POST /buckets` — 버킷을 생성하고 생성된 버킷 메타를 반환한다. */
@@ -89,10 +92,13 @@ export async function fetchInfluxMeasurements(
   bucket: string,
 ): Promise<string[]> {
   const params = new URLSearchParams({ bucket });
-  const data = await get<string[]>(
+  // 백엔드는 { measurements: [...], count } 객체로 응답한다(envelope 언래핑 후).
+  // buckets 와 동일하게 nested 배열을 추출하고, 직접 배열/null·빈 객체는 폴백한다.
+  const data = await get<{ measurements?: string[] } | string[] | null>(
     `/influxdb/${encodeURIComponent(agentName)}/measurements?${params}`,
   );
-  return data ?? [];
+  if (Array.isArray(data)) return data;
+  return data?.measurements ?? [];
 }
 
 /** `DELETE /measurements/{name}?bucket={name}` — 지정 버킷의 measurement 를 삭제한다. */
