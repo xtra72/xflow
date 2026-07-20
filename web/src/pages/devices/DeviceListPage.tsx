@@ -47,16 +47,16 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 /**
  * `remove_device` exec 를 지원하는 에이전트 타입 집합.
- * Samsung HVACR / LGAP 만 디바이스 로스터 삭제를 지원한다
+ * Samsung HVACR / LGAP / LG ICP-01 / LG ICP-02 가 디바이스 삭제를 지원한다
  * (Century/system/modbus 미지원).
  */
-const REMOVABLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap']);
+const REMOVABLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02']);
 
 /**
  * `set_device` exec 를 지원하는 에이전트 타입 집합 (디바이스별 상태 전송 on/off).
- * Samsung HVACR / LGAP 만 디바이스별 report_enabled 게이트를 지원한다.
+ * Samsung HVACR / LGAP / LG ICP-01 / LG ICP-02 가 디바이스별 report_enabled 게이트를 지원한다.
  */
-const REPORT_TOGGLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap']);
+const REPORT_TOGGLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02']);
 
 // 디바이스 source 값을 사용자 친화적 라벨로 매핑.
 // 수동(manual)=config|pinned, 자동(auto)=auto|bridge.

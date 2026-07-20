@@ -67,12 +67,13 @@ func (p *Hvacr02DeviceProvider) Device(id string) (device.Device, error) {
 // icp02DeviceToInfo 는 Icp02Device 를 adapter.LGIcp02DeviceInfo 로 변환한다.
 func icp02DeviceToInfo(dev *Icp02Device) adapter.LGIcp02DeviceInfo {
 	info := adapter.LGIcp02DeviceInfo{
-		Address:    dev.Address,
-		Label:      dev.Label,
-		DeviceType: dev.Type,
-		Online:     dev.Online,
-		LastSeen:   dev.LastSeen,
-		Source:     dev.Source,
+		Address:       dev.Address,
+		Label:         dev.Label,
+		DeviceType:    dev.Type,
+		Online:        dev.Online,
+		LastSeen:      dev.LastSeen,
+		Source:        dev.Source,
+		ReportEnabled: dev.ReportEnabled,
 	}
 	if dev.State != nil {
 		info.Properties = dev.State.toProperties(dev.Type)

@@ -23,6 +23,8 @@ type LGIcp02DeviceInfo struct {
 	LastSeen   time.Time
 	Properties map[string]any // 상태 속성 (LGCPDeviceState.toProperties() 결과)
 	Source     string         // "config" 또는 "auto"
+	// ReportEnabled 는 디바이스별 상태 전송 on/off 설정이다(기본 true=on). REST DTO 노출용.
+	ReportEnabled bool
 }
 
 // LGIcp02DeviceAdapter 는 LGCP 디바이스를 통합 Device 인터페이스로 래핑한다.
@@ -121,6 +123,15 @@ func (a *LGIcp02DeviceAdapter) Source() string {
 		return a.info.Source
 	}
 	return "auto"
+}
+
+// ReportEnabled 는 디바이스별 상태 전송 on/off 설정을 반환한다(기본 true=on).
+// REST DTO(GET /devices, GET /devices/{id}) 가 optional-interface(reportEnabledCarrier)
+// 로 이 값을 노출해, 웹 목록 새로고침/WebSocket 재조회 시에도 off 로 설정된 디바이스가
+// on 으로 되돌아가지 않도록 한다. device.Device 인터페이스에는 넣지 않고 별도 메서드로
+// 둔다(구현체 파급 방지).
+func (a *LGIcp02DeviceAdapter) ReportEnabled() bool {
+	return a.info.ReportEnabled
 }
 
 func (a *LGIcp02DeviceAdapter) Capabilities() []string {

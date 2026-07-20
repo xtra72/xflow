@@ -20,6 +20,11 @@ type Icp02Device struct {
 	LastSeen time.Time
 	Source   string            // "auto" (자동 발견) 또는 "config" (설정 등록)
 	State    *Icp02DeviceState // 현재 상태 (누적)
+	// ReportEnabled 는 디바이스별 상태 전송 on/off 이다(기본 true=on). false 면 이
+	// 디바이스에 대한 device_state 방출(report/change/response 포함)을 억제한다.
+	// 캡처 전용 에이전트이므로 In-memory 만 유지하며 roster/config 로 영속하지 않는다.
+	// a.mu 하에서만 접근한다(단순 필드 읽기이므로 기존 락 하에서 안전).
+	ReportEnabled bool
 }
 
 // Icp02DeviceState 는 디바이스의 누적 상태이다.

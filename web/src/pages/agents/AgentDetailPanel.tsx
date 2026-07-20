@@ -3956,6 +3956,11 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const devices = data?.data ?? [];
   const isNasa = agentType === 'samsung_hvacr01';
   const isLgap = agentType === 'lgap';
+  // LG ICP-01/02 는 auto-discovery capture 에이전트다. 수동 추가(add_device)는 없지만
+  // 디바이스별 삭제 + 상태 전송(report_enabled) 토글은 지원한다(samsung/lgap 와 동일).
+  const isLgIcp = agentType === 'lg_hvacr01' || agentType === 'lg_hvacr02';
+  // 디바이스 관리(삭제 + 상태 전송 토글) 지원 여부. 추가(add_device)는 isNasa||isLgap 만.
+  const canManageDevices = isNasa || isLgap || isLgIcp;
 
   // 소스 정보 (list_devices 응답에서 획득).
   // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
@@ -3970,7 +3975,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // bus address 가 보존되도록 별도 map 유지.
   const [addressMap, setAddressMap] = useState<Record<string, string>>({});
   useEffect(() => {
-    if ((!isNasa && !isLgap) || !agent) return;
+    if (!canManageDevices || !agent) return;
     execAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
@@ -4324,7 +4329,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colType')}</th>
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colConnection')}</th>
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colSource')}</th>
-                {(isNasa || isLgap) && <th className="pb-2 font-medium" />}
+                {canManageDevices && <th className="pb-2 font-medium" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
@@ -4361,7 +4366,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                           </span>
                         )}
                       </td>
-                      {(isNasa || isLgap) && (
+                      {canManageDevices && (
                         <td className="py-2 text-right">
                           {/* 상태 전송 토글(report_enabled) + 삭제 버튼. 전역 디바이스 목록과
                               동일한 액션 세트다. 모든 디바이스(config 포함, source 미해석 무관)에
@@ -4395,7 +4400,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={(isNasa || isLgap) ? 6 : 5} className="bg-(--color-bg-sunken)">
+                        <td colSpan={canManageDevices ? 6 : 5} className="bg-(--color-bg-sunken)">
                           <DeviceDetailPanel deviceId={d.id} />
                         </td>
                       </tr>

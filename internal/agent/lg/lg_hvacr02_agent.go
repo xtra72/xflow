@@ -429,13 +429,14 @@ func (a *Hvacr02Agent) Health() agent.HealthStatus {
 
 // hvacr02ProcessRequest 는 Process 메서드의 JSON 요청 구조체이다.
 type hvacr02ProcessRequest struct {
-	Command string         `json:"command"`
-	Count   int            `json:"count,omitempty"`    // get_recent 에서 사용
-	Address string         `json:"address,omitempty"`  // 제어 대상 실내기 주소 (hex)
-	Params  map[string]any `json:"params,omitempty"`   // 제어 파라미터
-	NodeID  string         `json:"node_id,omitempty"`  // 호출 노드 식별자 (노드별 통계용)
-	FlowID  string         `json:"flow_id,omitempty"`  // 호출 플로우 식별자 (노드별 통계용)
-	LastSeq int64          `json:"last_seq,omitempty"` // 노드가 마지막으로 수신한 seq (중복 필터링)
+	Command  string         `json:"command"`
+	Count    int            `json:"count,omitempty"`     // get_recent 에서 사용
+	Address  string         `json:"address,omitempty"`   // 제어 대상 실내기 주소 (hex)
+	DeviceID string         `json:"device_id,omitempty"` // 디바이스 UUID (remove_device/set_device 어드레싱)
+	Params   map[string]any `json:"params,omitempty"`    // 제어 파라미터
+	NodeID   string         `json:"node_id,omitempty"`   // 호출 노드 식별자 (노드별 통계용)
+	FlowID   string         `json:"flow_id,omitempty"`   // 호출 플로우 식별자 (노드별 통계용)
+	LastSeq  int64          `json:"last_seq,omitempty"`  // 노드가 마지막으로 수신한 seq (중복 필터링)
 }
 
 // Process 는 JSON 명령을 처리한다.
@@ -498,6 +499,15 @@ func (a *Hvacr02Agent) Process(data []byte) ([]byte, error) {
 		result, err = a.processControlCommand(req)
 	case "set_multiple":
 		result, err = a.processControlCommand(req)
+	case "list_devices":
+		// 디바이스 목록 조회 (report_enabled 포함). NASA 통일 DTO.
+		result, err = a.processListDevices()
+	case "remove_device":
+		// In-memory 디바이스 삭제 (자동 재발견 가능). NASA 통일 DTO.
+		result, err = a.processRemoveDevice(&req)
+	case "set_device":
+		// 디바이스별 report_enabled/name 갱신. NASA 통일 DTO.
+		result, err = a.processSetDevice(&req)
 	default:
 		a.stats.IncrMessagesErrored()
 		return nil, fmt.Errorf("lg_hvacr02: unsupported command %q", req.Command)
@@ -1044,6 +1054,171 @@ func (a *Hvacr02Agent) processGetAll() ([]byte, error) {
 		"status":  "ok",
 		"devices": devices,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// 디바이스 관리 명령 (list_devices / remove_device / set_device)
+//
+// NASA(Hvacr01Agent) 와 동일한 DTO 형태로 프론트엔드/REST 가 변경 없이 동작하도록
+// 맞춘다. 캡처 전용 에이전트이므로 add_device 는 지원하지 않는다(자동 발견 전용).
+// report_enabled/삭제는 In-memory 만 유지하며 roster/config 로 영속하지 않는다.
+// ---------------------------------------------------------------------------
+
+// processListDevices 는 디바이스 목록을 report_enabled 포함으로 반환한다.
+func (a *Hvacr02Agent) processListDevices() ([]byte, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	devices := make([]map[string]any, 0, len(a.devices))
+	for _, dev := range a.devices {
+		devices = append(devices, map[string]any{
+			"address":        dev.Address,
+			"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.Address),
+			"device_type":    dev.Type,
+			"online":         dev.Online,
+			"source":         dev.Source,
+			"report_enabled": dev.ReportEnabled,
+		})
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"devices": devices,
+	})
+}
+
+// processRemoveDevice 는 In-memory 디바이스를 삭제한다 (remove_device).
+// address(hex) 또는 device_id(UUID) 로 대상을 찾는다. 삭제해도 버스에서 다시
+// 관측되면 자동 재발견되므로 config/auto 구분 없이 삭제를 허용한다.
+func (a *Hvacr02Agent) processRemoveDevice(req *hvacr02ProcessRequest) ([]byte, error) {
+	// API exec DTO 폴백: params 내 address/device_id 도 허용.
+	if req.Address == "" {
+		if v, ok := req.Params["address"].(string); ok {
+			req.Address = v
+		}
+	}
+	if req.DeviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			req.DeviceID = v
+		}
+	}
+
+	addr, dev, err := a.resolveDeviceMgmt(req)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	delete(a.devices, addr)
+	delete(a.lastStates, addr)
+	delete(a.lastEmitted, addr)
+	v2 := a.onDeviceStateChangeV2
+	agentName := a.agentConfig.Name
+	a.mu.Unlock()
+
+	// UI 재조회 유도 (디바이스 목록에서 사라지도록). lock 밖에서 호출.
+	if v2 != nil && addr != "ffffffff" {
+		globalID := fmt.Sprintf("%s:%s", agentName, addr)
+		deviceUID := agent.ResolveDeviceID(context.Background(), agentName, addr)
+		go v2(agentName, deviceUID, globalID)
+	}
+
+	return json.Marshal(map[string]any{
+		"status":    "ok",
+		"address":   addr,
+		"unit_id":   addr,
+		"device_id": agent.ResolveDeviceID(context.Background(), agentName, addr),
+		"name":      dev.Label,
+	})
+}
+
+// processSetDevice 는 디바이스별 설정(report_enabled/name)을 갱신한다 (set_device).
+// report_enabled=false 로 갱신하면 이후 이 디바이스의 device_state 방출이 억제된다.
+func (a *Hvacr02Agent) processSetDevice(req *hvacr02ProcessRequest) ([]byte, error) {
+	// API exec DTO 폴백: params 내 address/device_id 도 허용.
+	if req.Address == "" {
+		if v, ok := req.Params["address"].(string); ok {
+			req.Address = v
+		}
+	}
+	if req.DeviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			req.DeviceID = v
+		}
+	}
+
+	addr, dev, err := a.resolveDeviceMgmt(req)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	// report_enabled: present(bool) 일 때만 갱신.
+	if v, ok := req.Params["report_enabled"].(bool); ok {
+		dev.ReportEnabled = v
+	}
+	// name: present(string) 일 때만 갱신.
+	if v, ok := req.Params["name"].(string); ok {
+		dev.Label = v
+	}
+	resp := map[string]any{
+		"status":         "ok",
+		"address":        addr,
+		"unit_id":        addr,
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr),
+		"name":           dev.Label,
+		"device_type":    dev.Type,
+		"report_enabled": dev.ReportEnabled,
+	}
+	a.mu.Unlock()
+
+	return json.Marshal(resp)
+}
+
+// resolveDeviceMgmt 는 remove_device/set_device 요청에서 디바이스 주소와 포인터를
+// 해석한다. device_id(UUID) 가 우선이며, 없으면 address(hex) 를 사용한다.
+// NASA 의 resolveDevice 패턴을 따른다.
+func (a *Hvacr02Agent) resolveDeviceMgmt(req *hvacr02ProcessRequest) (string, *Icp02Device, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var addr string
+	if req.DeviceID != "" {
+		// 전역 device.List / REST 응답은 UUID(1급 식별자)만 노출하므로, 삭제/실행
+		// 경로가 device_id 로 UUID 를 전달한다. 각 디바이스의 emit-경로 UUID
+		// (ResolveDeviceID(name, addr)) 와 대조해 역매칭한다.
+		byUUID, ok := a.addrByDeviceUUID(req.DeviceID)
+		if !ok {
+			return "", nil, ErrDeviceIDNotFound
+		}
+		addr = byUUID
+	} else if req.Address != "" {
+		addr = req.Address
+	} else {
+		return "", nil, fmt.Errorf("lg_hvacr02: address or device_id is required")
+	}
+
+	dev, ok := a.devices[addr]
+	if !ok {
+		return "", nil, ErrDeviceNotFound
+	}
+	return addr, dev, nil
+}
+
+// addrByDeviceUUID 는 글로벌 UUID(device_id) 를 각 디바이스의 emit-경로 UUID
+// (ResolveDeviceID(name, addr)) 와 대조해 해당 주소를 역매칭한다. 매칭 실패 시 ("", false).
+//
+// 주의(RWMutex 비재진입): 호출자(resolveDeviceMgmt)가 a.mu 를 보유한 상태에서
+// 호출하므로 여기서 a.mu 를 재-lock 하지 않으며 a.Name() 도 호출하지 않는다
+// (재진입 deadlock 회피 — project_hvac_agent_lock_pattern). ResolveDeviceID 는
+// a.mu 와 무관한 별도 저장소를 사용하므로 재진입 위험이 없다.
+func (a *Hvacr02Agent) addrByDeviceUUID(uuid string) (string, bool) {
+	for addr := range a.devices {
+		if agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr) == uuid {
+			return addr, true
+		}
+	}
+	return "", false
 }
 
 // processGetStats 는 캡처 통계를 반환한다.
@@ -1747,13 +1922,14 @@ func (a *Hvacr02Agent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
 			label = defaultHvacr02Label(entry.Address)
 		}
 		dev := &Icp02Device{
-			Address:  entry.Address,
-			Label:    label,
-			Type:     detectIcp02DeviceType(entry.Address),
-			Online:   false,
-			LastSeen: now,
-			Source:   "pinned",
-			State:    &Icp02DeviceState{},
+			Address:       entry.Address,
+			Label:         label,
+			Type:          detectIcp02DeviceType(entry.Address),
+			Online:        false,
+			LastSeen:      now,
+			Source:        "pinned",
+			State:         &Icp02DeviceState{},
+			ReportEnabled: true, // 신규 디바이스는 기본 on
 		}
 		a.devices[entry.Address] = dev
 		a.logger.Info("lg_hvacr02: 고정 설치 디바이스 등록",
@@ -1771,13 +1947,14 @@ func (a *Hvacr02Agent) registerOneConfigDevice(addrHex, label string, ts time.Ti
 		label = defaultHvacr02Label(addrHex)
 	}
 	dev := &Icp02Device{
-		Address:  addrHex,
-		Label:    label,
-		Type:     detectIcp02DeviceType(addrHex),
-		Online:   false, // 아직 프레임을 수신하지 않았으므로 오프라인
-		LastSeen: ts,
-		Source:   "config",
-		State:    &Icp02DeviceState{},
+		Address:       addrHex,
+		Label:         label,
+		Type:          detectIcp02DeviceType(addrHex),
+		Online:        false, // 아직 프레임을 수신하지 않았으므로 오프라인
+		LastSeen:      ts,
+		Source:        "config",
+		State:         &Icp02DeviceState{},
+		ReportEnabled: true, // 신규 디바이스는 기본 on
 	}
 	a.devices[addrHex] = dev
 	a.logger.Info("lg_hvacr02: 설정 디바이스 등록",
@@ -1822,13 +1999,14 @@ func (a *Hvacr02Agent) ensureDevice(addrHex string, ts time.Time) *Icp02Device {
 	dev, ok := a.devices[addrHex]
 	if !ok {
 		dev = &Icp02Device{
-			Address:  addrHex,
-			Label:    defaultHvacr02Label(addrHex),
-			Type:     detectIcp02DeviceType(addrHex),
-			Online:   true,
-			LastSeen: ts,
-			Source:   "auto",
-			State:    &Icp02DeviceState{},
+			Address:       addrHex,
+			Label:         defaultHvacr02Label(addrHex),
+			Type:          detectIcp02DeviceType(addrHex),
+			Online:        true,
+			LastSeen:      ts,
+			Source:        "auto",
+			State:         &Icp02DeviceState{},
+			ReportEnabled: true, // 자동 발견 디바이스는 기본 on
 		}
 		a.devices[addrHex] = dev
 		a.logger.Info("lg_hvacr02: 디바이스 발견",
@@ -2038,6 +2216,13 @@ func (a *Hvacr02Agent) emitDeviceStateLocked(dev *Icp02Device, trigger string) {
 // 호출 전제: a.mu 쓰기 락 보유.
 func (a *Hvacr02Agent) emitDeviceStatePayloadLocked(dev *Icp02Device, trigger string, state map[string]any) {
 	if dev == nil || dev.State == nil {
+		return
+	}
+	// report_enabled 게이트: off 인 디바이스는 device_state(report/change/response)를
+	// 방출하지 않는다. emitDeviceStateLocked / updateDeviceState(변경 경로) 모두 이
+	// 단일 길목을 거치므로 여기서만 게이트하면 모든 device_state emit 이 억제된다.
+	// lastEmitted 갱신 전에 반환하여 off 동안의 상태를 dedup 기준으로 남기지 않는다.
+	if !dev.ReportEnabled {
 		return
 	}
 
