@@ -9,6 +9,8 @@
 #   make rpi         Cross-compile for Raspberry Pi (linux/arm64)
 #   make rpi-deploy RPI_HOST=pi@192.168.1.100  Build and deploy to RPi
 #   make rpi-pkg     Create installation package (tar.gz)
+#   make amd64       Cross-compile for Linux x86-64 (linux/amd64)
+#   make amd64-pkg   Create installation package (tar.gz) for Linux x86-64
 #   make release-all VERSION=v0.1.0  Build all 6 platform release packages locally
 #   make release-images VERSION=v0.4.0 SIGN_KEY=xflow-release.key  Build + sign store images
 #   make checksums   Generate SHA256 checksums.txt for dist/
@@ -35,6 +37,9 @@ RPI_HOST   ?=
 RPI_DIR    ?= /opt/xflow
 PKG_DIR    := $(BUILD_DIR)/pkg
 
+# Linux x86-64 cross-compile
+AMD64_GOARCH := amd64
+
 # Release packaging (SPEC-CICD-001)
 # CI 워크플로우와 동일한 산출물을 로컬에서 미러링한다.
 VERSION    ?= dev
@@ -46,7 +51,7 @@ DOCKER_IMAGE ?= xflow
 DOCKER_TAG   ?= $(VERSION)
 DOCKER_PORT  ?= 8081
 
-.PHONY: all web server rpi rpi-deploy rpi-pkg run dev test test-go test-web lint clean help \
+.PHONY: all web server rpi rpi-deploy rpi-pkg amd64 amd64-pkg run dev test test-go test-web lint clean help \
         release-all release-platform checksums docker-build docker-run keygen release-images release-image-one release-images-guard
 
 ## all: Build frontend and backend
@@ -99,6 +104,34 @@ rpi-pkg: rpi
 	cd $(BUILD_DIR) && tar czf xflowd-linux-$(RPI_GOARCH).tar.gz -C pkg .
 	rm -rf $(PKG_DIR)
 	@echo "Package created: $(BUILD_DIR)/xflowd-linux-$(RPI_GOARCH).tar.gz"
+
+## amd64: Cross-compile for Linux x86-64 (linux/amd64)
+# rpi 타깃과 동일하게 실제 버전을 main.Version 으로 주입한다(예: make amd64-pkg VERSION=v1.3.0).
+AMD64_LDFLAGS := $(LDFLAGS) -X main.Version=$(VERSION)
+amd64: web
+	GOOS=linux GOARCH=$(AMD64_GOARCH) \
+		go build $(GOFLAGS) -ldflags "$(AMD64_LDFLAGS)" -o $(BUILD_DIR)/$(APP)-linux-$(AMD64_GOARCH) ./cmd/$(APP)
+	@for cli in $(CLI_APPS); do \
+		GOOS=linux GOARCH=$(AMD64_GOARCH) \
+			go build $(GOFLAGS) -ldflags "$(AMD64_LDFLAGS)" -o $(BUILD_DIR)/$$cli-linux-$(AMD64_GOARCH) ./cmd/$$cli; \
+	done
+
+## amd64-pkg: Create installation package (tar.gz) for Linux x86-64
+amd64-pkg: amd64
+	rm -rf $(PKG_DIR)
+	mkdir -p $(PKG_DIR)/web
+	cp $(BUILD_DIR)/$(APP)-linux-$(AMD64_GOARCH) $(PKG_DIR)/xflowd
+	@for cli in $(CLI_APPS); do \
+		cp $(BUILD_DIR)/$$cli-linux-$(AMD64_GOARCH) $(PKG_DIR)/$$cli; \
+	done
+	cp -r $(WEB_DIST) $(PKG_DIR)/web/dist
+	cp deploy/xflow.yaml $(PKG_DIR)/
+	cp deploy/xflowd.service $(PKG_DIR)/
+	cp deploy/install.sh $(PKG_DIR)/
+	cp deploy/uninstall.sh $(PKG_DIR)/
+	cd $(BUILD_DIR) && tar czf xflowd-linux-$(AMD64_GOARCH).tar.gz -C pkg .
+	rm -rf $(PKG_DIR)
+	@echo "Package created: $(BUILD_DIR)/xflowd-linux-$(AMD64_GOARCH).tar.gz"
 
 ## run: Build all and run xflowd
 run: all
