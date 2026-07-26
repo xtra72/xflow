@@ -58,6 +58,7 @@ func NewTCPClientAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		Delimiter:      cfg.Delimiter,
 		FixedSize:      cfg.FixedSize,
 		MaxMessageSize: cfg.MaxMessageSize,
+		WriteTimeout:   cfg.WriteTimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tcp client agent: %w", err)

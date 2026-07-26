@@ -22,6 +22,10 @@ const (
 	DefaultReconnectInterval = 5 * time.Second
 	DefaultConnectTimeout    = 10 * time.Second
 	DefaultMaxMessageSize    = 1048576 // 1MB
+	// DefaultWriteTimeout 은 framer conn.Write 의 기본 쓰기 데드라인이다.
+	// stale 클라이언트가 수신을 멈춰 커널 송신버퍼가 포화될 때 conn.Write 가
+	// 무한 블록되어 flow(runNode)를 정지시키는 것을 방지한다. 0 이면 데드라인 미설정.
+	DefaultWriteTimeout = 5 * time.Second
 )
 
 // logPacket 은 log_messages 옵션이 켜져 있을 때 송/수신 패킷을 hex 로 INFO 로그한다.

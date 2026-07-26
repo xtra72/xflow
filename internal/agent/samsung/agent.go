@@ -45,9 +45,12 @@ type Hvacr01Agent struct {
 	warnedUnknown map[NasaAddress]bool // 미등록 주소 최초 경고 여부
 
 	disconnectCh      chan struct{} // 연결 끊김 시그널 (receiveLoop → pollLoop)
-	reconnectMu       sync.Mutex    // reconnecting 상태 보호
+	reconnectMu       sync.Mutex    // reconnecting 상태 + lastStaleReconnect 보호
 	isReconnecting    bool          // 재연결 진행 중 여부
 	reconnectAttempts int           // 현재 재연결 시도 횟수
+	// lastStaleReconnect 은 half-open 감지로 transport 를 강제 close 한 마지막 시각이다.
+	// 재연결 폭주 방지 쿨다운 가드에 사용한다 (reconnectMu 로 보호).
+	lastStaleReconnect time.Time
 
 	statusQueryCancel context.CancelFunc // 진행 중인 상태 조회 goroutine 취소
 
@@ -1595,24 +1598,37 @@ func (a *Hvacr01Agent) staleOfflineThreshold() time.Duration {
 // 않으며, 복구는 handleMessage 가 ErrorCount=0 으로 초기화하므로 영향받지 않는다.
 func (a *Hvacr01Agent) checkStaleDevices() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	// offline_timeout == 0 (명시적) → staleness 감지 비활성 (3-way 규칙).
 	// transport-disconnect bulk offline(setAllDevicesOffline)은 이와 무관하게 동작한다.
 	if a.hvacr01Config.OfflineTimeout == 0 {
+		a.mu.Unlock()
 		return
 	}
 
 	// Stop 이후에는 방출 금지 (emitConnectionReports 선례, N10).
 	select {
 	case <-a.stopCh:
+		a.mu.Unlock()
 		return
 	default:
 	}
 
 	threshold := a.staleOfflineThreshold()
 	now := time.Now()
+
+	// half-open 감지용: 마지막으로 무언가 수신한 시각(모든 디바이스 통틀어) 과
+	// 수신 이력이 있는 디바이스 수를 함께 집계한다. offline 디바이스의 LastSeen 도
+	// "트랜스포트가 살아있던 마지막 시각" 의 근거이므로 online 게이트 이전에 집계한다.
+	var maxLastSeen time.Time
+	seenCount := 0
 	for addr, dev := range a.devices {
+		if !dev.LastSeen.IsZero() {
+			seenCount++
+			if dev.LastSeen.After(maxLastSeen) {
+				maxLastSeen = dev.LastSeen
+			}
+		}
 		if !dev.Online {
 			continue
 		}
@@ -1623,6 +1639,68 @@ func (a *Hvacr01Agent) checkStaleDevices() {
 			a.markOfflineLocked(addr, dev, "stale")
 		}
 	}
+
+	transportType := a.hvacr01Config.TransportType
+	// idle-timeout: stale offline 임계값의 2배. 90s 에 offline 마킹된 뒤에도 전면
+	// 침묵이 이어지면(probe 도 무응답) half-open 소켓으로 판정한다.
+	idleTimeout := 2 * threshold
+	a.mu.Unlock()
+
+	a.maybeForceReconnectStale(transportType, idleTimeout, seenCount, maxLastSeen, now)
+}
+
+// maybeForceReconnectStale 은 half-open 소켓(전면 침묵)을 감지하면 transport 를
+// 강제로 close 하여 receiveLoop 의 Available()==false 재연결 경로로 진입시킨다.
+//
+// tcp-client 한정:
+//   - tcp-server 는 Available() 이 listener 상태를 반영하므로 close 시 listener 가
+//     무너져 수동 대기 모드가 깨진다.
+//   - serial 은 opener 레벨 read timeout(500ms)으로 이미 bounded — half-open 무관.
+//
+// 정상 idle 과의 구분: "수신 이력이 있는 모든 디바이스" 가 idle-timeout 이상 전면
+// 침묵해야만 트리거된다. transport 가 살아있으면 probeSilentDevices 의 targeted 쿼리에
+// 최소 하나는 응답하여 maxLastSeen 이 갱신되므로, 전면 침묵은 소켓 자체가 죽은 신호다.
+//
+// 재연결 폭주 방지: 이미 재연결 중이거나(isReconnecting) 최근 idle-timeout 이내에
+// 강제 close 했으면(lastStaleReconnect) skip 한다. transport.Close()/Available() 은
+// a.mu 가 아닌 transport 자체 mutex 를 잡으므로 a.mu 를 놓은 뒤 호출한다.
+func (a *Hvacr01Agent) maybeForceReconnectStale(transportType string, idleTimeout time.Duration, seenCount int, maxLastSeen, now time.Time) {
+	if transportType != "tcp-client" {
+		return
+	}
+	if idleTimeout <= 0 {
+		return
+	}
+	// 수신 이력이 있는 디바이스가 없으면 half-open 판단 근거가 없다.
+	if seenCount == 0 || maxLastSeen.IsZero() {
+		return
+	}
+	// 전면 침묵이 idle-timeout 미만이면 정상 (아직 half-open 판정 이르다).
+	if now.Sub(maxLastSeen) <= idleTimeout {
+		return
+	}
+	// transport 가 이미 끊겨 있으면 reconnectLoop 가 이미 처리 중.
+	if !a.transport.Available() {
+		return
+	}
+
+	a.reconnectMu.Lock()
+	if a.isReconnecting {
+		a.reconnectMu.Unlock()
+		return
+	}
+	if !a.lastStaleReconnect.IsZero() && now.Sub(a.lastStaleReconnect) < idleTimeout {
+		a.reconnectMu.Unlock()
+		return
+	}
+	a.lastStaleReconnect = now
+	a.reconnectMu.Unlock()
+
+	a.logger.Warn("samsung_hvacr01: half-open 의심(전면 침묵) — transport 강제 재연결",
+		"idle", now.Sub(maxLastSeen).Round(time.Second).String(),
+		"idle_timeout", idleTimeout.String(),
+	)
+	_ = a.transport.Close()
 }
 
 // probeSilentDevices 는 마지막 수신 후 PollInterval 이상 조용한 online 디바이스에

@@ -17,10 +17,11 @@ type SocketConfig struct {
 // TCPConfig 는 TCP 소켓의 공통 설정이다.
 type TCPConfig struct {
 	SocketConfig
-	Framing        string // 프레이밍 타입: raw, newline, length_prefix, fixed_size
-	Delimiter      byte   // 커스텀 구분자 (framing=newline 시 기본 '\n' 대체)
-	FixedSize      int    // 고정 크기 (framing=fixed_size 시 필수)
-	MaxMessageSize int    // 최대 메시지 크기 (0=무제한)
+	Framing        string        // 프레이밍 타입: raw, newline, length_prefix, fixed_size
+	Delimiter      byte          // 커스텀 구분자 (framing=newline 시 기본 '\n' 대체)
+	FixedSize      int           // 고정 크기 (framing=fixed_size 시 필수)
+	MaxMessageSize int           // 최대 메시지 크기 (0=무제한)
+	WriteTimeout   time.Duration // conn.Write 쓰기 데드라인 (기본 5s, 0=무제한 블록 허용)
 }
 
 // TCPServerConfig 는 TCP 서버 에이전트 설정이다.
@@ -155,6 +156,7 @@ func parseTCPConfig(opts map[string]any, defaultHost string) (TCPConfig, error) 
 		SocketConfig:   sc,
 		Framing:        FramingRaw,
 		MaxMessageSize: DefaultMaxMessageSize,
+		WriteTimeout:   DefaultWriteTimeout,
 	}
 	if v, ok := opts["framing"]; ok {
 		cfg.Framing = v.(string)
@@ -173,6 +175,18 @@ func parseTCPConfig(opts map[string]any, defaultHost string) (TCPConfig, error) 
 	}
 	if v, ok := opts["max_message_size"]; ok {
 		cfg.MaxMessageSize = toInt(v)
+	}
+	// write_timeout (선택, 기본 5s) — framer conn.Write 데드라인. "0s" 로 명시하면 데드라인 미설정.
+	if v, ok := opts["write_timeout"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return TCPConfig{}, fmt.Errorf("%w: write_timeout must be a duration string", ErrInvalidConfig)
+		}
+		d, parseErr := time.ParseDuration(s)
+		if parseErr != nil {
+			return TCPConfig{}, fmt.Errorf("%w: invalid write_timeout: %v", ErrInvalidConfig, parseErr)
+		}
+		cfg.WriteTimeout = d
 	}
 	return cfg, nil
 }

@@ -154,18 +154,19 @@ func TestSendFrame_LogsTxWhenEnabled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type mockTransport struct {
-	mu            sync.Mutex
-	openErr       error
-	closeErr      error
-	sendErr       error
-	recvData      []byte
-	recvErr       error
-	sentData      [][]byte
-	available     bool
-	opened        bool
-	closed        bool
-	openCallCount int // Open() 호출 횟수
-	openErrUntil  int // 이 횟수 미만까지 openErr 반환, 이후 성공
+	mu             sync.Mutex
+	openErr        error
+	closeErr       error
+	sendErr        error
+	recvData       []byte
+	recvErr        error
+	sentData       [][]byte
+	available      bool
+	opened         bool
+	closed         bool
+	openCallCount  int // Open() 호출 횟수
+	closeCallCount int // Close() 호출 횟수
+	openErrUntil   int // 이 횟수 미만까지 openErr 반환, 이후 성공
 }
 
 func (m *mockTransport) Open() error {
@@ -186,7 +187,14 @@ func (m *mockTransport) Close() error {
 	m.opened = false
 	m.available = false
 	m.closed = true
+	m.closeCallCount++
 	return m.closeErr
+}
+
+func (m *mockTransport) getCloseCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closeCallCount
 }
 
 func (m *mockTransport) Send(data []byte) error {

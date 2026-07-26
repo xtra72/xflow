@@ -111,6 +111,41 @@ func (tb *tcpNodeBase) initAgent(ctx context.Context) error {
 	return nil
 }
 
+// callAgentProcess 는 Agent.Process()를 전달받은 context 를 존중하며 호출한다.
+//
+// agent.Process 는 동기 blocking 호출로, socket 트랜스포트가 stale 클라이언트로
+// 인해 conn.Write 에서 무한 블록될 수 있다. Process 를 고루틴으로 감싸고 ctx.Done()
+// 을 select 하여, StopFlow 가 runNode 의 nodeCtx 를 cancel 하면 즉시 반환한다.
+// 이렇게 하면 runNode 가 wg 를 놓아 StopFlow 30초 상한을 소진하지 않는다.
+// (samsung_hvacr01.go callAgentProcess 와 동일 패턴).
+//
+// ch 는 버퍼 1 이므로, ctx 취소로 먼저 반환해도 뒤늦게 완료되는 고루틴이 채널
+// 송신에서 블록되지 않는다 (leak 방지).
+func (tb *tcpNodeBase) callAgentProcess(ctx context.Context, cmdBytes []byte) ([]byte, error) {
+	ag := tb.agent
+	if ag == nil {
+		return nil, fmt.Errorf("tcp: agent not initialized")
+	}
+
+	type processResult struct {
+		data []byte
+		err  error
+	}
+	ch := make(chan processResult, 1)
+
+	go func() {
+		data, err := ag.Process(cmdBytes)
+		ch <- processResult{data: data, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("tcp: %w", ctx.Err())
+	case result := <-ch:
+		return result.data, result.err
+	}
+}
+
 // shutdown 은 공통 종료 로직을 수행한다.
 func (tb *tcpNodeBase) shutdown() error {
 	return tb.BaseNode.TransitionTo(lifecycle.StateStopping)
@@ -390,7 +425,7 @@ func (n *TCPOutNode) Init(ctx context.Context) error {
 // 메타데이터에서 tcp.remote_addr를 추출하여 특정 클라이언트에게 라우팅하고,
 // 비어 있으면 전체 브로드캐스트한다.
 // 페이로드에서 raw > data > JSON 직렬화 순서로 전송 데이터를 결정한다.
-func (n *TCPOutNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+func (n *TCPOutNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	// 전송할 데이터 추출 (raw > data > JSON fallback)
 	var sendData []byte
 
@@ -439,7 +474,9 @@ func (n *TCPOutNode) Process(_ context.Context, msg message.Message) ([]message.
 		return nil, fmt.Errorf("tcp-out: agent not initialized")
 	}
 
-	if _, err := n.agent.Process(cmdJSON); err != nil {
+	// ctx 를 존중하는 래핑 호출 — StopFlow 가 nodeCtx 를 cancel 하거나 deadline 초과 시
+	// blocking 한 agent.Process 로부터 즉시 반환하여 runNode 가 정지되지 않게 한다.
+	if _, err := n.callAgentProcess(ctx, cmdJSON); err != nil {
 		return nil, fmt.Errorf("tcp-out: send failed: %w", err)
 	}
 
