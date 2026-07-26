@@ -22,6 +22,12 @@ import (
 const (
 	// serialDefaultBufferSize 는 수신 메시지 버퍼의 기본 크기이다.
 	serialDefaultBufferSize = 256
+
+	// serialDefaultWriteTimeout 는 시리얼 write(agent.Process) 의 per-call 기본 타임아웃이다.
+	// go.bug.st/serial 에는 SetWriteDeadline 이 없어 라이브러리 레벨 write deadline 을 걸 수
+	// 없으므로, 노드 레벨에서 명시적 타임아웃을 걸어 정상 운행 중(incoming ctx 에 deadline
+	// 이 없어도) 시리얼 write 가 영구 블록되지 않게 한다. write_timeout 설정으로 재정의 가능.
+	serialDefaultWriteTimeout = 5 * time.Second
 )
 
 // ---------------------------------------------------------------------------
@@ -36,6 +42,11 @@ type serialNodeConfig struct {
 	// 바이트로 변환하는 방식을 지정한다. SerialOutNode 에서만 사용한다.
 	// 허용 값: "auto"(기본, hex 추론 후 평문 폴백), "hex", "text", "base64".
 	InputEncoding string `json:"input_encoding"`
+
+	// WriteTimeout 은 시리얼 write(agent.Process) per-call 타임아웃이다 (선택, 기본 "5s").
+	// 시리얼은 라이브러리 write deadline 이 없으므로 노드 레벨에서 명시적으로 상한을 건다.
+	// time.ParseDuration 형식 문자열(예: "5s", "500ms"). SerialOutNode 에서만 사용한다.
+	WriteTimeout string `json:"write_timeout"`
 
 	// EmitMetadata 는 metadata 그룹 emit 정책을 제어한다 (P3).
 	// serial 은 디바이스 노드가 아니므로 사실상 Agent(에이전트 그룹)만 사용한다.
@@ -88,11 +99,12 @@ func decodeSerialPayloadString(s, encoding string) ([]byte, error) {
 // SerialInNode, SerialOutNode가 이를 임베딩한다.
 type serialNodeBase struct {
 	*BaseNode
-	serialCfg serialNodeConfig
-	resolver  AgentResolver
-	transport AgentTransport
-	agent     agent.Agent  // 원본 Agent 객체
-	mu        sync.RWMutex // 설정 보호 뮤텍스
+	serialCfg    serialNodeConfig
+	resolver     AgentResolver
+	transport    AgentTransport
+	agent        agent.Agent   // 원본 Agent 객체
+	writeTimeout time.Duration // 시리얼 write per-call 타임아웃 (configure 에서 파싱)
+	mu           sync.RWMutex  // 설정 보호 뮤텍스
 }
 
 // configure 는 공통 설정 파싱을 수행한다. agent_ref(필수)를 검증한다.
@@ -128,11 +140,28 @@ func (sb *serialNodeBase) configure(config map[string]any) error {
 		return fmt.Errorf("serial: 알 수 없는 input_encoding %q (허용: auto, hex, text, base64)", cfg.InputEncoding)
 	}
 
+	// write_timeout (선택, 기본 "5s"). 시리얼 write per-call 타임아웃.
+	// SerialOutNode 에서만 사용하지만 공통 설정에서 파싱한다.
+	cfg.WriteTimeout = serialDefaultWriteTimeout.String()
+	if v, ok := config["write_timeout"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cfg.WriteTimeout = s
+		}
+	}
+	writeTimeout, err := time.ParseDuration(cfg.WriteTimeout)
+	if err != nil {
+		return fmt.Errorf("serial: 알 수 없는 write_timeout %q: %w", cfg.WriteTimeout, err)
+	}
+	if writeTimeout <= 0 {
+		return fmt.Errorf("serial: write_timeout 은 양수여야 함 (got %q)", cfg.WriteTimeout)
+	}
+
 	// P3: emit_metadata — agent 그룹 emit 정책 (기본 ON).
 	parseEmitMetadata(config, &cfg.EmitMetadata)
 
 	sb.mu.Lock()
 	sb.serialCfg = cfg
+	sb.writeTimeout = writeTimeout
 	sb.mu.Unlock()
 
 	return nil
@@ -164,6 +193,56 @@ func (sb *serialNodeBase) initAgent(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// callAgentProcess 는 Agent.Process()를 명시적 per-call 타임아웃과 함께 호출한다.
+//
+// agent.Process 는 동기 blocking 호출로, 시리얼 트랜스포트가 컨버터/장비에서
+// write 를 빼가지 못하면 framer.Write(port, data) 에서 무한 블록될 수 있다.
+// go.bug.st/serial 에는 SetWriteDeadline 이 없어 라이브러리 레벨 write deadline 을
+// 걸 수 없으므로, incoming ctx 에 writeTimeout 을 씌운 timeoutCtx 로 상한을 건다.
+// 이래야 정상 운행 중(incoming ctx = nodeCtx 에 deadline 이 없어 StopFlow 전까지
+// 취소되지 않음)에도 시리얼 write 가 writeTimeout 내에 반환되어, 상류 stall
+// (serial-to-ethernet 브리지의 tcp-in → tcp-server msgCh 드롭)을 막는다. StopFlow 가
+// nodeCtx 를 cancel 하는 정지 경로도 timeoutCtx 를 통해 함께 존중된다.
+// (samsung_hvacr01.go callAgentProcess 와 동일 패턴 — TCP 는 socket framer 의
+// SetWriteDeadline 이 런타임을 묶지만 시리얼은 그런 deadline 이 없어 노드 레벨 상한이 필요).
+//
+// ch 는 버퍼 1 이므로, 타임아웃/취소로 먼저 반환해도 뒤늦게 완료되는 고루틴이 채널
+// 송신에서 블록되지 않는다 (leak 방지). 다만 시리얼 write 가 진짜로 영구 정체되면
+// 그 고루틴 자체는 OS write 반환 시까지 남는다 (deadline 부재로 취소 불가).
+func (sb *serialNodeBase) callAgentProcess(ctx context.Context, data []byte) ([]byte, error) {
+	ag := sb.agent
+	if ag == nil {
+		return nil, fmt.Errorf("serial: agent not initialized")
+	}
+
+	// configure 를 거치지 않은 경로(zero value)에 대한 방어적 기본값.
+	timeout := sb.writeTimeout
+	if timeout <= 0 {
+		timeout = serialDefaultWriteTimeout
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type processResult struct {
+		data []byte
+		err  error
+	}
+	ch := make(chan processResult, 1)
+
+	go func() {
+		out, err := ag.Process(data)
+		ch <- processResult{data: out, err: err}
+	}()
+
+	select {
+	case <-timeoutCtx.Done():
+		return nil, fmt.Errorf("serial: %w", timeoutCtx.Err())
+	case result := <-ch:
+		return result.data, result.err
+	}
 }
 
 // shutdown 은 공통 종료 로직을 수행한다.
@@ -529,7 +608,10 @@ func (n *SerialOutNode) Init(ctx context.Context) error {
 // Process 는 입력 메시지의 페이로드를 시리얼 포트로 전송한다.
 // raw 바이트 우선, 없으면 data 문자열, 없으면 JSON 직렬화하여 전송한다.
 // 전송 후 원본 메시지를 복제하여 출력한다.
-func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {
+//
+// 전달받은 ctx 는 callAgentProcess 로 넘겨져 blocking 한 시리얼 write 로부터
+// 상한 시간 내 반환을 보장한다 (StopFlow 가 nodeCtx 를 cancel 하는 경로).
+func (n *SerialOutNode) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
 	var data []byte
 
 	// input_encoding 설정 읽기 (문자열 페이로드 디코딩 방식 결정).
@@ -592,7 +674,9 @@ func (n *SerialOutNode) Process(_ context.Context, msg message.Message) ([]messa
 		return []message.Message{out}, nil
 	}
 
-	if _, err := agent.Process(data); err != nil {
+	// ctx 를 존중하는 래핑 호출 — StopFlow 가 nodeCtx 를 cancel 하거나 deadline 초과 시
+	// blocking 한 시리얼 write(agent.Process)로부터 즉시 반환하여 runNode 가 정지되지 않게 한다.
+	if _, err := n.callAgentProcess(ctx, data); err != nil {
 		return nil, fmt.Errorf("serial-out: send failed: %w", err)
 	}
 
