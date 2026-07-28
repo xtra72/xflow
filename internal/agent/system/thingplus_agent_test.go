@@ -183,6 +183,35 @@ func TestParseThingplusConfig_Custom(t *testing.T) {
 	assert.Equal(t, 512, tc.BufferSize)
 }
 
+// TestParseThingplusConfig_LogMessages 는 log_messages 옵션의 기본값(false)과
+// bool/string 파싱, 형식 무시 관대성을 검증한다 (socket/serial 계열 log_messages 관례와 동형).
+func TestParseThingplusConfig_LogMessages(t *testing.T) {
+	// 기본값: 미지정 시 false.
+	def := parseThingplusConfig(newThingplusTestConfig(map[string]any{"broker": "localhost"}))
+	assert.False(t, def.LogMessages, "log_messages 미지정 시 기본값은 false 여야 한다")
+
+	// bool true → true.
+	onBool := parseThingplusConfig(newThingplusTestConfig(map[string]any{
+		"broker":       "localhost",
+		"log_messages": true,
+	}))
+	assert.True(t, onBool.LogMessages, "log_messages=true(bool) 는 true 여야 한다")
+
+	// string "true" → true (Web UI toggle 관대성).
+	onStr := parseThingplusConfig(newThingplusTestConfig(map[string]any{
+		"broker":       "localhost",
+		"log_messages": "true",
+	}))
+	assert.True(t, onStr.LogMessages, "log_messages=\"true\"(string) 는 true 여야 한다")
+
+	// 인식되지 않는 형식(숫자 등)은 관대하게 false.
+	onBad := parseThingplusConfig(newThingplusTestConfig(map[string]any{
+		"broker":       "localhost",
+		"log_messages": 123,
+	}))
+	assert.False(t, onBad.LogMessages, "인식되지 않는 형식은 관대하게 false 여야 한다")
+}
+
 // === client_id 충돌(EOF flapping) 회귀 테스트 ===
 
 // TestParseThingplusConfig_ClientIDUnique_SameConfigID 는 client_id 충돌 버그의 핵심 재현이다.

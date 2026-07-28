@@ -64,8 +64,10 @@ const THINGPLUS_FIELDS: ConfigField[] = [
   { name: 'device_name_path', type: 'string', label: '디바이스 이름 경로', default: '$.device', description: 'JSONPath 로 인입 메시지에서 디바이스 NAME 추출 (예: $.device, $.metadata.device_id)' },
   { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1' },
   { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },
+  { name: 'connect_timeout_sec', type: 'number', label: '연결 타임아웃 (초)', default: 10 },
   { name: 'auto_reconnect', type: 'boolean', label: '자동 재연결', default: true },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256, description: '업링크 무손실 버퍼 크기' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.', section: 'logging' },
 ];
 
 const MODBUS_TCP_FIELDS: ConfigField[] = [

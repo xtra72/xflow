@@ -539,6 +539,11 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; 
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
   },
+  'thingplus-gateway': {
+    left: new Set(['broker', 'port', 'tls', 'ca_cert', 'access_token', 'client_id', 'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
 };
 
 function TwoColumnConfigLayout({

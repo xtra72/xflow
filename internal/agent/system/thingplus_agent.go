@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -114,6 +115,11 @@ type ThingplusConfig struct {
 
 	// ConnectTimeoutSec 는 연결 타임아웃(초)이다.
 	ConnectTimeoutSec int `json:"connect_timeout_sec"`
+
+	// LogMessages 는 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 출력할지 여부이다
+	// (기본값 false, opt-in 진단용). socket/serial 계열의 log_messages 옵션과 동형이며,
+	// 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성을 권장한다.
+	LogMessages bool `json:"log_messages"`
 }
 
 // mqttPublisher 는 디바이스 상태 머신이 발행에 필요로 하는 최소 인터페이스이다.
@@ -558,8 +564,28 @@ func parseThingplusConfig(cfg agent.AgentConfig) ThingplusConfig {
 			tc.ConnectTimeoutSec = n
 		}
 	}
+	// log_messages (기본값: false) — 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 출력.
+	// Web UI select/toggle 는 bool 또는 string 으로 전달될 수 있으므로 관대하게 파싱한다.
+	if v, ok := opts["log_messages"]; ok {
+		tc.LogMessages = toBool(v)
+	}
 
 	return tc
+}
+
+// toBool 은 bool 또는 string 값을 bool 로 변환한다.
+// JSON/YAML 파싱에서는 bool 로, Web UI toggle 필드에서는 string("true"/"1")으로 전달될 수
+// 있으므로 두 타입을 모두 처리하며, 인식되지 않는 값은 관대하게 false 로 본다
+// (socket/serial 계열 toBool 관례와 동형).
+func toBool(v any) bool {
+	switch b := v.(type) {
+	case bool:
+		return b
+	case string:
+		return b == "true" || b == "1"
+	default:
+		return false
+	}
 }
 
 // thingplusBrokerURL 은 설정으로부터 Paho 브로커 URL을 구성한다.
@@ -844,6 +870,8 @@ func (a *ThingplusGatewayAgent) subscribeDownlink(c mqttSubscriber) {
 func (a *ThingplusGatewayAgent) downlinkHandler(_ mqtt.Client, msg mqtt.Message) {
 	data := make([]byte, len(msg.Payload()))
 	copy(data, msg.Payload())
+	// RX 로그 gate: 브로커로부터의 유일한 수신 진입점이므로 여기서 한 번만 로깅한다.
+	logThingplusFrame(a.logger, a.snapshotConfig().LogMessages, "RX", msg.Topic(), data)
 	a.routeDownlink(msg.Topic(), data)
 }
 
@@ -1048,6 +1076,7 @@ func (a *ThingplusGatewayAgent) connectDevice(pub mqttPublisher, name string) er
 		return fmt.Errorf("thingplus connect: 페이로드 조립 실패: %w", err)
 	}
 
+	logThingplusFrame(a.logger, a.snapshotConfig().LogMessages, "TX", topicGatewayConnect, payload)
 	token := pub.Publish(topicGatewayConnect, a.snapshotConfig().QoS, false, payload)
 	token.Wait()
 	if token.Error() != nil {
@@ -1073,6 +1102,7 @@ func (a *ThingplusGatewayAgent) disconnectDevice(pub mqttPublisher, name string)
 		return fmt.Errorf("thingplus disconnect: 페이로드 조립 실패: %w", err)
 	}
 
+	logThingplusFrame(a.logger, a.snapshotConfig().LogMessages, "TX", topicGatewayDisconnect, payload)
 	token := pub.Publish(topicGatewayDisconnect, a.snapshotConfig().QoS, false, payload)
 	token.Wait()
 	if token.Error() != nil {
@@ -1130,6 +1160,7 @@ func (a *ThingplusGatewayAgent) PublishMessage(topic string, qos byte, retained 
 		return fmt.Errorf("thingplus: 발행 토픽이 지정되지 않음")
 	}
 
+	logThingplusFrame(a.logger, a.snapshotConfig().LogMessages, "TX", topic, payload)
 	token := client.Publish(topic, qos, retained, payload)
 	token.Wait()
 	if token.Error() != nil {
@@ -1379,6 +1410,20 @@ func (a *ThingplusGatewayAgent) snapshotConfig() ThingplusConfig {
 	return a.cfg
 }
 
+// logThingplusFrame 은 log_messages 옵션이 켜져 있을 때 송/수신 프레임을 hex 로 INFO 로그한다.
+//
+// enabled 가 false 이거나 logger 가 nil 이면 no-op 이다 (opt-in 진단용).
+// dir 은 "TX"(송신) 또는 "RX"(수신), topic 은 대상 MQTT 토픽이다.
+//
+// socket 계열(tcp/udp)의 logPacket 과 동일한 형식(len + hex)을 사용하여 진단 로그를
+// 통일한다. socket.logPacket 은 패키지 private 이라 재사용할 수 없어 로컬로 복제한다.
+func logThingplusFrame(logger *slog.Logger, enabled bool, dir, topic string, data []byte) {
+	if !enabled || logger == nil {
+		return
+	}
+	logger.Info("thingplus: "+dir, "topic", topic, "len", len(data), "hex", hex.EncodeToString(data))
+}
+
 // isGatewayMode 는 현재 설정이 Gateway API 모드(api_mode="gateway")인지 반환한다.
 // 그 외(기본 "device" 포함)는 false 이다. 런타임 Configure() 레이스 방지를 위해
 // snapshotConfig() 로 스냅샷한 값을 사용한다.
@@ -1523,6 +1568,7 @@ func (a *ThingplusGatewayAgent) handleDeviceRPCResponse(pub mqttPublisher, paylo
 	}
 
 	topic := topicDeviceRPCResponsePrefix + id
+	logThingplusFrame(a.logger, a.snapshotConfig().LogMessages, "TX", topic, out)
 	token := pub.Publish(topic, a.snapshotConfig().QoS, false, out)
 	token.Wait()
 	if token.Error() != nil {
@@ -1578,6 +1624,7 @@ func (a *ThingplusGatewayAgent) handleRPCReply(pub mqttPublisher, payload map[st
 		return err
 	}
 
+	logThingplusFrame(a.logger, a.snapshotConfig().LogMessages, "TX", topicGatewayRPC, out)
 	token := pub.Publish(topicGatewayRPC, a.snapshotConfig().QoS, false, out)
 	token.Wait()
 	if token.Error() != nil {
@@ -1748,6 +1795,7 @@ func (a *ThingplusGatewayAgent) handleUplinkGateway(pub mqttPublisher, name stri
 // qos 는 호출자가 스냅샷한 값을 전달받아 사용한다 (런타임 Configure() 레이스 방지).
 func (a *ThingplusGatewayAgent) publishOrBuffer(pub mqttPublisher, topic string, payload []byte, connected bool, qos byte) error {
 	if connected {
+		logThingplusFrame(a.logger, a.snapshotConfig().LogMessages, "TX", topic, payload)
 		token := pub.Publish(topic, qos, false, payload)
 		token.Wait()
 		if token.Error() != nil {
@@ -1781,7 +1829,9 @@ func (a *ThingplusGatewayAgent) publishOrBuffer(pub mqttPublisher, topic string,
 // (REQ-up-nolost / AC-05). onConnect 에서 호출된다.
 func (a *ThingplusGatewayAgent) flushUplinkBuffer(pub mqttPublisher) {
 	items := a.upBuf.drain()
+	logMessages := a.snapshotConfig().LogMessages
 	for _, it := range items {
+		logThingplusFrame(a.logger, logMessages, "TX", it.topic, it.payload)
 		token := pub.Publish(it.topic, it.qos, false, it.payload)
 		token.Wait()
 		if token.Error() != nil {
