@@ -24,6 +24,7 @@ type SerialConfig struct {
 	MaxMessageSize int           // 최대 메시지 크기 (0=무제한)
 	LogDrops       bool          // 수신 버퍼 가득 참으로 메시지 드롭 시 WARN 로그 출력 여부 (기본값 false — 운영 환경 noise 억제)
 	LogMessages    bool          // 송/수신(TX/RX) 메시지를 hex 로 INFO 로그 출력 여부 (기본값 false, opt-in 진단용)
+	HalfDuplex     bool          // true(기본)면 물리 포트 read/write 를 직렬화한다 (RS-485 half-duplex 버스 안전). false 면 full-duplex 포트(TX/RX 물리 분리)에서 read/write 병행을 허용하여 프레임 조립으로 오래 블로킹되는 read 가 write 를 굶기지 않게 한다.
 
 	// frame 프레이밍 설정 (framing=frame 시)
 	STX                  []byte // 프레임 시작 마커 (hex 문자열에서 파싱)
@@ -48,6 +49,7 @@ func ParseSerialConfig(opts map[string]any) (SerialConfig, error) {
 		BufferSize:     DefaultBufferSize,
 		Framing:        FramingRaw,
 		MaxMessageSize: DefaultMaxMessageSize,
+		HalfDuplex:     true, // 기본값 true — 기존 직렬화 동작 보존 (RS-485 half-duplex 안전)
 	}
 
 	// port (필수)
@@ -162,6 +164,15 @@ func ParseSerialConfig(opts map[string]any) (SerialConfig, error) {
 	// opt-in 진단용이며 운영 환경에서는 로그 폭주 우려로 비활성 권장.
 	if v, ok := opts["log_messages"]; ok {
 		cfg.LogMessages = toBool(v)
+	}
+
+	// half_duplex (기본값: true) — 물리 포트 read/write 직렬화 여부.
+	// true: RS-485 half-duplex 버스처럼 송수신이 물리적으로 겹치면 안 되는 경우 (안전 기본값).
+	// false: full-duplex 포트(TX/RX 분리)에서 read/write 병행을 허용해, 프레임 조립으로
+	//        오래 블로킹되는 read 가 상위 write 를 굶겨 write_timeout 에 걸리는 것을 방지한다.
+	// 부재 시 true 로 유지되어 기존 동작이 보존된다.
+	if v, ok := opts["half_duplex"]; ok {
+		cfg.HalfDuplex = toBool(v)
 	}
 
 	// frame 프레이밍 전용 설정

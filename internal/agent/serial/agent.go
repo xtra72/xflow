@@ -52,20 +52,38 @@ type SerialAgent struct {
 	// mu 는 구조체 필드 (port 포인터, agentConfig, startedAt 등) 에 대한 접근을
 	// 보호한다. 실제 물리 포트 I/O 는 보호하지 않는다 — 그것은 portIOMu 의 역할이다.
 	mu sync.Mutex
-	// portIOMu 는 물리 포트 I/O (framer.Write 와 reader.Read) 를 직렬화한다.
+	// portIOMu 는 half-duplex 모드에서 물리 포트 I/O 를 직렬화하는 실제 mutex 이다.
 	// RS-485 half-duplex 버스는 송신과 수신을 물리적으로 동시에 수행할 수 없으므로,
 	// Write 와 Read 가 같은 포트에서 절대 겹치지 않도록 이 mutex 로 직렬화한다.
-	// (mu 와 분리한 이유: readLoop 가 Read 동안 portIOMu 를 점유하므로, mu 와
-	// 섞으면 lock-ordering cycle / deadlock 위험이 있다. 두 mutex 의 임계 구역은
-	// 절대 중첩하지 않는다 — mu 로 port 포인터를 읽고 해제한 뒤 portIOMu 를 획득한다.)
-	// Go sync.Mutex 의 starvation mode (1ms 이상 대기한 고루틴에 우선권 부여) 덕분에
-	// readLoop 가 Read 사이에 즉시 재획득해도 대기 중인 Process 의 Write 는 starve 되지 않는다.
-	portIOMu  sync.Mutex
-	connected atomic.Bool
-	paused    atomic.Bool
-	stopCh    chan struct{}
-	stopOnce  sync.Once
-	wg        sync.WaitGroup
+	// (mu 와 분리한 이유: readLoop 가 per-sub-read 마다 portIOMu 를 획득/해제하므로,
+	// mu 와 섞으면 lock-ordering cycle / deadlock 위험이 있다. 두 mutex 의 임계 구역은
+	// 절대 중첩하지 않는다 — mu 로 port 포인터를 읽고 해제한 뒤 portIOReader 가
+	// per-sub-read 마다 portIOMu 를 획득한다.)
+	//
+	// 고정(2025-01-28): 이전 설계는 readLoop 가 a.reader.Read() 동안 portIOMu 를
+	// 통째로 쥐었으나, length_prefix/frame 등의 프레이밍은 io.ReadFull 로 완전한
+	// 프레임이 조립될 때까지 여러 하위 read 를 루프한다. 장비가 유휴/노이즈만 보내
+	// 프레임이 완성 안 되면 readLoop 가 포트 조립 내내 (다수의 read 타임아웃 사이클
+	// 동안) 락을 점유했고, 그 사이 Process 의 Write 는 락을 얻지 못해 상위 write_timeout
+	// (예: 5초) 에 걸려 starve 되었다. 수정: portIOReader 가 각 하위 read 마다
+	// per-sub-read 로 락을 획득/해제하므로, 프레임 조립 루프 중간에 락이 자유로워져서
+	// Process 의 Write 가 SetReadTimeout 으로 bounded 된 타임아웃 범위 내에 진행된다.
+	// 이 굶주림은 full-duplex 포트에서는 불필요하므로 half_duplex=false 로 회피한다
+	// (portIOLock 참고).
+	portIOMu sync.Mutex
+	// portIOLock 은 readLoop (portIOReader 를 거쳐 per-sub-read 마다 획득/해제) 와
+	// Process (framer.Write 전후) 가 실제로 사용하는 포트 I/O 락이다.
+	// half_duplex=true (기본) 이면 &portIOMu 를 가리켜 per-sub-read 마다 직렬화하고,
+	// half_duplex=false (full-duplex) 이면 no-op locker 로 대체되어 read 와 write 가
+	// 서로 배제하지 않는다 — go.bug.st/serial 의 Read/Write 는 같은 fd 에 대한 독립
+	// syscall 이므로 full-duplex 포트에서 동시 호출이 안전하다. NewSerialAgent 에서
+	// 한 번만 설정되며 이후 불변이므로 별도 동기화가 필요 없다.
+	portIOLock sync.Locker
+	connected  atomic.Bool
+	paused     atomic.Bool
+	stopCh     chan struct{}
+	stopOnce   sync.Once
+	wg         sync.WaitGroup
 }
 
 // 컴파일 타임 인터페이스 구현 확인.
@@ -119,6 +137,14 @@ func NewSerialAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		logger:        logger,
 		createdAt:     time.Now(),
 		stopCh:        make(chan struct{}),
+	}
+
+	// 포트 I/O 락 선택: half_duplex 면 portIOMu 로 read/write 를 직렬화하고,
+	// full-duplex 면 no-op locker 로 두어 read 가 write 를 굶기지 않게 한다.
+	if cfg.HalfDuplex {
+		a.portIOLock = &a.portIOMu
+	} else {
+		a.portIOLock = noopLocker{}
 	}
 
 	if err := a.init(agentConfig); err != nil {
@@ -224,6 +250,12 @@ func (a *SerialAgent) Start(_ context.Context) error {
 	a.connected.Store(true)
 	// raw_out 지원: 포트에서 읽은 원시 바이트를 rawCh 로 복사 전송
 	var portReader io.Reader = port
+	// portIOReader 는 각 하위 read 호출마다 portIOLock 을 획득/해제한다.
+	// 이를 통해 framer 의 프레임 조립 루프 중간에 락이 자유로워져서 Process 의 Write 가
+	// SetReadTimeout 으로 bounded 된 per-sub-read 타임아웃 범위 내에 진행된다.
+	// half_duplex=true 이면 RS-485 half-duplex 안전성을 유지하고,
+	// half_duplex=false 이면 no-op locker 로 read/write 직렬화가 사라져 write starvation 을 회피한다.
+	portReader = &portIOReader{inner: portReader, lock: a.portIOLock}
 	portReader = &rawTeeReader{reader: portReader, rawCh: a.rawCh}
 	a.reader = NewSerialConnReader(a.framer, portReader)
 
@@ -250,15 +282,14 @@ func (a *SerialAgent) readLoop() {
 		default:
 		}
 
-		// portIOMu 로 물리 포트 Read 를 직렬화한다. Process 의 framer.Write 와
-		// 절대 겹치지 않도록 보장한다 (RS-485 half-duplex 요구사항).
-		// 락은 매 read 사이클 직후 해제하여 대기 중인 Process 의 Write 가
-		// 획득할 수 있도록 한다. reader.Read 는 SetReadTimeout (effectiveReadTimeout
-		// 으로 항상 유한 양수 보정) 으로 bounded 되므로 무한 점유하지 않는다.
-		// Stop 은 portIOMu 를 획득하지 않고 port.Close() 로 mid-read 를 풀어준다.
-		a.portIOMu.Lock()
+		// a.reader.Read() 는 내부적으로 portIOReader 를 거쳐 각 하위 read 호출마다
+		// portIOLock 을 획득/해제한다. 이를 통해:
+		// - half_duplex=true: 매 하위 read 타임아웃마다 락이 자유로워져서 Process 의
+		//   Write 가 SetReadTimeout 으로 bounded 된 시간 내에 진행된다.
+		// - half_duplex=false: no-op locker 이므로 read 와 write 가 직렬화되지 않아
+		//   프레임 조립 중에 Process 의 Write 가 굶지 않는다.
+		// Stop 은 portIOLock 을 획득하지 않고 port.Close() 로 mid-read 를 풀어준다.
 		data, err := a.reader.Read()
-		a.portIOMu.Unlock()
 		if err != nil {
 			// stopCh 가 닫혔으면 정상 종료
 			select {
@@ -445,12 +476,15 @@ func (a *SerialAgent) Process(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("serial agent: port is nil")
 	}
 
-	// portIOMu 로 물리 포트 Write 를 직렬화한다. readLoop 의 reader.Read 와
-	// 절대 겹치지 않도록 보장한다 (RS-485 half-duplex 요구사항).
-	// 주의: mu 는 위에서 이미 해제했으므로 두 mutex 의 임계 구역은 중첩하지 않는다.
-	a.portIOMu.Lock()
+	// portIOLock 으로 물리 포트 Write 를 감싼다. half_duplex=true 이면 portIOMu 로서
+	// readLoop 의 reader.Read (portIOReader 를 거쳐 per-sub-read 로 락을 획득/해제)
+	// 와 직렬화되어 RS-485 half-duplex 에서 송수신이 겹치지 않도록 보장한다.
+	// half_duplex=false 이면 no-op locker 이므로 블로킹 read 와 무관하게 즉시 Write
+	// 를 수행한다.
+	// 주의: mu 는 위에서 이미 해제했으므로 두 lock 의 임계 구역은 중첩하지 않는다.
+	a.portIOLock.Lock()
 	err := a.framer.Write(port, data)
-	a.portIOMu.Unlock()
+	a.portIOLock.Unlock()
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, fmt.Errorf("serial agent: write failed: %w", err)
@@ -663,6 +697,15 @@ func stopBitsFromInt(n int) goserial.StopBits {
 	}
 }
 
+// noopLocker 는 아무 동작도 하지 않는 sync.Locker 이다.
+// full-duplex 포트 (half_duplex=false) 에서 portIOLock 으로 사용되어 물리 포트
+// read/write 를 직렬화하지 않는다 — TX/RX 가 물리적으로 분리되어 동시 접근이
+// 안전하므로, 블로킹 read 가 write 를 굶기는 half-duplex 결함을 회피한다.
+type noopLocker struct{}
+
+func (noopLocker) Lock()   {}
+func (noopLocker) Unlock() {}
+
 // rawTeeReader 는 io.Reader 를 감싸서 읽은 원시 바이트를 rawCh 로 비차단 전송한다.
 type rawTeeReader struct {
 	reader io.Reader
@@ -680,5 +723,24 @@ func (r *rawTeeReader) Read(p []byte) (n int, err error) {
 		default:
 		}
 	}
+	return n, err
+}
+
+// portIOReader 는 underlying 포트 리더를 감싸서 각 단일 Read 호출마다
+// portIOLock 을 획득/해제한다. 이를 통해 프레이머의 프레임 조립 루프가
+// 여러 하위 read 를 반복 호출하는 동안에도 각 하위 read 마다 락이 자유로워져서
+// Process 의 framer.Write 가 SetReadTimeout 으로 bounded 된 per-sub-read 타임아웃
+// 범위 내에 진행될 수 있다. half_duplex=true 이면 RS-485 half-duplex 안전성을
+// 유지하고 (per-sub-read 마다 락으로 직렬화), half_duplex=false 이면 no-op locker
+// 로 read/write 직렬화가 사라져 write starvation 을 회피한다.
+type portIOReader struct {
+	inner io.Reader
+	lock  sync.Locker
+}
+
+func (r *portIOReader) Read(p []byte) (int, error) {
+	r.lock.Lock()
+	n, err := r.inner.Read(p)
+	r.lock.Unlock()
 	return n, err
 }

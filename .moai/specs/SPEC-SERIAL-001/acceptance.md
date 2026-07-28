@@ -807,14 +807,14 @@ Then "out" 키에 2개, "raw_out" 키에 1개의 와이어가 그룹화된다
 
 ---
 
-## 18. 포트 I/O 직렬화 (REQ-SERIAL-003 v2.3.0 보강)
+## 18. 포트 I/O 직렬화 (REQ-SERIAL-003 v2.3.0 보강, REQ-SERIAL-019 v2.4.0)
 
-### 시나리오 18.1: 쓰기와 읽기 동시 접근 직렬화
+### 시나리오 18.1: 쓰기와 읽기 동시 접근 직렬화 (half_duplex=true)
 
 ```gherkin
-Given SerialAgent가 Running 상태이고 readLoop이 실행 중이다
-When Process(msg) 호출과 readLoop의 Read가 동시에 발생한다
-Then portIOMu가 framer.Write와 reader.Read를 직렬화한다
+Given SerialAgent가 half_duplex=true, Running 상태이고 readLoop이 실행 중이다
+When Process(msg) 호출과 readLoop의 하위 read가 동시에 발생한다
+Then portIOMu가 framer.Write와 개별 물리 포트 read를 직렬화한다
 And 두 I/O 연산이 물리 포트에 겹쳐서 접근하지 않는다
 And go test -race로 경쟁 조건이 검출되지 않는다
 ```
@@ -825,8 +825,30 @@ And go test -race로 경쟁 조건이 검출되지 않는다
 Given 시리얼 에이전트 설정에 read_timeout="0s" 또는 음수 값이 있다
 When effectiveReadTimeout을 계산한다
 Then 읽기 타임아웃이 200ms로 클램프된다
-And readLoop이 portIOMu를 무한정 점유하지 않는다
-And Process()의 쓰기가 기아 상태에 빠지지 않는다
+And 각 하위 read가 유한 시간에 반환된다
+```
+
+### 시나리오 18.3: half-duplex 쓰기 기아 방지 (v2.4.0 근본 수정)
+
+```gherkin
+Given SerialAgent가 half_duplex=true, Running 상태이다
+And 장비가 프레임을 완성하지 못하는 데이터를 연속으로 흘려 readLoop의 Read가 오래 지속된다
+When Process(msg) 쓰기가 요청된다
+Then portIOReader가 하위 read syscall 단위로만 portIOMu를 획득/해제하므로
+And 대기 중인 쓰기가 하위 read 사이에 끼어들어 write_timeout 이전(< 1s)에 완료된다
+And "serial: context deadline exceeded" 가 발생하지 않는다
+```
+
+> 회귀 방지: `agent_writestarve_test.go` `TestSerialAgent_WriteNotStarved`. 수정 전(readLoop이 Read 전체 동안 portIOMu 점유)에는 쓰기가 write_timeout(예: 5s)까지 굶어 FAIL, 수정 후 PASS.
+
+### 시나리오 18.4: full-duplex 포트에서 직렬화 우회 (half_duplex=false)
+
+```gherkin
+Given 시리얼 에이전트 설정에 half_duplex=false가 있다 (RS-232/USB-serial/컨버터)
+When SerialAgent가 Start된다
+Then portIOLock이 noopLocker(no-op)로 설정된다
+And readLoop의 Read와 Process의 Write가 서로 배제하지 않는다
+And 오래 블로킹되는 read가 쓰기를 굶기지 않는다
 ```
 
 ---
