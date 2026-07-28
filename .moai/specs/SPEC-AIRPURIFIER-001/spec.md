@@ -2,7 +2,7 @@
 id: SPEC-AIRPURIFIER-001
 title: "지하철 역사 공기청정기 관리 에이전트 (MQTT)"
 version: "0.3.0"
-status: in-progress
+status: completed
 created: 2026-07-28
 updated: 2026-07-28
 author: xtra
