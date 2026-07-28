@@ -720,26 +720,39 @@ func (n *TriggerNode) buildMessage(entry *triggerTimerEntry, trigger system.Time
 	triggerTime := trigger.TriggerAt.UTC()
 	triggerTimeStr := triggerTime.Format(time.RFC3339Nano)
 
-	// 페이로드 해결 순서 (per-schedule payload, v1.2.0):
+	// 페이로드 소스 선택 (해결 순서, per-schedule payload v1.2.0):
 	//  (1) 스케줄 항목 payload_template → payload
 	//  (2) 노드 레벨 payload_template → payload
 	//  (3) 기본 페이로드 {"trigger_time": now}
-	var payload message.Payload
-	var templateErr string
+	// 선택된 소스는 단일 통합 템플릿 엔진(evalPayload)으로 평가된다. (v1.3.0)
+	var src any
 	switch {
 	case entry != nil && entry.payloadTmpl != nil:
-		payload, templateErr = n.templatePayload(entry.payloadTmpl, trigger, tickCount)
+		src = entry.payloadTmpl
 	case entry != nil && entry.payload != nil:
-		payload = n.staticPayload(entry.payload)
+		src = entry.payload
 	case n.payloadTemplate != nil:
-		payload, templateErr = n.templatePayload(n.payloadTemplate, trigger, tickCount)
+		src = n.payloadTemplate
 	case n.payload != nil:
-		payload = n.staticPayload(n.payload)
-	default:
-		// 기본 페이로드
+		src = n.payload
+	}
+
+	var payload message.Payload
+	var templateErr string
+	if src == nil {
+		// 기본 페이로드 (스케줄·노드 레벨 페이로드 모두 없음)
 		payload = message.NewPayload(map[string]any{
 			"trigger_time": triggerTimeStr,
 		})
+	} else {
+		// 통합 엔진 알려진 변수 4종 (키는 "$." 접두사 제외)
+		vars := map[string]any{
+			"trigger_time": triggerTimeStr,
+			"tick_count":   tickCount,
+			"schedule_id":  trigger.ScheduleID,
+			"trigger_id":   n.Name(),
+		}
+		payload, templateErr = n.evalPayload(src, vars)
 	}
 
 	// 메시지 생성 옵션
@@ -762,47 +775,36 @@ func (n *TriggerNode) buildMessage(entry *triggerTimerEntry, trigger system.Time
 	return message.New(opts...)
 }
 
-// staticPayload 는 주어진 정적 페이로드 소스로부터 페이로드를 생성한다.
-// 맵은 트리거마다 깊은 복사되어 메시지 간 데이터 격리를 유지한다.
-func (n *TriggerNode) staticPayload(src any) message.Payload {
-	switch v := src.(type) {
-	case map[string]any:
-		return message.NewPayload(deepCopyMap(v))
-	default:
-		// 단일 값을 map으로 래핑
-		return message.NewPayload(map[string]any{"value": v})
-	}
-}
-
-// templatePayload 는 주어진 템플릿으로부터 동적 페이로드를 생성한다.
-// 에러 발생 시 에러 메시지 문자열도 반환한다.
-func (n *TriggerNode) templatePayload(tmpl map[string]any, trigger system.TimerTrigger, tickCount int64) (message.Payload, string) {
-	triggerTimeStr := trigger.TriggerAt.UTC().Format(time.RFC3339Nano)
-
-	// 변수 맵
-	vars := map[string]any{
-		"$.trigger_time": triggerTimeStr,
-		"$.tick_count":   tickCount,
-		"$.schedule_id":  trigger.ScheduleID,
-		"$.trigger_id":   n.Name(),
+// evalPayload 는 페이로드 소스를 단일 통합 템플릿 엔진으로 평가한다. (v1.3.0)
+//
+// config 하위호환 라우팅:
+//   - src 가 map[string]any 이면 그대로 평가한다.
+//   - src 가 비-map 스칼라/배열(구 static 스칼라)이면 {"value": <src>} 로 래핑 후 평가한다.
+//
+// 각 최상위 문자열 값은 evalString 규칙(통째 변수 → 네이티브 타입, 그 외 interpolation)으로
+// 평가되고, 비문자열 값은 리터럴 패스스루(깊은 복사)된다. 중첩 맵은 재귀 평가하지 않는다
+// (알려진 한계). 미지 변수를 만나면 해당 키 값을 nil 로 만들고 에러 메시지를 반환한다
+// (여러 키가 실패하면 마지막 에러 우선).
+func (n *TriggerNode) evalPayload(src any, vars map[string]any) (message.Payload, string) {
+	srcMap, ok := src.(map[string]any)
+	if !ok {
+		// 비-map 스칼라/배열 → {"value": <src>} 래핑 (config 하위호환 라우팅)
+		srcMap = map[string]any{"value": src}
 	}
 
-	result := make(map[string]any)
+	result := make(map[string]any, len(srcMap))
 	var errMsg string
-
-	for key, tmplVal := range tmpl {
-		strVal, ok := tmplVal.(string)
-		if !ok {
-			result[key] = tmplVal
+	for key, val := range srcMap {
+		strVal, isStr := val.(string)
+		if !isStr {
+			// 비문자열 값: 리터럴 패스스루 (메시지 간 격리를 위해 깊은 복사)
+			result[key] = deepCopyAny(val)
 			continue
 		}
-
-		if resolved, exists := vars[strVal]; exists {
-			result[key] = resolved
-		} else {
-			// 알 수 없는 변수 → 에러
-			errMsg = fmt.Sprintf("unknown template variable: %s", strVal)
-			result[key] = nil
+		evaluated, e := evalString(strVal, vars)
+		result[key] = evaluated
+		if e != "" {
+			errMsg = e
 		}
 	}
 
@@ -814,6 +816,97 @@ func (n *TriggerNode) templatePayload(tmpl map[string]any, trigger system.TimerT
 	}
 
 	return message.NewPayload(result), errMsg
+}
+
+// evalString 은 단일 문자열 값을 통합 템플릿 엔진 규칙으로 평가한다. (v1.3.0)
+//
+//  1. 통째 변수 치환(whole-value): 문자열 전체가 알려진 변수 토큰 "$.<name>" 과 정확히
+//     일치하면 변수의 네이티브 타입 값을 반환한다(예: "$.tick_count" → int64).
+//  2. 그 외에는 문자 단위 interpolation:
+//     - "$$"                 → 리터럴 "$"
+//     - "$.<name>" (known)   → 변수의 문자열 형태(fmt.Sprint)
+//     - "$.<name>" (unknown) → 에러 기록 + 값 nil (오타 탐지)
+//     - 그 외 문자(단독 "$", 식별자 없는 "$." 포함) → 리터럴
+//
+// 알려진 변수는 vars 맵의 키("trigger_time" 등, "$." 접두사 제외)로 판별한다.
+func evalString(s string, vars map[string]any) (any, string) {
+	// (1) 통째 변수 치환 (whole-value fast path)
+	if name, ok := wholeVarToken(s); ok {
+		if v, known := vars[name]; known {
+			return v, ""
+		}
+		// 통째 토큰이지만 미지의 변수이면 아래 interpolation 에서 에러 처리된다.
+	}
+
+	// (2) 문자 단위 interpolation
+	var b strings.Builder
+	var errMsg string
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		// "$$" → 리터럴 "$"
+		if c == '$' && i+1 < len(s) && s[i+1] == '$' {
+			b.WriteByte('$')
+			i += 2
+			continue
+		}
+		// "$.<name>"
+		if c == '$' && i+1 < len(s) && s[i+1] == '.' {
+			j := i + 2
+			for j < len(s) && isIdentChar(s[j]) {
+				j++
+			}
+			name := s[i+2 : j]
+			if name == "" {
+				// 단독 "$." (뒤에 식별자 없음) → 리터럴 "$" (다음 반복에서 "." 리터럴 처리)
+				b.WriteByte('$')
+				i++
+				continue
+			}
+			if v, known := vars[name]; known {
+				b.WriteString(fmt.Sprint(v))
+			} else {
+				errMsg = fmt.Sprintf("unknown template variable: $.%s", name)
+			}
+			i = j
+			continue
+		}
+		// 그 외 모든 문자(단독 "$" 포함) → 리터럴
+		b.WriteByte(c)
+		i++
+	}
+
+	if errMsg != "" {
+		// 미지 변수가 하나라도 있으면 해당 키 값은 nil 이 된다.
+		return nil, errMsg
+	}
+	return b.String(), ""
+}
+
+// wholeVarToken 은 문자열 전체가 "$.<name>" 형태인지 검사하고 <name> 을 반환한다.
+// <name> 은 [A-Za-z0-9_]+ 이어야 한다.
+func wholeVarToken(s string) (string, bool) {
+	if !strings.HasPrefix(s, "$.") {
+		return "", false
+	}
+	name := s[2:]
+	if name == "" {
+		return "", false
+	}
+	for i := 0; i < len(name); i++ {
+		if !isIdentChar(name[i]) {
+			return "", false
+		}
+	}
+	return name, true
+}
+
+// isIdentChar 는 변수명에 허용되는 문자([A-Za-z0-9_])인지 판별한다.
+func isIdentChar(c byte) bool {
+	return c == '_' ||
+		(c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9')
 }
 
 // Shutdown 은 TriggerNode를 종료한다.
@@ -927,20 +1020,28 @@ func (n *TriggerNode) Resume(_ context.Context) error {
 // 헬퍼 함수
 // ---------------------------------------------------------------------------
 
-// deepCopyMap 은 map[string]any를 깊은 복사한다.
+// deepCopyAny 는 임의의 값을 재귀적으로 깊은 복사한다.
+// map/슬라이스는 재귀 복사하고, 그 외 기본 타입은 값 복사한다.
+func deepCopyAny(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return deepCopyMap(val)
+	case []any:
+		cp := make([]any, len(val))
+		for i, e := range val {
+			cp[i] = deepCopyAny(e)
+		}
+		return cp
+	default:
+		return v
+	}
+}
+
+// deepCopyMap 은 map[string]any를 재귀적으로 깊은 복사한다.
 func deepCopyMap(src map[string]any) map[string]any {
 	dst := make(map[string]any, len(src))
 	for k, v := range src {
-		switch val := v.(type) {
-		case map[string]any:
-			dst[k] = deepCopyMap(val)
-		case []any:
-			cp := make([]any, len(val))
-			copy(cp, val)
-			dst[k] = cp
-		default:
-			dst[k] = v
-		}
+		dst[k] = deepCopyAny(v)
 	}
 	return dst
 }

@@ -2484,33 +2484,17 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           description: '1개 이상의 스케줄을 지정합니다. 타입: 주기(interval)/cron/1회(once)/매일 시각(times)/요일 반복(weekly)/월간 반복(monthly). 각 스케줄은 자체 페이로드를 가질 수 있으며, 미지정 시 노드 레벨 페이로드로 폴백합니다. 여러 스케줄이 동시에 실행될 수 있습니다.',
         },
         {
-          name: 'payload_mode',
-          type: 'select',
-          label: '페이로드 모드',
-          options: ['none', 'static', 'json', 'template'],
-          default: 'none',
-          description: 'none: 기본 / static: 키-값 입력 / json: JSON 직접 편집 / template: 변수 치환',
-        },
-        {
-          name: 'payload',
-          type: 'typed_key_value_map',
-          label: '정적 페이로드',
-          description: '키-값 쌍 입력. 값 타입을 string/number/boolean/array/json 중 선택',
-          visibleWhen: { field: 'payload_mode', value: 'static' },
-        },
-        {
+          // v1.3.0: 단일 통합 페이로드 에디터. static/template 이원 구조(payload_mode 토글)를
+          // 제거하고 하나의 JSON 오브젝트 에디터로 통일한다. 백엔드는 이 값을 통합 템플릿
+          // 엔진(문자열 값의 $.<var> 치환 + $$ 리터럴 이스케이프)으로 평가한다.
           name: 'payload',
           type: 'object',
-          label: '페이로드 (JSON)',
-          description: 'JSON 형식으로 직접 편집. 예: {"rooms": ["room1", "room2"], "count": 10}',
-          visibleWhen: { field: 'payload_mode', value: 'json' },
-        },
-        {
-          name: 'payload_template',
-          type: 'key_value_map',
-          label: '템플릿 페이로드',
-          description: '사용 가능 변수: $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id',
-          visibleWhen: { field: 'payload_mode', value: 'template' },
+          label: '페이로드',
+          description:
+            'JSON 오브젝트로 직접 편집. 예: {"rooms": ["room1", "room2"], "count": 10, "at": "$.trigger_time"}. ' +
+            '문자열 값 안의 $.<변수>는 발화 시 치환되고, $$는 리터럴 $로 출력됩니다. ' +
+            '숫자/불리언/배열/중첩 오브젝트는 그대로 전달됩니다. 미설정 시 기본 페이로드({trigger_time})를 사용합니다.',
+          hint: '변수: $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id (문자열 값에 삽입). $$ = 리터럴 $',
         },
         {
           name: 'source_ch_size',

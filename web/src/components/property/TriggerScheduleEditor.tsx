@@ -1,8 +1,10 @@
 // 트리거 노드 스케줄 에디터 컴포넌트.
 // interval / cron / once / times / weekly / monthly 6종 스케줄을 행 단위로 편집한다.
 // 각 타입별로 전용 입력 위젯을 제공하고, 잘못된 형식은 인라인 검증 메시지로 표시한다.
-// 각 스케줄 항목은 선택적으로 자체 페이로드(payload/payload_template)를 가질 수 있으며,
+// 각 스케줄 항목은 선택적으로 자체 페이로드를 가질 수 있으며(none | set 토글),
 // 미입력 시 노드 레벨 페이로드로 폴백한다 (v1.2.0, REQ-NODE-004-03-04).
+// v1.3.0: static/template 이원 구조를 제거하고 단일 JSON 페이로드 에디터로 통합.
+// 저장은 항상 `payload` 키로 정규화하되, 로드 시 하위호환으로 `payload_template`(map)도 수용한다.
 //
 // 저장 형식은 백엔드(trigger.go)와 호환되는 배열이다:
 //   [{ type: 'interval', value: '5s' },
@@ -18,7 +20,6 @@ import { ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
-import { KeyValueMapEditor } from './KeyValueMapEditor';
 
 // ---------------------------------------------------------------------------
 // 타입 정의
@@ -28,9 +29,6 @@ type ScheduleType = 'interval' | 'cron' | 'once' | 'times' | 'weekly' | 'monthly
 
 /** monthly.day 값: 정수 1~31 | "first" | "last" */
 type MonthlyDay = number | 'first' | 'last';
-
-/** 스케줄별 페이로드 모드 (UI 전용). none 이면 노드 레벨로 폴백. */
-type PayloadMode = 'none' | 'static' | 'template';
 
 interface Schedule {
   /** 내부 key (React 렌더 + 추적용, 저장 시 제외) */
@@ -44,12 +42,12 @@ interface Schedule {
   day?: MonthlyDay;
   /** weekly/monthly 전용: 시각 배열 ("HH:MM") */
   times?: string[];
-  /** 스케줄별 페이로드 모드 (UI 전용, 저장 시 제외) */
-  payloadMode: PayloadMode;
-  /** 정적 페이로드 (payloadMode === 'static') */
+  /** 이 스케줄이 자체 페이로드 오버라이드를 갖는지 여부 (UI 전용, 저장 시 제외).
+   *  false 면 노드 레벨(또는 기본) 페이로드로 폴백한다 (v1.3.0). */
+  payloadSet: boolean;
+  /** 단일 통합 페이로드 값 (payloadSet === true 일 때 emit). map/스칼라/배열 허용.
+   *  백엔드는 통합 템플릿 엔진($.<var> 치환 + $$ 이스케이프)으로 평가한다. */
   payload?: unknown;
-  /** 템플릿 페이로드 (payloadMode === 'template') */
-  payloadTemplate?: Record<string, unknown>;
 }
 
 interface TriggerScheduleEditorProps {
@@ -113,17 +111,41 @@ function parseMonthlyDay(val: unknown): MonthlyDay {
   return 1;
 }
 
-/** raw 객체에서 스케줄별 페이로드 모드/값을 해석한다. */
-function parsePayload(obj: Record<string, unknown>): Pick<Schedule, 'payloadMode' | 'payload' | 'payloadTemplate'> {
+/**
+ * raw 객체에서 스케줄별 페이로드를 해석한다 (v1.3.0 단일 통합 에디터).
+ * 하위호환: payload(any)와 payload_template(map)를 모두 수용하여 단일 값으로 병합한다.
+ * - 둘 다 map이면 병합(payload가 우선), 하나만 있으면 그 값을 사용.
+ * - 아무 것도 없으면 payloadSet=false (노드 레벨 폴백).
+ */
+function parsePayload(obj: Record<string, unknown>): Pick<Schedule, 'payloadSet' | 'payload'> {
   const tmpl = obj.payload_template;
-  if (tmpl && typeof tmpl === 'object' && !Array.isArray(tmpl) && Object.keys(tmpl).length > 0) {
-    return { payloadMode: 'template', payloadTemplate: tmpl as Record<string, unknown> };
+  const hasTmpl =
+    tmpl != null && typeof tmpl === 'object' && !Array.isArray(tmpl) && Object.keys(tmpl).length > 0;
+  // payload 키 존재 여부로 판정 (0/false/"" 등 falsy 값도 유효한 오버라이드).
+  const hasPayload = 'payload' in obj && obj.payload !== undefined && obj.payload !== null;
+
+  if (hasPayload && hasTmpl && isPlainObject(obj.payload)) {
+    return {
+      payloadSet: true,
+      payload: { ...(tmpl as Record<string, unknown>), ...(obj.payload as Record<string, unknown>) },
+    };
   }
-  // payload 키 존재 여부로 판정 (0/false/"" 등 falsy 정적 값도 유효한 오버라이드).
-  if ('payload' in obj && obj.payload !== undefined) {
-    return { payloadMode: 'static', payload: obj.payload };
-  }
-  return { payloadMode: 'none' };
+  if (hasPayload) return { payloadSet: true, payload: obj.payload };
+  if (hasTmpl) return { payloadSet: true, payload: tmpl };
+  return { payloadSet: false };
+}
+
+/** map 여부(플레인 오브젝트, 배열/null 제외). */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** 페이로드가 비어있지 않은지 판정(미설정/빈 문자열/빈 오브젝트 → 폴백). */
+function isNonEmptyPayload(payload: unknown): boolean {
+  if (payload === undefined || payload === null) return false;
+  if (typeof payload === 'string') return payload.trim() !== '';
+  if (isPlainObject(payload)) return Object.keys(payload).length > 0;
+  return true; // 숫자/불리언/배열 등은 값이 있는 것으로 간주.
 }
 
 /** 외부 value(unknown) → Schedule[] 변환 */
@@ -189,11 +211,11 @@ function serialize(schedules: Schedule[]): unknown[] {
         base.value = s.value;
         break;
     }
-    // 스케줄별 페이로드: none 이면 어떤 키도 emit 하지 않는다 (백엔드가 노드 레벨→기본으로 폴백).
-    if (s.payloadMode === 'static') {
-      base.payload = s.payload ?? {};
-    } else if (s.payloadMode === 'template') {
-      base.payload_template = s.payloadTemplate ?? {};
+    // 스케줄별 페이로드(v1.3.0): 설정됨이고 비어있지 않을 때만 `payload`로 정규화 emit.
+    // 미설정/빈 값이면 어떤 키도 emit 하지 않는다(백엔드가 노드 레벨→기본으로 폴백).
+    // payload_template 은 더 이상 emit 하지 않는다(로드 시 하위호환 수용).
+    if (s.payloadSet && isNonEmptyPayload(s.payload)) {
+      base.payload = s.payload;
     }
     return base;
   });
@@ -201,7 +223,7 @@ function serialize(schedules: Schedule[]): unknown[] {
 
 /** 새 스케줄의 기본값 */
 function defaultScheduleForType(type: ScheduleType): Schedule {
-  const common = { key: nextKey(), payloadMode: 'none' as const };
+  const common = { key: nextKey(), payloadSet: false };
   switch (type) {
     case 'interval':
       return { ...common, type, value: '5s' };
@@ -399,9 +421,8 @@ export function TriggerScheduleEditor({ value, onChange, readOnly }: TriggerSche
           return {
             ...fresh,
             key: s.key,
-            payloadMode: s.payloadMode,
+            payloadSet: s.payloadSet,
             payload: s.payload,
-            payloadTemplate: s.payloadTemplate,
           };
         }),
       );
@@ -557,9 +578,8 @@ function ScheduleRow({ schedule, readOnly, onTypeChange, onPatch, onRemove }: Sc
 
       {/* 스케줄별 페이로드 (선택) */}
       <SchedulePayloadEditor
-        mode={schedule.payloadMode}
+        payloadSet={schedule.payloadSet}
         payload={schedule.payload}
-        payloadTemplate={schedule.payloadTemplate}
         readOnly={readOnly}
         onChange={(patch) => onPatch(patch)}
       />
@@ -994,29 +1014,25 @@ function MonthlyInput({
 // ---------------------------------------------------------------------------
 
 function SchedulePayloadEditor({
-  mode,
+  payloadSet,
   payload,
-  payloadTemplate,
   readOnly,
   onChange,
 }: {
-  mode: PayloadMode;
+  payloadSet: boolean;
   payload: unknown;
-  payloadTemplate: Record<string, unknown> | undefined;
   readOnly?: boolean;
   onChange: (patch: Partial<Schedule>) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState<boolean>(false);
-  const active = mode !== 'none';
 
-  const setMode = (next: PayloadMode) => {
-    if (next === 'static') {
-      onChange({ payloadMode: 'static', payload: payload ?? {} });
-    } else if (next === 'template') {
-      onChange({ payloadMode: 'template', payloadTemplate: payloadTemplate ?? {} });
+  // none | set 토글. set 으로 전환 시 기존 값 보존(없으면 빈 오브젝트), none 이면 값 제거.
+  const setEnabled = (enabled: boolean) => {
+    if (enabled) {
+      onChange({ payloadSet: true, payload: payload ?? {} });
     } else {
-      onChange({ payloadMode: 'none' });
+      onChange({ payloadSet: false, payload: undefined });
     }
   };
 
@@ -1030,9 +1046,9 @@ function SchedulePayloadEditor({
       >
         {open ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
         <span className="flex-1">{t('property.schedule.payloadSection')}</span>
-        {active && (
+        {payloadSet && (
           <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-            {t(mode === 'static' ? 'property.schedule.payloadModeStatic' : 'property.schedule.payloadModeTemplate')}
+            {t('property.schedule.payloadSetBadge')}
           </span>
         )}
       </button>
@@ -1040,53 +1056,65 @@ function SchedulePayloadEditor({
       {open && (
         <div className="space-y-1.5 border-t border-(--color-border-default) p-2">
           <p className="text-[10px] text-(--color-text-muted)">
-            {active
+            {payloadSet
               ? t('property.schedule.payloadOverrideNote')
               : t('property.schedule.payloadFallbackNote')}
           </p>
 
-          {/* 항목별 payload_mode 서브 토글 */}
-          <select
-            value={mode}
-            disabled={readOnly}
-            onChange={(e) => setMode(e.target.value as PayloadMode)}
-            className={cn(cellInput, readOnly && readOnlyStyle)}
-            aria-label={t('property.schedule.payloadModeAria')}
-          >
-            <option value="none">{t('property.schedule.payloadModeNone')}</option>
-            <option value="static">{t('property.schedule.payloadModeStatic')}</option>
-            <option value="template">{t('property.schedule.payloadModeTemplate')}</option>
-          </select>
+          {/* none | set 2단 토글 */}
+          <div className="flex gap-1">
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => setEnabled(false)}
+              aria-pressed={!payloadSet}
+              className={cn(
+                'flex-1 rounded border px-2 py-1 text-xs font-medium transition-colors',
+                !payloadSet
+                  ? 'border-blue-400 bg-blue-500 text-white dark:border-blue-500'
+                  : 'border-(--color-border-default) bg-(--color-bg-primary) text-(--color-text-secondary) hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400',
+                readOnly && 'cursor-not-allowed opacity-70',
+              )}
+            >
+              {t('property.schedule.payloadOptionNone')}
+            </button>
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => setEnabled(true)}
+              aria-pressed={payloadSet}
+              className={cn(
+                'flex-1 rounded border px-2 py-1 text-xs font-medium transition-colors',
+                payloadSet
+                  ? 'border-blue-400 bg-blue-500 text-white dark:border-blue-500'
+                  : 'border-(--color-border-default) bg-(--color-bg-primary) text-(--color-text-secondary) hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400',
+                readOnly && 'cursor-not-allowed opacity-70',
+              )}
+            >
+              {t('property.schedule.payloadOptionSet')}
+            </button>
+          </div>
 
-          {/* static: JSON textarea (노드 레벨 object 페이로드와 동일 패턴) */}
-          {mode === 'static' && (
-            <textarea
-              rows={4}
-              value={typeof payload === 'string' ? payload : JSON.stringify(payload ?? {}, null, 2)}
-              readOnly={readOnly}
-              onChange={(e) => {
-                try {
-                  onChange({ payload: JSON.parse(e.target.value) as unknown });
-                } catch {
-                  // JSON 파싱 실패 시 문자열 그대로 저장 (object 필드와 동일 동작).
-                  onChange({ payload: e.target.value });
-                }
-              }}
-              placeholder='{"shift": "morning", "team": "A"}'
-              className={cn(cellInput, 'font-mono text-xs', readOnly && readOnlyStyle)}
-            />
-          )}
-
-          {/* template: 노드 레벨 payload_template 와 동일하게 KeyValueMapEditor 재사용 */}
-          {mode === 'template' && (
+          {/* set: 단일 JSON 오브젝트 에디터 (노드 레벨과 동일 패턴) + 인라인 힌트 */}
+          {payloadSet && (
             <div className="space-y-1">
-              <KeyValueMapEditor
-                value={payloadTemplate}
-                onChange={(v) => onChange({ payloadTemplate: v as Record<string, unknown> })}
+              <textarea
+                rows={4}
+                value={typeof payload === 'string' ? payload : JSON.stringify(payload ?? {}, null, 2)}
                 readOnly={readOnly}
+                onChange={(e) => {
+                  try {
+                    onChange({ payload: JSON.parse(e.target.value) as unknown });
+                  } catch {
+                    // JSON 파싱 실패 시 문자열 그대로 저장 (object 필드와 동일 동작).
+                    onChange({ payload: e.target.value });
+                  }
+                }}
+                placeholder='{"shift": "morning", "at": "$.trigger_time"}'
+                className={cn(cellInput, 'font-mono text-xs', readOnly && readOnlyStyle)}
               />
               <p className="text-[10px] text-(--color-text-muted)">
-                {t('property.schedule.payloadTemplateVars')}
+                {t('property.schedule.payloadHint')}
               </p>
             </div>
           )}

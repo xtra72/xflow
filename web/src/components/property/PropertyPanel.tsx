@@ -18,6 +18,39 @@ import type { ConfigSchema } from '@/types/node';
 import { DynamicForm } from './DynamicForm';
 import { FieldHelp } from './FieldHelp';
 
+// --- trigger 페이로드 하위호환 헬퍼 (v1.3.0 단일 페이로드 에디터) ---
+
+/** map 여부(플레인 오브젝트, 배열/ null 제외). */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * 로드 시 하위호환 병합: payload(any)와 payload_template(map)를 단일 에디터 값으로 합친다.
+ * - 둘 다 map이면 병합(payload가 우선).
+ * - 하나만 있으면 그 값을 사용(payload는 스칼라/배열도 그대로 표시).
+ * - 둘 다 없으면 undefined(미설정).
+ */
+function mergeTriggerPayload(payload: unknown, template: unknown): unknown {
+  const hasPayload = payload !== undefined && payload !== null;
+  const hasTemplate = isPlainObject(template) && Object.keys(template).length > 0;
+  if (hasPayload && hasTemplate && isPlainObject(payload)) {
+    return { ...(template as Record<string, unknown>), ...payload };
+  }
+  if (hasPayload) return payload;
+  if (hasTemplate) return template;
+  return undefined;
+}
+
+/** 저장 시 페이로드가 비어있는지 판정(미설정/빈 문자열/빈 오브젝트 → 기본 폴백). */
+function isNonEmptyPayload(payload: unknown): boolean {
+  if (payload === undefined || payload === null) return false;
+  if (typeof payload === 'string') return payload.trim() !== '';
+  if (isPlainObject(payload)) return Object.keys(payload).length > 0;
+  // 숫자/불리언/배열 등은 값이 있는 것으로 간주.
+  return true;
+}
+
 // --- 포트 관리 서브 컴포넌트 ---
 
 type Port = { name: string; direction: 'input' | 'output' | 'error' };
@@ -210,17 +243,23 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
   const [draft, setDraft] = useState<Record<string, unknown>>(originalData);
 
   // 선택 노드가 바뀌면 드래프트를 원본으로 리셋.
-  // trigger 노드는 payload/payload_template 존재 여부에서 UI 전용 필드 payload_mode를 유도한다.
+  // trigger 노드는 v1.3.0에서 단일 페이로드 에디터로 통합되었다. 하위호환을 위해
+  // 로드 시 payload(map)와 payload_template(map)를 모두 수용하여 단일 `payload`
+  // 에디터에 병합 표시하고, 폐기된 payload_mode 가상 필드는 제거한다.
   useEffect(() => {
     const nodeType = (originalData.nodeType as string) ?? '';
-    if (nodeType === 'trigger' && !originalData.payload_mode) {
-      const hasTemplate =
-        originalData.payload_template != null &&
-        typeof originalData.payload_template === 'object' &&
-        Object.keys(originalData.payload_template as Record<string, unknown>).length > 0;
-      const hasStatic = originalData.payload != null;
-      const mode = hasTemplate ? 'template' : hasStatic ? 'static' : 'none';
-      setDraft({ ...originalData, payload_mode: mode });
+    if (nodeType === 'trigger') {
+      // payload_mode(폐기)와 하위호환 payload_template를 드래프트에서 분리.
+      const { payload_mode: _pm, payload, payload_template, ...rest } =
+        originalData as {
+          payload_mode?: unknown;
+          payload?: unknown;
+          payload_template?: unknown;
+        } & Record<string, unknown>;
+      const next: Record<string, unknown> = { ...rest };
+      const merged = mergeTriggerPayload(payload, payload_template);
+      if (merged !== undefined) next.payload = merged;
+      setDraft(next);
       return;
     }
     setDraft(originalData);
@@ -297,16 +336,18 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         }
       }
     } else if (nodeType === 'trigger') {
-      // trigger 노드: UI 전용 payload_mode를 제거하고, 비활성 payload/payload_template 키도 정리한다.
-      const { payload_mode, ...rest } = draft as { payload_mode?: string } & Record<string, unknown>;
-      const cleaned: Record<string, unknown> = { ...rest, payload_mode: payload_mode ?? 'none' };
-      if (payload_mode === 'static' || payload_mode === 'json') {
-        delete cleaned.payload_template;
-      } else if (payload_mode === 'template') {
-        delete cleaned.payload;
-      } else {
-        delete cleaned.payload;
-        delete cleaned.payload_template;
+      // trigger 노드(v1.3.0): 단일 페이로드 에디터. 폐기된 payload_mode와 하위호환
+      // payload_template 키를 제거하고, 페이로드는 `payload`(map)로 정규화 저장한다.
+      // 에디터가 비어있으면(빈 오브젝트/미설정) payload 키를 제거해 기본 페이로드로 폴백.
+      const { payload_mode: _pm, payload, payload_template: _pt, ...rest } =
+        draft as {
+          payload_mode?: unknown;
+          payload?: unknown;
+          payload_template?: unknown;
+        } & Record<string, unknown>;
+      const cleaned: Record<string, unknown> = { ...rest };
+      if (isNonEmptyPayload(payload)) {
+        cleaned.payload = payload;
       }
       updateNodeData(selectedNodeId, cleaned);
     } else {

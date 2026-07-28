@@ -267,30 +267,36 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
       )}
 
       {field.type === 'object' && (
-        <textarea
-          id={id}
-          rows={4}
-          value={
-            typeof value === 'string' ? value : JSON.stringify(value ?? {}, null, 2)
-          }
-          onChange={(e) => {
-            try {
-              onChange(JSON.parse(e.target.value) as unknown);
-            } catch {
-              // JSON 파싱 실패 시 문자열 그대로 저장
-              onChange(e.target.value);
+        <>
+          <textarea
+            id={id}
+            rows={4}
+            value={
+              typeof value === 'string' ? value : JSON.stringify(value ?? {}, null, 2)
             }
-          }}
-          // textarea 도 readOnly attr 지원 — 가독성 보존을 위해 사용.
-          readOnly={readOnly}
-          className={cn(
-            inputClass,
-            'font-mono text-xs',
-            error && errorInputClass,
-            readOnly && readOnlyClass,
+            onChange={(e) => {
+              try {
+                onChange(JSON.parse(e.target.value) as unknown);
+              } catch {
+                // JSON 파싱 실패 시 문자열 그대로 저장
+                onChange(e.target.value);
+              }
+            }}
+            // textarea 도 readOnly attr 지원 — 가독성 보존을 위해 사용.
+            readOnly={readOnly}
+            className={cn(
+              inputClass,
+              'font-mono text-xs',
+              error && errorInputClass,
+              readOnly && readOnlyClass,
+            )}
+            {...ariaProps}
+          />
+          {/* 상시 노출 인라인 힌트(선택): 변수/이스케이프 문법 안내. */}
+          {field.hint && (
+            <p className="text-[10px] text-(--color-text-muted)">{field.hint}</p>
           )}
-          {...ariaProps}
-        />
+        </>
       )}
 
       {/* object_fields: 중첩 객체를 네이티브 위젯 섹션으로 편집한다(JSON textarea 아님).

@@ -39,6 +39,10 @@ export interface ConfigField {
   default?: unknown;
   options?: string[];
   description?: string;
+  /** 입력 위젯 바로 아래에 상시 노출되는 인라인 힌트(선택).
+   *  description(? 아이콘 클릭 시 표시)과 달리 항상 보이며, object 타입 등에서
+   *  변수/이스케이프 문법 안내에 사용한다. 현재 object 타입에서만 렌더링된다. */
+  hint?: string;
   /** object_fields 타입 전용: 중첩 객체의 하위 필드 스키마.
    *  값은 이 필드의 `name` 키 아래 중첩 객체로 저장된다
    *  (config[name] = { <sub.name>: value, ... }). dotted 키를 만들지 않는다.

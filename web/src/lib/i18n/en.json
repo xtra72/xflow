@@ -2519,11 +2519,10 @@
       "payloadSection": "This schedule's payload (optional)",
       "payloadOverrideNote": "Overrides the node-level payload when set.",
       "payloadFallbackNote": "Falls back to the node-level payload when empty.",
-      "payloadModeAria": "Payload mode",
-      "payloadModeNone": "None (use node-level)",
-      "payloadModeStatic": "Static (JSON)",
-      "payloadModeTemplate": "Template",
-      "payloadTemplateVars": "Variables: $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id"
+      "payloadOptionNone": "None (use node-level)",
+      "payloadOptionSet": "Set",
+      "payloadSetBadge": "Set",
+      "payloadHint": "Variables: $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id (insert into string values). $$ = literal $"
     },
     "register": {
       "areaType": "Area type",

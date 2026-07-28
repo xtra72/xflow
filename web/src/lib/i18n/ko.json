@@ -2519,11 +2519,10 @@
       "payloadSection": "이 스케줄 전용 페이로드 (선택)",
       "payloadOverrideNote": "설정 시 노드 레벨 페이로드를 덮어씁니다.",
       "payloadFallbackNote": "미입력 시 노드 레벨 페이로드로 폴백합니다.",
-      "payloadModeAria": "페이로드 모드",
-      "payloadModeNone": "없음 (노드 레벨 사용)",
-      "payloadModeStatic": "정적 (JSON)",
-      "payloadModeTemplate": "템플릿",
-      "payloadTemplateVars": "사용 가능 변수: $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id"
+      "payloadOptionNone": "없음 (노드 레벨 사용)",
+      "payloadOptionSet": "설정",
+      "payloadSetBadge": "설정됨",
+      "payloadHint": "변수: $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id (문자열 값에 삽입). $$ = 리터럴 $"
     },
     "register": {
       "areaType": "영역 타입",
