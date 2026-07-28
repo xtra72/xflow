@@ -1,13 +1,15 @@
 ---
 id: SPEC-NODE-004
 type: plan
-version: "1.2.0"
+version: "1.3.0"
 spec_ref: SPEC-NODE-004
 ---
 
 # SPEC-NODE-004 구현 계획
 
 > **v1.2.0 개정 노트 (2026-07-28)**: 아래 §1~§6은 v1.0.0/v1.1.0 원본 계획이다. v1.2.0 인플레이스 개정으로 추가된 3종 기능(weekly / monthly / per-schedule payload)의 구현 계획은 **§7 (v1.2.0 개정 마일스톤)** 및 **§8 (v1.2.0 기술적 접근)**에 별도로 기술한다. 코드는 후속 run-phase에서 구현한다.
+>
+> **v1.3.0 개정 노트 (2026-07-28)**: 페이로드 모델을 단일 통합 템플릿 엔진으로 통합(static/template 이원성 제거 + `$$` 이스케이프)하는 개정의 구현 계획은 **§10 (v1.3.0 개정 마일스톤)**, **§11 (v1.3.0 기술적 접근)**, **§12 (v1.3.0 리스크)**에 별도로 기술한다. Tier M(3파일: spec/plan/acceptance) 유지, design.md/research.md 없음. 코드는 후속 run-phase에서 구현한다.
 
 ## 1. 구현 전략 개요
 
@@ -464,3 +466,131 @@ func (n *TriggerNode) resolvePayload(entry triggerTimerEntry, tr TimerTrigger) a
 
 - **위험**: 페이로드 결정부 재작성으로 기존 노드-레벨 페이로드 동작 변경
 - **대응**: 기존 설정(노드 레벨 전용) 회귀 테스트를 명시적 AC로 추가(AC-NODE-004-42). 폴백 순서 (2)/(3)이 기존 경로와 동일함을 보장
+
+---
+
+## 10. v1.3.0 개정 마일스톤 (통합 페이로드 엔진)
+
+기존 페이로드 결정부(v1.2.0의 3단계 폴백)를 보존하면서, **평가 단계**를 단일 통합 템플릿 엔진으로 교체한다. static/template 이원 분기를 제거하되 config 키 수용은 하위호환으로 유지한다. 신규 로직에 TDD(RED-GREEN-REFACTOR)를 적용한다.
+
+### Primary Goal (v1.3.0): 통합 템플릿 스캐너 (P0)
+
+**범위**: REQ-NODE-004-03-01, REQ-NODE-004-03-03, REQ-NODE-004-06-04
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - 통째 변수 치환(문자열 전체 `$.<var>` → 네이티브 타입): 숫자/문자열 각각 (AC-19, AC-48)
+   - 문자 단위 스캔: `$$`→리터럴 `$` (AC-46), 리터럴+변수 혼합 interpolation (AC-47)
+   - 미지 변수 `$.x` → 에러 기록 + 키 null (AC-20)
+   - 비문자열 값(숫자/불리언/배열/중첩 맵) 리터럴 패스스루 + 중첩 맵 미재귀 (AC-18)
+2. 구현 (TDD GREEN)
+   - `evalPayload(src map[string]any, ctx) (map[string]any, []error)`: 최상위 문자열 값만 스캔
+   - 문자열 평가기 `evalString(s, ctx) (any, bool, error)`: (a) 통째 일치 → 네이티브 값(any) 반환, (b) 그 외 char 스캔 → 문자열 빌드
+   - char 스캐너: `$$`/`$.<name>`/lone `$`/일반문자 상태 처리, 미지 변수 시 에러 + null 반환
+
+**산출물**: 단일 통합 템플릿 스캐너 완성 (whole-value 타입 보존 + interpolation + `$$` 이스케이프)
+
+### Secondary Goal (v1.3.0): config 하위호환 라우팅 + 결정부 통합 (P0)
+
+**범위**: REQ-NODE-004-03-03, REQ-NODE-004-03-04 (전 스케줄 타입)
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - 노드/스케줄 `payload`(map) → 직접 평가; 비-map 스칼라/배열 → `{"value": v}` 래핑 후 평가 (AC-13/14/16/50)
+   - 구 static 맵 동일 출력 회귀 (AC-49)
+   - per-schedule 해결 순서(항목→노드→기본)가 통합 엔진 적용 후에도 불변 (AC-41~44)
+2. 구현 (TDD GREEN)
+   - `normalizeSource(v any) map[string]any`: map이면 그대로, 아니면 `{"value": v}` 래핑
+   - `resolvePayload()`(v1.2.0 3단계 폴백)의 반환을 `normalizeSource` → `evalPayload` 파이프라인으로 연결
+   - v1.2.0 static-복사/template-치환 이원 분기 제거, 단일 경로로 교체
+
+**산출물**: config 하위호환 라우팅 + 통합 결정-평가 파이프라인 (하위호환 보존)
+
+### Optional Goal (v1.3.0): Web UI 단일 페이로드 에디터 (P1)
+
+**범위**: REQ-NODE-004-08-04(폐기), REQ-NODE-004-08-05
+
+**작업 항목**:
+
+1. `PropertyPanel.tsx`: `payload_mode` 가상 필드 유도/정리 로직 제거, 로드 시 `payload`/`payload_template` 병합 로드
+2. `nodeSchemas.ts`: `payload_mode`(select)·별도 `payload_template` 필드 제거, 단일 `payload` object 에디터로 대체
+3. `TriggerScheduleEditor.tsx`: 항목별 payload_mode 서브 토글 제거, 단일 JSON 페이로드 에디터로 통일
+4. 인라인 힌트: `$.<var>` 4종 목록 + `$$` 이스케이프 설명 노출 (AC-51)
+
+**산출물**: 단일 페이로드 에디터 UI (백엔드 통합 엔진과 호환)
+
+---
+
+## 11. v1.3.0 기술적 접근
+
+### 11.1 통합 문자열 평가 규칙
+
+```
+evalString(s):
+  if s == "$." + name  and name ∈ knownVars:   // 통째 일치
+      return nativeValue(name)                  // 숫자/문자열 등 네이티브 타입 (any)
+  else:                                          // 문자 단위 스캔 (interpolation)
+      buf := ""
+      i := 0
+      while i < len(s):
+          if s[i:i+2] == "$$":      buf += "$"; i += 2
+          elif s[i:i+2] == "$.":    name := scanName(s, i+2)
+                                    if name ∈ knownVars: buf += stringForm(name)
+                                    else:                 err = unknownVar(name); return null, err
+                                    i += 2 + len(name)
+          else:                     buf += s[i]; i += 1
+      return buf
+```
+
+- **통째 일치만 네이티브 타입 보존**: 부분 일치(interpolation)에서는 항상 문자열 형태로 삽입한다 (예: `"count=$.tick_count"` → `"count=7"`).
+- **알려진 변수 4종 불변**: `$.trigger_time`, `$.tick_count`, `$.schedule_id`, `$.trigger_id` (v1.2.0 컨텍스트 재사용).
+
+### 11.2 config 하위호환 라우팅
+
+```
+normalizeSource(v):
+  if v is map[string]any: return v            // 직접 평가
+  else:                   return {"value": v} // 구 static 스칼라/배열 래핑
+
+evalPayload(src):
+  m := normalizeSource(src)
+  out := {}
+  errs := []
+  for k, val := range m:
+      if val is string:  out[k], e := evalString(val); if e: errs.append(e)
+      else:              out[k] = deepCopy(val)   // 비문자열 리터럴 패스스루 (중첩 맵 미재귀)
+  return out, errs
+```
+
+- **중첩 맵 미재귀**: `evalPayload`는 최상위 맵의 문자열 값만 평가한다. 중첩 map/배열은 `deepCopy`로 리터럴 패스스루된다 (알려진 한계, A17).
+- **에러 처리**: `errs`가 비어있지 않으면 `trigger.error` 메타데이터를 첨부하고, 문제 키는 이미 `null`로 설정되어 있다 (REQ-06-04).
+
+### 11.3 결정-평가 파이프라인 통합
+
+v1.2.0 `resolvePayload()`(항목→노드→기본 3단계 폴백)는 그대로 유지하되, 반환값을 `normalizeSource → evalPayload` 로 흘려보낸다. static-깊은복사/template-치환의 이원 분기는 제거되고, 모든 경로가 동일 파이프라인을 통과한다. 기본 페이로드 `{"trigger_time": now}`는 이미 map이므로 동일하게 평가된다(리터럴 통과).
+
+### 11.4 마이그레이션 영향 (문서화)
+
+- 구 static 맵 `{"cmd":"open"}` → 동일 출력 (리터럴 통과).
+- 두 경계 케이스만 의미 변화: (1) 리터럴 `$.trigger_time` 포함 static 문자열 → interpolation, (2) 리터럴 `$` → `$$` 필요. run-phase 구현 시 CHANGELOG/마이그레이션 노트에 명시한다.
+
+---
+
+## 12. v1.3.0 리스크 및 대응
+
+### Risk 10: 통째 일치 vs interpolation 경계 판정 오류
+
+- **위험**: `"$.tick_count"`(통째, 숫자)와 `"$.tick_count "`(뒤 공백, 문자열)의 구분 실패로 타입 손상
+- **대응**: 통째 일치는 `s == "$." + name` **정확 일치**로만 판정. 공백/추가 문자 포함 시 즉시 interpolation 경로. 경계 테스트(AC-48) 추가
+
+### Risk 11: `$$`/`$.`/lone `$` 스캐너 상태 오류
+
+- **위험**: 문자열 끝 단독 `$`, `$$$` 연속, `$.`뒤 빈 이름 등 엣지 케이스에서 스캐너 오작동
+- **대응**: char 스캐너 상태별 단위 테스트(문자열 끝 `$`, 연속 `$$`, `$.` 뒤 비영숫자) 추가. 이름 스캔은 알려진 변수 이름 문자 집합으로 한정
+
+### Risk 12: config 하위호환 회귀 (스칼라 래핑 의미 변화)
+
+- **위험**: 구 static 스칼라(`payload: 42`)가 `{"value":42}`로 래핑되어 기존 소비자가 최상위 스칼라를 기대할 경우 파손
+- **대응**: 스칼라 래핑은 **의도된 하위호환 규약**임을 마이그레이션 노트에 명시(AC-50). 맵 페이로드는 래핑 없이 동일 동작(AC-49)하여 대부분의 실사용 케이스는 영향 없음

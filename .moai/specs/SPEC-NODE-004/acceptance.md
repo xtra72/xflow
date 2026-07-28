@@ -1,20 +1,22 @@
 ---
 id: SPEC-NODE-004
 type: acceptance
-version: "1.2.0"
+version: "1.3.0"
 spec_ref: SPEC-NODE-004
 ---
 
 # SPEC-NODE-004 수락 기준
 
 > **v1.2.0 개정 노트 (2026-07-28)**: AC-NODE-004-01 ~ 34는 v1.0.0/v1.1.0 원본 수락 기준이다. v1.2.0 개정으로 추가된 weekly / monthly / per-schedule payload 및 하위 호환 시나리오는 **Module 7 (v1.2.0 신규 기능)** 에 AC-NODE-004-35 이후로 추가된다.
+>
+> **v1.3.0 개정 노트 (2026-07-28)**: 페이로드 모델을 단일 통합 템플릿 엔진으로 통합함에 따라, **Module 3(AC-NODE-004-13 ~ 20)의 정적/템플릿 시나리오는 통합 모델로 개정**되었다. config 하위호환 라우팅에 따라 노드 레벨 비-map 스칼라/배열 페이로드는 `{"value": <v>}`로 래핑된다. 통합 엔진 신규 시나리오(`$$` 이스케이프, 리터럴+변수 혼합, 통째 타입 치환, 미지 변수 에러+null, 구 static 마이그레이션, 단일 페이로드 에디터)는 **Module 8 (v1.3.0 통합 페이로드 엔진)** 에 AC-NODE-004-46 이후로 추가된다. 프론트엔드 AC-NODE-004-45도 단일 페이로드 에디터로 개정되었다.
 
 ## Module 1: TriggerNode Core - 트리거 노드 핵심
 
 ### AC-NODE-004-01: NewTriggerNode 생성자
 
 ```gherkin
-Given interval 스케줄 1개와 정적 payload가 설정된 flow.NodeDef가 주어졌을 때
+Given interval 스케줄 1개와 payload가 설정된 flow.NodeDef가 주어졌을 때
 When NewTriggerNode(def, opts...)를 호출하면
 Then Node 인터페이스를 구현한 TriggerNode 인스턴스를 반환해야 한다
 And Type()이 "trigger"여야 한다
@@ -144,39 +146,43 @@ Then ErrTriggerInvalidScheduleValue 에러를 반환해야 한다
 
 ---
 
-## Module 3: Payload Generation - 페이로드 생성
+## Module 3: Payload Generation - 페이로드 생성 (v1.3.0 통합 모델로 개정)
 
-### AC-NODE-004-13: 정적 페이로드 - 숫자
+### AC-NODE-004-13: 페이로드 - 숫자 스칼라 (config 하위호환 래핑)
 
 ```gherkin
-Given TriggerNode에 payload: 42가 설정되어 있을 때
+Given TriggerNode에 payload: 42가 설정되어 있을 때 (비-map 스칼라)
 When 트리거가 발생하면
-Then 생성된 메시지의 Payload에 값 42가 포함되어야 한다
+Then 통합 엔진이 스칼라를 {"value": 42}로 래핑하여 평가해야 한다
+And 생성된 메시지의 Payload가 {"value": 42}여야 한다 (value가 숫자 42)
 ```
 
-### AC-NODE-004-14: 정적 페이로드 - 문자열
+### AC-NODE-004-14: 페이로드 - 문자열 스칼라 (리터럴, 래핑)
 
 ```gherkin
-Given TriggerNode에 payload: "hello"가 설정되어 있을 때
+Given TriggerNode에 payload: "hello"가 설정되어 있을 때 (비-map 스칼라)
 When 트리거가 발생하면
-Then 생성된 메시지의 Payload에 값 "hello"가 포함되어야 한다
+Then 통합 엔진이 {"value": "hello"}로 래핑하고 "hello"에 $. / $$가 없으므로 리터럴로 통과해야 한다
+And 생성된 메시지의 Payload가 {"value": "hello"}여야 한다
 ```
 
-### AC-NODE-004-15: 정적 페이로드 - 오브젝트
+### AC-NODE-004-15: 페이로드 - 오브젝트 (map 직접 평가)
 
 ```gherkin
-Given TriggerNode에 payload: {"temperature": 25.5, "status": "active"}가 설정되어 있을 때
+Given TriggerNode에 payload: {"temperature": 25.5, "status": "active"}가 설정되어 있을 때 (map)
 When 트리거가 발생하면
-Then 생성된 메시지의 Payload에 temperature: 25.5가 포함되어야 한다
-And Payload에 status: "active"가 포함되어야 한다
+Then 통합 엔진이 map을 직접 평가해야 한다 (래핑 없음)
+And Payload에 temperature: 25.5가 포함되어야 한다 (비문자열 패스스루)
+And Payload에 status: "active"가 포함되어야 한다 ($. / $$ 없으므로 리터럴)
 ```
 
-### AC-NODE-004-16: 정적 페이로드 - 배열
+### AC-NODE-004-16: 페이로드 - 배열 스칼라 (래핑)
 
 ```gherkin
-Given TriggerNode에 payload: [1, 2, 3]가 설정되어 있을 때
+Given TriggerNode에 payload: [1, 2, 3]가 설정되어 있을 때 (비-map 배열)
 When 트리거가 발생하면
-Then 생성된 메시지의 Payload에 배열 [1, 2, 3]가 포함되어야 한다
+Then 통합 엔진이 {"value": [1, 2, 3]}로 래핑하여 평가해야 한다
+And 생성된 메시지의 Payload가 {"value": [1, 2, 3]}여야 한다 (배열은 비문자열 패스스루)
 ```
 
 ### AC-NODE-004-17: 기본 페이로드
@@ -188,32 +194,34 @@ Then 생성된 메시지의 Payload에 "trigger_time" 키가 포함되어야 한
 And trigger_time 값이 ISO 8601 형식의 현재 시각이어야 한다
 ```
 
-### AC-NODE-004-18: 정적 페이로드 깊은 복사
+### AC-NODE-004-18: 페이로드 깊은 복사 (중첩 맵 미재귀)
 
 ```gherkin
-Given TriggerNode에 payload: {"data": {"value": 1}}가 설정되어 있을 때
+Given TriggerNode에 payload: {"data": {"value": 1}}가 설정되어 있을 때 (중첩 map)
 When 트리거가 2번 발생하면
-Then 첫 번째 메시지의 Payload와 두 번째 메시지의 Payload가 독립적이어야 한다
+Then 중첩 맵 {"value": 1}은 재귀 평가되지 않고 리터럴 패스스루되어야 한다 (알려진 한계)
+And 첫 번째 메시지의 Payload와 두 번째 메시지의 Payload가 깊은 복사로 독립적이어야 한다
 And 첫 번째 메시지의 Payload를 변경해도 두 번째 메시지에 영향을 주지 않아야 한다
 ```
 
-### AC-NODE-004-19: 템플릿 페이로드 변수 치환
+### AC-NODE-004-19: 통째 변수 치환 - 문자열/숫자 (통합 엔진)
 
 ```gherkin
-Given TriggerNode에 payload_template: {"time": "$.trigger_time", "count": "$.tick_count"}가 설정되어 있을 때
+Given TriggerNode에 payload: {"time": "$.trigger_time", "count": "$.tick_count"}가 설정되어 있을 때
 When 트리거가 발생하면 (tick_count=3)
-Then 생성된 메시지의 Payload에 time이 ISO 8601 시각이어야 한다
-And Payload에 count가 3이어야 한다
+Then "time" 값 전체가 "$.trigger_time"과 일치하므로 문자열 ISO 8601 시각으로 치환되어야 한다
+And "count" 값 전체가 "$.tick_count"와 일치하므로 네이티브 타입 숫자 3으로 치환되어야 한다 (문자열 "3"이 아님)
 ```
 
-### AC-NODE-004-20: 템플릿 평가 실패 시 폴백
+### AC-NODE-004-20: 미지 변수 - 에러 기록 + 키 null (통합 엔진)
 
 ```gherkin
-Given TriggerNode에 payload_template: {"bad": "$.unknown_var"}가 설정되어 있을 때
+Given TriggerNode에 payload: {"bad": "$.unknown_var"}가 설정되어 있을 때
 When 트리거가 발생하면
-Then 경고 로그가 기록되어야 한다
+Then 통합 엔진이 미지 변수 $.unknown_var를 감지하여 에러 메시지를 기록해야 한다
+And "bad" 키의 값이 null이 되어야 한다
 And 메시지의 Metadata에 trigger.error가 포함되어야 한다
-And 메시지가 sourceCh로 전송되어야 한다 (빈 페이로드)
+And 메시지가 sourceCh로 전송되어야 한다
 ```
 
 ---
@@ -502,9 +510,81 @@ Then 일자 선택(1~31 | first | last)과 시각 칩 위젯이 표시되어야 
 And day가 29~31 정수일 때 "해당 일이 없는 달에는 발화하지 않음" 안내 힌트가 노출되어야 한다
 And 저장 시 {"type": "monthly", "day": ..., "times": [...]} 형식으로 직렬화되어야 한다
 
-Given 임의 스케줄 항목에서 "이 스케줄 전용 페이로드"를 입력했을 때
-Then 저장 시 해당 스케줄 항목에 payload 또는 payload_template가 포함되어야 한다
+Given 임의 스케줄 항목에서 "이 스케줄 전용 페이로드"를 단일 JSON 페이로드 에디터에 입력했을 때 (v1.3.0: payload_mode static/template 토글 없음)
+Then 저장 시 해당 스케줄 항목에 payload(오브젝트)가 포함되어야 한다
 And 미입력 시 노드 레벨 페이로드로 폴백함이 안내되어야 한다
+And 에디터에 $.<var> 변수 목록과 $$ 이스케이프 인라인 힌트가 노출되어야 한다
+```
+
+---
+
+## Module 8: v1.3.0 통합 페이로드 엔진 - `$$` 이스케이프 / 혼합 / 통째 타입 / 마이그레이션 / 단일 에디터
+
+### AC-NODE-004-46: `$$` → 리터럴 `$` 이스케이프
+
+```gherkin
+Given TriggerNode에 payload: {"price": "$$100", "label": "cost is $$"}가 설정되어 있을 때
+When 트리거가 발생하면
+Then "price" 값의 $$가 리터럴 $로 치환되어 "$100"이 되어야 한다
+And "label" 값의 $$가 리터럴 $로 치환되어 "cost is $"가 되어야 한다
+```
+
+### AC-NODE-004-47: 한 문자열 내 리터럴 + 변수 혼합 (interpolation)
+
+```gherkin
+Given TriggerNode에 payload: {"cmd": "open", "at": "$.trigger_time"}가 설정되어 있을 때
+When 트리거가 발생하면
+Then "cmd" 값은 $. / $$가 없으므로 리터럴 "open" 그대로여야 한다
+And "at" 값 전체가 "$.trigger_time"과 정확히 일치하므로 문자열 ISO 8601 시각으로 치환되어야 한다
+
+Given TriggerNode에 payload: {"msg": "run at $.trigger_time now"}가 설정되어 있을 때 (리터럴 + 변수 혼합)
+When 트리거가 발생하면
+Then "msg" 값이 문자 단위 interpolation되어 "run at <ISO시각> now" 형태의 문자열이어야 한다 (변수는 문자열 형태로 삽입)
+```
+
+### AC-NODE-004-48: 통째 값 네이티브 타입 치환 (문자열 vs 숫자 구분)
+
+```gherkin
+Given TriggerNode에 payload: {"n": "$.tick_count"}가 설정되어 있을 때
+When 트리거가 발생하면 (tick_count=7)
+Then "n" 값 전체가 "$.tick_count"와 일치하므로 네이티브 타입 숫자 7로 치환되어야 한다 (문자열 "7"이 아님)
+
+Given TriggerNode에 payload: {"n": "count=$.tick_count"}가 설정되어 있을 때 (통째 일치 아님)
+When 트리거가 발생하면 (tick_count=7)
+Then "n" 값이 interpolation되어 문자열 "count=7"이어야 한다 (숫자 삽입이 아니라 문자열 형태)
+```
+
+### AC-NODE-004-49: 하위호환 마이그레이션 - 구 static 맵 동일 출력
+
+```gherkin
+Given TriggerNode에 payload: {"cmd": "open", "level": 3}가 설정되어 있을 때 (구 static 맵, $. / $$ 없음)
+When 트리거가 발생하면
+Then 통합 엔진이 map을 직접 평가하여 구 static 동작과 동일하게 {"cmd": "open", "level": 3}를 생성해야 한다
+And "open"은 리터럴 통과, level 3은 비문자열 패스스루여야 한다
+```
+
+### AC-NODE-004-50: 하위호환 마이그레이션 - 구 static 스칼라 → {"value": ...} 래핑
+
+```gherkin
+Given TriggerNode에 payload: 5가 설정되어 있을 때 (구 static 스칼라)
+When 트리거가 발생하면
+Then 통합 엔진이 비-map 스칼라를 {"value": 5}로 래핑하여 평가해야 한다
+And 생성된 메시지의 Payload가 {"value": 5}여야 한다 (value가 숫자 5)
+```
+
+### AC-NODE-004-51: Web UI - 단일 페이로드 에디터 + 힌트 (payload_mode 제거)
+
+```gherkin
+Given TriggerNode 속성 패널을 열었을 때 (v1.3.0)
+Then payload_mode(static/template) 토글이 표시되지 않아야 한다
+And 단일 JSON 오브젝트 페이로드 에디터 하나만 표시되어야 한다
+And 에디터에 $.trigger_time, $.tick_count, $.schedule_id, $.trigger_id 변수 목록과 $$ 리터럴-달러 이스케이프 인라인 힌트가 노출되어야 한다
+
+Given 기존 payload_template(map) 형식이 저장된 노드를 로드했을 때 (하위호환)
+Then 단일 페이로드 에디터에 해당 값이 로드되어 편집 가능해야 한다
+
+Given 페이로드 에디터를 비운 채 저장했을 때
+Then payload와 payload_template가 모두 제거되어 기본 페이로드로 폴백해야 한다
 ```
 
 ---
@@ -513,8 +593,10 @@ And 미입력 시 노드 레벨 페이로드로 폴백함이 안내되어야 한
 
 ### Definition of Done
 
-- [ ] 모든 수락 기준(AC-NODE-004-01 ~ 45) 테스트 통과
+- [ ] 모든 수락 기준(AC-NODE-004-01 ~ 51) 테스트 통과
 - [ ] v1.2.0 신규 기능(AC-NODE-004-35 ~ 45): weekly/monthly/per-schedule payload 테스트 통과
+- [ ] v1.3.0 통합 페이로드 엔진(AC-NODE-004-13 ~ 20 개정 + AC-NODE-004-46 ~ 51): 통째 타입 치환/interpolation/`$$` 이스케이프/미지 변수 에러+null/config 하위호환 래핑/단일 에디터 테스트 통과
+- [ ] v1.3.0 하위호환 회귀: 구 static 맵 동일 출력(AC-49), 구 static 스칼라 `{"value":...}` 래핑(AC-50) 확인
 - [ ] monthly "last" 월말 게이트: 2월(28/29), 30일 달, 31일 달 경계 테스트 통과 (주입 clock)
 - [ ] 하위 호환 회귀(AC-NODE-004-44): 기존 4종 타입 + 노드 레벨 payload 동작 불변 확인
 - [ ] `go test ./internal/node/...` 전체 통과
@@ -528,7 +610,7 @@ And 미입력 시 노드 레벨 페이로드로 폴백함이 안내되어야 한
   - [ ] Init() 전체: < 10ms (Timer Agent resolve + 스케줄 등록)
 - [ ] goroutine 누수 없음 (Init/Shutdown 사이클 후 goroutine 수 원복 확인)
 - [ ] sourceCh 정상 닫힘 확인 (Shutdown 후 읽기 종료)
-- [ ] 정적 페이로드 깊은 복사 확인 (메시지 간 데이터 격리)
+- [ ] 페이로드 깊은 복사 확인 (메시지 간 데이터 격리; 통합 엔진 평가 결과 및 비문자열 패스스루 포함)
 
 ### 검증 도구
 
