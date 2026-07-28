@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/airpurifier"
 	"github.com/xtra/xflow/internal/agent/century"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/modbus"
@@ -387,6 +388,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	if err := century.RegisterHvacr01Types(agentMgr); err != nil {
 		return fmt.Errorf("Century HVACR-01 agent type registration failed: %w", err)
+	}
+	if err := airpurifier.RegisterAirPurifierTypes(agentMgr); err != nil {
+		return fmt.Errorf("Air Purifier agent type registration failed: %w", err)
 	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)
@@ -952,6 +956,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		}
 		remoteAuditRepo = auRepo
 		defer remoteAuditRepo.Close()
+
+		// 공기청정기 제어 감사 저장소 배선(REQ-AIRPUR-001-F05): airpurifier 패키지의
+		// 감사 저장소 슬롯에 원격 감사 저장소를 주입한다. 미주입 시 감사는 no-op.
+		airpurifier.SetAuditRepository(remoteAuditRepo)
 
 		// enrollment 토큰 저장소(v1.1 그룹 H) — 동일 SQLite DB 에 enrollment_tokens
 		// 테이블을 멱등 추가. 토큰은 SHA-256 해시로만 저장된다(REQ-H06).

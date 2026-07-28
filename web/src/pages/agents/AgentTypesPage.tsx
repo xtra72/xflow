@@ -33,6 +33,7 @@ const AGENT_CATEGORY: Record<string, string> = {
   lg_hvacr02: 'device',
   lg_hvacr01: 'device',
   'century_hvacr01': 'device',
+  airpurifier: 'device',
   influxdb: 'storage',
   store: 'storage',
   logger: 'utility',

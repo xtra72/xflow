@@ -1,0 +1,632 @@
+package airpurifier
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/pkg/lifecycle"
+)
+
+// agentType 는 이 에이전트의 타입 식별자이다.
+const agentType = "airpurifier"
+
+// msgChannelSize 는 노드 방출용 msgCh 버퍼 크기이다.
+const msgChannelSize = 256
+
+// AirPurifierAgent 는 지하철 역사 공기청정기 관리 에이전트이다 (REQ-AIRPUR-001-01-01).
+//
+// thingplus MQTT 트랜스포트 셸 + samsung 로스터/관측 상태 모델을 결합한다. 에이전트는
+// 순수 프로토콜/로직 레이어이며, I/O 경계(상태 유입 · 명령 방출)를 인터페이스로 추상화하여
+// direct(브로커 소유)·port(외부 노드 I/O) 두 모드를 주입한다 (REQ-AIRPUR-001-01-11).
+type AirPurifierAgent struct {
+	*lifecycle.BaseLifecycle
+
+	agentConfig agent.AgentConfig
+	cfg         AirPurifierConfig
+
+	// I/O 경계 (모드에 따라 주입). client 는 port 모드에서 nil.
+	client  MQTTClient
+	cmdSink CommandSink
+	ctrlCh  chan ControlMessage // port 모드 제어 출력 포트 (direct 모드는 nil)
+
+	devices map[string]*Device
+	mu      sync.RWMutex
+
+	// pendings 는 제어 응답 대기 레지스트리이다 (B3). 로스터 락(mu)과 분리된 자체 락으로
+	// 보호되며 절대 중첩하지 않는다 (RWMutex 재진입 트랩 회피).
+	pendings *pendingRegistry
+
+	// stations 는 역사(station)→호선(line) 레지스트리이다 (B6, REQ-AIRPUR-001-02-11).
+	// 자체 RWMutex 로 보호되며 로스터 락(mu)·pending 락과 절대 중첩하지 않는다.
+	stations *StationRegistry
+
+	// registry 는 런타임 등록 디바이스(bridge/auto) 로스터의 파일 기반 영속 저장소이다
+	// (B7, REQ-AIRPUR-001-02-05/08). registry_path 가 빈 값이면 nil(영속화 비활성). 자체
+	// 락을 보유하며 로스터 락(mu)에 걸쳐 잡지 않는다(스냅샷 후 해제, 그다음 파일 I/O).
+	registry *deviceRegistryStore
+
+	msgCh  chan []byte
+	stopCh chan struct{}
+
+	// monitorWG 는 오프라인 감지 모니터 고루틴의 생명주기를 추적한다 (B5). Stop 이
+	// stopCh 를 닫은 뒤 Wait 하여 고루틴 누수/타이머 누수를 방지한다.
+	monitorWG sync.WaitGroup
+
+	// deviceIDRepo 는 device_id 저장소 참조 슬롯이다 (후속 배치에서 배선).
+	deviceIDRepo agent.DeviceIDRepository
+
+	stats     *agent.AgentStats
+	logger    *slog.Logger
+	startedAt time.Time
+	createdAt time.Time
+}
+
+// 컴파일 타임 인터페이스 체크 (REQ-AIRPUR-001-01-02).
+var (
+	_ agent.Agent           = (*AirPurifierAgent)(nil)
+	_ agent.MessageReceiver = (*AirPurifierAgent)(nil)
+)
+
+// DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다
+// (samsung.Hvacr01Agent.DeviceProvider 패턴 미러). 에이전트 매니저의 OnStart 훅이
+// 이 표면을 감지해 디바이스 레지스트리에 프로바이더를 자동 등록한다 (REQ-AIRPUR-001-08).
+func (a *AirPurifierAgent) DeviceProvider() device.DeviceProvider {
+	return NewAirPurifierDeviceProvider(a)
+}
+
+// processRequest 는 Process 의 JSON 요청 구조체이다 (제어 명령 디스패치).
+type processRequest struct {
+	Command  string `json:"command"`
+	DeviceID string `json:"device_id,omitempty"`
+	Name     string `json:"name,omitempty"`
+	GroupID  string `json:"group_id,omitempty"`
+	Station  string `json:"station,omitempty"`
+	Place    string `json:"place,omitempty"`
+	Index    int    `json:"index,omitempty"`
+	Line     string `json:"line,omitempty"`
+
+	// 역사 레지스트리 CRUD 필드 (B6, add_station: display_name/order).
+	DisplayName string `json:"display_name,omitempty"`
+	Order       int    `json:"order,omitempty"`
+
+	Params map[string]any `json:"params,omitempty"`
+	NodeID string         `json:"node_id,omitempty"`
+	FlowID string         `json:"flow_id,omitempty"`
+}
+
+// NewAirPurifierAgent 는 AirPurifierAgent 팩토리 함수이다 (agent.Agent 반환).
+func NewAirPurifierAgent(config agent.AgentConfig) (agent.Agent, error) {
+	cfg, err := parseAirPurifierConfig(config.Transport.Options)
+	if err != nil {
+		return nil, fmt.Errorf("airpurifier agent: %w", err)
+	}
+
+	a := &AirPurifierAgent{
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName(agentType)),
+		cfg:           cfg,
+		devices:       make(map[string]*Device),
+		pendings:      newPendingRegistry(),
+		msgCh:         make(chan []byte, msgChannelSize),
+		stopCh:        make(chan struct{}),
+		deviceIDRepo:  agent.GetDeviceIDRepository(),
+		stats:         agent.NewAgentStats(),
+		logger:        agent.ResolveLogger(config),
+		createdAt:     time.Now(),
+	}
+
+	// client_id 자동 생성 (direct 모드, 인스턴스별 고유성 — thingplus 패턴).
+	if a.cfg.TransportMode == transportModeDirect && a.cfg.ClientID == "" {
+		a.cfg.ClientID = "xflow-airpurifier-" + uuid.NewString()
+	}
+
+	// I/O 경계 배선 (REQ-AIRPUR-001-01-07 step 3).
+	switch a.cfg.TransportMode {
+	case transportModeDirect:
+		a.client = newPahoMQTTClient(a.cfg, a.logger)
+		a.cmdSink = &brokerCommandSink{
+			client:    a.client,
+			topicTmpl: a.cfg.CommandTopicTemplate,
+			qos:       a.cfg.QoS,
+		}
+	case transportModePort:
+		a.client = nil
+		a.ctrlCh = make(chan ControlMessage, controlPortBuffer)
+		a.cmdSink = &portCommandSink{ch: a.ctrlCh, logger: a.logger}
+	}
+
+	// 설정 기반 디바이스 등록 (Source="config", Online=false — REQ-AIRPUR-001-02-03).
+	for _, cd := range a.cfg.Devices {
+		if _, exists := a.devices[cd.DeviceID]; exists {
+			continue
+		}
+		a.devices[cd.DeviceID] = &Device{
+			DeviceID: cd.DeviceID,
+			Name:     cd.Name,
+			GroupID:  cd.GroupID,
+			Station:  cd.Station,
+			Place:    cd.Place,
+			Index:    cd.Index,
+			Online:   false,
+			Source:   "config",
+		}
+	}
+
+	if err := a.Init(config); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// Init 은 에이전트를 초기화하고 상태를 Running 으로 전이한다 (REQ-AIRPUR-001-01-07).
+func (a *AirPurifierAgent) Init(config agent.AgentConfig) error {
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("airpurifier init: %w", err)
+	}
+	if err := a.TransitionTo(lifecycle.StateInitializing); err != nil {
+		return fmt.Errorf("airpurifier init: %w", err)
+	}
+
+	a.mu.Lock()
+	a.agentConfig = config
+	a.mu.Unlock()
+
+	// 역사 레지스트리 구성 (B6, REQ-AIRPUR-001-02-11): station_registry_path 영속 항목 +
+	// station_registry 설정 시드 병합. 경로가 비면 인메모리/시드 전용. 자체 락 보유.
+	stations, err := newStationRegistry(a.cfg.StationRegistryPath, a.cfg.StationRegistry)
+	if err != nil {
+		return fmt.Errorf("airpurifier init: %w", err)
+	}
+	a.mu.Lock()
+	a.stations = stations
+	a.mu.Unlock()
+
+	// 로스터 영속 저장소 구성 + 복원 (B7, REQ-AIRPUR-001-02-05/08): registry_path 가 설정되면
+	// 저장소를 열고 런타임 등록 디바이스를 로스터에 복원한다. 설정 디바이스는 이미
+	// NewAirPurifierAgent 에서 선등록됐으므로 device_id 충돌 시 설정이 우선한다(덮어쓰지 않음).
+	if a.cfg.RegistryPath != "" {
+		store, err := newDeviceRegistryStore(a.cfg.RegistryPath)
+		if err != nil {
+			return fmt.Errorf("airpurifier init: %w", err)
+		}
+		a.mu.Lock()
+		a.registry = store
+		a.mu.Unlock()
+		if err := a.loadPersistedRoster(); err != nil {
+			return fmt.Errorf("airpurifier init: restore roster: %w", err)
+		}
+	}
+
+	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
+		return fmt.Errorf("airpurifier init: %w", err)
+	}
+
+	a.mu.Lock()
+	a.startedAt = time.Now()
+	a.mu.Unlock()
+
+	a.logger.Info("airpurifier: agent initialized",
+		"transport_mode", a.cfg.TransportMode,
+		"devices", len(a.devices),
+		"mqtt_client", a.client != nil,
+	)
+	return nil
+}
+
+// Start 는 direct 모드에서 브로커에 연결하고 모든 디바이스 state 토픽을 구독한다.
+// port 모드는 브로커 연결 없이 Running 을 유지한다 (REQ-AIRPUR-001-01-08).
+//
+// 오프라인 감지 모니터(offline_timeout 경과 기반)는 양 모드에서 동작하므로 트랜스포트
+// 분기 이전에 시작한다 (REQ-AIRPUR-001-05-03). LWT 경로는 direct 전용이며 별도 훅
+// (handleLWTOffline)으로 노출된다.
+func (a *AirPurifierAgent) Start(_ context.Context) error {
+	// 오프라인 감지 모니터 (양 모드 공통, offline_timeout>0 일 때만 기동).
+	a.startOfflineMonitor()
+
+	if a.cfg.TransportMode == transportModePort {
+		a.logger.Info("airpurifier: started in port mode (no broker)")
+		return nil
+	}
+
+	// direct 모드: 초기 연결 실패는 치명적으로 보지 않는다 (auto-reconnect 시 재시도).
+	if err := a.client.Connect(); err != nil {
+		a.logger.Warn("airpurifier: broker connect failed at start", "error", err)
+	}
+
+	// 모든 등록 디바이스의 state 토픽을 구독한다. 콜백이 device_id 를 클로저로 캡처하여
+	// 유입 페이로드를 mode-agnostic 한 handleStatePayload 로 라우팅한다.
+	a.mu.RLock()
+	ids := make([]string, 0, len(a.devices))
+	for id := range a.devices {
+		ids = append(ids, id)
+	}
+	a.mu.RUnlock()
+
+	for _, id := range ids {
+		if err := a.subscribeDeviceState(id); err != nil {
+			a.logger.Error("airpurifier: subscribe device state failed", "device_id", id, "error", err)
+		}
+	}
+
+	a.logger.Info("airpurifier: started in direct mode", "subscribed_devices", len(ids))
+	return nil
+}
+
+// subscribeDeviceState 는 한 디바이스의 state 토픽을 구독한다 (direct 모드).
+func (a *AirPurifierAgent) subscribeDeviceState(deviceID string) error {
+	if a.client == nil {
+		return nil
+	}
+	topic := renderTopic(a.cfg.StateTopicTemplate, deviceID)
+	return a.client.Subscribe(topic, a.cfg.QoS, func(_ string, payload []byte) {
+		a.handleStatePayload(deviceID, payload)
+	})
+}
+
+// handleStatePayload 는 유입 상태 페이로드를 디코딩하여 로스터를 갱신하고 상태 변경을
+// 방출한다 (상태 유입 시임, REQ-AIRPUR-001-05-01/05-02, REQ-06-02).
+//
+// direct(구독 콜백)·port(입력 포트) 두 경로가 이 동일한 mode-agnostic 메서드를 호출하여
+// 바이트 동일한 디코딩·emit 경로를 공유한다 (REQ-AIRPUR-001-01-11). 락 하에서 이전/신규
+// 값을 비교해 changed_fields 를 산출하고, 방출 페이로드(관측 게이팅 + 메타)를 스냅샷한 뒤
+// 락을 해제하고 방출한다 — 락을 채널 송신에 걸쳐 잡지 않는다.
+func (a *AirPurifierAgent) handleStatePayload(deviceID string, payload []byte) {
+	st, err := decodeStatePayload(a.cfg.PayloadMapping, payload)
+	if err != nil {
+		a.logger.Warn("airpurifier: decode state payload failed", "device_id", deviceID, "error", err)
+		return
+	}
+
+	a.mu.Lock()
+	dev := a.devices[deviceID]
+	if dev == nil {
+		a.mu.Unlock()
+		return
+	}
+
+	prevOnline := dev.Online
+	var changed []string
+
+	// 각 축은 이전에 미관측이었거나(최초 관측) 값이 달라지면 changed 로 본다. markObserved 는
+	// 관측 여부 판정 후 호출해 "최초 관측"을 정확히 changed 로 잡는다.
+	if st.PowerSet {
+		if !dev.isObserved(observedPower) || dev.Power != st.Power {
+			changed = append(changed, "power")
+		}
+		dev.Power = st.Power
+		dev.markObserved(observedPower)
+	}
+	if st.FanSpeedSet {
+		if !dev.isObserved(observedFanSpeed) || dev.FanSpeed != st.FanSpeed {
+			changed = append(changed, "fan_speed")
+		}
+		dev.FanSpeed = st.FanSpeed
+		dev.markObserved(observedFanSpeed)
+	}
+
+	// online 축: 페이로드에 online 필드가 있으면 그 값을, 없으면 상태 유입 자체를 생존 신호로
+	// 보아 암묵적으로 online=true 로 복원한다 (REQ-05-05 오프라인 복구). 명시적 online=false 는
+	// 존중한다.
+	newOnline := true
+	if st.OnlineSet {
+		newOnline = st.Online
+		dev.markObserved(observedOnline)
+	}
+	dev.Online = newOnline
+	if prevOnline != newOnline {
+		changed = append(changed, "online")
+	}
+
+	dev.LastSeen = time.Now()
+
+	// 방출 페이로드 스냅샷 (락 하에서 관측 게이팅 축 + 메타를 복사). 관측 게이팅은 미관측 축을
+	// 생략하고 power=off 시 신뢰 불가한 fan_speed 를 생략한다 (REQ-05-02).
+	stateAxes := dev.StateForJSON()
+	groupID := dev.GroupID
+	lastSeenMs := dev.LastSeen.UnixMilli()
+	a.mu.Unlock()
+
+	// B3: 로스터 갱신 후 제어 응답 대기 에코 해소 (REQ-03-09). 로스터 락 해제 후 별도
+	// pending 락 하에서 처리한다 (락 중첩 금지). 기대 일치 pending 이 없으면 — 이미 타임아웃
+	// 제거된 late echo 포함 — no-op 이며 로스터만 갱신된다 (REQ-03-10).
+	a.pendings.resolve(deviceID, st)
+
+	// 오프라인→온라인 전이는 device_online 이벤트로 별도 방출한다 (REQ-05-05). 온라인→오프라인
+	// (명시적 online=false 유입)은 device_offline 로 방출한다.
+	if !prevOnline && newOnline {
+		a.emitOnlineTransition("device_online", deviceID, groupID, true, lastSeenMs)
+	} else if prevOnline && !newOnline {
+		a.emitOnlineTransition("device_offline", deviceID, groupID, false, lastSeenMs)
+	}
+
+	// 변경된 축이 있으면 device_state_changed 를 방출한다 (REQ-06-02). 변경이 없으면(동일 상태
+	// 재수신) 방출하지 않는다.
+	if len(changed) > 0 {
+		a.emitStateChanged(deviceID, groupID, newOnline, changed, stateAxes, lastSeenMs)
+	}
+}
+
+// emitStateChanged 는 device_state_changed 메시지를 msgCh 로 non-blocking 방출한다 (REQ-06-02).
+//
+// 메시지는 type/device_id/group_id(설정 시)/online/관측 축(StateForJSON)/changed_fields/
+// timestamp(epoch ms int64)를 담는다. B8 status 노드가 이 shape 를 재사용한다.
+func (a *AirPurifierAgent) emitStateChanged(deviceID, groupID string, online bool, changed []string, stateAxes map[string]any, timestampMs int64) {
+	data := map[string]any{
+		"device_id":      deviceID,
+		"online":         online,
+		"changed_fields": changed,
+		"timestamp":      timestampMs,
+	}
+	if groupID != "" {
+		data["group_id"] = groupID
+	}
+	// 관측 게이팅된 상태 축(power/fan_speed/online)을 최상위에 병합한다. online 축이 관측됐다면
+	// 최상위 online 과 동일 값이므로 무해하게 덮어쓴다.
+	for k, v := range stateAxes {
+		data[k] = v
+	}
+	a.sendEvent("device_state_changed", data)
+}
+
+// emitOnlineTransition 는 device_online / device_offline 전이 이벤트를 방출한다 (REQ-05-05).
+func (a *AirPurifierAgent) emitOnlineTransition(eventType, deviceID, groupID string, online bool, timestampMs int64) {
+	data := map[string]any{
+		"device_id": deviceID,
+		"online":    online,
+		"timestamp": timestampMs,
+	}
+	if groupID != "" {
+		data["group_id"] = groupID
+	}
+	a.sendEvent(eventType, data)
+}
+
+// FeedState 는 port 모드에서 상태 입력 포트로 유입된 원시 상태 페이로드를 에이전트에
+// 전달하는 배선 훅이다 (REQ-AIRPUR-001-01-12). direct 구독 콜백과 동일한 디코딩 경로를 탄다.
+func (a *AirPurifierAgent) FeedState(deviceID string, payload []byte) {
+	a.handleStatePayload(deviceID, payload)
+}
+
+// ControlPort 는 port 모드 제어 출력 포트 채널을 반환한다 (direct 모드는 nil).
+// 하류 노드가 이 채널을 drain 하여 mqtt-out 으로 발행한다 (REQ-AIRPUR-001-01-12).
+func (a *AirPurifierAgent) ControlPort() <-chan ControlMessage {
+	return a.ctrlCh
+}
+
+// Stop 은 에이전트를 정지한다 (REQ-AIRPUR-001-01-09).
+func (a *AirPurifierAgent) Stop(_ context.Context) error {
+	if err := a.TransitionTo(lifecycle.StateStopping); err != nil {
+		return fmt.Errorf("airpurifier stop: %w", err)
+	}
+	close(a.stopCh)
+	// B5: 오프라인 감지 모니터 고루틴이 stopCh 를 관측하고 종료할 때까지 대기하여 고루틴/
+	// 타이머 누수를 방지한다. 모니터는 락을 채널 송신에 걸쳐 잡지 않으므로 Wait 가 데드락하지
+	// 않는다 (offline_timeout<=0 이면 고루틴 미기동, Wait 즉시 반환).
+	a.monitorWG.Wait()
+	// B3: 미해소 pending 을 모두 종결하여 대기 중인 controlDevice 호출자를 즉시 해제하고
+	// 타이머 누수를 방지한다.
+	a.pendings.close()
+	if a.client != nil {
+		a.client.Disconnect()
+	}
+	if err := a.TransitionTo(lifecycle.StateStopped); err != nil {
+		return fmt.Errorf("airpurifier stop: %w", err)
+	}
+	return nil
+}
+
+// Pause 는 Running -> Paused 로 전환한다.
+func (a *AirPurifierAgent) Pause(_ context.Context) error {
+	if err := a.TransitionTo(lifecycle.StatePaused); err != nil {
+		return fmt.Errorf("airpurifier pause: %w", err)
+	}
+	return nil
+}
+
+// Resume 은 Paused -> Running 으로 전환한다.
+func (a *AirPurifierAgent) Resume(_ context.Context) error {
+	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
+		return fmt.Errorf("airpurifier resume: %w", err)
+	}
+	return nil
+}
+
+// Health 는 에이전트의 건강 상태를 반환한다.
+func (a *AirPurifierAgent) Health() agent.HealthStatus {
+	now := time.Now()
+	switch a.CurrentState() {
+	case lifecycle.StateRunning:
+		return agent.HealthStatus{Status: agent.HealthHealthy, LastCheck: now, Message: "airpurifier agent is running"}
+	case lifecycle.StatePaused:
+		return agent.HealthStatus{Status: agent.HealthDegraded, LastCheck: now, Message: "airpurifier agent is paused"}
+	default:
+		return agent.HealthStatus{Status: agent.HealthUnhealthy, LastCheck: now, Message: fmt.Sprintf("airpurifier agent is in %s state", a.CurrentState())}
+	}
+}
+
+// Process 는 JSON 명령을 디스패치한다 (REQ-AIRPUR-001-01-07 Process 표면).
+//
+// B2 는 런타임 디바이스 CRUD(Module 2)와 개별 2-축 제어(Module 3)를 구현한다. 셀렉터
+// fan-out(group_id/station/line)·응답 대기·역사 레지스트리 CRUD 등은 후속 배치에서 구현되며
+// 그 전까지 ErrInvalidCommand 를 반환한다.
+func (a *AirPurifierAgent) Process(data []byte) ([]byte, error) {
+	var req processRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("airpurifier process: invalid JSON: %w", err)
+	}
+
+	switch req.Command {
+	// Module 2 — 런타임 디바이스 CRUD.
+	case "add_device":
+		return a.handleAddDevice(req)
+	case "remove_device":
+		return a.handleRemoveDevice(req)
+	case "set_device":
+		return a.handleSetDevice(req, data)
+	case "list_devices":
+		return a.handleListDevices()
+
+	// Module 3/4 — 2-축 제어 (device_id 단일 또는 셀렉터 fan-out). dispatchControl 이
+	// 셀렉터 우선순위(device_id > station > line > group_id)로 라우팅한다.
+	case "set_power", "set_fan_speed", "set_multiple":
+		return a.dispatchControl(req)
+
+	// Module 2B — 역사 레지스트리 CRUD (B6, REQ-AIRPUR-001-02-11).
+	case "add_station":
+		return a.handleAddStation(req)
+	case "remove_station":
+		return a.handleRemoveStation(req)
+	case "list_stations":
+		return a.handleListStations()
+
+	// Module 5 — 캐시 상태 조회 (B5, REQ-AIRPUR-001-05-04). 브로커 통신 없이 로스터에서 즉시 반환.
+	case "request_state":
+		return a.handleRequestState(req)
+
+	// 후속 배치에서 구현.
+	case "set_group", "set_line", "set_station",
+		"get_state", "get_all",
+		"get_line_stations":
+		return nil, fmt.Errorf("%w: %q not implemented in this batch", ErrInvalidCommand, req.Command)
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrInvalidCommand, req.Command)
+	}
+}
+
+// ReceiveMessage 는 msgCh 에서 노드 방출 메시지를 수신한다 (agent.MessageReceiver).
+func (a *AirPurifierAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+	select {
+	case data := <-a.msgCh:
+		return data, nil
+	case <-a.stopCh:
+		return nil, fmt.Errorf("airpurifier: stopped")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 로스터 조회 (REQ-AIRPUR-001-02-02, RWMutex 보호)
+// ---------------------------------------------------------------------------
+
+// ListDevices 는 등록된 전체 디바이스의 값 복사본 목록을 반환한다 (device_id 정렬).
+func (a *AirPurifierAgent) ListDevices() []Device {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	out := make([]Device, 0, len(a.devices))
+	for _, dev := range a.devices {
+		out = append(out, dev.clone())
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
+	return out
+}
+
+// GetDevice 는 device_id 로 디바이스 값 복사본을 조회한다. 미등록 시 ErrDeviceNotFound.
+func (a *AirPurifierAgent) GetDevice(deviceID string) (*Device, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	dev, ok := a.devices[deviceID]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrDeviceNotFound, deviceID)
+	}
+	d := dev.clone()
+	return &d, nil
+}
+
+// GroupMembers 는 group_id 에 속한 device_id 목록을 로스터 속성에서 도출한다 (정렬).
+func (a *AirPurifierAgent) GroupMembers(groupID string) []string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	var ids []string
+	for id, dev := range a.devices {
+		if dev.GroupID == groupID {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// ---------------------------------------------------------------------------
+// Agent 인터페이스 나머지 (Configure/ID/Name/Type/Info/Stats)
+// ---------------------------------------------------------------------------
+
+// Configure 는 설정을 재파싱하여 갱신한다 (런타임 재구성; 트랜스포트 배선 변경은 후속 배치).
+func (a *AirPurifierAgent) Configure(config agent.AgentConfig) error {
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("airpurifier configure: %w", err)
+	}
+	if len(config.Transport.Options) > 0 {
+		cfg, err := parseAirPurifierConfig(config.Transport.Options)
+		if err != nil {
+			return fmt.Errorf("airpurifier configure: re-parse: %w", err)
+		}
+		a.mu.Lock()
+		a.cfg = cfg
+		a.agentConfig = config
+		a.mu.Unlock()
+	} else {
+		a.mu.Lock()
+		a.agentConfig = config
+		a.mu.Unlock()
+	}
+	return nil
+}
+
+// ID 는 에이전트 ID 를 반환한다.
+func (a *AirPurifierAgent) ID() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.agentConfig.ID
+}
+
+// Name 은 에이전트 이름을 반환한다.
+func (a *AirPurifierAgent) Name() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.agentConfig.Name
+}
+
+// Type 은 에이전트 타입을 반환한다.
+func (a *AirPurifierAgent) Type() string { return agentType }
+
+// Info 는 에이전트 정보 스냅샷을 반환한다.
+func (a *AirPurifierAgent) Info() agent.AgentInfo {
+	a.mu.RLock()
+	cfg := a.agentConfig
+	startedAt := a.startedAt
+	createdAt := a.createdAt
+	a.mu.RUnlock()
+
+	state := a.CurrentState()
+	var uptime time.Duration
+	if state == lifecycle.StateRunning && !startedAt.IsZero() {
+		uptime = time.Since(startedAt)
+	}
+	return agent.AgentInfo{
+		ID:        cfg.ID,
+		Name:      cfg.Name,
+		Type:      agentType,
+		State:     state,
+		Health:    a.Health(),
+		Config:    cfg,
+		Stats:     a.stats.Snapshot(),
+		StartedAt: startedAt,
+		Uptime:    uptime,
+		CreatedAt: createdAt,
+	}
+}
+
+// Stats 는 통계 스냅샷을 반환한다.
+func (a *AirPurifierAgent) Stats() agent.StatsSnapshot {
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = len(a.msgCh), cap(a.msgCh)
+	return s
+}

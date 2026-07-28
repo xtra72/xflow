@@ -92,6 +92,8 @@ func (r *Registry) registerBuiltins() {
 		{"samsung-hvacr01-status", NewSamsungHvacr01StatusNode, "io", "Samsung HVACR-01 (NASA) 디바이스 상태 조회"},
 		{"samsung-hvacr01-control", NewSamsungHvacr01ControlNode, "io", "Samsung HVACR-01 (NASA) 디바이스 제어"},
 		{"samsung-hvacr01", NewSamsungHvacr01Node, "io", "Samsung HVACR-01 (NASA) 상태 조회 + 제어 통합"},
+		{"airpurifier-status", NewAirpurifierStatusNode, "io", "공기청정기 상태 텔레메트리 + 상태 입력 포트"},
+		{"airpurifier-control", NewAirpurifierControlNode, "io", "공기청정기 제어 + 제어 출력 포트"},
 		{"mqtt-subscriber", NewMQTTSubNode, "io", "MQTT 토픽 구독 및 메시지 수신"},
 		{"mqtt-publisher", NewMQTTPublisherNode, "io", "MQTT 토픽으로 메시지 발행"},
 		{"thingplus-uplink", NewThingplusUplinkNode, "io", "Thingplus 게이트웨이 업링크: 텔레메트리/속성 발행"},
@@ -161,6 +163,8 @@ var deprecatedHVACAliases = map[string]string{
 	"century_hvacr01":         "century-hvacr01",
 	"century_hvacr01_status":  "century-hvacr01-status",
 	"century_hvacr01_control": "century-hvacr01-control",
+	"airpurifier_status":      "airpurifier-status",
+	"airpurifier_control":     "airpurifier-control",
 }
 
 // registerDeprecatedHVACAliases 는 deprecatedHVACAliases 의 각 `_` 이름을
