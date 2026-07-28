@@ -1,11 +1,13 @@
 ---
 id: SPEC-NODE-004
 type: plan
-version: "1.0.0"
+version: "1.2.0"
 spec_ref: SPEC-NODE-004
 ---
 
 # SPEC-NODE-004 구현 계획
+
+> **v1.2.0 개정 노트 (2026-07-28)**: 아래 §1~§6은 v1.0.0/v1.1.0 원본 계획이다. v1.2.0 인플레이스 개정으로 추가된 3종 기능(weekly / monthly / per-schedule payload)의 구현 계획은 **§7 (v1.2.0 개정 마일스톤)** 및 **§8 (v1.2.0 기술적 접근)**에 별도로 기술한다. 코드는 후속 run-phase에서 구현한다.
 
 ## 1. 구현 전략 개요
 
@@ -304,3 +306,161 @@ internal/node/trigger.go (본 SPEC)
 | 3 | registry.go | RegisterDefaults()에 "trigger" 추가 | trigger.go |
 
 모든 파일에 대해 TDD 방식으로 테스트 파일을 먼저 작성한다.
+
+---
+
+## 7. v1.2.0 개정 마일스톤 (weekly / monthly / per-schedule payload)
+
+기존 구조(하위 호환)를 보존하면서 3종 기능을 추가한다. 방법론은 신규 로직에 대해 TDD(RED-GREEN-REFACTOR)를 적용한다.
+
+### Primary Goal (v1.2.0): weekly 스케줄 타입 (P0)
+
+**범위**: REQ-NODE-004-02-09
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - weekday 토큰 파싱 테스트 (`sun`~`sat`, 정수 `0`~`6`)
+   - `days × times` 조합 → cron 등록 수 검증 (예: 3요일 × 2시각 = 6개)
+   - 생성 cron 표현식 정확성 (`0 9 * * 1` 등) 검증
+   - 잘못된 요일 토큰/시각 → `ErrTriggerInvalidScheduleValue`
+2. 구현 (TDD GREEN)
+   - `TriggerScheduleWeekly` 상수, `TriggerSchedule.Days`/`Times` 필드 파싱
+   - weekday 토큰 → cron Dow 매핑 테이블
+   - `(day × time)` 조합마다 `SetCron("MM HH * * DOW")` 등록
+
+**산출물**: weekly 스케줄 타입 완성
+
+### Secondary Goal (v1.2.0): monthly 스케줄 타입 + last-day 게이트 (P0)
+
+**범위**: REQ-NODE-004-02-10, REQ-NODE-004-02-11
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - `day` 정수(1~31) / `"first"` → `MM HH N * *` cron 등록 검증
+   - `day="last"` → 매일 cron(`MM HH * * *`) 등록 검증
+   - 월말 게이트: 핸들러가 `time.Now().Day() == lastDayOfMonth` 일 때만 emit (2월 28/29, 30일 달, 31일 달 각각 검증 — 주입 가능한 clock 사용)
+   - 존재하지 않는 정수 일자(31)가 짧은 달에 미발화 (표준 cron 동작) 문서화 테스트
+   - 잘못된 `day` 값 → `ErrTriggerInvalidScheduleValue`
+2. 구현 (TDD GREEN)
+   - `TriggerScheduleMonthly` 상수, `TriggerSchedule.Day`/`Times` 파싱
+   - `day` 정수/`first`/`last` 분기
+   - last-day 게이트: entry에 last-day 플래그 저장, 핸들러 진입 시 월 마지막 날 계산 후 게이트
+
+**산출물**: monthly 스케줄 타입(date/first/last) 완성
+
+### Tertiary Goal (v1.2.0): 스케줄별 페이로드 (per-schedule payload) (P0)
+
+**범위**: REQ-NODE-004-03-04 (전 스케줄 타입 적용)
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - 스케줄 항목 payload 존재 → 항목 페이로드 우선 사용
+   - 스케줄 항목 payload 없음 → 노드 레벨 페이로드 폴백
+   - 노드 레벨도 없음 → 기본 페이로드 폴백
+   - 항목 `payload_template` 우선 치환 테스트
+   - 하위 호환: 기존 노드-레벨 전용 설정이 오늘과 동일 동작 (회귀 테스트)
+   - interval/cron/once/times/weekly/monthly 전 타입에서 per-schedule payload 동작 검증
+2. 구현 (TDD GREEN)
+   - `TriggerSchedule.Payload`/`PayloadTmpl` 파싱
+   - `buildMessage()` 페이로드 결정부를 3단계 폴백 순서로 재작성 (entry 페이로드 → 노드 레벨 → 기본)
+   - 깊은 복사 정책 유지
+
+**산출물**: 스케줄별 페이로드 오버라이드 완성 (하위 호환 보존)
+
+### Optional Goal (v1.2.0): Web UI weekly/monthly 위젯 + 스케줄별 페이로드 편집 (P1)
+
+**범위**: REQ-NODE-004-08-05
+
+**작업 항목**:
+
+1. `TriggerScheduleEditor.tsx`: weekly(요일 토글 + 시각 칩), monthly(일자 선택 + 시각 칩) 전용 위젯 추가
+2. `nodeSchemas.ts`: `trigger_schedules` 위젯이 신규 필드(`days`/`day`/`times`) 직렬화 지원
+3. 각 스케줄 항목에 "이 스케줄 전용 페이로드(선택)" 서브 섹션 (항목별 payload_mode 토글)
+4. 인라인 검증: 요일 최소 1개, 일자 유효성, `HH:MM` 정규식, 29~31일 미발화 안내 힌트
+
+**산출물**: 웹 UI 편집 지원 (백엔드 저장 형식과 호환)
+
+---
+
+## 8. v1.2.0 기술적 접근
+
+### 8.1 weekly → cron 변환 전략
+
+```
+days=["mon","wed","fri"], times=["09:00","18:00"]
+  → 조합 (day × time) 6개:
+     mon 09:00 → "0 9 * * 1"
+     mon 18:00 → "0 18 * * 1"
+     wed 09:00 → "0 9 * * 3"
+     wed 18:00 → "0 18 * * 3"
+     fri 09:00 → "0 9 * * 5"
+     fri 18:00 → "0 18 * * 5"
+```
+
+weekday 토큰 매핑: `sun/0→0, mon/1→1, tue/2→2, wed/3→3, thu/4→4, fri/5→5, sat/6→6`.
+`times` 타입과 동일한 `SetCron()` 경로를 사용하므로 별도 타임존 처리는 없다 (A13).
+
+### 8.2 monthly → cron 변환 전략
+
+```
+day=15, times=["08:30"]        → "30 8 15 * *"   (매월 15일)
+day="first", times=["00:00"]   → "0 0 1 * *"     (매월 1일)
+day="last", times=["23:59"]    → "59 23 * * *"   (매일 등록) + 핸들러 월말 게이트
+```
+
+- 정수/`first`: 표준 5필드 cron `MM HH N * *`. 존재하지 않는 일자(31 등)는 짧은 달에 미발화 (표준 cron, 의도됨).
+- `last`: robfig/cron이 마지막 날을 표현하지 못하므로 매일 cron으로 등록 후 게이트.
+
+### 8.3 monthly last-day 게이트 구현
+
+```go
+// entry.isLastDay == true 인 스케줄 핸들러 진입부:
+now := n.clock.Now()
+lastDay := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
+if now.Day() != lastDay {
+    return // 월말 아님 → emit 안 함
+}
+// 월말 → 정상 메시지 생성
+```
+
+`time.Date(year, month+1, 0, ...)`는 "다음 달 0일" = "이번 달 마지막 날"을 반환하므로
+2월(28/29), 30일 달, 31일 달을 모두 자동 처리한다. 테스트 용이성을 위해 주입 가능한 clock 인터페이스 사용을 권장한다.
+
+### 8.4 per-schedule payload 결정 로직
+
+```go
+func (n *TriggerNode) resolvePayload(entry triggerTimerEntry, tr TimerTrigger) any {
+    // (1) 스케줄 항목 페이로드 우선
+    if entry.payload != nil { return deepCopy(entry.payload) }
+    if entry.payloadTmpl != nil { return renderTemplate(entry.payloadTmpl, tr, entry) }
+    // (2) 노드 레벨 폴백
+    if n.payload != nil { return deepCopy(n.payload) }
+    if n.payloadTmpl != nil { return renderTemplate(n.payloadTmpl, tr, entry) }
+    // (3) 기본 페이로드
+    return map[string]any{"trigger_time": tr.TriggerAt.Format(time.RFC3339)}
+}
+```
+
+기존 `buildMessage()`의 노드-레벨 전용 로직을 위 3단계 폴백으로 승격한다. entry 페이로드가 없는 기존 설정은 (2)/(3) 경로로 오늘과 동일하게 동작한다 (하위 호환).
+
+---
+
+## 9. v1.2.0 리스크 및 대응
+
+### Risk 7: monthly last-day 게이트의 시간대/경계 오류
+
+- **위험**: 자정 근처 실행 시 날짜 경계, DST 전환, 잘못된 마지막 날 계산
+- **대응**: `time.Date(y, m+1, 0, ...)` 표준 관용구 사용(윤년/월별 일수 자동 처리). 주입 가능한 clock으로 2월 28/29, 30/31일 달 경계 테스트
+
+### Risk 8: weekly/monthly 다중 조합 타이머 누수
+
+- **위험**: `days × times` 조합으로 다수 타이머 등록 시 Init 실패 롤백 또는 Shutdown 누락
+- **대응**: 모든 등록 타이머를 `entries`에 추적. Init 부분 실패 시 기존 롤백 로직(REQ-NODE-004-05-01) 재사용, Shutdown 시 전체 Cancel
+
+### Risk 9: per-schedule payload 하위 호환 회귀
+
+- **위험**: 페이로드 결정부 재작성으로 기존 노드-레벨 페이로드 동작 변경
+- **대응**: 기존 설정(노드 레벨 전용) 회귀 테스트를 명시적 AC로 추가(AC-NODE-004-42). 폴백 순서 (2)/(3)이 기존 경로와 동일함을 보장

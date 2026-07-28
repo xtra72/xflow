@@ -1,11 +1,12 @@
 ---
 id: SPEC-NODE-004
-version: "1.1.0"
-status: implemented
+version: "1.2.0"
+status: in-progress
 created: "2026-04-15"
-updated: "2026-04-16"
+updated: "2026-07-28"
 author: xtra
 priority: high
+amendment_of: SPEC-NODE-004
 ---
 
 ## HISTORY
@@ -14,6 +15,15 @@ priority: high
 |------|------|----------|
 | 2026-04-15 | 1.0.0 | 초기 SPEC 작성 (draft) |
 | 2026-04-16 | 1.1.0 | 구현 완료: (1) Timer Agent 주입 경로 확정 — `AgentResolver`는 user agent manager 소속 에이전트만 해석하므로, 시스템 Timer Agent는 `node.WithTimer(system.Timer)` NodeOption 으로 엔진 구성 시점에 직접 주입한다. `resolveTimer()` 스텁 로직을 `n.timer` 기반 통과 + config fallback 패턴으로 재작성. (2) 웹 UI — `trigger` 노드 스키마 신규 등록, `TriggerScheduleEditor` 전용 컴포넌트 추가 (interval/cron/once/times 4종 전용 위젯 + 프리셋 + 인라인 검증), `payload_mode` UI 전용 가상 필드로 payload/payload_template 토글, `source_ch_size` 고급 설정 섹션 분리 |
+| 2026-07-28 | 1.2.0 | 인플레이스 개정 (amendment, plan-phase): 트리거 노드에 3종 신규 기능 추가 — (1) `weekly` 스케줄 타입 (특정 요일×시각 다중 조합 → `MM HH * * DOW` cron 등록), (2) `monthly` 스케줄 타입 (특정 일자/`first`/`last` × 시각; `last`는 매일 cron 등록 후 핸들러에서 월 마지막 날에만 emit 게이트), (3) 스케줄별 페이로드 (per-schedule payload — 항목별 선택 + 노드 레벨 폴백, 전 스케줄 타입 적용, 완전 하위 호환). 신규 REQ: 02-09(weekly), 02-10(monthly date/first), 02-11(monthly last-day 게이트), 03-04(per-schedule payload), 08-05(웹 UI weekly/monthly 위젯 + 스케줄별 페이로드 편집). 코드 구현은 후속 run-phase에서 진행. |
+
+### Amendments
+
+- **1.2.0 (2026-07-28) — 인플레이스 개정 (in-place amendment)**
+  - **직전 상태**: v1.1.0, `status: implemented`
+  - **prior_completed_sha**: 미기록 (v1.1.0은 sync-close 이전 `implemented` 상태로, 별도 완료 SHA가 추적되지 않음)
+  - **개정 근거 (rationale)**: 기존 4종 스케줄(interval/cron/once/times)만으로는 "특정 요일 반복", "특정 월일 반복", "월말 반복" 및 "스케줄별 서로 다른 페이로드" 요구를 표현할 수 없어, 사용자 확정 요구사항 3종(R1 weekly / R2 monthly / R3 per-schedule payload)을 추가한다.
+  - **범위 (scope)**: Module 2(스케줄 설정)에 weekly/monthly 타입 추가, Module 3(페이로드)에 스케줄별 페이로드 해결 순서 추가, Module 4(메타데이터) `schedule_type` enum 확장, 4.x 명세/웹 UI 확장. 기존 interval/cron/once/times 동작 및 노드 레벨 payload 동작은 **변경 없음**(하위 호환).
 
 # SPEC-NODE-004: Trigger Node - 스케줄 기반 데이터 생성 소스 노드
 
@@ -21,13 +31,13 @@ priority: high
 
 ### 1.1 시스템 개요
 
-XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trigger Node를 정의한다. Trigger Node는 지정된 시간 간격, cron 표현식, 특정 시각, 또는 매일 반복 시각에 따라 설정된 페이로드(숫자, 문자열, 오브젝트 등)를 자동 생성하여 플로우에 전송하는 SourceNode이다.
+XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trigger Node를 정의한다. Trigger Node는 지정된 시간 간격, cron 표현식, 특정 시각, 매일 반복 시각, 특정 요일 반복(weekly), 또는 특정 월일/월말 반복(monthly)에 따라 설정된 페이로드(숫자, 문자열, 오브젝트 등)를 자동 생성하여 플로우에 전송하는 SourceNode이다.
 
 본 SPEC은 다음을 포함한다:
 
 - **TriggerNode** (`trigger.go`): BaseNode + SourceNode 인터페이스 구현, 스케줄 기반 메시지 생성
-- **Schedule Configuration**: 다중 스케줄 동시 지원 (interval, cron, once, times)
-- **Payload Generation**: 정적 값 또는 트리거 컨텍스트 기반 템플릿 페이로드 생성
+- **Schedule Configuration**: 다중 스케줄 동시 지원 (interval, cron, once, times, weekly, monthly)
+- **Payload Generation**: 정적 값 또는 트리거 컨텍스트 기반 템플릿 페이로드 생성, 스케줄별 페이로드(per-schedule payload) 오버라이드
 - **Timer Agent Integration**: Timer System Agent를 AgentResolver 패턴으로 참조
 
 ### 1.2 기술 환경
@@ -56,9 +66,11 @@ XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trig
 
 **IN SCOPE (본 SPEC 범위)**:
 - TriggerNode 구조체 (BaseNode 임베딩 + SourceNode 인터페이스)
-- 4종 스케줄 타입: interval, cron, once, times
-- 다중 스케줄 동시 설정 및 실행
+- 6종 스케줄 타입: interval, cron, once, times, weekly (v1.2.0), monthly (v1.2.0)
+- 다중 스케줄 동시 설정 및 실행 (weekly/monthly는 요일·시각·일자 다중 조합 지원)
 - 정적 및 템플릿 기반 페이로드 생성
+- 스케줄별 페이로드(per-schedule payload) 오버라이드 및 노드 레벨 폴백 (v1.2.0)
+- monthly `"last"` 월말 emit 게이트 (v1.2.0)
 - 메시지 메타데이터 자동 첨부
 - Timer Agent 통합 (AgentResolver 패턴)
 - sourceCh 채널 기반 메시지 출력
@@ -95,6 +107,7 @@ XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trig
 - A4: Engine이 SourceNode 인터페이스를 확인하고 `SourceCh()`에서 메시지를 읽는 goroutine을 관리한다
 - A5: sourceCh 채널이 닫히면 Engine의 SourceNode 읽기 goroutine이 정상 종료된다
 - A6: `_agent_resolver` 키로 config에 주입되는 AgentResolver가 Timer 인터페이스를 구현하는 Agent를 반환한다
+- A13 (v1.2.0): `weekly`/`monthly` 스케줄은 기존 `times` 타입과 **동일한 cron 스케줄러 경로**(`SetCron()`)를 사용한다. 별도의 타임존 처리 로직을 새로 도입하지 않으며, 현재 cron 스케줄러가 사용하는 타임존을 그대로 상속한다 (동작이 놀랍지 않도록 명시).
 
 ### 2.2 도메인 가정
 
@@ -104,6 +117,9 @@ XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trig
 - A10: 페이로드 미설정 시 기본 페이로드 `{"trigger_time": <현재시각>}`을 생성한다
 - A11: sourceCh 버퍼가 가득 찬 경우(backpressure), 메시지를 드롭하고 경고 로그를 기록한다
 - A12: 템플릿 페이로드의 변수는 `$.trigger_time`, `$.tick_count`, `$.schedule_id`, `$.trigger_id` 4종을 지원한다
+- A14 (v1.2.0): `weekly`/`monthly`는 배열(`days[]`, `times[]`)을 받아 다중 조합을 지원한다. 단일 값도 원소 1개의 배열로 취급한다. weekday 토큰은 소문자 3자 약어(`sun`~`sat`) 및 정수 `0`~`6`(0=일요일)을 허용하며, `monthly.day`는 정수 `1`~`31`, `"first"`(=1일), `"last"`(월말)를 허용한다.
+- A15 (v1.2.0): 각 스케줄 항목은 선택적으로 자체 `payload`/`payload_template`를 가질 수 있다. 발화 시 페이로드 해결 순서는 (1) 스케줄 항목 페이로드 → (2) 노드 레벨 페이로드 → (3) 기본 페이로드 이며, 이는 모든 스케줄 타입에 적용되고 기존 설정과 **완전 하위 호환**된다.
+- A16 (v1.2.0): 표준 cron은 "마지막 날(L)"을 표현하지 못하므로, `monthly.day = "last"`는 매일 cron 등록 후 핸들러에서 `time.Now().Day()`가 해당 월의 마지막 날과 같을 때만 메시지를 emit한다. 또한 존재하지 않는 일자(예: 31)를 정수로 지정하면 해당 날이 없는 달에는 발화하지 않는다(표준 cron 동작, 의도됨).
 
 ---
 
@@ -180,6 +196,49 @@ XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trig
 
 시스템은 스케줄 값이 유효하지 않은 경우(파싱 실패, 과거 시각 등) Init 시 `ErrTriggerInvalidScheduleValue` 에러를 반환**해야 한다**.
 
+#### REQ-NODE-004-02-09 (State-Driven) weekly 스케줄 타입 (v1.2.0)
+
+**IF** 스케줄 타입이 `"weekly"`이면, **THEN** `days` 배열의 각 요일과 `times` 배열의 각 시각 **조합마다** cron 표현식(`MM HH * * DOW`)으로 변환하여 Timer Agent의 `SetCron()`으로 매주 반복 타이머를 등록해야 한다.
+
+설정 스키마:
+
+```json
+{"type": "weekly", "days": ["mon", "wed", "fri"], "times": ["09:00", "18:00"]}
+```
+
+- **`days`**: 요일 토큰 배열. 허용 토큰 = 소문자 3자 약어(`sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`), 정수 `0`~`6`도 허용. cron Dow 필드 매핑: `sun`/0 → 0, `mon`/1 → 1, `tue`/2 → 2, `wed`/3 → 3, `thu`/4 → 4, `fri`/5 → 5, `sat`/6 → 6.
+- **`times`**: `"HH:MM"` 형식(00:00~23:59) 시각 배열.
+- 등록 타이머 수 = `len(days) × len(times)` (다중 조합).
+- 잘못된 요일 토큰 또는 시각은 `ErrTriggerInvalidScheduleValue` 에러를 반환한다.
+
+예시: `days=["mon","wed","fri"]`, `times=["09:00","18:00"]` → 6개 cron 등록 (`0 9 * * 1`, `0 18 * * 1`, `0 9 * * 3`, `0 18 * * 3`, `0 9 * * 5`, `0 18 * * 5`)
+
+#### REQ-NODE-004-02-10 (State-Driven) monthly 스케줄 타입 - 특정 일자/first (v1.2.0)
+
+**IF** 스케줄 타입이 `"monthly"`이고 `day`가 정수(1~31) 또는 `"first"`이면, **THEN** 해당 일자(`"first"` = 1일)와 `times` 배열의 각 시각마다 cron 표현식(`MM HH N * *`)으로 변환하여 Timer Agent의 `SetCron()`으로 매월 반복 타이머를 등록해야 한다.
+
+설정 스키마:
+
+```json
+{"type": "monthly", "day": 15, "times": ["08:30"]}
+```
+
+- **`day`**: 정수 `1`~`31`, 또는 `"first"`(=1일), 또는 `"last"`(REQ-NODE-004-02-11 참조).
+- **`times`**: `"HH:MM"` 형식 시각 배열.
+- **표준 cron 특성**: 존재하지 않는 날짜(예: `day=31`)는 그 날이 없는 달(2월, 4월 등)에는 **발화하지 않는다**. 이는 의도된 동작이며, 항상 월말에 발화하려면 `"last"`를 사용해야 한다.
+- 잘못된 `day` 값(0, 32 이상, 알 수 없는 문자열) 또는 시각은 `ErrTriggerInvalidScheduleValue` 에러를 반환한다.
+
+예시: `day=15`, `times=["08:30"]` → `30 8 15 * *` (매월 15일 08:30)
+
+#### REQ-NODE-004-02-11 (Event-Driven) monthly `"last"` 월말 emit 게이트 (v1.2.0)
+
+**WHEN** 스케줄 타입이 `"monthly"`이고 `day`가 `"last"`인 경우, **THEN** robfig/cron이 마지막 날(L)을 표현하지 못하므로 `times` 배열의 각 시각마다 **매일** cron(`MM HH * * *`)을 등록하되, 핸들러 진입 시 현재 날짜가 해당 월의 마지막 날일 때만(`time.Now().Day() == <해당 월의 마지막 날>`) 메시지를 emit해야 한다.
+
+- 타이머는 매일 발화하지만, 월말이 아닌 날에는 메시지를 생성하지 않는다 (게이트).
+- 2월(28/29일), 30일 달(4·6·9·11월), 31일 달 모두 각 달의 **실제 마지막 날**에만 발화한다.
+
+예시: `{"type": "monthly", "day": "last", "times": ["23:59"]}` → 매일 `59 23 * * *` 등록 + 핸들러 월말 게이트
+
 ---
 
 ### Module 3: Payload Generation - 페이로드 생성 (P0)
@@ -207,6 +266,29 @@ XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trig
 - `$.schedule_id`: 스케줄 식별자
 - `$.trigger_id`: 트리거 노드 이름
 
+#### REQ-NODE-004-03-04 (State-Driven) 스케줄별 페이로드 (per-schedule payload) (v1.2.0)
+
+**IF** 개별 스케줄 항목에 자체 `payload`(정적) 또는 `payload_template`가 지정되어 있으면, **THEN** 해당 스케줄이 발화할 때 그 스케줄 항목의 페이로드를 우선 사용해야 한다. 발화된 스케줄의 페이로드 **해결 순서**:
+
+1. **해당 스케줄 항목**의 `payload` / `payload_template` (존재 시)
+2. **노드 레벨** `payload` / `payload_template` (존재 시)
+3. **기본 페이로드** `{"trigger_time": <현재 ISO 8601 시각>}`
+
+- **적용 범위**: 본 규칙은 **모든 스케줄 타입**(interval, cron, once, times, weekly, monthly)에 적용된다. 신규 타입에만 한정되지 않는다.
+- **하위 호환**: 스케줄 항목에 페이로드가 없는 기존 설정은 노드 레벨 페이로드(또는 기본 페이로드)로 동작하여 **완전 하위 호환**을 보장한다 (오늘과 동일하게 동작).
+- 정적 페이로드는 트리거마다 깊은 복사되어 메시지 간 데이터 격리를 유지한다 (REQ-NODE-004-03-01 동일 정책).
+
+설정 스키마 예시:
+
+```json
+{
+  "type": "weekly",
+  "days": ["mon"],
+  "times": ["09:00"],
+  "payload": {"shift": "morning", "team": "A"}
+}
+```
+
 ---
 
 ### Module 4: Message Metadata - 메시지 메타데이터 (P0)
@@ -215,7 +297,7 @@ XFlow 플랫폼에 스케줄 기반 데이터 생성 기능을 제공하는 Trig
 
 시스템은 **항상** 생성된 메시지의 Metadata에 다음 정보를 첨부해야 한다:
 
-- `trigger.schedule_type`: 스케줄 타입 (`"interval"` | `"cron"` | `"once"` | `"times"`)
+- `trigger.schedule_type`: 스케줄 타입 (`"interval"` | `"cron"` | `"once"` | `"times"` | `"weekly"` | `"monthly"`)
 - `trigger.schedule_id`: 스케줄 고유 식별자 (TimerID)
 - `trigger.tick_count`: 해당 스케줄의 누적 트리거 횟수
 - `trigger.trigger_time`: 트리거 발생 시각 (ISO 8601)
@@ -308,7 +390,21 @@ nodes:
           value: "2026-04-15T10:00:00Z"
         - type: "times"
           value: ["09:00", "12:00", "18:00"]
-      payload:
+        # weekly (v1.2.0): 특정 요일 × 시각 다중 조합
+        - type: "weekly"
+          days: ["mon", "wed", "fri"]
+          times: ["09:00", "18:00"]
+        # monthly (v1.2.0): 특정 일자/first/last × 시각
+        - type: "monthly"
+          day: 15                 # 정수(1~31) | "first" | "last"
+          times: ["08:30"]
+        # monthly last-day (v1.2.0): 스케줄별 페이로드 오버라이드 예시
+        - type: "monthly"
+          day: "last"
+          times: ["23:59"]
+          payload:                # 이 스케줄만의 페이로드 (노드 레벨보다 우선)
+            report: "month-end"
+      payload:                    # 노드 레벨(폴백) 페이로드
         temperature: 25.5
         status: "active"
       channel_buffer: 64
@@ -341,12 +437,26 @@ const (
     TriggerScheduleCron     TriggerScheduleType = "cron"
     TriggerScheduleOnce     TriggerScheduleType = "once"
     TriggerScheduleTimes    TriggerScheduleType = "times"
+    TriggerScheduleWeekly   TriggerScheduleType = "weekly"  // v1.2.0
+    TriggerScheduleMonthly  TriggerScheduleType = "monthly" // v1.2.0
 )
 
 // TriggerSchedule 은 단일 스케줄 설정을 나타낸다.
 type TriggerSchedule struct {
     Type  TriggerScheduleType // 스케줄 타입
     Value any                 // interval: "5s", cron: "0 */5 * * * *", once: "2026-...", times: ["09:00",...]
+
+    // weekly (v1.2.0): 요일 × 시각 다중 조합
+    Days  []string // 요일 토큰 (sun~sat 또는 0~6). weekly 전용
+    // weekly/monthly (v1.2.0): 시각 배열 ("HH:MM")
+    Times []string // weekly/monthly 전용 (times 타입은 Value 사용, 하위 호환)
+    // monthly (v1.2.0): 일자 (정수 1~31 | "first" | "last")
+    Day   any      // monthly 전용
+
+    // per-schedule payload (v1.2.0): 스케줄 항목별 페이로드 오버라이드 (선택)
+    // nil이면 노드 레벨 payload/payloadTmpl 로 폴백한다.
+    Payload     any            // 이 스케줄의 정적 페이로드 (선택)
+    PayloadTmpl map[string]any // 이 스케줄의 템플릿 페이로드 (선택)
 }
 
 // triggerTimerEntry 는 등록된 타이머의 런타임 정보를 추적한다.
@@ -482,12 +592,16 @@ Timer Agent 트리거
     │
     ├── 1. TimerHandler 호출 (독립 goroutine)
     │       ├── TimerTrigger 수신 {TimerID, TriggerAt, TickCount, ScheduleID}
-    │       └── Paused 상태 확인 → paused=true이면 리턴 (메시지 미생성)
+    │       ├── Paused 상태 확인 → paused=true이면 리턴 (메시지 미생성)
+    │       └── monthly "last" 게이트 (v1.2.0):
+    │             해당 entry가 last-day 스케줄이면
+    │             time.Now().Day() != <해당 월 마지막 날> 이면 리턴 (메시지 미생성)
     │
-    ├── 2. 페이로드 결정
-    │       ├── payload 설정 있음 → 정적 페이로드 복사
-    │       ├── payload_template 설정 있음 → 변수 치환
-    │       └── 둘 다 없음 → 기본 페이로드 {"trigger_time": now}
+    ├── 2. 페이로드 결정 (per-schedule 우선, v1.2.0)
+    │       ├── (1) 스케줄 항목 payload/payload_template 있음 → 우선 사용
+    │       ├── (2) 노드 레벨 payload 있음 → 정적 페이로드 복사
+    │       ├── (2) 노드 레벨 payload_template 있음 → 변수 치환
+    │       └── (3) 모두 없음 → 기본 페이로드 {"trigger_time": now}
     │
     ├── 3. Message 생성
     │       ├── Payload: 결정된 페이로드
@@ -545,20 +659,31 @@ web/src/
 | `cron` | cron 표현식 + 칩 | 매분/5분마다/매시/매일 자정/매일 9시/평일 9시 |
 | `once` | `<input type="datetime-local">` | 로컬 시간 선택 → RFC3339 변환 |
 | `times` | `<input type="time">` + 칩 목록 | HH:MM 정렬 추가/삭제 |
+| `weekly` (v1.2.0) | 요일 토글 버튼 7개(일~토) + `<input type="time">` 칩 목록 | 평일/주말/매일 요일 프리셋 |
+| `monthly` (v1.2.0) | 일자 선택(1~31 드롭다운 \| `first` \| `last`) + `<input type="time">` 칩 목록 | 1일/15일/말일 프리셋 |
 
 실시간 인라인 검증:
 - `interval`: duration 정규식 `^\d+(ns|us|µs|ms|s|m|h)$`
 - `cron`: 5/6 필드 개수 체크
 - `once`: RFC3339 파싱 + 미래 시각 확인
 - `times`: `HH:MM` 정규식 + 중복 제거
+- `weekly` (v1.2.0): 요일 최소 1개 선택 + 시각 최소 1개(`HH:MM` 정규식) + 요일/시각 중복 제거
+- `monthly` (v1.2.0): 일자 값(1~31 \| `first` \| `last`) 유효성 + 시각 최소 1개(`HH:MM`); `day`가 29~31 정수일 때 "해당 일이 없는 달에는 발화하지 않음, 월말은 `last` 사용" 안내 힌트 노출
 
-저장 형식은 백엔드와 호환되는 배열:
+스케줄별 페이로드 편집 (v1.2.0):
+- 각 스케줄 항목에 접힘 상태의 "이 스케줄 전용 페이로드(선택)" 서브 섹션 제공 (`payload` 정적 / `payload_template`).
+- 미입력 시 노드 레벨 페이로드로 폴백함을 안내. 항목별 `payload_mode`(none/static/template) 서브 토글로 처리.
+
+저장 형식은 백엔드와 호환되는 배열 (weekly/monthly는 `days`/`day`/`times` 필드, 스케줄별 `payload` 선택):
 ```json
 [
   {"type": "interval", "value": "5s"},
   {"type": "cron",     "value": "0 */5 * * * *"},
   {"type": "once",     "value": "2026-04-15T10:00:00Z"},
-  {"type": "times",    "value": ["09:00", "12:00"]}
+  {"type": "times",    "value": ["09:00", "12:00"]},
+  {"type": "weekly",   "days": ["mon", "wed", "fri"], "times": ["09:00", "18:00"]},
+  {"type": "monthly",  "day": 15, "times": ["08:30"]},
+  {"type": "monthly",  "day": "last", "times": ["23:59"], "payload": {"report": "month-end"}}
 ]
 ```
 
@@ -594,7 +719,11 @@ web/src/
 |------------|------|------|---------|
 | REQ-NODE-004-01-01 ~ 01-04 | TriggerNode Core | internal/node/trigger.go | P0 |
 | REQ-NODE-004-02-01 ~ 02-08 | Schedule Configuration | internal/node/trigger.go | P0 |
+| REQ-NODE-004-02-09 (v1.2.0) | weekly 스케줄 타입 | internal/node/trigger.go | P0 |
+| REQ-NODE-004-02-10 (v1.2.0) | monthly 스케줄 타입 (date/first) | internal/node/trigger.go | P0 |
+| REQ-NODE-004-02-11 (v1.2.0) | monthly last-day emit 게이트 | internal/node/trigger.go | P0 |
 | REQ-NODE-004-03-01 ~ 03-03 | Payload Generation | internal/node/trigger.go | P0 |
+| REQ-NODE-004-03-04 (v1.2.0) | 스케줄별 페이로드 (per-schedule payload) | internal/node/trigger.go | P0 |
 | REQ-NODE-004-04-01 | Message Metadata | internal/node/trigger.go | P0 |
 | REQ-NODE-004-05-01 ~ 05-04 | Lifecycle Integration | internal/node/trigger.go | P0 |
 | REQ-NODE-004-06-01 ~ 06-04 | Error Handling | internal/node/trigger.go | P0 |
@@ -603,3 +732,4 @@ web/src/
 | REQ-NODE-004-08-02 (v1.1.0) | Web UI - 스키마 등록 | web/src/config/nodeSchemas.ts | P1 |
 | REQ-NODE-004-08-03 (v1.1.0) | Web UI - advanced 섹션 인프라 | web/src/components/property/DynamicForm.tsx | P1 |
 | REQ-NODE-004-08-04 (v1.1.0) | Web UI - payload_mode 가상 필드 | web/src/components/property/PropertyPanel.tsx | P1 |
+| REQ-NODE-004-08-05 (v1.2.0) | Web UI - weekly/monthly 위젯 + 스케줄별 페이로드 편집 | web/src/components/property/TriggerScheduleEditor.tsx, web/src/config/nodeSchemas.ts | P1 |

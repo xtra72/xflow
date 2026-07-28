@@ -1,11 +1,13 @@
 ---
 id: SPEC-NODE-004
 type: acceptance
-version: "1.0.0"
+version: "1.2.0"
 spec_ref: SPEC-NODE-004
 ---
 
 # SPEC-NODE-004 수락 기준
+
+> **v1.2.0 개정 노트 (2026-07-28)**: AC-NODE-004-01 ~ 34는 v1.0.0/v1.1.0 원본 수락 기준이다. v1.2.0 개정으로 추가된 weekly / monthly / per-schedule payload 및 하위 호환 시나리오는 **Module 7 (v1.2.0 신규 기능)** 에 AC-NODE-004-35 이후로 추가된다.
 
 ## Module 1: TriggerNode Core - 트리거 노드 핵심
 
@@ -356,11 +358,165 @@ And 모든 메시지가 올바른 메타데이터를 포함해야 한다
 
 ---
 
+## Module 7: v1.2.0 신규 기능 - weekly / monthly / per-schedule payload
+
+### AC-NODE-004-35: weekly 다중 요일×시각 조합 cron 등록
+
+```gherkin
+Given TriggerNode에 schedules: [{"type": "weekly", "days": ["mon", "wed", "fri"], "times": ["09:00", "18:00"]}]가 설정되어 있을 때
+When Init(ctx)를 호출하면
+Then Mock Timer의 SetCron()이 6번(3요일 × 2시각) 호출되어야 한다
+And 등록된 cron 표현식 집합이 {"0 9 * * 1", "0 18 * * 1", "0 9 * * 3", "0 18 * * 3", "0 9 * * 5", "0 18 * * 5"}와 일치해야 한다
+
+When Mock Timer가 임의의 핸들러를 호출하면
+Then SourceCh()에서 메시지를 수신할 수 있어야 한다
+And Metadata의 trigger.schedule_type이 "weekly"여야 한다
+```
+
+### AC-NODE-004-36: weekly 정수 요일 토큰 및 잘못된 토큰 거부
+
+```gherkin
+Given TriggerNode에 schedules: [{"type": "weekly", "days": [0, 6], "times": ["10:00"]}]가 설정되어 있을 때 (0=일요일, 6=토요일)
+When Init(ctx)를 호출하면
+Then SetCron()이 "0 10 * * 0"와 "0 10 * * 6"로 각각 호출되어야 한다
+
+Given TriggerNode에 schedules: [{"type": "weekly", "days": ["funday"], "times": ["10:00"]}]가 설정되어 있을 때 (잘못된 요일 토큰)
+When Init(ctx)를 호출하면
+Then ErrTriggerInvalidScheduleValue 에러를 반환해야 한다
+
+Given TriggerNode에 schedules: [{"type": "weekly", "days": ["mon"], "times": ["25:61"]}]가 설정되어 있을 때 (잘못된 시각)
+When Init(ctx)를 호출하면
+Then ErrTriggerInvalidScheduleValue 에러를 반환해야 한다
+```
+
+### AC-NODE-004-37: monthly 특정 일자 cron 등록
+
+```gherkin
+Given TriggerNode에 schedules: [{"type": "monthly", "day": 15, "times": ["08:30"]}]가 설정되어 있을 때
+When Init(ctx)를 호출하면
+Then Mock Timer의 SetCron()이 "30 8 15 * *"로 호출되어야 한다
+
+When Mock Timer가 핸들러를 호출하면
+Then SourceCh()에서 메시지 1개를 수신할 수 있어야 한다
+And Metadata의 trigger.schedule_type이 "monthly"여야 한다
+```
+
+### AC-NODE-004-38: monthly "first" 일자 cron 등록
+
+```gherkin
+Given TriggerNode에 schedules: [{"type": "monthly", "day": "first", "times": ["00:00"]}]가 설정되어 있을 때
+When Init(ctx)를 호출하면
+Then Mock Timer의 SetCron()이 "0 0 1 * *"로 호출되어야 한다 (first = 1일)
+```
+
+### AC-NODE-004-39: monthly "last" 월말 emit 게이트
+
+```gherkin
+Given TriggerNode에 schedules: [{"type": "monthly", "day": "last", "times": ["23:59"]}]가 설정되어 있을 때
+When Init(ctx)를 호출하면
+Then Mock Timer의 SetCron()이 매일 cron "59 23 * * *"로 호출되어야 한다 (마지막 날 직접 표현 불가)
+
+Given 주입된 clock의 현재 날짜가 2026-02-28 (2월 마지막 날)일 때
+When Mock Timer가 핸들러를 호출하면
+Then SourceCh()에서 메시지 1개를 수신할 수 있어야 한다
+
+Given 주입된 clock의 현재 날짜가 2026-02-27 (월말 아님)일 때
+When Mock Timer가 핸들러를 호출하면
+Then 메시지가 생성되지 않아야 한다 (게이트로 차단)
+
+Given 주입된 clock의 현재 날짜가 2028-02-29 (윤년 2월 마지막 날)일 때
+When Mock Timer가 핸들러를 호출하면
+Then SourceCh()에서 메시지 1개를 수신할 수 있어야 한다
+
+Given 주입된 clock의 현재 날짜가 2026-04-30 (30일 달의 마지막 날)일 때
+When Mock Timer가 핸들러를 호출하면
+Then SourceCh()에서 메시지 1개를 수신할 수 있어야 한다
+
+Given 주입된 clock의 현재 날짜가 2026-01-31 (31일 달의 마지막 날)일 때
+When Mock Timer가 핸들러를 호출하면
+Then SourceCh()에서 메시지 1개를 수신할 수 있어야 한다
+```
+
+### AC-NODE-004-40: monthly 존재하지 않는 정수 일자 (표준 cron 미발화)
+
+```gherkin
+Given TriggerNode에 schedules: [{"type": "monthly", "day": 31, "times": ["10:00"]}]가 설정되어 있을 때
+When Init(ctx)를 호출하면
+Then Mock Timer의 SetCron()이 "0 10 31 * *"로 호출되어야 한다
+And 이는 31일이 없는 달(2월, 4월 등)에는 발화하지 않는 표준 cron 동작이어야 한다 (의도됨: 항상 월말은 "last" 사용)
+```
+
+### AC-NODE-004-41: per-schedule payload 우선 (스케줄 페이로드가 노드 레벨보다 우선)
+
+```gherkin
+Given TriggerNode에 노드 레벨 payload: {"src": "node"}가 있고
+And schedules: [{"type": "interval", "value": "50ms", "payload": {"src": "schedule"}}]가 설정되어 있을 때
+When 트리거가 발생하면
+Then 생성된 메시지의 Payload가 {"src": "schedule"}여야 한다 (스케줄 항목 페이로드 우선)
+And 노드 레벨 payload는 사용되지 않아야 한다
+```
+
+### AC-NODE-004-42: per-schedule payload 폴백 순서 (노드 레벨 → 기본)
+
+```gherkin
+Given TriggerNode에 노드 레벨 payload: {"src": "node"}가 있고
+And schedules: [{"type": "interval", "value": "50ms"}]가 설정되어 있을 때 (스케줄 항목 페이로드 없음)
+When 트리거가 발생하면
+Then 생성된 메시지의 Payload가 {"src": "node"}여야 한다 (노드 레벨로 폴백)
+
+Given TriggerNode에 노드 레벨 payload도 없고
+And schedules: [{"type": "interval", "value": "50ms"}]가 설정되어 있을 때
+When 트리거가 발생하면
+Then 생성된 메시지의 Payload에 "trigger_time" 키가 포함되어야 한다 (기본 페이로드로 폴백)
+```
+
+### AC-NODE-004-43: per-schedule payload_template 우선 치환
+
+```gherkin
+Given schedules: [{"type": "interval", "value": "50ms", "payload_template": {"c": "$.tick_count"}}]가 설정되어 있을 때
+When 트리거가 발생하면 (tick_count=2)
+Then 생성된 메시지의 Payload에 c가 2여야 한다 (스케줄 항목 템플릿 우선 치환)
+```
+
+### AC-NODE-004-44: 하위 호환 - 기존 4종 타입 + 노드 레벨 payload 동작 불변
+
+```gherkin
+Given TriggerNode에 schedules: [{"type": "times", "value": ["09:00", "18:00"]}]와 노드 레벨 payload: {"t": 1}만 설정되어 있을 때 (per-schedule payload 미사용, v1.1.0 형식)
+When Init(ctx)를 호출하면
+Then SetCron()이 "0 9 * * *"와 "0 18 * * *"로 호출되어야 한다 (기존 times 동작 그대로)
+
+When 트리거가 발생하면
+Then 생성된 메시지의 Payload가 {"t": 1}여야 한다 (노드 레벨 payload, v1.1.0과 동일)
+And interval/cron/once/times 타입의 기존 동작이 변경되지 않아야 한다
+```
+
+### AC-NODE-004-45: Web UI - weekly/monthly 위젯 및 스케줄별 페이로드 편집
+
+```gherkin
+Given TriggerScheduleEditor에서 스케줄 타입으로 "weekly"를 선택했을 때
+Then 요일 토글 버튼(일~토)과 시각 칩 입력 위젯이 표시되어야 한다
+And 저장 시 {"type": "weekly", "days": [...], "times": [...]} 형식으로 직렬화되어야 한다
+
+Given 스케줄 타입으로 "monthly"를 선택했을 때
+Then 일자 선택(1~31 | first | last)과 시각 칩 위젯이 표시되어야 한다
+And day가 29~31 정수일 때 "해당 일이 없는 달에는 발화하지 않음" 안내 힌트가 노출되어야 한다
+And 저장 시 {"type": "monthly", "day": ..., "times": [...]} 형식으로 직렬화되어야 한다
+
+Given 임의 스케줄 항목에서 "이 스케줄 전용 페이로드"를 입력했을 때
+Then 저장 시 해당 스케줄 항목에 payload 또는 payload_template가 포함되어야 한다
+And 미입력 시 노드 레벨 페이로드로 폴백함이 안내되어야 한다
+```
+
+---
+
 ## 품질 게이트
 
 ### Definition of Done
 
-- [ ] 모든 수락 기준(AC-NODE-004-01 ~ 34) 테스트 통과
+- [ ] 모든 수락 기준(AC-NODE-004-01 ~ 45) 테스트 통과
+- [ ] v1.2.0 신규 기능(AC-NODE-004-35 ~ 45): weekly/monthly/per-schedule payload 테스트 통과
+- [ ] monthly "last" 월말 게이트: 2월(28/29), 30일 달, 31일 달 경계 테스트 통과 (주입 clock)
+- [ ] 하위 호환 회귀(AC-NODE-004-44): 기존 4종 타입 + 노드 레벨 payload 동작 불변 확인
 - [ ] `go test ./internal/node/...` 전체 통과
 - [ ] `go test -race ./internal/node/...` 경쟁 상태 없음
 - [ ] `go vet ./internal/node/...` 경고 없음
