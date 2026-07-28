@@ -2471,7 +2471,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Input ---
   trigger: {
-    description: '스케줄(주기/cron/1회/매일 시각)에 따라 메시지를 자동으로 생성합니다. 입력이 없는 소스 노드이며, 플로우의 시작점으로 사용합니다.',
+    description: '스케줄(주기/cron/1회/매일 시각/요일 반복/월간 반복)에 따라 메시지를 자동으로 생성합니다. 입력이 없는 소스 노드이며, 플로우의 시작점으로 사용합니다.',
     inputDesc: '없음 (소스 노드)',
     outputDesc: 'payload: 설정에 따라 다름 (정적 값, 템플릿, 또는 기본 {trigger_time}). metadata: trigger.schedule_type, trigger.schedule_id, trigger.tick_count, trigger.trigger_time, trigger.node_name',
     configSchema: {
@@ -2481,7 +2481,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'trigger_schedules',
           label: '스케줄',
           required: true,
-          description: '1개 이상의 스케줄을 지정합니다. 여러 스케줄이 동시에 실행될 수 있습니다.',
+          description: '1개 이상의 스케줄을 지정합니다. 타입: 주기(interval)/cron/1회(once)/매일 시각(times)/요일 반복(weekly)/월간 반복(monthly). 각 스케줄은 자체 페이로드를 가질 수 있으며, 미지정 시 노드 레벨 페이로드로 폴백합니다. 여러 스케줄이 동시에 실행될 수 있습니다.',
         },
         {
           name: 'payload_mode',
