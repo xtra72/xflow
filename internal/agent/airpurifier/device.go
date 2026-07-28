@@ -1,6 +1,9 @@
 package airpurifier
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // 상태 축별 observed bitmask (samsung observedCore 패턴). 관측 기반 emit 에 사용.
 const (
@@ -25,6 +28,11 @@ type Device struct {
 	Online   bool      // 온라인 상태
 	LastSeen time.Time // 마지막 상태 수신 시각
 	Source   string    // 등록 출처: "config", "bridge", "auto"
+
+	// Address 는 다중 필드 토픽 주소의 원시 placeholder→값 맵이다 ({attribute} 제외, M14).
+	// 유입 토픽 파싱 또는 설정 시드에서 채워지며, 명령 토픽 재구성(renderTopic)에 사용한다.
+	// {device_id} 단일 필드 모델에서는 {"device_id": id} 이거나 nil(이 경우 device 필드로 폴백).
+	Address map[string]string
 
 	// observed 는 각 축(power/fan_speed/online)의 관측 여부 bitmask 이다 (관측 기반 emit).
 	// 디바이스 상태가 페이로드로 한 번이라도 관측된 축의 bit 만 set 되며, StateForJSON 이
@@ -62,4 +70,32 @@ func (d *Device) StateForJSON() map[string]any {
 }
 
 // clone 은 Device 의 값 복사본을 반환한다 (로스터 조회가 내부 포인터를 노출하지 않도록).
-func (d *Device) clone() Device { return *d }
+// Address 맵은 얕은 공유를 피하기 위해 깊은 복사한다.
+func (d *Device) clone() Device {
+	c := *d
+	if d.Address != nil {
+		c.Address = make(map[string]string, len(d.Address))
+		for k, v := range d.Address {
+			c.Address[k] = v
+		}
+	}
+	return c
+}
+
+// deviceFieldValue 는 표준 placeholder 이름을 Device 필드 값으로 매핑한다 (양방향 매핑의
+// 정방향). 알 수 없는 이름은 ok=false. 명령 토픽 렌더에서 Address 에 없는 placeholder 를
+// 재구성할 때 폴백으로 쓴다.
+func deviceFieldValue(name string, d *Device) (string, bool) {
+	switch name {
+	case placeholderDeviceID:
+		return d.DeviceID, true
+	case placeholderStationCode:
+		return d.Station, true
+	case placeholderPlaceCode:
+		return d.Place, true
+	case placeholderDeviceIndex:
+		return strconv.Itoa(d.Index), true
+	default:
+		return "", false
+	}
+}

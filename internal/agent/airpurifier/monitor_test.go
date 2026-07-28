@@ -249,23 +249,36 @@ func TestMonitor_RequestStateNoBroker(t *testing.T) {
 	assert.Equal(t, 0, mock.publishCount(), "request_state 는 MQTT publish 를 하지 않아야 한다")
 }
 
-// remove_device(direct) 는 디바이스 state 토픽을 Unsubscribe 해야 한다.
-func TestMonitor_RemoveDeviceUnsubscribes(t *testing.T) {
+// M14: 단일 와일드카드 구독 모델 — add/remove_device 는 디바이스별 구독/해제를 하지 않는다.
+// state 유입은 와일드카드 구독 콜백이 실제 토픽을 파싱하여 대상 디바이스로 라우팅하고,
+// remove 후에도 와일드카드 구독은 유지된다(디바이스별 Unsubscribe 없음).
+func TestMonitor_WildcardSubscriptionModel(t *testing.T) {
 	opts := directOpts()
 	ap, mock := newDirectAgentWithMock(t, opts)
 	require.NoError(t, ap.Start(context.Background()))
 	defer func() { _ = ap.Stop(context.Background()) }()
 
-	// 런타임 등록(add_device) → 구독.
+	// Start 시 단일 와일드카드 구독만 존재하며, 디바이스별 렌더 토픽은 구독되지 않는다.
+	assert.ElementsMatch(t, []string{"airpurifier/+/state"}, mock.subscribedTopics())
+
+	// 런타임 등록(add_device) 은 디바이스별 구독을 추가하지 않는다.
 	_, err := ap.Process([]byte(`{"command":"add_device","device_id":"ap-201"}`))
 	require.NoError(t, err)
-	assert.Contains(t, mock.subscribedTopics(), "airpurifier/ap-201/state")
+	assert.NotContains(t, mock.subscribedTopics(), "airpurifier/ap-201/state",
+		"M14: 디바이스별 구독을 하지 않는다")
 
-	// remove_device → 해당 state 토픽 Unsubscribe.
+	// 그럼에도 ap-201 의 실제 토픽 유입은 와일드카드 콜백으로 라우팅되어 로스터를 갱신한다.
+	mock.deliver("airpurifier/ap-201/state", []byte(`{"power":true}`))
+	dev, err := ap.GetDevice("ap-201")
+	require.NoError(t, err)
+	assert.True(t, dev.Power)
+
+	// remove_device 는 디바이스별 Unsubscribe 를 하지 않는다(와일드카드 구독 유지).
 	_, err = ap.Process([]byte(`{"command":"remove_device","device_id":"ap-201"}`))
 	require.NoError(t, err)
-	assert.Contains(t, mock.unsubscribedTopics(), "airpurifier/ap-201/state",
-		"remove_device 는 state 토픽을 Unsubscribe 해야 한다")
+	assert.NotContains(t, mock.unsubscribedTopics(), "airpurifier/ap-201/state",
+		"M14: 디바이스별 Unsubscribe 를 하지 않는다")
+	assert.Contains(t, mock.subscribedTopics(), "airpurifier/+/state", "와일드카드 구독은 유지된다")
 }
 
 // 모니터 고루틴은 Stop() 에서 깨끗이 종료되어야 한다 (누수 없음).

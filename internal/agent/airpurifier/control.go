@@ -41,45 +41,103 @@ type memberResult struct {
 // recordControlAudit 는 제어 감사 레코드 기록 표면이다 (REQ-AIRPUR-001-06-03). 구현은
 // audit.go 에 있다 — controlDevice 가 개별/fan-out 멤버 제어 양쪽에서 호출한다(B7).
 
-// controlDevice 는 단일 디바이스 제어의 공통 경로이다: 디바이스 확인 → 인코딩 → cmdSink
-// 방출 → 감사 → 결과 반환 (REQ-AIRPUR-001-03-01..07).
+// controlDevice 는 단일 디바이스 제어의 공통 진입점이다: 디바이스 확인 → 주소 필드 도출 →
+// 모드 디스패치 (REQ-AIRPUR-001-03-01..07, M14).
 //
 // cmdSink 만 egress 로 사용하므로 direct(브로커 발행)·port(제어 출력 포트 emit) 두 모드가
-// 동일한 코드 경로를 탄다 (REQ-AIRPUR-001-01-11). B2 는 fire-and-forget 이지만, B3 이
-// 방출 직전 pending 등록 / 방출 직후 에코 대기를 재구조화 없이 삽입할 수 있도록 방출을
-// 명시적 시임으로 분리해 둔다.
+// 동일한 코드 경로를 탄다 (REQ-AIRPUR-001-01-11). 명령 템플릿에 {attribute} 가 있으면
+// attribute-per-topic(축별 스칼라 발행), 없으면 기존 JSON-blob 발행으로 디스패치한다.
 func (a *AirPurifierAgent) controlDevice(deviceID, command string, cmd commandPayload) (memberResult, error) {
-	// 디바이스 존재 확인 (락 하에 스냅샷 후 해제 — RWMutex 재진입 트랩 회피).
+	// 디바이스 존재 확인 + 주소 필드 스냅샷 (락 하에 뜬 뒤 해제 — RWMutex 재진입 트랩 회피).
 	a.mu.RLock()
-	_, exists := a.devices[deviceID]
-	a.mu.RUnlock()
+	dev, exists := a.devices[deviceID]
 	if !exists {
+		a.mu.RUnlock()
 		return memberResult{}, fmt.Errorf("%w: %q", ErrDeviceNotFound, deviceID)
 	}
+	fields := a.buildCommandFieldsLocked(dev)
+	a.mu.RUnlock()
 
+	if a.cfg.commandHasAttribute {
+		return a.controlDeviceAttr(deviceID, command, cmd, fields)
+	}
+	return a.controlDeviceBlob(deviceID, command, cmd, fields)
+}
+
+// controlDeviceBlob 는 JSON-blob 모드의 단일 디바이스 제어이다 (하위호환 경로). 설정된 축을
+// 하나의 JSON 페이로드로 인코딩하여 주소 필드로 렌더한 토픽으로 1회 발행하고, 하나의 pending 을
+// 등록해 에코를 기다린다 (REQ-03-08/09). timeout==0 이면 fire-and-forget.
+func (a *AirPurifierAgent) controlDeviceBlob(deviceID, command string, cmd commandPayload, fields map[string]string) (memberResult, error) {
 	payload, err := encodeCommandPayload(a.cfg.PayloadMapping, cmd)
 	if err != nil {
 		return memberResult{}, err
 	}
 
-	// B3: control_response_timeout>0 이면 방출 직전 pending 을 등록한다. register→emit→wait
-	// 순서를 지켜, 방출 직후 race 로 되돌아오는 에코를 놓치지 않는다 (REQ-03-08). timeout==0
-	// 이면 pending 없이 fire-and-forget 한다 (B2 동작 그대로).
 	var p *pending
 	if a.cfg.ControlResponseTimeout > 0 {
 		p = a.pendings.register(deviceID, command, expectFromPayload(cmd), a.cfg.ControlResponseTimeout)
 	}
 
-	if err := a.cmdSink.SendCommand(deviceID, payload); err != nil {
-		a.pendings.cancel(p) // 방출 실패 시 등록된 pending 정리 (p==nil 이면 no-op).
+	if err := a.cmdSink.SendCommand(outboundCommand{DeviceID: deviceID, Fields: fields, Payload: payload}); err != nil {
+		a.pendings.cancel(p)
 		return memberResult{}, err
 	}
 
-	// B3: 방출 직후 에코 대기 (timeout>0). 에코 해소 → status "ok"; 타임아웃 → ErrControlTimeout
-	// + status "timeout" (pending 은 finalize 에서 이미 제거됨, REQ-03-09).
 	if p != nil {
 		if err := p.wait(); err != nil {
 			return memberResult{DeviceID: deviceID, Command: command, Status: "timeout"}, err
+		}
+	}
+
+	res := memberResult{DeviceID: deviceID, Command: command, Status: "ok"}
+	a.recordControlAudit(res)
+	return res, nil
+}
+
+// controlDeviceAttr 는 attribute-per-topic 모드의 단일 디바이스 제어이다 (M14). 설정된 각 축을
+// 독립 발행으로 분해한다: 전원은 payload_mapping.power_field 토큰의 토픽으로, 풍량은
+// fan_speed_field 토큰의 토픽으로 축 스칼라를 발행한다(전원 먼저, 풍량 그다음). 각 축은 독립
+// pending(축별 command kind 키)으로 에코를 기다리므로, 축별 상태 에코가 독립적으로 해소한다.
+func (a *AirPurifierAgent) controlDeviceAttr(deviceID, command string, cmd commandPayload, fields map[string]string) (memberResult, error) {
+	m := a.cfg.PayloadMapping
+	type axisEmit struct {
+		attr    string
+		command string
+		payload []byte
+		expect  pendingExpect
+	}
+	var axes []axisEmit
+	if cmd.Power != nil {
+		axes = append(axes, axisEmit{
+			attr:    m.Power.Name,
+			command: "set_power",
+			payload: scalarBytes(m.Power.encodeBool(*cmd.Power)),
+			expect:  expectFromPayload(commandPayload{Power: cmd.Power}),
+		})
+	}
+	if cmd.FanSpeed != nil {
+		axes = append(axes, axisEmit{
+			attr:    m.FanSpeed.Name,
+			command: "set_fan_speed",
+			payload: scalarBytes(m.FanSpeed.encodeInt(*cmd.FanSpeed)),
+			expect:  expectFromPayload(commandPayload{FanSpeed: cmd.FanSpeed}),
+		})
+	}
+
+	for _, ax := range axes {
+		var p *pending
+		if a.cfg.ControlResponseTimeout > 0 {
+			p = a.pendings.register(deviceID, ax.command, ax.expect, a.cfg.ControlResponseTimeout)
+		}
+		out := outboundCommand{DeviceID: deviceID, Fields: fields, Attribute: ax.attr, Payload: ax.payload}
+		if err := a.cmdSink.SendCommand(out); err != nil {
+			a.pendings.cancel(p)
+			return memberResult{}, err
+		}
+		if p != nil {
+			if err := p.wait(); err != nil {
+				return memberResult{DeviceID: deviceID, Command: command, Status: "timeout"}, err
+			}
 		}
 	}
 
@@ -200,7 +258,8 @@ func (a *AirPurifierAgent) handleSetMultiple(req processRequest) ([]byte, error)
 // ---------------------------------------------------------------------------
 
 // handleAddDevice 는 add_device 명령을 처리한다 (Source="bridge", Online=false).
-// direct 모드에서는 state 토픽을 구독하고, 양 모드에서 device_registered 이벤트를 방출한다.
+// 양 모드에서 device_registered 이벤트를 방출한다. state 토픽 구독은 Start 의 단일 와일드카드
+// 구독이 모든 디바이스를 이미 커버하므로 디바이스별 구독을 하지 않는다 (M14).
 func (a *AirPurifierAgent) handleAddDevice(req processRequest) ([]byte, error) {
 	if req.DeviceID == "" {
 		return nil, fmt.Errorf("%w: add_device requires device_id", ErrInvalidCommand)
@@ -222,13 +281,6 @@ func (a *AirPurifierAgent) handleAddDevice(req processRequest) ([]byte, error) {
 		Source:   "bridge",
 	}
 	a.mu.Unlock()
-
-	// state 토픽 구독 (direct 모드만; port 모드는 client==nil 이라 건너뛴다). 락 해제 후 수행.
-	if a.client != nil {
-		if err := a.subscribeDeviceState(req.DeviceID); err != nil {
-			a.logger.Error("airpurifier: add_device subscribe failed", "device_id", req.DeviceID, "error", err)
-		}
-	}
 
 	a.sendEvent("device_registered", map[string]any{"device_id": req.DeviceID, "source": "bridge"})
 
@@ -262,14 +314,9 @@ func (a *AirPurifierAgent) handleRemoveDevice(req processRequest) ([]byte, error
 	delete(a.devices, req.DeviceID)
 	a.mu.Unlock()
 
-	// B5: direct 모드에서 제거된 디바이스의 state 토픽 구독을 해제한다 (B2 문서화 gap 종결).
-	// 락 해제 후 수행한다. port 모드는 client==nil 이라 건너뛴다.
-	if a.client != nil {
-		topic := renderTopic(a.cfg.StateTopicTemplate, req.DeviceID)
-		if err := a.client.Unsubscribe(topic); err != nil {
-			a.logger.Warn("airpurifier: remove_device unsubscribe failed", "device_id", req.DeviceID, "topic", topic, "error", err)
-		}
-	}
+	// M14: state 토픽은 단일 와일드카드 구독이 모든 디바이스를 커버하므로 디바이스별 Unsubscribe
+	// 를 하지 않는다. 제거된 디바이스로의 유입은 handleStateMessage 에서 자동 재등록될 수 있으나,
+	// bridge 삭제는 런타임 명령이므로 이후 유입은 auto 로 재등록되는 정상 동작이다.
 
 	a.sendEvent("device_unregistered", map[string]any{"device_id": req.DeviceID})
 

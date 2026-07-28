@@ -11,8 +11,9 @@ var (
 	ErrInvalidTransportMode = errors.New("airpurifier: invalid transport_mode (must be 'direct' or 'port')")
 	// ErrBrokerRequired 는 direct 모드에서 broker 가 비어 있을 때 반환된다.
 	ErrBrokerRequired = errors.New("airpurifier: broker is required in direct mode")
-	// ErrInvalidTopicTemplate 는 토픽 템플릿에 {device_id} placeholder 가 없을 때 반환된다.
-	ErrInvalidTopicTemplate = errors.New("airpurifier: topic template must contain {device_id} placeholder")
+	// ErrInvalidTopicTemplate 는 토픽 템플릿에 {placeholder} 가 하나도 없을 때 반환된다
+	// ({device_id} 를 강제하지 않는다 — 다중 필드 템플릿 지원, M14).
+	ErrInvalidTopicTemplate = errors.New("airpurifier: topic template must contain at least one {placeholder}")
 	// ErrInvalidPayloadMapping 은 payload_mapping 이 없거나 power/fan_speed 필드가 누락됐을 때 반환된다.
 	ErrInvalidPayloadMapping = errors.New("airpurifier: payload_mapping must define power_field and fan_speed_field")
 	// ErrDeviceNotFound 는 device_id 로 조회한 디바이스가 로스터에 없을 때 반환된다.

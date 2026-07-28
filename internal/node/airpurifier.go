@@ -556,10 +556,14 @@ func airpurifierTrySetJSONPayload(msg message.Message, data []byte) error {
 
 // airpurifierControlMessageToFlow 는 에이전트 ControlMessage 를 하류 message.Message 로
 // 변환한다. device_id 는 메타/페이로드에, 인코딩된 명령 페이로드는 payload 로 나른다.
+//
+// M14 다중 필드: port 모드에서 하류 mqtt-out 이 명령 토픽을 재구성할 수 있도록 주소 필드
+// (station_code/place_code/device_index 등)와 attribute 토큰을 메타/페이로드에 실어 나른다.
 func airpurifierControlMessageToFlow(cm airpurifier.ControlMessage) message.Message {
 	msg := message.New()
 	msg.Payload().Set("device_id", cm.DeviceID)
 	// 인코딩된 명령 페이로드가 JSON 이면 파싱하여 payload 로 노출하고, 아니면 원시 바이트로.
+	// attribute-per-topic 모드의 스칼라 페이로드는 JSON 이 아닐 수 있으므로 원시 바이트로 보존된다.
 	var parsed map[string]any
 	if err := json.Unmarshal(cm.Payload, &parsed); err == nil {
 		for k, v := range parsed {
@@ -567,6 +571,15 @@ func airpurifierControlMessageToFlow(cm airpurifier.ControlMessage) message.Mess
 		}
 	} else {
 		msg.Payload().Set("payload", cm.Payload)
+	}
+	// 주소 필드/attribute 를 메타·페이로드로 전파 (하류 토픽 재구성용, M14).
+	for k, v := range cm.Fields {
+		msg.Payload().Set(k, v)
+		msg.Metadata().Set(k, v)
+	}
+	if cm.Attribute != "" {
+		msg.Payload().Set("attribute", cm.Attribute)
+		msg.Metadata().Set("attribute", cm.Attribute)
 	}
 	msg.Metadata().Set("device_id", cm.DeviceID)
 	msg.SetType("device_command")

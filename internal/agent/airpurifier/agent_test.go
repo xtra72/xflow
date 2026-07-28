@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -119,14 +120,42 @@ func (m *mockMQTTClient) publishCount() int {
 	return len(m.published)
 }
 
-// deliver 는 구독된 토픽으로 페이로드가 도착한 것을 시뮬레이션한다.
+// deliver 는 구독된 토픽으로 페이로드가 도착한 것을 시뮬레이션한다. 정확 일치가 없으면
+// MQTT 단일 레벨 와일드카드("+") 패턴과 매칭하여 콜백을 찾는다 (M14 와일드카드 구독). 콜백은
+// 실제 토픽을 인자로 받아 파싱한다.
 func (m *mockMQTTClient) deliver(topic string, payload []byte) {
 	m.mu.Lock()
-	cb := m.subscribed[topic]
+	cb, ok := m.subscribed[topic]
+	if !ok {
+		for pat, c := range m.subscribed {
+			if mqttTopicMatches(pat, topic) {
+				cb = c
+				break
+			}
+		}
+	}
 	m.mu.Unlock()
 	if cb != nil {
 		cb(topic, payload)
 	}
+}
+
+// mqttTopicMatches 는 MQTT 단일 레벨 와일드카드("+") 패턴이 토픽과 매칭하는지 판정한다.
+func mqttTopicMatches(pattern, topic string) bool {
+	ps := strings.Split(pattern, "/")
+	ts := strings.Split(topic, "/")
+	if len(ps) != len(ts) {
+		return false
+	}
+	for i := range ps {
+		if ps[i] == "+" {
+			continue
+		}
+		if ps[i] != ts[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *mockMQTTClient) subscribedTopics() []string {
@@ -301,12 +330,13 @@ func TestStartDirect_SubscribeAndIngest(t *testing.T) {
 	ap.cmdSink = &brokerCommandSink{client: mock, topicTmpl: ap.cfg.CommandTopicTemplate, qos: ap.cfg.QoS}
 
 	require.NoError(t, ap.Start(context.Background()))
+	// M14: 디바이스별 렌더 구독 대신 단일 와일드카드 구독.
 	assert.ElementsMatch(t,
-		[]string{"airpurifier/ap-101/state", "airpurifier/ap-102/state"},
+		[]string{"airpurifier/+/state"},
 		mock.subscribedTopics(),
 	)
 
-	// 유입 상태 페이로드 → 로스터 갱신 (direct 구독 콜백 경로).
+	// 유입 상태 페이로드 → 로스터 갱신 (와일드카드 콜백이 실제 토픽을 파싱하여 대상 디바이스 도출).
 	mock.deliver("airpurifier/ap-101/state", []byte(`{"power":true,"fan_speed":2}`))
 	dev, err := ap.GetDevice("ap-101")
 	require.NoError(t, err)
@@ -319,24 +349,44 @@ func TestStartDirect_SubscribeAndIngest(t *testing.T) {
 func TestBrokerCommandSink(t *testing.T) {
 	mock := newMockMQTTClient()
 	sink := &brokerCommandSink{client: mock, topicTmpl: "airpurifier/{device_id}/cmd", qos: 1}
+	did := map[string]string{"device_id": "ap-101"}
 
-	assert.ErrorIs(t, sink.SendCommand("ap-101", []byte(`{"power":true}`)), ErrNotConnected)
+	assert.ErrorIs(t, sink.SendCommand(outboundCommand{DeviceID: "ap-101", Fields: did, Payload: []byte(`{"power":true}`)}), ErrNotConnected)
 
 	require.NoError(t, mock.Connect())
-	require.NoError(t, sink.SendCommand("ap-101", []byte(`{"power":true}`)))
+	require.NoError(t, sink.SendCommand(outboundCommand{DeviceID: "ap-101", Fields: did, Payload: []byte(`{"power":true}`)}))
 	require.Len(t, mock.published, 1)
 	assert.Equal(t, "airpurifier/ap-101/cmd", mock.published[0].topic)
 	assert.JSONEq(t, `{"power":true}`, string(mock.published[0].payload))
 }
 
-// portCommandSink 는 제어 출력 포트로 ControlMessage 를 방출한다.
+// M14: brokerCommandSink 는 attribute-per-topic 모드에서 {attribute} 를 채운 축별 토픽으로 발행.
+func TestBrokerCommandSink_AttributeMode(t *testing.T) {
+	mock := newMockMQTTClient()
+	require.NoError(t, mock.Connect())
+	sink := &brokerCommandSink{
+		client:    mock,
+		topicTmpl: "cmd/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute}",
+		qos:       1,
+	}
+	addr := map[string]string{"station_code": "ST1", "place_code": "P1", "device_index": "3"}
+	require.NoError(t, sink.SendCommand(outboundCommand{DeviceID: "ST1:P1:3", Fields: addr, Attribute: "power", Payload: []byte("on")}))
+	require.Len(t, mock.published, 1)
+	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/3/power", mock.published[0].topic)
+	assert.Equal(t, "on", string(mock.published[0].payload))
+}
+
+// portCommandSink 는 제어 출력 포트로 ControlMessage 를 방출한다 (주소 필드/attribute 포함).
 func TestPortCommandSink(t *testing.T) {
 	ch := make(chan ControlMessage, 4)
 	sink := &portCommandSink{ch: ch}
-	require.NoError(t, sink.SendCommand("ap-101", []byte(`{"power":true}`)))
+	addr := map[string]string{"station_code": "ST1"}
+	require.NoError(t, sink.SendCommand(outboundCommand{DeviceID: "ap-101", Fields: addr, Attribute: "power", Payload: []byte("on")}))
 	msg := <-ch
 	assert.Equal(t, "ap-101", msg.DeviceID)
-	assert.JSONEq(t, `{"power":true}`, string(msg.Payload))
+	assert.Equal(t, "ST1", msg.Fields["station_code"])
+	assert.Equal(t, "power", msg.Attribute)
+	assert.Equal(t, "on", string(msg.Payload))
 }
 
 // Process 는 아직 미구현인 명령(후속 배치)과 알 수 없는 명령을 ErrInvalidCommand 로 반환한다.

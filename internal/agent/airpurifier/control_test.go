@@ -1,6 +1,7 @@
 package airpurifier
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -57,9 +58,13 @@ func oneDeviceOpts(extra map[string]any) map[string]any {
 // Module 2 — CRUD
 // ---------------------------------------------------------------------------
 
-// Scenario 2.1: add_device → Source="bridge", state 토픽 구독, device_registered 이벤트.
+// Scenario 2.1: add_device → Source="bridge", device_registered 이벤트. state 토픽은 Start 의
+// 단일 와일드카드 구독이 커버하므로 디바이스별 구독은 하지 않으며(M14), 유입은 와일드카드
+// 콜백이 실제 토픽을 파싱하여 대상 디바이스로 라우팅한다.
 func TestAddDevice_BridgeSubscribeEvent(t *testing.T) {
 	ap, mock := directAgentWithMock(t, directOpts())
+	require.NoError(t, ap.Start(context.Background()))
+	defer func() { _ = ap.Stop(context.Background()) }()
 
 	resp, err := ap.Process([]byte(`{"command":"add_device","device_id":"ap-101","name":"대합실-A","group_id":"concourse-b1"}`))
 	require.NoError(t, err)
@@ -72,7 +77,12 @@ func TestAddDevice_BridgeSubscribeEvent(t *testing.T) {
 	assert.Equal(t, "concourse-b1", dev.GroupID)
 	assert.Equal(t, "대합실-A", dev.Name)
 
-	assert.Contains(t, mock.subscribedTopics(), "airpurifier/ap-101/state", "state 토픽이 구독되어야 한다")
+	// 단일 와일드카드 구독이 존재하고, ap-101 의 실제 토픽 유입이 이 디바이스를 갱신한다.
+	assert.Contains(t, mock.subscribedTopics(), "airpurifier/+/state", "와일드카드 state 토픽이 구독되어야 한다")
+	mock.deliver("airpurifier/ap-101/state", []byte(`{"power":true}`))
+	dev, err = ap.GetDevice("ap-101")
+	require.NoError(t, err)
+	assert.True(t, dev.Power, "와일드카드 구독으로 추가된 디바이스 상태가 갱신되어야 한다")
 
 	evt := readEvent(t, ap)
 	assert.Equal(t, "device_registered", evt["type"])

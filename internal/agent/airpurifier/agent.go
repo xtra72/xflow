@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,11 +144,10 @@ func NewAirPurifierAgent(config agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	// 설정 기반 디바이스 등록 (Source="config", Online=false — REQ-AIRPUR-001-02-03).
+	// 로스터 키는 상태 템플릿의 placeholder 구성으로 합성한다: {device_id} 단일 필드는
+	// device_id 자체, 다중 필드는 "{station_code}:{place_code}:{device_index}" (M14).
 	for _, cd := range a.cfg.Devices {
-		if _, exists := a.devices[cd.DeviceID]; exists {
-			continue
-		}
-		a.devices[cd.DeviceID] = &Device{
+		dev := &Device{
 			DeviceID: cd.DeviceID,
 			Name:     cd.Name,
 			GroupID:  cd.GroupID,
@@ -157,6 +157,13 @@ func NewAirPurifierAgent(config agent.AgentConfig) (agent.Agent, error) {
 			Online:   false,
 			Source:   "config",
 		}
+		key, addr := a.seedKeyAndAddress(dev)
+		dev.DeviceID = key
+		dev.Address = addr
+		if _, exists := a.devices[key]; exists {
+			continue
+		}
+		a.devices[key] = dev
 	}
 
 	if err := a.Init(config); err != nil {
@@ -240,62 +247,77 @@ func (a *AirPurifierAgent) Start(_ context.Context) error {
 		a.logger.Warn("airpurifier: broker connect failed at start", "error", err)
 	}
 
-	// 모든 등록 디바이스의 state 토픽을 구독한다. 콜백이 device_id 를 클로저로 캡처하여
-	// 유입 페이로드를 mode-agnostic 한 handleStatePayload 로 라우팅한다.
-	a.mu.RLock()
-	ids := make([]string, 0, len(a.devices))
-	for id := range a.devices {
-		ids = append(ids, id)
-	}
-	a.mu.RUnlock()
-
-	for _, id := range ids {
-		if err := a.subscribeDeviceState(id); err != nil {
-			a.logger.Error("airpurifier: subscribe device state failed", "device_id", id, "error", err)
-		}
+	// 상태 템플릿의 모든 placeholder 를 "+" 로 치환한 단일 와일드카드 토픽을 구독한다 (M14).
+	// 디바이스별 렌더 구독을 대체하며, 콜백이 실제 토픽을 파싱해 대상 디바이스를 도출한다.
+	if err := a.subscribeState(); err != nil {
+		a.logger.Error("airpurifier: subscribe state topic failed", "error", err)
 	}
 
-	a.logger.Info("airpurifier: started in direct mode", "subscribed_devices", len(ids))
+	a.logger.Info("airpurifier: started in direct mode",
+		"subscription", buildSubscriptionTopic(a.cfg.StateTopicTemplate))
 	return nil
 }
 
-// subscribeDeviceState 는 한 디바이스의 state 토픽을 구독한다 (direct 모드).
-func (a *AirPurifierAgent) subscribeDeviceState(deviceID string) error {
+// subscribeState 는 상태 템플릿의 와일드카드 토픽 하나를 구독한다 (direct 모드, M14).
+// 콜백 handleStateMessage 가 실제 토픽을 파싱해 주소/attribute 를 추출한다.
+func (a *AirPurifierAgent) subscribeState() error {
 	if a.client == nil {
 		return nil
 	}
-	topic := renderTopic(a.cfg.StateTopicTemplate, deviceID)
-	return a.client.Subscribe(topic, a.cfg.QoS, func(_ string, payload []byte) {
-		a.handleStatePayload(deviceID, payload)
-	})
+	topic := buildSubscriptionTopic(a.cfg.StateTopicTemplate)
+	return a.client.Subscribe(topic, a.cfg.QoS, a.handleStateMessage)
 }
 
-// handleStatePayload 는 유입 상태 페이로드를 디코딩하여 로스터를 갱신하고 상태 변경을
-// 방출한다 (상태 유입 시임, REQ-AIRPUR-001-05-01/05-02, REQ-06-02).
-//
-// direct(구독 콜백)·port(입력 포트) 두 경로가 이 동일한 mode-agnostic 메서드를 호출하여
-// 바이트 동일한 디코딩·emit 경로를 공유한다 (REQ-AIRPUR-001-01-11). 락 하에서 이전/신규
-// 값을 비교해 changed_fields 를 산출하고, 방출 페이로드(관측 게이팅 + 메타)를 스냅샷한 뒤
-// 락을 해제하고 방출한다 — 락을 채널 송신에 걸쳐 잡지 않는다.
-func (a *AirPurifierAgent) handleStatePayload(deviceID string, payload []byte) {
-	st, err := decodeStatePayload(a.cfg.PayloadMapping, payload)
-	if err != nil {
-		a.logger.Warn("airpurifier: decode state payload failed", "device_id", deviceID, "error", err)
-		return
+// handleStateMessage 는 와일드카드 구독으로 유입된 (실제 토픽, 페이로드)를 처리한다 (M14).
+// 토픽을 상태 템플릿과 대조해 placeholder 를 추출하고, {attribute} 존재 여부로 디코드 모드를
+// 디스패치한 뒤 ingestState 로 로스터를 갱신한다. 우리 소유가 아닌 토픽(리터럴 불일치)은 무시한다.
+func (a *AirPurifierAgent) handleStateMessage(topic string, payload []byte) {
+	fields, ok := parseTopic(a.cfg.StateTopicTemplate, topic)
+	if !ok {
+		return // 리터럴 불일치 / 세그먼트 수 불일치 → 우리 소유 아님
 	}
+	key := synthesizeAddress(a.cfg.StateTopicTemplate, fields)
 
+	var st decodedState
+	if a.cfg.stateHasAttribute {
+		attribute := fields[placeholderAttribute]
+		var okDec bool
+		st, okDec = a.cfg.PayloadMapping.decodeAttributeScalar(attribute, payload)
+		if !okDec {
+			a.logger.Warn("airpurifier: unknown attribute in state topic", "topic", topic, "attribute", attribute)
+			return
+		}
+	} else {
+		var err error
+		st, err = decodeStatePayload(a.cfg.PayloadMapping, payload)
+		if err != nil {
+			a.logger.Warn("airpurifier: decode state payload failed", "topic", topic, "error", err)
+			return
+		}
+	}
+	a.ingestState(key, fields, st)
+}
+
+// ingestState 는 디코딩된 상태를 로스터에 반영하고 상태 변경을 방출하는 mode-agnostic 시임이다
+// (REQ-AIRPUR-001-05-01/05-02, REQ-06-02). direct(토픽 파싱)·port(FeedState) 경로가 공유한다.
+//
+// 미등록 디바이스는 Source="auto" 로 자동 등록한다(config/bridge 우선순위 유지 — 이미 존재하면
+// 갱신). 락 하에서 이전/신규 값을 비교해 changed_fields 를 산출하고 방출 스냅샷을 뜬 뒤 락을
+// 해제하고 방출한다 — 락을 채널 송신에 걸쳐 잡지 않는다. fields 의 placeholder 는 device_state_changed
+// 메타로 실려 하류 influx 태그(station_code/place_code/device_index/attribute)를 형성한다.
+func (a *AirPurifierAgent) ingestState(key string, fields map[string]string, st decodedState) {
 	a.mu.Lock()
-	dev := a.devices[deviceID]
+	dev := a.devices[key]
+	created := false
 	if dev == nil {
-		a.mu.Unlock()
-		return
+		dev = a.autoCreateDeviceLocked(key, fields)
+		created = true
 	}
 
 	prevOnline := dev.Online
 	var changed []string
 
-	// 각 축은 이전에 미관측이었거나(최초 관측) 값이 달라지면 changed 로 본다. markObserved 는
-	// 관측 여부 판정 후 호출해 "최초 관측"을 정확히 changed 로 잡는다.
+	// 각 축은 이전에 미관측이었거나(최초 관측) 값이 달라지면 changed 로 본다.
 	if st.PowerSet {
 		if !dev.isObserved(observedPower) || dev.Power != st.Power {
 			changed = append(changed, "power")
@@ -312,8 +334,7 @@ func (a *AirPurifierAgent) handleStatePayload(deviceID string, payload []byte) {
 	}
 
 	// online 축: 페이로드에 online 필드가 있으면 그 값을, 없으면 상태 유입 자체를 생존 신호로
-	// 보아 암묵적으로 online=true 로 복원한다 (REQ-05-05 오프라인 복구). 명시적 online=false 는
-	// 존중한다.
+	// 보아 암묵적으로 online=true 로 복원한다 (REQ-05-05). 명시적 online=false 는 존중한다.
 	newOnline := true
 	if st.OnlineSet {
 		newOnline = st.Online
@@ -326,38 +347,104 @@ func (a *AirPurifierAgent) handleStatePayload(deviceID string, payload []byte) {
 
 	dev.LastSeen = time.Now()
 
-	// 방출 페이로드 스냅샷 (락 하에서 관측 게이팅 축 + 메타를 복사). 관측 게이팅은 미관측 축을
-	// 생략하고 power=off 시 신뢰 불가한 fan_speed 를 생략한다 (REQ-05-02).
 	stateAxes := dev.StateForJSON()
 	groupID := dev.GroupID
 	lastSeenMs := dev.LastSeen.UnixMilli()
 	a.mu.Unlock()
 
-	// B3: 로스터 갱신 후 제어 응답 대기 에코 해소 (REQ-03-09). 로스터 락 해제 후 별도
-	// pending 락 하에서 처리한다 (락 중첩 금지). 기대 일치 pending 이 없으면 — 이미 타임아웃
-	// 제거된 late echo 포함 — no-op 이며 로스터만 갱신된다 (REQ-03-10).
-	a.pendings.resolve(deviceID, st)
+	// 자동 등록 시 로스터가 변경됐으므로 best-effort 영속화 (registry 미설정이면 no-op).
+	if created {
+		a.persistRoster()
+	}
 
-	// 오프라인→온라인 전이는 device_online 이벤트로 별도 방출한다 (REQ-05-05). 온라인→오프라인
-	// (명시적 online=false 유입)은 device_offline 로 방출한다.
+	// B3: 로스터 갱신 후 제어 응답 대기 에코 해소. 로스터 락 해제 후 별도 pending 락 하에서 처리.
+	a.pendings.resolve(key, st)
+
 	if !prevOnline && newOnline {
-		a.emitOnlineTransition("device_online", deviceID, groupID, true, lastSeenMs)
+		a.emitOnlineTransition("device_online", key, groupID, true, lastSeenMs)
 	} else if prevOnline && !newOnline {
-		a.emitOnlineTransition("device_offline", deviceID, groupID, false, lastSeenMs)
+		a.emitOnlineTransition("device_offline", key, groupID, false, lastSeenMs)
 	}
 
-	// 변경된 축이 있으면 device_state_changed 를 방출한다 (REQ-06-02). 변경이 없으면(동일 상태
-	// 재수신) 방출하지 않는다.
 	if len(changed) > 0 {
-		a.emitStateChanged(deviceID, groupID, newOnline, changed, stateAxes, lastSeenMs)
+		a.emitStateChanged(key, groupID, newOnline, changed, stateAxes, lastSeenMs, fields)
 	}
+}
+
+// autoCreateDeviceLocked 는 최초 관측된 미등록 디바이스를 Source="auto" 로 생성한다 (M14).
+// 표준 placeholder(station_code/place_code/device_index)를 Device 필드로 역매핑하고, 명령 토픽
+// 재구성을 위해 원시 주소 필드를 Device.Address 에 저장한다. 로스터 락을 보유한 채 호출한다.
+func (a *AirPurifierAgent) autoCreateDeviceLocked(key string, fields map[string]string) *Device {
+	dev := &Device{DeviceID: key, Online: false, Source: "auto"}
+	if v, ok := fields[placeholderStationCode]; ok {
+		dev.Station = v
+	}
+	if v, ok := fields[placeholderPlaceCode]; ok {
+		dev.Place = v
+	}
+	if v, ok := fields[placeholderDeviceIndex]; ok {
+		dev.Index = toInt(v)
+	}
+	dev.Address = nonAttrFields(fields)
+	a.devices[key] = dev
+	return dev
+}
+
+// seedKeyAndAddress 는 설정 시드 디바이스의 로스터 키와 주소 필드를 상태 템플릿 구성으로
+// 도출한다 (M14). 단일 {device_id}(또는 템플릿 없음)는 device_id 자체가 키이며, 다중 필드는
+// 비-attribute placeholder 값을 ":" 로 이어 합성한다.
+func (a *AirPurifierAgent) seedKeyAndAddress(dev *Device) (string, map[string]string) {
+	var nonAttr []string
+	for _, n := range placeholderNames(a.cfg.StateTopicTemplate) {
+		if n != placeholderAttribute {
+			nonAttr = append(nonAttr, n)
+		}
+	}
+	if len(nonAttr) == 0 || (len(nonAttr) == 1 && nonAttr[0] == placeholderDeviceID) {
+		return dev.DeviceID, map[string]string{placeholderDeviceID: dev.DeviceID}
+	}
+	addr := make(map[string]string, len(nonAttr))
+	parts := make([]string, 0, len(nonAttr))
+	for _, n := range nonAttr {
+		v, _ := deviceFieldValue(n, dev)
+		addr[n] = v
+		parts = append(parts, v)
+	}
+	key := strings.Join(parts, ":")
+	if key == "" { // 위치 미지정 폴백: device_id 로 키잉.
+		return dev.DeviceID, map[string]string{placeholderDeviceID: dev.DeviceID}
+	}
+	return key, addr
+}
+
+// buildCommandFieldsLocked 는 명령 토픽의 비-attribute placeholder 값을 디바이스에서 도출한다
+// (M14). dev.Address 를 우선 참조하고, 없으면 표준 placeholder→Device 필드 매핑으로 폴백한다.
+// 로스터 락을 보유한 채 호출한다.
+func (a *AirPurifierAgent) buildCommandFieldsLocked(dev *Device) map[string]string {
+	names := placeholderNames(a.cfg.CommandTopicTemplate)
+	out := make(map[string]string, len(names))
+	for _, n := range names {
+		if n == placeholderAttribute {
+			continue
+		}
+		if dev.Address != nil {
+			if v, ok := dev.Address[n]; ok {
+				out[n] = v
+				continue
+			}
+		}
+		if v, ok := deviceFieldValue(n, dev); ok {
+			out[n] = v
+		}
+	}
+	return out
 }
 
 // emitStateChanged 는 device_state_changed 메시지를 msgCh 로 non-blocking 방출한다 (REQ-06-02).
 //
 // 메시지는 type/device_id/group_id(설정 시)/online/관측 축(StateForJSON)/changed_fields/
 // timestamp(epoch ms int64)를 담는다. B8 status 노드가 이 shape 를 재사용한다.
-func (a *AirPurifierAgent) emitStateChanged(deviceID, groupID string, online bool, changed []string, stateAxes map[string]any, timestampMs int64) {
+func (a *AirPurifierAgent) emitStateChanged(deviceID, groupID string, online bool, changed []string, stateAxes map[string]any, timestampMs int64, meta map[string]string) {
 	data := map[string]any{
 		"device_id":      deviceID,
 		"online":         online,
@@ -370,6 +457,18 @@ func (a *AirPurifierAgent) emitStateChanged(deviceID, groupID string, online boo
 	// 관측 게이팅된 상태 축(power/fan_speed/online)을 최상위에 병합한다. online 축이 관측됐다면
 	// 최상위 online 과 동일 값이므로 무해하게 덮어쓴다.
 	for k, v := range stateAxes {
+		data[k] = v
+	}
+	// 추출된 주소/attribute placeholder 를 메타로 병합한다 (M14): 하류 influx 태그가
+	// station_code/place_code/device_index/attribute 를 나른다. device_id 는 최상위와 중복,
+	// 상태 축과 충돌하는 키는 건너뛴다.
+	for k, v := range meta {
+		if k == placeholderDeviceID {
+			continue
+		}
+		if _, exists := data[k]; exists {
+			continue
+		}
 		data[k] = v
 	}
 	a.sendEvent("device_state_changed", data)
@@ -388,10 +487,23 @@ func (a *AirPurifierAgent) emitOnlineTransition(eventType, deviceID, groupID str
 	a.sendEvent(eventType, data)
 }
 
-// FeedState 는 port 모드에서 상태 입력 포트로 유입된 원시 상태 페이로드를 에이전트에
-// 전달하는 배선 훅이다 (REQ-AIRPUR-001-01-12). direct 구독 콜백과 동일한 디코딩 경로를 탄다.
+// FeedState 는 port 모드에서 상태 입력 포트로 유입된 원시 상태 페이로드를 device_id 로
+// 에이전트에 전달하는 배선 훅이다 (REQ-AIRPUR-001-01-12, JSON-blob/하위호환 경로). 미등록
+// 디바이스는 ingestState 가 Source="auto" 로 자동 등록한다. attribute-per-topic port 유입은
+// 토픽이 필요하므로 FeedStateFromTopic 을 사용한다.
 func (a *AirPurifierAgent) FeedState(deviceID string, payload []byte) {
-	a.handleStatePayload(deviceID, payload)
+	st, err := decodeStatePayload(a.cfg.PayloadMapping, payload)
+	if err != nil {
+		a.logger.Warn("airpurifier: decode state payload failed", "device_id", deviceID, "error", err)
+		return
+	}
+	a.ingestState(deviceID, map[string]string{placeholderDeviceID: deviceID}, st)
+}
+
+// FeedStateFromTopic 은 port 모드에서 실제 토픽까지 함께 유입될 때의 다중 필드 경로이다 (M14).
+// direct 와이드카드 콜백과 동일하게 토픽을 파싱해 주소/attribute 를 추출한다.
+func (a *AirPurifierAgent) FeedStateFromTopic(topic string, payload []byte) {
+	a.handleStateMessage(topic, payload)
 }
 
 // ControlPort 는 port 모드 제어 출력 포트 채널을 반환한다 (direct 모드는 nil).

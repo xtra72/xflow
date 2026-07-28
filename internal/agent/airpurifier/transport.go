@@ -29,14 +29,29 @@ type MQTTClient interface {
 	IsConnected() bool
 }
 
+// outboundCommand 는 cmdSink 로 방출되는 단일 명령의 완전한 주소 컨텍스트이다 (M14).
+//
+// Fields 는 명령 토픽의 비-attribute placeholder 값(주소)이며, Attribute 는 attribute-per-topic
+// 모드에서 이 발행이 지칭하는 상태 축 토큰이다(blob 모드에서는 ""). Payload 는 attribute
+// 모드에서 축 스칼라, blob 모드에서 JSON blob 이다. direct·port 두 구현이 이 값을 공유한다.
+type outboundCommand struct {
+	DeviceID  string            // 합성 device_id / 로스터 키 (port ControlMessage · 로깅용)
+	Fields    map[string]string // 비-attribute placeholder 값 (명령 토픽 렌더용)
+	Attribute string            // {attribute} 토큰 (attribute 모드), blob 모드는 ""
+	Payload   []byte            // 인코딩된 페이로드 (attribute: 스칼라, blob: JSON)
+}
+
 // ControlMessage 는 제어 출력 포트로 방출되는 단일 명령이다 (port 모드).
 //
-// port 모드에서 에이전트는 토픽 스킴을 소유하지 않으므로(하류 mqtt-out 노드가 소유)
-// device_id 와 인코딩된 명령 페이로드만 담는다. Payload 는 direct 모드의 브로커 발행
-// 페이로드와 바이트 단위로 동일하다 (공유 인코딩 경로, REQ-AIRPUR-001-01-11/12).
+// port 모드에서 에이전트는 실제 토픽 스킴을 소유하지 않으므로(하류 mqtt-out 노드가 소유),
+// 하류가 명령 토픽을 재구성할 수 있도록 device_id · 주소 필드(Fields) · attribute · 인코딩된
+// 페이로드를 담는다 (REQ-AIRPUR-001-01-11/12, M14 다중 필드). Fields/Attribute 는 blob 모드에서
+// 비어 있으며, DeviceID·Payload 는 하위호환을 위해 항상 채워진다.
 type ControlMessage struct {
-	DeviceID string `json:"device_id"`
-	Payload  []byte `json:"payload"`
+	DeviceID  string            `json:"device_id"`
+	Fields    map[string]string `json:"fields,omitempty"`
+	Attribute string            `json:"attribute,omitempty"`
+	Payload   []byte            `json:"payload"`
 }
 
 // CommandSink 는 명령 출력(egress) 경계 추상화이다 (REQ-AIRPUR-001-01-11).
@@ -44,8 +59,8 @@ type ControlMessage struct {
 // direct 구현은 MQTTClient 로 브로커에 발행하고, port 구현은 제어 출력 포트(채널)로
 // 방출한다. 공유 로직 레이어(제어 명령 구성/인코딩)는 이 인터페이스만 사용한다.
 type CommandSink interface {
-	// SendCommand 는 인코딩된 명령 페이로드를 대상 디바이스로 방출한다.
-	SendCommand(deviceID string, payload []byte) error
+	// SendCommand 는 인코딩된 명령을 대상 디바이스로 방출한다.
+	SendCommand(cmd outboundCommand) error
 }
 
 // brokerCommandSink 는 명령을 브로커로 발행하는 direct 모드 구현이다.
@@ -55,12 +70,21 @@ type brokerCommandSink struct {
 	qos       byte
 }
 
-// SendCommand 는 command_topic_template 을 device_id 로 렌더링한 토픽으로 발행한다.
-func (s *brokerCommandSink) SendCommand(deviceID string, payload []byte) error {
+// SendCommand 는 command_topic_template 을 주소 필드(+attribute)로 렌더링한 토픽으로 발행한다.
+// attribute-per-topic 모드에서는 {attribute} 를 cmd.Attribute 로 채워 축별 토픽을 산출한다.
+func (s *brokerCommandSink) SendCommand(cmd outboundCommand) error {
 	if s.client == nil || !s.client.IsConnected() {
 		return ErrNotConnected
 	}
-	return s.client.Publish(renderTopic(s.topicTmpl, deviceID), s.qos, payload)
+	fields := cmd.Fields
+	if cmd.Attribute != "" {
+		fields = make(map[string]string, len(cmd.Fields)+1)
+		for k, v := range cmd.Fields {
+			fields[k] = v
+		}
+		fields[placeholderAttribute] = cmd.Attribute
+	}
+	return s.client.Publish(renderTopic(s.topicTmpl, fields), s.qos, cmd.Payload)
 }
 
 // portCommandSink 는 명령을 제어 출력 포트(버퍼드 채널)로 방출하는 port 모드 구현이다.
@@ -72,15 +96,16 @@ type portCommandSink struct {
 }
 
 // SendCommand 는 제어 출력 포트로 ControlMessage 를 non-blocking 방출한다.
+// 주소 필드/attribute 를 함께 실어 하류 mqtt-out 이 토픽을 재구성할 수 있게 한다 (M14).
 // 포트가 가득 차면(하류 미소비) 드롭하고 로그만 남긴다 (전체 백프레셔는 후속 배치).
-func (s *portCommandSink) SendCommand(deviceID string, payload []byte) error {
-	msg := ControlMessage{DeviceID: deviceID, Payload: payload}
+func (s *portCommandSink) SendCommand(cmd outboundCommand) error {
+	msg := ControlMessage{DeviceID: cmd.DeviceID, Fields: cmd.Fields, Attribute: cmd.Attribute, Payload: cmd.Payload}
 	select {
 	case s.ch <- msg:
 		return nil
 	default:
 		if s.logger != nil && s.logDrop {
-			s.logger.Warn("airpurifier: control port full, dropping command", "device_id", deviceID)
+			s.logger.Warn("airpurifier: control port full, dropping command", "device_id", cmd.DeviceID)
 		}
 		return nil
 	}

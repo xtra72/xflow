@@ -6,8 +6,19 @@ import (
 	"strings"
 )
 
-// deviceIDPlaceholder 는 토픽 템플릿에서 device_id 로 치환되는 placeholder 이다.
-const deviceIDPlaceholder = "{device_id}"
+// 토픽 템플릿 placeholder 이름 상수 (다중 필드 주소 지정, M14).
+//
+// 토픽 템플릿은 "/" 로 분리된 세그먼트로 구성되며, 각 세그먼트는 리터럴이거나
+// "{name}" 형태의 placeholder 이다. placeholder 는 세그먼트 전체를 차지한다
+// (부분 세그먼트 "ap-{device_id}" 는 리터럴로 취급). 아래 이름들은 로스터 Device 의
+// 필드로 양방향 매핑되는 표준 placeholder 이름이다.
+const (
+	placeholderDeviceID    = "device_id"    // → Device.DeviceID (하위호환 단일 필드)
+	placeholderStationCode = "station_code" // → Device.Station
+	placeholderPlaceCode   = "place_code"   // → Device.Place
+	placeholderDeviceIndex = "device_index" // → Device.Index
+	placeholderAttribute   = "attribute"    // 상태 축 이름(power/fan_speed/online), 주소가 아님
+)
 
 // PayloadMapping 은 설정 주도 페이로드 시임이다 (REQ-AIRPUR-001-01-06).
 //
@@ -66,10 +77,173 @@ type decodedState struct {
 	OnlineSet   bool
 }
 
-// renderTopic 은 토픽 템플릿의 {device_id} placeholder 를 deviceID 로 치환한다
-// (REQ-AIRPUR-001-01-05). 토픽 스킴은 하드코딩하지 않고 설정 템플릿으로만 산출한다.
-func renderTopic(template, deviceID string) string {
-	return strings.ReplaceAll(template, deviceIDPlaceholder, deviceID)
+// ---------------------------------------------------------------------------
+// 다중 필드 토픽 주소 지정 (M14)
+// ---------------------------------------------------------------------------
+//
+// 토픽 seam 은 하나의 parse/render 쌍으로 통일된다: {device_id} 단일 필드 모델과
+// {station_code}/{place_code}/{device_index}/{attribute} 다중 필드 모델을 모두 지원하며,
+// {attribute} placeholder 의 존재 여부로 디코드 모드를 디스패치한다. placeholder 는
+// 세그먼트 단위("{name}" 전체 세그먼트)이며 리터럴 세그먼트는 정확히 일치해야 한다.
+
+// placeholderOf 는 세그먼트가 "{name}" 형태면 name 과 true 를, 아니면 "", false 를 반환한다.
+func placeholderOf(segment string) (string, bool) {
+	if len(segment) >= 2 && segment[0] == '{' && segment[len(segment)-1] == '}' {
+		return segment[1 : len(segment)-1], true
+	}
+	return "", false
+}
+
+// placeholderNames 는 템플릿의 placeholder 이름을 템플릿 순서대로 반환한다.
+func placeholderNames(template string) []string {
+	var names []string
+	for _, seg := range strings.Split(template, "/") {
+		if n, ok := placeholderOf(seg); ok {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// templateHasAttribute 는 템플릿에 {attribute} placeholder 가 있는지 반환한다
+// (attribute-per-topic 디코드/인코드 모드 디스패치의 기준).
+func templateHasAttribute(template string) bool {
+	for _, n := range placeholderNames(template) {
+		if n == placeholderAttribute {
+			return true
+		}
+	}
+	return false
+}
+
+// buildSubscriptionTopic 은 템플릿의 모든 {...} placeholder 세그먼트를 MQTT 단일 레벨
+// 와일드카드 "+" 로 치환한다. 템플릿당 단 하나의 와일드카드 구독을 산출하여 디바이스별
+// 렌더 구독을 대체한다 (예: state/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute}
+// → state/ui-line/+/+/bse9000/+/+).
+func buildSubscriptionTopic(template string) string {
+	segs := strings.Split(template, "/")
+	for i, seg := range segs {
+		if _, ok := placeholderOf(seg); ok {
+			segs[i] = "+"
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// parseTopic 은 실제 토픽을 템플릿과 세그먼트 단위로 대조하여 placeholder→값 맵을 추출한다.
+// 리터럴 세그먼트가 정확히 일치하지 않거나 세그먼트 수가 다르면 (nil, false)를 반환한다
+// (우리 소유가 아닌 토픽 → 무시). placeholder 세그먼트는 실제 값을 캡처한다.
+func parseTopic(template, actual string) (map[string]string, bool) {
+	ts := strings.Split(template, "/")
+	as := strings.Split(actual, "/")
+	if len(ts) != len(as) {
+		return nil, false
+	}
+	out := make(map[string]string, len(ts))
+	for i, seg := range ts {
+		if n, ok := placeholderOf(seg); ok {
+			out[n] = as[i]
+			continue
+		}
+		if seg != as[i] {
+			return nil, false // 리터럴 불일치 → 우리 소유 아님
+		}
+	}
+	return out, true
+}
+
+// renderTopic 은 템플릿의 각 {name} placeholder 세그먼트를 fields[name] 으로 치환한다
+// (REQ-AIRPUR-001-01-05, 다중 필드 일반화). {device_id} 단일 필드 템플릿에는
+// fields={"device_id": id} 를 넘겨 하위호환을 유지한다. 토픽 스킴은 하드코딩하지 않고
+// 설정 템플릿으로만 산출한다.
+func renderTopic(template string, fields map[string]string) string {
+	segs := strings.Split(template, "/")
+	for i, seg := range segs {
+		if n, ok := placeholderOf(seg); ok {
+			segs[i] = fields[n]
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// synthesizeAddress 는 {attribute} 를 제외한 모든 placeholder 값을 템플릿 순서대로 ":" 로
+// 이어 로스터 키(합성 device_id)를 만든다. {device_id} 단일 필드 템플릿에서는 device_id
+// 자체가 된다 (정확한 하위호환).
+func synthesizeAddress(template string, fields map[string]string) string {
+	var parts []string
+	for _, n := range placeholderNames(template) {
+		if n == placeholderAttribute {
+			continue
+		}
+		parts = append(parts, fields[n])
+	}
+	return strings.Join(parts, ":")
+}
+
+// nonAttrFields 는 {attribute} 를 제외한 placeholder 값 맵의 복사본을 반환한다
+// (Device.Address 저장 / 명령 렌더 재구성용).
+func nonAttrFields(fields map[string]string) map[string]string {
+	out := make(map[string]string, len(fields))
+	for k, v := range fields {
+		if k == placeholderAttribute {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// scalarWire 는 attribute-per-topic 의 원시 스칼라 페이로드 바이트를 wire 값으로 해석한다.
+// JSON 스칼라(true / 2 / "on")면 그 값으로, 아니면 원시 문자열("on")로 본다.
+func scalarWire(payload []byte) any {
+	var v any
+	if err := json.Unmarshal(payload, &v); err == nil {
+		return v
+	}
+	return string(payload)
+}
+
+// scalarBytes 는 wire 값을 attribute-per-topic 의 원시 스칼라 페이로드 바이트로 인코딩한다.
+// 문자열은 그대로(따옴표 없이), bool/정수는 그 문자열 표현으로 발행한다.
+func scalarBytes(v any) []byte {
+	switch t := v.(type) {
+	case string:
+		return []byte(t)
+	case bool:
+		if t {
+			return []byte("true")
+		}
+		return []byte("false")
+	case nil:
+		return []byte("")
+	default:
+		return []byte(fmt.Sprintf("%v", t))
+	}
+}
+
+// decodeAttributeScalar 는 attribute 토큰이 지칭하는 상태 축의 스칼라 페이로드를 디코딩하여
+// 해당 축만 *Set=true 인 decodedState 를 반환한다 (attribute-per-topic 모드). attribute 가
+// 어떤 축과도 일치하지 않으면 ok=false (알 수 없는 attribute → 무시).
+func (m PayloadMapping) decodeAttributeScalar(attribute string, payload []byte) (decodedState, bool) {
+	wire := scalarWire(payload)
+	var st decodedState
+	switch attribute {
+	case m.Power.Name:
+		st.Power = m.Power.decodeBool(wire)
+		st.PowerSet = true
+		return st, true
+	case m.FanSpeed.Name:
+		st.FanSpeed = m.FanSpeed.decodeInt(wire)
+		st.FanSpeedSet = true
+		return st, true
+	default:
+		if m.Online != nil && attribute == m.Online.Name {
+			st.Online = m.Online.decodeBool(wire)
+			st.OnlineSet = true
+			return st, true
+		}
+		return decodedState{}, false
+	}
 }
 
 // encodeBool 은 boolean 축 값을 wire 표현으로 인코딩한다.

@@ -2,7 +2,6 @@ package airpurifier
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -60,9 +59,15 @@ type AirPurifierConfig struct {
 	ConnectTimeout time.Duration
 	AutoReconnect  bool
 
-	// 토픽 템플릿 (direct 모드 필수, {device_id} placeholder 포함).
+	// 토픽 템플릿 (direct 모드 필수, 최소 1개 {placeholder} 포함).
 	StateTopicTemplate   string
 	CommandTopicTemplate string
+
+	// stateHasAttribute / commandHasAttribute 는 각 템플릿에 {attribute} placeholder 가
+	// 있는지의 파생 플래그이다 (attribute-per-topic 디코드/인코드 모드 디스패치, M14).
+	// stateHasAttribute 는 상태 유입 디코드·구독을, commandHasAttribute 는 제어 방출을 결정한다.
+	stateHasAttribute   bool
+	commandHasAttribute bool
 
 	// PayloadMapping 은 설정 주도 페이로드 시임이다 (양 모드 공통 필수).
 	PayloadMapping PayloadMapping
@@ -167,6 +172,10 @@ func parseAirPurifierConfig(opts map[string]any) (AirPurifierConfig, error) {
 			cfg.CommandTopicTemplate = s
 		}
 	}
+	// attribute-per-topic 모드 파생 플래그 (M14): 템플릿에 {attribute} 가 있으면 축별
+	// 스칼라 디코드/인코드, 없으면 기존 JSON-blob 경로(하위호환).
+	cfg.stateHasAttribute = templateHasAttribute(cfg.StateTopicTemplate)
+	cfg.commandHasAttribute = templateHasAttribute(cfg.CommandTopicTemplate)
 
 	// payload_mapping (양 모드 공통 필수).
 	mapping, err := parsePayloadMapping(opts)
@@ -236,9 +245,11 @@ func parseAirPurifierConfig(opts map[string]any) (AirPurifierConfig, error) {
 	return cfg, nil
 }
 
-// validateTopicTemplate 은 토픽 템플릿에 {device_id} placeholder 가 있는지 검증한다.
+// validateTopicTemplate 은 토픽 템플릿에 최소 1개의 {placeholder} 세그먼트가 있는지 검증한다
+// (M14: {device_id} 를 강제하지 않는다 — 다중 필드 템플릿 허용). placeholder 가 하나도 없으면
+// 와일드카드 구독/합성 키를 만들 수 없으므로 거부한다.
 func validateTopicTemplate(tmpl string) error {
-	if !strings.Contains(tmpl, deviceIDPlaceholder) {
+	if len(placeholderNames(tmpl)) == 0 {
 		return fmt.Errorf("%w: got %q", ErrInvalidTopicTemplate, tmpl)
 	}
 	return nil
@@ -340,7 +351,9 @@ func parseConfigDevices(opts map[string]any) []ConfigDevice {
 		if idx, ok := m["index"]; ok {
 			d.Index = toInt(idx)
 		}
-		if d.DeviceID != "" {
+		// device_id 또는 위치 계층(station/place/index) 중 하나라도 있으면 시드로 수용한다.
+		// 다중 필드 모델(M14)에서는 device_id 없이 station/place/index 만으로 키가 합성된다.
+		if d.DeviceID != "" || d.Station != "" || d.Place != "" || d.Index != 0 {
 			devices = append(devices, d)
 		}
 	}
