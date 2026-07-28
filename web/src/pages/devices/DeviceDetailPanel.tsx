@@ -129,6 +129,7 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
           )}
           <MetadataSection
             deviceId={deviceId}
+            fullId={device.uid || device.id}
             source={device.source}
             name={device.metadata?.name || device.name}
             metadata={{
@@ -303,6 +304,8 @@ function HistoryRow({
 }) {
   const { t } = useTranslation();
   const props = entry.properties ?? {};
+  // 히스토리 엔트리도 당시 전원 OFF 였다면 운전 계열 값은 실제 값이 아니므로 '-'.
+  const powerOff = props['power'] === false;
 
   return (
     <tr className="hover:bg-(--color-bg-elevated)">
@@ -330,7 +333,7 @@ function HistoryRow({
           key={k}
           className="whitespace-nowrap px-3 py-2 text-xs font-medium text-(--color-text-primary)"
         >
-          {k in props ? formatPropertyValue(k, props[k]) : '-'}
+          {k in props ? formatPropertyValue(k, props[k], { powerOff }) : '-'}
         </td>
       ))}
       <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
@@ -651,6 +654,9 @@ function GenericPropertiesGrid({
     return accentColor;
   };
   const entries = sortProperties(Object.entries(properties));
+  // 전원 OFF 시 운전 계열 속성(모드/온도/풍량/스윙)은 정규화된 기본값이라 실제 값이
+  // 아니므로 '-' 로 표시한다(formatPropertyValue 의 powerOff 옵션).
+  const powerOff = properties['power'] === false;
 
   return (
     <div className={compact ? 'px-4 py-3' : ''}>
@@ -666,7 +672,7 @@ function GenericPropertiesGrid({
               {getPropertyLabel(key, protocol, type)}
             </p>
             <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
-              {formatPropertyValue(key, value)}
+              {formatPropertyValue(key, value, { powerOff })}
             </p>
           </div>
         ))}
@@ -1251,6 +1257,8 @@ function InlineParamInput({
 
 interface MetadataSectionProps {
   deviceId: string;
+  /** 전체 디바이스 식별자 (uid || id) — 읽기 모드 테이블에 잘림 없이 표시. */
+  fullId?: string;
   source: string;
   name: string;
   metadata: {
@@ -1270,7 +1278,7 @@ interface MetadataSectionProps {
   readOnly?: boolean;
 }
 
-function MetadataSection({ deviceId, source, name, metadata, editing, onEditChange, readOnly: _readOnly }: MetadataSectionProps) {
+function MetadataSection({ deviceId, fullId, source, name, metadata, editing, onEditChange, readOnly: _readOnly }: MetadataSectionProps) {
   const { t } = useTranslation();
   // config 소스 디바이스는 기본 고정 설치 (체크 해제 → 재시작시 삭제)
   const effectivePinned = metadata.pinned ?? (source === 'config' || source === 'pinned');
@@ -1405,6 +1413,14 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               <tr>
                 <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">{t('devices.detail.name')}</td>
                 <td className="py-1.5 text-(--color-text-primary)">{name}</td>
+              </tr>
+            )}
+            {fullId && (
+              <tr>
+                <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">{t('devices.detail.deviceId')}</td>
+                <td className="py-1.5 text-(--color-text-primary)">
+                  <span title={fullId} className="font-mono text-xs break-all">{fullId}</span>
+                </td>
               </tr>
             )}
             <tr>

@@ -42,6 +42,7 @@ type Hvacr01Config struct {
 	LogDecodeErrors bool // 프레임 파싱 실패를 WARN 로그로 출력할지 여부 (Samsung / Century 와 동일 의미).
 	LogDrops        bool // msgCh full 로 인한 frame drop 을 WARN 로그로 출력할지 여부.
 	LogStateUpdates bool // IDU/ODU state 갱신마다 디코드된 핵심 필드 + raw payload hex 를 INFO 로그로 출력 (Century logDecodedState 패턴).
+	LogMessages     bool // 디바이스와의 송/수신(TX/RX) 프레임 hex 를 INFO 로그로 출력 (Samsung/LGAP 와 통일). capture 라 수신(RX)만 기록.
 
 	// 트랜스포트 타입 선택
 	TransportType     string        // "serial", "tcp-client", "tcp-server" (기본: "serial")
@@ -91,6 +92,7 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		LogDecodeErrors:    false,
 		LogDrops:           false,
 		LogStateUpdates:    false,
+		LogMessages:        false,
 		TransportType:      "serial",
 		TCPHost:            "0.0.0.0",
 		TCPReadTimeout:     500 * time.Millisecond,
@@ -302,6 +304,14 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	if v, ok := opts["log_io"]; ok {
 		if b, isBool := v.(bool); isBool {
 			cfg.LogIO = b
+		}
+	}
+
+	// log_messages — 디바이스와의 송/수신(TX/RX) 프레임 hex 를 INFO 로그로 출력
+	// (기본 false, Samsung/LGAP 와 통일). capture 라 수신(RX)만 기록된다.
+	if v, ok := opts["log_messages"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogMessages = b
 		}
 	}
 

@@ -20,6 +20,13 @@ type mockInfluxClient struct {
 	queryFunc  func(ctx context.Context, query string, lang string) ([]map[string]any, error)
 	healthFunc func(ctx context.Context) error
 	closeFunc  func() error
+
+	listBucketsFunc       func(ctx context.Context) ([]BucketInfo, error)
+	createBucketFunc      func(ctx context.Context, name string, retentionSeconds int64) (BucketInfo, error)
+	deleteBucketFunc      func(ctx context.Context, bucketRef string) error
+	truncateBucketFunc    func(ctx context.Context, bucketRef string) error
+	listMeasurementsFunc  func(ctx context.Context, bucket string) ([]string, error)
+	deleteMeasurementFunc func(ctx context.Context, bucket, measurement string) error
 }
 
 func (m *mockInfluxClient) Write(ctx context.Context, data []WriteData) error {
@@ -46,6 +53,48 @@ func (m *mockInfluxClient) Health(ctx context.Context) error {
 func (m *mockInfluxClient) Close() error {
 	if m.closeFunc != nil {
 		return m.closeFunc()
+	}
+	return nil
+}
+
+func (m *mockInfluxClient) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
+	if m.listBucketsFunc != nil {
+		return m.listBucketsFunc(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockInfluxClient) CreateBucket(ctx context.Context, name string, retentionSeconds int64) (BucketInfo, error) {
+	if m.createBucketFunc != nil {
+		return m.createBucketFunc(ctx, name, retentionSeconds)
+	}
+	return BucketInfo{}, nil
+}
+
+func (m *mockInfluxClient) DeleteBucket(ctx context.Context, bucketRef string) error {
+	if m.deleteBucketFunc != nil {
+		return m.deleteBucketFunc(ctx, bucketRef)
+	}
+	return nil
+}
+
+func (m *mockInfluxClient) TruncateBucket(ctx context.Context, bucketRef string) error {
+	if m.truncateBucketFunc != nil {
+		return m.truncateBucketFunc(ctx, bucketRef)
+	}
+	return nil
+}
+
+func (m *mockInfluxClient) ListMeasurements(ctx context.Context, bucket string) ([]string, error) {
+	if m.listMeasurementsFunc != nil {
+		return m.listMeasurementsFunc(ctx, bucket)
+	}
+	return nil, nil
+}
+
+func (m *mockInfluxClient) DeleteMeasurement(ctx context.Context, bucket, measurement string) error {
+	if m.deleteMeasurementFunc != nil {
+		return m.deleteMeasurementFunc(ctx, bucket, measurement)
 	}
 	return nil
 }

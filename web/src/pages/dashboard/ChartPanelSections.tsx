@@ -37,6 +37,7 @@ import type {
   StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
 import { pickSeriesColor } from './panels/charts/chartChannelTypes';
+import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
 import {
   distinctDataTypes,
   distinctMetricTypes,
@@ -399,43 +400,79 @@ function StoreSourceEditor({
   // Store 에이전트 목록(type === 'store').
   const { data: agentsResult } = useAgents();
   const storeAgents = useMemo(
-    () => (agentsResult?.data ?? []).filter((a: { type: string }) => a.type === 'store'),
+    () =>
+      (agentsResult?.data ?? []).filter(
+        (a: { type: string }) => a.type === 'store',
+      ),
     [agentsResult],
   );
 
+  // SPEC-WEB-006: 셀렉트는 agent id 기준. 저장된 agent_id 로 현재 에이전트를 찾아
+  // 선택값/표시 이름을 해석한다. 구 config(agent_id 부재)는 저장된 이름으로 매칭
+  // 시도해 backfill 이 가능하도록 하고, 못 찾으면 비활성 폴백 옵션을 노출한다.
+  const selectedAgent = useMemo(
+    () =>
+      storeSource.agent_id
+        ? storeAgents.find((a: { id: string }) => a.id === storeSource.agent_id)
+        : storeAgents.find((a: { name: string }) => a.name === storeSource.agent_name),
+    [storeAgents, storeSource.agent_id, storeSource.agent_name],
+  );
+  // 셀렉트 value: 매칭된 에이전트 id > 저장된 agent_id > 없음(비활성 폴백 표기용).
+  const selectValue = selectedAgent?.id ?? storeSource.agent_id ?? '';
+  // 키 선택/시리즈 조회에 사용할 현재 에이전트 이름(해석값).
+  const resolvedAgentName = resolveStoreAgentName(
+    storeSource.agent_id,
+    storeSource.agent_name,
+    agentsResult?.data,
+  );
+  const isSelected = !!storeSource.agent_id || !!storeSource.agent_name;
+
   return (
     <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
-      {/* 에이전트 선택 */}
+      {/* 에이전트 선택 (value/option 은 agent id 기준, 표시는 이름) */}
       <LabeledField label={t('dashboard.chart.storeAgent')}>
         <select
           data-testid="chart-store-agent-select"
-          value={storeSource.agent_name}
-          onChange={(e) => onPatch({ agent_name: e.target.value, series: [] })}
+          value={selectValue}
+          onChange={(e) => {
+            const id = e.target.value;
+            if (!id) {
+              // 미선택으로 초기화.
+              onPatch({ agent_id: undefined, agent_name: '', series: [] });
+              return;
+            }
+            const agent = storeAgents.find((a: { id: string }) => a.id === id);
+            // agent_id(정본)와 agent_name(현재 이름 스냅샷)을 함께 저장, 시리즈 초기화.
+            onPatch({
+              agent_id: id,
+              agent_name: agent?.name ?? '',
+              series: [],
+            });
+          }}
           className={inputClass()}
         >
           <option value="">{t('dashboard.chart.storeAgentSelect')}</option>
-          {storeAgents.map((a: { name: string }) => (
-            <option key={a.name} value={a.name}>
+          {storeAgents.map((a: { id: string; name: string }) => (
+            <option key={a.id} value={a.id}>
               {a.name}
             </option>
           ))}
-          {/* 현재 저장된 에이전트가 목록에 없으면(비활성 등) 선택 유지 */}
-          {storeSource.agent_name &&
-            !storeAgents.some((a: { name: string }) => a.name === storeSource.agent_name) && (
-              <option value={storeSource.agent_name}>
-                {t('dashboard.chart.storeAgentInactive').replace(
-                  '{name}',
-                  storeSource.agent_name,
-                )}
-              </option>
-            )}
+          {/* 저장된 에이전트가 목록에 없으면(비활성/삭제 등) 저장된 이름으로 선택 유지 */}
+          {selectValue && !selectedAgent && (
+            <option value={selectValue}>
+              {t('dashboard.chart.storeAgentInactive').replace(
+                '{name}',
+                storeSource.agent_name || selectValue,
+              )}
+            </option>
+          )}
         </select>
       </LabeledField>
 
-      {/* 키 선택기(4 필터 + 멀티셀렉트) */}
-      {storeSource.agent_name && (
+      {/* 키 선택기(4 필터 + 멀티셀렉트) — 해석된 현재 이름으로 조회 */}
+      {isSelected && resolvedAgentName && (
         <StoreKeySelector
-          agentName={storeSource.agent_name}
+          agentName={resolvedAgentName}
           series={storeSource.series}
           onChange={(series) => onPatch({ series })}
         />

@@ -9,6 +9,64 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseDevices_Source 는 devices 항목의 "source" 키가 DeviceEntry.Source 로
+// 파싱되고, 없으면 빈 문자열(로더가 "config" 로 간주)로 남는지 검증한다.
+func TestParseDevices_Source(t *testing.T) {
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{"address": "200001", "name": "runtime", "source": "bridge"},
+			map[string]any{"address": "200002", "name": "declared"}, // source 미지정
+		},
+	}
+	got := ParseDevices(opts)
+	require.Len(t, got, 2)
+	assert.Equal(t, "bridge", got[0].Source, "source 키가 보존되어야 함")
+	assert.Equal(t, "", got[1].Source, "source 미지정은 빈 문자열(로더가 config 처리)")
+}
+
+// TestParseDevices_ReportEnabled 는 devices 항목의 "report_enabled" 키가
+// DeviceEntry.ReportEnabled(*bool) 로 파싱되는지 검증한다. present 이면 포인터로
+// 캡처(true/false), absent 이면 nil(기본 enabled) 로 남는다.
+func TestParseDevices_ReportEnabled(t *testing.T) {
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{"address": "200001", "report_enabled": false},
+			map[string]any{"address": "200002", "report_enabled": true},
+			map[string]any{"address": "200003"}, // report_enabled 미지정
+		},
+	}
+	got := ParseDevices(opts)
+	require.Len(t, got, 3)
+
+	require.NotNil(t, got[0].ReportEnabled, "report_enabled=false 는 non-nil 포인터")
+	assert.False(t, *got[0].ReportEnabled)
+
+	require.NotNil(t, got[1].ReportEnabled, "report_enabled=true 는 non-nil 포인터")
+	assert.True(t, *got[1].ReportEnabled)
+
+	assert.Nil(t, got[2].ReportEnabled, "report_enabled 미지정은 nil(기본 enabled)")
+}
+
+// TestParseDevices_DisplayName 는 devices 항목의 "display_name" 키가
+// DeviceEntry.DisplayName 으로 파싱되고, 없으면 빈 문자열(후방호환)로 남는지 검증한다.
+// Name 슬롯(→UnitID)과 독립적인 별도 슬롯임을 함께 확인한다.
+func TestParseDevices_DisplayName(t *testing.T) {
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{"address": "200001", "name": "living-room", "display_name": "개발팀"},
+			map[string]any{"address": "200002", "name": "declared"}, // display_name 미지정
+		},
+	}
+	got := ParseDevices(opts)
+	require.Len(t, got, 2)
+
+	assert.Equal(t, "개발팀", got[0].DisplayName, "display_name 키가 보존되어야 함")
+	assert.Equal(t, "living-room", got[0].Name, "name 슬롯(UnitID)은 display_name 과 독립")
+
+	assert.Equal(t, "", got[1].DisplayName, "display_name 미지정은 빈 문자열(후방호환)")
+	assert.Equal(t, "declared", got[1].Name)
+}
+
 func TestAgentConfig_Validate_Valid(t *testing.T) {
 	cfg := AgentConfig{
 		ID:                  "agent-1",

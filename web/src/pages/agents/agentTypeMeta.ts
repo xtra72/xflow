@@ -404,4 +404,36 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     configFields: [],
     configExample: {},
   },
+
+  'udp-server': {
+    description:
+      'UDP 서버로 동작하여 데이터그램을 수신하는 에이전트. 피어를 추적하며, 수신한 데이터그램을 메시지로 변환하여 플로우에 전달합니다. UDP 는 데이터그램 기반이라 프레이밍 설정이 없습니다.',
+    configFields: [
+      { name: 'host', type: 'string', required: false, default: '0.0.0.0', description: '바인드 주소' },
+      { name: 'port', type: 'number', required: true, description: 'UDP 수신 포트' },
+      { name: 'buffer_size', type: 'number', required: false, default: '4096', description: '데이터그램 읽기 버퍼 크기 (바이트)' },
+      { name: 'log_messages', type: 'boolean', required: false, default: 'false', description: '송/수신 데이터그램을 hex 로 INFO 로그 (패킷 단위 진단용)' },
+    ],
+    configExample: {
+      host: '0.0.0.0',
+      port: 9000,
+      buffer_size: 4096,
+    },
+  },
+
+  'udp-client': {
+    description:
+      'UDP 클라이언트로 동작하여 대상 서버로 데이터그램을 전송하고 응답을 수신하는 에이전트. 플로우에서 생성된 메시지를 서버로 전송하며, 응답 데이터그램을 메시지로 변환합니다.',
+    configFields: [
+      { name: 'host', type: 'string', required: true, description: '전송 대상 서버 IP' },
+      { name: 'port', type: 'number', required: true, description: '전송 대상 서버 UDP 포트' },
+      { name: 'buffer_size', type: 'number', required: false, default: '4096', description: '응답 데이터그램 읽기 버퍼 크기 (바이트)' },
+      { name: 'log_messages', type: 'boolean', required: false, default: 'false', description: '송/수신 데이터그램을 hex 로 INFO 로그 (패킷 단위 진단용)' },
+    ],
+    configExample: {
+      host: '192.168.1.100',
+      port: 9000,
+      buffer_size: 4096,
+    },
+  },
 };

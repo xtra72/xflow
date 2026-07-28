@@ -45,6 +45,13 @@ func (r *fakeDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (str
 	return r.store[agentName+":"+unitID], nil
 }
 
+func (r *fakeDeviceIDRepo) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.store[agentName+":"+unitID] = deviceID
+	return nil
+}
+
 // withTestSlogHandler 는 테스트 동안 slog 의 기본 핸들러를 buf 에 캡처하는
 // 핸들러로 바꾼다. 테스트 종료 시 원복.
 func withTestSlogHandler(t *testing.T) *bytes.Buffer {

@@ -1,0 +1,190 @@
+# thingplus-gateway.yaml
+# Thingplus(ThingsBoard) Device API 양방향 연동 플로우
+#
+# thingplus-gateway 에이전트는 ThingsBoard Device API(v1/devices/me/*)로
+# 텔레메트리를 업링크하고, 공유 속성과 RPC 요청을 다운링크로 수신한다. 본 플로우는
+# 업링크(텔레메트리)와 다운링크(공유 속성/RPC)를 양방향으로 중계하는 구성을 보여준다.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │                        데이터 흐름                                 │
+# ├──────────────────────────────────────────────────────────────────┤
+# │                                                                    │
+# │  [업링크: 센서 → 에이전트 → 플랫폼]                                │
+# │    sensor-in ──→ gateway-uplink(thingplus-uplink)                  │
+# │      → v1/devices/me/telemetry 발행 (connect 없음)                 │
+# │                                                                    │
+# │  [다운링크: 플랫폼 → 에이전트 → 플로우]                            │
+# │    gateway-downlink(thingplus-downlink, source) ──→ type-router    │
+# │      ├─ thingplus.attr.update  ──→ attr-logger                     │
+# │      └─ thingplus.rpc.request  ──→ rpc-logger                      │
+# │                                                                    │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# 업링크 인입 메시지 형식 (device_name_path "$.device" 기준):
+#   { "device": "unit-1", "current_temperature": 24, "target_temperature": 20 }
+#     → v1/devices/me/telemetry:
+#         {"ts":<epoch_ms>,"values":{"unit-1":{"current_temperature":24,"target_temperature":20}}}
+#     (ts 생략 시 서버 시각 사용)
+#
+# 다운링크 방출 메시지:
+#   Type "thingplus.attr.update"  — 공유 속성 변경 push (data: {"key":value,...})
+#   Type "thingplus.rpc.request"  — 서버→디바이스 RPC 요청 (payload: {"id":"<requestId>","method":..,"params":..})
+#
+# Device API RPC (v1/devices/me/rpc/*):
+#   - 요청(다운링크): 에이전트가 v1/devices/me/rpc/request/+ 를 자동 구독한다.
+#       토픽 v1/devices/me/rpc/request/{requestId} 의 {requestId}(정수)는 토픽에 담기고,
+#       페이로드는 {"method":..,"params":..} 이다. 방출 페이로드의 "id" 에 requestId 가
+#       문자열로 담긴다.
+#   - 응답(업링크): 플로우가 Type "thingplus.rpc.response" 메시지를 보내며 요청의 "id"
+#       를 그대로 echo 하면, 에이전트가 v1/devices/me/rpc/response/{id} 로 응답 본문을
+#       발행한다(id 는 토픽에만, 본문에는 미포함). 응답 본문은 payload.data / payload.result
+#       또는 id 등 식별 키를 제외한 나머지에서 추출된다.
+#   NOTE: 게이트웨이 sub-device connect/disconnect 및 v1/gateway/rpc 는 dormant 이다.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/thingplus-gateway.yaml
+#   xflow agent import -f examples/agents/stdout-logger.yaml
+#   xflow flow import  -f examples/flows/thingplus-gateway.yaml
+#   xflow flow deploy  thingplus-gateway
+#   xflow flow start   thingplus-gateway
+
+name: "thingplus-gateway"
+description: "Thingplus Device API 양방향 연동 - 텔레메트리 업링크 + RPC/공유 속성 다운링크"
+config:
+  track_history: true
+  max_history_size: 200
+  error_handling: "propagate"
+  log_level: "info"
+metadata:
+  author: "xtra"
+  version: "1.0"
+  domain: "iot-gateway"
+
+required_agents:
+  - name: "thingplus-gateway-agent"
+    type: "thingplus-gateway"
+  - name: "sensor-source"
+    type: "mqtt-client"
+  - name: "stdout-logger"
+    type: "logger"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # 업링크 경로: 센서 데이터 → 게이트웨이 → 플랫폼
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 센서 수신: 로컬 센서 브로커에서 디바이스 텔레메트리 구독 ──
+  # 각 메시지는 device_name_path("$.device")로 식별될 device 필드를 포함한다.
+  - name: "sensor-in"
+    type: "mqtt-subscriber"
+    config:
+      agent_ref: "sensor-source"
+      topics:
+        - "sensor/+/telemetry"
+      payload_format: "json"
+      buffer_size: 128
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 업링크: thingplus-uplink 로 텔레메트리 전달 ──
+  # 전용 업링크 노드(processing). 인입 메시지를 에이전트의 업링크 경로로 전달한다.
+  # 텔레메트리는 connect 없이 곧바로 v1/devices/me/telemetry 로 발행된다(Device API).
+  # 발행 토픽은 에이전트가 내부적으로 결정하므로 노드에 토픽 설정이 필요 없다.
+  - name: "gateway-uplink"
+    type: "thingplus-uplink"
+    config:
+      agent_ref: "thingplus-gateway-agent"
+      # emit_agent: true  # (기본값) agent:{type,id} 그룹 메타데이터 emit
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 다운링크 경로: 플랫폼 공유 속성 → 에이전트 → 플로우
+  # ═══════════════════════════════════════════════════════════════
+
+  # ── 다운링크: thingplus-downlink 로 공유 속성 수신 ──
+  # 전용 소스 노드(source, out 전용). 에이전트의 다운링크 채널을 드레인하여
+  # 메시지 Type("thingplus.attr.update")을 보존한 채 방출한다.
+  # 에이전트가 onConnect 에서 v1/devices/me/attributes 및 v1/devices/me/rpc/request/+
+  # 를 자동 구독하므로 topics 설정은 선택 사항이다(생략 시 노드가 별도로 Subscribe 하지 않음).
+  # 따라서 아래 rpc-filter/rpc-logger 는 Device API RPC 요청을 수신하는 활성 경로이다.
+  - name: "gateway-downlink"
+    type: "thingplus-downlink"
+    config:
+      agent_ref: "thingplus-gateway-agent"
+      buffer_size: 64
+      # topics: []       # (선택) 추가 구독 토픽. 비우면 에이전트 자동 구독에 의존.
+      # emit_agent: true # (기본값) agent:{type,id} 그룹 메타데이터 emit
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── RPC 요청 필터 (Device API: thingplus.rpc.request, id 는 토픽 requestId) ──
+  - name: "rpc-filter"
+    type: "filter"
+    config:
+      condition: "$.type == 'thingplus.rpc.request'"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── 공유 속성 변경 필터 ──
+  - name: "attr-filter"
+    type: "filter"
+    config:
+      condition: "$.type == 'thingplus.attr.update'"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    errors:
+      - "error"
+
+  # ── RPC 요청 로깅 ──
+  - name: "rpc-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+  # ── 공유 속성 로깅 ──
+  - name: "attr-logger"
+    type: "bridge"
+    inputs:
+      - "in"
+    outputs:
+      - "out"
+    agent_ref:
+      agent_name: "stdout-logger"
+      direction: "out"
+
+wires:
+  # 업링크: 센서 → 게이트웨이
+  - source: "sensor-in:out"
+    target: "gateway-uplink:in"
+
+  # 다운링크: 게이트웨이 → 타입별 라우팅
+  - source: "gateway-downlink:out"
+    target: "rpc-filter:in"
+  - source: "gateway-downlink:out"
+    target: "attr-filter:in"
+
+  # 타입별 로깅
+  - source: "rpc-filter:out"
+    target: "rpc-logger:in"
+  - source: "attr-filter:out"
+    target: "attr-logger:in"

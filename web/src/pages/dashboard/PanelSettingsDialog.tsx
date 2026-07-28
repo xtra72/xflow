@@ -24,6 +24,7 @@ import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
 import { listStoreKeys } from '@/services/api/storeService';
+import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
 import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
@@ -1329,7 +1330,17 @@ interface DataSourceBinding {
   channelName?: string;
   /** chart-emitter / store 소스: 값 추출 경로 (기본 "value", dot-path 지원) */
   displayField?: string;
-  /** store 소스 전용: Store 에이전트 이름 */
+  /**
+   * store 소스 전용: Store 에이전트의 안정적 ID(정본). @spec SPEC-WEB-006
+   * Store API 는 이름 주소이지만 이름은 변경될 수 있으므로 불변 ID 를 정본으로
+   * 저장하고, 조회 시 이 id 로 현재 이름을 해석해 호출한다. 구 config 하위호환을
+   * 위해 옵셔널이며, 부재 시 `storeAgent`(이름)를 그대로 사용한다.
+   */
+  storeAgentId?: string;
+  /**
+   * store 소스 전용: Store 에이전트 이름.
+   * `storeAgentId` 가 있으면 표시용 스냅샷 + 하위호환 폴백. @spec SPEC-WEB-006
+   */
   storeAgent?: string;
   /** store 소스 전용: Store 키 */
   storeKey?: string;
@@ -2072,18 +2083,34 @@ function StoreSourceSelector({
     [agentsResult],
   );
 
+  // SPEC-WEB-006: 셀렉트는 agent id 기준. 저장된 storeAgentId 로 현재 에이전트를
+  // 찾고(구 config 는 이름으로 매칭 시도), 키 조회는 해석된 현재 이름으로 한다.
+  const selectedAgent = useMemo(
+    () =>
+      ds.storeAgentId
+        ? storeAgents.find((a) => a.id === ds.storeAgentId)
+        : storeAgents.find((a) => a.name === ds.storeAgent),
+    [storeAgents, ds.storeAgentId, ds.storeAgent],
+  );
+  const selectValue = selectedAgent?.id ?? ds.storeAgentId ?? '';
+  const resolvedAgentName = resolveStoreAgentName(
+    ds.storeAgentId,
+    ds.storeAgent ?? '',
+    agentsResult?.data,
+  );
+
   // 선택된 에이전트의 키 목록
   const [keys, setKeys] = useState<string[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
 
   useEffect(() => {
-    if (!ds.storeAgent) {
+    if (!resolvedAgentName) {
       setKeys([]);
       return;
     }
     let cancelled = false;
     setKeysLoading(true);
-    listStoreKeys(ds.storeAgent, ds.storeNamespace ?? 'default')
+    listStoreKeys(resolvedAgentName, ds.storeNamespace ?? 'default')
       .then((result) => {
         if (!cancelled) setKeys(result);
       })
@@ -2094,25 +2121,38 @@ function StoreSourceSelector({
         if (!cancelled) setKeysLoading(false);
       });
     return () => { cancelled = true; };
-  }, [ds.storeAgent, ds.storeNamespace]);
+  }, [resolvedAgentName, ds.storeNamespace]);
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1">
       <div className="flex gap-1">
         <select
-          value={ds.storeAgent ?? ''}
-          onChange={(e) => onChange({ storeAgent: e.target.value || undefined, storeKey: undefined })}
+          value={selectValue}
+          onChange={(e) => {
+            const id = e.target.value;
+            if (!id) {
+              onChange({ storeAgentId: undefined, storeAgent: undefined, storeKey: undefined });
+              return;
+            }
+            const agent = storeAgents.find((a) => a.id === id);
+            // storeAgentId(정본) + storeAgent(현재 이름 스냅샷) 저장, 키 초기화.
+            onChange({ storeAgentId: id, storeAgent: agent?.name, storeKey: undefined });
+          }}
           className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
         >
           <option value="">{t('dashboard.settings.gaugeSection.selectStore')}</option>
-          {storeAgents.map((a: { name: string }) => (
-            <option key={a.name} value={a.name}>{a.name}</option>
+          {storeAgents.map((a: { id: string; name: string }) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
           ))}
+          {/* 저장된 에이전트가 목록에 없으면(비활성/삭제) 저장된 이름으로 선택 유지 */}
+          {selectValue && !selectedAgent && (
+            <option value={selectValue}>{ds.storeAgent || selectValue}</option>
+          )}
         </select>
         <select
           value={ds.storeKey ?? ''}
           onChange={(e) => onChange({ storeKey: e.target.value || undefined })}
-          disabled={keysLoading || !ds.storeAgent}
+          disabled={keysLoading || !selectValue}
           className="min-w-0 flex-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500 disabled:opacity-60"
         >
           <option value="">

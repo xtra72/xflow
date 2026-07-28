@@ -127,12 +127,20 @@ func NewLGAPAgent(config agent.AgentConfig) (agent.Agent, error) {
 	for _, entry := range lgapConfig.Devices {
 		zone := toInt(parseZoneKey(entry.Address))
 		zoneByte := byte(zone)
+		// source 보존: 런타임("bridge") 디바이스가 영속화 왕복 후에도 출처를 유지해
+		// 삭제 가능성이 보존되도록 entry.Source 를 우선한다. 비어 있으면 "config".
+		source := entry.Source
+		if source == "" {
+			source = "config"
+		}
 		dev := &LGAPDevice{
 			Zone:   zoneByte,
 			UnitID: entry.Name,
 			Online: false,
 			State:  &LGAPDeviceState{},
-			Source: "config",
+			Source: source,
+			// report_enabled: nil(미지정) 이면 기본 on. 명시 false 만 off.
+			ReportEnabled: entry.ReportEnabled == nil || *entry.ReportEnabled,
 		}
 		a.devices[zoneByte] = dev
 		if entry.Name != "" {
@@ -203,6 +211,9 @@ func (a *LGAPAgent) Start(_ context.Context) error {
 	}
 
 	// v0.6.8: 정기 상태 보고 루프 (NotifyInterval > 0 일 때만 시작).
+	// 연결 상태(online/error_count/offline_threshold/transport_connected)는 device_state
+	// 스트림에 통합되어 이 report 루프와 online/offline 전이 change 로 함께 전달된다
+	// (별도 device_connection 스트림 및 startup-probe 루프 제거, century 단일 스트림 정렬).
 	if a.lgapConfig.NotifyInterval > 0 {
 		go a.notifyLoop()
 	}
@@ -250,6 +261,10 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 	if dev == nil || dev.State == nil {
 		return
 	}
+	// report_enabled 게이트: off 인 디바이스는 device_state 를 방출하지 않는다.
+	if !dev.ReportEnabled {
+		return
+	}
 	label := dev.Name
 	if label == "" {
 		label = dev.UnitID
@@ -262,6 +277,28 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 		"zone":        fmt.Sprintf("0x%02X", zone),
 		"device_type": "HVACR.IDU",
 	}
+	// state 그룹 빌드: online 을 시작으로 운전상태(StateForJSON)를 평탄화해 흡수하고,
+	// 연결 부가 필드(error_count/offline_threshold/transport_connected)를 같은 그룹에
+	// 둔다. 이는 제거된 device_connection 스트림이 싣던 연결 정보를 device_state 로
+	// 일원화한 것으로, samsung device_state state 그룹과 동일 키 구조를 갖는다.
+	state := map[string]any{"online": dev.Online}
+	if raw, err := json.Marshal(dev.State.StateForJSON()); err == nil {
+		var inner map[string]any
+		if json.Unmarshal(raw, &inner) == nil {
+			for k, v := range inner {
+				state[k] = v
+			}
+		}
+	}
+	state["error_count"] = dev.ErrorCount
+	state["offline_threshold"] = a.lgapConfig.OfflineThreshold
+	// transport_connected 는 online=true 이면 항상 true 라 정보량이 없다. online=false 일
+	// 때만 실어 필드 존재 자체가 버스 문제(포트/TCP) 판별 신호가 되게 한다(samsung device_state
+	// 와 동일 규칙 — 관측/의미 기반 emit).
+	if !dev.Online {
+		state["transport_connected"] = a.transport.Available()
+	}
+
 	// v0.9.0: payload.type 제거. eventType="" 로 sendEventLocked 호출 시 type 필드 주입 skip.
 	// v0.18.6: unit_id (프로토콜) + device_id (UUID) 분리.
 	// FIX: a.Name() 호출 금지 — caller 가 a.mu 쓰기 락 보유 중. a.Name() 은 같은
@@ -270,7 +307,7 @@ func (a *LGAPAgent) emitDeviceStateLocked(zone byte, dev *LGAPDevice, trigger st
 		"unit_id":   dev.UnitID,
 		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		"trigger":   trigger,
-		"state":     dev.State.StateForJSON(),
+		"state":     state,
 		"metadata":  metadata,
 	}
 	if !dev.LastSeen.IsZero() {
@@ -477,6 +514,8 @@ func (a *LGAPAgent) Process(data []byte) ([]byte, error) {
 		return a.processAddDevice(&req)
 	case "remove_device":
 		return a.processRemoveDevice(&req)
+	case "set_device":
+		return a.processSetDevice(&req)
 	case "list_devices":
 		return a.processListDevices()
 	default:
@@ -715,11 +754,12 @@ func (a *LGAPAgent) processGetState(req *processRequest) ([]byte, error) {
 	}
 
 	resp := map[string]any{
-		"status":    "ok",
-		"zone":      fmt.Sprintf("0x%02X", zone),
-		"unit_id":   dev.UnitID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
-		"online":    dev.Online,
+		"status":         "ok",
+		"zone":           fmt.Sprintf("0x%02X", zone),
+		"unit_id":        dev.UnitID,
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+		"online":         dev.Online,
+		"report_enabled": dev.ReportEnabled,
 	}
 
 	if dev.State != nil {
@@ -740,10 +780,11 @@ func (a *LGAPAgent) processGetAllStates() ([]byte, error) {
 	var devices []map[string]any
 	for zone, dev := range a.devices {
 		d := map[string]any{
-			"zone":      fmt.Sprintf("0x%02X", zone),
-			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
-			"online":    dev.Online,
+			"zone":           fmt.Sprintf("0x%02X", zone),
+			"unit_id":        dev.UnitID,
+			"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+			"online":         dev.Online,
+			"report_enabled": dev.ReportEnabled,
 		}
 		if dev.State != nil {
 			d["state"] = dev.State.StateForJSON()
@@ -789,6 +830,12 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 		name = v
 	}
 
+	// report_enabled 파라미터: present 이면 반영, absent 면 기본 on(true).
+	reportEnabled := true
+	if v, ok := req.Params["report_enabled"].(bool); ok {
+		reportEnabled = v
+	}
+
 	zoneByte := byte(zoneInt)
 
 	a.mu.Lock()
@@ -806,12 +853,13 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	dev := &LGAPDevice{
-		Zone:   zoneByte,
-		UnitID: deviceID,
-		Name:   name,
-		Online: false,
-		State:  &LGAPDeviceState{},
-		Source: "bridge",
+		Zone:          zoneByte,
+		UnitID:        deviceID,
+		Name:          name,
+		Online:        false,
+		State:         &LGAPDeviceState{},
+		Source:        "bridge",
+		ReportEnabled: reportEnabled,
 	}
 
 	a.devices[zoneByte] = dev
@@ -820,7 +868,7 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	// 이벤트 전송
-	a.sendEventLocked("device_registered", map[string]any{
+	a.sendDeviceEventLocked(dev, "device_registered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zoneByte),
 		"unit_id":   deviceID,
 		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
@@ -828,11 +876,12 @@ func (a *LGAPAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	})
 
 	resp := map[string]any{
-		"status":    "ok",
-		"zone":      fmt.Sprintf("0x%02X", zoneByte),
-		"unit_id":   deviceID,
-		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
-		"name":      name,
+		"status":         "ok",
+		"zone":           fmt.Sprintf("0x%02X", zoneByte),
+		"unit_id":        deviceID,
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
+		"name":           name,
+		"report_enabled": dev.ReportEnabled,
 	}
 	return json.Marshal(resp)
 }
@@ -857,9 +906,8 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	if dev.Source == "config" {
-		return nil, ErrConfigDeviceProtected
-	}
+	// config 소스 디바이스도 UI 에서 삭제 가능하게 한다(보호 제거). 수동 추가 후
+	// 재시작으로 "config" 로 굳은 디바이스를 사용자가 직접 삭제할 수 있어야 하기 때문이다.
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -870,7 +918,8 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	}
 	delete(a.devices, zone)
 
-	a.sendEventLocked("device_unregistered", map[string]any{
+	// 삭제 전 캡처된 dev 포인터로 report_enabled 게이트 적용(맵에서 delete 됐어도 유효).
+	a.sendDeviceEventLocked(dev, "device_unregistered", map[string]any{
 		"zone":      fmt.Sprintf("0x%02X", zone),
 		"unit_id":   dev.UnitID,
 		"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
@@ -885,6 +934,53 @@ func (a *LGAPAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 	return json.Marshal(resp)
 }
 
+// processSetDevice 는 디바이스별 설정(report_enabled/name)을 갱신한다 (set_device).
+// zone 또는 device_id 로 디바이스를 찾아 params 에 present 한 필드만 갱신한다.
+// report_enabled=false 로 갱신하면 이후 이 디바이스의 device_state 및
+// 디바이스 이벤트 방출이 모두 억제된다.
+func (a *LGAPAgent) processSetDevice(req *processRequest) ([]byte, error) {
+	// params 폴백 처리 (add_device/remove_device 패턴).
+	if req.Zone == nil {
+		if v, ok := req.Params["zone"]; ok {
+			z := toInt(v)
+			req.Zone = &z
+		}
+	}
+	if req.DeviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			req.DeviceID = v
+		}
+	}
+
+	zone, dev, err := a.resolveDevice(req)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// report_enabled: present(bool) 일 때만 갱신.
+	if v, ok := req.Params["report_enabled"].(bool); ok {
+		dev.ReportEnabled = v
+	}
+	// name: present(string) 일 때만 갱신.
+	if v, ok := req.Params["name"].(string); ok {
+		dev.Name = v
+	}
+
+	resp := map[string]any{
+		"status":         "ok",
+		"zone":           fmt.Sprintf("0x%02X", zone),
+		"unit_id":        dev.UnitID,
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+		"name":           dev.Name,
+		"device_type":    "HVACR.IDU",
+		"report_enabled": dev.ReportEnabled,
+	}
+	return json.Marshal(resp)
+}
+
 // processListDevices 는 디바이스 목록 조회 명령을 처리한다.
 func (a *LGAPAgent) processListDevices() ([]byte, error) {
 	a.mu.RLock()
@@ -893,11 +989,12 @@ func (a *LGAPAgent) processListDevices() ([]byte, error) {
 	var devices []map[string]any
 	for zone, dev := range a.devices {
 		devices = append(devices, map[string]any{
-			"zone":      fmt.Sprintf("0x%02X", zone),
-			"unit_id":   dev.UnitID,
-			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
-			"online":    dev.Online,
-			"source":    dev.Source,
+			"zone":           fmt.Sprintf("0x%02X", zone),
+			"unit_id":        dev.UnitID,
+			"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
+			"online":         dev.Online,
+			"source":         dev.Source,
+			"report_enabled": dev.ReportEnabled,
 		})
 	}
 
@@ -922,6 +1019,15 @@ func (a *LGAPAgent) resolveDevice(req *processRequest) (byte, *LGAPDevice, error
 	if req.DeviceID != "" {
 		resolved, ok := a.deviceIDs[req.DeviceID]
 		if !ok {
+			// UUID 폴백: 전역 device.List / REST 응답은 UUID(1급 식별자) 만 노출하므로
+			// (zone/UnitID 미노출), 삭제/실행 경로가 device_id 로 UUID 를 전달한다.
+			// deviceIDs 는 UnitID 로만 키잉되므로, UUID 는 각 디바이스의 emit-경로 UUID
+			// (ResolveDeviceID(name, dev.UnitID)) 와 대조해 역매칭한다.
+			if byUUID, ok2 := a.zoneByDeviceUUID(req.DeviceID); ok2 {
+				resolved, ok = byUUID, true
+			}
+		}
+		if !ok {
 			return 0, nil, ErrDeviceIDNotFound
 		}
 		zone = resolved
@@ -939,6 +1045,34 @@ func (a *LGAPAgent) resolveDevice(req *processRequest) (byte, *LGAPDevice, error
 	return zone, dev, nil
 }
 
+// zoneByDeviceUUID 는 글로벌 UUID(device_id) 를 각 디바이스의 레지스트리 UUID 와
+// 대조해 해당 zone 을 역매칭한다. 매칭 실패 시 (0, false).
+//
+// localID 는 반드시 어댑터(SamsungNasaDeviceInfo.Address = formatZone(zone)) 와 동일한
+// formatZone(zone) 을 사용한다 — 프론트엔드/REST 가 받는 device.uid 는 레지스트리
+// 어댑터의 UID() (ResolveDeviceID(name, formatZone(zone))) 이기 때문이다. dev.UnitID 를
+// 쓰면 emit 경로 UUID 와는 맞아도 레지스트리 UUID 와 어긋날 수 있다.
+//
+// 주의(RWMutex 비재진입): 호출자(resolveDevice) 가 a.mu 를 보유한 상태에서 호출하므로
+// 여기서 a.mu 를 재-lock 하지 않으며 a.Name() 도 호출하지 않는다(재진입 deadlock 회피).
+func (a *LGAPAgent) zoneByDeviceUUID(uuid string) (byte, bool) {
+	for zone := range a.devices {
+		if agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, formatZone(zone)) == uuid {
+			return zone, true
+		}
+	}
+	return 0, false
+}
+
+// msgLogLevel 은 송/수신(TX/RX) 프레임 로그 레벨을 반환한다. log_messages 옵션이
+// 켜져 있으면 INFO(기본 레벨에서 보임), 아니면 기존 Debug 레벨을 유지한다.
+func (a *LGAPAgent) msgLogLevel() slog.Level {
+	if a.lgapConfig.LogMessages {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
+}
+
 // sendControlCommand 는 제어 패킷을 빌드하고 트랜스포트로 전송한다.
 // pollMu 를 사용하여 시리얼 포트 동시 접근을 방지한다.
 func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, temp byte) error {
@@ -947,7 +1081,7 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 
 	pkt := a.protocol.BuildControlCommand(zone, flags, modeCombo, temp)
 
-	a.logger.Debug("lgap: 제어 명령 전송",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 제어 명령 전송",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"flags", fmt.Sprintf("0x%02X", flags),
 		"tx", hex.EncodeToString(pkt),
@@ -974,7 +1108,7 @@ func (a *LGAPAgent) sendControlCommand(zone byte, flags byte, modeCombo byte, te
 	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
-	a.logger.Debug("lgap: 제어 응답 수신",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 제어 응답 수신",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"rx", hex.EncodeToString(buf[:n]),
 		"bytes", n,
@@ -1055,6 +1189,17 @@ func (a *LGAPAgent) sendEventLocked(eventType string, data map[string]any) {
 	a.sendToMsgCh(b, logType)
 }
 
+// sendDeviceEventLocked 는 디바이스별 이벤트를 방출하되 report_enabled=false 인
+// 디바이스는 억제한다. 디바이스 이벤트(device_registered/unregistered/online/offline)
+// 의 공통 게이트 진입점이다. 트랜스포트 단위 이벤트(transport_*)는 이 헬퍼를 거치지
+// 않으므로 게이트 대상이 아니다. 호출 전제: a.mu 보유.
+func (a *LGAPAgent) sendDeviceEventLocked(dev *LGAPDevice, eventType string, data map[string]any) {
+	if dev == nil || !dev.ReportEnabled {
+		return
+	}
+	a.sendEventLocked(eventType, data)
+}
+
 // sendToMsgCh 는 데이터를 msgCh 로 전송한다.
 // 버퍼가 가득 차면 가장 오래된 메시지를 드롭하고 최신 메시지를 삽입한다 (ring buffer 전략).
 func (a *LGAPAgent) sendToMsgCh(data []byte, eventType string) {
@@ -1098,14 +1243,19 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 	dev.ErrorCount = 0
 
 	if wasOffline {
-		a.sendEventLocked("device_online", map[string]any{
+		a.sendDeviceEventLocked(dev, "device_online", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
 			"unit_id":   dev.UnitID,
 			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
 	}
 
-	// 상태 업데이트
+	// 상태 업데이트 및 device_state 방출.
+	// device_connection 스트림 제거(연결 정보를 device_state 로 일원화)에 따라
+	// offline→online 복구도 device_state change 로 online=true 를 반드시 반영한다.
+	// 상태 변화 change 와 online 복구 change 를 중복 방출하지 않도록 stateChangeEmitted
+	// 로 dedupe 한다.
+	stateChangeEmitted := false
 	if dev.State != nil {
 		// 이전 상태 저장
 		prevState := a.lastStates[zone]
@@ -1119,29 +1269,35 @@ func (a *LGAPAgent) handleResponse(zone byte, resp *LGAPResponse) {
 			// (RoomTemp + PipeInTemp + PipeOutTemp) 만 변경된 경우 max|Δ| < threshold
 			// 면 emit suppress. (v0.6.6: RoomTemp 만 검사 → Pipe 온도 변경 시
 			// 새어나가는 결함 fix)
-			if a.lgapConfig.EventTempThreshold > 0 &&
-				!nonTempFieldsChangedLGAP(prevState, currentState) {
-				if maxTempDeltaLGAP(prevState, currentState) < a.lgapConfig.EventTempThreshold {
-					return
+			tempSuppressed := a.lgapConfig.EventTempThreshold > 0 &&
+				!nonTempFieldsChangedLGAP(prevState, currentState) &&
+				maxTempDeltaLGAP(prevState, currentState) < a.lgapConfig.EventTempThreshold
+			if !tempSuppressed {
+				a.lastStates[zone] = currentState
+				a.logger.Debug("lgap: 상태 변경 감지",
+					"device", dev.UnitID, "zone", fmt.Sprintf("0x%02X", zone),
+					"power", currentState.Power, "mode", currentState.Mode,
+					"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
+				// v0.7.0: 통합 schema (type="device_state") 로 emit. 이전 별도 event
+				// type ("device_state_changed") 폐기.
+				a.emitDeviceStateLocked(zone, dev, "change")
+				stateChangeEmitted = true
+				// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
+				if v2 := a.onDeviceStateChangeV2; v2 != nil {
+					agentName := a.agentConfig.Name
+					globalID := fmt.Sprintf("%s:%02X", agentName, zone)
+					deviceUID := agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID)
+					a.logger.Debug("lgap: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
+					go v2(agentName, deviceUID, globalID)
 				}
 			}
-			a.lastStates[zone] = currentState
-			a.logger.Debug("lgap: 상태 변경 감지",
-				"device", dev.UnitID, "zone", fmt.Sprintf("0x%02X", zone),
-				"power", currentState.Power, "mode", currentState.Mode,
-				"target_temperature", currentState.TargetTemp, "fan_speed", currentState.FanSpeed)
-			// v0.7.0: 통합 schema (type="device_state") 로 emit. 이전 별도 event
-			// type ("device_state_changed") 폐기.
-			a.emitDeviceStateLocked(zone, dev, "change")
-			// WebSocket 브로드캐스트 콜백 (SPEC-DEVICE-IDENTITY-001 Phase D § M3 — V2 단일).
-			if v2 := a.onDeviceStateChangeV2; v2 != nil {
-				agentName := a.agentConfig.Name
-				globalID := fmt.Sprintf("%s:%02X", agentName, zone)
-				deviceUID := agent.ResolveDeviceID(context.Background(), agentName, dev.UnitID)
-				a.logger.Debug("lgap: WebSocket 상태 변경 브로드캐스트", "agent", agentName, "globalID", globalID, "device_uid", deviceUID)
-				go v2(agentName, deviceUID, globalID)
-			}
 		}
+	}
+
+	// offline→online 복구: 상태 변화 change 가 방출되지 않았다면(상태 동일 또는 온도
+	// 억제) online=true 반영을 위해 device_state change 를 방출한다.
+	if wasOffline && !stateChangeEmitted {
+		a.emitDeviceStateLocked(zone, dev, "change")
 	}
 
 	a.stats.UpdateLastActivity()
@@ -1321,7 +1477,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 
 	pkt := a.protocol.BuildStatusQuery(zone)
 
-	a.logger.Debug("lgap: 상태 쿼리 전송",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 상태 쿼리 전송",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"tx", hex.EncodeToString(pkt),
 	)
@@ -1373,7 +1529,7 @@ func (a *LGAPAgent) pollZone(zone byte) {
 	a.stats.IncrExternalMessagesReceived()
 	a.stats.AddBytesRead(int64(n))
 
-	a.logger.Debug("lgap: 상태 응답 수신",
+	a.logger.Log(context.Background(), a.msgLogLevel(), "lgap: 상태 응답 수신",
 		"zone", fmt.Sprintf("0x%02X", zone),
 		"rx", hex.EncodeToString(buf[:n]),
 		"bytes", n,
@@ -1404,11 +1560,14 @@ func (a *LGAPAgent) incrementErrorCount(zone byte) {
 	dev.ErrorCount++
 	if dev.ErrorCount >= a.lgapConfig.OfflineThreshold && dev.Online {
 		dev.Online = false
-		a.sendEventLocked("device_offline", map[string]any{
+		a.sendDeviceEventLocked(dev, "device_offline", map[string]any{
 			"zone":      fmt.Sprintf("0x%02X", zone),
 			"unit_id":   dev.UnitID,
 			"device_id": agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, dev.UnitID),
 		})
+		// online→offline 전이를 device_state change 로 즉시 방출한다(online=false 반영).
+		// device_connection 스트림 제거에 따른 단일 스트림 일원화.
+		a.emitDeviceStateLocked(zone, dev, "change")
 		a.logger.Warn("lgap: 디바이스 오프라인",
 			"zone", fmt.Sprintf("0x%02X", zone),
 			"device_id", dev.UnitID,
@@ -1435,6 +1594,8 @@ func (a *LGAPAgent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
 			Online: false,
 			State:  &LGAPDeviceState{},
 			Source: "pinned",
+			// report_enabled: nil(미지정) 이면 기본 on. 명시 false 만 off.
+			ReportEnabled: entry.ReportEnabled == nil || *entry.ReportEnabled,
 		}
 		a.devices[zoneByte] = dev
 		if entry.Name != "" {
@@ -1450,10 +1611,13 @@ func (a *LGAPAgent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
 func (a *LGAPAgent) setAllDevicesOffline() {
 	a.mu.Lock()
 	var offlined int
-	for _, dev := range a.devices {
+	for zone, dev := range a.devices {
 		if dev.Online {
 			dev.Online = false
 			offlined++
+			// bulk offline 은 device 당 개별 device_state change(online=false)를 방출한다
+			// (배칭 금지). device_connection 스트림 제거에 따른 단일 스트림 일원화.
+			a.emitDeviceStateLocked(zone, dev, "change")
 		}
 	}
 	a.mu.Unlock()
@@ -1653,6 +1817,34 @@ func (a *LGAPAgent) State() map[string]any {
 	result["reconnect_attempts"] = a.reconnectAttempts
 	a.reconnectMu.Unlock()
 
+	return result
+}
+
+// GetPersistableDevices 는 현재 메모리의 디바이스 중 영속 저장할 대상 디바이스만 반환한다.
+// LGAP 는 auto-discovery 개념이 없으므로 "config" 또는 "bridge"(runtime 추가) Source 인 모든 디바이스를 반환한다.
+// 반환된 DeviceEntry 배열은 agent.ParseDevices() 를 통해 다시 파싱할 수 있는 형식이다.
+//
+// 이 메서드는 add_device/remove_device 명령 후 저장소에 디바이스 목록을 persist 하기 위해
+// internal/api/service/agent_adapter.go 의 ExecAgent 에서 호출된다.
+func (a *LGAPAgent) GetPersistableDevices() []agent.DeviceEntry {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var result []agent.DeviceEntry
+	for zone, dev := range a.devices {
+		// LGAP 는 auto 개념이 없으므로 모든 non-config 디바이스를 포함
+		// (config 와 bridge/runtime-added 모두 영속화)
+		// 중요: Name 필드는 항상 dev.UnitID 를 사용한다.
+		// ParseDevices() 시 entry.Name → UnitID 로 매핑되므로,
+		// 역으로 저장할 때는 UnitID → Name 으로 써야 round-trip 이 보존된다.
+		re := dev.ReportEnabled
+		result = append(result, agent.DeviceEntry{
+			Address:       fmt.Sprintf("0x%x", zone),
+			Name:          dev.UnitID,
+			Source:        dev.Source, // source 보존: 재시작 후에도 "bridge" 유지 → 삭제 가능
+			ReportEnabled: &re,        // report_enabled 왕복 보존(off 설정이 재시작 후에도 유지)
+		})
+	}
 	return result
 }
 

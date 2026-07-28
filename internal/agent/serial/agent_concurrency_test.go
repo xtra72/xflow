@@ -237,11 +237,15 @@ func TestSerialAgent_ConcurrentWriteRead_NoPortOverlap(t *testing.T) {
 
 	// Start 를 우회하고 직접 포트를 주입한다 (overlapDetectingPort 는
 	// goserial.Port 를 만족하지 않으므로).
+	// portIOReader 로 감싼다: 각 sub-read 마다 락을 획득/해제하여
+	// 물리 포트 I/O 를 per-sub-read 로 직렬화한다.
 	sa.mu.Lock()
 	sa.port = mock
 	sa.mu.Unlock()
 	sa.connected.Store(true)
-	sa.reader = NewSerialConnReader(sa.framer, mock)
+	var portReader io.Reader = mock
+	portReader = &portIOReader{inner: portReader, lock: sa.portIOLock}
+	sa.reader = NewSerialConnReader(sa.framer, portReader)
 
 	sa.wg.Add(1)
 	go sa.readLoop()

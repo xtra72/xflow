@@ -40,8 +40,17 @@ config:
   # 기본값: true — 명시는 선택이며 비활성화하려면 false 로 설정.
   auto_discovery: true
 
-  # 오프라인 판정 임계값 (연속 N회 응답 실패 시 오프라인)
+  # 오프라인 판정 임계값 (연속 N회 send/build 실패 시 오프라인)
   offline_threshold: 3
+
+  # LastSeen 기반 stale offline 판정 임계값 (device 가 이 시간 동안 프레임을 보내지
+  # 않으면 오프라인 전환). Samsung 폴링은 비동기라 이 검사가 실내기 정전/응답없음을
+  # 감지하는 유일한 경로다. 3-way 의미:
+  #   - 미설정(키 자체를 생략): offline_threshold × poll_interval 파생 (기본 3×30s=90s)
+  #   - 양수(예: "90s"): 그 값을 임계값으로 그대로 사용 (파생값을 덮어씀)
+  #   - "0s": staleness 감지 완전 비활성 (단, 트랜스포트 연결 끊김 시 일괄 오프라인은 계속 동작)
+  # 아래는 파생 기본값(미설정)과 동일한 90s 를 명시한 예시다. 주석 처리하면 파생을 사용한다.
+  # offline_timeout: "90s"
 
   # 메시지 채널 버퍼 크기
   msg_channel_size: 256
@@ -66,6 +75,10 @@ config:
 
   # 정기 keepalive emit 주기 (기본값: "60s", 0=비활성)
   # v1.19.0+ 부터 기본값이 "0s" → "60s" 로 변경. 변경 감지만 원하면 "0s" 명시.
+  # 연결 상태(online/offline)는 device_state 스트림에 일원화되어 전달된다.
+  # state 그룹에 online 과 함께 error_count/offline_threshold/transport_connected 가 실리며,
+  # online↔offline 전이 시 device_state change, 주기 보고는 report_interval 로 방출된다.
+  # (이전의 별도 device_connection 스트림·connection_report_interval·startup_probe_timeout 은 폐지됨)
   report_interval: "60s"
 
   # 로그 옵션 (3종 HVACR-01 에이전트 통일, default false)

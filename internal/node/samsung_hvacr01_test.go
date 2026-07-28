@@ -298,6 +298,56 @@ func TestSamsungHvacr01StatusNode_DrainNewFrames_Emits(t *testing.T) {
 	}
 }
 
+// TestSamsungHvacr01StatusNode_DrainNewFrames_EmitsConnectionFields 는 연결 정보가
+// device_state 로 일원화된 뒤(별도 device_connection 스트림 제거), 연결 진단 필드
+// (online/error_count/offline_threshold/transport_connected)를 state 그룹에 담은 스냅샷이
+// device_state.<trigger> 메시지로 방출되고 해당 필드가 payload 로 평탄화되는지 검증한다.
+func TestSamsungHvacr01StatusNode_DrainNewFrames_EmitsConnectionFields(t *testing.T) {
+	t.Parallel()
+	device := map[string]any{
+		"address":   "20.00.00",
+		"unit_id":   "20.00.00",
+		"device_id": "20.00.00",
+		"trigger":   "report",
+		"state": map[string]any{
+			"online":              false,
+			"error_count":         float64(2),
+			"offline_threshold":   float64(3),
+			"transport_connected": true,
+		},
+		"last_seen_ms": int64(1716800000000),
+	}
+	devJSON, _ := json.Marshal(device)
+	snap, _ := json.Marshal(map[string]any{"seq": 1, "device": json.RawMessage(devJSON)})
+	resp, _ := json.Marshal(map[string]any{
+		"count":     1,
+		"snapshots": []json.RawMessage{snap},
+	})
+	mock := newMockNASAAgent(resp)
+	n := makeRunningSamsungStatusNode(t, mock, nil)
+
+	n.mu.RLock()
+	cfg := n.hvacr01Cfg
+	n.mu.RUnlock()
+	n.drainNewFrames(cfg)
+
+	select {
+	case msg := <-n.sourceCh:
+		assert.Equal(t, "device_state.report", msg.Type(),
+			"연결 정보 스냅샷도 device_state 로 방출되어야 함")
+		online, _ := msg.Payload().Get("online")
+		assert.Equal(t, false, online, "online 필드가 평탄화되어야 함")
+		ec, _ := msg.Payload().Get("error_count")
+		assert.Equal(t, float64(2), ec, "error_count 필드 보존")
+		ot, _ := msg.Payload().Get("offline_threshold")
+		assert.Equal(t, float64(3), ot, "offline_threshold 필드 보존")
+		tc, _ := msg.Payload().Get("transport_connected")
+		assert.Equal(t, true, tc, "transport_connected 필드 보존")
+	case <-time.After(time.Second):
+		t.Fatal("expected device_state message on sourceCh")
+	}
+}
+
 func TestSamsungHvacr01StatusNode_DrainNewFrames_AddressingFilter(t *testing.T) {
 	t.Parallel()
 	// 두 디바이스: address 10.0F.00 (매칭) / 10.10.00 (제외).

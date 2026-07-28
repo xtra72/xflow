@@ -13,7 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { useAgent, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
 import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
-import { useDevicesRealtime } from '@/hooks/useDevice';
+import { useDeleteDevice, useDevicesRealtime, useSetDeviceReport } from '@/hooks/useDevice';
 import { useUpdateRemoteAgent } from '@/hooks/useRemote';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -32,10 +32,8 @@ import {
   resetStoreKey,
   useSetStoreKeyMeta,
   useStoreKeysWithTags,
-  useStoreTagPairs,
   type DataType,
   type StoreKeyObject,
-  type StoreTagPair,
 } from '@/services/api/store';
 import { mapStoreError } from '@/lib/errors/storeErrorMapper';
 import { cn } from '@/lib/utils/cn';
@@ -64,12 +62,9 @@ import {
 } from '@/components/property/EditKeyMetaDialog';
 import RenameKeyDialog from '@/components/property/RenameKeyDialog';
 import SelectStaticKeyDialog from '@/components/property/SelectStaticKeyDialog';
-import {
-  TagFilterChips,
-  matchesTagFilter,
-} from '@/components/property/TagFilterChips';
 import DeviceDetailPanel from '@/pages/devices/DeviceDetailPanel';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
+import { ReportToggleSwitch } from '@/pages/devices/ReportToggleSwitch';
 import {
   getLogLevels,
   setComponentLogLevel,
@@ -77,6 +72,7 @@ import {
 } from '@/services/api/monitorService';
 import { useUIStore } from '@/stores/uiStore';
 
+import InfluxdbManagementPanel from './InfluxdbManagementPanel';
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
 import {
@@ -113,7 +109,7 @@ interface AgentDetailPanelProps {
   agentName?: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -145,6 +141,12 @@ const HAS_STORE_TAB = new Set(['store']);
  */
 const HAS_SERIES_TAB = new Set<string>(['tsdb']);
 
+/**
+ * 관리 탭을 표시하는 에이전트 타입.
+ * InfluxDB 에이전트는 bucket / measurement 관리 UI 를 '관리' 탭으로 노출한다.
+ */
+const HAS_MANAGEMENT_TAB = new Set<string>(['influxdb']);
+
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
   const showDevices = !NO_DEVICES_TAB.has(agentType);
@@ -152,6 +154,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
   const showStore = HAS_STORE_TAB.has(agentType);
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
   const showSeries = HAS_SERIES_TAB.has(agentType);
+  const showManagement = HAS_MANAGEMENT_TAB.has(agentType);
 
   // TSDB 에이전트는 기본 탭을 '시리즈', Store 에이전트는 '저장소',
   // 그 외에는 '통계' 를 기본 탭으로 선택한다.
@@ -165,6 +168,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       <div className="flex border-b border-(--color-border-default) px-4">
         <TabButton label={t('agents.detail.tabs.stats')} active={tab === 'stats'} onClick={() => setTab('stats')} />
         <TabButton label={t('agents.detail.tabs.config')} active={tab === 'config'} onClick={() => setTab('config')} />
+        {showManagement && <TabButton label={t('agents.detail.tabs.management')} active={tab === 'management'} onClick={() => setTab('management')} />}
         {showTopics && <TabButton label={t('agents.detail.tabs.topics')} active={tab === 'topics'} onClick={() => setTab('topics')} />}
         {showStore && <TabButton label={t('agents.detail.tabs.store')} active={tab === 'store'} onClick={() => setTab('store')} />}
         {showSeries && <TabButton label={t('agents.detail.tabs.series')} active={tab === 'series'} onClick={() => setTab('series')} />}
@@ -175,6 +179,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       {/* 탭 컨텐츠 */}
       {tab === 'stats' && <StatsTab agentId={agentId} />}
       {tab === 'config' && <ConfigTab agentId={agentId} agentType={agentType} />}
+      {tab === 'management' && showManagement && <InfluxdbManagementPanel agentName={agentName} />}
       {tab === 'topics' && showTopics && <TopicsTab agentId={agentId} />}
       {tab === 'store' && showStore && <StoreTab agentId={agentId} agentName={agentName} />}
       {tab === 'series' && showSeries && (
@@ -534,6 +539,11 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; 
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
   },
+  'thingplus-gateway': {
+    left: new Set(['broker', 'port', 'tls', 'ca_cert', 'access_token', 'client_id', 'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
 };
 
 function TwoColumnConfigLayout({
@@ -551,8 +561,11 @@ function TwoColumnConfigLayout({
   const colConfig = TWO_COL_CONFIG[agentType];
   if (!colConfig) return null;
 
-  const leftFields = schema.fields.filter((f) => colConfig.left.has(f.name));
-  const rightFields = schema.fields.filter((f) => !colConfig.left.has(f.name));
+  // 로그 섹션(section: 'logging') 필드가 있으면 별도 '로그' 그룹으로 분리하고 로그 레벨
+  // 셀렉터를 그 그룹 상단에 둔다(HVACR 4-분면의 logging 섹션과 동형). 로그 섹션 필드가
+  // 없는 에이전트는 기존 2열 동작을 유지한다(로그 레벨은 우측 컬럼 하단).
+  const leftFields = schema.fields.filter((f) => colConfig.left.has(f.name) && f.section !== 'logging');
+  const rightFields = schema.fields.filter((f) => !colConfig.left.has(f.name) && f.section !== 'logging');
 
   const filterVisible = (fields: typeof schema.fields) =>
     fields.filter((f) => {
@@ -563,9 +576,43 @@ function TwoColumnConfigLayout({
       return actual === expected;
     });
 
+  const loggingFields = filterVisible(schema.fields.filter((f) => f.section === 'logging'));
+  const hasLoggingGroup = loggingFields.length > 0;
+
   const handleChange = (fieldName: string, value: unknown) => {
     onChange({ ...data, [fieldName]: value });
   };
+
+  // 로그 레벨 셀렉터(로컬 타깃에서만 logLevel 전달). 로그 그룹 유무에 따라 그룹 상단 또는
+  // 우측 컬럼 하단에 배치한다.
+  const logLevelSelect = logLevel ? (
+    <div className="space-y-1">
+      <label
+        htmlFor={`agent-log-${logLevel.agentId}`}
+        className="block text-xs font-medium text-(--color-text-secondary)"
+      >
+        {t('agents.detail.config.logLevel')}
+      </label>
+      <select
+        id={`agent-log-${logLevel.agentId}`}
+        value={logLevel.value}
+        onChange={(e) => logLevel.onChangeLevel(e.target.value)}
+        disabled={logLevel.updating}
+        className={cn(
+          'block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm shadow-sm',
+          'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
+          'bg-(--color-bg-surface) text-(--color-text-primary)',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+        )}
+      >
+        <option value="">{t('agents.detail.config.logLevelDefault')}</option>
+        <option value="debug">DEBUG</option>
+        <option value="info">INFO</option>
+        <option value="warn">WARN</option>
+        <option value="error">ERROR</option>
+      </select>
+    </div>
+  ) : null;
 
   return (
     <div className="grid grid-cols-2 gap-4">
@@ -594,33 +641,26 @@ function TwoColumnConfigLayout({
             readOnly={readOnly}
           />
         ))}
-        {logLevel && (
-          <div className="space-y-1">
-            <label
-              htmlFor={`agent-log-${logLevel.agentId}`}
-              className="block text-xs font-medium text-(--color-text-secondary)"
-            >
-              {t('agents.detail.config.logLevel')}
-            </label>
-            <select
-              id={`agent-log-${logLevel.agentId}`}
-              value={logLevel.value}
-              onChange={(e) => logLevel.onChangeLevel(e.target.value)}
-              disabled={logLevel.updating}
-              className={cn(
-                'block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm shadow-sm',
-                'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
-                'bg-(--color-bg-surface) text-(--color-text-primary)',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-              )}
-            >
-              <option value="">{t('agents.detail.config.logLevelDefault')}</option>
-              <option value="debug">DEBUG</option>
-              <option value="info">INFO</option>
-              <option value="warn">WARN</option>
-              <option value="error">ERROR</option>
-            </select>
+        {/* 로그 그룹 (section: 'logging' 필드 보유 에이전트: serial / tcp-server 등) 은
+            우측 컬럼 하단에 별도 '로그' 그룹으로 렌더한다. 로그 레벨을 상단에, 그 아래
+            로그 토글(송/수신 프레임 로그 등)을 둔다. 로그 섹션 필드가 없으면 기존처럼
+            로그 레벨만 우측 하단에 렌더한다. */}
+        {hasLoggingGroup ? (
+          <div className="space-y-3 border-t border-(--color-border-default) pt-3">
+            <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{t('agents.detail.config.logging')}</h4>
+            {logLevelSelect}
+            {loggingFields.map((field) => (
+              <FormField
+                key={field.name}
+                field={field}
+                value={data[field.name]}
+                onChange={(v) => handleChange(field.name, v)}
+                readOnly={readOnly}
+              />
+            ))}
           </div>
+        ) : (
+          logLevelSelect
         )}
       </div>
     </div>
@@ -2821,14 +2861,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<StorePageSize>(10);
 
-  // --- 태그 필터 상태 (SPEC-STORE-003) ---
-  // "tagKey=tagValue" 문자열 집합. AND 로직 (모두 일치하는 엔트리만 표시).
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set());
-
-  // --- 메트릭 타입 필터 상태 (SPEC-STORE-003 v0.4.0) ---
-  // 빈 문자열 = 전체. 엔트리에 모두 metric_type 이 포함되므로 클라이언트 측 필터.
-  const [selectedMetricType, setSelectedMetricType] = useState<string>('');
-
   // --- 검색 필터 상태 (store key 테이블) ---
   // key / metric_type / tags 에 대한 부분일치(대소문자 무시) 검색어.
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -2859,10 +2891,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   // 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더의 토글로 일괄 제어한다.
   // false(기본): 앞 8자만 표시, true: 전체 키 표시.
   const [keyColumnExpanded, setKeyColumnExpanded] = useState(false);
-
-  // 태그 쌍 목록 조회 (구버전 서버/태그 없음 은 빈 배열로 폴백).
-  const tagPairsQuery = useStoreTagPairs(agentName);
-  const tagPairs: StoreTagPair[] = tagPairsQuery.data ?? [];
 
   // v0.7.0 (M14, Phase D): 백엔드에서 자동 등록된 키의 메타데이터(data_type 포함)를
   // 가져온다. PromoteToStaticDialog 가 defaultDataType 으로 사전 채움하기 위함이다.
@@ -2913,35 +2941,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const totalHistoryEntries = (agent?.state as { total_history_entries?: number } | undefined)?.total_history_entries ?? 0;
   const maxHistorySize = (agent?.state as { max_history_size?: number } | undefined)?.max_history_size ?? 0;
 
-  // 사용 중인 메트릭 타입 목록 (필터 셀렉트 옵션). 빈 값은 "unknown" 으로 정규화.
-  // 필터링 전 전체 엔트리 기준으로 계산하여, 필터 적용 후에도 옵션이 사라지지 않게 한다.
-  // @spec SPEC-STORE-003 v0.4.0
-  const metricTypeOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const e of allEntries) {
-      set.add(extractEntryMetricType(e) || 'unknown');
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [allEntries]);
-
-  // 태그 + 메트릭 타입 필터 적용 (AND 로직). 선택이 없으면 원본 그대로.
-  // @spec SPEC-STORE-003 v0.4.0
-  const filteredEntries = useMemo(() => {
-    const tagActive = selectedTags.size > 0;
-    const metricActive = selectedMetricType !== '';
-    if (!tagActive && !metricActive) return allEntries;
-    return allEntries.filter((e) => {
-      if (tagActive && !matchesTagFilter(extractEntryTags(e), selectedTags)) {
-        return false;
-      }
-      if (metricActive) {
-        const mt = extractEntryMetricType(e) || 'unknown';
-        if (mt !== selectedMetricType) return false;
-      }
-      return true;
-    });
-  }, [allEntries, selectedTags, selectedMetricType]);
-
   // Excel 유사 컬럼 필터/정렬용 컨텍스트. binding 컬럼은 정적/동적 라벨을 셀 값으로
   // 사용하므로 i18n 라벨을 주입한다. (t 는 안정적이나 방어적으로 deps 에 포함.)
   const filterCtx = useMemo<FilterContext>(
@@ -2956,14 +2955,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   );
 
   // 검색·컬럼 필터·정렬을 차례로 적용.
-  // 파이프라인: 태그/메트릭 필터(filteredEntries) → 컬럼별 Excel 필터 → 검색 → 정렬.
+  // 파이프라인: 전체 엔트리 → 컬럼별 Excel 필터 → 검색 → 정렬.
   // 모두 AND 결합이므로 순서는 결과에 영향을 주지 않는다.
   // binding(정적/동적) 정렬은 staticKeyNames 집합을 사용한다.
   const entries = useMemo(() => {
-    const byColumn = applyColumnFilters(filteredEntries, columnFilters, filterCtx);
+    const byColumn = applyColumnFilters(allEntries, columnFilters, filterCtx);
     const searched = filterEntries(byColumn, searchQuery);
     return sortEntries(searched, sort, { staticKeyNames });
-  }, [filteredEntries, columnFilters, filterCtx, searchQuery, sort, staticKeyNames]);
+  }, [allEntries, columnFilters, filterCtx, searchQuery, sort, staticKeyNames]);
 
   // 태그 컬럼 표시 여부: 필터링 전 전체 엔트리 중 하나라도 태그가 있으면 표시.
   // (필터링 후 엔트리만 기준으로 하면, 필터 해제 시 컬럼이 사라지는 UX 문제가 발생)
@@ -3002,8 +3001,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     isColumnFilterActive(f),
   );
   const hasActiveFilter =
-    selectedTags.size > 0 ||
-    selectedMetricType !== '' ||
     searchQuery.trim() !== '' ||
     anyColumnFilterActive;
 
@@ -3017,37 +3014,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const visibleEntries = useMemo(
     () => entries.slice(startIdx, startIdx + pageSize),
     [entries, startIdx, pageSize],
-  );
-
-  // --- 태그 필터 핸들러 ---
-
-  const handleToggleTag = useCallback((filterId: string) => {
-    setSelectedTags((prev) => {
-      const next = new Set(prev);
-      if (next.has(filterId)) {
-        next.delete(filterId);
-      } else {
-        next.add(filterId);
-      }
-      return next;
-    });
-    // 필터 변경 시 1페이지로 리셋.
-    setPage(1);
-  }, []);
-
-  const handleClearTags = useCallback(() => {
-    setSelectedTags(new Set());
-    setPage(1);
-  }, []);
-
-  // --- 메트릭 타입 필터 핸들러 (SPEC-STORE-003 v0.4.0) ---
-  const handleMetricTypeFilterChange = useCallback(
-    (e: ChangeEvent<HTMLSelectElement>) => {
-      setSelectedMetricType(e.target.value);
-      // 필터 변경 시 1페이지로 리셋.
-      setPage(1);
-    },
-    [],
   );
 
   // --- 검색 핸들러 (store key 테이블) ---
@@ -3588,58 +3554,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         )}
       </div>
 
-      {/* 메트릭 타입 필터 (SPEC-STORE-003 v0.4.0): 사용 중인 타입이 2종 이상일 때만 노출.
-          (단일 종류뿐이면 필터 의미가 없으므로 숨겨 노이즈를 줄인다.) */}
-      {metricTypeOptions.length > 1 && (
-        <div className="flex items-center gap-2 rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-          <label
-            htmlFor="store-metric-type-filter"
-            className="flex items-center gap-1.5 text-xs font-medium text-(--color-text-muted)"
-          >
-            <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('agents.detail.store.metricType')}
-          </label>
-          <select
-            id="store-metric-type-filter"
-            value={selectedMetricType}
-            onChange={handleMetricTypeFilterChange}
-            data-testid="store-metric-type-filter"
-            className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="">{t('agents.detail.store.all')}</option>
-            {metricTypeOptions.map((mt) => (
-              <option key={mt} value={mt}>
-                {mt}
-              </option>
-            ))}
-          </select>
-          {selectedMetricType !== '' && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedMetricType('');
-                setPage(1);
-              }}
-              className="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-            >
-              {t('agents.detail.store.clearFilter')}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 태그 필터 섹션 (SPEC-STORE-003): 태그 쌍이 하나도 없으면 전체를 숨긴다. */}
-      {tagPairs.length > 0 && (
-        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-          <TagFilterChips
-            pairs={tagPairs}
-            selected={selectedTags}
-            onToggle={handleToggleTag}
-            onClearAll={handleClearTags}
-          />
-        </div>
-      )}
-
       {/* 테이블 */}
       {entries.length === 0 ? (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-8 text-center text-sm text-(--color-text-muted)">
@@ -4036,11 +3950,22 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // 클릭 시 상세 패널 expand. 동시 1개만 펼침.
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const execAgent = useExecAgent();
+  const deleteDevice = useDeleteDevice();
+  const setDeviceReport = useSetDeviceReport();
   const addNotification = useUIStore((s) => s.addNotification);
+  // 삭제 확인 다이얼로그 대상(1개). null 이면 닫힌 상태.
+  const [removeTarget, setRemoveTarget] = useState<
+    { deviceId: string; address: string; name: string } | null
+  >(null);
 
   const devices = data?.data ?? [];
   const isNasa = agentType === 'samsung_hvacr01';
   const isLgap = agentType === 'lgap';
+  // LG ICP-01/02 는 auto-discovery capture 에이전트다. 수동 추가(add_device)는 없지만
+  // 디바이스별 삭제 + 상태 전송(report_enabled) 토글은 지원한다(samsung/lgap 와 동일).
+  const isLgIcp = agentType === 'lg_hvacr01' || agentType === 'lg_hvacr02';
+  // 디바이스 관리(삭제 + 상태 전송 토글) 지원 여부. 추가(add_device)는 isNasa||isLgap 만.
+  const canManageDevices = isNasa || isLgap || isLgIcp;
 
   // 소스 정보 (list_devices 응답에서 획득).
   // SPEC-DEVICE-IDENTITY-001 Phase D (M11 / D-T20):
@@ -4055,7 +3980,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // bus address 가 보존되도록 별도 map 유지.
   const [addressMap, setAddressMap] = useState<Record<string, string>>({});
   useEffect(() => {
-    if ((!isNasa && !isLgap) || !agent) return;
+    if (!canManageDevices || !agent) return;
     execAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
@@ -4170,18 +4095,40 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   }
 
-  function handleRemoveDevice(deviceId: string, address?: string) {
-    const params: Record<string, unknown> = {};
-    if (deviceId) params.device_id = deviceId;
-    else if (address) params.address = address;
-    execAgent.mutate(
-      { id: agentId, req: { command: 'remove_device', params } },
+  // 삭제 확인 다이얼로그에서 확인 클릭 시 실행. remove_device 성공 후 저장된
+  // 메타데이터(이름/태그/pin)를 정리한다(useDeleteDevice 가 오케스트레이션).
+  function confirmRemoveDevice() {
+    if (!removeTarget) return;
+    const target = removeTarget;
+    deleteDevice.mutate(
+      { agentId, deviceId: target.deviceId, address: target.address },
       {
         onSuccess: () => {
+          setRemoveTarget(null);
           addNotification({ type: 'success', message: t('agents.detail.devices.removeSuccess') });
         },
         onError: (err) => {
+          setRemoveTarget(null);
           addNotification({ type: 'error', message: t('agents.detail.devices.removeError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.devices.unknownError')) });
+        },
+      },
+    );
+  }
+
+  // 상태 전송(report_enabled) on/off 토글. 낙관적 업데이트는 훅이 처리하며 실패 시 알림.
+  // samsung_hvacr01 / lgap 만 디바이스별 report 게이트를 지원한다(액션 열과 동일 조건).
+  function handleToggleReport(device: { id: string; uid?: string }, next: boolean) {
+    setDeviceReport.mutate(
+      { agentId, deviceId: device.uid ?? device.id, reportEnabled: next },
+      {
+        onError: (err) => {
+          addNotification({
+            type: 'error',
+            message: t('devices.list.reportError').replace(
+              '{message}',
+              err instanceof Error ? err.message : t('devices.list.unknownError'),
+            ),
+          });
         },
       },
     );
@@ -4199,15 +4146,12 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     // 1순위: list_devices 응답에서 받은 bus address (사람이 읽기 좋은 hex).
     const uid = device.uid ?? device.id;
     if (uid && addressMap[uid]) return addressMap[uid];
-    // 2순위: UUID short form (Phase D+ 호환, address 미수신 시).
-    if (device.uid) return device.uid.slice(0, 8);
+    // 2순위: UUID 전체 (Phase D+ 호환, address 미수신 시) — 잘라내지 않고 전체 노출.
+    if (device.uid) return device.uid;
     // 3순위: Phase A~C composite — colon 뒷부분만 추출 (legacy fallback).
     const parts = device.id.split(':');
     if (parts.length > 1) return parts.slice(1).join(':');
-    // 4순위: 그 외 (UUID 자체) — UUID 8자리로 trim 하여 가독성 확보.
-    if (device.id.length >= 8 && device.id.includes('-')) {
-      return device.id.slice(0, 8);
-    }
+    // 4순위: 그 외 (UUID 자체) — 전체 노출 (잘림 없음).
     return device.id;
   }
 
@@ -4387,7 +4331,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colType')}</th>
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colConnection')}</th>
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colSource')}</th>
-                {(isNasa || isLgap) && <th className="pb-2 font-medium" />}
+                {canManageDevices && <th className="pb-2 font-medium" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
@@ -4405,7 +4349,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                       className="cursor-pointer text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
                     >
                       <td className="py-2 pr-3 font-medium">{d.name || addressLabel}</td>
-                      <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
+                      <td title={addressLabel} className="whitespace-nowrap py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
                       <td className="py-2 pr-3 text-xs">{getDeviceTypeLabel(d.type)}</td>
                       <td className="py-2 pr-3"><DeviceStatusBadge online={d.online} /></td>
                       <td className="py-2 pr-3">
@@ -4424,28 +4368,41 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                           </span>
                         )}
                       </td>
-                      {(isNasa || isLgap) && (
+                      {canManageDevices && (
                         <td className="py-2 text-right">
-                          {!isManual && variant && (
+                          {/* 상태 전송 토글(report_enabled) + 삭제 버튼. 전역 디바이스 목록과
+                              동일한 액션 세트다. 모든 디바이스(config 포함, source 미해석 무관)에
+                              노출하며 variant 게이트에 의존하지 않는다. */}
+                          <div className="flex items-center justify-end gap-2">
+                            <ReportToggleSwitch
+                              enabled={d.report_enabled ?? true}
+                              onToggle={(next) => handleToggleReport(d, next)}
+                              t={t}
+                            />
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleRemoveDevice(d.name || '', addressLabel);
+                                setRemoveTarget({
+                                  deviceId: d.uid ?? d.id,
+                                  address: addressLabel,
+                                  name: d.name || addressLabel,
+                                });
                               }}
-                              disabled={execAgent.isPending}
+                              disabled={deleteDevice.isPending}
                               className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
                               title={t('agents.detail.devices.removeTooltip')}
+                              aria-label={t('agents.detail.devices.removeTooltip')}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
-                          )}
+                          </div>
                         </td>
                       )}
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={(isNasa || isLgap) ? 6 : 5} className="bg-(--color-bg-sunken)">
+                        <td colSpan={canManageDevices ? 6 : 5} className="bg-(--color-bg-sunken)">
                           <DeviceDetailPanel deviceId={d.id} />
                         </td>
                       </tr>
@@ -4456,6 +4413,23 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* 디바이스 제거 확인 다이얼로그 */}
+      {removeTarget && (
+        <ConfirmDialog
+          isOpen
+          onClose={() => setRemoveTarget(null)}
+          onConfirm={confirmRemoveDevice}
+          title={t('agents.detail.devices.removeConfirmTitle')}
+          message={t('agents.detail.devices.removeConfirmMessage').replace(
+            '{name}',
+            removeTarget.name,
+          )}
+          confirmLabel={t('common.delete')}
+          variant="danger"
+          isSubmitting={deleteDevice.isPending}
+        />
       )}
     </div>
   );

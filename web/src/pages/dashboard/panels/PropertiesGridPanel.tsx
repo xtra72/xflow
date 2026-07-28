@@ -109,6 +109,9 @@ export default function PropertiesGridPanel({
     );
   }
 
+  // 전원 OFF 시 운전 계열 속성은 정규화된 기본값이라 실제 값이 아니므로 '-' 로 표시.
+  const powerOff = properties['power'] === false;
+
   // 표시할 속성 필터링 (visibleProperties가 비어있으면 전체 표시)
   let entries = sortProperties(Object.entries(properties));
   if (visibleProperties.length > 0) {
@@ -164,7 +167,7 @@ export default function PropertiesGridPanel({
                 {getPropertyLabel(key, device.protocol, device.type)}
               </p>
               <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
-                {formatPropertyValue(key, value)}
+                {formatPropertyValue(key, value, { powerOff })}
               </p>
             </div>
           ))}

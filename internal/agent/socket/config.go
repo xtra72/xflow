@@ -8,18 +8,20 @@ import (
 
 // SocketConfig 는 모든 소켓 에이전트의 공통 설정이다.
 type SocketConfig struct {
-	Host       string // 바인드/연결 호스트 주소
-	Port       int    // 포트 번호 (필수)
-	BufferSize int    // 읽기 버퍼 크기 (바이트)
+	Host        string // 바인드/연결 호스트 주소
+	Port        int    // 포트 번호 (필수)
+	BufferSize  int    // 읽기 버퍼 크기 (바이트)
+	LogMessages bool   // 송/수신(RX/TX) 패킷을 hex 로 INFO 로그 (기본 false, opt-in 진단용)
 }
 
 // TCPConfig 는 TCP 소켓의 공통 설정이다.
 type TCPConfig struct {
 	SocketConfig
-	Framing        string // 프레이밍 타입: raw, newline, length_prefix, fixed_size
-	Delimiter      byte   // 커스텀 구분자 (framing=newline 시 기본 '\n' 대체)
-	FixedSize      int    // 고정 크기 (framing=fixed_size 시 필수)
-	MaxMessageSize int    // 최대 메시지 크기 (0=무제한)
+	Framing        string        // 프레이밍 타입: raw, newline, length_prefix, fixed_size
+	Delimiter      byte          // 커스텀 구분자 (framing=newline 시 기본 '\n' 대체)
+	FixedSize      int           // 고정 크기 (framing=fixed_size 시 필수)
+	MaxMessageSize int           // 최대 메시지 크기 (0=무제한)
+	WriteTimeout   time.Duration // conn.Write 쓰기 데드라인 (기본 5s, 0=무제한 블록 허용)
 }
 
 // TCPServerConfig 는 TCP 서버 에이전트 설정이다.
@@ -138,6 +140,9 @@ func parseSocketConfig(opts map[string]any, defaultHost string) (SocketConfig, e
 	if v, ok := opts["buffer_size"]; ok {
 		cfg.BufferSize = toInt(v)
 	}
+	if v, ok := opts["log_messages"]; ok {
+		cfg.LogMessages = toBool(v)
+	}
 	return cfg, nil
 }
 
@@ -151,6 +156,7 @@ func parseTCPConfig(opts map[string]any, defaultHost string) (TCPConfig, error) 
 		SocketConfig:   sc,
 		Framing:        FramingRaw,
 		MaxMessageSize: DefaultMaxMessageSize,
+		WriteTimeout:   DefaultWriteTimeout,
 	}
 	if v, ok := opts["framing"]; ok {
 		cfg.Framing = v.(string)
@@ -169,6 +175,18 @@ func parseTCPConfig(opts map[string]any, defaultHost string) (TCPConfig, error) 
 	}
 	if v, ok := opts["max_message_size"]; ok {
 		cfg.MaxMessageSize = toInt(v)
+	}
+	// write_timeout (선택, 기본 5s) — framer conn.Write 데드라인. "0s" 로 명시하면 데드라인 미설정.
+	if v, ok := opts["write_timeout"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return TCPConfig{}, fmt.Errorf("%w: write_timeout must be a duration string", ErrInvalidConfig)
+		}
+		d, parseErr := time.ParseDuration(s)
+		if parseErr != nil {
+			return TCPConfig{}, fmt.Errorf("%w: invalid write_timeout: %v", ErrInvalidConfig, parseErr)
+		}
+		cfg.WriteTimeout = d
 	}
 	return cfg, nil
 }

@@ -1,11 +1,13 @@
 package samsung
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,23 +16,157 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
+// TestMarkOfflineLocked_PushesOfflineStateSnapshot 는 online→offline 전환 시
+// device_state 스냅샷(online=false)이 push 되는지 검증한다.
+//
+// 회귀 배경: 오프라인 전환은 connection change 만 방출하고 device_state 스냅샷은
+// push 하지 않아, report_interval=0(주기 report 비활성)이면 device_state 스트림에
+// 오프라인 상태가 실리지 않았다. online 전환(pushRecentSnapshot)과 대칭이어야 한다.
+func TestMarkOfflineLocked_PushesOfflineStateSnapshot(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+	addr, _ := ParseNasaAddress("200002") // bedroom, IDU(State 있음)
+
+	a.recentMu.Lock()
+	before := len(a.recentSnapshots)
+	a.recentMu.Unlock()
+
+	a.mu.Lock()
+	dev := a.devices[addr]
+	dev.Online = true
+	dev.LastSeen = time.Now()
+	a.markOfflineLocked(addr, dev, "stale")
+	a.mu.Unlock()
+
+	a.recentMu.Lock()
+	snaps := append([]recentStateEntry(nil), a.recentSnapshots...)
+	a.recentMu.Unlock()
+
+	if len(snaps) <= before {
+		t.Fatalf("오프라인 전환 시 device_state 스냅샷이 push 되어야 함: %d→%d", before, len(snaps))
+	}
+	var d map[string]any
+	if err := json.Unmarshal(snaps[len(snaps)-1].Data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	st, _ := d["state"].(map[string]any)
+	if st == nil || st["online"] != false {
+		t.Errorf("오프라인 스냅샷의 state.online 이 false 여야 함: %v", st)
+	}
+}
+
+// TestEmitPeriodicReport_IncludesOutdoorAndOffline 는 실외기(ODU, State=nil)와
+// offline 디바이스도 주기 상태 report 에 포함되는지 검증한다.
+//
+// 회귀 배경: emitPeriodicReport 가 dev.State==nil(실외기) 을 skip 해 실외기 상태
+// 전송이 누락됐다. State 유무·online 여부와 무관하게 등록된 모든 디바이스를 보고해야
+// 한다(실외기: online+ready, offline: online=false).
+func TestEmitPeriodicReport_IncludesOutdoorAndOffline(t *testing.T) {
+	a, _, _ := newTestAgent(t)
+
+	oduAddr, _ := ParseNasaAddress("100000") // 0x10 → HVACR.ODU
+	offlineAddr, _ := ParseNasaAddress("200005")
+	a.mu.Lock()
+	a.devices[oduAddr] = &NasaDevice{
+		Address: oduAddr, UnitID: "odu-1", Type: "HVACR.ODU",
+		Online: true, Ready: true, LastSeen: time.Now(), Source: "config",
+		ReportEnabled: true,
+		// State: nil (실외기)
+	}
+	a.devices[offlineAddr] = &NasaDevice{
+		Address: offlineAddr, UnitID: "idu-off", Type: "HVACR.IDU",
+		Online: false, LastSeen: time.Now(), Source: "config",
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		ReportEnabled: true,
+	}
+	a.mu.Unlock()
+
+	a.emitPeriodicReport()
+
+	a.recentMu.Lock()
+	snaps := append([]recentStateEntry(nil), a.recentSnapshots...)
+	a.recentMu.Unlock()
+
+	oduReported, offlineReported := false, false
+	for _, s := range snaps {
+		var d map[string]any
+		if json.Unmarshal(s.Data, &d) != nil {
+			continue
+		}
+		st, _ := d["state"].(map[string]any)
+		md, _ := d["metadata"].(map[string]any)
+		if md != nil && md["device_type"] == "HVACR.ODU" {
+			oduReported = true
+			if st == nil || st["online"] != true {
+				t.Errorf("실외기 state.online 이 true 여야: %v", st)
+			}
+			if _, ok := st["ready"]; !ok {
+				t.Errorf("실외기 state 에 ready 가 있어야: %v", st)
+			}
+		}
+		if md != nil && md["name"] == "idu-off" {
+			offlineReported = true
+			if st == nil || st["online"] != false {
+				t.Errorf("offline 디바이스 state.online 이 false 여야: %v", st)
+			}
+		}
+	}
+	if !oduReported {
+		t.Errorf("실외기(ODU) 상태 report 가 emit 되어야 함")
+	}
+	if !offlineReported {
+		t.Errorf("offline 디바이스 상태 report 가 emit 되어야 함")
+	}
+}
+
+// TestSendFrame_LogsTxWhenEnabled 는 log_messages 옵션에 따라 송신(TX) 프레임이
+// hex 로 로그되는지, 그리고 프레임이 실제 전송되는지 검증한다.
+func TestSendFrame_LogsTxWhenEnabled(t *testing.T) {
+	a, mt, _ := newTestAgent(t)
+	var buf bytes.Buffer
+	a.logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// log_messages=true → TX 로그 + 전송.
+	a.hvacr01Config.LogMessages = true
+	before := len(mt.getSentData())
+	if err := a.sendFrame("20.00.00", []byte{0x32, 0xAB}); err != nil {
+		t.Fatalf("sendFrame: %v", err)
+	}
+	if len(mt.getSentData()) != before+1 {
+		t.Errorf("프레임이 전송되어야 함: sent %d→%d", before, len(mt.getSentData()))
+	}
+	if !strings.Contains(buf.String(), "TX") || !strings.Contains(buf.String(), "32ab") {
+		t.Errorf("log_messages=true 면 TX hex 로그가 있어야 함: %s", buf.String())
+	}
+
+	// log_messages=false → 로그 없음(전송은 유지).
+	buf.Reset()
+	a.hvacr01Config.LogMessages = false
+	if err := a.sendFrame("20.00.00", []byte{0x32}); err != nil {
+		t.Fatalf("sendFrame: %v", err)
+	}
+	if strings.Contains(buf.String(), "TX") {
+		t.Errorf("log_messages=false 면 TX 로그가 없어야 함: %s", buf.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // mockTransport 는 NasaTransport 인터페이스의 테스트 구현체이다.
 // ---------------------------------------------------------------------------
 
 type mockTransport struct {
-	mu            sync.Mutex
-	openErr       error
-	closeErr      error
-	sendErr       error
-	recvData      []byte
-	recvErr       error
-	sentData      [][]byte
-	available     bool
-	opened        bool
-	closed        bool
-	openCallCount int // Open() 호출 횟수
-	openErrUntil  int // 이 횟수 미만까지 openErr 반환, 이후 성공
+	mu             sync.Mutex
+	openErr        error
+	closeErr       error
+	sendErr        error
+	recvData       []byte
+	recvErr        error
+	sentData       [][]byte
+	available      bool
+	opened         bool
+	closed         bool
+	openCallCount  int // Open() 호출 횟수
+	closeCallCount int // Close() 호출 횟수
+	openErrUntil   int // 이 횟수 미만까지 openErr 반환, 이후 성공
 }
 
 func (m *mockTransport) Open() error {
@@ -51,7 +187,14 @@ func (m *mockTransport) Close() error {
 	m.opened = false
 	m.available = false
 	m.closed = true
+	m.closeCallCount++
 	return m.closeErr
+}
+
+func (m *mockTransport) getCloseCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closeCallCount
 }
 
 func (m *mockTransport) Send(data []byte) error {
@@ -229,6 +372,7 @@ func newTestAgent(t *testing.T) (*Hvacr01Agent, *mockTransport, *mockProtocol) {
 			SerialPort:          "/dev/ttyTest",
 			PollInterval:        30 * time.Second,
 			MsgChannelSize:      256,
+			OfflineTimeout:      -1, // production 기본값(미설정) 미러 → staleOfflineThreshold 파생 경로
 			ReconnectInterval:   10 * time.Millisecond,
 			MaxReconnectBackoff: 50 * time.Millisecond,
 			ControlEnabled:      true, // 테스트는 능동 제어 명령을 검증하므로 명시적으로 활성화
@@ -261,22 +405,24 @@ func newTestAgent(t *testing.T) (*Hvacr01Agent, *mockTransport, *mockProtocol) {
 	addr2, _ := ParseNasaAddress("200002")
 
 	a.devices[addr1] = &NasaDevice{
-		Address:  addr1,
-		UnitID:   "living-room",
-		Type:     "HVACR.IDU",
-		Online:   true,
-		LastSeen: time.Now(),
-		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-		Source:   "config",
+		Address:       addr1,
+		UnitID:        "living-room",
+		Type:          "HVACR.IDU",
+		Online:        true,
+		LastSeen:      time.Now(),
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:        "config",
+		ReportEnabled: true,
 	}
 	a.devices[addr2] = &NasaDevice{
-		Address:  addr2,
-		UnitID:   "bedroom",
-		Type:     "HVACR.IDU",
-		Online:   true,
-		LastSeen: time.Now(),
-		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-		Source:   "bridge",
+		Address:       addr2,
+		UnitID:        "bedroom",
+		Type:          "HVACR.IDU",
+		Online:        true,
+		LastSeen:      time.Now(),
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:        "bridge",
+		ReportEnabled: true,
 	}
 	a.deviceIDs["living-room"] = addr1
 	a.deviceIDs["bedroom"] = addr2
@@ -350,6 +496,136 @@ func TestNewHvacr01Agent_Success(t *testing.T) {
 	}
 	if a.Type() != "samsung_hvacr01" {
 		t.Errorf("Type() = %q, want %q", a.Type(), "samsung_hvacr01")
+	}
+}
+
+// TestNewHvacr01Agent_PreservesDeviceSource 는 영속화된 디바이스의 source 가
+// 생성자 로드에서 보존되는지 검증한다.
+//
+// 회귀 배경: 이전에는 파싱된 모든 디바이스가 무조건 Source="config" 로 로드되어,
+// 런타임 등록("bridge") 디바이스가 재시작 후 삭제 보호(config) 대상이 되었다.
+// source 를 왕복 보존하면 bridge 는 bridge 로 유지되어 삭제 가능해야 하고,
+// source 미지정(yaml 선언/구 포맷) 은 여전히 config 로 로드되어야 한다.
+func TestNewHvacr01Agent_PreservesDeviceSource(t *testing.T) {
+	origOpener := SerialOpener
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return nil, nil
+	}
+	defer func() { SerialOpener = origOpener }()
+
+	config := agent.AgentConfig{
+		ID:   "samsung-hvacr01-src",
+		Name: "NASA HVAC",
+		Type: "samsung_hvacr01",
+		Transport: agent.TransportConfig{
+			Type: "serial",
+			Options: map[string]any{
+				"transport_type": "serial",
+				"serial_port":    "/dev/ttyUSB0",
+				"devices": []any{
+					map[string]any{"address": "200001", "name": "runtime", "source": "bridge"},
+					map[string]any{"address": "200002", "name": "declared"}, // source 미지정 → config
+				},
+			},
+		},
+	}
+
+	ag, err := NewHvacr01Agent(config)
+	if err != nil {
+		t.Fatalf("NewHvacr01Agent: %v", err)
+	}
+	a := ag.(*Hvacr01Agent)
+
+	bridgeAddr, _ := ParseNasaAddress("200001")
+	declaredAddr, _ := ParseNasaAddress("200002")
+
+	a.mu.RLock()
+	bridgeDev := a.devices[bridgeAddr]
+	declaredDev := a.devices[declaredAddr]
+	a.mu.RUnlock()
+
+	if bridgeDev == nil || bridgeDev.Source != "bridge" {
+		t.Errorf("런타임 디바이스 source 미보존: got %+v, want Source=\"bridge\"", bridgeDev)
+	}
+	if declaredDev == nil || declaredDev.Source != "config" {
+		t.Errorf("source 미지정 디바이스는 config 여야: got %+v", declaredDev)
+	}
+
+	// bridge 디바이스는 삭제 가능(config 보호 대상 아님)해야 한다.
+	if _, err := processJSON(t, a, map[string]any{
+		"command": "remove_device",
+		"address": bridgeAddr.String(),
+	}); err != nil {
+		t.Errorf("bridge 디바이스 삭제 실패(보호되면 안 됨): %v", err)
+	}
+}
+
+// TestNewHvacr01Agent_RestoresDisplayName 는 영속화된 display_name 이 생성자 로드에서
+// dev.Name(사용자 표시 이름)으로 복원되고, display_name 이 없는 항목은 빈 dev.Name 으로
+// 로드되는지(후방호환) 검증한다.
+//
+// 회귀 배경: 이전에는 복원 루프가 entry.Name → UnitID 만 세팅해 dev.Name 이 항상 빈 값이
+// 됐고, 프로바이더가 빈 이름을 보고하여 UI 가 재시작 후 id 로 폴백했다. display_name 을
+// 왕복 보존하면 표시 이름이 dev.Name 으로 복원되어야 한다. UnitID(device_id) 왕복은
+// entry.Name → dev.UnitID 로 변경 전과 동일하게 유지된다.
+func TestNewHvacr01Agent_RestoresDisplayName(t *testing.T) {
+	origOpener := SerialOpener
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return nil, nil
+	}
+	defer func() { SerialOpener = origOpener }()
+
+	config := agent.AgentConfig{
+		ID:   "samsung-hvacr01-dn",
+		Name: "NASA HVAC",
+		Type: "samsung_hvacr01",
+		Transport: agent.TransportConfig{
+			Type: "serial",
+			Options: map[string]any{
+				"transport_type": "serial",
+				"serial_port":    "/dev/ttyUSB0",
+				"devices": []any{
+					// 표시 이름 있음: name=UnitID(device_id), display_name=표시 이름
+					map[string]any{"address": "200001", "name": "dev-uuid-001", "display_name": "개발팀"},
+					// 표시 이름 없음(구 config/미지정) → dev.Name 은 빈 값(후방호환)
+					map[string]any{"address": "200002", "name": "dev-uuid-002"},
+				},
+			},
+		},
+	}
+
+	ag, err := NewHvacr01Agent(config)
+	if err != nil {
+		t.Fatalf("NewHvacr01Agent: %v", err)
+	}
+	a := ag.(*Hvacr01Agent)
+
+	withDNAddr, _ := ParseNasaAddress("200001")
+	noDNAddr, _ := ParseNasaAddress("200002")
+
+	a.mu.RLock()
+	withDN := a.devices[withDNAddr]
+	noDN := a.devices[noDNAddr]
+	a.mu.RUnlock()
+
+	if withDN == nil {
+		t.Fatalf("display_name 디바이스가 로드되지 않음")
+	}
+	if withDN.Name != "개발팀" {
+		t.Errorf("표시 이름 미복원: dev.Name = %q, want \"개발팀\"", withDN.Name)
+	}
+	if withDN.UnitID != "dev-uuid-001" {
+		t.Errorf("UnitID 왕복 손상: dev.UnitID = %q, want \"dev-uuid-001\"", withDN.UnitID)
+	}
+
+	if noDN == nil {
+		t.Fatalf("display_name 없는 디바이스가 로드되지 않음")
+	}
+	if noDN.Name != "" {
+		t.Errorf("후방호환 위반: display_name 없는 dev.Name = %q, want \"\"", noDN.Name)
+	}
+	if noDN.UnitID != "dev-uuid-002" {
+		t.Errorf("UnitID 왕복 손상: dev.UnitID = %q, want \"dev-uuid-002\"", noDN.UnitID)
 	}
 }
 
@@ -675,8 +951,9 @@ func TestHvacr01Agent_Process_GetState(t *testing.T) {
 			t.Errorf("status = %v, want ok", resp["status"])
 		}
 		// v0.18.6: 프로토콜 식별자는 unit_id (이전 device_id), 글로벌 UUID 는 device_id.
-		if resp["unit_id"] != "living-room" {
-			t.Errorf("unit_id = %v, want living-room", resp["unit_id"])
+		// SPEC-DEVICE-IDENTITY-001 M1: unit_id 는 address.String() (dotted format) 으로 통일
+		if resp["unit_id"] != "20.00.01" {
+			t.Errorf("unit_id = %v, want 20.00.01 (dotted address)", resp["unit_id"])
 		}
 		if resp["online"] != true {
 			t.Errorf("online = %v, want true", resp["online"])
@@ -698,9 +975,12 @@ func TestHvacr01Agent_Process_GetState(t *testing.T) {
 	})
 }
 
-// TestEffectiveDeviceID 는 device_id 가 비어 있을 때 주소 Hex 로 대체되고,
-// 지정되어 있으면 그대로 유지되는지 검증한다.
+// TestEffectiveDeviceID 는 항상 주소의 dotted 형식(addr.String())을 반환함을 검증한다.
+// deviceID 파라미터는 무시되며(legacy), emit/registry 일관성을 위해 address 를 사용한다.
 func TestEffectiveDeviceID(t *testing.T) {
+	// ParseNasaAddress("200000") → 주소 객체 (내부적으로 dotted 형식 유지)
+	// addr.String() == "20.00.00" (dotted)
+	// addr.Hex() == "200000" (dotless, legacy)
 	addr, _ := ParseNasaAddress("200000")
 
 	tests := []struct {
@@ -708,8 +988,8 @@ func TestEffectiveDeviceID(t *testing.T) {
 		deviceID string
 		want     string
 	}{
-		{name: "empty falls back to address Hex", deviceID: "", want: "200000"},
-		{name: "configured device_id is unchanged", deviceID: "living-room", want: "living-room"},
+		{name: "empty deviceID uses address String (dotted)", deviceID: "", want: "20.00.00"},
+		{name: "configured deviceID ignored, uses address String (dotted)", deviceID: "living-room", want: "20.00.00"},
 	}
 
 	for _, tt := range tests {
@@ -729,13 +1009,14 @@ func TestHvacr01Agent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	// DeviceID 가 비어 있는 자동 발견 디바이스 등록
 	addr, _ := ParseNasaAddress("200003")
 	a.devices[addr] = &NasaDevice{
-		Address:  addr,
-		UnitID:   "", // 자동 발견 디바이스: 사용자 지정 ID 없음
-		Type:     "HVACR.IDU",
-		Online:   true,
-		LastSeen: time.Now(),
-		State:    &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
-		Source:   "auto",
+		Address:       addr,
+		UnitID:        "", // 자동 발견 디바이스: 사용자 지정 ID 없음
+		Type:          "HVACR.IDU",
+		Online:        true,
+		LastSeen:      time.Now(),
+		State:         &NasaDeviceState{RawMessageSets: make(map[uint16][]byte)},
+		Source:        "auto",
+		ReportEnabled: true,
 	}
 
 	resp, err := processJSON(t, a, map[string]any{
@@ -745,11 +1026,12 @@ func TestHvacr01Agent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
-	if resp["unit_id"] != "200003" {
-		t.Errorf("unit_id = %v, want 200003 (address Hex fallback)", resp["unit_id"])
+	// SPEC-DEVICE-IDENTITY-001 M1: unit_id 는 항상 address.String() (dotted format)
+	if resp["unit_id"] != "20.00.03" {
+		t.Errorf("unit_id = %v, want 20.00.03 (dotted address)", resp["unit_id"])
 	}
 
-	// 사용자 지정 device_id 가 있는 디바이스는 그대로 유지
+	// 사용자 지정 device_id 가 있는 디바이스도 address 사용 (identity 통일)
 	resp2, err := processJSON(t, a, map[string]any{
 		"command":   "get_state",
 		"device_id": "living-room",
@@ -757,8 +1039,8 @@ func TestHvacr01Agent_Process_GetState_DeviceIDFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
-	if resp2["unit_id"] != "living-room" {
-		t.Errorf("unit_id = %v, want living-room (unchanged)", resp2["unit_id"])
+	if resp2["unit_id"] != "20.00.01" {
+		t.Errorf("unit_id = %v, want 20.00.01 (dotted address)", resp2["unit_id"])
 	}
 }
 
@@ -850,16 +1132,84 @@ func TestHvacr01Agent_Process_RemoveDevice(t *testing.T) {
 		}
 	})
 
-	t.Run("config device protected", func(t *testing.T) {
+	t.Run("config device 도 삭제 가능 (보호 제거)", func(t *testing.T) {
 		a, _, _ := newTestAgent(t)
-		_, err := processJSON(t, a, map[string]any{
+		addr, _ := ParseNasaAddress("200001") // living-room, source: config
+		resp, err := processJSON(t, a, map[string]any{
 			"command":   "remove_device",
 			"device_id": "living-room", // source: config
 		})
-		if !errors.Is(err, ErrConfigDeviceProtected) {
-			t.Errorf("error = %v, want ErrConfigDeviceProtected", err)
+		if err != nil {
+			t.Fatalf("config 디바이스 삭제 실패(보호되면 안 됨): %v", err)
+		}
+		if resp["status"] != "ok" {
+			t.Errorf("status = %v, want ok", resp["status"])
+		}
+		a.mu.RLock()
+		_, stillThere := a.devices[addr]
+		a.mu.RUnlock()
+		if stillThere {
+			t.Errorf("config 디바이스가 삭제되지 않음")
 		}
 	})
+}
+
+// fakeDeviceIDRepo 는 agent.DeviceIDRepository 의 테스트 구현체이다.
+// (agentName, unitID) → 결정적 UUID 를 발급해 ResolveDeviceID 를 구동한다.
+type fakeDeviceIDRepo struct{ m map[string]string }
+
+func (r *fakeDeviceIDRepo) GetOrCreate(_ context.Context, agentName, unitID string) (string, error) {
+	k := agentName + ":" + unitID
+	if v, ok := r.m[k]; ok {
+		return v, nil
+	}
+	v := "uuid-" + agentName + "-" + unitID
+	r.m[k] = v
+	return v, nil
+}
+
+func (r *fakeDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (string, error) {
+	return r.m[agentName+":"+unitID], nil
+}
+
+func (r *fakeDeviceIDRepo) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	r.m[agentName+":"+unitID] = deviceID
+	return nil
+}
+
+// TestHvacr01Agent_Process_RemoveDevice_ByUUID 는 remove_device 가 UUID(1급 식별자)로도
+// 디바이스를 제거하는지 검증한다.
+//
+// 회귀 배경: 전역 device.List / REST 응답은 UUID 만 노출하므로(bus address 미노출),
+// 프론트엔드 삭제 경로는 device_id 로 UUID 를 전달한다. 그러나 resolveDevice 는
+// UnitID 로 키잉된 deviceIDs 맵만 조회해, UUID 는 ErrDeviceIDNotFound 로 실패했다.
+func TestHvacr01Agent_Process_RemoveDevice_ByUUID(t *testing.T) {
+	prev := agent.GetDeviceIDRepository()
+	agent.SetDeviceIDRepository(&fakeDeviceIDRepo{m: make(map[string]string)})
+	t.Cleanup(func() { agent.SetDeviceIDRepository(prev) })
+
+	a, _, _ := newTestAgent(t)
+
+	addr2, _ := ParseNasaAddress("200002") // bedroom, source: bridge
+	// emit 경로와 동일하게 addr.String() 을 localID 로 UUID 해석.
+	uuid := agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr2.String())
+	if uuid == "" {
+		t.Fatalf("precondition: UUID 해석 실패")
+	}
+
+	resp, err := processJSON(t, a, map[string]any{
+		"command":   "remove_device",
+		"device_id": uuid,
+	})
+	if err != nil {
+		t.Fatalf("remove_device by UUID: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("status = %v, want ok", resp["status"])
+	}
+	if _, ok := a.devices[addr2]; ok {
+		t.Errorf("bedroom 디바이스가 UUID 삭제 후 제거되어야 함")
+	}
 }
 
 // TestHvacr01Agent_Process_ListDevices 는 list_devices 명령을 검증한다.
@@ -898,18 +1248,20 @@ func TestHvacr01Agent_Process_InvalidCommand(t *testing.T) {
 // TestHvacr01Agent_Process_DeviceIDResolution 는 device_id 가 address 보다 우선하는지 검증한다.
 func TestHvacr01Agent_Process_DeviceIDResolution(t *testing.T) {
 	a, _, _ := newTestAgent(t)
-	// device_id 와 address 를 동시에 제공: device_id 가 우선
+	// device_id 와 address 를 동시에 제공: device_id(UnitID) 가 우선 (resolveDevice 에서)
+	// 따라서 "living-room" device 가 선택되고, 그 주소는 200001 (20.00.01)
 	resp, err := processJSON(t, a, map[string]any{
 		"command":   "get_state",
-		"device_id": "living-room",
-		"address":   "200002", // bedroom 의 주소
+		"device_id": "living-room", // 이 device 의 주소는 200001
+		"address":   "200002",      // 이 주소는 무시됨 (device_id 우선)
 	})
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
-	// device_id living-room 이 우선 적용되어 unit_id 로 emit (v0.18.6).
-	if resp["unit_id"] != "living-room" {
-		t.Errorf("unit_id = %v, want living-room", resp["unit_id"])
+	// SPEC-DEVICE-IDENTITY-001 M1: unit_id 는 resolved device 의 address (dotted format)
+	// living-room device 는 주소 200001 이므로 unit_id = "20.00.01"
+	if resp["unit_id"] != "20.00.01" {
+		t.Errorf("unit_id = %v, want 20.00.01 (living-room device address)", resp["unit_id"])
 	}
 }
 

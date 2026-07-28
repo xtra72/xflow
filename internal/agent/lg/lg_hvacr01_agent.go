@@ -80,6 +80,11 @@ type Hvacr01Agent struct {
 	oduState    *Icp01ODUState              // ODU 상태 (단일)
 	oduLastSeen time.Time                   // ODU 마지막 수신 시각
 	lastStates  map[string]Icp01DeviceState // 주소(hex) → 이전 상태 (변경 감지용)
+	// oduReportEnabled 는 ODU 의 디바이스별 상태 전송 on/off 이다 (기본 true=on).
+	// ODU 는 iduDevices 맵에 저장되지 않고 oduState 로 단일 관리되므로, IDU 의
+	// Icp01Device.ReportEnabled 대신 에이전트 레벨 필드로 게이트를 관리한다.
+	// a.mu 로 보호. Samsung NASA 의 report_enabled 게이트와 동일 목적 (IN-MEMORY only).
+	oduReportEnabled bool
 
 	// frame-level dedup — 이전 emit 한 frame event JSON 의 state 영역만 추출/보관해
 	// 동일 state 반복 emit 을 차단한다. timestamp_ms / seq / raw_hex 같이 매 frame
@@ -231,21 +236,22 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	a := &Hvacr01Agent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lg_hvacr01")),
-		hvacr01Config: hvacr01Config,
-		transport:     transport,
-		stopCh:        make(chan struct{}),
-		msgCh:         make(chan []byte, hvacr01Config.MsgChannelSize),
-		stats:         agent.NewAgentStats(),
-		logger:        agent.ResolveLogger(config),
-		createdAt:     time.Now(),
-		recentFrames:  make([]hvacr01FrameRecord, hvacr01RecentBufferSize),
-		recentNotify:  make(chan struct{}, 1),
-		iduDevices:    make(map[string]*Icp01Device),
-		oduState:      &Icp01ODUState{},
-		lastStates:    make(map[string]Icp01DeviceState),
-		lastIDUEmit:   make(map[int][]byte),
-		lastIDUParsed: make(map[int]Hvacr01IDUParsed),
+		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("lg_hvacr01")),
+		hvacr01Config:    hvacr01Config,
+		transport:        transport,
+		stopCh:           make(chan struct{}),
+		msgCh:            make(chan []byte, hvacr01Config.MsgChannelSize),
+		stats:            agent.NewAgentStats(),
+		logger:           agent.ResolveLogger(config),
+		createdAt:        time.Now(),
+		recentFrames:     make([]hvacr01FrameRecord, hvacr01RecentBufferSize),
+		recentNotify:     make(chan struct{}, 1),
+		iduDevices:       make(map[string]*Icp01Device),
+		oduState:         &Icp01ODUState{},
+		oduReportEnabled: true, // ODU 는 기본 report on
+		lastStates:       make(map[string]Icp01DeviceState),
+		lastIDUEmit:      make(map[int][]byte),
+		lastIDUParsed:    make(map[int]Hvacr01IDUParsed),
 	}
 
 	if err := a.Init(config); err != nil {
@@ -447,6 +453,12 @@ type hvacr01ProcessRequest struct {
 	FlowID  string `json:"flow_id,omitempty"`
 	LastSeq int64  `json:"last_seq,omitempty"`
 	DevID   string `json:"dev_id,omitempty"` // v0.7.3: get_state — "odu" or "idu-N"
+	// 디바이스 관리 명령 (remove_device / set_device) 용 어드레싱 필드.
+	// Samsung NASA 의 processRequest 와 동일한 shape. address 또는 device_id(UUID)
+	// 로 디바이스를 지정하며, API exec DTO 는 params 안에도 담아 보내므로 폴백한다.
+	Address  string         `json:"address,omitempty"`
+	DeviceID string         `json:"device_id,omitempty"`
+	Params   map[string]any `json:"params,omitempty"`
 }
 
 // Process 는 JSON 명령을 처리한다.
@@ -510,6 +522,15 @@ func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 	case "get_state":
 		// v0.7.3: 단일 device 조회 (dev_id = "odu" 또는 "idu-N").
 		result, err = a.processGetState(&req)
+	case "list_devices":
+		// 디바이스 목록 조회 (report_enabled 포함). Samsung NASA DTO shape 와 동일.
+		result, err = a.processListDevices()
+	case "remove_device":
+		// 디바이스 삭제 (IN-MEMORY). address 또는 device_id(UUID) 로 지정.
+		result, err = a.processRemoveDevice(&req)
+	case "set_device":
+		// 디바이스별 설정 갱신 (report_enabled / name). IN-MEMORY.
+		result, err = a.processSetDevice(&req)
 	default:
 		a.stats.IncrInternalMessagesErrored()
 		return nil, fmt.Errorf("lg_hvacr01: unsupported command %q", req.Command)
@@ -1032,6 +1053,19 @@ func (a *Hvacr01Agent) captureLoop() {
 		a.stats.UpdateLastActivity()
 		a.stats.RecordFirstMessage()
 
+		// log_messages: 수신(RX) 프레임을 hex 로 INFO 로그 (opt-in 진단용, Samsung/LGAP 통일).
+		// capture 라 송신(TX)은 없다. frameType 에 따라 해당 프레임의 raw 를 기록한다.
+		if a.hvacr01Config.LogMessages {
+			var raw []byte
+			switch frameType {
+			case 'A':
+				raw = oduFrame.Raw[:]
+			case 'B':
+				raw = iduFrame.Raw[:]
+			}
+			a.logger.Info("lg_hvacr01: RX", "type", string(frameType), "len", len(raw), "hex", hex.EncodeToString(raw))
+		}
+
 		switch frameType {
 		case 'A':
 			if a.hvacr01Config.LogIO {
@@ -1194,6 +1228,18 @@ func (a *Hvacr01Agent) handleODUFrame(f *Icp01ODUFrame) {
 			)
 			return
 		}
+	}
+
+	// report_enabled 게이트: ODU 의 상태 전송이 off 면 device_state emit 을 억제한다.
+	// oduState / lastODUParsed 캐시는 이미 위에서 갱신되었으므로 재활성화 시 즉시
+	// 정기 보고가 가능하다. Samsung NASA 의 report_enabled 게이트와 동일.
+	a.mu.RLock()
+	oduReport := a.oduReportEnabled
+	a.mu.RUnlock()
+	if !oduReport {
+		a.logger.Debug("lg_hvacr01: ODU device_state emit 억제 (report_enabled=false)",
+			"unit_id", hvacr01ODUUnitID, "seq", f.SEQ)
+		return
 	}
 
 	a.pushRecentFrame(b, f.Timestamp, seq)
@@ -1376,6 +1422,23 @@ func (a *Hvacr01Agent) handleIDUFrame(f *Icp01IDUFrame) {
 			)
 			return
 		}
+	}
+
+	// report_enabled 게이트: 해당 IDU 디바이스의 상태 전송이 off 면 device_state
+	// emit 을 억제한다. 디바이스 state / lastIDUParsed 캐시는 이미 갱신되었으므로
+	// 재활성화 시 즉시 정기 보고가 가능하다. 미등록(AutoDiscovery off) 주소는 맵에
+	// 없으므로 게이트를 적용하지 않는다(기존 동작 유지). Samsung NASA 와 동일.
+	iduAddrHex := fmt.Sprintf("%02x", f.IDUAddr)
+	a.mu.RLock()
+	suppressed := false
+	if dev, ok := a.iduDevices[iduAddrHex]; ok && !dev.ReportEnabled {
+		suppressed = true
+	}
+	a.mu.RUnlock()
+	if suppressed {
+		a.logger.Debug("lg_hvacr01: IDU device_state emit 억제 (report_enabled=false)",
+			"unit_id", hvacr01IDUUnitID(f.IDUNum), "address", iduAddrHex)
+		return
 	}
 
 	a.pushRecentFrame(b, f.Timestamp, seq)
@@ -1645,13 +1708,14 @@ func (a *Hvacr01Agent) registerConfigDevices() {
 			}
 		}
 		a.iduDevices[entry.Address] = &Icp01Device{
-			Address:  entry.Address,
-			Label:    label,
-			Type:     devType,
-			Online:   false,
-			LastSeen: now,
-			Source:   "config",
-			State:    &Icp01DeviceState{},
+			Address:       entry.Address,
+			Label:         label,
+			Type:          devType,
+			Online:        false,
+			LastSeen:      now,
+			Source:        "config",
+			State:         &Icp01DeviceState{},
+			ReportEnabled: true, // config 등록 디바이스는 기본 report on
 		}
 	}
 }
@@ -1677,15 +1741,16 @@ func (a *Hvacr01Agent) updateIDUDeviceState(f *Icp01IDUFrame, cmdCycle string) {
 			return
 		}
 		dev = &Icp01Device{
-			Address:  addrHex,
-			Label:    fmt.Sprintf("indoor-%d", f.IDUNum),
-			Type:     "HVACR.IDU",
-			Online:   true,
-			LastSeen: f.Timestamp,
-			Source:   "auto",
-			State:    &Icp01DeviceState{},
-			IDUNum:   f.IDUNum,
-			SlotNum:  f.SlotNum,
+			Address:       addrHex,
+			Label:         fmt.Sprintf("indoor-%d", f.IDUNum),
+			Type:          "HVACR.IDU",
+			Online:        true,
+			LastSeen:      f.Timestamp,
+			Source:        "auto",
+			State:         &Icp01DeviceState{},
+			IDUNum:        f.IDUNum,
+			SlotNum:       f.SlotNum,
+			ReportEnabled: true, // 자동 발견 디바이스는 기본 report on
 		}
 		a.iduDevices[addrHex] = dev
 		a.logger.Info("lg_hvacr01: IDU 디바이스 발견",
@@ -1879,11 +1944,19 @@ func (a *Hvacr01Agent) emitAllDeviceStates(trigger string) int {
 		slotNum byte
 		state   Hvacr01IDUParsed
 	}
-	a.mu.RLock()
-	devs := make([]*Icp01Device, 0, len(a.iduDevices))
-	for _, d := range a.iduDevices {
-		devs = append(devs, d)
+	// report_enabled 게이트 적용을 위해 (IDUNum/SlotNum/ReportEnabled) 스냅샷을
+	// a.mu 아래에서 캡처한다 (set_device 의 write 와의 race 방지).
+	type devSnap struct {
+		iduNum        int
+		slotNum       byte
+		reportEnabled bool
 	}
+	a.mu.RLock()
+	devs := make([]devSnap, 0, len(a.iduDevices))
+	for _, d := range a.iduDevices {
+		devs = append(devs, devSnap{iduNum: d.IDUNum, slotNum: d.SlotNum, reportEnabled: d.ReportEnabled})
+	}
+	oduReport := a.oduReportEnabled
 	a.mu.RUnlock()
 
 	a.dedupMu.Lock()
@@ -1894,14 +1967,19 @@ func (a *Hvacr01Agent) emitAllDeviceStates(trigger string) int {
 		parsedKeys = append(parsedKeys, k)
 	}
 	for _, d := range devs {
-		if st, ok := a.lastIDUParsed[d.IDUNum]; ok {
-			items = append(items, iduItem{iduNum: d.IDUNum, slotNum: d.SlotNum, state: st})
+		// report_enabled=false 인 디바이스는 정기 보고에서도 억제.
+		if !d.reportEnabled {
+			continue
+		}
+		if st, ok := a.lastIDUParsed[d.iduNum]; ok {
+			items = append(items, iduItem{iduNum: d.iduNum, slotNum: d.slotNum, state: st})
 		} else {
-			skippedIDUs = append(skippedIDUs, d.IDUNum)
+			skippedIDUs = append(skippedIDUs, d.iduNum)
 		}
 	}
 	var odu *Hvacr01ODUParsed
-	if a.lastODUParsed != nil {
+	// ODU 도 report_enabled=false 면 정기 보고에서 억제.
+	if oduReport && a.lastODUParsed != nil {
 		cp := *a.lastODUParsed
 		odu = &cp
 	}
@@ -2020,13 +2098,14 @@ func (a *Hvacr01Agent) ListDevices() []Icp01Device {
 	// ODU 디바이스
 	oduSnap := a.oduState.snapshot()
 	result = append(result, Icp01Device{
-		Address:  "odu",
-		Label:    "outdoor",
-		Type:     "HVACR.ODU",
-		Online:   a.oduFramesCaptured.Load() > 0,
-		LastSeen: a.oduLastSeen,
-		Source:   "auto",
-		ODUState: &oduSnap,
+		Address:       "odu",
+		Label:         "outdoor",
+		Type:          "HVACR.ODU",
+		Online:        a.oduFramesCaptured.Load() > 0,
+		LastSeen:      a.oduLastSeen,
+		Source:        "auto",
+		ODUState:      &oduSnap,
+		ReportEnabled: a.oduReportEnabled,
 	})
 
 	// IDU 디바이스
@@ -2039,4 +2118,263 @@ func (a *Hvacr01Agent) ListDevices() []Icp01Device {
 		result = append(result, cp)
 	}
 	return result
+}
+
+// ---------------------------------------------------------------------------
+// 디바이스 관리 명령 (list_devices / remove_device / set_device) — IN-MEMORY
+// ---------------------------------------------------------------------------
+//
+// Samsung NASA (internal/agent/samsung/agent.go) 의 processListDevices /
+// processRemoveDevice / processSetDevice / resolveDevice / addrByDeviceUUID
+// 패턴을 그대로 옮긴 것이다. LG ICP-01 은 캡처 전용(자동 발견)이므로 add_device 는
+// 제공하지 않는다. 로스터/설정 영속화도 하지 않는다 (재시작 시 자동 재발견).
+//
+// ODU 는 iduDevices 맵에 저장되지 않고 oduState + oduReportEnabled 로 단일 관리되므로,
+// 아래 헬퍼들은 ODU 를 isODU=true 로 특수 처리한다.
+
+// icp01Target 은 remove_device/set_device 요청이 가리키는 디바이스를 표현한다.
+type icp01Target struct {
+	isODU   bool         // true 면 ODU (addrHex="odu", dev=nil)
+	addrHex string       // IDU: iduDevices 맵 키. ODU: "odu".
+	dev     *Icp01Device // IDU 디바이스 포인터. ODU 면 nil.
+}
+
+// resolveIcp01Target 은 요청에서 디바이스를 해석한다. device_id(UUID) 가 우선이며,
+// 없으면 address 를 사용한다. Samsung NASA 의 resolveDevice + addrByDeviceUUID 와 동일.
+//
+// device_id 는 REST 응답(어댑터 UID = ResolveDeviceID(name, address)) 및 emit 경로
+// (ResolveDeviceID(name, unit_id)) 양쪽에서 발급될 수 있으므로, address 기준과
+// unit_id 기준 UUID 모두와 역매칭한다.
+//
+// 주의(RWMutex 비재진입): a.mu.RLock 을 잡은 채 a.Name() 을 호출하지 않고
+// a.agentConfig.Name 을 직접 읽는다. ResolveDeviceID 는 a.mu 와 무관한 저장소를 쓴다.
+func (a *Hvacr01Agent) resolveIcp01Target(req *hvacr01ProcessRequest) (icp01Target, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	ctx := context.Background()
+	name := a.agentConfig.Name
+
+	// 1) device_id(UUID) 우선.
+	if req.DeviceID != "" {
+		// ODU UUID 매칭 (address "odu" 또는 unit_id "0" 기준).
+		if id := agent.ResolveDeviceID(ctx, name, "odu"); id != "" && id == req.DeviceID {
+			return icp01Target{isODU: true, addrHex: "odu"}, nil
+		}
+		if id := agent.ResolveDeviceID(ctx, name, hvacr01ODUUnitID); id != "" && id == req.DeviceID {
+			return icp01Target{isODU: true, addrHex: "odu"}, nil
+		}
+		// IDU UUID 역매칭 (addrHex 또는 unit_id 기준).
+		for addrHex, dev := range a.iduDevices {
+			if addrHex == "odu" {
+				continue // config 로 등록된 ODU 엔트리는 ODU 경로에서 처리.
+			}
+			if id := agent.ResolveDeviceID(ctx, name, addrHex); id != "" && id == req.DeviceID {
+				return icp01Target{addrHex: addrHex, dev: dev}, nil
+			}
+			if id := agent.ResolveDeviceID(ctx, name, hvacr01IDUUnitID(dev.IDUNum)); id != "" && id == req.DeviceID {
+				return icp01Target{addrHex: addrHex, dev: dev}, nil
+			}
+		}
+		return icp01Target{}, ErrDeviceIDNotFound
+	}
+
+	// 2) address 로 지정.
+	if req.Address != "" {
+		if req.Address == "odu" || req.Address == hvacr01ODUUnitID {
+			return icp01Target{isODU: true, addrHex: "odu"}, nil
+		}
+		if dev, ok := a.iduDevices[req.Address]; ok {
+			return icp01Target{addrHex: req.Address, dev: dev}, nil
+		}
+		// unit_id ("1"~"5") 로도 허용 — IDUNum 매칭.
+		var iduNum int
+		if _, err := fmt.Sscanf(req.Address, "%d", &iduNum); err == nil {
+			for addrHex, dev := range a.iduDevices {
+				if dev.IDUNum == iduNum {
+					return icp01Target{addrHex: addrHex, dev: dev}, nil
+				}
+			}
+		}
+		return icp01Target{}, ErrDeviceNotFound
+	}
+
+	return icp01Target{}, fmt.Errorf("lg_hvacr01: address or device_id is required")
+}
+
+// processListDevices 는 IDU + ODU 디바이스 목록을 report_enabled 포함해 반환한다.
+// Samsung NASA processListDevices 와 동일한 DTO shape.
+func (a *Hvacr01Agent) processListDevices() ([]byte, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	ctx := context.Background()
+	name := a.agentConfig.Name
+
+	devices := make([]map[string]any, 0, len(a.iduDevices)+1)
+
+	// ODU (단일). address="odu" 기준으로 device_id(UUID) 발급 — 어댑터/REST 와 일치.
+	devices = append(devices, map[string]any{
+		"address":        "odu",
+		"unit_id":        hvacr01ODUUnitID,
+		"device_id":      agent.ResolveDeviceID(ctx, name, "odu"),
+		"device_type":    "HVACR.ODU",
+		"online":         a.oduFramesCaptured.Load() > 0,
+		"source":         "auto",
+		"report_enabled": a.oduReportEnabled,
+	})
+
+	// IDU 디바이스들.
+	for addrHex, dev := range a.iduDevices {
+		if addrHex == "odu" {
+			continue // config 로 등록된 ODU 엔트리 중복 방지.
+		}
+		devices = append(devices, map[string]any{
+			"address":        addrHex,
+			"unit_id":        hvacr01IDUUnitID(dev.IDUNum),
+			"device_id":      agent.ResolveDeviceID(ctx, name, addrHex),
+			"device_type":    dev.Type,
+			"online":         dev.Online,
+			"source":         dev.Source,
+			"report_enabled": dev.ReportEnabled,
+		})
+	}
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"devices": devices,
+	})
+}
+
+// processRemoveDevice 는 디바이스를 IN-MEMORY 로 제거한다 (remove_device).
+// address 또는 device_id(UUID) 로 지정. Samsung NASA processRemoveDevice 패턴.
+func (a *Hvacr01Agent) processRemoveDevice(req *hvacr01ProcessRequest) ([]byte, error) {
+	// API exec DTO 폴백: params 안의 address/device_id 도 허용.
+	if req.Address == "" {
+		if v, ok := req.Params["address"].(string); ok {
+			req.Address = v
+		}
+	}
+	if req.DeviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			req.DeviceID = v
+		}
+	}
+
+	tgt, err := a.resolveIcp01Target(req)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	name := a.agentConfig.Name
+
+	if tgt.isODU {
+		// ODU 삭제: 상태/카운터를 리셋해 재관측 전까지 목록에서 사라지게 한다.
+		a.oduState = &Icp01ODUState{}
+		a.oduFramesCaptured.Store(0)
+		a.oduLastSeen = time.Time{}
+		a.dedupMu.Lock()
+		a.lastODUEmit = nil
+		a.lastODUParsed = nil
+		a.dedupMu.Unlock()
+		delete(a.iduDevices, "odu") // config 등록 ODU 엔트리가 있으면 함께 제거.
+		return json.Marshal(map[string]any{
+			"status":    "ok",
+			"address":   "odu",
+			"unit_id":   hvacr01ODUUnitID,
+			"device_id": agent.ResolveDeviceID(ctx, name, "odu"),
+		})
+	}
+
+	// IDU 삭제: 맵 + dedup/상태 캐시에서 제거.
+	iduNum := tgt.dev.IDUNum
+	delete(a.iduDevices, tgt.addrHex)
+	delete(a.lastStates, tgt.addrHex)
+	a.dedupMu.Lock()
+	delete(a.lastIDUEmit, iduNum)
+	delete(a.lastIDUParsed, iduNum)
+	a.dedupMu.Unlock()
+
+	return json.Marshal(map[string]any{
+		"status":    "ok",
+		"address":   tgt.addrHex,
+		"unit_id":   hvacr01IDUUnitID(iduNum),
+		"device_id": agent.ResolveDeviceID(ctx, name, tgt.addrHex),
+	})
+}
+
+// processSetDevice 는 디바이스별 설정(report_enabled/name)을 갱신한다 (set_device).
+// report_enabled=false 로 갱신하면 이후 이 디바이스의 device_state emit 이 억제된다.
+// Samsung NASA processSetDevice 패턴 (IN-MEMORY, 영속화 없음).
+func (a *Hvacr01Agent) processSetDevice(req *hvacr01ProcessRequest) ([]byte, error) {
+	// API exec DTO 폴백: params 안의 address/device_id 도 허용.
+	if req.Address == "" {
+		if v, ok := req.Params["address"].(string); ok {
+			req.Address = v
+		}
+	}
+	if req.DeviceID == "" {
+		if v, ok := req.Params["device_id"].(string); ok {
+			req.DeviceID = v
+		}
+	}
+
+	tgt, err := a.resolveIcp01Target(req)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	name := a.agentConfig.Name
+
+	var (
+		addrHex     string
+		unitID      string
+		deviceType  string
+		label       string
+		reportState bool
+	)
+
+	if tgt.isODU {
+		// report_enabled: present(bool) 일 때만 갱신.
+		if v, ok := req.Params["report_enabled"].(bool); ok {
+			a.oduReportEnabled = v
+		}
+		// ODU 라벨은 "outdoor" 로 고정 표시하므로 name 변경은 무시(수용만).
+		addrHex = "odu"
+		unitID = hvacr01ODUUnitID
+		deviceType = "HVACR.ODU"
+		label = "outdoor"
+		reportState = a.oduReportEnabled
+	} else {
+		dev := tgt.dev
+		if v, ok := req.Params["report_enabled"].(bool); ok {
+			dev.ReportEnabled = v
+		}
+		if v, ok := req.Params["name"].(string); ok {
+			dev.Label = v
+		}
+		addrHex = tgt.addrHex
+		unitID = hvacr01IDUUnitID(dev.IDUNum)
+		deviceType = dev.Type
+		label = dev.Label
+		reportState = dev.ReportEnabled
+	}
+
+	return json.Marshal(map[string]any{
+		"status":         "ok",
+		"address":        addrHex,
+		"unit_id":        unitID,
+		"device_id":      agent.ResolveDeviceID(ctx, name, addrHex),
+		"name":           label,
+		"device_type":    deviceType,
+		"report_enabled": reportState,
+	})
 }

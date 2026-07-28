@@ -12,6 +12,15 @@ async function flushMicrotasks(): Promise<void> {
   });
 }
 
+// useAgents 를 모킹해 store 에이전트 목록을 제어한다. 각 테스트가 필요 시
+// mockUseAgentsData 를 바꿔 이름/ID 매핑을 시뮬레이션한다. (SPEC-WEB-006)
+let mockUseAgentsData: { data: Array<{ id: string; name: string; type: string }> } | undefined = {
+  data: [{ id: 'store-1', name: 'store-1', type: 'store' }],
+};
+vi.mock('@/hooks/useAgent', () => ({
+  useAgents: () => ({ data: mockUseAgentsData }),
+}));
+
 import type { SeriesMatrix } from '@/services/api/seriesDataSource';
 import type { StoreSourceConfig } from './chartChannelTypes';
 import {
@@ -187,6 +196,8 @@ describe('matrixToEntries', () => {
 describe('useStoreChartData', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // 기본 에이전트 목록: id === name === 'store-1'.
+    mockUseAgentsData = { data: [{ id: 'store-1', name: 'store-1', type: 'store' }] };
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -347,6 +358,58 @@ describe('useStoreChartData', () => {
       { metricType: 'gauge', tags: { room: '1' } },
     ]);
     // 즉시 쿼리가 resolve 되며 발생하는 상태 업데이트를 flush 한다(act 경고 제거).
+    await flushMicrotasks();
+  });
+
+  // --- agent_id 기반 이름 해석 (SPEC-WEB-006) ---
+  // config 에 안정적인 agent_id 를 정본으로 저장하고, Store API(이름 주소) 호출 시
+  // 저장된 id → 현재 에이전트 이름으로 해석해 호출한다. 에이전트 이름이 바뀌어도
+  // id 는 불변이므로 항상 현재 이름으로 조회되어야 한다.
+  it('agent_id 가 있으면 저장된 옛 이름 대신 현재 에이전트 이름으로 조회한다', async () => {
+    // 저장된 config: agent_id='store-uuid', 저장 시점 이름은 'old'.
+    // 현재 에이전트 목록: 같은 id 의 이름이 'new' 로 변경됨.
+    mockUseAgentsData = { data: [{ id: 'store-uuid', name: 'new', type: 'store' }] };
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
+    renderHook(() =>
+      useStoreChartData(
+        makeConfig({ agent_id: 'store-uuid', agent_name: 'old' }),
+        true,
+        { queryMatrixFn: queryFn },
+      ),
+    );
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    // 옛 이름('old')이 아닌 현재 이름('new')으로 호출되어야 한다.
+    expect(queryFn.mock.calls[0]![0]).toBe('new');
+    await flushMicrotasks();
+  });
+
+  it('agent_id 가 없으면(구 config) 저장된 이름을 그대로 사용한다(하위호환)', async () => {
+    mockUseAgentsData = { data: [{ id: 'store-uuid', name: 'new', type: 'store' }] };
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
+    renderHook(() =>
+      useStoreChartData(
+        makeConfig({ agent_name: 'legacy-name' }),
+        true,
+        { queryMatrixFn: queryFn },
+      ),
+    );
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    expect(queryFn.mock.calls[0]![0]).toBe('legacy-name');
+    await flushMicrotasks();
+  });
+
+  it('agent_id 가 목록에 없으면 저장된 이름으로 폴백한다', async () => {
+    mockUseAgentsData = { data: [{ id: 'other', name: 'other-name', type: 'store' }] };
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
+    renderHook(() =>
+      useStoreChartData(
+        makeConfig({ agent_id: 'missing-uuid', agent_name: 'snapshot-name' }),
+        true,
+        { queryMatrixFn: queryFn },
+      ),
+    );
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    expect(queryFn.mock.calls[0]![0]).toBe('snapshot-name');
     await flushMicrotasks();
   });
 });

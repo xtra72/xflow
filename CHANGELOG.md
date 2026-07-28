@@ -6,6 +6,42 @@
 
 ## [Unreleased]
 
+### 추가 — thingplus-gateway 에이전트 (ThingsBoard Gateway MQTT 양방향 IoT 연동)
+
+- **`thingplus-gateway` 시스템 에이전트 신설 — 단일 MQTT 연결로 다수 하위 디바이스를 프록시하는 양방향 게이트웨이 (Non-breaking)**
+
+  ThingsBoard Gateway MQTT API(`v1/gateway/*`)를 지원하는 신규 시스템 에이전트를 추가했다. 하나의 게이트웨이 MQTT 연결이 다수의 논리 디바이스를 다중화(multiplexing)하며, 업링크(텔레메트리/속성)와 다운링크(RPC/공유 속성)를 양방향으로 중계하고 xflow `device_id`↔ThingsBoard 디바이스 NAME 매핑을 관리한다. 기존 `mqtt-client` 에이전트 및 Eclipse Paho 스택을 재사용하며 신규 외부 의존성은 없다.
+
+  - **코어/연결(M1)**: `"thingplus-gateway"` 타입 등록, 설정 파싱, access token 기반 MQTT username 인증, TLS(8883/CA), `State()`, 재연결. access token은 로그/`State()`에서 마스킹된다.
+  - **매핑/connect(M2)**: JSONPath 기반 디바이스 NAME 추출(기본 `$.device`), NAME↔device_id 양방향 매핑, 디바이스 상태 머신(`disconnected→connecting→connected`), 미등록 디바이스 자동 connect/auto-provision, 재연결 시 알려진 디바이스 재connect, repo-nil fallback(NAME을 device_id로 사용).
+  - **업링크(M3)**: 텔레메트리(`ts=epoch ms`, 부재 시 생략) 및 클라이언트 속성 발행, 배치 조립, 경계가 있는 무손실 버퍼(연결 끊김 시 버퍼링, 재연결 시 flush, 초과 시 관찰 가능).
+  - **다운링크(M4)**: `v1/gateway/rpc`·`v1/gateway/attributes` 구독 → `Type()`이 `thingplus.rpc.request` / `thingplus.attr.update`인 플로우 메시지 방출, RPC 응답 발행, 디바이스별 `pendingRPC` 상관.
+  - **스키마/관찰성(M5)**: 웹 설정 스키마(`agentSchemas.ts`), `ConnectionStats`/`BufferInfo` 관찰성, 예제 agent/flow YAML(`examples/agents/thingplus-gateway.yaml`, `examples/flows/thingplus-gateway.yaml`).
+  - **Bridge 어댑터(stateless)**: 플로우 경계를 넘어 메시지 `Type()`을 보존하기 위한 얇은 무상태 어댑터(`internal/node/adapter/thingplus.go`)를 추가했다. Bridge 코어는 변경하지 않는다.
+  - **이연(라이브 브로커)**: A7(MQTT v5 PUBACK 타이밍), A8(`attributes/response` 다중 키 인코딩)은 라이브 브로커 스모크 테스트로 이연했다. 빌더/파서는 구현되었으나 tolerant/deferred 상태.
+  - **품질**: 전체 회귀 11개 패키지 0 FAIL, `go test -race` 통과, `golangci-lint` 0 issues. 커버리지 codec 92.6% / mapping 96.6% / adapter 95.0% / 에이전트 코어 80.4%(브로커 전용 경로 제외 시 >90%). 신규 외부 의존성 0.
+  - **관련**: SPEC-THINGPLUS-001 v1.1.0(구현 완료, `eda584a`).
+
+### 변경 — 저장소 탭 필터 UI 정리
+
+- **저장소 탭에서 "메트릭 타입" 필터 드롭다운과 태그 필터 칩을 제거 (기능·데이터 무영향, Non-breaking)**
+
+  데이터 테이블 상단에 있던 두 필터 블록(메트릭 타입 `<select>` + 태그 필터 칩 `TagFilterChips`)이 중복 UI 로 판단되어 제거되었다. 동일한 필터링은 기존 키워드 검색 상자(키 / metric_type / 태그를 매칭)와 컬럼별 Excel 스타일 헤더 필터로 그대로 수행할 수 있다. 테이블 상단의 검색 입력창은 유지된다.
+
+  - **제거 대상**: 메트릭 타입 선택 드롭다운, 태그 필터 칩 섹션, 그리고 이와 연동된 상태/핸들러/파생값 및 해당 단위 테스트 블록("메트릭 타입 필터").
+  - **대체 수단**: 키워드 검색 + 컬럼별 Excel 필터가 동일한 필터링 요구를 커버한다. 데이터·기능 동작에는 영향이 없으며 UI 단순화에 해당한다.
+  - **관련**: SPEC-STORE-003(v0.4.0에서 최초 도입된 필터 UI), SPEC-WEB-005.
+
+### 추가 — 태그 컬럼 필터 그룹핑 (팝오버 확장 + 태그 타입 일괄 선택)
+
+- **태그 컬럼의 Excel 스타일 헤더 필터 팝오버를 넓히고 태그 타입별 그룹핑·그룹 단위 선택을 추가 (Non-breaking)**
+
+  긴 `key=value` 태그(예: 긴 UUID 형태의 `device_id=...`)가 잘려 보이지 않도록 팝오버 폭을 확장(`w-56` → `w-80`)하고 긴 태그 값을 줄바꿈(`break-all`) 처리해 전체 값을 노출한다. 필터 매칭 의미(전체 `key=value` 문자열 매칭)는 변경되지 않는다.
+
+  - **태그 타입별 그룹핑**: 필터 값들을 태그 키(`=` 앞부분) 기준으로 그룹화한다. 각 그룹 헤더는 태그 키와 `선택/전체` 개수를 표시하며, 그룹 단위 체크박스(indeterminate 상태 포함)로 해당 태그 타입의 모든 값을 한 번에 선택/해제할 수 있다.
+  - **행 표시 최적화**: 개별 행은 값 부분만 표시하고, 전체 `key=value` 는 title 툴팁으로 확인할 수 있다. 이 그룹핑은 태그 컬럼에만 적용된다.
+  - **관련**: SPEC-WEB-005.
+
 ### 추가 — 라인 차트 스타일 옵션 (Y축 데이터 타입 · 축 폰트 · 자동 색상)
 
 - **대시보드 라인 차트에 Y축 데이터 타입(숫자형/열거형)·축 폰트·시리즈 자동 색상 설정을 추가 (Non-breaking)**

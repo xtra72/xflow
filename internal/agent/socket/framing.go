@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 )
 
 // Framer 는 소켓 연결에서 메시지 프레이밍을 담당하는 인터페이스이다.
@@ -18,10 +19,23 @@ type Framer interface {
 
 // FramerOptions 는 프레이머 생성 옵션이다.
 type FramerOptions struct {
-	BufferSize     int  // 읽기 버퍼 크기 (RawFramer, NewlineFramer 에 사용)
-	Delimiter      byte // 구분자 (NewlineFramer 에 사용, 0이면 '\n')
-	FixedSize      int  // 고정 크기 (FixedSizeFramer 에 사용)
-	MaxMessageSize int  // 최대 메시지 크기 (LengthPrefixFramer 에 사용, 0=무제한)
+	BufferSize     int           // 읽기 버퍼 크기 (RawFramer, NewlineFramer 에 사용)
+	Delimiter      byte          // 구분자 (NewlineFramer 에 사용, 0이면 '\n')
+	FixedSize      int           // 고정 크기 (FixedSizeFramer 에 사용)
+	MaxMessageSize int           // 최대 메시지 크기 (LengthPrefixFramer 에 사용, 0=무제한)
+	WriteTimeout   time.Duration // conn.Write 쓰기 데드라인 (0이면 데드라인 미설정)
+}
+
+// setWriteDeadline 은 conn.Write 직전에 쓰기 데드라인을 설정한다.
+// timeout <= 0 이면 no-op (데드라인 미설정, 기존 동작 보존).
+//
+// 데드라인이 없으면 stale 클라이언트가 수신을 멈춰 커널 송신버퍼가 포화될 때
+// conn.Write 가 무한 블록되어 상위(processSend/Process)와 flow 를 정지시킨다.
+// 데드라인을 걸면 초과 시 timeout 에러가 반환되어 정상적으로 상위로 전파된다.
+func setWriteDeadline(conn net.Conn, timeout time.Duration) {
+	if timeout > 0 {
+		_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	}
 }
 
 // NewFramer 는 프레이밍 타입에 따라 적절한 Framer 구현체를 생성한다.
@@ -32,7 +46,7 @@ func NewFramer(framingType string, opts FramerOptions) (Framer, error) {
 		if size <= 0 {
 			size = DefaultBufferSize
 		}
-		return &rawFramer{bufferSize: size}, nil
+		return &rawFramer{bufferSize: size, writeTimeout: opts.WriteTimeout}, nil
 
 	case FramingNewline:
 		delim := opts.Delimiter
@@ -43,13 +57,13 @@ func NewFramer(framingType string, opts FramerOptions) (Framer, error) {
 		if size <= 0 {
 			size = DefaultBufferSize
 		}
-		return &newlineFramer{delimiter: delim, bufferSize: size}, nil
+		return &newlineFramer{delimiter: delim, bufferSize: size, writeTimeout: opts.WriteTimeout}, nil
 
 	case FramingLengthPrefix:
-		return &lengthPrefixFramer{maxMessageSize: opts.MaxMessageSize}, nil
+		return &lengthPrefixFramer{maxMessageSize: opts.MaxMessageSize, writeTimeout: opts.WriteTimeout}, nil
 
 	case FramingFixedSize:
-		return &fixedSizeFramer{fixedSize: opts.FixedSize}, nil
+		return &fixedSizeFramer{fixedSize: opts.FixedSize, writeTimeout: opts.WriteTimeout}, nil
 
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrInvalidFraming, framingType)
@@ -59,7 +73,8 @@ func NewFramer(framingType string, opts FramerOptions) (Framer, error) {
 // --- rawFramer: 원시 바이트 스트림 ---
 
 type rawFramer struct {
-	bufferSize int
+	bufferSize   int
+	writeTimeout time.Duration
 }
 
 func (f *rawFramer) Read(conn net.Conn) ([]byte, error) {
@@ -75,6 +90,7 @@ func (f *rawFramer) Read(conn net.Conn) ([]byte, error) {
 }
 
 func (f *rawFramer) Write(conn net.Conn, data []byte) error {
+	setWriteDeadline(conn, f.writeTimeout)
 	_, err := conn.Write(data)
 	return err
 }
@@ -82,8 +98,9 @@ func (f *rawFramer) Write(conn net.Conn, data []byte) error {
 // --- newlineFramer: 구분자 기반 프레이밍 ---
 
 type newlineFramer struct {
-	delimiter  byte
-	bufferSize int
+	delimiter    byte
+	bufferSize   int
+	writeTimeout time.Duration
 }
 
 func (f *newlineFramer) Read(conn net.Conn) ([]byte, error) {
@@ -109,6 +126,7 @@ func (f *newlineFramer) Write(conn net.Conn, data []byte) error {
 	buf := make([]byte, len(data)+1)
 	copy(buf, data)
 	buf[len(data)] = f.delimiter
+	setWriteDeadline(conn, f.writeTimeout)
 	_, err := conn.Write(buf)
 	return err
 }
@@ -132,6 +150,7 @@ func (f *newlineFramer) splitFunc() bufio.SplitFunc {
 
 type lengthPrefixFramer struct {
 	maxMessageSize int
+	writeTimeout   time.Duration
 }
 
 func (f *lengthPrefixFramer) Read(conn net.Conn) ([]byte, error) {
@@ -165,9 +184,11 @@ func (f *lengthPrefixFramer) Write(conn net.Conn, data []byte) error {
 	// 4바이트 길이 헤더 + 페이로드 전송
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, uint32(len(data)))
+	setWriteDeadline(conn, f.writeTimeout)
 	if _, err := conn.Write(header); err != nil {
 		return err
 	}
+	setWriteDeadline(conn, f.writeTimeout)
 	_, err := conn.Write(data)
 	return err
 }
@@ -175,7 +196,8 @@ func (f *lengthPrefixFramer) Write(conn net.Conn, data []byte) error {
 // --- fixedSizeFramer: 고정 크기 프레이밍 ---
 
 type fixedSizeFramer struct {
-	fixedSize int
+	fixedSize    int
+	writeTimeout time.Duration
 }
 
 func (f *fixedSizeFramer) Read(conn net.Conn) ([]byte, error) {
@@ -189,6 +211,7 @@ func (f *fixedSizeFramer) Read(conn net.Conn) ([]byte, error) {
 func (f *fixedSizeFramer) Write(conn net.Conn, data []byte) error {
 	buf := make([]byte, f.fixedSize)
 	copy(buf, data) // 짧으면 제로 패딩, 길면 잘림
+	setWriteDeadline(conn, f.writeTimeout)
 	_, err := conn.Write(buf)
 	return err
 }

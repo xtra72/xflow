@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/lg"
+	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/storage"
@@ -583,18 +585,97 @@ func agentToHandlerInfo(ag agent.Agent, detail string) *handler.AgentInfo {
 }
 
 // ExecAgent 는 에이전트에 Process 커맨드를 전송하고 결과를 반환한다.
+// add_device/remove_device 커맨드 성공 시, 변경된 디바이스 목록을 저장소에 persist 한다.
 func (a *AgentServiceAdapter) ExecAgent(ctx context.Context, id string, data []byte) (json.RawMessage, error) {
 	ag, err := a.manager.Get(id)
 	if err != nil {
 		return nil, err
 	}
 
+	// 커맨드 이름 추출 (device 관련 커맨드 감지용)
+	var cmdPayload map[string]any
+	_ = json.Unmarshal(data, &cmdPayload) // 파싱 실패는 무시 (명령 실행은 진행)
+	cmdName, _ := cmdPayload["command"].(string)
+
 	result, err := ag.Process(data)
 	if err != nil {
 		return nil, fmt.Errorf("agent exec: %w", err)
 	}
 
+	// add_device/remove_device/set_device 커맨드 성공 후 디바이스 목록 영속 저장
+	// set_device 는 report_enabled 변경을 재시작 후에도 보존하기 위해 포함한다.
+	if (cmdName == "add_device" || cmdName == "remove_device" || cmdName == "set_device") && a.repo != nil {
+		if err := a.persistDeviceRosterAfterExec(ctx, ag); err != nil {
+			// 저장 실패는 경고로만 기록하고 응답은 반환 (in-memory 는 이미 성공)
+			a.logger.Warn("디바이스 목록 영속 저장 실패", "agentID", id, "command", cmdName, "error", err)
+		}
+	}
+
 	return json.RawMessage(result), nil
+}
+
+// persistDeviceRosterAfterExec 는 add_device/remove_device 후 변경된 디바이스 목록을 저장소에 저장한다.
+// 에이전트 인스턴스에서 현재 로스터를 추출하고 AgentConfig 에 업데이트한 후 repo.Save() 를 호출한다.
+func (a *AgentServiceAdapter) persistDeviceRosterAfterExec(ctx context.Context, ag agent.Agent) error {
+	// 에이전트의 Info() 에서 현재 config 를 가져온다
+	cfg := ag.Info().Config
+
+	// Transport.Options 가 nil 이면 초기화
+	if cfg.Transport.Options == nil {
+		cfg.Transport.Options = make(map[string]any)
+	}
+
+	// 지원되는 디바이스 관리 에이전트인지 확인하고 persistable devices 추출
+	// Samsung (HVACR01) 에이전트
+	if samsungAg, ok := ag.(*samsung.Hvacr01Agent); ok {
+		devices := samsungAg.GetPersistableDevices()
+		devicesList := a.buildDevicesList(devices)
+		cfg.Transport.Options["devices"] = devicesList
+		return a.repo.Save(ctx, cfg)
+	}
+
+	// LGAP (LG HVACR01) 에이전트
+	if lgAg, ok := ag.(*lg.LGAPAgent); ok {
+		devices := lgAg.GetPersistableDevices()
+		devicesList := a.buildDevicesList(devices)
+		cfg.Transport.Options["devices"] = devicesList
+		return a.repo.Save(ctx, cfg)
+	}
+
+	// ModbusServer 에이전트 — 향후 구현
+	// if mbAg, ok := ag.(*modbusserver.ModbusServerAgent); ok { ... }
+
+	// 지원되지 않는 에이전트 타입 (device management 미지원)
+	// 커맨드가 실행 중인데 persist 할 수 없다면, 이는 심각한 조건
+	return fmt.Errorf("agent type %T does not support device roster persistence for %s command",
+		ag, ag.Type())
+}
+
+// buildDevicesList 는 DeviceEntry 배열을 디바이스 설정 형식으로 변환한다.
+// ParseDevices() 와 역방향으로 동작한다.
+func (a *AgentServiceAdapter) buildDevicesList(devices []agent.DeviceEntry) []any {
+	var result []any
+	for _, dev := range devices {
+		entry := map[string]any{
+			"address": dev.Address,
+		}
+		if dev.Name != "" {
+			entry["name"] = dev.Name
+		}
+		// display_name: 비어 있지 않을 때만 기록(빈 값=미지정→키 생략으로 후방호환).
+		if dev.DisplayName != "" {
+			entry["display_name"] = dev.DisplayName // 표시 이름 보존: 재시작 후에도 dev.Name 복원
+		}
+		if dev.Source != "" {
+			entry["source"] = dev.Source // source 보존: 재시작 후 삭제 가능성 유지
+		}
+		// report_enabled: non-nil 일 때만 기록(nil=미지정→기본 on, 키 생략으로 후방호환).
+		if dev.ReportEnabled != nil {
+			entry["report_enabled"] = *dev.ReportEnabled
+		}
+		result = append(result, entry)
+	}
+	return result
 }
 
 // 컴파일 타임 인터페이스 검증

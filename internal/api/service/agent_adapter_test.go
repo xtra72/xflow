@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/pkg/lifecycle"
@@ -1439,4 +1441,643 @@ func TestAgentServiceAdapter_ListAgents_EnrichesUptimeAndStats(t *testing.T) {
 	if got.Stats == nil {
 		t.Error("목록 응답의 Stats 가 nil 이면 안 됨 (web Messages 컬럼)")
 	}
+}
+
+// TestExecAgent_AddDevice_PersistsDeviceRoster 는 add_device 커맨드가 메모리와 저장소에
+// 디바이스를 모두 저장하는지 검증한다 (SPEC-DEVICE-PERSISTENCE-001).
+// 재현 테스트: 현재는 실패하고, 수정 후 성공해야 한다.
+func TestExecAgent_AddDevice_PersistsDeviceRoster(t *testing.T) {
+	// 임시 저장소 설정
+	tmpDir := t.TempDir()
+	repo, err := storage.NewAgentFileRepository(tmpDir)
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+
+	// 첫 번째 어댑터: 에이전트 생성 및 디바이스 추가
+	mgr1 := agent.NewManager()
+	// Samsung 에이전트 타입 등록
+	if err := samsung.RegisterSamsungHvacr01Types(mgr1); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패: %v", err)
+	}
+	adapter1 := NewAgentServiceAdapter(mgr1, repo, nil)
+
+	// Samsung HVACR01 에이전트 생성
+	agentInfo, err := adapter1.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "device-persist-test",
+		Type: "samsung_hvacr01",
+		Config: map[string]any{
+			"transport_type": "tcp-client",
+			"tcp_host":       "127.0.0.1",
+			"tcp_port":       float64(9100),
+		},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+	agentID := agentInfo.ID
+
+	// 장치 추가 커맨드 실행
+	addDevicePayload := map[string]any{
+		"command": "add_device",
+		"address": "200001",
+		"params": map[string]any{
+			"name":      "test-device-1",
+			"device_id": "device-001",
+		},
+	}
+	payloadBytes, err := marshalJSON(addDevicePayload)
+	if err != nil {
+		t.Fatalf("JSON 마샬링 실패: %v", err)
+	}
+
+	_, err = adapter1.ExecAgent(context.Background(), agentID, payloadBytes)
+	if err != nil {
+		t.Fatalf("add_device 실행 실패: %v", err)
+	}
+
+	// 메모리에서 디바이스 확인 (이 단계에서는 성공해야 함)
+	_, err = mgr1.Get(agentID)
+	if err != nil {
+		t.Fatalf("에이전트 조회 실패: %v", err)
+	}
+
+	// 메모리 상태 확인용 방법: Info().Config.Options 에서 devices 확인
+	// 하지만 현재 in-memory 만 있고 저장되지 않음
+
+	// 두 번째 어댑터: 저장소에서 다시 로드 (시뮬레이트: 데몬 재시작)
+	mgr2 := agent.NewManager()
+	configs, err := repo.List(context.Background())
+	if err != nil {
+		t.Fatalf("저장소 목록 조회 실패: %v", err)
+	}
+
+	// 저장된 config 에서 devices 확인
+	var savedConfig agent.AgentConfig
+	for _, cfg := range configs {
+		if cfg.ID == agentID {
+			savedConfig = cfg
+			break
+		}
+	}
+
+	if savedConfig.ID == "" {
+		t.Fatalf("저장소에서 에이전트를 찾을 수 없음")
+	}
+
+	// SPEC 요구사항: add_device 로 추가된 디바이스가 저장소에 persist 되어야 한다
+	devices := agent.ParseDevices(savedConfig.Transport.Options)
+	if len(devices) == 0 {
+		t.Fatal("저장소의 에이전트 config 에 devices 가 없음 — BUG: add_device 결과가 persist 되지 않음")
+	}
+
+	// 추가된 디바이스를 확인
+	// NASA 주소 형식 참고: "200001" → "20.00.01" (dots 포함)
+	// 중요: roster 에 저장된 name 은 device_id ("device-001") 이다.
+	// 표시 이름 "test-device-1" 은 device_metadata 에 별도 저장된다.
+	found := false
+	for _, dev := range devices {
+		if dev.Address == "20.00.01" && dev.Name == "device-001" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("저장소에서 추가된 디바이스 (address=20.00.01, name=device-001) 를 찾을 수 없음. 저장된 장치 목록: %v", devices)
+	}
+
+	// 저장소에서 로드한 config 로 에이전트를 다시 생성
+	// Samsung 에이전트 타입 등록 (mgr2에서도 필요)
+	if err := samsung.RegisterSamsungHvacr01Types(mgr2); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패 (mgr2): %v", err)
+	}
+	ag2, err := mgr2.Create(savedConfig)
+	if err != nil {
+		t.Fatalf("저장된 config 로 에이전트 생성 실패: %v", err)
+	}
+
+	// 복원된 에이전트의 info 에서 devices 확인
+	info := ag2.Info()
+	devicesInRestoredConfig := agent.ParseDevices(info.Config.Transport.Options)
+	if len(devicesInRestoredConfig) == 0 {
+		t.Fatal("복원된 에이전트 config 에 devices 가 없음")
+	}
+
+	// 추가된 디바이스가 복원되었는지 확인
+	// 저장된 name 은 device_id 이므로 "device-001" 을 확인
+	restoreFound := false
+	for _, dev := range devicesInRestoredConfig {
+		if dev.Address == "20.00.01" && dev.Name == "device-001" {
+			restoreFound = true
+			break
+		}
+	}
+	if !restoreFound {
+		t.Errorf("복원된 에이전트에 추가된 디바이스가 없음. 복원된 장치 목록: %v", devicesInRestoredConfig)
+	}
+}
+
+// TestExecAgent_RemoveDevice_PersistsRosterShrinkage 는 remove_device 커맨드가
+// 디바이스를 메모리와 저장소에서 모두 제거하는지 검증한다.
+func TestExecAgent_RemoveDevice_PersistsRosterShrinkage(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo, err := storage.NewAgentFileRepository(tmpDir)
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+
+	mgr1 := agent.NewManager()
+	if err := samsung.RegisterSamsungHvacr01Types(mgr1); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패: %v", err)
+	}
+	adapter1 := NewAgentServiceAdapter(mgr1, repo, nil)
+
+	// Samsung HVACR01 에이전트 생성
+	agentInfo, err := adapter1.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "device-remove-test",
+		Type: "samsung_hvacr01",
+		Config: map[string]any{
+			"transport_type": "tcp-client",
+			"tcp_host":       "127.0.0.1",
+			"tcp_port":       float64(9100),
+		},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+	agentID := agentInfo.ID
+
+	// 두 디바이스 추가
+	for i, address := range []string{"200001", "200002"} {
+		addPayload := map[string]any{
+			"command": "add_device",
+			"address": address,
+			"params": map[string]any{
+				"name":      fmt.Sprintf("device-%d", i),
+				"device_id": fmt.Sprintf("device-%03d", i),
+			},
+		}
+		data, _ := json.Marshal(addPayload)
+		_, _ = adapter1.ExecAgent(context.Background(), agentID, data)
+	}
+
+	// 첫 디바이스 제거
+	removePayload := map[string]any{
+		"command": "remove_device",
+		"address": "200001",
+	}
+	data, _ := json.Marshal(removePayload)
+	_, _ = adapter1.ExecAgent(context.Background(), agentID, data)
+
+	// 저장소에서 확인
+	configs, _ := repo.List(context.Background())
+	var savedConfig agent.AgentConfig
+	for _, cfg := range configs {
+		if cfg.ID == agentID {
+			savedConfig = cfg
+			break
+		}
+	}
+
+	devices := agent.ParseDevices(savedConfig.Transport.Options)
+	if len(devices) != 1 {
+		t.Errorf("제거 후 1개 디바이스여야 함: got %d", len(devices))
+	}
+
+	found := false
+	for _, dev := range devices {
+		if dev.Address == "20.00.02" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("첫 번째 디바이스가 제거되지 않음")
+	}
+}
+
+// TestExecAgent_NonRosterCommand_NoRepoSave 는 add_device/remove_device 가 아닌
+// 커맨드가 repo.Save 를 호출하지 않음을 확인한다.
+func TestExecAgent_NonRosterCommand_NoRepoSave(t *testing.T) {
+	spyRepo := &spyAgentRepository{}
+	mgr := agent.NewManager()
+	if err := samsung.RegisterSamsungHvacr01Types(mgr); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, spyRepo, nil)
+
+	agentInfo, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "non-roster-test",
+		Type: "samsung_hvacr01",
+		Config: map[string]any{
+			"transport_type": "tcp-client",
+			"tcp_host":       "127.0.0.1",
+			"tcp_port":       float64(9100),
+		},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// CreateAgent 가 Save 를 호출했을 수 있으므로 리셋
+	createCallCount := spyRepo.saveCallCount
+	spyRepo.saveCallCount = 0
+
+	// list_devices 는 Save 를 호출하면 안 됨
+	listPayload := map[string]any{"command": "list_devices"}
+	data, _ := json.Marshal(listPayload)
+	adapter.ExecAgent(context.Background(), agentInfo.ID, data) //nolint:errcheck
+
+	if spyRepo.saveCallCount > 0 {
+		t.Errorf("비로스터 커맨드에서 Save 호출됨: %d times (CreateAgent에서 %d번 호출)", spyRepo.saveCallCount, createCallCount)
+	}
+}
+
+// TestExecAgent_ParseDevicesRoundTrip 는 디바이스가 라운드트립(메모리→빌드→파싱→복원)
+// 을 통해 동일하게 유지되는지 확인한다.
+func TestExecAgent_ParseDevicesRoundTrip(t *testing.T) {
+	original := []agent.DeviceEntry{
+		{Address: "20.00.01", Name: "device-a"},
+		{Address: "20.00.02", Name: ""}, // 이름 없음
+	}
+
+	adapter := &AgentServiceAdapter{}
+	built := adapter.buildDevicesList(original)
+	opts := map[string]any{"devices": built}
+	parsed := agent.ParseDevices(opts)
+
+	if len(parsed) != len(original) {
+		t.Fatalf("라운드트립 길이 불일치: got %d, want %d", len(parsed), len(original))
+	}
+
+	for i := range original {
+		if parsed[i].Address != original[i].Address || parsed[i].Name != original[i].Name {
+			t.Errorf("[%d] 라운드트립 실패: got %v, want %v", i, parsed[i], original[i])
+		}
+	}
+}
+
+// TestBuildDevicesList_ReportEnabledRoundTrip 는 report_enabled(*bool) 가
+// buildDevicesList → ParseDevices 왕복에서 보존되는지 검증한다. false 는 유지되고,
+// nil(미지정) 은 키가 생략되어 재파싱 시 nil(기본 enabled) 로 남는다(후방호환).
+func TestBuildDevicesList_ReportEnabledRoundTrip(t *testing.T) {
+	off := false
+	on := true
+	original := []agent.DeviceEntry{
+		{Address: "20.00.01", Name: "off-dev", ReportEnabled: &off},
+		{Address: "20.00.02", Name: "on-dev", ReportEnabled: &on},
+		{Address: "20.00.03", Name: "unset-dev"}, // ReportEnabled nil
+	}
+
+	adapter := &AgentServiceAdapter{}
+	built := adapter.buildDevicesList(original)
+	opts := map[string]any{"devices": built}
+	parsed := agent.ParseDevices(opts)
+
+	if len(parsed) != 3 {
+		t.Fatalf("라운드트립 길이 불일치: got %d, want 3", len(parsed))
+	}
+
+	byName := map[string]agent.DeviceEntry{}
+	for _, e := range parsed {
+		byName[e.Name] = e
+	}
+
+	if e := byName["off-dev"]; e.ReportEnabled == nil || *e.ReportEnabled != false {
+		t.Errorf("off-dev report_enabled 미보존: got %v", e.ReportEnabled)
+	}
+	if e := byName["on-dev"]; e.ReportEnabled == nil || *e.ReportEnabled != true {
+		t.Errorf("on-dev report_enabled 미보존: got %v", e.ReportEnabled)
+	}
+	if e := byName["unset-dev"]; e.ReportEnabled != nil {
+		t.Errorf("unset-dev report_enabled 는 nil 유지여야 함: got %v", *e.ReportEnabled)
+	}
+}
+
+// spyAgentRepository 는 Save 호출을 추적하는 테스트용 저장소
+type spyAgentRepository struct {
+	saveCallCount int
+}
+
+func (s *spyAgentRepository) Save(context.Context, agent.AgentConfig) error {
+	s.saveCallCount++
+	return nil
+}
+
+func (s *spyAgentRepository) Get(context.Context, string) (agent.AgentConfig, error) {
+	return agent.AgentConfig{}, storage.ErrAgentNotFound
+}
+
+func (s *spyAgentRepository) List(context.Context) ([]agent.AgentConfig, error) {
+	return nil, nil
+}
+
+func (s *spyAgentRepository) Delete(context.Context, string) error {
+	return nil
+}
+
+func (s *spyAgentRepository) Close() error {
+	return nil
+}
+
+// TestExecAgent_SamsungConfigDeviceRoundTrip 는 runtime-added 디바이스가
+// add_device 후 저장되고 복원될 때 UnitID (deviceID) 가 보존됨을 확인한다.
+//
+// 이 테스트는 핵심 요구사항을 검증한다:
+// - Runtime 에 추가된 디바이스의 UnitID 는 deviceID 이다
+// - GetPersistableDevices 는 UnitID 를 Name 필드로 저장한다
+// - 복원 후 ParseDevices 는 Name → UnitID 로 매핑하여 동일한 식별자를 만든다
+//
+// 주의: config 로 등록된 디바이스의 보존은 여기서 다루지 않는다.
+// TestExecAgent_ConfigDevicesSurviveAddDevice 를 참조.
+func TestExecAgent_SamsungRuntimeDeviceRoundTrip(t *testing.T) {
+	fileRepo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	defer fileRepo.Close()
+
+	mgr := agent.NewManager()
+	if err := samsung.RegisterSamsungHvacr01Types(mgr); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, fileRepo, nil)
+
+	initialConfig := &dto.AgentCreateRequest{
+		Name: "config-device-test",
+		Type: "samsung_hvacr01",
+		Config: map[string]any{
+			"transport_type": "tcp-client",
+			"tcp_host":       "127.0.0.1",
+			"tcp_port":       float64(9100),
+		},
+	}
+
+	agentInfo, err := adapter.CreateAgent(context.Background(), initialConfig)
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// add_device 실행 (이것이 저장을 트리거)
+	// 중요: params 구조를 정확히 맞춘다
+	addPayload := map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"address":   "20.00.02",
+			"device_id": "dev-uuid-002",
+			"name":      "bedroom",
+		},
+	}
+	data, _ := json.Marshal(addPayload)
+	_, err = adapter.ExecAgent(context.Background(), agentInfo.ID, data)
+	if err != nil {
+		t.Fatalf("add_device 실행 실패: %v", err)
+	}
+
+	// 저장된 설정 확인
+	savedConfig, err := fileRepo.Get(context.Background(), agentInfo.ID)
+	if err != nil {
+		t.Fatalf("설정 로드 실패: %v", err)
+	}
+
+	// Transport.Options["devices"] 확인
+	devicesAny, ok := savedConfig.Transport.Options["devices"]
+	if !ok {
+		t.Fatalf("저장된 설정에 devices 없음")
+	}
+	devicesList, ok := devicesAny.([]any)
+	if !ok {
+		t.Fatalf("devices 타입 오류: got %T", devicesAny)
+	}
+
+	// UnitID 가 보존되었는지 확인
+	// Runtime-added 디바이스는 UnitID = deviceID = "dev-uuid-002"
+	found := false
+	for _, d := range devicesList {
+		m, ok := d.(map[string]any)
+		if !ok {
+			continue
+		}
+		if m["address"] == "20.00.02" {
+			if m["name"] != "dev-uuid-002" {
+				t.Errorf("UnitID(deviceID) 손상: got %v, want dev-uuid-002", m["name"])
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("저장된 설정에 추가된 디바이스 없음. 저장된 목록: %v", devicesList)
+	}
+}
+
+// TestExecAgent_ConfigDevicesSurviveAddDevice 는 config 로 등록된 디바이스가
+// add_device 실행 후에도 저장된 설정에 그대로 남아 있는지 검증한다.
+//
+// 회귀 방지: GetPersistableDevices 가 dev.Name(항상 빈 문자열)을 읽던 시절,
+// add_device 한 번이면 기존 config 디바이스의 unit id 가 전부 지워진 채 저장됐다.
+// UnitID 는 ResolveDeviceID 의 입력이므로 재시작 후 device_id(UUID)가 바뀐다.
+//
+// auto-discovery 제외와 zone 주소 왕복은 각 에이전트 패키지의
+// roster_persist_test.go 에서 단위 검증한다 (handleMessage 가 비공개이므로).
+func TestExecAgent_ConfigDevicesSurviveAddDevice(t *testing.T) {
+	fileRepo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	defer fileRepo.Close()
+
+	mgr := agent.NewManager()
+	if err := samsung.RegisterSamsungHvacr01Types(mgr); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, fileRepo, nil)
+
+	// config 로 디바이스 2개를 등록한 상태에서 시작한다.
+	agentInfo, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "config-survives-test",
+		Type: "samsung_hvacr01",
+		Config: map[string]any{
+			"transport_type": "tcp-client",
+			"tcp_host":       "127.0.0.1",
+			"tcp_port":       float64(9101),
+			"devices": []any{
+				map[string]any{"address": "20.00.00", "name": "living-room"},
+				map[string]any{"address": "20.00.01"}, // 이름 없는 디바이스
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 런타임에 디바이스를 하나 추가 → 로스터 저장이 트리거된다.
+	data, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"address":   "20.00.02",
+			"device_id": "dev-uuid-002",
+			"name":      "bedroom",
+		},
+	})
+	if _, err := adapter.ExecAgent(context.Background(), agentInfo.ID, data); err != nil {
+		t.Fatalf("add_device 실행 실패: %v", err)
+	}
+
+	savedConfig, err := fileRepo.Get(context.Background(), agentInfo.ID)
+	if err != nil {
+		t.Fatalf("설정 로드 실패: %v", err)
+	}
+	devicesList, ok := savedConfig.Transport.Options["devices"].([]any)
+	if !ok {
+		t.Fatalf("저장된 devices 타입 오류: got %T", savedConfig.Transport.Options["devices"])
+	}
+
+	// address → name 으로 펼쳐서 확인한다.
+	saved := make(map[string]string, len(devicesList))
+	for _, d := range devicesList {
+		m, ok := d.(map[string]any)
+		if !ok {
+			t.Fatalf("device 항목 타입 오류: got %T", d)
+		}
+		addr, _ := m["address"].(string)
+		name, _ := m["name"].(string) // 키가 없으면 빈 문자열
+		saved[addr] = name
+	}
+
+	if len(saved) != 3 {
+		t.Fatalf("저장된 device 수: got %d, want 3. saved=%v", len(saved), saved)
+	}
+
+	// 핵심 검증: config 디바이스의 unit id 가 살아남았는가.
+	if got := saved["20.00.00"]; got != "living-room" {
+		t.Errorf("config 디바이스 unit id 소실: saved[20.00.00] = %q, want \"living-room\"", got)
+	}
+	// 이름 없는 config 디바이스는 빈 이름으로 일관되게 남는다.
+	if got, ok := saved["20.00.01"]; !ok {
+		t.Errorf("이름 없는 config 디바이스가 저장되지 않음. saved=%v", saved)
+	} else if got != "" {
+		t.Errorf("이름 없는 config 디바이스에 이름이 생김: got %q, want \"\"", got)
+	}
+	// 런타임 추가 디바이스는 UnitID(=deviceID)로 저장된다.
+	if got := saved["20.00.02"]; got != "dev-uuid-002" {
+		t.Errorf("런타임 디바이스 UnitID 손상: saved[20.00.02] = %q, want \"dev-uuid-002\"", got)
+	}
+}
+
+// TestExecAgent_EmptyUnitIDRoundTrip 는 UnitID 가 비어있는 디바이스가 round-trip 에서
+// 일관성 있게 보존됨을 확인한다.
+func TestExecAgent_EmptyUnitIDRoundTrip(t *testing.T) {
+	original := []agent.DeviceEntry{
+		{Address: "20.00.01", Name: "device-a"},
+		{Address: "20.00.02", Name: ""}, // 빈 UnitID
+	}
+
+	adapter := &AgentServiceAdapter{}
+	built := adapter.buildDevicesList(original)
+	opts := map[string]any{"devices": built}
+	parsed := agent.ParseDevices(opts)
+
+	// 빈 이름 디바이스 확인
+	if len(parsed) < 2 {
+		t.Fatalf("라운드트립 후 디바이스 손실: got %d, want at least 2", len(parsed))
+	}
+
+	// 빈 UnitID 는 일관성 있게 빈 채로 유지되어야 함
+	if parsed[1].Address != "20.00.02" {
+		t.Errorf("주소 보존 실패: got %v, want 20.00.02", parsed[1].Address)
+	}
+	if parsed[1].Name != "" {
+		t.Errorf("빈 UnitID 보존 실패: got %q, want empty string", parsed[1].Name)
+	}
+}
+
+// TestExecAgent_SamsungDisplayNameSurvivesRestart 는 런타임에 add_device 로 추가한
+// 디바이스의 사용자 표시 이름(dev.Name)이 config 영속 왕복(직렬화 → 저장 → 재파싱 →
+// 복원) 후에도 유지되는지 검증한다.
+//
+// 회귀 방지(버그 재현): DisplayName 슬롯이 없던 시절, 직렬화는 DeviceEntry.Name 에
+// UnitID(device_id)만 실었고 dev.Name(표시 이름)은 버려졌다. 복원 루프도 entry.Name →
+// UnitID 만 세팅해 dev.Name 이 빈 값이 됐고, 프로바이더가 빈 이름을 보고하여 UI 가
+// id 로 폴백했다. 이 테스트는 add_device → 저장 → 새 인스턴스 복원까지 전체 실경로
+// (buildDevicesList → ParseDevices → 복원 루프)를 통과시켜 표시 이름 왕복을 검증한다.
+func TestExecAgent_SamsungDisplayNameSurvivesRestart(t *testing.T) {
+	fileRepo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	defer fileRepo.Close()
+
+	mgr := agent.NewManager()
+	if err := samsung.RegisterSamsungHvacr01Types(mgr); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, fileRepo, nil)
+
+	agentInfo, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "display-name-restart-test",
+		Type: "samsung_hvacr01",
+		Config: map[string]any{
+			"transport_type": "tcp-client",
+			"tcp_host":       "127.0.0.1",
+			"tcp_port":       float64(9102),
+		},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 런타임에 표시 이름을 가진 디바이스 추가 → 로스터 저장이 트리거된다.
+	data, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"address":   "20.00.05",
+			"device_id": "dev-uuid-005",
+			"name":      "개발팀",
+		},
+	})
+	if _, err := adapter.ExecAgent(context.Background(), agentInfo.ID, data); err != nil {
+		t.Fatalf("add_device 실행 실패: %v", err)
+	}
+
+	savedConfig, err := fileRepo.Get(context.Background(), agentInfo.ID)
+	if err != nil {
+		t.Fatalf("설정 로드 실패: %v", err)
+	}
+
+	// 재시작 시뮬레이션: 저장된 config 로 새 에이전트 인스턴스를 복원한다.
+	restored, err := samsung.NewHvacr01Agent(savedConfig)
+	if err != nil {
+		t.Fatalf("복원 에이전트 생성 실패: %v", err)
+	}
+	sAgent, ok := restored.(*samsung.Hvacr01Agent)
+	if !ok {
+		t.Fatalf("복원 에이전트 타입 오류: got %T", restored)
+	}
+
+	var found *samsung.NasaDevice
+	devs := sAgent.ListDevices()
+	for i := range devs {
+		if devs[i].Address.String() == "20.00.05" {
+			found = &devs[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("복원된 로스터에 추가한 디바이스(20.00.05)가 없음. devs=%+v", devs)
+	}
+
+	// 핵심 검증(버그 재현 대상): 표시 이름이 복원됐는가.
+	if found.Name != "개발팀" {
+		t.Errorf("표시 이름 소실: 복원된 dev.Name = %q, want \"개발팀\"", found.Name)
+	}
+	// 무회귀: UnitID(device_id)는 변경 전과 동일하게 보존돼야 한다.
+	if found.UnitID != "dev-uuid-005" {
+		t.Errorf("UnitID 왕복 손상: 복원된 dev.UnitID = %q, want \"dev-uuid-005\"", found.UnitID)
+	}
+}
+
+// marshalJSON 은 구조체를 JSON 바이트로 변환한다.
+func marshalJSON(v any) ([]byte, error) {
+	data, err := json.Marshal(v)
+	return data, err
 }

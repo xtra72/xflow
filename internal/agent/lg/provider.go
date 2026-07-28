@@ -74,16 +74,17 @@ func formatZone(zone byte) string {
 // LGAP 디바이스는 SamsungNasaDeviceInfo 어댑터를 재사용한다 (필드 호환).
 func lgapDeviceToInfo(dev *LGAPDevice) adapter.SamsungNasaDeviceInfo {
 	info := adapter.SamsungNasaDeviceInfo{
-		Address:      formatZone(dev.Zone),
-		DeviceID:     dev.UnitID,
-		Name:         dev.Name,
-		DeviceType:   "HVACR.IDU", // LGAP 는 실내기만 지원 (v0.18.3)
-		Online:       dev.Online,
-		Ready:        dev.Online, // LGAP 는 온라인이면 Ready
-		LastSeen:     dev.LastSeen,
-		ErrorCount:   dev.ErrorCount,
-		Protocol:     "lgap",
-		DeviceSource: dev.Source,
+		Address:       formatZone(dev.Zone),
+		DeviceID:      dev.UnitID,
+		Name:          dev.Name,
+		DeviceType:    "HVACR.IDU", // LGAP 는 실내기만 지원 (v0.18.3)
+		Online:        dev.Online,
+		Ready:         dev.Online, // LGAP 는 온라인이면 Ready
+		LastSeen:      dev.LastSeen,
+		ErrorCount:    dev.ErrorCount,
+		Protocol:      "lgap",
+		DeviceSource:  dev.Source,
+		ReportEnabled: dev.ReportEnabled,
 	}
 
 	if dev.State != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/device"
+	"github.com/xtra/xflow/internal/device/adapter"
 )
 
 // --- Mock DeviceRegistry ---
@@ -919,4 +920,33 @@ func TestDeviceHandler_ResolveRoute_CompositeReturns404(t *testing.T) {
 		"/devices/{composite} 는 Phase D 부터 alias 제거되어 404 반환")
 	assert.Empty(t, rec.Header().Get("Deprecation"),
 		"Deprecation 헤더는 더 이상 부착되지 않는다")
+}
+
+// TestDeviceToResponse_ReportEnabled 는 deviceToResponse 가 report_enabled 를
+// optional-interface 로 채우는지 검증한다: samsung/lgap 어댑터는 값을 반영하고,
+// 미구현 어댑터(mockDevice)는 기본 true 로 안전 처리된다.
+func TestDeviceToResponse_ReportEnabled(t *testing.T) {
+	// 미구현 어댑터(mockDevice 는 ReportEnabled() 메서드 없음) → 기본 true.
+	base := deviceToResponse(&mockDevice{id: "x", deviceType: device.DeviceTypeIndoor})
+	assert.True(t, base.ReportEnabled, "미구현 어댑터는 기본 true")
+
+	// samsung/lgap 공용 어댑터: report_enabled=false 반영.
+	offAdapter := adapter.NewSamsungNasaDevice("agent", adapter.SamsungNasaDeviceInfo{
+		Address:       "20.00.01",
+		DeviceType:    "HVACR.IDU",
+		Online:        true,
+		ReportEnabled: false,
+	})
+	off := deviceToResponse(offAdapter)
+	assert.False(t, off.ReportEnabled, "off 어댑터는 report_enabled=false 반영")
+
+	// report_enabled=true 반영.
+	onAdapter := adapter.NewSamsungNasaDevice("agent", adapter.SamsungNasaDeviceInfo{
+		Address:       "20.00.02",
+		DeviceType:    "HVACR.IDU",
+		Online:        true,
+		ReportEnabled: true,
+	})
+	on := deviceToResponse(onAdapter)
+	assert.True(t, on.ReportEnabled, "on 어댑터는 report_enabled=true 반영")
 }

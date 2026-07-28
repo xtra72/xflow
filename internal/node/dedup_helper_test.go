@@ -6,6 +6,72 @@ import (
 	"github.com/xtra/xflow/pkg/message"
 )
 
+// TestApplyRegistryDeviceName_OverridesUnitIDFallback 는 device 그룹의 name 이
+// 에이전트 폴백(UnitID "1") 으로 채워졌을 때, 레지스트리 lookup 의 사용자 지정
+// 이름으로 덮어써지는지 검증한다 (전 계층 이름 통일 회귀 방지).
+func TestApplyRegistryDeviceName_OverridesUnitIDFallback(t *testing.T) {
+	const uuid = "43cff119-4dbb-48fa-a414-4dac5605f233"
+	msg := message.New()
+	// pushRecentSnapshot 폴백 재현: name 이 UnitID "1", type 은 프로토콜 값.
+	msg.Metadata().SetGroup("device", map[string]string{
+		"id": uuid, "name": "1", "type": "HVACR.IDU",
+	})
+
+	lookup := DeviceLookupFunc(func(id string) (RegistryMeta, bool) {
+		if id == uuid {
+			return RegistryMeta{ID: id, Name: "대표실-실내기", Type: "indoor"}, true
+		}
+		return RegistryMeta{}, false
+	})
+
+	applyRegistryDeviceName(msg, lookup, MetadataEmitOptions{Device: true})
+
+	dg, ok := msg.Metadata().GetGroup("device")
+	if !ok {
+		t.Fatalf("device 그룹이 있어야 함")
+	}
+	if dg["name"] != "대표실-실내기" {
+		t.Errorf("device.name = %q; want 사용자 지정 이름 %q", dg["name"], "대표실-실내기")
+	}
+	// type 은 lookup 의 device.DeviceType 상수("indoor") 로 clobber 되지 않고
+	// payload 의 프로토콜 값이 보존되어야 한다.
+	if dg["type"] != "HVACR.IDU" {
+		t.Errorf("device.type = %q; want 보존된 %q", dg["type"], "HVACR.IDU")
+	}
+}
+
+// TestApplyRegistryDeviceName_NoUserNameKeepsFallback 는 레지스트리에 사용자 지정
+// 이름이 없으면(빈 Name) 에이전트 폴백 값을 보존하는지 검증한다.
+func TestApplyRegistryDeviceName_NoUserNameKeepsFallback(t *testing.T) {
+	msg := message.New()
+	msg.Metadata().SetGroup("device", map[string]string{"id": "uuid-x", "name": "1"})
+
+	lookup := DeviceLookupFunc(func(id string) (RegistryMeta, bool) {
+		return RegistryMeta{ID: id, Name: "", Type: "indoor"}, true // 사용자 이름 없음
+	})
+
+	applyRegistryDeviceName(msg, lookup, MetadataEmitOptions{Device: true})
+
+	dg, _ := msg.Metadata().GetGroup("device")
+	if dg["name"] != "1" {
+		t.Errorf("사용자 이름이 없으면 폴백 유지해야: device.name = %q; want %q", dg["name"], "1")
+	}
+}
+
+// TestApplyRegistryDeviceName_NilLookupNoop 는 lookup 미설정 시 no-op 이라 폴백
+// 동작이 보존되고 패닉이 없는지 검증한다.
+func TestApplyRegistryDeviceName_NilLookupNoop(t *testing.T) {
+	msg := message.New()
+	msg.Metadata().SetGroup("device", map[string]string{"id": "u", "name": "1"})
+
+	applyRegistryDeviceName(msg, nil, MetadataEmitOptions{Device: true})
+
+	dg, _ := msg.Metadata().GetGroup("device")
+	if dg["name"] != "1" {
+		t.Errorf("nil lookup 은 no-op 이어야: device.name = %q", dg["name"])
+	}
+}
+
 // TestPromotePayloadMetadata_NestedMetadataPromoted 는 payload 의 nested metadata
 // 그룹이 message metadata 로 promote 되고 payload 에서 제거되는지 검증한다 (v0.7.14).
 func TestPromotePayloadMetadata_NestedMetadataPromoted(t *testing.T) {

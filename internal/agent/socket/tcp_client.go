@@ -34,6 +34,9 @@ type TCPClientAgent struct {
 	stopOnce        sync.Once
 	wg              sync.WaitGroup
 	reconnectCancel context.CancelFunc
+
+	// logMessages 는 log_messages 활성 여부의 lock-free 미러이다 (Configure 로 즉시 갱신).
+	logMessages atomic.Bool
 }
 
 // 컴파일 타임 인터페이스 구현 확인.
@@ -55,6 +58,7 @@ func NewTCPClientAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		Delimiter:      cfg.Delimiter,
 		FixedSize:      cfg.FixedSize,
 		MaxMessageSize: cfg.MaxMessageSize,
+		WriteTimeout:   cfg.WriteTimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tcp client agent: %w", err)
@@ -76,6 +80,7 @@ func NewTCPClientAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		createdAt:     time.Now(),
 		stopCh:        make(chan struct{}),
 	}
+	a.logMessages.Store(cfg.LogMessages)
 
 	if err := a.init(agentConfig); err != nil {
 		return nil, err
@@ -190,6 +195,8 @@ func (a *TCPClientAgent) readLoop() {
 		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
+
+		logPacket(a.logger, a.logMessages.Load(), "tcp-client", "RX", a.serverAddr(), data)
 
 		// msgCh 에 비차단 전송 (가득 차면 드롭)
 		select {
@@ -398,6 +405,8 @@ func (a *TCPClientAgent) Process(data []byte) ([]byte, error) {
 	a.stats.AddBytesWritten(int64(len(data)))
 	a.stats.UpdateLastActivity()
 
+	logPacket(a.logger, a.logMessages.Load(), "tcp-client", "TX", a.serverAddr(), data)
+
 	return nil, nil
 }
 
@@ -410,6 +419,11 @@ func (a *TCPClientAgent) Configure(config agent.AgentConfig) error {
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
+
+	// log_messages 는 재시작 없이 즉시 반영한다.
+	if newCfg, perr := ParseTCPClientConfig(config.Transport.Options); perr == nil {
+		a.logMessages.Store(newCfg.LogMessages)
+	}
 
 	return nil
 }

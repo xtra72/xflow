@@ -165,6 +165,26 @@ var (
 
 	// ErrTCPAgentNotReceiver 는 resolve된 Agent가 MessageReceiver 또는 ConnAwareReceiver 인터페이스를 구현하지 않을 때 반환된다.
 	ErrTCPAgentNotReceiver = fmt.Errorf("tcp-in: %w: agent does not implement MessageReceiver or ConnAwareReceiver", ErrInvalidConfig)
+
+	// Thingplus 게이트웨이 노드 에러 (thingplus-uplink / thingplus-downlink)
+
+	// ErrThingplusMissingAgentRef 는 thingplus 노드에 agent_ref 설정이 없을 때 반환된다.
+	ErrThingplusMissingAgentRef = fmt.Errorf("thingplus: %w: agent_ref is required", ErrInvalidConfig)
+
+	// ErrThingplusNoResolver 는 AgentResolver가 설정되지 않았을 때 반환된다.
+	ErrThingplusNoResolver = fmt.Errorf("thingplus: %w: agent resolver not configured", ErrNodeNotInitialized)
+
+	// ErrThingplusAgentNotReceiver 는 resolve된 Agent가 MessageReceiver 인터페이스를 구현하지 않을 때 반환된다 (다운링크 전용).
+	ErrThingplusAgentNotReceiver = fmt.Errorf("thingplus-downlink: %w: agent does not implement MessageReceiver", ErrInvalidConfig)
+
+	// ErrThingplusAgentNotSubscriber 는 topics 가 지정되었으나 resolve된 Agent가 SubscriberAgent 인터페이스를 구현하지 않을 때 반환된다.
+	ErrThingplusAgentNotSubscriber = fmt.Errorf("thingplus-downlink: %w: agent does not implement SubscriberAgent", ErrInvalidConfig)
+
+	// ErrThingplusAgentUnsupported 는 resolve된 Agent가 업링크 Process 진입점(agent.Agent)을 제공하지 않을 때 반환된다 (업링크 전용).
+	ErrThingplusAgentUnsupported = fmt.Errorf("thingplus-uplink: %w: agent does not support Process entrypoint", ErrInvalidConfig)
+
+	// ErrThingplusPublishFailed 는 업링크 Process() 호출이 실패했을 때 반환된다.
+	ErrThingplusPublishFailed = fmt.Errorf("thingplus-uplink: publish failed")
 )
 
 // NodeError 는 노드에서 발생한 에러를 래핑하는 구조체이다.

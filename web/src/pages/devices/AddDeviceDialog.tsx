@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Trash2, X } from 'lucide-react';
 
 import { useAgents, useExecAgent } from '@/hooks/useAgent';
 import { useTranslation } from '@/lib/i18n';
+import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 
 /** 레지스터 영역 라벨 */
@@ -50,6 +51,8 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const [samsungHvacr01Address, setSamsungHvacr01Address] = useState('');
   const [samsungHvacr01DeviceId, setSamsungHvacr01DeviceId] = useState('');
   const [samsungHvacr01DeviceType, setSamsungHvacr01DeviceType] = useState('');
+  // 상태 전송(report) on/off. 기본 on(true). off 면 이 디바이스는 상태 메시지를 보내지 않는다.
+  const [samsungHvacr01ReportEnabled, setSamsungHvacr01ReportEnabled] = useState(true);
 
   // --- Modbus 폼 상태 ---
   const [modbusUnitId, setModbusUnitId] = useState('');
@@ -61,6 +64,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
     setSamsungHvacr01Address('');
     setSamsungHvacr01DeviceId('');
     setSamsungHvacr01DeviceType('');
+    setSamsungHvacr01ReportEnabled(true);
     setModbusUnitId('');
     setModbusName('');
     setModbusRegAreas({
@@ -86,6 +90,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               address: samsungHvacr01Address.trim(),
               ...(samsungHvacr01DeviceId.trim() && { device_id: samsungHvacr01DeviceId.trim() }),
               ...(samsungHvacr01DeviceType && { device_type: samsungHvacr01DeviceType }),
+              report_enabled: samsungHvacr01ReportEnabled,
             },
           },
         },
@@ -248,6 +253,35 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   <option value="HVACR.IDU">{t('devices.add.indoor')}</option>
                   <option value="HVACR.ODU">{t('devices.add.outdoor')}</option>
                 </select>
+              </div>
+              {/* 상태 전송 on/off. off 면 이 디바이스는 노드로 상태 메시지를 보내지 않는다. */}
+              <div className="flex items-center justify-between rounded-md border border-(--color-border-default) px-3 py-2">
+                <div className="mr-3 min-w-0">
+                  <p className="text-sm font-medium text-(--color-text-secondary)">
+                    {t('devices.add.reportEnabled')}
+                  </p>
+                  <p className="text-xs text-(--color-text-muted)">
+                    {t('devices.add.reportEnabledDesc')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={samsungHvacr01ReportEnabled}
+                  aria-label={t('devices.add.reportEnabled')}
+                  onClick={() => setSamsungHvacr01ReportEnabled((v) => !v)}
+                  className={cn(
+                    'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
+                    samsungHvacr01ReportEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200',
+                      samsungHvacr01ReportEnabled ? 'translate-x-5' : 'translate-x-0.5',
+                    )}
+                  />
+                </button>
               </div>
               <p className="text-xs text-(--color-text-muted)">
                 {t('devices.add.dynamicNotice')}

@@ -9,39 +9,52 @@ import (
 
 // Hvacr01Config 는 Samsung NASA HVAC 에이전트의 설정을 나타낸다.
 type Hvacr01Config struct {
-	TransportType         string
-	SerialPort            string
-	BaudRate              int
-	DataBits              int
-	StopBits              int
-	Parity                string
-	TCPHost               string
-	TCPPort               int
-	ConnectTimeout        time.Duration
-	ReadTimeout           time.Duration
-	PollInterval          time.Duration
-	StatusQueryEnabled    bool          // v0.6.1: 주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (기본 true)
-	NotifyInterval        time.Duration // v0.6.0: report_interval 의 backing field. 옵션 명칭은 report_interval. 2026-05-29: 기본 60s (LG 통일)
-	ReportMode            string        // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock 정렬). Century 와 통일.
-	Devices               []agent.DeviceEntry
-	ProtocolFile          string
-	AutoDiscovery         bool // 2026-05-29: 기본 true (LG / Century 통일)
-	RegistryPath          string
-	OfflineThreshold      int
-	OfflineTimeout        time.Duration // v0.6.2: 디바이스 통신 없음 → 오프라인 판정 시간 (기본 30s). 0 = 비활성
+	TransportType      string
+	SerialPort         string
+	BaudRate           int
+	DataBits           int
+	StopBits           int
+	Parity             string
+	TCPHost            string
+	TCPPort            int
+	ConnectTimeout     time.Duration
+	ReadTimeout        time.Duration
+	PollInterval       time.Duration
+	StatusQueryEnabled bool          // v0.6.1: 주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (기본 true)
+	NotifyInterval     time.Duration // v0.6.0: report_interval 의 backing field. 옵션 명칭은 report_interval. 2026-05-29: 기본 60s (LG 통일)
+	ReportMode         string        // v0.6.0: "relative" (default) 또는 "absolute" (wall-clock 정렬). Century 와 통일.
+	Devices            []agent.DeviceEntry
+	ProtocolFile       string
+	AutoDiscovery      bool // 2026-05-29: 기본 true (LG / Century 통일)
+	RegistryPath       string
+	OfflineThreshold   int
+	// OfflineTimeout 은 LastSeen 기반 stale offline 판정 임계값이다 (offline_timeout 키).
+	// 3-way 의미(사용자 승인):
+	//   - 양수: 그 값을 임계값으로 verbatim 사용.
+	//   - 0(명시): staleness 감지 완전 비활성 (transport-disconnect bulk offline 은 무관하게 동작).
+	//   - 음수 sentinel(-1, 미설정): OfflineThreshold × PollInterval 파생 (기본 3×30s=90s).
+	// 파서는 opts 에 키가 있을 때만 값을 대입하므로 "미설정(-1)"과 "명시적 0"을 구분한다.
+	// 검증 규칙상 사용자는 음수를 넣을 수 없어 -1 은 오직 "미설정"만을 뜻한다.
+	OfflineTimeout        time.Duration
 	MsgChannelSize        int
 	UnsupportedMsgSets    map[uint16]bool // 필터링할 메시지 셋 인덱스
 	LogUnsupportedMsgSets bool            // 필터링 시 로그 출력 여부
 	LogDecodeErrors       bool            // 일반 decode error 로그 출력 여부 (기본값 false — 운영 환경 noise 억제)
 	LogDrops              bool            // 2026-05-29: msgCh full 로 인한 event drop 을 WARN 로그로 출력 (기본 false, Century / LG 통일).
 	LogStateUpdates       bool            // 2026-05-29: 디바이스 state 갱신마다 핵심 필드 + raw payload INFO 로그 (Century logDecodedState 패턴).
+	LogMessages           bool            // 디바이스와의 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 (기본 false, opt-in 진단용).
 	IncludeRawHex         bool            // 2026-05-29: 이전 IncludeRawMessageSets — RawMessageSets (원본 NASA 메시지 전체) 포함 여부 (기본 false, opt-in). LG IncludeRawHex 와 명칭 통일.
 	ReconnectInterval     time.Duration   // 재연결 기본 간격 (기본값 5s)
 	MaxReconnectBackoff   time.Duration   // 재연결 최대 백오프 (기본값 5m)
 	StatusQueryDelay      time.Duration   // 제어 후 상태 조회 간격 (기본값 3s)
 	StatusQueryRetries    int             // 제어 후 상태 조회 횟수 (기본값 3)
-	BuzzerOnControl       bool            // 제어 명령 시 실내기 부저 울림 (기본값 false)
-	ControlEnabled        bool            // 능동 제어 (set_multiple) 활성 여부 (기본값 true). false 면 제어 명령 거부.
+	// InterCommandDelay 는 pollLoop 에서 여러 디바이스에 status query 를 연속 전송할 때
+	// 프레임 간 최소 간격이다 (inter_command_delay 키, 기본 1s). 디바이스가 2개 이상이면
+	// 이 간격 없이는 요청들이 수 μs 간격으로 나가 컨트롤러/버스에서 겹칠 수 있다.
+	// LG InterCommandDelay(존 간 딜레이)와 명칭 통일. 0 이면 딜레이 없음(기존 동작).
+	InterCommandDelay time.Duration
+	BuzzerOnControl   bool // 제어 명령 시 실내기 부저 울림 (기본값 false)
+	ControlEnabled    bool // 능동 제어 (set_multiple) 활성 여부 (기본값 true). false 면 제어 명령 거부.
 
 	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
 	//
@@ -80,15 +93,16 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		StatusQueryEnabled:  true,             // v0.6.1: 주기적 상태 확인 요청 기본 활성 (기존 동작 보존)
 		NotifyInterval:      60 * time.Second, // 2026-05-29: 기본 60s (LG 통일).
 		ReportMode:          "relative",
-		AutoDiscovery:       true,             // 2026-05-29: 기본 true (LG / Century 통일).
-		OfflineTimeout:      30 * time.Second, // v0.6.2: 디바이스 오프라인 판정 시간 default
+		AutoDiscovery:       true, // 2026-05-29: 기본 true (LG / Century 통일).
+		OfflineTimeout:      -1,   // sentinel: 미설정 → staleOfflineThreshold 에서 OfflineThreshold×PollInterval 파생
 		OfflineThreshold:    3,
 		MsgChannelSize:      256,
 		ReconnectInterval:   5 * time.Second,
 		MaxReconnectBackoff: 5 * time.Minute,
 		StatusQueryDelay:    3 * time.Second,
 		StatusQueryRetries:  3,
-		ControlEnabled:      true, // 2026-05-29: 능동 제어 (set_multiple) 기본 활성 (기존 동작 보존)
+		InterCommandDelay:   1 * time.Second, // 폴링 시 디바이스 간 요청 최소 간격 (기본 1s).
+		ControlEnabled:      true,            // 2026-05-29: 능동 제어 (set_multiple) 기본 활성 (기존 동작 보존)
 		EventTempThreshold:  1.0,
 	}
 
@@ -203,7 +217,9 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		cfg.PollInterval = d
 	}
 
-	// offline_timeout (v0.6.2) — 디바이스 통신 없음 → 오프라인 판정 시간.
+	// offline_timeout (v0.6.2) — LastSeen 기반 stale offline 판정 임계값 (3-way, OfflineTimeout 필드 주석 참조).
+	// 키가 opts 에 존재할 때만 대입하여 "미설정(-1 sentinel)"과 "명시적 0(비활성)"을 구분한다.
+	// 명시적 0 은 허용값이며(>= 0 검증 통과) staleness 감지를 비활성화한다.
 	if v, ok := opts["offline_timeout"]; ok {
 		s, sok := v.(string)
 		if sok {
@@ -337,6 +353,14 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		}
 	}
 
+	// log_messages (기본값: false) — 디바이스와의 송/수신(TX/RX) 프레임을 hex 로
+	// INFO 로그로 출력. 진단용 opt-in (버스 트래픽 확인, 통신 문제 추적).
+	if v, ok := opts["log_messages"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogMessages = b
+		}
+	}
+
 	// reconnect_interval
 	if v, ok := opts["reconnect_interval"]; ok {
 		d, err := time.ParseDuration(v.(string))
@@ -369,6 +393,22 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		cfg.StatusQueryRetries = toInt(v)
 	}
 
+	// inter_command_delay — pollLoop 에서 디바이스 간 status query 전송 최소 간격 (기본 1s).
+	// 여러 디바이스에 요청이 너무 가깝게 나가는 것을 방지한다. 0 이면 딜레이 없음.
+	if v, ok := opts["inter_command_delay"]; ok {
+		s, sok := v.(string)
+		if sok {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: invalid inter_command_delay: %w", err)
+			}
+			if d < 0 {
+				return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: inter_command_delay must be >= 0, got %s", d)
+			}
+			cfg.InterCommandDelay = d
+		}
+	}
+
 	// control_enabled (선택, 기본값 true)
 	// 2026-05-29: 능동 제어 (set_multiple) 활성/비활성 토글.
 	// false 면 set_multiple 명령이 거부된다. UI 일관성 위해 LG/Century 와 동일하게 노출.
@@ -389,6 +429,11 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 		}
 		cfg.EventTempThreshold = f
 	}
+
+	// 연결 정보는 device_state 단일 스트림으로 일원화되었으므로 별도 connection 옵션
+	// (connection_report_interval / startup_probe_timeout / deprecated connection_notify_interval)
+	// 은 더 이상 파싱하지 않는다. 기존 config 에 이 키들이 남아 있어도 hard-error 없이 조용히
+	// 무시된다(알 수 없는 키 무시 정책). 주기 보고는 report_interval(device_state) 로 수렴한다.
 
 	return cfg, nil
 }

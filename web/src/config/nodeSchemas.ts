@@ -1798,6 +1798,65 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- Thingplus Gateway ---
+  'thingplus-uplink': {
+    description: 'Thingplus 게이트웨이로 텔레메트리/속성을 업링크 발행합니다. 인입 메시지의 device 필드로 디바이스를 식별하며 미등록 디바이스는 자동 connect됩니다.',
+    inputDesc: 'payload: 발행할 텔레메트리/속성 데이터 (device 필드로 디바이스 식별). metadata: agent 그룹.',
+    outputDesc: '원본 메시지 패스스루 + 발행 메타데이터.',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['thingplus-gateway'],
+          description: 'Thingplus 게이트웨이 에이전트',
+        },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  'thingplus-downlink': {
+    description: 'Thingplus 게이트웨이의 RPC/공유속성 다운링크 메시지를 수신하는 소스 노드입니다. 방출 메시지 타입은 thingplus.rpc.request / thingplus.attr.update 입니다.',
+    inputDesc: '없음 (소스 노드). 게이트웨이가 구독한 v1/gateway/rpc, v1/gateway/attributes에서 자동 수신.',
+    outputDesc: 'payload: RPC/속성 데이터. type: thingplus.rpc.request 또는 thingplus.attr.update (보존). metadata: agent 그룹.',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['thingplus-gateway'],
+        },
+        {
+          name: 'topics',
+          type: 'string_list',
+          label: '추가 구독 토픽',
+          description: '비우면 게이트웨이 기본 다운링크 토픽 사용',
+        },
+        {
+          name: 'buffer_size',
+          type: 'number',
+          label: '버퍼 크기',
+          default: 64,
+        },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   // --- IO: TSDB ---
   'tsdb-write': {
     description: '메시지 데이터를 시계열 DB에 기록합니다. measurement, 태그, 필드를 매핑하여 저장합니다.',

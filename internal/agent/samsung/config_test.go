@@ -102,6 +102,31 @@ func TestParseHvacr01Config_FullValid(t *testing.T) {
 	}
 }
 
+// TestParseHvacr01Config_LogMessages 는 log_messages 옵션 파싱(기본 false, 명시 true)을 검증한다.
+func TestParseHvacr01Config_LogMessages(t *testing.T) {
+	base := map[string]any{
+		"transport_type": "serial",
+		"devices":        []any{map[string]any{"address": "200001"}},
+	}
+
+	cfg, err := parseHvacr01Config(base)
+	if err != nil {
+		t.Fatalf("parseHvacr01Config: %v", err)
+	}
+	if cfg.LogMessages {
+		t.Errorf("log_messages 기본값은 false 여야 함")
+	}
+
+	base["log_messages"] = true
+	cfg, err = parseHvacr01Config(base)
+	if err != nil {
+		t.Fatalf("parseHvacr01Config: %v", err)
+	}
+	if !cfg.LogMessages {
+		t.Errorf("log_messages=true 가 파싱되어야 함")
+	}
+}
+
 // TestParseHvacr01Config_MinimalValid 는 필수 필드만으로 기본값이 올바르게 적용되는지 검증한다.
 func TestParseHvacr01Config_MinimalValid(t *testing.T) {
 	opts := map[string]any{
@@ -412,6 +437,7 @@ func TestParseHvacr01Config_Defaults(t *testing.T) {
 		{name: "AutoDiscovery", got: cfg.AutoDiscovery, want: true},
 		{name: "ReconnectInterval", got: cfg.ReconnectInterval, want: 5 * time.Second},
 		{name: "MaxReconnectBackoff", got: cfg.MaxReconnectBackoff, want: 5 * time.Minute},
+		{name: "InterCommandDelay", got: cfg.InterCommandDelay, want: 1 * time.Second},
 	}
 
 	// Devices 는 nil 이어야 한다
@@ -638,4 +664,74 @@ func TestParseHvacr01Config_TCPClientRequiresHost(t *testing.T) {
 	_, err := parseHvacr01Config(opts)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrTCPHostRequired)
+}
+
+// ---------------------------------------------------------------------------
+// 연결 정보 device_state 일원화: deprecated connection 옵션은 조용히 무시된다.
+// ---------------------------------------------------------------------------
+
+// TestParseHvacr01Config_DeprecatedConnectionOptionsIgnored 는 device_connection 스트림
+// 제거 후 관련 옵션 키(connection_report_interval / startup_probe_timeout /
+// connection_notify_interval)가 config 에 남아 있어도 hard-error 없이 조용히 무시되는지
+// 검증한다(알 수 없는 키 무시 정책). 잘못된 값이어도 파싱 대상이 아니므로 에러가 없다.
+func TestParseHvacr01Config_DeprecatedConnectionOptionsIgnored(t *testing.T) {
+	opts := map[string]any{
+		"transport_type":             "serial",
+		"serial_port":                "/dev/ttyUSB0",
+		"connection_report_interval": "notaduration", // 무시되므로 값이 잘못돼도 무방
+		"startup_probe_timeout":      "xyz",          // 무시
+		"connection_notify_interval": "30s",          // deprecated, 더 이상 hard-error 아님
+	}
+	_, err := parseHvacr01Config(opts)
+	require.NoError(t, err, "deprecated connection 옵션은 조용히 무시되어야 한다")
+}
+
+// TestParseHvacr01Config_OfflineTimeout3Way 는 offline_timeout 의 3-way 파싱을 검증한다:
+// 미설정 → -1 sentinel, 명시적 양수 → verbatim, 명시적 0 → 0(비활성), 음수 → hard error.
+func TestParseHvacr01Config_OfflineTimeout3Way(t *testing.T) {
+	// 미설정 → -1 sentinel (명시 0 과 구분됨).
+	cfg, err := parseHvacr01Config(map[string]any{"transport_type": "serial"})
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(-1), cfg.OfflineTimeout, "미설정 → -1 sentinel")
+
+	// 명시적 양수 → verbatim.
+	cfg, err = parseHvacr01Config(map[string]any{"transport_type": "serial", "offline_timeout": "5s"})
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, cfg.OfflineTimeout, "양수 → verbatim")
+
+	// 명시적 0 → 0 (비활성). 미설정 sentinel(-1)과 반드시 달라야 한다.
+	cfg, err = parseHvacr01Config(map[string]any{"transport_type": "serial", "offline_timeout": "0s"})
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), cfg.OfflineTimeout, "명시적 0 → 0 (비활성)")
+
+	// 음수 → hard error (기존 검증 유지).
+	_, err = parseHvacr01Config(map[string]any{"transport_type": "serial", "offline_timeout": "-1s"})
+	require.Error(t, err, "음수 offline_timeout 은 hard error")
+}
+
+// TestParseHvacr01Config_InterCommandDelay 는 inter_command_delay 파싱과 검증을 확인한다.
+// 폴링 시 디바이스 간 요청 최소 간격 (기본 1s, 0=딜레이 없음, 음수=hard error).
+func TestParseHvacr01Config_InterCommandDelay(t *testing.T) {
+	// 미설정 → 기본 1s.
+	cfg, err := parseHvacr01Config(map[string]any{"transport_type": "serial"})
+	require.NoError(t, err)
+	assert.Equal(t, 1*time.Second, cfg.InterCommandDelay, "미설정 → 기본 1s")
+
+	// 명시적 양수 → verbatim.
+	cfg, err = parseHvacr01Config(map[string]any{"transport_type": "serial", "inter_command_delay": "500ms"})
+	require.NoError(t, err)
+	assert.Equal(t, 500*time.Millisecond, cfg.InterCommandDelay, "양수 → verbatim")
+
+	// 명시적 0 → 0 (딜레이 없음 = 기존 동작).
+	cfg, err = parseHvacr01Config(map[string]any{"transport_type": "serial", "inter_command_delay": "0s"})
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), cfg.InterCommandDelay, "명시적 0 → 딜레이 없음")
+
+	// 음수 → hard error.
+	_, err = parseHvacr01Config(map[string]any{"transport_type": "serial", "inter_command_delay": "-1s"})
+	require.Error(t, err, "음수 inter_command_delay 은 hard error")
+
+	// 잘못된 형식 → hard error.
+	_, err = parseHvacr01Config(map[string]any{"transport_type": "serial", "inter_command_delay": "abc"})
+	require.Error(t, err, "잘못된 duration 형식은 hard error")
 }

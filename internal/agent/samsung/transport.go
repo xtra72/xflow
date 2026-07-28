@@ -40,6 +40,11 @@ type NasaTransport interface {
 
 const preambleLen = 100
 
+// defaultTCPWriteTimeout 은 TCP 트랜스포트 conn.Write 의 기본 쓰기 데드라인이다.
+// stale peer 로 커널 송신버퍼가 포화될 때 conn.Write 가 무한 블록되는 것을 방지한다.
+// write_timeout 옵션으로 재정의 가능하며, "0s" 로 명시하면 데드라인 미설정.
+const defaultTCPWriteTimeout = 5 * time.Second
+
 // preamble 은 RS-485 UART 동기화를 위해 프레임 전송 전에 붙이는 0x55 바이트열이다.
 var preamble [preambleLen]byte
 
@@ -207,6 +212,7 @@ type NasaTCPTransport struct {
 	address        string
 	connectTimeout time.Duration
 	readTimeout    time.Duration
+	writeTimeout   time.Duration
 	conn           net.Conn
 	mu             sync.Mutex
 	open           atomic.Bool // 연결 상태 (Available 에서 lock-free 조회)
@@ -261,6 +267,11 @@ func (t *NasaTCPTransport) Send(data []byte) error {
 		return ErrTransportNotConnected
 	}
 
+	// 쓰기 데드라인: stale peer(EW11 등 컨버터 절체) 로 커널 송신버퍼가 포화되면
+	// conn.Write 가 무한 블록되어 pollLoop/제어 경로가 정지한다. LG 패턴과 통일.
+	if t.writeTimeout > 0 {
+		_ = t.conn.SetWriteDeadline(time.Now().Add(t.writeTimeout))
+	}
 	_, err := t.conn.Write(prependPreamble(data))
 	if err != nil && isConnectionError(err) {
 		t.open.Store(false)
@@ -315,9 +326,10 @@ func (t *NasaTCPTransport) Available() bool {
 // Receive 는 활성 conn 에서 read deadline 적용 후 수신; 클라이언트 미접속 시
 // 짧게 대기 후 transient 에러 반환 (receiveLoop 의 Available()==true 체크에 의해 폴링 지속).
 type NasaTCPServerTransport struct {
-	host        string
-	port        int
-	readTimeout time.Duration
+	host         string
+	port         int
+	readTimeout  time.Duration
+	writeTimeout time.Duration
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -358,12 +370,14 @@ func newTCPServerTransport(opts map[string]any) (*NasaTCPServerTransport, error)
 	}
 
 	readTimeout := optDuration(opts, "read_timeout", 3*time.Second)
+	writeTimeout := optDuration(opts, "write_timeout", defaultTCPWriteTimeout)
 
 	return &NasaTCPServerTransport{
-		host:        host,
-		port:        port,
-		readTimeout: readTimeout,
-		logger:      noopServerLogger{},
+		host:         host,
+		port:         port,
+		readTimeout:  readTimeout,
+		writeTimeout: writeTimeout,
+		logger:       noopServerLogger{},
 	}, nil
 }
 
@@ -503,6 +517,11 @@ func (s *NasaTCPServerTransport) Send(data []byte) error {
 		return ErrTransportNotConnected
 	}
 
+	// 쓰기 데드라인: stale client 로 송신버퍼가 포화되면 conn.Write 가 무한 블록되어
+	// 제어 경로가 정지한다. LG lgapTCPServerTransport 패턴과 통일.
+	if s.writeTimeout > 0 {
+		_ = s.conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+	}
 	_, err := s.conn.Write(prependPreamble(data))
 	if err != nil && isConnectionError(err) {
 		// conn 만 정리 — 리스너는 그대로 유지 (다음 클라이언트 대기).
@@ -638,11 +657,13 @@ func newTCPTransport(opts map[string]any) (*NasaTCPTransport, error) {
 	address := fmt.Sprintf("%s:%d", host, port)
 	connectTimeout := optDuration(opts, "connect_timeout", 5*time.Second)
 	readTimeout := optDuration(opts, "read_timeout", 3*time.Second)
+	writeTimeout := optDuration(opts, "write_timeout", defaultTCPWriteTimeout)
 
 	return &NasaTCPTransport{
 		address:        address,
 		connectTimeout: connectTimeout,
 		readTimeout:    readTimeout,
+		writeTimeout:   writeTimeout,
 	}, nil
 }
 

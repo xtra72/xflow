@@ -1,9 +1,9 @@
 ---
 id: SPEC-SAMSUNG-HVACR-001
-version: "1.19.0"
+version: "1.21.0"
 status: active
 created: "2026-02-24"
-updated: "2026-05-29"
+updated: "2026-07-13"
 author: xtra
 priority: P2
 ---
@@ -13,6 +13,8 @@ priority: P2
 
 | 날짜         | 버전    | 변경 내용                                                                                                                                                                                                                                                                       |
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-13 | 1.21.0 | **device_state 가시성 개선 3종 (fix + additive)**. (1) **power 관측 기반 emit (fix)** — `StateForJSON` 이 `power` 를 관측 여부와 무관하게 항상 emit 하던 것을 `observed(observedPower)` 게이트로 전환. 재시작 직후 power 프레임(`0x4000`) 미수신 상태에서 기본값 `false` 가 방출되어, 실제 on 인 디바이스가 대시보드에서 default off 로 덮어써져 "꺼졌다 켜진" 것처럼 보이던 회귀 수정. 미관측 시 payload 에서 생략해 마지막 확인값 보존(mode/온도/fan 과 동일 규칙). (2) **transport_connected 조건부 emit (schema)** — device_state `state` 그룹의 `transport_connected` 를 `online=true` 이면 생략하고 `online=false` 일 때만 실는다. online 이면 트랜스포트가 항상 열려 있어(=true) 정보량이 없으므로, 필드 존재 자체가 "버스(포트/TCP) 문제인지 디바이스 침묵인지" 판별 신호가 되게 한다(관측/의미 기반 emit). `error_count`/`offline_threshold` 는 상시 유지. 에이전트 전역 `get_stats`/`State()` 의 `transport_connected`(버스 상태 상시 진단)는 불변. LGAP(SPEC-LGAP-001 v1.18.14)도 동일 규칙. 다운스트림: device_state 의 `transport_connected` 상시 존재를 가정한 소비자는 online 디바이스에서 값 부재(=연결됨)를 처리해야 한다. (3) **실외기 텔레메트리 device provider 노출 (additive)** — `hvacr01DeviceToInfo` 가 `dev.Outdoor.Fields`(관측된 `out_*`/`outdoor_temperature` 등)를 `ExtraProperties` 로 노출 → 어댑터 `State()` 가 device REST `Properties` 에 평탄화 → UI 디바이스 상세에 실외기 상태 속성이 표시된다. 이전엔 실내기(`dev.State`)만 매핑돼 ODU 상세가 비어 있었다(REQ-NASA-001-04-13 후속). 관련: `internal/agent/samsung/device.go`, `agent.go`, `provider.go`, `internal/device/adapter/samsung_nasa.go`. |
+| 2026-07-13 | 1.20.0 | **실외기(ODU) 상태 디코딩 + 폴링 요청 간격 (additive)**. (1) **폴링 요청 간격 신규 (additive)** — `inter_command_delay` (Duration, default `"1s"`). `pollLoop` 에서 여러 디바이스에 status query 를 연속 전송할 때 프레임 간 최소 간격을 강제해 요청이 μs 단위로 겹치는 것을 방지 (LG `inter_command_delay` 와 명칭 통일, 단 Samsung default 는 `"1s"`). `probeSilentDevices` 에도 동일 적용. 대기는 `stopCh`/`disconnectCh` 로 인터럽트 가능. `0s` = 딜레이 없음(기존 동작). UI(`agentSchemas.ts` protocol 섹션) 노출. (2) **실외기 상태 텔레메트리 디코딩 신규 (additive)** — 실외기는 자기 상태를 C0 14 Notification 으로 버스에 브로드캐스트하므로 SA=`10 xx 00` 프레임의 `0x80xx`(ENUM 1B)/`0x82xx`(VAR 2B)/`0x84xx`·`0x24FC`(LVAR 4B) 대역 Message Set 을 수동 디코딩한다. `NasaDevice.Outdoor *OutdoorState` 추가 (실내기 `State` 와 병렬; ODU 는 `State=nil`). 온도는 signed `/10 = °C`, ENUM/VAR/LVAR 은 raw 정수. 관측 기반 emit (수신된 필드만 노출). 출처: esphome_samsung_hvac_bus / pysamsungnasa 리버스 엔지니어링 — 모델별 존재·스케일 상이 가능(전기값 단위 미확정, 실측 검증 필요). (3) **emit 정책** — 이산 필드(운전상태·압축기 On/Off·4way·제상단계·에러코드) 변경 시에만 즉시 `device_state_changed` emit, 연속 센서(온도·압축기 주파수·전류·전력)는 정기 보고(`report_interval`) 주기에만 실어 emit 폭주 방지. (4) **센티넬 처리** — 미장착 압축기/센서가 값 폭 전체를 `0xFF` 로 보고(예: 단일 압축기 유닛 comp2 주파수 `0xFFFF`)하는 경우 raw 정수 필드(ENUM `0xFF`/VAR `0xFFFF`/LVAR `0xFFFFFFFF`)를 무효로 간주해 payload 에서 생략(관측 안 됨과 동일, raw 는 보존). 온도(signed)는 `0xFFFF`(-0.1°C)가 정상 저온일 수 있어 마스킹 제외. (5) **LG 필드명 통일** — 의미가 1:1 일치하는 실외기 필드는 LG HVACR emit 키와 통일: `0x8204 → outdoor_temperature`, `0x8280 → compressor_discharge_temperature`, `0x8235 → error_code`. 그 외(파이프 온도·다중 압축기·전류/전압/전력 등)는 LG 대응 필드 부재로 Samsung 고유명 유지. 관련: `internal/agent/samsung/outdoor.go`, `references/protocols/samsung_nasa_protocol.md`. |
 | 2026-05-29 | 1.19.0 | **BREAKING — 3종 HVACR-01 에이전트 config 통일 (LG 기준)**. (1) **기본값 변경 (Breaking)** — `report_interval`: `"0s"` → `"60s"` (변경 감지만 → 60s keepalive 활성. 변경 감지만 원하면 명시적으로 `"0s"` 설정). `auto_discovery`: `false` → `true` (LG / Century 와 정렬. 자동 탐색 비활성 원하면 명시적으로 `false`). (2) **필드 rename (Breaking, alias 미수용)** — `include_raw_message_sets` → `include_raw_hex` (LG / Century 의 동명 필드와 정렬, 의미 동일 — register-decoded / state response 의 원시 바이트 hex 포함 여부). (3) **deprecated alias 완전 제거 (Breaking)** — `notify_interval`: v1.9.0a 의 deprecation alias 가 backend 에서 더 이상 silent accept 되지 않고 명시적 parse error 로 거부. `include_raw_message_sets`: 본 버전에서 rename, 이전 키는 parse error. (4) **로그 옵션 신규 노출 (additive)** — `log_drops`, `log_state_updates` (boolean, default false). 의미는 LG / Century 와 동일 — msgCh / ring buffer drop per-message WARN 로그 + device state 변경/report emit DEBUG 로그. `log_decode_errors` 는 v1.9.0 부터 보유 (변경 없음). (5) **REVISED REQ 항목** — `NotifyInterval` (REQ-NASA-001-04-XX): NotifyInterval 필드명·default 변경 (`notify_interval "0s"` → `report_interval "60s"`). `AutoDiscovery` (REQ-NASA-001-04-XX): default 변경 (`false` → `true`). `IncludeRawMessageSets` (REQ-NASA-001-04-XX, Scenario 11.5 / 14.3): rename → `IncludeRawHex` / `include_raw_hex`. (6) **본 변경의 회귀 위험 평가** — 기존 yaml 이 deprecated alias 를 사용했다면 부팅 실패. 운영자 마이그레이션 가이드 `docs/migration/hvacr-config-unification.md` 제공. 관련: SPEC-LG-HVACR-001 v1.18.27, SPEC-CENTURY-HVACR-001 v0.5.0, CHANGELOG.md [Unreleased]. |
 | 2026-05-28 | 1.18.26 | **BREAKING — status 노드 통일 (LG inactivity 모델) + 어드레싱 + metadata 정리**. (1) **노드 동작 모델 변경** — Samsung HVACR-01 status / combined 노드가 ticker 기반 폴링 (`get_recent_states` / `get_all_states`) 에서 LG ICP-01 의 inactivity-fallback 모델로 전환. 노드는 에이전트의 `FrameNotifyCh` 신호로 새 frame 도착 시 즉시 처리하고, `inactivity_timeout` (기본 `"90s"`) 동안 신호가 없으면 `request_state` 명령으로 강제 상태 확보. agent 측에 `processRequestState` 추가 — 모든 디바이스의 `trigger="response"` emit. (2) **노드 config 변경** — 제거: `device_id`, `device_address`, `poll_interval`, `poll_command`. 추가: `inactivity_timeout`, `group_id` (NASA addr byte 1, 외기 인덱스 `"00"`–`"0F"`), `unit_id` (NASA addr byte 2 또는 dotted/compact 형식 `"10.0F.00"` / `"100F00"` 모두 인식). 두 어드레싱 필드 모두 비어있으면 모든 디바이스 frame 처리 + broadcast `request_state`. (3) **출력 metadata 정리 (Breaking)** — `MetadataEmitOptions.UnitID` / `SlotNum` 필드 제거 + 노드 config 의 `emit_unit_id` / `emit_slot_num` 옵션 제거. `unit_id` / `slot_num` 은 프로토콜 해석 단계에서만 의미가 있던 내부 표현으로, `metadata.device_id` (UUID) 와 노드 어드레싱 필드로 대체된다. (4) **agent 측 변경** — `applySamsungHvacr01Overrides` 시그니처 변경 (`(cfg, deviceID)` 반환). 제어 명령 시 payload override (`device_id` / `unit_id`) 가 우선, 다음 `cfg.UnitID`. `pollLoop` / `pollRecentBulk` / `pollSnapshot` / `samsungHvacr01StateHash` / `splitSamsungHvacr01PollResult` / 콘텐츠 dedup 모두 제거. `receiveLoop` + `drainNewFrames` + `requestStateRefresh` (LG 패턴) 로 교체. (5) **하위 영향** — control 노드는 payload-level `device_id` / `unit_id` override 그대로 수용 (단일 디바이스 제어 가능). 본 SPEC 의 REQ-NASA-001-09-XX (M9, NASA Nodes) 중 polling 동작 관련 항목 (`PollInterval`, `get_state` / `get_all_states` 폴링 분기 등) 은 REVISED — inactivity 모델로 대체된 동작 기술. Samsung agent 자체의 `poll_interval` (디바이스 polling 주기) 은 보존된다 (agent-level 설정으로 NASA 디바이스 양방향 폴링은 유지). |
 | 2026-05-26 | 1.18.14 | **`mode`/`fan_speed` 통일 ID 정합 — adapter `Device.State()` (v1.18.13 후속)**. v1.18.13 이 agent direct emit (`processGetAllStates`) 경로만 수정했으나, `internal/device/adapter/nasa.go` 의 `NASADeviceAdapter.State()` (REST/inventory 경로) 가 `*a.info.Mode` / `*a.info.FanSpeed` 를 raw string ("cool"/"low") 그대로 emit 하여 inventory 출력에서 NASA HVACR.IDU 만 schema 불일치 (다른 HVAC 디바이스: int). 수정: `hvac.ModeFromName` / `hvac.FanSpeedFromName` 로 wrap. 영향: inventory/REST 응답이 다른 HVAC 에이전트 (LGCP/LGCNP/Century) 와 schema 정합. NASA 의 모든 emit 경로 (agent direct + adapter) 가 hvac 통일 ID 로 일관. |
@@ -926,6 +928,27 @@ NASADeviceState 구조체는 **항상** 다음 필드를 포함해야 한다:
 2. 설정 기반 디바이스와 주소가 충돌하면 설정 기반이 우선한다
 3. 로드된 디바이스의 `Source`는 원본 값(`"bridge"` 또는 `"auto"`)을 유지한다
 
+#### REQ-NASA-001-04-13 (Event-Driven) 실외기(ODU) 상태 텔레메트리 디코딩 (v1.20.0)
+
+실외기는 자기 상태를 C0 14 Notification 으로 버스에 브로드캐스트하므로, 외부제어기는 별도 요청 없이 SA=`10 xx 00`(실외기) 프레임의 Message Set 을 수동 수집하여 상태를 파악한다.
+
+**WHEN** 디바이스 타입이 `HVACR.ODU`로 판별되면 **THEN** `NasaDevice.Outdoor`(`*OutdoorState`)를 초기화한다 (실내기 `State`와 병렬 구조이며, ODU 는 `State=nil`). 초기화 지점은 config 로드·`add_device`·자동 탐색 3곳이다.
+
+**WHEN** `HVACR.ODU` 디바이스로부터 Message Set 을 수신하면 **THEN** 다음 대역을 문서화된 인덱스 레지스트리로 디코딩한다:
+
+1. `0x82xx`(VAR 2B, 온도): signed `raw/10 = °C` (예: `0x8204 outdoor_temperature`, `0x8280 compressor_discharge_temperature`)
+2. `0x80xx`(ENUM 1B): raw 정수 (예: `0x8001 out_operation_odu_mode`, `0x8010~0x8012 out_load_comp1~3`)
+3. `0x84xx`·`0x24FC`(LVAR 4B): raw 정수 (예: `0x8413 wattmeter_1min_sum`, `0x24FC out_sensor_voltage`)
+4. 관측 기반 emit — 한 번이라도 수신된 필드만 상태 payload 에 포함한다. 미등록 인덱스도 `RawMessageSets`에는 보존한다.
+
+**WHEN** 이산 필드(운전상태·압축기 On/Off·4-way·제상단계·에러코드)의 값이 새로 관측되거나 변경되면 **THEN** 즉시 `device_state_changed`(trigger=`change`)를 emit 한다.
+
+**IF** 변경된 필드가 연속 센서(온도·압축기 주파수·전류·전력)뿐이면 **THEN** 즉시 emit 하지 않고 `report_interval` 정기 보고(trigger=`report`) 주기에만 최신 값을 싣는다 (매 프레임 변동으로 인한 emit 폭주 방지).
+
+**IF** raw 정수 필드의 값이 폭 전체 `0xFF` 센티넬(ENUM `0xFF` / VAR `0xFFFF` / LVAR `0xFFFFFFFF`, 미장착 압축기·센서)이면 **THEN** 무효로 간주하여 상태 payload 에서 생략한다 (관측 안 됨과 동일, raw 는 보존). 온도(signed)는 `0xFFFF`(-0.1°C)가 정상 저온일 수 있어 센티넬 마스킹에서 제외한다.
+
+**주의**: 실외기 인덱스 매핑은 esphome_samsung_hvac_bus / pysamsungnasa 리버스 엔지니어링 결과이며, 모델별로 존재 여부·의미·스케일이 다를 수 있다. 온도는 `/10`으로 확인되었으나 전류·전압·전력은 raw 로만 노출되며 단위·계수는 실측 검증이 필요하다. 의미가 1:1 일치하는 필드(`outdoor_temperature`, `compressor_discharge_temperature`, `error_code`)는 LG HVACR emit 키와 통일한다.
+
 ---
 
 ### Module 5: Control Commands (제어 명령)
@@ -1778,6 +1801,7 @@ var (
 | ConnectTimeout        | `connect_timeout`          | `string`            | `"5s"`   | No          | 연결 타임아웃 (time.Duration)                                                                                    |
 | ReadTimeout           | `read_timeout`             | `string`            | `"3s"`   | No          | 읽기 타임아웃                                                                                                    |
 | PollInterval          | `poll_interval`            | `string`            | `"30s"`  | No          | 디바이스 상태 폴링 주기 (time.Duration)                                                                              |
+| InterCommandDelay     | `inter_command_delay`      | `string` (Duration) | `"1s"`   | No          | **v1.20.0 신규**. `pollLoop`/`probeSilentDevices` 에서 여러 디바이스에 status query 를 연속 전송할 때 프레임 간 최소 간격. 요청이 μs 단위로 겹치는 것을 방지 (LG `inter_command_delay` 명칭 통일, Samsung default `"1s"`). 대기는 `stopCh`/`disconnectCh` 로 인터럽트 가능. `0s` = 딜레이 없음(기존 동작). 음수는 parse error. |
 | NotifyInterval        | `report_interval`          | `string`            | `"60s"`  | No          | **v1.19.0 REVISED** — 주기적 상태 보고 간격. default `"0s"` → `"60s"` (3종 HVACR-01 통일). `0` = 비활성화, 변경 감지만 동작. `notify_interval` (v1.9.0a deprecation alias) 는 v1.19.0 부터 parse error 로 거부. |
 | ~~DeviceAddresses~~   | ~~`device_addresses`~~     | ~~`[]string`~~      | -        | ~~Yes~~     | **v1.7.0에서 제거됨** — `Devices` 필드로 대체                                                                        |
 | ~~DeviceIDs~~         | ~~`device_ids`~~           | ~~`map[string]string`~~ | -    | ~~No~~      | **v1.7.0에서 제거됨** — `Devices` 필드로 대체                                                                        |

@@ -12,10 +12,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type {
   DeviceExecuteRequest,
+  DeviceInfo,
   DeviceListParams,
   DeviceMetadataUpdateRequest,
 } from '@/types/device';
 import * as deviceService from '@/services/api/deviceService';
+import * as agentService from '@/services/api/agentService';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { onDeviceStatus } from '@/services/ws/wsHandlers';
 
@@ -128,6 +130,134 @@ export function useDeleteMetadata() {
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
       queryClient.invalidateQueries({ queryKey: ['devices', id] });
+    },
+  });
+}
+
+/** {@link useSetDeviceReport} 뮤테이션 변수. */
+export interface SetDeviceReportVariables {
+  /** 디바이스를 소유한 에이전트 ID (`set_device` exec 대상). */
+  agentId: string;
+  /**
+   * 디바이스 UUID(`device.uid` 우선). `set_device` 의 `device_id` 파라미터로 사용된다.
+   * add_device/remove_device 와 동일한 식별자 방식(백엔드가 params 내 device_id 를 해석).
+   */
+  deviceId: string;
+  /** 설정할 상태 전송 활성화 여부. */
+  reportEnabled: boolean;
+}
+
+/**
+ * 디바이스별 상태 전송 on/off 토글 훅 (`set_device` exec).
+ *
+ * 백엔드는 `samsung_hvacr01` / `lgap` 에이전트에서 `set_device` 를 지원한다.
+ * `report_enabled=false` 로 설정하면 이후 해당 디바이스의 device_state 및
+ * 디바이스 이벤트 방출이 모두 억제되며, 설정은 재시작 후에도
+ * 영속된다(백엔드가 자동 저장).
+ *
+ * 낙관적 업데이트: 즉시 `['devices']` 캐시의 해당 디바이스 `report_enabled` 를 갱신해
+ * 토글 UI 가 지연 없이 반영되게 하고, 실패 시 이전 캐시로 롤백한다. 성공/실패 후
+ * `['devices']` 를 무효화해 권위 응답으로 동기화한다.
+ */
+export function useSetDeviceReport() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentId, deviceId, reportEnabled }: SetDeviceReportVariables) =>
+      agentService.execAgent(agentId, {
+        command: 'set_device',
+        params: { device_id: deviceId, report_enabled: reportEnabled },
+      }),
+    onMutate: async ({ deviceId, reportEnabled }) => {
+      // 진행 중인 ['devices'] 리페치를 취소해 낙관적 갱신 덮어쓰기를 방지한다.
+      await queryClient.cancelQueries({ queryKey: ['devices'] });
+      const snapshots = queryClient.getQueriesData<DeviceListResult>({ queryKey: ['devices'] });
+      // uid/id 어느 쪽이 넘어와도 매칭되도록 두 값을 모두 비교한다.
+      for (const [key, value] of snapshots) {
+        if (!value?.data) continue;
+        queryClient.setQueryData(key, {
+          ...value,
+          data: value.data.map((d) =>
+            d.uid === deviceId || d.id === deviceId
+              ? { ...d, report_enabled: reportEnabled }
+              : d,
+          ),
+        });
+      }
+      return { snapshots };
+    },
+    onError: (_err, _vars, context) => {
+      // 낙관적 갱신 롤백.
+      for (const [key, value] of context?.snapshots ?? []) {
+        queryClient.setQueryData(key, value);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/**
+ * `['devices']` 목록 쿼리의 캐시 형태. getDevices 응답(`{ data: DeviceInfo[] }`).
+ * 낙관적 업데이트에서 개별 디바이스의 report_enabled 를 패치할 때 사용한다.
+ */
+interface DeviceListResult {
+  data?: DeviceInfo[];
+}
+
+/** {@link useDeleteDevice} 뮤테이션 변수. */
+export interface DeleteDeviceVariables {
+  /** 디바이스를 소유한 에이전트 ID (`remove_device` exec 대상). */
+  agentId: string;
+  /**
+   * 디바이스 UUID(`device.uid` 우선). 지정 시 `remove_device` 의 `device_id`
+   * 파라미터로 사용되며, 성공 후 동일 식별자로 저장된 메타데이터를 정리한다.
+   */
+  deviceId?: string;
+  /**
+   * 버스 주소(Samsung NASA "20.00.01" / LGAP zone "01"). `deviceId` 가 없을 때만
+   * `remove_device` 의 `address` 파라미터 fallback 으로 사용된다.
+   */
+  address?: string;
+}
+
+/**
+ * 디바이스 삭제 오케스트레이션 훅.
+ *
+ * 백엔드는 `samsung_hvacr01` / `lgap` 에이전트에서만 `remove_device` 를 지원한다
+ * (Century/system/modbus 미지원). `source === 'config'` 디바이스는 서버가 보호하므로
+ * 호출자가 사전에 삭제 대상에서 제외해야 한다.
+ *
+ * 순서:
+ *   1. `POST /agents/{agentId}/exec` `remove_device` (device_id 우선, address fallback).
+ *   2. 성공 시 `deviceId` 로 저장된 메타데이터 삭제(best-effort — 404/오류 무시).
+ *   3. `['devices']` 쿼리 무효화로 목록 갱신.
+ *
+ * remove_device 실패는 mutation 을 reject 하여 호출자의 onError 로 전파된다.
+ * 메타데이터 정리 실패는 사용자 흐름을 막지 않도록 삼킨다.
+ */
+export function useDeleteDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ agentId, deviceId, address }: DeleteDeviceVariables) => {
+      const params: Record<string, unknown> = {};
+      if (deviceId) params.device_id = deviceId;
+      else if (address) params.address = address;
+
+      await agentService.execAgent(agentId, { command: 'remove_device', params });
+
+      // 저장된 사용자 메타데이터(이름/태그/pin) 정리. 메타데이터가 없으면 404 가
+      // 반환될 수 있으므로 best-effort 로 처리하고 오류를 무시한다.
+      if (deviceId) {
+        try {
+          await deviceService.deleteMetadata(deviceId);
+        } catch {
+          // ignore — 메타데이터가 없을 수 있음(404 등).
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
     },
   });
 }

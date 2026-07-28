@@ -78,6 +78,13 @@ export interface DeviceInfo {
   last_seen: string;
   capabilities: string[];
   metadata?: DeviceMetadata;
+  /**
+   * 디바이스별 상태 전송(report) 활성화 여부.
+   * false 이면 이 디바이스는 노드로 상태 메시지(device_state 등)를 방출하지 않는다.
+   * 백엔드 디바이스 조회 응답(get_state / get_all / list_devices)이 제공하며,
+   * 값이 없으면(구버전 응답/미지정) 기본 on(true)으로 간주한다.
+   */
+  report_enabled?: boolean;
 }
 
 /**

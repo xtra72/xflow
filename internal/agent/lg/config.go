@@ -27,6 +27,7 @@ type LGAPConfig struct {
 	NotifyInterval time.Duration // report_interval 의 backing field — 주기적 상태보고 간격
 	ReportMode     string        // "relative" (default) 또는 "absolute"
 	IncludeRawHex  bool          // raw_hex 출력 옵션 (기본 false)
+	LogMessages    bool          // 디바이스와의 송/수신(TX/RX) 프레임 hex 를 INFO 로그 (기본 false, opt-in 진단용). false 면 기존 Debug 레벨 유지.
 
 	// EventTempThreshold 는 change 트리거 event 보고의 실내온도 변화 임계값이다 (단위: ℃, v0.6.6).
 	// 온도(RoomTemp)만 변경되고 |Δ| < EventTempThreshold 면 emit suppress.
@@ -174,6 +175,13 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		}
 	}
 
+	// log_messages — 송/수신(TX/RX) 프레임 hex 를 INFO 로 출력 (기본 false, opt-in 진단용).
+	if v, ok := opts["log_messages"]; ok {
+		if b, isBool := v.(bool); isBool {
+			cfg.LogMessages = b
+		}
+	}
+
 	// event_temp_threshold (v0.6.6) — 실내온도 변화 임계값 (단위 ℃, 기본 1.0).
 	if v, ok := opts["event_temp_threshold"]; ok {
 		f, err := toFloat64(v)
@@ -182,6 +190,11 @@ func parseLGAPConfig(opts map[string]any) (LGAPConfig, error) {
 		}
 		cfg.EventTempThreshold = f
 	}
+
+	// device_connection 스트림 제거(연결 정보를 device_state 로 일원화)에 따라 아래
+	// 레거시 옵션 키는 더 이상 사용하지 않는다: connection_report_interval,
+	// startup_probe_timeout, connection_notify_interval. 하위 호환을 위해 값이 남아
+	// 있어도 hard-error 를 내지 않고 조용히 무시한다(map 기반 파서라 미참조 키는 자동 무시).
 
 	return cfg, nil
 }

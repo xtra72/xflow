@@ -24,6 +24,10 @@ type Icp01Device struct {
 	// v0.7.0: IDU 메타 (frame 의 slot_num 저장 — 정기 보고 시 metadata 재현용).
 	IDUNum  int  // 1..5 (IDU 인덱스)
 	SlotNum byte // frame.SlotNum (0x51~0x55)
+	// ReportEnabled 는 디바이스별 상태 전송 on/off 이다 (기본 true=on).
+	// false 면 handleIDUFrame/handleODUFrame 및 정기 보고에서 device_state emit 을
+	// 억제한다. Samsung NASA 의 NasaDevice.ReportEnabled 패턴과 동일 (IN-MEMORY only).
+	ReportEnabled bool
 }
 
 // Icp01DeviceState 는 IDU 디바이스의 누적 상태이다.
@@ -365,12 +369,13 @@ func (p *Icp01DeviceProvider) Device(id string) (device.Device, error) {
 // icp01DeviceToInfo 는 Icp01Device 를 adapter.Icp01DeviceInfo 로 변환한다.
 func icp01DeviceToInfo(dev *Icp01Device) adapter.Icp01DeviceInfo {
 	info := adapter.Icp01DeviceInfo{
-		Address:    dev.Address,
-		Label:      dev.Label,
-		DeviceType: dev.Type,
-		Online:     dev.Online,
-		LastSeen:   dev.LastSeen,
-		Source:     dev.Source,
+		Address:       dev.Address,
+		Label:         dev.Label,
+		DeviceType:    dev.Type,
+		Online:        dev.Online,
+		LastSeen:      dev.LastSeen,
+		Source:        dev.Source,
+		ReportEnabled: dev.ReportEnabled,
 	}
 	if dev.State != nil {
 		info.Properties = dev.State.toProperties()

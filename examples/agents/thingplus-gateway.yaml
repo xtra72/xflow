@@ -1,0 +1,66 @@
+# Thingplus Gateway Agent Example
+# ThingsBoard DEVICE MQTT API(v1/devices/me/*)를 통해 텔레메트리를 업링크하고
+# 공유 속성을 다운링크로 수신하는 양방향 IoT 에이전트.
+#
+# 동작 개요:
+#   - 업링크: 인입 플로우 메시지에서 디바이스/유닛 NAME을 추출하여
+#     v1/devices/me/telemetry 로 곧바로 발행한다(Device API 는 sub-device
+#     connect 개념이 없어 별도 connect 발행이 없다).
+#     텔레메트리 형식: {"ts":<epoch_ms>,"values":{"<name>":{<kv>}}}
+#     (ts 생략 시 서버 시각 사용)
+#   - 다운링크: v1/devices/me/attributes 구독 →
+#     공유 속성 변경을 thingplus.attr.update 메시지로 플로우에 방출
+#     (Device API 공유 속성은 flat {"key":value} 또는 {"shared":{...}})
+#
+# 인증: access_token 을 MQTT username 으로 사용 (password 없음).
+#       평문 1883 포트, TLS 사용 시 8883 포트 + CA 인증서.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/thingplus-gateway.yaml
+
+# 에이전트 이름 (필수)
+name: "thingplus-gateway-agent"
+
+# 에이전트 타입 (필수)
+type: "thingplus-gateway"
+
+# 에이전트 설정
+config:
+  # API 모드: "device"(기본) 또는 "gateway"
+  #   - device : v1/devices/me/* (단일 디바이스). 텔레메트리를 곧바로 발행한다.
+  #   - gateway: v1/gateway/* (다중 디바이스 다중화). connect/disconnect 로 하위
+  #              디바이스를 관리하고 텔레메트리/속성/RPC 를 NAME 으로 감싼다.
+  # 게이트웨이 모드로 전환하려면 아래 값을 "gateway" 로 바꾸세요.
+  # api_mode: "device"
+
+  # ThingsBoard/Thingplus 브로커 주소
+  broker: "tcp://thingsboard.example.com:1883"
+
+  # 포트 (평문 1883, TLS 8883)
+  port: 1883
+
+  # TLS 사용 여부 (true 시 ssl://host:8883 + ca_cert 필요)
+  tls: false
+
+  # TLS CA 인증서 (PEM 내용 또는 파일 경로). tls: true 일 때만 사용.
+  # ca_cert: "/etc/xflow/certs/thingsboard-ca.pem"
+
+  # 게이트웨이 액세스 토큰 (MQTT username 으로 사용, 민감 정보)
+  # 운영 환경에서는 환경변수/시크릿 매니저로 주입하세요.
+  access_token: "REPLACE_WITH_GATEWAY_TOKEN"
+
+  # 인입 메시지에서 디바이스 NAME을 추출하는 JSONPath (기본 "$.device")
+  # 예: "$.device", "$.metadata.device_id"
+  device_name_path: "$.device"
+
+  # QoS 레벨 (0: at most once, 1: at least once, 2: exactly once)
+  qos: 1
+
+  # 연결 유지 간격 (초)
+  keep_alive_sec: 60
+
+  # 자동 재연결 활성화 (재연결 시 다운링크 재구독 + 버퍼링된 업링크 flush)
+  auto_reconnect: true
+
+  # 업링크 무손실 버퍼 크기 (연결 끊김 시 텔레메트리 버퍼링, 재연결 시 flush)
+  buffer_size: 256

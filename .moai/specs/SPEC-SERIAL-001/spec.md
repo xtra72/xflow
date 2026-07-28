@@ -5,10 +5,10 @@
 | 항목 | 값 |
 |------|-----|
 | ID | SPEC-SERIAL-001 |
-| 버전 | 2.3.0 |
+| 버전 | 2.4.0 |
 | 상태 | Done |
 | 생성일 | 2026-04-01 |
-| 수정일 | 2026-05-14 |
+| 수정일 | 2026-07-28 |
 | 작성자 | MoAI |
 | 우선순위 | High |
 | 관련 SPEC | SPEC-AGENT-001, SPEC-AGENT-006, SPEC-BRIDGE-001, SPEC-SOCKET-001, SPEC-ENGINE-001 |
@@ -22,6 +22,7 @@
 | 2026-04-01 | 1.0.0 ~ 2.1.0 | 초기 작성 ~ NASA 디바이스 연동 확장 (하단 확장 섹션 참조) |
 | 2026-05-14 | 2.2.0 | xagent04 실배포 검증 hotfix 3종 반영. (1) **Serial 재시작 생명주기 보강** — `Stop()` 시 `stopCh` 재설정, bounded `Stop()`(5초 타임아웃), `Error` 상태에서의 회복 경로 추가 (REQ-SERIAL-003 amend, 커밋 `d0651aa`). (2) **SerialOut hex 인코딩 대칭성** — `data`/`raw` 필드가 hex 문자열일 때 `hex.DecodeString` 적용. 이전엔 `[]byte(str)` 로 ASCII 변질 (REQ-SERIAL-005 amend). (3) **Init-tolerance 패턴** — `serial-in`/`serial-out` 노드가 Init 시점에 agent 를 못 찾으면 hard-fail 대신 경고 로그 + Running 전이(deferred connection), agent 활성화 시 `ReinitNodesForAgent` 로 자동 연결. "resolver 미설정"(구성 오류)은 여전히 hard-fail (신규 REQ-SERIAL-016). 관련: SPEC-ENGINE-001 v1.3.0 Module 8, SPEC-AGENT-005 v1.1.0. |
 | 2026-05-14 | 2.3.0 | develop 브랜치 serial/IO 결함 수정 4종 반영. (1) **포트 I/O 직렬화** — `Process()`(쓰기)와 `readLoop()`(읽기)가 동일 물리 포트에 동시 접근하던 경쟁 조건을 `portIOMu sync.Mutex` 로 직렬화. RS-485 반이중 정합성을 위해 필수 (REQ-SERIAL-003 보강, 커밋 `5c00731`). (2) **`effectiveReadTimeout` 클램프** — 0 이하의 `read_timeout` 을 200ms 로 클램프하여 `readLoop` 이 `portIOMu` 를 무한 점유해 쓰기를 기아 상태로 만드는 것을 방지 (REQ-SERIAL-002 보강). (3) **출력 디버그 로그** — `Process()` 가 쓰기 성공 후 `시리얼 포트 출력 port=... len=... hex=...` debug 로그를 남겨 OS 포트로 전달된 바이트를 운영자가 확인 가능 (REQ-SERIAL-005 보강). (4) **`serial-out` `input_encoding` 옵션** — 문자열 `data`/`raw` 페이로드의 바이트 변환 방식을 명시적으로 선택(`auto`/`hex`/`text`/`base64`, 기본 `auto`). `auto` 는 기존 동작(hex 시도 후 text 폴백)과 바이트 동일하며, 유효 hex 평문이 잘못 hex 디코딩되던 모호성 제거. `[]byte` 인 `raw` 는 인코딩을 우회 (신규 REQ-SERIAL-017, 커밋 `8cfd1b6`). (5) **`raw` 버퍼 aliasing 수정** — `SerialInNode` 의 `receiveLoop`/`rawReceiveLoop` 가 재사용 읽기 버퍼를 슬라이스 참조로 `raw` 에 저장하던 것을 방어적 복사로 수정 (REQ-SERIAL-004/012 보강, 커밋 `8cfd1b6`). (6) **시리얼 에이전트 `log_drops` 옵션** — `msgCh` 수신 버퍼 가득 참으로 메시지 드롭 시 per-drop WARN 로그를 `log_drops: true` 일 때만 출력(기본 `false`). 드롭은 항상 `stats.IncrDroppedMessages()` 로 계수되어 통계로 관측 가능. samsung-nasa `log_decode_errors` 패턴과 일관 (신규 REQ-SERIAL-018, 미커밋 작업). |
+| 2026-07-28 | 2.4.0 | **half-duplex 쓰기 기아(write starvation) 근본 수정.** v2.3.0 의 포트 I/O 직렬화가 실배포(xagent03)에서 `serial-out: send failed: serial: context deadline exceeded` 를 반복 유발한 결함 수정. **근본 원인**: v2.3.0 은 `readLoop` 이 `a.reader.Read()` **한 번 호출 전체 동안** `portIOMu` 를 점유했고, "`effectiveReadTimeout` 클램프로 `Read` 가 bounded 되어 기아를 막는다"고 가정했으나 이 가정이 **틀렸다** — `SetReadTimeout` 은 개별 하위 read syscall 1회만 bound 할 뿐, 한 프레임을 조립하려 여러 하위 read 를 도는 프레이머의 전체 `Read()` 시간은 여전히 무한이다(`stream` 프레이머는 연속 스트림/`idle_timeout≤0` 에서 절대 반환 안 함; `length_prefix`/`frame`/`fixed_size` 는 `io.ReadFull` 로 부분 프레임에서 무한 블록). 그동안 `portIOMu` 를 놓지 못해 `Process()` 의 쓰기가 굶었고, 노드 레벨 `write_timeout`(커밋 `73dd0a2`, 기본 5s)이 이 무한 hang 을 5초 에러로 표면화했다. **수정**: `portIOReader` io.Reader 래퍼를 포트–프레이머 사이에 삽입해 락을 **프레임 조립 전체가 아니라 개별 하위 read syscall 단위**로만 획득/해제(readLoop 의 조악한 락 제거). 프레이머의 다중 read 루프 사이에 대기 중인 쓰기가 Go mutex 공정성(~1ms)으로 끼어들어 기아가 사라진다. half-duplex 직렬화(바이트 전송 순간의 배타성)는 보존. (2) **`half_duplex` 설정 옵션(기본 `true`)** — full-duplex 포트(TX/RX 물리 분리: RS-232/USB-serial/serial-to-ethernet 컨버터)에서 `false` 로 설정 시 `portIOLock` 이 no-op(`noopLocker`)이 되어 read/write 를 직렬화하지 않는다. 기본 `true` 는 RS-485 반이중 안전을 위한 기존 동작 보존 (신규 REQ-SERIAL-019). (3) **노드 레벨 `write_timeout`** — `serial-out` 이 blocking 한 시리얼 write 를 `write_timeout`(기본 5s) 내 반환하도록 상한, 상류 stall 방지 (REQ-SERIAL-005 보강, 커밋 `73dd0a2`). 특성 테스트: `agent_writestarve_test.go`(half_duplex=true 에서 연속 데이터 중 쓰기가 <1s 완료). |
 
 ---
 
@@ -110,13 +111,14 @@ xflow는 IoT 데이터 스트림 처리를 위한 FBP 플랫폼이다. 현재 TC
 - **Bounded Stop**: `Stop()` 은 읽기 goroutine 종료를 무한정 대기하지 않고 5초 타임아웃을 적용한다. 타임아웃 시에도 포트를 닫고 상태 전이를 완료한다.
 - **Error 상태 회복**: 에이전트가 `Error` 상태에 진입한 경우에도 `Start()`/`Restart()` 를 통해 정상 lifecycle 경로로 회복할 수 있어야 한다. `Error` 상태가 영구 정지 상태가 되어서는 안 된다.
 
-#### 포트 I/O 직렬화 (v2.3.0)
+#### 포트 I/O 직렬화 (v2.3.0, v2.4.0 근본 수정)
 
-`Process()`(쓰기 경로)와 `readLoop()`(읽기 경로)는 동일한 물리 시리얼 포트에 접근하므로, 시스템은 **항상** `portIOMu sync.Mutex` 로 `framer.Write` 와 `reader.Read` 호출을 직렬화해야 한다.
+`Process()`(쓰기 경로)와 `readLoop()`(읽기 경로)는 동일한 물리 시리얼 포트에 접근하므로, `half_duplex=true`(기본)일 때 시스템은 `portIOMu sync.Mutex` 로 `framer.Write` 와 물리 포트 `Read` 를 직렬화해야 한다.
 
-- **RS-485 반이중 정합성**: RS-485 반이중 회선에서 송신과 수신이 겹치면 회선 충돌이 발생하므로 포트 I/O 직렬화가 필수이다.
+- **RS-485 반이중 정합성**: RS-485 반이중 회선에서 송신과 수신이 겹치면 회선 충돌이 발생하므로 포트 I/O 직렬화가 필요하다.
 - **`portIOMu` 는 기존 Write 직렬화용 `sync.Mutex` 와 별개의 잠금**으로, 읽기·쓰기 양방향을 모두 보호한다.
-- **`effectiveReadTimeout` 클램프**: `read_timeout` 이 0 이하이면 `readLoop` 의 단일 `Read` 가 `portIOMu` 를 무한정 점유하여 `Process()` 의 쓰기가 기아(starvation) 상태가 될 수 있다. 따라서 0 이하의 `read_timeout` 은 200ms 로 클램프하여, `readLoop` 이 주기적으로 잠금을 해제하고 쓰기에 양보하도록 보장한다.
+- **`half_duplex` 옵션 (v2.4.0, 기본 `true`)**: full-duplex 포트(TX/RX 물리 분리: RS-232 / USB-serial / serial-to-ethernet 컨버터)는 송수신을 동시에 수행할 수 있으므로 직렬화가 불필요하다. `half_duplex=false` 로 설정하면 `portIOLock` 이 `noopLocker`(no-op)로 대체되어 read 와 write 가 서로 배제하지 않는다. 기본 `true` 는 RS-485 안전을 위한 기존 동작 보존이다.
+- **per-sub-read 락킹 (v2.4.0 근본 수정)**: v2.3.0 은 `readLoop` 이 `a.reader.Read()` **한 번 호출 전체 동안** `portIOMu` 를 점유했고, "`effectiveReadTimeout` 클램프로 `Read` 가 bounded 되므로 쓰기가 굶지 않는다"고 가정했다. **이 가정은 틀렸다**: `SetReadTimeout` 은 개별 하위 read syscall 1회만 bound 할 뿐, 한 프레임을 조립하려 여러 하위 read 를 루프하는 프레이머(`stream` 은 연속 스트림/`idle_timeout≤0` 에서 절대 반환 안 함; `length_prefix`/`frame`/`fixed_size` 는 `io.ReadFull` 로 부분 프레임에서 무한 블록)의 전체 `Read()` 시간은 여전히 무한이다. 그동안 `portIOMu` 를 놓지 못해 `Process()` 의 쓰기가 굶고, 노드 레벨 `write_timeout`(기본 5s)이 이를 `serial: context deadline exceeded` 로 표면화했다. **수정**: `portIOReader` io.Reader 래퍼를 물리 포트–프레이머 사이에 삽입하여 락을 **개별 하위 read syscall 단위**로만 획득/해제한다(`readLoop` 의 조악한 락 제거). 프레이머의 다중 read 루프 사이에 대기 중인 쓰기가 Go mutex 공정성(~1ms)으로 끼어들 수 있어 기아가 제거되며, half-duplex 직렬화(실제 바이트 전송 순간의 배타성)는 보존된다. `effectiveReadTimeout` 클램프(0 이하 → 200ms)는 각 하위 read 가 유한 시간에 반환되도록 여전히 유지한다.
 
 ### REQ-SERIAL-004: 데이터 수신 (Agent -> Flow)
 

@@ -165,17 +165,18 @@ func TestParseHvacr01Config_IncludeRawHexAndDedupe(t *testing.T) {
 // 트랜스포트 / lifecycle 없이 메시지 채널만 갖춘 최소 agent 를 만든다.
 func newMinimalHvacr01AgentForTest() *Hvacr01Agent {
 	a := &Hvacr01Agent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("lg_hvacr01-test")),
-		hvacr01Config: Hvacr01Config{DedupeFrames: true, IncludeRawHex: false},
-		msgCh:         make(chan []byte, 16),
-		stats:         agent.NewAgentStats(),
-		logger:        slog.Default(),
-		recentFrames:  make([]hvacr01FrameRecord, hvacr01RecentBufferSize),
-		recentNotify:  make(chan struct{}, 1),
-		iduDevices:    make(map[string]*Icp01Device),
-		oduState:      &Icp01ODUState{},
-		lastStates:    make(map[string]Icp01DeviceState),
-		lastIDUEmit:   make(map[int][]byte),
+		BaseLifecycle:    lifecycle.NewBaseLifecycle(lifecycle.WithName("lg_hvacr01-test")),
+		hvacr01Config:    Hvacr01Config{DedupeFrames: true, IncludeRawHex: false},
+		msgCh:            make(chan []byte, 16),
+		stats:            agent.NewAgentStats(),
+		logger:           slog.Default(),
+		recentFrames:     make([]hvacr01FrameRecord, hvacr01RecentBufferSize),
+		recentNotify:     make(chan struct{}, 1),
+		iduDevices:       make(map[string]*Icp01Device),
+		oduState:         &Icp01ODUState{},
+		oduReportEnabled: true, // report 게이트 기본 on (억제 회귀 방지)
+		lastStates:       make(map[string]Icp01DeviceState),
+		lastIDUEmit:      make(map[int][]byte),
 	}
 	a.bridgeActive.Store(true)
 	return a

@@ -585,6 +585,8 @@ func (n *SamsungHvacr01StatusNode) drainNewFrames(cfg SamsungHvacr01NodeConfig) 
 			continue
 		}
 
+		// 연결 정보가 device_state 단일 스트림으로 일원화되어, 링버퍼의 모든 스냅샷은
+		// device_state 로 처리한다(별도 device_connection 분기 제거).
 		msg := message.New()
 		promotePayloadMetadata(msg, dev, cfg.EmitMetadata)
 		applyDeviceStateMessageType(msg, dev, "poll")

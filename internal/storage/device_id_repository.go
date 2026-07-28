@@ -19,6 +19,8 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+
+	"github.com/xtra/xflow/internal/agent"
 )
 
 // DeviceIDRepository 는 (agentName, unitID) → device_id (UUID) 매핑을 제공한다.
@@ -29,6 +31,11 @@ type DeviceIDRepository interface {
 
 	// Get 은 (agentName, unitID) 의 UUID 를 반환한다. 존재하지 않으면 빈 문자열.
 	Get(ctx context.Context, agentName, unitID string) (string, error)
+
+	// Set 은 (agentName, unitID) 에 지정 deviceID 를 등록·영속한다.
+	// 지정 deviceID 가 이미 다른 (agentName, unitID) 에 배정돼 있으면
+	// agent.ErrDeviceIDConflict(래핑)를 반환한다. 같은 키에 같은 값 재지정은 idempotent.
+	Set(ctx context.Context, agentName, unitID, deviceID string) error
 
 	// Delete 는 (agentName, unitID) 매핑을 제거한다.
 	Delete(ctx context.Context, agentName, unitID string) error
@@ -99,6 +106,37 @@ func (r *DeviceIDFileRepository) GetOrCreate(_ context.Context, agentName, unitI
 		return "", fmt.Errorf("persist device id: %w", err)
 	}
 	return id, nil
+}
+
+func (r *DeviceIDFileRepository) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	if agentName == "" || unitID == "" || deviceID == "" {
+		return fmt.Errorf("device-id repository: empty agentName, unitID, or deviceID for Set")
+	}
+	key := deviceIDKey(agentName, unitID)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// idempotent: 같은 키에 이미 같은 값이면 no-op.
+	if existing, ok := r.cache[key]; ok && existing == deviceID {
+		return nil
+	}
+	// 유일성: 지정 deviceID 가 다른 키에 배정돼 있으면 충돌.
+	if err := ensureDeviceIDUnique(r.cache, key, deviceID); err != nil {
+		return err
+	}
+	prior, had := r.cache[key]
+	r.cache[key] = deviceID
+	if err := r.saveToFile(); err != nil {
+		// 저장 실패 — 이전 상태로 롤백 (다음 시도에서 재시도하도록).
+		if had {
+			r.cache[key] = prior
+		} else {
+			delete(r.cache, key)
+		}
+		return fmt.Errorf("persist device id (Set): %w", err)
+	}
+	return nil
 }
 
 func (r *DeviceIDFileRepository) Get(_ context.Context, agentName, unitID string) (string, error) {
@@ -207,10 +245,43 @@ func (r *DeviceIDMemoryRepository) GetOrCreate(_ context.Context, agentName, uni
 	return id, nil
 }
 
+func (r *DeviceIDMemoryRepository) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	if agentName == "" || unitID == "" || deviceID == "" {
+		return fmt.Errorf("device-id repository: empty agentName, unitID, or deviceID for Set")
+	}
+	key := deviceIDKey(agentName, unitID)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if existing, ok := r.cache[key]; ok && existing == deviceID {
+		return nil // idempotent
+	}
+	if err := ensureDeviceIDUnique(r.cache, key, deviceID); err != nil {
+		return err
+	}
+	r.cache[key] = deviceID
+	return nil
+}
+
 func (r *DeviceIDMemoryRepository) Get(_ context.Context, agentName, unitID string) (string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cache[deviceIDKey(agentName, unitID)], nil
+}
+
+// ensureDeviceIDUnique 는 deviceID 가 targetKey 이외의 키에 이미 배정돼 있으면
+// agent.ErrDeviceIDConflict(래핑)를 반환한다. 호출자는 cache 잠금을 보유해야 한다.
+//
+// 목적: 지정 device_id 의 전역 유일성 보장(중복 device_id 방지). 같은 키(targetKey)에
+// 대한 재지정은 충돌이 아니다(호출자가 idempotent 처리 후 호출).
+func ensureDeviceIDUnique(cache map[string]string, targetKey, deviceID string) error {
+	for k, v := range cache {
+		if k != targetKey && v == deviceID {
+			return fmt.Errorf("%w: %q already assigned to %q", agent.ErrDeviceIDConflict, deviceID, k)
+		}
+	}
+	return nil
 }
 
 func (r *DeviceIDMemoryRepository) Delete(_ context.Context, agentName, unitID string) error {

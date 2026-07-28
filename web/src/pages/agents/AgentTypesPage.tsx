@@ -18,6 +18,7 @@ const GRID_COLS = 3;
 /** 에이전트 타입별 카테고리 */
 const AGENT_CATEGORY: Record<string, string> = {
   'mqtt-client': 'protocol',
+  'thingplus-gateway': 'protocol',
   'modbus-tcp': 'protocol',
   'modbus-tcp-server': 'protocol',
   http: 'protocol',
@@ -25,6 +26,8 @@ const AGENT_CATEGORY: Record<string, string> = {
   serial: 'protocol',
   'tcp-server': 'protocol',
   'tcp-client': 'protocol',
+  'udp-server': 'protocol',
+  'udp-client': 'protocol',
   'samsung_hvacr01': 'device',
   lgap: 'device',
   lg_hvacr02: 'device',

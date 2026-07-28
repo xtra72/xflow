@@ -1,11 +1,48 @@
 package lg
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
 )
+
+// TestParseLGAPConfig_LogMessages 는 log_messages 옵션 파싱(기본 false, 명시 true)을 검증한다.
+func TestParseLGAPConfig_LogMessages(t *testing.T) {
+	base := map[string]any{"serial_port": "/dev/ttyUSB0"}
+
+	cfg, err := parseLGAPConfig(base)
+	if err != nil {
+		t.Fatalf("parseLGAPConfig: %v", err)
+	}
+	if cfg.LogMessages {
+		t.Errorf("log_messages 기본값은 false 여야 함")
+	}
+
+	base["log_messages"] = true
+	cfg, err = parseLGAPConfig(base)
+	if err != nil {
+		t.Fatalf("parseLGAPConfig: %v", err)
+	}
+	if !cfg.LogMessages {
+		t.Errorf("log_messages=true 가 파싱되어야 함")
+	}
+}
+
+// TestLGAP_MsgLogLevel 은 log_messages 옵션에 따라 TX/RX 로그 레벨이 INFO/Debug 로
+// 결정되는지 검증한다.
+func TestLGAP_MsgLogLevel(t *testing.T) {
+	a := &LGAPAgent{}
+	a.lgapConfig.LogMessages = false
+	if a.msgLogLevel() != slog.LevelDebug {
+		t.Errorf("log_messages=false 면 Debug 레벨이어야 함: got %v", a.msgLogLevel())
+	}
+	a.lgapConfig.LogMessages = true
+	if a.msgLogLevel() != slog.LevelInfo {
+		t.Errorf("log_messages=true 면 Info 레벨이어야 함: got %v", a.msgLogLevel())
+	}
+}
 
 // TestParseLGAPConfig_FullValid verifies all fields are correctly parsed.
 func TestParseLGAPConfig_FullValid(t *testing.T) {
@@ -372,5 +409,25 @@ func TestToInt(t *testing.T) {
 				t.Errorf("toInt(%v) = %d, want %d", tt.val, got, tt.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// device_connection 스트림 제거(연결 정보를 device_state 로 일원화) 설정 회귀 테스트
+// ---------------------------------------------------------------------------
+
+// TestParseLGAPConfig_LegacyConnectionKeysIgnored 는 제거된 연결 스트림 옵션 키가
+// 남아 있어도 hard-error 없이 조용히 무시되는지 검증한다(하위 호환).
+func TestParseLGAPConfig_LegacyConnectionKeysIgnored(t *testing.T) {
+	opts := map[string]any{
+		"serial_port":                "/dev/ttyUSB0",
+		"connection_report_interval": "30s",
+		"startup_probe_timeout":      "45s",
+		"connection_notify_interval": "10s",
+		// 파싱 불가능한 값이어도 무시되어야 한다(더 이상 참조하지 않으므로).
+		"connection_report_interval_bogus": "zzz",
+	}
+	if _, err := parseLGAPConfig(opts); err != nil {
+		t.Fatalf("레거시 연결 옵션 키는 무시되어야 하며 error 를 내면 안 된다: %v", err)
 	}
 }

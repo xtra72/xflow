@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -39,6 +40,11 @@ type TCPServerAgent struct {
 	paused      bool
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
+
+	// logMessages 는 송/수신 패킷 hex 로그(log_messages) 활성 여부의 lock-free 미러이다.
+	// RX/TX 로그 지점이 goroutine 에서 읽고 Configure 가 갱신하므로 atomic 으로 관리한다
+	// (a.config 는 생성 시점 값으로 고정되어 Configure 로 갱신되지 않기 때문).
+	logMessages atomic.Bool
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -69,6 +75,7 @@ func NewTCPServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		Delimiter:      cfg.Delimiter,
 		FixedSize:      cfg.FixedSize,
 		MaxMessageSize: cfg.MaxMessageSize,
+		WriteTimeout:   cfg.WriteTimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tcp-server agent: %w", err)
@@ -85,6 +92,7 @@ func NewTCPServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		createdAt:     time.Now(),
 		stopCh:        make(chan struct{}),
 	}
+	a.logMessages.Store(cfg.LogMessages)
 
 	if err := a.Init(agentConfig); err != nil {
 		return nil, err
@@ -291,6 +299,7 @@ func (a *TCPServerAgent) processSend(cmd processCommand) ([]byte, error) {
 				info.PacketsSent.Add(1)
 				a.stats.IncrExternalMessagesSent()
 				a.stats.AddBytesWritten(int64(len(payload)))
+				logPacket(a.logger, a.logMessages.Load(), "tcp-server", "TX", addr, payload)
 			}
 		}
 		return json.Marshal(map[string]any{"status": "broadcast_sent"})
@@ -308,6 +317,7 @@ func (a *TCPServerAgent) processSend(cmd processCommand) ([]byte, error) {
 	info.PacketsSent.Add(1)
 	a.stats.IncrExternalMessagesSent()
 	a.stats.AddBytesWritten(int64(len(payload)))
+	logPacket(a.logger, a.logMessages.Load(), "tcp-server", "TX", cmd.Target, payload)
 
 	return json.Marshal(map[string]any{"status": "sent"})
 }
@@ -337,6 +347,10 @@ func (a *TCPServerAgent) Configure(config agent.AgentConfig) error {
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
+	// log_messages 는 재시작 없이 즉시 반영한다 (needsRestart 대상 아님).
+	if newCfg, perr := ParseTCPServerConfig(config.Transport.Options); perr == nil {
+		a.logMessages.Store(newCfg.LogMessages)
+	}
 	return nil
 }
 
@@ -553,6 +567,8 @@ func (a *TCPServerAgent) handleConn(conn net.Conn) {
 		a.stats.IncrExternalMessagesReceived()
 		a.stats.AddBytesRead(int64(len(data)))
 		a.stats.UpdateLastActivity()
+
+		logPacket(a.logger, a.logMessages.Load(), "tcp-server", "RX", remoteAddr, data)
 
 		// 수신 통계 업데이트.
 		if info, ok := a.connections.Get(remoteAddr); ok {

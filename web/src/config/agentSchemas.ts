@@ -7,6 +7,7 @@ import type { ConfigField, ConfigSchema } from '@/types/node';
 /** 백엔드에 등록된 에이전트 타입 목록 */
 export const AGENT_TYPES = [
   { value: 'mqtt-client', label: 'MQTT' },
+  { value: 'thingplus-gateway', label: 'Thingplus Gateway' },
   { value: 'modbus-tcp', label: 'Modbus TCP' },
   { value: 'modbus-tcp-server', label: 'Modbus TCP Server' },
   { value: 'http', label: 'HTTP Receiver' },
@@ -22,6 +23,8 @@ export const AGENT_TYPES = [
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
   { value: 'tcp-client', label: 'TCP Client' },
+  { value: 'udp-server', label: 'UDP Server' },
+  { value: 'udp-client', label: 'UDP Client' },
 ] as const;
 
 // ---- 타입별 ConfigField 정의 ----
@@ -39,6 +42,32 @@ const MQTT_FIELDS: ConfigField[] = [
   { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256 },
   { name: 'max_pub_topics', type: 'number', label: '발행 토픽 최대 추적 수', default: 100, description: '초과 시 가장 오래된 토픽 삭제' },
+];
+
+// ──────────────────────────────────────────────────────────────────────────
+// Thingplus Gateway (SPEC-THINGPLUS-001, REQ-THINGPLUS-001-web-schema)
+// ThingsBoard Gateway MQTT API 를 프록시하는 시스템 에이전트. broker/port/tls/token
+// 설정과 device_name_path(JSONPath) 로 인입 메시지에서 디바이스 NAME 을 추출한다.
+// api_mode 로 Device API(v1/devices/me/*) 와 Gateway API(v1/gateway/*) 를 선택한다(기본 device).
+// 백엔드 ThingplusConfig json 태그와 1:1 매핑:
+//   api_mode, broker, port, tls, ca_cert, access_token, client_id, device_name_path,
+//   qos, keep_alive_sec, auto_reconnect, buffer_size.
+// ──────────────────────────────────────────────────────────────────────────
+const THINGPLUS_FIELDS: ConfigField[] = [
+  { name: 'api_mode', type: 'select', label: 'API 모드', options: ['device', 'gateway'], default: 'device', description: 'device: v1/devices/me/* (단일 디바이스), gateway: v1/gateway/* (다중 디바이스 다중화)' },
+  { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883). TLS 사용 시 ssl:// 스킴 사용' },
+  { name: 'port', type: 'number', label: '포트', default: 1883, description: '평문 1883, TLS 8883' },
+  { name: 'tls', type: 'boolean', label: 'TLS 사용', default: false },
+  { name: 'ca_cert', type: 'multiline', label: 'CA 인증서', description: 'TLS CA 인증서 PEM 또는 경로', visibleWhen: { field: 'tls', value: true } },
+  { name: 'access_token', type: 'string', label: '액세스 토큰', sensitive: true, description: 'MQTT username 으로 사용되는 게이트웨이 토큰' },
+  { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성 (xflow-thingplus-<uuid>). 인스턴스마다 고유해야 하며, 고정 값 공유 시 브로커가 세션을 끊어 재연결이 반복될 수 있음' },
+  { name: 'device_name_path', type: 'string', label: '디바이스 이름 경로', default: '$.device', description: 'JSONPath 로 인입 메시지에서 디바이스 NAME 추출 (예: $.device, $.metadata.device_id)' },
+  { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1' },
+  { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },
+  { name: 'connect_timeout_sec', type: 'number', label: '연결 타임아웃 (초)', default: 10 },
+  { name: 'auto_reconnect', type: 'boolean', label: '자동 재연결', default: true },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256, description: '업링크 무손실 버퍼 크기' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.', section: 'logging' },
 ];
 
 const MODBUS_TCP_FIELDS: ConfigField[] = [
@@ -122,6 +151,7 @@ const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
 // 키 이름은 그대로 유지한다.
 // ──────────────────────────────────────────────────────────────────────────
 const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '디바이스와 주고받는 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장 — 로그 폭주 우려)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -139,6 +169,7 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   // ── Protocol-specific (Samsung NASA) ──
   { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)', section: 'protocol' },
   { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신', section: 'protocol' },
+  { name: 'inter_command_delay', type: 'string', label: '요청 간 딜레이', default: '1s', description: '한 폴링 주기에서 여러 디바이스에 상태 확인 요청을 연속 전송할 때 프레임 간 최소 간격. 요청이 너무 가깝게 나가 컨트롤러/버스에서 겹치는 것을 방지 (예: 1s, 500ms, 0s=딜레이 없음)', section: 'protocol' },
   { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: true, description: '실내기 능동 제어 (set_power / set_mode / target_temperature / set_fan_speed / set_multiple). false 면 제어 명령 거부', section: 'protocol' },
   { name: 'buzzer_on_control', type: 'boolean', label: '제어 시 부저', default: false, description: '제어 명령 시 실내기 부저 울림 (control_enabled=true 일 때만 의미 있음)', section: 'protocol' },
   // ── Device discovery ──
@@ -161,6 +192,7 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
 ];
 
 const LG_LGAP_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '디바이스와 주고받는 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장 — 로그 폭주 우려)' },
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial'], required: true, default: 'serial', description: 'RS-485 시리얼 통신' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', description: '시리얼 포트 (예: /dev/ttyUSB0)' },
   { name: 'baud_rate', type: 'number', label: '보 레이트', default: 4800, description: '통신 속도 (LGAP 기본값: 4800)' },
@@ -189,6 +221,7 @@ const LG_LGAP_FIELDS: ConfigField[] = [
 //   logging  : include_raw_hex, log_decode_errors, log_drops, log_state_updates
 // ──────────────────────────────────────────────────────────────────────────
 const LG_HVACR02_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '수신 프레임 로그', default: false, description: '디바이스로부터 수신한(RX) 프레임을 hex 로 INFO 로그 (passive capture 라 수신만; 진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB1)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -241,6 +274,7 @@ const LG_HVACR02_FIELDS: ConfigField[] = [
 // 모두 파싱한다 — 따라서 UI 에 그대로 노출한다.
 // ──────────────────────────────────────────────────────────────────────────
 const LG_HVACR01_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '수신 프레임 로그', default: false, description: '디바이스로부터 수신한(RX) 프레임을 hex 로 INFO 로그 (passive capture 라 수신만; 진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -291,6 +325,7 @@ const LG_HVACR01_FIELDS: ConfigField[] = [
 //   logging  : include_raw_hex, include_register_info, log_*
 // ──────────────────────────────────────────────────────────────────────────
 const CENTURY_HVACR01_FIELDS: ConfigField[] = [
+  { name: 'log_messages', type: 'boolean', label: '수신 프레임 로그', default: false, description: '디바이스로부터 수신한(RX) 프레임을 hex 로 INFO 로그 (passive capture 라 수신만; 진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
   // ── Transport ──
   { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], default: 'serial', required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -343,7 +378,8 @@ const SERIAL_FIELDS: ConfigField[] = [
   { name: 'read_timeout', type: 'string', label: '읽기 타임아웃', default: '1s', description: 'Go duration 형식 (예: 500ms, 1s)' },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096 },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
-  { name: 'log_drops', type: 'boolean', label: '드롭 로그 출력', default: false, description: '수신 버퍼가 가득 차 메시지를 드롭할 때 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장 — 로그 폭주 방지' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장 — 로그 폭주 우려)', section: 'logging' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그 출력', default: false, description: '수신 버퍼가 가득 차 메시지를 드롭할 때 WARN 로그 출력 (디버깅 용). 운영 환경에서는 비활성 권장 — 로그 폭주 방지', section: 'logging' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size', 'stream', 'frame'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
@@ -370,6 +406,7 @@ const TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 0, description: '0 = 무제한' },
   { name: 'broadcast', type: 'boolean', label: '브로드캐스트', default: false, description: '활성화 시 송신 데이터를 연결된 모든 클라이언트에 전송 (특정 대상 무시). 한 소스를 여러 클라이언트가 동시에 수신할 때 사용.' },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.', section: 'logging' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
@@ -387,10 +424,28 @@ const TCP_CLIENT_FIELDS: ConfigField[] = [
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '5s', description: '연결 끊김 시 재시도 간격 (예: 5s)' },
   { name: 'max_retries', type: 'number', label: '최대 재시도 횟수', default: 0, description: '0 = 무한 재시도' },
   { name: 'max_message_size', type: 'number', label: '최대 메시지 크기', default: 0, description: '0 = 무제한' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 패킷을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
   // 프레이밍 설정
   { name: 'framing', type: 'select', label: '프레이밍 모드', options: ['raw', 'newline', 'length_prefix', 'fixed_size'], default: 'raw', description: '수신 데이터 구분 방식' },
   { name: 'delimiter', type: 'number', label: '구분자 (바이트 값)', default: 10, description: '0x0A = LF, 0x0D = CR', visibleWhen: { field: 'framing', value: 'newline' } },
   { name: 'fixed_size', type: 'number', label: '고정 크기 (바이트)', description: '프레임당 고정 바이트 수', visibleWhen: { field: 'framing', value: 'fixed_size' } },
+];
+
+// UDP Server 에이전트 필드 정의 (백엔드 socket.ParseUDPServerConfig 키와 1:1 매핑).
+// UDP 는 데이터그램 기반이라 프레이밍 설정이 없다 (수신 데이터그램 = 1 패킷).
+const UDP_SERVER_FIELDS: ConfigField[] = [
+  { name: 'host', type: 'string', label: '호스트', default: '0.0.0.0', description: '바인드 주소 (0.0.0.0 = 모든 인터페이스)' },
+  { name: 'port', type: 'number', label: '포트', required: true, description: 'UDP 수신 포트' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096, description: '데이터그램 읽기 버퍼 크기' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 데이터그램을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
+];
+
+// UDP Client 에이전트 필드 정의 (백엔드 socket.ParseUDPClientConfig 키와 1:1 매핑).
+const UDP_CLIENT_FIELDS: ConfigField[] = [
+  { name: 'host', type: 'string', label: '호스트', required: true, description: '전송 대상 서버 IP' },
+  { name: 'port', type: 'number', label: '포트', required: true, description: '전송 대상 서버 UDP 포트' },
+  { name: 'buffer_size', type: 'number', label: '버퍼 크기 (바이트)', default: 4096, description: '응답 데이터그램 읽기 버퍼 크기' },
+  { name: 'log_messages', type: 'boolean', label: '송/수신 패킷 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 데이터그램을 hex 로 INFO 로그 (패킷 단위 진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.' },
 ];
 
 /**
@@ -475,6 +530,7 @@ export const HVACR_QUADRANT_AGENT_TYPES = new Set([
 /** 에이전트 타입별 설정 스키마 레지스트리 */
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'mqtt-client': MQTT_FIELDS,
+  'thingplus-gateway': THINGPLUS_FIELDS,
   'modbus-tcp': MODBUS_TCP_FIELDS,
   'modbus-tcp-server': MODBUS_TCP_SERVER_FIELDS,
   'http': HTTP_RECEIVER_FIELDS,
@@ -489,6 +545,8 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
   'tcp-client': TCP_CLIENT_FIELDS,
+  'udp-server': UDP_SERVER_FIELDS,
+  'udp-client': UDP_CLIENT_FIELDS,
   'store': STORE_FIELDS,
 };
 

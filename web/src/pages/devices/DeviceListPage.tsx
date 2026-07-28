@@ -11,9 +11,11 @@ import {
   HardDrive,
   Lock,
   Plus,
+  Trash2,
 } from 'lucide-react';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
+import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
 import {
   ALL_DEVICE_COLUMNS,
@@ -21,6 +23,8 @@ import {
   useDeviceColumns,
   type DeviceListColumnKey,
 } from '@/hooks/useDeviceColumns';
+import { useAgents } from '@/hooks/useAgent';
+import { useDeleteDevice, useSetDeviceReport } from '@/hooks/useDevice';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
@@ -29,15 +33,30 @@ import { TargetProvider } from '@/lib/remote/TargetContext';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { getDeviceTypeLabel, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
+import { useUIStore } from '@/stores/uiStore';
 import type { DeviceInfo, DeviceListParams } from '@/types/device';
 
 import DeviceDetailPanel from './DeviceDetailPanel';
 import DeviceStatusBadge from './DeviceStatusBadge';
+import { ReportToggleSwitch } from './ReportToggleSwitch';
 import DeviceSearchFilter from './DeviceSearchFilter';
 import AddDeviceDialog from './AddDeviceDialog';
 
 /** 페이지 크기 옵션 */
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
+
+/**
+ * `remove_device` exec 를 지원하는 에이전트 타입 집합.
+ * Samsung HVACR / LGAP / LG ICP-01 / LG ICP-02 가 디바이스 삭제를 지원한다
+ * (Century/system/modbus 미지원).
+ */
+const REMOVABLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02']);
+
+/**
+ * `set_device` exec 를 지원하는 에이전트 타입 집합 (디바이스별 상태 전송 on/off).
+ * Samsung HVACR / LGAP / LG ICP-01 / LG ICP-02 가 디바이스별 report_enabled 게이트를 지원한다.
+ */
+const REPORT_TOGGLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02']);
 
 // 디바이스 source 값을 사용자 친화적 라벨로 매핑.
 // 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
@@ -128,6 +147,24 @@ export default function DeviceListPage({
   const { data, isLoading, error, refetch } = useDevicesTarget(target, filters);
   const gating = useTargetGating(target);
   const showLocalWrites = !remote;
+
+  // 삭제 가능 여부 판정을 위한 에이전트 타입 맵. device.agent_name → { id, type }.
+  // remove_device 는 에이전트 exec 이므로 소유 에이전트 ID 와 지원 타입 확인이 필요하다.
+  // 원격 타깃에서는 로컬 쓰기(exec)를 노출하지 않으므로 조회를 건너뛴다.
+  const { data: agentsData } = useAgents(undefined, undefined);
+  const agentMap = useMemo(() => {
+    const map = new Map<string, { id: string; type: string }>();
+    for (const a of agentsData?.data ?? []) {
+      map.set(a.name, { id: a.id, type: a.type });
+    }
+    return map;
+  }, [agentsData]);
+
+  const deleteDevice = useDeleteDevice();
+  const setDeviceReport = useSetDeviceReport();
+  const addNotification = useUIStore((s) => s.addNotification);
+  // 삭제 확인 다이얼로그 대상(1개). null 이면 닫힌 상태.
+  const [deleteTarget, setDeleteTarget] = useState<DeviceInfo | null>(null);
 
   // 정렬 상태
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
@@ -281,6 +318,80 @@ export default function DeviceListPage({
   /** 행 클릭 시 상세 패널 토글 (읽기 모드) */
   const toggleExpand = (id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
+  };
+
+  /**
+   * 디바이스가 삭제 가능하면 소유 에이전트 ID 를 반환하고, 아니면 null.
+   * 조건: 로컬 타깃 + 소유 에이전트 타입이 remove_device 지원.
+   * config 소스도 삭제 가능하다(수동 추가 후 재시작으로 config 로 굳은 디바이스를
+   * 사용자가 직접 삭제할 수 있도록 보호를 제거함 — 서버도 동일).
+   */
+  const resolveDeletableAgentId = (device: DeviceInfo): string | null => {
+    if (!showLocalWrites) return null;
+    const meta = agentMap.get(device.agent_name);
+    if (!meta || !REMOVABLE_AGENT_TYPES.has(meta.type)) return null;
+    return meta.id;
+  };
+
+  /** 삭제 확인 다이얼로그에서 확인 클릭 시 실행. */
+  const handleConfirmDelete = () => {
+    if (!deleteTarget) return;
+    const agentId = resolveDeletableAgentId(deleteTarget);
+    if (!agentId) {
+      setDeleteTarget(null);
+      return;
+    }
+    const target = deleteTarget;
+    deleteDevice.mutate(
+      { agentId, deviceId: target.uid ?? target.id },
+      {
+        onSuccess: () => {
+          setDeleteTarget(null);
+          addNotification({ type: 'success', message: t('devices.list.deleteSuccess') });
+        },
+        onError: (err) => {
+          setDeleteTarget(null);
+          addNotification({
+            type: 'error',
+            message: t('devices.list.deleteError').replace(
+              '{message}',
+              err instanceof Error ? err.message : t('devices.list.unknownError'),
+            ),
+          });
+        },
+      },
+    );
+  };
+
+  /**
+   * 디바이스가 상태 전송 토글 가능하면 소유 에이전트 ID 를 반환하고, 아니면 null.
+   * 조건: 로컬 타깃 + 소유 에이전트 타입이 set_device 지원(samsung_hvacr01/lgap).
+   */
+  const resolveReportTogglableAgentId = (device: DeviceInfo): string | null => {
+    if (!showLocalWrites) return null;
+    const meta = agentMap.get(device.agent_name);
+    if (!meta || !REPORT_TOGGLE_AGENT_TYPES.has(meta.type)) return null;
+    return meta.id;
+  };
+
+  /** 상태 전송 on/off 토글. 낙관적 업데이트는 훅이 처리하며 실패 시 알림. */
+  const handleToggleReport = (device: DeviceInfo, next: boolean) => {
+    const agentId = resolveReportTogglableAgentId(device);
+    if (!agentId) return;
+    setDeviceReport.mutate(
+      { agentId, deviceId: device.uid ?? device.id, reportEnabled: next },
+      {
+        onError: (err) => {
+          addNotification({
+            type: 'error',
+            message: t('devices.list.reportError').replace(
+              '{message}',
+              err instanceof Error ? err.message : t('devices.list.unknownError'),
+            ),
+          });
+        },
+      },
+    );
   };
 
 
@@ -471,11 +582,15 @@ export default function DeviceListPage({
                       />
                     ),
                   )}
+                  {/* 액션(상태 전송 토글 + 삭제) 컬럼 — 정렬 비대상 빈 헤더. */}
+                  <th className="w-24 px-3 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
                 {pagedDevices.map((device) => {
                   const isExpanded = expandedId === device.id;
+                  const canDelete = resolveDeletableAgentId(device) !== null;
+                  const canToggleReport = resolveReportTogglableAgentId(device) !== null;
                   return (
                     <DeviceRow
                       key={device.id}
@@ -483,6 +598,12 @@ export default function DeviceListPage({
                       columns={visibleColumns}
                       isExpanded={isExpanded}
                       onToggle={() => toggleExpand(device.id)}
+                      onDelete={canDelete ? () => setDeleteTarget(device) : undefined}
+                      onToggleReport={
+                        canToggleReport
+                          ? (next) => handleToggleReport(device, next)
+                          : undefined
+                      }
                       t={t}
                     />
                   );
@@ -496,6 +617,23 @@ export default function DeviceListPage({
       {/* 디바이스 추가 다이얼로그 (로컬 전용) */}
       {showLocalWrites && showAddDialog && (
         <AddDeviceDialog onClose={() => setShowAddDialog(false)} />
+      )}
+
+      {/* 디바이스 삭제 확인 다이얼로그 */}
+      {deleteTarget && (
+        <ConfirmDialog
+          isOpen
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={handleConfirmDelete}
+          title={t('devices.list.deleteTitle')}
+          message={t('devices.list.deleteMessage').replace(
+            '{name}',
+            getDeviceDisplayName(deleteTarget),
+          )}
+          confirmLabel={t('common.delete')}
+          variant="danger"
+          isSubmitting={deleteDevice.isPending}
+        />
       )}
     </div>
     </TargetProvider>
@@ -600,10 +738,21 @@ interface DeviceRowProps {
   columns: DeviceListColumnKey[];
   isExpanded: boolean;
   onToggle: () => void;
+  /**
+   * 삭제 요청 핸들러. 삭제 불가 디바이스(설정 소스/미지원 에이전트/원격)면 undefined 이며,
+   * 이 경우 휴지통 아이콘을 렌더하지 않는다.
+   */
+  onDelete?: () => void;
+  /**
+   * 상태 전송 on/off 토글 핸들러. 토글 미지원 디바이스(미지원 에이전트/원격)면 undefined 이며,
+   * 이 경우 스위치를 렌더하지 않는다. `next` 는 전환할 목표 값이다.
+   */
+  onToggleReport?: (next: boolean) => void;
   /** 번역 함수(상위에서 주입). */
   t: TranslationFn;
 }
 
+/** 상태 전송 on/off 스위치. 디바이스 행 액션 셀에서 사용한다. */
 /** 단일 컬럼 셀 렌더 (컬럼 키별). */
 function DeviceCell({
   column,
@@ -698,7 +847,15 @@ function DeviceCell({
   }
 }
 
-function DeviceRow({ device, columns, isExpanded, onToggle, t }: DeviceRowProps) {
+function DeviceRow({
+  device,
+  columns,
+  isExpanded,
+  onToggle,
+  onDelete,
+  onToggleReport,
+  t,
+}: DeviceRowProps) {
   return (
     <>
       <tr
@@ -717,12 +874,40 @@ function DeviceRow({ device, columns, isExpanded, onToggle, t }: DeviceRowProps)
         {columns.map((col) => (
           <DeviceCell key={col} column={col} device={device} t={t} />
         ))}
+
+        {/* 액션 셀. 상태 전송 토글(지원 디바이스) + 삭제(삭제 가능 디바이스)를 렌더한다.
+            행 클릭(확장)과 겹치지 않도록 각 컨트롤에서 stopPropagation 한다. */}
+        <td className="px-3 py-3">
+          <div className="flex items-center justify-end gap-2">
+            {onToggleReport && (
+              <ReportToggleSwitch
+                enabled={device.report_enabled ?? true}
+                onToggle={onToggleReport}
+                t={t}
+              />
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                title={t('devices.list.deleteTooltip')}
+                aria-label={t('devices.list.deleteTooltip')}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </td>
       </tr>
 
-      {/* 확장된 상세 패널 (colspan = 확장 아이콘 1 + 표시 컬럼 수) */}
+      {/* 확장된 상세 패널 (colspan = 확장 아이콘 1 + 표시 컬럼 수 + 액션 1) */}
       {isExpanded && (
         <tr>
-          <td colSpan={columns.length + 1} className="bg-(--color-bg-sunken)">
+          <td colSpan={columns.length + 2} className="bg-(--color-bg-sunken)">
             <DeviceDetailPanel deviceId={device.id} />
           </td>
         </tr>

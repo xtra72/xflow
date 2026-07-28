@@ -95,7 +95,23 @@ export interface StoreSeriesRef {
  * @spec SPEC-WEB-005
  */
 export interface StoreSourceConfig {
-  /** Store 에이전트 이름(백엔드 라우트가 name 기반). */
+  /**
+   * Store 에이전트의 안정적 ID(정본). @spec SPEC-WEB-006
+   *
+   * Store API 는 이름 주소(`/store/{agent_name}/...`)이지만, 에이전트 이름은
+   * 변경될 수 있어 config 에 이름만 저장하면 리네임 시 연결이 끊긴다. 따라서
+   * 불변 ID 를 정본으로 저장하고, 렌더/쿼리 시 이 id 로 현재 이름을 해석해
+   * API 를 호출한다. 구 config 하위호환을 위해 옵셔널이며, 부재 시 `agent_name`
+   * 을 그대로 사용한다.
+   */
+  agent_id?: string;
+  /**
+   * Store 에이전트 이름.
+   *
+   * `agent_id` 가 있으면 이 값은 표시용 스냅샷 + 하위호환 폴백으로만 쓰인다
+   * (실제 API 호출 이름은 agent_id 로 해석한 현재 이름). `agent_id` 가 없는 구
+   * config 에서는 이 값이 그대로 API 호출에 사용된다. @spec SPEC-WEB-006
+   */
   agent_name: string;
   /** Store 네임스페이스(미지정 시 'default'). */
   namespace?: string;

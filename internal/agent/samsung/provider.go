@@ -71,15 +71,16 @@ func (p *Hvacr01DeviceProvider) createExecutor(addr NasaAddress) adapter.Command
 // hvacr01DeviceToInfo converts a NasaDevice to adapter.SamsungNasaDeviceInfo.
 func hvacr01DeviceToInfo(dev *NasaDevice) adapter.SamsungNasaDeviceInfo {
 	info := adapter.SamsungNasaDeviceInfo{
-		Address:      dev.Address.String(),
-		DeviceID:     dev.UnitID, // v0.18.7: NasaDevice.UnitID 가 adapter SamsungNasaDeviceInfo.DeviceID (사용자 식별자) 로 매핑
-		Name:         dev.Name,
-		DeviceType:   dev.Type,
-		Online:       dev.Online,
-		Ready:        dev.Ready,
-		LastSeen:     dev.LastSeen,
-		ErrorCount:   dev.ErrorCount,
-		DeviceSource: dev.Source,
+		Address:       dev.Address.String(),
+		DeviceID:      dev.UnitID, // v0.18.7: NasaDevice.UnitID 가 adapter SamsungNasaDeviceInfo.DeviceID (사용자 식별자) 로 매핑
+		Name:          dev.Name,
+		DeviceType:    dev.Type,
+		Online:        dev.Online,
+		Ready:         dev.Ready,
+		LastSeen:      dev.LastSeen,
+		ErrorCount:    dev.ErrorCount,
+		DeviceSource:  dev.Source,
+		ReportEnabled: dev.ReportEnabled,
 	}
 
 	if dev.State != nil {
@@ -91,6 +92,17 @@ func hvacr01DeviceToInfo(dev *NasaDevice) adapter.SamsungNasaDeviceInfo {
 		info.SwingVertical = &dev.State.SwingVertical
 		info.FilterAlarm = &dev.State.FilterAlarm
 		info.ErrorCode = &dev.State.ErrorCode
+	}
+
+	// 실외기(ODU): State=nil, Outdoor 에 디코드된 텔레메트리(out_* / outdoor_temperature 등)를
+	// 보유한다. 관측된 필드만 ExtraProperties 로 노출해 device.State().Properties 에 평탄화한다
+	// — 어댑터가 이를 병합하므로 UI 디바이스 상세에 실외기 상태 속성이 표시된다.
+	if dev.Outdoor != nil && len(dev.Outdoor.Fields) > 0 {
+		extra := make(map[string]any, len(dev.Outdoor.Fields))
+		for k, v := range dev.Outdoor.Fields {
+			extra[k] = v
+		}
+		info.ExtraProperties = extra
 	}
 
 	return info

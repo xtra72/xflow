@@ -16,6 +16,11 @@ type LGAPDevice struct {
 	State      *LGAPDeviceState // 현재 상태
 	ErrorCount int
 	Source     string // "config", "bridge"
+	// ReportEnabled 는 디바이스별 상태 전송 on/off 이다(기본 true=on). false 면 이 디바이스에
+	// 대한 device_state 리포트/변경 및 모든 디바이스 이벤트를 노드로 방출하지 않는다.
+	// 트랜스포트 단위 이벤트(transport_*)는 게이트하지 않는다.
+	// a.mu 하에서만 접근한다(단순 필드 읽기이므로 기존 락 하에서 안전).
+	ReportEnabled bool
 }
 
 // LGAPDeviceState 는 실내기의 현재 운전 상태를 나타낸다.
