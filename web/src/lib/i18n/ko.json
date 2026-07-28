@@ -1851,6 +1851,7 @@
       "unpinned": "미고정",
       "metadata": "메타데이터",
       "name": "이름",
+      "deviceId": "디바이스 ID",
       "location": "위치",
       "group": "그룹",
       "tags": "태그",

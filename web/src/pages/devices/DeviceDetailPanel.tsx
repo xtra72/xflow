@@ -129,6 +129,7 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
           )}
           <MetadataSection
             deviceId={deviceId}
+            fullId={device.uid || device.id}
             source={device.source}
             name={device.metadata?.name || device.name}
             metadata={{
@@ -1256,6 +1257,8 @@ function InlineParamInput({
 
 interface MetadataSectionProps {
   deviceId: string;
+  /** 전체 디바이스 식별자 (uid || id) — 읽기 모드 테이블에 잘림 없이 표시. */
+  fullId?: string;
   source: string;
   name: string;
   metadata: {
@@ -1275,7 +1278,7 @@ interface MetadataSectionProps {
   readOnly?: boolean;
 }
 
-function MetadataSection({ deviceId, source, name, metadata, editing, onEditChange, readOnly: _readOnly }: MetadataSectionProps) {
+function MetadataSection({ deviceId, fullId, source, name, metadata, editing, onEditChange, readOnly: _readOnly }: MetadataSectionProps) {
   const { t } = useTranslation();
   // config 소스 디바이스는 기본 고정 설치 (체크 해제 → 재시작시 삭제)
   const effectivePinned = metadata.pinned ?? (source === 'config' || source === 'pinned');
@@ -1410,6 +1413,14 @@ function MetadataSection({ deviceId, source, name, metadata, editing, onEditChan
               <tr>
                 <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">{t('devices.detail.name')}</td>
                 <td className="py-1.5 text-(--color-text-primary)">{name}</td>
+              </tr>
+            )}
+            {fullId && (
+              <tr>
+                <td className="py-1.5 pr-4 text-(--color-text-muted) whitespace-nowrap">{t('devices.detail.deviceId')}</td>
+                <td className="py-1.5 text-(--color-text-primary)">
+                  <span title={fullId} className="font-mono text-xs break-all">{fullId}</span>
+                </td>
               </tr>
             )}
             <tr>

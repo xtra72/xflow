@@ -4141,15 +4141,12 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     // 1순위: list_devices 응답에서 받은 bus address (사람이 읽기 좋은 hex).
     const uid = device.uid ?? device.id;
     if (uid && addressMap[uid]) return addressMap[uid];
-    // 2순위: UUID short form (Phase D+ 호환, address 미수신 시).
-    if (device.uid) return device.uid.slice(0, 8);
+    // 2순위: UUID 전체 (Phase D+ 호환, address 미수신 시) — 잘라내지 않고 전체 노출.
+    if (device.uid) return device.uid;
     // 3순위: Phase A~C composite — colon 뒷부분만 추출 (legacy fallback).
     const parts = device.id.split(':');
     if (parts.length > 1) return parts.slice(1).join(':');
-    // 4순위: 그 외 (UUID 자체) — UUID 8자리로 trim 하여 가독성 확보.
-    if (device.id.length >= 8 && device.id.includes('-')) {
-      return device.id.slice(0, 8);
-    }
+    // 4순위: 그 외 (UUID 자체) — 전체 노출 (잘림 없음).
     return device.id;
   }
 
@@ -4347,7 +4344,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                       className="cursor-pointer text-(--color-text-primary) transition-colors hover:bg-(--color-bg-elevated)"
                     >
                       <td className="py-2 pr-3 font-medium">{d.name || addressLabel}</td>
-                      <td className="py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
+                      <td title={addressLabel} className="whitespace-nowrap py-2 pr-3 text-xs text-(--color-text-muted) font-mono">{addressLabel}</td>
                       <td className="py-2 pr-3 text-xs">{getDeviceTypeLabel(d.type)}</td>
                       <td className="py-2 pr-3"><DeviceStatusBadge online={d.online} /></td>
                       <td className="py-2 pr-3">

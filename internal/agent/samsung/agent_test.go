@@ -560,6 +560,75 @@ func TestNewHvacr01Agent_PreservesDeviceSource(t *testing.T) {
 	}
 }
 
+// TestNewHvacr01Agent_RestoresDisplayName 는 영속화된 display_name 이 생성자 로드에서
+// dev.Name(사용자 표시 이름)으로 복원되고, display_name 이 없는 항목은 빈 dev.Name 으로
+// 로드되는지(후방호환) 검증한다.
+//
+// 회귀 배경: 이전에는 복원 루프가 entry.Name → UnitID 만 세팅해 dev.Name 이 항상 빈 값이
+// 됐고, 프로바이더가 빈 이름을 보고하여 UI 가 재시작 후 id 로 폴백했다. display_name 을
+// 왕복 보존하면 표시 이름이 dev.Name 으로 복원되어야 한다. UnitID(device_id) 왕복은
+// entry.Name → dev.UnitID 로 변경 전과 동일하게 유지된다.
+func TestNewHvacr01Agent_RestoresDisplayName(t *testing.T) {
+	origOpener := SerialOpener
+	SerialOpener = func(port string, baudRate, dataBits, stopBits int, parity string) (io.ReadWriteCloser, error) {
+		return nil, nil
+	}
+	defer func() { SerialOpener = origOpener }()
+
+	config := agent.AgentConfig{
+		ID:   "samsung-hvacr01-dn",
+		Name: "NASA HVAC",
+		Type: "samsung_hvacr01",
+		Transport: agent.TransportConfig{
+			Type: "serial",
+			Options: map[string]any{
+				"transport_type": "serial",
+				"serial_port":    "/dev/ttyUSB0",
+				"devices": []any{
+					// 표시 이름 있음: name=UnitID(device_id), display_name=표시 이름
+					map[string]any{"address": "200001", "name": "dev-uuid-001", "display_name": "개발팀"},
+					// 표시 이름 없음(구 config/미지정) → dev.Name 은 빈 값(후방호환)
+					map[string]any{"address": "200002", "name": "dev-uuid-002"},
+				},
+			},
+		},
+	}
+
+	ag, err := NewHvacr01Agent(config)
+	if err != nil {
+		t.Fatalf("NewHvacr01Agent: %v", err)
+	}
+	a := ag.(*Hvacr01Agent)
+
+	withDNAddr, _ := ParseNasaAddress("200001")
+	noDNAddr, _ := ParseNasaAddress("200002")
+
+	a.mu.RLock()
+	withDN := a.devices[withDNAddr]
+	noDN := a.devices[noDNAddr]
+	a.mu.RUnlock()
+
+	if withDN == nil {
+		t.Fatalf("display_name 디바이스가 로드되지 않음")
+	}
+	if withDN.Name != "개발팀" {
+		t.Errorf("표시 이름 미복원: dev.Name = %q, want \"개발팀\"", withDN.Name)
+	}
+	if withDN.UnitID != "dev-uuid-001" {
+		t.Errorf("UnitID 왕복 손상: dev.UnitID = %q, want \"dev-uuid-001\"", withDN.UnitID)
+	}
+
+	if noDN == nil {
+		t.Fatalf("display_name 없는 디바이스가 로드되지 않음")
+	}
+	if noDN.Name != "" {
+		t.Errorf("후방호환 위반: display_name 없는 dev.Name = %q, want \"\"", noDN.Name)
+	}
+	if noDN.UnitID != "dev-uuid-002" {
+		t.Errorf("UnitID 왕복 손상: dev.UnitID = %q, want \"dev-uuid-002\"", noDN.UnitID)
+	}
+}
+
 // TestNewHvacr01Agent_InvalidConfig 는 transport_type 누락 시 에러를 반환하는지 검증한다.
 func TestNewHvacr01Agent_InvalidConfig(t *testing.T) {
 	config := agent.AgentConfig{
@@ -1101,6 +1170,11 @@ func (r *fakeDeviceIDRepo) GetOrCreate(_ context.Context, agentName, unitID stri
 
 func (r *fakeDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (string, error) {
 	return r.m[agentName+":"+unitID], nil
+}
+
+func (r *fakeDeviceIDRepo) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	r.m[agentName+":"+unitID] = deviceID
+	return nil
 }
 
 // TestHvacr01Agent_Process_RemoveDevice_ByUUID 는 remove_device 가 UUID(1급 식별자)로도

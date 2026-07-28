@@ -36,6 +36,10 @@ func (fakeIcp01DeviceIDRepo) Get(_ context.Context, agentName, unitID string) (s
 	return "uuid:" + agentName + ":" + unitID, nil
 }
 
+func (fakeIcp01DeviceIDRepo) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	return nil
+}
+
 // withFakeDeviceIDRepoIcp01 은 결정적 device_id 저장소를 설정하고 종료 시 복원한다.
 func withFakeDeviceIDRepoIcp01(t *testing.T) {
 	t.Helper()

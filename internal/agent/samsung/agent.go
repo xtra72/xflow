@@ -166,8 +166,10 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 			Address: addr,
 			Type:    devType,
 			UnitID:  entry.Name,
-			Online:  false,
-			Source:  source,
+			// display_name 이 있으면 표시 이름 복원. 없으면(구 config/미지정) 빈 값 → 현행 동작.
+			Name:   entry.DisplayName,
+			Online: false,
+			Source: source,
 			// report_enabled: nil(미지정) 이면 기본 on. 명시 false 만 off.
 			ReportEnabled: entry.ReportEnabled == nil || *entry.ReportEnabled,
 		}
@@ -186,7 +188,50 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 		return nil, err
 	}
 
+	// 재시작 견고성: config 로 복원된 디바이스의 지정 device_id(dev.UnitID)를 저장소에
+	// 재등록해, device_ids.json 이 유실돼도 config 가 authoritative 하도록 한다.
+	// (Init 이후여야 a.agentConfig.Name 이 채워져 정규화 키가 올바르게 산출됨.)
+	a.restoreSpecifiedDeviceIDs()
+
 	return a, nil
+}
+
+// restoreSpecifiedDeviceIDs 는 config 로 복원된 디바이스의 지정 device_id(dev.UnitID)를
+// device_id 저장소에 재등록한다. 저장소에 이미 값이 있으면 덮어쓰지 않는다(set-if-absent).
+//
+// 목적: device_ids.json 이 유실된 경우에만 config 를 authoritative 로 삼아 지정 id 를
+// 복구한다. 저장소가 정상이면 기존 매핑을 보존해 기존 저장 디바이스의 device_id 를
+// 바꾸지 않는다(무회귀). dev.UnitID 가 빈 값(미지정)이면 등록하지 않아 자동생성을 유지한다.
+//
+// 락 순서: a.mu(RLock)로 등록 대상만 수집한 뒤 락을 놓고 저장소를 호출한다.
+// SetDeviceID/GetDeviceID 는 a.mu 와 무관한 별도 저장소 락을 쓰므로 재진입 위험이 없다.
+func (a *Hvacr01Agent) restoreSpecifiedDeviceIDs() {
+	if agent.GetDeviceIDRepository() == nil {
+		return // 저장소 미설정: 재등록할 대상 없음 (graceful).
+	}
+
+	type reg struct{ addr, unitID string }
+	var regs []reg
+	a.mu.RLock()
+	for addr, dev := range a.devices {
+		if dev.UnitID != "" {
+			regs = append(regs, reg{addr: addr.String(), unitID: dev.UnitID})
+		}
+	}
+	agentName := a.agentConfig.Name
+	a.mu.RUnlock()
+
+	for _, r := range regs {
+		// set-if-absent: 저장소에 이미 값이 있으면 보존(기존 device_id 무회귀).
+		if agent.GetDeviceID(context.Background(), agentName, r.addr) != "" {
+			continue
+		}
+		if err := agent.SetDeviceID(context.Background(), agentName, r.addr, r.unitID); err != nil {
+			// 충돌/영속 실패는 부팅을 막지 않는다(best-effort). 로그만 남긴다.
+			a.logger.Warn("samsung_hvacr01: 지정 device_id 재등록 실패",
+				"addr", r.addr, "unit_id", r.unitID, "error", err)
+		}
+	}
 }
 
 // Init 은 에이전트를 초기화한다.
@@ -1068,6 +1113,19 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 		}
 	}
 
+	// 사용자가 device_id 를 지정하면, ResolveDeviceID 호출들 이전에 (agent, 주소) →
+	// 지정값 매핑을 등록·영속한다. 이렇게 하면 이후 emit/응답 경로의
+	// ResolveDeviceID(agent, addr.String()) 가 지정값을 반환한다(자동생성 대신).
+	// 지정 없으면(빈 문자열) 등록하지 않아 기존 자동생성 UUID 동작을 보존한다.
+	if deviceID != "" {
+		if err := agent.SetDeviceID(context.Background(), a.agentConfig.Name, addr.String(), deviceID); err != nil {
+			if errors.Is(err, agent.ErrDeviceIDConflict) {
+				return nil, ErrDuplicateDeviceID
+			}
+			return nil, fmt.Errorf("samsung_hvacr01: register device_id: %w", err)
+		}
+	}
+
 	if devType == "" {
 		devType = DetectDeviceType(addr)
 	}
@@ -1113,10 +1171,13 @@ func (a *Hvacr01Agent) processAddDevice(req *processRequest) ([]byte, error) {
 	}
 
 	resp := map[string]any{
-		"status":         "ok",
-		"address":        addr.String(),
-		"unit_id":        deviceID,
-		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, deviceID),
+		"status":  "ok",
+		"address": addr.String(),
+		"unit_id": deviceID,
+		// device_id 는 emit 경로(regData 및 telemetry)와 동일하게 (agent, 주소) 키로
+		// 해석한다. 지정 device_id 가 있으면 위 SetDeviceID 등록으로 지정값을,
+		// 없으면 기존과 동일한 자동생성 UUID 를 반환한다.
+		"device_id":      agent.ResolveDeviceID(context.Background(), a.agentConfig.Name, addr.String()),
 		"name":           name,
 		"device_type":    devType,
 		"report_enabled": dev.ReportEnabled,
@@ -1325,6 +1386,8 @@ func (a *Hvacr01Agent) addrByDeviceUUID(uuid string) (NasaAddress, bool) {
 // 반환 형식은 ParseDevices() 와 round-trip 되도록 DeviceEntry 로 맞춘다.
 // 중요: Name 필드는 항상 dev.UnitID 를 사용한다. ParseDevices() 시 entry.Name → UnitID 로
 // 매핑되므로, 역으로 저장할 때는 UnitID → Name 으로 써야 device_id(UUID) 안정성이 보존된다.
+// 사용자 표시 이름(dev.Name)은 별도 슬롯 DisplayName 으로 보존한다(Name 슬롯이 UnitID 를
+// 점유하므로). 재시작 후 복원 루프가 entry.DisplayName → dev.Name 으로 되돌린다.
 func (a *Hvacr01Agent) GetPersistableDevices() []agent.DeviceEntry {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -1338,6 +1401,7 @@ func (a *Hvacr01Agent) GetPersistableDevices() []agent.DeviceEntry {
 		result = append(result, agent.DeviceEntry{
 			Address:       addr.String(),
 			Name:          dev.UnitID,
+			DisplayName:   dev.Name,   // 표시 이름 보존: 재시작 후 dev.Name 복원용
 			Source:        dev.Source, // source 보존: 재시작 후에도 "bridge" 유지 → 삭제 가능
 			ReportEnabled: &re,        // report_enabled 왕복 보존(off 설정이 재시작 후에도 유지)
 		})

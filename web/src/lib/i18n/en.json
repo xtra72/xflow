@@ -1851,6 +1851,7 @@
       "unpinned": "Unpinned",
       "metadata": "Metadata",
       "name": "Name",
+      "deviceId": "Device ID",
       "location": "Location",
       "group": "Group",
       "tags": "Tags",

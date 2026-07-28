@@ -13,9 +13,15 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 )
+
+// ErrDeviceIDConflict 는 지정 device_id 가 이미 다른 (agentName, unitID) 에
+// 배정돼 있어 등록이 거부됐음을 나타낸다. Set 이 유일성 위반 시 이 에러(래핑)를
+// 반환하며, 호출자는 errors.Is 로 충돌을 구분해 도메인 에러로 매핑한다.
+var ErrDeviceIDConflict = errors.New("device-id repository: device_id already assigned to another device")
 
 // DeviceIDRepository 는 (agentName, unitID) → device_id (UUID) 매핑을 제공한다.
 // 구체 구현체는 internal/storage 패키지에 위치한다.
@@ -24,6 +30,10 @@ type DeviceIDRepository interface {
 	GetOrCreate(ctx context.Context, agentName, unitID string) (string, error)
 	// Get 은 (agentName, unitID) 의 UUID 를 반환한다. 없으면 빈 문자열.
 	Get(ctx context.Context, agentName, unitID string) (string, error)
+	// Set 은 (agentName, unitID) 에 지정 deviceID 를 등록·영속한다.
+	// 지정 deviceID 가 이미 다른 (agentName, unitID) 에 배정돼 있으면
+	// ErrDeviceIDConflict(래핑)를 반환한다. 같은 키에 같은 값 재지정은 idempotent.
+	Set(ctx context.Context, agentName, unitID, deviceID string) error
 }
 
 var (
@@ -72,6 +82,42 @@ func ResolveDeviceID(ctx context.Context, agentName, unitID string) string {
 	// 항상 ID 기준으로 일관되게 발급되도록 한다 (이름키/ID키 중복 발급 방지).
 	agentName = normalizeAgentRef(agentName)
 	id, err := repo.GetOrCreate(ctx, agentName, unitID)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// SetDeviceID 는 (agentName, unitID) 에 사용자가 지정한 deviceID 를 등록·영속한다.
+// ResolveDeviceID 와 동일하게 저장소 미설정(nil) 시 no-op(nil)으로 graceful 하며,
+// agentName 을 정본 에이전트 ID 로 정규화하여 읽기/쓰기 키를 일치시킨다.
+//
+// 지정 deviceID 가 이미 다른 (agentName, unitID) 에 배정돼 있으면 저장소가
+// ErrDeviceIDConflict(래핑)를 반환한다. 같은 키에 같은 값 재지정은 idempotent.
+func SetDeviceID(ctx context.Context, agentName, unitID, deviceID string) error {
+	repo := GetDeviceIDRepository()
+	if repo == nil {
+		// 저장소 미설정: 지정 device_id 를 영속할 수 없으나, ResolveDeviceID 도
+		// nil 저장소에서 "" 를 반환하므로(graceful degradation) 여기서도 no-op.
+		return nil
+	}
+	agentName = normalizeAgentRef(agentName)
+	return repo.Set(ctx, agentName, unitID, deviceID)
+}
+
+// GetDeviceID 는 (agentName, unitID) 에 등록된 device_id 를 조회한다(읽기 전용).
+// GetOrCreate 와 달리 없으면 새로 생성하지 않고 빈 문자열을 반환한다.
+// 저장소 미설정(nil) 시 "" 를 반환하며 agentName 을 정본 ID 로 정규화한다.
+//
+// 재등록 경로가 "저장소에 이미 값이 있으면 덮어쓰지 않는다"(set-if-absent)를
+// 판단할 때 사용한다 — 기존 저장 디바이스의 device_id 를 보존하기 위함.
+func GetDeviceID(ctx context.Context, agentName, unitID string) string {
+	repo := GetDeviceIDRepository()
+	if repo == nil {
+		return ""
+	}
+	agentName = normalizeAgentRef(agentName)
+	id, err := repo.Get(ctx, agentName, unitID)
 	if err != nil {
 		return ""
 	}

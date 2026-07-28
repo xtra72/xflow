@@ -132,6 +132,11 @@ func (r *fakeLGDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (s
 	return r.m[agentName+":"+unitID], nil
 }
 
+func (r *fakeLGDeviceIDRepo) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	r.m[agentName+":"+unitID] = deviceID
+	return nil
+}
+
 // TestLGAPAgent_RemoveDevice_ByUUID 는 remove_device 가 UUID(1급 식별자)로도 디바이스를
 // 제거하는지 검증한다. localID 는 레지스트리 어댑터와 동일한 formatZone(zone) 을 사용한다
 // (프론트엔드/REST 가 받는 device.uid 의 근거).

@@ -47,6 +47,26 @@ func TestParseDevices_ReportEnabled(t *testing.T) {
 	assert.Nil(t, got[2].ReportEnabled, "report_enabled 미지정은 nil(기본 enabled)")
 }
 
+// TestParseDevices_DisplayName 는 devices 항목의 "display_name" 키가
+// DeviceEntry.DisplayName 으로 파싱되고, 없으면 빈 문자열(후방호환)로 남는지 검증한다.
+// Name 슬롯(→UnitID)과 독립적인 별도 슬롯임을 함께 확인한다.
+func TestParseDevices_DisplayName(t *testing.T) {
+	opts := map[string]any{
+		"devices": []any{
+			map[string]any{"address": "200001", "name": "living-room", "display_name": "개발팀"},
+			map[string]any{"address": "200002", "name": "declared"}, // display_name 미지정
+		},
+	}
+	got := ParseDevices(opts)
+	require.Len(t, got, 2)
+
+	assert.Equal(t, "개발팀", got[0].DisplayName, "display_name 키가 보존되어야 함")
+	assert.Equal(t, "living-room", got[0].Name, "name 슬롯(UnitID)은 display_name 과 독립")
+
+	assert.Equal(t, "", got[1].DisplayName, "display_name 미지정은 빈 문자열(후방호환)")
+	assert.Equal(t, "declared", got[1].Name)
+}
+
 func TestAgentConfig_Validate_Valid(t *testing.T) {
 	cfg := AgentConfig{
 		ID:                  "agent-1",

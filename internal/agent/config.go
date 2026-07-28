@@ -82,6 +82,10 @@ type DeviceEntry struct {
 	// zero-value(false)가 실수로 disable 로 해석되는 것을 방지하기 위함이다. 후방호환:
 	// report_enabled 키가 없는 기존 항목은 nil 로 로드되어 기본 enabled 로 동작한다.
 	ReportEnabled *bool
+	// DisplayName 은 사용자 표시 이름이다(선택). Name 슬롯이 프로토콜 unit id(device_id)를
+	// 점유하므로, 사람이 읽는 표시 이름은 별도 슬롯에 보존한다. 후방호환: display_name 키가
+	// 없는 기존 항목은 빈 문자열로 로드된다(표시 이름 미영속 → 현행 동작 유지).
+	DisplayName string
 }
 
 // ParseDevices 는 에이전트 설정 옵션에서 "devices" 배열을 파싱한다.
@@ -106,6 +110,10 @@ func ParseDevices(opts map[string]any) []DeviceEntry {
 		}
 		if name, ok := m["name"]; ok {
 			entry.Name = fmt.Sprintf("%v", name)
+		}
+		// display_name: present 이면 표시 이름으로 캡처, absent 면 빈 문자열(후방호환).
+		if dn, ok := m["display_name"]; ok {
+			entry.DisplayName = fmt.Sprintf("%v", dn)
 		}
 		if src, ok := m["source"]; ok {
 			entry.Source = fmt.Sprintf("%v", src)

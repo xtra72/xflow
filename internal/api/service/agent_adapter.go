@@ -662,6 +662,10 @@ func (a *AgentServiceAdapter) buildDevicesList(devices []agent.DeviceEntry) []an
 		if dev.Name != "" {
 			entry["name"] = dev.Name
 		}
+		// display_name: 비어 있지 않을 때만 기록(빈 값=미지정→키 생략으로 후방호환).
+		if dev.DisplayName != "" {
+			entry["display_name"] = dev.DisplayName // 표시 이름 보존: 재시작 후에도 dev.Name 복원
+		}
 		if dev.Source != "" {
 			entry["source"] = dev.Source // source 보존: 재시작 후 삭제 가능성 유지
 		}

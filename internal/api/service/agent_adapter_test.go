@@ -1991,6 +1991,91 @@ func TestExecAgent_EmptyUnitIDRoundTrip(t *testing.T) {
 	}
 }
 
+// TestExecAgent_SamsungDisplayNameSurvivesRestart 는 런타임에 add_device 로 추가한
+// 디바이스의 사용자 표시 이름(dev.Name)이 config 영속 왕복(직렬화 → 저장 → 재파싱 →
+// 복원) 후에도 유지되는지 검증한다.
+//
+// 회귀 방지(버그 재현): DisplayName 슬롯이 없던 시절, 직렬화는 DeviceEntry.Name 에
+// UnitID(device_id)만 실었고 dev.Name(표시 이름)은 버려졌다. 복원 루프도 entry.Name →
+// UnitID 만 세팅해 dev.Name 이 빈 값이 됐고, 프로바이더가 빈 이름을 보고하여 UI 가
+// id 로 폴백했다. 이 테스트는 add_device → 저장 → 새 인스턴스 복원까지 전체 실경로
+// (buildDevicesList → ParseDevices → 복원 루프)를 통과시켜 표시 이름 왕복을 검증한다.
+func TestExecAgent_SamsungDisplayNameSurvivesRestart(t *testing.T) {
+	fileRepo, err := storage.NewAgentFileRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("저장소 생성 실패: %v", err)
+	}
+	defer fileRepo.Close()
+
+	mgr := agent.NewManager()
+	if err := samsung.RegisterSamsungHvacr01Types(mgr); err != nil {
+		t.Fatalf("Samsung 에이전트 타입 등록 실패: %v", err)
+	}
+	adapter := NewAgentServiceAdapter(mgr, fileRepo, nil)
+
+	agentInfo, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "display-name-restart-test",
+		Type: "samsung_hvacr01",
+		Config: map[string]any{
+			"transport_type": "tcp-client",
+			"tcp_host":       "127.0.0.1",
+			"tcp_port":       float64(9102),
+		},
+	})
+	if err != nil {
+		t.Fatalf("에이전트 생성 실패: %v", err)
+	}
+
+	// 런타임에 표시 이름을 가진 디바이스 추가 → 로스터 저장이 트리거된다.
+	data, _ := json.Marshal(map[string]any{
+		"command": "add_device",
+		"params": map[string]any{
+			"address":   "20.00.05",
+			"device_id": "dev-uuid-005",
+			"name":      "개발팀",
+		},
+	})
+	if _, err := adapter.ExecAgent(context.Background(), agentInfo.ID, data); err != nil {
+		t.Fatalf("add_device 실행 실패: %v", err)
+	}
+
+	savedConfig, err := fileRepo.Get(context.Background(), agentInfo.ID)
+	if err != nil {
+		t.Fatalf("설정 로드 실패: %v", err)
+	}
+
+	// 재시작 시뮬레이션: 저장된 config 로 새 에이전트 인스턴스를 복원한다.
+	restored, err := samsung.NewHvacr01Agent(savedConfig)
+	if err != nil {
+		t.Fatalf("복원 에이전트 생성 실패: %v", err)
+	}
+	sAgent, ok := restored.(*samsung.Hvacr01Agent)
+	if !ok {
+		t.Fatalf("복원 에이전트 타입 오류: got %T", restored)
+	}
+
+	var found *samsung.NasaDevice
+	devs := sAgent.ListDevices()
+	for i := range devs {
+		if devs[i].Address.String() == "20.00.05" {
+			found = &devs[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("복원된 로스터에 추가한 디바이스(20.00.05)가 없음. devs=%+v", devs)
+	}
+
+	// 핵심 검증(버그 재현 대상): 표시 이름이 복원됐는가.
+	if found.Name != "개발팀" {
+		t.Errorf("표시 이름 소실: 복원된 dev.Name = %q, want \"개발팀\"", found.Name)
+	}
+	// 무회귀: UnitID(device_id)는 변경 전과 동일하게 보존돼야 한다.
+	if found.UnitID != "dev-uuid-005" {
+		t.Errorf("UnitID 왕복 손상: 복원된 dev.UnitID = %q, want \"dev-uuid-005\"", found.UnitID)
+	}
+}
+
 // marshalJSON 은 구조체를 JSON 바이트로 변환한다.
 func marshalJSON(v any) ([]byte, error) {
 	data, err := json.Marshal(v)

@@ -1359,6 +1359,16 @@ func (r *fakeDeviceIDRepo) Get(_ context.Context, agentName, unitID string) (str
 	return "", nil
 }
 
+func (r *fakeDeviceIDRepo) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.mapping == nil {
+		r.mapping = make(map[string]string)
+	}
+	r.mapping[agentName+"/"+unitID] = deviceID
+	return nil
+}
+
 // withDeviceIDRepo 는 테스트 동안 패키지-레벨 DeviceIDRepository 를 임시 주입한다.
 func withDeviceIDRepo(t *testing.T, repo agent.DeviceIDRepository) {
 	t.Helper()

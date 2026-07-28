@@ -85,6 +85,66 @@ func TestGetPersistableDevices_PreservesConfigUnitID(t *testing.T) {
 	}
 }
 
+// TestGetPersistableDevices_PreservesDisplayName 는 런타임 등록 device 의
+// 사용자 표시 이름(dev.Name)이 DeviceEntry.DisplayName 슬롯으로 보존되고,
+// Name 슬롯은 여전히 UnitID(device_id)를 실어 두 값이 독립적으로 왕복하는지 검증한다.
+//
+// 회귀 방지: DisplayName 슬롯이 없던 시절, 직렬화는 Name=UnitID 만 실었고 dev.Name
+// (표시 이름)은 통째로 버려져 재시작 후 id 로 표시됐다.
+func TestGetPersistableDevices_PreservesDisplayName(t *testing.T) {
+	a, _ := newConnAgent(t, "200001")
+
+	addr, err := ParseNasaAddress("200001")
+	if err != nil {
+		t.Fatalf("주소 파싱 실패: %v", err)
+	}
+
+	a.mu.Lock()
+	a.devices[addr].Source = "bridge"
+	a.devices[addr].UnitID = "dev-uuid-001" // device_id
+	a.devices[addr].Name = "개발팀"            // 사용자 표시 이름
+	a.mu.Unlock()
+
+	got := a.GetPersistableDevices()
+	if len(got) != 1 {
+		t.Fatalf("영속 대상 device 수: got %d, want 1", len(got))
+	}
+	if got[0].Name != "dev-uuid-001" {
+		t.Errorf("Name 슬롯(UnitID) 손상: got %q, want \"dev-uuid-001\"", got[0].Name)
+	}
+	if got[0].DisplayName != "개발팀" {
+		t.Errorf("표시 이름 소실: DeviceEntry.DisplayName = %q, want \"개발팀\"", got[0].DisplayName)
+	}
+}
+
+// TestGetPersistableDevices_EmptyDisplayName 는 표시 이름 없는 device 가
+// 빈 DisplayName 으로 왕복하는지(후방호환) 검증한다.
+func TestGetPersistableDevices_EmptyDisplayName(t *testing.T) {
+	a, _ := newConnAgent(t, "200001")
+
+	addr, err := ParseNasaAddress("200001")
+	if err != nil {
+		t.Fatalf("주소 파싱 실패: %v", err)
+	}
+
+	a.mu.Lock()
+	a.devices[addr].UnitID = "living-room"
+	a.devices[addr].Name = "" // 표시 이름 없음
+	a.mu.Unlock()
+
+	got := a.GetPersistableDevices()
+	if len(got) != 1 {
+		t.Fatalf("영속 대상 device 수: got %d, want 1", len(got))
+	}
+	if got[0].DisplayName != "" {
+		t.Errorf("빈 표시 이름이 보존되지 않음: DisplayName = %q, want \"\"", got[0].DisplayName)
+	}
+	// 무회귀: 표시 이름과 무관하게 UnitID 는 Name 슬롯으로 보존.
+	if got[0].Name != "living-room" {
+		t.Errorf("UnitID 소실: Name = %q, want \"living-room\"", got[0].Name)
+	}
+}
+
 // TestGetPersistableDevices_EmptyUnitID 는 이름 없는 config device 가
 // 빈 Name 으로 일관되게 왕복하는지 검증한다.
 func TestGetPersistableDevices_EmptyUnitID(t *testing.T) {

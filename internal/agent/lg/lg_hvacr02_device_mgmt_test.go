@@ -29,6 +29,10 @@ func (fakeIcp02DeviceIDRepo) Get(_ context.Context, agentName, unitID string) (s
 	return "uuid:" + agentName + ":" + unitID, nil
 }
 
+func (fakeIcp02DeviceIDRepo) Set(_ context.Context, agentName, unitID, deviceID string) error {
+	return nil
+}
+
 // withFakeDeviceIDRepoIcp02 는 결정적 device_id 저장소를 설정하고 테스트 종료 시 복원한다.
 func withFakeDeviceIDRepoIcp02(t *testing.T) {
 	t.Helper()
