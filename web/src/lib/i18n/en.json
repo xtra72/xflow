@@ -1226,6 +1226,14 @@
           "emptyStation": "station code missing",
           "rowError": "line {line}: {reason}"
         },
+        "placesBulkTop": {
+          "toggle": "Bulk places",
+          "title": "Bulk register places (any station)",
+          "placeholder": "station,place,display_name,order\nst01,PL-A,Platform A,1",
+          "formatHint": "One place per line, station included. Columns: station,place,display_name,order (comma or tab).",
+          "submit": "Register all",
+          "emptyRow": "station/place code missing"
+        },
         "places": {
           "title": "Places",
           "addPlace": "Add place",

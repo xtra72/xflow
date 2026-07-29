@@ -1226,6 +1226,14 @@
           "emptyStation": "역사 코드 누락",
           "rowError": "{line}행: {reason}"
         },
+        "placesBulkTop": {
+          "toggle": "위치 일괄",
+          "title": "위치 일괄 등록 (역사 지정)",
+          "placeholder": "station,place,display_name,order\nst01,PL-A,승강장 A,1",
+          "formatHint": "한 줄에 위치 하나, station 포함. 컬럼: station,place,display_name,order (콤마 또는 탭).",
+          "submit": "일괄 등록",
+          "emptyRow": "역사/위치 코드 누락"
+        },
         "places": {
           "title": "위치",
           "addPlace": "위치 추가",

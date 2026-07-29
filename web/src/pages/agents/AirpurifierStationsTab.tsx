@@ -12,6 +12,7 @@ import {
   useAddPlace,
   useAddStation,
   useBulkAddPlaces,
+  useBulkAddPlacesTop,
   useBulkAddStations,
   useRemovePlace,
   useRemoveStation,
@@ -116,6 +117,7 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
   const removePlace = useRemovePlace(agentId);
   const bulkAddStations = useBulkAddStations(agentId);
   const bulkAddPlaces = useBulkAddPlaces(agentId);
+  const bulkAddPlacesTop = useBulkAddPlacesTop(agentId);
 
   // 역사 폼: null=닫힘, editing=편집 대상 station code(수정 시 코드 잠금).
   const [stationForm, setStationForm] = useState<StationFormState | null>(null);
@@ -133,6 +135,10 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
   const [showStationBulk, setShowStationBulk] = useState(false);
   const [stationBulkText, setStationBulkText] = useState('');
   const [stationBulkFailures, setStationBulkFailures] = useState<BulkFailure[] | null>(null);
+  // 일괄 등록(위치 최상위) 패널 상태 — 행에 station 포함, 아무 역사나 등록.
+  const [showPlaceTopBulk, setShowPlaceTopBulk] = useState(false);
+  const [placeTopBulkText, setPlaceTopBulkText] = useState('');
+  const [placeTopBulkFailures, setPlaceTopBulkFailures] = useState<BulkFailure[] | null>(null);
   // 일괄 등록(위치) 패널 — 한 번에 한 역사만 열림.
   const [placeBulkStation, setPlaceBulkStation] = useState<string | null>(null);
   const [placeBulkText, setPlaceBulkText] = useState('');
@@ -177,6 +183,12 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
       .replace('{line}', String(f.line))
       .replace('{reason}', reason);
   }
+  function formatPlaceTopFailure(f: BulkFailure): string {
+    const reason = f.reason === EMPTY_REQUIRED ? t('agents.detail.stations.placesBulkTop.emptyRow') : f.reason;
+    return t('agents.detail.stations.bulk.rowError')
+      .replace('{line}', String(f.line))
+      .replace('{reason}', reason);
+  }
 
   async function submitStationBulk() {
     const result = await bulkAddStations.mutateAsync(stationBulkText);
@@ -190,6 +202,13 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
     const fullSuccess = reportBulk(result);
     setPlaceBulkFailures(result.failed.length > 0 ? result.failed : null);
     if (fullSuccess) setPlaceBulkText('');
+  }
+
+  async function submitPlaceTopBulk() {
+    const result = await bulkAddPlacesTop.mutateAsync(placeTopBulkText);
+    const fullSuccess = reportBulk(result);
+    setPlaceTopBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setPlaceTopBulkText('');
   }
 
   function togglePlaceBulk(station: string) {
@@ -360,6 +379,15 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
           </button>
           <button
             type="button"
+            onClick={() => setShowPlaceTopBulk((v) => !v)}
+            aria-expanded={showPlaceTopBulk}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+            {t('agents.detail.stations.placesBulkTop.toggle')}
+          </button>
+          <button
+            type="button"
             onClick={openAddStation}
             className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
@@ -385,6 +413,26 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
             submitLabel={t('agents.detail.stations.bulk.submit')}
             failures={stationBulkFailures}
             formatFailure={formatStationFailure}
+          />
+        </div>
+      )}
+
+      {/* 위치 일괄 등록(최상위) 패널 — 행에 station 포함 */}
+      {showPlaceTopBulk && (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+          <h4 className="mb-2 text-xs font-semibold text-(--color-text-secondary)">
+            {t('agents.detail.stations.placesBulkTop.title')}
+          </h4>
+          <BulkRegisterPanel
+            placeholder={t('agents.detail.stations.placesBulkTop.placeholder')}
+            formatHint={t('agents.detail.stations.placesBulkTop.formatHint')}
+            value={placeTopBulkText}
+            onChange={setPlaceTopBulkText}
+            onSubmit={submitPlaceTopBulk}
+            submitting={bulkAddPlacesTop.isPending}
+            submitLabel={t('agents.detail.stations.placesBulkTop.submit')}
+            failures={placeTopBulkFailures}
+            formatFailure={formatPlaceTopFailure}
           />
         </div>
       )}

@@ -261,6 +261,46 @@ export function useBulkAddPlaces(agentId: string) {
   });
 }
 
+/**
+ * 위치 일괄 등록(최상위) — 행마다 STATION 을 포함해 어떤 역사든 한 번에 등록한다.
+ * 컬럼 순서: station(필수), place(필수), display_name, order(int). station 또는 place 가
+ * 비면 EMPTY_REQUIRED 로 실패 집계(백엔드 미호출). best-effort 순차 루프, 마지막에 1회 무효화.
+ */
+export function useBulkAddPlacesTop(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (text: string): Promise<BulkResult> => {
+      const rows = parseDelimitedRows(text);
+      const failed: BulkFailure[] = [];
+      let ok = 0;
+      for (const r of rows) {
+        const station = r.cells[0] ?? '';
+        const place = r.cells[1] ?? '';
+        if (!station || !place) {
+          failed.push({ line: r.line, input: r.raw, reason: EMPTY_REQUIRED });
+          continue;
+        }
+        try {
+          await agentService.execAgent(agentId, {
+            command: 'add_place',
+            params: {
+              station,
+              place,
+              display_name: r.cells[2] ?? '',
+              order: toIntOrZero(r.cells[3]),
+            },
+          });
+          ok += 1;
+        } catch (e) {
+          failed.push({ line: r.line, input: r.raw, reason: e instanceof Error ? e.message : EMPTY_REQUIRED });
+        }
+      }
+      return { total: rows.length, ok, failed };
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: stationsKey(agentId) }),
+  });
+}
+
 // ---- 디바이스(airpurifier) ----
 
 /** airpurifier 디바이스 로스터 조회 (list_devices). */

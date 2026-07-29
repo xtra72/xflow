@@ -23,6 +23,7 @@ import {
   useAddStation,
   useAirpurifierDevices,
   useBulkAddPlaces,
+  useBulkAddPlacesTop,
   useBulkAddStations,
   useRemovePlace,
   useSetAirpurifierDevice,
@@ -229,5 +230,45 @@ describe('useBulkAddPlaces', () => {
 
     expect(res).toEqual({ total: 1, ok: 0, failed: [{ line: 1, input: ',이름,1', reason: EMPTY_REQUIRED }] });
     expect(execAgentMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useBulkAddPlacesTop', () => {
+  it('행마다 station+place 를 포함해 add_place 를 호출한다 (station,place,display_name,order)', async () => {
+    execAgentMock.mockResolvedValue({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkAddPlacesTop('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync('st01,PL-A,승강장 A,1\nst02,PL-B');
+
+    expect(res).toEqual({ total: 2, ok: 2, failed: [] });
+    expect(execAgentMock).toHaveBeenNthCalledWith(1, 'agent-1', {
+      command: 'add_place',
+      params: { station: 'st01', place: 'PL-A', display_name: '승강장 A', order: 1 },
+    });
+    // 나머지 컬럼 없음 → 빈 문자열/0.
+    expect(execAgentMock).toHaveBeenNthCalledWith(2, 'agent-1', {
+      command: 'add_place',
+      params: { station: 'st02', place: 'PL-B', display_name: '', order: 0 },
+    });
+  });
+
+  it('station 또는 place 가 비면 EMPTY_REQUIRED 로 실패, best-effort 로 계속 진행', async () => {
+    // 행1 성공, 행2(빈 station) 스킵, 행3(빈 place) 스킵, 행4 백엔드 오류.
+    execAgentMock
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockRejectedValueOnce(new Error('station not found'));
+
+    const { result } = renderHook(() => useBulkAddPlacesTop('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync('st01,PL-A\n,PL-X\nst02,\nst03,PL-Z');
+
+    expect(res.total).toBe(4);
+    expect(res.ok).toBe(1);
+    expect(res.failed).toEqual([
+      { line: 2, input: ',PL-X', reason: EMPTY_REQUIRED },
+      { line: 3, input: 'st02,', reason: EMPTY_REQUIRED },
+      { line: 4, input: 'st03,PL-Z', reason: 'station not found' },
+    ]);
+    // 유효 행(st01, st03) 2회만 호출.
+    expect(execAgentMock).toHaveBeenCalledTimes(2);
   });
 });
