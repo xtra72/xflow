@@ -17,6 +17,32 @@ vi.mock('@/hooks/useDevice', () => ({
   useDevices: () => ({ data: { data: [] }, isLoading: false }),
 }));
 
+// SPEC-FACILITY-DASHBOARD-001 M5: 설비 스텝이 사용하는 에이전트/로스터 훅 mock.
+vi.mock('@/hooks/useAgent', () => ({
+  useAgents: () => ({
+    data: {
+      data: [
+        { id: 'air-1', name: '공기청정 에이전트', type: 'airpurifier', status: 'running' },
+        { id: 'store-1', name: '스토어', type: 'store', status: 'running' },
+      ],
+    },
+  }),
+}));
+
+vi.mock('@/hooks/useStation', () => ({
+  useStations: () => ({
+    data: [
+      { station: 's1', line: 'L1', display_name: '1역', order: 0, places: [] },
+      { station: 's2', line: 'L2', display_name: '2역', order: 1, places: [] },
+    ],
+    isLoading: false,
+  }),
+  useAirpurifierDevices: () => ({
+    data: [{ device_id: 'd1', name: '기기-1', station: 's1', place: 'p1', index: 0 }],
+    isLoading: false,
+  }),
+}));
+
 // uiStore 상태를 캡처하기 위한 mock
 const storeState = vi.hoisted(() => ({
   addPanelCalls: [] as Array<{ type: string }>,
@@ -308,6 +334,76 @@ describe('AddPanelDialog', () => {
       // 검색은 번역된 라벨/설명(여기선 키 문자열) 기준으로 필터링되므로 키 substring 으로 검색.
       fireEvent.change(search, { target: { value: 'multiChannel' } });
       expect(screen.getByText('dashboard.addPanel.labels.multiChannel')).toBeInTheDocument();
+    });
+  });
+
+  // ---- 설비 패널 (SPEC-FACILITY-DASHBOARD-001 M5) ----
+
+  describe('설비 패널 3종 (facility)', () => {
+    it('제어 카테고리에 설비 3종 옵션 노출', () => {
+      render(<AddPanelDialog open={true} onClose={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+      expect(screen.getByText('dashboard.panelTypes.facilityLine')).toBeInTheDocument();
+      expect(screen.getByText('dashboard.panelTypes.facilityStation')).toBeInTheDocument();
+      expect(screen.getByText('dashboard.panelTypes.facilityDevice')).toBeInTheDocument();
+    });
+
+    it('설비 옵션 선택 시 즉시 addPanel 되지 않고 설비 스텝으로 진입', () => {
+      render(<AddPanelDialog open={true} onClose={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityStation'));
+
+      // 에이전트/대상 셀렉트 등장, 즉시 추가는 없음
+      expect(screen.getByTestId('facility-agent-select')).toBeInTheDocument();
+      expect(screen.getByTestId('facility-target-select')).toBeInTheDocument();
+      expect(storeState.addPanelCalls).toEqual([]);
+      expect(storeState.addPanelWithConfigCalls).toEqual([]);
+    });
+
+    it('facility-station: 에이전트→역사 선택 후 저장 시 addPanelWithConfig({agentId, station})', () => {
+      const onClose = vi.fn();
+      render(<AddPanelDialog open={true} onClose={onClose} />);
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityStation'));
+
+      // 에이전트 셀렉트는 airpurifier 만 노출 (store 에이전트 제외)
+      const agentSelect = screen.getByTestId('facility-agent-select') as HTMLSelectElement;
+      expect(agentSelect.options.length).toBe(2); // placeholder + airpurifier 1개
+      fireEvent.change(agentSelect, { target: { value: 'air-1' } });
+
+      const targetSelect = screen.getByTestId('facility-target-select') as HTMLSelectElement;
+      fireEvent.change(targetSelect, { target: { value: 's1' } });
+
+      const save = screen.getByTestId('facility-save') as HTMLButtonElement;
+      expect(save.disabled).toBe(false);
+      fireEvent.click(save);
+
+      expect(storeState.addPanelWithConfigCalls).toEqual([
+        { type: 'facility-station', config: { agentId: 'air-1', station: 's1' }, title: '1역' },
+      ]);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('facility-line: 대상 셀렉트는 distinct line 값을 노출', () => {
+      render(<AddPanelDialog open={true} onClose={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityLine'));
+
+      fireEvent.change(screen.getByTestId('facility-agent-select'), { target: { value: 'air-1' } });
+      const targetSelect = screen.getByTestId('facility-target-select') as HTMLSelectElement;
+      // placeholder + L1 + L2
+      expect(targetSelect.options.length).toBe(3);
+      expect(screen.getByRole('option', { name: 'L1' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'L2' })).toBeInTheDocument();
+    });
+
+    it('에이전트 미선택 시 저장 비활성', () => {
+      render(<AddPanelDialog open={true} onClose={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityDevice'));
+
+      const save = screen.getByTestId('facility-save') as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
     });
   });
 });

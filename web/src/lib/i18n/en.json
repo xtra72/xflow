@@ -116,7 +116,10 @@
         "acControl": "AC temperature/mode control",
         "hvacControl": "Integrated HVAC control",
         "outdoorControl": "Outdoor unit/controller compressor status",
-        "customControl": "User-defined control"
+        "customControl": "User-defined control",
+        "facilityLine": "Station and device status with bulk control for a line",
+        "facilityStation": "Device status with bulk control for a station",
+        "facilityDevice": "Individual facility device status and control"
       },
       "labels": {
         "propertiesGrid": "Properties grid",
@@ -154,7 +157,10 @@
       "text": "Text",
       "acControl": "AC Control",
       "hvacControl": "HVAC Control",
-      "customControl": "Custom Control"
+      "customControl": "Custom Control",
+      "facilityLine": "Facility Line",
+      "facilityStation": "Facility Station",
+      "facilityDevice": "Facility Device"
     },
     "acPanel": {
       "indoorTemp": "Indoor Temp",
@@ -211,6 +217,66 @@
       "connected": "Connected",
       "disconnected": "Disconnected",
       "loadingAria": "Loading"
+    },
+    "facility": {
+      "notConfigured": "Panel not configured.",
+      "deviceNotFound": "Device not found.",
+      "loadError": "Failed to load data.",
+      "noData": "No stations/devices to display.",
+      "unregisteredStation": "Unregistered station",
+      "noDevices": "No devices",
+      "unclassified": "Unclassified",
+      "fault": "Fault",
+      "stat": {
+        "total": "Total",
+        "online": "Online",
+        "offline": "Offline",
+        "powerOn": "On",
+        "powerOff": "Off",
+        "fan1": "Fan 1",
+        "fan2": "Fan 2",
+        "fan3": "Fan 3"
+      },
+      "control": {
+        "title": "Bulk control",
+        "powerOn": "Power ON",
+        "powerOff": "Power OFF",
+        "fan": "Fan",
+        "running": "Running control...",
+        "noTarget": "No target devices; bulk control unavailable."
+      },
+      "result": {
+        "memberOk": "OK",
+        "memberTimeout": "Timeout",
+        "memberError": "Error",
+        "excluded": "Excluded"
+      },
+      "device": {
+        "power": "Power",
+        "fanSpeed": "Fan speed",
+        "station": "Station",
+        "place": "Place",
+        "index": "Index",
+        "on": "On",
+        "off": "Off",
+        "online": "Online",
+        "offline": "Offline",
+        "control": "Device control",
+        "fanDisabledHint": "Power is off; fan speed cannot be controlled.",
+        "result": {
+          "ok": "Control succeeded (state echoed)",
+          "timeout": "Response timed out (timeout)",
+          "error": "Control failed:"
+        }
+      },
+      "station": {
+        "devices": "Device list"
+      },
+      "line": {
+        "diagram": "Line diagram",
+        "stations": "Station status",
+        "stats": "Line stats"
+      }
     },
     "col": {
       "name": "Name",
@@ -384,6 +450,13 @@
       "titleLabel": "Title",
       "device": "Device",
       "selectDevice": "Select",
+      "agent": "Agent",
+      "selectAgent": "Select agent",
+      "station": "Station",
+      "selectStation": "Select station",
+      "line": "Line",
+      "selectLine": "Select line",
+      "facility": "Facility target",
       "noDevices": "No devices registered.",
       "columns": "Columns",
       "visibleColumns": "Visible columns",

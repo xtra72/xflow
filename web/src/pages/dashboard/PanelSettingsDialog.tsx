@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
+import { useStations, useAirpurifierDevices } from '@/hooks/useStation';
 import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
@@ -451,6 +452,17 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             {panel.type === 'properties-grid' && (
               <CollapsibleSection title={t('dashboard.settings.propertiesGrid')}>
                 <PropertiesGridSection
+                  panel={panel}
+                  onConfigChange={(c) => handleConfigChange(c)}
+                />
+              </CollapsibleSection>
+            )}
+            {/* SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종 (에이전트 + 라인/역사/기기) */}
+            {(panel.type === 'facility-line' ||
+              panel.type === 'facility-station' ||
+              panel.type === 'facility-device') && (
+              <CollapsibleSection title={t('dashboard.settings.facility')} defaultOpen={true}>
+                <FacilitySection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
@@ -1047,6 +1059,106 @@ function DeviceSection({
           ))}
         </select>
       )}
+    </div>
+  );
+}
+
+/**
+ * 설비 패널 전용 설정 (SPEC-FACILITY-DASHBOARD-001 M5).
+ *
+ * 에이전트(airpurifier)를 고르고, 패널 타입에 따라 라인/역사/기기 대상을 고른다.
+ * 대상 조회는 기존 useStations / useAirpurifierDevices 를 재사용한다(UB-001).
+ * 변경은 onConfigChange({ agentId }) / ({ deviceId | station | line }) 로 config 에만 기록한다.
+ */
+function FacilitySection({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: (config: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const agentId = (panel.config?.agentId as string | undefined) ?? '';
+
+  const { data: agentsResult } = useAgents();
+  const airAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'airpurifier'),
+    [agentsResult],
+  );
+
+  const { data: stations, isLoading: stationsLoading } = useStations(agentId);
+  const { data: devices, isLoading: devicesLoading } = useAirpurifierDevices(agentId);
+
+  // 패널 타입별 대상 키 / 현재 값 / i18n 라벨.
+  const targetKey: 'deviceId' | 'station' | 'line' =
+    panel.type === 'facility-device' ? 'deviceId' : panel.type === 'facility-station' ? 'station' : 'line';
+  const currentTarget = (panel.config?.[targetKey] as string | undefined) ?? '';
+  const targetLabelKey =
+    panel.type === 'facility-device'
+      ? 'dashboard.settings.device'
+      : panel.type === 'facility-station'
+        ? 'dashboard.settings.station'
+        : 'dashboard.settings.line';
+  const targetPlaceholderKey =
+    panel.type === 'facility-device'
+      ? 'dashboard.settings.selectDevice'
+      : panel.type === 'facility-station'
+        ? 'dashboard.settings.selectStation'
+        : 'dashboard.settings.selectLine';
+
+  const targetOptions: { value: string; label: string }[] = useMemo(() => {
+    if (panel.type === 'facility-device') {
+      return (devices ?? []).map((d) => ({ value: d.device_id, label: d.name || d.device_id }));
+    }
+    if (panel.type === 'facility-station') {
+      return (stations ?? []).map((s) => ({ value: s.station, label: s.display_name || s.station }));
+    }
+    const lines = Array.from(new Set((stations ?? []).map((s) => s.line).filter(Boolean)));
+    return lines.map((l) => ({ value: l, label: l }));
+  }, [panel.type, devices, stations]);
+
+  const targetLoading = panel.type === 'facility-device' ? devicesLoading : stationsLoading;
+
+  return (
+    <div className="space-y-3">
+      {/* 에이전트 선택 */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.agent')}
+        </label>
+        <select
+          value={agentId}
+          onChange={(e) => onConfigChange({ agentId: e.target.value })}
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">{t('dashboard.settings.selectAgent')}</option>
+          {airAgents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* 대상(라인/역사/기기) 선택 */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t(targetLabelKey)}
+        </label>
+        <select
+          value={currentTarget}
+          onChange={(e) => onConfigChange({ [targetKey]: e.target.value })}
+          disabled={!agentId || targetLoading}
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+        >
+          <option value="">{t(targetPlaceholderKey)}</option>
+          {targetOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }

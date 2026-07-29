@@ -105,8 +105,13 @@ const devicesKey = (agentId: string) => ['airpurifier-devices', agentId] as cons
 
 // ---- 역사(station) 쿼리 ----
 
-/** 역사 목록 조회 (list_stations, Order 정렬). 각 역사에 위치(places)가 임베드된다. */
-export function useStations(agentId: string) {
+/**
+ * 역사 목록 조회 (list_stations, Order 정렬). 각 역사에 위치(places)가 임베드된다.
+ *
+ * @param refetchInterval - 지정 시 주기 폴링(ms). facility 대시보드 패널이 exec-폴링
+ *   로스터를 주기 갱신하기 위해 사용한다(REQ-FACDASH-001-05-04). 미지정 시 폴링 없음(기존 동작).
+ */
+export function useStations(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: stationsKey(agentId),
     queryFn: async () => {
@@ -116,6 +121,7 @@ export function useStations(agentId: string) {
       return stations.map((s) => ({ ...s, places: s.places ?? [] }));
     },
     enabled: !!agentId,
+    refetchInterval,
   });
 }
 
@@ -303,8 +309,14 @@ export function useBulkAddPlacesTop(agentId: string) {
 
 // ---- 디바이스(airpurifier) ----
 
-/** airpurifier 디바이스 로스터 조회 (list_devices). */
-export function useAirpurifierDevices(agentId: string) {
+/**
+ * airpurifier 디바이스 로스터 조회 (list_devices).
+ *
+ * @param refetchInterval - 지정 시 주기 폴링(ms). airpurifier 로스터는 WebSocket 푸시가 아닌
+ *   exec 폴링이므로 facility 패널이 주기 갱신하도록 지원한다(REQ-FACDASH-001-05-04).
+ *   미지정 시 폴링 없음(기존 동작).
+ */
+export function useAirpurifierDevices(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: devicesKey(agentId),
     queryFn: async () => {
@@ -312,6 +324,7 @@ export function useAirpurifierDevices(agentId: string) {
       return (res as unknown as { devices?: AirDevice[] }).devices ?? [];
     },
     enabled: !!agentId,
+    refetchInterval,
   });
 }
 
