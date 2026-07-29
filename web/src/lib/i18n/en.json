@@ -1189,7 +1189,15 @@
         "updateSuccess": "Device updated.",
         "removeSuccess": "Device removed.",
         "opError": "Operation failed: {message}",
-        "unknownError": "Unknown error"
+        "unknownError": "Unknown error",
+        "actions": "Actions",
+        "filter": {
+          "lineAll": "All lines",
+          "stationAll": "All stations",
+          "searchPlaceholder": "Search name / ID / station / place",
+          "noMatch": "No matching devices.",
+          "count": "{shown} / {total}"
+        }
       },
       "stations": {
         "addStation": "Add station",
@@ -1203,6 +1211,8 @@
         "displayNamePlaceholder": "e.g. City Hall",
         "order": "Order",
         "orderError": "Order must be a number.",
+        "placesColumn": "Places",
+        "actions": "Actions",
         "noStations": "No stations registered.",
         "stationsCount": "{count} stations",
         "cancel": "Cancel",

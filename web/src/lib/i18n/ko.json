@@ -1189,7 +1189,15 @@
         "updateSuccess": "디바이스를 수정했습니다.",
         "removeSuccess": "디바이스를 삭제했습니다.",
         "opError": "작업 실패: {message}",
-        "unknownError": "알 수 없는 오류"
+        "unknownError": "알 수 없는 오류",
+        "actions": "액션",
+        "filter": {
+          "lineAll": "전체 라인",
+          "stationAll": "전체 역사",
+          "searchPlaceholder": "이름 / 아이디 / 역사 / 위치 검색",
+          "noMatch": "일치하는 기기가 없습니다.",
+          "count": "{shown} / {total}"
+        }
       },
       "stations": {
         "addStation": "역사 추가",
@@ -1203,6 +1211,8 @@
         "displayNamePlaceholder": "예: 시청역",
         "order": "정렬",
         "orderError": "정렬 값은 숫자여야 합니다.",
+        "placesColumn": "위치",
+        "actions": "액션",
         "noStations": "등록된 역사가 없습니다.",
         "stationsCount": "역사 {count}개",
         "cancel": "취소",
