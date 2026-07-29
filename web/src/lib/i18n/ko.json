@@ -275,7 +275,21 @@
       "line": {
         "diagram": "라인도",
         "stations": "역사별 상태",
-        "stats": "라인 통계"
+        "stats": "라인 통계",
+        "legend": "범례",
+        "simple": "심플",
+        "detail": "상세"
+      },
+      "status": {
+        "normal": "정상",
+        "warning": "경고",
+        "offline": "오프라인",
+        "off": "꺼짐"
+      },
+      "fan": {
+        "fan1": "1단",
+        "fan2": "2단",
+        "fan3": "3단"
       }
     },
     "col": {
@@ -457,6 +471,12 @@
       "line": "호선",
       "selectLine": "호선을 선택하세요",
       "facility": "설비 대상",
+      "showStationStatus": "역사별 상태 표시",
+      "showLineStats": "라인 통계 표시",
+      "nodeSize": "역 정보 크기",
+      "nodeSizeSm": "작게",
+      "nodeSizeMd": "보통",
+      "nodeSizeLg": "크게",
       "noDevices": "등록된 디바이스가 없습니다.",
       "columns": "컬럼",
       "visibleColumns": "표시 항목",

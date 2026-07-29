@@ -7,7 +7,10 @@ import {
   aggregateByLine,
   aggregateByStation,
   countStats,
+  deviceFanStatus,
   lineDiagramLayout,
+  stationDeviceRows,
+  stationStatus,
   stationSummary,
 } from './facilityAggregation';
 
@@ -198,5 +201,118 @@ describe('lineDiagramLayout', () => {
     ];
     const nodes = lineDiagramLayout('3호선', tied, []);
     expect(nodes.map((n) => n.station)).toEqual(['ST-Y', 'ST-Z']);
+  });
+
+  it('노드에 역사 레지스트리의 places 를 실어 상세 모드 해석에 제공한다', () => {
+    const withPlaces: AirStation[] = [
+      station({
+        station: 'ST-P',
+        line: '4호선',
+        order: 1,
+        places: [{ place: 'PL-1', display_name: '승강장', order: 1 }],
+      }),
+    ];
+    const nodes = lineDiagramLayout('4호선', withPlaces, []);
+    expect(nodes[0]?.places).toEqual([{ place: 'PL-1', display_name: '승강장', order: 1 }]);
+  });
+});
+
+describe('stationStatus', () => {
+  function stats(partial: Partial<ReturnType<typeof countStats>>) {
+    return {
+      total: 0,
+      online: 0,
+      offline: 0,
+      powerOn: 0,
+      powerOff: 0,
+      fan1: 0,
+      fan2: 0,
+      fan3: 0,
+      ...partial,
+    };
+  }
+
+  it('기기 0대면 empty 를 반환한다', () => {
+    expect(stationStatus(stats({}))).toBe('empty');
+  });
+
+  it('전부 오프라인이면 offline(우선순위 최상)', () => {
+    expect(stationStatus(stats({ total: 3, offline: 3, powerOff: 3 }))).toBe('offline');
+  });
+
+  it('일부만 오프라인이면 warning', () => {
+    expect(stationStatus(stats({ total: 3, online: 2, offline: 1, powerOn: 2, powerOff: 1 }))).toBe(
+      'warning',
+    );
+  });
+
+  it('전부 온라인·전부 전원 꺼짐이면 off', () => {
+    expect(stationStatus(stats({ total: 2, online: 2, offline: 0, powerOff: 2 }))).toBe('off');
+  });
+
+  it('온라인 + 최소 1대 가동이면 normal', () => {
+    expect(stationStatus(stats({ total: 2, online: 2, offline: 0, powerOn: 1, powerOff: 1 }))).toBe(
+      'normal',
+    );
+  });
+});
+
+describe('deviceFanStatus', () => {
+  it('오프라인 기기는 offline(전원·풍량 무관)', () => {
+    expect(deviceFanStatus(dev({ device_id: 'd', online: false, power: true, fan_speed: 2 }))).toBe(
+      'offline',
+    );
+  });
+
+  it('온라인이나 전원 꺼짐이면 off', () => {
+    expect(deviceFanStatus(dev({ device_id: 'd', online: true, power: false, fan_speed: 3 }))).toBe(
+      'off',
+    );
+  });
+
+  it('온라인·전원 켜짐이면 fan_speed 1/2/3 을 fan1/2/3 으로 매핑', () => {
+    expect(deviceFanStatus(dev({ device_id: 'd', power: true, fan_speed: 1 }))).toBe('fan1');
+    expect(deviceFanStatus(dev({ device_id: 'd', power: true, fan_speed: 2 }))).toBe('fan2');
+    expect(deviceFanStatus(dev({ device_id: 'd', power: true, fan_speed: 3 }))).toBe('fan3');
+  });
+
+  it('알 수 없는 fan_speed 는 unknown 폴백', () => {
+    expect(deviceFanStatus(dev({ device_id: 'd', power: true, fan_speed: 9 }))).toBe('unknown');
+  });
+});
+
+describe('stationDeviceRows', () => {
+  const places: AirStation['places'] = [
+    { place: 'PL-A', display_name: '승강장', order: 2 },
+    { place: 'PL-B', display_name: '대합실', order: 1 },
+  ];
+
+  it('place order→index 로 정렬하고 place code 를 표시명으로 해석한다', () => {
+    const devices = [
+      dev({ device_id: 'd1', place: 'PL-A', index: 1, power: true, fan_speed: 1 }),
+      dev({ device_id: 'd2', place: 'PL-B', index: 2 }),
+      dev({ device_id: 'd3', place: 'PL-B', index: 1 }),
+    ];
+    const rows = stationDeviceRows(devices, places);
+    // PL-B(order 1) 먼저, 내부는 index 오름차순 → d3, d2; 그다음 PL-A(order 2) → d1.
+    expect(rows.map((r) => r.device.device_id)).toEqual(['d3', 'd2', 'd1']);
+    expect(rows[0]?.placeLabel).toBe('대합실');
+    expect(rows[2]?.placeLabel).toBe('승강장');
+    expect(rows[2]?.fanStatus).toBe('fan1');
+  });
+
+  it('미등록 place 는 목록 끝으로 보내고 place code 로 폴백한다', () => {
+    const devices = [
+      dev({ device_id: 'd1', place: 'PL-UNKNOWN', index: 1 }),
+      dev({ device_id: 'd2', place: 'PL-B', index: 1 }),
+    ];
+    const rows = stationDeviceRows(devices, places);
+    expect(rows.map((r) => r.device.device_id)).toEqual(['d2', 'd1']);
+    expect(rows[1]?.placeLabel).toBe('PL-UNKNOWN');
+  });
+
+  it('place code 가 비면 device name 으로 폴백한다', () => {
+    const rows = stationDeviceRows([dev({ device_id: 'd1', name: '기기1', place: '' })], places);
+    expect(rows[0]?.placeLabel).toBe('기기1');
   });
 });

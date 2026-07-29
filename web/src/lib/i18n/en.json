@@ -275,7 +275,21 @@
       "line": {
         "diagram": "Line diagram",
         "stations": "Station status",
-        "stats": "Line stats"
+        "stats": "Line stats",
+        "legend": "Legend",
+        "simple": "Simple",
+        "detail": "Detail"
+      },
+      "status": {
+        "normal": "Normal",
+        "warning": "Warning",
+        "offline": "Offline",
+        "off": "Off"
+      },
+      "fan": {
+        "fan1": "L1",
+        "fan2": "L2",
+        "fan3": "L3"
       }
     },
     "col": {
@@ -457,6 +471,12 @@
       "line": "Line",
       "selectLine": "Select line",
       "facility": "Facility target",
+      "showStationStatus": "Show station status",
+      "showLineStats": "Show line stats",
+      "nodeSize": "Station info size",
+      "nodeSizeSm": "Small",
+      "nodeSizeMd": "Medium",
+      "nodeSizeLg": "Large",
       "noDevices": "No devices registered.",
       "columns": "Columns",
       "visibleColumns": "Visible columns",

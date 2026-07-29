@@ -1159,7 +1159,89 @@ function FacilitySection({
           ))}
         </select>
       </div>
+
+      {/* 라인 패널 전용 표시 옵션(SPEC-FACILITY-DASHBOARD-001 후속, config-only UB-003). */}
+      {panel.type === 'facility-line' && (
+        <FacilityLineDisplayOptions panel={panel} onConfigChange={onConfigChange} />
+      )}
     </div>
+  );
+}
+
+/**
+ * 라인 패널 표시 옵션(config-only, UB-003 — 스냅샷 스키마 변경 없음).
+ *   - showStationStatus: "역사별 간략 상태" 섹션 표시(기본 true).
+ *   - showLineStats: "라인 통계" 섹션 표시(기본 true).
+ *   - nodeSize: 라인도 역 정보 크기 sm/md/lg(기본 md, "역 정보 크기 조절").
+ */
+function FacilityLineDisplayOptions({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: (config: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const showStationStatus = (panel.config?.showStationStatus as boolean | undefined) ?? true;
+  const showLineStats = (panel.config?.showLineStats as boolean | undefined) ?? true;
+  const nodeSize = (panel.config?.nodeSize as string | undefined) ?? 'md';
+  const sizeOptions: { value: 'sm' | 'md' | 'lg'; labelKey: string }[] = [
+    { value: 'sm', labelKey: 'dashboard.settings.nodeSizeSm' },
+    { value: 'md', labelKey: 'dashboard.settings.nodeSizeMd' },
+    { value: 'lg', labelKey: 'dashboard.settings.nodeSizeLg' },
+  ];
+
+  return (
+    <>
+      <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)">
+        <input
+          type="checkbox"
+          data-testid="facility-line-show-station-status"
+          checked={showStationStatus}
+          onChange={(e) => onConfigChange({ showStationStatus: e.target.checked })}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm font-medium text-(--color-text-primary)">
+          {t('dashboard.settings.showStationStatus')}
+        </span>
+      </label>
+
+      <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)">
+        <input
+          type="checkbox"
+          data-testid="facility-line-show-line-stats"
+          checked={showLineStats}
+          onChange={(e) => onConfigChange({ showLineStats: e.target.checked })}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm font-medium text-(--color-text-primary)">
+          {t('dashboard.settings.showLineStats')}
+        </span>
+      </label>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.nodeSize')}
+        </label>
+        <div className="flex gap-1" data-testid="facility-line-node-size">
+          {sizeOptions.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              data-testid={`facility-line-node-size-${o.value}`}
+              onClick={() => onConfigChange({ nodeSize: o.value })}
+              className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                nodeSize === o.value
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                  : 'bg-(--color-bg-elevated) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80'
+              }`}
+            >
+              {t(o.labelKey)}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

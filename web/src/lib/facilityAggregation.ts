@@ -8,7 +8,7 @@
 // 미분류(UNCLASSIFIED) 규약(UB-004, REQ-05-03): 레지스트리에 없는(또는 station 이 빈)
 // 디바이스는 호선 집계에서 제외하되 별도로 카운트한다.
 
-import type { AirDevice, AirStation } from '@/hooks/useStation';
+import type { AirDevice, AirPlace, AirStation } from '@/hooks/useStation';
 
 // ---- 결과 타입 ----
 
@@ -59,7 +59,81 @@ export interface LineDiagramNode {
   station: string;
   displayName: string;
   order: number;
+  /** 역사 레지스트리의 위치(place) 목록. 상세 모드에서 기기 place code → 표시명 해석에 쓴다. */
+  places: AirPlace[];
   summary: StationSummary;
+}
+
+/**
+ * 역사 노드 상태(라인도 상태 점). 소속 기기의 countStats 를 집계한 결과이며 우선순위는
+ * all-offline → partial-offline → all-off → normal 이다(UB-001 — 재구현 없이 롤업만 소비).
+ *   - 'offline'(빨강): offline === total (전부 오프라인)
+ *   - 'warning'(주황): 0 < offline < total (일부 오프라인)
+ *   - 'off'(흰/회색): offline === 0 && powerOff === total (전부 온라인·전부 전원 꺼짐)
+ *   - 'normal'(초록): 그 외(온라인 + 최소 1대 가동)
+ *   - 'empty': 기기 0대(중립 노드, 크래시 없음)
+ */
+export type StationStatus = 'offline' | 'warning' | 'off' | 'normal' | 'empty';
+
+/** StatCounts 로부터 역사 노드 상태를 도출한다(순수). 우선순위 순으로 판정한다. */
+export function stationStatus(stats: StatCounts): StationStatus {
+  if (stats.total === 0) return 'empty';
+  if (stats.offline === stats.total) return 'offline';
+  if (stats.offline > 0) return 'warning';
+  if (stats.powerOff === stats.total) return 'off';
+  return 'normal';
+}
+
+/**
+ * 기기별 풍량 배지 상태(상세 모드의 사각 배지). 우선순위: offline → off → fan1/2/3 → unknown.
+ *   - 'offline'(빨강): 기기 오프라인
+ *   - 'off'(흰/회색): 온라인이나 전원 꺼짐
+ *   - 'fan1'(노랑)/'fan2'(초록)/'fan3'(파랑): 온라인·전원 켜짐 + fan_speed 1/2/3
+ *   - 'unknown': 온라인·전원 켜짐이나 fan_speed 가 1/2/3 이 아님(방어값)
+ */
+export type DeviceFanStatus = 'offline' | 'off' | 'fan1' | 'fan2' | 'fan3' | 'unknown';
+
+/** 단일 기기의 풍량 배지 상태를 도출한다(순수). */
+export function deviceFanStatus(device: AirDevice): DeviceFanStatus {
+  if (!device.online) return 'offline';
+  if (!device.power) return 'off';
+  if (device.fan_speed === 1) return 'fan1';
+  if (device.fan_speed === 2) return 'fan2';
+  if (device.fan_speed === 3) return 'fan3';
+  return 'unknown';
+}
+
+/** 상세 모드 기기 행: place order→index 정렬 + place 표시명 해석 + 풍량 배지 상태. */
+export interface DeviceRow {
+  device: AirDevice;
+  /** place code → 레지스트리 display_name 해석(미해석 시 place code → device name 폴백). */
+  placeLabel: string;
+  fanStatus: DeviceFanStatus;
+}
+
+/**
+ * 한 역사의 기기 목록을 상세 표시용 행으로 변환한다(순수, UB-001 — 롤업만 소비).
+ * place 레지스트리 order 오름차순(동률 시 place code, 그다음 index)으로 정렬하며, place code 를
+ * 레지스트리의 display_name 으로 해석한다(미등록 place 는 code → device name 순 폴백, 목록 끝으로).
+ */
+export function stationDeviceRows(devices: AirDevice[], places: AirPlace[]): DeviceRow[] {
+  const placeMap = new Map<string, AirPlace>();
+  for (const p of places) {
+    if (p.place) placeMap.set(p.place, p);
+  }
+  const rows = devices.map((device) => {
+    const entry = device.place ? placeMap.get(device.place) : undefined;
+    const placeLabel = entry?.display_name || device.place || device.name || device.device_id;
+    // 미등록 place 는 정렬상 목록 끝으로 보낸다.
+    const placeOrder = entry ? entry.order : Number.MAX_SAFE_INTEGER;
+    return { device, placeLabel, placeOrder, fanStatus: deviceFanStatus(device) };
+  });
+  rows.sort((a, b) => {
+    if (a.placeOrder !== b.placeOrder) return a.placeOrder - b.placeOrder;
+    if (a.device.place !== b.device.place) return a.device.place.localeCompare(b.device.place);
+    return a.device.index - b.device.index;
+  });
+  return rows.map(({ device, placeLabel, fanStatus }) => ({ device, placeLabel, fanStatus }));
 }
 
 // ---- 헬퍼 ----
@@ -229,7 +303,13 @@ export function lineDiagramLayout(
     .filter((s) => s.line === line && s.station)
     .map((s) => {
       const summary = stationSummary(s.station, byStation.get(s.station) ?? [], s);
-      return { station: s.station, displayName: summary.displayName, order: s.order, summary };
+      return {
+        station: s.station,
+        displayName: summary.displayName,
+        order: s.order,
+        places: s.places ?? [],
+        summary,
+      };
     });
   nodes.sort((a, b) => (a.order !== b.order ? a.order - b.order : a.station.localeCompare(b.station)));
   return nodes;
