@@ -122,29 +122,36 @@ describe('airpurifier devices', () => {
     expect(result.current.data?.[0]?.device_id).toBe('ap-101');
   });
 
-  it('add_device 인자를 params 아래에 중첩해 전송한다', async () => {
-    execAgentMock.mockResolvedValueOnce({ status: 'ok' });
+  it('add_device 는 device_id/name 없이 station/place/index/group_id 만 params 로 보내고 응답을 반환한다', async () => {
+    execAgentMock.mockResolvedValueOnce({ status: 'ok', device_id: 'uuid-1', name: 'st01:PL-A:003', source: 'bridge' });
 
     const { result } = renderHook(() => useAddAirpurifierDevice('agent-1'), { wrapper });
-    result.current.mutate({ device_id: 'ap-101', name: '대합실', station: 'ST-1', place: 'p1', index: 3, group_id: 'g1' });
+    result.current.mutate({ station: 'st01', place: 'PL-A', index: 3, group_id: 'g1' });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(execAgentMock).toHaveBeenCalledWith('agent-1', {
       command: 'add_device',
-      params: { device_id: 'ap-101', name: '대합실', station: 'ST-1', place: 'p1', index: 3, group_id: 'g1' },
+      params: { station: 'st01', place: 'PL-A', index: 3, group_id: 'g1' },
+    });
+    // 백엔드가 생성/계산한 device_id + name 이 결과로 반환된다(성공 토스트에 사용).
+    expect(result.current.data).toEqual({
+      status: 'ok',
+      device_id: 'uuid-1',
+      name: 'st01:PL-A:003',
+      source: 'bridge',
     });
   });
 
-  it('set_device 인자를 params 아래에 중첩해 전송한다', async () => {
+  it('set_device 는 device_id(UUID)로 대상 지정 + 편집 필드를 params 로 보낸다', async () => {
     execAgentMock.mockResolvedValueOnce({ status: 'ok' });
 
     const { result } = renderHook(() => useSetAirpurifierDevice('agent-1'), { wrapper });
-    result.current.mutate({ device_id: 'ap-101', name: '변경' });
+    result.current.mutate({ device_id: 'uuid-1', station: 'st02', place: 'PL-B', index: 5, group_id: 'g2' });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(execAgentMock).toHaveBeenCalledWith('agent-1', {
       command: 'set_device',
-      params: { device_id: 'ap-101', name: '변경' },
+      params: { device_id: 'uuid-1', station: 'st02', place: 'PL-B', index: 5, group_id: 'g2' },
     });
   });
 });

@@ -73,8 +73,19 @@ func TestConfig_MultiFieldTemplateAcceptedZeroPlaceholderRejected(t *testing.T) 
 	assert.ErrorIs(t, err, ErrInvalidTopicTemplate)
 }
 
-// M14: attribute-per-topic 유입 — 실제 토픽 파싱 → 합성 키로 auto 등록 → 축 스칼라 디코드 →
-// device_state_changed 에 주소/attribute 메타 + epoch-ms timestamp.
+// secondaryLookup 은 보조 인덱스(compositeKey → device_id/UUID)를 직접 조회하는 테스트 헬퍼이다.
+// 유입 상태가 device_id 가 아니라 (station,place,index) 보조 인덱스로 매칭됨을 검증하는 데 쓴다.
+func secondaryLookup(ap *AirPurifierAgent, station, place string, index int) (string, bool) {
+	ap.mu.RLock()
+	defer ap.mu.RUnlock()
+	id, ok := ap.secondary[compositeKey(station, place, index)]
+	return id, ok
+}
+
+// M14(개정): attribute-per-topic 유입 — 실제 토픽 파싱 → 보조 인덱스에 없으므로 UUID 생성 auto
+// 등록 → 축 스칼라 디코드 → device_state_changed 에 device_id(UUID) + 주소/attribute 메타 + epoch-ms.
+// 조회 키가 "합성 주소 = device_id" 에서 "보조 인덱스 → UUID" 로 바뀌었으므로, 디바이스는 UUID 로
+// 조회하고 보조 인덱스가 (ST1,P1,3) → 그 UUID 를 가리킴을 확인한다(기능 단언은 보존).
 func TestAttr_IngressAutoRegisterAndMeta(t *testing.T) {
 	ap, mock := attrAgentWithMock(t, attrOpts())
 
@@ -84,18 +95,24 @@ func TestAttr_IngressAutoRegisterAndMeta(t *testing.T) {
 	// power=on 스칼라 유입 (실제 토픽).
 	mock.deliver("state/ui-line/ST1/P1/bse9000/3/power", []byte("on"))
 
-	dev, err := ap.GetDevice("ST1:P1:3")
+	// 보조 인덱스로 대상 device_id(UUID)를 찾는다 — device_id 가 아니라 (station,place,index)로 매칭.
+	uuidID, ok := secondaryLookup(ap, "ST1", "P1", 3)
+	require.True(t, ok, "보조 인덱스가 (ST1,P1,3) 를 가리켜야 한다")
+	assert.True(t, isUUID(uuidID), "auto 등록 device_id 는 생성된 UUID 여야 한다")
+
+	dev, err := ap.GetDevice(uuidID)
 	require.NoError(t, err)
 	assert.True(t, dev.Power, "power 축이 갱신되어야 한다")
 	assert.Equal(t, "auto", dev.Source, "최초 관측 디바이스는 Source=auto")
 	assert.Equal(t, "ST1", dev.Station)
 	assert.Equal(t, "P1", dev.Place)
 	assert.Equal(t, 3, dev.Index)
+	assert.Equal(t, "ST1:P1:003", dev.Name, "Name 은 3자리 0채움 합성")
 
 	events := drainEvents(t, ap, 100*time.Millisecond)
 	evt := firstEventOfType(events, "device_state_changed")
 	require.NotNil(t, evt)
-	assert.Equal(t, "ST1:P1:3", evt["device_id"])
+	assert.Equal(t, uuidID, evt["device_id"], "이벤트 device_id 는 UUID")
 	assert.Equal(t, "ST1", evt["station_code"], "추출된 주소 필드가 메타로 실려야 한다")
 	assert.Equal(t, "P1", evt["place_code"])
 	assert.Equal(t, "3", evt["device_index"])
@@ -107,21 +124,26 @@ func TestAttr_IngressAutoRegisterAndMeta(t *testing.T) {
 
 	// 리터럴 불일치(bse8000)는 무시되어야 한다 (우리 소유 아님).
 	mock.deliver("state/ui-line/ST9/P9/bse8000/9/power", []byte("on"))
-	_, err = ap.GetDevice("ST9:P9:9")
-	assert.ErrorIs(t, err, ErrDeviceNotFound, "리터럴 불일치 토픽은 무시되어야 한다")
+	_, ok = secondaryLookup(ap, "ST9", "P9", 9)
+	assert.False(t, ok, "리터럴 불일치 토픽은 무시되어야 한다(보조 인덱스 미등록)")
 }
 
-// M14: 분리된 attribute 메시지 — power 와 fan_speed 가 같은 합성 디바이스의 두 축을 독립 갱신.
+// M14(개정): 분리된 attribute 메시지 — power 와 fan_speed 가 같은 (station,place,index) 디바이스의
+// 두 축을 독립 갱신한다. 두 토픽이 동일 보조 인덱스 → 동일 UUID 로 매칭됨을 확인한다.
 func TestAttr_SeparateAttributeMessagesUpdateAxes(t *testing.T) {
 	ap, mock := attrAgentWithMock(t, attrOpts())
 
 	mock.deliver("state/ui-line/ST1/P1/bse9000/3/power", []byte("on"))
 	mock.deliver("state/ui-line/ST1/P1/bse9000/3/fan_speed", []byte("2"))
 
-	dev, err := ap.GetDevice("ST1:P1:3")
+	uuidID, ok := secondaryLookup(ap, "ST1", "P1", 3)
+	require.True(t, ok)
+	dev, err := ap.GetDevice(uuidID)
 	require.NoError(t, err)
 	assert.True(t, dev.Power)
 	assert.Equal(t, 2, dev.FanSpeed)
+	// 두 메시지가 같은 디바이스를 갱신했으므로 로스터에는 단 하나의 디바이스만 존재해야 한다.
+	assert.Len(t, ap.ListDevices(), 1, "두 축 메시지가 하나의 디바이스로 병합되어야 한다")
 }
 
 // M14: 명령 렌더(attribute 모드) — set_power → .../power, set_fan_speed → .../fan_speed,

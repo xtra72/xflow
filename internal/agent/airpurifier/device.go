@@ -29,6 +29,11 @@ type Device struct {
 	LastSeen time.Time // 마지막 상태 수신 시각
 	Source   string    // 등록 출처: "config", "bridge", "auto"
 
+	// composite 는 이 디바이스가 합성 주소 모델(device_id=UUID, Name=합성)에 속하는지 표시한다.
+	// true 이면 Name 이 station/place/index 에서 파생되므로 station/place/index 변경 시 Name 을
+	// 재계산한다. false(=blob/{device_id} 모델)이면 Name 은 사용자가 관리하므로 재계산하지 않는다.
+	composite bool
+
 	// Address 는 다중 필드 토픽 주소의 원시 placeholder→값 맵이다 ({attribute} 제외, M14).
 	// 유입 토픽 파싱 또는 설정 시드에서 채워지며, 명령 토픽 재구성(renderTopic)에 사용한다.
 	// {device_id} 단일 필드 모델에서는 {"device_id": id} 이거나 nil(이 경우 device 필드로 폴백).
@@ -80,6 +85,27 @@ func (d *Device) clone() Device {
 		}
 	}
 	return c
+}
+
+// hasComposite 는 디바이스가 위치 계층 합성 주소(station/place/index 중 하나라도 비-zero)를
+// 가지는지 반환한다. 보조 인덱스 등록 여부의 판별 기준이다 — 합성 주소가 없는 디바이스
+// (blob/{device_id} 모델의 위치 미지정 디바이스)는 보조 인덱스에 넣지 않는다(빈 키 충돌 회피).
+func hasComposite(d *Device) bool {
+	return d.Station != "" || d.Place != "" || d.Index != 0
+}
+
+// applyAddressFields 는 파싱된 토픽 placeholder(station_code/place_code/device_index)를 Device
+// 의 위치 필드로 역매핑한다. device_index 는 int 로 정규화한다(선행 0 무시).
+func applyAddressFields(d *Device, fields map[string]string) {
+	if v, ok := fields[placeholderStationCode]; ok {
+		d.Station = v
+	}
+	if v, ok := fields[placeholderPlaceCode]; ok {
+		d.Place = v
+	}
+	if v, ok := fields[placeholderDeviceIndex]; ok {
+		d.Index = toInt(v)
+	}
 }
 
 // deviceFieldValue 는 표준 placeholder 이름을 Device 필드 값으로 매핑한다 (양방향 매핑의

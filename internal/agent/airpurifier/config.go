@@ -69,6 +69,12 @@ type AirPurifierConfig struct {
 	stateHasAttribute   bool
 	commandHasAttribute bool
 
+	// stateIsComposite 는 상태 템플릿이 합성 주소 모델(station/place/index 다중 필드)인지의
+	// 파생 플래그이다. true 이면 유입 상태를 보조 인덱스(compositeKey → device_id/UUID)로 조회하고
+	// 미등록 시 UUID 를 생성해 auto 등록한다. false({device_id} 단일 필드 = blob 모델)이면 topic 의
+	// device_id 를 로스터 키로 직접 조회한다(하위호환).
+	stateIsComposite bool
+
 	// PayloadMapping 은 설정 주도 페이로드 시임이다 (양 모드 공통 필수).
 	PayloadMapping PayloadMapping
 
@@ -187,6 +193,9 @@ func parseAirPurifierConfig(opts map[string]any) (AirPurifierConfig, error) {
 	// 스칼라 디코드/인코드, 없으면 기존 JSON-blob 경로(하위호환).
 	cfg.stateHasAttribute = templateHasAttribute(cfg.StateTopicTemplate)
 	cfg.commandHasAttribute = templateHasAttribute(cfg.CommandTopicTemplate)
+	// 합성 주소 모델 판별(M14): 상태 템플릿의 비-attribute placeholder 가 {device_id} 단독(또는
+	// placeholder 없음)이면 blob 모델, 그 외(station/place/index 등)면 합성 주소 모델이다.
+	cfg.stateIsComposite = templateIsComposite(cfg.StateTopicTemplate)
 
 	// payload_mapping (양 모드 공통 필수).
 	mapping, err := parsePayloadMapping(opts)

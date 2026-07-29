@@ -38,8 +38,17 @@ type AirPurifierAgent struct {
 	cmdSink CommandSink
 	ctrlCh  chan ControlMessage // port 모드 제어 출력 포트 (direct 모드는 nil)
 
+	// devices 는 로스터 PRIMARY 인덱스(device_id → Device)이다. 합성 주소 모델에서 device_id 는
+	// 생성된 UUID 이고, blob/{device_id} 모델에서는 사용자/토픽이 부여한 식별자 그대로이다.
 	devices map[string]*Device
-	mu      sync.RWMutex
+
+	// secondary 는 위치 계층 합성 주소 → device_id 보조 인덱스(compositeKey → device_id)이다.
+	// 유입 상태 토픽이 나르는 (station,place,index) 를 정규화 키로 조회해 대상 device_id(UUID)를
+	// 찾는다. 로스터 상태의 일부이므로 devices 와 동일한 mu 로 보호하며, 로스터 add/remove/update
+	// 마다 함께 갱신한다(pending/registry 락과 절대 중첩하지 않는다).
+	secondary map[string]string
+
+	mu sync.RWMutex
 
 	// pendings 는 제어 응답 대기 레지스트리이다 (B3). 로스터 락(mu)과 분리된 자체 락으로
 	// 보호되며 절대 중첩하지 않는다 (RWMutex 재진입 트랩 회피).
@@ -160,6 +169,7 @@ func NewAirPurifierAgent(config agent.AgentConfig) (agent.Agent, error) {
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName(agentType)),
 		cfg:           cfg,
 		devices:       make(map[string]*Device),
+		secondary:     make(map[string]string),
 		pendings:      newPendingRegistry(),
 		msgCh:         make(chan []byte, msgChannelSize),
 		stopCh:        make(chan struct{}),
@@ -209,7 +219,18 @@ func NewAirPurifierAgent(config agent.AgentConfig) (agent.Agent, error) {
 		if _, exists := a.devices[key]; exists {
 			continue
 		}
+		// 합성 주소 모델의 config 디바이스: Name 미지정 시 합성 규칙으로 채우고 composite 로 표시한다.
+		// 보조 인덱스에도 등록하여, 이 위치로 유입되는 상태가 새 디바이스를 auto 생성하지 않고 이
+		// config 디바이스에 매칭되도록 한다(중복 방지). config 디바이스의 device_id 는 안정성을 위해
+		// 합성 키를 그대로 유지한다(재시작마다 바뀌는 UUID 대신 — config 는 영속화 대상이 아님).
+		if a.cfg.stateIsComposite && hasComposite(dev) {
+			dev.composite = true
+			if dev.Name == "" {
+				dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+			}
+		}
 		a.devices[key] = dev
+		a.indexDeviceLocked(dev)
 	}
 
 	if err := a.Init(config); err != nil {
@@ -325,7 +346,6 @@ func (a *AirPurifierAgent) handleStateMessage(topic string, payload []byte) {
 	if !ok {
 		return // 리터럴 불일치 / 세그먼트 수 불일치 → 우리 소유 아님
 	}
-	key := synthesizeAddress(a.cfg.StateTopicTemplate, fields)
 
 	var st decodedState
 	if a.cfg.stateHasAttribute {
@@ -347,7 +367,7 @@ func (a *AirPurifierAgent) handleStateMessage(topic string, payload []byte) {
 	if a.cfg.LogMessages {
 		a.logFrame("RX", topic, payload, stateSummary(st))
 	}
-	a.ingestState(key, fields, st)
+	a.ingestState(a.cfg.stateIsComposite, fields, st)
 }
 
 // ingestState 는 디코딩된 상태를 로스터에 반영하고 상태 변경을 방출하는 mode-agnostic 시임이다
@@ -357,14 +377,9 @@ func (a *AirPurifierAgent) handleStateMessage(topic string, payload []byte) {
 // 갱신). 락 하에서 이전/신규 값을 비교해 changed_fields 를 산출하고 방출 스냅샷을 뜬 뒤 락을
 // 해제하고 방출한다 — 락을 채널 송신에 걸쳐 잡지 않는다. fields 의 placeholder 는 device_state_changed
 // 메타로 실려 하류 influx 태그(station_code/place_code/device_index/attribute)를 형성한다.
-func (a *AirPurifierAgent) ingestState(key string, fields map[string]string, st decodedState) {
+func (a *AirPurifierAgent) ingestState(composite bool, fields map[string]string, st decodedState) {
 	a.mu.Lock()
-	dev := a.devices[key]
-	created := false
-	if dev == nil {
-		dev = a.autoCreateDeviceLocked(key, fields)
-		created = true
-	}
+	deviceID, dev, created := a.resolveDeviceLocked(composite, fields)
 
 	prevOnline := dev.Online
 	var changed []string
@@ -410,36 +425,83 @@ func (a *AirPurifierAgent) ingestState(key string, fields map[string]string, st 
 	}
 
 	// B3: 로스터 갱신 후 제어 응답 대기 에코 해소. 로스터 락 해제 후 별도 pending 락 하에서 처리.
-	a.pendings.resolve(key, st)
+	// pending 은 controlDevice 가 로스터 device_id(UUID)로 등록하므로 동일 키(deviceID)로 해소한다.
+	a.pendings.resolve(deviceID, st)
 
 	if !prevOnline && newOnline {
-		a.emitOnlineTransition("device_online", key, groupID, true, lastSeenMs)
+		a.emitOnlineTransition("device_online", deviceID, groupID, true, lastSeenMs)
 	} else if prevOnline && !newOnline {
-		a.emitOnlineTransition("device_offline", key, groupID, false, lastSeenMs)
+		a.emitOnlineTransition("device_offline", deviceID, groupID, false, lastSeenMs)
 	}
 
 	if len(changed) > 0 {
-		a.emitStateChanged(key, groupID, newOnline, changed, stateAxes, lastSeenMs, fields)
+		a.emitStateChanged(deviceID, groupID, newOnline, changed, stateAxes, lastSeenMs, fields)
 	}
 }
 
-// autoCreateDeviceLocked 는 최초 관측된 미등록 디바이스를 Source="auto" 로 생성한다 (M14).
-// 표준 placeholder(station_code/place_code/device_index)를 Device 필드로 역매핑하고, 명령 토픽
-// 재구성을 위해 원시 주소 필드를 Device.Address 에 저장한다. 로스터 락을 보유한 채 호출한다.
-func (a *AirPurifierAgent) autoCreateDeviceLocked(key string, fields map[string]string) *Device {
-	dev := &Device{DeviceID: key, Online: false, Source: "auto"}
-	if v, ok := fields[placeholderStationCode]; ok {
-		dev.Station = v
+// resolveDeviceLocked 는 유입 상태의 대상 로스터 디바이스를 조회하고, 미등록이면 auto 등록한다.
+// 로스터 락을 보유한 채 호출한다. 반환: (로스터 device_id, *Device, 신규 생성 여부).
+//
+//   - composite(합성 주소 모델): 파싱된 (station,place,index) 를 정규화 compositeKey 로 만들어
+//     보조 인덱스에서 device_id(UUID)를 찾는다. 없으면 UUID 를 생성해 새 디바이스를 만들고
+//     Name 을 합성한 뒤 로스터 + 보조 인덱스에 등록한다(Source="auto"). 이 경로가 M14 유입의
+//     핵심 변경점이다 — 조회 키가 "합성 주소 = device_id" 에서 "보조 인덱스 → UUID" 로 바뀐다.
+//   - !composite(blob/{device_id} 모델): topic 의 device_id 를 로스터 키로 직접 조회한다.
+//     미등록이면 그 device_id 를 키로 auto 생성한다(하위호환 — 기존 동작 보존).
+func (a *AirPurifierAgent) resolveDeviceLocked(composite bool, fields map[string]string) (string, *Device, bool) {
+	if composite {
+		ck := compositeKeyFromFields(fields)
+		if id, ok := a.secondary[ck]; ok {
+			if dev := a.devices[id]; dev != nil {
+				return id, dev, false
+			}
+		}
+		id := newDeviceID()
+		dev := &Device{DeviceID: id, Online: false, Source: "auto", composite: true}
+		applyAddressFields(dev, fields)
+		dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+		dev.Address = nonAttrFields(fields)
+		a.devices[id] = dev
+		a.indexDeviceLocked(dev)
+		return id, dev, true
 	}
-	if v, ok := fields[placeholderPlaceCode]; ok {
-		dev.Place = v
+
+	id := fields[placeholderDeviceID]
+	if dev := a.devices[id]; dev != nil {
+		return id, dev, false
 	}
-	if v, ok := fields[placeholderDeviceIndex]; ok {
-		dev.Index = toInt(v)
-	}
+	dev := &Device{DeviceID: id, Online: false, Source: "auto"}
+	applyAddressFields(dev, fields)
 	dev.Address = nonAttrFields(fields)
-	a.devices[key] = dev
-	return dev
+	a.devices[id] = dev
+	a.indexDeviceLocked(dev) // 위치 계층이 있으면 보조 인덱스에도 등록(없으면 no-op).
+	return id, dev, true
+}
+
+// newDeviceID 는 글로벌 고유 device_id(UUID v4)를 생성한다 (합성 주소 모델의 PRIMARY 키).
+// 프로젝트의 device_id 저장소(samsung/lg)와 동일하게 github.com/google/uuid 를 사용한다.
+func newDeviceID() string { return uuid.NewString() }
+
+// indexDeviceLocked 는 디바이스를 보조 인덱스(compositeKey → device_id)에 등록한다. 위치 계층
+// 합성 주소가 없는 디바이스(blob 모델의 위치 미지정)는 등록하지 않는다(빈 키 충돌 회피). 로스터
+// 락을 보유한 채 호출한다.
+func (a *AirPurifierAgent) indexDeviceLocked(dev *Device) {
+	if !hasComposite(dev) {
+		return
+	}
+	a.secondary[compositeKey(dev.Station, dev.Place, dev.Index)] = dev.DeviceID
+}
+
+// unindexDeviceLocked 는 디바이스의 보조 인덱스 항목을 제거한다(자기 소유 항목만 — 다른 디바이스가
+// 같은 키를 차지한 경우 건드리지 않는다). 로스터 락을 보유한 채 호출한다.
+func (a *AirPurifierAgent) unindexDeviceLocked(dev *Device) {
+	if !hasComposite(dev) {
+		return
+	}
+	ck := compositeKey(dev.Station, dev.Place, dev.Index)
+	if a.secondary[ck] == dev.DeviceID {
+		delete(a.secondary, ck)
+	}
 }
 
 // seedKeyAndAddress 는 설정 시드 디바이스의 로스터 키와 주소 필드를 상태 템플릿 구성으로
@@ -552,7 +614,7 @@ func (a *AirPurifierAgent) FeedState(deviceID string, payload []byte) {
 	if a.cfg.LogMessages {
 		a.logFrame("RX", deviceID, payload, stateSummary(st))
 	}
-	a.ingestState(deviceID, map[string]string{placeholderDeviceID: deviceID}, st)
+	a.ingestState(false, map[string]string{placeholderDeviceID: deviceID}, st)
 }
 
 // FeedStateFromTopic 은 port 모드에서 실제 토픽까지 함께 유입될 때의 다중 필드 경로이다 (M14).

@@ -1,8 +1,8 @@
 // airpurifier 디바이스 관리 탭.
 //
-// SPEC-AIRPURIFIER-001 Wave 2. samsung/lgap DevicesTab 과 달리 airpurifier 는
-// device_id 기반이며 역사(station)→위치(place) 계층 속성을 가진다. 역사/위치는
-// list_stations 임베드 목록에서 SELECT 로 고른다(위치는 선택 역사의 places 에 종속).
+// SPEC-AIRPURIFIER-001 Wave 2 (identity 모델 개정). 백엔드가 device_id(UUID)를 생성하고
+// name(복합 키 "station:place:index")을 계산한다. 프런트엔드는 station/place/index/group_id
+// 만 입력하며, 목록의 station/place CODE 는 역사 레지스트리(useStations)로 표시명을 해석한다.
 
 import { useMemo, useState } from 'react';
 import { HardDrive, Pencil, Plus, Trash2, X } from 'lucide-react';
@@ -14,34 +14,31 @@ import {
   useSetAirpurifierDevice,
   useStations,
   type AirDevice,
+  type AirStation,
 } from '@/hooks/useStation';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 
-/** 폼 상태(문자열 위주 — 제출 시 파싱). */
+/** 폼 상태(문자열 위주 — 제출 시 파싱). device_id/name 은 입력하지 않는다(백엔드 생성/계산). */
 interface DeviceFormState {
-  device_id: string;
-  name: string;
   station: string;
   place: string;
   index: string;
   group_id: string;
 }
 
-const EMPTY_FORM: DeviceFormState = {
-  device_id: '',
-  name: '',
-  station: '',
-  place: '',
-  index: '',
-  group_id: '',
-};
+const EMPTY_FORM: DeviceFormState = { station: '', place: '', index: '', group_id: '' };
 
 const inputCls =
   'block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)';
 const labelCls = 'mb-1 block text-xs font-medium text-(--color-text-secondary)';
+
+/** UUID 를 축약 표시(앞 8자 + …). 전체 값은 title 툴팁으로 노출. */
+function shortId(id: string): string {
+  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
+}
 
 export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
@@ -54,16 +51,32 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
   const setDevice = useSetAirpurifierDevice(agentId);
   const removeDevice = useRemoveAirpurifierDevice(agentId);
 
-  // 폼 상태: null 이면 닫힘, editing 이 있으면 편집(기존 device_id), 없으면 추가.
+  // station CODE → 엔트리 맵(표시명 해석 + place 조회). 미등록 코드는 원문 fallback.
+  const stationsByCode = useMemo(() => {
+    const m = new Map<string, AirStation>();
+    for (const s of stations) m.set(s.station, s);
+    return m;
+  }, [stations]);
+
+  function stationDisplay(code: string): string {
+    if (!code) return '-';
+    return stationsByCode.get(code)?.display_name || code;
+  }
+  function placeDisplay(stationCode: string, placeCode: string): string {
+    if (!placeCode) return '-';
+    const p = stationsByCode.get(stationCode)?.places.find((x) => x.place === placeCode);
+    return p?.display_name || placeCode;
+  }
+
+  // 폼 상태: null=닫힘, editing 이 있으면 편집 대상 device_id(UUID), 없으면 추가.
   const [form, setForm] = useState<DeviceFormState | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<AirDevice | null>(null);
 
   // 선택된 역사의 위치 목록(선택 역사 종속). 역사 미선택 시 빈 배열.
   const placeOptions = useMemo(() => {
-    const st = stations.find((s) => s.station === form?.station);
-    return st?.places ?? [];
-  }, [stations, form?.station]);
+    return stationsByCode.get(form?.station ?? '')?.places ?? [];
+  }, [stationsByCode, form?.station]);
 
   function openAdd() {
     setEditing(null);
@@ -73,8 +86,6 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
   function openEdit(d: AirDevice) {
     setEditing(d.device_id);
     setForm({
-      device_id: d.device_id,
-      name: d.name ?? '',
       station: d.station ?? '',
       place: d.place ?? '',
       index: d.index ? String(d.index) : '',
@@ -89,49 +100,58 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
 
   function handleSubmit() {
     if (!form) return;
-    const deviceId = form.device_id.trim();
-    if (!deviceId) {
-      addNotification({ type: 'error', message: t('agents.detail.airDevices.deviceIdRequired') });
+    const station = form.station.trim();
+    const place = form.place.trim();
+    if (!station || !place) {
+      addNotification({ type: 'error', message: t('agents.detail.airDevices.stationPlaceRequired') });
       return;
     }
-    // index 파싱(빈 값=0). 숫자가 아니면 오류.
-    let indexNum = 0;
-    if (form.index.trim()) {
-      indexNum = parseInt(form.index.trim(), 10);
-      if (Number.isNaN(indexNum)) {
-        addNotification({ type: 'error', message: t('agents.detail.airDevices.indexError') });
-        return;
-      }
+    if (form.index.trim() === '') {
+      addNotification({ type: 'error', message: t('agents.detail.airDevices.indexRequired') });
+      return;
     }
+    const indexNum = parseInt(form.index.trim(), 10);
+    if (Number.isNaN(indexNum)) {
+      addNotification({ type: 'error', message: t('agents.detail.airDevices.indexError') });
+      return;
+    }
+    const groupId = form.group_id.trim();
 
-    const payload = {
-      device_id: deviceId,
-      name: form.name.trim(),
-      station: form.station.trim(),
-      place: form.place.trim(),
-      index: indexNum,
-      group_id: form.group_id.trim(),
-    };
+    if (editing) {
+      setDevice.mutate(
+        { device_id: editing, station, place, index: indexNum, group_id: groupId },
+        {
+          onSuccess: () => {
+            closeForm();
+            addNotification({ type: 'success', message: t('agents.detail.airDevices.updateSuccess') });
+          },
+          onError: (err) => notifyOpError(err),
+        },
+      );
+    } else {
+      addDevice.mutate(
+        { station, place, index: indexNum, group_id: groupId },
+        {
+          onSuccess: (res) => {
+            closeForm();
+            addNotification({
+              type: 'success',
+              message: t('agents.detail.airDevices.addSuccess').replace('{name}', res.name || res.device_id),
+            });
+          },
+          onError: (err) => notifyOpError(err),
+        },
+      );
+    }
+  }
 
-    const mutation = editing ? setDevice : addDevice;
-    const successMsg = editing
-      ? t('agents.detail.airDevices.updateSuccess')
-      : t('agents.detail.airDevices.addSuccess');
-
-    mutation.mutate(payload, {
-      onSuccess: () => {
-        closeForm();
-        addNotification({ type: 'success', message: successMsg });
-      },
-      onError: (err) => {
-        addNotification({
-          type: 'error',
-          message: t('agents.detail.airDevices.opError').replace(
-            '{message}',
-            err instanceof Error ? err.message : t('agents.detail.airDevices.unknownError'),
-          ),
-        });
-      },
+  function notifyOpError(err: unknown) {
+    addNotification({
+      type: 'error',
+      message: t('agents.detail.airDevices.opError').replace(
+        '{message}',
+        err instanceof Error ? err.message : t('agents.detail.airDevices.unknownError'),
+      ),
     });
   }
 
@@ -145,13 +165,7 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
       },
       onError: (err) => {
         setRemoveTarget(null);
-        addNotification({
-          type: 'error',
-          message: t('agents.detail.airDevices.opError').replace(
-            '{message}',
-            err instanceof Error ? err.message : t('agents.detail.airDevices.unknownError'),
-          ),
-        });
+        notifyOpError(err);
       },
     });
   }
@@ -185,7 +199,7 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
         </button>
       </div>
 
-      {/* 목록 */}
+      {/* 목록: 이름 → 아이디 → 역사 → 위치 → 인덱스 */}
       {devices.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
           <HardDrive className="h-8 w-8 opacity-40" aria-hidden="true" />
@@ -196,12 +210,11 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated) text-left text-xs text-(--color-text-muted)">
-                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.deviceId')}</th>
                 <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.name')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.deviceId')}</th>
                 <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.station')}</th>
                 <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.place')}</th>
                 <th className="px-3 py-2 text-right font-medium">{t('agents.detail.airDevices.index')}</th>
-                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.groupId')}</th>
                 <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.status')}</th>
                 <th className="px-3 py-2 text-right font-medium" />
               </tr>
@@ -212,12 +225,13 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
                   key={d.device_id}
                   className="border-b border-(--color-border-default) last:border-0 hover:bg-(--color-bg-elevated)"
                 >
-                  <td className="px-3 py-2 font-mono text-xs text-(--color-text-primary)">{d.device_id}</td>
-                  <td className="px-3 py-2 text-(--color-text-secondary)">{d.name || '-'}</td>
-                  <td className="px-3 py-2 text-(--color-text-secondary)">{d.station || '-'}</td>
-                  <td className="px-3 py-2 text-(--color-text-secondary)">{d.place || '-'}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-(--color-text-primary)">{d.name || '-'}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-(--color-text-muted)" title={d.device_id}>
+                    {shortId(d.device_id)}
+                  </td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">{stationDisplay(d.station)}</td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">{placeDisplay(d.station, d.place)}</td>
                   <td className="px-3 py-2 text-right text-(--color-text-secondary)">{d.index || 0}</td>
-                  <td className="px-3 py-2 text-(--color-text-secondary)">{d.group_id || '-'}</td>
                   <td className="px-3 py-2">
                     <span
                       className={cn(
@@ -282,32 +296,11 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
               </button>
             </div>
             <div className="space-y-3 p-4">
-              <div>
-                <label className={labelCls}>
-                  {t('agents.detail.airDevices.deviceId')} <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={form.device_id}
-                  disabled={!!editing}
-                  placeholder={t('agents.detail.airDevices.deviceIdPlaceholder')}
-                  onChange={(e) => setForm({ ...form, device_id: e.target.value })}
-                  className={cn(inputCls, editing && 'cursor-not-allowed opacity-60')}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('agents.detail.airDevices.name')}</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  placeholder={t('agents.detail.airDevices.namePlaceholder')}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className={labelCls}>{t('agents.detail.airDevices.station')}</label>
+                  <label className={labelCls}>
+                    {t('agents.detail.airDevices.station')} <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={form.station}
                     onChange={(e) => setForm({ ...form, station: e.target.value, place: '' })}
@@ -327,7 +320,9 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
                   )}
                 </div>
                 <div>
-                  <label className={labelCls}>{t('agents.detail.airDevices.place')}</label>
+                  <label className={labelCls}>
+                    {t('agents.detail.airDevices.place')} <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={form.place}
                     disabled={!form.station}
@@ -345,7 +340,9 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className={labelCls}>{t('agents.detail.airDevices.index')}</label>
+                  <label className={labelCls}>
+                    {t('agents.detail.airDevices.index')} <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="number"
                     value={form.index}
@@ -377,7 +374,7 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={submitting || !form.device_id.trim()}
+                disabled={submitting || !form.station || !form.place || form.index.trim() === ''}
                 className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
               >
                 {submitting

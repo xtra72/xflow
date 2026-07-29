@@ -315,21 +315,48 @@ export function useAirpurifierDevices(agentId: string) {
   });
 }
 
-export interface AirDeviceUpsert {
+/**
+ * 디바이스 생성 파라미터. 백엔드가 device_id(UUID)를 생성하고 name(복합 키)을 계산하므로
+ * 생성 요청에는 device_id / name 을 보내지 않는다.
+ */
+export interface AirDeviceCreate {
+  station: string;
+  place: string;
+  index: number;
+  group_id?: string;
+}
+
+/**
+ * 디바이스 수정 파라미터. device_id(UUID)로 대상을 지정하고, 편집 가능한 필드를 보낸다.
+ * 백엔드가 name 을 재계산한다.
+ */
+export interface AirDeviceUpdate {
   device_id: string;
-  name?: string;
   station?: string;
   place?: string;
   index?: number;
   group_id?: string;
 }
 
-/** 디바이스 추가 (add_device, Source="bridge"). device_id 필수. */
+/** add_device 응답 형태(execAgent 는 엔벨로프를 벗겨 Process 결과를 그대로 반환). */
+export interface AddDeviceResult {
+  status: string;
+  device_id: string;
+  name: string;
+  source: string;
+}
+
+/**
+ * 디바이스 추가 (add_device, Source="bridge"). device_id(UUID)와 name(복합 키)은 백엔드가
+ * 생성/계산한다. 응답의 name 을 성공 토스트에 노출하기 위해 결과를 반환한다.
+ */
 export function useAddAirpurifierDevice(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (v: AirDeviceUpsert) =>
-      agentService.execAgent(agentId, { command: 'add_device', params: { ...v } }),
+    mutationFn: async (v: AirDeviceCreate): Promise<AddDeviceResult> => {
+      const res = await agentService.execAgent(agentId, { command: 'add_device', params: { ...v } });
+      return res as unknown as AddDeviceResult;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: devicesKey(agentId) });
       queryClient.invalidateQueries({ queryKey: ['devices'] });
@@ -338,13 +365,13 @@ export function useAddAirpurifierDevice(agentId: string) {
 }
 
 /**
- * 디바이스 부분 갱신 (set_device). 백엔드는 요청 본문에 존재하는 키만 갱신하므로
- * 변경할 필드만 전달한다(device_id 는 항상 필요).
+ * 디바이스 부분 갱신 (set_device). device_id(UUID)로 대상을 지정하고, 존재하는 키만
+ * 갱신된다(백엔드가 name 재계산).
  */
 export function useSetAirpurifierDevice(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (v: AirDeviceUpsert) =>
+    mutationFn: (v: AirDeviceUpdate) =>
       agentService.execAgent(agentId, { command: 'set_device', params: { ...v } }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: devicesKey(agentId) });

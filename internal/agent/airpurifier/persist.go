@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
 )
 
@@ -126,7 +127,7 @@ func (a *AirPurifierAgent) loadPersistedRoster() error {
 		if _, exists := a.devices[id]; exists {
 			continue // config precedence — 설정 디바이스가 우선
 		}
-		a.devices[id] = &Device{
+		dev := &Device{
 			DeviceID: id,
 			Name:     pd.Name,
 			GroupID:  pd.GroupID,
@@ -135,9 +136,23 @@ func (a *AirPurifierAgent) loadPersistedRoster() error {
 			Index:    pd.Index,
 			Online:   false,
 			Source:   pd.Source,
+			// 저장된 device_id 는 verbatim 으로 키에 사용한다(과거 id 를 재작성하지 않음). UUID 형태면
+			// 합성 주소 모델 디바이스로 간주해 composite=true 로 표시한다 — 이후 set_device 로 위치가
+			// 바뀌면 Name 을 재계산한다. 비-UUID(과거 합성/blob id)는 composite=false 로 둔다.
+			composite: isUUID(id),
 		}
+		a.devices[id] = dev
+		// 보조 인덱스는 station/place/index 로부터 항상 재구축한다(id 형태와 무관) — 유입 상태
+		// 토픽이 재시작 후에도 올바른 device_id 로 매칭되도록 한다.
+		a.indexDeviceLocked(dev)
 	}
 	return nil
+}
+
+// isUUID 는 문자열이 UUID(v4 등) 형식인지 판정한다. 영속 복원 시 device_id 가 생성된 UUID(합성
+// 주소 모델)인지 과거 blob/합성 식별자인지 구분하는 데 쓴다.
+func isUUID(s string) bool {
+	return uuid.Validate(s) == nil
 }
 
 // persistRoster 는 현재 런타임 로스터(Source="bridge"/"auto")의 스냅샷을 저장소에 통째로

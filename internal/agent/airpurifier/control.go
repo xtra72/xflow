@@ -329,35 +329,68 @@ func (a *AirPurifierAgent) handleSetMultiple(req processRequest) ([]byte, error)
 // 양 모드에서 device_registered 이벤트를 방출한다. state 토픽 구독은 Start 의 단일 와일드카드
 // 구독이 모든 디바이스를 이미 커버하므로 디바이스별 구독을 하지 않는다 (M14).
 func (a *AirPurifierAgent) handleAddDevice(req processRequest) ([]byte, error) {
-	if req.DeviceID == "" {
-		return nil, fmt.Errorf("%w: add_device requires device_id", ErrInvalidCommand)
-	}
-
 	a.mu.Lock()
-	if _, exists := a.devices[req.DeviceID]; exists {
+
+	// 명시적 device_id 경로(하위호환): 사용자/브리지가 부여한 device_id 를 그대로 로스터 키로
+	// 쓴다. blob/{device_id} 모델·기존 테스트 경로를 정확히 보존한다. Name 은 사용자 제공 값 유지.
+	if req.DeviceID != "" {
+		if _, exists := a.devices[req.DeviceID]; exists {
+			a.mu.Unlock()
+			return nil, fmt.Errorf("%w: %q", ErrDeviceAlreadyRegistered, req.DeviceID)
+		}
+		dev := &Device{
+			DeviceID: req.DeviceID,
+			Name:     req.Name,
+			GroupID:  req.GroupID,
+			Station:  req.Station,
+			Place:    req.Place,
+			Index:    req.Index,
+			Online:   false,
+			Source:   "bridge",
+		}
+		a.devices[req.DeviceID] = dev
+		a.indexDeviceLocked(dev) // 위치 계층이 있으면 보조 인덱스에도 등록.
 		a.mu.Unlock()
-		return nil, fmt.Errorf("%w: %q", ErrDeviceAlreadyRegistered, req.DeviceID)
+		return a.finishAddDevice(req.DeviceID, dev.Name)
 	}
-	a.devices[req.DeviceID] = &Device{
-		DeviceID: req.DeviceID,
-		Name:     req.Name,
-		GroupID:  req.GroupID,
-		Station:  req.Station,
-		Place:    req.Place,
-		Index:    req.Index,
-		Online:   false,
-		Source:   "bridge",
+
+	// device_id 미지정 경로(합성 주소 모델): UUID 를 생성하고 Name 을 합성한다. 같은 위치 계층
+	// 주소가 이미 있으면(보조 인덱스 hit) 중복 UUID 를 만들지 않고 ErrDeviceAlreadyRegistered.
+	ck := compositeKey(req.Station, req.Place, req.Index)
+	if _, exists := a.secondary[ck]; exists {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("%w: composite %q", ErrDeviceAlreadyRegistered, ck)
 	}
+	id := newDeviceID()
+	dev := &Device{
+		DeviceID:  id,
+		Name:      composeName(req.Station, req.Place, req.Index),
+		GroupID:   req.GroupID,
+		Station:   req.Station,
+		Place:     req.Place,
+		Index:     req.Index,
+		Online:    false,
+		Source:    "bridge",
+		composite: true,
+	}
+	a.devices[id] = dev
+	a.indexDeviceLocked(dev)
 	a.mu.Unlock()
+	return a.finishAddDevice(id, dev.Name)
+}
 
-	a.sendEvent("device_registered", map[string]any{"device_id": req.DeviceID, "source": "bridge"})
+// finishAddDevice 는 add_device 성공 후 공통 마무리(이벤트 방출·영속화)를 수행하고, UI 표시용으로
+// device_id + name 을 담은 응답을 반환한다. 락 미보유 상태에서 호출한다.
+func (a *AirPurifierAgent) finishAddDevice(deviceID, name string) ([]byte, error) {
+	a.sendEvent("device_registered", map[string]any{"device_id": deviceID, "source": "bridge"})
 
-	// B7: 로스터 변경 후 영속화(best-effort — 실패해도 등록 자체는 성공). 락 미보유 상태에서 호출.
+	// B7: 로스터 변경 후 영속화(best-effort — 실패해도 등록 자체는 성공).
 	a.persistRoster()
 
 	return json.Marshal(map[string]any{
 		"status":    "ok",
-		"device_id": req.DeviceID,
+		"device_id": deviceID,
+		"name":      name,
 		"command":   "add_device",
 		"source":    "bridge",
 	})
@@ -380,6 +413,7 @@ func (a *AirPurifierAgent) handleRemoveDevice(req processRequest) ([]byte, error
 		return nil, fmt.Errorf("%w: %q", ErrConfigDeviceProtected, req.DeviceID)
 	}
 	delete(a.devices, req.DeviceID)
+	a.unindexDeviceLocked(dev) // 보조 인덱스 항목도 함께 제거(로스터와 동기화).
 	a.mu.Unlock()
 
 	// M14: state 토픽은 단일 와일드카드 구독이 모든 디바이스를 커버하므로 디바이스별 Unsubscribe
@@ -434,6 +468,12 @@ func (a *AirPurifierAgent) handleSetDevice(req processRequest, raw []byte) ([]by
 		a.mu.Unlock()
 		return nil, fmt.Errorf("%w: %q", ErrDeviceNotFound, req.DeviceID)
 	}
+	// 위치 계층(station/place/index) 변경 시 보조 인덱스를 갱신한다: 옛 compositeKey 를 먼저
+	// 제거하고(변경 전 값 기준), 필드 갱신 후 새 compositeKey 로 재등록한다.
+	addrChange := present("station") || present("place") || present("index")
+	if addrChange {
+		a.unindexDeviceLocked(dev)
+	}
 	if present("name") {
 		dev.Name = req.Name
 	}
@@ -448,6 +488,14 @@ func (a *AirPurifierAgent) handleSetDevice(req processRequest, raw []byte) ([]by
 	}
 	if present("index") {
 		dev.Index = req.Index
+	}
+	if addrChange {
+		// 합성 주소 모델(composite) 디바이스의 Name 은 파생값이므로, name 을 명시적으로 주지
+		// 않았다면 새 위치로 재계산한다. blob 디바이스의 Name 은 사용자 관리값이라 보존한다.
+		if dev.composite && !present("name") {
+			dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+		}
+		a.indexDeviceLocked(dev)
 	}
 	a.mu.Unlock()
 

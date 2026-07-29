@@ -3,6 +3,7 @@ package airpurifier
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -116,6 +117,25 @@ func templateHasAttribute(template string) bool {
 	return false
 }
 
+// templateIsComposite 는 템플릿이 합성 주소 모델(다중 필드)인지 반환한다. 비-attribute
+// placeholder 가 없거나 {device_id} 단독이면 false(blob/{device_id} 모델), 그 외(station_code/
+// place_code/device_index 등)면 true. seedKeyAndAddress 의 키 판별 규칙과 동형이다.
+func templateIsComposite(template string) bool {
+	var nonAttr []string
+	for _, n := range placeholderNames(template) {
+		if n != placeholderAttribute {
+			nonAttr = append(nonAttr, n)
+		}
+	}
+	if len(nonAttr) == 0 {
+		return false
+	}
+	if len(nonAttr) == 1 && nonAttr[0] == placeholderDeviceID {
+		return false
+	}
+	return true
+}
+
 // buildSubscriptionTopic 은 템플릿의 모든 {...} placeholder 세그먼트를 MQTT 단일 레벨
 // 와일드카드 "+" 로 치환한다. 템플릿당 단 하나의 와일드카드 구독을 산출하여 디바이스별
 // 렌더 구독을 대체한다 (예: state/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute}
@@ -178,6 +198,26 @@ func synthesizeAddress(template string, fields map[string]string) string {
 		parts = append(parts, fields[n])
 	}
 	return strings.Join(parts, ":")
+}
+
+// compositeKey 는 위치 계층 주소를 정규화한 보조 인덱스 키를 만든다: "{station}:{place}:{index}".
+// index 는 int 로 정규화(선행 0 무시)되므로 토픽의 ".../3/..." 와 ".../003/..." 가 같은 키로
+// 귀결된다 — 보조 인덱스(compositeKey → device_id/UUID) 조회의 안정성을 보장한다.
+func compositeKey(station, place string, index int) string {
+	return station + ":" + place + ":" + strconv.Itoa(index)
+}
+
+// compositeKeyFromFields 는 파싱된 토픽 placeholder 로부터 정규화 보조 인덱스 키를 만든다.
+// device_index 는 int 로 정규화한다(compositeKey 와 동일 규칙).
+func compositeKeyFromFields(fields map[string]string) string {
+	return compositeKey(fields[placeholderStationCode], fields[placeholderPlaceCode], toInt(fields[placeholderDeviceIndex]))
+}
+
+// composeName 은 표시용 Name 을 위치 계층으로 합성한다: "{station}:{place}:{index-3자리-0채움}".
+// compositeKey 와 달리 index 를 3자리로 0-채움한다(예: 3 → "003") — 사람이 읽는 표시 규약이며,
+// 보조 인덱스 키(정규화 int)와는 목적이 다르다(표시 vs 매칭).
+func composeName(station, place string, index int) string {
+	return fmt.Sprintf("%s:%s:%03d", station, place, index)
 }
 
 // nonAttrFields 는 {attribute} 를 제외한 placeholder 값 맵의 복사본을 반환한다
