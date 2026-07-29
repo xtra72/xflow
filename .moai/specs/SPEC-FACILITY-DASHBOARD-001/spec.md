@@ -11,16 +11,16 @@ phase: "v0.1.0 target"
 module: "web/src/pages/dashboard"
 lifecycle: spec-anchored
 tier: M
-tags: "dashboard, facility, subway, airpurifier, line-panel, station-panel, device-panel, bulk-control, aggregation, station-registry"
+tags: "dashboard, facility, subway, xsfm, line-panel, station-panel, device-panel, bulk-control, aggregation, station-registry"
 depends_on:
-  - SPEC-AIRPURIFIER-001
+  - SPEC-XSFM-001
 ---
 
 ## HISTORY
 
 | 날짜         | 버전    | 변경 내용                                                                 |
 | ---------- | ----- | --------------------------------------------------------------------- |
-| 2026-07-28 | 0.1.0 | 초기 SPEC 작성 — 지하철 역사 시설물 관리 비전의 대시보드 3종 패널(라인/역사/기기) 정의. SPEC-AIRPURIFIER-001(v0.3.0)이 소유하는 디바이스 위치 계층(station/place/index) + 역사 레지스트리(station→line) + line/station fan-out 표면을 **소비**하여 시각화·통계·일괄제어 UI를 구성한다. 저장 영속화(패널 스키마)는 SPEC-DASHBOARD-001을 소비한다 |
+| 2026-07-28 | 0.1.0 | 초기 SPEC 작성 — 지하철 역사 시설물 관리 비전의 대시보드 3종 패널(라인/역사/기기) 정의. SPEC-XSFM-001(v0.3.0)이 소유하는 디바이스 위치 계층(station/place/index) + 역사 레지스트리(station→line) + line/station fan-out 표면을 **소비**하여 시각화·통계·일괄제어 UI를 구성한다. 저장 영속화(패널 스키마)는 SPEC-DASHBOARD-001을 소비한다 |
 
 ---
 
@@ -32,13 +32,13 @@ depends_on:
 
 xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대시보드 패널 시스템**을 이미 보유하고 있다. 사용자는 대시보드 페이지에 여러 종류의 패널(패널 타입)을 자유롭게 추가·배치·설정하며, 그 구성은 서버(SQLite)에 영속 저장된다(SPEC-DASHBOARD-001).
 
-본 SPEC은 **지하철 역사 시설물 관리(facility management)** 비전에서 **첫 디바이스 타입인 공기청정기(air purifier)** 를 대상으로, 운영자가 라인(호선) → 역사(station) → 기기(device) 계층으로 시설물 상태를 조망·제어할 수 있는 **3종의 신규 대시보드 패널 타입**을 정의한다.
+본 SPEC은 **지하철 역사 시설물 관리(facility management)** 비전에서 **첫 디바이스 타입인 설비(facility)** 를 대상으로, 운영자가 라인(호선) → 역사(station) → 기기(device) 계층으로 시설물 상태를 조망·제어할 수 있는 **3종의 신규 대시보드 패널 타입**을 정의한다.
 
 1. **라인 패널(Line panel)** — 한 호선 전체 기기의 라인도(line diagram) + 역사별 상태 요약 + 라인 통계 + 라인 일괄 제어.
 2. **역사 패널(Station panel)** — 한 역사의 통계 + 기기별 상태 목록 + 역사 일괄 제어.
 3. **기기 패널(Device panel)** — 단일 기기의 상태 + 제어(응답 대기 피드백 포함).
 
-이 세 패널은 기존 대시보드 패널 시스템의 **새 패널 타입**으로 편입되며, SPEC-AIRPURIFIER-001이 소유·노출하는 데이터/제어 표면만 소비한다. 본 SPEC은 **디바이스 에이전트/프로토콜/제어 내부 동작을 재정의하지 않는다**.
+이 세 패널은 기존 대시보드 패널 시스템의 **새 패널 타입**으로 편입되며, SPEC-XSFM-001이 소유·노출하는 데이터/제어 표면만 소비한다. 본 SPEC은 **디바이스 에이전트/프로토콜/제어 내부 동작을 재정의하지 않는다**.
 
 ### 1.2 기술 환경
 
@@ -49,19 +49,19 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
   - `web/src/pages/dashboard/renderDashboardPanel.tsx` — `switch (panel.type)` 렌더 디스패치.
   - `web/src/pages/dashboard/PanelSettingsDialog.tsx` — 패널별 설정 편집.
   - `web/src/pages/dashboard/panels/` — 기존 패널: `DevicePanel.tsx`, `SingleDevicePanel.tsx`, `AcControlPanel.tsx`, `HvacControlPanel.tsx`, `LogPanel.tsx`, `GaugePanel.tsx` 등 (신규 패널이 미러링할 패턴).
-- **데이터/제어 API 표면** (SPEC-AIRPURIFIER-001 + 기존 API):
+- **데이터/제어 API 표면** (SPEC-XSFM-001 + 기존 API):
   - 단일 기기 조회/제어: `deviceService.getDevice(id)`, `deviceService.executeCommand(id, {command, params})` → `POST /devices/{id}/execute` → 어댑터 → 에이전트 `Process`.
   - 에이전트 Process 명령(로스터/레지스트리/셀렉터 일괄): `agentService.execAgent(id, {command, params, ...selector})` → `POST /agents/{id}/exec` → `AgentServiceAdapter.ExecAgent` → 에이전트 `Process`.
-  - 공기청정기 에이전트 Process 명령(REQ-AIRPUR-001-03-06): `list_devices`, `list_stations`, `set_power`, `set_fan_speed`, `set_multiple`(셀렉터 `station`/`line`/`group_id` 지원).
+  - 설비 에이전트 Process 명령(REQ-XSFM-001-03-06): `list_devices`, `list_stations`, `set_power`, `set_fan_speed`, `set_multiple`(셀렉터 `station`/`line`/`group_id` 지원).
 - **패널 영속화**: SPEC-DASHBOARD-001의 `DashboardSnapshot.payload.dashboardPages[].panels[]` 스키마. 신규 패널은 그 스키마의 `type` + `config`로 표현되어 그대로 저장/복원된다.
 - **테스트 프레임워크**: Vitest + React Testing Library (`*.test.tsx`).
 
 ### 1.3 설계 원칙
 
 - **기존 패턴 준수**: 신규 패널은 `panels/` 하위 컴포넌트로 작성하고, 타입 등록(`PanelType` 유니온) → AddPanelDialog 항목 → renderDashboardPanel case → PanelSettingsDialog 설정의 4-지점 와이어링을 기존 패널(`ac-control`/`hvac-control`)과 동일하게 따른다.
-- **소비 전용(consume-only)**: 디바이스 위치 계층, station→line 매핑, line/station fan-out은 **SPEC-AIRPURIFIER-001의 SSOT**를 그대로 소비한다. 본 SPEC은 자체 매핑/제어 로직을 만들지 않는다.
+- **소비 전용(consume-only)**: 디바이스 위치 계층, station→line 매핑, line/station fan-out은 **SPEC-XSFM-001의 SSOT**를 그대로 소비한다. 본 SPEC은 자체 매핑/제어 로직을 만들지 않는다.
 - **집계는 UI/집계 레이어에서**: 라인/역사 통계와 역사별 요약은 에이전트가 노출하는 로스터(`list_devices`) + 역사 레지스트리(`list_stations`)로부터 파생한다. 백엔드 전용 집계 엔드포인트는 MVP 범위 외로 두되(대규모 fleet 성능 시 후속), 계산 방식은 §3 Module 5에서 결정한다.
-- **응답 대기 UX 노출**: 개별·일괄 제어 모두 SPEC-AIRPURIFIER-001의 응답 대기(state echo) 결과(`ok`/`error`/`timeout`)를 사용자에게 그대로 반영한다.
+- **응답 대기 UX 노출**: 개별·일괄 제어 모두 SPEC-XSFM-001의 응답 대기(state echo) 결과(`ok`/`error`/`timeout`)를 사용자에게 그대로 반영한다.
 
 ### 1.4 범위 경계
 
@@ -75,14 +75,14 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 **본 SPEC이 소비만 하는 것(재정의하지 않음)**
 
-- 디바이스 에이전트/프로토콜/제어 내부 동작, 위치 계층(station/place/index), 역사 레지스트리(station→line), 개별·일괄 제어(set_power/set_fan_speed), 응답 대기(state echo, `control_response_timeout`, `ErrControlTimeout`), line/station/group 셀렉터 fan-out 및 멤버별 집계 응답 → **모두 SPEC-AIRPURIFIER-001의 범위**.
+- 디바이스 에이전트/프로토콜/제어 내부 동작, 위치 계층(station/place/index), 역사 레지스트리(station→line), 개별·일괄 제어(set_power/set_fan_speed), 응답 대기(state echo, `control_response_timeout`, `ErrControlTimeout`), line/station/group 셀렉터 fan-out 및 멤버별 집계 응답 → **모두 SPEC-XSFM-001의 범위**.
 - 대시보드 페이지/패널 서버 영속화 메커니즘(SQLite, 공유/개인 스코프, 권한, `If-Match` 충돌) → **SPEC-DASHBOARD-001의 범위**. 본 SPEC은 신규 패널이 그 스키마에 맞게 저장·복원됨만 보장.
 
 **범위 외(Non-Goals)**
 
-- 공기청정기 외 다른 시설물 디바이스 타입(공조/조명/센서 등)의 패널 — 후속 SPEC.
-- PM2.5/CO2 등 센서 텔레메트리의 시각화 — 본 SPEC은 power/fan_speed/online 상태 중심(SPEC-AIRPURIFIER-001 상태 축과 동일).
-- 역사 레지스트리 자체의 편집(CRUD) UI — 레지스트리 CRUD는 SPEC-AIRPURIFIER-001의 `add_station`/`remove_station`/`list_stations`가 소유. 본 SPEC은 `list_stations` **조회**만 소비한다(레지스트리 편집 화면은 후속).
+- 설비 외 다른 시설물 디바이스 타입(공조/조명/센서 등)의 패널 — 후속 SPEC.
+- PM2.5/CO2 등 센서 텔레메트리의 시각화 — 본 SPEC은 power/fan_speed/online 상태 중심(SPEC-XSFM-001 상태 축과 동일).
+- 역사 레지스트리 자체의 편집(CRUD) UI — 레지스트리 CRUD는 SPEC-XSFM-001의 `add_station`/`remove_station`/`list_stations`가 소유. 본 SPEC은 `list_stations` **조회**만 소비한다(레지스트리 편집 화면은 후속).
 - 실시간 WebSocket 푸시 — 본 SPEC은 대시보드 refresh 주기(폴링)로 갱신(기존 패널 관행 준수).
 - 지리적 좌표 기반 실측 노선도(GIS) — 라인도는 역사 레지스트리의 **순서(order)** 기반 논리적 배치이며 실좌표 지도가 아니다.
 
@@ -90,14 +90,14 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 ## 2. Assumptions (가정)
 
-- **A-1. AIRPURIFIER-001 표면 가용성**: 본 SPEC은 SPEC-AIRPURIFIER-001(v0.3.0 이상)이 정의한 (a) 디바이스 위치 계층(`station`/`place`/`index`), (b) 역사 레지스트리(station→{line, display_name, order}), (c) `list_devices`/`list_stations` 조회 명령, (d) `station`/`line` 셀렉터 일괄 제어 + 멤버별 `ok`/`error`/`timeout` 집계 응답이 에이전트 `Process`/exec 경로로 이용 가능하다고 가정한다. 이들이 미구현이면 본 SPEC의 패널은 빈/에러 상태로 안전 degrade한다(A-7).
+- **A-1. XSFM-001 표면 가용성**: 본 SPEC은 SPEC-XSFM-001(v0.3.0 이상)이 정의한 (a) 디바이스 위치 계층(`station`/`place`/`index`), (b) 역사 레지스트리(station→{line, display_name, order}), (c) `list_devices`/`list_stations` 조회 명령, (d) `station`/`line` 셀렉터 일괄 제어 + 멤버별 `ok`/`error`/`timeout` 집계 응답이 에이전트 `Process`/exec 경로로 이용 가능하다고 가정한다. 이들이 미구현이면 본 SPEC의 패널은 빈/에러 상태로 안전 degrade한다(A-7).
 - **A-2. 데이터 소스는 에이전트 exec**: 라인/역사/기기 화면에 필요한 로스터·레지스트리 데이터는 `POST /agents/{id}/exec`의 `list_devices`/`list_stations` 응답으로 취득한다. 별도의 시설물 전용 REST 리소스는 MVP에서 도입하지 않는다(Module 5 결정).
 - **A-3. 통계 집합 정의**: "통계 정보"는 상태별 **카운트**로 한정한다 — {online/offline 수, power on/off 수, fan_speed(1/2/3) 분포, 총 기기 수}. 시계열/추세는 기존 차트 패널(SPEC-CHART-001)의 몫이며 본 패널의 통계는 스냅샷 카운트다.
 - **A-4. 라인도 배치 소스는 역사 레지스트리의 order/display_name**: 라인 위 역사 배치 순서와 표시명은 역사 레지스트리(`list_stations`)의 `order`·`display_name`에서 온다. 별도 좌표 데이터는 사용하지 않는다.
-- **A-5. 셀렉터 대상 지정**: 라인 일괄 제어는 셀렉터 `line`, 역사 일괄 제어는 셀렉터 `station`으로 에이전트 exec를 호출한다. 우선순위·해석(REQ-AIRPUR-001-04-04)은 에이전트가 소유하며, 패널은 단일 셀렉터만 지정한다.
-- **A-6. 응답 대기 결과는 exec 응답으로 반환**: 개별 제어(`executeCommand`)와 일괄 제어(`execAgent`)의 응답에는 SPEC-AIRPURIFIER-001의 응답 대기 판정(개별: `ok`/`timeout`, 일괄: 멤버별 `ok`/`error`/`timeout` 집계)이 포함되어 반환된다고 가정한다. 패널은 이 응답을 렌더링할 뿐 자체 타임아웃 로직을 두지 않는다(단, 네트워크 레벨 요청 타임아웃은 별개).
+- **A-5. 셀렉터 대상 지정**: 라인 일괄 제어는 셀렉터 `line`, 역사 일괄 제어는 셀렉터 `station`으로 에이전트 exec를 호출한다. 우선순위·해석(REQ-XSFM-001-04-04)은 에이전트가 소유하며, 패널은 단일 셀렉터만 지정한다.
+- **A-6. 응답 대기 결과는 exec 응답으로 반환**: 개별 제어(`executeCommand`)와 일괄 제어(`execAgent`)의 응답에는 SPEC-XSFM-001의 응답 대기 판정(개별: `ok`/`timeout`, 일괄: 멤버별 `ok`/`error`/`timeout` 집계)이 포함되어 반환된다고 가정한다. 패널은 이 응답을 렌더링할 뿐 자체 타임아웃 로직을 두지 않는다(단, 네트워크 레벨 요청 타임아웃은 별개).
 - **A-7. 미등록/빈 상태 안전 degrade**: 미등록 station(레지스트리에 없음)·빈 라인·빈 역사·미구현 표면은 패널이 크래시 없이 "데이터 없음"/"미등록" 안내로 표시한다.
-- **A-8. 에이전트 식별**: 시설물 패널은 대상 공기청정기 **에이전트 ID**를 패널 `config`로 보유한다(패널 추가 시 선택). 하나의 에이전트가 다수 역사·라인의 기기를 로스터로 관리하는 것을 기본 가정한다(단일 에이전트 스코프). 다중 에이전트 통합 집계는 후속(OI-3).
+- **A-8. 에이전트 식별**: 시설물 패널은 대상 설비 **에이전트 ID**를 패널 `config`로 보유한다(패널 추가 시 선택). 하나의 에이전트가 다수 역사·라인의 기기를 로스터로 관리하는 것을 기본 가정한다(단일 에이전트 스코프). 다중 에이전트 통합 집계는 후속(OI-3).
 - **A-9. 영속 정합**: 신규 패널의 `config`(에이전트 ID, 선택된 line/station, 표시 옵션)는 SPEC-DASHBOARD-001의 `payload` snapshot에 포함되어 그대로 저장/복원되며, 알 수 없는 필드를 추가하지 않는다(schema 확장은 `config` 내부 키로 한정).
 
 ---
@@ -162,11 +162,11 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 #### REQ-FACDASH-001-03-02 (Event-Driven) 기기 제어와 응답 대기 피드백
 
-**WHEN** 사용자가 기기 패널에서 `set_power`(on/off) 또는 `set_fan_speed`(1/2/3)를 실행하면 **THEN** 패널은 `deviceService.executeCommand`(또는 에이전트 exec의 device_id 대상)로 제어를 호출하고, SPEC-AIRPURIFIER-001의 응답 대기 결과를 **성공(`ok`, 상태 에코 반영)** 또는 **타임아웃(`timeout`/`ErrControlTimeout`)** 으로 사용자에게 명시적으로 표시해야 한다.
+**WHEN** 사용자가 기기 패널에서 `set_power`(on/off) 또는 `set_fan_speed`(1/2/3)를 실행하면 **THEN** 패널은 `deviceService.executeCommand`(또는 에이전트 exec의 device_id 대상)로 제어를 호출하고, SPEC-XSFM-001의 응답 대기 결과를 **성공(`ok`, 상태 에코 반영)** 또는 **타임아웃(`timeout`/`ErrControlTimeout`)** 으로 사용자에게 명시적으로 표시해야 한다.
 
 #### REQ-FACDASH-001-03-03 (State-Driven) 풍량-전원 의존 UX
 
-**IF** 대상 기기의 전원이 OFF 상태이면 **THEN** 기기 패널은 풍량 제어의 의미론(전원 ON일 때만 유효, REQ-AIRPUR-001-03-03)을 UX에 반영해야 한다 — 풍량 컨트롤 비활성화 또는 거부(`ErrPowerOff`) 결과의 명시적 안내 중 하나.
+**IF** 대상 기기의 전원이 OFF 상태이면 **THEN** 기기 패널은 풍량 제어의 의미론(전원 ON일 때만 유효, REQ-XSFM-001-03-03)을 UX에 반영해야 한다 — 풍량 컨트롤 비활성화 또는 거부(`ErrPowerOff`) 결과의 명시적 안내 중 하나.
 
 #### REQ-FACDASH-001-03-04 (Optional) 기존 SingleDevicePanel 확장 재사용
 
@@ -202,15 +202,15 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 #### REQ-FACDASH-001-05-01 (Ubiquitous) 데이터 소스 = 에이전트 exec (client-side 집계 채택)
 
-시스템은 **항상** 라인/역사/기기 화면 데이터를 에이전트 exec의 `list_devices`(로스터: device_id, station, place, index, online, power, fan_speed) + `list_stations`(역사 레지스트리: station→{line, display_name, order})로부터 취득하고, 통계·역사별 요약·라인도 배치를 **client-side에서 집계**해야 한다. **결정**: MVP는 신규 백엔드 집계 엔드포인트를 도입하지 않고 기존 AIRPURIFIER exec 표면을 재사용한다(A-2).
+시스템은 **항상** 라인/역사/기기 화면 데이터를 에이전트 exec의 `list_devices`(로스터: device_id, station, place, index, online, power, fan_speed) + `list_stations`(역사 레지스트리: station→{line, display_name, order})로부터 취득하고, 통계·역사별 요약·라인도 배치를 **client-side에서 집계**해야 한다. **결정**: MVP는 신규 백엔드 집계 엔드포인트를 도입하지 않고 기존 XSFM exec 표면을 재사용한다(A-2).
 
 #### REQ-FACDASH-001-05-02 (Ubiquitous) 통계 집계 규칙
 
-집계 로직은 **항상** 로스터를 station/line으로 그룹핑하여 {총 기기 수, online/offline, power on/off, fan_speed(1/2/3) 분포}를 카운트로 산출해야 한다. line은 디바이스 속성이 아니므로(REQ-AIRPUR-001-02-07/A-10) 각 디바이스의 `station`을 레지스트리에서 조회하여 line을 해석한 뒤 집계한다.
+집계 로직은 **항상** 로스터를 station/line으로 그룹핑하여 {총 기기 수, online/offline, power on/off, fan_speed(1/2/3) 분포}를 카운트로 산출해야 한다. line은 디바이스 속성이 아니므로(REQ-XSFM-001-02-07/A-10) 각 디바이스의 `station`을 레지스트리에서 조회하여 line을 해석한 뒤 집계한다.
 
 #### REQ-FACDASH-001-05-03 (State-Driven) 미등록 station 집계 처리
 
-**IF** 로스터의 어떤 디바이스가 레지스트리에 없는 station을 참조하면 **THEN** 그 디바이스는 line 집계에서 제외되고, 그 사실이 UI(예: "미분류 N대")로 표기되어야 한다(REQ-AIRPUR-001-02-13 정합).
+**IF** 로스터의 어떤 디바이스가 레지스트리에 없는 station을 참조하면 **THEN** 그 디바이스는 line 집계에서 제외되고, 그 사실이 UI(예: "미분류 N대")로 표기되어야 한다(REQ-XSFM-001-02-13 정합).
 
 #### REQ-FACDASH-001-05-04 (Event-Driven) 갱신 주기
 
@@ -224,7 +224,7 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 #### REQ-FACDASH-001-06-01 (Ubiquitous) 일괄 제어 호출 경로
 
-라인/역사 일괄 제어는 **항상** `agentService.execAgent(agentId, {command, <selector>, params})`(→ `POST /agents/{id}/exec` → 에이전트 `Process`)로 호출되어야 하며, 셀렉터는 라인=`line`, 역사=`station`으로 지정한다. 패널은 SPEC-AIRPURIFIER-001의 셀렉터 fan-out을 호출만 하고 fan-out 로직을 재구현하지 않는다.
+라인/역사 일괄 제어는 **항상** `agentService.execAgent(agentId, {command, <selector>, params})`(→ `POST /agents/{id}/exec` → 에이전트 `Process`)로 호출되어야 하며, 셀렉터는 라인=`line`, 역사=`station`으로 지정한다. 패널은 SPEC-XSFM-001의 셀렉터 fan-out을 호출만 하고 fan-out 로직을 재구현하지 않는다.
 
 #### REQ-FACDASH-001-06-02 (Event-Driven) 멤버별 집계 결과 렌더링
 
@@ -232,7 +232,7 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 #### REQ-FACDASH-001-06-03 (State-Driven) 빈 대상 일괄 제어 방지
 
-**IF** 대상 라인/역사에 멤버 기기가 없으면 **THEN** 패널은 일괄 제어를 비활성화하거나 실행 시 `ErrEmptyGroup` 의미론(REQ-AIRPUR-001-04-02)의 no-op 응답을 "대상 없음"으로 안내해야 한다.
+**IF** 대상 라인/역사에 멤버 기기가 없으면 **THEN** 패널은 일괄 제어를 비활성화하거나 실행 시 `ErrEmptyGroup` 의미론(REQ-XSFM-001-04-02)의 no-op 응답을 "대상 없음"으로 안내해야 한다.
 
 #### REQ-FACDASH-001-06-04 (Event-Driven) 제어 진행/결과 피드백
 
@@ -240,7 +240,7 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 ### Unwanted Behavior Requirements (금지 동작)
 
-- **UB-001**: 패널은 station→line 매핑·fan-out·응답 대기 판정을 **자체적으로 재구현하지 않아야** 한다 — 모두 SPEC-AIRPURIFIER-001 표면을 호출한다.
+- **UB-001**: 패널은 station→line 매핑·fan-out·응답 대기 판정을 **자체적으로 재구현하지 않아야** 한다 — 모두 SPEC-XSFM-001 표면을 호출한다.
 - **UB-002**: 패널은 제어 결과를 **소리 없이 누락**하지 않아야 한다 — 성공/실패/타임아웃을 항상 사용자에게 표시한다.
 - **UB-003**: 패널은 대시보드 스냅샷 스키마에 신규 최상위 필드를 추가하지 않아야 한다 — 확장은 패널 `config` 내부로 한정(SPEC-DASHBOARD-001 백워드 호환).
 - **UB-004**: 패널은 미등록 station의 디바이스를 line 집계에 **묵시적으로 포함**하지 않아야 한다 — 제외 + 별도 표기(REQ-FACDASH-001-05-03).
@@ -258,17 +258,17 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 | `facility-station` | `panels/FacilityStationPanel.tsx`   | `agentId`, `station`, 표시 옵션                     |
 | `facility-device`  | `panels/FacilityDevicePanel.tsx`    | `agentId`, `deviceId`, 표시 옵션                    |
 
-### 소비하는 AIRPURIFIER-001 표면 (재정의 금지)
+### 소비하는 XSFM-001 표면 (재정의 금지)
 
-| 소비 대상                     | AIRPURIFIER-001 REQ            | 호출 경로                                                   |
+| 소비 대상                     | XSFM-001 REQ            | 호출 경로                                                   |
 | ------------------------ | ----------------------------- | ------------------------------------------------------- |
-| 로스터 조회(위치/상태)            | REQ-AIRPUR-001-02-06 `list_devices` | `execAgent(agentId, {command:"list_devices"})`          |
-| 역사 레지스트리 조회             | REQ-AIRPUR-001-02-11 `list_stations` | `execAgent(agentId, {command:"list_stations"})`         |
-| 개별 제어 + 응답 대기           | REQ-AIRPUR-001-03-02/03/07/08 | `executeCommand(deviceId, {command, params})`           |
-| line 셀렉터 일괄 제어          | REQ-AIRPUR-001-04-06          | `execAgent(agentId, {command, line, params})`           |
-| station 셀렉터 일괄 제어       | REQ-AIRPUR-001-04-05          | `execAgent(agentId, {command, station, params})`        |
-| 멤버별 응답 집계(ok/error/timeout) | REQ-AIRPUR-001-04-07      | 위 exec 응답 body의 `results[]`                             |
-| 미등록 station 제외 표기       | REQ-AIRPUR-001-02-13          | 집계 응답/로스터 대비 레지스트리 조회 결과                             |
+| 로스터 조회(위치/상태)            | REQ-XSFM-001-02-06 `list_devices` | `execAgent(agentId, {command:"list_devices"})`          |
+| 역사 레지스트리 조회             | REQ-XSFM-001-02-11 `list_stations` | `execAgent(agentId, {command:"list_stations"})`         |
+| 개별 제어 + 응답 대기           | REQ-XSFM-001-03-02/03/07/08 | `executeCommand(deviceId, {command, params})`           |
+| line 셀렉터 일괄 제어          | REQ-XSFM-001-04-06          | `execAgent(agentId, {command, line, params})`           |
+| station 셀렉터 일괄 제어       | REQ-XSFM-001-04-05          | `execAgent(agentId, {command, station, params})`        |
+| 멤버별 응답 집계(ok/error/timeout) | REQ-XSFM-001-04-07      | 위 exec 응답 body의 `results[]`                             |
+| 미등록 station 제외 표기       | REQ-XSFM-001-02-13          | 집계 응답/로스터 대비 레지스트리 조회 결과                             |
 
 ### 소비하는 DASHBOARD-001 표면 (재정의 금지)
 
@@ -298,6 +298,6 @@ xflow는 Go 기반 IoT FBP 플랫폼이며, React 기반 웹 UI(`web/`)에 **대
 
 ## 6. 비고 (Notes)
 
-- 본 SPEC은 **소비 SPEC**이다. 데이터/제어/매핑의 SSOT는 SPEC-AIRPURIFIER-001, 영속화의 SSOT는 SPEC-DASHBOARD-001이며, 본 SPEC은 그 위에 시각화·통계·제어 UI만 얹는다.
+- 본 SPEC은 **소비 SPEC**이다. 데이터/제어/매핑의 SSOT는 SPEC-XSFM-001, 영속화의 SSOT는 SPEC-DASHBOARD-001이며, 본 SPEC은 그 위에 시각화·통계·제어 UI만 얹는다.
 - 선례 참조: SPEC-DASHBOARD-001(패널 영속화), SPEC-CHART-001(차트/stat 패널), SPEC-DEVICE-001(기기 패널/상태), 기존 `AcControlPanel`/`HvacControlPanel`(제어 패널 UX 패턴).
 - 라인/역사 통계는 **스냅샷 카운트**이며 시계열이 아니다(A-3). 추세 시각화가 필요하면 기존 차트 패널을 병행 사용한다.

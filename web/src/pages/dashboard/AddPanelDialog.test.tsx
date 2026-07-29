@@ -22,7 +22,7 @@ vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({
     data: {
       data: [
-        { id: 'air-1', name: '공기청정 에이전트', type: 'airpurifier', status: 'running' },
+        { id: 'air-1', name: '공기청정 에이전트', type: 'xsfm', status: 'running' },
         { id: 'store-1', name: '스토어', type: 'store', status: 'running' },
       ],
     },
@@ -37,7 +37,7 @@ vi.mock('@/hooks/useStation', () => ({
     ],
     isLoading: false,
   }),
-  useAirpurifierDevices: () => ({
+  useXsfmDevices: () => ({
     data: [{ device_id: 'd1', name: '기기-1', station: 's1', place: 'p1', index: 0 }],
     isLoading: false,
   }),
@@ -366,9 +366,9 @@ describe('AddPanelDialog', () => {
       fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
       fireEvent.click(screen.getByText('dashboard.panelTypes.facilityStation'));
 
-      // 에이전트 셀렉트는 airpurifier 만 노출 (store 에이전트 제외)
+      // 에이전트 셀렉트는 xsfm 만 노출 (store 에이전트 제외)
       const agentSelect = screen.getByTestId('facility-agent-select') as HTMLSelectElement;
-      expect(agentSelect.options.length).toBe(2); // placeholder + airpurifier 1개
+      expect(agentSelect.options.length).toBe(2); // placeholder + xsfm 1개
       fireEvent.change(agentSelect, { target: { value: 'air-1' } });
 
       const targetSelect = screen.getByTestId('facility-target-select') as HTMLSelectElement;

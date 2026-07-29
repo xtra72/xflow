@@ -14,7 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
-	"github.com/xtra/xflow/internal/agent/airpurifier"
 	"github.com/xtra/xflow/internal/agent/century"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/modbus"
@@ -23,6 +22,7 @@ import (
 	"github.com/xtra/xflow/internal/agent/serial"
 	"github.com/xtra/xflow/internal/agent/socket"
 	"github.com/xtra/xflow/internal/agent/system"
+	"github.com/xtra/xflow/internal/agent/xsfm"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/api/service"
@@ -389,8 +389,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := century.RegisterHvacr01Types(agentMgr); err != nil {
 		return fmt.Errorf("Century HVACR-01 agent type registration failed: %w", err)
 	}
-	if err := airpurifier.RegisterAirPurifierTypes(agentMgr); err != nil {
-		return fmt.Errorf("Air Purifier agent type registration failed: %w", err)
+	if err := xsfm.RegisterXSFMTypes(agentMgr); err != nil {
+		return fmt.Errorf("XSFM agent type registration failed: %w", err)
 	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)
@@ -632,12 +632,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer deviceIDRepo.Close()
 	agent.SetDeviceIDRepository(deviceIDRepo)
 
-	// 공기청정기 역사/위치/기기 레지스트리 기본 영속 경로 배선(SPEC-AIRPURIFIER-001).
+	// 설비 역사/위치/기기 레지스트리 기본 영속 경로 배선(SPEC-XSFM-001).
 	// registry_path/station_registry_path 설정이 비어 있어도 영속화가 기본 ON 이 되도록
 	// 서버 데이터 디렉터리를 기본 베이스로 주입한다. 실제 경로는 각 에이전트 Init 에서
-	// <dataDir>/airpurifier/<agentID>/ 로 유도된다(설정 경로가 있으면 그 경로가 우선).
+	// <dataDir>/xsfm/<agentID>/ 로 유도된다(설정 경로가 있으면 그 경로가 우선).
 	// device_metadata/device_ids 와 동일한 베이스(dir(sqlite_path))를 재사용한다.
-	airpurifier.SetDefaultRegistryDir(filepath.Dir(storageCfg.SQLitePath))
+	xsfm.SetDefaultRegistryDir(filepath.Dir(storageCfg.SQLitePath))
 
 	// device_id / device_info 키를 항상 에이전트 ID 기준으로 정규화하는 resolver 를
 	// 주입한다. agentRef 가 이름("LG HVACR2")으로 들어오든 ID(UUID)로 들어오든
@@ -964,9 +964,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		remoteAuditRepo = auRepo
 		defer remoteAuditRepo.Close()
 
-		// 공기청정기 제어 감사 저장소 배선(REQ-AIRPUR-001-F05): airpurifier 패키지의
+		// 설비 제어 감사 저장소 배선(REQ-XSFM-001-F05): xsfm 패키지의
 		// 감사 저장소 슬롯에 원격 감사 저장소를 주입한다. 미주입 시 감사는 no-op.
-		airpurifier.SetAuditRepository(remoteAuditRepo)
+		xsfm.SetAuditRepository(remoteAuditRepo)
 
 		// enrollment 토큰 저장소(v1.1 그룹 H) — 동일 SQLite DB 에 enrollment_tokens
 		// 테이블을 멱등 추가. 토큰은 SHA-256 해시로만 저장된다(REQ-H06).

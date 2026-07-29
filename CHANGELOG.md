@@ -10,22 +10,22 @@
 
 - **지하철 시설물 관리 대시보드 3종 패널 신설 — 라인(호선)/역사(station)/기기(device) 계층 조망·제어 (프론트엔드 전용, Non-breaking)**
 
-  지하철 역사 시설물 관리 비전에서 첫 디바이스인 공기청정기(air purifier)를 대상으로, 운영자가 라인 → 역사 → 기기 계층으로 시설물 상태를 조망·통계·일괄 제어할 수 있는 신규 대시보드 패널 타입 3종을 추가했다. SPEC-AIRPURIFIER-001이 소유하는 디바이스 위치 계층(station/place/index) + 역사 레지스트리(station→line) + line/station fan-out exec 표면을 **소비**하며, **신규 백엔드 코드는 0**이다(기존 airpurifier exec 표면 재사용). 신규 17개 + 수정 8개 프론트엔드 파일로 구현되었다.
+  지하철 역사 시설물 관리 비전에서 첫 디바이스인 설비(facility)를 대상으로, 운영자가 라인 → 역사 → 기기 계층으로 시설물 상태를 조망·통계·일괄 제어할 수 있는 신규 대시보드 패널 타입 3종을 추가했다. SPEC-XSFM-001이 소유하는 디바이스 위치 계층(station/place/index) + 역사 레지스트리(station→line) + line/station fan-out exec 표면을 **소비**하며, **신규 백엔드 코드는 0**이다(기존 xsfm exec 표면 재사용). 신규 17개 + 수정 8개 프론트엔드 파일로 구현되었다.
 
   - **3종 패널**: (1) **라인 패널** — 한 호선 전체 기기의 라인도(line diagram) + 역사별 상태 요약 + 라인 통계 타일 + 라인 일괄 제어. (2) **역사 패널** — 한 역사의 통계 + 기기별 상태 목록 + 역사 일괄 제어. (3) **기기 패널** — 단일 기기 상태 + 제어(응답 대기 피드백 포함).
-  - **순수 집계 로직**(`web/src/lib/facilityAggregation.ts`): 역사→호선 해석, 상태 통계 카운트, 라인도 순서 레이아웃, 미분류 기기 분리. **클라이언트 사이드 집계** 방식으로, 신규 집계 엔드포인트 없이 airpurifier `list_devices`/`list_stations` exec 결과를 웹에서 조합한다.
-  - **셀렉터 제어 훅**(`web/src/hooks/useAirpurifierControl.ts`): `set_power`/`set_fan_speed`/`set_multiple`을 device_id/station/line 셀렉터로 execAgent 호출(`fanOutResponse` 타입) + `useFacilityRoster`(refresh 폴링).
+  - **순수 집계 로직**(`web/src/lib/facilityAggregation.ts`): 역사→호선 해석, 상태 통계 카운트, 라인도 순서 레이아웃, 미분류 기기 분리. **클라이언트 사이드 집계** 방식으로, 신규 집계 엔드포인트 없이 xsfm `list_devices`/`list_stations` exec 결과를 웹에서 조합한다.
+  - **셀렉터 제어 훅**(`web/src/hooks/useXsfmControl.ts`): `set_power`/`set_fan_speed`/`set_multiple`을 device_id/station/line 셀렉터로 execAgent 호출(`fanOutResponse` 타입) + `useFacilityRoster`(refresh 폴링).
   - **패널 컴포넌트**: `panels/{FacilityLine,FacilityStation,FacilityDevice}Panel.tsx` + 공용 `facilityShared.tsx`(StatTiles/ControlResultView/BulkControl).
   - **와이어링 4지점**: `uiStore.ts`(PanelType/기본값), `renderDashboardPanel.tsx`(패널 타입 분기), `AddPanelDialog.tsx`(패널 옵션 + facility 대상 선택 단계), `PanelSettingsDialog.tsx`(FacilitySection 설정). i18n는 `lib/i18n/{ko,en}.json`(`dashboard.facility.*`).
-  - **분기(Divergence)**: (1) **클라이언트 사이드 집계 채택**(A-2, REQ-05-01) — 백엔드 집계 엔드포인트 대신 airpurifier exec 재사용. 대규모 fleet 성능을 위한 백엔드 엔드포인트는 OI-1로 이연. (2) **REQ-04-04 테스트 갭** — PanelSettingsDialog의 facility 설정 하위 폼(FacilitySection)은 **구현 완료**되었으나 단위 테스트가 없다. FacilitySection이 비-export 내부 컴포넌트라 프로덕션 변경 없이는 테스트 커버가 불가 → 이연(후속: export + scoped RTL 테스트). (3) **REQ-05-04(폴링)/REQ-06-04(로딩 스피너)** — 타이머/브라우저 거동으로 manual/단위-범위-외 분류. (4) **기기 제어 경로** — 기기 패널은 `deviceService.executeCommand`가 아닌 `useAirpurifierControl`(device_id 셀렉터 execAgent)을 사용 — 기능적으로 동등(둘 다 에이전트 `Process`에 도달). (5) **런타임 의존** — 대시보드는 airpurifier exec 표면(develop 머지 완료)을 소비 → airpurifier 백엔드 실행 필요.
+  - **분기(Divergence)**: (1) **클라이언트 사이드 집계 채택**(A-2, REQ-05-01) — 백엔드 집계 엔드포인트 대신 xsfm exec 재사용. 대규모 fleet 성능을 위한 백엔드 엔드포인트는 OI-1로 이연. (2) **REQ-04-04 테스트 갭** — PanelSettingsDialog의 facility 설정 하위 폼(FacilitySection)은 **구현 완료**되었으나 단위 테스트가 없다. FacilitySection이 비-export 내부 컴포넌트라 프로덕션 변경 없이는 테스트 커버가 불가 → 이연(후속: export + scoped RTL 테스트). (3) **REQ-05-04(폴링)/REQ-06-04(로딩 스피너)** — 타이머/브라우저 거동으로 manual/단위-범위-외 분류. (4) **기기 제어 경로** — 기기 패널은 `deviceService.executeCommand`가 아닌 `useXsfmControl`(device_id 셀렉터 execAgent)을 사용 — 기능적으로 동등(둘 다 에이전트 `Process`에 도달). (5) **런타임 의존** — 대시보드는 xsfm exec 표면(develop 머지 완료)을 소비 → xsfm 백엔드 실행 필요.
   - **품질**: 전체 vitest 스위트 2141개 green, `tsc` 0 errors, `eslint` 클린. 백엔드(Go) 코드/테스트 무변경. 신규 외부 의존성 0.
-  - **관련**: SPEC-FACILITY-DASHBOARD-001 v0.1.0(구현 완료, `74ada88`, Tier M). depends_on: SPEC-AIRPURIFIER-001.
+  - **관련**: SPEC-FACILITY-DASHBOARD-001 v0.1.0(구현 완료, `74ada88`, Tier M). depends_on: SPEC-XSFM-001.
 
-### 추가 — airpurifier 에이전트 (지하철 역사 공기청정기 MQTT 관리)
+### 추가 — xsfm 에이전트 (지하철 역사 설비 MQTT 관리)
 
-- **`airpurifier` 시스템 에이전트 신설 — 지하철 역사 공기청정기 MQTT 제어·모니터링 관리 에이전트 (Non-breaking)**
+- **`xsfm` 시스템 에이전트 신설 — 지하철 역사 설비 MQTT 제어·모니터링 관리 에이전트 (Non-breaking)**
 
-  지하철 역사 시설물 관리 비전의 첫 디바이스로, MQTT 기반 공기청정기 다수를 개별·그룹·역사(station)·호선(line) 단위로 제어·모니터링하는 신규 에이전트를 추가했다. 기존 Eclipse Paho MQTT 스택을 재사용하며 신규 외부 의존성은 없다. 13개 마일스톤에 걸쳐 신규 패키지 + 노드/디바이스 어댑터/스토리지/와이어링/프론트엔드로 구현되었다.
+  지하철 역사 시설물 관리 비전의 첫 디바이스로, MQTT 기반 설비 다수를 개별·그룹·역사(station)·호선(line) 단위로 제어·모니터링하는 신규 에이전트를 추가했다. 기존 Eclipse Paho MQTT 스택을 재사용하며 신규 외부 의존성은 없다. 13개 마일스톤에 걸쳐 신규 패키지 + 노드/디바이스 어댑터/스토리지/와이어링/프론트엔드로 구현되었다.
 
   - **듀얼 트랜스포트(direct/port)**: `transport_mode`에 따라 `direct`는 에이전트가 브로커 sub/pub을 직접 소유하고, `port`는 외부 mqtt-in/out 노드가 브로커 I/O를 담당하고 에이전트는 순수 프로토콜/로직 레이어로 동작한다(상태 입력 포트 · 제어 출력 포트 분리). I/O 경계(CommandSink + 상태 ingress)를 공유 페이로드 매핑/로직과 추상화로 분리했다.
   - **개별 제어(2축)**: 디바이스별 `set_power`/`set_fan_speed`(1/2/3)/`set_multiple` 제어 + 전원 OFF 게이트. 제어는 **응답 대기(state echo 대기)** — 디바이스별 pending-command 레지스트리 + 에코 상관(correlation by device_id), 타임아웃 시 `ErrControlTimeout`, 동시성 안전.
@@ -33,10 +33,10 @@
   - **역사 레지스트리(station registry)**: station→line 매핑을 SSOT로 정의(디바이스는 station만 보유, line은 station→line로 해석) + 디바이스 위치 계층(station/place/index, 선택/하위호환, `device_metadata` 패턴).
   - **상태 모니터링**: observed 기반 방출, 오프라인 감지(LWT + 타임아웃), `request_state`.
   - **감사·영속화**: 제어/그룹 감사(`remote_audit_repository`) + 로스터 영속화(device_id 키잉, v0.2.0 하위호환).
-  - **플로우/디바이스/프론트엔드 통합**: 플로우 노드(`airpurifier-status`/`airpurifier-control`, 상태-입력/제어-출력 포트 분리) + 디바이스 어댑터 `CommandSpec` + `cmd/xflowd/main.go` 와이어링 + API 어댑터 + 웹 설정 스키마.
-  - **분기(Divergence)**: (1) **i18n** — acceptance 9.1은 en/ko i18n 문자열을 요청했으나, 코드베이스 관례상 에이전트 설정 필드 라벨은 `agentSchemas.ts` + `agentTypeMeta.ts`(하드코딩 한국어)에 둔다(에이전트별 i18n JSON 아님). airpurifier는 이 관례를 따르며 죽은 i18n 키를 추가하지 않는다. (2) **LWT 토픽 스킴** — 디바이스 매뉴얼 미확보(SPEC 가정 A-1)로 오프라인 전이 로직은 구조적/테스트 가능하나, 라이브 LWT 토픽 구독 와이어링은 config 기반 확정으로 이연했다.
-  - **품질**: 빌드/vet/`-race` 클린, airpurifier 관련 패키지 전부 green, 커버리지 85.1%, `golangci-lint` airpurifier 0 issues. 신규 외부 의존성 0.
-  - **관련**: SPEC-AIRPURIFIER-001 v0.3.0(구현 완료, `bbd6365`). 대시보드 패널은 본 SPEC 범위 외(SPEC-FACILITY-DASHBOARD-001).
+  - **플로우/디바이스/프론트엔드 통합**: 플로우 노드(`xsfm-status`/`xsfm-control`, 상태-입력/제어-출력 포트 분리) + 디바이스 어댑터 `CommandSpec` + `cmd/xflowd/main.go` 와이어링 + API 어댑터 + 웹 설정 스키마.
+  - **분기(Divergence)**: (1) **i18n** — acceptance 9.1은 en/ko i18n 문자열을 요청했으나, 코드베이스 관례상 에이전트 설정 필드 라벨은 `agentSchemas.ts` + `agentTypeMeta.ts`(하드코딩 한국어)에 둔다(에이전트별 i18n JSON 아님). xsfm는 이 관례를 따르며 죽은 i18n 키를 추가하지 않는다. (2) **LWT 토픽 스킴** — 디바이스 매뉴얼 미확보(SPEC 가정 A-1)로 오프라인 전이 로직은 구조적/테스트 가능하나, 라이브 LWT 토픽 구독 와이어링은 config 기반 확정으로 이연했다.
+  - **품질**: 빌드/vet/`-race` 클린, xsfm 관련 패키지 전부 green, 커버리지 85.1%, `golangci-lint` xsfm 0 issues. 신규 외부 의존성 0.
+  - **관련**: SPEC-XSFM-001 v0.3.0(구현 완료, `bbd6365`). 대시보드 패널은 본 SPEC 범위 외(SPEC-FACILITY-DASHBOARD-001).
 
 ### 추가 — thingplus-gateway 에이전트 (ThingsBoard Gateway MQTT 양방향 IoT 연동)
 

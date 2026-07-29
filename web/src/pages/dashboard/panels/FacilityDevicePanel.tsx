@@ -1,6 +1,6 @@
 // Facility 기기 패널 (SPEC-FACILITY-DASHBOARD-001 M2, REQ-FACDASH-001-03-*).
 //
-// config 의 agentId + deviceId 로 로스터를 조회해 단일 airpurifier 기기의 상태(power,
+// config 의 agentId + deviceId 로 로스터를 조회해 단일 xsfm 기기의 상태(power,
 // fan_speed, online, station/place/index)를 표시하고, set_power/set_fan_speed 제어를 제공한다.
 // 제어 응답은 성공(ok, 에코 반영) vs 타임아웃(timeout/ErrControlTimeout)을 명시한다(REQ-03-02,
 // UB-002). 전원 OFF 시 풍량 컨트롤을 비활성화한다(REQ-03-03, UB-005 — 위장 없음).
@@ -9,10 +9,10 @@ import { useState } from 'react';
 import { Activity, Fan, HardDrive, Moon, Power } from 'lucide-react';
 
 import {
-  useAirpurifierControl,
+  useXsfmControl,
   useFacilityRoster,
   type ControlResponse,
-} from '@/hooks/useAirpurifierControl';
+} from '@/hooks/useXsfmControl';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { ControlResultView } from './facilityShared';
@@ -50,7 +50,7 @@ export default function FacilityDevicePanel({
   const refreshMs = config.refreshMs as number | undefined;
 
   const { devices, stations, isLoading, isError } = useFacilityRoster(agentId, refreshMs);
-  const { setPower, setFanSpeed } = useAirpurifierControl(agentId);
+  const { setPower, setFanSpeed } = useXsfmControl(agentId);
   const [lastAction, setLastAction] = useState<'power' | 'fan' | null>(null);
 
   const device = deviceId ? devices.find((d) => d.device_id === deviceId) : undefined;

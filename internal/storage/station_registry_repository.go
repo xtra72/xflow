@@ -10,7 +10,7 @@ import (
 )
 
 // StationRegistryEntry 는 역사(station) → 호선(line) 매핑 레지스트리의 영속 항목이다
-// (REQ-AIRPUR-001-02-09). device_metadata 와 별개 저장소로 관리되며(REQ-AIRPUR-001-02-12),
+// (REQ-XSFM-001-02-09). device_metadata 와 별개 저장소로 관리되며(REQ-XSFM-001-02-12),
 // line 은 오직 이 레지스트리에만 SSOT 로 존재한다.
 type StationRegistryEntry struct {
 	// Station 은 역사 식별자(레지스트리 기본 키, 디바이스 Station 이 참조)이다.

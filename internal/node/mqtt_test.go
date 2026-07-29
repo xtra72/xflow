@@ -724,8 +724,8 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 // + flow-node (SPEC-SUBFLOW-001, composition 카테고리 — 배포 시 확장됨)
 // + enrich (message-slim-metadata / enrich, processing 카테고리)
 // + thingplus-uplink / thingplus-downlink (SPEC-THINGPLUS-001, io 카테고리)
-// + airpurifier-status / airpurifier-control (SPEC-AIRPURIFIER-001, io 카테고리) canonical 2종
-//   - airpurifier_status / airpurifier_control `_` 별칭 2종 = 63 + 4 = 67.
+// + xsfm-status / xsfm-control (SPEC-XSFM-001, io 카테고리) canonical 2종
+//   - xsfm_status / xsfm_control `_` 별칭 2종 = 63 + 4 = 67.
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()

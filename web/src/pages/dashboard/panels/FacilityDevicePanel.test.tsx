@@ -1,12 +1,12 @@
 // FacilityDevicePanel 테스트 (SPEC-FACILITY-DASHBOARD-001 M2).
-// useFacilityRoster / useAirpurifierControl 을 mock 하여 상태 표시, set_power 호출 인자,
+// useFacilityRoster / useXsfmControl 을 mock 하여 상태 표시, set_power 호출 인자,
 // timeout 응답의 명시 표시(REQ-03-02), 전원 OFF 시 풍량 비활성(REQ-03-03/UB-005)을 검증한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import type { AirDevice, AirStation } from '@/hooks/useStation';
-import type { ControlResponse } from '@/hooks/useAirpurifierControl';
+import type { ControlResponse } from '@/hooks/useXsfmControl';
 
 const rosterMock = vi.hoisted(() => ({
   current: {
@@ -22,12 +22,12 @@ const controlMock = vi.hoisted(() => ({
   setFanSpeed: { mutate: vi.fn(), data: undefined as ControlResponse | undefined, isPending: false, error: null as unknown },
 }));
 
-vi.mock('@/hooks/useAirpurifierControl', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/hooks/useAirpurifierControl')>();
+vi.mock('@/hooks/useXsfmControl', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/useXsfmControl')>();
   return {
     ...actual,
     useFacilityRoster: () => rosterMock.current,
-    useAirpurifierControl: () => controlMock,
+    useXsfmControl: () => controlMock,
   };
 });
 

@@ -19,7 +19,7 @@ import { useState } from 'react';
 
 import { HardDrive } from 'lucide-react';
 
-import { useFacilityRoster } from '@/hooks/useAirpurifierControl';
+import { useFacilityRoster } from '@/hooks/useXsfmControl';
 import {
   aggregateByLine,
   countStats,

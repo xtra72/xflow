@@ -19,7 +19,7 @@ export const AGENT_TYPES = [
   { value: 'lg_hvacr02', label: 'LG HVACR-02 Capture' },
   { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
   { value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' },
-  { value: 'airpurifier', label: 'Air Purifier' },
+  { value: 'xsfm', label: 'Subway Facilities Manager' },
   { value: 'store', label: 'Store' },
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
@@ -369,29 +369,29 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
-// Air Purifier (SPEC-AIRPURIFIER-001)
-// 지하철 역사 공기청정기 관리 에이전트. thingplus MQTT 트랜스포트 셸 + samsung 로스터/
+// Subway Facilities Manager (SPEC-XSFM-001)
+// 지하철 역사 설비 관리 에이전트. thingplus MQTT 트랜스포트 셸 + samsung 로스터/
 // 관측 상태 모델. transport_mode 로 direct(에이전트가 브로커 소유) / port(외부 노드 I/O)
-// 두 모드를 선택한다. field key 는 백엔드 AirPurifierConfig Transport.Options JSON 키와
+// 두 모드를 선택한다. field key 는 백엔드 XSFMConfig Transport.Options JSON 키와
 // 1:1 매핑되어야 폼이 바인딩된다:
 //   transport_mode, broker, tls, ca_cert, client_id, username, password, qos,
 //   state_topic_template, command_topic_template, payload_mapping, offline_timeout,
 //   control_response_timeout, lwt_enabled, registry_path, station_registry_path.
 // ──────────────────────────────────────────────────────────────────────────
-const AIRPURIFIER_FIELDS: ConfigField[] = [
+const XSFM_FIELDS: ConfigField[] = [
   // ── Transport ──
   { name: 'transport_mode', type: 'select', label: '트랜스포트 모드', options: ['direct', 'port'], default: 'direct', required: true, description: 'direct: 에이전트가 MQTT 브로커를 직접 소유 / port: 외부 노드가 I/O 를 담당 (제어 출력 포트 사용)', section: 'transport' },
   { name: 'broker', type: 'string', label: '브로커 주소', default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (direct 모드 필수, 예: tcp://localhost:1883). TLS 사용 시 ssl:// 스킴', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
   { name: 'tls', type: 'boolean', label: 'TLS 사용', default: false, visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
   { name: 'ca_cert', type: 'multiline', label: 'CA 인증서', description: 'TLS CA 인증서 PEM 또는 경로', visibleWhen: { field: 'tls', value: true }, section: 'transport' },
-  { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성 (xflow-airpurifier-<uuid>). 인스턴스마다 고유해야 함', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성 (xflow-xsfm-<uuid>). 인스턴스마다 고유해야 함', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
   { name: 'username', type: 'string', label: '사용자명', sensitive: true, visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
   { name: 'password', type: 'string', label: '비밀번호', sensitive: true, visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
   { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1', description: '메시지 전달 보증 레벨', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
   { name: 'lwt_enabled', type: 'boolean', label: 'LWT(유언) 사용', default: true, description: 'Last Will and Testament — 비정상 종료 시 오프라인 통지', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
   // ── Topic / Payload mapping ──
-  { name: 'state_topic_template', type: 'string', label: '상태 토픽 템플릿', required: true, description: '최소 1개의 {placeholder} 세그먼트 포함 (direct 모드 필수). 단일 필드: airpurifier/{device_id}/state. 다중 필드: state/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute} — 모든 {...} 는 하나의 와일드카드(+) 구독으로 통합되고, {attribute} 가 있으면 마지막 세그먼트가 상태 축(power/fan_speed/online)을 지칭하며 페이로드는 그 축의 스칼라 값이다', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'protocol' },
-  { name: 'command_topic_template', type: 'string', label: '명령 토픽 템플릿', required: true, description: '최소 1개의 {placeholder} 세그먼트 포함 (direct 모드 필수). 단일 필드: airpurifier/{device_id}/cmd. 다중 필드: cmd/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute} — {attribute} 가 있으면 축별 토픽으로 발행(set_power→…/power, set_fan_speed→…/fan_speed)하며 payload_mapping 의 필드명이 {attribute} 토큰이 된다', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'protocol' },
+  { name: 'state_topic_template', type: 'string', label: '상태 토픽 템플릿', required: true, description: '최소 1개의 {placeholder} 세그먼트 포함 (direct 모드 필수). 단일 필드: xsfm/{device_id}/state. 다중 필드: state/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute} — 모든 {...} 는 하나의 와일드카드(+) 구독으로 통합되고, {attribute} 가 있으면 마지막 세그먼트가 상태 축(power/fan_speed/online)을 지칭하며 페이로드는 그 축의 스칼라 값이다', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'protocol' },
+  { name: 'command_topic_template', type: 'string', label: '명령 토픽 템플릿', required: true, description: '최소 1개의 {placeholder} 세그먼트 포함 (direct 모드 필수). 단일 필드: xsfm/{device_id}/cmd. 다중 필드: cmd/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute} — {attribute} 가 있으면 축별 토픽으로 발행(set_power→…/power, set_fan_speed→…/fan_speed)하며 payload_mapping 의 필드명이 {attribute} 토큰이 된다', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'protocol' },
   { name: 'payload_mapping', type: 'object', label: '페이로드 매핑', required: true, description: '설정 주도 페이로드 시임 (양 모드 공통 필수). power_field / fan_speed_field / online_field 등 (JSON)', section: 'protocol' },
   // ── Operation / Control ──
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '60s', description: '이 시간 동안 상태 미수신 시 디바이스 오프라인 판정 (Go duration, 예: 60s, 1m)', section: 'operation' },
@@ -578,7 +578,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'lg_hvacr02': LG_HVACR02_FIELDS,
   'lg_hvacr01': LG_HVACR01_FIELDS,
   'century_hvacr01': CENTURY_HVACR01_FIELDS,
-  'airpurifier': AIRPURIFIER_FIELDS,
+  'xsfm': XSFM_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
   'tcp-client': TCP_CLIENT_FIELDS,

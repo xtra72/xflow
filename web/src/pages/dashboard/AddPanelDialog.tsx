@@ -36,7 +36,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useUIStore, type PanelType } from '@/stores/uiStore';
 import { useDevices } from '@/hooks/useDevice';
 import { useAgents } from '@/hooks/useAgent';
-import { useStations, useAirpurifierDevices } from '@/hooks/useStation';
+import { useStations, useXsfmDevices } from '@/hooks/useStation';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -732,8 +732,8 @@ interface FacilityTargetOption {
 }
 
 /**
- * 설비 대상 선택 스텝. 에이전트(airpurifier)를 먼저 고르고, 패널 타입에 따라
- * 라인/역사/기기 대상을 고른다. 대상 조회는 기존 useStations / useAirpurifierDevices 를
+ * 설비 대상 선택 스텝. 에이전트(xsfm)를 먼저 고르고, 패널 타입에 따라
+ * 라인/역사/기기 대상을 고른다. 대상 조회는 기존 useStations / useXsfmDevices 를
  * 재사용한다(UB-001, 재구현 없음). 완료 시 addPanelWithConfig 로 { agentId, <대상키> } 를 전달한다.
  */
 function FacilityStep({
@@ -753,12 +753,12 @@ function FacilityStep({
 
   const { data: agentsResult } = useAgents();
   const airAgents = useMemo(
-    () => (agentsResult?.data ?? []).filter((a) => a.type === 'airpurifier'),
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'xsfm'),
     [agentsResult],
   );
 
   const { data: stations, isLoading: stationsLoading } = useStations(agentId);
-  const { data: devices, isLoading: devicesLoading } = useAirpurifierDevices(agentId);
+  const { data: devices, isLoading: devicesLoading } = useXsfmDevices(agentId);
 
   const targetKey = FACILITY_TARGET_KEY[panelType] ?? 'deviceId';
   const targetI18n = FACILITY_TARGET_I18N[panelType] ?? FACILITY_TARGET_I18N['facility-device']!;

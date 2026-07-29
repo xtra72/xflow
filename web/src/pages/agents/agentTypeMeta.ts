@@ -329,15 +329,15 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  airpurifier: {
+  xsfm: {
     description:
-      '지하철 역사 공기청정기 관리 에이전트(SPEC-AIRPURIFIER-001). thingplus MQTT 트랜스포트 셸과 samsung 로스터/관측 상태 모델을 결합합니다. transport_mode 로 direct(에이전트가 브로커를 직접 소유) / port(외부 노드가 I/O 담당) 두 모드를 선택하며, payload_mapping 으로 설정 주도 페이로드 시임(power/fan_speed/online 필드 매핑)을 정의합니다. 2축 제어(set_power / set_fan_speed 1·2·3)를 지원하고, 관측 기반 emit("확인된 값만 전송")로 상태를 방출합니다. 역사(station)→호선(line) 레지스트리로 위치 계층을 해석합니다.',
+      '지하철 역사 설비 관리 에이전트(SPEC-XSFM-001). thingplus MQTT 트랜스포트 셸과 samsung 로스터/관측 상태 모델을 결합합니다. transport_mode 로 direct(에이전트가 브로커를 직접 소유) / port(외부 노드가 I/O 담당) 두 모드를 선택하며, payload_mapping 으로 설정 주도 페이로드 시임(power/fan_speed/online 필드 매핑)을 정의합니다. 2축 제어(set_power / set_fan_speed 1·2·3)를 지원하고, 관측 기반 emit("확인된 값만 전송")로 상태를 방출합니다. 역사(station)→호선(line) 레지스트리로 위치 계층을 해석합니다.',
     configFields: [
       { name: 'transport_mode', type: 'select', required: true, description: 'I/O 경계 선택 (direct: 브로커 직접 소유 / port: 외부 노드 I/O)', default: 'direct' },
       { name: 'broker', type: 'string', required: false, description: 'MQTT 브로커 주소 (direct 모드 필수, 예: tcp://localhost:1883)' },
       { name: 'tls', type: 'boolean', required: false, description: 'TLS 사용 (direct 모드)', default: 'false' },
       { name: 'ca_cert', type: 'string', required: false, description: 'TLS CA 인증서 PEM 또는 경로 (tls=true 일 때)' },
-      { name: 'client_id', type: 'string', required: false, description: '빈 값이면 자동 생성 (xflow-airpurifier-<uuid>)' },
+      { name: 'client_id', type: 'string', required: false, description: '빈 값이면 자동 생성 (xflow-xsfm-<uuid>)' },
       { name: 'username', type: 'string', required: false, description: 'MQTT 사용자명 (direct 모드)' },
       { name: 'password', type: 'string', required: false, description: 'MQTT 비밀번호 (direct 모드)' },
       { name: 'qos', type: 'select', required: false, description: '메시지 전달 보증 레벨 (0/1/2)', default: '1' },
@@ -354,8 +354,8 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       transport_mode: 'direct',
       broker: 'tcp://localhost:1883',
       qos: '1',
-      state_topic_template: 'airpurifier/{device_id}/state',
-      command_topic_template: 'airpurifier/{device_id}/cmd',
+      state_topic_template: 'xsfm/{device_id}/state',
+      command_topic_template: 'xsfm/{device_id}/cmd',
       payload_mapping: {
         power_field: 'power',
         fan_speed_field: 'fan_speed',

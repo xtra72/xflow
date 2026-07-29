@@ -1,13 +1,13 @@
 # SPEC-FACILITY-DASHBOARD-001 — 인수 기준 (acceptance.md)
 
 > 형식: Gherkin (Given-When-Then, 한국어). 각 시나리오는 spec.md의 REQ-FACDASH-001-* 요구사항에 대응한다.
-> 소비 표면(AIRPURIFIER-001 exec, DASHBOARD-001 영속화)은 스텁/실표면 모두에서 검증 가능하도록 작성한다.
+> 소비 표면(XSFM-001 exec, DASHBOARD-001 영속화)은 스텁/실표면 모두에서 검증 가능하도록 작성한다.
 
 ## Feature: 라인 패널 (Line panel)
 
 ### Scenario: 라인도에 호선의 역사가 순서대로 배치되고 역사별 상태 요약이 표시된다
 - **Given** 대상 에이전트의 역사 레지스트리에 2호선 소속 역사 3개가 order 1,2,3으로 등록되어 있고
-- **And** 각 역사에 online/offline·power on/off가 섞인 공기청정기 로스터가 있고
+- **And** 각 역사에 online/offline·power on/off가 섞인 설비 로스터가 있고
 - **When** 사용자가 `facility-line` 패널을 2호선 대상으로 표시하면
 - **Then** 라인도에 세 역사가 order 순으로 배치되고
 - **And** 각 역사 노드에 online/offline 수·power on/off 수·결함 지시자 배지가 표시된다 (REQ-FACDASH-001-01-02)
@@ -32,7 +32,7 @@
 ## Feature: 역사 패널 (Station panel)
 
 ### Scenario: 역사 통계와 기기별 상태 목록이 표시된다
-- **Given** 특정 역사에 공기청정기 4대(online 3/offline 1, power on 2/off 2)가 소속되어 있을 때
+- **Given** 특정 역사에 설비 4대(online 3/offline 1, power on 2/off 2)가 소속되어 있을 때
 - **When** 사용자가 `facility-station` 패널을 그 역사 대상으로 표시하면
 - **Then** 역사 통계(총 4, online 3/offline 1, power on 2/off 2, fan_speed 분포)가 표시되고 (REQ-FACDASH-001-02-02)
 - **And** 각 기기의 상태(기기명/ID·online·power·fan_speed·place/index)가 목록으로 표시된다 (REQ-FACDASH-001-02-03)
@@ -106,9 +106,9 @@
 
 - [ ] REQ-FACDASH-001-01-*~06-* 전 요구사항이 대응 테스트로 검증됨
 - [ ] 3종 패널이 기존 대시보드 패널 시스템에 등록/렌더/설정/영속됨(4-지점 + 스냅샷 정합)
-- [ ] 라인/역사 일괄 제어가 AIRPURIFIER-001 셀렉터 fan-out을 호출하고 멤버별 응답 대기 집계를 표시함
+- [ ] 라인/역사 일괄 제어가 XSFM-001 셀렉터 fan-out을 호출하고 멤버별 응답 대기 집계를 표시함
 - [ ] 개별 제어의 응답 대기 성공/타임아웃이 사용자에게 명시적으로 표시됨(소리 없는 실패 없음)
 - [ ] 빈/미등록 station·라인, 미분류 기기가 크래시 없이 안전 degrade됨
-- [ ] station→line 매핑·fan-out·응답 판정을 자체 재구현하지 않고 AIRPURIFIER-001 표면만 소비함(UB-001)
+- [ ] station→line 매핑·fan-out·응답 판정을 자체 재구현하지 않고 XSFM-001 표면만 소비함(UB-001)
 - [ ] i18n 키가 ko/en에 추가되고 하드코딩 텍스트가 없음
 - [ ] Vitest + RTL 테스트 통과, TRUST 5 품질 게이트 충족

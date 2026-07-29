@@ -33,7 +33,7 @@ func TestMessageSetValueSize(t *testing.T) {
 		{name: "MsgSwingVertical (0x4011) nibble 1 -> 1", index: 0x4011, want: 1},
 		{name: "MsgFilterCleanReset (0x4025) nibble 0 -> 1", index: 0x4025, want: 1},
 		{name: "MsgFilterCleanAlarm (0x4027) nibble 0 -> 1", index: 0x4027, want: 1},
-		{name: "MsgAirPurifier (0x4043) nibble 0 -> 1", index: 0x4043, want: 1},
+		{name: "MsgXSFM (0x4043) nibble 0 -> 1", index: 0x4043, want: 1},
 		{name: "MsgAutoDry (0x4111) nibble 1 -> 1", index: 0x4111, want: 1},
 
 		// 니블 2 -> 2바이트
@@ -136,7 +136,7 @@ func TestMessageIndexConstants(t *testing.T) {
 		{name: "MsgSwingVertical", got: MsgSwingVertical, want: 0x4011},
 		{name: "MsgFilterCleanReset", got: MsgFilterCleanReset, want: 0x4025},
 		{name: "MsgFilterCleanAlarm", got: MsgFilterCleanAlarm, want: 0x4027},
-		{name: "MsgAirPurifier", got: MsgAirPurifier, want: 0x4043},
+		{name: "MsgXSFM", got: MsgXSFM, want: 0x4043},
 		{name: "MsgBuzzer", got: MsgBuzzer, want: 0x4050},
 		{name: "MsgWindless", got: MsgWindless, want: 0x4060},
 		{name: "MsgSwingHorizontal", got: MsgSwingHorizontal, want: 0x407E},
@@ -294,7 +294,7 @@ func TestMessageSetValueSizeConsistency(t *testing.T) {
 		// 1바이트 메시지들 (니블 0 - 0x40XX 범위)
 		{name: "MsgFilterCleanReset", constant: MsgFilterCleanReset, wantSize: 1},
 		{name: "MsgFilterCleanAlarm", constant: MsgFilterCleanAlarm, wantSize: 1},
-		{name: "MsgAirPurifier", constant: MsgAirPurifier, wantSize: 1},
+		{name: "MsgXSFM", constant: MsgXSFM, wantSize: 1},
 
 		// 1바이트 메시지들 (니블 1)
 		{name: "MsgSwingVertical", constant: MsgSwingVertical, wantSize: 1},

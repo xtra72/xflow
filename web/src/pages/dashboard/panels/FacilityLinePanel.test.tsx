@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 
 import type { AirDevice, AirStation } from '@/hooks/useStation';
-import type { ControlResponse } from '@/hooks/useAirpurifierControl';
+import type { ControlResponse } from '@/hooks/useXsfmControl';
 
 const rosterMock = vi.hoisted(() => ({
   current: {
@@ -22,12 +22,12 @@ const controlMock = vi.hoisted(() => ({
   setFanSpeed: { mutate: vi.fn(), data: undefined as ControlResponse | undefined, isPending: false, error: null as unknown },
 }));
 
-vi.mock('@/hooks/useAirpurifierControl', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/hooks/useAirpurifierControl')>();
+vi.mock('@/hooks/useXsfmControl', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/useXsfmControl')>();
   return {
     ...actual,
     useFacilityRoster: () => rosterMock.current,
-    useAirpurifierControl: () => controlMock,
+    useXsfmControl: () => controlMock,
   };
 });
 

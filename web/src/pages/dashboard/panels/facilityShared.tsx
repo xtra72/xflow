@@ -6,18 +6,18 @@
 //     실패·타임아웃 상세를(REQ-06-02), 단일 device 응답은 ok/timeout/error 를 명시 표시(REQ-03-02).
 //     UB-002: 결과를 소리 없이 누락하지 않는다.
 //   - FacilityBulkControl: 셀렉터(station/line) fan-out 일괄 제어. fan-out 로직은 재구현하지
-//     않고(UB-001) useAirpurifierControl 을 호출만 한다. 빈 대상/미등록 시 비활성(REQ-06-03).
+//     않고(UB-001) useXsfmControl 을 호출만 한다. 빈 대상/미등록 시 비활성(REQ-06-03).
 
 import { useState } from 'react';
 
 import {
   isFanOutResponse,
-  useAirpurifierControl,
+  useXsfmControl,
   type ControlResponse,
   type SetFanSpeedVariables,
   type SetPowerVariables,
   type SingleDeviceResult,
-} from '@/hooks/useAirpurifierControl';
+} from '@/hooks/useXsfmControl';
 import type { StatCounts } from '@/lib/facilityAggregation';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
@@ -321,7 +321,7 @@ interface FacilityBulkControlProps {
 }
 
 /**
- * 셀렉터 fan-out 일괄 제어(set_power off + set_fan_speed 1/2/3). useAirpurifierControl 을
+ * 셀렉터 fan-out 일괄 제어(set_power off + set_fan_speed 1/2/3). useXsfmControl 을
  * 호출만 하고 fan-out 을 재구현하지 않는다(UB-001). 진행 중 로딩 표시(REQ-06-04) + 멤버별 결과
  * 렌더(REQ-06-02, UB-002). 빈 대상(memberCount=0)/미등록(disabled) 시 컨트롤을 비활성화한다.
  *
@@ -331,7 +331,7 @@ interface FacilityBulkControlProps {
  */
 export function FacilityBulkControl({ agentId, selector, memberCount, disabled }: FacilityBulkControlProps) {
   const { t } = useTranslation();
-  const { setPower, setFanSpeed } = useAirpurifierControl(agentId);
+  const { setPower, setFanSpeed } = useXsfmControl(agentId);
   const [lastAction, setLastAction] = useState<'power' | 'fan' | null>(null);
 
   const isPending = setPower.isPending || setFanSpeed.isPending;

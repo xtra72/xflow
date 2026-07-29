@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
-import { useStations, useAirpurifierDevices } from '@/hooks/useStation';
+import { useStations, useXsfmDevices } from '@/hooks/useStation';
 import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
@@ -1066,8 +1066,8 @@ function DeviceSection({
 /**
  * 설비 패널 전용 설정 (SPEC-FACILITY-DASHBOARD-001 M5).
  *
- * 에이전트(airpurifier)를 고르고, 패널 타입에 따라 라인/역사/기기 대상을 고른다.
- * 대상 조회는 기존 useStations / useAirpurifierDevices 를 재사용한다(UB-001).
+ * 에이전트(xsfm)를 고르고, 패널 타입에 따라 라인/역사/기기 대상을 고른다.
+ * 대상 조회는 기존 useStations / useXsfmDevices 를 재사용한다(UB-001).
  * 변경은 onConfigChange({ agentId }) / ({ deviceId | station | line }) 로 config 에만 기록한다.
  */
 function FacilitySection({
@@ -1082,12 +1082,12 @@ function FacilitySection({
 
   const { data: agentsResult } = useAgents();
   const airAgents = useMemo(
-    () => (agentsResult?.data ?? []).filter((a) => a.type === 'airpurifier'),
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'xsfm'),
     [agentsResult],
   );
 
   const { data: stations, isLoading: stationsLoading } = useStations(agentId);
-  const { data: devices, isLoading: devicesLoading } = useAirpurifierDevices(agentId);
+  const { data: devices, isLoading: devicesLoading } = useXsfmDevices(agentId);
 
   // 패널 타입별 대상 키 / 현재 값 / i18n 라벨.
   const targetKey: 'deviceId' | 'station' | 'line' =

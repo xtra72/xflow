@@ -1,9 +1,9 @@
-// React Query hooks for airpurifier station / place / device management.
+// React Query hooks for xsfm station / place / device management.
 //
-// SPEC-AIRPURIFIER-001 Wave 2 (frontend).
+// SPEC-XSFM-001 Wave 2 (frontend).
 // 모든 명령은 표준 exec 계약 `execAgent(id, { command, params })` 로 전송한다.
 // 명령 인자는 `params` 아래에 중첩한다(samsung/modbus 와 동일 — HTTP /exec 핸들러가
-// {command, params} 만 에이전트로 전달하며, airpurifier 백엔드가 params 로부터 내부
+// {command, params} 만 에이전트로 전달하며, xsfm 백엔드가 params 로부터 내부
 // 구조체 필드를 backfill 한다).
 //
 // 응답 형태(execAgent 는 API 엔벨로프를 벗겨 Process 결과를 그대로 반환):
@@ -32,7 +32,7 @@ export interface AirStation {
   places: AirPlace[];
 }
 
-/** airpurifier 디바이스 로스터 항목 (list_devices 응답). */
+/** xsfm 디바이스 로스터 항목 (list_devices 응답). */
 export interface AirDevice {
   device_id: string;
   name: string;
@@ -100,8 +100,8 @@ function toIntOrZero(s: string | undefined): number {
 
 // ---- 쿼리 키 ----
 
-const stationsKey = (agentId: string) => ['airpurifier-stations', agentId] as const;
-const devicesKey = (agentId: string) => ['airpurifier-devices', agentId] as const;
+const stationsKey = (agentId: string) => ['xsfm-stations', agentId] as const;
+const devicesKey = (agentId: string) => ['xsfm-devices', agentId] as const;
 
 // ---- 역사(station) 쿼리 ----
 
@@ -307,16 +307,16 @@ export function useBulkAddPlacesTop(agentId: string) {
   });
 }
 
-// ---- 디바이스(airpurifier) ----
+// ---- 디바이스(xsfm) ----
 
 /**
- * airpurifier 디바이스 로스터 조회 (list_devices).
+ * xsfm 디바이스 로스터 조회 (list_devices).
  *
- * @param refetchInterval - 지정 시 주기 폴링(ms). airpurifier 로스터는 WebSocket 푸시가 아닌
+ * @param refetchInterval - 지정 시 주기 폴링(ms). xsfm 로스터는 WebSocket 푸시가 아닌
  *   exec 폴링이므로 facility 패널이 주기 갱신하도록 지원한다(REQ-FACDASH-001-05-04).
  *   미지정 시 폴링 없음(기존 동작).
  */
-export function useAirpurifierDevices(agentId: string, refetchInterval?: number) {
+export function useXsfmDevices(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: devicesKey(agentId),
     queryFn: async () => {
@@ -363,7 +363,7 @@ export interface AddDeviceResult {
  * 디바이스 추가 (add_device, Source="bridge"). device_id(UUID)와 name(복합 키)은 백엔드가
  * 생성/계산한다. 응답의 name 을 성공 토스트에 노출하기 위해 결과를 반환한다.
  */
-export function useAddAirpurifierDevice(agentId: string) {
+export function useAddXsfmDevice(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (v: AirDeviceCreate): Promise<AddDeviceResult> => {
@@ -381,7 +381,7 @@ export function useAddAirpurifierDevice(agentId: string) {
  * 디바이스 부분 갱신 (set_device). device_id(UUID)로 대상을 지정하고, 존재하는 키만
  * 갱신된다(백엔드가 name 재계산).
  */
-export function useSetAirpurifierDevice(agentId: string) {
+export function useSetXsfmDevice(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (v: AirDeviceUpdate) =>
@@ -394,7 +394,7 @@ export function useSetAirpurifierDevice(agentId: string) {
 }
 
 /** 디바이스 삭제 (remove_device). Source="config" 디바이스는 백엔드가 보호한다. */
-export function useRemoveAirpurifierDevice(agentId: string) {
+export function useRemoveXsfmDevice(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (deviceId: string) =>

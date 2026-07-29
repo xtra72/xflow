@@ -1,6 +1,6 @@
 // Facility dashboard 순수 집계 함수 (SPEC-FACILITY-DASHBOARD-001 B1 / M1).
 //
-// REQ-FACDASH-001-05-01/02/03: airpurifier 로스터(list_devices)와 역사 레지스트리
+// REQ-FACDASH-001-05-01/02/03: xsfm 로스터(list_devices)와 역사 레지스트리
 // (list_stations)를 화면 표시용으로 ROLL UP 만 한다. 부수효과·I/O 가 전혀 없는 순수
 // 함수이며(테스트 대상 코어), station→line 매핑·fan-out·응답 대기 등의 도메인 로직은
 // 여기서 재구현하지 않는다(UB-001). 이 모듈은 오직 roster + registry 를 합산한다.

@@ -1,6 +1,6 @@
-// useStation 훅 테스트 (SPEC-AIRPURIFIER-001 Wave 2).
+// useStation 훅 테스트 (SPEC-XSFM-001 Wave 2).
 //
-// agentService.execAgent 를 mock 하여 airpurifier 명령이 표준 exec 계약대로 인자를
+// agentService.execAgent 를 mock 하여 xsfm 명령이 표준 exec 계약대로 인자를
 // `params` 아래에 중첩해 전송하는지, list_* 응답이 올바르게 파싱되는지 검증한다
 // (samsung/modbus 와 동일 계약; 백엔드가 params 로부터 내부 필드를 backfill).
 
@@ -18,15 +18,15 @@ vi.mock('@/services/api/agentService', () => ({
 import {
   EMPTY_REQUIRED,
   parseDelimitedRows,
-  useAddAirpurifierDevice,
+  useAddXsfmDevice,
   useAddPlace,
   useAddStation,
-  useAirpurifierDevices,
+  useXsfmDevices,
   useBulkAddPlaces,
   useBulkAddPlacesTop,
   useBulkAddStations,
   useRemovePlace,
-  useSetAirpurifierDevice,
+  useSetXsfmDevice,
   useStations,
 } from './useStation';
 
@@ -106,7 +106,7 @@ describe('useAddPlace / useRemovePlace', () => {
   });
 });
 
-describe('airpurifier devices', () => {
+describe('xsfm devices', () => {
   it('list_devices 응답의 devices 를 파싱한다', async () => {
     execAgentMock.mockResolvedValueOnce({
       status: 'ok',
@@ -115,7 +115,7 @@ describe('airpurifier devices', () => {
       ],
     });
 
-    const { result } = renderHook(() => useAirpurifierDevices('agent-1'), { wrapper });
+    const { result } = renderHook(() => useXsfmDevices('agent-1'), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(execAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_devices' });
@@ -125,7 +125,7 @@ describe('airpurifier devices', () => {
   it('add_device 는 device_id/name 없이 station/place/index/group_id 만 params 로 보내고 응답을 반환한다', async () => {
     execAgentMock.mockResolvedValueOnce({ status: 'ok', device_id: 'uuid-1', name: 'st01:PL-A:003', source: 'bridge' });
 
-    const { result } = renderHook(() => useAddAirpurifierDevice('agent-1'), { wrapper });
+    const { result } = renderHook(() => useAddXsfmDevice('agent-1'), { wrapper });
     result.current.mutate({ station: 'st01', place: 'PL-A', index: 3, group_id: 'g1' });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -145,7 +145,7 @@ describe('airpurifier devices', () => {
   it('set_device 는 device_id(UUID)로 대상 지정 + 편집 필드를 params 로 보낸다', async () => {
     execAgentMock.mockResolvedValueOnce({ status: 'ok' });
 
-    const { result } = renderHook(() => useSetAirpurifierDevice('agent-1'), { wrapper });
+    const { result } = renderHook(() => useSetXsfmDevice('agent-1'), { wrapper });
     result.current.mutate({ device_id: 'uuid-1', station: 'st02', place: 'PL-B', index: 5, group_id: 'g2' });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

@@ -2,7 +2,7 @@
 //
 // config 의 agentId + station 으로 로스터를 조회해 한 역사의 (1) 통계, (2) 기기별 상태 목록,
 // (3) 역사 일괄 제어(station 셀렉터 fan-out)를 렌더한다. 집계는 stationSummary(롤업만, UB-001),
-// fan-out 은 useAirpurifierControl(FacilityBulkControl)을 호출만 한다. 미등록 역사/기기 없음은
+// fan-out 은 useXsfmControl(FacilityBulkControl)을 호출만 한다. 미등록 역사/기기 없음은
 // 안내 + 일괄 제어 비활성(REQ-02-05, 06-03).
 
 import { useState } from 'react';
@@ -11,11 +11,11 @@ import { Activity, HardDrive, Moon } from 'lucide-react';
 
 import {
   isFanOutResponse,
-  useAirpurifierControl,
+  useXsfmControl,
   useFacilityRoster,
   type ControlResponse,
   type SingleDeviceResult,
-} from '@/hooks/useAirpurifierControl';
+} from '@/hooks/useXsfmControl';
 import type { AirDevice, AirStation } from '@/hooks/useStation';
 import { stationSummary } from '@/lib/facilityAggregation';
 import { useTranslation } from '@/lib/i18n';
@@ -225,7 +225,7 @@ function pickRowResult(
 /**
  * 역사 기기 목록의 한 행(C2/C3). 기기 이름(name = station:place:index 조합, 없으면 위치 표시명
  * → device_id 폴백)을 주 라벨로 크게 보여주고, 각 행에 개별 제어 버튼(OFF + 풍량 1/2/3)을 둔다.
- * 제어는 useAirpurifierControl 을 {device_id} 셀렉터로 호출하며(단일 응답), 결과/진행을 인라인
+ * 제어는 useXsfmControl 을 {device_id} 셀렉터로 호출하며(단일 응답), 결과/진행을 인라인
  * 표시한다(UB-002). 전원 OFF 상태에서는 풍량 버튼을 비활성화한다(UB-005 — 위장 없음).
  * 전원 ON 버튼은 제공하지 않는다(A1 정책 일치 — OFF + 풍량만).
  */
@@ -243,7 +243,7 @@ function StationDeviceRow({
   offlineAsOff: boolean;
 }) {
   const { t } = useTranslation();
-  const { setPower, setFanSpeed } = useAirpurifierControl(agentId);
+  const { setPower, setFanSpeed } = useXsfmControl(agentId);
   const [lastAction, setLastAction] = useState<'power' | 'fan' | null>(null);
 
   const primaryLabel = resolveDeviceLabel(device, entry, labelMode);

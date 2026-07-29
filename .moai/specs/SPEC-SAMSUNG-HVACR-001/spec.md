@@ -570,7 +570,7 @@ NASAMessageSet 구조체는 **항상** 다음 필드를 포함해야 한다:
 | `MsgSwingVertical`    | `0x4011` | 1 byte    | 풍향 (상하)   | `0x00`=off, `0x01`=on                                         |
 | `MsgFilterCleanReset` | `0x4025` | 1 byte    | 필터 청소 리셋  | `0x00`=off, `0x01`=on                                         |
 | `MsgFilterCleanAlarm` | `0x4027` | 1 byte    | 필터 청소 알림  | `0x00`=off, `0x01`=on                                         |
-| `MsgAirPurifier`      | `0x4043` | 1 byte    | 청정        | -                                                             |
+| `MsgXSFM`      | `0x4043` | 1 byte    | 청정        | -                                                             |
 | `MsgBuzzer`           | `0x4050` | 1 byte    | 부저        | `0x00`=on, `0x01`=off (역논리)                                   |
 | `MsgWindless`         | `0x4060` | 1 byte    | 무풍        | -                                                             |
 | `MsgSwingHorizontal`  | `0x407E` | 1 byte    | 풍향 (좌우)   | -                                                             |
