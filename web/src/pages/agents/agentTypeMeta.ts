@@ -329,6 +329,42 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
+  airpurifier: {
+    description:
+      '지하철 역사 공기청정기 관리 에이전트(SPEC-AIRPURIFIER-001). thingplus MQTT 트랜스포트 셸과 samsung 로스터/관측 상태 모델을 결합합니다. transport_mode 로 direct(에이전트가 브로커를 직접 소유) / port(외부 노드가 I/O 담당) 두 모드를 선택하며, payload_mapping 으로 설정 주도 페이로드 시임(power/fan_speed/online 필드 매핑)을 정의합니다. 2축 제어(set_power / set_fan_speed 1·2·3)를 지원하고, 관측 기반 emit("확인된 값만 전송")로 상태를 방출합니다. 역사(station)→호선(line) 레지스트리로 위치 계층을 해석합니다.',
+    configFields: [
+      { name: 'transport_mode', type: 'select', required: true, description: 'I/O 경계 선택 (direct: 브로커 직접 소유 / port: 외부 노드 I/O)', default: 'direct' },
+      { name: 'broker', type: 'string', required: false, description: 'MQTT 브로커 주소 (direct 모드 필수, 예: tcp://localhost:1883)' },
+      { name: 'tls', type: 'boolean', required: false, description: 'TLS 사용 (direct 모드)', default: 'false' },
+      { name: 'ca_cert', type: 'string', required: false, description: 'TLS CA 인증서 PEM 또는 경로 (tls=true 일 때)' },
+      { name: 'client_id', type: 'string', required: false, description: '빈 값이면 자동 생성 (xflow-airpurifier-<uuid>)' },
+      { name: 'username', type: 'string', required: false, description: 'MQTT 사용자명 (direct 모드)' },
+      { name: 'password', type: 'string', required: false, description: 'MQTT 비밀번호 (direct 모드)' },
+      { name: 'qos', type: 'select', required: false, description: '메시지 전달 보증 레벨 (0/1/2)', default: '1' },
+      { name: 'state_topic_template', type: 'string', required: false, description: '{device_id} placeholder 포함 상태 토픽 (direct 모드 필수)' },
+      { name: 'command_topic_template', type: 'string', required: false, description: '{device_id} placeholder 포함 명령 토픽 (direct 모드 필수)' },
+      { name: 'payload_mapping', type: 'object', required: true, description: '설정 주도 페이로드 시임 (양 모드 공통 필수, power_field/fan_speed_field/online_field 등)' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '상태 미수신 시 오프라인 판정 시간', default: '60s' },
+      { name: 'control_response_timeout', type: 'string', required: false, description: '제어 명령 후 상태 반영 대기 시간', default: '5s' },
+      { name: 'lwt_enabled', type: 'boolean', required: false, description: 'LWT(유언) 사용 — 비정상 종료 시 오프라인 통지', default: 'true' },
+      { name: 'registry_path', type: 'string', required: false, description: '런타임 등록 디바이스(bridge/auto) 로스터 파일 경로 (빈 값=영속화 비활성)' },
+      { name: 'station_registry_path', type: 'string', required: false, description: '역사(station)→호선(line) 레지스트리 파일 경로 (빈 값=영속화 비활성)' },
+    ],
+    configExample: {
+      transport_mode: 'direct',
+      broker: 'tcp://localhost:1883',
+      qos: '1',
+      state_topic_template: 'airpurifier/{device_id}/state',
+      command_topic_template: 'airpurifier/{device_id}/cmd',
+      payload_mapping: {
+        power_field: 'power',
+        fan_speed_field: 'fan_speed',
+      },
+      offline_timeout: '60s',
+      control_response_timeout: '5s',
+    },
+  },
+
   serial: {
     description:
       '범용 시리얼 통신 에이전트. 다양한 프레이밍 모드(raw, newline, length_prefix, fixed_size, stream, frame)를 지원하며, STX/ETX/길이/체크섬 기반의 프로토콜 프레임 감지가 가능합니다. 산업용 장비, 센서, 임베디드 시스템과의 통신에 사용됩니다.',

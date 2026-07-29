@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+### 추가 — airpurifier 에이전트 (지하철 역사 공기청정기 MQTT 관리)
+
+- **`airpurifier` 시스템 에이전트 신설 — 지하철 역사 공기청정기 MQTT 제어·모니터링 관리 에이전트 (Non-breaking)**
+
+  지하철 역사 시설물 관리 비전의 첫 디바이스로, MQTT 기반 공기청정기 다수를 개별·그룹·역사(station)·호선(line) 단위로 제어·모니터링하는 신규 에이전트를 추가했다. 기존 Eclipse Paho MQTT 스택을 재사용하며 신규 외부 의존성은 없다. 13개 마일스톤에 걸쳐 신규 패키지 + 노드/디바이스 어댑터/스토리지/와이어링/프론트엔드로 구현되었다.
+
+  - **듀얼 트랜스포트(direct/port)**: `transport_mode`에 따라 `direct`는 에이전트가 브로커 sub/pub을 직접 소유하고, `port`는 외부 mqtt-in/out 노드가 브로커 I/O를 담당하고 에이전트는 순수 프로토콜/로직 레이어로 동작한다(상태 입력 포트 · 제어 출력 포트 분리). I/O 경계(CommandSink + 상태 ingress)를 공유 페이로드 매핑/로직과 추상화로 분리했다.
+  - **개별 제어(2축)**: 디바이스별 `set_power`/`set_fan_speed`(1/2/3)/`set_multiple` 제어 + 전원 OFF 게이트. 제어는 **응답 대기(state echo 대기)** — 디바이스별 pending-command 레지스트리 + 에코 상관(correlation by device_id), 타임아웃 시 `ErrControlTimeout`, 동시성 안전.
+  - **일괄 제어(fan-out)**: 그룹 + 역사(station) + 호선(line) 셀렉터 팬아웃(우선순위 `device_id > station > line > group_id`), best-effort ok/error/timeout 집계.
+  - **역사 레지스트리(station registry)**: station→line 매핑을 SSOT로 정의(디바이스는 station만 보유, line은 station→line로 해석) + 디바이스 위치 계층(station/place/index, 선택/하위호환, `device_metadata` 패턴).
+  - **상태 모니터링**: observed 기반 방출, 오프라인 감지(LWT + 타임아웃), `request_state`.
+  - **감사·영속화**: 제어/그룹 감사(`remote_audit_repository`) + 로스터 영속화(device_id 키잉, v0.2.0 하위호환).
+  - **플로우/디바이스/프론트엔드 통합**: 플로우 노드(`airpurifier-status`/`airpurifier-control`, 상태-입력/제어-출력 포트 분리) + 디바이스 어댑터 `CommandSpec` + `cmd/xflowd/main.go` 와이어링 + API 어댑터 + 웹 설정 스키마.
+  - **분기(Divergence)**: (1) **i18n** — acceptance 9.1은 en/ko i18n 문자열을 요청했으나, 코드베이스 관례상 에이전트 설정 필드 라벨은 `agentSchemas.ts` + `agentTypeMeta.ts`(하드코딩 한국어)에 둔다(에이전트별 i18n JSON 아님). airpurifier는 이 관례를 따르며 죽은 i18n 키를 추가하지 않는다. (2) **LWT 토픽 스킴** — 디바이스 매뉴얼 미확보(SPEC 가정 A-1)로 오프라인 전이 로직은 구조적/테스트 가능하나, 라이브 LWT 토픽 구독 와이어링은 config 기반 확정으로 이연했다.
+  - **품질**: 빌드/vet/`-race` 클린, airpurifier 관련 패키지 전부 green, 커버리지 85.1%, `golangci-lint` airpurifier 0 issues. 신규 외부 의존성 0.
+  - **관련**: SPEC-AIRPURIFIER-001 v0.3.0(구현 완료, `bbd6365`). 대시보드 패널은 본 SPEC 범위 외(SPEC-FACILITY-DASHBOARD-001).
+
 ### 추가 — thingplus-gateway 에이전트 (ThingsBoard Gateway MQTT 양방향 IoT 연동)
 
 - **`thingplus-gateway` 시스템 에이전트 신설 — 단일 MQTT 연결로 다수 하위 디바이스를 프록시하는 양방향 게이트웨이 (Non-breaking)**

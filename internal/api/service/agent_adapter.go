@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/internal/agent/airpurifier"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -637,6 +638,14 @@ func (a *AgentServiceAdapter) persistDeviceRosterAfterExec(ctx context.Context, 
 	// LGAP (LG HVACR01) 에이전트
 	if lgAg, ok := ag.(*lg.LGAPAgent); ok {
 		devices := lgAg.GetPersistableDevices()
+		devicesList := a.buildDevicesList(devices)
+		cfg.Transport.Options["devices"] = devicesList
+		return a.repo.Save(ctx, cfg)
+	}
+
+	// AirPurifier (공기청정기) 에이전트
+	if apAg, ok := ag.(*airpurifier.AirPurifierAgent); ok {
+		devices := apAg.GetPersistableDevices()
 		devicesList := a.buildDevicesList(devices)
 		cfg.Transport.Options["devices"] = devicesList
 		return a.repo.Save(ctx, cfg)
