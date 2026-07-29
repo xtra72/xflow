@@ -146,8 +146,8 @@ func TestIdentity_ControlByUUIDAndSelector(t *testing.T) {
 	_, err := ap.Process([]byte(`{"command":"set_power","device_id":"` + id1 + `","params":{"power":true}}`))
 	require.NoError(t, err)
 	require.Len(t, mock.published, 1)
-	assert.Equal(t, "cmd/ui-line/st01/PL-A/bse9000/1/power", mock.published[0].topic,
-		"명령 토픽은 device_id 가 아니라 station/place/index 로 렌더")
+	assert.Equal(t, "cmd/ui-line/st01/PL-A/bse9000/001/power", mock.published[0].topic,
+		"명령 토픽은 device_id 가 아니라 station/place/index(3자리 0-채움)로 렌더")
 
 	// station 셀렉터 fan-out → 두 디바이스 모두, 대상 device_id 는 UUID.
 	resp, err := ap.Process([]byte(`{"command":"set_power","station":"st01","params":{"power":false}}`))

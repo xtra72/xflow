@@ -431,7 +431,18 @@ func (a *AirPurifierAgent) ingestState(composite bool, fields map[string]string,
 		changed = append(changed, "online")
 	}
 
+	// LastSeen 설정(생존 판정 소스). 기본(liveness_source="receive")은 에이전트 수신 시각이다.
+	// liveness_source="payload" 이고 디바이스 보고 시각(time_field 엔벨로프)이 추출됐으면 그 디바이스
+	// 시각을 LastSeen 으로 쓴다 — offline 판정이 디바이스 보고 시각 기준이 된다. 이곳이 LastSeen 이
+	// 디바이스 시각이 될 수 있는 유일한 지점이며, 방출 메시지 timestamp(emitTsMs, 아래)는 이 옵션과
+	// 무관하게 time_field 설정 시 항상 디바이스 시각을 쓴다(불변).
+	//
+	// 주의(스큐 경고): payload 모드에서는 디바이스 시계 오차가 offline 판정에 직접 영향을 준다 —
+	// 디바이스 시계가 뒤처지면 살아있어도 stale 로 오판할 수 있다(기본 receive 는 스큐에 영향 없음).
 	dev.LastSeen = time.Now()
+	if a.cfg.LivenessSource == livenessSourcePayload && st.TimestampSet {
+		dev.LastSeen = time.UnixMilli(st.TimestampMs)
+	}
 
 	stateAxes := dev.StateForJSON()
 	groupID := dev.GroupID
@@ -453,8 +464,16 @@ func (a *AirPurifierAgent) ingestState(composite bool, fields map[string]string,
 		a.emitOnlineTransition("device_offline", deviceID, groupID, false, lastSeenMs)
 	}
 
+	// 방출 타임스탬프: time_field 로 디바이스 보고 시각이 추출됐으면 그 값을(타임시리즈 데이터포인트
+	// 시각), 아니면 수신 시각(lastSeenMs)으로 폴백한다. LastSeen 자체는 항상 수신 시각을 유지하므로
+	// offline 판정(생존)은 디바이스 시각과 무관하게 신뢰성을 보존한다.
+	emitTsMs := lastSeenMs
+	if st.TimestampSet {
+		emitTsMs = st.TimestampMs
+	}
+
 	if len(changed) > 0 {
-		a.emitStateChanged(deviceID, groupID, newOnline, changed, stateAxes, lastSeenMs, fields)
+		a.emitStateChanged(deviceID, groupID, newOnline, changed, stateAxes, emitTsMs, fields)
 	}
 }
 
@@ -558,6 +577,15 @@ func (a *AirPurifierAgent) buildCommandFieldsLocked(dev *Device) map[string]stri
 	out := make(map[string]string, len(names))
 	for _, n := range names {
 		if n == placeholderAttribute {
+			continue
+		}
+		// device_index 는 명령 토픽에서 항상 3자리 0-채움(%03d)으로 렌더한다(예: 1 → "001",
+		// 23 → "023"). 디바이스 토픽 스킴(composeName 의 %03d 표시 규약)과 일치시키기 위함이며,
+		// dev.Address 의 원시 문자열("1"/"3")이나 폴백보다 우선한다. 유입(STATE) 토픽 매칭은 index 를
+		// int 로 정규화하므로 "/1/" 와 "/001/" 이 모두 매칭된다 — 이 패딩은 명령 egress 표기에만
+		// 영향을 주고 매칭 경로는 불변이다. index 가 1000 이상이면 %03d 가 자연히 넓어진다(절삭 없음).
+		if n == placeholderDeviceIndex {
+			out[n] = fmt.Sprintf("%03d", dev.Index)
 			continue
 		}
 		if dev.Address != nil {

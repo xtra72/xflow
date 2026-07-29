@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // 토픽 템플릿 placeholder 이름 상수 (다중 필드 주소 지정, M14).
@@ -34,6 +35,21 @@ type PayloadMapping struct {
 	FanSpeed IntField
 	// Online 은 온라인 축(bool)의 필드명 + 표현이다 (선택). nil 이면 LWT/타임아웃 기반 판정.
 	Online *BoolField
+
+	// ValueField 는 attribute-per-topic 페이로드가 스칼라가 아니라 엔벨로프({time,value})일 때
+	// 축 값을 나르는 JSON 키이다 (선택, json "value_field"). 예: 토픽 ".../power" 의 페이로드가
+	// {"time":<ts>,"value":1} 이면 ValueField="value" 로 value 를 추출해 축 표현으로 디코딩한다.
+	// 빈 값이면 비활성 — 페이로드 전체를 원시 스칼라로 보는 기존 동작(하위호환)을 유지한다.
+	ValueField string
+	// TimeField 는 엔벨로프에서 디바이스 보고 시각을 나르는 JSON 키이다 (선택, json "time_field").
+	// 설정 시 그 값을 방출 메시지(device_state_changed)의 timestamp(타임시리즈 데이터포인트 시각)로
+	// 사용한다. 빈 값/해석 불가면 수신 시각으로 폴백한다.
+	//
+	// offline 판정(LastSeen)과의 관계는 config 의 liveness_source 로 결정된다: 기본 "receive" 에서는
+	// LastSeen 이 항상 에이전트 수신 시각을 유지해 time_field 의 영향을 받지 않는다(생존 판정 신뢰성).
+	// "payload" 에서는 이 time_field 로 추출한 디바이스 시각이 LastSeen 이 되어 offline 판정 기준이
+	// 바뀐다(스큐 주의 — AirPurifierConfig.LivenessSource 참조).
+	TimeField string
 }
 
 // BoolField 는 boolean 상태 축(power/online)을 JSON 필드 + on/off wire 값으로 매핑한다.
@@ -76,6 +92,11 @@ type decodedState struct {
 	PowerSet    bool
 	FanSpeedSet bool
 	OnlineSet   bool
+
+	// TimestampMs 는 엔벨로프 time_field 에서 추출한 디바이스 보고 시각(epoch ms)이다.
+	// TimestampSet 이 true 일 때만 유효하며, 방출 메시지 timestamp 로 사용된다(미설정 시 수신 시각).
+	TimestampMs  int64
+	TimestampSet bool
 }
 
 // ---------------------------------------------------------------------------
@@ -261,29 +282,114 @@ func scalarBytes(v any) []byte {
 	}
 }
 
-// decodeAttributeScalar 는 attribute 토큰이 지칭하는 상태 축의 스칼라 페이로드를 디코딩하여
-// 해당 축만 *Set=true 인 decodedState 를 반환한다 (attribute-per-topic 모드). attribute 가
-// 어떤 축과도 일치하지 않으면 ok=false (알 수 없는 attribute → 무시).
+// decodeAttributeScalar 는 attribute 토큰이 지칭하는 상태 축의 페이로드를 디코딩하여 해당 축만
+// *Set=true 인 decodedState 를 반환한다 (attribute-per-topic 모드). attribute 가 어떤 축과도
+// 일치하지 않으면 ok=false (알 수 없는 attribute → 무시).
+//
+// wire 값 추출은 ValueField 설정 여부로 분기한다:
+//   - ValueField != "": 페이로드를 엔벨로프({time,value}) JSON 객체로 보고 ValueField 키를 wire 로,
+//     TimeField(설정 시) 키를 방출 타임스탬프로 추출한다. 페이로드가 객체가 아니거나 ValueField 키가
+//     없으면 축을 설정하지 않는다(안전 강등, 크래시 없음) — attribute 는 인지됐으므로 ok=true.
+//   - ValueField == "": 페이로드 전체를 원시 스칼라로 본다(하위호환, 기존 동작 유지).
 func (m PayloadMapping) decodeAttributeScalar(attribute string, payload []byte) (decodedState, bool) {
-	wire := scalarWire(payload)
 	var st decodedState
+	var wire any
+	hasWire := true
+	if m.ValueField != "" {
+		wire, hasWire, st.TimestampMs, st.TimestampSet = m.extractEnvelope(payload)
+	} else {
+		wire = scalarWire(payload)
+	}
+
 	switch attribute {
 	case m.Power.Name:
-		st.Power = m.Power.decodeBool(wire)
-		st.PowerSet = true
+		if hasWire {
+			st.Power = m.Power.decodeBool(wire)
+			st.PowerSet = true
+		}
 		return st, true
 	case m.FanSpeed.Name:
-		st.FanSpeed = m.FanSpeed.decodeInt(wire)
-		st.FanSpeedSet = true
+		if hasWire {
+			st.FanSpeed = m.FanSpeed.decodeInt(wire)
+			st.FanSpeedSet = true
+		}
 		return st, true
 	default:
 		if m.Online != nil && attribute == m.Online.Name {
-			st.Online = m.Online.decodeBool(wire)
-			st.OnlineSet = true
+			if hasWire {
+				st.Online = m.Online.decodeBool(wire)
+				st.OnlineSet = true
+			}
 			return st, true
 		}
 		return decodedState{}, false
 	}
+}
+
+// extractEnvelope 는 ValueField 가 설정된 attribute-per-topic 모드에서 {time,value} 엔벨로프
+// 페이로드를 파싱해 wire 값과 (TimeField 설정 시) 타임스탬프를 추출한다. 페이로드가 JSON 객체가
+// 아니거나(스칼라/malformed) ValueField 키가 없으면 hasWire=false 로 안전 강등한다 — 축 미설정,
+// 크래시 없음.
+func (m PayloadMapping) extractEnvelope(payload []byte) (wire any, hasWire bool, tsMs int64, tsSet bool) {
+	var obj map[string]any
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil, false, 0, false // 비객체/malformed → 안전 강등
+	}
+	if v, ok := obj[m.ValueField]; ok {
+		wire, hasWire = v, true
+	}
+	if m.TimeField != "" {
+		if tv, ok := obj[m.TimeField]; ok {
+			if ms, ok := envelopeTimeMs(tv); ok {
+				tsMs, tsSet = ms, true
+			}
+		}
+	}
+	return wire, hasWire, tsMs, tsSet
+}
+
+// envelopeTimeMs 는 엔벨로프의 time_field 값을 epoch 밀리초(int64)로 해석한다. 해석 불가면
+// ok=false 로 수신 시각 폴백을 유도한다.
+//
+//   - JSON 숫자: epoch ms 로 그대로 사용한다(프로젝트 규약 — device_state_changed timestamp 는
+//     int64 UnixMilli).
+//   - RFC3339 문자열: 파싱해 UnixMilli 로 변환한다.
+//
+// 가정: 숫자 타임스탬프는 epoch 밀리초이다. 디바이스가 epoch 초를 보낸다면(값이 1e12 미만) 이
+// 함수는 여전히 그 값을 ms 로 취급하므로 조정이 필요하다 — 현재는 verbatim ms 로 문서화한다.
+func envelopeTimeMs(v any) (int64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return int64(t), true
+	case int64:
+		return t, true
+	case int:
+		return int64(t), true
+	case string:
+		if ts, err := time.Parse(time.RFC3339, t); err == nil {
+			return ts.UnixMilli(), true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+// commandWireBytes 는 축의 wire 값을 attribute-per-topic 명령 페이로드 바이트로 인코딩한다.
+// ValueField 가 설정돼 있으면 인바운드 엔벨로프와 대칭인 {"<ValueField>": <wire>} JSON 객체로
+// 감싸고(명령에는 time 을 넣지 않는다 — 에이전트는 시각을 보내지 않는다), 아니면 원시 스칼라이다.
+//
+// 가정(중요): 명령 엔벨로프 형식은 사용자가 지정하지 않은 ASSUMPTION 이다. 디바이스가 명령으로
+// 원시 스칼라나 다른 형태의 엔벨로프를 기대한다면 이 부분을 조정해야 한다(인바운드 {time,value}
+// 대칭으로 {"<ValueField>":<wire>} 를 채택).
+func (m PayloadMapping) commandWireBytes(wire any) []byte {
+	if m.ValueField != "" {
+		if b, err := json.Marshal(map[string]any{m.ValueField: wire}); err == nil {
+			return b
+		}
+		// 마샬 실패(사실상 불가)는 안전하게 스칼라로 폴백한다.
+	}
+	return scalarBytes(wire)
 }
 
 // encodeBool 은 boolean 축 값을 wire 표현으로 인코딩한다.

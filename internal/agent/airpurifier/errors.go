@@ -40,4 +40,6 @@ var (
 	ErrNotConnected = errors.New("airpurifier: not connected to broker")
 	// ErrInvalidCommand 은 알 수 없는/미구현 Process 명령이 수신됐을 때 반환된다.
 	ErrInvalidCommand = errors.New("airpurifier: invalid command")
+	// ErrInvalidLivenessSource 는 liveness_source 가 receive/payload 이외일 때 반환된다.
+	ErrInvalidLivenessSource = errors.New("airpurifier: invalid liveness_source (must be 'receive' or 'payload')")
 )

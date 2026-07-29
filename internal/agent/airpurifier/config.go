@@ -19,6 +19,17 @@ const (
 	fanSpeedPolicyPowerOnFirst = "power_on_first"
 )
 
+// liveness_source 값 상수 (오프라인 감지의 생존 시각 소스).
+const (
+	// livenessSourceReceive 는 LastSeen(생존 판정)을 에이전트 수신 시각으로 설정한다 (기본, 하위호환).
+	// 디바이스 시계 오차에 영향받지 않아 offline 판정이 안정적이다.
+	livenessSourceReceive = "receive"
+	// livenessSourcePayload 는 디바이스 보고 시각(time_field 엔벨로프)이 있으면 그 값을 LastSeen 으로
+	// 설정한다. offline 판정이 디바이스 보고 시각 기준이 되어 네트워크 지연이 아닌 실제 디바이스
+	// 관측 시각을 반영하지만, 디바이스 시계 스큐가 판정에 직접 영향을 준다(아래 주의 참조).
+	livenessSourcePayload = "payload"
+)
+
 // ConfigDevice 는 설정에서 선언된 디바이스 시드 항목이다 (REQ-AIRPUR-001-02-03).
 // device_id 필수, 나머지는 선택. 로스터 Device 로 확장되어 Source="config" 로 등록된다.
 type ConfigDevice struct {
@@ -87,6 +98,16 @@ type AirPurifierConfig struct {
 	// "reject"(기본, ErrPowerOff 거부) | "power_on_first"(전원 ON 선방출 후 풍량).
 	FanSpeedPowerOffPolicy string
 
+	// LivenessSource 는 오프라인 감지(LastSeen/staleness)가 사용할 생존 시각 소스이다 (json "liveness_source").
+	// "receive"(기본, 하위호환): LastSeen = 에이전트 수신 시각. "payload": 디바이스 보고 시각(time_field
+	// 엔벨로프)이 있으면 그 값을 LastSeen 으로 사용해 offline 판정이 디바이스 시각 기준이 된다.
+	//
+	// 주의(스큐 경고): "payload" 모드에서는 디바이스 시계 오차(clock skew)가 offline 판정에 직접 영향을
+	// 준다 — 디바이스 시계가 실제보다 뒤처지면 살아있어도 stale 로 오판할 수 있고, 앞서면 오프라인
+	// 전환이 지연될 수 있다. 방출 메시지 timestamp 는 이 옵션과 무관하게 time_field 설정 시 항상
+	// 디바이스 시각을 쓴다(불변). 기본 "receive" 는 스큐에 영향받지 않는다.
+	LivenessSource string
+
 	// LogMessages 는 송/수신(RX/TX) 프레임 로그 여부이다 (기본 false, opt-in 진단용).
 	// true 이면 각 상태 유입(RX: 토픽+페이로드+디코드 축)과 명령 방출(TX: 토픽+페이로드+축)을
 	// INFO 로 로그한다. thingplus/samsung 의 log_messages 옵션과 동형이다.
@@ -123,10 +144,11 @@ func parseAirPurifierConfig(opts map[string]any) (AirPurifierConfig, error) {
 		KeepAlive:              30 * time.Second,
 		ConnectTimeout:         5 * time.Second,
 		AutoReconnect:          true,
-		OfflineTimeout:         60 * time.Second,
+		OfflineTimeout:         90 * time.Second,
 		ControlResponseTimeout: 5 * time.Second,
 		LWTEnabled:             true,
 		FanSpeedPowerOffPolicy: fanSpeedPolicyReject,
+		LivenessSource:         livenessSourceReceive,
 	}
 
 	// transport_mode (기본 "direct", enum {direct, port}).
@@ -240,6 +262,24 @@ func parseAirPurifierConfig(opts map[string]any) (AirPurifierConfig, error) {
 		}
 	}
 
+	// liveness_source (기본 "receive", enum {receive, payload}). 명시적 무효값은 에러로 거부한다
+	// (transport_mode 검증 패턴과 동형 — 조용한 폴백보다 설정 오타를 조기에 드러낸다). 빈 문자열은
+	// 미지정으로 보아 기본값을 유지한다.
+	if v, ok := opts["liveness_source"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return AirPurifierConfig{}, fmt.Errorf("%w: liveness_source must be a string", ErrInvalidLivenessSource)
+		}
+		if s != "" {
+			switch s {
+			case livenessSourceReceive, livenessSourcePayload:
+				cfg.LivenessSource = s
+			default:
+				return AirPurifierConfig{}, fmt.Errorf("%w: got %q", ErrInvalidLivenessSource, s)
+			}
+		}
+	}
+
 	// 진단 로그 토글 (기본 false, opt-in). log_messages: 송/수신 프레임 로그,
 	// log_mqtt: MQTT 생명주기 로그. 둘 다 독립적이며 운영에서는 꺼두는 것을 권장한다.
 	if v, ok := opts["log_messages"]; ok {
@@ -318,6 +358,11 @@ func parsePayloadMapping(opts map[string]any) (PayloadMapping, error) {
 	if online, ok := parseBoolField(m["online_field"]); ok && online.Name != "" {
 		mapping.Online = &online
 	}
+	// value_field / time_field (선택, attribute-per-topic 엔벨로프 추출). 둘 다 빈 값이면 비활성 —
+	// 페이로드 전체를 원시 스칼라로 보는 기존 동작을 유지한다(하위호환). 예: {"time":<ts>,"value":1}
+	// 페이로드에 value_field="value", time_field="time".
+	mapping.ValueField = stringField(m, "value_field")
+	mapping.TimeField = stringField(m, "time_field")
 	return mapping, nil
 }
 
