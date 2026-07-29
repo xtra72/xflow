@@ -2,7 +2,7 @@
 id: SPEC-FACILITY-DASHBOARD-001
 title: "지하철 시설물 관리 대시보드 패널 (라인·역사·기기)"
 version: "0.1.0"
-status: in-progress
+status: completed
 created: 2026-07-28
 updated: 2026-07-29
 author: xtra

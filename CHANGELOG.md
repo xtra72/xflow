@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### 추가 — 지하철 시설물 관리 대시보드 패널 (라인·역사·기기)
+
+- **지하철 시설물 관리 대시보드 3종 패널 신설 — 라인(호선)/역사(station)/기기(device) 계층 조망·제어 (프론트엔드 전용, Non-breaking)**
+
+  지하철 역사 시설물 관리 비전에서 첫 디바이스인 공기청정기(air purifier)를 대상으로, 운영자가 라인 → 역사 → 기기 계층으로 시설물 상태를 조망·통계·일괄 제어할 수 있는 신규 대시보드 패널 타입 3종을 추가했다. SPEC-AIRPURIFIER-001이 소유하는 디바이스 위치 계층(station/place/index) + 역사 레지스트리(station→line) + line/station fan-out exec 표면을 **소비**하며, **신규 백엔드 코드는 0**이다(기존 airpurifier exec 표면 재사용). 신규 17개 + 수정 8개 프론트엔드 파일로 구현되었다.
+
+  - **3종 패널**: (1) **라인 패널** — 한 호선 전체 기기의 라인도(line diagram) + 역사별 상태 요약 + 라인 통계 타일 + 라인 일괄 제어. (2) **역사 패널** — 한 역사의 통계 + 기기별 상태 목록 + 역사 일괄 제어. (3) **기기 패널** — 단일 기기 상태 + 제어(응답 대기 피드백 포함).
+  - **순수 집계 로직**(`web/src/lib/facilityAggregation.ts`): 역사→호선 해석, 상태 통계 카운트, 라인도 순서 레이아웃, 미분류 기기 분리. **클라이언트 사이드 집계** 방식으로, 신규 집계 엔드포인트 없이 airpurifier `list_devices`/`list_stations` exec 결과를 웹에서 조합한다.
+  - **셀렉터 제어 훅**(`web/src/hooks/useAirpurifierControl.ts`): `set_power`/`set_fan_speed`/`set_multiple`을 device_id/station/line 셀렉터로 execAgent 호출(`fanOutResponse` 타입) + `useFacilityRoster`(refresh 폴링).
+  - **패널 컴포넌트**: `panels/{FacilityLine,FacilityStation,FacilityDevice}Panel.tsx` + 공용 `facilityShared.tsx`(StatTiles/ControlResultView/BulkControl).
+  - **와이어링 4지점**: `uiStore.ts`(PanelType/기본값), `renderDashboardPanel.tsx`(패널 타입 분기), `AddPanelDialog.tsx`(패널 옵션 + facility 대상 선택 단계), `PanelSettingsDialog.tsx`(FacilitySection 설정). i18n는 `lib/i18n/{ko,en}.json`(`dashboard.facility.*`).
+  - **분기(Divergence)**: (1) **클라이언트 사이드 집계 채택**(A-2, REQ-05-01) — 백엔드 집계 엔드포인트 대신 airpurifier exec 재사용. 대규모 fleet 성능을 위한 백엔드 엔드포인트는 OI-1로 이연. (2) **REQ-04-04 테스트 갭** — PanelSettingsDialog의 facility 설정 하위 폼(FacilitySection)은 **구현 완료**되었으나 단위 테스트가 없다. FacilitySection이 비-export 내부 컴포넌트라 프로덕션 변경 없이는 테스트 커버가 불가 → 이연(후속: export + scoped RTL 테스트). (3) **REQ-05-04(폴링)/REQ-06-04(로딩 스피너)** — 타이머/브라우저 거동으로 manual/단위-범위-외 분류. (4) **기기 제어 경로** — 기기 패널은 `deviceService.executeCommand`가 아닌 `useAirpurifierControl`(device_id 셀렉터 execAgent)을 사용 — 기능적으로 동등(둘 다 에이전트 `Process`에 도달). (5) **런타임 의존** — 대시보드는 airpurifier exec 표면(develop 머지 완료)을 소비 → airpurifier 백엔드 실행 필요.
+  - **품질**: 전체 vitest 스위트 2141개 green, `tsc` 0 errors, `eslint` 클린. 백엔드(Go) 코드/테스트 무변경. 신규 외부 의존성 0.
+  - **관련**: SPEC-FACILITY-DASHBOARD-001 v0.1.0(구현 완료, `74ada88`, Tier M). depends_on: SPEC-AIRPURIFIER-001.
+
 ### 추가 — airpurifier 에이전트 (지하철 역사 공기청정기 MQTT 관리)
 
 - **`airpurifier` 시스템 에이전트 신설 — 지하철 역사 공기청정기 MQTT 제어·모니터링 관리 에이전트 (Non-breaking)**

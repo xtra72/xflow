@@ -684,6 +684,14 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - `web/src/pages/agents/PromoteToStaticDialog.tsx` (SPEC-STORE-003 v0.2.0): 동적 키 → 정적 키 변환 다이얼로그 (태그 입력 + Configure API 재사용, 별도 백엔드 변경 없음).
 - `web/src/services/api/keyTagExtractor.ts` (SPEC-WEB-005 v0.5.0): 키 문자열에서 태그 자동 추출 (InfluxDB 라인 프로토콜 + colon/slash 위치 기반 segments). 정적 태그 미존재 시 fallback.
 
+**지하철 시설물 관리 대시보드 패널** (SPEC-FACILITY-DASHBOARD-001, v0.1.0 — 프론트엔드 전용, 신규 백엔드 0):
+
+- `web/src/lib/facilityAggregation.ts`: 순수 집계 로직. 역사→호선(station→line) 해석, 상태 통계 카운트, 라인도(line-diagram) 순서 레이아웃, 미분류 기기 분리. SPEC-AIRPURIFIER-001의 exec 표면(`list_devices`/`list_stations`)을 클라이언트에서 집계(신규 집계 엔드포인트 없음).
+- `web/src/hooks/useAirpurifierControl.ts`: 셀렉터 제어 훅(`set_power`/`set_fan_speed`/`set_multiple`을 device_id/station/line 셀렉터로 execAgent, `fanOutResponse` 타입) + `useFacilityRoster`(refresh 폴링).
+- `web/src/pages/dashboard/panels/FacilityLinePanel.tsx` · `FacilityStationPanel.tsx` · `FacilityDevicePanel.tsx`: 라인/역사/기기 3종 패널. 라인도 + 역사별 요약 + 통계 타일 + 일괄/개별 제어(응답 대기 피드백).
+- `web/src/pages/dashboard/panels/facilityShared.tsx`: 패널 공용 컴포넌트(`StatTiles`/`ControlResultView`/`BulkControl`).
+- 와이어링 4지점: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(패널 타입 분기), `pages/dashboard/AddPanelDialog.tsx`(패널 옵션 + facility 대상 선택 단계), `pages/dashboard/PanelSettingsDialog.tsx`(FacilitySection 설정). i18n는 `lib/i18n/{ko,en}.json`(`dashboard.facility.*`).
+
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
 - `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)
