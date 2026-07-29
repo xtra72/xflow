@@ -129,6 +129,17 @@ type pahoMQTTClient struct {
 	subs   map[string]subEntry // 재연결 복원용 구독 레지스트리
 }
 
+// logLifecycle 은 log_mqtt 옵션이 켜져 있을 때만 MQTT 생명주기 이벤트를 INFO 로 로그한다
+// (opt-in 진단용). 토글이 꺼져 있거나 logger 가 nil 이면 no-op → 운영 로그 볼륨 0.
+// 연결 실패/유실 같은 문제 신호는 별도 Warn 으로 항상 남기며(이 게이트와 무관), 여기서는
+// 정상 생명주기 트레이스(연결 성공·해제·구독·발행·구독 복원)만 게이트한다.
+func (c *pahoMQTTClient) logLifecycle(msg string, args ...any) {
+	if !c.cfg.LogMQTT || c.logger == nil {
+		return
+	}
+	c.logger.Info("airpurifier mqtt: "+msg, args...)
+}
+
 // newPahoMQTTClient 는 설정으로 pahoMQTTClient 를 생성한다 (아직 연결하지 않는다).
 func newPahoMQTTClient(cfg AirPurifierConfig, logger *slog.Logger) *pahoMQTTClient {
 	return &pahoMQTTClient{
@@ -183,6 +194,7 @@ func (c *pahoMQTTClient) Connect() error {
 		}
 		return fmt.Errorf("airpurifier: mqtt connect timeout (%s)", c.cfg.Broker)
 	}
+	c.logLifecycle("connect succeeded", "broker", c.cfg.Broker, "auto_reconnect", c.cfg.AutoReconnect)
 	return nil
 }
 
@@ -190,6 +202,7 @@ func (c *pahoMQTTClient) Connect() error {
 func (c *pahoMQTTClient) Disconnect() {
 	if c.client != nil {
 		c.client.Disconnect(250)
+		c.logLifecycle("disconnect", "broker", c.cfg.Broker)
 	}
 }
 
@@ -203,6 +216,7 @@ func (c *pahoMQTTClient) Publish(topic string, qos byte, payload []byte) error {
 	if err := token.Error(); err != nil {
 		return fmt.Errorf("airpurifier: mqtt publish %q: %w", topic, err)
 	}
+	c.logLifecycle("published", "topic", topic, "qos", qos, "len", len(payload))
 	return nil
 }
 
@@ -257,7 +271,7 @@ func (c *pahoMQTTClient) onConnect(_ mqtt.Client) {
 			continue
 		}
 	}
-	c.logger.Info("airpurifier: mqtt connected, subscriptions restored",
+	c.logLifecycle("connected, subscriptions restored",
 		"broker", c.cfg.Broker, "subscriptions", len(restore))
 }
 
@@ -270,6 +284,7 @@ func (c *pahoMQTTClient) doSubscribe(topic string, qos byte, cb MessageHandler) 
 	if err := token.Error(); err != nil {
 		return fmt.Errorf("airpurifier: mqtt subscribe %q: %w", topic, err)
 	}
+	c.logLifecycle("subscribed", "topic", topic, "qos", qos)
 	return nil
 }
 

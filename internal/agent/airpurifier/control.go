@@ -3,6 +3,7 @@ package airpurifier
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,67 @@ func (a *AirPurifierAgent) sendEvent(eventType string, data map[string]any) {
 	default:
 		a.logger.Debug("airpurifier: msgCh full, dropping event", "type", eventType)
 	}
+}
+
+// logFrame 은 log_messages 옵션이 켜져 있을 때 송/수신 프레임을 INFO 로 로그한다 (opt-in 진단).
+//
+// 호출부가 a.cfg.LogMessages 를 먼저 확인하므로(토글 false 시 zero overhead), 여기서는 방출만
+// 한다. dir 은 "RX"(상태 유입) 또는 "TX"(명령 방출), topic 은 대상 MQTT 토픽(port 모드는 재구성한
+// 토픽 또는 device_id), summary 는 디코드된 축/값 요약이다.
+func (a *AirPurifierAgent) logFrame(dir, topic string, payload []byte, summary string) {
+	if a.logger == nil {
+		return
+	}
+	a.logger.Info("airpurifier: "+dir,
+		"topic", topic,
+		"len", len(payload),
+		"payload", string(payload),
+		"decoded", summary,
+	)
+}
+
+// stateSummary 는 디코드된 상태 축(관측된 것만)을 사람이 읽을 요약 문자열로 만든다 (RX 로그용).
+func stateSummary(st decodedState) string {
+	parts := make([]string, 0, 3)
+	if st.PowerSet {
+		parts = append(parts, fmt.Sprintf("power=%v", st.Power))
+	}
+	if st.FanSpeedSet {
+		parts = append(parts, fmt.Sprintf("fan_speed=%d", st.FanSpeed))
+	}
+	if st.OnlineSet {
+		parts = append(parts, fmt.Sprintf("online=%v", st.Online))
+	}
+	return strings.Join(parts, " ")
+}
+
+// commandSummary 는 명령 페이로드의 설정된 축을 요약 문자열로 만든다 (blob 모드 TX 로그용).
+func commandSummary(command string, cmd commandPayload) string {
+	parts := make([]string, 0, 2)
+	if cmd.Power != nil {
+		parts = append(parts, fmt.Sprintf("power=%v", *cmd.Power))
+	}
+	if cmd.FanSpeed != nil {
+		parts = append(parts, fmt.Sprintf("fan_speed=%d", *cmd.FanSpeed))
+	}
+	return strings.TrimSpace(command + " " + strings.Join(parts, " "))
+}
+
+// renderCommandTopic 은 TX 로그용으로 명령 토픽을 재구성한다 (attribute 모드는 {attribute} 포함).
+// command_topic_template 이 비면(port 모드 등) "" 를 반환한다 — 로그는 device_id 로 식별한다.
+func (a *AirPurifierAgent) renderCommandTopic(fields map[string]string, attribute string) string {
+	if a.cfg.CommandTopicTemplate == "" {
+		return ""
+	}
+	f := fields
+	if attribute != "" {
+		f = make(map[string]string, len(fields)+1)
+		for k, v := range fields {
+			f[k] = v
+		}
+		f[placeholderAttribute] = attribute
+	}
+	return renderTopic(a.cfg.CommandTopicTemplate, f)
 }
 
 // memberResult 는 단일 디바이스 제어 명령의 결과이다.
@@ -78,6 +140,9 @@ func (a *AirPurifierAgent) controlDeviceBlob(deviceID, command string, cmd comma
 		p = a.pendings.register(deviceID, command, expectFromPayload(cmd), a.cfg.ControlResponseTimeout)
 	}
 
+	if a.cfg.LogMessages {
+		a.logFrame("TX", a.renderCommandTopic(fields, ""), payload, commandSummary(command, cmd))
+	}
 	if err := a.cmdSink.SendCommand(outboundCommand{DeviceID: deviceID, Fields: fields, Payload: payload}); err != nil {
 		a.pendings.cancel(p)
 		return memberResult{}, err
@@ -130,6 +195,9 @@ func (a *AirPurifierAgent) controlDeviceAttr(deviceID, command string, cmd comma
 			p = a.pendings.register(deviceID, ax.command, ax.expect, a.cfg.ControlResponseTimeout)
 		}
 		out := outboundCommand{DeviceID: deviceID, Fields: fields, Attribute: ax.attr, Payload: ax.payload}
+		if a.cfg.LogMessages {
+			a.logFrame("TX", a.renderCommandTopic(fields, ax.attr), ax.payload, ax.command+" ["+ax.attr+"]")
+		}
 		if err := a.cmdSink.SendCommand(out); err != nil {
 			a.pendings.cancel(p)
 			return memberResult{}, err
@@ -344,25 +412,41 @@ func (a *AirPurifierAgent) handleSetDevice(req processRequest, raw []byte) ([]by
 		return nil, fmt.Errorf("airpurifier set_device: %w", err)
 	}
 
+	// present 는 부분 갱신 대상 필드 판별기이다. HTTP exec 경로는 본문을 표준 {command, params}
+	// 계약으로 재직렬화하므로 top-level 키에는 필드가 없고 params 에만 존재한다. top-level raw 키
+	// 또는 params 키 중 어느 한쪽에 존재하면 갱신 대상으로 본다 (갱신 값 자체는 fillFromParams 가
+	// 이미 req 로 backfill 해둠).
+	present := func(key string) bool {
+		if _, ok := fields[key]; ok {
+			return true
+		}
+		if req.Params != nil {
+			if _, ok := req.Params[key]; ok {
+				return true
+			}
+		}
+		return false
+	}
+
 	a.mu.Lock()
 	dev, ok := a.devices[req.DeviceID]
 	if !ok {
 		a.mu.Unlock()
 		return nil, fmt.Errorf("%w: %q", ErrDeviceNotFound, req.DeviceID)
 	}
-	if _, present := fields["name"]; present {
+	if present("name") {
 		dev.Name = req.Name
 	}
-	if _, present := fields["group_id"]; present {
+	if present("group_id") {
 		dev.GroupID = req.GroupID
 	}
-	if _, present := fields["station"]; present {
+	if present("station") {
 		dev.Station = req.Station
 	}
-	if _, present := fields["place"]; present {
+	if present("place") {
 		dev.Place = req.Place
 	}
-	if _, present := fields["index"]; present {
+	if present("index") {
 		dev.Index = req.Index
 	}
 	a.mu.Unlock()

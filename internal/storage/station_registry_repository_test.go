@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -25,7 +26,7 @@ func TestStationRegistryFileRepository_SaveAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got != entry {
+	if !reflect.DeepEqual(got, entry) {
 		t.Fatalf("Get mismatch: got %+v want %+v", got, entry)
 	}
 }
@@ -42,7 +43,7 @@ func TestStationRegistryFileRepository_GetMissingReturnsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get returned error for missing key: %v", err)
 	}
-	if (got != StationRegistryEntry{}) {
+	if !reflect.DeepEqual(got, StationRegistryEntry{}) {
 		t.Fatalf("expected zero entry for missing key, got %+v", got)
 	}
 }
@@ -86,7 +87,7 @@ func TestStationRegistryFileRepository_AtomicReload(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("expected 2 entries after reload, got %d", len(all))
 	}
-	if all["ST-101"] != e1 || all["ST-102"] != e2 {
+	if !reflect.DeepEqual(all["ST-101"], e1) || !reflect.DeepEqual(all["ST-102"], e2) {
 		t.Fatalf("reloaded entries mismatch: %+v", all)
 	}
 }
@@ -110,7 +111,7 @@ func TestStationRegistryFileRepository_Delete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after delete: %v", err)
 	}
-	if (got != StationRegistryEntry{}) {
+	if !reflect.DeepEqual(got, StationRegistryEntry{}) {
 		t.Fatalf("expected zero entry after delete, got %+v", got)
 	}
 }

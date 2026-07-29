@@ -34,6 +34,8 @@ var (
 	ErrStationNotFound = errors.New("airpurifier: station not found")
 	// ErrLineNotFound 는 역사 레지스트리에서 line 에 속한 station 이 없을 때 반환된다.
 	ErrLineNotFound = errors.New("airpurifier: line not found")
+	// ErrPlaceNotFound 는 역사 내에서 place 를 찾지 못했을 때 반환된다 (remove_place/get_place).
+	ErrPlaceNotFound = errors.New("airpurifier: place not found")
 	// ErrNotConnected 는 direct 모드에서 브로커에 연결되지 않은 상태로 발행을 시도할 때 반환된다.
 	ErrNotConnected = errors.New("airpurifier: not connected to broker")
 	// ErrInvalidCommand 은 알 수 없는/미구현 Process 명령이 수신됐을 때 반환된다.

@@ -72,6 +72,8 @@ import {
 } from '@/services/api/monitorService';
 import { useUIStore } from '@/stores/uiStore';
 
+import AirpurifierDevicesTab from './AirpurifierDevicesTab';
+import AirpurifierStationsTab from './AirpurifierStationsTab';
 import InfluxdbManagementPanel from './InfluxdbManagementPanel';
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
@@ -109,7 +111,7 @@ interface AgentDetailPanelProps {
   agentName?: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management' | 'stations';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -147,6 +149,12 @@ const HAS_SERIES_TAB = new Set<string>(['tsdb']);
  */
 const HAS_MANAGEMENT_TAB = new Set<string>(['influxdb']);
 
+/**
+ * 역사(station) 탭을 표시하는 에이전트 타입 (SPEC-AIRPURIFIER-001 Wave 2).
+ * airpurifier 에이전트만 역사→위치 계층 관리 탭을 노출한다.
+ */
+const HAS_STATIONS_TAB = new Set<string>(['airpurifier']);
+
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
   const showDevices = !NO_DEVICES_TAB.has(agentType);
@@ -155,6 +163,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
   const showSeries = HAS_SERIES_TAB.has(agentType);
   const showManagement = HAS_MANAGEMENT_TAB.has(agentType);
+  const showStations = HAS_STATIONS_TAB.has(agentType);
 
   // TSDB 에이전트는 기본 탭을 '시리즈', Store 에이전트는 '저장소',
   // 그 외에는 '통계' 를 기본 탭으로 선택한다.
@@ -174,6 +183,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
         {showSeries && <TabButton label={t('agents.detail.tabs.series')} active={tab === 'series'} onClick={() => setTab('series')} />}
         {showSessions && <TabButton label={t('agents.detail.tabs.sessions')} active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
         {showDevices && <TabButton label={t('agents.detail.tabs.devices')} active={tab === 'devices'} onClick={() => setTab('devices')} />}
+        {showStations && <TabButton label={t('agents.detail.tabs.stations')} active={tab === 'stations'} onClick={() => setTab('stations')} />}
       </div>
 
       {/* 탭 컨텐츠 */}
@@ -187,6 +197,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       )}
       {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
+      {tab === 'stations' && showStations && <AirpurifierStationsTab agentId={agentId} />}
     </div>
   );
 }
@@ -484,6 +495,11 @@ function StatsTab({ agentId }: { agentId: string }) {
  * 렌더 시점(TwoColumnConfigLayout)에 변환한다.
  */
 const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; rightLabelKey: string }> = {
+  airpurifier: {
+    left: new Set(['transport_mode', 'broker', 'tls', 'ca_cert', 'client_id', 'username', 'password', 'qos', 'lwt_enabled']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
   'mqtt-client': {
     left: new Set(['broker', 'client_id', 'username', 'password', 'keep_alive_sec', 'connect_timeout_sec']),
     leftLabelKey: 'agents.detail.config.transport',
@@ -4028,6 +4044,12 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // Modbus TCP Server: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
   if (agentType === 'modbus-tcp-server') {
     return <ModbusDevicesSection agentId={agentId} />;
+  }
+
+  // airpurifier: device_id 기반 + 역사/위치 계층 속성. 전용 탭으로 분기
+  // (samsung/lgap/lg-icp 분기와 독립 — SPEC-AIRPURIFIER-001 Wave 2).
+  if (agentType === 'airpurifier') {
+    return <AirpurifierDevicesTab agentId={agentId} />;
   }
 
   function handleAddDevice() {

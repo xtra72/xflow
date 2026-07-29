@@ -17,6 +17,10 @@ import (
 // 간 변환 없이 그대로 흐른다.
 type StationRegistryEntry = storage.StationRegistryEntry
 
+// PlaceEntry 는 역사 내 위치(place) 항목 타입이다 (SPEC-AIRPUR-001 Wave1). 저장소 타입을
+// 재사용하여 변환 없이 그대로 흐른다. 위치는 StationRegistryEntry.Places 로 역사 안에 소속된다.
+type PlaceEntry = storage.PlaceEntry
+
 // StationRegistry 는 역사(station) → 호선(line) 매핑의 인메모리 캐시 + 조회 표면이다
 // (REQ-AIRPUR-001-02-11). 저장소(repo)를 감싸며 자체 RWMutex 로 보호된다.
 //
@@ -169,6 +173,141 @@ func sortStationsByOrder(entries []StationRegistryEntry) {
 }
 
 // ---------------------------------------------------------------------------
+// 위치(place) 표면 — 역사 내에 위치를 등록/조회 (SPEC-AIRPUR-001 Wave1)
+// ---------------------------------------------------------------------------
+//
+// 위치는 StationRegistryEntry.Places 로 역사 항목 안에 소속되며, station_registry 저장소에 함께
+// 영속화된다(device_metadata 와 별개 저장소 유지, REQ-02-12). 락 규율은 station 표면과 동일하다:
+// 자체 RWMutex 하에서 캐시만 갱신하고, 락 해제 후 저장소에 write-through 한다(로스터/pending 락과
+// 절대 중첩하지 않는다). 갱신은 항상 새 슬라이스를 만들어 인메모리 캐시와 저장소 캐시가 backing
+// 배열을 in-place 로 공유·변경하지 않게 한다.
+
+// UpsertPlace 는 역사 내 위치를 추가/갱신하고 저장소에 write-through 한다. Place 는 필수이며,
+// 역사가 미등록이면 ErrStationNotFound 를 반환한다.
+func (r *StationRegistry) UpsertPlace(station string, place PlaceEntry) error {
+	if place.Place == "" {
+		return fmt.Errorf("%w: place is required", ErrPlaceNotFound)
+	}
+
+	r.mu.Lock()
+	entry, ok := r.cache[station]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("%w: %q", ErrStationNotFound, station)
+	}
+	entry.Places = upsertPlaceInto(entry.Places, place)
+	r.cache[station] = entry
+	snapshot := entry
+	r.mu.Unlock()
+
+	if r.repo != nil {
+		return r.repo.Save(context.Background(), station, snapshot)
+	}
+	return nil
+}
+
+// RemovePlace 는 역사에서 위치를 제거하고 저장소에 write-through 한다. 역사가 미등록이면
+// ErrStationNotFound, 위치가 미등록이면 ErrPlaceNotFound 를 반환한다(place-absent 는 no-op 이
+// 아니라 구별 가능한 에러).
+func (r *StationRegistry) RemovePlace(station, place string) error {
+	r.mu.Lock()
+	entry, ok := r.cache[station]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("%w: %q", ErrStationNotFound, station)
+	}
+	newPlaces, removed := removePlaceFrom(entry.Places, place)
+	if !removed {
+		r.mu.Unlock()
+		return fmt.Errorf("%w: %q in station %q", ErrPlaceNotFound, place, station)
+	}
+	entry.Places = newPlaces
+	r.cache[station] = entry
+	snapshot := entry
+	r.mu.Unlock()
+
+	if r.repo != nil {
+		return r.repo.Save(context.Background(), station, snapshot)
+	}
+	return nil
+}
+
+// ListPlaces 는 역사의 위치 목록을 Order 오름차순(동률 시 Place 사전순)으로 반환한다.
+// 역사가 미등록이면 ErrStationNotFound.
+func (r *StationRegistry) ListPlaces(station string) ([]PlaceEntry, error) {
+	r.mu.RLock()
+	entry, ok := r.cache[station]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrStationNotFound, station)
+	}
+	out := make([]PlaceEntry, len(entry.Places))
+	copy(out, entry.Places)
+	sortPlacesByOrder(out)
+	return out, nil
+}
+
+// GetPlace 는 역사 내 단일 위치를 조회한다. 역사 미등록 시 ErrStationNotFound, 위치 미등록 시
+// ErrPlaceNotFound.
+func (r *StationRegistry) GetPlace(station, place string) (PlaceEntry, error) {
+	r.mu.RLock()
+	entry, ok := r.cache[station]
+	r.mu.RUnlock()
+	if !ok {
+		return PlaceEntry{}, fmt.Errorf("%w: %q", ErrStationNotFound, station)
+	}
+	for _, p := range entry.Places {
+		if p.Place == place {
+			return p, nil
+		}
+	}
+	return PlaceEntry{}, fmt.Errorf("%w: %q in station %q", ErrPlaceNotFound, place, station)
+}
+
+// upsertPlaceInto 는 places 에서 동일 Place 를 교체하거나 없으면 추가한 새 슬라이스를 반환한다
+// (항상 새 슬라이스 — in-place 변경 금지).
+func upsertPlaceInto(places []PlaceEntry, p PlaceEntry) []PlaceEntry {
+	out := make([]PlaceEntry, 0, len(places)+1)
+	replaced := false
+	for _, existing := range places {
+		if existing.Place == p.Place {
+			out = append(out, p)
+			replaced = true
+			continue
+		}
+		out = append(out, existing)
+	}
+	if !replaced {
+		out = append(out, p)
+	}
+	return out
+}
+
+// removePlaceFrom 은 places 에서 place 를 제거한 새 슬라이스와 제거 여부를 반환한다.
+func removePlaceFrom(places []PlaceEntry, place string) ([]PlaceEntry, bool) {
+	out := make([]PlaceEntry, 0, len(places))
+	removed := false
+	for _, existing := range places {
+		if existing.Place == place {
+			removed = true
+			continue
+		}
+		out = append(out, existing)
+	}
+	return out, removed
+}
+
+// sortPlacesByOrder 는 Order 오름차순, 동률 시 Place 사전순으로 정렬한다(결정적 순서).
+func sortPlacesByOrder(places []PlaceEntry) {
+	sort.Slice(places, func(i, j int) bool {
+		if places[i].Order != places[j].Order {
+			return places[i].Order < places[j].Order
+		}
+		return places[i].Place < places[j].Place
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Module 2B — 역사 레지스트리 런타임 CRUD 명령 핸들러 (REQ-AIRPUR-001-02-11)
 // ---------------------------------------------------------------------------
 
@@ -215,19 +354,104 @@ func (a *AirPurifierAgent) handleRemoveStation(req processRequest) ([]byte, erro
 	})
 }
 
-// handleListStations 는 list_stations 명령을 처리한다. 전체 역사를 Order 순으로 반환한다.
+// handleListStations 는 list_stations 명령을 처리한다. 전체 역사를 Order 순으로 반환하며,
+// 각 역사의 위치(places)도 Order 순으로 함께 실어 프런트엔드가 역사→위치 계층을 한 번에 렌더할
+// 수 있게 한다 (SPEC-AIRPUR-001 Wave1).
 func (a *AirPurifierAgent) handleListStations() ([]byte, error) {
 	entries := a.stations.ListStations() // Order 오름차순 정렬된 값 복사본.
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
+		places := append([]PlaceEntry(nil), e.Places...)
+		sortPlacesByOrder(places)
+		placesOut := make([]map[string]any, 0, len(places))
+		for _, p := range places {
+			placesOut = append(placesOut, map[string]any{
+				"place":        p.Place,
+				"display_name": p.DisplayName,
+				"order":        p.Order,
+			})
+		}
 		out = append(out, map[string]any{
 			"station":      e.Station,
 			"line":         e.Line,
 			"display_name": e.DisplayName,
 			"order":        e.Order,
+			"places":       placesOut,
 		})
 	}
 	return json.Marshal(map[string]any{"status": "ok", "stations": out})
+}
+
+// ---------------------------------------------------------------------------
+// 위치(place) 런타임 CRUD 명령 핸들러 (add_station/remove_station/list_stations 미러)
+// ---------------------------------------------------------------------------
+
+// handleAddPlace 는 add_place 명령을 처리한다 (역사 내 위치 upsert). station·place 필수.
+// 역사 미등록 시 ErrStationNotFound. 저장소 경로가 설정된 경우 write-through 로 영속화된다.
+func (a *AirPurifierAgent) handleAddPlace(req processRequest) ([]byte, error) {
+	if req.Station == "" {
+		return nil, fmt.Errorf("%w: add_place requires station", ErrInvalidCommand)
+	}
+	if req.Place == "" {
+		return nil, fmt.Errorf("%w: add_place requires place", ErrInvalidCommand)
+	}
+	entry := PlaceEntry{Place: req.Place, DisplayName: req.DisplayName, Order: req.Order}
+	if err := a.stations.UpsertPlace(req.Station, entry); err != nil {
+		return nil, err
+	}
+
+	a.sendEvent("place_registered", map[string]any{"station": req.Station, "place": req.Place})
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"station": req.Station,
+		"place":   req.Place,
+		"command": "add_place",
+	})
+}
+
+// handleRemovePlace 는 remove_place 명령을 처리한다. 역사 미등록 시 ErrStationNotFound,
+// 위치 미등록 시 ErrPlaceNotFound.
+func (a *AirPurifierAgent) handleRemovePlace(req processRequest) ([]byte, error) {
+	if req.Station == "" {
+		return nil, fmt.Errorf("%w: remove_place requires station", ErrInvalidCommand)
+	}
+	if req.Place == "" {
+		return nil, fmt.Errorf("%w: remove_place requires place", ErrInvalidCommand)
+	}
+	if err := a.stations.RemovePlace(req.Station, req.Place); err != nil {
+		return nil, err
+	}
+
+	a.sendEvent("place_unregistered", map[string]any{"station": req.Station, "place": req.Place})
+
+	return json.Marshal(map[string]any{
+		"status":  "ok",
+		"station": req.Station,
+		"place":   req.Place,
+		"command": "remove_place",
+	})
+}
+
+// handleListPlaces 는 list_places 명령을 처리한다. 역사의 위치를 Order 순으로 반환한다.
+// station 필수, 역사 미등록 시 ErrStationNotFound.
+func (a *AirPurifierAgent) handleListPlaces(req processRequest) ([]byte, error) {
+	if req.Station == "" {
+		return nil, fmt.Errorf("%w: list_places requires station", ErrInvalidCommand)
+	}
+	places, err := a.stations.ListPlaces(req.Station)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(places))
+	for _, p := range places {
+		out = append(out, map[string]any{
+			"place":        p.Place,
+			"display_name": p.DisplayName,
+			"order":        p.Order,
+		})
+	}
+	return json.Marshal(map[string]any{"status": "ok", "station": req.Station, "places": out})
 }
 
 // ---------------------------------------------------------------------------

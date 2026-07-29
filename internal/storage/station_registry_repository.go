@@ -21,6 +21,23 @@ type StationRegistryEntry struct {
 	DisplayName string `json:"display_name"`
 	// Order 는 라인맵 상 역사 정렬 위치(호선 내 순서)이다.
 	Order int `json:"order"`
+	// Places 는 이 역사에 등록된 위치(place) 목록이다 (역사 내에 위치를 등록, SPEC-AIRPUR-001 Wave1).
+	// omitempty 로 직렬화되어 places 필드가 없는 기존 station_registry.json 도 그대로 로드된다(하위호환).
+	Places []PlaceEntry `json:"places,omitempty"`
+}
+
+// PlaceEntry 는 역사(station)에 소속된 위치(place) 항목이다 (SPEC-AIRPUR-001 Wave1).
+//
+// 위치는 역사 안에서 등록되며(역사가 위치 집합을 소유), Place 가 역사 내 키이다. DisplayName/Order
+// 는 선택이며 UI 표시/정렬용이다. 디바이스의 Place 필드는 이 목록을 강제 참조하지 않는다(느슨한 연결,
+// REQ-02-13): UI 는 등록된 위치를 제시하되 미등록 place 라도 디바이스 등록을 거부하지 않는다.
+type PlaceEntry struct {
+	// Place 는 위치 코드(역사 내 키)이다.
+	Place string `json:"place"`
+	// DisplayName 은 위치 표시명(선택)이다.
+	DisplayName string `json:"display_name,omitempty"`
+	// Order 는 역사 내 위치 정렬 순서(선택)이다.
+	Order int `json:"order,omitempty"`
 }
 
 // StationRegistryRepository 는 역사 레지스트리 영속화 인터페이스이다.

@@ -103,6 +103,52 @@ type processRequest struct {
 	FlowID string         `json:"flow_id,omitempty"`
 }
 
+// fillFromParams 는 top-level 주소지정(addressing) 필드가 zero 값일 때 params 에서 backfill 한다.
+//
+// HTTP exec 엔드포인트(POST /agents/{id}/exec)는 요청 본문을 표준 {command, params} 계약으로
+// 재직렬화하므로 top-level 주소지정 필드(device_id/station/place/index 등)가 소실된다. 이 헬퍼는
+// params 에 담긴 주소지정 값을 구조체 필드로 승격해 표준 exec 계약을 지원한다. top-level 이 이미
+// 지정된 경우 그대로 두어(top-level 우선) 기존 노드·유닛테스트 경로를 정확히 보존한다.
+//
+// 제어 값 params(power/fan_speed)는 주소지정이 아니므로 여기서 다루지 않으며 개별 제어 핸들러가
+// 계속 req.Params 에서 직접 읽는다.
+func (req *processRequest) fillFromParams() {
+	if req.Params == nil {
+		return
+	}
+	// 문자열 주소지정 필드: top-level 이 빈 값일 때만 params 에서 채운다. stringField 는
+	// 누락 키에 대해 "" 를 반환하므로 zero 값이 그대로 유지된다.
+	if req.DeviceID == "" {
+		req.DeviceID = stringField(req.Params, "device_id")
+	}
+	if req.Name == "" {
+		req.Name = stringField(req.Params, "name")
+	}
+	if req.GroupID == "" {
+		req.GroupID = stringField(req.Params, "group_id")
+	}
+	if req.Station == "" {
+		req.Station = stringField(req.Params, "station")
+	}
+	if req.Place == "" {
+		req.Place = stringField(req.Params, "place")
+	}
+	if req.Line == "" {
+		req.Line = stringField(req.Params, "line")
+	}
+	if req.DisplayName == "" {
+		req.DisplayName = stringField(req.Params, "display_name")
+	}
+	// 정수 주소지정 필드: JSON 숫자는 float64, 숫자 문자열("3")도 허용(toInt). 누락 키는
+	// firstPresent 가 nil 을 반환하고 toInt(nil)==0 이므로 zero 값이 유지된다.
+	if req.Index == 0 {
+		req.Index = toInt(firstPresent(req.Params, "index"))
+	}
+	if req.Order == 0 {
+		req.Order = toInt(firstPresent(req.Params, "order"))
+	}
+}
+
 // NewAirPurifierAgent 는 AirPurifierAgent 팩토리 함수이다 (agent.Agent 반환).
 func NewAirPurifierAgent(config agent.AgentConfig) (agent.Agent, error) {
 	cfg, err := parseAirPurifierConfig(config.Transport.Options)
@@ -243,6 +289,9 @@ func (a *AirPurifierAgent) Start(_ context.Context) error {
 	}
 
 	// direct 모드: 초기 연결 실패는 치명적으로 보지 않는다 (auto-reconnect 시 재시도).
+	if a.cfg.LogMQTT {
+		a.logger.Info("airpurifier mqtt: connecting", "broker", a.cfg.Broker)
+	}
 	if err := a.client.Connect(); err != nil {
 		a.logger.Warn("airpurifier: broker connect failed at start", "error", err)
 	}
@@ -294,6 +343,9 @@ func (a *AirPurifierAgent) handleStateMessage(topic string, payload []byte) {
 			a.logger.Warn("airpurifier: decode state payload failed", "topic", topic, "error", err)
 			return
 		}
+	}
+	if a.cfg.LogMessages {
+		a.logFrame("RX", topic, payload, stateSummary(st))
 	}
 	a.ingestState(key, fields, st)
 }
@@ -497,6 +549,9 @@ func (a *AirPurifierAgent) FeedState(deviceID string, payload []byte) {
 		a.logger.Warn("airpurifier: decode state payload failed", "device_id", deviceID, "error", err)
 		return
 	}
+	if a.cfg.LogMessages {
+		a.logFrame("RX", deviceID, payload, stateSummary(st))
+	}
 	a.ingestState(deviceID, map[string]string{placeholderDeviceID: deviceID}, st)
 }
 
@@ -573,6 +628,9 @@ func (a *AirPurifierAgent) Process(data []byte) ([]byte, error) {
 	if err := json.Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("airpurifier process: invalid JSON: %w", err)
 	}
+	// HTTP exec 경로 지원: params 에 담긴 주소지정 필드를 구조체 필드로 backfill 한다
+	// (top-level 우선 — 기존 노드·유닛테스트 경로 보존). 디스패치 전에 한 번만 수행.
+	req.fillFromParams()
 
 	switch req.Command {
 	// Module 2 — 런타임 디바이스 CRUD.
@@ -597,6 +655,14 @@ func (a *AirPurifierAgent) Process(data []byte) ([]byte, error) {
 		return a.handleRemoveStation(req)
 	case "list_stations":
 		return a.handleListStations()
+
+	// 위치(place) 런타임 CRUD — 역사 내에 위치를 등록 (SPEC-AIRPUR-001 Wave1).
+	case "add_place":
+		return a.handleAddPlace(req)
+	case "remove_place":
+		return a.handleRemovePlace(req)
+	case "list_places":
+		return a.handleListPlaces(req)
 
 	// Module 5 — 캐시 상태 조회 (B5, REQ-AIRPUR-001-05-04). 브로커 통신 없이 로스터에서 즉시 반환.
 	case "request_state":

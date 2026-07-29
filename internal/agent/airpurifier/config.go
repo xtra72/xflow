@@ -81,6 +81,17 @@ type AirPurifierConfig struct {
 	// "reject"(기본, ErrPowerOff 거부) | "power_on_first"(전원 ON 선방출 후 풍량).
 	FanSpeedPowerOffPolicy string
 
+	// LogMessages 는 송/수신(RX/TX) 프레임 로그 여부이다 (기본 false, opt-in 진단용).
+	// true 이면 각 상태 유입(RX: 토픽+페이로드+디코드 축)과 명령 방출(TX: 토픽+페이로드+축)을
+	// INFO 로 로그한다. thingplus/samsung 의 log_messages 옵션과 동형이다.
+	// 주의: 진단용이며 로그 볼륨이 크므로 운영에서는 꺼둘 것.
+	LogMessages bool
+
+	// LogMQTT 는 MQTT 클라이언트 생명주기 로그 여부이다 (기본 false, opt-in 진단용).
+	// true 이면 연결 성공/해제·구독·발행 등 브로커 생명주기를 INFO 로 로그한다. direct 모드에서만
+	// 의미가 있으며(port 모드는 브로커가 없어 no-op), 진단용이므로 운영에서는 꺼둘 것.
+	LogMQTT bool
+
 	// 영속화/레지스트리 경로 (후속 배치에서 배선; B1 은 파싱·저장만).
 	RegistryPath        string
 	StationRegistryPath string
@@ -211,6 +222,15 @@ func parseAirPurifierConfig(opts map[string]any) (AirPurifierConfig, error) {
 		if s, ok := v.(string); ok && s != "" {
 			cfg.FanSpeedPowerOffPolicy = s
 		}
+	}
+
+	// 진단 로그 토글 (기본 false, opt-in). log_messages: 송/수신 프레임 로그,
+	// log_mqtt: MQTT 생명주기 로그. 둘 다 독립적이며 운영에서는 꺼두는 것을 권장한다.
+	if v, ok := opts["log_messages"]; ok {
+		cfg.LogMessages = toBool(v)
+	}
+	if v, ok := opts["log_mqtt"]; ok {
+		cfg.LogMQTT = toBool(v)
 	}
 
 	// 영속화/레지스트리 경로.

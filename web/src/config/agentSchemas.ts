@@ -398,6 +398,9 @@ const AIRPURIFIER_FIELDS: ConfigField[] = [
   { name: 'control_response_timeout', type: 'string', label: '제어 응답 타임아웃', default: '5s', description: '제어 명령 후 상태 반영 대기 시간 (Go duration)', section: 'operation' },
   { name: 'registry_path', type: 'string', label: '디바이스 레지스트리 경로', description: '런타임 등록 디바이스(bridge/auto) 로스터 파일 경로 (빈 값=영속화 비활성)', section: 'operation' },
   { name: 'station_registry_path', type: 'string', label: '역사 레지스트리 경로', description: '역사(station)→호선(line) 레지스트리 파일 경로 (빈 값=영속화 비활성)', section: 'operation' },
+  // ── Output / logging (advanced) ──
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '수신 상태(RX)·송신 명령(TX) MQTT 메시지(토픽+페이로드)를 INFO 로그. 진단용, 운영 비활성 권장', advanced: true, section: 'logging' },
+  { name: 'log_mqtt', type: 'boolean', label: 'MQTT 로그', default: false, description: 'MQTT 연결/재연결/구독/발행 생명주기를 INFO 로그. 진단용, 운영 비활성 권장', advanced: true, section: 'logging' },
 ];
 
 const SERIAL_FIELDS: ConfigField[] = [
