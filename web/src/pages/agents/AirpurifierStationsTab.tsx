@@ -444,52 +444,63 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
           <p className="text-sm">{t('agents.detail.stations.noStations')}</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
+          {/* 컬럼 헤더: 이름 / 코드 / 라인 (역사 행과 동일 grid 트랙으로 정렬) */}
+          <div className="grid grid-cols-[1.25rem_1fr_9rem_6rem_auto] items-center gap-2 px-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+            <span aria-hidden="true" />
+            <span>{t('agents.detail.stations.displayName')}</span>
+            <span>{t('agents.detail.stations.station')}</span>
+            <span>{t('agents.detail.stations.line')}</span>
+            <span aria-hidden="true" />
+          </div>
           {stations.map((s) => {
             const isOpen = expanded[s.station] ?? false;
             return (
               <div key={s.station} className="rounded-lg border border-(--color-border-default)">
-                {/* 역사 행 헤더 */}
-                <div className="flex items-center gap-2 px-3 py-2">
+                {/* 역사 행 헤더: 이름 → 코드 → 라인 정렬 컬럼 (헤더 행과 동일 grid 트랙) */}
+                <div className="grid grid-cols-[1.25rem_1fr_9rem_6rem_auto] items-center gap-2 px-3 py-2">
+                  {/* 클릭 시 확장/접기. 첫 4개 컬럼을 subgrid 로 span 하여 헤더와 정렬. */}
                   <button
                     type="button"
                     onClick={() => toggleExpand(s.station)}
-                    className="flex flex-1 items-center gap-2 text-left"
+                    aria-expanded={isOpen}
+                    className="col-span-4 grid grid-cols-subgrid items-center gap-2 text-left"
                   >
-                    {isOpen ? (
-                      <ChevronDown className="h-4 w-4 text-(--color-text-muted)" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 text-(--color-text-muted)" />
-                    )}
-                    <span className="text-sm font-medium text-(--color-text-primary)">
+                    <span className="flex items-center">
+                      {isOpen ? (
+                        <ChevronDown className="h-4 w-4 text-(--color-text-muted)" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-(--color-text-muted)" />
+                      )}
+                    </span>
+                    <span className="truncate text-sm font-medium text-(--color-text-primary)">
                       {s.display_name || s.station}
                     </span>
-                    <span className="font-mono text-xs text-(--color-text-muted)">{s.station}</span>
-                    {s.line && (
-                      <span className="rounded-full bg-(--color-bg-elevated) px-2 py-0.5 text-[10px] text-(--color-text-secondary)">
-                        {s.line}
-                      </span>
-                    )}
-                    <span className="ml-1 text-[10px] text-(--color-text-muted)">
+                    <span className="truncate font-mono text-xs text-(--color-text-muted)">{s.station}</span>
+                    <span className="truncate text-xs text-(--color-text-secondary)">{s.line || '—'}</span>
+                  </button>
+                  {/* 위치 개수 + 편집/삭제 (토글 버튼 밖의 형제 요소) */}
+                  <div className="flex items-center justify-end gap-1">
+                    <span className="mr-1 whitespace-nowrap text-[10px] text-(--color-text-muted)">
                       {t('agents.detail.stations.places.count').replace('{count}', String(s.places.length))}
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openEditStation(s)}
-                    aria-label={t('agents.detail.stations.edit')}
-                    className="rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-surface) hover:text-(--color-text-secondary)"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRemoveStationTarget(s)}
-                    aria-label={t('agents.detail.stations.remove')}
-                    className="rounded p-1 text-(--color-text-muted) hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => openEditStation(s)}
+                      aria-label={t('agents.detail.stations.edit')}
+                      className="rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-surface) hover:text-(--color-text-secondary)"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRemoveStationTarget(s)}
+                      aria-label={t('agents.detail.stations.remove')}
+                      className="rounded p-1 text-(--color-text-muted) hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* 위치 목록 (확장 시) */}
