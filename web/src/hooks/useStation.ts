@@ -46,6 +46,58 @@ export interface AirDevice {
   source: string;
 }
 
+// ---- 일괄 등록 (delimited-text paste) ----
+
+/** 파싱된 한 행. line 은 붙여넣은 텍스트의 원본 1-based 줄 번호(오류 표기용). */
+export interface ParsedRow {
+  line: number;
+  cells: string[];
+  raw: string;
+}
+
+/** 일괄 등록 개별 행 실패. reason 이 'EMPTY_REQUIRED' 면 필수값 누락(컴포넌트가 i18n 매핑),
+ *  그 외에는 백엔드 오류 메시지 원문. */
+export interface BulkFailure {
+  line: number;
+  input: string;
+  reason: string;
+}
+
+/** 일괄 등록 결과 요약(best-effort). */
+export interface BulkResult {
+  total: number;
+  ok: number;
+  failed: BulkFailure[];
+}
+
+/** 필수값 누락 사유 sentinel(컴포넌트에서 i18n 으로 치환). */
+export const EMPTY_REQUIRED = 'EMPTY_REQUIRED';
+
+/**
+ * 구분자 텍스트를 행 단위로 파싱한다.
+ *   - 개행(\n)으로 분리, \r 제거(스프레드시트/윈도우 붙여넣기), 공백만인 줄은 스킵.
+ *   - 줄마다 구분자 자동 감지: TAB 이 있으면 tab-split, 없으면 comma-split.
+ *   - 각 셀 trim.
+ * 원본 줄 번호(1-based)를 보존해 오류 표기에 사용한다.
+ */
+export function parseDelimitedRows(text: string): ParsedRow[] {
+  const out: ParsedRow[] = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const raw = (lines[i] ?? '').replace(/\r$/, '');
+    if (raw.trim() === '') continue;
+    const delim = raw.includes('\t') ? '\t' : ',';
+    out.push({ line: i + 1, cells: raw.split(delim).map((c) => c.trim()), raw: raw.trim() });
+  }
+  return out;
+}
+
+/** 정수 파싱(빈 값/비숫자 → 0). */
+function toIntOrZero(s: string | undefined): number {
+  const n = parseInt((s ?? '').trim(), 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
 // ---- 쿼리 키 ----
 
 const stationsKey = (agentId: string) => ['airpurifier-stations', agentId] as const;
@@ -126,6 +178,85 @@ export function useRemovePlace(agentId: string) {
   return useMutation({
     mutationFn: (v: RemovePlaceVariables) =>
       agentService.execAgent(agentId, { command: 'remove_place', params: { ...v } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: stationsKey(agentId) }),
+  });
+}
+
+// ---- 일괄 등록 뮤테이션 (best-effort 순차 루프) ----
+
+/**
+ * 역사 일괄 등록. 붙여넣은 텍스트를 파싱해 각 행마다 add_station 을 순차 호출한다.
+ * 컬럼 순서: station(필수), line, display_name, order(int). best-effort — 개별 실패는
+ * 수집하고 계속 진행하며, 마지막에 한 번만 stations 쿼리를 무효화한다.
+ */
+export function useBulkAddStations(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (text: string): Promise<BulkResult> => {
+      const rows = parseDelimitedRows(text);
+      const failed: BulkFailure[] = [];
+      let ok = 0;
+      for (const r of rows) {
+        const station = r.cells[0] ?? '';
+        if (!station) {
+          failed.push({ line: r.line, input: r.raw, reason: EMPTY_REQUIRED });
+          continue;
+        }
+        try {
+          await agentService.execAgent(agentId, {
+            command: 'add_station',
+            params: {
+              station,
+              line: r.cells[1] ?? '',
+              display_name: r.cells[2] ?? '',
+              order: toIntOrZero(r.cells[3]),
+            },
+          });
+          ok += 1;
+        } catch (e) {
+          failed.push({ line: r.line, input: r.raw, reason: e instanceof Error ? e.message : EMPTY_REQUIRED });
+        }
+      }
+      return { total: rows.length, ok, failed };
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: stationsKey(agentId) }),
+  });
+}
+
+/**
+ * 특정 역사에 위치 일괄 등록. 컬럼 순서: place(필수), display_name, order(int).
+ * best-effort — 개별 실패 수집 후 계속, 마지막에 stations 쿼리 1회 무효화.
+ */
+export function useBulkAddPlaces(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ station, text }: { station: string; text: string }): Promise<BulkResult> => {
+      const rows = parseDelimitedRows(text);
+      const failed: BulkFailure[] = [];
+      let ok = 0;
+      for (const r of rows) {
+        const place = r.cells[0] ?? '';
+        if (!place) {
+          failed.push({ line: r.line, input: r.raw, reason: EMPTY_REQUIRED });
+          continue;
+        }
+        try {
+          await agentService.execAgent(agentId, {
+            command: 'add_place',
+            params: {
+              station,
+              place,
+              display_name: r.cells[1] ?? '',
+              order: toIntOrZero(r.cells[2]),
+            },
+          });
+          ok += 1;
+        } catch (e) {
+          failed.push({ line: r.line, input: r.raw, reason: e instanceof Error ? e.message : EMPTY_REQUIRED });
+        }
+      }
+      return { total: rows.length, ok, failed };
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: stationsKey(agentId) }),
   });
 }

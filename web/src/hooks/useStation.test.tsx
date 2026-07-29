@@ -16,10 +16,14 @@ vi.mock('@/services/api/agentService', () => ({
 }));
 
 import {
+  EMPTY_REQUIRED,
+  parseDelimitedRows,
   useAddAirpurifierDevice,
   useAddPlace,
   useAddStation,
   useAirpurifierDevices,
+  useBulkAddPlaces,
+  useBulkAddStations,
   useRemovePlace,
   useSetAirpurifierDevice,
   useStations,
@@ -141,5 +145,89 @@ describe('airpurifier devices', () => {
       command: 'set_device',
       params: { device_id: 'ap-101', name: '변경' },
     });
+  });
+});
+
+describe('parseDelimitedRows', () => {
+  it('개행 분리 + 빈 줄 스킵 + 셀 trim, 원본 줄번호 보존', () => {
+    const rows = parseDelimitedRows('ST-1, line-2 , 강남 , 5\n\n   \nST-2,line-2,을지로,2');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ line: 1, cells: ['ST-1', 'line-2', '강남', '5'], raw: 'ST-1, line-2 , 강남 , 5' });
+    // 빈 줄(2,3)을 건너뛰어 다음 데이터 행의 원본 줄번호는 4.
+    expect(rows[1]?.line).toBe(4);
+    expect(rows[1]?.cells).toEqual(['ST-2', 'line-2', '을지로', '2']);
+  });
+
+  it('TAB 이 있으면 tab-split, 없으면 comma-split (줄마다 자동 감지) + \\r 제거', () => {
+    const rows = parseDelimitedRows('ST-1\tline-2\t강남\t5\r\nST-2,line-2,을지로,2');
+    expect(rows[0]?.cells).toEqual(['ST-1', 'line-2', '강남', '5']);
+    expect(rows[1]?.cells).toEqual(['ST-2', 'line-2', '을지로', '2']);
+  });
+});
+
+describe('useBulkAddStations', () => {
+  it('행마다 add_station 을 params 로 호출하고 order 를 정수 파싱한다 (빈 값→0)', async () => {
+    execAgentMock.mockResolvedValue({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkAddStations('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync('ST-1,line-2,강남,5\nST-2');
+
+    expect(res).toEqual({ total: 2, ok: 2, failed: [] });
+    expect(execAgentMock).toHaveBeenNthCalledWith(1, 'agent-1', {
+      command: 'add_station',
+      params: { station: 'ST-1', line: 'line-2', display_name: '강남', order: 5 },
+    });
+    // ST-2: 나머지 컬럼 없음 → 빈 문자열/0.
+    expect(execAgentMock).toHaveBeenNthCalledWith(2, 'agent-1', {
+      command: 'add_station',
+      params: { station: 'ST-2', line: '', display_name: '', order: 0 },
+    });
+  });
+
+  it('best-effort: 빈 station 행은 호출 없이 실패로 집계, 개별 오류는 계속 진행', async () => {
+    // 행1 성공, 행2(빈 station) 스킵-실패, 행3 백엔드 오류.
+    execAgentMock
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockRejectedValueOnce(new Error('duplicate'));
+
+    const { result } = renderHook(() => useBulkAddStations('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync('ST-1,line-2\n,line-2,이름\nST-3');
+
+    expect(res.total).toBe(3);
+    expect(res.ok).toBe(1);
+    expect(res.failed).toHaveLength(2);
+    // 빈 station 행(원본 2행)은 sentinel 사유, execAgent 미호출.
+    expect(res.failed[0]).toEqual({ line: 2, input: ',line-2,이름', reason: EMPTY_REQUIRED });
+    // 백엔드 오류(원본 3행)는 메시지 원문.
+    expect(res.failed[1]).toEqual({ line: 3, input: 'ST-3', reason: 'duplicate' });
+    // execAgent 는 유효 행(ST-1, ST-3) 2회만 호출.
+    expect(execAgentMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('useBulkAddPlaces', () => {
+  it('행마다 add_place 를 station+params 로 호출한다', async () => {
+    execAgentMock.mockResolvedValue({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkAddPlaces('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync({ station: 'ST-1', text: 'PL-A,승강장 A,1\nPL-B' });
+
+    expect(res).toEqual({ total: 2, ok: 2, failed: [] });
+    expect(execAgentMock).toHaveBeenNthCalledWith(1, 'agent-1', {
+      command: 'add_place',
+      params: { station: 'ST-1', place: 'PL-A', display_name: '승강장 A', order: 1 },
+    });
+    expect(execAgentMock).toHaveBeenNthCalledWith(2, 'agent-1', {
+      command: 'add_place',
+      params: { station: 'ST-1', place: 'PL-B', display_name: '', order: 0 },
+    });
+  });
+
+  it('빈 place 행은 실패로 집계하고 execAgent 를 호출하지 않는다', async () => {
+    const { result } = renderHook(() => useBulkAddPlaces('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync({ station: 'ST-1', text: ',이름,1' });
+
+    expect(res).toEqual({ total: 1, ok: 0, failed: [{ line: 1, input: ',이름,1', reason: EMPTY_REQUIRED }] });
+    expect(execAgentMock).not.toHaveBeenCalled();
   });
 });

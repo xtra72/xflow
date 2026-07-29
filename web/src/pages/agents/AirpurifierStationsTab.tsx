@@ -5,15 +5,20 @@
 // add_place/remove_place 로 관리한다("위치를 역사내에 등록" 요구사항).
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, MapPin, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ListPlus, MapPin, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 import {
+  EMPTY_REQUIRED,
   useAddPlace,
   useAddStation,
+  useBulkAddPlaces,
+  useBulkAddStations,
   useRemovePlace,
   useRemoveStation,
   useStations,
   type AirStation,
+  type BulkFailure,
+  type BulkResult,
 } from '@/hooks/useStation';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
@@ -23,6 +28,67 @@ import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 const inputCls =
   'block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)';
 const labelCls = 'mb-1 block text-xs font-medium text-(--color-text-secondary)';
+const textareaCls =
+  'block w-full rounded-md border border-(--color-border-strong) px-3 py-2 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)';
+
+/**
+ * 일괄 등록 패널 (역사/위치 공용). textarea + 제출 + 파싱 도움말 + 실패 목록.
+ * best-effort 실행 결과의 실패 행은 formatFailure 로 변환해 인라인 표시한다.
+ */
+function BulkRegisterPanel({
+  placeholder,
+  formatHint,
+  value,
+  onChange,
+  onSubmit,
+  submitting,
+  submitLabel,
+  failures,
+  formatFailure,
+}: {
+  placeholder: string;
+  formatHint: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  submitting: boolean;
+  submitLabel: string;
+  failures: BulkFailure[] | null;
+  formatFailure: (f: BulkFailure) => string;
+}) {
+  return (
+    <div className="space-y-2">
+      <textarea
+        rows={5}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className={textareaCls}
+      />
+      <p className="text-[11px] text-(--color-text-muted)">{formatHint}</p>
+      {failures && failures.length > 0 && (
+        <ul className="space-y-0.5 rounded-md border border-red-200 bg-red-50 p-2 dark:border-red-900/40 dark:bg-red-900/20">
+          {failures.map((f) => (
+            <li key={f.line} className="text-[11px] text-red-600 dark:text-red-400">
+              {formatFailure(f)}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={submitting || value.trim() === ''}
+          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
+        >
+          <ListPlus className="h-3.5 w-3.5" />
+          {submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 interface StationFormState {
   station: string;
@@ -48,6 +114,8 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
   const removeStation = useRemoveStation(agentId);
   const addPlace = useAddPlace(agentId);
   const removePlace = useRemovePlace(agentId);
+  const bulkAddStations = useBulkAddStations(agentId);
+  const bulkAddPlaces = useBulkAddPlaces(agentId);
 
   // 역사 폼: null=닫힘, editing=편집 대상 station code(수정 시 코드 잠금).
   const [stationForm, setStationForm] = useState<StationFormState | null>(null);
@@ -61,9 +129,73 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
   const [removePlaceTarget, setRemovePlaceTarget] = useState<{ station: string; place: string; label: string } | null>(
     null,
   );
+  // 일괄 등록(역사) 패널 상태.
+  const [showStationBulk, setShowStationBulk] = useState(false);
+  const [stationBulkText, setStationBulkText] = useState('');
+  const [stationBulkFailures, setStationBulkFailures] = useState<BulkFailure[] | null>(null);
+  // 일괄 등록(위치) 패널 — 한 번에 한 역사만 열림.
+  const [placeBulkStation, setPlaceBulkStation] = useState<string | null>(null);
+  const [placeBulkText, setPlaceBulkText] = useState('');
+  const [placeBulkFailures, setPlaceBulkFailures] = useState<BulkFailure[] | null>(null);
 
   function toggleExpand(station: string) {
     setExpanded((prev) => ({ ...prev, [station]: !prev[station] }));
+  }
+
+  // 일괄 실행 결과 → 요약 토스트. total===0 이면 입력 없음 오류.
+  function reportBulk(result: BulkResult): boolean {
+    if (result.total === 0) {
+      addNotification({ type: 'error', message: t('agents.detail.stations.bulk.emptyInput') });
+      return false;
+    }
+    if (result.failed.length === 0) {
+      addNotification({
+        type: 'success',
+        message: t('agents.detail.stations.bulk.successToast').replace('{count}', String(result.ok)),
+      });
+      return true;
+    }
+    addNotification({
+      type: 'error',
+      message: t('agents.detail.stations.bulk.partialToast')
+        .replace('{ok}', String(result.ok))
+        .replace('{failed}', String(result.failed.length)),
+    });
+    return false;
+  }
+
+  // 실패 행 → 표시 문자열. EMPTY_REQUIRED sentinel 은 i18n 사유로 치환.
+  function formatStationFailure(f: BulkFailure): string {
+    const reason = f.reason === EMPTY_REQUIRED ? t('agents.detail.stations.bulk.emptyStation') : f.reason;
+    return t('agents.detail.stations.bulk.rowError')
+      .replace('{line}', String(f.line))
+      .replace('{reason}', reason);
+  }
+  function formatPlaceFailure(f: BulkFailure): string {
+    const reason = f.reason === EMPTY_REQUIRED ? t('agents.detail.stations.places.bulk.emptyPlace') : f.reason;
+    return t('agents.detail.stations.bulk.rowError')
+      .replace('{line}', String(f.line))
+      .replace('{reason}', reason);
+  }
+
+  async function submitStationBulk() {
+    const result = await bulkAddStations.mutateAsync(stationBulkText);
+    const fullSuccess = reportBulk(result);
+    setStationBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setStationBulkText('');
+  }
+
+  async function submitPlaceBulk(station: string) {
+    const result = await bulkAddPlaces.mutateAsync({ station, text: placeBulkText });
+    const fullSuccess = reportBulk(result);
+    setPlaceBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setPlaceBulkText('');
+  }
+
+  function togglePlaceBulk(station: string) {
+    setPlaceBulkFailures(null);
+    setPlaceBulkText('');
+    setPlaceBulkStation((prev) => (prev === station ? null : station));
   }
 
   // ---- 역사 CRUD ----
@@ -216,15 +348,46 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
         <span className="text-xs text-(--color-text-muted)">
           {t('agents.detail.stations.stationsCount').replace('{count}', String(stations.length))}
         </span>
-        <button
-          type="button"
-          onClick={openAddStation}
-          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {t('agents.detail.stations.addStation')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowStationBulk((v) => !v)}
+            aria-expanded={showStationBulk}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+            {t('agents.detail.stations.bulk.toggle')}
+          </button>
+          <button
+            type="button"
+            onClick={openAddStation}
+            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('agents.detail.stations.addStation')}
+          </button>
+        </div>
       </div>
+
+      {/* 역사 일괄 등록 패널 */}
+      {showStationBulk && (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+          <h4 className="mb-2 text-xs font-semibold text-(--color-text-secondary)">
+            {t('agents.detail.stations.bulk.title')}
+          </h4>
+          <BulkRegisterPanel
+            placeholder={t('agents.detail.stations.bulk.placeholder')}
+            formatHint={t('agents.detail.stations.bulk.formatHint')}
+            value={stationBulkText}
+            onChange={setStationBulkText}
+            onSubmit={submitStationBulk}
+            submitting={bulkAddStations.isPending}
+            submitLabel={t('agents.detail.stations.bulk.submit')}
+            failures={stationBulkFailures}
+            formatFailure={formatStationFailure}
+          />
+        </div>
+      )}
 
       {/* 역사 목록 */}
       {stations.length === 0 ? (
@@ -288,15 +451,44 @@ export default function AirpurifierStationsTab({ agentId }: { agentId: string })
                       <span className="text-xs font-medium text-(--color-text-muted)">
                         {t('agents.detail.stations.places.title')}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => openAddPlace(s.station)}
-                        className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
-                      >
-                        <Plus className="h-3 w-3" />
-                        {t('agents.detail.stations.places.addPlace')}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => togglePlaceBulk(s.station)}
+                          aria-expanded={placeBulkStation === s.station}
+                          className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+                        >
+                          <ListPlus className="h-3 w-3" />
+                          {t('agents.detail.stations.places.bulk.toggle')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openAddPlace(s.station)}
+                          className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+                        >
+                          <Plus className="h-3 w-3" />
+                          {t('agents.detail.stations.places.addPlace')}
+                        </button>
+                      </div>
                     </div>
+                    {placeBulkStation === s.station && (
+                      <div className="mb-2 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-2">
+                        <h5 className="mb-2 text-[11px] font-semibold text-(--color-text-secondary)">
+                          {t('agents.detail.stations.places.bulk.title')}
+                        </h5>
+                        <BulkRegisterPanel
+                          placeholder={t('agents.detail.stations.places.bulk.placeholder')}
+                          formatHint={t('agents.detail.stations.places.bulk.formatHint')}
+                          value={placeBulkText}
+                          onChange={setPlaceBulkText}
+                          onSubmit={() => submitPlaceBulk(s.station)}
+                          submitting={bulkAddPlaces.isPending}
+                          submitLabel={t('agents.detail.stations.places.bulk.submit')}
+                          failures={placeBulkFailures}
+                          formatFailure={formatPlaceFailure}
+                        />
+                      </div>
+                    )}
                     {s.places.length === 0 ? (
                       <p className="py-2 text-center text-xs text-(--color-text-muted)">
                         {t('agents.detail.stations.places.noPlaces')}

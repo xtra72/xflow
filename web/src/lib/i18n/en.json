@@ -1214,6 +1214,18 @@
         "removeSuccess": "Station removed.",
         "opError": "Operation failed: {message}",
         "unknownError": "Unknown error",
+        "bulk": {
+          "toggle": "Bulk register",
+          "title": "Bulk register stations",
+          "placeholder": "station,line,display_name,order\nST-101,line-2,Gangnam,5",
+          "formatHint": "One station per line. Columns: station,line,display_name,order (comma or tab — spreadsheet paste works).",
+          "submit": "Register all",
+          "successToast": "{count} stations registered",
+          "partialToast": "{ok} registered, {failed} failed",
+          "emptyInput": "Nothing to register.",
+          "emptyStation": "station code missing",
+          "rowError": "line {line}: {reason}"
+        },
         "places": {
           "title": "Places",
           "addPlace": "Add place",
@@ -1231,7 +1243,15 @@
           "removeConfirmTitle": "Remove place",
           "removeConfirmMessage": "Remove place \"{name}\"? This cannot be undone.",
           "addSuccess": "Place added.",
-          "removeSuccess": "Place removed."
+          "removeSuccess": "Place removed.",
+          "bulk": {
+            "toggle": "Bulk",
+            "title": "Bulk register places",
+            "placeholder": "place,display_name,order\nPL-A,Platform A,1",
+            "formatHint": "One place per line. Columns: place,display_name,order (comma or tab).",
+            "submit": "Register all",
+            "emptyPlace": "place code missing"
+          }
         }
       },
       "field": {
