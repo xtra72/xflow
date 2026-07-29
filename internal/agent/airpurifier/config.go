@@ -98,7 +98,14 @@ type AirPurifierConfig struct {
 	// 의미가 있으며(port 모드는 브로커가 없어 no-op), 진단용이므로 운영에서는 꺼둘 것.
 	LogMQTT bool
 
-	// 영속화/레지스트리 경로 (후속 배치에서 배선; B1 은 파싱·저장만).
+	// 영속화/레지스트리 경로.
+	//
+	// 의미(자동 기본값): 빈 값이면 서버 기본 디렉터리(<dataDir>/airpurifier/<agentID>/)를
+	// 자동으로 사용해 영속화가 기본 ON 이다. 명시적으로 경로를 지정하면 그 경로가 우선한다
+	// (설정 경로 > 기본 경로 > 인메모리). 서버 기본 디렉터리 자체가 미설정인 경우(단위 테스트/
+	// 임베딩 등 SetDefaultRegistryDir 미호출)에만 빈 값 = 영속화 비활성(인메모리)로 남는다.
+	//   - RegistryPath        : 디바이스 로스터(device_registry.json) 저장 디렉터리.
+	//   - StationRegistryPath : 역사/위치 레지스트리(station_registry.json) 저장 디렉터리.
 	RegistryPath        string
 	StationRegistryPath string
 	StationRegistry     []StationSeed

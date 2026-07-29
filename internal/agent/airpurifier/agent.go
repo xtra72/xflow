@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -252,9 +253,27 @@ func (a *AirPurifierAgent) Init(config agent.AgentConfig) error {
 	a.agentConfig = config
 	a.mu.Unlock()
 
-	// 역사 레지스트리 구성 (B6, REQ-AIRPUR-001-02-11): station_registry_path 영속 항목 +
+	// 영속 경로 해석 (자동 기본값): 설정 경로가 우선하고, 비어 있으면 서버 기본 디렉터리
+	// (<dataDir>/airpurifier/<agentID>/) 를 유도한다. 우선순위는 설정 경로 > 기본 경로 >
+	// 인메모리 이며, 기본 디렉터리 미설정(단위 테스트 등)이면 종전 동작(빈 설정 → 인메모리)이
+	// 그대로 유지된다. station_registry.json / device_registry.json 은 파일명이 달라 같은
+	// 디렉터리를 공유해도 충돌하지 않는다. <agentID> 는 에이전트 고유 식별자(이름은 중복 가능
+	// 하므로 안정 유일 키인 ID 를 사용)로 다중 공기청정기 에이전트를 격리한다.
+	stationPath := a.cfg.StationRegistryPath
+	rosterPath := a.cfg.RegistryPath
+	if base := getDefaultRegistryDir(); base != "" {
+		perAgentDir := filepath.Join(base, "airpurifier", config.ID)
+		if stationPath == "" {
+			stationPath = perAgentDir
+		}
+		if rosterPath == "" {
+			rosterPath = perAgentDir
+		}
+	}
+
+	// 역사 레지스트리 구성 (B6, REQ-AIRPUR-001-02-11): 해석된 station 경로의 영속 항목 +
 	// station_registry 설정 시드 병합. 경로가 비면 인메모리/시드 전용. 자체 락 보유.
-	stations, err := newStationRegistry(a.cfg.StationRegistryPath, a.cfg.StationRegistry)
+	stations, err := newStationRegistry(stationPath, a.cfg.StationRegistry)
 	if err != nil {
 		return fmt.Errorf("airpurifier init: %w", err)
 	}
@@ -262,11 +281,11 @@ func (a *AirPurifierAgent) Init(config agent.AgentConfig) error {
 	a.stations = stations
 	a.mu.Unlock()
 
-	// 로스터 영속 저장소 구성 + 복원 (B7, REQ-AIRPUR-001-02-05/08): registry_path 가 설정되면
-	// 저장소를 열고 런타임 등록 디바이스를 로스터에 복원한다. 설정 디바이스는 이미
+	// 로스터 영속 저장소 구성 + 복원 (B7, REQ-AIRPUR-001-02-05/08): 해석된 roster 경로가
+	// 있으면 저장소를 열고 런타임 등록 디바이스를 로스터에 복원한다. 설정 디바이스는 이미
 	// NewAirPurifierAgent 에서 선등록됐으므로 device_id 충돌 시 설정이 우선한다(덮어쓰지 않음).
-	if a.cfg.RegistryPath != "" {
-		store, err := newDeviceRegistryStore(a.cfg.RegistryPath)
+	if rosterPath != "" {
+		store, err := newDeviceRegistryStore(rosterPath)
 		if err != nil {
 			return fmt.Errorf("airpurifier init: %w", err)
 		}

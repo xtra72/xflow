@@ -632,6 +632,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer deviceIDRepo.Close()
 	agent.SetDeviceIDRepository(deviceIDRepo)
 
+	// 공기청정기 역사/위치/기기 레지스트리 기본 영속 경로 배선(SPEC-AIRPURIFIER-001).
+	// registry_path/station_registry_path 설정이 비어 있어도 영속화가 기본 ON 이 되도록
+	// 서버 데이터 디렉터리를 기본 베이스로 주입한다. 실제 경로는 각 에이전트 Init 에서
+	// <dataDir>/airpurifier/<agentID>/ 로 유도된다(설정 경로가 있으면 그 경로가 우선).
+	// device_metadata/device_ids 와 동일한 베이스(dir(sqlite_path))를 재사용한다.
+	airpurifier.SetDefaultRegistryDir(filepath.Dir(storageCfg.SQLitePath))
+
 	// device_id / device_info 키를 항상 에이전트 ID 기준으로 정규화하는 resolver 를
 	// 주입한다. agentRef 가 이름("LG HVACR2")으로 들어오든 ID(UUID)로 들어오든
 	// 동일한 device_id 가 발급되도록 보장한다 (SPEC-DEVICE-IDENTITY-001).
