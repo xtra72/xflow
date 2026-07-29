@@ -156,7 +156,9 @@ func TestAttr_CommandRenderPerAxis(t *testing.T) {
 	_, err := ap.Process([]byte(`{"command":"set_power","device_id":"ST1:P1:3","params":{"power":true}}`))
 	require.NoError(t, err)
 	require.Len(t, mock.published, 1)
-	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/3/power", mock.published[0].topic)
+	// 명령 토픽의 device_index 는 3자리 0-채움(%03d)으로 렌더된다(3 → "003"). SPEC-AIRPURIFIER-001
+	// 개정 Change 1 — 유입(STATE) 매칭은 int 정규화라 불변, 명령 egress 표기만 패딩된다.
+	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/003/power", mock.published[0].topic)
 	assert.Equal(t, "on", string(mock.published[0].payload), "축 스칼라(on) 페이로드")
 
 	// set_fan_speed 2 — 전원 ON 상태로 만든 뒤.
@@ -164,16 +166,16 @@ func TestAttr_CommandRenderPerAxis(t *testing.T) {
 	_, err = ap.Process([]byte(`{"command":"set_fan_speed","device_id":"ST1:P1:3","params":{"fan_speed":2}}`))
 	require.NoError(t, err)
 	require.Len(t, mock.published, 2)
-	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/3/fan_speed", mock.published[1].topic)
+	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/003/fan_speed", mock.published[1].topic)
 	assert.Equal(t, "2", string(mock.published[1].payload))
 
 	// set_multiple {power:true, fan_speed:3} → 두 발행(power 먼저).
 	_, err = ap.Process([]byte(`{"command":"set_multiple","device_id":"ST1:P1:3","params":{"power":true,"fan_speed":3}}`))
 	require.NoError(t, err)
 	require.Len(t, mock.published, 4)
-	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/3/power", mock.published[2].topic)
+	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/003/power", mock.published[2].topic)
 	assert.Equal(t, "on", string(mock.published[2].payload))
-	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/3/fan_speed", mock.published[3].topic)
+	assert.Equal(t, "cmd/ui-line/ST1/P1/bse9000/003/fan_speed", mock.published[3].topic)
 	assert.Equal(t, "3", string(mock.published[3].payload))
 }
 
@@ -217,8 +219,8 @@ func TestAttr_StationSelectorFanOut(t *testing.T) {
 	// 두 멤버 각자의 축별 토픽으로 발행되어야 한다.
 	assert.ElementsMatch(t,
 		[]string{
-			"cmd/ui-line/ST1/P1/bse9000/1/power",
-			"cmd/ui-line/ST1/P2/bse9000/2/power",
+			"cmd/ui-line/ST1/P1/bse9000/001/power",
+			"cmd/ui-line/ST1/P2/bse9000/002/power",
 		},
 		mock.publishedTopics(),
 	)

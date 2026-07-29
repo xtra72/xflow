@@ -176,7 +176,7 @@ func (a *AirPurifierAgent) controlDeviceAttr(deviceID, command string, cmd comma
 		axes = append(axes, axisEmit{
 			attr:    m.Power.Name,
 			command: "set_power",
-			payload: scalarBytes(m.Power.encodeBool(*cmd.Power)),
+			payload: m.commandWireBytes(m.Power.encodeBool(*cmd.Power)),
 			expect:  expectFromPayload(commandPayload{Power: cmd.Power}),
 		})
 	}
@@ -184,7 +184,7 @@ func (a *AirPurifierAgent) controlDeviceAttr(deviceID, command string, cmd comma
 		axes = append(axes, axisEmit{
 			attr:    m.FanSpeed.Name,
 			command: "set_fan_speed",
-			payload: scalarBytes(m.FanSpeed.encodeInt(*cmd.FanSpeed)),
+			payload: m.commandWireBytes(m.FanSpeed.encodeInt(*cmd.FanSpeed)),
 			expect:  expectFromPayload(commandPayload{FanSpeed: cmd.FanSpeed}),
 		})
 	}
