@@ -20,6 +20,7 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
+import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 
 /** 폼 상태(문자열 위주 — 제출 시 파싱). device_id/name 은 입력하지 않는다(백엔드 생성/계산). */
 interface DeviceFormState {
@@ -113,6 +114,53 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
       return true;
     });
   }, [devices, filterLine, filterStation, filterText, stationsByCode]);
+
+  // 정렬 상태(클라이언트 사이드). 기본: 이름 오름차순.
+  const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
+
+  function handleSort(field: string) {
+    setSort((prev) =>
+      prev.field === field
+        ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { field, direction: 'asc' },
+    );
+  }
+
+  // 필터된 목록에 정렬 적용(원본 배열 불변 — 복사 후 정렬).
+  // 컬럼별 comparator: 문자열은 localeCompare('ko'), 인덱스는 수치, 상태는 online-우선(asc).
+  // 동률은 이름 → device_id 로 결정적 tiebreak(항상 오름차순, 방향과 무관).
+  const sortedDevices = useMemo(() => {
+    const dir = sort.direction === 'asc' ? 1 : -1;
+    const stationName = (d: AirDevice) => stationsByCode.get(d.station)?.display_name || d.station || '';
+    const placeName = (d: AirDevice) => {
+      const st = stationsByCode.get(d.station);
+      return st?.places.find((x) => x.place === d.place)?.display_name || d.place || '';
+    };
+    const primary = (a: AirDevice, b: AirDevice): number => {
+      switch (sort.field) {
+        case 'name':
+          return (a.name || '').localeCompare(b.name || '', 'ko');
+        case 'device_id':
+          return a.device_id.localeCompare(b.device_id);
+        case 'station':
+          return stationName(a).localeCompare(stationName(b), 'ko');
+        case 'place':
+          return placeName(a).localeCompare(placeName(b), 'ko');
+        case 'index':
+          return (a.index || 0) - (b.index || 0);
+        case 'status':
+          // asc: online 먼저(online=true 가 앞). desc 는 dir 로 반전.
+          return a.online === b.online ? 0 : a.online ? -1 : 1;
+        default:
+          return 0;
+      }
+    };
+    return [...filteredDevices].sort((a, b) => {
+      const c = primary(a, b);
+      if (c !== 0) return c * dir;
+      return (a.name || '').localeCompare(b.name || '', 'ko') || a.device_id.localeCompare(b.device_id);
+    });
+  }, [filteredDevices, sort, stationsByCode]);
 
   function openAdd() {
     setEditing(null);
@@ -297,18 +345,20 @@ export default function AirpurifierDevicesTab({ agentId }: { agentId: string }) 
         <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated) text-left text-xs text-(--color-text-muted)">
-                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.name')}</th>
-                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.deviceId')}</th>
-                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.station')}</th>
-                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.place')}</th>
-                <th className="px-3 py-2 text-right font-medium">{t('agents.detail.airDevices.index')}</th>
-                <th className="px-3 py-2 font-medium">{t('agents.detail.airDevices.status')}</th>
-                <th className="px-3 py-2 text-right font-medium">{t('agents.detail.airDevices.actions')}</th>
+              <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
+                <SortableHeader label={t('agents.detail.airDevices.name')} field="name" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
+                <SortableHeader label={t('agents.detail.airDevices.deviceId')} field="device_id" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
+                <SortableHeader label={t('agents.detail.airDevices.station')} field="station" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
+                <SortableHeader label={t('agents.detail.airDevices.place')} field="place" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
+                <SortableHeader label={t('agents.detail.airDevices.index')} field="index" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
+                <SortableHeader label={t('agents.detail.airDevices.status')} field="status" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
+                <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                  {t('agents.detail.airDevices.actions')}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {filteredDevices.map((d) => (
+              {sortedDevices.map((d) => (
                 <tr
                   key={d.device_id}
                   className="border-b border-(--color-border-default) last:border-0 hover:bg-(--color-bg-elevated)"
