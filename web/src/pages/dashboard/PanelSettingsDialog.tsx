@@ -1164,15 +1164,42 @@ function FacilitySection({
       {panel.type === 'facility-line' && (
         <FacilityLineDisplayOptions panel={panel} onConfigChange={onConfigChange} />
       )}
+
+      {/* 역사 패널 전용 표시 옵션(config-only UB-003). */}
+      {panel.type === 'facility-station' && (
+        <FacilityStationDisplayOptions panel={panel} onConfigChange={onConfigChange} />
+      )}
     </div>
   );
+}
+
+/** config 의 nodeSize 값을 5단계 키로 정규화(레거시 sm/md/lg → '1'/'2'/'3', 기본 '2'). */
+function normalizeNodeSize(value: unknown): '1' | '2' | '3' | '4' | '5' {
+  switch (value) {
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+      return value;
+    case 'sm':
+      return '1';
+    case 'md':
+      return '2';
+    case 'lg':
+      return '3';
+    default:
+      return '2';
+  }
 }
 
 /**
  * 라인 패널 표시 옵션(config-only, UB-003 — 스냅샷 스키마 변경 없음).
  *   - showStationStatus: "역사별 간략 상태" 섹션 표시(기본 true).
  *   - showLineStats: "라인 통계" 섹션 표시(기본 true).
- *   - nodeSize: 라인도 역 정보 크기 sm/md/lg(기본 md, "역 정보 크기 조절").
+ *   - offlineAsOff: 오프라인을 꺼짐으로 표시(기본 false).
+ *   - nodeSize: 라인도 역 정보 크기 5단계 '1'~'5'(기본 '2', 레벨3 = 기존 lg).
+ *   - stationsPerRow: 1줄당 역사 수(0 = 자동, nodeSize 기반 폴백; 1 이상 지정 시 직접 제어).
  */
 function FacilityLineDisplayOptions({
   panel,
@@ -1184,11 +1211,15 @@ function FacilityLineDisplayOptions({
   const { t } = useTranslation();
   const showStationStatus = (panel.config?.showStationStatus as boolean | undefined) ?? true;
   const showLineStats = (panel.config?.showLineStats as boolean | undefined) ?? true;
-  const nodeSize = (panel.config?.nodeSize as string | undefined) ?? 'md';
-  const sizeOptions: { value: 'sm' | 'md' | 'lg'; labelKey: string }[] = [
-    { value: 'sm', labelKey: 'dashboard.settings.nodeSizeSm' },
-    { value: 'md', labelKey: 'dashboard.settings.nodeSizeMd' },
-    { value: 'lg', labelKey: 'dashboard.settings.nodeSizeLg' },
+  const offlineAsOff = (panel.config?.offlineAsOff as boolean | undefined) ?? false;
+  const nodeSize = normalizeNodeSize(panel.config?.nodeSize);
+  const stationsPerRow = (panel.config?.stationsPerRow as number | undefined) ?? 0;
+  const sizeOptions: { value: '1' | '2' | '3' | '4' | '5'; labelKey: string }[] = [
+    { value: '1', labelKey: 'dashboard.settings.nodeSize1' },
+    { value: '2', labelKey: 'dashboard.settings.nodeSize2' },
+    { value: '3', labelKey: 'dashboard.settings.nodeSize3' },
+    { value: '4', labelKey: 'dashboard.settings.nodeSize4' },
+    { value: '5', labelKey: 'dashboard.settings.nodeSize5' },
   ];
 
   return (
@@ -1219,27 +1250,117 @@ function FacilityLineDisplayOptions({
         </span>
       </label>
 
+      <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)">
+        <input
+          type="checkbox"
+          data-testid="facility-line-offline-as-off"
+          checked={offlineAsOff}
+          onChange={(e) => onConfigChange({ offlineAsOff: e.target.checked })}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm font-medium text-(--color-text-primary)">
+          {t('dashboard.settings.offlineAsOff')}
+        </span>
+      </label>
+
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.nodeSize')}
         </label>
-        <div className="flex gap-1" data-testid="facility-line-node-size">
+        <select
+          value={nodeSize}
+          data-testid="facility-line-node-size"
+          onChange={(e) => onConfigChange({ nodeSize: e.target.value })}
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        >
           {sizeOptions.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              data-testid={`facility-line-node-size-${o.value}`}
-              onClick={() => onConfigChange({ nodeSize: o.value })}
-              className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                nodeSize === o.value
-                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
-                  : 'bg-(--color-bg-elevated) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80'
-              }`}
-            >
+            <option key={o.value} value={o.value}>
               {t(o.labelKey)}
-            </button>
+            </option>
           ))}
-        </div>
+        </select>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.stationsPerRow')}
+        </label>
+        <input
+          type="number"
+          min={0}
+          max={20}
+          step={1}
+          value={stationsPerRow}
+          data-testid="facility-line-stations-per-row"
+          // 0 = 자동(nodeSize 기반 폴백). 1 이상이면 1줄당 역사 수를 직접 제어한다.
+          onChange={(e) => onConfigChange({ stationsPerRow: Number(e.target.value) })}
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        />
+      </div>
+    </>
+  );
+}
+
+/**
+ * 역사 패널 표시 옵션(config-only, UB-003).
+ *   - showStats: "역사 통계"(StatTiles) 섹션 표시(기본 true).
+ *   - deviceLabelMode: 개별 기기 라벨(placeIndex=위치+번호 기본 / name=기기 이름).
+ *   - offlineAsOff: 오프라인을 꺼짐으로 표시(기본 false, 라인 패널과 동일 옵션).
+ */
+function FacilityStationDisplayOptions({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: (config: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const showStats = (panel.config?.showStats as boolean | undefined) ?? true;
+  const deviceLabelMode = (panel.config?.deviceLabelMode as string | undefined) ?? 'placeIndex';
+  const offlineAsOff = (panel.config?.offlineAsOff as boolean | undefined) ?? false;
+
+  return (
+    <>
+      <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)">
+        <input
+          type="checkbox"
+          data-testid="facility-station-show-stats"
+          checked={showStats}
+          onChange={(e) => onConfigChange({ showStats: e.target.checked })}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm font-medium text-(--color-text-primary)">
+          {t('dashboard.settings.showStats')}
+        </span>
+      </label>
+
+      {/* 오프라인을 꺼짐으로 표시(item 2, 라인 패널과 동일한 i18n 키 재사용). */}
+      <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)">
+        <input
+          type="checkbox"
+          data-testid="facility-station-offline-as-off"
+          checked={offlineAsOff}
+          onChange={(e) => onConfigChange({ offlineAsOff: e.target.checked })}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm font-medium text-(--color-text-primary)">
+          {t('dashboard.settings.offlineAsOff')}
+        </span>
+      </label>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.deviceLabelMode')}
+        </label>
+        <select
+          value={deviceLabelMode}
+          data-testid="facility-station-device-label-mode"
+          onChange={(e) => onConfigChange({ deviceLabelMode: e.target.value })}
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="placeIndex">{t('dashboard.settings.deviceLabelModePlaceIndex')}</option>
+          <option value="name">{t('dashboard.settings.deviceLabelModeName')}</option>
+        </select>
       </div>
     </>
   );

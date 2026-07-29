@@ -103,6 +103,23 @@ export function deviceFanStatus(device: AirDevice): DeviceFanStatus {
   return 'unknown';
 }
 
+/**
+ * 표시 옵션 offlineAsOff 매핑(표시 전용, 집계 불변 — UB-001). 켜져 있으면 완전 오프라인
+ * 역사 상태('offline')를 꺼짐('off')으로 표시한다. 부분 오프라인('warning')은 그대로 둔다
+ * (일부만 오프라인이면 '꺼짐'으로 위장하지 않는다).
+ */
+export function displayStationStatus(status: StationStatus, offlineAsOff: boolean): StationStatus {
+  return offlineAsOff && status === 'offline' ? 'off' : status;
+}
+
+/**
+ * 표시 옵션 offlineAsOff 매핑(표시 전용). 켜져 있으면 오프라인 기기의 풍량 배지('offline')를
+ * 꺼짐('off')으로 표시한다. 그 외 상태는 그대로 둔다.
+ */
+export function displayDeviceFanStatus(status: DeviceFanStatus, offlineAsOff: boolean): DeviceFanStatus {
+  return offlineAsOff && status === 'offline' ? 'off' : status;
+}
+
 /** 상세 모드 기기 행: place order→index 정렬 + place 표시명 해석 + 풍량 배지 상태. */
 export interface DeviceRow {
   device: AirDevice;

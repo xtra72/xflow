@@ -390,12 +390,30 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     case 'properties-grid':
       return { type, title: '속성 그리드', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
     // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종. config 는 agentId + 대상(라인/역사/기기).
+    // 표시 옵션(nodeSize 5단계 / offlineAsOff / showStats / stationsPerRow)은 config-only 영속(UB-003).
     case 'facility-device':
       return { type, title: '설비 기기', config: { agentId: '', deviceId: '' } };
     case 'facility-station':
-      return { type, title: '설비 역사', config: { agentId: '', station: '' } };
+      return {
+        type,
+        title: '설비 역사',
+        // deviceLabelMode: 개별 기기 라벨(placeIndex=위치+번호 기본 / name=기기 이름).
+        // offlineAsOff: 오프라인을 꺼짐으로 표시(라인 패널과 동일 옵션, 기본 false).
+        config: {
+          agentId: '',
+          station: '',
+          showStats: true,
+          deviceLabelMode: 'placeIndex',
+          offlineAsOff: false,
+        },
+      };
     case 'facility-line':
-      return { type, title: '설비 호선', config: { agentId: '', line: '' } };
+      return {
+        type,
+        title: '설비 호선',
+        // stationsPerRow: 0 = 자동(nodeSize 기반) 폴백. 1 이상 지정 시 1줄당 역사 수를 직접 제어.
+        config: { agentId: '', line: '', nodeSize: '2', offlineAsOff: false, stationsPerRow: 0 },
+      };
   }
 }
 

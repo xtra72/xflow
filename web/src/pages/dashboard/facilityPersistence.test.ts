@@ -35,11 +35,20 @@ function panelOfType(payload: DashboardPayload, type: PanelType): PanelConfig | 
   return page?.panels.find((pl) => pl.type === type);
 }
 
-// 3종 설비 패널의 현실적 config (agentId + 대상 + 표시옵션 refreshMs).
+// 3종 설비 패널의 현실적 config (agentId + 대상 + 표시옵션). facility-station/line 은
+// addPanelWithConfig 병합 시 기본 표시옵션(showStats / nodeSize / offlineAsOff / stationsPerRow)이 함께 저장된다.
 const facilityPanels: { type: PanelType; config: Record<string, unknown>; title: string }[] = [
   { type: 'facility-device', config: { agentId: 'air-1', deviceId: 'dev-42', refreshMs: 5000 }, title: '설비 기기 A' },
-  { type: 'facility-station', config: { agentId: 'air-1', station: 'ST-101', refreshMs: 10000 }, title: '강남역' },
-  { type: 'facility-line', config: { agentId: 'air-1', line: '2호선' }, title: '2호선' },
+  {
+    type: 'facility-station',
+    config: { agentId: 'air-1', station: 'ST-101', refreshMs: 10000, showStats: true, deviceLabelMode: 'placeIndex', offlineAsOff: false },
+    title: '강남역',
+  },
+  {
+    type: 'facility-line',
+    config: { agentId: 'air-1', line: '2호선', nodeSize: '2', offlineAsOff: false, stationsPerRow: 0 },
+    title: '2호선',
+  },
 ];
 
 beforeEach(() => {

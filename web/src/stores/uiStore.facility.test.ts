@@ -21,8 +21,12 @@ describe('uiStore 설비 패널 등록 (SPEC-FACILITY-DASHBOARD-001 M5)', () => 
     size: { w: number; h: number };
   }[] = [
     { type: 'facility-device', config: { agentId: '', deviceId: '' }, size: { w: 3, h: 5 } },
-    { type: 'facility-station', config: { agentId: '', station: '' }, size: { w: 5, h: 6 } },
-    { type: 'facility-line', config: { agentId: '', line: '' }, size: { w: 8, h: 6 } },
+    { type: 'facility-station', config: { agentId: '', station: '', showStats: true, deviceLabelMode: 'placeIndex', offlineAsOff: false }, size: { w: 5, h: 6 } },
+    {
+      type: 'facility-line',
+      config: { agentId: '', line: '', nodeSize: '2', offlineAsOff: false, stationsPerRow: 0 },
+      size: { w: 8, h: 6 },
+    },
   ];
 
   it.each(cases)('addPanel($type) → 기본 config + 그리드 크기', ({ type, config, size }) => {
@@ -47,7 +51,8 @@ describe('uiStore 설비 패널 등록 (SPEC-FACILITY-DASHBOARD-001 M5)', () => 
     const page = activePage();
     const panel = page.panels[page.panels.length - 1]!;
     expect(panel.type).toBe('facility-station');
-    expect(panel.config).toEqual({ agentId: 'air-1', station: 's1' });
+    // 기본값(showStats:true, deviceLabelMode:'placeIndex') 위에 전달값이 병합된다.
+    expect(panel.config).toEqual({ agentId: 'air-1', station: 's1', showStats: true, deviceLabelMode: 'placeIndex', offlineAsOff: false });
     expect(panel.title).toBe('A역');
   });
 });

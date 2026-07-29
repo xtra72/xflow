@@ -8,6 +8,8 @@ import {
   aggregateByStation,
   countStats,
   deviceFanStatus,
+  displayDeviceFanStatus,
+  displayStationStatus,
   lineDiagramLayout,
   stationDeviceRows,
   stationStatus,
@@ -278,6 +280,33 @@ describe('deviceFanStatus', () => {
 
   it('알 수 없는 fan_speed 는 unknown 폴백', () => {
     expect(deviceFanStatus(dev({ device_id: 'd', power: true, fan_speed: 9 }))).toBe('unknown');
+  });
+});
+
+describe('displayStationStatus (offlineAsOff)', () => {
+  it('offlineAsOff 켜짐: offline → off, 그 외 상태는 불변', () => {
+    expect(displayStationStatus('offline', true)).toBe('off');
+    expect(displayStationStatus('warning', true)).toBe('warning'); // 부분 오프라인은 위장 안 함
+    expect(displayStationStatus('normal', true)).toBe('normal');
+    expect(displayStationStatus('off', true)).toBe('off');
+  });
+
+  it('offlineAsOff 꺼짐: 모든 상태 불변', () => {
+    expect(displayStationStatus('offline', false)).toBe('offline');
+    expect(displayStationStatus('normal', false)).toBe('normal');
+  });
+});
+
+describe('displayDeviceFanStatus (offlineAsOff)', () => {
+  it('offlineAsOff 켜짐: offline → off, 그 외 상태는 불변', () => {
+    expect(displayDeviceFanStatus('offline', true)).toBe('off');
+    expect(displayDeviceFanStatus('fan2', true)).toBe('fan2');
+    expect(displayDeviceFanStatus('off', true)).toBe('off');
+  });
+
+  it('offlineAsOff 꺼짐: 모든 상태 불변', () => {
+    expect(displayDeviceFanStatus('offline', false)).toBe('offline');
+    expect(displayDeviceFanStatus('fan1', false)).toBe('fan1');
   });
 });
 

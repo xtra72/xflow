@@ -156,6 +156,136 @@ export function ControlResultView({ response }: { response?: ControlResponse }) 
   );
 }
 
+// ---- FacilityControlButtons (공용 제어 버튼 행) ----
+
+/**
+ * 제어 버튼 행에서 현재 상태로 강조할 대상.
+ *   - 'off': 전원 OFF 버튼 강조
+ *   - 1|2|3: 해당 풍량 버튼을 레벨 색상으로 강조(1단 노랑·2단 초록·3단 파랑)
+ *   - null: 강조 없음(일괄 제어 또는 오프라인 기기)
+ */
+export type FanActive = 'off' | 1 | 2 | 3 | null;
+
+/** 공용 버튼 base(크기/모양). 일괄·개별 제어가 동일 스타일을 쓰도록 단일 출처로 둔다. */
+const CONTROL_BTN_BASE =
+  'rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition-colors disabled:opacity-40';
+
+/** OFF 버튼 색상(비활성 base / 현재 상태 활성). */
+const OFF_BASE =
+  'bg-slate-200 text-slate-600 ring-transparent hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-300';
+const OFF_ACTIVE =
+  'bg-slate-300 text-slate-800 ring-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:ring-slate-400';
+
+/** 풍량 버튼 비활성 base 색상. */
+const FAN_BASE =
+  'bg-(--color-bg-elevated) text-(--color-text-secondary) ring-(--color-border-default) hover:bg-(--color-border-default)';
+
+/** 풍량 단계별 활성 색상(배지 팔레트와 일치: 1단 노랑·2단 초록·3단 파랑). */
+const FAN_ACTIVE: Record<1 | 2 | 3, string> = {
+  1: 'bg-yellow-50 text-yellow-700 ring-yellow-500 dark:bg-yellow-900/30 dark:text-yellow-300',
+  2: 'bg-green-50 text-green-700 ring-green-500 dark:bg-green-900/30 dark:text-green-300',
+  3: 'bg-blue-50 text-blue-600 ring-blue-500 dark:bg-blue-900/30 dark:text-blue-300',
+};
+
+interface FacilityControlButtonsProps {
+  /** OFF(전원 끄기) 클릭. */
+  onPowerOff: () => void;
+  /** 풍량 N 클릭. */
+  onFan: (n: number) => void;
+  /** 전체 비활성(진행 중/빈 대상/미등록). */
+  disabled?: boolean;
+  /** OFF 버튼 추가 비활성(이미 꺼짐). */
+  offDisabled?: boolean;
+  /** 풍량 버튼 추가 비활성(전원 OFF — UB-005). */
+  fanDisabled?: boolean;
+  /** OFF 버튼 title(hint). */
+  offTitle?: string;
+  /** 풍량 버튼 title(hint). */
+  fanTitle?: string;
+  /** 현재 상태로 강조할 버튼(OFF 또는 풍량 N). 일괄 제어는 null. */
+  active?: FanActive;
+  /**
+   * 응답 대기 중(로딩)인 버튼(클릭한 버튼). 해당 버튼 위에 스피너를 얹어 어떤 제어가 진행
+   * 중인지 버튼 자체로 표시한다(C item 3). null 이면 스피너 없음(일괄 제어는 미사용).
+   */
+  pending?: FanActive;
+  /** testid: OFF 버튼. */
+  powerOffTestId: string;
+  /** testid: 풍량 N 버튼(1/2/3). */
+  fanTestId: (n: number) => string;
+}
+
+/** 제어 버튼 내부 로딩 스피너(진행 중 버튼에 얹는다). 버튼 텍스트를 대체한다. */
+function ControlSpinner() {
+  return (
+    <span
+      data-testid="control-btn-spinner"
+      aria-hidden="true"
+      className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent align-middle"
+    />
+  );
+}
+
+/**
+ * 공용 제어 버튼 행(OFF + 풍량 1/2/3). 일괄 제어(FacilityBulkControl)와 개별 기기 행이 동일한
+ * 시각을 쓰도록 버튼 스타일을 한곳으로 모은다(단순성 원칙). 전원 켜기(ON) 버튼은 제공하지 않는다
+ * (패널 정책 A1). `active` 로 현재 상태 버튼을 레벨 색상(1단 노랑·2단 초록·3단 파랑)/OFF 로 강조한다.
+ */
+export function FacilityControlButtons({
+  onPowerOff,
+  onFan,
+  disabled,
+  offDisabled,
+  fanDisabled,
+  offTitle,
+  fanTitle,
+  active = null,
+  pending = null,
+  powerOffTestId,
+  fanTestId,
+}: FacilityControlButtonsProps) {
+  const { t } = useTranslation();
+  const offActive = active === 'off';
+  const offPending = pending === 'off';
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <button
+        type="button"
+        data-testid={powerOffTestId}
+        onClick={onPowerOff}
+        disabled={Boolean(disabled) || Boolean(offDisabled)}
+        title={offTitle}
+        aria-pressed={offActive}
+        aria-busy={offPending}
+        className={cn(CONTROL_BTN_BASE, offActive ? OFF_ACTIVE : OFF_BASE)}
+        aria-label={t('dashboard.facility.control.off')}
+      >
+        {offPending ? <ControlSpinner /> : t('dashboard.facility.control.off')}
+      </button>
+      {[1, 2, 3].map((n) => {
+        const isActive = active === n;
+        const isPending = pending === n;
+        return (
+          <button
+            key={n}
+            type="button"
+            data-testid={fanTestId(n)}
+            onClick={() => onFan(n)}
+            disabled={Boolean(disabled) || Boolean(fanDisabled)}
+            title={fanTitle}
+            aria-pressed={isActive}
+            aria-busy={isPending}
+            className={cn(CONTROL_BTN_BASE, isActive ? FAN_ACTIVE[n as 1 | 2 | 3] : FAN_BASE)}
+            aria-label={`${t('dashboard.facility.control.fan')} ${n}`}
+          >
+            {isPending ? <ControlSpinner /> : `${t('dashboard.facility.control.fan')} ${n}`}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---- FacilityBulkControl ----
 
 /** setPower / setFanSpeed 뮤테이션의 공통 관찰 필드(변수 타입이 달라 구조적 뷰로 좁힌다). */
@@ -191,9 +321,13 @@ interface FacilityBulkControlProps {
 }
 
 /**
- * 셀렉터 fan-out 일괄 제어(set_power on/off + set_fan_speed 1/2/3). useAirpurifierControl 을
+ * 셀렉터 fan-out 일괄 제어(set_power off + set_fan_speed 1/2/3). useAirpurifierControl 을
  * 호출만 하고 fan-out 을 재구현하지 않는다(UB-001). 진행 중 로딩 표시(REQ-06-04) + 멤버별 결과
  * 렌더(REQ-06-02, UB-002). 빈 대상(memberCount=0)/미등록(disabled) 시 컨트롤을 비활성화한다.
+ *
+ * 버튼 구성: OFF(전원 끄기) + 풍량 1/2/3. 전원 켜기(ON) 버튼은 제공하지 않는다(패널 정책).
+ * 컴팩트 인라인 레이아웃(헤더/목록 제목 옆 배치용)이며, 결과/진행/에러는 버튼 아래
+ * 팝오버로 표시해 UB-002(결과 무음 누락 금지)를 지킨다.
  */
 export function FacilityBulkControl({ agentId, selector, memberCount, disabled }: FacilityBulkControlProps) {
   const { t } = useTranslation();
@@ -204,6 +338,8 @@ export function FacilityBulkControl({ agentId, selector, memberCount, disabled }
   const emptyTarget = memberCount === 0;
   const controlDisabled = Boolean(disabled) || emptyTarget || isPending;
   const active = pickActive(lastAction, setPower, setFanSpeed);
+  const hasResult = isPending || Boolean(active?.data) || Boolean(active?.error);
+  const emptyHint = emptyTarget && !disabled ? t('dashboard.facility.control.noTarget') : undefined;
 
   const runPower = (power: boolean) => {
     setLastAction('power');
@@ -215,64 +351,37 @@ export function FacilityBulkControl({ agentId, selector, memberCount, disabled }
   };
 
   return (
-    <div className="space-y-2">
-      <span className="text-xs font-semibold text-(--color-text-secondary)">
-        {t('dashboard.facility.control.title')}
-      </span>
+    <div className="relative" data-testid="facility-bulk">
+      {/* 공용 버튼 행: 일괄 제어는 단일 현재 상태가 없어 강조(active) 없이 표시. */}
+      <FacilityControlButtons
+        onPowerOff={() => runPower(false)}
+        onFan={runFan}
+        disabled={controlDisabled}
+        offTitle={emptyHint}
+        fanTitle={emptyHint}
+        active={null}
+        powerOffTestId="facility-bulk-power-off"
+        fanTestId={(n) => `facility-bulk-fan-${n}`}
+      />
 
-      {emptyTarget && !disabled && (
-        <p className="text-[11px] text-(--color-text-muted)">{t('dashboard.facility.control.noTarget')}</p>
-      )}
-
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          data-testid="facility-bulk-power-on"
-          onClick={() => runPower(true)}
-          disabled={controlDisabled}
-          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-40 dark:bg-blue-500"
-          aria-label={t('dashboard.facility.control.powerOn')}
+      {hasResult && (
+        <div
+          data-testid="facility-bulk-result"
+          className="absolute right-0 top-full z-20 mt-1 w-64 max-w-[80vw] space-y-1 rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-2 shadow-lg"
         >
-          {t('dashboard.facility.control.powerOn')}
-        </button>
-        <button
-          type="button"
-          data-testid="facility-bulk-power-off"
-          onClick={() => runPower(false)}
-          disabled={controlDisabled}
-          className="rounded-md bg-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-300 disabled:opacity-40 dark:bg-slate-700 dark:text-slate-300"
-          aria-label={t('dashboard.facility.control.powerOff')}
-        >
-          {t('dashboard.facility.control.powerOff')}
-        </button>
-        {[1, 2, 3].map((n) => (
-          <button
-            key={n}
-            type="button"
-            data-testid={`facility-bulk-fan-${n}`}
-            onClick={() => runFan(n)}
-            disabled={controlDisabled}
-            className="rounded-md bg-(--color-bg-elevated) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) ring-1 ring-(--color-border-default) transition-colors hover:bg-(--color-border-default) disabled:opacity-40"
-            aria-label={`${t('dashboard.facility.control.fan')} ${n}`}
-          >
-            {t('dashboard.facility.control.fan')} {n}
-          </button>
-        ))}
-      </div>
-
-      {isPending && (
-        <p role="status" className="text-[11px] text-(--color-text-muted)">
-          {t('dashboard.facility.control.running')}
-        </p>
+          {isPending && (
+            <p role="status" className="text-[11px] text-(--color-text-muted)">
+              {t('dashboard.facility.control.running')}
+            </p>
+          )}
+          <ControlResultView response={active?.data} />
+          {active?.error ? (
+            <p className="rounded-lg bg-red-50 px-2.5 py-1.5 text-[11px] text-red-600 dark:bg-red-900/20 dark:text-red-400">
+              {String((active.error as Error)?.message ?? active.error)}
+            </p>
+          ) : null}
+        </div>
       )}
-
-      <ControlResultView response={active?.data} />
-
-      {active?.error ? (
-        <p className="rounded-lg bg-red-50 px-2.5 py-2 text-[11px] text-red-600 dark:bg-red-900/20 dark:text-red-400">
-          {String((active.error as Error)?.message ?? active.error)}
-        </p>
-      ) : null}
     </div>
   );
 }
