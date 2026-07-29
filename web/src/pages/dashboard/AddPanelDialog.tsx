@@ -27,11 +27,16 @@ import {
   CircleDot,
   Table,
   LayoutGrid,
+  Route,
+  MapPin,
+  Fan,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { useUIStore, type PanelType } from '@/stores/uiStore';
 import { useDevices } from '@/hooks/useDevice';
+import { useAgents } from '@/hooks/useAgent';
+import { useStations, useXsfmDevices } from '@/hooks/useStation';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -73,6 +78,8 @@ interface PanelOption {
   descriptionKey: string;
   /** 디바이스 선택 스텝이 필요한 유형 */
   needsDevice?: boolean;
+  /** 설비(에이전트 + 라인/역사/기기) 선택 스텝이 필요한 유형 (SPEC-FACILITY-DASHBOARD-001 M5) */
+  needsFacility?: boolean;
   /**
    * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
    * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
@@ -127,6 +134,10 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     { type: 'hvac-control', icon: Wind, labelKey: 'dashboard.panelTypes.hvacControl', descriptionKey: 'dashboard.addPanel.descriptions.hvacControl', needsDevice: true },
     { type: 'outdoor-control', icon: Cpu, labelKey: 'dashboard.addPanel.labels.outdoorControl', descriptionKey: 'dashboard.addPanel.descriptions.outdoorControl', needsDevice: true },
     { type: 'custom-control', icon: Settings, labelKey: 'dashboard.panelTypes.customControl', descriptionKey: 'dashboard.addPanel.descriptions.customControl', needsDevice: true },
+    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종 (에이전트 + 라인/역사/기기 선택).
+    { type: 'facility-line', icon: Route, labelKey: 'dashboard.panelTypes.facilityLine', descriptionKey: 'dashboard.addPanel.descriptions.facilityLine', needsFacility: true },
+    { type: 'facility-station', icon: MapPin, labelKey: 'dashboard.panelTypes.facilityStation', descriptionKey: 'dashboard.addPanel.descriptions.facilityStation', needsFacility: true },
+    { type: 'facility-device', icon: Fan, labelKey: 'dashboard.panelTypes.facilityDevice', descriptionKey: 'dashboard.addPanel.descriptions.facilityDevice', needsFacility: true },
   ],
 };
 
@@ -144,7 +155,7 @@ interface AddPanelDialogProps {
 export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
-  const [step, setStep] = useState<'type' | 'device' | 'chart-config'>('type');
+  const [step, setStep] = useState<'type' | 'device' | 'chart-config' | 'facility'>('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
   // 다이얼로그 닫힐 때 상태 초기화
@@ -160,7 +171,7 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (step === 'device' || step === 'chart-config') {
+        if (step === 'device' || step === 'chart-config' || step === 'facility') {
           setStep('type');
           setSelectedType(null);
         } else {
@@ -187,6 +198,11 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       setStep('device');
       return;
     }
+    if (option.needsFacility) {
+      setSelectedType(option.type);
+      setStep('facility');
+      return;
+    }
     if (option.presetConfig) {
       // 프리셋이 채널 정보를 미리 주므로 chart-config 스텝 건너뜀
       addPanelWithConfig(option.type, option.presetConfig);
@@ -206,6 +222,13 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const handleDeviceSelect = (deviceId: string, deviceName: string) => {
     if (!selectedType) return;
     addPanelWithConfig(selectedType, { deviceId }, deviceName);
+    onClose();
+  };
+
+  // 설비 대상 선택 완료 처리 (에이전트 + 라인/역사/기기).
+  const handleFacilityConfirm = (config: Record<string, unknown>, title?: string) => {
+    if (!selectedType) return;
+    addPanelWithConfig(selectedType, config, title);
     onClose();
   };
 
@@ -244,6 +267,17 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
           <ChartConfigStep
             panelType={selectedType}
             onConfirm={handleChartConfirm}
+            onBack={() => {
+              setStep('type');
+              setSelectedType(null);
+            }}
+            onClose={onClose}
+          />
+        )}
+        {step === 'facility' && selectedType && (
+          <FacilityStep
+            panelType={selectedType}
+            onConfirm={handleFacilityConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -659,6 +693,192 @@ function ChartConfigStep({
         <button
           type="button"
           data-testid="chart-channel-save"
+          onClick={handleConfirm}
+          disabled={!canSave}
+          className={cn(
+            'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
+            canSave
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
+          )}
+        >
+          {t('dashboard.addPanel.save')}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ---- Step: 설비 대상 선택 (SPEC-FACILITY-DASHBOARD-001 M5) ----
+
+/** 설비 패널 타입 → config 대상 키. */
+const FACILITY_TARGET_KEY: Record<string, 'deviceId' | 'station' | 'line'> = {
+  'facility-device': 'deviceId',
+  'facility-station': 'station',
+  'facility-line': 'line',
+};
+
+/** 대상 셀렉트 라벨/placeholder i18n 키(패널 타입별). */
+const FACILITY_TARGET_I18N: Record<string, { label: string; placeholder: string }> = {
+  'facility-device': { label: 'dashboard.settings.device', placeholder: 'dashboard.settings.selectDevice' },
+  'facility-station': { label: 'dashboard.settings.station', placeholder: 'dashboard.settings.selectStation' },
+  'facility-line': { label: 'dashboard.settings.line', placeholder: 'dashboard.settings.selectLine' },
+};
+
+/** 대상 옵션 한 건(값 + 표시 라벨). */
+interface FacilityTargetOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * 설비 대상 선택 스텝. 에이전트(xsfm)를 먼저 고르고, 패널 타입에 따라
+ * 라인/역사/기기 대상을 고른다. 대상 조회는 기존 useStations / useXsfmDevices 를
+ * 재사용한다(UB-001, 재구현 없음). 완료 시 addPanelWithConfig 로 { agentId, <대상키> } 를 전달한다.
+ */
+function FacilityStep({
+  panelType,
+  onConfirm,
+  onBack,
+  onClose,
+}: {
+  panelType: PanelType;
+  onConfirm: (config: Record<string, unknown>, title?: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [agentId, setAgentId] = useState('');
+  const [target, setTarget] = useState('');
+
+  const { data: agentsResult } = useAgents();
+  const airAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'xsfm'),
+    [agentsResult],
+  );
+
+  const { data: stations, isLoading: stationsLoading } = useStations(agentId);
+  const { data: devices, isLoading: devicesLoading } = useXsfmDevices(agentId);
+
+  const targetKey = FACILITY_TARGET_KEY[panelType] ?? 'deviceId';
+  const targetI18n = FACILITY_TARGET_I18N[panelType] ?? FACILITY_TARGET_I18N['facility-device']!;
+
+  // 패널 타입별 대상 옵션 계산.
+  const targetOptions: FacilityTargetOption[] = useMemo(() => {
+    if (panelType === 'facility-device') {
+      return (devices ?? []).map((d) => ({ value: d.device_id, label: d.name || d.device_id }));
+    }
+    if (panelType === 'facility-station') {
+      return (stations ?? []).map((s) => ({ value: s.station, label: s.display_name || s.station }));
+    }
+    // facility-line: 로스터의 distinct line 값.
+    const lines = Array.from(new Set((stations ?? []).map((s) => s.line).filter(Boolean)));
+    return lines.map((l) => ({ value: l, label: l }));
+  }, [panelType, devices, stations]);
+
+  const targetLoading = panelType === 'facility-device' ? devicesLoading : stationsLoading;
+  const canSave = agentId.length > 0 && target.length > 0;
+
+  const handleConfirm = () => {
+    if (!canSave) return;
+    const selected = targetOptions.find((o) => o.value === target);
+    onConfirm({ agentId, [targetKey]: target }, selected?.label);
+  };
+
+  return (
+    <>
+      {/* 헤더 */}
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label={t('dashboard.addPanel.backAria')}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <h2 className="text-lg font-semibold text-(--color-text-primary)">
+            {t(targetI18n.label)}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          aria-label={t('dashboard.addPanel.closeAria')}
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* 본문 */}
+      <div className="space-y-4 px-5 py-4">
+        {/* 에이전트 선택 */}
+        <div>
+          <label
+            htmlFor="facility-agent-select"
+            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+          >
+            {t('dashboard.settings.agent')} <span className="text-red-500">*</span>
+          </label>
+          <select
+            id="facility-agent-select"
+            data-testid="facility-agent-select"
+            value={agentId}
+            onChange={(e) => {
+              setAgentId(e.target.value);
+              setTarget('');
+            }}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">{t('dashboard.settings.selectAgent')}</option>
+            {airAgents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* 대상(라인/역사/기기) 선택 */}
+        <div>
+          <label
+            htmlFor="facility-target-select"
+            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+          >
+            {t(targetI18n.label)} <span className="text-red-500">*</span>
+          </label>
+          <select
+            id="facility-target-select"
+            data-testid="facility-target-select"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            disabled={!agentId || targetLoading}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+          >
+            <option value="">{t(targetI18n.placeholder)}</option>
+            {targetOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* 푸터 */}
+      <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-4 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default)"
+        >
+          {t('dashboard.addPanel.previous')}
+        </button>
+        <button
+          type="button"
+          data-testid="facility-save"
           onClick={handleConfirm}
           disabled={!canSave}
           className={cn(

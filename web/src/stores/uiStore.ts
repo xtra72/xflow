@@ -192,7 +192,10 @@ export type PanelType =
   | 'hvac-control'
   | 'custom-control'
   | 'outdoor-control'
-  | 'properties-grid';
+  | 'properties-grid'
+  | 'facility-line'
+  | 'facility-station'
+  | 'facility-device';
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -271,6 +274,16 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
       return { w: 3, h: 5, minW: 2, minH: 3 };
     case 'properties-grid':
       return { w: 4, h: 4, minW: 2, minH: 2 };
+    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종
+    case 'facility-device':
+      // 단일 기기(에어컨 제어와 유사한 세로 카드).
+      return { w: 3, h: 5, minW: 2, minH: 4 };
+    case 'facility-station':
+      // 역사(통계 + 기기 목록 + 일괄 제어).
+      return { w: 5, h: 6, minW: 3, minH: 4 };
+    case 'facility-line':
+      // 호선(라인도 포함으로 더 넓게).
+      return { w: 8, h: 6, minW: 4, minH: 4 };
     case 'line-chart':
       // SPEC REQ-M5-05: line-chart {w:6, h:3}
       return { w: 6, h: 3, minW: 3, minH: 2 };
@@ -376,6 +389,31 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
       return { type, title: '실외기 모니터링', config: { deviceId: '' } };
     case 'properties-grid':
       return { type, title: '속성 그리드', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
+    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종. config 는 agentId + 대상(라인/역사/기기).
+    // 표시 옵션(nodeSize 5단계 / offlineAsOff / showStats / stationsPerRow)은 config-only 영속(UB-003).
+    case 'facility-device':
+      return { type, title: '설비 기기', config: { agentId: '', deviceId: '' } };
+    case 'facility-station':
+      return {
+        type,
+        title: '설비 역사',
+        // deviceLabelMode: 개별 기기 라벨(placeIndex=위치+번호 기본 / name=기기 이름).
+        // offlineAsOff: 오프라인을 꺼짐으로 표시(라인 패널과 동일 옵션, 기본 false).
+        config: {
+          agentId: '',
+          station: '',
+          showStats: true,
+          deviceLabelMode: 'placeIndex',
+          offlineAsOff: false,
+        },
+      };
+    case 'facility-line':
+      return {
+        type,
+        title: '설비 호선',
+        // stationsPerRow: 0 = 자동(nodeSize 기반) 폴백. 1 이상 지정 시 1줄당 역사 수를 직접 제어.
+        config: { agentId: '', line: '', nodeSize: '2', offlineAsOff: false, stationsPerRow: 0 },
+      };
   }
 }
 

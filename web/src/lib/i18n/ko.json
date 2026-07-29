@@ -116,7 +116,10 @@
         "acControl": "에어컨 온도/모드 제어",
         "hvacControl": "공조기 통합 제어",
         "outdoorControl": "실외기/제어기 압축기 상태",
-        "customControl": "사용자 정의 제어"
+        "customControl": "사용자 정의 제어",
+        "facilityLine": "호선의 역사·기기 상태와 일괄 제어",
+        "facilityStation": "역사의 기기 상태와 일괄 제어",
+        "facilityDevice": "개별 설비 기기 상태와 제어"
       },
       "labels": {
         "propertiesGrid": "속성 그리드",
@@ -154,7 +157,10 @@
       "text": "텍스트",
       "acControl": "에어컨 제어",
       "hvacControl": "공조기 제어",
-      "customControl": "커스텀 제어"
+      "customControl": "커스텀 제어",
+      "facilityLine": "설비 호선",
+      "facilityStation": "설비 역사",
+      "facilityDevice": "설비 기기"
     },
     "acPanel": {
       "indoorTemp": "실내 온도",
@@ -211,6 +217,81 @@
       "connected": "연결됨",
       "disconnected": "연결 해제",
       "loadingAria": "로딩 중"
+    },
+    "facility": {
+      "notConfigured": "패널이 설정되지 않았습니다.",
+      "deviceNotFound": "기기를 찾을 수 없습니다.",
+      "loadError": "데이터를 불러오는 중 오류가 발생했습니다.",
+      "noData": "표시할 역사/기기가 없습니다.",
+      "unregisteredStation": "미등록 역사",
+      "noDevices": "기기 없음",
+      "unclassified": "미분류",
+      "fault": "결함",
+      "stat": {
+        "total": "전체",
+        "online": "온라인",
+        "offline": "오프라인",
+        "powerOn": "가동",
+        "powerOff": "정지",
+        "fan1": "풍량 1",
+        "fan2": "풍량 2",
+        "fan3": "풍량 3"
+      },
+      "control": {
+        "title": "일괄 제어",
+        "off": "OFF",
+        "powerOn": "전원 ON",
+        "powerOff": "전원 OFF",
+        "fan": "풍량",
+        "running": "제어 실행 중...",
+        "noTarget": "대상 기기가 없어 일괄 제어를 사용할 수 없습니다."
+      },
+      "result": {
+        "memberOk": "성공",
+        "memberTimeout": "타임아웃",
+        "memberError": "실패",
+        "excluded": "제외"
+      },
+      "device": {
+        "power": "전원",
+        "fanSpeed": "풍량",
+        "station": "역사",
+        "place": "위치",
+        "index": "인덱스",
+        "on": "켜짐",
+        "off": "꺼짐",
+        "online": "온라인",
+        "offline": "오프라인",
+        "control": "기기 제어",
+        "fanDisabledHint": "전원이 꺼져 있어 풍량을 제어할 수 없습니다.",
+        "result": {
+          "ok": "제어 성공 (상태 반영됨)",
+          "timeout": "응답 시간 초과 (timeout)",
+          "error": "제어 실패:"
+        }
+      },
+      "station": {
+        "devices": "기기 목록"
+      },
+      "line": {
+        "diagram": "라인도",
+        "stations": "역사별 상태",
+        "stats": "라인 통계",
+        "legend": "범례",
+        "simple": "심플",
+        "detail": "상세"
+      },
+      "status": {
+        "normal": "정상",
+        "warning": "경고",
+        "offline": "오프라인",
+        "off": "꺼짐"
+      },
+      "fan": {
+        "fan1": "1단",
+        "fan2": "2단",
+        "fan3": "3단"
+      }
     },
     "col": {
       "name": "이름",
@@ -384,6 +465,27 @@
       "titleLabel": "타이틀",
       "device": "디바이스",
       "selectDevice": "선택하세요",
+      "agent": "에이전트",
+      "selectAgent": "에이전트를 선택하세요",
+      "station": "역사",
+      "selectStation": "역사를 선택하세요",
+      "line": "호선",
+      "selectLine": "호선을 선택하세요",
+      "facility": "설비 대상",
+      "showStationStatus": "역사별 상태 표시",
+      "showLineStats": "라인 통계 표시",
+      "showStats": "역사 통계 표시",
+      "offlineAsOff": "오프라인을 꺼짐으로 표시",
+      "nodeSize": "역 정보 크기",
+      "nodeSize1": "1단계 (가장 작게)",
+      "nodeSize2": "2단계 (작게)",
+      "nodeSize3": "3단계 (보통)",
+      "nodeSize4": "4단계 (크게)",
+      "nodeSize5": "5단계 (가장 크게)",
+      "stationsPerRow": "1줄당 역사 수 (0 = 자동)",
+      "deviceLabelMode": "기기 라벨",
+      "deviceLabelModePlaceIndex": "위치 + 번호",
+      "deviceLabelModeName": "기기 이름",
       "noDevices": "등록된 디바이스가 없습니다.",
       "columns": "컬럼",
       "visibleColumns": "표시 항목",

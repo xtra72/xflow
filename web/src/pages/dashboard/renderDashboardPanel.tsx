@@ -32,6 +32,9 @@ import GaugePanel from './panels/GaugePanel';
 import PropertiesGridPanel from './panels/PropertiesGridPanel';
 import HvacControlPanel from './panels/HvacControlPanel';
 import OutdoorControlPanel from './panels/OutdoorControlPanel';
+import FacilityDevicePanel from './panels/FacilityDevicePanel';
+import FacilityStationPanel from './panels/FacilityStationPanel';
+import FacilityLinePanel from './panels/FacilityLinePanel';
 import StatPanel from './panels/charts/StatPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import BarChartPanel from './panels/charts/BarChartPanel';
@@ -136,6 +139,37 @@ export function renderDashboardPanel(
     case 'outdoor-control':
       return (
         <OutdoorControlPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종 (device-panel 케이스와 동일 디스패치).
+    case 'facility-device':
+      return (
+        <FacilityDevicePanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'facility-station':
+      return (
+        <FacilityStationPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'facility-line':
+      return (
+        <FacilityLinePanel
           panelId={panel.id}
           title={panel.title}
           config={panel.config}

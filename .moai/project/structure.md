@@ -527,9 +527,9 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
   - `protocol.go`: NASAProtocol 인코딩/디코딩
   - `register.go`: 에이전트 타입 등록
   - `transport.go`: NASATransport 인터페이스 (Serial/TCP)
-- **airpurifier/ (SPEC-AIRPURIFIER-001 구현 완료)**: 지하철 역사 공기청정기 MQTT 관리 에이전트(`airpurifier`). 지하철 역사 시설물 관리 비전의 첫 디바이스. 16개 소스 + 12개 테스트로 구성, 85.1% 커버리지. 듀얼 트랜스포트(`transport_mode`: direct는 브로커 sub/pub 직접 소유, port는 외부 mqtt-in/out 노드가 I/O 담당 — 상태 입력 포트 · 제어 출력 포트 분리)를 I/O 경계(CommandSink + 상태 ingress) 추상화로 분리. 개별 2축 제어(`set_power`/`set_fan_speed` 1/2/3/`set_multiple`, 전원 OFF 게이트) + **응답 대기**(디바이스별 pending-command 레지스트리 + 에코 상관, 타임아웃 시 `ErrControlTimeout`, 동시성 안전). 그룹 + 역사(station) + 호선(line) 셀렉터 팬아웃(우선순위 device_id>station>line>group_id, best-effort ok/error/timeout 집계). 역사 레지스트리(station→line SSOT, `device_metadata` 패턴) + 디바이스 위치 계층(station/place/index). 상태 모니터링(observed 기반 방출, 오프라인 감지 LWT+타임아웃, `request_state`), 제어/그룹 감사(`remote_audit_repository`) + 로스터 영속화(device_id 키잉, v0.2.0 하위호환).
+- **xsfm/ (SPEC-XSFM-001 구현 완료)**: 지하철 역사 설비 MQTT 관리 에이전트(`xsfm`). 지하철 역사 시설물 관리 비전의 첫 디바이스. 16개 소스 + 12개 테스트로 구성, 85.1% 커버리지. 듀얼 트랜스포트(`transport_mode`: direct는 브로커 sub/pub 직접 소유, port는 외부 mqtt-in/out 노드가 I/O 담당 — 상태 입력 포트 · 제어 출력 포트 분리)를 I/O 경계(CommandSink + 상태 ingress) 추상화로 분리. 개별 2축 제어(`set_power`/`set_fan_speed` 1/2/3/`set_multiple`, 전원 OFF 게이트) + **응답 대기**(디바이스별 pending-command 레지스트리 + 에코 상관, 타임아웃 시 `ErrControlTimeout`, 동시성 안전). 그룹 + 역사(station) + 호선(line) 셀렉터 팬아웃(우선순위 device_id>station>line>group_id, best-effort ok/error/timeout 집계). 역사 레지스트리(station→line SSOT, `device_metadata` 패턴) + 디바이스 위치 계층(station/place/index). 상태 모니터링(observed 기반 방출, 오프라인 감지 LWT+타임아웃, `request_state`), 제어/그룹 감사(`remote_audit_repository`) + 로스터 영속화(device_id 키잉, v0.2.0 하위호환).
   - 주요 파일: `agent.go`, `transport.go`(듀얼 트랜스포트), `config.go`, `control.go`+`pending.go`(개별 제어·응답 대기), `group.go`(셀렉터 팬아웃), `station_registry.go`(역사 레지스트리), `mapping.go`, `monitor.go`+`status.go`(상태 모니터링), `audit.go`, `persist.go`, `device.go`, `provider.go`, `errors.go`, `register.go`
-  - 짝을 이루는 통합: `internal/node/airpurifier.go`(플로우 노드 `airpurifier-status`/`airpurifier-control`, 상태-입력/제어-출력 포트 분리), `internal/device/adapter/airpurifier.go`(디바이스 어댑터 `CommandSpec`), `internal/storage/station_registry_repository.go`(역사 레지스트리 영속화), `cmd/xflowd/main.go` 와이어링, `internal/api/service/agent_adapter.go`(API 어댑터), 웹 설정 스키마(`agentSchemas.ts`/`agentTypeMeta.ts`)
+  - 짝을 이루는 통합: `internal/node/xsfm.go`(플로우 노드 `xsfm-status`/`xsfm-control`, 상태-입력/제어-출력 포트 분리), `internal/device/adapter/xsfm.go`(디바이스 어댑터 `CommandSpec`), `internal/storage/station_registry_repository.go`(역사 레지스트리 영속화), `cmd/xflowd/main.go` 와이어링, `internal/api/service/agent_adapter.go`(API 어댑터), 웹 설정 스키마(`agentSchemas.ts`/`agentTypeMeta.ts`)
   - i18n는 코드베이스 관례(에이전트 설정 필드 라벨을 `agentSchemas.ts`/`agentTypeMeta.ts`에 하드코딩)를 따름. 라이브 LWT 토픽 구독 와이어링은 config 기반 확정으로 이연(디바이스 매뉴얼 미확보, SPEC 가정 A-1)
 
 Agent 활용 예시:
@@ -537,7 +537,7 @@ Agent 활용 예시:
 - MODBUS/TCP Client Agent: PLC/센서 등 MODBUS 슬레이브 디바이스에서 레지스터 값을 주기적으로 폴링하여 데이터 수집, 캐시 기반 최적화로 불필요한 통신 최소화
 - MODBUS/TCP Server Agent: xflow를 MODBUS/TCP 서버로 동작시켜 외부 SCADA/HMI 시스템이 xflow의 데이터를 MODBUS 레지스터로 읽기/쓰기 가능
 - Samsung NASA Agent: RS-485로 에어컨 시스템 연결, 프로토콜 정의에 따라 바이트 데이터를 파싱하여 온도/상태 데이터 공유
-- Air Purifier Agent: 지하철 역사 공기청정기를 MQTT로 개별·그룹·역사(station)·호선(line) 단위 제어/모니터링, state echo 응답 대기로 제어 확인
+- Subway Facilities Manager Agent: 지하철 역사 설비를 MQTT로 개별·그룹·역사(station)·호선(line) 단위 제어/모니터링, state echo 응답 대기로 제어 확인
 - Custom Protocol Agent: 사용자가 YAML로 정의한 산업 프로토콜(BACnet 등)을 Serial/TCP 인터페이스로 통신
 
 #### internal/api/
@@ -683,6 +683,14 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - `web/src/components/common/ConfirmDialog.tsx` (SPEC-STORE-003 v0.2.0): 재사용 가능한 확인 다이얼로그 컴포넌트 (default/danger variant). 키 초기화 등 destructive 액션 보호.
 - `web/src/pages/agents/PromoteToStaticDialog.tsx` (SPEC-STORE-003 v0.2.0): 동적 키 → 정적 키 변환 다이얼로그 (태그 입력 + Configure API 재사용, 별도 백엔드 변경 없음).
 - `web/src/services/api/keyTagExtractor.ts` (SPEC-WEB-005 v0.5.0): 키 문자열에서 태그 자동 추출 (InfluxDB 라인 프로토콜 + colon/slash 위치 기반 segments). 정적 태그 미존재 시 fallback.
+
+**지하철 시설물 관리 대시보드 패널** (SPEC-FACILITY-DASHBOARD-001, v0.1.0 — 프론트엔드 전용, 신규 백엔드 0):
+
+- `web/src/lib/facilityAggregation.ts`: 순수 집계 로직. 역사→호선(station→line) 해석, 상태 통계 카운트, 라인도(line-diagram) 순서 레이아웃, 미분류 기기 분리. SPEC-XSFM-001의 exec 표면(`list_devices`/`list_stations`)을 클라이언트에서 집계(신규 집계 엔드포인트 없음).
+- `web/src/hooks/useXsfmControl.ts`: 셀렉터 제어 훅(`set_power`/`set_fan_speed`/`set_multiple`을 device_id/station/line 셀렉터로 execAgent, `fanOutResponse` 타입) + `useFacilityRoster`(refresh 폴링).
+- `web/src/pages/dashboard/panels/FacilityLinePanel.tsx` · `FacilityStationPanel.tsx` · `FacilityDevicePanel.tsx`: 라인/역사/기기 3종 패널. 라인도 + 역사별 요약 + 통계 타일 + 일괄/개별 제어(응답 대기 피드백).
+- `web/src/pages/dashboard/panels/facilityShared.tsx`: 패널 공용 컴포넌트(`StatTiles`/`ControlResultView`/`BulkControl`).
+- 와이어링 4지점: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(패널 타입 분기), `pages/dashboard/AddPanelDialog.tsx`(패널 옵션 + facility 대상 선택 단계), `pages/dashboard/PanelSettingsDialog.tsx`(FacilitySection 설정). i18n는 `lib/i18n/{ko,en}.json`(`dashboard.facility.*`).
 
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 

@@ -72,8 +72,8 @@ import {
 } from '@/services/api/monitorService';
 import { useUIStore } from '@/stores/uiStore';
 
-import AirpurifierDevicesTab from './AirpurifierDevicesTab';
-import AirpurifierStationsTab from './AirpurifierStationsTab';
+import XsfmDevicesTab from './XsfmDevicesTab';
+import XsfmStationsTab from './XsfmStationsTab';
 import InfluxdbManagementPanel from './InfluxdbManagementPanel';
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
@@ -150,10 +150,10 @@ const HAS_SERIES_TAB = new Set<string>(['tsdb']);
 const HAS_MANAGEMENT_TAB = new Set<string>(['influxdb']);
 
 /**
- * 역사(station) 탭을 표시하는 에이전트 타입 (SPEC-AIRPURIFIER-001 Wave 2).
- * airpurifier 에이전트만 역사→위치 계층 관리 탭을 노출한다.
+ * 역사(station) 탭을 표시하는 에이전트 타입 (SPEC-XSFM-001 Wave 2).
+ * xsfm 에이전트만 역사→위치 계층 관리 탭을 노출한다.
  */
-const HAS_STATIONS_TAB = new Set<string>(['airpurifier']);
+const HAS_STATIONS_TAB = new Set<string>(['xsfm']);
 
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
@@ -197,7 +197,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       )}
       {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
-      {tab === 'stations' && showStations && <AirpurifierStationsTab agentId={agentId} />}
+      {tab === 'stations' && showStations && <XsfmStationsTab agentId={agentId} />}
     </div>
   );
 }
@@ -495,7 +495,7 @@ function StatsTab({ agentId }: { agentId: string }) {
  * 렌더 시점(TwoColumnConfigLayout)에 변환한다.
  */
 const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; rightLabelKey: string }> = {
-  airpurifier: {
+  xsfm: {
     left: new Set(['transport_mode', 'broker', 'tls', 'ca_cert', 'client_id', 'username', 'password', 'qos', 'lwt_enabled']),
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
@@ -4046,10 +4046,10 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     return <ModbusDevicesSection agentId={agentId} />;
   }
 
-  // airpurifier: device_id 기반 + 역사/위치 계층 속성. 전용 탭으로 분기
-  // (samsung/lgap/lg-icp 분기와 독립 — SPEC-AIRPURIFIER-001 Wave 2).
-  if (agentType === 'airpurifier') {
-    return <AirpurifierDevicesTab agentId={agentId} />;
+  // xsfm: device_id 기반 + 역사/위치 계층 속성. 전용 탭으로 분기
+  // (samsung/lgap/lg-icp 분기와 독립 — SPEC-XSFM-001 Wave 2).
+  if (agentType === 'xsfm') {
+    return <XsfmDevicesTab agentId={agentId} />;
   }
 
   function handleAddDevice() {

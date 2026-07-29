@@ -263,7 +263,7 @@ Agent는 플로우와 독립적으로 실행되는 서비스 단위이다. 사�
 | MODBUS/TCP Client | 표준 (사전 정의) | TCP | MODBUS 슬레이브 디바이스 폴링, 캐시 최적화 |
 | MODBUS/TCP Server | 표준 (사전 정의) | TCP | xflow를 MODBUS 서버로 운영, SCADA/HMI 연동 |
 | Thingplus Gateway | 표준 (사전 정의) | TCP(MQTT) | ThingsBoard Gateway MQTT(`v1/gateway/*`) 양방향 IoT 게이트웨이. 단일 연결로 다수 하위 디바이스 프록시, 텔레메트리/속성 업링크 + RPC/공유 속성 다운링크 |
-| Air Purifier | 도메인 (시설물) | TCP(MQTT) | 지하철 역사 공기청정기 관리. 듀얼 트랜스포트(direct/port), 개별 2축 제어(전원/풍량, state echo 응답 대기) + 그룹/역사(station)/호선(line) 셀렉터 일괄제어, 역사 레지스트리(station→line SSOT) |
+| Subway Facilities Manager | 도메인 (시설물) | TCP(MQTT) | 지하철 역사 설비 관리. 듀얼 트랜스포트(direct/port), 개별 2축 제어(전원/풍량, state echo 응답 대기) + 그룹/역사(station)/호선(line) 셀렉터 일괄제어, 역사 레지스트리(station→line SSOT) |
 | Custom Protocol | 커스텀 (사용자 정의) | 선택 가능 | 사용자가 프로토콜 구조를 직접 정의 |
 
 #### System Agent (시스템 내장 에이전트)
@@ -338,6 +338,7 @@ Lua 기반 실시간 스크립트 엔진으로, 플로우 실행 중에도 로�
 - **시스템 모니터링**: 플로우 실행 상태, 노드 처리량, 에러율 등 실시간 메트릭
 - **사용자 관리**: 역할 기반 접근 제어(RBAC), 사용자 초대 및 권한 설정
 - **Import/Export**: 플로우 및 에이전트를 JSON/YAML 형식으로 내보내기/가져오기, 드래그 앤 드롭 지원, CLI 호환 포맷
+- **지하철 시설물 관리 대시보드 패널** (SPEC-FACILITY-DASHBOARD-001): 지하철 역사 시설물(첫 디바이스: 설비)을 라인(호선)→역사(station)→기기(device) 계층으로 조망·제어하는 3종 패널. 라인 패널(라인도 + 역사별 상태 요약 + 라인 통계 + 라인 일괄 제어), 역사 패널(역사 통계 + 기기별 상태 목록 + 역사 일괄 제어), 기기 패널(단일 기기 상태 + 응답 대기 제어). 신규 백엔드 없이 xsfm 에이전트의 exec 표면을 클라이언트에서 집계·제어
 
 ### 5. Plugin System (플러그인 시스템)
 

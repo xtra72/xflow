@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
-	"github.com/xtra/xflow/internal/agent/airpurifier"
+	"github.com/xtra/xflow/internal/agent/xsfm"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -643,8 +643,8 @@ func (a *AgentServiceAdapter) persistDeviceRosterAfterExec(ctx context.Context, 
 		return a.repo.Save(ctx, cfg)
 	}
 
-	// AirPurifier (공기청정기) 에이전트
-	if apAg, ok := ag.(*airpurifier.AirPurifierAgent); ok {
+	// XSFM (설비) 에이전트
+	if apAg, ok := ag.(*xsfm.XSFMAgent); ok {
 		devices := apAg.GetPersistableDevices()
 		devicesList := a.buildDevicesList(devices)
 		cfg.Transport.Options["devices"] = devicesList
