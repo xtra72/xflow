@@ -1,7 +1,7 @@
 ---
 id: SPEC-XSFM-GROUP-001
 title: "xsfm 그룹 1급 개념 도입 (그룹 엔티티 · 다대다 멤버십 · 일괄 제어)"
-version: "0.3.0"
+version: "0.4.0"
 status: completed
 created: 2026-07-30
 updated: 2026-07-30
@@ -11,7 +11,8 @@ phase: "v0.4.0 target"
 module: "internal/agent/xsfm"
 lifecycle: spec-anchored
 tier: M
-tags: "xsfm, group, group-registry, membership, many-to-many, bulk-control, fan-out, station, line, facility, frontend"
+amendment_of: SPEC-XSFM-GROUP-001
+tags: "xsfm, group, group-registry, membership, many-to-many, bulk-control, fan-out, station, line, facility, frontend, node-control"
 ---
 
 ## HISTORY
@@ -21,6 +22,23 @@ tags: "xsfm, group, group-registry, membership, many-to-many, bulk-control, fan-
 | 2026-07-30 | 0.1.0 | 초기 SPEC 작성 — xsfm 에 **그룹(group)을 1급 개념으로 도입**. (1) 그룹 엔티티 `{id, name, type: line\|station\|custom, members}` + 별도 그룹 레지스트리 신설(비침습 레이어 추가, 기존 station/line 레지스트리 불변), (2) 디바이스 다대다 멤버십(단일 `Device.GroupID` → 다중 소속 확장), (3) 커스텀 그룹 CRUD, (4) 라인/역사 추가 시 대응 기본 그룹 자동 생성·동기화, (5) 그룹 셀렉터 일괄 제어(기존 fan-out 재사용), (6) 프런트엔드 그룹 탭 추가 + 설비 역사 패널 → 설비 그룹 패널 개편 |
 | 2026-07-30 | 0.2.0 | **4개 열린 질문(OQ) 사용자 확정 반영 → SPEC 확정**. RD-1(=OQ-1) `Device.GroupID` primary group 유지(단일 태그 방출 무회귀), RD-2(=OQ-2) 그룹 id 타입 접두사 인코딩(`station:`/`line:`/`custom:`), RD-3(=OQ-3) 조회 시 로스터 대조 필터(유령 멤버 자동 무시, remove_device 비침습), RD-4(=OQ-4) `line`/`station` 셀렉터 ↔ `group_id` 그룹 셀렉터 병존(동일 경로 수렴). "열린 질문" 섹션 → "확정된 설계 결정" 전환. REQ-02-07(primary 유지) 추가, REQ-05-06(셀렉터 병존) 추가, §4.5 primary 선정/갱신 규칙 추가 |
 | 2026-07-30 | 0.3.0 | **M1~M7 구현 완료 → `status: completed`**. 백엔드 M1~M5(`ae53b344`) + 프런트 M6~M7(`97c2bafd`) 커밋. xsfm 커버리지 88.8%, `-race` 클린, vitest 2254 pass, `tsc` 클린. as-implemented 정련 4건을 §6 구현 노트에 기록(M4 순수 파생, M7 가산형 패널, `group_membership.go` 신설, 미접두사 group_id fallback). |
+| 2026-07-30 | 0.4.0 | **in-place 정식 개정(amendment)** — v0.3.0 완료(sync `23e572d6`) 이후 구현이 원 범위를 넘어 확장됨을 반영. (1) **노드 제어 명령어 셋 신규**(Module 7 신설): xsfm-control 노드 + 상태·제어 통합 `xsfm` 노드(68번째 타입)에서 flow 메시지 device_id/group_id 셀렉터 → 에이전트 제어 명령 매핑, `7e85df05`. (2) **프런트 그룹 UI 개편**(Module 6 갱신): 멤버 선택 테이블화(라인·역사·위치 필터/정렬), `c48d4a05` / 설비 그룹 패널 config.groupId 단일 그룹화 + 역사 패널의 그룹 패널 대체 + 하위호환 alias, `861f3ce7`. §1.4 범위 명확화 + § 메시지 형식(§4.7) 신설. 상세 `## Amendments` 참조. |
+
+## Amendments
+
+> 본 SPEC 은 v0.3.0 완료(sync 커밋 `23e572d6`) 이후, 구현이 원 SPEC 범위를 넘어 **노드 레벨 제어 명령어 셋 + 프런트 그룹 UI 개편**으로 확장됨에 따라 in-place 정식 개정한다. `amendment_of: SPEC-XSFM-GROUP-001`(자기참조). 본 개정은 이미 배포·검증(green)된 작업을 사후 문서화하므로 최종 상태는 `status: completed`(개정 후 재완료)로 유지한다.
+
+### AM-1 (v0.4.0) — 노드 제어 명령어 셋 신설 + 그룹 UI 개편 반영
+
+- **직전 완료 버전(prior completed version)**: 0.3.0
+- **prior_completed_sha**: `23e572d6` (v0.3.0 sync 커밋)
+- **근거(rationale)**: 구현이 원 SPEC 범위를 넘어 (1) flow **노드 레벨 제어 명령어 셋**(xsfm-control / 상태·제어 통합 `xsfm` 노드에서 device_id·group_id 셀렉터 → 에이전트 제어 명령 매핑)과 (2) **그룹 UI 개편**(멤버 선택 테이블화 + 설비 그룹 패널 config.groupId 단일 그룹화 + 역사 패널의 그룹 패널 대체)으로 확장되었다.
+- **범위(scope)**: **Module 7 신설**(REQ-07-01~06 노드 제어 명령어 셋), **Module 6 갱신**(멤버 편집 테이블·config.groupId 단일 그룹·역사 패널 대체 + 하위호환 alias), **§1.4 범위 경계 명확화**(flow 노드 레벨 제어를 범위 내로 추가, MQTT 규약 불변 유지 명시), **§4.7 메시지 형식 신설**.
+- **반영 커밋(feature/SPEC-XSFM-GROUP-001, 모두 green)**:
+  - `c48d4a05` — 그룹 탭 멤버 선택 테이블화(라인 파생·역사 Device.Station·위치 Device.Place·이름 컬럼 + 라인/역사/위치 필터·정렬, name ko 타이브레이크, 미지정 값 "-"/"미지정" 버킷) + 설비 그룹 패널 초기 드릴다운(이후 `861f3ce7` config화로 대체).
+  - `861f3ce7` — 설비 그룹 패널을 config.groupId 기반 단일 그룹으로 개편(생성 시 FacilityStep 그룹 선택 + PanelSettingsDialog 편집, in-panel 드릴다운 제거) + 역사 패널(facility-station)을 그룹 패널로 대체(저장된 facility-station → `station:<code>` 그룹 자동 매핑 하위호환 alias, FacilityStationPanel 컴포넌트 삭제).
+  - `7e85df05` — 노드 레벨 제어 명령어 셋(xsfm-control 노드 + 상태·제어 통합 `xsfm` 노드 68번째 타입, buildXsfmControlCommand group_id top-level 방출 + 접두사 판별, command 명시 우선/추론, hasXsfmControlCommand 라우팅, 셀렉터 우선순위 device_id>group_id 계승).
+- **검증**: 3개 커밋 모두 테스트 green. 인수 시나리오는 acceptance.md §9(노드 제어)·§10(UI)·§11 참조.
 
 ---
 
@@ -65,9 +83,10 @@ xflow 는 Go 기반 IoT FBP 플랫폼이며, `internal/agent/xsfm` 는 지하철
   - 그룹 셀렉터(group_id) 일괄 제어 — 그룹 타입별 멤버 도출 후 기존 fan-out 재사용
   - 프런트엔드: xsfm 에이전트 상세에 그룹 탭 신설(그룹 CRUD + 멤버 편집 + 일괄 제어 UI), 훅 추가
   - 대시보드: "설비 역사 패널" → "설비 그룹 패널" 개편(역사를 그룹의 한 종류로 표시)
+  - **flow 노드 레벨 제어 명령어 셋(v0.4.0 개정, Module 7)**: xsfm 제어 노드(`xsfm-control`) + 상태·제어 통합 `xsfm` 노드가 flow 메시지의 `device_id`(개별)·`group_id`(그룹) 셀렉터를 에이전트 제어 명령으로 매핑(노드 payload → 에이전트 명령 매핑 레이어). group_id 는 top-level 셀렉터로 방출되며 접두사(`station:`/`line:`/`custom:`)로 그룹 종류를 판별한다.
 - **범위 외(Out-of-Scope)**:
   - 설비 이외 디바이스 타입 (SPEC-XSFM-001 범위 계승)
-  - MQTT 토픽/페이로드 스키마 변경 (그룹은 순수 논리 레이어 — 브로커 통신 규약 불변)
+  - MQTT 토픽/페이로드 스키마 변경 (그룹은 순수 논리 레이어 — 브로커 통신 규약 불변). **노드 제어 명령어 셋(Module 7)은 flow 입력 규약이지 브로커 통신 규약 변경이 아니다** — 노드 payload → 에이전트 명령 매핑 레이어일 뿐, MQTT 토픽/페이로드 스키마는 그대로 유지된다.
   - 그룹 계층(그룹 안의 그룹, 중첩 그룹) — 본 SPEC 은 평면 그룹만
   - 하드웨어 브로드캐스트 그룹 제어 (에이전트 측 per-device fan-out 만; SPEC-XSFM-001 계승)
   - station→line 레지스트리 자체의 재설계 (그대로 유지)
@@ -161,6 +180,23 @@ SPEC-XSFM-001 A-4 는 "그룹은 디바이스 속성(단일 group_id 태그)이�
 - **REQ-XSFM-GROUP-001-06-05** (Ubiquitous): 대시보드의 "설비 역사 패널"은 "**설비 그룹 패널**"로 개편되어, 역사를 그룹의 한 종류(type=station)로 표시하고 커스텀/라인 그룹도 함께 표시·제어할 수 있어야 한다.
 - **REQ-XSFM-GROUP-001-06-06** (Optional): 가능하면 그룹 목록에 멤버 수·온라인 요약(기존 `StatTiles`/`facilityAggregation` 재사용)을 제공한다.
 
+> **Module 6 as-implemented 갱신 (v0.4.0 개정)**: 아래 REQ-06-07~09 는 v0.3.0 완료 이후 커밋 `c48d4a05`/`861f3ce7` 로 구현된 그룹 UI 개편을 반영한다. 이는 §6 IN-2(가산형 `FacilityGroupPanel`) 의 후속 정련으로, IN-2 의 가산 패널이 이후 **config.groupId 기반 단일 그룹 패널**로 재편되었고(REQ-06-08), 역사 패널(facility-station)이 그룹 패널로 **대체**되면서 저장된 facility-station 은 `station:<code>` 그룹으로 자동 매핑되는 하위호환 alias 로 보존된다(REQ-06-09). REQ-06-01~06 의 기존 목표는 유지된다(삭제 없음).
+
+- **REQ-XSFM-GROUP-001-06-07** (Event-driven): **WHEN** 사용자가 그룹 탭에서 멤버(디바이스)를 편집하면 **THEN** UI 는 멤버 후보를 **테이블**로 표시해야 한다 — 라인(파생)·역사(`Device.Station`)·위치(`Device.Place`)·이름 컬럼을 제공하고, 라인/역사/위치 **필터**와 **정렬**(이름은 ko 로케일 타이브레이크)을 지원하며, 미지정 값은 표시상 "-", 버킷상 "미지정"으로 그룹핑한다.
+- **REQ-XSFM-GROUP-001-06-08** (State-driven): **IF** 설비 그룹 패널이 대시보드에 추가되면 **THEN** 패널은 `config.groupId` 로 지정된 **단일 그룹**을 대상으로 해야 한다 — 패널 생성 시 `FacilityStep` 에서 그룹을 선택하고 `PanelSettingsDialog` 에서 편집하며, in-panel 드릴다운은 제거된다. 레이아웃은 역사 패널과 동일하게 통계 `StatTiles` + 일괄 제어 + 소속 디바이스 개별 제어(공유 `FacilityDeviceRow`)를 제공한다.
+- **REQ-XSFM-GROUP-001-06-09** (Event-driven): **WHEN** 대시보드 패널 추가 옵션에서 역사(facility-station)를 선택하려 하면 **THEN** 시스템은 이를 그룹 패널 선택으로 대체해야 한다(역사 패널 타입 제거, 라인/디바이스 패널은 유지). 기존에 저장된 `facility-station` 패널은 `station:<code>` 그룹으로 자동 매핑되어 그룹 패널로 렌더되어야 한다(하위호환 alias). `FacilityStationPanel` 컴포넌트는 삭제된다.
+
+### Module 7 — 노드 제어 명령어 셋 (flow 노드 레벨 제어)
+
+> flow 그래프의 노드가 xsfm 에이전트로 제어 명령을 방출하는 규약(v0.4.0 개정, 커밋 `7e85df05`). 노드 payload → 에이전트 명령 매핑 레이어이며, MQTT 토픽/페이로드 스키마는 불변이다(§1.4). 제어 의미론·fan-out 은 Module 5 를 재사용한다.
+
+- **REQ-XSFM-GROUP-001-07-01** (Event-driven): **WHEN** xsfm 제어 노드가 `device_id`(개별) 또는 `group_id`(그룹) 셀렉터를 담은 flow 메시지를 받으면 **THEN** 시스템은 대응하는 에이전트 제어 명령을 구성해 방출해야 한다. 개별은 단일 디바이스로, 그룹은 그룹 멤버 fan-out(Module 5 재사용)으로 처리된다.
+- **REQ-XSFM-GROUP-001-07-02** (Ubiquitous): `buildXsfmControlCommand` 는 `group_id` 를 명령의 **top-level 셀렉터**로 방출해야 하며, 그룹 종류는 id 접두사(`station:`/`line:`/`custom:`)로 판별한다(RD-2 계승).
+- **REQ-XSFM-GROUP-001-07-03** (State-driven): **IF** 노드 메시지에 `command` 가 명시되면 **THEN** 시스템은 그 명령을 우선 사용하고, **ELSE** `power`/`fan_speed` 값에서 명령을 추론해야 한다 — `power`→`set_power`, `fan_speed`→`set_fan_speed`, 둘 다 존재→`set_multiple`.
+- **REQ-XSFM-GROUP-001-07-04** (State-driven): **IF** 상태·제어 통합 `xsfm` 노드가 메시지를 받으면 **THEN** 시스템은 `hasXsfmControlCommand`(= `command` | `params` | `group_id` 존재)로 라우팅해야 한다 — 참이면 **제어 명령**으로, 그 외(bare `device_id` + 값 raw)이면 **`FeedState` 상태 주입**으로 처리한다. `group_id` 가 있으면 항상 제어로 라우팅된다.
+- **REQ-XSFM-GROUP-001-07-05** (State-driven): **IF** 노드 메시지에 `device_id` 와 `group_id` 가 함께 지정되면 **THEN** 시스템은 셀렉터 우선순위 `device_id > group_id` 를 계승하여 개별 제어로 처리해야 한다(REQ-05-03 계승). 에이전트는 `group_id` 를 top-level 로 읽으며, `params.group_id` 는 `fillFromParams` 가 top-level 로 승격시켜 명령 shape 정합을 보장한다.
+- **REQ-XSFM-GROUP-001-07-06** (Ubiquitous): 노드 레지스트리는 `xsfm-status`(상태 전용)·`xsfm-control`(제어 전용)·`xsfm`(상태+제어 통합) 노드 타입을 등록해야 하며, 통합 `xsfm` 노드는 시스템의 **68번째 노드 타입**이다. 구(舊) 언더스코어 alias(`_`)는 deprecated 로 유지한다(하위호환).
+
 ### 비기능 요구 (NFR)
 
 - **REQ-XSFM-GROUP-001-NF-01** (Ubiquitous): 커스텀 그룹 레지스트리는 재시작을 넘어 영속되어야 하며(atomic write), 기본 그룹은 재시작 후 station/line 레지스트리로부터 재파생되어야 한다.
@@ -222,7 +258,36 @@ id 의 타입 접두사로 분기하며, **모든 반환 경로는 현재 로스
 | 04-01~05 | `handleAddStation`/`handleRemoveStation` 동기화 훅, line 파생 | AC 4.x |
 | 05-01~06 | `handleSelectorControl`→접두사 분기, `fanOutControl` 재사용, line/station↔group_id 병존 | AC 5.x |
 | 06-01~06 | `web/` 그룹 탭·훅·패널 개편 | AC 6.x |
+| 06-07~09 | `web/` 멤버 편집 테이블(필터/정렬), `FacilityGroupPanel`(config.groupId 단일 그룹), 역사 패널 대체·하위호환 alias | AC 10.x |
+| 07-01~06 | `buildXsfmControlCommand`, `hasXsfmControlCommand`, `fillFromParams`(group_id 승격), 노드 레지스트리(xsfm-status/xsfm-control/xsfm 68번째) | AC 9.x |
 | NF-01~04 | 영속 저장소, 락 규율, 회귀 테스트, primary 방출 무회귀 | AC 7.x |
+
+### 4.7 메시지 형식 (노드 제어 명령어 셋, Module 7 — v0.4.0 개정)
+
+flow 노드가 xsfm 에이전트로 방출하는 제어 메시지 형식이다. `group_id` 는 항상 top-level 셀렉터로 방출되며 접두사(`station:`/`line:`/`custom:`)로 그룹 종류를 판별한다(RD-2).
+
+**개별 제어 (device_id)**
+
+- 간편형: `{ "device_id": "01", "power": true }`
+- 명시형: `{ "device_id": "01", "command": "set_power", "params": { "power": true } }`
+
+**그룹 제어 (group_id, fan-out)**
+
+- `{ "group_id": "custom:floor2", "power": false }`
+- `{ "group_id": "station:st01", "fan_speed": 2 }`
+- `{ "group_id": "line:L1", "power": true }`
+
+**명령 추론 규칙 (command 미명시 시)**: `power`→`set_power`, `fan_speed`→`set_fan_speed`, 둘 다 존재→`set_multiple`. `command` 가 명시되면 그것을 우선한다(REQ-07-03).
+
+**노드별 차이**
+
+- 전용 `xsfm-control` 노드: 간편형(bare `device_id` + 값)도 **제어**로 해석한다.
+- 통합 `xsfm` 노드: 개별 제어에는 `command`/`params` 가 필요하다 — bare `device_id` + 값은 **상태 주입(`FeedState`)** 으로 라우팅된다. 반면 `group_id` 가 있으면 항상 **제어**로 라우팅된다(REQ-07-04).
+
+**응답 / 출력**
+
+- 응답 메시지 `type` = `device_state.response`.
+- port 모드 제어 출력 `type` = `device_command`.
 
 ---
 

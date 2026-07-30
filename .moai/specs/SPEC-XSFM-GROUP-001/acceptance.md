@@ -1,7 +1,7 @@
 ---
 id: SPEC-XSFM-GROUP-001
 title: "xsfm 그룹 1급 개념 도입 — 인수 기준"
-version: "0.3.0"
+version: "0.4.0"
 status: completed
 created: 2026-07-30
 updated: 2026-07-30
@@ -11,12 +11,20 @@ phase: "v0.4.0 target"
 module: "internal/agent/xsfm"
 lifecycle: spec-anchored
 tier: M
-tags: "xsfm, group, acceptance, given-when-then, fan-out, frontend"
+amendment_of: SPEC-XSFM-GROUP-001
+tags: "xsfm, group, acceptance, given-when-then, fan-out, frontend, node-control"
 ---
 
 # SPEC-XSFM-GROUP-001 인수 기준: xsfm 그룹 1급 개념 도입
 
 > 각 시나리오는 Given-When-Then 형식이며 기계 검증 가능(Go `testing`/`testify`, 프런트 `vitest`)해야 한다.
+
+## HISTORY
+
+| 날짜 | 버전 | 변경 내용 |
+| ---------- | ----- | --------- |
+| 2026-07-30 | 0.3.0 | Scenario 1.x~8 인수 기준 확정, M1~M7 구현 통과. |
+| 2026-07-30 | 0.4.0 | **in-place 개정(amendment)** — v0.3.0 완료(sync `23e572d6`) 이후 확장 작업의 인수 시나리오 추가: §9(노드 제어 명령어 셋, Module 7), §10(그룹 UI 개편, Module 6 갱신). 모두 **구현 완료·통과**(커밋 `c48d4a05`/`861f3ce7`/`7e85df05`). 상세 spec.md `## Amendments` AM-1. |
 
 ## 1. Module 1 — 그룹 레지스트리 · 엔티티
 
@@ -215,3 +223,60 @@ tags: "xsfm, group, acceptance, given-when-then, fan-out, frontend"
 - 기존 SPEC-XSFM-001·SPEC-FACILITY-DASHBOARD-001 기능 무회귀.
 
 > 열린 질문 OQ-1~4 는 v0.2.0 에서 사용자 확정(RD-1~4)되어 미해결 이슈 없음.
+
+## 9. Module 7 — 노드 제어 명령어 셋 (v0.4.0 개정, 구현 완료·통과)
+
+> 아래 시나리오는 커밋 `7e85df05` 로 이미 구현·통과되었다. 테스트: `internal/node/xsfm_test.go`, `internal/api/service/node_adapter_test.go`.
+
+### Scenario 9.1: 노드 개별 제어 (device_id → set_power)
+- Given: xsfm 제어 노드
+- When: flow 메시지 `{device_id:"01", power:true}` (간편형)
+- Then: `buildXsfmControlCommand` 가 `set_power`(params `{power:true}`) 명령을 단일 디바이스 "01" 대상으로 구성·방출한다(REQ-07-01/03).
+
+### Scenario 9.2: 노드 그룹 제어 (group_id → set_power fan-out)
+- Given: `custom:floor2` 멤버 다수
+- When: flow 메시지 `{group_id:"custom:floor2", power:false}`
+- Then: `group_id` 가 top-level 셀렉터로 방출되고, 그룹 멤버로 `set_power` fan-out(Module 5 재사용)된다. 접두사 `custom:` 로 그룹 종류가 판별된다(REQ-07-01/02).
+
+### Scenario 9.3: 통합 xsfm 노드 라우팅 (제어 vs 상태 주입)
+- Given: 상태·제어 통합 `xsfm` 노드
+- When: (a) `{group_id:"station:st01", fan_speed:2}` / (b) bare `{device_id:"01", power:true}`(command·params·group_id 없음)
+- Then: (a) `hasXsfmControlCommand` 참(group_id 존재) → **제어 명령**(`set_fan_speed`)으로 라우팅, (b) 거짓 → **`FeedState` 상태 주입**으로 라우팅(REQ-07-04).
+
+### Scenario 9.4: 셀렉터 우선순위 (device_id + group_id → 개별)
+- Given: 노드 메시지에 `device_id` 와 `group_id` 동시 지정
+- When: 명령 구성
+- Then: `device_id > group_id` 우선순위 계승으로 개별 제어 처리, group_id fan-out 없음(REQ-07-05, REQ-05-03 계승).
+
+### Scenario 9.5: params.group_id 승격 + 명령 shape 정합
+- Given: 노드 메시지가 `group_id` 를 `params.group_id` 에만 담음
+- When: 에이전트 명령 파싱
+- Then: `fillFromParams` 가 `params.group_id` 를 top-level `group_id` 로 승격시켜, 에이전트가 top-level 셀렉터로 일관되게 읽는다(REQ-07-05).
+
+### Scenario 9.6: 노드 레지스트리 등록 + 노드 개수 68
+- Given: 노드 타입 레지스트리
+- When: 레지스트리 조회
+- Then: `xsfm-status`/`xsfm-control`/`xsfm` 가 등록되며 통합 `xsfm` 노드는 **68번째 노드 타입**이다. 구 언더스코어 alias(`_`)는 deprecated 로 유지된다(REQ-07-06).
+
+### Scenario 9.7: 명령 추론 (command 미명시)
+- When: (a) `{device_id:"01", power:true}` / (b) `{device_id:"01", fan_speed:2}` / (c) `{device_id:"01", power:true, fan_speed:2}`
+- Then: 각각 `set_power` / `set_fan_speed` / `set_multiple` 로 추론되고, `command` 가 명시되면 그것을 우선한다(REQ-07-03).
+
+## 10. Module 6 갱신 — 그룹 UI 개편 (v0.4.0 개정, 구현 완료·통과)
+
+> 아래 시나리오는 커밋 `c48d4a05`(멤버 테이블)/`861f3ce7`(그룹 패널·역사 대체)로 이미 구현·통과되었다. 테스트: `web` `XsfmGroupsTab.test.tsx`, `FacilityGroupPanel.test.tsx`, `renderDashboardPanel.facility.test.tsx`.
+
+### Scenario 10.1: 멤버 편집 테이블 필터·정렬
+- Given: 그룹 탭의 멤버 편집 테이블(라인·역사·위치·이름 컬럼)
+- When: 라인/역사/위치 필터 적용 및 컬럼 정렬
+- Then: 필터 조건에 맞는 행만 표시되고, 이름은 ko 로케일 타이브레이크로 정렬되며, 미지정 값은 "-"(표시)/"미지정"(버킷)으로 처리된다(REQ-06-07).
+
+### Scenario 10.2: 설비 그룹 패널 config.groupId 단일 그룹
+- Given: 대시보드에 설비 그룹 패널 추가
+- When: 생성 시 `FacilityStep` 에서 그룹 선택, `PanelSettingsDialog` 로 편집
+- Then: 패널이 `config.groupId` 단일 그룹을 대상으로 렌더되며(in-panel 드릴다운 없음), `StatTiles` + 일괄 제어 + 소속 디바이스 개별 제어(공유 `FacilityDeviceRow`)를 역사 패널과 동일 레이아웃으로 표시한다(REQ-06-08).
+
+### Scenario 10.3: 역사 패널 대체 + 하위호환 alias
+- Given: 기존에 저장된 `facility-station` 패널(역사 코드 `<code>`)
+- When: 대시보드 렌더 및 패널 추가 옵션 열기
+- Then: 저장된 `facility-station` 은 `station:<code>` 그룹으로 자동 매핑되어 그룹 패널로 렌더되고, 추가 옵션에서 역사 항목은 그룹 선택으로 대체된다(라인/디바이스 패널 유지). `FacilityStationPanel` 컴포넌트는 존재하지 않는다(REQ-06-09).

@@ -1,7 +1,7 @@
 ---
 id: SPEC-XSFM-GROUP-001
 title: "xsfm 그룹 1급 개념 도입 — 구현 계획"
-version: "0.3.0"
+version: "0.4.0"
 status: completed
 created: 2026-07-30
 updated: 2026-07-30
@@ -11,12 +11,20 @@ phase: "v0.4.0 target"
 module: "internal/agent/xsfm"
 lifecycle: spec-anchored
 tier: M
-tags: "xsfm, group, plan, milestones, membership, fan-out, frontend"
+amendment_of: SPEC-XSFM-GROUP-001
+tags: "xsfm, group, plan, milestones, membership, fan-out, frontend, node-control"
 ---
 
 # SPEC-XSFM-GROUP-001 구현 계획: xsfm 그룹 1급 개념 도입
 
 > 시간 예측을 사용하지 않는다. 마일스톤은 **우선도·의존 순서**로만 표현한다.
+
+## HISTORY
+
+| 날짜 | 버전 | 변경 내용 |
+| ---------- | ----- | --------- |
+| 2026-07-30 | 0.3.0 | M1~M7 구현 완료(백엔드 `ae53b344` + 프런트 `97c2bafd`), `status: completed`. |
+| 2026-07-30 | 0.4.0 | **in-place 개정(amendment)** — v0.3.0 완료(sync `23e572d6`) 이후 확장 작업을 반영. **M8 신설**(노드 제어 명령어 셋 + M6/M7 as-implemented 갱신). 반영 커밋 `c48d4a05`/`861f3ce7`/`7e85df05`. 상세 spec.md `## Amendments` AM-1.
 
 ## 1. 작업 분해 (우선도 기반 마일스톤)
 
@@ -85,6 +93,28 @@ tags: "xsfm, group, plan, milestones, membership, fan-out, frontend"
 
 - 우선도: Low
 - 다대다 정합·파생 즉시 반영·동시성 race(`-race`) 테스트, 기존 xsfm 테스트 전체 통과 확인(NF-02~04).
+
+### M8 (v0.4.0 개정): 노드 제어 명령어 셋 + M6/M7 as-implemented 갱신
+
+> v0.3.0 완료 이후 확장 작업. 의존 순서: 노드 제어(백엔드/노드) → 그룹 UI 개편(프런트). 3개 커밋 모두 green(테스트 통과).
+
+- 우선도: High(신규 능력 — 노드 레벨 제어)
+- **M8-a 노드 제어 명령어 셋 (`7e85df05`, Module 7 신설)**:
+  - `xsfm-control` 노드 + 상태·제어 통합 `xsfm` 노드(68번째 노드 타입) 등록(레지스트리), deprecated 언더스코어 alias(`_`) 유지.
+  - `buildXsfmControlCommand`: `group_id` 를 top-level 셀렉터로 방출, 접두사(`station:`/`line:`/`custom:`)로 그룹 종류 판별. `command` 명시 우선, 미명시 시 `power`→`set_power`/`fan_speed`→`set_fan_speed`/둘 다→`set_multiple` 추론.
+  - `hasXsfmControlCommand` 라우팅: `command`|`params`|`group_id` 존재 → 제어, 그 외 bare `device_id`+값 raw → `FeedState` 상태 주입. `group_id` 는 항상 제어.
+  - 셀렉터 우선순위 `device_id > group_id` 계승(REQ-05-03). 에이전트는 `group_id` 를 top-level 로 읽고, `params.group_id` 는 `fillFromParams` 가 top-level 로 승격.
+  - 완료 조건: REQ-07-01~06 커버. 테스트: `internal/node/xsfm_test.go`, `internal/api/service/node_adapter_test.go`.
+- **M8-b 그룹 탭 멤버 선택 테이블화 (`c48d4a05`, REQ-06-07)**:
+  - 멤버 후보 테이블(라인 파생·역사 `Device.Station`·위치 `Device.Place`·이름 컬럼) + 라인/역사/위치 필터·정렬(이름 ko 로케일 타이브레이크), 미지정 값 "-"/"미지정" 버킷.
+  - (초기 설비 그룹 패널 드릴다운 포함 — 이후 M8-c 에서 config화로 대체.)
+  - 테스트: `web` `XsfmGroupsTab.test.tsx`.
+- **M8-c 설비 그룹 패널 config.groupId 단일 그룹 개편 + 역사 패널 대체 (`861f3ce7`, REQ-06-08/09)**:
+  - `FacilityGroupPanel` 을 `config.groupId` 기반 단일 그룹으로 개편(생성 시 `FacilityStep` 그룹 선택 + `PanelSettingsDialog` 편집, in-panel 드릴다운 제거). 역사 패널과 동일 레이아웃(`StatTiles` + 일괄 제어 + 소속 디바이스 개별 제어, 공유 `FacilityDeviceRow`).
+  - 역사 패널(facility-station)을 그룹 패널로 대체(추가 옵션에서 역사 제거, 역사 선택 → 그룹 선택), 라인/디바이스 패널 유지. 저장된 `facility-station` → `station:<code>` 그룹 자동 매핑(하위호환 alias). `FacilityStationPanel` 컴포넌트 삭제.
+  - 근거: spec.md §6 IN-2(가산형 패널)의 후속 정련 — 가산 패널 → config 단일 그룹 패널 재편.
+  - 테스트: `web` `FacilityGroupPanel.test.tsx`, `renderDashboardPanel.facility.test.tsx`.
+- 완료 조건(M8 전체): REQ-06-07~09 + REQ-07-01~06 커버, 3개 커밋 green, 기존 테스트 무회귀(NF-02).
 
 ## 2. 기술 접근 방식
 
