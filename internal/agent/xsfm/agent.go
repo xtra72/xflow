@@ -116,6 +116,12 @@ type processRequest struct {
 	Index    int    `json:"index,omitempty"`
 	Line     string `json:"line,omitempty"`
 
+	// 이름 기반 제어 셀렉터 (SPEC-XSFM-NAMESEL-001 RD-1). CRUD Name(json `name`) 필드와
+	// 별개이며 제어 대상 지정에만 쓰인다: DeviceName 은 개별 이름 셀렉터(→ device_id 해소 후
+	// 개별 제어), GroupName 은 그룹 이름 셀렉터(→ 그룹 해소 후 fan-out)이다.
+	DeviceName string `json:"device_name,omitempty"`
+	GroupName  string `json:"group_name,omitempty"`
+
 	// 역사 레지스트리 CRUD 필드 (B6, add_station: display_name/order).
 	DisplayName string `json:"display_name,omitempty"`
 	Order       int    `json:"order,omitempty"`
@@ -156,6 +162,14 @@ func (req *processRequest) fillFromParams() {
 	}
 	if req.GroupID == "" {
 		req.GroupID = stringField(req.Params, "group_id")
+	}
+	// 이름 셀렉터 승격 (SPEC-XSFM-NAMESEL-001 RD-1, group_id 승격 패턴 계승): HTTP exec 계약이
+	// device_name/group_name 을 params 로 나른 경우 top-level 로 끌어올린다(top-level 우선).
+	if req.DeviceName == "" {
+		req.DeviceName = stringField(req.Params, "device_name")
+	}
+	if req.GroupName == "" {
+		req.GroupName = stringField(req.Params, "group_name")
 	}
 	if req.Station == "" {
 		req.Station = stringField(req.Params, "station")

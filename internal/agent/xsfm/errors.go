@@ -61,4 +61,8 @@ var (
 	// ErrInvalidStateEmitMode 는 state_emit_mode 가 event/interval/both 이외일 때 반환된다
 	// (SPEC-XSFM-AGENT-IO-001 REQ-03-02, transport_mode/liveness_source enum 검증 패턴 동형).
 	ErrInvalidStateEmitMode = errors.New("xsfm: invalid state_emit_mode (must be 'event', 'interval', or 'both')")
+	// ErrAmbiguousName 은 이름 셀렉터(device_name/group_name)가 2개 이상의 대상과 일치할 때
+	// 반환된다 (SPEC-XSFM-NAMESEL-001 RD-2). 무방출 fail-closed — 임의 매치를 선택하지 않고
+	// 거부한다.
+	ErrAmbiguousName = errors.New("xsfm: ambiguous name (matches multiple targets)")
 )

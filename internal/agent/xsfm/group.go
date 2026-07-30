@@ -106,34 +106,56 @@ func buildControlPlan(command string, params map[string]any) ([]controlStep, err
 }
 
 // dispatchControl 은 제어 명령(set_power/set_fan_speed/set_multiple)을 대상 지정 방식으로
-// 라우팅한다 (REQ-XSFM-001-04-04 우선순위).
+// 라우팅한다 (REQ-XSFM-001-04-04 / SPEC-XSFM-NAMESEL-001 RD-4 우선순위).
 //
-// device_id 가 지정되면 최우선으로 단일 디바이스 경로(개별 제어 Module 3)로 처리하며 셀렉터가
-// 함께 지정돼도 fan-out 하지 않는다(device_id > station > line > group_id). device_id 가 없으면
-// handleSelectorControl 이 station → line → group_id 순으로 fan-out 한다.
+// device_id 가 지정되면 최우선으로 단일 디바이스 경로(개별 제어 Module 3)로 처리하며 다른
+// 셀렉터가 함께 지정돼도 fan-out 하지 않는다(체인 최상위). device_id 가 없으면
+// handleSelectorControl 이 나머지 체인(device_name → station → line → group_id → group_name)을
+// 결정론적으로 해석한다.
 func (a *XSFMAgent) dispatchControl(req processRequest) ([]byte, error) {
 	if req.DeviceID != "" {
-		switch req.Command {
-		case "set_power":
-			return a.handleSetPower(req)
-		case "set_fan_speed":
-			return a.handleSetFanSpeed(req)
-		case "set_multiple":
-			return a.handleSetMultiple(req)
-		default:
-			return nil, fmt.Errorf("%w: %q is not a control command", ErrInvalidCommand, req.Command)
-		}
+		return a.handleIndividualControl(req)
 	}
 	return a.handleSelectorControl(req)
 }
 
-// handleSelectorControl 은 device_id 가 없는 제어 명령을 셀렉터로 라우팅해 fan-out 한다.
+// handleIndividualControl 은 req.DeviceID 로 지정된 단일 디바이스 개별 제어를 명령 종류별
+// 핸들러(Module 3)로 라우팅한다. device_id(체인 최상위)와 device_name(이름 해소 후) 양쪽이
+// 재사용하는 공용 진입점이다 — 개별 제어 의미론(값 검증, 2-축, 응답 대기)을 재구현하지 않는다.
+func (a *XSFMAgent) handleIndividualControl(req processRequest) ([]byte, error) {
+	switch req.Command {
+	case "set_power":
+		return a.handleSetPower(req)
+	case "set_fan_speed":
+		return a.handleSetFanSpeed(req)
+	case "set_multiple":
+		return a.handleSetMultiple(req)
+	default:
+		return nil, fmt.Errorf("%w: %q is not a control command", ErrInvalidCommand, req.Command)
+	}
+}
+
+// handleSelectorControl 은 device_id 가 없는 제어 명령을 셀렉터로 라우팅한다.
 //
-// 셀렉터 우선순위(REQ-XSFM-001-04-04): device_id > station > line > group_id. device_id 는
-// 상위(dispatchControl)에서 이미 단일 경로로 처리되므로, 여기서는 station → line → group_id
-// 순으로 첫 번째로 지정된 셀렉터를 결정론적으로 해석한다. 셀렉터가 하나도 없으면 대상 미지정
-// 이므로 ErrInvalidCommand 를 반환한다.
+// 셀렉터 우선순위 체인(RD-4): device_id > device_name > station > line > group_id > group_name.
+// device_id 는 상위(dispatchControl)에서 이미 단일 경로로 처리되므로, 여기서는 "개별 먼저"
+// 원칙에 따라 device_name(개별 이름) → station → line → group_id → group_name(그룹 이름) 순으로
+// 첫 번째로 지정된 셀렉터만 결정론적으로 해석한다. 이름 셀렉터는 리졸버로 정확히 하나의 대상으로
+// 해소한 뒤 기존 개별/fan-out 경로를 그대로 재사용한다(SPEC-XSFM-NAMESEL-001 RD-1/A-3). 셀렉터가
+// 하나도 없으면 대상 미지정이므로 ErrInvalidCommand 를 반환한다.
 func (a *XSFMAgent) handleSelectorControl(req processRequest) ([]byte, error) {
+	// device_name(개별 이름 셀렉터): device_id 바로 뒤, 모든 집계 셀렉터에 선행한다("개별 먼저").
+	// 이름을 정확히 하나의 device_id 로 해소(0 매치 ErrDeviceNotFound / ≥2 ErrAmbiguousName, 무방출)
+	// 한 뒤 개별 제어 경로를 재사용한다.
+	if req.DeviceName != "" {
+		deviceID, err := a.DeviceByName(req.DeviceName)
+		if err != nil {
+			return nil, err
+		}
+		req.DeviceID = deviceID
+		return a.handleIndividualControl(req)
+	}
+
 	var sel selectorRef
 	var targets, excluded []string
 
@@ -155,8 +177,20 @@ func (a *XSFMAgent) handleSelectorControl(req processRequest) ([]byte, error) {
 			return nil, err
 		}
 		targets = a.GroupMembers(req.GroupID)
+	case req.GroupName != "":
+		// group_name(그룹 이름 셀렉터): 체인 최하위 — 다른 상위 셀렉터가 하나도 없을 때만 해석된다.
+		// 전 타입 그룹에서 유일 해소(0 매치 ErrGroupNotFound / ≥2 ErrAmbiguousName, 무방출)한 뒤,
+		// 해소된 그룹 id 를 기존 group_id 경로(GroupMembers → fanOutControl)에 그대로 넣어 재사용한다.
+		// 유일 해소된 그룹은 이미 존재하므로 ensureGroupExists 를 별도로 호출하지 않는다(빈 그룹은
+		// fanOutControl 이 ErrEmptyGroup 으로 처리, REQ-02-05).
+		groupID, err := a.GroupByName(req.GroupName)
+		if err != nil {
+			return nil, err
+		}
+		sel = selectorRef{Type: "group_name", Value: req.GroupName}
+		targets = a.GroupMembers(groupID)
 	default:
-		return nil, fmt.Errorf("%w: control requires device_id or a selector (station/line/group_id)", ErrInvalidCommand)
+		return nil, fmt.Errorf("%w: control requires device_id or a selector (device_name/station/line/group_id/group_name)", ErrInvalidCommand)
 	}
 
 	// 값 검증 + 제어 플랜 구성 (fan-out 전 1회, 개별 제어와 동일 검증 재사용). 잘못된 params

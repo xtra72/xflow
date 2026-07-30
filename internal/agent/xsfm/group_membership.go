@@ -365,7 +365,13 @@ func (a *XSFMAgent) handleSetGroup(req processRequest, raw []byte) ([]byte, erro
 // 커스텀 그룹은 그룹 레지스트리에서, 기본 그룹은 station 레지스트리에서 파생한다: station 그룹은
 // 등록된 각 역사에서(name=표시명), line 그룹은 역사들의 호선 집합에서(REQ-04-01..04). member_count/
 // members 는 GroupMembers 로 도출하므로 로스터 대조 필터·파생이 일관 적용된다(RD-3).
-func (a *XSFMAgent) handleListGroups() ([]byte, error) {
+// allGroups 는 전 타입 그룹(커스텀 + 파생 station/line)의 값 복사본 목록을 정렬 없이 반환한다.
+// 이름 리졸버(GroupByName, RD-5 전 타입 매칭)와 list_groups 핸들러가 공용한다(단일 도출 지점).
+//
+// 락 규율: 각 레지스트리 락은 내부(ListGroups/ListStations)에서 취득·해제되며 서로 중첩하지
+// 않는다 — 반환 시 어떤 락도 보유하지 않는다. 파생 그룹 표시명은 handleListGroups 와 동일 규칙
+// (station=DisplayName 폴백 코드, line=호선 코드)으로 도출한다.
+func (a *XSFMAgent) allGroups() []Group {
 	var groups []Group
 
 	// 커스텀 그룹 (레지스트리).
@@ -402,6 +408,12 @@ func (a *XSFMAgent) handleListGroups() ([]byte, error) {
 			})
 		}
 	}
+
+	return groups
+}
+
+func (a *XSFMAgent) handleListGroups() ([]byte, error) {
+	groups := a.allGroups()
 
 	// 결정적 순서: type → name → id.
 	sort.Slice(groups, func(i, j int) bool {

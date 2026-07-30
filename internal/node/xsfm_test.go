@@ -620,6 +620,78 @@ func TestBuildXsfmControlCommand(t *testing.T) {
 	}
 }
 
+// buildXsfmControlCommand 의 이름 셀렉터(device_name/group_name) top-level 방출 + 명령 추론 +
+// 드롭 금지(위임)를 검증한다 (SPEC-XSFM-NAMESEL-001 AC 3.1/3.2/3.5, extractor metadata 폴백).
+func TestBuildXsfmControlCommand_NameSelectors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		payload        map[string]any
+		meta           map[string]string
+		wantCommand    string
+		wantDeviceID   string
+		wantDeviceName string
+		wantGroupName  string
+	}{
+		{
+			// AC 3.1: device_name top-level 방출 + set_power 추론.
+			name:        "device_name + power → set_power (개별 이름)",
+			payload:     map[string]any{"device_name": "환기팬-01", "power": true},
+			wantCommand: "set_power", wantDeviceName: "환기팬-01",
+		},
+		{
+			// AC 3.2: group_name top-level 방출 + set_fan_speed 추론.
+			name:        "group_name + fan_speed → set_fan_speed (그룹 이름)",
+			payload:     map[string]any{"group_name": "2층 환기", "fan_speed": float64(2)},
+			wantCommand: "set_fan_speed", wantGroupName: "2층 환기",
+		},
+		{
+			// extractor metadata 폴백 (payload 없음 → metadata).
+			name:        "device_name metadata 폴백 → set_power",
+			payload:     map[string]any{"power": true},
+			meta:        map[string]string{"device_name": "환기팬-01"},
+			wantCommand: "set_power", wantDeviceName: "환기팬-01",
+		},
+		{
+			// AC 3.5: device_id + device_name 병존 → 둘 다 top-level(드롭 금지, 우선순위는 에이전트).
+			name:        "device_id + device_name 병존 → 둘 다 방출",
+			payload:     map[string]any{"device_id": "01", "device_name": "환기팬-02", "power": true},
+			wantCommand: "set_power", wantDeviceID: "01", wantDeviceName: "환기팬-02",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			msg := newXsfmMsg(tt.payload, tt.meta)
+			deviceID := xsfmExtractDeviceID(msg)
+			out, err := buildXsfmControlCommand(msg, deviceID, "node-1")
+			require.NoError(t, err)
+
+			var cmd map[string]any
+			require.NoError(t, json.Unmarshal(out, &cmd))
+			assert.Equal(t, tt.wantCommand, cmd["command"])
+
+			if tt.wantDeviceID != "" {
+				assert.Equal(t, tt.wantDeviceID, cmd["device_id"], "device_id 셀렉터는 드롭되지 않는다")
+			}
+			if tt.wantDeviceName != "" {
+				assert.Equal(t, tt.wantDeviceName, cmd["device_name"], "device_name 셀렉터가 최상위에 실려야 한다")
+			} else {
+				_, has := cmd["device_name"]
+				assert.False(t, has, "device_name 셀렉터가 명령에 없어야 한다")
+			}
+			if tt.wantGroupName != "" {
+				assert.Equal(t, tt.wantGroupName, cmd["group_name"], "group_name 셀렉터가 최상위에 실려야 한다")
+			} else {
+				_, has := cmd["group_name"]
+				assert.False(t, has, "group_name 셀렉터가 명령에 없어야 한다")
+			}
+		})
+	}
+}
+
 // hasXsfmControlCommand 의 라우팅 판정을 테이블로 검증한다: command/params/group_id 셀렉터가
 // 있으면 제어 경로, device_id+제어키 상태 스냅샷은 상태 주입 경로(무회귀).
 func TestHasXsfmControlCommand_Routing(t *testing.T) {
@@ -635,6 +707,11 @@ func TestHasXsfmControlCommand_Routing(t *testing.T) {
 		{name: "group_id 셀렉터 → 제어", payload: map[string]any{"group_id": "custom:g"}, want: true},
 		{name: "group_id + power → 제어", payload: map[string]any{"group_id": "custom:g", "power": true}, want: true},
 		{name: "group_id metadata → 제어", meta: map[string]string{"group_id": "station:st01"}, want: true},
+		{name: "device_name 셀렉터 → 제어", payload: map[string]any{"device_name": "환기팬-01"}, want: true},
+		{name: "device_name + power → 제어", payload: map[string]any{"device_name": "환기팬-01", "power": true}, want: true},
+		{name: "group_name 셀렉터 → 제어", payload: map[string]any{"group_name": "2층 환기"}, want: true},
+		{name: "device_name metadata → 제어", meta: map[string]string{"device_name": "환기팬-01"}, want: true},
+		{name: "group_name metadata → 제어", meta: map[string]string{"group_name": "2층 환기"}, want: true},
 		{name: "device_id + power + fan_speed 상태 스냅샷 → 상태 주입", payload: map[string]any{"device_id": "01", "power": true, "fan_speed": float64(2)}, want: false},
 		{name: "device_id 단독 → 상태 주입", payload: map[string]any{"device_id": "01"}, want: false},
 		{name: "빈 payload → 상태 주입", payload: map[string]any{}, want: false},

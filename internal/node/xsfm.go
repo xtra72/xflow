@@ -809,6 +809,12 @@ func hasXsfmControlCommand(msg message.Message) bool {
 	if xsfmExtractGroupID(msg) != "" {
 		return true
 	}
+	// 이름 셀렉터(device_name/group_name) 존재도 제어 라우팅 신호이다 (SPEC-XSFM-NAMESEL-001
+	// REQ-03-02). 이름은 device_id 로 키잉되는 상태 스냅샷에 절대 실리지 않으므로(상태 유입은
+	// device_id 기준) 오직 이름 기반 제어에서만 유입된다 — group_id 라우팅 규칙 계승.
+	if xsfmExtractDeviceName(msg) != "" || xsfmExtractGroupName(msg) != "" {
+		return true
+	}
 	return false
 }
 
@@ -884,6 +890,36 @@ func xsfmExtractGroupID(msg message.Message) string {
 	return ""
 }
 
+// xsfmExtractDeviceName 은 메시지 payload/metadata 에서 device_name 이름 셀렉터를 추출한다
+// (SPEC-XSFM-NAMESEL-001 REQ-03-03, xsfmExtractDeviceID/GroupID 미러). payload "device_name"
+// 우선, 없으면 metadata "device_name" 폴백. 이름은 에이전트 리졸버가 device_id 로 해소한다.
+func xsfmExtractDeviceName(msg message.Message) string {
+	if v, ok := msg.Payload().Get("device_name"); ok {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	if s, ok := msg.Metadata().Get("device_name"); ok && s != "" {
+		return s
+	}
+	return ""
+}
+
+// xsfmExtractGroupName 은 메시지 payload/metadata 에서 group_name 이름 셀렉터를 추출한다
+// (SPEC-XSFM-NAMESEL-001 REQ-03-03, xsfmExtractGroupID 미러). payload "group_name" 우선,
+// 없으면 metadata "group_name" 폴백. 이름은 에이전트 리졸버가 전 타입 그룹에서 해소한다.
+func xsfmExtractGroupName(msg message.Message) string {
+	if v, ok := msg.Payload().Get("group_name"); ok {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	if s, ok := msg.Metadata().Get("group_name"); ok && s != "" {
+		return s
+	}
+	return ""
+}
+
 // buildXsfmControlCommand 는 입력 메시지에서 에이전트 제어 명령 JSON 을 구성한다.
 //
 // 대상 선정(개별/그룹): device_id(개별) 와 group_id(그룹 일괄) 셀렉터를 최상위 필드로
@@ -906,6 +942,15 @@ func buildXsfmControlCommand(msg message.Message, deviceID, nodeID string) ([]by
 	// 적용한다(위 주석 참조). custom:/station:/line:/레거시 접두사는 에이전트 GroupMembers 가 해석.
 	if groupID := xsfmExtractGroupID(msg); groupID != "" {
 		cmd["group_id"] = groupID
+	}
+	// 이름 셀렉터(device_name/group_name)도 top-level 로 실어 보낸다 (SPEC-XSFM-NAMESEL-001
+	// REQ-03-01/05). 다른 셀렉터와 병존해도 조용히 드롭하지 않고 모두 실어 우선순위 판정을
+	// 에이전트에 위임한다(device_id/group_id 위임 패턴 계승, RD-4 체인은 에이전트가 적용).
+	if deviceName := xsfmExtractDeviceName(msg); deviceName != "" {
+		cmd["device_name"] = deviceName
+	}
+	if groupName := xsfmExtractGroupName(msg); groupName != "" {
+		cmd["group_name"] = groupName
 	}
 	if nodeID != "" {
 		cmd["node_id"] = nodeID
