@@ -28,7 +28,6 @@ import {
   Table,
   LayoutGrid,
   Route,
-  MapPin,
   Fan,
   Layers,
 } from 'lucide-react';
@@ -38,6 +37,7 @@ import { useUIStore, type PanelType } from '@/stores/uiStore';
 import { useDevices } from '@/hooks/useDevice';
 import { useAgents } from '@/hooks/useAgent';
 import { useStations, useXsfmDevices } from '@/hooks/useStation';
+import { useGroups } from '@/hooks/useGroups';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -135,12 +135,12 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     { type: 'hvac-control', icon: Wind, labelKey: 'dashboard.panelTypes.hvacControl', descriptionKey: 'dashboard.addPanel.descriptions.hvacControl', needsDevice: true },
     { type: 'outdoor-control', icon: Cpu, labelKey: 'dashboard.addPanel.labels.outdoorControl', descriptionKey: 'dashboard.addPanel.descriptions.outdoorControl', needsDevice: true },
     { type: 'custom-control', icon: Settings, labelKey: 'dashboard.panelTypes.customControl', descriptionKey: 'dashboard.addPanel.descriptions.customControl', needsDevice: true },
-    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종 (에이전트 + 라인/역사/기기 선택).
+    // SPEC-FACILITY-DASHBOARD-001 M5 / SPEC-XSFM-GROUP-001 M7: 설비 패널.
+    // 역사(facility-station)는 그룹(facility-group)의 한 종류로 흡수되어 더 이상 별도 생성 타입이
+    // 아니다(그룹 선택기에서 역사 그룹을 고른다). 라인/기기 패널은 그대로 유지한다.
     { type: 'facility-line', icon: Route, labelKey: 'dashboard.panelTypes.facilityLine', descriptionKey: 'dashboard.addPanel.descriptions.facilityLine', needsFacility: true },
-    { type: 'facility-station', icon: MapPin, labelKey: 'dashboard.panelTypes.facilityStation', descriptionKey: 'dashboard.addPanel.descriptions.facilityStation', needsFacility: true },
-    { type: 'facility-device', icon: Fan, labelKey: 'dashboard.panelTypes.facilityDevice', descriptionKey: 'dashboard.addPanel.descriptions.facilityDevice', needsFacility: true },
-    // SPEC-XSFM-GROUP-001 M7: 설비 그룹 패널(에이전트만 선택, 그룹 전체 표시·제어).
     { type: 'facility-group', icon: Layers, labelKey: 'dashboard.panelTypes.facilityGroup', descriptionKey: 'dashboard.addPanel.descriptions.facilityGroup', needsFacility: true },
+    { type: 'facility-device', icon: Fan, labelKey: 'dashboard.panelTypes.facilityDevice', descriptionKey: 'dashboard.addPanel.descriptions.facilityDevice', needsFacility: true },
   ],
 };
 
@@ -714,30 +714,34 @@ function ChartConfigStep({
 
 // ---- Step: 설비 대상 선택 (SPEC-FACILITY-DASHBOARD-001 M5) ----
 
-/** 설비 패널 타입 → config 대상 키. */
-const FACILITY_TARGET_KEY: Record<string, 'deviceId' | 'station' | 'line'> = {
+/** 설비 패널 타입 → config 대상 키. 역사(facility-station)는 그룹으로 흡수되어 생성 경로에서 제외된다. */
+const FACILITY_TARGET_KEY: Record<string, 'deviceId' | 'line' | 'groupId'> = {
   'facility-device': 'deviceId',
-  'facility-station': 'station',
   'facility-line': 'line',
+  'facility-group': 'groupId',
 };
 
 /** 대상 셀렉트 라벨/placeholder i18n 키(패널 타입별). */
 const FACILITY_TARGET_I18N: Record<string, { label: string; placeholder: string }> = {
   'facility-device': { label: 'dashboard.settings.device', placeholder: 'dashboard.settings.selectDevice' },
-  'facility-station': { label: 'dashboard.settings.station', placeholder: 'dashboard.settings.selectStation' },
   'facility-line': { label: 'dashboard.settings.line', placeholder: 'dashboard.settings.selectLine' },
+  'facility-group': { label: 'dashboard.settings.group', placeholder: 'dashboard.settings.selectGroup' },
 };
 
-/** 대상 옵션 한 건(값 + 표시 라벨). */
+/** 대상 옵션 한 건(값 + 표시 라벨 + 선택 시 기본 타이틀). title 미지정 시 label 을 타이틀로 쓴다. */
 interface FacilityTargetOption {
   value: string;
   label: string;
+  title?: string;
 }
 
 /**
- * 설비 대상 선택 스텝. 에이전트(xsfm)를 먼저 고르고, 패널 타입에 따라
- * 라인/역사/기기 대상을 고른다. 대상 조회는 기존 useStations / useXsfmDevices 를
- * 재사용한다(UB-001, 재구현 없음). 완료 시 addPanelWithConfig 로 { agentId, <대상키> } 를 전달한다.
+ * 설비 대상 선택 스텝. 에이전트(xsfm)를 먼저 고르고, 패널 타입에 따라 라인/그룹/기기 대상을 고른다.
+ * 대상 조회는 기존 useStations / useXsfmDevices / useGroups 를 재사용한다(UB-001, 재구현 없음).
+ * 완료 시 addPanelWithConfig 로 { agentId, <대상키> } + 대상 이름 기본 타이틀을 전달한다.
+ *
+ * 설비 그룹 패널(facility-group)은 역사·라인·커스텀 그룹을 한 셀렉터에 나열하며(type 라벨 + 멤버 수),
+ * 선택 시 config.groupId 로 저장한다. 역사(facility-station)는 그룹으로 흡수되어 생성 경로에서 제외된다.
  */
 function FacilityStep({
   panelType,
@@ -762,36 +766,41 @@ function FacilityStep({
 
   const { data: stations, isLoading: stationsLoading } = useStations(agentId);
   const { data: devices, isLoading: devicesLoading } = useXsfmDevices(agentId);
+  const { data: groups, isLoading: groupsLoading } = useGroups(agentId);
 
   const targetKey = FACILITY_TARGET_KEY[panelType] ?? 'deviceId';
   const targetI18n = FACILITY_TARGET_I18N[panelType] ?? FACILITY_TARGET_I18N['facility-device']!;
 
-  // 패널 타입별 대상 옵션 계산.
+  // 패널 타입별 대상 옵션 계산. 그룹은 label 에 type + 멤버 수를 함께 보여주되 title 은 그룹명만 쓴다.
   const targetOptions: FacilityTargetOption[] = useMemo(() => {
     if (panelType === 'facility-device') {
       return (devices ?? []).map((d) => ({ value: d.device_id, label: d.name || d.device_id }));
     }
-    if (panelType === 'facility-station') {
-      return (stations ?? []).map((s) => ({ value: s.station, label: s.display_name || s.station }));
+    if (panelType === 'facility-group') {
+      return (groups ?? []).map((g) => ({
+        value: g.id,
+        label: `${g.name} · ${t(`dashboard.facility.group.type.${g.type}`)} · ${g.member_count}`,
+        title: g.name,
+      }));
     }
     // facility-line: 로스터의 distinct line 값.
     const lines = Array.from(new Set((stations ?? []).map((s) => s.line).filter(Boolean)));
     return lines.map((l) => ({ value: l, label: l }));
-  }, [panelType, devices, stations]);
+  }, [panelType, devices, stations, groups, t]);
 
-  const targetLoading = panelType === 'facility-device' ? devicesLoading : stationsLoading;
-  // 설비 그룹 패널(M7)은 그룹 전체를 나열하므로 단일 대상 선택이 없다 — 에이전트만 필요.
-  const isGroup = panelType === 'facility-group';
-  const canSave = isGroup ? agentId.length > 0 : agentId.length > 0 && target.length > 0;
+  const targetLoading =
+    panelType === 'facility-device'
+      ? devicesLoading
+      : panelType === 'facility-group'
+        ? groupsLoading
+        : stationsLoading;
+  const canSave = agentId.length > 0 && target.length > 0;
 
   const handleConfirm = () => {
     if (!canSave) return;
-    if (isGroup) {
-      onConfirm({ agentId });
-      return;
-    }
     const selected = targetOptions.find((o) => o.value === target);
-    onConfirm({ agentId, [targetKey]: target }, selected?.label);
+    // 기본 타이틀: 그룹은 그룹명(title), 그 외는 표시 라벨.
+    onConfirm({ agentId, [targetKey]: target }, selected?.title ?? selected?.label);
   };
 
   return (
@@ -850,8 +859,7 @@ function FacilityStep({
           </select>
         </div>
 
-        {/* 대상(라인/역사/기기) 선택. 설비 그룹 패널(M7)은 대상이 없어(그룹 전체 표시) 숨긴다. */}
-        {!isGroup && (
+        {/* 대상(라인/그룹/기기) 선택. */}
         <div>
           <label
             htmlFor="facility-target-select"
@@ -875,7 +883,6 @@ function FacilityStep({
             ))}
           </select>
         </div>
-        )}
       </div>
 
       {/* 푸터 */}

@@ -484,6 +484,8 @@
       "selectStation": "Select station",
       "line": "Line",
       "selectLine": "Select line",
+      "group": "Group",
+      "selectGroup": "Select group",
       "facility": "Facility target",
       "showStationStatus": "Show station status",
       "showLineStats": "Show line stats",

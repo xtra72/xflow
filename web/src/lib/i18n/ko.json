@@ -484,6 +484,8 @@
       "selectStation": "역사를 선택하세요",
       "line": "호선",
       "selectLine": "호선을 선택하세요",
+      "group": "그룹",
+      "selectGroup": "그룹을 선택하세요",
       "facility": "설비 대상",
       "showStationStatus": "역사별 상태 표시",
       "showLineStats": "라인 통계 표시",

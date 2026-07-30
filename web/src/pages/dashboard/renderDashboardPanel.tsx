@@ -33,7 +33,6 @@ import PropertiesGridPanel from './panels/PropertiesGridPanel';
 import HvacControlPanel from './panels/HvacControlPanel';
 import OutdoorControlPanel from './panels/OutdoorControlPanel';
 import FacilityDevicePanel from './panels/FacilityDevicePanel';
-import FacilityStationPanel from './panels/FacilityStationPanel';
 import FacilityLinePanel from './panels/FacilityLinePanel';
 import FacilityGroupPanel from './panels/FacilityGroupPanel';
 import StatPanel from './panels/charts/StatPanel';
@@ -158,9 +157,12 @@ export function renderDashboardPanel(
           onTitleChange={onTitle}
         />
       );
+    // 레거시 facility-station 은 facility-group 의 별칭으로 디스패치한다(하위호환).
+    // FacilityGroupPanel 이 config.station → "station:<code>" 로 groupId 를 파생하므로
+    // 기존 저장된 역사 패널({type:'facility-station', config:{station}})이 그대로 렌더된다.
     case 'facility-station':
       return (
-        <FacilityStationPanel
+        <FacilityGroupPanel
           panelId={panel.id}
           title={panel.title}
           config={panel.config}
