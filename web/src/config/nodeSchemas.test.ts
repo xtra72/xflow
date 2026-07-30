@@ -271,6 +271,9 @@ describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
     'lg-hvacr01',
     'century-hvacr01-status',
     'century-hvacr01',
+    'xsfm-status',
+    'xsfm-control',
+    'xsfm',
     'modbus',
     'modbus-writer',
     'mqtt-subscriber',
@@ -294,6 +297,9 @@ describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
     'lg-hvacr01',
     'century-hvacr01-status',
     'century-hvacr01',
+    'xsfm-status',
+    'xsfm-control',
+    'xsfm',
   ] as const;
 
   // emit_agent 만 노출하고 emit_device 는 노출하지 않는 노드(디바이스 아님).
@@ -345,6 +351,8 @@ describe('옛 `_` HVAC 타입의 스키마/메타 정규화 해석', () => {
     ['lg_hvacr01_status', 'lg-hvacr01-status'],
     ['lg_hvacr02', 'lg-hvacr02'],
     ['century_hvacr01_status', 'century-hvacr01-status'],
+    ['xsfm_status', 'xsfm-status'],
+    ['xsfm_control', 'xsfm-control'],
   ];
 
   it.each(pairs)('%s 의 configSchema 가 canonical %s 와 동일하게 해석된다', (legacy, canonical) => {
@@ -370,5 +378,49 @@ describe('옛 `_` HVAC 타입의 스키마/메타 정규화 해석', () => {
     expect(getNodeDescription(legacy)).toBe(getNodeDescription(canonical));
     expect(getNodeDescription(legacy)).toBeTruthy();
     expect(getNodeIODesc(legacy)).toEqual(getNodeIODesc(canonical));
+  });
+});
+
+// XSFM(설비) 노드 3종 스키마 존재/필드/포트 검증 (SPEC-XSFM-001).
+// 백엔드 XSFMNodeConfig: agent_ref(필수) + timeout(기본 5s) + emit_metadata.
+// push + port drain 모델이라 device_id/poll 필드 없음. 포트는 in/out 만.
+describe('XSFM(설비) 노드 3종 스키마 (SPEC-XSFM-001)', () => {
+  const XSFM_NODES = ['xsfm-status', 'xsfm-control', 'xsfm'] as const;
+
+  it.each(XSFM_NODES)('%s 스키마가 존재하고 설명/입출력 설명을 갖는다', (nodeType) => {
+    const schema = getNodeSchema(nodeType);
+    expect(schema, `${nodeType} 스키마가 있어야 함`).toBeDefined();
+    expect(getNodeDescription(nodeType)).toBeTruthy();
+    const io = getNodeIODesc(nodeType);
+    expect(io?.inputDesc).toBeTruthy();
+    expect(io?.outputDesc).toBeTruthy();
+  });
+
+  it.each(XSFM_NODES)('%s 는 agent_ref agent_select(required, options:[xsfm]) 필드를 노출한다', (nodeType) => {
+    const field = findField(nodeType, 'agent_ref');
+    expect(field, `${nodeType} 에 agent_ref 필드가 있어야 함`).toBeDefined();
+    expect(field?.type).toBe('agent_select');
+    expect(field?.required).toBe(true);
+    expect(field?.options).toEqual(['xsfm']);
+  });
+
+  it.each(XSFM_NODES)('%s 는 timeout 필드를 기본값 5s 로 노출한다', (nodeType) => {
+    const field = findField(nodeType, 'timeout');
+    expect(field, `${nodeType} 에 timeout 필드가 있어야 함`).toBeDefined();
+    expect(field?.type).toBe('string');
+    expect(field?.default).toBe('5s');
+  });
+
+  it.each(XSFM_NODES)('%s 는 device_id / poll 류 필드를 노출하지 않는다 (push+port 모델)', (nodeType) => {
+    expect(findField(nodeType, 'device_id')).toBeUndefined();
+    expect(findField(nodeType, 'poll_interval')).toBeUndefined();
+    expect(findField(nodeType, 'poll_command')).toBeUndefined();
+  });
+
+  it.each(XSFM_NODES)('%s 의 기본 포트는 in/out 만이다 (에러 포트 없음)', (nodeType) => {
+    expect(getDefaultPorts(nodeType)).toEqual([
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ]);
   });
 });

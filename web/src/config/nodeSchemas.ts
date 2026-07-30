@@ -992,6 +992,119 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- IO: XSFM (설비) --- (SPEC-XSFM-001)
+  // push + port drain 모델. device_id / poll 류 config 없음. 노출 필드는
+  // agent_ref(필수) + timeout + emit_metadata(samsung/lgap 동일 키/기본값).
+  // 백엔드 XSFMNodeConfig / parseEmitMetadata 참고. 포트는 in/out 만 (에러 포트 없음).
+  'xsfm-status': {
+    description: 'XSFM(설비) 에이전트의 상태를 다룹니다. 상류 device-STATE 메시지를 에이전트 FeedState 로 주입하고(입력 포트), 에이전트가 방출하는 상태 텔레메트리를 push 로 하류에 emit 합니다(출력 포트). direct 모드에서는 에이전트가 자체 구독으로 상태를 받으므로 입력 포트는 사용되지 않습니다.',
+    inputDesc: 'payload: 상류 device-STATE 스냅샷 (port 모드에서 FeedState 로 주입). device_id 는 payload/metadata 에서 추출하며, 없으면 주입하지 않음. 하류로 반환하지 않음.',
+    outputDesc: 'payload: 에이전트 상태 텔레메트리 (device_state_changed 등, push). metadata: agent:{type,id} 그룹 (기본) + device_id + node_id (옵션). 그룹은 emit_agent 토글로 끌 수 있음',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['xsfm'],
+          description: '연결할 XSFM(설비) 에이전트를 선택합니다',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: 'Process 타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+        // emit_metadata — metadata 옵션 필드 emit 정책 (samsung/lgap 동일 키/기본값).
+        // device_id 는 항상 emit. agent/device 그룹은 기본 ON, 나머지는 default OFF.
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함', advanced: true },
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 포함', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+    ],
+  },
+
+  'xsfm-control': {
+    description: 'XSFM(설비) 에이전트에 제어 명령을 전송합니다. 입력 메시지의 제어 명령을 에이전트에 전달하고 응답을 하류로 반환합니다. port 모드에서는 에이전트의 ControlPort 를 drain 해 각 제어 명령을 하류(mqtt-out)로 emit 합니다.',
+    inputDesc: 'payload: {device_id | group_id, command, ...params}. 개별 제어는 device_id(예: {device_id:"01", power:true}), 그룹 일괄 제어는 group_id 셀렉터(예: {group_id:"custom:floor2", power:false} 또는 {group_id:"station:st01", fan_speed:2}). command 없으면 제어 키(power/fan_speed)에서 명령 추론(set_power/set_fan_speed/set_multiple). 둘 다 지정 시 에이전트 우선순위 device_id > station > line > group_id 적용.',
+    outputDesc: '제어 응답: payload 에 에이전트 응답 병합 (type=device_state.response, Process 반환). port 모드 제어 출력: 에이전트 ControlPort 명령을 하류로 emit (type=device_command)',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['xsfm'],
+          description: '연결할 XSFM(설비) 에이전트를 선택합니다',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: 'Process 타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+        // emit_metadata — metadata 옵션 필드 emit 정책 (samsung/lgap 동일 키/기본값).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함', advanced: true },
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 포함', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+    ],
+  },
+
+  xsfm: {
+    description: 'XSFM(설비) 에이전트의 상태 수신 + 제어 송신 통합 노드입니다. 상태 수신(텔레메트리 emit + 상태 입력 FeedState)과 제어 송신을 한 노드로 통합하여, 브로커 직결 없이 [mqtt-in → xsfm] / [xsfm → mqtt-out] 로 플로우 상에서 메시지를 교환합니다(port 모드).',
+    inputDesc: 'command/params 또는 group_id 셀렉터가 있으면 제어 명령(에이전트 제어 경로, 응답 하류 반환), 없으면 raw 상태 payload 로 간주해 FeedState 로 주입(하류 반환 없음). 개별 제어는 {device_id, command, ...params}, 그룹 일괄 제어는 group_id 셀렉터({group_id:"custom:floor2", power:false} 또는 {group_id:"station:st01", fan_speed:2}). device_id/group_id 는 payload/metadata 에서 추출.',
+    outputDesc: '단일 출력 포트 — 상태 텔레메트리(device_state_changed)와 port 모드 제어 출력(device_command)이 병합되어 흐름. 제어 명령 응답(device_state.response)은 Process 반환값으로 별도 전달.',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['xsfm'],
+          description: '연결할 XSFM(설비) 에이전트를 선택합니다',
+        },
+        {
+          name: 'timeout',
+          type: 'string',
+          label: 'Process 타임아웃',
+          default: '5s',
+          description: 'Agent Process 호출 타임아웃',
+        },
+        // emit_metadata — metadata 옵션 필드 emit 정책 (samsung/lgap 동일 키/기본값).
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        { name: 'emit_device_type', type: 'boolean', label: '메타데이터: device_type', default: false, description: '메시지 metadata 에 device_type 포함', advanced: true },
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_name', type: 'boolean', label: '메타데이터: name', default: false, description: '메시지 metadata 에 사용자 이름(라벨) 포함', advanced: true },
+        { name: 'emit_node_source', type: 'boolean', label: '메타데이터: node_source', default: false, description: '메시지 metadata 에 emit 경로 식별자 포함', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+    ],
+  },
+
   // --- IO: LG HVACR-02 (ICP-02 protocol) ---
   'lg-hvacr02-status': {
     description: 'LG HVACR-02 에이전트(LG ICP-02 프로토콜)의 에어컨 상태를 수신합니다. 에이전트의 FrameNotifyCh 신호 수신 시 디바이스별 상태를 push 받고, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다. (2026-05-30 LG HVACR-01 통일 패턴)',
