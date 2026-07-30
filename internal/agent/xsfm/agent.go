@@ -65,6 +65,12 @@ type XSFMAgent struct {
 	// (station/line)은 저장하지 않고 station 레지스트리/로스터에서 파생한다.
 	groups *GroupRegistry
 
+	// lines 는 라인(1급 엔티티) 레지스트리이다 (SPEC-XSFM-LINE-001, 신설 비침습 레이어).
+	// 라인 엔티티의 코드/표시명/정렬 SSOT 이며 자체 RWMutex 로 보호된다 — 로스터 락(mu)·
+	// pending 락·station 레지스트리 락·group 레지스트리 락과 절대 중첩하지 않는다(REQ-07-01
+	// 락 규율). line:<code> 멤버는 저장하지 않고 DevicesByLine 로 파생한다(REQ-01-08).
+	lines *LineRegistry
+
 	// registry 는 런타임 등록 디바이스(bridge/auto) 로스터의 파일 기반 영속 저장소이다
 	// (B7, REQ-XSFM-001-02-05/08). registry_path 가 빈 값이면 nil(영속화 비활성). 자체
 	// 락을 보유하며 로스터 락(mu)에 걸쳐 잡지 않는다(스냅샷 후 해제, 그다음 파일 I/O).
@@ -114,6 +120,10 @@ type processRequest struct {
 	DisplayName string `json:"display_name,omitempty"`
 	Order       int    `json:"order,omitempty"`
 
+	// Code 는 라인/커스텀 그룹의 통일 코드 식별자이다 (SPEC-XSFM-LINE-001 RD-2/RD-6).
+	// add_line{code} 및 add_group{code} 에서 사용한다.
+	Code string `json:"code,omitempty"`
+
 	Params map[string]any `json:"params,omitempty"`
 	NodeID string         `json:"node_id,omitempty"`
 	FlowID string         `json:"flow_id,omitempty"`
@@ -154,6 +164,9 @@ func (req *processRequest) fillFromParams() {
 	}
 	if req.DisplayName == "" {
 		req.DisplayName = stringField(req.Params, "display_name")
+	}
+	if req.Code == "" {
+		req.Code = stringField(req.Params, "code")
 	}
 	// 정수 주소지정 필드: JSON 숫자는 float64, 숫자 문자열("3")도 허용(toInt). 누락 키는
 	// firstPresent 가 nil 을 반환하고 toInt(nil)==0 이므로 zero 값이 유지된다.
@@ -233,7 +246,9 @@ func NewXSFMAgent(config agent.AgentConfig) (agent.Agent, error) {
 		if a.cfg.stateIsComposite && hasComposite(dev) {
 			dev.composite = true
 			if dev.Name == "" {
-				dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+				// 구성 시점(Init 이전)에는 station 레지스트리가 아직 없어 라인이 미해석된다 →
+				// resolveLineFor 가 "" 를 반환해 3-세그먼트로 합성(하위호환, RD-4).
+				dev.Name = composeName(a.resolveLineFor(dev.Station), dev.Station, dev.Place, dev.Index)
 			}
 		}
 		a.devices[key] = dev
@@ -315,6 +330,23 @@ func (a *XSFMAgent) Init(config agent.AgentConfig) error {
 	a.groups = groups
 	a.mu.Unlock()
 	a.migrateGroupMembership()
+
+	// 라인 레지스트리 구성 (SPEC-XSFM-LINE-001, 신설 레이어): device_registry.json 과 동일
+	// dir(rosterPath)에 line_registry.json 으로 라인 엔티티를 영속한다. rosterPath 가 비면
+	// 인메모리 전용(종전 동작 보존). 구성 후 로드 1회성·비파괴 마이그레이션을 수행한다:
+	// (1) 기존 station.Line 값 → Line 엔티티 ensure-create(REQ-05-01), (2) 레거시
+	// custom:<name> 그룹 코드 → custom:<code> slugify 승격(REQ-05-02, §4.6).
+	lines, err := newLineRegistry(rosterPath)
+	if err != nil {
+		return fmt.Errorf("xsfm init: %w", err)
+	}
+	a.mu.Lock()
+	a.lines = lines
+	a.mu.Unlock()
+	a.migrateLinesFromStations() // REQ-05-01: station.Line → Line 엔티티 ensure-create.
+	if a.groups != nil {
+		a.groups.migrateCodes() // REQ-05-02/§4.6: custom:<name> → custom:<code> slugify 승격.
+	}
 
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
 		return fmt.Errorf("xsfm init: %w", err)
@@ -427,8 +459,15 @@ func (a *XSFMAgent) handleStateMessage(topic string, payload []byte) {
 // 해제하고 방출한다 — 락을 채널 송신에 걸쳐 잡지 않는다. fields 의 placeholder 는 device_state_changed
 // 메타로 실려 하류 influx 태그(station_code/place_code/device_index/attribute)를 형성한다.
 func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st decodedState) {
+	// composite auto-생성 시 새 디바이스 이름의 라인 세그먼트를 로스터 락 취득 전에 해석한다
+	// (레지스트리 간 락 중첩 금지, REQ-07-01). 비-composite 경로는 이름 합성이 없어 불필요하다.
+	lineHint := ""
+	if composite {
+		lineHint = a.resolveLineFor(fields[placeholderStationCode])
+	}
+
 	a.mu.Lock()
-	deviceID, dev, created := a.resolveDeviceLocked(composite, fields)
+	deviceID, dev, created := a.resolveDeviceLocked(composite, fields, lineHint)
 
 	prevOnline := dev.Online
 	var changed []string
@@ -516,7 +555,7 @@ func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st dec
 //     핵심 변경점이다 — 조회 키가 "합성 주소 = device_id" 에서 "보조 인덱스 → UUID" 로 바뀐다.
 //   - !composite(blob/{device_id} 모델): topic 의 device_id 를 로스터 키로 직접 조회한다.
 //     미등록이면 그 device_id 를 키로 auto 생성한다(하위호환 — 기존 동작 보존).
-func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string) (string, *Device, bool) {
+func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string, lineHint string) (string, *Device, bool) {
 	if composite {
 		ck := compositeKeyFromFields(fields)
 		if id, ok := a.secondary[ck]; ok {
@@ -527,7 +566,9 @@ func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string
 		id := newDeviceID()
 		dev := &Device{DeviceID: id, Online: false, Source: "auto", composite: true}
 		applyAddressFields(dev, fields)
-		dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+		// lineHint 는 호출부(ingestState)가 로스터 락 취득 전에 ResolveLine 으로 해석해 주입한다
+		// (레지스트리 간 락 중첩 금지, REQ-07-01). 미해석이면 "" → 3-세그먼트(RD-4).
+		dev.Name = composeName(lineHint, dev.Station, dev.Place, dev.Index)
 		dev.Address = nonAttrFields(fields)
 		a.devices[id] = dev
 		a.indexDeviceLocked(dev)
@@ -827,6 +868,14 @@ func (a *XSFMAgent) Process(data []byte) ([]byte, error) {
 		return a.handleSetGroup(req, data)
 	case "list_groups":
 		return a.handleListGroups()
+
+	// 라인 1급 엔티티 CRUD (SPEC-XSFM-LINE-001 M1, REQ-01-03/05/06).
+	case "add_line":
+		return a.handleAddLine(req)
+	case "remove_line":
+		return a.handleRemoveLine(req)
+	case "list_lines":
+		return a.handleListLines()
 
 	// 후속 배치에서 구현.
 	case "set_line", "set_station",

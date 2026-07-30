@@ -32,8 +32,15 @@ var (
 	ErrControlTimeout = errors.New("xsfm: control response timeout")
 	// ErrStationNotFound 는 역사 레지스트리에서 station 을 찾지 못했을 때 반환된다.
 	ErrStationNotFound = errors.New("xsfm: station not found")
-	// ErrLineNotFound 는 역사 레지스트리에서 line 에 속한 station 이 없을 때 반환된다.
+	// ErrLineNotFound 는 라인 레지스트리에서 미존재 라인을 조회/제거하려 할 때 반환된다
+	// (SPEC-XSFM-LINE-001 §4.2).
 	ErrLineNotFound = errors.New("xsfm: line not found")
+	// ErrLineInUse 는 참조 중(해당 라인 코드를 참조하는 역사가 존재)인 라인을 remove_line
+	// 하려 할 때 반환된다 (SPEC-XSFM-LINE-001 REQ-01-05a/RD-5, dangling 참조 방지).
+	ErrLineInUse = errors.New("xsfm: line is in use (referenced by one or more stations)")
+	// ErrInvalidCode 는 신규 코드(add_line/add_group)가 통일 코드 포맷
+	// (^[a-z0-9][a-z0-9_-]*$)을 위반할 때 반환된다 (SPEC-XSFM-LINE-001 RD-6).
+	ErrInvalidCode = errors.New("xsfm: invalid code format (must match ^[a-z0-9][a-z0-9_-]*$)")
 	// ErrPlaceNotFound 는 역사 내에서 place 를 찾지 못했을 때 반환된다 (remove_place/get_place).
 	ErrPlaceNotFound = errors.New("xsfm: place not found")
 	// ErrNotConnected 는 direct 모드에서 브로커에 연결되지 않은 상태로 발행을 시도할 때 반환된다.

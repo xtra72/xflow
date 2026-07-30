@@ -234,10 +234,19 @@ func compositeKeyFromFields(fields map[string]string) string {
 	return compositeKey(fields[placeholderStationCode], fields[placeholderPlaceCode], toInt(fields[placeholderDeviceIndex]))
 }
 
-// composeName 은 표시용 Name 을 위치 계층으로 합성한다: "{station}:{place}:{index-3자리-0채움}".
+// composeName 은 표시용 Name 을 위치 계층으로 합성한다 (SPEC-XSFM-LINE-001 REQ-04-01/03, RD-4).
+//
+//   - line != "" → "{line}:{station}:{place}:{index-3자리-0채움}" (4-세그먼트)
+//   - line == "" → "{station}:{place}:{index-3자리-0채움}"        (3-세그먼트, 하위호환·무회귀)
+//
+// line 은 호출부에서 ResolveLine(station) 로 해석해 주입한다(순수 함수 유지, 레지스트리 의존
+// 주입 회피). 라인 코드가 미해석(빈 라인·미등록 station)이면 라인 세그먼트를 생략한다(RD-4).
 // compositeKey 와 달리 index 를 3자리로 0-채움한다(예: 3 → "003") — 사람이 읽는 표시 규약이며,
-// 보조 인덱스 키(정규화 int)와는 목적이 다르다(표시 vs 매칭).
-func composeName(station, place string, index int) string {
+// 보조 인덱스 키(정규화 int)와는 목적이 다르다(표시 vs 매칭, REQ-04-05).
+func composeName(line, station, place string, index int) string {
+	if line != "" {
+		return fmt.Sprintf("%s:%s:%s:%03d", line, station, place, index)
+	}
 	return fmt.Sprintf("%s:%s:%03d", station, place, index)
 }
 

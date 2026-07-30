@@ -241,18 +241,31 @@ func (a *XSFMAgent) handleAddGroup(req processRequest, raw []byte) ([]byte, erro
 	if req.Name == "" {
 		return nil, fmt.Errorf("%w: add_group requires name", ErrInvalidCommand)
 	}
-	gid := customIDFor(req.Name)
+	// SPEC-XSFM-LINE-001 RD-2: code 가 제공되면 통일 코드 포맷을 검증하고 id=custom:<code> 로
+	// 인코딩한다. code 키가 아예 없는 레거시 요청(name 만 제공)은 무회귀 폴백으로 id=custom:<name>
+	// 을 사용한다(GROUP-001 동작 보존). code 키가 존재하지만 빈/비적합이면 ErrInvalidCode 로 거부.
+	var gid, code string
+	if keyPresent(raw, req.Params, "code") {
+		if !validCode(req.Code) {
+			return nil, fmt.Errorf("%w: %q", ErrInvalidCode, req.Code)
+		}
+		code = req.Code
+		gid = groupPrefixCustom + code
+	} else {
+		gid = customIDFor(req.Name)
+		code = customIDName(gid)
+	}
 	if a.groups.exists(gid) {
 		return nil, fmt.Errorf("%w: %q", ErrGroupAlreadyExists, gid)
 	}
 	members, _ := extractMembers(raw, req.Params)
 
-	g := Group{ID: gid, Name: req.Name, Type: groupTypeCustom, Members: dedupSortedStrings(members)}
+	g := Group{ID: gid, Name: req.Name, Type: groupTypeCustom, Code: code, Members: dedupSortedStrings(members)}
 	if err := a.groups.UpsertGroup(g); err != nil {
 		return nil, err
 	}
 
-	a.enrollPrimaryIfEmpty(members, req.Name)
+	a.enrollPrimaryIfEmpty(members, customIDName(gid))
 	a.sendEvent("group_registered", map[string]any{"group_id": gid, "name": req.Name})
 
 	return json.Marshal(map[string]any{
@@ -411,6 +424,7 @@ func (a *XSFMAgent) handleListGroups() ([]byte, error) {
 			"id":           g.ID,
 			"name":         g.Name,
 			"type":         g.Type,
+			"code":         g.Code,
 			"ref":          g.Ref,
 			"member_count": len(members),
 			"members":      members,
@@ -422,6 +436,25 @@ func (a *XSFMAgent) handleListGroups() ([]byte, error) {
 // ---------------------------------------------------------------------------
 // params/raw 추출 헬퍼
 // ---------------------------------------------------------------------------
+
+// keyPresent 는 raw 최상위 JSON 키 또는 params 키에 key 가 존재하는지 판정한다(부분 갱신/신규
+// 폼 판별용, handleSetGroup 의 present 패턴 재사용). raw 파싱 실패는 params 만 검사한다.
+func keyPresent(raw []byte, params map[string]any, key string) bool {
+	if len(raw) > 0 {
+		var top map[string]json.RawMessage
+		if json.Unmarshal(raw, &top) == nil {
+			if _, ok := top[key]; ok {
+				return true
+			}
+		}
+	}
+	if params != nil {
+		if _, ok := params[key]; ok {
+			return true
+		}
+	}
+	return false
+}
 
 // extractMembers 는 members 목록을 raw 최상위 또는 params 에서 추출한다(HTTP exec 경로 지원).
 // 반환: (문자열 슬라이스, 존재 여부). 존재하지만 빈 배열이면 (빈 슬라이스, true).

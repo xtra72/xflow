@@ -46,6 +46,7 @@ type Group struct {
 	ID      string   `json:"id"`                // 타입 접두사 인코딩 식별자.
 	Name    string   `json:"name"`              // 표시 이름.
 	Type    string   `json:"type"`              // "line" | "station" | "custom".
+	Code    string   `json:"code,omitempty"`    // 커스텀 그룹 코드(SPEC-XSFM-LINE-001 RD-2). id 의 custom:<code> 접미.
 	Ref     string   `json:"ref,omitempty"`     // 파생 그룹의 원천 참조(station 코드/line id). custom 은 "".
 	Members []string `json:"members,omitempty"` // device_id 목록 — custom 에서만 저장.
 }
@@ -260,6 +261,65 @@ func (r *GroupRegistry) importLegacyMemberships(pairs []legacyMembership) {
 	if err := r.persist(snapshot); err != nil {
 		// 마이그레이션 영속 실패는 시동을 막지 않는다(best-effort, 인메모리 상태는 유효).
 		_ = err
+	}
+}
+
+// migrateCodes 는 로드 1회성 마이그레이션으로 레거시 custom:<name> 그룹 id 를 custom:<code>
+// 로 승격한다(SPEC-XSFM-LINE-001 REQ-05-02, §4.6). 코드 포맷을 만족하는 name 은 code=name
+// 으로 id 를 유지·승격하고, 포맷 비적합 name 은 slugify 하여 code 를 생성(id=custom:<slug>)
+// 하되 Name 표시값은 원문을 보존한다. 충돌 시 접미 번호로 유일성을 보장한다(REQ-05-02a).
+//
+// 비파괴·멱등: 원본 Name/Members 를 보존하고, 재기동 시 이미 승격된(포맷 적합) 코드는 그대로
+// 유지되어 동일 결과를 낸다. 접미 번호 부여는 정렬된 id 순서로 결정적이다.
+//
+// @MX:WARN: 자체 락 하에서 캐시를 재구성하고 스냅샷을 뜬 뒤 락을 해제하고 persist 한다.
+// @MX:REASON: 파일 I/O 를 락 구간에 걸치면 동시 조회가 블록되고 잠금 순서가 얽힌다(REQ-07-01).
+func (r *GroupRegistry) migrateCodes() {
+	r.mu.Lock()
+	ids := make([]string, 0, len(r.cache))
+	for id := range r.cache {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // 결정적 접미 번호 부여를 위한 안정 순서.
+
+	// 1차: 포맷 적합 코드를 먼저 예약해, slugify 결과가 그 코드들을 피해 접미 번호를 받도록 한다.
+	used := make(map[string]bool)
+	for _, id := range ids {
+		code := customIDName(id)
+		if validCode(code) {
+			used[code] = true
+		}
+	}
+
+	newCache := make(map[string]Group, len(r.cache))
+	for _, id := range ids {
+		g := r.cache[id]
+		g.Type = groupTypeCustom
+		code := customIDName(id)
+		if validCode(code) {
+			g.Code = code
+			g.ID = groupPrefixCustom + code // 불변(포맷 적합).
+			newCache[g.ID] = g
+			continue
+		}
+		// 포맷 비적합: slugify + 충돌 접미 번호.
+		slug := slugify(code)
+		final := slug
+		for n := 2; used[final]; n++ {
+			final = fmt.Sprintf("%s-%d", slug, n)
+		}
+		used[final] = true
+		g.Code = final
+		g.ID = groupPrefixCustom + final
+		// Name 은 원문 표시값 보존(레거시 name = 원본). Members 보존.
+		newCache[g.ID] = g
+	}
+	r.cache = newCache
+	snapshot := r.snapshotLocked()
+	r.mu.Unlock()
+
+	if err := r.persist(snapshot); err != nil {
+		_ = err // 마이그레이션 영속 실패는 시동을 막지 않는다(인메모리 상태 유효).
 	}
 }
 

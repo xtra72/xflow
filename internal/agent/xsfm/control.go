@@ -342,6 +342,10 @@ func (a *XSFMAgent) handleSetMultiple(req processRequest) ([]byte, error) {
 // 양 모드에서 device_registered 이벤트를 방출한다. state 토픽 구독은 Start 의 단일 와일드카드
 // 구독이 모든 디바이스를 이미 커버하므로 디바이스별 구독을 하지 않는다 (M14).
 func (a *XSFMAgent) handleAddDevice(req processRequest) ([]byte, error) {
+	// 라인 세그먼트 해석은 로스터 락 취득 전에 수행한다(레지스트리 간 락 중첩 금지, REQ-07-01).
+	// 미해석이면 "" → composeName 이 3-세그먼트로 합성한다(RD-4).
+	line := a.resolveLineFor(req.Station)
+
 	a.mu.Lock()
 
 	// 명시적 device_id 경로(하위호환): 사용자/브리지가 부여한 device_id 를 그대로 로스터 키로
@@ -377,7 +381,7 @@ func (a *XSFMAgent) handleAddDevice(req processRequest) ([]byte, error) {
 	id := newDeviceID()
 	// 사용자가 비어있지 않은 name 을 주면 커스텀 이름으로 고정(sticky)하고, 아니면 위치 계층에서
 	// 파생한다. sticky 여부는 nameOverridden 으로 표시해 이후 주소 변경 시 재계산을 막는다.
-	name := composeName(req.Station, req.Place, req.Index)
+	name := composeName(line, req.Station, req.Place, req.Index)
 	nameOverridden := false
 	if req.Name != "" {
 		name = req.Name
@@ -523,16 +527,29 @@ func (a *XSFMAgent) handleSetDevice(req processRequest, raw []byte) ([]byte, err
 	if present("index") {
 		dev.Index = req.Index
 	}
-	// composite 파생 이름 재계산: override 가 아닌 composite 디바이스에 한해, 주소 변경 또는
-	// name override 해제(present("name") && 빈값)를 트리거로 새 위치에서 Name 을 재계산한다.
-	// nameOverridden 이면(커스텀 이름 sticky) 재계산하지 않아 이름이 유지된다. blob 은 재계산 없음.
-	if dev.composite && !dev.nameOverridden && (addrChange || present("name")) {
-		dev.Name = composeName(dev.Station, dev.Place, dev.Index)
-	}
+	// composite 파생 이름 재계산 판정: override 가 아닌 composite 디바이스에 한해, 주소 변경 또는
+	// name override 해제(present("name"))를 트리거로 새 위치에서 Name 을 재계산한다(RD-4 4-세그먼트
+	// 재계산 포함). nameOverridden(sticky)·blob 은 재계산 없음. 실제 재계산은 라인 세그먼트 해석을
+	// 위해 로스터 락 해제 후 수행한다(레지스트리 간 락 중첩 금지, REQ-07-01).
+	needRecompute := dev.composite && !dev.nameOverridden && (addrChange || present("name"))
+	recStation, recPlace, recIndex := dev.Station, dev.Place, dev.Index
 	if addrChange {
 		a.indexDeviceLocked(dev)
 	}
 	a.mu.Unlock()
+
+	// 파생 이름 재계산(RD-4): 라인 코드 해석(ResolveLine, station 레지스트리 자체 락)은 로스터 락을
+	// 해제한 뒤 수행하고, 결과만 두 번째 짧은 임계구역에서 반영한다 — 두 락을 중첩하지 않는다.
+	// 재확인(composite && !nameOverridden) 후 반영해 그 사이 override 가 걸렸으면 sticky 를 존중한다.
+	if needRecompute {
+		line := a.resolveLineFor(recStation)
+		newName := composeName(line, recStation, recPlace, recIndex)
+		a.mu.Lock()
+		if d, ok := a.devices[req.DeviceID]; ok && d.composite && !d.nameOverridden {
+			d.Name = newName
+		}
+		a.mu.Unlock()
+	}
 
 	// B7: 로스터 변경 후 영속화(best-effort). 설정 디바이스 변경은 스냅샷에서 제외되어 반영되지 않는다.
 	a.persistRoster()
