@@ -1,6 +1,7 @@
 # Acceptance Criteria — SPEC-XSFM-NAMESEL-001
 
 > Given-When-Then 인수 시나리오. 요구 추적: `spec.md` §4.7. Definition of Done 은 §6 참조.
+> 버전: v0.3.0(status: completed) — **핵심 구현 완료(M1~M3, `2acb980d`)**. AC 1.x~5.x 전 시나리오가 테스트로 검증됨(`go test ./...` exit 0, 42 pkgs; 신규 함수 커버리지 100%; `-race` 클린; 무회귀). 프런트 미변경으로 기존 vitest/`tsc` 자동 무회귀(§6 DoD). **M4(프런트엔드 이름 제어 UI)는 선택·저우선으로 이연(DEFERRED)** — 착수 시 별도 vitest/`tsc` 검증 필요(§6 DoD 조항). as-implemented 분기 4건은 spec.md §7.
 > 버전: v0.2.0 — 구 OQ-1~3 사용자 확정(RD-4~6) 반영. 아래 시나리오는 확정값 기준으로 구체화됨: 우선순위 체인 `device_id > device_name > station > line > group_id > group_name`(RD-4, 개별 먼저), group_name 전 타입 매칭(RD-5), trim 후 정확 일치 + 대소문자 구분(RD-6). v0.1.0 = 제안 기본안 기준 초안.
 
 ## AC 1.x — 이름 리졸버 + 모호성/부재 (Module 1, Module 4)
@@ -145,10 +146,10 @@
 
 ## 6. Definition of Done
 
-- [ ] REQ-01~04 + NFR 구현 완료, spec §4.7 추적표의 모든 anchor 반영
-- [ ] AC 1.x~5.x 전부 통과(테스트 코드로 검증)
-- [ ] `go test -race ./internal/agent/xsfm/... ./internal/node/...` 클린
-- [ ] xsfm 패키지 커버리지 ≥85% 목표 유지, 기존 테스트 무회귀
-- [ ] 프런트 미변경 시 기존 vitest/`tsc` 자동 무회귀 (M4 착수 시 별도 검증)
+- [x] REQ-01~04 + NFR 구현 완료, spec §4.7 추적표의 모든 anchor 반영 (`2acb980d`, M1~M3)
+- [x] AC 1.x~5.x 전부 통과(테스트 코드로 검증) — `name_resolver_test.go`(신규 +381), `xsfm_test.go`(+77)
+- [x] `go test -race ./internal/agent/xsfm/... ./internal/node/...` 클린
+- [x] xsfm 패키지 커버리지 — 신규 함수 커버리지 **100%**, 기존 테스트 무회귀
+- [x] 프런트 미변경으로 기존 vitest/`tsc` 자동 무회귀 (M4(프런트 이름 제어 UI) 이연 — 착수 시 별도 검증)
 - [x] OQ-1~3 사용자 확정값 반영 완료(RD-4~6, v0.2.0) — 우선순위 체인(RD-4)·전 타입 group_name 매칭(RD-5)·trim+대소문자 구분(RD-6) baked-in, 본문/AC 정정 완료
-- [ ] `gofmt`/`goimports` 클린, Conventional Commits + SPEC 참조
+- [x] `gofmt`/`goimports` 클린, Conventional Commits + SPEC 참조 (`feat(xsfm): ... SPEC-XSFM-NAMESEL-001 M1~M3`)

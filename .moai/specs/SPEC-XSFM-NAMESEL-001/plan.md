@@ -1,6 +1,7 @@
 # Implementation Plan — SPEC-XSFM-NAMESEL-001
 
 > xsfm 이름 기반 제어 셀렉터(`device_name`/`group_name`). Tier M. 상세 요구는 `spec.md`, 인수 기준은 `acceptance.md` 참조.
+> 버전: v0.3.0(status: completed) — **핵심 구현 완료(M1~M3, `2acb980d`)**. M1(에이전트 리졸버 `name_resolver.go` + `dispatchControl` 우선순위 체인 + `handleIndividualControl` 추출) + M2(노드 `buildXsfmControlCommand`/`hasXsfmControlCommand` pass-through) + M3(테스트/무회귀). 검증: `go test ./...` exit 0(42 pkgs), 신규 함수 커버리지 100%, `-race` 클린. **M4(프런트엔드 이름 제어 UI)는 선택·저우선으로 이연(DEFERRED)** — 에이전트+노드 레벨에서 기능 완전 사용 가능, "completed" 는 M1~M3 핵심에 한함(spec.md §7.5). as-implemented 분기 4건은 spec.md §7.
 > 버전: v0.2.0 — 구 OQ-1~3 사용자 확정(RD-4 우선순위 체인 `device_id > device_name > station > line > group_id > group_name`, RD-5 전 타입 group_name 매칭, RD-6 trim+대소문자 구분) 반영. v0.1.0 = 초안(RD-1~3).
 
 ## 1. 기술 접근 (Technical Approach)

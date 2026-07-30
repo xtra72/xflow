@@ -1,8 +1,8 @@
 ---
 id: SPEC-XSFM-NAMESEL-001
 title: "xsfm 이름 기반 제어 셀렉터 (device_name / group_name)"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-30
 updated: 2026-07-30
 author: xtra
@@ -20,6 +20,7 @@ tags: "xsfm, control, selector, device-name, group-name, name-resolver, ambiguit
 | ---------- | ----- | --------------------------------------------------------------------- |
 | 2026-07-30 | 0.1.0 | 초기 SPEC 작성 — 제어 명령에서 **이름 기반 셀렉터**(`device_name`/`group_name`)를 신설. (1) 신규 processRequest 필드 `DeviceName`/`GroupName`(json `device_name`/`group_name`) — CRUD `name` 필드와 별개, (2) 에이전트 이름 리졸버 `DeviceByName`/`GroupByName`(스냅샷-안전 락 규율), (3) 모호성 = 거부(≥2 매치 → `ErrAmbiguousName`, 무방출), 0 매치 → not-found(`ErrDeviceNotFound`/`ErrGroupNotFound`), 정확히 1개 → 진행, (4) 셀렉터 우선순위 확장(제안 `device_id > device_name > station > line > group_id > group_name`), (5) 노드 pass-through(buildXsfmControlCommand top-level 방출 + hasXsfmControlCommand 라우팅 + fillFromParams 승격), (6) 기존 셀렉터 무회귀. RD-1~3 사용자 확정 반영. 미해결 열린 질문 3건(OQ-1 우선순위 순서, OQ-2 그룹 이름 공간, OQ-3 case/trim). |
 | 2026-07-30 | 0.2.0 | 열린 질문 3건(OQ-1~3) 사용자 확정 → RD-4~6 으로 승격하고 본문 baked-in, §6 Open Questions 제거(잔여 열린 질문 없음). **RD-4(우선순위)**: 셀렉터 우선순위 체인 = `device_id > device_name > station > line > group_id > group_name` 확정 — "개별 먼저"(device_id/device_name 개별 셀렉터가 집계/그룹 셀렉터에 선행), device_name 은 device_id 바로 뒤. **RD-5(group_name 이름 공간)**: `GroupByName` 은 **전 타입**(custom + 파생 station/line 그룹) 표시명 매칭 — 타입 간 충돌은 RD-2 의 `ErrAmbiguousName`(안전 거부)으로 처리. **RD-6(매칭 규칙)**: 공백 trim 후 정확 일치, **대소문자 구분**(case-sensitive) — 입력·비교 대상 Name 양쪽 trim, case folding 없음. §3 EARS(Module 1 리졸버 매칭·전 타입, Module 2 우선순위 체인)·§4 명세 정정. |
+| 2026-07-30 | 0.3.0 | **구현 완료(M1~M3) — sync-phase 3-phase close.** 백엔드 M1(에이전트 리졸버 + 디스패치) + M2(노드 pass-through) + M3(테스트 + 무회귀 검증) 구현·커밋(`2acb980d`). 신규 `name_resolver.go`(`DeviceByName`/`GroupByName`, trim+대소문자 구분, ≥2→`ErrAmbiguousName`, 0→NotFound, 스냅샷-안전 락), `dispatchControl` 우선순위 체인 `device_id > device_name > station > line > group_id > group_name`(`handleIndividualControl` 추출), `GroupByName` 전 타입 매칭(신규 `allGroups()` 추출), 노드 `buildXsfmControlCommand` device_name/group_name top-level pass-through + `hasXsfmControlCommand` 라우팅 + `xsfmExtractDeviceName`/`GroupName`, 신규 `ErrAmbiguousName` 센티널. 검증: `go test ./...` exit 0(42 pkgs), 신규 함수 커버리지 **100%**, `-race` 클린, 무회귀. `status: draft → completed`(핵심 M1~M3 기준), `version: 0.2.0 → 0.3.0`. as-implemented 분기 4건은 §7 신설. **M4(프런트엔드 이름 제어 UI)는 선택·저우선(§plan)으로 이연** — 에이전트+노드 레벨에서 기능 완전 사용 가능, "completed" 는 핵심 기능(M1~M3)에 한함(§7.5 명시). |
 
 ---
 
@@ -250,3 +251,39 @@ ErrAmbiguousName = errors.New("xsfm: ambiguous name (matches multiple targets)")
 ## 6. 열린 질문 (Open Questions)
 
 > 잔여 열린 질문 없음. 구 OQ-1~3 은 사용자 확정으로 RD-4~6(§5) 에 승격되어 본문에 baked-in 되었다(v0.2.0).
+
+---
+
+## 7. Implementation Notes (as-implemented, spec-anchored Level 2)
+
+> 아래는 구현(`2acb980d`, M1~M3) 이 사양(§3·§4) 과 **동작 보존적으로** 갈린 지점을 기록한 것이다(spec-anchored L2 규율). 어떤 분기도 요구·인수 기준의 의미를 바꾸지 않으며, 모두 §4 사양과 정합한다. 커버리지·테스트 수치는 run-phase(오케스트레이터) 보고 값이다.
+
+### 7.1 우선순위 체인 분산 배치 + `handleIndividualControl` 추출 (분기 1)
+
+- **사양(§4.3)**: `dispatchControl`/`handleSelectorControl` 에 확정 순서(RD-4) `device_id > device_name > station > line > group_id > group_name` 를 하나의 순차 게이트로 확장.
+- **구현**: 우선순위 체인이 `dispatchControl`(최상위 `device_id` 분기) + `handleSelectorControl`(스위치 진입 전 `device_name` if-guard, `group_name` 을 최종 case 로) 로 **분산 배치**되었다. 개별 제어 경로는 `handleIndividualControl` 로 **추출(extract-method)** 하여 `device_id`·`device_name` 두 진입점이 동일 개별 제어 로직을 공유한다.
+- **사유**: 개별(device_id/device_name)과 집계(station/line/group_id/group_name) 셀렉터의 자연스러운 경계를 코드 구조에 반영. extract-method 는 동작 보존적이며 두 개별 진입점의 중복을 제거한다(enforce simplicity). 확정 순서(RD-4)는 코드/주석/테스트에 그대로 고정 — 동작 순서 불변.
+
+### 7.2 `GroupByName` 전 타입 매칭 = `allGroups()` 추출 (분기 2)
+
+- **사양(§4.2, RD-5)**: `GroupByName` 은 전 타입 그룹(custom + 파생 station/line) 표시명을 매칭.
+- **구현**: 전 타입 순회를 위해 `handleListGroups` 에서 **`allGroups()`(custom + 파생 station/line 그룹 집합)를 추출**하고, 이를 `GroupByName` 과 `handleListGroups` 가 **공유**한다(DRY, 목록·해소 경로 단일 SSOT).
+- **사유**: 전 타입 집합을 도출하는 로직이 두 곳에 중복 구현되는 것을 방지. 목록(`list_groups`) 과 이름 해소(`GroupByName`) 가 동일한 그룹 세계관을 보므로 결과 일관성 보장.
+
+### 7.3 `group_name` fan-out 집계 셀렉터 라벨 (분기 3)
+
+- **사양(§4.3)**: `group_name` 해소 후 해소된 group id 를 기존 group_id 경로(GroupMembers → fanOutControl)에 넣어 재사용.
+- **구현**: `group_name` fan-out 집계 응답의 셀렉터 참조가 `selectorRef{Type:"group_name"}` 로 표기된다(해소 전 원 셀렉터 종류를 집계 응답에 보존).
+- **사유**: 집계 응답 소비자가 "무엇으로 대상이 지정되었는지"(group_id 가 아닌 group_name) 를 식별할 수 있게 함. fan-out 실행 자체는 해소된 group id 로 기존 경로를 무변경 재사용.
+
+### 7.4 구현 배치 (분기 4 — 사양 권장 대안 채택)
+
+- **사양(§4.3)**: 리졸버는 신규 파일(예: `name_resolver.go`) **또는** `group_membership.go` 확장; 디스패치 게이트는 `group.go` 에서 확장.
+- **구현**: 리졸버를 **신규 파일 `name_resolver.go`** 에 배치(사양의 권장 대안). 디스패치 확장은 `group.go`(`dispatchControl`/`handleSelectorControl`) 에서 수행. `control.go` 는 불변 유지.
+- **사유**: `agent.go`/`control.go` diff 최소화(GROUP-001 의 `group_membership.go` 신규 파일 패턴 계승), 이름 해소 로직의 응집도 확보.
+
+### 7.5 M4(프런트엔드 이름 제어 UI) 이연 — "completed" 범위 명시
+
+- **범위**: 본 SPEC 의 `status: completed` 전이는 **핵심 기능(M1~M3: 에이전트 리졸버·디스패치 + 노드 pass-through + 테스트/무회귀)** 에 대한 것이다.
+- **이연**: **M4(프런트엔드 이름 기반 제어 입력 UI)** 는 plan §2 에서 **선택·저우선(Priority Low)** 으로 분류되어 **이연(DEFERRED)** 되었다. 이름 셀렉터 기능은 에이전트+노드 레벨에서 이미 **완전히 사용 가능**하다 — flow 노드가 `device_name`/`group_name` 메시지를 제어로 라우팅하고, HTTP exec 계약(`params.device_name`/`params.group_name` 승격) 으로도 호출 가능하므로 전용 UI 없이도 기능이 온전하다.
+- **overclaim 방지**: 따라서 "completed" 는 M4 UI 를 포함하지 않는다. M4 는 선택적 후속(optional follow-up)으로 남으며, 착수 시 별도 검증(vitest/`tsc`)이 필요하다. plan §2 Optional Goal / acceptance §6 DoD 의 "M4 착수 시 별도 검증" 조항과 정합한다.

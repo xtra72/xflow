@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 추가 — xsfm 이름 기반 제어 셀렉터(device_name / group_name)
+
+- **`xsfm` 에이전트·노드에 사람이 읽는 이름(`device_name`/`group_name`)으로 제어 대상을 지정하는 이름 기반 셀렉터 도입 (Non-breaking, 비침습 가산 셀렉터)**
+
+  기존 제어 대상 지정은 `device_id`(개별) 또는 `station`/`line`/`group_id`(셀렉터)로만 가능했다. 여기에 기존 셀렉터의 자료구조·우선순위·디스패치 경로를 **무회귀**로 두고, 이름을 **정확히 하나의 대상으로 해소한 뒤 기존 개별/fan-out 경로를 재사용**하는 얇은 해소 레이어를 **가산**했다. 백엔드+노드 M1~M3(`2acb980d`)로 핵심 완성. 프런트엔드 이름 제어 UI(M4)는 선택·저우선으로 이연 — 에이전트+노드 레벨에서 기능 완전 사용 가능.
+
+  - **이름 리졸버(신규 `name_resolver.go`)**: `DeviceByName`/`GroupByName` — 공백 trim 후 정확 일치, **대소문자 구분**(case-sensitive, RD-6). ≥2 매치 시 신규 센티널 `ErrAmbiguousName` 으로 **거부(무방출, fail-closed, RD-2)**, 0 매치 시 `ErrDeviceNotFound`/`ErrGroupNotFound`, 정확히 1개일 때만 진행. 스냅샷-안전 락 규율(로스터/그룹 레지스트리 락을 스냅샷 후 해제, 락 미중첩 — RWMutex 재진입 deadlock 회피). `GroupByName` 은 **전 타입 그룹**(custom + 파생 station/line) 표시명 매칭(RD-5), 타입 간 충돌도 `ErrAmbiguousName` 로 안전 거부.
+  - **셀렉터 우선순위 체인 확장**: `dispatchControl`/`handleSelectorControl` 이 확정 순서 **`device_id > device_name > station > line > group_id > group_name`**(RD-4, "개별 먼저")로 확장. `device_name` → 개별 제어(controlDevice), `group_name` → 그룹 fan-out(GroupMembers → fanOutControl) 로 해소 후 **기존 경로 재사용**(제어 의미론 재구현 없음). 신규 `processRequest` 필드 `DeviceName`/`GroupName`(json `device_name`/`group_name`, CRUD `name` 과 별개) + `fillFromParams` 승격.
+  - **노드 pass-through**(`internal/node/xsfm.go`): `buildXsfmControlCommand` 가 `device_name`/`group_name` 을 top-level 셀렉터로 방출, `hasXsfmControlCommand` 가 이름 셀렉터 존재 시 제어로 라우팅, `xsfmExtractDeviceName`/`xsfmExtractGroupName` 미러. 다중 셀렉터 공존 시 노드는 드롭 없이 모두 top-level 로 실어 우선순위 판정을 에이전트에 위임.
+  - **분기(Divergence, as-implemented — spec.md §7)**: (1) 우선순위 체인이 `dispatchControl`(device_id) + `handleSelectorControl`(device_name if-guard + group_name 최종 case) 로 분산 배치, 개별 제어는 `handleIndividualControl` 추출(동작 보존). (2) `GroupByName` 전 타입 매칭을 위해 `handleListGroups` 에서 `allGroups()`(custom+파생) 추출·공유(DRY). (3) `group_name` fan-out 집계 셀렉터 라벨 `selectorRef{Type:"group_name"}`(원 셀렉터 종류 보존). (4) 리졸버는 신규 `name_resolver.go` 배치(사양 권장 대안), `control.go` 불변.
+  - **품질**: 신규 함수 커버리지 **100%**, `go test ./...` exit 0(42 pkgs, 0 FAIL), `-race` 클린, 기존 셀렉터/CRUD `name`/그룹 fan-out 무회귀(NF-01). MQTT 토픽/페이로드 규약 불변(순수 논리 해소 레이어, NF-03). 신규 외부 의존성 0.
+  - **관련**: SPEC-XSFM-NAMESEL-001 v0.3.0(핵심 M1~M3 구현 완료, `2acb980d`, Tier M). M4(프런트 이름 제어 UI) 이연(optional follow-up). SPEC-XSFM-001 의 셀렉터 표면을 가산 확장.
+
 ### 추가 — xsfm 에이전트 수신 forward 옵션 + 상태 방출 모드(event/interval/both)
 
 - **`xsfm` 에이전트에 (1) 수신 파싱-상태 전달 옵션과 (2) 상태 방출 모드를 도입 (Non-breaking, 비침습 가산 방출 레이어)**
