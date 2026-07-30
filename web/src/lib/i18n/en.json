@@ -119,7 +119,8 @@
         "customControl": "User-defined control",
         "facilityLine": "Station and device status with bulk control for a line",
         "facilityStation": "Device status with bulk control for a station",
-        "facilityDevice": "Individual facility device status and control"
+        "facilityDevice": "Individual facility device status and control",
+        "facilityGroup": "Status and bulk control by group (station/line/custom)"
       },
       "labels": {
         "propertiesGrid": "Properties grid",
@@ -160,7 +161,8 @@
       "customControl": "Custom Control",
       "facilityLine": "Facility Line",
       "facilityStation": "Facility Station",
-      "facilityDevice": "Facility Device"
+      "facilityDevice": "Facility Device",
+      "facilityGroup": "Facility Group"
     },
     "acPanel": {
       "indoorTemp": "Indoor Temp",
@@ -227,6 +229,14 @@
       "noDevices": "No devices",
       "unclassified": "Unclassified",
       "fault": "Fault",
+      "group": {
+        "noGroups": "No groups registered.",
+        "type": {
+          "custom": "Custom",
+          "station": "Station",
+          "line": "Line"
+        }
+      },
       "stat": {
         "total": "Total",
         "online": "Online",
@@ -1253,7 +1263,37 @@
         "series": "Series",
         "sessions": "Sessions",
         "devices": "Device",
-        "stations": "Location"
+        "stations": "Location",
+        "groups": "Groups"
+      },
+      "groups": {
+        "groupsCount": "{count} groups",
+        "addGroup": "Add group",
+        "editGroup": "Edit group",
+        "noGroups": "No groups registered.",
+        "name": "Name",
+        "namePlaceholder": "Group name",
+        "nameRequired": "Enter a group name.",
+        "members": "Members",
+        "memberSelected": "{count} selected",
+        "noDevicesHint": "No devices registered.",
+        "edit": "Edit",
+        "remove": "Delete",
+        "save": "Save",
+        "add": "Add",
+        "saving": "Saving...",
+        "addSuccess": "Group added.",
+        "updateSuccess": "Group updated.",
+        "removeSuccess": "Group deleted.",
+        "removeConfirmTitle": "Delete group",
+        "removeConfirmMessage": "Delete group '{name}'?",
+        "opError": "Operation failed: {message}",
+        "unknownError": "Unknown error",
+        "type": {
+          "custom": "Custom",
+          "station": "Station",
+          "line": "Line"
+        }
       },
       "airDevices": {
         "addDevice": "Add device",

@@ -74,6 +74,7 @@ import { useUIStore } from '@/stores/uiStore';
 
 import XsfmDevicesTab from './XsfmDevicesTab';
 import XsfmStationsTab from './XsfmStationsTab';
+import XsfmGroupsTab from './XsfmGroupsTab';
 import InfluxdbManagementPanel from './InfluxdbManagementPanel';
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
@@ -111,7 +112,7 @@ interface AgentDetailPanelProps {
   agentName?: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management' | 'stations';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management' | 'stations' | 'groups';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -155,6 +156,12 @@ const HAS_MANAGEMENT_TAB = new Set<string>(['influxdb']);
  */
 const HAS_STATIONS_TAB = new Set<string>(['xsfm']);
 
+/**
+ * 그룹(group) 탭을 표시하는 에이전트 타입 (SPEC-XSFM-GROUP-001 Module 6).
+ * xsfm 에이전트만 그룹 CRUD + 멤버 편집 + 그룹 일괄 제어 탭을 노출한다.
+ */
+const HAS_GROUPS_TAB = new Set<string>(['xsfm']);
+
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
   const showDevices = !NO_DEVICES_TAB.has(agentType);
@@ -164,6 +171,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
   const showSeries = HAS_SERIES_TAB.has(agentType);
   const showManagement = HAS_MANAGEMENT_TAB.has(agentType);
   const showStations = HAS_STATIONS_TAB.has(agentType);
+  const showGroups = HAS_GROUPS_TAB.has(agentType);
 
   // TSDB 에이전트는 기본 탭을 '시리즈', Store 에이전트는 '저장소',
   // 그 외에는 '통계' 를 기본 탭으로 선택한다.
@@ -184,6 +192,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
         {showSessions && <TabButton label={t('agents.detail.tabs.sessions')} active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
         {showDevices && <TabButton label={t('agents.detail.tabs.devices')} active={tab === 'devices'} onClick={() => setTab('devices')} />}
         {showStations && <TabButton label={t('agents.detail.tabs.stations')} active={tab === 'stations'} onClick={() => setTab('stations')} />}
+        {showGroups && <TabButton label={t('agents.detail.tabs.groups')} active={tab === 'groups'} onClick={() => setTab('groups')} />}
       </div>
 
       {/* 탭 컨텐츠 */}
@@ -198,6 +207,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
       {tab === 'stations' && showStations && <XsfmStationsTab agentId={agentId} />}
+      {tab === 'groups' && showGroups && <XsfmGroupsTab agentId={agentId} />}
     </div>
   );
 }

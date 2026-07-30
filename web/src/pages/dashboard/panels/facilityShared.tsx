@@ -307,8 +307,9 @@ function pickActive(
   return undefined;
 }
 
-/** FacilityBulkControl 대상 셀렉터: 역사(station) 또는 라인(line). */
-export type BulkSelector = { station: string } | { line: string };
+/** FacilityBulkControl 대상 셀렉터: 역사(station) · 라인(line) · 그룹(group_id).
+ *  group_id 는 SPEC-XSFM-GROUP-001 M6/M7 에서 추가(그룹 탭·설비 그룹 패널 일괄 제어). */
+export type BulkSelector = { station: string } | { line: string } | { group_id: string };
 
 interface FacilityBulkControlProps {
   agentId: string;

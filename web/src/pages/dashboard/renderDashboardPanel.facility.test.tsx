@@ -25,6 +25,12 @@ vi.mock('./panels/FacilityLinePanel', () => ({
     <div data-testid="stub-facility-line" data-title={props.title} data-cfg={JSON.stringify(props.config)} />
   ),
 }));
+// SPEC-XSFM-GROUP-001 M7: 설비 그룹 패널 스텁.
+vi.mock('./panels/FacilityGroupPanel', () => ({
+  default: (props: { panelId: string; title: string; config: Record<string, unknown> }) => (
+    <div data-testid="stub-facility-group" data-title={props.title} data-cfg={JSON.stringify(props.config)} />
+  ),
+}));
 
 import { renderDashboardPanel } from './renderDashboardPanel';
 
@@ -44,6 +50,7 @@ describe('renderDashboardPanel 설비 디스패치 (SPEC-FACILITY-DASHBOARD-001 
     { type: 'facility-device', testid: 'stub-facility-device', config: { agentId: 'a1', deviceId: 'd1' } },
     { type: 'facility-station', testid: 'stub-facility-station', config: { agentId: 'a1', station: 'ST-1' } },
     { type: 'facility-line', testid: 'stub-facility-line', config: { agentId: 'a1', line: '2호선' } },
+    { type: 'facility-group', testid: 'stub-facility-group', config: { agentId: 'a1', showStats: true } },
   ];
 
   it.each(cases)('$type → 해당 컴포넌트로 디스패치하고 props 를 전달한다', ({ type, testid, config }) => {

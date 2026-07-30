@@ -35,6 +35,7 @@ import OutdoorControlPanel from './panels/OutdoorControlPanel';
 import FacilityDevicePanel from './panels/FacilityDevicePanel';
 import FacilityStationPanel from './panels/FacilityStationPanel';
 import FacilityLinePanel from './panels/FacilityLinePanel';
+import FacilityGroupPanel from './panels/FacilityGroupPanel';
 import StatPanel from './panels/charts/StatPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import BarChartPanel from './panels/charts/BarChartPanel';
@@ -170,6 +171,17 @@ export function renderDashboardPanel(
     case 'facility-line':
       return (
         <FacilityLinePanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-XSFM-GROUP-001 M7: 설비 그룹 패널.
+    case 'facility-group':
+      return (
+        <FacilityGroupPanel
           panelId={panel.id}
           title={panel.title}
           config={panel.config}

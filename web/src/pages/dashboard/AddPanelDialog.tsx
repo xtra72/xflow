@@ -30,6 +30,7 @@ import {
   Route,
   MapPin,
   Fan,
+  Layers,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -138,6 +139,8 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     { type: 'facility-line', icon: Route, labelKey: 'dashboard.panelTypes.facilityLine', descriptionKey: 'dashboard.addPanel.descriptions.facilityLine', needsFacility: true },
     { type: 'facility-station', icon: MapPin, labelKey: 'dashboard.panelTypes.facilityStation', descriptionKey: 'dashboard.addPanel.descriptions.facilityStation', needsFacility: true },
     { type: 'facility-device', icon: Fan, labelKey: 'dashboard.panelTypes.facilityDevice', descriptionKey: 'dashboard.addPanel.descriptions.facilityDevice', needsFacility: true },
+    // SPEC-XSFM-GROUP-001 M7: 설비 그룹 패널(에이전트만 선택, 그룹 전체 표시·제어).
+    { type: 'facility-group', icon: Layers, labelKey: 'dashboard.panelTypes.facilityGroup', descriptionKey: 'dashboard.addPanel.descriptions.facilityGroup', needsFacility: true },
   ],
 };
 
@@ -777,10 +780,16 @@ function FacilityStep({
   }, [panelType, devices, stations]);
 
   const targetLoading = panelType === 'facility-device' ? devicesLoading : stationsLoading;
-  const canSave = agentId.length > 0 && target.length > 0;
+  // 설비 그룹 패널(M7)은 그룹 전체를 나열하므로 단일 대상 선택이 없다 — 에이전트만 필요.
+  const isGroup = panelType === 'facility-group';
+  const canSave = isGroup ? agentId.length > 0 : agentId.length > 0 && target.length > 0;
 
   const handleConfirm = () => {
     if (!canSave) return;
+    if (isGroup) {
+      onConfirm({ agentId });
+      return;
+    }
     const selected = targetOptions.find((o) => o.value === target);
     onConfirm({ agentId, [targetKey]: target }, selected?.label);
   };
@@ -841,7 +850,8 @@ function FacilityStep({
           </select>
         </div>
 
-        {/* 대상(라인/역사/기기) 선택 */}
+        {/* 대상(라인/역사/기기) 선택. 설비 그룹 패널(M7)은 대상이 없어(그룹 전체 표시) 숨긴다. */}
+        {!isGroup && (
         <div>
           <label
             htmlFor="facility-target-select"
@@ -865,6 +875,7 @@ function FacilityStep({
             ))}
           </select>
         </div>
+        )}
       </div>
 
       {/* 푸터 */}
