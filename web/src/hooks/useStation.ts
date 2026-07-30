@@ -73,6 +73,9 @@ export interface BulkResult {
 /** 필수값 누락 사유 sentinel(컴포넌트에서 i18n 으로 치환). */
 export const EMPTY_REQUIRED = 'EMPTY_REQUIRED';
 
+/** 인덱스 정수 파싱 실패 사유 sentinel(디바이스 일괄 등록 — 컴포넌트에서 i18n 으로 치환). */
+export const INVALID_INDEX = 'INVALID_INDEX';
+
 /**
  * 구분자 텍스트를 행 단위로 파싱한다.
  *   - 개행(\n)으로 분리, \r 제거(스프레드시트/윈도우 붙여넣기), 공백만인 줄은 스킵.
@@ -150,6 +153,33 @@ export function useRemoveStation(agentId: string) {
   return useMutation({
     mutationFn: (station: string) =>
       agentService.execAgent(agentId, { command: 'remove_station', params: { station } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: stationsKey(agentId) }),
+  });
+}
+
+/**
+ * 역사 일괄 삭제. 선택된 station code 배열을 받아 각각 remove_station 을 순차 호출한다.
+ * 백엔드에 일괄 명령이 없으므로 개별 remove 를 반복한다(일괄 등록과 동일 best-effort 패턴).
+ * 종속(위치/디바이스) 관련 백엔드 거부 등 개별 실패는 BulkFailure(input=station, reason=오류
+ * 메시지)로 수집하고 계속 진행하며, 마지막에 한 번만 stations 쿼리를 무효화한다.
+ * failed 행은 줄 개념이 없으므로 line=0.
+ */
+export function useBulkRemoveStations(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (stationCodes: string[]): Promise<BulkResult> => {
+      const failed: BulkFailure[] = [];
+      let ok = 0;
+      for (const station of stationCodes) {
+        try {
+          await agentService.execAgent(agentId, { command: 'remove_station', params: { station } });
+          ok += 1;
+        } catch (e) {
+          failed.push({ line: 0, input: station, reason: e instanceof Error ? e.message : EMPTY_REQUIRED });
+        }
+      }
+      return { total: stationCodes.length, ok, failed };
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: stationsKey(agentId) }),
   });
 }
@@ -337,6 +367,8 @@ export interface AirDeviceCreate {
   place: string;
   index: number;
   group_id?: string;
+  /** 커스텀 이름 override(sticky). 비우거나 생략하면 백엔드가 station:place:index 로 자동 계산. */
+  name?: string;
 }
 
 /**
@@ -349,6 +381,9 @@ export interface AirDeviceUpdate {
   place?: string;
   index?: number;
   group_id?: string;
+  /** 커스텀 이름 override(sticky). 편집 폼에서 기존 name 과 달라졌을 때만 전송(부분갱신).
+   *  빈 문자열을 보내면 override 해제(백엔드가 자동 계산으로 복귀). 키 자체를 생략하면 변경 없음. */
+  name?: string;
 }
 
 /** add_device 응답 형태(execAgent 는 엔벨로프를 벗겨 Process 결과를 그대로 반환). */
@@ -399,6 +434,82 @@ export function useRemoveXsfmDevice(agentId: string) {
   return useMutation({
     mutationFn: (deviceId: string) =>
       agentService.execAgent(agentId, { command: 'remove_device', params: { device_id: deviceId } }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: devicesKey(agentId) });
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/**
+ * 디바이스 일괄 삭제. 선택된 device_id(UUID) 배열을 받아 각각 remove_device 를 순차 호출한다.
+ * 백엔드에 일괄 명령이 없으므로 개별 remove 를 반복한다(일괄 등록과 동일 best-effort 패턴).
+ * 개별 실패는 BulkFailure(input=device_id, reason=오류 메시지)로 수집하고 계속 진행하며,
+ * 마지막에 한 번만 devices 쿼리를 무효화한다. failed 행은 줄 개념이 없으므로 line=0.
+ */
+export function useBulkRemoveDevices(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (deviceIds: string[]): Promise<BulkResult> => {
+      const failed: BulkFailure[] = [];
+      let ok = 0;
+      for (const deviceId of deviceIds) {
+        try {
+          await agentService.execAgent(agentId, { command: 'remove_device', params: { device_id: deviceId } });
+          ok += 1;
+        } catch (e) {
+          failed.push({ line: 0, input: deviceId, reason: e instanceof Error ? e.message : EMPTY_REQUIRED });
+        }
+      }
+      return { total: deviceIds.length, ok, failed };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: devicesKey(agentId) });
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/**
+ * 디바이스 일괄 등록. 붙여넣은 텍스트를 파싱해 각 행마다 add_device 를 순차 호출한다.
+ * 컬럼 순서: station(필수), place(필수), index(필수·정수), group_id(선택), name(선택).
+ *   - station 또는 place 가 비면 EMPTY_REQUIRED 로 실패 집계(백엔드 미호출).
+ *   - index 가 비었거나 정수가 아니면 INVALID_INDEX 로 실패 집계(백엔드 미호출).
+ *   - name 이 있으면 params 에 포함(백엔드가 override sticky 처리), 비면 omit → 백엔드가 자동 계산.
+ * best-effort — 개별 실패는 수집하고 계속 진행하며, 마지막에 한 번만 devices 쿼리를 무효화한다.
+ */
+export function useBulkAddDevices(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (text: string): Promise<BulkResult> => {
+      const rows = parseDelimitedRows(text);
+      const failed: BulkFailure[] = [];
+      let ok = 0;
+      for (const r of rows) {
+        const station = r.cells[0] ?? '';
+        const place = r.cells[1] ?? '';
+        const indexRaw = (r.cells[2] ?? '').trim();
+        if (!station || !place) {
+          failed.push({ line: r.line, input: r.raw, reason: EMPTY_REQUIRED });
+          continue;
+        }
+        const index = parseInt(indexRaw, 10);
+        if (indexRaw === '' || Number.isNaN(index)) {
+          failed.push({ line: r.line, input: r.raw, reason: INVALID_INDEX });
+          continue;
+        }
+        const name = (r.cells[4] ?? '').trim();
+        const params: AirDeviceCreate = { station, place, index, group_id: (r.cells[3] ?? '').trim() };
+        if (name) params.name = name;
+        try {
+          await agentService.execAgent(agentId, { command: 'add_device', params: { ...params } });
+          ok += 1;
+        } catch (e) {
+          failed.push({ line: r.line, input: r.raw, reason: e instanceof Error ? e.message : EMPTY_REQUIRED });
+        }
+      }
+      return { total: rows.length, ok, failed };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: devicesKey(agentId) });
       queryClient.invalidateQueries({ queryKey: ['devices'] });

@@ -14,6 +14,7 @@ import {
   useBulkAddPlaces,
   useBulkAddPlacesTop,
   useBulkAddStations,
+  useBulkRemoveStations,
   useRemovePlace,
   useRemoveStation,
   useStations,
@@ -25,71 +26,12 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
+import BulkRegisterPanel from './BulkRegisterPanel';
+import TablePagination from './TablePagination';
 
 const inputCls =
   'block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)';
 const labelCls = 'mb-1 block text-xs font-medium text-(--color-text-secondary)';
-const textareaCls =
-  'block w-full rounded-md border border-(--color-border-strong) px-3 py-2 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)';
-
-/**
- * 일괄 등록 패널 (역사/위치 공용). textarea + 제출 + 파싱 도움말 + 실패 목록.
- * best-effort 실행 결과의 실패 행은 formatFailure 로 변환해 인라인 표시한다.
- */
-function BulkRegisterPanel({
-  placeholder,
-  formatHint,
-  value,
-  onChange,
-  onSubmit,
-  submitting,
-  submitLabel,
-  failures,
-  formatFailure,
-}: {
-  placeholder: string;
-  formatHint: string;
-  value: string;
-  onChange: (v: string) => void;
-  onSubmit: () => void;
-  submitting: boolean;
-  submitLabel: string;
-  failures: BulkFailure[] | null;
-  formatFailure: (f: BulkFailure) => string;
-}) {
-  return (
-    <div className="space-y-2">
-      <textarea
-        rows={5}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className={textareaCls}
-      />
-      <p className="text-[11px] text-(--color-text-muted)">{formatHint}</p>
-      {failures && failures.length > 0 && (
-        <ul className="space-y-0.5 rounded-md border border-red-200 bg-red-50 p-2 dark:border-red-900/40 dark:bg-red-900/20">
-          {failures.map((f) => (
-            <li key={f.line} className="text-[11px] text-red-600 dark:text-red-400">
-              {formatFailure(f)}
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={onSubmit}
-          disabled={submitting || value.trim() === ''}
-          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <ListPlus className="h-3.5 w-3.5" />
-          {submitLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
 
 interface StationFormState {
   station: string;
@@ -118,6 +60,12 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
   const bulkAddStations = useBulkAddStations(agentId);
   const bulkAddPlaces = useBulkAddPlaces(agentId);
   const bulkAddPlacesTop = useBulkAddPlacesTop(agentId);
+  const bulkRemoveStations = useBulkRemoveStations(agentId);
+
+  // 역사 다중선택 상태(station code Set) + 일괄 삭제 확인 다이얼로그 표시 여부.
+  // 범위: 역사(station)만 — 위치(place) 일괄 삭제는 범위 아님.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showBulkRemove, setShowBulkRemove] = useState(false);
 
   // 역사 폼: null=닫힘, editing=편집 대상 station code(수정 시 코드 잠금).
   const [stationForm, setStationForm] = useState<StationFormState | null>(null);
@@ -146,6 +94,70 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
 
   function toggleExpand(station: string) {
     setExpanded((prev) => ({ ...prev, [station]: !prev[station] }));
+  }
+
+  // 페이지네이션 상태(클라이언트 사이드). 역사 탭은 목록 필터가 없으므로 전체 역사에
+  // 페이지네이션을 적용한다. 기본 페이지 크기 10.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const totalPages = Math.max(1, Math.ceil(stations.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedStations = stations.slice(startIndex, startIndex + pageSize);
+
+  // 전체선택 기준: 현재 페이지에 보이는 역사.
+  const allSelected = pagedStations.length > 0 && pagedStations.every((s) => selected.has(s.station));
+  const someSelected = pagedStations.some((s) => selected.has(s.station));
+
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) for (const s of pagedStations) next.delete(s.station);
+      else for (const s of pagedStations) next.add(s.station);
+      return next;
+    });
+  }
+
+  function toggleStationRow(station: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(station)) next.delete(station);
+      else next.add(station);
+      return next;
+    });
+  }
+
+  // 일괄 삭제 결과 → 요약 토스트. 종속 거부 등 개별 실패는 부분성공 토스트 개수로 표기한다.
+  function reportBulkRemove(result: BulkResult) {
+    if (result.failed.length === 0) {
+      addNotification({
+        type: 'success',
+        message: t('agents.detail.stations.bulkRemove.successToast').replace('{count}', String(result.ok)),
+      });
+      return;
+    }
+    addNotification({
+      type: 'error',
+      message: t('agents.detail.stations.bulkRemove.partialToast')
+        .replace('{ok}', String(result.ok))
+        .replace('{failed}', String(result.failed.length)),
+    });
+  }
+
+  // 확인 다이얼로그 확정 시: 선택된 각 station code 에 remove_station 반복 호출 → 선택 해제 + 갱신.
+  function confirmBulkRemove() {
+    const codes = Array.from(selected);
+    if (codes.length === 0) {
+      setShowBulkRemove(false);
+      return;
+    }
+    bulkRemoveStations.mutate(codes, {
+      onSuccess: (result) => {
+        setShowBulkRemove(false);
+        setSelected(new Set());
+        reportBulkRemove(result);
+      },
+    });
   }
 
   // 일괄 실행 결과 → 요약 토스트. total===0 이면 입력 없음 오류.
@@ -368,6 +380,17 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
           {t('agents.detail.stations.stationsCount').replace('{count}', String(stations.length))}
         </span>
         <div className="flex items-center gap-2">
+          {stations.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowBulkRemove(true)}
+              disabled={selected.size === 0}
+              className="inline-flex items-center gap-1 rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t('agents.detail.stations.bulkRemove.button').replace('{count}', String(selected.size))}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowStationBulk((v) => !v)}
@@ -444,9 +467,33 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
           <p className="text-sm">{t('agents.detail.stations.noStations')}</p>
         </div>
       ) : (
+        <>
+          {/* 페이지네이션 컨트롤 (전체 역사에 슬라이스 적용) */}
+          <TablePagination
+            page={safePage}
+            pageSize={pageSize}
+            totalItems={stations.length}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
         <div className="space-y-1.5">
           {/* 컬럼 헤더: 순서 / 이름 / 코드 / 라인 / 위치 / 액션 (역사 행과 동일 grid 트랙으로 정렬) */}
-          <div className="grid grid-cols-[1.25rem_3rem_1fr_9rem_6rem_4rem_auto] items-center gap-2 px-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+          <div className="grid grid-cols-[1.5rem_1.25rem_3rem_1fr_9rem_6rem_4rem_auto] items-center gap-2 px-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+            <span className="flex items-center">
+              <input
+                type="checkbox"
+                aria-label={t('agents.detail.stations.selectAll')}
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected && !allSelected;
+                }}
+                onChange={toggleSelectAll}
+                className="h-3.5 w-3.5 cursor-pointer accent-blue-600"
+              />
+            </span>
             <span aria-hidden="true" />
             <span className="text-center">{t('agents.detail.stations.order')}</span>
             <span>{t('agents.detail.stations.displayName')}</span>
@@ -455,12 +502,22 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
             <span className="text-center">{t('agents.detail.stations.placesColumn')}</span>
             <span className="text-right">{t('agents.detail.stations.actions')}</span>
           </div>
-          {stations.map((s) => {
+          {pagedStations.map((s) => {
             const isOpen = expanded[s.station] ?? false;
             return (
               <div key={s.station} className="rounded-lg border border-(--color-border-default)">
-                {/* 역사 행 헤더: 순서 → 이름 → 코드 → 라인 → 위치수 정렬 컬럼 (헤더 행과 동일 grid 트랙) */}
-                <div className="grid grid-cols-[1.25rem_3rem_1fr_9rem_6rem_4rem_auto] items-center gap-2 px-3 py-2">
+                {/* 역사 행 헤더: 선택 → 순서 → 이름 → 코드 → 라인 → 위치수 정렬 컬럼 (헤더 행과 동일 grid 트랙) */}
+                <div className="grid grid-cols-[1.5rem_1.25rem_3rem_1fr_9rem_6rem_4rem_auto] items-center gap-2 px-3 py-2">
+                  {/* 선택 체크박스(토글 버튼 밖 — 클릭해도 확장/접기 안 됨). */}
+                  <span className="flex items-center">
+                    <input
+                      type="checkbox"
+                      aria-label={t('agents.detail.stations.selectRow')}
+                      checked={selected.has(s.station)}
+                      onChange={() => toggleStationRow(s.station)}
+                      className="h-3.5 w-3.5 cursor-pointer accent-blue-600"
+                    />
+                  </span>
                   {/* 클릭 시 확장/접기. 앞 6개 컬럼(chevron~위치수)을 subgrid 로 span 하여 헤더와 정렬. */}
                   <button
                     type="button"
@@ -590,6 +647,7 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
             );
           })}
         </div>
+        </>
       )}
 
       {/* 역사 추가/편집 폼 모달 */}
@@ -761,6 +819,20 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
           </div>
         </div>
       )}
+
+      {/* 역사 일괄 삭제 확인 */}
+      <ConfirmDialog
+        isOpen={showBulkRemove}
+        onClose={() => setShowBulkRemove(false)}
+        onConfirm={confirmBulkRemove}
+        title={t('agents.detail.stations.bulkRemove.confirmTitle')}
+        message={t('agents.detail.stations.bulkRemove.confirmMessage').replace(
+          '{count}',
+          String(selected.size),
+        )}
+        variant="danger"
+        isSubmitting={bulkRemoveStations.isPending}
+      />
 
       {/* 역사 삭제 확인 */}
       <ConfirmDialog

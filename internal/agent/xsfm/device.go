@@ -34,6 +34,12 @@ type Device struct {
 	// 재계산한다. false(=blob/{device_id} 모델)이면 Name 은 사용자가 관리하므로 재계산하지 않는다.
 	composite bool
 
+	// nameOverridden 은 composite 디바이스의 Name 이 사용자 지정 커스텀 이름으로 고정(sticky)
+	// 되었는지 표시한다. true 이면 station/place/index 가 바뀌어도 Name 을 파생값으로 재계산하지
+	// 않아 커스텀 이름을 보존한다. 사용자가 명시적으로 빈 이름을 주면 다시 false 로 해제되어
+	// composite 파생 이름으로 복귀한다. blob 디바이스에서는 의미 없음(Name 은 항상 사용자 관리).
+	nameOverridden bool
+
 	// Address 는 다중 필드 토픽 주소의 원시 placeholder→값 맵이다 ({attribute} 제외, M14).
 	// 유입 토픽 파싱 또는 설정 시드에서 채워지며, 명령 토픽 재구성(renderTopic)에 사용한다.
 	// {device_id} 단일 필드 모델에서는 {"device_id": id} 이거나 nil(이 경우 device 필드로 폴백).

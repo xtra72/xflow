@@ -24,7 +24,10 @@ func (a *XSFMAgent) sendEvent(eventType string, data map[string]any) {
 	}
 	select {
 	case a.msgCh <- b:
+		// 내부 발신 경계: 노드로 이벤트 enqueue 성공.
+		a.stats.IncrInternalMessagesSent()
 	default:
+		a.stats.IncrDroppedMessages()
 		a.logger.Debug("xsfm: msgCh full, dropping event", "type", eventType)
 	}
 }
@@ -144,9 +147,14 @@ func (a *XSFMAgent) controlDeviceBlob(deviceID, command string, cmd commandPaylo
 		a.logFrame("TX", a.renderCommandTopic(fields, ""), payload, commandSummary(command, cmd))
 	}
 	if err := a.cmdSink.SendCommand(outboundCommand{DeviceID: deviceID, Fields: fields, Payload: payload}); err != nil {
+		a.stats.IncrExternalMessagesErrored()
 		a.pendings.cancel(p)
 		return memberResult{}, err
 	}
+	// 외부 발신 경계: 명령 publish 성공.
+	a.stats.IncrExternalMessagesSent()
+	a.stats.AddBytesWritten(int64(len(payload)))
+	a.stats.UpdateLastActivity()
 
 	if p != nil {
 		if err := p.wait(); err != nil {
@@ -199,9 +207,14 @@ func (a *XSFMAgent) controlDeviceAttr(deviceID, command string, cmd commandPaylo
 			a.logFrame("TX", a.renderCommandTopic(fields, ax.attr), ax.payload, ax.command+" ["+ax.attr+"]")
 		}
 		if err := a.cmdSink.SendCommand(out); err != nil {
+			a.stats.IncrExternalMessagesErrored()
 			a.pendings.cancel(p)
 			return memberResult{}, err
 		}
+		// 외부 발신 경계: 축별 명령 publish 성공.
+		a.stats.IncrExternalMessagesSent()
+		a.stats.AddBytesWritten(int64(len(ax.payload)))
+		a.stats.UpdateLastActivity()
 		if p != nil {
 			if err := p.wait(); err != nil {
 				return memberResult{DeviceID: deviceID, Command: command, Status: "timeout"}, err
@@ -362,16 +375,25 @@ func (a *XSFMAgent) handleAddDevice(req processRequest) ([]byte, error) {
 		return nil, fmt.Errorf("%w: composite %q", ErrDeviceAlreadyRegistered, ck)
 	}
 	id := newDeviceID()
+	// 사용자가 비어있지 않은 name 을 주면 커스텀 이름으로 고정(sticky)하고, 아니면 위치 계층에서
+	// 파생한다. sticky 여부는 nameOverridden 으로 표시해 이후 주소 변경 시 재계산을 막는다.
+	name := composeName(req.Station, req.Place, req.Index)
+	nameOverridden := false
+	if req.Name != "" {
+		name = req.Name
+		nameOverridden = true
+	}
 	dev := &Device{
-		DeviceID:  id,
-		Name:      composeName(req.Station, req.Place, req.Index),
-		GroupID:   req.GroupID,
-		Station:   req.Station,
-		Place:     req.Place,
-		Index:     req.Index,
-		Online:    false,
-		Source:    "bridge",
-		composite: true,
+		DeviceID:       id,
+		Name:           name,
+		GroupID:        req.GroupID,
+		Station:        req.Station,
+		Place:          req.Place,
+		Index:          req.Index,
+		Online:         false,
+		Source:         "bridge",
+		composite:      true,
+		nameOverridden: nameOverridden,
 	}
 	a.devices[id] = dev
 	a.indexDeviceLocked(dev)
@@ -474,8 +496,20 @@ func (a *XSFMAgent) handleSetDevice(req processRequest, raw []byte) ([]byte, err
 	if addrChange {
 		a.unindexDeviceLocked(dev)
 	}
+	// name 처리: 비어있지 않은 값이면 sticky override 로 고정하고, 명시적 빈값이면 override 를
+	// 해제한다. blob(비-composite) 디바이스는 Name 을 준 값 그대로 반영한다(기존 동작 보존).
 	if present("name") {
-		dev.Name = req.Name
+		switch {
+		case req.Name != "":
+			dev.Name = req.Name
+			dev.nameOverridden = true
+		case dev.composite:
+			// composite + 명시적 빈값 = override 해제 → 아래에서 파생 이름으로 복귀.
+			dev.nameOverridden = false
+		default:
+			// blob + 명시적 빈값: 사용자 관리값이므로 준 값(빈값)을 그대로 반영.
+			dev.Name = req.Name
+		}
 	}
 	if present("group_id") {
 		dev.GroupID = req.GroupID
@@ -489,12 +523,13 @@ func (a *XSFMAgent) handleSetDevice(req processRequest, raw []byte) ([]byte, err
 	if present("index") {
 		dev.Index = req.Index
 	}
+	// composite 파생 이름 재계산: override 가 아닌 composite 디바이스에 한해, 주소 변경 또는
+	// name override 해제(present("name") && 빈값)를 트리거로 새 위치에서 Name 을 재계산한다.
+	// nameOverridden 이면(커스텀 이름 sticky) 재계산하지 않아 이름이 유지된다. blob 은 재계산 없음.
+	if dev.composite && !dev.nameOverridden && (addrChange || present("name")) {
+		dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+	}
 	if addrChange {
-		// 합성 주소 모델(composite) 디바이스의 Name 은 파생값이므로, name 을 명시적으로 주지
-		// 않았다면 새 위치로 재계산한다. blob 디바이스의 Name 은 사용자 관리값이라 보존한다.
-		if dev.composite && !present("name") {
-			dev.Name = composeName(dev.Station, dev.Place, dev.Index)
-		}
 		a.indexDeviceLocked(dev)
 	}
 	a.mu.Unlock()

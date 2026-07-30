@@ -17,14 +17,18 @@ vi.mock('@/services/api/agentService', () => ({
 
 import {
   EMPTY_REQUIRED,
+  INVALID_INDEX,
   parseDelimitedRows,
   useAddXsfmDevice,
   useAddPlace,
   useAddStation,
   useXsfmDevices,
+  useBulkAddDevices,
   useBulkAddPlaces,
   useBulkAddPlacesTop,
   useBulkAddStations,
+  useBulkRemoveDevices,
+  useBulkRemoveStations,
   useRemovePlace,
   useSetXsfmDevice,
   useStations,
@@ -237,6 +241,137 @@ describe('useBulkAddPlaces', () => {
 
     expect(res).toEqual({ total: 1, ok: 0, failed: [{ line: 1, input: ',이름,1', reason: EMPTY_REQUIRED }] });
     expect(execAgentMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useBulkAddDevices', () => {
+  it('행마다 station,place,index,group_id,name 을 파싱해 add_device 를 호출한다 (name 있으면 포함)', async () => {
+    execAgentMock.mockResolvedValue({ status: 'ok', device_id: 'u', name: 'n', source: 'bridge' });
+
+    const { result } = renderHook(() => useBulkAddDevices('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync('st01,PL-A,5,g1,대합실-A\nst02,PL-B,3');
+
+    expect(res).toEqual({ total: 2, ok: 2, failed: [] });
+    // name 이 있으면 params 에 포함(override sticky).
+    expect(execAgentMock).toHaveBeenNthCalledWith(1, 'agent-1', {
+      command: 'add_device',
+      params: { station: 'st01', place: 'PL-A', index: 5, group_id: 'g1', name: '대합실-A' },
+    });
+    // name/group_id 없음 → name omit, group_id 는 빈 문자열.
+    expect(execAgentMock).toHaveBeenNthCalledWith(2, 'agent-1', {
+      command: 'add_device',
+      params: { station: 'st02', place: 'PL-B', index: 3, group_id: '' },
+    });
+  });
+
+  it('name 이 빈값이면 params 에서 name 을 omit 한다 (백엔드 자동 계산)', async () => {
+    execAgentMock.mockResolvedValue({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkAddDevices('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync('st01,PL-A,5,g1,');
+
+    expect(res.ok).toBe(1);
+    expect(execAgentMock).toHaveBeenCalledWith('agent-1', {
+      command: 'add_device',
+      params: { station: 'st01', place: 'PL-A', index: 5, group_id: 'g1' },
+    });
+  });
+
+  it('station/place 누락은 EMPTY_REQUIRED, index 비숫자/누락은 INVALID_INDEX 로 집계(백엔드 미호출)', async () => {
+    // 행1 성공, 행2(빈 station) EMPTY_REQUIRED, 행3(비숫자 index) INVALID_INDEX,
+    // 행4(빈 index) INVALID_INDEX, 행5 백엔드 오류.
+    execAgentMock
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockRejectedValueOnce(new Error('duplicate'));
+
+    const { result } = renderHook(() => useBulkAddDevices('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync('st01,PL-A,1\n,PL-X,2\nst02,PL-Y,abc\nst03,PL-Z,\nst04,PL-W,9');
+
+    expect(res.total).toBe(5);
+    expect(res.ok).toBe(1);
+    expect(res.failed).toEqual([
+      { line: 2, input: ',PL-X,2', reason: EMPTY_REQUIRED },
+      { line: 3, input: 'st02,PL-Y,abc', reason: INVALID_INDEX },
+      { line: 4, input: 'st03,PL-Z,', reason: INVALID_INDEX },
+      { line: 5, input: 'st04,PL-W,9', reason: 'duplicate' },
+    ]);
+    // 유효 행(st01, st04) 2회만 백엔드 호출.
+    expect(execAgentMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('useBulkRemoveDevices', () => {
+  it('선택된 device_id 마다 remove_device 를 params 로 순차 호출하고 BulkResult 를 반환한다', async () => {
+    execAgentMock.mockResolvedValue({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkRemoveDevices('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync(['uuid-1', 'uuid-2']);
+
+    expect(res).toEqual({ total: 2, ok: 2, failed: [] });
+    expect(execAgentMock).toHaveBeenNthCalledWith(1, 'agent-1', {
+      command: 'remove_device',
+      params: { device_id: 'uuid-1' },
+    });
+    expect(execAgentMock).toHaveBeenNthCalledWith(2, 'agent-1', {
+      command: 'remove_device',
+      params: { device_id: 'uuid-2' },
+    });
+  });
+
+  it('best-effort: 개별 실패(백엔드 거부)는 BulkFailure(input=device_id)로 수집하고 계속 진행한다', async () => {
+    execAgentMock
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockRejectedValueOnce(new Error('config protected'))
+      .mockResolvedValueOnce({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkRemoveDevices('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync(['uuid-1', 'uuid-2', 'uuid-3']);
+
+    expect(res.total).toBe(3);
+    expect(res.ok).toBe(2);
+    expect(res.failed).toEqual([{ line: 0, input: 'uuid-2', reason: 'config protected' }]);
+    expect(execAgentMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('빈 배열이면 execAgent 를 호출하지 않고 total=0 을 반환한다', async () => {
+    const { result } = renderHook(() => useBulkRemoveDevices('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync([]);
+
+    expect(res).toEqual({ total: 0, ok: 0, failed: [] });
+    expect(execAgentMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useBulkRemoveStations', () => {
+  it('선택된 station code 마다 remove_station 을 params 로 순차 호출하고 BulkResult 를 반환한다', async () => {
+    execAgentMock.mockResolvedValue({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkRemoveStations('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync(['ST-1', 'ST-2']);
+
+    expect(res).toEqual({ total: 2, ok: 2, failed: [] });
+    expect(execAgentMock).toHaveBeenNthCalledWith(1, 'agent-1', {
+      command: 'remove_station',
+      params: { station: 'ST-1' },
+    });
+    expect(execAgentMock).toHaveBeenNthCalledWith(2, 'agent-1', {
+      command: 'remove_station',
+      params: { station: 'ST-2' },
+    });
+  });
+
+  it('종속 거부 등 개별 실패는 BulkFailure(input=station)로 수집하고 계속 진행한다', async () => {
+    execAgentMock
+      .mockRejectedValueOnce(new Error('station has devices'))
+      .mockResolvedValueOnce({ status: 'ok' });
+
+    const { result } = renderHook(() => useBulkRemoveStations('agent-1'), { wrapper });
+    const res = await result.current.mutateAsync(['ST-1', 'ST-2']);
+
+    expect(res.total).toBe(2);
+    expect(res.ok).toBe(1);
+    expect(res.failed).toEqual([{ line: 0, input: 'ST-1', reason: 'station has devices' }]);
+    expect(execAgentMock).toHaveBeenCalledTimes(2);
   });
 });
 

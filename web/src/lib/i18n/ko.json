@@ -1252,8 +1252,8 @@
         "store": "저장소",
         "series": "시리즈",
         "sessions": "세션",
-        "devices": "디바이스",
-        "stations": "역사"
+        "devices": "장치(Device)",
+        "stations": "장소(Location)"
       },
       "airDevices": {
         "addDevice": "디바이스 추가",
@@ -1263,6 +1263,7 @@
         "deviceIdRequired": "디바이스 ID는 필수입니다.",
         "name": "이름",
         "namePlaceholder": "예: 대합실-A",
+        "nameHint": "비우면 station:place:index 형식으로 자동 생성됩니다.",
         "station": "역사",
         "place": "위치",
         "index": "인덱스",
@@ -1299,6 +1300,29 @@
           "searchPlaceholder": "이름 / 아이디 / 역사 / 위치 검색",
           "noMatch": "일치하는 기기가 없습니다.",
           "count": "{shown} / {total}"
+        },
+        "bulk": {
+          "toggle": "일괄 등록",
+          "title": "디바이스 일괄 등록",
+          "placeholder": "station,place,index,group_id,name\nst01,PL-A,5,g1,대합실-A",
+          "formatHint": "한 줄에 디바이스 하나. 컬럼: station,place,index,group_id,name (콤마 또는 탭 — 스프레드시트 붙여넣기 지원). station/place/index 필수, group_id/name 선택. name 을 주면 override 됩니다.",
+          "submit": "일괄 등록",
+          "successToast": "{count}개 디바이스 등록 완료",
+          "partialToast": "{ok}개 등록, {failed}개 실패",
+          "emptyInput": "등록할 내용이 없습니다.",
+          "emptyRow": "역사/위치 코드 누락",
+          "invalidIndex": "인덱스가 숫자가 아님",
+          "rowError": "{line}행: {reason}"
+        },
+        "selectAll": "전체 선택",
+        "selectRow": "행 선택",
+        "configProtected": "설정 디바이스는 삭제할 수 없습니다.",
+        "bulkRemove": {
+          "button": "선택 삭제 ({count})",
+          "confirmTitle": "선택 디바이스 삭제",
+          "confirmMessage": "선택한 {count}개 디바이스를 삭제할까요? 되돌릴 수 없습니다.",
+          "successToast": "{count}개 디바이스를 삭제했습니다.",
+          "partialToast": "{ok}개 삭제, {failed}개 실패"
         }
       },
       "stations": {
@@ -1339,6 +1363,15 @@
           "emptyInput": "등록할 내용이 없습니다.",
           "emptyStation": "역사 코드 누락",
           "rowError": "{line}행: {reason}"
+        },
+        "selectAll": "전체 선택",
+        "selectRow": "행 선택",
+        "bulkRemove": {
+          "button": "선택 삭제 ({count})",
+          "confirmTitle": "선택 역사 삭제",
+          "confirmMessage": "선택한 {count}개 역사와 소속 위치를 삭제할까요? 되돌릴 수 없습니다.",
+          "successToast": "{count}개 역사를 삭제했습니다.",
+          "partialToast": "{ok}개 삭제, {failed}개 실패"
         },
         "placesBulkTop": {
           "toggle": "위치 일괄",

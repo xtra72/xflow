@@ -176,7 +176,8 @@ export default function FacilityStationPanel({
 
       {/* (2) 기기별 상태 목록 + 목록 제목 우측 일괄 제어(C5). */}
       <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
+        {/* 헤더 행에 기기 카드와 동일한 px-2.5 를 주어 제목↔기기명, 일괄 제어 버튼↔개별 제어 버튼을 세로로 정렬한다. */}
+        <div className="flex items-center justify-between gap-2 px-2.5">
           <span className="text-xs font-semibold text-(--color-text-secondary)">
             {t('dashboard.facility.station.devices')}
           </span>

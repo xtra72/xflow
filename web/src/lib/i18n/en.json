@@ -1252,8 +1252,8 @@
         "store": "Store",
         "series": "Series",
         "sessions": "Sessions",
-        "devices": "Devices",
-        "stations": "Stations"
+        "devices": "Device",
+        "stations": "Location"
       },
       "airDevices": {
         "addDevice": "Add device",
@@ -1263,6 +1263,7 @@
         "deviceIdRequired": "Device ID is required.",
         "name": "Name",
         "namePlaceholder": "e.g. Concourse-A",
+        "nameHint": "Leave empty to auto-generate as station:place:index.",
         "station": "Station",
         "place": "Place",
         "index": "Index",
@@ -1299,6 +1300,29 @@
           "searchPlaceholder": "Search name / ID / station / place",
           "noMatch": "No matching devices.",
           "count": "{shown} / {total}"
+        },
+        "bulk": {
+          "toggle": "Bulk register",
+          "title": "Bulk register devices",
+          "placeholder": "station,place,index,group_id,name\nst01,PL-A,5,g1,Concourse-A",
+          "formatHint": "One device per line. Columns: station,place,index,group_id,name (comma or tab — spreadsheet paste works). station/place/index required, group_id/name optional. Providing name sets an override.",
+          "submit": "Register all",
+          "successToast": "{count} devices registered",
+          "partialToast": "{ok} registered, {failed} failed",
+          "emptyInput": "Nothing to register.",
+          "emptyRow": "station/place code missing",
+          "invalidIndex": "index is not a number",
+          "rowError": "line {line}: {reason}"
+        },
+        "selectAll": "Select all",
+        "selectRow": "Select row",
+        "configProtected": "Config devices cannot be deleted.",
+        "bulkRemove": {
+          "button": "Delete selected ({count})",
+          "confirmTitle": "Delete selected devices",
+          "confirmMessage": "Delete {count} selected devices? This cannot be undone.",
+          "successToast": "{count} devices deleted.",
+          "partialToast": "{ok} deleted, {failed} failed"
         }
       },
       "stations": {
@@ -1339,6 +1363,15 @@
           "emptyInput": "Nothing to register.",
           "emptyStation": "station code missing",
           "rowError": "line {line}: {reason}"
+        },
+        "selectAll": "Select all",
+        "selectRow": "Select row",
+        "bulkRemove": {
+          "button": "Delete selected ({count})",
+          "confirmTitle": "Delete selected stations",
+          "confirmMessage": "Delete {count} selected stations and their places? This cannot be undone.",
+          "successToast": "{count} stations deleted.",
+          "partialToast": "{ok} deleted, {failed} failed"
         },
         "placesBulkTop": {
           "toggle": "Bulk places",

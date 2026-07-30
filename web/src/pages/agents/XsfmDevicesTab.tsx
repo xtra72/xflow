@@ -5,41 +5,48 @@
 // 만 입력하며, 목록의 station/place CODE 는 역사 레지스트리(useStations)로 표시명을 해석한다.
 
 import { useMemo, useState } from 'react';
-import { HardDrive, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { HardDrive, ListPlus, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 import {
+  EMPTY_REQUIRED,
+  INVALID_INDEX,
   useAddXsfmDevice,
+  useBulkAddDevices,
+  useBulkRemoveDevices,
   useXsfmDevices,
   useRemoveXsfmDevice,
   useSetXsfmDevice,
   useStations,
   type AirDevice,
+  type AirDeviceCreate,
+  type AirDeviceUpdate,
   type AirStation,
+  type BulkFailure,
+  type BulkResult,
 } from '@/hooks/useStation';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
+import BulkRegisterPanel from './BulkRegisterPanel';
+import TablePagination from './TablePagination';
 
-/** 폼 상태(문자열 위주 — 제출 시 파싱). device_id/name 은 입력하지 않는다(백엔드 생성/계산). */
+/** 폼 상태(문자열 위주 — 제출 시 파싱). device_id 는 입력하지 않는다(백엔드 생성).
+ *  name 은 선택 — 비우면 백엔드가 station:place:index 로 자동 계산, 입력하면 override(sticky). */
 interface DeviceFormState {
   station: string;
   place: string;
   index: string;
   group_id: string;
+  name: string;
 }
 
-const EMPTY_FORM: DeviceFormState = { station: '', place: '', index: '', group_id: '' };
+const EMPTY_FORM: DeviceFormState = { station: '', place: '', index: '', group_id: '', name: '' };
 
 const inputCls =
   'block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)';
 const labelCls = 'mb-1 block text-xs font-medium text-(--color-text-secondary)';
-
-/** UUID 를 축약 표시(앞 8자 + …). 전체 값은 title 툴팁으로 노출. */
-function shortId(id: string): string {
-  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
-}
 
 export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
@@ -51,6 +58,8 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
   const addDevice = useAddXsfmDevice(agentId);
   const setDevice = useSetXsfmDevice(agentId);
   const removeDevice = useRemoveXsfmDevice(agentId);
+  const bulkAddDevices = useBulkAddDevices(agentId);
+  const bulkRemoveDevices = useBulkRemoveDevices(agentId);
 
   // station CODE → 엔트리 맵(표시명 해석 + place 조회). 미등록 코드는 원문 fallback.
   const stationsByCode = useMemo(() => {
@@ -72,7 +81,19 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
   // 폼 상태: null=닫힘, editing 이 있으면 편집 대상 device_id(UUID), 없으면 추가.
   const [form, setForm] = useState<DeviceFormState | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  // 편집 진입 시점의 기존 name 스냅샷(부분갱신 dirty 판정용). 추가 모드에서는 미사용.
+  const [editingName, setEditingName] = useState('');
   const [removeTarget, setRemoveTarget] = useState<AirDevice | null>(null);
+
+  // 다중선택 상태(device_id Set) + 일괄 삭제 확인 다이얼로그 표시 여부.
+  // Source="config" 디바이스는 백엔드가 삭제를 거부하므로 선택 대상에서 제외한다(체크박스 disabled).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showBulkRemove, setShowBulkRemove] = useState(false);
+
+  // 일괄 등록 패널 상태(역사 탭과 동일 패턴).
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkFailures, setBulkFailures] = useState<BulkFailure[] | null>(null);
 
   // 필터 상태(클라이언트 사이드): 라인 / 역사(코드) / 검색어. 기본 '전체'(빈 값).
   const [filterLine, setFilterLine] = useState('');
@@ -118,12 +139,17 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
   // 정렬 상태(클라이언트 사이드). 기본: 이름 오름차순.
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
+  // 페이지네이션 상태(클라이언트 사이드). 기본 페이지 크기 10.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   function handleSort(field: string) {
     setSort((prev) =>
       prev.field === field
         ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
         : { field, direction: 'asc' },
     );
+    setPage(1);
   }
 
   // 필터된 목록에 정렬 적용(원본 배열 불변 — 복사 후 정렬).
@@ -146,8 +172,6 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
           return stationName(a).localeCompare(stationName(b), 'ko');
         case 'place':
           return placeName(a).localeCompare(placeName(b), 'ko');
-        case 'index':
-          return (a.index || 0) - (b.index || 0);
         case 'status':
           // asc: online 먼저(online=true 가 앞). desc 는 dir 로 반전.
           return a.online === b.online ? 0 : a.online ? -1 : 1;
@@ -162,24 +186,98 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
     });
   }, [filteredDevices, sort, stationsByCode]);
 
+  // 페이지네이션: 정렬/필터된 전체에서 현재 페이지 슬라이스만 렌더한다.
+  const totalPages = Math.max(1, Math.ceil(sortedDevices.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedDevices = useMemo(
+    () => sortedDevices.slice(startIndex, startIndex + pageSize),
+    [sortedDevices, startIndex, pageSize],
+  );
+
+  // 현재 페이지에 보이는 행 중 선택 가능한(=config 아님) 디바이스. 전체선택 기준.
+  const selectableVisible = useMemo(
+    () => pagedDevices.filter((d) => d.source !== 'config'),
+    [pagedDevices],
+  );
+  const allSelected =
+    selectableVisible.length > 0 && selectableVisible.every((d) => selected.has(d.device_id));
+  const someSelected = selectableVisible.some((d) => selected.has(d.device_id));
+
+  // 전체선택 토글: 이미 전부 선택이면 보이는 선택가능 행을 해제, 아니면 모두 선택.
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) for (const d of selectableVisible) next.delete(d.device_id);
+      else for (const d of selectableVisible) next.add(d.device_id);
+      return next;
+    });
+  }
+
+  function toggleRow(deviceId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(deviceId)) next.delete(deviceId);
+      else next.add(deviceId);
+      return next;
+    });
+  }
+
+  // 일괄 삭제 결과 → 요약 토스트(성공/부분성공). 선택 삭제는 줄 개념이 없어 개수만 보고한다.
+  function reportBulkRemove(result: BulkResult) {
+    if (result.failed.length === 0) {
+      addNotification({
+        type: 'success',
+        message: t('agents.detail.airDevices.bulkRemove.successToast').replace('{count}', String(result.ok)),
+      });
+      return;
+    }
+    addNotification({
+      type: 'error',
+      message: t('agents.detail.airDevices.bulkRemove.partialToast')
+        .replace('{ok}', String(result.ok))
+        .replace('{failed}', String(result.failed.length)),
+    });
+  }
+
+  // 확인 다이얼로그에서 확정 시: 선택된 각 device_id 에 remove_device 를 반복 호출 → 선택 해제 + 갱신.
+  function confirmBulkRemove() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) {
+      setShowBulkRemove(false);
+      return;
+    }
+    bulkRemoveDevices.mutate(ids, {
+      onSuccess: (result) => {
+        setShowBulkRemove(false);
+        setSelected(new Set());
+        reportBulkRemove(result);
+      },
+    });
+  }
+
   function openAdd() {
     setEditing(null);
+    setEditingName('');
     setForm({ ...EMPTY_FORM });
   }
 
   function openEdit(d: AirDevice) {
     setEditing(d.device_id);
+    setEditingName(d.name ?? '');
     setForm({
       station: d.station ?? '',
       place: d.place ?? '',
       index: d.index ? String(d.index) : '',
       group_id: d.group_id ?? '',
+      name: d.name ?? '',
     });
   }
 
   function closeForm() {
     setForm(null);
     setEditing(null);
+    setEditingName('');
   }
 
   function handleSubmit() {
@@ -200,32 +298,35 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
       return;
     }
     const groupId = form.group_id.trim();
+    const name = form.name.trim();
 
     if (editing) {
-      setDevice.mutate(
-        { device_id: editing, station, place, index: indexNum, group_id: groupId },
-        {
-          onSuccess: () => {
-            closeForm();
-            addNotification({ type: 'success', message: t('agents.detail.airDevices.updateSuccess') });
-          },
-          onError: (err) => notifyOpError(err),
+      // 부분갱신 정확성: 기존 name 과 달라졌을 때만 name 을 전송한다. 자동이름 디바이스를
+      // 사용자가 손대지 않았으면 name 키를 omit 하여 override 로 잘못 고정되는 것을 막는다.
+      // 빈값으로 바꿨으면 override 해제 의도이므로 name:'' 를 전송한다.
+      const update: AirDeviceUpdate = { device_id: editing, station, place, index: indexNum, group_id: groupId };
+      if (name !== editingName.trim()) update.name = name;
+      setDevice.mutate(update, {
+        onSuccess: () => {
+          closeForm();
+          addNotification({ type: 'success', message: t('agents.detail.airDevices.updateSuccess') });
         },
-      );
+        onError: (err) => notifyOpError(err),
+      });
     } else {
-      addDevice.mutate(
-        { station, place, index: indexNum, group_id: groupId },
-        {
-          onSuccess: (res) => {
-            closeForm();
-            addNotification({
-              type: 'success',
-              message: t('agents.detail.airDevices.addSuccess').replace('{name}', res.name || res.device_id),
-            });
-          },
-          onError: (err) => notifyOpError(err),
+      // 추가: name 이 비어있지 않을 때만 전송(비면 omit → 백엔드가 composeName 자동 계산).
+      const create: AirDeviceCreate = { station, place, index: indexNum, group_id: groupId };
+      if (name) create.name = name;
+      addDevice.mutate(create, {
+        onSuccess: (res) => {
+          closeForm();
+          addNotification({
+            type: 'success',
+            message: t('agents.detail.airDevices.addSuccess').replace('{name}', res.name || res.device_id),
+          });
         },
-      );
+        onError: (err) => notifyOpError(err),
+      });
     }
   }
 
@@ -237,6 +338,45 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
         err instanceof Error ? err.message : t('agents.detail.airDevices.unknownError'),
       ),
     });
+  }
+
+  // 일괄 실행 결과 → 요약 토스트. total===0 이면 입력 없음 오류. 전건 성공 시 true.
+  function reportBulk(result: BulkResult): boolean {
+    if (result.total === 0) {
+      addNotification({ type: 'error', message: t('agents.detail.airDevices.bulk.emptyInput') });
+      return false;
+    }
+    if (result.failed.length === 0) {
+      addNotification({
+        type: 'success',
+        message: t('agents.detail.airDevices.bulk.successToast').replace('{count}', String(result.ok)),
+      });
+      return true;
+    }
+    addNotification({
+      type: 'error',
+      message: t('agents.detail.airDevices.bulk.partialToast')
+        .replace('{ok}', String(result.ok))
+        .replace('{failed}', String(result.failed.length)),
+    });
+    return false;
+  }
+
+  // 실패 행 → 표시 문자열. sentinel(EMPTY_REQUIRED / INVALID_INDEX)은 i18n 사유로 치환.
+  function formatDeviceFailure(f: BulkFailure): string {
+    let reason = f.reason;
+    if (f.reason === EMPTY_REQUIRED) reason = t('agents.detail.airDevices.bulk.emptyRow');
+    else if (f.reason === INVALID_INDEX) reason = t('agents.detail.airDevices.bulk.invalidIndex');
+    return t('agents.detail.airDevices.bulk.rowError')
+      .replace('{line}', String(f.line))
+      .replace('{reason}', reason);
+  }
+
+  async function submitDeviceBulk() {
+    const result = await bulkAddDevices.mutateAsync(bulkText);
+    const fullSuccess = reportBulk(result);
+    setBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setBulkText('');
   }
 
   function confirmRemove() {
@@ -273,15 +413,57 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
         <span className="text-xs text-(--color-text-muted)">
           {t('agents.detail.airDevices.devicesCount').replace('{count}', String(devices.length))}
         </span>
-        <button
-          type="button"
-          onClick={openAdd}
-          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {t('agents.detail.airDevices.addDevice')}
-        </button>
+        <div className="flex items-center gap-2">
+          {devices.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowBulkRemove(true)}
+              disabled={selected.size === 0}
+              className="inline-flex items-center gap-1 rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t('agents.detail.airDevices.bulkRemove.button').replace('{count}', String(selected.size))}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowBulk((v) => !v)}
+            aria-expanded={showBulk}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+            {t('agents.detail.airDevices.bulk.toggle')}
+          </button>
+          <button
+            type="button"
+            onClick={openAdd}
+            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('agents.detail.airDevices.addDevice')}
+          </button>
+        </div>
       </div>
+
+      {/* 일괄 등록 패널 */}
+      {showBulk && (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+          <h4 className="mb-2 text-xs font-semibold text-(--color-text-secondary)">
+            {t('agents.detail.airDevices.bulk.title')}
+          </h4>
+          <BulkRegisterPanel
+            placeholder={t('agents.detail.airDevices.bulk.placeholder')}
+            formatHint={t('agents.detail.airDevices.bulk.formatHint')}
+            value={bulkText}
+            onChange={setBulkText}
+            onSubmit={submitDeviceBulk}
+            submitting={bulkAddDevices.isPending}
+            submitLabel={t('agents.detail.airDevices.bulk.submit')}
+            failures={bulkFailures}
+            formatFailure={formatDeviceFailure}
+          />
+        </div>
+      )}
 
       {/* 필터 바: 라인 / 역사 / 검색 + 필터 개수 (기기가 있을 때만) */}
       {devices.length > 0 && (
@@ -291,6 +473,7 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
             onChange={(e) => {
               setFilterLine(e.target.value);
               setFilterStation('');
+              setPage(1);
             }}
             aria-label={t('agents.detail.airDevices.line')}
             className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
@@ -304,7 +487,10 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
           </select>
           <select
             value={filterStation}
-            onChange={(e) => setFilterStation(e.target.value)}
+            onChange={(e) => {
+              setFilterStation(e.target.value);
+              setPage(1);
+            }}
             aria-label={t('agents.detail.airDevices.station')}
             className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
           >
@@ -318,7 +504,10 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
           <input
             type="text"
             value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
+            onChange={(e) => {
+              setFilterText(e.target.value);
+              setPage(1);
+            }}
             placeholder={t('agents.detail.airDevices.filter.searchPlaceholder')}
             className="min-w-40 flex-1 rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
           />
@@ -330,7 +519,7 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
         </div>
       )}
 
-      {/* 목록: 이름 → 아이디 → 역사 → 위치 → 인덱스 → 상태 → 액션 */}
+      {/* 목록: 이름 → 아이디 → 역사 → 위치 → 상태 → 액션 */}
       {devices.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
           <HardDrive className="h-8 w-8 opacity-40" aria-hidden="true" />
@@ -342,15 +531,39 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
           <p className="text-sm">{t('agents.detail.airDevices.filter.noMatch')}</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+        <>
+          {/* 페이지네이션 컨트롤 (정렬/필터 뒤에 슬라이스) */}
+          <TablePagination
+            page={safePage}
+            pageSize={pageSize}
+            totalItems={sortedDevices.length}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
+          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated)">
+                <th className="w-8 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label={t('agents.detail.airDevices.selectAll')}
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someSelected && !allSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    disabled={selectableVisible.length === 0}
+                    className="h-3.5 w-3.5 cursor-pointer accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                  />
+                </th>
                 <SortableHeader label={t('agents.detail.airDevices.name')} field="name" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
                 <SortableHeader label={t('agents.detail.airDevices.deviceId')} field="device_id" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
                 <SortableHeader label={t('agents.detail.airDevices.station')} field="station" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
                 <SortableHeader label={t('agents.detail.airDevices.place')} field="place" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
-                <SortableHeader label={t('agents.detail.airDevices.index')} field="index" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
                 <SortableHeader label={t('agents.detail.airDevices.status')} field="status" currentSort={sort} onSort={handleSort} className="px-3 py-2" />
                 <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                   {t('agents.detail.airDevices.actions')}
@@ -358,18 +571,37 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
               </tr>
             </thead>
             <tbody>
-              {sortedDevices.map((d) => (
+              {pagedDevices.map((d) => (
                 <tr
                   key={d.device_id}
                   className="border-b border-(--color-border-default) last:border-0 hover:bg-(--color-bg-elevated)"
                 >
+                  <td className="w-8 px-3 py-2">
+                    {d.source === 'config' ? (
+                      <span title={t('agents.detail.airDevices.configProtected')} className="inline-flex">
+                        <input
+                          type="checkbox"
+                          disabled
+                          aria-label={t('agents.detail.airDevices.selectRow')}
+                          className="h-3.5 w-3.5 cursor-not-allowed opacity-40"
+                        />
+                      </span>
+                    ) : (
+                      <input
+                        type="checkbox"
+                        aria-label={t('agents.detail.airDevices.selectRow')}
+                        checked={selected.has(d.device_id)}
+                        onChange={() => toggleRow(d.device_id)}
+                        className="h-3.5 w-3.5 cursor-pointer accent-blue-600"
+                      />
+                    )}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs text-(--color-text-primary)">{d.name || '-'}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-(--color-text-muted)" title={d.device_id}>
-                    {shortId(d.device_id)}
+                  <td className="px-3 py-2 font-mono text-xs break-all text-(--color-text-muted)">
+                    {d.device_id}
                   </td>
                   <td className="px-3 py-2 text-(--color-text-secondary)">{stationDisplay(d.station)}</td>
                   <td className="px-3 py-2 text-(--color-text-secondary)">{placeDisplay(d.station, d.place)}</td>
-                  <td className="px-3 py-2 text-right text-(--color-text-secondary)">{d.index || 0}</td>
                   <td className="px-3 py-2">
                     <span
                       className={cn(
@@ -406,7 +638,8 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       {/* 추가/편집 폼 모달 */}
@@ -500,6 +733,19 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
                   />
                 </div>
               </div>
+              <div>
+                <label className={labelCls}>{t('agents.detail.airDevices.name')}</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  placeholder={t('agents.detail.airDevices.namePlaceholder')}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className={inputCls}
+                />
+                <p className="mt-1 text-xs text-(--color-text-muted)">
+                  {t('agents.detail.airDevices.nameHint')}
+                </p>
+              </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-4 py-3">
               <button
@@ -538,6 +784,20 @@ export default function XsfmDevicesTab({ agentId }: { agentId: string }) {
         )}
         variant="danger"
         isSubmitting={removeDevice.isPending}
+      />
+
+      {/* 일괄 삭제 확인 */}
+      <ConfirmDialog
+        isOpen={showBulkRemove}
+        onClose={() => setShowBulkRemove(false)}
+        onConfirm={confirmBulkRemove}
+        title={t('agents.detail.airDevices.bulkRemove.confirmTitle')}
+        message={t('agents.detail.airDevices.bulkRemove.confirmMessage').replace(
+          '{count}',
+          String(selected.size),
+        )}
+        variant="danger"
+        isSubmitting={bulkRemoveDevices.isPending}
       />
     </div>
   );

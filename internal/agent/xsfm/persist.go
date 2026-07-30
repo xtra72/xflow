@@ -42,6 +42,9 @@ type persistedDevice struct {
 	Place    string `json:"place,omitempty"`
 	Index    int    `json:"index,omitempty"`
 	Source   string `json:"source"`
+	// NameOverridden 은 composite 디바이스의 커스텀 이름 sticky 여부를 라운드트립한다 — 재시작
+	// 후에도 사용자 지정 이름이 주소 변경으로 재계산되지 않도록 보존한다(REQ sticky name).
+	NameOverridden bool `json:"name_overridden,omitempty"`
 }
 
 // deviceRegistryStore 는 런타임 등록 디바이스 로스터의 파일 기반 영속 저장소이다.
@@ -140,6 +143,8 @@ func (a *XSFMAgent) loadPersistedRoster() error {
 			// 합성 주소 모델 디바이스로 간주해 composite=true 로 표시한다 — 이후 set_device 로 위치가
 			// 바뀌면 Name 을 재계산한다. 비-UUID(과거 합성/blob id)는 composite=false 로 둔다.
 			composite: isUUID(id),
+			// 커스텀 이름 sticky 여부 복원 — 재시작 후에도 사용자 지정 이름이 보존된다.
+			nameOverridden: pd.NameOverridden,
 		}
 		a.devices[id] = dev
 		// 보조 인덱스는 station/place/index 로부터 항상 재구축한다(id 형태와 무관) — 유입 상태
@@ -173,13 +178,14 @@ func (a *XSFMAgent) persistRoster() {
 			continue // 설정 디바이스는 절대 영속화하지 않는다(REQ-02-05)
 		}
 		snapshot[id] = persistedDevice{
-			DeviceID: dev.DeviceID,
-			Name:     dev.Name,
-			GroupID:  dev.GroupID,
-			Station:  dev.Station,
-			Place:    dev.Place,
-			Index:    dev.Index,
-			Source:   dev.Source,
+			DeviceID:       dev.DeviceID,
+			Name:           dev.Name,
+			GroupID:        dev.GroupID,
+			Station:        dev.Station,
+			Place:          dev.Place,
+			Index:          dev.Index,
+			Source:         dev.Source,
+			NameOverridden: dev.nameOverridden,
 		}
 	}
 	a.mu.RUnlock()

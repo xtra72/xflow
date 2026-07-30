@@ -305,6 +305,9 @@ func (a *XSFMAgent) Init(config agent.AgentConfig) error {
 	a.startedAt = time.Now()
 	a.mu.Unlock()
 
+	// 통계 시작 시각 기록 (LoadTime = 시작→첫 메시지 산출 기준).
+	a.stats.SetStartedAt(time.Now())
+
 	a.logger.Info("xsfm: agent initialized",
 		"transport_mode", a.cfg.TransportMode,
 		"devices", len(a.devices),
@@ -366,12 +369,19 @@ func (a *XSFMAgent) handleStateMessage(topic string, payload []byte) {
 		return // 리터럴 불일치 / 세그먼트 수 불일치 → 우리 소유 아님
 	}
 
+	// 외부 수신 경계: 우리 소유 토픽이 확정된 지점에서 수신/바이트/활동/로드시각을 계측한다.
+	a.stats.IncrExternalMessagesReceived()
+	a.stats.AddBytesRead(int64(len(payload)))
+	a.stats.UpdateLastActivity()
+	a.stats.RecordFirstMessage()
+
 	var st decodedState
 	if a.cfg.stateHasAttribute {
 		attribute := fields[placeholderAttribute]
 		var okDec bool
 		st, okDec = a.cfg.PayloadMapping.decodeAttributeScalar(attribute, payload)
 		if !okDec {
+			a.stats.IncrExternalMessagesErrored()
 			a.logger.Warn("xsfm: unknown attribute in state topic", "topic", topic, "attribute", attribute)
 			return
 		}
@@ -379,6 +389,7 @@ func (a *XSFMAgent) handleStateMessage(topic string, payload []byte) {
 		var err error
 		st, err = decodeStatePayload(a.cfg.PayloadMapping, payload)
 		if err != nil {
+			a.stats.IncrExternalMessagesErrored()
 			a.logger.Warn("xsfm: decode state payload failed", "topic", topic, "error", err)
 			return
 		}
@@ -653,8 +664,15 @@ func (a *XSFMAgent) emitOnlineTransition(eventType, deviceID, groupID string, on
 // 디바이스는 ingestState 가 Source="auto" 로 자동 등록한다. attribute-per-topic port 유입은
 // 토픽이 필요하므로 FeedStateFromTopic 을 사용한다.
 func (a *XSFMAgent) FeedState(deviceID string, payload []byte) {
+	// 외부 수신 경계 (port 모드 device_id 직접 유입): 항상 우리 소유이므로 진입 시 계측한다.
+	a.stats.IncrExternalMessagesReceived()
+	a.stats.AddBytesRead(int64(len(payload)))
+	a.stats.UpdateLastActivity()
+	a.stats.RecordFirstMessage()
+
 	st, err := decodeStatePayload(a.cfg.PayloadMapping, payload)
 	if err != nil {
+		a.stats.IncrExternalMessagesErrored()
 		a.logger.Warn("xsfm: decode state payload failed", "device_id", deviceID, "error", err)
 		return
 	}
@@ -733,6 +751,9 @@ func (a *XSFMAgent) Health() agent.HealthStatus {
 // fan-out(group_id/station/line)·응답 대기·역사 레지스트리 CRUD 등은 후속 배치에서 구현되며
 // 그 전까지 ErrInvalidCommand 를 반환한다.
 func (a *XSFMAgent) Process(data []byte) ([]byte, error) {
+	// 내부 수신 경계: 노드/플로우에서 명령이 유입된 지점.
+	a.stats.IncrInternalMessagesReceived()
+
 	var req processRequest
 	if err := json.Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("xsfm process: invalid JSON: %w", err)
