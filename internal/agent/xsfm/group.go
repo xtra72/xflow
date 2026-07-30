@@ -146,6 +146,14 @@ func (a *XSFMAgent) handleSelectorControl(req processRequest) ([]byte, error) {
 		targets, excluded = a.DevicesByLine(req.Line)
 	case req.GroupID != "":
 		sel = selectorRef{Type: "group_id", Value: req.GroupID}
+		// 미등록 커스텀 그룹은 ErrGroupNotFound 로 거부한다(REQ-05-05). station:/line:/레거시
+		// group_id 는 파생/무회귀 경로로 수렴하므로 존재 검사 없이 GroupMembers 로 대상을 도출한다
+		// (RD-4 셀렉터 병존 — group_id=station:<code> 는 station 셀렉터와 동일 결과). GroupMembers
+		// 는 접두사 분기 + 로스터 대조 필터를 적용하며(RD-2/RD-3), 빈 대상은 fanOutControl 이
+		// ErrEmptyGroup 으로 처리한다(REQ-05-04).
+		if err := a.ensureGroupExists(req.GroupID); err != nil {
+			return nil, err
+		}
 		targets = a.GroupMembers(req.GroupID)
 	default:
 		return nil, fmt.Errorf("%w: control requires device_id or a selector (station/line/group_id)", ErrInvalidCommand)

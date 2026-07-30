@@ -42,4 +42,13 @@ var (
 	ErrInvalidCommand = errors.New("xsfm: invalid command")
 	// ErrInvalidLivenessSource 는 liveness_source 가 receive/payload 이외일 때 반환된다.
 	ErrInvalidLivenessSource = errors.New("xsfm: invalid liveness_source (must be 'receive' or 'payload')")
+	// ErrGroupNotFound 는 그룹 레지스트리에서 커스텀 그룹을 찾지 못했을 때 반환된다
+	// (SPEC-XSFM-GROUP-001 REQ-03-06/05-05).
+	ErrGroupNotFound = errors.New("xsfm: group not found")
+	// ErrGroupNotCustom 은 기본 그룹(type=line/station)을 편집/삭제하려 할 때 반환된다
+	// (SPEC-XSFM-GROUP-001 REQ-03-05). 기본 그룹은 station/line 레지스트리·디바이스 위치가 SSOT.
+	ErrGroupNotCustom = errors.New("xsfm: group is not a custom group (base groups are derived, not editable)")
+	// ErrGroupAlreadyExists 는 이미 존재하는 커스텀 그룹 id 를 다시 생성할 때 반환된다
+	// (SPEC-XSFM-GROUP-001 REQ-03-01).
+	ErrGroupAlreadyExists = errors.New("xsfm: group already exists")
 )

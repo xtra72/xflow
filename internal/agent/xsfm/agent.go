@@ -59,6 +59,12 @@ type XSFMAgent struct {
 	// 자체 RWMutex 로 보호되며 로스터 락(mu)·pending 락과 절대 중첩하지 않는다.
 	stations *StationRegistry
 
+	// groups 는 그룹(1급 개념) 레지스트리이다 (SPEC-XSFM-GROUP-001, 신설 비침습 레이어).
+	// 커스텀 그룹 멤버십의 SSOT 이며 자체 RWMutex 로 보호된다 — 로스터 락(mu)·pending
+	// 락·station 레지스트리 락과 절대 중첩하지 않는다(REQ-01-07 락 규율). 기본 그룹
+	// (station/line)은 저장하지 않고 station 레지스트리/로스터에서 파생한다.
+	groups *GroupRegistry
+
 	// registry 는 런타임 등록 디바이스(bridge/auto) 로스터의 파일 기반 영속 저장소이다
 	// (B7, REQ-XSFM-001-02-05/08). registry_path 가 빈 값이면 nil(영속화 비활성). 자체
 	// 락을 보유하며 로스터 락(mu)에 걸쳐 잡지 않는다(스냅샷 후 해제, 그다음 파일 I/O).
@@ -296,6 +302,19 @@ func (a *XSFMAgent) Init(config agent.AgentConfig) error {
 			return fmt.Errorf("xsfm init: restore roster: %w", err)
 		}
 	}
+
+	// 그룹 레지스트리 구성 (SPEC-XSFM-GROUP-001, 신설 레이어): device_registry.json 과 동일
+	// dir(rosterPath)에 group_registry.json 으로 커스텀 그룹을 영속한다. rosterPath 가 비면
+	// 인메모리 전용(종전 동작 보존). 구성 후 기존 group_id 를 커스텀 그룹으로 마이그레이션한다
+	// (REQ-02-04) — Device.GroupID 는 primary 로 유지되어 단일 태그 방출은 무회귀(RD-1).
+	groups, err := newGroupRegistry(rosterPath)
+	if err != nil {
+		return fmt.Errorf("xsfm init: %w", err)
+	}
+	a.mu.Lock()
+	a.groups = groups
+	a.mu.Unlock()
+	a.migrateGroupMembership()
 
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
 		return fmt.Errorf("xsfm init: %w", err)
@@ -798,8 +817,19 @@ func (a *XSFMAgent) Process(data []byte) ([]byte, error) {
 	case "request_state":
 		return a.handleRequestState(req)
 
+	// 커스텀 그룹 CRUD (SPEC-XSFM-GROUP-001 M3, REQ-03-01..06). 기본 그룹(station/line)은
+	// 파생이므로 list_groups 조회로만 노출되고 편집/삭제는 ErrGroupNotCustom 으로 거부된다.
+	case "add_group":
+		return a.handleAddGroup(req, data)
+	case "remove_group":
+		return a.handleRemoveGroup(req)
+	case "set_group":
+		return a.handleSetGroup(req, data)
+	case "list_groups":
+		return a.handleListGroups()
+
 	// 후속 배치에서 구현.
-	case "set_group", "set_line", "set_station",
+	case "set_line", "set_station",
 		"get_state", "get_all",
 		"get_line_stations":
 		return nil, fmt.Errorf("%w: %q not implemented in this batch", ErrInvalidCommand, req.Command)
@@ -848,19 +878,9 @@ func (a *XSFMAgent) GetDevice(deviceID string) (*Device, error) {
 	return &d, nil
 }
 
-// GroupMembers 는 group_id 에 속한 device_id 목록을 로스터 속성에서 도출한다 (정렬).
-func (a *XSFMAgent) GroupMembers(groupID string) []string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	var ids []string
-	for id, dev := range a.devices {
-		if dev.GroupID == groupID {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	return ids
-}
+// GroupMembers 는 group_registry.go / group_membership.go 로 재구현되어 접두사 분기 +
+// 로스터 대조 필터를 적용한다 (SPEC-XSFM-GROUP-001 M1, RD-2/RD-3). 시그니처는 동일하여
+// 호출부(handleSelectorControl)는 변경되지 않는다.
 
 // ---------------------------------------------------------------------------
 // Agent 인터페이스 나머지 (Configure/ID/Name/Type/Info/Stats)
