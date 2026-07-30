@@ -342,9 +342,11 @@ func (a *XSFMAgent) handleSetMultiple(req processRequest) ([]byte, error) {
 // 양 모드에서 device_registered 이벤트를 방출한다. state 토픽 구독은 Start 의 단일 와일드카드
 // 구독이 모든 디바이스를 이미 커버하므로 디바이스별 구독을 하지 않는다 (M14).
 func (a *XSFMAgent) handleAddDevice(req processRequest) ([]byte, error) {
-	// 라인 세그먼트 해석은 로스터 락 취득 전에 수행한다(레지스트리 간 락 중첩 금지, REQ-07-01).
-	// 미해석이면 "" → composeName 이 3-세그먼트로 합성한다(RD-4).
+	// 라인·역사 세그먼트 해석은 로스터 락 취득 전에 수행한다(레지스트리 간 락 중첩 금지, REQ-07-01).
+	// line 미해석이면 "" → composeName 이 3-세그먼트로 합성한다(RD-4). stationDisp 는 역번호가 있으면
+	// 역번호·없으면 역사 코드 폴백이다.
 	line := a.resolveLineFor(req.Station)
+	stationDisp := a.stationDisplayFor(req.Station)
 
 	a.mu.Lock()
 
@@ -381,7 +383,7 @@ func (a *XSFMAgent) handleAddDevice(req processRequest) ([]byte, error) {
 	id := newDeviceID()
 	// 사용자가 비어있지 않은 name 을 주면 커스텀 이름으로 고정(sticky)하고, 아니면 위치 계층에서
 	// 파생한다. sticky 여부는 nameOverridden 으로 표시해 이후 주소 변경 시 재계산을 막는다.
-	name := composeName(line, req.Station, req.Place, req.Index)
+	name := composeName(line, stationDisp, req.Place, req.Index)
 	nameOverridden := false
 	if req.Name != "" {
 		name = req.Name
@@ -543,7 +545,8 @@ func (a *XSFMAgent) handleSetDevice(req processRequest, raw []byte) ([]byte, err
 	// 재확인(composite && !nameOverridden) 후 반영해 그 사이 override 가 걸렸으면 sticky 를 존중한다.
 	if needRecompute {
 		line := a.resolveLineFor(recStation)
-		newName := composeName(line, recStation, recPlace, recIndex)
+		stationDisp := a.stationDisplayFor(recStation)
+		newName := composeName(line, stationDisp, recPlace, recIndex)
 		a.mu.Lock()
 		if d, ok := a.devices[req.DeviceID]; ok && d.composite && !d.nameOverridden {
 			d.Name = newName

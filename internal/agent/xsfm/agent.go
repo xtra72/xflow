@@ -120,6 +120,10 @@ type processRequest struct {
 	DisplayName string `json:"display_name,omitempty"`
 	Order       int    `json:"order,omitempty"`
 
+	// StationNumber 는 역번호(실제 역사 대외 표시 번호, 선택)이다. add_station 에서 역사 코드와
+	// 별개로 지정하며, 지정 시 디바이스 자동 이름의 역사 세그먼트에 우선 반영된다.
+	StationNumber string `json:"station_number,omitempty"`
+
 	// Code 는 라인/커스텀 그룹의 통일 코드 식별자이다 (SPEC-XSFM-LINE-001 RD-2/RD-6).
 	// add_line{code} 및 add_group{code} 에서 사용한다.
 	Code string `json:"code,omitempty"`
@@ -164,6 +168,9 @@ func (req *processRequest) fillFromParams() {
 	}
 	if req.DisplayName == "" {
 		req.DisplayName = stringField(req.Params, "display_name")
+	}
+	if req.StationNumber == "" {
+		req.StationNumber = stringField(req.Params, "station_number")
 	}
 	if req.Code == "" {
 		req.Code = stringField(req.Params, "code")
@@ -246,9 +253,9 @@ func NewXSFMAgent(config agent.AgentConfig) (agent.Agent, error) {
 		if a.cfg.stateIsComposite && hasComposite(dev) {
 			dev.composite = true
 			if dev.Name == "" {
-				// 구성 시점(Init 이전)에는 station 레지스트리가 아직 없어 라인이 미해석된다 →
-				// resolveLineFor 가 "" 를 반환해 3-세그먼트로 합성(하위호환, RD-4).
-				dev.Name = composeName(a.resolveLineFor(dev.Station), dev.Station, dev.Place, dev.Index)
+				// 구성 시점(Init 이전)에는 station 레지스트리가 아직 없어 라인·역번호가 미해석된다 →
+				// resolveLineFor 는 "" 를(3-세그먼트, RD-4), stationDisplayFor 는 코드 폴백을 반환한다.
+				dev.Name = composeName(a.resolveLineFor(dev.Station), a.stationDisplayFor(dev.Station), dev.Place, dev.Index)
 			}
 		}
 		a.devices[key] = dev
@@ -459,15 +466,18 @@ func (a *XSFMAgent) handleStateMessage(topic string, payload []byte) {
 // 해제하고 방출한다 — 락을 채널 송신에 걸쳐 잡지 않는다. fields 의 placeholder 는 device_state_changed
 // 메타로 실려 하류 influx 태그(station_code/place_code/device_index/attribute)를 형성한다.
 func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st decodedState) {
-	// composite auto-생성 시 새 디바이스 이름의 라인 세그먼트를 로스터 락 취득 전에 해석한다
+	// composite auto-생성 시 새 디바이스 이름의 라인·역사 세그먼트를 로스터 락 취득 전에 해석한다
 	// (레지스트리 간 락 중첩 금지, REQ-07-01). 비-composite 경로는 이름 합성이 없어 불필요하다.
+	// stationHint 는 역번호(있으면)-또는-코드 표시 값이다.
 	lineHint := ""
+	stationHint := ""
 	if composite {
 		lineHint = a.resolveLineFor(fields[placeholderStationCode])
+		stationHint = a.stationDisplayFor(fields[placeholderStationCode])
 	}
 
 	a.mu.Lock()
-	deviceID, dev, created := a.resolveDeviceLocked(composite, fields, lineHint)
+	deviceID, dev, created := a.resolveDeviceLocked(composite, fields, lineHint, stationHint)
 
 	prevOnline := dev.Online
 	var changed []string
@@ -555,7 +565,7 @@ func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st dec
 //     핵심 변경점이다 — 조회 키가 "합성 주소 = device_id" 에서 "보조 인덱스 → UUID" 로 바뀐다.
 //   - !composite(blob/{device_id} 모델): topic 의 device_id 를 로스터 키로 직접 조회한다.
 //     미등록이면 그 device_id 를 키로 auto 생성한다(하위호환 — 기존 동작 보존).
-func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string, lineHint string) (string, *Device, bool) {
+func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string, lineHint, stationHint string) (string, *Device, bool) {
 	if composite {
 		ck := compositeKeyFromFields(fields)
 		if id, ok := a.secondary[ck]; ok {
@@ -566,9 +576,10 @@ func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string
 		id := newDeviceID()
 		dev := &Device{DeviceID: id, Online: false, Source: "auto", composite: true}
 		applyAddressFields(dev, fields)
-		// lineHint 는 호출부(ingestState)가 로스터 락 취득 전에 ResolveLine 으로 해석해 주입한다
-		// (레지스트리 간 락 중첩 금지, REQ-07-01). 미해석이면 "" → 3-세그먼트(RD-4).
-		dev.Name = composeName(lineHint, dev.Station, dev.Place, dev.Index)
+		// lineHint/stationHint 는 호출부(ingestState)가 로스터 락 취득 전에 레지스트리에서 해석해
+		// 주입한다(레지스트리 간 락 중첩 금지, REQ-07-01). lineHint 미해석이면 "" → 3-세그먼트(RD-4),
+		// stationHint 는 역번호가 있으면 역번호·없으면 역사 코드 폴백이다.
+		dev.Name = composeName(lineHint, stationHint, dev.Place, dev.Index)
 		dev.Address = nonAttrFields(fields)
 		a.devices[id] = dev
 		a.indexDeviceLocked(dev)

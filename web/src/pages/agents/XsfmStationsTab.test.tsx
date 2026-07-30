@@ -20,8 +20,9 @@ vi.mock('@/services/api/agentService', () => ({ execAgent: execAgentMock }));
 import XsfmStationsTab from './XsfmStationsTab';
 
 const STATIONS = [
-  { station: 'ST-1', line: '2호선', display_name: '시청', order: 1, places: [] },
-  { station: 'ST-2', line: '2호선', display_name: '을지로', order: 2, places: [] },
+  // ST-1: 역번호 있음, ST-2: 역번호 빈값(선택/생략 케이스 — 목록에서 '—' 로 표시).
+  { station: 'ST-1', line: '2호선', display_name: '시청', order: 1, station_number: '132', places: [] },
+  { station: 'ST-2', line: '2호선', display_name: '을지로', order: 2, station_number: '', places: [] },
 ];
 
 beforeEach(() => {
@@ -93,6 +94,54 @@ describe('XsfmStationsTab 다중선택 삭제', () => {
       .filter((c) => c[1]?.command === 'remove_station')
       .map((c) => c[1].params.station);
     expect(removed.sort()).toEqual(['ST-1', 'ST-2']);
+  });
+});
+
+// 역번호(station_number): 목록 컬럼 렌더 + 추가 폼 전송(제공 시 포함, 비면 생략).
+describe('XsfmStationsTab 역번호', () => {
+  it('역번호 컬럼(헤더 + 행 값)을 렌더하고, 빈 역번호는 —로 표시한다', async () => {
+    renderTab();
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(3));
+
+    // 컬럼 헤더 + ST-1 역번호 값.
+    expect(screen.getByText('역번호')).toBeTruthy();
+    expect(screen.getByText('132')).toBeTruthy();
+    // ST-2 는 역번호 빈값 → '—'. 두 역 모두 line='2호선' 이라 라인 컬럼엔 em-dash 없음.
+    expect(screen.getAllByText('—')).toHaveLength(1);
+  });
+
+  it('추가 폼에서 역번호를 입력하면 add_station params 에 station_number 를 포함해 전송한다', async () => {
+    renderTab();
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(3));
+
+    fireEvent.click(screen.getByRole('button', { name: '역사 추가' }));
+    fireEvent.change(screen.getByPlaceholderText('예: ST-101'), { target: { value: 'ST-NEW' } });
+    fireEvent.change(screen.getByPlaceholderText('예: 239, K215, 2-14'), { target: { value: '239' } });
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => {
+      const addCalls = execAgentMock.mock.calls.filter((c) => c[1]?.command === 'add_station');
+      expect(addCalls).toHaveLength(1);
+    });
+    const addCall = execAgentMock.mock.calls.find((c) => c[1]?.command === 'add_station');
+    expect(addCall?.[1].params.station).toBe('ST-NEW');
+    expect(addCall?.[1].params.station_number).toBe('239');
+  });
+
+  it('추가 폼에서 역번호를 비우면 add_station params 에서 station_number 를 생략한다', async () => {
+    renderTab();
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(3));
+
+    fireEvent.click(screen.getByRole('button', { name: '역사 추가' }));
+    fireEvent.change(screen.getByPlaceholderText('예: ST-101'), { target: { value: 'ST-NEW' } });
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => {
+      const addCalls = execAgentMock.mock.calls.filter((c) => c[1]?.command === 'add_station');
+      expect(addCalls).toHaveLength(1);
+    });
+    const addCall = execAgentMock.mock.calls.find((c) => c[1]?.command === 'add_station');
+    expect('station_number' in addCall![1].params).toBe(false);
   });
 });
 

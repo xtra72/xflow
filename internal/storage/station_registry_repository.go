@@ -14,7 +14,14 @@ import (
 // line 은 오직 이 레지스트리에만 SSOT 로 존재한다.
 type StationRegistryEntry struct {
 	// Station 은 역사 식별자(레지스트리 기본 키, 디바이스 Station 이 참조)이다.
+	// 이 값은 내부 코드(주소지정/셀렉터/영속 키)로만 쓰이며, 사람이 읽는 실제 역번호는
+	// StationNumber 가 별도로 나른다(코드 vs 역번호 분리).
 	Station string `json:"station"`
+	// StationNumber 는 역번호(실제 역사에 부여된 대외 표시 번호, 예: "239"/"K215"/"2-14")이다
+	// (선택). 자유 형식 문자열이며 코드(Station)와 분리된 표시 참조로, 디바이스 자동 이름의 역사
+	// 세그먼트에 역번호가 있으면 우선 사용된다(없으면 코드로 폴백). omitempty 로 직렬화되어 역번호가
+	// 없는 기존 station_registry.json 도 그대로 로드된다(하위호환).
+	StationNumber string `json:"station_number,omitempty"`
 	// Line 은 소속 호선 식별자 — station 의 상위 집계 레벨이다.
 	Line string `json:"line"`
 	// DisplayName 은 역사 표시명(UI/대시보드 소비용)이다.

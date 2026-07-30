@@ -29,6 +29,9 @@ export interface AirStation {
   line: string;
   display_name: string;
   order: number;
+  /** 역번호(실제 역 번호, 예: "239","K215","2-14"). 내부 역사 코드(station)와 별개인 표시용 참조값.
+   *  list_stations 응답에서 누락/빈 문자열일 수 있어(선택 필드) useStations 에서 ?? '' 로 정규화한다. */
+  station_number?: string;
   places: AirPlace[];
 }
 
@@ -120,8 +123,8 @@ export function useStations(agentId: string, refetchInterval?: number) {
     queryFn: async () => {
       const res = await agentService.execAgent(agentId, { command: 'list_stations' });
       const stations = (res as unknown as { stations?: AirStation[] }).stations ?? [];
-      // places 누락 방어(빈 역사).
-      return stations.map((s) => ({ ...s, places: s.places ?? [] }));
+      // places 누락 방어(빈 역사) + station_number 누락/빈값 정규화(표시 코드가 항상 string 이도록).
+      return stations.map((s) => ({ ...s, station_number: s.station_number ?? '', places: s.places ?? [] }));
     },
     enabled: !!agentId,
     refetchInterval,
@@ -135,6 +138,8 @@ export interface AddStationVariables {
   line?: string;
   display_name?: string;
   order?: number;
+  /** 역번호(표시용, 자유형식·선택). 비었으면 호출부에서 키를 생략한다(order/line omit 패턴과 동일). */
+  station_number?: string;
 }
 
 /** 역사 추가/갱신 (add_station upsert). */

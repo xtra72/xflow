@@ -65,6 +65,24 @@ describe('useStations', () => {
     expect(result.current.data?.[0]?.places).toHaveLength(1);
     expect(result.current.data?.[1]?.places).toEqual([]);
   });
+
+  it('list_stations 응답의 station_number 를 파싱하고 누락/빈값은 빈 문자열로 정규화한다', async () => {
+    execAgentMock.mockResolvedValueOnce({
+      status: 'ok',
+      stations: [
+        // 역번호 있음.
+        { station: 'ST-1', line: '2호선', display_name: '시청', order: 1, station_number: '239', places: [] },
+        // 역번호 키 자체가 없음(백엔드가 빈 값 생략) → '' 로 정규화.
+        { station: 'ST-2', line: '2호선', display_name: '을지로', order: 2, places: [] },
+      ],
+    });
+
+    const { result } = renderHook(() => useStations('agent-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.[0]?.station_number).toBe('239');
+    expect(result.current.data?.[1]?.station_number).toBe('');
+  });
 });
 
 describe('useAddStation', () => {
@@ -79,6 +97,30 @@ describe('useAddStation', () => {
       command: 'add_station',
       params: { station: 'ST-1', line: '2호선', display_name: '시청', order: 1 },
     });
+  });
+
+  it('station_number 가 주어지면 params 에 포함해 전송한다', async () => {
+    execAgentMock.mockResolvedValueOnce({ status: 'ok' });
+
+    const { result } = renderHook(() => useAddStation('agent-1'), { wrapper });
+    result.current.mutate({ station: 'ST-1', line: '2호선', display_name: '시청', order: 1, station_number: '239' });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(execAgentMock).toHaveBeenCalledWith('agent-1', {
+      command: 'add_station',
+      params: { station: 'ST-1', line: '2호선', display_name: '시청', order: 1, station_number: '239' },
+    });
+  });
+
+  it('station_number 키를 생략하면 params 에도 포함되지 않는다(선택 필드)', async () => {
+    execAgentMock.mockResolvedValueOnce({ status: 'ok' });
+
+    const { result } = renderHook(() => useAddStation('agent-1'), { wrapper });
+    result.current.mutate({ station: 'ST-1', line: '2호선', display_name: '시청', order: 1 });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const params = execAgentMock.mock.calls[0]?.[1]?.params as Record<string, unknown>;
+    expect('station_number' in params).toBe(false);
   });
 });
 
