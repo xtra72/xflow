@@ -1,6 +1,8 @@
 # Research — SPEC-TRIGGER-PANEL-001
 
 > 코드베이스 조사 아티팩트. 모든 file:line 은 조사 시점 확인 기준선(2026-07-31, develop 브랜치). 구현 착수 시 재확인 권장.
+>
+> **버전 노트**: v0.3.0 (2026-07-31) — M1~M6 구현 완료 + sync-phase close. 조사 기준선은 구현으로 검증됨: §1 의 `cancelAllTimers`/`registerSchedules` 재사용 가정이 M1 재무장에서 성립하고, §2~§5 의 기존 경로(configureNode/updateFlow/패널 시스템/TriggerScheduleEditor) 재사용이 M2~M5 에서 확인됨. 구현 트리거 config 키는 `schedules`(SPEC 산문 `trigger_schedules` 정정, spec.md §8 IN-3).
 
 ## 1. Trigger 노드 (`internal/node/trigger.go`) — 확인됨
 

@@ -339,6 +339,7 @@ Lua 기반 실시간 스크립트 엔진으로, 플로우 실행 중에도 로�
 - **사용자 관리**: 역할 기반 접근 제어(RBAC), 사용자 초대 및 권한 설정
 - **Import/Export**: 플로우 및 에이전트를 JSON/YAML 형식으로 내보내기/가져오기, 드래그 앤 드롭 지원, CLI 호환 포맷
 - **지하철 시설물 관리 대시보드 패널** (SPEC-FACILITY-DASHBOARD-001): 지하철 역사 시설물(첫 디바이스: 설비)을 라인(호선)→역사(station)→기기(device) 계층으로 조망·제어하는 3종 패널. 라인 패널(라인도 + 역사별 상태 요약 + 라인 통계 + 라인 일괄 제어), 역사 패널(역사 통계 + 기기별 상태 목록 + 역사 일괄 제어), 기기 패널(단일 기기 상태 + 응답 대기 제어). 신규 백엔드 없이 xsfm 에이전트의 exec 표면을 클라이언트에서 집계·제어
+- **Trigger 노드 대시보드 패널** (SPEC-TRIGGER-PANEL-001): 대시보드에서 특정 trigger 노드를 타겟팅해 스케줄(interval/cron/once/times/weekly/monthly)과 페이로드를 직접 편집하는 전용 패널. 편집은 즉시(live) 실행 중인 노드에 반영되고(백엔드 `TriggerNode.Configure` live 타이머 재무장) 동시에 flow 정의로 지속화되는 dual-write. 패널-로컬 페이로드 카탈로그(이름→payload)를 스케줄에 스냅샷으로 배정, running/stopped 배지 + 미실행 노드 persist-only 강등
 
 ### 5. Plugin System (플러그인 시스템)
 

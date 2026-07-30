@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### 추가 — Trigger 노드 대시보드 패널 + 백엔드 live 타이머 재등록
+
+- **대시보드에서 Trigger 노드를 직접 운영하는 전용 패널 도입 + `TriggerNode.Configure` live 타이머 재무장 (Non-breaking, 가산형)**
+
+  기존 Trigger 노드 스케줄/페이로드 편집은 flow 에디터 속성 위젯에서만 가능했고 재배포를 거쳐야 반영됐다. 여기에 (1) 대시보드에서 특정 trigger 노드를 타겟팅해 스케줄을 편집하면 **즉시(live)** 노드에 반영되고 동시에 flow 정의로 **지속화(persist)**되는 dual-write 패널, (2) 이를 뒷받침하는 백엔드 live 재등록을 가산했다. 백엔드 M1(커밋 `31a0e08`) + 프런트 M2~M5(커밋 `cf00c74`)로 완성.
+
+  - **백엔드 live 재등록(M1, `internal/node/trigger.go`)**: `TriggerNode.Configure` 가 running 노드 live 재설정 시 기존 타이머를 취소하고 새 스케줄로 재무장한다. **started-gate + `StateRunning` 체크**로 재무장을 running 노드의 live 재설정 케이스에만 격리(초기 `Configure→Init` 은 이중 등록 안 함). **`rearmGen` generation 토큰**으로 cancel→re-register 창의 stale in-flight 발화를 drop(double-fire·orphan 없음). 빈 스케줄은 전 타이머 취소 후 유효 IDLE(오류 아님). live 재무장이 유발한 `buildMessage` payload 읽기 vs 동시 `Configure` payload 쓰기 race 를 신규 `payloadMu` 로 보호. `-race` 클린, 노드 테스트 green.
+  - **대시보드 패널(M2~M5, `web/`)**: 신규 `trigger-config` PanelType + `TriggerConfigPanel`. `useNodeTypeInstances('trigger')` 기반 타겟 피커(running/stopped 배지). `TriggerScheduleEditor` 재사용 스케줄 CRUD. 패널-로컬 `payloadCatalog` + per-schedule 인라인 스냅샷 주입(선택 시점 JSON deep-clone, 카탈로그 후속 편집 비소급 — 재선택 시에만 갱신). dual-write: LIVE `configureNode` + PERSIST `getFlow`→`node.data` 패치→`updateFlow`(patch-then-PUT, 다른 노드/와이어 보존). 404(미실행)는 persist-only + 통지, 동시 편집은 last-write-wins + 대시보드 통지(낙관적 잠금 미도입). 순수 유틸 `triggerPanelUtils`.
+  - **분기(Divergence, as-implemented — spec.md §8 IN-1~IN-6)**: (1) 재무장 게이트를 started + StateRunning 으로 세분(Paused/Stopped 미재등록). (2) `payloadMu` 신규 추가(-race 로 표면화된 Configure-vs-fire race). (3) 트리거 config 키는 구현 SSOT 인 `schedules`(SPEC 산문 `trigger_schedules` 정정). (4) dual-write patch 는 reactflow flat `node.data` 병합. (5) 스냅샷 주입 = 선택 시점 JSON deep-clone(`payloadRef` 미직렬화). (6) 충돌 감지 = 지속 config vs hydration 기준선 비교.
+  - **품질**: 노드 재무장/취소/no-double-fire/롤백/빈-스케줄/폴백 신규 함수 커버리지 100%, `go test ./...` exit 0(42 pkgs), `-race` 클린, 프런트 vitest 2319 pass(+32)·`tsc`/eslint 클린. 기존 대시보드 패널·flow 에디터 무회귀(가산형). 신규 외부 의존성 0.
+  - **관련**: SPEC-TRIGGER-PANEL-001 v0.3.0(구현 완료, `31a0e08` + `cf00c74`, Tier L). RD-1~11 반영, OQ-1~6 확정. 공유 명명 페이로드 저장소·낙관적 잠금은 향후 SPEC.
+
 ### 추가 — xsfm 토픽 `{line_code}` placeholder (SPEC-XSFM-LINE-001 amendment v0.4.0)
 
 - **sub/pub 토픽 템플릿에 `{line_code}` placeholder 도입 (Non-breaking, 가산)** — 예: `cmd/{line_code}/{station_code}/{place_code}/bse9000/{device_index}`.

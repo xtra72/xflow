@@ -3,6 +3,8 @@
 > Trigger 노드 대시보드 패널 (스케줄 설정 + 페이로드 카탈로그 + 노드 맵핑). Tier L. 우선순위 기반 마일스톤(시간 예측 없음).
 >
 > **버전 노트**: v0.2.0 (2026-07-31) — OQ-1~6 엔지니어링 기본값 확정 → RD-6~11 반영. M1 은 generation 토큰 재무장으로, M5 는 last-write-wins + running/stopped 배지로 구체화. OQ 미해결 항목 없음.
+>
+> **버전 노트**: v0.3.0 (2026-07-31) — M1~M6 구현 완료 + sync-phase close(status `completed`). M1 게이트는 started + StateRunning 으로, M2 배지/타겟팅과 M4 스냅샷 주입(JSON deep-clone)과 M5 dual-write(patch-then-PUT, 404 persist-only, last-write-wins 통지)로 구현. 트리거 config 키는 `schedules`(구현 SSOT). as-implemented 정련 6건은 spec.md §8 IN-1~IN-6 참조. 검증: `go test ./...` exit 0(42 pkgs), vitest 2319 pass, `-race` 클린.
 
 ## 기술 접근 (Technical Approach)
 

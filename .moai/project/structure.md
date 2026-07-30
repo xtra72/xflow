@@ -696,6 +696,13 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - `web/src/pages/dashboard/panels/facilityShared.tsx`: 패널 공용 컴포넌트(`StatTiles`/`ControlResultView`/`BulkControl`).
 - 와이어링 4지점: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(패널 타입 분기), `pages/dashboard/AddPanelDialog.tsx`(패널 옵션 + facility 대상 선택 단계), `pages/dashboard/PanelSettingsDialog.tsx`(FacilitySection 설정). i18n는 `lib/i18n/{ko,en}.json`(`dashboard.facility.*`).
 
+**Trigger 노드 대시보드 패널 + 백엔드 live 타이머 재등록** (SPEC-TRIGGER-PANEL-001, v0.3.0 — 프런트 가산형 패널 + 백엔드 최소 침습 노드 확장):
+
+- `internal/node/trigger.go` (백엔드 M1): `TriggerNode.Configure` 에 live 타이머 재무장 추가. started-gate + `StateRunning` 게이트로 running 노드 live 재설정(`engine.ReconfigureNode`) 케이스에만 재등록 격리(초기 `Configure→Init` 이중 등록 없음). `rearmGen` generation 토큰으로 cancel→re-register 창의 stale in-flight 발화 drop(double-fire·orphan 없음), 빈 스케줄은 유효 IDLE, 신규 `payloadMu` 로 Configure-vs-fire payload race 보호. 기존 `cancelAllTimers`/`registerSchedules` 재사용(최소 침습). 신규 함수 커버리지 100%, `-race` 클린.
+- `web/src/pages/dashboard/panels/TriggerConfigPanel.tsx` (프런트 M2~M5): 대시보드에서 특정 trigger 노드를 타겟팅해 스케줄/페이로드를 편집하는 신규 패널(`trigger-config` PanelType). `useNodeTypeInstances('trigger')` 타겟 피커(running/stopped 배지), `TriggerScheduleEditor` 재사용 6타입 스케줄 CRUD, 패널-로컬 `payloadCatalog` + 인라인 스냅샷 주입(선택 시점 JSON deep-clone, 비소급). 노드 config(`schedules` 키)가 SSOT, 패널은 live 에디터.
+- `web/src/pages/dashboard/panels/triggerPanelUtils.ts`: 순수 유틸(카탈로그→inline 직렬화, `patchNodeConfigInDefinition` reactflow flat `node.data` 병합). dual-write: LIVE `nodeService.configureNode` + PERSIST `getFlow`→patch→`flowService.updateFlow`(patch-then-PUT). 404 persist-only + 통지, last-write-wins(지속 config vs hydration 기준선 비교) 통지.
+- 와이어링: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(디스패치), `pages/dashboard/AddPanelDialog.tsx`(trigger-node 피커 단계). i18n `lib/i18n/{ko,en}.json`. 기존 flow API/패널 시스템 재사용(신규 백엔드 엔드포인트·권한 계층 0).
+
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
 - `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)

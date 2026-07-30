@@ -1,8 +1,8 @@
 ---
 id: SPEC-TRIGGER-PANEL-001
 title: "Trigger 노드 대시보드 패널 (스케줄 설정 + 페이로드 카탈로그 + 노드 맵핑)"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-31
 updated: 2026-07-31
 author: xtra
@@ -20,6 +20,7 @@ tier: L
 | ---------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-07-31 | 0.1.0 | 초기 SPEC 작성 — Trigger 노드용 대시보드 패널 도입. (1) 대시보드에서 특정 trigger 노드를 타겟팅하여 스케줄 CRUD, (2) 패널 config 레벨 페이로드 카탈로그 정의 + 스케줄에 이름으로 배정 시 인라인 주입, (3) `TriggerNode.Configure` live 타이머 재등록(cancel+re-register), (4) dual-write 지속성(configureNode live + updateFlow persist), (5) 6개 스케줄 타입 편집 UI. RD-1~5 확정 반영, OQ-1~6 미해결. |
 | 2026-07-31 | 0.2.0 | OQ-1~6 엔지니어링 기본값 확정 → RD-6~11 승격, §6 Open Questions 전면 해소(잔여 없음). (RD-6) 재등록 no-double-fire 를 **re-arm generation 토큰**으로 확정(stale in-flight fire drop), (RD-7) 빈 스케줄 live Configure 는 전 타이머 취소 후 valid IDLE(오류 아님), (RD-8) 동시 flow 편집은 last-write-wins + 대시보드 통지(낙관적 잠금은 향후 SPEC), (RD-9) 카탈로그는 패널-로컬(`config.payloadCatalog`) 확정(공유 저장소 out of scope), (RD-10) 대시보드는 기존 flow API(useFlows/useFlowNodes read, updateFlow write) 재사용 + running/stopped 배지 + 404 시 persist-only+통지, (RD-11) 카탈로그 배정은 **스냅샷 주입**(카탈로그 후속 편집이 기주입 스케줄을 소급 변경하지 않음; 재선택 시에만 갱신). 관련 EARS(REQ-01-02/05, REQ-04-04, REQ-05-03/05) 및 §4 사양 갱신. |
+| 2026-07-31 | 0.3.0 | M1~M6 구현 완료 → sync-phase 문서 동기화 + as-implemented 정련 + 3-phase close. status `draft→completed`. 백엔드 M1(커밋 `31a0e08`): `TriggerNode.Configure` live 재무장(started-gate + StateRunning, rearmGen generation 토큰, 빈 스케줄 valid IDLE, payloadMu race fix). 프런트 M2~M5(커밋 `cf00c74`): `trigger-config` PanelType + `TriggerConfigPanel` + `useNodeTypeInstances('trigger')` 피커(running/stopped 배지) + 스케줄 CRUD + `payloadCatalog` inline 스냅샷 주입 + dual-write(configureNode live + getFlow→patch→updateFlow persist, 404 persist-only, last-write-wins 통지). §8 구현 노트(as-implemented) IN-1~IN-6 신설. 검증: `go test ./...` exit 0(42 pkgs), vitest 2319 pass(+32), `-race` 클린. |
 
 ---
 
@@ -203,3 +204,19 @@ Configure(config):
 | REQ-04-01~05  | M4 카탈로그 + inline 주입          | 신규 패널 컴포넌트 + 직렬화 유틸                                                         | §D (vitest)        |
 | REQ-05-01~05  | M5 dual-write                | `nodeService.configureNode`, `flowService.updateFlow`, 패널 저장 핸들러          | §E (vitest)        |
 | REQ-06-01~04  | M6 NFR                       | 전 범위                                                                     | §F                |
+
+## 8. 구현 노트 (Implementation Notes · as-implemented)
+
+> spec-anchored (Tier L) Level 2 규율. 아래는 M1~M6 구현 결과 계획(§4/§5) 대비 정련·구체화된 사항의 정식 기록이다. 6건 모두 **비침습성·정확성을 강화**하는 방향이며 스코프 확장이 아니다. 백엔드 M1 커밋 `31a0e08`, 프런트 M2~M5 커밋 `cf00c74`.
+
+- **IN-1 — 재무장 게이트: started + StateRunning (RD-6/§4.2 정련)**: 계획(§4.2)은 게이트를 `state()==Running && timer!=nil` 로 기술했다. 실제 구현은 **started-gate + `StateRunning` 체크**로 세분화하여, 재무장을 **running 노드의 live 재설정(ReconfigureNode) 케이스에만** 격리한다. 초기 `Configure→Init` 경로는 started-gate 로 걸러져 이중 등록하지 않으며(REQ-01-04 불변 보장 강화), `Paused`/`Stopped` 상태는 재등록하지 않는다(REQ-01-03). 판정: 강화형 정련(REQ-01-01/03/04 충족).
+
+- **IN-2 — `payloadMu` 추가 (신규 필드, -race 로 표면화)**: 계획에 없던 `payloadMu` 를 추가했다. live 재무장으로 `Configure` 가 발화와 동시 실행 가능해지면서, `buildMessage` 의 노드 레벨 payload 폴백 읽기와 동시 `Configure` 의 payload 재설정 쓰기 사이 data race 가 `-race` 에서 표면화되었다. `payloadMu` 로 노드 레벨 payload 접근을 보호한다. 판정: in-scope 필수 정련(live 재무장이 Configure-vs-fire 동시성을 새로 유발하므로 REQ-01-02/07 정확성 보강).
+
+- **IN-3 — 트리거 config 키는 `schedules` (SPEC 산문 `trigger_schedules` 정정)**: SPEC 산문(§3 REQ-03-04, §4.4 등)은 트리거 스케줄 config 키를 느슨하게 `trigger_schedules` 로 표기했으나, `internal/node/trigger.go` 대조 결과 실제 파서/직렬화 키는 **`schedules`** 이다. LIVE(`configureNode`)와 PERSIST(`node.data`) 양쪽 모두 `schedules` 를 사용한다. 판정: 문서 표기 정정(구현이 SSOT; 노드 스키마 불변).
+
+- **IN-4 — dual-write patch shape: reactflow flat node.data (§4.3 구체화)**: `getFlow` 는 노드 config 를 reactflow 형식으로 `node.data` 에 flat 하게 반환한다. 지속 경로는 `patchNodeConfigInDefinition` 유틸이 `fullConfig` 를 대상 노드의 `node.data` 에 병합하되 `nodeType`/`label`/다른 노드/와이어를 보존한 뒤 `updateFlow` 로 저장한다(patch-then-PUT, REQ-05-02 충족). 판정: §4.3 시퀀스의 구체적 patch 형상 확정.
+
+- **IN-5 — 스냅샷 주입 = 선택 시점 JSON deep-clone (RD-11/§3.3 구체화)**: 카탈로그 배정 스냅샷은 **선택 시점의 JSON deep-clone** 으로 구현되며 `payloadRef`(이름 참조)는 노드 config 로 직렬화되지 않는다. 노드는 resolved inline payload 만 관측한다(REQ-04-03). 카탈로그 후속 편집은 기주입 스케줄에 비소급이며 재선택 시에만 갱신된다(REQ-04-04). 판정: RD-11 확정안의 구체 구현(비소급 보장).
+
+- **IN-6 — 충돌 감지 = 지속 config vs hydration 기준선 비교 (RD-8/§3.4 구체화)**: 동시 편집 충돌(RD-8)은 **막 읽은 지속 노드 config 를 hydration 기준선과 비교**하여 감지한다. 불일치 시에만 last-write-wins 덮어쓰기 통지를 노출하며, version/etag 잠금 경로는 도입하지 않는다(REQ-05-05, RD-8 확정). 판정: RD-8 last-write-wins + 통지의 구체 감지 메커니즘 확정.

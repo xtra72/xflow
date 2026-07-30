@@ -1,6 +1,8 @@
 # Design — SPEC-TRIGGER-PANEL-001
 
 > Tier L 기술 설계. 아키텍처, 컴포넌트 경계, 데이터 모델, 재등록 시퀀스, dual-write 시퀀스.
+>
+> **버전 노트**: v0.3.0 (2026-07-31) — M1~M6 구현 완료 + sync-phase close. 본 설계는 구현으로 실현됨(§2.2 재무장 게이트는 started + StateRunning 으로, §3.3 스냅샷은 JSON deep-clone 으로, §3.4 dual-write 는 patch-then-PUT 로 구현). 구현 트리거 config 키는 `schedules`. as-implemented 정련 6건은 spec.md §8 IN-1~IN-6 참조.
 
 ## 1. 아키텍처 개요
 

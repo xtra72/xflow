@@ -3,6 +3,8 @@
 > Given-When-Then. 기계 검증 가능: 백엔드 Go testify(`internal/node/trigger_test.go`), 프런트 vitest(`web/src/**/*.test.ts(x)`). REQ 추적은 각 시나리오 말미.
 >
 > **버전 노트**: v0.2.0 (2026-07-31) — OQ-1~6 확정(RD-6~11) 반영. A-2(generation 토큰 stale drop), A-5(빈 스케줄 IDLE), D-3(스냅샷 주입 비소급), E-3(404 persist-only + 배지), E-4(last-write-wins 통지) 를 확정안으로 구체화하고, B-5(running/stopped 배지) 신규 추가.
+>
+> **버전 노트**: v0.3.0 (2026-07-31) — M1~M6 구현 완료 + sync-phase close. §A~§F 전 시나리오가 Go testify(`internal/node/trigger_rearm_test.go`) + vitest(`AddPanelDialog.triggerNode.test.tsx`, `TriggerConfigPanel.test.tsx`, `triggerPanelUtils.test.ts`)로 커버됨. 검증: `go test ./...` exit 0(42 pkgs), vitest 2319 pass(+32), `-race` 클린. as-implemented 정련은 spec.md §8 IN-1~IN-6 참조.
 
 ## §A. Trigger 노드 live 재등록 (Go testify) — M1
 
