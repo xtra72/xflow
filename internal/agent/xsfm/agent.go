@@ -383,6 +383,8 @@ func (a *XSFMAgent) Init(config agent.AgentConfig) error {
 func (a *XSFMAgent) Start(_ context.Context) error {
 	// 오프라인 감지 모니터 (양 모드 공통, offline_timeout>0 일 때만 기동).
 	a.startOfflineMonitor()
+	// 주기 상태 방출기 (SPEC-XSFM-AGENT-IO-001, state_emit_mode ∈ {interval, both} 일 때만 기동).
+	a.startStateEmitter()
 
 	if a.cfg.TransportMode == transportModePort {
 		a.logger.Info("xsfm: started in port mode (no broker)")
@@ -551,8 +553,18 @@ func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st dec
 		emitTsMs = st.TimestampMs
 	}
 
-	if len(changed) > 0 {
+	// on-change 방출을 상태 방출 모드로 게이팅한다 (SPEC-XSFM-AGENT-IO-001 RD-2, §4.4).
+	// event/both: 현행대로 변경 시 device_state_changed 방출. interval: 억제(주기 스냅샷이 대신함).
+	// 전이 이벤트(device_online/offline, 위)는 방출 모드와 무관하게 항상 방출된다(범위 밖, 게이팅 제외).
+	if len(changed) > 0 && (a.cfg.StateEmitMode == stateEmitModeEvent || a.cfg.StateEmitMode == stateEmitModeBoth) {
 		a.emitStateChanged(deviceID, groupID, newOnline, changed, stateAxes, emitTsMs, fields)
+	}
+
+	// 수신 파싱-상태 forward 탭 (SPEC-XSFM-AGENT-IO-001 RD-1/RD-4). forward_received_to_node 가 ON 이면
+	// 변경 여부(len(changed))·방출 모드와 무관하게 매 수신마다 device_state_received 를 방출한다.
+	// ingestState 는 direct·port 공유 시임이므로 이 단일 지점 배치로 양 모드에 mode-agnostic 하게 적용된다.
+	if a.cfg.ForwardReceivedToNode {
+		a.emitStateReceived(deviceID, groupID, newOnline, stateAxes, emitTsMs, fields)
 	}
 }
 

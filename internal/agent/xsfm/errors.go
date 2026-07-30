@@ -58,4 +58,7 @@ var (
 	// ErrGroupAlreadyExists 는 이미 존재하는 커스텀 그룹 id 를 다시 생성할 때 반환된다
 	// (SPEC-XSFM-GROUP-001 REQ-03-01).
 	ErrGroupAlreadyExists = errors.New("xsfm: group already exists")
+	// ErrInvalidStateEmitMode 는 state_emit_mode 가 event/interval/both 이외일 때 반환된다
+	// (SPEC-XSFM-AGENT-IO-001 REQ-03-02, transport_mode/liveness_source enum 검증 패턴 동형).
+	ErrInvalidStateEmitMode = errors.New("xsfm: invalid state_emit_mode (must be 'event', 'interval', or 'both')")
 )
