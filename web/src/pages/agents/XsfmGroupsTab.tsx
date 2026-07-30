@@ -17,6 +17,7 @@ import {
   useSetGroup,
   type Group,
 } from '@/hooks/useGroups';
+import { LINE_CODE_PATTERN } from '@/hooks/useLine';
 import { useXsfmDevices, useStations, type AirDevice, type AirStation } from '@/hooks/useStation';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
@@ -37,6 +38,11 @@ interface GroupFormState {
   /** 편집 대상 group_id(추가 모드에서는 ''). */
   groupId: string;
   name: string;
+  /**
+   * 사용자 지정 코드(SPEC-XSFM-LINE-001, RD-2). 추가 모드에서만 입력·전송한다(선택).
+   * 편집 모드에서는 코드가 식별자이므로 변경 불가(입력 미노출).
+   */
+  code: string;
   /** 선택된 멤버 device_id 집합. */
   members: Set<string>;
 }
@@ -195,13 +201,16 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
   }, [groups]);
 
   function openAdd() {
-    setForm({ groupId: '', name: '', members: new Set() });
+    setForm({ groupId: '', name: '', code: '', members: new Set() });
   }
 
   function openEdit(g: Group) {
     if (!isCustomGroup(g)) return; // 기본 그룹은 편집 불가(방어).
-    setForm({ groupId: g.id, name: g.name, members: new Set(g.members) });
+    setForm({ groupId: g.id, name: g.name, code: g.code, members: new Set(g.members) });
   }
+
+  // 추가 모드에서 입력한 코드의 포맷 위반 여부(빈 코드는 허용 — 선택 필드). 편집 모드는 코드 잠금.
+  const codeInvalid = !!form && !form.groupId && form.code.trim() !== '' && !LINE_CODE_PATTERN.test(form.code.trim());
 
   function closeForm() {
     setForm(null);
@@ -249,9 +258,15 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
         },
       );
     } else {
-      // 추가: name + 초기 members(선택).
+      // 추가: name + 초기 members(선택) + code(선택, RD-2). code 제공 시 포맷 검증 후 전송하며,
+      // 생략하면 기존 name 기반 동작을 유지한다(하위호환).
+      const code = form.code.trim();
+      if (code && !LINE_CODE_PATTERN.test(code)) {
+        addNotification({ type: 'error', message: t('agents.detail.groups.codeFormatError') });
+        return;
+      }
       addGroup.mutate(
-        { name, members },
+        code ? { name, members, code } : { name, members },
         {
           onSuccess: () => {
             closeForm();
@@ -338,6 +353,16 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
                     <span className="truncate text-sm font-medium text-(--color-text-primary)" title={g.name}>
                       {g.name}
                     </span>
+                    {/* 코드 표시(SPEC-XSFM-LINE-001) — 있을 때만 mono 배지로 노출. */}
+                    {g.code && (
+                      <span
+                        data-testid={`group-code-${g.id}`}
+                        className="shrink-0 truncate font-mono text-[10px] text-(--color-text-muted)"
+                        title={g.code}
+                      >
+                        {g.code}
+                      </span>
+                    )}
                     <span
                       data-testid={`group-member-count-${g.id}`}
                       className="inline-flex shrink-0 items-center gap-1 text-[11px] text-(--color-text-muted)"
@@ -433,6 +458,26 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
                   className={inputCls}
                 />
               </div>
+              {/* 코드 입력(추가 모드만, 선택). 코드는 식별자이므로 편집 모드에서는 잠금(미노출). */}
+              {!form.groupId && (
+                <div>
+                  <label className={labelCls}>{t('agents.detail.groups.code')}</label>
+                  <input
+                    type="text"
+                    value={form.code}
+                    placeholder={t('agents.detail.groups.codePlaceholder')}
+                    onChange={(e) => setForm({ ...form, code: e.target.value })}
+                    data-testid="group-code-input"
+                    className={inputCls}
+                  />
+                  <p
+                    data-testid="group-code-hint"
+                    className={cn('mt-1 text-[11px]', codeInvalid ? 'text-red-500' : 'text-(--color-text-muted)')}
+                  >
+                    {t('agents.detail.groups.codeFormatHint')}
+                  </p>
+                </div>
+              )}
               <div>
                 <label className={labelCls}>
                   {t('agents.detail.groups.members')}{' '}
@@ -594,7 +639,7 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={submitting || !form.name.trim()}
+                disabled={submitting || !form.name.trim() || codeInvalid}
                 data-testid="group-form-submit"
                 className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
               >

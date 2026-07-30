@@ -98,8 +98,8 @@ function memberRowIds(): string[] {
   );
 }
 
-const customGroup: Group = { id: 'custom:x', name: '2층', type: 'custom', member_count: 1, members: ['d1'] };
-const stationGroup: Group = { id: 'station:ST-1', name: '강남역', type: 'station', member_count: 2, members: ['d1', 'd2'] };
+const customGroup: Group = { id: 'custom:x', name: '2층', code: 'x', type: 'custom', member_count: 1, members: ['d1'] };
+const stationGroup: Group = { id: 'station:ST-1', name: '강남역', code: 'ST-1', type: 'station', member_count: 2, members: ['d1', 'd2'] };
 
 beforeEach(() => {
   mutations.add.mockReset();
@@ -155,6 +155,52 @@ describe('XsfmGroupsTab', () => {
 
     expect(mutations.add).toHaveBeenCalledTimes(1);
     expect(mutations.add).toHaveBeenCalledWith({ name: '3층', members: ['d2'] }, expect.anything());
+  });
+
+  it('코드 입력 시 add_group 을 { name, members, code } 로 호출한다(SPEC-XSFM-LINE-001 AC-7.2)', () => {
+    devicesMock.current = [device('d1', '기기1')];
+    render(<XsfmGroupsTab agentId="a1" />);
+
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+    fireEvent.change(screen.getByPlaceholderText('agents.detail.groups.namePlaceholder'), {
+      target: { value: '펌프군' },
+    });
+    fireEvent.change(screen.getByTestId('group-code-input'), { target: { value: 'gpump' } });
+    fireEvent.click(screen.getByTestId('group-form-submit'));
+
+    expect(mutations.add).toHaveBeenCalledTimes(1);
+    expect(mutations.add).toHaveBeenCalledWith({ name: '펌프군', members: [], code: 'gpump' }, expect.anything());
+  });
+
+  it('코드 포맷 위반 시 제출이 비활성화되고 힌트가 붉게 표시된다(AC-3.3, RD-6)', () => {
+    render(<XsfmGroupsTab agentId="a1" />);
+
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+    fireEvent.change(screen.getByPlaceholderText('agents.detail.groups.namePlaceholder'), {
+      target: { value: '펌프군' },
+    });
+    // 공백·한글 포함 → 포맷 위반.
+    fireEvent.change(screen.getByTestId('group-code-input'), { target: { value: '펌프 군' } });
+
+    expect(screen.getByTestId('group-form-submit')).toBeDisabled();
+    expect(screen.getByTestId('group-code-hint').className).toContain('text-red-500');
+    expect(mutations.add).not.toHaveBeenCalled();
+  });
+
+  it('그룹 목록에 code 를 표시한다(SPEC-XSFM-LINE-001)', () => {
+    groupsMock.current = [{ ...customGroup, code: 'gpump' }];
+    render(<XsfmGroupsTab agentId="a1" />);
+
+    expect(screen.getByTestId('group-code-custom:x')).toHaveTextContent('gpump');
+  });
+
+  it('편집 모드에서는 코드 입력이 미노출된다(코드는 식별자, 변경 불가)', () => {
+    groupsMock.current = [customGroup];
+    devicesMock.current = [device('d1', '기기1')];
+    render(<XsfmGroupsTab agentId="a1" />);
+
+    fireEvent.click(screen.getByTestId('group-edit-custom:x'));
+    expect(screen.queryByTestId('group-code-input')).toBeNull();
   });
 
   it('커스텀 그룹 수정: set_group 을 { group_id, name, members } 로 호출한다(AC 6.2/6.3)', () => {

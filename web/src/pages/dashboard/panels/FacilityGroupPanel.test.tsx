@@ -78,9 +78,9 @@ const stationEntry: AirStation = {
   places: [{ place: 'PL-1', display_name: '대합실', order: 1 }],
 };
 
-const stationGroup: Group = { id: 'station:ST-1', name: '강남역', type: 'station', member_count: 2, members: ['d1', 'd2'] };
-const lineGroup: Group = { id: 'line:L1', name: '2호선', type: 'line', member_count: 2, members: ['d1', 'd2'] };
-const customGroup: Group = { id: 'custom:floor2', name: '2층', type: 'custom', member_count: 1, members: ['d1'] };
+const stationGroup: Group = { id: 'station:ST-1', name: '강남역', code: 'ST-1', type: 'station', member_count: 2, members: ['d1', 'd2'] };
+const lineGroup: Group = { id: 'line:L1', name: '2호선', code: 'L1', type: 'line', member_count: 2, members: ['d1', 'd2'] };
+const customGroup: Group = { id: 'custom:floor2', name: '2층', code: 'floor2', type: 'custom', member_count: 1, members: ['d1'] };
 
 function renderPanel(config: Record<string, unknown>) {
   return render(<FacilityGroupPanel panelId="p1" title="설비 그룹" config={config} />);

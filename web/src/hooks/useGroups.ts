@@ -22,10 +22,16 @@ import * as agentService from '@/services/api/agentService';
 /** 그룹 타입. 접두사 인코딩된 id 에서 파생 판별 가능하다. custom 만 편집 가능. */
 export type GroupType = 'custom' | 'station' | 'line';
 
-/** 그룹(group) 항목 (list_groups 응답). members 는 device_id 목록, member_count 는 그 길이. */
+/**
+ * 그룹(group) 항목 (list_groups 응답). members 는 device_id 목록, member_count 는 그 길이.
+ * code 는 SPEC-XSFM-LINE-001 에서 도입된 코드 기반 식별자다 — 커스텀 그룹은 사용자 코드
+ * (id=`custom:<code>`), 기본 그룹(station/line)은 파생 코드(역사/라인 코드)를 반영한다.
+ * 구(舊) 백엔드 호환을 위해 누락 시 '' 로 폴백한다.
+ */
 export interface Group {
   id: string;
   name: string;
+  code: string;
   type: GroupType;
   member_count: number;
   members: string[];
@@ -54,9 +60,11 @@ export function useGroups(agentId: string, refetchInterval?: number) {
     queryFn: async () => {
       const res = await agentService.execAgent(agentId, { command: 'list_groups' });
       const groups = (res as unknown as { groups?: Group[] }).groups ?? [];
-      // members 누락 방어(빈 그룹) + member_count 정합(백엔드 미제공 시 members 길이로 폴백).
+      // members 누락 방어(빈 그룹) + member_count 정합(백엔드 미제공 시 members 길이로 폴백)
+      // + code 누락 방어(구 백엔드 호환 시 '').
       return groups.map((g) => ({
         ...g,
+        code: g.code ?? '',
         members: g.members ?? [],
         member_count: g.member_count ?? (g.members?.length ?? 0),
       }));
@@ -77,6 +85,11 @@ export interface AddGroupResult {
 export interface AddGroupVariables {
   name: string;
   members?: string[];
+  /**
+   * 사용자 지정 코드(SPEC-XSFM-LINE-001, RD-2). 제공 시 검증 후 group id 가 `custom:<code>` 가
+   * 되고, 생략 시 기존 name 기반 동작을 유지한다(선택·하위호환). 포맷 `^[a-z0-9][a-z0-9_-]*$`.
+   */
+  code?: string;
 }
 
 /** 커스텀 그룹 생성 (add_group, type=custom). 생성된 group_id 를 성공 토스트에 노출하려 결과 반환. */
