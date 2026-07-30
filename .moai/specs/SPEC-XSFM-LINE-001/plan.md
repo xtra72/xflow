@@ -1,7 +1,7 @@
 # SPEC-XSFM-LINE-001 구현 계획 (plan.md)
 
 > 연관: `spec.md` (요구사항·사양), `acceptance.md` (인수 기준). Tier M. 개발 방법론: hybrid (신규 코드 TDD / 기존 코드 DDD, `quality.yaml`).
-> 버전: 0.3.0 (spec.md 정합). 상태: **completed** (2026-07-30). HISTORY: 0.3.0 — M1~M6 구현 완료(백엔드 `ef4f28a7` M1~M5, 프런트 `e8678033` M6). as-implemented 분기 5건은 spec.md §7 참조. xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영 — M1 remove_line `ErrLineInUse`(RD-5), M2 slugify 마이그레이션(RD-6), M4 빈-라인 3-세그먼트 네이밍(RD-4), Line.Order(RD-7). 리스크 표·DoD 갱신.
+> 버전: 0.3.1 (spec.md 정합). 상태: **completed** (2026-07-30). HISTORY: 0.3.1 — 역번호(station_number) 후속 노트(`a35c468b`, 원 EARS 범위 밖 직접 후속). 상세는 spec.md §7.6 참조. / 0.3.0 — M1~M6 구현 완료(백엔드 `ef4f28a7` M1~M5, 프런트 `e8678033` M6). as-implemented 분기 5건은 spec.md §7 참조. xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영 — M1 remove_line `ErrLineInUse`(RD-5), M2 slugify 마이그레이션(RD-6), M4 빈-라인 3-세그먼트 네이밍(RD-4), Line.Order(RD-7). 리스크 표·DoD 갱신.
 
 ## 1. 기술 접근 (Technical Approach)
 

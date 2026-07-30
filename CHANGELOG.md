@@ -19,7 +19,8 @@
   - **프런트엔드**: `useLine` 훅 + `XsfmLinesTab`(라인 관리 — add_line/list_lines, Order 정렬) + `XsfmGroupsTab` 그룹 코드 입력 필드 + `AgentDetailPanel` 라인 탭 가산. 디바이스 이름은 백엔드 산출값을 그대로 렌더(프런트 표시 코드 변경 불필요).
   - **분기(Divergence, as-implemented — spec.md §7)**: (1) `add_group{code}` 를 **선택 파라미터**로 구현(GROUP-001 `add_group{name}` 테스트 무회귀). (2) 코드 포맷 검증을 station 코드에는 **미강제**(기존 `ST-101`/`S1` 대문자 코드 회귀 방지). (3) 마이그레이션 시 라인 코드는 **slugify 미적용**(원문 보존, station.Line 참조 정합). (4) `golang.org/x/text` 를 slugify NFC 정규화용 **직접 의존성**으로 승격(`go mod tidy`). (5) 디바이스 이름 표시는 **프런트 변경 없음**(기존 `device.name` 렌더가 새 포맷 자동 반영).
   - **품질**: xsfm 커버리지 89.1%, `go test -race` 클린, `go test ./...` exit 0(0 FAIL), 프런트 vitest 2275 pass, `tsc` 클린. SPEC-XSFM-GROUP-001 / station / node / api-service 무회귀. 신규 외부 신규 패키지 0(x/text 는 표준 확장 모듈 직접화).
-  - **관련**: SPEC-XSFM-LINE-001 v0.3.0(구현 완료, `ef4f28a7` + `e8678033`, Tier M). SPEC-XSFM-001 의 라인=역사 파생 속성 가정을 의도적으로 갱신.
+  - **후속 — 역사 역번호(station_number)**: 역사에 선택 필드 `station_number`(역번호, 실세계 역번호, 내부 코드와 구분) 추가 — `add_station`/`list_stations`/`station_registered` 관통, 중복 역번호는 경고만. 디바이스 자동 이름 station 세그먼트가 역번호 우선·코드 폴백(`{line}:{역번호|코드}:{place}:{index:03d}`, 내부 주소/셀렉터는 코드 유지). 프런트 `XsfmStationsTab` 표시·편집. config-seed 경로는 미배선(런타임 `add_station` 만). 원 EARS 범위 밖 직접 후속(`a35c468b`), spec.md §7.6.
+  - **관련**: SPEC-XSFM-LINE-001 v0.3.1(구현 완료 + 역번호 후속, `ef4f28a7` + `e8678033` + `a35c468b`, Tier M). SPEC-XSFM-001 의 라인=역사 파생 속성 가정을 의도적으로 갱신.
 
 ### 추가 — xsfm 그룹 1급(first-class) 개념 도입 (그룹 엔티티·다대다 멤버십·일괄 제어)
 

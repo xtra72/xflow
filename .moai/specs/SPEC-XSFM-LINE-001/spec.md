@@ -1,7 +1,7 @@
 ---
 id: SPEC-XSFM-LINE-001
 title: "xsfm 라인 1급화 + 코드 기반 주소 체계 + 디바이스 네이밍"
-version: "0.3.0"
+version: "0.3.1"
 status: completed
 created: 2026-07-30
 updated: 2026-07-30
@@ -21,6 +21,7 @@ tags: "xsfm, line, line-registry, group-code, code-addressing, device-naming, co
 | 2026-07-30 | 0.1.0 | 초기 SPEC 작성 — xsfm 에 **라인(line)을 1급 엔티티로 승격**하고 **코드 기반 통일 주소 체계**를 도입. (1) 라인 전용 레지스트리 신설(`Line{Code, Name, Order}` + 자체 RWMutex + write-through 영속, station_registry 미러) + `add_line`/`remove_line`/`list_lines` 명령, (2) 커스텀 그룹에 사용자 코드 도입(그룹 id `custom:<name>` → `custom:<code>`, name 은 표시 전용), (3) 제어/셀렉터를 `station:<code>`/`line:<code>`/`custom:<code>` 로 통일, (4) 디바이스 자동 이름 규칙 확장 `{line}:{station}:{place}:{index:03d}`, (5) 1회성 로드 마이그레이션(기존 `station.Line` 문자열 → Line 엔티티 ensure-create, 기존 `custom:<name>` → `custom:<code>`). 확정 설계 RD-1~3 반영. 빈-라인 디바이스 네이밍 기본값 등 4건 열린 질문(OQ) 기재. |
 | 2026-07-30 | 0.2.0 | OQ-1~4 사용자 확정 반영 — RD-4~7 승격 및 §6 Open Questions 제거(미해결 OQ 없음). (RD-4) 빈-라인 네이밍은 라인 세그먼트 생략(3-세그먼트, 하위호환), (RD-5) 참조 중 라인 `remove_line` 은 `ErrLineInUse` 반환 거부, (RD-6) 통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` 강제 + 레거시 비적합 name slugify 마이그레이션 규칙 명세, (RD-7) `Line.Order` 채택(기본값=생성 순번). §4 사양(composeName 빈-라인 분기·예시, remove_line ErrLineInUse, 코드 포맷+slugify 규칙+워크드 예시, Line 구조체 Order), 센티널 에러 `ErrLineInUse` 추가, Module 1/4/5 EARS 요구사항 확정 거동 참조로 갱신. |
 | 2026-07-30 | 0.3.0 | **M1~M6 구현 완료** (백엔드 `ef4f28a7`, 프런트 `e8678033`). 신규 `line_registry.go`(`LineRegistry` 자체 RWMutex + write-through, `Line{Code,Name,Order}`, `add_line`/`remove_line`/`list_lines`, `ErrLineInUse`) + `code.go`(§4.6 slugify: 한글 Revised Romanization + `validCode`) + 로드 마이그레이션(`station.Line`→Line 엔티티, 레거시 `custom:<name>`→`custom:<slug>`) + `Group.Code`(id `custom:<code>`) + composeName 4/3-세그먼트 분기(sticky 보존). 프런트: `useLine` 훅, `XsfmLinesTab`, 그룹 코드 입력, AgentDetailPanel 라인 탭. xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. §7 as-implemented 분기 5건 기록. status draft→completed. |
+| 2026-07-30 | 0.3.1 | **역번호(station_number) 후속 노트** (`a35c468b`). 원 EARS 범위 밖 직접 후속 구현 기록 — `StationRegistryEntry` 선택 필드 `station_number`(역번호, 실세계 역번호, 내부 코드와 구분) 추가, `add_station`/`list_stations`/`station_registered` 관통, 중복 역번호는 경고만. 디바이스 자동 이름 station 세그먼트가 역번호 우선·코드 폴백(`{line}:{역번호\|코드}:{place}:{index:03d}`, 내부 주소/셀렉터는 코드 유지). 프런트 `XsfmStationsTab` 표시·편집. **알려진 갭**: config-seed(`station_registry`/`StationSeed`)는 역번호 미전달(런타임 `add_station` 만 배선). §7.6 기록. status completed 유지(문서 노트). |
 
 ---
 
@@ -280,3 +281,14 @@ type LineRegistry struct {
 - **사양**: REQ-06-03 는 프런트가 4/3-세그먼트 이름 포맷을 표시하도록 요구.
 - **구현**: `XsfmDevicesTab` 및 멤버 테이블이 이미 `device.name` 을 **그대로 렌더**하므로 프런트 코드 변경 불필요. 4-세그먼트/3-세그먼트 포맷은 **백엔드 `composeName`** 이 생산하고 프런트는 이를 표시만 함.
 - **사유**: 표시 계층이 이미 백엔드 산출 이름을 신뢰·렌더하는 구조 → 새 포맷이 프런트 수정 없이 자동 반영. (REQ-06-03 충족, 프런트 diff 최소)
+
+### 7.6 역번호(station_number) 후속 (원 EARS 범위 밖 직접 후속 구현, `a35c468b`)
+
+> 본 절은 원 SPEC 의 EARS 요구사항 밖에서 이루어진 **직접 후속 구현**을 기록한다(역사에 실세계 역번호를 부여하는 편의 기능). 라인/코드 주소 체계 자체는 변경하지 않으며, 역번호는 디바이스 자동 이름의 **표시용 세그먼트**로만 개입한다.
+
+- **필드**: `StationRegistryEntry` 에 선택 필드 `station_number`(역번호, string, 자유 포맷) 추가. 지하철 실세계 역번호로, 내부 역사 코드와 **구분**되는 별개 값이다.
+- **배선(emission surfaces)**: `add_station`(입력) / `list_stations`(조회) / `station_registered` 이벤트(발행)를 통해 역번호가 관통한다. 중복 역번호는 **경고만 발생**(non-blocking, 등록 자체는 허용).
+- **디바이스 자동 이름 폴백**: 자동 이름의 station 세그먼트가 역사에 역번호가 있으면 **역번호**를, 없으면 **역사 코드**로 폴백 → `{line}:{역번호|코드}:{place}:{index:03d}`(라인 미해석 시 RD-4 에 따라 3-세그먼트, sticky 이름 보존). **내부 주소/셀렉터는 여전히 역사 코드**를 사용한다(역번호는 표시 계층 한정).
+- **프런트엔드**: `XsfmStationsTab` 에서 역번호 표시·편집(`useStation` Station 타입 + `add_station` variable 반영).
+- **알려진 갭(플래그)**: config-seed 경로(`station_registry` 옵션 / `StationSeed`)는 **아직 `station_number` 를 전달하지 않음** — 런타임 `add_station` 경로만 배선됨. config 시드로 역번호를 주입해야 하는 경우 후속 작업 필요.
+- **사유/성격**: 원 EARS(REQ-01~07) 밖의 편의 기능 직접 후속. 라인/코드 주소 불변, 역번호는 자동 이름 표시 세그먼트로만 개입하므로 기존 AC 무회귀.

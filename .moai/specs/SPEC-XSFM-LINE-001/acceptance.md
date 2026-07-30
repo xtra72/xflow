@@ -1,7 +1,7 @@
 # SPEC-XSFM-LINE-001 인수 기준 (acceptance.md)
 
 > Given-When-Then 형식. 기계 검증 가능(Go `testing`+`testify` / 프런트 `vitest`). 각 시나리오는 요구사항(REQ) 및 마일스톤(M)에 매핑.
-> 버전: 0.3.0 (spec.md 정합). 상태: **completed** (2026-07-30). HISTORY: 0.3.0 — M1~M6 구현 완료로 §1~§8 전 시나리오 통과(백엔드 `ef4f28a7`, 프런트 `e8678033`). xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. as-implemented 분기 5건은 spec.md §7 참조(분기 1 add_group code optional / 분기 2 station 코드 포맷 미강제 / 분기 5 디바이스 이름 프런트 무변경). / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영으로 구 OQ-의존 시나리오를 확정 시나리오로 전환/추가 — AC-1.8(ErrLineInUse), AC-1.9/1.10, AC-3.3(포맷 거부), AC-5.4/5.6/5.7(빈-라인 3-세그먼트·후지정 재계산·sticky 보존), AC-6.2/6.2a/6.2b(slugify 마이그레이션·충돌).
+> 버전: 0.3.1 (spec.md 정합). 상태: **completed** (2026-07-30). HISTORY: 0.3.1 — 역번호(station_number) 후속 노트(`a35c468b`, 원 EARS 범위 밖 직접 후속, 기존 AC 무회귀). 상세는 spec.md §7.6 참조. / 0.3.0 — M1~M6 구현 완료로 §1~§8 전 시나리오 통과(백엔드 `ef4f28a7`, 프런트 `e8678033`). xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. as-implemented 분기 5건은 spec.md §7 참조(분기 1 add_group code optional / 분기 2 station 코드 포맷 미강제 / 분기 5 디바이스 이름 프런트 무변경). / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영으로 구 OQ-의존 시나리오를 확정 시나리오로 전환/추가 — AC-1.8(ErrLineInUse), AC-1.9/1.10, AC-3.3(포맷 거부), AC-5.4/5.6/5.7(빈-라인 3-세그먼트·후지정 재계산·sticky 보존), AC-6.2/6.2a/6.2b(slugify 마이그레이션·충돌).
 
 ## §1. 라인 레지스트리 — add_line / list_lines (Module 1, M1)
 
