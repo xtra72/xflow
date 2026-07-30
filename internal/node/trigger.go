@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent/system"
@@ -94,6 +95,11 @@ type triggerTimerEntry struct {
 	// lastDayGate (v1.2.0): monthly "last" 스케줄이면 true.
 	// 핸들러 진입 시 현재 날짜가 해당 월의 마지막 날일 때만 emit한다.
 	lastDayGate bool
+
+	// gen (SPEC-TRIGGER-PANEL-001 RD-6): 이 엔트리가 등록된 시점의 re-arm 세대.
+	// 발화 시 노드의 현재 rearmGen 과 불일치하면 live 재무장으로 무효화된 stale
+	// in-flight 발화이므로 폐기(drop)된다 — cancel→re-register 창의 중복 발화 방지.
+	gen uint64
 }
 
 // ---------------------------------------------------------------------------
@@ -113,9 +119,29 @@ type TriggerNode struct {
 	timerEntries []*triggerTimerEntry
 	timerMu      sync.Mutex
 
+	// rearmGen (SPEC-TRIGGER-PANEL-001 RD-6): live 재무장(re-arm) 세대 카운터.
+	// Configure 가 running 노드에서 타이머를 재등록할 때마다 증가한다. 각 등록
+	// 타이머 엔트리는 등록 시점의 세대를 캡처하며(entry.gen), 발화 시 자신의 세대가
+	// 현재 세대와 다르면 폐기된다 — cancel→re-register 창의 stale in-flight 발화 제거.
+	// atomic 으로 접근하여 timer agent 고루틴의 발화와 Configure 고루틴의 증가가
+	// 경합해도 race-free 하다.
+	rearmGen atomic.Uint64
+
+	// started (SPEC-TRIGGER-PANEL-001 RD-2): Init 완료(타이머 최초 등록) 여부.
+	// Init 성공 말미에 true, Shutdown 시 false. Configure 는 started && Running 일
+	// 때만 live 재무장한다. 최초 Configure(Init 이전, Created 상태)에서는 재등록하지
+	// 않아 Configure+Init 이중 등록을 방지한다.
+	started atomic.Bool
+
 	// 페이로드 설정
 	payload         any            // 정적 페이로드 (nil이면 기본값 사용)
 	payloadTemplate map[string]any // 템플릿 페이로드 (nil이면 사용 안 함)
+
+	// payloadMu (SPEC-TRIGGER-PANEL-001): 노드 레벨 payload/payloadTemplate 필드를
+	// 보호한다. live Configure(재무장)가 이 필드를 리셋하는 동안 발화 핸들러의
+	// buildMessage 가 폴백으로 읽을 수 있어(cancel→re-register 창) 경합이 발생한다.
+	// per-schedule payload(entry.payload/payloadTmpl)는 엔트리 로컬 불변이라 무관.
+	payloadMu sync.RWMutex
 
 	// 일시정지 상태
 	paused  bool
@@ -285,6 +311,8 @@ func (n *TriggerNode) Init(ctx context.Context) error {
 	// Configure가 아직 호출되지 않았으면 config에서 직접 파싱
 	if len(n.schedules) == 0 && n.config != nil {
 		n.parseScheduleConfig()
+		// payloadMu 로 보호하여 노드 레벨 payload 접근 규율을 통일한다(발화 이전 경로).
+		n.payloadMu.Lock()
 		if p, ok := n.config["payload"]; ok {
 			n.payload = p
 		}
@@ -293,6 +321,7 @@ func (n *TriggerNode) Init(ctx context.Context) error {
 				n.payloadTemplate = tmpl
 			}
 		}
+		n.payloadMu.Unlock()
 		if a, ok := n.config["_timer_agent"]; ok {
 			if timer, ok := a.(system.Timer); ok {
 				n.timer = timer
@@ -330,6 +359,9 @@ func (n *TriggerNode) Init(ctx context.Context) error {
 		n.cancelAllTimers()
 		return err
 	}
+
+	// 최초 등록 완료 — 이후 Configure 는 live 재무장 대상이 된다 (RD-2).
+	n.started.Store(true)
 
 	return nil
 }
@@ -395,6 +427,9 @@ func (n *TriggerNode) newEntry(sched TriggerSchedule, lastDayGate bool) *trigger
 		payload:      sched.Payload,
 		payloadTmpl:  sched.PayloadTmpl,
 		lastDayGate:  lastDayGate,
+		// 등록 시점의 re-arm 세대를 캡처한다. registerSchedules 는 rearmGen 증가
+		// 이후 동일 고루틴에서 호출되므로 항상 최신 세대를 읽는다 (RD-6).
+		gen: n.rearmGen.Load(),
 	}
 }
 
@@ -677,6 +712,14 @@ func (n *TriggerNode) setNowFunc(f func() time.Time) {
 // makeHandler 는 타이머 핸들러 함수를 생성한다.
 func (n *TriggerNode) makeHandler(entry *triggerTimerEntry, scheduleType string, timerID string) system.TimerHandler {
 	return func(trigger system.TimerTrigger) {
+		// re-arm 세대 게이트 (SPEC-TRIGGER-PANEL-001 RD-6): 이 엔트리가 등록된
+		// 세대가 현재 rearmGen 과 다르면 live 재무장으로 무효화된 stale in-flight
+		// 발화이므로 폐기한다. cancel→re-register 창에서 이미 디스패치된 구 타이머
+		// 핸들러의 중복 발화를 방지한다 (double-fire·orphan 없음).
+		if entry.gen != n.rearmGen.Load() {
+			return
+		}
+
 		// 일시정지 상태 확인
 		n.pauseMu.RLock()
 		isPaused := n.paused
@@ -731,10 +774,16 @@ func (n *TriggerNode) buildMessage(entry *triggerTimerEntry, trigger system.Time
 		src = entry.payloadTmpl
 	case entry != nil && entry.payload != nil:
 		src = entry.payload
-	case n.payloadTemplate != nil:
-		src = n.payloadTemplate
-	case n.payload != nil:
-		src = n.payload
+	default:
+		// 노드 레벨 폴백은 live Configure 와 경합하므로 payloadMu 로 보호한다.
+		n.payloadMu.RLock()
+		switch {
+		case n.payloadTemplate != nil:
+			src = n.payloadTemplate
+		case n.payload != nil:
+			src = n.payload
+		}
+		n.payloadMu.RUnlock()
 	}
 
 	var payload message.Payload
@@ -915,6 +964,9 @@ func (n *TriggerNode) Shutdown(_ context.Context) error {
 		return err
 	}
 
+	// 종료 후 Configure 는 더 이상 live 재무장 대상이 아니다 (RD-2).
+	n.started.Store(false)
+
 	n.cancelAllTimers()
 	close(n.sourceCh)
 
@@ -958,7 +1010,8 @@ func (n *TriggerNode) Configure(config map[string]any) error {
 	n.schedules = nil
 	n.parseScheduleConfig()
 
-	// 페이로드 설정
+	// 페이로드 설정 (live Configure 는 발화 핸들러와 경합하므로 payloadMu 보호)
+	n.payloadMu.Lock()
 	n.payload = nil
 	n.payloadTemplate = nil
 	if p, ok := config["payload"]; ok {
@@ -969,6 +1022,7 @@ func (n *TriggerNode) Configure(config map[string]any) error {
 			n.payloadTemplate = tmpl
 		}
 	}
+	n.payloadMu.Unlock()
 
 	// Timer Agent 직접 주입 (테스트용)
 	if a, ok := config["_timer_agent"]; ok {
@@ -991,6 +1045,42 @@ func (n *TriggerNode) Configure(config map[string]any) error {
 		}
 	}
 
+	// --- live 재무장 (SPEC-TRIGGER-PANEL-001 RD-2 / RD-6) ---
+	// 이미 Init 을 마친(started) 실행 중(Running) 노드에서 Configure 가 호출되면
+	// (런타임 ReconfigureNode 경로) 기존 타이머를 모두 취소하고 새 스케줄로 재등록하여
+	// 스케줄 변경을 즉시 반영한다(flow 재배포 불필요). 최초 Configure(Init 이전,
+	// Created 상태)에서는 재등록하지 않으며 Init 이 등록을 담당하므로 이중 등록이
+	// 발생하지 않는다. Paused/Stopped 상태도 재등록하지 않는다(다음 Resume/Init 경로가
+	// 반영). n.timer 는 Init 에서 resolve 되므로 running 노드에서는 항상 non-nil 이다.
+	// (REQ-01-01/03/04)
+	if n.started.Load() && n.CurrentState() == lifecycle.StateRunning && n.timer != nil {
+		return n.rearmTimers()
+	}
+
+	return nil
+}
+
+// rearmTimers 는 live 재무장을 수행한다: 기존 타이머 전체 취소 → re-arm 세대 증가
+// → 새 스케줄 재등록. 실패 시 부분 등록 타이머를 롤백하고 오류를 반환하되 lifecycle
+// 상태는 유지한다(Error 전이 없음, REQ-01-06). 스케줄이 비어 있으면 전 타이머만
+// 취소되고 발화 없는 유효 IDLE 상태로 Running 을 유지한다(REQ-01-05, RD-7).
+//
+// @MX:WARN: cancel→re-register 창에서 취소된 타이머의 in-flight 핸들러가 아직
+//
+//	timer agent 고루틴에서 실행 중일 수 있다. rearmGen 을 증가시켜 각 stale
+//	핸들러(구 세대를 캡처한 엔트리)가 발화 시 세대 불일치로 스스로 폐기되게 한다
+//	(makeHandler 의 세대 게이트) — double-fire·orphan 없음.
+//
+// @MX:REASON: 타이머 발화는 timer agent 고루틴에서 비동기 실행되므로 취소와 발화가
+//
+//	경합한다. atomic generation 토큰이 lock-free 로 stale 발화를 무해화한다.
+func (n *TriggerNode) rearmTimers() error {
+	n.cancelAllTimers() // 기존 타이머 전체 취소 (timerMu 보호, timerEntries=nil)
+	n.rearmGen.Add(1)   // 재무장 세대 증가 — 이후 등록 엔트리가 새 세대를 캡처
+	if err := n.registerSchedules(); err != nil {
+		n.cancelAllTimers() // 롤백: 부분 등록 타이머 취소 (REQ-01-06)
+		return err
+	}
 	return nil
 }
 
