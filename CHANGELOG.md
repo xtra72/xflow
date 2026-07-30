@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### 추가 — xsfm 라인 1급화 + 코드 기반 주소 체계 + 디바이스 네이밍
+
+- **`xsfm` 에이전트에 라인(line)을 1급 엔티티로 승격 + station/line/custom 을 관통하는 코드 기반 통일 주소 체계 + 디바이스 자동 이름 규칙 확장 (Non-breaking, 비침습 레이어 추가)**
+
+  기존에 역사의 속성(`StationRegistryEntry.Line`, 역사당 단일 문자열)으로만 파생 존재하던 라인을, 코드·이름·정렬을 가진 1급 엔티티로 승격했다. SPEC-XSFM-GROUP-001 의 "**별도 레지스트리를 비침습 가산 레이어로 신설**" 패턴을 그대로 적용해 기존 station→line 파생·fan-out·그룹 동작의 **구조를 변경하지 않고** 구현했다. 백엔드 M1~M5(`ef4f28a7`) + 프런트 M6(`e8678033`)로 완성.
+
+  - **라인 레지스트리(신설 레이어)**: `Line{Code, Name, Order}` + 자체 RWMutex + write-through atomic 영속(`StationRegistry`/`GroupRegistry` 락·영속 패턴 미러). 신규 파일 `line_registry.go`. 명령 `add_line`/`remove_line`/`list_lines`(Order 오름차순). **멤버 미저장** — `line:<code>` 멤버는 항상 `DevicesByLine` 로 파생(station→line SSOT `ResolveLine` 보존). 참조 중인 라인 `remove_line` 은 `ErrLineInUse` 로 거부(dangling 방지, RD-5). 빈 라인(역사 0개) 유효(RD-1).
+  - **코드 기반 통일 주소**: 커스텀 그룹에 사용자 코드 도입 — 그룹 id `custom:<name>` → `custom:<code>`(name 표시 전용). 제어/셀렉터를 `station:<code>`/`line:<code>`/`custom:<code>` 로 통일. 통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` + §4.6 slugify(신규 `code.go`: NFC 정규화, 한글 Revised Romanization, 비허용문자→`-`, 충돌 시 접미 번호). 노드 레이어(GROUP-001 Module 7)는 문자열 pass-through 로 **코드 변경 없음**.
+  - **디바이스 네이밍**: 자동 생성 이름을 `{line}:{station}:{place}:{index:03d}`(4-세그먼트)로 합성. 라인 미해석 시 라인 세그먼트를 생략해 `{station}:{place}:{index:03d}`(3-세그먼트, 하위호환·무회귀, RD-4). `nameOverridden`(sticky) 이름 보존, 라인 후지정 시 4-세그먼트 재계산. 보조 인덱스 키(정규화 int)는 불변(표시 vs 매칭 분리).
+  - **로드 마이그레이션(1회성·비파괴·멱등)**: `station.Line` 문자열 → Line 엔티티 ensure-create(레거시 라인 코드 원문 보존), 레거시 `custom:<name>` → `custom:<slug>` 승격(name 원문 표시 보존, 예: `"2층 창고"` → `2cheung-changgo`).
+  - **프런트엔드**: `useLine` 훅 + `XsfmLinesTab`(라인 관리 — add_line/list_lines, Order 정렬) + `XsfmGroupsTab` 그룹 코드 입력 필드 + `AgentDetailPanel` 라인 탭 가산. 디바이스 이름은 백엔드 산출값을 그대로 렌더(프런트 표시 코드 변경 불필요).
+  - **분기(Divergence, as-implemented — spec.md §7)**: (1) `add_group{code}` 를 **선택 파라미터**로 구현(GROUP-001 `add_group{name}` 테스트 무회귀). (2) 코드 포맷 검증을 station 코드에는 **미강제**(기존 `ST-101`/`S1` 대문자 코드 회귀 방지). (3) 마이그레이션 시 라인 코드는 **slugify 미적용**(원문 보존, station.Line 참조 정합). (4) `golang.org/x/text` 를 slugify NFC 정규화용 **직접 의존성**으로 승격(`go mod tidy`). (5) 디바이스 이름 표시는 **프런트 변경 없음**(기존 `device.name` 렌더가 새 포맷 자동 반영).
+  - **품질**: xsfm 커버리지 89.1%, `go test -race` 클린, `go test ./...` exit 0(0 FAIL), 프런트 vitest 2275 pass, `tsc` 클린. SPEC-XSFM-GROUP-001 / station / node / api-service 무회귀. 신규 외부 신규 패키지 0(x/text 는 표준 확장 모듈 직접화).
+  - **관련**: SPEC-XSFM-LINE-001 v0.3.0(구현 완료, `ef4f28a7` + `e8678033`, Tier M). SPEC-XSFM-001 의 라인=역사 파생 속성 가정을 의도적으로 갱신.
+
 ### 추가 — xsfm 그룹 1급(first-class) 개념 도입 (그룹 엔티티·다대다 멤버십·일괄 제어)
 
 - **`xsfm` 에이전트에 그룹(group)을 1급 개념으로 승격 — 그룹 엔티티·다대다 멤버십·커스텀 CRUD·기본 그룹 자동 동기화·그룹 셀렉터 일괄 제어 + 프런트 그룹 탭/패널 (Non-breaking, 비침습 레이어 추가)**

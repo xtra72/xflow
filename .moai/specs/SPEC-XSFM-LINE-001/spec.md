@@ -1,8 +1,8 @@
 ---
 id: SPEC-XSFM-LINE-001
 title: "xsfm 라인 1급화 + 코드 기반 주소 체계 + 디바이스 네이밍"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-30
 updated: 2026-07-30
 author: xtra
@@ -20,6 +20,7 @@ tags: "xsfm, line, line-registry, group-code, code-addressing, device-naming, co
 | ---------- | ----- | --------------------------------------------------------------------- |
 | 2026-07-30 | 0.1.0 | 초기 SPEC 작성 — xsfm 에 **라인(line)을 1급 엔티티로 승격**하고 **코드 기반 통일 주소 체계**를 도입. (1) 라인 전용 레지스트리 신설(`Line{Code, Name, Order}` + 자체 RWMutex + write-through 영속, station_registry 미러) + `add_line`/`remove_line`/`list_lines` 명령, (2) 커스텀 그룹에 사용자 코드 도입(그룹 id `custom:<name>` → `custom:<code>`, name 은 표시 전용), (3) 제어/셀렉터를 `station:<code>`/`line:<code>`/`custom:<code>` 로 통일, (4) 디바이스 자동 이름 규칙 확장 `{line}:{station}:{place}:{index:03d}`, (5) 1회성 로드 마이그레이션(기존 `station.Line` 문자열 → Line 엔티티 ensure-create, 기존 `custom:<name>` → `custom:<code>`). 확정 설계 RD-1~3 반영. 빈-라인 디바이스 네이밍 기본값 등 4건 열린 질문(OQ) 기재. |
 | 2026-07-30 | 0.2.0 | OQ-1~4 사용자 확정 반영 — RD-4~7 승격 및 §6 Open Questions 제거(미해결 OQ 없음). (RD-4) 빈-라인 네이밍은 라인 세그먼트 생략(3-세그먼트, 하위호환), (RD-5) 참조 중 라인 `remove_line` 은 `ErrLineInUse` 반환 거부, (RD-6) 통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` 강제 + 레거시 비적합 name slugify 마이그레이션 규칙 명세, (RD-7) `Line.Order` 채택(기본값=생성 순번). §4 사양(composeName 빈-라인 분기·예시, remove_line ErrLineInUse, 코드 포맷+slugify 규칙+워크드 예시, Line 구조체 Order), 센티널 에러 `ErrLineInUse` 추가, Module 1/4/5 EARS 요구사항 확정 거동 참조로 갱신. |
+| 2026-07-30 | 0.3.0 | **M1~M6 구현 완료** (백엔드 `ef4f28a7`, 프런트 `e8678033`). 신규 `line_registry.go`(`LineRegistry` 자체 RWMutex + write-through, `Line{Code,Name,Order}`, `add_line`/`remove_line`/`list_lines`, `ErrLineInUse`) + `code.go`(§4.6 slugify: 한글 Revised Romanization + `validCode`) + 로드 마이그레이션(`station.Line`→Line 엔티티, 레거시 `custom:<name>`→`custom:<slug>`) + `Group.Code`(id `custom:<code>`) + composeName 4/3-세그먼트 분기(sticky 보존). 프런트: `useLine` 훅, `XsfmLinesTab`, 그룹 코드 입력, AgentDetailPanel 라인 탭. xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. §7 as-implemented 분기 5건 기록. status draft→completed. |
 
 ---
 
@@ -244,3 +245,38 @@ type LineRegistry struct {
 - 상위 SPEC: SPEC-XSFM-001(base agent), SPEC-XSFM-GROUP-001(그룹 1급화, completed v0.4.0)
 - 코드 anchor: `station_registry.go`(ResolveLine/StationsByLine), `agent.go`(DevicesByLine/DevicesByStation), `group_registry.go`(Group/GroupRegistry/접두사 id), `mapping.go`(composeName), `control.go`(nameOverridden), `group.go`(fanOutControl)
 - 하위 산출물: plan.md(마일스톤·기술 접근·리스크), acceptance.md(Given-When-Then 인수 시나리오)
+
+## 7. Implementation Notes (구현 완료 — as-implemented, Level 2)
+
+> 본 절은 구현(백엔드 `ef4f28a7` M1~M5, 프런트 `e8678033` M6)이 SPEC 사양과 **의도적으로 달라진** 지점을 기록한다(spec-anchored Level 2 as-implemented). 각 분기는 무회귀·하위호환을 위한 결정이며, 관련 요구사항/AC 는 그대로 충족된다.
+
+- **신규 파일**: `line_registry.go`(`LineRegistry` — 자체 RWMutex + write-through 영속, `Line{Code, Name, Order}`, `add_line`/`remove_line`/`list_lines`, `ErrLineInUse`), `code.go`(§4.6 slugify — 한글 Revised Romanization + `validCode` 포맷 검증). Init 로드 마이그레이션에서 `station.Line`→Line 엔티티 ensure-create, 레거시 `custom:<name>`→`custom:<slug>` 승격. `Group.Code` 추가 + id `custom:<code>`. `composeName` = `{line}:{station}:{place}:{index}`(라인 미해석 시 라인 세그먼트 생략 3-세그먼트, sticky 보존).
+
+### 7.1 분기 1 — `add_group` code 파라미터를 **선택(optional)** 으로 구현
+
+- **사양**: RD-2 는 `add_group{code, name, members}` 로 사용자 코드를 필수 입력으로 명세.
+- **구현**: `code` 를 **선택 파라미터**로 구현(keyPresent 검사). code 가 있으면 `custom:<code>`(포맷 검증), 없으면 레거시 `custom:<name>` 경로로 폴백.
+- **사유**: 기존 SPEC-XSFM-GROUP-001 의 `add_group{name}` 테스트를 무회귀로 유지하기 위함. 신규 코드 기반 생성과 레거시 name 기반 생성이 병존한다. (REQ-02-01/02-03 충족, GROUP-001 무회귀)
+
+### 7.2 분기 2 — 코드 포맷 검증을 station 코드에는 **미강제**
+
+- **사양**: RD-6 통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` 를 station/line/custom **신규 코드**에 강제(§4.6).
+- **구현**: 포맷 검증(`validCode`)을 `add_line` 과 `add_group`(code 경로)에만 적용하고, **station 코드에는 적용하지 않음**.
+- **사유**: 기존 station 테스트가 대문자/짧은 코드(`ST-101`, `S1`)를 사용하므로 강제 시 회귀 발생. station 코드 거부를 요구하는 AC 도 없음. (신규 코드 진입점만 강제, 무회귀 우선)
+
+### 7.3 분기 3 — 마이그레이션 시 라인 코드는 **slugify 미적용**
+
+- **사양**: §4.4 마이그레이션은 라인 ensure-create + 커스텀 그룹 slugify.
+- **구현**: `station.Line` 값은 `Line{Code: line, Name: line}` 로 **원문 그대로**(레거시 라인 코드 보존) 승격. slugify 는 **커스텀 그룹 name 에만** 적용(§4.4-2, §7.1).
+- **사유**: 기존 라인 코드를 slugify 하면 `station.Line` 참조와의 정합이 깨져 dangling 발생 가능. 라인은 이미 코드 성격의 문자열이므로 원문 보존이 안전. (REQ-05-01 충족)
+
+### 7.4 분기 4 — `golang.org/x/text` 직접 의존성으로 승격
+
+- **구현**: slugify 의 Unicode NFC 정규화를 위해 `golang.org/x/text/unicode/norm` 사용 → `go mod tidy` 로 `x/text` 가 **간접→직접 의존성**으로 승격(`go.mod` require 블록).
+- **사유**: §4.6 slugify 규칙(NFC 정규화)의 결정론적 구현 요구. 외부 신규 패키지 도입이 아닌 기존 표준 확장 모듈의 직접화. (§4.6 충족)
+
+### 7.5 분기 5 — 디바이스 이름 표시는 **프런트 변경 없음**
+
+- **사양**: REQ-06-03 는 프런트가 4/3-세그먼트 이름 포맷을 표시하도록 요구.
+- **구현**: `XsfmDevicesTab` 및 멤버 테이블이 이미 `device.name` 을 **그대로 렌더**하므로 프런트 코드 변경 불필요. 4-세그먼트/3-세그먼트 포맷은 **백엔드 `composeName`** 이 생산하고 프런트는 이를 표시만 함.
+- **사유**: 표시 계층이 이미 백엔드 산출 이름을 신뢰·렌더하는 구조 → 새 포맷이 프런트 수정 없이 자동 반영. (REQ-06-03 충족, 프런트 diff 최소)
