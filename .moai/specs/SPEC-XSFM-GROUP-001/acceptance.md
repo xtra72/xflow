@@ -1,8 +1,8 @@
 ---
 id: SPEC-XSFM-GROUP-001
 title: "xsfm 그룹 1급 개념 도입 — 인수 기준"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-30
 updated: 2026-07-30
 author: xtra

@@ -1,8 +1,8 @@
 ---
 id: SPEC-XSFM-GROUP-001
 title: "xsfm 그룹 1급 개념 도입 (그룹 엔티티 · 다대다 멤버십 · 일괄 제어)"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-30
 updated: 2026-07-30
 author: xtra
@@ -20,6 +20,7 @@ tags: "xsfm, group, group-registry, membership, many-to-many, bulk-control, fan-
 | ---------- | ----- | --------------------------------------------------------------------- |
 | 2026-07-30 | 0.1.0 | 초기 SPEC 작성 — xsfm 에 **그룹(group)을 1급 개념으로 도입**. (1) 그룹 엔티티 `{id, name, type: line\|station\|custom, members}` + 별도 그룹 레지스트리 신설(비침습 레이어 추가, 기존 station/line 레지스트리 불변), (2) 디바이스 다대다 멤버십(단일 `Device.GroupID` → 다중 소속 확장), (3) 커스텀 그룹 CRUD, (4) 라인/역사 추가 시 대응 기본 그룹 자동 생성·동기화, (5) 그룹 셀렉터 일괄 제어(기존 fan-out 재사용), (6) 프런트엔드 그룹 탭 추가 + 설비 역사 패널 → 설비 그룹 패널 개편 |
 | 2026-07-30 | 0.2.0 | **4개 열린 질문(OQ) 사용자 확정 반영 → SPEC 확정**. RD-1(=OQ-1) `Device.GroupID` primary group 유지(단일 태그 방출 무회귀), RD-2(=OQ-2) 그룹 id 타입 접두사 인코딩(`station:`/`line:`/`custom:`), RD-3(=OQ-3) 조회 시 로스터 대조 필터(유령 멤버 자동 무시, remove_device 비침습), RD-4(=OQ-4) `line`/`station` 셀렉터 ↔ `group_id` 그룹 셀렉터 병존(동일 경로 수렴). "열린 질문" 섹션 → "확정된 설계 결정" 전환. REQ-02-07(primary 유지) 추가, REQ-05-06(셀렉터 병존) 추가, §4.5 primary 선정/갱신 규칙 추가 |
+| 2026-07-30 | 0.3.0 | **M1~M7 구현 완료 → `status: completed`**. 백엔드 M1~M5(`ae53b344`) + 프런트 M6~M7(`97c2bafd`) 커밋. xsfm 커버리지 88.8%, `-race` 클린, vitest 2254 pass, `tsc` 클린. as-implemented 정련 4건을 §6 구현 노트에 기록(M4 순수 파생, M7 가산형 패널, `group_membership.go` 신설, 미접두사 group_id fallback). |
 
 ---
 
@@ -233,3 +234,25 @@ id 의 타입 접두사로 분기하며, **모든 반환 경로는 현재 로스
 - **RD-2 (= OQ-2) 접두사 방식 id**: 그룹 id 를 타입 접두사로 인코딩한다 — `station:<code>` / `line:<code>` / `custom:<name|uuid>`. 자동 그룹·커스텀 그룹을 id 만으로 구분하며, 충돌을 원천 차단하고 `GroupMembers` 분기를 접두사 기반으로 단순화한다. 근거: group_id 셀렉터가 접두사로 타입 즉시 판별.
 - **RD-3 (= OQ-3) 조회 시 로스터 대조 필터**: 그룹 멤버 조회/fan-out 시 현재 로스터에 존재하는 device_id 만 통과시켜 유령 멤버(삭제된 device_id)를 자동 무시한다. `remove_device` 경로에 멤버십 연쇄 제거 로직이 불필요하여 비침습적이다. 근거: 삭제 경로를 그룹 레지스트리와 결합하지 않음.
 - **RD-4 (= OQ-4) 셀렉터 병존(둘 다 허용)**: 기존 `line`/`station` 셀렉터와 `group_id=line:<code>`/`station:<code>` 그룹 셀렉터를 둘 다 허용하며, 동일한 `DevicesByLine`/`DevicesByStation` 경로로 수렴시켜 결과가 동일하다. 근거: 기존 line/station 셀렉터 무회귀 + 그룹 UI 는 group_id 로 통일.
+
+---
+
+## 6. 구현 노트 (as-implemented, spec-anchored Level 2)
+
+> 아래는 M1~M7 실제 구현(백엔드 `ae53b344`, 프런트 `97c2bafd`)에서 계획(§4, plan.md) 대비 발생한 **as-implemented 정련**이다. 4건 모두 비침습성·무회귀를 **강화**하는 방향이며, 인수 기준(acceptance.md)은 모두 충족되었다. spec-anchored Level 2 규율에 따라 SPEC 본문을 실제 구현에 맞춰 정정한다.
+
+### IN-1. M4 순수 파생 — `station_registry.go` 완전 불변 (§4.3 정련)
+
+§4.3 은 `handleAddStation`/`handleRemoveStation` 성공 직후 `station:<code>` 그룹을 upsert/remove 하는 **명시적 훅**을 기술했다. 실제 구현은 station/line 그룹을 **조회 시점에 `StationRegistry` 로부터 순수 파생**한다 — `handleAddStation`/`handleRemoveStation` 에 그룹 upsert/remove 훅을 삽입하지 않으며 **`station_registry.go` 는 한 줄도 변경하지 않는다**. 역사 추가/삭제/이름변경은 station 레지스트리에만 반영되고, `list_groups`/`GroupMembers` 가 그때그때 station 레지스트리 상태에서 station/line 그룹을 도출하므로 자동으로 정합·동기화된다. 이는 REQ-01-04(파생 멤버십)의 원칙을 그룹 **엔티티 존재 자체**로까지 확장한 것으로, 비침습성이 계획보다 더 강하다. AC 4.1~4.5 및 REQ-04-01~05 충족(훅 없이도 동일한 관찰 가능 동작). §4.3 의 "훅 지점" 표현은 "조회 시 파생"으로 읽는다.
+
+### IN-2. M7 가산형(additive) 패널 — `FacilityStationPanel` 보존 (REQ-06-05 정련)
+
+REQ-06-05/§4 는 "설비 역사 패널 → 설비 그룹 패널 **개편**"으로 기술했으나, 실제 구현은 기존 `FacilityStationPanel` 을 파괴적으로 개편하지 않고 **신규 `FacilityGroupPanel` + `facility-group` 패널 타입을 가산**했다. 기존 역사 패널(및 그 15개 단위 테스트)은 그대로 보존된다. 근거: 기존 station-패널 테스트 무회귀(NF-02). 신규 그룹 패널은 역사(type=station)·커스텀·라인 그룹을 함께 표시하고 group_id 셀렉터로 일괄 제어하므로 REQ-06-05 의 기능 목표(역사를 그룹의 한 종류로 표시 + 커스텀/라인 그룹 표시·제어)를 충족한다. AC 6.5 는 "설비 그룹 패널 추가" 로 해석·충족되었다("역사 패널 대체" 아님).
+
+### IN-3. 그룹 로직 신규 파일 `group_membership.go` 배치 (plan §1 정련)
+
+plan.md 는 다대다 멤버십·그룹 명령 로직을 `agent.go`/`control.go` 확장으로 배치할 것을 시사했다. 실제 구현은 에이전트 레이어 그룹 로직을 **신규 `group_membership.go`** 에 두어 `agent.go` diff 를 최소화했고(`group_registry.go` 는 레지스트리 자료구조/영속, `group_membership.go` 는 에이전트-레벨 멤버십·명령 배선). 또한 본 코드베이스에서 `handleSelectorControl` 은 `control.go` 가 아니라 **`group.go`** 에 존재하므로 셀렉터 제어 게이트는 `group.go` 에서 정련했고 **`control.go` 는 손대지 않았다**. REQ-01-07(자체 락)·NF-02(무회귀) 를 강화하는 파일 분해이며 스코프 확장이 아니다.
+
+### IN-4. 미접두사(un-prefixed) `group_id` fallback — Device.GroupID primary 대조 (RD-2/NF-02 정련)
+
+RD-2 는 그룹 id 를 타입 접두사(`station:`/`line:`/`custom:`)로 인코딩한다. 실제 구현은 접두사 없는 `group_id` 값(기존 셀렉터/레거시 호출)에 대해 **`Device.GroupID`(primary) 를 1차 대조**하는 fallback 을 둔다. 이는 미접두사 group_id 셀렉터를 사용하던 기존 테스트/호출부의 무회귀(NF-02)를 보장하기 위한 것으로, 접두사 인코딩(RD-2)·primary 유지(RD-1)와 정합한다. 새 UI 는 접두사 group_id 로 통일하고, 미접두사 경로는 하위호환 대조로만 유지된다.

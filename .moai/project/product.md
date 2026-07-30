@@ -263,7 +263,7 @@ Agent는 플로우와 독립적으로 실행되는 서비스 단위이다. 사�
 | MODBUS/TCP Client | 표준 (사전 정의) | TCP | MODBUS 슬레이브 디바이스 폴링, 캐시 최적화 |
 | MODBUS/TCP Server | 표준 (사전 정의) | TCP | xflow를 MODBUS 서버로 운영, SCADA/HMI 연동 |
 | Thingplus Gateway | 표준 (사전 정의) | TCP(MQTT) | ThingsBoard Gateway MQTT(`v1/gateway/*`) 양방향 IoT 게이트웨이. 단일 연결로 다수 하위 디바이스 프록시, 텔레메트리/속성 업링크 + RPC/공유 속성 다운링크 |
-| Subway Facilities Manager | 도메인 (시설물) | TCP(MQTT) | 지하철 역사 설비 관리. 듀얼 트랜스포트(direct/port), 개별 2축 제어(전원/풍량, state echo 응답 대기) + 그룹/역사(station)/호선(line) 셀렉터 일괄제어, 역사 레지스트리(station→line SSOT) |
+| Subway Facilities Manager | 도메인 (시설물) | TCP(MQTT) | 지하철 역사 설비 관리. 듀얼 트랜스포트(direct/port), 개별 2축 제어(전원/풍량, state echo 응답 대기) + 그룹/역사(station)/호선(line) 셀렉터 일괄제어, 역사 레지스트리(station→line SSOT). **그룹 1급 개념**(SPEC-XSFM-GROUP-001): 그룹 엔티티(접두사 id `station:`/`line:`/`custom:`) + 다대다 멤버십(primary group 유지) + 커스텀 그룹 CRUD + 기본 그룹 자동 파생 + 그룹 셀렉터 일괄 제어 + 프런트 그룹 탭/설비 그룹 패널 |
 | Custom Protocol | 커스텀 (사용자 정의) | 선택 가능 | 사용자가 프로토콜 구조를 직접 정의 |
 
 #### System Agent (시스템 내장 에이전트)

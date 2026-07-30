@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 추가 — xsfm 그룹 1급(first-class) 개념 도입 (그룹 엔티티·다대다 멤버십·일괄 제어)
+
+- **`xsfm` 에이전트에 그룹(group)을 1급 개념으로 승격 — 그룹 엔티티·다대다 멤버십·커스텀 CRUD·기본 그룹 자동 동기화·그룹 셀렉터 일괄 제어 + 프런트 그룹 탭/패널 (Non-breaking, 비침습 레이어 추가)**
+
+  기존에 디바이스 속성(`Device.GroupID`, 디바이스당 단일 태그)으로만 존재하던 그룹을, 이름·타입·멤버를 가진 1급 엔티티로 승격했다. 기존 station→line 레지스트리·디바이스 로스터·fan-out 의 **구조를 변경하지 않고** 그룹 레지스트리를 별도 레이어로 신설하는 비침습 방식으로 구현했다. 백엔드 M1~M5(`ae53b344`) + 프런트 M6~M7(`97c2bafd`)로 완성.
+
+  - **그룹 레지스트리(신설 레이어)**: `Group{ID,Name,Type,Ref,Members}` + 자체 RWMutex + write-through 영속(`StationRegistry` 락/영속 패턴 미러). 그룹 id 는 **타입 접두사 인코딩**(`station:<code>`/`line:<code>`/`custom:<name|uuid>`)으로 타입을 id 만으로 판별하고 충돌을 원천 차단(RD-2). 신규 파일 `group_registry.go` + `group_membership.go`, 센티널 에러 3종 추가(`errors.go`).
+  - **다대다 멤버십**: 한 디바이스가 라인 그룹 + 역사 그룹 + 다수 커스텀 그룹에 동시 소속. `Device.GroupID` 는 폐기하지 않고 **대표(primary) 그룹**으로 유지하여 텔레메트리/이벤트/InfluxDB 단일 `group_id` 태그 방출(status.go/monitor.go/provider.go)을 **무회귀** 보존(RD-1). 조회/fan-out 시 **로스터 대조 필터**로 유령 멤버(삭제된 device_id)를 자동 무시하여 `remove_device` 에 연쇄 제거 로직 불필요(RD-3, 비침습).
+  - **커스텀 그룹 CRUD**: `Process()` switch 에 `add_group`/`remove_group`/`set_group`/`list_groups` 배선(예약된 미구현 `set_group` 스텁 대체). 부분 갱신(present 패턴), `group_registered`/`group_unregistered` 이벤트, 기본 그룹(type≠custom) 편집 차단(`ErrGroupNotCustom`).
+  - **기본 그룹 자동 동기화**: 역사(station)/호선(line) 그룹은 저장하지 않고 `StationRegistry` 에서 조회 시점 순수 파생 → 디바이스 위치 변경이 즉시 반영되고 동기화 코드가 불필요. 셀렉터 병존(RD-4): 기존 `line`/`station` 셀렉터와 `group_id=line:<code>`/`station:<code>` 그룹 셀렉터를 둘 다 허용, 동일 `DevicesByLine`/`DevicesByStation` 로 수렴하여 결과 동일.
+  - **그룹 셀렉터 일괄 제어**: `handleSelectorControl`(본 코드베이스상 `group.go`)의 group_id 분기가 접두사별 멤버 도출 후 기존 `fanOutControl`/`buildControlPlan`/`aggregateStatus` 를 **무변경 재사용**(재구현 없음). 우선순위 `device_id > station > line > group_id` 불변, 빈 그룹 `ErrEmptyGroup`, 미등록 그룹 `ErrGroupNotFound`.
+  - **프런트엔드**: `useGroups`/`useAddGroup`/`useSetGroup`/`useRemoveGroup` 훅 + xsfm 에이전트 상세에 **그룹 탭(`XsfmGroupsTab`)** 신설(그룹 CRUD + 멤버 편집(커스텀만) + 그룹 일괄 제어) + 대시보드 **설비 그룹 패널(`FacilityGroupPanel`, `facility-group` 타입) 가산**. `facilityShared.tsx`/`renderDashboardPanel`/`AddPanelDialog`/`uiStore`/`AgentDetailPanel` 정합 반영, i18n ko/en 추가.
+  - **분기(Divergence, as-implemented)**: (1) **M4 순수 파생** — station/line 그룹은 `handleAddStation`/`handleRemoveStation` 훅 없이 조회 시 파생하여 `station_registry.go` 완전 불변(계획한 명시적 훅보다 강한 비침습성). (2) **M7 가산형 패널** — 기존 `FacilityStationPanel` 을 파괴적으로 개편하지 않고 신규 `FacilityGroupPanel` 을 가산하여 15개 역사-패널 테스트 무회귀. (3) **신규 `group_membership.go`** — 에이전트-레벨 그룹 로직을 신규 파일에 배치해 `agent.go` diff 최소화, `control.go` 불변. (4) **미접두사 group_id fallback** — 접두사 없는 group_id 는 `Device.GroupID`(primary) 를 1차 대조하여 기존 미접두사 셀렉터 테스트 무회귀.
+  - **품질**: xsfm 커버리지 88.8%, `go test -race` 클린, 프런트 vitest 2254 pass, `tsc` 클린. 신규 외부 의존성 0. station/line 레지스트리·로스터·기존 fan-out 무회귀(NF-02).
+  - **관련**: SPEC-XSFM-GROUP-001 v0.3.0(구현 완료, `ae53b344` + `97c2bafd`, Tier M). SPEC-XSFM-001 A-4 가정(그룹=단일 태그)을 의도적으로 갱신.
+
 ### 추가 — 지하철 시설물 관리 대시보드 패널 (라인·역사·기기)
 
 - **지하철 시설물 관리 대시보드 3종 패널 신설 — 라인(호선)/역사(station)/기기(device) 계층 조망·제어 (프론트엔드 전용, Non-breaking)**

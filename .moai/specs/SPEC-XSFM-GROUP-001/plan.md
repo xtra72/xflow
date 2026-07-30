@@ -1,8 +1,8 @@
 ---
 id: SPEC-XSFM-GROUP-001
 title: "xsfm 그룹 1급 개념 도입 — 구현 계획"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-30
 updated: 2026-07-30
 author: xtra
@@ -55,6 +55,7 @@ tags: "xsfm, group, plan, milestones, membership, fan-out, frontend"
 - `handleAddStation`/`handleRemoveStation` 성공 직후 station 그룹 upsert/remove 훅(REQ-04-01~03). 역사 표시명 변경 → 그룹 name 동기화.
 - line 그룹은 저장하지 않고 `list_groups`/`GroupMembers` 조회 시 station 레지스트리 line 집합에서 파생(REQ-04-04).
 - 완료 조건: REQ-04-01~05 커버; station/line 레지스트리 자체는 불변(NF-02).
+- **as-implemented (IN-1)**: station/line 그룹은 `handleAddStation`/`handleRemoveStation` 훅 삽입 없이 **조회 시점에 `StationRegistry` 로부터 순수 파생**하도록 구현되어 `station_registry.go` 를 **완전 불변**으로 유지했다(계획한 명시적 upsert/remove 훅보다 강한 비침습성). 역사 CRUD 는 station 레지스트리에만 반영되고 그룹 엔티티는 그때그때 파생되므로 AC 4.1~4.5 를 훅 없이 충족. 상세: spec.md §6 IN-1.
 
 ### M5: 그룹 셀렉터 일괄 제어
 
@@ -78,6 +79,7 @@ tags: "xsfm, group, plan, milestones, membership, fan-out, frontend"
 - 우선도: Low
 - `FacilityStationPanel` → 그룹 패널로 개편(역사를 type=station 그룹으로 표시, 커스텀/라인 그룹 함께 표시·제어). `facilityShared.tsx`/`facilityAggregation.ts`/`renderDashboardPanel` 정합 반영.
 - 완료 조건: REQ-06-05 커버; 기존 패널 테스트 갱신·무회귀.
+- **as-implemented (IN-2)**: 기존 `FacilityStationPanel` 을 파괴적으로 개편하지 않고 **신규 `FacilityGroupPanel` + `facility-group` 패널 타입을 가산(additive)**했다. 기존 역사 패널과 그 15개 단위 테스트는 그대로 보존(무회귀 근거 NF-02). 신규 그룹 패널이 역사(type=station)·커스텀·라인 그룹을 함께 표시·제어하므로 REQ-06-05 기능 목표를 충족(AC 6.5 = "설비 그룹 패널 추가"로 해석). 상세: spec.md §6 IN-2. (참고: 에이전트-레벨 그룹 로직은 신규 `group_membership.go` 에 배치되고 `handleSelectorControl` 은 본 코드베이스상 `group.go` 에 존재하여 `control.go` 는 불변 — IN-3.)
 
 ### Optional Goal: 회귀·정합 테스트 보강
 
