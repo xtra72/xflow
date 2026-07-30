@@ -3,6 +3,8 @@
 > Given-When-Then 인수 시나리오. 상위: `spec.md` (RD-1 수신 forward, RD-2 방출 모드, RD-3~6 확정). Tier M.
 
 > **버전 노트**: v0.2.0 (2026-07-30) — OQ-1~4 확정(RD-3~6)에 따라 OQ 의존 시나리오를 구체화: 주기 스냅샷 기본 60s + `{timestamp, devices:[...]}` 단일 배열 shape, forward mode-agnostic(direct·port 양 모드), `device_state_received` 단일 디바이스 shape, 프런트 설정 토글 UI. 신규 AC-2.5(port 모드 forward)·AC-3.8(interval 기본 60s) 추가, AC-2.3/AC-3.5/AC-7.x 갱신.
+>
+> **버전 노트**: v0.3.0 (2026-07-30) — **상태 `completed`**. AC-1.x ~ AC-6.x(백엔드) + AC-7.x(프런트 M5) 전 시나리오 검증(구현 `5fc11209` + `6fb084c3`). event/interval/both 3모드 + forward on/off + mode-agnostic(direct·port) + 주기 풀 스냅샷(offline 포함·단일 배열) + interval 기본 60s·하한 클램프 + goroutine 누수 없음(-race) + 기본 설정 바이트 동일 무회귀 전부 green. 커버리지 89.3%, `go test ./...` exit 0, vitest 2287. 본문 시나리오 무변경.
 
 ## §1. 설정 파싱·검증 (Module 3, M1)
 

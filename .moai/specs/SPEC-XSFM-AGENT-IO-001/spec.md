@@ -1,8 +1,8 @@
 ---
 id: SPEC-XSFM-AGENT-IO-001
 title: "xsfm 에이전트 수신-전달 옵션 + 상태 방출 모드(event/interval/both)"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-30
 updated: 2026-07-30
 author: xtra
@@ -20,6 +20,7 @@ tags: "xsfm, agent-io, forward, state-emit, emit-mode, interval, snapshot, ticke
 | ---------- | ----- | --------------------------------------------------------------------- |
 | 2026-07-30 | 0.1.0 | 초기 SPEC 작성 — xsfm 에이전트에 **(1) 수신 파싱-상태 전달 옵션**과 **(2) 상태 방출 모드**를 도입. (1) `forward_received_to_node`(기본 `false`) 옵션: ON 이면 수신된 **모든** 디바이스 상태를 파싱/정규화된 형태(원시 브로커 바이트 아님)로 xsfm 노드에 전달하는 패스스루 탭(`device_state_received`) — 상태 **변경 여부와 무관**하게 매 유입마다 방출(변경시에만 방출하는 `device_state_changed` 와 구분). (2) `state_emit_mode` enum `{event, interval, both}`(기본 `event`, 무회귀): `event`=현행 on-change 방출, `interval`=`state_emit_interval` 주기 ticker 가 **전체 디바이스 상태 풀 스냅샷**(`device_state_snapshot`)을 방출하고 on-change 는 억제, `both`=on-change + 주기 스냅샷 heartbeat 병행. ticker 는 `startOfflineMonitor` 패턴 미러(min-guard·goroutine+stopCh·snapshot-후-락해제, 채널 송신 중 락 미보유). 확정 설계 RD-1/RD-2 반영. interval 기본값(60s)·port 모드 forward 거동·메시지 타입 네이밍 등 열린 질문(OQ) 기재. |
 | 2026-07-30 | 0.2.0 | 사용자 확정으로 열린 질문 OQ-1~4 를 확정 설계 RD-3~6 으로 승격하고 §6 Open Questions 를 제거(미해결 OQ 없음). (RD-3) `state_emit_interval` 기본값 **60s** 확정(offline_timeout 기본 90s 와 정합), min-interval 가드는 `minMonitorInterval` 미러. (RD-4) `forward_received_to_node` 는 **mode-agnostic** — `ingestState` 단일 시임에서 direct·port **양 모드** 적용, 특별 케이스 없음(정규화 상태 형태이므로 port 모드 에코 위험 없음). (RD-5) 메시지 타입/shape 확정: forward = `device_state_received`(단일 디바이스 파싱 상태), 주기 = `device_state_snapshot` 단일 `{timestamp, devices:[...]}` 배열 페이로드(request_state / deviceStateJSON shape 재사용, per-device N 메시지 아님). (RD-6) 프런트엔드(forward_received_to_node·state_emit_mode·state_emit_interval 설정 토글 UI)를 본 SPEC 저우선 마일스톤 **M5** 로 포함 확정. §4 config 표·메시지 shape·mode-agnostic forward, Module 1/2/3/5 EARS 요구사항 갱신. |
+| 2026-07-30 | 0.3.0 | **구현 완료(M1~M5) 및 sync — status `draft→completed`**. 백엔드 M1~M4(`5fc11209`): config.go(forward_received_to_node·state_emit_mode enum·state_emit_interval 60s+min guard·ErrInvalidStateEmitMode), emit_mode.go(emitStateReceived 수신 forward 탭 + startStateEmitter/emitStateSnapshot 주기 풀 스냅샷, offline monitor 미러·monitorWG/stopCh 공유), ingestState on-change 게이팅(interval 억제·전이 이벤트 비게이팅). 기본 config byte-identical 무회귀, xsfm 커버리지 89.3%, `-race` 클린. 프런트 M5(`6fb084c3`): agentSchemas.ts XSFM_FIELDS 3개 컨트롤(forward 토글·mode select·interval duration, mode=interval\|both 시 표시), vitest 2287·tsc 클린. spec-anchored Level 2 규율에 따라 §7 Implementation Notes(as-implemented) 신설(분기 1~4). |
 
 ---
 
@@ -297,3 +298,31 @@ if len(changed) > 0 && (a.cfg.StateEmitMode == stateEmitModeEvent || a.cfg.State
 - 상위 SPEC: SPEC-XSFM-001(base agent), SPEC-XSFM-GROUP-001(그룹 1급화, completed v0.4.0), SPEC-XSFM-LINE-001(라인 1급화, completed v0.3.1)
 - 코드 anchor: `config.go`(parseXSFMConfig / transport_mode enum 검증 / parseDurationOpt), `agent.go`(ingestState / emitStateChanged / sendEvent 경유 msgCh / ReceiveMessage / ListDevices / Start / Stop / stopCh / monitorWG), `status.go`(deviceStateJSON / handleRequestState), `monitor.go`(startOfflineMonitor / checkOfflineDevices / minMonitorInterval — 미러 대상), `control.go`(sendEvent), `errors.go`(enum 검증 에러 패턴)
 - 하위 산출물: plan.md(마일스톤·기술 접근·리스크·TRUST 5), acceptance.md(Given-When-Then 인수 시나리오)
+
+## 7. Implementation Notes (as-implemented, Level 2)
+
+> spec-anchored Level 2 규율에 따라, 구현(M1~M5, `5fc11209` + `6fb084c3`)이 §3~§5 사양과 갈린 지점을 as-implemented 로 기록한다. 4건 모두 **사양 위반이 아닌 구현 선택**이며, 확정 설계(RD-1~6)·범위 규율(scope discipline)·무회귀 불변식에 부합한다.
+
+### §7.1 state_emit_mode select — raw enum 표시 (프런트, M5)
+
+- **사양**: REQ-05-01 은 `state_emit_mode`(event/interval/both) 선택 UI 제공을 요구(한국어 의미 표기 방식은 미규정).
+- **구현**: `state_emit_mode` select 는 원시 enum 값(`event`/`interval`/`both`)을 옵션으로 노출하고, 각 값의 한국어 의미는 필드 설명(description)에 기술한다.
+- **사유**: 공용 `FormField` select 위젯에 옵션 라벨 매핑(value→표시 라벨) 기능이 없으며, 기존 xsfm/HVACR 계열 select 가 모두 동일하게 raw enum 을 노출한다. 별도 라벨 맵을 도입하지 않고 **기존 패턴을 그대로 계승**(scope discipline — 본 SPEC 범위 밖 위젯 개편 회피).
+
+### §7.2 interval 모드 on-change 억제 — 단일 시임 복합 조건 (백엔드, M3)
+
+- **사양**: §4.4 는 `interval` 모드에서 on-change `device_state_changed` 방출을 **억제**하도록 요구.
+- **구현**: 억제는 `ingestState` 의 **기존 단일 방출 지점**에서 복합 조건(`len(changed) > 0 && (mode==event || mode==both)`)으로 처리한다 — 별도 플래그/분기 경로를 신설하지 않는다.
+- **사유**: 억제를 단일 게이트 조건으로 표현하는 것이 별도 상태/경로 신설보다 단순하며(enforce simplicity), §4.4 의 게이팅 스케치와 일치. on-change 방출 지점이 하나뿐이므로 복합 조건으로 충분.
+
+### §7.3 device_state_snapshot / device_state_received shape (백엔드, M2·M3)
+
+- **사양(RD-5)**: 주기 스냅샷 = `device_state_snapshot` 단일 `{timestamp, devices:[...]}` 배열 메시지; forward = `device_state_received` 단일 디바이스 메시지, `changed_fields` 생략.
+- **구현**: 확정대로 — `device_state_snapshot` 은 per-device N 메시지가 아닌 **단일 `{type, timestamp, devices:[...]}` 배열 메시지**로 방출하며 `deviceStateJSON`/`handleRequestState` shape 를 재사용한다. `device_state_received` 는 단일 디바이스 파싱 상태로 `changed_fields` 를 싣지 않는다.
+- **사유**: 스냅샷은 배치/roster 개념이므로 단일 배열이 request_state 응답 shape 와 동형(재사용). 패스스루 탭은 "변경분" 개념이 없어 `changed_fields` 생략.
+
+### §7.4 Stop 변경 없음 — offline monitor 자원 공유 (백엔드, M4)
+
+- **사양**: §4.5 는 신규 주기 방출기 goroutine 을 `Stop` 에서 정리(누수 방지)하도록 요구.
+- **구현**: 주기 방출기는 offline 모니터의 `monitorWG`/`stopCh` 를 **재사용**하며, `Stop` 은 기존 단일 `monitorWG.Wait()` 로 두 goroutine 종료를 함께 커버한다 — `Stop` 코드 자체는 변경하지 않는다.
+- **사유**: §4.5 사양(monitorWG 재사용, 한 번의 Wait 로 두 goroutine 커버)에 정확히 부합. 두 goroutine 모두 채널 송신에 걸쳐 락을 잡지 않으므로 `Wait` 가 데드락하지 않는다(monitor.go 락 규율 계승).

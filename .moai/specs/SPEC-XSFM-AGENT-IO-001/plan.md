@@ -3,6 +3,8 @@
 > 상위 SPEC: `spec.md` (RD-1 수신 forward 옵션, RD-2 상태 방출 모드, RD-3~6 확정). Tier M.
 
 > **버전 노트**: v0.2.0 (2026-07-30) — 열린 질문 OQ-1~4 가 확정 설계 RD-3~6 으로 승격됨. RD-3 interval 기본 60s, RD-4 forward mode-agnostic, RD-5 메시지 shape 확정, RD-6 프런트(M5) 본 SPEC 포함 확정. 마일스톤·리스크에 반영.
+>
+> **버전 노트**: v0.3.0 (2026-07-30) — **상태 `completed`(구현 M1~M5 완료 + sync)**. 백엔드 M1~M4(`5fc11209`) + 프런트 M5(`6fb084c3`) 완료. M1~M4(config·enum 검증·emit_mode.go 수신 forward + 주기 스냅샷·on-change 게이팅) + M5(agentSchemas.ts 3개 컨트롤) 전부 구현. 기본 config byte-identical 무회귀, xsfm 커버리지 89.3%, `-race` 클린, `go test ./...` exit 0(42 pkgs), 프런트 vitest 2287. as-implemented 분기 4건은 spec.md §7 기록.
 
 ## 1. 기술 접근 (Technical Approach)
 

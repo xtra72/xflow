@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### 추가 — xsfm 에이전트 수신 forward 옵션 + 상태 방출 모드(event/interval/both)
+
+- **`xsfm` 에이전트에 (1) 수신 파싱-상태 전달 옵션과 (2) 상태 방출 모드를 도입 (Non-breaking, 비침습 가산 방출 레이어)**
+
+  기존 xsfm 방출은 상태 **변경 시에만** `device_state_changed` 를 내보내는 이벤트 기반(on-change) 단일 모델이었다. 여기에 기존 방출 경로를 **재작성하지 않고** 두 가산 기능을 추가했다. 기본 설정(forward off, mode=event)은 현행 동작과 **바이트 동일**(무회귀)이다. 백엔드 M1~M4(`5fc11209`) + 프런트 M5(`6fb084c3`).
+
+  - **수신 파싱-상태 전달 옵션(RD-1)**: `forward_received_to_node`(기본 `false`) 옵션 — ON 이면 수신된 **모든** 디바이스 상태를 파싱/정규화된 형태(원시 브로커 바이트 아님)로 노드에 전달하는 패스스루 탭(`device_state_received`, 단일 디바이스 메시지, `changed_fields` 생략). 상태 **변경 여부와 무관**하게 매 유입마다 방출하며(변경분만 방출하는 `device_state_changed` 와 구분), `state_emit_mode` 와도 독립. `ingestState`(direct·port 공유 시임) 단일 지점 배치로 **mode-agnostic**(양 모드 동일 적용, 특별 케이스 없음, RD-4).
+  - **상태 방출 모드(RD-2)**: `state_emit_mode` enum `{event, interval, both}`(기본 `event`). `event`=현행 on-change. `interval`=`state_emit_interval` 주기(기본 60s, RD-3)로 **전체 등록 디바이스 풀 스냅샷**(`device_state_snapshot`, 단일 `{timestamp, devices:[...]}` 배열 메시지, offline 포함)을 방출하고 on-change 는 **억제**. `both`=on-change + 주기 스냅샷 heartbeat 병행. 주기 방출기는 `startOfflineMonitor` 를 미러(min-interval 가드·`monitorWG`/`stopCh` 공유·스냅샷-후-락해제, 채널 송신 중 락 미보유).
+  - **설정 파싱·검증**: `state_emit_mode` enum 위반 시 `ErrInvalidStateEmitMode` 반환(`transport_mode`/`liveness_source` 검증 패턴 동형, 조용한 폴백 없음). `state_emit_interval` 기본 60s(offline_timeout 기본 90s 와 정합)·음수 거부·유효 tick < `minStateEmitInterval` 시 하한 클램프. 신규 파일 `emit_mode.go`(`emitStateReceived`/`startStateEmitter`/`emitStateSnapshot`).
+  - **전이 이벤트 불변**: `device_online`/`device_offline` 전이 이벤트는 방출 모드와 무관하게 항상 방출(게이팅 제외). MQTT 토픽/페이로드 규약 불변(두 기능은 `msgCh` 노드 방출 계층에만 작용).
+  - **프런트엔드(M5)**: `agentSchemas.ts` XSFM_FIELDS 에 3개 컨트롤 추가 — `forward_received_to_node` 토글 + `state_emit_mode` select(event/interval/both) + `state_emit_interval` duration(mode=interval|both 시 표시). `Transport.Options` 키 1:1 매핑, 기본값 무회귀(off/event/60s).
+  - **분기(Divergence, as-implemented — spec.md §7)**: (1) `state_emit_mode` select 는 raw enum 값 노출(공용 FormField 위젯 옵션 라벨 맵 부재, 기존 xsfm/HVACR select 관례 계승). (2) interval 모드 on-change 억제는 `ingestState` 기존 단일 방출 지점의 복합 조건(별도 플래그/경로 없음). (3) `device_state_snapshot` 단일 배열 메시지(N per-device 아님), `device_state_received` 단일 디바이스·`changed_fields` 생략(RD-5 확정 그대로). (4) `Stop` 변경 없음 — 주기 방출기가 offline 모니터의 `monitorWG`/`stopCh` 재사용(한 번의 Wait 로 두 goroutine 커버).
+  - **품질**: xsfm 커버리지 89.3%, `go test -race` 클린, `go test ./...` exit 0(42 pkgs, 0 FAIL), 프런트 vitest 2287 pass·`tsc` 클린. 기본 config byte-identical 무회귀. 신규 외부 의존성 0.
+  - **관련**: SPEC-XSFM-AGENT-IO-001 v0.3.0(구현 완료, `5fc11209` + `6fb084c3`, Tier M). SPEC-XSFM-001 의 이벤트 기반 단일 방출 모델을 가산 확장.
+
 ### 추가 — xsfm 라인 1급화 + 코드 기반 주소 체계 + 디바이스 네이밍
 
 - **`xsfm` 에이전트에 라인(line)을 1급 엔티티로 승격 + station/line/custom 을 관통하는 코드 기반 통일 주소 체계 + 디바이스 자동 이름 규칙 확장 (Non-breaking, 비침습 레이어 추가)**
