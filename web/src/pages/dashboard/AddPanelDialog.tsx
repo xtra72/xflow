@@ -30,6 +30,7 @@ import {
   Route,
   Fan,
   Layers,
+  AlarmClock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -38,6 +39,7 @@ import { useDevices } from '@/hooks/useDevice';
 import { useAgents } from '@/hooks/useAgent';
 import { useStations, useXsfmDevices } from '@/hooks/useStation';
 import { useGroups } from '@/hooks/useGroups';
+import { useNodeTypeInstances } from '@/hooks/useNodeTypeInstances';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -81,6 +83,8 @@ interface PanelOption {
   needsDevice?: boolean;
   /** 설비(에이전트 + 라인/역사/기기) 선택 스텝이 필요한 유형 (SPEC-FACILITY-DASHBOARD-001 M5) */
   needsFacility?: boolean;
+  /** trigger 노드(플로우 + 노드) 선택 스텝이 필요한 유형 (SPEC-TRIGGER-PANEL-001 M2) */
+  needsTriggerNode?: boolean;
   /**
    * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
    * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
@@ -110,6 +114,8 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     { type: 'devices', icon: HardDrive, labelKey: 'dashboard.panelTypes.devices', descriptionKey: 'dashboard.addPanel.descriptions.devices' },
     { type: 'device', icon: HardDrive, labelKey: 'dashboard.panelTypes.device', descriptionKey: 'dashboard.addPanel.descriptions.device', needsDevice: true },
     { type: 'logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.logs', descriptionKey: 'dashboard.addPanel.descriptions.logs' },
+    // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
+    { type: 'trigger-config', icon: AlarmClock, labelKey: 'dashboard.panelTypes.triggerConfig', descriptionKey: 'dashboard.addPanel.descriptions.triggerConfig', needsTriggerNode: true },
     { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
     { type: 'properties-grid', icon: LayoutGrid, labelKey: 'dashboard.addPanel.labels.propertiesGrid', descriptionKey: 'dashboard.addPanel.descriptions.propertiesGrid', needsDevice: true },
   ],
@@ -158,7 +164,9 @@ interface AddPanelDialogProps {
 export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
-  const [step, setStep] = useState<'type' | 'device' | 'chart-config' | 'facility'>('type');
+  const [step, setStep] = useState<
+    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node'
+  >('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
   // 다이얼로그 닫힐 때 상태 초기화
@@ -174,7 +182,12 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (step === 'device' || step === 'chart-config' || step === 'facility') {
+        if (
+          step === 'device' ||
+          step === 'chart-config' ||
+          step === 'facility' ||
+          step === 'trigger-node'
+        ) {
           setStep('type');
           setSelectedType(null);
         } else {
@@ -206,6 +219,11 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       setStep('facility');
       return;
     }
+    if (option.needsTriggerNode) {
+      setSelectedType(option.type);
+      setStep('trigger-node');
+      return;
+    }
     if (option.presetConfig) {
       // 프리셋이 채널 정보를 미리 주므로 chart-config 스텝 건너뜀
       addPanelWithConfig(option.type, option.presetConfig);
@@ -232,6 +250,17 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const handleFacilityConfirm = (config: Record<string, unknown>, title?: string) => {
     if (!selectedType) return;
     addPanelWithConfig(selectedType, config, title);
+    onClose();
+  };
+
+  // trigger 노드 선택 완료 처리 (SPEC-TRIGGER-PANEL-001 M2).
+  // 선택한 flow/node 를 패널 config 에 저장하고, 기본 타이틀은 노드/플로우 이름으로 한다.
+  const handleTriggerNodeSelect = (
+    flowId: string,
+    nodeId: string,
+    title: string,
+  ) => {
+    addPanelWithConfig('trigger-config', { flowId, nodeId }, title);
     onClose();
   };
 
@@ -281,6 +310,16 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
           <FacilityStep
             panelType={selectedType}
             onConfirm={handleFacilityConfirm}
+            onBack={() => {
+              setStep('type');
+              setSelectedType(null);
+            }}
+            onClose={onClose}
+          />
+        )}
+        {step === 'trigger-node' && (
+          <TriggerNodeStep
+            onSelect={handleTriggerNodeSelect}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -908,6 +947,88 @@ function FacilityStep({
         >
           {t('dashboard.addPanel.save')}
         </button>
+      </div>
+    </>
+  );
+}
+
+// ---- Step: trigger 노드 선택 (SPEC-TRIGGER-PANEL-001 M2) ----
+
+/**
+ * trigger 노드 선택 스텝. running 플로우의 trigger 노드 인스턴스를
+ * useNodeTypeInstances('trigger') 로 열거하여 피커로 제시한다(REQ-02-02).
+ * 선택 시 { flowId, nodeId } 를 패널 config 로 저장하고(REQ-02-03), 기본 타이틀은
+ * 노드/플로우 이름으로 한다. 설비 스텝(FacilityStep)을 flow 노드 타겟으로 미러링한 것이다.
+ */
+function TriggerNodeStep({
+  onSelect,
+  onBack,
+  onClose,
+}: {
+  onSelect: (flowId: string, nodeId: string, title: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const { instances, isLoading } = useNodeTypeInstances('trigger');
+
+  return (
+    <>
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label={t('dashboard.addPanel.backAria')}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <h2 className="text-lg font-semibold text-(--color-text-primary)">
+            {t('dashboard.addPanel.selectTriggerNode')}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          aria-label={t('dashboard.addPanel.closeAria')}
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="max-h-80 overflow-y-auto px-5 py-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600" />
+          </div>
+        ) : instances.length === 0 ? (
+          <p className="py-8 text-center text-sm text-(--color-text-muted)">
+            {t('dashboard.addPanel.noTriggerNodes')}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {instances.map((inst) => (
+              <button
+                key={`${inst.flowId}:${inst.nodeId}`}
+                type="button"
+                data-testid={`trigger-node-option-${inst.flowId}-${inst.nodeId}`}
+                onClick={() =>
+                  onSelect(inst.flowId, inst.nodeId, inst.nodeName || inst.flowName)
+                }
+                className="flex w-full items-center gap-3 rounded-lg border border-(--color-border-default) p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-600 dark:hover:bg-blue-900/20"
+              >
+                <AlarmClock className="h-4 w-4 shrink-0 text-blue-500" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-(--color-text-primary)">
+                    {inst.nodeName}
+                  </p>
+                  <p className="text-xs text-(--color-text-muted)">{inst.flowName}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );

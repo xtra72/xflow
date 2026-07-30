@@ -196,7 +196,9 @@ export type PanelType =
   | 'facility-line'
   | 'facility-station'
   | 'facility-device'
-  | 'facility-group';
+  | 'facility-group'
+  // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
+  | 'trigger-config';
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -288,6 +290,9 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
     case 'facility-group':
       // 그룹(그룹별 통계 + 일괄 제어 목록). SPEC-XSFM-GROUP-001 M7.
       return { w: 5, h: 6, minW: 3, minH: 4 };
+    // SPEC-TRIGGER-PANEL-001 M2: 스케줄 리스트 + 카탈로그 편집을 담는 세로 카드.
+    case 'trigger-config':
+      return { w: 4, h: 7, minW: 3, minH: 4 };
     case 'line-chart':
       // SPEC REQ-M5-05: line-chart {w:6, h:3}
       return { w: 6, h: 3, minW: 3, minH: 2 };
@@ -422,6 +427,11 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     // config 는 agentId 만 필요(그룹 전체를 나열하므로 단일 대상 없음). showStats 는 그룹 통계 토글.
     case 'facility-group':
       return { type, title: '설비 그룹', config: { agentId: '', showStats: true } };
+    // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 설정 패널.
+    // config 는 대상 노드({flowId,nodeId}) + 대시보드-로컬 페이로드 카탈로그(RD-9).
+    // 스케줄은 노드 config 가 SSOT 이므로 패널 config 에 복제하지 않는다(REQ-02-04).
+    case 'trigger-config':
+      return { type, title: '트리거 설정', config: { flowId: '', nodeId: '', payloadCatalog: {} } };
   }
 }
 
