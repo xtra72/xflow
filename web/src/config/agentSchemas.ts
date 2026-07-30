@@ -396,6 +396,12 @@ const XSFM_FIELDS: ConfigField[] = [
   // ── Operation / Control ──
   { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '60s', description: '이 시간 동안 상태 미수신 시 디바이스 오프라인 판정 (Go duration, 예: 60s, 1m)', section: 'operation' },
   { name: 'control_response_timeout', type: 'string', label: '제어 응답 타임아웃', default: '5s', description: '제어 명령 후 상태 반영 대기 시간 (Go duration)', section: 'operation' },
+  // ── State emission (SPEC-XSFM-AGENT-IO-001, M5 / REQ-05) ──
+  // 백엔드 Transport.Options 키(forward_received_to_node/state_emit_mode/state_emit_interval)와
+  // 1:1 매핑. 기본값(forward off, mode=event)은 현행 동작과 바이트 동일(무회귀).
+  { name: 'forward_received_to_node', type: 'boolean', label: '수신 메시지 노드 전달', default: false, description: '파싱된 상태를 xsfm 노드로 전달 (device_state_received). 변경 여부와 무관하게 매 수신마다 방출하는 패스스루 탭. state_emit_mode 와 독립적으로 동작 (기본 꺼짐)', section: 'operation' },
+  { name: 'state_emit_mode', type: 'select', label: '상태 방출 모드', options: ['event', 'interval', 'both'], default: 'event', description: 'event: 이벤트(변경 시)만 방출 (현행) / interval: 주기 스냅샷만 방출 (변경 이벤트 억제) / both: 이벤트+주기 스냅샷 병행', section: 'operation' },
+  { name: 'state_emit_interval', type: 'string', label: '상태 방출 주기', default: '60s', description: '주기 스냅샷(device_state_snapshot) 방출 간격 (Go duration, 예: 60s, 1m). state_emit_mode 가 interval 또는 both 일 때만 적용', visibleWhen: { field: 'state_emit_mode', value: ['interval', 'both'] }, section: 'operation' },
   { name: 'registry_path', type: 'string', label: '디바이스 레지스트리 경로', description: '런타임 등록 디바이스(bridge/auto) 로스터 파일 경로 (빈 값=영속화 비활성)', section: 'operation' },
   { name: 'station_registry_path', type: 'string', label: '역사 레지스트리 경로', description: '역사(station)→호선(line) 레지스트리 파일 경로 (빈 값=영속화 비활성)', section: 'operation' },
   // ── Output / logging (advanced) ──

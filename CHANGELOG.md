@@ -6,6 +6,75 @@
 
 ## [Unreleased]
 
+### 추가 — xsfm 토픽 `{line_code}` placeholder (SPEC-XSFM-LINE-001 amendment v0.4.0)
+
+- **sub/pub 토픽 템플릿에 `{line_code}` placeholder 도입 (Non-breaking, 가산)** — 예: `cmd/{line_code}/{station_code}/{place_code}/bse9000/{device_index}`.
+
+  - **Outbound(명령/pub) 파생 렌더**: `{line_code}` 를 디바이스의 파생 라인(`ResolveLine(device.Station)`)으로 채운다. 라인 해석은 로스터 락 **밖에서** 수행(lineHint 패턴, `composeName` 미러 — station 레지스트리 락을 로스터 락 안에 중첩하지 않아 RWMutex 재진입 deadlock 회피). 라인 미해석 시 **빈 세그먼트**로 렌더(`cmd//st99/...`).
+  - **Inbound(상태/sub) 무시**: `{line_code}` 는 구독 시 와일드카드, 파싱 시 추출되나 **디바이스 식별에는 무시**(식별=station_code+place_code+index, 라인은 station→line 파생 SSOT). `Device.Address`/composite key 에 저장하지 않아 역류·중복 방지.
+  - **범위**: direct 모드 토픽 한정(port 모드+노드 무관), 기존 placeholder 무회귀. `commandHasLineCode` 게이팅.
+  - **품질**: 신규/변경 함수 커버리지 100%, `go test ./...` green(42 pkgs), `-race` 클린, 무회귀. SPEC-XSFM-LINE-001 정식 amendment(v0.3.1→v0.4.0, Module 8/RD-8, §7 `## Amendments`).
+
+### 추가 — xsfm 이름 기반 제어 셀렉터(device_name / group_name)
+
+- **`xsfm` 에이전트·노드에 사람이 읽는 이름(`device_name`/`group_name`)으로 제어 대상을 지정하는 이름 기반 셀렉터 도입 (Non-breaking, 비침습 가산 셀렉터)**
+
+  기존 제어 대상 지정은 `device_id`(개별) 또는 `station`/`line`/`group_id`(셀렉터)로만 가능했다. 여기에 기존 셀렉터의 자료구조·우선순위·디스패치 경로를 **무회귀**로 두고, 이름을 **정확히 하나의 대상으로 해소한 뒤 기존 개별/fan-out 경로를 재사용**하는 얇은 해소 레이어를 **가산**했다. 백엔드+노드 M1~M3(`2acb980d`)로 핵심 완성. 프런트엔드 이름 제어 UI(M4)는 선택·저우선으로 이연 — 에이전트+노드 레벨에서 기능 완전 사용 가능.
+
+  - **이름 리졸버(신규 `name_resolver.go`)**: `DeviceByName`/`GroupByName` — 공백 trim 후 정확 일치, **대소문자 구분**(case-sensitive, RD-6). ≥2 매치 시 신규 센티널 `ErrAmbiguousName` 으로 **거부(무방출, fail-closed, RD-2)**, 0 매치 시 `ErrDeviceNotFound`/`ErrGroupNotFound`, 정확히 1개일 때만 진행. 스냅샷-안전 락 규율(로스터/그룹 레지스트리 락을 스냅샷 후 해제, 락 미중첩 — RWMutex 재진입 deadlock 회피). `GroupByName` 은 **전 타입 그룹**(custom + 파생 station/line) 표시명 매칭(RD-5), 타입 간 충돌도 `ErrAmbiguousName` 로 안전 거부.
+  - **셀렉터 우선순위 체인 확장**: `dispatchControl`/`handleSelectorControl` 이 확정 순서 **`device_id > device_name > station > line > group_id > group_name`**(RD-4, "개별 먼저")로 확장. `device_name` → 개별 제어(controlDevice), `group_name` → 그룹 fan-out(GroupMembers → fanOutControl) 로 해소 후 **기존 경로 재사용**(제어 의미론 재구현 없음). 신규 `processRequest` 필드 `DeviceName`/`GroupName`(json `device_name`/`group_name`, CRUD `name` 과 별개) + `fillFromParams` 승격.
+  - **노드 pass-through**(`internal/node/xsfm.go`): `buildXsfmControlCommand` 가 `device_name`/`group_name` 을 top-level 셀렉터로 방출, `hasXsfmControlCommand` 가 이름 셀렉터 존재 시 제어로 라우팅, `xsfmExtractDeviceName`/`xsfmExtractGroupName` 미러. 다중 셀렉터 공존 시 노드는 드롭 없이 모두 top-level 로 실어 우선순위 판정을 에이전트에 위임.
+  - **분기(Divergence, as-implemented — spec.md §7)**: (1) 우선순위 체인이 `dispatchControl`(device_id) + `handleSelectorControl`(device_name if-guard + group_name 최종 case) 로 분산 배치, 개별 제어는 `handleIndividualControl` 추출(동작 보존). (2) `GroupByName` 전 타입 매칭을 위해 `handleListGroups` 에서 `allGroups()`(custom+파생) 추출·공유(DRY). (3) `group_name` fan-out 집계 셀렉터 라벨 `selectorRef{Type:"group_name"}`(원 셀렉터 종류 보존). (4) 리졸버는 신규 `name_resolver.go` 배치(사양 권장 대안), `control.go` 불변.
+  - **품질**: 신규 함수 커버리지 **100%**, `go test ./...` exit 0(42 pkgs, 0 FAIL), `-race` 클린, 기존 셀렉터/CRUD `name`/그룹 fan-out 무회귀(NF-01). MQTT 토픽/페이로드 규약 불변(순수 논리 해소 레이어, NF-03). 신규 외부 의존성 0.
+  - **관련**: SPEC-XSFM-NAMESEL-001 v0.3.0(핵심 M1~M3 구현 완료, `2acb980d`, Tier M). M4(프런트 이름 제어 UI) 이연(optional follow-up). SPEC-XSFM-001 의 셀렉터 표면을 가산 확장.
+
+### 추가 — xsfm 에이전트 수신 forward 옵션 + 상태 방출 모드(event/interval/both)
+
+- **`xsfm` 에이전트에 (1) 수신 파싱-상태 전달 옵션과 (2) 상태 방출 모드를 도입 (Non-breaking, 비침습 가산 방출 레이어)**
+
+  기존 xsfm 방출은 상태 **변경 시에만** `device_state_changed` 를 내보내는 이벤트 기반(on-change) 단일 모델이었다. 여기에 기존 방출 경로를 **재작성하지 않고** 두 가산 기능을 추가했다. 기본 설정(forward off, mode=event)은 현행 동작과 **바이트 동일**(무회귀)이다. 백엔드 M1~M4(`5fc11209`) + 프런트 M5(`6fb084c3`).
+
+  - **수신 파싱-상태 전달 옵션(RD-1)**: `forward_received_to_node`(기본 `false`) 옵션 — ON 이면 수신된 **모든** 디바이스 상태를 파싱/정규화된 형태(원시 브로커 바이트 아님)로 노드에 전달하는 패스스루 탭(`device_state_received`, 단일 디바이스 메시지, `changed_fields` 생략). 상태 **변경 여부와 무관**하게 매 유입마다 방출하며(변경분만 방출하는 `device_state_changed` 와 구분), `state_emit_mode` 와도 독립. `ingestState`(direct·port 공유 시임) 단일 지점 배치로 **mode-agnostic**(양 모드 동일 적용, 특별 케이스 없음, RD-4).
+  - **상태 방출 모드(RD-2)**: `state_emit_mode` enum `{event, interval, both}`(기본 `event`). `event`=현행 on-change. `interval`=`state_emit_interval` 주기(기본 60s, RD-3)로 **전체 등록 디바이스 풀 스냅샷**(`device_state_snapshot`, 단일 `{timestamp, devices:[...]}` 배열 메시지, offline 포함)을 방출하고 on-change 는 **억제**. `both`=on-change + 주기 스냅샷 heartbeat 병행. 주기 방출기는 `startOfflineMonitor` 를 미러(min-interval 가드·`monitorWG`/`stopCh` 공유·스냅샷-후-락해제, 채널 송신 중 락 미보유).
+  - **설정 파싱·검증**: `state_emit_mode` enum 위반 시 `ErrInvalidStateEmitMode` 반환(`transport_mode`/`liveness_source` 검증 패턴 동형, 조용한 폴백 없음). `state_emit_interval` 기본 60s(offline_timeout 기본 90s 와 정합)·음수 거부·유효 tick < `minStateEmitInterval` 시 하한 클램프. 신규 파일 `emit_mode.go`(`emitStateReceived`/`startStateEmitter`/`emitStateSnapshot`).
+  - **전이 이벤트 불변**: `device_online`/`device_offline` 전이 이벤트는 방출 모드와 무관하게 항상 방출(게이팅 제외). MQTT 토픽/페이로드 규약 불변(두 기능은 `msgCh` 노드 방출 계층에만 작용).
+  - **프런트엔드(M5)**: `agentSchemas.ts` XSFM_FIELDS 에 3개 컨트롤 추가 — `forward_received_to_node` 토글 + `state_emit_mode` select(event/interval/both) + `state_emit_interval` duration(mode=interval|both 시 표시). `Transport.Options` 키 1:1 매핑, 기본값 무회귀(off/event/60s).
+  - **분기(Divergence, as-implemented — spec.md §7)**: (1) `state_emit_mode` select 는 raw enum 값 노출(공용 FormField 위젯 옵션 라벨 맵 부재, 기존 xsfm/HVACR select 관례 계승). (2) interval 모드 on-change 억제는 `ingestState` 기존 단일 방출 지점의 복합 조건(별도 플래그/경로 없음). (3) `device_state_snapshot` 단일 배열 메시지(N per-device 아님), `device_state_received` 단일 디바이스·`changed_fields` 생략(RD-5 확정 그대로). (4) `Stop` 변경 없음 — 주기 방출기가 offline 모니터의 `monitorWG`/`stopCh` 재사용(한 번의 Wait 로 두 goroutine 커버).
+  - **품질**: xsfm 커버리지 89.3%, `go test -race` 클린, `go test ./...` exit 0(42 pkgs, 0 FAIL), 프런트 vitest 2287 pass·`tsc` 클린. 기본 config byte-identical 무회귀. 신규 외부 의존성 0.
+  - **관련**: SPEC-XSFM-AGENT-IO-001 v0.3.0(구현 완료, `5fc11209` + `6fb084c3`, Tier M). SPEC-XSFM-001 의 이벤트 기반 단일 방출 모델을 가산 확장.
+
+### 추가 — xsfm 라인 1급화 + 코드 기반 주소 체계 + 디바이스 네이밍
+
+- **`xsfm` 에이전트에 라인(line)을 1급 엔티티로 승격 + station/line/custom 을 관통하는 코드 기반 통일 주소 체계 + 디바이스 자동 이름 규칙 확장 (Non-breaking, 비침습 레이어 추가)**
+
+  기존에 역사의 속성(`StationRegistryEntry.Line`, 역사당 단일 문자열)으로만 파생 존재하던 라인을, 코드·이름·정렬을 가진 1급 엔티티로 승격했다. SPEC-XSFM-GROUP-001 의 "**별도 레지스트리를 비침습 가산 레이어로 신설**" 패턴을 그대로 적용해 기존 station→line 파생·fan-out·그룹 동작의 **구조를 변경하지 않고** 구현했다. 백엔드 M1~M5(`ef4f28a7`) + 프런트 M6(`e8678033`)로 완성.
+
+  - **라인 레지스트리(신설 레이어)**: `Line{Code, Name, Order}` + 자체 RWMutex + write-through atomic 영속(`StationRegistry`/`GroupRegistry` 락·영속 패턴 미러). 신규 파일 `line_registry.go`. 명령 `add_line`/`remove_line`/`list_lines`(Order 오름차순). **멤버 미저장** — `line:<code>` 멤버는 항상 `DevicesByLine` 로 파생(station→line SSOT `ResolveLine` 보존). 참조 중인 라인 `remove_line` 은 `ErrLineInUse` 로 거부(dangling 방지, RD-5). 빈 라인(역사 0개) 유효(RD-1).
+  - **코드 기반 통일 주소**: 커스텀 그룹에 사용자 코드 도입 — 그룹 id `custom:<name>` → `custom:<code>`(name 표시 전용). 제어/셀렉터를 `station:<code>`/`line:<code>`/`custom:<code>` 로 통일. 통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` + §4.6 slugify(신규 `code.go`: NFC 정규화, 한글 Revised Romanization, 비허용문자→`-`, 충돌 시 접미 번호). 노드 레이어(GROUP-001 Module 7)는 문자열 pass-through 로 **코드 변경 없음**.
+  - **디바이스 네이밍**: 자동 생성 이름을 `{line}:{station}:{place}:{index:03d}`(4-세그먼트)로 합성. 라인 미해석 시 라인 세그먼트를 생략해 `{station}:{place}:{index:03d}`(3-세그먼트, 하위호환·무회귀, RD-4). `nameOverridden`(sticky) 이름 보존, 라인 후지정 시 4-세그먼트 재계산. 보조 인덱스 키(정규화 int)는 불변(표시 vs 매칭 분리).
+  - **로드 마이그레이션(1회성·비파괴·멱등)**: `station.Line` 문자열 → Line 엔티티 ensure-create(레거시 라인 코드 원문 보존), 레거시 `custom:<name>` → `custom:<slug>` 승격(name 원문 표시 보존, 예: `"2층 창고"` → `2cheung-changgo`).
+  - **프런트엔드**: `useLine` 훅 + `XsfmLinesTab`(라인 관리 — add_line/list_lines, Order 정렬) + `XsfmGroupsTab` 그룹 코드 입력 필드 + `AgentDetailPanel` 라인 탭 가산. 디바이스 이름은 백엔드 산출값을 그대로 렌더(프런트 표시 코드 변경 불필요).
+  - **분기(Divergence, as-implemented — spec.md §7)**: (1) `add_group{code}` 를 **선택 파라미터**로 구현(GROUP-001 `add_group{name}` 테스트 무회귀). (2) 코드 포맷 검증을 station 코드에는 **미강제**(기존 `ST-101`/`S1` 대문자 코드 회귀 방지). (3) 마이그레이션 시 라인 코드는 **slugify 미적용**(원문 보존, station.Line 참조 정합). (4) `golang.org/x/text` 를 slugify NFC 정규화용 **직접 의존성**으로 승격(`go mod tidy`). (5) 디바이스 이름 표시는 **프런트 변경 없음**(기존 `device.name` 렌더가 새 포맷 자동 반영).
+  - **품질**: xsfm 커버리지 89.1%, `go test -race` 클린, `go test ./...` exit 0(0 FAIL), 프런트 vitest 2275 pass, `tsc` 클린. SPEC-XSFM-GROUP-001 / station / node / api-service 무회귀. 신규 외부 신규 패키지 0(x/text 는 표준 확장 모듈 직접화).
+  - **후속 — 역사 역번호(station_number)**: 역사에 선택 필드 `station_number`(역번호, 실세계 역번호, 내부 코드와 구분) 추가 — `add_station`/`list_stations`/`station_registered` 관통, 중복 역번호는 경고만. 디바이스 자동 이름 station 세그먼트가 역번호 우선·코드 폴백(`{line}:{역번호|코드}:{place}:{index:03d}`, 내부 주소/셀렉터는 코드 유지). 프런트 `XsfmStationsTab` 표시·편집. config-seed 경로는 미배선(런타임 `add_station` 만). 원 EARS 범위 밖 직접 후속(`a35c468b`), spec.md §7.6.
+  - **관련**: SPEC-XSFM-LINE-001 v0.3.1(구현 완료 + 역번호 후속, `ef4f28a7` + `e8678033` + `a35c468b`, Tier M). SPEC-XSFM-001 의 라인=역사 파생 속성 가정을 의도적으로 갱신.
+
+### 추가 — xsfm 그룹 1급(first-class) 개념 도입 (그룹 엔티티·다대다 멤버십·일괄 제어)
+
+- **`xsfm` 에이전트에 그룹(group)을 1급 개념으로 승격 — 그룹 엔티티·다대다 멤버십·커스텀 CRUD·기본 그룹 자동 동기화·그룹 셀렉터 일괄 제어 + 프런트 그룹 탭/패널 (Non-breaking, 비침습 레이어 추가)**
+
+  기존에 디바이스 속성(`Device.GroupID`, 디바이스당 단일 태그)으로만 존재하던 그룹을, 이름·타입·멤버를 가진 1급 엔티티로 승격했다. 기존 station→line 레지스트리·디바이스 로스터·fan-out 의 **구조를 변경하지 않고** 그룹 레지스트리를 별도 레이어로 신설하는 비침습 방식으로 구현했다. 백엔드 M1~M5(`ae53b344`) + 프런트 M6~M7(`97c2bafd`)로 완성.
+
+  - **그룹 레지스트리(신설 레이어)**: `Group{ID,Name,Type,Ref,Members}` + 자체 RWMutex + write-through 영속(`StationRegistry` 락/영속 패턴 미러). 그룹 id 는 **타입 접두사 인코딩**(`station:<code>`/`line:<code>`/`custom:<name|uuid>`)으로 타입을 id 만으로 판별하고 충돌을 원천 차단(RD-2). 신규 파일 `group_registry.go` + `group_membership.go`, 센티널 에러 3종 추가(`errors.go`).
+  - **다대다 멤버십**: 한 디바이스가 라인 그룹 + 역사 그룹 + 다수 커스텀 그룹에 동시 소속. `Device.GroupID` 는 폐기하지 않고 **대표(primary) 그룹**으로 유지하여 텔레메트리/이벤트/InfluxDB 단일 `group_id` 태그 방출(status.go/monitor.go/provider.go)을 **무회귀** 보존(RD-1). 조회/fan-out 시 **로스터 대조 필터**로 유령 멤버(삭제된 device_id)를 자동 무시하여 `remove_device` 에 연쇄 제거 로직 불필요(RD-3, 비침습).
+  - **커스텀 그룹 CRUD**: `Process()` switch 에 `add_group`/`remove_group`/`set_group`/`list_groups` 배선(예약된 미구현 `set_group` 스텁 대체). 부분 갱신(present 패턴), `group_registered`/`group_unregistered` 이벤트, 기본 그룹(type≠custom) 편집 차단(`ErrGroupNotCustom`).
+  - **기본 그룹 자동 동기화**: 역사(station)/호선(line) 그룹은 저장하지 않고 `StationRegistry` 에서 조회 시점 순수 파생 → 디바이스 위치 변경이 즉시 반영되고 동기화 코드가 불필요. 셀렉터 병존(RD-4): 기존 `line`/`station` 셀렉터와 `group_id=line:<code>`/`station:<code>` 그룹 셀렉터를 둘 다 허용, 동일 `DevicesByLine`/`DevicesByStation` 로 수렴하여 결과 동일.
+  - **그룹 셀렉터 일괄 제어**: `handleSelectorControl`(본 코드베이스상 `group.go`)의 group_id 분기가 접두사별 멤버 도출 후 기존 `fanOutControl`/`buildControlPlan`/`aggregateStatus` 를 **무변경 재사용**(재구현 없음). 우선순위 `device_id > station > line > group_id` 불변, 빈 그룹 `ErrEmptyGroup`, 미등록 그룹 `ErrGroupNotFound`.
+  - **프런트엔드**: `useGroups`/`useAddGroup`/`useSetGroup`/`useRemoveGroup` 훅 + xsfm 에이전트 상세에 **그룹 탭(`XsfmGroupsTab`)** 신설(그룹 CRUD + 멤버 편집(커스텀만) + 그룹 일괄 제어) + 대시보드 **설비 그룹 패널(`FacilityGroupPanel`, `facility-group` 타입) 가산**. `facilityShared.tsx`/`renderDashboardPanel`/`AddPanelDialog`/`uiStore`/`AgentDetailPanel` 정합 반영, i18n ko/en 추가.
+  - **분기(Divergence, as-implemented)**: (1) **M4 순수 파생** — station/line 그룹은 `handleAddStation`/`handleRemoveStation` 훅 없이 조회 시 파생하여 `station_registry.go` 완전 불변(계획한 명시적 훅보다 강한 비침습성). (2) **M7 가산형 패널** — 기존 `FacilityStationPanel` 을 파괴적으로 개편하지 않고 신규 `FacilityGroupPanel` 을 가산하여 15개 역사-패널 테스트 무회귀. (3) **신규 `group_membership.go`** — 에이전트-레벨 그룹 로직을 신규 파일에 배치해 `agent.go` diff 최소화, `control.go` 불변. (4) **미접두사 group_id fallback** — 접두사 없는 group_id 는 `Device.GroupID`(primary) 를 1차 대조하여 기존 미접두사 셀렉터 테스트 무회귀.
+  - **품질**: xsfm 커버리지 88.8%, `go test -race` 클린, 프런트 vitest 2254 pass, `tsc` 클린. 신규 외부 의존성 0. station/line 레지스트리·로스터·기존 fan-out 무회귀(NF-02).
+  - **관련**: SPEC-XSFM-GROUP-001 v0.3.0(구현 완료, `ae53b344` + `97c2bafd`, Tier M). SPEC-XSFM-001 A-4 가정(그룹=단일 태그)을 의도적으로 갱신.
+
 ### 추가 — 지하철 시설물 관리 대시보드 패널 (라인·역사·기기)
 
 - **지하철 시설물 관리 대시보드 3종 패널 신설 — 라인(호선)/역사(station)/기기(device) 계층 조망·제어 (프론트엔드 전용, Non-breaking)**

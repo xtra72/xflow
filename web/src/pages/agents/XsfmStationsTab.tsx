@@ -18,6 +18,7 @@ import {
   useRemovePlace,
   useRemoveStation,
   useStations,
+  type AddStationVariables,
   type AirStation,
   type BulkFailure,
   type BulkResult,
@@ -35,11 +36,12 @@ const labelCls = 'mb-1 block text-xs font-medium text-(--color-text-secondary)';
 
 interface StationFormState {
   station: string;
+  station_number: string;
   line: string;
   display_name: string;
   order: string;
 }
-const EMPTY_STATION_FORM: StationFormState = { station: '', line: '', display_name: '', order: '' };
+const EMPTY_STATION_FORM: StationFormState = { station: '', station_number: '', line: '', display_name: '', order: '' };
 
 interface PlaceFormState {
   place: string;
@@ -239,6 +241,7 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
     setEditingStation(s.station);
     setStationForm({
       station: s.station,
+      station_number: s.station_number ?? '',
       line: s.line ?? '',
       display_name: s.display_name ?? '',
       order: s.order ? String(s.order) : '',
@@ -264,16 +267,22 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
         return;
       }
     }
-    addStation.mutate(
-      { station, line: stationForm.line.trim(), display_name: stationForm.display_name.trim(), order: orderNum },
-      {
-        onSuccess: () => {
-          closeStationForm();
-          addNotification({ type: 'success', message: t('agents.detail.stations.addSuccess') });
-        },
-        onError: (err) => notifyError(err),
+    const vars: AddStationVariables = {
+      station,
+      line: stationForm.line.trim(),
+      display_name: stationForm.display_name.trim(),
+      order: orderNum,
+    };
+    // 역번호는 비었으면 키를 생략(선택 필드; order/line omit 패턴과 동일).
+    const stationNumber = stationForm.station_number.trim();
+    if (stationNumber) vars.station_number = stationNumber;
+    addStation.mutate(vars, {
+      onSuccess: () => {
+        closeStationForm();
+        addNotification({ type: 'success', message: t('agents.detail.stations.addSuccess') });
       },
-    );
+      onError: (err) => notifyError(err),
+    });
   }
 
   function confirmRemoveStation() {
@@ -480,8 +489,8 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
             }}
           />
         <div className="space-y-1.5">
-          {/* 컬럼 헤더: 순서 / 이름 / 코드 / 라인 / 위치 / 액션 (역사 행과 동일 grid 트랙으로 정렬) */}
-          <div className="grid grid-cols-[1.5rem_1.25rem_3rem_1fr_9rem_6rem_4rem_auto] items-center gap-2 px-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
+          {/* 컬럼 헤더: 순서 / 이름 / 코드 / 역번호 / 라인 / 위치 / 액션 (역사 행과 동일 grid 트랙으로 정렬) */}
+          <div className="grid grid-cols-[1.5rem_1.25rem_3rem_1fr_9rem_6rem_6rem_4rem_auto] items-center gap-2 px-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-(--color-text-muted)">
             <span className="flex items-center">
               <input
                 type="checkbox"
@@ -498,6 +507,7 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
             <span className="text-center">{t('agents.detail.stations.order')}</span>
             <span>{t('agents.detail.stations.displayName')}</span>
             <span>{t('agents.detail.stations.station')}</span>
+            <span>{t('agents.detail.stations.stationNumber')}</span>
             <span>{t('agents.detail.stations.line')}</span>
             <span className="text-center">{t('agents.detail.stations.placesColumn')}</span>
             <span className="text-right">{t('agents.detail.stations.actions')}</span>
@@ -506,8 +516,8 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
             const isOpen = expanded[s.station] ?? false;
             return (
               <div key={s.station} className="rounded-lg border border-(--color-border-default)">
-                {/* 역사 행 헤더: 선택 → 순서 → 이름 → 코드 → 라인 → 위치수 정렬 컬럼 (헤더 행과 동일 grid 트랙) */}
-                <div className="grid grid-cols-[1.5rem_1.25rem_3rem_1fr_9rem_6rem_4rem_auto] items-center gap-2 px-3 py-2">
+                {/* 역사 행 헤더: 선택 → 순서 → 이름 → 코드 → 역번호 → 라인 → 위치수 정렬 컬럼 (헤더 행과 동일 grid 트랙) */}
+                <div className="grid grid-cols-[1.5rem_1.25rem_3rem_1fr_9rem_6rem_6rem_4rem_auto] items-center gap-2 px-3 py-2">
                   {/* 선택 체크박스(토글 버튼 밖 — 클릭해도 확장/접기 안 됨). */}
                   <span className="flex items-center">
                     <input
@@ -523,7 +533,7 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
                     type="button"
                     onClick={() => toggleExpand(s.station)}
                     aria-expanded={isOpen}
-                    className="col-span-6 grid grid-cols-subgrid items-center gap-2 text-left"
+                    className="col-span-7 grid grid-cols-subgrid items-center gap-2 text-left"
                   >
                     <span className="flex items-center">
                       {isOpen ? (
@@ -537,6 +547,7 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
                       {s.display_name || s.station}
                     </span>
                     <span className="truncate font-mono text-xs text-(--color-text-muted)">{s.station}</span>
+                    <span className="truncate text-xs text-(--color-text-secondary)">{s.station_number || '—'}</span>
                     <span className="truncate text-xs text-(--color-text-secondary)">{s.line || '—'}</span>
                     <span className="text-center text-[10px] text-(--color-text-muted)">{s.places.length}</span>
                   </button>
@@ -684,6 +695,19 @@ export default function XsfmStationsTab({ agentId }: { agentId: string }) {
                   onChange={(e) => setStationForm({ ...stationForm, station: e.target.value })}
                   className={cn(inputCls, editingStation && 'cursor-not-allowed opacity-60')}
                 />
+              </div>
+              <div>
+                <label className={labelCls}>{t('agents.detail.stations.stationNumber')}</label>
+                <input
+                  type="text"
+                  value={stationForm.station_number}
+                  placeholder={t('agents.detail.stations.stationNumberPlaceholder')}
+                  onChange={(e) => setStationForm({ ...stationForm, station_number: e.target.value })}
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[10px] text-(--color-text-muted)">
+                  {t('agents.detail.stations.stationNumberHelper')}
+                </p>
               </div>
               <div>
                 <label className={labelCls}>{t('agents.detail.stations.line')}</label>

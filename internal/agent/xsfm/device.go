@@ -102,6 +102,11 @@ func hasComposite(d *Device) bool {
 
 // applyAddressFields 는 파싱된 토픽 placeholder(station_code/place_code/device_index)를 Device
 // 의 위치 필드로 역매핑한다. device_index 는 int 로 정규화한다(선행 0 무시).
+//
+// {line_code} 는 의도적으로 어떤 Device 필드에도 매핑하지 않는다(SPEC-XSFM-LINE-001 RD-8,
+// REQ-08-05): 라인은 inbound 토픽이 아니라 역사(station)에서 파생하는 값이므로(station→line SSOT),
+// 토픽의 {line_code} 를 식별·저장에 쓰면 SSOT 이중화가 된다. 디바이스 식별은 station_code+
+// place_code+device_index 로만 이루어지고(compositeKeyFromFields), 라인은 station 파생으로 단일화한다.
 func applyAddressFields(d *Device, fields map[string]string) {
 	if v, ok := fields[placeholderStationCode]; ok {
 		d.Station = v
@@ -112,6 +117,7 @@ func applyAddressFields(d *Device, fields map[string]string) {
 	if v, ok := fields[placeholderDeviceIndex]; ok {
 		d.Index = toInt(v)
 	}
+	// {line_code} 미매핑(REQ-08-05): 위 3필드 외 placeholder(라인 포함)는 Device 필드로 역매핑하지 않는다.
 }
 
 // deviceFieldValue 는 표준 placeholder 이름을 Device 필드 값으로 매핑한다 (양방향 매핑의

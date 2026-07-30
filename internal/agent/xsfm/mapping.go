@@ -20,6 +20,15 @@ const (
 	placeholderPlaceCode   = "place_code"   // → Device.Place
 	placeholderDeviceIndex = "device_index" // → Device.Index
 	placeholderAttribute   = "attribute"    // 상태 축 이름(power/fan_speed/online), 주소가 아님
+
+	// placeholderLineCode 는 direct-mode 토픽 템플릿의 라인 코드 세그먼트이다
+	// (SPEC-XSFM-LINE-001 RD-8, Module 8). 라인은 Device 필드가 아니라 역사(station)에서 파생하는
+	// 값(station→line SSOT, A-1)이므로 다른 placeholder 와 달리 Device 필드로 양방향 매핑되지 않는다:
+	//   - outbound(command/pub) 렌더: 디바이스의 파생 라인 ResolveLine(device.Station) 로 치환한다
+	//     (roster 락 밖 lineHint 패턴 — REQ-08-02/03, controlDevice 참조).
+	//   - inbound(state/sub) 파싱: subscribe 시 wildcard, 파싱 시 추출되지만 디바이스 식별에는 무시된다
+	//     (applyAddressFields 미매핑, compositeKey 미포함 — REQ-08-05).
+	placeholderLineCode = "line_code"
 )
 
 // PayloadMapping 은 설정 주도 페이로드 시임이다 (REQ-XSFM-001-01-06).
@@ -138,6 +147,18 @@ func templateHasAttribute(template string) bool {
 	return false
 }
 
+// templateHasLineCode 는 템플릿에 {line_code} placeholder 가 있는지 반환한다
+// (SPEC-XSFM-LINE-001 RD-8, REQ-08-01). outbound 렌더에서 라인 파생 해석 필요 여부를
+// 판별하는 데 쓴다(templateHasAttribute 미러). placeholder 가 없으면 라인 해석 자체를 건너뛴다.
+func templateHasLineCode(template string) bool {
+	for _, n := range placeholderNames(template) {
+		if n == placeholderLineCode {
+			return true
+		}
+	}
+	return false
+}
+
 // templateIsComposite 는 템플릿이 합성 주소 모델(다중 필드)인지 반환한다. 비-attribute
 // placeholder 가 없거나 {device_id} 단독이면 false(blob/{device_id} 모델), 그 외(station_code/
 // place_code/device_index 등)면 true. seedKeyAndAddress 의 키 판별 규칙과 동형이다.
@@ -234,19 +255,34 @@ func compositeKeyFromFields(fields map[string]string) string {
 	return compositeKey(fields[placeholderStationCode], fields[placeholderPlaceCode], toInt(fields[placeholderDeviceIndex]))
 }
 
-// composeName 은 표시용 Name 을 위치 계층으로 합성한다: "{station}:{place}:{index-3자리-0채움}".
+// composeName 은 표시용 Name 을 위치 계층으로 합성한다 (SPEC-XSFM-LINE-001 REQ-04-01/03, RD-4).
+//
+//   - line != "" → "{line}:{station}:{place}:{index-3자리-0채움}" (4-세그먼트)
+//   - line == "" → "{station}:{place}:{index-3자리-0채움}"        (3-세그먼트, 하위호환·무회귀)
+//
+// line 은 호출부에서 ResolveLine(station) 로 해석해 주입한다(순수 함수 유지, 레지스트리 의존
+// 주입 회피). 라인 코드가 미해석(빈 라인·미등록 station)이면 라인 세그먼트를 생략한다(RD-4).
 // compositeKey 와 달리 index 를 3자리로 0-채움한다(예: 3 → "003") — 사람이 읽는 표시 규약이며,
-// 보조 인덱스 키(정규화 int)와는 목적이 다르다(표시 vs 매칭).
-func composeName(station, place string, index int) string {
+// 보조 인덱스 키(정규화 int)와는 목적이 다르다(표시 vs 매칭, REQ-04-05).
+func composeName(line, station, place string, index int) string {
+	if line != "" {
+		return fmt.Sprintf("%s:%s:%s:%03d", line, station, place, index)
+	}
 	return fmt.Sprintf("%s:%s:%03d", station, place, index)
 }
 
-// nonAttrFields 는 {attribute} 를 제외한 placeholder 값 맵의 복사본을 반환한다
+// nonAttrFields 는 {attribute} 와 {line_code} 를 제외한 placeholder 값 맵의 복사본을 반환한다
 // (Device.Address 저장 / 명령 렌더 재구성용).
+//
+// {line_code} 제외(SPEC-XSFM-LINE-001 RD-8, REQ-08-05): 라인은 Device 필드로 저장하지 않고
+// 역사(station)에서 파생하는 값이다(station→line SSOT). inbound 토픽이 나른 {line_code} 를
+// Device.Address 에 저장하면 이후 outbound 렌더가 파생 라인이 아닌 토픽의 라인을 재사용해
+// SSOT 이중화가 되므로, 주소 맵에서 배제한다(식별·저장 어디에도 매핑하지 않음). outbound 렌더는
+// controlDevice 가 ResolveLine(device.Station) 로 파생 라인을 별도 주입한다(REQ-08-02).
 func nonAttrFields(fields map[string]string) map[string]string {
 	out := make(map[string]string, len(fields))
 	for k, v := range fields {
-		if k == placeholderAttribute {
+		if k == placeholderAttribute || k == placeholderLineCode {
 			continue
 		}
 		out[k] = v

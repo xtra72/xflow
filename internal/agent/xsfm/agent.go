@@ -59,6 +59,18 @@ type XSFMAgent struct {
 	// 자체 RWMutex 로 보호되며 로스터 락(mu)·pending 락과 절대 중첩하지 않는다.
 	stations *StationRegistry
 
+	// groups 는 그룹(1급 개념) 레지스트리이다 (SPEC-XSFM-GROUP-001, 신설 비침습 레이어).
+	// 커스텀 그룹 멤버십의 SSOT 이며 자체 RWMutex 로 보호된다 — 로스터 락(mu)·pending
+	// 락·station 레지스트리 락과 절대 중첩하지 않는다(REQ-01-07 락 규율). 기본 그룹
+	// (station/line)은 저장하지 않고 station 레지스트리/로스터에서 파생한다.
+	groups *GroupRegistry
+
+	// lines 는 라인(1급 엔티티) 레지스트리이다 (SPEC-XSFM-LINE-001, 신설 비침습 레이어).
+	// 라인 엔티티의 코드/표시명/정렬 SSOT 이며 자체 RWMutex 로 보호된다 — 로스터 락(mu)·
+	// pending 락·station 레지스트리 락·group 레지스트리 락과 절대 중첩하지 않는다(REQ-07-01
+	// 락 규율). line:<code> 멤버는 저장하지 않고 DevicesByLine 로 파생한다(REQ-01-08).
+	lines *LineRegistry
+
 	// registry 는 런타임 등록 디바이스(bridge/auto) 로스터의 파일 기반 영속 저장소이다
 	// (B7, REQ-XSFM-001-02-05/08). registry_path 가 빈 값이면 nil(영속화 비활성). 자체
 	// 락을 보유하며 로스터 락(mu)에 걸쳐 잡지 않는다(스냅샷 후 해제, 그다음 파일 I/O).
@@ -104,9 +116,23 @@ type processRequest struct {
 	Index    int    `json:"index,omitempty"`
 	Line     string `json:"line,omitempty"`
 
+	// 이름 기반 제어 셀렉터 (SPEC-XSFM-NAMESEL-001 RD-1). CRUD Name(json `name`) 필드와
+	// 별개이며 제어 대상 지정에만 쓰인다: DeviceName 은 개별 이름 셀렉터(→ device_id 해소 후
+	// 개별 제어), GroupName 은 그룹 이름 셀렉터(→ 그룹 해소 후 fan-out)이다.
+	DeviceName string `json:"device_name,omitempty"`
+	GroupName  string `json:"group_name,omitempty"`
+
 	// 역사 레지스트리 CRUD 필드 (B6, add_station: display_name/order).
 	DisplayName string `json:"display_name,omitempty"`
 	Order       int    `json:"order,omitempty"`
+
+	// StationNumber 는 역번호(실제 역사 대외 표시 번호, 선택)이다. add_station 에서 역사 코드와
+	// 별개로 지정하며, 지정 시 디바이스 자동 이름의 역사 세그먼트에 우선 반영된다.
+	StationNumber string `json:"station_number,omitempty"`
+
+	// Code 는 라인/커스텀 그룹의 통일 코드 식별자이다 (SPEC-XSFM-LINE-001 RD-2/RD-6).
+	// add_line{code} 및 add_group{code} 에서 사용한다.
+	Code string `json:"code,omitempty"`
 
 	Params map[string]any `json:"params,omitempty"`
 	NodeID string         `json:"node_id,omitempty"`
@@ -137,6 +163,14 @@ func (req *processRequest) fillFromParams() {
 	if req.GroupID == "" {
 		req.GroupID = stringField(req.Params, "group_id")
 	}
+	// 이름 셀렉터 승격 (SPEC-XSFM-NAMESEL-001 RD-1, group_id 승격 패턴 계승): HTTP exec 계약이
+	// device_name/group_name 을 params 로 나른 경우 top-level 로 끌어올린다(top-level 우선).
+	if req.DeviceName == "" {
+		req.DeviceName = stringField(req.Params, "device_name")
+	}
+	if req.GroupName == "" {
+		req.GroupName = stringField(req.Params, "group_name")
+	}
 	if req.Station == "" {
 		req.Station = stringField(req.Params, "station")
 	}
@@ -148,6 +182,12 @@ func (req *processRequest) fillFromParams() {
 	}
 	if req.DisplayName == "" {
 		req.DisplayName = stringField(req.Params, "display_name")
+	}
+	if req.StationNumber == "" {
+		req.StationNumber = stringField(req.Params, "station_number")
+	}
+	if req.Code == "" {
+		req.Code = stringField(req.Params, "code")
 	}
 	// 정수 주소지정 필드: JSON 숫자는 float64, 숫자 문자열("3")도 허용(toInt). 누락 키는
 	// firstPresent 가 nil 을 반환하고 toInt(nil)==0 이므로 zero 값이 유지된다.
@@ -227,7 +267,9 @@ func NewXSFMAgent(config agent.AgentConfig) (agent.Agent, error) {
 		if a.cfg.stateIsComposite && hasComposite(dev) {
 			dev.composite = true
 			if dev.Name == "" {
-				dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+				// 구성 시점(Init 이전)에는 station 레지스트리가 아직 없어 라인·역번호가 미해석된다 →
+				// resolveLineFor 는 "" 를(3-세그먼트, RD-4), stationDisplayFor 는 코드 폴백을 반환한다.
+				dev.Name = composeName(a.resolveLineFor(dev.Station), a.stationDisplayFor(dev.Station), dev.Place, dev.Index)
 			}
 		}
 		a.devices[key] = dev
@@ -297,6 +339,36 @@ func (a *XSFMAgent) Init(config agent.AgentConfig) error {
 		}
 	}
 
+	// 그룹 레지스트리 구성 (SPEC-XSFM-GROUP-001, 신설 레이어): device_registry.json 과 동일
+	// dir(rosterPath)에 group_registry.json 으로 커스텀 그룹을 영속한다. rosterPath 가 비면
+	// 인메모리 전용(종전 동작 보존). 구성 후 기존 group_id 를 커스텀 그룹으로 마이그레이션한다
+	// (REQ-02-04) — Device.GroupID 는 primary 로 유지되어 단일 태그 방출은 무회귀(RD-1).
+	groups, err := newGroupRegistry(rosterPath)
+	if err != nil {
+		return fmt.Errorf("xsfm init: %w", err)
+	}
+	a.mu.Lock()
+	a.groups = groups
+	a.mu.Unlock()
+	a.migrateGroupMembership()
+
+	// 라인 레지스트리 구성 (SPEC-XSFM-LINE-001, 신설 레이어): device_registry.json 과 동일
+	// dir(rosterPath)에 line_registry.json 으로 라인 엔티티를 영속한다. rosterPath 가 비면
+	// 인메모리 전용(종전 동작 보존). 구성 후 로드 1회성·비파괴 마이그레이션을 수행한다:
+	// (1) 기존 station.Line 값 → Line 엔티티 ensure-create(REQ-05-01), (2) 레거시
+	// custom:<name> 그룹 코드 → custom:<code> slugify 승격(REQ-05-02, §4.6).
+	lines, err := newLineRegistry(rosterPath)
+	if err != nil {
+		return fmt.Errorf("xsfm init: %w", err)
+	}
+	a.mu.Lock()
+	a.lines = lines
+	a.mu.Unlock()
+	a.migrateLinesFromStations() // REQ-05-01: station.Line → Line 엔티티 ensure-create.
+	if a.groups != nil {
+		a.groups.migrateCodes() // REQ-05-02/§4.6: custom:<name> → custom:<code> slugify 승격.
+	}
+
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
 		return fmt.Errorf("xsfm init: %w", err)
 	}
@@ -325,6 +397,8 @@ func (a *XSFMAgent) Init(config agent.AgentConfig) error {
 func (a *XSFMAgent) Start(_ context.Context) error {
 	// 오프라인 감지 모니터 (양 모드 공통, offline_timeout>0 일 때만 기동).
 	a.startOfflineMonitor()
+	// 주기 상태 방출기 (SPEC-XSFM-AGENT-IO-001, state_emit_mode ∈ {interval, both} 일 때만 기동).
+	a.startStateEmitter()
 
 	if a.cfg.TransportMode == transportModePort {
 		a.logger.Info("xsfm: started in port mode (no broker)")
@@ -408,8 +482,18 @@ func (a *XSFMAgent) handleStateMessage(topic string, payload []byte) {
 // 해제하고 방출한다 — 락을 채널 송신에 걸쳐 잡지 않는다. fields 의 placeholder 는 device_state_changed
 // 메타로 실려 하류 influx 태그(station_code/place_code/device_index/attribute)를 형성한다.
 func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st decodedState) {
+	// composite auto-생성 시 새 디바이스 이름의 라인·역사 세그먼트를 로스터 락 취득 전에 해석한다
+	// (레지스트리 간 락 중첩 금지, REQ-07-01). 비-composite 경로는 이름 합성이 없어 불필요하다.
+	// stationHint 는 역번호(있으면)-또는-코드 표시 값이다.
+	lineHint := ""
+	stationHint := ""
+	if composite {
+		lineHint = a.resolveLineFor(fields[placeholderStationCode])
+		stationHint = a.stationDisplayFor(fields[placeholderStationCode])
+	}
+
 	a.mu.Lock()
-	deviceID, dev, created := a.resolveDeviceLocked(composite, fields)
+	deviceID, dev, created := a.resolveDeviceLocked(composite, fields, lineHint, stationHint)
 
 	prevOnline := dev.Online
 	var changed []string
@@ -483,8 +567,18 @@ func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st dec
 		emitTsMs = st.TimestampMs
 	}
 
-	if len(changed) > 0 {
+	// on-change 방출을 상태 방출 모드로 게이팅한다 (SPEC-XSFM-AGENT-IO-001 RD-2, §4.4).
+	// event/both: 현행대로 변경 시 device_state_changed 방출. interval: 억제(주기 스냅샷이 대신함).
+	// 전이 이벤트(device_online/offline, 위)는 방출 모드와 무관하게 항상 방출된다(범위 밖, 게이팅 제외).
+	if len(changed) > 0 && (a.cfg.StateEmitMode == stateEmitModeEvent || a.cfg.StateEmitMode == stateEmitModeBoth) {
 		a.emitStateChanged(deviceID, groupID, newOnline, changed, stateAxes, emitTsMs, fields)
+	}
+
+	// 수신 파싱-상태 forward 탭 (SPEC-XSFM-AGENT-IO-001 RD-1/RD-4). forward_received_to_node 가 ON 이면
+	// 변경 여부(len(changed))·방출 모드와 무관하게 매 수신마다 device_state_received 를 방출한다.
+	// ingestState 는 direct·port 공유 시임이므로 이 단일 지점 배치로 양 모드에 mode-agnostic 하게 적용된다.
+	if a.cfg.ForwardReceivedToNode {
+		a.emitStateReceived(deviceID, groupID, newOnline, stateAxes, emitTsMs, fields)
 	}
 }
 
@@ -497,7 +591,7 @@ func (a *XSFMAgent) ingestState(composite bool, fields map[string]string, st dec
 //     핵심 변경점이다 — 조회 키가 "합성 주소 = device_id" 에서 "보조 인덱스 → UUID" 로 바뀐다.
 //   - !composite(blob/{device_id} 모델): topic 의 device_id 를 로스터 키로 직접 조회한다.
 //     미등록이면 그 device_id 를 키로 auto 생성한다(하위호환 — 기존 동작 보존).
-func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string) (string, *Device, bool) {
+func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string, lineHint, stationHint string) (string, *Device, bool) {
 	if composite {
 		ck := compositeKeyFromFields(fields)
 		if id, ok := a.secondary[ck]; ok {
@@ -508,7 +602,10 @@ func (a *XSFMAgent) resolveDeviceLocked(composite bool, fields map[string]string
 		id := newDeviceID()
 		dev := &Device{DeviceID: id, Online: false, Source: "auto", composite: true}
 		applyAddressFields(dev, fields)
-		dev.Name = composeName(dev.Station, dev.Place, dev.Index)
+		// lineHint/stationHint 는 호출부(ingestState)가 로스터 락 취득 전에 레지스트리에서 해석해
+		// 주입한다(레지스트리 간 락 중첩 금지, REQ-07-01). lineHint 미해석이면 "" → 3-세그먼트(RD-4),
+		// stationHint 는 역번호가 있으면 역번호·없으면 역사 코드 폴백이다.
+		dev.Name = composeName(lineHint, stationHint, dev.Place, dev.Index)
 		dev.Address = nonAttrFields(fields)
 		a.devices[id] = dev
 		a.indexDeviceLocked(dev)
@@ -798,8 +895,27 @@ func (a *XSFMAgent) Process(data []byte) ([]byte, error) {
 	case "request_state":
 		return a.handleRequestState(req)
 
+	// 커스텀 그룹 CRUD (SPEC-XSFM-GROUP-001 M3, REQ-03-01..06). 기본 그룹(station/line)은
+	// 파생이므로 list_groups 조회로만 노출되고 편집/삭제는 ErrGroupNotCustom 으로 거부된다.
+	case "add_group":
+		return a.handleAddGroup(req, data)
+	case "remove_group":
+		return a.handleRemoveGroup(req)
+	case "set_group":
+		return a.handleSetGroup(req, data)
+	case "list_groups":
+		return a.handleListGroups()
+
+	// 라인 1급 엔티티 CRUD (SPEC-XSFM-LINE-001 M1, REQ-01-03/05/06).
+	case "add_line":
+		return a.handleAddLine(req)
+	case "remove_line":
+		return a.handleRemoveLine(req)
+	case "list_lines":
+		return a.handleListLines()
+
 	// 후속 배치에서 구현.
-	case "set_group", "set_line", "set_station",
+	case "set_line", "set_station",
 		"get_state", "get_all",
 		"get_line_stations":
 		return nil, fmt.Errorf("%w: %q not implemented in this batch", ErrInvalidCommand, req.Command)
@@ -848,19 +964,9 @@ func (a *XSFMAgent) GetDevice(deviceID string) (*Device, error) {
 	return &d, nil
 }
 
-// GroupMembers 는 group_id 에 속한 device_id 목록을 로스터 속성에서 도출한다 (정렬).
-func (a *XSFMAgent) GroupMembers(groupID string) []string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	var ids []string
-	for id, dev := range a.devices {
-		if dev.GroupID == groupID {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	return ids
-}
+// GroupMembers 는 group_registry.go / group_membership.go 로 재구현되어 접두사 분기 +
+// 로스터 대조 필터를 적용한다 (SPEC-XSFM-GROUP-001 M1, RD-2/RD-3). 시그니처는 동일하여
+// 호출부(handleSelectorControl)는 변경되지 않는다.
 
 // ---------------------------------------------------------------------------
 // Agent 인터페이스 나머지 (Configure/ID/Name/Type/Info/Stats)

@@ -32,8 +32,15 @@ var (
 	ErrControlTimeout = errors.New("xsfm: control response timeout")
 	// ErrStationNotFound 는 역사 레지스트리에서 station 을 찾지 못했을 때 반환된다.
 	ErrStationNotFound = errors.New("xsfm: station not found")
-	// ErrLineNotFound 는 역사 레지스트리에서 line 에 속한 station 이 없을 때 반환된다.
+	// ErrLineNotFound 는 라인 레지스트리에서 미존재 라인을 조회/제거하려 할 때 반환된다
+	// (SPEC-XSFM-LINE-001 §4.2).
 	ErrLineNotFound = errors.New("xsfm: line not found")
+	// ErrLineInUse 는 참조 중(해당 라인 코드를 참조하는 역사가 존재)인 라인을 remove_line
+	// 하려 할 때 반환된다 (SPEC-XSFM-LINE-001 REQ-01-05a/RD-5, dangling 참조 방지).
+	ErrLineInUse = errors.New("xsfm: line is in use (referenced by one or more stations)")
+	// ErrInvalidCode 는 신규 코드(add_line/add_group)가 통일 코드 포맷
+	// (^[a-z0-9][a-z0-9_-]*$)을 위반할 때 반환된다 (SPEC-XSFM-LINE-001 RD-6).
+	ErrInvalidCode = errors.New("xsfm: invalid code format (must match ^[a-z0-9][a-z0-9_-]*$)")
 	// ErrPlaceNotFound 는 역사 내에서 place 를 찾지 못했을 때 반환된다 (remove_place/get_place).
 	ErrPlaceNotFound = errors.New("xsfm: place not found")
 	// ErrNotConnected 는 direct 모드에서 브로커에 연결되지 않은 상태로 발행을 시도할 때 반환된다.
@@ -42,4 +49,20 @@ var (
 	ErrInvalidCommand = errors.New("xsfm: invalid command")
 	// ErrInvalidLivenessSource 는 liveness_source 가 receive/payload 이외일 때 반환된다.
 	ErrInvalidLivenessSource = errors.New("xsfm: invalid liveness_source (must be 'receive' or 'payload')")
+	// ErrGroupNotFound 는 그룹 레지스트리에서 커스텀 그룹을 찾지 못했을 때 반환된다
+	// (SPEC-XSFM-GROUP-001 REQ-03-06/05-05).
+	ErrGroupNotFound = errors.New("xsfm: group not found")
+	// ErrGroupNotCustom 은 기본 그룹(type=line/station)을 편집/삭제하려 할 때 반환된다
+	// (SPEC-XSFM-GROUP-001 REQ-03-05). 기본 그룹은 station/line 레지스트리·디바이스 위치가 SSOT.
+	ErrGroupNotCustom = errors.New("xsfm: group is not a custom group (base groups are derived, not editable)")
+	// ErrGroupAlreadyExists 는 이미 존재하는 커스텀 그룹 id 를 다시 생성할 때 반환된다
+	// (SPEC-XSFM-GROUP-001 REQ-03-01).
+	ErrGroupAlreadyExists = errors.New("xsfm: group already exists")
+	// ErrInvalidStateEmitMode 는 state_emit_mode 가 event/interval/both 이외일 때 반환된다
+	// (SPEC-XSFM-AGENT-IO-001 REQ-03-02, transport_mode/liveness_source enum 검증 패턴 동형).
+	ErrInvalidStateEmitMode = errors.New("xsfm: invalid state_emit_mode (must be 'event', 'interval', or 'both')")
+	// ErrAmbiguousName 은 이름 셀렉터(device_name/group_name)가 2개 이상의 대상과 일치할 때
+	// 반환된다 (SPEC-XSFM-NAMESEL-001 RD-2). 무방출 fail-closed — 임의 매치를 선택하지 않고
+	// 거부한다.
+	ErrAmbiguousName = errors.New("xsfm: ambiguous name (matches multiple targets)")
 )

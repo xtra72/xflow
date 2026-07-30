@@ -21,6 +21,7 @@ import { useTranslation } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useStations, useXsfmDevices } from '@/hooks/useStation';
+import { useGroups } from '@/hooks/useGroups';
 import { useDevices, useDeviceRealtime } from '@/hooks/useDevice';
 import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
@@ -460,6 +461,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             {/* SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종 (에이전트 + 라인/역사/기기) */}
             {(panel.type === 'facility-line' ||
               panel.type === 'facility-station' ||
+              panel.type === 'facility-group' ||
               panel.type === 'facility-device') && (
               <CollapsibleSection title={t('dashboard.settings.facility')} defaultOpen={true}>
                 <FacilitySection
@@ -1088,23 +1090,34 @@ function FacilitySection({
 
   const { data: stations, isLoading: stationsLoading } = useStations(agentId);
   const { data: devices, isLoading: devicesLoading } = useXsfmDevices(agentId);
+  const { data: groups, isLoading: groupsLoading } = useGroups(agentId);
 
-  // 패널 타입별 대상 키 / 현재 값 / i18n 라벨.
-  const targetKey: 'deviceId' | 'station' | 'line' =
-    panel.type === 'facility-device' ? 'deviceId' : panel.type === 'facility-station' ? 'station' : 'line';
+  // 패널 타입별 대상 키 / 현재 값 / i18n 라벨. 그룹(facility-group)은 groupId 로 단일 그룹을 지정한다.
+  const targetKey: 'deviceId' | 'station' | 'line' | 'groupId' =
+    panel.type === 'facility-device'
+      ? 'deviceId'
+      : panel.type === 'facility-station'
+        ? 'station'
+        : panel.type === 'facility-group'
+          ? 'groupId'
+          : 'line';
   const currentTarget = (panel.config?.[targetKey] as string | undefined) ?? '';
   const targetLabelKey =
     panel.type === 'facility-device'
       ? 'dashboard.settings.device'
       : panel.type === 'facility-station'
         ? 'dashboard.settings.station'
-        : 'dashboard.settings.line';
+        : panel.type === 'facility-group'
+          ? 'dashboard.settings.group'
+          : 'dashboard.settings.line';
   const targetPlaceholderKey =
     panel.type === 'facility-device'
       ? 'dashboard.settings.selectDevice'
       : panel.type === 'facility-station'
         ? 'dashboard.settings.selectStation'
-        : 'dashboard.settings.selectLine';
+        : panel.type === 'facility-group'
+          ? 'dashboard.settings.selectGroup'
+          : 'dashboard.settings.selectLine';
 
   const targetOptions: { value: string; label: string }[] = useMemo(() => {
     if (panel.type === 'facility-device') {
@@ -1113,11 +1126,22 @@ function FacilitySection({
     if (panel.type === 'facility-station') {
       return (stations ?? []).map((s) => ({ value: s.station, label: s.display_name || s.station }));
     }
+    if (panel.type === 'facility-group') {
+      return (groups ?? []).map((g) => ({
+        value: g.id,
+        label: `${g.name} · ${t(`dashboard.facility.group.type.${g.type}`)} · ${g.member_count}`,
+      }));
+    }
     const lines = Array.from(new Set((stations ?? []).map((s) => s.line).filter(Boolean)));
     return lines.map((l) => ({ value: l, label: l }));
-  }, [panel.type, devices, stations]);
+  }, [panel.type, devices, stations, groups, t]);
 
-  const targetLoading = panel.type === 'facility-device' ? devicesLoading : stationsLoading;
+  const targetLoading =
+    panel.type === 'facility-device'
+      ? devicesLoading
+      : panel.type === 'facility-group'
+        ? groupsLoading
+        : stationsLoading;
 
   return (
     <div className="space-y-3">
@@ -1140,13 +1164,14 @@ function FacilitySection({
         </select>
       </div>
 
-      {/* 대상(라인/역사/기기) 선택 */}
+      {/* 대상(라인/그룹/기기) 선택 */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
           {t(targetLabelKey)}
         </label>
         <select
           value={currentTarget}
+          data-testid="facility-target-select"
           onChange={(e) => onConfigChange({ [targetKey]: e.target.value })}
           disabled={!agentId || targetLoading}
           className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
@@ -1165,8 +1190,8 @@ function FacilitySection({
         <FacilityLineDisplayOptions panel={panel} onConfigChange={onConfigChange} />
       )}
 
-      {/* 역사 패널 전용 표시 옵션(config-only UB-003). */}
-      {panel.type === 'facility-station' && (
+      {/* 역사/그룹 패널 공용 표시 옵션(config-only UB-003). 그룹 패널은 역사 패널을 일반화한 것이라 동일 옵션. */}
+      {(panel.type === 'facility-station' || panel.type === 'facility-group') && (
         <FacilityStationDisplayOptions panel={panel} onConfigChange={onConfigChange} />
       )}
     </div>
@@ -1302,8 +1327,9 @@ function FacilityLineDisplayOptions({
 }
 
 /**
- * 역사 패널 표시 옵션(config-only, UB-003).
- *   - showStats: "역사 통계"(StatTiles) 섹션 표시(기본 true).
+ * 역사/그룹 패널 공용 표시 옵션(config-only, UB-003). 그룹 패널은 역사 패널을 일반화한 것이라
+ * 동일 옵션을 쓴다. testid 접두사는 panel.type 을 따른다(facility-station-* / facility-group-*).
+ *   - showStats: "통계"(StatTiles) 섹션 표시(기본 true).
  *   - deviceLabelMode: 개별 기기 라벨(placeIndex=위치+번호 기본 / name=기기 이름).
  *   - offlineAsOff: 오프라인을 꺼짐으로 표시(기본 false, 라인 패널과 동일 옵션).
  */
@@ -1318,13 +1344,15 @@ function FacilityStationDisplayOptions({
   const showStats = (panel.config?.showStats as boolean | undefined) ?? true;
   const deviceLabelMode = (panel.config?.deviceLabelMode as string | undefined) ?? 'placeIndex';
   const offlineAsOff = (panel.config?.offlineAsOff as boolean | undefined) ?? false;
+  // testid 접두사: 역사=facility-station, 그룹=facility-group.
+  const idp = panel.type;
 
   return (
     <>
       <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)">
         <input
           type="checkbox"
-          data-testid="facility-station-show-stats"
+          data-testid={`${idp}-show-stats`}
           checked={showStats}
           onChange={(e) => onConfigChange({ showStats: e.target.checked })}
           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -1338,7 +1366,7 @@ function FacilityStationDisplayOptions({
       <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)">
         <input
           type="checkbox"
-          data-testid="facility-station-offline-as-off"
+          data-testid={`${idp}-offline-as-off`}
           checked={offlineAsOff}
           onChange={(e) => onConfigChange({ offlineAsOff: e.target.checked })}
           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -1354,7 +1382,7 @@ function FacilityStationDisplayOptions({
         </label>
         <select
           value={deviceLabelMode}
-          data-testid="facility-station-device-label-mode"
+          data-testid={`${idp}-device-label-mode`}
           onChange={(e) => onConfigChange({ deviceLabelMode: e.target.value })}
           className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
         >

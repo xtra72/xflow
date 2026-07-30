@@ -136,6 +136,46 @@ func (r *StationRegistry) ResolveLine(station string) (string, error) {
 	return entry.Line, nil
 }
 
+// ResolveStationNumber 는 station 코드→역번호(station_number)를 해석한다 (ResolveLine 미러,
+// 스냅샷 안전 조회). 미등록 station 이거나 역번호가 비어 있으면 "" 를 반환한다 — 호출부가 역사
+// 세그먼트 표시 값으로 코드 폴백을 판단하는 데 쓰이므로 에러가 아니라 빈 문자열로 강등한다
+// (composeName 라인 세그먼트의 RD-4 생략 규약과 동형의 표시-우선/폴백 정신).
+func (r *StationRegistry) ResolveStationNumber(station string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.cache[station]
+	if !ok {
+		return ""
+	}
+	return entry.StationNumber
+}
+
+// resolveStationNumberFor 는 station 코드→역번호를 해석한다(composeName 역사 세그먼트 주입용,
+// resolveLineFor 미러). station 레지스트리(자체 락)만 취득하며, 반드시 로스터 락을 보유하지 않은
+// 상태에서 호출한다(레지스트리 간 락 중첩 금지, REQ-07-01). 미해석(레지스트리 부재·빈 코드·
+// 미등록·역번호 없음)이면 "" 를 반환한다.
+func (a *XSFMAgent) resolveStationNumberFor(station string) string {
+	if a.stations == nil || station == "" {
+		return ""
+	}
+	return a.stations.ResolveStationNumber(station)
+}
+
+// stationDisplayFor 는 composeName 의 역사 세그먼트에 넣을 표시 값을 도출한다: 역번호가 있으면
+// 역번호를, 없으면 역사 코드를 그대로 쓴다(코드 폴백). 라인 세그먼트와 마찬가지로 레지스트리 락을
+// 로스터 락과 중첩하지 않도록 호출부가 로스터 락 취득 전에 미리 해석해 주입한다(REQ-07-01).
+//
+// @MX:ANCHOR: [AUTO] composeName 의 역사 세그먼트 표시 값 도출 단일 진입점(4개 호출부: 설정 시드·
+// ingestState auto-생성·add_device·set_device 재계산).
+// @MX:REASON: 역번호 우선/코드 폴백 규약이 모든 자동 이름 합성 경로에서 동일해야 하며, 반드시
+// 로스터 락 취득 전에 호출되어야 한다(레지스트리 간 락 중첩 deadlock 회피, REQ-07-01).
+func (a *XSFMAgent) stationDisplayFor(station string) string {
+	if num := a.resolveStationNumberFor(station); num != "" {
+		return num
+	}
+	return station
+}
+
 // ListStations 는 전체 역사 목록을 Order 오름차순(동률 시 Station 사전순)으로 반환한다.
 func (r *StationRegistry) ListStations() []StationRegistryEntry {
 	r.mu.RLock()
@@ -317,17 +357,38 @@ func (a *XSFMAgent) handleAddStation(req processRequest) ([]byte, error) {
 	if req.Station == "" {
 		return nil, fmt.Errorf("%w: add_station requires station", ErrInvalidCommand)
 	}
+
+	// 역번호 중복은 비차단 경고이다(에러 아님): 다른 역사가 동일한 비어있지 않은 역번호를 이미
+	// 보유하면 로그만 남기고 등록을 계속 진행한다(양쪽 역사 모두 등록 유지). 스냅샷 안전한
+	// ListStations 로 로스터/registry 락과 무관하게 조회한다(레지스트리 자체 락, 중첩 없음).
+	if req.StationNumber != "" {
+		for _, e := range a.stations.ListStations() {
+			if e.Station != req.Station && e.StationNumber == req.StationNumber {
+				a.logger.Warn("xsfm: duplicate station_number (non-blocking)",
+					"station_number", req.StationNumber,
+					"station", req.Station,
+					"existing_station", e.Station)
+				break
+			}
+		}
+	}
+
 	entry := StationRegistryEntry{
-		Station:     req.Station,
-		Line:        req.Line,
-		DisplayName: req.DisplayName,
-		Order:       req.Order,
+		Station:       req.Station,
+		StationNumber: req.StationNumber,
+		Line:          req.Line,
+		DisplayName:   req.DisplayName,
+		Order:         req.Order,
 	}
 	if err := a.stations.UpsertStation(entry); err != nil {
 		return nil, err
 	}
 
-	a.sendEvent("station_registered", map[string]any{"station": req.Station, "line": req.Line})
+	a.sendEvent("station_registered", map[string]any{
+		"station":        req.Station,
+		"station_number": req.StationNumber,
+		"line":           req.Line,
+	})
 
 	return json.Marshal(map[string]any{
 		"status":  "ok",
@@ -372,11 +433,12 @@ func (a *XSFMAgent) handleListStations() ([]byte, error) {
 			})
 		}
 		out = append(out, map[string]any{
-			"station":      e.Station,
-			"line":         e.Line,
-			"display_name": e.DisplayName,
-			"order":        e.Order,
-			"places":       placesOut,
+			"station":        e.Station,
+			"station_number": e.StationNumber,
+			"line":           e.Line,
+			"display_name":   e.DisplayName,
+			"order":          e.Order,
+			"places":         placesOut,
 		})
 	}
 	return json.Marshal(map[string]any{"status": "ok", "stations": out})

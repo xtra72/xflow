@@ -114,6 +114,7 @@ type memberResult struct {
 // attribute-per-topic(축별 스칼라 발행), 없으면 기존 JSON-blob 발행으로 디스패치한다.
 func (a *XSFMAgent) controlDevice(deviceID, command string, cmd commandPayload) (memberResult, error) {
 	// 디바이스 존재 확인 + 주소 필드 스냅샷 (락 하에 뜬 뒤 해제 — RWMutex 재진입 트랩 회피).
+	// dev.Station 도 함께 스냅샷하여 {line_code} 파생 해석(로스터 락 밖)의 입력으로 쓴다.
 	a.mu.RLock()
 	dev, exists := a.devices[deviceID]
 	if !exists {
@@ -121,7 +122,23 @@ func (a *XSFMAgent) controlDevice(deviceID, command string, cmd commandPayload) 
 		return memberResult{}, fmt.Errorf("%w: %q", ErrDeviceNotFound, deviceID)
 	}
 	fields := a.buildCommandFieldsLocked(dev)
+	station := dev.Station
 	a.mu.RUnlock()
+
+	// {line_code} 파생 렌더 (SPEC-XSFM-LINE-001 RD-8, REQ-08-02/03/04): 명령 템플릿에 {line_code} 가
+	// 있으면 디바이스의 파생 라인 ResolveLine(station) 으로 채운다. deviceFieldValue 는 라인을 알지
+	// 못하므로(라인은 Device 필드가 아니라 station 파생값, station→line SSOT) buildCommandFieldsLocked
+	// 은 {line_code} 를 비운 채 두며, 여기서 lineHint 로 주입한다. 라인 미배정이면 resolveLineFor 가
+	// "" 를 반환해 빈 세그먼트로 렌더된다(REQ-08-04, 예: cmd//st99/...).
+	//
+	// @MX:WARN: [AUTO] 라인 해석(resolveLineFor→station 레지스트리 자체 락)은 반드시 로스터 락(a.mu)을
+	// 해제한 뒤 수행한다(composeName 의 lineHint 패턴 미러). 위 station 스냅샷 후 RUnlock 을 거쳐
+	// 이 지점에서 해석하므로 station 레지스트리 락이 로스터 락 내부에서 취득되지 않는다.
+	// @MX:REASON: 로스터 락 보유 상태에서 station 레지스트리 락을 취득하면 프로젝트 RWMutex 재진입
+	// deadlock 트랩에 걸린다(REQ-07-01·REQ-08-03). 락 순서를 직렬화(스냅샷→해제→해석→주입)해 회피한다.
+	if a.cfg.commandHasLineCode {
+		fields[placeholderLineCode] = a.resolveLineFor(station)
+	}
 
 	if a.cfg.commandHasAttribute {
 		return a.controlDeviceAttr(deviceID, command, cmd, fields)
@@ -342,6 +359,12 @@ func (a *XSFMAgent) handleSetMultiple(req processRequest) ([]byte, error) {
 // 양 모드에서 device_registered 이벤트를 방출한다. state 토픽 구독은 Start 의 단일 와일드카드
 // 구독이 모든 디바이스를 이미 커버하므로 디바이스별 구독을 하지 않는다 (M14).
 func (a *XSFMAgent) handleAddDevice(req processRequest) ([]byte, error) {
+	// 라인·역사 세그먼트 해석은 로스터 락 취득 전에 수행한다(레지스트리 간 락 중첩 금지, REQ-07-01).
+	// line 미해석이면 "" → composeName 이 3-세그먼트로 합성한다(RD-4). stationDisp 는 역번호가 있으면
+	// 역번호·없으면 역사 코드 폴백이다.
+	line := a.resolveLineFor(req.Station)
+	stationDisp := a.stationDisplayFor(req.Station)
+
 	a.mu.Lock()
 
 	// 명시적 device_id 경로(하위호환): 사용자/브리지가 부여한 device_id 를 그대로 로스터 키로
@@ -377,7 +400,7 @@ func (a *XSFMAgent) handleAddDevice(req processRequest) ([]byte, error) {
 	id := newDeviceID()
 	// 사용자가 비어있지 않은 name 을 주면 커스텀 이름으로 고정(sticky)하고, 아니면 위치 계층에서
 	// 파생한다. sticky 여부는 nameOverridden 으로 표시해 이후 주소 변경 시 재계산을 막는다.
-	name := composeName(req.Station, req.Place, req.Index)
+	name := composeName(line, stationDisp, req.Place, req.Index)
 	nameOverridden := false
 	if req.Name != "" {
 		name = req.Name
@@ -523,16 +546,30 @@ func (a *XSFMAgent) handleSetDevice(req processRequest, raw []byte) ([]byte, err
 	if present("index") {
 		dev.Index = req.Index
 	}
-	// composite 파생 이름 재계산: override 가 아닌 composite 디바이스에 한해, 주소 변경 또는
-	// name override 해제(present("name") && 빈값)를 트리거로 새 위치에서 Name 을 재계산한다.
-	// nameOverridden 이면(커스텀 이름 sticky) 재계산하지 않아 이름이 유지된다. blob 은 재계산 없음.
-	if dev.composite && !dev.nameOverridden && (addrChange || present("name")) {
-		dev.Name = composeName(dev.Station, dev.Place, dev.Index)
-	}
+	// composite 파생 이름 재계산 판정: override 가 아닌 composite 디바이스에 한해, 주소 변경 또는
+	// name override 해제(present("name"))를 트리거로 새 위치에서 Name 을 재계산한다(RD-4 4-세그먼트
+	// 재계산 포함). nameOverridden(sticky)·blob 은 재계산 없음. 실제 재계산은 라인 세그먼트 해석을
+	// 위해 로스터 락 해제 후 수행한다(레지스트리 간 락 중첩 금지, REQ-07-01).
+	needRecompute := dev.composite && !dev.nameOverridden && (addrChange || present("name"))
+	recStation, recPlace, recIndex := dev.Station, dev.Place, dev.Index
 	if addrChange {
 		a.indexDeviceLocked(dev)
 	}
 	a.mu.Unlock()
+
+	// 파생 이름 재계산(RD-4): 라인 코드 해석(ResolveLine, station 레지스트리 자체 락)은 로스터 락을
+	// 해제한 뒤 수행하고, 결과만 두 번째 짧은 임계구역에서 반영한다 — 두 락을 중첩하지 않는다.
+	// 재확인(composite && !nameOverridden) 후 반영해 그 사이 override 가 걸렸으면 sticky 를 존중한다.
+	if needRecompute {
+		line := a.resolveLineFor(recStation)
+		stationDisp := a.stationDisplayFor(recStation)
+		newName := composeName(line, stationDisp, recPlace, recIndex)
+		a.mu.Lock()
+		if d, ok := a.devices[req.DeviceID]; ok && d.composite && !d.nameOverridden {
+			d.Name = newName
+		}
+		a.mu.Unlock()
+	}
 
 	// B7: 로스터 변경 후 영속화(best-effort). 설정 디바이스 변경은 스냅샷에서 제외되어 반영되지 않는다.
 	a.persistRoster()

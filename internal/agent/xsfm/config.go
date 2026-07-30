@@ -19,6 +19,18 @@ const (
 	fanSpeedPolicyPowerOnFirst = "power_on_first"
 )
 
+// state_emit_mode 값 상수 (상태 방출 모드, SPEC-XSFM-AGENT-IO-001 RD-2).
+const (
+	// stateEmitModeEvent 은 현행 on-change device_state_changed 방출이다 (기본, 무회귀).
+	// 주기 방출기를 기동하지 않는다.
+	stateEmitModeEvent = "event"
+	// stateEmitModeInterval 은 state_emit_interval 주기로 전체 디바이스 풀 스냅샷
+	// (device_state_snapshot)을 방출하고 on-change device_state_changed 는 억제한다.
+	stateEmitModeInterval = "interval"
+	// stateEmitModeBoth 은 on-change device_state_changed 와 주기 풀 스냅샷 heartbeat 를 병행 방출한다.
+	stateEmitModeBoth = "both"
+)
+
 // liveness_source 값 상수 (오프라인 감지의 생존 시각 소스).
 const (
 	// livenessSourceReceive 는 LastSeen(생존 판정)을 에이전트 수신 시각으로 설정한다 (기본, 하위호환).
@@ -80,6 +92,12 @@ type XSFMConfig struct {
 	stateHasAttribute   bool
 	commandHasAttribute bool
 
+	// commandHasLineCode 는 명령 템플릿에 {line_code} placeholder 가 있는지의 파생 플래그이다
+	// (SPEC-XSFM-LINE-001 RD-8, REQ-08-01/02). true 이면 outbound 렌더 시 디바이스의 파생 라인
+	// (ResolveLine(station))을 roster 락 밖에서 해석해 {line_code} 로 주입한다(controlDevice). false
+	// 이면(대부분의 기존 템플릿·port 모드) 라인 해석 자체를 건너뛰어 무회귀이다.
+	commandHasLineCode bool
+
 	// stateIsComposite 는 상태 템플릿이 합성 주소 모델(station/place/index 다중 필드)인지의
 	// 파생 플래그이다. true 이면 유입 상태를 보조 인덱스(compositeKey → device_id/UUID)로 조회하고
 	// 미등록 시 UUID 를 생성해 auto 등록한다. false({device_id} 단일 필드 = blob 모델)이면 topic 의
@@ -133,10 +151,28 @@ type XSFMConfig struct {
 
 	// Devices 는 설정 기반 디바이스 시드이다.
 	Devices []ConfigDevice
+
+	// ForwardReceivedToNode 는 수신된 모든 파싱 상태를 노드로 전달(device_state_received)할지의
+	// 패스스루 탭 옵션이다 (기본 false, SPEC-XSFM-AGENT-IO-001 RD-1). state_emit_mode 와 독립적으로
+	// 매 수신마다 방출되며, direct·port 양 모드에 동일 적용된다(mode-agnostic, RD-4).
+	ForwardReceivedToNode bool
+
+	// StateEmitMode 는 상태 방출 모드이다 (RD-2): "event"(기본, on-change) | "interval"(주기 풀
+	// 스냅샷, on-change 억제) | "both"(on-change + 주기 스냅샷 heartbeat).
+	StateEmitMode string
+
+	// StateEmitInterval 은 interval/both 모드의 주기 스냅샷 방출 주기이다 (기본 60s, RD-3).
+	// event 모드에서는 무시된다. <=0 이면 주기 방출기 미기동(3-way 비활성).
+	StateEmitInterval time.Duration
 }
 
+// @MX:ANCHOR: XSFMConfig 파싱·검증의 단일 진입점 — 기본값·enum 검증 계약을 보존한다.
+// @MX:REASON: NewXSFMAgent/Init + 다수 테스트가 호출한다(fan_in>=3). 기본 설정(forward off,
+// state_emit_mode=event, interval=60s)은 현행 방출 동작과 바이트 동일해야 하며(무회귀), enum 무효값은
+// 조용한 폴백 없이 센티널 에러로 거부한다(transport_mode/liveness_source/state_emit_mode 동형).
+//
 // parseXSFMConfig 는 Transport.Options 맵에서 XSFMConfig 를 파싱·검증한다
-// (REQ-XSFM-001-01-04/05/06/10/13).
+// (REQ-XSFM-001-01-04/05/06/10/13, SPEC-XSFM-AGENT-IO-001 RD-1/RD-2/RD-3).
 func parseXSFMConfig(opts map[string]any) (XSFMConfig, error) {
 	cfg := XSFMConfig{
 		TransportMode:          transportModeDirect,
@@ -149,6 +185,8 @@ func parseXSFMConfig(opts map[string]any) (XSFMConfig, error) {
 		LWTEnabled:             true,
 		FanSpeedPowerOffPolicy: fanSpeedPolicyReject,
 		LivenessSource:         livenessSourceReceive,
+		StateEmitMode:          stateEmitModeEvent,
+		StateEmitInterval:      60 * time.Second,
 	}
 
 	// transport_mode (기본 "direct", enum {direct, port}).
@@ -222,6 +260,9 @@ func parseXSFMConfig(opts map[string]any) (XSFMConfig, error) {
 	// 스칼라 디코드/인코드, 없으면 기존 JSON-blob 경로(하위호환).
 	cfg.stateHasAttribute = templateHasAttribute(cfg.StateTopicTemplate)
 	cfg.commandHasAttribute = templateHasAttribute(cfg.CommandTopicTemplate)
+	// {line_code} 파생 플래그(SPEC-XSFM-LINE-001 RD-8, REQ-08-01): 명령 템플릿에 {line_code} 가
+	// 있으면 outbound 렌더가 파생 라인을 주입한다(controlDevice). 없으면 라인 해석을 건너뛴다(무회귀).
+	cfg.commandHasLineCode = templateHasLineCode(cfg.CommandTopicTemplate)
 	// 합성 주소 모델 판별(M14): 상태 템플릿의 비-attribute placeholder 가 {device_id} 단독(또는
 	// placeholder 없음)이면 blob 모델, 그 외(station/place/index 등)면 합성 주소 모델이다.
 	cfg.stateIsComposite = templateIsComposite(cfg.StateTopicTemplate)
@@ -287,6 +328,37 @@ func parseXSFMConfig(opts map[string]any) (XSFMConfig, error) {
 	}
 	if v, ok := opts["log_mqtt"]; ok {
 		cfg.LogMQTT = toBool(v)
+	}
+
+	// 수신-전달 옵션 + 상태 방출 모드 (SPEC-XSFM-AGENT-IO-001 RD-1/RD-2/RD-3).
+	// forward_received_to_node (bool, 기본 false): ON 시 수신된 모든 파싱 상태를 device_state_received
+	// 로 노드에 전달한다(패스스루 탭, state_emit_mode 와 독립).
+	if v, ok := opts["forward_received_to_node"]; ok {
+		cfg.ForwardReceivedToNode = toBool(v)
+	}
+	// state_emit_mode (기본 "event", enum {event, interval, both}). 명시적 무효값은 에러로 거부한다
+	// (transport_mode/liveness_source 검증 패턴과 동형 — 조용한 폴백보다 설정 오타를 조기에 드러낸다).
+	// 빈 문자열은 미지정으로 보아 기본값을 유지한다.
+	if v, ok := opts["state_emit_mode"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return XSFMConfig{}, fmt.Errorf("%w: state_emit_mode must be a string", ErrInvalidStateEmitMode)
+		}
+		if s != "" {
+			cfg.StateEmitMode = s
+		}
+	}
+	switch cfg.StateEmitMode {
+	case stateEmitModeEvent, stateEmitModeInterval, stateEmitModeBoth:
+		// valid
+	default:
+		return XSFMConfig{}, fmt.Errorf("%w: got %q", ErrInvalidStateEmitMode, cfg.StateEmitMode)
+	}
+	// state_emit_interval (기본 60s, RD-3; parseDurationOpt 규약 계승 — 음수 거부, 0 허용).
+	if d, ok, err := parseDurationOpt(opts, "state_emit_interval"); err != nil {
+		return XSFMConfig{}, err
+	} else if ok {
+		cfg.StateEmitInterval = d
 	}
 
 	// 영속화/레지스트리 경로.

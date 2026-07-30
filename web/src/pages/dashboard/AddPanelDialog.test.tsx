@@ -43,6 +43,17 @@ vi.mock('@/hooks/useStation', () => ({
   }),
 }));
 
+// SPEC-XSFM-GROUP-001 M7: 설비 그룹 스텝이 사용하는 그룹 훅 mock(역사·라인·커스텀 그룹 나열).
+vi.mock('@/hooks/useGroups', () => ({
+  useGroups: () => ({
+    data: [
+      { id: 'station:s1', name: '1역', type: 'station', member_count: 3, members: ['d1', 'd2', 'd3'] },
+      { id: 'custom:g1', name: '커스텀그룹', type: 'custom', member_count: 2, members: ['d1', 'd2'] },
+    ],
+    isLoading: false,
+  }),
+}));
+
 // uiStore 상태를 캡처하기 위한 mock
 const storeState = vi.hoisted(() => ({
   addPanelCalls: [] as Array<{ type: string }>,
@@ -339,19 +350,21 @@ describe('AddPanelDialog', () => {
 
   // ---- 설비 패널 (SPEC-FACILITY-DASHBOARD-001 M5) ----
 
-  describe('설비 패널 3종 (facility)', () => {
-    it('제어 카테고리에 설비 3종 옵션 노출', () => {
+  describe('설비 패널 (facility)', () => {
+    it('제어 카테고리에 설비 3종(라인·그룹·기기) 노출, 역사(station)는 생성 옵션에서 제외', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
       fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
       expect(screen.getByText('dashboard.panelTypes.facilityLine')).toBeInTheDocument();
-      expect(screen.getByText('dashboard.panelTypes.facilityStation')).toBeInTheDocument();
+      expect(screen.getByText('dashboard.panelTypes.facilityGroup')).toBeInTheDocument();
       expect(screen.getByText('dashboard.panelTypes.facilityDevice')).toBeInTheDocument();
+      // 역사 패널은 그룹으로 흡수되어 더 이상 별도 생성 타입이 아니다.
+      expect(screen.queryByText('dashboard.panelTypes.facilityStation')).toBeNull();
     });
 
     it('설비 옵션 선택 시 즉시 addPanel 되지 않고 설비 스텝으로 진입', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
       fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityStation'));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityGroup'));
 
       // 에이전트/대상 셀렉트 등장, 즉시 추가는 없음
       expect(screen.getByTestId('facility-agent-select')).toBeInTheDocument();
@@ -360,26 +373,29 @@ describe('AddPanelDialog', () => {
       expect(storeState.addPanelWithConfigCalls).toEqual([]);
     });
 
-    it('facility-station: 에이전트→역사 선택 후 저장 시 addPanelWithConfig({agentId, station})', () => {
+    it('facility-group: 에이전트→그룹 선택 후 저장 시 addPanelWithConfig({agentId, groupId})', () => {
       const onClose = vi.fn();
       render(<AddPanelDialog open={true} onClose={onClose} />);
       fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityStation'));
+      fireEvent.click(screen.getByText('dashboard.panelTypes.facilityGroup'));
 
       // 에이전트 셀렉트는 xsfm 만 노출 (store 에이전트 제외)
       const agentSelect = screen.getByTestId('facility-agent-select') as HTMLSelectElement;
       expect(agentSelect.options.length).toBe(2); // placeholder + xsfm 1개
       fireEvent.change(agentSelect, { target: { value: 'air-1' } });
 
+      // 그룹 셀렉트는 역사·라인·커스텀 그룹을 나열한다(placeholder + station + custom).
       const targetSelect = screen.getByTestId('facility-target-select') as HTMLSelectElement;
-      fireEvent.change(targetSelect, { target: { value: 's1' } });
+      expect(targetSelect.options.length).toBe(3);
+      fireEvent.change(targetSelect, { target: { value: 'custom:g1' } });
 
       const save = screen.getByTestId('facility-save') as HTMLButtonElement;
       expect(save.disabled).toBe(false);
       fireEvent.click(save);
 
+      // 저장: config.groupId 로 저장하고 기본 타이틀은 그룹명(멤버 수/type 라벨 제외).
       expect(storeState.addPanelWithConfigCalls).toEqual([
-        { type: 'facility-station', config: { agentId: 'air-1', station: 's1' }, title: '1역' },
+        { type: 'facility-group', config: { agentId: 'air-1', groupId: 'custom:g1' }, title: '커스텀그룹' },
       ]);
       expect(onClose).toHaveBeenCalledTimes(1);
     });

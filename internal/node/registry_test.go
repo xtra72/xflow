@@ -287,7 +287,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 67) // 53 canonical builtins (+xsfm-status/control) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
+	assert.Len(t, metas, 68) // 54 canonical builtins (+xsfm-status/control/xsfm 통합) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

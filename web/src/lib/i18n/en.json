@@ -119,7 +119,8 @@
         "customControl": "User-defined control",
         "facilityLine": "Station and device status with bulk control for a line",
         "facilityStation": "Device status with bulk control for a station",
-        "facilityDevice": "Individual facility device status and control"
+        "facilityDevice": "Individual facility device status and control",
+        "facilityGroup": "Status and bulk control by group (station/line/custom)"
       },
       "labels": {
         "propertiesGrid": "Properties grid",
@@ -160,7 +161,8 @@
       "customControl": "Custom Control",
       "facilityLine": "Facility Line",
       "facilityStation": "Facility Station",
-      "facilityDevice": "Facility Device"
+      "facilityDevice": "Facility Device",
+      "facilityGroup": "Facility Group"
     },
     "acPanel": {
       "indoorTemp": "Indoor Temp",
@@ -227,6 +229,17 @@
       "noDevices": "No devices",
       "unclassified": "Unclassified",
       "fault": "Fault",
+      "group": {
+        "noGroups": "No groups registered.",
+        "selectGroup": "Select group",
+        "members": "Member devices",
+        "noMembers": "No member devices.",
+        "type": {
+          "custom": "Custom",
+          "station": "Station",
+          "line": "Line"
+        }
+      },
       "stat": {
         "total": "Total",
         "online": "Online",
@@ -471,6 +484,8 @@
       "selectStation": "Select station",
       "line": "Line",
       "selectLine": "Select line",
+      "group": "Group",
+      "selectGroup": "Select group",
       "facility": "Facility target",
       "showStationStatus": "Show station status",
       "showLineStats": "Show line stats",
@@ -1253,7 +1268,83 @@
         "series": "Series",
         "sessions": "Sessions",
         "devices": "Device",
-        "stations": "Location"
+        "stations": "Location",
+        "lines": "Line",
+        "groups": "Groups"
+      },
+      "lines": {
+        "linesCount": "{count} lines",
+        "addLine": "Add line",
+        "editLine": "Edit line",
+        "noLines": "No lines registered.",
+        "code": "Code",
+        "codePlaceholder": "e.g. line_2",
+        "codeRequired": "Line code is required.",
+        "codeFormatHint": "Lowercase alphanumeric start, then lowercase alphanumeric, underscore (_), hyphen (-) only (^[a-z0-9][a-z0-9_-]*$).",
+        "codeFormatError": "Invalid code format. Start with a lowercase alphanumeric, then use only lowercase alphanumeric, _ and -.",
+        "displayName": "Display name",
+        "displayNamePlaceholder": "e.g. Line 2",
+        "nameRequired": "Display name is required.",
+        "order": "Order",
+        "orderError": "Order must be a number.",
+        "actions": "Actions",
+        "edit": "Edit",
+        "remove": "Delete",
+        "save": "Save",
+        "saving": "Saving...",
+        "addSuccess": "Line saved.",
+        "removeSuccess": "Line deleted.",
+        "removeConfirmTitle": "Delete line",
+        "removeConfirmMessage": "Delete line \"{name}\"?",
+        "inUseError": "This line cannot be deleted because it is referenced by one or more stations. Clear or reassign those stations' line first.",
+        "opError": "Operation failed: {message}",
+        "unknownError": "Unknown error"
+      },
+      "groups": {
+        "groupsCount": "{count} groups",
+        "addGroup": "Add group",
+        "editGroup": "Edit group",
+        "noGroups": "No groups registered.",
+        "name": "Name",
+        "namePlaceholder": "Group name",
+        "nameRequired": "Enter a group name.",
+        "code": "Code (optional)",
+        "codePlaceholder": "e.g. gpump",
+        "codeFormatHint": "Optional (recommended). When set, the group id becomes custom:<code>. Lowercase alphanumeric start, then lowercase alphanumeric, _ and - only (^[a-z0-9][a-z0-9_-]*$).",
+        "codeFormatError": "Invalid code format. Start with a lowercase alphanumeric, then use only lowercase alphanumeric, _ and -.",
+        "members": "Members",
+        "memberSelected": "{count} selected",
+        "noDevicesHint": "No devices registered.",
+        "line": "Line",
+        "station": "Station",
+        "place": "Place",
+        "select": "Select",
+        "unassigned": "Unassigned",
+        "noMemberMatch": "No matching devices.",
+        "filter": {
+          "lineAll": "All lines",
+          "stationAll": "All stations",
+          "placeAll": "All places",
+          "unassigned": "Unassigned",
+          "count": "{shown} / {total}"
+        },
+        "edit": "Edit",
+        "remove": "Delete",
+        "save": "Save",
+        "add": "Add",
+        "saving": "Saving...",
+        "addSuccess": "Group added.",
+        "updateSuccess": "Group updated.",
+        "removeSuccess": "Group deleted.",
+        "removeConfirmTitle": "Delete group",
+        "removeConfirmMessage": "Delete group '{name}'?",
+        "opError": "Operation failed: {message}",
+        "unknownError": "Unknown error",
+        "type": {
+          "custom": "Custom",
+          "station": "Station",
+          "line": "Line"
+        }
       },
       "airDevices": {
         "addDevice": "Add device",
@@ -1331,6 +1422,9 @@
         "station": "Station code",
         "stationPlaceholder": "e.g. ST-101",
         "stationRequired": "Station code is required.",
+        "stationNumber": "Station number",
+        "stationNumberPlaceholder": "e.g. 239, K215, 2-14",
+        "stationNumberHelper": "Real-world station number (for display). Separate from the internal station code.",
         "line": "Line",
         "linePlaceholder": "e.g. Line 2",
         "displayName": "Display name",
