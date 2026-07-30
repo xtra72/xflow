@@ -10,6 +10,8 @@
 
 import { useState } from 'react';
 
+import { Activity, Moon } from 'lucide-react';
+
 import {
   isFanOutResponse,
   useXsfmControl,
@@ -18,6 +20,7 @@ import {
   type SetPowerVariables,
   type SingleDeviceResult,
 } from '@/hooks/useXsfmControl';
+import type { AirDevice, AirStation } from '@/hooks/useStation';
 import type { StatCounts } from '@/lib/facilityAggregation';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
@@ -384,5 +387,209 @@ export function FacilityBulkControl({ agentId, selector, memberCount, disabled }
         </div>
       )}
     </div>
+  );
+}
+
+// ---- FacilityDeviceRow (공용 기기별 개별 제어 행) ----
+//
+// 역사 패널·그룹 패널이 공유하는 "한 기기의 상태 + 개별 제어(OFF + 풍량 1/2/3)" 행이다.
+// 제어는 useXsfmControl 을 {device_id} 셀렉터로 호출하며(단일 응답), 결과/진행/실패를 인라인으로
+// 표시한다(UB-002). 전원 OFF 상태에서는 풍량 버튼을 비활성화한다(UB-005 — 위장 없음). 전원 켜기(ON)
+// 버튼은 제공하지 않는다(패널 정책 A1 — OFF + 풍량만). 라벨은 config 옵션(placeIndex|name)으로 해석한다.
+
+/** 개별 기기 목록 라벨 표시 방식(config-only, UB-003). */
+export type DeviceLabelMode = 'placeIndex' | 'name';
+
+/**
+ * 기기 목록/개별 제어 헤더의 라벨을 config 옵션에 따라 해석한다(표시 전용).
+ *   - 'placeIndex'(기본): place 코드 → 레지스트리 display_name 해석 + '-' + index
+ *     (예: "상행 1번 승강장-1"). place 미해석 시 place 코드 → name → device_id 순 폴백.
+ *   - 'name': 기기 name 필드(list_devices 조합 이름). 없으면 place 표시명 → device_id 폴백.
+ */
+function resolveDeviceLabel(
+  device: AirDevice,
+  entry: AirStation | undefined,
+  mode: DeviceLabelMode,
+): string {
+  const placeDisplay =
+    entry?.places.find((p) => p.place === device.place)?.display_name || device.place;
+  if (mode === 'name') {
+    return device.name || placeDisplay || device.device_id;
+  }
+  const base = placeDisplay || device.name || device.device_id;
+  return `${base}-${device.index}`;
+}
+
+/**
+ * 기기의 현재 (전원, 풍량) 상태를 제어 버튼 강조 대상으로 변환한다.
+ * 오프라인 기기는 실제 상태를 신뢰할 수 없으므로 기본적으로 강조하지 않지만(중립), offlineAsOff
+ * 옵션이 켜지면 오프라인을 꺼짐으로 간주해 OFF 버튼을 강조한다(item 2). 전원 OFF → 'off',
+ * 전원 ON + fan_speed 1/2/3 → 해당 레벨. 그 외(방어값) → 강조 없음.
+ */
+function deviceActive(device: AirDevice, offlineAsOff: boolean): FanActive {
+  if (!device.online) return offlineAsOff ? 'off' : null;
+  if (!device.power) return 'off';
+  if (device.fan_speed === 1) return 1;
+  if (device.fan_speed === 2) return 2;
+  if (device.fan_speed === 3) return 3;
+  return null;
+}
+
+/** setPower/setFanSpeed 뮤테이션의 진행 상태 관찰(스피너 대상 버튼 도출용). */
+type PendingView = {
+  isPending: boolean;
+  variables?: { power?: boolean; fan_speed?: number } | undefined;
+};
+
+/**
+ * 현재 응답 대기(로딩) 중인 제어 버튼을 뮤테이션 상태에서 도출한다(item 3). 클릭한 버튼 = 진행 중인
+ * 뮤테이션의 variables(전원 OFF → 'off', 풍량 N → N)로 식별한다. 진행 중이 아니면 null(스피너 없음).
+ */
+function pendingButton(setPower: PendingView, setFanSpeed: PendingView): FanActive {
+  if (setPower.isPending) return setPower.variables?.power === false ? 'off' : null;
+  if (setFanSpeed.isPending) {
+    const fs = setFanSpeed.variables?.fan_speed;
+    return fs === 1 || fs === 2 || fs === 3 ? fs : null;
+  }
+  return null;
+}
+
+/**
+ * 제어 실패(에러/타임아웃) 메시지를 도출한다(UB-002 — 무음 금지, item 4). 뮤테이션 예외(activeError)가
+ * 우선하고, 단일 기기 응답(SingleDeviceResult)의 status 가 timeout/error 이면 그 사유를 문구로 만든다.
+ * 성공(ok)/미실행/fan-out 응답이면 null(문구 없음 — 성공은 조용히 통과).
+ */
+function failureMessage(
+  activeError: unknown,
+  result: ControlResponse | undefined,
+  t: (k: string) => string,
+): string | null {
+  if (activeError) return String((activeError as Error)?.message ?? activeError);
+  if (!result || isFanOutResponse(result)) return null;
+  const single = result as SingleDeviceResult;
+  const status = String(single.status);
+  if (status === 'timeout') return t('dashboard.facility.device.result.timeout');
+  if (status !== 'ok') {
+    const detail = typeof single.error === 'string' ? single.error : status;
+    return `${t('dashboard.facility.device.result.error')} ${detail}`;
+  }
+  return null;
+}
+
+/** 마지막 실행 뮤테이션 응답을 고른다(이 행의 버튼을 눌렀을 때만 결과를 노출). */
+function pickRowResult(
+  lastAction: 'power' | 'fan' | null,
+  power: { data?: ControlResponse },
+  fan: { data?: ControlResponse },
+): ControlResponse | undefined {
+  if (lastAction === 'power') return power.data;
+  if (lastAction === 'fan') return fan.data;
+  return undefined;
+}
+
+/**
+ * 공용 기기별 개별 제어 행(역사/그룹 패널 공유). 기기 이름(name = station:place:index 조합, 없으면
+ * 위치 표시명 → device_id 폴백)을 주 라벨로 크게 보여주고, 각 행에 개별 제어 버튼(OFF + 풍량 1/2/3)을
+ * 둔다. 제어는 useXsfmControl 을 {device_id} 셀렉터로 호출하며(단일 응답), 결과/진행을 인라인
+ * 표시한다(UB-002). 전원 OFF 상태에서는 풍량 버튼을 비활성화한다(UB-005 — 위장 없음).
+ * 전원 ON 버튼은 제공하지 않는다(A1 정책 일치 — OFF + 풍량만).
+ */
+export function FacilityDeviceRow({
+  agentId,
+  device,
+  entry,
+  labelMode,
+  offlineAsOff,
+}: {
+  agentId: string;
+  device: AirDevice;
+  entry?: AirStation;
+  labelMode: DeviceLabelMode;
+  offlineAsOff: boolean;
+}) {
+  const { t } = useTranslation();
+  const { setPower, setFanSpeed } = useXsfmControl(agentId);
+  const [lastAction, setLastAction] = useState<'power' | 'fan' | null>(null);
+
+  const primaryLabel = resolveDeviceLabel(device, entry, labelMode);
+  const fanDisabled = !device.power; // 전원 OFF → 풍량 제어 비활성(UB-005)
+  const isPending = setPower.isPending || setFanSpeed.isPending;
+  // 진행 중인(클릭한) 버튼 — 그 버튼 위에 스피너 표시(item 3).
+  const pending = pendingButton(setPower, setFanSpeed);
+  const result = pickRowResult(lastAction, setPower, setFanSpeed);
+  const activeError = lastAction === 'fan' ? setFanSpeed.error : lastAction === 'power' ? setPower.error : null;
+  // 실패(에러/타임아웃) 문구 — 성공/미실행이면 null(item 4). 상태 정보 텍스트 뒤에 인라인 표시한다.
+  const failure = failureMessage(activeError, result, t);
+
+  // 오프라인을 꺼짐으로 표시(item 2): showAsOff 이면 상태 텍스트를 꺼짐으로 바꾼다.
+  const showAsOff = offlineAsOff && !device.online;
+  const statusText = showAsOff
+    ? t('dashboard.facility.device.off')
+    : device.power
+      ? `${t('dashboard.facility.device.on')} · ${t('dashboard.facility.device.fanSpeed')} ${device.fan_speed}`
+      : t('dashboard.facility.device.off');
+
+  const runPower = (power: boolean) => {
+    setLastAction('power');
+    setPower.mutate({ device_id: device.device_id, power });
+  };
+  const runFan = (fan_speed: number) => {
+    setLastAction('fan');
+    setFanSpeed.mutate({ device_id: device.device_id, fan_speed });
+  };
+
+  return (
+    <li className="space-y-1.5 rounded-lg border border-(--color-border-default) px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-(--color-text-primary)" title={primaryLabel}>
+            {primaryLabel}
+          </p>
+          {/* 상태 정보 텍스트(온라인/전원/풍량). showAsOff 이면 오프라인을 꺼짐으로 표기. */}
+          <p
+            data-testid={`facility-device-status-${device.device_id}`}
+            className="mt-0.5 flex items-center gap-1 text-[11px] text-(--color-text-muted)"
+          >
+            {device.online ? (
+              <Activity className="h-3 w-3" aria-label={t('dashboard.facility.device.online')} />
+            ) : (
+              <Moon
+                className="h-3 w-3"
+                aria-label={
+                  showAsOff ? t('dashboard.facility.device.off') : t('dashboard.facility.device.offline')
+                }
+              />
+            )}
+            <span>{statusText}</span>
+          </p>
+          {/* 실패 메시지(item 4): 상태 정보 텍스트 바로 뒤에 인라인 표시(UB-002 — 무음 금지). */}
+          {failure ? (
+            <p
+              data-testid={`facility-device-failure-${device.device_id}`}
+              className="mt-0.5 text-[11px] text-red-600 dark:text-red-400"
+            >
+              {failure}
+            </p>
+          ) : null}
+        </div>
+
+        {/* 개별 제어: 일괄 제어와 동일한 공용 버튼 행(OFF + 풍량 1/2/3). 현재 상태를 레벨 색상으로
+            강조하고, 진행 중인 버튼에는 스피너를 얹는다(item 3). */}
+        <div className="shrink-0">
+          <FacilityControlButtons
+            onPowerOff={() => runPower(false)}
+            onFan={runFan}
+            disabled={isPending}
+            offDisabled={!device.power}
+            fanDisabled={fanDisabled}
+            fanTitle={fanDisabled ? t('dashboard.facility.device.fanDisabledHint') : undefined}
+            active={deviceActive(device, offlineAsOff)}
+            pending={pending}
+            powerOffTestId={`facility-device-power-off-${device.device_id}`}
+            fanTestId={(n) => `facility-device-fan-${n}-${device.device_id}`}
+          />
+        </div>
+      </div>
+    </li>
   );
 }

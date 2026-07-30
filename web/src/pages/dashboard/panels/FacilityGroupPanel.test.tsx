@@ -132,4 +132,57 @@ describe('FacilityGroupPanel (AC 6.5)', () => {
     renderPanel({});
     expect(screen.getByText('dashboard.facility.notConfigured')).toBeInTheDocument();
   });
+
+  // ---- 개별 그룹 드릴다운(선택 + 소속 디바이스 개별 제어) ----
+
+  it('그룹 선택기에서 다른 그룹을 선택하면 상세(소속 디바이스)가 그 그룹으로 바뀐다', () => {
+    rosterMock.current = { devices: [device('d1'), device('d2')], stations: [], isLoading: false, isError: false };
+    // stationGroup(d1,d2) 자동 선택 → 두 기기 표시. custom(d1) 선택 시 d1 만.
+    groupsMock.current = [stationGroup, customGroup];
+    renderPanel({ agentId: 'a1' });
+
+    // 기본(첫 그룹=station) 상세: d1, d2 개별 제어 행.
+    const detailList = screen.getByTestId('facility-group-device-list');
+    expect(within(detailList).getByTestId('facility-device-power-off-d1')).toBeInTheDocument();
+    expect(within(detailList).getByTestId('facility-device-power-off-d2')).toBeInTheDocument();
+
+    // custom 그룹 선택 → d1 만.
+    fireEvent.click(screen.getByTestId('facility-group-item-custom:floor2'));
+    expect(screen.getByTestId('facility-device-power-off-d1')).toBeInTheDocument();
+    expect(screen.queryByTestId('facility-device-power-off-d2')).toBeNull();
+  });
+
+  it('소속 디바이스 개별 제어(OFF)가 {device_id} 셀렉터로 setPower 를 호출한다', () => {
+    rosterMock.current = { devices: [device('d1')], stations: [], isLoading: false, isError: false };
+    groupsMock.current = [customGroup];
+    renderPanel({ agentId: 'a1' });
+    fireEvent.click(screen.getByTestId('facility-device-power-off-d1'));
+    expect(controlMock.setPower.mutate).toHaveBeenCalledWith({ device_id: 'd1', power: false });
+  });
+
+  it('소속 디바이스 개별 풍량 제어가 {device_id, fan_speed} 로 setFanSpeed 를 호출한다', () => {
+    rosterMock.current = { devices: [device('d1')], stations: [], isLoading: false, isError: false };
+    groupsMock.current = [customGroup];
+    renderPanel({ agentId: 'a1' });
+    fireEvent.click(screen.getByTestId('facility-device-fan-3-d1'));
+    expect(controlMock.setFanSpeed.mutate).toHaveBeenCalledWith({ device_id: 'd1', fan_speed: 3 });
+  });
+
+  it('소속 디바이스 목록도 로스터 대조로 유령 멤버를 제외한다(RD-3)', () => {
+    // members=[d1, d-ghost] 이지만 로스터엔 d1 만 → 개별 제어 행은 d1 만.
+    rosterMock.current = { devices: [device('d1')], stations: [], isLoading: false, isError: false };
+    groupsMock.current = [{ ...customGroup, member_count: 2, members: ['d1', 'd-ghost'] }];
+    renderPanel({ agentId: 'a1' });
+    expect(screen.getByTestId('facility-device-power-off-d1')).toBeInTheDocument();
+    expect(screen.queryByTestId('facility-device-power-off-d-ghost')).toBeNull();
+  });
+
+  it('소속 디바이스가 로스터에 없으면 안내 문구를 표시한다', () => {
+    // member_count>0(일괄 제어 활성)이지만 로스터에 실재 멤버 없음 → 개별 목록은 안내.
+    rosterMock.current = { devices: [], stations: [], isLoading: false, isError: false };
+    groupsMock.current = [{ ...customGroup, member_count: 1, members: ['d-ghost'] }];
+    renderPanel({ agentId: 'a1' });
+    expect(screen.getByText('dashboard.facility.group.noMembers')).toBeInTheDocument();
+    expect(screen.queryByTestId('facility-group-device-list')).toBeNull();
+  });
 });

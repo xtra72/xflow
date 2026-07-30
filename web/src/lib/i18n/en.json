@@ -231,6 +231,9 @@
       "fault": "Fault",
       "group": {
         "noGroups": "No groups registered.",
+        "selectGroup": "Select group",
+        "members": "Member devices",
+        "noMembers": "No member devices.",
         "type": {
           "custom": "Custom",
           "station": "Station",
@@ -1277,6 +1280,19 @@
         "members": "Members",
         "memberSelected": "{count} selected",
         "noDevicesHint": "No devices registered.",
+        "line": "Line",
+        "station": "Station",
+        "place": "Place",
+        "select": "Select",
+        "unassigned": "Unassigned",
+        "noMemberMatch": "No matching devices.",
+        "filter": {
+          "lineAll": "All lines",
+          "stationAll": "All stations",
+          "placeAll": "All places",
+          "unassigned": "Unassigned",
+          "count": "{shown} / {total}"
+        },
         "edit": "Edit",
         "remove": "Delete",
         "save": "Save",

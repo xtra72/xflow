@@ -17,12 +17,16 @@ import {
   useSetGroup,
   type Group,
 } from '@/hooks/useGroups';
-import { useXsfmDevices, type AirDevice } from '@/hooks/useStation';
+import { useXsfmDevices, useStations, type AirDevice, type AirStation } from '@/hooks/useStation';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 import { ConfirmDialog } from '@/components/property/ConfirmDialog';
+import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import { FacilityBulkControl } from '@/pages/dashboard/panels/facilityShared';
+
+/** 필터 셀렉트에서 "미지정"(빈 station/place/line) 버킷을 나타내는 sentinel 값('' = 전체와 구분). */
+const UNASSIGNED = '__unassigned__';
 
 const inputCls =
   'block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)';
@@ -50,6 +54,7 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
 
   const { data: groups = [], isLoading } = useGroups(agentId);
   const { data: devices = [] } = useXsfmDevices(agentId);
+  const { data: stations = [] } = useStations(agentId);
 
   const addGroup = useAddGroup(agentId);
   const setGroup = useSetGroup(agentId);
@@ -59,12 +64,126 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
   const [form, setForm] = useState<GroupFormState | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Group | null>(null);
 
+  // 멤버 선택 테이블 필터(모달 스코프, 런타임). 기본 '전체'(빈 값). UNASSIGNED = 미지정 버킷.
+  const [filterLine, setFilterLine] = useState('');
+  const [filterStation, setFilterStation] = useState('');
+  const [filterPlace, setFilterPlace] = useState('');
+  // 멤버 선택 테이블 정렬(라인/역사/위치). 기본 역사 오름차순, 동률은 이름(ko) tiebreak.
+  const [memberSort, setMemberSort] = useState<SortState>({ field: 'station', direction: 'asc' });
+
+  // station CODE → 레지스트리 엔트리 맵(라인 파생 · 표시명 해석). 라인은 디바이스가 아니라 역사에서 파생한다.
+  const stationsByCode = useMemo(() => {
+    const m = new Map<string, AirStation>();
+    for (const s of stations) m.set(s.station, s);
+    return m;
+  }, [stations]);
+
+  // 디바이스의 라인(호선)은 station→레지스트리 파생값이다(디바이스 필드가 아님). 미해석 시 ''.
+  function deviceLine(d: AirDevice): string {
+    return stationsByCode.get(d.station)?.line ?? '';
+  }
+  function stationDisplay(code: string): string {
+    if (!code) return '-';
+    return stationsByCode.get(code)?.display_name || code;
+  }
+  function placeDisplay(stationCode: string, placeCode: string): string {
+    if (!placeCode) return '-';
+    const p = stationsByCode.get(stationCode)?.places.find((x) => x.place === placeCode);
+    return p?.display_name || placeCode;
+  }
+
   // device_id → 표시 이름 맵(멤버 읽기 전용 뷰/편집 라벨 해석용).
   const deviceLabel = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of devices) m.set(d.device_id, d.name || d.device_id);
     return m;
   }, [devices]);
+
+  // 필터 옵션(디바이스 실측값 기준 — 빈 값이 있으면 미지정 버킷 노출). 라인은 파생값 distinct.
+  const lineOptions = useMemo(() => {
+    const set = new Set<string>();
+    let hasUnassigned = false;
+    for (const d of devices) {
+      const ln = deviceLine(d);
+      if (ln) set.add(ln);
+      else hasUnassigned = true;
+    }
+    return { values: Array.from(set).sort((a, b) => a.localeCompare(b, 'ko')), hasUnassigned };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices, stationsByCode]);
+
+  const stationOptions = useMemo(() => {
+    const set = new Set<string>();
+    let hasUnassigned = false;
+    for (const d of devices) {
+      if (d.station) set.add(d.station);
+      else hasUnassigned = true;
+    }
+    const values = Array.from(set).sort((a, b) =>
+      stationDisplay(a).localeCompare(stationDisplay(b), 'ko'),
+    );
+    return { values, hasUnassigned };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices, stationsByCode]);
+
+  const placeOptions = useMemo(() => {
+    const set = new Set<string>();
+    let hasUnassigned = false;
+    for (const d of devices) {
+      if (d.place) set.add(d.place);
+      else hasUnassigned = true;
+    }
+    return { values: Array.from(set).sort((a, b) => a.localeCompare(b, 'ko')), hasUnassigned };
+  }, [devices]);
+
+  // 필터 적용(AND): 라인(파생) + 역사(코드) + 위치(코드). UNASSIGNED 는 빈 값 매칭.
+  const filteredMembers = useMemo(() => {
+    return devices.filter((d) => {
+      const ln = deviceLine(d);
+      if (filterLine) {
+        if (filterLine === UNASSIGNED ? ln !== '' : ln !== filterLine) return false;
+      }
+      if (filterStation) {
+        if (filterStation === UNASSIGNED ? d.station !== '' : d.station !== filterStation) return false;
+      }
+      if (filterPlace) {
+        if (filterPlace === UNASSIGNED ? d.place !== '' : d.place !== filterPlace) return false;
+      }
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices, filterLine, filterStation, filterPlace, stationsByCode]);
+
+  // 정렬(라인/역사/위치). 문자열 localeCompare('ko'), 동률은 이름 → device_id 결정적 tiebreak.
+  const sortedMembers = useMemo(() => {
+    const dir = memberSort.direction === 'asc' ? 1 : -1;
+    const primary = (a: AirDevice, b: AirDevice): number => {
+      switch (memberSort.field) {
+        case 'line':
+          return deviceLine(a).localeCompare(deviceLine(b), 'ko');
+        case 'station':
+          return stationDisplay(a.station).localeCompare(stationDisplay(b.station), 'ko');
+        case 'place':
+          return placeDisplay(a.station, a.place).localeCompare(placeDisplay(b.station, b.place), 'ko');
+        default:
+          return 0;
+      }
+    };
+    return [...filteredMembers].sort((a, b) => {
+      const c = primary(a, b);
+      if (c !== 0) return c * dir;
+      return (a.name || '').localeCompare(b.name || '', 'ko') || a.device_id.localeCompare(b.device_id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredMembers, memberSort, stationsByCode]);
+
+  function handleMemberSort(field: string) {
+    setMemberSort((prev) =>
+      prev.field === field
+        ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { field, direction: 'asc' },
+    );
+  }
 
   // 결정적 순서 유지(백엔드가 type→name 정렬해 반환하지만 방어적으로 정렬).
   const sortedGroups = useMemo(() => {
@@ -286,7 +405,7 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
       {form && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={closeForm}>
           <div
-            className="mx-4 flex max-h-[85vh] w-full max-w-md flex-col rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) shadow-xl"
+            className="mx-4 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-(--color-border-default) px-4 py-3">
@@ -324,27 +443,143 @@ export default function XsfmGroupsTab({ agentId }: { agentId: string }) {
                 {devices.length === 0 ? (
                   <p className="text-xs text-(--color-text-muted)">{t('agents.detail.groups.noDevicesHint')}</p>
                 ) : (
-                  <ul
-                    data-testid="group-member-editor"
-                    className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-(--color-border-default) p-2"
-                  >
-                    {devices.map((d: AirDevice) => (
-                      <li key={d.device_id}>
-                        <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-(--color-bg-elevated)">
-                          <input
-                            type="checkbox"
-                            checked={form.members.has(d.device_id)}
-                            onChange={() => toggleMember(d.device_id)}
-                            data-testid={`group-member-checkbox-${d.device_id}`}
-                            className="h-3.5 w-3.5 cursor-pointer accent-blue-600"
-                          />
-                          <span className="truncate text-xs text-(--color-text-primary)">
-                            {d.name || d.device_id}
-                          </span>
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
+                  <div data-testid="group-member-editor" className="space-y-2">
+                    {/* 필터 바: 라인(파생) / 역사 / 위치 + 표시 개수. */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={filterLine}
+                        onChange={(e) => setFilterLine(e.target.value)}
+                        aria-label={t('agents.detail.groups.line')}
+                        data-testid="group-member-filter-line"
+                        className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
+                      >
+                        <option value="">{t('agents.detail.groups.filter.lineAll')}</option>
+                        {lineOptions.values.map((ln) => (
+                          <option key={ln} value={ln}>
+                            {ln}
+                          </option>
+                        ))}
+                        {lineOptions.hasUnassigned && (
+                          <option value={UNASSIGNED}>{t('agents.detail.groups.filter.unassigned')}</option>
+                        )}
+                      </select>
+                      <select
+                        value={filterStation}
+                        onChange={(e) => setFilterStation(e.target.value)}
+                        aria-label={t('agents.detail.groups.station')}
+                        data-testid="group-member-filter-station"
+                        className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
+                      >
+                        <option value="">{t('agents.detail.groups.filter.stationAll')}</option>
+                        {stationOptions.values.map((code) => (
+                          <option key={code} value={code}>
+                            {stationDisplay(code)}
+                          </option>
+                        ))}
+                        {stationOptions.hasUnassigned && (
+                          <option value={UNASSIGNED}>{t('agents.detail.groups.filter.unassigned')}</option>
+                        )}
+                      </select>
+                      <select
+                        value={filterPlace}
+                        onChange={(e) => setFilterPlace(e.target.value)}
+                        aria-label={t('agents.detail.groups.place')}
+                        data-testid="group-member-filter-place"
+                        className="rounded-md border border-(--color-border-strong) px-2 py-1.5 text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
+                      >
+                        <option value="">{t('agents.detail.groups.filter.placeAll')}</option>
+                        {placeOptions.values.map((code) => (
+                          <option key={code} value={code}>
+                            {code}
+                          </option>
+                        ))}
+                        {placeOptions.hasUnassigned && (
+                          <option value={UNASSIGNED}>{t('agents.detail.groups.filter.unassigned')}</option>
+                        )}
+                      </select>
+                      <span className="whitespace-nowrap text-[11px] tabular-nums text-(--color-text-muted)">
+                        {t('agents.detail.groups.filter.count')
+                          .replace('{shown}', String(filteredMembers.length))
+                          .replace('{total}', String(devices.length))}
+                      </span>
+                    </div>
+
+                    {/* 멤버 선택 테이블: 선택 · 라인 · 역사 · 위치 · 이름. */}
+                    {filteredMembers.length === 0 ? (
+                      <p className="py-6 text-center text-xs text-(--color-text-muted)">
+                        {t('agents.detail.groups.noMemberMatch')}
+                      </p>
+                    ) : (
+                      <div className="max-h-72 overflow-auto rounded-md border border-(--color-border-default)">
+                        <table className="w-full text-xs" data-testid="group-member-table">
+                          <thead className="sticky top-0 bg-(--color-bg-elevated)">
+                            <tr className="border-b border-(--color-border-default)">
+                              <th className="w-8 px-2 py-1.5 text-left text-(--color-text-muted)">
+                                {t('agents.detail.groups.select')}
+                              </th>
+                              <SortableHeader
+                                label={t('agents.detail.groups.line')}
+                                field="line"
+                                currentSort={memberSort}
+                                onSort={handleMemberSort}
+                                className="px-2 py-1.5"
+                              />
+                              <SortableHeader
+                                label={t('agents.detail.groups.station')}
+                                field="station"
+                                currentSort={memberSort}
+                                onSort={handleMemberSort}
+                                className="px-2 py-1.5"
+                              />
+                              <SortableHeader
+                                label={t('agents.detail.groups.place')}
+                                field="place"
+                                currentSort={memberSort}
+                                onSort={handleMemberSort}
+                                className="px-2 py-1.5"
+                              />
+                              <th className="px-2 py-1.5 text-left text-(--color-text-muted)">
+                                {t('agents.detail.groups.name')}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sortedMembers.map((d) => (
+                              <tr
+                                key={d.device_id}
+                                data-testid={`group-member-row-${d.device_id}`}
+                                onClick={() => toggleMember(d.device_id)}
+                                className="cursor-pointer border-b border-(--color-border-default) last:border-0 hover:bg-(--color-bg-elevated)"
+                              >
+                                <td className="w-8 px-2 py-1.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={form.members.has(d.device_id)}
+                                    onChange={() => toggleMember(d.device_id)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    data-testid={`group-member-checkbox-${d.device_id}`}
+                                    className="h-3.5 w-3.5 cursor-pointer accent-blue-600"
+                                  />
+                                </td>
+                                <td className="px-2 py-1.5 text-(--color-text-secondary)">
+                                  {deviceLine(d) || '-'}
+                                </td>
+                                <td className="px-2 py-1.5 text-(--color-text-secondary)">
+                                  {stationDisplay(d.station)}
+                                </td>
+                                <td className="px-2 py-1.5 text-(--color-text-secondary)">
+                                  {placeDisplay(d.station, d.place)}
+                                </td>
+                                <td className="truncate px-2 py-1.5 text-(--color-text-primary)">
+                                  {d.name || d.device_id}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 
-import type { AirDevice } from '@/hooks/useStation';
+import type { AirDevice, AirStation } from '@/hooks/useStation';
 import type { Group } from '@/hooks/useGroups';
 import type { ControlResponse } from '@/hooks/useXsfmControl';
 
@@ -14,6 +14,7 @@ import type { ControlResponse } from '@/hooks/useXsfmControl';
 
 const groupsMock = vi.hoisted(() => ({ current: [] as Group[] }));
 const devicesMock = vi.hoisted(() => ({ current: [] as AirDevice[] }));
+const stationsMock = vi.hoisted(() => ({ current: [] as AirStation[] }));
 const mutations = vi.hoisted(() => ({
   add: vi.fn(),
   set: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock('@/hooks/useGroups', async (importOriginal) => {
 
 vi.mock('@/hooks/useStation', () => ({
   useXsfmDevices: () => ({ data: devicesMock.current, isLoading: false }),
+  useStations: () => ({ data: stationsMock.current, isLoading: false }),
 }));
 
 // FacilityBulkControl 이 사용하는 제어 훅 스텁(fan-out 재구현 없음).
@@ -54,7 +56,7 @@ vi.mock('@/stores/uiStore', () => ({
 
 import XsfmGroupsTab from './XsfmGroupsTab';
 
-function device(id: string, name = id): AirDevice {
+function device(id: string, name = id, overrides: Partial<AirDevice> = {}): AirDevice {
   return {
     device_id: id,
     name,
@@ -66,7 +68,34 @@ function device(id: string, name = id): AirDevice {
     power: true,
     fan_speed: 1,
     source: 'config',
+    ...overrides,
   };
+}
+
+// 역사 레지스트리(라인 파생 + 표시명 해석용). ST-1=강남역(2호선), ST-2=역삼역(3호선).
+const stationRegistry: AirStation[] = [
+  {
+    station: 'ST-1',
+    line: '2호선',
+    display_name: '강남역',
+    order: 1,
+    places: [{ place: 'PL-1', display_name: '대합실', order: 1 }],
+  },
+  {
+    station: 'ST-2',
+    line: '3호선',
+    display_name: '역삼역',
+    order: 2,
+    places: [{ place: 'PL-2', display_name: '승강장', order: 1 }],
+  },
+];
+
+/** 모달을 연 뒤 멤버 테이블의 tbody 행 device_id 순서를 반환한다(정렬 검증용). */
+function memberRowIds(): string[] {
+  const table = screen.getByTestId('group-member-table');
+  return Array.from(table.querySelectorAll('tbody tr')).map(
+    (tr) => tr.getAttribute('data-testid')?.replace('group-member-row-', '') ?? '',
+  );
 }
 
 const customGroup: Group = { id: 'custom:x', name: '2층', type: 'custom', member_count: 1, members: ['d1'] };
@@ -81,6 +110,7 @@ beforeEach(() => {
   addNotification.mockReset();
   groupsMock.current = [];
   devicesMock.current = [];
+  stationsMock.current = [];
 });
 
 describe('XsfmGroupsTab', () => {
@@ -173,5 +203,102 @@ describe('XsfmGroupsTab', () => {
     // submit 버튼은 이름이 비면 disabled → 클릭해도 mutate 안 됨.
     expect(screen.getByTestId('group-form-submit')).toBeDisabled();
     expect(mutations.add).not.toHaveBeenCalled();
+  });
+
+  // ---- 멤버 선택 테이블(라인/역사/위치 컬럼 + 필터 + 정렬) ----
+
+  it('멤버 선택 테이블에 라인(파생)/역사/위치/이름을 해석해 렌더한다', () => {
+    devicesMock.current = [device('d1', '기기1'), device('d2', '기기2', { station: 'ST-2', place: 'PL-2' })];
+    stationsMock.current = stationRegistry;
+    render(<XsfmGroupsTab agentId="a1" />);
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+
+    expect(screen.getByTestId('group-member-table')).toBeInTheDocument();
+    // d1: 라인 2호선 파생 + 역사 강남역 + 위치 대합실.
+    const row1 = screen.getByTestId('group-member-row-d1');
+    expect(within(row1).getByText('2호선')).toBeInTheDocument();
+    expect(within(row1).getByText('강남역')).toBeInTheDocument();
+    expect(within(row1).getByText('대합실')).toBeInTheDocument();
+    // d2: 라인 3호선 + 역삼역 + 승강장.
+    const row2 = screen.getByTestId('group-member-row-d2');
+    expect(within(row2).getByText('3호선')).toBeInTheDocument();
+    expect(within(row2).getByText('역삼역')).toBeInTheDocument();
+  });
+
+  it('라인 필터가 해당 라인의 디바이스만 남긴다', () => {
+    devicesMock.current = [device('d1', '기기1'), device('d2', '기기2', { station: 'ST-2', place: 'PL-2' })];
+    stationsMock.current = stationRegistry;
+    render(<XsfmGroupsTab agentId="a1" />);
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+
+    fireEvent.change(screen.getByTestId('group-member-filter-line'), { target: { value: '2호선' } });
+    expect(screen.getByTestId('group-member-row-d1')).toBeInTheDocument();
+    expect(screen.queryByTestId('group-member-row-d2')).toBeNull();
+  });
+
+  it('역사 필터가 해당 역사의 디바이스만 남긴다', () => {
+    devicesMock.current = [device('d1', '기기1'), device('d2', '기기2', { station: 'ST-2', place: 'PL-2' })];
+    stationsMock.current = stationRegistry;
+    render(<XsfmGroupsTab agentId="a1" />);
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+
+    fireEvent.change(screen.getByTestId('group-member-filter-station'), { target: { value: 'ST-2' } });
+    expect(screen.queryByTestId('group-member-row-d1')).toBeNull();
+    expect(screen.getByTestId('group-member-row-d2')).toBeInTheDocument();
+  });
+
+  it('위치 컬럼 정렬 헤더 클릭이 정렬 방향을 토글한다(동률은 이름 tiebreak)', () => {
+    // 위치 표시명: d1 대합실, d2 승강장. asc = 대합실 → 승강장, desc = 승강장 → 대합실.
+    devicesMock.current = [device('d2', '기기2', { station: 'ST-2', place: 'PL-2' }), device('d1', '기기1')];
+    stationsMock.current = stationRegistry;
+    render(<XsfmGroupsTab agentId="a1" />);
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+
+    // 위치 헤더 클릭 → 위치 asc(대합실=d1 먼저).
+    fireEvent.click(screen.getByText('agents.detail.groups.place'));
+    expect(memberRowIds()).toEqual(['d1', 'd2']);
+    // 다시 클릭 → desc(승강장=d2 먼저).
+    fireEvent.click(screen.getByText('agents.detail.groups.place'));
+    expect(memberRowIds()).toEqual(['d2', 'd1']);
+  });
+
+  it('빈 station/place 는 "-" 로 표시되고 여전히 선택·필터(미지정) 가능하다', () => {
+    devicesMock.current = [
+      device('d1', '기기1'),
+      device('dU', '미지정기기', { station: '', place: '' }),
+    ];
+    stationsMock.current = stationRegistry;
+    render(<XsfmGroupsTab agentId="a1" />);
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+
+    // 미지정 행: 라인/역사/위치가 '-' placeholder.
+    const rowU = screen.getByTestId('group-member-row-dU');
+    expect(within(rowU).getAllByText('-').length).toBeGreaterThanOrEqual(3);
+    // 미지정 필터(역사)로 걸러도 여전히 표시·선택 가능.
+    fireEvent.change(screen.getByTestId('group-member-filter-station'), { target: { value: '__unassigned__' } });
+    expect(screen.queryByTestId('group-member-row-d1')).toBeNull();
+    expect(screen.getByTestId('group-member-row-dU')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('group-member-checkbox-dU'));
+    fireEvent.change(screen.getByPlaceholderText('agents.detail.groups.namePlaceholder'), {
+      target: { value: '기타' },
+    });
+    fireEvent.click(screen.getByTestId('group-form-submit'));
+    expect(mutations.add).toHaveBeenCalledWith({ name: '기타', members: ['dU'] }, expect.anything());
+  });
+
+  it('행 전체 클릭으로도 멤버를 토글한다(체크박스 외 영역)', () => {
+    devicesMock.current = [device('d1', '기기1')];
+    stationsMock.current = stationRegistry;
+    render(<XsfmGroupsTab agentId="a1" />);
+    fireEvent.click(screen.getByText('agents.detail.groups.addGroup'));
+
+    // 행 클릭 → 체크됨.
+    fireEvent.click(screen.getByTestId('group-member-row-d1'));
+    expect(screen.getByTestId('group-member-checkbox-d1')).toBeChecked();
+    fireEvent.change(screen.getByPlaceholderText('agents.detail.groups.namePlaceholder'), {
+      target: { value: '한개' },
+    });
+    fireEvent.click(screen.getByTestId('group-form-submit'));
+    expect(mutations.add).toHaveBeenCalledWith({ name: '한개', members: ['d1'] }, expect.anything());
   });
 });

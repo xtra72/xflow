@@ -231,6 +231,9 @@
       "fault": "결함",
       "group": {
         "noGroups": "등록된 그룹이 없습니다.",
+        "selectGroup": "그룹 선택",
+        "members": "소속 디바이스",
+        "noMembers": "소속 디바이스가 없습니다.",
         "type": {
           "custom": "커스텀",
           "station": "역사",
@@ -1277,6 +1280,19 @@
         "members": "멤버",
         "memberSelected": "{count}개 선택",
         "noDevicesHint": "등록된 디바이스가 없습니다.",
+        "line": "라인",
+        "station": "역사",
+        "place": "위치",
+        "select": "선택",
+        "unassigned": "미지정",
+        "noMemberMatch": "일치하는 디바이스가 없습니다.",
+        "filter": {
+          "lineAll": "전체 라인",
+          "stationAll": "전체 역사",
+          "placeAll": "전체 위치",
+          "unassigned": "미지정",
+          "count": "{shown} / {total}"
+        },
         "edit": "편집",
         "remove": "삭제",
         "save": "저장",
