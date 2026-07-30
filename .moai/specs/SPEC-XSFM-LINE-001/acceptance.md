@@ -1,7 +1,7 @@
 # SPEC-XSFM-LINE-001 인수 기준 (acceptance.md)
 
 > Given-When-Then 형식. 기계 검증 가능(Go `testing`+`testify` / 프런트 `vitest`). 각 시나리오는 요구사항(REQ) 및 마일스톤(M)에 매핑.
-> 버전: 0.3.1 (spec.md 정합). 상태: **completed** (2026-07-30). HISTORY: 0.3.1 — 역번호(station_number) 후속 노트(`a35c468b`, 원 EARS 범위 밖 직접 후속, 기존 AC 무회귀). 상세는 spec.md §7.6 참조. / 0.3.0 — M1~M6 구현 완료로 §1~§8 전 시나리오 통과(백엔드 `ef4f28a7`, 프런트 `e8678033`). xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. as-implemented 분기 5건은 spec.md §7 참조(분기 1 add_group code optional / 분기 2 station 코드 포맷 미강제 / 분기 5 디바이스 이름 프런트 무변경). / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영으로 구 OQ-의존 시나리오를 확정 시나리오로 전환/추가 — AC-1.8(ErrLineInUse), AC-1.9/1.10, AC-3.3(포맷 거부), AC-5.4/5.6/5.7(빈-라인 3-세그먼트·후지정 재계산·sticky 보존), AC-6.2/6.2a/6.2b(slugify 마이그레이션·충돌).
+> 버전: 0.4.0 (spec.md 정합). 상태: **completed** (2026-07-31, amendment 후 re-completed). HISTORY: 0.4.0 — `{line_code}` 토픽 placeholder 정식 amendment(in-place, `amendment_of: SPEC-XSFM-LINE-001`, 직전 완료 0.3.1 `e23a93b5`). §9(AC-9.1~9.6) 추가 — outbound 파생 렌더/빈-라인 빈 세그먼트/inbound 무시(식별 불변)/기존 placeholder 무회귀. 기존 §1~§8 무회귀. 상세는 spec.md §4.7·Module 8 참조. / 0.3.1 — 역번호(station_number) 후속 노트(`a35c468b`, 원 EARS 범위 밖 직접 후속, 기존 AC 무회귀). 상세는 spec.md §7.6 참조. / 0.3.0 — M1~M6 구현 완료로 §1~§8 전 시나리오 통과(백엔드 `ef4f28a7`, 프런트 `e8678033`). xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. as-implemented 분기 5건은 spec.md §7 참조(분기 1 add_group code optional / 분기 2 station 코드 포맷 미강제 / 분기 5 디바이스 이름 프런트 무변경). / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영으로 구 OQ-의존 시나리오를 확정 시나리오로 전환/추가 — AC-1.8(ErrLineInUse), AC-1.9/1.10, AC-3.3(포맷 거부), AC-5.4/5.6/5.7(빈-라인 3-세그먼트·후지정 재계산·sticky 보존), AC-6.2/6.2a/6.2b(slugify 마이그레이션·충돌).
 
 ## §1. 라인 레지스트리 — add_line / list_lines (Module 1, M1)
 
@@ -213,8 +213,49 @@
 ### AC-8.2 MQTT 규약 불변
 - **Then** MQTT 토픽/페이로드 형식 관련 테스트가 무변경으로 통과한다 (REQ-07-05)
 
+## §9. `{line_code}` 토픽 placeholder (Module 8, M9 · amendment 0.4.0)
+
+> amendment(0.4.0)로 추가된 시나리오. direct-mode 토픽 템플릿 한정. 기계 검증 가능(Go `testing`+`testify`).
+
+### AC-9.1 placeholder 등록
+- **Given** direct-mode 토픽 placeholder 집합
+- **When** placeholder 상수 집합을 검사한다
+- **Then** `line_code` 가 기존 placeholder(`station_code`/`place_code`/`device_index`/`device_id`/`attribute`)와 함께 등록되어 있다 (REQ-08-01)
+- **검증**: Go 단위 테스트 — placeholder 집합에 `line_code` 존재, 기존 placeholder 전량 잔존
+
+### AC-9.2 outbound 파생 렌더 (라인 있음)
+- **Given** device.Station=`st01`, `ResolveLine(st01)="line_2"`, 토픽 템플릿 `cmd/{line_code}/{station_code}/{place_code}/bse9000/{device_index}`, device_index=3
+- **When** outbound(command/pub) 토픽을 렌더한다
+- **Then** 렌더 결과는 `cmd/line_2/st01/pump/bse9000/003` 이다(`{line_code}` ← 파생 라인) (REQ-08-02)
+- **검증**: Go 단위 테스트 — 렌더 문자열이 파생 라인 코드로 치환됨
+
+### AC-9.3 빈 라인 → 빈 세그먼트 (라인 없음)
+- **Given** device.Station=`st99`, `ResolveLine(st99)=""`(라인 미배정), 동일 토픽 템플릿, device_index=3
+- **When** outbound 토픽을 렌더한다
+- **Then** `{line_code}` 가 빈 문자열로 렌더되어 `cmd//st99/pump/bse9000/003`(빈 세그먼트 유지) 이다(에러 아님) (REQ-08-04)
+- **검증**: Go 단위 테스트 — 라인 세그먼트가 빈 문자열, 나머지 세그먼트 정상
+
+### AC-9.4 lineHint 락 규율 (roster 락 밖 해석, -race)
+- **Given** roster 와 station-registry 를 동시 접근하는 다수 goroutine
+- **When** outbound 렌더가 `{line_code}` 파생 해석을 수행한다
+- **Then** `go test -race` 가 클린이며, 라인 해석은 roster 락 밖(lineHint)에서 이루어져 레지스트리 락 중첩/재진입 deadlock 이 없다 (REQ-08-03, REQ-07-01)
+- **검증**: Go 단위 테스트 — `-race` 클린 + lineHint 선해석 경로 확인(roster 락 내 station-registry 락 미취득)
+
+### AC-9.5 inbound `{line_code}` 추출·식별 무시
+- **Given** state(sub) 템플릿에 `{line_code}` 포함, inbound 메시지가 `state/line_2/st01/pump/bse9000/003` 로 도착(단, station `st01` 의 파생 라인은 `line_9` 로 불일치)
+- **When** inbound 토픽을 파싱한다
+- **Then** `{line_code}` 세그먼트는 추출되지만 디바이스 식별에는 무시되고, 디바이스는 `station_code`(st01)+`place_code`(pump)+`device_index`(003)로 식별되며 라인은 station 파생(`line_9`)으로 결정된다(`{line_code}` 는 Device 필드에 매핑되지 않음) (REQ-08-05)
+- **검증**: Go 단위 테스트 — 토픽의 `{line_code}` 값과 무관하게 동일 디바이스로 식별, `applyAddressFields` 가 `line_code` 를 어떤 필드에도 세팅하지 않음
+
+### AC-9.6 기존 placeholder 렌더/파싱 무회귀
+- **Given** `line_code` placeholder 도입 후
+- **When** 기존 placeholder(`station_code`/`place_code`/`device_index`/`device_id`/`attribute`)만 사용하는 토픽 템플릿을 렌더/파싱한다
+- **Then** 렌더/파싱 결과가 amendment 이전과 동일하며, port mode·노드 레이어가 변경되지 않는다 (REQ-08-06, REQ-07-05)
+- **검증**: Go 단위 테스트 — 기존 토픽 렌더/파싱 characterization 무변경, 노드 스키마/매핑 무변경
+
 ## Definition of Done (요약)
 
 - §1~§8 전 시나리오 통과(RD-1~7, 구 OQ-1~4 확정 포함 반영).
+- §9 전 시나리오 통과(RD-8, amendment 0.4.0 — `{line_code}` 토픽 placeholder).
 - xsfm `-race` 클린 + 커버리지 85%+, 프런트 vitest + `tsc` 클린.
 - SPEC-XSFM-GROUP-001 + 기존 station/line 파생 무회귀.

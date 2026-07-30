@@ -1,7 +1,7 @@
 # SPEC-XSFM-LINE-001 구현 계획 (plan.md)
 
 > 연관: `spec.md` (요구사항·사양), `acceptance.md` (인수 기준). Tier M. 개발 방법론: hybrid (신규 코드 TDD / 기존 코드 DDD, `quality.yaml`).
-> 버전: 0.3.1 (spec.md 정합). 상태: **completed** (2026-07-30). HISTORY: 0.3.1 — 역번호(station_number) 후속 노트(`a35c468b`, 원 EARS 범위 밖 직접 후속). 상세는 spec.md §7.6 참조. / 0.3.0 — M1~M6 구현 완료(백엔드 `ef4f28a7` M1~M5, 프런트 `e8678033` M6). as-implemented 분기 5건은 spec.md §7 참조. xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영 — M1 remove_line `ErrLineInUse`(RD-5), M2 slugify 마이그레이션(RD-6), M4 빈-라인 3-세그먼트 네이밍(RD-4), Line.Order(RD-7). 리스크 표·DoD 갱신.
+> 버전: 0.4.0 (spec.md 정합). 상태: **completed** (2026-07-31, amendment 후 re-completed). HISTORY: 0.4.0 — `{line_code}` 토픽 placeholder 정식 amendment(in-place, `amendment_of: SPEC-XSFM-LINE-001`, 직전 완료 0.3.1 `e23a93b5`). direct-mode 토픽 템플릿에 `line_code` placeholder 가산 — outbound 파생 렌더(lineHint 락 규율)/빈-라인 빈 세그먼트/inbound 무시. RD-8 + Module 8(REQ-08-01~06) + spec.md §4.7 + 본 plan.md M9 + acceptance.md §9. 상세는 spec.md §4.7·§Amendments 참조. / 0.3.1 — 역번호(station_number) 후속 노트(`a35c468b`, 원 EARS 범위 밖 직접 후속). 상세는 spec.md §7.6 참조. / 0.3.0 — M1~M6 구현 완료(백엔드 `ef4f28a7` M1~M5, 프런트 `e8678033` M6). as-implemented 분기 5건은 spec.md §7 참조. xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. / 0.2.0 — OQ-1~4 확정(RD-4~7) 반영 — M1 remove_line `ErrLineInUse`(RD-5), M2 slugify 마이그레이션(RD-6), M4 빈-라인 3-세그먼트 네이밍(RD-4), Line.Order(RD-7). 리스크 표·DoD 갱신.
 
 ## 1. 기술 접근 (Technical Approach)
 
@@ -75,6 +75,18 @@ SPEC-XSFM-GROUP-001 이 확립한 "**별도 레지스트리를 비침습 가산 
 - 기존 역사/디바이스/그룹 탭 무회귀.
 - vitest 커버리지 유지.
 - 의존: 백엔드 명령 API 확정(M1~M5).
+
+### M9 — `{line_code}` 토픽 placeholder (Priority Medium · amendment 0.4.0 · M1/M4 의존)
+
+> amendment(0.4.0)로 추가된 마일스톤. direct-mode 토픽 템플릿에 라인 코드 placeholder 를 가산한다(RD-8, Module 8, spec.md §4.7). MQTT 토픽/페이로드 규약은 placeholder **추가**만으로 확장되며 기존 렌더/파싱은 무회귀.
+
+- **placeholder 등록(REQ-08-01)**: `mapping.go` 토픽 placeholder 상수 집합에 `line_code` 를 기존 placeholder 옆에 가산 등록.
+- **Outbound 파생 렌더(REQ-08-02·08-03)**: command/pub 토픽 렌더 시 `{line_code}` ← `ResolveLine(device.Station)`. 라인 해석은 **roster 락 밖** lineHint 로 선해석해 렌더 경로에 주입(composeName 의 `resolveLineFor` 미러). roster 락 내부에서 station-registry 락 취득 금지(RWMutex 재진입 deadlock 트랩 회피, HVAC 락 패턴 교훈 계승).
+- **빈-라인 빈 세그먼트(REQ-08-04)**: `ResolveLine` 미해석 시 `{line_code}` → 빈 문자열(`cmd//{station}/...`). 에러 경로 아님(데이터 책임).
+- **Inbound 무시(REQ-08-05)**: state 템플릿 `{line_code}` 는 subscribe wildcard, inbound 파싱 시 추출하되 식별에 무시(`applyAddressFields` 에서 Device 필드 미매핑). 디바이스 식별 = station_code+place_code+device_index 불변.
+- **무회귀(REQ-08-06)**: 기존 placeholder·렌더/파싱 거동 characterization 테스트로 무회귀 확인. port mode·노드 레이어 무변경.
+- 단위 테스트: outbound 파생 렌더(라인 있음 4-세그먼트 토픽 / 라인 없음 빈 세그먼트), inbound `{line_code}` 무시(식별 불변), 기존 placeholder 렌더/파싱 무회귀, lineHint 락 규율(`-race`).
+- 의존: M1(라인 레지스트리/ResolveLine 기존), M4(composeName lineHint 패턴 존재).
 
 ## 3. 아키텍처 설계 방향
 

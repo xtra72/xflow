@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### 추가 — xsfm 토픽 `{line_code}` placeholder (SPEC-XSFM-LINE-001 amendment v0.4.0)
+
+- **sub/pub 토픽 템플릿에 `{line_code}` placeholder 도입 (Non-breaking, 가산)** — 예: `cmd/{line_code}/{station_code}/{place_code}/bse9000/{device_index}`.
+
+  - **Outbound(명령/pub) 파생 렌더**: `{line_code}` 를 디바이스의 파생 라인(`ResolveLine(device.Station)`)으로 채운다. 라인 해석은 로스터 락 **밖에서** 수행(lineHint 패턴, `composeName` 미러 — station 레지스트리 락을 로스터 락 안에 중첩하지 않아 RWMutex 재진입 deadlock 회피). 라인 미해석 시 **빈 세그먼트**로 렌더(`cmd//st99/...`).
+  - **Inbound(상태/sub) 무시**: `{line_code}` 는 구독 시 와일드카드, 파싱 시 추출되나 **디바이스 식별에는 무시**(식별=station_code+place_code+index, 라인은 station→line 파생 SSOT). `Device.Address`/composite key 에 저장하지 않아 역류·중복 방지.
+  - **범위**: direct 모드 토픽 한정(port 모드+노드 무관), 기존 placeholder 무회귀. `commandHasLineCode` 게이팅.
+  - **품질**: 신규/변경 함수 커버리지 100%, `go test ./...` green(42 pkgs), `-race` 클린, 무회귀. SPEC-XSFM-LINE-001 정식 amendment(v0.3.1→v0.4.0, Module 8/RD-8, §7 `## Amendments`).
+
 ### 추가 — xsfm 이름 기반 제어 셀렉터(device_name / group_name)
 
 - **`xsfm` 에이전트·노드에 사람이 읽는 이름(`device_name`/`group_name`)으로 제어 대상을 지정하는 이름 기반 셀렉터 도입 (Non-breaking, 비침습 가산 셀렉터)**

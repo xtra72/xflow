@@ -114,6 +114,7 @@ type memberResult struct {
 // attribute-per-topic(축별 스칼라 발행), 없으면 기존 JSON-blob 발행으로 디스패치한다.
 func (a *XSFMAgent) controlDevice(deviceID, command string, cmd commandPayload) (memberResult, error) {
 	// 디바이스 존재 확인 + 주소 필드 스냅샷 (락 하에 뜬 뒤 해제 — RWMutex 재진입 트랩 회피).
+	// dev.Station 도 함께 스냅샷하여 {line_code} 파생 해석(로스터 락 밖)의 입력으로 쓴다.
 	a.mu.RLock()
 	dev, exists := a.devices[deviceID]
 	if !exists {
@@ -121,7 +122,23 @@ func (a *XSFMAgent) controlDevice(deviceID, command string, cmd commandPayload) 
 		return memberResult{}, fmt.Errorf("%w: %q", ErrDeviceNotFound, deviceID)
 	}
 	fields := a.buildCommandFieldsLocked(dev)
+	station := dev.Station
 	a.mu.RUnlock()
+
+	// {line_code} 파생 렌더 (SPEC-XSFM-LINE-001 RD-8, REQ-08-02/03/04): 명령 템플릿에 {line_code} 가
+	// 있으면 디바이스의 파생 라인 ResolveLine(station) 으로 채운다. deviceFieldValue 는 라인을 알지
+	// 못하므로(라인은 Device 필드가 아니라 station 파생값, station→line SSOT) buildCommandFieldsLocked
+	// 은 {line_code} 를 비운 채 두며, 여기서 lineHint 로 주입한다. 라인 미배정이면 resolveLineFor 가
+	// "" 를 반환해 빈 세그먼트로 렌더된다(REQ-08-04, 예: cmd//st99/...).
+	//
+	// @MX:WARN: [AUTO] 라인 해석(resolveLineFor→station 레지스트리 자체 락)은 반드시 로스터 락(a.mu)을
+	// 해제한 뒤 수행한다(composeName 의 lineHint 패턴 미러). 위 station 스냅샷 후 RUnlock 을 거쳐
+	// 이 지점에서 해석하므로 station 레지스트리 락이 로스터 락 내부에서 취득되지 않는다.
+	// @MX:REASON: 로스터 락 보유 상태에서 station 레지스트리 락을 취득하면 프로젝트 RWMutex 재진입
+	// deadlock 트랩에 걸린다(REQ-07-01·REQ-08-03). 락 순서를 직렬화(스냅샷→해제→해석→주입)해 회피한다.
+	if a.cfg.commandHasLineCode {
+		fields[placeholderLineCode] = a.resolveLineFor(station)
+	}
 
 	if a.cfg.commandHasAttribute {
 		return a.controlDeviceAttr(deviceID, command, cmd, fields)

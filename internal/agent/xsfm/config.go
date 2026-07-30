@@ -92,6 +92,12 @@ type XSFMConfig struct {
 	stateHasAttribute   bool
 	commandHasAttribute bool
 
+	// commandHasLineCode 는 명령 템플릿에 {line_code} placeholder 가 있는지의 파생 플래그이다
+	// (SPEC-XSFM-LINE-001 RD-8, REQ-08-01/02). true 이면 outbound 렌더 시 디바이스의 파생 라인
+	// (ResolveLine(station))을 roster 락 밖에서 해석해 {line_code} 로 주입한다(controlDevice). false
+	// 이면(대부분의 기존 템플릿·port 모드) 라인 해석 자체를 건너뛰어 무회귀이다.
+	commandHasLineCode bool
+
 	// stateIsComposite 는 상태 템플릿이 합성 주소 모델(station/place/index 다중 필드)인지의
 	// 파생 플래그이다. true 이면 유입 상태를 보조 인덱스(compositeKey → device_id/UUID)로 조회하고
 	// 미등록 시 UUID 를 생성해 auto 등록한다. false({device_id} 단일 필드 = blob 모델)이면 topic 의
@@ -254,6 +260,9 @@ func parseXSFMConfig(opts map[string]any) (XSFMConfig, error) {
 	// 스칼라 디코드/인코드, 없으면 기존 JSON-blob 경로(하위호환).
 	cfg.stateHasAttribute = templateHasAttribute(cfg.StateTopicTemplate)
 	cfg.commandHasAttribute = templateHasAttribute(cfg.CommandTopicTemplate)
+	// {line_code} 파생 플래그(SPEC-XSFM-LINE-001 RD-8, REQ-08-01): 명령 템플릿에 {line_code} 가
+	// 있으면 outbound 렌더가 파생 라인을 주입한다(controlDevice). 없으면 라인 해석을 건너뛴다(무회귀).
+	cfg.commandHasLineCode = templateHasLineCode(cfg.CommandTopicTemplate)
 	// 합성 주소 모델 판별(M14): 상태 템플릿의 비-attribute placeholder 가 {device_id} 단독(또는
 	// placeholder 없음)이면 blob 모델, 그 외(station/place/index 등)면 합성 주소 모델이다.
 	cfg.stateIsComposite = templateIsComposite(cfg.StateTopicTemplate)

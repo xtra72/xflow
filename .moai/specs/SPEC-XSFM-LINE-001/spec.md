@@ -1,17 +1,18 @@
 ---
 id: SPEC-XSFM-LINE-001
 title: "xsfm 라인 1급화 + 코드 기반 주소 체계 + 디바이스 네이밍"
-version: "0.3.1"
+version: "0.4.0"
 status: completed
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-07-31
 author: xtra
 priority: P2
 phase: "v0.5.0 target"
 module: "internal/agent/xsfm"
 lifecycle: spec-anchored
 tier: M
-tags: "xsfm, line, line-registry, group-code, code-addressing, device-naming, composeName, migration, station, selector, fan-out, frontend, node-control"
+amendment_of: SPEC-XSFM-LINE-001
+tags: "xsfm, line, line-registry, group-code, code-addressing, device-naming, composeName, migration, station, selector, fan-out, frontend, node-control, line-code-placeholder, topic-template"
 ---
 
 ## HISTORY
@@ -22,8 +23,21 @@ tags: "xsfm, line, line-registry, group-code, code-addressing, device-naming, co
 | 2026-07-30 | 0.2.0 | OQ-1~4 사용자 확정 반영 — RD-4~7 승격 및 §6 Open Questions 제거(미해결 OQ 없음). (RD-4) 빈-라인 네이밍은 라인 세그먼트 생략(3-세그먼트, 하위호환), (RD-5) 참조 중 라인 `remove_line` 은 `ErrLineInUse` 반환 거부, (RD-6) 통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` 강제 + 레거시 비적합 name slugify 마이그레이션 규칙 명세, (RD-7) `Line.Order` 채택(기본값=생성 순번). §4 사양(composeName 빈-라인 분기·예시, remove_line ErrLineInUse, 코드 포맷+slugify 규칙+워크드 예시, Line 구조체 Order), 센티널 에러 `ErrLineInUse` 추가, Module 1/4/5 EARS 요구사항 확정 거동 참조로 갱신. |
 | 2026-07-30 | 0.3.0 | **M1~M6 구현 완료** (백엔드 `ef4f28a7`, 프런트 `e8678033`). 신규 `line_registry.go`(`LineRegistry` 자체 RWMutex + write-through, `Line{Code,Name,Order}`, `add_line`/`remove_line`/`list_lines`, `ErrLineInUse`) + `code.go`(§4.6 slugify: 한글 Revised Romanization + `validCode`) + 로드 마이그레이션(`station.Line`→Line 엔티티, 레거시 `custom:<name>`→`custom:<slug>`) + `Group.Code`(id `custom:<code>`) + composeName 4/3-세그먼트 분기(sticky 보존). 프런트: `useLine` 훅, `XsfmLinesTab`, 그룹 코드 입력, AgentDetailPanel 라인 탭. xsfm 커버리지 89.1% · `-race` 클린 · `go test ./...` exit 0, 프런트 vitest 2275 pass · `tsc` 클린. §7 as-implemented 분기 5건 기록. status draft→completed. |
 | 2026-07-30 | 0.3.1 | **역번호(station_number) 후속 노트** (`a35c468b`). 원 EARS 범위 밖 직접 후속 구현 기록 — `StationRegistryEntry` 선택 필드 `station_number`(역번호, 실세계 역번호, 내부 코드와 구분) 추가, `add_station`/`list_stations`/`station_registered` 관통, 중복 역번호는 경고만. 디바이스 자동 이름 station 세그먼트가 역번호 우선·코드 폴백(`{line}:{역번호\|코드}:{place}:{index:03d}`, 내부 주소/셀렉터는 코드 유지). 프런트 `XsfmStationsTab` 표시·편집. **알려진 갭**: config-seed(`station_registry`/`StationSeed`)는 역번호 미전달(런타임 `add_station` 만 배선). §7.6 기록. status completed 유지(문서 노트). |
+| 2026-07-31 | 0.4.0 | **`{line_code}` 토픽 placeholder 정식 amendment** (in-place amendment, `amendment_of: SPEC-XSFM-LINE-001`). 원 SPEC 완료(0.3.1, `e23a93b5`) 이후 토픽 주소 체계에 라인 코드를 반영하기 위한 범위 확장 — direct-mode sub/pub 토픽 템플릿에 신규 placeholder `line_code` 추가(기존 station_code/place_code/device_index/device_id/attribute 옆에 가산). Outbound(command/pub 렌더): device 의 **파생 라인**(`ResolveLine(device.Station)`)으로 채우며, 해석은 roster 락 밖 lineHint 패턴(composeName 의 resolveLineFor 미러 — 재진입 deadlock 회피). 빈 라인 → 빈 세그먼트(`cmd//{station}/...`, 데이터 책임). Inbound(state/sub 파싱): subscribe 시 wildcard, 파싱 시 추출하되 **디바이스 식별에 무시**(식별 = station_code+place_code+device_index, 라인은 station 파생 SSOT, Device 필드 미매핑). Scope: direct-mode 토픽 템플릿 한정(port mode 무관, 노드 레이어 불변). 무회귀: 기존 placeholder·렌더/파싱 거동 불변. RD-8 + Module 8(REQ-08-01~05) + §4.7 + M9 + AC §9 추가. status completed 유지(re-completed, `## Amendments` 행이 정식 마커). |
 
 ---
+
+## Amendments
+
+> 본 절은 원 SPEC 완료 이후 이루어진 정식 in-place amendment 를 기록한다(`amendment_of: SPEC-XSFM-LINE-001`, 자기참조 in-place). 각 amendment 는 원 SPEC 의 완료 상태를 이어받아 범위를 가산 확장하며, 완료 후 re-complete 된다.
+
+### A-1 — `{line_code}` 토픽 placeholder (0.4.0, 2026-07-31)
+
+- **직전 완료 버전**: 0.3.1
+- **prior_completed_sha**: `e23a93b5`
+- **사유(rationale)**: MQTT 토픽 주소 체계에 라인 코드를 반영해야 하는 요구가 발생. 원 SPEC 은 코드 기반 통일 주소(RD-3)와 디바이스 네이밍에 라인을 반영했으나, 에이전트의 sub/pub **토픽 템플릿** 자체에는 라인 세그먼트를 넣을 수단(placeholder)이 없었다. 원 SPEC 범위를 토픽 주소 체계로 확장한다.
+- **범위(scope)**: RD-8 확정 + 신규 토픽 placeholder Module(Module 8, REQ-08-01~05) + §4.7 사양(placeholder 등록·outbound lineHint 렌더·inbound 무시·빈-라인 빈 세그먼트) + plan.md M9 + acceptance.md §9 시나리오. 기존 RD-1~7, IN §7 노트(§7.6 역번호 포함), Module 1~7 은 불변(가산만).
+- **status 처리**: 원 SPEC 은 `completed`. amendment 반영 후에도 `completed` 를 유지(re-completed)하며, 본 `## Amendments` 절이 정식 amendment 마커이다(구현은 orchestrator 가 amendment 와 함께 커밋).
 
 # SPEC-XSFM-LINE-001: xsfm 라인 1급화 + 코드 기반 주소 체계 + 디바이스 네이밍
 
@@ -145,6 +159,17 @@ xflow 는 Go 기반 IoT FBP 플랫폼이며, `internal/agent/xsfm` 는 지하철
 - **REQ-07-04** (Ubiquitous): 시스템은 항상 xsfm 패키지 테스트 커버리지 85% 이상 및 `-race` 클린을 유지해야 한다(TRUST 5 Tested).
 - **REQ-07-05** (Ubiquitous): 시스템은 항상 MQTT 토픽/페이로드 규약을 불변으로 유지해야 한다.
 
+### Module 8 — `{line_code}` 토픽 placeholder (REQ-08, amendment 0.4.0)
+
+> 본 모듈은 amendment(0.4.0)로 추가된 가산 요구사항이다. direct-mode 토픽 템플릿에 라인 코드 placeholder 를 도입하되, 기존 placeholder 와 렌더/파싱 거동을 무회귀로 유지한다. RD-8 참조.
+
+- **REQ-08-01** (Ubiquitous): 시스템은 항상 direct-mode sub/pub 토픽 템플릿의 placeholder 집합에 `line_code` 를 기존 placeholder(`station_code`/`place_code`/`device_index`/`device_id`/`attribute`) 옆에 가산 등록해야 한다.
+- **REQ-08-02** (Event): WHEN outbound(command/pub) 토픽을 렌더 THEN 시스템은 `{line_code}` 를 해당 디바이스의 **파생 라인 코드**(`ResolveLine(device.Station)`)로 치환해야 한다.
+- **REQ-08-03** (Ubiquitous): 시스템은 항상 `{line_code}` 파생 해석을 roster 락 밖에서 수행해야 한다(lineHint 패턴, composeName 의 `resolveLineFor` 미러 — station-registry 락을 roster 락 내부에서 취득하지 않음, 프로젝트 RWMutex 재진입 deadlock 트랩 회피).
+- **REQ-08-04** (State): IF 디바이스의 역사에 해석된 라인이 없으면(빈 라인) THEN 시스템은 `{line_code}` 를 **빈 문자열**로 렌더해야 한다(예: `cmd//{station}/...`). 빈 라인은 별도 에러 경로가 아니라 데이터/설정 정합성 문제(데이터 책임)로 취급한다.
+- **REQ-08-05** (State): IF state(sub) 템플릿에 `{line_code}` 가 포함되면 THEN 시스템은 subscribe 시 이를 wildcard 로 처리하고, inbound 파싱 시 `{line_code}` 세그먼트를 **추출하되 디바이스 식별에는 무시**해야 한다(식별 = `station_code`+`place_code`+`device_index`, 라인은 station 파생 SSOT, `{line_code}` 를 Device 필드에 매핑하지 않음 — `applyAddressFields` 무시).
+- **REQ-08-06** (Unwanted): 시스템은 `line_code` placeholder 도입으로 기존 placeholder 및 토픽 렌더/파싱 거동을 회귀시켜서는 안 되며(가산·무회귀), port mode(노드가 I/O 소유, 에이전트 브로커 토픽 없음)와 노드 레이어를 변경해서는 안 된다.
+
 ## 4. Specifications (사양)
 
 ### 4.1 Line 엔티티 & 라인 레지스트리
@@ -227,6 +252,45 @@ type LineRegistry struct {
   6. **충돌 처리**: 생성된 slug 가 이미 존재하는 코드와 충돌하면 접미 번호를 부여한다 — `<slug>`, `<slug>-2`, `<slug>-3` … (첫 미충돌 값 채택).
 - **워크드 예시**: 레거시 `custom:"2층 창고"` → 소문자화 `2층 창고` → 로마자화 `2cheung 창고`(`창`→`chang`, `고`→`go` → `2cheung changgo`) → 공백→하이픈 → **`2cheung-changgo`**. 결과 id = `custom:2cheung-changgo`, name 표시값 = 원문 `"2층 창고"` 보존.
 
+### 4.7 `{line_code}` 토픽 placeholder (RD-8, amendment 0.4.0)
+
+> 본 절은 amendment(0.4.0)로 추가된 사양이다. direct-mode 토픽 템플릿에 라인 코드 세그먼트를 부여한다. 예시 토픽: `cmd/{line_code}/{station_code}/{place_code}/bse9000/{device_index}`.
+
+#### 4.7.1 placeholder 등록 (mapping.go)
+
+- 토픽 템플릿 placeholder 상수 집합(`mapping.go`)에 `line_code` 를 **가산 등록**한다. 기존 placeholder(`station_code`, `place_code`, `device_index`, `device_id`, `attribute`)는 불변이며, `line_code` 는 그 옆에 추가된다(REQ-08-01).
+- placeholder 는 direct-mode sub/pub 토픽 템플릿에서 `{line_code}` 토큰으로 참조된다. port mode 는 노드가 I/O 를 소유하여 에이전트 브로커 토픽이 없으므로 본 placeholder 의 적용 대상이 아니다(REQ-08-06, scope 한정).
+
+#### 4.7.2 Outbound 렌더 — 파생 라인 + lineHint 락 규율
+
+- outbound(command/pub) 토픽 렌더 시 `{line_code}` 는 해당 디바이스의 **파생 라인 코드** = `ResolveLine(device.Station)` 로 치환한다(REQ-08-02). 라인은 디바이스에 직접 저장된 값이 아니라 역사(station)로부터 파생(station→line SSOT, A-1 계승)한다.
+- **락 규율(핵심)**: 라인 해석은 **roster 락 밖**에서 수행한다. `composeName` 계열의 `resolveLineFor`(lineHint) 패턴을 미러하여, roster 락을 보유한 상태에서 station-registry 락을 취득하지 않는다(레지스트리 락 중첩 금지 — 프로젝트 RWMutex 재진입 deadlock 트랩, REQ-07-01·REQ-08-03 계승). 즉, 라인 힌트를 roster 락 진입 전에 미리 해석해 렌더 경로에 주입한다.
+
+  ```text
+  // lineHint 패턴 (개념):
+  //   1) roster 락 밖에서 lineHint = ResolveLine(device.Station) 선해석
+  //   2) roster 락 취득 후 토픽 렌더 시 {line_code} ← lineHint 주입
+  //   → station-registry 락을 roster 락 내부에서 취득하지 않음
+  ```
+
+#### 4.7.3 빈 라인 → 빈 세그먼트
+
+- `ResolveLine(device.Station)` 이 라인을 해석하지 못하면(미배정/`ErrStationNotFound`/빈 코드) `{line_code}` 는 **빈 문자열**로 렌더된다(REQ-08-04).
+  - 예시(라인 있음): device.Station=`st01`, `ResolveLine(st01)="line_2"` → `cmd/line_2/st01/pump/bse9000/003`
+  - 예시(라인 없음): device.Station=`st99`, `ResolveLine(st99)=""` → `cmd//st99/pump/bse9000/003` (빈 세그먼트)
+- 빈 라인은 별도 에러 경로로 다루지 않는다. 미배정 라인은 **데이터/설정 정합성**(데이터 책임)의 문제이며, 렌더는 단순·예측 가능하게 빈 세그먼트를 산출한다. (composeName 의 빈-라인 세그먼트 **생략**(RD-4)과는 다른 결정 — 토픽은 위치 기반 파싱을 위해 세그먼트를 **유지하되 비운다**.)
+
+#### 4.7.4 Inbound 파싱 — 추출하되 식별 무시
+
+- state(sub) 템플릿에 `{line_code}` 가 있으면 subscribe 시 해당 세그먼트를 **wildcard**(`+` 취지) 로 구독한다(REQ-08-05).
+- inbound 메시지 파싱 시 `{line_code}` 세그먼트는 **추출은 되지만 디바이스 식별에는 사용하지 않는다**. 디바이스 식별은 여전히 `station_code` + `place_code` + `device_index` 로 이루어지며, 라인은 station 으로부터 파생한다(station→line SSOT). 따라서 `{line_code}` 는 `applyAddressFields` 에서 **어떤 Device 필드에도 매핑되지 않는다**(무시).
+- 이유: 라인을 inbound 토픽에서 식별 키로 채택하면 station→line SSOT 와 이중 소스가 되어 정합성이 깨질 수 있다. 라인은 항상 station 파생으로 단일화한다.
+
+#### 4.7.5 무회귀 경계
+
+- 기존 placeholder(`station_code`/`place_code`/`device_index`/`device_id`/`attribute`)와 토픽 렌더/파싱 거동은 불변이다. `line_code` 는 순수 가산이다(REQ-08-06).
+- 적용 범위는 direct-mode 토픽 템플릿에 한정된다. port mode·노드 레이어(SPEC-XSFM-GROUP-001 Module 7 pass-through 포함)는 변경되지 않는다.
+
 ## 5. Resolved Decisions (확정된 설계 결정)
 
 > 아래는 사용자 확정 사항이며 재검토하지 않는다.
@@ -238,8 +302,14 @@ type LineRegistry struct {
 - **RD-5 — 참조 중 라인의 remove_line 거부(구 OQ-2 확정)**: `remove_line` 대상 라인을 참조하는 역사(또는 디바이스)가 하나라도 있으면 **거부하고 `ErrLineInUse` 를 반환**한다(dangling 방지). 참조 역사를 먼저 비우거나 재배치한 뒤에만 삭제할 수 있다. (REQ-01-05a, §4.2)
 - **RD-6 — 코드 포맷 + slugify 마이그레이션(구 OQ-3 확정)**: 통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` 를 station/line/custom **신규 코드**에 강제한다. 로드 마이그레이션 시 포맷 적합 레거시 `custom:<name>` 은 code=name 으로 승격하고, 포맷 비적합 name(공백·한글·콜론 등)은 **slugify**(§4.6 규칙: NFC·소문자화, 한글 Revised Romanization, 비허용문자→`-`, 중복 하이픈 축약, 양끝 트림, 빈 결과 시 해시 폴백, 충돌 시 접미 번호)하여 code 를 생성(id `custom:<slug>`)하되 name 표시값은 원문을 보존한다. 워크드 예시: `"2층 창고"` → `2cheung-changgo`. (§4.6)
 - **RD-7 — Line.Order 채택(구 OQ-4 확정)**: `Line{Code, Name, Order}` 에 `Order` 를 포함한다(기본값 = 생성 순번). `StationRegistryEntry.Order` 및 UI 정렬과 일관성을 유지한다. (§4.1)
+- **RD-8 — `{line_code}` 토픽 placeholder (amendment 0.4.0 확정)**: direct-mode sub/pub 토픽 템플릿에 신규 placeholder `line_code` 를 기존 placeholder(`station_code`/`place_code`/`device_index`/`device_id`/`attribute`) 옆에 가산 도입한다. 예시 토픽: `cmd/{line_code}/{station_code}/{place_code}/bse9000/{device_index}`.
+  - **Outbound(command/pub 렌더)**: `{line_code}` 는 디바이스의 **파생 라인** = `ResolveLine(device.Station)` 로 채운다. 해석은 **roster 락 밖**에서 수행(lineHint 패턴, `composeName` 의 `resolveLineFor` 미러 — station-registry 락을 roster 락 내부에서 취득하지 않아 RWMutex 재진입 deadlock 트랩 회피).
+  - **빈 라인 → 빈 세그먼트**: 디바이스 역사에 해석 라인이 없으면 `{line_code}` 를 **빈 문자열**로 렌더한다(예: `cmd//{station}/...`). 단순·예측 가능; 미배정 라인은 특수 에러 경로가 아니라 데이터/설정 정합성(데이터 책임) 문제로 취급한다.
+  - **Inbound(state/sub 파싱)**: state 템플릿의 `{line_code}` 는 subscribe 시 wildcard 가 되고, inbound 파싱 시 **추출되지만 디바이스 식별에는 무시**된다. 디바이스 식별은 여전히 `station_code`+`place_code`+`device_index` 이며 라인은 station 파생(station→line SSOT). `{line_code}` 는 Device 필드에 매핑하지 않는다(`applyAddressFields` 무시).
+  - **Scope**: direct-mode 토픽 템플릿 한정(port mode = 노드가 I/O 소유, 에이전트 브로커 토픽 없음). 노드 레이어 불변.
+  - **무회귀**: 기존 placeholder 및 토픽 렌더/파싱 거동 불변; `line_code` 는 가산. (§4.7, Module 8)
 
-> §6 Open Questions 는 OQ-1~4 가 모두 RD-4~7 로 확정되어 제거되었다(미해결 열린 질문 없음).
+> §6 Open Questions 는 OQ-1~4 가 모두 RD-4~7 로 확정되어 제거되었다(미해결 열린 질문 없음). RD-8 은 amendment 0.4.0 에서 사용자 확정으로 추가되었다.
 
 ## 6. Traceability
 
