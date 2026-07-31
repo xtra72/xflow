@@ -19,17 +19,8 @@ import { useNodeTypeInstances } from '@/hooks/useNodeTypeInstances';
 import { useAgents } from '@/hooks/useAgent';
 import { useGroups } from '@/hooks/useGroups';
 import { useXsfmDevices } from '@/hooks/useStation';
-import { configureNode } from '@/services/api/nodeService';
-import { getFlow, updateFlow } from '@/services/api/flowService';
-import { useUIStore } from '@/stores/uiStore';
-import { APIError } from '@/types/api';
 import { cn } from '@/lib/utils/cn';
-import {
-  buildFullTriggerConfig,
-  detectConflict,
-  findNodeConfigInDefinition,
-  patchNodeConfigInDefinition,
-} from '../triggerPanelUtils';
+import { useScheduleDualWrite } from './useScheduleDualWrite';
 import FacilityRuleModal from './FacilityRuleModal';
 import {
   buildScheduleFromDraft,
@@ -74,7 +65,6 @@ export default function FacilitySchedulePanel({
 
   const { data: nodes, isLoading } = useFlowNodes(flowId);
   const { instances } = useNodeTypeInstances('trigger');
-  const addNotification = useUIStore((s) => s.addNotification);
 
   // TARGET 이름 매핑용 열거(에이전트 있을 때만). 그룹/기기 id→name.
   const { data: agentsResult } = useAgents();
@@ -104,10 +94,11 @@ export default function FacilitySchedulePanel({
     [instances, flowId, nodeId],
   );
 
+  // dual-write 훅(M4 추출): saving/baseline 소유 + LIVE/PERSIST + 통지 재사용.
+  const { persist, saving, setBaseline } = useScheduleDualWrite({ flowId, nodeId });
+
   // 로컬 스케줄 draft(SSOT=노드 config, 최초 1회 하이드레이트). dual-write 후 baseline 갱신.
   const [schedules, setSchedules] = useState<SerializedSchedule[]>([]);
-  const [saving, setSaving] = useState(false);
-  const baselineRef = useRef<Record<string, unknown>>({});
   const hydratedRef = useRef(false);
 
   useEffect(() => {
@@ -118,9 +109,9 @@ export default function FacilitySchedulePanel({
     if (!targetNode || hydratedRef.current) return;
     const cfg = (targetNode.config ?? {}) as Record<string, unknown>;
     setSchedules(Array.isArray(cfg.schedules) ? (cfg.schedules as SerializedSchedule[]) : []);
-    baselineRef.current = cfg;
+    setBaseline(cfg);
     hydratedRef.current = true;
-  }, [targetNode]);
+  }, [targetNode, setBaseline]);
 
   // 정렬 방향(기본 priority 오름차순, PRIO 헤더 클릭 토글).
   const [sortDesc, setSortDesc] = useState(false);
@@ -129,59 +120,11 @@ export default function FacilitySchedulePanel({
   // 모달 상태: editIndex -1 = 신규, >=0 = 편집(원본 인덱스).
   const [modal, setModal] = useState<{ open: boolean; editIndex: number; initial: RuleDraft } | null>(null);
 
-  // ---- dual-write (M6, 선행 재사용) ----
-  const persist = useCallback(
-    async (nextSchedules: SerializedSchedule[]) => {
-      if (!flowId || !nodeId || saving) return;
-      setSaving(true);
-      const fullConfig = buildFullTriggerConfig(baselineRef.current, nextSchedules);
-
-      // 1) LIVE
-      let persistOnly = false;
-      try {
-        await configureNode(flowId, nodeId, fullConfig);
-      } catch (err) {
-        if (err instanceof APIError && err.status === 404) {
-          persistOnly = true;
-        } else {
-          addNotification({ type: 'error', message: '저장 실패 — 라이브 반영 중 오류가 발생했습니다.' });
-          setSaving(false);
-          return;
-        }
-      }
-
-      // 2) PERSIST (patch-then-PUT)
-      let conflict = false;
-      try {
-        const flow = await getFlow(flowId);
-        const def = (flow.config ?? {}) as Record<string, unknown>;
-        conflict = detectConflict(findNodeConfigInDefinition(def, nodeId), baselineRef.current);
-        const patched = patchNodeConfigInDefinition(def, nodeId, fullConfig);
-        await updateFlow(flowId, { definition: patched });
-      } catch {
-        addNotification({ type: 'error', message: '저장 실패 — 플로우 정의 지속화 중 오류가 발생했습니다.' });
-        setSaving(false);
-        return;
-      }
-
-      baselineRef.current = fullConfig;
-      setSchedules(nextSchedules);
-      addNotification({
-        type: persistOnly ? 'warning' : 'success',
-        message: persistOnly ? '노드 미실행 — 저장만 적용, 재배포 시 반영' : '저장 완료',
-      });
-      if (conflict) {
-        addNotification({ type: 'warning', message: '다른 편집이 감지되어 덮어썼습니다 (last-write-wins)' });
-      }
-      setSaving(false);
-    },
-    [flowId, nodeId, saving, addNotification],
-  );
-
   // ---- STATE 토글 ----
+  // dual-write 성공 시에만 로컬 스케줄 반영(onApplied). 조기 반환 오류 경로는 미반영.
   const handleToggle = useCallback(
     (index: number) => {
-      void persist(toggleEnabledAt(schedules, index));
+      void persist(toggleEnabledAt(schedules, index), setSchedules);
     },
     [schedules, persist],
   );
@@ -202,7 +145,7 @@ export default function FacilitySchedulePanel({
       if (!next) return; // 유효하지 않으면 모달이 이미 검증으로 막음.
       const nextSchedules = upsertScheduleAt(schedules, modal.editIndex, next);
       setModal(null);
-      void persist(nextSchedules);
+      void persist(nextSchedules, setSchedules);
     },
     [modal, schedules, persist],
   );
