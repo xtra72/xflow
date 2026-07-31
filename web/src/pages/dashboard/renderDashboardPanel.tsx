@@ -36,6 +36,7 @@ import FacilityDevicePanel from './panels/FacilityDevicePanel';
 import FacilityLinePanel from './panels/FacilityLinePanel';
 import FacilityGroupPanel from './panels/FacilityGroupPanel';
 import TriggerConfigPanel from './panels/TriggerConfigPanel';
+import FacilitySchedulePanel from './panels/facilitySchedule/FacilitySchedulePanel';
 import StatPanel from './panels/charts/StatPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import BarChartPanel from './panels/charts/BarChartPanel';
@@ -196,6 +197,17 @@ export function renderDashboardPanel(
     case 'trigger-config':
       return (
         <TriggerConfigPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(trigger-config 와 공존, RD-5).
+    case 'facility-schedule':
+      return (
+        <FacilitySchedulePanel
           panelId={panel.id}
           title={panel.title}
           config={panel.config}

@@ -31,6 +31,7 @@ import {
   Fan,
   Layers,
   AlarmClock,
+  CalendarClock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -85,6 +86,8 @@ interface PanelOption {
   needsFacility?: boolean;
   /** trigger 노드(플로우 + 노드) 선택 스텝이 필요한 유형 (SPEC-TRIGGER-PANEL-001 M2) */
   needsTriggerNode?: boolean;
+  /** 설비 제어 예약(trigger 노드 + xsfm 에이전트) 선택 스텝이 필요한 유형 (SPEC-TRIGGER-SCHED-001 M2) */
+  needsFacilitySchedule?: boolean;
   /**
    * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
    * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
@@ -147,6 +150,8 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     { type: 'facility-line', icon: Route, labelKey: 'dashboard.panelTypes.facilityLine', descriptionKey: 'dashboard.addPanel.descriptions.facilityLine', needsFacility: true },
     { type: 'facility-group', icon: Layers, labelKey: 'dashboard.panelTypes.facilityGroup', descriptionKey: 'dashboard.addPanel.descriptions.facilityGroup', needsFacility: true },
     { type: 'facility-device', icon: Fan, labelKey: 'dashboard.panelTypes.facilityDevice', descriptionKey: 'dashboard.addPanel.descriptions.facilityDevice', needsFacility: true },
+    // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(규칙 테이블 + 모달). trigger-config 와 공존(RD-5).
+    { type: 'facility-schedule', icon: CalendarClock, labelKey: 'dashboard.panelTypes.facilitySchedule', descriptionKey: 'dashboard.addPanel.descriptions.facilitySchedule', needsFacilitySchedule: true },
   ],
 };
 
@@ -165,7 +170,7 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
   const [step, setStep] = useState<
-    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node'
+    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node' | 'facility-schedule'
   >('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
@@ -186,7 +191,8 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
           step === 'device' ||
           step === 'chart-config' ||
           step === 'facility' ||
-          step === 'trigger-node'
+          step === 'trigger-node' ||
+          step === 'facility-schedule'
         ) {
           setStep('type');
           setSelectedType(null);
@@ -222,6 +228,11 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (option.needsTriggerNode) {
       setSelectedType(option.type);
       setStep('trigger-node');
+      return;
+    }
+    if (option.needsFacilitySchedule) {
+      setSelectedType(option.type);
+      setStep('facility-schedule');
       return;
     }
     if (option.presetConfig) {
@@ -261,6 +272,18 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     title: string,
   ) => {
     addPanelWithConfig('trigger-config', { flowId, nodeId }, title);
+    onClose();
+  };
+
+  // 설비 제어 예약 대상 선택 완료 처리 (SPEC-TRIGGER-SCHED-001 M2).
+  // trigger 노드({flowId,nodeId}) + xsfm 에이전트(agentId, 선택)를 config 로 저장한다.
+  const handleFacilityScheduleConfirm = (
+    flowId: string,
+    nodeId: string,
+    agentId: string,
+    title: string,
+  ) => {
+    addPanelWithConfig('facility-schedule', { flowId, nodeId, agentId }, title);
     onClose();
   };
 
@@ -320,6 +343,16 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
         {step === 'trigger-node' && (
           <TriggerNodeStep
             onSelect={handleTriggerNodeSelect}
+            onBack={() => {
+              setStep('type');
+              setSelectedType(null);
+            }}
+            onClose={onClose}
+          />
+        )}
+        {step === 'facility-schedule' && (
+          <FacilityScheduleStep
+            onConfirm={handleFacilityScheduleConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -1023,6 +1056,117 @@ function TriggerNodeStep({
                   <p className="text-sm font-medium text-(--color-text-primary)">
                     {inst.nodeName}
                   </p>
+                  <p className="text-xs text-(--color-text-muted)">{inst.flowName}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ---- Step: 설비 제어 예약 대상 선택 (SPEC-TRIGGER-SCHED-001 M2) ----
+
+/**
+ * 설비 제어 예약 패널 대상 선택 스텝. trigger 노드(필수)를
+ * useNodeTypeInstances('trigger') 로 열거하고, TARGET 열거용 xsfm 에이전트(선택)를
+ * useAgents 로 고른다. 에이전트는 미지정 가능하며(자유 입력 폴백), 노드 선택 시
+ * { flowId, nodeId, agentId } 를 패널 config 로 저장한다(REQ-SCHED-02/04).
+ */
+function FacilityScheduleStep({
+  onConfirm,
+  onBack,
+  onClose,
+}: {
+  onConfirm: (flowId: string, nodeId: string, agentId: string, title: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const { instances, isLoading } = useNodeTypeInstances('trigger');
+  const { data: agentsResult } = useAgents();
+  const xsfmAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'xsfm'),
+    [agentsResult],
+  );
+  const [agentId, setAgentId] = useState('');
+
+  return (
+    <>
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label={t('dashboard.addPanel.backAria')}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <h2 className="text-lg font-semibold text-(--color-text-primary)">
+            {t('dashboard.addPanel.selectFacilitySchedule')}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          aria-label={t('dashboard.addPanel.closeAria')}
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="max-h-80 overflow-y-auto px-5 py-4">
+        {/* 설비 에이전트(선택) */}
+        <div className="mb-4">
+          <label
+            htmlFor="facility-schedule-agent-select"
+            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+          >
+            {t('dashboard.settings.agent')}
+          </label>
+          <select
+            id="facility-schedule-agent-select"
+            data-testid="facility-schedule-agent-select"
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">{t('dashboard.addPanel.facilityScheduleAgentOptional')}</option>
+            {xsfmAgents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* trigger 노드(필수) */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600" />
+          </div>
+        ) : instances.length === 0 ? (
+          <p className="py-8 text-center text-sm text-(--color-text-muted)">
+            {t('dashboard.addPanel.noTriggerNodes')}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {instances.map((inst) => (
+              <button
+                key={`${inst.flowId}:${inst.nodeId}`}
+                type="button"
+                data-testid={`facility-schedule-node-${inst.flowId}-${inst.nodeId}`}
+                onClick={() =>
+                  onConfirm(inst.flowId, inst.nodeId, agentId, inst.nodeName || inst.flowName)
+                }
+                className="flex w-full items-center gap-3 rounded-lg border border-(--color-border-default) p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-600 dark:hover:bg-blue-900/20"
+              >
+                <CalendarClock className="h-4 w-4 shrink-0 text-blue-500" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-(--color-text-primary)">{inst.nodeName}</p>
                   <p className="text-xs text-(--color-text-muted)">{inst.flowName}</p>
                 </div>
               </button>

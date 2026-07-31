@@ -198,7 +198,9 @@ export type PanelType =
   | 'facility-device'
   | 'facility-group'
   // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
-  | 'trigger-config';
+  | 'trigger-config'
+  // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(규칙 테이블 + 모달). trigger-config 와 공존.
+  | 'facility-schedule';
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -293,6 +295,9 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
     // SPEC-TRIGGER-PANEL-001 M2: 스케줄 리스트 + 카탈로그 편집을 담는 세로 카드.
     case 'trigger-config':
       return { w: 4, h: 7, minW: 3, minH: 4 };
+    // SPEC-TRIGGER-SCHED-001 M2: 예약 규칙 테이블(6컬럼). 가로로 넓은 카드.
+    case 'facility-schedule':
+      return { w: 8, h: 6, minW: 5, minH: 4 };
     case 'line-chart':
       // SPEC REQ-M5-05: line-chart {w:6, h:3}
       return { w: 6, h: 3, minW: 3, minH: 2 };
@@ -432,6 +437,11 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     // 스케줄은 노드 config 가 SSOT 이므로 패널 config 에 복제하지 않는다(REQ-02-04).
     case 'trigger-config':
       return { type, title: '트리거 설정', config: { flowId: '', nodeId: '', payloadCatalog: {} } };
+    // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널.
+    // config 는 대상 trigger 노드({flowId,nodeId}) + TARGET 열거용 xsfm 에이전트(agentId).
+    // 예약 규칙(스케줄 + 확장 메타 + 제어 payload)은 노드 config 가 SSOT 이므로 복제하지 않는다.
+    case 'facility-schedule':
+      return { type, title: '설비 제어 예약', config: { flowId: '', nodeId: '', agentId: '' } };
   }
 }
 
