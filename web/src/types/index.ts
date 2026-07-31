@@ -67,3 +67,10 @@ export type {
   AgentExecRequest,
   AgentExecResponse,
 } from './agent';
+
+export type {
+  ScheduleLogKind,
+  ScheduleLogResult,
+  ScheduleLogTargetResult,
+  ScheduleLogRecord,
+} from './schedule';
