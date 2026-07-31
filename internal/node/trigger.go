@@ -80,6 +80,18 @@ type TriggerSchedule struct {
 	// nil이면 노드 레벨 payload/payloadTemplate 로 폴백한다.
 	Payload     any            // 이 스케줄의 정적 페이로드 (선택)
 	PayloadTmpl map[string]any // 이 스케줄의 템플릿 페이로드 (선택)
+
+	// 규칙 메타 (SPEC-TRIGGER-SCHED-001 RD-1 / RD-8): 설비 제어 예약 규칙의
+	// 표시·유효기간·우선순위·활성 상태. 확장 필드가 config 에 없으면 하위 호환
+	// 기본값(Name=""; ValidFrom/ValidTo=""(무기한); Priority=0; Enabled=nil→true)이
+	// 적용되어 기존 스케줄이 무회귀로 계속 발화한다. (REQ-SCHED-01-01/02)
+	Name      string // 규칙 표시 이름 (config `name`). 발화 비영향 pass-through 메타.
+	ValidFrom string // 유효 시작 (config `valid_from`, `YYYY-MM-DD`). 빈 값=하한 무제한.
+	ValidTo   string // 유효 종료 (config `valid_to`, `YYYY-MM-DD`). 빈 값=무기한.
+	Priority  int    // 표시/정렬 우선순위 (config `priority`). 발화 비영향 pass-through 메타.
+	// Enabled 는 활성 여부(config `enabled`)이다. 포인터로 tri-state 를 표현하여
+	// config 부재(nil)를 명시적 false 와 구분한다 — nil=부재=활성(기본 true).
+	Enabled *bool
 }
 
 // triggerTimerEntry 는 등록된 타이머의 추적 정보이다.
@@ -95,6 +107,17 @@ type triggerTimerEntry struct {
 	// lastDayGate (v1.2.0): monthly "last" 스케줄이면 true.
 	// 핸들러 진입 시 현재 날짜가 해당 월의 마지막 날일 때만 emit한다.
 	lastDayGate bool
+
+	// 규칙 메타 (SPEC-TRIGGER-SCHED-001 RD-8): 발화 게이팅에 필요한 값을 등록 시점에
+	// 캡처한다. 엔트리 로컬 불변이므로(payload 와 동일) 발화 핸들러에서 lock 없이 읽는다.
+	//   enabled  : 활성 여부(config 부재 시 true 로 해소). false 면 발화 시 emit 하지 않음.
+	//   validFrom/validTo : 유효기간 경계(빈 값=해당 방향 무제한). 밖이면 emit 하지 않음.
+	//   name/priority : 발화 비영향 pass-through 메타(메시지 메타데이터로 전달).
+	enabled   bool
+	validFrom string
+	validTo   string
+	name      string
+	priority  int
 
 	// gen (SPEC-TRIGGER-PANEL-001 RD-6): 이 엔트리가 등록된 시점의 re-arm 세대.
 	// 발화 시 노드의 현재 rearmGen 과 불일치하면 live 재무장으로 무효화된 stale
@@ -262,6 +285,26 @@ func (n *TriggerNode) parseScheduleConfig() {
 			}
 		}
 
+		// 규칙 메타 (SPEC-TRIGGER-SCHED-001 RD-1 / RD-8): 확장 필드 파싱.
+		// 키가 없거나 타입이 다르면 하위 호환 기본값을 유지한다(REQ-SCHED-01-02).
+		if name, ok := s["name"].(string); ok {
+			sched.Name = name
+		}
+		if vf, ok := s["valid_from"].(string); ok {
+			sched.ValidFrom = vf
+		}
+		if vt, ok := s["valid_to"].(string); ok {
+			sched.ValidTo = vt
+		}
+		if p, ok := s["priority"]; ok {
+			sched.Priority = anyToInt(p)
+		}
+		// enabled: 부재(키 없음)면 nil 을 유지해 발화 게이트에서 true 로 해소된다.
+		// bool 값이 명시된 경우에만 포인터를 세팅한다(명시 false 를 부재와 구분).
+		if e, ok := s["enabled"].(bool); ok {
+			sched.Enabled = &e
+		}
+
 		n.schedules = append(n.schedules, sched)
 	}
 }
@@ -278,6 +321,27 @@ func anySliceToStrings(raw any) []string {
 		out = append(out, anyToToken(e))
 	}
 	return out
+}
+
+// anyToInt 은 config 에서 온 임의의 수치 값을 int 로 변환한다.
+// JSON 디코딩 경로는 숫자를 float64 로, Go 리터럴 config(테스트)는 int 로 전달하므로
+// 두 표현을 모두 수용한다. 문자열 정수도 관용적으로 허용한다. 변환 불가 시 0(기본값).
+func anyToInt(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(x)); err == nil {
+			return n
+		}
+		return 0
+	default:
+		return 0
+	}
 }
 
 // anyToToken 은 단일 값을 토큰 문자열로 변환한다.
@@ -427,6 +491,13 @@ func (n *TriggerNode) newEntry(sched TriggerSchedule, lastDayGate bool) *trigger
 		payload:      sched.Payload,
 		payloadTmpl:  sched.PayloadTmpl,
 		lastDayGate:  lastDayGate,
+		// 규칙 메타 캡처 (SPEC-TRIGGER-SCHED-001 RD-8): enabled 는 config 부재(nil)
+		// 시 true 로 해소하여 하위 호환(기존 스케줄 무회귀)을 보장한다 (REQ-SCHED-01-02).
+		enabled:   sched.Enabled == nil || *sched.Enabled,
+		validFrom: sched.ValidFrom,
+		validTo:   sched.ValidTo,
+		name:      sched.Name,
+		priority:  sched.Priority,
 		// 등록 시점의 re-arm 세대를 캡처한다. registerSchedules 는 rearmGen 증가
 		// 이후 동일 고루틴에서 호출되므로 항상 최신 세대를 읽는다 (RD-6).
 		gen: n.rearmGen.Load(),
@@ -695,6 +766,53 @@ func lastDayOfMonth(t time.Time) int {
 	return time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, t.Location()).Day()
 }
 
+// withinValidity 는 now 가 규칙 유효기간 [from, to] 내인지 판정한다.
+// (SPEC-TRIGGER-SCHED-001 RD-8)
+//
+// 의미론:
+//   - 기준 시각대(timezone): now 의 위치(서버 로컬). from/to 도 같은 위치로 해석한다.
+//   - 비교 단위: 날짜(day) 단위. from 은 해당 일 00:00:00 부터, to 는 해당 일
+//     23:59:59.999... 까지 포함 — 양끝 inclusive.
+//   - 무제한: from 이 빈 값/파싱 불가면 하한 무제한(과거 무제한), to 가 빈 값/파싱
+//     불가면 상한 무제한(무기한). 잘못된 날짜 문자열은 오류가 아니라 해당 방향의
+//     무제한으로 관용 처리한다(REQ-SCHED-01-04, 파싱 견고성).
+func withinValidity(now time.Time, from, to string) bool {
+	if fromDay, ok := parseValidityDate(from, now.Location()); ok {
+		// 하한: now 가 from 당일 00:00 이전이면 범위 밖.
+		if now.Before(fromDay) {
+			return false
+		}
+	}
+	if toDay, ok := parseValidityDate(to, now.Location()); ok {
+		// 상한: to 당일 전체 포함 → 다음 날 00:00 이상이면 범위 밖(양끝 inclusive).
+		if !now.Before(toDay.AddDate(0, 0, 1)) {
+			return false
+		}
+	}
+	return true
+}
+
+// parseValidityDate 는 유효기간 경계 문자열을 loc(서버 로컬) 기준 해당 날짜의
+// 00:00:00 시각으로 파싱한다. 수용 형식은 `YYYY-MM-DD`(주 형식)와 RFC3339
+// datetime(해당 날짜로 정규화)이다. 빈 값/파싱 불가는 (zero, false) 를 반환하여
+// 호출부에서 해당 방향 무제한으로 처리한다.
+func parseValidityDate(s string, loc *time.Location) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	// 주 형식: YYYY-MM-DD (loc 기준 자정).
+	if t, err := time.ParseInLocation("2006-01-02", s, loc); err == nil {
+		return t, true
+	}
+	// 보조 형식: RFC3339 datetime → loc 기준 날짜로 정규화(날짜 단위 비교).
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		lt := t.In(loc)
+		return time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, loc), true
+	}
+	return time.Time{}, false
+}
+
 // now 는 현재 시각을 반환한다. nowFunc 가 주입되어 있으면 이를 사용한다.
 func (n *TriggerNode) now() time.Time {
 	if n.nowFunc != nil {
@@ -725,6 +843,21 @@ func (n *TriggerNode) makeHandler(entry *triggerTimerEntry, scheduleType string,
 		isPaused := n.paused
 		n.pauseMu.RUnlock()
 		if isPaused {
+			return
+		}
+
+		// 활성/유효기간 발화 게이트 (SPEC-TRIGGER-SCHED-001 RD-8):
+		// 발화 조건은 enabled AND now∈[valid_from, valid_to] 의 논리곱이다.
+		// 비활성이거나 유효기간 밖이면 이번 틱에는 emit 하지 않는다. 타이머는
+		// 취소하지 않고 등록된 채 유지되어(반복 타이머) 다음 틱에 재검사된다 —
+		// 재활성/기간 복귀 시 별도 재무장 없이 자연히 발화가 재개된다.
+		// entry.enabled/validFrom/validTo 는 등록 시점 캡처된 엔트리 로컬 불변이라
+		// lock 없이 읽는다. now() 는 서버 로컬 시각(테스트는 nowFunc 로 고정 주입).
+		// (REQ-SCHED-01-03/04/05)
+		if !entry.enabled {
+			return
+		}
+		if !withinValidity(n.now(), entry.validFrom, entry.validTo) {
 			return
 		}
 
@@ -814,6 +947,18 @@ func (n *TriggerNode) buildMessage(entry *triggerTimerEntry, trigger system.Time
 		message.WithMetadata("trigger.tick_count", strconv.FormatInt(tickCount, 10)),
 		message.WithMetadata("trigger.trigger_time", triggerTimeStr),
 		message.WithMetadata("trigger.node_name", n.Name()),
+	}
+
+	// 규칙 메타 pass-through (SPEC-TRIGGER-SCHED-001 REQ-SCHED-01-06):
+	// name/priority 는 발화 여부에 영향을 주지 않는 메타로, 방출 메시지에 통과 전달한다.
+	// 기존 스케줄(name="" priority=0) 무회귀를 위해 의미 있는 값일 때만 메타를 추가한다.
+	if entry != nil {
+		if entry.name != "" {
+			opts = append(opts, message.WithMetadata("trigger.rule_name", entry.name))
+		}
+		if entry.priority != 0 {
+			opts = append(opts, message.WithMetadata("trigger.priority", strconv.Itoa(entry.priority)))
+		}
 	}
 
 	// 템플릿 에러 시 메타데이터 추가
