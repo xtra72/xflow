@@ -137,6 +137,11 @@ type processRequest struct {
 	Params map[string]any `json:"params,omitempty"`
 	NodeID string         `json:"node_id,omitempty"`
 	FlowID string         `json:"flow_id,omitempty"`
+
+	// Correlation 은 예약(스케줄) 발화 상관 블록이다(SPEC-SCHEDULE-VIEW-001 M2). trigger 노드가
+	// 실은 스케줄 발화에서 유입된 제어일 때만 존재한다(수동 제어는 nil). 존재할 때만 제어 실행
+	// 후 스케줄 로그 result 이벤트를 fire 이벤트와 조인해 기록한다(AC-6: nil 이면 미기록).
+	Correlation *scheduleCorrelation `json:"_correlation,omitempty"`
 }
 
 // fillFromParams 는 top-level 주소지정(addressing) 필드가 zero 값일 때 params 에서 backfill 한다.

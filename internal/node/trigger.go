@@ -89,6 +89,11 @@ type TriggerSchedule struct {
 	ValidFrom string // 유효 시작 (config `valid_from`, `YYYY-MM-DD`). 빈 값=하한 무제한.
 	ValidTo   string // 유효 종료 (config `valid_to`, `YYYY-MM-DD`). 빈 값=무기한.
 	Priority  int    // 표시/정렬 우선순위 (config `priority`). 발화 비영향 pass-through 메타.
+	// AgentID 는 스케줄이 선언한 대상(설비 제어) 에이전트이다(config `agent_id`,
+	// SPEC-SCHEDULE-VIEW-001 M2). 스케줄 로그의 DeclaredAgentID(선언된 대상)로 실린다.
+	// 빈 값=대상 미선언(하위 호환) — 발화 비영향 pass-through 메타이며, 값이 있을 때만
+	// 방출 메시지에 `trigger.agent_id` 메타로 통과 전달된다(무회귀, AC-13).
+	AgentID string
 	// Enabled 는 활성 여부(config `enabled`)이다. 포인터로 tri-state 를 표현하여
 	// config 부재(nil)를 명시적 false 와 구분한다 — nil=부재=활성(기본 true).
 	Enabled *bool
@@ -118,6 +123,10 @@ type triggerTimerEntry struct {
 	validTo   string
 	name      string
 	priority  int
+	// agentID (SPEC-SCHEDULE-VIEW-001 M2): 스케줄이 선언한 대상 에이전트. 발화 시
+	// 스케줄 로그 fire 이벤트의 DeclaredAgentID + `trigger.agent_id` 메타 전달에 쓴다.
+	// name/priority 와 동일한 발화 비영향 pass-through 메타(엔트리 로컬 불변, lock 없이 읽음).
+	agentID string
 
 	// gen (SPEC-TRIGGER-PANEL-001 RD-6): 이 엔트리가 등록된 시점의 re-arm 세대.
 	// 발화 시 노드의 현재 rearmGen 과 불일치하면 live 재무장으로 무효화된 stale
@@ -298,6 +307,11 @@ func (n *TriggerNode) parseScheduleConfig() {
 		}
 		if p, ok := s["priority"]; ok {
 			sched.Priority = anyToInt(p)
+		}
+		// agent_id: 스케줄이 선언한 대상 에이전트(SPEC-SCHEDULE-VIEW-001 M2). 키가 없거나
+		// 타입이 다르면 빈 값(대상 미선언)을 유지한다 — 무회귀(AC-13).
+		if a, ok := s["agent_id"].(string); ok {
+			sched.AgentID = a
 		}
 		// enabled: 부재(키 없음)면 nil 을 유지해 발화 게이트에서 true 로 해소된다.
 		// bool 값이 명시된 경우에만 포인터를 세팅한다(명시 false 를 부재와 구분).
@@ -498,6 +512,7 @@ func (n *TriggerNode) newEntry(sched TriggerSchedule, lastDayGate bool) *trigger
 		validTo:   sched.ValidTo,
 		name:      sched.Name,
 		priority:  sched.Priority,
+		agentID:   sched.AgentID,
 		// 등록 시점의 re-arm 세대를 캡처한다. registerSchedules 는 rearmGen 증가
 		// 이후 동일 고루틴에서 호출되므로 항상 최신 세대를 읽는다 (RD-6).
 		gen: n.rearmGen.Load(),
@@ -876,6 +891,24 @@ func (n *TriggerNode) makeHandler(entry *triggerTimerEntry, scheduleType string,
 		// 메시지 생성
 		msg := n.buildMessage(entry, trigger, scheduleType, timerID, tickCount)
 
+		// 스케줄 발화 관측(SPEC-SCHEDULE-VIEW-001 M2, RD-8): 관측자가 설정돼 있으면 발화
+		// 이벤트를 best-effort 로 통지한다. 제네릭 trigger 노드는 storage 를 몰라도 되도록
+		// 관측자 인터페이스에만 의존한다(구체 어댑터는 internal/schedulelog). 발화마다 호출되어
+		// fire-only(다운스트림 제어 없음)도 포착한다(AC-15). correlation_id=schedule_id:trigger_ms
+		// 는 result 이벤트와 동일 공식으로 조인된다(AC-16). trigger_ms 는 발화 시각 epoch ms 이며,
+		// result 측(buildXsfmControlCommand→에이전트)은 `trigger.trigger_time`(RFC3339) 메타를
+		// 동일 epoch ms 로 파싱해 같은 키를 재구성한다. 관측자 nil/에러는 발화에 영향을 주지 않는다.
+		if obs := getScheduleFireObserver(); obs != nil {
+			triggerMs := trigger.TriggerAt.UnixMilli()
+			obs.OnScheduleFire(ScheduleFireContext{
+				CorrelationID:   timerID + ":" + strconv.FormatInt(triggerMs, 10),
+				ScheduleID:      timerID,
+				RuleName:        entry.name,
+				DeclaredAgentID: entry.agentID,
+				TriggerTime:     triggerMs,
+			})
+		}
+
 		// sourceCh로 전송 (non-blocking)
 		select {
 		case n.sourceCh <- msg:
@@ -958,6 +991,12 @@ func (n *TriggerNode) buildMessage(entry *triggerTimerEntry, trigger system.Time
 		}
 		if entry.priority != 0 {
 			opts = append(opts, message.WithMetadata("trigger.priority", strconv.Itoa(entry.priority)))
+		}
+		// agent_id(SPEC-SCHEDULE-VIEW-001 M2): 선언된 대상 에이전트. 하위 호환(agent_id 미선언
+		// 스케줄 무회귀, AC-13)을 위해 값이 있을 때만 메타를 추가한다. xsfm 제어 노드가 이 메타를
+		// 읽어 _correlation.declared_agent_id 로 실어 result 이벤트에 조인한다.
+		if entry.agentID != "" {
+			opts = append(opts, message.WithMetadata("trigger.agent_id", entry.agentID))
 		}
 	}
 

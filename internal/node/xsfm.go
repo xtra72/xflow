@@ -920,6 +920,31 @@ func xsfmExtractGroupName(msg message.Message) string {
 	return ""
 }
 
+// xsfmExtractScheduleCorrelation 은 예약(스케줄) 발화 메타에서 상관(correlation) 블록을 추출한다
+// (SPEC-SCHEDULE-VIEW-001 M2). trigger 노드가 실은 trigger.schedule_id/rule_name/agent_id/
+// trigger_time 메타를 읽어 _correlation 맵으로 구성한다.
+//
+// schedule_id 와 trigger_time 이 모두 있어야 유효한 상관으로 보고 맵을 반환한다(둘 중 하나라도
+// 없으면 nil → 호출부가 _correlation 을 전면 생략, AC-6 무회귀: 수동 제어는 상관 메타가 없다).
+// trigger_time 은 메타의 문자열 형태(RFC3339)를 그대로 싣고, 기록 측(에이전트)이 epoch ms 로
+// 파싱해 fire 이벤트와 동일한 correlation_id 를 재구성한다(플랜 sub-task 3 note).
+func xsfmExtractScheduleCorrelation(msg message.Message) map[string]any {
+	meta := msg.Metadata()
+	scheduleID, _ := meta.Get("trigger.schedule_id")
+	triggerTime, _ := meta.Get("trigger.trigger_time")
+	if scheduleID == "" || triggerTime == "" {
+		return nil
+	}
+	ruleName, _ := meta.Get("trigger.rule_name")
+	agentID, _ := meta.Get("trigger.agent_id")
+	return map[string]any{
+		"schedule_id":       scheduleID,
+		"rule_name":         ruleName,
+		"declared_agent_id": agentID,
+		"trigger_time":      triggerTime,
+	}
+}
+
 // buildXsfmControlCommand 는 입력 메시지에서 에이전트 제어 명령 JSON 을 구성한다.
 //
 // 대상 선정(개별/그룹): device_id(개별) 와 group_id(그룹 일괄) 셀렉터를 최상위 필드로
@@ -954,6 +979,15 @@ func buildXsfmControlCommand(msg message.Message, deviceID, nodeID string) ([]by
 	}
 	if nodeID != "" {
 		cmd["node_id"] = nodeID
+	}
+
+	// 스케줄 상관(SPEC-SCHEDULE-VIEW-001 M2): 이 제어가 예약(스케줄) 발화에서 유입된 경우,
+	// trigger.* 메타(schedule_id/rule_name/agent_id/trigger_time)를 _correlation 블록으로 실어
+	// 보낸다. 에이전트가 이를 읽어 스케줄 로그 result 이벤트를 fire 이벤트와 조인한다. 수동 제어
+	// (trigger 상관 메타 없음)는 이 블록을 붙이지 않아 스케줄 로그를 남기지 않는다(AC-6 무회귀).
+	// schedule_id + trigger_time 이 모두 있을 때만 실으며, 없으면 블록을 전면 생략한다.
+	if corr := xsfmExtractScheduleCorrelation(msg); corr != nil {
+		cmd["_correlation"] = corr
 	}
 
 	// params: 명시적 payload "params" 우선, 없으면 제어 키에서 수집.

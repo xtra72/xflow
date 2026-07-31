@@ -35,6 +35,7 @@ import (
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/internal/remote"
+	"github.com/xtra/xflow/internal/schedulelog"
 	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/internal/updater"
@@ -924,6 +925,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	var (
 		remoteServer            *remote.Server
 		remoteAdminHandler      *handler.RemoteAdminHandler
+		scheduleLogHandler      *handler.ScheduleLogHandler
+		scheduleLogRepo         storage.ScheduleLogRepository
 		remoteEnrollmentHandler *handler.RemoteEnrollmentHandler
 		remoteEditHandler       *handler.RemoteEditHandler
 		remoteQueryHandler      *handler.RemoteQueryHandler
@@ -967,6 +970,20 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 설비 제어 감사 저장소 배선(REQ-XSFM-001-F05): xsfm 패키지의
 		// 감사 저장소 슬롯에 원격 감사 저장소를 주입한다. 미주입 시 감사는 no-op.
 		xsfm.SetAuditRepository(remoteAuditRepo)
+
+		// 스케줄(예약) 실행 로그 저장소 배선(SPEC-SCHEDULE-VIEW-001 M2): 공유 SQLite DB 에
+		// schedule_log 테이블을 멱등 추가한다. fire 이벤트(trigger 발화)와 result 이벤트(xsfm
+		// 제어 실행)를 각각 별도 경로로 기록하므로, 두 슬롯을 모두 주입한다 — node 측 발화 관측자
+		// (fire)와 xsfm 측 저장소(result). 초기화 실패는 audit 배선과 동일하게 best-effort 로 로깅만
+		// 하고 계속하며(미설정 시 양측 no-op), 제어/발화 경로를 죽이지 않는다.
+		if slRepo, slErr := storage.NewScheduleLogRepository(context.Background(), "sqlite", storageCfg.SQLitePath); slErr != nil {
+			logger.Error("스케줄 로그 저장소 초기화 실패 — 스케줄 로그 비활성(제어/발화는 정상)", "error", slErr)
+		} else {
+			defer slRepo.Close()
+			scheduleLogRepo = slRepo                                                  // 읽기 측(GET /schedules/logs) 재사용을 위한 공유 인스턴스 캡처(M3)
+			xsfm.SetScheduleLogRepository(slRepo)                                     // result 이벤트(제어 실행 측)
+			node.SetScheduleFireObserver(schedulelog.NewFireObserver(slRepo, logger)) // fire 이벤트(발화 측 어댑터)
+		}
 
 		// enrollment 토큰 저장소(v1.1 그룹 H) — 동일 SQLite DB 에 enrollment_tokens
 		// 테이블을 멱등 추가. 토큰은 SHA-256 해시로만 저장된다(REQ-H06).
@@ -1051,6 +1068,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			WithAudit(remoteAuditRepo).
 			WithSettings(settingsRepo)
 
+		// 스케줄(예약) 실행 로그 조회 API(SPEC-SCHEDULE-VIEW-001 M3, RD-5). remote_admin 의
+		// Audit 핸들러를 미러링하되 admin 게이팅 없이 인증된 전체 사용자에게 서비스한다(AC-17).
+		// M2 에서 fire(node)/result(xsfm) 기록에 주입한 것과 동일한 저장소 인스턴스를 읽기 측으로
+		// 재사용한다. 저장소 미구성(nil)이어도 핸들러는 등록하며 빈 목록을 반환한다(AC-5, audit 준용).
+		scheduleLogHandler = handler.NewScheduleLogHandler(scheduleLogRepo)
+
 		// 수동 enrollment 관리자 API(v1.1 그룹 H): 사전 등록 노드 생성/삭제 + enrollment
 		// 토큰 발급/목록/폐기. *remote.Server 가 PreRegistrationService 를 만족한다.
 		remoteEnrollmentHandler = handler.NewRemoteEnrollmentHandler(
@@ -1105,6 +1128,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if remoteAdminHandler != nil {
 		server.RegisterRoutes(func(g *api.RouteGroup) {
 			remoteAdminHandler.RegisterRoutes(g)
+		})
+	}
+
+	// 9.5c'. 스케줄 로그 조회 API 등록(SPEC-SCHEDULE-VIEW-001 M3, RD-5). server 모드에서만
+	// 등록한다. remote_admin 과 동일 /api/v1 인증 그룹에 추가하되 admin 게이팅은 없다(AC-17).
+	if scheduleLogHandler != nil {
+		server.RegisterRoutes(func(g *api.RouteGroup) {
+			scheduleLogHandler.RegisterRoutes(g)
 		})
 	}
 

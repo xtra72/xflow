@@ -113,10 +113,22 @@ func buildControlPlan(command string, params map[string]any) ([]controlStep, err
 // handleSelectorControl 이 나머지 체인(device_name → station → line → group_id → group_name)을
 // 결정론적으로 해석한다.
 func (a *XSFMAgent) dispatchControl(req processRequest) ([]byte, error) {
+	var resp []byte
+	var err error
 	if req.DeviceID != "" {
-		return a.handleIndividualControl(req)
+		resp, err = a.handleIndividualControl(req)
+	} else {
+		resp, err = a.handleSelectorControl(req)
 	}
-	return a.handleSelectorControl(req)
+
+	// 스케줄 로그 result 이벤트(SPEC-SCHEDULE-VIEW-001 M2): 예약 발화 상관이 있을 때만, 제어
+	// 명령 처리의 최상위에서 실행 완료 후 집계 결과를 알 때 1회 기록한다(RD-7 fan-out 1레코드).
+	// 수동 제어(상관 없음)는 미기록(AC-6). recordControlAudit/recordGroupAudit 는 그대로 유지되며
+	// 스케줄 로그는 가산적이다. best-effort — 기록은 제어 결과에 영향을 주지 않는다(AC-14).
+	if req.Correlation != nil {
+		a.recordScheduleLog(req, resp, err)
+	}
+	return resp, err
 }
 
 // handleIndividualControl 은 req.DeviceID 로 지정된 단일 디바이스 개별 제어를 명령 종류별
