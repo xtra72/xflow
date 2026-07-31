@@ -43,6 +43,17 @@ func (f *fakeScheduleLogRepo) List(_ context.Context, _ storage.ScheduleLogFilte
 	return f.records(), nil
 }
 
+func (f *fakeScheduleLogRepo) Count(_ context.Context, _ storage.ScheduleLogFilter) (int, error) {
+	return len(f.records()), nil
+}
+
+func (f *fakeScheduleLogRepo) Clear(_ context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appended = nil
+	return nil
+}
+
 func (f *fakeScheduleLogRepo) Close() error { return nil }
 
 func (f *fakeScheduleLogRepo) records() []storage.ScheduleLogRecord {

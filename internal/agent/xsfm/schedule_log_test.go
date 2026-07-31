@@ -44,6 +44,17 @@ func (m *mockScheduleLogRepo) List(_ context.Context, _ storage.ScheduleLogFilte
 	return m.records(), nil
 }
 
+func (m *mockScheduleLogRepo) Count(_ context.Context, _ storage.ScheduleLogFilter) (int, error) {
+	return len(m.records()), nil
+}
+
+func (m *mockScheduleLogRepo) Clear(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.appended = nil
+	return nil
+}
+
 func (m *mockScheduleLogRepo) Close() error { return nil }
 
 func (m *mockScheduleLogRepo) records() []storage.ScheduleLogRecord {

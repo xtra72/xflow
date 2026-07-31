@@ -52,20 +52,26 @@ func NewScheduleLogHandler(repo storage.ScheduleLogRepository) *ScheduleLogHandl
 	return &ScheduleLogHandler{logs: repo}
 }
 
-// RegisterRoutes 는 스케줄 로그 조회 라우트를 그룹에 등록한다. remote_admin 과 동일한
-// 인증 그룹에 등록하되 requireAdmin 을 호출하지 않으므로 인증된 전체 사용자가 접근한다(AC-17).
+// RegisterRoutes 는 스케줄 로그 조회/초기화 라우트를 그룹에 등록한다. remote_admin 과
+// 동일한 인증 그룹에 등록하되 requireAdmin 을 호출하지 않으므로 인증된 전체 사용자가
+// 접근한다(RD-5, AC-17). DELETE 도 동일하게 admin 게이팅 없이 전체 사용자에게 열린다.
 func (h *ScheduleLogHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GET("/schedules/logs", h.Logs)
+	g.DELETE("/schedules/logs", h.Clear)
 }
 
 // Logs 는 스케줄 실행 로그를 최신순으로 반환한다. GET /schedules/logs
 //
 // admin 게이팅 없음 — 인증된 전체 사용자 접근(RD-5, AC-17). 선택적 필터
 // ?schedule_id=/?rule_name=/?agent_id=(선언 또는 실행 에이전트 매칭 — RD-6) + ?limit=/
-// ?offset= 페이지네이션(기본 limit=100). 저장소 미구성(nil)이면 빈 목록을 반환한다(AC-5).
+// ?offset= 페이지네이션(기본 limit=100). 응답 형태는 {items, total} — total 은 필터에
+// 매칭되는 전체 개수(페이지네이션 무관). 저장소 미구성(nil)이면 {items:[], total:0}(AC-5).
 func (h *ScheduleLogHandler) Logs(ctx api.Context) error {
 	if h.logs == nil {
-		return ctx.JSON(http.StatusOK, dto.NewSuccessResponse([]ScheduleLogResponse{}))
+		return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+			"items": []ScheduleLogResponse{},
+			"total": 0,
+		}))
 	}
 	filter := storage.ScheduleLogFilter{
 		ScheduleID: ctx.Query("schedule_id"),
@@ -79,7 +85,29 @@ func (h *ScheduleLogHandler) Logs(ctx api.Context) error {
 	if err != nil {
 		return api.ErrInternalServer.WithMessage(err.Error())
 	}
-	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toScheduleLogDTOs(records)))
+	total, err := h.logs.Count(ctx.Context(), filter)
+	if err != nil {
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
+		"items": toScheduleLogDTOs(records),
+		"total": total,
+	}))
+}
+
+// Clear 는 저장된 모든 스케줄 로그를 삭제한다(수동 전체 초기화). DELETE /schedules/logs
+//
+// admin 게이팅 없음 — 인증된 전체 사용자 접근(RD-5, GET 과 동일). 저장소 미구성(nil)이면
+// no-op 성공(AC-5 준용). 성공 시 200 + {cleared:true}(remote_admin mutation 핸들러 스타일
+// 미러). Clear 오류는 500(ErrInternalServer).
+func (h *ScheduleLogHandler) Clear(ctx api.Context) error {
+	if h.logs == nil {
+		return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{"cleared": true}))
+	}
+	if err := h.logs.Clear(ctx.Context()); err != nil {
+		return api.ErrInternalServer.WithMessage(err.Error())
+	}
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{"cleared": true}))
 }
 
 // emptyTargets 는 대상별 상세가 없을 때(빈 값/유효하지 않은 JSON) 반환하는 빈 JSON

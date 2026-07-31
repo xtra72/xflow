@@ -68,6 +68,34 @@ func (m *memScheduleLog) List(_ context.Context, f storage.ScheduleLogFilter, li
 	return filtered, nil
 }
 
+// Count 는 필터에 매칭되는 전체 레코드 수를 반환한다(List 와 동일 필터 의미, 페이지네이션 무관).
+func (m *memScheduleLog) Count(_ context.Context, f storage.ScheduleLogFilter) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.records {
+		if f.ScheduleID != "" && r.ScheduleID != f.ScheduleID {
+			continue
+		}
+		if f.RuleName != "" && r.RuleName != f.RuleName {
+			continue
+		}
+		if f.AgentID != "" && r.DeclaredAgentID != f.AgentID && r.ActorAgentID != f.AgentID {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+// Clear 는 저장된 모든 레코드를 삭제한다(전체 초기화).
+func (m *memScheduleLog) Clear(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.records = nil
+	return nil
+}
+
 func (m *memScheduleLog) Close() error { return nil }
 
 // seedScheduleLogs 는 테스트 레코드를 저장소에 추가한다.
@@ -95,15 +123,25 @@ func scheduleLogRequest(t *testing.T, repo storage.ScheduleLogRepository) func(t
 	}
 }
 
-// decodeScheduleLogs 는 200 응답 본문을 ScheduleLogResponse 슬라이스로 디코드한다.
-func decodeScheduleLogs(t *testing.T, rec *httptest.ResponseRecorder) []ScheduleLogResponse {
+// decodeScheduleLogsPage 는 200 응답 본문을 {items, total} 페이지 형태로 디코드한다.
+func decodeScheduleLogsPage(t *testing.T, rec *httptest.ResponseRecorder) (items []ScheduleLogResponse, total int) {
 	t.Helper()
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {
-		Data []ScheduleLogResponse `json:"data"`
+		Data struct {
+			Items []ScheduleLogResponse `json:"items"`
+			Total int                   `json:"total"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	return resp.Data
+	return resp.Data.Items, resp.Data.Total
+}
+
+// decodeScheduleLogs 는 200 응답의 items 슬라이스만 반환한다(total 을 확인하지 않는 테스트 편의).
+func decodeScheduleLogs(t *testing.T, rec *httptest.ResponseRecorder) []ScheduleLogResponse {
+	t.Helper()
+	items, _ := decodeScheduleLogsPage(t, rec)
+	return items
 }
 
 // TestScheduleLogs_FilterByScheduleID 는 schedule_id 필터가 매칭 레코드만 최신순으로
@@ -235,4 +273,91 @@ func TestScheduleLogs_TargetsSerialization(t *testing.T) {
 	assert.JSONEq(t, `[{"target":"g1","result":"ok","reason":"3/3"}]`, string(got[0].Targets))
 	// 빈 값 → 빈 배열(유효 JSON 보장).
 	assert.Equal(t, "[]", string(got[1].Targets))
+}
+
+// scheduleLogDelete 는 주어진 role 로 인증된 DELETE 요청을 실행하는 헬퍼를 만든다.
+func scheduleLogDelete(t *testing.T, repo storage.ScheduleLogRepository) func(role string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := NewScheduleLogHandler(repo)
+	return func(role string) *httptest.ResponseRecorder {
+		router := api.NewRouter()
+		h.RegisterRoutes(router.Group("/api/v1"))
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/schedules/logs", nil)
+		ctx := context.WithValue(req.Context(), api.ContextKeyUserRole(), role)
+		ctx = context.WithValue(ctx, api.ContextKeyUserID(), "tester")
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+		router.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+}
+
+// TestScheduleLogs_TotalReflectsFilterNotPagination 은 total 이 페이지네이션과 무관하게
+// 필터 매칭 전체 개수를 반영하는지 검증한다(items 는 limit 만큼만).
+func TestScheduleLogs_TotalReflectsFilterNotPagination(t *testing.T) {
+	repo := &memScheduleLog{}
+	seedScheduleLogs(repo,
+		storage.ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: 10},
+		storage.ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: 20},
+		storage.ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: 30},
+		storage.ScheduleLogRecord{ScheduleID: "s2", RecordKind: "result", Timestamp: 40},
+	)
+	do := scheduleLogRequest(t, repo)
+
+	// schedule_id=s1 필터: 전체 3건 중 limit 2 만 반환하되 total 은 3.
+	items, total := decodeScheduleLogsPage(t, do("/api/v1/schedules/logs?schedule_id=s1&limit=2", "admin"))
+	require.Len(t, items, 2)
+	assert.Equal(t, 3, total, "total 은 필터 매칭 전체 개수(페이지네이션 무관)")
+	// 최신순 확인.
+	assert.Equal(t, int64(30), items[0].Timestamp)
+	assert.Equal(t, int64(20), items[1].Timestamp)
+}
+
+// TestScheduleLogs_NilRepoShape 는 저장소 미구성(nil) 시 {items:[], total:0} 형태를 반환하는지
+// 검증한다(AC-5 — 에러 아님).
+func TestScheduleLogs_NilRepoShape(t *testing.T) {
+	do := scheduleLogRequest(t, nil)
+	items, total := decodeScheduleLogsPage(t, do("/api/v1/schedules/logs", "admin"))
+	assert.Empty(t, items)
+	assert.Equal(t, 0, total)
+}
+
+// TestScheduleLogs_Clear 는 DELETE 가 전체 로그를 초기화하고 이후 GET 이 빈 목록 + total 0 을
+// 반환하는지 검증한다. admin 게이팅 없이 비-admin 도 초기화할 수 있다(RD-5).
+func TestScheduleLogs_Clear(t *testing.T) {
+	repo := &memScheduleLog{}
+	seedScheduleLogs(repo,
+		storage.ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: 100},
+		storage.ScheduleLogRecord{ScheduleID: "s2", RecordKind: "result", Timestamp: 200},
+	)
+	get := scheduleLogRequest(t, repo)
+	del := scheduleLogDelete(t, repo)
+
+	// 초기 상태: 2건.
+	_, total := decodeScheduleLogsPage(t, get("/api/v1/schedules/logs", "admin"))
+	require.Equal(t, 2, total)
+
+	// DELETE(비-admin viewer) → 200 + cleared:true.
+	rec := del("viewer")
+	require.Equal(t, http.StatusOK, rec.Code, "비-admin 도 초기화 가능(RD-5)")
+	var clearResp struct {
+		Data struct {
+			Cleared bool `json:"cleared"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &clearResp))
+	assert.True(t, clearResp.Data.Cleared)
+
+	// 초기화 후: 빈 목록 + total 0.
+	items, total := decodeScheduleLogsPage(t, get("/api/v1/schedules/logs", "admin"))
+	assert.Empty(t, items)
+	assert.Equal(t, 0, total)
+}
+
+// TestScheduleLogs_ClearNilRepo 는 저장소 미구성(nil) 시 DELETE 가 no-op 성공(200 + cleared)을
+// 반환하는지 검증한다(AC-5 준용).
+func TestScheduleLogs_ClearNilRepo(t *testing.T) {
+	del := scheduleLogDelete(t, nil)
+	rec := del("admin")
+	require.Equal(t, http.StatusOK, rec.Code)
 }

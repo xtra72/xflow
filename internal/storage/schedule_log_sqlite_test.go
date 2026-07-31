@@ -306,3 +306,51 @@ func TestScheduleLog_EmptyResult(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, recs)
 }
+
+// TestScheduleLog_Count 는 Count 가 List 와 동일한 필터 의미(AgentID 는 declared 또는 actor
+// 매칭)로 전체 개수를 반환하는지 검증한다(페이지네이션 무관).
+func TestScheduleLog_Count(t *testing.T) {
+	t.Parallel()
+	repo := newTestScheduleLogRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Append(ctx, fireRecord("s1", "r", "hvac-a", 10)))
+	require.NoError(t, repo.Append(ctx, fireRecord("s1", "r", "hvac-a", 20)))
+	require.NoError(t, repo.Append(ctx, fireRecord("s2", "r", "hvac-b", 30)))
+
+	all, err := repo.Count(ctx, ScheduleLogFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, 3, all)
+
+	byID, err := repo.Count(ctx, ScheduleLogFilter{ScheduleID: "s1"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, byID, "필터 매칭 전체(페이지네이션 무관)")
+
+	byAgent, err := repo.Count(ctx, ScheduleLogFilter{AgentID: "hvac-a"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, byAgent, "declared 또는 actor 매칭(RD-6)")
+}
+
+// TestScheduleLog_Clear 는 Clear 가 전체 레코드를 삭제하고 테이블은 유지(이후 Append/List
+// 정상)하는지 검증한다.
+func TestScheduleLog_Clear(t *testing.T) {
+	t.Parallel()
+	repo := newTestScheduleLogRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Append(ctx, fireRecord("s1", "r", "hvac-a", 10)))
+	require.NoError(t, repo.Append(ctx, fireRecord("s2", "r", "hvac-b", 20)))
+
+	require.NoError(t, repo.Clear(ctx))
+
+	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0)
+	require.NoError(t, err)
+	assert.Empty(t, recs)
+	n, err := repo.Count(ctx, ScheduleLogFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+
+	// 테이블 유지 확인: Clear 후에도 Append 가 정상 동작한다.
+	require.NoError(t, repo.Append(ctx, fireRecord("s3", "r", "hvac-c", 30)))
+	after, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+}

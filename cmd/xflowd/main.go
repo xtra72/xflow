@@ -847,6 +847,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 이 인스턴스의 client 모드 설정을 조회/편집하며, config 오버라이드 레이어에 영속화한다.
 	remoteConfigHandler := handler.NewRemoteConfigHandler(cfg, obs.Loggers.NewLogger("api.handler.remote_config").Logger())
 
+	// 스케줄 로그 저장소 백엔드 타입 설정 핸들러 (설정 UI 용, admin 전용).
+	// storage.schedule_log.type 을 config 오버라이드 레이어에 영속화한다(재시작 후 적용).
+	scheduleLogConfigHandler := handler.NewScheduleLogConfigHandler(cfg, obs.Loggers.NewLogger("api.handler.schedule_log_config").Logger())
+
 	// 9.4. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
 	// Dashboard API 핸들러 등록 — 공유/개인 snapshot 영속화.
 	// authDashboardDB 는 7.2 에서 열린 공유 *sql.DB (credentials 와 공유).
@@ -896,6 +900,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// SPEC-REMOTE-001: 원격 관리 클라이언트 설정 라우트 (admin 전용).
 		remoteConfigHandler.RegisterRoutes(g)
+
+		// 스케줄 로그 저장소 백엔드 타입 설정 라우트 (admin 전용).
+		scheduleLogConfigHandler.RegisterRoutes(g)
 
 		// SPEC-DASHBOARD-001 v0.2.0 M-8: 대시보드 라우트 (shared / mine).
 		dashboardHandler.RegisterRoutes(g)
@@ -976,7 +983,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// 제어 실행)를 각각 별도 경로로 기록하므로, 두 슬롯을 모두 주입한다 — node 측 발화 관측자
 		// (fire)와 xsfm 측 저장소(result). 초기화 실패는 audit 배선과 동일하게 best-effort 로 로깅만
 		// 하고 계속하며(미설정 시 양측 no-op), 제어/발화 경로를 죽이지 않는다.
-		if slRepo, slErr := storage.NewScheduleLogRepository(context.Background(), "sqlite", storageCfg.SQLitePath); slErr != nil {
+		// 백엔드는 시작 설정(storage.schedule_log.type)으로 선택한다. 미설정 시 "sqlite"
+		// 기본값(defaults.go)으로 기존 동작이 유지된다. memory/jsonl 은 path 를 팩토리가
+		// 유도/무시한다(sqlitePath 는 sqlite 경로 및 jsonl 형제 경로 산출에 재사용).
+		scheduleLogStorageType := storageCfg.ScheduleLogType
+		if scheduleLogStorageType == "" {
+			scheduleLogStorageType = "sqlite"
+		}
+		if slRepo, slErr := storage.NewScheduleLogRepository(context.Background(), scheduleLogStorageType, storageCfg.SQLitePath); slErr != nil {
 			logger.Error("스케줄 로그 저장소 초기화 실패 — 스케줄 로그 비활성(제어/발화는 정상)", "error", slErr)
 		} else {
 			defer slRepo.Close()

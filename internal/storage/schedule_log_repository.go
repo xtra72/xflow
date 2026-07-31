@@ -10,6 +10,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"path/filepath"
 )
 
 // 스케줄 로그 레코드 종류 상수.
@@ -77,17 +78,43 @@ type ScheduleLogRepository interface {
 	// List 는 로그 레코드를 최신순(timestamp 내림차순)으로 반환한다. 필터 조건에
 	// 따라 스케줄/규칙/에이전트로 좁힌다. limit/offset 으로 페이지네이션한다.
 	List(ctx context.Context, f ScheduleLogFilter, limit, offset int) ([]ScheduleLogRecord, error)
+	// Count 는 필터에 매칭되는 전체 레코드 수를 반환한다(페이지네이션 total 용).
+	// List 와 동일한 필터 의미(AgentID 는 declared 또는 actor 매칭)를 사용하되
+	// limit/offset 은 적용하지 않는다.
+	Count(ctx context.Context, f ScheduleLogFilter) (int, error)
+	// Clear 는 저장된 모든 스케줄 로그를 삭제한다(수동 전체 초기화). append-only 예외 —
+	// 개별 삭제는 여전히 없고, 전량 초기화만 허용한다.
+	Clear(ctx context.Context) error
 	// Close 는 저장소 리소스를 정리한다.
 	Close() error
 }
 
 // NewScheduleLogRepository 는 storage type 에 따라 ScheduleLogRepository 구현을
-// 생성한다. M1 은 sqlite 만 지원한다(서버 측 스케줄 로그 저장소).
+// 생성한다(스케줄 로그 저장소 백엔드 선택 — 시작 설정으로 결정).
+//
+// 디스패치:
+//   - "sqlite"/"database"/"db"/"" → SQLite(영속, 기본)
+//   - "memory"/"mem"              → 인메모리(비영속, 재시작 시 소실) — path 무시
+//   - "file"/"jsonl"              → JSON-Lines 파일(append-only) — path 에서 .jsonl 유도
 func NewScheduleLogRepository(ctx context.Context, storageType, sqlitePath string) (ScheduleLogRepository, error) {
 	switch storageType {
-	case "sqlite", "file":
+	case "memory", "mem":
+		return NewScheduleLogMemoryRepository(), nil
+	case "file", "jsonl":
+		return NewScheduleLogJSONLRepository(scheduleLogJSONLPath(sqlitePath))
+	case "sqlite", "database", "db", "":
 		return NewScheduleLogSQLiteRepository(ctx, sqlitePath)
 	default:
 		return NewScheduleLogSQLiteRepository(ctx, sqlitePath)
 	}
+}
+
+// scheduleLogJSONLPath 는 sqlite DB 경로에서 형제(sibling) JSONL 파일 경로를 유도한다.
+// 예: "./data/xflow.db" → "./data/schedule_log.jsonl". 빈 경로면 현재 디렉터리 기준.
+func scheduleLogJSONLPath(sqlitePath string) string {
+	dir := filepath.Dir(sqlitePath)
+	if sqlitePath == "" {
+		dir = "."
+	}
+	return filepath.Join(dir, "schedule_log.jsonl")
 }

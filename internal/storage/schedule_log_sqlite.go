@@ -106,22 +106,10 @@ func (r *ScheduleLogSQLiteRepository) Append(ctx context.Context, rec ScheduleLo
 	return nil
 }
 
-// List 는 로그 레코드를 최신순(timestamp 내림차순, 동률은 id 내림차순)으로 반환한다.
-// 필터 조건에 따라 WHERE 절을 동적으로 구성한다. AgentID 필터는 DeclaredAgentID 또는
-// ActorAgentID 중 하나라도 일치하면 매칭한다(RD-6). limit<=0 이면 100 으로 보정한다.
-func (r *ScheduleLogSQLiteRepository) List(ctx context.Context, f ScheduleLogFilter, limit, offset int) ([]ScheduleLogRecord, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	// 필터 조건을 동적으로 결합한다(빈 값은 무시).
-	var (
-		where string
-		args  []any
-	)
+// scheduleLogWhere 는 필터 조건을 SQL WHERE 절과 인자 슬라이스로 구성한다(빈 값은
+// 무시). AgentID 필터는 DeclaredAgentID 또는 ActorAgentID 중 하나라도 일치하면
+// 매칭한다(RD-6). List/Count 가 동일 WHERE 의미를 공유하도록 여기에 단일화한다.
+func scheduleLogWhere(f ScheduleLogFilter) (where string, args []any) {
 	appendCond := func(cond string, values ...any) {
 		if where == "" {
 			where = " WHERE " + cond
@@ -140,6 +128,21 @@ func (r *ScheduleLogSQLiteRepository) List(ctx context.Context, f ScheduleLogFil
 		// 선언된 대상 또는 실제 실행자 중 하나라도 일치하면 매칭(RD-6).
 		appendCond("(declared_agent_id = ? OR actor_agent_id = ?)", f.AgentID, f.AgentID)
 	}
+	return where, args
+}
+
+// List 는 로그 레코드를 최신순(timestamp 내림차순, 동률은 id 내림차순)으로 반환한다.
+// 필터 조건에 따라 WHERE 절을 동적으로 구성한다. AgentID 필터는 DeclaredAgentID 또는
+// ActorAgentID 중 하나라도 일치하면 매칭한다(RD-6). limit<=0 이면 100 으로 보정한다.
+func (r *ScheduleLogSQLiteRepository) List(ctx context.Context, f ScheduleLogFilter, limit, offset int) ([]ScheduleLogRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	where, args := scheduleLogWhere(f)
 
 	const cols = `id, correlation_id, record_kind, schedule_id, rule_name, declared_agent_id,
 		actor_agent_id, trigger_time, target, action, result, targets, reason, timestamp`
@@ -167,6 +170,27 @@ func (r *ScheduleLogSQLiteRepository) List(ctx context.Context, f ScheduleLogFil
 		return nil, fmt.Errorf("iterate schedule log rows: %w", err)
 	}
 	return out, nil
+}
+
+// Count 는 필터에 매칭되는 전체 레코드 수를 반환한다(페이지네이션 total 용). List 와
+// 동일한 WHERE 절(AgentID 는 declared 또는 actor 매칭 — RD-6)을 사용하되 limit/offset 은
+// 적용하지 않는다.
+func (r *ScheduleLogSQLiteRepository) Count(ctx context.Context, f ScheduleLogFilter) (int, error) {
+	where, args := scheduleLogWhere(f)
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schedule_log`+where, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count schedule log: %w", err)
+	}
+	return n, nil
+}
+
+// Clear 는 저장된 모든 스케줄 로그를 삭제한다(수동 전체 초기화). append-only 예외 —
+// 개별 삭제 SQL 은 여전히 없고, 전량 DELETE 만 허용한다. 테이블은 유지한다.
+func (r *ScheduleLogSQLiteRepository) Clear(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM schedule_log`); err != nil {
+		return fmt.Errorf("clear schedule log: %w", err)
+	}
+	return nil
 }
 
 // Close 는 데이터베이스 연결을 닫는다.
