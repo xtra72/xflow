@@ -171,14 +171,31 @@ describe('§D 카탈로그 + inline 주입', () => {
     expect(state.onConfigChangeCalls).toContainEqual({ payloadCatalog: {} });
   });
 
-  it('D-1: 카탈로그 payload 편집(JSON) 시 payloadCatalog 가 갱신된다', () => {
+  it('D-1: payload 작성 후 저장 버튼을 눌러야 payloadCatalog 가 갱신된다(명시적 저장)', () => {
     setRunning();
     setNode({ schedules: [] });
     renderPanel({ flowId: FLOW, nodeId: NODE, payloadCatalog: { warn: { level: 3 } } });
 
     const ta = screen.getByTestId('catalog-edit-warn');
-    fireEvent.blur(ta, { target: { value: '{"level":9}' } });
+    fireEvent.change(ta, { target: { value: '{"level":9}' } });
+    // 작성(변경)만으로는 커밋되지 않는다 — 저장 버튼이 있어야 커밋.
+    expect(state.onConfigChangeCalls).not.toContainEqual({ payloadCatalog: { warn: { level: 9 } } });
+
+    fireEvent.click(screen.getByTestId('catalog-save-warn'));
     expect(state.onConfigChangeCalls).toContainEqual({ payloadCatalog: { warn: { level: 9 } } });
+  });
+
+  it('D-1: 유효하지 않은 JSON 저장 시 인라인 에러를 표시하고 커밋하지 않는다', () => {
+    setRunning();
+    setNode({ schedules: [] });
+    renderPanel({ flowId: FLOW, nodeId: NODE, payloadCatalog: { warn: { level: 3 } } });
+
+    const ta = screen.getByTestId('catalog-edit-warn');
+    fireEvent.change(ta, { target: { value: '{ not valid json' } });
+    fireEvent.click(screen.getByTestId('catalog-save-warn'));
+
+    expect(screen.getByTestId('catalog-error-warn')).toBeInTheDocument();
+    expect(state.onConfigChangeCalls).toHaveLength(0);
   });
 
   it('D-2: 스케줄에 카탈로그를 주입하면 저장 시 그 스케줄 payload 로 인라인 전송된다', async () => {

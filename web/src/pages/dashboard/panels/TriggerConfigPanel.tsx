@@ -10,7 +10,7 @@
 // 통지하며 stopped 배지를 노출한다(RD-10). 동시 편집은 last-write-wins + 통지(RD-8).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlarmClock, CirclePlay, CircleStop, Plus, Save, Trash2 } from 'lucide-react';
+import { AlarmClock, Check, CirclePlay, CircleStop, Plus, Save, Trash2 } from 'lucide-react';
 
 import { TriggerScheduleEditor } from '@/components/property/TriggerScheduleEditor';
 import { useFlowNodes } from '@/hooks/useFlow';
@@ -105,6 +105,12 @@ export default function TriggerConfigPanel({
   // ---- 카탈로그 CRUD (패널 config, RD-9) ----
 
   const [newCatalogName, setNewCatalogName] = useState('');
+  // 항목별 편집 draft / 인라인 에러 / 저장 표식 (명시적 저장 UX — onBlur 자동 커밋 제거).
+  const [catalogEdits, setCatalogEdits] = useState<Record<string, string>>({});
+  const [catalogErrors, setCatalogErrors] = useState<Record<string, string>>({});
+  const [catalogSaved, setCatalogSaved] = useState<Record<string, boolean>>({});
+  // 추가 직후 포커스할 항목 이름(작성-후-저장 흐름을 한 곳에서).
+  const [focusName, setFocusName] = useState<string | null>(null);
 
   const commitCatalog = useCallback(
     (next: PayloadCatalog) => {
@@ -113,11 +119,25 @@ export default function TriggerConfigPanel({
     [onConfigChange],
   );
 
+  /** 항목의 현재 편집 텍스트(draft 우선, 없으면 커밋값 직렬화). */
+  const catalogText = useCallback(
+    (name: string) => catalogEdits[name] ?? JSON.stringify(catalog[name] ?? {}, null, 2),
+    [catalogEdits, catalog],
+  );
+
+  /** 커밋값과 다른 미저장 편집이 있는지. */
+  const isCatalogDirty = useCallback(
+    (name: string) =>
+      name in catalogEdits && catalogEdits[name] !== JSON.stringify(catalog[name] ?? {}, null, 2),
+    [catalogEdits, catalog],
+  );
+
   const handleAddCatalog = useCallback(() => {
     const name = newCatalogName.trim();
     if (!name || name in catalog) return;
     commitCatalog({ ...catalog, [name]: {} });
     setNewCatalogName('');
+    setFocusName(name); // 추가 즉시 payload 편집기 + 저장 버튼이 노출되고 포커스된다.
   }, [newCatalogName, catalog, commitCatalog]);
 
   const handleRemoveCatalog = useCallback(
@@ -125,20 +145,67 @@ export default function TriggerConfigPanel({
       const next = { ...catalog };
       delete next[name];
       commitCatalog(next);
+      // 로컬 편집 상태 정리(고아 draft/에러/표식 방지).
+      setCatalogEdits((prev) => {
+        const n = { ...prev };
+        delete n[name];
+        return n;
+      });
+      setCatalogErrors((prev) => {
+        const n = { ...prev };
+        delete n[name];
+        return n;
+      });
+      setCatalogSaved((prev) => {
+        const n = { ...prev };
+        delete n[name];
+        return n;
+      });
     },
     [catalog, commitCatalog],
   );
 
-  const handleEditCatalog = useCallback(
-    (name: string, value: string) => {
+  /** 편집 중 draft 만 갱신하고 저장 전까지 커밋하지 않는다(명시적 저장). */
+  const handleCatalogInput = useCallback((name: string, value: string) => {
+    setCatalogEdits((prev) => ({ ...prev, [name]: value }));
+    setCatalogSaved((prev) => (prev[name] ? { ...prev, [name]: false } : prev));
+    setCatalogErrors((prev) => {
+      if (!(name in prev)) return prev;
+      const n = { ...prev };
+      delete n[name];
+      return n;
+    });
+  }, []);
+
+  /** payload JSON 을 검증 후 커밋한다. 유효하지 않으면 인라인 에러 표시(무통지 무시 제거). */
+  const handleSaveCatalog = useCallback(
+    (name: string) => {
+      const text = catalogEdits[name] ?? JSON.stringify(catalog[name] ?? {}, null, 2);
+      let parsed: unknown;
       try {
-        const parsed = JSON.parse(value) as Record<string, unknown>;
-        commitCatalog({ ...catalog, [name]: parsed });
+        parsed = JSON.parse(text);
       } catch {
-        // 유효하지 않은 JSON 은 커밋하지 않는다(입력 중 상태 보존).
+        setCatalogErrors((prev) => ({ ...prev, [name]: 'JSON 형식 오류 — 올바른 JSON 을 입력하세요.' }));
+        return;
       }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setCatalogErrors((prev) => ({ ...prev, [name]: 'JSON 형식 오류 — 객체({}) 형태의 payload 여야 합니다.' }));
+        return;
+      }
+      commitCatalog({ ...catalog, [name]: parsed as Record<string, unknown> });
+      setCatalogErrors((prev) => {
+        const n = { ...prev };
+        delete n[name];
+        return n;
+      });
+      setCatalogEdits((prev) => {
+        const n = { ...prev };
+        delete n[name];
+        return n;
+      });
+      setCatalogSaved((prev) => ({ ...prev, [name]: true }));
     },
-    [catalog, commitCatalog],
+    [catalogEdits, catalog, commitCatalog],
   );
 
   // ---- 스케줄별 카탈로그 스냅샷 주입 (RD-11) ----
@@ -275,29 +342,71 @@ export default function TriggerConfigPanel({
             {catalogNames.length === 0 && (
               <p className="text-[11px] text-(--color-text-muted)">정의된 카탈로그 페이로드가 없습니다.</p>
             )}
-            {catalogNames.map((name) => (
-              <div key={name} className="rounded border border-(--color-border-default) p-2" data-testid={`catalog-item-${name}`}>
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-medium text-(--color-text-primary)">{name}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveCatalog(name)}
-                    className="rounded p-0.5 text-gray-400 transition-colors hover:text-red-500"
-                    aria-label={`${name} 삭제`}
-                    data-testid={`catalog-remove-${name}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+            {catalogNames.map((name) => {
+              const err = catalogErrors[name];
+              const dirty = isCatalogDirty(name);
+              const saved = Boolean(catalogSaved[name]) && !dirty && !err;
+              return (
+                <div key={name} className="rounded border border-(--color-border-default) p-2" data-testid={`catalog-item-${name}`}>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-xs font-medium text-(--color-text-primary)">{name}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCatalog(name)}
+                      className="rounded p-0.5 text-gray-400 transition-colors hover:text-red-500"
+                      aria-label={`${name} 삭제`}
+                      data-testid={`catalog-remove-${name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <textarea
+                    ref={(el) => {
+                      if (el && focusName === name) {
+                        el.focus();
+                        setFocusName(null);
+                      }
+                    }}
+                    rows={3}
+                    value={catalogText(name)}
+                    onChange={(e) => handleCatalogInput(name, e.target.value)}
+                    data-testid={`catalog-edit-${name}`}
+                    className={cn(
+                      'w-full rounded border bg-(--color-bg-surface) px-2 py-1 font-mono text-xs text-(--color-text-primary) focus:outline-none',
+                      err
+                        ? 'border-red-400 focus:border-red-400'
+                        : 'border-(--color-border-default) focus:border-blue-400',
+                    )}
+                  />
+                  {err && (
+                    <p data-testid={`catalog-error-${name}`} className="mt-1 text-[11px] text-red-500">
+                      {err}
+                    </p>
+                  )}
+                  <div className="mt-1 flex items-center justify-end gap-2">
+                    {saved && (
+                      <span
+                        data-testid={`catalog-saved-${name}`}
+                        className="inline-flex items-center gap-0.5 text-[11px] text-green-600 dark:text-green-400"
+                      >
+                        <Check className="h-3 w-3" /> 저장됨
+                      </span>
+                    )}
+                    {dirty && !err && (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400">미저장 변경</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleSaveCatalog(name)}
+                      data-testid={`catalog-save-${name}`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-(--color-border-default) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) transition-colors hover:border-blue-400 hover:text-blue-600"
+                    >
+                      <Save className="h-3 w-3" /> 저장
+                    </button>
+                  </div>
                 </div>
-                <textarea
-                  rows={3}
-                  defaultValue={JSON.stringify(catalog[name] ?? {}, null, 2)}
-                  onBlur={(e) => handleEditCatalog(name, e.target.value)}
-                  data-testid={`catalog-edit-${name}`}
-                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 font-mono text-xs text-(--color-text-primary) focus:border-blue-400 focus:outline-none"
-                />
-              </div>
-            ))}
+              );
+            })}
             <div className="flex items-center gap-1">
               <input
                 type="text"
