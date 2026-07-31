@@ -1,10 +1,10 @@
 ---
 id: SPEC-SCHEDULE-VIEW-001
 title: "Schedule View — 에이전트별 스케줄 관리 + 스케줄 실행 로그"
-version: "0.2.0"
+version: "0.3.0"
 status: in-progress
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
 author: xtra
 priority: P2
 phase: "v0.1.0 target"
@@ -26,10 +26,13 @@ depends_on:
 | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-07-31 | 0.1.0 | 초기 SPEC 작성 — 설비 제어 예약 대시보드 패널(SPEC-TRIGGER-SCHED-001)을 **전용 풀페이지 VIEW** 로 확장. (1) **스케줄에 대상 에이전트 명시 저장**(RD-3, `config.schedules[].agent_id`), (2) **스케줄 실행 로그 전용 저장소 신설**(RD-1, append-only SQLite, `remote_audit_*` 패턴 미러) + **발화↔제어결과 상관** 기록(RD-2), (3) **로그 조회 API 신설**, (4) **전용 페이지 `/schedules` + 사이드바 nav**(RD-4) — 크로스-플로우 집계 에이전트별 그룹핑 + CRUD(dual-write hook 추출 재사용) + 로그 뷰, (5) 기존 설비 예약 **대시보드 패널은 불변 병존**. 열린 질문 §6 (OQ-1 ~ OQ-7) 사용자 확정 대기. |
 | 2026-07-31 | 0.2.0 | 열린 질문 OQ-1~7 **전부 사용자 확정 → RD-5~11 로 승격**, §6 Open Questions 소거(잔여 없음). (RD-5) `/schedules` 페이지 + 로그 조회 API 를 **전체 인증 사용자** 접근으로 확정(admin 전용 아님, AgentListPage 동급). (RD-6) 로그의 agent 권위 = **실제 실행 에이전트(auditActor/AgentRef)** + **선언 `agent_id`(RD-3) 병기** — 선언↔실제 불일치 가시화. (RD-7) 발화당 **집계 1건** + 대상별 ok/error **임베드**(N건 아님). (RD-8) **발화-only 도 기록** — 트리거 발화 시점에 fire 로그 이벤트를 (주입된 관측자 경유로) 기록하고, 제어 경로가 동일 상관 id(`schedule_id + trigger_time`)로 result 이벤트를 append 하여 조인. 제네릭 트리거 노드는 스케줄-로그 저장소에 비결합(주입 관측자). (RD-9) agent 필드는 **스케줄별**(`config.schedules[].agent_id`). (RD-10) 크로스-플로우 집계는 **프런트 `useQueries` 팬아웃**, v1 백엔드 집계 엔드포인트 없음(후속). (RD-11) v1 **무제한 append-only**, 보존/pruning 정책 후속. |
+| 2026-08-01 | 0.3.0 | **as-implemented sync** — M1~M7 구현 완료 후 확장/버그수정을 반영(M8~M13, §8). (A) M5/M6 버그수정 3건(§8.0): 규칙 모달의 xsfm 에이전트 경유 TARGET 열거, 스케줄 0개 트리거 노드 관리 뷰 숨김, 삭제-영속 정상 확인(크로스-서피스 에디터 staleness 로 판명). (B, M8) 로그 저장소 **3-백엔드 팩토리**(sqlite 기본/memory/JSONL) + `storage.schedule_log.type` config + 인터페이스 `Clear`/`Count` 추가 → **RD-11 수정**(개별 삭제는 여전히 부재, 수동 전체 초기화(Clear) 예외 허용). (C, M9) `GET /schedules/logs` 응답을 `{items,total}` 로 변경 + `DELETE /schedules/logs`(전체 인증) + `GET/PUT /system/schedule-log-config`(admin). (D, M10) 로그 탭 페이지네이션(25/50/100)·CSV 내보내기·전체 초기화. (E, M11) admin 전용 저장방식 Settings 카드. (F, M12) TARGET 선택을 **테이블**(이름/라인/역사/위치)로. (G, M13) 관리 탭을 **에이전트별 그룹 → 단일 플랫 테이블(에이전트 이름 컬럼)** 로 개편 → **RD-3/RD-7 수정** + 규칙 생성 모달 내부화 + 트리거→제어 하류 엣지 순회 **agent 자동 도출**(`deriveDownstreamAgents`) → **RD-3/RD-9 수정**. 3건 amendment 는 §9 에 기록(원 RD 텍스트 보존 + 승계 노트). |
 
 ---
 
 # SPEC-SCHEDULE-VIEW-001: Schedule View — 에이전트별 스케줄 관리 + 스케줄 실행 로그
+
+> **버전 노트 (0.3.0)** — as-implemented 동기화. M1~M7(0.2.0 설계) 구현이 완료·테스트·green 상태로 종료된 뒤 도입된 확장(M8~M13)과 M5/M6 버그수정을 문서화한다. §1~§7(M1~M7)은 **불변 보존**하고, §8(0.3.0 확장 as-implemented)과 §9(0.3.0 설계 수정 Amendments)를 가산했다. 3건의 설계 수정(**RD-11** 전체 초기화(Clear) 예외, **RD-3/RD-7** 에이전트별 그룹→플랫 테이블, **RD-3/RD-9** create 시 하류 엣지 순회 agent 자동 도출)은 §9 에 승계 노트로 기록하며, 원 RD 텍스트(§5)는 덮어쓰지 않는다. 본 SPEC 은 아직 sync-close 되지 않았다(status: in-progress).
 
 ## 1. Environment (환경)
 
@@ -243,14 +246,18 @@ SPEC-TRIGGER-SCHED-001 은 이 스케줄을 **대시보드 패널**(설비 제�
 - **RD-1 — 전용 로그 저장소 신설**: 스케줄 실행 로그는 `remote_audit` 를 오버로딩하지 않고 **신설 append-only SQLite 저장소** + 전용 조회 API 로 관리한다(`internal/storage/remote_audit_*` 패턴 미러). (REQ-02-01, REQ-03-01)
 - **RD-2 — 로그 내용 = 발화 + 제어결과 상관**: 로그는 트리거 발화(schedule_id/rule_name/agent/trigger_time)와 그에 상관된 제어 결과(대상별 ok/error)를 함께 기록한다. 상관은 `correlation_id`(`schedule_id`+`trigger_time`, RD-8)로 조인하며, 상관 메타를 통과 보유한 **xsfm 제어 경로가 결과와 함께 result 이벤트를 기록**한다(§4.2). 발화-only 는 RD-8 로 fire 이벤트로 기록된다. (REQ-02-04~06)
 - **RD-3 — 스케줄에 agent 명시 저장**: 대상 에이전트를 **스케줄 단위**로 명시 영속(`config.schedules[].agent_id`)한다. 대시보드 패널과 View 가 모두 이를 기록하며, 에이전트별 그룹핑의 1차 기준이자 로그 `declared_agent_id` 의 공급원이 된다. (REQ-01-01~05)
+  > **[0.3.0 수정 — §9 AM-0.3.0-2 / AM-0.3.0-3]** 명시 `agent_id`(→ `declared_agent_id`) 저장·로깅·표시는 유지. 단 (a) 관리 뷰의 **에이전트별 그룹핑**은 **단일 플랫 테이블 + 에이전트(이름) 컬럼**으로 대체(RD-7 항의 그룹핑도 함께 수정), (b) create 플로우에서 명시 필드를 **하류 엣지 순회 자동 도출**(`deriveDownstreamAgents`, 단일-노드)로 채우도록 보강(RD-9 항의 "엣지 순회 배제"를 create 범위에서 완화). 원 텍스트는 보존; 상세는 §9.
 - **RD-4 — 전용 페이지 + 패널 병존**: 신설 풀페이지 `/schedules`(에이전트별 CRUD + 로그 뷰) + 사이드바 nav 를 추가하고, 기존 설비 제어 예약 **대시보드 패널은 불변으로 병존**한다. (REQ-04-01~02, REQ-07-01)
 - **RD-5 — RBAC: 전체 인증 사용자**: `/schedules` View 페이지와 스케줄 로그 조회 API 는 **전체 인증 사용자** 에게 접근 가능하다(admin 전용 아님 — `AgentListPage` 와 동급). 이는 스케줄 관리가 운영 성격이기 때문이며, remote/audit 의 admin 게이트와는 **의도적으로 상이**하다. (REQ-03-05, REQ-04-01, OQ-5 확정)
 - **RD-6 — 로그 agent 권위 = 실제 실행 + 선언 병기**: 로그는 **실제 실행 에이전트**(auditActor / `XSFMNodeConfig.AgentRef`)를 `actor_agent_id` 권위 값으로 기록하고, 스케줄의 **선언 `agent_id`**(RD-9)를 `declared_agent_id` 로 병기한다. 두 필드를 모두 레코드에 두어 선언↔실제 불일치가 조회 시 가시화된다. (REQ-02-02, REQ-02-04c, OQ-2 확정)
 - **RD-7 — 로그 입도 = 집계 1건 + 대상별 임베드**: 하나의 발화(셀렉터 fan-out 포함)는 발화당 **집계 result 이벤트 1건** 으로 기록하며, 대상별 ok/error 를 그 레코드의 `targets` 에 **임베드**한다(recordGroupAudit 집계 패턴 미러). 대상별 N 건을 별도 레코드로 남기지 않는다. (REQ-02-04b, OQ-1 확정)
+  > **[0.3.0 수정 — §9 AM-0.3.0-2]** 로그 **입도(집계 1건 + 임베드)** 자체는 불변. 다만 이 RD 가 함께 규정하던 **관리 뷰의 "에이전트별 그룹" 표시**(AC-7)는 **단일 플랫 테이블**로 대체되었다. 상세는 §9.
 - **RD-8 — 발화-only 도 기록 + fire↔result 상관**: 하류 제어가 없는(트리거가 xsfm-control 에 미연결 또는 순수 트리거) 발화도 **fire-only 레코드**(result 없음)로 기록한다. 발화 시점에 **fire 이벤트** 를 기록하고, 제어 경로가 동일 `correlation_id`(`schedule_id`+`trigger_time`)로 **result 이벤트** 를 append 하여 조회 시 조인한다(제어 도달 발화 = fire+result, fire-only = fire). **비결합**: fire 이벤트는 제네릭 트리거 노드에 스케줄-로그 저장소를 하드코딩하지 않고 **주입된 `ScheduleFireObserver`**(패키지 싱글턴, 미주입 시 no-op)가 기록하며, 저장소 결합은 facility-schedule 측 관측자 구현에 둔다. 하류 컬렉터 노드 방식은 fire-only 를 놓치므로 채택하지 않는다(§4.2). (REQ-02-09~11, OQ-6 확정)
 - **RD-9 — agent 필드 배치 = 스케줄별**: agent 연관은 **스케줄별**(`config.schedules[].agent_id`)에 둔다(트리거-노드 레벨 단일 필드 아님). RD-3 와 정합. (REQ-01-01, OQ-3 확정)
+  > **[0.3.0 수정 — §9 AM-0.3.0-3]** 스케줄별 명시 `agent_id` 저장은 불변. 다만 이 RD 가 함께 규정하던 **"엣지 순회 배제"**(그룹핑을 엣지가 아닌 명시 필드로)는 **create 플로우에 한해 완화** — 트리거 노드 선택 시 하류 엣지를 제어 노드 `agent_ref` 까지 **단일-노드 순회**하여 명시 필드를 자동 도출(`deriveDownstreamAgents`)한다(취약성 우려는 대규모 크로스-플로우 그룹핑에 국한). 명시 `declared_agent_id` 필드는 저장/로깅/표시용으로 유지. 상세는 §9.
 - **RD-10 — 집계 = 프런트 팬아웃**: 크로스-플로우 스케줄 집계는 **프런트 `useQueries` 팬아웃**(flow 순회 → getFlowNodes/getFlow)으로 수행하며, **v1 백엔드 집계 엔드포인트를 두지 않는다**. 스케일이 커지면 백엔드 집계로 승급(후속 플래그). (REQ-04-03, REQ-04-07, OQ-4 확정)
 - **RD-11 — 보존 = 무제한 append-only**: v1 로그 저장소는 **무제한 append-only**(pruning 없음)이며, 보존 한도/정리 정책은 **후속 SPEC 으로 이연**한다. (REQ-02-12, OQ-7 확정)
+  > **[0.3.0 수정 — §9 AM-0.3.0-1]** 무제한 append-only 및 **개별 레코드 삭제 API 부재**는 유지. 다만 운영상 필요로 **수동 "전체 초기화(Clear)" 예외**를 허용(저장소 인터페이스 `Clear(ctx)` = 전 로그 삭제, `Count(ctx,filter)` = 페이지네이션 total 추가). 개별 삭제/보존-기반 pruning 은 여전히 부재. 상세는 §9.
 
 ---
 
@@ -264,5 +271,77 @@ SPEC-TRIGGER-SCHED-001 은 이 스케줄을 **대시보드 패널**(설비 제�
 
 - 상위 의존: SPEC-TRIGGER-SCHED-001(스케줄 규칙/패널/발화 게이팅·상관 메타), SPEC-FACILITY-DASHBOARD-001(설비 패널·집계), SPEC-XSFM-GROUP-001(노드 제어 명령 셋·셀렉터), SPEC-XSFM-001(제어 감사), SPEC-REMOTE-001(append-only 감사 저장소·admin-gated 조회 API 패턴).
 - 모듈 ↔ REQ: Module 1 = REQ-01-01~05 / Module 2 = REQ-02-01~12(신설 04b/04c/09/10/11/12 포함) / Module 3 = REQ-03-01~05 / Module 4 = REQ-04-01~07 / Module 5 = REQ-05-01~05 / Module 6 = REQ-06-01~04 / Module 7 = REQ-07-01~05.
+- 모듈 ↔ REQ (0.3.0, §8): Module 8 = REQ-08-01~04 / Module 9 = REQ-09-01~03 / Module 10 = REQ-10-01~03 / Module 11 = REQ-11-01 / Module 12 = REQ-12-01~02 / Module 13 = REQ-13-01~03. 버그수정 FIX-1~3(§8.0).
 - RD ↔ OQ: RD-5←OQ-5(RBAC) / RD-6←OQ-2(agent 권위) / RD-7←OQ-1(로그 입도) / RD-8←OQ-6(발화-only) / RD-9←OQ-3(agent 필드 배치) / RD-10←OQ-4(집계) / RD-11←OQ-7(보존).
+- Amendments(§9): AM-0.3.0-1 = RD-11(전체 초기화 Clear) / AM-0.3.0-2 = RD-3·RD-7(그룹→플랫 테이블) / AM-0.3.0-3 = RD-3·RD-9(create 하류 엣지 순회 agent 자동 도출).
 - 상세 설계: `design.md`. 조사 근거: `research.md`. 인수 기준: `acceptance.md`. 구현 계획: `plan.md`.
+
+---
+
+## 8. 0.3.0 확장 요구사항 (as-implemented, M8~M13)
+
+> **as-implemented 기록.** M1~M7 구현 완료 후 실제 구축된 확장(B~G)과 M5/M6 버그수정(A)이다. REQ 는 기존 넘버링 체계(Module N)를 연장한다. AMENDS 표기 항목의 상세 사유는 §9.
+
+### 8.0 M5/M6 버그수정 (A — as-fixed)
+
+- **FIX-1 — 규칙 추가 모달의 TARGET 열거를 xsfm 에이전트 경유로**: 규칙 추가 모달이 **선택된 xsfm 에이전트**를 통해 TARGET(대상 device/group)을 열거하도록 수정했다(원래 미지정 노드는 대상이 표시되지 않았다). `FacilityRuleModal` 에 **에이전트 선택**을 가산했다(additive). 대시보드 패널의 기존 동작은 불변(REQ-07-01).
+- **FIX-2 — 스케줄 0개 트리거 노드 숨김**: 스케줄이 하나도 없는 트리거 노드는 관리 뷰에서 **숨긴다**(원래 자동으로 표시되었다).
+- **FIX-3 — 삭제-영속 정상 확인(버그 아님)**: 스케줄 삭제의 백엔드 왕복 영속은 **정상(일관)**으로 검증되었다. "flow editor 에 규칙이 남아 보인다"는 현상은 **크로스-서피스 에디터-상태 staleness**(별도 에디터 화면의 캐시 미갱신)이며 영속 버그가 아니다 — `required:true` 강제나 기본 스케줄 주입은 도입하지 않았다. (문서 기록용 결론)
+
+### Module 8 — Schedule-Log Storage Backends + Retention Amendment (B, RD-11 수정)
+
+- **REQ-08-01** (Ubiquitous): 스케줄 로그 저장소는 **팩토리**를 통해 3개 백엔드를 지원해야 한다 — **sqlite**(기본, 영속) / **memory**(비영속) / **JSONL 파일**(append-only 파일). (신설 파일: `internal/storage/schedule_log_memory.go`, `internal/storage/schedule_log_jsonl.go`)
+- **REQ-08-02** (Ubiquitous): 백엔드는 config 키 `storage.schedule_log.type`(기본 `sqlite`)로 선택되며 startup 시 적용되어야 한다. (`internal/config` `StorageConfig.ScheduleLogType`)
+- **REQ-08-03** (Ubiquitous): 저장소 인터페이스는 `Clear(ctx)`(전체 로그 삭제 — 수동 전체 초기화)와 `Count(ctx, filter)`(페이지네이션 total 산출)를 제공해야 한다.
+- **REQ-08-04** (Unwanted): If **개별 레코드 삭제 API** 가 추가되면, then the 변경 shall 거부되어야 한다. **AMENDS RD-11**(§9 AM-0.3.0-1): 무제한 append-only + 개별 삭제 부재는 유지하되, 수동 **전체 초기화(Clear)** 예외만 허용한다(보존-기반 pruning 은 여전히 후속).
+
+### Module 9 — Log Query API Changes (C)
+
+- **REQ-09-01** (Ubiquitous): `GET /schedules/logs` 응답 형태는 페이지네이션을 지원하는 `{ items: [...], total: N }` 여야 한다(기존 bare array 에서 변경).
+- **REQ-09-02** (Event-Driven): When 사용자가 전체 초기화를 요청할 때, the API shall `DELETE /schedules/logs`(전체 인증 사용자 — admin 아님, RD-5)로 모든 로그를 삭제해야 한다.
+- **REQ-09-03** (Ubiquitous): 시스템은 `GET/PUT /system/schedule-log-config`(**admin 전용**)를 제공하여 `storage.schedule_log.type` 를 읽기/설정하고 **needs_restart 신호**를 반환해야 한다. (신설 핸들러 `internal/api/handler/schedule_log_config.go`; `internal/config/overrides.go` allowlist 에 해당 키 확장)
+
+### Module 10 — Log Tab UX (D)
+
+- **REQ-10-01** (Ubiquitous): 로그 탭은 페이지네이션(page size **25(기본)/50/100** + prev/next + total 표시)을 제공해야 한다.
+- **REQ-10-02** (Event-Driven): When 사용자가 **CSV 내보내기**(내보내기)를 실행할 때, the 뷰 shall 필터 매칭 **전체 행**을 **UTF-8 BOM** 으로, 컬럼 **실행시각 / 규칙이름 / 에이전트(선언, 실제 다르면 병기) / 대상 / 동작 / 결과** 로 내보내야 한다.
+- **REQ-10-03** (Event-Driven): When 사용자가 **전체 초기화**(초기화)를 실행할 때, the 뷰 shall **confirm 다이얼로그**로 가드된 파괴적 동작으로 `DELETE /schedules/logs` 를 호출해야 한다.
+
+### Module 11 — Storage-Type Settings UI (E)
+
+- **REQ-11-01** (Ubiquitous): 시스템은 **admin 전용 Settings 카드**("스케줄 로그 저장 방식")를 제공하여 sqlite / 파일(JSONL) / 메모리 중 선택하고, config 엔드포인트(REQ-09-03)로 영속하며, **재시작 시 적용**되어야 한다.
+
+### Module 12 — TARGET Table Picker (F)
+
+- **REQ-12-01** (Ubiquitous): 규칙 모달의 device-target picker 는 **테이블**(컬럼 **이름 / 라인 / 역사 / 위치** — device 를 station line + station display_name + place display_name 과 조인) + **검색 필터** + **행 선택** 형태여야 한다.
+- **REQ-12-02** (Ubiquitous): 이 테이블 picker 는 **Schedule View 와 대시보드 Trigger 패널 양쪽**(공유 모달)에 적용되어야 하며, 저장되는 `TargetSpec` shape 은 불변이어야 한다.
+
+### Module 13 — Management Tab Redesign + Agent Model (G, RD-3/RD-7 · RD-3/RD-9 수정)
+
+- **REQ-13-01** (Ubiquitous): 관리 탭은 에이전트별 그룹 섹션이 아니라 **단일 플랫 테이블**(**에이전트(이름)** 컬럼 + **플로우/노드** 컬럼)로 렌더링해야 한다. React Rules-of-Hooks 는 **per-node `<tbody>` 컴포넌트**로 보존한다. **AMENDS RD-3/RD-7**(§9 AM-0.3.0-2): 원래의 "에이전트별 그룹"(AC-7) → 플랫 테이블 + 에이전트 컬럼.
+- **REQ-13-02** (Event-Driven): When 사용자가 "규칙 추가"를 클릭할 때, the View shall 별도 "대상 노드" 생성 카드 없이 **설정 모달을 직접 열고**, **대상 노드를 모달 내부 첫 필드**로 선택한 뒤 에이전트 + 대상 + 계획(plan) + 동작(action)을 함께 입력받아야 한다. dual-write persist 는 저장 시점 노드를 타깃팅할 수 있도록 독립 함수 `persistScheduleDualWrite` 로 추출한다.
+- **REQ-13-03** (Event-Driven): When (생성 시) 트리거 노드가 선택될 때, the View shall 플로우의 **하류 엣지를 제어 노드 `agent_ref` 까지 순회**(`deriveDownstreamAgents`)하여 에이전트를 **자동 도출**해야 한다 — 단일 → 자동 채움, 미배선/모호한 fan-out → 모달 내 수동 선택 폴백. **AMENDS RD-3/RD-9**(§9 AM-0.3.0-3): 원래의 "엣지 순회 배제"를 create 플로우의 **단일-노드 하류 순회**로 완화한다. 명시 `declared_agent_id` 필드는 저장/로깅/표시용으로 유지한다.
+
+---
+
+## 9. 0.3.0 설계 수정 (Amendments)
+
+> **승계 노트.** 아래 3건은 §5 의 원 RD(RD-3/RD-7/RD-9/RD-11)를 **덮어쓰지 않고** 부분 수정한 것이다. 각 항목은 (a) 원 결정, (b) 변경 내용, (c) 사유를 기록하여 이력이 추적 가능하게 한다. 원 RD 텍스트는 §5 에 그대로 남고, 각 RD 말미에 본 §9 로의 승계 마커를 달았다.
+
+### AM-0.3.0-1 — RD-11 수정: 전체 초기화(Clear) 예외 허용
+
+- **원 결정(RD-11)**: v1 로그 저장소는 **무제한 append-only**(pruning 없음)이며, **삭제 API 를 노출하지 않는다**(감사 무결성).
+- **변경**: **개별 레코드 삭제 API 는 여전히 부재**하나, 운영상 필요로 **수동 "전체 초기화(Clear)" 예외**를 허용한다. 저장소 인터페이스에 `Clear(ctx)`(전 로그 삭제)와 `Count(ctx, filter)`(페이지네이션 total)를 추가했다. (REQ-08-03/04, REQ-09-02, REQ-10-03)
+- **사유**: 운영 중 로그 전체 리셋 수요 + 페이지네이션 total 산출 필요. 개별-레코드 불변성(감사성)은 유지하면서 "전량 초기화"라는 명시적·일괄 파괴 동작만 예외로 허용해 무결성 우려를 최소화한다. 보존-기반 자동 pruning 은 여전히 후속 SPEC.
+
+### AM-0.3.0-2 — RD-3/RD-7 수정: 에이전트별 그룹 → 단일 플랫 테이블
+
+- **원 결정(RD-3/RD-7)**: 관리 뷰는 스케줄을 **대상 에이전트별로 그룹핑**하여 에이전트 섹션별 규칙 테이블로 표시한다(AC-7 grouping).
+- **변경**: 관리 탭을 **단일 플랫 테이블**로 개편하고, 그룹 헤더 대신 **에이전트(이름) 컬럼**(+ 플로우/노드 컬럼)을 둔다. React Rules-of-Hooks 는 **per-node `<tbody>` 컴포넌트**로 보존한다. (REQ-13-01; AC-7 은 acceptance.md 에서 플랫 테이블로 갱신)
+- **사유**: 다수 에이전트/노드에 걸친 스케줄을 한눈에 훑고 정렬·검색하기에 플랫 테이블이 우수하며, 그룹 섹션 반복 렌더링에서 발생하던 Hooks 순서 취약성을 per-node `<tbody>` 로 안정화. 스케줄별 `agent_id`(→ `declared_agent_id`) 저장·로깅·표시 자체는 불변(로그 입도 RD-7 집계 규약도 불변).
+
+### AM-0.3.0-3 — RD-3/RD-9 수정: create 시 하류 엣지 순회 agent 자동 도출
+
+- **원 결정(RD-3/RD-9)**: agent 는 **스케줄별 명시 필드**(`config.schedules[].agent_id`)이며, 그룹핑/도출은 **엣지 순회에 의존하지 않는다**(엣지 순회는 취약 — 런타임 의존·부정확).
+- **변경**: **create(규칙 생성) 플로우에 한해** 트리거 노드 선택 시 플로우 하류 엣지를 제어 노드의 `agent_ref` 까지 **단일-노드 순회**하여 명시 필드를 **자동 도출**(`deriveDownstreamAgents`)한다. 단일 도출 → 자동 채움, 미배선/모호한 fan-out → 모달 내 수동 선택 폴백. 명시 `declared_agent_id` 필드는 **저장/로깅/표시용으로 유지**한다. (REQ-13-02/03)
+- **사유**: 원래의 취약성 우려는 **대규모 크로스-플로우 그룹핑**(전체 스케줄을 엣지로 재구성)에 국한된 것이었고, **단일 create 시점의 단일-노드 하류 순회**는 범위가 좁아 안전하다. 사용자가 매번 에이전트를 수동 지정하는 부담을 줄이되, 도출 실패(미배선/모호)에는 명시적 수동 폴백을 두어 정확성을 보장한다. 저장·로깅·표시의 권위는 계속 명시 `declared_agent_id`(RD-6 병기 규약 불변).

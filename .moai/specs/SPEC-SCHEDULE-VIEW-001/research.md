@@ -1,16 +1,17 @@
 ---
 id: SPEC-SCHEDULE-VIEW-001
 title: "Schedule View — 조사 근거"
-version: "0.2.0"
+version: "0.3.0"
 status: in-progress
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
 author: xtra
 tier: L
 ---
 
 # SPEC-SCHEDULE-VIEW-001 — 조사 근거 (research.md)
 
+> **버전 노트 (0.3.0)**: as-implemented 동기화. §1~§10(0.2.0 정찰)은 불변 보존하고, 0.3.0 확장(M8~M13)이 실제 착지한 코드 지점을 §11 에 요약한다(상세 설계는 design.md §6~§7, 요구사항은 spec.md §8~§9).
 > 코드베이스 정찰(reconnaissance) 결과. 모든 참조는 검증된 file:line. 결함 주장이 아니라
 > 재사용 지점·통합 지점·현재 단절 지점의 근거 기록이다.
 
@@ -87,3 +88,17 @@ tier: L
 - SPEC-XSFM-GROUP-001(v0.4.0, completed) — AM-1 노드 제어 명령 셋/그룹 셀렉터.
 - SPEC-XSFM-001 — 제어 감사(REQ-XSFM-001-06-03).
 - SPEC-REMOTE-001(M6) — append-only 감사 저장소 + admin-gated 조회 API.
+
+## 11. 0.3.0 확장 코드 지점 (as-implemented)
+
+> 0.3.0 확장(M8~M13)이 착지한 신설/변경 코드 지점 요약. 상세 설계는 design.md §6~§7, 요구사항은 spec.md §8~§9 참조.
+
+- **스토리지 3-백엔드 (M8/B)**: 신설 `internal/storage/schedule_log_memory.go`(memory, 비영속), `internal/storage/schedule_log_jsonl.go`(JSONL append-only 파일). 기존 `schedule_log_sqlite.go`(sqlite 기본). 인터페이스에 `Clear(ctx)` + `Count(ctx, filter)` 추가. config: `internal/config` `StorageConfig.ScheduleLogType`(키 `storage.schedule_log.type`, 기본 `sqlite`).
+- **로그 API 변경 (M9/C)**: `GET /schedules/logs` → `{ items, total }`, 신설 `DELETE /schedules/logs`(전체 인증), 신설 핸들러 `internal/api/handler/schedule_log_config.go`(`GET/PUT /system/schedule-log-config`, admin 전용, needs_restart). `internal/config/overrides.go` allowlist 에 `storage.schedule_log.type` 확장.
+- **로그 탭 UX (M10/D)**: 페이지네이션(25/50/100)·CSV 내보내기(UTF-8 BOM)·전체 초기화(confirm→DELETE) — 로그 탭 프런트.
+- **저장방식 Settings 카드 (M11/E)**: admin 전용 카드 → 설정 엔드포인트 소비.
+- **TARGET 테이블 picker (M12/F)**: 규칙 모달 device-target picker 를 테이블(이름/라인/역사/위치 — device ⋈ station line + station display_name + place display_name)로. 공유 모달(Schedule View + 대시보드 Trigger 패널). `TargetSpec` 불변.
+- **관리 탭 개편 (M13/G)**: 에이전트별 그룹 → 단일 플랫 테이블(에이전트 이름 컬럼), per-node `<tbody>` 로 Rules-of-Hooks 보존. 규칙 생성 모달 내부화 + dual-write persist 를 `persistScheduleDualWrite` 로 추출. 트리거 선택 시 `deriveDownstreamAgents`(하류 엣지 순회) agent 자동 도출.
+- **M5/M6 버그수정 (FIX-1~3)**: `FacilityRuleModal` 에 xsfm 에이전트 선택 가산(TARGET 열거, 대시보드 패널 불변); 스케줄 0개 트리거 노드 관리 뷰 숨김; 삭제-영속 정상(크로스-서피스 에디터 staleness 로 판명).
+
+> **참고**: SPEC-TRIGGER-SCHED-001 은 0.3.0 으로 completed 동기화됨(별도 SPEC).

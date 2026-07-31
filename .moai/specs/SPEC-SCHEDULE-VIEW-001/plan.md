@@ -1,16 +1,17 @@
 ---
 id: SPEC-SCHEDULE-VIEW-001
 title: "Schedule View — 구현 계획"
-version: "0.2.0"
+version: "0.3.0"
 status: in-progress
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
 author: xtra
 tier: L
 ---
 
 # SPEC-SCHEDULE-VIEW-001 — 구현 계획 (plan.md)
 
+> **버전 노트 (0.3.0)**: as-implemented 동기화. M1~M7(0.2.0) 구현 완료 후 도입된 확장을 **M8~M13**(§3.1) 으로 가산 기록하고 M5/M6 버그수정(FIX-1~3)을 명시한다. 3건의 설계 수정(RD-11 전체 초기화(Clear), RD-3/RD-7 그룹→플랫 테이블, RD-3/RD-9 create 하류 엣지 순회 agent 자동 도출)은 spec.md §9 에 승계 기록. M1~M7 텍스트는 불변 보존.
 > **버전 노트 (0.2.0)**: OQ-1~7 확정(RD-5~11) 반영. M1 스키마에 `correlation_id`/`record_kind`/`declared_agent_id`/`actor_agent_id`/`targets` 추가(RD-6/7/8) + 무제한 append-only(RD-11), M2 를 fire-side 주입 관측자(RD-8) + result-side 제어 기록(RD-6/7)의 2-이벤트 경로로 확장, M3 RBAC 전체 인증(RD-5), M5 집계는 프런트 팬아웃(RD-10) + 스케줄별 agent 필드(RD-9). 리스크 표에서 확정 항목(OQ→RD) 갱신.
 > 시간 예측 없음. 우선순위·마일스톤 순서로 표기. 각 마일스톤은 선행 완료 후 착수한다.
 > 개발 방법론: Hybrid(신규 코드 TDD, 기존 코드 DDD ANALYZE-PRESERVE-IMPROVE).
@@ -74,6 +75,53 @@ tier: L
 
 - 선행: M1~M6.
 - 목표: end-to-end 인수(acceptance.md) 검증, 트리거 노드·설비 패널 무회귀(REQ-07-01), 품질 게이트(커버리지/`-race`/`tsc`/`vitest`).
+
+## 3.1 0.3.0 확장 마일스톤 (M8~M13, as-implemented)
+
+> M1~M7 구현·테스트 green 종료 후 도입된 확장이다. **이미 구현·테스트 완료(green)** 상태의 as-implemented 기록이다. spec.md §8(Module 8~13) + §9(Amendments)에 대응한다.
+
+### M5/M6 버그수정 (FIX-1~3, as-fixed)
+
+- **FIX-1**: 규칙 추가 모달의 TARGET 열거를 **선택된 xsfm 에이전트 경유**로 수정(원래 미지정 노드는 대상 미표시). `FacilityRuleModal` 에 에이전트 선택 가산(대시보드 패널 불변). (§8.0)
+- **FIX-2**: 스케줄 0개 트리거 노드를 관리 뷰에서 숨김.
+- **FIX-3**: 삭제-영속은 정상(백엔드 왕복 일관) 확인 — "flow editor 잔존"은 크로스-서피스 에디터-상태 staleness 로 판명(영속 버그 아님, `required:true`/기본 스케줄 주입 미도입).
+
+### M8 — 로그 저장소 3-백엔드 팩토리 + Clear/Count (Priority High, Module 8, RD-11 수정)
+
+- 선행: M1.
+- 목표(백엔드): 저장소를 팩토리화하여 **sqlite(기본)/memory/JSONL** 3-백엔드 지원(신설 `internal/storage/schedule_log_memory.go`, `schedule_log_jsonl.go`). config 키 `storage.schedule_log.type`(`internal/config` `StorageConfig.ScheduleLogType`, 기본 `sqlite`) startup 적용. 인터페이스에 `Clear(ctx)`(전 로그 삭제) + `Count(ctx, filter)`(total) 추가. **개별 삭제 API 는 미도입**(RD-11 amendment — spec.md §9 AM-0.3.0-1).
+- 방법론: TDD(신규 백엔드/인터페이스 메서드). 3-백엔드 계약 동형 테스트.
+- 산출: 3-백엔드 + Clear/Count + config 선택. 단위 테스트 + `-race`.
+
+### M9 — 로그 조회 API 변경 + 삭제/설정 엔드포인트 (Priority High, Module 9)
+
+- 선행: M8, M3.
+- 목표: (1) `GET /schedules/logs` 응답을 `{ items, total }` 로 변경(페이지네이션). (2) `DELETE /schedules/logs`(전체 인증, admin 아님 — RD-5) → `Clear`. (3) 신설 `GET/PUT /system/schedule-log-config`(admin 전용, 신설 핸들러 `internal/api/handler/schedule_log_config.go`) → `storage.schedule_log.type` 읽기/설정 + needs_restart 신호. `internal/config/overrides.go` allowlist 에 키 확장.
+- 산출: 변경 응답 + 삭제/설정 API + 핸들러 테스트.
+
+### M10 — 로그 탭 UX: 페이지네이션·CSV·초기화 (Priority Medium, Module 10)
+
+- 선행: M6, M9.
+- 목표: 로그 탭에 (1) 페이지네이션(page size 25/50/100 + prev/next + total), (2) **CSV 내보내기**(필터 매칭 전체 행, UTF-8 BOM, 컬럼 실행시각/규칙이름/에이전트(선언, 실제 다르면 병기)/대상/동작/결과), (3) **전체 초기화**(confirm 다이얼로그 가드 → DELETE 엔드포인트) 추가.
+- 산출: 로그 탭 UX. 컴포넌트 테스트.
+
+### M11 — 저장방식 Settings 카드 (Priority Medium, Module 11)
+
+- 선행: M9.
+- 목표: **admin 전용** Settings 카드("스케줄 로그 저장 방식")로 sqlite/파일(JSONL)/메모리 선택 → config 엔드포인트(M9)로 영속 → 재시작 시 적용.
+- 산출: Settings 카드. 컴포넌트 테스트.
+
+### M12 — TARGET 테이블 picker (Priority Medium, Module 12)
+
+- 선행: 없음(모달 확장). Schedule View + Trigger 패널 공유.
+- 목표: 규칙 모달의 device-target picker 를 **테이블**(컬럼 이름/라인/역사/위치 — device ⋈ station line + station display_name + place display_name) + 검색 필터 + 행 선택으로 개편. **공유 모달**이므로 Schedule View 와 대시보드 Trigger 패널 양쪽 적용. 저장 `TargetSpec` shape 불변.
+- 산출: 테이블 picker(공유). 컴포넌트 테스트.
+
+### M13 — 관리 탭 개편 + agent 자동 도출 (Priority Medium, Module 13, RD-3/RD-7·RD-3/RD-9 수정)
+
+- 선행: M5, M12.
+- 목표: (1) 관리 탭을 **에이전트별 그룹 → 단일 플랫 테이블**(에이전트(이름) 컬럼 + 플로우/노드 컬럼)로 개편. Rules-of-Hooks 는 per-node `<tbody>` 컴포넌트로 보존. **AMENDS RD-3/RD-7**. (2) 규칙 생성을 **모달 내부화** — 별도 "대상 노드" 카드 제거, "규칙 추가"가 설정 모달을 직접 열고 대상 노드를 모달 첫 필드로 선택. dual-write persist 를 독립 `persistScheduleDualWrite` 로 추출(저장 시점 노드 타깃팅). (3) 트리거 노드 선택 시 하류 엣지를 제어 노드 `agent_ref` 까지 순회(`deriveDownstreamAgents`)하여 **agent 자동 도출**(단일→자동, 미배선/모호→수동 폴백). 명시 `declared_agent_id` 유지. **AMENDS RD-3/RD-9**.
+- 산출: 플랫 테이블 + 모달-내부 create + agent 자동 도출. 컴포넌트 테스트.
 
 ## 4. 리스크 및 대응
 

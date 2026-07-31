@@ -1,16 +1,17 @@
 ---
 id: SPEC-SCHEDULE-VIEW-001
 title: "Schedule View — 인수 기준"
-version: "0.2.0"
+version: "0.3.0"
 status: in-progress
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
 author: xtra
 tier: L
 ---
 
 # SPEC-SCHEDULE-VIEW-001 — 인수 기준 (acceptance.md)
 
+> **버전 노트 (0.3.0)**: as-implemented 동기화. 0.3.0 확장(B~G, spec.md §8)을 커버하는 신규 AC-19~28 을 가산하고, AM-0.3.0-2(그룹→플랫 테이블)에 따라 **AC-7 을 플랫 테이블 기준으로 갱신**했다(원 시나리오 취지는 보존). AC-1~18(M1~M7)은 불변 보존.
 > **버전 노트 (0.2.0)**: OQ-1~7 확정(RD-5~11) 반영. AC-3(fire+control 집계 + actual/declared + targets, RD-6/7), AC-4(agent 필터 선언·실제 매칭), AC-7(선언 agent_id 그룹핑, RD-9), AC-11(RBAC 전체 인증, RD-5) 갱신 + 신규 AC-15~18(발화-only RD-8, fire↔result 조인 RD-8, 비-admin 접근 RD-5, 크로스-플로우 팬아웃 RD-10).
 > Given-When-Then. 각 시나리오는 대응 REQ 를 추적한다. 식별자는 영문.
 
@@ -64,6 +65,8 @@ tier: L
 - **Given** 여러 플로우에 흩어진 트리거 스케줄(각 스케줄이 `config.schedules[].agent_id` 를 개별 보유, RD-9)
 - **When** Schedule View 관리 탭이 로드되면
 - **Then** 전체 플로우에서 스케줄이 수집되어 스케줄별 선언 `agent_id` 기준으로 그룹핑 표시되며, 그룹핑은 엣지 순회가 아닌 명시 필드에 근거한다.
+
+> **[0.3.0 수정 — spec.md §9 AM-0.3.0-2 / AC-25]** 표시 형태는 **에이전트별 그룹 섹션 → 단일 플랫 테이블(에이전트(이름) 컬럼)** 로 변경되었다. 스케줄별 선언 `agent_id` 기준 표기·명시 필드 근거라는 취지는 불변이며, 플랫 테이블 시나리오는 AC-25 로 검증한다.
 
 ## AC-8 — 미지정 에이전트 버킷 (REQ-04-06)
 
@@ -139,9 +142,92 @@ tier: L
 - **When** 관리 탭이 로드되면
 - **Then** View 가 `useFlows`+`useQueries` 팬아웃으로 각 플로우의 `config.schedules` 를 수집·집계하며(백엔드 집계 엔드포인트 미사용, RD-10), 로딩/부분 실패 상태를 명시적으로 처리한다(REQ-07-05).
 
+---
+
+## 0.3.0 확장 인수 기준 (AC-19~28, as-implemented)
+
+> B~G(spec.md §8, Module 8~13) 커버. 모두 **이미 구현·테스트 완료(green)** 상태의 as-implemented 검증이다.
+
+## AC-19 — 3-백엔드 스토리지 + config 선택 (REQ-08-01/02, B)
+
+- **Given** `storage.schedule_log.type` config 키(기본 `sqlite`)
+- **When** 값을 `memory` 또는 `file`(JSONL) 로 설정하고 startup 하면
+- **Then** 해당 백엔드(sqlite 영속 / memory 비영속 / JSONL append-only 파일)로 로그 저장소가 구성되며, 미설정 시 `sqlite` 가 적용된다.
+
+## AC-20 — 전체 초기화(Clear) + total (REQ-08-03/04, REQ-09-02, RD-11 amendment)
+
+- **Given** 여러 로그가 기록된 저장소
+- **When** `DELETE /schedules/logs`(전체 인증 사용자) 를 호출하면
+- **Then** `Clear` 로 **모든 로그가 삭제**되고, `Count`/`total` 이 0 으로 반영된다.
+- **And** 개별 레코드 삭제 API 는 제공되지 않는다(RD-11 amendment — 전체 초기화 예외만 허용).
+
+## AC-21 — 로그 응답 형태 { items, total } (REQ-09-01, C)
+
+- **Given** 로그가 기록된 상태
+- **When** `GET /schedules/logs` 를 호출하면
+- **Then** 응답이 bare array 가 아니라 `{ items: [...], total: N }` 형태로 반환되어 페이지네이션 total 을 제공한다.
+
+## AC-22 — 저장방식 설정 엔드포인트 (REQ-09-03, REQ-11-01, C/E)
+
+- **Given** admin 사용자
+- **When** `GET /system/schedule-log-config` 로 현재 저장방식을 읽고 `PUT` 으로 `sqlite`/`file`/`memory` 중 하나로 설정하면
+- **Then** 값이 영속되고 **needs_restart 신호**가 반환되며, 재시작 후 해당 백엔드가 적용된다.
+- **And Given** admin 이 아닌 사용자
+- **When** 동일 엔드포인트를 호출하면
+- **Then** admin 게이팅으로 거부된다(로그 조회 API 의 전체-인증 정책과 상이 — 설정은 admin 전용).
+
+## AC-23 — 로그 탭 페이지네이션 (REQ-10-01, D)
+
+- **Given** 로그 탭
+- **When** page size 를 25(기본)/50/100 중 선택하고 prev/next 로 이동하면
+- **Then** 선택 크기로 페이징되고 total 표시가 갱신된다.
+
+## AC-24 — CSV 내보내기 (REQ-10-02, D)
+
+- **Given** 필터가 적용된 로그 탭
+- **When** "내보내기"(CSV)를 실행하면
+- **Then** 필터 매칭 **전체 행**이 **UTF-8 BOM** CSV 로 내보내지며, 컬럼은 **실행시각 / 규칙이름 / 에이전트(선언, 실제 다르면 병기) / 대상 / 동작 / 결과** 이다.
+
+## AC-25 — 관리 탭 플랫 테이블 + 에이전트 컬럼 (REQ-13-01, RD-3/RD-7 amendment)
+
+- **Given** 여러 에이전트/노드에 걸친 스케줄
+- **When** 관리 탭이 로드되면
+- **Then** 에이전트별 그룹 섹션이 아니라 **단일 플랫 테이블**로 렌더링되며 **에이전트(이름)** 컬럼과 **플로우/노드** 컬럼을 포함한다.
+- **And** React Rules-of-Hooks 위반 없이(per-node `<tbody>` 컴포넌트) 정상 렌더링된다.
+
+## AC-26 — 규칙 생성 모달 내부화 + 노드 선택 (REQ-13-02, G)
+
+- **Given** 관리 탭
+- **When** "규칙 추가"를 클릭하면
+- **Then** 별도 "대상 노드" 생성 카드 없이 **설정 모달이 직접 열리고**, **대상 노드가 모달 첫 필드**로 선택되며, 이어서 에이전트/대상/계획(plan)/동작(action)을 함께 입력한 뒤 저장 시점 노드로 dual-write(`persistScheduleDualWrite`)가 수행된다.
+
+## AC-27 — 트리거 선택 시 agent 자동 도출 (REQ-13-03, RD-3/RD-9 amendment)
+
+- **Given** create 모달에서 트리거 노드를 선택
+- **When** 그 트리거의 하류 엣지가 **단일 제어 노드**로 배선되어 있으면
+- **Then** `deriveDownstreamAgents` 가 제어 노드 `agent_ref` 를 순회 도출하여 에이전트가 **자동 채움**된다.
+- **And When** 트리거가 **미배선이거나 모호한 fan-out**(다중 하류 제어)이면
+- **Then** 모달 내 **수동 선택 폴백**으로 사용자가 에이전트를 지정한다.
+- **And** 어느 경우든 명시 `declared_agent_id` 필드가 저장/로깅/표시용으로 기록된다.
+
+## AC-28 — TARGET 테이블 picker (공유) (REQ-12-01/02, F)
+
+- **Given** 규칙 모달의 device-target picker
+- **When** picker 가 표시되면
+- **Then** **테이블**(컬럼 이름/라인/역사/위치 — device 를 station line + station display_name + place display_name 과 조인) + 검색 필터 + 행 선택으로 렌더링된다.
+- **And** 동일 picker 가 Schedule View 와 대시보드 Trigger 패널 양쪽(공유 모달)에서 동작하며, 저장되는 `TargetSpec` shape 은 이전과 동일하다.
+
+## FIX 검증 — M5/M6 버그수정 (§8.0, as-fixed)
+
+- **FIX-1**: 규칙 추가 모달에서 선택된 xsfm 에이전트의 TARGET 이 열거된다(미지정 노드도 에이전트 선택 후 대상 표시). 대시보드 패널 저장 동작 무회귀.
+- **FIX-2**: 스케줄 0개 트리거 노드가 관리 뷰에 표시되지 않는다.
+- **FIX-3**: 스케줄 삭제가 백엔드 왕복으로 일관 영속됨(에디터 잔존은 크로스-서피스 staleness, 영속 버그 아님).
+
 ## Definition of Done
 
-- [ ] AC-1 ~ AC-18 전부 통과
-- [ ] RD-5~11(전 OQ 확정) 반영 확인(SPEC v0.2.0)
+- [ ] AC-1 ~ AC-18 전부 통과 (M1~M7)
+- [ ] AC-19 ~ AC-28 + FIX-1~3 전부 통과 (0.3.0 확장, as-implemented green)
+- [ ] RD-5~11(전 OQ 확정) 반영 확인
+- [ ] 3건 amendment(RD-11 Clear / RD-3·RD-7 플랫 테이블 / RD-3·RD-9 agent 자동 도출) spec.md §9 기록 확인 (SPEC v0.3.0)
 - [ ] 트리거 노드 + 설비 예약 대시보드 패널 무회귀 확인
 - [ ] 신설 저장소/API/페이지 문서화(sync 단계)

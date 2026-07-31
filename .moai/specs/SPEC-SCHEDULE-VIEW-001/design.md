@@ -1,16 +1,17 @@
 ---
 id: SPEC-SCHEDULE-VIEW-001
 title: "Schedule View — 기술 설계"
-version: "0.2.0"
+version: "0.3.0"
 status: in-progress
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
 author: xtra
 tier: L
 ---
 
 # SPEC-SCHEDULE-VIEW-001 — 기술 설계 (design.md)
 
+> **버전 노트 (0.3.0)**: as-implemented 동기화. §1~§5(0.2.0 설계)는 불변 보존하고, §6(0.3.0 확장 설계 — 3-백엔드 스토리지 / 로그 API 변경 / 로그 탭 UX / 저장방식 설정 / TARGET 테이블 picker / 관리 탭 플랫 테이블 + agent 자동 도출)과 §7(0.3.0 설계 수정 Amendments — RD-11 Clear, RD-3/RD-7 플랫 테이블, RD-3/RD-9 create 하류 엣지 순회)을 가산했다.
 > **버전 노트 (0.2.0)**: OQ-1~7 확정(RD-5~11) 반영. 로그 축을 **2-이벤트 모델**(fire 이벤트 + result 이벤트, `correlation_id` 조인)로 확장하여 발화-only 기록(RD-8)을 포함하고, fire 기록을 **주입 관측자**로 제네릭 트리거 노드에서 비결합했다. agent 필드는 선언(`declared_agent_id`) + 실제(`actor_agent_id`) 병기(RD-6), fan-out 은 집계 1건 + 대상별 임베드(RD-7), RBAC 는 전체 인증 사용자(RD-5), 집계는 프런트 팬아웃(RD-10), 보존은 무제한 append-only(RD-11).
 
 ## 1. 아키텍처 개요
@@ -136,3 +137,53 @@ Close() error
 - **프런트 팬아웃** vs **백엔드 집계**: 팬아웃(RD-10, A-5), v1 백엔드 엔드포인트 없음. 규모 초과 시 후속 승급.
 - **RBAC admin 전용** vs **전체 인증**: 전체 인증(RD-5). 스케줄 관리는 운영 성격 → AgentListPage 동급, remote/audit admin 게이트와 의도적 상이.
 - **보존 무제한** vs **pruning**: v1 무제한 append-only(RD-11), 보존/정리 정책 후속.
+
+---
+
+## 6. 0.3.0 확장 설계 (as-implemented)
+
+> M1~M7 구현 완료 후 실제 구축된 확장 설계. spec.md §8(Module 8~13) 에 대응.
+
+### 6.1 스토리지 3-백엔드 팩토리 (Module 8 — B)
+
+- **팩토리**: `storage.schedule_log.type` config(`internal/config` `StorageConfig.ScheduleLogType`, 기본 `sqlite`)에 따라 3 구현 중 하나를 startup 에 생성.
+  - `sqlite`(기본, 영속) — 기존 `schedule_log_sqlite.go`.
+  - `memory`(비영속) — 신설 `internal/storage/schedule_log_memory.go`(in-memory 슬라이스 + mutex).
+  - `file`(JSONL append-only 파일) — 신설 `internal/storage/schedule_log_jsonl.go`(라인당 1 레코드 JSON, append).
+- **인터페이스 확장**: `Append`/`List` 에 더해 **`Clear(ctx)`**(전 로그 삭제 — 수동 전체 초기화) + **`Count(ctx, filter)`**(페이지네이션 total). 3-백엔드 모두 동형 계약. **개별 레코드 삭제 API 는 미도입**(RD-11 amendment — §7 AM-0.3.0-1).
+- **배선**: `main.go` startup 에서 config 값을 읽어 팩토리로 저장소 인스턴스를 선택 후 `SetScheduleLogRepository` 주입.
+
+### 6.2 로그 조회 API 변경 (Module 9 — C)
+
+- **응답 형태**: `GET /schedules/logs` → `{ items: ScheduleLogResponse[], total: number }`(기존 bare array 에서 변경; `Count` 로 total 산출).
+- **`DELETE /schedules/logs`**: **전체 인증 사용자**(admin 아님 — RD-5), `Clear` 호출.
+- **저장방식 설정**: 신설 핸들러 `internal/api/handler/schedule_log_config.go` — `GET/PUT /system/schedule-log-config`(**admin 전용**), `storage.schedule_log.type` 읽기/설정 + **needs_restart** 신호 반환. `internal/config/overrides.go` allowlist 에 해당 키 확장(런타임 override 허용). RBAC 대비: 로그 조회/삭제 = 전체 인증(운영), 저장방식 설정 = admin 전용(구성 변경) — 의도적 분리.
+
+### 6.3 로그 탭 UX (Module 10 — D)
+
+- **페이지네이션**: page size 25(기본)/50/100 셀렉터 + prev/next + total 표시(`{items,total}` 소비).
+- **CSV 내보내기**: 필터 매칭 **전체 행**(현재 페이지 아님)을 조회하여 **UTF-8 BOM** 접두 CSV 생성. 컬럼: 실행시각 / 규칙이름 / 에이전트(선언, 실제 다르면 병기) / 대상 / 동작 / 결과.
+- **전체 초기화**: 파괴적 버튼 → confirm 다이얼로그 → `DELETE /schedules/logs`.
+
+### 6.4 저장방식 Settings 카드 (Module 11 — E)
+
+- **admin 전용** Settings 카드("스케줄 로그 저장 방식")로 sqlite / 파일(JSONL) / 메모리 선택 → `PUT /system/schedule-log-config` 영속 → 재시작 시 적용(needs_restart 안내).
+
+### 6.5 TARGET 테이블 picker (Module 12 — F)
+
+- 규칙 모달의 device-target picker 를 **테이블**로 개편. 컬럼 **이름 / 라인 / 역사 / 위치** — device 를 station line + station display_name + place display_name 과 조인해 표시. **검색 필터** + **행 선택**.
+- **공유 모달**이므로 Schedule View 와 대시보드 Trigger 패널 양쪽에 동시 적용. 저장되는 `TargetSpec` shape 은 불변(표시 계층만 확장).
+
+### 6.6 관리 탭 플랫 테이블 + agent 자동 도출 (Module 13 — G)
+
+- **플랫 테이블**: 에이전트별 그룹 섹션 대신 **단일 플랫 테이블**(에이전트(이름) 컬럼 + 플로우/노드 컬럼). React Rules-of-Hooks 는 **per-node `<tbody>` 컴포넌트**로 분리해 그룹 반복 렌더링에서의 Hooks 순서 취약성을 제거. (AMENDS RD-3/RD-7 — §7 AM-0.3.0-2)
+- **규칙 생성 모달 내부화**: 별도 "대상 노드" 생성 카드 제거. "규칙 추가" → 설정 모달 직접 오픈, **대상 노드를 모달 첫 필드**로 선택 → 에이전트 + 대상 + plan + action 일괄 입력. dual-write persist 를 독립 함수 **`persistScheduleDualWrite`** 로 추출(모달 저장 시점에 선택된 노드를 타깃팅).
+- **agent 자동 도출**: create 시 트리거 노드 선택 → **`deriveDownstreamAgents`** 가 플로우 하류 엣지를 제어 노드 `agent_ref` 까지 **단일-노드 순회** → 단일이면 자동 채움, 미배선/모호(다중 하류)면 모달 내 수동 폴백. 명시 `declared_agent_id` 는 저장/로깅/표시용으로 유지. (AMENDS RD-3/RD-9 — §7 AM-0.3.0-3)
+
+## 7. 0.3.0 설계 수정 근거 (Amendments)
+
+> 원 RD 텍스트(spec.md §5)는 보존, 아래는 대안 대비 승계 근거. 정식 amendment 기록은 spec.md §9.
+
+- **AM-0.3.0-1 (RD-11)** — **개별 삭제 없음(유지)** vs **전체 초기화(Clear) 예외 허용**: Clear 예외. 개별-레코드 불변(감사성)은 유지하되, 운영상 "전량 리셋"이라는 명시적·일괄 파괴 동작만 예외로 허용. `Count` 는 페이지네이션 total 을 위해 부수 추가. 보존-기반 자동 pruning 은 여전히 후속.
+- **AM-0.3.0-2 (RD-3/RD-7)** — **에이전트별 그룹 섹션** vs **단일 플랫 테이블 + 에이전트 컬럼**: 플랫 테이블. 다수 에이전트/노드 스케줄의 일람·정렬·검색성이 우수하고, per-node `<tbody>` 로 Hooks 순서를 안정화. 로그 입도(RD-7 집계 1건 + 임베드) 규약은 불변.
+- **AM-0.3.0-3 (RD-3/RD-9)** — **엣지 순회 전면 배제** vs **create 시 단일-노드 하류 순회 자동 도출**: create 한정 단일-노드 순회. 원 취약성 우려는 **대규모 크로스-플로우 그룹핑**(전체 스케줄 엣지 재구성)에 국한 → 단일 create 시점의 좁은 순회는 안전. 도출 실패에는 수동 폴백. 저장·로깅·표시 권위는 계속 명시 `declared_agent_id`(RD-6 병기 불변).
