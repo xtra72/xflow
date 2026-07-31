@@ -26,6 +26,9 @@ const AgentListPage = lazy(() => import('@/pages/agents/AgentListPage'));
 const NodeTypesPage = lazy(() => import('@/pages/nodes/NodeTypesPage'));
 const AgentTypesPage = lazy(() => import('@/pages/agents/AgentTypesPage'));
 const DeviceListPage = lazy(() => import('@/pages/devices/DeviceListPage'));
+// SPEC-SCHEDULE-VIEW-001 M5: 스케줄 뷰(에이전트별 관리 + 실행 로그). 전체 인증
+//   사용자 접근(RD-5, AC-11/AC-17) — 추가 admin AuthGuard 없이 AppLayout 하위 라우트.
+const SchedulesPage = lazy(() => import('@/pages/schedules/SchedulesPage'));
 const SystemStatusPage = lazy(() =>
   import('@/pages/system/SystemStatusPage').then((m) => ({
     default: m.SystemStatusPage,
@@ -104,6 +107,14 @@ const router = createBrowserRouter([
             element: (
               <SuspenseWrapper>
                 <DeviceListPage />
+              </SuspenseWrapper>
+            ),
+          },
+          {
+            path: '/schedules',
+            element: (
+              <SuspenseWrapper>
+                <SchedulesPage />
               </SuspenseWrapper>
             ),
           },

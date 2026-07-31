@@ -10,6 +10,7 @@
     "settings": "설정",
     "agents": "에이전트",
     "devices": "디바이스",
+    "schedules": "스케줄",
     "nodes": "노드 타입",
     "agentTypes": "에이전트 타입",
     "reference": "참고",

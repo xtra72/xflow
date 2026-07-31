@@ -10,6 +10,7 @@
     "settings": "Settings",
     "agents": "Agents",
     "devices": "Devices",
+    "schedules": "Schedules",
     "nodes": "Node Types",
     "agentTypes": "Agent Types",
     "reference": "Reference",

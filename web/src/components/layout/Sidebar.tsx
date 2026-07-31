@@ -7,6 +7,7 @@ import {
   Blocks,
   BookOpen,
   Bot,
+  CalendarClock,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -87,6 +88,12 @@ const NAV_ENTRIES: NavEntry[] = [
     labelKey: 'nav.monitoring',
     path: '/monitoring',
     icon: Monitor,
+  },
+  // SPEC-SCHEDULE-VIEW-001 M5: 스케줄 뷰(전체 인증 사용자, RD-5 — role 게이팅 없음).
+  {
+    labelKey: 'nav.schedules',
+    path: '/schedules',
+    icon: CalendarClock,
   },
   // 참고 그룹 메뉴
   {
