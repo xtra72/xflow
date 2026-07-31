@@ -7,6 +7,7 @@ import type { FlowInfo } from '@/types/flow';
 
 import {
   collectTriggerNodeEntries,
+  deriveDownstreamAgents,
   groupEntriesByAgent,
   nodeLevelAgent,
   resolveScheduleAgent,
@@ -15,6 +16,11 @@ import {
 
 function flow(id: string, name: string, nodes: unknown[]): FlowInfo {
   return { id, name, status: 'stored', node_count: nodes.length, config: { nodes } };
+}
+
+/** nodes + edges 를 갖는 플로우(엣지 유도 검증용). */
+function wiredFlow(nodes: unknown[], edges: unknown[]): FlowInfo {
+  return { id: 'f', name: 'F', status: 'stored', node_count: nodes.length, config: { nodes, edges } };
 }
 
 describe('collectTriggerNodeEntries — 플로우 정의에서 trigger 노드 추출', () => {
@@ -69,6 +75,7 @@ describe('groupEntriesByAgent — agent 그룹 + 미지정 버킷(AC-7/AC-8)', (
     nodeName: nodeId,
     nodeConfig,
     schedules,
+    derivedAgentIds: [],
   });
 
   it('여러 플로우의 스케줄을 declared agent_id 로 묶고, agent 없는 스케줄은 미지정(null) 버킷', () => {
@@ -102,5 +109,110 @@ describe('groupEntriesByAgent — agent 그룹 + 미지정 버킷(AC-7/AC-8)', (
     ]);
     const keys = groups.map((g) => g.key).sort();
     expect(keys).toEqual(['ag-a', 'ag-b']);
+  });
+});
+
+describe('deriveDownstreamAgents — 엣지 하류 제어 노드에서 실행 에이전트 유도', () => {
+  it('단일 하류 제어 노드 → [agent_ref]', () => {
+    const f = wiredFlow(
+      [
+        { id: 't', data: { nodeType: 'trigger' } },
+        { id: 'c', data: { nodeType: 'xsfm-control', agent_ref: 'ag-1' } },
+      ],
+      [{ source: 't', target: 'c' }],
+    );
+    expect(deriveDownstreamAgents(f, 't')).toEqual(['ag-1']);
+  });
+
+  it('필터를 거친 다중 홉(trigger→filter→control) → [agent]', () => {
+    const f = wiredFlow(
+      [
+        { id: 't', data: { nodeType: 'trigger' } },
+        { id: 'flt', data: { nodeType: 'filter' } },
+        { id: 'c', data: { nodeType: 'xsfm-control', agent_ref: 'ag-2' } },
+      ],
+      [
+        { source: 't', target: 'flt', sourceHandle: 'out', targetHandle: 'in' },
+        { source: 'flt', target: 'c' },
+      ],
+    );
+    expect(deriveDownstreamAgents(f, 't')).toEqual(['ag-2']);
+  });
+
+  it('서로 다른 agent_ref 를 갖는 두 제어 노드로 팬아웃 → [a, b](모호)', () => {
+    const f = wiredFlow(
+      [
+        { id: 't', data: { nodeType: 'trigger' } },
+        { id: 'c1', data: { nodeType: 'xsfm-control', agent_ref: 'ag-a' } },
+        { id: 'c2', data: { nodeType: 'samsung-hvacr01-control', agent_ref: 'ag-b' } },
+      ],
+      [
+        { source: 't', target: 'c1' },
+        { source: 't', target: 'c2' },
+      ],
+    );
+    expect(deriveDownstreamAgents(f, 't').sort()).toEqual(['ag-a', 'ag-b']);
+  });
+
+  it('미배선 trigger(하류 제어 노드 없음) → []', () => {
+    const f = wiredFlow(
+      [
+        { id: 't', data: { nodeType: 'trigger' } },
+        { id: 'o', data: { nodeType: 'output' } },
+      ],
+      [{ source: 't', target: 'o' }],
+    );
+    expect(deriveDownstreamAgents(f, 't')).toEqual([]);
+  });
+
+  it('agent_ref 부재 시 agent_id 로 폴백, 동일 agent 중복 제거', () => {
+    const f = wiredFlow(
+      [
+        { id: 't', data: { nodeType: 'trigger' } },
+        { id: 'c1', data: { nodeType: 'xsfm-control', agent_id: 'ag-x' } },
+        { id: 'c2', data: { nodeType: 'xsfm-control', agent_ref: 'ag-x' } },
+      ],
+      [
+        { source: 't', target: 'c1' },
+        { source: 'c1', target: 'c2' },
+      ],
+    );
+    expect(deriveDownstreamAgents(f, 't')).toEqual(['ag-x']);
+  });
+
+  it('잘못된(누락 source/target) 엣지·사이클을 안전하게 처리한다(예외 없음)', () => {
+    const f = wiredFlow(
+      [
+        { id: 't', data: { nodeType: 'trigger' } },
+        { id: 'c', data: { nodeType: 'xsfm-control', agent_ref: 'ag-1' } },
+      ],
+      [
+        { source: 't' }, // target 누락 → 무시
+        { target: 'c' }, // source 누락 → 무시
+        { source: 't', target: 'c' },
+        { source: 'c', target: 't' }, // 사이클 → 무한 루프 방지
+        null,
+      ],
+    );
+    expect(deriveDownstreamAgents(f, 't')).toEqual(['ag-1']);
+  });
+
+  it('config/edges 부재면 빈 결과', () => {
+    expect(
+      deriveDownstreamAgents({ id: 'a', name: 'a', status: 'stored', node_count: 0 }, 't'),
+    ).toEqual([]);
+  });
+
+  it('collectTriggerNodeEntries 가 trigger 노드마다 derivedAgentIds 를 채운다', () => {
+    const f = wiredFlow(
+      [
+        { id: 't', data: { nodeType: 'trigger', schedules: [] } },
+        { id: 'c', data: { nodeType: 'xsfm-control', agent_ref: 'ag-1' } },
+      ],
+      [{ source: 't', target: 'c' }],
+    );
+    const entries = collectTriggerNodeEntries(f);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.derivedAgentIds).toEqual(['ag-1']);
   });
 });

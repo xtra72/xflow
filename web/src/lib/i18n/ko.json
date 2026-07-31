@@ -1123,6 +1123,22 @@
       "saveError": "저장에 실패했습니다",
       "noChanges": "변경된 내용이 없습니다"
     },
+    "scheduleLog": {
+      "title": "스케줄 로그 저장 방식",
+      "desc": "스케줄 실행 로그를 저장할 백엔드를 선택합니다. 변경 사항은 재시작 후 적용됩니다.",
+      "selectLabel": "저장 방식 선택",
+      "storageSqlite": "데이터베이스(sqlite)",
+      "storageFile": "파일(JSONL)",
+      "storageMemory": "메모리",
+      "descSqlite": "SQLite 데이터베이스에 영속 저장합니다 (기본값).",
+      "descFile": "JSONL 파일에 영속 저장합니다.",
+      "descMemory": "메모리에 저장하며 재시작 시 소실됩니다 (비영속).",
+      "save": "저장",
+      "saved": "저장되었습니다",
+      "savedRestart": "저장되었습니다. 재시작 후 적용됩니다.",
+      "restartNotice": "재시작 후 적용됩니다",
+      "saveError": "저장에 실패했습니다"
+    },
     "name": "이름",
     "email": "이메일",
     "role": "역할",

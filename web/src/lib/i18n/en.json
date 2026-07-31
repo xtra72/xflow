@@ -1123,6 +1123,22 @@
       "saveError": "Failed to save",
       "noChanges": "No changes"
     },
+    "scheduleLog": {
+      "title": "Schedule Log Storage",
+      "desc": "Choose the backend that stores schedule execution logs. Changes take effect after a restart.",
+      "selectLabel": "Select storage type",
+      "storageSqlite": "Database (SQLite)",
+      "storageFile": "File (JSONL)",
+      "storageMemory": "Memory",
+      "descSqlite": "Persisted in the SQLite database (default).",
+      "descFile": "Persisted to a JSONL file.",
+      "descMemory": "Kept in memory and lost on restart (non-persistent).",
+      "save": "Save",
+      "saved": "Saved",
+      "savedRestart": "Saved. It will take effect after a restart.",
+      "restartNotice": "Takes effect after a restart",
+      "saveError": "Failed to save"
+    },
     "name": "Name",
     "email": "Email",
     "role": "Role",

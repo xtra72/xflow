@@ -11,7 +11,7 @@ import { useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 
 import { TriggerScheduleEditor } from '@/components/property/TriggerScheduleEditor';
-import { useStations, useXsfmDevices } from '@/hooks/useStation';
+import { useStations, useXsfmDevices, type AirDevice, type AirStation } from '@/hooks/useStation';
 import { useGroups } from '@/hooks/useGroups';
 import { cn } from '@/lib/utils/cn';
 import {
@@ -26,15 +26,51 @@ import {
   FAN_SPEED_MAX,
 } from './facilityScheduleUtils';
 
+/** 대상 노드 선택 옵션(스케줄 뷰 CREATE 모드). key = `flowId:nodeId`. */
+export interface FacilityRuleModalNode {
+  flowId: string;
+  nodeId: string;
+  /** 표시 라벨(예: `플로우명 / 노드명`). */
+  label: string;
+  /** 하류 제어 노드에서 유도한 실행 에이전트 후보(자동 각인/프리필용). */
+  derivedAgentIds: string[];
+}
+
 interface FacilityRuleModalProps {
   /** 편집 대상 초안(신규는 emptyDraft). */
   initial: RuleDraft;
   /** TARGET 열거용 xsfm 에이전트 ID(없으면 free-form). */
   agentId: string;
+  /**
+   * 선택 가능한 xsfm 에이전트 목록(선택). 제공하면 상단에 에이전트 선택 드롭다운을 노출하고,
+   * 선택된 에이전트가 TARGET 열거(useStations/useGroups/useXsfmDevices)를 구동한다. 미제공 시
+   * 기존 동작(고정 `agentId`, 셀렉터 없음)을 유지한다 — 패널(FacilitySchedulePanel) 경로 불변.
+   */
+  agents?: { id: string; name: string }[];
+  /** 선택된 에이전트 id 초기값(agents 제공 시). 상위가 각인(agent_id)에 사용. */
+  selectedAgentId?: string;
+  /** 에이전트 선택 변경 콜백(상위가 각인 대상을 추적하도록). */
+  onAgentChange?: (id: string) => void;
+  /**
+   * 대상 노드 목록(선택). 제공하면 본문 최상단에 "대상 노드" 셀렉터를 노출하고(스케줄 뷰
+   * CREATE 모드), 노드 선택 시 유도 에이전트를 프리필해 TARGET 열거를 구동한다. 노드 선택은
+   * 필수이며(미선택 시 저장 비활성 + 오류), 상위가 저장 시점에 대상 노드를 결정한다. 미제공 시
+   * 셀렉터 없음 — 패널/행 편집 경로 불변.
+   */
+  nodes?: FacilityRuleModalNode[];
+  /** 선택된 대상 노드 key(`flowId:nodeId`) 초기값(nodes 제공 시). */
+  selectedNodeKey?: string;
+  /** 대상 노드 선택 변경 콜백(상위가 대상 노드를 추적하도록). */
+  onNodeChange?: (key: string) => void;
   /** 저장(검증 통과 시). 상위 패널이 dual-write 수행. */
   onSave: (draft: RuleDraft) => void;
   /** 취소(변경 폐기). */
   onCancel: () => void;
+}
+
+/** 노드 옵션 key(`flowId:nodeId`). */
+function nodeKey(n: FacilityRuleModalNode): string {
+  return `${n.flowId}:${n.nodeId}`;
 }
 
 const inputCls =
@@ -42,7 +78,18 @@ const inputCls =
 const labelCls = 'mb-1 block text-xs font-medium text-(--color-text-muted)';
 
 /** 설비 제어 예약 규칙 모달. */
-export default function FacilityRuleModal({ initial, agentId, onSave, onCancel }: FacilityRuleModalProps) {
+export default function FacilityRuleModal({
+  initial,
+  agentId,
+  agents,
+  selectedAgentId,
+  onAgentChange,
+  nodes,
+  selectedNodeKey,
+  onNodeChange,
+  onSave,
+  onCancel,
+}: FacilityRuleModalProps) {
   const [name, setName] = useState(initial.name);
   const [validFrom, setValidFrom] = useState(initial.validFrom);
   const [validTo, setValidTo] = useState(initial.validTo);
@@ -58,12 +105,40 @@ export default function FacilityRuleModal({ initial, agentId, onSave, onCancel }
   const [action, setAction] = useState<ActionSpec>(initial.action);
   const [showErrors, setShowErrors] = useState(false);
 
+  // 에이전트 선택(선택 기능). agents 제공 시 상단 드롭다운으로 TARGET 열거 에이전트를 고른다.
+  const showAgentSelect = Array.isArray(agents) && agents.length > 0;
+  const [agentPick, setAgentPick] = useState(selectedAgentId ?? '');
+  // TARGET 열거/각인에 쓰는 실효 에이전트: 셀렉터가 있으면 선택값, 없으면 고정 agentId(패널 경로).
+  const enumAgentId = showAgentSelect ? agentPick : agentId;
+  const handleAgentPick = (id: string) => {
+    setAgentPick(id);
+    onAgentChange?.(id);
+    // 에이전트가 바뀌면 다른 로스터이므로 TARGET 값을 초기화한다(종류는 유지).
+    setTarget((t) => ({ kind: t.kind, value: '', byName: false }));
+  };
+
+  // 대상 노드 선택(선택 기능, 스케줄 뷰 CREATE 모드). nodes 제공 시 본문 최상단에 노출한다.
+  const showNodeSelect = Array.isArray(nodes) && nodes.length > 0;
+  const [nodePick, setNodePick] = useState(selectedNodeKey ?? '');
+  const handleNodePick = (key: string) => {
+    setNodePick(key);
+    onNodeChange?.(key);
+    // 노드 선택 시 유도 에이전트 자동 각인: 단일 유도면 에이전트 셀렉터를 그 값으로 프리필하고
+    // (TARGET 열거를 구동), 미배선(0)·모호(복수)면 셀렉터를 그대로 두어 수동 선택하게 한다.
+    const picked = nodes!.find((n) => nodeKey(n) === key);
+    if (picked && picked.derivedAgentIds.length === 1) {
+      handleAgentPick(picked.derivedAgentIds[0]!);
+    }
+  };
+  // 노드 셀렉터 모드에서 대상 노드는 필수. 미선택 시 저장 비활성 + 오류 노출.
+  const nodeMissing = showNodeSelect && nodePick.length === 0;
+
   const plan = planArr.length > 0 ? planArr[0]! : undefined;
   const draft: RuleDraft = { name, validFrom, validTo, priority, enabled, schedule: plan, target, action };
   const validation = validateRuleDraft(draft);
 
   const handleSave = () => {
-    if (!validation.ok) {
+    if (nodeMissing || !validation.ok) {
       setShowErrors(true);
       return;
     }
@@ -101,6 +176,57 @@ export default function FacilityRuleModal({ initial, agentId, onSave, onCancel }
 
         {/* 본문(스크롤) */}
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          {/* 대상 노드 선택(선택 기능) — 스케줄 뷰 CREATE 모드. 본문 최상단 필드. */}
+          {showNodeSelect && (
+            <div>
+              <label className={labelCls} htmlFor="fr-node">
+                대상 노드 <span className="text-red-500">*</span>
+              </label>
+              <select
+                id="fr-node"
+                data-testid="fr-node-select"
+                value={nodePick}
+                onChange={(e) => handleNodePick(e.target.value)}
+                className={cn(inputCls, nodeMissing && showErrors && 'border-red-400 focus:border-red-400')}
+              >
+                <option value="">노드 선택…</option>
+                {nodes!.map((n) => (
+                  <option key={nodeKey(n)} value={nodeKey(n)}>
+                    {n.label}
+                  </option>
+                ))}
+              </select>
+              {showErrors && nodeMissing && (
+                <p data-testid="fr-error-node" className="mt-1 text-[11px] text-red-500">
+                  대상 노드를 선택하세요.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* 설비 에이전트 선택(선택 기능) — TARGET 열거/각인 대상 */}
+          {showAgentSelect && (
+            <div>
+              <label className={labelCls} htmlFor="fr-agent">
+                설비 에이전트
+              </label>
+              <select
+                id="fr-agent"
+                data-testid="fr-agent-select"
+                value={agentPick}
+                onChange={(e) => handleAgentPick(e.target.value)}
+                className={inputCls}
+              >
+                <option value="">(선택 — 자유 입력)</option>
+                {agents!.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* 이름 */}
           <div>
             <label className={labelCls} htmlFor="fr-name">
@@ -201,7 +327,7 @@ export default function FacilityRuleModal({ initial, agentId, onSave, onCancel }
 
           {/* TARGET (M4) */}
           <TargetPicker
-            agentId={agentId}
+            agentId={enumAgentId}
             value={target}
             onChange={setTarget}
             invalid={showErrors && !!validation.errors.target}
@@ -228,8 +354,12 @@ export default function FacilityRuleModal({ initial, agentId, onSave, onCancel }
           <button
             type="button"
             onClick={handleSave}
+            aria-disabled={nodeMissing}
             data-testid="facility-rule-save"
-            className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            className={cn(
+              'rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700',
+              nodeMissing && 'cursor-not-allowed opacity-50 hover:bg-blue-600',
+            )}
           >
             저장
           </button>
@@ -299,34 +429,39 @@ function TargetPicker({
         ))}
       </div>
 
-      {/* 값 선택 (에이전트 있으면 열거 select, 없으면 free-form) */}
+      {/* 값 선택: 에이전트가 있으면 열거(개별=테이블 / 전체·그룹=select), 없으면 free-form */}
       {hasAgent ? (
-        <select
-          data-testid="fr-target-value"
-          value={value.value}
-          onChange={(e) => onChange({ ...value, value: e.target.value, byName: false })}
-          className={cn(inputCls, invalid && 'border-red-400')}
-        >
-          <option value="">선택…</option>
-          {value.kind === 'all' &&
-            lines.map((l) => (
-              <option key={l} value={l}>
-                {l}호선 전체
-              </option>
-            ))}
-          {value.kind === 'group' &&
-            (groups ?? []).map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name} · {g.member_count}대
-              </option>
-            ))}
-          {value.kind === 'device' &&
-            (devices ?? []).map((d) => (
-              <option key={d.device_id} value={d.device_id}>
-                {d.name || d.device_id}
-              </option>
-            ))}
-        </select>
+        value.kind === 'device' ? (
+          // 개별(device): 이름/라인/역사/위치 테이블에서 행 선택(REQ — 로스터가 커서 검색 지원).
+          <DeviceTargetTable
+            devices={devices ?? []}
+            stations={stations ?? []}
+            selectedId={value.value}
+            onSelect={(deviceId) => onChange({ ...value, value: deviceId, byName: false })}
+            invalid={invalid}
+          />
+        ) : (
+          <select
+            data-testid="fr-target-value"
+            value={value.value}
+            onChange={(e) => onChange({ ...value, value: e.target.value, byName: false })}
+            className={cn(inputCls, invalid && 'border-red-400')}
+          >
+            <option value="">선택…</option>
+            {value.kind === 'all' &&
+              lines.map((l) => (
+                <option key={l} value={l}>
+                  {l}호선 전체
+                </option>
+              ))}
+            {value.kind === 'group' &&
+              (groups ?? []).map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} · {g.member_count}대
+                </option>
+              ))}
+          </select>
+        )
       ) : (
         <div className="space-y-1">
           <input
@@ -357,6 +492,153 @@ function TargetPicker({
           대상을 선택하세요.
         </p>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 개별(device) TARGET 테이블 — 이름/라인/역사/위치. 검색 필터 + 행 선택.
+// ---------------------------------------------------------------------------
+
+/** 디바이스 로스터 × 역사/위치 조인 결과(테이블 한 행). 매칭 실패 시 원본 id 로 폴백. */
+interface DeviceRow {
+  device: AirDevice;
+  name: string;
+  line: string;
+  stationName: string;
+  placeName: string;
+}
+
+/**
+ * 개별 대상 선택 테이블. device.station 으로 역사(라인·표시명)를, device.place 로 위치 표시명을
+ * 조인한다(매칭 실패 시 원본 id 폴백). 상단 검색 입력이 이름/라인/역사/위치 부분일치로 필터링한다.
+ * 행 클릭/Enter/Space 로 device_id 를 선택하며(byName 의미 불변), 선택 행을 강조한다.
+ */
+function DeviceTargetTable({
+  devices,
+  stations,
+  selectedId,
+  onSelect,
+  invalid,
+}: {
+  devices: AirDevice[];
+  stations: AirStation[];
+  selectedId: string;
+  onSelect: (deviceId: string) => void;
+  invalid: boolean;
+}) {
+  const [search, setSearch] = useState('');
+
+  const rows = useMemo<DeviceRow[]>(() => {
+    const byStation = new Map(stations.map((s) => [s.station, s]));
+    return devices.map((d) => {
+      const st = byStation.get(d.station);
+      const place = st?.places.find((p) => p.place === d.place);
+      return {
+        device: d,
+        name: d.name || d.device_id,
+        line: st?.line || d.station || '',
+        stationName: st?.display_name || d.station || '',
+        placeName: place?.display_name || d.place || '',
+      };
+    });
+  }, [devices, stations]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) =>
+      [r.name, r.line, r.stationName, r.placeName].some((f) => f.toLowerCase().includes(q)),
+    );
+  }, [rows, search]);
+
+  return (
+    <div className="space-y-1.5">
+      <input
+        type="text"
+        data-testid="fr-target-device-search"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="이름/라인/역사/위치 검색…"
+        aria-label="기기 검색"
+        className={inputCls}
+      />
+      <div
+        className={cn(
+          'max-h-56 overflow-y-auto rounded-md border border-(--color-border-default)',
+          invalid && 'border-red-400',
+        )}
+      >
+        <table
+          className="w-full border-collapse text-left text-xs"
+          data-testid="fr-target-device-table"
+        >
+          <thead className="sticky top-0 bg-(--color-bg-elevated) text-(--color-text-muted)">
+            <tr>
+              <th scope="col" className="px-2 py-1.5 font-medium">이름</th>
+              <th scope="col" className="px-2 py-1.5 font-medium">라인</th>
+              <th scope="col" className="px-2 py-1.5 font-medium">역사</th>
+              <th scope="col" className="px-2 py-1.5 font-medium">위치</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={4}
+                  data-testid="fr-target-device-empty"
+                  className="px-2 py-3 text-center text-(--color-text-muted)"
+                >
+                  {rows.length === 0 ? '기기 로스터가 비어 있습니다.' : '검색 결과가 없습니다.'}
+                </td>
+              </tr>
+            ) : (
+              filtered.map((r) => {
+                const selected = r.device.device_id === selectedId;
+                return (
+                  <tr
+                    key={r.device.device_id}
+                    data-testid={`fr-target-device-row-${r.device.device_id}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={selected}
+                    onClick={() => onSelect(r.device.device_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSelect(r.device.device_id);
+                      }
+                    }}
+                    className={cn(
+                      'cursor-pointer border-t border-(--color-border-default) outline-none transition-colors',
+                      selected
+                        ? 'bg-blue-500 text-white'
+                        : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated) focus:bg-(--color-bg-elevated)',
+                    )}
+                  >
+                    <td className="px-2 py-1.5">
+                      <span className="flex items-center gap-1.5">
+                        <span
+                          aria-hidden="true"
+                          title={r.device.online ? '온라인' : '오프라인'}
+                          className={cn(
+                            'inline-block h-1.5 w-1.5 shrink-0 rounded-full',
+                            r.device.online ? 'bg-green-500' : 'bg-gray-400',
+                          )}
+                        />
+                        {r.name}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5">{r.line}</td>
+                    <td className="px-2 py-1.5">{r.stationName}</td>
+                    <td className="px-2 py-1.5">{r.placeName}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -8,17 +8,9 @@
 
 import { useCallback, useRef, useState } from 'react';
 
-import { configureNode } from '@/services/api/nodeService';
-import { getFlow, updateFlow } from '@/services/api/flowService';
 import { useUIStore } from '@/stores/uiStore';
-import { APIError } from '@/types/api';
-import {
-  buildFullTriggerConfig,
-  detectConflict,
-  findNodeConfigInDefinition,
-  patchNodeConfigInDefinition,
-  type SerializedSchedule,
-} from '../triggerPanelUtils';
+import { buildFullTriggerConfig, type SerializedSchedule } from '../triggerPanelUtils';
+import { persistScheduleDualWrite } from './scheduleDualWrite';
 
 /** 훅 대상 노드 좌표. */
 export interface UseScheduleDualWriteOptions {
@@ -72,44 +64,19 @@ export function useScheduleDualWrite({
     ) => {
       if (!flowId || !nodeId || saving) return;
       setSaving(true);
-      const fullConfig = buildFullTriggerConfig(baselineRef.current, nextSchedules);
-
-      // 1) LIVE
-      let persistOnly = false;
-      try {
-        await configureNode(flowId, nodeId, fullConfig);
-      } catch (err) {
-        if (err instanceof APIError && err.status === 404) {
-          persistOnly = true;
-        } else {
-          addNotification({ type: 'error', message: '저장 실패 — 라이브 반영 중 오류가 발생했습니다.' });
-          setSaving(false);
-          return;
-        }
-      }
-
-      // 2) PERSIST (patch-then-PUT)
-      let conflict = false;
-      try {
-        const flow = await getFlow(flowId);
-        const def = (flow.config ?? {}) as Record<string, unknown>;
-        conflict = detectConflict(findNodeConfigInDefinition(def, nodeId), baselineRef.current);
-        const patched = patchNodeConfigInDefinition(def, nodeId, fullConfig);
-        await updateFlow(flowId, { definition: patched });
-      } catch {
-        addNotification({ type: 'error', message: '저장 실패 — 플로우 정의 지속화 중 오류가 발생했습니다.' });
-        setSaving(false);
-        return;
-      }
-
-      baselineRef.current = fullConfig;
-      onApplied?.(nextSchedules);
-      addNotification({
-        type: persistOnly ? 'warning' : 'success',
-        message: persistOnly ? '노드 미실행 — 저장만 적용, 재배포 시 반영' : '저장 완료',
+      const baseline = baselineRef.current;
+      const ok = await persistScheduleDualWrite({
+        flowId,
+        nodeId,
+        baseline,
+        nextSchedules,
+        notify: addNotification,
       });
-      if (conflict) {
-        addNotification({ type: 'warning', message: '다른 편집이 감지되어 덮어썼습니다 (last-write-wins)' });
+      if (ok) {
+        // 전체 성공 시에만 baseline 을 이번 fullConfig 로 갱신하고 소비자 상태를 반영한다
+        // (조기 반환 오류 경로에서는 미갱신 — 코어가 상태를 소유하지 않으므로 훅이 담당).
+        baselineRef.current = buildFullTriggerConfig(baseline, nextSchedules);
+        onApplied?.(nextSchedules);
       }
       setSaving(false);
     },

@@ -35,6 +35,13 @@ export interface ScheduleNodeEntry {
   nodeConfig: Record<string, unknown>;
   /** 노드의 FULL schedules 배열(원본 인덱스 = CRUD origin). */
   schedules: SerializedSchedule[];
+  /**
+   * 이 trigger 노드에서 flow 엣지를 하류로 순회해 도달한 제어(control) 노드들의
+   * 실행 에이전트(agent_ref) 목록(distinct, 비어있지 않음). 규칙 추가 시 에이전트
+   * 자동 유도에 사용한다: []=미배선(수동 폴백) / [단일]=자동 사용 / [복수]=모호(수동 폴백).
+   * @see deriveDownstreamAgents
+   */
+  derivedAgentIds: string[];
 }
 
 /** agent 그룹(AC-7). key=null 은 미지정 버킷(AC-8). */
@@ -64,6 +71,98 @@ export function resolveScheduleAgent(
 /** 노드 레벨 agent(빈 노드의 그룹 배치용). nodeConfig.agentId ?? null. */
 export function nodeLevelAgent(nodeConfig: Record<string, unknown>): string | null {
   return readString(nodeConfig.agentId);
+}
+
+/** 노드 data(reactflow) 를 안전하게 읽는다(오브젝트 아니면 빈 오브젝트). */
+function readNodeData(node: Record<string, unknown>): Record<string, unknown> {
+  return node.data && typeof node.data === 'object' && !Array.isArray(node.data)
+    ? (node.data as Record<string, unknown>)
+    : {};
+}
+
+/** 노드 타입 문자열(data.nodeType 우선, reactflow node.type 폴백). 없으면 null. */
+function readNodeType(node: Record<string, unknown>): string | null {
+  return readString(readNodeData(node).nodeType) ?? readString(node.type);
+}
+
+/** 노드 타입이 제어(control) 노드인지(예: xsfm-control / samsung-hvacr01-control / lgap-control). */
+function isControlNodeType(type: string | null): boolean {
+  return type !== null && type.includes('control');
+}
+
+/** 제어 노드의 실행 에이전트 id(data.agent_ref ?? data.agent_id). 없으면 null. */
+function readNodeAgentRef(node: Record<string, unknown>): string | null {
+  const data = readNodeData(node);
+  return readString(data.agent_ref) ?? readString(data.agent_id);
+}
+
+/**
+ * trigger 노드에서 flow 엣지를 하류로 순회해 도달 가능한 제어(control) 노드들의
+ * 실행 에이전트(agent_ref) 를 수집한다. 비-제어 중간 노드(filter/script 등)를 통과해
+ * 다중 홉 배선도 해석하며, 방문 집합으로 사이클을 방지한다. 반환값은 distinct 한
+ * 비어있지 않은 agent_ref 목록이다(최초 발견 순).
+ *
+ *   []      → 하류 제어 노드 없음(미배선) → 수동 폴백
+ *   [단일]  → 파생 에이전트(자동 사용)
+ *   [복수]  → 팬아웃 모호 → 수동 폴백
+ *
+ * 엣지는 reactflow `{ source, target }`(노드 id) 이며 sourceHandle/targetHandle 은 무시한다.
+ * 잘못된(누락 source/target/data) 엣지·노드는 조용히 건너뛴다(예외 없음).
+ */
+export function deriveDownstreamAgents(flow: FlowInfo, triggerNodeId: string): string[] {
+  const def = flow.config;
+  if (!def || typeof def !== 'object') return [];
+  const record = def as Record<string, unknown>;
+
+  const rawNodes = Array.isArray(record.nodes) ? (record.nodes as unknown[]) : [];
+  const rawEdges = Array.isArray(record.edges) ? (record.edges as unknown[]) : [];
+
+  // 노드 맵(id → 노드). 잘못된 노드는 제외.
+  const nodeById = new Map<string, Record<string, unknown>>();
+  for (const raw of rawNodes) {
+    if (!raw || typeof raw !== 'object') continue;
+    const node = raw as Record<string, unknown>;
+    if (typeof node.id === 'string' && node.id) nodeById.set(node.id, node);
+  }
+
+  // 인접 리스트(source → targets). 누락 source/target 엣지는 건너뛴다.
+  const adjacency = new Map<string, string[]>();
+  for (const raw of rawEdges) {
+    if (!raw || typeof raw !== 'object') continue;
+    const edge = raw as Record<string, unknown>;
+    const src = edge.source;
+    const dst = edge.target;
+    if (typeof src !== 'string' || !src || typeof dst !== 'string' || !dst) continue;
+    const list = adjacency.get(src);
+    if (list) list.push(dst);
+    else adjacency.set(src, [dst]);
+  }
+
+  // BFS 하류 순회(방문 집합으로 사이클 방지). trigger 자신은 수집 대상 아님.
+  const agents: string[] = [];
+  const seen = new Set<string>();
+  const visited = new Set<string>([triggerNodeId]);
+  const queue: string[] = [triggerNodeId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const targets = adjacency.get(current);
+    if (!targets) continue;
+    for (const next of targets) {
+      if (visited.has(next)) continue;
+      visited.add(next);
+      const node = nodeById.get(next);
+      if (node && isControlNodeType(readNodeType(node))) {
+        const ref = readNodeAgentRef(node);
+        if (ref && !seen.has(ref)) {
+          seen.add(ref);
+          agents.push(ref);
+        }
+      }
+      // 제어 노드 이후에도 계속 순회(비-제어 중간 노드 다중 홉 해석).
+      queue.push(next);
+    }
+  }
+  return agents;
 }
 
 /**
@@ -101,6 +200,7 @@ export function collectTriggerNodeEntries(flow: FlowInfo): ScheduleNodeEntry[] {
       nodeName: label,
       nodeConfig: data,
       schedules,
+      derivedAgentIds: deriveDownstreamAgents(flow, id),
     });
   }
   return out;
