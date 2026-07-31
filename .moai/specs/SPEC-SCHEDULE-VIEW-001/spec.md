@@ -2,7 +2,7 @@
 id: SPEC-SCHEDULE-VIEW-001
 title: "Schedule View — 에이전트별 스케줄 관리 + 스케줄 실행 로그"
 version: "0.2.0"
-status: draft
+status: in-progress
 created: 2026-07-31
 updated: 2026-07-31
 author: xtra

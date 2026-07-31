@@ -2,7 +2,7 @@
 id: SPEC-SCHEDULE-VIEW-001
 title: "Schedule View — 기술 설계"
 version: "0.2.0"
-status: draft
+status: in-progress
 created: 2026-07-31
 updated: 2026-07-31
 author: xtra
