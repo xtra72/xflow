@@ -36,6 +36,7 @@ import type { LogLevelInfo, LogStyle } from '@/services/api/monitorService';
 import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import RemoteManagementTab from '@/pages/settings/RemoteManagementTab';
+import { ScheduleLogStorageCard } from '@/pages/settings/ScheduleLogStorageCard';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation, type Locale, type TranslationFn } from '@/lib/i18n';
 
@@ -560,6 +561,9 @@ function SystemTab() {
 
       {/* 컴포넌트별 로그 레벨 오버라이드 카드 */}
       <ComponentLogLevelOverrides isViewer={isViewer} addNotification={addNotification} />
+
+      {/* 스케줄 로그 저장 방식 카드 (admin 전용, viewer 비활성화) */}
+      <ScheduleLogStorageCard isViewer={isViewer} />
 
       {/* API 서버 정보 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
