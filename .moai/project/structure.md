@@ -703,6 +703,14 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - `web/src/pages/dashboard/panels/triggerPanelUtils.ts`: 순수 유틸(카탈로그→inline 직렬화, `patchNodeConfigInDefinition` reactflow flat `node.data` 병합). dual-write: LIVE `nodeService.configureNode` + PERSIST `getFlow`→patch→`flowService.updateFlow`(patch-then-PUT). 404 persist-only + 통지, last-write-wins(지속 config vs hydration 기준선 비교) 통지.
 - 와이어링: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(디스패치), `pages/dashboard/AddPanelDialog.tsx`(trigger-node 피커 단계). i18n `lib/i18n/{ko,en}.json`. 기존 flow API/패널 시스템 재사용(신규 백엔드 엔드포인트·권한 계층 0).
 
+**설비 제어 예약 패널 + Trigger 스케줄 규칙 메타·발화 게이팅** (SPEC-TRIGGER-SCHED-001, v0.3.0 — 범용 `trigger-config` 패널과 공존하는 특화 패널 + 백엔드 규칙 메타 확장):
+
+- `internal/node/trigger.go` (백엔드 M1~M2): `TriggerSchedule` 에 `name`/`valid_from`/`valid_to`/`priority`/`enabled`(`*bool` 트라이스테이트, 부재→true 무회귀) 5필드 확장. `makeHandler` 가 generation-token 게이트 뒤에서 `enabled` ∧ `withinValidity`(서버 로컬·날짜 단위 양끝 inclusive, 빈 경계=무제한, 잘못된 날짜=무제한, `YYYY-MM-DD`+RFC3339) 로 발화 게이팅 — 비활성/기간외는 emit 스킵하되 타이머 유지(재개 가능). `buildMessage` 는 `rule_name`/`priority` 조건부 pass-through(기존 스케줄 byte-identical). 게이팅 스칼라는 entry 사전 캡처 → 발화 클로저에서 노드 lock 미획득(재귀 RLock 회피). 신규 함수 커버리지 100%, `-race` 클린.
+- `web/src/pages/dashboard/panels/facilitySchedule/FacilitySchedulePanel.tsx` (프런트 M3~M4): 신규 `facility-schedule` PanelType. 트리거 노드 `config.schedules` 를 규칙으로 표현하는 6컬럼 읽기 전용 테이블(SCHEDULE/TARGET/PLAN/ACTION/PRIO/STATE, priority 안정 정렬 + STATE 토글 + 행별 EDIT). `useNodeTypeInstances('trigger')` 노드 피커 재사용.
+- `web/src/pages/dashboard/panels/facilitySchedule/FacilityRuleModal.tsx` (프런트 M4~M5): 규칙 생성/편집 모달 — 이름/유효기간/PLAN(`TriggerScheduleEditor` 단일 원소 재사용, 타이밍 키 전용)/TARGET(`TargetPicker`)/ACTION(`ActionEditor`)/priority/enabled. `TargetPicker` 는 패널 config `agentId` 로 대상 열거(설정 시 `useStations`/`useGroups`/`useXsfmDevices` id 셀렉터, 미설정 시 free-form + 이름 셀렉터 폴백). `ActionEditor` 는 전원/풍량 2축만(모드 축 없음, `mode` 키 무방출), `fan_speed` 1~3 검증.
+- `web/src/pages/dashboard/panels/facilitySchedule/facilityScheduleUtils.ts`: 순수 로직(셀렉터/액션 build·parse·label·정렬·검증). dual-write 는 선행 `triggerPanelUtils`(`buildFullTriggerConfig`/`patchNodeConfigInDefinition`/`detectConflict`) 재사용 — configureNode(live)+updateFlow(persist), 404 persist-only, last-write-wins.
+- 와이어링: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(디스패치), `pages/dashboard/AddPanelDialog.tsx`(패널 옵션 + 대상 선택 단계). i18n `lib/i18n/{ko,en}.json`. 범용 `trigger-config` 패널·trigger 노드 무회귀, 신규 백엔드 엔드포인트/저장소 0.
+
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
 - `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)

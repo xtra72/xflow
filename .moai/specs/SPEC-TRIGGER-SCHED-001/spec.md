@@ -1,8 +1,8 @@
 ---
 id: SPEC-TRIGGER-SCHED-001
 title: "설비 제어 예약 패널 (스케줄 규칙 테이블 + 모달 편집)"
-version: "0.2.0"
-status: draft
+version: "0.3.0"
+status: completed
 created: 2026-07-31
 updated: 2026-07-31
 author: xtra
@@ -20,6 +20,7 @@ tier: L
 | ---------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-07-31 | 0.1.0 | 초기 SPEC 작성 — 설비 제어 예약 전용 대시보드 패널 도입. (1) Trigger 스케줄 모델을 확장해 규칙별 `name`/유효기간(`valid_from`/`valid_to`)/`priority`/`enabled` 메타를 부여하고 백엔드가 발화 시점에 존중(비활성·유효기간 밖은 발화 금지), (2) 규칙 payload = xsfm 제어 명령(TARGET=셀렉터, ACTION=제어 명령)으로 특화, (3) 읽기 전용 요약 **테이블**(SCHEDULE/TARGET/PLAN/ACTION/PRIO/STATE) + **모달** 생성/편집 + 행별 EDIT + STATE 토글 UX. RD-1~3 확정 반영. OQ-1~6 미해결(사용자 결정 대기). 모드 축(Auto/Sleep) 코드 점검 결과: xsfm 제어 모델은 2축(power/fan_speed)만 지원, `mode` 축 부재 → OQ-5 로 플래그. |
 | 2026-07-31 | 0.2.0 | OQ-1~6 사용자 확정 → RD-4~9 승격, §6 Open Questions 제거(잔여 없음). RD-4: ACTION 은 xsfm 2축(power/fan_speed)만 — 모드 축(Auto/Sleep) 부재로 v1 범위 밖(라벨에서 Auto/Sleep 제거). RD-5: 신규 `facility-schedule` 패널이 범용 `trigger-config` 패널과 공존(대체 아님). RD-6: TARGET "전체" = `line` 셀렉터(호선 전체, 예 "2호선 전체"), 에이전트 전체 셀렉터 미도입. RD-7: priority 는 v1 표시+테이블 정렬 전용(런타임 충돌 해소 유보). RD-8: 유효기간은 서버 로컬 시간·날짜 단위 양끝 inclusive, 빈 `valid_to`=무기한/빈 `valid_from`=하한 무제한, 발화는 활성 AND [valid_from, valid_to] 내에서만. RD-9: 확장 필드는 dual-write(configureNode live + updateFlow persist)로 trigger 스케줄 config 에 지속(RD-1 일관). |
+| 2026-07-31 | 0.3.0 | 구현 완료 + 3-phase close. 전 마일스톤(M1~M6) 구현·커밋 — 백엔드 M1~M2(커밋 `03e8827b`: `TriggerSchedule` 5필드 확장 + `makeHandler` 발화 게이팅), 프런트 M3~M6(커밋 `fb40c4b2`: 신규 `facility-schedule` 패널 — 6컬럼 테이블 + 모달 + TARGET 피커 + ACTION 편집기 + dual-write). `status: draft→completed`, `version: 0.2.0→0.3.0`. spec-anchored Level 2 규율에 따라 §8 구현 노트(as-implemented) IN-1~IN-7 신설. 검증: `go test ./...` exit 0(42 pkgs)·`-race` 클린·백엔드 M1 신규 함수 커버리지 100%, 프런트 vitest 2370(+50)·`tsc`/eslint 클린. 무회귀(범용 `trigger-config` 패널·trigger 노드 기존 동작 보존). |
 
 ---
 
@@ -218,3 +219,15 @@ v1 에서 priority 는 테이블 정렬 + PRIO 표기 전용이다(RD-7). 동일
 - REQ-SCHED-04-xx / 05-xx → TARGET 피커 / ACTION 편집기 (신규 프런트 유틸)
 - REQ-SCHED-06-xx → 선행 dual-write 경로 재사용(`nodeService`/`flowService`, `triggerPanelUtils.ts`)
 - REQ-SCHED-07-xx → 회귀 테스트 (기존 trigger 노드 + `trigger-config` 패널)
+
+## 8. 구현 노트 (as-implemented, spec-anchored Level 2)
+
+> v0.3.0 구현 완료 시점 기록. 계획(§4/§5) 대비 실제 구현의 정련·구체화 7건. 모두 스코프 확장이 아니라 정확성·하위호환을 강화하는 방향이다. 구현 커밋: 백엔드 `03e8827b`(M1~M2), 프런트 `fb40c4b2`(M3~M6).
+
+- **IN-1 — `Enabled` = `*bool` 트라이스테이트**: `TriggerSchedule.Enabled` 를 `bool` 이 아닌 `*bool` 포인터로 구현했다. config 에 `enabled` 키가 **부재**하면 `nil` → `true`(기본 활성)로 해석해 기존 스케줄을 무회귀로 유지하고, 명시적 `false` 는 `nil`(부재)과 구별 가능하다. (REQ-SCHED-01-01/02, §4.1 확정 구현)
+- **IN-2 — 날짜 포맷 = `YYYY-MM-DD` + RFC3339 수용**: 유효기간 파싱은 `YYYY-MM-DD` 뿐 아니라 RFC3339 도 수용하되, 비교는 RD-8 대로 **서버 로컬·날짜 단위**로 절삭해 수행한다. 잘못된(파싱 실패) 날짜는 방어적으로 **해당 경계 무제한**으로 처리해 오발화를 방지한다. (REQ-SCHED-01-04, RD-8; §4.2 의 "미발화 처리"에서 "경계 무제한"으로 정련)
+- **IN-3 — `rule_name`/`priority` 메타 조건부 pass-through**: `buildMessage` 는 `name`/`priority` 가 지정된 규칙에 한해 방출 메시지에 `rule_name`/`priority` 메타를 실어 통과 전달한다. 미지정 규칙(기존 스케줄)의 방출 메시지는 **byte-identical** 로 보존된다. (REQ-SCHED-01-06, §4.3 무회귀 강화)
+- **IN-4 — TARGET 열거는 패널 config `agentId` 기반**: TARGET 피커는 패널 config 의 `agentId`(추가 시점 + 패널 내 셀렉터)로 대상을 열거한다. `agentId` 가 **설정된 경우** id 셀렉터(호선/그룹/개별)를 `useStations`/`useGroups`/`useXsfmDevices` 로 열거하고, **미설정인 경우** free-form 텍스트 입력 + "이름으로 지정" 토글(→ `group_name`/`device_name`)로 폴백한다. (REQ-SCHED-04-02~05, §4.5 피커 구현 구체화)
+- **IN-5 — ACTION 인코딩 = `{power:bool|null, fanSpeed:number|null}`**: ACTION 편집기 내부 모델은 `power`/`fanSpeed` 2축을 각각 `null`(무변경) 허용으로 인코딩한다. `buildActionCommand` 는 무-축(둘 다 미지정)·범위 밖(`fan_speed` 1~3 위반) 시 저장을 차단하고, payload 에 `mode` 키를 **어떤 경우에도 방출하지 않는다**. (REQ-SCHED-05-01~06, RD-4; §4.3/§4.5 확정 구현)
+- **IN-6 — PLAN = `TriggerScheduleEditor` 단일 원소 배열 재사용**: PLAN(스케줄) 편집은 선행 `TriggerScheduleEditor` 를 단일 원소 배열에 대해 재사용하며 **타이밍 키만** 편집한다. payload(제어 명령)는 ACTION 편집기가 소유해 관심사를 분리한다. (§4.5 모달 폼 구현 구체화, 단순성 사다리 재사용)
+- **IN-7 — dual-write + STATE 토글 단일 `persist()` 경로**: 규칙 생성/편집과 STATE 토글은 선행 `triggerPanelUtils`(`buildFullTriggerConfig`/`patchNodeConfigInDefinition`/`detectConflict`)를 재사용하는 단일 `persist()` 경로를 통해 dual-write 된다 — 범용 패널과 동일한 LIVE(`configureNode`)→PERSIST(`updateFlow`)→404 persist-only→last-write-wins 규약을 그대로 계승한다. (REQ-SCHED-06-01~04, RD-9; §4.5 지속화 구현)

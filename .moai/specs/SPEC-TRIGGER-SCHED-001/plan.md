@@ -2,7 +2,8 @@
 
 > 대상 SPEC: 설비 제어 예약 패널 (스케줄 규칙 테이블 + 모달 편집)
 > Tier: L — 노드 모델 변경 + 특화 패널 + 테이블/모달 + TARGET/ACTION 편집기 (백엔드+프런트 교차)
-> 버전: 0.2.0 (spec.md 동기) — OQ-1~6 확정(RD-4~9) 반영. RD-4(ACTION 2축·모드 축 없음), RD-5(신규 `facility-schedule` 패널 공존), RD-6("전체"=line), RD-7(priority 표시/정렬 전용), RD-8(유효기간 서버 로컬·양끝 inclusive), RD-9(dual-write 지속).
+> 버전: 0.3.0 (spec.md 동기) — 구현 완료 + 3-phase close. 전 마일스톤(M1~M6) 구현·커밋(백엔드 M1~M2 `03e8827b`, 프런트 M3~M6 `fb40c4b2`). as-implemented 정련 7건은 spec.md §8 IN-1~IN-7 참조.
+> 이전 버전: 0.2.0 — OQ-1~6 확정(RD-4~9) 반영. RD-4(ACTION 2축·모드 축 없음), RD-5(신규 `facility-schedule` 패널 공존), RD-6("전체"=line), RD-7(priority 표시/정렬 전용), RD-8(유효기간 서버 로컬·양끝 inclusive), RD-9(dual-write 지속).
 
 ## 1. 기술 접근 (Technical Approach)
 

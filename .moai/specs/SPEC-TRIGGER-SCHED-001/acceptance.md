@@ -1,7 +1,8 @@
 # SPEC-TRIGGER-SCHED-001 — 인수 기준 (acceptance.md)
 
 > 형식: Given-When-Then. 각 시나리오는 대응 REQ 를 명시한다.
-> 버전: 0.2.0 (spec.md 동기) — OQ-1~6 확정(RD-4~9) 반영. AC-2/AC-3(RD-8 서버 로컬·양끝 inclusive), AC-4(RD-7 PRIO 정렬), AC-9(RD-6 전체=line), AC-10(RD-4 2축·모드 없음), AC-11(RD-9 확장 필드 지속) 구체화. AC-13(RD-5 패널 공존) 신규.
+> 버전: 0.3.0 (spec.md 동기) — 구현 완료 + 3-phase close. AC-1~AC-13 전량 구현·검증 통과(백엔드 `03e8827b`, 프런트 `fb40c4b2`). AC 대응 구현 정련은 spec.md §8 IN-1~IN-7 참조 — 특히 AC-1(IN-1 `*bool` 트라이스테이트), AC-2/AC-3(IN-2 RFC3339 수용·잘못된 날짜 경계 무제한), AC-9(IN-4 `agentId` 열거·이름 폴백), AC-10(IN-5 `mode` 키 무방출), AC-11(IN-7 단일 `persist()` 경로). 검증 지표: `go test ./...` exit 0(42 pkgs)·`-race` 클린·백엔드 M1 신규 함수 커버리지 100%, 프런트 vitest 2370(+50)·`tsc`/eslint 클린.
+> 이전 버전: 0.2.0 — OQ-1~6 확정(RD-4~9) 반영. AC-2/AC-3(RD-8 서버 로컬·양끝 inclusive), AC-4(RD-7 PRIO 정렬), AC-9(RD-6 전체=line), AC-10(RD-4 2축·모드 없음), AC-11(RD-9 확장 필드 지속) 구체화. AC-13(RD-5 패널 공존) 신규.
 
 ## AC-1 — 비활성 규칙은 발화하지 않는다 (REQ-SCHED-01-03, RD-8)
 

@@ -1,7 +1,8 @@
 # SPEC-TRIGGER-SCHED-001 — 기술 설계 (design.md)
 
 > Tier L 설계 문서. 아키텍처·데이터 모델·인터페이스 계약·발화 게이팅 상세.
-> 버전: 0.2.0 (spec.md 동기) — OQ-1~6 확정(RD-4~9) 반영: RD-4(ACTION 2축·모드 축 없음), RD-5(`facility-schedule` 패널 공존), RD-6("전체"=line 셀렉터), RD-7(priority 표시/정렬 전용), RD-8(유효기간 서버 로컬·양끝 inclusive), RD-9(dual-write 지속).
+> 버전: 0.3.0 (spec.md 동기) — 구현 완료 + 3-phase close. 설계→구현 실현 매핑은 spec.md §8 IN-1~IN-7 참조: §2 데이터 모델 `Enabled *bool`(IN-1), §3 `withinValidity` RFC3339 수용·잘못된 날짜 경계 무제한(IN-2), §4.1 TARGET 열거 `agentId` 기반·이름 폴백(IN-4), §4.2 ACTION `{power,fanSpeed}` null 인코딩·`mode` 무방출(IN-5), §5 dual-write 단일 `persist()` 재사용(IN-7). 구현 커밋: 백엔드 `03e8827b`, 프런트 `fb40c4b2`.
+> 이전 버전: 0.2.0 — OQ-1~6 확정(RD-4~9) 반영: RD-4(ACTION 2축·모드 축 없음), RD-5(`facility-schedule` 패널 공존), RD-6("전체"=line 셀렉터), RD-7(priority 표시/정렬 전용), RD-8(유효기간 서버 로컬·양끝 inclusive), RD-9(dual-write 지속).
 
 ## 1. 컴포넌트 개요
 

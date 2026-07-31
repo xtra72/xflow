@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### 추가 — 설비 제어 예약 패널 (규칙 테이블 + 모달) + Trigger 스케줄 규칙 메타·발화 게이팅
+
+- **설비 제어 예약 전용 대시보드 패널 도입 + Trigger 스케줄 규칙 메타/fire-gating 백엔드 (Non-breaking, 가산형)**
+
+  선행 SPEC-TRIGGER-PANEL-001 의 범용 `trigger-config` 패널 위에, xsfm(지하철 설비) 제어 예약에 특화된 **신규 `facility-schedule` 패널**을 가산했다(범용 패널과 공존, 대체 아님). 운영자는 예약 제어 규칙을 표(테이블)로 조회하고 모달로 생성/편집하며, 각 규칙에 이름·유효기간·대상 설비(TARGET)·실행 계획(PLAN)·제어 명령(ACTION)·우선순위·활성 여부를 지정한다. 백엔드는 규칙 메타를 발화 시점에 존중한다. 백엔드 M1~M2(커밋 `03e8827b`) + 프런트 M3~M6(커밋 `fb40c4b2`)로 완성.
+
+  - **백엔드 규칙 메타 + 발화 게이팅(M1~M2, `internal/node/trigger.go`)**: `TriggerSchedule` 에 `name`/`valid_from`/`valid_to`/`priority`/`enabled` 5필드 확장. `enabled` 는 `*bool` **트라이스테이트**(config 부재→`true` 무회귀, 명시 `false` 구별). `makeHandler` 가 generation-token 게이트 뒤에서 **`enabled` ∧ `withinValidity`** 로 발화를 게이팅 — 비활성이거나 유효기간(서버 로컬·날짜 단위 **양끝 inclusive**, 빈 경계=무제한, 잘못된 날짜=무제한) 밖이면 emit 을 스킵하되 **타이머는 유지**(재활성/기간 진입 시 재개). 날짜 포맷은 `YYYY-MM-DD` + RFC3339 수용. `buildMessage` 는 `rule_name`/`priority` 메타를 **조건부 pass-through**(기존 스케줄 방출 byte-identical). `-race` 클린, 신규 함수 커버리지 100%.
+  - **프런트 특화 패널(M3~M6, `web/`)**: 신규 `facility-schedule` PanelType + `FacilitySchedulePanel`(6컬럼 테이블 — SCHEDULE 이름+유효기간(무기한)/TARGET 전체(line)·그룹·개별 배지/PLAN/ACTION 2축 라벨/PRIO 안정 정렬/STATE 토글) + `FacilityRuleModal`(생성·행별 편집). `TargetPicker` 는 패널 config `agentId` 로 대상 열거(설정 시 `useStations`/`useGroups`/`useXsfmDevices` id 셀렉터, 미설정 시 free-form + "이름으로 지정" 폴백 → `group_name`/`device_name`). `ActionEditor` 는 v1 전원/풍량 **2축**만(모드 축 없음, payload 에 `mode` 키 무방출). PLAN 은 `TriggerScheduleEditor` 를 단일 원소 배열로 재사용(타이밍 키 전용). dual-write 는 선행 `triggerPanelUtils`(`buildFullTriggerConfig`/`patchNodeConfigInDefinition`/`detectConflict`) 재사용 — configureNode(live)+updateFlow(persist), 404 persist-only, last-write-wins. 순수 로직은 `facilityScheduleUtils`(셀렉터/액션 build·parse·label·정렬·검증).
+  - **분기(Divergence, as-implemented — spec.md §8 IN-1~IN-7)**: (1) `Enabled` = `*bool` 트라이스테이트. (2) 날짜 포맷 `YYYY-MM-DD` + RFC3339 수용, 잘못된 날짜=경계 무제한. (3) `rule_name`/`priority` 조건부 메타 pass-through(기존 스케줄 byte-identical). (4) TARGET 열거 = 패널 config `agentId` 기반(설정 시 id 셀렉터, 미설정 시 free-form+이름 폴백). (5) ACTION 인코딩 = `{power:bool|null, fanSpeed:number|null}`, 무-축/범위밖 저장 차단, `mode` 키 무방출. (6) PLAN = `TriggerScheduleEditor` 단일 원소 배열 재사용(타이밍 키 전용). (7) dual-write + STATE 토글 단일 `persist()` 경로(범용 패널과 동일 규약 계승).
+  - **품질**: `go test ./...` exit 0(42 pkgs)·`-race` 클린·백엔드 M1 신규 함수 커버리지 100%, 프런트 vitest 2370 pass(+50)·`tsc`/eslint 클린. 기존 범용 `trigger-config` 패널 + trigger 노드 6종 스케줄·per-schedule payload 해결 순서 무회귀. 신규 외부 의존성 0, 신규 백엔드 엔드포인트/저장소 0(노드 config dual-write 재사용).
+  - **관련**: SPEC-TRIGGER-SCHED-001 v0.3.0(구현 완료, `03e8827b` + `fb40c4b2`, Tier L). RD-1~9 반영, OQ 잔여 없음. priority 기반 런타임 충돌 해소·xsfm 모드 축(Auto/Sleep) 도입은 향후 SPEC.
+
 ### 추가 — Trigger 노드 대시보드 패널 + 백엔드 live 타이머 재등록
 
 - **대시보드에서 Trigger 노드를 직접 운영하는 전용 패널 도입 + `TriggerNode.Configure` live 타이머 재무장 (Non-breaking, 가산형)**

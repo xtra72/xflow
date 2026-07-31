@@ -1,7 +1,8 @@
 # SPEC-TRIGGER-SCHED-001 — 정찰/연구 (research.md)
 
 > Tier L 연구 문서. 코드베이스 정찰 결과, 재사용 자산, 제약, 모드 축 코드 점검.
-> 버전: 0.2.0 (spec.md 동기) — OQ-1~6 확정(RD-4~9) 반영. 모드 축 코드 점검 결론은 RD-4(v1 2축 한정, 모드 도입 유보)로 확정.
+> 버전: 0.3.0 (spec.md 동기) — 구현 완료 + 3-phase close. 정찰 기준선(trigger.go 발화 경로·xsfm 2축 제어·선행 재사용 자산)이 구현으로 검증됨: 발화 게이트는 generation-token 뒤 삽입(§1.3 확정), ACTION 은 2축 유지·`mode` 무방출(§2.3 → spec.md §8 IN-5), dual-write 는 선행 자산 재사용(§3 → IN-7). 구현 커밋: 백엔드 `03e8827b`, 프런트 `fb40c4b2`.
+> 이전 버전: 0.2.0 — OQ-1~6 확정(RD-4~9) 반영. 모드 축 코드 점검 결론은 RD-4(v1 2축 한정, 모드 도입 유보)로 확정.
 
 ## 1. Trigger 노드 (internal/node/trigger.go)
 
