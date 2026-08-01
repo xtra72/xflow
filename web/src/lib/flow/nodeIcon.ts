@@ -92,6 +92,7 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'mqtt-publisher': Radio,
   // Modbus: 산업용 시리얼/TCP 버스 → Cable/Plug/Network 계열
   modbus: Cable,
+  'modbus-client': Network,
   'modbus-tcp': Network,
   'modbus-rtu': Cable,
   'modbus-tcp-server': Network,

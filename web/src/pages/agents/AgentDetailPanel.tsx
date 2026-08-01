@@ -525,7 +525,7 @@ const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; 
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
   },
-  'modbus-tcp': {
+  'modbus-client': {
     left: new Set(['mode', 'read_mode', 'reconnect_interval', 'request_timeout', 'max_retries']),
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',

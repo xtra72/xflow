@@ -19,7 +19,7 @@ const GRID_COLS = 3;
 const AGENT_CATEGORY: Record<string, string> = {
   'mqtt-client': 'protocol',
   'thingplus-gateway': 'protocol',
-  'modbus-tcp': 'protocol',
+  'modbus-client': 'protocol',
   'modbus-tcp-server': 'protocol',
   http: 'protocol',
   'http-sender': 'protocol',

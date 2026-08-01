@@ -24,7 +24,7 @@ func oneGroupWithIntervalConfig(groupInterval string) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-ac08",
 		Name: "AC08 Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -336,8 +336,8 @@ func TestAC03_TransportAbsent_IdenticalTCPBehavior_Closing(t *testing.T) {
 	mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
 	a, _ := newTestModbusAgent(t, cfg, mt)
 
-	// type id 보존.
-	assert.Equal(t, "modbus-tcp", a.Type(), "transport 생략 시 type id 는 modbus-tcp 로 보존되어야 한다")
+	// type id 확인 (modbus-client 로 개명됨).
+	assert.Equal(t, "modbus-client", a.Type(), "transport 생략 시에도 type id 는 modbus-client 여야 한다")
 
 	require.NoError(t, a.Start(context.Background()))
 	defer func() { _ = a.Stop(context.Background()) }()

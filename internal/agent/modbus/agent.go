@@ -119,7 +119,7 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	a := &ModbusAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-tcp")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-client")),
 		config:        cfg,
 		devices:       make([]*ModbusDevice, 0, len(cfg.Devices)),
 		pollResetCh:   make(chan time.Duration, 1),
@@ -207,7 +207,7 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 	}
 
 	a := &ModbusAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-tcp")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-client")),
 		config:        cfg,
 		devices:       make([]*ModbusDevice, 0, len(cfg.Devices)),
 		pollResetCh:   make(chan time.Duration, 1),
@@ -1199,7 +1199,7 @@ func (a *ModbusAgent) Name() string {
 
 // Type 은 에이전트 타입을 반환한다.
 func (a *ModbusAgent) Type() string {
-	return "modbus-tcp"
+	return "modbus-client"
 }
 
 // Info 는 에이전트 정보의 스냅샷을 반환한다.
@@ -1219,7 +1219,7 @@ func (a *ModbusAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "modbus-tcp",
+		Type:      "modbus-client",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,

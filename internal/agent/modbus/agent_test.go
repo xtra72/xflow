@@ -92,7 +92,7 @@ func minimalAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-test-1",
 		Name: "Test Modbus Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -133,7 +133,7 @@ func twoDeviceAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-test-2",
 		Name: "Test Modbus Agent 2",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -252,7 +252,7 @@ func TestNewModbusAgent_Success(t *testing.T) {
 	a, _ := newTestModbusAgent(t, config, mt)
 
 	assert.NotNil(t, a)
-	assert.Equal(t, "modbus-tcp", a.Type())
+	assert.Equal(t, "modbus-client", a.Type())
 	assert.Equal(t, lifecycle.StateRunning, a.CurrentState())
 	assert.Equal(t, "modbus-test-1", a.ID())
 	assert.Equal(t, "Test Modbus Agent", a.Name())
@@ -269,7 +269,7 @@ func TestNewModbusAgent_InvalidConfig(t *testing.T) {
 			config: agent.AgentConfig{
 				ID:   "bad-1",
 				Name: "Bad Agent",
-				Type: "modbus-tcp",
+				Type: "modbus-client",
 				Transport: agent.TransportConfig{
 					Options: map[string]any{},
 				},
@@ -279,7 +279,7 @@ func TestNewModbusAgent_InvalidConfig(t *testing.T) {
 			name: "ID 누락 (Validate 실패)",
 			config: agent.AgentConfig{
 				Name: "No ID",
-				Type: "modbus-tcp",
+				Type: "modbus-client",
 				Transport: agent.TransportConfig{
 					Options: map[string]any{
 						"devices": []any{
@@ -702,7 +702,7 @@ func TestModbusAgent_Configure(t *testing.T) {
 	newConfig := agent.AgentConfig{
 		ID:   "updated-id",
 		Name: "Updated Modbus",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 	}
 	err := a.Configure(newConfig)
 	require.NoError(t, err)
@@ -717,7 +717,7 @@ func TestModbusAgent_Info(t *testing.T) {
 	info := a.Info()
 	assert.Equal(t, "modbus-test-1", info.ID)
 	assert.Equal(t, "Test Modbus Agent", info.Name)
-	assert.Equal(t, "modbus-tcp", info.Type)
+	assert.Equal(t, "modbus-client", info.Type)
 	assert.Equal(t, lifecycle.StateRunning, info.State)
 	assert.NotZero(t, info.CreatedAt)
 }
@@ -1419,7 +1419,7 @@ func typeOverlayAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-overlay-1",
 		Name: "Overlay Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -1454,7 +1454,7 @@ func typeOverlayFC04AgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-overlay-fc4",
 		Name: "Overlay FC4 Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -1491,7 +1491,7 @@ func typeOverlayMultiGroupConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-overlay-multi",
 		Name: "Overlay Multi Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{

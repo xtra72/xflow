@@ -2,7 +2,7 @@
 
 ## 개요
 
-`internal/agent/modbus`는 xflow FBP 플랫폼의 MODBUS 클라이언트 에이전트 구현체이다. `agent.Agent`, `agent.MessageReceiver`, `agent.StatefulAgent` 인터페이스를 구현하며, 다중 디바이스 연결과 주기적 폴링을 통해 MODBUS 서버의 레지스터 데이터를 수집한다. type id 는 `modbus-tcp` 로 보존되며, `transport` 설정으로 TCP 또는 RTU(시리얼) 트랜스포트를 선택한다.
+`internal/agent/modbus`는 xflow FBP 플랫폼의 MODBUS 클라이언트 에이전트 구현체이다. `agent.Agent`, `agent.MessageReceiver`, `agent.StatefulAgent` 인터페이스를 구현하며, 다중 디바이스 연결과 주기적 폴링을 통해 MODBUS 서버의 레지스터 데이터를 수집한다. type id 는 `modbus-client` 이며, `transport` 설정으로 TCP 또는 RTU(시리얼) 트랜스포트를 선택한다.
 
 주요 기능으로 다중 디바이스 관리, **트랜스포트 선택(TCP/RTU)**, 3가지 읽기 모드(direct/cached/force), 이벤트/인터벌 전송 모드, **레지스터 그룹별 독립 폴링 주기**, **`raw` + 4순열 바이트순서 데이터 타입 변환**, Cache-Level TypeOverlay 패턴, 쓰기 명령(FC05/FC06/FC15/FC16), **플로우 노드를 통한 런타임 재구성(`set_config`)** 을 지원한다.
 
@@ -15,7 +15,7 @@
 MODBUS/TCP 클라이언트 에이전트 구조체이다. `lifecycle.BaseLifecycle`을 임베딩하여 생명주기를 관리한다.
 
 - `NewModbusAgent(agentConfig) (agent.Agent, error)`: 팩토리 함수
-- 에이전트 타입: `"modbus-tcp"`
+- 에이전트 타입: `"modbus-client"`
 
 ### ModbusConfig
 
@@ -181,7 +181,7 @@ type RegisterGroupConfig struct {
 | `set_config.go` | 런타임 재구성 명령 `set_config` 핸들러 (런타임 가변 vs init 전용 필드 분기) |
 | `write.go` | 쓰기 명령 처리 (FC05/FC06/FC15/FC16), 파라미터 추출 헬퍼, FC06->FC16 자동 전환 |
 | `errors.go` | sentinel 에러 정의 |
-| `register.go` | `RegisterModbusTypes()` 에이전트 타입 등록 (type id `modbus-tcp` 보존) |
+| `register.go` | `RegisterModbusTypes()` 에이전트 타입 등록 (type id `modbus-client`) |
 | `agent_test.go` | 에이전트 통합 테스트 |
 | `cache_test.go` | RegisterCache, TypeOverlay 테스트 |
 | `config_test.go` | 설정 파싱 및 검증 테스트 |

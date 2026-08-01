@@ -9,17 +9,17 @@ import (
 
 // registerAreaAliases 는 레지스터 영역의 별칭을 정규 이름으로 매핑한다.
 var registerAreaAliases = map[string]string{
-	"holding":            "holding_registers",
-	"hr":                 "holding_registers",
-	"input":              "input_registers",
-	"ir":                 "input_registers",
-	"coils":              "coils",
-	"c":                  "coils",
-	"discrete":           "discrete_inputs",
-	"di":                 "discrete_inputs",
-	"holding_registers":  "holding_registers",
-	"input_registers":    "input_registers",
-	"discrete_inputs":    "discrete_inputs",
+	"holding":           "holding_registers",
+	"hr":                "holding_registers",
+	"input":             "input_registers",
+	"ir":                "input_registers",
+	"coils":             "coils",
+	"c":                 "coils",
+	"discrete":          "discrete_inputs",
+	"di":                "discrete_inputs",
+	"holding_registers": "holding_registers",
+	"input_registers":   "input_registers",
+	"discrete_inputs":   "discrete_inputs",
 }
 
 // writableAreas 는 쓰기 가능한 레지스터 영역을 정의한다.
@@ -31,7 +31,7 @@ var writableAreas = map[string]bool{
 const (
 	modbusAgentTypeClient = "client"
 	modbusAgentTypeServer = "server"
-	modbusClientType      = "modbus-tcp"
+	modbusClientType      = "modbus-client"
 	modbusServerType      = "modbus-tcp-server"
 )
 

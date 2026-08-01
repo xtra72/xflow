@@ -37,7 +37,7 @@ func setupModbusTest(t *testing.T, handler http.Handler) (*httptest.Server, *cob
 }
 
 // modbusAgentHandler 는 MODBUS 에이전트 관련 API 를 모킹한다.
-// agentType 은 "modbus-tcp" 또는 "modbus-tcp-server" 이다.
+// agentType 은 "modbus-client" 또는 "modbus-tcp-server" 이다.
 func modbusAgentHandler(agentType string, execResult map[string]any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -124,7 +124,7 @@ func TestResolveModbusAgentType(t *testing.T) {
 	}{
 		{
 			name:      "Client 에이전트",
-			agentType: "modbus-tcp",
+			agentType: "modbus-client",
 			wantRole:  "client",
 		},
 		{

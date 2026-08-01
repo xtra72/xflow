@@ -36,7 +36,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  'modbus-tcp': {
+  'modbus-client': {
     description:
       'Modbus 클라이언트 에이전트. TCP(MBAP) 또는 RTU(시리얼, CRC-16) 트랜스포트를 선택해 원격 디바이스의 레지스터를 읽고 쓴다. interval/event 모드, 다중 디바이스 폴링, 그룹별 폴링 주기, 쓰기 이벤트, 런타임 재구성(set_config)을 지원합니다.',
     configFields: [

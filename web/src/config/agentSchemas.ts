@@ -8,7 +8,7 @@ import type { ConfigField, ConfigSchema } from '@/types/node';
 export const AGENT_TYPES = [
   { value: 'mqtt-client', label: 'MQTT' },
   { value: 'thingplus-gateway', label: 'Thingplus Gateway' },
-  { value: 'modbus-tcp', label: 'Modbus Client' },
+  { value: 'modbus-client', label: 'Modbus Client' },
   { value: 'modbus-tcp-server', label: 'Modbus TCP Server' },
   { value: 'http', label: 'HTTP Receiver' },
   { value: 'http-sender', label: 'HTTP Sender' },
@@ -73,7 +73,7 @@ const THINGPLUS_FIELDS: ConfigField[] = [
 
 // ──────────────────────────────────────────────────────────────────────────
 // Modbus Client (SPEC-MODBUS-006)
-// type id 는 modbus-tcp 로 보존하되, transport 로 tcp | rtu 를 선택한다.
+// type id 는 modbus-client 이며, transport 로 tcp | rtu 를 선택한다.
 //  - transport=tcp (기본, 생략 시): 기존 MBAP/TCP 동작 (하위 호환)
 //  - transport=rtu: 시리얼 파라미터(serial_port/baud_rate/data_bits/stop_bits/parity)를
 //    조건부(visibleWhen)로 노출. 시리얼 파라미터는 init 전용(런타임 set_config 로 변경 불가).
@@ -597,7 +597,7 @@ export const HVACR_QUADRANT_AGENT_TYPES = new Set([
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'mqtt-client': MQTT_FIELDS,
   'thingplus-gateway': THINGPLUS_FIELDS,
-  'modbus-tcp': MODBUS_TCP_FIELDS,
+  'modbus-client': MODBUS_TCP_FIELDS,
   'modbus-tcp-server': MODBUS_TCP_SERVER_FIELDS,
   'http': HTTP_RECEIVER_FIELDS,
   'http-sender': HTTP_SENDER_FIELDS,

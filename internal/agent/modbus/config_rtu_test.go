@@ -144,7 +144,7 @@ func rtuAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-rtu-1",
 		Name: "Test Modbus RTU Agent",
-		Type: "modbus-tcp", // type id 는 보존(REQ-05)
+		Type: "modbus-client", // type id 는 modbus-client 로 개명됨(pure rename)
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -216,18 +216,18 @@ func TestTransportRouting_RTUSharedBus(t *testing.T) {
 		"RTU 멀티드롭은 단일 시리얼 버스를 공유해야 한다")
 }
 
-// TestTransportRouting_TypeIDPreserved 는 rtu 라우팅에서도 등록 type id 가
-// 보존되는지 검증한다(REQ-05): "modbus-tcp" 로 등록된 팩토리가 rtu 설정을 받아
+// TestTransportRouting_TypeIDPreserved 는 rtu 라우팅에서도 단일 등록 type id 가
+// 유지되는지 검증한다(REQ-05): "modbus-client" 로 등록된 팩토리가 rtu 설정을 받아
 // ModbusRTUTransport 로 라우팅하는 에이전트를 생성한다.
 func TestTransportRouting_TypeIDPreserved(t *testing.T) {
 	mgr := agent.NewManager()
 	require.NoError(t, RegisterModbusTypes(mgr))
 
 	a, err := mgr.Create(rtuAgentConfig())
-	require.NoError(t, err, "type id modbus-tcp 로 rtu 에이전트를 생성할 수 있어야 한다")
+	require.NoError(t, err, "type id modbus-client 로 rtu 에이전트를 생성할 수 있어야 한다")
 
 	ma, ok := a.(*ModbusAgent)
 	require.True(t, ok)
 	_, isRTU := ma.devices[0].transport.(*ModbusRTUTransport)
-	assert.True(t, isRTU, "modbus-tcp type id 를 통해 생성된 rtu 설정은 RTU 로 라우팅되어야 한다")
+	assert.True(t, isRTU, "modbus-client type id 를 통해 생성된 rtu 설정은 RTU 로 라우팅되어야 한다")
 }

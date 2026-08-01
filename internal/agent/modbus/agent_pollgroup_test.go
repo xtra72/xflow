@@ -23,7 +23,7 @@ func twoGroupAgentConfig(groupAInterval, defaultInterval string) agent.AgentConf
 	return agent.AgentConfig{
 		ID:   "modbus-ac04",
 		Name: "AC04 Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
