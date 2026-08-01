@@ -1084,7 +1084,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   );
 }
 
-// ---- Modbus TCP Server 디바이스 섹션 ----
+// ---- Modbus Server 디바이스 섹션 ----
 
 /** list_devices 응답 내 개별 디바이스 */
 interface ModbusDevice {
@@ -3869,8 +3869,8 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   }
 
-  // Modbus TCP Server: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
-  if (agentType === 'modbus-tcp-server') {
+  // Modbus Server: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
+  if (agentType === 'modbus-server') {
     return <ModbusDevicesSection agentId={agentId} />;
   }
 

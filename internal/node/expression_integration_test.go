@@ -29,9 +29,9 @@ func testModbusAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "test-modbus-server",
 		Name: "Test MODBUS Server",
-		Type: "modbus-tcp-server",
+		Type: "modbus-server",
 		Transport: agent.TransportConfig{
-			Type: "modbus-tcp-server",
+			Type: "modbus-server",
 			Options: map[string]any{
 				"listen_address":   "127.0.0.1",
 				"listen_port":      0,
@@ -87,12 +87,12 @@ func addressResolverConfig() map[string]any {
 	return map[string]any{
 		"mode": "merge",
 		"address_table": map[string]any{
-			"창고:서버 옆":     0,
-			"실습실:전방 우측":   8,
-			"실습실:후방 오른쪽":  16,
-			"실습실:전방 좌측":   24,
-			"실습실:앞문":      32,
-			"회의실:":        40,
+			"창고:서버 옆":    0,
+			"실습실:전방 우측":  8,
+			"실습실:후방 오른쪽": 16,
+			"실습실:전방 좌측":  24,
+			"실습실:앞문":     32,
+			"회의실:":       40,
 		},
 		"expression": `{
           _base: $address_table[
@@ -298,7 +298,7 @@ func TestMqttToModbus_EndToEnd(t *testing.T) {
 
 	// ── 5단계: Modbus 서버 에이전트 생성 및 Process 호출 ──
 	cfg := testModbusAgentConfig()
-	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg)
+	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg, nil)
 	require.NoError(t, err, "NewModbusServerAgent 실패")
 
 	msa := modbusAgent.(*modbusserver.ModbusServerAgent)
@@ -393,7 +393,7 @@ func TestMqttToModbus_EndToEnd_MultiSensor(t *testing.T) {
 
 	// ── Modbus 에이전트 생성 ──
 	cfg := testModbusAgentConfig()
-	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg)
+	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg, nil)
 	require.NoError(t, err, "NewModbusServerAgent 실패")
 	msa := modbusAgent.(*modbusserver.ModbusServerAgent)
 
@@ -576,7 +576,7 @@ func TestMqttToModbus_EndToEnd_Float32Precision(t *testing.T) {
 	}
 
 	cfg := testModbusAgentConfig()
-	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg)
+	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg, nil)
 	require.NoError(t, err)
 	msa := modbusAgent.(*modbusserver.ModbusServerAgent)
 
@@ -631,4 +631,3 @@ func TestMqttToModbus_EndToEnd_Float32Precision(t *testing.T) {
 		})
 	}
 }
-

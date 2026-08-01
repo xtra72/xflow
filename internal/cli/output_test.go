@@ -324,7 +324,7 @@ func TestDetailFormatter_NestedMapConfig(t *testing.T) {
 
 	data := map[string]any{
 		"name": "modbus-server",
-		"type": "modbus-tcp-server",
+		"type": "modbus-server",
 		"config": map[string]any{
 			"listen_port": 5020,
 			"register_map": map[string]any{

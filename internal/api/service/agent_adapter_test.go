@@ -690,7 +690,7 @@ func TestAgentToHandlerInfo_ConfigSource(t *testing.T) {
 				ID:   "opts-id",
 				Name: "opts-test",
 				Transport: agent.TransportConfig{
-					Type: "modbus-tcp-server",
+					Type: "modbus-server",
 					Options: map[string]any{
 						"listen_port": 5020,
 						"register_map": map[string]any{

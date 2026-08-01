@@ -43,4 +43,17 @@ var (
 
 	// ErrDeviceNotFound 는 요청된 Unit ID 에 해당하는 디바이스를 찾을 수 없을 때 반환된다.
 	ErrDeviceNotFound = errors.New("modbus-server: device not found")
+
+	// ErrMissingSerialPort 는 RTU 트랜스포트에서 serial_port 가 지정되지 않았을 때 반환된다.
+	ErrMissingSerialPort = errors.New("modbus-server: serial_port is required for RTU transport")
+
+	// ErrInvalidSerialParam 는 RTU 시리얼 파라미터가 유효하지 않을 때 반환된다.
+	ErrInvalidSerialParam = errors.New("modbus-server: invalid serial parameter")
+
+	// ErrInvalidSharedConfig 는 공유 레지스터 맵(role/shared_from) 설정이 유효하지 않을 때 반환된다.
+	ErrInvalidSharedConfig = errors.New("modbus-server: invalid shared register map configuration")
+
+	// ErrSharedMainNotFound 는 role=sub 서버가 shared_from 이 가리키는 주 서버를
+	// 찾지 못하거나, 대상이 modbus-server 가 아닐 때 반환된다.
+	ErrSharedMainNotFound = errors.New("modbus-server: shared main agent not found or not a modbus-server")
 )

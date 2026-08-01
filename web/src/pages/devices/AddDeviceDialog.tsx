@@ -33,10 +33,10 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
-  // 디바이스 추가 지원 에이전트 필터링 (samsung_hvacr01 + modbus-tcp-server)
+  // 디바이스 추가 지원 에이전트 필터링 (samsung_hvacr01 + modbus-server)
   const supportedAgents = useMemo(() => {
     const agents = agentsData?.data ?? [];
-    return agents.filter((a) => a.type === 'samsung_hvacr01' || a.type === 'modbus-tcp-server');
+    return agents.filter((a) => a.type === 'samsung_hvacr01' || a.type === 'modbus-server');
   }, [agentsData]);
 
   const [selectedAgentId, setSelectedAgentId] = useState('');
@@ -104,7 +104,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           },
         },
       );
-    } else if (selectedAgentType === 'modbus-tcp-server') {
+    } else if (selectedAgentType === 'modbus-server') {
       const unitId = parseInt(modbusUnitId, 10);
       if (isNaN(unitId) || unitId < 1 || unitId > 247) {
         addNotification({ type: 'error', message: t('devices.add.unitIdRange') });
@@ -160,7 +160,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const canSubmit = (() => {
     if (!selectedAgentId || execAgent.isPending) return false;
     if (selectedAgentType === 'samsung_hvacr01') return !!samsungHvacr01Address.trim();
-    if (selectedAgentType === 'modbus-tcp-server') return !!modbusUnitId.trim();
+    if (selectedAgentType === 'modbus-server') return !!modbusUnitId.trim();
     return false;
   })();
 
@@ -200,7 +200,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             >
               <option value="">{t('devices.add.agentPlaceholder')}</option>
               {supportedAgents.map((a) => {
-                const typeLabel = a.type === 'modbus-tcp-server' ? 'Modbus' : 'Samsung HVACR-01';
+                const typeLabel = a.type === 'modbus-server' ? 'Modbus' : 'Samsung HVACR-01';
                 return (
                   <option key={a.id} value={a.id}>
                     {a.name} [{typeLabel}] ({a.status === 'running' ? t('devices.add.agentRunning') : t('devices.add.agentStopped')})
@@ -290,7 +290,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           )}
 
           {/* ===== Modbus 폼 ===== */}
-          {selectedAgentType === 'modbus-tcp-server' && (
+          {selectedAgentType === 'modbus-server' && (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div>

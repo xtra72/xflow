@@ -36,11 +36,12 @@ type ModbusServerAgent struct {
 	config        ModbusServerConfig
 	deviceManager *DeviceManager
 	registerMap   *RegisterMap // 하위 호환: 첫 번째 디바이스의 RegisterMap (Process 메서드용)
-	listener      *Listener
+	listener      serverListener
 	handler       *ModbusHandler
+	mgr           *agent.DefaultManager // role=sub 가 shared_from 을 resolve 할 때 사용 (nil 가능)
 	cancelFn      context.CancelFunc
 	msgCh         chan map[string]any
-	hasReceiver   *atomic.Bool // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
+	hasReceiver   *atomic.Bool  // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
 	receiverOn    chan struct{} // ReceiveMessage 활성화 신호 (drainMsgCh 즉시 종료용, 1회 close)
 	receiverOnce  sync.Once     // receiverOn 채널의 1회 close 보장
 	stopCh        chan struct{}
@@ -52,8 +53,10 @@ type ModbusServerAgent struct {
 	paused        bool
 }
 
-// NewModbusServerAgent creates a new MODBUS/TCP server agent.
-func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
+// NewModbusServerAgent creates a new MODBUS server agent.
+// mgr is used by role=sub servers to resolve shared_from at Start; it may be nil
+// (e.g. tests that construct the agent directly and do not use role=sub).
+func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManager) (agent.Agent, error) {
 	cfg, err := parseModbusServerConfig(agentConfig.Transport.Options)
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server agent: %w", err)
@@ -70,16 +73,23 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 
 	handler := NewModbusHandler(dm, msgCh, logger)
 
-	listenAddr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort)
-	listener := NewListener(listenAddr, cfg.MaxConnections, cfg.IdleTimeout, handler, logger)
+	// 트랜스포트에 따라 TCP 리스너 또는 RTU 시리얼 슬레이브 리스너를 선택한다.
+	var listener serverListener
+	if cfg.Transport == TransportRTU {
+		listener = NewRTUListener(cfg.Serial, handler, logger)
+	} else {
+		listenAddr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort)
+		listener = NewListener(listenAddr, cfg.MaxConnections, cfg.IdleTimeout, handler, logger)
+	}
 
 	a := &ModbusServerAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-tcp-server")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-server")),
 		config:        cfg,
 		deviceManager: dm,
 		registerMap:   dm.FirstDevice().RegisterMap, // 하위 호환: 첫 번째 디바이스
 		listener:      listener,
 		handler:       handler,
+		mgr:           mgr,
 		msgCh:         msgCh,
 		hasReceiver:   &atomic.Bool{},
 		receiverOn:    make(chan struct{}),
@@ -142,6 +152,14 @@ func (a *ModbusServerAgent) Start(ctx context.Context) error {
 		return a.Init(cfg)
 	default:
 		return fmt.Errorf("modbus-server start: agent is not in running state (current: %s)", a.CurrentState())
+	}
+
+	// role=sub: 시작 시점에 shared_from 이 가리키는 주 서버의 RegisterMap 을 라이브 공유한다.
+	// (서브는 주 서버 이후에 생성되므로 Start 시점 resolve 로 충분하다.)
+	if a.config.Role == RoleSub {
+		if err := a.applySharedRegisterMap(); err != nil {
+			return fmt.Errorf("modbus-server start: %w", err)
+		}
 	}
 
 	childCtx, cancel := context.WithCancel(ctx)
@@ -1266,7 +1284,8 @@ func (a *ModbusServerAgent) sendChangeEvent(cs *ChangeSet, command string, dataT
 // Implements agent.MessageReceiver.
 // 최초 호출 시 hasReceiver=true + receiverOn close 로 drainMsgCh 를 즉시 종료시킨다.
 // (atomic 만으로는 drainMsgCh 가 select 블록 중일 때 종료를 보장 못함 → channel close 로
-//  select 의 첫 번째 case 를 깨운다.)
+//
+//	select 의 첫 번째 case 를 깨운다.)
 func (a *ModbusServerAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	a.activateReceiver()
 	select {
@@ -1339,7 +1358,53 @@ func (a *ModbusServerAgent) Name() string {
 
 // Type returns the agent type.
 func (a *ModbusServerAgent) Type() string {
-	return "modbus-tcp-server"
+	return "modbus-server"
+}
+
+// SharedRegisterMap 는 이 서버의 주(첫 번째) 디바이스 RegisterMap 포인터를 반환한다.
+// role=sub 서버가 이 포인터를 자신의 핸들러/디바이스에 연결하여 라이브 공유한다.
+// 단일-디바이스 서버가 일반적이므로 주 디바이스 맵만 공유한다(멀티-디바이스 서브는
+// 주 디바이스 맵만 공유하고 나머지 디바이스는 자체 맵을 유지한다).
+func (a *ModbusServerAgent) SharedRegisterMap() *RegisterMap {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.registerMap
+}
+
+// applySharedRegisterMap 는 role=sub 일 때 shared_from 이 가리키는 주 서버의 RegisterMap
+// 포인터를 resolve 하여 이 서브 서버의 주 디바이스가 그것을 직접 참조하도록 스왑한다.
+// 스왑 이후 이 서브로 들어오는 읽기/쓰기는 공유 맵을 변경하며, 이는 주 서버 및 다른
+// 서브에 즉시 반영된다(라이브 공유 시맨틱). Start 시점(리스너 서빙 전)에만 호출된다.
+func (a *ModbusServerAgent) applySharedRegisterMap() error {
+	if a.mgr == nil {
+		return fmt.Errorf("modbus-server: cannot resolve shared_from %q: manager unavailable: %w",
+			a.config.SharedFrom, ErrSharedMainNotFound)
+	}
+
+	mainAgent, err := a.mgr.Get(a.config.SharedFrom)
+	if err != nil {
+		return fmt.Errorf("modbus-server: shared_from %q: %w", a.config.SharedFrom, ErrSharedMainNotFound)
+	}
+	mainSrv, ok := mainAgent.(*ModbusServerAgent)
+	if !ok {
+		return fmt.Errorf("modbus-server: shared_from %q is not a modbus-server: %w",
+			a.config.SharedFrom, ErrSharedMainNotFound)
+	}
+
+	shared := mainSrv.SharedRegisterMap()
+	if shared == nil {
+		return fmt.Errorf("modbus-server: shared_from %q has no register map: %w",
+			a.config.SharedFrom, ErrSharedMainNotFound)
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if first := a.deviceManager.FirstDevice(); first != nil {
+		first.RegisterMap = shared
+		first.ReqHandler = NewRequestHandler(shared, a.logger)
+	}
+	a.registerMap = shared
+	return nil
 }
 
 // Info returns the agent info snapshot.
@@ -1359,7 +1424,7 @@ func (a *ModbusServerAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "modbus-tcp-server",
+		Type:      "modbus-server",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,

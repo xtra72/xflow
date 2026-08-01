@@ -11,6 +11,23 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// serverListener interface
+// ---------------------------------------------------------------------------
+
+// serverListener is the common interface implemented by both the TCP Listener
+// and the RTU serial listener. It lets ModbusServerAgent switch transports
+// (tcp/rtu) without changing its lifecycle wiring.
+type serverListener interface {
+	Start(ctx context.Context) error
+	Stop() error
+	ActiveConnections() int32
+	Addr() net.Addr
+}
+
+// Compile-time interface check.
+var _ serverListener = (*Listener)(nil)
+
+// ---------------------------------------------------------------------------
 // Listener
 // ---------------------------------------------------------------------------
 

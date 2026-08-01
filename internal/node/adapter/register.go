@@ -22,7 +22,7 @@ func init() {
 	// Modbus 프로토콜 어댑터 등록
 	node.RegisterAdapter("modbus-tcp", NewModbusAdapter(WithUnitID(1)))
 	node.RegisterAdapter("modbus-rtu", NewModbusAdapter(WithUnitID(1)))
-	node.RegisterAdapter("modbus-tcp-server", NewModbusAdapter(WithUnitID(1)))
+	node.RegisterAdapter("modbus-server", NewModbusAdapter(WithUnitID(1)))
 
 	// Samsung NASA 프로토콜 어댑터 등록
 	node.RegisterAdapter("samsung_hvacr01", NewSamsungHvacr01Adapter())

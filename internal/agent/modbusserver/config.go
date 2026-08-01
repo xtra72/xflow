@@ -11,16 +11,47 @@ import (
 // 설정 구조체
 // ---------------------------------------------------------------------------
 
-// ModbusServerConfig 는 MODBUS/TCP 서버 에이전트의 설정을 나타낸다.
+// 트랜스포트 디스크리미네이터 상수.
+const (
+	// TransportTCP 는 MODBUS/TCP(MBAP) 서버 트랜스포트이다(기본값).
+	TransportTCP = "tcp"
+	// TransportRTU 는 MODBUS RTU(시리얼 슬레이브) 서버 트랜스포트이다.
+	TransportRTU = "rtu"
+)
+
+// 역할(role) 상수 — 공유 레지스터 맵 기능(M3).
+const (
+	// RoleMain 은 자체 RegisterMap 을 소유하는 주 서버이다(기본값).
+	RoleMain = "main"
+	// RoleSub 는 SharedFrom 이 가리키는 주 서버의 RegisterMap 을 라이브 공유하는 서브 서버이다.
+	RoleSub = "sub"
+)
+
+// ModbusServerConfig 는 MODBUS 서버 에이전트의 설정을 나타낸다.
 type ModbusServerConfig struct {
-	ListenAddress  string        // 리슨 주소 (기본값 "0.0.0.0")
-	ListenPort     int           // 리슨 포트 (기본값 502, 범위 1-65535)
-	UnitID         byte          // 유닛 ID (기본값 1, 범위 0-247) — 하위 호환용, Devices 가 없을 때 사용
-	MaxConnections int           // 최대 연결 수 (기본값 10, > 0)
-	IdleTimeout    time.Duration // 유휴 타임아웃 (기본값 60s)
-	MsgChannelSize int           // 메시지 채널 버퍼 크기 (기본값 256)
+	Transport      string            // "tcp" | "rtu" (기본값 "tcp")
+	Serial         SerialConfig      // Transport == "rtu" 일 때만 유효한 시리얼 파라미터
+	ListenAddress  string            // 리슨 주소 (기본값 "0.0.0.0", TCP 전용)
+	ListenPort     int               // 리슨 포트 (기본값 502, 범위 1-65535, TCP 전용)
+	UnitID         byte              // 유닛 ID (기본값 1, 범위 0-247) — 하위 호환용, Devices 가 없을 때 사용
+	MaxConnections int               // 최대 연결 수 (기본값 10, > 0, TCP 전용)
+	IdleTimeout    time.Duration     // 유휴 타임아웃 (기본값 60s, TCP 전용)
+	MsgChannelSize int               // 메시지 채널 버퍼 크기 (기본값 256)
 	RegisterMap    RegisterMapConfig // 하위 호환용, Devices 가 없을 때 사용
-	Devices        []DeviceConfig    // 다중 디바이스 설정 (M1: 멀티-디바이스 지원)
+	Devices        []DeviceConfig    // 다중 디바이스 설정 (멀티-디바이스 지원)
+	Role           string            // "main" | "sub" (기본값 "main") — 공유 레지스터 맵(M3)
+	SharedFrom     string            // Role == "sub" 일 때 필수: 공유할 주 서버 에이전트 ID
+}
+
+// SerialConfig 는 RTU 트랜스포트의 시리얼 포트 파라미터이다.
+// 클라이언트 에이전트(internal/agent/modbus)의 SerialConfig 와 동일한 옵션 키를 사용한다.
+// transport == "rtu" 일 때 Transport.Options 에서 파싱·검증된다.
+type SerialConfig struct {
+	Port     string // 시리얼 포트 경로 (필수, 예: /dev/ttyUSB0)
+	BaudRate int    // 기본값 9600
+	DataBits int    // 기본값 8
+	StopBits int    // 기본값 1 (1 또는 2)
+	Parity   string // "none" | "even" | "odd" (기본값 "none")
 }
 
 // DeviceConfig 는 단일 가상 디바이스의 설정을 나타낸다.
@@ -42,10 +73,10 @@ type RegisterMapConfig struct {
 
 // RegisterAreaConfig 는 단일 레지스터 영역의 설정을 나타낸다.
 type RegisterAreaConfig struct {
-	StartAddress  uint16              // 시작 주소
-	Count         uint16              // 레지스터 수 (필수, > 0)
-	InitialValues []any               // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자
-	DataType      string              // 영역 기본 데이터 타입 (기본: "uint16")
+	StartAddress  uint16                // 시작 주소
+	Count         uint16                // 레지스터 수 (필수, > 0)
+	InitialValues []any                 // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자
+	DataType      string                // 영역 기본 데이터 타입 (기본: "uint16")
 	TypeMap       []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
 }
 
@@ -56,12 +87,64 @@ type RegisterAreaConfig struct {
 // parseModbusServerConfig 는 Transport.Options 맵에서 ModbusServerConfig 를 파싱한다.
 func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 	cfg := ModbusServerConfig{
+		Transport:      TransportTCP,
 		ListenAddress:  "0.0.0.0",
 		ListenPort:     502,
 		UnitID:         1,
 		MaxConnections: 10,
 		IdleTimeout:    60 * time.Second,
 		MsgChannelSize: 256,
+		Role:           RoleMain,
+	}
+
+	// transport (선택, 기본 "tcp" — 생략 시 기존 TCP 동작 보존)
+	if v, ok := opts["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case TransportTCP, "":
+			cfg.Transport = TransportTCP
+		case TransportRTU:
+			cfg.Transport = TransportRTU
+		default:
+			return ModbusServerConfig{}, fmt.Errorf(
+				"modbus-server: transport %q must be %q or %q", s, TransportTCP, TransportRTU)
+		}
+	}
+
+	// RTU 시리얼 파라미터 (transport == "rtu" 일 때 파싱·검증)
+	if cfg.Transport == TransportRTU {
+		sc, err := parseServerSerialConfig(opts)
+		if err != nil {
+			return ModbusServerConfig{}, err
+		}
+		cfg.Serial = sc
+	}
+
+	// role (선택, 기본 "main") — 공유 레지스터 맵(M3)
+	if v, ok := opts["role"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case RoleMain, "":
+			cfg.Role = RoleMain
+		case RoleSub:
+			cfg.Role = RoleSub
+		default:
+			return ModbusServerConfig{}, fmt.Errorf(
+				"modbus-server: role %q must be %q or %q", s, RoleMain, RoleSub)
+		}
+	}
+
+	// shared_from (role == "sub" 일 때 필수)
+	if v, ok := opts["shared_from"]; ok {
+		cfg.SharedFrom, _ = v.(string)
+	}
+	if cfg.Role == RoleSub && cfg.SharedFrom == "" {
+		return ModbusServerConfig{}, fmt.Errorf(
+			"modbus-server: role=sub requires shared_from (main agent id): %w", ErrInvalidSharedConfig)
+	}
+	if cfg.Role == RoleMain {
+		// main 은 shared_from 을 무시한다.
+		cfg.SharedFrom = ""
 	}
 
 	// listen_address
@@ -527,6 +610,70 @@ func validateTypeMap(typeMap []modbus.TypeMapEntry, startAddr, count uint16, are
 	}
 
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// RTU 시리얼 설정 파싱
+// ---------------------------------------------------------------------------
+
+// parseServerSerialConfig 는 Transport.Options 에서 RTU 시리얼 파라미터를 파싱·검증한다.
+// 클라이언트 에이전트(internal/agent/modbus)의 parseSerialConfig 와 동일한 옵션 키를
+// 사용한다: serial_port(또는 port)는 필수이며, 나머지는 관례적 기본값을 가진다.
+func parseServerSerialConfig(opts map[string]any) (SerialConfig, error) {
+	sc := SerialConfig{
+		BaudRate: 9600,
+		DataBits: 8,
+		StopBits: 1,
+		Parity:   "none",
+	}
+
+	// serial_port / port (필수)
+	if v, ok := opts["serial_port"]; ok {
+		sc.Port, _ = v.(string)
+	} else if v, ok := opts["port"]; ok {
+		sc.Port, _ = v.(string)
+	}
+	if sc.Port == "" {
+		return SerialConfig{}, ErrMissingSerialPort
+	}
+
+	// baud_rate (기본 9600, > 0)
+	if v, ok := opts["baud_rate"]; ok {
+		sc.BaudRate = toInt(v)
+	}
+	if sc.BaudRate <= 0 {
+		return SerialConfig{}, fmt.Errorf("modbus-server: baud_rate must be > 0 (got %d): %w", sc.BaudRate, ErrInvalidSerialParam)
+	}
+
+	// data_bits (기본 8, 5-8)
+	if v, ok := opts["data_bits"]; ok {
+		sc.DataBits = toInt(v)
+	}
+	if sc.DataBits < 5 || sc.DataBits > 8 {
+		return SerialConfig{}, fmt.Errorf("modbus-server: data_bits must be 5-8 (got %d): %w", sc.DataBits, ErrInvalidSerialParam)
+	}
+
+	// stop_bits (기본 1, 1 또는 2)
+	if v, ok := opts["stop_bits"]; ok {
+		sc.StopBits = toInt(v)
+	}
+	if sc.StopBits != 1 && sc.StopBits != 2 {
+		return SerialConfig{}, fmt.Errorf("modbus-server: stop_bits must be 1 or 2 (got %d): %w", sc.StopBits, ErrInvalidSerialParam)
+	}
+
+	// parity (기본 "none", none|even|odd)
+	if v, ok := opts["parity"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			sc.Parity = s
+		}
+	}
+	switch sc.Parity {
+	case "none", "even", "odd":
+	default:
+		return SerialConfig{}, fmt.Errorf("modbus-server: parity %q must be none|even|odd: %w", sc.Parity, ErrInvalidSerialParam)
+	}
+
+	return sc, nil
 }
 
 // ---------------------------------------------------------------------------

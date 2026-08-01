@@ -1189,8 +1189,8 @@ func TestSubcommandFlagWithRealRootCmd(t *testing.T) {
 // TestREPL_ModbusSubcommandFlagReset 은 modbus 서브커맨드의 플래그가
 // 실행 사이에 올바르게 리셋되는지 검증한다.
 func TestREPL_ModbusSubcommandFlagReset(t *testing.T) {
-	// mock 서버: modbus-tcp-server 타입 에이전트 반환
-	handler := modbusAgentHandler("modbus-tcp-server", map[string]any{
+	// mock 서버: modbus-server 타입 에이전트 반환
+	handler := modbusAgentHandler("modbus-server", map[string]any{
 		"values": []any{1, 2, 3},
 	})
 	srv := httptest.NewServer(handler)

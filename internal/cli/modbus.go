@@ -32,7 +32,7 @@ const (
 	modbusAgentTypeClient = "client"
 	modbusAgentTypeServer = "server"
 	modbusClientType      = "modbus-client"
-	modbusServerType      = "modbus-tcp-server"
+	modbusServerType      = "modbus-server"
 )
 
 // resolveModbusAgentType 는 에이전트 ID로 MODBUS 에이전트 타입을 조회한다.

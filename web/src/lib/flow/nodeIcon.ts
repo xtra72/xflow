@@ -95,7 +95,7 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'modbus-client': Network,
   'modbus-tcp': Network,
   'modbus-rtu': Cable,
-  'modbus-tcp-server': Network,
+  'modbus-server': Network,
   'modbus-poller': Cable,
   'modbus-writer': Plug,
   // HTTP → Globe

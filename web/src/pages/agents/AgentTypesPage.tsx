@@ -20,7 +20,7 @@ const AGENT_CATEGORY: Record<string, string> = {
   'mqtt-client': 'protocol',
   'thingplus-gateway': 'protocol',
   'modbus-client': 'protocol',
-  'modbus-tcp-server': 'protocol',
+  'modbus-server': 'protocol',
   http: 'protocol',
   'http-sender': 'protocol',
   serial: 'protocol',
