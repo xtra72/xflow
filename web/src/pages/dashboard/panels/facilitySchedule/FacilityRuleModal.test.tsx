@@ -194,6 +194,8 @@ describe('M4 — TARGET 피커 (AC-9)', () => {
 
     // 행 클릭으로 선택 → draft.target 반영(device_id, byName:false — 저장 값 의미 불변)
     fireEvent.click(row);
+    // 선택 후 선택값 표시(전체/그룹의 select 값 표시와 동등한 가시성).
+    expect(screen.getByTestId('fr-target-device-selected')).toHaveTextContent('강남#2');
     fireEvent.change(screen.getByTestId('fr-name'), { target: { value: 'n' } });
     fireEvent.click(screen.getByTestId('facility-rule-save'));
     expect(onSave.mock.calls[0]![0].target).toEqual({ kind: 'device', value: 'GN:P1:2', byName: false });

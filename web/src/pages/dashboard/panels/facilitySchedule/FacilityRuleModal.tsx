@@ -8,6 +8,7 @@
 // useXsfmDevices 로 라인/그룹/기기를 열거하고, 없으면 자유 입력(free-form)으로 폴백한다.
 
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 import { TriggerScheduleEditor } from '@/components/property/TriggerScheduleEditor';
@@ -147,7 +148,10 @@ export default function FacilityRuleModal({
 
   const errCls = (on: boolean | undefined) => (on && showErrors ? 'border-red-400 focus:border-red-400' : '');
 
-  return (
+  // 전체 화면 기준 가운데 정렬을 위해 document.body 로 포털 렌더한다. 패널 조상의
+  // transform/overflow 가 fixed 요소의 컨테이닝 블록이 되어 팝업이 패널 경계에서 잘리는
+  // 문제를 방지한다(뷰포트 기준 fixed 보장).
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={(e) => {
@@ -365,7 +369,8 @@ export default function FacilityRuleModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -552,8 +557,40 @@ function DeviceTargetTable({
     );
   }, [rows, search]);
 
+  // 현재 선택된 기기 요약(전체/그룹의 select 값 표시와 동등한 가시성 제공). 로스터에서
+  // 매칭 실패하면 원본 device_id 로 폴백해 항상 선택값을 노출한다(테이블 스크롤과 무관).
+  const selectedRow = useMemo(
+    () => rows.find((r) => r.device.device_id === selectedId),
+    [rows, selectedId],
+  );
+
   return (
     <div className="space-y-1.5">
+      {/* 선택값 표시(전체/그룹 select 와 동일한 가시성). 선택 시에만 노출 + 해제 버튼. */}
+      {selectedId && (
+        <div
+          data-testid="fr-target-device-selected"
+          className="flex items-center justify-between gap-2 rounded-md border border-blue-400 bg-blue-500/10 px-2.5 py-1.5 text-xs text-(--color-text-primary)"
+        >
+          <span className="min-w-0 truncate">
+            <span className="text-(--color-text-muted)">선택됨: </span>
+            {selectedRow
+              ? `${selectedRow.name}${selectedRow.line ? ` · ${selectedRow.line}호선` : ''}${
+                  selectedRow.stationName ? ` ${selectedRow.stationName}` : ''
+                }`
+              : selectedId}
+          </span>
+          <button
+            type="button"
+            onClick={() => onSelect('')}
+            aria-label="선택 해제"
+            data-testid="fr-target-device-clear"
+            className="shrink-0 rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
       <input
         type="text"
         data-testid="fr-target-device-search"
