@@ -224,6 +224,38 @@ func TestAC08_SetConfig_InvalidGroupRejected_NoPartialApply(t *testing.T) {
 	}
 }
 
+// TestAC08_SetConfig_ParamValidationErrors 는 processSetConfig 의 파라미터 파싱·검증
+// 오류 분기를 경계(a.Process)에서 검증한다: register_groups 형식 오류/빈 배열,
+// duration 파라미터의 비문자열·무효 문자열, 런타임 가변 필드 부재. 어느 경우든
+// 오류를 반환하고 에이전트는 재시작 없이 Running 을 유지한다(부분 적용 없음).
+func TestAC08_SetConfig_ParamValidationErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]any
+	}{
+		{"register_groups 배열 아님", map[string]any{"register_groups": "not-an-array"}},
+		{"register_groups 빈 배열", map[string]any{"register_groups": []any{}}},
+		{"register_groups 원소가 맵 아님", map[string]any{"register_groups": []any{"not-a-map"}}},
+		{"request_timeout 문자열 아님", map[string]any{"request_timeout": 123}},
+		{"request_timeout 무효 duration", map[string]any{"request_timeout": "not-a-duration"}},
+		{"reconnect_interval 무효 duration", map[string]any{"reconnect_interval": "nope"}},
+		{"런타임 가변 필드 없음", map[string]any{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
+			a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+			require.NoError(t, a.Start(context.Background()))
+			defer func() { _ = a.Stop(context.Background()) }()
+
+			cmd := setConfigJSON(t, "plc-1", tc.params)
+			_, err := a.Process(cmd)
+			require.Error(t, err, "유효하지 않은 파라미터는 거부되어야 한다")
+			assert.Equal(t, lifecycle.StateRunning, a.CurrentState(), "거부 후에도 Running 유지")
+		})
+	}
+}
+
 // TestAC08_SetConfig_DefaultCadence_And_Timeouts 는 에이전트 기본 poll_interval 과
 // request_timeout/reconnect_interval 을 런타임 변경할 수 있음을 검증한다(REQ-05 runtime-mutable).
 func TestAC08_SetConfig_DefaultCadence_And_Timeouts(t *testing.T) {

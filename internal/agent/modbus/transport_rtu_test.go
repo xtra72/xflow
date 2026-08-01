@@ -3,6 +3,7 @@ package modbus
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -245,4 +246,178 @@ func TestRTUInterFrameSilenceEnforced(t *testing.T) {
 
 	// 1200 baud 의 T3.5 ≈ 32ms; 최소 절반 이상 대기했어야 한다.
 	assert.GreaterOrEqual(t, elapsed, rtuInterFrameDelay(1200)/2)
+}
+
+// ---------------------------------------------------------------------------
+// 연결 오류 경로 테스트 (handleConnError / SendAndReceive 오류 분기)
+// ---------------------------------------------------------------------------
+
+// TestModbusRTUTransport_WriteError 는 시리얼 write 오류 시 오류를 감싸 반환하고
+// handleConnError 가 연결 상태를 초기화(포트 닫힘·미연결)하는지 검증한다.
+func TestModbusRTUTransport_WriteError(t *testing.T) {
+	port := newMockSerialPort(nil)
+	port.writeErr = errors.New("device unplugged")
+
+	tr := newTestRTUTransport(port)
+	require.NoError(t, tr.Connect(context.Background()))
+	require.True(t, tr.IsConnected())
+
+	reqPDU := buildReadPDU(FC03ReadHoldingRegisters, 0x0000, 2)
+	gotPDU, err := tr.SendAndReceive(context.Background(), 0x01, reqPDU)
+
+	require.Error(t, err, "write 오류는 상위로 전파되어야 한다")
+	assert.ErrorContains(t, err, "write failed")
+	assert.Nil(t, gotPDU)
+	// handleConnError: 연결은 초기화되고 포트는 닫혀야 한다.
+	assert.False(t, tr.IsConnected(), "write 오류 후 연결은 초기화되어야 한다")
+	assert.True(t, port.closed, "handleConnError 는 포트를 닫아야 한다")
+}
+
+// TestModbusRTUTransport_ReadError 는 응답 수신 중 오류(잘린 헤더) 시 오류를 감싸
+// 반환하고 handleConnError 가 연결 상태를 초기화하는지 검증한다.
+func TestModbusRTUTransport_ReadError(t *testing.T) {
+	// 헤더 2바이트가 필요하나 1바이트만 제공 → io.ReadFull 이 오류를 반환한다.
+	port := newMockSerialPort([]byte{0x01})
+
+	tr := newTestRTUTransport(port)
+	require.NoError(t, tr.Connect(context.Background()))
+
+	reqPDU := buildReadPDU(FC03ReadHoldingRegisters, 0x0000, 2)
+	gotPDU, err := tr.SendAndReceive(context.Background(), 0x01, reqPDU)
+
+	require.Error(t, err, "수신 오류는 상위로 전파되어야 한다")
+	assert.ErrorContains(t, err, "read failed")
+	assert.Nil(t, gotPDU)
+	// handleConnError: 수신 오류도 연결 오류로 간주되어 연결이 초기화된다.
+	assert.False(t, tr.IsConnected(), "수신 오류 후 연결은 초기화되어야 한다")
+	assert.True(t, port.closed, "handleConnError 는 포트를 닫아야 한다")
+}
+
+// ---------------------------------------------------------------------------
+// readRTUResponse 프레임 길이 판별 오류 분기 테스트 (직접 호출)
+// ---------------------------------------------------------------------------
+
+// TestReadRTUResponse_ErrorBranches 는 요청 FC 별 프레임 길이 판별의 오류 분기를
+// 직접 검증한다: 잘린 헤더/예외/읽기/쓰기 프레임과 미지원 FC(default) 경로.
+func TestReadRTUResponse_ErrorBranches(t *testing.T) {
+	tests := []struct {
+		name      string
+		requestFC byte
+		raw       []byte
+		wantErr   error
+	}{
+		{
+			name:      "header_truncated",
+			requestFC: FC03ReadHoldingRegisters,
+			raw:       []byte{0x01}, // 헤더 2바이트 중 1바이트만
+			wantErr:   io.ErrUnexpectedEOF,
+		},
+		{
+			name:      "exception_rest_truncated",
+			requestFC: FC03ReadHoldingRegisters,
+			raw:       []byte{0x01, 0x83, 0x02}, // 예외 헤더 + excCode/CRC 3바이트 중 1바이트만
+			wantErr:   io.ErrUnexpectedEOF,
+		},
+		{
+			name:      "read_bytecount_missing",
+			requestFC: FC03ReadHoldingRegisters,
+			raw:       []byte{0x01, 0x03}, // 헤더까지만, byteCount 없음
+			wantErr:   io.EOF,
+		},
+		{
+			name:      "read_data_truncated",
+			requestFC: FC03ReadHoldingRegisters,
+			raw:       []byte{0x01, 0x03, 0x04, 0x12, 0x34}, // byteCount=4 이나 data+CRC 부족
+			wantErr:   io.ErrUnexpectedEOF,
+		},
+		{
+			name:      "write_rest_truncated",
+			requestFC: FC06WriteSingleRegister,
+			raw:       []byte{0x01, 0x06, 0x00}, // 쓰기 응답 6바이트 필요, 1바이트만
+			wantErr:   io.ErrUnexpectedEOF,
+		},
+		{
+			name:      "unsupported_fc_default",
+			requestFC: 0x07, // 읽기(01-04)·쓰기(05/06/15/16) 어디에도 속하지 않음
+			raw:       []byte{0x01, 0x07},
+			wantErr:   ErrInvalidFunctionCode,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readRTUResponse(bytes.NewReader(tt.raw), tt.requestFC)
+			require.Error(t, err)
+			assert.Nil(t, got, "오류 시 부분 프레임을 반환하지 않아야 한다")
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// applyReadTimeout: readTimeoutSetter 실-세터 분기 테스트
+// ---------------------------------------------------------------------------
+
+// recordingSerialPort 는 mockSerialPort 에 readTimeoutSetter 를 추가로 구현하여
+// applyReadTimeout 의 실-세터 분기(ok==true)를 관측한다. 설정된 timeout 을 기록한다.
+type recordingSerialPort struct {
+	*mockSerialPort
+	setTimeouts []time.Duration
+}
+
+// SetReadTimeout 은 readTimeoutSetter 를 만족하며 설정 요청을 기록한다.
+func (m *recordingSerialPort) SetReadTimeout(d time.Duration) error {
+	m.setTimeouts = append(m.setTimeouts, d)
+	return nil
+}
+
+// TestModbusRTUTransport_ApplyReadTimeout 는 포트가 readTimeoutSetter 를 구현할 때
+// applyReadTimeout 이 ctx 데드라인/requestTimeout 을 올바르게 반영하는지 검증한다.
+func TestModbusRTUTransport_ApplyReadTimeout(t *testing.T) {
+	makePort := func() *recordingSerialPort {
+		respPDU := []byte{0x03, 0x02, 0xAB, 0xCD} // FC03, byteCount=2, 1 레지스터
+		respADU := buildRTUADU(0x01, respPDU)
+		return &recordingSerialPort{mockSerialPort: newMockSerialPort(respADU)}
+	}
+	reqPDU := buildReadPDU(FC03ReadHoldingRegisters, 0x0000, 1)
+
+	t.Run("no_deadline_uses_request_timeout", func(t *testing.T) {
+		port := makePort()
+		tr := newTestRTUTransport(port) // requestTimeout = 1s
+		require.NoError(t, tr.Connect(context.Background()))
+
+		_, err := tr.SendAndReceive(context.Background(), 0x01, reqPDU)
+		require.NoError(t, err)
+		require.Len(t, port.setTimeouts, 1, "실-세터 분기가 실행되어야 한다")
+		assert.Equal(t, time.Second, port.setTimeouts[0], "데드라인 없으면 requestTimeout")
+	})
+
+	t.Run("future_deadline_overrides_request_timeout", func(t *testing.T) {
+		port := makePort()
+		tr := newTestRTUTransport(port)
+		require.NoError(t, tr.Connect(context.Background()))
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+		defer cancel()
+		_, err := tr.SendAndReceive(ctx, 0x01, reqPDU)
+		require.NoError(t, err)
+		require.Len(t, port.setTimeouts, 1)
+		// ctx 데드라인이 requestTimeout(1s)보다 크므로 잔여 데드라인이 채택된다.
+		assert.Greater(t, port.setTimeouts[0], time.Second, "미래 데드라인이 채택되어야 한다")
+		assert.LessOrEqual(t, port.setTimeouts[0], 50*time.Second)
+	})
+
+	t.Run("expired_deadline_falls_back_to_request_timeout", func(t *testing.T) {
+		port := makePort()
+		tr := newTestRTUTransport(port)
+		require.NoError(t, tr.Connect(context.Background()))
+
+		// 이미 만료된 데드라인 → time.Until <= 0 → requestTimeout 유지.
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+		_, err := tr.SendAndReceive(ctx, 0x01, reqPDU)
+		require.NoError(t, err)
+		require.Len(t, port.setTimeouts, 1)
+		assert.Equal(t, time.Second, port.setTimeouts[0], "만료 데드라인이면 requestTimeout")
+	})
 }
