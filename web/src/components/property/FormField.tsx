@@ -20,6 +20,7 @@ import type { ManagedNode } from '@/types/remote';
 import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
+import { ModbusDevicesEditor } from './ModbusDevicesEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
@@ -43,6 +44,8 @@ interface FormFieldProps {
   onFlowPortsRefresh?: () => void;
   /** 읽기 전용 모드 */
   readOnly?: boolean;
+  /** 전체 폼 데이터(형제 필드 접근용). modbus_devices 가 transport 형제 값을 읽는 데 사용. */
+  formData?: Record<string, unknown>;
 }
 
 /** 공통 입력 스타일 */
@@ -72,7 +75,7 @@ const errorInputClass = cn(
  * `disabled={readOnly}` 를 그대로 사용한다. */
 const readOnlyClass = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
-export function FormField({ field, value, onChange, error, agentName, flowName, onFlowPortsRefresh, readOnly }: FormFieldProps) {
+export function FormField({ field, value, onChange, error, agentName, flowName, onFlowPortsRefresh, readOnly, formData }: FormFieldProps) {
   const { t } = useTranslation();
   const id = useId();
   const descriptionId = `${id}-desc`;
@@ -321,6 +324,17 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
           value={value}
           onChange={onChange}
           readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'modbus_devices' && (
+        <ModbusDevicesEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+          transport={
+            typeof formData?.transport === 'string' ? formData.transport : 'tcp'
+          }
         />
       )}
 

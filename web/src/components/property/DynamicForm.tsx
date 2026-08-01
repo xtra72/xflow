@@ -251,6 +251,7 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         onChange={(v) => handleFieldChange(field.name, v)}
         error={errors[field.name]}
         readOnly={readOnly}
+        formData={localData}
       />
     );
 
