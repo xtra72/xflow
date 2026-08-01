@@ -199,7 +199,7 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 				if !ok {
 					return ModbusConfig{}, fmt.Errorf("modbus: devices[%d] is not a map", i)
 				}
-				dc, err := parseDeviceConfig(devMap, i)
+				dc, err := parseDeviceConfig(devMap, i, cfg.Transport)
 				if err != nil {
 					return ModbusConfig{}, err
 				}
@@ -281,7 +281,10 @@ func parseSerialConfig(opts map[string]any) (SerialConfig, error) {
 }
 
 // parseDeviceConfig 는 디바이스 설정 맵을 DeviceConfig 로 파싱한다.
-func parseDeviceConfig(m map[string]any, idx int) (DeviceConfig, error) {
+// transport 파라미터로 host 필수 여부가 갈린다: TCP 는 host:port 가 필요하므로
+// host 가 필수이지만, RTU 는 공유 시리얼 버스에서 unit_id 만으로 디바이스를
+// 식별하므로 host 가 선택이다(생략 시 빈 값 유지, Port 기본값은 RTU 에서 무시됨).
+func parseDeviceConfig(m map[string]any, idx int, transport string) (DeviceConfig, error) {
 	dc := DeviceConfig{
 		Port:   502,
 		UnitID: 1,
@@ -292,11 +295,11 @@ func parseDeviceConfig(m map[string]any, idx int) (DeviceConfig, error) {
 		dc.ID, _ = v.(string)
 	}
 
-	// host (필수)
+	// host (TCP 는 필수, RTU 는 선택)
 	if v, ok := m["host"]; ok {
 		dc.Host, _ = v.(string)
 	}
-	if dc.Host == "" {
+	if transport == TransportTCP && dc.Host == "" {
 		return DeviceConfig{}, fmt.Errorf("modbus: devices[%d].host is required", idx)
 	}
 

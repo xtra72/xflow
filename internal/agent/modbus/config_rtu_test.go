@@ -135,6 +135,57 @@ func TestParseModbusConfig_RTUInvalidSerialParams(t *testing.T) {
 	}
 }
 
+// TestParseDeviceConfig_RTUHostOptional 는 RTU 트랜스포트에서 host 없이
+// unit_id 만으로 디바이스가 파싱되는지 검증한다(공유 시리얼 버스, A-4).
+// host 는 빈 값으로 유지되고 unit_id 가 디바이스 키로 설정되어야 한다.
+func TestParseDeviceConfig_RTUHostOptional(t *testing.T) {
+	opts := map[string]any{
+		"transport":   "rtu",
+		"serial_port": "/dev/ttyUSB0",
+		"devices": []any{
+			map[string]any{
+				"unit_id":         5,
+				"register_groups": []any{map[string]any{"function_code": 3, "quantity": 4}},
+			},
+		},
+	}
+	cfg, err := parseModbusConfig(opts)
+	require.NoError(t, err, "RTU 디바이스는 host 없이 unit_id 만으로 파싱되어야 한다")
+	require.Len(t, cfg.Devices, 1)
+	assert.Empty(t, cfg.Devices[0].Host, "RTU 디바이스의 host 는 빈 값으로 유지되어야 한다")
+	assert.Equal(t, byte(5), cfg.Devices[0].UnitID, "unit_id 가 디바이스 키로 설정되어야 한다")
+}
+
+// TestParseDeviceConfig_TCPHostStillRequired 는 회귀 가드이다:
+// TCP 트랜스포트(생략·명시 모두)에서 host 가 없으면 여전히 "host is required" 오류.
+func TestParseDeviceConfig_TCPHostStillRequired(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport any // nil 이면 transport 키 생략(기본 tcp)
+	}{
+		{name: "transport_omitted", transport: nil},
+		{name: "transport_explicit_tcp", transport: "tcp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := map[string]any{
+				"devices": []any{
+					map[string]any{
+						"unit_id":         3,
+						"register_groups": []any{map[string]any{"function_code": 3, "quantity": 4}},
+					},
+				},
+			}
+			if tt.transport != nil {
+				opts["transport"] = tt.transport
+			}
+			_, err := parseModbusConfig(opts)
+			require.Error(t, err, "TCP 디바이스는 host 가 없으면 오류여야 한다")
+			assert.Contains(t, err.Error(), "host is required")
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 트랜스포트 라우팅 테스트 (AC-02)
 // ---------------------------------------------------------------------------
