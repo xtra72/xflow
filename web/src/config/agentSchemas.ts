@@ -96,7 +96,7 @@ const MODBUS_TCP_FIELDS: ConfigField[] = [
   { name: 'request_timeout', type: 'string', label: '요청 타임아웃', default: '3s' },
   { name: 'max_retries', type: 'number', label: '최대 재시도', default: 3 },
   { name: 'enable_write_events', type: 'boolean', label: '쓰기 이벤트', default: true },
-  { name: 'devices', type: 'modbus_devices', label: '디바이스 설정', required: true, description: '디바이스 배열. 각 디바이스는 register_group 목록을 가지며, 그룹별로 data_type(uint16/int16/uint32/int32/float32/raw)·poll_interval(그룹별 독립 주기)을 지정한다. byte_order(big_endian/little_endian 별칭 + ABCD/BADC/CDAB/DCBA 4순열)는 그룹의 고급 type_map 에서 주소별로만 지정한다. TCP 는 host+port 를, RTU 는 unit_id 만 사용한다(host/port 숨김)' },
+  { name: 'devices', type: 'modbus_devices', label: '디바이스 설정', required: false, description: '디바이스 배열. 각 디바이스는 register_group 목록을 가지며, 그룹별로 data_type(uint16/int16/uint32/int32/float32/raw)·poll_interval(그룹별 독립 주기)을 지정한다. byte_order(big_endian/little_endian 별칭 + ABCD/BADC/CDAB/DCBA 4순열)는 그룹의 고급 type_map 에서 주소별로만 지정한다. TCP 는 host+port 를, RTU 는 unit_id 만 사용한다(host/port 숨김)' },
 ];
 
 /** Modbus register_group 의 data_type 옵션 (SPEC-MODBUS-006 REQ-03). raw 는 변환 없이 원본 워드 전달. */

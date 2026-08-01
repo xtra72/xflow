@@ -1,0 +1,76 @@
+// CreateAgentModal — 2열 레이아웃 분기 + 모달 폭 회귀 테스트.
+//
+// 범위:
+//   - TWO_COL_CONFIG 타입(modbus-client)은 넓은 모달(max-w-4xl) + 2열 그리드로
+//     렌더하며, 디바이스 편집기(modbus_devices)는 우측 컬럼에 위치한다.
+//   - 비-TWO_COL 타입(tcp-client)은 기존 좁은 단일 컬럼(max-w-lg)을 유지한다(회귀 방지).
+//
+// 데이터 뮤테이션 훅과 i18n 은 스텁으로 격리한다.
+
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+import CreateAgentModal from './CreateAgentModal';
+
+// 생성 뮤테이션 스텁(reset 은 open effect 에서 호출됨).
+vi.mock('@/hooks/useAgent', () => ({
+  useCreateAgent: () => ({
+    isPending: false,
+    isError: false,
+    mutateAsync: vi.fn(),
+    reset: vi.fn(),
+  }),
+}));
+
+// i18n 은 키를 그대로 반환한다(라벨은 스키마의 field.label 을 직접 사용하므로 무관).
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
+
+/** 모달 컨테이너(role=dialog 의 직속 자식 div)를 반환한다. */
+function getModalContainer(): HTMLElement {
+  const dialog = screen.getByRole('dialog');
+  const container = dialog.querySelector(':scope > div');
+  if (!(container instanceof HTMLElement)) throw new Error('modal container not found');
+  return container;
+}
+
+/** 타입 셀렉트 값을 변경한다. */
+function selectType(value: string): void {
+  const select = document.getElementById('agent-type');
+  if (!(select instanceof HTMLSelectElement)) throw new Error('type select not found');
+  fireEvent.change(select, { target: { value } });
+}
+
+describe('CreateAgentModal 2열 레이아웃 분기', () => {
+  it('modbus-client 는 넓은 모달 + 2열 그리드로 렌더하고 디바이스 편집기를 우측 컬럼에 둔다', () => {
+    render(<CreateAgentModal open onClose={vi.fn()} />);
+    selectType('modbus-client');
+
+    // (a) 모달이 넓어진다.
+    const container = getModalContainer();
+    expect(container.className).toContain('max-w-4xl');
+    expect(container.className).not.toContain('max-w-lg');
+
+    // (b) 2열 그리드가 존재하고 디바이스 필드(디바이스 설정)가 우측(두 번째) 컬럼에 있다.
+    const grid = container.querySelector('.grid.grid-cols-2');
+    expect(grid).not.toBeNull();
+    const columns = grid!.querySelectorAll(':scope > div');
+    expect(columns.length).toBe(2);
+    const rightColumn = columns[1] as HTMLElement;
+    expect(rightColumn.textContent).toContain('디바이스 설정');
+    // 좌측 컬럼에는 디바이스 필드가 없어야 한다(스칼라 필드만).
+    expect((columns[0] as HTMLElement).textContent).not.toContain('디바이스 설정');
+  });
+
+  it('비-TWO_COL 타입(tcp-client)은 좁은 단일 컬럼 모달을 유지한다(회귀 방지)', () => {
+    render(<CreateAgentModal open onClose={vi.fn()} />);
+    selectType('tcp-client');
+
+    const container = getModalContainer();
+    expect(container.className).toContain('max-w-lg');
+    expect(container.className).not.toContain('max-w-4xl');
+    // 2열 그리드가 없어야 한다(단일 컬럼 DynamicForm 경로).
+    expect(container.querySelector('.grid.grid-cols-2')).toBeNull();
+  });
+});

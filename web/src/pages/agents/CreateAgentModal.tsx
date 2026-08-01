@@ -7,6 +7,7 @@ import { X } from 'lucide-react';
 import { useCreateAgent } from '@/hooks/useAgent';
 import { AGENT_TYPES, getAgentConfigDefaults, getAgentConfigSchema } from '@/config/agentSchemas';
 import { DynamicForm } from '@/components/property/DynamicForm';
+import { TWO_COL_CONFIG, TwoColumnConfigLayout } from './twoColumnConfig';
 import { useTranslation } from '@/lib/i18n';
 
 interface CreateAgentModalProps {
@@ -27,6 +28,9 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
   );
 
   const schema = getAgentConfigSchema(type);
+  // TWO_COL_CONFIG 타입(modbus-client / modbus-tcp-server 등)은 상세 패널과 동일한
+  // 2열 레이아웃(스칼라 필드=좌, 디바이스 등 넓은 필드=우)으로 렌더하고 모달을 넓힌다.
+  const isTwoCol = type in TWO_COL_CONFIG;
 
   // 모달이 열리면 이름 입력 필드에 포커스
   useEffect(() => {
@@ -104,7 +108,9 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
       aria-modal="true"
       aria-labelledby="create-agent-title"
     >
-      <div className="mx-4 w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-lg bg-(--color-bg-surface) p-6 shadow-xl">
+      <div
+        className={`mx-4 w-full ${isTwoCol ? 'max-w-4xl' : 'max-w-lg'} max-h-[80vh] overflow-y-auto rounded-lg bg-(--color-bg-surface) p-6 shadow-xl`}
+      >
         {/* 헤더 */}
         <div className="mb-4 flex items-center justify-between">
           <h2
@@ -175,12 +181,22 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
                 {t('agents.config')}
               </p>
               <div className="rounded-md border border-(--color-border-default) p-3">
-                <DynamicForm
-                  nodeId={`create-${type}`}
-                  data={config}
-                  schema={schema}
-                  onChange={setConfig}
-                />
+                {isTwoCol ? (
+                  <TwoColumnConfigLayout
+                    nodeId={`create-${type}`}
+                    data={config}
+                    schema={schema}
+                    onChange={setConfig}
+                    agentType={type}
+                  />
+                ) : (
+                  <DynamicForm
+                    nodeId={`create-${type}`}
+                    data={config}
+                    schema={schema}
+                    onChange={setConfig}
+                  />
+                )}
               </div>
             </div>
           )}
