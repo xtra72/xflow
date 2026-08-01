@@ -60,11 +60,12 @@ func (h *ScheduleLogHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.DELETE("/schedules/logs", h.Clear)
 }
 
-// Logs 는 스케줄 실행 로그를 최신순으로 반환한다. GET /schedules/logs
+// Logs 는 스케줄 실행 로그를 정렬 방향(order)에 따라 반환한다(기본 최신순). GET /schedules/logs
 //
 // admin 게이팅 없음 — 인증된 전체 사용자 접근(RD-5, AC-17). 선택적 필터
-// ?schedule_id=/?rule_name=/?agent_id=(선언 또는 실행 에이전트 매칭 — RD-6) + ?limit=/
-// ?offset= 페이지네이션(기본 limit=100). 응답 형태는 {items, total} — total 은 필터에
+// ?schedule_id=/?rule_name=/?agent_id=(선언 또는 실행 에이전트 매칭 — RD-6)/?target=/
+// ?action=/?result=(각각 정확 일치, 빈 값=전체) + ?order=(asc|desc, 기본 desc=최신순) +
+// ?limit=/?offset= 페이지네이션(기본 limit=100). 응답 형태는 {items, total} — total 은 필터에
 // 매칭되는 전체 개수(페이지네이션 무관). 저장소 미구성(nil)이면 {items:[], total:0}(AC-5).
 func (h *ScheduleLogHandler) Logs(ctx api.Context) error {
 	if h.logs == nil {
@@ -77,11 +78,16 @@ func (h *ScheduleLogHandler) Logs(ctx api.Context) error {
 		ScheduleID: ctx.Query("schedule_id"),
 		RuleName:   ctx.Query("rule_name"),
 		AgentID:    ctx.Query("agent_id"),
+		Target:     ctx.Query("target"),
+		Action:     ctx.Query("action"),
+		Result:     ctx.Query("result"),
 	}
 	limit := parsePositiveInt(ctx.Query("limit"), 100)
 	offset := parsePositiveInt(ctx.Query("offset"), 0)
+	// 정렬 방향: 빈 값/기타는 저장소가 desc(최신순)로 폴백한다(기존 기본 동작 보존).
+	order := ctx.Query("order")
 
-	records, err := h.logs.List(ctx.Context(), filter, limit, offset)
+	records, err := h.logs.List(ctx.Context(), filter, limit, offset, order)
 	if err != nil {
 		return api.ErrInternalServer.WithMessage(err.Error())
 	}

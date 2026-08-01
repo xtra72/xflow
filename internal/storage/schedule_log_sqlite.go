@@ -128,13 +128,24 @@ func scheduleLogWhere(f ScheduleLogFilter) (where string, args []any) {
 		// 선언된 대상 또는 실제 실행자 중 하나라도 일치하면 매칭(RD-6).
 		appendCond("(declared_agent_id = ? OR actor_agent_id = ?)", f.AgentID, f.AgentID)
 	}
+	if f.Target != "" {
+		appendCond("target = ?", f.Target)
+	}
+	if f.Action != "" {
+		appendCond("action = ?", f.Action)
+	}
+	if f.Result != "" {
+		appendCond("result = ?", f.Result)
+	}
 	return where, args
 }
 
-// List 는 로그 레코드를 최신순(timestamp 내림차순, 동률은 id 내림차순)으로 반환한다.
-// 필터 조건에 따라 WHERE 절을 동적으로 구성한다. AgentID 필터는 DeclaredAgentID 또는
-// ActorAgentID 중 하나라도 일치하면 매칭한다(RD-6). limit<=0 이면 100 으로 보정한다.
-func (r *ScheduleLogSQLiteRepository) List(ctx context.Context, f ScheduleLogFilter, limit, offset int) ([]ScheduleLogRecord, error) {
+// List 는 로그 레코드를 정렬 방향(order)에 따라 반환한다. 필터 조건에 따라 WHERE 절을
+// 동적으로 구성한다. AgentID 필터는 DeclaredAgentID 또는 ActorAgentID 중 하나라도
+// 일치하면 매칭한다(RD-6). order 는 "asc" 면 오래된순(timestamp ASC, id ASC), 그 외
+// ("" / "desc" 포함)는 최신순(timestamp DESC, id DESC — 기본값)이다. limit<=0 이면 100
+// 으로 보정한다.
+func (r *ScheduleLogSQLiteRepository) List(ctx context.Context, f ScheduleLogFilter, limit, offset int, order string) ([]ScheduleLogRecord, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -146,9 +157,14 @@ func (r *ScheduleLogSQLiteRepository) List(ctx context.Context, f ScheduleLogFil
 
 	const cols = `id, correlation_id, record_kind, schedule_id, rule_name, declared_agent_id,
 		actor_agent_id, trigger_time, target, action, result, targets, reason, timestamp`
+	// SQL 인젝션 방지: order 원문을 SQL 에 보간하지 않고 Go 에서 분기해 상수 절만 선택한다.
+	orderBy := ` ORDER BY timestamp DESC, id DESC`
+	if order == "asc" {
+		orderBy = ` ORDER BY timestamp ASC, id ASC`
+	}
 	args = append(args, limit, offset)
 	query := `SELECT ` + cols + ` FROM schedule_log` + where +
-		` ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
+		orderBy + ` LIMIT ? OFFSET ?`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {

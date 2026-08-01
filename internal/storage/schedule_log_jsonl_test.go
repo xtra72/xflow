@@ -36,7 +36,7 @@ func TestScheduleLogJSONL_AppendAndListNewestFirst(t *testing.T) {
 	_, statErr := os.Stat(filepath.Dir(path))
 	require.NoError(t, statErr)
 
-	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0)
+	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, int64(200), got[0].Timestamp)
@@ -53,14 +53,60 @@ func TestScheduleLogJSONL_FilterAgentDeclaredOrActor(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", ActorAgentID: "hvac-a", RecordKind: "result", Timestamp: 200}))
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s2", DeclaredAgentID: "hvac-b", ActorAgentID: "hvac-b", RecordKind: "result", Timestamp: 150}))
 
-	got, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-a"}, 0, 0)
+	got, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-a"}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2, "declared 또는 actor 매칭(RD-6)")
 
-	only, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-b"}, 0, 0)
+	only, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-b"}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, only, 1)
 	assert.Equal(t, "s2", only[0].ScheduleID)
+}
+
+func TestScheduleLogJSONL_FilterTargetActionResult(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo, _ := newTempJSONL(t)
+	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Target: "group_id=g1", Action: "set_power", Result: "ok", Timestamp: 100}))
+	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s2", RecordKind: "result", Target: "group_id=g2", Action: "set_fan_speed", Result: "error", Timestamp: 200}))
+
+	byTarget, err := repo.List(ctx, ScheduleLogFilter{Target: "group_id=g1"}, 0, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byTarget, 1)
+	assert.Equal(t, "s1", byTarget[0].ScheduleID)
+
+	byAction, err := repo.List(ctx, ScheduleLogFilter{Action: "set_fan_speed"}, 0, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byAction, 1)
+	assert.Equal(t, "s2", byAction[0].ScheduleID)
+
+	byResult, err := repo.List(ctx, ScheduleLogFilter{Result: "error"}, 0, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byResult, 1)
+	assert.Equal(t, "s2", byResult[0].ScheduleID)
+}
+
+func TestScheduleLogJSONL_OrderAscDesc(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo, _ := newTempJSONL(t)
+	for _, ts := range []int64{100, 200, 300} {
+		require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: ts}))
+	}
+
+	asc, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "asc")
+	require.NoError(t, err)
+	require.Len(t, asc, 3)
+	assert.Equal(t, int64(100), asc[0].Timestamp)
+	assert.Equal(t, int64(300), asc[2].Timestamp)
+
+	for _, ord := range []string{"", "desc"} {
+		desc, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, ord)
+		require.NoError(t, err)
+		require.Len(t, desc, 3)
+		assert.Equal(t, int64(300), desc[0].Timestamp, "order=%q 는 최신순", ord)
+		assert.Equal(t, int64(100), desc[2].Timestamp)
+	}
 }
 
 func TestScheduleLogJSONL_PaginationAndCount(t *testing.T) {
@@ -70,7 +116,7 @@ func TestScheduleLogJSONL_PaginationAndCount(t *testing.T) {
 	for _, ts := range []int64{10, 20, 30, 40, 50} {
 		require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: ts}))
 	}
-	got, err := repo.List(ctx, ScheduleLogFilter{}, 2, 1)
+	got, err := repo.List(ctx, ScheduleLogFilter{}, 2, 1, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, int64(40), got[0].Timestamp)
@@ -88,7 +134,7 @@ func TestScheduleLogJSONL_Clear(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: 10}))
 	require.NoError(t, repo.Clear(ctx))
 
-	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0)
+	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	require.NoError(t, err)
 	assert.Empty(t, got)
 	n, err := repo.Count(ctx, ScheduleLogFilter{})
@@ -112,7 +158,7 @@ func TestScheduleLogJSONL_MalformedLineSkipped(t *testing.T) {
 	// 손상된 줄 뒤에 정상 레코드를 다시 append.
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s2", RecordKind: "result", Timestamp: 200}))
 
-	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0)
+	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2, "손상된 줄은 건너뛰고 정상 레코드만 반환")
 	assert.Equal(t, int64(200), got[0].Timestamp)
@@ -135,7 +181,7 @@ func TestScheduleLogJSONL_PersistAcrossReopen(t *testing.T) {
 	t.Cleanup(func() { _ = repo2.Close() })
 	require.NoError(t, repo2.Append(ctx, ScheduleLogRecord{ScheduleID: "s2", RecordKind: "result", Timestamp: 200}))
 
-	got, err := repo2.List(ctx, ScheduleLogFilter{}, 0, 0)
+	got, err := repo2.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, int64(2), got[0].ID, "재오픈 후 ID 가 단조 증가로 이어짐")
@@ -148,7 +194,7 @@ func TestScheduleLogJSONL_ClosedError(t *testing.T) {
 	require.NoError(t, repo.Close())
 
 	assert.ErrorIs(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1"}), ErrScheduleLogClosed)
-	_, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0)
+	_, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	assert.ErrorIs(t, err, ErrScheduleLogClosed)
 	_, err = repo.Count(ctx, ScheduleLogFilter{})
 	assert.ErrorIs(t, err, ErrScheduleLogClosed)

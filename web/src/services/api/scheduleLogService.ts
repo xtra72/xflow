@@ -17,6 +17,14 @@ export interface ScheduleLogQuery {
   scheduleId?: string;
   ruleName?: string;
   agentId?: string;
+  /** 대상(target) 정확 일치 필터. */
+  target?: string;
+  /** 동작(action) 정확 일치 필터(예: set_power). */
+  action?: string;
+  /** 결과(result) 정확 일치 필터("ok" | "error"). */
+  result?: string;
+  /** 실행 시각 정렬 방향("asc" 오래된순 | "desc" 최신순, 기본 desc). */
+  order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }
@@ -46,6 +54,10 @@ export async function getScheduleLogs(
   if (params.scheduleId) query.schedule_id = params.scheduleId;
   if (params.ruleName) query.rule_name = params.ruleName;
   if (params.agentId) query.agent_id = params.agentId;
+  if (params.target) query.target = params.target;
+  if (params.action) query.action = params.action;
+  if (params.result) query.result = params.result;
+  if (params.order) query.order = params.order;
   if (params.limit != null) query.limit = params.limit;
   if (params.offset != null) query.offset = params.offset;
 

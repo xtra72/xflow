@@ -97,6 +97,12 @@ export default function ScheduleLogTab() {
   const [scheduleId, setScheduleId] = useState('');
   const [ruleName, setRuleName] = useState('');
   const [agentId, setAgentId] = useState('');
+  const [target, setTarget] = useState('');
+  const [action, setAction] = useState('');
+  const [result, setResult] = useState('');
+
+  // 실행 시각 정렬 방향(기본 최신순 desc). 헤더 클릭으로 asc/desc 토글.
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
 
   // 페이지네이션 상태(0-based page + page size).
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZE_OPTIONS[0]);
@@ -107,13 +113,18 @@ export default function ScheduleLogTab() {
   const [clearOpen, setClearOpen] = useState(false);
 
   // 필터만 담은 쿼리(내보내기 재조회에 재사용). limit/offset 제외.
+  // order 는 필터가 아니라 정렬 지시지만, 서버 목록/내보내기가 이를 반영하도록 포함한다.
   const filterQuery = useMemo<ScheduleLogQuery>(
     () => ({
       scheduleId: scheduleId.trim() || undefined,
       ruleName: ruleName.trim() || undefined,
       agentId: agentId.trim() || undefined,
+      target: target.trim() || undefined,
+      action: action.trim() || undefined,
+      result: result.trim() || undefined,
+      order,
     }),
-    [scheduleId, ruleName, agentId],
+    [scheduleId, ruleName, agentId, target, action, result, order],
   );
 
   // 현재 페이지 조회 쿼리(필터 + limit/offset).
@@ -129,7 +140,16 @@ export default function ScheduleLogTab() {
   const total = data?.total ?? 0;
   const rawCount = items.length;
 
-  const rows = useMemo(() => mergeScheduleLogs(items), [items]);
+  // 서버가 요청한 순서로 레코드를 반환하므로 병합 결과 순서도 서버를 따른다. mergeScheduleLogs
+  // 는 내부적으로 최신순(desc)으로 정렬하므로, asc 요청 시에는 오래된순으로 재정렬한다.
+  const rows = useMemo(() => {
+    const m = mergeScheduleLogs(items);
+    return order === 'asc'
+      ? [...m].sort(
+          (a, b) => a.latestTimestamp - b.latestTimestamp || a.triggerTime - b.triggerTime,
+        )
+      : m;
+  }, [items, order]);
 
   // 상세(대상별 결과) 펼침 상태(correlation_id Set).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -151,6 +171,16 @@ export default function ScheduleLogTab() {
   }
   function handlePageSizeChange(e: React.ChangeEvent<HTMLSelectElement>) {
     setPageSize(Number(e.target.value));
+    setPage(0);
+  }
+  // 결과 필터(select): 상태 반영 + 첫 페이지 리셋(입력 필터와 동일 규칙).
+  function handleResultChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setResult(e.target.value);
+    setPage(0);
+  }
+  // 실행 시각 정렬 토글(asc/desc). 정렬 변경 시 첫 페이지로 되돌린다.
+  function toggleOrder() {
+    setOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
     setPage(0);
   }
 
@@ -215,6 +245,35 @@ export default function ScheduleLogTab() {
           data-testid="log-filter-agent-id"
           className={inputCls}
         />
+        <input
+          type="text"
+          value={target}
+          onChange={handleFilterChange(setTarget)}
+          placeholder="대상"
+          aria-label="대상 필터"
+          data-testid="log-filter-target"
+          className={inputCls}
+        />
+        <input
+          type="text"
+          value={action}
+          onChange={handleFilterChange(setAction)}
+          placeholder="동작"
+          aria-label="동작 필터"
+          data-testid="log-filter-action"
+          className={inputCls}
+        />
+        <select
+          value={result}
+          onChange={handleResultChange}
+          aria-label="결과 필터"
+          data-testid="log-filter-result"
+          className={inputCls}
+        >
+          <option value="">전체</option>
+          <option value="ok">ok</option>
+          <option value="error">error</option>
+        </select>
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
@@ -279,7 +338,14 @@ export default function ScheduleLogTab() {
               <thead>
                 <tr className="border-b border-(--color-border-default) bg-(--color-bg-elevated) text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
                   <th className="w-8 px-3 py-2" aria-label="상세 펼침" />
-                  <th className="px-3 py-2">실행 시각</th>
+                  <th
+                    className="cursor-pointer select-none px-3 py-2 hover:text-blue-600"
+                    onClick={toggleOrder}
+                    data-testid="log-sort-time"
+                    title="실행 시각 정렬"
+                  >
+                    실행 시각 {order === 'asc' ? '▲' : '▼'}
+                  </th>
                   <th className="px-3 py-2">스케줄 ID</th>
                   <th className="px-3 py-2">규칙</th>
                   <th className="px-3 py-2">에이전트</th>

@@ -64,6 +64,9 @@ type ScheduleLogFilter struct {
 	ScheduleID string // 빈 값 = 전체
 	RuleName   string // 빈 값 = 전체
 	AgentID    string // 빈 값 = 전체. DeclaredAgentID 또는 ActorAgentID 와 매칭(RD-6)
+	Target     string // 빈 값 = 전체. Target 컬럼 정확 일치(예: group_id=station:0150)
+	Action     string // 빈 값 = 전체. Action 컬럼 정확 일치(예: set_power)
+	Result     string // 빈 값 = 전체. Result 컬럼 정확 일치(ok | error)
 }
 
 // ScheduleLogRepository 는 스케줄 실행 로그의 영속 저장소이다(spec §4.1).
@@ -75,9 +78,12 @@ type ScheduleLogRepository interface {
 	// Append 는 로그 레코드를 추가한다(추가 전용). fire 와 result 는 각각 별도의
 	// Append 호출로 기록되며 갱신/삭제 API 는 없다.
 	Append(ctx context.Context, rec ScheduleLogRecord) error
-	// List 는 로그 레코드를 최신순(timestamp 내림차순)으로 반환한다. 필터 조건에
-	// 따라 스케줄/규칙/에이전트로 좁힌다. limit/offset 으로 페이지네이션한다.
-	List(ctx context.Context, f ScheduleLogFilter, limit, offset int) ([]ScheduleLogRecord, error)
+	// List 는 로그 레코드를 정렬 방향(order)에 따라 반환한다. 필터 조건에 따라
+	// 스케줄/규칙/에이전트/대상/명령/결과로 좁히고 limit/offset 으로 페이지네이션한다.
+	//
+	// order: "" 또는 "desc" → 최신순(timestamp 내림차순, id 내림차순) — 기존 기본값.
+	// "asc" → 오래된순(timestamp 오름차순, id 오름차순). 그 외 값은 desc 로 폴백한다.
+	List(ctx context.Context, f ScheduleLogFilter, limit, offset int, order string) ([]ScheduleLogRecord, error)
 	// Count 는 필터에 매칭되는 전체 레코드 수를 반환한다(페이지네이션 total 용).
 	// List 와 동일한 필터 의미(AgentID 는 declared 또는 actor 매칭)를 사용하되
 	// limit/offset 은 적용하지 않는다.

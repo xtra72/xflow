@@ -25,6 +25,9 @@ import (
 type memScheduleLog struct {
 	mu      sync.Mutex
 	records []storage.ScheduleLogRecord
+	// 마지막 List 호출의 필터/정렬을 기록한다(핸들러 쿼리 파라미터 배선 검증용).
+	lastFilter storage.ScheduleLogFilter
+	lastOrder  string
 }
 
 func (m *memScheduleLog) Append(_ context.Context, rec storage.ScheduleLogRecord) error {
@@ -35,9 +38,11 @@ func (m *memScheduleLog) Append(_ context.Context, rec storage.ScheduleLogRecord
 	return nil
 }
 
-func (m *memScheduleLog) List(_ context.Context, f storage.ScheduleLogFilter, limit, offset int) ([]storage.ScheduleLogRecord, error) {
+func (m *memScheduleLog) List(_ context.Context, f storage.ScheduleLogFilter, limit, offset int, order string) ([]storage.ScheduleLogRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.lastFilter = f
+	m.lastOrder = order
 	filtered := make([]storage.ScheduleLogRecord, 0)
 	for _, r := range m.records {
 		if f.ScheduleID != "" && r.ScheduleID != f.ScheduleID {
@@ -50,11 +55,28 @@ func (m *memScheduleLog) List(_ context.Context, f storage.ScheduleLogFilter, li
 		if f.AgentID != "" && r.DeclaredAgentID != f.AgentID && r.ActorAgentID != f.AgentID {
 			continue
 		}
+		if f.Target != "" && r.Target != f.Target {
+			continue
+		}
+		if f.Action != "" && r.Action != f.Action {
+			continue
+		}
+		if f.Result != "" && r.Result != f.Result {
+			continue
+		}
 		filtered = append(filtered, r)
 	}
+	// order="asc" 면 오래된순, 그 외("" / "desc" 포함)는 최신순(기본값).
+	ascending := order == "asc"
 	sort.SliceStable(filtered, func(i, j int) bool {
 		if filtered[i].Timestamp != filtered[j].Timestamp {
+			if ascending {
+				return filtered[i].Timestamp < filtered[j].Timestamp
+			}
 			return filtered[i].Timestamp > filtered[j].Timestamp
+		}
+		if ascending {
+			return filtered[i].ID < filtered[j].ID
 		}
 		return filtered[i].ID > filtered[j].ID
 	})
@@ -360,4 +382,35 @@ func TestScheduleLogs_ClearNilRepo(t *testing.T) {
 	del := scheduleLogDelete(t, nil)
 	rec := del("admin")
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+// TestScheduleLogs_TargetActionResultOrderWiring 은 새 쿼리 파라미터
+// (target/action/result/order)가 필터/List 호출로 올바르게 배선되는지 검증한다.
+func TestScheduleLogs_TargetActionResultOrderWiring(t *testing.T) {
+	repo := &memScheduleLog{}
+	seedScheduleLogs(repo,
+		storage.ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Target: "group_id=g1", Action: "set_power", Result: "ok", Timestamp: 100},
+		storage.ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Target: "group_id=g2", Action: "set_fan_speed", Result: "error", Timestamp: 200},
+	)
+	do := scheduleLogRequest(t, repo)
+
+	rec := do("/api/v1/schedules/logs?target=group_id=g1&action=set_power&result=ok&order=asc", "admin")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// 핸들러가 쿼리 파라미터를 필터/order 로 배선했는지 확인.
+	repo.mu.Lock()
+	gotFilter := repo.lastFilter
+	gotOrder := repo.lastOrder
+	repo.mu.Unlock()
+	assert.Equal(t, "group_id=g1", gotFilter.Target)
+	assert.Equal(t, "set_power", gotFilter.Action)
+	assert.Equal(t, "ok", gotFilter.Result)
+	assert.Equal(t, "asc", gotOrder)
+
+	// 필터가 실제로 적용되어 매칭 레코드만 반환.
+	got := decodeScheduleLogs(t, rec)
+	require.Len(t, got, 1)
+	assert.Equal(t, "group_id=g1", got[0].Target)
+	assert.Equal(t, "set_power", got[0].Action)
+	assert.Equal(t, "ok", got[0].Result)
 }

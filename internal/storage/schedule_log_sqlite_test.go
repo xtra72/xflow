@@ -70,7 +70,7 @@ func TestScheduleLog_AppendFireAndList(t *testing.T) {
 
 	require.NoError(t, repo.Append(ctx, fireRecord("sched-1", "야간 절전", "agent-a", 1000)))
 
-	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0)
+	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0, "")
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	assert.Equal(t, ScheduleLogRecordKindFire, recs[0].RecordKind)
@@ -102,7 +102,7 @@ func TestScheduleLog_FireResultJoinByCorrelation(t *testing.T) {
 		Result: ScheduleLogResultOK, Reason: "members=[..] ok=4/4", Timestamp: 2100,
 	}))
 
-	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0)
+	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0, "")
 	require.NoError(t, err)
 	require.Len(t, recs, 2, "fire 와 result 두 레코드가 모두 존재해야 함")
 
@@ -127,7 +127,7 @@ func TestScheduleLog_FilterByScheduleID(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, fireRecord("sched-1", "r1", "agent-a", 3000)))
 	require.NoError(t, repo.Append(ctx, fireRecord("sched-2", "r2", "agent-b", 2000)))
 
-	recs, err := repo.List(ctx, ScheduleLogFilter{ScheduleID: "sched-1"}, 100, 0)
+	recs, err := repo.List(ctx, ScheduleLogFilter{ScheduleID: "sched-1"}, 100, 0, "")
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
 	assert.Equal(t, int64(3000), recs[0].Timestamp, "최신 레코드가 먼저 와야 함")
@@ -161,7 +161,7 @@ func TestScheduleLog_FilterByAgentID(t *testing.T) {
 		TriggerTime: 3000, Result: ScheduleLogResultOK, Timestamp: 3000,
 	}))
 
-	recs, err := repo.List(ctx, ScheduleLogFilter{AgentID: "agent-x"}, 100, 0)
+	recs, err := repo.List(ctx, ScheduleLogFilter{AgentID: "agent-x"}, 100, 0, "")
 	require.NoError(t, err)
 	require.Len(t, recs, 2, "declared 또는 actor 로 매칭되는 두 레코드가 반환되어야 함")
 
@@ -179,11 +179,70 @@ func TestScheduleLog_FilterByRuleName(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, fireRecord("s1", "야간 절전", "agent-a", 1000)))
 	require.NoError(t, repo.Append(ctx, fireRecord("s2", "주간 냉방", "agent-b", 2000)))
 
-	recs, err := repo.List(ctx, ScheduleLogFilter{RuleName: "야간 절전"}, 100, 0)
+	recs, err := repo.List(ctx, ScheduleLogFilter{RuleName: "야간 절전"}, 100, 0, "")
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	assert.Equal(t, "야간 절전", recs[0].RuleName)
 	assert.Equal(t, "s1", recs[0].ScheduleID)
+}
+
+// TestScheduleLog_FilterTargetActionResult 는 target/action/result 필터가 각각 정확 일치로
+// 매칭 레코드만 반환하는지 검증한다.
+func TestScheduleLog_FilterTargetActionResult(t *testing.T) {
+	t.Parallel()
+	repo := newTestScheduleLogRepo(t)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{
+		CorrelationID: "s1:100", RecordKind: ScheduleLogRecordKindResult, ScheduleID: "s1",
+		ActorAgentID: "agent-a", TriggerTime: 100, Target: "group_id=g1", Action: "set_power",
+		Result: ScheduleLogResultOK, Timestamp: 100,
+	}))
+	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{
+		CorrelationID: "s2:200", RecordKind: ScheduleLogRecordKindResult, ScheduleID: "s2",
+		ActorAgentID: "agent-b", TriggerTime: 200, Target: "group_id=g2", Action: "set_fan_speed",
+		Result: ScheduleLogResultError, Timestamp: 200,
+	}))
+
+	byTarget, err := repo.List(ctx, ScheduleLogFilter{Target: "group_id=g1"}, 100, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byTarget, 1)
+	assert.Equal(t, "s1", byTarget[0].ScheduleID)
+
+	byAction, err := repo.List(ctx, ScheduleLogFilter{Action: "set_fan_speed"}, 100, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byAction, 1)
+	assert.Equal(t, "s2", byAction[0].ScheduleID)
+
+	byResult, err := repo.List(ctx, ScheduleLogFilter{Result: ScheduleLogResultError}, 100, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byResult, 1)
+	assert.Equal(t, "s2", byResult[0].ScheduleID)
+}
+
+// TestScheduleLog_OrderAscDesc 는 order 파라미터가 오래된순(asc)/최신순(desc, 기본)을
+// 올바르게 적용하는지 검증한다.
+func TestScheduleLog_OrderAscDesc(t *testing.T) {
+	t.Parallel()
+	repo := newTestScheduleLogRepo(t)
+	ctx := context.Background()
+	for _, ts := range []int64{100, 200, 300} {
+		require.NoError(t, repo.Append(ctx, fireRecord("s1", "r", "agent-a", ts)))
+	}
+
+	asc, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0, "asc")
+	require.NoError(t, err)
+	require.Len(t, asc, 3)
+	assert.Equal(t, int64(100), asc[0].Timestamp)
+	assert.Equal(t, int64(300), asc[2].Timestamp)
+
+	for _, ord := range []string{"", "desc"} {
+		desc, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0, ord)
+		require.NoError(t, err)
+		require.Len(t, desc, 3)
+		assert.Equal(t, int64(300), desc[0].Timestamp, "order=%q 는 최신순", ord)
+		assert.Equal(t, int64(100), desc[2].Timestamp)
+	}
 }
 
 // TestScheduleLog_Pagination 은 limit/offset 페이지네이션을 검증한다.
@@ -195,19 +254,19 @@ func TestScheduleLog_Pagination(t *testing.T) {
 		require.NoError(t, repo.Append(ctx, fireRecord("s", "r", "agent-a", i*100)))
 	}
 
-	page1, err := repo.List(ctx, ScheduleLogFilter{}, 2, 0)
+	page1, err := repo.List(ctx, ScheduleLogFilter{}, 2, 0, "")
 	require.NoError(t, err)
 	require.Len(t, page1, 2)
 	assert.Equal(t, int64(500), page1[0].Timestamp)
 	assert.Equal(t, int64(400), page1[1].Timestamp)
 
-	page2, err := repo.List(ctx, ScheduleLogFilter{}, 2, 2)
+	page2, err := repo.List(ctx, ScheduleLogFilter{}, 2, 2, "")
 	require.NoError(t, err)
 	require.Len(t, page2, 2)
 	assert.Equal(t, int64(300), page2[0].Timestamp)
 
 	// limit<=0/offset<0 은 보정되어 에러 없이 동작한다.
-	all, err := repo.List(ctx, ScheduleLogFilter{}, 0, -5)
+	all, err := repo.List(ctx, ScheduleLogFilter{}, 0, -5, "")
 	require.NoError(t, err)
 	require.Len(t, all, 5)
 }
@@ -242,7 +301,7 @@ func TestScheduleLog_TargetsJSONRoundTrip(t *testing.T) {
 		Reason: "members=[a,b] ok=1/2", Timestamp: 1000,
 	}))
 
-	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0)
+	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0, "")
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	assert.Equal(t, targets, recs[0].Targets, "Targets JSON 이 그대로 복원되어야 함")
@@ -302,7 +361,7 @@ func TestScheduleLog_MigrationError(t *testing.T) {
 func TestScheduleLog_EmptyResult(t *testing.T) {
 	t.Parallel()
 	repo := newTestScheduleLogRepo(t)
-	recs, err := repo.List(context.Background(), ScheduleLogFilter{ScheduleID: "missing"}, 10, 0)
+	recs, err := repo.List(context.Background(), ScheduleLogFilter{ScheduleID: "missing"}, 10, 0, "")
 	require.NoError(t, err)
 	assert.Empty(t, recs)
 }
@@ -341,7 +400,7 @@ func TestScheduleLog_Clear(t *testing.T) {
 
 	require.NoError(t, repo.Clear(ctx))
 
-	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0)
+	recs, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0, "")
 	require.NoError(t, err)
 	assert.Empty(t, recs)
 	n, err := repo.Count(ctx, ScheduleLogFilter{})
@@ -350,7 +409,7 @@ func TestScheduleLog_Clear(t *testing.T) {
 
 	// 테이블 유지 확인: Clear 후에도 Append 가 정상 동작한다.
 	require.NoError(t, repo.Append(ctx, fireRecord("s3", "r", "hvac-c", 30)))
-	after, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0)
+	after, err := repo.List(ctx, ScheduleLogFilter{}, 100, 0, "")
 	require.NoError(t, err)
 	require.Len(t, after, 1)
 }

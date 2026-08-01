@@ -43,10 +43,11 @@ func (r *ScheduleLogMemoryRepository) Append(_ context.Context, rec ScheduleLogR
 	return nil
 }
 
-// List 는 필터·최신순 정렬·페이지네이션을 적용해 레코드를 반환한다. 필터 의미는
-// sqlite 구현과 동일하다(AgentID 는 declared 또는 actor 매칭 — RD-6). limit<=0 이면
-// 100 으로 보정하고 offset<0 이면 0 으로 보정한다.
-func (r *ScheduleLogMemoryRepository) List(_ context.Context, f ScheduleLogFilter, limit, offset int) ([]ScheduleLogRecord, error) {
+// List 는 필터·정렬·페이지네이션을 적용해 레코드를 반환한다. 필터 의미는 sqlite 구현과
+// 동일하다(AgentID 는 declared 또는 actor 매칭 — RD-6). order 는 "asc" 면 오래된순,
+// 그 외("" / "desc" 포함)는 최신순(기본값)이다. limit<=0 이면 100 으로 보정하고 offset<0
+// 이면 0 으로 보정한다.
+func (r *ScheduleLogMemoryRepository) List(_ context.Context, f ScheduleLogFilter, limit, offset int, order string) ([]ScheduleLogRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -60,7 +61,7 @@ func (r *ScheduleLogMemoryRepository) List(_ context.Context, f ScheduleLogFilte
 	}
 
 	filtered := filterScheduleLogRecords(r.records, f)
-	sortScheduleLogRecordsNewestFirst(filtered)
+	sortScheduleLogRecords(filtered, order == "asc")
 
 	if offset >= len(filtered) {
 		return []ScheduleLogRecord{}, nil
@@ -119,17 +120,34 @@ func filterScheduleLogRecords(records []ScheduleLogRecord, f ScheduleLogFilter) 
 		if f.AgentID != "" && rec.DeclaredAgentID != f.AgentID && rec.ActorAgentID != f.AgentID {
 			continue
 		}
+		if f.Target != "" && rec.Target != f.Target {
+			continue
+		}
+		if f.Action != "" && rec.Action != f.Action {
+			continue
+		}
+		if f.Result != "" && rec.Result != f.Result {
+			continue
+		}
 		out = append(out, rec)
 	}
 	return out
 }
 
-// sortScheduleLogRecordsNewestFirst 는 최신순(timestamp 내림차순, 동률은 id 내림차순)
-// 으로 in-place 정렬한다(sqlite ORDER BY timestamp DESC, id DESC 와 동일).
-func sortScheduleLogRecordsNewestFirst(records []ScheduleLogRecord) {
+// sortScheduleLogRecords 는 정렬 방향에 따라 in-place 정렬한다. ascending=false(기본)
+// 이면 최신순(timestamp 내림차순, 동률은 id 내림차순 — sqlite ORDER BY timestamp DESC,
+// id DESC 와 동일)이고, ascending=true 이면 그 정확한 역순(timestamp 오름차순, 동률은
+// id 오름차순)이다.
+func sortScheduleLogRecords(records []ScheduleLogRecord, ascending bool) {
 	sort.SliceStable(records, func(i, j int) bool {
 		if records[i].Timestamp != records[j].Timestamp {
+			if ascending {
+				return records[i].Timestamp < records[j].Timestamp
+			}
 			return records[i].Timestamp > records[j].Timestamp
+		}
+		if ascending {
+			return records[i].ID < records[j].ID
 		}
 		return records[i].ID > records[j].ID
 	})

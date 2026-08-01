@@ -183,9 +183,9 @@ describe('플랫 표 렌더 — 노드별 tbody + 에이전트 이름 컬럼(AC-
     expect(screen.getByTestId('schedule-table')).toBeInTheDocument();
     expect(screen.queryByTestId('schedule-group-ag-x')).toBeNull();
     expect(screen.queryByTestId('schedule-group-unassigned')).toBeNull();
-    // 각 노드가 자신의 tbody 를 소유한다.
-    expect(screen.getByTestId('schedule-node-flow-1-t1')).toBeInTheDocument();
-    expect(screen.getByTestId('schedule-node-flow-2-t2')).toBeInTheDocument();
+    // 각 노드의 규칙이 단일 플랫 tbody 의 행으로 렌더된다(노드별 tbody 없음).
+    expect(screen.getByTestId('schedule-row-flow-1-t1-0')).toBeInTheDocument();
+    expect(screen.getByTestId('schedule-row-flow-2-t2-0')).toBeInTheDocument();
     // 에이전트 컬럼: id → 이름 매핑(있으면 이름), 미해석은 "미지정".
     expect(screen.getByTestId('schedule-agent-flow-1-t1-0')).toHaveTextContent('설비X');
     expect(screen.getByTestId('schedule-agent-flow-2-t2-0')).toHaveTextContent('미지정');
@@ -208,7 +208,7 @@ describe('부분 실패 통지(AC-18/REQ-07-05)', () => {
     };
     render(<ScheduleManagementTab />);
     expect(screen.getByTestId('schedule-partial-failure')).toBeInTheDocument();
-    expect(screen.getByTestId('schedule-node-flow-1-t1')).toBeInTheDocument(); // 성공 행 유지
+    expect(screen.getByTestId('schedule-row-flow-1-t1-0')).toBeInTheDocument(); // 성공 행 유지
   });
 });
 
@@ -357,8 +357,8 @@ describe('빈(스케줄 0) 노드 숨김 + 규칙 추가 팝업 노드 인벤토
     };
     render(<ScheduleManagementTab />);
 
-    // 기본 목록에서는 숨김(빈 상태) — 노드 섹션 미표시.
-    expect(screen.queryByTestId('schedule-node-flow-1-empty')).toBeNull();
+    // 기본 목록에서는 숨김(빈 상태) — 해당 노드의 행 미표시.
+    expect(screen.queryByTestId('schedule-row-flow-1-empty-0')).toBeNull();
     expect(screen.getByTestId('schedule-empty')).toBeInTheDocument();
 
     // 규칙 추가 팝업 → 노드 인벤토리에 빈 노드가 존재.
@@ -387,5 +387,75 @@ describe('빈(스케줄 0) 노드 숨김 + 규칙 추가 팝업 노드 인벤토
     expect(sent).toHaveLength(1);
     expect(sent[0]!.name).toBe('신규 규칙');
     expect(sent[0]!.agent_id).toBe('ag-z'); // 선택 에이전트 각인(REQ-01-05)
+  });
+});
+
+describe('필터 바(상태/에이전트/검색)', () => {
+  it('상태 필터를 "활성"으로 두면 비활성 행이 숨겨진다', () => {
+    agg.value = {
+      ...agg.value,
+      totalFlows: 1,
+      nodeEntries: [
+        entry('flow-1', 't1', [
+          { name: 'A', enabled: true, agent_id: 'ag-x', type: 'interval', value: '1s' },
+          { name: 'B', enabled: false, agent_id: 'ag-x', type: 'interval', value: '2s' },
+        ]),
+      ],
+    };
+    render(<ScheduleManagementTab />);
+
+    // 초기: 두 행 모두 존재.
+    expect(screen.getByTestId('schedule-row-flow-1-t1-0')).toBeInTheDocument();
+    expect(screen.getByTestId('schedule-row-flow-1-t1-1')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('schedule-filter-status'), { target: { value: 'enabled' } });
+
+    // 활성만 남는다(비활성 B 행 숨김).
+    expect(screen.getByTestId('schedule-row-flow-1-t1-0')).toBeInTheDocument();
+    expect(screen.queryByTestId('schedule-row-flow-1-t1-1')).toBeNull();
+  });
+
+  it('검색어로 스케줄 이름을 필터링한다', () => {
+    agg.value = {
+      ...agg.value,
+      totalFlows: 1,
+      nodeEntries: [
+        entry('flow-1', 't1', [
+          { name: 'Alpha', agent_id: 'ag-x', type: 'interval', value: '1s' },
+          { name: 'Beta', agent_id: 'ag-x', type: 'interval', value: '2s' },
+        ]),
+      ],
+    };
+    render(<ScheduleManagementTab />);
+
+    fireEvent.change(screen.getByTestId('schedule-filter-search'), { target: { value: 'Alph' } });
+
+    expect(screen.getByTestId('schedule-row-flow-1-t1-0')).toBeInTheDocument();
+    expect(screen.queryByTestId('schedule-row-flow-1-t1-1')).toBeNull();
+  });
+});
+
+describe('전역 평면 정렬(교차 노드)', () => {
+  it('스케줄 이름 헤더 클릭 시 노드 경계를 넘어 전역으로 재정렬된다', () => {
+    agg.value = {
+      ...agg.value,
+      totalFlows: 2,
+      nodeEntries: [
+        entry('flow-1', 't1', [{ name: 'Zebra', priority: 1, agent_id: 'ag-x', type: 'interval', value: '1s' }]),
+        entry('flow-2', 't2', [{ name: 'Apple', priority: 2, agent_id: 'ag-x', type: 'interval', value: '2s' }]),
+      ],
+    };
+    render(<ScheduleManagementTab />);
+
+    // 기본 우선순위 오름차순 → priority 1(Zebra, flow-1) 먼저.
+    const before = screen.getAllByTestId(/^schedule-row-/);
+    expect(before[0]).toHaveAttribute('data-testid', 'schedule-row-flow-1-t1-0');
+
+    // 이름 헤더 클릭 → 이름 오름차순 → Apple(flow-2) 이 우선(전역 재정렬).
+    fireEvent.click(screen.getByText('스케줄 이름'));
+
+    const after = screen.getAllByTestId(/^schedule-row-/);
+    expect(after[0]).toHaveAttribute('data-testid', 'schedule-row-flow-2-t2-0');
+    expect(after[1]).toHaveAttribute('data-testid', 'schedule-row-flow-1-t1-0');
   });
 });

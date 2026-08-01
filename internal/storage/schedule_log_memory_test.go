@@ -21,7 +21,7 @@ func TestScheduleLogMemory_AppendAndListNewestFirst(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: ScheduleLogRecordKindFire, Timestamp: 100}))
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: ScheduleLogRecordKindResult, Timestamp: 200}))
 
-	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0)
+	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	// 최신순(timestamp DESC).
@@ -40,11 +40,11 @@ func TestScheduleLogMemory_FilterScheduleAndRule(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s2", RuleName: "evening", RecordKind: "result", Timestamp: 200}))
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RuleName: "morning", RecordKind: "result", Timestamp: 300}))
 
-	byID, err := repo.List(ctx, ScheduleLogFilter{ScheduleID: "s1"}, 0, 0)
+	byID, err := repo.List(ctx, ScheduleLogFilter{ScheduleID: "s1"}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, byID, 2)
 
-	byRule, err := repo.List(ctx, ScheduleLogFilter{RuleName: "evening"}, 0, 0)
+	byRule, err := repo.List(ctx, ScheduleLogFilter{RuleName: "evening"}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, byRule, 1)
 	assert.Equal(t, "s2", byRule[0].ScheduleID)
@@ -61,14 +61,62 @@ func TestScheduleLogMemory_FilterAgentDeclaredOrActor(t *testing.T) {
 	// 무관.
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s2", DeclaredAgentID: "hvac-b", ActorAgentID: "hvac-b", RecordKind: "result", Timestamp: 150}))
 
-	got, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-a"}, 0, 0)
+	got, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-a"}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2, "declared 또는 actor 매칭(RD-6)")
 
-	only, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-b"}, 0, 0)
+	only, err := repo.List(ctx, ScheduleLogFilter{AgentID: "hvac-b"}, 0, 0, "")
 	require.NoError(t, err)
 	require.Len(t, only, 1)
 	assert.Equal(t, "s2", only[0].ScheduleID)
+}
+
+func TestScheduleLogMemory_FilterTargetActionResult(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := NewScheduleLogMemoryRepository()
+	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Target: "group_id=g1", Action: "set_power", Result: "ok", Timestamp: 100}))
+	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s2", RecordKind: "result", Target: "group_id=g2", Action: "set_fan_speed", Result: "error", Timestamp: 200}))
+
+	byTarget, err := repo.List(ctx, ScheduleLogFilter{Target: "group_id=g1"}, 0, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byTarget, 1)
+	assert.Equal(t, "s1", byTarget[0].ScheduleID)
+
+	byAction, err := repo.List(ctx, ScheduleLogFilter{Action: "set_fan_speed"}, 0, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byAction, 1)
+	assert.Equal(t, "s2", byAction[0].ScheduleID)
+
+	byResult, err := repo.List(ctx, ScheduleLogFilter{Result: "error"}, 0, 0, "")
+	require.NoError(t, err)
+	require.Len(t, byResult, 1)
+	assert.Equal(t, "s2", byResult[0].ScheduleID)
+}
+
+func TestScheduleLogMemory_OrderAscDesc(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := NewScheduleLogMemoryRepository()
+	for _, ts := range []int64{100, 200, 300} {
+		require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: ts}))
+	}
+
+	// order="asc" → 오래된순.
+	asc, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "asc")
+	require.NoError(t, err)
+	require.Len(t, asc, 3)
+	assert.Equal(t, int64(100), asc[0].Timestamp)
+	assert.Equal(t, int64(300), asc[2].Timestamp)
+
+	// order="" / "desc" → 최신순(기본, 변경 없음).
+	for _, ord := range []string{"", "desc"} {
+		desc, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, ord)
+		require.NoError(t, err)
+		require.Len(t, desc, 3)
+		assert.Equal(t, int64(300), desc[0].Timestamp, "order=%q 는 최신순", ord)
+		assert.Equal(t, int64(100), desc[2].Timestamp)
+	}
 }
 
 func TestScheduleLogMemory_Pagination(t *testing.T) {
@@ -79,14 +127,14 @@ func TestScheduleLogMemory_Pagination(t *testing.T) {
 		require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: ts}))
 	}
 	// 최신순 50,40,30,20,10 → offset 1 → 40,30,20,10 → limit 2 → 40,30.
-	got, err := repo.List(ctx, ScheduleLogFilter{}, 2, 1)
+	got, err := repo.List(ctx, ScheduleLogFilter{}, 2, 1, "")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, int64(40), got[0].Timestamp)
 	assert.Equal(t, int64(30), got[1].Timestamp)
 
 	// offset 이 범위를 넘으면 빈 슬라이스.
-	empty, err := repo.List(ctx, ScheduleLogFilter{}, 10, 100)
+	empty, err := repo.List(ctx, ScheduleLogFilter{}, 10, 100, "")
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }
@@ -115,7 +163,7 @@ func TestScheduleLogMemory_Clear(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1", RecordKind: "result", Timestamp: 10}))
 	require.NoError(t, repo.Clear(ctx))
 
-	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0)
+	got, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	require.NoError(t, err)
 	assert.Empty(t, got)
 	n, err := repo.Count(ctx, ScheduleLogFilter{})
@@ -130,7 +178,7 @@ func TestScheduleLogMemory_ClosedError(t *testing.T) {
 	require.NoError(t, repo.Close())
 
 	assert.ErrorIs(t, repo.Append(ctx, ScheduleLogRecord{ScheduleID: "s1"}), ErrScheduleLogClosed)
-	_, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0)
+	_, err := repo.List(ctx, ScheduleLogFilter{}, 0, 0, "")
 	assert.ErrorIs(t, err, ErrScheduleLogClosed)
 	_, err = repo.Count(ctx, ScheduleLogFilter{})
 	assert.ErrorIs(t, err, ErrScheduleLogClosed)

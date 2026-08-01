@@ -172,9 +172,69 @@ describe('필터 → 쿼리 파라미터(AC-10)', () => {
       scheduleId: 'sch-9',
       ruleName: undefined,
       agentId: 'ag-9',
+      target: undefined,
+      action: undefined,
+      result: undefined,
+      order: 'desc',
       limit: 25,
       offset: 0,
     });
+  });
+
+  it('대상/동작/결과 필터 입력이 쿼리로 전달된다', () => {
+    render(<ScheduleLogTab />);
+
+    fireEvent.change(screen.getByTestId('log-filter-target'), {
+      target: { value: 'group_id=station:0150' },
+    });
+    fireEvent.change(screen.getByTestId('log-filter-action'), {
+      target: { value: 'set_power' },
+    });
+    fireEvent.change(screen.getByTestId('log-filter-result'), {
+      target: { value: 'error' },
+    });
+
+    expect(useScheduleLogsMock).toHaveBeenLastCalledWith({
+      scheduleId: undefined,
+      ruleName: undefined,
+      agentId: undefined,
+      target: 'group_id=station:0150',
+      action: 'set_power',
+      result: 'error',
+      order: 'desc',
+      limit: 25,
+      offset: 0,
+    });
+  });
+});
+
+describe('실행 시각 정렬(order)', () => {
+  it('실행 시각 헤더 클릭 시 order 가 asc 로 토글되고 표시자가 바뀐다', () => {
+    logs.value = {
+      ...logs.value,
+      data: page([rec({ correlation_id: 'c:1', record_kind: 'fire' })], 1),
+    };
+    render(<ScheduleLogTab />);
+
+    // 기본은 최신순(desc) → ▼ 표시자.
+    const sortTh = screen.getByTestId('log-sort-time');
+    expect(sortTh).toHaveTextContent('▼');
+
+    fireEvent.click(sortTh);
+
+    expect(useScheduleLogsMock).toHaveBeenLastCalledWith({
+      scheduleId: undefined,
+      ruleName: undefined,
+      agentId: undefined,
+      target: undefined,
+      action: undefined,
+      result: undefined,
+      order: 'asc',
+      limit: 25,
+      offset: 0,
+    });
+    // asc 로 바뀌면 ▲ 표시자.
+    expect(screen.getByTestId('log-sort-time')).toHaveTextContent('▲');
   });
 });
 
@@ -190,6 +250,10 @@ describe('페이지네이션(limit/offset 배선)', () => {
       scheduleId: undefined,
       ruleName: undefined,
       agentId: undefined,
+      target: undefined,
+      action: undefined,
+      result: undefined,
+      order: 'desc',
       limit: 25,
       offset: 0,
     });
@@ -211,6 +275,10 @@ describe('페이지네이션(limit/offset 배선)', () => {
       scheduleId: undefined,
       ruleName: undefined,
       agentId: undefined,
+      target: undefined,
+      action: undefined,
+      result: undefined,
+      order: 'desc',
       limit: 25,
       offset: 25,
     });
@@ -233,6 +301,10 @@ describe('페이지네이션(limit/offset 배선)', () => {
       scheduleId: undefined,
       ruleName: undefined,
       agentId: undefined,
+      target: undefined,
+      action: undefined,
+      result: undefined,
+      order: 'desc',
       limit: 50,
       offset: 0,
     });

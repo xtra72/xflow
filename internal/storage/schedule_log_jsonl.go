@@ -80,10 +80,11 @@ func (r *ScheduleLogJSONLRepository) Append(_ context.Context, rec ScheduleLogRe
 	return nil
 }
 
-// List 는 파일 전체를 읽어 필터·최신순 정렬·페이지네이션을 적용해 반환한다. 필터 의미는
-// sqlite/memory 와 동일하다(AgentID 는 declared 또는 actor 매칭 — RD-6). limit<=0 이면
-// 100 으로 보정하고 offset<0 이면 0 으로 보정한다.
-func (r *ScheduleLogJSONLRepository) List(_ context.Context, f ScheduleLogFilter, limit, offset int) ([]ScheduleLogRecord, error) {
+// List 는 파일 전체를 읽어 필터·정렬·페이지네이션을 적용해 반환한다. 필터·정렬 의미는
+// sqlite/memory 와 동일하다(AgentID 는 declared 또는 actor 매칭 — RD-6). order 는 "asc" 면
+// 오래된순, 그 외("" / "desc" 포함)는 최신순(기본값)이다. limit<=0 이면 100 으로 보정하고
+// offset<0 이면 0 으로 보정한다.
+func (r *ScheduleLogJSONLRepository) List(_ context.Context, f ScheduleLogFilter, limit, offset int, order string) ([]ScheduleLogRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -101,7 +102,7 @@ func (r *ScheduleLogJSONLRepository) List(_ context.Context, f ScheduleLogFilter
 		return nil, err
 	}
 	filtered := filterScheduleLogRecords(all, f)
-	sortScheduleLogRecordsNewestFirst(filtered)
+	sortScheduleLogRecords(filtered, order == "asc")
 
 	if offset >= len(filtered) {
 		return []ScheduleLogRecord{}, nil
