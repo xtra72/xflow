@@ -133,7 +133,8 @@ const MODBUS_SERVER_FIELDS: ConfigField[] = [
   // 공통 (tcp/rtu)
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 10 },
   { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '60s' },
-  // 디바이스(unit_id + register_map)는 디바이스 탭에서 관리
+  // 디바이스(unit_id + register_map) — role=main 필수. sub 는 main 의 맵을 상속하므로 숨긴다.
+  { name: 'devices', type: 'modbus_server_devices', label: '디바이스 / 레지스터 맵', visibleWhen: { field: 'role', value: 'main' }, description: 'main 서버가 호스팅할 디바이스 목록. 각 디바이스는 unit_id(1-247)와 4개 영역(코일/이산입력/보유레지스터/입력레지스터)의 레지스터 맵을 가진다. main 은 최소 1개 디바이스에 최소 1개 영역이 필요하다. sub 는 main 의 맵을 상속하므로 정의하지 않는다.' },
 ];
 
 const HTTP_RECEIVER_FIELDS: ConfigField[] = [

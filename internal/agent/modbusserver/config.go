@@ -235,15 +235,22 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 				RegisterDefs: topDefs,
 			},
 		}
+	} else if cfg.Role == RoleSub {
+		// role=sub 는 자체 devices/register_map 을 정의하지 않아도 된다.
+		// Start 시점에 shared_from 이 가리키는 주 서버의 전체 디바이스 집합을
+		// 라이브 공유 RegisterMap 으로 그대로 상속한다(cfg.Devices 는 빈 채로 둔다).
 	} else {
-		// register_map 도 devices 도 없는 경우
+		// main 은 register_map 도 devices 도 없으면 기존과 동일하게 오류.
 		return ModbusServerConfig{}, fmt.Errorf(
 			"modbus-server: register_map or devices is required: %w", ErrInvalidRegisterMap)
 	}
 
-	// Devices 유효성 검증
-	if err := validateDevices(cfg.Devices); err != nil {
-		return ModbusServerConfig{}, err
+	// Devices 유효성 검증: 자체 디바이스를 가진 경우에만 검증한다.
+	// (main-상속 서브는 이 시점에 디바이스가 없으며 Start 에서 채워진다.)
+	if len(cfg.Devices) > 0 {
+		if err := validateDevices(cfg.Devices); err != nil {
+			return ModbusServerConfig{}, err
+		}
 	}
 
 	return cfg, nil

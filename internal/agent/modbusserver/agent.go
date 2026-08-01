@@ -65,13 +65,27 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 	msgCh := make(chan map[string]any, cfg.MsgChannelSize)
 	logger := agent.ResolveLogger(agentConfig)
 
-	// DeviceManager 생성 (멀티-디바이스 지원)
-	dm, err := NewDeviceManager(cfg.Devices, logger)
-	if err != nil {
-		return nil, fmt.Errorf("modbus-server agent: %w", err)
+	// DeviceManager 생성 (멀티-디바이스 지원).
+	// role=sub 가 자체 디바이스를 정의하지 않은 경우 빈 DeviceManager 로 시작하고,
+	// Start 시점에 주 서버의 디바이스를 그대로 상속한다(라이브 공유 RegisterMap).
+	var dm *DeviceManager
+	if len(cfg.Devices) == 0 {
+		dm = NewEmptyDeviceManager()
+	} else {
+		dm, err = NewDeviceManager(cfg.Devices, logger)
+		if err != nil {
+			return nil, fmt.Errorf("modbus-server agent: %w", err)
+		}
 	}
 
 	handler := NewModbusHandler(dm, msgCh, logger)
+
+	// 첫 번째 디바이스의 RegisterMap (Process 메서드 하위 호환용). 디바이스가 없으면
+	// (main-상속 서브) nil 이며 Start 의 applySharedRegisterMap 에서 채워진다.
+	var primaryRM *RegisterMap
+	if first := dm.FirstDevice(); first != nil {
+		primaryRM = first.RegisterMap
+	}
 
 	// 트랜스포트에 따라 TCP 리스너 또는 RTU 시리얼 슬레이브 리스너를 선택한다.
 	var listener serverListener
@@ -86,7 +100,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-server")),
 		config:        cfg,
 		deviceManager: dm,
-		registerMap:   dm.FirstDevice().RegisterMap, // 하위 호환: 첫 번째 디바이스
+		registerMap:   primaryRM, // 하위 호환: 첫 번째 디바이스 (sub-상속 시 nil→Start에서 채움)
 		listener:      listener,
 		handler:       handler,
 		mgr:           mgr,
@@ -1363,18 +1377,47 @@ func (a *ModbusServerAgent) Type() string {
 
 // SharedRegisterMap 는 이 서버의 주(첫 번째) 디바이스 RegisterMap 포인터를 반환한다.
 // role=sub 서버가 이 포인터를 자신의 핸들러/디바이스에 연결하여 라이브 공유한다.
-// 단일-디바이스 서버가 일반적이므로 주 디바이스 맵만 공유한다(멀티-디바이스 서브는
-// 주 디바이스 맵만 공유하고 나머지 디바이스는 자체 맵을 유지한다).
+// 디바이스가 없으면(예: 아직 상속 전인 서브) nil 을 반환한다.
 func (a *ModbusServerAgent) SharedRegisterMap() *RegisterMap {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.registerMap
 }
 
-// applySharedRegisterMap 는 role=sub 일 때 shared_from 이 가리키는 주 서버의 RegisterMap
-// 포인터를 resolve 하여 이 서브 서버의 주 디바이스가 그것을 직접 참조하도록 스왑한다.
-// 스왑 이후 이 서브로 들어오는 읽기/쓰기는 공유 맵을 변경하며, 이는 주 서버 및 다른
-// 서브에 즉시 반영된다(라이브 공유 시맨틱). Start 시점(리스너 서빙 전)에만 호출된다.
+// SharedDevice 는 unit_id 와 그 디바이스의 라이브 *RegisterMap 포인터 쌍이다.
+type SharedDevice struct {
+	UnitID      byte
+	Name        string
+	RegisterMap *RegisterMap
+}
+
+// SharedDevices 는 이 서버의 모든 디바이스를 추가 순서대로 (unit_id, *RegisterMap) 쌍으로
+// 반환한다. role=sub 서버가 주 서버의 전체 디바이스 집합을 라이브 공유(동일 포인터)로
+// 상속할 때 사용한다. 반환된 *RegisterMap 는 복사본이 아니라 라이브 포인터이다.
+func (a *ModbusServerAgent) SharedDevices() []SharedDevice {
+	devs := a.deviceManager.GetAllDevices()
+	result := make([]SharedDevice, 0, len(devs))
+	for _, dev := range devs {
+		result = append(result, SharedDevice{
+			UnitID:      dev.UnitID,
+			Name:        dev.Name,
+			RegisterMap: dev.RegisterMap,
+		})
+	}
+	return result
+}
+
+// applySharedRegisterMap 는 role=sub 일 때 shared_from 이 가리키는 주 서버를 resolve 하여
+// 이 서브 서버가 주 서버의 디바이스를 라이브 공유 RegisterMap 으로 서빙하도록 배선한다.
+// Start 시점(리스너 서빙 전)에만 호출된다.
+//
+// 두 가지 경로:
+//   - 서브가 자체 디바이스를 갖지 않는 경우(main-상속): 주 서버의 모든 디바이스를
+//     동일한 unit_id + 동일한 *RegisterMap 포인터로 이 서브의 DeviceManager 에 채운다.
+//     이후 이 서브로 들어오는 요청은 공유 맵을 서빙/변경한다.
+//   - 서브가 자체 디바이스를 갖는 경우(레거시): 각 서브 디바이스를 동일 unit_id 의 주
+//     디바이스에 매칭하여 그 포인터를 공유하고, 매칭이 하나도 없으면 주 서버의 주
+//     RegisterMap 으로 주 디바이스를 스왑하는 기존 동작으로 폴백한다.
 func (a *ModbusServerAgent) applySharedRegisterMap() error {
 	if a.mgr == nil {
 		return fmt.Errorf("modbus-server: cannot resolve shared_from %q: manager unavailable: %w",
@@ -1391,19 +1434,58 @@ func (a *ModbusServerAgent) applySharedRegisterMap() error {
 			a.config.SharedFrom, ErrSharedMainNotFound)
 	}
 
-	shared := mainSrv.SharedRegisterMap()
-	if shared == nil {
-		return fmt.Errorf("modbus-server: shared_from %q has no register map: %w",
-			a.config.SharedFrom, ErrSharedMainNotFound)
+	// 주 서버의 디바이스 집합을 순서대로 수집한다(서브 락 획득 전에 수행).
+	mainDevices := mainSrv.SharedDevices()
+	if len(mainDevices) == 0 {
+		return fmt.Errorf("modbus-server: shared_from %q has no devices to share: %w",
+			a.config.SharedFrom, ErrSharedMainNoDevices)
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if first := a.deviceManager.FirstDevice(); first != nil {
-		first.RegisterMap = shared
-		first.ReqHandler = NewRequestHandler(shared, a.logger)
+
+	// 경로 1: main-상속 (서브가 자체 디바이스 없음) → 주 서버 디바이스를 그대로 채운다.
+	if a.deviceManager.DeviceCount() == 0 {
+		for _, md := range mainDevices {
+			dev := &Device{
+				UnitID:      md.UnitID,
+				Name:        md.Name,
+				RegisterMap: md.RegisterMap, // 라이브 공유 포인터
+				ReqHandler:  NewRequestHandler(md.RegisterMap, a.logger),
+			}
+			if err := a.deviceManager.AddDevice(dev); err != nil {
+				return fmt.Errorf("modbus-server: adopt shared device unit_id %d: %w", md.UnitID, err)
+			}
+		}
+		// 주(첫 번째) 디바이스 맵을 하위 호환 필드에 반영한다.
+		a.registerMap = mainDevices[0].RegisterMap
+		return nil
 	}
-	a.registerMap = shared
+
+	// 경로 2: 레거시 (서브가 자체 디바이스 보유) → unit_id 매칭 공유, 없으면 주-스왑 폴백.
+	mainByUnit := make(map[byte]*RegisterMap, len(mainDevices))
+	for _, md := range mainDevices {
+		mainByUnit[md.UnitID] = md.RegisterMap
+	}
+
+	matched := false
+	for _, dev := range a.deviceManager.GetAllDevices() {
+		if rm, ok := mainByUnit[dev.UnitID]; ok {
+			dev.RegisterMap = rm
+			dev.ReqHandler = NewRequestHandler(rm, a.logger)
+			matched = true
+		}
+	}
+
+	if first := a.deviceManager.FirstDevice(); first != nil {
+		if !matched {
+			// 폴백: 매칭이 하나도 없으면 주 디바이스를 주 서버의 주 맵으로 스왑한다.
+			shared := mainDevices[0].RegisterMap
+			first.RegisterMap = shared
+			first.ReqHandler = NewRequestHandler(shared, a.logger)
+		}
+		a.registerMap = first.RegisterMap
+	}
 	return nil
 }
 

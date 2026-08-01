@@ -2945,6 +2945,17 @@
       "address": "Address",
       "byteOrder": "Byte order"
     },
+    "modbusServerDevices": {
+      "device": "Device",
+      "addDevice": "Add device",
+      "removeDevice": "Remove device",
+      "empty": "No devices. Use \"Add device\" to add one.",
+      "unitId": "Unit ID",
+      "name": "Name",
+      "registerMap": "Register map",
+      "unitIdDuplicate": "Duplicate unit ID. Each device must be unique.",
+      "emptyMapHint": "No register area defined. A main server requires at least one area."
+    },
     "metrics": {
       "metric": "Metric",
       "valueKey": "Value key ($.)",

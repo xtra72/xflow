@@ -77,6 +77,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'shared_from', type: 'string', required: false, description: 'role=sub 일 때 공유할 main 에이전트 ID' },
       { name: 'max_connections', type: 'number', required: false, description: '최대 동시 클라이언트 연결 수', default: '10' },
       { name: 'idle_timeout', type: 'string', required: false, description: '유휴 연결 타임아웃', default: '60s' },
+      { name: 'devices', type: 'object', required: false, description: 'role=main 필수. 호스팅할 디바이스 목록(각 unit_id + register_map)' },
     ],
     configExample: {
       transport: 'tcp',
@@ -85,6 +86,17 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       role: 'main',
       max_connections: 10,
       idle_timeout: '60s',
+      devices: [
+        {
+          unit_id: 1,
+          name: 'device-1',
+          register_map: {
+            holding_registers: [
+              { start_address: 0, count: 10, data_type: 'uint16' },
+            ],
+          },
+        },
+      ],
     },
   },
 

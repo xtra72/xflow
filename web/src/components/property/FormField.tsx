@@ -21,6 +21,7 @@ import type { ConfigField } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
 import { ModbusDevicesEditor } from './ModbusDevicesEditor';
+import { ModbusServerDevicesEditor } from './ModbusServerDevicesEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
@@ -335,6 +336,14 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
           transport={
             typeof formData?.transport === 'string' ? formData.transport : 'tcp'
           }
+        />
+      )}
+
+      {field.type === 'modbus_server_devices' && (
+        <ModbusServerDevicesEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
         />
       )}
 

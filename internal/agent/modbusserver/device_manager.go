@@ -69,6 +69,16 @@ type DeviceManager struct {
 	order   []byte // 디바이스 추가 순서 보존 (broadcast 시 첫 번째 디바이스 결정용)
 }
 
+// NewEmptyDeviceManager 는 디바이스가 없는 빈 DeviceManager 를 반환한다.
+// role=sub 서버가 자체 디바이스 없이 생성될 때 사용되며, Start 시점에
+// 주 서버의 디바이스를 AddDevice 로 채운다(라이브 공유 RegisterMap).
+func NewEmptyDeviceManager() *DeviceManager {
+	return &DeviceManager{
+		devices: make(map[byte]*Device),
+		order:   make([]byte, 0),
+	}
+}
+
 // NewDeviceManager 는 설정에서 디바이스 목록을 생성하여 DeviceManager 를 반환한다.
 func NewDeviceManager(configs []DeviceConfig, logger *slog.Logger) (*DeviceManager, error) {
 	if len(configs) == 0 {

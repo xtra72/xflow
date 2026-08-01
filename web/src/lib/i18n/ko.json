@@ -2945,6 +2945,17 @@
       "address": "주소",
       "byteOrder": "바이트 순서"
     },
+    "modbusServerDevices": {
+      "device": "디바이스",
+      "addDevice": "디바이스 추가",
+      "removeDevice": "디바이스 삭제",
+      "empty": "디바이스가 없습니다. \"디바이스 추가\"로 추가하세요.",
+      "unitId": "유닛 ID",
+      "name": "이름",
+      "registerMap": "레지스터 맵",
+      "unitIdDuplicate": "유닛 ID가 중복됩니다. 디바이스마다 고유해야 합니다.",
+      "emptyMapHint": "레지스터 영역이 없습니다. main 서버는 최소 1개 영역이 필요합니다."
+    },
     "metrics": {
       "metric": "메트릭",
       "valueKey": "값 키 ($.)",
