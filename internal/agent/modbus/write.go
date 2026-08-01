@@ -222,7 +222,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 			if a.config.EnableWriteEvents {
 				a.sendEvent("write_error", map[string]any{
 					"device_id":      dev.config.ID,
-					"unit_id":        dev.config.UnitID,
+					"unit_id":        dev.UnitID(),
 					"command":        "write_coil",
 					"address":        addr,
 					"error":          exc.Error(),
@@ -230,7 +230,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 					"timestamp":      time.Now().Format(time.RFC3339),
 				})
 			}
-			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, "write_coil", exc)
+			return writeExceptionResponse(dev.config.ID, dev.UnitID(), "write_coil", exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -248,14 +248,14 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 	if a.config.EnableWriteEvents {
 		a.sendEvent("write_success", map[string]any{
 			"device_id": dev.config.ID,
-			"unit_id":   dev.config.UnitID,
+			"unit_id":   dev.UnitID(),
 			"command":   "write_coil",
 			"address":   addr,
 			"timestamp": time.Now().Format(time.RFC3339),
 		})
 	}
 
-	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, "write_coil", respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.UnitID(), "write_coil", respAddr, quantity)
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 			if a.config.EnableWriteEvents {
 				evtData := map[string]any{
 					"device_id":      dev.config.ID,
-					"unit_id":        dev.config.UnitID,
+					"unit_id":        dev.UnitID(),
 					"command":        command,
 					"address":        addr,
 					"error":          exc.Error(),
@@ -373,7 +373,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 				}
 				a.sendEvent("write_error", evtData)
 			}
-			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, command, exc)
+			return writeExceptionResponse(dev.config.ID, dev.UnitID(), command, exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -391,7 +391,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 	if a.config.EnableWriteEvents {
 		evtData := map[string]any{
 			"device_id": dev.config.ID,
-			"unit_id":   dev.config.UnitID,
+			"unit_id":   dev.UnitID(),
 			"command":   command,
 			"address":   addr,
 			"timestamp": time.Now().Format(time.RFC3339),
@@ -402,7 +402,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 		a.sendEvent("write_success", evtData)
 	}
 
-	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, command, respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.UnitID(), command, respAddr, quantity)
 }
 
 // sendWriteMultipleRegisters 는 FC16 PDU 를 빌드하고 전송한다.
@@ -427,7 +427,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 			if a.config.EnableWriteEvents {
 				evtData := map[string]any{
 					"device_id":      dev.config.ID,
-					"unit_id":        dev.config.UnitID,
+					"unit_id":        dev.UnitID(),
 					"command":        command,
 					"address":        addr,
 					"error":          exc.Error(),
@@ -439,7 +439,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 				}
 				a.sendEvent("write_error", evtData)
 			}
-			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, command, exc)
+			return writeExceptionResponse(dev.config.ID, dev.UnitID(), command, exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -457,7 +457,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 	if a.config.EnableWriteEvents {
 		evtData := map[string]any{
 			"device_id": dev.config.ID,
-			"unit_id":   dev.config.UnitID,
+			"unit_id":   dev.UnitID(),
 			"command":   command,
 			"address":   addr,
 			"timestamp": time.Now().Format(time.RFC3339),
@@ -468,7 +468,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 		a.sendEvent("write_success", evtData)
 	}
 
-	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, command, respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.UnitID(), command, respAddr, quantity)
 }
 
 // ---------------------------------------------------------------------------
@@ -529,7 +529,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 			if a.config.EnableWriteEvents {
 				a.sendEvent("write_error", map[string]any{
 					"device_id":      dev.config.ID,
-					"unit_id":        dev.config.UnitID,
+					"unit_id":        dev.UnitID(),
 					"command":        "write_coils",
 					"address":        addr,
 					"error":          exc.Error(),
@@ -537,7 +537,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 					"timestamp":      time.Now().Format(time.RFC3339),
 				})
 			}
-			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, "write_coils", exc)
+			return writeExceptionResponse(dev.config.ID, dev.UnitID(), "write_coils", exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -555,14 +555,14 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 	if a.config.EnableWriteEvents {
 		a.sendEvent("write_success", map[string]any{
 			"device_id": dev.config.ID,
-			"unit_id":   dev.config.UnitID,
+			"unit_id":   dev.UnitID(),
 			"command":   "write_coils",
 			"address":   addr,
 			"timestamp": time.Now().Format(time.RFC3339),
 		})
 	}
 
-	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, "write_coils", respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.UnitID(), "write_coils", respAddr, quantity)
 }
 
 // ---------------------------------------------------------------------------

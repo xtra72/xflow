@@ -36,6 +36,8 @@ func TestModbusDeviceProvider_Devices(t *testing.T) {
 		},
 		online: true,
 	}
+	// unit_id 는 원자값이 SSOT 이므로 리터럴 생성 시에도 시드해야 한다(device.go UnitID 불변식).
+	dev1.setUnitID(1)
 
 	dev2 := &ModbusDevice{
 		config: DeviceConfig{
@@ -46,6 +48,7 @@ func TestModbusDeviceProvider_Devices(t *testing.T) {
 		},
 		online: false,
 	}
+	dev2.setUnitID(2)
 
 	cache := NewRegisterCache()
 	cache.UpdateHoldingRegisters(0, []uint16{100, 200})
@@ -132,6 +135,7 @@ func TestModbusDeviceProvider_Device(t *testing.T) {
 		},
 		online: true,
 	}
+	dev.setUnitID(1) // 원자값 시드(device.go UnitID 불변식).
 
 	a := newTestModbusAgentForProvider("mb-agent", []*ModbusDevice{dev}, map[string]*RegisterCache{})
 	provider := NewModbusDeviceProvider(a)
@@ -226,6 +230,7 @@ func TestModbusDeviceToInfo(t *testing.T) {
 		},
 		online: true,
 	}
+	dev.setUnitID(5) // 원자값 시드(device.go UnitID 불변식).
 
 	cache := NewRegisterCache()
 	cache.UpdateHoldingRegisters(100, []uint16{42})

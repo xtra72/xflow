@@ -5,15 +5,26 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // ModbusDevice 는 단일 MODBUS 디바이스의 상태와 통신을 관리한다.
 // 트랜잭션 ID 관리는 ADU(MBAP) 관심사이므로 트랜스포트가 소유한다.
+//
+// UnitID 불변식(M9 → SPEC-MODBUS-006 unit_id 런타임 가변화):
+//
+//	unitID(atomic)는 unit_id 의 런타임 단일 소스(SSOT)이다. 폴링 goroutine 이
+//	락 없이 읽는 핫 패스(ReadRegisters/SendPDU)와 응답 빌더가 모두 이 원자값을
+//	UnitID() 로 읽고, set_config 는 setUnitID() 로 원자적으로 갱신한다.
+//	config.UnitID 는 생성 시점의 시드일 뿐이며 런타임에는 절대 갱신·판독하지
+//	않는다(살아있는 값은 항상 UnitID() 를 통해 읽어야 한다). 이로써 set_config
+//	가 unit_id 를 바꾸는 도중에도 폴링 goroutine 과의 데이터 경합이 발생하지 않는다.
 type ModbusDevice struct {
 	config               DeviceConfig
 	transport            ModbusTransport
 	mu                   sync.RWMutex
+	unitID               atomic.Uint32 // 런타임 가변 unit_id 의 SSOT (byte 값을 저장). 위 불변식 참조.
 	online               bool
 	lastError            error
 	consecutiveErr       int
@@ -25,21 +36,39 @@ type ModbusDevice struct {
 // 내부적으로 ModbusTCPTransport 를 생성하여 사용한다.
 func NewModbusDevice(cfg DeviceConfig, requestTimeout time.Duration, logger *slog.Logger) *ModbusDevice {
 	transport := NewModbusTCPTransport(cfg.Host, cfg.Port, requestTimeout, logger)
-	return &ModbusDevice{
+	d := &ModbusDevice{
 		config:    cfg,
 		transport: transport,
 		logger:    logger,
 	}
+	d.unitID.Store(uint32(cfg.UnitID)) // 생성 시 config.UnitID 로 원자값 시드(이후 런타임 SSOT).
+	return d
 }
 
 // newModbusDeviceWithTransport 는 주입된 트랜스포트를 사용하는 ModbusDevice 를 생성한다.
 // 테스트에서 mock 트랜스포트를 주입할 때 사용한다.
 func newModbusDeviceWithTransport(cfg DeviceConfig, transport ModbusTransport, logger *slog.Logger) *ModbusDevice {
-	return &ModbusDevice{
+	d := &ModbusDevice{
 		config:    cfg,
 		transport: transport,
 		logger:    logger,
 	}
+	d.unitID.Store(uint32(cfg.UnitID)) // 생성 시 config.UnitID 로 원자값 시드(이후 런타임 SSOT).
+	return d
+}
+
+// UnitID 는 디바이스의 현재 unit_id 를 원자적으로 읽어 반환한다.
+// 폴링 goroutine 의 락-프리 핫 패스(ReadRegisters/SendPDU)와 응답 빌더는
+// config.UnitID 가 아니라 반드시 이 접근자를 통해 살아있는 값을 읽어야 한다(위 불변식 참조).
+func (d *ModbusDevice) UnitID() byte {
+	return byte(d.unitID.Load())
+}
+
+// setUnitID 는 디바이스의 unit_id 를 원자적으로 갱신한다(set_config 런타임 변경 경로).
+// 호출자는 a.mu.Lock() 하에서 호출하여 다른 설정 변경과의 원자적 적용(부분 적용 없음)을 보장한다.
+// 원자 저장 자체는 락 없이 읽는 폴링 goroutine 과 경합하지 않는다.
+func (d *ModbusDevice) setUnitID(v byte) {
+	d.unitID.Store(uint32(v))
 }
 
 // Connect 는 디바이스에 TCP 연결을 수립한다.
@@ -82,7 +111,7 @@ func (d *ModbusDevice) ReadRegisters(ctx context.Context, rg RegisterGroupConfig
 
 	pdu := buildReadPDU(rg.FunctionCode, rg.StartAddress, rg.Quantity)
 
-	respPDU, err := d.transport.SendAndReceive(ctx, d.config.UnitID, pdu)
+	respPDU, err := d.transport.SendAndReceive(ctx, d.UnitID(), pdu)
 	if err != nil {
 		d.recordError(err)
 		return nil, fmt.Errorf("modbus: device %s read failed: %w", d.config.ID, err)
@@ -105,7 +134,7 @@ func (d *ModbusDevice) SendPDU(ctx context.Context, pdu []byte) ([]byte, error) 
 	if !d.transport.IsConnected() {
 		return nil, ErrDeviceOffline
 	}
-	respPDU, err := d.transport.SendAndReceive(ctx, d.config.UnitID, pdu)
+	respPDU, err := d.transport.SendAndReceive(ctx, d.UnitID(), pdu)
 	if err != nil {
 		d.recordError(err)
 		return nil, fmt.Errorf("modbus: device %s send failed: %w", d.config.ID, err)

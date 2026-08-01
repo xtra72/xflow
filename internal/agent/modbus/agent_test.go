@@ -28,6 +28,7 @@ type mockModbusTransport struct {
 	sendRecvErr error
 	response    []byte // SendAndReceive 가 반환할 데이터
 	sentFrames  [][]byte
+	sentUnitIDs []byte // SendAndReceive 에 전달된 unitID 기록(unit_id 런타임 변경 검증용)
 	connected   bool
 	connectCnt  int
 	closeCnt    int
@@ -56,12 +57,13 @@ func (m *mockModbusTransport) Close() error {
 // 상위는 순수 PDU 를 전달하므로 sentFrames 에는 PDU 가 기록된다.
 // response 는 테스트 편의를 위해 전체 MBAP 응답 프레임으로 설정되며,
 // mock 은 실제 트랜스포트처럼 MBAP 를 제거한 순수 응답 PDU 를 반환한다.
-func (m *mockModbusTransport) SendAndReceive(_ context.Context, _ byte, pdu []byte) ([]byte, error) {
+func (m *mockModbusTransport) SendAndReceive(_ context.Context, unitID byte, pdu []byte) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := make([]byte, len(pdu))
 	copy(cp, pdu)
 	m.sentFrames = append(m.sentFrames, cp)
+	m.sentUnitIDs = append(m.sentUnitIDs, unitID)
 	if m.sendRecvErr != nil {
 		return nil, m.sendRecvErr
 	}

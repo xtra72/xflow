@@ -46,6 +46,9 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 		newGroups []RegisterGroupConfig
 		hasGroups bool
 
+		newUnitID byte
+		hasUnitID bool
+
 		newPoll   time.Duration
 		hasPoll   bool
 		newReqTO  time.Duration
@@ -61,6 +64,16 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 		}
 		newGroups = groups
 		hasGroups = true
+	}
+
+	// unit_id (디바이스 스코프, 런타임 가변 — spec §5.5.1). 적용 전 검증(부분 적용 금지).
+	if v, ok := params["unit_id"]; ok {
+		uid, err := parseUnitIDParam(v)
+		if err != nil {
+			return nil, err
+		}
+		newUnitID = uid
+		hasUnitID = true
 	}
 
 	if v, ok := params["poll_interval"]; ok {
@@ -98,12 +111,12 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 		hasReconn = true
 	}
 
-	// register_groups 변경은 대상 디바이스를 필요로 한다. findDevice 는 불변 필드(dev.config.ID)만
-	// 읽으므로 락 없이 안전하다.
+	// register_groups / unit_id 변경은 대상 디바이스를 필요로 한다(디바이스 스코프). findDevice 는
+	// 불변 필드(dev.config.ID)만 읽으므로 락 없이 안전하다.
 	var dev *ModbusDevice
-	if hasGroups {
+	if hasGroups || hasUnitID {
 		if req.DeviceID == "" {
-			return nil, fmt.Errorf("modbus set_config: device_id required when changing register_groups")
+			return nil, fmt.Errorf("modbus set_config: device_id required when changing register_groups or unit_id")
 		}
 		d, err := a.findDevice(req.DeviceID)
 		if err != nil {
@@ -112,7 +125,7 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 		dev = d
 	}
 
-	if !hasGroups && !hasPoll && !hasReqTO && !hasReconn {
+	if !hasGroups && !hasUnitID && !hasPoll && !hasReqTO && !hasReconn {
 		return nil, fmt.Errorf("modbus set_config: no runtime-mutable fields provided")
 	}
 
@@ -152,6 +165,16 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 		)
 	}
 
+	if hasUnitID {
+		// unit_id 는 device.go 의 원자값(SSOT)에 저장한다. 폴링 goroutine 의 락-프리
+		// 핫 패스가 다음 요청부터 새 unit_id 를 원자적으로 읽어 반영한다(재시작 없음).
+		dev.setUnitID(newUnitID)
+		a.logger.Info("modbus: set_config unit_id 변경",
+			"device", dev.config.ID,
+			"unit_id", newUnitID,
+		)
+	}
+
 	if hasReqTO {
 		a.config.RequestTimeout = newReqTO
 	}
@@ -171,7 +194,7 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 	resp := map[string]any{
 		"status":    "reconfigured",
 		"device_id": req.DeviceID,
-		"applied":   appliedSetConfigKeys(hasGroups, hasPoll, hasReqTO, hasReconn),
+		"applied":   appliedSetConfigKeys(hasGroups, hasUnitID, hasPoll, hasReqTO, hasReconn),
 	}
 	return json.Marshal(resp)
 }
@@ -220,6 +243,29 @@ func parseSetConfigRegisterGroups(v any) ([]RegisterGroupConfig, error) {
 	return groups, nil
 }
 
+// parseUnitIDParam 은 set_config 의 unit_id 파라미터를 파싱·검증한다(SPEC-MODBUS-006 unit_id 런타임 가변화).
+// JSON 숫자는 float64 로 전달되므로 int/float64 를 모두 허용하되, MODBUS unit_id 는 1바이트이므로
+// [0,255] 범위를 벗어나거나 정수가 아니면 설정 오류로 거부한다(init 경로 toByte 의 무언의 절삭을
+// 런타임 경로에서는 명시적 오류로 승격 — 부분 적용 금지 원칙과 정합).
+func parseUnitIDParam(v any) (byte, error) {
+	var n int
+	switch x := v.(type) {
+	case int:
+		n = x
+	case float64:
+		if x != float64(int(x)) {
+			return 0, fmt.Errorf("modbus set_config: unit_id must be an integer, got %v", x)
+		}
+		n = int(x)
+	default:
+		return 0, fmt.Errorf("modbus set_config: unit_id must be a number")
+	}
+	if n < 0 || n > 255 {
+		return 0, fmt.Errorf("modbus set_config: unit_id must be in [0,255], got %d", n)
+	}
+	return byte(n), nil
+}
+
 // parseDurationParam 은 set_config 의 duration 문자열 파라미터를 파싱한다(M9).
 // parseModbusConfig 와 동일하게 time.ParseDuration 을 사용한다.
 func parseDurationParam(name string, v any) (time.Duration, error) {
@@ -245,11 +291,14 @@ func (a *ModbusAgent) rebuildDeviceTypeOverlay(dev *ModbusDevice) {
 	cache.SetTypeOverlay(buildCacheTypeOverlay(dev.config.RegisterGroups))
 }
 
-// appliedSetConfigKeys 는 실제로 적용된 필드 키 목록을 응답용으로 만든다(M9).
-func appliedSetConfigKeys(hasGroups, hasPoll, hasReqTO, hasReconn bool) []string {
-	applied := make([]string, 0, 4)
+// appliedSetConfigKeys 는 실제로 적용된 필드 키 목록을 응답용으로 만든다(M9, unit_id 추가).
+func appliedSetConfigKeys(hasGroups, hasUnitID, hasPoll, hasReqTO, hasReconn bool) []string {
+	applied := make([]string, 0, 5)
 	if hasGroups {
 		applied = append(applied, "register_groups")
+	}
+	if hasUnitID {
+		applied = append(applied, "unit_id")
 	}
 	if hasPoll {
 		applied = append(applied, "poll_interval")

@@ -88,7 +88,7 @@ func modbusDeviceToInfo(dev *ModbusDevice, caches map[string]*RegisterCache) ada
 		DeviceID: dev.config.ID,
 		Host:     dev.config.Host,
 		Port:     dev.config.Port,
-		UnitID:   dev.config.UnitID,
+		UnitID:   dev.UnitID(),
 		Online:   online,
 		LastSeen: time.Now(), // Modbus uses polling, so last seen is approximate
 		Writable: true,

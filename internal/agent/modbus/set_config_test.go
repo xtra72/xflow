@@ -3,6 +3,7 @@ package modbus
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -352,4 +353,149 @@ func TestAC03_TransportAbsent_IdenticalTCPBehavior_Closing(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return a.devStats["plc-1"].success.Load() > 0
 	}, 2*time.Second, 20*time.Millisecond, "TCP 읽기 왕복이 성공해야 한다")
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-MODBUS-006: unit_id 런타임 가변화(M9 잔여 항목 마감) — 재시작 없음 + 경합 안전.
+// spec §5.5.1 은 unit_id 를 런타임 가변 필드로 명시하나 M9 는 경합 안전 문제로 유보했다.
+// device.go 의 원자값(atomic unitID)으로 핫 패스 락-프리 읽기와 set_config 갱신을 경합 없이 처리한다.
+// ---------------------------------------------------------------------------
+
+// TestSetConfig_UnitID_ConcurrentPollAndSetConfig_RaceSafe 는 SPEC-MODBUS-006 unit_id 런타임
+// 가변화의 핵심 수용 기준을 검증한다: 폴링(락-프리 핫 패스에서 unit_id 를 읽음)과 동시에
+// set_config 로 unit_id 를 변경해도 (a) 데이터 경합이 없고(-race 로 검출), (b) 새 unit_id 가
+// 재시작 없이 이후 요청부터 반영된다. `go test -race` 로 실행할 때 경합이 검출되면 실패한다.
+func TestSetConfig_UnitID_ConcurrentPollAndSetConfig_RaceSafe(t *testing.T) {
+	mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
+	// 빠른 케이던스(5ms)로 폴링하여 핫 패스의 락-프리 unit_id 읽기가 set_config 갱신과 자주 겹치게 한다.
+	a, _ := newTestModbusAgent(t, oneGroupWithIntervalConfig("5ms"), mt)
+	require.NoError(t, a.Start(context.Background()))
+	defer func() { _ = a.Stop(context.Background()) }()
+
+	// 초기 unit_id=1 로 폴링이 시작됨을 확인.
+	require.Eventually(t, func() bool {
+		mt.mu.Lock()
+		defer mt.mu.Unlock()
+		return len(mt.sentUnitIDs) > 0
+	}, time.Second, 5*time.Millisecond, "폴링이 시작되어야 한다")
+
+	// 폴링과 동시에 set_config 로 unit_id 를 반복 변경(경합 창 최대화).
+	// require 는 테스트 goroutine 에서만 안전하므로 여기서는 t.Errorf 를 사용한다.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for _, uid := range []int{2, 3, 4, 5, 6, 7} {
+			cmd := setConfigJSON(t, "plc-1", map[string]any{"unit_id": uid})
+			if _, err := a.Process(cmd); err != nil {
+				t.Errorf("동시 set_config unit_id=%d 는 성공해야 한다: %v", uid, err)
+			}
+			time.Sleep(3 * time.Millisecond)
+		}
+	}()
+	wg.Wait()
+
+	// 최종 unit_id=7 로 확정.
+	_, err := a.Process(setConfigJSON(t, "plc-1", map[string]any{"unit_id": 7}))
+	require.NoError(t, err)
+	require.Equal(t, lifecycle.StateRunning, a.CurrentState(), "재시작 없이 계속 Running 이어야 한다")
+
+	// (b) set_config 이후 폴링 요청이 새 unit_id=7 을 사용하는지 관측(재시작 없이 반영).
+	mt.mu.Lock()
+	mark := len(mt.sentUnitIDs)
+	mt.mu.Unlock()
+	require.Eventually(t, func() bool {
+		mt.mu.Lock()
+		defer mt.mu.Unlock()
+		for i := mark; i < len(mt.sentUnitIDs); i++ {
+			if mt.sentUnitIDs[i] == 7 {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "set_config 이후 폴링이 새 unit_id=7 을 사용해야 한다")
+
+	// 확정 이후로는 모든 요청이 7 이어야 한다(이전 값 잔존 없음).
+	mt.mu.Lock()
+	tailStart := len(mt.sentUnitIDs)
+	mt.mu.Unlock()
+	time.Sleep(40 * time.Millisecond)
+	mt.mu.Lock()
+	tail := append([]byte(nil), mt.sentUnitIDs[tailStart:]...)
+	mt.mu.Unlock()
+	require.NotEmpty(t, tail, "확정 후에도 폴링이 계속되어야 한다")
+	for _, u := range tail {
+		assert.Equal(t, byte(7), u, "확정된 unit_id=7 이 모든 후속 요청에 반영되어야 한다")
+	}
+}
+
+// TestSetConfig_UnitID_RuntimeMutable_Applied 는 unit_id 단독 변경이 응답의 applied 키에 포함되고
+// 디바이스 원자 접근자(dev.UnitID())에 반영됨을 결정적으로 검증한다(재시작 없음).
+func TestSetConfig_UnitID_RuntimeMutable_Applied(t *testing.T) {
+	mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+	require.NoError(t, a.Start(context.Background()))
+	defer func() { _ = a.Stop(context.Background()) }()
+
+	// 초기 시드값 확인.
+	dev, err := a.findDevice("plc-1")
+	require.NoError(t, err)
+	require.Equal(t, byte(1), dev.UnitID(), "생성 시 config.UnitID(1) 로 원자값이 시드되어야 한다")
+
+	resp, err := a.Process(setConfigJSON(t, "plc-1", map[string]any{"unit_id": 42}))
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(resp, &decoded))
+	assert.Equal(t, "reconfigured", decoded["status"])
+	applied, _ := decoded["applied"].([]any)
+	assert.Contains(t, applied, "unit_id", "응답 applied 에 unit_id 가 포함되어야 한다")
+
+	assert.Equal(t, byte(42), dev.UnitID(), "런타임 변경된 unit_id 가 원자 접근자에 반영되어야 한다")
+	assert.Equal(t, lifecycle.StateRunning, a.CurrentState())
+}
+
+// TestSetConfig_UnitID_ValidationErrors 는 unit_id 파라미터의 검증 오류(비숫자/정수 아님/범위 초과)가
+// 거부되고, 부분 적용 없이 직전 설정이 유지됨을 검증한다(부분 적용 금지).
+func TestSetConfig_UnitID_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		val  any
+	}{
+		{"문자열(비숫자)", "not-a-number"},
+		{"정수 아님(float)", 1.5},
+		{"범위 초과(256)", 256},
+		{"음수(-1)", -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
+			a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+			require.NoError(t, a.Start(context.Background()))
+			defer func() { _ = a.Stop(context.Background()) }()
+
+			dev, err := a.findDevice("plc-1")
+			require.NoError(t, err)
+			require.Equal(t, byte(1), dev.UnitID())
+
+			_, err = a.Process(setConfigJSON(t, "plc-1", map[string]any{"unit_id": tc.val}))
+			require.Error(t, err, "유효하지 않은 unit_id 는 거부되어야 한다")
+			// 부분 적용 없음: 직전 unit_id(1) 유지.
+			assert.Equal(t, byte(1), dev.UnitID(), "검증 실패 시 직전 unit_id 가 유지되어야 한다(부분 적용 금지)")
+			assert.Equal(t, lifecycle.StateRunning, a.CurrentState())
+		})
+	}
+}
+
+// TestSetConfig_UnitID_RequiresDeviceID 는 unit_id 변경 시 device_id 가 필요함을 검증한다.
+func TestSetConfig_UnitID_RequiresDeviceID(t *testing.T) {
+	mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
+	a, _ := newTestModbusAgent(t, minimalAgentConfig(), mt)
+	require.NoError(t, a.Start(context.Background()))
+	defer func() { _ = a.Stop(context.Background()) }()
+
+	// device_id 를 빈 문자열로 발행 → 거부.
+	_, err := a.Process(setConfigJSON(t, "", map[string]any{"unit_id": 5}))
+	require.Error(t, err, "device_id 없는 unit_id 변경은 거부되어야 한다")
+	assert.Equal(t, lifecycle.StateRunning, a.CurrentState())
 }

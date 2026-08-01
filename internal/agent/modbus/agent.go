@@ -694,7 +694,7 @@ func (a *ModbusAgent) pollGroupTick(dev *ModbusDevice, rg RegisterGroupConfig) {
 func (a *ModbusAgent) sendRegisterEvent(dev *ModbusDevice, rg RegisterGroupConfig, rawData []byte, mode string) {
 	evtData := map[string]any{
 		"device_id":     dev.config.ID,
-		"unit_id":       dev.config.UnitID,
+		"unit_id":       dev.UnitID(),
 		"timestamp":     time.Now().Format(time.RFC3339),
 		"mode":          mode,
 		"function_code": rg.FunctionCode,
@@ -734,7 +734,7 @@ func (a *ModbusAgent) sendRegisterEvent(dev *ModbusDevice, rg RegisterGroupConfi
 func (a *ModbusAgent) sendChangedEvent(dev *ModbusDevice, rg RegisterGroupConfig, changedData map[string]any) {
 	evtData := map[string]any{
 		"device_id":     dev.config.ID,
-		"unit_id":       dev.config.UnitID,
+		"unit_id":       dev.UnitID(),
 		"timestamp":     time.Now().Format(time.RFC3339),
 		"mode":          "event",
 		"function_code": rg.FunctionCode,
@@ -968,7 +968,7 @@ func (a *ModbusAgent) processReadRaw(req *processRequest) ([]byte, error) {
 	if uidRaw, ok := req.Params["unit_id"]; ok {
 		uid := toByte(uidRaw)
 		for _, d := range a.devices {
-			if d.config.UnitID == uid {
+			if d.UnitID() == uid {
 				dev = d
 				break
 			}
@@ -1277,7 +1277,7 @@ func (a *ModbusAgent) State() map[string]any {
 			"host":      dev.config.Host,
 			"port":      dev.config.Port,
 			"online":    dev.IsOnline(),
-			"unit_id":   dev.config.UnitID,
+			"unit_id":   dev.UnitID(),
 		}
 
 		// 캐시 정보 추가
