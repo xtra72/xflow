@@ -205,7 +205,9 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
+	writeStart := time.Now()
 	resp, err := dev.SendPDU(ctx, pdu)
+	a.recordRequestStat(dev.config.ID, "", err == nil, time.Since(writeStart)) // M7: 쓰기 트랜스포트 통계
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err
@@ -344,7 +346,9 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
+	writeStart := time.Now()
 	resp, err := dev.SendPDU(ctx, pdu)
+	a.recordRequestStat(dev.config.ID, "", err == nil, time.Since(writeStart)) // M7: 쓰기 트랜스포트 통계
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err
@@ -408,7 +412,9 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
+	writeStart := time.Now()
 	resp, err := dev.SendPDU(ctx, pdu)
+	a.recordRequestStat(dev.config.ID, "", err == nil, time.Since(writeStart)) // M7: 쓰기 트랜스포트 통계
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err
@@ -507,7 +513,9 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
+	writeStart := time.Now()
 	resp, err := dev.SendPDU(ctx, pdu)
+	a.recordRequestStat(dev.config.ID, "", err == nil, time.Since(writeStart)) // M7: 쓰기 트랜스포트 통계
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err

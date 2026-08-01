@@ -17,6 +17,7 @@ const (
 	DataTypeFloat32 = "float32" // 2 레지스터, IEEE 754
 	DataTypeUint32  = "uint32"  // 2 레지스터
 	DataTypeInt32   = "int32"   // 2 레지스터
+	DataTypeRaw     = "raw"     // 변환 없이 읽은 워드(uint16 배열)를 그대로 전달 (A-9, REQ-03)
 )
 
 // ---------------------------------------------------------------------------
@@ -24,8 +25,15 @@ const (
 // ---------------------------------------------------------------------------
 
 const (
-	ByteOrderBigEndian    = "big_endian"    // 기본값
-	ByteOrderLittleEndian = "little_endian" // 워드 스왑
+	ByteOrderBigEndian    = "big_endian"    // 기본값 — ABCD 별칭 (스왑 없음, 하위 호환)
+	ByteOrderLittleEndian = "little_endian" // 워드 스왑 — CDAB 별칭 (하위 호환)
+
+	// 완전한 4순열 바이트순서 (2워드/32비트 값 대상, REQ-03).
+	// 워드를 [A B][C D] (A=상위워드 상위바이트 … D=하위워드 하위바이트)로 보면:
+	ByteOrderABCD = "ABCD" // 스왑 없음(빅엔디안). big_endian 별칭과 바이트 단위로 동일 결과
+	ByteOrderBADC = "BADC" // 각 워드 내 바이트 스왑, 워드 순서 유지
+	ByteOrderCDAB = "CDAB" // 워드 스왑, 워드 내 바이트 유지. little_endian 별칭과 동일 결과
+	ByteOrderDCBA = "DCBA" // 워드 스왑 + 바이트 스왑(완전 역순)
 )
 
 // ---------------------------------------------------------------------------
@@ -78,13 +86,73 @@ func RegisterCountForType(dataType string) (uint16, error) {
 	}
 }
 
-// IsValidDataType은 지원되는 5가지 데이터 타입인지 확인한다.
+// IsValidDataType은 지원되는 데이터 타입인지 확인한다.
+// 5가지 스칼라 타입에 더해 raw(변환 없는 워드 패스스루)를 포함한다(REQ-03).
 func IsValidDataType(dataType string) bool {
 	switch dataType {
-	case DataTypeUint16, DataTypeInt16, DataTypeFloat32, DataTypeUint32, DataTypeInt32:
+	case DataTypeUint16, DataTypeInt16, DataTypeFloat32, DataTypeUint32, DataTypeInt32, DataTypeRaw:
 		return true
 	default:
 		return false
+	}
+}
+
+// IsValidByteOrder는 지원되는 바이트순서 지정인지 확인한다(REQ-03).
+// 하위 호환 별칭(big_endian/little_endian)과 4순열(ABCD/BADC/CDAB/DCBA)을 허용한다.
+// 알 수 없는 지정은 설정 오류로 거부되어야 하므로 false 를 반환한다.
+func IsValidByteOrder(byteOrder string) bool {
+	switch byteOrder {
+	case ByteOrderBigEndian, ByteOrderLittleEndian,
+		ByteOrderABCD, ByteOrderBADC, ByteOrderCDAB, ByteOrderDCBA:
+		return true
+	default:
+		return false
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 4순열 바이트순서 조립/분해 헬퍼 (2워드 32비트 값)
+// ---------------------------------------------------------------------------
+
+// swapBytes는 16비트 워드의 상·하위 바이트를 교환한다.
+func swapBytes(w uint16) uint16 {
+	return w<<8 | w>>8
+}
+
+// assemble32는 2개의 레지스터를 지정된 바이트순서에 따라 uint32 로 조립한다.
+//   - big_endian/ABCD(기본): regs[0]<<16 | regs[1]  (스왑 없음)
+//   - little_endian/CDAB: regs[1]<<16 | regs[0]      (워드 스왑)
+//   - BADC: 각 워드 내 바이트 스왑
+//   - DCBA: 워드 스왑 + 바이트 스왑(완전 역순)
+//
+// 알 수 없는 값은 하위 호환을 위해 ABCD(빅엔디안)로 처리한다(기존 else 분기 의미 보존).
+func assemble32(regs [2]uint16, byteOrder string) uint32 {
+	switch byteOrder {
+	case ByteOrderLittleEndian, ByteOrderCDAB:
+		return uint32(regs[1])<<16 | uint32(regs[0])
+	case ByteOrderBADC:
+		return uint32(swapBytes(regs[0]))<<16 | uint32(swapBytes(regs[1]))
+	case ByteOrderDCBA:
+		return uint32(swapBytes(regs[1]))<<16 | uint32(swapBytes(regs[0]))
+	default: // ByteOrderBigEndian, ByteOrderABCD, "" 등 → ABCD
+		return uint32(regs[0])<<16 | uint32(regs[1])
+	}
+}
+
+// disassemble32는 uint32 를 지정된 바이트순서에 따라 2개의 레지스터로 분해한다.
+// assemble32 의 역변환이며 인코딩(쓰기) 경로에서 사용된다.
+func disassemble32(bits uint32, byteOrder string) [2]uint16 {
+	hi := uint16(bits >> 16)
+	lo := uint16(bits & 0xFFFF)
+	switch byteOrder {
+	case ByteOrderLittleEndian, ByteOrderCDAB:
+		return [2]uint16{lo, hi}
+	case ByteOrderBADC:
+		return [2]uint16{swapBytes(hi), swapBytes(lo)}
+	case ByteOrderDCBA:
+		return [2]uint16{swapBytes(lo), swapBytes(hi)}
+	default: // ByteOrderBigEndian, ByteOrderABCD, "" 등 → ABCD
+		return [2]uint16{hi, lo}
 	}
 }
 
@@ -95,25 +163,12 @@ func IsValidDataType(dataType string) bool {
 // Float32ToRegisters는 float32 값을 IEEE 754 형식으로 인코딩하여 2개의 레지스터로 변환한다.
 // 빅엔디안: 상위 워드가 먼저 온다. 리틀엔디안: 하위 워드가 먼저 온다.
 func Float32ToRegisters(f float32, byteOrder string) [2]uint16 {
-	bits := math.Float32bits(f)
-	high := uint16(bits >> 16)
-	low := uint16(bits & 0xFFFF)
-
-	if byteOrder == ByteOrderLittleEndian {
-		return [2]uint16{low, high}
-	}
-	return [2]uint16{high, low}
+	return disassemble32(math.Float32bits(f), byteOrder)
 }
 
 // RegistersToFloat32는 2개의 레지스터를 IEEE 754 형식으로 디코딩하여 float32 값을 반환한다.
 func RegistersToFloat32(regs [2]uint16, byteOrder string) float32 {
-	var bits uint32
-	if byteOrder == ByteOrderLittleEndian {
-		bits = uint32(regs[1])<<16 | uint32(regs[0])
-	} else {
-		bits = uint32(regs[0])<<16 | uint32(regs[1])
-	}
-	return math.Float32frombits(bits)
+	return math.Float32frombits(assemble32(regs, byteOrder))
 }
 
 // ---------------------------------------------------------------------------
@@ -123,25 +178,12 @@ func RegistersToFloat32(regs [2]uint16, byteOrder string) float32 {
 // Int32ToRegisters는 int32 값을 2개의 레지스터로 변환한다.
 // 빅엔디안: 상위 워드가 먼저 온다.
 func Int32ToRegisters(i int32, byteOrder string) [2]uint16 {
-	u := uint32(i)
-	high := uint16(u >> 16)
-	low := uint16(u & 0xFFFF)
-
-	if byteOrder == ByteOrderLittleEndian {
-		return [2]uint16{low, high}
-	}
-	return [2]uint16{high, low}
+	return disassemble32(uint32(i), byteOrder)
 }
 
 // RegistersToInt32는 2개의 레지스터를 int32 값으로 변환한다.
 func RegistersToInt32(regs [2]uint16, byteOrder string) int32 {
-	var u uint32
-	if byteOrder == ByteOrderLittleEndian {
-		u = uint32(regs[1])<<16 | uint32(regs[0])
-	} else {
-		u = uint32(regs[0])<<16 | uint32(regs[1])
-	}
-	return int32(u)
+	return int32(assemble32(regs, byteOrder))
 }
 
 // ---------------------------------------------------------------------------
@@ -151,21 +193,12 @@ func RegistersToInt32(regs [2]uint16, byteOrder string) int32 {
 // Uint32ToRegisters는 uint32 값을 2개의 레지스터로 변환한다.
 // 빅엔디안: 상위 워드가 먼저 온다.
 func Uint32ToRegisters(u uint32, byteOrder string) [2]uint16 {
-	high := uint16(u >> 16)
-	low := uint16(u & 0xFFFF)
-
-	if byteOrder == ByteOrderLittleEndian {
-		return [2]uint16{low, high}
-	}
-	return [2]uint16{high, low}
+	return disassemble32(u, byteOrder)
 }
 
 // RegistersToUint32는 2개의 레지스터를 uint32 값으로 변환한다.
 func RegistersToUint32(regs [2]uint16, byteOrder string) uint32 {
-	if byteOrder == ByteOrderLittleEndian {
-		return uint32(regs[1])<<16 | uint32(regs[0])
-	}
-	return uint32(regs[0])<<16 | uint32(regs[1])
+	return assemble32(regs, byteOrder)
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +276,14 @@ func TypedValueToRegisters(value any, dataType string, byteOrder string) ([]uint
 // 지원하지 않는 데이터 타입이면 ErrUnsupportedDataType을 반환한다.
 // nil 슬라이스에 대해 패닉하지 않는다.
 func RegistersToTypedValue(regs []uint16, dataType string, byteOrder string) (any, error) {
+	// raw: 변환 없이 읽은 워드를 그대로(복사본) 반환한다 (A-9, REQ-03).
+	// 호출자 슬라이스를 별칭하지 않도록 복사본을 반환한다.
+	if dataType == DataTypeRaw {
+		out := make([]uint16, len(regs))
+		copy(out, regs)
+		return out, nil
+	}
+
 	count, err := RegisterCountForType(dataType)
 	if err != nil {
 		return nil, err

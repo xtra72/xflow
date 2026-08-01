@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -26,14 +27,63 @@ type ModbusAgent struct {
 	mu          sync.RWMutex
 	pollTicker  *time.Ticker
 	pollResetCh chan time.Duration // 폴링 간격 변경 시그널
+	pollWg      sync.WaitGroup     // pollLoop + 그룹별 스케줄러 goroutine 수명 관리 (M5, 누수 방지)
 	stopCh      chan struct{}
 	msgCh       chan []byte // Bridge 메시지 (ReceiveMessage)
 	stats       *agent.AgentStats
-	logger      *slog.Logger
-	startedAt   time.Time
-	createdAt   time.Time
-	paused      bool
-	started     bool // Start() 호출 여부 (멱등성 보장)
+	// devStats/groupStats 는 디바이스별·그룹별 요청 통계이다(M7).
+	// 생성 시 1회 채워지며 이후 맵 자체는 불변(엔트리는 atomic) — 폴링 goroutine 과의 경합 없음.
+	devStats   map[string]*requestCounters // 키: deviceID
+	groupStats map[string]*requestCounters // 키: groupStatKey(deviceID, groupName)
+	logger     *slog.Logger
+	startedAt  time.Time
+	createdAt  time.Time
+	paused     bool
+	started    bool // Start() 호출 여부 (멱등성 보장)
+}
+
+// requestCounters 는 단일 스코프(디바이스 또는 그룹)의 요청 처리 통계를 원자적으로 추적한다(M7).
+// 성공/오류 카운터와 지연(누적/최근)을 폴링 goroutine 간 경합 없이 갱신한다.
+type requestCounters struct {
+	success     atomic.Int64
+	errors      atomic.Int64
+	latencySum  atomic.Int64 // 누적 지연(나노초)
+	latencyLast atomic.Int64 // 마지막 요청 지연(나노초)
+}
+
+// record 는 요청 완료 시 성공/오류와 지연을 반영한다(REQ-04).
+func (c *requestCounters) record(ok bool, latency time.Duration) {
+	if ok {
+		c.success.Add(1)
+	} else {
+		c.errors.Add(1)
+	}
+	c.latencySum.Add(int64(latency))
+	c.latencyLast.Store(int64(latency))
+}
+
+// avgLatency 는 누적 지연을 총 요청 수로 나눈 평균 지연을 반환한다.
+func (c *requestCounters) avgLatency() time.Duration {
+	total := c.success.Load() + c.errors.Load()
+	if total == 0 {
+		return 0
+	}
+	return time.Duration(c.latencySum.Load() / total)
+}
+
+// groupStatKey 는 그룹 통계 맵의 키를 생성한다(deviceID + 그룹명).
+func groupStatKey(deviceID, groupName string) string {
+	return deviceID + "\x1f" + groupName
+}
+
+// requestStatsMap 은 요청 카운터를 State() 응답용 맵으로 직렬화한다(M7).
+func requestStatsMap(c *requestCounters) map[string]any {
+	return map[string]any{
+		"success":         c.success.Load(),
+		"errors":          c.errors.Load(),
+		"avg_latency_ms":  float64(c.avgLatency()) / float64(time.Millisecond),
+		"last_latency_ms": float64(c.latencyLast.Load()) / float64(time.Millisecond),
+	}
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -42,6 +92,7 @@ var _ agent.MessageReceiver = (*ModbusAgent)(nil)
 var _ agent.StatefulAgent = (*ModbusAgent)(nil)
 var _ agent.PollingConfigurable = (*ModbusAgent)(nil)
 var _ agent.BufferInfoProvider = (*ModbusAgent)(nil)
+var _ agent.ConnectionStatsProvider = (*ModbusAgent)(nil)
 
 // DeviceProvider 는 이 에이전트의 디바이스를 device.DeviceProvider 로 노출한다.
 func (a *ModbusAgent) DeviceProvider() device.DeviceProvider {
@@ -87,6 +138,9 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	// TypeOverlay 초기화
 	a.initCacheTypeOverlays()
 
+	// 디바이스별·그룹별 요청 통계 초기화 (M7)
+	a.initRequestStats()
+
 	if err := a.Init(agentConfig); err != nil {
 		return nil, err
 	}
@@ -110,6 +164,32 @@ func (a *ModbusAgent) buildDevices(cfg ModbusConfig) {
 	for i := range cfg.Devices {
 		dev := NewModbusDevice(cfg.Devices[i], cfg.RequestTimeout, a.logger)
 		a.devices = append(a.devices, dev)
+	}
+}
+
+// initRequestStats 는 디바이스별·그룹별 요청 통계 카운터를 생성한다(M7).
+// 생성 시 1회 호출되며, 맵은 이후 불변으로 유지되어 폴링 goroutine 이 락 없이 안전하게 읽는다.
+func (a *ModbusAgent) initRequestStats() {
+	a.devStats = make(map[string]*requestCounters, len(a.devices))
+	a.groupStats = make(map[string]*requestCounters)
+	for _, dev := range a.devices {
+		a.devStats[dev.config.ID] = &requestCounters{}
+		for _, rg := range dev.config.RegisterGroups {
+			a.groupStats[groupStatKey(dev.config.ID, rg.Name)] = &requestCounters{}
+		}
+	}
+}
+
+// recordRequestStat 는 요청 완료 시 디바이스별·그룹별 통계를 갱신한다(M7, REQ-04).
+// 트랜스포트 오류(ok=false)는 오류 카운터를, 성공은 성공 카운터를 증가시킨다(AC-06).
+func (a *ModbusAgent) recordRequestStat(deviceID, groupName string, ok bool, latency time.Duration) {
+	if c, found := a.devStats[deviceID]; found {
+		c.record(ok, latency)
+	}
+	if groupName != "" {
+		if c, found := a.groupStats[groupStatKey(deviceID, groupName)]; found {
+			c.record(ok, latency)
+		}
 	}
 }
 
@@ -153,6 +233,9 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 
 	// TypeOverlay 초기화
 	a.initCacheTypeOverlays()
+
+	// 디바이스별·그룹별 요청 통계 초기화 (M7)
+	a.initRequestStats()
 
 	if err := a.Init(agentConfig); err != nil {
 		return nil, err
@@ -228,7 +311,20 @@ func (a *ModbusAgent) Start(ctx context.Context) error {
 				"pollInterval", a.config.PollInterval,
 				"mode", a.config.Mode,
 			)
+			a.pollWg.Add(1)
 			go a.pollLoop()
+
+			// 그룹별 독립 폴링 스케줄러 시작 (M5).
+			// poll_interval 이 지정된 그룹마다 전용 goroutine 을 띄운다.
+			// 하나도 없으면 루프는 만들어지지 않아 기존 단일-티커 동작과 동일하다(AC-03).
+			for _, dev := range a.devices {
+				for _, rg := range dev.config.RegisterGroups {
+					if rg.PollInterval > 0 {
+						a.pollWg.Add(1)
+						go a.groupPollLoop(dev, rg)
+					}
+				}
+			}
 		}
 
 		a.logger.Info("modbus: 에이전트 시작 완료")
@@ -254,6 +350,10 @@ func (a *ModbusAgent) Stop(_ context.Context) error {
 		a.pollTicker = nil
 	}
 	a.mu.Unlock()
+
+	// pollLoop + 그룹별 스케줄러 goroutine 이 모두 종료될 때까지 대기(M5, 누수·경합 방지).
+	// stopCh 를 이미 닫았으므로 각 goroutine 은 진행 중인 폴을 마치고 반환한다.
+	a.pollWg.Wait()
 
 	// 디바이스 연결 종료
 	for _, dev := range a.devices {
@@ -354,6 +454,7 @@ func (a *ModbusAgent) Health() agent.HealthStatus {
 // Interval 모드: 매 폴 주기마다 전체 데이터 전송.
 // Event 모드: 변경 감지 시에만 전송 + heartbeat 주기마다 전체 전송.
 func (a *ModbusAgent) pollLoop() {
+	defer a.pollWg.Done()
 	pollTicker := time.NewTicker(a.config.PollInterval)
 	a.mu.Lock()
 	a.pollTicker = pollTicker
@@ -436,49 +537,117 @@ func (a *ModbusAgent) pollDevices(forceFullSend bool) {
 	}
 }
 
-// pollDevice 는 단일 디바이스의 모든 레지스터 그룹을 읽고 모드에 따라 이벤트를 전송한다.
+// pollDevice 는 단일 디바이스의 기본 케이던스 그룹(poll_interval 미지정)을 읽고
+// 모드에 따라 이벤트를 전송한다. poll_interval 이 지정된 그룹은 groupPollLoop 가 담당한다(M5).
+// poll_interval 을 가진 그룹이 하나도 없으면 모든 그룹이 여기서 폴링되어 기존 동작과 동일하다(AC-03).
 func (a *ModbusAgent) pollDevice(ctx context.Context, dev *ModbusDevice, forceFullSend bool) {
 	for _, rg := range dev.config.RegisterGroups {
-		data, err := dev.ReadRegisters(ctx, rg)
-		if err != nil {
-			a.logger.Warn("modbus: 레지스터 읽기 실패",
-				"device", dev.config.ID,
-				"group", rg.Name,
-				"error", err,
-			)
-			a.stats.IncrExternalMessagesErrored()
+		if rg.PollInterval > 0 {
+			// 그룹별 독립 케이던스 — 전용 스케줄러가 폴링하므로 기본 루프에서 제외(M5).
 			continue
 		}
+		a.pollGroupRead(ctx, dev, rg, forceFullSend)
+	}
+}
 
-		a.stats.IncrExternalMessagesReceived()
-		a.stats.AddBytesRead(int64(len(data)))
-		a.stats.UpdateLastActivity()
+// pollGroupRead 는 단일 (디바이스, 그룹)의 레지스터를 1회 읽어 캐시 갱신·이벤트 전송·통계 기록을 수행한다.
+// 기본 케이던스 pollDevice 와 그룹별 스케줄러 groupPollLoop 양쪽에서 호출된다(M5).
+// 트랜스포트(turnaround mutex)·캐시(mutex)·통계(atomic)가 모두 스레드 안전하므로
+// 서로 다른 그룹의 동시 폴링에도 경합이 없다(-race).
+func (a *ModbusAgent) pollGroupRead(ctx context.Context, dev *ModbusDevice, rg RegisterGroupConfig, forceFullSend bool) {
+	a.mu.RLock()
+	mode := a.config.Mode
+	a.mu.RUnlock()
 
-		cache, ok := a.caches[dev.config.ID]
-		if !ok {
-			continue
-		}
+	start := time.Now()
+	data, err := dev.ReadRegisters(ctx, rg)
+	// 요청 완료 통계(디바이스별·그룹별) — 성공/오류 모두 기록(M7, AC-06).
+	a.recordRequestStat(dev.config.ID, rg.Name, err == nil, time.Since(start))
+	if err != nil {
+		a.logger.Warn("modbus: 레지스터 읽기 실패",
+			"device", dev.config.ID,
+			"group", rg.Name,
+			"error", err,
+		)
+		a.stats.IncrExternalMessagesErrored()
+		return
+	}
 
-		switch a.config.Mode {
-		case "interval":
-			// Interval 모드: 항상 전체 데이터 전송
+	a.stats.IncrExternalMessagesReceived()
+	a.stats.AddBytesRead(int64(len(data)))
+	a.stats.UpdateLastActivity()
+
+	cache, ok := a.caches[dev.config.ID]
+	if !ok {
+		return
+	}
+
+	switch mode {
+	case "interval":
+		// Interval 모드: 항상 전체 데이터 전송
+		cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
+		a.sendRegisterEvent(dev, rg, data, "interval")
+
+	case "event":
+		if forceFullSend {
+			// Heartbeat: 변경 여부와 무관하게 전체 데이터 전송
 			cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
-			a.sendRegisterEvent(dev, rg, data, "interval")
-
-		case "event":
-			if forceFullSend {
-				// Heartbeat: 변경 여부와 무관하게 전체 데이터 전송
-				cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
-				a.sendRegisterEvent(dev, rg, data, "event_heartbeat")
-			} else {
-				// 변경 감지: 변경된 데이터만 전송
-				changed, changedData := cache.CompareAndUpdate(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
-				if changed {
-					a.sendChangedEvent(dev, rg, changedData)
-				}
+			a.sendRegisterEvent(dev, rg, data, "event_heartbeat")
+		} else {
+			// 변경 감지: 변경된 데이터만 전송
+			changed, changedData := cache.CompareAndUpdate(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
+			if changed {
+				a.sendChangedEvent(dev, rg, changedData)
 			}
 		}
 	}
+}
+
+// groupPollLoop 는 poll_interval 이 지정된 단일 (디바이스, 그룹)을 자신의 케이던스로 독립 폴링한다(M5).
+// 티커 수명은 이 goroutine 이 소유하며 stopCh 종료 또는 반환 시 반드시 정지된다(누수 방지, plan.md §5).
+// M9 는 동일한 시그널 방식으로 그룹 케이던스를 런타임 재설정하도록 확장할 수 있다.
+func (a *ModbusAgent) groupPollLoop(dev *ModbusDevice, rg RegisterGroupConfig) {
+	defer a.pollWg.Done()
+	ticker := time.NewTicker(rg.PollInterval)
+	defer ticker.Stop()
+
+	a.logger.Info("modbus: 그룹별 폴링 스케줄러 시작",
+		"device", dev.config.ID,
+		"group", rg.Name,
+		"interval", rg.PollInterval,
+	)
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ticker.C:
+			a.pollGroupTick(dev, rg)
+		}
+	}
+}
+
+// pollGroupTick 는 그룹 스케줄러의 1회 폴을 수행한다: paused 확인, 온라인/재연결, 읽기(M5).
+// 기본 pollDevices 의 디바이스 단위 온라인/재연결 로직과 동일한 규약을 그룹 단위로 적용한다.
+func (a *ModbusAgent) pollGroupTick(dev *ModbusDevice, rg RegisterGroupConfig) {
+	a.mu.RLock()
+	paused := a.paused
+	reqTimeout := a.config.RequestTimeout
+	reconnectInterval := a.config.ReconnectInterval
+	a.mu.RUnlock()
+	if paused {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout)
+	defer cancel()
+
+	if !dev.IsOnline() {
+		if !dev.TryReconnect(ctx, reconnectInterval) {
+			return
+		}
+	}
+	a.pollGroupRead(ctx, dev, rg, false)
 }
 
 // sendRegisterEvent 는 전체 레지스터 데이터 이벤트를 전송한다.
@@ -650,7 +819,9 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 
 	results := make([]map[string]any, 0, len(dev.config.RegisterGroups))
 	for _, rg := range dev.config.RegisterGroups {
+		start := time.Now()
 		data, readErr := dev.ReadRegisters(ctx, rg)
+		a.recordRequestStat(dev.config.ID, rg.Name, readErr == nil, time.Since(start)) // M7
 		if readErr != nil {
 			a.stats.IncrExternalMessagesErrored()
 			results = append(results, map[string]any{
@@ -1016,6 +1187,26 @@ func (a *ModbusAgent) Stats() agent.StatsSnapshot {
 	return s
 }
 
+// ConnectionStats 는 디바이스별 요청 처리 통계를 반환한다(M7, REQ-04).
+// agent.ConnectionStatsProvider 인터페이스 구현. 각 디바이스를 하나의 연결 단위로 노출하며,
+// 성공 요청 수는 MessagesReceived, 오류 요청 수는 MessagesErrored 로 매핑한다.
+// 그룹별 통계와 지연(latency)은 State() 응답에서 추가로 표면화한다.
+func (a *ModbusAgent) ConnectionStats() []agent.ConnectionStats {
+	out := make([]agent.ConnectionStats, 0, len(a.devices))
+	for _, dev := range a.devices {
+		c, ok := a.devStats[dev.config.ID]
+		if !ok {
+			continue
+		}
+		out = append(out, agent.ConnectionStats{
+			ID:               dev.config.ID,
+			MessagesReceived: c.success.Load(),
+			MessagesErrored:  c.errors.Load(),
+		})
+	}
+	return out
+}
+
 // State 는 디바이스 요약 상태를 반환한다.
 // agent.StatefulAgent 인터페이스 구현 — detail=full API 응답에 포함된다.
 // 캐시 스냅샷과 레지스터 그룹 정보를 포함한다.
@@ -1044,6 +1235,11 @@ func (a *ModbusAgent) State() map[string]any {
 			d["stale_groups"] = staleGroups
 		}
 
+		// 디바이스별 요청 통계 (M7)
+		if c, ok := a.devStats[dev.config.ID]; ok {
+			d["request_stats"] = requestStatsMap(c)
+		}
+
 		// 레지스터 그룹 정보 추가
 		groups := make([]map[string]any, 0, len(dev.config.RegisterGroups))
 		for _, rg := range dev.config.RegisterGroups {
@@ -1054,6 +1250,10 @@ func (a *ModbusAgent) State() map[string]any {
 				"start_address": rg.StartAddress,
 				"quantity":      rg.Quantity,
 			}
+			// 그룹별 폴링 주기 (M5): 지정 시 노출, 미지정이면 기본 주기 폴백
+			if rg.PollInterval > 0 {
+				g["poll_interval"] = rg.PollInterval.String()
+			}
 			if cache, ok := a.caches[dev.config.ID]; ok {
 				g["stale"] = cache.IsStale(groupKey, a.config.StaleThreshold)
 				cache.mu.RLock()
@@ -1061,6 +1261,10 @@ func (a *ModbusAgent) State() map[string]any {
 					g["last_update"] = t.Format(time.RFC3339)
 				}
 				cache.mu.RUnlock()
+			}
+			// 그룹별 요청 통계 (M7)
+			if c, ok := a.groupStats[groupStatKey(dev.config.ID, rg.Name)]; ok {
+				g["request_stats"] = requestStatsMap(c)
 			}
 			groups = append(groups, g)
 		}

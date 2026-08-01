@@ -45,6 +45,10 @@ var (
 	// config 검증 시 이 에러를 반환하며, 공유 패키지의 타입 변환 에러와 구분된다.
 	ErrUnsupportedDataType = errors.New("modbus: unsupported data type")
 
+	// ErrUnsupportedByteOrder 는 지원하지 않는 바이트순서가 지정되었을 때 반환된다(REQ-03).
+	// 별칭(big_endian/little_endian) 및 4순열(ABCD/BADC/CDAB/DCBA)만 허용된다.
+	ErrUnsupportedByteOrder = errors.New("modbus: unsupported byte order")
+
 	// ErrTypeMapOverlap 는 type_map 주소가 겹칠 때 반환된다.
 	ErrTypeMapOverlap = errors.New("modbus: type_map addresses overlap")
 

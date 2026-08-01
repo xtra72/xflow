@@ -60,6 +60,7 @@ type RegisterGroupConfig struct {
 	Quantity     uint16
 	DataType     string                // 그룹 기본 데이터 타입 (기본: "uint16")
 	TypeMap      []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
+	PollInterval time.Duration         // 그룹별 폴링 주기 (선택, M5). 0 이면 에이전트 기본 주기로 폴백(A-7)
 }
 
 // parseModbusConfig 는 Transport.Options 맵에서 ModbusConfig 를 파싱한다.
@@ -366,6 +367,30 @@ func parseRegisterGroupConfig(m map[string]any, devIdx, rgIdx int) (RegisterGrou
 		)
 	}
 
+	// poll_interval (선택, M5). 지정 시 양수여야 하며, 생략/0 이면 에이전트 기본 주기로 폴백(A-7).
+	if v, ok := m["poll_interval"]; ok {
+		s, isStr := v.(string)
+		if !isStr {
+			return RegisterGroupConfig{}, fmt.Errorf(
+				"modbus: devices[%d].register_groups[%d].poll_interval must be a duration string",
+				devIdx, rgIdx)
+		}
+		if s != "" {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return RegisterGroupConfig{}, fmt.Errorf(
+					"modbus: devices[%d].register_groups[%d].poll_interval invalid: %w",
+					devIdx, rgIdx, err)
+			}
+			if d <= 0 {
+				return RegisterGroupConfig{}, fmt.Errorf(
+					"modbus: devices[%d].register_groups[%d].poll_interval must be > 0 (got %v)",
+					devIdx, rgIdx, d)
+			}
+			rg.PollInterval = d
+		}
+	}
+
 	// data_type (선택, 기본값 "uint16")
 	if v, ok := m["data_type"]; ok {
 		if s, ok := v.(string); ok {
@@ -436,10 +461,17 @@ func parseClientTypeMap(entries []any, prefix string) ([]modbus.TypeMapEntry, er
 				"modbus: %s.type_map[%d].data_type is required", prefix, i)
 		}
 
-		// byte_order (선택, 기본값 "big_endian")
+		// byte_order (선택, 기본값 "big_endian"). 지정 시 유효성 검증(REQ-03):
+		// 별칭(big_endian/little_endian) + 4순열(ABCD/BADC/CDAB/DCBA)만 허용,
+		// 알 수 없는 값은 설정 오류로 거부한다.
 		tme.ByteOrder = modbus.ByteOrderBigEndian
 		if v, ok := m["byte_order"]; ok {
-			if s, ok := v.(string); ok {
+			if s, ok := v.(string); ok && s != "" {
+				if !modbus.IsValidByteOrder(s) {
+					return nil, fmt.Errorf(
+						"modbus: %s.type_map[%d].byte_order is not supported: %q: %w",
+						prefix, i, s, ErrUnsupportedByteOrder)
+				}
 				tme.ByteOrder = s
 			}
 		}
