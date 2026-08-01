@@ -17,7 +17,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | WebSocket | gorilla/websocket | 양방향 실시간 통신 |
 | gRPC | google.golang.org/grpc | 고성능 서비스 간 통신 |
 | Samsung NASA | 자체 프로토콜 구현 | 삼성 시스템 에어컨 제어 (RS-485/TCP) |
-| MODBUS/TCP | 표준 라이브러리 (net) | MODBUS/TCP 클라이언트/서버 (FC01-FC06, FC15-FC16) |
+| MODBUS TCP/RTU | 표준 라이브러리 (net) + go.bug.st/serial (RTU) | MODBUS 클라이언트(TCP/RTU)/서버(TCP) (FC01-FC06, FC15-FC16) |
 | TCP/UDP Socket | 표준 라이브러리 (net) | TCP/UDP Server/Client 에이전트 (4종 프레이밍, 자동 재연결) |
 | DB (기본) | SQLite (modernc.org/sqlite) | CGo-free SQLite |
 | DB (프로덕션) | PostgreSQL 16+ | 프로덕션 저장소 |
@@ -136,13 +136,13 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 - Protocol: NASA 프로토콜 정의(nasa.yaml)로 바이트 구조 설정
 - 디바이스 자동 탐색, 실내기/실외기 제어 및 모니터링
 
-**MODBUS/TCP (표준 Agent)**:
-- 산업 자동화 표준 프로토콜 MODBUS/TCP 클라이언트 및 서버 구현
-- Go 표준 라이브러리 net 패키지만 사용 (외부 MODBUS 라이브러리 미사용)
+**MODBUS (표준 Agent — TCP/RTU)**:
+- 산업 자동화 표준 프로토콜 MODBUS 클라이언트 및 서버 구현
+- 외부 MODBUS 라이브러리 미사용 — TCP 는 Go 표준 라이브러리 net 패키지, RTU 는 go.bug.st/serial(century 재사용)만 사용
 - 지원 기능 코드: FC01(Read Coils), FC02(Read Discrete Inputs), FC03(Read Holding Registers), FC04(Read Input Registers), FC05(Write Single Coil), FC06(Write Single Register), FC15(Write Multiple Coils), FC16(Write Multiple Registers)
-- 클라이언트: PLC/센서 등 슬레이브 디바이스 레지스터 폴링, 캐시 기반 최적화, 디바이스 관리
+- 클라이언트: PLC/센서 등 슬레이브 디바이스 레지스터 폴링, 캐시 기반 최적화, 디바이스 관리. 트랜스포트 선택(`transport: tcp | rtu`, 미지정 시 tcp — 하위 호환), RTU 반이중 시리얼 마스터(in-house CRC-16 poly 0xA001), 레지스터 그룹별 독립 폴링 주기, 플로우 노드를 통한 런타임 재구성(`set_config`) 지원 (SPEC-MODBUS-006). type id `modbus-tcp` 보존
 - 서버: xflow를 MODBUS/TCP 서버로 동작, 외부 SCADA/HMI 시스템 연동, 레지스터 맵 관리
-- 공유 데이터 타입 변환: internal/modbus/ 패키지에서 uint16/int16/float32/uint32/int32 레지스터 변환 유틸리티 제공
+- 공유 데이터 타입 변환: internal/modbus/ 패키지에서 uint16/int16/float32/uint32/int32 + raw 패스스루 + 4순열 바이트순서(ABCD/BADC/CDAB/DCBA) 레지스터 변환 유틸리티 제공
 
 ### Storage: SQLite + PostgreSQL 이중 전략
 

@@ -1,10 +1,12 @@
-# internal/agent/modbus - MODBUS/TCP 클라이언트 에이전트
+# internal/agent/modbus - MODBUS 클라이언트 에이전트 (TCP / RTU)
 
 ## 개요
 
-`internal/agent/modbus`는 xflow FBP 플랫폼의 MODBUS/TCP 클라이언트 에이전트 구현체이다. `agent.Agent`, `agent.MessageReceiver`, `agent.StatefulAgent` 인터페이스를 구현하며, 다중 디바이스 연결과 주기적 폴링을 통해 MODBUS 서버의 레지스터 데이터를 수집한다.
+`internal/agent/modbus`는 xflow FBP 플랫폼의 MODBUS 클라이언트 에이전트 구현체이다. `agent.Agent`, `agent.MessageReceiver`, `agent.StatefulAgent` 인터페이스를 구현하며, 다중 디바이스 연결과 주기적 폴링을 통해 MODBUS 서버의 레지스터 데이터를 수집한다. type id 는 `modbus-tcp` 로 보존되며, `transport` 설정으로 TCP 또는 RTU(시리얼) 트랜스포트를 선택한다.
 
-주요 기능으로 다중 디바이스 관리, 3가지 읽기 모드(direct/cached/force), 이벤트/인터벌 전송 모드, Cache-Level TypeOverlay 패턴, 쓰기 명령(FC05/FC06/FC15/FC16)을 지원한다.
+주요 기능으로 다중 디바이스 관리, **트랜스포트 선택(TCP/RTU)**, 3가지 읽기 모드(direct/cached/force), 이벤트/인터벌 전송 모드, **레지스터 그룹별 독립 폴링 주기**, **`raw` + 4순열 바이트순서 데이터 타입 변환**, Cache-Level TypeOverlay 패턴, 쓰기 명령(FC05/FC06/FC15/FC16), **플로우 노드를 통한 런타임 재구성(`set_config`)** 을 지원한다.
+
+> **트랜스포트 선택**: `transport: tcp | rtu`(`Transport.Options`). 미지정 시 `tcp` 로 해석되어 기존 동작이 바이트 동일하게 유지된다(하위 호환). RTU 는 CRC-16(poly 0xA001, init 0xFFFF) + `[unitID][PDU][CRC-lo][CRC-hi]` ADU 프레이밍을 사용하는 in-house 반이중 시리얼 마스터이며, 시리얼 버스당 단일 공유 인스턴스 + 단일 turnaround mutex 로 동작한다(multi-drop). 외부 modbus 라이브러리 없이 `go.bug.st/serial`(century 재사용)만 사용한다.
 
 ## 주요 타입
 
@@ -41,9 +43,9 @@ MODBUS/TCP 클라이언트 에이전트 구조체이다. `lifecycle.BaseLifecycl
 ```go
 type DeviceConfig struct {
     ID             string
-    Host           string              // 필수
-    Port           int                 // 기본값 502
-    UnitID         byte
+    Host           string              // TCP 필수 (RTU 시 무시)
+    Port           int                 // 기본값 502 (TCP)
+    UnitID         byte                // 생성 시드 (런타임 판독은 dev.UnitID())
     RegisterGroups []RegisterGroupConfig
 }
 
@@ -52,10 +54,36 @@ type RegisterGroupConfig struct {
     FunctionCode byte                  // 1, 2, 3, 4
     StartAddress uint16
     Quantity     uint16                // 필수, > 0
-    DataType     string               // 그룹 기본 데이터 타입 (기본: "uint16")
+    DataType     string               // 그룹 기본 데이터 타입 (기본: "uint16", "raw" 지원)
+    PollInterval Duration             // 그룹별 폴링 주기 (선택, 미지정 시 에이전트/디바이스 기본 주기로 폴백)
     TypeMap      []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
 }
 ```
+
+### 트랜스포트 설정 (`Transport.Options`)
+
+| 필드 | 적용 | 기본값 | 설명 |
+|------|------|--------|------|
+| `transport` | 공통 | `"tcp"` | 트랜스포트 선택: `"tcp"` / `"rtu"`. 미지정 시 `tcp`(하위 호환) |
+| `port` | RTU | - | 시리얼 포트 경로 (예: `/dev/ttyUSB0`). **init 전용** |
+| `baud` | RTU | - | baudrate. **init 전용** |
+| `data_bits` | RTU | - | 데이터 비트. **init 전용** |
+| `stop_bits` | RTU | - | 정지 비트. **init 전용** |
+| `parity` | RTU | - | 패리티. **init 전용** |
+
+> **init 전용 필드**: 트랜스포트 `tcp↔rtu` 전환 및 RTU 시리얼 하드웨어 파라미터(port/baud/data_bits/stop_bits/parity)는 트랜스포트 오픈에 귀속되므로 런타임 `set_config` 로 변경할 수 없다(요청 시 오류 반환, 부분 적용 없음).
+
+### 데이터 타입 / 바이트순서
+
+| 지정 | 동작 |
+|------|------|
+| `uint16`/`int16`/`uint32`/`int32`/`float32` | 기존 타입 변환 |
+| `raw` | 무변환 — 읽은 워드(uint16 배열)를 그대로 전달 |
+| 바이트순서 4순열 | `ABCD` / `BADC` / `CDAB` / `DCBA` (word-swap × byte-swap) |
+| `big_endian` (별칭) | `ABCD` 와 동일 (하위 호환 word-swap 별칭) |
+| `little_endian` (별칭) | `CDAB` 와 동일 (하위 호환 word-swap 별칭) |
+
+> 알 수 없는 타입/바이트순서 지정은 잘못된 값을 반환하지 않고 파싱/설정 오류로 처리된다. float64/uint64(4워드) 디코딩은 Optional 로 미구현이다.
 
 ### RegisterCache
 
@@ -80,6 +108,18 @@ type RegisterGroupConfig struct {
 | `write_register` | 단일 레지스터 쓰기 (FC06, 2-레지스터 타입 시 FC16 자동 전환) |
 | `write_coils` | 다중 코일 쓰기 (FC15) |
 | `write_registers` | 다중 레지스터 쓰기 (FC16, `data_type` 지정 가능) |
+| `set_config` | 런타임 재구성 (에이전트 재시작 없이 런타임 가변 필드 갱신) |
+
+### `set_config` 런타임 재구성
+
+플로우 노드가 `agent_ref` → `Process([]byte)`(기존 제네릭 `callAgentProcess` 경로)로 발행하는 재구성 명령이다. init 경로(`parseModbusConfig`)와 동일한 파싱/검증 규칙을 재사용하며, `a.mu`(RWMutex) 보호 하에 가변 상태를 갱신한다(신규 노드 operation 추가 없음).
+
+| 구분 | 필드 |
+|------|------|
+| 런타임 가변 | 레지스터 그룹(추가/수정/삭제/enable-disable), 그룹별 `poll_interval`, 디바이스 `unit_id`/timeout/reconnect, 데이터 타입/바이트순서 오버레이 |
+| init 전용 (거부) | `transport`(tcp↔rtu 전환), RTU 시리얼 하드웨어 파라미터(port/baud/data_bits/stop_bits/parity) |
+
+> `unit_id` 는 `ModbusDevice` 의 atomic `unitID` SSOT 로 런타임 변이한다(`config.UnitID` = 생성 시드, 런타임 판독 `dev.UnitID()`). `parseUnitIDParam` 은 init `toByte` 보다 엄격하여 범위 초과/비정수를 truncate 하지 않고 거부한다. init 전용 필드 변경 요청 시 오류를 반환하고 에이전트는 직전 설정으로 계속 동작한다(부분 적용 없음).
 
 ## 읽기 모드
 
@@ -133,11 +173,15 @@ type RegisterGroupConfig struct {
 | `cache.go` | RegisterCache, TypeOverlay 지원, CompareAndUpdate, buildTypedValues |
 | `config.go` | ModbusConfig/DeviceConfig/RegisterGroupConfig 파싱, TypeMap 파싱 및 검증 |
 | `device.go` | ModbusDevice 관리, 연결/재연결, 레지스터 읽기, 트랜잭션 ID 관리 |
-| `protocol.go` | MODBUS 프로토콜 프레임 인코딩/디코딩, 기능 코드 상수 |
-| `transport.go` | TCP 트랜스포트, 프레임 송수신 |
+| `protocol.go` | MODBUS 프로토콜 프레임 인코딩/디코딩(ADU-중립 PDU 빌더), 기능 코드 상수 |
+| `transport.go` | `ModbusTransport` 인터페이스(`SendAndReceive(ctx, unitID, pdu)→respPDU`) + TCP 트랜스포트(MBAP/txID) |
+| `transport_rtu.go` | RTU 시리얼 트랜스포트(반이중, 시리얼 버스당 단일 공유 인스턴스 + turnaround mutex) |
+| `rtu_crc.go` | RTU CRC-16 계산 (poly 0xA001, init 0xFFFF) |
+| `rtu_adu.go` | RTU ADU 프레이밍/디프레이밍 (`[unitID][PDU][CRC-lo][CRC-hi]`) |
+| `set_config.go` | 런타임 재구성 명령 `set_config` 핸들러 (런타임 가변 vs init 전용 필드 분기) |
 | `write.go` | 쓰기 명령 처리 (FC05/FC06/FC15/FC16), 파라미터 추출 헬퍼, FC06->FC16 자동 전환 |
-| `errors.go` | 15개 sentinel 에러 정의 |
-| `register.go` | `RegisterModbusTypes()` 에이전트 타입 등록 |
+| `errors.go` | sentinel 에러 정의 |
+| `register.go` | `RegisterModbusTypes()` 에이전트 타입 등록 (type id `modbus-tcp` 보존) |
 | `agent_test.go` | 에이전트 통합 테스트 |
 | `cache_test.go` | RegisterCache, TypeOverlay 테스트 |
 | `config_test.go` | 설정 파싱 및 검증 테스트 |
@@ -150,8 +194,9 @@ type RegisterGroupConfig struct {
 go test -v -race -cover ./internal/agent/modbus/...
 ```
 
-- 커버리지: 86.2%
+- 커버리지: `internal/agent/modbus` 85.6% / `internal/modbus` 99.4%
 - Race Detector: 이상 없음
+- 참고: `defaultRTUSerialOpener`(실제 시리얼 오픈)는 하드웨어 전용 경로로 설계상 커버리지 제외
 
 ## 의존성
 
@@ -163,6 +208,7 @@ go test -v -race -cover ./internal/agent/modbus/...
 | `log/slog` | 구조화 로깅 |
 | `sync` | RWMutex 기반 동시성 제어 |
 | `net` | TCP 연결 관리 |
+| `go.bug.st/serial` | RTU 시리얼 포트 오픈/입출력 (century 재사용, 신규 의존성 아님) |
 | `encoding/json` | JSON 요청/응답 처리 |
 | `encoding/binary` | MODBUS 프레임 바이너리 인코딩 |
 
@@ -170,4 +216,5 @@ go test -v -race -cover ./internal/agent/modbus/...
 
 - SPEC ID: SPEC-MODBUS-001 (클라이언트 에이전트 기본 구현)
 - SPEC ID: SPEC-MODBUS-003 (TypeOverlay 패턴 추가)
+- SPEC ID: SPEC-MODBUS-006 (RTU 지원 + 트랜스포트 선택 + 그룹별 폴링 + raw/4순열 바이트순서 + 노드 런타임 `set_config`)
 - 상태: 구현 완료

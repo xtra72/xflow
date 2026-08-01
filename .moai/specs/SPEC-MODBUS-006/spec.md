@@ -1,8 +1,8 @@
 ---
 id: SPEC-MODBUS-006
 title: "MODBUS Client RTU 지원 및 트랜스포트 선택 확장"
-version: "0.2.0"
-status: draft
+version: "1.0.0"
+status: completed
 created: 2026-08-01
 updated: 2026-08-01
 author: xtra
@@ -23,6 +23,7 @@ depends_on:
 |--------|------------|-----------------------------------------------------------------|
 | 0.1.0  | 2026-08-01 | 초안 작성 (Draft) — 기존 `modbus-tcp` 에이전트 확장(RTU + 트랜스포트 선택) 명세 |
 | 0.2.0  | 2026-08-01 | 개정 (Draft, plan-phase 리뷰) — **노드를 통한 런타임 설정 변경** 능력 추가. 플로우 노드가 `agent_ref` → `Process()` JSON 명령(`set_config`)으로 실행 중인 클라이언트를 재시작 없이 재구성(레지스터 그룹·그룹별 poll_interval·타깃/디바이스 파라미터). REQ-02/REQ-05 확장, AC-08 추가. 신규 REQ 모듈 없음(최대 5개 유지). |
+| 1.0.0  | 2026-08-01 | **구현 완료 (Completed) → sync-phase 문서 동기화 + as-implemented 정련 + 3-phase close.** status `draft→completed`. M1~M9 + 후속(`unit_id` 런타임 변이) 전량 구현. 신규 파일 `rtu_crc.go`/`rtu_adu.go`/`transport_rtu.go`/`set_config.go`(+ 테스트); 편집 `protocol.go`(ADU-중립 PDU)·`transport.go`(인터페이스 `SendAndReceive(ctx, unitID, pdu)→respPDU`)·`device.go`(atomic `unitID` SSOT)·`write.go`·`errors.go`·`config.go`·`agent.go`(그룹 스케줄러·통계·set_config)·`internal/modbus/types.go`(raw + 4순열 바이트순서)·`provider.go`·`agentSchemas.ts`. `register.go` + `cmd/xflowd/main.go` 불변(`modbus-tcp` type id 보존). §8 구현 분기(as-implemented) IN-1~IN-9 신설. 커밋: `833af42e`(M1~M2)·`d7b01886`(M3~M4)·`35fb409d`(M5~M7)·`46f8e0ad`(M8~M9)·`4e478657`(커버리지 보강)·`0fe9170d`(unit_id 런타임 변이). 검증: AC-01~08 전량 pass, build/vet/golangci-lint 클린(0 issues), 커버리지 modbus 85.6%/internal/modbus 99.4%, `go test -race` 클린, `tsc --noEmit` 클린, 신규 의존성 0(go.bug.st/serial 재사용). |
 
 ---
 
@@ -219,3 +220,29 @@ init 전용(init-only) 필드 — 런타임 변경 거부(안전 결정):
 - 신규 외부 modbus 라이브러리 도입.
 - 기존 `modbus-tcp` type id 변경 또는 신규 패키지 복제.
 - 실제 하드웨어 RTU 타이밍 튜닝(잔여 위험으로 plan.md에 기록).
+
+---
+
+## 8. 구현 분기 (Implementation Notes · as-implemented)
+
+> spec-anchored (Level 2) 규율. 아래는 M1~M9 + 후속 구현 결과, 계획(§4/§5) 대비 정련·구체화·해소된 사항의 정식 기록이다. 원 요구사항 텍스트는 보존하며 여기서 분기점만 주석한다. 모든 분기는 비침습성·정확성을 강화하는 방향이며 스코프 확장이 아니다. 커밋: `833af42e`(M1~M2), `d7b01886`(M3~M4), `35fb409d`(M5~M7), `46f8e0ad`(M8~M9), `4e478657`(커버리지 보강), `0fe9170d`(unit_id 런타임 변이).
+
+- **IN-1 — PDU/ADU 리팩터링: `SendAndReceive(ctx, unitID, pdu)→respPDU` (§5.1 구체화)**: 계획(§5.1)은 PDU 빌더의 ADU-중립 리팩터링을 기술했다. 실제 구현은 `ModbusTransport.SendAndReceive` 시그니처를 `(ctx, unitID byte, pdu []byte) → respPDU`로 변경하여, MBAP 프레이밍 + txID 관리를 `ModbusTCPTransport` 내부로 이동했다. TCP 와이어 동작은 바이트 동일(golden test 로 검증). 판정: §5.1 ADU-중립 리팩터링의 인터페이스 형상 확정(TCP 무회귀).
+
+- **IN-2 — RTU CRC/ADU 파일 분리: `rtu_crc.go` + `rtu_adu.go` (§4/§5.1 정련)**: 계획(§4)은 `transport_rtu.go` 에 RTU 프레이밍을 총괄 배치하는 안을 제시했다. 실제 구현은 CRC 계산(`rtu_crc.go`)과 ADU 프레이밍(`rtu_adu.go`)을 분리하여 배선을 명확히 했다(트랜스포트 본체는 `transport_rtu.go`). 판정: 파일 구성 정련(동작 동일, 관심사 분리).
+
+- **IN-3 — RTU 트랜스포트 = 시리얼 버스당 단일 공유 인스턴스 (§5.1/A-4 구체화, multi-drop)**: 계획(A-4)은 반이중 동기식 마스터를 기술했다. 실제 구현은 하나의 시리얼 버스(multi-drop) 위 모든 RTU 디바이스가 **단일 `ModbusRTUTransport` + 단일 turnaround mutex** 를 공유하도록 구현했다(RTU 버스 정확성). 결과적으로 한 디바이스의 `Close`가 공유 포트를 닫는다는 점을 한계로 기록한다. 판정: A-4/A-5 반이중 규율의 버스-수준 정확 구현(공유 포트 Close 한계 명시).
+
+- **IN-4 — 바이트순서 별칭: `big_endian`≡ABCD, `little_endian`≡CDAB (§5.3/A-8 확정)**: 계획(A-8)은 기존 word-swap 의미를 4순열 별칭으로 매핑한다고 기술했다. 실제 매핑은 기존 word-swap 동작에서 파생하여 `big_endian`을 ABCD, `little_endian`을 CDAB 에 대응시켰다(바이트 동일, AC-05 검증). 판정: A-8 별칭 매핑의 구체값 확정(하위 호환).
+
+- **IN-5 — M7 통계 = 에이전트 레이어 배치 (§5.4 구체화)**: 계획(§5.4)은 디바이스별·그룹별 카운터를 기술했다. 실제 구현은 통계를 `device.go` 가 아닌 **에이전트 레이어의 `devStats`/`groupStats` 맵**에 배치했다(`device.go` 의 offline/reconnect 로직 불변). 한계: 런타임 `set_config`로 **추가된** 그룹(신규 이름)에 대한 per-group 통계는 생성되지 않는다(init-시점 불변 맵) — 문서화된 한계. 판정: §5.4 통계 표면화의 배치 확정(device.go 무회귀, 신규-그룹 통계 미생성 한계 명시).
+
+- **IN-6 — `unit_id` 런타임 변이 구현 (분기 해소 · §5.5.1 완전 부합)**: 계획 초기에는 M9 에서 `unit_id` 런타임 변이를 이연했으나, 후속(`0fe9170d`)에서 `ModbusDevice` 상의 **atomic `unitID` SSOT** 로 완성했다. `config.UnitID` 는 생성 시드 전용이며 런타임 판독은 `dev.UnitID()` 를 통한다. `parseUnitIDParam` 은 init 경로의 `toByte` 보다 엄격하다(범위 초과/비정수를 truncate 하지 않고 거부). 이로써 §5.5.1 "디바이스/타깃 파라미터: unit_id" 항목이 완전히 충족된다. 판정: **분기 해소(RESOLVED)** — §5.5.1 런타임 가변 필드 전량 매칭.
+
+- **IN-7 — init 전용 필드 런타임 거부 (§5.5.1 불변 확인)**: 계획(§5.5.1 init-only)대로 트랜스포트 `tcp↔rtu` 전환 + RTU 시리얼 하드웨어 파라미터(port/baud/data_bits/stop_bits/parity)의 런타임 변경은 오류로 거부하며, 부분 적용(partial apply)을 하지 않고 에이전트는 직전 설정으로 계속 동작한다. 판정: §5.5.1 init-only 안전 결정 그대로 구현.
+
+- **IN-8 — 노드측 `set_config` 전용 operation 미추가 (§5.5.1 최소 스코프)**: 계획(§5.5.1)은 노드→에이전트 `set_config` 명령 경로를 기술했다. AC-08 은 신규 노드 operation 을 추가하지 않고 **기존 제네릭 `callAgentProcess` 경로**(`internal/node/modbus.go`)를 통해 `agent.Process([]byte)` 경계에서 충족된다. 판정: 최소 스코프 확정(신규 노드 operation 불필요, 기존 명령 디스패치 재사용).
+
+- **IN-9 — Optional 미구현: float64/uint64(4워드) 디코딩 (§5.3 Optional)**: 계획(§5.3, REQ-03 Optional)의 float64/uint64 4워드 디코딩은 Optional 표기 그대로 미구현이다. 판정: SPEC Optional 범위로 이연(잔여 위험 아님).
+
+> **잔여 위험**: 실제 하드웨어 RTU 타이밍(T3.5/turnaround)은 mock 수준에서만 검증되었다(plan.md §5). `defaultRTUSerialOpener`(실제 시리얼 오픈)는 하드웨어 전용 경로로 설계상 커버리지 제외 대상이다.

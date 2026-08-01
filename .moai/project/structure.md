@@ -466,7 +466,7 @@ FBP 런타임 엔진의 핵심 구현이다. 노드 그래프를 실행하고, �
 
 MODBUS 데이터 타입 변환 공유 패키지이다. MODBUS 프로토콜에서 사용하는 16비트 레지스터 값과 Go 네이티브 타입 간의 변환 유틸리티를 제공한다. `internal/agent/modbus/`와 `internal/agent/modbusserver/` 패키지에서 공통으로 사용한다.
 
-- **types.go**: MODBUS 데이터 타입 변환 유틸리티. uint16, int16, float32, uint32, int32 등 MODBUS 레지스터 값과 Go 타입 간 양방향 변환 함수 제공. 빅 엔디안/리틀 엔디안 바이트 오더 지원.
+- **types.go**: MODBUS 데이터 타입 변환 유틸리티. uint16, int16, float32, uint32, int32 등 MODBUS 레지스터 값과 Go 타입 간 양방향 변환 함수 제공. raw 패스스루 + 완전한 4순열 바이트순서(ABCD/BADC/CDAB/DCBA) 지원, 기존 빅/리틀 엔디안은 별칭으로 보존(SPEC-MODBUS-006).
 - **types_test.go**: 타입 변환 테스트. 경계값, 엔디안 변환, 부호 있는/없는 정수, 부동소수점 변환 등 포괄적 테스트 (99.4% 커버리지).
 
 #### internal/agent/
@@ -500,7 +500,7 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **http/**: HTTP Client/Server Agent - 폴링/웹훅 수신, 요청/응답 관리
 - **websocket/**: WebSocket Client/Server Agent - gorilla/websocket 기반, 자동 재연결
 - **grpc/**: gRPC Client/Server Agent - protobuf 기반, 스트리밍
-- **modbus/ (SPEC-MODBUS-001 구현 완료)**: MODBUS/TCP Client Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 9 + 테스트 5)로 구성. MODBUSAgent(Agent 인터페이스), 디바이스 관리, 레지스터 캐시(폴링 최적화), 프로토콜 인코딩/디코딩, 쓰기 명령 처리. internal/modbus/ 공유 패키지를 활용한 데이터 타입 변환 지원.
+- **modbus/ (SPEC-MODBUS-001/003/006 구현 완료)**: MODBUS Client Agent (TCP/RTU) - TCP 는 Go 표준 라이브러리(net), RTU 는 go.bug.st/serial(century 재사용) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. MODBUSAgent(Agent 인터페이스), 디바이스 관리, 레지스터 캐시(폴링 최적화), ADU-중립 프로토콜 인코딩/디코딩, 쓰기 명령 처리. SPEC-MODBUS-006 확장: `transport: tcp|rtu` 선택(미지정 시 tcp, 하위 호환), in-house RTU 마스터(CRC-16 poly 0xA001, `transport_rtu.go`/`rtu_crc.go`/`rtu_adu.go`), 레지스터 그룹별 독립 폴링 주기, raw + 4순열 바이트순서, 플로우 노드 런타임 재구성(`set_config.go`). type id `modbus-tcp` 보존, 신규 외부 의존성 0. internal/modbus/ 공유 패키지를 활용한 데이터 타입 변환 지원.
 - **socket/ (SPEC-SOCKET-001 구현 완료)**: TCP/UDP 소켓 통신 에이전트. Go 표준 라이브러리(net) 기반. TCP Server/Client, UDP Server/Client 4종 에이전트, net.Conn 기반 Framer로 4종 프레이밍(raw/newline/length_prefix/fixed_size) 지원. ConnectionManager를 통한 TCP 연결 추적/IP 차단. 자동 재연결.
 - **serial/ (SPEC-SERIAL-001 구현 완료)**: 범용 시리얼 포트(RS-232/RS-485) 에이전트. go.bug.st/serial 라이브러리 기반. io.ReadWriteCloser 기반 SerialFramer로 4종 프레이밍 지원. USB 디바이스 분리 감지(ENXIO/EIO). BridgeNode를 통한 Input/Output/InputOutput 방향별 공유 접근. 14개 파일(소스 8 + 테스트 6), 4,120줄, 94.3% 커버리지.
 - **modbusserver/ (SPEC-MODBUS-002 구현 완료)**: MODBUS/TCP Server Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 8 + 테스트 6)로 구성. MODBUSServerAgent(Agent 인터페이스), TCP 리스너 관리, 레지스터 맵 관리, 요청 핸들러, 요청/응답 파싱. 클라이언트 에이전트와 쌍으로 동작하여 MODBUS/TCP 양방향 통신 지원.

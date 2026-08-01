@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 추가 — MODBUS Client RTU 지원 + 트랜스포트 선택 + 그룹별 폴링 + 데이터타입 확장 + 노드 런타임 set_config
+
+- **기존 `modbus-tcp` 에이전트에 Modbus RTU(시리얼) 지원 + 트랜스포트 선택 + 레지스터 그룹별 독립 폴링 + 데이터타입 4순열/raw + 노드 런타임 재구성(`set_config`) 을 가산 (Non-breaking, 가산형, `modbus-tcp` type id 보존)**
+
+  기존 MODBUS/TCP 클라이언트 에이전트(`internal/agent/modbus/`, type id `modbus-tcp`)를 **신규 패키지 복제 없이 동일 패키지 내에서 확장**했다. TCP 전용이던 트랜스포트를 `transport: tcp | rtu` 디스크리미네이터로 선택 가능하게 하고, in-house RTU 마스터(CRC-16 poly 0xA001)를 추가했으며, 레지스터 그룹별 독립 폴링 주기·`raw` 패스스루 + 완전한 4순열 바이트순서·플로우 노드를 통한 런타임 재구성(`set_config`)을 가산했다. `transport` 미지정 기존 설정은 자동으로 `tcp` 로 해석되어 **기존 동작 바이트 동일**(무회귀). 9개 마일스톤 M1~M9 + 후속(`unit_id` 런타임 변이)로 완성.
+
+  - **트랜스포트 선택 + RTU 마스터(M1~M4)**: `ModbusTransport` 인터페이스를 `SendAndReceive(ctx, unitID byte, pdu []byte) → respPDU` 로 리팩터링하여 MBAP 프레이밍 + txID 관리를 `ModbusTCPTransport` 내부로 이동(TCP 와이어 동작 byte-identical, golden test). 신규 `ModbusRTUTransport` — RTU ADU `[unitID][PDU][CRC-lo][CRC-hi]` 프레이밍, CRC-16(poly 0xA001, init 0xFFFF, 리틀엔디언 부착), T3.5 프레임 간 정적, 반이중 turnaround mutex. CRC/ADU 를 `rtu_crc.go`/`rtu_adu.go` 로 분리(본체 `transport_rtu.go`). RTU 트랜스포트는 **시리얼 버스당 단일 공유 인스턴스**(multi-drop, 단일 turnaround mutex — 버스 정확성; 한 디바이스 Close 가 공유 포트 닫음 한계 기록). go.bug.st/serial 재사용(신규 의존성 0).
+  - **레지스터 그룹별 독립 폴링(M5~M6)**: 각 `register_group` 에 선택적 `poll_interval` 추가 — 미지정 그룹은 에이전트/디바이스 기본 주기로 폴백(하위 호환, 기존 단일 `time.Ticker` 는 "전 그룹 기본 주기" 특수 케이스). 그룹별 스케줄러로 한 그룹의 지연이 타 그룹 정시성에 영향을 주지 않게 함. 런타임 주기 변경은 기존 `PollingConfigurable`(`SetPollInterval`→`pollResetCh`→`pollTicker.Reset`) 경로 재사용.
+  - **데이터 타입 변환 확장(M5, `internal/modbus/types.go`)**: `raw` 패스스루(읽은 uint16 워드 무변환 전달) + 완전한 **4순열 바이트순서**(ABCD/BADC/CDAB/DCBA = word-swap × byte-swap). 기존 word-swap 의미는 별칭으로 보존(`big_endian`≡ABCD, `little_endian`≡CDAB, 바이트 동일). 알 수 없는 타입/바이트순서는 파싱/설정 오류로 처리. `internal/modbusserver` 와 공유 유지(중복 구현 회피).
+  - **상태·통계(M7)**: 디바이스별·그룹별 성공/오류/지연 카운터를 **에이전트 레이어**(`devStats`/`groupStats` 맵)에 배치(`device.go` 의 offline/reconnect 로직 불변). 한계: 런타임 `set_config` 로 추가된 신규 그룹의 per-group 통계는 init-불변 맵이라 생성되지 않음(문서화 한계).
+  - **노드 런타임 재구성 `set_config`(M8~M9 + 후속)**: `ModbusAgent.Process` 스위치에 신규 명령 `set_config` 추가(`set_config.go`). 플로우 노드가 기존 제네릭 `callAgentProcess`(`internal/node/modbus.go`) 경로로 `agent.Process([]byte)` 경계에서 재구성 명령 발행 — **에이전트 재시작 없이** 레지스터 그룹·그룹별 `poll_interval`·디바이스 파라미터·타입 오버레이를 `a.mu`(RWMutex) 보호 하에 갱신. init 경로와 동일 파싱/검증 규칙 재사용. **런타임 가변**: 레지스터 그룹, 그룹별 주기, `unit_id`/timeout/reconnect, 타입/바이트순서 오버레이. **init 전용(런타임 거부)**: 트랜스포트 `tcp↔rtu` 전환 + RTU 시리얼 하드웨어 파라미터(port/baud/data_bits/stop_bits/parity) — 오류 반환, 부분 적용 없음. `unit_id` 는 후속(`0fe9170d`)에서 `ModbusDevice` atomic `unitID` SSOT 로 완성(`config.UnitID`=생성 시드, 런타임 판독 `dev.UnitID()`; `parseUnitIDParam` 이 init `toByte` 보다 엄격 — 범위 초과/비정수 거부).
+  - **프론트엔드(`web/src/config/agentSchemas.ts`)**: `transport` select + RTU 시리얼 필드(port/baud/data_bits/stop_bits/parity) + 데이터타입/바이트순서 필드를 스키마 주도로 가산(신규 React 컴포넌트 불필요). `tsc --noEmit` 클린.
+  - **분기(Divergence, as-implemented — spec.md §8 IN-1~IN-9)**: (1) `SendAndReceive(ctx, unitID, pdu)→respPDU` 시그니처 변경 + MBAP/txID 를 TCP 트랜스포트로 이동(TCP byte-identical). (2) RTU CRC/ADU 를 `rtu_crc.go`/`rtu_adu.go` 로 분리. (3) RTU 트랜스포트 = 시리얼 버스당 단일 공유 인스턴스 + 단일 turnaround mutex(공유 포트 Close 한계). (4) 바이트순서 별칭 `big_endian`≡ABCD/`little_endian`≡CDAB. (5) M7 통계 에이전트 레이어 배치(device.go 불변, 신규-그룹 per-group 통계 미생성 한계). (6) `unit_id` 런타임 변이 **분기 해소** — atomic `unitID` SSOT, §5.5.1 완전 부합. (7) init 전용 필드 런타임 거부(부분 적용 없음). (8) 노드측 `set_config` 전용 operation 미추가 — 기존 `callAgentProcess` 경로로 AC-08 충족(최소 스코프). (9) Optional float64/uint64(4워드) 미구현(SPEC Optional 그대로).
+  - **품질**: AC-01~08 전량 pass. build/vet/golangci-lint 클린(0 issues), 커버리지 `internal/agent/modbus` **85.6%** / `internal/modbus` **99.4%**, `go test -race` 클린, 기존 modbus/modbusserver/node 테스트 무회귀 green, `tsc --noEmit` 클린. `register.go` + `cmd/xflowd/main.go` 불변(type id 보존). 신규 Go/npm 의존성 **0**(go.bug.st/serial v1.6.4 재사용). 잔여 위험: 실제 하드웨어 RTU 타이밍(T3.5/turnaround)은 mock 수준 검증(plan.md §5), `defaultRTUSerialOpener` 는 하드웨어 전용 경로로 설계상 커버리지 제외.
+  - **관련**: SPEC-MODBUS-006 v1.0.0(구현 완료, `833af42e`·`d7b01886`·`35fb409d`·`46f8e0ad`·`4e478657`·`0fe9170d`). depends_on: SPEC-MODBUS-001. SPEC-MODBUS-001/003 의 `modbus-tcp` 표면을 가산 확장.
+
 ### 추가 — 설비 제어 예약 패널 (규칙 테이블 + 모달) + Trigger 스케줄 규칙 메타·발화 게이팅
 
 - **설비 제어 예약 전용 대시보드 패널 도입 + Trigger 스케줄 규칙 메타/fire-gating 백엔드 (Non-breaking, 가산형)**
