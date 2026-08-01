@@ -52,10 +52,10 @@ const (
 // ---------------------------------------------------------------------------
 
 const (
-	ExceptionIllegalFunction     byte = 0x01
-	ExceptionIllegalDataAddress  byte = 0x02
-	ExceptionIllegalDataValue    byte = 0x03
-	ExceptionSlaveDeviceFailure  byte = 0x04
+	ExceptionIllegalFunction    byte = 0x01
+	ExceptionIllegalDataAddress byte = 0x02
+	ExceptionIllegalDataValue   byte = 0x03
+	ExceptionSlaveDeviceFailure byte = 0x04
 )
 
 // ---------------------------------------------------------------------------
@@ -114,211 +114,181 @@ func exceptionCodeString(code byte) string {
 }
 
 // ---------------------------------------------------------------------------
-// 프레임 빌드 함수
+// ADU 프레이밍: MBAP 헤더 부착 (MODBUS/TCP 전용)
 // ---------------------------------------------------------------------------
 
-// buildReadRequest 는 MODBUS/TCP 읽기 요청 프레임(MBAP + PDU)을 생성한다.
-// fc 는 FC01, FC02, FC03, FC04 중 하나여야 한다.
-func buildReadRequest(transactionID uint16, unitID byte, fc byte, startAddr uint16, quantity uint16) []byte {
-	// MBAP(7) + FC(1) + StartAddr(2) + Quantity(2) = 12 바이트
-	frame := make([]byte, 12)
-
-	// MBAP 헤더
+// buildMBAPFrame 은 순수 PDU 앞에 7바이트 MBAP 헤더를 부착하여
+// 완전한 MODBUS/TCP ADU 프레임(MBAP + PDU)을 생성한다.
+// Length 필드는 UnitID(1) + PDU 길이로 계산된다.
+// PDU 빌더와 ADU 프레이밍을 분리하여 TCP(MBAP)와 RTU(CRC)가 동일한 PDU 를 공유한다.
+func buildMBAPFrame(transactionID uint16, unitID byte, pdu []byte) []byte {
+	frame := make([]byte, MBAPHeaderSize+len(pdu))
 	binary.BigEndian.PutUint16(frame[0:2], transactionID)
 	binary.BigEndian.PutUint16(frame[2:4], MBAPProtocolID)
-	binary.BigEndian.PutUint16(frame[4:6], 6) // Length: UnitID(1) + FC(1) + StartAddr(2) + Quantity(2)
+	binary.BigEndian.PutUint16(frame[4:6], uint16(1+len(pdu))) // Length: UnitID(1) + PDU
 	frame[6] = unitID
-
-	// PDU
-	frame[7] = fc
-	binary.BigEndian.PutUint16(frame[8:10], startAddr)
-	binary.BigEndian.PutUint16(frame[10:12], quantity)
-
+	copy(frame[MBAPHeaderSize:], pdu)
 	return frame
 }
 
-// parseReadResponse 는 MODBUS/TCP 읽기 응답을 파싱한다.
+// ---------------------------------------------------------------------------
+// PDU 빌드 함수 (ADU-중립: MBAP/CRC 프레이밍과 무관)
+// ---------------------------------------------------------------------------
+
+// buildReadPDU 는 MODBUS 읽기 요청 PDU 를 생성한다.
+// fc 는 FC01, FC02, FC03, FC04 중 하나여야 한다.
+// 결과: [fc][startHi][startLo][qtyHi][qtyLo] (5바이트)
+func buildReadPDU(fc byte, startAddr uint16, quantity uint16) []byte {
+	pdu := make([]byte, 5)
+	pdu[0] = fc
+	binary.BigEndian.PutUint16(pdu[1:3], startAddr)
+	binary.BigEndian.PutUint16(pdu[3:5], quantity)
+	return pdu
+}
+
+// parseReadResponse 는 MODBUS 읽기 응답 PDU 를 파싱한다.
+// 입력은 ADU 프레이밍(MBAP/CRC)이 제거된 순수 PDU 이다.
 // 예외 응답인 경우 ModbusException 에러를 반환한다.
-func parseReadResponse(data []byte) (unitID byte, fc byte, values []byte, err error) {
-	// 최소 MBAP(7) + FC(1) + ByteCount(1) = 9 바이트
-	if len(data) < 9 {
-		return 0, 0, nil, ErrFrameTooShort
+func parseReadResponse(pdu []byte) (fc byte, values []byte, err error) {
+	// 최소 FC(1) + ByteCount(1) = 2 바이트
+	if len(pdu) < 2 {
+		return 0, nil, ErrFrameTooShort
 	}
 
-	unitID = data[6]
-	fc = data[7]
+	fc = pdu[0]
 
 	// 예외 응답 감지: 기능 코드의 최상위 비트가 설정됨
 	if fc&0x80 != 0 {
-		if len(data) < 9 {
-			return 0, 0, nil, ErrFrameTooShort
-		}
-		return unitID, fc & 0x7F, nil, &ModbusException{
+		return fc & 0x7F, nil, &ModbusException{
 			FunctionCode: fc & 0x7F,
-			Code:         data[8],
+			Code:         pdu[1],
 		}
 	}
 
-	byteCount := int(data[8])
-	if len(data) < 9+byteCount {
-		return 0, 0, nil, ErrFrameTooShort
+	byteCount := int(pdu[1])
+	if len(pdu) < 2+byteCount {
+		return 0, nil, ErrFrameTooShort
 	}
 
 	values = make([]byte, byteCount)
-	copy(values, data[9:9+byteCount])
+	copy(values, pdu[2:2+byteCount])
 
-	return unitID, fc, values, nil
+	return fc, values, nil
 }
 
 // ---------------------------------------------------------------------------
-// 쓰기 요청 빌드 함수
+// 쓰기 요청 PDU 빌드 함수 (ADU-중립)
 // ---------------------------------------------------------------------------
 
-// buildWriteSingleCoilRequest 는 FC05 단일 코일 쓰기 요청 프레임을 생성한다.
+// buildWriteSingleCoilPDU 는 FC05 단일 코일 쓰기 요청 PDU 를 생성한다.
 // value 가 true 이면 0xFF00, false 이면 0x0000 을 전송한다.
-func buildWriteSingleCoilRequest(txID uint16, unitID byte, addr uint16, value bool) []byte {
-	frame := make([]byte, 12)
-
-	// MBAP 헤더
-	binary.BigEndian.PutUint16(frame[0:2], txID)
-	binary.BigEndian.PutUint16(frame[2:4], MBAPProtocolID)
-	binary.BigEndian.PutUint16(frame[4:6], 6) // Length: UnitID(1) + FC(1) + Addr(2) + Value(2)
-	frame[6] = unitID
-
-	// PDU
-	frame[7] = FC05WriteSingleCoil
-	binary.BigEndian.PutUint16(frame[8:10], addr)
+func buildWriteSingleCoilPDU(addr uint16, value bool) []byte {
+	pdu := make([]byte, 5)
+	pdu[0] = FC05WriteSingleCoil
+	binary.BigEndian.PutUint16(pdu[1:3], addr)
 	if value {
-		frame[10] = 0xFF
-		frame[11] = 0x00
+		pdu[3] = 0xFF
+		pdu[4] = 0x00
 	} else {
-		frame[10] = 0x00
-		frame[11] = 0x00
+		pdu[3] = 0x00
+		pdu[4] = 0x00
 	}
-
-	return frame
+	return pdu
 }
 
-// buildWriteSingleRegisterRequest 는 FC06 단일 레지스터 쓰기 요청 프레임을 생성한다.
-func buildWriteSingleRegisterRequest(txID uint16, unitID byte, addr uint16, value uint16) []byte {
-	frame := make([]byte, 12)
-
-	// MBAP 헤더
-	binary.BigEndian.PutUint16(frame[0:2], txID)
-	binary.BigEndian.PutUint16(frame[2:4], MBAPProtocolID)
-	binary.BigEndian.PutUint16(frame[4:6], 6) // Length: UnitID(1) + FC(1) + Addr(2) + Value(2)
-	frame[6] = unitID
-
-	// PDU
-	frame[7] = FC06WriteSingleRegister
-	binary.BigEndian.PutUint16(frame[8:10], addr)
-	binary.BigEndian.PutUint16(frame[10:12], value)
-
-	return frame
+// buildWriteSingleRegisterPDU 는 FC06 단일 레지스터 쓰기 요청 PDU 를 생성한다.
+func buildWriteSingleRegisterPDU(addr uint16, value uint16) []byte {
+	pdu := make([]byte, 5)
+	pdu[0] = FC06WriteSingleRegister
+	binary.BigEndian.PutUint16(pdu[1:3], addr)
+	binary.BigEndian.PutUint16(pdu[3:5], value)
+	return pdu
 }
 
-// buildWriteMultipleCoilsRequest 는 FC15 다중 코일 쓰기 요청 프레임을 생성한다.
-func buildWriteMultipleCoilsRequest(txID uint16, unitID byte, addr uint16, values []bool) []byte {
+// buildWriteMultipleCoilsPDU 는 FC15 다중 코일 쓰기 요청 PDU 를 생성한다.
+func buildWriteMultipleCoilsPDU(addr uint16, values []bool) []byte {
 	quantity := uint16(len(values))
 	byteCount := (len(values) + 7) / 8 // 코일 8개당 1바이트
 
-	// MBAP(7) + FC(1) + Addr(2) + Quantity(2) + ByteCount(1) + Data(byteCount)
-	frameLen := 7 + 1 + 2 + 2 + 1 + byteCount
-	frame := make([]byte, frameLen)
-
-	// MBAP 헤더
-	binary.BigEndian.PutUint16(frame[0:2], txID)
-	binary.BigEndian.PutUint16(frame[2:4], MBAPProtocolID)
-	binary.BigEndian.PutUint16(frame[4:6], uint16(1+1+2+2+1+byteCount)) // Length
-	frame[6] = unitID
-
-	// PDU
-	frame[7] = FC15WriteMultipleCoils
-	binary.BigEndian.PutUint16(frame[8:10], addr)
-	binary.BigEndian.PutUint16(frame[10:12], quantity)
-	frame[12] = byte(byteCount)
+	// FC(1) + Addr(2) + Quantity(2) + ByteCount(1) + Data(byteCount)
+	pdu := make([]byte, 6+byteCount)
+	pdu[0] = FC15WriteMultipleCoils
+	binary.BigEndian.PutUint16(pdu[1:3], addr)
+	binary.BigEndian.PutUint16(pdu[3:5], quantity)
+	pdu[5] = byte(byteCount)
 
 	// 코일 데이터 인코딩: 각 바이트에 최대 8개 코일, LSB 먼저
 	for i, v := range values {
 		if v {
 			byteIdx := i / 8
 			bitIdx := uint(i % 8)
-			frame[13+byteIdx] |= 1 << bitIdx
+			pdu[6+byteIdx] |= 1 << bitIdx
 		}
 	}
 
-	return frame
+	return pdu
 }
 
-// buildWriteMultipleRegistersRequest 는 FC16 다중 레지스터 쓰기 요청 프레임을 생성한다.
-func buildWriteMultipleRegistersRequest(txID uint16, unitID byte, addr uint16, values []uint16) []byte {
+// buildWriteMultipleRegistersPDU 는 FC16 다중 레지스터 쓰기 요청 PDU 를 생성한다.
+func buildWriteMultipleRegistersPDU(addr uint16, values []uint16) []byte {
 	quantity := uint16(len(values))
 	byteCount := len(values) * 2
 
-	// MBAP(7) + FC(1) + Addr(2) + Quantity(2) + ByteCount(1) + Data(byteCount)
-	frameLen := 7 + 1 + 2 + 2 + 1 + byteCount
-	frame := make([]byte, frameLen)
-
-	// MBAP 헤더
-	binary.BigEndian.PutUint16(frame[0:2], txID)
-	binary.BigEndian.PutUint16(frame[2:4], MBAPProtocolID)
-	binary.BigEndian.PutUint16(frame[4:6], uint16(1+1+2+2+1+byteCount)) // Length
-	frame[6] = unitID
-
-	// PDU
-	frame[7] = FC16WriteMultipleRegisters
-	binary.BigEndian.PutUint16(frame[8:10], addr)
-	binary.BigEndian.PutUint16(frame[10:12], quantity)
-	frame[12] = byte(byteCount)
+	// FC(1) + Addr(2) + Quantity(2) + ByteCount(1) + Data(byteCount)
+	pdu := make([]byte, 6+byteCount)
+	pdu[0] = FC16WriteMultipleRegisters
+	binary.BigEndian.PutUint16(pdu[1:3], addr)
+	binary.BigEndian.PutUint16(pdu[3:5], quantity)
+	pdu[5] = byte(byteCount)
 
 	// 레지스터 데이터 인코딩: 각 레지스터 2바이트 Big-Endian
 	for i, v := range values {
-		binary.BigEndian.PutUint16(frame[13+i*2:15+i*2], v)
+		binary.BigEndian.PutUint16(pdu[6+i*2:8+i*2], v)
 	}
 
-	return frame
+	return pdu
 }
 
 // ---------------------------------------------------------------------------
 // 쓰기 응답 파싱
 // ---------------------------------------------------------------------------
 
-// parseWriteResponse 는 MODBUS/TCP 쓰기 응답(FC05, FC06, FC15, FC16)을 파싱한다.
+// parseWriteResponse 는 MODBUS 쓰기 응답 PDU(FC05, FC06, FC15, FC16)를 파싱한다.
+// 입력은 ADU 프레이밍이 제거된 순수 PDU 이다.
 // 단일 쓰기(FC05, FC06)의 경우 quantity 는 1 로 반환된다.
-func parseWriteResponse(data []byte) (unitID byte, fc byte, addr uint16, quantity uint16, err error) {
-	// 최소 MBAP(7) + FC(1) = 8 바이트 (예외 응답은 9 바이트)
-	if len(data) < 8 {
-		return 0, 0, 0, 0, ErrFrameTooShort
+func parseWriteResponse(pdu []byte) (fc byte, addr uint16, quantity uint16, err error) {
+	// 최소 FC(1) = 1 바이트 (예외 응답은 2 바이트)
+	if len(pdu) < 1 {
+		return 0, 0, 0, ErrFrameTooShort
 	}
 
-	unitID = data[6]
-	fc = data[7]
+	fc = pdu[0]
 
 	// 예외 응답 감지
 	if fc&0x80 != 0 {
-		if len(data) < 9 {
-			return 0, 0, 0, 0, ErrFrameTooShort
+		if len(pdu) < 2 {
+			return 0, 0, 0, ErrFrameTooShort
 		}
-		return unitID, fc & 0x7F, 0, 0, &ModbusException{
+		return fc & 0x7F, 0, 0, &ModbusException{
 			FunctionCode: fc & 0x7F,
-			Code:         data[8],
+			Code:         pdu[1],
 		}
 	}
 
-	// 정상 응답: MBAP(7) + FC(1) + Addr(2) + Value/Quantity(2) = 12 바이트
-	if len(data) < 12 {
-		return 0, 0, 0, 0, ErrFrameTooShort
+	// 정상 응답: FC(1) + Addr(2) + Value/Quantity(2) = 5 바이트
+	if len(pdu) < 5 {
+		return 0, 0, 0, ErrFrameTooShort
 	}
 
-	addr = binary.BigEndian.Uint16(data[8:10])
-	quantity = binary.BigEndian.Uint16(data[10:12])
+	addr = binary.BigEndian.Uint16(pdu[1:3])
+	quantity = binary.BigEndian.Uint16(pdu[3:5])
 
 	// FC05/FC06 단일 쓰기의 경우 echo-back 값이 반환되므로 quantity 를 1 로 설정
 	if fc == FC05WriteSingleCoil || fc == FC06WriteSingleRegister {
 		quantity = 1
 	}
 
-	return unitID, fc, addr, quantity, nil
+	return fc, addr, quantity, nil
 }
 
 // ---------------------------------------------------------------------------

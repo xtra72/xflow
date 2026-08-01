@@ -199,21 +199,20 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	// 프레임 빌드 및 전송
-	txID := dev.nextTransactionID()
-	frame := buildWriteSingleCoilRequest(txID, dev.config.UnitID, addr, value)
+	// PDU 빌드 및 전송 (unitID/ADU 프레이밍은 트랜스포트가 담당)
+	pdu := buildWriteSingleCoilPDU(addr, value)
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
-	resp, err := dev.SendFrame(ctx, frame)
+	resp, err := dev.SendPDU(ctx, pdu)
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
-	// 응답 파싱
-	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
+	// 응답 파싱 (unitID 는 요청 unitID 를 그대로 사용 — 응답이 이를 에코함)
+	_, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		// MODBUS 예외 확인
 		if exc, ok := parseErr.(*ModbusException); ok {
@@ -229,7 +228,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 					"timestamp":      time.Now().Format(time.RFC3339),
 				})
 			}
-			return writeExceptionResponse(dev.config.ID, unitID, "write_coil", exc)
+			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, "write_coil", exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -241,7 +240,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 	}
 
 	a.stats.IncrExternalMessagesSent()
-	a.stats.AddBytesWritten(int64(len(frame)))
+	a.stats.AddBytesWritten(int64(len(pdu)))
 	a.stats.UpdateLastActivity()
 
 	if a.config.EnableWriteEvents {
@@ -254,7 +253,7 @@ func (a *ModbusAgent) processWriteCoil(req *processRequest) ([]byte, error) {
 		})
 	}
 
-	return writeSuccessResponse(dev.config.ID, unitID, "write_coil", respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, "write_coil", respAddr, quantity)
 }
 
 // ---------------------------------------------------------------------------
@@ -338,21 +337,20 @@ func (a *ModbusAgent) processWriteRegister(req *processRequest) ([]byte, error) 
 	return a.sendWriteSingleRegister(dev, addr, value, "write_register", "")
 }
 
-// sendWriteSingleRegister 는 FC06 프레임을 빌드하고 전송한다.
+// sendWriteSingleRegister 는 FC06 PDU 를 빌드하고 전송한다.
 func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, value uint16, command string, dataType string) ([]byte, error) {
-	txID := dev.nextTransactionID()
-	frame := buildWriteSingleRegisterRequest(txID, dev.config.UnitID, addr, value)
+	pdu := buildWriteSingleRegisterPDU(addr, value)
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
-	resp, err := dev.SendFrame(ctx, frame)
+	resp, err := dev.SendPDU(ctx, pdu)
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
-	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
+	_, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		if exc, ok := parseErr.(*ModbusException); ok {
 			a.stats.IncrExternalMessagesErrored()
@@ -371,7 +369,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 				}
 				a.sendEvent("write_error", evtData)
 			}
-			return writeExceptionResponse(dev.config.ID, unitID, command, exc)
+			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, command, exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -383,7 +381,7 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 	}
 
 	a.stats.IncrExternalMessagesSent()
-	a.stats.AddBytesWritten(int64(len(frame)))
+	a.stats.AddBytesWritten(int64(len(pdu)))
 	a.stats.UpdateLastActivity()
 
 	if a.config.EnableWriteEvents {
@@ -400,24 +398,23 @@ func (a *ModbusAgent) sendWriteSingleRegister(dev *ModbusDevice, addr uint16, va
 		a.sendEvent("write_success", evtData)
 	}
 
-	return writeSuccessResponse(dev.config.ID, unitID, command, respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, command, respAddr, quantity)
 }
 
-// sendWriteMultipleRegisters 는 FC16 프레임을 빌드하고 전송한다.
+// sendWriteMultipleRegisters 는 FC16 PDU 를 빌드하고 전송한다.
 func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16, values []uint16, command string, dataType string) ([]byte, error) {
-	txID := dev.nextTransactionID()
-	frame := buildWriteMultipleRegistersRequest(txID, dev.config.UnitID, addr, values)
+	pdu := buildWriteMultipleRegistersPDU(addr, values)
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
-	resp, err := dev.SendFrame(ctx, frame)
+	resp, err := dev.SendPDU(ctx, pdu)
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
-	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
+	_, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		if exc, ok := parseErr.(*ModbusException); ok {
 			a.stats.IncrExternalMessagesErrored()
@@ -436,7 +433,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 				}
 				a.sendEvent("write_error", evtData)
 			}
-			return writeExceptionResponse(dev.config.ID, unitID, command, exc)
+			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, command, exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -448,7 +445,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 	}
 
 	a.stats.IncrExternalMessagesSent()
-	a.stats.AddBytesWritten(int64(len(frame)))
+	a.stats.AddBytesWritten(int64(len(pdu)))
 	a.stats.UpdateLastActivity()
 
 	if a.config.EnableWriteEvents {
@@ -465,7 +462,7 @@ func (a *ModbusAgent) sendWriteMultipleRegisters(dev *ModbusDevice, addr uint16,
 		a.sendEvent("write_success", evtData)
 	}
 
-	return writeSuccessResponse(dev.config.ID, unitID, command, respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, command, respAddr, quantity)
 }
 
 // ---------------------------------------------------------------------------
@@ -504,21 +501,20 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	// 프레임 빌드 및 전송
-	txID := dev.nextTransactionID()
-	frame := buildWriteMultipleCoilsRequest(txID, dev.config.UnitID, addr, values)
+	// PDU 빌드 및 전송 (unitID/ADU 프레이밍은 트랜스포트가 담당)
+	pdu := buildWriteMultipleCoilsPDU(addr, values)
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.WriteTimeout)
 	defer cancel()
 
-	resp, err := dev.SendFrame(ctx, frame)
+	resp, err := dev.SendPDU(ctx, pdu)
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
 		return nil, err
 	}
 
-	// 응답 파싱
-	unitID, _, respAddr, quantity, parseErr := parseWriteResponse(resp)
+	// 응답 파싱 (unitID 는 요청 unitID 를 그대로 사용 — 응답이 이를 에코함)
+	_, respAddr, quantity, parseErr := parseWriteResponse(resp)
 	if parseErr != nil {
 		if exc, ok := parseErr.(*ModbusException); ok {
 			a.stats.IncrExternalMessagesErrored()
@@ -533,7 +529,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 					"timestamp":      time.Now().Format(time.RFC3339),
 				})
 			}
-			return writeExceptionResponse(dev.config.ID, unitID, "write_coils", exc)
+			return writeExceptionResponse(dev.config.ID, dev.config.UnitID, "write_coils", exc)
 		}
 		a.stats.IncrExternalMessagesErrored()
 		return nil, parseErr
@@ -545,7 +541,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 	}
 
 	a.stats.IncrExternalMessagesSent()
-	a.stats.AddBytesWritten(int64(len(frame)))
+	a.stats.AddBytesWritten(int64(len(pdu)))
 	a.stats.UpdateLastActivity()
 
 	if a.config.EnableWriteEvents {
@@ -558,7 +554,7 @@ func (a *ModbusAgent) processWriteCoils(req *processRequest) ([]byte, error) {
 		})
 	}
 
-	return writeSuccessResponse(dev.config.ID, unitID, "write_coils", respAddr, quantity)
+	return writeSuccessResponse(dev.config.ID, dev.config.UnitID, "write_coils", respAddr, quantity)
 }
 
 // ---------------------------------------------------------------------------

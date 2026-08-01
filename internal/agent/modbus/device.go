@@ -9,6 +9,7 @@ import (
 )
 
 // ModbusDevice 는 단일 MODBUS 디바이스의 상태와 통신을 관리한다.
+// 트랜잭션 ID 관리는 ADU(MBAP) 관심사이므로 트랜스포트가 소유한다.
 type ModbusDevice struct {
 	config               DeviceConfig
 	transport            ModbusTransport
@@ -16,7 +17,6 @@ type ModbusDevice struct {
 	online               bool
 	lastError            error
 	consecutiveErr       int
-	transactionID        uint16
 	lastReconnectAttempt time.Time // 마지막 재연결 시도 시각
 	logger               *slog.Logger
 }
@@ -72,32 +72,23 @@ func (d *ModbusDevice) Close() error {
 	return err
 }
 
-// nextTransactionID 는 트랜잭션 ID 를 증가시키고 반환한다.
-func (d *ModbusDevice) nextTransactionID() uint16 {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	current := d.transactionID
-	d.transactionID++
-	return current
-}
-
 // ReadRegisters 는 레지스터 그룹 설정에 따라 읽기 요청을 전송하고 응답 데이터를 반환한다.
-// protocol.go 의 buildReadRequest/parseReadResponse 를 사용한다.
+// protocol.go 의 buildReadPDU/parseReadResponse(순수 PDU)를 사용하며,
+// ADU 프레이밍(MBAP/CRC)은 트랜스포트가 담당한다.
 func (d *ModbusDevice) ReadRegisters(ctx context.Context, rg RegisterGroupConfig) ([]byte, error) {
 	if !d.transport.IsConnected() {
 		return nil, ErrDeviceOffline
 	}
 
-	txID := d.nextTransactionID()
-	frame := buildReadRequest(txID, d.config.UnitID, rg.FunctionCode, rg.StartAddress, rg.Quantity)
+	pdu := buildReadPDU(rg.FunctionCode, rg.StartAddress, rg.Quantity)
 
-	resp, err := d.transport.SendAndReceive(ctx, frame)
+	respPDU, err := d.transport.SendAndReceive(ctx, d.config.UnitID, pdu)
 	if err != nil {
 		d.recordError(err)
 		return nil, fmt.Errorf("modbus: device %s read failed: %w", d.config.ID, err)
 	}
 
-	_, _, values, err := parseReadResponse(resp)
+	_, values, err := parseReadResponse(respPDU)
 	if err != nil {
 		d.recordError(err)
 		return nil, fmt.Errorf("modbus: device %s parse response failed: %w", d.config.ID, err)
@@ -107,19 +98,20 @@ func (d *ModbusDevice) ReadRegisters(ctx context.Context, rg RegisterGroupConfig
 	return values, nil
 }
 
-// SendFrame 은 원시 MODBUS 프레임을 전송하고 응답을 반환한다.
+// SendPDU 는 순수 요청 PDU 를 전송하고 응답 PDU 를 반환한다.
+// unitID 부착과 ADU 프레이밍은 트랜스포트가 담당한다.
 // 연결 상태 확인, 에러 기록, 성공 기록을 처리한다.
-func (d *ModbusDevice) SendFrame(ctx context.Context, frame []byte) ([]byte, error) {
+func (d *ModbusDevice) SendPDU(ctx context.Context, pdu []byte) ([]byte, error) {
 	if !d.transport.IsConnected() {
 		return nil, ErrDeviceOffline
 	}
-	resp, err := d.transport.SendAndReceive(ctx, frame)
+	respPDU, err := d.transport.SendAndReceive(ctx, d.config.UnitID, pdu)
 	if err != nil {
 		d.recordError(err)
 		return nil, fmt.Errorf("modbus: device %s send failed: %w", d.config.ID, err)
 	}
 	d.recordSuccess()
-	return resp, nil
+	return respPDU, nil
 }
 
 // IsOnline 은 디바이스가 온라인 상태인지 반환한다.

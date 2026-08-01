@@ -50,4 +50,18 @@ var (
 
 	// ErrTypeMapOutOfRange 는 type_map 주소가 범위를 초과할 때 반환된다.
 	ErrTypeMapOutOfRange = errors.New("modbus: type_map address out of range")
+
+	// ErrCRCMismatch 는 RTU 응답의 CRC-16 재계산 검증이 실패했을 때 반환된다.
+	// 손상된 프레임을 유효한 결과로 상위에 반환하지 않기 위해 사용한다(AC-07).
+	ErrCRCMismatch = errors.New("modbus: RTU CRC mismatch")
+
+	// ErrRTUFrameTooShort 는 RTU ADU 가 최소 길이(unitID+FC+CRC = 4바이트)보다 짧을 때 반환된다.
+	ErrRTUFrameTooShort = errors.New("modbus: RTU frame too short")
+
+	// ErrUnitIDMismatch 는 RTU 응답의 unitID 가 요청 unitID 와 일치하지 않을 때 반환된다.
+	ErrUnitIDMismatch = errors.New("modbus: RTU response unit ID mismatch")
+
+	// ErrFunctionCodeMismatch 는 RTU 응답의 function code 가 요청 function code
+	// (또는 그 예외 형태 fc|0x80)와 일치하지 않을 때 반환된다.
+	ErrFunctionCodeMismatch = errors.New("modbus: RTU response function code mismatch")
 )
