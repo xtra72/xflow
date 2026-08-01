@@ -8,7 +8,7 @@ import type { ConfigField, ConfigSchema } from '@/types/node';
 export const AGENT_TYPES = [
   { value: 'mqtt-client', label: 'MQTT' },
   { value: 'thingplus-gateway', label: 'Thingplus Gateway' },
-  { value: 'modbus-tcp', label: 'Modbus TCP' },
+  { value: 'modbus-tcp', label: 'Modbus Client' },
   { value: 'modbus-tcp-server', label: 'Modbus TCP Server' },
   { value: 'http', label: 'HTTP Receiver' },
   { value: 'http-sender', label: 'HTTP Sender' },

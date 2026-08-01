@@ -38,7 +38,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
 
   'modbus-tcp': {
     description:
-      'Modbus TCP 클라이언트로 원격 디바이스의 레지스터를 읽고 쓰는 에이전트. interval/event 모드를 지원하며, 다중 디바이스 폴링과 쓰기 이벤트 처리가 가능합니다.',
+      'Modbus 클라이언트 에이전트. TCP(MBAP) 또는 RTU(시리얼, CRC-16) 트랜스포트를 선택해 원격 디바이스의 레지스터를 읽고 쓴다. interval/event 모드, 다중 디바이스 폴링, 그룹별 폴링 주기, 쓰기 이벤트, 런타임 재구성(set_config)을 지원합니다.',
     configFields: [
       { name: 'mode', type: 'select', required: false, description: '동작 모드 (interval: 주기적 폴링, event: 변경 감지)', default: 'interval' },
       { name: 'poll_interval', type: 'string', required: false, description: '폴링 간격 (Go duration 형식)', default: '5s' },
