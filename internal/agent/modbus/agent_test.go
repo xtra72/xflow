@@ -265,17 +265,6 @@ func TestNewModbusAgent_InvalidConfig(t *testing.T) {
 		config agent.AgentConfig
 	}{
 		{
-			name: "devices 누락",
-			config: agent.AgentConfig{
-				ID:   "bad-1",
-				Name: "Bad Agent",
-				Type: "modbus-client",
-				Transport: agent.TransportConfig{
-					Options: map[string]any{},
-				},
-			},
-		},
-		{
 			name: "ID 누락 (Validate 실패)",
 			config: agent.AgentConfig{
 				Name: "No ID",

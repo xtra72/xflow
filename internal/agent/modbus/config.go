@@ -208,9 +208,9 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 		}
 	}
 
-	if len(cfg.Devices) == 0 {
-		return ModbusConfig{}, fmt.Errorf("modbus: devices is required and must not be empty")
-	}
+	// 디바이스는 선택 사항이다. 디바이스 없이 에이전트를 먼저 생성하고
+	// 이후 설정(또는 런타임 set_config)으로 디바이스를 추가할 수 있다.
+	// 0 디바이스일 때 Start/pollLoop 는 빈 순회(no-op), Health 는 "0/0 online" Healthy 로 안전하다.
 
 	// stale_threshold 기본값: PollInterval * 3
 	if !staleSet {

@@ -71,17 +71,17 @@ func TestParseModbusConfig_Defaults(t *testing.T) {
 // TestParseModbusConfig_Full 는 모든 필드가 지정된 설정을 올바르게 파싱하는지 검증한다.
 func TestParseModbusConfig_Full(t *testing.T) {
 	opts := map[string]any{
-		"mode":               "event",
-		"read_mode":          "cached",
-		"poll_interval":      "10s",
-		"heartbeat_interval": "30s",
-		"stale_threshold":    "45s",
-		"write_timeout":      "3s",
+		"mode":                "event",
+		"read_mode":           "cached",
+		"poll_interval":       "10s",
+		"heartbeat_interval":  "30s",
+		"stale_threshold":     "45s",
+		"write_timeout":       "3s",
 		"enable_write_events": false,
-		"reconnect_interval": "15s",
-		"max_retries":        5,
-		"request_timeout":    "2s",
-		"msg_channel_size":   512,
+		"reconnect_interval":  "15s",
+		"max_retries":         5,
+		"request_timeout":     "2s",
+		"msg_channel_size":    512,
 		"devices": []any{
 			map[string]any{
 				"id":      "plc-1",
@@ -163,24 +163,26 @@ func TestParseModbusConfig_Full(t *testing.T) {
 // 에러 케이스 테스트
 // ===========================================================================
 
-// TestParseModbusConfig_NoDevices 는 devices 누락 시 에러를 반환하는지 검증한다.
+// TestParseModbusConfig_NoDevices 는 devices 누락 시에도 에러 없이 0 디바이스로
+// 파싱되는지 검증한다(디바이스는 선택 사항 — 이후 설정/런타임으로 추가 가능).
 func TestParseModbusConfig_NoDevices(t *testing.T) {
 	opts := map[string]any{}
 
-	_, err := parseModbusConfig(opts)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "devices is required")
+	cfg, err := parseModbusConfig(opts)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Devices)
 }
 
-// TestParseModbusConfig_EmptyDevices 는 빈 devices 배열에 대해 에러를 반환하는지 검증한다.
+// TestParseModbusConfig_EmptyDevices 는 빈 devices 배열도 에러 없이 0 디바이스로
+// 파싱되는지 검증한다(디바이스 없이 에이전트 생성 허용).
 func TestParseModbusConfig_EmptyDevices(t *testing.T) {
 	opts := map[string]any{
 		"devices": []any{},
 	}
 
-	_, err := parseModbusConfig(opts)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "devices is required")
+	cfg, err := parseModbusConfig(opts)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Devices)
 }
 
 // TestParseModbusConfig_InvalidMode 는 잘못된 mode 값에 대해 에러를 반환하는지 검증한다.
