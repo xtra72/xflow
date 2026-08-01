@@ -28,9 +28,13 @@ type ModbusAgent struct {
 	pollTicker  *time.Ticker
 	pollResetCh chan time.Duration // 폴링 간격 변경 시그널
 	pollWg      sync.WaitGroup     // pollLoop + 그룹별 스케줄러 goroutine 수명 관리 (M5, 누수 방지)
-	stopCh      chan struct{}
-	msgCh       chan []byte // Bridge 메시지 (ReceiveMessage)
-	stats       *agent.AgentStats
+	// groupStops 는 그룹별 폴링 스케줄러(groupPollLoop)의 개별 종료 채널이다(M9).
+	// 키: groupStatKey(deviceID, groupName). set_config 런타임 재구성 시 개별 그룹 루프만
+	// 정지·재시작하기 위해 사용한다. Start(단일 스레드) 또는 a.mu.Lock() 하에서만 접근한다.
+	groupStops map[string]chan struct{}
+	stopCh     chan struct{}
+	msgCh      chan []byte // Bridge 메시지 (ReceiveMessage)
+	stats      *agent.AgentStats
 	// devStats/groupStats 는 디바이스별·그룹별 요청 통계이다(M7).
 	// 생성 시 1회 채워지며 이후 맵 자체는 불변(엔트리는 atomic) — 폴링 goroutine 과의 경합 없음.
 	devStats   map[string]*requestCounters // 키: deviceID
@@ -119,6 +123,7 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		config:        cfg,
 		devices:       make([]*ModbusDevice, 0, len(cfg.Devices)),
 		pollResetCh:   make(chan time.Duration, 1),
+		groupStops:    make(map[string]chan struct{}),
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
@@ -206,6 +211,7 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 		config:        cfg,
 		devices:       make([]*ModbusDevice, 0, len(cfg.Devices)),
 		pollResetCh:   make(chan time.Duration, 1),
+		groupStops:    make(map[string]chan struct{}),
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
@@ -317,11 +323,11 @@ func (a *ModbusAgent) Start(ctx context.Context) error {
 			// 그룹별 독립 폴링 스케줄러 시작 (M5).
 			// poll_interval 이 지정된 그룹마다 전용 goroutine 을 띄운다.
 			// 하나도 없으면 루프는 만들어지지 않아 기존 단일-티커 동작과 동일하다(AC-03).
+			// Start 는 단일 스레드 초기화이므로 groupStops 접근에 락이 불필요하다.
 			for _, dev := range a.devices {
-				for _, rg := range dev.config.RegisterGroups {
-					if rg.PollInterval > 0 {
-						a.pollWg.Add(1)
-						go a.groupPollLoop(dev, rg)
+				for i := range dev.config.RegisterGroups {
+					if dev.config.RegisterGroups[i].PollInterval > 0 {
+						a.startGroupLoop(dev, dev.config.RegisterGroups[i])
 					}
 				}
 			}
@@ -492,8 +498,13 @@ func (a *ModbusAgent) pollLoop() {
 // pollDevices 는 모든 온라인 디바이스의 레지스터를 읽는다.
 // forceFullSend 가 true 이면 event 모드에서도 전체 데이터를 전송한다 (heartbeat).
 func (a *ModbusAgent) pollDevices(forceFullSend bool) {
+	// 런타임 가변 필드(요청 타임아웃·재연결 간격·stale 임계값)를 RLock 스냅샷으로 읽는다.
+	// M9 set_config 가 a.mu.Lock() 하에 이 값들을 갱신하므로 경합을 피한다(-race).
 	a.mu.RLock()
 	paused := a.paused
+	reqTimeout := a.config.RequestTimeout
+	reconnectInterval := a.config.ReconnectInterval
+	staleThreshold := a.config.StaleThreshold
 	a.mu.RUnlock()
 	if paused {
 		return
@@ -504,13 +515,13 @@ func (a *ModbusAgent) pollDevices(forceFullSend bool) {
 		"forceFullSend", forceFullSend,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), a.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout)
 	defer cancel()
 
 	for _, dev := range a.devices {
 		if !dev.IsOnline() {
 			// 오프라인 디바이스 재연결 시도
-			if !dev.TryReconnect(ctx, a.config.ReconnectInterval) {
+			if !dev.TryReconnect(ctx, reconnectInterval) {
 				a.logger.Debug("modbus: 디바이스 재연결 실패 또는 대기 중",
 					"device", dev.config.ID,
 				)
@@ -524,7 +535,7 @@ func (a *ModbusAgent) pollDevices(forceFullSend bool) {
 	// Stale 레지스터 그룹 경고 이벤트 전송
 	for _, dev := range a.devices {
 		if cache, ok := a.caches[dev.config.ID]; ok {
-			staleGroups := cache.StaleGroups(a.config.StaleThreshold)
+			staleGroups := cache.StaleGroups(staleThreshold)
 			for _, groupKey := range staleGroups {
 				a.sendEvent("register_group_stale", map[string]any{
 					"device_id": dev.config.ID,
@@ -541,7 +552,12 @@ func (a *ModbusAgent) pollDevices(forceFullSend bool) {
 // 모드에 따라 이벤트를 전송한다. poll_interval 이 지정된 그룹은 groupPollLoop 가 담당한다(M5).
 // poll_interval 을 가진 그룹이 하나도 없으면 모든 그룹이 여기서 폴링되어 기존 동작과 동일하다(AC-03).
 func (a *ModbusAgent) pollDevice(ctx context.Context, dev *ModbusDevice, forceFullSend bool) {
-	for _, rg := range dev.config.RegisterGroups {
+	// 레지스터 그룹 슬라이스를 RLock 스냅샷으로 읽는다(M9). set_config 는 copy-on-write 로
+	// dev.config.RegisterGroups 를 통째로 교체하므로, 스냅샷된 헤더는 안정적이다(-race).
+	a.mu.RLock()
+	groups := dev.config.RegisterGroups
+	a.mu.RUnlock()
+	for _, rg := range groups {
 		if rg.PollInterval > 0 {
 			// 그룹별 독립 케이던스 — 전용 스케줄러가 폴링하므로 기본 루프에서 제외(M5).
 			continue
@@ -603,10 +619,31 @@ func (a *ModbusAgent) pollGroupRead(ctx context.Context, dev *ModbusDevice, rg R
 	}
 }
 
+// startGroupLoop 는 (디바이스, 그룹) 전용 폴링 goroutine 을 시작하고 개별 종료 채널을 등록한다(M5/M9).
+// 호출자는 Start(단일 스레드) 이거나 a.mu.Lock() 을 보유해야 한다(groupStops 보호).
+// M9 런타임 재구성(processSetConfig)이 개별 그룹 루프만 정지·재시작할 때 재사용한다.
+func (a *ModbusAgent) startGroupLoop(dev *ModbusDevice, rg RegisterGroupConfig) {
+	key := groupStatKey(dev.config.ID, rg.Name)
+	stop := make(chan struct{})
+	a.groupStops[key] = stop
+	a.pollWg.Add(1)
+	go a.groupPollLoop(dev, rg, stop)
+}
+
+// stopGroupLoop 는 (디바이스, 그룹) 전용 폴링 goroutine 에 개별 종료 시그널을 보내고 등록을 해제한다(M9).
+// 호출자는 a.mu.Lock() 을 보유해야 한다. 대상 루프가 없으면 no-op.
+func (a *ModbusAgent) stopGroupLoop(deviceID, groupName string) {
+	key := groupStatKey(deviceID, groupName)
+	if stop, ok := a.groupStops[key]; ok {
+		close(stop)
+		delete(a.groupStops, key)
+	}
+}
+
 // groupPollLoop 는 poll_interval 이 지정된 단일 (디바이스, 그룹)을 자신의 케이던스로 독립 폴링한다(M5).
-// 티커 수명은 이 goroutine 이 소유하며 stopCh 종료 또는 반환 시 반드시 정지된다(누수 방지, plan.md §5).
-// M9 는 동일한 시그널 방식으로 그룹 케이던스를 런타임 재설정하도록 확장할 수 있다.
-func (a *ModbusAgent) groupPollLoop(dev *ModbusDevice, rg RegisterGroupConfig) {
+// 티커 수명은 이 goroutine 이 소유하며 전역 stopCh 종료, 개별 stop 종료, 또는 반환 시 반드시 정지된다
+// (누수 방지, plan.md §5). 개별 stop 은 M9 런타임 재구성에서 이 그룹 루프만 재시작할 때 사용된다.
+func (a *ModbusAgent) groupPollLoop(dev *ModbusDevice, rg RegisterGroupConfig, stop <-chan struct{}) {
 	defer a.pollWg.Done()
 	ticker := time.NewTicker(rg.PollInterval)
 	defer ticker.Stop()
@@ -620,6 +657,9 @@ func (a *ModbusAgent) groupPollLoop(dev *ModbusDevice, rg RegisterGroupConfig) {
 	for {
 		select {
 		case <-a.stopCh:
+			return
+		case <-stop:
+			// M9: 이 그룹 루프만 개별 정지(런타임 재구성으로 케이던스 변경/그룹 제거).
 			return
 		case <-ticker.C:
 			a.pollGroupTick(dev, rg)
@@ -777,6 +817,8 @@ func (a *ModbusAgent) Process(data []byte) ([]byte, error) {
 		return a.processWriteRegisters(&req)
 	case "read_raw":
 		return a.processReadRaw(&req)
+	case "set_config":
+		return a.processSetConfig(&req)
 	default:
 		return nil, ErrInvalidCommand
 	}
@@ -793,8 +835,16 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 		return nil, err
 	}
 
+	// 런타임 가변 필드(read_mode·요청 타임아웃·레지스터 그룹)를 RLock 스냅샷으로 읽는다(M9).
+	// set_config 가 register_groups/request_timeout 을 a.mu.Lock() 하에 갱신하므로 경합을 피한다.
+	a.mu.RLock()
+	readMode := a.config.ReadMode
+	reqTimeout := a.config.RequestTimeout
+	groups := dev.config.RegisterGroups
+	a.mu.RUnlock()
+
 	// cached 모드 + force=false: 캐시 스냅샷 반환
-	if a.config.ReadMode == "cached" && !req.Force {
+	if readMode == "cached" && !req.Force {
 		cache, ok := a.caches[dev.config.ID]
 		if !ok {
 			return nil, ErrCacheNotFound
@@ -814,11 +864,11 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 		return nil, ErrDeviceOffline
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), a.config.RequestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout)
 	defer cancel()
 
-	results := make([]map[string]any, 0, len(dev.config.RegisterGroups))
-	for _, rg := range dev.config.RegisterGroups {
+	results := make([]map[string]any, 0, len(groups))
+	for _, rg := range groups {
 		start := time.Now()
 		data, readErr := dev.ReadRegisters(ctx, rg)
 		a.recordRequestStat(dev.config.ID, rg.Name, readErr == nil, time.Since(start)) // M7
@@ -935,7 +985,12 @@ func (a *ModbusAgent) processReadRaw(req *processRequest) ([]byte, error) {
 		return nil, ErrDeviceOffline
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), a.config.RequestTimeout)
+	// 요청 타임아웃을 RLock 스냅샷으로 읽는다(M9, set_config 런타임 갱신 경합 방지).
+	a.mu.RLock()
+	reqTimeout := a.config.RequestTimeout
+	a.mu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout)
 	defer cancel()
 
 	rg := RegisterGroupConfig{
@@ -1240,9 +1295,12 @@ func (a *ModbusAgent) State() map[string]any {
 			d["request_stats"] = requestStatsMap(c)
 		}
 
-		// 레지스터 그룹 정보 추가
-		groups := make([]map[string]any, 0, len(dev.config.RegisterGroups))
-		for _, rg := range dev.config.RegisterGroups {
+		// 레지스터 그룹 정보 추가 — RLock 스냅샷으로 읽는다(M9, set_config copy-on-write 경합 방지).
+		a.mu.RLock()
+		rgSnapshot := dev.config.RegisterGroups
+		a.mu.RUnlock()
+		groups := make([]map[string]any, 0, len(rgSnapshot))
+		for _, rg := range rgSnapshot {
 			groupKey := fmt.Sprintf("FC%d_%d", rg.FunctionCode, rg.StartAddress)
 			g := map[string]any{
 				"name":          rg.Name,

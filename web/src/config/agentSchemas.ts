@@ -71,16 +71,40 @@ const THINGPLUS_FIELDS: ConfigField[] = [
   { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.', section: 'logging' },
 ];
 
+// ──────────────────────────────────────────────────────────────────────────
+// Modbus Client (SPEC-MODBUS-006)
+// type id 는 modbus-tcp 로 보존하되, transport 로 tcp | rtu 를 선택한다.
+//  - transport=tcp (기본, 생략 시): 기존 MBAP/TCP 동작 (하위 호환)
+//  - transport=rtu: 시리얼 파라미터(serial_port/baud_rate/data_bits/stop_bits/parity)를
+//    조건부(visibleWhen)로 노출. 시리얼 파라미터는 init 전용(런타임 set_config 로 변경 불가).
+// 데이터 타입/바이트순서(raw + ABCD/BADC/CDAB/DCBA + big_endian/little_endian 별칭)와
+// 그룹별 poll_interval 은 디바이스/레지스터 그룹 탭에서 그룹 단위로 지정한다.
+// ──────────────────────────────────────────────────────────────────────────
 const MODBUS_TCP_FIELDS: ConfigField[] = [
+  { name: 'transport', type: 'select', label: '트랜스포트', options: ['tcp', 'rtu'], default: 'tcp', description: 'tcp: MODBUS/TCP(MBAP) / rtu: MODBUS RTU(시리얼, CRC-16). 생략 시 tcp (하위 호환). 런타임 전환 불가(init 전용)' },
+  // RTU 시리얼 파라미터 (transport=rtu 일 때만 노출, init 전용). 백엔드 parseSerialConfig 키와 1:1 매핑.
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', description: 'RTU 시리얼 포트 경로 (예: /dev/ttyUSB0). transport=rtu 필수', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'baud_rate', type: 'select', label: '보 레이트', options: ['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'], default: '9600', description: 'RTU 시리얼 통신 속도', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'data_bits', type: 'select', label: '데이터 비트', options: ['5', '6', '7', '8'], default: '8', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'stop_bits', type: 'select', label: '스톱 비트', options: ['1', '2'], default: '1', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport', value: 'rtu' } },
+  // 공통 (tcp/rtu)
   { name: 'mode', type: 'select', label: '모드', options: ['interval', 'event'], default: 'interval', description: 'interval: 주기적 폴링, event: 변경 감지' },
   { name: 'read_mode', type: 'select', label: '읽기 모드', options: ['direct', 'cached'], default: 'cached' },
-  { name: 'poll_interval', type: 'string', label: '폴링 간격', default: '5s', description: 'Go duration 형식 (예: 5s, 1m)' },
+  { name: 'poll_interval', type: 'string', label: '기본 폴링 간격', default: '5s', description: 'Go duration 형식 (예: 5s, 1m). 그룹에 poll_interval 이 지정되면 해당 그룹은 그 주기로 독립 폴링하고, 미지정 그룹만 이 기본 주기로 폴백' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '10s' },
   { name: 'request_timeout', type: 'string', label: '요청 타임아웃', default: '3s' },
   { name: 'max_retries', type: 'number', label: '최대 재시도', default: 3 },
   { name: 'enable_write_events', type: 'boolean', label: '쓰기 이벤트', default: true },
-  { name: 'devices', type: 'object', label: '디바이스 설정', required: true, description: '디바이스 배열 (JSON)' },
+  { name: 'devices', type: 'object', label: '디바이스 설정', required: true, description: '디바이스 배열 (JSON). 각 register_group 은 선택적 poll_interval(그룹별 독립 주기), data_type(uint16/int16/uint32/int32/float32/raw), byte_order(big_endian/little_endian 별칭 + ABCD/BADC/CDAB/DCBA 4순열)를 가질 수 있다' },
 ];
+
+/** Modbus register_group 의 data_type 옵션 (SPEC-MODBUS-006 REQ-03). raw 는 변환 없이 원본 워드 전달. */
+export const MODBUS_DATA_TYPE_OPTIONS = ['uint16', 'int16', 'uint32', 'int32', 'float32', 'raw'] as const;
+
+/** Modbus register_group 의 byte_order 옵션 (SPEC-MODBUS-006 REQ-03).
+ *  big_endian(=ABCD)/little_endian(=CDAB) 별칭 + 완전한 4순열(ABCD/BADC/CDAB/DCBA). */
+export const MODBUS_BYTE_ORDER_OPTIONS = ['big_endian', 'little_endian', 'ABCD', 'BADC', 'CDAB', 'DCBA'] as const;
 
 const MODBUS_TCP_SERVER_FIELDS: ConfigField[] = [
   { name: 'listen_address', type: 'string', label: '수신 주소', default: '0.0.0.0' },

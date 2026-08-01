@@ -81,4 +81,10 @@ var (
 	// ErrInvalidSerialParam 는 RTU 시리얼 파라미터(baud_rate/data_bits/stop_bits/parity)가
 	// 유효 범위를 벗어났을 때 반환된다.
 	ErrInvalidSerialParam = errors.New("modbus: invalid serial parameter")
+
+	// ErrInitOnlyField 는 런타임 set_config 로 init 전용 필드(트랜스포트 tcp↔rtu 전환,
+	// RTU 시리얼 하드웨어 파라미터 port/baud/data_bits/stop_bits/parity)의 변경을
+	// 시도했을 때 반환된다(M9, AC-08). 이 필드들은 ADU 프레이밍·연결 토폴로지·시리얼 포트
+	// 오픈에 귀속되므로 런타임 변경을 거부하고 에이전트는 직전 설정으로 계속 동작한다.
+	ErrInitOnlyField = errors.New("modbus: field is init-only and cannot be changed at runtime")
 )
