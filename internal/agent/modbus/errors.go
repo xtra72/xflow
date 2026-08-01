@@ -64,4 +64,17 @@ var (
 	// ErrFunctionCodeMismatch 는 RTU 응답의 function code 가 요청 function code
 	// (또는 그 예외 형태 fc|0x80)와 일치하지 않을 때 반환된다.
 	ErrFunctionCodeMismatch = errors.New("modbus: RTU response function code mismatch")
+
+	// ErrSerialConnectionFailed 는 RTU 시리얼 포트 오픈/연결에 실패했을 때 반환된다.
+	ErrSerialConnectionFailed = errors.New("modbus: RTU serial connection failed")
+
+	// ErrInvalidTransport 는 transport 값이 "tcp"/"rtu" 가 아닐 때 반환된다.
+	ErrInvalidTransport = errors.New("modbus: invalid transport (must be \"tcp\" or \"rtu\")")
+
+	// ErrMissingSerialPort 는 transport 가 "rtu" 인데 serial_port 가 없을 때 반환된다.
+	ErrMissingSerialPort = errors.New("modbus: serial_port is required for rtu transport")
+
+	// ErrInvalidSerialParam 는 RTU 시리얼 파라미터(baud_rate/data_bits/stop_bits/parity)가
+	// 유효 범위를 벗어났을 때 반환된다.
+	ErrInvalidSerialParam = errors.New("modbus: invalid serial parameter")
 )

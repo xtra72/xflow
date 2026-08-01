@@ -7,8 +7,18 @@ import (
 	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
-// ModbusConfig 는 MODBUS/TCP 에이전트의 설정을 나타낸다.
+// 트랜스포트 디스크리미네이터 상수.
+const (
+	// TransportTCP 는 MODBUS/TCP(MBAP) 트랜스포트이다(기본값).
+	TransportTCP = "tcp"
+	// TransportRTU 는 MODBUS RTU(시리얼, CRC 프레이밍) 트랜스포트이다.
+	TransportRTU = "rtu"
+)
+
+// ModbusConfig 는 MODBUS 클라이언트 에이전트의 설정을 나타낸다.
 type ModbusConfig struct {
+	Transport         string        // "tcp" | "rtu" (기본값 "tcp", 생략 시 하위 호환)
+	Serial            SerialConfig  // Transport == "rtu" 일 때만 유효한 시리얼 파라미터
 	Mode              string        // "interval" | "event"
 	ReadMode          string        // "direct" | "cached"
 	PollInterval      time.Duration // 기본값 5s
@@ -23,6 +33,16 @@ type ModbusConfig struct {
 	Devices           []DeviceConfig
 }
 
+// SerialConfig 는 RTU 트랜스포트의 시리얼 포트 파라미터이다(A-10).
+// transport == "rtu" 일 때 Transport.Options 에서 파싱·검증된다.
+type SerialConfig struct {
+	Port     string // 시리얼 포트 경로 (필수, 예: /dev/ttyUSB0)
+	BaudRate int    // 기본값 9600
+	DataBits int    // 기본값 8
+	StopBits int    // 기본값 1 (1 또는 2)
+	Parity   string // "none" | "even" | "odd" (기본값 "none")
+}
+
 // DeviceConfig 는 단일 MODBUS 디바이스의 설정을 나타낸다.
 type DeviceConfig struct {
 	ID             string
@@ -35,16 +55,17 @@ type DeviceConfig struct {
 // RegisterGroupConfig 는 레지스터 그룹의 설정을 나타낸다.
 type RegisterGroupConfig struct {
 	Name         string
-	FunctionCode byte   // 1, 2, 3, 4
+	FunctionCode byte // 1, 2, 3, 4
 	StartAddress uint16
 	Quantity     uint16
-	DataType     string              // 그룹 기본 데이터 타입 (기본: "uint16")
+	DataType     string                // 그룹 기본 데이터 타입 (기본: "uint16")
 	TypeMap      []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
 }
 
 // parseModbusConfig 는 Transport.Options 맵에서 ModbusConfig 를 파싱한다.
 func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 	cfg := ModbusConfig{
+		Transport:         TransportTCP,
 		Mode:              "interval",
 		ReadMode:          "cached",
 		PollInterval:      5 * time.Second,
@@ -55,6 +76,28 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 		MaxRetries:        3,
 		RequestTimeout:    3 * time.Second,
 		MsgChannelSize:    256,
+	}
+
+	// transport (선택, 기본 "tcp" — 생략 시 기존 TCP 동작 보존, AC-03)
+	if v, ok := opts["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case TransportTCP, "":
+			cfg.Transport = TransportTCP
+		case TransportRTU:
+			cfg.Transport = TransportRTU
+		default:
+			return ModbusConfig{}, fmt.Errorf("modbus: transport %q: %w", s, ErrInvalidTransport)
+		}
+	}
+
+	// RTU 시리얼 파라미터 (transport == "rtu" 일 때 파싱·검증, A-10)
+	if cfg.Transport == TransportRTU {
+		sc, err := parseSerialConfig(opts)
+		if err != nil {
+			return ModbusConfig{}, err
+		}
+		cfg.Serial = sc
 	}
 
 	// mode
@@ -174,6 +217,66 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseSerialConfig 는 Transport.Options 에서 RTU 시리얼 파라미터를 파싱·검증한다(A-10).
+// serial_port(또는 port)는 필수이며, 나머지는 관례적 기본값을 가진다.
+// 검증은 파싱 단계에서 수행되며, 무효 값은 설정 오류로 거부한다.
+func parseSerialConfig(opts map[string]any) (SerialConfig, error) {
+	sc := SerialConfig{
+		BaudRate: 9600,
+		DataBits: 8,
+		StopBits: 1,
+		Parity:   "none",
+	}
+
+	// serial_port / port (필수)
+	if v, ok := opts["serial_port"]; ok {
+		sc.Port, _ = v.(string)
+	} else if v, ok := opts["port"]; ok {
+		sc.Port, _ = v.(string)
+	}
+	if sc.Port == "" {
+		return SerialConfig{}, ErrMissingSerialPort
+	}
+
+	// baud_rate (기본 9600, > 0)
+	if v, ok := opts["baud_rate"]; ok {
+		sc.BaudRate = toInt(v)
+	}
+	if sc.BaudRate <= 0 {
+		return SerialConfig{}, fmt.Errorf("modbus: baud_rate must be > 0 (got %d): %w", sc.BaudRate, ErrInvalidSerialParam)
+	}
+
+	// data_bits (기본 8, 5-8)
+	if v, ok := opts["data_bits"]; ok {
+		sc.DataBits = toInt(v)
+	}
+	if sc.DataBits < 5 || sc.DataBits > 8 {
+		return SerialConfig{}, fmt.Errorf("modbus: data_bits must be 5-8 (got %d): %w", sc.DataBits, ErrInvalidSerialParam)
+	}
+
+	// stop_bits (기본 1, 1 또는 2)
+	if v, ok := opts["stop_bits"]; ok {
+		sc.StopBits = toInt(v)
+	}
+	if sc.StopBits != 1 && sc.StopBits != 2 {
+		return SerialConfig{}, fmt.Errorf("modbus: stop_bits must be 1 or 2 (got %d): %w", sc.StopBits, ErrInvalidSerialParam)
+	}
+
+	// parity (기본 "none", none|even|odd)
+	if v, ok := opts["parity"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			sc.Parity = s
+		}
+	}
+	switch sc.Parity {
+	case "none", "even", "odd":
+	default:
+		return SerialConfig{}, fmt.Errorf("modbus: parity %q must be none|even|odd: %w", sc.Parity, ErrInvalidSerialParam)
+	}
+
+	return sc, nil
 }
 
 // parseDeviceConfig 는 디바이스 설정 맵을 DeviceConfig 로 파싱한다.

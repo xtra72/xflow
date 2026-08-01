@@ -75,11 +75,8 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		createdAt:     time.Now(),
 	}
 
-	// 설정에 정의된 디바이스 생성
-	for i := range cfg.Devices {
-		dev := NewModbusDevice(cfg.Devices[i], cfg.RequestTimeout, a.logger)
-		a.devices = append(a.devices, dev)
-	}
+	// 설정에 정의된 디바이스 생성 (transport 로 라우팅, M4)
+	a.buildDevices(cfg)
 
 	// 디바이스별 RegisterCache 생성
 	a.caches = make(map[string]*RegisterCache, len(a.devices))
@@ -95,6 +92,25 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	}
 
 	return a, nil
+}
+
+// buildDevices 는 파싱된 transport 에 따라 각 디바이스의 트랜스포트를 선택해 생성한다(M4).
+//   - tcp(기본): 디바이스별 ModbusTCPTransport (기존 동작 그대로, AC-03)
+//   - rtu: 단일 시리얼 버스를 공유하는 ModbusRTUTransport 를 모든 디바이스에 주입
+//     (반이중 멀티드롭 — 하나의 포트/turnaround mutex 를 unitID 별로 직렬 공유, A-4)
+func (a *ModbusAgent) buildDevices(cfg ModbusConfig) {
+	if cfg.Transport == TransportRTU {
+		rtu := NewModbusRTUTransport(cfg.Serial, cfg.RequestTimeout, a.logger)
+		for i := range cfg.Devices {
+			dev := newModbusDeviceWithTransport(cfg.Devices[i], rtu, a.logger)
+			a.devices = append(a.devices, dev)
+		}
+		return
+	}
+	for i := range cfg.Devices {
+		dev := NewModbusDevice(cfg.Devices[i], cfg.RequestTimeout, a.logger)
+		a.devices = append(a.devices, dev)
+	}
 }
 
 // newModbusAgentWithTransport 는 테스트용 팩토리 함수이다.
@@ -754,7 +770,7 @@ func (a *ModbusAgent) processReadRaw(req *processRequest) ([]byte, error) {
 	rg := RegisterGroupConfig{
 		FunctionCode: fc,
 		StartAddress: addr,
-		Quantity:      qty,
+		Quantity:     qty,
 	}
 	data, err := dev.ReadRegisters(ctx, rg)
 	if err != nil {
