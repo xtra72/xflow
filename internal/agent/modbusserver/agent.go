@@ -1384,24 +1384,39 @@ func (a *ModbusServerAgent) SharedRegisterMap() *RegisterMap {
 	return a.registerMap
 }
 
-// SharedDevice 는 unit_id 와 그 디바이스의 라이브 *RegisterMap 포인터 쌍이다.
+// SharedDevice 는 한 디바이스의 라이브 공유 배선 정보이다. RegisterMap 은 디바이스의
+// 자체 맵 포인터(포인터 동일성/로컬 접근용), store 는 실제 서빙 스토어(로컬 *RegisterMap
+// 또는 공유 세그먼트 주소 변환 *deviceView)이다. isContainer 는 unit_id 0 공유 컨테이너를
+// 나타낸다(와이어 미서빙, 상속 시 컨테이너로 배선).
 type SharedDevice struct {
 	UnitID      byte
 	Name        string
 	RegisterMap *RegisterMap
+	store       registerStore
+	isContainer bool
 }
 
-// SharedDevices 는 이 서버의 모든 디바이스를 추가 순서대로 (unit_id, *RegisterMap) 쌍으로
-// 반환한다. role=sub 서버가 주 서버의 전체 디바이스 집합을 라이브 공유(동일 포인터)로
-// 상속할 때 사용한다. 반환된 *RegisterMap 는 복사본이 아니라 라이브 포인터이다.
+// SharedDevices 는 이 서버의 공유 컨테이너(unit_id 0, 있으면 맨 앞) + 모든 서빙 디바이스를
+// 추가 순서대로 반환한다. role=sub 서버가 주 서버의 전체 디바이스 집합(컨테이너 포함)을
+// 라이브 공유(동일 포인터 + 동일 store 배선)로 상속할 때 사용한다.
 func (a *ModbusServerAgent) SharedDevices() []SharedDevice {
-	devs := a.deviceManager.GetAllDevices()
-	result := make([]SharedDevice, 0, len(devs))
-	for _, dev := range devs {
+	result := make([]SharedDevice, 0)
+	if c := a.deviceManager.SharedContainer(); c != nil {
+		result = append(result, SharedDevice{
+			UnitID:      0,
+			Name:        c.Name,
+			RegisterMap: c.RegisterMap,
+			store:       c.ReqHandler.store,
+			isContainer: true,
+		})
+	}
+	for _, dev := range a.deviceManager.GetAllDevices() {
 		result = append(result, SharedDevice{
 			UnitID:      dev.UnitID,
 			Name:        dev.Name,
 			RegisterMap: dev.RegisterMap,
+			store:       dev.ReqHandler.store,
+			isContainer: false,
 		})
 	}
 	return result
@@ -1441,48 +1456,74 @@ func (a *ModbusServerAgent) applySharedRegisterMap() error {
 			a.config.SharedFrom, ErrSharedMainNoDevices)
 	}
 
+	// 주 서버의 컨테이너/서빙 디바이스를 분리한다.
+	var mainContainer *SharedDevice
+	var mainServed []SharedDevice
+	for i := range mainDevices {
+		if mainDevices[i].isContainer {
+			mainContainer = &mainDevices[i]
+		} else {
+			mainServed = append(mainServed, mainDevices[i])
+		}
+	}
+	if len(mainServed) == 0 {
+		return fmt.Errorf("modbus-server: shared_from %q has no served devices to share: %w",
+			a.config.SharedFrom, ErrSharedMainNoDevices)
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// 경로 1: main-상속 (서브가 자체 디바이스 없음) → 주 서버 디바이스를 그대로 채운다.
+	// 컨테이너를 먼저 상속한다(있으면). 서빙 디바이스의 공유 세그먼트 store 는 이미 주 서버의
+	// 컨테이너 맵을 참조하므로, 컨테이너 상속은 SharedDevices 체인 일관성을 위한 것이다.
+	if mainContainer != nil {
+		a.deviceManager.setSharedContainer(&Device{
+			UnitID:      0,
+			Name:        mainContainer.Name,
+			RegisterMap: mainContainer.RegisterMap,
+			ReqHandler:  newRequestHandlerWithStore(mainContainer.store, a.logger),
+		})
+	}
+
+	// 경로 1: main-상속 (서브가 자체 서빙 디바이스 없음) → 주 서버 서빙 디바이스를 그대로 채운다.
+	// store 포인터를 재사용하므로 공유 세그먼트 주소 변환 배선이 보존된다.
 	if a.deviceManager.DeviceCount() == 0 {
-		for _, md := range mainDevices {
+		for _, md := range mainServed {
 			dev := &Device{
 				UnitID:      md.UnitID,
 				Name:        md.Name,
 				RegisterMap: md.RegisterMap, // 라이브 공유 포인터
-				ReqHandler:  NewRequestHandler(md.RegisterMap, a.logger),
+				ReqHandler:  newRequestHandlerWithStore(md.store, a.logger),
 			}
 			if err := a.deviceManager.AddDevice(dev); err != nil {
 				return fmt.Errorf("modbus-server: adopt shared device unit_id %d: %w", md.UnitID, err)
 			}
 		}
-		// 주(첫 번째) 디바이스 맵을 하위 호환 필드에 반영한다.
-		a.registerMap = mainDevices[0].RegisterMap
+		a.registerMap = mainServed[0].RegisterMap
 		return nil
 	}
 
-	// 경로 2: 레거시 (서브가 자체 디바이스 보유) → unit_id 매칭 공유, 없으면 주-스왑 폴백.
-	mainByUnit := make(map[byte]*RegisterMap, len(mainDevices))
-	for _, md := range mainDevices {
-		mainByUnit[md.UnitID] = md.RegisterMap
+	// 경로 2: 레거시 (서브가 자체 서빙 디바이스 보유) → unit_id 매칭 공유, 없으면 주-스왑 폴백.
+	mainByUnit := make(map[byte]SharedDevice, len(mainServed))
+	for _, md := range mainServed {
+		mainByUnit[md.UnitID] = md
 	}
 
 	matched := false
 	for _, dev := range a.deviceManager.GetAllDevices() {
-		if rm, ok := mainByUnit[dev.UnitID]; ok {
-			dev.RegisterMap = rm
-			dev.ReqHandler = NewRequestHandler(rm, a.logger)
+		if md, ok := mainByUnit[dev.UnitID]; ok {
+			dev.RegisterMap = md.RegisterMap
+			dev.ReqHandler = newRequestHandlerWithStore(md.store, a.logger)
 			matched = true
 		}
 	}
 
 	if first := a.deviceManager.FirstDevice(); first != nil {
 		if !matched {
-			// 폴백: 매칭이 하나도 없으면 주 디바이스를 주 서버의 주 맵으로 스왑한다.
-			shared := mainDevices[0].RegisterMap
-			first.RegisterMap = shared
-			first.ReqHandler = NewRequestHandler(shared, a.logger)
+			// 폴백: 매칭이 하나도 없으면 주 디바이스를 주 서버의 첫 서빙 맵으로 스왑한다.
+			fb := mainServed[0]
+			first.RegisterMap = fb.RegisterMap
+			first.ReqHandler = newRequestHandlerWithStore(fb.store, a.logger)
 		}
 		a.registerMap = first.RegisterMap
 	}

@@ -88,12 +88,18 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       idle_timeout: '60s',
       devices: [
         {
+          unit_id: 0,
+          name: 'shared',
+          register_map: {
+            holding_registers: [{ address: 0, count: 100, data_type: 'uint16' }],
+          },
+        },
+        {
           unit_id: 1,
           name: 'device-1',
           register_map: {
-            holding_registers: [
-              { start_address: 0, count: 10, data_type: 'uint16' },
-            ],
+            coils: [{ address: 0, count: 8, data_type: 'uint16' }],
+            holding_registers: [{ address: 0, count: 10, shared_address: 0 }],
           },
         },
       ],

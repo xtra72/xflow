@@ -60,4 +60,16 @@ var (
 	// ErrSharedMainNoDevices 는 role=sub 서버가 상속할 주 서버에 디바이스가 하나도
 	// 없을 때 반환된다(공유할 대상 레지스터 맵이 없음).
 	ErrSharedMainNoDevices = errors.New("modbus-server: shared main agent has no devices to share")
+
+	// ErrSharedMapMissing 는 공유 세그먼트(shared_address)가 있으나 unit_id 0
+	// 공유 컨테이너가 없을 때 반환된다(intra-server 공유).
+	ErrSharedMapMissing = errors.New("modbus-server: shared segment requires a unit_id 0 container")
+
+	// ErrSharedRangeOutOfBounds 는 공유 세그먼트의 shared_address 범위가 컨테이너의
+	// 같은 영역 선언 범위를 벗어날 때 반환된다.
+	ErrSharedRangeOutOfBounds = errors.New("modbus-server: shared range out of container bounds")
+
+	// ErrSharedUnderContainer 는 unit_id 0 컨테이너의 세그먼트에 shared_address 가
+	// 지정되었을 때 반환된다(컨테이너 세그먼트는 모두 로컬이어야 함).
+	ErrSharedUnderContainer = errors.New("modbus-server: shared_address not allowed under unit_id 0")
 )

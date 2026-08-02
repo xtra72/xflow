@@ -73,11 +73,18 @@ type RegisterMapConfig struct {
 
 // RegisterAreaConfig 는 단일 레지스터 영역의 설정을 나타낸다.
 type RegisterAreaConfig struct {
-	StartAddress  uint16                // 시작 주소
+	StartAddress  uint16                // 디바이스 주소 (config 키 "address", 하위 호환 "start_address")
 	Count         uint16                // 레지스터 수 (필수, > 0)
-	InitialValues []any                 // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자
-	DataType      string                // 영역 기본 데이터 타입 (기본: "uint16")
-	TypeMap       []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
+	InitialValues []any                 // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자 (로컬 세그먼트 전용)
+	DataType      string                // 영역 기본 데이터 타입 (기본: "uint16", 로컬 세그먼트 전용)
+	TypeMap       []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택, 로컬 세그먼트 전용)
+
+	// 공유 세그먼트(intra-server): shared_address 가 있으면 IsShared=true 이며,
+	// 디바이스 주소 [StartAddress, StartAddress+Count) 는 unit_id 0(공유 컨테이너)의
+	// 같은 영역 [SharedAddress, SharedAddress+Count) 로 앨리어싱된다. data_type/type
+	// 오버레이는 컨테이너 맵에서 상속하므로 공유 세그먼트에는 요구하지 않는다.
+	IsShared      bool   // shared_address 존재 여부 (로컬 vs 공유 판별자)
+	SharedAddress uint16 // 공유 컨테이너(unit_id 0)에서의 시작 주소 (IsShared 일 때만 유효)
 }
 
 // ---------------------------------------------------------------------------
@@ -275,12 +282,12 @@ func parseDevicesConfig(raw any) ([]DeviceConfig, error) {
 
 		var dev DeviceConfig
 
-		// unit_id (필수, 1-247)
+		// unit_id (필수). 0 은 공유 컨테이너(와이어 미서빙), 1-247 은 서빙 디바이스.
 		if v, ok := devMap["unit_id"]; ok {
 			id := toInt(v)
-			if id < 1 || id > 247 {
+			if id < 0 || id > 247 {
 				return nil, fmt.Errorf(
-					"modbus-server: devices[%d].unit_id must be 1-247 (got %d)", i, id)
+					"modbus-server: devices[%d].unit_id must be 0-247 (got %d)", i, id)
 			}
 			dev.UnitID = byte(id)
 		} else {
@@ -325,26 +332,116 @@ func parseDevicesConfig(raw any) ([]DeviceConfig, error) {
 	return devices, nil
 }
 
+// areaNames 는 register_map 의 4개 표준 영역 이름이다.
+var areaNames = []string{"coils", "discrete_inputs", "holding_registers", "input_registers"}
+
+// areaSegments 는 RegisterMapConfig 에서 영역 이름에 해당하는 세그먼트 슬라이스를 반환한다.
+func areaSegments(cfg RegisterMapConfig, area string) []*RegisterAreaConfig {
+	switch area {
+	case "coils":
+		return cfg.Coils
+	case "discrete_inputs":
+		return cfg.DiscreteInputs
+	case "holding_registers":
+		return cfg.HoldingRegisters
+	case "input_registers":
+		return cfg.InputRegisters
+	default:
+		return nil
+	}
+}
+
+// hasSharedSegment 는 register_map 에 공유 세그먼트가 하나라도 있으면 true 를 반환한다.
+func hasSharedSegment(cfg RegisterMapConfig) bool {
+	for _, area := range areaNames {
+		for _, seg := range areaSegments(cfg, area) {
+			if seg.IsShared {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rangeWithinAnySegment 는 [start, start+count) 가 segs 중 하나의 범위에 완전히 포함되면 true.
+func rangeWithinAnySegment(segs []*RegisterAreaConfig, start, count uint16) bool {
+	end := uint32(start) + uint32(count)
+	for _, s := range segs {
+		if uint32(start) >= uint32(s.StartAddress) && end <= uint32(s.StartAddress)+uint32(s.Count) {
+			return true
+		}
+	}
+	return false
+}
+
 // validateDevices 는 디바이스 목록의 유효성을 검증한다.
-// - 최소 1개 디바이스 필요
-// - Unit ID 범위: 1-247
-// - Unit ID 중복 불가
+//   - Unit ID 범위: 0(공유 컨테이너) 또는 1-247(서빙), 중복 불가
+//   - 서빙 디바이스(1-247) 최소 1개 필요
+//   - 공유 세그먼트(shared_address)는 컨테이너(unit_id 0)가 존재해야 하며, 컨테이너의
+//     같은 영역 선언 범위 안에 있어야 한다
+//   - unit_id 0 의 세그먼트는 모두 로컬이어야 한다(shared_address 금지)
 func validateDevices(devices []DeviceConfig) error {
 	if len(devices) == 0 {
 		return fmt.Errorf("modbus-server: at least one device is required: %w", ErrInvalidDeviceConfig)
 	}
 
 	seen := make(map[byte]bool, len(devices))
-	for i, dev := range devices {
-		if dev.UnitID < 1 || dev.UnitID > 247 {
+	var container *DeviceConfig
+	servedCount := 0
+	for i := range devices {
+		dev := &devices[i]
+		if dev.UnitID > 247 {
 			return fmt.Errorf(
-				"modbus-server: devices[%d].unit_id must be 1-247 (got %d)", i, dev.UnitID)
+				"modbus-server: devices[%d].unit_id must be 0-247 (got %d)", i, dev.UnitID)
 		}
 		if seen[dev.UnitID] {
 			return fmt.Errorf(
 				"modbus-server: duplicate unit_id %d in devices: %w", dev.UnitID, ErrDuplicateUnitID)
 		}
 		seen[dev.UnitID] = true
+
+		if dev.UnitID == 0 {
+			container = dev
+			// 컨테이너 세그먼트는 모두 로컬이어야 한다.
+			if hasSharedSegment(dev.RegisterMap) {
+				return fmt.Errorf(
+					"modbus-server: unit_id 0 (shared container) segments must be local (no shared_address): %w",
+					ErrSharedUnderContainer)
+			}
+		} else {
+			servedCount++
+		}
+	}
+
+	if servedCount == 0 {
+		return fmt.Errorf(
+			"modbus-server: at least one served device (unit_id 1-247) is required: %w", ErrInvalidDeviceConfig)
+	}
+
+	// 공유 세그먼트 검증: 컨테이너 존재 + 범위 포함.
+	for i := range devices {
+		dev := &devices[i]
+		if dev.UnitID == 0 {
+			continue
+		}
+		for _, area := range areaNames {
+			for _, seg := range areaSegments(dev.RegisterMap, area) {
+				if !seg.IsShared {
+					continue
+				}
+				if container == nil {
+					return fmt.Errorf(
+						"modbus-server: devices unit_id %d %s has a shared segment but no unit_id 0 container exists: %w",
+						dev.UnitID, area, ErrSharedMapMissing)
+				}
+				if !rangeWithinAnySegment(areaSegments(container.RegisterMap, area), seg.SharedAddress, seg.Count) {
+					return fmt.Errorf(
+						"modbus-server: unit_id %d %s shared range [%d,%d) is out of container %s bounds: %w",
+						dev.UnitID, area, seg.SharedAddress, uint32(seg.SharedAddress)+uint32(seg.Count),
+						area, ErrSharedRangeOutOfBounds)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -468,8 +565,10 @@ func validateSegmentOverlap(segments []*RegisterAreaConfig, areaName string) err
 func parseRegisterAreaConfig(m map[string]any, areaName string) (RegisterAreaConfig, error) {
 	var area RegisterAreaConfig
 
-	// start_address
-	if v, ok := m["start_address"]; ok {
+	// address (신규 키) — 하위 호환으로 start_address 도 허용
+	if v, ok := m["address"]; ok {
+		area.StartAddress = toUint16(v)
+	} else if v, ok := m["start_address"]; ok {
 		area.StartAddress = toUint16(v)
 	}
 
@@ -482,7 +581,16 @@ func parseRegisterAreaConfig(m map[string]any, areaName string) (RegisterAreaCon
 			"modbus-server: register_map.%s.count must be > 0", areaName)
 	}
 
-	// initial_values (선택)
+	// shared_address (선택) — 존재하면 공유 세그먼트로 판별된다.
+	// 공유 세그먼트는 data_type/initial_values/type_map 를 컨테이너(unit_id 0)에서
+	// 상속하므로 로컬 전용 필드를 파싱하지 않는다.
+	if v, ok := m["shared_address"]; ok {
+		area.IsShared = true
+		area.SharedAddress = toUint16(v)
+		return area, nil
+	}
+
+	// initial_values (선택, 로컬 세그먼트 전용)
 	if v, ok := m["initial_values"]; ok {
 		if vals, ok := v.([]any); ok {
 			if len(vals) > int(area.Count) {

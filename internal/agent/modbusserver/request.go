@@ -11,16 +11,39 @@ import (
 // RequestHandler
 // ---------------------------------------------------------------------------
 
-// RequestHandler processes MODBUS PDU requests against a RegisterMap.
+// registerStore 는 RequestHandler 가 와이어 요청을 서빙하기 위해 사용하는 읽기/쓰기
+// 인터페이스이다. *RegisterMap(로컬 전용 디바이스) 와 *deviceView(공유 세그먼트 주소
+// 변환) 가 모두 이를 만족한다.
+type registerStore interface {
+	ReadCoils(start, quantity uint16) ([]bool, error)
+	ReadDiscreteInputs(start, quantity uint16) ([]bool, error)
+	ReadHoldingRegisters(start, quantity uint16) ([]uint16, error)
+	ReadInputRegisters(start, quantity uint16) ([]uint16, error)
+	WriteCoils(start uint16, values []bool) (*ChangeSet, error)
+	WriteHoldingRegisters(start uint16, values []uint16) (*ChangeSet, error)
+}
+
+// 컴파일 타임 인터페이스 체크: *RegisterMap 은 registerStore 를 만족한다.
+var _ registerStore = (*RegisterMap)(nil)
+
+// RequestHandler processes MODBUS PDU requests against a registerStore.
 type RequestHandler struct {
-	rm     *RegisterMap
+	store  registerStore
 	logger *slog.Logger
 }
 
-// NewRequestHandler creates a new RequestHandler.
+// NewRequestHandler creates a new RequestHandler backed by a *RegisterMap.
 func NewRequestHandler(rm *RegisterMap, logger *slog.Logger) *RequestHandler {
 	return &RequestHandler{
-		rm:     rm,
+		store:  rm,
+		logger: logger,
+	}
+}
+
+// newRequestHandlerWithStore 는 임의의 registerStore(예: *deviceView)로 RequestHandler 를 만든다.
+func newRequestHandlerWithStore(store registerStore, logger *slog.Logger) *RequestHandler {
+	return &RequestHandler{
+		store:  store,
 		logger: logger,
 	}
 }
@@ -68,7 +91,7 @@ func (rh *RequestHandler) handleReadCoils(fc byte, startAddr, quantity uint16) [
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataValue)
 	}
 
-	vals, err := rh.rm.ReadCoils(startAddr, quantity)
+	vals, err := rh.store.ReadCoils(startAddr, quantity)
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
 	}
@@ -87,7 +110,7 @@ func (rh *RequestHandler) handleReadDiscreteInputs(fc byte, startAddr, quantity 
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataValue)
 	}
 
-	vals, err := rh.rm.ReadDiscreteInputs(startAddr, quantity)
+	vals, err := rh.store.ReadDiscreteInputs(startAddr, quantity)
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
 	}
@@ -106,7 +129,7 @@ func (rh *RequestHandler) handleReadHoldingRegisters(fc byte, startAddr, quantit
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataValue)
 	}
 
-	vals, err := rh.rm.ReadHoldingRegisters(startAddr, quantity)
+	vals, err := rh.store.ReadHoldingRegisters(startAddr, quantity)
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
 	}
@@ -125,7 +148,7 @@ func (rh *RequestHandler) handleReadInputRegisters(fc byte, startAddr, quantity 
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataValue)
 	}
 
-	vals, err := rh.rm.ReadInputRegisters(startAddr, quantity)
+	vals, err := rh.store.ReadInputRegisters(startAddr, quantity)
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
 	}
@@ -186,7 +209,7 @@ func (rh *RequestHandler) handleWriteSingleCoil(pdu []byte) ([]byte, *ChangeSet)
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataValue), nil
 	}
 
-	cs, err := rh.rm.WriteCoils(addr, []bool{coilVal})
+	cs, err := rh.store.WriteCoils(addr, []bool{coilVal})
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
 	}
@@ -207,7 +230,7 @@ func (rh *RequestHandler) handleWriteSingleRegister(pdu []byte) ([]byte, *Change
 	addr := binary.BigEndian.Uint16(pdu[1:3])
 	value := binary.BigEndian.Uint16(pdu[3:5])
 
-	cs, err := rh.rm.WriteHoldingRegisters(addr, []uint16{value})
+	cs, err := rh.store.WriteHoldingRegisters(addr, []uint16{value})
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
 	}
@@ -241,7 +264,7 @@ func (rh *RequestHandler) handleWriteMultipleCoils(pdu []byte) ([]byte, *ChangeS
 	coilData := pdu[6 : 6+byteCount]
 	values := decodeCoilBits(coilData, int(quantity))
 
-	cs, err := rh.rm.WriteCoils(startAddr, values)
+	cs, err := rh.store.WriteCoils(startAddr, values)
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
 	}
@@ -277,7 +300,7 @@ func (rh *RequestHandler) handleWriteMultipleRegisters(pdu []byte) ([]byte, *Cha
 	regData := pdu[6 : 6+byteCount]
 	values := decodeRegisterBytes(regData)
 
-	cs, err := rh.rm.WriteHoldingRegisters(startAddr, values)
+	cs, err := rh.store.WriteHoldingRegisters(startAddr, values)
 	if err != nil {
 		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
 	}

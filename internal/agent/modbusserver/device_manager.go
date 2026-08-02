@@ -66,7 +66,23 @@ func (ds *DeviceStats) GetLastAccess() time.Time {
 type DeviceManager struct {
 	mu      sync.RWMutex
 	devices map[byte]*Device
-	order   []byte // 디바이스 추가 순서 보존 (broadcast 시 첫 번째 디바이스 결정용)
+	order   []byte  // 디바이스 추가 순서 보존 (broadcast 시 첫 번째 디바이스 결정용)
+	shared  *Device // unit_id 0 공유 컨테이너 (와이어 미서빙; devices/order 에서 제외). nil 가능.
+}
+
+// SharedContainer 는 unit_id 0 공유 컨테이너 디바이스를 반환한다(없으면 nil).
+// 와이어 서빙 집합(GetDevice/GetAllDevices/FirstDevice)에는 포함되지 않는다.
+func (dm *DeviceManager) SharedContainer() *Device {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	return dm.shared
+}
+
+// setSharedContainer 는 공유 컨테이너를 설정한다(cross-agent 상속 시 사용).
+func (dm *DeviceManager) setSharedContainer(dev *Device) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	dm.shared = dev
 }
 
 // NewEmptyDeviceManager 는 디바이스가 없는 빈 DeviceManager 를 반환한다.
@@ -80,6 +96,9 @@ func NewEmptyDeviceManager() *DeviceManager {
 }
 
 // NewDeviceManager 는 설정에서 디바이스 목록을 생성하여 DeviceManager 를 반환한다.
+// unit_id 0 은 공유 컨테이너로 먼저 구성되어 dm.shared 에 저장되고(와이어 미서빙),
+// 서빙 디바이스(1-247)는 로컬 세그먼트로 자체 맵을 구성하되 공유 세그먼트가 있으면
+// deviceView 를 통해 컨테이너 맵으로 주소 변환 서빙한다.
 func NewDeviceManager(configs []DeviceConfig, logger *slog.Logger) (*DeviceManager, error) {
 	if len(configs) == 0 {
 		return nil, fmt.Errorf("modbus-server: at least one device config is required: %w", ErrInvalidDeviceConfig)
@@ -90,19 +109,44 @@ func NewDeviceManager(configs []DeviceConfig, logger *slog.Logger) (*DeviceManag
 		order:   make([]byte, 0, len(configs)),
 	}
 
+	// 1) 공유 컨테이너(unit_id 0) 를 먼저 구성한다. 컨테이너 세그먼트는 모두 로컬이다.
+	var containerRM *RegisterMap
 	for _, cfg := range configs {
+		if cfg.UnitID != 0 {
+			continue
+		}
+		containerRM = NewRegisterMap(cfg.RegisterMap)
+		dm.shared = &Device{
+			UnitID:       0,
+			Name:         cfg.Name,
+			RegisterMap:  containerRM,
+			ReqHandler:   NewRequestHandler(containerRM, logger),
+			RegisterDefs: cfg.RegisterDefs,
+		}
+	}
+
+	// 2) 서빙 디바이스(1-247) 를 구성한다.
+	for _, cfg := range configs {
+		if cfg.UnitID == 0 {
+			continue
+		}
 		if _, exists := dm.devices[cfg.UnitID]; exists {
 			return nil, fmt.Errorf("modbus-server: duplicate unit_id %d: %w", cfg.UnitID, ErrDuplicateUnitID)
 		}
 
-		rm := NewRegisterMap(cfg.RegisterMap)
-		reqHandler := NewRequestHandler(rm, logger)
+		// 자체 맵은 로컬 세그먼트만 담는다(공유 세그먼트는 컨테이너가 서빙).
+		ownRM := NewRegisterMap(localSegmentsConfig(cfg.RegisterMap))
+
+		var store registerStore = ownRM
+		if hasSharedSegment(cfg.RegisterMap) {
+			store = newDeviceView(cfg.RegisterMap, ownRM, containerRM)
+		}
 
 		device := &Device{
 			UnitID:       cfg.UnitID,
 			Name:         cfg.Name,
-			RegisterMap:  rm,
-			ReqHandler:   reqHandler,
+			RegisterMap:  ownRM,
+			ReqHandler:   newRequestHandlerWithStore(store, logger),
 			RegisterDefs: cfg.RegisterDefs,
 		}
 
@@ -111,6 +155,28 @@ func NewDeviceManager(configs []DeviceConfig, logger *slog.Logger) (*DeviceManag
 	}
 
 	return dm, nil
+}
+
+// localSegmentsConfig 는 register_map 설정에서 로컬 세그먼트만 남긴 사본을 반환한다.
+// (공유 세그먼트는 디바이스 자체 맵에 스토리지를 할당하지 않고 컨테이너가 서빙한다.)
+func localSegmentsConfig(cfg RegisterMapConfig) RegisterMapConfig {
+	return RegisterMapConfig{
+		Coils:            filterLocalSegments(cfg.Coils),
+		DiscreteInputs:   filterLocalSegments(cfg.DiscreteInputs),
+		HoldingRegisters: filterLocalSegments(cfg.HoldingRegisters),
+		InputRegisters:   filterLocalSegments(cfg.InputRegisters),
+	}
+}
+
+// filterLocalSegments 는 공유(IsShared) 세그먼트를 제외한 로컬 세그먼트만 반환한다.
+func filterLocalSegments(segs []*RegisterAreaConfig) []*RegisterAreaConfig {
+	out := make([]*RegisterAreaConfig, 0, len(segs))
+	for _, s := range segs {
+		if !s.IsShared {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // GetDevice 는 UnitID 에 해당하는 디바이스를 반환한다.
