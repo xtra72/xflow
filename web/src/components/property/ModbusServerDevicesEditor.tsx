@@ -332,18 +332,14 @@ function AreaSegmentEditor({
   readOnly,
 }: AreaSegmentEditorProps) {
   const { t } = useTranslation();
+  // 선택 상태(UI 전용, 방출값에 영향 없음). 세그먼트 key 는 전역 고유.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   const patchArea = (areaKey: AreaKey, rows: SegmentRow[]) =>
     onChange({ ...areas, [areaKey]: rows });
 
   const addSegment = (areaKey: AreaKey) =>
     patchArea(areaKey, [...areas[areaKey], newSegment()]);
-
-  const removeSegment = (areaKey: AreaKey, segKey: string) =>
-    patchArea(
-      areaKey,
-      areas[areaKey].filter((s) => s.key !== segKey),
-    );
 
   const patchSegment = (
     areaKey: AreaKey,
@@ -355,147 +351,238 @@ function AreaSegmentEditor({
       areas[areaKey].map((s) => (s.key === segKey ? { ...s, ...patch } : s)),
     );
 
+  const toggleSelect = (segKey: string, on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(segKey);
+      else next.delete(segKey);
+      return next;
+    });
+
+  const toggleSelectAll = (areaKey: AreaKey, on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const s of areas[areaKey]) {
+        if (on) next.add(s.key);
+        else next.delete(s.key);
+      }
+      return next;
+    });
+
+  // 선택된 행 일괄 삭제. 선택 상태에서도 삭제된 key 를 정리한다.
+  const deleteSelected = (areaKey: AreaKey) => {
+    const rows = areas[areaKey];
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const s of rows) next.delete(s.key);
+      return next;
+    });
+    patchArea(
+      areaKey,
+      rows.filter((s) => !selected.has(s.key)),
+    );
+  };
+
+  // 컬럼 정렬용 grid 템플릿: 선택 | 주소 | 개수 | 데이터타입 | (공유 | 공유주소)
+  const gridCols = allowShared
+    ? 'grid-cols-[1.75rem_1fr_1fr_1fr_2.5rem_1fr]'
+    : 'grid-cols-[1.75rem_1fr_1fr_1fr]';
+
   return (
     <div className="space-y-3">
       {AREA_KEYS.map((area) => {
         const rows = areas[area.key];
         const overlap = hasOverlap(rows);
+        const selectedInArea = rows.filter((s) => selected.has(s.key)).length;
+        const allSelected = rows.length > 0 && selectedInArea === rows.length;
         return (
           <div
             key={area.key}
             className="space-y-2 rounded border border-(--color-border-default) bg-(--color-bg-elevated) p-2"
           >
-            <span className="text-xs font-semibold text-(--color-text-secondary)">
-              {t(area.labelKey)}
-            </span>
+            {/* 영역 헤더 + 선택 삭제 */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-(--color-text-secondary)">
+                {t(area.labelKey)}
+              </span>
+              {!readOnly && selectedInArea > 0 && (
+                <button
+                  type="button"
+                  onClick={() => deleteSelected(area.key)}
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-red-500 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t('property.modbusServerDevices.deleteSelected')} ({selectedInArea})
+                </button>
+              )}
+            </div>
 
-            {rows.length === 0 && (
+            {rows.length === 0 ? (
               <p className="py-1 text-center text-[11px] text-(--color-text-muted)">
                 {t('property.modbusServerDevices.noSegments')}
               </p>
-            )}
-
-            {rows.map((seg) => (
-              <div
-                key={seg.key}
-                className="grid grid-cols-2 items-end gap-2 rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2"
-              >
-                <label className="space-y-0.5">
+            ) : (
+              <div className="space-y-1">
+                {/* 컬럼 헤더 행 */}
+                <div className={cn('grid items-center gap-2 px-1', gridCols)}>
+                  <div className="flex justify-center">
+                    {!readOnly && (
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={(e) => toggleSelectAll(area.key, e.target.checked)}
+                        aria-label={t('property.modbusServerDevices.selectAll')}
+                        className="h-3.5 w-3.5"
+                      />
+                    )}
+                  </div>
                   <span className={fieldLabel}>
                     {t('property.modbusServerDevices.address')}
                   </span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={65535}
-                    value={seg.address}
-                    readOnly={readOnly}
-                    onChange={(e) =>
-                      patchSegment(area.key, seg.key, {
-                        address: numOr(e.target.value, 0),
-                      })
-                    }
-                    className={cn(cellInput, readOnly && readOnlyInput)}
-                  />
-                </label>
-
-                <label className="space-y-0.5">
                   <span className={fieldLabel}>
                     {t('property.modbusServerDevices.count')}
                   </span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={seg.count}
-                    readOnly={readOnly}
-                    onChange={(e) =>
-                      patchSegment(area.key, seg.key, {
-                        count: numOr(e.target.value, 1),
-                      })
-                    }
-                    className={cn(cellInput, readOnly && readOnlyInput)}
-                  />
-                </label>
-
-                {/* 공유 토글 (서빙 디바이스만) */}
-                {allowShared && (
-                  <label className="col-span-2 flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={seg.shared}
-                      disabled={readOnly}
-                      onChange={(e) =>
-                        patchSegment(area.key, seg.key, {
-                          shared: e.target.checked,
-                        })
-                      }
-                      className="h-3.5 w-3.5"
-                    />
-                    <span className="text-xs text-(--color-text-secondary)">
-                      {t('property.modbusServerDevices.shared')}
+                  <span className={fieldLabel}>
+                    {t('property.modbusServerDevices.dataType')}
+                  </span>
+                  {allowShared && (
+                    <span className={cn(fieldLabel, 'text-center')}>
+                      {t('property.modbusServerDevices.sharedColumn')}
                     </span>
-                  </label>
-                )}
-
-                {/* 공유 ON → shared_address / 공유 OFF → data_type */}
-                {allowShared && seg.shared ? (
-                  <label className="space-y-0.5">
+                  )}
+                  {allowShared && (
                     <span className={fieldLabel}>
                       {t('property.modbusServerDevices.sharedAddress')}
                     </span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={65535}
-                      value={seg.sharedAddress}
-                      readOnly={readOnly}
-                      onChange={(e) =>
-                        patchSegment(area.key, seg.key, {
-                          sharedAddress: numOr(e.target.value, 0),
-                        })
-                      }
-                      className={cn(cellInput, readOnly && readOnlyInput)}
-                    />
-                  </label>
-                ) : (
-                  <label className="space-y-0.5">
-                    <span className={fieldLabel}>
-                      {t('property.modbusServerDevices.dataType')}
-                    </span>
-                    <select
-                      value={seg.dataType}
-                      disabled={readOnly}
-                      onChange={(e) =>
-                        patchSegment(area.key, seg.key, {
-                          dataType: e.target.value,
-                        })
-                      }
-                      className={cn(cellInput, readOnly && readOnlyInput)}
-                    >
-                      {MODBUS_DATA_TYPE_OPTIONS.map((dt) => (
-                        <option key={dt} value={dt}>
-                          {dt}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+                  )}
+                </div>
 
-                {!readOnly && (
-                  <div className="col-span-2 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => removeSegment(area.key, seg.key)}
-                      className={removeButton}
-                      aria-label={t('property.modbusServerDevices.removeSegment')}
+                {/* 세그먼트 행 (한 세그먼트 = 한 행) */}
+                {rows.map((seg) => {
+                  const isShared = allowShared && seg.shared;
+                  return (
+                    <div
+                      key={seg.key}
+                      className={cn(
+                        'grid items-center gap-2 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1',
+                        gridCols,
+                      )}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
+                      {/* 선택 체크박스 */}
+                      <div className="flex justify-center">
+                        {!readOnly && (
+                          <input
+                            type="checkbox"
+                            checked={selected.has(seg.key)}
+                            onChange={(e) => toggleSelect(seg.key, e.target.checked)}
+                            aria-label={t('property.modbusServerDevices.selectRow')}
+                            className="h-3.5 w-3.5"
+                          />
+                        )}
+                      </div>
+
+                      {/* 주소 */}
+                      <input
+                        type="number"
+                        min={0}
+                        max={65535}
+                        value={seg.address}
+                        readOnly={readOnly}
+                        onChange={(e) =>
+                          patchSegment(area.key, seg.key, {
+                            address: numOr(e.target.value, 0),
+                          })
+                        }
+                        aria-label={t('property.modbusServerDevices.address')}
+                        className={cn(cellInput, readOnly && readOnlyInput)}
+                      />
+
+                      {/* 개수 */}
+                      <input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={seg.count}
+                        readOnly={readOnly}
+                        onChange={(e) =>
+                          patchSegment(area.key, seg.key, {
+                            count: numOr(e.target.value, 1),
+                          })
+                        }
+                        aria-label={t('property.modbusServerDevices.count')}
+                        className={cn(cellInput, readOnly && readOnlyInput)}
+                      />
+
+                      {/* 데이터 타입 (공유 ON 이면 비활성/블랭크 — 컨테이너에서 상속) */}
+                      {isShared ? (
+                        <span className="text-center text-xs text-(--color-text-muted)">
+                          —
+                        </span>
+                      ) : (
+                        <select
+                          value={seg.dataType}
+                          disabled={readOnly}
+                          onChange={(e) =>
+                            patchSegment(area.key, seg.key, {
+                              dataType: e.target.value,
+                            })
+                          }
+                          aria-label={t('property.modbusServerDevices.dataType')}
+                          className={cn(cellInput, readOnly && readOnlyInput)}
+                        >
+                          {MODBUS_DATA_TYPE_OPTIONS.map((dt) => (
+                            <option key={dt} value={dt}>
+                              {dt}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {/* 공유 토글 (서빙 디바이스만) */}
+                      {allowShared && (
+                        <div className="flex justify-center">
+                          <input
+                            type="checkbox"
+                            checked={seg.shared}
+                            disabled={readOnly}
+                            onChange={(e) =>
+                              patchSegment(area.key, seg.key, {
+                                shared: e.target.checked,
+                              })
+                            }
+                            aria-label={t('property.modbusServerDevices.sharedColumn')}
+                            className="h-3.5 w-3.5"
+                          />
+                        </div>
+                      )}
+
+                      {/* 공유 주소 (공유 ON 일 때만 활성) */}
+                      {allowShared &&
+                        (isShared ? (
+                          <input
+                            type="number"
+                            min={0}
+                            max={65535}
+                            value={seg.sharedAddress}
+                            readOnly={readOnly}
+                            onChange={(e) =>
+                              patchSegment(area.key, seg.key, {
+                                sharedAddress: numOr(e.target.value, 0),
+                              })
+                            }
+                            aria-label={t('property.modbusServerDevices.sharedAddress')}
+                            className={cn(cellInput, readOnly && readOnlyInput)}
+                          />
+                        ) : (
+                          <span className="text-center text-xs text-(--color-text-muted)">
+                            —
+                          </span>
+                        ))}
+                    </div>
+                  );
+                })}
               </div>
-            ))}
+            )}
 
             {overlap && (
               <p className="text-[11px] text-red-500 dark:text-red-400">

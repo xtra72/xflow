@@ -2977,7 +2977,11 @@
       "editSharedTitle": "Edit shared map (device 0)",
       "save": "Save",
       "cancel": "Cancel",
-      "close": "Close"
+      "close": "Close",
+      "selectRow": "Select row",
+      "selectAll": "Select all",
+      "deleteSelected": "Delete selected",
+      "sharedColumn": "Shared"
     },
     "metrics": {
       "metric": "Metric",

@@ -1,14 +1,19 @@
 // ModbusServerDevicesEditor 컴포넌트 테스트 (컴팩트 목록 + 팝업 편집, address 키 모델).
 //
+// 세그먼트 에디터는 컬럼형 단일 행 레이아웃 + 선택 기반 일괄 삭제이다:
+//   [선택] | 주소 | 개수 | 데이터 타입 | 공유 | 공유 주소
+//
 // 검증 대상:
 //   - 빈 value → 시작점 서빙 디바이스 1개 시드 (unit_id 1)
 //   - 컴팩트 목록: unit_id + name 표시, 팝업으로 편집
-//   - 방출 devices JSON 이 백엔드 형상과 일치:
-//       * 세그먼트 키는 address (start_address 아님)
+//   - 방출 devices JSON 이 백엔드 형상과 일치 (변경 없음):
+//       * 세그먼트 키는 address
 //       * local 세그먼트: address/count/data_type
 //       * shared 세그먼트: address/count/shared_address (data_type 없음)
-//       * 디바이스 0 컨테이너: unit_id 0, 전부 local
-//   - legacy JSON 문자열 value 파싱 (address / shared_address / start_address 폴백)
+//       * 디바이스 0 컨테이너: unit_id 0, 전부 local, 공유 토글 없음
+//   - 공유 토글 flip: data_type ↔ shared_address
+//   - 선택 기반 일괄 삭제
+//   - legacy JSON 문자열 value 파싱
 //   - readOnly 모드에서 추가/삭제 버튼 숨김
 //
 // i18n: ModbusDevicesEditor.test 와 동일하게 ko.json 을 점 표기로 해석하는 mock 사용.
@@ -42,6 +47,12 @@ function dialog(): HTMLElement {
   return screen.getByRole('dialog');
 }
 
+/** 팝업 내 특정 영역(0=coils,1=discrete,2=holding,3=input)에 세그먼트 1개 추가. */
+function addSegment(areaIndex: number): void {
+  const btns = within(dialog()).getAllByRole('button', { name: '세그먼트 추가' });
+  fireEvent.click(btns[areaIndex]!);
+}
+
 describe('ModbusServerDevicesEditor', () => {
   it('빈 value 는 시작점 서빙 디바이스 1개(unit_id 1)를 시드한다', () => {
     render(<ModbusServerDevicesEditor value={undefined} onChange={vi.fn()} />);
@@ -55,7 +66,6 @@ describe('ModbusServerDevicesEditor', () => {
       { unit_id: 7, name: 'boiler', register_map: { coils: [{ start_address: 0, count: 8 }] } },
     ]);
     render(<ModbusServerDevicesEditor value={json} onChange={vi.fn()} />);
-    // 컨테이너(디바이스 0) 섹션 + 서빙 디바이스 유닛 ID 7.
     expect(screen.getByText(/유닛 ID: 7/)).toBeInTheDocument();
     expect(screen.getByText('boiler')).toBeInTheDocument();
   });
@@ -81,13 +91,8 @@ describe('ModbusServerDevicesEditor', () => {
       />,
     );
 
-    // 편집 팝업 열기.
     fireEvent.click(screen.getByRole('button', { name: '편집' }));
-    // 보유 레지스터 영역의 "세그먼트 추가" (4개 영역 중 3번째). 첫 번째 매칭이 coils 이므로
-    // 영역별 버튼을 모두 찾아 holding_registers(3번째)를 클릭한다.
-    const addSegBtns = within(dialog()).getAllByRole('button', { name: '세그먼트 추가' });
-    fireEvent.click(addSegBtns[2]!); // holding_registers
-    // 저장.
+    addSegment(2); // holding_registers
     fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
 
     expect(lastEmit(onChange)).toEqual([
@@ -100,7 +105,7 @@ describe('ModbusServerDevicesEditor', () => {
     ]);
   });
 
-  it('팝업에서 공유 세그먼트 → address/count/shared_address 로 방출하고 data_type 을 생략한다', () => {
+  it('공유 토글 ON → address/count/shared_address 로 방출하고 data_type 을 생략한다', () => {
     const onChange = vi.fn();
     render(
       <ModbusServerDevicesEditor
@@ -110,10 +115,8 @@ describe('ModbusServerDevicesEditor', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '편집' }));
-    const addSegBtns = within(dialog()).getAllByRole('button', { name: '세그먼트 추가' });
-    fireEvent.click(addSegBtns[2]!); // holding_registers
-    // 공유 체크박스 ON.
-    fireEvent.click(within(dialog()).getByRole('checkbox'));
+    addSegment(2); // holding_registers
+    fireEvent.click(within(dialog()).getByRole('checkbox', { name: '공유' }));
     fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
 
     expect(lastEmit(onChange)).toEqual([
@@ -126,7 +129,43 @@ describe('ModbusServerDevicesEditor', () => {
     ]);
   });
 
-  it('공유 맵(디바이스 0) 추가 → 팝업 세그먼트는 전부 local 로, unit_id 0 으로 방출한다', () => {
+  it('공유 토글 flip: local(data_type) → 저장 → shared(shared_address) 로 전환된다', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 4, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
+    // 1) 로컬 세그먼트 추가 후 저장 → data_type 포함.
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    addSegment(2); // holding_registers
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+    expect(lastEmit(onChange)).toEqual([
+      {
+        unit_id: 4,
+        register_map: {
+          holding_registers: [{ address: 0, count: 1, data_type: 'uint16' }],
+        },
+      },
+    ]);
+
+    // 2) 다시 편집 → 공유 토글 ON → 저장 → shared_address 로 전환(data_type 제거).
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    fireEvent.click(within(dialog()).getByRole('checkbox', { name: '공유' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+    expect(lastEmit(onChange)).toEqual([
+      {
+        unit_id: 4,
+        register_map: {
+          holding_registers: [{ address: 0, count: 1, shared_address: 0 }],
+        },
+      },
+    ]);
+  });
+
+  it('선택 기반 일괄 삭제: 두 행 선택 후 "선택 삭제" → 해당 영역이 비워진다', () => {
     const onChange = vi.fn();
     render(
       <ModbusServerDevicesEditor
@@ -135,12 +174,39 @@ describe('ModbusServerDevicesEditor', () => {
       />,
     );
 
-    // 공유 맵 추가 → 팝업 열림 (컨테이너 모드).
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    addSegment(2); // holding_registers 세그먼트 1
+    addSegment(2); // holding_registers 세그먼트 2
+
+    // 두 행 선택.
+    const rowChecks = within(dialog()).getAllByRole('checkbox', { name: '행 선택' });
+    expect(rowChecks).toHaveLength(2);
+    fireEvent.click(rowChecks[0]!);
+    fireEvent.click(rowChecks[1]!);
+
+    // 선택 삭제.
+    fireEvent.click(within(dialog()).getByRole('button', { name: /선택 삭제/ }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    // 영역이 비워져 register_map 에서 생략된다.
+    expect(lastEmit(onChange)).toEqual([{ unit_id: 1, register_map: {} }]);
+  });
+
+  it('공유 맵(디바이스 0) 추가 → 팝업에 공유 토글이 없고 unit_id 0 으로 방출한다', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 1, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
     fireEvent.click(screen.getByRole('button', { name: '공유 맵 추가' }));
-    // 컨테이너 팝업에는 공유 토글(checkbox)이 없다.
-    expect(within(dialog()).queryByRole('checkbox')).not.toBeInTheDocument();
-    const addSegBtns = within(dialog()).getAllByRole('button', { name: '세그먼트 추가' });
-    fireEvent.click(addSegBtns[2]!); // holding_registers
+    addSegment(2); // holding_registers
+    // 컨테이너 팝업에는 공유 토글(checkbox name '공유')이 없다.
+    expect(
+      within(dialog()).queryByRole('checkbox', { name: '공유' }),
+    ).not.toBeInTheDocument();
     fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
 
     // 컨테이너가 먼저, 그 다음 서빙 디바이스.
@@ -165,9 +231,8 @@ describe('ModbusServerDevicesEditor', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '편집' }));
-    const addSegBtns = within(dialog()).getAllByRole('button', { name: '세그먼트 추가' });
-    fireEvent.click(addSegBtns[0]!); // coils
-    fireEvent.click(within(dialog()).getByRole('checkbox')); // shared ON
+    addSegment(0); // coils
+    fireEvent.click(within(dialog()).getByRole('checkbox', { name: '공유' }));
     fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
 
     const emitted = lastEmit(onChange) as Array<{
@@ -191,7 +256,6 @@ describe('ModbusServerDevicesEditor', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '편집' }));
-    // 팝업 내 name 입력(빈 값) 찾기.
     const nameInput = within(dialog()).getByPlaceholderText('device-1');
     fireEvent.change(nameInput, { target: { value: 'sensor-a' } });
     fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));

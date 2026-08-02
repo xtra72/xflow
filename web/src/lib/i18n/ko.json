@@ -2977,7 +2977,11 @@
       "editSharedTitle": "공유 맵 편집 (디바이스 0)",
       "save": "저장",
       "cancel": "취소",
-      "close": "닫기"
+      "close": "닫기",
+      "selectRow": "행 선택",
+      "selectAll": "전체 선택",
+      "deleteSelected": "선택 삭제",
+      "sharedColumn": "공유"
     },
     "metrics": {
       "metric": "메트릭",
