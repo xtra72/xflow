@@ -1,20 +1,25 @@
-// ModbusDevicesEditor 컴포넌트 테스트.
+// ModbusDevicesEditor(modbus-client) 컴포넌트 테스트.
+//
+// Server 에디터와 동일한 UX(컴팩트 목록 + 팝업 + 영역별 one-line 행 + 일괄등록)로 재구성됨.
+// register 설정은 4개 영역으로 조직하고, 영역이 function_code 를 유도한다
+// (1=coils 2=discrete_inputs 3=holding_registers 4=input_registers).
 //
 // 검증 대상:
-//   - 빈 value → "디바이스가 없습니다" 안내
-//   - 디바이스 추가/삭제 + onChange 방출
-//   - 레지스터 그룹 추가/삭제
-//   - transport=tcp: host/port 노출 / transport=rtu: host/port 숨김(unit_id 만)
-//   - 고급 type_map 항목 추가/삭제
-//   - 방출 JSON 이 백엔드 형상과 일치 (빈 선택 필드 생략)
-//   - legacy JSON 문자열 value 파싱
+//   - 빈 value → 안내 문구
+//   - legacy JSON 문자열 파싱 → 목록 렌더
+//   - transport tcp: 팝업에 host/port 노출·방출 / rtu: 숨김·방출 제외
+//   - register_groups round-trip (function_code / start_address / quantity / data_type /
+//     poll_interval / name / type_map 보존, fc↔영역)
+//   - 디바이스 레벨 일괄등록: fc→영역 분배 + poll_interval/name 방출
+//   - parseBulkGroups 단위 테스트
+//   - readOnly 모드 버튼 숨김
 //
-// i18n: StoreKeysEditor.test 와 동일하게 ko.json 을 점 표기로 해석하는 mock 사용.
+// i18n: ko.json 을 점 표기로 해석하는 mock.
 
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import { ModbusDevicesEditor } from './ModbusDevicesEditor';
+import { ModbusDevicesEditor, parseBulkGroups } from './ModbusDevicesEditor';
 
 vi.mock('@/lib/i18n', async () => {
   const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
@@ -30,9 +35,12 @@ vi.mock('@/lib/i18n', async () => {
   };
 });
 
-/** 마지막 onChange 인자 (방출된 devices 배열). */
 function lastEmit(onChange: ReturnType<typeof vi.fn>): unknown {
   return onChange.mock.calls.at(-1)?.[0];
+}
+
+function dialog(): HTMLElement {
+  return screen.getByRole('dialog');
 }
 
 describe('ModbusDevicesEditor', () => {
@@ -46,154 +54,101 @@ describe('ModbusDevicesEditor', () => {
     expect(screen.getByText(/디바이스가 없습니다/)).toBeInTheDocument();
   });
 
-  it('legacy JSON 문자열 value 를 파싱해 디바이스를 렌더링한다', () => {
+  it('legacy JSON 문자열 value 를 파싱해 목록을 렌더링한다', () => {
     const json = '[{"unit_id":7,"host":"10.0.0.5","register_groups":[]}]';
     render(<ModbusDevicesEditor value={json} onChange={vi.fn()} transport="tcp" />);
-    expect(screen.getByDisplayValue('10.0.0.5')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('7')).toBeInTheDocument();
+    expect(screen.getByText(/유닛 ID: 7/)).toBeInTheDocument();
+    expect(screen.getByText(/10\.0\.0\.5:502/)).toBeInTheDocument();
   });
 
-  it('깨진 JSON 문자열은 빈 목록으로 폴백한다', () => {
-    render(<ModbusDevicesEditor value={'{not json'} onChange={vi.fn()} />);
-    expect(screen.getByText(/디바이스가 없습니다/)).toBeInTheDocument();
-  });
-
-  it('transport=tcp 는 host/port 를 노출한다', () => {
+  it('transport=tcp 는 팝업에 host/port 를 노출한다', () => {
     render(
-      <ModbusDevicesEditor value={[{ unit_id: 1 }]} onChange={vi.fn()} transport="tcp" />,
+      <ModbusDevicesEditor
+        value={[{ unit_id: 1, host: 'h', register_groups: [] }]}
+        onChange={vi.fn()}
+        transport="tcp"
+      />,
     );
-    expect(screen.getByText('호스트')).toBeInTheDocument();
-    expect(screen.getByText('포트')).toBeInTheDocument();
-    expect(screen.getByText('유닛 ID')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    expect(within(dialog()).getByText('호스트')).toBeInTheDocument();
+    expect(within(dialog()).getByText('포트')).toBeInTheDocument();
+    expect(within(dialog()).getByText('유닛 ID')).toBeInTheDocument();
   });
 
-  it('transport=rtu 는 host/port 를 숨기고 unit_id 만 노출한다', () => {
+  it('transport=rtu 는 팝업에서 host/port 를 숨긴다', () => {
     render(
-      <ModbusDevicesEditor value={[{ unit_id: 1 }]} onChange={vi.fn()} transport="rtu" />,
+      <ModbusDevicesEditor
+        value={[{ unit_id: 1, register_groups: [] }]}
+        onChange={vi.fn()}
+        transport="rtu"
+      />,
     );
-    expect(screen.queryByText('호스트')).not.toBeInTheDocument();
-    expect(screen.queryByText('포트')).not.toBeInTheDocument();
-    expect(screen.getByText('유닛 ID')).toBeInTheDocument();
-  });
-
-  it('디바이스 추가 → onChange 로 기본 디바이스를 방출한다 (tcp)', () => {
-    const onChange = vi.fn();
-    render(<ModbusDevicesEditor value={[]} onChange={onChange} transport="tcp" />);
-
-    fireEvent.click(screen.getByRole('button', { name: '디바이스 추가' }));
-
-    expect(lastEmit(onChange)).toEqual([
-      { unit_id: 1, port: 502, register_groups: [] },
-    ]);
-  });
-
-  it('디바이스 추가 → rtu 에서는 host/port 를 방출하지 않는다', () => {
-    const onChange = vi.fn();
-    render(<ModbusDevicesEditor value={[]} onChange={onChange} transport="rtu" />);
-
-    fireEvent.click(screen.getByRole('button', { name: '디바이스 추가' }));
-
-    expect(lastEmit(onChange)).toEqual([{ unit_id: 1, register_groups: [] }]);
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    expect(within(dialog()).queryByText('호스트')).not.toBeInTheDocument();
+    expect(within(dialog()).queryByText('포트')).not.toBeInTheDocument();
+    expect(within(dialog()).getByText('유닛 ID')).toBeInTheDocument();
   });
 
   it('디바이스 삭제 → 빈 배열을 방출한다', () => {
     const onChange = vi.fn();
     render(
-      <ModbusDevicesEditor value={[{ unit_id: 1 }]} onChange={onChange} transport="tcp" />,
+      <ModbusDevicesEditor
+        value={[{ unit_id: 1, host: 'h', register_groups: [] }]}
+        onChange={onChange}
+        transport="tcp"
+      />,
     );
-
     fireEvent.click(screen.getByRole('button', { name: '디바이스 삭제' }));
-
     expect(lastEmit(onChange)).toEqual([]);
   });
 
-  it('그룹 추가/삭제 → register_groups 를 갱신한다', () => {
+  it('디바이스 추가(tcp): 팝업에서 host 입력 + 보유레지스터 세그먼트 → register_groups(fc3) 방출', () => {
     const onChange = vi.fn();
-    render(
-      <ModbusDevicesEditor value={[{ unit_id: 2 }]} onChange={onChange} transport="tcp" />,
-    );
+    render(<ModbusDevicesEditor value={[]} onChange={onChange} transport="tcp" />);
 
-    fireEvent.click(screen.getByRole('button', { name: '그룹 추가' }));
+    fireEvent.click(screen.getByRole('button', { name: '디바이스 추가' }));
+    // host 입력(필수).
+    fireEvent.change(within(dialog()).getByPlaceholderText('192.168.1.10'), {
+      target: { value: '10.0.0.9' },
+    });
+    // holding_registers(3번째) 세그먼트 추가.
+    const addBtns = within(dialog()).getAllByRole('button', { name: '세그먼트 추가' });
+    fireEvent.click(addBtns[2]!);
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
     expect(lastEmit(onChange)).toEqual([
       {
-        unit_id: 2,
+        unit_id: 1,
+        host: '10.0.0.9',
         port: 502,
         register_groups: [
           { function_code: 3, start_address: 0, quantity: 1, data_type: 'uint16' },
         ],
       },
     ]);
-
-    fireEvent.click(screen.getByRole('button', { name: '그룹 삭제' }));
-    expect(lastEmit(onChange)).toEqual([
-      { unit_id: 2, port: 502, register_groups: [] },
-    ]);
   });
 
-  it('tcp 디바이스 + 그룹 + type_map 엔트리를 백엔드 형상으로 방출한다 (빈 필드 생략)', () => {
-    const onChange = vi.fn();
-    render(<ModbusDevicesEditor value={[]} onChange={onChange} transport="tcp" />);
-
-    // 디바이스 추가 → 그룹 추가 → 고급 열기 → type_map 항목 추가
-    fireEvent.click(screen.getByRole('button', { name: '디바이스 추가' }));
-    fireEvent.click(screen.getByRole('button', { name: '그룹 추가' }));
-    fireEvent.click(
-      screen.getByRole('button', { name: '고급: type_map (주소별 타입)' }),
-    );
-    fireEvent.click(screen.getByRole('button', { name: '항목 추가' }));
-
-    // 빈 host/id/name/poll_interval 은 방출되지 않는다. byte_order 는 엔트리 레벨.
-    expect(lastEmit(onChange)).toEqual([
-      {
-        unit_id: 1,
-        port: 502,
-        register_groups: [
-          {
-            function_code: 3,
-            start_address: 0,
-            quantity: 1,
-            data_type: 'uint16',
-            type_map: [
-              { address: 0, data_type: 'uint16', byte_order: 'big_endian' },
-            ],
-          },
-        ],
-      },
-    ]);
-  });
-
-  it('rtu 디바이스는 unit_id 만 방출한다 (host/port 없음)', () => {
-    const onChange = vi.fn();
-    render(
-      <ModbusDevicesEditor
-        value={[{ unit_id: 9, register_groups: [{ function_code: 4, quantity: 3 }] }]}
-        onChange={onChange}
-        transport="rtu"
-      />,
-    );
-
-    // 그룹 삭제로 방출을 트리거해 rtu 형상을 확인한다.
-    fireEvent.click(screen.getByRole('button', { name: '그룹 삭제' }));
-
-    expect(lastEmit(onChange)).toEqual([{ unit_id: 9, register_groups: [] }]);
-  });
-
-  it('고급 type_map 항목 삭제 → 그룹에서 type_map 키를 제거한다', () => {
+  it('register_groups round-trip: fc↔영역 그룹핑 후 저장하면 function_code/type_map 을 보존한다', () => {
     const onChange = vi.fn();
     render(
       <ModbusDevicesEditor
         value={[
           {
-            unit_id: 1,
-            host: 'h',
+            id: 'dev1',
+            host: '10.0.0.5',
+            port: 502,
+            unit_id: 7,
             register_groups: [
               {
                 function_code: 3,
-                quantity: 2,
-                type_map: [
-                  { address: 0, data_type: 'uint16', byte_order: 'big_endian' },
-                ],
+                start_address: 0,
+                quantity: 10,
+                data_type: 'uint16',
+                poll_interval: '5s',
+                name: 'temp',
+                type_map: [{ address: 0, data_type: 'float32', byte_order: 'big_endian' }],
               },
+              { function_code: 1, start_address: 0, quantity: 8, data_type: 'uint16' },
             ],
           },
         ]}
@@ -202,16 +157,89 @@ describe('ModbusDevicesEditor', () => {
       />,
     );
 
-    // type_map 엔트리가 있으면 고급 섹션이 자동으로 열린다.
-    fireEvent.click(screen.getByRole('button', { name: '항목 삭제' }));
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    // 방출은 영역 순서(coils → holding)로 정렬된다. function_code 는 영역에서 유도되어 보존.
+    expect(lastEmit(onChange)).toEqual([
+      {
+        id: 'dev1',
+        host: '10.0.0.5',
+        port: 502,
+        unit_id: 7,
+        register_groups: [
+          { function_code: 1, start_address: 0, quantity: 8, data_type: 'uint16' },
+          {
+            function_code: 3,
+            start_address: 0,
+            quantity: 10,
+            data_type: 'uint16',
+            poll_interval: '5s',
+            name: 'temp',
+            type_map: [{ address: 0, data_type: 'float32', byte_order: 'big_endian' }],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('rtu 디바이스는 host/port 를 방출하지 않는다', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusDevicesEditor
+        value={[
+          { unit_id: 9, register_groups: [{ function_code: 4, start_address: 0, quantity: 3 }] },
+        ]}
+        onChange={onChange}
+        transport="rtu"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    expect(lastEmit(onChange)).toEqual([
+      {
+        unit_id: 9,
+        register_groups: [
+          { function_code: 4, start_address: 0, quantity: 3, data_type: 'uint16' },
+        ],
+      },
+    ]);
+  });
+
+  it('일괄등록: fc 로 영역 분배 + poll_interval/name 방출 (holding + coils)', () => {
+    const onChange = vi.fn();
+    render(<ModbusDevicesEditor value={[]} onChange={onChange} transport="tcp" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '디바이스 추가' }));
+    fireEvent.change(within(dialog()).getByPlaceholderText('192.168.1.10'), {
+      target: { value: '10.0.0.9' },
+    });
+    fireEvent.click(within(dialog()).getByRole('button', { name: '일괄등록' }));
+
+    const textarea = within(dialog()).getByRole('textbox', { name: '일괄등록' });
+    fireEvent.change(textarea, {
+      target: { value: '3,0,10,uint16,5s,temp\n1,0,8,uint16,,door' },
+    });
+    fireEvent.click(within(dialog()).getByRole('button', { name: '적용' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
 
     expect(lastEmit(onChange)).toEqual([
       {
         unit_id: 1,
-        host: 'h',
+        host: '10.0.0.9',
         port: 502,
         register_groups: [
-          { function_code: 3, start_address: 0, quantity: 2, data_type: 'uint16' },
+          { function_code: 1, start_address: 0, quantity: 8, data_type: 'uint16', name: 'door' },
+          {
+            function_code: 3,
+            start_address: 0,
+            quantity: 10,
+            data_type: 'uint16',
+            poll_interval: '5s',
+            name: 'temp',
+          },
         ],
       },
     ]);
@@ -219,9 +247,98 @@ describe('ModbusDevicesEditor', () => {
 
   it('readOnly 모드에서는 추가/삭제 버튼을 숨긴다', () => {
     render(
-      <ModbusDevicesEditor value={[{ unit_id: 1 }]} onChange={vi.fn()} readOnly />,
+      <ModbusDevicesEditor
+        value={[{ unit_id: 1, host: 'h', register_groups: [] }]}
+        onChange={vi.fn()}
+        readOnly
+      />,
     );
     expect(screen.queryByRole('button', { name: '디바이스 추가' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '디바이스 삭제' })).not.toBeInTheDocument();
+  });
+});
+
+describe('parseBulkGroups (fc 기반)', () => {
+  it('fc 1-4 → 올바른 영역으로 매핑한다', () => {
+    const r = parseBulkGroups(
+      '1,0,8,uint16,,a\n2,0,4,uint16,,b\n3,0,10,uint16,,c\n4,0,2,uint16,,d',
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.groups.map((g) => g.area)).toEqual([
+      'coils',
+      'discrete_inputs',
+      'holding_registers',
+      'input_registers',
+    ]);
+  });
+
+  it('6열: poll_interval + 설명(name) 포함', () => {
+    const r = parseBulkGroups('3,16,10,int16,5s,temp');
+    expect(r.errors).toEqual([]);
+    expect(r.groups).toEqual([
+      {
+        area: 'holding_registers',
+        address: 16,
+        quantity: 10,
+        dataType: 'int16',
+        pollInterval: '5s',
+        name: 'temp',
+      },
+    ]);
+  });
+
+  it('5열(설명 생략) → name 은 빈 문자열', () => {
+    const r = parseBulkGroups('1,0,8,uint16,1s');
+    expect(r.errors).toEqual([]);
+    expect(r.groups[0]).toMatchObject({ area: 'coils', pollInterval: '1s', name: '' });
+  });
+
+  it('poll_interval 빈 셀 허용 + data_type 빈 셀은 uint16', () => {
+    const r = parseBulkGroups('3,0,10,,,note');
+    expect(r.errors).toEqual([]);
+    expect(r.groups[0]).toMatchObject({ dataType: 'uint16', pollInterval: '', name: 'note' });
+  });
+
+  it('탭 구분도 파싱한다', () => {
+    const r = parseBulkGroups('4\t0\t2\tuint16\t\tin');
+    expect(r.errors).toEqual([]);
+    expect(r.groups[0]).toMatchObject({ area: 'input_registers', address: 0, quantity: 2 });
+  });
+
+  it('헤더 줄(첫 셀 비숫자) 자동 무시', () => {
+    const r = parseBulkGroups('fc,주소,개수,타입,폴링,설명\n3,0,4,uint16,,x');
+    expect(r.errors).toEqual([]);
+    expect(r.groups).toHaveLength(1);
+  });
+
+  it('잘못된 fc(5) → invalidFc', () => {
+    const r = parseBulkGroups('5,0,8,uint16,,x');
+    expect(r.groups).toEqual([]);
+    expect(r.errors).toEqual([{ line: 1, code: 'invalidFc' }]);
+  });
+
+  it('열 개수 오류(4열/7열) → wrongColumnCount', () => {
+    expect(parseBulkGroups('3,0,8,uint16').errors).toEqual([
+      { line: 1, code: 'wrongColumnCount' },
+    ]);
+    expect(parseBulkGroups('3,0,8,uint16,5s,x,extra').errors).toEqual([
+      { line: 1, code: 'wrongColumnCount' },
+    ]);
+  });
+
+  it('잘못된 data_type → invalidDataType', () => {
+    const r = parseBulkGroups('3,0,8,badtype,,x');
+    expect(r.errors).toEqual([{ line: 1, code: 'invalidDataType' }]);
+  });
+
+  it('잘못된 개수(0) → invalidCount', () => {
+    const r = parseBulkGroups('3,0,0,uint16,,x');
+    expect(r.errors).toEqual([{ line: 1, code: 'invalidCount' }]);
+  });
+
+  it('빈 줄 무시 + 유효/무효 혼합 시 유효 그룹과 오류를 함께 반환', () => {
+    const r = parseBulkGroups('1,0,4,uint16,,a\n\nbad\n3,8,2,uint16,,b');
+    expect(r.groups.map((g) => g.area)).toEqual(['coils', 'holding_registers']);
+    expect(r.errors).toEqual([{ line: 3, code: 'wrongColumnCount' }]);
   });
 });
