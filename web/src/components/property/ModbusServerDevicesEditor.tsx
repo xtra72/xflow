@@ -25,7 +25,7 @@
 // RenameKeyDialog/EditKeyMetaDialog 와 동형)을 그대로 사용한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ClipboardPaste, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
@@ -283,6 +283,131 @@ function hasOverlap(rows: SegmentRow[]): boolean {
   return false;
 }
 
+// ---- 일괄등록(bulk paste) 파서 ----
+
+/** 파싱된 세그먼트(순수 데이터, React key 없음). SegmentRow 의 데이터 필드와 동일. */
+export interface BulkSegment {
+  address: number;
+  count: number;
+  shared: boolean;
+  dataType: string;
+  sharedAddress: number;
+}
+
+/** 파싱 오류. line 은 원본 1-based 줄 번호, code 는 i18n bulkError.<code> 키. */
+export interface BulkParseError {
+  line: number;
+  code: string;
+}
+
+export interface BulkParseResult {
+  segments: BulkSegment[];
+  errors: BulkParseError[];
+}
+
+/** 콤마 또는 탭으로 셀 분리(탭 우선 자동 감지). 각 셀 트림. */
+function splitCells(line: string): string[] {
+  const parts = line.includes('\t') ? line.split('\t') : line.split(',');
+  return parts.map((c) => c.trim());
+}
+
+/** 0 이상 정수 문자열 여부. */
+function isNonNegInt(s: string): boolean {
+  return /^\d+$/.test(s);
+}
+
+/**
+ * 붙여넣기 텍스트 → 세그먼트 파싱(순수 함수, 단위 테스트 대상).
+ *
+ * 한 줄 = 한 세그먼트. 컬럼 순서: address, count, data_type, shared_address
+ * (콤마 또는 탭 구분, 셀 트림).
+ *  - 로컬: `address, count, data_type` (data_type 생략 시 uint16). 3컬럼 이하는 항상 로컬.
+ *  - 공유: `address, count, , shared_address` (4컬럼 형식 필수 — shared_address 셀이
+ *    비어있지 않으면 공유). 공유 세그먼트는 data_type 을 상속하므로 방출에서 생략된다.
+ *  - 빈 줄 무시. 첫 non-empty 줄의 첫 셀이 숫자가 아니면 헤더로 보고 무시.
+ *  - address/count/shared_address 는 0 이상 정수(count ≥ 1). data_type 은
+ *    MODBUS_DATA_TYPE_OPTIONS 중 하나. 위반 시 해당 줄 오류.
+ *  - allowShared=false(컨테이너)에서 shared_address 셀이 있으면 오류(containerNoShared).
+ *
+ * 오류가 있어도 유효한 세그먼트는 그대로 담아 반환한다(호출부가 block-on-error 정책 적용).
+ */
+export function parseBulkSegments(
+  text: string,
+  allowShared: boolean,
+): BulkParseResult {
+  const segments: BulkSegment[] = [];
+  const errors: BulkParseError[] = [];
+  const lines = text.split(/\r?\n/);
+  let firstNonEmptySeen = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.trim();
+    if (line === '') continue;
+
+    const cells = splitCells(line);
+
+    // 첫 non-empty 줄의 첫 셀이 비숫자면 헤더로 보고 스킵.
+    if (!firstNonEmptySeen) {
+      firstNonEmptySeen = true;
+      if (!isNonNegInt(cells[0] ?? '')) continue;
+    }
+
+    const lineNo = i + 1;
+    if (cells.length < 2) {
+      errors.push({ line: lineNo, code: 'missingColumns' });
+      continue;
+    }
+
+    const addrCell = cells[0] ?? '';
+    const countCell = cells[1] ?? '';
+    const dtCell = cells[2] ?? '';
+    const sharedCell = cells[3] ?? '';
+    const isShared = sharedCell !== '';
+
+    if (isShared && !allowShared) {
+      errors.push({ line: lineNo, code: 'containerNoShared' });
+      continue;
+    }
+    if (!isNonNegInt(addrCell)) {
+      errors.push({ line: lineNo, code: 'invalidAddress' });
+      continue;
+    }
+    if (!isNonNegInt(countCell) || Number(countCell) < 1) {
+      errors.push({ line: lineNo, code: 'invalidCount' });
+      continue;
+    }
+
+    if (isShared) {
+      if (!isNonNegInt(sharedCell)) {
+        errors.push({ line: lineNo, code: 'invalidSharedAddress' });
+        continue;
+      }
+      segments.push({
+        address: Number(addrCell),
+        count: Number(countCell),
+        shared: true,
+        dataType: DEFAULT_DATA_TYPE,
+        sharedAddress: Number(sharedCell),
+      });
+    } else {
+      const dataType = dtCell === '' ? DEFAULT_DATA_TYPE : dtCell;
+      if (!(MODBUS_DATA_TYPE_OPTIONS as readonly string[]).includes(dataType)) {
+        errors.push({ line: lineNo, code: 'invalidDataType' });
+        continue;
+      }
+      segments.push({
+        address: Number(addrCell),
+        count: Number(countCell),
+        shared: false,
+        dataType,
+        sharedAddress: 0,
+      });
+    }
+  }
+
+  return { segments, errors };
+}
+
 // ---- 스타일 ----
 
 const cellInput = cn(
@@ -334,12 +459,47 @@ function AreaSegmentEditor({
   const { t } = useTranslation();
   // 선택 상태(UI 전용, 방출값에 영향 없음). 세그먼트 key 는 전역 고유.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  // 일괄등록 패널 상태(열린 영역 / 붙여넣기 텍스트 / 파싱 오류).
+  const [bulkArea, setBulkArea] = useState<AreaKey | null>(null);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkErrors, setBulkErrors] = useState<BulkParseError[]>([]);
 
   const patchArea = (areaKey: AreaKey, rows: SegmentRow[]) =>
     onChange({ ...areas, [areaKey]: rows });
 
   const addSegment = (areaKey: AreaKey) =>
     patchArea(areaKey, [...areas[areaKey], newSegment()]);
+
+  const openBulk = (areaKey: AreaKey) => {
+    setBulkArea(areaKey);
+    setBulkText('');
+    setBulkErrors([]);
+  };
+
+  const closeBulk = () => {
+    setBulkArea(null);
+    setBulkText('');
+    setBulkErrors([]);
+  };
+
+  // block-on-error: 오류가 하나라도 있으면 아무것도 추가하지 않고 오류만 표시한다.
+  const applyBulk = (areaKey: AreaKey) => {
+    const result = parseBulkSegments(bulkText, allowShared);
+    if (result.errors.length > 0) {
+      setBulkErrors(result.errors);
+      return;
+    }
+    if (result.segments.length === 0) {
+      closeBulk();
+      return;
+    }
+    const newRows: SegmentRow[] = result.segments.map((s) => ({
+      key: nextKey('seg'),
+      ...s,
+    }));
+    patchArea(areaKey, [...areas[areaKey], ...newRows]);
+    closeBulk();
+  };
 
   const patchSegment = (
     areaKey: AreaKey,
@@ -591,14 +751,74 @@ function AreaSegmentEditor({
             )}
 
             {!readOnly && (
-              <button
-                type="button"
-                onClick={() => addSegment(area.key)}
-                className={addButton}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t('property.modbusServerDevices.addSegment')}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => addSegment(area.key)}
+                  className={addButton}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t('property.modbusServerDevices.addSegment')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    bulkArea === area.key ? closeBulk() : openBulk(area.key)
+                  }
+                  className={addButton}
+                >
+                  <ClipboardPaste className="h-3.5 w-3.5" />
+                  {t('property.modbusServerDevices.bulkRegister')}
+                </button>
+              </div>
+            )}
+
+            {/* 일괄등록 패널 (인라인 확장) */}
+            {!readOnly && bulkArea === area.key && (
+              <div className="space-y-2 rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2">
+                <p className="whitespace-pre-line text-[11px] text-(--color-text-muted)">
+                  {allowShared
+                    ? t('property.modbusServerDevices.bulkHelp')
+                    : t('property.modbusServerDevices.bulkHelpContainer')}
+                </p>
+                <textarea
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  rows={5}
+                  aria-label={t('property.modbusServerDevices.bulkRegister')}
+                  placeholder={t('property.modbusServerDevices.bulkPlaceholder')}
+                  className={cn(cellInput, 'font-mono')}
+                />
+                {bulkErrors.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {bulkErrors.map((er) => (
+                      <li
+                        key={er.line}
+                        className="text-[11px] text-red-500 dark:text-red-400"
+                      >
+                        {t('property.modbusServerDevices.bulkLinePrefix')} {er.line}:{' '}
+                        {t(`property.modbusServerDevices.bulkError.${er.code}`)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeBulk}
+                    className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary)"
+                  >
+                    {t('property.modbusServerDevices.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyBulk(area.key)}
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+                  >
+                    {t('property.modbusServerDevices.bulkApply')}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         );

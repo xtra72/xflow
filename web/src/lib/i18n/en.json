@@ -2981,7 +2981,21 @@
       "selectRow": "Select row",
       "selectAll": "Select all",
       "deleteSelected": "Delete selected",
-      "sharedColumn": "Shared"
+      "sharedColumn": "Shared",
+      "bulkRegister": "Bulk add",
+      "bulkApply": "Apply",
+      "bulkLinePrefix": "Line",
+      "bulkHelp": "address,count,data_type (local) / address,count,,shared_address (shared)\nComma or tab separated, header line auto-skipped. One line = one segment.",
+      "bulkHelpContainer": "address,count,data_type (container is local-only)\nComma or tab separated, header line auto-skipped. One line = one segment.",
+      "bulkPlaceholder": "0,10,uint16\n16,8,,200",
+      "bulkError": {
+        "missingColumns": "Too few columns (address, count required)",
+        "invalidAddress": "Invalid address (non-negative integer)",
+        "invalidCount": "Invalid count (integer >= 1)",
+        "invalidDataType": "Invalid data type",
+        "invalidSharedAddress": "Invalid shared address (non-negative integer)",
+        "containerNoShared": "Container cannot have shared segments"
+      }
     },
     "metrics": {
       "metric": "Metric",
