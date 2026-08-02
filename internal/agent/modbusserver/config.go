@@ -85,6 +85,8 @@ type RegisterAreaConfig struct {
 	// 오버레이는 컨테이너 맵에서 상속하므로 공유 세그먼트에는 요구하지 않는다.
 	IsShared      bool   // shared_address 존재 여부 (로컬 vs 공유 판별자)
 	SharedAddress uint16 // 공유 컨테이너(unit_id 0)에서의 시작 주소 (IsShared 일 때만 유효)
+
+	Description string // 세그먼트 설명 (선택, 메타데이터 전용 — 와이어 서빙에 영향 없음)
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +581,14 @@ func parseRegisterAreaConfig(m map[string]any, areaName string) (RegisterAreaCon
 	if area.Count == 0 {
 		return RegisterAreaConfig{}, fmt.Errorf(
 			"modbus-server: register_map.%s.count must be > 0", areaName)
+	}
+
+	// description (선택, 메타데이터 전용) — 로컬/공유 세그먼트 모두 적용.
+	// shared_address 조기 반환 이전에 읽어 두 경로 모두에서 보존한다.
+	if v, ok := m["description"]; ok {
+		if s, ok := v.(string); ok {
+			area.Description = s
+		}
 	}
 
 	// shared_address (선택) — 존재하면 공유 세그먼트로 판별된다.

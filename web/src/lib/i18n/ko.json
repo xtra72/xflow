@@ -2985,17 +2985,20 @@
       "bulkRegister": "일괄등록",
       "bulkApply": "적용",
       "bulkLinePrefix": "줄",
-      "bulkHelp": "주소,개수,데이터타입 (로컬) / 주소,개수,,공유주소 (공유)\n콤마 또는 탭 구분, 헤더 줄 자동 무시. 한 줄 = 한 세그먼트.",
-      "bulkHelpContainer": "주소,개수,데이터타입 (컨테이너는 로컬만)\n콤마 또는 탭 구분, 헤더 줄 자동 무시. 한 줄 = 한 세그먼트.",
-      "bulkPlaceholder": "0,10,uint16\n16,8,,200",
+      "bulkHelp": "fc,주소,개수,데이터타입,설명 (로컬 5열) / fc,주소,개수,데이터타입,공유,공유주소,설명 (공유 7열)\nfc: 1=코일 2=이산입력 3=보유레지스터 4=입력레지스터. 콤마 또는 탭 구분, 헤더 줄 자동 무시.",
+      "bulkHelpContainer": "fc,주소,개수,데이터타입,설명 (컨테이너는 로컬 5열만)\nfc: 1=코일 2=이산입력 3=보유레지스터 4=입력레지스터. 콤마 또는 탭 구분, 헤더 줄 자동 무시.",
+      "bulkPlaceholder": "1,0,8,uint16,도어 센서\n3,0,10,uint16,shared,200,펌프 상태",
       "bulkError": {
         "missingColumns": "열 개수 부족 (최소 주소, 개수 필요)",
         "invalidAddress": "주소가 올바르지 않음 (0 이상 정수)",
         "invalidCount": "개수가 올바르지 않음 (1 이상 정수)",
         "invalidDataType": "데이터 타입이 올바르지 않음",
         "invalidSharedAddress": "공유 주소가 올바르지 않음 (0 이상 정수)",
-        "containerNoShared": "컨테이너는 공유 세그먼트를 가질 수 없습니다"
-      }
+        "containerNoShared": "컨테이너는 공유 세그먼트를 가질 수 없습니다",
+        "invalidFc": "fc가 올바르지 않음 (1-4 만 허용)",
+        "wrongColumnCount": "열 개수 오류 (로컬 5열 또는 공유 7열)"
+      },
+      "descriptionColumn": "설명"
     },
     "metrics": {
       "metric": "메트릭",

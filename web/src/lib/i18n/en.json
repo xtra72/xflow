@@ -2985,17 +2985,20 @@
       "bulkRegister": "Bulk add",
       "bulkApply": "Apply",
       "bulkLinePrefix": "Line",
-      "bulkHelp": "address,count,data_type (local) / address,count,,shared_address (shared)\nComma or tab separated, header line auto-skipped. One line = one segment.",
-      "bulkHelpContainer": "address,count,data_type (container is local-only)\nComma or tab separated, header line auto-skipped. One line = one segment.",
-      "bulkPlaceholder": "0,10,uint16\n16,8,,200",
+      "bulkHelp": "fc,address,count,data_type,description (local 5 cols) / fc,address,count,data_type,shared,shared_address,description (shared 7 cols)\nfc: 1=coils 2=discrete_inputs 3=holding_registers 4=input_registers. Comma or tab separated, header line auto-skipped.",
+      "bulkHelpContainer": "fc,address,count,data_type,description (container is local 5 cols only)\nfc: 1=coils 2=discrete_inputs 3=holding_registers 4=input_registers. Comma or tab separated, header line auto-skipped.",
+      "bulkPlaceholder": "1,0,8,uint16,door sensor\n3,0,10,uint16,shared,200,pump status",
       "bulkError": {
         "missingColumns": "Too few columns (address, count required)",
         "invalidAddress": "Invalid address (non-negative integer)",
         "invalidCount": "Invalid count (integer >= 1)",
         "invalidDataType": "Invalid data type",
         "invalidSharedAddress": "Invalid shared address (non-negative integer)",
-        "containerNoShared": "Container cannot have shared segments"
-      }
+        "containerNoShared": "Container cannot have shared segments",
+        "invalidFc": "Invalid fc (only 1-4 allowed)",
+        "wrongColumnCount": "Wrong column count (local 5 cols or shared 7 cols)"
+      },
+      "descriptionColumn": "Description"
     },
     "metrics": {
       "metric": "Metric",

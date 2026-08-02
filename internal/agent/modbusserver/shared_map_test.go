@@ -74,6 +74,65 @@ func newSharedServer(t *testing.T) *ModbusServerAgent {
 	return a.(*ModbusServerAgent)
 }
 
+// TestSegmentDescription 은 세그먼트 description(메타데이터)이 로컬/공유 세그먼트 모두에서
+// 파싱·보존되며, 없으면 ""(빈 문자열)로 기본값 처리되는지 검증한다.
+func TestSegmentDescription(t *testing.T) {
+	cfg, err := parseModbusServerConfig(map[string]any{"devices": []any{
+		map[string]any{"unit_id": 0, "register_map": map[string]any{
+			"holding_registers": []any{map[string]any{"address": 0, "count": 1000}},
+		}},
+		map[string]any{"unit_id": 1, "register_map": map[string]any{
+			// 로컬 세그먼트 (description 있음)
+			"coils": []any{map[string]any{"address": 0, "count": 16, "description": "로컬 코일 설명"}},
+			// 공유 세그먼트 (description 있음) + description 없는 두 번째 로컬 세그먼트
+			"holding_registers": []any{
+				map[string]any{"address": 0, "count": 50, "shared_address": 100, "description": "공유 세그먼트 설명"},
+				map[string]any{"address": 100, "count": 10}, // description 없음 → ""
+			},
+		}},
+	}})
+	require.NoError(t, err)
+
+	// unit_id 1 디바이스를 찾는다.
+	var dev1 *DeviceConfig
+	for i := range cfg.Devices {
+		if cfg.Devices[i].UnitID == 1 {
+			dev1 = &cfg.Devices[i]
+		}
+	}
+	require.NotNil(t, dev1)
+
+	// 로컬 코일 세그먼트 description
+	require.Len(t, dev1.RegisterMap.Coils, 1)
+	assert.Equal(t, "로컬 코일 설명", dev1.RegisterMap.Coils[0].Description)
+
+	// 공유 holding 세그먼트 description (shared 경로에서도 보존)
+	require.Len(t, dev1.RegisterMap.HoldingRegisters, 2)
+	assert.True(t, dev1.RegisterMap.HoldingRegisters[0].IsShared)
+	assert.Equal(t, "공유 세그먼트 설명", dev1.RegisterMap.HoldingRegisters[0].Description)
+
+	// description 없는 세그먼트 → "" 기본값
+	assert.False(t, dev1.RegisterMap.HoldingRegisters[1].IsShared)
+	assert.Equal(t, "", dev1.RegisterMap.HoldingRegisters[1].Description)
+}
+
+// TestSegmentDescription_RoundTrip 은 register_map 이 raw Transport.Options 맵으로 그대로
+// 반환되므로 description 이 API 왕복에서 보존됨을 확인한다(구조체 재구성 경로 없음).
+func TestSegmentDescription_RoundTrip(t *testing.T) {
+	opts := map[string]any{"devices": []any{
+		map[string]any{"unit_id": 1, "register_map": map[string]any{
+			"holding_registers": []any{map[string]any{"address": 0, "count": 10, "description": "설명 보존"}},
+		}},
+	}}
+	// 파싱은 성공해야 하며(수용됨), raw 맵은 description 을 그대로 보유한다.
+	_, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+
+	devs := opts["devices"].([]any)
+	seg := devs[0].(map[string]any)["register_map"].(map[string]any)["holding_registers"].([]any)[0].(map[string]any)
+	assert.Equal(t, "설명 보존", seg["description"], "raw options 맵에서 description 보존")
+}
+
 // (a) 파싱: 컨테이너 + 공유 세그먼트 디바이스가 정상 구성된다.
 func TestSharedMap_ParseAndConstruct(t *testing.T) {
 	srv := newSharedServer(t)

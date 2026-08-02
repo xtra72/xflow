@@ -265,7 +265,7 @@ describe('ModbusServerDevicesEditor', () => {
     ]);
   });
 
-  it('일괄등록: 붙여넣기 → 로컬 + 공유 세그먼트를 append 하고 방출한다 (수동 추가와 동일 형상)', () => {
+  it('일괄등록(디바이스 레벨): fc 로 영역 분배 + 설명 방출 (로컬 coils + 공유 holding)', () => {
     const onChange = vi.fn();
     render(
       <ModbusServerDevicesEditor
@@ -275,13 +275,14 @@ describe('ModbusServerDevicesEditor', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '편집' }));
-    // holding_registers 영역(3번째)의 일괄등록 패널 열기.
-    const bulkBtns = within(dialog()).getAllByRole('button', { name: '일괄등록' });
-    fireEvent.click(bulkBtns[2]!);
+    // 디바이스 레벨 일괄등록 패널 열기(팝업에 단일 버튼).
+    fireEvent.click(within(dialog()).getByRole('button', { name: '일괄등록' }));
 
-    // 한 줄 = 한 세그먼트: 로컬 + 공유.
+    // fc 1 = coils(로컬 5열), fc 3 = holding_registers(공유 7열).
     const textarea = within(dialog()).getByRole('textbox', { name: '일괄등록' });
-    fireEvent.change(textarea, { target: { value: '0,10,uint16\n16,8,,200' } });
+    fireEvent.change(textarea, {
+      target: { value: '1,0,8,uint16,door sensor\n3,0,10,uint16,shared,200,pump status' },
+    });
     fireEvent.click(within(dialog()).getByRole('button', { name: '적용' }));
 
     fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
@@ -290,9 +291,9 @@ describe('ModbusServerDevicesEditor', () => {
       {
         unit_id: 1,
         register_map: {
+          coils: [{ address: 0, count: 8, data_type: 'uint16', description: 'door sensor' }],
           holding_registers: [
-            { address: 0, count: 10, data_type: 'uint16' },
-            { address: 16, count: 8, shared_address: 200 },
+            { address: 0, count: 10, shared_address: 200, description: 'pump status' },
           ],
         },
       },
@@ -319,75 +320,140 @@ describe('ModbusServerDevicesEditor', () => {
   });
 });
 
-describe('parseBulkSegments', () => {
-  it('콤마 구분 로컬 라인 → data_type 포함 세그먼트', () => {
-    const r = parseBulkSegments('0,10,uint16', true);
+describe('parseBulkSegments (fc 기반)', () => {
+  it('fc 1-4 → 올바른 영역으로 매핑한다', () => {
+    const r = parseBulkSegments(
+      '1,0,8,uint16,a\n2,0,4,uint16,b\n3,0,10,uint16,c\n4,0,2,uint16,d',
+      true,
+    );
     expect(r.errors).toEqual([]);
-    expect(r.segments).toEqual([
-      { address: 0, count: 10, shared: false, dataType: 'uint16', sharedAddress: 0 },
+    expect(r.segments.map((s) => s.area)).toEqual([
+      'coils',
+      'discrete_inputs',
+      'holding_registers',
+      'input_registers',
     ]);
   });
 
-  it('탭 구분 로컬 라인 → 셀 분리', () => {
-    const r = parseBulkSegments('0\t10\tint16', true);
+  it('5열 로컬 라인 → data_type + description 포함, shared=false', () => {
+    const r = parseBulkSegments('1,0,8,int16,door', true);
     expect(r.errors).toEqual([]);
     expect(r.segments).toEqual([
-      { address: 0, count: 10, shared: false, dataType: 'int16', sharedAddress: 0 },
+      {
+        area: 'coils',
+        address: 0,
+        count: 8,
+        shared: false,
+        dataType: 'int16',
+        sharedAddress: 0,
+        description: 'door',
+      },
     ]);
   });
 
-  it('data_type 생략 시 기본값 uint16', () => {
-    const r = parseBulkSegments('5,8', true);
+  it('탭 구분 5열 로컬 라인도 파싱한다', () => {
+    const r = parseBulkSegments('3\t16\t10\tuint16\ttemp', true);
     expect(r.errors).toEqual([]);
-    expect(r.segments[0]).toMatchObject({ address: 5, count: 8, shared: false, dataType: 'uint16' });
+    expect(r.segments[0]).toMatchObject({
+      area: 'holding_registers',
+      address: 16,
+      count: 10,
+      shared: false,
+      dataType: 'uint16',
+      description: 'temp',
+    });
+  });
+
+  it('data_type 셀이 비면 기본값 uint16', () => {
+    const r = parseBulkSegments('1,5,8,,note', true);
+    expect(r.errors).toEqual([]);
+    expect(r.segments[0]).toMatchObject({ dataType: 'uint16', description: 'note' });
+  });
+
+  it('7열 공유 라인 → shared=true, shared_address + description 포함 (data_type 은 방출에서 생략)', () => {
+    const r = parseBulkSegments('3,0,10,uint16,shared,200,pump', true);
+    expect(r.errors).toEqual([]);
+    expect(r.segments).toEqual([
+      {
+        area: 'holding_registers',
+        address: 0,
+        count: 10,
+        shared: true,
+        dataType: 'uint16',
+        sharedAddress: 200,
+        description: 'pump',
+      },
+    ]);
   });
 
   it('헤더 줄(첫 셀 비숫자) 자동 무시', () => {
-    const r = parseBulkSegments('주소,개수,데이터타입\n0,4,uint16', true);
+    const r = parseBulkSegments('fc,주소,개수,타입,설명\n1,0,4,uint16,x', true);
     expect(r.errors).toEqual([]);
-    expect(r.segments).toEqual([
-      { address: 0, count: 4, shared: false, dataType: 'uint16', sharedAddress: 0 },
-    ]);
+    expect(r.segments).toHaveLength(1);
+    expect(r.segments[0]).toMatchObject({ area: 'coils', address: 0, count: 4 });
   });
 
-  it('공유 라인(0,10,,200) → shared_address 포함, shared=true (방출 시 data_type 생략)', () => {
-    const r = parseBulkSegments('0,10,,200', true);
-    expect(r.errors).toEqual([]);
-    expect(r.segments).toEqual([
-      { address: 0, count: 10, shared: true, dataType: 'uint16', sharedAddress: 200 },
-    ]);
+  it('잘못된 fc(5) → invalidFc 오류', () => {
+    const r = parseBulkSegments('5,0,8,uint16,x', true);
+    expect(r.segments).toEqual([]);
+    expect(r.errors).toEqual([{ line: 1, code: 'invalidFc' }]);
   });
 
-  it('잘못된 data_type → 해당 줄 오류, 세그먼트 없음', () => {
-    const r = parseBulkSegments('0,4,badtype', true);
+  it('열 개수 오류(6열) → wrongColumnCount', () => {
+    const r = parseBulkSegments('1,0,8,uint16,shared,200', true);
+    expect(r.segments).toEqual([]);
+    expect(r.errors).toEqual([{ line: 1, code: 'wrongColumnCount' }]);
+  });
+
+  it('잘못된 data_type → invalidDataType', () => {
+    const r = parseBulkSegments('1,0,8,badtype,x', true);
     expect(r.segments).toEqual([]);
     expect(r.errors).toEqual([{ line: 1, code: 'invalidDataType' }]);
   });
 
-  it('잘못된 개수(0) → invalidCount 오류', () => {
-    const r = parseBulkSegments('0,0', true);
+  it('잘못된 개수(0) → invalidCount', () => {
+    const r = parseBulkSegments('1,0,0,uint16,x', true);
     expect(r.errors).toEqual([{ line: 1, code: 'invalidCount' }]);
   });
 
-  it('잘못된 주소(비숫자, 헤더 아님) → invalidAddress, 원본 줄 번호 보고', () => {
-    const r = parseBulkSegments('10,5\nabc,5', true);
-    expect(r.segments).toHaveLength(1);
-    expect(r.errors).toEqual([{ line: 2, code: 'invalidAddress' }]);
-  });
-
-  it('컨테이너(allowShared=false)에서 공유 라인 → containerNoShared 오류', () => {
-    const r = parseBulkSegments('0,10,,200', false);
+  it('컨테이너(allowShared=false)에서 7열 공유 라인 → containerNoShared', () => {
+    const r = parseBulkSegments('3,0,10,uint16,shared,200,pump', false);
     expect(r.segments).toEqual([]);
     expect(r.errors).toEqual([{ line: 1, code: 'containerNoShared' }]);
   });
 
-  it('빈 줄은 무시하고, 유효/무효가 섞이면 유효 세그먼트와 오류를 함께 반환한다', () => {
-    const r = parseBulkSegments('0,4\n\nbad\n8,2,uint16', true);
+  it('혼합 붙여넣기: 5열 로컬 + 7열 공유가 함께 파싱된다 (설명 양쪽 포함)', () => {
+    const r = parseBulkSegments(
+      '1,0,8,uint16,coil desc\n3,0,10,uint16,shared,200,shared desc',
+      true,
+    );
+    expect(r.errors).toEqual([]);
     expect(r.segments).toEqual([
-      { address: 0, count: 4, shared: false, dataType: 'uint16', sharedAddress: 0 },
-      { address: 8, count: 2, shared: false, dataType: 'uint16', sharedAddress: 0 },
+      {
+        area: 'coils',
+        address: 0,
+        count: 8,
+        shared: false,
+        dataType: 'uint16',
+        sharedAddress: 0,
+        description: 'coil desc',
+      },
+      {
+        area: 'holding_registers',
+        address: 0,
+        count: 10,
+        shared: true,
+        dataType: 'uint16',
+        sharedAddress: 200,
+        description: 'shared desc',
+      },
     ]);
-    // 'bad' 는 3번째 줄(원본), 열 부족.
-    expect(r.errors).toEqual([{ line: 3, code: 'missingColumns' }]);
+  });
+
+  it('빈 줄은 무시하고, 유효/무효가 섞이면 유효 세그먼트와 오류를 함께 반환한다', () => {
+    const r = parseBulkSegments('1,0,4,uint16,a\n\nbad\n2,8,2,uint16,b', true);
+    expect(r.segments.map((s) => s.area)).toEqual(['coils', 'discrete_inputs']);
+    // 'bad' 는 3번째 줄(원본), 열 개수 오류.
+    expect(r.errors).toEqual([{ line: 3, code: 'wrongColumnCount' }]);
   });
 });

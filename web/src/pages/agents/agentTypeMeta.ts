@@ -98,8 +98,8 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
           unit_id: 1,
           name: 'device-1',
           register_map: {
-            coils: [{ address: 0, count: 8, data_type: 'uint16' }],
-            holding_registers: [{ address: 0, count: 10, shared_address: 0 }],
+            coils: [{ address: 0, count: 8, data_type: 'uint16', description: 'door sensor' }],
+            holding_registers: [{ address: 0, count: 10, shared_address: 0, description: 'pump status' }],
           },
         },
       ],
