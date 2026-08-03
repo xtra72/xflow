@@ -30,6 +30,9 @@ type ModbusConfig struct {
 	MaxRetries        int           // 기본값 3
 	RequestTimeout    time.Duration // 기본값 3s
 	MsgChannelSize    int           // 기본값 256
+	LogFrames         bool          // log_frames: TX/RX 프레임 요약 로그 (기본 false → no-op, F4)
+	LogRawFrames      bool          // log_raw_frames: 전체 ADU hex 포함 (log_frames 활성 시에만 의미, F4)
+	ShareSession      bool          // share_session: 동일 엔드포인트 디바이스의 트랜스포트/연결 공유 (기본 false → 현 토폴로지, F3)
 	Devices           []DeviceConfig
 }
 
@@ -50,6 +53,16 @@ type DeviceConfig struct {
 	Port           int // 기본값 502
 	UnitID         byte
 	RegisterGroups []RegisterGroupConfig
+	// Transport 는 per-device 트랜스포트 오버라이드이다(F2, 선택). 빈 값이면 에이전트 레벨
+	// transport 를 상속한다(하위 호환 — 기존 설정과 바이트 동일 동작, AC-03). "tcp" | "rtu".
+	Transport string
+	// Serial 은 per-device RTU 오버라이드(Transport == "rtu")의 시리얼 파라미터이다(F2).
+	// Transport 가 "rtu" 로 명시된 디바이스에서만 파싱·검증되며, 상속 rtu 디바이스는
+	// 에이전트 레벨 Serial 을 사용하므로 이 필드를 채우지 않는다.
+	Serial SerialConfig
+	// ShareSession 은 per-device 세션 공유 오버라이드이다(F3, 선택). nil 이면 에이전트 레벨
+	// share_session 을 상속한다. 명시되면 해당 값(true/false)이 에이전트 기본을 오버라이드한다.
+	ShareSession *bool
 }
 
 // RegisterGroupConfig 는 레지스터 그룹의 설정을 나타낸다.
@@ -190,6 +203,30 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 		cfg.MsgChannelSize = toInt(v)
 	}
 
+	// log_frames (선택, 기본 false — no-op). true 이면 TX/RX 프레임 요약을 INFO 로 남긴다(F4).
+	if v, ok := opts["log_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogFrames = b
+		}
+	}
+
+	// log_raw_frames (선택, 기본 false). true 이고 log_frames 도 true 일 때만 프레임 로그에
+	// 전체 ADU hex 를 포함한다(log_frames 가 꺼져 있으면 무의미, F4).
+	if v, ok := opts["log_raw_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogRawFrames = b
+		}
+	}
+
+	// share_session (선택, 기본 false — no-op → 현 토폴로지 유지, F3). true 이면 동일 엔드포인트
+	// 키(TCP (host,port) / RTU serial_port)를 갖는 디바이스가 하나의 트랜스포트/연결을 공유한다.
+	// per-device share_session 오버라이드가 있으면 buildDevices 에서 디바이스별로 재판정한다(AC-05).
+	if v, ok := opts["share_session"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.ShareSession = b
+		}
+	}
+
 	// devices (필수)
 	if v, ok := opts["devices"]; ok {
 		switch devList := v.(type) {
@@ -281,9 +318,12 @@ func parseSerialConfig(opts map[string]any) (SerialConfig, error) {
 }
 
 // parseDeviceConfig 는 디바이스 설정 맵을 DeviceConfig 로 파싱한다.
-// transport 파라미터로 host 필수 여부가 갈린다: TCP 는 host:port 가 필요하므로
-// host 가 필수이지만, RTU 는 공유 시리얼 버스에서 unit_id 만으로 디바이스를
-// 식별하므로 host 가 선택이다(생략 시 빈 값 유지, Port 기본값은 RTU 에서 무시됨).
+// transport 파라미터(에이전트 레벨 기본값)로 상속 대상을 정하고, 디바이스 맵에 per-device
+// transport 오버라이드가 있으면 이를 우선한다(F2). 유효 트랜스포트(override ?? 에이전트 기본)로
+// host 필수 여부가 갈린다: TCP 는 host:port 가 필요하므로 host 가 필수이지만, RTU 는 공유
+// 시리얼 버스에서 unit_id 만으로 디바이스를 식별하므로 host 가 선택이다.
+// per-device RTU 오버라이드(transport == "rtu" 명시)는 시리얼 파라미터(serial_port 등)를
+// 반드시 가져야 하며, 누락 시 설정 오류로 거부한다(AC-04).
 func parseDeviceConfig(m map[string]any, idx int, transport string) (DeviceConfig, error) {
 	dc := DeviceConfig{
 		Port:   502,
@@ -295,12 +335,49 @@ func parseDeviceConfig(m map[string]any, idx int, transport string) (DeviceConfi
 		dc.ID, _ = v.(string)
 	}
 
-	// host (TCP 는 필수, RTU 는 선택)
+	// per-device transport 오버라이드 (선택, F2). 빈 값/부재 시 에이전트 기본을 상속한다.
+	if v, ok := m["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case "":
+			// 명시적 빈 값은 상속으로 취급한다(오버라이드 없음).
+		case TransportTCP, TransportRTU:
+			dc.Transport = s
+		default:
+			return DeviceConfig{}, fmt.Errorf("modbus: devices[%d].transport %q: %w", idx, s, ErrInvalidTransport)
+		}
+	}
+
+	// 유효 트랜스포트 = per-device 오버라이드 ?? 에이전트 기본값(host 필수 판정 기준).
+	effTransport := transport
+	if dc.Transport != "" {
+		effTransport = dc.Transport
+	}
+
+	// host (유효 트랜스포트가 TCP 면 필수, RTU 면 선택)
 	if v, ok := m["host"]; ok {
 		dc.Host, _ = v.(string)
 	}
-	if transport == TransportTCP && dc.Host == "" {
+	if effTransport == TransportTCP && dc.Host == "" {
 		return DeviceConfig{}, fmt.Errorf("modbus: devices[%d].host is required", idx)
+	}
+
+	// per-device RTU 오버라이드는 시리얼 파라미터를 반드시 가져야 한다(AC-04). 디바이스 맵에서
+	// 파싱·검증하며, serial_port 누락/무효 파라미터는 설정 오류로 거부한다. 상속 rtu 디바이스는
+	// 에이전트 레벨 Serial 을 사용하므로 이 블록을 타지 않는다(dc.Transport 미지정).
+	if dc.Transport == TransportRTU {
+		sc, err := parseSerialConfig(m)
+		if err != nil {
+			return DeviceConfig{}, fmt.Errorf("modbus: devices[%d]: %w", idx, err)
+		}
+		dc.Serial = sc
+	}
+
+	// per-device share_session 오버라이드 (선택, F3). 명시되면 에이전트 기본을 오버라이드한다.
+	if v, ok := m["share_session"]; ok {
+		if b, ok := v.(bool); ok {
+			dc.ShareSession = &b
+		}
 	}
 
 	// port

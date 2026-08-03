@@ -56,6 +56,12 @@ type ModbusRTUTransport struct {
 	silence        time.Duration // T3.5 프레임 간 정적(A-5), baud 로부터 산출
 	lastFrameAt    time.Time     // 직전 프레임 완료 시각(정적 확보 기준)
 	logger         *slog.Logger
+	obs            *clientObs // 프레임 로그 관측성 배선 (nil 이면 no-op, opt-in, F4)
+}
+
+// setObs 는 프레임 로그 관측성 배선을 주입한다(opt-in). nil 이면 프레임 로그는 no-op 이다.
+func (t *ModbusRTUTransport) setObs(o *clientObs) {
+	t.obs = o
 }
 
 // NewModbusRTUTransport 는 새로운 ModbusRTUTransport 를 생성한다.
@@ -116,6 +122,12 @@ func (t *ModbusRTUTransport) SendAndReceive(ctx context.Context, unitID byte, pd
 
 	// (2) RTU ADU 프레이밍 후 시리얼 포트로 기록
 	adu := buildRTUADU(unitID, pdu)
+
+	// TX 프레임 로그 (log_frames): ADU 프레이밍 직후, 전체 아웃바운드 RTU 요청 ADU(A-9).
+	if t.obs.framesOn() {
+		logFrame(t.logger, true, t.obs.rawOn(), "TX", t.serial.Port, unitID, requestFC, adu)
+	}
+
 	if _, err := t.port.Write(adu); err != nil {
 		t.handleConnError()
 		return nil, fmt.Errorf("modbus: RTU write failed: %w", err)
@@ -126,6 +138,16 @@ func (t *ModbusRTUTransport) SendAndReceive(ctx context.Context, unitID byte, pd
 	if err != nil {
 		t.handleConnError()
 		return nil, fmt.Errorf("modbus: RTU read failed: %w", err)
+	}
+
+	// RX 프레임 로그 (log_frames): 응답 수신 직후, 전체 인바운드 RTU 응답 ADU(A-9).
+	// respADU = [unitID][respFC]... 이므로 응답 FC 는 두 번째 바이트에서 읽는다.
+	if t.obs.framesOn() {
+		var respFC byte
+		if len(respADU) >= 2 {
+			respFC = respADU[1]
+		}
+		logFrame(t.logger, true, t.obs.rawOn(), "RX", t.serial.Port, unitID, respFC, respADU)
 	}
 
 	// 다음 프레임 정적 확보를 위한 기준 시각 갱신

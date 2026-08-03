@@ -87,4 +87,12 @@ var (
 	// 시도했을 때 반환된다(M9, AC-08). 이 필드들은 ADU 프레이밍·연결 토폴로지·시리얼 포트
 	// 오픈에 귀속되므로 런타임 변경을 거부하고 에이전트는 직전 설정으로 계속 동작한다.
 	ErrInitOnlyField = errors.New("modbus: field is init-only and cannot be changed at runtime")
+
+	// ErrDuplicateDevice 는 런타임 add_device 로 이미 존재하는 device ID 를 추가하려 할 때
+	// 반환된다(M4, AC-07). 중복 추가는 원자적으로 거부되며(부분 적용 없음) 에이전트는
+	// 직전 상태로 계속 동작한다.
+	ErrDuplicateDevice = errors.New("modbus: device with this ID already exists")
+
+	// ErrMissingDeviceID 는 add_device/remove_device 명령에 device ID 가 없을 때 반환된다(M4).
+	ErrMissingDeviceID = errors.New("modbus: device id is required")
 )

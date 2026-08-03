@@ -57,6 +57,14 @@ func newModbusDeviceWithTransport(cfg DeviceConfig, transport ModbusTransport, l
 	return d
 }
 
+// setObs 는 디바이스의 트랜스포트가 프레임 로그를 지원하면 관측성 배선을 주입한다(F4, opt-in).
+// mock 트랜스포트처럼 setObs 를 구현하지 않는 트랜스포트에는 아무 영향이 없다(no-op).
+func (d *ModbusDevice) setObs(o *clientObs) {
+	if setter, ok := d.transport.(interface{ setObs(*clientObs) }); ok {
+		setter.setObs(o)
+	}
+}
+
 // UnitID 는 디바이스의 현재 unit_id 를 원자적으로 읽어 반환한다.
 // 폴링 goroutine 의 락-프리 핫 패스(ReadRegisters/SendPDU)와 응답 빌더는
 // config.UnitID 가 아니라 반드시 이 접근자를 통해 살아있는 값을 읽어야 한다(위 불변식 참조).

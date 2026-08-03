@@ -96,7 +96,14 @@ const MODBUS_TCP_FIELDS: ConfigField[] = [
   { name: 'request_timeout', type: 'string', label: '요청 타임아웃', default: '3s' },
   { name: 'max_retries', type: 'number', label: '최대 재시도', default: 3 },
   { name: 'enable_write_events', type: 'boolean', label: '쓰기 이벤트', default: true },
-  { name: 'devices', type: 'modbus_devices', label: '디바이스 설정', required: false, description: '디바이스 배열. 각 디바이스는 register_group 목록을 가지며, 그룹별로 data_type(uint16/int16/uint32/int32/float32/raw)·poll_interval(그룹별 독립 주기)을 지정한다. byte_order(big_endian/little_endian 별칭 + ABCD/BADC/CDAB/DCBA 4순열)는 그룹의 고급 type_map 에서 주소별로만 지정한다. TCP 는 host+port 를, RTU 는 unit_id 만 사용한다(host/port 숨김)' },
+  // 세션 공유 (SPEC-MODBUS-008 F3). 켜면 동일 엔드포인트(TCP (host,port) / RTU serial_port)를
+  // 대상으로 하는 디바이스들이 하나의 트랜스포트/연결을 공유한다. 기본 false(현 토폴로지 유지 —
+  // TCP 디바이스별 독립 연결, RTU 단일 버스). 디바이스별 오버라이드는 디바이스 탭에서 지정한다.
+  { name: 'share_session', type: 'boolean', label: '세션 공유', default: false, description: '켜면 동일 엔드포인트(TCP host:port / RTU 시리얼 포트) 디바이스들이 하나의 연결을 공유합니다. 끄면 TCP 는 디바이스별 독립 연결, RTU 는 단일 버스를 유지합니다(기본). 접근은 turnaround 직렬화됩니다.' },
+  // 프레임 로그 (SPEC-MODBUS-008 F4). 게이트웨이와 동일 키·의미. 변경 즉시 적용(재시작 불필요).
+  { name: 'log_frames', type: 'boolean', label: '프레임 로그', default: false, description: '켜면 송/수신 MODBUS 프레임 요약(방향·주소·unit·기능코드·길이)을 로그에 남깁니다. 변경 즉시 적용(재시작 불필요). 로그 패널에서 확인.' },
+  { name: 'log_raw_frames', type: 'boolean', label: 'Raw 프레임(hex)', default: false, description: '켜면 프레임 로그에 전체 ADU를 hex 로 포함합니다. 프레임 로그가 켜져 있을 때만 의미가 있습니다. 변경 즉시 적용.' },
+  { name: 'devices', type: 'modbus_devices', label: '디바이스 설정', required: false, description: '디바이스 배열. 각 디바이스는 register_group 목록을 가지며, 그룹별로 data_type(uint16/int16/uint32/int32/float32/raw)·poll_interval(그룹별 독립 주기)을 지정한다. byte_order(big_endian/little_endian 별칭 + ABCD/BADC/CDAB/DCBA 4순열)는 그룹의 고급 type_map 에서 주소별로만 지정한다. per-device transport 오버라이드(+RTU 시리얼) 및 per-device share_session 오버라이드는 디바이스 편집 팝업에서 지정한다(SPEC-MODBUS-008 F2/F3). TCP 는 host+port 를, RTU 는 unit_id 만 사용한다(host/port 숨김)' },
 ];
 
 /** Modbus register_group 의 data_type 옵션 (SPEC-MODBUS-006 REQ-03). raw 는 변환 없이 원본 워드 전달. */

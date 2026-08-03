@@ -42,6 +42,17 @@ type ModbusTCPTransport struct {
 	transactionID  uint16 // MBAP 트랜잭션 ID 카운터 (MBAP 관심사이므로 트랜스포트가 소유)
 	requestTimeout time.Duration
 	logger         *slog.Logger
+	obs            *clientObs // 프레임 로그 관측성 배선 (nil 이면 no-op, opt-in, F4)
+}
+
+// setObs 는 프레임 로그 관측성 배선을 주입한다(opt-in). nil 이면 프레임 로그는 no-op 이다.
+func (t *ModbusTCPTransport) setObs(o *clientObs) {
+	t.obs = o
+}
+
+// endpointAddr 는 프레임 로그용 대상 엔드포인트 주소 문자열을 반환한다.
+func (t *ModbusTCPTransport) endpointAddr() string {
+	return fmt.Sprintf("%s:%d", t.host, t.port)
 }
 
 // NewModbusTCPTransport 는 새로운 ModbusTCPTransport 를 생성한다.
@@ -97,6 +108,15 @@ func (t *ModbusTCPTransport) SendAndReceive(ctx context.Context, unitID byte, pd
 	t.transactionID++
 	frame := buildMBAPFrame(txID, unitID, pdu)
 
+	// TX 프레임 로그 (log_frames): ADU 프레이밍 직후, 전체 아웃바운드 ADU = MBAP 프레임(A-9).
+	if t.obs.framesOn() {
+		var reqFC byte
+		if len(pdu) > 0 {
+			reqFC = pdu[0]
+		}
+		logFrame(t.logger, true, t.obs.rawOn(), "TX", t.endpointAddr(), unitID, reqFC, frame)
+	}
+
 	// 컨텍스트 또는 requestTimeout 으로 데드라인 설정
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -138,6 +158,18 @@ func (t *ModbusTCPTransport) SendAndReceive(ctx context.Context, unitID byte, pd
 			t.handleConnError()
 			return nil, fmt.Errorf("modbus: read PDU failed: %w", err)
 		}
+	}
+
+	// RX 프레임 로그 (log_frames): 응답 수신 직후, 전체 인바운드 ADU = MBAP 헤더(7) + 응답 PDU(A-9).
+	if t.obs.framesOn() {
+		rxADU := make([]byte, 0, len(header)+len(respPDU))
+		rxADU = append(rxADU, header...)
+		rxADU = append(rxADU, respPDU...)
+		var respFC byte
+		if len(respPDU) > 0 {
+			respFC = respPDU[0]
+		}
+		logFrame(t.logger, true, t.obs.rawOn(), "RX", t.endpointAddr(), unitID, respFC, rxADU)
 	}
 
 	return respPDU, nil

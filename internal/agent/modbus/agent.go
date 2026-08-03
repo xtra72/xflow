@@ -39,11 +39,14 @@ type ModbusAgent struct {
 	// 생성 시 1회 채워지며 이후 맵 자체는 불변(엔트리는 atomic) — 폴링 goroutine 과의 경합 없음.
 	devStats   map[string]*requestCounters // 키: deviceID
 	groupStats map[string]*requestCounters // 키: groupStatKey(deviceID, groupName)
-	logger     *slog.Logger
-	startedAt  time.Time
-	createdAt  time.Time
-	paused     bool
-	started    bool // Start() 호출 여부 (멱등성 보장)
+	// obs 는 프레임 로그 관측성 배선(logFrames/logRawFrames atomic 미러)이다(F4).
+	// buildDevices 에서 각 트랜스포트에 주입되며, Configure 로 재시작 없이 라이브 갱신된다.
+	obs       *clientObs
+	logger    *slog.Logger
+	startedAt time.Time
+	createdAt time.Time
+	paused    bool
+	started   bool // Start() 호출 여부 (멱등성 보장)
 }
 
 // requestCounters 는 단일 스코프(디바이스 또는 그룹)의 요청 처리 통계를 원자적으로 추적한다(M7).
@@ -127,6 +130,7 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
+		obs:           newClientObs(cfg.LogFrames, cfg.LogRawFrames),
 		logger:        agent.ResolveLogger(agentConfig),
 		createdAt:     time.Now(),
 	}
@@ -153,23 +157,154 @@ func NewModbusAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	return a, nil
 }
 
-// buildDevices 는 파싱된 transport 에 따라 각 디바이스의 트랜스포트를 선택해 생성한다(M4).
-//   - tcp(기본): 디바이스별 ModbusTCPTransport (기존 동작 그대로, AC-03)
-//   - rtu: 단일 시리얼 버스를 공유하는 ModbusRTUTransport 를 모든 디바이스에 주입
-//     (반이중 멀티드롭 — 하나의 포트/turnaround mutex 를 unitID 별로 직렬 공유, A-4)
+// buildDevices 는 파싱된 트랜스포트/세션공유 설정에 따라 각 디바이스의 트랜스포트를 선택해 생성한다.
+// share_session 이 설정에 전혀 등장하지 않으면(에이전트·per-device 모두) 기존 토폴로지를 그대로
+// 유지하는 기본 경로를 타서 하위 호환(바이트 동일 동작, AC-09)을 보존한다. 세션 공유가 개입하면
+// 엔드포인트/종류별 그룹화 + 참조 카운팅 공유 경로를 탄다(F3, AC-05/AC-06).
 func (a *ModbusAgent) buildDevices(cfg ModbusConfig) {
-	if cfg.Transport == TransportRTU {
-		rtu := NewModbusRTUTransport(cfg.Serial, cfg.RequestTimeout, a.logger)
-		for i := range cfg.Devices {
-			dev := newModbusDeviceWithTransport(cfg.Devices[i], rtu, a.logger)
-			a.devices = append(a.devices, dev)
-		}
+	if anyDeviceSharesSession(cfg) {
+		a.buildDevicesWithSharing(cfg)
 		return
 	}
+	a.buildDevicesDefault(cfg)
+}
+
+// buildDevicesDefault 는 세션 공유가 없는 기본 토폴로지로 디바이스를 생성한다(M2, F2).
+//   - tcp(상속 또는 per-device override): 디바이스별 독립 ModbusTCPTransport (기존 동작, AC-03)
+//   - rtu 상속(per-device override 없음): 단일 시리얼 버스를 공유하는 ModbusRTUTransport 를
+//     모든 상속 디바이스에 주입 (반이중 멀티드롭 — 기존 동작 그대로, A-4)
+//   - rtu per-device override: 자체 시리얼 파라미터로 디바이스 독립 ModbusRTUTransport 생성(A-5)
+//
+// 공유 래퍼(sharedTransport)를 쓰지 않아 트랜스포트 인스턴스 타입이 기존과 동일하게
+// 노출된다(특성화 테스트의 raw 타입 단언 보존).
+func (a *ModbusAgent) buildDevicesDefault(cfg ModbusConfig) {
+	var agentRTU *ModbusRTUTransport // 에이전트-기본 rtu 상속 디바이스의 단일 공유 버스(lazy)
 	for i := range cfg.Devices {
-		dev := NewModbusDevice(cfg.Devices[i], cfg.RequestTimeout, a.logger)
+		dc := cfg.Devices[i]
+		if effectiveTransportKind(dc, cfg) == TransportRTU {
+			if dc.Transport == TransportRTU {
+				// per-device rtu override → 자체 시리얼로 독립 트랜스포트(A-5)
+				rtu := NewModbusRTUTransport(dc.Serial, cfg.RequestTimeout, a.logger)
+				rtu.setObs(a.obs)
+				a.devices = append(a.devices, newModbusDeviceWithTransport(dc, rtu, a.logger))
+			} else {
+				// 에이전트-기본 rtu 상속 → 단일 버스 공유(기존 동작 보존)
+				if agentRTU == nil {
+					agentRTU = NewModbusRTUTransport(cfg.Serial, cfg.RequestTimeout, a.logger)
+					agentRTU.setObs(a.obs)
+				}
+				a.devices = append(a.devices, newModbusDeviceWithTransport(dc, agentRTU, a.logger))
+			}
+			continue
+		}
+		// tcp(상속 또는 override) → 디바이스별 독립 트랜스포트(기존 동작, AC-03)
+		dev := NewModbusDevice(dc, cfg.RequestTimeout, a.logger)
+		dev.setObs(a.obs) // 프레임 로그 배선 주입(F4, opt-in)
 		a.devices = append(a.devices, dev)
 	}
+}
+
+// buildDevicesWithSharing 는 세션 공유가 개입할 때 디바이스를 생성한다(M3, F3).
+// (종류 + 엔드포인트 키)로 디바이스를 그룹화하여 그룹당 하나의 참조 카운팅 공유 트랜스포트를
+// 생성·주입한다. 종류/엔드포인트가 다르면 공유하지 않는다(AC-05).
+//
+// 그룹 판정:
+//   - rtu 상속(per-device transport override 없음): 물리 시리얼 포트는 하나뿐이므로 share 플래그와
+//     무관하게 항상 단일 버스로 그룹화한다(기존 단일 버스 공유를 이 규칙의 특수 케이스로 보존).
+//   - 그 외(tcp / rtu override): 유효 share_session 이 true 인 디바이스만 (종류,엔드포인트)로 그룹화한다.
+//   - 공유하지 않는 디바이스는 자체 독립 트랜스포트를 갖는다(현 토폴로지 유지).
+func (a *ModbusAgent) buildDevicesWithSharing(cfg ModbusConfig) {
+	shared := make(map[string]*sharedTransport)
+	for i := range cfg.Devices {
+		dc := cfg.Devices[i]
+		if deviceIsGrouped(dc, cfg) {
+			key := deviceGroupKey(dc, cfg)
+			st, ok := shared[key]
+			if !ok {
+				inner := a.buildInnerTransport(dc, cfg)
+				st = newSharedTransport(inner)
+				shared[key] = st
+			}
+			st.addRef()
+			a.devices = append(a.devices, newModbusDeviceWithTransport(dc, st, a.logger))
+			continue
+		}
+		// 비공유 디바이스: 자체 독립 트랜스포트(현 토폴로지).
+		inner := a.buildInnerTransport(dc, cfg)
+		a.devices = append(a.devices, newModbusDeviceWithTransport(dc, inner, a.logger))
+	}
+}
+
+// buildInnerTransport 는 디바이스의 유효 트랜스포트 종류/엔드포인트로 하부 raw 트랜스포트를
+// 생성하고 프레임 로그 배선을 주입해 반환한다(F4, opt-in). 공유(sharedTransport 로 감쌈)와
+// 비공유 경로가 공통으로 사용한다.
+func (a *ModbusAgent) buildInnerTransport(dc DeviceConfig, cfg ModbusConfig) ModbusTransport {
+	if effectiveTransportKind(dc, cfg) == TransportRTU {
+		serial := cfg.Serial
+		if dc.Transport == TransportRTU {
+			serial = dc.Serial // per-device rtu override 는 자체 시리얼 사용
+		}
+		rtu := NewModbusRTUTransport(serial, cfg.RequestTimeout, a.logger)
+		rtu.setObs(a.obs)
+		return rtu
+	}
+	tcp := NewModbusTCPTransport(dc.Host, dc.Port, cfg.RequestTimeout, a.logger)
+	tcp.setObs(a.obs)
+	return tcp
+}
+
+// effectiveTransportKind 는 디바이스의 유효 트랜스포트 종류를 반환한다:
+// per-device override 가 있으면 그 값, 없으면 에이전트 기본값(F2, AC-03).
+func effectiveTransportKind(dc DeviceConfig, cfg ModbusConfig) string {
+	if dc.Transport != "" {
+		return dc.Transport
+	}
+	return cfg.Transport
+}
+
+// effectiveShareSession 은 디바이스의 유효 세션 공유 여부를 반환한다:
+// per-device override(nil 이 아니면)가 우선, 없으면 에이전트 기본값(F3).
+func effectiveShareSession(dc DeviceConfig, cfg ModbusConfig) bool {
+	if dc.ShareSession != nil {
+		return *dc.ShareSession
+	}
+	return cfg.ShareSession
+}
+
+// anyDeviceSharesSession 은 설정에 세션 공유가 개입하는지(에이전트 기본 또는 어떤 per-device
+// 오버라이드로 인해 하나라도 공유가 활성인지) 반환한다. false 면 buildDevices 는 기본 경로를
+// 타서 기존 토폴로지를 바이트 동일하게 보존한다(AC-09).
+func anyDeviceSharesSession(cfg ModbusConfig) bool {
+	for i := range cfg.Devices {
+		if effectiveShareSession(cfg.Devices[i], cfg) {
+			return true
+		}
+	}
+	return false
+}
+
+// deviceIsGrouped 는 세션 공유 경로에서 디바이스가 공유 그룹에 편입되는지 판정한다.
+// rtu 상속 디바이스는 물리 시리얼 포트가 하나뿐이므로 share 플래그와 무관하게 항상 그룹화한다
+// (기존 단일 버스 공유 보존). 그 외는 유효 share_session 이 true 일 때만 그룹화한다.
+func deviceIsGrouped(dc DeviceConfig, cfg ModbusConfig) bool {
+	if effectiveTransportKind(dc, cfg) == TransportRTU && dc.Transport == "" {
+		return true
+	}
+	return effectiveShareSession(dc, cfg)
+}
+
+// deviceGroupKey 는 공유 그룹 키(종류 + 엔드포인트)를 생성한다. TCP 는 (host,port),
+// RTU 는 serial_port 를 엔드포인트로 사용한다(A-6). 종류/엔드포인트가 같은 디바이스만
+// 하나의 공유 트랜스포트를 공유한다(AC-05).
+func deviceGroupKey(dc DeviceConfig, cfg ModbusConfig) string {
+	if effectiveTransportKind(dc, cfg) == TransportRTU {
+		port := cfg.Serial.Port
+		if dc.Transport == TransportRTU {
+			port = dc.Serial.Port
+		}
+		return "rtu|" + port
+	}
+	return fmt.Sprintf("tcp|%s:%d", dc.Host, dc.Port)
 }
 
 // initRequestStats 는 디바이스별·그룹별 요청 통계 카운터를 생성한다(M7).
@@ -188,11 +323,16 @@ func (a *ModbusAgent) initRequestStats() {
 // recordRequestStat 는 요청 완료 시 디바이스별·그룹별 통계를 갱신한다(M7, REQ-04).
 // 트랜스포트 오류(ok=false)는 오류 카운터를, 성공은 성공 카운터를 증가시킨다(AC-06).
 func (a *ModbusAgent) recordRequestStat(deviceID, groupName string, ok bool, latency time.Duration) {
-	if c, found := a.devStats[deviceID]; found {
+	// 통계 맵은 add/remove 가 copy-on-write 로 교체하므로 RLock 스냅샷으로 읽는다(-race, AC-10).
+	a.mu.RLock()
+	devStats := a.devStats
+	groupStats := a.groupStats
+	a.mu.RUnlock()
+	if c, found := devStats[deviceID]; found {
 		c.record(ok, latency)
 	}
 	if groupName != "" {
-		if c, found := a.groupStats[groupStatKey(deviceID, groupName)]; found {
+		if c, found := groupStats[groupStatKey(deviceID, groupName)]; found {
 			c.record(ok, latency)
 		}
 	}
@@ -215,6 +355,7 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 		stopCh:        make(chan struct{}),
 		msgCh:         make(chan []byte, cfg.MsgChannelSize),
 		stats:         agent.NewAgentStats(),
+		obs:           newClientObs(cfg.LogFrames, cfg.LogRawFrames),
 		logger:        agent.ResolveLogger(agentConfig),
 		createdAt:     time.Now(),
 	}
@@ -228,6 +369,7 @@ func newModbusAgentWithTransport(agentConfig agent.AgentConfig, transports []Mod
 			transport = NewModbusTCPTransport(cfg.Devices[i].Host, cfg.Devices[i].Port, cfg.RequestTimeout, a.logger)
 		}
 		dev := newModbusDeviceWithTransport(cfg.Devices[i], transport, a.logger)
+		dev.setObs(a.obs) // 프레임 로그 배선 주입(mock 트랜스포트에는 no-op, F4)
 		a.devices = append(a.devices, dev)
 	}
 
@@ -361,8 +503,8 @@ func (a *ModbusAgent) Stop(_ context.Context) error {
 	// stopCh 를 이미 닫았으므로 각 goroutine 은 진행 중인 폴을 마치고 반환한다.
 	a.pollWg.Wait()
 
-	// 디바이스 연결 종료
-	for _, dev := range a.devices {
+	// 디바이스 연결 종료 (add/remove copy-on-write 대비 RLock 스냅샷)
+	for _, dev := range a.snapshotDevices() {
 		if err := dev.Close(); err != nil {
 			a.logger.Warn("modbus: 디바이스 연결 종료 실패",
 				"device", dev.config.ID,
@@ -418,10 +560,11 @@ func (a *ModbusAgent) Health() agent.HealthStatus {
 
 	switch state {
 	case lifecycle.StateRunning:
-		// 디바이스 온라인 비율 확인
+		// 디바이스 온라인 비율 확인 (add/remove copy-on-write 대비 RLock 스냅샷)
+		devs := a.snapshotDevices()
 		online := 0
-		total := len(a.devices)
-		for _, dev := range a.devices {
+		total := len(devs)
+		for _, dev := range devs {
 			if dev.IsOnline() {
 				online++
 			}
@@ -500,25 +643,30 @@ func (a *ModbusAgent) pollLoop() {
 func (a *ModbusAgent) pollDevices(forceFullSend bool) {
 	// 런타임 가변 필드(요청 타임아웃·재연결 간격·stale 임계값)를 RLock 스냅샷으로 읽는다.
 	// M9 set_config 가 a.mu.Lock() 하에 이 값들을 갱신하므로 경합을 피한다(-race).
+	// 런타임 가변 컬렉션(devices/caches)과 스칼라 필드를 한 번의 RLock 스냅샷으로 읽는다.
+	// add_device/remove_device 가 devices/caches 를 copy-on-write 로 통째 교체하므로,
+	// 스냅샷된 참조는 이 폴 동안 안정적이다(-race, AC-10).
 	a.mu.RLock()
 	paused := a.paused
 	reqTimeout := a.config.RequestTimeout
 	reconnectInterval := a.config.ReconnectInterval
 	staleThreshold := a.config.StaleThreshold
+	devs := a.devices
+	caches := a.caches
 	a.mu.RUnlock()
 	if paused {
 		return
 	}
 
 	a.logger.Debug("modbus: 폴링 시작",
-		"devices", len(a.devices),
+		"devices", len(devs),
 		"forceFullSend", forceFullSend,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout)
 	defer cancel()
 
-	for _, dev := range a.devices {
+	for _, dev := range devs {
 		if !dev.IsOnline() {
 			// 오프라인 디바이스 재연결 시도
 			if !dev.TryReconnect(ctx, reconnectInterval) {
@@ -533,8 +681,8 @@ func (a *ModbusAgent) pollDevices(forceFullSend bool) {
 	}
 
 	// Stale 레지스터 그룹 경고 이벤트 전송
-	for _, dev := range a.devices {
-		if cache, ok := a.caches[dev.config.ID]; ok {
+	for _, dev := range devs {
+		if cache, ok := caches[dev.config.ID]; ok {
 			staleGroups := cache.StaleGroups(staleThreshold)
 			for _, groupKey := range staleGroups {
 				a.sendEvent("register_group_stale", map[string]any{
@@ -573,6 +721,7 @@ func (a *ModbusAgent) pollDevice(ctx context.Context, dev *ModbusDevice, forceFu
 func (a *ModbusAgent) pollGroupRead(ctx context.Context, dev *ModbusDevice, rg RegisterGroupConfig, forceFullSend bool) {
 	a.mu.RLock()
 	mode := a.config.Mode
+	caches := a.caches
 	a.mu.RUnlock()
 
 	start := time.Now()
@@ -593,7 +742,7 @@ func (a *ModbusAgent) pollGroupRead(ctx context.Context, dev *ModbusDevice, rg R
 	a.stats.AddBytesRead(int64(len(data)))
 	a.stats.UpdateLastActivity()
 
-	cache, ok := a.caches[dev.config.ID]
+	cache, ok := caches[dev.config.ID]
 	if !ok {
 		return
 	}
@@ -704,8 +853,10 @@ func (a *ModbusAgent) sendRegisterEvent(dev *ModbusDevice, rg RegisterGroupConfi
 		"data":          rawData,
 	}
 
-	// TypeOverlay 설정 시 해당 그룹 주소 범위에 속하는 typed_values 만 추가
-	if cache, ok := a.caches[dev.config.ID]; ok && cache.HasTypeOverlay() {
+	// TypeOverlay 설정 시 해당 그룹 주소 범위에 속하는 typed_values 만 추가.
+	// 캐시 맵은 add/remove 가 copy-on-write 로 교체하므로 RLock 스냅샷으로 읽는다(-race).
+	cache, hasCache := a.cacheFor(dev.config.ID)
+	if hasCache && cache.HasTypeOverlay() {
 		snapshot := cache.GetSnapshot()
 		var srcKey string
 		switch rg.FunctionCode {
@@ -819,6 +970,10 @@ func (a *ModbusAgent) Process(data []byte) ([]byte, error) {
 		return a.processReadRaw(&req)
 	case "set_config":
 		return a.processSetConfig(&req)
+	case "add_device":
+		return a.processAddDevice(&req)
+	case "remove_device":
+		return a.processRemoveDevice(&req)
 	default:
 		return nil, ErrInvalidCommand
 	}
@@ -841,11 +996,12 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 	readMode := a.config.ReadMode
 	reqTimeout := a.config.RequestTimeout
 	groups := dev.config.RegisterGroups
+	caches := a.caches
 	a.mu.RUnlock()
 
 	// cached 모드 + force=false: 캐시 스냅샷 반환
 	if readMode == "cached" && !req.Force {
-		cache, ok := a.caches[dev.config.ID]
+		cache, ok := caches[dev.config.ID]
 		if !ok {
 			return nil, ErrCacheNotFound
 		}
@@ -886,7 +1042,7 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 
 		// force 읽기: 캐시도 갱신
 		if req.Force {
-			if cache, ok := a.caches[dev.config.ID]; ok {
+			if cache, ok := caches[dev.config.ID]; ok {
 				cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
 			}
 		}
@@ -900,7 +1056,7 @@ func (a *ModbusAgent) processReadRegisters(req *processRequest) ([]byte, error) 
 		}
 
 		// TypeOverlay 설정 시 해당 그룹 주소 범위에 속하는 typed_values 만 추가
-		if cache, ok := a.caches[dev.config.ID]; ok && cache.HasTypeOverlay() {
+		if cache, ok := caches[dev.config.ID]; ok && cache.HasTypeOverlay() {
 			snapshot := cache.GetSnapshot()
 			var srcKey string
 			switch rg.FunctionCode {
@@ -964,18 +1120,20 @@ func (a *ModbusAgent) processReadRaw(req *processRequest) ([]byte, error) {
 	qty := toUint16(qtyRaw)
 
 	// unit_id로 디바이스 매칭. 없으면 첫 번째 디바이스 사용.
+	// add/remove 가 devices 를 copy-on-write 로 교체하므로 RLock 스냅샷으로 순회한다(-race).
+	devs := a.snapshotDevices()
 	var dev *ModbusDevice
 	if uidRaw, ok := req.Params["unit_id"]; ok {
 		uid := toByte(uidRaw)
-		for _, d := range a.devices {
+		for _, d := range devs {
 			if d.UnitID() == uid {
 				dev = d
 				break
 			}
 		}
 	}
-	if dev == nil && len(a.devices) > 0 {
-		dev = a.devices[0]
+	if dev == nil && len(devs) > 0 {
+		dev = devs[0]
 	}
 	if dev == nil {
 		return nil, ErrDeviceNotFound
@@ -1016,8 +1174,9 @@ func (a *ModbusAgent) processReadRaw(req *processRequest) ([]byte, error) {
 
 // processGetStatus 는 전체 디바이스 상태를 반환한다.
 func (a *ModbusAgent) processGetStatus() ([]byte, error) {
-	devices := make([]map[string]any, 0, len(a.devices))
-	for _, dev := range a.devices {
+	devs := a.snapshotDevices()
+	devices := make([]map[string]any, 0, len(devs))
+	for _, dev := range devs {
 		devices = append(devices, map[string]any{
 			"device_id": dev.config.ID,
 			"host":      dev.config.Host,
@@ -1027,7 +1186,7 @@ func (a *ModbusAgent) processGetStatus() ([]byte, error) {
 	}
 
 	resp := map[string]any{
-		"device_count": len(a.devices),
+		"device_count": len(devs),
 		"devices":      devices,
 	}
 
@@ -1041,7 +1200,7 @@ func (a *ModbusAgent) processGetCache(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	cache, ok := a.caches[req.DeviceID]
+	cache, ok := a.cacheFor(req.DeviceID)
 	if !ok {
 		return nil, ErrCacheNotFound
 	}
@@ -1057,9 +1216,13 @@ func (a *ModbusAgent) processGetCache(req *processRequest) ([]byte, error) {
 
 // processGetAllCaches 는 모든 디바이스의 캐시 스냅샷을 반환한다.
 func (a *ModbusAgent) processGetAllCaches() ([]byte, error) {
-	caches := make(map[string]any, len(a.devices))
-	for _, dev := range a.devices {
-		if cache, ok := a.caches[dev.config.ID]; ok {
+	a.mu.RLock()
+	devs := a.devices
+	cacheMap := a.caches
+	a.mu.RUnlock()
+	caches := make(map[string]any, len(devs))
+	for _, dev := range devs {
+		if cache, ok := cacheMap[dev.config.ID]; ok {
 			caches[dev.config.ID] = cache.GetSnapshot()
 		}
 	}
@@ -1086,13 +1249,32 @@ func filterTypedValuesByRange(typed map[uint16]any, startAddr, quantity uint16) 
 }
 
 // findDevice 는 device ID 로 디바이스를 검색한다.
+// add/remove 가 devices 를 copy-on-write 로 교체하므로 RLock 스냅샷으로 순회한다(-race).
 func (a *ModbusAgent) findDevice(deviceID string) (*ModbusDevice, error) {
-	for _, dev := range a.devices {
+	for _, dev := range a.snapshotDevices() {
 		if dev.config.ID == deviceID {
 			return dev, nil
 		}
 	}
 	return nil, ErrDeviceNotFound
+}
+
+// snapshotDevices 는 현재 devices 슬라이스 헤더를 RLock 스냅샷으로 반환한다(copy-on-write 읽기).
+// add_device/remove_device 가 슬라이스를 통째 교체하므로 반환된 헤더는 이후에도 안정적이다(-race).
+func (a *ModbusAgent) snapshotDevices() []*ModbusDevice {
+	a.mu.RLock()
+	devs := a.devices
+	a.mu.RUnlock()
+	return devs
+}
+
+// cacheFor 는 device ID 의 RegisterCache 를 RLock 스냅샷으로 조회한다(copy-on-write 읽기).
+// 호출자는 a.mu 를 보유하지 않아야 한다(비중첩 RLock).
+func (a *ModbusAgent) cacheFor(deviceID string) (*RegisterCache, bool) {
+	a.mu.RLock()
+	c, ok := a.caches[deviceID]
+	a.mu.RUnlock()
+	return c, ok
 }
 
 // buildCacheTypeOverlay 는 디바이스의 RegisterGroup 설정에서 TypeOverlay 맵을 구축한다.
@@ -1177,6 +1359,12 @@ func (a *ModbusAgent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("modbus configure: %w", err)
 	}
+	// log_frames / log_raw_frames 는 재시작 없이 즉시 반영한다(atomic 미러 갱신, F4).
+	// 게이트웨이 Configure 라이브 갱신 패턴 준거. 파싱 실패 시 토글은 직전 값을 유지한다.
+	if newCfg, perr := parseModbusConfig(config.Transport.Options); perr == nil {
+		a.obs.logFrames.Store(newCfg.LogFrames)
+		a.obs.logRawFrames.Store(newCfg.LogRawFrames)
+	}
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
@@ -1247,9 +1435,13 @@ func (a *ModbusAgent) Stats() agent.StatsSnapshot {
 // 성공 요청 수는 MessagesReceived, 오류 요청 수는 MessagesErrored 로 매핑한다.
 // 그룹별 통계와 지연(latency)은 State() 응답에서 추가로 표면화한다.
 func (a *ModbusAgent) ConnectionStats() []agent.ConnectionStats {
-	out := make([]agent.ConnectionStats, 0, len(a.devices))
-	for _, dev := range a.devices {
-		c, ok := a.devStats[dev.config.ID]
+	a.mu.RLock()
+	devs := a.devices
+	devStats := a.devStats
+	a.mu.RUnlock()
+	out := make([]agent.ConnectionStats, 0, len(devs))
+	for _, dev := range devs {
+		c, ok := devStats[dev.config.ID]
 		if !ok {
 			continue
 		}
@@ -1266,9 +1458,17 @@ func (a *ModbusAgent) ConnectionStats() []agent.ConnectionStats {
 // agent.StatefulAgent 인터페이스 구현 — detail=full API 응답에 포함된다.
 // 캐시 스냅샷과 레지스터 그룹 정보를 포함한다.
 func (a *ModbusAgent) State() map[string]any {
+	// 런타임 가변 컬렉션을 한 번의 RLock 스냅샷으로 읽는다(add/remove copy-on-write 대비, -race).
+	a.mu.RLock()
+	devs := a.devices
+	cacheMap := a.caches
+	devStats := a.devStats
+	groupStats := a.groupStats
+	a.mu.RUnlock()
+
 	onlineCount := 0
-	devices := make([]map[string]any, 0, len(a.devices))
-	for _, dev := range a.devices {
+	devices := make([]map[string]any, 0, len(devs))
+	for _, dev := range devs {
 		if dev.IsOnline() {
 			onlineCount++
 		}
@@ -1281,7 +1481,7 @@ func (a *ModbusAgent) State() map[string]any {
 		}
 
 		// 캐시 정보 추가
-		if cache, ok := a.caches[dev.config.ID]; ok {
+		if cache, ok := cacheMap[dev.config.ID]; ok {
 			d["cache"] = cache.GetSnapshot()
 			staleGroups := cache.StaleGroups(a.config.StaleThreshold)
 			if staleGroups == nil {
@@ -1291,7 +1491,7 @@ func (a *ModbusAgent) State() map[string]any {
 		}
 
 		// 디바이스별 요청 통계 (M7)
-		if c, ok := a.devStats[dev.config.ID]; ok {
+		if c, ok := devStats[dev.config.ID]; ok {
 			d["request_stats"] = requestStatsMap(c)
 		}
 
@@ -1312,7 +1512,7 @@ func (a *ModbusAgent) State() map[string]any {
 			if rg.PollInterval > 0 {
 				g["poll_interval"] = rg.PollInterval.String()
 			}
-			if cache, ok := a.caches[dev.config.ID]; ok {
+			if cache, ok := cacheMap[dev.config.ID]; ok {
 				g["stale"] = cache.IsStale(groupKey, a.config.StaleThreshold)
 				cache.mu.RLock()
 				if t, exists := cache.LastUpdateTime[groupKey]; exists {
@@ -1321,7 +1521,7 @@ func (a *ModbusAgent) State() map[string]any {
 				cache.mu.RUnlock()
 			}
 			// 그룹별 요청 통계 (M7)
-			if c, ok := a.groupStats[groupStatKey(dev.config.ID, rg.Name)]; ok {
+			if c, ok := groupStats[groupStatKey(dev.config.ID, rg.Name)]; ok {
 				g["request_stats"] = requestStatsMap(c)
 			}
 			groups = append(groups, g)
@@ -1332,7 +1532,7 @@ func (a *ModbusAgent) State() map[string]any {
 	}
 
 	return map[string]any{
-		"device_count": len(a.devices),
+		"device_count": len(devs),
 		"online_count": onlineCount,
 		"read_mode":    a.config.ReadMode,
 		"devices":      devices,

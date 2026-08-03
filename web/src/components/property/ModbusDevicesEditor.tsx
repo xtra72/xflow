@@ -99,6 +99,12 @@ interface DeviceRow {
   host: string;
   port: number;
   unitId: number;
+  // per-device transport 오버라이드 (SPEC-MODBUS-008 F2). ''=에이전트 기본 상속, 'tcp'|'rtu'.
+  transport: string;
+  // per-device RTU 오버라이드(transport==='rtu')의 시리얼 포트. 상속 rtu 는 에이전트 값을 쓰므로 비운다.
+  serialPort: string;
+  // per-device 세션 공유 오버라이드 (SPEC-MODBUS-008 F3). ''=상속, 'true'|'false'=오버라이드.
+  shareSession: string;
   areas: Record<AreaKey, SegmentRow[]>;
 }
 
@@ -125,6 +131,10 @@ interface EmittedDevice {
   host?: string;
   port?: number;
   unit_id: number;
+  // per-device 오버라이드 (SPEC-MODBUS-008 F2/F3). 미설정(상속) 시 방출하지 않아 하위 호환을 유지한다.
+  transport?: string;
+  serial_port?: string;
+  share_session?: boolean;
   register_groups: EmittedGroup[];
 }
 
@@ -212,14 +222,25 @@ function toAreas(groups: unknown): Record<AreaKey, SegmentRow[]> {
   return areas;
 }
 
+/** unknown 을 per-device share_session 삼상태 문자열로 변환한다(true/false → 'true'/'false', 그 외 → ''=상속). */
+function toShareOverride(v: unknown): string {
+  if (v === true) return 'true';
+  if (v === false) return 'false';
+  return '';
+}
+
 function toDeviceRow(item: unknown): DeviceRow {
   const o = asObject(item);
+  const transport = asString(o.transport);
   return {
     key: nextKey('dev'),
     id: asString(o.id),
     host: asString(o.host),
     port: numOr(o.port, 502),
     unitId: numOr(o.unit_id, 1),
+    transport: transport === 'tcp' || transport === 'rtu' ? transport : '',
+    serialPort: asString(o.serial_port),
+    shareSession: toShareOverride(o.share_session),
     areas: toAreas(o.register_groups),
   };
 }
@@ -268,6 +289,9 @@ function newDeviceRow(): DeviceRow {
     host: '',
     port: 502,
     unitId: 1,
+    transport: '',
+    serialPort: '',
+    shareSession: '',
     areas: emptyAreas(),
   };
 }
@@ -297,9 +321,12 @@ function toEmitGroup(area: AreaKey, seg: SegmentRow): EmittedGroup {
   return out;
 }
 
-/** DeviceRow → 백엔드 device. transport==='rtu' 면 host/port 를 방출하지 않는다. */
-function toEmitDevice(d: DeviceRow, transport: string): EmittedDevice {
-  const isRtu = transport === 'rtu';
+/** DeviceRow → 백엔드 device. 유효 트랜스포트(per-device override ?? 에이전트 기본)가 rtu 면
+ *  host/port 를 방출하지 않는다. per-device 오버라이드(transport/serial_port/share_session)는
+ *  설정된 경우에만 방출하여 하위 호환(미설정 시 기존 형상과 바이트 동일)을 유지한다(SPEC-MODBUS-008). */
+function toEmitDevice(d: DeviceRow, agentTransport: string): EmittedDevice {
+  const effTransport = d.transport !== '' ? d.transport : agentTransport;
+  const isRtu = effTransport === 'rtu';
   const register_groups: EmittedGroup[] = [];
   for (const area of AREA_KEYS) {
     for (const seg of d.areas[area.key]) {
@@ -312,6 +339,13 @@ function toEmitDevice(d: DeviceRow, transport: string): EmittedDevice {
     if (d.host.trim() !== '') out.host = d.host.trim();
     out.port = d.port;
   }
+  // per-device transport 오버라이드(상속이 아니면 방출).
+  if (d.transport !== '') out.transport = d.transport;
+  // per-device RTU 오버라이드의 시리얼 포트(transport==='rtu' 이고 값이 있으면 방출).
+  if (d.transport === 'rtu' && d.serialPort.trim() !== '') out.serial_port = d.serialPort.trim();
+  // per-device share_session 오버라이드(상속이 아니면 방출).
+  if (d.shareSession === 'true') out.share_session = true;
+  else if (d.shareSession === 'false') out.share_session = false;
   return out;
 }
 
@@ -876,7 +910,9 @@ function DeviceEditDialog({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const [bulkErrors, setBulkErrors] = useState<BulkParseError[]>([]);
-  const isTcp = transport !== 'rtu';
+  // 유효 트랜스포트 = per-device 오버라이드 ?? 에이전트 기본(F2). host/port 노출 판정에 사용한다.
+  const effTransport = draft.transport !== '' ? draft.transport : transport;
+  const isTcp = effTransport !== 'rtu';
 
   const closeBulk = () => {
     setBulkOpen(false);
@@ -930,7 +966,9 @@ function DeviceEditDialog({
 
   const unitIdValid = draft.unitId >= 1 && draft.unitId <= 247;
   const hostMissing = isTcp && draft.host.trim() === '';
-  const canSave = !readOnly && unitIdValid && !hostMissing;
+  // per-device rtu 오버라이드는 시리얼 포트가 필수다(백엔드 parseDeviceConfig 검증과 정합, AC-04).
+  const serialMissing = draft.transport === 'rtu' && draft.serialPort.trim() === '';
+  const canSave = !readOnly && unitIdValid && !hostMissing && !serialMissing;
 
   return (
     <div
@@ -1038,6 +1076,66 @@ function DeviceEditDialog({
           {hostMissing && (
             <p className="text-[11px] text-red-500 dark:text-red-400">
               {t('property.modbusDevices.hostRequired')}
+            </p>
+          )}
+
+          {/* per-device 오버라이드 (SPEC-MODBUS-008 F2/F3): 트랜스포트 / 시리얼 포트 / 세션 공유.
+              모두 '상속'이 기본이며, 상속일 때는 방출하지 않아 기존 설정과 바이트 동일하게 동작한다. */}
+          <div className="grid grid-cols-2 gap-2 border-t border-(--color-border-default) pt-3">
+            <label className="space-y-0.5">
+              <span className={fieldLabel}>트랜스포트 오버라이드</span>
+              <select
+                value={draft.transport}
+                disabled={readOnly}
+                onChange={(e) => setDraft((d) => ({ ...d, transport: e.target.value }))}
+                aria-label="per-device transport override"
+                className={cn(cellInput, readOnly && readOnlyInput)}
+              >
+                <option value="">에이전트 기본 상속</option>
+                <option value="tcp">tcp</option>
+                <option value="rtu">rtu</option>
+              </select>
+            </label>
+
+            <label className="space-y-0.5">
+              <span className={fieldLabel}>세션 공유 오버라이드</span>
+              <select
+                value={draft.shareSession}
+                disabled={readOnly}
+                onChange={(e) => setDraft((d) => ({ ...d, shareSession: e.target.value }))}
+                aria-label="per-device share_session override"
+                className={cn(cellInput, readOnly && readOnlyInput)}
+              >
+                <option value="">에이전트 기본 상속</option>
+                <option value="true">공유</option>
+                <option value="false">독립</option>
+              </select>
+            </label>
+
+            {draft.transport === 'rtu' && (
+              <label className="col-span-2 space-y-0.5">
+                <span className={fieldLabel}>시리얼 포트 (per-device rtu)</span>
+                <input
+                  type="text"
+                  value={draft.serialPort}
+                  readOnly={readOnly}
+                  onChange={(e) => setDraft((d) => ({ ...d, serialPort: e.target.value }))}
+                  aria-label="per-device serial_port"
+                  className={cn(
+                    cellInput,
+                    readOnly && readOnlyInput,
+                    serialMissing &&
+                      'border-red-400 focus:border-red-400 focus:ring-red-400 dark:border-red-500',
+                  )}
+                  placeholder="/dev/ttyUSB0"
+                />
+              </label>
+            )}
+          </div>
+
+          {serialMissing && (
+            <p className="text-[11px] text-red-500 dark:text-red-400">
+              per-device rtu 오버라이드는 시리얼 포트가 필요합니다
             </p>
           )}
 
