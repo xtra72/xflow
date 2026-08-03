@@ -17,11 +17,11 @@ import (
 func TestParseModbusServerConfig_ValidConfig(t *testing.T) {
 	// 모든 필드를 명시적으로 설정한 완전한 설정을 파싱한다.
 	opts := map[string]any{
-		"listen_address":  "192.168.1.100",
-		"listen_port":     float64(5020),
-		"unit_id":         float64(10),
+		"listen_address":   "192.168.1.100",
+		"listen_port":      float64(5020),
+		"unit_id":          float64(10),
 		"max_connections":  float64(20),
-		"idle_timeout":    "30s",
+		"idle_timeout":     "30s",
 		"msg_channel_size": float64(512),
 		"register_map": map[string]any{
 			"coils": map[string]any{
@@ -101,14 +101,15 @@ func TestParseModbusServerConfig_DefaultValues(t *testing.T) {
 }
 
 func TestParseModbusServerConfig_MissingRegisterMap(t *testing.T) {
-	// register_map 이 없으면 에러를 반환해야 한다.
+	// register_map 이 없어도 role=main 은 zero-device 서버로 구성된다(오류 아님).
+	// (디바이스는 생성 후 config 업데이트로 추가된다.)
 	opts := map[string]any{
 		"listen_port": float64(5020),
 	}
 
-	_, err := parseModbusServerConfig(opts)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidRegisterMap)
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Devices, "register_map 없는 main 은 zero-device")
 }
 
 func TestParseModbusServerConfig_InvalidPort(t *testing.T) {
@@ -388,8 +389,8 @@ func TestParseModbusServerConfig_InvalidIdleTimeout(t *testing.T) {
 func TestParseModbusServerConfig_IntTypePorts(t *testing.T) {
 	// int 타입으로 전달되는 경우도 처리해야 한다
 	opts := map[string]any{
-		"listen_port":     502,
-		"unit_id":         1,
+		"listen_port":      502,
+		"unit_id":          1,
 		"max_connections":  5,
 		"msg_channel_size": 128,
 		"register_map": map[string]any{
@@ -982,12 +983,13 @@ func TestParseModbusServerConfig_MultiDevice_NoNameOptional(t *testing.T) {
 }
 
 func TestParseModbusServerConfig_NoRegisterMapNoDevices(t *testing.T) {
-	// register_map 도 devices 도 없으면 에러를 반환한다.
+	// register_map 도 devices 도 없으면 zero-device main 으로 구성된다(오류 아님).
 	opts := map[string]any{
 		"listen_port": float64(5020),
 	}
 
-	_, err := parseModbusServerConfig(opts)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidRegisterMap)
+	cfg, err := parseModbusServerConfig(opts)
+	require.NoError(t, err)
+	assert.Equal(t, RoleMain, cfg.Role)
+	assert.Empty(t, cfg.Devices)
 }

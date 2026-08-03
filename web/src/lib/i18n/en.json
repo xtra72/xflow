@@ -1810,7 +1810,19 @@
         "removeDeviceFailed": "Failed to remove device",
         "removeDeviceSuccess": "Device (Unit {unit}) removed",
         "removeDeviceError": "Failed to remove device: {message}",
-        "unknownError": "Unknown error"
+        "unknownError": "Unknown error",
+        "configSectionTitle": "Device configuration",
+        "liveSectionTitle": "Live status (read-only)",
+        "restartNotice": "Applying restarts the server briefly; connections may drop momentarily.",
+        "saveConfig": "Save & apply",
+        "saving": "Saving...",
+        "reset": "Revert",
+        "configSavedRestart": "Device configuration saved. The server restarts to apply.",
+        "configSaveError": "Config save failed: {message}",
+        "refresh": "Refresh",
+        "noLiveDevices": "No running devices.",
+        "sharedUnit": "Shared (unit 0)",
+        "noDetail": "Could not load details."
       },
       "devices": {
         "remoteUnavailable": "Devices on remote nodes are controlled from the Devices page.",

@@ -7,7 +7,7 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -47,6 +47,7 @@ import {
 import type { ConfigSchema, ConfigSection } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
+import { ModbusServerDevicesEditor } from '@/components/property/ModbusServerDevicesEditor';
 import { TWO_COL_CONFIG, TwoColumnConfigLayout } from './twoColumnConfig';
 import {
   StoreKeysEditor,
@@ -1248,590 +1249,226 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
 
 function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
-  const execAgent = useExecAgent();
+  const target = useTargetContext();
+  const { data: agent, isLoading } = useAgentDetailTarget(target, agentId, 'full');
+  const configureAgent = useConfigureAgent();
+  const queryClient = useQueryClient();
   const addNotification = useUIStore((s) => s.addNotification);
+  const execAgent = useExecAgent();
 
-  // 디바이스 목록
-  const [devices, setDevices] = useState<ModbusDevice[]>([]);
-  const [isLoadingDevices, setIsLoadingDevices] = useState(true);
+  // ── config.devices 편집(단일 소스). 저장 시 PUT /agents/{id}/config → 백엔드가
+  //    config 를 영속화하고 modbus-server 를 재시작해 DeviceManager 를 재빌드한다.
+  const config = useMemo(
+    () => (agent?.config as Record<string, unknown> | undefined) ?? {},
+    [agent?.config],
+  );
+  const savedDevices = useMemo(() => {
+    const d = config.devices;
+    return Array.isArray(d) ? (d as unknown[]) : [];
+  }, [config.devices]);
 
-  // 상세 보기
+  // 에디터 방출 드래프트. 저장 전까지 로컬 상태.
+  const [draft, setDraft] = useState<unknown>(savedDevices);
+  const [dirty, setDirty] = useState(false);
+
+  // 외부 config 로드/변경 시(저장 후 refetch 포함) 드래프트를 동기화한다.
+  useEffect(() => {
+    setDraft(savedDevices);
+    setDirty(false);
+  }, [savedDevices]);
+
+  const handleSave = useCallback(async () => {
+    const devices = Array.isArray(draft) ? draft : [];
+    try {
+      await configureAgent.mutateAsync({
+        id: agentId,
+        config: { ...config, devices },
+      });
+      addNotification({
+        type: 'success',
+        message: t('agents.detail.modbus.configSavedRestart'),
+      });
+      setDirty(false);
+      await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
+    } catch (err) {
+      addNotification({
+        type: 'error',
+        message: t('agents.detail.modbus.configSaveError').replace(
+          '{message}',
+          err instanceof Error ? err.message : t('agents.detail.modbus.unknownError'),
+        ),
+      });
+    }
+  }, [draft, config, agentId, configureAgent, addNotification, queryClient, t]);
+
+  const handleReset = useCallback(() => {
+    setDraft(savedDevices);
+    setDirty(false);
+  }, [savedDevices]);
+
+  // ── 실시간 상태(읽기 전용). 런타임 list_devices / get_device_status 로 현재
+  //    구동 중인 디바이스와 레지스터 값을 조회한다(설정 편집과 별개).
+  const [liveDevices, setLiveDevices] = useState<ModbusDevice[]>([]);
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
   const [deviceDetail, setDeviceDetail] = useState<ModbusDeviceDetail | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
-  // 추가 모달
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [addUnitId, setAddUnitId] = useState('');
-  const [addName, setAddName] = useState('');
-  const [isAdding, setIsAdding] = useState(false);
-
-  // 레지스터 맵 폼 상태 (영역별 블록 배열, 빈 배열 = 비활성)
-  type RegBlock = { start: string; count: string };
-  const [addRegAreas, setAddRegAreas] = useState<Record<string, RegBlock[]>>({
-    holding_registers: [{ start: '0', count: '100' }],
-    input_registers: [],
-    coils: [],
-    discrete_inputs: [],
-  });
-
-  // 삭제 확인
-  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
-
-  // 디바이스 목록 로드
-  const fetchDevices = useCallback(() => {
-    setIsLoadingDevices(true);
+  const fetchLiveDevices = useCallback(() => {
     execAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {
-          const result = res as { result?: { devices?: ModbusDevice[]; total?: number } };
-          const list = result?.result?.devices ?? [];
-          setDevices(list);
-          setIsLoadingDevices(false);
+          const result = res as { result?: { devices?: ModbusDevice[] } };
+          setLiveDevices(result?.result?.devices ?? []);
         },
-        onError: () => {
-          setIsLoadingDevices(false);
-          addNotification({ type: 'error', message: t('agents.detail.modbus.loadDevicesError') });
-        },
+        onError: () => setLiveDevices([]),
       },
     );
-  }, [agentId, execAgent, addNotification, t]);
+  }, [agentId, execAgent]);
 
   useEffect(() => {
-    fetchDevices();
+    fetchLiveDevices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
-  // 디바이스 상세 로드
-  const handleSelectDevice = useCallback((unitId: number) => {
-    if (selectedUnitId === unitId) {
-      setSelectedUnitId(null);
-      setDeviceDetail(null);
-      return;
-    }
-    setSelectedUnitId(unitId);
-    setIsLoadingDetail(true);
-    execAgent.mutate(
-      { id: agentId, req: { command: 'get_device_status', params: { unit_id: unitId } } },
-      {
-        onSuccess: (res) => {
-          const result = res as { result?: ModbusDeviceDetail };
-          setDeviceDetail(result?.result ?? null);
-          setIsLoadingDetail(false);
-        },
-        onError: () => {
-          setDeviceDetail(null);
-          setIsLoadingDetail(false);
-        },
-      },
-    );
-  }, [agentId, selectedUnitId, execAgent]);
-
-  // 디바이스 추가
-  const handleAddDevice = useCallback(() => {
-    const unitId = parseInt(addUnitId, 10);
-    if (isNaN(unitId) || unitId < 1 || unitId > 247) {
-      addNotification({ type: 'error', message: t('agents.detail.modbus.unitIdRangeError') });
-      return;
-    }
-
-    const params: Record<string, unknown> = { unit_id: unitId };
-    if (addName.trim()) params.name = addName.trim();
-
-    // 구조화된 레지스터 맵 조립 (영역당 다중 블록 지원)
-    const regMap: Record<string, unknown> = {};
-    for (const [area, blocks] of Object.entries(addRegAreas)) {
-      if (!blocks || blocks.length === 0) continue;
-      const parsed: { start_address: number; count: number }[] = [];
-      for (const blk of blocks) {
-        const start = parseInt(blk.start, 10);
-        const cnt = parseInt(blk.count, 10);
-        if (isNaN(start) || isNaN(cnt) || cnt <= 0) {
-          addNotification({ type: 'error', message: t('agents.detail.modbus.blockInputError').replace('{area}', REGISTER_AREA_LABELS[area] ?? area) });
-          return;
-        }
-        parsed.push({ start_address: start, count: cnt });
+  const handleSelectLive = useCallback(
+    (unitId: number) => {
+      if (selectedUnitId === unitId) {
+        setSelectedUnitId(null);
+        setDeviceDetail(null);
+        return;
       }
-      // 블록 1개면 객체, 2개 이상이면 배열 (백엔드 호환)
-      regMap[area] = parsed.length === 1 ? parsed[0] : parsed;
-    }
-    if (Object.keys(regMap).length === 0) {
-      addNotification({ type: 'error', message: t('agents.detail.modbus.noRegisterArea') });
-      return;
-    }
-    params.register_map = regMap;
-
-    setIsAdding(true);
-    execAgent.mutate(
-      { id: agentId, req: { command: 'add_device', params } },
-      {
-        onSuccess: (res) => {
-          const result = res as { result?: { success?: boolean; error?: string } };
-          if (result?.result?.success === false) {
-            addNotification({ type: 'error', message: result.result.error ?? t('agents.detail.modbus.addDeviceFailed') });
-          } else {
-            addNotification({ type: 'success', message: t('agents.detail.modbus.addDeviceSuccess').replace('{unit}', String(unitId)) });
-            setShowAddModal(false);
-            setAddUnitId('');
-            setAddName('');
-            setAddRegAreas({
-              holding_registers: [{ start: '0', count: '100' }],
-              input_registers: [],
-              coils: [],
-              discrete_inputs: [],
-            });
-            fetchDevices();
-          }
-          setIsAdding(false);
+      setSelectedUnitId(unitId);
+      setIsLoadingDetail(true);
+      execAgent.mutate(
+        { id: agentId, req: { command: 'get_device_status', params: { unit_id: unitId } } },
+        {
+          onSuccess: (res) => {
+            const result = res as { result?: ModbusDeviceDetail };
+            setDeviceDetail(result?.result ?? null);
+            setIsLoadingDetail(false);
+          },
+          onError: () => {
+            setDeviceDetail(null);
+            setIsLoadingDetail(false);
+          },
         },
-        onError: (err) => {
-          addNotification({ type: 'error', message: t('agents.detail.modbus.addDeviceError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.modbus.unknownError')) });
-          setIsAdding(false);
-        },
-      },
-    );
-  }, [agentId, addUnitId, addName, addRegAreas, execAgent, addNotification, fetchDevices, t]);
+      );
+    },
+    [agentId, selectedUnitId, execAgent],
+  );
 
-  // 디바이스 삭제
-  const handleDeleteDevice = useCallback((unitId: number) => {
-    execAgent.mutate(
-      { id: agentId, req: { command: 'remove_device', params: { unit_id: unitId } } },
-      {
-        onSuccess: (res) => {
-          const result = res as { result?: { success?: boolean; error?: string } };
-          if (result?.result?.success === false) {
-            addNotification({ type: 'error', message: result.result.error ?? t('agents.detail.modbus.removeDeviceFailed') });
-          } else {
-            addNotification({ type: 'success', message: t('agents.detail.modbus.removeDeviceSuccess').replace('{unit}', String(unitId)) });
-            if (selectedUnitId === unitId) {
-              setSelectedUnitId(null);
-              setDeviceDetail(null);
-            }
-            fetchDevices();
-          }
-          setDeleteTarget(null);
-        },
-        onError: (err) => {
-          addNotification({ type: 'error', message: t('agents.detail.modbus.removeDeviceError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.modbus.unknownError')) });
-          setDeleteTarget(null);
-        },
-      },
-    );
-  }, [agentId, selectedUnitId, execAgent, addNotification, fetchDevices, t]);
-
-  const canDelete = useMemo(() => devices.length > 1, [devices.length]);
-
-  if (isLoadingDevices) {
+  if (isLoading) {
     return (
-      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-32 animate-pulse rounded-lg bg-(--color-bg-elevated)"
-          />
-        ))}
+      <div className="space-y-3 p-4">
+        <div className="h-40 animate-pulse rounded-lg bg-(--color-bg-elevated)" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-3 p-4">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-(--color-text-muted)">
-          {t('agents.detail.modbus.devicesCount').replace('{count}', String(devices.length))}
-        </span>
-        <button
-          type="button"
-          onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {t('agents.detail.modbus.addDevice')}
-        </button>
+    <div className="space-y-5 p-4">
+      {/* ── 디바이스 설정(config.devices) ── */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+            {t('agents.detail.modbus.configSectionTitle')}
+          </h4>
+          <div className="flex items-center gap-2">
+            {dirty && (
+              <button
+                type="button"
+                onClick={handleReset}
+                disabled={configureAgent.isPending}
+                className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
+              >
+                {t('agents.detail.modbus.reset')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!dirty || configureAgent.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {configureAgent.isPending
+                ? t('agents.detail.modbus.saving')
+                : t('agents.detail.modbus.saveConfig')}
+            </button>
+          </div>
+        </div>
+
+        {/* 적용 시 재시작 안내 */}
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-300">
+          {t('agents.detail.modbus.restartNotice')}
+        </p>
+
+        <ModbusServerDevicesEditor
+          value={draft}
+          onChange={(v) => {
+            setDraft(v);
+            setDirty(true);
+          }}
+        />
       </div>
 
-      {/* 추가 모달 */}
-      {showAddModal && (
-        <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
-          <div className="text-sm font-medium text-(--color-text-primary)">{t('agents.detail.modbus.addDevice')}</div>
-          <div>
-            <label htmlFor="modbus-add-unit-id" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-              {t('agents.detail.modbus.unitId')}
-            </label>
-            <input
-              id="modbus-add-unit-id"
-              type="number"
-              min={1}
-              max={247}
-              placeholder="1"
-              value={addUnitId}
-              onChange={(e) => setAddUnitId(e.target.value)}
-              className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
-            />
-          </div>
-          <div>
-            <label htmlFor="modbus-add-name" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-              {t('agents.detail.modbus.name')}
-            </label>
-            <input
-              id="modbus-add-name"
-              type="text"
-              placeholder={t('agents.detail.modbus.namePlaceholder')}
-              value={addName}
-              onChange={(e) => setAddName(e.target.value)}
-              className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
-            />
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-(--color-text-muted)">
-              {t('agents.detail.modbus.registerMap')}
-            </p>
-            <div className="space-y-1.5">
-              {REGISTER_AREA_ORDER.map((area) => {
-                const blocks = addRegAreas[area] ?? [];
-                const isActive = blocks.length > 0;
-                const label = REGISTER_AREA_LABELS[area] ?? area;
-                const defaultCount = area === 'coils' || area === 'discrete_inputs' ? '8' : '100';
-                return (
-                  <div
-                    key={area}
-                    className={cn(
-                      'rounded-md border p-2 transition-colors',
-                      isActive
-                        ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/30'
-                        : 'border-(--color-border-default) bg-(--color-bg-primary)',
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isActive}
-                          onChange={(e) => {
-                            setAddRegAreas((prev) => ({
-                              ...prev,
-                              [area]: e.target.checked ? [{ start: '0', count: defaultCount }] : [],
-                            }));
-                          }}
-                          className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
-                        />
-                        <span className="text-xs font-medium text-(--color-text-secondary)">
-                          {label}
-                        </span>
-                      </label>
-                      {isActive && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAddRegAreas((prev) => {
-                              const cur = prev[area] ?? [];
-                              return { ...prev, [area]: [...cur, { start: '0', count: defaultCount }] };
-                            });
-                          }}
-                          className="text-[10px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                        >
-                          {t('agents.detail.modbus.addBlock')}
-                        </button>
-                      )}
-                    </div>
-                    {isActive && (
-                      <div className="mt-1.5 space-y-1 pl-5">
-                        {blocks.map((blk, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-(--color-text-muted)">Start:</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={blk.start}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setAddRegAreas((prev) => {
-                                    const cur = [...(prev[area] ?? [])];
-                                    cur[idx] = { start: val, count: cur[idx]?.count ?? defaultCount };
-                                    return { ...prev, [area]: cur };
-                                  });
-                                }}
-                                className="w-20 rounded border border-(--color-border-strong) px-1.5 py-0.5 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
-                              />
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-(--color-text-muted)">Count:</span>
-                              <input
-                                type="number"
-                                min={1}
-                                value={blk.count}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setAddRegAreas((prev) => {
-                                    const cur = [...(prev[area] ?? [])];
-                                    cur[idx] = { start: cur[idx]?.start ?? '0', count: val };
-                                    return { ...prev, [area]: cur };
-                                  });
-                                }}
-                                className="w-20 rounded border border-(--color-border-strong) px-1.5 py-0.5 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
-                              />
-                            </div>
-                            {blocks.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAddRegAreas((prev) => {
-                                    const cur = [...(prev[area] ?? [])];
-                                    cur.splice(idx, 1);
-                                    return { ...prev, [area]: cur };
-                                  });
-                                }}
-                                className="rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
-                                title={t('agents.detail.modbus.deleteBlock')}
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleAddDevice}
-              disabled={!addUnitId.trim() || isAdding}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
-            >
-              {isAdding ? t('agents.detail.modbus.adding') : t('agents.detail.modbus.add')}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowAddModal(false);
-                setAddUnitId('');
-                setAddName('');
-                setAddRegAreas({
-                  holding_registers: [{ start: '0', count: '100' }],
-                  input_registers: [],
-                  coils: [],
-                  discrete_inputs: [],
-                });
-              }}
-              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
-            >
-              {t('agents.detail.modbus.cancel')}
-            </button>
-          </div>
+      {/* ── 실시간 상태(읽기 전용) ── */}
+      <div className="space-y-2 border-t border-(--color-border-default) pt-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+            {t('agents.detail.modbus.liveSectionTitle')}
+          </h4>
+          <button
+            type="button"
+            onClick={fetchLiveDevices}
+            className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary)"
+          >
+            {t('agents.detail.modbus.refresh')}
+          </button>
         </div>
-      )}
 
-      {/* 삭제 확인 다이얼로그 */}
-      {deleteTarget !== null && (
-        <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950">
-          <AlertTriangle className="h-4 w-4 flex-shrink-0 text-red-500" />
-          <div className="flex-1">
-            <p className="text-sm text-red-700 dark:text-red-300">
-              {t('agents.detail.modbus.confirmDelete').replace('{unit}', String(deleteTarget))}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleDeleteDevice(deleteTarget)}
-              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
-            >
-              {t('agents.detail.modbus.delete')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeleteTarget(null)}
-              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
-            >
-              {t('agents.detail.modbus.cancel')}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 디바이스 목록 */}
-      {devices.length === 0 ? (
-        <div className="p-6 text-center">
-          <Server className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
-          <p className="mt-2 text-sm text-(--color-text-muted)">
-            {t('agents.detail.modbus.noDevices')}
+        {liveDevices.length === 0 ? (
+          <p className="py-2 text-center text-xs text-(--color-text-muted)">
+            {t('agents.detail.modbus.noLiveDevices')}
           </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {devices.map((d) => (
-            <div
-              key={d.unit_id}
-              className={cn(
-                'cursor-pointer rounded-lg border bg-(--color-bg-surface) p-3 transition-colors',
-                selectedUnitId === d.unit_id
-                  ? 'border-blue-400 ring-1 ring-blue-400 dark:border-blue-500'
-                  : 'border-(--color-border-default) hover:border-gray-300 dark:hover:border-gray-600',
-              )}
-              onClick={() => handleSelectDevice(d.unit_id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleSelectDevice(d.unit_id);
-                }
-              }}
-            >
-              {/* 카드 헤더 */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded bg-(--color-bg-elevated) px-1.5 text-xs font-bold text-(--color-text-secondary)">
-                    {d.unit_id}
-                  </span>
-                  <span className="text-sm font-medium text-(--color-text-primary)">
-                    {d.name || `Device ${d.unit_id}`}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                      d.status === 'active'
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
-                        : 'bg-(--color-bg-elevated) text-(--color-text-muted)',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'h-1.5 w-1.5 rounded-full',
-                        d.status === 'active' ? 'bg-green-500' : 'bg-gray-400',
-                      )}
-                    />
-                    {d.status === 'active' ? t('agents.detail.modbus.active') : t('agents.detail.modbus.inactive')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteTarget(d.unit_id);
-                    }}
-                    disabled={!canDelete}
-                    className={cn(
-                      'rounded p-1 transition-colors',
-                      canDelete
-                        ? 'text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950'
-                        : 'cursor-not-allowed text-gray-300 dark:text-gray-600',
-                    )}
-                    title={canDelete ? t('agents.detail.modbus.deleteTooltip') : t('agents.detail.modbus.lastDeviceTooltip')}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5">
+              {liveDevices.map((d) => (
+                <button
+                  key={d.unit_id}
+                  type="button"
+                  onClick={() => handleSelectLive(d.unit_id)}
+                  className={
+                    selectedUnitId === d.unit_id
+                      ? 'rounded-md border border-blue-400 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-900/20 dark:text-blue-300'
+                      : 'rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-[11px] text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)'
+                  }
+                >
+                  {d.unit_id === 0
+                    ? t('agents.detail.modbus.sharedUnit')
+                    : `unit ${d.unit_id}`}
+                  {d.name ? ` · ${d.name}` : ''}
+                </button>
+              ))}
+            </div>
 
-              {/* 레지스터 영역 카운트 */}
-              <div className="mt-2 grid grid-cols-2 gap-1">
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">Coils:</span> {d.register_counts.coils}
-                </div>
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">DI:</span> {d.register_counts.discrete_inputs}
-                </div>
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">HR:</span> {d.register_counts.holding_registers}
-                </div>
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">IR:</span> {d.register_counts.input_registers}
-                </div>
-              </div>
-
-              {/* 통계 요약 */}
-              <div className="mt-2 flex items-center gap-3 border-t border-(--color-border-default) pt-2">
-                <span className="flex items-center gap-1 text-[10px] text-(--color-text-muted)">
-                  <Activity className="h-3 w-3" />
-                  R:{d.stats.read_count} W:{d.stats.write_count}
-                </span>
-                {d.stats.error_count > 0 && (
-                  <span className="text-[10px] text-red-500">
-                    E:{d.stats.error_count}
-                  </span>
+            {selectedUnitId !== null && (
+              <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-2">
+                {isLoadingDetail ? (
+                  <div className="h-16 animate-pulse rounded bg-(--color-bg-elevated)" />
+                ) : deviceDetail ? (
+                  <RegisterMapTable registerMap={deviceDetail.register_map} />
+                ) : (
+                  <p className="py-2 text-center text-[11px] text-(--color-text-muted)">
+                    {t('agents.detail.modbus.noDetail')}
+                  </p>
                 )}
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 디바이스 상세 보기 */}
-      {selectedUnitId !== null && (
-        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h4 className="text-sm font-medium text-(--color-text-primary)">
-              {t('agents.detail.modbus.unitDetail').replace('{unit}', String(selectedUnitId))}
-            </h4>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedUnitId(null);
-                setDeviceDetail(null);
-              }}
-              className="rounded p-1 text-gray-400 hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            )}
           </div>
-          {isLoadingDetail ? (
-            <div className="space-y-2">
-              <div className="h-4 w-1/3 animate-pulse rounded bg-(--color-bg-elevated)" />
-              <div className="h-4 w-2/3 animate-pulse rounded bg-(--color-bg-elevated)" />
-            </div>
-          ) : deviceDetail ? (
-            <div className="space-y-3">
-              {/* 요청 통계 */}
-              <div>
-                <p className="mb-1 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.modbus.requestStats')}</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.read')}</p>
-                    <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.read_count}</p>
-                  </div>
-                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.write')}</p>
-                    <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.write_count}</p>
-                  </div>
-                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
-                    <p className={cn(
-                      'text-sm font-semibold',
-                      deviceDetail.stats.error_count > 0 ? 'text-red-500' : 'text-(--color-text-primary)',
-                    )}>{deviceDetail.stats.error_count}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* 레지스터 맵 정보 */}
-              {deviceDetail.register_map && Object.keys(deviceDetail.register_map).length > 0 && (
-                <RegisterMapTable registerMap={deviceDetail.register_map} />
-              )}
-
-              {/* 생성 시간 */}
-              {deviceDetail.created_at && (
-                <p className="text-xs text-(--color-text-muted)">
-                  {t('agents.detail.modbus.createdAt').replace('{date}', new Date(deviceDetail.created_at).toLocaleString('ko-KR'))}
-                </p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-(--color-text-muted)">
-              {t('agents.detail.modbus.detailLoadError')}
-            </p>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

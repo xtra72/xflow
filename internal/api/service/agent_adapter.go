@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
-	"github.com/xtra/xflow/internal/agent/xsfm"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/samsung"
+	"github.com/xtra/xflow/internal/agent/xsfm"
 	"github.com/xtra/xflow/internal/api/dto"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/storage"
@@ -290,8 +290,18 @@ var transportKeys = []string{
 	"tcp_host", "tcp_port",
 }
 
+// modbusServerAgentType 은 modbus-server 에이전트 타입 식별자이다.
+const modbusServerAgentType = "modbus-server"
+
+// modbusStructuralKeys 는 값이 바뀌면 modbus-server 재시작이 필요한 중첩 구조 설정 키이다.
+// devices/register_map 변경 → 팩토리 재생성으로 DeviceManager 를 재구축해야 한다.
+var modbusStructuralKeys = []string{"devices", "register_map"}
+
 // needsRestart 는 이전 설정과 새 설정을 비교하여 transport 재시작이 필요한지 판단한다.
-func needsRestart(oldOpts, newOpts map[string]any) bool {
+// transport 키 변경은 모든 에이전트 타입에 적용되고, devices/register_map 같은 중첩 구조
+// 변경은 modbus-server 에만 적용된다(HVAC 등 다른 에이전트도 "devices" 키를 쓰지만
+// add_device 로 재시작 없이 로스터를 갱신하므로 재시작을 트리거하지 않는다).
+func needsRestart(agentType string, oldOpts, newOpts map[string]any) bool {
 	for _, key := range transportKeys {
 		oldVal, oldOK := oldOpts[key]
 		newVal, newOK := newOpts[key]
@@ -299,7 +309,33 @@ func needsRestart(oldOpts, newOpts map[string]any) bool {
 			return true
 		}
 	}
+
+	// 중첩 구조(devices/register_map) 변경 감지: JSON 정규화 후 deep-equal.
+	// modbus-server 에이전트에만 적용한다(다른 타입에는 무해하게 스킵).
+	if agentType == modbusServerAgentType {
+		for _, key := range modbusStructuralKeys {
+			oldVal, oldOK := oldOpts[key]
+			newVal, newOK := newOpts[key]
+			if oldOK != newOK {
+				return true
+			}
+			if oldOK && jsonNormalize(oldVal) != jsonNormalize(newVal) {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+// jsonNormalize 는 값을 결정적 JSON 문자열로 정규화한다(encoding/json 은 맵 키를 정렬,
+// 슬라이스는 순서 보존). 포인터 동일성이 아닌 값 기반 deep-equal 비교에 사용한다.
+// 마셜 실패 시 fmt.Sprint 로 폴백한다.
+func jsonNormalize(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
 }
 
 // ConfigureAgent 는 에이전트 설정을 변경한다.
@@ -339,9 +375,10 @@ func (a *AgentServiceAdapter) ConfigureAgent(ctx context.Context, id string, cfg
 		}
 	}
 
-	// transport 설정이 변경되면 자동 재시작 (새 transport로 재생성)
-	if needsRestart(oldOpts, cfg) {
-		a.logger.Info("transport 설정 변경 감지, 에이전트 재시작", "agentID", id)
+	// transport 또는 modbus-server 의 devices/register_map 이 변경되면 자동 재시작
+	// (팩토리로 재생성 → DeviceManager 재구축). agentCfg.Type 으로 구조 키 비교를 스코프한다.
+	if needsRestart(agentCfg.Type, oldOpts, cfg) {
+		a.logger.Info("설정 변경 감지, 에이전트 재시작", "agentID", id, "type", agentCfg.Type)
 		if err := a.manager.Restart(ctx, id); err != nil {
 			return fmt.Errorf("configure: auto-restart failed: %w", err)
 		}

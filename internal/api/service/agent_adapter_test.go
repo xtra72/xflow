@@ -310,13 +310,14 @@ func TestAgentServiceAdapter_ConfigureAgent_WithRepo(t *testing.T) {
 	}
 }
 
-// TestNeedsRestart 는 transport 설정 변경 감지를 검증한다.
+// TestNeedsRestart 는 transport 및 modbus-server 구조(devices/register_map) 변경 감지를 검증한다.
 func TestNeedsRestart(t *testing.T) {
 	tests := []struct {
-		name    string
-		oldOpts map[string]any
-		newOpts map[string]any
-		want    bool
+		name      string
+		agentType string // "" 이면 비-modbus (transport 키만 적용)
+		oldOpts   map[string]any
+		newOpts   map[string]any
+		want      bool
 	}{
 		{
 			name:    "port 변경 — 재시작 필요",
@@ -366,10 +367,53 @@ func TestNeedsRestart(t *testing.T) {
 			newOpts: map[string]any{"port": "/dev/ttyUSB0", "baud_rate": 9600},
 			want:    false,
 		},
+		// --- modbus-server 구조 변경 ---
+		{
+			name:      "modbus-server devices 변경 — 재시작 필요",
+			agentType: "modbus-server",
+			oldOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}},
+			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(2)}}},
+			want:      true,
+		},
+		{
+			name:      "modbus-server devices 추가(zero → one) — 재시작 필요",
+			agentType: "modbus-server",
+			oldOpts:   map[string]any{},
+			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}},
+			want:      true,
+		},
+		{
+			name:      "modbus-server register_map 변경 — 재시작 필요",
+			agentType: "modbus-server",
+			oldOpts:   map[string]any{"register_map": map[string]any{"holding_registers": map[string]any{"address": float64(0), "count": float64(10)}}},
+			newOpts:   map[string]any{"register_map": map[string]any{"holding_registers": map[string]any{"address": float64(0), "count": float64(20)}}},
+			want:      true,
+		},
+		{
+			name:      "modbus-server devices 동일 — 재시작 불필요",
+			agentType: "modbus-server",
+			oldOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1), "name": "a"}}},
+			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1), "name": "a"}}},
+			want:      false,
+		},
+		{
+			name:      "modbus-server 무관 키만 변경 — 재시작 불필요",
+			agentType: "modbus-server",
+			oldOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}, "listen_port": float64(502)},
+			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}, "listen_port": float64(502)},
+			want:      false,
+		},
+		{
+			name:      "비-modbus 에이전트의 devices 변경 — 재시작 불필요(스코프 제외)",
+			agentType: "samsung-hvacr01",
+			oldOpts:   map[string]any{"devices": []any{map[string]any{"id": "a"}}},
+			newOpts:   map[string]any{"devices": []any{map[string]any{"id": "b"}}},
+			want:      false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := needsRestart(tt.oldOpts, tt.newOpts)
+			got := needsRestart(tt.agentType, tt.oldOpts, tt.newOpts)
 			assert.Equal(t, tt.want, got)
 		})
 	}

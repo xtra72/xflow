@@ -33,10 +33,12 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const execAgent = useExecAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
-  // 디바이스 추가 지원 에이전트 필터링 (samsung_hvacr01 + modbus-server)
+  // 디바이스 추가 지원 에이전트 필터링 (samsung_hvacr01).
+  // modbus-server 의 디바이스는 이제 config.devices(디바이스 탭 + PUT /agents/{id}/config)로
+  // 관리한다(SPEC-MODBUS-008). 전역 add_device exec 경로에서는 제외한다.
   const supportedAgents = useMemo(() => {
     const agents = agentsData?.data ?? [];
-    return agents.filter((a) => a.type === 'samsung_hvacr01' || a.type === 'modbus-server');
+    return agents.filter((a) => a.type === 'samsung_hvacr01');
   }, [agentsData]);
 
   const [selectedAgentId, setSelectedAgentId] = useState('');
