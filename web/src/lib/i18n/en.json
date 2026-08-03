@@ -2285,6 +2285,7 @@
     "detail": {
       "emptyNodes": "No node information. Nodes appear once the flow is deployed.",
       "nodeInstances": "Node Instances ({count})",
+      "showInternalNodes": "Show internal nodes",
       "logLevel": "Log Level",
       "logLevelDefault": "Default",
       "portIn": "Input",

@@ -2285,6 +2285,7 @@
     "detail": {
       "emptyNodes": "노드 정보가 없습니다. 플로우를 배포하면 노드가 표시됩니다.",
       "nodeInstances": "노드 인스턴스 ({count})",
+      "showInternalNodes": "내부 노드 표시",
       "logLevel": "로그 레벨",
       "logLevelDefault": "기본값",
       "portIn": "입력",

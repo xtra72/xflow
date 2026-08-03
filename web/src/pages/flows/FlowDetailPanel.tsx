@@ -110,6 +110,12 @@ function NodeLogLevelSelect({ nodeName }: { nodeName: string }) {
 }
 
 /** 포트 통계 요약: in / out 분리 표시 */
+// 내부적으로 생성된 노드(공유 경계 tap 등 __xxx__ 규칙)는 사용자 정의 노드가
+// 아니므로 인스턴스 리스트에서 기본 숨긴다. "내부 노드 표시" 옵션으로 노출 가능.
+function isInternalNode(node: FlowNodeInfo): boolean {
+  return node.type.startsWith('__');
+}
+
 function PortStats({ node }: { node: FlowNodeInfo }) {
   const { t } = useTranslation();
   if (!node.ports || node.ports.length === 0) return null;
@@ -145,11 +151,17 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
   const isRunning = flowStatus?.status === 'running';
   const { data: nodes, isLoading } = useFlowNodesTarget(target, flowId, isRunning ? 3000 : undefined);
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
+  // 내부 생성 노드 표시 여부 (기본 숨김)
+  const [showInternal, setShowInternal] = useState(false);
 
-  // 정렬된 노드 목록
+  // 내부 생성 노드 존재 여부 (옵션 토글 노출 판단용)
+  const hasInternal = useMemo(() => (nodes ?? []).some(isInternalNode), [nodes]);
+
+  // 필터(내부 노드) + 정렬된 노드 목록
   const sortedNodes = useMemo(() => {
     if (!nodes) return [];
-    return [...nodes].sort((a, b) => {
+    const visible = showInternal ? nodes : nodes.filter((n) => !isInternalNode(n));
+    return [...visible].sort((a, b) => {
       let aVal = '';
       let bVal = '';
       switch (sort.field) {
@@ -161,7 +173,7 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
       const cmp = aVal.localeCompare(bVal);
       return sort.direction === 'asc' ? cmp : -cmp;
     });
-  }, [nodes, sort]);
+  }, [nodes, sort, showInternal]);
 
   function handleSort(field: string) {
     setSort((prev) =>
@@ -194,9 +206,22 @@ export default function FlowDetailPanel({ flowId }: FlowDetailPanelProps) {
 
   return (
     <div className="p-4">
-      <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
-        {t('flows.detail.nodeInstances').replace('{count}', String(nodes.length))}
-      </h4>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h4 className="text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+          {t('flows.detail.nodeInstances').replace('{count}', String(sortedNodes.length))}
+        </h4>
+        {hasInternal && (
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5"
+              checked={showInternal}
+              onChange={(e) => setShowInternal(e.target.checked)}
+            />
+            {t('flows.detail.showInternalNodes')}
+          </label>
+        )}
+      </div>
       <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
         <table className="min-w-full divide-y divide-(--color-border-default) text-sm">
           <thead className="bg-(--color-bg-sunken)">
