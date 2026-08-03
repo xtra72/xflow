@@ -1,4 +1,4 @@
-// Modbus Server(modbus-server) 디바이스 배열 구조화 에디터.
+// Modbus Gateway(modbus-gateway) 디바이스 배열 구조화 에디터.
 //
 // UX (사용자 확정):
 //   1) 컴팩트 목록 + 팝업 편집: 목록 행은 unit_id + name 만 보여주고, 레지스터 맵은

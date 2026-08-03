@@ -310,7 +310,7 @@ func TestAgentServiceAdapter_ConfigureAgent_WithRepo(t *testing.T) {
 	}
 }
 
-// TestNeedsRestart 는 transport 및 modbus-server 구조(devices/register_map) 변경 감지를 검증한다.
+// TestNeedsRestart 는 transport 및 modbus-gateway 구조(devices/register_map) 변경 감지를 검증한다.
 func TestNeedsRestart(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -367,38 +367,38 @@ func TestNeedsRestart(t *testing.T) {
 			newOpts: map[string]any{"port": "/dev/ttyUSB0", "baud_rate": 9600},
 			want:    false,
 		},
-		// --- modbus-server 구조 변경 ---
+		// --- modbus-gateway 구조 변경 ---
 		{
 			name:      "modbus-server devices 변경 — 재시작 필요",
-			agentType: "modbus-server",
+			agentType: "modbus-gateway",
 			oldOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}},
 			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(2)}}},
 			want:      true,
 		},
 		{
 			name:      "modbus-server devices 추가(zero → one) — 재시작 필요",
-			agentType: "modbus-server",
+			agentType: "modbus-gateway",
 			oldOpts:   map[string]any{},
 			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}},
 			want:      true,
 		},
 		{
 			name:      "modbus-server register_map 변경 — 재시작 필요",
-			agentType: "modbus-server",
+			agentType: "modbus-gateway",
 			oldOpts:   map[string]any{"register_map": map[string]any{"holding_registers": map[string]any{"address": float64(0), "count": float64(10)}}},
 			newOpts:   map[string]any{"register_map": map[string]any{"holding_registers": map[string]any{"address": float64(0), "count": float64(20)}}},
 			want:      true,
 		},
 		{
 			name:      "modbus-server devices 동일 — 재시작 불필요",
-			agentType: "modbus-server",
+			agentType: "modbus-gateway",
 			oldOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1), "name": "a"}}},
 			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1), "name": "a"}}},
 			want:      false,
 		},
 		{
 			name:      "modbus-server 무관 키만 변경 — 재시작 불필요",
-			agentType: "modbus-server",
+			agentType: "modbus-gateway",
 			oldOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}, "listen_port": float64(502)},
 			newOpts:   map[string]any{"devices": []any{map[string]any{"unit_id": float64(1)}}, "listen_port": float64(502)},
 			want:      false,
@@ -734,7 +734,7 @@ func TestAgentToHandlerInfo_ConfigSource(t *testing.T) {
 				ID:   "opts-id",
 				Name: "opts-test",
 				Transport: agent.TransportConfig{
-					Type: "modbus-server",
+					Type: "modbus-gateway",
 					Options: map[string]any{
 						"listen_port": 5020,
 						"register_map": map[string]any{

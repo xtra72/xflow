@@ -97,7 +97,7 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'modbus-client': Network,
   'modbus-tcp': Network,
   'modbus-rtu': Cable,
-  'modbus-server': Network,
+  'modbus-gateway': Network,
   // Modbus 명령셋 노드: write=Upload, read=Download, control=SlidersHorizontal
   'modbus-write': Upload,
   'modbus-read': Download,

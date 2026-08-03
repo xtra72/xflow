@@ -29,9 +29,9 @@ func testModbusAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "test-modbus-server",
 		Name: "Test MODBUS Server",
-		Type: "modbus-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address":   "127.0.0.1",
 				"listen_port":      0,

@@ -21,9 +21,9 @@ func testAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "test-modbus-server",
 		Name: "Test MODBUS Server",
-		Type: "modbus-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address":   "127.0.0.1",
 				"listen_port":      0,
@@ -87,7 +87,7 @@ func TestNewModbusServerAgent(t *testing.T) {
 	assert.Equal(t, lifecycle.StateRunning, msa.CurrentState())
 	assert.Equal(t, "test-modbus-server", msa.ID())
 	assert.Equal(t, "Test MODBUS Server", msa.Name())
-	assert.Equal(t, "modbus-server", msa.Type())
+	assert.Equal(t, "modbus-gateway", msa.Type())
 }
 
 func TestModbusServerAgent_StartStop(t *testing.T) {
@@ -634,7 +634,7 @@ func TestModbusServerAgent_Info(t *testing.T) {
 	info := msa.Info()
 	assert.Equal(t, "test-modbus-server", info.ID)
 	assert.Equal(t, "Test MODBUS Server", info.Name)
-	assert.Equal(t, "modbus-server", info.Type)
+	assert.Equal(t, "modbus-gateway", info.Type)
 	assert.Equal(t, lifecycle.StateRunning, info.State)
 }
 
@@ -642,7 +642,7 @@ func TestModbusServerAgent_Type(t *testing.T) {
 	cfg := testAgentConfig()
 	a, err := NewModbusServerAgent(cfg, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "modbus-server", a.Type())
+	assert.Equal(t, "modbus-gateway", a.Type())
 }
 
 func TestModbusServerAgent_InvalidCommand(t *testing.T) {

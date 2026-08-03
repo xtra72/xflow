@@ -1085,7 +1085,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   );
 }
 
-// ---- Modbus Server 디바이스 섹션 ----
+// ---- Modbus Gateway 디바이스 섹션 ----
 
 /** list_devices 응답 내 개별 디바이스 */
 interface ModbusDevice {
@@ -1257,7 +1257,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const execAgent = useExecAgent();
 
   // ── config.devices 편집(단일 소스). 저장 시 PUT /agents/{id}/config → 백엔드가
-  //    config 를 영속화하고 modbus-server 를 재시작해 DeviceManager 를 재빌드한다.
+  //    config 를 영속화하고 modbus-gateway 를 재시작해 DeviceManager 를 재빌드한다.
   const config = useMemo(
     () => (agent?.config as Record<string, unknown> | undefined) ?? {},
     [agent?.config],
@@ -3506,8 +3506,8 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   }
 
-  // Modbus Server: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
-  if (agentType === 'modbus-server') {
+  // Modbus Gateway: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
+  if (agentType === 'modbus-gateway') {
     return <ModbusDevicesSection agentId={agentId} />;
   }
 

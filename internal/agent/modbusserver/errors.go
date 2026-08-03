@@ -54,7 +54,7 @@ var (
 	ErrInvalidSharedConfig = errors.New("modbus-server: invalid shared register map configuration")
 
 	// ErrSharedMainNotFound 는 role=sub 서버가 shared_from 이 가리키는 주 서버를
-	// 찾지 못하거나, 대상이 modbus-server 가 아닐 때 반환된다.
+	// 찾지 못하거나, 대상이 modbus-gateway 가 아닐 때 반환된다.
 	ErrSharedMainNotFound = errors.New("modbus-server: shared main agent not found or not a modbus-server")
 
 	// ErrSharedMainNoDevices 는 role=sub 서버가 상속할 주 서버에 디바이스가 하나도

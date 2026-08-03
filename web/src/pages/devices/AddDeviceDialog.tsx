@@ -34,7 +34,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const addNotification = useUIStore((s) => s.addNotification);
 
   // 디바이스 추가 지원 에이전트 필터링 (samsung_hvacr01).
-  // modbus-server 의 디바이스는 이제 config.devices(디바이스 탭 + PUT /agents/{id}/config)로
+  // modbus-gateway 의 디바이스는 이제 config.devices(디바이스 탭 + PUT /agents/{id}/config)로
   // 관리한다(SPEC-MODBUS-008). 전역 add_device exec 경로에서는 제외한다.
   const supportedAgents = useMemo(() => {
     const agents = agentsData?.data ?? [];
@@ -106,7 +106,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           },
         },
       );
-    } else if (selectedAgentType === 'modbus-server') {
+    } else if (selectedAgentType === 'modbus-gateway') {
       const unitId = parseInt(modbusUnitId, 10);
       if (isNaN(unitId) || unitId < 1 || unitId > 247) {
         addNotification({ type: 'error', message: t('devices.add.unitIdRange') });
@@ -162,7 +162,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
   const canSubmit = (() => {
     if (!selectedAgentId || execAgent.isPending) return false;
     if (selectedAgentType === 'samsung_hvacr01') return !!samsungHvacr01Address.trim();
-    if (selectedAgentType === 'modbus-server') return !!modbusUnitId.trim();
+    if (selectedAgentType === 'modbus-gateway') return !!modbusUnitId.trim();
     return false;
   })();
 
@@ -202,7 +202,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
             >
               <option value="">{t('devices.add.agentPlaceholder')}</option>
               {supportedAgents.map((a) => {
-                const typeLabel = a.type === 'modbus-server' ? 'Modbus' : 'Samsung HVACR-01';
+                const typeLabel = a.type === 'modbus-gateway' ? 'Modbus' : 'Samsung HVACR-01';
                 return (
                   <option key={a.id} value={a.id}>
                     {a.name} [{typeLabel}] ({a.status === 'running' ? t('devices.add.agentRunning') : t('devices.add.agentStopped')})
@@ -292,7 +292,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           )}
 
           {/* ===== Modbus 폼 ===== */}
-          {selectedAgentType === 'modbus-server' && (
+          {selectedAgentType === 'modbus-gateway' && (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div>

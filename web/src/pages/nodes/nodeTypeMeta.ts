@@ -780,7 +780,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'modbus-server-1',
+      agent_ref: 'modbus-gateway-1',
       command_set: [
         { area: 'holding_registers', address: 100, value: 42, data_type: 'uint16', byte_order: 'big_endian' },
         { area: 'holding_registers', address: 200, values: [1, 2, 3], data_type: 'uint16', byte_order: 'big_endian', unit_id: 0 },
@@ -811,7 +811,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'modbus-server-1',
+      agent_ref: 'modbus-gateway-1',
       command_set: [
         { area: 'holding_registers', address: 0, count: 10, data_type: 'float32', byte_order: 'big_endian' },
         { area: 'coils', address: 0, count: 8, unit_id: 1 },
@@ -842,7 +842,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       },
     ],
     configExample: {
-      agent_ref: 'modbus-server-1',
+      agent_ref: 'modbus-gateway-1',
       command_set: [
         { action: 'reconnect' },
         { action: 'add_device', params: { unit_id: 5, host: '10.0.0.9', port: 502 } },

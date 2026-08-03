@@ -13,7 +13,7 @@ import (
 // 공유 레지스터 맵 (role main/sub) 테스트 (M3)
 // ---------------------------------------------------------------------------
 
-// serverConfig 는 지정한 ID/role/shared_from 으로 modbus-server AgentConfig 를 만든다.
+// serverConfig 는 지정한 ID/role/shared_from 으로 modbus-gateway AgentConfig 를 만든다.
 func serverConfig(id, role, sharedFrom string) agent.AgentConfig {
 	opts := map[string]any{
 		"listen_address": "127.0.0.1",
@@ -35,9 +35,9 @@ func serverConfig(id, role, sharedFrom string) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   id,
 		Name: id,
-		Type: "modbus-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type:    "modbus-server",
+			Type:    "modbus-gateway",
 			Options: opts,
 		},
 	}
@@ -61,9 +61,9 @@ func serverConfigMultiDevice(id string, unitIDs []byte) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   id,
 		Name: id,
-		Type: "modbus-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address": "127.0.0.1",
 				"listen_port":    0,
@@ -78,9 +78,9 @@ func serverConfigSubNoDevices(id, sharedFrom string) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   id,
 		Name: id,
-		Type: "modbus-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address": "127.0.0.1",
 				"listen_port":    0,

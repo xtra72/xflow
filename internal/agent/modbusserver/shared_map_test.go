@@ -13,14 +13,14 @@ import (
 // intra-server 공유 레지스터 맵 + 주소 변환 테스트 (B1/B2)
 // ---------------------------------------------------------------------------
 
-// multiDeviceAgentConfig 는 devices 배열로 구성된 modbus-server 설정을 만든다.
+// multiDeviceAgentConfig 는 devices 배열로 구성된 modbus-gateway 설정을 만든다.
 func multiDeviceAgentConfig(id string, devices []any) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   id,
 		Name: id,
-		Type: "modbus-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address": "127.0.0.1",
 				"listen_port":    0,

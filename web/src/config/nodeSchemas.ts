@@ -23,7 +23,7 @@ const BRIDGE_AGENT_DEFAULTS: Record<string, { direction: string; showTopics: boo
   'mqtt': { direction: 'inout', showTopics: true, showPayloadFormat: true, showPublishTopic: true },
   'modbus-tcp': { direction: 'in', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
   'modbus-rtu': { direction: 'in', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
-  'modbus-server': { direction: 'in', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
+  'modbus-gateway': { direction: 'in', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
   'http': { direction: 'in', showTopics: false, showPayloadFormat: true, showPublishTopic: false },
   'logger': { direction: 'out', showTopics: false, showPayloadFormat: true, showPublishTopic: true },
   'error-logger': { direction: 'out', showTopics: false, showPayloadFormat: false, showPublishTopic: false },
@@ -1680,7 +1680,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['modbus-client', 'modbus-server'],
+          options: ['modbus-client', 'modbus-gateway'],
           description: '연결할 MODBUS 에이전트(Client/Server)를 선택합니다',
         },
         {
@@ -1711,7 +1711,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['modbus-client', 'modbus-server'],
+          options: ['modbus-client', 'modbus-gateway'],
           description: '연결할 MODBUS 에이전트(Client/Server)를 선택합니다',
         },
         {
@@ -1749,7 +1749,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['modbus-client', 'modbus-server'],
+          options: ['modbus-client', 'modbus-gateway'],
           description: '제어할 MODBUS 에이전트(Client/Server)를 선택합니다',
         },
         {

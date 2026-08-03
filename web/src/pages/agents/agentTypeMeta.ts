@@ -65,9 +65,9 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  'modbus-server': {
+  'modbus-gateway': {
     description:
-      'Modbus 서버로 동작하여 외부 클라이언트의 요청을 수신하는 에이전트. transport(tcp/rtu)로 TCP 수신 또는 시리얼(RTU) 수신을 선택하고, role(main/sub)로 독립 서버 또는 main 서버의 레지스터 맵을 공유하는 보조 서버를 구성합니다. 다중 유닛 디바이스를 호스팅하며 레지스터 맵 기반의 읽기/쓰기를 처리합니다.',
+      'Modbus 게이트웨이 에이전트. Modbus 서버로 동작하여 외부 클라이언트의 요청을 수신합니다. transport(tcp/rtu)로 TCP 수신 또는 시리얼(RTU) 수신을 선택하고, role(main/sub)로 독립 게이트웨이 또는 main 게이트웨이의 레지스터 맵을 공유하는 보조 게이트웨이를 구성합니다. 다중 유닛 디바이스를 호스팅하며 레지스터 맵 기반의 읽기/쓰기를 처리합니다.',
     configFields: [
       { name: 'transport', type: 'string', required: false, description: 'tcp(MBAP) 또는 rtu(시리얼)', default: 'tcp' },
       { name: 'listen_address', type: 'string', required: false, description: '수신 대기 IP 주소 (transport=tcp)', default: '0.0.0.0' },

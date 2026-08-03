@@ -30,7 +30,7 @@ export const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: s
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
   },
-  'modbus-server': {
+  'modbus-gateway': {
     left: new Set(['transport', 'listen_address', 'listen_port', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'role', 'shared_from', 'max_connections', 'idle_timeout']),
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',

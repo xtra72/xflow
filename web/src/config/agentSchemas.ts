@@ -9,7 +9,7 @@ export const AGENT_TYPES = [
   { value: 'mqtt-client', label: 'MQTT' },
   { value: 'thingplus-gateway', label: 'Thingplus Gateway' },
   { value: 'modbus-client', label: 'Modbus Client' },
-  { value: 'modbus-server', label: 'Modbus Server' },
+  { value: 'modbus-gateway', label: 'Modbus Gateway' },
   { value: 'http', label: 'HTTP Receiver' },
   { value: 'http-sender', label: 'HTTP Sender' },
   { value: 'influxdb', label: 'InfluxDB' },
@@ -107,8 +107,8 @@ export const MODBUS_DATA_TYPE_OPTIONS = ['uint16', 'int16', 'uint32', 'int32', '
 export const MODBUS_BYTE_ORDER_OPTIONS = ['big_endian', 'little_endian', 'ABCD', 'BADC', 'CDAB', 'DCBA'] as const;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Modbus Server (SPEC-MODBUS-006)
-// type id 는 modbus-server 이며, transport 로 tcp | rtu 를 선택한다.
+// Modbus Gateway (SPEC-MODBUS-006)
+// type id 는 modbus-gateway 이며, transport 로 tcp | rtu 를 선택한다.
 //  - transport=tcp (기본, 생략 시): listen_address/listen_port 로 TCP 수신.
 //  - transport=rtu: 시리얼 파라미터(serial_port/baud_rate/data_bits/stop_bits/parity)를
 //    조건부(visibleWhen)로 노출한다(modbus-client 와 동일 키). init 전용.
@@ -129,7 +129,7 @@ const MODBUS_SERVER_FIELDS: ConfigField[] = [
   { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport', value: 'rtu' } },
   // 역할 (main/sub). sub 는 main 의 레지스터 맵을 공유한다.
   { name: 'role', type: 'select', label: '역할', options: ['main', 'sub'], default: 'main', description: 'main: 독립 서버 / sub: main 서버의 레지스터 맵을 공유하는 보조 서버' },
-  { name: 'shared_from', type: 'agent_select', label: '공유 대상(main)', options: ['modbus-server'], required: true, description: 'role=sub 일 때 레지스터 맵을 공유할 main 에이전트를 선택한다', visibleWhen: { field: 'role', value: 'sub' } },
+  { name: 'shared_from', type: 'agent_select', label: '공유 대상(main)', options: ['modbus-gateway'], required: true, description: 'role=sub 일 때 레지스터 맵을 공유할 main 에이전트를 선택한다', visibleWhen: { field: 'role', value: 'sub' } },
   // 공통 (tcp/rtu)
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 10 },
   { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '60s' },
@@ -622,7 +622,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'mqtt-client': MQTT_FIELDS,
   'thingplus-gateway': THINGPLUS_FIELDS,
   'modbus-client': MODBUS_TCP_FIELDS,
-  'modbus-server': MODBUS_SERVER_FIELDS,
+  'modbus-gateway': MODBUS_SERVER_FIELDS,
   'http': HTTP_RECEIVER_FIELDS,
   'http-sender': HTTP_SENDER_FIELDS,
   'influxdb': INFLUXDB_FIELDS,

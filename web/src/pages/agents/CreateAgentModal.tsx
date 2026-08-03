@@ -28,7 +28,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
   );
 
   const schema = getAgentConfigSchema(type);
-  // TWO_COL_CONFIG 타입(modbus-client / modbus-server 등)은 상세 패널과 동일한
+  // TWO_COL_CONFIG 타입(modbus-client / modbus-gateway 등)은 상세 패널과 동일한
   // 2열 레이아웃(스칼라 필드=좌, 디바이스 등 넓은 필드=우)으로 렌더하고 모달을 넓힌다.
   const isTwoCol = type in TWO_COL_CONFIG;
 
@@ -79,7 +79,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
     const cleanConfig: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(config)) {
       if (v === '' || v == null) continue;
-      // agent_select 필드(예: modbus-server sub 의 shared_from)는
+      // agent_select 필드(예: modbus-gateway sub 의 shared_from)는
       // { agent_id, agent_name, agent_type } 복합 객체를 값으로 가진다.
       // 백엔드는 에이전트 ID 문자열을 기대하므로 agent_id 만 추출한다.
       if (typeof v === 'object' && v !== null && 'agent_id' in v) {

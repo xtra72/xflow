@@ -290,16 +290,16 @@ var transportKeys = []string{
 	"tcp_host", "tcp_port",
 }
 
-// modbusServerAgentType 은 modbus-server 에이전트 타입 식별자이다.
-const modbusServerAgentType = "modbus-server"
+// modbusServerAgentType 은 modbus-gateway 에이전트 타입 식별자이다.
+const modbusServerAgentType = "modbus-gateway"
 
-// modbusStructuralKeys 는 값이 바뀌면 modbus-server 재시작이 필요한 중첩 구조 설정 키이다.
+// modbusStructuralKeys 는 값이 바뀌면 modbus-gateway 재시작이 필요한 중첩 구조 설정 키이다.
 // devices/register_map 변경 → 팩토리 재생성으로 DeviceManager 를 재구축해야 한다.
 var modbusStructuralKeys = []string{"devices", "register_map"}
 
 // needsRestart 는 이전 설정과 새 설정을 비교하여 transport 재시작이 필요한지 판단한다.
 // transport 키 변경은 모든 에이전트 타입에 적용되고, devices/register_map 같은 중첩 구조
-// 변경은 modbus-server 에만 적용된다(HVAC 등 다른 에이전트도 "devices" 키를 쓰지만
+// 변경은 modbus-gateway 에만 적용된다(HVAC 등 다른 에이전트도 "devices" 키를 쓰지만
 // add_device 로 재시작 없이 로스터를 갱신하므로 재시작을 트리거하지 않는다).
 func needsRestart(agentType string, oldOpts, newOpts map[string]any) bool {
 	for _, key := range transportKeys {
@@ -311,7 +311,7 @@ func needsRestart(agentType string, oldOpts, newOpts map[string]any) bool {
 	}
 
 	// 중첩 구조(devices/register_map) 변경 감지: JSON 정규화 후 deep-equal.
-	// modbus-server 에이전트에만 적용한다(다른 타입에는 무해하게 스킵).
+	// modbus-gateway 에이전트에만 적용한다(다른 타입에는 무해하게 스킵).
 	if agentType == modbusServerAgentType {
 		for _, key := range modbusStructuralKeys {
 			oldVal, oldOK := oldOpts[key]
@@ -375,7 +375,7 @@ func (a *AgentServiceAdapter) ConfigureAgent(ctx context.Context, id string, cfg
 		}
 	}
 
-	// transport 또는 modbus-server 의 devices/register_map 이 변경되면 자동 재시작
+	// transport 또는 modbus-gateway 의 devices/register_map 이 변경되면 자동 재시작
 	// (팩토리로 재생성 → DeviceManager 재구축). agentCfg.Type 으로 구조 키 비교를 스코프한다.
 	if needsRestart(agentCfg.Type, oldOpts, cfg) {
 		a.logger.Info("설정 변경 감지, 에이전트 재시작", "agentID", id, "type", agentCfg.Type)

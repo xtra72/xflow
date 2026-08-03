@@ -97,7 +97,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 	}
 
 	a := &ModbusServerAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-server")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-gateway")),
 		config:        cfg,
 		deviceManager: dm,
 		registerMap:   primaryRM, // 하위 호환: 첫 번째 디바이스 (sub-상속 시 nil→Start에서 채움)
@@ -1416,7 +1416,7 @@ func (a *ModbusServerAgent) Name() string {
 
 // Type returns the agent type.
 func (a *ModbusServerAgent) Type() string {
-	return "modbus-server"
+	return "modbus-gateway"
 }
 
 // SharedRegisterMap 는 이 서버의 주(첫 번째) 디바이스 RegisterMap 포인터를 반환한다.
@@ -1591,7 +1591,7 @@ func (a *ModbusServerAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "modbus-server",
+		Type:      "modbus-gateway",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,

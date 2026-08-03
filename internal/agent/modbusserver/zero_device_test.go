@@ -19,9 +19,9 @@ func zeroDeviceMainConfig(id string) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   id,
 		Name: id,
-		Type: "modbus-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address": "127.0.0.1",
 				"listen_port":    0,
