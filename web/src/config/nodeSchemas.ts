@@ -1702,7 +1702,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   // --- IO: MODBUS Read (command set) ---
   'modbus-read': {
     description: 'MODBUS 레지스터를 읽습니다. command_set(ReadOp 배열)을 config 기본값으로 정의합니다.',
-    inputDesc: '입력 payload 의 command_set 으로 config 기본값을 오버라이드할 수 있습니다.',
+    inputDesc: '입력 payload 의 command_set 으로 config 기본값을 오버라이드할 수 있습니다. poll_interval 설정 시 입력 없이 주기적으로 자체 읽습니다.',
     outputDesc: '읽기 결과. command_set(config 기본) — 입력 payload 의 command_set 로 오버라이드 가능',
     configSchema: {
       fields: [
@@ -1720,6 +1720,13 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           label: '명령셋 (기본값)',
           description:
             '읽기 명령(ReadOp) 목록. 각 행: area, address, count, data_type, byte_order, unit_id(0=공유). 입력 payload 의 command_set 으로 런타임 오버라이드됩니다.',
+        },
+        {
+          name: 'poll_interval',
+          type: 'string',
+          label: '폴링 주기',
+          description:
+            'Go duration 형식(예: 5s, 500ms). 지정 시 입력 없이 이 주기로 명령셋(기본값)을 주기적으로 읽어 emit 합니다. 비어있으면 입력 메시지 도착 시에만 읽습니다(on-demand). 주기 읽기는 명령셋(기본값)이 설정된 경우에만 동작합니다.',
         },
       ],
     },
