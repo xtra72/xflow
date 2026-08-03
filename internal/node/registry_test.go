@@ -287,7 +287,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 68) // 54 canonical builtins (modbus-write/modbus-read/modbus-control 추가) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
+	assert.Len(t, metas, 69) // 55 canonical builtins (modbus-write/modbus-read/modbus-control/modbus-remap 추가) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

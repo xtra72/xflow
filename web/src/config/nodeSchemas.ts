@@ -1761,6 +1761,36 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  // --- IO: MODBUS Register Remapper ---
+  'modbus-remap': {
+    description: 'MODBUS 레지스터를 재매핑합니다. modbus-read 출력을 rules/templates 로 변환해 modbus-write 호환 payload 로 만듭니다. 에이전트와 통신하지 않습니다.',
+    inputDesc: 'modbus-read 출력 {success, values[], agent_type} 을 소비합니다.',
+    outputDesc: '재매핑된 {success, values[], errors?, agent_type} (modbus-write 호환)',
+    configSchema: {
+      fields: [
+        {
+          name: 'rules',
+          type: 'modbus_remap_rules',
+          label: '규칙 (From→To)',
+          description:
+            '개별 재매핑 규칙 목록. 좌(From): source_area/source_address/count, 우(To): target_unit_id/target_area(선택, 생략 시 source_area 유지)/target_address. count 는 대응 read 항목의 count 와 정확히 일치해야 합니다.',
+        },
+        {
+          name: 'templates',
+          type: 'modbus_remap_templates',
+          label: '템플릿 (정의+적용)',
+          description:
+            '축약형 규칙 목록. 각 행: area, offset(target_address=start+offset, 음수 허용), device_id(→target_unit_id), start(→source_address), count, target_area(선택, 생략 시 area 유지).',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
   'mqtt-publisher': {
     description: 'MQTT 토픽으로 메시지를 발행합니다. 토픽, QoS, Retained를 설정할 수 있습니다.',
     inputDesc: 'payload: 발행할 데이터. metadata: mqtt.topic (토픽 오버라이드), mqtt.qos, mqtt.retained',

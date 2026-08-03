@@ -99,6 +99,7 @@ func (r *Registry) registerBuiltins() {
 		{"modbus-write", NewModbusWriteNode, "modbus", "MODBUS command-set 기반 레지스터 쓰기"},
 		{"modbus-read", NewModbusReadNode, "modbus", "MODBUS command-set 기반 레지스터 읽기"},
 		{"modbus-control", NewModbusControlNode, "modbus", "MODBUS 에이전트 lifecycle/디바이스/설정 제어"},
+		{"modbus-remap", NewModbusRemapNode, "modbus", "레지스터 주소/영역/디바이스 재매핑"},
 		{"thingplus-uplink", NewThingplusUplinkNode, "io", "Thingplus 게이트웨이 업링크: 텔레메트리/속성 발행"},
 		{"thingplus-downlink", NewThingplusDownlinkNode, "io", "Thingplus 게이트웨이 다운링크: RPC/공유속성 수신"},
 		{"lgap-status", NewLGAPStatusNode, "io", "LG LGAP 디바이스 상태 조회"},

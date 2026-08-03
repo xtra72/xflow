@@ -850,6 +850,39 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  'modbus-remap': {
+    description:
+      'MODBUS 레지스터 리매퍼 노드입니다. 에이전트와 통신하지 않고, modbus-read 출력 payload({success, values[], agent_type})의 레지스터를 rules/templates 규칙에 따라 재매핑하여 modbus-write 호환 payload({success, values[], errors?, agent_type})로 변환합니다. rules는 From→To 개별 규칙, templates는 정의+적용 축약형입니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: 'modbus-read 출력 메시지를 수신합니다. payload에 success, values 배열, agent_type이 포함됩니다.' },
+      { name: 'out', direction: 'output', description: '재매핑된 modbus-write 호환 메시지를 출력합니다.' },
+      { name: 'error', direction: 'error', description: 'count 불일치 등 재매핑 실패 시 에러 메시지를 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'rules',
+        type: 'json',
+        required: false,
+        description: '개별 재매핑 규칙(From→To) 배열입니다. 각 항목: source_area, source_address, count, target_unit_id, target_area(선택; 생략 시 source_area 유지), target_address. count는 대응 read 항목의 count와 정확히 일치해야 합니다.',
+      },
+      {
+        name: 'templates',
+        type: 'json',
+        required: false,
+        description: '축약형 규칙 배열입니다. 각 항목: area, offset(target_address=start+offset, 음수 허용), device_id(→target_unit_id), start(→source_address), count, target_area(선택; 생략 시 area 유지).',
+      },
+    ],
+    configExample: {
+      rules: [
+        { source_area: 'holding_registers', source_address: 0, count: 10, target_unit_id: 1, target_address: 100 },
+        { source_area: 'input_registers', source_address: 0, count: 4, target_unit_id: 2, target_area: 'holding_registers', target_address: 200 },
+      ],
+      templates: [
+        { area: 'holding_registers', offset: 1000, device_id: 3, start: 0, count: 8 },
+      ],
+    },
+  },
+
   'tsdb-write': {
     description:
       'TSDB 에이전트에 시계열 데이터를 기록하는 노드입니다. 입력 메시지의 페이로드에서 tag_mappings과 field_mappings에 따라 태그와 필드를 추출하여 measurement에 기록합니다.',

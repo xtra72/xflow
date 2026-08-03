@@ -12,6 +12,7 @@ import {
   Activity,
   Antenna,
   Archive,
+  ArrowLeftRight,
   ArrowUpFromLine,
   BarChart3,
   Boxes,
@@ -101,6 +102,8 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'modbus-write': Upload,
   'modbus-read': Download,
   'modbus-control': SlidersHorizontal,
+  // Modbus 레지스터 리매퍼: From→To 변환 → ArrowLeftRight
+  'modbus-remap': ArrowLeftRight,
   // HTTP → Globe
   http: Globe,
   // 시리얼/TCP → 물리 결선
