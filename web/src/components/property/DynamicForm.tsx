@@ -182,6 +182,19 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
         }
         void denormalizeFlowNodePorts(flowId, updated);
         return;
+      } else if (
+        field?.type === 'modbus_remap' &&
+        typeof value === 'object' &&
+        value !== null
+      ) {
+        // modbus_remap 은 단일 필드에서 { rules, templates } 복합 객체를 반환한다.
+        // 두 개의 최상위 config 키(rules/templates)로 spread 한다(agent_select 과 동일 패턴).
+        const compound = value as Record<string, unknown>;
+        updated = {
+          ...localData,
+          rules: compound.rules ?? [],
+          templates: compound.templates ?? [],
+        };
       } else {
         updated = { ...localData, [fieldName]: value };
       }

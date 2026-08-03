@@ -2,7 +2,6 @@ package node
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -43,18 +42,12 @@ import (
 //     - 하위 호환: "targets" 가 없고 최상위 target_unit_id/target_area/target_address 가
 //       있으면 단일 타깃(1-element targets)으로 취급한다(기존 config 계속 동작).
 //       "targets" 가 있으면 우선한다.
-//   templates: []map[string]any    // 각 템플릿({area, offset} + 적용 파라미터, SINGLE-target):
-//     {
-//       "source_unit_id": number?, // 적용: 규칙 source_unit_id (선택)
-//       "area":        string,     // 템플릿 영역 (= source_area, target_area 기본값)
-//       "offset":      number,     // 주소 오프셋 (target_address = start + offset; 음수 허용)
-//       "device_id":   number,     // 적용: target_unit_id
-//       "start":       number,     // 적용: source_address
-//       "count":       number,     // 적용: count
-//       "target_area": string?     // 적용: To 영역 (생략 시 area 유지)
-//     }
-//     - 템플릿은 항상 1-target 규칙(1-element targets)으로 인스턴스화되어 rules 뒤에
-//       append 된다. multi-target 은 rules 전용 기능이다.
+//   templates: []map[string]any    // (백엔드 런타임 무시) named 멀티-규칙 패턴 저장 필드.
+//     - 프론트엔드(RegisterRemapEditor)가 편집 시점에 템플릿 + base 시작주소 + device_id 를
+//       구체 rules 로 materialize(전개)한다. 백엔드는 런타임에 templates 를 읽거나 확장하지
+//       않는다(rules-only). config 에 templates 키가 있어도 무해하게 저장만 되며 출력에
+//       영향을 주지 않는다(존재 시 에러도 아님). — 백엔드가 templates 를 또 전개하면
+//       rules 가 이중 적용되므로 backend = rules-only 로 고정한다.
 //
 // ── unit_id 매칭 규칙 (Change 1, unit-id-optional) ────────────────────────────
 //   From 매칭은 항상 (area, address, count) 정확 매칭이다. 추가로:
@@ -66,8 +59,8 @@ import (
 //   - 규칙에 source_unit_id 가 없으면 unit_id 로 절대 제약하지 않는다.
 //
 // ── payload 오버라이드 (modbus_read.go command_set 선례) ──────────────────────
-//   payload 에 "rules"(또는 "command_set") 키가 있으면 config 기본 rules 를 대체하고,
-//   payload 에 "templates" 키가 있으면 config 기본 templates 를 대체한다(각 독립).
+//   payload 에 "rules"(또는 "command_set") 키가 있으면 config 기본 rules 를 대체한다.
+//   (templates 는 런타임에서 무시되므로 payload templates 오버라이드도 없다.)
 //
 // ── 출력 스키마 (downstream modbus-write command_set 소비 호환) ────────────────
 //   { success: bool,
@@ -91,16 +84,16 @@ var (
 	// ErrModbusRemapInvalidInput 은 입력이 modbus-read 페이로드(values[])가 아닐 때 반환된다.
 	ErrModbusRemapInvalidInput = fmt.Errorf("modbus-remap: input is not a modbus-read payload (missing values[] list)")
 
-	// ErrModbusRemapEmptyRules 는 config/payload 어느 쪽에서도 규칙/템플릿이 없을 때 반환된다.
-	ErrModbusRemapEmptyRules = fmt.Errorf("modbus-remap: %w: no rules or templates configured", ErrInvalidConfig)
+	// ErrModbusRemapEmptyRules 는 config/payload 어느 쪽에서도 규칙(rules)이 없을 때 반환된다.
+	// (templates 는 런타임에서 무시되므로 "할 일 있음" 판정에 포함되지 않는다.)
+	ErrModbusRemapEmptyRules = fmt.Errorf("modbus-remap: %w: no rules configured", ErrInvalidConfig)
 )
 
 // ModbusRemapNode 는 modbus-read 출력의 각 엔트리를 remap 규칙으로 재주소화하는 노드이다.
 type ModbusRemapNode struct {
 	*BaseNode
-	rules     []map[string]any // config 기본 규칙 목록
-	templates []map[string]any // config 기본 템플릿 목록
-	mu        sync.RWMutex     // 설정 보호 뮤텍스
+	rules []map[string]any // config 기본 규칙 목록 (런타임 처리 단위)
+	mu    sync.RWMutex     // 설정 보호 뮤텍스
 }
 
 // 인터페이스 컴파일 체크
@@ -125,17 +118,17 @@ func (n *ModbusRemapNode) Init(_ context.Context) error {
 }
 
 // Configure 는 ModbusRemapNode의 설정을 적용한다.
-// rules(선택), templates(선택)를 파싱한다. 둘 다 비어 있으면 Process 시점에 거부된다.
+// rules(선택)만 파싱한다. templates 키는 프론트엔드 전용 저장 필드로 런타임에서 읽지 않는다.
+// rules 가 비어 있으면 Process 시점에 거부된다.
 func (n *ModbusRemapNode) Configure(config map[string]any) error {
 	if err := n.BaseNode.Configure(config); err != nil {
 		return err
 	}
+	// templates 는 의도적으로 소비하지 않는다(프론트엔드가 편집 시점에 rules 로 materialize).
 	rules := toOpList(config["rules"])
-	templates := toOpList(config["templates"])
 
 	n.mu.Lock()
 	n.rules = rules
-	n.templates = templates
 	n.mu.Unlock()
 	return nil
 }
@@ -157,7 +150,7 @@ func (n *ModbusRemapNode) Process(_ context.Context, msg message.Message) (resul
 		}
 	}()
 
-	// 1) 유효 규칙 집합 = (config|payload) rules + 인스턴스화된 (config|payload) templates
+	// 1) 유효 규칙 집합 = (config|payload) rules. (templates 는 런타임 무시.)
 	effective, err := n.effectiveRules(msg)
 	if err != nil {
 		return nil, err
@@ -234,12 +227,12 @@ func (n *ModbusRemapNode) Process(_ context.Context, msg message.Message) (resul
 	return []message.Message{out}, nil
 }
 
-// effectiveRules 는 config 기본값과 payload 오버라이드를 결합하여 유효 규칙 맵 목록을 만든다.
-// payload 의 rules(또는 command_set) / templates 키가 있으면 각 config 기본값을 대체한다.
+// effectiveRules 는 config 기본 rules 를 payload 오버라이드와 결합하여 유효 규칙 목록을 만든다.
+// payload 의 rules(또는 command_set) 키가 있으면 config 기본을 대체한다.
+// templates 는 런타임에서 무시된다(프론트엔드가 편집 시점에 rules 로 materialize).
 func (n *ModbusRemapNode) effectiveRules(msg message.Message) ([]map[string]any, error) {
 	n.mu.RLock()
 	rulesCfg := n.rules
-	templatesCfg := n.templates
 	n.mu.RUnlock()
 
 	if p := msg.Payload(); p != nil {
@@ -252,22 +245,12 @@ func (n *ModbusRemapNode) effectiveRules(msg message.Message) ([]map[string]any,
 				rulesCfg = o
 			}
 		}
-		if v, ok := p.Get("templates"); ok {
-			if o := toOpList(v); len(o) > 0 {
-				templatesCfg = o
-			}
-		}
 	}
 
-	effective := make([]map[string]any, 0, len(rulesCfg)+len(templatesCfg))
-	effective = append(effective, rulesCfg...)
-	for _, t := range templatesCfg {
-		effective = append(effective, instantiateRemapTemplate(t))
-	}
-	if len(effective) == 0 {
+	if len(rulesCfg) == 0 {
 		return nil, ErrModbusRemapEmptyRules
 	}
-	return effective, nil
+	return rulesCfg, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -337,47 +320,6 @@ func parseRemapTarget(m map[string]any, sourceArea string) remapTarget {
 	}
 	t.address = toUint16FromAny(m["target_address"])
 	return t
-}
-
-// instantiateRemapTemplate 은 템플릿({area, offset} + 적용 파라미터)을 구체 규칙 맵으로 전개한다.
-//
-//	source_area = area, source_address = start, count = count,
-//	target_unit_id = device_id, target_area = target_area(없으면 area),
-//	target_address = start + offset (음수 오프셋 허용).
-func instantiateRemapTemplate(m map[string]any) map[string]any {
-	area, _ := m["area"].(string)
-	offset := toIntFromAny(m["offset"])
-	start := toUint16FromAny(m["start"])
-	count := toUint16FromAny(m["count"])
-	deviceID := toByte(m["device_id"])
-
-	targetArea := area
-	if s, ok := m["target_area"].(string); ok && s != "" {
-		targetArea = s
-	}
-
-	targetAddr := uint16(int(start) + offset)
-
-	// int 로 저장한다: 하류 파서(toByte/toUint16FromAny)가 int 를 모두 처리하므로
-	// uint8/uint16 저장 시 toByte 가 인식하지 못하는 문제를 피한다.
-	// 템플릿은 항상 SINGLE-target(1-element targets)으로 인스턴스화한다.
-	rule := map[string]any{
-		"source_area":    area,
-		"source_address": int(start),
-		"count":          int(count),
-		"targets": []map[string]any{
-			{
-				"target_unit_id": int(deviceID),
-				"target_area":    targetArea,
-				"target_address": int(targetAddr),
-			},
-		},
-	}
-	// source_unit_id 적용 파라미터(선택).
-	if v, ok := m["source_unit_id"]; ok {
-		rule["source_unit_id"] = toIntFromAny(v)
-	}
-	return rule
 }
 
 // ---------------------------------------------------------------------------
@@ -499,25 +441,4 @@ func remapRuleError(ruleIndex int, rule remapRule, reason string) map[string]any
 		"count":          rule.count,
 		"reason":         reason,
 	}
-}
-
-// toIntFromAny 는 any 값을 int 로 변환한다(음수 오프셋 지원). 변환 불가 시 0.
-func toIntFromAny(v any) int {
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case uint16:
-		return int(n)
-	case uint8:
-		return int(n)
-	case json.Number:
-		if i, err := n.Int64(); err == nil {
-			return int(i)
-		}
-	}
-	return 0
 }

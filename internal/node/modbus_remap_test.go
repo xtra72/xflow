@@ -93,40 +93,55 @@ func TestModbusRemap_AC01_WholeEntryRemap(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// AC-02 — 템플릿 적용 → 인스턴스화된 규칙이 정상 remap
+// templates 재설계 — 백엔드는 templates 를 런타임에서 무시한다.
+// (프론트엔드가 편집 시점에 templates 를 구체 rules 로 materialize 한다.)
 // ---------------------------------------------------------------------------
 
-func TestModbusRemap_AC02_TemplateApply(t *testing.T) {
+// TestModbusRemap_TemplatesIgnored_EmptyRules 는 config 에 templates 만 있고 rules 가 없으면
+// 런타임에서 templates 가 전개되지 않아 빈 규칙(ErrModbusRemapEmptyRules)으로 거부됨을 검증한다.
+func TestModbusRemap_TemplatesIgnored_EmptyRules(t *testing.T) {
 	n := newRemapNode(t, map[string]any{
 		"templates": []any{
-			map[string]any{
-				"area":      "holding_registers",
-				"offset":    1000,
-				"device_id": 7,
-				"start":     100,
-				"count":     3,
-			},
+			map[string]any{"area": "holding_registers", "offset": 1000, "device_id": 7, "start": 100, "count": 3},
 		},
 	})
 
 	in := makeReadMsg(true, "server", []any{
-		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3,
-			"values": []any{1, 2, 3}},
+		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "values": []any{1, 2, 3}},
+	})
+
+	out, err := n.Process(context.Background(), in)
+	require.Error(t, err, "templates 만 있으면 규칙 없음 → 거부")
+	assert.ErrorIs(t, err, ErrModbusRemapEmptyRules)
+	assert.Nil(t, out)
+}
+
+// TestModbusRemap_TemplatesInert_AlongsideRules 는 rules 와 함께 templates 키가 있어도
+// templates 는 무시되고 rules 만 출력에 반영됨을 검증한다(전개됐다면 2개, 무시되므로 1개).
+func TestModbusRemap_TemplatesInert_AlongsideRules(t *testing.T) {
+	n := newRemapNode(t, map[string]any{
+		"rules": []any{
+			map[string]any{"source_area": "holding_registers", "source_address": 100, "count": 3,
+				"target_unit_id": 1, "target_area": "input_registers", "target_address": 500},
+		},
+		// 이 templates 는 저장만 되고 런타임에서 무시된다(전개 시 이중 적용될 값).
+		"templates": []any{
+			map[string]any{"area": "holding_registers", "offset": 1000, "device_id": 7, "start": 100, "count": 3},
+		},
+	})
+
+	in := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "values": []any{1, 2, 3}},
 	})
 
 	out, err := n.Process(context.Background(), in)
 	require.NoError(t, err)
-	require.Len(t, out, 1)
-
 	assert.True(t, outBool(t, out[0], "success"))
 	entries := outEntries(t, out[0])
-	require.Len(t, entries, 1)
-	e := entries[0]
-	assert.Equal(t, "holding_registers", e["area"], "target_area = source area(별도 지정 없음)")
-	assert.Equal(t, uint16(1100), e["address"], "target_address = start + offset")
-	assert.Equal(t, uint16(3), e["count"])
-	assert.Equal(t, uint8(7), e["unit_id"], "unit_id = device_id")
-	assert.Equal(t, []any{1, 2, 3}, e["values"])
+	require.Len(t, entries, 1, "rules 1개만 출력(templates 무시 — 전개됐다면 2개였을 것)")
+	assert.Equal(t, "input_registers", entries[0]["area"])
+	assert.Equal(t, uint16(500), entries[0]["address"], "rules 규칙만 적용됨")
+	assert.Equal(t, uint8(1), entries[0]["unit_id"])
 }
 
 // ---------------------------------------------------------------------------
@@ -289,33 +304,6 @@ func TestModbusRemap_Edge_MultiEntryMultiRule(t *testing.T) {
 	assert.Equal(t, "coils", entries[1]["area"], "target_area 미지정 → source_area 유지")
 	assert.Equal(t, uint16(20), entries[1]["address"])
 	assert.Equal(t, uint8(2), entries[1]["unit_id"])
-}
-
-// ---------------------------------------------------------------------------
-// 엣지: templates payload 오버라이드도 config 기본을 대체
-// ---------------------------------------------------------------------------
-
-func TestModbusRemap_Edge_TemplateOverride(t *testing.T) {
-	n := newRemapNode(t, map[string]any{
-		"templates": []any{
-			map[string]any{"area": "holding_registers", "offset": 1, "device_id": 1, "start": 999, "count": 1},
-		},
-	})
-
-	in := makeReadMsg(true, "server", []any{
-		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "values": []any{1, 2, 3}},
-	})
-	in.Payload().Set("templates", []any{
-		map[string]any{"area": "holding_registers", "offset": 500, "device_id": 4, "start": 100, "count": 3},
-	})
-
-	out, err := n.Process(context.Background(), in)
-	require.NoError(t, err)
-	assert.True(t, outBool(t, out[0], "success"))
-	entries := outEntries(t, out[0])
-	require.Len(t, entries, 1)
-	assert.Equal(t, uint16(600), entries[0]["address"], "payload 템플릿: 100+500")
-	assert.Equal(t, uint8(4), entries[0]["unit_id"])
 }
 
 // ---------------------------------------------------------------------------
@@ -537,41 +525,4 @@ func TestModbusRemap_LegacySingleTargetBackwardCompat(t *testing.T) {
 	assert.Equal(t, uint16(200), entries[0]["address"])
 	assert.Equal(t, uint8(3), entries[0]["unit_id"])
 	assert.Equal(t, []any{10, 20, 30, 40, 50}, entries[0]["values"])
-}
-
-// ---------------------------------------------------------------------------
-// Change 1+2 (e) — 템플릿에 source_unit_id 적용 파라미터
-// ---------------------------------------------------------------------------
-
-func TestModbusRemap_TemplateWithSourceUnitID(t *testing.T) {
-	n := newRemapNode(t, map[string]any{
-		"templates": []any{
-			map[string]any{
-				"source_unit_id": 8, "area": "holding_registers", "offset": 1000,
-				"device_id": 2, "start": 100, "count": 3,
-			},
-		},
-	})
-
-	// 엔트리에 unit_id=8 포함 → source_unit_id 매칭 확인
-	in := makeReadMsg(true, "server", []any{
-		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "unit_id": 8, "values": []any{1, 2, 3}},
-	})
-
-	out, err := n.Process(context.Background(), in)
-	require.NoError(t, err)
-	assert.True(t, outBool(t, out[0], "success"), "템플릿 source_unit_id=8 + 엔트리 unit_id=8 매칭")
-	entries := outEntries(t, out[0])
-	require.Len(t, entries, 1, "템플릿은 항상 SINGLE-target")
-	assert.Equal(t, uint16(1100), entries[0]["address"], "start+offset")
-	assert.Equal(t, uint8(2), entries[0]["unit_id"], "device_id")
-	assert.Equal(t, "holding_registers", entries[0]["area"])
-
-	// 엔트리 unit_id 가 다르면(9) 미매칭
-	in2 := makeReadMsg(true, "server", []any{
-		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "unit_id": 9, "values": []any{1, 2, 3}},
-	})
-	out2, err := n.Process(context.Background(), in2)
-	require.NoError(t, err)
-	assert.False(t, outBool(t, out2[0], "success"), "템플릿 source_unit_id 불일치 → 거부")
 }

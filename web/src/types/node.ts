@@ -33,7 +33,7 @@ export type ConfigSection = 'transport' | 'protocol' | 'operation' | 'logging';
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'modbus_devices' | 'modbus_server_devices' | 'modbus_write_ops' | 'modbus_read_ops' | 'modbus_control_ops' | 'modbus_remap_rules' | 'modbus_remap_templates' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor' | 'metrics_editor';
+  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'modbus_devices' | 'modbus_server_devices' | 'modbus_write_ops' | 'modbus_read_ops' | 'modbus_control_ops' | 'modbus_remap' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor' | 'metrics_editor';
   label: string;
   required?: boolean;
   default?: unknown;

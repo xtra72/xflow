@@ -886,7 +886,23 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         },
       ],
       templates: [
-        { source_unit_id: 1, area: 'holding_registers', offset: 1000, device_id: 3, start: 0, count: 8 },
+        {
+          name: 'sensor-block',
+          rules: [
+            {
+              source_area: 'holding_registers',
+              source_offset: 0,
+              count: 8,
+              targets: [{ target_offset: 100, target_unit_offset: 0 }],
+            },
+            {
+              source_area: 'input_registers',
+              source_offset: 8,
+              count: 4,
+              targets: [{ target_area: 'holding_registers', target_offset: 200, target_unit_offset: 1 }],
+            },
+          ],
+        },
       ],
     },
   },

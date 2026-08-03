@@ -26,7 +26,7 @@ import {
   ModbusRwCommandSetEditor,
   ModbusControlCommandSetEditor,
 } from './ModbusCommandSetEditor';
-import { RemapRulesEditor, RemapTemplatesEditor } from './RegisterRemapEditor';
+import { RegisterRemapEditor } from './RegisterRemapEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
@@ -378,12 +378,13 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
         />
       )}
 
-      {field.type === 'modbus_remap_rules' && (
-        <RemapRulesEditor value={value} onChange={onChange} readOnly={readOnly} />
-      )}
-
-      {field.type === 'modbus_remap_templates' && (
-        <RemapTemplatesEditor value={value} onChange={onChange} readOnly={readOnly} />
+      {field.type === 'modbus_remap' && (
+        <RegisterRemapEditor
+          rulesValue={formData?.rules}
+          templatesValue={formData?.templates}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
       )}
 
       {field.type === 'transform_pipeline' && (

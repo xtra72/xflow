@@ -1769,18 +1769,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     configSchema: {
       fields: [
         {
-          name: 'rules',
-          type: 'modbus_remap_rules',
-          label: '규칙 (From→To)',
+          name: 'remap',
+          type: 'modbus_remap',
+          label: '리매핑 (규칙 / 템플릿)',
           description:
-            '개별 재매핑 규칙 목록. 좌(From): source_area/source_address/count, 우(To): target_unit_id/target_area(선택, 생략 시 source_area 유지)/target_address. count 는 대응 read 항목의 count 와 정확히 일치해야 합니다.',
-        },
-        {
-          name: 'templates',
-          type: 'modbus_remap_templates',
-          label: '템플릿 (정의+적용)',
-          description:
-            '축약형 규칙 목록. 각 행: area, offset(target_address=start+offset, 음수 허용), device_id(→target_unit_id), start(→source_address), count, target_area(선택, 생략 시 area 유지).',
+            '규칙(rules)과 템플릿(templates)을 함께 관리합니다. rules 는 개별 From→To 재매핑(source_unit_id?/source_area/source_address/count → targets[]{target_unit_id, target_area?, target_address})이며 런타임에 처리됩니다. templates 는 이름 지정 상대-오프셋 패턴이며 적용(start/device_id) 시 구체 rules 로 확장됩니다(백엔드 미처리, config 저장). 두 배열은 config.rules / config.templates 로 저장됩니다.',
         },
       ],
     },
