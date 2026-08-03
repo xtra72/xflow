@@ -757,133 +757,12 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  modbus: {
+  'modbus-write': {
     description:
-      'MODBUS 에이전트(Server/Client)에 연결하여 레지스터를 읽거나 쓰는 처리 노드입니다. 입력 메시지가 도착하면 설정된 연산(읽기/쓰기)을 수행하고 결과를 출력합니다. 모든 설정값(operation, register_area, address, count, data_type, byte_order, device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다. 노드 config은 기본값이며, 메시지에 동일 키가 있으면 해당 값이 우선 적용됩니다.',
+      'MODBUS 에이전트(Client/Server)에 연결하여 레지스터에 값을 쓰는 노드입니다. config의 command_set(WriteOp 배열)이 기본값이며, 입력 메시지 payload에 command_set이 있으면 런타임에 오버라이드됩니다.',
     ports: [
-      { name: 'input', direction: 'input', description: '읽기/쓰기 연산을 트리거하는 메시지를 수신합니다. 쓰기 시 payload에 value 또는 values 키가 필요합니다. payload에 operation, register_area, address, count, data_type, byte_order, device_id 키가 있으면 노드 설정을 오버라이드합니다.' },
-      { name: 'output', direction: 'output', description: '읽기 결과 또는 쓰기 확인 메시지를 출력합니다. 원본 payload가 보존됩니다.' },
-      { name: 'error', direction: 'error', description: '에이전트 통신 실패, timeout, 잘못된 설정 등 에러 발생 시 에러 메시지를 출력합니다.' },
-    ],
-    configFields: [
-      {
-        name: 'agent_ref',
-        type: 'string',
-        required: true,
-        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다. Server Agent와 Client Agent를 모두 지원합니다.',
-      },
-      {
-        name: 'operation',
-        type: 'string',
-        required: true,
-        description: '수행할 연산입니다. "read"는 레지스터를 읽고, "write"는 레지스터에 값을 씁니다. 입력 메시지 payload의 operation으로 오버라이드 가능합니다.',
-      },
-      {
-        name: 'register_area',
-        type: 'string',
-        required: true,
-        description: 'MODBUS 레지스터 영역입니다. coils, discrete_inputs, holding_registers, input_registers를 지원합니다. 입력 메시지 payload의 register_area로 오버라이드 가능합니다.',
-      },
-      {
-        name: 'address',
-        type: 'number',
-        required: true,
-        description: '시작 레지스터 주소입니다 (0-65535). 입력 메시지 payload의 address로 오버라이드 가능합니다.',
-      },
-      {
-        name: 'count',
-        type: 'number',
-        required: false,
-        description: '읽기/쓰기할 레지스터 수입니다. 입력 메시지 payload의 count로 오버라이드 가능합니다.',
-        default: '1',
-      },
-      {
-        name: 'data_type',
-        type: 'string',
-        required: false,
-        description: '레지스터 데이터 타입입니다. Holding/Input Registers에만 적용됩니다. 지원: uint16, int16, float32, uint32, int32. 입력 메시지 payload의 data_type으로 오버라이드 가능합니다.',
-        default: 'uint16',
-      },
-      {
-        name: 'byte_order',
-        type: 'string',
-        required: false,
-        description: '다중 레지스터 타입(float32, uint32, int32)의 바이트 순서입니다. 입력 메시지 payload의 byte_order로 오버라이드 가능합니다.',
-        default: 'big_endian',
-      },
-      {
-        name: 'device_id',
-        type: 'number',
-        required: false,
-        description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID입니다. 입력 메시지 payload의 device_id로 오버라이드 가능합니다.',
-        default: '1',
-      },
-    ],
-    configExample: {
-      agent_ref: 'modbus-server-1',
-      operation: 'read',
-      register_area: 'holding_registers',
-      address: 100,
-      count: 10,
-      data_type: 'float32',
-      byte_order: 'big_endian',
-      device_id: 1,
-    },
-  },
-
-  'modbus-poller': {
-    description:
-      'MODBUS 에이전트(Server/Client)에 연결하여 register_map에 정의된 레지스터를 주기적으로 폴링하는 SourceNode입니다. poll_interval 주기로 자동 읽기를 수행하며, 각 레지스터 항목별로 영역, 주소, 데이터 타입, 디바이스 ID를 개별 지정할 수 있습니다. in 포트로 메시지를 보내면 device_id, poll_interval, register_map을 런타임에 동적으로 변경할 수 있습니다.',
-    ports: [
-      { name: 'in', direction: 'input', description: '설정 변경 메시지를 수신합니다. payload에 device_id, poll_interval, register_map을 포함하면 폴링 설정이 동적으로 변경됩니다.' },
-      { name: 'out', direction: 'output', description: '폴링 읽기 결과를 출력합니다. register_map의 이름별 키로 값이 포함됩니다.' },
-      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
-    ],
-    configFields: [
-      {
-        name: 'agent_ref',
-        type: 'string',
-        required: true,
-        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다.',
-      },
-      {
-        name: 'device_id',
-        type: 'number',
-        required: false,
-        description: '기본 디바이스 ID입니다. register_map 항목에서 개별 지정하지 않으면 이 값이 사용됩니다.',
-        default: '1',
-      },
-      {
-        name: 'poll_interval',
-        type: 'string',
-        required: false,
-        description: '폴링 주기입니다 (예: "1s", "5s", "1m"). 최소 100ms.',
-        default: '5s',
-      },
-      {
-        name: 'register_map',
-        type: 'json',
-        required: true,
-        description: '폴링할 레지스터 정의입니다. 각 항목에 name, register_area, address, count, data_type, byte_order, device_id를 지정합니다.',
-      },
-    ],
-    configExample: {
-      agent_ref: 'modbus-server-1',
-      poll_interval: '5s',
-      register_map: [
-        { name: 'temperature', register_area: 'input_registers', address: 0, count: 2, data_type: 'float32' },
-        { name: 'humidity', register_area: 'input_registers', address: 2, count: 2, data_type: 'float32' },
-        { name: 'battery', register_area: 'input_registers', address: 6, count: 1, data_type: 'uint16' },
-      ],
-    },
-  },
-
-  'modbus-writer': {
-    description:
-      'MODBUS 에이전트(Server/Client)에 연결하여 레지스터에 값을 쓰는 전용 ProcessNode입니다. 쓰기 가능 영역(coils, holding_registers)만 허용합니다. 입력 메시지의 payload에서 value 또는 values를 추출하여 레지스터에 씁니다. address, data_type, byte_order, device_id, register_area는 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
-    ports: [
-      { name: 'in', direction: 'input', description: '쓰기 연산을 트리거하는 메시지를 수신합니다. payload에 value 또는 values 키가 필요합니다.' },
-      { name: 'out', direction: 'output', description: '쓰기 완료 후 결과 메시지를 출력합니다. success, register_area, address, data_type 등이 포함됩니다.' },
+      { name: 'in', direction: 'input', description: '쓰기를 트리거하는 메시지를 수신합니다. payload에 command_set이 있으면 config 기본값을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '쓰기 결과를 출력합니다.' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패 등 에러 발생 시 출력합니다.' },
     ],
     configFields: [
@@ -891,49 +770,83 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'agent_ref',
         type: 'string',
         required: true,
-        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다.',
+        description: '대상 MODBUS 에이전트(Client/Server)의 이름 또는 ID입니다.',
       },
       {
-        name: 'register_area',
-        type: 'string',
+        name: 'command_set',
+        type: 'json',
         required: false,
-        description: '쓰기 가능 레지스터 영역입니다. coils, holding_registers만 허용합니다.',
-        default: 'holding_registers',
-      },
-      {
-        name: 'address',
-        type: 'number',
-        required: false,
-        description: '시작 레지스터 주소입니다 (0-65535).',
-        default: '0',
-      },
-      {
-        name: 'data_type',
-        type: 'string',
-        required: false,
-        description: '레지스터 데이터 타입입니다. uint16, int16, float32, uint32, int32을 지원합니다.',
-        default: 'uint16',
-      },
-      {
-        name: 'byte_order',
-        type: 'string',
-        required: false,
-        description: '다중 레지스터 타입의 바이트 순서입니다.',
-        default: 'big_endian',
-      },
-      {
-        name: 'device_id',
-        type: 'number',
-        required: false,
-        description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID입니다.',
-        default: '1',
+        description: '쓰기 명령(WriteOp) 배열입니다. 각 항목: area, address, value(단일) 또는 values(배열), data_type, byte_order, unit_id(0=공유). config 기본값이며 입력 payload의 command_set으로 오버라이드됩니다.',
       },
     ],
     configExample: {
       agent_ref: 'modbus-server-1',
-      register_area: 'holding_registers',
-      address: 100,
-      data_type: 'float32',
+      command_set: [
+        { area: 'holding_registers', address: 100, value: 42, data_type: 'uint16', byte_order: 'big_endian' },
+        { area: 'holding_registers', address: 200, values: [1, 2, 3], data_type: 'uint16', byte_order: 'big_endian', unit_id: 0 },
+      ],
+    },
+  },
+
+  'modbus-read': {
+    description:
+      'MODBUS 에이전트(Client/Server)에 연결하여 레지스터를 읽는 노드입니다. config의 command_set(ReadOp 배열)이 기본값이며, 입력 메시지 payload에 command_set이 있으면 런타임에 오버라이드됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '읽기를 트리거하는 메시지를 수신합니다. payload에 command_set이 있으면 config 기본값을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '읽기 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 MODBUS 에이전트(Client/Server)의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'command_set',
+        type: 'json',
+        required: false,
+        description: '읽기 명령(ReadOp) 배열입니다. 각 항목: area, address, count, data_type, byte_order, unit_id(0=공유). config 기본값이며 입력 payload의 command_set으로 오버라이드됩니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'modbus-server-1',
+      command_set: [
+        { area: 'holding_registers', address: 0, count: 10, data_type: 'float32', byte_order: 'big_endian' },
+        { area: 'coils', address: 0, count: 8, unit_id: 1 },
+      ],
+    },
+  },
+
+  'modbus-control': {
+    description:
+      'MODBUS 에이전트(Client/Server)를 제어하는 노드입니다(start/stop/pause/resume/reconnect/add_device/remove_device/set_config/command). config의 command_set(ControlOp 배열)이 기본값이며, 입력 메시지 payload에 command_set이 있으면 런타임에 오버라이드됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '제어를 트리거하는 메시지를 수신합니다. payload에 command_set이 있으면 config 기본값을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '제어 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '제어 실패 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '제어할 MODBUS 에이전트(Client/Server)의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'command_set',
+        type: 'json',
+        required: false,
+        description: '제어 명령(ControlOp) 배열입니다. 각 항목: action, params(자유형 객체, add_device/remove_device/set_config/command 용). config 기본값이며 입력 payload의 command_set으로 오버라이드됩니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'modbus-server-1',
+      command_set: [
+        { action: 'reconnect' },
+        { action: 'add_device', params: { unit_id: 5, host: '10.0.0.9', port: 502 } },
+      ],
     },
   },
 
@@ -1730,7 +1643,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         timestamp: 1713312000000,
         value: 25.5,
         labels: { room: 'room1', sensor: 'temp' },
-        meta: { source: 'modbus-poller' },
+        meta: { source: 'modbus-read' },
       },
       '단일 엔트리 · timestamp 생략 → 현재 epoch ms 주입': {
         value: 42.5,

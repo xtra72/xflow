@@ -3026,6 +3026,26 @@
       },
       "descriptionColumn": "Description"
     },
+    "modbusCommandSet": {
+      "commandSet": "Command set",
+      "empty": "No commands. Use \"Add\" to add one.",
+      "addOp": "Add",
+      "selectRow": "Select row",
+      "selectAll": "Select all",
+      "deleteSelected": "Delete selected",
+      "area": "Area",
+      "address": "Address",
+      "value": "Value",
+      "valuePlaceholder": "single or comma/space separated",
+      "count": "Count",
+      "dataType": "Data type",
+      "byteOrder": "Byte order",
+      "unitId": "Unit ID",
+      "unitIdPlaceholder": "optional (0=shared)",
+      "action": "Action",
+      "params": "params (JSON)",
+      "paramsPlaceholder": "e.g. {\"unit_id\":5,\"host\":\"10.0.0.9\"}"
+    },
     "metrics": {
       "metric": "Metric",
       "valueKey": "Value key ($.)",

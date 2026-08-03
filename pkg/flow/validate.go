@@ -147,6 +147,10 @@ var agentRefRequiredTypes = map[string]struct{}{
 	"tsdb-query":      {},
 	"mqtt-subscriber": {},
 	"mqtt-publisher":  {},
+	// MODBUS command-set 노드 (agent_ref 필수)
+	"modbus-write":   {},
+	"modbus-read":    {},
+	"modbus-control": {},
 	// Thingplus 게이트웨이 노드 (agent_ref 필수)
 	"thingplus-uplink":   {},
 	"thingplus-downlink": {},
@@ -175,9 +179,6 @@ var agentRefRequiredTypes = map[string]struct{}{
 	"lgap":                    {},
 	"lgap-status":             {},
 	"lgap-control":            {},
-	"modbus":                  {},
-	"modbus-poller":           {},
-	"modbus-writer":           {},
 	"serial-in":               {},
 	"serial-out":              {},
 	"tcp-in":                  {},

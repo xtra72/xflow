@@ -65,6 +65,10 @@ var (
 	// 공유 컨테이너가 없을 때 반환된다(intra-server 공유).
 	ErrSharedMapMissing = errors.New("modbus-server: shared segment requires a unit_id 0 container")
 
+	// ErrNoSharedContainer 는 exec 명령이 unit_id 0(공유 컨테이너)을 대상으로 했으나
+	// 이 서버에 공유 컨테이너가 구성되어 있지 않을 때 반환된다.
+	ErrNoSharedContainer = errors.New("modbus-server: no shared container (unit_id 0) configured")
+
 	// ErrSharedRangeOutOfBounds 는 공유 세그먼트의 shared_address 범위가 컨테이너의
 	// 같은 영역 선언 범위를 벗어날 때 반환된다.
 	ErrSharedRangeOutOfBounds = errors.New("modbus-server: shared range out of container bounds")

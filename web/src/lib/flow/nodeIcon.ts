@@ -22,6 +22,7 @@ import {
   Columns3,
   CopyMinus,
   Database,
+  Download,
   Filter,
   GitBranch,
   Globe,
@@ -46,6 +47,7 @@ import {
   Thermometer,
   ThermometerSun,
   TriangleAlert,
+  Upload,
   Workflow,
   Zap,
   type LucideIcon,
@@ -91,13 +93,14 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'mqtt-subscriber': Antenna,
   'mqtt-publisher': Radio,
   // Modbus: 산업용 시리얼/TCP 버스 → Cable/Plug/Network 계열
-  modbus: Cable,
   'modbus-client': Network,
   'modbus-tcp': Network,
   'modbus-rtu': Cable,
   'modbus-server': Network,
-  'modbus-poller': Cable,
-  'modbus-writer': Plug,
+  // Modbus 명령셋 노드: write=Upload, read=Download, control=SlidersHorizontal
+  'modbus-write': Upload,
+  'modbus-read': Download,
+  'modbus-control': SlidersHorizontal,
   // HTTP → Globe
   http: Globe,
   // 시리얼/TCP → 물리 결선

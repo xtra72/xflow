@@ -34,7 +34,7 @@ func dummyFactory(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 func TestNewRegistry_기본생성_빌트인포함(t *testing.T) {
 	r := NewRegistry()
 
-	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "modbus", "output", "deadletter", "samsung-hvacr01-status", "samsung-hvacr01-control", "samsung-hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-poller", "modbus-writer", "lgap-status", "lgap-control", "lgap", "lg-hvacr02-status", "lg-hvacr02-control", "lg-hvacr02", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
+	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "output", "deadletter", "samsung-hvacr01-status", "samsung-hvacr01-control", "samsung-hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-write", "modbus-read", "modbus-control", "lgap-status", "lgap-control", "lgap", "lg-hvacr02-status", "lg-hvacr02-control", "lg-hvacr02", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
 	for _, typ := range builtins {
 		assert.True(t, r.Has(typ), "빌트인 타입 %q가 등록되어 있어야 한다", typ)
 	}
@@ -156,14 +156,14 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"mapping":                 {"processing", "키 기반 값 매핑", "builtin"},
 		"output":                  {"io", "메시지를 포맷팅하여 출력", "builtin"},
 		"deadletter":              {"error", "처리 실패 메시지를 보관", "builtin"},
-		"modbus":                  {"processing", "MODBUS 레지스터 읽기/쓰기", "builtin"},
 		"samsung-hvacr01-status":  {"io", "Samsung HVACR-01 (NASA) 디바이스 상태 조회", "builtin"},
 		"samsung-hvacr01-control": {"io", "Samsung HVACR-01 (NASA) 디바이스 제어", "builtin"},
 		"samsung-hvacr01":         {"io", "Samsung HVACR-01 (NASA) 상태 조회 + 제어 통합", "builtin"},
 		"mqtt-subscriber":         {"io", "MQTT 토픽 구독 및 메시지 수신", "builtin"},
 		"mqtt-publisher":          {"io", "MQTT 토픽으로 메시지 발행", "builtin"},
-		"modbus-poller":           {"io", "MODBUS 레지스터를 주기적으로 폴링 읽기", "builtin"},
-		"modbus-writer":           {"io", "MODBUS 레지스터 쓰기 전용", "builtin"},
+		"modbus-write":            {"modbus", "MODBUS command-set 기반 레지스터 쓰기", "builtin"},
+		"modbus-read":             {"modbus", "MODBUS command-set 기반 레지스터 읽기", "builtin"},
+		"modbus-control":          {"modbus", "MODBUS 에이전트 lifecycle/디바이스/설정 제어", "builtin"},
 		"lgap-status":             {"io", "LG LGAP 디바이스 상태 조회", "builtin"},
 		"lgap-control":            {"io", "LG LGAP 디바이스 제어", "builtin"},
 		"lgap":                    {"io", "LG LGAP 상태 조회 + 제어 통합", "builtin"},
@@ -287,7 +287,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 68) // 54 canonical builtins (+xsfm-status/control/xsfm 통합) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
+	assert.Len(t, metas, 68) // 54 canonical builtins (modbus-write/modbus-read/modbus-control 추가) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

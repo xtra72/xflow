@@ -1532,87 +1532,6 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 
   // --- IO: MODBUS ---
-  modbus: {
-    description: 'MODBUS 레지스터를 읽거나 씁니다. RTU/TCP 에이전트를 통해 통신합니다.',
-    inputDesc: 'write 시: payload.values (쓸 값 배열). read 시: 입력 불필요 (설정값 사용)',
-    outputDesc: 'read: payload.values (레지스터 값 배열). write: payload.success (성공 여부)',
-    configSchema: {
-      fields: [
-        {
-          name: 'agent_ref',
-          type: 'agent_select',
-          label: '에이전트',
-          required: true,
-          options: ['modbus-rtu', 'modbus-tcp'],
-          description: '연결할 MODBUS 에이전트를 선택합니다',
-        },
-        {
-          name: 'operation',
-          type: 'select',
-          label: '연산',
-          options: ['read', 'write'],
-          default: 'read',
-          required: true,
-          description: '읽기 또는 쓰기 연산을 선택합니다',
-        },
-        {
-          name: 'register_area',
-          type: 'select',
-          label: '레지스터 영역',
-          options: ['coils', 'discrete_inputs', 'holding_registers', 'input_registers'],
-          default: 'holding_registers',
-          required: true,
-          description: 'MODBUS 레지스터 영역을 선택합니다',
-        },
-        {
-          name: 'address',
-          type: 'number',
-          label: '시작 주소',
-          required: true,
-          default: 0,
-          description: '시작 레지스터 주소 (0-65535)',
-        },
-        {
-          name: 'count',
-          type: 'number',
-          label: '레지스터 수',
-          default: 1,
-          description: '읽기/쓰기할 레지스터 수',
-        },
-        {
-          name: 'data_type',
-          type: 'select',
-          label: '데이터 타입',
-          options: ['uint16', 'int16', 'float32', 'uint32', 'int32'],
-          default: 'uint16',
-          description: '레지스터 데이터 타입 (Holding/Input Registers 전용)',
-        },
-        {
-          name: 'byte_order',
-          type: 'select',
-          label: '바이트 순서',
-          options: ['big_endian', 'little_endian'],
-          default: 'big_endian',
-          description: '다중 레지스터 타입의 바이트 순서',
-        },
-        {
-          name: 'device_id',
-          type: 'number',
-          label: '디바이스 ID',
-          default: 1,
-          description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID',
-        },
-        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
-        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
-      ],
-    },
-    defaultPorts: [
-      { name: 'input', direction: 'input' as const },
-      { name: 'output', direction: 'output' as const },
-      { name: 'error', direction: 'error' as const },
-    ],
-  },
-
   // --- Routing ---
   switch: {
     description: '조건에 따라 메시지를 다른 출력 포트로 라우팅합니다.',
@@ -1749,11 +1668,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- IO: MODBUS Poller ---
-  'modbus-poller': {
-    description: 'MODBUS 레지스터를 주기적으로 폴링합니다. register_map에 정의된 레지스터를 일괄 읽기합니다.',
-    inputDesc: '없음 (소스 노드). poll_interval 주기로 자동 폴링. 입력 메시지 수신 시 즉시 폴링 트리거',
-    outputDesc: 'payload: register_map에 정의된 이름을 키로 한 값 맵 (예: {temperature: 25.5, humidity: 60})',
+  // --- IO: MODBUS Write (command set) ---
+  'modbus-write': {
+    description: 'MODBUS 레지스터에 값을 씁니다. command_set(WriteOp 배열)을 config 기본값으로 정의합니다.',
+    inputDesc: '입력 payload 의 command_set 으로 config 기본값을 오버라이드할 수 있습니다.',
+    outputDesc: '쓰기 결과. command_set(config 기본) — 입력 payload 의 command_set 로 오버라이드 가능',
     configSchema: {
       fields: [
         {
@@ -1761,29 +1680,15 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['modbus-rtu', 'modbus-tcp', 'modbus-server'],
-          description: '연결할 MODBUS 에이전트를 선택합니다',
+          options: ['modbus-client', 'modbus-server'],
+          description: '연결할 MODBUS 에이전트(Client/Server)를 선택합니다',
         },
         {
-          name: 'device_id',
-          type: 'number',
-          label: '디바이스 ID',
-          default: 1,
-          description: '기본 디바이스 ID (register_map 항목에서 개별 지정 가능)',
-        },
-        {
-          name: 'poll_interval',
-          type: 'string',
-          label: '폴링 주기',
-          default: '5s',
-          description: '레지스터 폴링 주기 (예: 1s, 5s, 1m)',
-        },
-        {
-          name: 'register_map',
-          type: 'register_map',
-          label: '레지스터 맵',
-          required: true,
-          description: '폴링할 레지스터 정의 (이름, 영역, 주소, 수, 타입, 디바이스ID)',
+          name: 'command_set',
+          type: 'modbus_write_ops',
+          label: '명령셋 (기본값)',
+          description:
+            '쓰기 명령(WriteOp) 목록. 각 행: area, address, 값(단일/다중), data_type, byte_order, unit_id(0=공유). 입력 payload 의 command_set 으로 런타임 오버라이드됩니다.',
         },
       ],
     },
@@ -1794,11 +1699,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
-  // --- IO: MODBUS Writer ---
-  'modbus-writer': {
-    description: 'MODBUS 레지스터에 값을 씁니다. Coils 또는 Holding Registers에 쓸 수 있습니다.',
-    inputDesc: 'payload.value 또는 payload.values: 쓸 값 (단일 또는 배열)',
-    outputDesc: 'payload: {success: bool, address, count, values} 쓰기 결과',
+  // --- IO: MODBUS Read (command set) ---
+  'modbus-read': {
+    description: 'MODBUS 레지스터를 읽습니다. command_set(ReadOp 배열)을 config 기본값으로 정의합니다.',
+    inputDesc: '입력 payload 의 command_set 으로 config 기본값을 오버라이드할 수 있습니다.',
+    outputDesc: '읽기 결과. command_set(config 기본) — 입력 payload 의 command_set 로 오버라이드 가능',
     configSchema: {
       fields: [
         {
@@ -1806,49 +1711,47 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['modbus-rtu', 'modbus-tcp', 'modbus-server'],
-          description: '연결할 MODBUS 에이전트를 선택합니다',
+          options: ['modbus-client', 'modbus-server'],
+          description: '연결할 MODBUS 에이전트(Client/Server)를 선택합니다',
         },
         {
-          name: 'register_area',
-          type: 'select',
-          label: '레지스터 영역',
-          options: ['coils', 'holding_registers'],
-          default: 'holding_registers',
-          description: '쓰기 가능 레지스터 영역 (coils, holding_registers)',
+          name: 'command_set',
+          type: 'modbus_read_ops',
+          label: '명령셋 (기본값)',
+          description:
+            '읽기 명령(ReadOp) 목록. 각 행: area, address, count, data_type, byte_order, unit_id(0=공유). 입력 payload 의 command_set 으로 런타임 오버라이드됩니다.',
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
+    ],
+  },
+
+  // --- IO: MODBUS Control (command set) ---
+  'modbus-control': {
+    description: 'MODBUS 에이전트를 제어합니다(start/stop/reconnect/add_device 등). command_set(ControlOp 배열)을 config 기본값으로 정의합니다.',
+    inputDesc: '입력 payload 의 command_set 으로 config 기본값을 오버라이드할 수 있습니다.',
+    outputDesc: '제어 결과. command_set(config 기본) — 입력 payload 의 command_set 로 오버라이드 가능',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['modbus-client', 'modbus-server'],
+          description: '제어할 MODBUS 에이전트(Client/Server)를 선택합니다',
         },
         {
-          name: 'address',
-          type: 'number',
-          label: '시작 주소',
-          default: 0,
-          description: '시작 레지스터 주소 (0-65535)',
+          name: 'command_set',
+          type: 'modbus_control_ops',
+          label: '명령셋 (기본값)',
+          description:
+            '제어 명령(ControlOp) 목록. 각 행: action(start/stop/pause/resume/reconnect/add_device/remove_device/set_config/command), params(JSON, 선택). 입력 payload 의 command_set 으로 런타임 오버라이드됩니다.',
         },
-        {
-          name: 'data_type',
-          type: 'select',
-          label: '데이터 타입',
-          options: ['uint16', 'int16', 'float32', 'uint32', 'int32'],
-          default: 'uint16',
-          description: '레지스터 데이터 타입',
-        },
-        {
-          name: 'byte_order',
-          type: 'select',
-          label: '바이트 순서',
-          options: ['big_endian', 'little_endian'],
-          default: 'big_endian',
-          description: '다중 레지스터의 바이트 순서',
-        },
-        {
-          name: 'device_id',
-          type: 'number',
-          label: '디바이스 ID',
-          default: 1,
-          description: 'MODBUS Client 에이전트 전용 디바이스 ID',
-        },
-        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
-        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [

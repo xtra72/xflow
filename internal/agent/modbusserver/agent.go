@@ -335,7 +335,10 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 
 // processSetCoil sets a single coil value.
 func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_coil requires 'address' param")
@@ -356,7 +359,10 @@ func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) 
 
 // processSetCoils sets multiple coil values.
 func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_coils requires 'address' param")
@@ -391,7 +397,10 @@ func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error)
 // processSetRegister sets a single holding register value.
 // Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_register requires 'address' param")
@@ -431,7 +440,10 @@ func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, err
 // processSetRegisters sets multiple holding register values.
 // Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_registers requires 'address' param")
@@ -502,7 +514,10 @@ func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, er
 // processSetInput sets a single input register or discrete input value.
 // Supports optional data_type and byte_order params for typed writes on input_registers.
 func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	area, ok := req.Params["area"].(string)
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_input requires 'area' param (string)")
@@ -581,7 +596,10 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 
 	switch area {
 	case "input_registers":
-		rm := a.resolveRegisterMap(req.Params)
+		rm, err := a.resolveRegisterMap(req.Params)
+		if err != nil {
+			return nil, err
+		}
 		dataType, _ := getParamString(req.Params, "data_type")
 		byteOrder, _ := getParamString(req.Params, "byte_order")
 		if byteOrder == "" {
@@ -634,7 +652,10 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 		return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "quantity": len(values)})
 
 	case "discrete_inputs":
-		rm := a.resolveRegisterMap(req.Params)
+		rm, err := a.resolveRegisterMap(req.Params)
+		if err != nil {
+			return nil, err
+		}
 		values := make([]bool, len(arr))
 		for i, v := range arr {
 			b, ok := v.(bool)
@@ -659,7 +680,10 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 // params.writes 배열의 각 항목은 area, address, value, (선택) data_type, byte_order를 포함한다.
 // 브릿지 어댑터가 플로우 메시지를 ModbusServerAgent에 전달할 때 사용한다.
 func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	rawWrites, ok := req.Params["writes"]
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: bulk_write requires 'writes' param")
@@ -773,7 +797,10 @@ func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error
 
 // processGetCoils reads coil values by address and quantity.
 func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_coils requires 'address' param")
@@ -798,7 +825,10 @@ func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error)
 
 // processGetDiscreteInputs reads discrete input values by address and quantity.
 func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_discrete_inputs requires 'address' param")
@@ -823,7 +853,10 @@ func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byt
 
 // processGetHoldingRegisters reads holding register values by address and quantity.
 func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_holding_registers requires 'address' param")
@@ -863,7 +896,10 @@ func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]b
 
 // processGetInputRegisters reads input register values by address and quantity.
 func (a *ModbusServerAgent) processGetInputRegisters(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_input_registers requires 'address' param")
@@ -1007,7 +1043,10 @@ func (a *ModbusServerAgent) buildTypedValues(rm *RegisterMap, area string, start
 
 // processGetRegisterTyped reads a single typed register value.
 func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_register_typed requires 'address' param")
@@ -1036,7 +1075,10 @@ func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte
 // processGetMap returns the register map snapshot.
 // If a TypeOverlay exists, it is included in the response.
 func (a *ModbusServerAgent) processGetMap(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	snap := rm.GetSnapshot()
 	resp := map[string]any{"register_map": snap}
 
@@ -1054,7 +1096,10 @@ func (a *ModbusServerAgent) processReadRaw(req *processRequest) ([]byte, error) 
 		return nil, fmt.Errorf("modbus-server read_raw: params required")
 	}
 
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	fc, ok := getParamInt(req.Params, "function_code")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server read_raw: function_code required")
@@ -1069,7 +1114,6 @@ func (a *ModbusServerAgent) processReadRaw(req *processRequest) ([]byte, error) 
 	}
 
 	var values []uint16
-	var err error
 
 	const (
 		fc03 = 3 // ReadHoldingRegisters
@@ -1751,16 +1795,26 @@ func (a *ModbusServerAgent) ListenAddr() net.Addr {
 
 // resolveRegisterMap resolves the target RegisterMap based on unit_id parameter.
 // If unit_id is not specified, uses the first device's RegisterMap (backward compatibility).
-func (a *ModbusServerAgent) resolveRegisterMap(params map[string]any) *RegisterMap {
+// When unit_id is explicitly 0, the shared container (unit_id 0) is targeted; if no
+// shared container is configured, ErrNoSharedContainer is returned.
+func (a *ModbusServerAgent) resolveRegisterMap(params map[string]any) (*RegisterMap, error) {
 	if params != nil {
 		if uid, ok := getParamInt(params, "unit_id"); ok {
+			// unit_id 가 명시적으로 0 이면 공유 컨테이너를 대상으로 한다.
+			// (getParamInt 의 ok 로 "미지정"과 "명시적 0"을 구분: 미지정이면 아래 기본 경로)
+			if uid == 0 {
+				if c := a.deviceManager.SharedContainer(); c != nil {
+					return c.RegisterMap, nil
+				}
+				return nil, ErrNoSharedContainer
+			}
 			dev := a.deviceManager.GetDevice(byte(uid))
 			if dev != nil {
-				return dev.RegisterMap
+				return dev.RegisterMap, nil
 			}
 		}
 	}
-	return a.registerMap // 첫 번째 디바이스 (하위 호환)
+	return a.registerMap, nil // 첫 번째 디바이스 (하위 호환)
 }
 
 // ---------------------------------------------------------------------------
@@ -1770,7 +1824,11 @@ func (a *ModbusServerAgent) resolveRegisterMap(params map[string]any) *RegisterM
 // resolveDataType resolves the data_type for a given area and address.
 // Priority: explicit param > TypeOverlay > "uint16" default
 func (a *ModbusServerAgent) resolveDataType(params map[string]any, area string, address uint16) (string, string) {
-	rm := a.resolveRegisterMap(params)
+	rm, err := a.resolveRegisterMap(params)
+	if err != nil {
+		// 맵을 얻지 못하면(예: 컨테이너 미존재) TypeOverlay 없이 명시 파라미터/기본값만 사용한다.
+		rm = nil
+	}
 	return resolveDataTypeFromRM(rm, params, area, address)
 }
 
@@ -1782,7 +1840,7 @@ func resolveDataTypeFromRM(rm *RegisterMap, params map[string]any, area string, 
 		byteOrder = modbus.ByteOrderBigEndian
 	}
 
-	if dataType == "" {
+	if dataType == "" && rm != nil {
 		// TypeOverlay 확인
 		overlay := rm.GetTypeOverlay()
 		key := area + ":" + fmt.Sprintf("%d", address)

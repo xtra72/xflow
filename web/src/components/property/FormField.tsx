@@ -22,6 +22,10 @@ import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
 import { ModbusDevicesEditor } from './ModbusDevicesEditor';
 import { ModbusServerDevicesEditor } from './ModbusServerDevicesEditor';
+import {
+  ModbusRwCommandSetEditor,
+  ModbusControlCommandSetEditor,
+} from './ModbusCommandSetEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
@@ -341,6 +345,32 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
 
       {field.type === 'modbus_server_devices' && (
         <ModbusServerDevicesEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'modbus_write_ops' && (
+        <ModbusRwCommandSetEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+          mode="write"
+        />
+      )}
+
+      {field.type === 'modbus_read_ops' && (
+        <ModbusRwCommandSetEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+          mode="read"
+        />
+      )}
+
+      {field.type === 'modbus_control_ops' && (
+        <ModbusControlCommandSetEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}

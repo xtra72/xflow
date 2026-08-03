@@ -717,15 +717,8 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 
 // TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 68개인지 확인한다.
 //
-// 61개 이전 빌트인 + thingplus-uplink / thingplus-downlink (SPEC-THINGPLUS-001, io 카테고리) = 63.
-// canonical 추가 항목: chart-emitter + century-hvacr01-status / century-hvacr01-control / century-hvacr01 (3종, raw-frame 통합됨)
-// + inventory (SPEC-INVENTORY-001, processing 카테고리)
-// + select-field (SPEC-SELECT-FIELD, processing 카테고리)
-// + flow-node (SPEC-SUBFLOW-001, composition 카테고리 — 배포 시 확장됨)
-// + enrich (message-slim-metadata / enrich, processing 카테고리)
-// + thingplus-uplink / thingplus-downlink (SPEC-THINGPLUS-001, io 카테고리)
-// + xsfm-status / xsfm-control / xsfm (SPEC-XSFM-001, io 카테고리) canonical 3종
-//   - xsfm_status / xsfm_control `_` 별칭 2종 = 63 + 5 = 68.
+// 65개(구 modbus 3종 제거 후)에서 command-set 노드 modbus-write / modbus-read /
+// modbus-control 3종을 추가하여 68개.
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()

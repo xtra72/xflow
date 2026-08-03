@@ -38,11 +38,6 @@ func TestAgentReinitializer_InterfaceCompliance(t *testing.T) {
 	var _ AgentReinitializer = (*MQTTSubNode)(nil)
 	var _ AgentReinitializer = (*MQTTPublisherNode)(nil)
 
-	// Modbus 계열
-	var _ AgentReinitializer = (*ModbusNode)(nil)
-	var _ AgentReinitializer = (*ModbusPollerNode)(nil)
-	var _ AgentReinitializer = (*ModbusWriterNode)(nil)
-
 	// InfluxDB 계열
 	var _ AgentReinitializer = (*InfluxDBReadNode)(nil)
 	var _ AgentReinitializer = (*InfluxDBQueryNode)(nil)

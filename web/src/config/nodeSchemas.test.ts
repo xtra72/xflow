@@ -274,8 +274,6 @@ describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
     'xsfm-status',
     'xsfm-control',
     'xsfm',
-    'modbus',
-    'modbus-writer',
     'mqtt-subscriber',
     'mqtt-publisher',
     'serial-in',
@@ -304,8 +302,6 @@ describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
 
   // emit_agent 만 노출하고 emit_device 는 노출하지 않는 노드(디바이스 아님).
   const AGENT_ONLY_NODES = [
-    'modbus',
-    'modbus-writer',
     'mqtt-subscriber',
     'mqtt-publisher',
     'serial-in',
@@ -335,8 +331,10 @@ describe('emit_agent / emit_device 그룹 토글 (P4)', () => {
     expect(findField(nodeType, 'emit_device')).toBeUndefined();
   });
 
-  it('modbus-poller 는 agent 그룹을 emit 하지 않으므로 emit_agent 토글이 없다', () => {
-    expect(findField('modbus-poller', 'emit_agent')).toBeUndefined();
+  it('modbus 명령셋 노드(write/read/control)는 emit_agent 토글이 없다 (agent_ref + command_set 만)', () => {
+    expect(findField('modbus-write', 'emit_agent')).toBeUndefined();
+    expect(findField('modbus-read', 'emit_agent')).toBeUndefined();
+    expect(findField('modbus-control', 'emit_agent')).toBeUndefined();
   });
 });
 

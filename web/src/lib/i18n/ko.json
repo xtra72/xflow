@@ -3026,6 +3026,26 @@
       },
       "descriptionColumn": "설명"
     },
+    "modbusCommandSet": {
+      "commandSet": "명령셋",
+      "empty": "명령이 없습니다. \"추가\"로 추가하세요.",
+      "addOp": "추가",
+      "selectRow": "행 선택",
+      "selectAll": "전체 선택",
+      "deleteSelected": "선택 삭제",
+      "area": "영역",
+      "address": "주소",
+      "value": "값",
+      "valuePlaceholder": "단일 또는 콤마/공백 구분 다중",
+      "count": "개수",
+      "dataType": "데이터 타입",
+      "byteOrder": "바이트 순서",
+      "unitId": "유닛 ID",
+      "unitIdPlaceholder": "선택 (0=공유)",
+      "action": "액션",
+      "params": "params (JSON)",
+      "paramsPlaceholder": "예: {\"unit_id\":5,\"host\":\"10.0.0.9\"}"
+    },
     "metrics": {
       "metric": "메트릭",
       "valueKey": "값 키 ($.)",
