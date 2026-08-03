@@ -30,14 +30,17 @@ type ConnectionHandler interface {
 type ModbusHandler struct {
 	deviceManager *DeviceManager
 	msgCh         chan<- map[string]any
+	notifyOnWrite bool // 외부 통신(와이어 쓰기) register_change 알림 발행 여부 (opt-in, 기본 false)
 	logger        *slog.Logger
 }
 
 // NewModbusHandler creates a new ModbusHandler with a DeviceManager for multi-device routing.
-func NewModbusHandler(deviceManager *DeviceManager, msgCh chan<- map[string]any, logger *slog.Logger) *ModbusHandler {
+// notifyOnWrite 가 true 일 때만 원격 마스터의 와이어 쓰기에 대해 register_change 알림을 발행한다.
+func NewModbusHandler(deviceManager *DeviceManager, msgCh chan<- map[string]any, notifyOnWrite bool, logger *slog.Logger) *ModbusHandler {
 	return &ModbusHandler{
 		deviceManager: deviceManager,
 		msgCh:         msgCh,
+		notifyOnWrite: notifyOnWrite,
 		logger:        logger,
 	}
 }
@@ -190,7 +193,14 @@ func isWriteFC(fc byte) bool {
 }
 
 // sendChangeNotification sends a register change notification to msgCh (non-blocking).
+// notify_on_write 가 false(기본)이면 와이어 쓰기 알림을 발행하지 않는다(opt-in).
+// 이 게이트는 와이어 경로(외부 마스터 쓰기)에만 적용되며, 플로우 입력 경로의
+// sendChangeEvent(set_*/bulk_write)에는 영향을 주지 않는다.
 func (mh *ModbusHandler) sendChangeNotification(cs *ChangeSet, remoteAddr string, unitID byte) {
+	if !mh.notifyOnWrite {
+		return
+	}
+
 	notification := map[string]any{
 		"type":       "register_change",
 		"area":       cs.Area,

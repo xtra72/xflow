@@ -78,7 +78,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 		}
 	}
 
-	handler := NewModbusHandler(dm, msgCh, logger)
+	handler := NewModbusHandler(dm, msgCh, cfg.NotifyOnWrite, logger)
 
 	// 첫 번째 디바이스의 RegisterMap (Process 메서드 하위 호환용). 디바이스가 없으면
 	// (main-상속 서브) nil 이며 Start 의 applySharedRegisterMap 에서 채워진다.

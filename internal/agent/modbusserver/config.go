@@ -41,6 +41,7 @@ type ModbusServerConfig struct {
 	Devices        []DeviceConfig    // 다중 디바이스 설정 (멀티-디바이스 지원)
 	Role           string            // "main" | "sub" (기본값 "main") — 공유 레지스터 맵(M3)
 	SharedFrom     string            // Role == "sub" 일 때 필수: 공유할 주 서버 에이전트 ID
+	NotifyOnWrite  bool              // 외부 통신(원격 마스터 와이어 쓰기)로 레지스터가 변경될 때만 register_change 알림 발행 (기본값 false, opt-in)
 }
 
 // SerialConfig 는 RTU 트랜스포트의 시리얼 포트 파라미터이다.
@@ -205,6 +206,15 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 	// msg_channel_size
 	if v, ok := opts["msg_channel_size"]; ok {
 		cfg.MsgChannelSize = toInt(v)
+	}
+
+	// notify_on_write (선택, 기본 false — opt-in). true 이면 외부 통신(원격 마스터의
+	// 와이어 쓰기)으로 레지스터가 변경될 때만 register_change 알림을 발행한다. 플로우 입력
+	// 포트(set_*/bulk_write)로 인한 변경 알림(sendChangeEvent)에는 영향을 주지 않는다.
+	if v, ok := opts["notify_on_write"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.NotifyOnWrite = b
+		}
 	}
 
 	// ---------------------------------------------------------------

@@ -61,7 +61,7 @@ func newRTUTestHandler(t *testing.T, initial []any) *ModbusHandler {
 		},
 	}, nil)
 	require.NoError(t, err)
-	return NewModbusHandler(dm, make(chan map[string]any, 8), nil)
+	return NewModbusHandler(dm, make(chan map[string]any, 8), true, nil)
 }
 
 // startRTUListenerWithRequest 는 mock 시리얼로 단일 요청을 주입하고 응답이 기록될

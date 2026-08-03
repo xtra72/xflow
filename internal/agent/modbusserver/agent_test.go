@@ -742,8 +742,14 @@ func TestModbusServerAgent_TCPIntegration(t *testing.T) {
 }
 
 func TestModbusServerAgent_TCPWriteCoilIntegration(t *testing.T) {
-	msa, cleanup := createAndStartAgent(t)
-	defer cleanup()
+	// 와이어 쓰기(원격 마스터) register_change 알림은 opt-in 이므로 notify_on_write=true 로 활성화한다.
+	cfg := testAgentConfig()
+	cfg.Transport.Options["notify_on_write"] = true
+	a, err := NewModbusServerAgent(cfg, nil)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+	require.NoError(t, msa.Start(context.Background()))
+	defer func() { _ = msa.Stop(context.Background()) }()
 
 	// 소비자 활성화 (TCP handler의 sendChangeNotification이 이벤트를 생성하도록)
 	msa.activateReceiver()
