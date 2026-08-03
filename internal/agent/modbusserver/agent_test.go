@@ -58,7 +58,7 @@ func testAgentConfig() agent.AgentConfig {
 func createAndStartAgent(t *testing.T) (*ModbusServerAgent, func()) {
 	t.Helper()
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	msa := a.(*ModbusServerAgent)
@@ -79,7 +79,7 @@ func createAndStartAgent(t *testing.T) (*ModbusServerAgent, func()) {
 
 func TestNewModbusServerAgent(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, a)
 
@@ -107,7 +107,7 @@ func TestModbusServerAgent_StartStop(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetCoil(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -134,7 +134,7 @@ func TestModbusServerAgent_Process_SetCoil(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetCoils(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -161,7 +161,7 @@ func TestModbusServerAgent_Process_SetCoils(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetRegister(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -187,7 +187,7 @@ func TestModbusServerAgent_Process_SetRegister(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetRegisters(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -213,7 +213,7 @@ func TestModbusServerAgent_Process_SetRegisters(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInput_InputRegisters(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -241,7 +241,7 @@ func TestModbusServerAgent_Process_SetInput_InputRegisters(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInput_DiscreteInputs(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -269,7 +269,7 @@ func TestModbusServerAgent_Process_SetInput_DiscreteInputs(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInputs_InputRegisters(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -296,7 +296,7 @@ func TestModbusServerAgent_Process_SetInputs_InputRegisters(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInputs_DiscreteInputs(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -323,7 +323,7 @@ func TestModbusServerAgent_Process_SetInputs_DiscreteInputs(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetMap(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -359,7 +359,7 @@ func TestModbusServerAgent_Process_GetStatus(t *testing.T) {
 
 func TestModbusServerAgent_ReceiveMessage(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -395,7 +395,7 @@ func TestModbusServerAgent_ReceiveMessage(t *testing.T) {
 
 func TestModbusServerAgent_PauseResume(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -414,7 +414,7 @@ func TestModbusServerAgent_PauseResume(t *testing.T) {
 
 func TestModbusServerAgent_Health(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -433,7 +433,7 @@ func TestModbusServerAgent_Health(t *testing.T) {
 
 func TestModbusServerAgent_State(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -475,7 +475,7 @@ func TestModbusServerAgent_State_RegisterDefsWithCurrentValues(t *testing.T) {
 			"scale":      1.0,
 		},
 	}
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -526,7 +526,7 @@ func TestModbusServerAgent_State_RegisterDefsWithArea(t *testing.T) {
 			"area":       "holding_registers",
 		},
 	}
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -547,7 +547,7 @@ func TestModbusServerAgent_State_RegisterDefsWithArea(t *testing.T) {
 func TestModbusServerAgent_State_NoRegisterDefs(t *testing.T) {
 	cfg := testAgentConfig()
 	// register_defs 미설정
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -576,7 +576,7 @@ func TestModbusServerAgent_Process_GetRegisterDefs(t *testing.T) {
 			"scale":      1.0,
 		},
 	}
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -612,7 +612,7 @@ func TestModbusServerAgent_Process_GetRegisterDefs(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetRegisterDefs_NotConfigured(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	data, _ := json.Marshal(map[string]any{"command": "get_register_defs"})
@@ -627,7 +627,7 @@ func TestModbusServerAgent_Process_GetRegisterDefs_NotConfigured(t *testing.T) {
 
 func TestModbusServerAgent_Info(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -640,14 +640,14 @@ func TestModbusServerAgent_Info(t *testing.T) {
 
 func TestModbusServerAgent_Type(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "modbus-gateway", a.Type())
 }
 
 func TestModbusServerAgent_InvalidCommand(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	data, _ := json.Marshal(map[string]any{"command": "invalid_command"})
@@ -658,7 +658,7 @@ func TestModbusServerAgent_InvalidCommand(t *testing.T) {
 
 func TestModbusServerAgent_Configure(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	newCfg := cfg
@@ -670,7 +670,7 @@ func TestModbusServerAgent_Configure(t *testing.T) {
 
 func TestModbusServerAgent_Stats(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	stats := a.Stats()
@@ -745,7 +745,7 @@ func TestModbusServerAgent_TCPWriteCoilIntegration(t *testing.T) {
 	// 와이어 쓰기(원격 마스터) register_change 알림은 opt-in 이므로 notify_on_write=true 로 활성화한다.
 	cfg := testAgentConfig()
 	cfg.Transport.Options["notify_on_write"] = true
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 	require.NoError(t, msa.Start(context.Background()))
@@ -809,7 +809,7 @@ func TestModbusServerAgent_TCPWriteCoilIntegration(t *testing.T) {
 
 func TestModbusServerAgent_Process_InvalidJSON(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	_, err = a.Process([]byte("not-json"))
@@ -819,7 +819,7 @@ func TestModbusServerAgent_Process_InvalidJSON(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInput_UnsupportedArea(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	data, _ := json.Marshal(map[string]any{
@@ -838,7 +838,7 @@ func TestModbusServerAgent_Process_SetInput_UnsupportedArea(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInputs_UnsupportedArea(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	data, _ := json.Marshal(map[string]any{
@@ -857,7 +857,7 @@ func TestModbusServerAgent_Process_SetInputs_UnsupportedArea(t *testing.T) {
 
 func TestModbusServerAgent_ListenAddr_BeforeStart(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -867,7 +867,7 @@ func TestModbusServerAgent_ListenAddr_BeforeStart(t *testing.T) {
 
 func TestModbusServerAgent_ReceiveMessage_ContextCancelled(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -880,7 +880,7 @@ func TestModbusServerAgent_ReceiveMessage_ContextCancelled(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetCoil_MissingParams(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	// Missing value
@@ -908,7 +908,7 @@ func TestModbusServerAgent_Process_SetCoil_MissingParams(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetRegister_MissingParams(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 
 	// Missing value
@@ -960,7 +960,7 @@ func testAgentConfigWithTypeMap() agent.AgentConfig {
 
 func TestModbusServerAgent_Process_SetRegister_WithDataType_Float32(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -991,7 +991,7 @@ func TestModbusServerAgent_Process_SetRegister_WithDataType_Float32(t *testing.T
 
 func TestModbusServerAgent_Process_SetRegister_WithDataType_Int32(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1019,7 +1019,7 @@ func TestModbusServerAgent_Process_SetRegister_WithDataType_Int32(t *testing.T) 
 
 func TestModbusServerAgent_Process_SetRegister_WithDataType_Uint32(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1047,7 +1047,7 @@ func TestModbusServerAgent_Process_SetRegister_WithDataType_Uint32(t *testing.T)
 
 func TestModbusServerAgent_Process_SetRegister_WithDataType_Int16(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1076,7 +1076,7 @@ func TestModbusServerAgent_Process_SetRegister_WithDataType_Int16(t *testing.T) 
 func TestModbusServerAgent_Process_SetRegister_BackwardCompatible(t *testing.T) {
 	// 기존 uint16 동작이 data_type 없이도 유지되는지 확인
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1106,7 +1106,7 @@ func TestModbusServerAgent_Process_SetRegister_BackwardCompatible(t *testing.T) 
 func TestModbusServerAgent_Process_SetRegister_TypeOverlayDefault(t *testing.T) {
 	// TypeMap이 있을 때 data_type 파라미터 없이도 TypeOverlay에서 타입을 가져오는지 확인
 	cfg := testAgentConfigWithTypeMap()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1137,7 +1137,7 @@ func TestModbusServerAgent_Process_SetRegister_TypeOverlayDefault(t *testing.T) 
 
 func TestModbusServerAgent_Process_SetRegisters_WithDataType(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1177,7 +1177,7 @@ func TestModbusServerAgent_Process_SetRegisters_WithDataType(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInput_WithDataType(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1209,7 +1209,7 @@ func TestModbusServerAgent_Process_SetInput_WithDataType(t *testing.T) {
 
 func TestModbusServerAgent_Process_SetInputs_WithDataType(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1250,7 +1250,7 @@ func TestModbusServerAgent_Process_SetInputs_WithDataType(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetRegisterTyped(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1286,7 +1286,7 @@ func TestModbusServerAgent_Process_GetRegisterTyped(t *testing.T) {
 func TestModbusServerAgent_Process_GetRegisterTyped_DefaultOverlay(t *testing.T) {
 	// TypeMap이 있을 때 data_type 파라미터 없이도 TypeOverlay에서 타입을 가져오는지 확인
 	cfg := testAgentConfigWithTypeMap()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1318,7 +1318,7 @@ func TestModbusServerAgent_Process_GetRegisterTyped_DefaultOverlay(t *testing.T)
 
 func TestModbusServerAgent_Process_GetMap_WithTypeOverlay(t *testing.T) {
 	cfg := testAgentConfigWithTypeMap()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1339,7 +1339,7 @@ func TestModbusServerAgent_Process_GetMap_WithTypeOverlay(t *testing.T) {
 func TestModbusServerAgent_Process_GetMap_WithoutTypeOverlay(t *testing.T) {
 	// TypeMap이 없는 기본 설정에서는 type_overlay가 응답에 없어야 함
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1356,7 +1356,7 @@ func TestModbusServerAgent_Process_GetMap_WithoutTypeOverlay(t *testing.T) {
 
 func TestModbusServerAgent_Process_ChangeEvent_WithDataType(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 	msa.activateReceiver()
@@ -1389,7 +1389,7 @@ func TestModbusServerAgent_Process_ChangeEvent_WithDataType(t *testing.T) {
 
 func TestModbusServerAgent_Process_ChangeEvent_WithoutDataType(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 	msa.activateReceiver()
@@ -1421,7 +1421,7 @@ func TestModbusServerAgent_Process_ChangeEvent_WithoutDataType(t *testing.T) {
 func TestModbusServerAgent_Process_SetInput_TypeOverlayDefault(t *testing.T) {
 	// input_registers의 TypeMap에서 address 0이 float32로 지정됨
 	cfg := testAgentConfigWithTypeMap()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1496,7 +1496,7 @@ func TestGetParamFloat64(t *testing.T) {
 func TestResolveDataType(t *testing.T) {
 	// TypeMap이 있는 설정
 	cfg := testAgentConfigWithTypeMap()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1521,7 +1521,7 @@ func TestResolveDataType(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetRegisterTyped_InputRegisters(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1556,7 +1556,7 @@ func TestModbusServerAgent_Process_GetRegisterTyped_InputRegisters(t *testing.T)
 func TestModbusServerAgent_Process_SetRegister_Float32_IntegerValue(t *testing.T) {
 	// REQ-M4-07: JSON에서 정수로 전달된 float32 값이 올바르게 변환되는지 확인
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1585,7 +1585,7 @@ func TestModbusServerAgent_Process_SetRegister_Float32_IntegerValue(t *testing.T
 
 func TestModbusServerAgent_NoChangeSetOnSameValue(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1611,7 +1611,7 @@ func TestModbusServerAgent_NoChangeSetOnSameValue(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetCoils(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1646,7 +1646,7 @@ func TestModbusServerAgent_Process_GetCoils(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetCoils_MissingParams(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1671,7 +1671,7 @@ func TestModbusServerAgent_Process_GetCoils_MissingParams(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetDiscreteInputs(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1706,7 +1706,7 @@ func TestModbusServerAgent_Process_GetDiscreteInputs(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetHoldingRegisters(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1741,7 +1741,7 @@ func TestModbusServerAgent_Process_GetHoldingRegisters(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetInputRegisters(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1775,7 +1775,7 @@ func TestModbusServerAgent_Process_GetInputRegisters(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetHoldingRegisters_OutOfRange(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1793,7 +1793,7 @@ func TestModbusServerAgent_Process_GetHoldingRegisters_OutOfRange(t *testing.T) 
 
 func TestModbusServerAgent_Process_GetHoldingRegisters_TypedValues(t *testing.T) {
 	cfg := testAgentConfigWithTypeMap()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1861,7 +1861,7 @@ func TestModbusServerAgent_Process_GetHoldingRegisters_TypedValues(t *testing.T)
 
 func TestModbusServerAgent_Process_GetInputRegisters_TypedValues(t *testing.T) {
 	cfg := testAgentConfigWithTypeMap()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1908,7 +1908,7 @@ func TestModbusServerAgent_Process_GetInputRegisters_TypedValues(t *testing.T) {
 func TestModbusServerAgent_Process_GetHoldingRegisters_NoTypedValuesWithoutOverlay(t *testing.T) {
 	// TypeOverlay가 없는 기본 설정
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1940,7 +1940,7 @@ func TestModbusServerAgent_Process_GetHoldingRegisters_NoTypedValuesWithoutOverl
 
 func TestModbusServerAgent_Process_ListDevices(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -1981,7 +1981,7 @@ func TestModbusServerAgent_Process_ListDevices(t *testing.T) {
 
 func TestModbusServerAgent_Process_AddDevice(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2024,7 +2024,7 @@ func TestModbusServerAgent_Process_AddDevice(t *testing.T) {
 
 func TestModbusServerAgent_Process_AddDevice_DefaultName(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2052,7 +2052,7 @@ func TestModbusServerAgent_Process_AddDevice_DefaultName(t *testing.T) {
 
 func TestModbusServerAgent_Process_AddDevice_InvalidUnitID(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2103,7 +2103,7 @@ func TestModbusServerAgent_Process_AddDevice_InvalidUnitID(t *testing.T) {
 
 func TestModbusServerAgent_Process_AddDevice_DuplicateUnitID(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2125,7 +2125,7 @@ func TestModbusServerAgent_Process_AddDevice_DuplicateUnitID(t *testing.T) {
 
 func TestModbusServerAgent_Process_AddDevice_MissingRegisterMap(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2143,7 +2143,7 @@ func TestModbusServerAgent_Process_AddDevice_MissingRegisterMap(t *testing.T) {
 
 func TestModbusServerAgent_Process_RemoveDevice(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2184,7 +2184,7 @@ func TestModbusServerAgent_Process_RemoveDevice(t *testing.T) {
 
 func TestModbusServerAgent_Process_RemoveDevice_LastDevice(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2204,7 +2204,7 @@ func TestModbusServerAgent_Process_RemoveDevice_LastDevice(t *testing.T) {
 
 func TestModbusServerAgent_Process_RemoveDevice_NotFound(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2236,7 +2236,7 @@ func TestModbusServerAgent_Process_RemoveDevice_NotFound(t *testing.T) {
 
 func TestModbusServerAgent_Process_RemoveDevice_MissingUnitID(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2252,7 +2252,7 @@ func TestModbusServerAgent_Process_RemoveDevice_MissingUnitID(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetDeviceStatus(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2283,7 +2283,7 @@ func TestModbusServerAgent_Process_GetDeviceStatus(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetDeviceStatus_NotFound(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2301,7 +2301,7 @@ func TestModbusServerAgent_Process_GetDeviceStatus_NotFound(t *testing.T) {
 
 func TestModbusServerAgent_Process_GetDeviceStatus_MissingUnitID(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2317,7 +2317,7 @@ func TestModbusServerAgent_Process_GetDeviceStatus_MissingUnitID(t *testing.T) {
 
 func TestModbusServerAgent_Stats_DeviceCount(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -2345,7 +2345,7 @@ func TestModbusServerAgent_Stats_DeviceCount(t *testing.T) {
 
 func TestModbusServerAgent_Process_AddDevice_ThenListDevices(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 

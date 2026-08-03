@@ -112,9 +112,7 @@ export const MODBUS_BYTE_ORDER_OPTIONS = ['big_endian', 'little_endian', 'ABCD',
 //  - transport=tcp (기본, 생략 시): listen_address/listen_port 로 TCP 수신.
 //  - transport=rtu: 시리얼 파라미터(serial_port/baud_rate/data_bits/stop_bits/parity)를
 //    조건부(visibleWhen)로 노출한다(modbus-client 와 동일 키). init 전용.
-// role 로 main | sub 를 선택한다. sub 는 shared_from 으로 main 에이전트 ID 를 참조하여
-// 레지스터 맵을 공유한다(role=sub 일 때만 노출, 필수). 디바이스(unit_id + register_map)는
-// 디바이스 탭에서 관리한다.
+// 디바이스(unit_id + register_map)는 디바이스 탭에서 관리한다.
 // ──────────────────────────────────────────────────────────────────────────
 const MODBUS_SERVER_FIELDS: ConfigField[] = [
   { name: 'transport', type: 'select', label: '트랜스포트', options: ['tcp', 'rtu'], default: 'tcp', description: 'tcp: MODBUS/TCP(MBAP) 수신 / rtu: MODBUS RTU(시리얼, CRC-16). 생략 시 tcp (하위 호환). 런타임 전환 불가(init 전용)' },
@@ -127,9 +125,6 @@ const MODBUS_SERVER_FIELDS: ConfigField[] = [
   { name: 'data_bits', type: 'select', label: '데이터 비트', options: ['5', '6', '7', '8'], default: '8', visibleWhen: { field: 'transport', value: 'rtu' } },
   { name: 'stop_bits', type: 'select', label: '스톱 비트', options: ['1', '2'], default: '1', visibleWhen: { field: 'transport', value: 'rtu' } },
   { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport', value: 'rtu' } },
-  // 역할 (main/sub). sub 는 main 의 레지스터 맵을 공유한다.
-  { name: 'role', type: 'select', label: '역할', options: ['main', 'sub'], default: 'main', description: 'main: 독립 서버 / sub: main 서버의 레지스터 맵을 공유하는 보조 서버' },
-  { name: 'shared_from', type: 'agent_select', label: '공유 대상(main)', options: ['modbus-gateway'], required: true, description: 'role=sub 일 때 레지스터 맵을 공유할 main 에이전트를 선택한다', visibleWhen: { field: 'role', value: 'sub' } },
   // 공통 (tcp/rtu)
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 10 },
   { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '60s' },
@@ -137,7 +132,7 @@ const MODBUS_SERVER_FIELDS: ConfigField[] = [
   { name: 'log_frames', type: 'boolean', label: '프레임 로그', default: false, description: '켜면 송/수신 MODBUS 프레임 요약(방향·주소·unit·기능코드·길이)을 로그에 남깁니다. 변경 즉시 적용(재시작 불필요). 로그 패널에서 확인.' },
   { name: 'log_raw_frames', type: 'boolean', label: 'Raw 프레임(hex)', default: false, description: '켜면 프레임 로그에 전체 ADU를 hex 로 포함합니다. 프레임 로그가 켜져 있을 때만 의미가 있습니다. 변경 즉시 적용.' },
   // 디바이스(unit_id + register_map)는 생성 폼이 아니라 디바이스 탭(config.devices + PUT)에서
-  // 관리한다. 서버는 devices 없이 생성 가능하며(role 기본 main), 생성/추가 디바이스가 동일하게
+  // 관리한다. 서버는 devices 없이 생성 가능하며, 생성/추가 디바이스가 동일하게
   // 취급된다(SPEC-MODBUS-008). modbus_server_devices 필드 타입/에디터는 디바이스 탭에서 재사용된다.
 ];
 

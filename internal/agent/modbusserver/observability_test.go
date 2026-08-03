@@ -98,7 +98,7 @@ func TestClientRegistry_RecordsUnitIDSetAcrossRequests(t *testing.T) {
 // 통합: 연결된 클라이언트가 list_clients 로 노출되고 접근 unit_id 가 기록된다.
 func TestProcessListClients_ReturnsConnectedClient(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 	require.NoError(t, msa.Start(context.Background()))
@@ -231,7 +231,7 @@ func TestLogFrames_DisabledEmitsNothing(t *testing.T) {
 
 func TestConfigure_LiveUpdatesLogFrames(t *testing.T) {
 	cfg := testAgentConfig()
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -260,7 +260,7 @@ func TestDeviceRoster_AddRemoveEmitInfoLogs(t *testing.T) {
 	cfg := testAgentConfig()
 	cfg.Logger = slog.New(cap)
 
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 

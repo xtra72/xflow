@@ -1,7 +1,6 @@
 package modbusserver
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,7 +68,7 @@ func sharedTopology() []any {
 
 func newSharedServer(t *testing.T) *ModbusServerAgent {
 	t.Helper()
-	a, err := NewModbusServerAgent(multiDeviceAgentConfig("shared-srv", sharedTopology()), nil)
+	a, err := NewModbusServerAgent(multiDeviceAgentConfig("shared-srv", sharedTopology()))
 	require.NoError(t, err)
 	return a.(*ModbusServerAgent)
 }
@@ -237,43 +236,4 @@ func TestSharedMap_ContainerNotServed(t *testing.T) {
 		assert.NotEqual(t, byte(0), dev.UnitID, "GetAllDevices 는 컨테이너를 제외")
 	}
 	require.NotNil(t, srv.deviceManager.SharedContainer())
-}
-
-// (e) cross-agent: 컨테이너를 가진 main 을 상속한 sub 가 동일 라이브 컨테이너로 변환한다.
-func TestSharedMap_SubAdoptsContainer(t *testing.T) {
-	mgr := agent.NewManager()
-	require.NoError(t, RegisterModbusServerTypes(mgr))
-
-	mainAgent, err := mgr.Create(multiDeviceAgentConfig("shared-main", sharedTopology()))
-	require.NoError(t, err)
-	mainSrv := mainAgent.(*ModbusServerAgent)
-
-	subAgent, err := mgr.Create(serverConfigSubNoDevices("shared-sub", "shared-main"))
-	require.NoError(t, err)
-	subSrv := subAgent.(*ModbusServerAgent)
-
-	require.NoError(t, subSrv.Start(context.Background()))
-	t.Cleanup(func() { _ = subSrv.Stop(context.Background()) })
-
-	// 서브는 main 의 컨테이너를 동일 포인터로 상속한다.
-	require.NotNil(t, subSrv.deviceManager.SharedContainer())
-	require.Same(t,
-		mainSrv.deviceManager.SharedContainer().RegisterMap,
-		subSrv.deviceManager.SharedContainer().RegisterMap,
-		"sub 는 main 의 컨테이너 맵을 라이브 공유")
-
-	// 서브 dev1 의 공유 세그먼트 쓰기가 main 의 컨테이너 + main dev1 관측으로 전파된다.
-	subS1 := subSrv.deviceManager.GetDevice(1).ReqHandler.store
-	_, err = subS1.WriteHoldingRegisters(7, []uint16{0xABCD}) // → 컨테이너 107
-	require.NoError(t, err)
-
-	mainContainer := mainSrv.deviceManager.SharedContainer().RegisterMap
-	gc, err := mainContainer.ReadHoldingRegisters(107, 1)
-	require.NoError(t, err)
-	assert.Equal(t, []uint16{0xABCD}, gc, "sub 쓰기가 main 컨테이너에 반영")
-
-	mainS1 := mainSrv.deviceManager.GetDevice(1).ReqHandler.store
-	gm, err := mainS1.ReadHoldingRegisters(7, 1)
-	require.NoError(t, err)
-	assert.Equal(t, []uint16{0xABCD}, gm, "main dev1 이 sub 쓰기를 관측(동일 라이브 컨테이너)")
 }

@@ -78,7 +78,7 @@ func TestNotifyOnWrite_Disabled_FlowInputEventUnaffected(t *testing.T) {
 	cfg := testAgentConfig()
 	cfg.Transport.Options["notify_on_write"] = false // 명시적으로 비활성(기본과 동일)
 
-	a, err := NewModbusServerAgent(cfg, nil)
+	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 

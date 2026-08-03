@@ -78,13 +78,6 @@ func (dm *DeviceManager) SharedContainer() *Device {
 	return dm.shared
 }
 
-// setSharedContainer 는 공유 컨테이너를 설정한다(cross-agent 상속 시 사용).
-func (dm *DeviceManager) setSharedContainer(dev *Device) {
-	dm.mu.Lock()
-	defer dm.mu.Unlock()
-	dm.shared = dev
-}
-
 // NewEmptyDeviceManager 는 디바이스가 없는 빈 DeviceManager 를 반환한다.
 // role=sub 서버가 자체 디바이스 없이 생성될 때 사용되며, Start 시점에
 // 주 서버의 디바이스를 AddDevice 로 채운다(라이브 공유 RegisterMap).

@@ -11,10 +11,10 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// role=main 서버의 zero-device 구성 테스트 (device 는 생성 후 config 업데이트로 추가)
+// zero-device 서버 구성 테스트 (device 는 생성 후 config 업데이트로 추가)
 // ---------------------------------------------------------------------------
 
-// zeroDeviceMainConfig 는 devices/register_map 없는 role=main 서버 설정이다(role 생략 → 기본 main).
+// zeroDeviceMainConfig 는 devices/register_map 없는 서버 설정이다(빈 게이트웨이).
 func zeroDeviceMainConfig(id string) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   id,
@@ -25,7 +25,7 @@ func zeroDeviceMainConfig(id string) agent.AgentConfig {
 			Options: map[string]any{
 				"listen_address": "127.0.0.1",
 				"listen_port":    0,
-				// devices/register_map/role 없음 → zero-device main
+				// devices/register_map 없음 → zero-device 서버
 			},
 		},
 	}
@@ -37,15 +37,14 @@ func TestZeroDeviceMain_Parse(t *testing.T) {
 		"listen_address": "127.0.0.1",
 		"listen_port":    0,
 	})
-	require.NoError(t, err, "devices/register_map 없는 main 은 오류 아님")
-	assert.Equal(t, RoleMain, cfg.Role)
-	assert.Empty(t, cfg.Devices, "zero-device main 은 빈 Devices")
+	require.NoError(t, err, "devices/register_map 없는 서버는 오류 아님")
+	assert.Empty(t, cfg.Devices, "zero-device 서버는 빈 Devices")
 }
 
 // TestZeroDeviceMain_ConstructStartProcess 는 zero-device main 이 빈 DeviceManager 로
 // 구성되고 Start/Process(list_devices,get_status)/Stop 이 panic 없이 동작함을 검증한다.
 func TestZeroDeviceMain_ConstructStartProcess(t *testing.T) {
-	a, err := NewModbusServerAgent(zeroDeviceMainConfig("zero-main"), nil)
+	a, err := NewModbusServerAgent(zeroDeviceMainConfig("zero-main"))
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 
@@ -73,7 +72,7 @@ func TestZeroDeviceMain_ConstructStartProcess(t *testing.T) {
 // TestZeroDeviceMain_AddDeviceThenServe 는 zero-device main 에 런타임 add_device 로
 // 디바이스를 추가한 뒤 그 unit_id 로 읽기/쓰기가 동작함을 검증한다(생성 후 추가 경로).
 func TestZeroDeviceMain_AddDeviceThenServe(t *testing.T) {
-	a, err := NewModbusServerAgent(zeroDeviceMainConfig("zero-main-add"), nil)
+	a, err := NewModbusServerAgent(zeroDeviceMainConfig("zero-main-add"))
 	require.NoError(t, err)
 	msa := a.(*ModbusServerAgent)
 	require.NoError(t, msa.Start(context.Background()))

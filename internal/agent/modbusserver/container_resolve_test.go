@@ -20,7 +20,7 @@ func newNoContainerServer(t *testing.T) *ModbusServerAgent {
 			},
 		},
 	}
-	a, err := NewModbusServerAgent(multiDeviceAgentConfig("no-container-srv", devices), nil)
+	a, err := NewModbusServerAgent(multiDeviceAgentConfig("no-container-srv", devices))
 	require.NoError(t, err)
 	return a.(*ModbusServerAgent)
 }

@@ -19,14 +19,6 @@ const (
 	TransportRTU = "rtu"
 )
 
-// 역할(role) 상수 — 공유 레지스터 맵 기능(M3).
-const (
-	// RoleMain 은 자체 RegisterMap 을 소유하는 주 서버이다(기본값).
-	RoleMain = "main"
-	// RoleSub 는 SharedFrom 이 가리키는 주 서버의 RegisterMap 을 라이브 공유하는 서브 서버이다.
-	RoleSub = "sub"
-)
-
 // ModbusServerConfig 는 MODBUS 서버 에이전트의 설정을 나타낸다.
 type ModbusServerConfig struct {
 	Transport      string            // "tcp" | "rtu" (기본값 "tcp")
@@ -39,8 +31,6 @@ type ModbusServerConfig struct {
 	MsgChannelSize int               // 메시지 채널 버퍼 크기 (기본값 256)
 	RegisterMap    RegisterMapConfig // 하위 호환용, Devices 가 없을 때 사용
 	Devices        []DeviceConfig    // 다중 디바이스 설정 (멀티-디바이스 지원)
-	Role           string            // "main" | "sub" (기본값 "main") — 공유 레지스터 맵(M3)
-	SharedFrom     string            // Role == "sub" 일 때 필수: 공유할 주 서버 에이전트 ID
 	NotifyOnWrite  bool              // 외부 통신(원격 마스터 와이어 쓰기)로 레지스터가 변경될 때만 register_change 알림 발행 (기본값 false, opt-in)
 	LogFrames      bool              // TX/RX 프레임 요약 로그 활성 여부 (기본값 false, Configure 로 라이브 갱신)
 	LogRawFrames   bool              // 프레임 로그에 전체 ADU hex 포함 여부 (LogFrames 가 켜져 있을 때만 의미, 기본값 false, 라이브 갱신)
@@ -106,7 +96,6 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 		MaxConnections: 10,
 		IdleTimeout:    60 * time.Second,
 		MsgChannelSize: 256,
-		Role:           RoleMain,
 	}
 
 	// transport (선택, 기본 "tcp" — 생략 시 기존 TCP 동작 보존)
@@ -130,33 +119,6 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 			return ModbusServerConfig{}, err
 		}
 		cfg.Serial = sc
-	}
-
-	// role (선택, 기본 "main") — 공유 레지스터 맵(M3)
-	if v, ok := opts["role"]; ok {
-		s, _ := v.(string)
-		switch s {
-		case RoleMain, "":
-			cfg.Role = RoleMain
-		case RoleSub:
-			cfg.Role = RoleSub
-		default:
-			return ModbusServerConfig{}, fmt.Errorf(
-				"modbus-server: role %q must be %q or %q", s, RoleMain, RoleSub)
-		}
-	}
-
-	// shared_from (role == "sub" 일 때 필수)
-	if v, ok := opts["shared_from"]; ok {
-		cfg.SharedFrom, _ = v.(string)
-	}
-	if cfg.Role == RoleSub && cfg.SharedFrom == "" {
-		return ModbusServerConfig{}, fmt.Errorf(
-			"modbus-server: role=sub requires shared_from (main agent id): %w", ErrInvalidSharedConfig)
-	}
-	if cfg.Role == RoleMain {
-		// main 은 shared_from 을 무시한다.
-		cfg.SharedFrom = ""
 	}
 
 	// listen_address

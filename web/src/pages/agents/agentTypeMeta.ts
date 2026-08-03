@@ -67,14 +67,12 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
 
   'modbus-gateway': {
     description:
-      'Modbus 게이트웨이 에이전트. Modbus 서버로 동작하여 외부 클라이언트의 요청을 수신합니다. transport(tcp/rtu)로 TCP 수신 또는 시리얼(RTU) 수신을 선택하고, role(main/sub)로 독립 게이트웨이 또는 main 게이트웨이의 레지스터 맵을 공유하는 보조 게이트웨이를 구성합니다. 다중 유닛 디바이스를 호스팅하며 레지스터 맵 기반의 읽기/쓰기를 처리합니다.',
+      'Modbus 게이트웨이 에이전트. Modbus 서버로 동작하여 외부 클라이언트의 요청을 수신합니다. transport(tcp/rtu)로 TCP 수신 또는 시리얼(RTU) 수신을 선택합니다. 다중 유닛 디바이스를 호스팅하며 레지스터 맵 기반의 읽기/쓰기를 처리합니다.',
     configFields: [
       { name: 'transport', type: 'string', required: false, description: 'tcp(MBAP) 또는 rtu(시리얼)', default: 'tcp' },
       { name: 'listen_address', type: 'string', required: false, description: '수신 대기 IP 주소 (transport=tcp)', default: '0.0.0.0' },
       { name: 'listen_port', type: 'number', required: true, description: '수신 대기 포트 (1-65535, transport=tcp)', default: '502' },
       { name: 'serial_port', type: 'string', required: false, description: 'RTU 시리얼 포트 경로 (transport=rtu)', default: '/dev/ttyUSB0' },
-      { name: 'role', type: 'string', required: false, description: 'main(독립) 또는 sub(main 레지스터 맵 공유)', default: 'main' },
-      { name: 'shared_from', type: 'string', required: false, description: 'role=sub 일 때 공유할 main 에이전트 ID' },
       { name: 'max_connections', type: 'number', required: false, description: '최대 동시 클라이언트 연결 수', default: '10' },
       { name: 'idle_timeout', type: 'string', required: false, description: '유휴 연결 타임아웃', default: '60s' },
       { name: 'devices', type: 'object', required: false, description: 'role=main 필수. 호스팅할 디바이스 목록(각 unit_id + register_map)' },

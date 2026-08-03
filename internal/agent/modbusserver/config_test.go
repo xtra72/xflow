@@ -990,6 +990,5 @@ func TestParseModbusServerConfig_NoRegisterMapNoDevices(t *testing.T) {
 
 	cfg, err := parseModbusServerConfig(opts)
 	require.NoError(t, err)
-	assert.Equal(t, RoleMain, cfg.Role)
 	assert.Empty(t, cfg.Devices)
 }

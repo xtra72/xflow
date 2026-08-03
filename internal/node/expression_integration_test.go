@@ -298,7 +298,7 @@ func TestMqttToModbus_EndToEnd(t *testing.T) {
 
 	// ── 5단계: Modbus 서버 에이전트 생성 및 Process 호출 ──
 	cfg := testModbusAgentConfig()
-	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg, nil)
+	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg)
 	require.NoError(t, err, "NewModbusServerAgent 실패")
 
 	msa := modbusAgent.(*modbusserver.ModbusServerAgent)
@@ -393,7 +393,7 @@ func TestMqttToModbus_EndToEnd_MultiSensor(t *testing.T) {
 
 	// ── Modbus 에이전트 생성 ──
 	cfg := testModbusAgentConfig()
-	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg, nil)
+	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg)
 	require.NoError(t, err, "NewModbusServerAgent 실패")
 	msa := modbusAgent.(*modbusserver.ModbusServerAgent)
 
@@ -576,7 +576,7 @@ func TestMqttToModbus_EndToEnd_Float32Precision(t *testing.T) {
 	}
 
 	cfg := testModbusAgentConfig()
-	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg, nil)
+	modbusAgent, err := modbusserver.NewModbusServerAgent(cfg)
 	require.NoError(t, err)
 	msa := modbusAgent.(*modbusserver.ModbusServerAgent)
 

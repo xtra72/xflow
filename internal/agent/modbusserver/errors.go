@@ -50,17 +50,6 @@ var (
 	// ErrInvalidSerialParam 는 RTU 시리얼 파라미터가 유효하지 않을 때 반환된다.
 	ErrInvalidSerialParam = errors.New("modbus-server: invalid serial parameter")
 
-	// ErrInvalidSharedConfig 는 공유 레지스터 맵(role/shared_from) 설정이 유효하지 않을 때 반환된다.
-	ErrInvalidSharedConfig = errors.New("modbus-server: invalid shared register map configuration")
-
-	// ErrSharedMainNotFound 는 role=sub 서버가 shared_from 이 가리키는 주 서버를
-	// 찾지 못하거나, 대상이 modbus-gateway 가 아닐 때 반환된다.
-	ErrSharedMainNotFound = errors.New("modbus-server: shared main agent not found or not a modbus-server")
-
-	// ErrSharedMainNoDevices 는 role=sub 서버가 상속할 주 서버에 디바이스가 하나도
-	// 없을 때 반환된다(공유할 대상 레지스터 맵이 없음).
-	ErrSharedMainNoDevices = errors.New("modbus-server: shared main agent has no devices to share")
-
 	// ErrSharedMapMissing 는 공유 세그먼트(shared_address)가 있으나 unit_id 0
 	// 공유 컨테이너가 없을 때 반환된다(intra-server 공유).
 	ErrSharedMapMissing = errors.New("modbus-server: shared segment requires a unit_id 0 container")

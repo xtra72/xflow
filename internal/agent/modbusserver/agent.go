@@ -38,7 +38,6 @@ type ModbusServerAgent struct {
 	registerMap   *RegisterMap // 하위 호환: 첫 번째 디바이스의 RegisterMap (Process 메서드용)
 	listener      serverListener
 	handler       *ModbusHandler
-	mgr           *agent.DefaultManager // role=sub 가 shared_from 을 resolve 할 때 사용 (nil 가능)
 	cancelFn      context.CancelFunc
 	obs           *serverObs // 관측성 배선(클라이언트 레지스트리 + 프레임 로그 토글 미러). Configure 로 라이브 갱신
 	msgCh         chan map[string]any
@@ -55,9 +54,7 @@ type ModbusServerAgent struct {
 }
 
 // NewModbusServerAgent creates a new MODBUS server agent.
-// mgr is used by role=sub servers to resolve shared_from at Start; it may be nil
-// (e.g. tests that construct the agent directly and do not use role=sub).
-func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManager) (agent.Agent, error) {
+func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	cfg, err := parseModbusServerConfig(agentConfig.Transport.Options)
 	if err != nil {
 		return nil, fmt.Errorf("modbus-server agent: %w", err)
@@ -67,8 +64,8 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 	logger := agent.ResolveLogger(agentConfig)
 
 	// DeviceManager 생성 (멀티-디바이스 지원).
-	// role=sub 가 자체 디바이스를 정의하지 않은 경우 빈 DeviceManager 로 시작하고,
-	// Start 시점에 주 서버의 디바이스를 그대로 상속한다(라이브 공유 RegisterMap).
+	// 디바이스가 없는 서버(빈 게이트웨이)는 빈 DeviceManager 로 시작하며, 생성 이후
+	// device 탭(add_device)으로 디바이스를 추가한다.
 	var dm *DeviceManager
 	if len(cfg.Devices) == 0 {
 		dm = NewEmptyDeviceManager()
@@ -94,7 +91,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 	handler := NewModbusHandler(dm, msgCh, cfg.NotifyOnWrite, obs, logger)
 
 	// 첫 번째 디바이스의 RegisterMap (Process 메서드 하위 호환용). 디바이스가 없으면
-	// (main-상속 서브) nil 이며 Start 의 applySharedRegisterMap 에서 채워진다.
+	// nil 이며 이후 add_device 로 디바이스가 추가되면 그 맵을 사용한다.
 	var primaryRM *RegisterMap
 	if first := dm.FirstDevice(); first != nil {
 		primaryRM = first.RegisterMap
@@ -113,10 +110,9 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-gateway")),
 		config:        cfg,
 		deviceManager: dm,
-		registerMap:   primaryRM, // 하위 호환: 첫 번째 디바이스 (sub-상속 시 nil→Start에서 채움)
+		registerMap:   primaryRM, // 하위 호환: 첫 번째 디바이스 (없으면 nil, add_device 후 채움)
 		listener:      listener,
 		handler:       handler,
-		mgr:           mgr,
 		obs:           obs,
 		msgCh:         msgCh,
 		hasReceiver:   &atomic.Bool{},
@@ -180,14 +176,6 @@ func (a *ModbusServerAgent) Start(ctx context.Context) error {
 		return a.Init(cfg)
 	default:
 		return fmt.Errorf("modbus-server start: agent is not in running state (current: %s)", a.CurrentState())
-	}
-
-	// role=sub: 시작 시점에 shared_from 이 가리키는 주 서버의 RegisterMap 을 라이브 공유한다.
-	// (서브는 주 서버 이후에 생성되므로 Start 시점 resolve 로 충분하다.)
-	if a.config.Role == RoleSub {
-		if err := a.applySharedRegisterMap(); err != nil {
-			return fmt.Errorf("modbus-server start: %w", err)
-		}
 	}
 
 	childCtx, cancel := context.WithCancel(ctx)
@@ -1482,152 +1470,6 @@ func (a *ModbusServerAgent) SharedRegisterMap() *RegisterMap {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.registerMap
-}
-
-// SharedDevice 는 한 디바이스의 라이브 공유 배선 정보이다. RegisterMap 은 디바이스의
-// 자체 맵 포인터(포인터 동일성/로컬 접근용), store 는 실제 서빙 스토어(로컬 *RegisterMap
-// 또는 공유 세그먼트 주소 변환 *deviceView)이다. isContainer 는 unit_id 0 공유 컨테이너를
-// 나타낸다(와이어 미서빙, 상속 시 컨테이너로 배선).
-type SharedDevice struct {
-	UnitID      byte
-	Name        string
-	RegisterMap *RegisterMap
-	store       registerStore
-	isContainer bool
-}
-
-// SharedDevices 는 이 서버의 공유 컨테이너(unit_id 0, 있으면 맨 앞) + 모든 서빙 디바이스를
-// 추가 순서대로 반환한다. role=sub 서버가 주 서버의 전체 디바이스 집합(컨테이너 포함)을
-// 라이브 공유(동일 포인터 + 동일 store 배선)로 상속할 때 사용한다.
-func (a *ModbusServerAgent) SharedDevices() []SharedDevice {
-	result := make([]SharedDevice, 0)
-	if c := a.deviceManager.SharedContainer(); c != nil {
-		result = append(result, SharedDevice{
-			UnitID:      0,
-			Name:        c.Name,
-			RegisterMap: c.RegisterMap,
-			store:       c.ReqHandler.store,
-			isContainer: true,
-		})
-	}
-	for _, dev := range a.deviceManager.GetAllDevices() {
-		result = append(result, SharedDevice{
-			UnitID:      dev.UnitID,
-			Name:        dev.Name,
-			RegisterMap: dev.RegisterMap,
-			store:       dev.ReqHandler.store,
-			isContainer: false,
-		})
-	}
-	return result
-}
-
-// applySharedRegisterMap 는 role=sub 일 때 shared_from 이 가리키는 주 서버를 resolve 하여
-// 이 서브 서버가 주 서버의 디바이스를 라이브 공유 RegisterMap 으로 서빙하도록 배선한다.
-// Start 시점(리스너 서빙 전)에만 호출된다.
-//
-// 두 가지 경로:
-//   - 서브가 자체 디바이스를 갖지 않는 경우(main-상속): 주 서버의 모든 디바이스를
-//     동일한 unit_id + 동일한 *RegisterMap 포인터로 이 서브의 DeviceManager 에 채운다.
-//     이후 이 서브로 들어오는 요청은 공유 맵을 서빙/변경한다.
-//   - 서브가 자체 디바이스를 갖는 경우(레거시): 각 서브 디바이스를 동일 unit_id 의 주
-//     디바이스에 매칭하여 그 포인터를 공유하고, 매칭이 하나도 없으면 주 서버의 주
-//     RegisterMap 으로 주 디바이스를 스왑하는 기존 동작으로 폴백한다.
-func (a *ModbusServerAgent) applySharedRegisterMap() error {
-	if a.mgr == nil {
-		return fmt.Errorf("modbus-server: cannot resolve shared_from %q: manager unavailable: %w",
-			a.config.SharedFrom, ErrSharedMainNotFound)
-	}
-
-	mainAgent, err := a.mgr.Get(a.config.SharedFrom)
-	if err != nil {
-		return fmt.Errorf("modbus-server: shared_from %q: %w", a.config.SharedFrom, ErrSharedMainNotFound)
-	}
-	mainSrv, ok := mainAgent.(*ModbusServerAgent)
-	if !ok {
-		return fmt.Errorf("modbus-server: shared_from %q is not a modbus-server: %w",
-			a.config.SharedFrom, ErrSharedMainNotFound)
-	}
-
-	// 주 서버의 디바이스 집합을 순서대로 수집한다(서브 락 획득 전에 수행).
-	mainDevices := mainSrv.SharedDevices()
-	if len(mainDevices) == 0 {
-		return fmt.Errorf("modbus-server: shared_from %q has no devices to share: %w",
-			a.config.SharedFrom, ErrSharedMainNoDevices)
-	}
-
-	// 주 서버의 컨테이너/서빙 디바이스를 분리한다.
-	var mainContainer *SharedDevice
-	var mainServed []SharedDevice
-	for i := range mainDevices {
-		if mainDevices[i].isContainer {
-			mainContainer = &mainDevices[i]
-		} else {
-			mainServed = append(mainServed, mainDevices[i])
-		}
-	}
-	if len(mainServed) == 0 {
-		return fmt.Errorf("modbus-server: shared_from %q has no served devices to share: %w",
-			a.config.SharedFrom, ErrSharedMainNoDevices)
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// 컨테이너를 먼저 상속한다(있으면). 서빙 디바이스의 공유 세그먼트 store 는 이미 주 서버의
-	// 컨테이너 맵을 참조하므로, 컨테이너 상속은 SharedDevices 체인 일관성을 위한 것이다.
-	if mainContainer != nil {
-		a.deviceManager.setSharedContainer(&Device{
-			UnitID:      0,
-			Name:        mainContainer.Name,
-			RegisterMap: mainContainer.RegisterMap,
-			ReqHandler:  newRequestHandlerWithStore(mainContainer.store, a.logger),
-		})
-	}
-
-	// 경로 1: main-상속 (서브가 자체 서빙 디바이스 없음) → 주 서버 서빙 디바이스를 그대로 채운다.
-	// store 포인터를 재사용하므로 공유 세그먼트 주소 변환 배선이 보존된다.
-	if a.deviceManager.DeviceCount() == 0 {
-		for _, md := range mainServed {
-			dev := &Device{
-				UnitID:      md.UnitID,
-				Name:        md.Name,
-				RegisterMap: md.RegisterMap, // 라이브 공유 포인터
-				ReqHandler:  newRequestHandlerWithStore(md.store, a.logger),
-			}
-			if err := a.deviceManager.AddDevice(dev); err != nil {
-				return fmt.Errorf("modbus-server: adopt shared device unit_id %d: %w", md.UnitID, err)
-			}
-		}
-		a.registerMap = mainServed[0].RegisterMap
-		return nil
-	}
-
-	// 경로 2: 레거시 (서브가 자체 서빙 디바이스 보유) → unit_id 매칭 공유, 없으면 주-스왑 폴백.
-	mainByUnit := make(map[byte]SharedDevice, len(mainServed))
-	for _, md := range mainServed {
-		mainByUnit[md.UnitID] = md
-	}
-
-	matched := false
-	for _, dev := range a.deviceManager.GetAllDevices() {
-		if md, ok := mainByUnit[dev.UnitID]; ok {
-			dev.RegisterMap = md.RegisterMap
-			dev.ReqHandler = newRequestHandlerWithStore(md.store, a.logger)
-			matched = true
-		}
-	}
-
-	if first := a.deviceManager.FirstDevice(); first != nil {
-		if !matched {
-			// 폴백: 매칭이 하나도 없으면 주 디바이스를 주 서버의 첫 서빙 맵으로 스왑한다.
-			fb := mainServed[0]
-			first.RegisterMap = fb.RegisterMap
-			first.ReqHandler = newRequestHandlerWithStore(fb.store, a.logger)
-		}
-		a.registerMap = first.RegisterMap
-	}
-	return nil
 }
 
 // Info returns the agent info snapshot.
