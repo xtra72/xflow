@@ -1292,6 +1292,7 @@
         "store": "Store",
         "series": "Series",
         "sessions": "Sessions",
+        "clients": "Clients",
         "devices": "Device",
         "stations": "Location",
         "lines": "Line",
@@ -1774,6 +1775,19 @@
         "colPacketsSent": "Tx Packets",
         "colDataReceived": "Rx Data",
         "colDataSent": "Tx Data"
+      },
+      "clients": {
+        "remoteUnavailable": "Client info is not available on remote nodes.",
+        "loading": "Loading...",
+        "clientsCount": "{count} clients",
+        "refresh": "Refresh",
+        "empty": "No connected clients",
+        "colIp": "IP",
+        "colPort": "Port",
+        "colUnitIds": "Unit IDs",
+        "colRequests": "Requests",
+        "colConnected": "Connected",
+        "colLastSeen": "Last seen"
       },
       "modbus": {
         "registerMap": "Register Map",

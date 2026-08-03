@@ -42,6 +42,7 @@ type RTUListener struct {
 	serial  SerialConfig
 	opener  rtuSerialOpener
 	handler *ModbusHandler
+	obs     *serverObs // 프레임 로그 토글 배선(RTU 는 클라이언트 레지스트리 미사용); nil 가능
 	logger  *slog.Logger
 
 	mu      sync.Mutex
@@ -53,13 +54,21 @@ type RTUListener struct {
 }
 
 // NewRTUListener 는 새로운 RTUListener 를 생성한다.
-func NewRTUListener(cfg SerialConfig, handler *ModbusHandler, logger *slog.Logger) *RTUListener {
+// obs 는 프레임 로그 토글을 담으며 nil 이어도 안전하다(RTU 는 registry 를 쓰지 않는다).
+func NewRTUListener(cfg SerialConfig, handler *ModbusHandler, obs *serverObs, logger *slog.Logger) *RTUListener {
 	return &RTUListener{
 		serial:  cfg,
 		opener:  defaultServerRTUSerialOpener,
 		handler: handler,
+		obs:     obs,
 		logger:  logger,
 	}
+}
+
+// Clients 는 항상 nil 을 반환한다. RTU 는 시리얼 버스로 per-client 개념이 없어
+// 프런트엔드는 "serial, no per-client" 로 표시한다.
+func (l *RTUListener) Clients() []ClientInfo {
+	return nil
 }
 
 // Start 는 시리얼 포트를 열고 요청 수신 루프를 시작한다.
@@ -159,6 +168,11 @@ func (l *RTUListener) readLoop(ctx context.Context) {
 
 		fc := pdu[0]
 
+		// RX 프레임 로그 (log_frames): 전체 인바운드 RTU 요청 ADU.
+		if l.obs.framesOn() {
+			logFrame(l.logger, true, l.obs.rawOn(), "RX", remote, unitID, fc, adu)
+		}
+
 		// broadcast(unitID=0): 쓰기를 팬아웃 처리하되 RTU 규격상 응답하지 않는다.
 		if unitID == 0 {
 			l.handler.handleBroadcast(pdu, fc, remote)
@@ -177,6 +191,12 @@ func (l *RTUListener) readLoop(ctx context.Context) {
 		}
 
 		respADU := modbus.BuildRTUADU(unitID, respPDU)
+
+		// TX 프레임 로그 (log_frames): 전체 아웃바운드 RTU 응답 ADU.
+		if l.obs.framesOn() {
+			logFrame(l.logger, true, l.obs.rawOn(), "TX", remote, unitID, respPDU[0], respADU)
+		}
+
 		if _, err := l.port.Write(respADU); err != nil {
 			if ctx.Err() == nil && l.running.Load() {
 				l.logWarn("RTU response write failed", "error", err)

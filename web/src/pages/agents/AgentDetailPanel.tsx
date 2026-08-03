@@ -115,7 +115,7 @@ interface AgentDetailPanelProps {
   agentName?: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management' | 'stations' | 'lines' | 'groups';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'clients' | 'series' | 'management' | 'stations' | 'lines' | 'groups';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -132,6 +132,8 @@ const NO_DEVICES_TAB = new Set(['mqtt-client', 'logger', 'http', 'http-sender', 
 
 /** 세션 탭을 표시하는 에이전트 타입 */
 const HAS_SESSIONS_TAB = new Set(['tcp-server']);
+// MODBUS Gateway 는 접속 클라이언트 목록(list_clients exec)을 '클라이언트' 탭으로 노출한다.
+const HAS_CLIENTS_TAB = new Set(['modbus-gateway']);
 
 /** 토픽 탭을 표시하는 에이전트 타입 */
 const HAS_TOPICS_TAB = new Set(['mqtt-client']);
@@ -177,6 +179,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
   const showTopics = HAS_TOPICS_TAB.has(agentType);
   const showStore = HAS_STORE_TAB.has(agentType);
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
+  const showClients = HAS_CLIENTS_TAB.has(agentType);
   const showSeries = HAS_SERIES_TAB.has(agentType);
   const showManagement = HAS_MANAGEMENT_TAB.has(agentType);
   const showStations = HAS_STATIONS_TAB.has(agentType);
@@ -200,6 +203,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
         {showStore && <TabButton label={t('agents.detail.tabs.store')} active={tab === 'store'} onClick={() => setTab('store')} />}
         {showSeries && <TabButton label={t('agents.detail.tabs.series')} active={tab === 'series'} onClick={() => setTab('series')} />}
         {showSessions && <TabButton label={t('agents.detail.tabs.sessions')} active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
+        {showClients && <TabButton label={t('agents.detail.tabs.clients')} active={tab === 'clients'} onClick={() => setTab('clients')} />}
         {showDevices && <TabButton label={t('agents.detail.tabs.devices')} active={tab === 'devices'} onClick={() => setTab('devices')} />}
         {showStations && <TabButton label={t('agents.detail.tabs.stations')} active={tab === 'stations'} onClick={() => setTab('stations')} />}
         {showLines && <TabButton label={t('agents.detail.tabs.lines')} active={tab === 'lines'} onClick={() => setTab('lines')} />}
@@ -216,6 +220,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
         <SeriesTab agentId={agentId} agentType={agentType} agentName={agentName} />
       )}
       {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
+      {tab === 'clients' && showClients && <ClientsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
       {tab === 'stations' && showStations && <XsfmStationsTab agentId={agentId} />}
       {tab === 'lines' && showLines && <XsfmLinesTab agentId={agentId} />}
@@ -3382,6 +3387,153 @@ function SessionsTab({ agentId }: { agentId: string }) {
                     </td>
                     <td className="py-2 text-right font-mono text-(--color-text-muted)">
                       {formatBytes(s.bytes_sent)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- 클라이언트 탭 (MODBUS Gateway) ----
+
+/** list_clients 응답의 접속 클라이언트 1개. */
+interface ClientInfo {
+  remote_addr: string;
+  connected_at: string;
+  unit_ids: number[];
+  request_count: number;
+  last_seen: string;
+}
+
+/**
+ * MODBUS Gateway 에 접속한 클라이언트 목록 탭. SessionsTab 을 그대로 복제하여
+ * exec(list_clients) 5초 폴링으로 갱신한다. RTU 게이트웨이는 clients:[] 를 반환하므로
+ * 빈 목록으로 표시된다(시리얼 버스는 per-client 개념 없음). 원격 타깃은 READ 프록시가
+ * exec 을 매핑하지 않으므로 안내만 표시한다(SessionsTab 과 동일 graceful).
+ */
+function ClientsTab({ agentId }: { agentId: string }) {
+  const { t } = useTranslation();
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const [clients, setClients] = useState<ClientInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (remote) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+
+    const fetchClients = async () => {
+      try {
+        const res = await agentService.execAgent(agentId, { command: 'list_clients' });
+        if (cancelled) return;
+        // envelope unwrap: clients 가 직접 또는 result 내부에 위치할 수 있음.
+        const raw = res as unknown as Record<string, unknown>;
+        const list = (
+          (raw?.clients as ClientInfo[] | undefined)
+          ?? ((raw?.result as Record<string, unknown> | undefined)?.clients as ClientInfo[] | undefined)
+          ?? []
+        );
+        setClients(list);
+      } catch (err) {
+        console.error('[ClientsTab] list_clients failed:', err);
+        if (!cancelled) setClients([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void fetchClients();
+    const timer = setInterval(() => void fetchClients(), 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [agentId, refreshKey, remote]);
+
+  if (remote) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+        <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
+        <p className="text-sm">{t('agents.detail.clients.remoteUnavailable')}</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 text-sm text-(--color-text-muted)">
+        {t('agents.detail.clients.loading')}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Server className="h-4 w-4 text-(--color-text-muted)" aria-hidden="true" />
+          <span className="text-sm font-medium text-(--color-text-primary)">
+            {t('agents.detail.clients.clientsCount').replace('{count}', String(clients.length))}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
+        >
+          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          {t('agents.detail.clients.refresh')}
+        </button>
+      </div>
+
+      {clients.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+          <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
+          <p className="text-sm">{t('agents.detail.clients.empty')}</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-(--color-border-default)">
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colIp')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colPort')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colUnitIds')}</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">{t('agents.detail.clients.colRequests')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colConnected')}</th>
+                <th className="py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colLastSeen')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default)">
+              {clients.map((c) => {
+                const [ip, port] = c.remote_addr.includes(']')
+                  ? [c.remote_addr.slice(0, c.remote_addr.lastIndexOf(':')), c.remote_addr.slice(c.remote_addr.lastIndexOf(':') + 1)]
+                  : c.remote_addr.split(':').length === 2
+                    ? c.remote_addr.split(':')
+                    : [c.remote_addr, '-'];
+                const unitIds = Array.isArray(c.unit_ids) && c.unit_ids.length > 0
+                  ? c.unit_ids.join(', ')
+                  : '—';
+                return (
+                  <tr key={c.remote_addr}>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-primary)">{ip}</td>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-muted)">{port}</td>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-muted)">{unitIds}</td>
+                    <td className="py-2 pr-4 text-right font-mono text-(--color-text-muted)">
+                      {(c.request_count ?? 0).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-4 text-(--color-text-muted)" title={new Date(c.connected_at).toLocaleString()}>
+                      {formatDuration(c.connected_at, t)}
+                    </td>
+                    <td className="py-2 text-(--color-text-muted)" title={new Date(c.last_seen).toLocaleString()}>
+                      {formatDuration(c.last_seen, t)}
                     </td>
                   </tr>
                 );

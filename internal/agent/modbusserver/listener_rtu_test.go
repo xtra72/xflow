@@ -61,7 +61,7 @@ func newRTUTestHandler(t *testing.T, initial []any) *ModbusHandler {
 		},
 	}, nil)
 	require.NoError(t, err)
-	return NewModbusHandler(dm, make(chan map[string]any, 8), true, nil)
+	return NewModbusHandler(dm, make(chan map[string]any, 8), true, nil, nil)
 }
 
 // startRTUListenerWithRequest 는 mock 시리얼로 단일 요청을 주입하고 응답이 기록될
@@ -70,7 +70,7 @@ func startRTUListenerWithRequest(t *testing.T, handler *ModbusHandler, reqADU []
 	t.Helper()
 	mock := &mockRWCloser{in: bytes.NewReader(reqADU)}
 
-	l := NewRTUListener(SerialConfig{Port: "/dev/mock", BaudRate: 9600, DataBits: 8, StopBits: 1, Parity: "none"}, handler, nil)
+	l := NewRTUListener(SerialConfig{Port: "/dev/mock", BaudRate: 9600, DataBits: 8, StopBits: 1, Parity: "none"}, handler, nil, nil)
 	l.opener = func(_ SerialConfig) (io.ReadWriteCloser, error) { return mock, nil }
 
 	require.NoError(t, l.Start(context.Background()))

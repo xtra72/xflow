@@ -134,6 +134,8 @@ const MODBUS_SERVER_FIELDS: ConfigField[] = [
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 10 },
   { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '60s' },
   { name: 'notify_on_write', type: 'boolean', label: '통신 쓰기 알림', default: false, description: '켜면 외부 MODBUS 마스터의 통신(와이어) 쓰기로 레지스터가 변경될 때만 register_change 알림을 발행합니다. 플로우 입력(set 명령) 쓰기는 대상이 아닙니다. 변경은 다음 재시작 시 적용됩니다.' },
+  { name: 'log_frames', type: 'boolean', label: '프레임 로그', default: false, description: '켜면 송/수신 MODBUS 프레임 요약(방향·주소·unit·기능코드·길이)을 로그에 남깁니다. 변경 즉시 적용(재시작 불필요). 로그 패널에서 확인.' },
+  { name: 'log_raw_frames', type: 'boolean', label: 'Raw 프레임(hex)', default: false, description: '켜면 프레임 로그에 전체 ADU를 hex 로 포함합니다. 프레임 로그가 켜져 있을 때만 의미가 있습니다. 변경 즉시 적용.' },
   // 디바이스(unit_id + register_map)는 생성 폼이 아니라 디바이스 탭(config.devices + PUT)에서
   // 관리한다. 서버는 devices 없이 생성 가능하며(role 기본 main), 생성/추가 디바이스가 동일하게
   // 취급된다(SPEC-MODBUS-008). modbus_server_devices 필드 타입/에디터는 디바이스 탭에서 재사용된다.

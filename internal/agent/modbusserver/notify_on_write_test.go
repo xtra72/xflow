@@ -25,7 +25,7 @@ func TestNotifyOnWrite_Enabled_WirePushesNotification(t *testing.T) {
 	rm := newTestRegisterMap()
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 4)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	dev := dm.GetDevice(1)
 	require.NotNil(t, dev)
@@ -50,7 +50,7 @@ func TestNotifyOnWrite_Disabled_WirePushesNothing(t *testing.T) {
 	rm := newTestRegisterMap()
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 4)
-	handler := NewModbusHandler(dm, msgCh, false, nil)
+	handler := NewModbusHandler(dm, msgCh, false, nil, nil)
 
 	dev := dm.GetDevice(1)
 	require.NotNil(t, dev)

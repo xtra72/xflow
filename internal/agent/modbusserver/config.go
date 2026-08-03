@@ -42,6 +42,8 @@ type ModbusServerConfig struct {
 	Role           string            // "main" | "sub" (기본값 "main") — 공유 레지스터 맵(M3)
 	SharedFrom     string            // Role == "sub" 일 때 필수: 공유할 주 서버 에이전트 ID
 	NotifyOnWrite  bool              // 외부 통신(원격 마스터 와이어 쓰기)로 레지스터가 변경될 때만 register_change 알림 발행 (기본값 false, opt-in)
+	LogFrames      bool              // TX/RX 프레임 요약 로그 활성 여부 (기본값 false, Configure 로 라이브 갱신)
+	LogRawFrames   bool              // 프레임 로그에 전체 ADU hex 포함 여부 (LogFrames 가 켜져 있을 때만 의미, 기본값 false, 라이브 갱신)
 }
 
 // SerialConfig 는 RTU 트랜스포트의 시리얼 포트 파라미터이다.
@@ -214,6 +216,21 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 	if v, ok := opts["notify_on_write"]; ok {
 		if b, ok := v.(bool); ok {
 			cfg.NotifyOnWrite = b
+		}
+	}
+
+	// log_frames (선택, 기본 false — 라이브 갱신). true 이면 TX/RX 프레임 요약을 INFO 로 남긴다.
+	if v, ok := opts["log_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogFrames = b
+		}
+	}
+
+	// log_raw_frames (선택, 기본 false — 라이브 갱신). true 이고 log_frames 도 true 일 때만
+	// 프레임 로그에 전체 ADU hex 를 포함한다(log_frames 가 꺼져 있으면 무의미).
+	if v, ok := opts["log_raw_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogRawFrames = b
 		}
 	}
 

@@ -22,6 +22,9 @@ type serverListener interface {
 	Stop() error
 	ActiveConnections() int32
 	Addr() net.Addr
+	// Clients 는 연결된 클라이언트 스냅샷을 반환한다. TCP 는 레지스트리 목록,
+	// RTU(시리얼 버스, per-client 개념 없음)는 nil 을 반환한다.
+	Clients() []ClientInfo
 }
 
 // Compile-time interface check.
@@ -38,6 +41,7 @@ type Listener struct {
 	maxConns    int
 	idleTimeout time.Duration
 	handler     ConnectionHandler
+	obs         *serverObs // 클라이언트 레지스트리 배선(Add/Remove/Clients); nil 가능
 	logger      *slog.Logger
 
 	listener    net.Listener
@@ -48,14 +52,21 @@ type Listener struct {
 }
 
 // NewListener creates a new Listener.
-func NewListener(addr string, maxConns int, idleTimeout time.Duration, handler ConnectionHandler, logger *slog.Logger) *Listener {
+// obs 는 클라이언트 레지스트리를 담으며 nil 이어도 안전하다(레지스트리 미사용).
+func NewListener(addr string, maxConns int, idleTimeout time.Duration, handler ConnectionHandler, obs *serverObs, logger *slog.Logger) *Listener {
 	return &Listener{
 		addr:        addr,
 		maxConns:    maxConns,
 		idleTimeout: idleTimeout,
 		handler:     handler,
+		obs:         obs,
 		logger:      logger,
 	}
+}
+
+// Clients 는 등록된 TCP 클라이언트 스냅샷을 반환한다(레지스트리 없으면 nil).
+func (l *Listener) Clients() []ClientInfo {
+	return l.obs.clients()
 }
 
 // Start begins listening for TCP connections and starts the accept loop.
@@ -162,6 +173,7 @@ func (l *Listener) acceptLoop(ctx context.Context) {
 
 		// Accept connection
 		l.activeConns.Add(1)
+		l.obs.add(conn.RemoteAddr().String()) // 클라이언트 레지스트리 등록 (registry nil 이면 no-op)
 		l.wg.Add(1)
 		go l.handleConn(ctx, conn)
 	}
@@ -171,6 +183,7 @@ func (l *Listener) acceptLoop(ctx context.Context) {
 func (l *Listener) handleConn(ctx context.Context, conn net.Conn) {
 	defer l.wg.Done()
 	defer l.activeConns.Add(-1)
+	defer l.obs.remove(conn.RemoteAddr().String()) // 연결 종료 시 레지스트리에서 제거
 	defer conn.Close()
 
 	if l.idleTimeout > 0 {

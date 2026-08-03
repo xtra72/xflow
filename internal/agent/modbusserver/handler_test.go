@@ -75,7 +75,7 @@ func TestModbusHandler_ReadRequest(t *testing.T) {
 
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	// Create pipe-based connection
 	server, client := net.Pipe()
@@ -124,7 +124,7 @@ func TestModbusHandler_WriteRequest(t *testing.T) {
 	rm := newTestRegisterMap()
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -173,7 +173,7 @@ func TestModbusHandler_UnitIDMismatch(t *testing.T) {
 	rm := newTestRegisterMap()
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -213,7 +213,7 @@ func TestModbusHandler_InvalidProtocol(t *testing.T) {
 	rm := newTestRegisterMap()
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -257,7 +257,7 @@ func TestModbusHandler_ContextCancellation(t *testing.T) {
 	rm := newTestRegisterMap()
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	server, client := net.Pipe()
 	defer client.Close()
@@ -288,7 +288,7 @@ func TestModbusHandler_BroadcastUnitID(t *testing.T) {
 	rm.WriteHoldingRegisters(0, []uint16{77})
 	dm := newTestDeviceManager(rm, 1)
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -326,7 +326,7 @@ func TestModbusHandler_MultiDeviceRouting(t *testing.T) {
 
 	dm := newTestMultiDeviceManager(map[byte]*RegisterMap{1: rm1, 2: rm2})
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -373,7 +373,7 @@ func TestModbusHandler_BroadcastWrite_FanOut(t *testing.T) {
 
 	dm := newTestMultiDeviceManager(map[byte]*RegisterMap{1: rm1, 2: rm2})
 	msgCh := make(chan map[string]any, 10)
-	handler := NewModbusHandler(dm, msgCh, true, nil)
+	handler := NewModbusHandler(dm, msgCh, true, nil, nil)
 
 	server, client := net.Pipe()
 	defer server.Close()

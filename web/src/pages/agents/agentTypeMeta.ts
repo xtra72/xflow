@@ -78,6 +78,9 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'max_connections', type: 'number', required: false, description: '최대 동시 클라이언트 연결 수', default: '10' },
       { name: 'idle_timeout', type: 'string', required: false, description: '유휴 연결 타임아웃', default: '60s' },
       { name: 'devices', type: 'object', required: false, description: 'role=main 필수. 호스팅할 디바이스 목록(각 unit_id + register_map)' },
+      { name: 'notify_on_write', type: 'boolean', required: false, description: '외부 마스터의 통신 쓰기로 레지스터 변경 시 register_change 알림 발행(다음 재시작 시 적용)', default: 'false' },
+      { name: 'log_frames', type: 'boolean', required: false, description: '송/수신 MODBUS 프레임 요약을 로그에 기록(변경 즉시 적용)', default: 'false' },
+      { name: 'log_raw_frames', type: 'boolean', required: false, description: '프레임 로그에 전체 ADU를 hex 로 포함(log_frames 켜짐일 때만 의미, 변경 즉시 적용)', default: 'false' },
     ],
     configExample: {
       transport: 'tcp',

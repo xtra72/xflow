@@ -40,6 +40,7 @@ type ModbusServerAgent struct {
 	handler       *ModbusHandler
 	mgr           *agent.DefaultManager // role=sub 가 shared_from 을 resolve 할 때 사용 (nil 가능)
 	cancelFn      context.CancelFunc
+	obs           *serverObs // 관측성 배선(클라이언트 레지스트리 + 프레임 로그 토글 미러). Configure 로 라이브 갱신
 	msgCh         chan map[string]any
 	hasReceiver   *atomic.Bool  // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
 	receiverOn    chan struct{} // ReceiveMessage 활성화 신호 (drainMsgCh 즉시 종료용, 1회 close)
@@ -78,7 +79,19 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 		}
 	}
 
-	handler := NewModbusHandler(dm, msgCh, cfg.NotifyOnWrite, logger)
+	// 관측성 배선: 프레임 로그 토글 atomic 미러(Configure 로 라이브 갱신) + TCP 클라이언트
+	// 레지스터리(RTU 는 per-client 개념 없음 → registry nil).
+	obs := &serverObs{
+		logFrames:    &atomic.Bool{},
+		logRawFrames: &atomic.Bool{},
+	}
+	obs.logFrames.Store(cfg.LogFrames)
+	obs.logRawFrames.Store(cfg.LogRawFrames)
+	if cfg.Transport == TransportTCP {
+		obs.registry = NewClientRegistry()
+	}
+
+	handler := NewModbusHandler(dm, msgCh, cfg.NotifyOnWrite, obs, logger)
 
 	// 첫 번째 디바이스의 RegisterMap (Process 메서드 하위 호환용). 디바이스가 없으면
 	// (main-상속 서브) nil 이며 Start 의 applySharedRegisterMap 에서 채워진다.
@@ -90,10 +103,10 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 	// 트랜스포트에 따라 TCP 리스너 또는 RTU 시리얼 슬레이브 리스너를 선택한다.
 	var listener serverListener
 	if cfg.Transport == TransportRTU {
-		listener = NewRTUListener(cfg.Serial, handler, logger)
+		listener = NewRTUListener(cfg.Serial, handler, obs, logger)
 	} else {
 		listenAddr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort)
-		listener = NewListener(listenAddr, cfg.MaxConnections, cfg.IdleTimeout, handler, logger)
+		listener = NewListener(listenAddr, cfg.MaxConnections, cfg.IdleTimeout, handler, obs, logger)
 	}
 
 	a := &ModbusServerAgent{
@@ -104,6 +117,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig, mgr *agent.DefaultManag
 		listener:      listener,
 		handler:       handler,
 		mgr:           mgr,
+		obs:           obs,
 		msgCh:         msgCh,
 		hasReceiver:   &atomic.Bool{},
 		receiverOn:    make(chan struct{}),
@@ -322,6 +336,8 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 		return a.processReadRaw(&req)
 	case "list_devices":
 		return a.processListDevices()
+	case "list_clients":
+		return a.processListClients()
 	case "add_device":
 		return a.processAddDevice(&req)
 	case "remove_device":
@@ -1185,6 +1201,29 @@ func (a *ModbusServerAgent) processListDevices() ([]byte, error) {
 	return json.Marshal(resp)
 }
 
+// processListClients 는 연결된 TCP 클라이언트 목록을 반환한다("Clients" 탭용).
+// TCP 는 레지스트리 스냅샷을, RTU 는 빈 배열을 반환한다(시리얼, per-client 개념 없음).
+// socket tcp_server.go 의 processListConnections 형식에 unit_ids 필드를 추가한 형태이다.
+func (a *ModbusServerAgent) processListClients() ([]byte, error) {
+	list := a.listener.Clients()
+	clients := make([]map[string]any, 0, len(list))
+	for i := range list {
+		// unit_ids 는 []byte 이면 JSON 에서 base64 로 인코딩되므로 정수 배열로 변환한다.
+		ids := make([]int, len(list[i].UnitIDs))
+		for j, id := range list[i].UnitIDs {
+			ids[j] = int(id)
+		}
+		clients = append(clients, map[string]any{
+			"remote_addr":   list[i].RemoteAddr,
+			"connected_at":  list[i].ConnectedAt.Format(time.RFC3339),
+			"unit_ids":      ids,
+			"request_count": list[i].RequestCount,
+			"last_seen":     list[i].LastSeen.Format(time.RFC3339),
+		})
+	}
+	return json.Marshal(map[string]any{"clients": clients})
+}
+
 // processAddDevice 는 런타임에 새 디바이스를 추가한다.
 // params: unit_id (1-247, 필수), name (선택), register_map (필수)
 func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error) {
@@ -1242,6 +1281,11 @@ func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error
 		return nil, err
 	}
 
+	// 디바이스 로스터 변경: INFO 로 남긴다(기존 로그 레벨에서 항상 노출).
+	if a.logger != nil {
+		a.logger.Info("modbus-gateway: device added", "unit_id", dev.UnitID, "name", dev.Name)
+	}
+
 	resp := map[string]any{
 		"status":          "added",
 		"unit_id":         dev.UnitID,
@@ -1266,6 +1310,11 @@ func (a *ModbusServerAgent) processRemoveDevice(req *processRequest) ([]byte, er
 
 	if err := a.deviceManager.RemoveDevice(byte(uid)); err != nil {
 		return nil, err
+	}
+
+	// 디바이스 로스터 변경: INFO 로 남긴다(기존 로그 레벨에서 항상 노출).
+	if a.logger != nil {
+		a.logger.Info("modbus-gateway: device removed", "unit_id", byte(uid))
 	}
 
 	resp := map[string]any{
@@ -1397,6 +1446,13 @@ func (a *ModbusServerAgent) Configure(config agent.AgentConfig) error {
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
+
+	// log_frames / log_raw_frames 는 재시작 없이 즉시 반영한다(needsRestart 대상 아님).
+	// 이 두 키만 재파싱하여 atomic 미러를 갱신한다(socket tcp_server.go log_messages 패턴).
+	if newCfg, perr := parseModbusServerConfig(config.Transport.Options); perr == nil {
+		a.obs.logFrames.Store(newCfg.LogFrames)
+		a.obs.logRawFrames.Store(newCfg.LogRawFrames)
+	}
 	return nil
 }
 

@@ -1292,6 +1292,7 @@
         "store": "저장소",
         "series": "시리즈",
         "sessions": "세션",
+        "clients": "클라이언트",
         "devices": "장치(Device)",
         "stations": "장소(Location)",
         "lines": "라인(호선)",
@@ -1774,6 +1775,19 @@
         "colPacketsSent": "송신 패킷",
         "colDataReceived": "수신 데이터",
         "colDataSent": "송신 데이터"
+      },
+      "clients": {
+        "remoteUnavailable": "원격 노드에서는 클라이언트 정보를 제공하지 않습니다.",
+        "loading": "로딩 중...",
+        "clientsCount": "{count}개 클라이언트",
+        "refresh": "새로고침",
+        "empty": "연결된 클라이언트가 없습니다",
+        "colIp": "IP",
+        "colPort": "포트",
+        "colUnitIds": "접근 Unit ID",
+        "colRequests": "요청 수",
+        "colConnected": "접속 시각",
+        "colLastSeen": "마지막 활동"
       },
       "modbus": {
         "registerMap": "레지스터 맵",
