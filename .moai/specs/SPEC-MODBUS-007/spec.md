@@ -1,7 +1,7 @@
 ---
 id: SPEC-MODBUS-007
 title: "MODBUS Register Remapper 노드 (주소/영역/디바이스 재매핑)"
-version: "0.1.0"
+version: "0.2.0"
 status: draft
 created: 2026-08-02
 updated: 2026-08-02
@@ -22,6 +22,7 @@ depends_on:
 | 버전  | 날짜       | 변경 내용                                                                                         |
 |-------|------------|--------------------------------------------------------------------------------------------------|
 | 0.1.0 | 2026-08-02 | 초안 작성 (Draft) — `modbus-remap` 노드 명세. 사용자 승인 확정 설계 반영: (1) 변환축 = 주소+area+device_id 전부, (2) 규칙 대상 단위 = read-op 엔트리 전체(정확 매칭), (3) 템플릿 = 노드 config 내부 저장(command_set 패턴). M1~M5 EARS 5모듈. |
+| 0.2.0 | 2026-08-02 | 구현 중 개선 반영: (1) From 측 `source_unit_id`(선택) 추가 — 입력 엔트리에 `unit_id`가 있으면(remap→remap 체이닝) 매칭에 포함, 없으면 unit_id 제외하고 area+address+count로 매칭, (2) 다중 To(`targets[]`) — 하나의 source 규칙이 여러 대상으로 팬아웃(대상마다 출력 엔트리 1개). 레거시 단일 `target_*`는 하위 호환(1-원소 targets로 정규화). M2 갱신. |
 
 ---
 
@@ -111,9 +112,11 @@ Web UI는 좌(From)/우(To) 2-테이블 From→To 편집기로 규칙을 편집�
 
 ### M2 — 규칙별 remap (주소 + area + device_id 재작성)
 
-- **Ubiquitous**: 각 remap 규칙은 `(source area, source address, count)` → `(target device_id/unit_id, target area, target address)`로 정의된다.
-- **Event-driven**: WHEN 규칙이 매칭 엔트리에 적용 THEN 타깃 엔트리는 `unit_id = target device_id`, `area = target area`, `address = targetStart + (srcAddr − srcStart)`로 재작성되고 `count`와 값 배열(positional)은 보존된다.
-- **State-driven**: IF 규칙이 타깃 area를 소스와 다르게 지정하면(예: `holding_registers`→`input_registers`) THEN 시스템은 area 변경을 적용해야 한다(area 재작성은 확정 요구사항).
+- **Ubiquitous**: 각 remap 규칙은 `(source area, source address, count[, source_unit_id])` → `targets[]`(1..N개의 `{target device_id/unit_id, target area?, target address}`)로 정의된다.
+- **Event-driven**: WHEN 규칙이 매칭 엔트리에 적용 THEN `targets`의 각 대상마다 출력 엔트리 1개를 팬아웃하며, 각 타깃 엔트리는 `unit_id = target device_id`, `area = target area`, `address = target address + (srcAddr − source address)`로 재작성되고 `count`와 값 배열(positional)은 보존된다.
+- **State-driven (unit_id 선택 매칭)**: IF 규칙이 `source_unit_id`를 지정하고 입력 엔트리에 `unit_id` 필드가 존재하면(상류가 또 다른 `modbus-remap`인 체이닝 경우 — 본 노드 출력 엔트리는 unit_id를 포함) THEN 엔트리 `unit_id`가 `source_unit_id`와 같아야 매칭한다. IF 입력 엔트리에 `unit_id`가 없으면(일반 `modbus-read` 경우) THEN unit_id를 제외하고 `(area, address, count)`로만 매칭한다. IF `source_unit_id`가 생략되면 unit_id로 제약하지 않는다.
+- **State-driven (area 재작성)**: IF 타깃이 `target_area`를 소스와 다르게 지정하면(예: `holding_registers`→`input_registers`) THEN area 변경을 적용해야 하며, 생략 시 source area를 유지한다.
+- **Optional (하위 호환)**: 가능하면 `targets` 없이 최상위 `target_unit_id`/`target_area`/`target_address`만 있는 레거시 단일-타깃 규칙을 1-원소 `targets`로 정규화해 수용한다.
 - **Unwanted**: 시스템은 remap 과정에서 입력 값(values/raw) 자체를 변형하지 않아야 한다(주소·영역·디바이스만 재작성).
 
 ### M3 — 완전-포함-아니면-거부 (엔트리 전체 정확 매칭)
@@ -149,11 +152,12 @@ Web UI는 좌(From)/우(To) 2-테이블 From→To 편집기로 규칙을 편집�
 ### 5.2 config 스키마 (제안)
 
 ```
-rules:     []map[string]any   // 각 규칙: {source_area, source_address, count, target_unit_id, target_area?, target_address}
-templates: []map[string]any   // 각 템플릿: {area, offset}
+rules:     []map[string]any   // 각 규칙: {source_unit_id?, source_area, source_address, count, targets:[{target_unit_id, target_area?, target_address}]}
+templates: []map[string]any   // 각 템플릿: {source_unit_id?, area, offset, device_id, start, count, target_area?}
 ```
 
-- 규칙 필드: `source_area`, `source_address`, `count`, `target_unit_id`(device_id), `target_area`(생략 시 source_area 유지), `target_address`(타깃 start).
+- 규칙 필드: `source_unit_id`(선택, unit-id 선택 매칭), `source_area`, `source_address`, `count`, `targets`(1..N개 `{target_unit_id(device_id), target_area?(생략 시 source_area 유지), target_address(타깃 start)}`). 레거시 최상위 `target_*`는 1-원소 targets로 정규화(하위 호환).
+- 템플릿 필드: `source_unit_id`(선택), `area`, `offset`, `device_id`, `start`, `count`, `target_area?`. 적용 시 단일-타깃 규칙으로 인스턴스화(다중 To는 rules 전용).
 - 템플릿 필드: `area`, `offset`. 적용 파라미터: `(device_id, start_address, count)`.
 - 페이로드 오버라이드: payload에 `rules` 또는 `templates` 키 존재 시 config 기본값 대체.
 

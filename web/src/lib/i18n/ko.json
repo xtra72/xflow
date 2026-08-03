@@ -3068,7 +3068,14 @@
       "area": "영역",
       "offset": "오프셋",
       "deviceId": "디바이스 ID",
-      "start": "시작"
+      "start": "시작",
+      "rule": "규칙",
+      "sourceUnitId": "소스 유닛 ID",
+      "optional": "선택",
+      "sourceUnitIdHint": "유닛 ID 없이 들어온 입력 항목은 이 규칙에서 무시됩니다(체이닝 리매핑 시).",
+      "targets": "타깃",
+      "addTarget": "타깃 추가",
+      "removeTarget": "타깃 삭제"
     },
     "metrics": {
       "metric": "메트릭",

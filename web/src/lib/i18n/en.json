@@ -3068,7 +3068,14 @@
       "area": "Area",
       "offset": "Offset",
       "deviceId": "Device ID",
-      "start": "Start"
+      "start": "Start",
+      "rule": "Rule",
+      "sourceUnitId": "Source unit ID",
+      "optional": "optional",
+      "sourceUnitIdHint": "Input entries without a unit_id are ignored by this rule (chained remap).",
+      "targets": "Targets",
+      "addTarget": "Add target",
+      "removeTarget": "Remove target"
     },
     "metrics": {
       "metric": "Metric",

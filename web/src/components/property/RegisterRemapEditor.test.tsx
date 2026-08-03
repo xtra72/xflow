@@ -1,6 +1,12 @@
-// RegisterRemapEditor(modbus-remap) 테스트 — SPEC-MODBUS-007.
+// RegisterRemapEditor(modbus-remap) 테스트 — SPEC-MODBUS-007 (multi-target fan-out).
 //
-// 검증: rules 방출(target_area 있음/없음), templates 방출, 라운드트립, readOnly.
+// 검증:
+//   - rule 방출: source_unit_id? + targets[] (≥1), target_area 있음/없음
+//   - source_unit_id 없으면 생략
+//   - 다중 타깃(2개) 방출
+//   - legacy 최상위 단일 target_* → 1-원소 targets 로 정규화 후 방출
+//   - template 방출: source_unit_id?, target_area?, 음수 offset
+//   - readOnly 버튼 숨김
 //
 // i18n: ko.json 을 점 표기로 해석하는 mock.
 
@@ -28,7 +34,7 @@ function lastEmit(onChange: ReturnType<typeof vi.fn>): unknown {
 }
 
 describe('RemapRulesEditor', () => {
-  it('규칙 추가 → target_area 없이 방출(area 유지)', () => {
+  it('규칙 추가 → source_unit_id 없이 targets 배열(1개, target_area 생략) 방출', () => {
     const onChange = vi.fn();
     render(<RemapRulesEditor value={[]} onChange={onChange} />);
 
@@ -46,23 +52,24 @@ describe('RemapRulesEditor', () => {
       target: { value: '100' },
     });
 
-    // 기본 source_area = holding_registers, target_area 비움 → 생략.
     expect(lastEmit(onChange)).toEqual([
       {
         source_area: 'holding_registers',
         source_address: 0,
         count: 10,
-        target_unit_id: 1,
-        target_address: 100,
+        targets: [{ target_unit_id: 1, target_address: 100 }],
       },
     ]);
   });
 
-  it('target_area 선택 시 방출에 포함(영역 변경 + device_id 변경)', () => {
+  it('source_unit_id 입력 + target_area 선택 시 방출에 포함', () => {
     const onChange = vi.fn();
     render(<RemapRulesEditor value={[]} onChange={onChange} />);
 
     fireEvent.click(screen.getByRole('button', { name: '규칙 추가' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: '소스 유닛 ID' }), {
+      target: { value: '1' },
+    });
     fireEvent.change(screen.getByRole('combobox', { name: '소스 영역' }), {
       target: { value: 'input_registers' },
     });
@@ -81,17 +88,66 @@ describe('RemapRulesEditor', () => {
 
     expect(lastEmit(onChange)).toEqual([
       {
+        source_unit_id: 1,
         source_area: 'input_registers',
         source_address: 0,
         count: 4,
-        target_unit_id: 2,
-        target_area: 'holding_registers',
-        target_address: 200,
+        targets: [{ target_unit_id: 2, target_area: 'holding_registers', target_address: 200 }],
       },
     ]);
   });
 
-  it('기존 config 를 라운드트립한다 (target_area 있는 규칙 표시)', () => {
+  it('다중 타깃(2개) 팬아웃을 방출한다 (하나는 area 유지, 하나는 area 변경)', () => {
+    const onChange = vi.fn();
+    render(
+      <RemapRulesEditor
+        value={[
+          {
+            source_unit_id: 1,
+            source_area: 'holding_registers',
+            source_address: 0,
+            count: 10,
+            targets: [
+              { target_unit_id: 2, target_address: 100 },
+              { target_unit_id: 3, target_area: 'input_registers', target_address: 200 },
+            ],
+          },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    // 방출 트리거: source_address 변경.
+    fireEvent.change(screen.getByRole('spinbutton', { name: '소스 주소' }), {
+      target: { value: '5' },
+    });
+
+    expect(lastEmit(onChange)).toEqual([
+      {
+        source_unit_id: 1,
+        source_area: 'holding_registers',
+        source_address: 5,
+        count: 10,
+        targets: [
+          { target_unit_id: 2, target_address: 100 },
+          { target_unit_id: 3, target_area: 'input_registers', target_address: 200 },
+        ],
+      },
+    ]);
+  });
+
+  it('타깃 추가 버튼으로 타깃을 늘린다 (targets 2개)', () => {
+    const onChange = vi.fn();
+    render(<RemapRulesEditor value={[]} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '규칙 추가' }));
+    fireEvent.click(screen.getByRole('button', { name: '타깃 추가' }));
+
+    const emitted = lastEmit(onChange) as Array<{ targets: unknown[] }>;
+    expect(emitted[0]!.targets).toHaveLength(2);
+  });
+
+  it('legacy 최상위 단일 target_* config 을 1-원소 targets 로 정규화해 방출한다', () => {
+    const onChange = vi.fn();
     render(
       <RemapRulesEditor
         value={[
@@ -104,29 +160,47 @@ describe('RemapRulesEditor', () => {
             target_address: 50,
           },
         ]}
-        onChange={vi.fn()}
+        onChange={onChange}
       />,
     );
-    expect(screen.getByDisplayValue('5')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('50')).toBeInTheDocument();
-    // target_area select 가 discrete_inputs 로 표시된다.
-    expect(screen.getByRole('combobox', { name: '대상 영역' })).toHaveValue('discrete_inputs');
+
+    // 방출 트리거: 개수 변경.
+    fireEvent.change(screen.getByRole('spinbutton', { name: '개수' }), {
+      target: { value: '3' },
+    });
+
+    expect(lastEmit(onChange)).toEqual([
+      {
+        source_area: 'coils',
+        source_address: 5,
+        count: 3,
+        targets: [{ target_unit_id: 7, target_area: 'discrete_inputs', target_address: 50 }],
+      },
+    ]);
   });
 
-  it('readOnly 는 추가 버튼을 숨긴다', () => {
+  it('readOnly 는 규칙 추가 / 타깃 추가 버튼을 숨긴다', () => {
     render(
       <RemapRulesEditor
-        value={[{ source_area: 'coils', source_address: 0, count: 1, target_unit_id: 1, target_address: 0 }]}
+        value={[
+          {
+            source_area: 'coils',
+            source_address: 0,
+            count: 1,
+            targets: [{ target_unit_id: 1, target_address: 0 }],
+          },
+        ]}
         onChange={vi.fn()}
         readOnly
       />,
     );
     expect(screen.queryByRole('button', { name: '규칙 추가' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '타깃 추가' })).not.toBeInTheDocument();
   });
 });
 
 describe('RemapTemplatesEditor', () => {
-  it('템플릿 추가 → {area, offset, device_id, start, count} 방출 (target_area 생략)', () => {
+  it('템플릿 추가 → {area, offset, device_id, start, count} 방출 (source_unit_id/target_area 생략)', () => {
     const onChange = vi.fn();
     render(<RemapTemplatesEditor value={[]} onChange={onChange} />);
 
@@ -145,21 +219,18 @@ describe('RemapTemplatesEditor', () => {
     });
 
     expect(lastEmit(onChange)).toEqual([
-      {
-        area: 'holding_registers',
-        offset: 1000,
-        device_id: 3,
-        start: 0,
-        count: 8,
-      },
+      { area: 'holding_registers', offset: 1000, device_id: 3, start: 0, count: 8 },
     ]);
   });
 
-  it('음수 offset 을 허용하고 target_area 를 방출에 포함한다', () => {
+  it('source_unit_id + 음수 offset + target_area 를 방출에 포함한다', () => {
     const onChange = vi.fn();
     render(<RemapTemplatesEditor value={[]} onChange={onChange} />);
 
     fireEvent.click(screen.getByRole('button', { name: '템플릿 추가' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: '소스 유닛 ID' }), {
+      target: { value: '1' },
+    });
     fireEvent.change(screen.getByRole('spinbutton', { name: '오프셋' }), {
       target: { value: '-5' },
     });
@@ -169,6 +240,7 @@ describe('RemapTemplatesEditor', () => {
 
     expect(lastEmit(onChange)).toEqual([
       {
+        source_unit_id: 1,
         area: 'holding_registers',
         offset: -5,
         device_id: 1,

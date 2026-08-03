@@ -863,22 +863,30 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'rules',
         type: 'json',
         required: false,
-        description: '개별 재매핑 규칙(From→To) 배열입니다. 각 항목: source_area, source_address, count, target_unit_id, target_area(선택; 생략 시 source_area 유지), target_address. count는 대응 read 항목의 count와 정확히 일치해야 합니다.',
+        description: '개별 재매핑 규칙(From→To 팬아웃) 배열입니다. 각 항목: source_unit_id(선택), source_area, source_address, count, targets[](최소 1개; 각 target 은 target_unit_id, target_area(선택; 생략 시 source_area 유지), target_address). count는 대응 read 항목의 count와 정확히 일치해야 합니다. legacy 최상위 단일 target_* 형식도 로드 가능하며 targets 배열로 정규화됩니다.',
       },
       {
         name: 'templates',
         type: 'json',
         required: false,
-        description: '축약형 규칙 배열입니다. 각 항목: area, offset(target_address=start+offset, 음수 허용), device_id(→target_unit_id), start(→source_address), count, target_area(선택; 생략 시 area 유지).',
+        description: '축약형 규칙 배열입니다. 각 항목: source_unit_id(선택), area, offset(target_address=start+offset, 음수 허용), device_id(→target_unit_id), start(→source_address), count, target_area(선택; 생략 시 area 유지).',
       },
     ],
     configExample: {
       rules: [
-        { source_area: 'holding_registers', source_address: 0, count: 10, target_unit_id: 1, target_address: 100 },
-        { source_area: 'input_registers', source_address: 0, count: 4, target_unit_id: 2, target_area: 'holding_registers', target_address: 200 },
+        {
+          source_unit_id: 1,
+          source_area: 'holding_registers',
+          source_address: 0,
+          count: 10,
+          targets: [
+            { target_unit_id: 2, target_address: 100 },
+            { target_unit_id: 3, target_area: 'input_registers', target_address: 200 },
+          ],
+        },
       ],
       templates: [
-        { area: 'holding_registers', offset: 1000, device_id: 3, start: 0, count: 8 },
+        { source_unit_id: 1, area: 'holding_registers', offset: 1000, device_id: 3, start: 0, count: 8 },
       ],
     },
   },

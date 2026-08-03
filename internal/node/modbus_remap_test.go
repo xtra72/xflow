@@ -382,3 +382,196 @@ func TestModbusRemap_InputFailureInherited(t *testing.T) {
 	entries := outEntries(t, out[0])
 	require.Len(t, entries, 1, "규칙 자체는 매칭됨")
 }
+
+// ---------------------------------------------------------------------------
+// Change 1 (a) — source_unit_id 매칭: 입력 엔트리에 unit_id 가 있을 때(체인 remap)
+// ---------------------------------------------------------------------------
+
+func TestModbusRemap_SourceUnitID_MatchWhenEntryHasUnitID(t *testing.T) {
+	n := newRemapNode(t, map[string]any{
+		"rules": []any{
+			// unit 5 만 매칭
+			map[string]any{"source_unit_id": 5, "source_area": "holding_registers", "source_address": 0, "count": 2,
+				"target_unit_id": 9, "target_area": "input_registers", "target_address": 100},
+		},
+	})
+
+	// 상류가 또 다른 modbus-remap 인 경우 — 엔트리에 unit_id 포함
+	in := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 0, "count": 2, "unit_id": 7, "values": []any{1, 2}}, // unit 7 → 불일치
+		map[string]any{"index": 1, "area": "holding_registers", "address": 0, "count": 2, "unit_id": 5, "values": []any{3, 4}}, // unit 5 → 일치
+	})
+
+	out, err := n.Process(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, outBool(t, out[0], "success"), "unit 5 엔트리와 매칭")
+	entries := outEntries(t, out[0])
+	require.Len(t, entries, 1)
+	assert.Equal(t, []any{3, 4}, entries[0]["values"], "unit 5 엔트리(값 3,4)가 선택됨")
+	assert.Equal(t, uint8(9), entries[0]["unit_id"])
+	assert.Equal(t, "input_registers", entries[0]["area"])
+	assert.Equal(t, uint16(100), entries[0]["address"])
+}
+
+// source_unit_id 지정 + 입력 엔트리 unit_id 모두 불일치 → 미매칭 거부
+func TestModbusRemap_SourceUnitID_NoMatchWhenUnitIDDiffers(t *testing.T) {
+	n := newRemapNode(t, map[string]any{
+		"rules": []any{
+			map[string]any{"source_unit_id": 5, "source_area": "holding_registers", "source_address": 0, "count": 2,
+				"target_unit_id": 9, "target_address": 100},
+		},
+	})
+	in := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 0, "count": 2, "unit_id": 7, "values": []any{1, 2}},
+	})
+	out, err := n.Process(context.Background(), in)
+	require.NoError(t, err)
+	assert.False(t, outBool(t, out[0], "success"), "unit_id 불일치 → 미매칭 거부")
+	assert.Empty(t, outEntries(t, out[0]))
+}
+
+// ---------------------------------------------------------------------------
+// Change 1 (b) — source_unit_id 무시: 입력 엔트리에 unit_id 가 없을 때(일반 modbus-read)
+// ---------------------------------------------------------------------------
+
+func TestModbusRemap_SourceUnitID_IgnoredWhenEntryLacksUnitID(t *testing.T) {
+	n := newRemapNode(t, map[string]any{
+		"rules": []any{
+			map[string]any{"source_unit_id": 5, "source_area": "holding_registers", "source_address": 0, "count": 2,
+				"target_unit_id": 9, "target_address": 100},
+		},
+	})
+
+	// 일반 modbus-read 출력 — 엔트리에 unit_id 없음 → unit_id 제약 무시, area+address+count 로만 매칭
+	in := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 0, "count": 2, "values": []any{11, 22}},
+	})
+
+	out, err := n.Process(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, outBool(t, out[0], "success"), "입력에 unit_id 없으면 unit_id 제외 매칭")
+	entries := outEntries(t, out[0])
+	require.Len(t, entries, 1)
+	assert.Equal(t, []any{11, 22}, entries[0]["values"])
+	assert.Equal(t, uint8(9), entries[0]["unit_id"], "To측 unit_id 는 할당됨")
+}
+
+// ---------------------------------------------------------------------------
+// Change 2 (c) — 멀티 타깃 fan-out: 소스 1개 → 출력 N개
+// ---------------------------------------------------------------------------
+
+func TestModbusRemap_MultiTargetFanOut(t *testing.T) {
+	n := newRemapNode(t, map[string]any{
+		"rules": []any{
+			map[string]any{
+				"source_area": "holding_registers", "source_address": 100, "count": 3,
+				"targets": []any{
+					map[string]any{"target_unit_id": 1, "target_area": "input_registers", "target_address": 200},
+					map[string]any{"target_unit_id": 2, "target_address": 300}, // target_area 생략 → source_area 유지
+					map[string]any{"target_unit_id": 3, "target_area": "coils", "target_address": 0},
+				},
+			},
+		},
+	})
+
+	in := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "values": []any{7, 8, 9}},
+	})
+
+	out, err := n.Process(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, outBool(t, out[0], "success"))
+	entries := outEntries(t, out[0])
+	require.Len(t, entries, 3, "타깃 3개 → 출력 엔트리 3개(fan-out)")
+
+	// 순차 index
+	assert.Equal(t, 0, entries[0]["index"])
+	assert.Equal(t, 1, entries[1]["index"])
+	assert.Equal(t, 2, entries[2]["index"])
+
+	// 타깃 1
+	assert.Equal(t, uint8(1), entries[0]["unit_id"])
+	assert.Equal(t, "input_registers", entries[0]["area"])
+	assert.Equal(t, uint16(200), entries[0]["address"])
+	// 타깃 2 (area 생략 → source_area)
+	assert.Equal(t, uint8(2), entries[1]["unit_id"])
+	assert.Equal(t, "holding_registers", entries[1]["area"])
+	assert.Equal(t, uint16(300), entries[1]["address"])
+	// 타깃 3
+	assert.Equal(t, uint8(3), entries[2]["unit_id"])
+	assert.Equal(t, "coils", entries[2]["area"])
+	assert.Equal(t, uint16(0), entries[2]["address"])
+
+	// 모든 출력이 동일 값 보존
+	for _, e := range entries {
+		assert.Equal(t, []any{7, 8, 9}, e["values"], "값 보존")
+		assert.Equal(t, uint16(3), e["count"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Change 2 (d) — 레거시 단일 타깃 규칙 하위 호환 (targets 없이 최상위 target_*)
+// ---------------------------------------------------------------------------
+
+func TestModbusRemap_LegacySingleTargetBackwardCompat(t *testing.T) {
+	n := newRemapNode(t, map[string]any{
+		"rules": []any{
+			// targets 배열 없음 — 기존 shape
+			map[string]any{
+				"source_area": "holding_registers", "source_address": 100, "count": 5,
+				"target_unit_id": 3, "target_area": "input_registers", "target_address": 200,
+			},
+		},
+	})
+
+	in := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 5, "values": []any{10, 20, 30, 40, 50}},
+	})
+
+	out, err := n.Process(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, outBool(t, out[0], "success"))
+	entries := outEntries(t, out[0])
+	require.Len(t, entries, 1, "레거시 단일 타깃 → 출력 1개")
+	assert.Equal(t, "input_registers", entries[0]["area"])
+	assert.Equal(t, uint16(200), entries[0]["address"])
+	assert.Equal(t, uint8(3), entries[0]["unit_id"])
+	assert.Equal(t, []any{10, 20, 30, 40, 50}, entries[0]["values"])
+}
+
+// ---------------------------------------------------------------------------
+// Change 1+2 (e) — 템플릿에 source_unit_id 적용 파라미터
+// ---------------------------------------------------------------------------
+
+func TestModbusRemap_TemplateWithSourceUnitID(t *testing.T) {
+	n := newRemapNode(t, map[string]any{
+		"templates": []any{
+			map[string]any{
+				"source_unit_id": 8, "area": "holding_registers", "offset": 1000,
+				"device_id": 2, "start": 100, "count": 3,
+			},
+		},
+	})
+
+	// 엔트리에 unit_id=8 포함 → source_unit_id 매칭 확인
+	in := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "unit_id": 8, "values": []any{1, 2, 3}},
+	})
+
+	out, err := n.Process(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, outBool(t, out[0], "success"), "템플릿 source_unit_id=8 + 엔트리 unit_id=8 매칭")
+	entries := outEntries(t, out[0])
+	require.Len(t, entries, 1, "템플릿은 항상 SINGLE-target")
+	assert.Equal(t, uint16(1100), entries[0]["address"], "start+offset")
+	assert.Equal(t, uint8(2), entries[0]["unit_id"], "device_id")
+	assert.Equal(t, "holding_registers", entries[0]["area"])
+
+	// 엔트리 unit_id 가 다르면(9) 미매칭
+	in2 := makeReadMsg(true, "server", []any{
+		map[string]any{"index": 0, "area": "holding_registers", "address": 100, "count": 3, "unit_id": 9, "values": []any{1, 2, 3}},
+	})
+	out2, err := n.Process(context.Background(), in2)
+	require.NoError(t, err)
+	assert.False(t, outBool(t, out2[0], "success"), "템플릿 source_unit_id 불일치 → 거부")
+}
