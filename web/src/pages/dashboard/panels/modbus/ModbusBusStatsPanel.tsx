@@ -105,8 +105,11 @@ function MiniChart({
 export default function ModbusBusStatsPanel({ title, config }: ModbusBusStatsPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
-  const { devices, isLoading } = useModbusListDevices(gate.agentId, gate.enabled);
-  const { status } = useModbusStatus(gate.agentId, gate.enabled);
+  const { devices, isLoading, isError: devicesError } = useModbusListDevices(
+    gate.agentId,
+    gate.enabled,
+  );
+  const { status, isError: statusError } = useModbusStatus(gate.agentId, gate.enabled);
   const activeConnections = status?.active_connections ?? 0;
   const points = useModbusBusSeries(devices, activeConnections);
 
@@ -130,6 +133,14 @@ export default function ModbusBusStatsPanel({ title, config }: ModbusBusStatsPan
     return (
       <ModbusPanelFrame title={title} icon={icon}>
         <ModbusSpinner />
+      </ModbusPanelFrame>
+    );
+  }
+  // exec 실패(에이전트 미실행/무응답) → 빈 차트 대신 명시적 안내(빈 blank 방지).
+  if (devicesError || statusError) {
+    return (
+      <ModbusPanelFrame title={title} icon={icon}>
+        <ModbusNotice message={t('dashboard.modbus.agentNotResponding')} />
       </ModbusPanelFrame>
     );
   }

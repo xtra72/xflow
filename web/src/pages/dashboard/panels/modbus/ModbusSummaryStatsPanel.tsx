@@ -69,8 +69,11 @@ export default function ModbusSummaryStatsPanel({ title, config }: ModbusSummary
   const { t } = useTranslation();
   const gate = useModbusGate(config);
   const pollCycle = useUIStore((s) => s.dashboardRefreshInterval);
-  const { status, isLoading: statusLoading } = useModbusStatus(gate.agentId, gate.enabled);
-  const { devices } = useModbusListDevices(gate.agentId, gate.enabled);
+  const { status, isLoading: statusLoading, isError: statusError } = useModbusStatus(
+    gate.agentId,
+    gate.enabled,
+  );
+  const { devices, isError: devicesError } = useModbusListDevices(gate.agentId, gate.enabled);
   const { clients } = useModbusListClients(gate.agentId, gate.enabled);
 
   const activeConnections = status?.active_connections ?? 0;
@@ -100,6 +103,14 @@ export default function ModbusSummaryStatsPanel({ title, config }: ModbusSummary
     return (
       <ModbusPanelFrame title={title} icon={icon}>
         <ModbusSpinner />
+      </ModbusPanelFrame>
+    );
+  }
+  // exec 실패(에이전트 미실행/무응답) → 0 값 타일 대신 명시적 안내(오해 소지 방지).
+  if ((statusError || devicesError) && !status) {
+    return (
+      <ModbusPanelFrame title={title} icon={icon}>
+        <ModbusNotice message={t('dashboard.modbus.agentNotResponding')} />
       </ModbusPanelFrame>
     );
   }

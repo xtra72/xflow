@@ -28,6 +28,14 @@ import { listChartChannels, type ChartChannelSummary } from '@/services/api/char
 import { listStoreKeys } from '@/services/api/storeService';
 import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
+// SPEC-MODBUS-012: MODBUS Gateway 패널 설정 섹션 + 프리뷰(설정 다이얼로그 내 실제 패널 렌더).
+import { useModbusListDevices, formatUnitLabel } from './panels/modbus/useModbusData';
+import ModbusRealDevicesPanel from './panels/modbus/ModbusRealDevicesPanel';
+import ModbusVirtualDevicesPanel from './panels/modbus/ModbusVirtualDevicesPanel';
+import ModbusSharedRegistersPanel from './panels/modbus/ModbusSharedRegistersPanel';
+import ModbusDeviceRegistersPanel from './panels/modbus/ModbusDeviceRegistersPanel';
+import ModbusBusStatsPanel from './panels/modbus/ModbusBusStatsPanel';
+import ModbusSummaryStatsPanel from './panels/modbus/ModbusSummaryStatsPanel';
 import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
   buildEnumLabelMap,
@@ -71,6 +79,16 @@ import {
 
 /** 차트 계열 패널 타입 집합 (REQ-M5-03) */
 const CHART_PANEL_TYPES = new Set(['stat', 'line-chart', 'bar-chart', 'pie-chart', 'table']);
+
+/** SPEC-MODBUS-012: MODBUS Gateway 패널 6종 집합(설정 섹션/프리뷰 분기용). */
+const MODBUS_PANEL_TYPES = new Set([
+  'modbus-real-devices',
+  'modbus-virtual-devices',
+  'modbus-shared-registers',
+  'modbus-device-registers',
+  'modbus-bus-stats',
+  'modbus-summary-stats',
+]);
 
 /** 패널 색상 프리셋 */
 const COLOR_PRESETS = [
@@ -471,6 +489,16 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
 
+            {/* SPEC-MODBUS-012: MODBUS Gateway 패널 6종 (게이트웨이 에이전트 + 가상 레지스터 맵은 unit) */}
+            {MODBUS_PANEL_TYPES.has(panel.type) && (
+              <CollapsibleSection title={t('dashboard.settings.modbusGateway')} defaultOpen={true}>
+                <ModbusSettingsSection
+                  panel={panel}
+                  onConfigChange={(c) => handleConfigChange(c)}
+                />
+              </CollapsibleSection>
+            )}
+
             {/*
               차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨).
               data_source === 'store' 인 경우에도 채널 설정은 유지된다(공존, 하위 호환).
@@ -775,6 +803,20 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 onWheel={handlePreviewWheel}
               >
                 <LineChartMiniPreview panel={panel} />
+              </div>
+            )}
+            {/*
+              SPEC-MODBUS-012: MODBUS 패널 프리뷰. 실제 패널 컴포넌트를 draft config 로 렌더한다.
+              패널이 미설정/원격/로딩/에러/빈 상태를 자체 ModbusNotice 로 표시하므로 blank 가 되지 않는다.
+              (TargetContext 는 기본 LOCAL_TARGET, react-query 는 앱 전역 Provider 를 사용한다.)
+            */}
+            {MODBUS_PANEL_TYPES.has(panel.type) && (
+              <div
+                className="mx-auto"
+                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                onWheel={handlePreviewWheel}
+              >
+                <ModbusPanelPreview panel={panel} />
               </div>
             )}
             {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
@@ -1194,6 +1236,115 @@ function FacilitySection({
       {(panel.type === 'facility-station' || panel.type === 'facility-group') && (
         <FacilityStationDisplayOptions panel={panel} onConfigChange={onConfigChange} />
       )}
+    </div>
+  );
+}
+
+/**
+ * MODBUS Gateway 패널 전용 설정 (SPEC-MODBUS-012).
+ *
+ * AddPanelDialog 의 ModbusAgentStep 을 미러링한다:
+ *   - modbus-gateway 에이전트를 필터해 재선택 → config.agentId.
+ *   - modbus-device-registers 만 대상 unit 2차 선택 → config.unitId(선택 에이전트에 list_devices 조회).
+ * 변경은 onConfigChange 로 draftConfig 에만 기록한다(적용 버튼 전까지 스토어 미반영).
+ */
+function ModbusSettingsSection({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: (config: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const agentId = (panel.config?.agentId as string | undefined) ?? '';
+  const needsUnit = panel.type === 'modbus-device-registers';
+  const currentUnitId = panel.config?.unitId as number | undefined;
+
+  const { data: agentsResult } = useAgents();
+  const gatewayAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'modbus-gateway'),
+    [agentsResult],
+  );
+
+  // 대상 unit 목록은 가상 레지스터 맵 패널에서만 선택 에이전트에 list_devices 로 조회한다.
+  const { devices } = useModbusListDevices(agentId, needsUnit && agentId.length > 0);
+
+  return (
+    <div className="space-y-3">
+      {/* 에이전트 선택(modbus-gateway 만). 변경 시 unit 은 초기화한다. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.agent')}
+        </label>
+        <select
+          value={agentId}
+          data-testid="modbus-settings-agent-select"
+          onChange={(e) =>
+            onConfigChange(
+              needsUnit
+                ? { agentId: e.target.value, unitId: undefined }
+                : { agentId: e.target.value },
+            )
+          }
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">{t('dashboard.settings.selectAgent')}</option>
+          {gatewayAgents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* 대상 unit 선택(가상 디바이스 레지스터 맵 전용). */}
+      {needsUnit && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.modbus.selectUnit')}
+          </label>
+          <select
+            value={currentUnitId !== undefined ? String(currentUnitId) : ''}
+            data-testid="modbus-settings-unit-select"
+            onChange={(e) =>
+              onConfigChange({ unitId: e.target.value === '' ? undefined : Number(e.target.value) })
+            }
+            disabled={!agentId}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+          >
+            <option value="">{t('dashboard.modbus.selectUnitPlaceholder')}</option>
+            {devices.map((d) => (
+              <option key={d.unit_id} value={String(d.unit_id)}>
+                {formatUnitLabel(d.unit_id)} · {d.name || formatUnitLabel(d.unit_id)}
+              </option>
+            ))}
+            {/* 저장된 unit 이 현재 목록에 없어도(에이전트 미실행 등) 선택 상태를 유지한다. */}
+            {currentUnitId !== undefined &&
+              !devices.some((d) => d.unit_id === currentUnitId) && (
+                <option value={String(currentUnitId)}>{formatUnitLabel(currentUnitId)}</option>
+              )}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * MODBUS 패널 프리뷰 — 실제 패널 컴포넌트를 draft config 로 렌더한다(SPEC-MODBUS-012).
+ * 각 패널이 미설정/원격/로딩/에러/빈 상태를 자체 ModbusNotice 로 표시하므로 프리뷰가 blank 가 되지 않는다.
+ */
+function ModbusPanelPreview({ panel }: { panel: PanelConfig }) {
+  const config = panel.config ?? {};
+  const common = { title: panel.title, config };
+  return (
+    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default)">
+      {panel.type === 'modbus-real-devices' && <ModbusRealDevicesPanel {...common} />}
+      {panel.type === 'modbus-virtual-devices' && <ModbusVirtualDevicesPanel {...common} />}
+      {panel.type === 'modbus-shared-registers' && <ModbusSharedRegistersPanel {...common} />}
+      {panel.type === 'modbus-device-registers' && <ModbusDeviceRegistersPanel {...common} />}
+      {panel.type === 'modbus-bus-stats' && <ModbusBusStatsPanel {...common} />}
+      {panel.type === 'modbus-summary-stats' && <ModbusSummaryStatsPanel {...common} />}
     </div>
   );
 }
