@@ -3127,6 +3127,8 @@
       "shared": "Shared (ref device 0)",
       "sharedAddress": "Shared address",
       "overlapHint": "Address ranges overlap.",
+      "emptyRegisterMapError": "This device needs at least one register segment. Add a segment or remove the device. (Shared segments count as area rows too.)",
+      "emptyRegisterMapBanner": "Some devices have no register segments. Saving is blocked until you add at least one segment to each device or remove it. To mirror the shared map, add shared segments — shared segments count as area rows too.",
       "editServedTitle": "Edit device",
       "editSharedTitle": "Edit shared map (device 0)",
       "save": "Save",

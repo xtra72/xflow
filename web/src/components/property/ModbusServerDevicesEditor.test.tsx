@@ -21,7 +21,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import { ModbusServerDevicesEditor, parseBulkSegments } from './ModbusServerDevicesEditor';
+import {
+  ModbusServerDevicesEditor,
+  modbusServerDevicesValid,
+  parseBulkSegments,
+} from './ModbusServerDevicesEditor';
 
 vi.mock('@/lib/i18n', async () => {
   const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
@@ -298,6 +302,55 @@ describe('ModbusServerDevicesEditor', () => {
         },
       },
     ]);
+  });
+
+  // SPEC-MODBUS-008: 세그먼트 0개 디바이스 저장 차단(백엔드 register_map ≥1 영역 규칙).
+  it('세그먼트 0개 디바이스는 경고 배너 + 디바이스별 오류로 표시된다 (저장 차단)', () => {
+    const onChange = vi.fn();
+    // register_map 이 비어있는(세그먼트 0개) 서빙 디바이스.
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 1, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
+    // 상단 경고 배너(role="alert")가 나타난다.
+    const banner = screen.getByRole('alert');
+    expect(banner).toHaveTextContent(/저장할 수 없습니다/);
+
+    // 디바이스별 인라인 오류가 나타난다.
+    expect(
+      screen.getByText(/최소 1개 레지스터 세그먼트가 필요합니다/),
+    ).toBeInTheDocument();
+
+    // 부모(ModbusDevicesSection)의 저장 게이팅에 쓰이는 검증 헬퍼가 invalid 로 판정한다.
+    expect(modbusServerDevicesValid([{ unit_id: 1, register_map: {} }])).toBe(false);
+  });
+
+  it('세그먼트가 있는 디바이스는 경고 배너를 표시하지 않는다', () => {
+    render(
+      <ModbusServerDevicesEditor
+        value={[
+          {
+            unit_id: 1,
+            register_map: { holding_registers: [{ address: 0, count: 4 }] },
+          },
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('공유 컨테이너(디바이스 0)도 세그먼트 0개면 invalid 로 판정한다', () => {
+    // 컨테이너(unit 0) 세그먼트 0 + 서빙 디바이스 세그먼트 있음 → 전체 invalid.
+    expect(
+      modbusServerDevicesValid([
+        { unit_id: 0, register_map: {} },
+        { unit_id: 1, register_map: { coils: [{ address: 0, count: 1 }] } },
+      ]),
+    ).toBe(false);
   });
 
   it('readOnly 모드에서는 추가/삭제 버튼을 숨긴다', () => {
@@ -652,5 +705,48 @@ describe('parseBulkSegments (fc 기반)', () => {
     expect(r.segments.map((s) => s.area)).toEqual(['coils', 'discrete_inputs']);
     // 'bad' 는 3번째 줄(원본), 열 개수 오류.
     expect(r.errors).toEqual([{ line: 3, code: 'wrongColumnCount' }]);
+  });
+});
+
+// SPEC-MODBUS-008: 부모 저장 게이팅 헬퍼(백엔드 register_map ≥1 영역 규칙, config.go:667).
+describe('modbusServerDevicesValid', () => {
+  it('빈 devices 배열은 유효하다 (디바이스 없음)', () => {
+    expect(modbusServerDevicesValid([])).toBe(true);
+    expect(modbusServerDevicesValid(undefined)).toBe(true);
+    expect(modbusServerDevicesValid('')).toBe(true);
+  });
+
+  it('register_map 이 비어있는 디바이스는 invalid', () => {
+    expect(modbusServerDevicesValid([{ unit_id: 1, register_map: {} }])).toBe(false);
+  });
+
+  it('영역이 1개 이상인 디바이스는 valid', () => {
+    expect(
+      modbusServerDevicesValid([
+        { unit_id: 1, register_map: { coils: [{ address: 0, count: 1 }] } },
+      ]),
+    ).toBe(true);
+  });
+
+  it('여러 디바이스 중 하나라도 세그먼트 0개면 invalid', () => {
+    expect(
+      modbusServerDevicesValid([
+        { unit_id: 1, register_map: { coils: [{ address: 0, count: 1 }] } },
+        { unit_id: 2, register_map: {} },
+      ]),
+    ).toBe(false);
+  });
+
+  it('JSON 문자열 value 도 파싱해 검증한다', () => {
+    expect(
+      modbusServerDevicesValid(
+        JSON.stringify([
+          { unit_id: 7, register_map: { holding_registers: [{ address: 0, count: 2 }] } },
+        ]),
+      ),
+    ).toBe(true);
+    expect(
+      modbusServerDevicesValid(JSON.stringify([{ unit_id: 7, register_map: {} }])),
+    ).toBe(false);
   });
 });

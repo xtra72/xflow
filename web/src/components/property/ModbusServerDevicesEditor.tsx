@@ -25,7 +25,7 @@
 // RenameKeyDialog/EditKeyMetaDialog 와 동형)을 그대로 사용한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ClipboardPaste, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ClipboardPaste, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
@@ -416,6 +416,24 @@ function toEmit(state: EditorState): EmittedDevice[] {
 /** 디바이스의 총 세그먼트 수(방출 유효성 시각 힌트용). */
 function segmentCount(d: DeviceRow): number {
   return AREA_KEYS.reduce((n, a) => n + d.areas[a.key].length, 0);
+}
+
+/**
+ * 방출된 devices 값(배열 | JSON 문자열 | 빈 값)이 모두 유효한지 검사한다(부모 저장 게이팅용).
+ *
+ * 백엔드 parseRegisterMapConfig(internal/agent/modbusserver/config.go:667)의 규칙과 정확히
+ * 일치한다: 모든 디바이스(공유 컨테이너 unit 0 + 서빙 디바이스)의 register_map 은 최소 1개
+ * 영역(비어있지 않은 세그먼트 배열)을 가져야 한다. 세그먼트가 0개인 디바이스가 하나라도 있으면
+ * 백엔드가 자동 재시작 시 `register_map must have at least one area`(ErrInvalidRegisterMap)로
+ * 거부하므로, 프론트에서 저장을 차단해 잘못된 config 가 백엔드에 도달하지 못하게 한다.
+ *
+ * 빈 devices 배열(디바이스 없음)은 유효하다 — 백엔드는 devices 없는 서버 생성을 허용한다.
+ * 공유 세그먼트도 영역 행이므로 segmentCount 에 포함된다.
+ */
+export function modbusServerDevicesValid(value: unknown): boolean {
+  const { container, served } = parseValue(value);
+  const all = container ? [container, ...served] : served;
+  return all.every((d) => segmentCount(d) > 0);
 }
 
 /** 한 영역 내 device-local 주소 범위 겹침 여부(시각 힌트용). */
@@ -1556,6 +1574,21 @@ export function ModbusServerDevicesEditor({
     [editTarget, state, emit],
   );
 
+  // 세그먼트 0개 디바이스 검증 (백엔드 register_map ≥1 영역 규칙, config.go:667).
+  // 컨테이너(unit 0) + 서빙 디바이스 모두 대상 — 백엔드 검증은 디바이스별로 동일하게 적용된다.
+  // 세그먼트가 없는 디바이스가 방출되면 백엔드가 자동 재시작 시 거부하므로, 여기서 시각적으로
+  // 표시하고 부모(ModbusDevicesSection)의 저장 버튼을 게이팅한다(modbusServerDevicesValid).
+  const invalidContainer =
+    state.container !== null && segmentCount(state.container) === 0;
+  const invalidServedKeys = useMemo(
+    () =>
+      new Set(
+        state.served.filter((d) => segmentCount(d) === 0).map((d) => d.key),
+      ),
+    [state.served],
+  );
+  const hasInvalidDevice = invalidContainer || invalidServedKeys.size > 0;
+
   // 중복 unit_id 시각 힌트 (서빙 디바이스 목록).
   const duplicateUnitIds = useMemo(() => {
     const seen = new Map<number, number>();
@@ -1586,6 +1619,17 @@ export function ModbusServerDevicesEditor({
 
   return (
     <div className="space-y-4">
+      {/* 세그먼트 0개 디바이스 경고 배너 (백엔드 register_map ≥1 영역 규칙 위반 → 저장 차단) */}
+      {hasInvalidDevice && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-md border border-red-400 bg-red-50 px-3 py-2 text-[11px] text-red-600 dark:border-red-500/50 dark:bg-red-900/20 dark:text-red-400"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{t('property.modbusServerDevices.emptyRegisterMapBanner')}</span>
+        </div>
+      )}
+
       {/* 공유 맵 (디바이스 0) 섹션 */}
       <div className="space-y-2">
         <span className={fieldLabel}>
@@ -1593,7 +1637,15 @@ export function ModbusServerDevicesEditor({
         </span>
 
         {state.container ? (
-          <div className="flex items-center justify-between rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
+          <>
+          <div
+            className={cn(
+              'flex items-center justify-between rounded-md border bg-(--color-bg-surface) px-3 py-2',
+              invalidContainer
+                ? 'border-red-400 dark:border-red-500'
+                : 'border-(--color-border-default)',
+            )}
+          >
             <div className="min-w-0">
               <span className="text-xs font-semibold text-(--color-text-secondary)">
                 {t('property.modbusServerDevices.sharedMap')}
@@ -1628,6 +1680,12 @@ export function ModbusServerDevicesEditor({
               )}
             </div>
           </div>
+          {invalidContainer && (
+            <p className="text-[11px] text-red-500 dark:text-red-400">
+              {t('property.modbusServerDevices.emptyRegisterMapError')}
+            </p>
+          )}
+          </>
         ) : (
           !readOnly && (
             <button
@@ -1656,10 +1714,16 @@ export function ModbusServerDevicesEditor({
 
         {state.served.map((device, idx) => {
           const isDuplicate = duplicateUnitIds.has(device.unitId);
+          const isEmpty = invalidServedKeys.has(device.key);
           return (
+            <div key={device.key} className="space-y-1">
             <div
-              key={device.key}
-              className="flex items-center justify-between rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
+              className={cn(
+                'flex items-center justify-between rounded-md border bg-(--color-bg-surface) px-3 py-2',
+                isEmpty
+                  ? 'border-red-400 dark:border-red-500'
+                  : 'border-(--color-border-default)',
+              )}
             >
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-(--color-text-secondary)">
@@ -1706,6 +1770,12 @@ export function ModbusServerDevicesEditor({
                   </button>
                 )}
               </div>
+            </div>
+            {isEmpty && (
+              <p className="text-[11px] text-red-500 dark:text-red-400">
+                {t('property.modbusServerDevices.emptyRegisterMapError')}
+              </p>
+            )}
             </div>
           );
         })}

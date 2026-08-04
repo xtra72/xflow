@@ -47,7 +47,10 @@ import {
 import type { ConfigSchema, ConfigSection } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
-import { ModbusServerDevicesEditor } from '@/components/property/ModbusServerDevicesEditor';
+import {
+  ModbusServerDevicesEditor,
+  modbusServerDevicesValid,
+} from '@/components/property/ModbusServerDevicesEditor';
 import {
   DeviceEditDialog,
   newDeviceRow,
@@ -1368,6 +1371,12 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const [draft, setDraft] = useState<unknown>(savedDevices);
   const [dirty, setDirty] = useState(false);
 
+  // 세그먼트 0개 디바이스가 하나라도 있으면 저장을 차단한다. 백엔드 parseRegisterMapConfig
+  // (config.go:667)는 모든 디바이스의 register_map 이 최소 1개 영역을 갖도록 요구하며,
+  // 위반 시 자동 재시작이 ErrInvalidRegisterMap 으로 실패한다. 여기서 막아 잘못된 config 가
+  // 백엔드에 도달하지 못하게 한다(에디터의 시각 경고와 동일 규칙).
+  const devicesValid = useMemo(() => modbusServerDevicesValid(draft), [draft]);
+
   // 외부 config 로드/변경 시(저장 후 refetch 포함) 드래프트를 동기화한다.
   useEffect(() => {
     setDraft(savedDevices);
@@ -1376,6 +1385,14 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
 
   const handleSave = useCallback(async () => {
     const devices = Array.isArray(draft) ? draft : [];
+    // 방어적 가드: 저장 버튼이 게이팅되지만 프로그램적 호출도 차단해 잘못된 config 방출을 막는다.
+    if (!modbusServerDevicesValid(devices)) {
+      addNotification({
+        type: 'error',
+        message: t('property.modbusServerDevices.emptyRegisterMapBanner'),
+      });
+      return;
+    }
     try {
       await configureAgent.mutateAsync({
         id: agentId,
@@ -1513,7 +1530,12 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             <button
               type="button"
               onClick={handleSave}
-              disabled={!dirty || configureAgent.isPending}
+              disabled={!dirty || configureAgent.isPending || !devicesValid}
+              title={
+                !devicesValid
+                  ? t('property.modbusServerDevices.emptyRegisterMapBanner')
+                  : undefined
+              }
               className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {configureAgent.isPending
