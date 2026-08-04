@@ -1184,13 +1184,30 @@ func (a *ModbusServerAgent) processGetStatus() ([]byte, error) {
 func (a *ModbusServerAgent) processListDevices() ([]byte, error) {
 	devices := a.deviceManager.GetAllDevices()
 
+	// 백킹 맵을 한 번만 RLock 으로 스냅샷하여 루프 내 락 경합을 줄인다(SPEC-MODBUS-012 M3).
+	a.mu.RLock()
+	backings := make(map[byte]*deviceBacking, len(a.backings))
+	for uid, b := range a.backings {
+		backings[uid] = b
+	}
+	a.mu.RUnlock()
+
 	devList := make([]map[string]any, 0, len(devices))
 	for _, dev := range devices {
+		// backed/mode: 실제(upstream) 백킹 여부와 모드. 비백킹은 backed=false, mode="".
+		backed := false
+		mode := ""
+		if b := backings[dev.UnitID]; b != nil && b.store != nil {
+			backed = true
+			mode = b.store.modeString()
+		}
 		devList = append(devList, map[string]any{
 			"unit_id":         dev.UnitID,
 			"name":            dev.Name,
 			"register_counts": dev.RegisterMap.RegisterCounts(),
 			"status":          "active",
+			"backed":          backed,
+			"mode":            mode,
 			"stats": map[string]any{
 				"read_count":  dev.Stats.ReadCount.Load(),
 				"write_count": dev.Stats.WriteCount.Load(),
@@ -1403,6 +1420,27 @@ func (a *ModbusServerAgent) processGetDeviceStatus(req *processRequest) ([]byte,
 			"last_access": lastAccessStr,
 		},
 	}
+
+	// backing: 실제(upstream) 백킹 관측 메트릭(SPEC-MODBUS-012 M3, REQ-06-02).
+	// 백킹 디바이스면 서브객체를, 비백킹(순수 slave)이면 null 을 반환한다(하위 호환).
+	// DeviceStats(위 stats, 마스터→게이트웨이 서빙측)와는 별개의 게이트웨이→upstream 통계다.
+	a.mu.RLock()
+	backing := a.backings[byte(uid)]
+	a.mu.RUnlock()
+	if backing != nil && backing.store != nil {
+		m := backing.store.metrics()
+		resp["backing"] = map[string]any{
+			"mode":           m.Mode,
+			"connected":      m.Connected,
+			"request_count":  m.RequestCount,
+			"error_count":    m.ErrorCount,
+			"avg_latency_ms": m.AvgLatencyMs,
+			"last_ok":        m.LastOKMillis,
+		}
+	} else {
+		resp["backing"] = nil
+	}
+
 	return json.Marshal(resp)
 }
 

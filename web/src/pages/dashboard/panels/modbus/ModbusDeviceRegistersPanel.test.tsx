@@ -1,0 +1,86 @@
+// SPEC-MODBUS-012 M4 (REQ-05, AC-12/13 + AC-03 graceful): 가상 디바이스 레지스터 맵 패널.
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+
+import type { ModbusDeviceStatus } from './useModbusData';
+
+const mockState = vi.hoisted(() => ({
+  gate: { agentId: 'gw-1', remote: false, bound: true, enabled: true },
+  status: undefined as ModbusDeviceStatus | undefined,
+  isLoading: false,
+  isError: false,
+  lastUnitId: -1,
+}));
+
+vi.mock('./useModbusData', async () => {
+  const actual = await vi.importActual<typeof import('./useModbusData')>('./useModbusData');
+  return {
+    ...actual,
+    useModbusGate: () => mockState.gate,
+    useModbusDeviceStatus: (_agentId: string, unitId: number) => {
+      mockState.lastUnitId = unitId;
+      return {
+        status: mockState.status,
+        isLoading: mockState.isLoading,
+        isError: mockState.isError,
+      };
+    },
+  };
+});
+
+vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
+
+import ModbusDeviceRegistersPanel from './ModbusDeviceRegistersPanel';
+
+function renderPanel(config: Record<string, unknown> = { agentId: 'gw-1', unitId: 2 }) {
+  return render(<ModbusDeviceRegistersPanel title="가상 레지스터" config={config} />);
+}
+
+function status(unitId: number): ModbusDeviceStatus {
+  return {
+    unit_id: unitId,
+    name: `U${unitId}`,
+    register_counts: { coils: 0, discrete_inputs: 0, holding_registers: 3, input_registers: 0 },
+    register_map: { holding_registers: { '0': 0, '1': 123 } },
+    stats: { read_count: 0, write_count: 0, error_count: 0 },
+    backing: null,
+  };
+}
+
+describe('ModbusDeviceRegistersPanel (SPEC-MODBUS-012 REQ-05)', () => {
+  beforeEach(() => {
+    mockState.gate = { agentId: 'gw-1', remote: false, bound: true, enabled: true };
+    mockState.status = undefined;
+    mockState.isLoading = false;
+    mockState.isError = false;
+    mockState.lastUnitId = -1;
+  });
+
+  it('AC-03: agentId 미설정 시 안내', () => {
+    mockState.gate = { agentId: '', remote: false, bound: false, enabled: false };
+    renderPanel();
+    expect(screen.getByText('dashboard.modbus.notConfigured')).toBeInTheDocument();
+  });
+
+  it('AC-12: config.unitId 로 get_device_status 를 조회한다', () => {
+    mockState.status = status(2);
+    renderPanel({ agentId: 'gw-1', unitId: 2 });
+    expect(mockState.lastUnitId).toBe(2);
+  });
+
+  it('AC-12/13: 레지스터 맵을 4영역 그리드(공유 컴포넌트)로 렌더한다', () => {
+    mockState.status = status(2);
+    renderPanel({ agentId: 'gw-1', unitId: 2 });
+    expect(screen.getByTestId('modbus-grid-area-holding_registers')).toBeInTheDocument();
+    // register_counts=3, 스냅샷 2 → degraded 1(공유 로직 재사용, AC-13).
+    expect(screen.getByTestId('modbus-grid-degraded-holding_registers')).toHaveTextContent('1');
+    expect(screen.getByTestId('modbus-grid-active-holding_registers')).toHaveTextContent('1');
+  });
+
+  it('조회 에러 시 안내', () => {
+    mockState.isError = true;
+    renderPanel();
+    expect(screen.getByText('dashboard.modbus.loadError')).toBeInTheDocument();
+  });
+});

@@ -39,6 +39,18 @@ type backedStore struct {
 	mode      backingMode
 	timeout   time.Duration
 	lastOK    atomic.Int64 // indirect: 마지막 성공 폴 시각(UnixNano); direct 미사용
+
+	// ---- 관측 메트릭 (SPEC-MODBUS-012 M3, REQ-06-01) ----
+	//
+	// 아래 카운터는 게이트웨이→upstream(실제 디바이스) 통신 통계이며, 마스터→게이트웨이
+	// 서빙 통계인 DeviceStats(device_manager.go)와는 별개다(혼동 금지). 계측점은 단일
+	// upstream 호출 지점 sendUpstream 하나뿐이므로 폴러 goroutine(indirect)과 서빙
+	// goroutine(direct)이 동시에 증가시킬 수 있으나 전부 atomic 이라 race-safe 하다.
+	reqCount   atomic.Int64 // upstream 요청 총수(성공+실패)
+	errCount   atomic.Int64 // upstream 트랜스포트 실패 총수(SendAndReceive 오류)
+	latencyNs  atomic.Int64 // upstream 누적 왕복 레이턴시(ns); avg = latencyNs/reqCount
+	lastReqOK  atomic.Int64 // 마지막 성공 upstream 요청 시각(UnixNano); direct last_ok/connected 판정 소스
+	lastReqErr atomic.Bool  // 직전 upstream 요청이 실패했는지; direct connected 판정 소스
 }
 
 // backingMode 는 백킹 동작 모드이다.
@@ -211,6 +223,75 @@ func (bs *backedStore) recordPollSuccess(t time.Time) {
 }
 
 // ---------------------------------------------------------------------------
+// 관측 메트릭 스냅샷 (SPEC-MODBUS-012 M3, REQ-06-02) — agent.go 노출용
+// ---------------------------------------------------------------------------
+
+// backingMetrics 는 백킹(upstream) 관측 메트릭의 스냅샷이다. get_device_status 의 backing
+// 서브객체로 직렬화된다. LastOKMillis 는 epoch 밀리초(프로젝트 타임스탬프 규약)이며 0 이면
+// 성공 이력이 없음을 뜻한다.
+type backingMetrics struct {
+	Mode         string  // "direct" | "indirect"
+	Connected    bool    // 연결/유효 상태(모드별 판정)
+	RequestCount int64   // upstream 요청 총수
+	ErrorCount   int64   // upstream 실패 총수
+	AvgLatencyMs float64 // 평균 왕복 레이턴시(ms); 요청 0 이면 0
+	LastOKMillis int64   // 마지막 성공 시각(epoch ms); 0=없음
+}
+
+// modeString 은 백킹 모드를 config 상수 문자열("direct"|"indirect")로 반환한다.
+func (bs *backedStore) modeString() string {
+	if bs.mode == backingIndirect {
+		return BackingModeIndirect
+	}
+	return BackingModeDirect
+}
+
+// isConnected 는 모드별로 연결/유효 상태를 판정한다.
+//   - indirect: 폴 신선도 기준. stale(마지막 성공 폴 초과)이 아니면 연결로 본다(!isStale).
+//   - direct  : 마지막 upstream 요청 성공 여부 기준. 요청 이력이 없으면(reqCount==0)
+//     트랜스포트 연결 상태(IsConnected)로 대체한다.
+func (bs *backedStore) isConnected() bool {
+	if bs.mode == backingIndirect {
+		return !bs.isStale()
+	}
+	if bs.reqCount.Load() == 0 {
+		return bs.transport.IsConnected()
+	}
+	return !bs.lastReqErr.Load()
+}
+
+// metrics 는 관측 카운터의 원자적 스냅샷을 반환한다. 모든 필드는 atomic 로드로
+// 취득하므로 폴러/서빙 goroutine 과 동시 호출해도 race-safe 하다.
+func (bs *backedStore) metrics() backingMetrics {
+	req := bs.reqCount.Load()
+	var avgMs float64
+	if req > 0 {
+		avgMs = float64(bs.latencyNs.Load()) / float64(req) / 1e6
+	}
+
+	// 마지막 성공 시각: indirect 는 폴 성공(lastOK), direct 는 요청 성공(lastReqOK) 기준.
+	var lastNs int64
+	if bs.mode == backingIndirect {
+		lastNs = bs.lastOK.Load()
+	} else {
+		lastNs = bs.lastReqOK.Load()
+	}
+	var lastMs int64
+	if lastNs > 0 {
+		lastMs = lastNs / int64(time.Millisecond)
+	}
+
+	return backingMetrics{
+		Mode:         bs.modeString(),
+		Connected:    bs.isConnected(),
+		RequestCount: req,
+		ErrorCount:   bs.errCount.Load(),
+		AvgLatencyMs: avgMs,
+		LastOKMillis: lastMs,
+	}
+}
+
+// ---------------------------------------------------------------------------
 // upstream 통신 헬퍼 (PDU 조립/디코딩)
 // ---------------------------------------------------------------------------
 //
@@ -220,10 +301,27 @@ func (bs *backedStore) recordPollSuccess(t time.Time) {
 // (decodeCoilBits/decodeRegisterBytes)를 재사용한다. 신규 외부 라이브러리는 도입하지 않는다.
 
 // sendUpstream 은 timeout 데드라인 하에서 upstream 에 순수 PDU 를 전송하고 응답 PDU 를 받는다.
+//
+// 모든 upstream 헬퍼(upstreamReadRegisters/upstreamReadBits/upstreamWrite*)가 이 함수를
+// 경유하므로, 관측 메트릭(요청 수·에러 수·레이턴시)을 여기 단일 지점에서 계측한다
+// (SPEC-MODBUS-012 M3, REQ-06-01). 에러 판정은 트랜스포트 SendAndReceive 결과 기준이며,
+// MODBUS 예외 응답(fc&0x80)은 상위 파서가 별도 처리하므로 errCount 에 포함되지 않는다.
 func (bs *backedStore) sendUpstream(pdu []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), bs.timeout)
 	defer cancel()
-	return bs.transport.SendAndReceive(ctx, bs.upUnitID, pdu)
+
+	start := time.Now()
+	resp, err := bs.transport.SendAndReceive(ctx, bs.upUnitID, pdu)
+	bs.reqCount.Add(1)
+	bs.latencyNs.Add(int64(time.Since(start)))
+	if err != nil {
+		bs.errCount.Add(1)
+		bs.lastReqErr.Store(true)
+		return resp, err
+	}
+	bs.lastReqErr.Store(false)
+	bs.lastReqOK.Store(time.Now().UnixNano())
+	return resp, nil
 }
 
 // upstreamReadRegisters 는 FC03/FC04 읽기 요청을 upstream 에 보내 레지스터 값을 조회한다.

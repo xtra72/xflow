@@ -200,7 +200,15 @@ export type PanelType =
   // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
   | 'trigger-config'
   // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(규칙 테이블 + 모달). trigger-config 와 공존.
-  | 'facility-schedule';
+  | 'facility-schedule'
+  // SPEC-MODBUS-012 M1: MODBUS Gateway 대시보드 패널 스위트 6종.
+  // 모두 modbus-gateway 에이전트에 바인딩(config.agentId)되며 레지스터 맵 2종은 관측 전용이다.
+  | 'modbus-real-devices' // 실제 연결(upstream 백킹) 디바이스 목록
+  | 'modbus-virtual-devices' // 가상 디바이스(U01~) 목록
+  | 'modbus-shared-registers' // 공유(unit 0) 레지스터 맵 그리드
+  | 'modbus-device-registers' // 가상 디바이스(unitId) 레지스터 맵 그리드
+  | 'modbus-bus-stats' // 버스 통계 미니차트
+  | 'modbus-summary-stats'; // 종합 통계 바
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -298,6 +306,18 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
     // SPEC-TRIGGER-SCHED-001 M2: 예약 규칙 테이블(6컬럼). 가로로 넓은 카드.
     case 'facility-schedule':
       return { w: 8, h: 6, minW: 5, minH: 4 };
+    // SPEC-MODBUS-012 M1: MODBUS Gateway 패널 6종(목업 레이아웃 부합).
+    // 레지스터 맵 그리드는 넓게, 목록은 세로로, 미니차트/요약 바는 낮게.
+    case 'modbus-shared-registers':
+    case 'modbus-device-registers':
+      return { w: 6, h: 5, minW: 4, minH: 3 };
+    case 'modbus-real-devices':
+    case 'modbus-virtual-devices':
+      return { w: 4, h: 5, minW: 3, minH: 3 };
+    case 'modbus-bus-stats':
+      return { w: 6, h: 3, minW: 3, minH: 2 };
+    case 'modbus-summary-stats':
+      return { w: 8, h: 2, minW: 4, minH: 2 };
     case 'line-chart':
       // SPEC REQ-M5-05: line-chart {w:6, h:3}
       return { w: 6, h: 3, minW: 3, minH: 2 };
@@ -442,6 +462,20 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     // 예약 규칙(스케줄 + 확장 메타 + 제어 payload)은 노드 config 가 SSOT 이므로 복제하지 않는다.
     case 'facility-schedule':
       return { type, title: '설비 제어 예약', config: { flowId: '', nodeId: '', agentId: '' } };
+    // SPEC-MODBUS-012 M1: MODBUS Gateway 패널 6종. 모두 modbus-gateway 에이전트에 바인딩된다.
+    // 가상 디바이스 레지스터 맵만 대상 unit(unitId)을 추가로 저장한다(2차 선택 스텝).
+    case 'modbus-real-devices':
+      return { type, title: '실제 디바이스', config: { agentId: '' } };
+    case 'modbus-virtual-devices':
+      return { type, title: '가상 디바이스', config: { agentId: '' } };
+    case 'modbus-shared-registers':
+      return { type, title: '공유 레지스터 맵', config: { agentId: '' } };
+    case 'modbus-device-registers':
+      return { type, title: '가상 디바이스 레지스터', config: { agentId: '', unitId: 0 } };
+    case 'modbus-bus-stats':
+      return { type, title: '버스 통계', config: { agentId: '' } };
+    case 'modbus-summary-stats':
+      return { type, title: '종합 통계', config: { agentId: '' } };
   }
 }
 

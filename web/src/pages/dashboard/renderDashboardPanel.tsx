@@ -37,6 +37,12 @@ import FacilityLinePanel from './panels/FacilityLinePanel';
 import FacilityGroupPanel from './panels/FacilityGroupPanel';
 import TriggerConfigPanel from './panels/TriggerConfigPanel';
 import FacilitySchedulePanel from './panels/facilitySchedule/FacilitySchedulePanel';
+import ModbusRealDevicesPanel from './panels/modbus/ModbusRealDevicesPanel';
+import ModbusVirtualDevicesPanel from './panels/modbus/ModbusVirtualDevicesPanel';
+import ModbusSharedRegistersPanel from './panels/modbus/ModbusSharedRegistersPanel';
+import ModbusDeviceRegistersPanel from './panels/modbus/ModbusDeviceRegistersPanel';
+import ModbusBusStatsPanel from './panels/modbus/ModbusBusStatsPanel';
+import ModbusSummaryStatsPanel from './panels/modbus/ModbusSummaryStatsPanel';
 import StatPanel from './panels/charts/StatPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import BarChartPanel from './panels/charts/BarChartPanel';
@@ -246,6 +252,20 @@ export function renderDashboardPanel(
       return <PieChartPanel panelId={panel.id} config={panel.config} />;
     case 'table':
       return <TablePanel panelId={panel.id} config={panel.config} />;
+    // SPEC-MODBUS-012 M1/M2/M4/M5: MODBUS Gateway 패널 6종(전부 실제 구현).
+    // M2: 실제/가상 디바이스 목록. M4: 공유/가상 레지스터 맵 그리드. M5: 버스/종합 통계.
+    case 'modbus-real-devices':
+      return <ModbusRealDevicesPanel title={panel.title} config={panel.config} />;
+    case 'modbus-virtual-devices':
+      return <ModbusVirtualDevicesPanel title={panel.title} config={panel.config} />;
+    case 'modbus-shared-registers':
+      return <ModbusSharedRegistersPanel title={panel.title} config={panel.config} />;
+    case 'modbus-device-registers':
+      return <ModbusDeviceRegistersPanel title={panel.title} config={panel.config} />;
+    case 'modbus-bus-stats':
+      return <ModbusBusStatsPanel title={panel.title} config={panel.config} />;
+    case 'modbus-summary-stats':
+      return <ModbusSummaryStatsPanel title={panel.title} config={panel.config} />;
     // 잔여 플레이스홀더 패널 타입들 (text, custom-control)
     case 'text':
     case 'custom-control':

@@ -32,12 +32,16 @@ import {
   Layers,
   AlarmClock,
   CalendarClock,
+  Grid3x3,
+  PlugZap,
+  Gauge,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { useUIStore, type PanelType } from '@/stores/uiStore';
 import { useDevices } from '@/hooks/useDevice';
 import { useAgents } from '@/hooks/useAgent';
+import { useModbusListDevices, formatUnitLabel } from '@/pages/dashboard/panels/modbus/useModbusData';
 import { useStations, useXsfmDevices } from '@/hooks/useStation';
 import { useGroups } from '@/hooks/useGroups';
 import { useNodeTypeInstances } from '@/hooks/useNodeTypeInstances';
@@ -88,6 +92,8 @@ interface PanelOption {
   needsTriggerNode?: boolean;
   /** 설비 제어 예약(trigger 노드 + xsfm 에이전트) 선택 스텝이 필요한 유형 (SPEC-TRIGGER-SCHED-001 M2) */
   needsFacilitySchedule?: boolean;
+  /** modbus-gateway 에이전트 선택 스텝이 필요한 유형 (SPEC-MODBUS-012 M1). 가상 레지스터 맵은 unit 2차 선택. */
+  needsAgent?: boolean;
   /**
    * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
    * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
@@ -121,6 +127,13 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     { type: 'trigger-config', icon: AlarmClock, labelKey: 'dashboard.panelTypes.triggerConfig', descriptionKey: 'dashboard.addPanel.descriptions.triggerConfig', needsTriggerNode: true },
     { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
     { type: 'properties-grid', icon: LayoutGrid, labelKey: 'dashboard.addPanel.labels.propertiesGrid', descriptionKey: 'dashboard.addPanel.descriptions.propertiesGrid', needsDevice: true },
+    // SPEC-MODBUS-012 M1: MODBUS Gateway 패널 6종(모두 modbus-gateway 에이전트에 바인딩).
+    { type: 'modbus-real-devices', icon: PlugZap, labelKey: 'dashboard.panelTypes.modbusRealDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusRealDevices', needsAgent: true },
+    { type: 'modbus-virtual-devices', icon: Cpu, labelKey: 'dashboard.panelTypes.modbusVirtualDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusVirtualDevices', needsAgent: true },
+    { type: 'modbus-shared-registers', icon: Grid3x3, labelKey: 'dashboard.panelTypes.modbusSharedRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusSharedRegisters', needsAgent: true },
+    { type: 'modbus-device-registers', icon: LayoutGrid, labelKey: 'dashboard.panelTypes.modbusDeviceRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusDeviceRegisters', needsAgent: true },
+    { type: 'modbus-bus-stats', icon: Activity, labelKey: 'dashboard.panelTypes.modbusBusStats', descriptionKey: 'dashboard.addPanel.descriptions.modbusBusStats', needsAgent: true },
+    { type: 'modbus-summary-stats', icon: Gauge, labelKey: 'dashboard.panelTypes.modbusSummaryStats', descriptionKey: 'dashboard.addPanel.descriptions.modbusSummaryStats', needsAgent: true },
   ],
   chart: [
     { type: 'stat', icon: Hash, labelKey: 'dashboard.panelTypes.stat', descriptionKey: 'dashboard.addPanel.descriptions.stat' },
@@ -170,7 +183,7 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
   const [step, setStep] = useState<
-    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node' | 'facility-schedule'
+    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node' | 'facility-schedule' | 'modbus-agent'
   >('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
@@ -192,7 +205,8 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
           step === 'chart-config' ||
           step === 'facility' ||
           step === 'trigger-node' ||
-          step === 'facility-schedule'
+          step === 'facility-schedule' ||
+          step === 'modbus-agent'
         ) {
           setStep('type');
           setSelectedType(null);
@@ -233,6 +247,12 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (option.needsFacilitySchedule) {
       setSelectedType(option.type);
       setStep('facility-schedule');
+      return;
+    }
+    // SPEC-MODBUS-012 M1: modbus-gateway 에이전트 선택 스텝(가상 레지스터 맵은 unit 2차 선택).
+    if (option.needsAgent) {
+      setSelectedType(option.type);
+      setStep('modbus-agent');
       return;
     }
     if (option.presetConfig) {
@@ -284,6 +304,14 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     title: string,
   ) => {
     addPanelWithConfig('facility-schedule', { flowId, nodeId, agentId }, title);
+    onClose();
+  };
+
+  // MODBUS Gateway 패널 대상 선택 완료 처리 (SPEC-MODBUS-012 M1).
+  // 선택한 modbus-gateway 에이전트(+ 가상 레지스터 맵은 unitId)를 config 로 저장한다.
+  const handleModbusConfirm = (config: Record<string, unknown>, title?: string) => {
+    if (!selectedType) return;
+    addPanelWithConfig(selectedType, config, title);
     onClose();
   };
 
@@ -353,6 +381,17 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
         {step === 'facility-schedule' && (
           <FacilityScheduleStep
             onConfirm={handleFacilityScheduleConfirm}
+            onBack={() => {
+              setStep('type');
+              setSelectedType(null);
+            }}
+            onClose={onClose}
+          />
+        )}
+        {step === 'modbus-agent' && selectedType && (
+          <ModbusAgentStep
+            panelType={selectedType}
+            onConfirm={handleModbusConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -1173,6 +1212,160 @@ function FacilityScheduleStep({
             ))}
           </div>
         )}
+      </div>
+    </>
+  );
+}
+
+// ---- Step: MODBUS Gateway 에이전트 선택 (SPEC-MODBUS-012 M1) ----
+
+/**
+ * MODBUS Gateway 패널 대상 선택 스텝. modbus-gateway 에이전트를 필터해 제시하고
+ * (FacilityStep 의 xsfm 필터를 gateway 로 미러링), 완료 시 { agentId } 를 config 로 저장한다.
+ * 가상 디바이스 레지스터 맵(modbus-device-registers)만 2차로 대상 unit 을 선택해 unitId 를 추가한다
+ * (선택된 에이전트에 list_devices 를 조회).
+ */
+function ModbusAgentStep({
+  panelType,
+  onConfirm,
+  onBack,
+  onClose,
+}: {
+  panelType: PanelType;
+  onConfirm: (config: Record<string, unknown>, title?: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [agentId, setAgentId] = useState('');
+  const [unitId, setUnitId] = useState('');
+
+  const { data: agentsResult } = useAgents();
+  const gatewayAgents = useMemo(
+    () => (agentsResult?.data ?? []).filter((a) => a.type === 'modbus-gateway'),
+    [agentsResult],
+  );
+
+  // 가상 디바이스 레지스터 맵만 unit 2차 선택. 그 외 5종은 에이전트만 선택한다.
+  const needsUnit = panelType === 'modbus-device-registers';
+  const { devices } = useModbusListDevices(agentId, needsUnit && agentId.length > 0);
+
+  const selectedAgentName = gatewayAgents.find((a) => a.id === agentId)?.name;
+  const canSave = agentId.length > 0 && (!needsUnit || unitId.length > 0);
+
+  const handleConfirm = () => {
+    if (!canSave) return;
+    const config = needsUnit ? { agentId, unitId: Number(unitId) } : { agentId };
+    onConfirm(config, selectedAgentName);
+  };
+
+  return (
+    <>
+      {/* 헤더 */}
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label={t('dashboard.addPanel.backAria')}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <h2 className="text-lg font-semibold text-(--color-text-primary)">
+            {t('dashboard.addPanel.selectModbusGateway')}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          aria-label={t('dashboard.addPanel.closeAria')}
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* 본문 */}
+      <div className="space-y-4 px-5 py-4">
+        {/* 에이전트 선택(modbus-gateway 만) */}
+        <div>
+          <label
+            htmlFor="modbus-agent-select"
+            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+          >
+            {t('dashboard.settings.agent')} <span className="text-red-500">*</span>
+          </label>
+          <select
+            id="modbus-agent-select"
+            data-testid="modbus-agent-select"
+            value={agentId}
+            onChange={(e) => {
+              setAgentId(e.target.value);
+              setUnitId('');
+            }}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">{t('dashboard.settings.selectAgent')}</option>
+            {gatewayAgents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* 대상 unit 선택(가상 디바이스 레지스터 맵 전용, 2차 스텝) */}
+        {needsUnit && (
+          <div>
+            <label
+              htmlFor="modbus-unit-select"
+              className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+            >
+              {t('dashboard.modbus.selectUnit')} <span className="text-red-500">*</span>
+            </label>
+            <select
+              id="modbus-unit-select"
+              data-testid="modbus-unit-select"
+              value={unitId}
+              onChange={(e) => setUnitId(e.target.value)}
+              disabled={!agentId}
+              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+            >
+              <option value="">{t('dashboard.modbus.selectUnitPlaceholder')}</option>
+              {devices.map((d) => (
+                <option key={d.unit_id} value={String(d.unit_id)}>
+                  {formatUnitLabel(d.unit_id)} · {d.name || formatUnitLabel(d.unit_id)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* 푸터 */}
+      <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-4 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default)"
+        >
+          {t('dashboard.addPanel.previous')}
+        </button>
+        <button
+          type="button"
+          data-testid="modbus-save"
+          onClick={handleConfirm}
+          disabled={!canSave}
+          className={cn(
+            'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
+            canSave
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
+          )}
+        >
+          {t('dashboard.addPanel.save')}
+        </button>
       </div>
     </>
   );

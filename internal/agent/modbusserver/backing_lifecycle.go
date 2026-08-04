@@ -21,6 +21,7 @@ type upstreamTransportFactory func(cfg *BackingConfig, logger *slog.Logger) (mod
 type deviceBacking struct {
 	transport modbus.ModbusTransport
 	poller    *devicePoller // indirect 만 존재; direct 는 nil
+	store     *backedStore  // 관측 메트릭 조회용 참조(SPEC-MODBUS-012 M3); agent.go 가 backing 노출에 사용
 }
 
 // setupBacking 은 백킹 설정에 따라 upstream 트랜스포트를 구성·연결하고 backedStore 로
@@ -54,7 +55,8 @@ func (a *ModbusServerAgent) setupBacking(ctx context.Context, inner *RegisterMap
 	bs := newBackedStore(inner, transport, bc)
 	handler := newRequestHandlerWithStore(bs, a.logger)
 
-	backing := &deviceBacking{transport: transport}
+	// store 참조를 보관하여 agent.go 가 unit_id 별 관측 메트릭을 조회할 수 있게 한다.
+	backing := &deviceBacking{transport: transport, store: bs}
 	if bs.mode == backingIndirect {
 		backing.poller = startPoller(ctx, bs, pollTargetsFromConfig(rmCfg), bc.PollInterval, a.logger)
 	}
