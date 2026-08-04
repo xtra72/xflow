@@ -58,10 +58,13 @@ import {
 import BulkRegisterPanel from './BulkRegisterPanel';
 import {
   EMPTY_SEGMENTS,
+  INVALID_FC,
   INVALID_GROUP,
   INVALID_PORT,
   INVALID_SEGMENT,
+  INVALID_SHARED_ADDRESS,
   INVALID_UNIT_ID,
+  NO_CURRENT_DEVICE,
   useModbusClientBulkAdd,
   useModbusGatewayBulkAdd,
 } from '@/hooks/useModbusBulk';
@@ -1291,10 +1294,16 @@ function modbusBulkReason(reason: string, t: TranslationFn): string {
       return t('agents.detail.devices.bulk.reasonInvalidUnitId');
     case INVALID_PORT:
       return t('agents.detail.devices.bulk.reasonInvalidPort');
+    case INVALID_FC:
+      return t('agents.detail.devices.bulk.reasonInvalidFc');
     case INVALID_GROUP:
       return t('agents.detail.devices.bulk.reasonInvalidGroup');
     case INVALID_SEGMENT:
       return t('agents.detail.devices.bulk.reasonInvalidSegment');
+    case INVALID_SHARED_ADDRESS:
+      return t('agents.detail.devices.bulk.reasonInvalidSharedAddress');
+    case NO_CURRENT_DEVICE:
+      return t('agents.detail.devices.bulk.reasonNoCurrentDevice');
     case EMPTY_SEGMENTS:
       return t('agents.detail.devices.bulk.reasonEmptySegments');
     default:

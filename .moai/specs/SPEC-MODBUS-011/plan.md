@@ -28,8 +28,8 @@ xsfm 장치탭의 검증된 일괄 등록 패턴(공용 `BulkRegisterPanel` + `p
 
 | 파일 | 변경 | 내용 |
 | ---- | ---- | ---- |
-| `web/src/hooks/useModbusBulk.ts` (신규) | 신규 | 순수 파서 `parseModbusClientBulk`/`parseModbusGatewayBulk` + 실행 훅 `useModbusClientBulkAdd`/`useModbusGatewayBulkAdd`. modbus sentinel(예: `INVALID_UNIT_ID`, `INVALID_SEGMENT`, `EMPTY_SEGMENTS`) 정의. |
-| `web/src/hooks/useModbusBulk.test.ts` (신규) | 신규 | 두 파서 순수 함수 단위 테스트(정상/헤더 스킵/필수 누락/무효 fc·area·정수/그룹·세그먼트 다중). |
+| `web/src/hooks/useModbusBulk.ts` (신규) | 신규 | 순수 파서 `parseModbusClientBulk`/`parseModbusGatewayBulk`(한 행=그룹/세그먼트, 신원 컬럼 그룹핑) + 실행 훅 `useModbusClientBulkAdd`/`useModbusGatewayBulkAdd`. modbus sentinel(`INVALID_UNIT_ID`, `INVALID_PORT`, `INVALID_FC`, `INVALID_GROUP`, `INVALID_SEGMENT`, `INVALID_SHARED_ADDRESS`, `NO_CURRENT_DEVICE`, `EMPTY_SEGMENTS`) 정의. |
+| `web/src/hooks/useModbusBulk.test.ts` (신규) | 신규 | 두 파서 순수 함수 단위 테스트(정상/헤더 스킵/다중 행 그룹핑·이어붙임/필수 누락/무효 fc·정수/shared 세그먼트/실패 행). |
 | `web/src/pages/agents/AgentDetailPanel.tsx` | 편집 | `ModbusClientDevicesSection`·`ModbusDevicesSection`에 showBulk 토글·bulkText 상태·`BulkRegisterPanel` 배선·제출 핸들러 추가. 기존 흐름 불변. |
 | `web/src/lib/i18n/ko.json` | 편집 | `agents.detail.devices.bulk.*`(client/gateway 공용 또는 분리) 키 추가. |
 | `web/src/lib/i18n/en.json` | 편집 | ko와 정합하는 영문 키 추가. |
@@ -59,8 +59,8 @@ xsfm 장치탭의 검증된 일괄 등록 패턴(공용 `BulkRegisterPanel` + `p
 
 | 위험 | 대응 |
 | ---- | ---- |
-| gateway `register_map` 백엔드 필수 → 세그먼트 없는 행 등록 시도 | 파서가 세그먼트 0개 행을 `EMPTY_SEGMENTS`로 사전 실패 집계(백엔드 미호출). |
-| 그룹/세그먼트 서브 구분자(`;`/`:`)가 행 구분자(콤마/탭)와 충돌 | 서브 구분자로 콤마·탭을 쓰지 않음(`;`/`:` 전용). `parseDelimitedRows`가 셀 분해 후 groups 셀만 서브 파싱. |
+| gateway `register_map` 백엔드 필수 → 세그먼트 없는 디바이스 등록 시도 | 파서가 유효 세그먼트 0개 디바이스를 `EMPTY_SEGMENTS`로 사전 실패 집계(백엔드 미호출). |
+| 다중 행 그룹핑에서 이어붙임 행이 선행 디바이스 없이 나타남 | 신원 컬럼이 모두 빈 첫 데이터 행은 `NO_CURRENT_DEVICE`로 집계(디바이스 시작 행이 먼저 필요). 헤더는 첫 행 신원 셀 비정수로 자동 스킵. |
 | 부분 성공 시 목록 다중 갱신으로 인한 깜빡임 | 모든 행 처리 후 **1회만** refetch/무효화(xsfm 선례 준수). |
 | per-device 오버라이드·backing 미지원으로 인한 기대 불일치 | Non-Goal로 명시. 붙여넣기 후 개별 편집 다이얼로그로 보완. |
 
@@ -69,4 +69,4 @@ xsfm 장치탭의 검증된 일괄 등록 패턴(공용 `BulkRegisterPanel` + `p
 - 신규 백엔드 bulk 명령/일괄 원자성.
 - 파일 업로드(붙여넣기 텍스트만).
 - 범위/패턴 자동 생성(붙여넣기 표만).
-- per-device transport/serial_port/share_session 오버라이드, gateway backing·shared 세그먼트(초기 범위 제외).
+- per-device transport/serial_port/share_session 오버라이드, gateway backing 세그먼트(초기 범위 제외). gateway shared 세그먼트는 v0.2.0에서 지원(`shared,<주소>` 두 셀 삽입).

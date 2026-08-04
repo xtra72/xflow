@@ -6,56 +6,58 @@ Given/When/Then 형식. 모든 AC는 프론트엔드 단위 테스트(`vitest`) 
 
 ## REQ-MODBUS-011-01 — Client 붙여넣기 파서
 
-### AC-01 — 정상 파싱 및 방출 형상
-- **Given** client 일괄 등록 텍스트
+### AC-01 — 다중 행 그룹핑 및 방출 형상
+- **Given** client 일괄 등록 텍스트(2개 그룹, 1개 디바이스)
   ```
-  host,port,unit_id,id,groups
-  192.168.0.10,502,1,,3:0:10:uint16;4:100:4
-  192.168.0.11,,2
+  host,port,unit_id,fc,address,count,data_type,polling_interval,comment
+  192.168.0.10,502,1,3,0,10,uint16,5s,온도
+  ,,,1,0,8,uint16,,도어
   ```
 - **When** `parseModbusClientBulk(text)`를 호출하면
-- **Then** 첫 줄은 헤더로 스킵되고 2개의 유효 `EmittedDevice`가 산출된다.
-  - 1번: `{ host:'192.168.0.10', port:502, unit_id:1, register_groups:[{function_code:3,start_address:0,quantity:10,data_type:'uint16'},{function_code:4,start_address:100,quantity:4}] }` (id 키 없음).
-  - 2번: `{ host:'192.168.0.11', unit_id:2, register_groups:[] }` (port 공란 → 방출 생략 또는 502 기본, groups 빈 배열).
-- **And** `errors`(BulkFailure)는 비어 있다.
+- **Then** 첫 줄은 헤더로 스킵되고, 2행이 디바이스를 시작하며 3행(빈 신원)이 그룹을 이어 붙여 1개의 유효
+  `EmittedDevice`가 산출된다.
+  - `{ host:'192.168.0.10', port:502, unit_id:1, register_groups:[{function_code:3,start_address:0,quantity:10,data_type:'uint16',poll_interval:'5s',name:'온도'},{function_code:1,start_address:0,quantity:8,data_type:'uint16',name:'도어'}] }` (id 키 없음).
+- **And** `failures`(BulkFailure)는 비어 있다.
 
 ### AC-02 — 필수/무효 필드 행 실패 집계
 - **Given** 텍스트
   ```
-  ,502,1
-  192.168.0.20,502,999
-  192.168.0.21,502,3,,9:0:1
+  ,502,1,3,0,1
+  192.168.0.20,502,999,3,0,1
+  192.168.0.21,502,3,9,0,1
   ```
 - **When** 파싱하면
-- **Then** 1행은 host 누락(tcp 상속)으로, 2행은 unit_id 범위 초과(>247)로, 3행은 무효 fc(9)로 각각
-  원본 줄 번호를 가진 `BulkFailure`로 집계되고, 유효 device는 0개다(백엔드 미호출 대상).
+- **Then** 1행은 host 누락(tcp 상속, `EMPTY_REQUIRED`)으로, 2행은 unit_id 범위 초과(>247, `INVALID_UNIT_ID`)로,
+  3행은 무효 fc(9, `INVALID_FC`)로 각각 원본 줄 번호를 가진 `BulkFailure`로 집계되고, 유효 device는 0개다
+  (유효 그룹 0개 디바이스는 방출 안 함, 백엔드 미호출).
 
 ---
 
 ## REQ-MODBUS-011-02 — Gateway 붙여넣기 파서
 
-### AC-03 — 정상 파싱 및 register_map 방출
-- **Given** gateway 텍스트
+### AC-03 — 다중 세그먼트 그룹핑 + shared 세그먼트
+- **Given** gateway 텍스트(2개 세그먼트, 1개 디바이스; 2번째가 shared)
   ```
-  unit_id,name,segments
-  1,Meter-A,holding_registers:0:10:uint16;input_registers:100:4
-  2,,coils:0:8
+  unit_id,name,fc,address,count,data_type,comment
+  1,meter-A,1,0,8,uint16,도어 센서
+  ,,3,0,10,uint16,shared,200,펌프 상태
   ```
 - **When** `parseModbusGatewayBulk(text)`를 호출하면
-- **Then** 2개의 유효 params가 산출된다.
-  - 1번: `{ unit_id:1, name:'Meter-A', register_map:{ holding_registers:[{address:0,count:10,data_type:'uint16'}], input_registers:[{address:100,count:4,data_type:'uint16'}] } }`.
-  - 2번: `{ unit_id:2, register_map:{ coils:[{address:0,count:8,data_type:'uint16'}] } }` (name 키 없음).
+- **Then** 2행이 디바이스를 시작하고 3행(빈 신원)이 shared 세그먼트를 이어 붙여 1개의 유효 params가 산출된다.
+  - `{ unit_id:1, name:'meter-A', register_map:{ coils:[{address:0,count:8,data_type:'uint16',description:'도어 센서'}], holding_registers:[{address:0,count:10,shared_address:200,description:'펌프 상태'}] } }` (shared 세그먼트는 data_type 미방출).
 
 ### AC-04 — 세그먼트 필수/무효 행 실패
 - **Given** 텍스트
   ```
-  1,NoSeg,
-  2,BadArea,foo:0:1
-  3,BadCount,coils:0:0
+  1,NoSeg
+  2,BadFc,9,0,1
+  3,BadCount,1,0,0
+  4,BadShared,3,0,10,uint16,shared,xx
   ```
 - **When** 파싱하면
-- **Then** 1행은 세그먼트 없음(`EMPTY_SEGMENTS`), 2행은 무효 area(`foo`), 3행은 count<1로 각각
-  `BulkFailure`로 집계되고 유효 params는 0개다(백엔드 register_map 필수 위반 사전 차단).
+- **Then** 1행은 세그먼트 없음(`EMPTY_SEGMENTS`), 2행은 무효 fc(9, `INVALID_FC`), 3행은 count<1(`INVALID_SEGMENT`),
+  4행은 비정수 shared_address(`INVALID_SHARED_ADDRESS`)로 각각 `BulkFailure`로 집계되고 유효 params는 0개다
+  (백엔드 register_map 필수 위반 사전 차단).
 
 ---
 
