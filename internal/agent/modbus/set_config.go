@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
 // initOnlySerialKeys 는 런타임 set_config 로 변경할 수 없는 RTU 시리얼 하드웨어 파라미터 키이다(M9).
@@ -41,80 +39,17 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	// (2) 변경 필드 파싱·검증 — parseModbusConfig 와 동일한 규칙을 재사용하여 전량 검증(부분 적용 금지).
-	var (
-		newGroups []RegisterGroupConfig
-		hasGroups bool
-
-		newUnitID byte
-		hasUnitID bool
-
-		newPoll   time.Duration
-		hasPoll   bool
-		newReqTO  time.Duration
-		hasReqTO  bool
-		newReconn time.Duration
-		hasReconn bool
-	)
-
-	if v, ok := params["register_groups"]; ok {
-		groups, err := parseSetConfigRegisterGroups(v)
-		if err != nil {
-			return nil, err
-		}
-		newGroups = groups
-		hasGroups = true
-	}
-
-	// unit_id (디바이스 스코프, 런타임 가변 — spec §5.5.1). 적용 전 검증(부분 적용 금지).
-	if v, ok := params["unit_id"]; ok {
-		uid, err := parseUnitIDParam(v)
-		if err != nil {
-			return nil, err
-		}
-		newUnitID = uid
-		hasUnitID = true
-	}
-
-	if v, ok := params["poll_interval"]; ok {
-		d, err := parseDurationParam("poll_interval", v)
-		if err != nil {
-			return nil, err
-		}
-		// SetPollInterval 과 동일한 하한(100ms)을 재사용한다.
-		if d < 100*time.Millisecond {
-			return nil, fmt.Errorf("modbus set_config: poll_interval must be >= 100ms, got %v", d)
-		}
-		newPoll = d
-		hasPoll = true
-	}
-	if v, ok := params["request_timeout"]; ok {
-		d, err := parseDurationParam("request_timeout", v)
-		if err != nil {
-			return nil, err
-		}
-		if d <= 0 {
-			return nil, fmt.Errorf("modbus set_config: request_timeout must be > 0, got %v", d)
-		}
-		newReqTO = d
-		hasReqTO = true
-	}
-	if v, ok := params["reconnect_interval"]; ok {
-		d, err := parseDurationParam("reconnect_interval", v)
-		if err != nil {
-			return nil, err
-		}
-		if d <= 0 {
-			return nil, fmt.Errorf("modbus set_config: reconnect_interval must be > 0, got %v", d)
-		}
-		newReconn = d
-		hasReconn = true
+	// (2) 변경 필드 파싱·검증 — update_device 와 공유하는 단일 소스(parseDeviceReconfig, 중복 회피).
+	// parseModbusConfig 와 동일한 규칙을 재사용하여 전량 검증한다(부분 적용 금지).
+	rc, err := parseDeviceReconfig(params)
+	if err != nil {
+		return nil, err
 	}
 
 	// register_groups / unit_id 변경은 대상 디바이스를 필요로 한다(디바이스 스코프). findDevice 는
 	// 불변 필드(dev.config.ID)만 읽으므로 락 없이 안전하다.
 	var dev *ModbusDevice
-	if hasGroups || hasUnitID {
+	if rc.hasDeviceScoped() {
 		if req.DeviceID == "" {
 			return nil, fmt.Errorf("modbus set_config: device_id required when changing register_groups or unit_id")
 		}
@@ -125,76 +60,20 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 		dev = d
 	}
 
-	if !hasGroups && !hasUnitID && !hasPoll && !hasReqTO && !hasReconn {
+	if !rc.hasAny() {
 		return nil, fmt.Errorf("modbus set_config: no runtime-mutable fields provided")
 	}
 
 	// (3) 전량 검증 통과 → a.mu.Lock() 하에 원자적 적용(부분 적용 없음).
+	// 적용 로직은 update_device 와 공유하는 단일 경로(applyDeviceReconfigLocked)를 사용한다.
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	// 폴링 중(Running + started + cached)일 때만 그룹 스케줄러를 재구성한다.
-	// Stop 은 먼저 StateStopping 으로 전이하므로, 정지 중에는 스케줄러를 건드리지 않는다(WaitGroup 경합 방지).
-	polling := a.CurrentState() == lifecycle.StateRunning && a.started && a.config.ReadMode == "cached"
-
-	if hasGroups {
-		// 이전 그룹 기준으로 실행 중인 개별 그룹 스케줄러를 정지한다.
-		if polling {
-			for _, rg := range dev.config.RegisterGroups {
-				if rg.PollInterval > 0 {
-					a.stopGroupLoop(dev.config.ID, rg.Name)
-				}
-			}
-		}
-		// copy-on-write: 새 그룹 슬라이스를 통째로 교체한다(읽기 측은 RLock 스냅샷).
-		dev.config.RegisterGroups = newGroups
-		// data_type/byte_order 변경 반영을 위해 TypeOverlay 재구축(그룹에서 타입이 사라지면 해제).
-		a.rebuildDeviceTypeOverlay(dev)
-		// 새 그룹 중 poll_interval 지정 그룹의 스케줄러를 시작한다(다음 폴 시점부터 반영).
-		if polling {
-			for i := range newGroups {
-				if newGroups[i].PollInterval > 0 {
-					a.startGroupLoop(dev, newGroups[i])
-				}
-			}
-		}
-		a.logger.Info("modbus: set_config 레지스터 그룹 재구성",
-			"device", dev.config.ID,
-			"groups", len(newGroups),
-			"polling", polling,
-		)
-	}
-
-	if hasUnitID {
-		// unit_id 는 device.go 의 원자값(SSOT)에 저장한다. 폴링 goroutine 의 락-프리
-		// 핫 패스가 다음 요청부터 새 unit_id 를 원자적으로 읽어 반영한다(재시작 없음).
-		dev.setUnitID(newUnitID)
-		a.logger.Info("modbus: set_config unit_id 변경",
-			"device", dev.config.ID,
-			"unit_id", newUnitID,
-		)
-	}
-
-	if hasReqTO {
-		a.config.RequestTimeout = newReqTO
-	}
-	if hasReconn {
-		a.config.ReconnectInterval = newReconn
-	}
-	if hasPoll {
-		a.config.PollInterval = newPoll
-		// pollLoop 에 즉시 반영(SetPollInterval 과 동일한 pollResetCh 시그널, 논블로킹).
-		select {
-		case a.pollResetCh <- newPoll:
-		default:
-		}
-		a.logger.Info("modbus: set_config 기본 폴링 간격 변경", "interval", newPoll)
-	}
+	a.applyDeviceReconfigLocked(dev, rc)
 
 	resp := map[string]any{
 		"status":    "reconfigured",
 		"device_id": req.DeviceID,
-		"applied":   appliedSetConfigKeys(hasGroups, hasUnitID, hasPoll, hasReqTO, hasReconn),
+		"applied":   appliedSetConfigKeys(rc.hasGroups, rc.hasUnitID, rc.hasPoll, rc.hasReqTO, rc.hasReconn),
 	}
 	return json.Marshal(resp)
 }

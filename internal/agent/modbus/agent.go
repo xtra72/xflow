@@ -974,6 +974,10 @@ func (a *ModbusAgent) Process(data []byte) ([]byte, error) {
 		return a.processAddDevice(&req)
 	case "remove_device":
 		return a.processRemoveDevice(&req)
+	case "list_devices":
+		return a.processListDevices()
+	case "update_device":
+		return a.processUpdateDevice(&req)
 	default:
 		return nil, ErrInvalidCommand
 	}

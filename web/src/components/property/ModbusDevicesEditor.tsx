@@ -93,7 +93,7 @@ interface SegmentRow {
   advancedOpen: boolean;
 }
 
-interface DeviceRow {
+export interface DeviceRow {
   key: string;
   id: string;
   host: string;
@@ -229,7 +229,7 @@ function toShareOverride(v: unknown): string {
   return '';
 }
 
-function toDeviceRow(item: unknown): DeviceRow {
+export function toDeviceRow(item: unknown): DeviceRow {
   const o = asObject(item);
   const transport = asString(o.transport);
   return {
@@ -282,7 +282,7 @@ function newTypeMapRow(): TypeMapRow {
   };
 }
 
-function newDeviceRow(): DeviceRow {
+export function newDeviceRow(): DeviceRow {
   return {
     key: nextKey('dev'),
     id: '',
@@ -324,7 +324,7 @@ function toEmitGroup(area: AreaKey, seg: SegmentRow): EmittedGroup {
 /** DeviceRow → 백엔드 device. 유효 트랜스포트(per-device override ?? 에이전트 기본)가 rtu 면
  *  host/port 를 방출하지 않는다. per-device 오버라이드(transport/serial_port/share_session)는
  *  설정된 경우에만 방출하여 하위 호환(미설정 시 기존 형상과 바이트 동일)을 유지한다(SPEC-MODBUS-008). */
-function toEmitDevice(d: DeviceRow, agentTransport: string): EmittedDevice {
+export function toEmitDevice(d: DeviceRow, agentTransport: string): EmittedDevice {
   const effTransport = d.transport !== '' ? d.transport : agentTransport;
   const isRtu = effTransport === 'rtu';
   const register_groups: EmittedGroup[] = [];
@@ -890,18 +890,27 @@ function AreaSegmentEditor({ areas, onChange, readOnly }: AreaSegmentEditorProps
 // 디바이스 편집 팝업 모달
 // ──────────────────────────────────────────────────────────────────────────
 
-interface DeviceEditDialogProps {
+export interface DeviceEditDialogProps {
   initial: DeviceRow;
   transport: string;
   readOnly?: boolean;
+  // lockConnection: 연결/init 전용 필드(host/port/transport override/serial/share_session)를
+  // 잠근다(숨김 + id 읽기전용). update_device(SPEC-MODBUS-009 F2)는 register_groups/unit_id/
+  // 케이던스만 in-place 변경하고 연결·init 필드는 백엔드가 거부하므로, 수정 폼에서 이를 잠근다.
+  lockConnection?: boolean;
+  // requireId: id 를 필수로 강제한다(빈 값이면 저장 불가 + 오류 표시). add_device(백엔드
+  // parseDeviceConfig)는 device id 가 필수이므로 장치 탭의 추가 폼에서 사용한다.
+  requireId?: boolean;
   onSave: (device: DeviceRow) => void;
   onClose: () => void;
 }
 
-function DeviceEditDialog({
+export function DeviceEditDialog({
   initial,
   transport,
   readOnly,
+  lockConnection,
+  requireId,
   onSave,
   onClose,
 }: DeviceEditDialogProps) {
@@ -965,10 +974,13 @@ function DeviceEditDialog({
   }, [onClose]);
 
   const unitIdValid = draft.unitId >= 1 && draft.unitId <= 247;
-  const hostMissing = isTcp && draft.host.trim() === '';
+  // 연결 잠금(update_device) 시 host/port/serial 은 숨겨지므로 검증 대상에서 제외한다.
+  const hostMissing = !lockConnection && isTcp && draft.host.trim() === '';
   // per-device rtu 오버라이드는 시리얼 포트가 필수다(백엔드 parseDeviceConfig 검증과 정합, AC-04).
-  const serialMissing = draft.transport === 'rtu' && draft.serialPort.trim() === '';
-  const canSave = !readOnly && unitIdValid && !hostMissing && !serialMissing;
+  const serialMissing = !lockConnection && draft.transport === 'rtu' && draft.serialPort.trim() === '';
+  // add_device 는 device id 가 필수다(백엔드 parseDeviceConfig 의 ErrMissingDeviceID 와 정합).
+  const idMissing = !!requireId && draft.id.trim() === '';
+  const canSave = !readOnly && unitIdValid && !hostMissing && !serialMissing && !idMissing;
 
   return (
     <div
@@ -1009,9 +1021,15 @@ function DeviceEditDialog({
               <input
                 type="text"
                 value={draft.id}
-                readOnly={readOnly}
+                // 연결 잠금(update_device) 시 id 는 디바이스 식별 키이므로 읽기 전용으로 표시한다.
+                readOnly={readOnly || lockConnection}
                 onChange={(e) => setDraft((d) => ({ ...d, id: e.target.value }))}
-                className={cn(cellInput, readOnly && readOnlyInput)}
+                className={cn(
+                  cellInput,
+                  (readOnly || lockConnection) && readOnlyInput,
+                  idMissing &&
+                    'border-red-400 focus:border-red-400 focus:ring-red-400 dark:border-red-500',
+                )}
                 placeholder="device-1"
               />
             </label>
@@ -1031,7 +1049,7 @@ function DeviceEditDialog({
               />
             </label>
 
-            {isTcp && (
+            {isTcp && !lockConnection && (
               <>
                 <label className="space-y-0.5">
                   <span className={fieldLabel}>{t('property.modbusDevices.host')}</span>
@@ -1068,6 +1086,11 @@ function DeviceEditDialog({
             )}
           </div>
 
+          {idMissing && (
+            <p className="text-[11px] text-red-500 dark:text-red-400">
+              {t('property.modbusDevices.idRequired')}
+            </p>
+          )}
           {!unitIdValid && (
             <p className="text-[11px] text-red-500 dark:text-red-400">
               {t('property.modbusDevices.unitIdRange')}
@@ -1080,7 +1103,10 @@ function DeviceEditDialog({
           )}
 
           {/* per-device 오버라이드 (SPEC-MODBUS-008 F2/F3): 트랜스포트 / 시리얼 포트 / 세션 공유.
-              모두 '상속'이 기본이며, 상속일 때는 방출하지 않아 기존 설정과 바이트 동일하게 동작한다. */}
+              모두 '상속'이 기본이며, 상속일 때는 방출하지 않아 기존 설정과 바이트 동일하게 동작한다.
+              연결 잠금(update_device, SPEC-MODBUS-009 F2) 시에는 이 블록 전체를 숨긴다 —
+              트랜스포트 전환·시리얼 하드웨어 파라미터는 백엔드가 init 전용으로 거부한다. */}
+          {!lockConnection && (
           <div className="grid grid-cols-2 gap-2 border-t border-(--color-border-default) pt-3">
             <label className="space-y-0.5">
               <span className={fieldLabel}>트랜스포트 오버라이드</span>
@@ -1132,6 +1158,7 @@ function DeviceEditDialog({
               </label>
             )}
           </div>
+          )}
 
           {serialMissing && (
             <p className="text-[11px] text-red-500 dark:text-red-400">

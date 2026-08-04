@@ -48,6 +48,13 @@ import type { ConfigSchema, ConfigSection } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
 import { ModbusServerDevicesEditor } from '@/components/property/ModbusServerDevicesEditor';
+import {
+  DeviceEditDialog,
+  newDeviceRow,
+  toDeviceRow,
+  toEmitDevice,
+  type DeviceRow,
+} from '@/components/property/ModbusDevicesEditor';
 import { TWO_COL_CONFIG, TwoColumnConfigLayout } from './twoColumnConfig';
 import {
   StoreKeysEditor,
@@ -839,6 +846,16 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   const config = agent?.config ?? {};
   const schema = getAgentConfigSchema(agentType);
 
+  // M3 (SPEC-MODBUS-009 REQ-03): 실행 중 에이전트의 설정 탭에서 modbus-client 의 devices
+  // 편집기(modbus_devices)를 숨긴다. 디바이스 관리는 장치 탭 전용 섹션으로 일원화한다.
+  // 스키마 자체(agentSchemas.ts)는 보존하므로 생성 모달(CreateAgentModal)의 초기 부트스트랩에는
+  // 영향이 없고, running-agent 설정 렌더에서만 devices 필드를 제외한다. 타입 스코프(modbus-client)
+  // + 필드 스코프(devices) 로 한정하여 다른 agentType/다른 필드에는 영향이 없다(AC-05).
+  const displaySchema = useMemo(() => {
+    if (!schema || agentType !== 'modbus-client') return schema;
+    return { ...schema, fields: schema.fields.filter((f) => f.name !== 'devices') };
+  }, [schema, agentType]);
+
   // 에이전트 데이터 로드 시 드래프트 초기화
   useEffect(() => {
     if (agent?.config) {
@@ -998,23 +1015,23 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       )}
 
       {/* 설정 폼 */}
-      {agentType === 'store' && schema ? (
+      {agentType === 'store' && displaySchema ? (
         // Store 는 운영/데이터 섹션으로 분리된 커스텀 레이아웃을 사용한다.
         // (SPEC-STORE-003)
         // v0.7.0 (M13): keys 검증 결과를 받아 저장 버튼 게이팅에 사용.
         <StoreConfigEditor
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           onValidityChange={setStoreKeysValid}
           readOnly={!editing}
         />
-      ) : HVACR_QUADRANT_AGENT_TYPES.has(agentType) && schema ? (
+      ) : HVACR_QUADRANT_AGENT_TYPES.has(agentType) && displaySchema ? (
         // 3 HVACR 에이전트는 4-분면 (transport/protocol/operation/logging) 그리드를 사용한다.
         <FourQuadrantConfigLayout
           nodeId={agentId}
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           readOnly={!editing}
           agentType={agentType}
@@ -1029,11 +1046,11 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
                 }
           }
         />
-      ) : agentType in TWO_COL_CONFIG && schema ? (
+      ) : agentType in TWO_COL_CONFIG && displaySchema ? (
         <TwoColumnConfigLayout
           nodeId={agentId}
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           readOnly={!editing}
           agentType={agentType}
@@ -1052,7 +1069,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
         <DynamicForm
           nodeId={agentId}
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           readOnly={!editing}
         />
@@ -1474,6 +1491,333 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---- Modbus Client 디바이스 섹션 (SPEC-MODBUS-009 F3b) ----
+
+/** modbus-client list_devices(백엔드 F1) 응답 내 개별 디바이스. */
+interface ModbusClientListDevice {
+  device_id: string;
+  id: string;
+  host: string;
+  port: number;
+  unit_id: number;
+  transport: string;
+  online: boolean;
+  share_session: boolean;
+  register_groups: Array<{
+    name?: string;
+    function_code: number;
+    start_address: number;
+    quantity: number;
+    data_type?: string;
+    poll_interval?: string;
+  }>;
+}
+
+/** 편집 다이얼로그 대상. add=신규, edit=기존 디바이스 in-place 수정(update_device). */
+type ModbusClientEditTarget =
+  | { mode: 'add' }
+  | { mode: 'edit'; device: ModbusClientListDevice };
+
+/**
+ * modbus-client 전용 디바이스 관리 섹션(REQ-MODBUS-009-04, M4).
+ *
+ * modbus-gateway 의 ModbusDevicesSection 을 구조 참조로 삼되, 관리 경로는 런타임 exec 명령이다:
+ *   - 목록: list_devices(F1) 응답의 res.data 배열(AgentDetailPanel:3617 소비 패턴과 정렬).
+ *   - 추가: add_device — DeviceEditDialog 로 신규 디바이스 폼(연결 필드 포함) → toEmitDevice 방출.
+ *   - 수정: update_device(F2) — DeviceEditDialog 를 lockConnection 으로 열어 register_groups/
+ *           unit_id 만 in-place 변경한다. 트랜스포트/host/port 는 백엔드가 init 전용으로 거부하므로
+ *           수정 폼에서 잠근다.
+ *   - 제거: remove_device — ConfirmDialog 후 실행.
+ * 편집 필드는 ModbusDevicesEditor 의 DeviceEditDialog 를 재사용한다(AC-07). 모든 문자열은
+ * agents.detail.devices.* i18n 키를 사용한다(하드코딩 금지).
+ */
+function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
+  const { t } = useTranslation();
+  const { data: agent } = useAgent(agentId);
+  const execAgent = useExecAgent();
+  const addNotification = useUIStore((s) => s.addNotification);
+
+  const [devices, setDevices] = useState<ModbusClientListDevice[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [editTarget, setEditTarget] = useState<ModbusClientEditTarget | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<ModbusClientListDevice | null>(null);
+
+  // 에이전트 기본 트랜스포트(per-device 오버라이드 미지정 시 host/port 노출 판정 기준).
+  const agentTransport =
+    typeof agent?.config?.transport === 'string' ? (agent.config.transport as string) : 'tcp';
+
+  const fetchDevices = useCallback(() => {
+    setIsLoading(true);
+    execAgent.mutate(
+      { id: agentId, req: { command: 'list_devices' } },
+      {
+        onSuccess: (res) => {
+          // 백엔드 F1 은 { data: [...], device_count } 를 반환한다(AgentDetailPanel:3617 소비 패턴).
+          const items = (res as { data?: ModbusClientListDevice[] })?.data;
+          setDevices(Array.isArray(items) ? items : []);
+          setIsLoading(false);
+        },
+        onError: () => {
+          setDevices([]);
+          setIsLoading(false);
+          addNotification({ type: 'error', message: t('agents.detail.devices.modbusLoadError') });
+        },
+      },
+    );
+  }, [agentId, execAgent, addNotification, t]);
+
+  useEffect(() => {
+    fetchDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+
+  // add_device: 편집 다이얼로그가 방출한 DeviceRow → toEmitDevice(백엔드 device 전체 형상) → params.
+  const handleAdd = useCallback(
+    (row: DeviceRow) => {
+      const device = toEmitDevice(row, agentTransport) as unknown as Record<string, unknown>;
+      execAgent.mutate(
+        { id: agentId, req: { command: 'add_device', params: device } },
+        {
+          onSuccess: () => {
+            setEditTarget(null);
+            addNotification({ type: 'success', message: t('agents.detail.devices.modbusAddSuccess') });
+            fetchDevices();
+          },
+          onError: (err) =>
+            addNotification({
+              type: 'error',
+              message: t('agents.detail.devices.modbusAddError').replace(
+                '{message}',
+                err instanceof Error ? err.message : t('agents.detail.devices.unknownError'),
+              ),
+            }),
+        },
+      );
+    },
+    [agentId, agentTransport, execAgent, addNotification, t, fetchDevices],
+  );
+
+  // update_device(F2): register_groups/unit_id 만 전송한다(연결/init 전용 필드는 백엔드가 거부).
+  const handleUpdate = useCallback(
+    (row: DeviceRow, deviceId: string) => {
+      const emitted = toEmitDevice(row, agentTransport) as {
+        unit_id: number;
+        register_groups: unknown[];
+      };
+      const params: Record<string, unknown> = {
+        device_id: deviceId,
+        unit_id: emitted.unit_id,
+        register_groups: emitted.register_groups,
+      };
+      execAgent.mutate(
+        { id: agentId, req: { command: 'update_device', params } },
+        {
+          onSuccess: () => {
+            setEditTarget(null);
+            addNotification({ type: 'success', message: t('agents.detail.devices.modbusUpdateSuccess') });
+            fetchDevices();
+          },
+          onError: (err) =>
+            addNotification({
+              type: 'error',
+              message: t('agents.detail.devices.modbusUpdateError').replace(
+                '{message}',
+                err instanceof Error ? err.message : t('agents.detail.devices.unknownError'),
+              ),
+            }),
+        },
+      );
+    },
+    [agentId, agentTransport, execAgent, addNotification, t, fetchDevices],
+  );
+
+  const handleRemove = useCallback(() => {
+    if (!removeTarget) return;
+    const deviceId = removeTarget.device_id || removeTarget.id;
+    execAgent.mutate(
+      { id: agentId, req: { command: 'remove_device', params: { device_id: deviceId } } },
+      {
+        onSuccess: () => {
+          setRemoveTarget(null);
+          addNotification({ type: 'success', message: t('agents.detail.devices.modbusRemoveSuccess') });
+          fetchDevices();
+        },
+        onError: (err) => {
+          setRemoveTarget(null);
+          addNotification({
+            type: 'error',
+            message: t('agents.detail.devices.modbusRemoveError').replace(
+              '{message}',
+              err instanceof Error ? err.message : t('agents.detail.devices.unknownError'),
+            ),
+          });
+        },
+      },
+    );
+  }, [agentId, removeTarget, execAgent, addNotification, t]);
+
+  // 편집 다이얼로그 초기값: 추가=빈 폼, 수정=기존 디바이스를 편집기 형상으로 변환(register_groups 를
+  // function_code 기준 영역별로 재구성).
+  const dialogInitial = useMemo<DeviceRow | null>(() => {
+    if (!editTarget) return null;
+    if (editTarget.mode === 'add') return newDeviceRow();
+    return toDeviceRow(editTarget.device);
+  }, [editTarget]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3 p-4">
+        <div className="h-40 animate-pulse rounded-lg bg-(--color-bg-elevated)" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      {/* 헤더: 제목 + 새로고침 + 추가 */}
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+          {t('agents.detail.devices.modbusSectionTitle')}
+        </h4>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={fetchDevices}
+            disabled={execAgent.isPending}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t('agents.detail.devices.modbusRefresh')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditTarget({ mode: 'add' })}
+            data-testid="modbus-client-add-device"
+            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('agents.detail.devices.modbusAddDevice')}
+          </button>
+        </div>
+      </div>
+
+      {/* 디바이스 목록 */}
+      {devices.length === 0 ? (
+        <p className="py-8 text-center text-sm text-(--color-text-muted)">
+          {t('agents.detail.devices.modbusEmpty')}
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-(--color-bg-primary) text-left text-(--color-text-muted)">
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColId')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColConnection')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColUnitId')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColTransport')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColStatus')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColShareSession')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColGroups')}</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default)">
+              {devices.map((device) => (
+                <tr key={device.device_id || device.id} className="hover:bg-(--color-bg-elevated)">
+                  <td className="px-3 py-2 font-mono text-(--color-text-primary)">{device.id}</td>
+                  <td className="px-3 py-2 font-mono text-(--color-text-secondary)">
+                    {device.transport === 'rtu' ? '—' : `${device.host}:${device.port}`}
+                  </td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">{device.unit_id}</td>
+                  <td className="px-3 py-2 uppercase text-(--color-text-secondary)">{device.transport}</td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={cn(
+                        'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
+                        device.online
+                          ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
+                          : 'bg-(--color-bg-elevated) text-(--color-text-muted)',
+                      )}
+                    >
+                      {device.online
+                        ? t('agents.detail.devices.modbusOnline')
+                        : t('agents.detail.devices.modbusOffline')}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">
+                    {device.share_session
+                      ? t('agents.detail.devices.modbusShared')
+                      : t('agents.detail.devices.modbusIndependent')}
+                  </td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">
+                    {(device.register_groups ?? []).length}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditTarget({ mode: 'edit', device })}
+                        aria-label={t('agents.detail.devices.modbusEditTooltip')}
+                        title={t('agents.detail.devices.modbusEditTooltip')}
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRemoveTarget(device)}
+                        aria-label={t('agents.detail.devices.modbusRemoveTooltip')}
+                        title={t('agents.detail.devices.modbusRemoveTooltip')}
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 추가/수정 편집 다이얼로그(ModbusDevicesEditor 필드 재사용). 추가=id 필수 + 연결 필드,
+          수정=연결 잠금(register_groups/unit_id 만). */}
+      {dialogInitial && editTarget && (
+        <DeviceEditDialog
+          initial={dialogInitial}
+          transport={agentTransport}
+          requireId={editTarget.mode === 'add'}
+          lockConnection={editTarget.mode === 'edit'}
+          onSave={(row) =>
+            editTarget.mode === 'add'
+              ? handleAdd(row)
+              : handleUpdate(row, editTarget.device.device_id || editTarget.device.id)
+          }
+          onClose={() => setEditTarget(null)}
+        />
+      )}
+
+      {/* 제거 확인 */}
+      {removeTarget && (
+        <ConfirmDialog
+          isOpen
+          onClose={() => setRemoveTarget(null)}
+          onConfirm={handleRemove}
+          title={t('agents.detail.devices.modbusRemoveConfirmTitle')}
+          message={t('agents.detail.devices.modbusRemoveConfirmMessage').replace(
+            '{id}',
+            removeTarget.id,
+          )}
+          confirmLabel={t('common.delete')}
+          variant="danger"
+          isSubmitting={execAgent.isPending}
+        />
+      )}
     </div>
   );
 }
@@ -3661,6 +4005,13 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // Modbus Gateway: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
   if (agentType === 'modbus-gateway') {
     return <ModbusDevicesSection agentId={agentId} />;
+  }
+
+  // Modbus Client: 전용 디바이스 관리 섹션(list/add/remove/update). ModbusDevicesSection 을
+  // 구조 참조로 삼되, 관리 경로는 런타임 exec 명령(add_device/remove_device/update_device)이다
+  // (SPEC-MODBUS-009 REQ-04). 기존 분기(modbus-gateway/xsfm/NASA/LGAP/LG-ICP)는 불변이다.
+  if (agentType === 'modbus-client') {
+    return <ModbusClientDevicesSection agentId={agentId} />;
   }
 
   // xsfm: device_id 기반 + 역사/위치 계층 속성. 전용 탭으로 분기
