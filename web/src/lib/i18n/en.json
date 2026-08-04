@@ -3009,6 +3009,8 @@
       "unitIdRange": "Unit ID must be in the 1-247 range.",
       "hostRequired": "TCP device requires a host.",
       "idRequired": "Device ID is required.",
+      "serialRequired": "Serial port is required.",
+      "saveBlockedTitle": "Please check the following",
       "save": "Save",
       "cancel": "Cancel",
       "close": "Close",

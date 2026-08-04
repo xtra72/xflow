@@ -919,6 +919,11 @@ export function DeviceEditDialog({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const [bulkErrors, setBulkErrors] = useState<BulkParseError[]>([]);
+  // submitted: 저장 버튼을 누르기 전에는 빈 필드에 오류(빨간 테두리)를 표시하지 않는다.
+  // 최초 열림 시에는 필수(*) 표식만 노출하고, 저장 시도 후부터 검증 오류를 드러낸다.
+  const [submitted, setSubmitted] = useState(false);
+  // showPopover: 저장 불가 상태에서 저장을 누르면 누락 항목 말풍선(말풍선)을 띄운다.
+  const [showPopover, setShowPopover] = useState(false);
   // 유효 트랜스포트 = per-device 오버라이드 ?? 에이전트 기본(F2). host/port 노출 판정에 사용한다.
   const effTransport = draft.transport !== '' ? draft.transport : transport;
   const isTcp = effTransport !== 'rtu';
@@ -982,6 +987,26 @@ export function DeviceEditDialog({
   const idMissing = !!requireId && draft.id.trim() === '';
   const canSave = !readOnly && unitIdValid && !hostMissing && !serialMissing && !idMissing;
 
+  // 저장 차단 사유(말풍선에 표시). 현재 실패 중인 항목만 담는다.
+  const saveIssues: string[] = [];
+  if (idMissing) saveIssues.push(t('property.modbusDevices.idRequired'));
+  if (!unitIdValid) saveIssues.push(t('property.modbusDevices.unitIdRange'));
+  if (hostMissing) saveIssues.push(t('property.modbusDevices.hostRequired'));
+  if (serialMissing) saveIssues.push(t('property.modbusDevices.serialRequired'));
+
+  // 저장 시도: 검증 오류를 드러내고(submitted), 가능하면 저장, 아니면 말풍선을 띄운다.
+  const handleSaveClick = (): void => {
+    setSubmitted(true);
+    if (canSave) {
+      onSave(draft);
+    } else {
+      setShowPopover(true);
+    }
+  };
+
+  // 필수 필드 표식(*). 라벨 텍스트 뒤에 붙인다.
+  const requiredMark = <span className="text-red-500"> *</span>;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -1017,7 +1042,10 @@ export function DeviceEditDialog({
           {/* 디바이스 필드: id, (tcp) host+port, unit_id */}
           <div className="grid grid-cols-2 gap-2">
             <label className="space-y-0.5">
-              <span className={fieldLabel}>{t('property.modbusDevices.id')}</span>
+              <span className={fieldLabel}>
+                {t('property.modbusDevices.id')}
+                {requireId && requiredMark}
+              </span>
               <input
                 type="text"
                 value={draft.id}
@@ -1027,7 +1055,8 @@ export function DeviceEditDialog({
                 className={cn(
                   cellInput,
                   (readOnly || lockConnection) && readOnlyInput,
-                  idMissing &&
+                  submitted &&
+                    idMissing &&
                     'border-red-400 focus:border-red-400 focus:ring-red-400 dark:border-red-500',
                 )}
                 placeholder="device-1"
@@ -1035,7 +1064,10 @@ export function DeviceEditDialog({
             </label>
 
             <label className="space-y-0.5">
-              <span className={fieldLabel}>{t('property.modbusDevices.unitId')}</span>
+              <span className={fieldLabel}>
+                {t('property.modbusDevices.unitId')}
+                {requiredMark}
+              </span>
               <input
                 type="number"
                 min={1}
@@ -1045,14 +1077,23 @@ export function DeviceEditDialog({
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, unitId: numOr(e.target.value, 1) }))
                 }
-                className={cn(cellInput, readOnly && readOnlyInput)}
+                className={cn(
+                  cellInput,
+                  readOnly && readOnlyInput,
+                  submitted &&
+                    !unitIdValid &&
+                    'border-red-400 focus:border-red-400 focus:ring-red-400 dark:border-red-500',
+                )}
               />
             </label>
 
             {isTcp && !lockConnection && (
               <>
                 <label className="space-y-0.5">
-                  <span className={fieldLabel}>{t('property.modbusDevices.host')}</span>
+                  <span className={fieldLabel}>
+                    {t('property.modbusDevices.host')}
+                    {requiredMark}
+                  </span>
                   <input
                     type="text"
                     value={draft.host}
@@ -1061,7 +1102,8 @@ export function DeviceEditDialog({
                     className={cn(
                       cellInput,
                       readOnly && readOnlyInput,
-                      hostMissing &&
+                      submitted &&
+                        hostMissing &&
                         'border-red-400 focus:border-red-400 focus:ring-red-400 dark:border-red-500',
                     )}
                     placeholder="192.168.1.10"
@@ -1086,21 +1128,7 @@ export function DeviceEditDialog({
             )}
           </div>
 
-          {idMissing && (
-            <p className="text-[11px] text-red-500 dark:text-red-400">
-              {t('property.modbusDevices.idRequired')}
-            </p>
-          )}
-          {!unitIdValid && (
-            <p className="text-[11px] text-red-500 dark:text-red-400">
-              {t('property.modbusDevices.unitIdRange')}
-            </p>
-          )}
-          {hostMissing && (
-            <p className="text-[11px] text-red-500 dark:text-red-400">
-              {t('property.modbusDevices.hostRequired')}
-            </p>
-          )}
+          {/* 검증 오류는 저장 버튼 말풍선(말풍선)에서 요약 표시한다(상시 인라인 메시지 제거). */}
 
           {/* per-device 오버라이드 (SPEC-MODBUS-008 F2/F3): 트랜스포트 / 시리얼 포트 / 세션 공유.
               모두 '상속'이 기본이며, 상속일 때는 방출하지 않아 기존 설정과 바이트 동일하게 동작한다.
@@ -1140,7 +1168,10 @@ export function DeviceEditDialog({
 
             {draft.transport === 'rtu' && (
               <label className="col-span-2 space-y-0.5">
-                <span className={fieldLabel}>시리얼 포트 (per-device rtu)</span>
+                <span className={fieldLabel}>
+                  시리얼 포트 (per-device rtu)
+                  {requiredMark}
+                </span>
                 <input
                   type="text"
                   value={draft.serialPort}
@@ -1150,7 +1181,8 @@ export function DeviceEditDialog({
                   className={cn(
                     cellInput,
                     readOnly && readOnlyInput,
-                    serialMissing &&
+                    submitted &&
+                      serialMissing &&
                       'border-red-400 focus:border-red-400 focus:ring-red-400 dark:border-red-500',
                   )}
                   placeholder="/dev/ttyUSB0"
@@ -1158,12 +1190,6 @@ export function DeviceEditDialog({
               </label>
             )}
           </div>
-          )}
-
-          {serialMissing && (
-            <p className="text-[11px] text-red-500 dark:text-red-400">
-              per-device rtu 오버라이드는 시리얼 포트가 필요합니다
-            </p>
           )}
 
           {/* 레지스터 그룹 (4개 영역) + 일괄등록 */}
@@ -1239,7 +1265,28 @@ export function DeviceEditDialog({
         </div>
 
         {/* 푸터 */}
-        <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
+        <div className="relative flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
+          {/* 저장 차단 말풍선: 저장 시도(showPopover) + 아직 저장 불가일 때만 표시하고,
+              필드를 채워 canSave 가 되면 자동으로 사라진다. */}
+          {!readOnly && showPopover && !canSave && (
+            <div
+              role="alert"
+              className="absolute bottom-full right-5 z-10 mb-2 w-64 rounded-md border border-red-300 bg-(--color-bg-surface) p-3 shadow-lg dark:border-red-500"
+            >
+              <p className="mb-1 text-[11px] font-semibold text-(--color-text-primary)">
+                {t('property.modbusDevices.saveBlockedTitle')}
+              </p>
+              <ul className="space-y-0.5">
+                {saveIssues.map((msg) => (
+                  <li key={msg} className="text-[11px] text-red-500 dark:text-red-400">
+                    {msg}
+                  </li>
+                ))}
+              </ul>
+              {/* 말풍선 꼬리(저장 버튼 방향) */}
+              <span className="absolute right-8 top-full h-2 w-2 -translate-y-1 rotate-45 border-b border-r border-red-300 bg-(--color-bg-surface) dark:border-red-500" />
+            </div>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -1250,9 +1297,8 @@ export function DeviceEditDialog({
           {!readOnly && (
             <button
               type="button"
-              onClick={() => canSave && onSave(draft)}
-              disabled={!canSave}
-              className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={handleSaveClick}
+              className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
             >
               {t('property.modbusDevices.save')}
             </button>

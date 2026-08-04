@@ -258,6 +258,62 @@ describe('ModbusDevicesEditor', () => {
   });
 });
 
+describe('DeviceEditDialog 검증 UX (필수 표식 + 제출 후 오류 + 저장 말풍선)', () => {
+  // 추가 다이얼로그를 연다(tcp → host 필수, 최초엔 비어있어 저장 불가).
+  const openAddDialog = (onChange = vi.fn()) => {
+    render(<ModbusDevicesEditor value={[]} onChange={onChange} transport="tcp" />);
+    fireEvent.click(screen.getByRole('button', { name: '디바이스 추가' }));
+    return onChange;
+  };
+
+  it('(a) 최초 열림: 빈 필수 필드라도 빨간 테두리/말풍선을 표시하지 않는다', () => {
+    openAddDialog();
+    // 저장 차단 말풍선(alert) 없음.
+    expect(within(dialog()).queryByRole('alert')).toBeNull();
+    // host 입력에 빨간 테두리 클래스가 없다(제출 전).
+    const host = within(dialog()).getByPlaceholderText('192.168.1.10');
+    expect(host.className).not.toContain('border-red-400');
+    // 필수 표식(*)은 노출된다(유닛 ID/호스트 라벨).
+    expect(within(dialog()).getAllByText('*').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('(b) 필수 누락 상태로 저장 시도: 말풍선 + 빨간 테두리를 표시하고 저장하지 않는다', () => {
+    const onChange = openAddDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    // 말풍선(alert) + 제목 + 호스트 필수 메시지가 노출된다.
+    expect(within(dialog()).getByRole('alert')).toBeInTheDocument();
+    expect(within(dialog()).getByText('다음 항목을 확인하세요')).toBeInTheDocument();
+    expect(
+      within(dialog()).getByText('TCP 디바이스는 호스트가 필요합니다.'),
+    ).toBeInTheDocument();
+    // host 입력에 빨간 테두리가 생긴다(제출 후).
+    const host = within(dialog()).getByPlaceholderText('192.168.1.10');
+    expect(host.className).toContain('border-red-400');
+    // 저장은 발생하지 않는다.
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('(c) 필수 채운 뒤 저장: onSave(onChange) 가 호출되고 말풍선이 사라진다', () => {
+    const onChange = openAddDialog();
+    // 먼저 빈 상태로 저장 시도 → 말풍선 노출.
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+    expect(within(dialog()).getByRole('alert')).toBeInTheDocument();
+
+    // host 를 채우면 말풍선이 자동으로 사라진다(canSave true).
+    fireEvent.change(within(dialog()).getByPlaceholderText('192.168.1.10'), {
+      target: { value: '10.0.0.9' },
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    // 다시 저장 → 방출된다.
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+    expect(lastEmit(onChange)).toEqual([
+      { unit_id: 1, host: '10.0.0.9', port: 502, register_groups: [] },
+    ]);
+  });
+});
+
 describe('parseBulkGroups (fc 기반)', () => {
   it('fc 1-4 → 올바른 영역으로 매핑한다', () => {
     const r = parseBulkGroups(

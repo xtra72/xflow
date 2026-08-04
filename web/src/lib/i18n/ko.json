@@ -3009,6 +3009,8 @@
       "unitIdRange": "유닛 ID는 1-247 범위여야 합니다.",
       "hostRequired": "TCP 디바이스는 호스트가 필요합니다.",
       "idRequired": "디바이스 ID가 필요합니다.",
+      "serialRequired": "시리얼 포트가 필요합니다.",
+      "saveBlockedTitle": "다음 항목을 확인하세요",
       "save": "저장",
       "cancel": "취소",
       "close": "닫기",
