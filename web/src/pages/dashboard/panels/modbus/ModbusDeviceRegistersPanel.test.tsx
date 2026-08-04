@@ -63,6 +63,16 @@ describe('ModbusDeviceRegistersPanel (SPEC-MODBUS-012 REQ-05)', () => {
     expect(screen.getByText('dashboard.modbus.notConfigured')).toBeInTheDocument();
   });
 
+  it('unitId=0(공유 컨테이너) 시 유닛 미선택 안내를 표시한다', () => {
+    renderPanel({ agentId: 'gw-1', unitId: 0 });
+    expect(screen.getByText('dashboard.modbus.unitNotSelected')).toBeInTheDocument();
+  });
+
+  it('unitId 누락 시 유닛 미선택 안내를 표시한다', () => {
+    renderPanel({ agentId: 'gw-1' });
+    expect(screen.getByText('dashboard.modbus.unitNotSelected')).toBeInTheDocument();
+  });
+
   it('AC-12: config.unitId 로 get_device_status 를 조회한다', () => {
     mockState.status = status(2);
     renderPanel({ agentId: 'gw-1', unitId: 2 });

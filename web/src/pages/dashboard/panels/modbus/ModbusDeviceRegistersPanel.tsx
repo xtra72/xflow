@@ -25,8 +25,17 @@ export default function ModbusDeviceRegistersPanel({
 }: ModbusDeviceRegistersPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
-  const unitId = (config.unitId as number | undefined) ?? 0;
-  const { status, isLoading, isError } = useModbusDeviceStatus(gate.agentId, unitId, gate.enabled);
+  const rawUnitId = config.unitId as number | undefined;
+  // unit 0 은 공유 컨테이너(서빙 디바이스 아님) → get_device_status(0) 은 의미 있는 결과가 없다.
+  // config.unitId 미설정(생성 시 가상 디바이스 없음/설정에서 에이전트 변경으로 초기화)이거나 0 이면
+  // "유닛 미선택"으로 보고 명시적 안내를 표시한다(제네릭 empty/loadError 로 빠지지 않도록).
+  const unitId = rawUnitId ?? 0;
+  const unitSelected = rawUnitId !== undefined && rawUnitId > 0;
+  const { status, isLoading, isError } = useModbusDeviceStatus(
+    gate.agentId,
+    unitId,
+    gate.enabled && unitSelected,
+  );
 
   const icon = <LayoutGrid className="h-4 w-4 shrink-0 text-(--color-text-muted)" />;
   const heading = status?.name
@@ -44,6 +53,14 @@ export default function ModbusDeviceRegistersPanel({
     return (
       <ModbusPanelFrame title={title} icon={icon}>
         <ModbusNotice message={t('dashboard.modbus.remoteUnavailable')} />
+      </ModbusPanelFrame>
+    );
+  }
+  // 대상 유닛 미선택(unitId 미설정 또는 0=공유 컨테이너) → 설정에서 유닛 선택을 안내한다.
+  if (!unitSelected) {
+    return (
+      <ModbusPanelFrame title={title} icon={icon}>
+        <ModbusNotice message={t('dashboard.modbus.unitNotSelected')} />
       </ModbusPanelFrame>
     );
   }

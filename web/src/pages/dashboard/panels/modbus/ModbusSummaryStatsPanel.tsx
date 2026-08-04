@@ -48,14 +48,17 @@ function StatTile({
   return (
     <div
       data-testid={testid}
-      className="flex min-w-[92px] flex-col rounded-md border border-(--color-border-default) px-3 py-2"
+      // 그리드 트랙(1fr)을 채우도록 min-w 를 제거하고 폭 100%로 늘린다(패널 폭에 맞춰 균등 신축).
+      className="flex min-w-0 flex-col rounded-md border border-(--color-border-default) px-3 py-2"
     >
-      <span className="text-[10px] uppercase tracking-wide text-(--color-text-muted)">{label}</span>
+      <span className="truncate text-[10px] uppercase tracking-wide text-(--color-text-muted)">
+        {label}
+      </span>
       <span
         className={
           tone === 'danger'
-            ? 'text-lg font-semibold text-amber-600 dark:text-amber-400'
-            : 'text-lg font-semibold text-(--color-text-primary)'
+            ? 'truncate text-lg font-semibold text-amber-600 dark:text-amber-400'
+            : 'truncate text-lg font-semibold text-(--color-text-primary)'
         }
       >
         {value}
@@ -121,7 +124,10 @@ export default function ModbusSummaryStatsPanel({ title, config }: ModbusSummary
     <ModbusPanelFrame title={title} icon={icon}>
       <div
         data-testid="modbus-summary-bar"
-        className="flex min-h-0 flex-1 flex-wrap content-start gap-2 overflow-y-auto"
+        // auto-fit 그리드: 타일이 패널 폭에 맞춰 균등 신축(1fr)하고, 폭이 좁아지면 열을 줄여
+        // 행을 추가하며 리플로우한다(고정폭 flex-wrap 의 빈 공간/오버플로 문제 해소).
+        className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto"
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(92px, 1fr))' }}
       >
         <StatTile
           testid="modbus-summary-pollCycle"

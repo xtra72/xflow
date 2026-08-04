@@ -102,4 +102,14 @@ describe('ModbusSummaryStatsPanel (SPEC-MODBUS-012 REQ-06)', () => {
     // poll cycle = 5s(uiStore mock).
     expect(screen.getByTestId('modbus-summary-pollCycle')).toHaveTextContent('5s');
   });
+
+  it('타일 컨테이너가 반응형 auto-fit 그리드로 패널 폭에 맞춰 리플로우한다', () => {
+    mockState.status = st(1, 10);
+    mockState.devices = [dev(1, 0, 0, 0)];
+    renderPanel();
+    const bar = screen.getByTestId('modbus-summary-bar');
+    // 고정폭 flex-wrap 이 아닌 grid + auto-fit minmax(1fr) 여야 타일이 균등 신축·리플로우한다.
+    expect(bar.className).toContain('grid');
+    expect(bar.style.gridTemplateColumns).toBe('repeat(auto-fit, minmax(92px, 1fr))');
+  });
 });

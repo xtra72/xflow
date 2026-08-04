@@ -193,6 +193,7 @@
       "noBackedDevices": "No real (backed) devices",
       "loadError": "Failed to load data",
       "agentNotResponding": "Agent is not running or not responding",
+      "unitNotSelected": "No target unit selected. Choose a unit in panel settings.",
       "comingSoon": "Coming soon",
       "active": "Active",
       "stale": "Idle",
