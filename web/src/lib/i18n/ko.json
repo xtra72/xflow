@@ -1906,7 +1906,26 @@
         "modbusAddError": "디바이스 추가 실패: {message}",
         "modbusUpdateError": "디바이스 수정 실패: {message}",
         "modbusRemoveError": "디바이스 제거 실패: {message}",
-        "modbusLoadError": "디바이스 목록을 불러오지 못했습니다"
+        "modbusLoadError": "디바이스 목록을 불러오지 못했습니다",
+        "bulk": {
+          "toggle": "일괄 등록",
+          "title": "디바이스 일괄 등록",
+          "submit": "일괄 등록",
+          "clientPlaceholder": "host,port,unit_id,id,groups\n192.168.0.10,502,1,,3:0:10:uint16;4:100:4\n192.168.0.11,,2",
+          "clientFormatHint": "한 줄에 디바이스 하나. 컬럼: host,port,unit_id,id,groups (콤마 또는 탭 — 스프레드시트 붙여넣기 지원). host(TCP)·unit_id(1-247) 필수, port·id·groups 선택. groups 는 ';'로 구분, 각 그룹 = fc:start:qty[:data_type[:poll]] (fc 1-4).",
+          "gatewayPlaceholder": "unit_id,name,segments\n1,Meter-A,holding_registers:0:10:uint16;input_registers:100:4\n2,,coils:0:8",
+          "gatewayFormatHint": "한 줄에 디바이스 하나. 컬럼: unit_id,name,segments (콤마 또는 탭). unit_id(1-247)·segments 필수, name 선택. segments 는 ';'로 구분, 각 세그먼트 = area:start:count[:data_type] (area 는 1-4 또는 영역명).",
+          "successToast": "{count}개 디바이스 등록 완료",
+          "partialToast": "{ok}개 등록, {failed}개 실패",
+          "emptyInput": "등록할 내용이 없습니다.",
+          "rowError": "{line}행: {reason}",
+          "reasonEmptyRequired": "필수 값 누락(host/unit_id)",
+          "reasonInvalidUnitId": "unit_id 는 1-247 정수여야 합니다",
+          "reasonInvalidPort": "port 는 숫자여야 합니다",
+          "reasonInvalidGroup": "레지스터 그룹 형식이 올바르지 않습니다",
+          "reasonInvalidSegment": "세그먼트 형식이 올바르지 않습니다",
+          "reasonEmptySegments": "세그먼트가 최소 1개 필요합니다"
+        }
       },
       "time": {
         "secondsAgo": "{n}초 전",

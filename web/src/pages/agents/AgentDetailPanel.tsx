@@ -7,7 +7,7 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, ListPlus, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -55,6 +55,17 @@ import {
   toEmitDevice,
   type DeviceRow,
 } from '@/components/property/ModbusDevicesEditor';
+import BulkRegisterPanel from './BulkRegisterPanel';
+import {
+  EMPTY_SEGMENTS,
+  INVALID_GROUP,
+  INVALID_PORT,
+  INVALID_SEGMENT,
+  INVALID_UNIT_ID,
+  useModbusClientBulkAdd,
+  useModbusGatewayBulkAdd,
+} from '@/hooks/useModbusBulk';
+import { EMPTY_REQUIRED, type BulkFailure, type BulkResult } from '@/hooks/useStation';
 import { TWO_COL_CONFIG, TwoColumnConfigLayout } from './twoColumnConfig';
 import {
   StoreKeysEditor,
@@ -1269,6 +1280,61 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
   );
 }
 
+// ---- MODBUS 일괄 등록 공용 헬퍼 (SPEC-MODBUS-011) ----
+
+/** BulkFailure sentinel → i18n 사유 문자열. sentinel 이 아니면 백엔드 오류 메시지 원문으로 간주. */
+function modbusBulkReason(reason: string, t: TranslationFn): string {
+  switch (reason) {
+    case EMPTY_REQUIRED:
+      return t('agents.detail.devices.bulk.reasonEmptyRequired');
+    case INVALID_UNIT_ID:
+      return t('agents.detail.devices.bulk.reasonInvalidUnitId');
+    case INVALID_PORT:
+      return t('agents.detail.devices.bulk.reasonInvalidPort');
+    case INVALID_GROUP:
+      return t('agents.detail.devices.bulk.reasonInvalidGroup');
+    case INVALID_SEGMENT:
+      return t('agents.detail.devices.bulk.reasonInvalidSegment');
+    case EMPTY_SEGMENTS:
+      return t('agents.detail.devices.bulk.reasonEmptySegments');
+    default:
+      return reason;
+  }
+}
+
+/** 실패 행 → 표시 문자열(줄 번호 + 사유). */
+function formatModbusBulkFailure(f: BulkFailure, t: TranslationFn): string {
+  return t('agents.detail.devices.bulk.rowError')
+    .replace('{line}', String(f.line))
+    .replace('{reason}', modbusBulkReason(f.reason, t));
+}
+
+/** 결과 요약 토스트. 전량 성공이면 true(호출부가 textarea 를 비운다). */
+function reportModbusBulk(
+  result: BulkResult,
+  t: TranslationFn,
+  addNotification: (n: { type: 'success' | 'error'; message: string }) => void,
+): boolean {
+  if (result.total === 0) {
+    addNotification({ type: 'error', message: t('agents.detail.devices.bulk.emptyInput') });
+    return false;
+  }
+  if (result.failed.length === 0) {
+    addNotification({
+      type: 'success',
+      message: t('agents.detail.devices.bulk.successToast').replace('{count}', String(result.ok)),
+    });
+    return true;
+  }
+  addNotification({
+    type: 'error',
+    message: t('agents.detail.devices.bulk.partialToast')
+      .replace('{ok}', String(result.ok))
+      .replace('{failed}', String(result.failed.length)),
+  });
+  return false;
+}
+
 function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
   const target = useTargetContext();
@@ -1353,6 +1419,24 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
+  // ── 일괄 등록(SPEC-MODBUS-011). 붙여넣기 → 파싱 → 행별 add_device → 결과 요약.
+  const bulkAdd = useModbusGatewayBulkAdd(agentId);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkFailures, setBulkFailures] = useState<BulkFailure[] | null>(null);
+
+  const submitBulk = useCallback(async () => {
+    const result = await bulkAdd.mutateAsync(bulkText);
+    const fullSuccess = reportModbusBulk(result, t, addNotification);
+    setBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setBulkText('');
+    // 모든 행 처리 후 1회만 목록 갱신(라이브 목록 + config 파생 목록).
+    if (result.ok > 0) {
+      fetchLiveDevices();
+      queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
+    }
+  }, [bulkAdd, bulkText, t, addNotification, fetchLiveDevices, queryClient, agentId]);
+
   const handleSelectLive = useCallback(
     (unitId: number) => {
       if (selectedUnitId === unitId) {
@@ -1397,6 +1481,16 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             {t('agents.detail.modbus.configSectionTitle')}
           </h4>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowBulk((v) => !v)}
+              aria-expanded={showBulk}
+              data-testid="modbus-gateway-bulk-toggle"
+              className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+            >
+              <ListPlus className="h-3.5 w-3.5" />
+              {t('agents.detail.devices.bulk.toggle')}
+            </button>
             {dirty && (
               <button
                 type="button"
@@ -1419,6 +1513,26 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
             </button>
           </div>
         </div>
+
+        {/* 일괄 등록 패널(gateway) */}
+        {showBulk && (
+          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+            <h4 className="mb-2 text-xs font-semibold text-(--color-text-secondary)">
+              {t('agents.detail.devices.bulk.title')}
+            </h4>
+            <BulkRegisterPanel
+              placeholder={t('agents.detail.devices.bulk.gatewayPlaceholder')}
+              formatHint={t('agents.detail.devices.bulk.gatewayFormatHint')}
+              value={bulkText}
+              onChange={setBulkText}
+              onSubmit={submitBulk}
+              submitting={bulkAdd.isPending}
+              submitLabel={t('agents.detail.devices.bulk.submit')}
+              failures={bulkFailures}
+              formatFailure={(f) => formatModbusBulkFailure(f, t)}
+            />
+          </div>
+        )}
 
         {/* 적용 시 재시작 안내 */}
         <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-300">
@@ -1575,6 +1689,21 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
+  // ── 일괄 등록(SPEC-MODBUS-011). 붙여넣기 → 파싱(agentTransport 상속) → 행별 add_device → 요약.
+  const bulkAdd = useModbusClientBulkAdd(agentId);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkFailures, setBulkFailures] = useState<BulkFailure[] | null>(null);
+
+  const submitBulk = useCallback(async () => {
+    const result = await bulkAdd.mutateAsync({ text: bulkText, transport: agentTransport });
+    const fullSuccess = reportModbusBulk(result, t, addNotification);
+    setBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setBulkText('');
+    // 모든 행 처리 후 1회만 목록 갱신(list_devices refetch).
+    if (result.ok > 0) fetchDevices();
+  }, [bulkAdd, bulkText, agentTransport, t, addNotification, fetchDevices]);
+
   // add_device: 편집 다이얼로그가 방출한 DeviceRow → toEmitDevice(백엔드 device 전체 형상) → params.
   const handleAdd = useCallback(
     (row: DeviceRow) => {
@@ -1695,6 +1824,16 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
           </button>
           <button
             type="button"
+            onClick={() => setShowBulk((v) => !v)}
+            aria-expanded={showBulk}
+            data-testid="modbus-client-bulk-toggle"
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+            {t('agents.detail.devices.bulk.toggle')}
+          </button>
+          <button
+            type="button"
             onClick={() => setEditTarget({ mode: 'add' })}
             data-testid="modbus-client-add-device"
             className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
@@ -1704,6 +1843,26 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
           </button>
         </div>
       </div>
+
+      {/* 일괄 등록 패널(client) */}
+      {showBulk && (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+          <h4 className="mb-2 text-xs font-semibold text-(--color-text-secondary)">
+            {t('agents.detail.devices.bulk.title')}
+          </h4>
+          <BulkRegisterPanel
+            placeholder={t('agents.detail.devices.bulk.clientPlaceholder')}
+            formatHint={t('agents.detail.devices.bulk.clientFormatHint')}
+            value={bulkText}
+            onChange={setBulkText}
+            onSubmit={submitBulk}
+            submitting={bulkAdd.isPending}
+            submitLabel={t('agents.detail.devices.bulk.submit')}
+            failures={bulkFailures}
+            formatFailure={(f) => formatModbusBulkFailure(f, t)}
+          />
+        </div>
+      )}
 
       {/* 디바이스 목록 */}
       {devices.length === 0 ? (
