@@ -320,6 +320,203 @@ describe('ModbusServerDevicesEditor', () => {
   });
 });
 
+// ── SPEC-MODBUS-010 REQ-06 (AC-13 프론트엔드): 백킹 설정 노출 + 하위 호환 ──
+describe('ModbusServerDevicesEditor 백킹(upstream) 설정 (SPEC-MODBUS-010)', () => {
+  const BACKING_ENABLE = '실제 디바이스 백킹 활성화';
+
+  it('백킹 미활성 디바이스는 backing 키를 방출하지 않는다 (순수 slave 보존)', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 1, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
+    // 편집 팝업에 백킹 활성 체크박스는 있으나 꺼진 상태로 저장.
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    expect(
+      within(dialog()).getByRole('checkbox', { name: BACKING_ENABLE }),
+    ).not.toBeChecked();
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    // 방출 디바이스에 backing 키가 전혀 없어야 한다(하위 호환, 백엔드 nil = 순수 slave).
+    const emitted = lastEmit(onChange) as Array<Record<string, unknown>>;
+    expect(emitted).toEqual([{ unit_id: 1, register_map: {} }]);
+    expect('backing' in emitted[0]!).toBe(false);
+  });
+
+  it('direct+tcp 백킹 활성화 → transport/mode/unit_id/host/port/timeout 방출', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 1, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    fireEvent.click(within(dialog()).getByRole('checkbox', { name: BACKING_ENABLE }));
+    fireEvent.change(within(dialog()).getByRole('textbox', { name: '호스트' }), {
+      target: { value: '10.0.0.5' },
+    });
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    expect(lastEmit(onChange)).toEqual([
+      {
+        unit_id: 1,
+        register_map: {},
+        backing: {
+          transport: 'tcp',
+          mode: 'direct',
+          unit_id: 1,
+          host: '10.0.0.5',
+          port: 502,
+          timeout: '2s',
+        },
+      },
+    ]);
+  });
+
+  it('indirect 모드 → poll_interval + timeout 을 방출한다', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 1, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    fireEvent.click(within(dialog()).getByRole('checkbox', { name: BACKING_ENABLE }));
+    fireEvent.change(within(dialog()).getByRole('textbox', { name: '호스트' }), {
+      target: { value: '10.0.0.5' },
+    });
+    fireEvent.change(within(dialog()).getByRole('combobox', { name: '모드' }), {
+      target: { value: 'indirect' },
+    });
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    expect(lastEmit(onChange)).toEqual([
+      {
+        unit_id: 1,
+        register_map: {},
+        backing: {
+          transport: 'tcp',
+          mode: 'indirect',
+          unit_id: 1,
+          host: '10.0.0.5',
+          port: 502,
+          poll_interval: '1s',
+          timeout: '2s',
+        },
+      },
+    ]);
+  });
+
+  it('rtu 트랜스포트 → serial_port + 시리얼 파라미터를 number 로 방출한다 (host/port 없음)', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 1, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    fireEvent.click(within(dialog()).getByRole('checkbox', { name: BACKING_ENABLE }));
+    fireEvent.change(within(dialog()).getByRole('combobox', { name: '트랜스포트' }), {
+      target: { value: 'rtu' },
+    });
+    fireEvent.change(within(dialog()).getByRole('textbox', { name: '시리얼 포트' }), {
+      target: { value: '/dev/ttyUSB0' },
+    });
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    const emitted = lastEmit(onChange) as Array<{ backing: Record<string, unknown> }>;
+    const backing = emitted[0]!.backing;
+    expect(backing).toEqual({
+      transport: 'rtu',
+      mode: 'direct',
+      unit_id: 1,
+      serial_port: '/dev/ttyUSB0',
+      baud_rate: 9600,
+      data_bits: 8,
+      stop_bits: 1,
+      parity: 'none',
+      timeout: '2s',
+    });
+    // 백엔드 toInt 는 문자열을 수용하지 않으므로 숫자 필드는 number 여야 한다.
+    expect(typeof backing.baud_rate).toBe('number');
+    expect(typeof backing.data_bits).toBe('number');
+    expect(typeof backing.stop_bits).toBe('number');
+    expect('host' in backing).toBe(false);
+    expect('port' in backing).toBe(false);
+  });
+
+  it('공유 맵(컨테이너, 디바이스 0) 팝업에는 백킹 활성 체크박스가 없다', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[{ unit_id: 1, register_map: {} }]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '공유 맵 추가' }));
+    expect(
+      within(dialog()).queryByRole('checkbox', { name: BACKING_ENABLE }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('backing 이 있는 value 를 라운드트립 파싱해 재방출한다 (활성 상태 복원)', () => {
+    const onChange = vi.fn();
+    render(
+      <ModbusServerDevicesEditor
+        value={[
+          {
+            unit_id: 9,
+            register_map: {},
+            backing: {
+              transport: 'tcp',
+              mode: 'indirect',
+              unit_id: 3,
+              host: 'plc.local',
+              port: 600,
+              poll_interval: '2s',
+              timeout: '10s',
+            },
+          },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    // 편집 팝업에 백킹 체크박스가 켜진 상태로 복원된다.
+    fireEvent.click(screen.getByRole('button', { name: '편집' }));
+    expect(
+      within(dialog()).getByRole('checkbox', { name: BACKING_ENABLE }),
+    ).toBeChecked();
+    fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+    expect(lastEmit(onChange)).toEqual([
+      {
+        unit_id: 9,
+        register_map: {},
+        backing: {
+          transport: 'tcp',
+          mode: 'indirect',
+          unit_id: 3,
+          host: 'plc.local',
+          port: 600,
+          poll_interval: '2s',
+          timeout: '10s',
+        },
+      },
+    ]);
+  });
+});
+
 describe('parseBulkSegments (fc 기반)', () => {
   it('fc 1-4 → 올바른 영역으로 매핑한다', () => {
     const r = parseBulkSegments(

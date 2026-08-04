@@ -45,6 +45,13 @@ type AreaKey = (typeof AREA_KEYS)[number]['key'];
 const DEFAULT_DATA_TYPE = 'uint16';
 const CONTAINER_UNIT_ID = 0;
 
+// 백킹(upstream) 설정 선택지 (SPEC-MODBUS-010). 백엔드 parseServerSerialConfig 와 동일 키·기본값.
+const BACKING_TRANSPORT_OPTIONS = ['tcp', 'rtu'] as const;
+const BACKING_BAUD_OPTIONS = ['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'] as const;
+const BACKING_DATA_BITS_OPTIONS = ['5', '6', '7', '8'] as const;
+const BACKING_STOP_BITS_OPTIONS = ['1', '2'] as const;
+const BACKING_PARITY_OPTIONS = ['none', 'even', 'odd'] as const;
+
 // ---- 내부 행 타입 (React 렌더링용 안정 key + UI 전용 상태 포함) ----
 
 interface SegmentRow {
@@ -64,11 +71,42 @@ interface SegmentRow {
   typeMap?: unknown;
 }
 
+/** 실제(upstream) 디바이스 백킹 설정 UI 상태 (SPEC-MODBUS-010 REQ-06).
+ *  null 이면 순수 slave(백킹 없음) — 방출에서 backing 키를 완전히 생략한다(하위 호환). */
+interface BackingRow {
+  /** 'tcp' | 'rtu'. */
+  transport: string;
+  /** TCP endpoint host. */
+  host: string;
+  /** TCP endpoint port. */
+  port: number;
+  /** RTU 시리얼 포트 경로. */
+  serialPort: string;
+  /** RTU 보 레이트(select value, 문자열; 방출 시 number 변환). */
+  baudRate: string;
+  /** RTU 데이터 비트(select value, 문자열; 방출 시 number 변환). */
+  dataBits: string;
+  /** RTU 스톱 비트(select value, 문자열; 방출 시 number 변환). */
+  stopBits: string;
+  /** RTU 패리티('none' | 'even' | 'odd'). */
+  parity: string;
+  /** upstream 디바이스 unit id (서빙 UnitID 와 독립). */
+  unitId: number;
+  /** 'direct' | 'indirect'. */
+  mode: string;
+  /** indirect 폴링 주기(duration 문자열, 예: '1s'). */
+  pollInterval: string;
+  /** upstream 요청 데드라인 + (indirect) stale 허용 한도(duration 문자열). */
+  timeout: string;
+}
+
 interface DeviceRow {
   key: string;
   unitId: number;
   name: string;
   areas: Record<AreaKey, SegmentRow[]>;
+  /** upstream 백킹 설정(서빙 디바이스 전용, null = 순수 slave). */
+  backing: BackingRow | null;
 }
 
 interface EditorState {
@@ -90,10 +128,29 @@ interface EmittedSegment {
   type_map?: unknown[];
 }
 
+/** 방출(백엔드) 백킹 오브젝트. 백엔드 parseBackingConfig 키와 정확히 일치한다(SPEC-MODBUS-010).
+ *  transport/mode/unit_id 는 항상, TCP 는 host/port, RTU 는 serial_port + 시리얼 파라미터,
+ *  indirect 는 poll_interval/timeout 을 방출한다. */
+interface EmittedBacking {
+  transport: string;
+  mode: string;
+  unit_id: number;
+  host?: string;
+  port?: number;
+  serial_port?: string;
+  baud_rate?: number;
+  data_bits?: number;
+  stop_bits?: number;
+  parity?: string;
+  poll_interval?: string;
+  timeout?: string;
+}
+
 interface EmittedDevice {
   unit_id: number;
   name?: string;
   register_map: Record<string, EmittedSegment[]>;
+  backing?: EmittedBacking;
 }
 
 // ---- Props ----
@@ -169,6 +226,29 @@ function toAreas(registerMap: unknown): Record<AreaKey, SegmentRow[]> {
   return areas;
 }
 
+/** 백엔드 backing 오브젝트 → BackingRow. 키 부재/비객체이면 null(순수 slave). */
+function toBackingRow(raw: unknown): BackingRow | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const transport = asString(o.transport) === 'rtu' ? 'rtu' : 'tcp';
+  const mode = asString(o.mode) === 'indirect' ? 'indirect' : 'direct';
+  const parity = asString(o.parity);
+  return {
+    transport,
+    host: asString(o.host),
+    port: numOr(o.port, 502),
+    serialPort: asString(o.serial_port),
+    baudRate: String(numOr(o.baud_rate, 9600)),
+    dataBits: String(numOr(o.data_bits, 8)),
+    stopBits: String(numOr(o.stop_bits, 1)),
+    parity: parity === 'even' || parity === 'odd' ? parity : 'none',
+    unitId: numOr(o.unit_id, 1),
+    mode,
+    pollInterval: asString(o.poll_interval),
+    timeout: asString(o.timeout),
+  };
+}
+
 function toDeviceRow(item: unknown): DeviceRow {
   const o = asObject(item);
   return {
@@ -176,6 +256,7 @@ function toDeviceRow(item: unknown): DeviceRow {
     unitId: numOr(o.unit_id, 1),
     name: asString(o.name),
     areas: toAreas(o.register_map),
+    backing: toBackingRow(o.backing),
   };
 }
 
@@ -206,7 +287,7 @@ function parseValue(value: unknown): EditorState {
 }
 
 function newServedDevice(): DeviceRow {
-  return { key: nextKey('sdev'), unitId: 1, name: '', areas: emptyAreas() };
+  return { key: nextKey('sdev'), unitId: 1, name: '', areas: emptyAreas(), backing: null };
 }
 
 function newContainer(): DeviceRow {
@@ -215,6 +296,25 @@ function newContainer(): DeviceRow {
     unitId: CONTAINER_UNIT_ID,
     name: '',
     areas: emptyAreas(),
+    backing: null,
+  };
+}
+
+/** 백킹 활성화 시 기본값. direct+tcp, upstream unit 1, indirect 기본 주기/타임아웃(> 0)로 시작한다. */
+function newBacking(): BackingRow {
+  return {
+    transport: 'tcp',
+    host: '',
+    port: 502,
+    serialPort: '',
+    baudRate: '9600',
+    dataBits: '8',
+    stopBits: '1',
+    parity: 'none',
+    unitId: 1,
+    mode: 'direct',
+    pollInterval: '1s',
+    timeout: '2s',
   };
 }
 
@@ -255,6 +355,37 @@ function toEmitSegment(s: SegmentRow, isContainer: boolean): EmittedSegment {
   return out;
 }
 
+/** BackingRow → 백엔드 backing 오브젝트. 백엔드 parseBackingConfig 가 기대하는 키를 정확히 방출한다:
+ *  transport/mode/unit_id 항상; TCP=host(비어있지 않을 때)+port; RTU=serial_port(비어있지 않을 때)+
+ *  baud_rate/data_bits/stop_bits/parity(number 변환 — 백엔드 toInt 는 문자열 미수용); indirect=poll_interval+timeout,
+ *  direct=timeout(비어있지 않을 때만). 숫자 필드는 number 로 방출한다. */
+function toEmitBacking(b: BackingRow): EmittedBacking {
+  const out: EmittedBacking = {
+    transport: b.transport,
+    mode: b.mode,
+    unit_id: b.unitId,
+  };
+  if (b.transport === 'rtu') {
+    if (b.serialPort.trim() !== '') out.serial_port = b.serialPort.trim();
+    out.baud_rate = Number(b.baudRate);
+    out.data_bits = Number(b.dataBits);
+    out.stop_bits = Number(b.stopBits);
+    out.parity = b.parity;
+  } else {
+    if (b.host.trim() !== '') out.host = b.host.trim();
+    out.port = b.port;
+  }
+  if (b.mode === 'indirect') {
+    // indirect 는 poll_interval/timeout 이 필수(> 0)이므로 항상 방출한다.
+    out.poll_interval = b.pollInterval.trim();
+    out.timeout = b.timeout.trim();
+  } else if (b.timeout.trim() !== '') {
+    // direct 의 timeout 은 선택(upstream 요청 데드라인).
+    out.timeout = b.timeout.trim();
+  }
+  return out;
+}
+
 function toEmitDevice(d: DeviceRow, isContainer: boolean): EmittedDevice {
   const register_map: Record<string, EmittedSegment[]> = {};
   for (const area of AREA_KEYS) {
@@ -263,9 +394,15 @@ function toEmitDevice(d: DeviceRow, isContainer: boolean): EmittedDevice {
     register_map[area.key] = rows.map((s) => toEmitSegment(s, isContainer));
   }
   const name = d.name.trim();
-  return name !== ''
-    ? { unit_id: d.unitId, name, register_map }
-    : { unit_id: d.unitId, register_map };
+  const base: EmittedDevice =
+    name !== ''
+      ? { unit_id: d.unitId, name, register_map }
+      : { unit_id: d.unitId, register_map };
+  // 백킹은 서빙 디바이스 전용. 미설정(null)이면 backing 키를 완전히 생략한다 → 순수 slave(하위 호환).
+  if (!isContainer && d.backing) {
+    base.backing = toEmitBacking(d.backing);
+  }
+  return base;
 }
 
 /** { container, served } → 백엔드 devices 배열 (컨테이너 먼저). */
@@ -792,6 +929,264 @@ function AreaSegmentEditor({
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// 실제(upstream) 디바이스 백킹 설정 에디터 (SPEC-MODBUS-010 REQ-06, 서빙 디바이스 전용)
+// ──────────────────────────────────────────────────────────────────────────
+
+interface BackingConfigEditorProps {
+  backing: BackingRow | null;
+  onChange: (backing: BackingRow | null) => void;
+  readOnly?: boolean;
+}
+
+function BackingConfigEditor({ backing, onChange, readOnly }: BackingConfigEditorProps) {
+  const { t } = useTranslation();
+  const enabled = backing !== null;
+
+  // 활성화 토글: 켜면 기본 백킹, 끄면 null(백킹 키 미방출 → 순수 slave).
+  const toggleEnabled = (on: boolean) => onChange(on ? newBacking() : null);
+
+  // 필드 패치(활성 상태에서만 유효).
+  const patch = (p: Partial<BackingRow>) => {
+    if (!backing) return;
+    onChange({ ...backing, ...p });
+  };
+
+  const isRtu = backing?.transport === 'rtu';
+  const isIndirect = backing?.mode === 'indirect';
+
+  return (
+    <div className="space-y-2 border-t border-(--color-border-default) pt-3">
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={readOnly}
+          onChange={(e) => toggleEnabled(e.target.checked)}
+          aria-label={t('property.modbusServerDevices.backingEnable')}
+          className="h-3.5 w-3.5"
+        />
+        <span className={fieldLabel}>{t('property.modbusServerDevices.backingSection')}</span>
+      </label>
+
+      <p className="text-[11px] text-(--color-text-muted)">
+        {t('property.modbusServerDevices.backingDesc')}
+      </p>
+
+      {enabled && backing && (
+        <div className="space-y-3 rounded border border-(--color-border-default) bg-(--color-bg-elevated) p-2">
+          <div className="grid grid-cols-2 gap-2">
+            {/* 트랜스포트 */}
+            <label className="space-y-0.5">
+              <span className={fieldLabel}>{t('property.modbusServerDevices.backingTransport')}</span>
+              <select
+                value={backing.transport}
+                disabled={readOnly}
+                onChange={(e) => patch({ transport: e.target.value })}
+                aria-label={t('property.modbusServerDevices.backingTransport')}
+                className={cn(cellInput, readOnly && readOnlyInput)}
+              >
+                {BACKING_TRANSPORT_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/* 모드 */}
+            <label className="space-y-0.5">
+              <span className={fieldLabel}>{t('property.modbusServerDevices.backingMode')}</span>
+              <select
+                value={backing.mode}
+                disabled={readOnly}
+                onChange={(e) => patch({ mode: e.target.value })}
+                aria-label={t('property.modbusServerDevices.backingMode')}
+                className={cn(cellInput, readOnly && readOnlyInput)}
+              >
+                <option value="direct">
+                  {t('property.modbusServerDevices.backingModeDirect')}
+                </option>
+                <option value="indirect">
+                  {t('property.modbusServerDevices.backingModeIndirect')}
+                </option>
+              </select>
+            </label>
+
+            {/* upstream unit id */}
+            <label className="space-y-0.5">
+              <span className={fieldLabel}>{t('property.modbusServerDevices.backingUnitId')}</span>
+              <input
+                type="number"
+                min={0}
+                max={247}
+                value={backing.unitId}
+                readOnly={readOnly}
+                onChange={(e) => patch({ unitId: numOr(e.target.value, 1) })}
+                aria-label={t('property.modbusServerDevices.backingUnitId')}
+                className={cn(cellInput, readOnly && readOnlyInput)}
+              />
+            </label>
+
+            {/* TCP endpoint */}
+            {!isRtu && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>{t('property.modbusServerDevices.backingHost')}</span>
+                <input
+                  type="text"
+                  value={backing.host}
+                  readOnly={readOnly}
+                  onChange={(e) => patch({ host: e.target.value })}
+                  aria-label={t('property.modbusServerDevices.backingHost')}
+                  placeholder="192.168.0.10"
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                />
+              </label>
+            )}
+            {!isRtu && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>{t('property.modbusServerDevices.backingPort')}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={backing.port}
+                  readOnly={readOnly}
+                  onChange={(e) => patch({ port: numOr(e.target.value, 502) })}
+                  aria-label={t('property.modbusServerDevices.backingPort')}
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                />
+              </label>
+            )}
+
+            {/* RTU 시리얼 파라미터 */}
+            {isRtu && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>
+                  {t('property.modbusServerDevices.backingSerialPort')}
+                </span>
+                <input
+                  type="text"
+                  value={backing.serialPort}
+                  readOnly={readOnly}
+                  onChange={(e) => patch({ serialPort: e.target.value })}
+                  aria-label={t('property.modbusServerDevices.backingSerialPort')}
+                  placeholder="/dev/ttyUSB0"
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                />
+              </label>
+            )}
+            {isRtu && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>{t('property.modbusServerDevices.backingBaudRate')}</span>
+                <select
+                  value={backing.baudRate}
+                  disabled={readOnly}
+                  onChange={(e) => patch({ baudRate: e.target.value })}
+                  aria-label={t('property.modbusServerDevices.backingBaudRate')}
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                >
+                  {BACKING_BAUD_OPTIONS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {isRtu && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>{t('property.modbusServerDevices.backingDataBits')}</span>
+                <select
+                  value={backing.dataBits}
+                  disabled={readOnly}
+                  onChange={(e) => patch({ dataBits: e.target.value })}
+                  aria-label={t('property.modbusServerDevices.backingDataBits')}
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                >
+                  {BACKING_DATA_BITS_OPTIONS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {isRtu && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>{t('property.modbusServerDevices.backingStopBits')}</span>
+                <select
+                  value={backing.stopBits}
+                  disabled={readOnly}
+                  onChange={(e) => patch({ stopBits: e.target.value })}
+                  aria-label={t('property.modbusServerDevices.backingStopBits')}
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                >
+                  {BACKING_STOP_BITS_OPTIONS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {isRtu && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>{t('property.modbusServerDevices.backingParity')}</span>
+                <select
+                  value={backing.parity}
+                  disabled={readOnly}
+                  onChange={(e) => patch({ parity: e.target.value })}
+                  aria-label={t('property.modbusServerDevices.backingParity')}
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                >
+                  {BACKING_PARITY_OPTIONS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {/* 타임아웃(양 모드; indirect 는 stale 허용 한도 겸용) */}
+            <label className="space-y-0.5">
+              <span className={fieldLabel}>{t('property.modbusServerDevices.backingTimeout')}</span>
+              <input
+                type="text"
+                value={backing.timeout}
+                readOnly={readOnly}
+                onChange={(e) => patch({ timeout: e.target.value })}
+                aria-label={t('property.modbusServerDevices.backingTimeout')}
+                placeholder="2s"
+                className={cn(cellInput, readOnly && readOnlyInput)}
+              />
+            </label>
+
+            {/* 폴링 주기(indirect 전용) */}
+            {isIndirect && (
+              <label className="space-y-0.5">
+                <span className={fieldLabel}>
+                  {t('property.modbusServerDevices.backingPollInterval')}
+                </span>
+                <input
+                  type="text"
+                  value={backing.pollInterval}
+                  readOnly={readOnly}
+                  onChange={(e) => patch({ pollInterval: e.target.value })}
+                  aria-label={t('property.modbusServerDevices.backingPollInterval')}
+                  placeholder="1s"
+                  className={cn(cellInput, readOnly && readOnlyInput)}
+                />
+              </label>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // 디바이스 편집 팝업 모달 (RenameKeyDialog 모달 패턴 재사용)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1042,6 +1437,15 @@ function DeviceEditDialog({
               readOnly={readOnly}
             />
           </div>
+
+          {/* 실제(upstream) 디바이스 백킹 — 서빙 디바이스 전용(컨테이너=공유 저장소는 백킹 불가). */}
+          {!isContainer && (
+            <BackingConfigEditor
+              backing={draft.backing}
+              onChange={(backing) => setDraft((d) => ({ ...d, backing }))}
+              readOnly={readOnly}
+            />
+          )}
         </div>
 
         {/* 푸터 */}

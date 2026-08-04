@@ -19,6 +19,15 @@ const (
 	TransportRTU = "rtu"
 )
 
+// 백킹 모드 디스크리미네이터 상수(REQ-MODBUS-010-01).
+const (
+	// BackingModeDirect 는 마스터 읽기 요청 시 실제(upstream) 디바이스를 즉시 조회하는 모드이다.
+	BackingModeDirect = "direct"
+	// BackingModeIndirect 는 백그라운드 폴러가 주기적으로 upstream 을 폴링하고 마스터 읽기는
+	// RegisterMap 저장값으로 서빙하는 모드이다.
+	BackingModeIndirect = "indirect"
+)
+
 // ModbusServerConfig 는 MODBUS 서버 에이전트의 설정을 나타낸다.
 type ModbusServerConfig struct {
 	Transport      string            // "tcp" | "rtu" (기본값 "tcp")
@@ -47,12 +56,26 @@ type SerialConfig struct {
 	Parity   string // "none" | "even" | "odd" (기본값 "none")
 }
 
+// BackingConfig 는 가상 디바이스가 백킹하는 실제(upstream) MODBUS 디바이스의 설정이다.
+// nil 이면 순수 slave(하위 호환)이며, upstream 연결을 전혀 수립하지 않는다.
+type BackingConfig struct {
+	Transport    string        // "tcp" | "rtu" (기본값 "tcp")
+	Host         string        // TCP endpoint host (transport == "tcp" 일 때 필수)
+	Port         int           // TCP endpoint port (transport == "tcp" 일 때 필수, 1-65535)
+	Serial       SerialConfig  // RTU 시리얼 파라미터 (transport == "rtu" 일 때 필수)
+	UnitID       byte          // upstream 디바이스 unit id (가상 UnitID 와 독립, 기본값 1)
+	Mode         string        // "direct" | "indirect" (필수)
+	PollInterval time.Duration // indirect 전용, > 0
+	Timeout      time.Duration // upstream 요청 데드라인 + (indirect) stale 허용 한도
+}
+
 // DeviceConfig 는 단일 가상 디바이스의 설정을 나타낸다.
 type DeviceConfig struct {
 	UnitID       byte              // 유닛 ID (범위 1-247)
 	Name         string            // 디바이스 이름 (선택, 로깅/식별용)
 	RegisterMap  RegisterMapConfig // 디바이스별 레지스터 맵
 	RegisterDefs []any             // 디바이스별 레지스터 정의 (Bridge Adapter 매핑용)
+	Backing      *BackingConfig    // upstream 백킹 설정 (nil = 순수 slave, 하위 호환)
 }
 
 // RegisterMapConfig 는 레지스터 맵의 설정을 나타낸다.
@@ -316,10 +339,168 @@ func parseDevicesConfig(raw any) ([]DeviceConfig, error) {
 			}
 		}
 
+		// backing (선택: upstream 백킹 설정). 부재 시 nil → 순수 slave(하위 호환).
+		if rawBacking, ok := devMap["backing"]; ok {
+			bc, err := parseBackingConfig(rawBacking, i)
+			if err != nil {
+				return nil, err
+			}
+			dev.Backing = bc
+		}
+
 		devices = append(devices, dev)
 	}
 
 	return devices, nil
+}
+
+// parseBackingConfig 는 device 설정의 backing 서브맵을 파싱·검증한다(REQ-MODBUS-010-01).
+//   - mode 는 필수이며 "direct" | "indirect" 중 하나여야 한다.
+//   - transport 는 "tcp"(기본) | "rtu"; tcp 는 host/port, rtu 는 시리얼 파라미터를 요구한다.
+//   - mode == indirect 이면 poll_interval 과 timeout 이 필수이며 양수여야 한다.
+//
+// 검증 실패 시 부분 적용 없이 오류를 반환한다(AC-02).
+func parseBackingConfig(raw any, deviceIdx int) (*BackingConfig, error) {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing must be a map: %w", deviceIdx, ErrInvalidBackingConfig)
+	}
+
+	bc := &BackingConfig{
+		Transport: TransportTCP,
+		UnitID:    1,
+	}
+
+	// transport (선택, 기본 "tcp")
+	if v, ok := m["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case TransportTCP, "":
+			bc.Transport = TransportTCP
+		case TransportRTU:
+			bc.Transport = TransportRTU
+		default:
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.transport %q must be %q or %q: %w",
+				deviceIdx, s, TransportTCP, TransportRTU, ErrInvalidBackingConfig)
+		}
+	}
+
+	// mode (필수)
+	modeStr, _ := m["mode"].(string)
+	switch modeStr {
+	case BackingModeDirect, BackingModeIndirect:
+		bc.Mode = modeStr
+	case "":
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing.mode is required: %w", deviceIdx, ErrInvalidBackingConfig)
+	default:
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing.mode %q must be %q or %q: %w",
+			deviceIdx, modeStr, BackingModeDirect, BackingModeIndirect, ErrInvalidBackingConfig)
+	}
+
+	// unit_id (선택, 0-247, 기본 1)
+	if v, ok := m["unit_id"]; ok {
+		id := toInt(v)
+		if id < 0 || id > 247 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.unit_id must be 0-247 (got %d): %w",
+				deviceIdx, id, ErrInvalidBackingConfig)
+		}
+		bc.UnitID = byte(id)
+	}
+
+	// endpoint 검증 (transport 별)
+	switch bc.Transport {
+	case TransportTCP:
+		host, _ := m["host"].(string)
+		if host == "" {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.host is required for tcp transport: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+		bc.Host = host
+
+		portRaw, ok := m["port"]
+		if !ok {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.port is required for tcp transport: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+		bc.Port = toInt(portRaw)
+		if bc.Port < 1 || bc.Port > 65535 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.port must be 1-65535 (got %d): %w",
+				deviceIdx, bc.Port, ErrInvalidBackingConfig)
+		}
+
+	case TransportRTU:
+		// 시리얼 파라미터는 서버 리스너용 parseServerSerialConfig 를 재사용한다
+		// (serial_port/port 필수, 나머지는 관례적 기본값).
+		sc, err := parseServerSerialConfig(m)
+		if err != nil {
+			return nil, err
+		}
+		bc.Serial = sc
+	}
+
+	// timeout (선택 문자열; indirect 에서 필수)
+	if d, ok, err := parseDurationField(m, "timeout", deviceIdx); err != nil {
+		return nil, err
+	} else if ok {
+		bc.Timeout = d
+	}
+
+	// poll_interval (선택 문자열; indirect 에서 필수)
+	if d, ok, err := parseDurationField(m, "poll_interval", deviceIdx); err != nil {
+		return nil, err
+	} else if ok {
+		bc.PollInterval = d
+	}
+
+	// mode 별 필수 검증
+	if bc.Mode == BackingModeIndirect {
+		if bc.PollInterval <= 0 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.poll_interval is required and must be > 0 for indirect mode: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+		if bc.Timeout <= 0 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.timeout is required and must be > 0 for indirect mode: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+	} else if bc.Timeout < 0 {
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing.timeout must be >= 0 (got %s): %w",
+			deviceIdx, bc.Timeout, ErrInvalidBackingConfig)
+	}
+
+	return bc, nil
+}
+
+// parseDurationField 는 맵에서 key 에 해당하는 duration 문자열(예: "500ms", "2s")을 파싱한다.
+// 키가 없으면 (0, false, nil) 을 반환한다(선택적 필드용).
+func parseDurationField(m map[string]any, key string, deviceIdx int) (time.Duration, bool, error) {
+	v, ok := m[key]
+	if !ok {
+		return 0, false, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return 0, false, fmt.Errorf(
+			"modbus-server: devices[%d].backing.%s must be a duration string: %w",
+			deviceIdx, key, ErrInvalidBackingConfig)
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, false, fmt.Errorf(
+			"modbus-server: devices[%d].backing.%s invalid duration %q: %w",
+			deviceIdx, key, s, ErrInvalidBackingConfig)
+	}
+	return d, true, nil
 }
 
 // areaNames 는 register_map 의 4개 표준 영역 이름이다.

@@ -39,7 +39,10 @@ type ModbusServerAgent struct {
 	listener      serverListener
 	handler       *ModbusHandler
 	cancelFn      context.CancelFunc
-	obs           *serverObs // 관측성 배선(클라이언트 레지스트리 + 프레임 로그 토글 미러). Configure 로 라이브 갱신
+	rootCtx       context.Context          // 백킹 폴러 수명을 묶는 에이전트 컨텍스트(Start 에서 설정, a.mu 보호)
+	backings      map[byte]*deviceBacking  // 백킹 디바이스별 런타임 상태(트랜스포트+폴러), a.mu 보호 (REQ-MODBUS-010-05)
+	newTransport  upstreamTransportFactory // 백킹 트랜스포트 생성 seam(nil=기본 newUpstreamTransport, 테스트 주입용)
+	obs           *serverObs               // 관측성 배선(클라이언트 레지스트리 + 프레임 로그 토글 미러). Configure 로 라이브 갱신
 	msgCh         chan map[string]any
 	hasReceiver   *atomic.Bool  // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
 	receiverOn    chan struct{} // ReceiveMessage 활성화 신호 (drainMsgCh 즉시 종료용, 1회 close)
@@ -113,6 +116,7 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 		registerMap:   primaryRM, // 하위 호환: 첫 번째 디바이스 (없으면 nil, add_device 후 채움)
 		listener:      listener,
 		handler:       handler,
+		backings:      make(map[byte]*deviceBacking),
 		obs:           obs,
 		msgCh:         msgCh,
 		hasReceiver:   &atomic.Bool{},
@@ -181,9 +185,18 @@ func (a *ModbusServerAgent) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	a.mu.Lock()
 	a.cancelFn = cancel
+	a.rootCtx = childCtx
 	a.mu.Unlock()
 
+	// 설정 시점 백킹 디바이스 배선: upstream 연결 + (indirect) 폴러 시작.
+	// 리스너 기동 이전에 수행하여 서빙 시작 시점에 디바이스가 백킹 준비 상태가 되게 한다.
+	if err := a.startBackings(childCtx); err != nil {
+		cancel()
+		return fmt.Errorf("modbus-server start: %w", err)
+	}
+
 	if err := a.listener.Start(childCtx); err != nil {
+		a.stopBackings()
 		cancel()
 		return fmt.Errorf("modbus-server start: %w", err)
 	}
@@ -209,6 +222,10 @@ func (a *ModbusServerAgent) Stop(_ context.Context) error {
 	if cancelFn != nil {
 		cancelFn()
 	}
+
+	// 백킹 폴러 종료 + upstream 트랜스포트 Close (goroutine 누수 방지, AC-11).
+	// cancelFn 이 이미 폴러 컨텍스트를 취소했더라도 stop() 으로 종료를 확정 대기한다.
+	a.stopBackings()
 
 	if err := a.listener.Stop(); err != nil {
 		a.logger.Warn("modbus-server: listener stop failed", "error", err)
@@ -1252,9 +1269,34 @@ func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error
 		}
 	}
 
-	// RegisterMap + RequestHandler 생성
+	// RegisterMap 생성. 기본은 순수 slave(RequestHandler(rm)).
 	rm := NewRegisterMap(rmCfg)
 	reqHandler := NewRequestHandler(rm, a.logger)
+
+	// backing 파라미터 (선택: upstream 백킹). 부재 시 순수 slave(하위 호환).
+	// 존재 시 트랜스포트 연결 + backedStore 배선 + (indirect) 폴러 시작을 수행한다.
+	var backing *deviceBacking
+	if rawBacking, ok := req.Params["backing"]; ok {
+		bc, err := parseBackingConfig(rawBacking, 0)
+		if err != nil {
+			return nil, err
+		}
+		// 폴러 수명 컨텍스트는 에이전트 Start 컨텍스트(rootCtx)에 묶는다. 미기동 시엔
+		// Background 로 대체하되, remove_device/Stop 이 폴러를 명시적으로 종료하므로 안전하다.
+		a.mu.RLock()
+		rootCtx := a.rootCtx
+		a.mu.RUnlock()
+		if rootCtx == nil {
+			rootCtx = context.Background()
+		}
+		// setupBacking 은 a.mu 밖에서 호출한다(Connect 가 블로킹될 수 있음).
+		h, b, err := a.setupBacking(rootCtx, rm, rmCfg, bc)
+		if err != nil {
+			return nil, err
+		}
+		reqHandler = h
+		backing = b
+	}
 
 	dev := &Device{
 		UnitID:       byte(uid),
@@ -1266,7 +1308,16 @@ func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error
 
 	// DeviceManager 에 추가 (중복 UnitID 검사 포함)
 	if err := a.deviceManager.AddDevice(dev); err != nil {
+		// 백킹 배선 롤백(폴러 종료 + 트랜스포트 Close)으로 goroutine 누수를 방지한다.
+		teardownBacking(backing)
 		return nil, err
+	}
+
+	// 백킹 상태를 a.mu 보호 하에 등록한다(Stop/remove 에서 정리 대상).
+	if backing != nil {
+		a.mu.Lock()
+		a.backings[dev.UnitID] = backing
+		a.mu.Unlock()
 	}
 
 	// 디바이스 로스터 변경: INFO 로 남긴다(기존 로그 레벨에서 항상 노출).
@@ -1299,6 +1350,15 @@ func (a *ModbusServerAgent) processRemoveDevice(req *processRequest) ([]byte, er
 	if err := a.deviceManager.RemoveDevice(byte(uid)); err != nil {
 		return nil, err
 	}
+
+	// 백킹 디바이스였으면 폴러 종료 + upstream 트랜스포트 Close (goroutine 누수 방지, AC-11).
+	// 디바이스는 이미 매니저에서 제거되어 신규 조회가 없으므로, 진행 중 요청이 있더라도
+	// Close 후에는 0x0B 로 안전하게 처리된다.
+	a.mu.Lock()
+	backing := a.backings[byte(uid)]
+	delete(a.backings, byte(uid))
+	a.mu.Unlock()
+	teardownBacking(backing)
 
 	// 디바이스 로스터 변경: INFO 로 남긴다(기존 로그 레벨에서 항상 노출).
 	if a.logger != nil {

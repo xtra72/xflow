@@ -3080,7 +3080,24 @@
         "invalidFc": "fc가 올바르지 않음 (1-4 만 허용)",
         "wrongColumnCount": "열 개수 오류 (로컬 5열 또는 공유 7열)"
       },
-      "descriptionColumn": "설명"
+      "descriptionColumn": "설명",
+      "backingSection": "실제 디바이스 백킹",
+      "backingEnable": "실제 디바이스 백킹 활성화",
+      "backingDesc": "켜면 이 가상 디바이스가 실제(upstream) MODBUS 디바이스를 백킹합니다. 끄면 순수 slave(RegisterMap 저장값 서빙)로 동작합니다(기본).",
+      "backingTransport": "트랜스포트",
+      "backingMode": "모드",
+      "backingModeDirect": "직접 (요청 시 실시간 조회)",
+      "backingModeIndirect": "간접 (주기 폴링 + stale 허용)",
+      "backingUnitId": "upstream 유닛 ID",
+      "backingHost": "호스트",
+      "backingPort": "포트",
+      "backingSerialPort": "시리얼 포트",
+      "backingBaudRate": "보 레이트",
+      "backingDataBits": "데이터 비트",
+      "backingStopBits": "스톱 비트",
+      "backingParity": "패리티",
+      "backingPollInterval": "폴링 주기",
+      "backingTimeout": "타임아웃"
     },
     "modbusCommandSet": {
       "commandSet": "명령셋",

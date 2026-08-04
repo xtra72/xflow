@@ -2,10 +2,27 @@ package modbusserver
 
 import (
 	"encoding/binary"
+	"errors"
 	"log/slog"
 
 	modbus "github.com/xtra/xflow/internal/agent/modbus"
 )
+
+// ExceptionGatewayTargetFailed 는 게이트웨이가 백킹 대상(upstream) 디바이스로부터
+// 응답을 받지 못했음을 나타내는 MODBUS 예외 코드(0x0B)이다. internal/agent/modbus 를
+// 변경하지 않기 위해 modbusserver 패키지에 로컬 상수로 정의한다(REQ-MODBUS-010-05).
+const ExceptionGatewayTargetFailed byte = 0x0B
+
+// mapStoreError 는 registerStore 가 반환한 오류를 MODBUS 예외 PDU 로 매핑한다.
+// 백킹 실패(ErrGatewayTargetFailed)는 0x0B 로, 그 외(주소 미매핑 등)는 기존과 동일하게
+// 0x02(Illegal Data Address)로 매핑한다. 순수 slave 경로는 ErrGatewayTargetFailed 를
+// 반환하지 않으므로 기존 동작이 바이트 단위로 보존된다(하위 호환 HARD).
+func mapStoreError(fc byte, err error) []byte {
+	if errors.Is(err, ErrGatewayTargetFailed) {
+		return makeExceptionPDU(fc, ExceptionGatewayTargetFailed)
+	}
+	return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
+}
 
 // ---------------------------------------------------------------------------
 // RequestHandler
@@ -93,7 +110,7 @@ func (rh *RequestHandler) handleReadCoils(fc byte, startAddr, quantity uint16) [
 
 	vals, err := rh.store.ReadCoils(startAddr, quantity)
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
+		return mapStoreError(fc, err)
 	}
 
 	data := encodeCoils(vals)
@@ -112,7 +129,7 @@ func (rh *RequestHandler) handleReadDiscreteInputs(fc byte, startAddr, quantity 
 
 	vals, err := rh.store.ReadDiscreteInputs(startAddr, quantity)
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
+		return mapStoreError(fc, err)
 	}
 
 	data := encodeCoils(vals)
@@ -131,7 +148,7 @@ func (rh *RequestHandler) handleReadHoldingRegisters(fc byte, startAddr, quantit
 
 	vals, err := rh.store.ReadHoldingRegisters(startAddr, quantity)
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
+		return mapStoreError(fc, err)
 	}
 
 	data := encodeRegisters(vals)
@@ -150,7 +167,7 @@ func (rh *RequestHandler) handleReadInputRegisters(fc byte, startAddr, quantity 
 
 	vals, err := rh.store.ReadInputRegisters(startAddr, quantity)
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress)
+		return mapStoreError(fc, err)
 	}
 
 	data := encodeRegisters(vals)
@@ -211,7 +228,7 @@ func (rh *RequestHandler) handleWriteSingleCoil(pdu []byte) ([]byte, *ChangeSet)
 
 	cs, err := rh.store.WriteCoils(addr, []bool{coilVal})
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
+		return mapStoreError(fc, err), nil
 	}
 
 	// Echo-back the request PDU as response
@@ -232,7 +249,7 @@ func (rh *RequestHandler) handleWriteSingleRegister(pdu []byte) ([]byte, *Change
 
 	cs, err := rh.store.WriteHoldingRegisters(addr, []uint16{value})
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
+		return mapStoreError(fc, err), nil
 	}
 
 	// Echo-back the request PDU as response
@@ -266,7 +283,7 @@ func (rh *RequestHandler) handleWriteMultipleCoils(pdu []byte) ([]byte, *ChangeS
 
 	cs, err := rh.store.WriteCoils(startAddr, values)
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
+		return mapStoreError(fc, err), nil
 	}
 
 	// Response: FC + StartAddr(2) + Quantity(2) = 5 bytes
@@ -302,7 +319,7 @@ func (rh *RequestHandler) handleWriteMultipleRegisters(pdu []byte) ([]byte, *Cha
 
 	cs, err := rh.store.WriteHoldingRegisters(startAddr, values)
 	if err != nil {
-		return makeExceptionPDU(fc, modbus.ExceptionIllegalDataAddress), nil
+		return mapStoreError(fc, err), nil
 	}
 
 	// Response: FC + StartAddr(2) + Quantity(2) = 5 bytes

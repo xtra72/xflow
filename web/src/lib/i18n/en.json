@@ -3080,7 +3080,24 @@
         "invalidFc": "Invalid fc (only 1-4 allowed)",
         "wrongColumnCount": "Wrong column count (local 5 cols or shared 7 cols)"
       },
-      "descriptionColumn": "Description"
+      "descriptionColumn": "Description",
+      "backingSection": "Real device backing",
+      "backingEnable": "Enable real device backing",
+      "backingDesc": "When on, this virtual device backs a real (upstream) MODBUS device. When off, it acts as a pure slave (serving RegisterMap stored values, default).",
+      "backingTransport": "Transport",
+      "backingMode": "Mode",
+      "backingModeDirect": "Direct (real-time query on request)",
+      "backingModeIndirect": "Indirect (periodic polling + stale allowance)",
+      "backingUnitId": "Upstream unit ID",
+      "backingHost": "Host",
+      "backingPort": "Port",
+      "backingSerialPort": "Serial port",
+      "backingBaudRate": "Baud rate",
+      "backingDataBits": "Data bits",
+      "backingStopBits": "Stop bits",
+      "backingParity": "Parity",
+      "backingPollInterval": "Poll interval",
+      "backingTimeout": "Timeout"
     },
     "modbusCommandSet": {
       "commandSet": "Command set",
