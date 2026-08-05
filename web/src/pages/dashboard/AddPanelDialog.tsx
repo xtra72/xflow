@@ -35,6 +35,7 @@ import {
   Grid3x3,
   PlugZap,
   Gauge,
+  Database,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -149,6 +150,26 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
       labelKey: 'dashboard.addPanel.labels.multiChannel',
       descriptionKey: 'dashboard.addPanel.descriptions.multiChannel',
       presetConfig: { channels: [{ name: '' }, { name: '' }] },
+    },
+    // SPEC-WEB-005: store 기반 라인 차트 프리셋. data_source='store' 로 바로 추가되어
+    // 설정에서 에이전트 + 키/태그만 지정하면 된다(defaultStoreSource 기본형과 동일한 형태).
+    {
+      type: 'line-chart',
+      icon: Database,
+      labelKey: 'dashboard.addPanel.labels.storeLineChart',
+      descriptionKey: 'dashboard.addPanel.descriptions.storeLineChart',
+      presetConfig: {
+        data_source: 'store',
+        store_source: {
+          agent_name: '',
+          namespace: 'default',
+          series: [],
+          time_window_ms: 60 * 60 * 1000,
+          interval_ms: 60 * 1000,
+          aggregation: 'average',
+          refresh_interval_ms: 5000,
+        },
+      },
     },
     { type: 'bar-chart', icon: BarChart2, labelKey: 'dashboard.panelTypes.barChart', descriptionKey: 'dashboard.addPanel.descriptions.barChart' },
     { type: 'pie-chart', icon: PieChart, labelKey: 'dashboard.panelTypes.pieChart', descriptionKey: 'dashboard.addPanel.descriptions.pieChart' },

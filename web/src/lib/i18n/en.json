@@ -136,12 +136,14 @@
         "modbusSharedRegisters": "Shared container (unit 0) register map grid",
         "modbusDeviceRegisters": "Register map grid for the selected virtual device",
         "modbusBusStats": "Bus statistics mini-chart (reads·writes/min, latency)",
-        "modbusSummaryStats": "Summary of connections, clients, devices and errors"
+        "modbusSummaryStats": "Summary of connections, clients, devices and errors",
+        "storeLineChart": "Plot a store key or tag history as a time-series line chart"
       },
       "labels": {
         "propertiesGrid": "Properties grid",
         "multiChannel": "Multi-channel comparison",
-        "outdoorControl": "Outdoor monitoring"
+        "outdoorControl": "Outdoor monitoring",
+        "storeLineChart": "Store line chart"
       }
     },
     "addDashboard": "Add New Dashboard",
