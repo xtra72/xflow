@@ -91,8 +91,8 @@ export default function AgentStatusDiagram({ data, name }: AgentStatusDiagramPro
   const countText = 'fill-(--color-text-primary) text-[11px] font-semibold';
   const errText = 'fill-red-500 text-[11px] font-semibold';
   const metaText = 'fill-(--color-text-muted) text-[10px]';
-  const cylinder = 'fill-(--color-bg-primary) stroke-(--color-border-strong)';
-  const trashLabel = 'fill-(--color-text-secondary) text-[10px]';
+  const dropMark = 'stroke-(--color-text-secondary)';
+  const dropLabel = 'fill-(--color-text-secondary) text-[10px]';
 
   const buffer = data.buffer;
 
@@ -164,15 +164,16 @@ export default function AgentStatusDiagram({ data, name }: AgentStatusDiagramPro
         </>
       )}
 
-      {/* 드롭 메시지: 에이전트 → 쓰레기통(DB 실린더) 하향 흐름 */}
-      <Arrow x1={240} y1={198} x2={240} y2={232} direction="down" className={flowStroke} />
-      <text x={252} y={218} className={countText} data-testid="agent-status-diagram-dropped">
+      {/* 드롭 메시지: 에이전트 → 소실(점선 하향 화살표 + ⨯). 저장이 아니라 유실을 나타낸다. */}
+      <line x1={240} y1={198} x2={240} y2={222} strokeWidth={2} strokeDasharray="3 3" className={flowStroke} />
+      <polygon points="240,222 236,214 244,214" className={flowStroke} />
+      <text x={252} y={214} className={countText} data-testid="agent-status-diagram-dropped">
         {n(data.dropped_messages).toLocaleString()}
       </text>
-      {/* 실린더: 상단 림 + 몸통(측면 + 하단 곡선) */}
-      <path d="M222 236 V256 A18 5 0 0 0 258 256 V236" strokeWidth={1.5} className={cylinder} />
-      <ellipse cx={240} cy={236} rx={18} ry={5} strokeWidth={1.5} className={cylinder} />
-      <text x={240} y={276} textAnchor="middle" className={trashLabel}>
+      {/* ⨯ 소실 표식(두 선 교차) — 컨테이너 없이 유실을 표현 */}
+      <line x1={233} y1={230} x2={247} y2={244} strokeWidth={2} className={dropMark} />
+      <line x1={247} y1={230} x2={233} y2={244} strokeWidth={2} className={dropMark} />
+      <text x={240} y={262} textAnchor="middle" className={dropLabel}>
         {t('dashboard.agentStatus.diagram.dropped')}
       </text>
     </svg>
