@@ -15,6 +15,7 @@ import { Activity } from 'lucide-react';
 import { Line, LineChart, ResponsiveContainer, YAxis } from 'recharts';
 
 import { useTranslation } from '@/lib/i18n';
+import { cn } from '@/lib/utils/cn';
 
 import { ModbusNotice, ModbusPanelFrame, ModbusSpinner } from './panelChrome';
 import {
@@ -105,6 +106,9 @@ function MiniChart({
 export default function ModbusBusStatsPanel({ title, config }: ModbusBusStatsPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
+  // config.columns(≥1) → 행당 고정 미니차트 수. 미설정/0 은 기본 2열(grid-cols-2).
+  const columns =
+    typeof config.columns === 'number' && config.columns > 0 ? config.columns : undefined;
   const { devices, isLoading, isError: devicesError } = useModbusListDevices(
     gate.agentId,
     gate.enabled,
@@ -149,7 +153,14 @@ export default function ModbusBusStatsPanel({ title, config }: ModbusBusStatsPan
     <ModbusPanelFrame title={title} icon={icon}>
       <div
         data-testid="modbus-bus-grid"
-        className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto"
+        // columns 설정 시 행당 고정 열(repeat(N, 1fr)). 미설정 시 기본 2열(grid-cols-2).
+        className={cn(
+          'grid min-h-0 flex-1 gap-2 overflow-y-auto',
+          columns ? undefined : 'grid-cols-2',
+        )}
+        style={
+          columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined
+        }
       >
         {CHARTS.map((spec) => (
           <MiniChart key={spec.key} spec={spec} points={points} label={t(spec.labelKey)} />

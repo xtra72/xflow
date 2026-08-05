@@ -25,6 +25,9 @@ export default function ModbusDeviceRegistersPanel({
 }: ModbusDeviceRegistersPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
+  // config.columns(≥1) → 영역 카드 내부 셀 그리드의 행당 셀 수. 미설정/0 은 자동(flex-wrap).
+  const columns =
+    typeof config.columns === 'number' && config.columns > 0 ? config.columns : undefined;
   const rawUnitId = config.unitId as number | undefined;
   // unit 0 은 공유 컨테이너(서빙 디바이스 아님) → get_device_status(0) 은 의미 있는 결과가 없다.
   // config.unitId 미설정(생성 시 가상 디바이스 없음/설정에서 에이전트 변경으로 초기화)이거나 0 이면
@@ -78,10 +81,13 @@ export default function ModbusDeviceRegistersPanel({
       </ModbusPanelFrame>
     );
   }
+  // 유닛은 선택됐으나 디바이스에 레지스터 영역이 전혀 없음 → 세그먼트 추가를 안내(제네릭 empty 대신).
+  // (백엔드 get_device_status 는 공유-앨리어스/백킹 값을 포함한 유효 맵을 반환하므로, 이 분기는
+  //  공유 세그먼트조차 없는 진짜 빈 디바이스에만 도달한다.)
   if (isRegisterMapEmpty(status.register_map, status.register_counts)) {
     return (
       <ModbusPanelFrame title={heading} icon={icon}>
-        <ModbusNotice message={t('dashboard.modbus.empty')} />
+        <ModbusNotice message={t('dashboard.modbus.deviceNoSegments')} />
       </ModbusPanelFrame>
     );
   }
@@ -91,6 +97,7 @@ export default function ModbusDeviceRegistersPanel({
       <RegisterMapGrid
         registerMap={status.register_map}
         registerCounts={status.register_counts}
+        cellColumns={columns}
       />
     </ModbusPanelFrame>
   );

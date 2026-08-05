@@ -28,6 +28,9 @@ export default function ModbusSharedRegistersPanel({
 }: ModbusSharedRegistersPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
+  // config.columns(≥1) → 영역 카드 내부 셀 그리드의 행당 셀 수. 미설정/0 은 자동(flex-wrap).
+  const columns =
+    typeof config.columns === 'number' && config.columns > 0 ? config.columns : undefined;
   const { registerMap, isLoading, isError } = useModbusRegisterMap(
     gate.agentId,
     SHARED_UNIT_ID,
@@ -69,7 +72,7 @@ export default function ModbusSharedRegistersPanel({
 
   return (
     <ModbusPanelFrame title={title} icon={icon}>
-      <RegisterMapGrid registerMap={registerMap} registerCounts={counts} />
+      <RegisterMapGrid registerMap={registerMap} registerCounts={counts} cellColumns={columns} />
     </ModbusPanelFrame>
   );
 }

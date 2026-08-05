@@ -90,6 +90,15 @@ const MODBUS_PANEL_TYPES = new Set([
   'modbus-summary-stats',
 ]);
 
+// config.columns(그리드 열 수) 컨트롤을 노출하는 MODBUS 패널 (SPEC-MODBUS-012).
+// summary/bus 는 타일·미니차트 열, shared/device 는 영역 카드 내부 셀 열을 의미한다.
+const MODBUS_COLUMNS_PANEL_TYPES = new Set([
+  'modbus-summary-stats',
+  'modbus-bus-stats',
+  'modbus-shared-registers',
+  'modbus-device-registers',
+]);
+
 /** 패널 색상 프리셋 */
 const COLOR_PRESETS = [
   '#3b82f6', // blue
@@ -1259,6 +1268,9 @@ function ModbusSettingsSection({
   const agentId = (panel.config?.agentId as string | undefined) ?? '';
   const needsUnit = panel.type === 'modbus-device-registers';
   const currentUnitId = panel.config?.unitId as number | undefined;
+  // 그리드 열 수(config.columns) — 4종 그리드 패널만. 미설정/0 은 자동(반응형/wrap).
+  const needsColumns = MODBUS_COLUMNS_PANEL_TYPES.has(panel.type);
+  const currentColumns = panel.config?.columns as number | undefined;
 
   const { data: agentsResult } = useAgents();
   const gatewayAgents = useMemo(
@@ -1324,6 +1336,31 @@ function ModbusSettingsSection({
                 <option value={String(currentUnitId)}>{formatUnitLabel(currentUnitId)}</option>
               )}
           </select>
+        </div>
+      )}
+
+      {/* 그리드 열 수(config.columns) — 4종 그리드 패널 전용. 비움/0 = 자동(반응형/wrap). */}
+      {needsColumns && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.modbusColumns')}
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={24}
+            value={currentColumns !== undefined ? String(currentColumns) : ''}
+            data-testid="modbus-settings-columns-input"
+            onChange={(e) =>
+              onConfigChange({
+                columns: e.target.value === '' ? undefined : Number(e.target.value),
+              })
+            }
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-[11px] text-(--color-text-muted)">
+            {t('dashboard.settings.modbusColumnsHint')}
+          </p>
         </div>
       )}
     </div>

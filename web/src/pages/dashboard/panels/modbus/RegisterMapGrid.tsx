@@ -22,6 +22,11 @@ import type { ModbusRegisterCounts, ModbusRegisterMap } from './useModbusData';
 interface RegisterMapGridProps {
   registerMap: ModbusRegisterMap;
   registerCounts: ModbusRegisterCounts;
+  /**
+   * 영역 카드 내부 셀 그리드의 행당 셀(열) 수. 설정(≥1) 시 flex-wrap 대신 고정 열 CSS grid 로
+   * 렌더한다. 미설정 시 기존 flex-wrap 반응형 배치를 유지한다(기본값, 바이트 동일 동작).
+   */
+  cellColumns?: number;
 }
 
 /** 셀 상태별 색상 토큰(값 기반). */
@@ -39,7 +44,7 @@ function cellTitle(addr: number | null, value: boolean | number | null): string 
 }
 
 /** 개별 영역 섹션(헤더 집계 + 셀 그리드). */
-function AreaSection({ grid }: { grid: AreaGrid }) {
+function AreaSection({ grid, cellColumns }: { grid: AreaGrid; cellColumns?: number }) {
   const { t } = useTranslation();
   const label = REGISTER_AREA_LABELS[grid.area as RegisterArea] ?? grid.area;
   const range =
@@ -77,8 +82,15 @@ function AreaSection({ grid }: { grid: AreaGrid }) {
           {t('dashboard.modbus.degradedShort')} <b>{grid.degraded}</b>
         </span>
       </div>
-      {/* 셀 그리드 */}
-      <div className="flex flex-wrap gap-0.5">
+      {/* 셀 그리드 — cellColumns 설정 시 고정 열 CSS grid, 미설정 시 flex-wrap(기본). */}
+      <div
+        className={cn(cellColumns ? 'grid' : 'flex flex-wrap', 'gap-0.5')}
+        style={
+          cellColumns
+            ? { gridTemplateColumns: `repeat(${cellColumns}, minmax(0, 1fr))` }
+            : undefined
+        }
+      >
         {grid.cells.map((cell, idx) => (
           <span
             key={cell.addr ?? `deg-${idx}`}
@@ -94,7 +106,11 @@ function AreaSection({ grid }: { grid: AreaGrid }) {
 }
 
 /** 레지스터 맵 그리드(4영역). points>0 또는 스냅샷 값이 있는 영역만 렌더한다. */
-export default function RegisterMapGrid({ registerMap, registerCounts }: RegisterMapGridProps) {
+export default function RegisterMapGrid({
+  registerMap,
+  registerCounts,
+  cellColumns,
+}: RegisterMapGridProps) {
   const grids = REGISTER_AREA_ORDER.map((area) => {
     const snapshot = registerMap[area] as Record<string, boolean | number> | undefined;
     const points = registerCounts[area] ?? 0;
@@ -104,7 +120,7 @@ export default function RegisterMapGrid({ registerMap, registerCounts }: Registe
   return (
     <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
       {grids.map((grid) => (
-        <AreaSection key={grid.area} grid={grid} />
+        <AreaSection key={grid.area} grid={grid} cellColumns={cellColumns} />
       ))}
     </div>
   );

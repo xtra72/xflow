@@ -106,6 +106,32 @@ describe('PanelSettingsDialog MODBUS 설정 (BUG A)', () => {
     expect(savedConfig.agentId).toBe('gw-2');
   });
 
+  it('그리드 패널이 아니면 열 수(columns) 입력을 노출하지 않는다', () => {
+    // 기본 beforeEach 패널 타입은 modbus-real-devices(그리드 컬럼 대상 아님).
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.queryByTestId('modbus-settings-columns-input')).toBeNull();
+  });
+
+  it('그리드 패널은 열 수(columns) 입력을 노출하고 변경 시 draft config.columns 로 저장된다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-summary-stats',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1' },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const colInput = screen.getByTestId('modbus-settings-columns-input') as HTMLInputElement;
+    expect(colInput).toBeInTheDocument();
+    fireEvent.change(colInput, { target: { value: '3' } });
+    expect((screen.getByTestId('modbus-settings-columns-input') as HTMLInputElement).value).toBe('3');
+
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.settings.apply' }));
+    expect(storeMock.updatePanelConfig).toHaveBeenCalledTimes(1);
+    const savedConfig = storeMock.updatePanelConfig.mock.calls[0]![1] as Record<string, unknown>;
+    expect(savedConfig.columns).toBe(3);
+  });
+
   it('modbus-device-registers 는 대상 unit 선택기를 추가로 노출한다', () => {
     storeMock.panel = {
       id: 'p1',

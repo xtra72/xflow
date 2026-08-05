@@ -93,4 +93,27 @@ describe('ModbusDeviceRegistersPanel (SPEC-MODBUS-012 REQ-05)', () => {
     renderPanel();
     expect(screen.getByText('dashboard.modbus.loadError')).toBeInTheDocument();
   });
+
+  it('유닛 선택됨 + 레지스터 영역 없음 → 세그먼트 추가 안내(제네릭 empty 아님)', () => {
+    mockState.status = {
+      unit_id: 2,
+      name: 'U2',
+      register_counts: { coils: 0, discrete_inputs: 0, holding_registers: 0, input_registers: 0 },
+      register_map: {},
+      stats: { read_count: 0, write_count: 0, error_count: 0 },
+      backing: null,
+    };
+    renderPanel({ agentId: 'gw-1', unitId: 2 });
+    expect(screen.getByText('dashboard.modbus.deviceNoSegments')).toBeInTheDocument();
+    expect(screen.queryByText('dashboard.modbus.empty')).toBeNull();
+  });
+
+  it('config.columns 를 RegisterMapGrid cellColumns 로 전달한다(고정 열 그리드)', () => {
+    mockState.status = status(2);
+    renderPanel({ agentId: 'gw-1', unitId: 2, columns: 4 });
+    const cellContainer =
+      screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
+    expect(cellContainer.className).toContain('grid');
+    expect(cellContainer.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
+  });
 });

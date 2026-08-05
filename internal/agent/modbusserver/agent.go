@@ -1408,11 +1408,24 @@ func (a *ModbusServerAgent) processGetDeviceStatus(req *processRequest) ([]byte,
 		lastAccessStr = lastAccess.Format(time.RFC3339)
 	}
 
+	// 실효(effective) 레지스터 맵/카운트: 마스터가 실제로 읽는 서빙 store 기준으로 노출한다
+	// (SPEC-MODBUS-008). 공유 세그먼트 디바이스(deviceView)는 컨테이너 값이, 백킹 디바이스
+	// (backedStore)는 폴/조회 값이 반영된다. 로컬 전용 디바이스는 기존과 바이트 동일하다.
+	// ReqHandler 부재 시(방어적)에만 자체 맵으로 폴백한다.
+	var registerMap map[string]any
+	var registerCounts map[string]int
+	if dev.ReqHandler != nil {
+		registerMap, registerCounts = dev.ReqHandler.effectiveRegisterView()
+	} else {
+		registerMap = dev.RegisterMap.GetSnapshot()
+		registerCounts = dev.RegisterMap.RegisterCounts()
+	}
+
 	resp := map[string]any{
 		"unit_id":         dev.UnitID,
 		"name":            dev.Name,
-		"register_counts": dev.RegisterMap.RegisterCounts(),
-		"register_map":    dev.RegisterMap.GetSnapshot(),
+		"register_counts": registerCounts,
+		"register_map":    registerMap,
 		"stats": map[string]any{
 			"read_count":  dev.Stats.ReadCount.Load(),
 			"write_count": dev.Stats.WriteCount.Load(),

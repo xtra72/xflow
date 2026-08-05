@@ -65,6 +65,29 @@ func newRequestHandlerWithStore(store registerStore, logger *slog.Logger) *Reque
 	}
 }
 
+// effectiveRegisterView 는 이 핸들러가 실제로 서빙하는 store 기준의 실효 레지스터 스냅샷과
+// 영역별 카운트를 반환한다(get_device_status 노출용, SPEC-MODBUS-008). store 종류별로:
+//   - *deviceView : 공유 세그먼트를 컨테이너 값으로 해석한 실효 맵(디바이스 자체 맵은
+//     로컬 세그먼트만 담으므로 공유 값이 누락되는 버그를 교정).
+//   - *backedStore: 폴/조회 값을 담는 inner 맵(마스터가 실제로 읽는 값).
+//   - *RegisterMap: 로컬 맵(로컬 전용 디바이스 — 기존 동작과 바이트 동일).
+//
+// 스냅샷/카운트 형태는 RegisterMap.GetSnapshot/RegisterCounts 와 동일하여 프런트엔드가
+// get_map 소비에 쓰는 형태를 그대로 유지한다(응답 스키마 불변, 내용만 실효화).
+func (rh *RequestHandler) effectiveRegisterView() (snapshot map[string]any, counts map[string]int) {
+	switch s := rh.store.(type) {
+	case *deviceView:
+		return s.EffectiveSnapshot(), s.EffectiveCounts()
+	case *backedStore:
+		return s.inner.GetSnapshot(), s.inner.RegisterCounts()
+	case *RegisterMap:
+		return s.GetSnapshot(), s.RegisterCounts()
+	default:
+		// 알 수 없는 store: 빈 스냅샷/카운트(방어적, 정상 경로에서는 도달하지 않음).
+		return map[string]any{}, map[string]int{}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Read request handling
 // ---------------------------------------------------------------------------

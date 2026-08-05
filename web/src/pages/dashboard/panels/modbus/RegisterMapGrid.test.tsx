@@ -75,4 +75,28 @@ describe('RegisterMapGrid (SPEC-MODBUS-012 REQ-04/05)', () => {
     expect(isRegisterMapEmpty({}, counts({}))).toBe(true);
     expect(isRegisterMapEmpty({ coils: { '0': false } }, counts({ coils: 1 }))).toBe(false);
   });
+
+  it('cellColumns 미설정 시 셀 컨테이너는 flex-wrap(기본)', () => {
+    const map: ModbusRegisterMap = { holding_registers: { '0': 1, '1': 2 } };
+    render(<RegisterMapGrid registerMap={map} registerCounts={counts({ holding_registers: 2 })} />);
+    const cellContainer =
+      screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
+    expect(cellContainer.className).toContain('flex');
+    expect(cellContainer.style.gridTemplateColumns).toBe('');
+  });
+
+  it('cellColumns 설정 시 셀 컨테이너를 고정 열 CSS grid 로 렌더한다', () => {
+    const map: ModbusRegisterMap = { holding_registers: { '0': 1, '1': 2 } };
+    render(
+      <RegisterMapGrid
+        registerMap={map}
+        registerCounts={counts({ holding_registers: 2 })}
+        cellColumns={4}
+      />,
+    );
+    const cellContainer =
+      screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
+    expect(cellContainer.className).toContain('grid');
+    expect(cellContainer.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
+  });
 });

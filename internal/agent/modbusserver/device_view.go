@@ -122,3 +122,95 @@ func (v *deviceView) WriteHoldingRegisters(start uint16, values []uint16) (*Chan
 	}
 	return target.WriteHoldingRegisters(tstart, values)
 }
+
+// ---------------------------------------------------------------------------
+// 실효(effective) 스냅샷 — get_device_status 서빙 관점 노출 (SPEC-MODBUS-008)
+// ---------------------------------------------------------------------------
+//
+// get_device_status 는 디바이스가 "실제로 서빙하는" 레지스터 맵을 보여야 한다. 공유
+// 세그먼트를 가진 디바이스의 자체 *RegisterMap 은 로컬 세그먼트만 담으므로, 마스터가
+// 읽는 실효 맵(공유 세그먼트=컨테이너 값)을 재현하려면 deviceView 의 세그먼트 라우팅을
+// 거쳐야 한다. 아래 메서드는 세그먼트별로 자신의 Read* 메서드(라우팅 재사용)를 호출하여
+// RegisterMap.GetSnapshot/RegisterCounts 와 동일한 형태의 스냅샷/카운트를 만든다.
+// (세그먼트 라우팅 로직을 복제하지 않고 기존 읽기 프리미티브를 그대로 재사용한다.)
+
+// EffectiveSnapshot 는 서빙 관점의 실효 레지스터 스냅샷을 RegisterMap.GetSnapshot 과
+// 동일한 형태(map[string]any, 영역→map[디바이스주소]value)로 반환한다. 로컬 세그먼트는
+// 자체 맵 값을, 공유 세그먼트는 컨테이너 값을 디바이스-로컬 주소에 매핑한다. 세그먼트가
+// 없는 영역은 키를 생략한다(GetSnapshot 과 동일).
+func (v *deviceView) EffectiveSnapshot() map[string]any {
+	snap := make(map[string]any)
+	if m := snapshotBoolSegments(v.coils, v.ReadCoils); m != nil {
+		snap["coils"] = m
+	}
+	if m := snapshotBoolSegments(v.discreteInputs, v.ReadDiscreteInputs); m != nil {
+		snap["discrete_inputs"] = m
+	}
+	if m := snapshotRegSegments(v.holding, v.ReadHoldingRegisters); m != nil {
+		snap["holding_registers"] = m
+	}
+	if m := snapshotRegSegments(v.input, v.ReadInputRegisters); m != nil {
+		snap["input_registers"] = m
+	}
+	return snap
+}
+
+// EffectiveCounts 는 영역별 실효 주소 개수를 RegisterMap.RegisterCounts 와 동일한 형태로
+// 반환한다(네 영역 키를 항상 포함). 각 값은 해당 영역 세그먼트 길이의 합이며, 디바이스
+// 주소가 세그먼트 간 중복되지 않으므로 실효 맵의 주소 개수와 일치한다.
+func (v *deviceView) EffectiveCounts() map[string]int {
+	return map[string]int{
+		"coils":             segmentAddrCount(v.coils),
+		"discrete_inputs":   segmentAddrCount(v.discreteInputs),
+		"holding_registers": segmentAddrCount(v.holding),
+		"input_registers":   segmentAddrCount(v.input),
+	}
+}
+
+// snapshotBoolSegments 는 bool 영역 세그먼트들을 라우팅 읽기로 스냅샷하여 디바이스 주소로
+// 키잉한 맵을 반환한다. 세그먼트가 없으면 nil(영역 키 생략용).
+func snapshotBoolSegments(segs []viewSegment, read func(uint16, uint16) ([]bool, error)) map[uint16]bool {
+	if len(segs) == 0 {
+		return nil
+	}
+	out := make(map[uint16]bool)
+	for _, s := range segs {
+		vals, err := read(s.devStart, s.count)
+		if err != nil {
+			// 방어적: 정상 구성에서는 세그먼트 자기범위 읽기가 실패하지 않는다.
+			continue
+		}
+		for i, val := range vals {
+			out[s.devStart+uint16(i)] = val
+		}
+	}
+	return out
+}
+
+// snapshotRegSegments 는 레지스터 영역 세그먼트들을 라우팅 읽기로 스냅샷하여 디바이스 주소로
+// 키잉한 맵을 반환한다. 세그먼트가 없으면 nil(영역 키 생략용).
+func snapshotRegSegments(segs []viewSegment, read func(uint16, uint16) ([]uint16, error)) map[uint16]uint16 {
+	if len(segs) == 0 {
+		return nil
+	}
+	out := make(map[uint16]uint16)
+	for _, s := range segs {
+		vals, err := read(s.devStart, s.count)
+		if err != nil {
+			continue
+		}
+		for i, val := range vals {
+			out[s.devStart+uint16(i)] = val
+		}
+	}
+	return out
+}
+
+// segmentAddrCount 는 세그먼트 길이의 합(=실효 주소 개수)을 반환한다.
+func segmentAddrCount(segs []viewSegment) int {
+	n := 0
+	for _, s := range segs {
+		n += int(s.count)
+	}
+	return n
+}

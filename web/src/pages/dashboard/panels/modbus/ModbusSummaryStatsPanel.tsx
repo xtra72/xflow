@@ -71,6 +71,9 @@ function StatTile({
 export default function ModbusSummaryStatsPanel({ title, config }: ModbusSummaryStatsPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
+  // config.columns(≥1) → 행당 고정 타일 수. 미설정/0 은 auto-fit 반응형(기본).
+  const columns =
+    typeof config.columns === 'number' && config.columns > 0 ? config.columns : undefined;
   const pollCycle = useUIStore((s) => s.dashboardRefreshInterval);
   const { status, isLoading: statusLoading, isError: statusError } = useModbusStatus(
     gate.agentId,
@@ -124,10 +127,14 @@ export default function ModbusSummaryStatsPanel({ title, config }: ModbusSummary
     <ModbusPanelFrame title={title} icon={icon}>
       <div
         data-testid="modbus-summary-bar"
-        // auto-fit 그리드: 타일이 패널 폭에 맞춰 균등 신축(1fr)하고, 폭이 좁아지면 열을 줄여
-        // 행을 추가하며 리플로우한다(고정폭 flex-wrap 의 빈 공간/오버플로 문제 해소).
+        // columns 설정 시 행당 고정 열(repeat(N, 1fr)). 미설정 시 auto-fit 그리드로 타일이 패널
+        // 폭에 맞춰 균등 신축(1fr)하고, 폭이 좁아지면 열을 줄여 리플로우한다(기본 동작).
         className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto"
-        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(92px, 1fr))' }}
+        style={{
+          gridTemplateColumns: columns
+            ? `repeat(${columns}, minmax(0, 1fr))`
+            : 'repeat(auto-fit, minmax(92px, 1fr))',
+        }}
       >
         <StatTile
           testid="modbus-summary-pollCycle"

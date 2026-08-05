@@ -42,8 +42,8 @@ function dev(unit_id: number, r: number, w: number, e: number): ModbusDeviceList
   };
 }
 
-function renderPanel() {
-  return render(<ModbusBusStatsPanel title="버스 통계" config={{ agentId: 'gw-1' }} />);
+function renderPanel(config: Record<string, unknown> = { agentId: 'gw-1' }) {
+  return render(<ModbusBusStatsPanel title="버스 통계" config={config} />);
 }
 
 describe('ModbusBusStatsPanel (SPEC-MODBUS-012 REQ-06)', () => {
@@ -80,5 +80,21 @@ describe('ModbusBusStatsPanel (SPEC-MODBUS-012 REQ-06)', () => {
     rerender(<ModbusBusStatsPanel title="버스 통계" config={{ agentId: 'gw-1' }} />);
     const readsVal = screen.getByTestId('modbus-bus-value-reads').textContent ?? '0';
     expect(Number(readsVal)).toBeGreaterThan(0);
+  });
+
+  it('columns 미설정 시 기본 2열(grid-cols-2)', () => {
+    mockState.devices = [dev(1, 0, 0, 0)];
+    renderPanel();
+    const grid = screen.getByTestId('modbus-bus-grid');
+    expect(grid.className).toContain('grid-cols-2');
+    expect(grid.style.gridTemplateColumns).toBe('');
+  });
+
+  it('config.columns 설정 시 미니차트 그리드를 행당 고정 열로 배치한다', () => {
+    mockState.devices = [dev(1, 0, 0, 0)];
+    renderPanel({ agentId: 'gw-1', columns: 4 });
+    const grid = screen.getByTestId('modbus-bus-grid');
+    expect(grid.className).not.toContain('grid-cols-2');
+    expect(grid.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
   });
 });
