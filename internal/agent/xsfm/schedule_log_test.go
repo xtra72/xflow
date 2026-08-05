@@ -40,7 +40,7 @@ func (m *mockScheduleLogRepo) Append(_ context.Context, rec storage.ScheduleLogR
 	return nil
 }
 
-func (m *mockScheduleLogRepo) List(_ context.Context, _ storage.ScheduleLogFilter, _, _ int) ([]storage.ScheduleLogRecord, error) {
+func (m *mockScheduleLogRepo) List(_ context.Context, _ storage.ScheduleLogFilter, _, _ int, _ string) ([]storage.ScheduleLogRecord, error) {
 	return m.records(), nil
 }
 
