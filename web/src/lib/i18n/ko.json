@@ -90,6 +90,7 @@
       "selectFacilitySchedule": "설비 제어 예약 대상 선택",
       "facilityScheduleAgentOptional": "(선택) 설비 에이전트 미지정 — 자유 입력",
       "selectModbusGateway": "MODBUS Gateway 선택",
+      "selectAgentStatus": "에이전트 선택",
       "channelSuffix": "채널 선택",
       "chartFallback": "차트",
       "channelNameLabel": "채널 이름",
@@ -106,6 +107,7 @@
       "descriptions": {
         "flows": "플로우 목록과 실행 상태",
         "agents": "에이전트 목록과 상태",
+        "agentStatus": "단일 에이전트의 상태와 통신 통계를 실시간 표시",
         "resource": "CPU, 메모리 등 시스템 메트릭",
         "devices": "등록된 디바이스 목록과 상태",
         "device": "개별 디바이스 리모컨",
@@ -159,6 +161,7 @@
     "panelTypes": {
       "flows": "플로우 현황",
       "agents": "에이전트 현황",
+      "agentStatus": "에이전트 상태",
       "resource": "프로세스 리소스",
       "devices": "디바이스 목록",
       "device": "디바이스 제어",
@@ -223,6 +226,13 @@
       "writesPerMin": "쓰기/분",
       "errorsPerMin": "오류/분",
       "activeConnections": "활성 연결"
+    },
+    "agentStatus": {
+      "notConfigured": "에이전트가 선택되지 않았습니다",
+      "cannotLoad": "에이전트 상태를 불러올 수 없습니다",
+      "status": "상태",
+      "enabled": "활성화",
+      "disabled": "비활성화"
     },
     "acPanel": {
       "indoorTemp": "실내 온도",

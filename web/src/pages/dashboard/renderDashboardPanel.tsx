@@ -23,6 +23,7 @@ import type { PanelConfig, PanelType } from '@/stores/uiStore';
 import type { FlowInfo } from '@/types/flow';
 
 import AgentPanel from './panels/AgentPanel';
+import AgentStatusPanel from './panels/AgentStatusPanel';
 import DevicePanel from './panels/DevicePanel';
 import FlowPanel from './panels/FlowPanel';
 import LogPanel from './panels/LogPanel';
@@ -91,6 +92,17 @@ export function renderDashboardPanel(
       return <FlowPanel flows={flowsList} panelConfig={panel} />;
     case 'agents':
       return <AgentPanel panelConfig={panel} />;
+    // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널.
+    case 'agent-status':
+      return (
+        <AgentStatusPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
     case 'resource':
       return <ResourceWidget metrics={metricsData} panelConfig={panel} />;
     case 'devices':

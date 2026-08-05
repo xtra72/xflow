@@ -208,7 +208,10 @@ export type PanelType =
   | 'modbus-shared-registers' // 공유(unit 0) 레지스터 맵 그리드
   | 'modbus-device-registers' // 가상 디바이스(unitId) 레지스터 맵 그리드
   | 'modbus-bus-stats' // 버스 통계 미니차트
-  | 'modbus-summary-stats'; // 종합 통계 바
+  | 'modbus-summary-stats' // 종합 통계 바
+  // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널.
+  // config.agentId 로 임의 타입의 에이전트 하나에 바인딩되며 관측 전용이다.
+  | 'agent-status';
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -318,6 +321,9 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
       return { w: 6, h: 3, minW: 3, minH: 2 };
     case 'modbus-summary-stats':
       return { w: 8, h: 2, minW: 4, minH: 2 };
+    // SPEC-DASHBOARD-002: 단일 에이전트 상태·통계 패널(통계 타일 그리드 + 헤더).
+    case 'agent-status':
+      return { w: 4, h: 5, minW: 3, minH: 3 };
     case 'line-chart':
       // SPEC REQ-M5-05: line-chart {w:6, h:3}
       return { w: 6, h: 3, minW: 3, minH: 2 };
@@ -476,6 +482,9 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
       return { type, title: '버스 통계', config: { agentId: '' } };
     case 'modbus-summary-stats':
       return { type, title: '종합 통계', config: { agentId: '' } };
+    // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태 패널. config 는 agentId 만 필요.
+    case 'agent-status':
+      return { type, title: '에이전트 상태', config: { agentId: '' } };
   }
 }
 

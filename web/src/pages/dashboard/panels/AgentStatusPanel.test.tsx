@@ -1,0 +1,134 @@
+// SPEC-DASHBOARD-002 (REQ-02/REQ-03): AgentStatusPanel 상태 매트릭스 + 렌더 검증.
+//
+// 데이터 훅(useAgentStatsTarget/useAgentDetailTarget)을 mock 하여 상태별(미설정/로딩/
+// 에러/정상/원격 graceful) 렌더와 공통 통계 타일, EnhancedMessagesStats 요약을 검증한다.
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+
+import type { AgentInfo, AgentStatsInfo } from '@/types/agent';
+import type { DetailQueryResult } from '@/hooks/useDetailTargets';
+
+const hooks = vi.hoisted(() => ({
+  stats: { data: undefined, isLoading: false, error: null } as DetailQueryResult<AgentStatsInfo>,
+  detail: { data: undefined, isLoading: false, error: null } as DetailQueryResult<AgentInfo>,
+}));
+
+vi.mock('@/hooks/useDetailTargets', () => ({
+  useAgentStatsTarget: () => hooks.stats,
+  useAgentDetailTarget: () => hooks.detail,
+}));
+
+vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
+
+import AgentStatusPanel from './AgentStatusPanel';
+
+function stats(overrides: Partial<AgentStatsInfo> = {}): AgentStatsInfo {
+  return {
+    id: 'a-1',
+    status: 'running',
+    uptime: '1h 2m',
+    messages_in: 1234,
+    messages_out: 5678,
+    error_count: 9,
+    connected: true,
+    dropped_messages: 3,
+    ...overrides,
+  };
+}
+
+function detail(overrides: Partial<AgentInfo> = {}): AgentInfo {
+  return {
+    id: 'a-1',
+    name: '테스트 에이전트',
+    type: 'mqtt-client',
+    status: 'running',
+    enabled: true,
+    ...overrides,
+  };
+}
+
+function renderPanel(config: Record<string, unknown>) {
+  return render(<AgentStatusPanel panelId="p1" title="에이전트 상태" config={config} />);
+}
+
+describe('AgentStatusPanel (SPEC-DASHBOARD-002)', () => {
+  beforeEach(() => {
+    hooks.stats = { data: undefined, isLoading: false, error: null };
+    hooks.detail = { data: undefined, isLoading: false, error: null };
+  });
+
+  it('AC-03-1: agentId 미설정이면 안내 문구(notConfigured)를 표시한다', () => {
+    renderPanel({ agentId: '' });
+    expect(screen.getByText('dashboard.agentStatus.notConfigured')).toBeInTheDocument();
+  });
+
+  it('AC-03-2: 로딩 중이면 타이틀 + 스피너를 표시한다(blank 아님)', () => {
+    hooks.stats = { data: undefined, isLoading: true, error: null };
+    const { container } = renderPanel({ agentId: 'a-1' });
+    expect(screen.getByText('에이전트 상태')).toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).toBeInTheDocument();
+  });
+
+  it('AC-03-3: 에러/무응답이면 cannotLoad 안내를 표시한다', () => {
+    hooks.stats = { data: undefined, isLoading: false, error: new Error('boom') };
+    renderPanel({ agentId: 'a-1' });
+    expect(screen.getByText('dashboard.agentStatus.cannotLoad')).toBeInTheDocument();
+  });
+
+  it('AC-02-1/AC-03-4: 정상 시 헤더(name/type) + 공통 통계 타일을 표시한다', () => {
+    hooks.stats = { data: stats(), isLoading: false, error: null };
+    hooks.detail = { data: detail(), isLoading: false, error: null };
+    renderPanel({ agentId: 'a-1' });
+
+    // 헤더 name/type
+    expect(screen.getByText('테스트 에이전트')).toBeInTheDocument();
+    expect(screen.getByText('mqtt-client')).toBeInTheDocument();
+    // 공통 통계(toLocaleString 포맷)
+    expect(screen.getByText((1234).toLocaleString())).toBeInTheDocument();
+    expect(screen.getByText((5678).toLocaleString())).toBeInTheDocument();
+    expect(screen.getByText('1h 2m')).toBeInTheDocument();
+    // enabled 배지
+    expect(screen.getByText('dashboard.agentStatus.enabled')).toBeInTheDocument();
+  });
+
+  it('AC-02-2: messages(EnhancedMessagesStats) 존재 시 external/internal 요약을 표시한다', () => {
+    hooks.stats = {
+      data: stats({
+        messages: {
+          total: { received: 0, sent: 0, errored: 0 },
+          external: { received: 11, sent: 22, errored: 0 },
+          internal: { received: 33, sent: 44, errored: 0 },
+        },
+      }),
+      isLoading: false,
+      error: null,
+    };
+    hooks.detail = { data: detail(), isLoading: false, error: null };
+    renderPanel({ agentId: 'a-1' });
+
+    expect(screen.getByText('agents.detail.stats.messageDetail')).toBeInTheDocument();
+    expect(screen.getByText('agents.detail.stats.external')).toBeInTheDocument();
+    expect(screen.getByText('agents.detail.stats.internal')).toBeInTheDocument();
+    expect(screen.getByText((22).toLocaleString())).toBeInTheDocument();
+  });
+
+  it('AC-02-2: messages 미존재 시 요약 그리드를 생략한다(오류 없음)', () => {
+    hooks.stats = { data: stats({ messages: undefined }), isLoading: false, error: null };
+    hooks.detail = { data: detail(), isLoading: false, error: null };
+    renderPanel({ agentId: 'a-1' });
+    expect(screen.queryByText('agents.detail.stats.messageDetail')).toBeNull();
+  });
+
+  it('AC-03-5: 원격 제약(detail 없음) 시 name→agentId, type→"-" 로 graceful 표기', () => {
+    hooks.stats = { data: stats(), isLoading: false, error: null };
+    hooks.detail = { data: undefined, isLoading: false, error: null };
+    renderPanel({ agentId: 'a-1' });
+
+    // 통계 타일은 유지된다.
+    expect(screen.getByText((1234).toLocaleString())).toBeInTheDocument();
+    // name 대체(agentId), type 대체("-")
+    expect(screen.getByText('a-1')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+});

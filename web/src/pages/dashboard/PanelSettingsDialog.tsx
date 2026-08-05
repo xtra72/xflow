@@ -516,6 +516,16 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
 
+            {/* SPEC-DASHBOARD-002: 에이전트 상태 패널 (전체 타입 에이전트 재선택) */}
+            {panel.type === 'agent-status' && (
+              <CollapsibleSection title={t('dashboard.settings.agent')} defaultOpen={true}>
+                <AgentStatusSettingsSection
+                  panel={panel}
+                  onConfigChange={(c) => handleConfigChange(c)}
+                />
+              </CollapsibleSection>
+            )}
+
             {/*
               차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨).
               data_source === 'store' 인 경우에도 채널 설정은 유지된다(공존, 하위 호환).
@@ -1253,6 +1263,50 @@ function FacilitySection({
       {(panel.type === 'facility-station' || panel.type === 'facility-group') && (
         <FacilityStationDisplayOptions panel={panel} onConfigChange={onConfigChange} />
       )}
+    </div>
+  );
+}
+
+/**
+ * 에이전트 상태 패널 전용 설정 (SPEC-DASHBOARD-002).
+ *
+ * AddPanelDialog 의 AgentStatusAgentStep 을 미러링한다: 전체 타입(필터 없음) 에이전트를
+ * 재선택 → config.agentId. 변경은 onConfigChange 로 draftConfig 에만 기록한다(적용 전까지 미반영).
+ */
+function AgentStatusSettingsSection({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: (config: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const agentId = (panel.config?.agentId as string | undefined) ?? '';
+
+  const { data: agentsResult } = useAgents();
+  // 타입 필터 없음 — 전체 연결 에이전트를 제시한다(모든 타입 대상).
+  const agents = useMemo(() => agentsResult?.data ?? [], [agentsResult]);
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.agent')}
+        </label>
+        <select
+          value={agentId}
+          data-testid="agent-status-settings-select"
+          onChange={(e) => onConfigChange({ agentId: e.target.value })}
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">{t('dashboard.settings.selectAgent')}</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} ({a.type})
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }

@@ -90,6 +90,7 @@
       "selectFacilitySchedule": "Select facility schedule target",
       "facilityScheduleAgentOptional": "(optional) No facility agent — free-form input",
       "selectModbusGateway": "Select MODBUS Gateway",
+      "selectAgentStatus": "Select Agent",
       "channelSuffix": "channel selection",
       "chartFallback": "Chart",
       "channelNameLabel": "Channel name",
@@ -106,6 +107,7 @@
       "descriptions": {
         "flows": "Flow list and run status",
         "agents": "Agent list and status",
+        "agentStatus": "Real-time status and message stats for a single agent",
         "resource": "System metrics such as CPU and memory",
         "devices": "Registered device list and status",
         "device": "Individual device remote",
@@ -159,6 +161,7 @@
     "panelTypes": {
       "flows": "Flow Status",
       "agents": "Agent Status",
+      "agentStatus": "Single Agent Status",
       "resource": "Process Resources",
       "devices": "Device List",
       "device": "Device Control",
@@ -223,6 +226,13 @@
       "writesPerMin": "Writes/min",
       "errorsPerMin": "Errors/min",
       "activeConnections": "Active conns"
+    },
+    "agentStatus": {
+      "notConfigured": "No agent selected",
+      "cannotLoad": "Cannot load agent status",
+      "status": "Status",
+      "enabled": "Enabled",
+      "disabled": "Disabled"
     },
     "acPanel": {
       "indoorTemp": "Indoor Temp",

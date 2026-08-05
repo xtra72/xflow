@@ -94,6 +94,8 @@ interface PanelOption {
   needsFacilitySchedule?: boolean;
   /** modbus-gateway 에이전트 선택 스텝이 필요한 유형 (SPEC-MODBUS-012 M1). 가상 레지스터 맵은 unit 2차 선택. */
   needsAgent?: boolean;
+  /** 전체 타입(필터 없음) 에이전트 선택 스텝이 필요한 유형 (SPEC-DASHBOARD-002). */
+  needsAgentStatus?: boolean;
   /**
    * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
    * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
@@ -119,6 +121,8 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
   data: [
     { type: 'flows', icon: GitBranch, labelKey: 'dashboard.panelTypes.flows', descriptionKey: 'dashboard.addPanel.descriptions.flows' },
     { type: 'agents', icon: Bot, labelKey: 'dashboard.panelTypes.agents', descriptionKey: 'dashboard.addPanel.descriptions.agents' },
+    // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널. 전체 타입 에이전트 선택 스텝을 거친다.
+    { type: 'agent-status', icon: Bot, labelKey: 'dashboard.panelTypes.agentStatus', descriptionKey: 'dashboard.addPanel.descriptions.agentStatus', needsAgentStatus: true },
     { type: 'resource', icon: Activity, labelKey: 'dashboard.panelTypes.resource', descriptionKey: 'dashboard.addPanel.descriptions.resource' },
     { type: 'devices', icon: HardDrive, labelKey: 'dashboard.panelTypes.devices', descriptionKey: 'dashboard.addPanel.descriptions.devices' },
     { type: 'device', icon: HardDrive, labelKey: 'dashboard.panelTypes.device', descriptionKey: 'dashboard.addPanel.descriptions.device', needsDevice: true },
@@ -183,7 +187,7 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
   const [step, setStep] = useState<
-    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node' | 'facility-schedule' | 'modbus-agent'
+    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node' | 'facility-schedule' | 'modbus-agent' | 'agent-status-agent'
   >('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
@@ -206,7 +210,8 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
           step === 'facility' ||
           step === 'trigger-node' ||
           step === 'facility-schedule' ||
-          step === 'modbus-agent'
+          step === 'modbus-agent' ||
+          step === 'agent-status-agent'
         ) {
           setStep('type');
           setSelectedType(null);
@@ -253,6 +258,12 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (option.needsAgent) {
       setSelectedType(option.type);
       setStep('modbus-agent');
+      return;
+    }
+    // SPEC-DASHBOARD-002: 전체 타입(필터 없음) 에이전트 선택 스텝.
+    if (option.needsAgentStatus) {
+      setSelectedType(option.type);
+      setStep('agent-status-agent');
       return;
     }
     if (option.presetConfig) {
@@ -312,6 +323,13 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const handleModbusConfirm = (config: Record<string, unknown>, title?: string) => {
     if (!selectedType) return;
     addPanelWithConfig(selectedType, config, title);
+    onClose();
+  };
+
+  // 에이전트 상태 패널 대상 선택 완료 처리 (SPEC-DASHBOARD-002).
+  // 전체 타입 중 선택한 에이전트의 { agentId } 를 config 로 저장하고, 기본 타이틀은 에이전트 이름으로 한다.
+  const handleAgentStatusConfirm = (agentId: string, title?: string) => {
+    addPanelWithConfig('agent-status', { agentId }, title);
     onClose();
   };
 
@@ -392,6 +410,16 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
           <ModbusAgentStep
             panelType={selectedType}
             onConfirm={handleModbusConfirm}
+            onBack={() => {
+              setStep('type');
+              setSelectedType(null);
+            }}
+            onClose={onClose}
+          />
+        )}
+        {step === 'agent-status-agent' && (
+          <AgentStatusAgentStep
+            onConfirm={handleAgentStatusConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -1355,6 +1383,118 @@ function ModbusAgentStep({
         <button
           type="button"
           data-testid="modbus-save"
+          onClick={handleConfirm}
+          disabled={!canSave}
+          className={cn(
+            'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
+            canSave
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
+          )}
+        >
+          {t('dashboard.addPanel.save')}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ---- Step: 에이전트 상태 패널 대상 선택 (SPEC-DASHBOARD-002) ----
+
+/**
+ * 에이전트 상태 패널 대상 선택 스텝. ModbusAgentStep 을 미러링하되 타입 필터를 제거해
+ * 전체 연결 에이전트를 제시한다(타입 무관 단일 에이전트 바인딩). 완료 시 { agentId } 를
+ * config 로 저장하고 기본 타이틀은 에이전트 이름으로 한다.
+ */
+function AgentStatusAgentStep({
+  onConfirm,
+  onBack,
+  onClose,
+}: {
+  onConfirm: (agentId: string, title?: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [agentId, setAgentId] = useState('');
+
+  const { data: agentsResult } = useAgents();
+  // 타입 필터 없음 — 전체 연결 에이전트를 제시한다(ModbusAgentStep 과의 핵심 차이).
+  const agents = useMemo(() => agentsResult?.data ?? [], [agentsResult]);
+
+  const selectedAgentName = agents.find((a) => a.id === agentId)?.name;
+  const canSave = agentId.length > 0;
+
+  const handleConfirm = () => {
+    if (!canSave) return;
+    onConfirm(agentId, selectedAgentName);
+  };
+
+  return (
+    <>
+      {/* 헤더 */}
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label={t('dashboard.addPanel.backAria')}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <h2 className="text-lg font-semibold text-(--color-text-primary)">
+            {t('dashboard.addPanel.selectAgentStatus')}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          aria-label={t('dashboard.addPanel.closeAria')}
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* 본문: 전체 타입 에이전트 선택 */}
+      <div className="space-y-4 px-5 py-4">
+        <div>
+          <label
+            htmlFor="agent-status-select"
+            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
+          >
+            {t('dashboard.settings.agent')} <span className="text-red-500">*</span>
+          </label>
+          <select
+            id="agent-status-select"
+            data-testid="agent-status-select"
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">{t('dashboard.settings.selectAgent')}</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.type})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* 푸터 */}
+      <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-4 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default)"
+        >
+          {t('dashboard.addPanel.previous')}
+        </button>
+        <button
+          type="button"
+          data-testid="agent-status-save"
           onClick={handleConfirm}
           disabled={!canSave}
           className={cn(
