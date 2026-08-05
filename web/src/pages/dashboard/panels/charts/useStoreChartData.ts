@@ -318,7 +318,10 @@ export function useStoreChartData(
                   .map((k) => `${k}=${s.tags![k]}`)
                   .join(',')
               : '';
-            return `${s.key}|${s.metric_type ?? ''}|${tagPart}`;
+            // alias(시리즈 표시 이름)도 포함해, 별칭 편집 시 재구독→재변환으로 범례
+            // 이름이 반영되게 한다. seriesName 은 조회 시점에 alias 로 확정되므로,
+            // alias 를 pollKey 에서 빼면 편집이 반영되지 않는다(범례 이름 안바뀜 버그).
+            return `${s.key}|${s.metric_type ?? ''}|${tagPart}|${s.alias ?? ''}`;
           })
           .join('');
     }

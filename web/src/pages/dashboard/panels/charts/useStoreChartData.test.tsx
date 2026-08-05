@@ -283,6 +283,31 @@ describe('useStoreChartData', () => {
     expect(result.current.seriesStyles.get('Temp')?.smooth).toBe(true);
   });
 
+  it('alias(시리즈 표시 이름) 변경 시 재구독하여 범례 이름이 갱신된다 (범례 이름 안바뀜 회귀)', async () => {
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue({
+      columns: ['room:temp'],
+      rows: [{ bucketStartMs: 1000, values: [21.5] }],
+    });
+    const cfgA = makeConfig({ series: [{ key: 'room:temp', alias: 'Temp' }] });
+    const cfgB = makeConfig({ series: [{ key: 'room:temp', alias: 'Renamed' }] });
+    const { result, rerender } = renderHook(
+      ({ cfg }) =>
+        useStoreChartData(cfg, true, {
+          queryMatrixFn: queryFn,
+          nowFn: () => 100_000,
+        }),
+      { initialProps: { cfg: cfgA } },
+    );
+    await flushMicrotasks();
+    expect([...result.current.seriesEntries.keys()]).toEqual(['Temp']);
+
+    // alias 만 변경 — pollKey 에 alias 가 포함되므로 재구독→재변환되어 표시 이름이 갱신된다.
+    rerender({ cfg: cfgB });
+    await flushMicrotasks();
+    expect(queryFn).toHaveBeenCalledTimes(2);
+    expect([...result.current.seriesEntries.keys()]).toEqual(['Renamed']);
+  });
+
   it('refresh_interval_ms 주기로 폴링한다', async () => {
     const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
     renderHook(() =>
