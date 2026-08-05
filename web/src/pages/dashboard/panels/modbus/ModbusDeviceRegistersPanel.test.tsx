@@ -108,12 +108,22 @@ describe('ModbusDeviceRegistersPanel (SPEC-MODBUS-012 REQ-05)', () => {
     expect(screen.queryByText('dashboard.modbus.empty')).toBeNull();
   });
 
-  it('config.columns 를 RegisterMapGrid cellColumns 로 전달한다(고정 열 그리드)', () => {
+  it('config.areaColumns 를 RegisterMapGrid areaColumns 로 전달한다(영역별 고정 열 그리드)', () => {
     mockState.status = status(2);
-    renderPanel({ agentId: 'gw-1', unitId: 2, columns: 4 });
+    renderPanel({ agentId: 'gw-1', unitId: 2, areaColumns: { holding_registers: 4 } });
     const cellContainer =
       screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
     expect(cellContainer.className).toContain('grid');
     expect(cellContainer.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
+  });
+
+  it('마이그레이션: 구 단일 config.columns 는 전 영역에 시드되어 적용된다', () => {
+    mockState.status = status(2);
+    // areaColumns 없이 구 columns 만 있는 기존 패널 → holding_registers 영역도 고정 열 그리드.
+    renderPanel({ agentId: 'gw-1', unitId: 2, columns: 5 });
+    const cellContainer =
+      screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
+    expect(cellContainer.className).toContain('grid');
+    expect(cellContainer.style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))');
   });
 });

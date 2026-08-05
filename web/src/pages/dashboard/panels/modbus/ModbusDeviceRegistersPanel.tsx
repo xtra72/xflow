@@ -10,7 +10,7 @@ import { useTranslation } from '@/lib/i18n';
 
 import { ModbusNotice, ModbusPanelFrame, ModbusSpinner } from './panelChrome';
 import RegisterMapGrid from './RegisterMapGrid';
-import { isRegisterMapEmpty } from './registerCellState';
+import { isRegisterMapEmpty, resolveAreaColumns } from './registerCellState';
 import { formatUnitLabel, useModbusDeviceStatus, useModbusGate } from './useModbusData';
 
 interface ModbusDeviceRegistersPanelProps {
@@ -25,9 +25,9 @@ export default function ModbusDeviceRegistersPanel({
 }: ModbusDeviceRegistersPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
-  // config.columns(≥1) → 영역 카드 내부 셀 그리드의 행당 셀 수. 미설정/0 은 자동(flex-wrap).
-  const columns =
-    typeof config.columns === 'number' && config.columns > 0 ? config.columns : undefined;
+  // config.areaColumns(영역별 열 수) → 영역 카드 내부 셀 그리드의 행당 셀 수(영역별).
+  // 미설정/0 은 자동(flex-wrap). 구 단일 config.columns 는 전 영역 시드로 하위호환된다.
+  const areaColumns = resolveAreaColumns(config);
   const rawUnitId = config.unitId as number | undefined;
   // unit 0 은 공유 컨테이너(서빙 디바이스 아님) → get_device_status(0) 은 의미 있는 결과가 없다.
   // config.unitId 미설정(생성 시 가상 디바이스 없음/설정에서 에이전트 변경으로 초기화)이거나 0 이면
@@ -97,7 +97,7 @@ export default function ModbusDeviceRegistersPanel({
       <RegisterMapGrid
         registerMap={status.register_map}
         registerCounts={status.register_counts}
-        cellColumns={columns}
+        areaColumns={areaColumns}
       />
     </ModbusPanelFrame>
   );

@@ -549,6 +549,7 @@
       "facility": "Facility target",
       "modbusGateway": "MODBUS Gateway",
       "modbusColumns": "Columns (grid)",
+      "modbusAreaColumns": "Columns per area (grid)",
       "modbusColumnsHint": "Empty or 0 = auto (responsive). Enter 1-24 for a fixed number of columns per row.",
       "showStationStatus": "Show station status",
       "showLineStats": "Show line stats",

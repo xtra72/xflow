@@ -76,7 +76,7 @@ describe('RegisterMapGrid (SPEC-MODBUS-012 REQ-04/05)', () => {
     expect(isRegisterMapEmpty({ coils: { '0': false } }, counts({ coils: 1 }))).toBe(false);
   });
 
-  it('cellColumns 미설정 시 셀 컨테이너는 flex-wrap(기본)', () => {
+  it('areaColumns 미설정 시 셀 컨테이너는 flex-wrap(기본)', () => {
     const map: ModbusRegisterMap = { holding_registers: { '0': 1, '1': 2 } };
     render(<RegisterMapGrid registerMap={map} registerCounts={counts({ holding_registers: 2 })} />);
     const cellContainer =
@@ -85,18 +85,41 @@ describe('RegisterMapGrid (SPEC-MODBUS-012 REQ-04/05)', () => {
     expect(cellContainer.style.gridTemplateColumns).toBe('');
   });
 
-  it('cellColumns 설정 시 셀 컨테이너를 고정 열 CSS grid 로 렌더한다', () => {
+  it('areaColumns 설정 시 해당 영역만 고정 열 CSS grid 로 렌더한다', () => {
     const map: ModbusRegisterMap = { holding_registers: { '0': 1, '1': 2 } };
     render(
       <RegisterMapGrid
         registerMap={map}
         registerCounts={counts({ holding_registers: 2 })}
-        cellColumns={4}
+        areaColumns={{ holding_registers: 4 }}
       />,
     );
     const cellContainer =
       screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
     expect(cellContainer.className).toContain('grid');
     expect(cellContainer.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
+  });
+
+  it('areaColumns 는 영역별로 개별 적용된다(설정 영역=grid, 미설정 영역=flex-wrap)', () => {
+    // coils 만 열 수 설정, holding_registers 는 미설정 → 각 영역 배치가 독립적으로 결정된다.
+    const map: ModbusRegisterMap = {
+      coils: { '0': true, '1': false, '2': true },
+      holding_registers: { '0': 1, '1': 2 },
+    };
+    render(
+      <RegisterMapGrid
+        registerMap={map}
+        registerCounts={counts({ coils: 3, holding_registers: 2 })}
+        areaColumns={{ coils: 2 }}
+      />,
+    );
+    const coilsContainer = screen.getByTestId('modbus-grid-cell-coils-0').parentElement!;
+    expect(coilsContainer.className).toContain('grid');
+    expect(coilsContainer.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
+
+    const holdingContainer =
+      screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
+    expect(holdingContainer.className).toContain('flex');
+    expect(holdingContainer.style.gridTemplateColumns).toBe('');
   });
 });

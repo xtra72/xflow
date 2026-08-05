@@ -144,6 +144,36 @@ export function formatAddr(addr: number): string {
   return `0x${addr.toString(16).toUpperCase().padStart(4, '0')}`;
 }
 
+/** 영역별 셀 열 수 부분 맵(레지스터 맵 패널 config.areaColumns). 각 값 ≥1, 미설정/0 = 자동(wrap). */
+export type AreaColumns = Partial<Record<RegisterArea, number>>;
+
+/**
+ * config.areaColumns(영역별 열 수) 를 정규화한다. 각 영역 값이 유효(숫자 ≥1)일 때만 채택한다.
+ * 하위호환: areaColumns 에 유효 값이 하나도 없고 구(舊) 단일 config.columns(≥1) 가 있으면
+ * 4영역 모두에 그 값을 시드한다(기존 패널이 열 수 설정을 잃지 않도록, §마이그레이션).
+ */
+export function resolveAreaColumns(config: Record<string, unknown> | undefined): AreaColumns {
+  const out: AreaColumns = {};
+  const raw = config?.areaColumns as Record<string, unknown> | undefined;
+  let hasAny = false;
+  if (raw && typeof raw === 'object') {
+    for (const area of REGISTER_AREA_ORDER) {
+      const v = raw[area];
+      if (typeof v === 'number' && v > 0) {
+        out[area] = v;
+        hasAny = true;
+      }
+    }
+  }
+  if (hasAny) return out;
+  // 마이그레이션: areaColumns 부재 + 구 단일 columns → 전 영역 동일 적용.
+  const legacy = config?.columns;
+  if (typeof legacy === 'number' && legacy > 0) {
+    for (const area of REGISTER_AREA_ORDER) out[area] = legacy;
+  }
+  return out;
+}
+
 /** 4영역 모두 비었는지(정의 0 + 스냅샷 0) 판정 — 패널 빈 상태 안내용. */
 export function isRegisterMapEmpty(
   registerMap: ModbusRegisterMap,

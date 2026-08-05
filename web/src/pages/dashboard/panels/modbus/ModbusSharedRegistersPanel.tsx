@@ -10,7 +10,7 @@ import { useTranslation } from '@/lib/i18n';
 
 import { ModbusNotice, ModbusPanelFrame, ModbusSpinner } from './panelChrome';
 import RegisterMapGrid from './RegisterMapGrid';
-import { countsFromSnapshot, isRegisterMapEmpty } from './registerCellState';
+import { countsFromSnapshot, isRegisterMapEmpty, resolveAreaColumns } from './registerCellState';
 import { useModbusGate, useModbusRegisterMap } from './useModbusData';
 
 interface ModbusSharedRegistersPanelProps {
@@ -28,9 +28,9 @@ export default function ModbusSharedRegistersPanel({
 }: ModbusSharedRegistersPanelProps) {
   const { t } = useTranslation();
   const gate = useModbusGate(config);
-  // config.columns(≥1) → 영역 카드 내부 셀 그리드의 행당 셀 수. 미설정/0 은 자동(flex-wrap).
-  const columns =
-    typeof config.columns === 'number' && config.columns > 0 ? config.columns : undefined;
+  // config.areaColumns(영역별 열 수) → 영역 카드 내부 셀 그리드의 행당 셀 수(영역별).
+  // 미설정/0 은 자동(flex-wrap). 구 단일 config.columns 는 전 영역 시드로 하위호환된다.
+  const areaColumns = resolveAreaColumns(config);
   const { registerMap, isLoading, isError } = useModbusRegisterMap(
     gate.agentId,
     SHARED_UNIT_ID,
@@ -72,7 +72,7 @@ export default function ModbusSharedRegistersPanel({
 
   return (
     <ModbusPanelFrame title={title} icon={icon}>
-      <RegisterMapGrid registerMap={registerMap} registerCounts={counts} cellColumns={columns} />
+      <RegisterMapGrid registerMap={registerMap} registerCounts={counts} areaColumns={areaColumns} />
     </ModbusPanelFrame>
   );
 }

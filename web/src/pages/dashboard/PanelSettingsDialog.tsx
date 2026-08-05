@@ -36,6 +36,12 @@ import ModbusSharedRegistersPanel from './panels/modbus/ModbusSharedRegistersPan
 import ModbusDeviceRegistersPanel from './panels/modbus/ModbusDeviceRegistersPanel';
 import ModbusBusStatsPanel from './panels/modbus/ModbusBusStatsPanel';
 import ModbusSummaryStatsPanel from './panels/modbus/ModbusSummaryStatsPanel';
+import {
+  REGISTER_AREA_LABELS,
+  REGISTER_AREA_ORDER,
+  resolveAreaColumns,
+  type RegisterArea,
+} from './panels/modbus/registerCellState';
 import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
   buildEnumLabelMap,
@@ -90,11 +96,13 @@ const MODBUS_PANEL_TYPES = new Set([
   'modbus-summary-stats',
 ]);
 
-// config.columns(그리드 열 수) 컨트롤을 노출하는 MODBUS 패널 (SPEC-MODBUS-012).
-// summary/bus 는 타일·미니차트 열, shared/device 는 영역 카드 내부 셀 열을 의미한다.
-const MODBUS_COLUMNS_PANEL_TYPES = new Set([
-  'modbus-summary-stats',
-  'modbus-bus-stats',
+// 단일 config.columns(그리드 열 수) 컨트롤을 노출하는 MODBUS 패널 (SPEC-MODBUS-012).
+// summary/bus 는 타일·미니차트 행당 개수를 단일 열 수로 제어한다.
+const MODBUS_COLUMNS_PANEL_TYPES = new Set(['modbus-summary-stats', 'modbus-bus-stats']);
+
+// 영역별 config.areaColumns(4영역 각각의 셀 열 수) 컨트롤을 노출하는 레지스터 맵 패널 (SPEC-MODBUS-012).
+// coils/discrete_inputs/holding_registers/input_registers 4개 입력을 각각 제공한다.
+const MODBUS_AREA_COLUMNS_PANEL_TYPES = new Set([
   'modbus-shared-registers',
   'modbus-device-registers',
 ]);
@@ -1268,9 +1276,13 @@ function ModbusSettingsSection({
   const agentId = (panel.config?.agentId as string | undefined) ?? '';
   const needsUnit = panel.type === 'modbus-device-registers';
   const currentUnitId = panel.config?.unitId as number | undefined;
-  // 그리드 열 수(config.columns) — 4종 그리드 패널만. 미설정/0 은 자동(반응형/wrap).
+  // 단일 그리드 열 수(config.columns) — summary/bus 만. 미설정/0 은 자동(반응형/wrap).
   const needsColumns = MODBUS_COLUMNS_PANEL_TYPES.has(panel.type);
   const currentColumns = panel.config?.columns as number | undefined;
+  // 영역별 셀 열 수(config.areaColumns) — 레지스터 맵 패널(shared/device) 만.
+  const needsAreaColumns = MODBUS_AREA_COLUMNS_PANEL_TYPES.has(panel.type);
+  // 표시/편집 기준값: 구 단일 columns 마이그레이션을 반영한 영역별 값(resolveAreaColumns).
+  const areaColumns = resolveAreaColumns(panel.config);
 
   const { data: agentsResult } = useAgents();
   const gatewayAgents = useMemo(
@@ -1339,7 +1351,7 @@ function ModbusSettingsSection({
         </div>
       )}
 
-      {/* 그리드 열 수(config.columns) — 4종 그리드 패널 전용. 비움/0 = 자동(반응형/wrap). */}
+      {/* 단일 그리드 열 수(config.columns) — summary/bus 전용. 비움/0 = 자동(반응형/wrap). */}
       {needsColumns && (
         <div>
           <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
@@ -1358,6 +1370,46 @@ function ModbusSettingsSection({
             }
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
           />
+          <p className="mt-1 text-[11px] text-(--color-text-muted)">
+            {t('dashboard.settings.modbusColumnsHint')}
+          </p>
+        </div>
+      )}
+
+      {/* 영역별 셀 열 수(config.areaColumns) — 레지스터 맵 패널 전용. 4영역 각각 비움/0 = 자동(wrap). */}
+      {needsAreaColumns && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.modbusAreaColumns')}
+          </label>
+          <div className="space-y-2">
+            {REGISTER_AREA_ORDER.map((area) => {
+              const value = areaColumns[area];
+              return (
+                <div key={area} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-xs text-(--color-text-secondary)">
+                    {REGISTER_AREA_LABELS[area]}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={value !== undefined ? String(value) : ''}
+                    data-testid={`modbus-settings-area-columns-input-${area}`}
+                    onChange={(e) => {
+                      // onConfigChange 는 최상위 얕은 병합이므로 areaColumns 전체를 다시 전달한다.
+                      // resolveAreaColumns 로 마이그레이션 시드된 다른 영역 값도 함께 보존한다.
+                      const next: Partial<Record<RegisterArea, number>> = { ...areaColumns };
+                      if (e.target.value === '') delete next[area];
+                      else next[area] = Number(e.target.value);
+                      onConfigChange({ areaColumns: next });
+                    }}
+                    className="w-20 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              );
+            })}
+          </div>
           <p className="mt-1 text-[11px] text-(--color-text-muted)">
             {t('dashboard.settings.modbusColumnsHint')}
           </p>

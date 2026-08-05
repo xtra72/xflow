@@ -13,6 +13,7 @@ import {
   formatAddr,
   REGISTER_AREA_LABELS,
   REGISTER_AREA_ORDER,
+  type AreaColumns,
   type AreaGrid,
   type CellState,
   type RegisterArea,
@@ -23,10 +24,11 @@ interface RegisterMapGridProps {
   registerMap: ModbusRegisterMap;
   registerCounts: ModbusRegisterCounts;
   /**
-   * 영역 카드 내부 셀 그리드의 행당 셀(열) 수. 설정(≥1) 시 flex-wrap 대신 고정 열 CSS grid 로
-   * 렌더한다. 미설정 시 기존 flex-wrap 반응형 배치를 유지한다(기본값, 바이트 동일 동작).
+   * 영역별 셀 그리드의 행당 셀(열) 수. 영역 키(coils/discrete_inputs/...)별로 개별 지정한다.
+   * 특정 영역 값(≥1)이 있으면 그 영역만 flex-wrap 대신 고정 열 CSS grid 로 렌더하고,
+   * 미설정/0 이면 해당 영역은 기존 flex-wrap 반응형 배치를 유지한다(기본값, 바이트 동일 동작).
    */
-  cellColumns?: number;
+  areaColumns?: AreaColumns;
 }
 
 /** 셀 상태별 색상 토큰(값 기반). */
@@ -43,8 +45,8 @@ function cellTitle(addr: number | null, value: boolean | number | null): string 
   return `${formatAddr(addr)} = ${v}`;
 }
 
-/** 개별 영역 섹션(헤더 집계 + 셀 그리드). */
-function AreaSection({ grid, cellColumns }: { grid: AreaGrid; cellColumns?: number }) {
+/** 개별 영역 섹션(헤더 집계 + 셀 그리드). columns 는 이 영역에 적용할 열 수(≥1 또는 미지정). */
+function AreaSection({ grid, columns }: { grid: AreaGrid; columns?: number }) {
   const { t } = useTranslation();
   const label = REGISTER_AREA_LABELS[grid.area as RegisterArea] ?? grid.area;
   const range =
@@ -82,14 +84,10 @@ function AreaSection({ grid, cellColumns }: { grid: AreaGrid; cellColumns?: numb
           {t('dashboard.modbus.degradedShort')} <b>{grid.degraded}</b>
         </span>
       </div>
-      {/* 셀 그리드 — cellColumns 설정 시 고정 열 CSS grid, 미설정 시 flex-wrap(기본). */}
+      {/* 셀 그리드 — 이 영역에 columns(≥1) 설정 시 고정 열 CSS grid, 미설정 시 flex-wrap(기본). */}
       <div
-        className={cn(cellColumns ? 'grid' : 'flex flex-wrap', 'gap-0.5')}
-        style={
-          cellColumns
-            ? { gridTemplateColumns: `repeat(${cellColumns}, minmax(0, 1fr))` }
-            : undefined
-        }
+        className={cn(columns ? 'grid' : 'flex flex-wrap', 'gap-0.5')}
+        style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
       >
         {grid.cells.map((cell, idx) => (
           <span
@@ -109,7 +107,7 @@ function AreaSection({ grid, cellColumns }: { grid: AreaGrid; cellColumns?: numb
 export default function RegisterMapGrid({
   registerMap,
   registerCounts,
-  cellColumns,
+  areaColumns,
 }: RegisterMapGridProps) {
   const grids = REGISTER_AREA_ORDER.map((area) => {
     const snapshot = registerMap[area] as Record<string, boolean | number> | undefined;
@@ -119,9 +117,13 @@ export default function RegisterMapGrid({
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
-      {grids.map((grid) => (
-        <AreaSection key={grid.area} grid={grid} cellColumns={cellColumns} />
-      ))}
+      {grids.map((grid) => {
+        // 영역별 열 수(≥1)만 고정 열 그리드로 적용, 나머지는 자동 wrap.
+        const cols = areaColumns?.[grid.area as RegisterArea];
+        return (
+          <AreaSection key={grid.area} grid={grid} columns={cols && cols > 0 ? cols : undefined} />
+        );
+      })}
     </div>
   );
 }

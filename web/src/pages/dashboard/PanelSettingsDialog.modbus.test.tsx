@@ -145,4 +145,82 @@ describe('PanelSettingsDialog MODBUS 설정 (BUG A)', () => {
     expect(unitSel).toBeInTheDocument();
     expect(unitSel.value).toBe('2');
   });
+
+  it('레지스터 맵 패널은 4개 영역별 열 수 입력을 노출하고 단일 columns 입력은 노출하지 않는다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-shared-registers',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1' },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    // 4영역 입력 노출.
+    for (const area of [
+      'coils',
+      'discrete_inputs',
+      'input_registers',
+      'holding_registers',
+    ]) {
+      expect(screen.getByTestId(`modbus-settings-area-columns-input-${area}`)).toBeInTheDocument();
+    }
+    // 단일 columns 입력은 레지스터 맵 패널에 없다.
+    expect(screen.queryByTestId('modbus-settings-columns-input')).toBeNull();
+  });
+
+  it('summary/bus 패널은 단일 columns 입력만 노출하고 영역별 입력은 노출하지 않는다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-bus-stats',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1' },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    expect(screen.getByTestId('modbus-settings-columns-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('modbus-settings-area-columns-input-coils')).toBeNull();
+  });
+
+  it('영역별 열 수를 변경하면 draft config.areaColumns.<area> 로 저장된다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-shared-registers',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1' },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const coilsInput = screen.getByTestId(
+      'modbus-settings-area-columns-input-coils',
+    ) as HTMLInputElement;
+    fireEvent.change(coilsInput, { target: { value: '3' } });
+    expect(
+      (screen.getByTestId('modbus-settings-area-columns-input-coils') as HTMLInputElement).value,
+    ).toBe('3');
+
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.settings.apply' }));
+    const savedConfig = storeMock.updatePanelConfig.mock.calls[0]![1] as Record<string, unknown>;
+    expect((savedConfig.areaColumns as Record<string, number>).coils).toBe(3);
+  });
+
+  it('마이그레이션: 구 단일 config.columns 는 4영역 입력에 시드되어 표시된다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-device-registers',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1', unitId: 2, columns: 6 },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    for (const area of [
+      'coils',
+      'discrete_inputs',
+      'input_registers',
+      'holding_registers',
+    ]) {
+      expect(
+        (screen.getByTestId(`modbus-settings-area-columns-input-${area}`) as HTMLInputElement).value,
+      ).toBe('6');
+    }
+  });
 });
