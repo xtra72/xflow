@@ -1282,6 +1282,8 @@ function AgentStatusSettingsSection({
 }) {
   const { t } = useTranslation();
   const agentId = (panel.config?.agentId as string | undefined) ?? '';
+  // 출력 형식(SPEC-DASHBOARD-003 REQ-06): 미설정/미인식 값은 기본 'tile'(하위호환).
+  const viewMode = panel.config?.viewMode === 'diagram' ? 'diagram' : 'tile';
 
   const { data: agentsResult } = useAgents();
   // 타입 필터 없음 — 전체 연결 에이전트를 제시한다(모든 타입 대상).
@@ -1305,6 +1307,22 @@ function AgentStatusSettingsSection({
               {a.name} ({a.type})
             </option>
           ))}
+        </select>
+      </div>
+
+      {/* 출력 형식 선택기(REQ-06): agent-picker <select> 미러링. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.agentStatus.viewMode')}
+        </label>
+        <select
+          value={viewMode}
+          data-testid="agent-status-viewmode-select"
+          onChange={(e) => onConfigChange({ viewMode: e.target.value })}
+          className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="tile">{t('dashboard.agentStatus.viewModeTile')}</option>
+          <option value="diagram">{t('dashboard.agentStatus.viewModeDiagram')}</option>
         </select>
       </div>
     </div>

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -1340,6 +1341,69 @@ func TestAgentStats_ConnectionStatsProvider(t *testing.T) {
 	assert.Equal(t, "node-1", stats.NodeRefs[0].NodeID)
 	assert.Equal(t, "flow-1", stats.NodeRefs[0].FlowID)
 	assert.Equal(t, int64(5), stats.NodeRefs[0].MessagesReceived)
+}
+
+// mockSummaryStatsAgent 는 agent.Agent 와 agent.SummaryStatsProvider 를 구현하는
+// 테스트용 모의 에이전트이다 (SPEC-DASHBOARD-003 REQ-02).
+type mockSummaryStatsAgent struct {
+	mockStatefulAgent
+	summary []agent.SummaryStat
+}
+
+func (m *mockSummaryStatsAgent) SummaryStats() []agent.SummaryStat { return m.summary }
+
+// TestAgentStats_SummaryStatsProvider 는 SummaryStatsProvider 구현 에이전트의 요약 카운트가
+// AgentStats DTO 의 SummaryStats 필드에 조건부로 채워지는지 검증한다 (AC-02-2).
+func TestAgentStats_SummaryStatsProvider(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	require.NoError(t, mgr.RegisterType("mock-summary", func(cfg agent.AgentConfig) (agent.Agent, error) {
+		return &mockSummaryStatsAgent{
+			mockStatefulAgent: mockStatefulAgent{
+				info: agent.AgentInfo{
+					ID:    cfg.ID,
+					Name:  cfg.Name,
+					Type:  cfg.Type,
+					State: lifecycle.StateRunning,
+				},
+			},
+			summary: []agent.SummaryStat{
+				{Key: "devicesTotal", Value: 5},
+				{Key: "devicesOnline", Value: 3},
+			},
+		}, nil
+	}))
+
+	created, err := mgr.Create(agent.AgentConfig{ID: "sum-1", Name: "sum", Type: "mock-summary"})
+	require.NoError(t, err)
+	require.Equal(t, "sum-1", created.ID())
+
+	stats, err := adapter.AgentStats(context.Background(), "sum-1")
+	require.NoError(t, err)
+
+	require.Len(t, stats.SummaryStats, 2, "요약 카운트 2개가 채워져야 한다")
+	assert.Equal(t, "devicesTotal", stats.SummaryStats[0].Key)
+	assert.Equal(t, int64(5), stats.SummaryStats[0].Value)
+	assert.Equal(t, "devicesOnline", stats.SummaryStats[1].Key)
+	assert.Equal(t, int64(3), stats.SummaryStats[1].Value)
+}
+
+// TestAgentStats_SummaryStatsProvider_Absent 는 SummaryStatsProvider 미구현 에이전트에서
+// SummaryStats 필드가 nil(omitempty 생략)로 남는지 검증한다 (AC-02-2 부재 처리).
+func TestAgentStats_SummaryStatsProvider_Absent(t *testing.T) {
+	mgr := agent.NewManager()
+	adapter := NewAgentServiceAdapter(mgr, nil, nil)
+
+	info, err := adapter.CreateAgent(context.Background(), &dto.AgentCreateRequest{
+		Name: "no-summary",
+		Type: "",
+	})
+	require.NoError(t, err)
+
+	stats, err := adapter.AgentStats(context.Background(), info.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stats.SummaryStats, "미구현 시 SummaryStats 는 nil 이어야 한다(omitempty)")
 }
 
 // TestAgentToHandlerInfo_DefaultDetail_PopulatesUptimeAndStats 는 detail="" (목록

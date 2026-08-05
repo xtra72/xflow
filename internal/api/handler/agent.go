@@ -110,6 +110,14 @@ type ConnectionStatsResponse struct {
 	LastActivityAt   string `json:"last_activity_at"`
 }
 
+// SummaryStatResponse 는 에이전트 타입별 요약 카운트 한 항목이다.
+// 안정적 key + 정수 value(+ 선택 unit)로 프론트가 i18n 매핑(미매핑 시 key fallback)한다.
+type SummaryStatResponse struct {
+	Key   string `json:"key"`
+	Value int64  `json:"value"`
+	Unit  string `json:"unit,omitempty"`
+}
+
 // NodeRefStatsResponse 는 노드 참조별 내부 통계이다.
 type NodeRefStatsResponse struct {
 	NodeID           string `json:"node_id"`
@@ -146,6 +154,10 @@ type AgentStatsInfo struct {
 	LastActivityAt    string                    `json:"last_activity_at,omitempty"`
 	Connections       []ConnectionStatsResponse `json:"connections"`
 	NodeRefs          []NodeRefStatsResponse    `json:"node_refs"`
+
+	// 타입별 부가 통계 (SPEC-DASHBOARD-003) — SummaryStatsProvider 구현 에이전트만 채운다.
+	// 미구현 시 omitempty 로 생략되어 기존 응답 형상을 깨지 않는다.
+	SummaryStats []SummaryStatResponse `json:"summary_stats,omitempty"`
 }
 
 // AgentHandler 는 에이전트 관련 API 엔드포인트를 처리한다.

@@ -485,6 +485,23 @@ func (a *AgentServiceAdapter) AgentStats(ctx context.Context, id string) (*handl
 		}
 	}
 
+	// SummaryStatsProvider 인터페이스 확인 (타입별 부가 통계, SPEC-DASHBOARD-003)
+	// Connections/NodeRefs 채움과 동일한 타입 단언 방식. 미구현 시 필드를 채우지 않아
+	// omitempty 로 응답에서 생략된다.
+	if sp, ok := ag.(agent.SummaryStatsProvider); ok {
+		summary := sp.SummaryStats()
+		if len(summary) > 0 {
+			result.SummaryStats = make([]handler.SummaryStatResponse, len(summary))
+			for i, s := range summary {
+				result.SummaryStats[i] = handler.SummaryStatResponse{
+					Key:   s.Key,
+					Value: s.Value,
+					Unit:  s.Unit,
+				}
+			}
+		}
+	}
+
 	// NodeRefStats 매핑 (resolver가 있으면 이름 해석 + 미해석 노드 필터링)
 	if len(stats.NodeRefs) > 0 {
 		refs := make([]handler.NodeRefStatsResponse, 0, len(stats.NodeRefs))

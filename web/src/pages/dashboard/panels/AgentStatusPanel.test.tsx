@@ -4,7 +4,7 @@
 // 에러/정상/원격 graceful) 렌더와 공통 통계 타일, EnhancedMessagesStats 요약을 검증한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 
 import type { AgentInfo, AgentStatsInfo } from '@/types/agent';
 import type { DetailQueryResult } from '@/hooks/useDetailTargets';
@@ -130,5 +130,55 @@ describe('AgentStatusPanel (SPEC-DASHBOARD-002)', () => {
     // name 대체(agentId), type 대체("-")
     expect(screen.getByText('a-1')).toBeInTheDocument();
     expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('AC-06-3: viewMode 미설정 시 기본 tile 뷰(기존 통계 타일)로 렌더한다(하위호환)', () => {
+    hooks.stats = { data: stats(), isLoading: false, error: null };
+    hooks.detail = { data: detail(), isLoading: false, error: null };
+    renderPanel({ agentId: 'a-1' });
+
+    expect(screen.getByText('agents.detail.stats.totalIn')).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-status-diagram')).toBeNull();
+  });
+
+  it('AC-05-1/AC-06-2: viewMode=diagram 이면 SVG 다이어그램을 렌더하고 통계 타일을 생략한다', () => {
+    hooks.stats = { data: stats(), isLoading: false, error: null };
+    hooks.detail = { data: detail(), isLoading: false, error: null };
+    renderPanel({ agentId: 'a-1', viewMode: 'diagram' });
+
+    expect(screen.getByTestId('agent-status-diagram')).toBeInTheDocument();
+    // 타일 뷰 전용 라벨은 diagram 뷰에서 생략된다.
+    expect(screen.queryByText('agents.detail.stats.totalIn')).toBeNull();
+  });
+
+  it('AC-07-1: summary_stats 존재 시 tile·diagram 두 뷰 모두에서 요약 카운트를 표시한다', () => {
+    const withSummary = stats({
+      summary_stats: [
+        { key: 'devicesTotal', value: 12 },
+        { key: 'devicesOnline', value: 8 },
+      ],
+    });
+
+    // tile 뷰
+    hooks.stats = { data: withSummary, isLoading: false, error: null };
+    hooks.detail = { data: detail(), isLoading: false, error: null };
+    const { unmount } = renderPanel({ agentId: 'a-1', viewMode: 'tile' });
+    const tileSummary = screen.getByTestId('agent-status-summary');
+    expect(within(tileSummary).getByText('devicesTotal')).toBeInTheDocument();
+    expect(within(tileSummary).getByText((12).toLocaleString())).toBeInTheDocument();
+    unmount();
+
+    // diagram 뷰
+    renderPanel({ agentId: 'a-1', viewMode: 'diagram' });
+    const diagSummary = screen.getByTestId('agent-status-summary');
+    expect(within(diagSummary).getByText('devicesOnline')).toBeInTheDocument();
+    expect(within(diagSummary).getByText((8).toLocaleString())).toBeInTheDocument();
+  });
+
+  it('AC-07-2: summary_stats 부재 시 요약 영역을 생략한다(graceful)', () => {
+    hooks.stats = { data: stats(), isLoading: false, error: null };
+    hooks.detail = { data: detail(), isLoading: false, error: null };
+    renderPanel({ agentId: 'a-1' });
+    expect(screen.queryByTestId('agent-status-summary')).toBeNull();
   });
 });

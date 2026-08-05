@@ -15,9 +15,12 @@
 import { Activity, AlertTriangle, Bot, CircleStop } from 'lucide-react';
 
 import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useTargetContext } from '@/lib/remote/TargetContext';
+import type { AgentSummaryStat } from '@/types/agent';
+
+import AgentStatusDiagram from './AgentStatusDiagram';
 
 interface AgentStatusPanelProps {
   panelId: string;
@@ -33,6 +36,31 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
     <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
       <p className="text-xs font-medium text-(--color-text-muted)">{label}</p>
       <p className="mt-1 text-lg font-semibold text-(--color-text-primary)">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * 타입별 부가 통계 요약(SPEC-DASHBOARD-003 REQ-07) — diagram·tile 두 뷰 공통.
+ * summary_stats 부재 시 null 을 반환해 영역을 오류 없이 생략한다(graceful, AC-07-2).
+ * 라벨은 안정적 key 를 i18n 매핑(`dashboard.agentStatus.summary.<key>`)하며, 미매핑 시 key 자체로 폴백(A7).
+ */
+function AgentSummaryStats({ summary, t }: { summary?: AgentSummaryStat[]; t: TranslationFn }) {
+  if (!summary || summary.length === 0) return null;
+  return (
+    <div data-testid="agent-status-summary">
+      <p className="mb-2 text-xs font-medium text-(--color-text-muted)">
+        {t('dashboard.agentStatus.summaryTitle')}
+      </p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {summary.map((s) => {
+          const labelKey = `dashboard.agentStatus.summary.${s.key}`;
+          const translated = t(labelKey);
+          const label = translated === labelKey ? s.key : translated;
+          const value = s.unit ? `${s.value.toLocaleString()} ${s.unit}` : s.value.toLocaleString();
+          return <StatCard key={s.key} label={label} value={value} />;
+        })}
+      </div>
     </div>
   );
 }
@@ -103,6 +131,10 @@ export default function AgentStatusPanel({
 
   const messages = data.messages;
 
+  // 출력 형식(REQ-06): config.viewMode 로 diagram|tile 전환. 미설정/미인식 값은 기본 'tile'
+  // 로 폴백해 DASHBOARD-002 기존 동작을 보존한다(하위호환, AC-06-3).
+  const viewMode = config.viewMode === 'diagram' ? 'diagram' : 'tile';
+
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
       {/* 헤더: name · type + 상태 배지 */}
@@ -153,64 +185,74 @@ export default function AgentStatusPanel({
           )}
         </div>
 
-        {/* 공통 요약 통계 타일 */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <StatCard label={t('agents.detail.stats.totalIn')} value={data.messages_in.toLocaleString()} />
-          <StatCard label={t('agents.detail.stats.totalOut')} value={data.messages_out.toLocaleString()} />
-          <StatCard label={t('agents.detail.stats.error')} value={data.error_count.toLocaleString()} />
-          <StatCard label={t('agents.detail.stats.uptime')} value={data.uptime ?? '-'} />
-        </div>
+        {/* 뷰 분기(REQ-05/REQ-06): diagram → 인라인 SVG 흐름 다이어그램, tile → 기존 통계 타일. */}
+        {viewMode === 'diagram' ? (
+          <AgentStatusDiagram data={data} />
+        ) : (
+          <>
+            {/* 공통 요약 통계 타일 */}
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <StatCard label={t('agents.detail.stats.totalIn')} value={data.messages_in.toLocaleString()} />
+              <StatCard label={t('agents.detail.stats.totalOut')} value={data.messages_out.toLocaleString()} />
+              <StatCard label={t('agents.detail.stats.error')} value={data.error_count.toLocaleString()} />
+              <StatCard label={t('agents.detail.stats.uptime')} value={data.uptime ?? '-'} />
+            </div>
 
-        {/* EnhancedMessagesStats 요약(external/internal) — 존재 시에만. */}
-        {messages && (
-          <div>
-            <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.messageDetail')}</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-                <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">{t('agents.detail.stats.external')}</p>
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <div>
-                    <p className="text-(--color-text-muted)">{t('agents.detail.field.received')}</p>
-                    <p className="font-semibold text-(--color-text-primary)">{(messages.external.received ?? 0).toLocaleString()}</p>
+            {/* EnhancedMessagesStats 요약(external/internal) — 존재 시에만. */}
+            {messages && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.messageDetail')}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+                    <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">{t('agents.detail.stats.external')}</p>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <p className="text-(--color-text-muted)">{t('agents.detail.field.received')}</p>
+                        <p className="font-semibold text-(--color-text-primary)">{(messages.external.received ?? 0).toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-(--color-text-muted)">{t('agents.detail.field.sent')}</p>
+                        <p className="font-semibold text-(--color-text-primary)">{(messages.external.sent ?? 0).toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
+                        <p className="font-semibold text-(--color-text-primary)">{(messages.external.errored ?? 0).toLocaleString()}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-(--color-text-muted)">{t('agents.detail.field.sent')}</p>
-                    <p className="font-semibold text-(--color-text-primary)">{(messages.external.sent ?? 0).toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
-                    <p className="font-semibold text-(--color-text-primary)">{(messages.external.errored ?? 0).toLocaleString()}</p>
+                  <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
+                    <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">{t('agents.detail.stats.internal')}</p>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <p className="text-(--color-text-muted)">{t('agents.detail.field.received')}</p>
+                        <p className="font-semibold text-(--color-text-primary)">{(messages.internal.received ?? 0).toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-(--color-text-muted)">{t('agents.detail.field.sent')}</p>
+                        <p className="font-semibold text-(--color-text-primary)">{(messages.internal.sent ?? 0).toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
+                        <p className="font-semibold text-(--color-text-primary)">{(messages.internal.errored ?? 0).toLocaleString()}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3">
-                <p className="mb-2 text-xs font-semibold text-(--color-text-secondary)">{t('agents.detail.stats.internal')}</p>
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <div>
-                    <p className="text-(--color-text-muted)">{t('agents.detail.field.received')}</p>
-                    <p className="font-semibold text-(--color-text-primary)">{(messages.internal.received ?? 0).toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-(--color-text-muted)">{t('agents.detail.field.sent')}</p>
-                    <p className="font-semibold text-(--color-text-primary)">{(messages.internal.sent ?? 0).toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
-                    <p className="font-semibold text-(--color-text-primary)">{(messages.internal.errored ?? 0).toLocaleString()}</p>
-                  </div>
-                </div>
+            )}
+
+            {/* 운영 통계: 드롭 메시지(공통, 타입 무관). */}
+            <div>
+              <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.operationStats')}</p>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <StatCard label={t('agents.detail.stats.droppedMessages')} value={(data.dropped_messages ?? 0).toLocaleString()} />
               </div>
             </div>
-          </div>
+          </>
         )}
 
-        {/* 운영 통계: 드롭 메시지(공통, 타입 무관). */}
-        <div>
-          <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.operationStats')}</p>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <StatCard label={t('agents.detail.stats.droppedMessages')} value={(data.dropped_messages ?? 0).toLocaleString()} />
-          </div>
-        </div>
+        {/* 타입별 부가 통계(REQ-07): diagram·tile 두 뷰 공통. 부재 시 생략(graceful). */}
+        <AgentSummaryStats summary={data.summary_stats} t={t} />
       </div>
     </div>
   );

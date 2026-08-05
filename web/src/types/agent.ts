@@ -83,6 +83,17 @@ export interface NodeRefStatsResponse {
   last_activity_at: string;
 }
 
+/**
+ * 에이전트 타입별 요약 카운트 한 항목 (SPEC-DASHBOARD-003).
+ * Go SummaryStatResponse 구조와 형상을 일치시킨다. key 는 안정적 식별자(프론트 i18n 매핑용,
+ * 미매핑 시 key fallback), value 는 정수, unit 은 선택적 단위이다.
+ */
+export interface AgentSummaryStat {
+  key: string;
+  value: number;
+  unit?: string;
+}
+
 export interface AgentStatsInfo {
   // 기존 flat 필드 (하위 호환성)
   id: string;
@@ -106,6 +117,9 @@ export interface AgentStatsInfo {
   last_activity_at?: string;
   connections?: ConnectionStatsResponse[];
   node_refs?: NodeRefStatsResponse[];
+
+  // 타입별 부가 통계 (SPEC-DASHBOARD-003) — SummaryStatsProvider 구현 에이전트만 채운다.
+  summary_stats?: AgentSummaryStat[];
 }
 
 /**

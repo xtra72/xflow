@@ -98,6 +98,22 @@ type ConnectionStatsProvider interface {
 	ConnectionStats() []ConnectionStats
 }
 
+// SummaryStat 는 에이전트 타입에 유의미한 요약 카운트 한 항목이다.
+// Key 는 프론트 i18n 매핑용 안정적 식별자, Value 는 정수 카운트, Unit 은 선택적 단위 표기이다.
+type SummaryStat struct {
+	Key   string // 안정적 식별자 (i18n 매핑용, 예: "devicesTotal")
+	Value int64  // 정수 카운트 값
+	Unit  string // (선택) 단위 표기 (빈 값이면 미표기)
+}
+
+// SummaryStatsProvider 는 에이전트 타입에 유의미한 요약 카운트를 제공하는 선택적 인터페이스이다.
+// xsfm 의 등록/동작 중 장비 수처럼 타입별로 의미 있는 카운트를 안정적 key + 정수 value 목록으로
+// 노출한다. ConnectionStatsProvider 와 동일한 옵셔널 관례를 따르며, 구현하지 않는 에이전트는
+// API 응답에서 summary_stats 가 생략(omitempty)되어 어떤 동작 변화도 강제하지 않는다.
+type SummaryStatsProvider interface {
+	SummaryStats() []SummaryStat
+}
+
 // InternalStatsRecorder 는 노드↔에이전트 간 내부 메시지 통계를 기록하는 선택적 인터페이스이다.
 // Bridge 노드가 에이전트와 메시지를 주고받을 때 이 인터페이스로 내부 통계를 추적한다.
 // BaseAgent가 기본 구현을 제공하므로, BaseAgent를 임베딩하는 모든 에이전트가 자동으로 지원한다.
@@ -130,8 +146,8 @@ type Agent interface {
 type BaseAgent struct {
 	*lifecycle.BaseLifecycle
 	config    AgentConfig
-	transport Transport    // may be nil for System Agents
-	stats     *AgentStats  // internal stats (use atomic helpers)
+	transport Transport   // may be nil for System Agents
+	stats     *AgentStats // internal stats (use atomic helpers)
 	mu        sync.RWMutex
 	startedAt time.Time
 	createdAt time.Time

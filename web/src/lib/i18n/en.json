@@ -232,7 +232,25 @@
       "cannotLoad": "Cannot load agent status",
       "status": "Status",
       "enabled": "Enabled",
-      "disabled": "Disabled"
+      "disabled": "Disabled",
+      "viewMode": "View mode",
+      "viewModeTile": "Tile",
+      "viewModeDiagram": "Diagram",
+      "summaryTitle": "Type stats",
+      "summary": {
+        "devicesTotal": "Devices",
+        "devicesOnline": "Online"
+      },
+      "diagram": {
+        "title": "Message flow",
+        "external": "External",
+        "internal": "Internal",
+        "agent": "Agent",
+        "in": "in",
+        "out": "out",
+        "err": "err",
+        "buffer": "Buffer"
+      }
     },
     "acPanel": {
       "indoorTemp": "Indoor Temp",

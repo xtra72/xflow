@@ -232,7 +232,25 @@
       "cannotLoad": "에이전트 상태를 불러올 수 없습니다",
       "status": "상태",
       "enabled": "활성화",
-      "disabled": "비활성화"
+      "disabled": "비활성화",
+      "viewMode": "출력 형식",
+      "viewModeTile": "타일",
+      "viewModeDiagram": "다이어그램",
+      "summaryTitle": "타입별 통계",
+      "summary": {
+        "devicesTotal": "등록 장비",
+        "devicesOnline": "동작 중"
+      },
+      "diagram": {
+        "title": "메시지 흐름",
+        "external": "외부",
+        "internal": "내부",
+        "agent": "에이전트",
+        "in": "수신",
+        "out": "송신",
+        "err": "오류",
+        "buffer": "버퍼"
+      }
     },
     "acPanel": {
       "indoorTemp": "실내 온도",
