@@ -203,6 +203,24 @@ export function sliceKeysPage(
 }
 
 /**
+ * 태그 AND 필터를 `&tag=key:value` 반복 쿼리 파라미터로 인코딩한다.
+ *
+ * 백엔드 `GET /keys` 는 `?tag=k:v` 를 여러 번 받아 AND 로 결합한다(콜론 구분,
+ * 첫 콜론 기준 분리). 각 `key:value` 쌍을 URL 인코딩해 콜론/특수문자를 보존한다.
+ * 필터가 비어있으면 빈 문자열을 반환해 기존 URL 을 그대로 둔다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+export function buildStoreTagQuery(
+  tagFilters: Record<string, string> | undefined,
+): string {
+  if (!tagFilters) return '';
+  return Object.entries(tagFilters)
+    .map(([k, v]) => `&tag=${encodeURIComponent(`${k}:${v}`)}`)
+    .join('');
+}
+
+/**
  * `GET /api/v1/store/{agent_name}/keys` 를 호출해 키 이름 배열만 반환한다.
  *
  * v0.7.0 (M11) BREAKING CHANGE 호환 레이어:
@@ -211,12 +229,21 @@ export function sliceKeysPage(
  *   - 메타데이터(태그/등록출처/데이터타입) 가 필요한 호출자는
  *     `fetchStoreKeyObjects` 또는 `fetchStoreKeysWithTags` 를 사용한다.
  *
+ * `tagFilters` 를 주면 `?tag=k:v` AND 필터로 좁혀 조회한다(차트 tag 자동 모드).
+ * 미지정이면 전체 키를 반환한다(기존 동작). `signal` 로 요청 중단을 전파한다.
+ *
  * @spec SPEC-WEB-005 v0.7.0 (M11)
  */
-export async function fetchStoreKeys(agentName: string): Promise<string[]> {
-  const data = await get<StoreKeysRawResponse>(
-    `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
-  );
+export async function fetchStoreKeys(
+  agentName: string,
+  tagFilters?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const url = `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*${buildStoreTagQuery(tagFilters)}`;
+  // signal 이 없을 때 두 번째 인자로 undefined 를 넘기지 않는다(호출 서명 하위 호환).
+  const data = signal
+    ? await get<StoreKeysRawResponse>(url, { signal })
+    : await get<StoreKeysRawResponse>(url);
   // @spec SPEC-STORE-004
   // 백엔드 GET /keys 는 같은 key 를 metric/tags 별 다중 시리즈 행으로 반환한다.
   // 시리즈 선택 풀은 key 단위이므로(선택 시 해당 key 의 모든 시리즈를 한 번에 조회)
@@ -239,14 +266,22 @@ export async function fetchStoreKeys(agentName: string): Promise<string[]> {
  * StoreKeysEditor 등) 를 위한 신규 API. 기존 호출자는 `fetchStoreKeys` 또는
  * `fetchStoreKeysWithTags` 를 그대로 사용한다.
  *
+ * `tagFilters` 를 주면 `?tag=k:v` AND 필터로 좁혀 조회한다(차트 tag 자동 모드에서
+ * 매칭 키의 메타데이터가 필요할 때). 미지정이면 전체 키 객체를 반환한다(기존 동작).
+ * `signal` 로 요청 중단을 전파한다.
+ *
  * @spec SPEC-WEB-005 v0.7.0 (M11)
  */
 export async function fetchStoreKeyObjects(
   agentName: string,
+  tagFilters?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<StoreKeyObject[]> {
-  const data = await get<StoreKeysRawResponse>(
-    `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
-  );
+  const url = `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*${buildStoreTagQuery(tagFilters)}`;
+  // signal 이 없을 때 두 번째 인자로 undefined 를 넘기지 않는다(호출 서명 하위 호환).
+  const data = signal
+    ? await get<StoreKeysRawResponse>(url, { signal })
+    : await get<StoreKeysRawResponse>(url);
   return data.keys ?? [];
 }
 

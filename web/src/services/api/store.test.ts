@@ -1045,6 +1045,38 @@ describe('fetchStoreKeys (v0.7.0 호환 레이어)', () => {
     getMock.mockResolvedValueOnce({});
     expect(await fetchStoreKeys('agent-a')).toEqual([]);
   });
+
+  // SPEC-WEB-005 tag 자동 모드: tag_filters 를 ?tag=k:v AND 파라미터로 전송한다.
+  it('tagFilters 를 주면 ?tag=k:v AND 필터를 쿼리에 붙여 조회한다', async () => {
+    getMock.mockResolvedValueOnce({
+      keys: [
+        { key: 'room:1:temp', registration: 'auto', data_type: 'float', metric_type: 'gauge', tags: { room: '1', type: 'temperature' } },
+      ],
+    });
+    const result = await fetchStoreKeys('agent-a', { room: '1', type: 'temperature' });
+    expect(getMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys?namespace=default&pattern=*&tag=room%3A1&tag=type%3Atemperature',
+    );
+    expect(result).toEqual(['room:1:temp']);
+  });
+
+  it('tagFilters 없이 호출하면 기존 URL 을 유지한다(하위 호환)', async () => {
+    getMock.mockResolvedValueOnce({ keys: [] });
+    await fetchStoreKeys('agent-a');
+    expect(getMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys?namespace=default&pattern=*',
+    );
+  });
+
+  it('signal 을 주면 AbortSignal 을 config 로 전달한다', async () => {
+    getMock.mockResolvedValueOnce({ keys: [] });
+    const controller = new AbortController();
+    await fetchStoreKeys('agent-a', { room: '1' }, controller.signal);
+    expect(getMock).toHaveBeenCalledWith(
+      '/store/agent-a/keys?namespace=default&pattern=*&tag=room%3A1',
+      { signal: controller.signal },
+    );
+  });
 });
 
 describe('fetchStoreKeyObjects (v0.7.0 신규 API)', () => {

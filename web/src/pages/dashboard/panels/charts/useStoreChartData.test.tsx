@@ -27,6 +27,7 @@ import {
   matrixToEntries,
   useStoreChartData,
   type QueryMatrixFn,
+  type ResolveKeysFn,
 } from './useStoreChartData';
 
 /** 기본 store 소스 설정 헬퍼. */
@@ -410,6 +411,154 @@ describe('useStoreChartData', () => {
     );
     expect(queryFn).toHaveBeenCalledTimes(1);
     expect(queryFn.mock.calls[0]![0]).toBe('snapshot-name');
+    await flushMicrotasks();
+  });
+});
+
+// --- tag 자동 확장 모드 (SPEC-WEB-005) ---
+// selection_mode='tag' 이면 폴링마다 tag_filters 매칭 키를 먼저 해석하고, 그 키들을
+// 동적으로 시리즈로 확장해 queryMatrix 로 팬아웃한다. 태그 하위 키가 추가/삭제되면
+// 다음 폴링에서 자동 반영된다.
+describe('useStoreChartData tag 모드', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockUseAgentsData = { data: [{ id: 'store-1', name: 'store-1', type: 'store' }] };
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** 전달된 keys 로부터 매트릭스를 만드는 쿼리 스텁(각 키 1컬럼, 값 1). */
+  const matrixFromKeys: QueryMatrixFn = (_agent, params) =>
+    Promise.resolve({
+      columns: params.keys,
+      rows: [{ bucketStartMs: 1000, values: params.keys.map(() => 1) }],
+    });
+
+  it('tag_filters 매칭 키를 해석해 정확히 그 키들로 팬아웃하고 키당 1시리즈를 만든다', async () => {
+    const resolveFn = vi
+      .fn<ResolveKeysFn>()
+      .mockResolvedValue(['room:1:temp', 'room:1:humidity']);
+    const queryFn = vi.fn<QueryMatrixFn>(matrixFromKeys);
+    const { result } = renderHook(() =>
+      useStoreChartData(
+        makeConfig({
+          selection_mode: 'tag',
+          tag_filters: { room: '1' },
+          series: [],
+        }),
+        true,
+        { queryMatrixFn: queryFn, resolveKeysFn: resolveFn, nowFn: () => 100_000 },
+      ),
+    );
+
+    // 먼저 tag_filters 로 키를 해석한다.
+    expect(resolveFn).toHaveBeenCalledTimes(1);
+    expect(resolveFn.mock.calls[0]![0]).toBe('store-1');
+    expect(resolveFn.mock.calls[0]![1]).toEqual({ room: '1' });
+
+    await flushMicrotasks();
+
+    // 해석된 키 집합으로 정확히 팬아웃한다.
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    expect(queryFn.mock.calls[0]![1].keys).toEqual([
+      'room:1:temp',
+      'room:1:humidity',
+    ]);
+    // seriesFilters 는 부여하지 않는다(키의 모든 시리즈 조회).
+    expect(queryFn.mock.calls[0]![1].seriesFilters).toBeUndefined();
+
+    // 키당 1시리즈(별칭 = 키명).
+    expect(result.current.status).toBe('connected');
+    expect(result.current.seriesNames).toEqual([
+      'room:1:temp',
+      'room:1:humidity',
+    ]);
+  });
+
+  it('다음 폴링에서 해석된 키 집합이 바뀌면 시리즈 집합도 바뀐다', async () => {
+    const resolveFn = vi
+      .fn<ResolveKeysFn>()
+      .mockResolvedValueOnce(['room:1:temp', 'room:1:humidity'])
+      .mockResolvedValueOnce(['room:1:temp', 'room:1:co2']);
+    const queryFn = vi.fn<QueryMatrixFn>(matrixFromKeys);
+    const { result } = renderHook(() =>
+      useStoreChartData(
+        makeConfig({
+          selection_mode: 'tag',
+          tag_filters: { room: '1' },
+          series: [],
+          refresh_interval_ms: 5_000,
+        }),
+        true,
+        { queryMatrixFn: queryFn, resolveKeysFn: resolveFn, nowFn: () => 100_000 },
+      ),
+    );
+    await flushMicrotasks();
+    expect(result.current.seriesNames).toEqual([
+      'room:1:temp',
+      'room:1:humidity',
+    ]);
+
+    // 두 번째 폴링: room:1:humidity 가 사라지고 room:1:co2 가 추가됨.
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(resolveFn).toHaveBeenCalledTimes(2);
+    expect(result.current.seriesNames).toEqual(['room:1:temp', 'room:1:co2']);
+  });
+
+  it('매칭 키가 0개면 빈 차트(connected, no-data)로 표시하고 매트릭스 조회를 생략한다', async () => {
+    const resolveFn = vi.fn<ResolveKeysFn>().mockResolvedValue([]);
+    const queryFn = vi.fn<QueryMatrixFn>(matrixFromKeys);
+    const { result } = renderHook(() =>
+      useStoreChartData(
+        makeConfig({
+          selection_mode: 'tag',
+          tag_filters: { room: '99' },
+          series: [],
+        }),
+        true,
+        { queryMatrixFn: queryFn, resolveKeysFn: resolveFn },
+      ),
+    );
+    await flushMicrotasks();
+    // 키 0개 → 매트릭스 조회 없이 빈 결과(크래시 없음).
+    expect(queryFn).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('connected');
+    expect(result.current.seriesNames).toEqual([]);
+    expect(result.current.entries).toEqual([]);
+  });
+
+  it('tag_filters 가 비어있으면 idle 을 유지하고 아무 것도 조회하지 않는다', () => {
+    const resolveFn = vi.fn<ResolveKeysFn>();
+    const queryFn = vi.fn<QueryMatrixFn>();
+    const { result } = renderHook(() =>
+      useStoreChartData(
+        makeConfig({ selection_mode: 'tag', tag_filters: {}, series: [] }),
+        true,
+        { queryMatrixFn: queryFn, resolveKeysFn: resolveFn },
+      ),
+    );
+    expect(result.current.status).toBe('idle');
+    expect(resolveFn).not.toHaveBeenCalled();
+    expect(queryFn).not.toHaveBeenCalled();
+  });
+
+  it('keys 모드(기본)에서는 키 해석기를 호출하지 않는다(하위 호환)', async () => {
+    const resolveFn = vi.fn<ResolveKeysFn>();
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
+    renderHook(() =>
+      useStoreChartData(makeConfig(), true, {
+        queryMatrixFn: queryFn,
+        resolveKeysFn: resolveFn,
+      }),
+    );
+    expect(resolveFn).not.toHaveBeenCalled();
+    expect(queryFn).toHaveBeenCalledTimes(1);
     await flushMicrotasks();
   });
 });

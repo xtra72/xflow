@@ -977,7 +977,14 @@
       "storeTagKeyPlaceholder": "Tag key...",
       "storeTagRemoveAria": "Remove tag filter {key}: {value}",
       "storeAliasInsertToken": "Insert tag:",
-      "storeAliasPreview": "Preview:"
+      "storeAliasPreview": "Preview:",
+      "storeSelectionModeLabel": "Selection mode",
+      "storeSelectionModeKeys": "Select keys",
+      "storeSelectionModeTag": "By tag",
+      "storeTagPickerLabel": "Tag filter (AND)",
+      "storeTagAnyValue": "(any)",
+      "storeTagMatchCount": "{count} keys matched",
+      "storeTagNone": "No tags available. Use key selection instead."
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"

@@ -13,6 +13,7 @@ import { listChartChannels, type ChartChannelSummary } from '@/services/api/char
 import { useAgents } from '@/hooks/useAgent';
 import {
   useStoreKeysWithTags,
+  useStoreTagPairs,
   type DataType,
   type StoreKeyObject,
 } from '@/services/api/store';
@@ -427,6 +428,18 @@ function StoreSourceEditor({
   );
   const isSelected = !!storeSource.agent_id || !!storeSource.agent_name;
 
+  // 시리즈 선택 방식. 미지정은 'keys'(기존 동작). @spec SPEC-WEB-005
+  const selectionMode = storeSource.selection_mode ?? 'keys';
+  const setSelectionMode = (mode: 'keys' | 'tag'): void => {
+    // 모드 전환 시 반대 모드의 선택 상태를 초기화해 혼선을 막는다.
+    // tag → 동적 해석이므로 series[] 를 비우고, keys → tag_filters 를 제거한다.
+    if (mode === 'tag') {
+      onPatch({ selection_mode: 'tag', series: [] });
+    } else {
+      onPatch({ selection_mode: 'keys', tag_filters: undefined });
+    }
+  };
+
   return (
     <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
       {/* 에이전트 선택 (value/option 은 agent id 기준, 표시는 이름) */}
@@ -469,8 +482,45 @@ function StoreSourceEditor({
         </select>
       </LabeledField>
 
-      {/* 키 선택기(4 필터 + 멀티셀렉트) — 해석된 현재 이름으로 조회 */}
+      {/* 시리즈 선택 방식 토글(키 직접 선택 / 태그로 자동) — 에이전트 선택 후 노출 */}
       {isSelected && resolvedAgentName && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.chart.storeSelectionModeLabel')}
+          </label>
+          <div
+            className="inline-flex rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-0.5"
+            role="tablist"
+            aria-label={t('dashboard.chart.storeSelectionModeLabel')}
+          >
+            {(['keys', 'tag'] as const).map((mode) => {
+              const selected = selectionMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  data-testid={`chart-store-selection-mode-${mode}`}
+                  onClick={() => setSelectionMode(mode)}
+                  className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                    selected
+                      ? 'bg-blue-600 text-white'
+                      : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
+                  }`}
+                >
+                  {mode === 'keys'
+                    ? t('dashboard.chart.storeSelectionModeKeys')
+                    : t('dashboard.chart.storeSelectionModeTag')}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* keys 모드: 키 선택기(4 필터 + 멀티셀렉트) — 해석된 현재 이름으로 조회 */}
+      {isSelected && resolvedAgentName && selectionMode === 'keys' && (
         <StoreKeySelector
           agentName={resolvedAgentName}
           series={storeSource.series}
@@ -478,12 +528,21 @@ function StoreSourceEditor({
         />
       )}
 
-      {/* 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
-      {storeSource.series.length > 0 && (
+      {/* keys 모드: 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
+      {selectionMode === 'keys' && storeSource.series.length > 0 && (
         <SelectedSeriesList
           series={storeSource.series}
           onChange={(series) => onPatch({ series })}
           isLineChart={isLineChart}
+        />
+      )}
+
+      {/* tag 모드: 태그 AND 선택기 — tag_filters 매칭 키가 폴링마다 시리즈로 확장된다 */}
+      {isSelected && resolvedAgentName && selectionMode === 'tag' && (
+        <StoreTagSelectionEditor
+          agentName={resolvedAgentName}
+          tagFilters={storeSource.tag_filters ?? {}}
+          onChange={(tagFilters) => onPatch({ tag_filters: tagFilters })}
         />
       )}
 
@@ -549,6 +608,110 @@ function StoreSourceEditor({
           />
         </LabeledField>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 태그 자동 선택기 (SPEC-WEB-005 tag 모드).
+ *
+ * 사용자가 태그 키마다 값을 하나씩 골라 AND 필터(`tag_filters`)를 구성한다. 매칭되는
+ * 모든 store 키가 폴링 시점에 자동으로 시리즈가 되며(키 추가/삭제 자동 반영), 개별 키를
+ * `series[]` 로 고정하지 않는다. 라이브 미리보기로 현재 매칭 키 수를 표시한다.
+ *
+ * `useStoreTagPairs` 로 사용 가능한 태그 키/값을 조회하고, `useStoreKeysWithTags` 의
+ * 키 객체로 클라이언트 측에서 매칭 키 수를 계산한다(추가 네트워크 호출 없이).
+ * 구버전 서버(태그 엔드포인트 미지원)나 태그가 하나도 없으면 안내 문구를 표시한다.
+ *
+ * @spec SPEC-WEB-005
+ */
+function StoreTagSelectionEditor({
+  agentName,
+  tagFilters,
+  onChange,
+}: {
+  agentName: string;
+  tagFilters: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const { data: tagPairs, isLoading, isError } = useStoreTagPairs(agentName);
+  const { data: keysData } = useStoreKeysWithTags(agentName);
+
+  const pairs = useMemo(() => tagPairs ?? [], [tagPairs]);
+
+  // 라이브 매칭 키 수: 선택된 tag_filters(AND)로 키 객체를 좁혀 distinct key 수를 센다.
+  // 백엔드 GET /keys?tag=k:v 와 동일한 AND 의미(storeSourceFilter)를 재사용한다.
+  const matchCount = useMemo(() => {
+    const objects = keysData?.keyObjects ?? [];
+    const filterSet = new Set(
+      Object.entries(tagFilters).map(([k, v]) => makeTagFilterId(k, v)),
+    );
+    const matched = filterStoreKeyObjects(objects, { tagFilters: filterSet });
+    return new Set(matched.map((o) => o.key)).size;
+  }, [keysData, tagFilters]);
+
+  const setValue = (key: string, value: string): void => {
+    const next = { ...tagFilters };
+    if (value === '') delete next[key];
+    else next[key] = value;
+    onChange(next);
+  };
+
+  if (isLoading) {
+    return (
+      <p className="py-2 text-center text-[11px] text-(--color-text-muted)">
+        {t('dashboard.chart.storeKeysLoading')}
+      </p>
+    );
+  }
+  // 구버전 서버(4xx) 또는 태그 없음 → 안내(키 직접 선택 사용 권장).
+  if (isError || pairs.length === 0) {
+    return (
+      <p
+        className="py-2 text-center text-[11px] text-(--color-text-muted)"
+        data-testid="chart-store-tag-none"
+      >
+        {t('dashboard.chart.storeTagNone')}
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="space-y-2 rounded border border-(--color-border-default) p-2"
+      data-testid="chart-store-tag-selection"
+    >
+      <label className="block text-xs font-medium text-(--color-text-muted)">
+        {t('dashboard.chart.storeTagPickerLabel')}
+      </label>
+      {/* 태그 키마다 값 셀렉트(빈 값 = 미적용). 서로 다른 키는 AND 로 결합된다. */}
+      <div className="grid grid-cols-2 gap-2">
+        {pairs.map((p) => (
+          <LabeledField key={p.key} label={p.key}>
+            <select
+              value={tagFilters[p.key] ?? ''}
+              data-testid={`chart-store-tag-select-${p.key}`}
+              onChange={(e) => setValue(p.key, e.target.value)}
+              className={inputClass()}
+            >
+              <option value="">{t('dashboard.chart.storeTagAnyValue')}</option>
+              {p.values.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </LabeledField>
+        ))}
+      </div>
+      {/* 라이브 매칭 키 수 미리보기. */}
+      <p
+        className="text-[11px] text-(--color-text-secondary)"
+        data-testid="chart-store-tag-match-count"
+      >
+        {t('dashboard.chart.storeTagMatchCount').replace('{count}', String(matchCount))}
+      </p>
     </div>
   );
 }

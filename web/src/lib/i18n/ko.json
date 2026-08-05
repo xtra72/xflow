@@ -977,7 +977,14 @@
       "storeTagKeyPlaceholder": "태그 키...",
       "storeTagRemoveAria": "태그 필터 {key}: {value} 제거",
       "storeAliasInsertToken": "태그 삽입:",
-      "storeAliasPreview": "미리보기:"
+      "storeAliasPreview": "미리보기:",
+      "storeSelectionModeLabel": "선택 방식",
+      "storeSelectionModeKeys": "키 직접 선택",
+      "storeSelectionModeTag": "태그로 자동",
+      "storeTagPickerLabel": "태그 필터 (AND)",
+      "storeTagAnyValue": "(전체)",
+      "storeTagMatchCount": "{count}개 키 매칭",
+      "storeTagNone": "사용 가능한 태그가 없습니다. 키를 직접 선택하세요."
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"

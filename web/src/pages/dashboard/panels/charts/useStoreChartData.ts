@@ -25,13 +25,15 @@ import type {
   SeriesMatrixQuery,
   SeriesSelectorFilter,
 } from '@/services/api/seriesDataSource';
-import { storeSeriesDataSource } from '@/services/api/store';
+import { fetchStoreKeys, storeSeriesDataSource } from '@/services/api/store';
 import { useAgents } from '@/hooks/useAgent';
 import { resolveSeriesAlias } from './aliasTemplate';
 import { resolveStoreAgentName } from './storeAgentResolve';
+import { pickSeriesColor } from './chartChannelTypes';
 import type {
   ChartConnectionStatus,
   ChartEntry,
+  StoreSeriesRef,
   StoreSourceConfig,
 } from './chartChannelTypes';
 
@@ -50,12 +52,25 @@ export type QueryMatrixFn = (
   signal: AbortSignal,
 ) => Promise<SeriesMatrix>;
 
+/**
+ * tag 모드 키 해석 함수 시그니처(테스트 주입용).
+ * `tag_filters` AND 필터로 현재 매칭되는 store 키 이름 배열을 반환한다.
+ * 기본 구현은 `fetchStoreKeys(agentName, tagFilters, signal)` 를 사용한다.
+ */
+export type ResolveKeysFn = (
+  agentName: string,
+  tagFilters: Record<string, string>,
+  signal: AbortSignal,
+) => Promise<string[]>;
+
 /** 훅 옵션(테스트 주입). */
 export interface UseStoreChartDataOptions {
   /** 매트릭스 쿼리 실행기(테스트에서 네트워크 없이 주입). */
   queryMatrixFn?: QueryMatrixFn;
   /** 현재 시각 제공기(테스트 결정성 확보). 기본 Date.now. */
   nowFn?: () => number;
+  /** tag 모드 키 해석기(테스트에서 네트워크 없이 주입). 기본 fetchStoreKeys. */
+  resolveKeysFn?: ResolveKeysFn;
 }
 
 /**
@@ -97,6 +112,32 @@ export interface UseStoreChartDataResult {
  */
 const defaultQueryMatrix: QueryMatrixFn = (agentName, params, signal) =>
   storeSeriesDataSource(agentName).queryMatrix(params, signal);
+
+/**
+ * 기본 tag 모드 키 해석기 — 실제 Store 백엔드의 `GET /keys?tag=k:v` 를 호출한다.
+ */
+const defaultResolveKeys: ResolveKeysFn = (agentName, tagFilters, signal) =>
+  fetchStoreKeys(agentName, tagFilters, signal);
+
+/**
+ * tag 모드에서 해석된 키 목록을 `series[]` 로 확장한 effective config 를 만든다.
+ *
+ * 각 키는 하나의 시리즈가 되며(별칭 = 키명), 인덱스 기준으로 기본 팔레트 색을 배정한다
+ * (사용자 지정 색은 tag 모드에 없으므로 항상 자동 배정). 집계/시간/인터벌/네임스페이스는
+ * 원본 config 를 그대로 물려받고, `series[]` 만 동적으로 교체한다. metric_type/tags 는
+ * 부여하지 않으므로 각 키의 모든 시리즈가 조회된다(태그에 걸린 키 전체를 라인으로).
+ */
+export function tagResolvedConfig(
+  config: StoreSourceConfig,
+  resolvedKeys: string[],
+): StoreSourceConfig {
+  const series: StoreSeriesRef[] = resolvedKeys.map((key, i) => ({
+    key,
+    alias: key,
+    color: pickSeriesColor(i),
+  }));
+  return { ...config, series };
+}
 
 /**
  * config.series 를 SeriesMatrixQuery 의 keys/seriesFilters 로 변환한다.
@@ -253,19 +294,34 @@ export function useStoreChartData(
   // series 의 순서/필터/시간 파라미터가 바뀌면 재구독한다.
   const pollKey = useMemo(() => {
     if (!enabled || !config) return '';
-    if (!config.series || config.series.length === 0) return '';
     if (config.time_window_ms <= 0 || config.interval_ms <= 0) return '';
-    const seriesPart = config.series
-      .map((s) => {
-        const tagPart = s.tags
-          ? Object.keys(s.tags)
-              .sort()
-              .map((k) => `${k}=${s.tags![k]}`)
-              .join(',')
-          : '';
-        return `${s.key}|${s.metric_type ?? ''}|${tagPart}`;
-      })
-      .join('');
+    let selectionPart: string;
+    if (config.selection_mode === 'tag') {
+      const tagFilters = config.tag_filters ?? {};
+      // tag 모드는 태그가 하나도 없으면 비활성(idle) — 전체 키 폭주를 막는다.
+      if (Object.keys(tagFilters).length === 0) return '';
+      selectionPart =
+        'tag:' +
+        Object.keys(tagFilters)
+          .sort()
+          .map((k) => `${k}=${tagFilters[k]}`)
+          .join(',');
+    } else {
+      if (!config.series || config.series.length === 0) return '';
+      selectionPart =
+        'keys:' +
+        config.series
+          .map((s) => {
+            const tagPart = s.tags
+              ? Object.keys(s.tags)
+                  .sort()
+                  .map((k) => `${k}=${s.tags![k]}`)
+                  .join(',')
+              : '';
+            return `${s.key}|${s.metric_type ?? ''}|${tagPart}`;
+          })
+          .join('');
+    }
     return [
       // 해석된 현재 이름을 키에 포함해, 에이전트 이름 변경 시 재조회되게 한다.
       resolvedAgentName,
@@ -274,7 +330,7 @@ export function useStoreChartData(
       config.interval_ms,
       config.aggregation,
       config.refresh_interval_ms ?? DEFAULT_REFRESH_MS,
-      seriesPart,
+      selectionPart,
     ].join('|');
   }, [enabled, config, resolvedAgentName]);
 
@@ -295,26 +351,54 @@ export function useStoreChartData(
 
     const run = async () => {
       const queryFn = optionsRef.current.queryMatrixFn ?? defaultQueryMatrix;
+      const resolveKeysFn = optionsRef.current.resolveKeysFn ?? defaultResolveKeys;
       const nowFn = optionsRef.current.nowFn ?? Date.now;
       const now = nowFn();
-      const { keys, seriesFilters } = buildKeysAndFilters(config);
-      const query: SeriesMatrixQuery = {
-        keys,
-        ...(seriesFilters ? { seriesFilters } : {}),
-        startMs: now - config.time_window_ms,
-        endMs: now,
-        intervalMs: config.interval_ms,
-        aggregation: config.aggregation,
-      };
       // 이전 진행 중 요청을 중단하고 새 컨트롤러를 만든다.
+      // (tag 모드의 키 해석 fetch 와 매트릭스 조회가 같은 signal 을 공유한다.)
       controller?.abort();
       controller = new AbortController();
       const signal = controller.signal;
+      // SPEC-WEB-006: 저장된 이름이 아닌 해석된 현재 에이전트 이름으로 조회한다.
+      const agentName = resolvedAgentNameRef.current;
       try {
-        // SPEC-WEB-006: 저장된 이름이 아닌 해석된 현재 에이전트 이름으로 조회한다.
-        const matrix = await queryFn(resolvedAgentNameRef.current, query, signal);
+        // tag 모드: 폴링마다 tag_filters 매칭 키를 먼저 해석해 series[] 를 동적으로 만든다.
+        // 태그 하위 키가 추가/삭제되면 다음 폴링에서 자동 반영된다.
+        // keys 모드: 저장된 series[] 를 그대로 사용한다(기존 동작).
+        let effectiveConfig = config;
+        if (config.selection_mode === 'tag') {
+          const resolvedKeys = await resolveKeysFn(
+            agentName,
+            config.tag_filters ?? {},
+            signal,
+          );
+          if (cancelled || signal.aborted) return;
+          // 매칭 키 0개: 빈 차트(기존 no-data 상태)로 표시하고 매트릭스 조회를 생략한다.
+          if (resolvedKeys.length === 0) {
+            setResult({
+              entries: [],
+              seriesEntries: new Map(),
+              seriesStyles: new Map(),
+              seriesNames: [],
+              booleanSeries: new Set(),
+              status: 'connected',
+            });
+            return;
+          }
+          effectiveConfig = tagResolvedConfig(config, resolvedKeys);
+        }
+        const { keys, seriesFilters } = buildKeysAndFilters(effectiveConfig);
+        const query: SeriesMatrixQuery = {
+          keys,
+          ...(seriesFilters ? { seriesFilters } : {}),
+          startMs: now - config.time_window_ms,
+          endMs: now,
+          intervalMs: config.interval_ms,
+          aggregation: config.aggregation,
+        };
+        const matrix = await queryFn(agentName, query, signal);
         if (cancelled || signal.aborted) return;
-        const converted = matrixToEntries(matrix, config);
+        const converted = matrixToEntries(matrix, effectiveConfig);
         setResult({
           entries: converted.entries,
           seriesEntries: converted.seriesEntries,
@@ -359,6 +443,9 @@ export function useStoreChartData(
   // 재매핑해 반환한다. 정렬 매핑 가능한 경우(컬럼 수 == 시리즈 수)에만 매핑하며, 그 외에는
   // 조회 시점 결과를 그대로 사용한다(matrixToEntries 의 aligned 규칙과 동일).
   const reactiveSeriesStyles = useMemo(() => {
+    // tag 모드는 series[] 를 조회 시점에 동적으로 만들므로(config.series 는 무시),
+    // fetch 시 계산된 스타일(인덱스 팔레트 색)을 그대로 사용한다.
+    if (config?.selection_mode === 'tag') return result.seriesStyles;
     if (!config?.series || result.seriesNames.length !== config.series.length) {
       return result.seriesStyles;
     }
@@ -379,6 +466,8 @@ export function useStoreChartData(
 
   // booleanSeries 도 순수 config(data_type) 파생값이므로 재조회 없이 반응적으로 계산한다.
   const reactiveBooleanSeries = useMemo(() => {
+    // tag 모드는 동적 시리즈이므로 fetch 시 계산된 booleanSeries 를 그대로 사용한다.
+    if (config?.selection_mode === 'tag') return result.booleanSeries;
     if (!config?.series || result.seriesNames.length !== config.series.length) {
       return result.booleanSeries;
     }

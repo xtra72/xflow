@@ -115,7 +115,28 @@ export interface StoreSourceConfig {
   agent_name: string;
   /** Store 네임스페이스(미지정 시 'default'). */
   namespace?: string;
-  /** 조회할 시리즈 목록. 비어있으면 store 소스는 비활성으로 취급한다. */
+  /**
+   * 시리즈 선택 방식. @spec SPEC-WEB-005
+   *
+   * - `'keys'`(기본): 사용자가 `series[]` 를 직접 멀티셀렉트한다(기존 동작).
+   * - `'tag'`: `tag_filters` 로 매칭되는 모든 store 키를 폴링 시점마다 동적으로
+   *   시리즈로 확장한다. 태그 하위 키가 추가/삭제되면 자동 반영된다. `series[]` 는 무시된다.
+   *
+   * 미지정/undefined 는 `'keys'` 로 해석되어 하위 호환을 보존한다(기존 패널 무영향).
+   */
+  selection_mode?: 'keys' | 'tag';
+  /**
+   * 태그 AND 필터(`selection_mode === 'tag'` 일 때만 사용). @spec SPEC-WEB-005
+   *
+   * 예) `{ room: '1', type: 'temperature' }` → room=1 AND type=temperature 를 가진
+   * 모든 키가 시리즈가 된다. 폴링마다 재해석되므로 키 추가/삭제가 자동 반영된다.
+   * 비어있으면(키 0개) tag 모드는 비활성(idle)으로 취급한다.
+   */
+  tag_filters?: Record<string, string>;
+  /**
+   * 조회할 시리즈 목록. `'keys'` 모드의 정본이다. 비어있으면 store 소스는 비활성으로
+   * 취급한다. `'tag'` 모드에서는 무시되며 키가 동적으로 해석된다.
+   */
   series: StoreSeriesRef[];
   /** 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각. */
   time_window_ms: number;
