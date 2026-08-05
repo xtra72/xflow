@@ -1073,6 +1073,39 @@ describe('LineChartPanel', () => {
       expect(keys).toContain('Hum');
     });
 
+    it('X축을 설정된 time_window_ms 범위로 고정한다(데이터 실제 범위와 무관)', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['Temp', [{ timestamp: 1000, value: 21 }, { timestamp: 2000, value: 22 }]],
+      ]);
+      render(<LineChartPanel panelId="p1" config={storeConfig} />);
+      const domain = JSON.parse(screen.getByTestId('rc-xaxis').getAttribute('data-domain')!);
+      expect(typeof domain[0]).toBe('number');
+      expect(typeof domain[1]).toBe('number');
+      // 설정 윈도우(60000ms)로 고정 — 데이터 실제 범위(1000~2000)가 아니라 [now-60000, now].
+      expect(domain[1] - domain[0]).toBe(60000);
+    });
+
+    it('태그 모드(series 빈, tag_filters 존재)에서도 store 라인이 활성화되어 렌더된다', () => {
+      storeMockResult.current.seriesEntries = new Map([
+        ['temp/room1/a', [{ timestamp: 1000, value: 21 }, { timestamp: 2000, value: 22 }]],
+      ]);
+      const tagConfig = {
+        data_source: 'store',
+        store_source: {
+          agent_name: 'store-1',
+          series: [],
+          selection_mode: 'tag',
+          tag_filters: { room: '1' },
+          time_window_ms: 60000,
+          interval_ms: 10000,
+          aggregation: 'average',
+        },
+      };
+      render(<LineChartPanel panelId="p1" config={tagConfig} />);
+      const keys = screen.getAllByTestId('rc-line').map((l) => l.getAttribute('data-line-key'));
+      expect(keys).toContain('temp/room1/a');
+    });
+
     it('booleanSeries(store data_type=boolean)는 Y축을 false/true 로 표시한다', () => {
       // store 값은 이미 1/0 로 변환되어 도달하며, booleanSeries 로 표시 대상을 판별한다.
       storeMockResult.current.seriesEntries = new Map([

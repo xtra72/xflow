@@ -337,8 +337,14 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   const cfg = parseConfig(config);
   // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서 시리즈를 가져온다(공존).
   const storeSource = config.store_source as StoreSourceConfig | undefined;
+  // 태그 자동 확장 모드는 series[] 가 비어 있고 tag_filters 로 키를 폴링 시점마다 동적
+  // 해석하므로, series 길이가 아닌 tag_filters 존재로도 store 모드를 활성화한다(SPEC-WEB-005).
+  const storeTagActive =
+    storeSource?.selection_mode === 'tag' &&
+    Object.keys(storeSource.tag_filters ?? {}).length > 0;
   const isStore =
-    config.data_source === 'store' && (storeSource?.series?.length ?? 0) > 0;
+    config.data_source === 'store' &&
+    ((storeSource?.series?.length ?? 0) > 0 || storeTagActive);
   const isMultiMode = !isStore && (cfg.channels?.length ?? 0) > 0;
   // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
   const effectiveMaxPoints = resolveMaxPoints(cfg);
@@ -426,11 +432,13 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   >(null);
   const isPaused = pauseSnapshot !== null;
 
+  // recent 모드 또는 store 모드(설정 윈도우로 X축 고정)에서 현재 시각을 주기 갱신해
+  // X축 도메인 끝(now)이 계속 전진하도록 한다.
   useEffect(() => {
-    if (timeWindowMode !== 'recent' || isPaused) return;
+    if ((timeWindowMode !== 'recent' && !isStore) || isPaused) return;
     const id = window.setInterval(() => setNow(Date.now()), refreshMs);
     return () => window.clearInterval(id);
-  }, [timeWindowMode, refreshMs, isPaused]);
+  }, [timeWindowMode, isStore, refreshMs, isPaused]);
 
   // raw 데이터 계산 (모드별 분기)
   const {
@@ -629,6 +637,12 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       const start = cfg.fixed_start_ms ?? end;
       return [start, end];
     }
+    // store 모드(기본): X축을 설정된 시간 윈도우(store_source.time_window_ms)로 고정한다.
+    // 데이터가 윈도우보다 짧아도 X축 범위는 설정값을 일관되게 유지한다(스케일 안정성 우선).
+    if (isStore) {
+      const windowMs = storeSource?.time_window_ms ?? 0;
+      if (windowMs > 0) return [effectiveNow - windowMs, effectiveNow];
+    }
     return ['dataMin', 'dataMax'];
   }, [
     timeWindowMode,
@@ -636,7 +650,13 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     recentWindowSec,
     cfg.fixed_start_ms,
     cfg.fixed_end_ms,
+    isStore,
+    storeSource?.time_window_ms,
   ]);
+
+  // X축 도메인이 고정 수치 범위인지(recent/fixed/store 윈도우) — 데이터 오버플로 클립 여부 결정.
+  const xDomainFixed =
+    typeof xDomain[0] === 'number' && typeof xDomain[1] === 'number';
 
   // X축 nice ticks
   const xTicks = useMemo(() => {
@@ -806,7 +826,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               dataKey="timestamp"
               type="number"
               domain={xDomain}
-              allowDataOverflow={timeWindowMode !== 'points'}
+              allowDataOverflow={xDomainFixed}
               ticks={xTicks}
               tickFormatter={(v: number) => formatTimeShort(v)}
               tick={{ fontSize: xTickFont.fontSize, fill: xTickFont.fill, fontWeight: xTickFont.fontWeight }}
