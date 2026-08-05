@@ -70,15 +70,16 @@ func (m *HexKeyByteMap) UnmarshalJSON(data []byte) error {
 // NasaDeviceState 는 실내기의 현재 운전 상태를 나타낸다.
 // JSON 직렬화 시 모든 필드는 snake_case 키로 출력된다.
 type NasaDeviceState struct {
-	Power          bool          `json:"power"`
-	Mode           string        `json:"mode"` // "cool", "heat", "dry", "fan", "auto"
-	TargetTemp     float32       `json:"target_temperature"`
-	CurrentTemp    float32       `json:"current_temperature"`
-	FanSpeed       string        `json:"fan_speed"` // "auto", "low", "medium", "high"
-	SwingVertical  bool          `json:"swing_vertical"`
-	FilterAlarm    bool          `json:"filter_alarm"`
-	ErrorCode      uint16        `json:"error_code"`
-	RawMessageSets HexKeyByteMap `json:"raw_message_sets"` // 수신된 모든 메시지 세트
+	Power           bool          `json:"power"`
+	Mode            string        `json:"mode"` // "cool", "heat", "dry", "fan", "auto"
+	TargetTemp      float32       `json:"target_temperature"`
+	CurrentTemp     float32       `json:"current_temperature"`
+	CurrentHumidity uint8         `json:"current_humidity"` // 현재 습도(%) — NASA V1.1 지표 세트 #10 (0x4038), raw uint8 (0~100)
+	FanSpeed        string        `json:"fan_speed"`        // "auto", "low", "medium", "high"
+	SwingVertical   bool          `json:"swing_vertical"`
+	FilterAlarm     bool          `json:"filter_alarm"`
+	ErrorCode       uint16        `json:"error_code"`
+	RawMessageSets  HexKeyByteMap `json:"raw_message_sets"` // 수신된 모든 메시지 세트
 
 	// observedCore 는 각 상태 필드의 관측 여부를 나타내는 bitmask 이다 (json 미직렬화).
 	//
@@ -86,20 +87,24 @@ type NasaDeviceState struct {
 	// 전송한다("확인된 값만 전송"). 관측되지 않은 필드는 zero-value("" / 0)로 채워
 	// 보내지 않고 payload 에서 생략한다. UpdateFromMessageSets 가 각 메시지 셋 처리
 	// 시 해당 bit 를 set 하고, StateForJSON 이 set 된 필드만 출력한다.
-	observedCore uint8 `json:"-"`
+	//
+	// v1.1: 8비트(observedPower..observedError)가 모두 사용되어 uint16 으로 확장했다.
+	// observedHumidity(1<<8)가 9번째 bit 로 추가되었다.
+	observedCore uint16 `json:"-"`
 }
 
 // 상태 필드별 observedCore bitmask. AllCoreObserved 는 5 핵심 필드가 모두 set 된 값이다.
 const (
-	observedPower       uint8 = 1 << 0 // 0x01
-	observedMode        uint8 = 1 << 1 // 0x02
-	observedTargetTemp  uint8 = 1 << 2 // 0x04
-	observedCurrentTemp uint8 = 1 << 3 // 0x08
-	observedFanSpeed    uint8 = 1 << 4 // 0x10
-	observedSwing       uint8 = 1 << 5 // 0x20
-	observedFilter      uint8 = 1 << 6 // 0x40
-	observedError       uint8 = 1 << 7 // 0x80
-	observedAllCore     uint8 = observedPower | observedMode | observedTargetTemp |
+	observedPower       uint16 = 1 << 0 // 0x01
+	observedMode        uint16 = 1 << 1 // 0x02
+	observedTargetTemp  uint16 = 1 << 2 // 0x04
+	observedCurrentTemp uint16 = 1 << 3 // 0x08
+	observedFanSpeed    uint16 = 1 << 4 // 0x10
+	observedSwing       uint16 = 1 << 5 // 0x20
+	observedFilter      uint16 = 1 << 6 // 0x40
+	observedError       uint16 = 1 << 7 // 0x80
+	observedHumidity    uint16 = 1 << 8 // 0x100 — v1.1 현재 습도(%) (핵심 5필드 gate 에는 미포함)
+	observedAllCore     uint16 = observedPower | observedMode | observedTargetTemp |
 		observedCurrentTemp | observedFanSpeed
 )
 
@@ -110,7 +115,7 @@ func (s *NasaDeviceState) AllCoreObserved() bool {
 }
 
 // observed 는 지정한 필드 bit 가 관측되었는지 반환한다.
-func (s *NasaDeviceState) observed(bit uint8) bool {
+func (s *NasaDeviceState) observed(bit uint16) bool {
 	return s.observedCore&bit != 0
 }
 
@@ -142,6 +147,9 @@ func (s *NasaDeviceState) StateForJSON(includeRaw bool) any {
 	}
 	if s.observed(observedCurrentTemp) {
 		out["current_temperature"] = s.CurrentTemp
+	}
+	if s.observed(observedHumidity) {
+		out["current_humidity"] = s.CurrentHumidity
 	}
 	if s.observed(observedFanSpeed) {
 		fan := hvac.FanSpeedFromName(s.FanSpeed)
@@ -284,6 +292,13 @@ func (s *NasaDeviceState) UpdateFromMessageSets(sets []NasaMessageSet) {
 			if len(ms.Value) >= 2 {
 				s.CurrentTemp = DecodeTemperature(binary.BigEndian.Uint16(ms.Value[:2]))
 				s.observedCore |= observedCurrentTemp
+			}
+		case MsgCurrentHumidity:
+			// NASA V1.1 지표 세트 #10 (0x4038): 1바이트 습도 percent (raw uint8, 0~100).
+			// 2바이트 온도와 달리 BigEndian 디코드나 음수 처리 없이 그대로 저장한다.
+			if len(ms.Value) >= 1 {
+				s.CurrentHumidity = ms.Value[0]
+				s.observedCore |= observedHumidity
 			}
 		case MsgSwingVertical:
 			s.SwingVertical = ms.Value[0] != 0

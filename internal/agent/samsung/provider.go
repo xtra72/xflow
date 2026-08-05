@@ -88,6 +88,7 @@ func hvacr01DeviceToInfo(dev *NasaDevice) adapter.SamsungNasaDeviceInfo {
 		info.Mode = &dev.State.Mode
 		info.TargetTemp = &dev.State.TargetTemp
 		info.CurrentTemp = &dev.State.CurrentTemp
+		info.CurrentHumidity = &dev.State.CurrentHumidity
 		info.FanSpeed = &dev.State.FanSpeed
 		info.SwingVertical = &dev.State.SwingVertical
 		info.FilterAlarm = &dev.State.FilterAlarm

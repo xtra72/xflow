@@ -20,26 +20,28 @@ func ptrBool(v bool) *bool      { return &v }
 func ptrStr(v string) *string   { return &v }
 func ptrF32(v float32) *float32 { return &v }
 func ptrU16(v uint16) *uint16   { return &v }
+func ptrU8(v uint8) *uint8      { return &v }
 
 // fullIndoorInfo returns a SamsungNasaDeviceInfo representing a typical indoor device
 // with all state fields populated.
 func fullIndoorInfo() SamsungNasaDeviceInfo {
 	return SamsungNasaDeviceInfo{
-		Address:       "20.01.00",
-		DeviceID:      "living-room-ac",
-		DeviceType:    "HVACR.IDU",
-		Online:        true,
-		Ready:         true,
-		LastSeen:      time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC),
-		ErrorCount:    2,
-		Power:         ptrBool(true),
-		Mode:          ptrStr("cool"),
-		TargetTemp:    ptrF32(24.0),
-		CurrentTemp:   ptrF32(26.5),
-		FanSpeed:      ptrStr("auto"),
-		SwingVertical: ptrBool(false),
-		FilterAlarm:   ptrBool(false),
-		ErrorCode:     ptrU16(0),
+		Address:         "20.01.00",
+		DeviceID:        "living-room-ac",
+		DeviceType:      "HVACR.IDU",
+		Online:          true,
+		Ready:           true,
+		LastSeen:        time.Date(2026, 3, 12, 10, 0, 0, 0, time.UTC),
+		ErrorCount:      2,
+		Power:           ptrBool(true),
+		Mode:            ptrStr("cool"),
+		TargetTemp:      ptrF32(24.0),
+		CurrentTemp:     ptrF32(26.5),
+		CurrentHumidity: ptrU8(62),
+		FanSpeed:        ptrStr("auto"),
+		SwingVertical:   ptrBool(false),
+		FilterAlarm:     ptrBool(false),
+		ErrorCode:       ptrU16(0),
 	}
 }
 
@@ -268,7 +270,8 @@ func TestSamsungNasaDeviceAdapter_State_FullyPopulated(t *testing.T) {
 	assert.Equal(t, 1, props["mode"]) // "cool" → ModeCool (1)
 	assert.InDelta(t, float32(24.0), props["target_temperature"], 0.01)
 	assert.InDelta(t, float32(26.5), props["current_temperature"], 0.01)
-	assert.Equal(t, 1, props["fan_speed"]) // "auto" → FanAuto (1)
+	assert.Equal(t, uint8(62), props["current_humidity"]) // NASA V1.1 지표 세트 #10 (0x4038)
+	assert.Equal(t, 1, props["fan_speed"])                // "auto" → FanAuto (1)
 	assert.Equal(t, false, props["swing_vertical"])
 	assert.Equal(t, false, props["filter_alarm"])
 	assert.Equal(t, uint16(0), props["error_code"])

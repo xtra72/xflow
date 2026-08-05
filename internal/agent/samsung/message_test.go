@@ -33,6 +33,7 @@ func TestMessageSetValueSize(t *testing.T) {
 		{name: "MsgSwingVertical (0x4011) nibble 1 -> 1", index: 0x4011, want: 1},
 		{name: "MsgFilterCleanReset (0x4025) nibble 0 -> 1", index: 0x4025, want: 1},
 		{name: "MsgFilterCleanAlarm (0x4027) nibble 0 -> 1", index: 0x4027, want: 1},
+		{name: "MsgCurrentHumidity (0x4038) nibble 0 -> 1", index: 0x4038, want: 1},
 		{name: "MsgXSFM (0x4043) nibble 0 -> 1", index: 0x4043, want: 1},
 		{name: "MsgAutoDry (0x4111) nibble 1 -> 1", index: 0x4111, want: 1},
 
@@ -141,6 +142,7 @@ func TestMessageIndexConstants(t *testing.T) {
 		{name: "MsgWindless", got: MsgWindless, want: 0x4060},
 		{name: "MsgSwingHorizontal", got: MsgSwingHorizontal, want: 0x407E},
 		{name: "MsgAutoDry", got: MsgAutoDry, want: 0x4111},
+		{name: "MsgCurrentHumidity", got: MsgCurrentHumidity, want: 0x4038},
 		{name: "MsgTargetTemp", got: MsgTargetTemp, want: 0x4201},
 		{name: "MsgCurrentTemp", got: MsgCurrentTemp, want: 0x4203},
 		{name: "MsgErrorCode", got: MsgErrorCode, want: 0x0202},
@@ -294,6 +296,7 @@ func TestMessageSetValueSizeConsistency(t *testing.T) {
 		// 1바이트 메시지들 (니블 0 - 0x40XX 범위)
 		{name: "MsgFilterCleanReset", constant: MsgFilterCleanReset, wantSize: 1},
 		{name: "MsgFilterCleanAlarm", constant: MsgFilterCleanAlarm, wantSize: 1},
+		{name: "MsgCurrentHumidity", constant: MsgCurrentHumidity, wantSize: 1},
 		{name: "MsgXSFM", constant: MsgXSFM, wantSize: 1},
 
 		// 1바이트 메시지들 (니블 1)

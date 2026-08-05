@@ -2362,6 +2362,7 @@ func (a *Hvacr01Agent) handleMessage(msg *NasaMessage) {
 				"mode", dev.State.Mode,
 				"target_temp", dev.State.TargetTemp,
 				"current_temp", dev.State.CurrentTemp,
+				"current_humidity", dev.State.CurrentHumidity,
 				"fan_speed", dev.State.FanSpeed,
 				"sets_count", len(sets),
 				"payload_hex", payloadHex,
@@ -2495,14 +2496,16 @@ func (a *Hvacr01Agent) filterMessageSets(sets []NasaMessageSet, addr NasaAddress
 	return filtered
 }
 
-// nonTempFieldsChangedHvacr01 는 비온도 필드 (Power/Mode/TargetTemp/FanSpeed) 중
-// 하나라도 변경되었는지 검사한다 (v0.6.7).
-// TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리. 호출 전제: stateChanged=true.
+// nonTempFieldsChangedHvacr01 는 비온도 필드 (Power/Mode/TargetTemp/FanSpeed/CurrentHumidity)
+// 중 하나라도 변경되었는지 검사한다 (v0.6.7).
+// TargetTemp 는 사용자 설정 값이라 비온도(제어) 카테고리. CurrentHumidity 는 이산(discrete)
+// 습도 필드로 온도 임계값 게이트 대상이 아니다. 호출 전제: stateChanged=true.
 func nonTempFieldsChangedHvacr01(prev, current NasaDeviceState) bool {
 	return prev.Power != current.Power ||
 		prev.Mode != current.Mode ||
 		prev.TargetTemp != current.TargetTemp ||
-		prev.FanSpeed != current.FanSpeed
+		prev.FanSpeed != current.FanSpeed ||
+		prev.CurrentHumidity != current.CurrentHumidity
 }
 
 // maxTempDeltaHvacr01 는 온도 센서값 (CurrentTemp) 의 |Δ| 를 반환한다 (v0.6.7).
@@ -2527,6 +2530,9 @@ func stateChanged(prev, current NasaDeviceState) bool {
 		return true
 	}
 	if prev.CurrentTemp != current.CurrentTemp {
+		return true
+	}
+	if prev.CurrentHumidity != current.CurrentHumidity {
 		return true
 	}
 	if prev.FanSpeed != current.FanSpeed {
@@ -2675,6 +2681,7 @@ func (a *Hvacr01Agent) State() map[string]any {
 				"mode":                hvac.ModeFromName(dev.State.Mode),
 				"target_temperature":  dev.State.TargetTemp,
 				"current_temperature": dev.State.CurrentTemp,
+				"current_humidity":    dev.State.CurrentHumidity,
 				"fan_speed":           hvac.FanSpeedFromName(dev.State.FanSpeed),
 			}
 		}
