@@ -100,6 +100,52 @@ describe('RegisterMapGrid (SPEC-MODBUS-012 REQ-04/05)', () => {
     expect(cellContainer.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
   });
 
+  it('layoutColumns 미설정 시 외곽 컨테이너는 반응형 기본(grid-cols-1 sm:grid-cols-2)을 유지한다', () => {
+    const map: ModbusRegisterMap = { holding_registers: { '0': 1, '1': 2 } };
+    render(<RegisterMapGrid registerMap={map} registerCounts={counts({ holding_registers: 2 })} />);
+    // 외곽 컨테이너 = 영역 카드(modbus-grid-area-*)의 부모.
+    const outer = screen.getByTestId('modbus-grid-area-holding_registers').parentElement!;
+    expect(outer.className).toContain('grid-cols-1');
+    expect(outer.className).toContain('sm:grid-cols-2');
+    expect(outer.style.gridTemplateColumns).toBe('');
+  });
+
+  it('layoutColumns 설정 시 외곽 컨테이너는 고정 열 CSS grid(영역 카드 배치)로 렌더한다', () => {
+    const map: ModbusRegisterMap = {
+      coils: { '0': true },
+      holding_registers: { '0': 1, '1': 2 },
+    };
+    render(
+      <RegisterMapGrid
+        registerMap={map}
+        registerCounts={counts({ coils: 1, holding_registers: 2 })}
+        layoutColumns={2}
+      />,
+    );
+    const outer = screen.getByTestId('modbus-grid-area-holding_registers').parentElement!;
+    expect(outer.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
+    // 고정 열 사용 시 반응형 기본 클래스는 적용하지 않는다.
+    expect(outer.className).not.toContain('sm:grid-cols-2');
+  });
+
+  it('layoutColumns(외곽 카드 배치)와 areaColumns(영역 내부 셀 열)는 독립적으로 적용된다', () => {
+    const map: ModbusRegisterMap = { holding_registers: { '0': 1, '1': 2 } };
+    render(
+      <RegisterMapGrid
+        registerMap={map}
+        registerCounts={counts({ holding_registers: 2 })}
+        areaColumns={{ holding_registers: 4 }}
+        layoutColumns={1}
+      />,
+    );
+    const outer = screen.getByTestId('modbus-grid-area-holding_registers').parentElement!;
+    expect(outer.style.gridTemplateColumns).toBe('repeat(1, minmax(0, 1fr))');
+    // 영역 내부 셀 그리드는 areaColumns 값(4)을 그대로 유지한다.
+    const cellContainer =
+      screen.getByTestId('modbus-grid-cell-holding_registers-0').parentElement!;
+    expect(cellContainer.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
+  });
+
   it('areaColumns 는 영역별로 개별 적용된다(설정 영역=grid, 미설정 영역=flex-wrap)', () => {
     // coils 만 열 수 설정, holding_registers 는 미설정 → 각 영역 배치가 독립적으로 결정된다.
     const map: ModbusRegisterMap = {

@@ -550,6 +550,8 @@
       "modbusGateway": "MODBUS Gateway",
       "modbusColumns": "Columns (grid)",
       "modbusAreaColumns": "Columns per area (grid)",
+      "modbusAreaLayoutColumns": "Area cards per row (layout)",
+      "modbusAreaLayoutColumnsHint": "Empty or 0 = auto (responsive 1-2). Enter 1-4 to place that many area cards per row.",
       "modbusColumnsHint": "Empty or 0 = auto (responsive). Enter 1-24 for a fixed number of columns per row.",
       "showStationStatus": "Show station status",
       "showLineStats": "Show line stats",

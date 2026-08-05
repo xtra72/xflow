@@ -28,6 +28,9 @@ export default function ModbusDeviceRegistersPanel({
   // config.areaColumns(영역별 열 수) → 영역 카드 내부 셀 그리드의 행당 셀 수(영역별).
   // 미설정/0 은 자동(flex-wrap). 구 단일 config.columns 는 전 영역 시드로 하위호환된다.
   const areaColumns = resolveAreaColumns(config);
+  // config.areaLayoutColumns(영역 카드 배치 열 수) → 4개 영역 카드의 외곽 그리드 행당 카드 수.
+  // 미설정/0 은 반응형 기본(1→2열). areaColumns 와는 독립적인 별개 설정이다.
+  const layoutColumns = config.areaLayoutColumns as number | undefined;
   const rawUnitId = config.unitId as number | undefined;
   // unit 0 은 공유 컨테이너(서빙 디바이스 아님) → get_device_status(0) 은 의미 있는 결과가 없다.
   // config.unitId 미설정(생성 시 가상 디바이스 없음/설정에서 에이전트 변경으로 초기화)이거나 0 이면
@@ -98,6 +101,7 @@ export default function ModbusDeviceRegistersPanel({
         registerMap={status.register_map}
         registerCounts={status.register_counts}
         areaColumns={areaColumns}
+        layoutColumns={layoutColumns}
       />
     </ModbusPanelFrame>
   );

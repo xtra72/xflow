@@ -1283,6 +1283,9 @@ function ModbusSettingsSection({
   const needsAreaColumns = MODBUS_AREA_COLUMNS_PANEL_TYPES.has(panel.type);
   // 표시/편집 기준값: 구 단일 columns 마이그레이션을 반영한 영역별 값(resolveAreaColumns).
   const areaColumns = resolveAreaColumns(panel.config);
+  // 영역 카드 배치 열 수(config.areaLayoutColumns) — 레지스터 맵 패널 전용. 4개 영역 카드의 외곽 배치.
+  // 미설정/0 은 반응형 기본(1→2열). 영역별 셀 열 수(areaColumns)와는 독립적인 별개 설정이다.
+  const currentAreaLayoutColumns = panel.config?.areaLayoutColumns as number | undefined;
 
   const { data: agentsResult } = useAgents();
   const gatewayAgents = useMemo(
@@ -1412,6 +1415,32 @@ function ModbusSettingsSection({
           </div>
           <p className="mt-1 text-[11px] text-(--color-text-muted)">
             {t('dashboard.settings.modbusColumnsHint')}
+          </p>
+        </div>
+      )}
+
+      {/* 영역 카드 배치 열 수(config.areaLayoutColumns) — 레지스터 맵 패널 전용. 4개 영역 카드의 외곽 배치. */}
+      {/* 비움/0 = 자동(반응형 1→2열). 영역별 셀 열 수(위)와는 독립적인 별개 설정이다. */}
+      {needsAreaColumns && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.modbusAreaLayoutColumns')}
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={4}
+            value={currentAreaLayoutColumns !== undefined ? String(currentAreaLayoutColumns) : ''}
+            data-testid="modbus-settings-area-layout-columns-input"
+            onChange={(e) =>
+              onConfigChange({
+                areaLayoutColumns: e.target.value === '' ? undefined : Number(e.target.value),
+              })
+            }
+            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-[11px] text-(--color-text-muted)">
+            {t('dashboard.settings.modbusAreaLayoutColumnsHint')}
           </p>
         </div>
       )}

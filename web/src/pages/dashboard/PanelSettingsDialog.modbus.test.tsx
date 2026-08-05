@@ -168,6 +168,50 @@ describe('PanelSettingsDialog MODBUS 설정 (BUG A)', () => {
     expect(screen.queryByTestId('modbus-settings-columns-input')).toBeNull();
   });
 
+  it('레지스터 맵 패널은 영역 카드 배치 열 수(areaLayoutColumns) 입력을 노출한다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-shared-registers',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1' },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.getByTestId('modbus-settings-area-layout-columns-input')).toBeInTheDocument();
+  });
+
+  it('영역 카드 배치 열 수를 변경하면 draft config.areaLayoutColumns 로 저장된다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-device-registers',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1', unitId: 2 },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const layoutInput = screen.getByTestId(
+      'modbus-settings-area-layout-columns-input',
+    ) as HTMLInputElement;
+    fireEvent.change(layoutInput, { target: { value: '2' } });
+    expect(
+      (screen.getByTestId('modbus-settings-area-layout-columns-input') as HTMLInputElement).value,
+    ).toBe('2');
+
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.settings.apply' }));
+    const savedConfig = storeMock.updatePanelConfig.mock.calls[0]![1] as Record<string, unknown>;
+    expect(savedConfig.areaLayoutColumns).toBe(2);
+  });
+
+  it('summary/bus 패널은 영역 카드 배치 열 수(areaLayoutColumns) 입력을 노출하지 않는다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'modbus-bus-stats',
+      title: 'MODBUS',
+      config: { agentId: 'gw-1' },
+    };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.queryByTestId('modbus-settings-area-layout-columns-input')).toBeNull();
+  });
+
   it('summary/bus 패널은 단일 columns 입력만 노출하고 영역별 입력은 노출하지 않는다', () => {
     storeMock.panel = {
       id: 'p1',
