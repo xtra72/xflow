@@ -246,10 +246,7 @@
         "external": "외부",
         "internal": "내부",
         "agent": "에이전트",
-        "in": "수신",
-        "out": "송신",
-        "err": "오류",
-        "buffer": "버퍼"
+        "dropped": "쓰레기통"
       }
     },
     "acPanel": {
