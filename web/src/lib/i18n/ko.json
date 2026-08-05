@@ -239,7 +239,11 @@
       "summaryTitle": "타입별 통계",
       "summary": {
         "devicesTotal": "등록 장비",
-        "devicesOnline": "동작 중"
+        "devicesOnline": "동작 중",
+        "keysTotal": "키 개수",
+        "accessTotal": "총 접근",
+        "accessPerMin": "분당 평균 접근",
+        "historyTotal": "총 히스토리"
       },
       "diagram": {
         "title": "메시지 흐름",

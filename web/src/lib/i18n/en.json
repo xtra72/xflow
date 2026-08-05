@@ -239,7 +239,11 @@
       "summaryTitle": "Type stats",
       "summary": {
         "devicesTotal": "Devices",
-        "devicesOnline": "Online"
+        "devicesOnline": "Online",
+        "keysTotal": "Keys",
+        "accessTotal": "Total accesses",
+        "accessPerMin": "Accesses/min",
+        "historyTotal": "History entries"
       },
       "diagram": {
         "title": "Message flow",
