@@ -187,7 +187,7 @@ export default function AgentStatusPanel({
 
         {/* 뷰 분기(REQ-05/REQ-06): diagram → 인라인 SVG 흐름 다이어그램, tile → 기존 통계 타일. */}
         {viewMode === 'diagram' ? (
-          <AgentStatusDiagram data={data} />
+          <AgentStatusDiagram data={data} name={displayName} />
         ) : (
           <>
             {/* 공통 요약 통계 타일 */}

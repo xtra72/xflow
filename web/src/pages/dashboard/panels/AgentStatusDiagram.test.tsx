@@ -69,6 +69,25 @@ describe('AgentStatusDiagram (SPEC-DASHBOARD-003)', () => {
     expect(screen.getByTestId('agent-status-diagram-uptime')).toHaveTextContent('3h 4m');
   });
 
+  it('중앙 에이전트 노드에 실제 타이틀(name)을 표기하고, 부재 시 일반 라벨로 폴백한다', () => {
+    const { rerender } = render(<AgentStatusDiagram data={base()} name="ui-line-01" />);
+    // 실제 타이틀 표기(짧은 이름은 그대로)
+    expect(screen.getByTestId('agent-status-diagram-agent')).toHaveTextContent('ui-line-01');
+
+    // name 부재 시 일반 라벨(i18n key) 폴백
+    rerender(<AgentStatusDiagram data={base()} />);
+    expect(screen.getByTestId('agent-status-diagram-agent')).toHaveTextContent(
+      'dashboard.agentStatus.diagram.agent',
+    );
+  });
+
+  it('긴 타이틀은 말줄임(…)하되 <title> 툴팁에 전체명을 유지한다', () => {
+    render(<AgentStatusDiagram data={base()} name="verylongagentname-station-42" />);
+    const node = screen.getByTestId('agent-status-diagram-agent');
+    expect(node).toHaveTextContent('…'); // 말줄임 표기
+    expect(node.querySelector('title')?.textContent).toBe('verylongagentname-station-42'); // 전체명 툴팁
+  });
+
   it('AC-05-3: messages 부재 시 flat 필드로 폴백하고 Internal 화살표를 생략한다', () => {
     render(<AgentStatusDiagram data={base({ messages: undefined })} />);
 

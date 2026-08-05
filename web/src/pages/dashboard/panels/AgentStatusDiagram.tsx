@@ -12,6 +12,8 @@ import type { AgentStatsInfo } from '@/types/agent';
 
 interface AgentStatusDiagramProps {
   data: AgentStatsInfo;
+  /** 중앙 에이전트 노드에 표기할 실제 타이틀(부재 시 일반 라벨로 폴백). */
+  name?: string;
 }
 
 /** 화살표 한 개(선 + 화살촉). direction 은 'right'|'left'. */
@@ -47,8 +49,13 @@ function n(v: number | undefined): number {
 }
 
 /** 단일 에이전트 메시지 흐름 다이어그램(자족 인라인 SVG). */
-export default function AgentStatusDiagram({ data }: AgentStatusDiagramProps) {
+export default function AgentStatusDiagram({ data, name }: AgentStatusDiagramProps) {
   const { t } = useTranslation();
+
+  // 중앙 노드 라벨: 실제 에이전트 타이틀(name) 우선, 부재 시 기존 일반 라벨로 폴백.
+  // 노드 폭(78px)·폰트(10px) 제약상 과도한 길이는 말줄임하고, 전체명은 <title> 툴팁으로 제공한다.
+  const agentFullLabel = name?.trim() || t('dashboard.agentStatus.diagram.agent');
+  const agentLabel = agentFullLabel.length > 11 ? `${agentFullLabel.slice(0, 10)}…` : agentFullLabel;
 
   const messages = data.messages;
   const hasInternal = !!messages;
@@ -93,10 +100,11 @@ export default function AgentStatusDiagram({ data }: AgentStatusDiagramProps) {
         {t('dashboard.agentStatus.diagram.external')}
       </text>
 
-      {/* 노드: Agent(상태 색상) */}
+      {/* 노드: Agent(상태 색상) — 실제 에이전트 타이틀 표기(부재 시 일반 라벨 폴백). */}
       <rect x={131} y={54} width={78} height={64} rx={6} strokeWidth={1.5} className={agentFill} />
-      <text x={170} y={90} textAnchor="middle" className={nodeText}>
-        {t('dashboard.agentStatus.diagram.agent')}
+      <text x={170} y={90} textAnchor="middle" className={nodeText} data-testid="agent-status-diagram-agent">
+        {agentLabel}
+        <title>{agentFullLabel}</title>
       </text>
 
       {/* External → Agent (수신/in) */}
