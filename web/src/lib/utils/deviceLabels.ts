@@ -23,6 +23,7 @@ const SAMSUNG_NASA_INDOOR_LABELS: Record<string, string> = {
   mode: '운전 모드',
   target_temperature: '설정 온도',
   current_temperature: '현재 온도',
+  current_humidity: '현재 습도', // NASA V1.1 지표 세트 #10 (0x4038)
   fan_speed: '풍량',
   swing_vertical: '상하 스윙',
   filter_alarm: '필터 알람',

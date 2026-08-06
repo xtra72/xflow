@@ -420,6 +420,7 @@
       "fanTurbo": "터보",
       "fanSpeed": "풍량",
       "currentTemp": "현재 온도",
+      "currentHumidity": "현재 습도",
       "setLabel": "설정",
       "powerOff": "전원 꺼짐",
       "powerOffAria": "전원 끄기",

@@ -420,6 +420,7 @@
       "fanTurbo": "Turbo",
       "fanSpeed": "Airflow",
       "currentTemp": "Current temp",
+      "currentHumidity": "Current humidity",
       "setLabel": "Set",
       "powerOff": "Power off",
       "powerOffAria": "Turn power off",

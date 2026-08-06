@@ -55,10 +55,12 @@ function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const isPassive = !hasControl;
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
   const currentTemp = props['current_temperature'] as number | undefined;
+  // 현재 습도(%) — 삼성 NASA V1.1 등 지원 기기만 emit 한다(미지원 시 undefined → 표시 생략).
+  const currentHumidity = props['current_humidity'] as number | undefined;
   const targetTemp = (props['target_temperature'] as number) ?? 24;
   const mode: AcMode = normalizeAcMode(props['mode']);
   const fanSpeed: FanSpeed = normalizeFanSpeed(props['fan_speed']);
-  return { power, mode, currentTemp, targetTemp, fanSpeed, isPassive };
+  return { power, mode, currentTemp, currentHumidity, targetTemp, fanSpeed, isPassive };
 }
 
 // ---- 타입 정의 ----
@@ -153,7 +155,7 @@ export default function AcControlPanel({
   // 디바이스 상태에서 읽기 (백엔드에서 속성명 통일됨)
   const rawProps = device?.state?.properties ?? {};
   const capabilities = device?.capabilities as string[] | undefined;
-  const { power: serverPower, mode, currentTemp, targetTemp, fanSpeed, isPassive } =
+  const { power: serverPower, mode, currentTemp, currentHumidity, targetTemp, fanSpeed, isPassive } =
     readAcProps(rawProps, capabilities);
 
   // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
@@ -285,6 +287,13 @@ export default function AcControlPanel({
           </span>
         </div>
         <span className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.acControl.currentTemp')}</span>
+        {/* ---- 현재 습도(%) — 지원 기기만(current_humidity emit 시). 미지원 시 생략 ---- */}
+        {currentHumidity !== undefined && (
+          <div className="mt-1 flex items-center gap-1" title={t('dashboard.acControl.currentHumidity')}>
+            <Droplets className="h-3.5 w-3.5 text-(--color-text-muted)" />
+            <span className="text-sm font-medium text-(--color-text-secondary)">{currentHumidity}%</span>
+          </div>
+        )}
       </div>
       )}
 
