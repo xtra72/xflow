@@ -19,7 +19,8 @@ tags: "hvacr, samsung, nasa, mqtt, mirror, sync, gateway"
 | ---------- | ----- | --------------------------------------------------------------------- |
 | 2026-08-06 | 0.1.0 | 초기 SPEC 작성. 게이트웨이 ↔ 서버 HVACR 에이전트 미러링/동기화(디코드 NASA 메시지 replay) over MQTT. 1차 대상 samsung Hvacr01Agent. |
 | 2026-08-06 | 0.2.0 | Module 9(미러 브로커 보안) 추가 — MQTT 인증(username/password) + TLS(CA 인증서) 지원. thingplus 패턴 재사용. 브로커 ACL 운영 가이드 포함. mTLS/클라이언트 인증서는 후속 범위. |
-| 2026-08-06 | 0.3.0 | Module 10(mirror-mqtt/mirror-message 2-모드) 추가 — (A) 기존 `mirror` transport_type 을 `mirror-mqtt` 로 rename. (B) 신규 `mirror-message` 모드: MQTT 없이 플로우 노드의 mirror-in/mirror-out 포트로 디코드 메시지를 중계(채널 급전형 transport + FeedMirrorWire/MirrorOutCh 시임 재사용). 엔진 fan-in 제약으로 노드 Process 는 message-type marker 로 mirror-in 을 판별. **백엔드 에이전트 시임 + rename 완료; 노드 bridge/엔진 통합은 후속(§Module 10 미결 항목).** |
+| 2026-08-06 | 0.3.0 | Module 10(mirror-mqtt/mirror-message 2-모드) 추가 — (A) 기존 `mirror` transport_type 을 `mirror-mqtt` 로 rename. (B) 신규 `mirror-message` 모드: MQTT 없이 플로우 노드의 mirror-in/mirror-out 포트로 디코드 메시지를 중계(채널 급전형 transport + FeedMirrorWire/MirrorOutCh 시임 재사용). 엔진 fan-in 제약으로 노드 Process 는 message-type marker 로 mirror-in 을 판별. 백엔드 에이전트 시임 + rename 완료. |
+| 2026-08-06 | 0.4.0 | Module 10 완결 — 엔진 타입 게이트 확장(`engine.go` runNode: 입력 와이어가 있어도 `MultiSourceNode.ExtraSourceChannels` 배출, 순수 소스 무영향), 노드 bridge(`SamsungHvacr01Node` `MultiSourceNode` 구현 + `Process` marker `mirror.uplink` 판별 → `FeedMirrorWire`, mirror-out 드레인 루프), 프론트 `nodeSchemas.ts` mirror-in/mirror-out 포트. 엔진/노드/프론트 회귀 테스트 추가. |
 
 ---
 
@@ -477,9 +478,9 @@ plan.md에서 (7a)/(7b) 중 채택안을 확정한다. NASA는 실외기/실내�
 
 serial/tcp/`mirror-mqtt` 동작과 lg/century 에이전트는 변경되지 않아야 한다. mirror-message 는 순수 additive 이며, 기존 미러 테스트는 rename 만 반영한다(행위 보존).
 
-#### 미결 항목 — 엔진 fan-in 제약 (후속 결정 필요)
+#### 엔진 fan-in 확장 (완료)
 
-현행 엔진(`internal/engine/engine.go` runNode)은 노드의 `ExtraSourceChannels()` 를 **입력 와이어가 없을 때(`len(inputWires)==0`)만** 배출한다(SourceNode 경로). 그러나 mirror-message 결합 노드는 mirror-in(입력 와이어)을 가지므로 fan-in Process 경로가 선택되어 `ExtraSourceChannels`(mirror-out)가 배출되지 **않는다**. 따라서 mirror-out 이 그래프로 흐르려면 **입력 와이어가 있어도 MultiSourceNode 의 ExtraSourceChannels 를 배출하도록 엔진을 확장**해야 한다(공유·안전관련 엔진 코드 변경 = 설계 결정). 본 SPEC 증분은 **백엔드 에이전트 시임(FeedMirrorWire/MirrorOutCh/roleMessage/transport 선택) + rename 을 완료**하고, 노드 bridge(`Process` marker + `ExtraSourceChannels`) + 엔진 확장 + 프론트 노드 포트(`nodeSchemas.ts` mirror-in/out)는 이 엔진 제약을 사용자에게 알린 뒤 후속 증분에서 처리한다.
+기존 엔진(`internal/engine/engine.go` runNode)은 노드의 `ExtraSourceChannels()` 를 **입력 와이어가 없을 때(`len(inputWires)==0`)만** 배출했다(SourceNode 경로). mirror-message 결합 노드는 mirror-in(입력 와이어)을 가지므로 fan-in Process 경로가 선택되어 `ExtraSourceChannels`(mirror-out)가 배출되지 않았다. 이를 해소하기 위해 **입력 와이어가 있어도 `MultiSourceNode` 이면 ExtraSourceChannels 를 배출**하도록 엔진을 타입 게이트 확장했다(fan-in Process 경로와 병행, SourcePort 기준 라우팅). 타입 게이트라 순수 소스 노드(SerialInNode 등)와 mirror 미연결 노드는 영향받지 않는다(행위 보존). 회귀 방지 테스트: `internal/engine/multi_source_input_test.go`(입력 와이어 有/無 양쪽 배출 검증).
 
 ---
 
@@ -520,6 +521,6 @@ serial/tcp/`mirror-mqtt` 동작과 lg/century 에이전트는 변경되지 않�
 | M7 동기화 의미론 | `agent.go:502-524`(request_state/get_all) | retain 스냅샷 또는 resync |
 | M8 경계 가드 | `cmd/xflowd/main.go:378` | 등록 배선 |
 | M9 미러 브로커 보안 | `thingplus_agent.go:700-712/762-789`(auth/TLS 패턴), `mqtt_agent.go:258-263`(auth gating) | `mirrorBrokerConn` + `buildMirrorTLSConfig` + config 4필드 |
-| M10 mirror 2-모드 | `config.go`/`transport.go` switch, `mirror.go` roles/tap, `mirror_transport.go` Feed, `serial_io.go:491`(ExtraSourceChannels 선례) | rename `mirror`→`mirror-mqtt`, `roleMessage` + `FeedMirrorWire`/`MirrorOutCh` + `mirror-message` transport (백엔드 완료); 노드 bridge·엔진 확장 후속 |
+| M10 mirror 2-모드 | `config.go`/`transport.go` switch, `mirror.go` roles/tap, `mirror_transport.go` Feed, `serial_io.go:491`(ExtraSourceChannels 선례), `engine.go` runNode fan-in | rename `mirror`→`mirror-mqtt`, `roleMessage` + `FeedMirrorWire`/`MirrorOutCh` + `mirror-message` transport, 노드 bridge(`Process` marker + `ExtraSourceChannels`), 엔진 타입 게이트 확장, 프론트 mirror-in/out 포트 (완료) |
 
 관련 SPEC: SPEC-SAMSUNG-HVACR-001 (기반 에이전트), SPEC-LG-HVACR-001 / SPEC-LGAP-001 (후속 일반화 대상), SPEC-BRIDGE-001/002 (브릿지 연동).

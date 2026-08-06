@@ -1600,6 +1600,56 @@ func (e *Engine) runNode(
 		return
 	}
 
+	// MultiSourceNode 이면서 입력 와이어를 가진 노드: fan-in Process 경로와 병행하여
+	// 추가 소스 포트(ExtraSourceChannels)도 배출한다. 순수 소스(입력 와이어 없음)는 위
+	// len(inputWires)==0 경로에서 이미 처리되므로, 이 경로는 "MultiSourceNode + 입력 와이어"
+	// 조합에만 적용된다(현재 유일 대상: Samsung mirror-message 결합 노드의 mirror-out).
+	// 타입 게이트로 다른 노드(순수 소스 SerialInNode 등)는 영향받지 않는다(행위 보존).
+	// "out" 포트는 Process 결과가 담당하며, ExtraSourceChannels 는 "out" 이 아닌 추가 포트만
+	// 반환하므로 결과 라우팅(SourcePort=="out")과 충돌하지 않는다.
+	if multi, ok := n.(node.MultiSourceNode); ok {
+		portWires := groupWiresBySourcePort(outWires)
+		for pn, pch := range multi.ExtraSourceChannels() {
+			targetWires := portWires[pn]
+			if len(targetWires) == 0 {
+				continue // 연결된 와이어가 없으면 건너뜀
+			}
+			go func(portName string, portCh <-chan message.Message, wires []*RuntimeWire) {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case msg, ok := <-portCh:
+						if !ok {
+							return
+						}
+						// 일시정지 대기
+						for rt.paused.Load() {
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(10 * time.Millisecond):
+							}
+						}
+						rt.messageCount.Add(1)
+						var pc *portCounter
+						if nc := rt.nodeCounters[n.ID()]; nc != nil {
+							nc.processed.Add(1)
+							if pc = nc.portCounters[portName]; pc != nil {
+								pc.Record() // emitted (생산)
+							}
+						}
+						// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+						e.notifyOutputObserver(flowID, n.ID(), portName, msg)
+						if e.sendToWires(ctx, msg, wires, n.ID()) > 0 && pc != nil {
+							pc.RecordDelivered() // delivered (실제 전달)
+						}
+					}
+				}
+			}(pn, pch, targetWires)
+		}
+	}
+
 	// 여러 입력 와이어를 하나의 merged 채널로 합친다 (fan-in).
 	merged := e.mergeInputWires(ctx, inputWires)
 

@@ -422,3 +422,31 @@ describe('XSFM(설비) 노드 3종 스키마 (SPEC-XSFM-001)', () => {
     ]);
   });
 });
+
+// SPEC-HVACR-SYNC-001 M10: 통합 samsung-hvacr01 노드의 mirror-in/mirror-out 포트.
+describe('samsung-hvacr01 통합 노드 mirror-message 포트 (SPEC-HVACR-SYNC-001 M10)', () => {
+  it('mirror-in(input) 과 mirror-out(output) 포트를 노출한다', () => {
+    const ports = getDefaultPorts('samsung-hvacr01');
+    expect(ports).toContainEqual({ name: 'mirror-in', direction: 'input' });
+    expect(ports).toContainEqual({ name: 'mirror-out', direction: 'output' });
+  });
+
+  it('기존 in/out/error 포트도 보존한다 (무회귀)', () => {
+    const ports = getDefaultPorts('samsung-hvacr01');
+    expect(ports).toContainEqual({ name: 'in', direction: 'input' });
+    expect(ports).toContainEqual({ name: 'out', direction: 'output' });
+    expect(ports).toContainEqual({ name: 'error', direction: 'error' });
+  });
+
+  it('legacy samsung_hvacr01 alias 도 동일한 포트로 해석된다', () => {
+    expect(getDefaultPorts('samsung_hvacr01')).toEqual(getDefaultPorts('samsung-hvacr01'));
+  });
+
+  it('status/control 분리 노드에는 mirror 포트가 없다 (통합 노드 전용)', () => {
+    for (const nodeType of ['samsung-hvacr01-status', 'samsung-hvacr01-control']) {
+      const names = getDefaultPorts(nodeType).map((p) => p.name);
+      expect(names).not.toContain('mirror-in');
+      expect(names).not.toContain('mirror-out');
+    }
+  });
+});

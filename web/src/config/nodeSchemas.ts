@@ -810,6 +810,11 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       { name: 'in', direction: 'input' as const },
       { name: 'out', direction: 'output' as const },
       { name: 'error', direction: 'error' as const },
+      // SPEC-HVACR-SYNC-001 M10: mirror-message 모드 I/O 포트.
+      // mirror-in: 업링크 와이어(mirror.uplink) 메시지를 에이전트 ingress 로 급전.
+      // mirror-out: 에이전트가 디코드한 메시지를 와이어 JSON 으로 방출.
+      { name: 'mirror-in', direction: 'input' as const },
+      { name: 'mirror-out', direction: 'output' as const },
     ],
   },
 
