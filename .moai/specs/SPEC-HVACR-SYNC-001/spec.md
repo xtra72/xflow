@@ -435,6 +435,8 @@ plan.md에서 (7a)/(7b) 중 채택안을 확정한다. NASA는 실외기/실내�
 
 이 가이드는 권장 사항이며, 실제 강제는 브로커(Mosquitto/EMQX 등)의 인증·ACL 설정으로 수행한다. 에이전트는 자격증명·TLS를 제공하는 역할까지만 담당한다.
 
+> **복붙용 ACL 템플릿**(Mosquitto ACL 파일 + EMQX 규칙, 게이트웨이·서버 양방향, 멀티테넌트 범위 제한 포함): [docs/guides/hvacr-mirror-broker-security.md](../../../docs/guides/hvacr-mirror-broker-security.md)
+
 ---
 
 ## 4. Specifications (사양 요약)
