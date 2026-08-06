@@ -1,8 +1,10 @@
 // 2열 설정 레이아웃 (HVACR 외 에이전트) — 공유 모듈.
 //
 // AgentDetailPanel(설정 탭)과 CreateAgentModal(생성 모달)이 함께 사용한다.
-// 3 HVACR 에이전트 (samsung_hvacr01 / lg_hvacr01 / century_hvacr01) 는
-// FourQuadrantConfigLayout 으로 분기되므로 여기에 포함되지 않는다.
+// HVACR 에이전트(lg_hvacr01 / century_hvacr01)는 상세 패널에서
+// FourQuadrantConfigLayout 으로 분기된다. samsung_hvacr01 은 생성 팝업에서
+// 연결|운영 2분할을 쓰도록 아래 TWO_COL_CONFIG 에 포함되지만, 상세 패널은
+// HVACR_QUADRANT_AGENT_TYPES 체크가 우선하므로 여전히 4-분면을 사용한다.
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
@@ -63,6 +65,23 @@ export const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: s
   },
   lg_hvacr02: {
     left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'tcp_host', 'tcp_port']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  // samsung_hvacr01: 생성 팝업(CreateAgentModal)에서 연결(좌)|운영(우) 2분할로 렌더한다.
+  // 상세 패널(AgentDetailPanel)은 HVACR_QUADRANT_AGENT_TYPES 체크가 우선하므로 4-분면을 유지한다.
+  // 좌(연결) = 전송(serial/tcp/mirror) + 미러 MQTT/보안, 우(운영) = 상태확인/상태보고/미러 제어·ack·스냅샷.
+  samsung_hvacr01: {
+    left: new Set([
+      'transport_type',
+      'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity',
+      'tcp_host', 'tcp_port', 'connect_timeout', 'read_timeout',
+      'reconnect_interval', 'max_reconnect_backoff',
+      // 미러 동기화 연결 + MQTT 보안(SPEC-HVACR-SYNC-001 M9)
+      'mirror_uplink_enabled', 'mirror_broker', 'mirror_gateway_id',
+      'mirror_topic_prefix', 'mirror_qos',
+      'mirror_username', 'mirror_password', 'mirror_tls', 'mirror_ca_cert',
+    ]),
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
   },

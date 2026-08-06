@@ -11,6 +11,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import CreateAgentModal from './CreateAgentModal';
+import { TWO_COL_CONFIG } from './twoColumnConfig';
 
 // 생성 뮤테이션 스텁(reset 은 open effect 에서 호출됨).
 vi.mock('@/hooks/useAgent', () => ({
@@ -72,5 +73,33 @@ describe('CreateAgentModal 2열 레이아웃 분기', () => {
     expect(container.className).not.toContain('max-w-4xl');
     // 2열 그리드가 없어야 한다(단일 컬럼 DynamicForm 경로).
     expect(container.querySelector('.grid.grid-cols-2')).toBeNull();
+  });
+
+  it('samsung_hvacr01 은 넓은 모달 + 연결|운영 2열 그리드로 렌더한다', () => {
+    render(<CreateAgentModal open onClose={vi.fn()} />);
+    selectType('samsung_hvacr01');
+
+    const container = getModalContainer();
+    expect(container.className).toContain('max-w-4xl');
+
+    const grid = container.querySelector('.grid.grid-cols-2');
+    expect(grid).not.toBeNull();
+    const columns = grid!.querySelectorAll(':scope > div');
+    expect(columns.length).toBe(2);
+
+    // 좌(연결): 연결 방식(transport_type)이 좌측 컬럼에 위치한다.
+    expect((columns[0] as HTMLElement).textContent).toContain('연결 방식');
+    // 우(운영): 상태 확인 요청(운영 필드)이 우측 컬럼에, 좌측엔 없어야 한다.
+    expect((columns[1] as HTMLElement).textContent).toContain('상태 확인 요청 활성');
+    expect((columns[0] as HTMLElement).textContent).not.toContain('상태 확인 요청 활성');
+  });
+
+  it('samsung_hvacr01 좌측(연결) 컬럼 집합에 MQTT 보안 필드가 포함된다', () => {
+    const entry = TWO_COL_CONFIG['samsung_hvacr01'];
+    expect(entry).toBeDefined();
+    const left = entry!.left;
+    for (const k of ['mirror_broker', 'mirror_username', 'mirror_password', 'mirror_tls', 'mirror_ca_cert']) {
+      expect(left.has(k), `연결 컬럼 누락: ${k}`).toBe(true);
+    }
   });
 });
