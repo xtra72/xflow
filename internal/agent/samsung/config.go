@@ -92,6 +92,24 @@ type Hvacr01Config struct {
 	MirrorAckEnabled bool
 	// MirrorSnapshotEnabled 는 retain 스냅샷(7a) 활성 여부이다(재동기화, REQ-SYNC-001-07-02).
 	MirrorSnapshotEnabled bool
+
+	// ---------------------------------------------------------------------
+	// SPEC-HVACR-SYNC-001 M9: 미러 브로커 보안 (인증 + TLS)
+	// ---------------------------------------------------------------------
+	// 아래 필드는 선택이며 미러/업링크 활성 시에만 적용된다(신규 required 에러 없음).
+	// 보안 브로커(인증 + per-topic ACL) 사용을 위한 자격증명/TLS 설정이다.
+	// thingplus_agent 패턴(SetUsername/SetPassword/SetTLSConfig)을 그대로 따른다.
+
+	// MirrorUsername 은 MQTT 브로커 인증 사용자명이다(mirror_username 키). 빈 값이면 미적용.
+	MirrorUsername string
+	// MirrorPassword 는 MQTT 브로커 인증 비밀번호이다(mirror_password 키). 빈 값이면 미적용.
+	MirrorPassword string
+	// MirrorTLS 는 TLS(ssl://) 브로커 연결 암호화 활성 여부이다(mirror_tls 키, 기본 false).
+	MirrorTLS bool
+	// MirrorCACert 는 서버 인증서 검증용 CA 인증서이다(mirror_ca_cert 키).
+	// PEM 문자열 또는 파일 경로를 모두 허용한다(thingplus buildTLSConfig 와 동일).
+	// 빈 값이면 시스템 루트 CA 를 사용한다. TLS 활성 시에만 적용된다.
+	MirrorCACert string
 }
 
 // parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
@@ -510,6 +528,32 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	}
 	if v, ok := opts["mirror_snapshot_enabled"]; ok {
 		cfg.MirrorSnapshotEnabled = toBool(v)
+	}
+
+	// M9: 미러 브로커 보안 (인증 + TLS). 모두 선택 — 미설정 시 기존 무인증/평문 동작 보존.
+	if v, ok := opts["mirror_username"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_username must be a string")
+		}
+		cfg.MirrorUsername = s
+	}
+	if v, ok := opts["mirror_password"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_password must be a string")
+		}
+		cfg.MirrorPassword = s
+	}
+	if v, ok := opts["mirror_tls"]; ok {
+		cfg.MirrorTLS = toBool(v)
+	}
+	if v, ok := opts["mirror_ca_cert"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_ca_cert must be a string")
+		}
+		cfg.MirrorCACert = s
 	}
 
 	// 미러/업링크 활성 시 브로커·게이트웨이 식별자 필수 (REQ-SYNC-001-02-02, silent default 금지).

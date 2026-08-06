@@ -1,7 +1,7 @@
 ---
 id: SPEC-HVACR-SYNC-001
 title: "HVACR 에이전트 미러링/동기화 (게이트웨이 ↔ 서버) over MQTT"
-version: "0.1.0"
+version: "0.2.0"
 status: draft
 created: 2026-08-06
 updated: 2026-08-06
@@ -18,6 +18,7 @@ tags: "hvacr, samsung, nasa, mqtt, mirror, sync, gateway"
 | 날짜         | 버전    | 변경 내용                                                                 |
 | ---------- | ----- | --------------------------------------------------------------------- |
 | 2026-08-06 | 0.1.0 | 초기 SPEC 작성. 게이트웨이 ↔ 서버 HVACR 에이전트 미러링/동기화(디코드 NASA 메시지 replay) over MQTT. 1차 대상 samsung Hvacr01Agent. |
+| 2026-08-06 | 0.2.0 | Module 9(미러 브로커 보안) 추가 — MQTT 인증(username/password) + TLS(CA 인증서) 지원. thingplus 패턴 재사용. 브로커 ACL 운영 가이드 포함. mTLS/클라이언트 인증서는 후속 범위. |
 
 ---
 
@@ -394,6 +395,48 @@ plan.md에서 (7a)/(7b) 중 채택안을 확정한다. NASA는 실외기/실내�
 
 ---
 
+### Module 9: 미러 브로커 보안 (인증 + TLS)
+
+미러 동기화 MQTT 경로는 초기 설계에서 인증·암호화가 없었다(평문 tcp:// + 익명 접속). 게이트웨이·서버가 서로 다른 물리 노드에 있고 신뢰되지 않은 네트워크(원격 사이트, 인터넷 경유)를 건널 수 있으므로, 보안 브로커(인증 + per-topic ACL) 사용을 위한 자격증명·TLS 설정을 제공해야 한다.
+
+설계 원칙: 기존 thingplus_agent(`internal/agent/system/thingplus_agent.go`)의 검증된 패턴을 재사용한다 — paho `SetUsername`/`SetPassword`(빈 값이면 미적용), `SetTLSConfig`(CA PEM 또는 파일 경로 → `*tls.Config{MinVersion: TLS1.2}`). 모든 옵션은 **선택**이며, 미설정 시 기존 무인증/평문 동작이 그대로 보존된다(행위 보존, REQ-SYNC-001-08-02와 정합).
+
+#### REQ-SYNC-001-09-01 (Ubiquitous) MQTT 인증 지원
+
+시스템은 미러 브로커 연결에 대해 username/password 인증을 지원해야 한다. `mirror_username`/`mirror_password` 옵션이 비어 있지 않으면 paho `SetUsername`/`SetPassword`로 적용한다. 둘 다 비어 있으면 익명 접속(기존 동작)을 유지한다.
+
+#### REQ-SYNC-001-09-02 (Ubiquitous) TLS 암호화 지원
+
+**WHEN** `mirror_tls`가 true이면 **THEN** 시스템은 미러 브로커 연결에 TLS를 적용해야 한다(`SetTLSConfig`, 최소 버전 TLS 1.2). 브로커 주소는 `ssl://host:8883` 형식으로 지정한다.
+
+#### REQ-SYNC-001-09-03 (Ubiquitous) CA 인증서 검증
+
+`mirror_ca_cert` 옵션은 서버 인증서 검증용 CA를 PEM 문자열 또는 파일 경로로 받아야 한다(두 형식 모두 지원, thingplus `buildTLSConfig`와 동일). 값이 비어 있으면 시스템 루트 CA를 사용한다. PEM 파싱 실패 시 명시적 에러를 반환해야 한다(silent 무시 금지).
+
+#### REQ-SYNC-001-09-04 (Unwanted) 기존 동작 보존
+
+보안 옵션 4종(`mirror_username`/`mirror_password`/`mirror_tls`/`mirror_ca_cert`)은 모두 선택이며, 신규 required-field 에러를 추가하지 **않아야 한다**. 미설정 config는 이전과 동일하게 동작해야 한다.
+
+#### REQ-SYNC-001-09-05 (스코프 경계) mTLS 후속 분리
+
+본 모듈은 서버 인증(단방향 TLS) + username/password까지를 범위로 한다. 클라이언트 인증서(mTLS)는 후속 SPEC로 분리한다.
+
+#### 브로커 ACL 운영 가이드 (권장 배포 구성)
+
+미러 동기화를 보안 브로커로 운영할 때 권장하는 구성이다. 에이전트 코드가 아니라 **브로커 측 설정**으로 강제한다:
+
+1. **필수 인증(익명 금지)**: 브로커에서 익명 접속을 비활성화하고(`allow_anonymous false` 등) 모든 클라이언트가 username/password로 인증하도록 강제한다.
+2. **per-topic ACL(게이트웨이별 최소권한)**: 각 게이트웨이 자격증명이 자신의 토픽 네임스페이스 `{prefix}/{gateway_id}/*`만 발행/구독하도록 ACL을 설정한다. 예:
+   - 게이트웨이 `gw01`: `{prefix}/gw01/up/#` 발행 + `{prefix}/gw01/down/#` 구독만 허용.
+   - 서버: `{prefix}/+/up/#` 구독 + `{prefix}/+/down/#` 발행(또는 담당 게이트웨이로 한정).
+   - 이로써 탈취된 게이트웨이 자격증명이 다른 게이트웨이 토픽을 위조·감청하지 못한다(토픽 스킴이 보안 경계를 겸함, §Module 6과 정합).
+3. **TLS 전송 암호화**: 신뢰되지 않은 네트워크를 건너는 경우 `mirror_tls: true` + 서버 인증서 검증(`mirror_ca_cert`)으로 도청·MITM을 방지한다.
+4. **네트워크 격리**: 가능하면 브로커를 VPN/사설망 뒤에 두고, 노출이 필요한 경우 방화벽으로 소스 IP를 제한한다.
+
+이 가이드는 권장 사항이며, 실제 강제는 브로커(Mosquitto/EMQX 등)의 인증·ACL 설정으로 수행한다. 에이전트는 자격증명·TLS를 제공하는 역할까지만 담당한다.
+
+---
+
 ## 4. Specifications (사양 요약)
 
 ### 4.1 데이터 흐름
@@ -430,5 +473,6 @@ plan.md에서 (7a)/(7b) 중 채택안을 확정한다. NASA는 실외기/실내�
 | M6 토픽 스킴 | `internal/node/mqtt.go` | 토픽 상수/설정 |
 | M7 동기화 의미론 | `agent.go:502-524`(request_state/get_all) | retain 스냅샷 또는 resync |
 | M8 경계 가드 | `cmd/xflowd/main.go:378` | 등록 배선 |
+| M9 미러 브로커 보안 | `thingplus_agent.go:700-712/762-789`(auth/TLS 패턴), `mqtt_agent.go:258-263`(auth gating) | `mirrorBrokerConn` + `buildMirrorTLSConfig` + config 4필드 |
 
 관련 SPEC: SPEC-SAMSUNG-HVACR-001 (기반 에이전트), SPEC-LG-HVACR-001 / SPEC-LGAP-001 (후속 일반화 대상), SPEC-BRIDGE-001/002 (브릿지 연동).

@@ -2,8 +2,18 @@ package samsung
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"log/slog"
+	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -144,7 +154,7 @@ func withFakeBus(t *testing.T) *fakeBus {
 	t.Helper()
 	bus := newFakeBus()
 	orig := mirrorBrokerFactory
-	mirrorBrokerFactory = func(_, _ string, _ *slog.Logger) (MirrorBroker, error) {
+	mirrorBrokerFactory = func(_ mirrorBrokerConn, _ *slog.Logger) (MirrorBroker, error) {
 		return &fakeBroker{bus: bus}, nil
 	}
 	t.Cleanup(func() { mirrorBrokerFactory = orig })
@@ -562,4 +572,150 @@ func mustAgent(t *testing.T, cfg agent.AgentConfig) *Hvacr01Agent {
 		t.Fatalf("NewHvacr01Agent: %v", err)
 	}
 	return a.(*Hvacr01Agent)
+}
+
+// ---------------------------------------------------------------------------
+// M9: 미러 브로커 보안 (인증 + TLS)
+// ---------------------------------------------------------------------------
+
+// genTestCAPEM 은 테스트용 자체서명 CA 인증서 PEM 을 생성한다.
+func genTestCAPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("키 생성: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "xflow-test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("인증서 생성: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// TestBuildMirrorTLSConfig 는 CA 인증서 소스별 TLS 구성 동작을 검증한다 (M9).
+//   - 빈 CA → 시스템 루트(RootCAs nil), MinVersion TLS12.
+//   - 유효 PEM → RootCAs 채워짐.
+//   - 파일 경로 PEM → RootCAs 채워짐.
+//   - 잘못된 PEM → 에러.
+func TestBuildMirrorTLSConfig(t *testing.T) {
+	// 빈 CA: 시스템 루트 사용.
+	cfg, err := buildMirrorTLSConfig("")
+	if err != nil {
+		t.Fatalf("빈 CA: 예상치 못한 에러: %v", err)
+	}
+	if cfg == nil || cfg.MinVersion != tls.VersionTLS12 {
+		t.Errorf("빈 CA: MinVersion TLS1.2 config 여야 함: %+v", cfg)
+	}
+	if cfg.RootCAs != nil {
+		t.Error("빈 CA: RootCAs 는 nil(시스템 루트)여야 함")
+	}
+
+	// 유효 PEM 문자열.
+	caPEM := genTestCAPEM(t)
+	cfg, err = buildMirrorTLSConfig(caPEM)
+	if err != nil {
+		t.Fatalf("PEM 문자열: 예상치 못한 에러: %v", err)
+	}
+	if cfg == nil || cfg.RootCAs == nil {
+		t.Error("PEM 문자열: RootCAs 가 채워져야 함")
+	}
+
+	// 파일 경로.
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(path, []byte(caPEM), 0o600); err != nil {
+		t.Fatalf("CA 파일 쓰기: %v", err)
+	}
+	cfg, err = buildMirrorTLSConfig(path)
+	if err != nil {
+		t.Fatalf("파일 경로: 예상치 못한 에러: %v", err)
+	}
+	if cfg == nil || cfg.RootCAs == nil {
+		t.Error("파일 경로: RootCAs 가 채워져야 함")
+	}
+
+	// 잘못된 PEM.
+	if _, err := buildMirrorTLSConfig("-----BEGIN CERTIFICATE-----\nnot-valid\n-----END CERTIFICATE-----"); err == nil {
+		t.Error("잘못된 PEM 은 에러를 반환해야 함")
+	}
+}
+
+// TestMirrorSecurityConfigParsing 은 인증/TLS 옵션 4종이 config 로 파싱되는지 검증한다 (M9).
+func TestMirrorSecurityConfigParsing(t *testing.T) {
+	cfg, err := parseHvacr01Config(map[string]any{
+		"transport_type":    "mirror",
+		"mirror_broker":     "ssl://x:8883",
+		"mirror_gateway_id": "gw01",
+		"mirror_username":   "user1",
+		"mirror_password":   "secret",
+		"mirror_tls":        true,
+		"mirror_ca_cert":    "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----",
+	})
+	if err != nil {
+		t.Fatalf("parseHvacr01Config: %v", err)
+	}
+	if cfg.MirrorUsername != "user1" {
+		t.Errorf("MirrorUsername=%q, want user1", cfg.MirrorUsername)
+	}
+	if cfg.MirrorPassword != "secret" {
+		t.Errorf("MirrorPassword=%q, want secret", cfg.MirrorPassword)
+	}
+	if !cfg.MirrorTLS {
+		t.Error("MirrorTLS 는 true 여야 함")
+	}
+	if !strings.Contains(cfg.MirrorCACert, "BEGIN CERTIFICATE") {
+		t.Errorf("MirrorCACert 미파싱: %q", cfg.MirrorCACert)
+	}
+
+	// 미설정 시 기존 동작 보존(빈 값/false).
+	def, err := parseHvacr01Config(map[string]any{
+		"transport_type":    "mirror",
+		"mirror_broker":     "tcp://x:1883",
+		"mirror_gateway_id": "gw01",
+	})
+	if err != nil {
+		t.Fatalf("parseHvacr01Config(default): %v", err)
+	}
+	if def.MirrorUsername != "" || def.MirrorPassword != "" || def.MirrorTLS || def.MirrorCACert != "" {
+		t.Errorf("미설정 시 보안 필드는 비어 있어야 함: %+v", def)
+	}
+}
+
+// TestMirrorSecurityConnPropagation 은 config 의 보안 필드가 브로커 팩토리 conn 으로
+// 전달되는지 검증한다 (M9). 실제 paho 클라이언트 옵션은 내부 상태라 직접 단언이 어려우므로
+// 팩토리에 전달되는 mirrorBrokerConn 을 캡처해 검증한다.
+func TestMirrorSecurityConnPropagation(t *testing.T) {
+	var captured mirrorBrokerConn
+	orig := mirrorBrokerFactory
+	mirrorBrokerFactory = func(conn mirrorBrokerConn, _ *slog.Logger) (MirrorBroker, error) {
+		captured = conn
+		return &fakeBroker{bus: newFakeBus()}, nil
+	}
+	t.Cleanup(func() { mirrorBrokerFactory = orig })
+
+	cfg := gatewayConfig("gw01")
+	cfg.Transport.Options["mirror_username"] = "user1"
+	cfg.Transport.Options["mirror_password"] = "secret"
+	cfg.Transport.Options["mirror_tls"] = true
+	cfg.Transport.Options["mirror_ca_cert"] = genTestCAPEM(t)
+	gw := mustAgent(t, cfg)
+	gw.startMirror()
+
+	if captured.username != "user1" || captured.password != "secret" {
+		t.Errorf("자격증명 미전달: %+v", captured)
+	}
+	if !captured.tls {
+		t.Error("tls 플래그 미전달")
+	}
+	if !strings.Contains(captured.caCert, "BEGIN CERTIFICATE") {
+		t.Errorf("caCert 미전달: %q", captured.caCert)
+	}
 }

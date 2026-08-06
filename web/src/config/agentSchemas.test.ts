@@ -118,8 +118,15 @@ describe('samsung_hvacr01 미러 동기화 스키마 (SPEC-HVACR-SYNC-001)', () 
       'mirror_uplink_enabled', 'mirror_broker', 'mirror_gateway_id',
       'mirror_topic_prefix', 'mirror_qos', 'mirror_control_enabled',
       'mirror_ack_enabled', 'mirror_snapshot_enabled',
+      // M9: 미러 브로커 보안 (인증 + TLS)
+      'mirror_username', 'mirror_password', 'mirror_tls', 'mirror_ca_cert',
     ]) {
       expect(samsungField(key), `누락된 미러 필드: ${key}`).toBeDefined();
     }
+  });
+
+  it('mirror_password 는 sensitive 로 마스킹된다 (M9)', () => {
+    const pw = samsungField('mirror_password')!;
+    expect(pw.sensitive).toBe(true);
   });
 });

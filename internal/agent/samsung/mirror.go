@@ -14,9 +14,13 @@ package samsung
 // 로직에 의존하지 않는 범용 MQTT 경로이다(REQ-SYNC-001-08-03).
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -54,6 +58,12 @@ type mirrorRuntime struct {
 	brokerAddr string
 	clientID   string
 
+	// M9: 미러 브로커 보안 설정 (인증 + TLS). config 로부터 setupMirror 에서 채운다.
+	username string
+	password string
+	tls      bool
+	caCert   string
+
 	controlEnabled  bool
 	ackEnabled      bool
 	snapshotEnabled bool
@@ -90,6 +100,10 @@ func (a *Hvacr01Agent) setupMirror(cfg Hvacr01Config) {
 		qos:             cfg.MirrorQoS,
 		brokerAddr:      cfg.MirrorBrokerAddr,
 		clientID:        fmt.Sprintf("xflow-hvacr-%d-%s", role, cfg.MirrorGatewayID),
+		username:        cfg.MirrorUsername,
+		password:        cfg.MirrorPassword,
+		tls:             cfg.MirrorTLS,
+		caCert:          cfg.MirrorCACert,
 		controlEnabled:  cfg.MirrorControlEnabled,
 		ackEnabled:      cfg.MirrorAckEnabled,
 		snapshotEnabled: cfg.MirrorSnapshotEnabled,
@@ -115,7 +129,14 @@ func (a *Hvacr01Agent) startMirror() {
 		return
 	}
 
-	broker, err := mirrorBrokerFactory(m.brokerAddr, m.clientID, m.logger)
+	broker, err := mirrorBrokerFactory(mirrorBrokerConn{
+		addr:     m.brokerAddr,
+		clientID: m.clientID,
+		username: m.username,
+		password: m.password,
+		tls:      m.tls,
+		caCert:   m.caCert,
+	}, m.logger)
 	if err != nil {
 		m.logger.Warn("samsung_hvacr01 mirror: broker 생성 실패", "error", err)
 		m.started.Store(false)
@@ -320,16 +341,45 @@ type pahoMirrorBroker struct {
 	logger *slog.Logger
 }
 
-// newPahoMirrorBroker 는 brokerAddr 에 연결된 paho MirrorBroker 를 생성한다.
+// mirrorBrokerConn 은 미러 브로커 연결에 필요한 주소·식별자·보안 설정을 묶는다(M9).
+// 팩토리 시그니처를 단일 파라미터로 유지해 향후 필드 추가 시 호출부 변경을 최소화한다.
+type mirrorBrokerConn struct {
+	addr     string
+	clientID string
+	username string // 빈 값이면 SetUsername 미적용
+	password string // 빈 값이면 SetPassword 미적용
+	tls      bool   // true 면 SetTLSConfig 적용
+	caCert   string // TLS 활성 시 서버 검증용 CA (PEM 또는 경로; 빈 값이면 시스템 루트)
+}
+
+// newPahoMirrorBroker 는 conn 에 연결된 paho MirrorBroker 를 생성한다.
 // AutoReconnect/ConnectRetry 로 백그라운드 재연결을 담당한다(REQ-SYNC-001-07-04).
-func newPahoMirrorBroker(brokerAddr, clientID string, logger *slog.Logger) (MirrorBroker, error) {
+// 인증(username/password) 및 TLS 는 conn 설정에 따라 적용된다(M9, thingplus 패턴).
+func newPahoMirrorBroker(conn mirrorBrokerConn, logger *slog.Logger) (MirrorBroker, error) {
 	opts := mqtt.NewClientOptions().
-		AddBroker(brokerAddr).
-		SetClientID(clientID).
+		AddBroker(conn.addr).
+		SetClientID(conn.clientID).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(5 * time.Second).
 		SetCleanSession(true)
+
+	// 인증: 비어 있지 않을 때만 적용한다(mqtt_agent 패턴 — 무인증 브로커 호환 보존).
+	if conn.username != "" {
+		opts.SetUsername(conn.username)
+	}
+	if conn.password != "" {
+		opts.SetPassword(conn.password)
+	}
+
+	// TLS: 활성 시 CA 로부터 tls.Config 를 구성해 적용한다(thingplus buildTLSConfig 패턴).
+	if conn.tls {
+		tlsConfig, err := buildMirrorTLSConfig(conn.caCert)
+		if err != nil {
+			return nil, fmt.Errorf("samsung_hvacr01 mirror: tls 구성 실패: %w", err)
+		}
+		opts.SetTLSConfig(tlsConfig)
+	}
 
 	client := mqtt.NewClient(opts)
 	token := client.Connect()
@@ -370,4 +420,33 @@ func (b *pahoMirrorBroker) Subscribe(topics []string, handler func(topic string,
 func (b *pahoMirrorBroker) Close() error {
 	b.client.Disconnect(250)
 	return nil
+}
+
+// buildMirrorTLSConfig 는 caCert 로부터 *tls.Config 를 구성한다(M9, thingplus buildTLSConfig 미러링).
+// TLS 활성(conn.tls==true) 경로에서만 호출되므로 항상 유효한 config 를 반환한다.
+//   - caCert 가 빈 값이면 시스템 루트 CA 를 사용한다(RootCAs 미설정).
+//   - caCert 는 PEM 문자열 또는 파일 경로를 모두 허용한다.
+//   - PEM 파싱 실패 시 에러를 반환한다.
+func buildMirrorTLSConfig(caCert string) (*tls.Config, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caCert == "" {
+		return tlsConfig, nil
+	}
+
+	pemData := []byte(caCert)
+	// PEM 헤더가 없으면 파일 경로로 간주하여 로드한다.
+	if !strings.Contains(caCert, "-----BEGIN") {
+		data, err := os.ReadFile(caCert)
+		if err != nil {
+			return nil, fmt.Errorf("mirror_ca_cert 읽기 실패: %w", err)
+		}
+		pemData = data
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemData) {
+		return nil, fmt.Errorf("mirror_ca_cert PEM 파싱 실패")
+	}
+	tlsConfig.RootCAs = pool
+	return tlsConfig, nil
 }
