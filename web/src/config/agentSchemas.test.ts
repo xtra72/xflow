@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getAgentConfigDefaults, getAgentConfigSchema } from './agentSchemas';
 import type { ConfigField } from '@/types/node';
+import { isFieldVisible } from '@/types/node';
 
 /** xsfm 스키마에서 name 으로 필드 하나를 찾는다. */
 function xsfmField(name: string): ConfigField | undefined {
@@ -79,5 +80,46 @@ describe('xsfm 상태 방출 옵션 스키마 (SPEC-XSFM-AGENT-IO-001 M5)', () =
     expect(xsfmField('forward_received_to_node')!.section).toBe('operation');
     expect(xsfmField('state_emit_mode')!.section).toBe('operation');
     expect(xsfmField('state_emit_interval')!.section).toBe('operation');
+  });
+});
+
+describe('samsung_hvacr01 미러 동기화 스키마 (SPEC-HVACR-SYNC-001)', () => {
+  const samsungField = (name: string): ConfigField | undefined =>
+    getAgentConfigSchema('samsung_hvacr01')?.fields.find((f) => f.name === name);
+
+  it('연결 방식(transport_type) 옵션에 mirror 가 추가된다', () => {
+    const tt = samsungField('transport_type')!;
+    expect(tt.options).toContain('mirror');
+    // 기존 옵션도 보존(무회귀)
+    expect(tt.options).toEqual(['serial', 'tcp-client', 'tcp-server', 'mirror']);
+  });
+
+  it('mirror_broker/gateway_id 는 mirror(서버) 또는 업링크(게이트웨이) 양쪽에서 표시된다(OR)', () => {
+    const broker = samsungField('mirror_broker')!;
+    expect(broker.visibleWhenAny).toBeDefined();
+    // 서버 역할: transport_type=mirror
+    expect(isFieldVisible(broker, { transport_type: 'mirror' })).toBe(true);
+    // 게이트웨이 역할: serial + 업링크 활성
+    expect(isFieldVisible(broker, { transport_type: 'serial', mirror_uplink_enabled: true })).toBe(true);
+    // 순수 serial(업링크 미활성): 숨김
+    expect(isFieldVisible(broker, { transport_type: 'serial' })).toBe(false);
+    expect(isFieldVisible(broker, { transport_type: 'tcp-client' })).toBe(false);
+  });
+
+  it('mirror_uplink_enabled 는 serial/tcp(게이트웨이)에서만 표시되고 mirror(서버)에서는 숨겨진다', () => {
+    const uplink = samsungField('mirror_uplink_enabled')!;
+    expect(isFieldVisible(uplink, { transport_type: 'serial' })).toBe(true);
+    expect(isFieldVisible(uplink, { transport_type: 'tcp-server' })).toBe(true);
+    expect(isFieldVisible(uplink, { transport_type: 'mirror' })).toBe(false);
+  });
+
+  it('미러 옵션 키가 백엔드 Transport.Options 와 일치한다', () => {
+    for (const key of [
+      'mirror_uplink_enabled', 'mirror_broker', 'mirror_gateway_id',
+      'mirror_topic_prefix', 'mirror_qos', 'mirror_control_enabled',
+      'mirror_ack_enabled', 'mirror_snapshot_enabled',
+    ]) {
+      expect(samsungField(key), `누락된 미러 필드: ${key}`).toBeDefined();
+    }
   });
 });

@@ -8,6 +8,7 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { FormField } from '@/components/property/FormField';
 import type { ConfigSchema } from '@/types/node';
+import { isFieldVisible } from '@/types/node';
 
 /**
  * 에이전트 타입별 좌측 컬럼 필드 및 컬럼 라벨.
@@ -104,13 +105,7 @@ export function TwoColumnConfigLayout({
   const rightFields = schema.fields.filter((f) => !colConfig.left.has(f.name) && f.section !== 'logging');
 
   const filterVisible = (fields: typeof schema.fields) =>
-    fields.filter((f) => {
-      if (!f.visibleWhen) return true;
-      const actual = data[f.visibleWhen.field];
-      const expected = f.visibleWhen.value;
-      if (Array.isArray(expected)) return (expected as unknown[]).includes(actual);
-      return actual === expected;
-    });
+    fields.filter((f) => isFieldVisible(f, data as Record<string, unknown>));
 
   const loggingFields = filterVisible(schema.fields.filter((f) => f.section === 'logging'));
   const hasLoggingGroup = loggingFields.length > 0;

@@ -49,8 +49,11 @@ export interface ConfigField {
    *  하위 필드는 최상위 필드와 동일한 위젯(FormField)으로 렌더링된다. */
   fields?: ConfigField[];
   /** 다른 필드 값에 따라 조건부 표시.
-   *  value: 값 일치 / notEmpty: 비어있지 않을 때 표시 */
-  visibleWhen?: { field: string; value?: unknown | unknown[]; notEmpty?: boolean };
+   *  value: 값 일치(배열이면 포함) / notEmpty: 비어있지 않을 때 표시 */
+  visibleWhen?: VisibleWhenCond;
+  /** 복수 조건 OR 표시(하나라도 만족 시 표시). visibleWhen 과 함께 쓰면 둘 다 만족(AND).
+   *  단일 필드 visibleWhen 으로 표현할 수 없는 "A 이거나 B" 노출에 사용한다. */
+  visibleWhenAny?: VisibleWhenCond[];
   /** true 이면 고급 설정 섹션으로 분리되어 기본 접힘 상태로 표시된다. */
   advanced?: boolean;
   /** HVACR 4-quadrant 레이아웃에서 어느 분면에 속하는지를 지정한다.
@@ -76,6 +79,39 @@ export interface ConfigField {
    *  influxdb-write 등 값에 JSONPath 를 받는 노드에서 opt-in 으로 사용한다.
    *  미지정/false 면 칩을 표시하지 않아 다른 노드의 동작은 변하지 않는다. */
   pathHelper?: boolean;
+}
+
+/** visibleWhen 단일 조건. value 일치(배열이면 포함) 또는 notEmpty 검사. */
+export interface VisibleWhenCond {
+  field: string;
+  value?: unknown | unknown[];
+  notEmpty?: boolean;
+}
+
+/** 단일 visibleWhen 조건 하나를 평가한다. */
+function matchVisibleCond(c: VisibleWhenCond, data: Record<string, unknown>): boolean {
+  const actual = data[c.field];
+  if (c.notEmpty) return actual != null && actual !== '';
+  const expected = c.value;
+  if (Array.isArray(expected)) return expected.includes(actual);
+  return actual === expected;
+}
+
+/**
+ * 필드의 표시 여부를 평가한다. 조건 미설정 시 항상 표시.
+ * - visibleWhen(단일): 만족해야 표시.
+ * - visibleWhenAny(복수): 하나라도 만족해야 표시(OR).
+ * - 둘 다 설정 시 AND(둘 다 만족해야 표시).
+ */
+export function isFieldVisible(
+  field: { visibleWhen?: VisibleWhenCond; visibleWhenAny?: VisibleWhenCond[] },
+  data: Record<string, unknown>,
+): boolean {
+  if (field.visibleWhen && !matchVisibleCond(field.visibleWhen, data)) return false;
+  if (field.visibleWhenAny && !field.visibleWhenAny.some((c) => matchVisibleCond(c, data))) {
+    return false;
+  }
+  return true;
 }
 
 /**

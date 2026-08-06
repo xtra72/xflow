@@ -15,6 +15,7 @@ import {
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import type { ConfigSchema } from '@/types/node';
+import { isFieldVisible } from '@/types/node';
 
 import { FormField } from './FormField';
 
@@ -237,17 +238,10 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
   // 스키마가 있는 경우: 스키마 필드 기반 렌더링
   if (schema && schema.fields.length > 0) {
-    // visibleWhen 조건에 따라 필드 필터링 (value 비교 또는 notEmpty 검사)
-    const visibleFields = schema.fields.filter((field) => {
-      if (!field.visibleWhen) return true;
-      const actual = localData[field.visibleWhen.field];
-      if (field.visibleWhen.notEmpty) {
-        return actual != null && actual !== '';
-      }
-      const expected = field.visibleWhen.value;
-      if (Array.isArray(expected)) return expected.includes(actual);
-      return actual === expected;
-    });
+    // visibleWhen 조건에 따라 필드 필터링 (단일 조건 또는 조건 배열=OR)
+    const visibleFields = schema.fields.filter((field) =>
+      isFieldVisible(field, localData),
+    );
 
     // advanced 플래그로 기본/고급 필드 분리
     const basicFields = visibleFields.filter((f) => !f.advanced);
