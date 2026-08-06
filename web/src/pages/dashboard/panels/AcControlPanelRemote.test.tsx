@@ -55,7 +55,7 @@ function deviceWithControl() {
       ready: true,
       last_seen: '',
       error_count: 0,
-      properties: { power: true, current_temperature: 24, target_temperature: 24, mode: 'cool' },
+      properties: { power: true, current_temperature: 24, target_temperature: 24, mode: 'cool' } as Record<string, unknown>,
     },
   };
 }
