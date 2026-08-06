@@ -71,6 +71,12 @@ type Hvacr01Agent struct {
 	// Phase D (xflowd v1.0) 부터 V1 시그니처는 완전 제거됨.
 	// SPEC-DEVICE-IDENTITY-001 § M3.
 	onDeviceStateChangeV2 agent.DeviceStateChangeCallbackV2
+
+	// mirror 는 게이트웨이↔서버 미러링/동기화 런타임이다 (SPEC-HVACR-SYNC-001).
+	// nil 이면 단독(standalone) 에이전트로 동작한다(행위 보존). 설정으로 게이트웨이
+	// (mirror_uplink_enabled) 또는 서버(transport_type:"mirror") 역할이 활성화될 때만
+	// 생성된다. broker/goroutine 은 Start 에서 기동된다.
+	mirror *mirrorRuntime
 }
 
 // 컴파일 타임 인터페이스 체크
@@ -193,6 +199,9 @@ func NewHvacr01Agent(config agent.AgentConfig) (agent.Agent, error) {
 	// (Init 이후여야 a.agentConfig.Name 이 채워져 정규화 키가 올바르게 산출됨.)
 	a.restoreSpecifiedDeviceIDs()
 
+	// SPEC-HVACR-SYNC-001: 미러/업링크 설정 시 미러 런타임 구성(broker 는 Start 에서 기동).
+	a.setupMirror(hvacr01Config)
+
 	return a, nil
 }
 
@@ -309,6 +318,9 @@ func (a *Hvacr01Agent) Start(ctx context.Context) error {
 	}
 	a.mu.Unlock()
 
+	// SPEC-HVACR-SYNC-001: 미러 브로커 기동 + 역할별 구독 (idempotent).
+	a.startMirror()
+
 	a.logger.Info("samsung_hvacr01: 에이전트 시작 완료")
 	return nil
 }
@@ -368,6 +380,11 @@ func (a *Hvacr01Agent) Stop(_ context.Context) error {
 
 	// goroutine 들에게 종료 시그널
 	close(a.stopCh)
+
+	// SPEC-HVACR-SYNC-001: 미러 런타임 정지 + mirrorTransport 언블록.
+	// mirrorTransport.Receive 는 채널 블로킹이므로, wg.Wait 이전에 transport 를 닫아
+	// receiveLoop 를 깨워야 교착을 피한다(아래 transport.Close 는 closeOnce 로 idempotent).
+	a.stopMirror()
 
 	a.mu.Lock()
 	if a.statusQueryCancel != nil {
@@ -464,6 +481,20 @@ func (a *Hvacr01Agent) Process(data []byte) ([]byte, error) {
 	var req processRequest
 	if err := json.Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("samsung_hvacr01 process: invalid JSON: %w", err)
+	}
+
+	// SPEC-HVACR-SYNC-001 M4: mirror 서버 역할의 제어 명령은 로컬 트랜스포트로 실행하지
+	// 않고 down/control 로 위임한다(REQ-SYNC-001-02-03 / 04-01). 게이트웨이가 이를 구독해
+	// 실제 RS-485 제어를 수행한다. 로컬 실행 경로(sendControlCommand→Send)에 도달하지
+	// 않으므로 로컬 Send 는 호출되지 않는다.
+	switch req.Command {
+	case "set_power", "set_mode", "target_temperature", "set_fan_speed", "set_multiple":
+		if a.mirror != nil && a.mirror.role == roleServer {
+			if err := a.mirror.publishControl(&req); err != nil {
+				return nil, err
+			}
+			return json.Marshal(map[string]any{"status": "accepted"})
+		}
 	}
 
 	// 2026-05-29: control_enabled 게이트. false 면 능동 제어 명령 거부 (read-only 는 허용).
@@ -2206,45 +2237,60 @@ func (a *Hvacr01Agent) receiveLoop() {
 			if !ok {
 				break
 			}
-
-			if a.hvacr01Config.LogMessages {
-				a.logger.Info("samsung_hvacr01: RX", "len", len(frame), "hex", hex.EncodeToString(frame))
-			}
-
-			// a.logger.Debug("samsung_hvacr01: 프레임 추출 완료",
-			// 	"frameBytes", len(frame),
-			// )
-
-			msg, err := a.protocol.Decode(frame)
-			if err != nil {
-				// unsupported 인덱스로 인한 디코드 에러는 설정에 따라 로그 억제
-				if errors.Is(err, ErrInvalidMessageSetIndex) && len(a.hvacr01Config.UnsupportedMsgSets) > 0 {
-					if !a.hvacr01Config.LogUnsupportedMsgSets {
-						a.stats.IncrExternalMessagesErrored()
-						continue
-					}
-				}
-				// log_decode_errors 옵션이 false 면 일반 decode error 도 억제 (운영 환경 noise 방지).
-				// 2026-05-14 hotfix: invalid message set index 등 빈번한 디코드 오류로 인한 로그 폭주 회피.
-				if a.hvacr01Config.LogDecodeErrors {
-					a.logger.Warn("samsung_hvacr01: decode error", "error", err)
-				}
-				a.stats.IncrExternalMessagesErrored()
-				continue
-			}
-
-			// a.logger.Debug("samsung_hvacr01: 메시지 디코드 성공",
-			// 	"source", msg.SourceAddr.String(),
-			// 	"dest", msg.DestAddr.String(),
-			// 	"sets", len(msg.MessageSets),
-			// )
-
-			a.stats.IncrExternalMessagesReceived()
-			a.stats.AddBytesRead(int64(len(frame)))
-
-			a.handleMessage(msg)
+			// SPEC-HVACR-SYNC-001 M1: 인라인 파싱 블록을 재사용 가능한 ingress 메서드로
+			// 추출. serial/tcp/mirror 입력이 동일 경로를 공유한다(behavior-preserving).
+			a.ingestFrameBytes(frame)
 		}
 	}
+}
+
+// ingestFrameBytes 는 완전한 NASA 프레임 바이트 하나를 디코드하여 상태에 반영한다
+// (REQ-SYNC-001-01-01 / 01-02). serial/tcp-client/tcp-server 로컬 입력과 서버측
+// mirror 입력이 공유하는 재사용 가능한 ingress 진입점이다.
+//
+// 이 메서드는 receiveLoop 의 기존 인라인 파싱 블록을 순수 추출한 것으로, 관측 동작을
+// 그대로 보존한다: LogMessages RX 로그, 디코드 성공/실패 카운트, unsupported 인덱스
+// 로그 억제, log_decode_errors 옵션. 기존 `continue`(다음 프레임으로) 는 추출 후
+// `return`(호출 루프로 복귀) 으로 대응되어 동작이 동일하다.
+func (a *Hvacr01Agent) ingestFrameBytes(frame []byte) {
+	if a.hvacr01Config.LogMessages {
+		a.logger.Info("samsung_hvacr01: RX", "len", len(frame), "hex", hex.EncodeToString(frame))
+	}
+
+	msg, err := a.protocol.Decode(frame)
+	if err != nil {
+		// unsupported 인덱스로 인한 디코드 에러는 설정에 따라 로그 억제
+		if errors.Is(err, ErrInvalidMessageSetIndex) && len(a.hvacr01Config.UnsupportedMsgSets) > 0 {
+			if !a.hvacr01Config.LogUnsupportedMsgSets {
+				a.stats.IncrExternalMessagesErrored()
+				return
+			}
+		}
+		// log_decode_errors 옵션이 false 면 일반 decode error 도 억제 (운영 환경 noise 방지).
+		// 2026-05-14 hotfix: invalid message set index 등 빈번한 디코드 오류로 인한 로그 폭주 회피.
+		if a.hvacr01Config.LogDecodeErrors {
+			a.logger.Warn("samsung_hvacr01: decode error", "error", err)
+		}
+		a.stats.IncrExternalMessagesErrored()
+		return
+	}
+
+	a.stats.IncrExternalMessagesReceived()
+	a.stats.AddBytesRead(int64(len(frame)))
+
+	a.ingestDecodedMessage(msg)
+}
+
+// ingestDecodedMessage 는 디코드된 NASA 메시지 하나를 디바이스 상태에 반영한다
+// (REQ-SYNC-001-01-01). handleMessage 로 상태를 갱신한 뒤, 게이트웨이 역할에서 미러
+// 업링크 tap 이 활성화돼 있으면 해당 메시지를 업링크로 발행한다(REQ-SYNC-001-03-01).
+//
+// 락 규약(REQ-SYNC-001-01-03): tapUplink 는 handleMessage 의 a.mu.Lock() 구간이
+// 반환된 뒤(락 해제 상태) 호출되므로 락 보유 중 a.Name() 재진입 deadlock 트랩에
+// 해당하지 않는다.
+func (a *Hvacr01Agent) ingestDecodedMessage(msg *NasaMessage) {
+	a.handleMessage(msg)
+	a.tapUplink(msg)
 }
 
 // handleMessage 는 수신된 메시지를 처리하여 디바이스 상태를 업데이트한다.

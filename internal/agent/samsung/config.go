@@ -65,6 +65,33 @@ type Hvacr01Config struct {
 	//
 	// 기본 1.0℃. 0 이하면 게이트 비활성. report 시점에도 lastReportTemp 갱신.
 	EventTempThreshold float64
+
+	// ---------------------------------------------------------------------
+	// SPEC-HVACR-SYNC-001: 게이트웨이↔서버 미러링/동기화 (over MQTT)
+	// ---------------------------------------------------------------------
+
+	// MirrorMode 는 서버 역할 여부이다(transport_type:"mirror"). true 면 MQTT 업링크
+	// 구독으로 디코드 메시지를 replay 받으며, 제어는 다운링크로 위임한다.
+	MirrorMode bool
+	// MirrorUplinkEnabled 는 게이트웨이 역할의 업링크 tap 활성 여부이다. false 면
+	// 기존 단독 에이전트로 동작한다(행위 보존, REQ-SYNC-001-03-02).
+	MirrorUplinkEnabled bool
+	// MirrorBrokerAddr 는 MQTT 브로커 주소이다(예: "tcp://broker:1883"). 미러/업링크
+	// 활성 시 필수(REQ-SYNC-001-02-02).
+	MirrorBrokerAddr string
+	// MirrorGatewayID 는 게이트웨이 식별자이다(토픽에 인코딩). 미러/업링크 활성 시 필수.
+	MirrorGatewayID string
+	// MirrorTopicPrefix 는 토픽 prefix 이다(기본 "xflow/hvacr").
+	MirrorTopicPrefix string
+	// MirrorQoS 는 미러 발행 QoS 이다(기본 1, REQ-SYNC-001-07-03).
+	MirrorQoS byte
+	// MirrorControlEnabled 는 제어 역경로 활성 여부이다(기본 true). 게이트웨이는
+	// down/control 을 구독해 Process 로 실행하고, 서버는 제어를 down/control 로 발행한다.
+	MirrorControlEnabled bool
+	// MirrorAckEnabled 는 제어 ack(up/ack) 활성 여부이다(선택, REQ-SYNC-001-04-03).
+	MirrorAckEnabled bool
+	// MirrorSnapshotEnabled 는 retain 스냅샷(7a) 활성 여부이다(재동기화, REQ-SYNC-001-07-02).
+	MirrorSnapshotEnabled bool
 }
 
 // parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
@@ -124,6 +151,9 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	switch cfg.TransportType {
 	case "serial", "tcp-client", "tcp-server":
 		// valid transport types
+	case "mirror":
+		// SPEC-HVACR-SYNC-001: 서버측 mirror 입력(채널 급전형 NasaTransport).
+		cfg.MirrorMode = true
 	case "tcp":
 		// 2026-05-29 breaking: explicit migration error pointing user to new value.
 		return Hvacr01Config{}, ErrDeprecatedTCPTransport
@@ -434,6 +464,63 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	// (connection_report_interval / startup_probe_timeout / deprecated connection_notify_interval)
 	// 은 더 이상 파싱하지 않는다. 기존 config 에 이 키들이 남아 있어도 hard-error 없이 조용히
 	// 무시된다(알 수 없는 키 무시 정책). 주기 보고는 report_interval(device_state) 로 수렴한다.
+
+	// -------------------------------------------------------------------------
+	// SPEC-HVACR-SYNC-001: 미러링/동기화 옵션 파싱 (Module 2/3/4/6/7)
+	// -------------------------------------------------------------------------
+	cfg.MirrorQoS = 1               // 기본 QoS 1 (REQ-SYNC-001-07-03)
+	cfg.MirrorControlEnabled = true // 제어 역경로 기본 활성
+
+	if v, ok := opts["mirror_uplink_enabled"]; ok {
+		cfg.MirrorUplinkEnabled = toBool(v)
+	}
+	if v, ok := opts["mirror_broker"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_broker must be a string")
+		}
+		cfg.MirrorBrokerAddr = s
+	}
+	if v, ok := opts["mirror_gateway_id"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_gateway_id must be a string")
+		}
+		cfg.MirrorGatewayID = s
+	}
+	if v, ok := opts["mirror_topic_prefix"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_topic_prefix must be a string")
+		}
+		cfg.MirrorTopicPrefix = s
+	}
+	if v, ok := opts["mirror_qos"]; ok {
+		q := toInt(v)
+		if q < 0 || q > 2 {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_qos must be 0, 1, or 2 (got %d)", q)
+		}
+		cfg.MirrorQoS = byte(q)
+	}
+	if v, ok := opts["mirror_control_enabled"]; ok {
+		cfg.MirrorControlEnabled = toBool(v)
+	}
+	if v, ok := opts["mirror_ack_enabled"]; ok {
+		cfg.MirrorAckEnabled = toBool(v)
+	}
+	if v, ok := opts["mirror_snapshot_enabled"]; ok {
+		cfg.MirrorSnapshotEnabled = toBool(v)
+	}
+
+	// 미러/업링크 활성 시 브로커·게이트웨이 식별자 필수 (REQ-SYNC-001-02-02, silent default 금지).
+	if cfg.MirrorMode || cfg.MirrorUplinkEnabled {
+		if cfg.MirrorBrokerAddr == "" {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_broker is required for mirror/uplink mode")
+		}
+		if cfg.MirrorGatewayID == "" {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_gateway_id is required for mirror/uplink mode")
+		}
+	}
 
 	return cfg, nil
 }
