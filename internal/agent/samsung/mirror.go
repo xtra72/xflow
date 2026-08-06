@@ -2,12 +2,15 @@ package samsung
 
 // SPEC-HVACR-SYNC-001: 게이트웨이↔서버 미러링/동기화 런타임.
 //
-// 동일 Hvacr01Agent 코드가 설정으로 3역할을 분기한다:
+// 동일 Hvacr01Agent 코드가 설정으로 4역할을 분기한다:
 //   - standalone: a.mirror == nil (기존 동작, 행위 보존)
 //   - gateway   : 로컬 트랜스포트 + mirror_uplink_enabled → 디코드 메시지를 up/nasa 로
 //     발행(tap, M3), down/control 을 구독해 Process 로 실행(M4)
-//   - server    : transport_type:"mirror" → up/nasa 를 구독해 mirrorTransport 에 급전
+//   - server    : transport_type:"mirror-mqtt" → up/nasa 를 구독해 mirrorTransport 에 급전
 //     (M2), 제어는 down/control 로 위임(M4)
+//   - message   : transport_type:"mirror-message" (M10) → MQTT 없이 플로우 노드가
+//     mirror-in 포트로 급전(FeedMirrorWire), tap 은 mirror-out 채널(MirrorOutCh)로 방출.
+//     제어는 server 와 동일하게 down/control 로 위임하지 않고 노드가 직접 Process 로 전달.
 //
 // MQTT 발행/구독은 MirrorBroker 인터페이스로 추상화된다. 프로덕션은 paho 어댑터를,
 // 테스트는 in-memory fake 를 주입한다(mirrorBrokerFactory). thingplus/ThingsBoard 전용
@@ -48,7 +51,14 @@ const (
 	roleNone mirrorRole = iota
 	roleGateway
 	roleServer
+	// roleMessage 는 M10 메시지 모드이다. MQTT 대신 플로우 노드가 mirror-in 으로 급전하고
+	// tap 은 mirror-out 채널로 방출한다(브로커 미사용).
+	roleMessage
 )
+
+// mirrorOutBuffer 는 mirror-out tap 채널의 버퍼 크기이다(M10). 포화 시 tap 은 블록하지
+// 않고 프레임을 드롭한다(디코드/수신 경로 비차단 우선, Feed 와 동일 정책).
+const mirrorOutBuffer = 1024
 
 // mirrorRuntime 은 미러 동기화 런타임 상태이다.
 type mirrorRuntime struct {
@@ -69,8 +79,13 @@ type mirrorRuntime struct {
 	snapshotEnabled bool
 
 	agent     *Hvacr01Agent    // back-ref (Process/logger/protocol 재사용)
-	transport *mirrorTransport // server 역할에서만 non-nil
+	transport *mirrorTransport // server/message 역할에서만 non-nil
 	logger    *slog.Logger
+
+	// outCh 는 message 역할(M10)의 mirror-out tap 채널이다. tap 이 toWireUplink JSON 을
+	// 넣으면 플로우 노드가 MirrorOutCh() 로 소비한다. 그 외 역할에서는 nil 이다.
+	outCh         chan []byte
+	droppedOutMsg atomic.Int64 // outCh 포화로 드롭된 mirror-out 메시지 수
 
 	brokerMu sync.Mutex
 	broker   MirrorBroker
@@ -87,6 +102,8 @@ func (a *Hvacr01Agent) setupMirror(cfg Hvacr01Config) {
 	role := roleNone
 	if cfg.MirrorMode {
 		role = roleServer
+	} else if cfg.MirrorMessageMode {
+		role = roleMessage
 	} else if cfg.MirrorUplinkEnabled {
 		role = roleGateway
 	}
@@ -112,11 +129,16 @@ func (a *Hvacr01Agent) setupMirror(cfg Hvacr01Config) {
 		stopCh:          make(chan struct{}),
 	}
 
-	// server 역할: 로컬 transport 는 mirrorTransport 이다.
-	if role == roleServer {
+	// server/message 역할: 로컬 transport 는 mirrorTransport 이다(채널 급전형).
+	if role == roleServer || role == roleMessage {
 		if mt, ok := a.transport.(*mirrorTransport); ok {
 			m.transport = mt
 		}
+	}
+
+	// message 역할(M10): mirror-out tap 채널을 준비한다. broker 는 사용하지 않는다.
+	if role == roleMessage {
+		m.outCh = make(chan []byte, mirrorOutBuffer)
 	}
 
 	a.mirror = m
@@ -126,6 +148,16 @@ func (a *Hvacr01Agent) setupMirror(cfg Hvacr01Config) {
 func (a *Hvacr01Agent) startMirror() {
 	m := a.mirror
 	if m == nil || m.started.Swap(true) {
+		return
+	}
+
+	// message 역할(M10): 브로커를 생성/구독하지 않는다. 채널 급전형 transport 만 활성화하면
+	// 플로우 노드의 FeedMirrorWire 급전과 mirror-out tap 이 즉시 동작한다.
+	if m.role == roleMessage {
+		if m.transport != nil {
+			m.transport.setAvailable(true)
+		}
+		m.logger.Info("samsung_hvacr01 mirror: 시작 (message 모드, MQTT 미사용)", "role", m.role)
 		return
 	}
 
@@ -207,7 +239,17 @@ func (m *mirrorRuntime) getBroker() MirrorBroker {
 // 발행 실패는 카운터+로그로 격리된다(REQ-SYNC-001-03-04).
 func (a *Hvacr01Agent) tapUplink(msg *NasaMessage) {
 	m := a.mirror
-	if m == nil || m.role != roleGateway {
+	if m == nil {
+		return
+	}
+
+	// message 역할(M10): 브로커 대신 mirror-out 채널로 방출한다(비차단, 포화 시 드롭).
+	if m.role == roleMessage {
+		m.tapToOutCh(msg)
+		return
+	}
+
+	if m.role != roleGateway {
 		return
 	}
 	broker := m.getBroker()
@@ -237,6 +279,25 @@ func (a *Hvacr01Agent) tapUplink(msg *NasaMessage) {
 	}
 }
 
+// tapToOutCh 는 message 역할(M10)에서 디코드 메시지를 toWireUplink JSON 으로 직렬화해
+// mirror-out 채널로 방출한다. 비차단이며, 버퍼 포화 시 프레임을 드롭하고 카운터를
+// 증가시켜 수신/디코드 경로를 차단하지 않는다(Feed 와 동일 정책).
+func (m *mirrorRuntime) tapToOutCh(msg *NasaMessage) {
+	if m.outCh == nil {
+		return
+	}
+	payload, err := json.Marshal(toWireUplink(msg))
+	if err != nil {
+		m.logger.Warn("samsung_hvacr01 mirror: mirror-out 직렬화 실패", "error", err)
+		return
+	}
+	select {
+	case m.outCh <- payload:
+	default:
+		m.droppedOutMsg.Add(1)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // M2: 서버 업링크 수신 → mirrorTransport 급전
 // ---------------------------------------------------------------------------
@@ -263,6 +324,52 @@ func (m *mirrorRuntime) onUplinkMessage(_ string, payload []byte) {
 	if m.transport != nil {
 		m.transport.Feed(frame)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// M10: 메시지 모드 노드 I/O 시임 (mirror-in / mirror-out)
+// ---------------------------------------------------------------------------
+
+// FeedMirrorWire 는 message 역할(M10)에서 플로우 노드의 mirror-in 포트로 들어온 업링크
+// 와이어 JSON 을 에이전트 수신 경로에 급전한다. onUplinkMessage(M2)의 본문을 노드-대면
+// 익스포트 메서드로 노출한 것으로, wireUplink → toNasaMessage → protocol.Encode →
+// mirrorTransport.Feed 로 이어져 기존 receiveLoop → Decode → handleMessage 경로를 재사용한다.
+//
+// 락 규약: a.mu 를 잡지 않으며 a.Name() 을 호출하지 않는다(재진입 deadlock 트랩 회피).
+// message 역할이 아니거나 transport 가 없으면 명시적 에러를 반환한다(silent 무시 금지).
+func (a *Hvacr01Agent) FeedMirrorWire(payload []byte) error {
+	m := a.mirror
+	if m == nil || m.role != roleMessage {
+		return fmt.Errorf("samsung_hvacr01 mirror: FeedMirrorWire 는 mirror-message 모드에서만 유효")
+	}
+	if m.transport == nil {
+		return fmt.Errorf("samsung_hvacr01 mirror: mirror-message transport 미준비")
+	}
+	var w wireUplink
+	if err := json.Unmarshal(payload, &w); err != nil {
+		return fmt.Errorf("samsung_hvacr01 mirror: mirror-in 역직렬화 실패: %w", err)
+	}
+	msg, err := w.toNasaMessage()
+	if err != nil {
+		return fmt.Errorf("samsung_hvacr01 mirror: mirror-in 메시지 복원 실패: %w", err)
+	}
+	frame, err := a.protocol.Encode(msg)
+	if err != nil {
+		return fmt.Errorf("samsung_hvacr01 mirror: mirror-in 프레임 재구성 실패: %w", err)
+	}
+	m.transport.Feed(frame)
+	return nil
+}
+
+// MirrorOutCh 는 message 역할(M10)의 mirror-out tap 채널을 반환한다. 디코드된 각 메시지가
+// toWireUplink JSON 으로 방출되며, 플로우 노드가 이를 소비해 mirror-out 포트로 전달한다.
+// message 역할이 아니면 nil 을 반환한다(RawMessageReceiver.ReceiveRawMessage 패턴).
+func (a *Hvacr01Agent) MirrorOutCh() <-chan []byte {
+	m := a.mirror
+	if m == nil || m.role != roleMessage {
+		return nil
+	}
+	return m.outCh
 }
 
 // ---------------------------------------------------------------------------

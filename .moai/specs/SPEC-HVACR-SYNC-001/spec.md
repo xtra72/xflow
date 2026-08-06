@@ -1,7 +1,7 @@
 ---
 id: SPEC-HVACR-SYNC-001
 title: "HVACR 에이전트 미러링/동기화 (게이트웨이 ↔ 서버) over MQTT"
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: 2026-08-06
 updated: 2026-08-06
@@ -19,6 +19,7 @@ tags: "hvacr, samsung, nasa, mqtt, mirror, sync, gateway"
 | ---------- | ----- | --------------------------------------------------------------------- |
 | 2026-08-06 | 0.1.0 | 초기 SPEC 작성. 게이트웨이 ↔ 서버 HVACR 에이전트 미러링/동기화(디코드 NASA 메시지 replay) over MQTT. 1차 대상 samsung Hvacr01Agent. |
 | 2026-08-06 | 0.2.0 | Module 9(미러 브로커 보안) 추가 — MQTT 인증(username/password) + TLS(CA 인증서) 지원. thingplus 패턴 재사용. 브로커 ACL 운영 가이드 포함. mTLS/클라이언트 인증서는 후속 범위. |
+| 2026-08-06 | 0.3.0 | Module 10(mirror-mqtt/mirror-message 2-모드) 추가 — (A) 기존 `mirror` transport_type 을 `mirror-mqtt` 로 rename. (B) 신규 `mirror-message` 모드: MQTT 없이 플로우 노드의 mirror-in/mirror-out 포트로 디코드 메시지를 중계(채널 급전형 transport + FeedMirrorWire/MirrorOutCh 시임 재사용). 엔진 fan-in 제약으로 노드 Process 는 message-type marker 로 mirror-in 을 판별. **백엔드 에이전트 시임 + rename 완료; 노드 bridge/엔진 통합은 후속(§Module 10 미결 항목).** |
 
 ---
 
@@ -439,6 +440,49 @@ plan.md에서 (7a)/(7b) 중 채택안을 확정한다. NASA는 실외기/실내�
 
 ---
 
+### Module 10: 미러 전송 2-모드 (mirror-mqtt / mirror-message)
+
+기존 서버 미러 입력은 에이전트가 직접 MQTT 브로커에 접속해 업링크를 구독하는 단일 방식(`transport_type:"mirror"`)이었다. 그러나 배포 구성에 따라 **MQTT 브로커 없이 플로우 그래프 내부에서** 게이트웨이↔서버 미러링을 완결하고 싶은 요구가 있다(예: 브로커 운영 부담 회피, xflow 노드로 전송 계층을 대체, 다른 트랜스포트(TCP/시리얼) 위에 미러를 얹는 조합). 본 모듈은 미러 전송을 2-모드로 분리한다:
+
+- **(A) rename `mirror` → `mirror-mqtt`**: 기존 MQTT 구독형 서버 역할. 동작·필드 전부 보존, 이름만 명확화(`mirror-mqtt`). 브로커/보안 필드(M9)는 이 모드 전용이다.
+- **(B) 신규 `mirror-message`**: 에이전트가 MQTT 에 접속하지 않고, 동일 `SamsungHvacr01Node`(결합 노드)가 **mirror-in / mirror-out** 포트로 디코드 메시지를 중계한다. 채널 급전형 `mirrorTransport` 와 와이어 포맷(M5), ingest/tap 초크포인트를 그대로 재사용한다.
+
+#### 확정된 설계 (LOCKED)
+
+- **mirror-in / mirror-out 은 별도 노드 타입이 아니라 기존 결합 노드(`SamsungHvacr01Node`)에 얹는다.** 엔진은 입력 와이어를 하나의 fan-in 스트림으로 병합한 뒤 `Process` 를 호출하므로, `mirror-in` 은 포트 이름으로 제어 `in` 포트와 구별할 수 없다 → `Process` 는 **message-type marker** 로 판별해야 한다(mirror 업링크 메시지면 에이전트 ingress 로 급전, 아니면 기존 제어 동작). `mirror-out` 은 `MultiSourceNode.ExtraSourceChannels()` 의 named 포트라 fan-in 문제가 없다.
+- **MQTT 보안·브로커 필드는 `mirror-mqtt` 전용**(mirror-message 는 broker/username/password/tls/ca_cert/topic_prefix/qos/gateway_id 불필요·숨김).
+- 와이어 포맷(`toWireUplink`/`toNasaMessage`/`toWireControl`/`toProcessRequest`)과 채널 급전형 `mirrorTransport` + ingest/tap 초크포인트는 AS-IS 재사용한다.
+
+#### REQ-SYNC-001-10-01 (Ubiquitous) transport_type rename
+
+시스템은 서버 MQTT 미러 역할의 transport_type 을 `mirror-mqtt` 로 노출해야 한다(config switch + 팩토리 + 프론트엔드 옵션). 이전 단일 값 `mirror` 는 제거된다(breaking, `tcp` → `tcp-client` 마이그레이션과 동일 정책).
+
+#### REQ-SYNC-001-10-02 (Ubiquitous) mirror-message 전송 선택
+
+**WHEN** transport_type 이 `mirror-message` 이면 **THEN** 시스템은 채널 급전형 `mirrorTransport` 를 생성하되 MQTT 브로커를 생성/구독하지 **않아야** 한다. `mirror_broker`/`mirror_gateway_id` 등 MQTT 필드를 요구하지 않는다(신규 required 에러 없음).
+
+#### REQ-SYNC-001-10-03 (Event) mirror-in 급전 (FeedMirrorWire)
+
+**WHEN** 플로우 노드가 mirror-in 포트로 업링크 와이어 JSON 을 전달하면 **THEN** 에이전트는 이를 `wireUplink` → `toNasaMessage` → `protocol.Encode` → `mirrorTransport.Feed` 경로로 급전해 기존 `receiveLoop → Decode → handleMessage` 상태 머신을 재사용해야 한다. 노드-대면 익스포트 메서드 `FeedMirrorWire(payload []byte) error` 로 노출한다. 락 규약(REQ-SYNC-001-01-03)을 준수한다(`a.mu` 미보유, `a.Name()` 미호출).
+
+#### REQ-SYNC-001-10-04 (Event) mirror-out tap (MirrorOutCh)
+
+**WHEN** message 역할에서 메시지가 디코드되면 **THEN** 보편 초크포인트 `ingestDecodedMessage` 의 tap 은 `broker.Publish` 대신 per-agent 익스포트 채널로 `toWireUplink(msg)` JSON 을 방출해야 한다(비차단, 포화 시 드롭). `RawMessageReceiver`/`ReceiveRawMessage` 패턴을 미러링한 `MirrorOutCh() <-chan []byte` 접근자로 노출한다.
+
+#### REQ-SYNC-001-10-05 (Ubiquitous) 노드 marker 판별 (mirror-in vs 제어)
+
+결합 노드의 `Process` 는 입력 메시지의 message-type marker 를 **먼저** 확인해, mirror 업링크 메시지면 `FeedMirrorWire(payload)` 후 하류 emit 없이 반환하고, 아니면 기존 제어/상태 처리로 폴백해야 한다. marker 상수를 명확히 정의한다. mirror-out 은 `ExtraSourceChannels()` 의 `"mirror-out"` 채널로 `nb.agent.(*samsung.Hvacr01Agent).MirrorOutCh()` 를 배출한다.
+
+#### REQ-SYNC-001-10-06 (Unwanted) 기존 동작 보존
+
+serial/tcp/`mirror-mqtt` 동작과 lg/century 에이전트는 변경되지 않아야 한다. mirror-message 는 순수 additive 이며, 기존 미러 테스트는 rename 만 반영한다(행위 보존).
+
+#### 미결 항목 — 엔진 fan-in 제약 (후속 결정 필요)
+
+현행 엔진(`internal/engine/engine.go` runNode)은 노드의 `ExtraSourceChannels()` 를 **입력 와이어가 없을 때(`len(inputWires)==0`)만** 배출한다(SourceNode 경로). 그러나 mirror-message 결합 노드는 mirror-in(입력 와이어)을 가지므로 fan-in Process 경로가 선택되어 `ExtraSourceChannels`(mirror-out)가 배출되지 **않는다**. 따라서 mirror-out 이 그래프로 흐르려면 **입력 와이어가 있어도 MultiSourceNode 의 ExtraSourceChannels 를 배출하도록 엔진을 확장**해야 한다(공유·안전관련 엔진 코드 변경 = 설계 결정). 본 SPEC 증분은 **백엔드 에이전트 시임(FeedMirrorWire/MirrorOutCh/roleMessage/transport 선택) + rename 을 완료**하고, 노드 bridge(`Process` marker + `ExtraSourceChannels`) + 엔진 확장 + 프론트 노드 포트(`nodeSchemas.ts` mirror-in/out)는 이 엔진 제약을 사용자에게 알린 뒤 후속 증분에서 처리한다.
+
+---
+
 ## 4. Specifications (사양 요약)
 
 ### 4.1 데이터 흐름
@@ -476,5 +520,6 @@ plan.md에서 (7a)/(7b) 중 채택안을 확정한다. NASA는 실외기/실내�
 | M7 동기화 의미론 | `agent.go:502-524`(request_state/get_all) | retain 스냅샷 또는 resync |
 | M8 경계 가드 | `cmd/xflowd/main.go:378` | 등록 배선 |
 | M9 미러 브로커 보안 | `thingplus_agent.go:700-712/762-789`(auth/TLS 패턴), `mqtt_agent.go:258-263`(auth gating) | `mirrorBrokerConn` + `buildMirrorTLSConfig` + config 4필드 |
+| M10 mirror 2-모드 | `config.go`/`transport.go` switch, `mirror.go` roles/tap, `mirror_transport.go` Feed, `serial_io.go:491`(ExtraSourceChannels 선례) | rename `mirror`→`mirror-mqtt`, `roleMessage` + `FeedMirrorWire`/`MirrorOutCh` + `mirror-message` transport (백엔드 완료); 노드 bridge·엔진 확장 후속 |
 
 관련 SPEC: SPEC-SAMSUNG-HVACR-001 (기반 에이전트), SPEC-LG-HVACR-001 / SPEC-LGAP-001 (후속 일반화 대상), SPEC-BRIDGE-001/002 (브릿지 연동).

@@ -616,9 +616,13 @@ func NewNasaTransport(transportType string, opts map[string]any) (NasaTransport,
 			return nil, err
 		}
 		return ts, nil
-	case "mirror":
+	case "mirror-mqtt":
 		// SPEC-HVACR-SYNC-001 M2 (설계 2a): 채널 급전형 NasaTransport.
 		// MQTT 업링크 구독 콜백이 Feed 로 프레임을 주입하면 receiveLoop 가 소비한다.
+		return newMirrorTransport(), nil
+	case "mirror-message":
+		// SPEC-HVACR-SYNC-001 M10: 동일한 채널 급전형 NasaTransport 를 재사용한다.
+		// MQTT 는 사용하지 않으며, 플로우 노드가 FeedMirrorWire 로 프레임을 주입한다.
 		return newMirrorTransport(), nil
 	case "tcp":
 		// 2026-05-29 breaking change: explicit migration error.

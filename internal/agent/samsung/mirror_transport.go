@@ -3,7 +3,8 @@ package samsung
 // SPEC-HVACR-SYNC-001 Module 2: 서버측 Mirror 입력 (설계 2a).
 //
 // mirrorTransport 는 NasaTransport 인터페이스의 채널 급전형 구현체이다
-// (transport_type:"mirror", REQ-SYNC-001-02-01). MQTT 업링크 구독 콜백이 역직렬화한
+// (transport_type:"mirror-mqtt"/"mirror-message", REQ-SYNC-001-02-01). MQTT 업링크 구독
+// 콜백(mirror-mqtt) 또는 플로우 노드(mirror-message)가 역직렬화한
 // 프레임 바이트를 Feed 로 내부 채널에 넣으면, receiveLoop 의 Receive 가 이를 반환한다.
 // 기존 receiveLoop → frameScanner → Decode → handleMessage 경로가 무변경 재사용된다.
 //

@@ -74,7 +74,8 @@ type Hvacr01Agent struct {
 
 	// mirror 는 게이트웨이↔서버 미러링/동기화 런타임이다 (SPEC-HVACR-SYNC-001).
 	// nil 이면 단독(standalone) 에이전트로 동작한다(행위 보존). 설정으로 게이트웨이
-	// (mirror_uplink_enabled) 또는 서버(transport_type:"mirror") 역할이 활성화될 때만
+	// (mirror_uplink_enabled) / 서버(transport_type:"mirror-mqtt") / 메시지 모드
+	// (transport_type:"mirror-message", M10) 역할이 활성화될 때만
 	// 생성된다. broker/goroutine 은 Start 에서 기동된다.
 	mirror *mirrorRuntime
 }

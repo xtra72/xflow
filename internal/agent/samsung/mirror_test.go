@@ -217,9 +217,9 @@ func serverConfig(gwID string) agent.AgentConfig {
 		Name: "server",
 		Type: "samsung_hvacr01",
 		Transport: agent.TransportConfig{
-			Type: "mirror",
+			Type: "mirror-mqtt",
 			Options: map[string]any{
-				"transport_type":    "mirror",
+				"transport_type":    "mirror-mqtt",
 				"mirror_broker":     "tcp://x:1883",
 				"mirror_gateway_id": gwID,
 			},
@@ -231,26 +231,26 @@ func serverConfig(gwID string) agent.AgentConfig {
 // Module 2: 서버 mirror 입력
 // ---------------------------------------------------------------------------
 
-// TestMirrorTransportRegistered 는 "mirror" transport_type 이 config switch 와 팩토리에
+// TestMirrorTransportRegistered 는 "mirror-mqtt" transport_type 이 config switch 와 팩토리에
 // 등록되었는지 검증한다 (AC-2.1 / AC-8.3).
 func TestMirrorTransportRegistered(t *testing.T) {
 	cfg, err := parseHvacr01Config(map[string]any{
-		"transport_type":    "mirror",
+		"transport_type":    "mirror-mqtt",
 		"mirror_broker":     "tcp://x:1883",
 		"mirror_gateway_id": "gw01",
 	})
 	if err != nil {
-		t.Fatalf("parseHvacr01Config(mirror): %v", err)
+		t.Fatalf("parseHvacr01Config(mirror-mqtt): %v", err)
 	}
 	if !cfg.MirrorMode {
-		t.Error("mirror transport_type 은 MirrorMode 를 활성화해야 함")
+		t.Error("mirror-mqtt transport_type 은 MirrorMode 를 활성화해야 함")
 	}
-	tr, err := NewNasaTransport("mirror", nil)
+	tr, err := NewNasaTransport("mirror-mqtt", nil)
 	if err != nil {
-		t.Fatalf("NewNasaTransport(mirror): %v", err)
+		t.Fatalf("NewNasaTransport(mirror-mqtt): %v", err)
 	}
 	if _, ok := tr.(*mirrorTransport); !ok {
-		t.Errorf("mirror 팩토리는 *mirrorTransport 를 반환해야 함, got %T", tr)
+		t.Errorf("mirror-mqtt 팩토리는 *mirrorTransport 를 반환해야 함, got %T", tr)
 	}
 }
 
@@ -261,8 +261,8 @@ func TestMirrorConfigValidation(t *testing.T) {
 		name string
 		opts map[string]any
 	}{
-		{"mirror broker 누락", map[string]any{"transport_type": "mirror", "mirror_gateway_id": "gw01"}},
-		{"mirror gateway_id 누락", map[string]any{"transport_type": "mirror", "mirror_broker": "tcp://x:1883"}},
+		{"mirror broker 누락", map[string]any{"transport_type": "mirror-mqtt", "mirror_gateway_id": "gw01"}},
+		{"mirror gateway_id 누락", map[string]any{"transport_type": "mirror-mqtt", "mirror_broker": "tcp://x:1883"}},
 		{"uplink broker 누락", map[string]any{"transport_type": "serial", "serial_port": "/dev/null", "mirror_uplink_enabled": true, "mirror_gateway_id": "gw01"}},
 		{"uplink gateway_id 누락", map[string]any{"transport_type": "serial", "serial_port": "/dev/null", "mirror_uplink_enabled": true, "mirror_broker": "tcp://x:1883"}},
 	}
@@ -651,7 +651,7 @@ func TestBuildMirrorTLSConfig(t *testing.T) {
 // TestMirrorSecurityConfigParsing 은 인증/TLS 옵션 4종이 config 로 파싱되는지 검증한다 (M9).
 func TestMirrorSecurityConfigParsing(t *testing.T) {
 	cfg, err := parseHvacr01Config(map[string]any{
-		"transport_type":    "mirror",
+		"transport_type":    "mirror-mqtt",
 		"mirror_broker":     "ssl://x:8883",
 		"mirror_gateway_id": "gw01",
 		"mirror_username":   "user1",
@@ -677,7 +677,7 @@ func TestMirrorSecurityConfigParsing(t *testing.T) {
 
 	// 미설정 시 기존 동작 보존(빈 값/false).
 	def, err := parseHvacr01Config(map[string]any{
-		"transport_type":    "mirror",
+		"transport_type":    "mirror-mqtt",
 		"mirror_broker":     "tcp://x:1883",
 		"mirror_gateway_id": "gw01",
 	})

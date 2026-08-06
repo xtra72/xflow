@@ -70,7 +70,7 @@ export const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: s
   },
   // samsung_hvacr01: 생성 팝업(CreateAgentModal)에서 연결(좌)|운영(우) 2분할로 렌더한다.
   // 상세 패널(AgentDetailPanel)은 HVACR_QUADRANT_AGENT_TYPES 체크가 우선하므로 4-분면을 유지한다.
-  // 좌(연결) = 전송(serial/tcp/mirror) + 미러 MQTT/보안, 우(운영) = 상태확인/상태보고/미러 제어·ack·스냅샷.
+  // 좌(연결) = 전송(serial/tcp/mirror-mqtt/mirror-message) + 미러 MQTT/보안, 우(운영) = 상태확인/상태보고/미러 제어·ack·스냅샷.
   samsung_hvacr01: {
     left: new Set([
       'transport_type',

@@ -87,30 +87,36 @@ describe('samsung_hvacr01 미러 동기화 스키마 (SPEC-HVACR-SYNC-001)', () 
   const samsungField = (name: string): ConfigField | undefined =>
     getAgentConfigSchema('samsung_hvacr01')?.fields.find((f) => f.name === name);
 
-  it('연결 방식(transport_type) 옵션에 mirror 가 추가된다', () => {
+  it('연결 방식(transport_type) 옵션에 mirror-mqtt 와 mirror-message 가 포함된다', () => {
     const tt = samsungField('transport_type')!;
-    expect(tt.options).toContain('mirror');
+    expect(tt.options).toContain('mirror-mqtt');
+    expect(tt.options).toContain('mirror-message');
+    // 이전 단일 'mirror' 값은 mirror-mqtt 로 rename 됨(제거 확인)
+    expect(tt.options).not.toContain('mirror');
     // 기존 옵션도 보존(무회귀)
-    expect(tt.options).toEqual(['serial', 'tcp-client', 'tcp-server', 'mirror']);
+    expect(tt.options).toEqual(['serial', 'tcp-client', 'tcp-server', 'mirror-mqtt', 'mirror-message']);
   });
 
-  it('mirror_broker/gateway_id 는 mirror(서버) 또는 업링크(게이트웨이) 양쪽에서 표시된다(OR)', () => {
+  it('mirror_broker/gateway_id 는 mirror-mqtt(서버) 또는 업링크(게이트웨이) 양쪽에서 표시된다(OR)', () => {
     const broker = samsungField('mirror_broker')!;
     expect(broker.visibleWhenAny).toBeDefined();
-    // 서버 역할: transport_type=mirror
-    expect(isFieldVisible(broker, { transport_type: 'mirror' })).toBe(true);
+    // 서버 역할: transport_type=mirror-mqtt
+    expect(isFieldVisible(broker, { transport_type: 'mirror-mqtt' })).toBe(true);
     // 게이트웨이 역할: serial + 업링크 활성
     expect(isFieldVisible(broker, { transport_type: 'serial', mirror_uplink_enabled: true })).toBe(true);
     // 순수 serial(업링크 미활성): 숨김
     expect(isFieldVisible(broker, { transport_type: 'serial' })).toBe(false);
     expect(isFieldVisible(broker, { transport_type: 'tcp-client' })).toBe(false);
+    // mirror-message: MQTT 없음 → 브로커 필드 숨김
+    expect(isFieldVisible(broker, { transport_type: 'mirror-message' })).toBe(false);
   });
 
-  it('mirror_uplink_enabled 는 serial/tcp(게이트웨이)에서만 표시되고 mirror(서버)에서는 숨겨진다', () => {
+  it('mirror_uplink_enabled 는 serial/tcp(게이트웨이)에서만 표시되고 mirror-mqtt/mirror-message 에서는 숨겨진다', () => {
     const uplink = samsungField('mirror_uplink_enabled')!;
     expect(isFieldVisible(uplink, { transport_type: 'serial' })).toBe(true);
     expect(isFieldVisible(uplink, { transport_type: 'tcp-server' })).toBe(true);
-    expect(isFieldVisible(uplink, { transport_type: 'mirror' })).toBe(false);
+    expect(isFieldVisible(uplink, { transport_type: 'mirror-mqtt' })).toBe(false);
+    expect(isFieldVisible(uplink, { transport_type: 'mirror-message' })).toBe(false);
   });
 
   it('미러 옵션 키가 백엔드 Transport.Options 와 일치한다', () => {

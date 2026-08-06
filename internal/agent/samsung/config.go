@@ -70,9 +70,14 @@ type Hvacr01Config struct {
 	// SPEC-HVACR-SYNC-001: 게이트웨이↔서버 미러링/동기화 (over MQTT)
 	// ---------------------------------------------------------------------
 
-	// MirrorMode 는 서버 역할 여부이다(transport_type:"mirror"). true 면 MQTT 업링크
+	// MirrorMode 는 서버 역할 여부이다(transport_type:"mirror-mqtt"). true 면 MQTT 업링크
 	// 구독으로 디코드 메시지를 replay 받으며, 제어는 다운링크로 위임한다.
 	MirrorMode bool
+	// MirrorMessageMode 는 메시지 모드 여부이다(transport_type:"mirror-message", M10).
+	// true 면 에이전트가 MQTT 에 직접 접속하지 않고, 플로우 노드가 mirror-in/mirror-out
+	// 포트로 디코드 메시지를 중계한다(채널 급전형 NasaTransport 재사용, MQTT 없음).
+	// MirrorMode 와 상호배타이며, 브로커/게이트웨이 식별자를 요구하지 않는다.
+	MirrorMessageMode bool
 	// MirrorUplinkEnabled 는 게이트웨이 역할의 업링크 tap 활성 여부이다. false 면
 	// 기존 단독 에이전트로 동작한다(행위 보존, REQ-SYNC-001-03-02).
 	MirrorUplinkEnabled bool
@@ -169,9 +174,13 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	switch cfg.TransportType {
 	case "serial", "tcp-client", "tcp-server":
 		// valid transport types
-	case "mirror":
-		// SPEC-HVACR-SYNC-001: 서버측 mirror 입력(채널 급전형 NasaTransport).
+	case "mirror-mqtt":
+		// SPEC-HVACR-SYNC-001: 서버측 mirror 입력(채널 급전형 NasaTransport, MQTT 업링크 구독).
 		cfg.MirrorMode = true
+	case "mirror-message":
+		// SPEC-HVACR-SYNC-001 M10: 플로우 노드가 mirror-in/mirror-out 포트로 I/O 를 중계하는
+		// 메시지 모드. 에이전트는 MQTT 에 접속하지 않고 채널 급전형 NasaTransport 만 재사용한다.
+		cfg.MirrorMessageMode = true
 	case "tcp":
 		// 2026-05-29 breaking: explicit migration error pointing user to new value.
 		return Hvacr01Config{}, ErrDeprecatedTCPTransport
