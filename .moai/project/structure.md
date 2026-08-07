@@ -732,6 +732,14 @@ MVP 히트맵 패널 위에 floor-plan 이미지 배경 + 히트맵 합성 불�
 - `web/src/pages/dashboard/panels/heatmap/SensorPlacementOverlay.tsx`: 정규화 좌표 absolute 마커 오버레이(`FacilityLinePanel` 배치 패턴 참고). 포인터 드래그 배치 + 미배치 센서 배치-인 + 마커 제거, 결과를 `sensor_positions[key]` 로 쓰기.
 - 확장: `heatmapConfig.ts`(`floor_plan`/`heatmap_opacity`/`editor` 하위호환 additive 파싱), `HeatmapPanel.tsx`(배경→히트맵(opacity)→마커 오버레이 z-스택 + 편집 모드 — 편집은 패널 런타임 비영속 상태, 폴링 비파괴), `renderDashboardPanel.tsx`(배선), `PanelSettingsDialog.tsx`(이미지 첨부/제거/미리보기 + opacity 슬라이더 + fit + 에디터 옵션). i18n `lib/i18n/{ko,en}.json`. 신규 코드 커버리지 96~100%, LSP 0, 회귀 826 tests 통과. 드래그 테스트는 `fireEvent`(PointerEvent 폴리필)로 작성 — @testing-library/user-event 미설치(신규 의존성 0). 후속: 등고선(003).
 
+**히트맵 패널 등고선(marching squares) 오버레이** (SPEC-HEATMAP-PANEL-003, v1.0.0 — 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0):
+
+MVP IDW 보간 격자를 재사용해 marching squares 로 등치선(iso-line)을 산출·렌더하는 **선택 토글** 오버레이를 **가산**(SPEC-002 와 독립, 그 위에 층으로 쌓임). 핵심 제약은 **재보간 금지** — `interpolateIDW` 호출을 `HeatmapPanel` 로 상승시켜 패널당 1회만 실행하고 동일 `Float32Array` 를 히트맵 canvas 와 등고선 레이어가 공유한다. `web/src/pages/dashboard/panels/heatmap/` 아래 신규 2개 소스(+ 동반 테스트).
+
+- `web/src/pages/dashboard/panels/heatmap/marchingSquares.ts`: 순수 로직(**TDD 핵심**). `computeContours`(셀 case 0..15 분기 + 모서리 선형 보간 + saddle 5·10 셀 중앙값 결정적 처리), `resolveLevels`(explicit 우선 · 균등 분할 · 범위 밖 필터 · 빈 격자 방어), `segmentsToPath`(SVG path `d` 문자열 변환). DOM 의존 없음, 커버리지 95.5%.
+- `web/src/pages/dashboard/panels/heatmap/ContourLayer.tsx`: 격자 + contour config → `computeContours` → SVG `<path>` 오버레이(viewBox 0..1 + `preserveAspectRatio=none` 로 리사이즈 정합). field 참조 `useMemo`, 선 스타일(색/두께/dash) + 등치값 `<text>` 라벨. 커버리지 100%.
+- 확장: `heatmapConfig.ts`(`contour` 하위호환 additive 파싱, 미설정 `undefined`/기본 enabled=false), `HeatmapCanvas.tsx`(격자 계산 상위 상승 리팩터 — `field`/`gridW`/`gridH`/`hasData` props consume, 행위 보존·기존 테스트 통과), `HeatmapPanel.tsx`(`interpolateIDW` `useMemo` 상승 + `ContourLayer` z-15 마운트 — 히트맵 z10 위·마커 z20 아래), `PanelSettingsDialog.tsx`(등고선 섹션). i18n `lib/i18n/{ko,en}.json`(+8키). 신규 순수 코드 커버리지 95%+, LSP 0, 회귀 2836 tests 통과. 렌더 방식은 canvas stroke 아닌 SVG `<path>` 채택(오케스트레이터 확정). 후속: 라벨 충돌 회피(향후 SPEC).
+
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
 - `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)

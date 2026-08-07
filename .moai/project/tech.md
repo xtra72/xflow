@@ -11,6 +11,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | Frontend | React 19 + TypeScript 5.x | 웹 대시보드 SPA |
 | Node Editor | React Flow | 플로우 에디터 UI |
 | Canvas 렌더 | HTML Canvas 2D API (네이티브) | 히트맵 패널 IDW 온도장 픽셀 렌더 (SPEC-HEATMAP-PANEL-001) |
+| 벡터 오버레이 | SVG `<path>` (네이티브) | 히트맵 패널 등치선(marching squares) 오버레이 렌더 (SPEC-HEATMAP-PANEL-003) |
 | CSS | Tailwind CSS v4 | 유틸리티 퍼스트 스타일링 |
 | State Management | Zustand | 경량 상태 관리 |
 | Build Tool | Vite | 프론트엔드 번들러 |
@@ -107,6 +108,18 @@ MVP Canvas 2D 히트맵(001) 위에 두 가지 프론트엔드 기법을 가산�
 **포인터 드래그 정규화 좌표 배치**:
 - 센서 마커 배치 에디터는 컨테이너 실측 rect 를 기준으로 포인터의 화면 픽셀 위치를 **정규화 상대 좌표(0..1)** 로 변환(`toNormalized`)하고, 역변환(`fromNormalized`)으로 마커를 absolute 배치한다. 좌표를 정규화로 저장하므로 패널/도면 리사이즈에 불변이다.
 - 좌표 변환·그리드 스냅(`applySnap`)·범위 방어([0,1] `clamp01`)는 순수 함수(`placement.ts`)로 분리하여 DOM 없이 단위 테스트(커버리지 100%)로 커버한다. 드래그 상호작용 테스트는 `@testing-library/user-event` 없이 `fireEvent` + MouseEvent 기반 PointerEvent 폴리필로 작성한다(신규 의존성 0).
+
+### 등치선(marching squares) + SVG 오버레이 (히트맵 패널 003, SPEC-HEATMAP-PANEL-003)
+
+MVP Canvas 2D 히트맵(001)의 IDW 보간 스칼라 격자 위에 **등고선(contour lines / iso-lines)** 을 그리는 기법을 가산한다. 브라우저 네이티브 SVG 만 사용하며 신규 의존성이 없다.
+
+**marching squares(등치선 산출)**:
+- 스칼라 격자의 각 셀 4코너를 등치값(iso-value) 기준으로 이진화(case 0..15)하고, 셀 모서리에서 **선형 보간**으로 교차점을 구해 등치선 세그먼트를 잇는다. 순수 로직(`computeContours`/`resolveLevels`/`segmentsToPath`, `marchingSquares.ts`)은 DOM 없이 골든 케이스 단위 테스트(커버리지 95.5%)로 커버한다.
+- **saddle(모호) 케이스(5·10)** 는 셀 중앙값(4코너 평균) 기준 분기로 **결정적**으로 해소해 비결정적/끊긴 선을 방지한다. `resolveLevels` 는 명시 값 목록을 개수 균등분할보다 우선 적용하고, 격자 값 범위(min/max) 밖 레벨은 필터하며 빈 격자를 방어한다.
+- **재보간 금지(핵심 제약)**: 등고선은 MVP `idw.ts` 가 이미 계산한 동일 격자를 재사용한다. 이를 위해 `interpolateIDW` 호출을 `HeatmapPanel` 로 상승시켜 패널당 1회만 실행하고, 동일 `Float32Array` 를 히트맵 canvas(`HeatmapCanvas`)와 등고선 레이어(`ContourLayer`)가 공유한다. `HeatmapCanvas` 는 격자를 자체 계산하지 않고 field props 를 consume 하도록 리팩터(행위 보존)한다.
+
+**SVG `<path>` 벡터 오버레이**:
+- 등치선은 히트맵 canvas 를 canvas 내부에서 다시 그리지 않고(방식 (b) `ctx.stroke` 미채택), **별도 SVG 레이어(`ContourLayer`)** 를 히트맵 위 z-15(마커 z-20 아래)에 겹치는 방식(방식 (a))이다. `viewBox 0..1` + `preserveAspectRatio=none` 로 패널 리사이즈에 정합되며, 선 스타일(색/두께/dash)과 등치값 라벨(`<text>`)을 벡터로 표현한다. 격자 참조 기준 `useMemo` 로 재계산을 억제한다.
 
 ### MQTT: Eclipse Paho Go
 

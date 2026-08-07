@@ -1,14 +1,14 @@
 ---
 id: SPEC-HEATMAP-PANEL-003
-version: "0.1.0"
-status: in-progress
+version: "1.0.0"
+status: completed
 created: 2026-08-07
 updated: 2026-08-07
 author: xtra
 priority: P3
 lifecycle_level: spec-first
 title: "Heatmap Panel — 등고선(contour lines, marching squares) 오버레이"
-phase: plan
+phase: sync
 module: web/dashboard
 tier: M
 tags: [dashboard, panel, heatmap, contour, marching-squares, isoline, canvas, svg, frontend]
@@ -21,6 +21,7 @@ tags: [dashboard, panel, heatmap, contour, marching-squares, isoline, canvas, sv
 | 일자 | 버전 | 변경 | 작성자 |
 |------|------|------|--------|
 | 2026-08-07 | 0.1.0 | 최초 작성. MVP(SPEC-HEATMAP-PANEL-001)의 IDW 보간 스칼라 격자(`idw.ts` 출력)를 입력으로 marching squares 를 수행하여 등치선(iso-value contour) 경로를 생성·렌더. 등고선은 기존 히트맵 렌더 파이프라인 위 optional toggle 레이어. 재보간 금지(기존 격자 재사용). 레벨 개수/명시 값 목록/선 스타일/등치값 라벨 설정. | xtra |
+| 2026-08-07 | 1.0.0 | 구현 완료(run 커밋 `07a4efd4`, develop 직접·personal-mode). `marchingSquares.ts`(순수, TDD 27) + `ContourLayer.tsx`(SVG `<path>` 오버레이, 11) 신규. 격자 계산을 `HeatmapPanel` 로 상승(`interpolateIDW` 패널당 1회, 동일 `Float32Array` 를 히트맵·등고선 공유 — 재보간 금지 R3 충족). `heatmapConfig.contour` additive 파싱, `HeatmapCanvas` field-consume 리팩터(행위 보존), `PanelSettingsDialog` 등고선 섹션 + i18n ko/en. 품질: 2836 tests, tsc/lint 0, 신규 순수코드 커버리지 95%+. §구현 노트 IN-1~5. | xtra |
 
 ## 개요 (Overview)
 
@@ -162,3 +163,40 @@ MVP `HeatmapPanelConfig` 에 다음 필드를 **추가**한다(기존 필드/의
 - REQ-03 → `heatmapConfig.ts:contour`(additive), `PanelSettingsDialog.tsx` 등고선 섹션, 레이어 순서 규약
 - REQ-04 → `marchingSquares.ts`(결정적 saddle/경계, 범위밖 필터), `ContourLayer` memoize/debounce, `HeatmapPanel` 토글/빈격자 분기
 - REQ-05 → `marchingSquares.ts:resolveLevels`, `ContourLayer`(선 스타일/라벨), `PanelSettingsDialog`(count/levels/style/labels)
+
+## 구현 노트 (Implementation Notes)
+
+> run 커밋 `07a4efd4`(develop 직접, personal-mode, PR 없음) 기준 as-implemented 기록. Level 1 spec-first sync 단계에서 append. 계획(plan.md/spec.md §명세)과의 분기를 IN-1~5 로 항목화한다. 계획된 파일 전량 생성 + 모든 신규 config 는 additive only(MVP/002 필드 의미 불변, 회귀 0).
+
+### 생성 파일 (신규)
+
+- `web/src/pages/dashboard/panels/heatmap/marchingSquares.ts`(순수, **TDD 핵심**): `computeContours`(셀 case 0..15 분기 + 모서리 선형 보간 + saddle 5·10 셀 중앙값 결정적 처리), `resolveLevels`(explicit 우선 · 미설정 시 균등 분할 · 범위 밖 레벨 필터 · 빈 격자 방어), `segmentsToPath`(SVG path `d` 문자열 변환). DOM 없음. 커버리지 **95.5%**.
+- `web/src/pages/dashboard/panels/heatmap/marchingSquares.test.ts`: 골든 케이스 27개(known-grid → known-segments, saddle 케이스 포함).
+- `web/src/pages/dashboard/panels/heatmap/ContourLayer.tsx`(신규): 격자 + contour config → `computeContours` 호출 → SVG `<path>` 오버레이 렌더(viewBox 0..1 + `preserveAspectRatio=none`). field 참조 `useMemo`, 선 스타일(색/두께/dash) 반영, 등치값 라벨 `<text>` 배치. 커버리지 **100%**.
+- `web/src/pages/dashboard/panels/heatmap/ContourLayer.test.tsx`: 11개.
+
+### 확장 파일 (행위 보존)
+
+- `heatmapConfig.ts`: `contour` 하위 필드 additive 파싱(미설정 반환 `undefined`, 기본 `enabled=false`).
+- `HeatmapCanvas.tsx`: 격자 계산을 상위로 상승시키는 리팩터 — `field`/`gridW`/`gridH`/`hasData` 를 props 로 consume(기존 격자 자체 계산 제거, 행위 보존, 기존 테스트 통과).
+- `HeatmapPanel.tsx`: `interpolateIDW` 를 `useMemo` 로 상승(패널당 1회 호출) — 동일 `Float32Array` 를 `HeatmapCanvas` 와 `ContourLayer` 가 참조. 등고선 활성 시 `ContourLayer` 를 z-15(히트맵 z-10 위, 마커 z-20 아래) 레이어로 마운트.
+- `PanelSettingsDialog.tsx`: 등고선 설정 섹션(토글/레벨 count·명시목록/선 스타일/라벨).
+- i18n `web/src/lib/i18n/{ko,en}.json`: 등고선 키 +8.
+
+### 분기 (Divergence — IN-1~5)
+
+- **IN-1 렌더 방식 = SVG `<path>` 오버레이**(오케스트레이터 확정). plan.md 택1 후보 중 (a) 벡터 SVG 채택, (b) canvas `ctx.stroke` 미채택. viewBox 0..1 + `preserveAspectRatio=none` 로 패널 리사이즈 정합.
+- **IN-2 격자 공유 = `HeatmapPanel` 로 상승**(오케스트레이터 확정). `interpolateIDW` 패널당 1회 호출, 동일 `Float32Array` 를 히트맵·등고선이 참조 → **재보간 금지(R3) 엄격 충족**. `HeatmapCanvas` 는 field 를 consume 하도록 리팩터(행위 보존, 기존 테스트 통과).
+- **IN-3 등치값 라벨 = SVG `<text>` user-unit fontSize**. viewBox 비균등 스케일에서 라벨 글자가 종횡비 왜곡될 수 있으나 별도 HTML 오버레이는 미추가(YAGNI). 라벨 충돌 회피는 후속 SPEC 범위.
+- **IN-4 `parseContour` 미설정 반환 = `undefined`**(floor_plan/editor 선례 통일, additive off). 신규 의존성 0.
+- **IN-5 등고선 path/label testid = 인덱스**(`contour-path-0`) — 값(부동소수) 대신 인덱스 사용.
+
+### 품질
+
+- REQ-01~05 전량 구현. 회귀 **2836 tests** 통과, tsc `--noEmit`/eslint **0**. 신규 순수 코드 커버리지 **95%+**(`marchingSquares` 95.5%, `ContourLayer` 100%). 신규 npm 의존성 **0**, 백엔드 무변경(불투명 JSON config 유지).
+
+### 미검증 (Gaps)
+
+- `PanelSettingsDialog` 등고선 UI 상호작용 다이얼로그 테스트 없음(MVP 동일 선례).
+- SVG 라벨 시각 왜곡은 jsdom 검증 불가.
+- E2E 실렌더 미수행.

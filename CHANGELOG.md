@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 추가 — 히트맵 패널 등고선(marching squares) 오버레이
+
+- **히트맵 패널(SPEC-HEATMAP-PANEL-001 MVP)에 등고선(contour lines / iso-lines, marching squares) 오버레이를 가산 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0)**
+
+  MVP 가 생성하는 **IDW 보간 스칼라 격자(temperature field grid)** 위에 사용자가 지정한 등치값(iso-value)마다 **marching squares** 를 적용해 등치선 경로를 산출하고, 히트맵 위에 **선택(optional) 토글** 오버레이로 렌더한다. 핵심 제약은 **재보간 금지** — 등고선은 MVP 가 이미 계산한 **동일 격자**를 재사용하므로 히트맵 색과 등치선이 같은 스칼라장을 반영해 시각적으로 일관된다. 이를 위해 `interpolateIDW` 호출을 `HeatmapPanel` 로 상승시켜 패널당 1회만 실행하고, 동일 `Float32Array` 를 히트맵 canvas 와 등고선 레이어가 공유한다. 모든 신규 config 필드는 **추가만(additive)** 하며 MVP/002 필드 의미는 불변이다. SPEC-002(도면 배경/드래그 배치)와 독립이며 그 위에 층으로 쌓인다. run 커밋 `07a4efd4`.
+
+  - **순수 로직(TDD)**: `marchingSquares.ts`(`computeContours` — 셀 case 0..15 분기 + 모서리 선형 보간 + saddle(5·10) 셀 중앙값 결정적 처리, `resolveLevels` — explicit 우선·균등 분할·범위 밖 필터·빈 격자 방어, `segmentsToPath` — SVG path `d` 문자열 변환). DOM 없이 골든 케이스 27 테스트, 커버리지 95.5%.
+  - **렌더/컴포넌트**: `ContourLayer.tsx`(격자 + contour config → `computeContours` → SVG `<path>` 오버레이, viewBox 0..1 + `preserveAspectRatio=none` 로 리사이즈 정합, field 참조 `useMemo`, 선 스타일/등치값 `<text>` 라벨, 커버리지 100%), 레이어 순서 히트맵(z10)→등고선(z15)→마커(z20).
+  - **확장(행위 보존)**: `heatmapConfig.ts`(`contour` 하위호환 additive 파싱, 미설정 `undefined`/기본 enabled=false), `HeatmapCanvas.tsx`(격자 계산을 상위로 상승 — `field`/`gridW`/`gridH`/`hasData` props consume, 기존 테스트 통과), `HeatmapPanel.tsx`(`interpolateIDW` `useMemo` 상승 + `ContourLayer` z-15 마운트), `PanelSettingsDialog.tsx`(등고선 섹션). i18n `lib/i18n/{ko,en}.json`(+8키).
+  - **분기(Divergence, as-implemented — spec.md §구현 노트 IN-1~5)**: (1) 렌더 방식 = SVG `<path>` 오버레이(오케스트레이터 확정, canvas stroke 미채택). (2) 격자 공유 = `HeatmapPanel` 로 상승(interpolateIDW 패널당 1회, 동일 Float32Array 공유 → 재보간 금지 R3 엄격 충족, `HeatmapCanvas` field-consume 리팩터 행위 보존). (3) 등치값 라벨 = SVG `<text>` user-unit fontSize(비균등 스케일 왜곡 가능, 별도 HTML 오버레이 미추가 YAGNI). (4) `parseContour` 미설정 반환 = `undefined`(floor_plan/editor 선례 통일). (5) path/label testid = 값 대신 인덱스(`contour-path-0`).
+  - **품질**: REQ-01~05 전량 구현. 회귀 프론트 2836 tests 통과, LSP 0(tsc `--noEmit` + eslint 클린), 신규 순수 코드 커버리지 95%+(`marchingSquares` 95.5%, `ContourLayer` 100%). 신규 npm 의존성 0, 백엔드 무변경(불투명 JSON config 유지). Gaps: `PanelSettingsDialog` 등고선 UI 다이얼로그 테스트·SVG 라벨 시각 왜곡 jsdom 검증·E2E 실렌더 미수행(MVP 동일 선례).
+  - **관련**: SPEC-HEATMAP-PANEL-003 v1.0.0(구현 완료, `07a4efd4`, Tier M). MVP SPEC-HEATMAP-PANEL-001 을 가산 확장, SPEC-002 와 독립. 후속: 라벨 충돌 회피 등은 향후 SPEC.
+
 ### 추가 — 히트맵 패널 도면 배경 + 드래그 앤 드롭 센서 배치 에디터
 
 - **히트맵 패널(SPEC-HEATMAP-PANEL-001 MVP)에 floor-plan 이미지 배경 + 히트맵 합성 불투명도 + 시각적 드래그 앤 드롭 센서 배치 에디터를 가산 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0)**
