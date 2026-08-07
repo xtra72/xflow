@@ -95,6 +95,19 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 
 **활용 범위**: 순수 보간/색 매핑 로직(`idw.ts`)은 DOM 의존 없이 분리하여 단위 테스트로 커버하고, 렌더(`HeatmapCanvas.tsx`)와 격리한다. 후속 SPEC(002 floor-plan 배경, 003 등고선)에서 동일 canvas 기반을 확장할 예정이다.
 
+### 도면 배경 임베딩 + 포인터 드래그 정규화 좌표 배치 (히트맵 패널 002, SPEC-HEATMAP-PANEL-002)
+
+MVP Canvas 2D 히트맵(001) 위에 두 가지 프론트엔드 기법을 가산한다. 모두 브라우저 네이티브 API 만 사용하며 신규 의존성이 없다.
+
+**data-URL 이미지 임베딩(FileReader)**:
+- 사용자가 첨부한 도면 이미지를 `FileReader.readAsDataURL` 로 **data-URL 문자열**로 인코딩하여 패널 config(`floor_plan.image`)에 직접 임베드한다. 백엔드 asset 업로드 엔드포인트가 없어도 즉시 구현 가능하며, config 는 기존과 동일한 불투명 JSON 으로 영속되어 백엔드 변경이 없다.
+- 대용량 data-URL 의 config 페이로드 팽창을 완화하기 위해 **2MB 크기 상한**(초과 시 경고/차단)을 둔다. 순수 로직(`readImageAsDataUrl`/`assertImageSizeUnderLimit`, `imageAsset.ts`)은 FileReader 를 모킹하여 단위 테스트로 커버한다.
+- 도면 배경 합성은 히트맵 canvas 를 canvas 내부에서 다시 그리지 않고, **별도 배경 DOM 레이어 + CSS `opacity`** 로 히트맵 레이어를 그 위에 겹치는 방식이다(`HeatmapCanvas.tsx` 불변).
+
+**포인터 드래그 정규화 좌표 배치**:
+- 센서 마커 배치 에디터는 컨테이너 실측 rect 를 기준으로 포인터의 화면 픽셀 위치를 **정규화 상대 좌표(0..1)** 로 변환(`toNormalized`)하고, 역변환(`fromNormalized`)으로 마커를 absolute 배치한다. 좌표를 정규화로 저장하므로 패널/도면 리사이즈에 불변이다.
+- 좌표 변환·그리드 스냅(`applySnap`)·범위 방어([0,1] `clamp01`)는 순수 함수(`placement.ts`)로 분리하여 DOM 없이 단위 테스트(커버리지 100%)로 커버한다. 드래그 상호작용 테스트는 `@testing-library/user-event` 없이 `fireEvent` + MouseEvent 기반 PointerEvent 폴리필로 작성한다(신규 의존성 0).
+
 ### MQTT: Eclipse Paho Go
 
 **선택 이유**:

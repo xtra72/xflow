@@ -722,6 +722,16 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - `web/src/pages/dashboard/panels/heatmap/HeatmapPanel.tsx`: 패널 진입점. `LineChartPanel` isStore 분기 미러링으로 `useStoreChartData` 태그 바인딩 + 센서값·좌표 결합, 센서 0개·미배치·폴링 실패 graceful 처리.
 - 와이어링 4지점: `stores/uiStore.ts`(PanelType/기본값/기본 config), `pages/dashboard/renderDashboardPanel.tsx`(렌더 switch), `pages/dashboard/AddPanelDialog.tsx`(chart 카테고리 옵션), `pages/dashboard/PanelSettingsDialog.tsx`(heatmap 전용 설정 섹션 — 태그필터/센서 x·y/value_bounds/color_table/IDW power·resolution). i18n `lib/i18n/{ko,en}.json`. 신규 코드 커버리지 99%, LSP 0. 후속: floor-plan 배경+드래그 배치(002), 등고선(003).
 
+**히트맵 패널 도면 배경 + 드래그 배치 에디터** (SPEC-HEATMAP-PANEL-002, v1.0.0 — 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0):
+
+MVP 히트맵 패널 위에 floor-plan 이미지 배경 + 히트맵 합성 불투명도 + 시각적 드래그 앤 드롭 센서 배치 에디터를 **가산**(모든 신규 config 필드 additive, MVP 필드 의미 불변). `web/src/pages/dashboard/panels/heatmap/` 아래 신규 4개 소스(+ 동반 테스트).
+
+- `web/src/pages/dashboard/panels/heatmap/placement.ts`: 좌표 순수 로직(`toNormalized`/`fromNormalized`/`clamp01`/`applySnap`). 화면 픽셀 ↔ 정규화(0..1) 변환·그리드 스냅·[0,1] clamp. DOM 의존 없음, 커버리지 100%.
+- `web/src/pages/dashboard/panels/heatmap/imageAsset.ts`: 도면 이미지 처리 순수 로직(`readImageAsDataUrl` — FileReader data-URL 인코딩, `assertImageSizeUnderLimit` — 2MB 상한 경고/차단). FileReader 모킹 테스트.
+- `web/src/pages/dashboard/panels/heatmap/FloorPlanBackground.tsx`: data-URL 도면 배경 레이어(contain/cover fit). 히트맵 canvas 아래 별도 DOM 레이어 + CSS opacity 합성(방식 (a), `HeatmapCanvas.tsx` 불변). 미첨부 시 graceful.
+- `web/src/pages/dashboard/panels/heatmap/SensorPlacementOverlay.tsx`: 정규화 좌표 absolute 마커 오버레이(`FacilityLinePanel` 배치 패턴 참고). 포인터 드래그 배치 + 미배치 센서 배치-인 + 마커 제거, 결과를 `sensor_positions[key]` 로 쓰기.
+- 확장: `heatmapConfig.ts`(`floor_plan`/`heatmap_opacity`/`editor` 하위호환 additive 파싱), `HeatmapPanel.tsx`(배경→히트맵(opacity)→마커 오버레이 z-스택 + 편집 모드 — 편집은 패널 런타임 비영속 상태, 폴링 비파괴), `renderDashboardPanel.tsx`(배선), `PanelSettingsDialog.tsx`(이미지 첨부/제거/미리보기 + opacity 슬라이더 + fit + 에디터 옵션). i18n `lib/i18n/{ko,en}.json`. 신규 코드 커버리지 96~100%, LSP 0, 회귀 826 tests 통과. 드래그 테스트는 `fireEvent`(PointerEvent 폴리필)로 작성 — @testing-library/user-event 미설치(신규 의존성 0). 후속: 등고선(003).
+
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
 - `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)

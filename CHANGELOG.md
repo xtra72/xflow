@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 추가 — 히트맵 패널 도면 배경 + 드래그 앤 드롭 센서 배치 에디터
+
+- **히트맵 패널(SPEC-HEATMAP-PANEL-001 MVP)에 floor-plan 이미지 배경 + 히트맵 합성 불투명도 + 시각적 드래그 앤 드롭 센서 배치 에디터를 가산 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0)**
+
+  MVP 히트맵 패널에 **공간 맥락(spatial context)** 을 부여했다. 사용자가 도면 이미지(floor-plan)를 첨부하면 보간 히트맵 레이어 **뒤(배경)** 에 도면이 렌더되고, 히트맵은 **설정 가능한 불투명도(opacity)** 로 도면 위에 합성되어 온도장이 실제 공간 위에 겹쳐 보인다. 또한 MVP 에서 숫자 입력으로만 지정하던 센서 좌표를 도면 위에 마커로 겹쳐 올린 **시각적 드래그 앤 드롭 배치 에디터**로 보완했다. 좌표계는 **정규화(0..1)** 를 유지하여 패널 리사이즈 후에도 배치가 보존된다. 모든 신규 config 필드는 **추가만(additive)** 하며 MVP 필드 의미는 불변이다. run 커밋 `bb32958a`.
+
+  - **순수 로직(TDD)**: `placement.ts`(`toNormalized`/`fromNormalized`/`clamp01`/`applySnap` — DOM 없이 좌표 변환·스냅·[0,1] clamp, 커버리지 100%), `imageAsset.ts`(`readImageAsDataUrl` — FileReader data-URL 인코딩 + `assertImageSizeUnderLimit` — 2MB 상한 경고/차단, FileReader 모킹 테스트).
+  - **렌더/컴포넌트**: `FloorPlanBackground.tsx`(data-URL 도면 배경 레이어, contain/cover fit, 미첨부 시 graceful), `SensorPlacementOverlay.tsx`(정규화 좌표 absolute 마커 오버레이 — `FacilityLinePanel` 배치 패턴 참고, 드래그 배치 + 미배치 배치-인 + 마커 제거), `HeatmapPanel.tsx`(배경→히트맵(opacity)→마커 오버레이 z-스택 + 편집 모드 — store 폴링 비파괴).
+  - **확장 4지점**: `heatmapConfig.ts`(`floor_plan`/`heatmap_opacity`/`editor` 하위호환 additive 파싱), `HeatmapPanel.tsx`(배경 레이어 + 편집 모드), `renderDashboardPanel.tsx`(배선), `PanelSettingsDialog.tsx`(이미지 첨부/제거/미리보기 + opacity 슬라이더 + fit select + 에디터 옵션). i18n `lib/i18n/{ko,en}.json`.
+  - **분기(Divergence, as-implemented — spec.md §구현 노트 IN-1~IN-4)**: (1) 이미지 저장 = data-URL-in-config + 2MB 상한(오케스트레이터 확정 1차 결정, 백엔드 asset 엔드포인트는 후속 이연). (2) 배경 합성 = 별도 배경 DOM 레이어 + CSS opacity(방식 (a)) — `HeatmapCanvas.tsx` 불변(방식 (b) canvas drawImage 미채택). (3) 드래그 테스트 = `fireEvent` + MouseEvent 기반 PointerEvent 폴리필(@testing-library/user-event 미설치, 신규 의존성 0). (4) 편집 모드 토글 = 패널 내부 런타임 비영속 상태(설정 다이얼로그는 에디터 옵션 snap/marker_size + 미배치 힌트만 제공).
+  - **품질**: REQ-01~05 전량 구현. 신규 코드 커버리지 96~100%(`placement.ts` 100%), LSP 0(tsc `--noEmit` + eslint 클린), 회귀 프론트 826 tests 통과. 신규 npm 의존성 0, 백엔드 무변경(data-URL, 불투명 JSON config 유지).
+  - **관련**: SPEC-HEATMAP-PANEL-002 v1.0.0(구현 완료, `bb32958a`, Tier M). MVP SPEC-HEATMAP-PANEL-001 을 가산 확장. 후속: SPEC-HEATMAP-PANEL-003(등고선, marching squares — 002 와 독립, 그 위에 층으로 쌓임).
+
 ### 추가 — 히트맵 대시보드 패널 (MVP) — Canvas 2D IDW 온도 히트맵
 
 - **신규 대시보드 PanelType `heatmap` 도입 — 공간 온도 센서를 IDW 보간하여 Canvas 2D 로 렌더하는 온도장 시각화 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0)**

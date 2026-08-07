@@ -1,7 +1,7 @@
 ---
 id: SPEC-HEATMAP-PANEL-002
-version: "0.1.0"
-status: in-progress
+version: "1.0.0"
+status: completed
 created: 2026-08-07
 updated: 2026-08-07
 author: xtra
@@ -21,6 +21,7 @@ tags: [dashboard, panel, heatmap, floor-plan, drag-and-drop, sensor-placement, c
 | 일자 | 버전 | 변경 | 작성자 |
 |------|------|------|--------|
 | 2026-08-07 | 0.1.0 | 최초 작성. MVP(SPEC-HEATMAP-PANEL-001) 위에 floor-plan 이미지 배경 렌더 + 히트맵 합성 불투명도 + 시각적 드래그 앤 드롭 센서 배치 에디터를 추가. MVP 의 `sensor_positions` 정규화 좌표 스키마를 그대로 소비(스키마 신규 필드는 추가만). 이미지 저장 방식은 1차 data-URL-in-config(plan.md 결정 근거). | xtra |
+| 2026-08-07 | 1.0.0 | 구현 완료(run 커밋 `bb32958a`, develop 직접 — personal-mode). REQ-01~05 전량 구현: 도면 배경 레이어(별도 DOM + CSS opacity 합성, 방식 (a)) + 드래그 앤 드롭 센서 배치 에디터(정규화 0..1 좌표, place-in/remove) + 설정 UI(이미지 첨부·제거·미리보기 / opacity 슬라이더 / fit select / 에디터 옵션). 신규 파일 `imageAsset.ts`·`FloorPlanBackground.tsx`·`placement.ts`(순수, 100% 커버리지)·`SensorPlacementOverlay.tsx`. 신규 코드 커버리지 96~100%, LSP 0, 회귀 826 tests 통과. 백엔드 무변경·신규 의존성 0. 상세 구현 노트는 §구현 노트 참조. | xtra |
 
 ## 개요 (Overview)
 
@@ -171,3 +172,42 @@ MVP `HeatmapPanelConfig` 에 다음 필드를 **추가**한다(기존 필드/의
 - REQ-03 → `SensorPlacementOverlay.tsx`, `placement.ts:toNormalized/fromNormalized`, `HeatmapPanel.tsx`(편집 모드)
 - REQ-04 → `placement.ts:clamp01`, `imageAsset.ts:assertImageSizeUnderLimit`, `HeatmapPanel.tsx`(미첨부/편집 격리 분기)
 - REQ-05 → `heatmap_opacity` 합성(`HeatmapPanel`/`HeatmapCanvas`), `placement.ts:applySnap`, `FloorPlanBackground`(fit)
+
+## 구현 노트 (Implementation Notes)
+
+run 커밋 `bb32958a`(develop 직접, personal-mode) as-implemented 기록. Level 1(spec-first) SPEC — 계획된 파일 전량 생성. MVP config 필드 의미는 불변(모든 신규 필드는 additive only).
+
+### 생성/확장 파일
+
+- **신규 순수 로직(TDD)**:
+  - `web/src/pages/dashboard/panels/heatmap/placement.ts` — `toNormalized`/`fromNormalized`/`clamp01`/`applySnap` 순수 함수. DOM 의존 없음, **커버리지 100%**.
+  - `web/src/pages/dashboard/panels/heatmap/imageAsset.ts` — `readImageAsDataUrl`(FileReader data-URL 인코딩) + `assertImageSizeUnderLimit`(2MB 상한 검증). FileReader 는 모킹으로 테스트.
+- **신규 컴포넌트**:
+  - `web/src/pages/dashboard/panels/heatmap/FloorPlanBackground.tsx` — data-URL 도면 배경 레이어(contain/cover fit). 미첨부 시 graceful(배경 없음).
+  - `web/src/pages/dashboard/panels/heatmap/SensorPlacementOverlay.tsx` — 정규화 좌표 absolute 마커 오버레이(`FacilityLinePanel` 배치 패턴 참고). 드래그 배치 + 미배치 배치-인 + 마커 제거.
+  - 각 컴포넌트/모듈의 `*.test.tsx`/`*.test.ts` 동반.
+- **확장(MVP 자산)**:
+  - `heatmapConfig.ts` — `floor_plan`/`heatmap_opacity`/`editor` 하위호환 파싱 추가(additive).
+  - `HeatmapPanel.tsx` — 배경→히트맵(opacity)→마커 오버레이 z-스택 + 편집 모드.
+  - `renderDashboardPanel.tsx` — 렌더 배선.
+  - `PanelSettingsDialog.tsx` — 이미지 첨부/제거/미리보기 + opacity 슬라이더 + fit + 에디터 옵션 UI.
+  - i18n `lib/i18n/{ko,en}.json`.
+
+### 분기 / 결정 (Divergence — Level 1)
+
+- **IN-1 이미지 저장 = data-URL-in-config**: 이미지를 config JSON 에 data-URL 로 임베드하고 **2MB 크기 상한**(초과 시 경고/차단)을 둔다. 오케스트레이터 확정 1차 결정으로, 백엔드 asset 업로드 엔드포인트는 후속 SPEC 으로 이연(백엔드 무변경, config 는 불투명 JSON 유지).
+- **IN-2 배경 합성 = 방식 (a)**: 별도 배경 DOM 레이어 + CSS `opacity` 합성(spec.md §환경 후보 (a))을 채택. `HeatmapCanvas.tsx` 는 **불변** — 후보 (b)(canvas `drawImage` + `ImageData` opacity 합성)는 채택하지 않음.
+- **IN-3 드래그 테스트 = `fireEvent` + PointerEvent 폴리필**: 드래그 테스트는 `fireEvent`(테스트 내 MouseEvent 기반 PointerEvent 폴리필)로 작성. `@testing-library/user-event` **미설치 — 신규 의존성 0**.
+- **IN-4 편집 모드 토글 = 패널 내부(런타임 비영속)**: 배치 편집 모드 on/off 는 패널 런타임 상태(비영속)로 패널 **안에** 둔다. 설정 다이얼로그는 에디터 옵션(snap/marker_size)과 미배치 센서 힌트만 제공(모드 토글 자체는 설정에 두지 않음).
+
+### 품질 (run 커밋 `bb32958a` 보고값 인용)
+
+- REQ-01~05 전량 구현.
+- 신규 코드 커버리지 **96~100%**(`placement.ts` 100%).
+- LSP **0**(tsc `--noEmit` + eslint 클린).
+- 회귀 프론트 **826 tests** 통과.
+- 백엔드 무변경, 신규 npm 의존성 **0**, config 불투명 JSON 유지.
+
+### 후속 (범위 밖, 불변)
+
+- SPEC-HEATMAP-PANEL-003: 등고선(contour lines, marching squares) 오버레이. 002 와 독립이며 그 위에 층으로 쌓임.
