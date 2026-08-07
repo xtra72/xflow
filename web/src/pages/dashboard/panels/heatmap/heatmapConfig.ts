@@ -22,6 +22,8 @@ export const DEFAULT_GRID_RESOLUTION = 48;
 export const DEFAULT_HEATMAP_OPACITY = 0.6;
 /** 도면 배경 맞춤(fit) 기본값(SPEC-002 REQ-01/REQ-05). */
 export const DEFAULT_FLOOR_PLAN_FIT: 'contain' | 'cover' = 'contain';
+/** 등고선 등치 레벨 개수 기본값(SPEC-003 REQ-05). */
+export const DEFAULT_CONTOUR_LEVEL_COUNT = 5;
 
 /** 센서 배치 좌표(정규화 0..1 권장). */
 export interface SensorPosition {
@@ -69,6 +71,34 @@ export interface EditorConfig {
   marker_size?: number;
 }
 
+/** 등고선 선 스타일(SPEC-003 REQ-05, additive). 미지정 필드는 렌더측 기본값. */
+export interface ContourLineStyle {
+  /** 선 색(hex). 미지정 시 렌더측 기본. */
+  color?: string;
+  /** 선 두께(px, non-scaling-stroke). 미지정 시 렌더측 기본. */
+  width?: number;
+  /** 점선 패턴(dasharray). 미지정/빈 배열이면 실선. */
+  dash?: number[];
+}
+
+/**
+ * 등고선(contour lines) config(SPEC-003 REQ-03/REQ-05, additive). 파싱 후 반환되면
+ * enabled/level_count/labels/line 이 항상 채워진 형태다. `levels`(명시 등치값)는 유효한
+ * 유한 숫자 배열일 때만 존재하며, 설정 시 level_count 보다 우선한다(렌더측 resolveLevels).
+ */
+export interface ContourConfig {
+  /** 등고선 표시 토글(기본 false). */
+  enabled: boolean;
+  /** 균등 분할 레벨 개수(기본 5). `levels` 미설정 시 사용. */
+  level_count: number;
+  /** 명시 등치값 배열(설정 시 level_count 보다 우선). */
+  levels?: number[];
+  /** 선 스타일(색/두께/dash). 미지정 필드는 렌더측 기본. */
+  line: ContourLineStyle;
+  /** 등치값 라벨 표시(기본 false). */
+  labels: boolean;
+}
+
 /**
  * 히트맵 패널 config.
  *
@@ -92,6 +122,8 @@ export interface HeatmapPanelConfig {
   heatmap_opacity: number;
   /** 배치 에디터 옵션(SPEC-002). 미지정/무효 시 undefined. */
   editor?: EditorConfig;
+  /** 등고선 오버레이(SPEC-003). 미지정 시 undefined(등고선 없음, additive off). */
+  contour?: ContourConfig;
 }
 
 /** 유한 숫자인지 확인한다(NaN/Infinity 방어). */
@@ -216,6 +248,50 @@ function parseEditor(raw: unknown): EditorConfig | undefined {
   return out.snap !== undefined || out.marker_size !== undefined ? out : undefined;
 }
 
+/** raw.contour.levels 를 파싱한다. 유한 숫자만 남긴다. 없거나 빈 결과면 undefined. */
+function parseContourLevels(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((v): v is number => isFiniteNumber(v));
+  return out.length > 0 ? out : undefined;
+}
+
+/** raw.contour.line 을 파싱한다. 유효 필드만 채운 선 스타일(항상 객체 반환, 기본 {}). */
+function parseContourLine(raw: unknown): ContourLineStyle {
+  if (!raw || typeof raw !== 'object') return {};
+  const l = raw as Record<string, unknown>;
+  const out: ContourLineStyle = {};
+  if (typeof l.color === 'string' && l.color.trim() !== '') out.color = l.color;
+  if (isFiniteNumber(l.width) && l.width > 0) out.width = l.width;
+  if (Array.isArray(l.dash)) {
+    const dash = l.dash.filter((v): v is number => isFiniteNumber(v) && v >= 0);
+    if (dash.length > 0) out.dash = dash;
+  }
+  return out;
+}
+
+/**
+ * raw.contour 를 파싱한다(SPEC-003, additive). floor_plan/editor 선례와 동일하게 raw 가
+ * 객체가 아니면 undefined 를 반환한다(등고선 없음). 객체이면 기본값(enabled=false,
+ * level_count=5, labels=false, line={})을 채워 반환한다. `levels`는 유효 배열일 때만 존재한다.
+ */
+function parseContour(raw: unknown): ContourConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const c = raw as Record<string, unknown>;
+  const levelCount =
+    isFiniteNumber(c.level_count) && c.level_count > 0
+      ? Math.trunc(c.level_count)
+      : DEFAULT_CONTOUR_LEVEL_COUNT;
+  const result: ContourConfig = {
+    enabled: c.enabled === true,
+    level_count: levelCount,
+    line: parseContourLine(c.line),
+    labels: c.labels === true,
+  };
+  const levels = parseContourLevels(c.levels);
+  if (levels) result.levels = levels;
+  return result;
+}
+
 /** raw.store_source 를 파싱한다. 객체가 아니면 기본 store 소스로 폴백(하위호환). */
 function parseStoreSource(raw: unknown): StoreSourceConfig {
   if (!raw || typeof raw !== 'object') return buildDefaultHeatmapStoreSource();
@@ -240,5 +316,7 @@ export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
     floor_plan: parseFloorPlan(cfg.floor_plan),
     heatmap_opacity: parseHeatmapOpacity(cfg.heatmap_opacity),
     editor: parseEditor(cfg.editor),
+    // SPEC-003 신규 필드(additive). 미설정 MVP/002 config 는 undefined(등고선 없음, AC-E2/회귀 0).
+    contour: parseContour(cfg.contour),
   };
 }

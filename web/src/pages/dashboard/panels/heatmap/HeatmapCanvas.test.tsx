@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, act } from '@testing-library/react';
 
 import HeatmapCanvas from './HeatmapCanvas';
-import { DEFAULT_COLOR_TABLE } from './idw';
+import { interpolateIDW, DEFAULT_COLOR_TABLE } from './idw';
 
 // ---- ResizeObserver 오버라이드: observe 시 지정 크기로 콜백을 발화한다 ----
 type RoCallback = (entries: Array<{ contentRect: { width: number; height: number } }>) => void;
@@ -64,21 +64,30 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// SPEC-003 T4b: HeatmapCanvas 는 상위가 계산한 field 를 받는다(재보간 없음).
+// 기존 동작(렌더 경로/DPR/리사이즈) 단언은 새 props 인터페이스로 갱신해 그대로 유지한다.
+const GRID = 8;
 const baseProps = {
-  points: [
-    { x: 0.2, y: 0.2, value: 20 },
-    { x: 0.8, y: 0.8, value: 26 },
-  ],
+  field: interpolateIDW(
+    [
+      { x: 0.2, y: 0.2, value: 20 },
+      { x: 0.8, y: 0.8, value: 26 },
+    ],
+    GRID,
+    GRID,
+    2,
+  ),
+  gridW: GRID,
+  gridH: GRID,
   bounds: { min: 18, max: 26 },
   colorTable: DEFAULT_COLOR_TABLE,
-  power: 2,
-  gridResolution: 8,
+  hasData: true,
 };
 
 describe('HeatmapCanvas', () => {
   it('렌더 경로가 끝까지 실행된다(ImageData 채움 → putImageData → drawImage 업스케일)', () => {
     render(<HeatmapCanvas {...baseProps} />);
-    // 저해상 격자 크기(8x8)로 ImageData 를 만든다.
+    // 전달받은 격자 크기(8x8)로 ImageData 를 만든다.
     expect(ctxStub.createImageData).toHaveBeenCalledWith(8, 8);
     expect(ctxStub.putImageData).toHaveBeenCalled();
     // 저해상 오프스크린 → 표시 canvas 로 업스케일 blit.
@@ -98,10 +107,19 @@ describe('HeatmapCanvas', () => {
     expect(canvas.style.height).toBe('80px');
   });
 
-  it('gridResolution 은 상한(MAX_GRID_RESOLUTION)으로 clamp 된다(R2 성능 가드)', () => {
-    render(<HeatmapCanvas {...baseProps} gridResolution={9999} />);
-    // 128 으로 clamp.
-    expect(ctxStub.createImageData).toHaveBeenCalledWith(128, 128);
+  it('전달받은 gridW/gridH 를 그대로 오프스크린 크기로 사용한다(재보간 없음)', () => {
+    const field = interpolateIDW([{ x: 0.5, y: 0.5, value: 22 }], 16, 16, 2);
+    render(<HeatmapCanvas {...baseProps} field={field} gridW={16} gridH={16} />);
+    expect(ctxStub.createImageData).toHaveBeenCalledWith(16, 16);
+  });
+
+  it('hasData=false 면 blank(alpha=0)로 채운다(빈 상태 규약 보존)', () => {
+    render(<HeatmapCanvas {...baseProps} hasData={false} />);
+    const img = ctxStub.putImageData.mock.calls[0]![0] as { data: Uint8ClampedArray };
+    // 모든 픽셀 alpha 채널(o+3)이 0.
+    for (let i = 0; i < GRID * GRID; i++) {
+      expect(img.data[i * 4 + 3]).toBe(0);
+    }
   });
 
   it('리사이즈 시 새 표시 크기(및 DPR)로 백킹 버퍼를 재계산한다', () => {

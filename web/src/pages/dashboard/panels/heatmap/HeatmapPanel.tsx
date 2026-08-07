@@ -21,11 +21,17 @@ import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 import { useStoreChartData } from '../charts/useStoreChartData';
 import { parseHeatmapConfig } from './heatmapConfig';
 import { joinSensorPoints } from './heatmapJoin';
-import { DEFAULT_COLOR_TABLE } from './idw';
-import HeatmapCanvas from './HeatmapCanvas';
+import { DEFAULT_COLOR_TABLE, interpolateIDW } from './idw';
+import HeatmapCanvas, { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './HeatmapCanvas';
+import ContourLayer from './ContourLayer';
 import FloorPlanBackground from './FloorPlanBackground';
 import SensorPlacementOverlay, { type PlacedSensor } from './SensorPlacementOverlay';
 import type { NormalizedPos } from './placement';
+
+/** 값을 [lo, hi] 로 clamp 한다(격자 해상도 성능 가드). */
+function clamp(value: number, lo: number, hi: number): number {
+  return value < lo ? lo : value > hi ? hi : value;
+}
 
 interface HeatmapPanelProps {
   panelId: string;
@@ -73,6 +79,18 @@ export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelPro
   // 상하한: config 지정값 우선, 미지정 시 자동(센서값 범위), 그마저 없으면 0..1(REQ-05).
   const bounds = cfg.value_bounds ?? autoBounds ?? { min: 0, max: 1 };
   const colorTable = cfg.color_table ?? DEFAULT_COLOR_TABLE;
+
+  // SPEC-003: 격자 계산을 패널로 상승한다. 히트맵 canvas 와 등고선(ContourLayer)이 **동일 field
+  // 참조**를 공유하도록 interpolateIDW 는 여기서 패널당 1회만 호출한다(재보간 금지, R3/AC-E5).
+  // clamp 상수는 HeatmapCanvas(성능 가드)에서, 보간은 idw.ts 에서 재사용한다.
+  const grid = useMemo(
+    () => Math.round(clamp(cfg.idw.grid_resolution, MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION)),
+    [cfg.idw.grid_resolution],
+  );
+  const field = useMemo(
+    () => interpolateIDW(points, grid, grid, cfg.idw.power),
+    [points, grid, cfg.idw.power],
+  );
 
   const isError = storeResult.status === 'error';
   // 빈 상태(REQ-04 / AC-E1): 좌표가 배치된 센서점이 0개면 안내 문구를 표시한다(렌더 예외 없음).
@@ -149,14 +167,26 @@ export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelPro
             {/* 온도장은 배치 센서점이 있을 때만 렌더(편집 중 빈 좌표 공간 위 배치도 허용, AC-E1). */}
             {!isEmpty && (
               <HeatmapCanvas
-                points={points}
+                field={field}
+                gridW={grid}
+                gridH={grid}
+                hasData={points.length > 0}
                 bounds={bounds}
                 colorTable={colorTable}
-                power={cfg.idw.power}
-                gridResolution={cfg.idw.grid_resolution}
               />
             )}
           </div>
+          {/* SPEC-003: 등고선 오버레이(z-15) — 히트맵(z-10) 위, 센서 마커(z-20) 아래. 히트맵과
+              동일 field 참조를 공유한다(재보간 없음). contour off/빈 격자 시 ContourLayer 가 null. */}
+          {!isEmpty && cfg.contour?.enabled && (
+            <ContourLayer
+              field={field}
+              gridW={grid}
+              gridH={grid}
+              bounds={bounds}
+              contour={cfg.contour}
+            />
+          )}
           {editing && (
             <SensorPlacementOverlay
               placed={placed}

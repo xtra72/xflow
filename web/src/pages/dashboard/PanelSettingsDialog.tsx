@@ -58,7 +58,12 @@ import {
   type StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
 // SPEC-HEATMAP-PANEL-001: 히트맵 설정 섹션(store 태그 + 센서 좌표 + 상하한 + 색상표 + IDW).
-import { parseHeatmapConfig, type ColorStop } from './panels/heatmap/heatmapConfig';
+import {
+  parseHeatmapConfig,
+  DEFAULT_CONTOUR_LEVEL_COUNT,
+  type ColorStop,
+  type ContourConfig,
+} from './panels/heatmap/heatmapConfig';
 import { useStoreChartData } from './panels/charts/useStoreChartData';
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // SPEC-HEATMAP-PANEL-002: 도면 이미지 첨부(data-URL) + 크기 상한 검증.
@@ -1482,6 +1487,34 @@ function HeatmapSettingsSection({
     const empty = next.snap === undefined && next.marker_size === undefined;
     onConfigChange({ editor: empty ? undefined : next });
   };
+
+  // SPEC-003: 등고선 설정(additive — contour 키만 병합). 기존 필드/렌더 경로 무변경.
+  const contourCfg = cfg.contour;
+  const setContour = (patch: Partial<ContourConfig>) => {
+    const base: ContourConfig = contourCfg ?? {
+      enabled: false,
+      level_count: DEFAULT_CONTOUR_LEVEL_COUNT,
+      line: {},
+      labels: false,
+    };
+    onConfigChange({ contour: { ...base, ...patch } });
+  };
+  // 선 스타일 부분 병합(색/두께/dash).
+  const setContourLine = (patch: Partial<ContourConfig['line']>) => {
+    const line = { ...(contourCfg?.line ?? {}), ...patch };
+    if (line.color === undefined) delete line.color;
+    if (line.width === undefined) delete line.width;
+    if (line.dash === undefined || line.dash.length === 0) delete line.dash;
+    setContour({ line });
+  };
+  // 쉼표 구분 숫자열 → number[](유한만). 비면 undefined.
+  const parseNumberList = (text: string): number[] | undefined => {
+    const nums = text
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n));
+    return nums.length > 0 ? nums : undefined;
+  };
   // 미배치 센서 수(라이브 시리즈 중 좌표 없는 것) — 편집 안내용.
   const unplacedCount = storeResult.seriesNames.filter((n) => {
     const p = rawPositions[n];
@@ -1820,6 +1853,114 @@ function HeatmapSettingsSection({
             />
           </div>
         </div>
+      </div>
+
+      {/* 9) SPEC-003: 등고선(contour lines) 오버레이 — enabled/레벨/선 스타일/라벨. additive. */}
+      <div>
+        <label className="mb-1.5 flex items-center gap-2 text-xs font-medium text-(--color-text-muted)">
+          <input
+            type="checkbox"
+            checked={contourCfg?.enabled ?? false}
+            data-testid="heatmap-contour-enabled"
+            onChange={(e) => setContour({ enabled: e.target.checked })}
+          />
+          {t('dashboard.settings.heatmapContour')}
+        </label>
+
+        {(contourCfg?.enabled ?? false) && (
+          <div className="mt-2 space-y-2 border-l-2 border-(--color-border-default) pl-2">
+            {/* 레벨 개수 vs 명시 등치값(설정 시 개수보다 우선). */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapContourLevelCount')}
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={String(contourCfg?.level_count ?? DEFAULT_CONTOUR_LEVEL_COUNT)}
+                  data-testid="heatmap-contour-level-count"
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n) && n > 0) setContour({ level_count: Math.trunc(n) });
+                  }}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapContourLevels')}
+                </label>
+                <input
+                  type="text"
+                  value={contourCfg?.levels?.join(', ') ?? ''}
+                  data-testid="heatmap-contour-levels"
+                  placeholder="20, 24"
+                  onChange={(e) => setContour({ levels: parseNumberList(e.target.value) })}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+
+            {/* 선 스타일: 색 / 두께 / dash. */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-(--color-text-muted)">
+                {t('dashboard.settings.heatmapContourLineColor')}
+              </span>
+              <ColorSwatchButton
+                color={contourCfg?.line.color}
+                onChange={(color) => setContourLine({ color })}
+                ariaLabel={t('dashboard.settings.heatmapContourLineColorAria')}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapContourLineWidth')}
+                </label>
+                <input
+                  type="number"
+                  min={0.5}
+                  step={0.5}
+                  value={contourCfg?.line.width !== undefined ? String(contourCfg.line.width) : ''}
+                  data-testid="heatmap-contour-line-width"
+                  placeholder="1"
+                  onChange={(e) =>
+                    setContourLine({
+                      width: e.target.value === '' ? undefined : Number(e.target.value),
+                    })
+                  }
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapContourLineDash')}
+                </label>
+                <input
+                  type="text"
+                  value={contourCfg?.line.dash?.join(', ') ?? ''}
+                  data-testid="heatmap-contour-line-dash"
+                  placeholder="4, 2"
+                  onChange={(e) => setContourLine({ dash: parseNumberList(e.target.value) })}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+
+            {/* 등치값 라벨 토글. */}
+            <label className="flex items-center gap-2 text-[11px] text-(--color-text-muted)">
+              <input
+                type="checkbox"
+                checked={contourCfg?.labels ?? false}
+                data-testid="heatmap-contour-labels"
+                onChange={(e) => setContour({ labels: e.target.checked })}
+              />
+              {t('dashboard.settings.heatmapContourLabels')}
+            </label>
+          </div>
+        )}
       </div>
     </div>
   );

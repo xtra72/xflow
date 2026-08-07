@@ -10,6 +10,7 @@ import {
   DEFAULT_IDW_POWER,
   DEFAULT_GRID_RESOLUTION,
   DEFAULT_HEATMAP_OPACITY,
+  DEFAULT_CONTOUR_LEVEL_COUNT,
 } from './heatmapConfig';
 
 describe('parseHeatmapConfig', () => {
@@ -179,6 +180,87 @@ describe('parseHeatmapConfig — SPEC-002 additive fields', () => {
     expect(parseHeatmapConfig({ editor: { snap: -1, marker_size: 0 } }).editor).toBeUndefined();
     expect(parseHeatmapConfig({ editor: {} }).editor).toBeUndefined();
     expect(parseHeatmapConfig({}).editor).toBeUndefined();
+  });
+});
+
+// SPEC-HEATMAP-PANEL-003 T2: contour 필드 하위호환 파싱(additive-only).
+describe('parseHeatmapConfig — SPEC-003 contour field', () => {
+  it('회귀 0: MVP/002 config(contour 없음)는 contour undefined 로 두고 기존 필드 불변', () => {
+    const mvp = {
+      data_source: 'store',
+      store_source: buildDefaultHeatmapStoreSource(),
+      sensor_positions: { s1: { x: 0.3, y: 0.7 } },
+      idw: { power: 2, grid_resolution: 32 },
+      floor_plan: { image: 'data:image/png;base64,AAAA' },
+      heatmap_opacity: 0.5,
+    };
+    const cfg = parseHeatmapConfig(mvp);
+    expect(cfg.contour).toBeUndefined();
+    // 기존 필드 의미 불변.
+    expect(cfg.sensor_positions).toEqual({ s1: { x: 0.3, y: 0.7 } });
+    expect(cfg.idw).toEqual({ power: 2, grid_resolution: 32 });
+    expect(cfg.floor_plan).toEqual({ image: 'data:image/png;base64,AAAA', fit: 'contain' });
+    expect(cfg.heatmap_opacity).toBe(0.5);
+  });
+
+  it('contour 객체가 있으면 기본값(enabled=false, level_count=5, labels=false, line={})으로 채운다', () => {
+    const cfg = parseHeatmapConfig({ contour: {} });
+    expect(cfg.contour).toEqual({
+      enabled: false,
+      level_count: DEFAULT_CONTOUR_LEVEL_COUNT,
+      labels: false,
+      line: {},
+    });
+  });
+
+  it('enabled/labels 는 boolean true 일 때만 켜진다', () => {
+    expect(parseHeatmapConfig({ contour: { enabled: true, labels: true } }).contour).toMatchObject({
+      enabled: true,
+      labels: true,
+    });
+    expect(parseHeatmapConfig({ contour: { enabled: 'yes', labels: 1 } }).contour).toMatchObject({
+      enabled: false,
+      labels: false,
+    });
+  });
+
+  it('level_count 는 양의 정수만, 그 외는 기본값(5)로 폴백', () => {
+    expect(parseHeatmapConfig({ contour: { level_count: 8 } }).contour?.level_count).toBe(8);
+    expect(parseHeatmapConfig({ contour: { level_count: 3.9 } }).contour?.level_count).toBe(3);
+    expect(parseHeatmapConfig({ contour: { level_count: 0 } }).contour?.level_count).toBe(
+      DEFAULT_CONTOUR_LEVEL_COUNT,
+    );
+    expect(parseHeatmapConfig({ contour: { level_count: -2 } }).contour?.level_count).toBe(
+      DEFAULT_CONTOUR_LEVEL_COUNT,
+    );
+  });
+
+  it('levels 는 유한 숫자 배열만 통과, 무효/빈 배열은 undefined(level_count 사용)', () => {
+    expect(parseHeatmapConfig({ contour: { levels: [20, 24] } }).contour?.levels).toEqual([20, 24]);
+    // 비유한 항목은 걸러진다.
+    expect(parseHeatmapConfig({ contour: { levels: [20, NaN, 'x', 24] } }).contour?.levels).toEqual([
+      20, 24,
+    ]);
+    expect(parseHeatmapConfig({ contour: { levels: [] } }).contour?.levels).toBeUndefined();
+    expect(parseHeatmapConfig({ contour: { levels: 'nope' } }).contour?.levels).toBeUndefined();
+  });
+
+  it('line 스타일은 유효 필드만 채운다(색/양의 두께/유한 dash)', () => {
+    expect(
+      parseHeatmapConfig({ contour: { line: { color: '#123456', width: 2, dash: [4, 2] } } })
+        .contour?.line,
+    ).toEqual({ color: '#123456', width: 2, dash: [4, 2] });
+    // 무효 필드는 제외(음수 두께/빈 색/음수 dash 항목).
+    expect(
+      parseHeatmapConfig({ contour: { line: { color: '  ', width: -1, dash: [-1] } } }).contour
+        ?.line,
+    ).toEqual({});
+    expect(parseHeatmapConfig({ contour: { line: 'x' } }).contour?.line).toEqual({});
+  });
+
+  it('contour 가 비객체(문자열/숫자)면 undefined(additive off)', () => {
+    expect(parseHeatmapConfig({ contour: 'on' }).contour).toBeUndefined();
+    expect(parseHeatmapConfig({ contour: 5 }).contour).toBeUndefined();
   });
 });
 

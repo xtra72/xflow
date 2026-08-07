@@ -222,6 +222,58 @@ describe('HeatmapPanel', () => {
     expect(screen.getByTestId('sensor-unplaced-s1')).toBeInTheDocument();
   });
 
+  // SPEC-HEATMAP-PANEL-003 T4: 등고선 오버레이 마운트(additive, contour off 시 무영향).
+  it('회귀 0: contour 미설정이면 등고선 레이어를 렌더하지 않는다(MVP/002 무영향)', () => {
+    setStore({
+      seriesNames: ['s1', 's2'],
+      seriesEntries: new Map([
+        ['s1', reading(20)],
+        ['s2', reading(26)],
+      ]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.2, y: 0.2 }, s2: { x: 0.8, y: 0.8 } })}
+      />,
+    );
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.queryByTestId('contour-layer')).toBeNull();
+  });
+
+  it('AC-01: contour.enabled 이면 히트맵 위에 등고선 레이어를 마운트한다(동일 격자)', () => {
+    setStore({
+      seriesNames: ['s1', 's2'],
+      seriesEntries: new Map([
+        ['s1', reading(18)],
+        ['s2', reading(26)],
+      ]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig(
+          { s1: { x: 0.1, y: 0.5 }, s2: { x: 0.9, y: 0.5 } },
+          { value_bounds: { min: 18, max: 26 }, contour: { enabled: true, level_count: 3 } },
+        )}
+      />,
+    );
+    // 히트맵 + 등고선 공존.
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.getByTestId('contour-layer')).toBeInTheDocument();
+  });
+
+  it('AC-E2: contour.enabled 이지만 배치 센서 0개면 등고선 레이어가 없다(graceful)', () => {
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    render(
+      <HeatmapPanel panelId="p" config={makeConfig({}, { contour: { enabled: true } })} />,
+    );
+    expect(screen.getByText('dashboard.heatmap.emptyState')).toBeInTheDocument();
+    expect(screen.queryByTestId('contour-layer')).toBeNull();
+  });
+
   it('AC-E3: 폴링 실패(status=error)여도 마지막 온도장을 유지하고 오류 배지를 덧띄운다', () => {
     setStore({
       seriesNames: ['s1'],
