@@ -1,7 +1,7 @@
 ---
 id: SPEC-HEATMAP-PANEL-001
-version: "0.1.0"
-status: in-progress
+version: "1.0.0"
+status: completed
 created: 2026-08-07
 updated: 2026-08-07
 author: xtra
@@ -21,6 +21,7 @@ tags: [dashboard, panel, heatmap, canvas, idw, store, temperature, frontend]
 | 일자 | 버전 | 변경 | 작성자 |
 |------|------|------|--------|
 | 2026-08-07 | 0.1.0 | 최초 작성. MVP 범위: 패널 타입 등록 + store 데이터 바인딩 + Canvas 2D IDW 보간 렌더 + 표시값 상하한(clamp) + 색상표. floor-plan 배경/드래그 배치(002), 등고선(003)은 후속 SPEC 로 분리. | xtra |
+| 2026-08-07 | 1.0.0 | 구현 완료(커밋 `69294ced`). REQ-01~05 전량 구현, 신규 코드 커버리지 99%, LSP 0(tsc/eslint), 회귀 786 tests 통과. 좌표 결합 로직을 순수 모듈 `heatmapJoin.ts` 로 분리(단위 테스트 격리 목적, plan.md 대비 유일 분기). 구현 노트는 §구현 노트 참고. | xtra |
 
 ## 개요 (Overview)
 
@@ -144,3 +145,38 @@ EARS 5개 유형(Ubiquitous / Event-Driven / State-Driven / Unwanted / Optional)
 - REQ-03 → `HeatmapCanvas.tsx`, `idw.ts:interpolateIDW`
 - REQ-04 → `HeatmapPanel.tsx` 빈/오류 상태 분기, `parseHeatmapConfig` 좌표 필터
 - REQ-05 → `idw.ts:mapValueToColor`, `HeatmapPanelSettingsSection`, `colorSwatchPalette`
+
+## 구현 노트 (Implementation Notes)
+
+구현 완료 (커밋 `69294ced`, 2026-08-07). Level 1 spec-first SPEC 로서 계획된 파일이 모두 생성되었고, 아래 1건의 분기 외에는 plan.md 설계와 일치한다.
+
+### 생성 파일 (신규 디렉토리 `web/src/pages/dashboard/panels/heatmap/`)
+
+MVP 는 순수 로직 3종 + 렌더/패널 2종 + 설정 UI + i18n + 등록 4지점으로 구성된다. 신규 컴포넌트는 모두 신규 디렉토리에 배치했다(REQ-01).
+
+- `idw.ts` — IDW 보간(`interpolateIDW`, 0-거리 안전 분기) + 값→색 매핑(`mapValueToColor`, clamp + 색상표 정지점 보간) 순수 함수 (REQ-03/05, TDD).
+- `heatmapConfig.ts` — `HeatmapPanelConfig` 타입 + `parseHeatmapConfig` 파서(결측/손상 입력을 예외 없이 기본값 보정, 하위호환 — A5/REQ-05).
+- `heatmapJoin.ts` — 센서 최신값(`aggregation:'last'`) + 배치 좌표 결합 순수 로직. 좌표 미배치 센서는 보간 입력 제외 + 설정 UI 노출용 별도 목록(AC-E2).
+- `HeatmapCanvas.tsx` — `<canvas>` 2D 렌더 컴포넌트. 저해상 IDW 격자 → `ImageData` → devicePixelRatio 업스케일 blit, `ResizeObserver` 리사이즈 재계산(R1 선명도 / R2 성능 / AC-E4).
+- `HeatmapPanel.tsx` — 패널 진입점. `LineChartPanel` isStore 분기 미러링으로 `useStoreChartData` 태그 바인딩(REQ-02) + 센서값·좌표 결합(REQ-04 견고성 분기).
+- 대응 테스트 5종: `idw.test.ts`, `heatmapConfig.test.ts`, `heatmapJoin.test.ts`, `HeatmapCanvas.test.tsx`, `HeatmapPanel.test.tsx`.
+
+패널 프레임워크 등록 4지점(REQ-01): `stores/uiStore.ts`(`PanelType` 유니온 + `panelDefaultSize` + `createDefaultPanel`), `pages/dashboard/renderDashboardPanel.tsx`(렌더 switch), `pages/dashboard/AddPanelDialog.tsx`(chart 카테고리 옵션), `pages/dashboard/PanelSettingsDialog.tsx`(heatmap 전용 설정 섹션: 태그필터 / 센서 x·y / value_bounds / color_table / IDW power·resolution). i18n `lib/i18n/{ko,en}.json`.
+
+### 분기 (Divergence, as-implemented)
+
+- **IN-1 — 좌표 결합 로직을 `heatmapJoin.ts` 순수 모듈로 분리**: plan.md 는 좌표-센서값 결합을 `HeatmapPanel.tsx` 내부에 두는 것으로 설계했으나, 실제 구현은 이를 별도 순수 모듈 `heatmapJoin.ts` 로 추출했다. **단위 테스트 격리 목적**(DOM 의존 없는 결합 로직을 독립 커버)이며, 새로운 추상화 계층을 도입한 것은 아니다. 그 외 계획 파일·설계는 모두 일치.
+
+### 순-신규 기술 (net-new)
+
+- **HTML Canvas 2D API** (`CanvasRenderingContext2D` + `ImageData`) — 코드베이스 **최초의 실제 2D drawing canvas**. 기존 차트 패널은 SVG/DOM 렌더였으므로 픽셀 단위 `ImageData` 채움은 본 SPEC 이 처음 도입한다.
+- 신규 의존성 0, 백엔드/엔드포인트/전송 계층 변경 0(패널 config 는 기존과 동일 불투명 JSON, store REST 폴링 `POST /api/v1/store/{agent}/query` 재사용).
+
+### 품질 결과
+
+- REQ-01~05 전량 구현. 신규 코드 커버리지 **99%**, LSP **0**(tsc `--noEmit` + eslint 클린), 회귀 프론트 **786 tests** 통과.
+
+### 후속 SPEC (범위 밖, 불변)
+
+- SPEC-HEATMAP-PANEL-002: floor-plan 이미지 배경 + 드래그 앤 드롭 센서 배치 에디터.
+- SPEC-HEATMAP-PANEL-003: 등고선(contour lines, marching squares).

@@ -711,6 +711,17 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - `web/src/pages/dashboard/panels/facilitySchedule/facilityScheduleUtils.ts`: 순수 로직(셀렉터/액션 build·parse·label·정렬·검증). dual-write 는 선행 `triggerPanelUtils`(`buildFullTriggerConfig`/`patchNodeConfigInDefinition`/`detectConflict`) 재사용 — configureNode(live)+updateFlow(persist), 404 persist-only, last-write-wins.
 - 와이어링: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(디스패치), `pages/dashboard/AddPanelDialog.tsx`(패널 옵션 + 대상 선택 단계). i18n `lib/i18n/{ko,en}.json`. 범용 `trigger-config` 패널·trigger 노드 무회귀, 신규 백엔드 엔드포인트/저장소 0.
 
+**히트맵 대시보드 패널 (MVP)** (SPEC-HEATMAP-PANEL-001, v1.0.0 — 프론트엔드 전용, 신규 백엔드 0):
+
+신규 PanelType `heatmap`. 공간 온도 센서를 store 태그 필터로 바인딩하고 센서별 수동 배치 좌표 `{x,y}` 기준 IDW(Inverse Distance Weighting) 보간으로 연속 온도장을 HTML Canvas 2D 에 픽셀 단위 렌더한다. 코드베이스 최초의 실제 2D drawing canvas. 신규 디렉토리 `web/src/pages/dashboard/panels/heatmap/` 아래 10개 파일(소스 5 + 테스트 5)로 구성.
+
+- `web/src/pages/dashboard/panels/heatmap/idw.ts`: IDW 보간(`interpolateIDW` — 0-거리 안전 분기) + 값→색 매핑(`mapValueToColor` — clamp + 색상표 정지점 보간) 순수 함수. DOM 의존 없음, 단위 테스트 필수 커버.
+- `web/src/pages/dashboard/panels/heatmap/heatmapConfig.ts`: `HeatmapPanelConfig` 타입(`store_source`/`sensor_positions`/`value_bounds`/`color_table`/`idw`) + `parseHeatmapConfig` 파서. 결측/손상 입력을 예외 없이 기본값으로 보정(하위호환, 불투명 JSON 영속).
+- `web/src/pages/dashboard/panels/heatmap/heatmapJoin.ts`: 센서 최신값(`aggregation:'last'`) + 배치 좌표 결합 순수 로직. 좌표 미배치 센서는 보간 입력 제외 + 설정 UI 노출용 별도 목록. (plan.md 는 `HeatmapPanel.tsx` 내부 배치였으나 단위 테스트 격리 위해 순수 모듈로 분리 — 유일 분기.)
+- `web/src/pages/dashboard/panels/heatmap/HeatmapCanvas.tsx`: `<canvas>` 2D 렌더. 저해상 IDW 격자 → `ImageData` → devicePixelRatio 업스케일 blit, `ResizeObserver` 리사이즈 재계산(선명도/성능).
+- `web/src/pages/dashboard/panels/heatmap/HeatmapPanel.tsx`: 패널 진입점. `LineChartPanel` isStore 분기 미러링으로 `useStoreChartData` 태그 바인딩 + 센서값·좌표 결합, 센서 0개·미배치·폴링 실패 graceful 처리.
+- 와이어링 4지점: `stores/uiStore.ts`(PanelType/기본값/기본 config), `pages/dashboard/renderDashboardPanel.tsx`(렌더 switch), `pages/dashboard/AddPanelDialog.tsx`(chart 카테고리 옵션), `pages/dashboard/PanelSettingsDialog.tsx`(heatmap 전용 설정 섹션 — 태그필터/센서 x·y/value_bounds/color_table/IDW power·resolution). i18n `lib/i18n/{ko,en}.json`. 신규 코드 커버리지 99%, LSP 0. 후속: floor-plan 배경+드래그 배치(002), 등고선(003).
+
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
 - `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)

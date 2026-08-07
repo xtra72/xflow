@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 추가 — 히트맵 대시보드 패널 (MVP) — Canvas 2D IDW 온도 히트맵
+
+- **신규 대시보드 PanelType `heatmap` 도입 — 공간 온도 센서를 IDW 보간하여 Canvas 2D 로 렌더하는 온도장 시각화 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0)**
+
+  대시보드에 신규 패널 타입 `heatmap` 을 가산했다. 공간에 배치된 다수의 온도 센서를 store 태그 필터로 동적 바인딩하고, 각 센서의 수동 배치 좌표 `{x,y}` 를 기준으로 **IDW(Inverse Distance Weighting)** 보간을 수행해 연속적인 온도장을 **HTML Canvas 2D** 에 픽셀 단위로 렌더한다. 보간값은 사용자 지정 상·하한으로 clamp 된 뒤 색상표로 색에 매핑된다. 코드베이스 최초의 실제 2D drawing canvas 도입(허용된 결정)이며, 백엔드/엔드포인트/전송 계층 변경은 없다(패널 config 는 기존과 동일 불투명 JSON, store REST 폴링 `POST /api/v1/store/{agent}/query` 재사용). 커밋 `69294ced`.
+
+  - **순수 로직(TDD)**: `idw.ts`(`interpolateIDW` — 0-거리 안전 분기 + `mapValueToColor` — clamp·색상표 정지점 보간), `heatmapConfig.ts`(`HeatmapPanelConfig` 타입 + `parseHeatmapConfig` 결측/손상 입력 기본값 보정 하위호환 파서), `heatmapJoin.ts`(센서 최신값 `aggregation:'last'` + 배치 좌표 결합, 좌표 미배치 센서는 보간 입력 제외 + 설정 UI 노출용 별도 목록).
+  - **렌더/패널**: `HeatmapCanvas.tsx`(저해상 IDW 격자 → `ImageData` → devicePixelRatio 업스케일 blit, `ResizeObserver` 리사이즈 재계산), `HeatmapPanel.tsx`(`LineChartPanel` isStore 분기 미러링으로 `useStoreChartData` 태그 바인딩 + 센서값·좌표 결합, 센서 0개·미배치·폴링 실패 graceful).
+  - **와이어링 4지점**: `stores/uiStore.ts`(`PanelType` 유니온 + `panelDefaultSize` + `createDefaultPanel`), `pages/dashboard/renderDashboardPanel.tsx`(렌더 switch), `pages/dashboard/AddPanelDialog.tsx`(chart 카테고리 옵션), `pages/dashboard/PanelSettingsDialog.tsx`(heatmap 전용 설정 섹션 — 태그필터/센서 x·y/value_bounds/color_table/IDW power·resolution). 신규 디렉토리 `web/src/pages/dashboard/panels/heatmap/`. i18n `lib/i18n/{ko,en}.json`.
+  - **분기(Divergence, as-implemented — spec.md §구현 노트 IN-1)**: 좌표-센서값 결합 로직을 `HeatmapPanel.tsx` 내부(plan.md 설계)가 아니라 순수 모듈 `heatmapJoin.ts` 로 분리 — 단위 테스트 격리 목적이며 신규 추상화 계층은 아님. 그 외 계획 파일·설계 일치.
+  - **품질**: REQ-01~05 전량 구현. 신규 코드 커버리지 99%, LSP 0(tsc `--noEmit` + eslint 클린), 회귀 프론트 786 tests 통과. 신규 의존성 0, 신규 백엔드 엔드포인트/저장소 0.
+  - **관련**: SPEC-HEATMAP-PANEL-001 v1.0.0(구현 완료, `69294ced`, Tier M). 범위 분할 후속: SPEC-HEATMAP-PANEL-002(floor-plan 배경 + 드래그 배치 에디터), SPEC-HEATMAP-PANEL-003(등고선, marching squares).
+
 ### 추가 — MODBUS Client RTU 지원 + 트랜스포트 선택 + 그룹별 폴링 + 데이터타입 확장 + 노드 런타임 set_config
 
 - **기존 `modbus-tcp` 에이전트에 Modbus RTU(시리얼) 지원 + 트랜스포트 선택 + 레지스터 그룹별 독립 폴링 + 데이터타입 4순열/raw + 노드 런타임 재구성(`set_config`) 을 가산 (Non-breaking, 가산형, `modbus-tcp` type id 보존)**

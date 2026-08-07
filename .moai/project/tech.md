@@ -10,6 +10,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | HTTP Framework | Fiber v3 또는 Echo v4 | REST API 서버 |
 | Frontend | React 19 + TypeScript 5.x | 웹 대시보드 SPA |
 | Node Editor | React Flow | 플로우 에디터 UI |
+| Canvas 렌더 | HTML Canvas 2D API (네이티브) | 히트맵 패널 IDW 온도장 픽셀 렌더 (SPEC-HEATMAP-PANEL-001) |
 | CSS | Tailwind CSS v4 | 유틸리티 퍼스트 스타일링 |
 | State Management | Zustand | 경량 상태 관리 |
 | Build Tool | Vite | 프론트엔드 번들러 |
@@ -82,6 +83,17 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 - 커스텀 노드 타입, 커스텀 엣지, 미니맵, 컨트롤 등 풍부한 기능
 - 성능 최적화 (가상화, 지연 렌더링)
 - 활발한 커뮤니티 및 지속적인 업데이트
+
+### Canvas 2D 렌더 + IDW 보간 (히트맵 패널, SPEC-HEATMAP-PANEL-001)
+
+히트맵 패널은 코드베이스에 **HTML Canvas 2D API**(`CanvasRenderingContext2D` + `ImageData`)를 순-신규 프론트엔드 렌더 기법으로 도입한다. 기존 차트/대시보드 패널은 SVG/DOM 기반(React Flow, recharts 등) 렌더였으므로, 픽셀 단위로 온도장을 채우는 실제 2D drawing canvas 는 본 패널이 처음이다.
+
+**선택 이유**:
+- 공간 온도 센서의 IDW(Inverse Distance Weighting, 역거리 가중) 보간 온도장은 격자 픽셀마다 색을 채워야 하므로 SVG/DOM 대비 `ImageData` 직접 채움이 자연스럽고 성능이 우수하다.
+- 성능을 위해 저해상 격자에서만 IDW 를 계산하고 표시 크기로 업스케일하며(디스플레이 픽셀마다 IDW 계산하지 않음), 선명도를 위해 `devicePixelRatio` 로 백킹 버퍼를 스케일하고 `ResizeObserver` 로 리사이즈 시 재계산한다.
+- 신규 외부 의존성 없이 브라우저 네이티브 API 만 사용한다(추가 차트/그래픽 라이브러리 도입 회피).
+
+**활용 범위**: 순수 보간/색 매핑 로직(`idw.ts`)은 DOM 의존 없이 분리하여 단위 테스트로 커버하고, 렌더(`HeatmapCanvas.tsx`)와 격리한다. 후속 SPEC(002 floor-plan 배경, 003 등고선)에서 동일 canvas 기반을 확장할 예정이다.
 
 ### MQTT: Eclipse Paho Go
 
