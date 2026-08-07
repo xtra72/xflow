@@ -18,6 +18,10 @@ import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 export const DEFAULT_IDW_POWER = 2;
 /** IDW 격자 해상도 기본값(중간 해상도, REQ-05). */
 export const DEFAULT_GRID_RESOLUTION = 48;
+/** 도면 위 히트맵 합성 불투명도 기본값(SPEC-002 REQ-05). */
+export const DEFAULT_HEATMAP_OPACITY = 0.6;
+/** 도면 배경 맞춤(fit) 기본값(SPEC-002 REQ-01/REQ-05). */
+export const DEFAULT_FLOOR_PLAN_FIT: 'contain' | 'cover' = 'contain';
 
 /** 센서 배치 좌표(정규화 0..1 권장). */
 export interface SensorPosition {
@@ -42,6 +46,30 @@ export interface IdwParams {
 }
 
 /**
+ * 도면 이미지 배경 config(SPEC-002 REQ-01/REQ-02, additive). 이미지는 1차 저장 방식으로
+ * data-URL 문자열을 임베드한다(백엔드 무변경). 파싱 후 반환되면 `image`(비어 있지 않은 문자열)와
+ * `fit`(기본 contain)이 항상 채워진다. 이미지가 없으면 파서가 undefined 를 반환한다(배경 없음).
+ */
+export interface FloorPlanConfig {
+  /** 도면 이미지 data-URL. 파싱 결과에는 항상 비어 있지 않은 문자열로 존재한다. */
+  image?: string;
+  /** 배경 맞춤(종횡비 보존). 기본 contain. */
+  fit?: 'contain' | 'cover';
+  /** 로드된 이미지 원본 폭(종횡비 유지용, 선택). */
+  natural_width?: number;
+  /** 로드된 이미지 원본 높이(종횡비 유지용, 선택). */
+  natural_height?: number;
+}
+
+/** 배치 에디터 옵션(SPEC-002 REQ-05, additive). 편집 활성 여부는 런타임 상태(비영속). */
+export interface EditorConfig {
+  /** 그리드 스냅 간격(정규화 0..1 단위, 선택). */
+  snap?: number;
+  /** 마커 표시 크기(px, 선택). */
+  marker_size?: number;
+}
+
+/**
  * 히트맵 패널 config.
  *
  * `store_source` 는 태그 필터로 공간 온도 센서를 동적 바인딩한다(selection_mode:'tag',
@@ -58,6 +86,12 @@ export interface HeatmapPanelConfig {
   color_table?: ColorStop[];
   /** IDW 파라미터(항상 기본값 보정). */
   idw: IdwParams;
+  /** 도면 이미지 배경(SPEC-002). 미첨부/무효 시 undefined(배경 없음, AC-E1). */
+  floor_plan?: FloorPlanConfig;
+  /** 도면 위 히트맵 합성 불투명도(0..1). 항상 기본값(0.6) 보정 — idw 와 동일 패턴. */
+  heatmap_opacity: number;
+  /** 배치 에디터 옵션(SPEC-002). 미지정/무효 시 undefined. */
+  editor?: EditorConfig;
 }
 
 /** 유한 숫자인지 확인한다(NaN/Infinity 방어). */
@@ -139,6 +173,49 @@ function parseIdw(raw: unknown): IdwParams {
   return { power, grid_resolution: gridResolution };
 }
 
+/** 값을 [0,1] 로 clamp 한다(불투명도 범위 방어). */
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/**
+ * raw.floor_plan 을 파싱한다. image(비어 있지 않은 문자열)가 없으면 undefined(배경 없음, AC-E1).
+ * fit 은 'cover' 만 명시적으로 인정하고 그 외에는 기본 'contain'. natural_width/height 는 양의
+ * 유한 숫자만 통과시킨다(선택).
+ */
+function parseFloorPlan(raw: unknown): FloorPlanConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const fp = raw as Record<string, unknown>;
+  const image =
+    typeof fp.image === 'string' && fp.image.trim() !== '' ? fp.image : undefined;
+  // 이미지가 없으면 배경 자체가 없다(fit 만 있어도 무의미).
+  if (!image) return undefined;
+  const fit: 'contain' | 'cover' = fp.fit === 'cover' ? 'cover' : DEFAULT_FLOOR_PLAN_FIT;
+  const result: FloorPlanConfig = { image, fit };
+  if (isFiniteNumber(fp.natural_width) && fp.natural_width > 0) {
+    result.natural_width = fp.natural_width;
+  }
+  if (isFiniteNumber(fp.natural_height) && fp.natural_height > 0) {
+    result.natural_height = fp.natural_height;
+  }
+  return result;
+}
+
+/** raw.heatmap_opacity 를 파싱한다. 유한 숫자면 0..1 clamp, 아니면 기본값(0.6). */
+function parseHeatmapOpacity(raw: unknown): number {
+  return isFiniteNumber(raw) ? clamp01(raw) : DEFAULT_HEATMAP_OPACITY;
+}
+
+/** raw.editor 를 파싱한다. snap/marker_size 는 양의 유한 숫자만 통과. 둘 다 없으면 undefined. */
+function parseEditor(raw: unknown): EditorConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const e = raw as Record<string, unknown>;
+  const out: EditorConfig = {};
+  if (isFiniteNumber(e.snap) && e.snap > 0) out.snap = e.snap;
+  if (isFiniteNumber(e.marker_size) && e.marker_size > 0) out.marker_size = e.marker_size;
+  return out.snap !== undefined || out.marker_size !== undefined ? out : undefined;
+}
+
 /** raw.store_source 를 파싱한다. 객체가 아니면 기본 store 소스로 폴백(하위호환). */
 function parseStoreSource(raw: unknown): StoreSourceConfig {
   if (!raw || typeof raw !== 'object') return buildDefaultHeatmapStoreSource();
@@ -159,5 +236,9 @@ export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
     value_bounds: parseValueBounds(cfg.value_bounds),
     color_table: parseColorTable(cfg.color_table),
     idw: parseIdw(cfg.idw),
+    // SPEC-002 신규 필드(additive). MVP 시절 config(필드 없음)는 기본값으로 채워진다(AC-E5).
+    floor_plan: parseFloorPlan(cfg.floor_plan),
+    heatmap_opacity: parseHeatmapOpacity(cfg.heatmap_opacity),
+    editor: parseEditor(cfg.editor),
   };
 }

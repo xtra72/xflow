@@ -9,6 +9,7 @@ import {
   buildDefaultHeatmapStoreSource,
   DEFAULT_IDW_POWER,
   DEFAULT_GRID_RESOLUTION,
+  DEFAULT_HEATMAP_OPACITY,
 } from './heatmapConfig';
 
 describe('parseHeatmapConfig', () => {
@@ -96,6 +97,88 @@ describe('parseHeatmapConfig', () => {
     expect(
       parseHeatmapConfig({ value_bounds: { min: 'a', max: 'b' } }).value_bounds,
     ).toBeUndefined();
+  });
+});
+
+// SPEC-HEATMAP-PANEL-002 T1: floor_plan / heatmap_opacity / editor 신규 필드 파싱.
+describe('parseHeatmapConfig — SPEC-002 additive fields', () => {
+  it('AC-E5: MVP 시절 config(신규 필드 없음)는 기본값으로 채우고 기존 필드는 불변이다', () => {
+    // floor_plan/heatmap_opacity/editor 가 전혀 없는 MVP config.
+    const mvp = {
+      data_source: 'store',
+      store_source: buildDefaultHeatmapStoreSource(),
+      sensor_positions: { s1: { x: 0.3, y: 0.7 } },
+      idw: { power: 2, grid_resolution: 32 },
+    };
+    const cfg = parseHeatmapConfig(mvp);
+    // 신규 필드 기본값(배경 없음 / opacity 0.6 / editor 없음).
+    expect(cfg.floor_plan).toBeUndefined();
+    expect(cfg.heatmap_opacity).toBe(DEFAULT_HEATMAP_OPACITY);
+    expect(cfg.editor).toBeUndefined();
+    // 기존 MVP 필드 의미 불변.
+    expect(cfg.sensor_positions).toEqual({ s1: { x: 0.3, y: 0.7 } });
+    expect(cfg.idw).toEqual({ power: 2, grid_resolution: 32 });
+  });
+
+  it('floor_plan.image 가 있으면 image + 기본 fit(contain)으로 파싱한다', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: { image: 'data:image/png;base64,AAAA' },
+    });
+    expect(cfg.floor_plan).toEqual({ image: 'data:image/png;base64,AAAA', fit: 'contain' });
+  });
+
+  it('floor_plan.fit=cover 와 natural_width/height 를 통과시킨다', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: {
+        image: 'data:image/png;base64,BBBB',
+        fit: 'cover',
+        natural_width: 800,
+        natural_height: 600,
+      },
+    });
+    expect(cfg.floor_plan).toEqual({
+      image: 'data:image/png;base64,BBBB',
+      fit: 'cover',
+      natural_width: 800,
+      natural_height: 600,
+    });
+  });
+
+  it('image 가 없거나 빈 문자열이면 floor_plan 은 undefined(배경 없음)', () => {
+    expect(parseHeatmapConfig({ floor_plan: { fit: 'cover' } }).floor_plan).toBeUndefined();
+    expect(parseHeatmapConfig({ floor_plan: { image: '   ' } }).floor_plan).toBeUndefined();
+    expect(parseHeatmapConfig({ floor_plan: 'not-an-object' }).floor_plan).toBeUndefined();
+  });
+
+  it('무효 fit / natural 크기는 무시한다(기본 contain, 크기 미포함)', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: {
+        image: 'data:image/png;base64,CCCC',
+        fit: 'stretch',
+        natural_width: -1,
+        natural_height: 0,
+      },
+    });
+    expect(cfg.floor_plan).toEqual({ image: 'data:image/png;base64,CCCC', fit: 'contain' });
+  });
+
+  it('heatmap_opacity 는 0..1 로 clamp 하고 비숫자는 기본값(0.6)으로 폴백한다', () => {
+    expect(parseHeatmapConfig({ heatmap_opacity: 0.3 }).heatmap_opacity).toBe(0.3);
+    expect(parseHeatmapConfig({ heatmap_opacity: 1.5 }).heatmap_opacity).toBe(1);
+    expect(parseHeatmapConfig({ heatmap_opacity: -0.4 }).heatmap_opacity).toBe(0);
+    expect(parseHeatmapConfig({ heatmap_opacity: 'x' }).heatmap_opacity).toBe(DEFAULT_HEATMAP_OPACITY);
+    expect(parseHeatmapConfig({}).heatmap_opacity).toBe(DEFAULT_HEATMAP_OPACITY);
+  });
+
+  it('editor 는 양의 snap/marker_size 만 통과, 그 외/없음은 undefined', () => {
+    expect(parseHeatmapConfig({ editor: { snap: 0.05, marker_size: 12 } }).editor).toEqual({
+      snap: 0.05,
+      marker_size: 12,
+    });
+    expect(parseHeatmapConfig({ editor: { snap: 0.1 } }).editor).toEqual({ snap: 0.1 });
+    expect(parseHeatmapConfig({ editor: { snap: -1, marker_size: 0 } }).editor).toBeUndefined();
+    expect(parseHeatmapConfig({ editor: {} }).editor).toBeUndefined();
+    expect(parseHeatmapConfig({}).editor).toBeUndefined();
   });
 });
 

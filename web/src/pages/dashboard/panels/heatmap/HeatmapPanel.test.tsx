@@ -3,7 +3,7 @@
 // 정상 경로(배치 센서 → canvas 렌더)를 컴포넌트 레벨에서 커버한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 import type { ChartEntry } from '../charts/chartChannelTypes';
 import type { UseStoreChartDataResult } from '../charts/useStoreChartData';
@@ -35,8 +35,11 @@ function reading(value: number): ChartEntry[] {
   return [{ timestamp: 1, value }];
 }
 
-/** store 태그 모드 활성 config(isStore=true). sensor_positions 는 인자로 주입. */
-function makeConfig(sensorPositions: Record<string, { x: number; y: number }>) {
+/** store 태그 모드 활성 config(isStore=true). sensor_positions + SPEC-002 extras 를 인자로 주입. */
+function makeConfig(
+  sensorPositions: Record<string, { x: number; y: number }>,
+  extras: Record<string, unknown> = {},
+) {
   return {
     data_source: 'store',
     store_source: {
@@ -51,6 +54,7 @@ function makeConfig(sensorPositions: Record<string, { x: number; y: number }>) {
     },
     sensor_positions: sensorPositions,
     idw: { power: 2, grid_resolution: 8 },
+    ...extras,
   } as Record<string, unknown>;
 }
 
@@ -107,6 +111,115 @@ describe('HeatmapPanel', () => {
     );
     expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
     expect(screen.queryByText('dashboard.heatmap.emptyState')).toBeNull();
+  });
+
+  // SPEC-HEATMAP-PANEL-002 T4: 도면 배경 레이어 + 히트맵 합성 불투명도.
+  it('도면 미첨부(MVP)면 배경을 렌더하지 않고 canvas 는 그대로 렌더한다(행위 보존)', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    render(<HeatmapPanel panelId="p" config={makeConfig({ s1: { x: 0.5, y: 0.5 } })} />);
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.queryByTestId('floor-plan-background')).toBeNull();
+  });
+
+  it('REQ-01: floor_plan.image 가 있으면 배경을 히트맵 아래에 렌더한다', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig(
+          { s1: { x: 0.5, y: 0.5 } },
+          { floor_plan: { image: 'data:image/png;base64,AAAA' }, heatmap_opacity: 0.4 },
+        )}
+      />,
+    );
+    // 배경 + 히트맵 canvas 가 함께 존재한다(레이어 스택).
+    const bg = screen.getByTestId('floor-plan-background');
+    expect(bg).toBeInTheDocument();
+    expect(bg.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+  });
+
+  // SPEC-HEATMAP-PANEL-002 T7: 인패널 배치 편집 모드.
+  it('onConfigChange 미제공(MVP)이면 편집 토글을 렌더하지 않는다(행위 보존)', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    render(<HeatmapPanel panelId="p" config={makeConfig({ s1: { x: 0.5, y: 0.5 } })} />);
+    expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
+    expect(screen.queryByTestId('sensor-placement-overlay')).toBeNull();
+  });
+
+  it('T7: 편집 토글을 누르면 마커 오버레이가 히트맵 위에 마운트된다', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    // 진입 전에는 오버레이 없음.
+    expect(screen.queryByTestId('sensor-placement-overlay')).toBeNull();
+    fireEvent.click(screen.getByTestId('heatmap-edit-toggle'));
+    // 진입 후 오버레이 + canvas 공존(폴링/렌더 비파괴, R3).
+    expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+  });
+
+  it('AC-04: 편집 모드에서 마커 제거는 해당 센서 좌표만 config 에서 삭제한다', () => {
+    const onConfigChange = vi.fn();
+    setStore({
+      seriesNames: ['s1', 's2'],
+      seriesEntries: new Map([
+        ['s1', reading(20)],
+        ['s2', reading(26)],
+      ]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.2, y: 0.2 }, s2: { x: 0.8, y: 0.8 } })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('heatmap-edit-toggle'));
+    fireEvent.click(screen.getByTestId('sensor-remove-s1'));
+    // s1 좌표만 삭제되고 s2 는 보존된다.
+    expect(onConfigChange).toHaveBeenCalledWith({ sensor_positions: { s2: { x: 0.8, y: 0.8 } } });
+  });
+
+  it('AC-E1(편집 경로): 도면/데이터가 없어도 편집 진입 시 오버레이가 마운트된다', () => {
+    // 좌표 미지정 센서만 존재(points 0개 → 평소엔 빈 상태). 편집 진입 시 배치 표면을 렌더.
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel panelId="p" config={makeConfig({})} onConfigChange={vi.fn()} />,
+    );
+    // 진입 전: 빈 상태 안내.
+    expect(screen.getByText('dashboard.heatmap.emptyState')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('heatmap-edit-toggle'));
+    // 진입 후: 오버레이 + 미배치 팔레트(s1)가 나타난다.
+    expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
+    expect(screen.getByTestId('sensor-unplaced-s1')).toBeInTheDocument();
   });
 
   it('AC-E3: 폴링 실패(status=error)여도 마지막 온도장을 유지하고 오류 배지를 덧띄운다', () => {

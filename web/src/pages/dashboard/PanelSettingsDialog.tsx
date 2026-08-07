@@ -61,6 +61,13 @@ import {
 import { parseHeatmapConfig, type ColorStop } from './panels/heatmap/heatmapConfig';
 import { useStoreChartData } from './panels/charts/useStoreChartData';
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
+// SPEC-HEATMAP-PANEL-002: 도면 이미지 첨부(data-URL) + 크기 상한 검증.
+import {
+  readImageAsDataUrl,
+  assertImageSizeUnderLimit,
+  DEFAULT_MAX_IMAGE_BYTES,
+  ImageSizeLimitError,
+} from './panels/heatmap/imageAsset';
 import ColorSwatchButton, { COLOR_PALETTE } from './colorSwatchPalette';
 import {
   ChartChannelSection,
@@ -1435,6 +1442,52 @@ function HeatmapSettingsSection({
     onConfigChange({ idw: { ...cfg.idw, ...patch } });
   };
 
+  // SPEC-002: 도면 이미지(data-URL) / 불투명도 / fit / 에디터 옵션.
+  const [imgWarning, setImgWarning] = useState<string | null>(null);
+  const floorImage = cfg.floor_plan?.image;
+  const floorFit: 'contain' | 'cover' = cfg.floor_plan?.fit ?? 'contain';
+
+  // 파일 첨부 → data-URL 인코딩 → 2MB 상한 검증(AC-E3). 초과 시 저장하지 않고 경고를 띄운다.
+  const onPickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 동일 파일 재선택 허용.
+    if (!file) return;
+    setImgWarning(null);
+    try {
+      const dataUrl = await readImageAsDataUrl(file);
+      assertImageSizeUnderLimit(dataUrl, DEFAULT_MAX_IMAGE_BYTES);
+      onConfigChange({ floor_plan: { image: dataUrl, fit: floorFit } });
+    } catch (err) {
+      setImgWarning(
+        err instanceof ImageSizeLimitError
+          ? t('dashboard.settings.heatmapImageTooLarge')
+          : t('dashboard.settings.heatmapImageReadError'),
+      );
+    }
+  };
+  // 이미지 제거: floor_plan 을 비워 배경만 제거(다른 히트맵 설정은 보존, REQ-02).
+  const removeImage = () => {
+    setImgWarning(null);
+    onConfigChange({ floor_plan: undefined });
+  };
+  const setFit = (fit: 'contain' | 'cover') => {
+    if (floorImage) onConfigChange({ floor_plan: { image: floorImage, fit } });
+  };
+  const setOpacity = (v: number) => onConfigChange({ heatmap_opacity: v });
+  // 에디터 옵션(snap/marker_size). 둘 다 비면 editor 를 undefined 로 되돌린다.
+  const setEditor = (patch: { snap?: number; marker_size?: number }) => {
+    const next: { snap?: number; marker_size?: number } = { ...(cfg.editor ?? {}), ...patch };
+    if (next.snap === undefined) delete next.snap;
+    if (next.marker_size === undefined) delete next.marker_size;
+    const empty = next.snap === undefined && next.marker_size === undefined;
+    onConfigChange({ editor: empty ? undefined : next });
+  };
+  // 미배치 센서 수(라이브 시리즈 중 좌표 없는 것) — 편집 안내용.
+  const unplacedCount = storeResult.seriesNames.filter((n) => {
+    const p = rawPositions[n];
+    return !(p !== undefined && Number.isFinite(p.x) && Number.isFinite(p.y));
+  }).length;
+
   const inputCls =
     'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
 
@@ -1627,6 +1680,145 @@ function HeatmapSettingsSection({
             }}
             className={inputCls}
           />
+        </div>
+      </div>
+
+      {/* 6) SPEC-002: 도면 이미지 배경(첨부/미리보기/제거) + fit. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.heatmapFloorPlan')}
+        </label>
+        {floorImage ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              {/* 미리보기 썸네일. */}
+              <img
+                src={floorImage}
+                alt=""
+                data-testid="heatmap-floorplan-preview"
+                className="h-14 w-20 rounded border border-(--color-border-default) object-cover"
+              />
+              <button
+                type="button"
+                data-testid="heatmap-floorplan-remove"
+                onClick={removeImage}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+              >
+                <Trash2 className="h-3 w-3" />
+                {t('dashboard.settings.heatmapRemoveImage')}
+              </button>
+            </div>
+            {/* fit 선택(contain/cover) — 이미지가 있을 때만. */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-(--color-text-muted)">
+                {t('dashboard.settings.heatmapFit')}
+              </span>
+              <select
+                value={floorFit}
+                data-testid="heatmap-floorplan-fit"
+                onChange={(e) => setFit(e.target.value === 'cover' ? 'cover' : 'contain')}
+                className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+              >
+                <option value="contain">{t('dashboard.settings.heatmapFitContain')}</option>
+                <option value="cover">{t('dashboard.settings.heatmapFitCover')}</option>
+              </select>
+            </div>
+          </div>
+        ) : (
+          <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-2 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)">
+            <Plus className="h-3 w-3" />
+            {t('dashboard.settings.heatmapAttachImage')}
+            <input
+              type="file"
+              accept="image/*"
+              data-testid="heatmap-floorplan-input"
+              onChange={onPickImage}
+              className="hidden"
+            />
+          </label>
+        )}
+        {imgWarning && (
+          <p
+            data-testid="heatmap-floorplan-warning"
+            className="mt-1 text-[11px] text-red-600 dark:text-red-400"
+          >
+            {imgWarning}
+          </p>
+        )}
+      </div>
+
+      {/* 7) SPEC-002: 히트맵 합성 불투명도(0..1). */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.heatmapOpacity')}{' '}
+          <span className="tabular-nums text-(--color-text-secondary)">
+            {cfg.heatmap_opacity.toFixed(2)}
+          </span>
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={cfg.heatmap_opacity}
+          data-testid="heatmap-opacity"
+          onChange={(e) => setOpacity(Number(e.target.value))}
+          className="w-full"
+        />
+      </div>
+
+      {/* 8) SPEC-002: 배치 에디터 옵션(스냅/마커 크기) + 미배치 안내. 실제 드래그 편집은 패널의
+          편집 토글에서 수행한다(런타임 상태). */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.heatmapEditor')}
+        </label>
+        <p className="mb-1.5 text-[11px] text-(--color-text-muted)">
+          {t('dashboard.settings.heatmapEditHint')}
+          {unplacedCount > 0 && (
+            <span className="ml-1 text-amber-600 dark:text-amber-400">
+              {t('dashboard.settings.heatmapUnplacedCount').replace('{count}', String(unplacedCount))}
+            </span>
+          )}
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+              {t('dashboard.settings.heatmapSnap')}
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={cfg.editor?.snap !== undefined ? String(cfg.editor.snap) : ''}
+              data-testid="heatmap-editor-snap"
+              placeholder="0"
+              onChange={(e) =>
+                setEditor({ snap: e.target.value === '' ? undefined : Number(e.target.value) })
+              }
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+              {t('dashboard.settings.heatmapMarkerSize')}
+            </label>
+            <input
+              type="number"
+              min={4}
+              step={1}
+              value={cfg.editor?.marker_size !== undefined ? String(cfg.editor.marker_size) : ''}
+              data-testid="heatmap-editor-marker-size"
+              placeholder="16"
+              onChange={(e) =>
+                setEditor({
+                  marker_size: e.target.value === '' ? undefined : Number(e.target.value),
+                })
+              }
+              className={inputCls}
+            />
+          </div>
         </div>
       </div>
     </div>
