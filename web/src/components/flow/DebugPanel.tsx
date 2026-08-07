@@ -34,6 +34,48 @@ interface DebugEntry {
 
 const MAX_ENTRIES = 500;
 
+// --- 로그 영역 크기 조절(드래그 리사이즈) 상수 ---
+/** 로그 영역 기본 높이(px). 기존 h-48(=192px)과 동일 — 미저장/파싱 실패 시 폴백. */
+const DEFAULT_LOG_HEIGHT = 192;
+/** 로그 영역 최소 높이(px). 이 아래로 끌면 접힘 판정 대상이 된다. */
+const MIN_LOG_HEIGHT = 96;
+/** 최대 높이 비율 — 뷰포트 높이의 70%까지 늘릴 수 있다. */
+const MAX_LOG_HEIGHT_RATIO = 0.7;
+/** 조절된 높이 영속화용 localStorage 키. */
+const LOG_HEIGHT_STORAGE_KEY = 'xflow.debugPanel.height';
+
+/** 현재 뷰포트 기준 [min, max] 로 높이를 clamp 한다(SSR/미지원 방어). */
+function clampLogHeight(h: number): number {
+  const max =
+    typeof window !== 'undefined'
+      ? Math.max(MIN_LOG_HEIGHT, window.innerHeight * MAX_LOG_HEIGHT_RATIO)
+      : DEFAULT_LOG_HEIGHT * 3;
+  return Math.min(Math.max(h, MIN_LOG_HEIGHT), max);
+}
+
+/** localStorage 에서 저장 높이를 복원한다. 없거나 파싱 실패 시 기본값(192)으로 폴백. */
+function readStoredLogHeight(): number {
+  if (typeof window === 'undefined') return DEFAULT_LOG_HEIGHT;
+  try {
+    const raw = window.localStorage.getItem(LOG_HEIGHT_STORAGE_KEY);
+    if (raw == null) return DEFAULT_LOG_HEIGHT;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? clampLogHeight(n) : DEFAULT_LOG_HEIGHT;
+  } catch {
+    return DEFAULT_LOG_HEIGHT;
+  }
+}
+
+/** 조절된 높이를 localStorage 에 저장한다(미지원/차단 환경은 조용히 무시). */
+function writeStoredLogHeight(h: number): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LOG_HEIGHT_STORAGE_KEY, String(Math.round(h)));
+  } catch {
+    /* localStorage 미지원/할당량 초과 — 무시 */
+  }
+}
+
 type PanelTab = 'debug' | 'tap';
 
 /** epoch ms 또는 ISO 문자열을 ko-KR HH:mm:ss.SSS 로 포맷한다. */
@@ -75,6 +117,76 @@ export function DebugPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
   const wsRef = useRef<WSClient | null>(null);
+
+  // 로그 영역 높이(px). 마운트 시 localStorage 에서 복원(없으면 192px).
+  const [logHeight, setLogHeight] = useState<number>(() => readStoredLogHeight());
+  // 최신 높이 미러 — 포인터다운 시작 스냅샷 확보용(핸들러는 stable 유지).
+  const logHeightRef = useRef(logHeight);
+  useEffect(() => {
+    logHeightRef.current = logHeight;
+  }, [logHeight]);
+  // 드래그 세션 상태. null 이면 유휴. startY/startHeight 는 시작 스냅샷,
+  // currentHeight 는 매 move 마다 갱신되는 최신 높이(드래그 종료 시 저장).
+  const dragRef = useRef<{
+    startY: number;
+    startHeight: number;
+    currentHeight: number;
+  } | null>(null);
+
+  // 드래그 시작: 시작 좌표·높이를 스냅샷하고 포인터 캡처.
+  const onHandlePointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startHeight = logHeightRef.current;
+    dragRef.current = { startY: e.clientY, startHeight, currentHeight: startHeight };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* jsdom 등 미지원 환경 — 무시 */
+    }
+  }, []);
+
+  // 드래그 중: 패널이 에디터 하단이라 위로 끌면(clientY 감소) 높이 증가.
+  // min의 절반 미만으로 끌어내리면 접기(setIsOpen(false)) + 직전 높이 복원.
+  const onHandlePointerMove = useCallback((e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const delta = drag.startY - e.clientY;
+    const rawTarget = drag.startHeight + delta;
+    if (rawTarget < MIN_LOG_HEIGHT / 2) {
+      dragRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* 무시 */
+      }
+      // 직전(드래그 시작) 높이를 유지해 재펼침 시 복원되게 한다. 저장은 하지 않는다.
+      setLogHeight(drag.startHeight);
+      setIsOpen(false);
+      return;
+    }
+    const next = clampLogHeight(rawTarget);
+    drag.currentHeight = next;
+    setLogHeight(next);
+  }, []);
+
+  // 드래그 종료: 최종 높이를 localStorage 에 저장.
+  const onHandlePointerUp = useCallback((e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* 무시 */
+    }
+    writeStoredLogHeight(drag.currentHeight);
+  }, []);
+
+  // 더블클릭: 기본 높이(192px)로 리셋 + localStorage 갱신.
+  const onHandleDoubleClick = useCallback(() => {
+    setLogHeight(DEFAULT_LOG_HEIGHT);
+    writeStoredLogHeight(DEFAULT_LOG_HEIGHT);
+  }, []);
 
   // 탭 출력 뷰 ID 발급용 카운터(렌더와 무관하게 단조 증가, 인메모리 전용).
   const viewIdRef = useRef(0);
@@ -353,11 +465,27 @@ export function DebugPanel() {
 
       {/* 메시지 로그 영역 */}
       {isOpen && (
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="h-48 overflow-y-auto border-t border-(--color-border-default) bg-gray-950 font-mono text-xs"
-        >
+        <>
+          {/* 상단 드래그 핸들 — 위로 끌면 확대, 아래로 끌면 축소, min 이하로 끌면 접힘.
+              더블클릭 시 기본 높이(192px)로 리셋. isOpen 일 때만 렌더된다. */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label={t('editor.debug.resizeHandle')}
+            data-testid="debug-resize-handle"
+            onPointerDown={onHandlePointerDown}
+            onPointerMove={onHandlePointerMove}
+            onPointerUp={onHandlePointerUp}
+            onDoubleClick={onHandleDoubleClick}
+            className="h-1.5 shrink-0 cursor-row-resize touch-none border-t border-(--color-border-default) bg-gray-100 hover:bg-sky-500/40 dark:bg-gray-800 dark:hover:bg-sky-500/40"
+          />
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            data-testid="debug-log-area"
+            style={{ height: logHeight }}
+            className="overflow-y-auto bg-gray-950 font-mono text-xs"
+          >
           {tab === 'debug' ? (
             entries.length === 0 ? (
               <div className="flex h-full items-center justify-center px-4 text-center text-gray-500">
@@ -523,7 +651,8 @@ export function DebugPanel() {
               )}
             </>
           )}
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

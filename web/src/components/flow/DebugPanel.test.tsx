@@ -32,6 +32,12 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
+// jsdom 은 PointerEvent 를 구현하지 않아 fireEvent.pointer* 가 clientY 를 실어 나르지
+// 못한다. MouseEvent(clientY 지원) 기반 폴리필로 대체해 좌표를 전달한다.
+if (typeof globalThis.PointerEvent === 'undefined') {
+  globalThis.PointerEvent = class extends MouseEvent {} as unknown as typeof PointerEvent;
+}
+
 import { DebugPanel } from './DebugPanel';
 import { useTapStore, type NodeOutputPayload } from '@/stores/tapStore';
 import { useEditorStore } from '@/stores/editorStore';
@@ -97,6 +103,7 @@ function getEntryRows(): { label: string; port: string }[] {
 beforeEach(() => {
   useTapStore.getState().reset();
   useEditorStore.getState().resetEditor();
+  window.localStorage.clear();
 });
 
 describe('DebugPanel — 탭 출력 뷰', () => {
@@ -293,5 +300,108 @@ describe('DebugPanel — 탭 출력 뷰', () => {
     // 뷰 탭 버튼만 title 을 가지므로(옵션엔 없음) getByTitle 로 유일하게 찾는다.
     fireEvent.click(screen.getByTitle('노드A'));
     expect((screen.getByLabelText('editor.debug.nodeFilter') as HTMLSelectElement).value).toBe('A');
+  });
+});
+
+describe('DebugPanel — 로그 영역 크기 조절', () => {
+  const STORAGE_KEY = 'xflow.debugPanel.height';
+
+  /** 패널을 펼친다(Debug Output 탭 클릭 → isOpen=true). */
+  function openPanel(): void {
+    fireEvent.click(screen.getByRole('button', { name: /Debug Output/ }));
+  }
+
+  it('기본 높이는 192px 이고, 위로 드래그하면 높이가 증가한다', () => {
+    render(<DebugPanel />);
+    openPanel();
+
+    const handle = screen.getByTestId('debug-resize-handle');
+    const logArea = screen.getByTestId('debug-log-area');
+    expect(logArea.style.height).toBe('192px');
+
+    // 위로 50px 드래그(clientY 300 → 250) → 높이 +50 = 242px.
+    fireEvent.pointerDown(handle, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientY: 250, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientY: 250, pointerId: 1 });
+
+    expect(logArea.style.height).toBe('242px');
+  });
+
+  it('드래그 종료 시 높이를 localStorage 에 저장하고, 재마운트 시 복원한다', () => {
+    const { unmount } = render(<DebugPanel />);
+    openPanel();
+
+    const handle = screen.getByTestId('debug-resize-handle');
+    fireEvent.pointerDown(handle, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientY: 200, pointerId: 1 }); // +100 = 292px
+    fireEvent.pointerUp(handle, { clientY: 200, pointerId: 1 });
+
+    // 저장 확인.
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('292');
+
+    // 재마운트 → 저장 높이로 복원.
+    unmount();
+    render(<DebugPanel />);
+    openPanel();
+    expect(screen.getByTestId('debug-log-area').style.height).toBe('292px');
+  });
+
+  it('저장값이 없으면 기본 높이(192px)로 폴백한다', () => {
+    render(<DebugPanel />);
+    openPanel();
+    expect(screen.getByTestId('debug-log-area').style.height).toBe('192px');
+  });
+
+  it('더블클릭하면 기본 높이(192px)로 리셋된다', () => {
+    render(<DebugPanel />);
+    openPanel();
+
+    const handle = screen.getByTestId('debug-resize-handle');
+    // 먼저 크기를 바꾼다.
+    fireEvent.pointerDown(handle, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientY: 250, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientY: 250, pointerId: 1 });
+    expect(screen.getByTestId('debug-log-area').style.height).toBe('242px');
+
+    // 더블클릭 → 기본값 복원 + localStorage 갱신.
+    fireEvent.doubleClick(handle);
+    expect(screen.getByTestId('debug-log-area').style.height).toBe('192px');
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('192');
+  });
+
+  it('min 절반 아래로 끌어내리면 접히고, 다시 펼치면 직전 높이로 복원된다', () => {
+    render(<DebugPanel />);
+    openPanel();
+
+    const handle = screen.getByTestId('debug-resize-handle');
+    // 192 - 200 = -8px < 48(=min/2) → 접힘.
+    fireEvent.pointerDown(handle, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientY: 500, pointerId: 1 });
+
+    // 로그 영역/핸들이 사라진다(접힘).
+    expect(screen.queryByTestId('debug-log-area')).toBeNull();
+    expect(screen.queryByTestId('debug-resize-handle')).toBeNull();
+
+    // chevron(펼치기)으로 재펼침 → 직전(드래그 시작) 높이 192px 복원.
+    fireEvent.click(screen.getByRole('button', { name: 'editor.debug.expand' }));
+    expect(screen.getByTestId('debug-log-area').style.height).toBe('192px');
+  });
+
+  it('크기 조절 도입 후에도 탭 전환/렌더가 정상 동작한다(회귀 스모크)', () => {
+    seedNodes([{ id: 'A', label: '노드A' }]);
+    useTapStore.getState().appendOutput(makePayload('A', 'out', { v: 1 }));
+    render(<DebugPanel />);
+    openPanel();
+
+    // Debug 탭에서 핸들 + 로그 영역이 존재.
+    expect(screen.getByTestId('debug-resize-handle')).toBeInTheDocument();
+    expect(screen.getByTestId('debug-log-area')).toBeInTheDocument();
+
+    // 탭 출력 탭으로 전환 → sticky 뷰 컨트롤(전체 뷰)과 엔트리가 보인다.
+    openTapTab();
+    expect(screen.getByTitle('editor.debug.viewAll')).toBeInTheDocument();
+    expect(screen.getAllByText('노드A').length).toBeGreaterThanOrEqual(1);
+    // 핸들은 탭 출력 탭에서도 유지된다.
+    expect(screen.getByTestId('debug-resize-handle')).toBeInTheDocument();
   });
 });

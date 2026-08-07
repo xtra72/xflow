@@ -1187,7 +1187,8 @@
       "port": "포트",
       "portFilter": "포트 필터",
       "filterAll": "전체",
-      "noOutput": "해당 출력이 없습니다."
+      "noOutput": "해당 출력이 없습니다.",
+      "resizeHandle": "로그 영역 크기 조절 (드래그: 크기 조절, 더블클릭: 기본 크기)"
     },
     "port": {
       "panelAria": "플로우 포트 관리",

@@ -1187,7 +1187,8 @@
       "port": "Port",
       "portFilter": "Port filter",
       "filterAll": "All",
-      "noOutput": "No matching output."
+      "noOutput": "No matching output.",
+      "resizeHandle": "Resize log area (drag to resize, double-click to reset)"
     },
     "port": {
       "panelAria": "Flow port management",
