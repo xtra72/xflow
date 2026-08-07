@@ -61,8 +61,10 @@ import {
 import {
   parseHeatmapConfig,
   DEFAULT_CONTOUR_LEVEL_COUNT,
+  DEFAULT_LEGEND_TICK_COUNT,
   type ColorStop,
   type ContourConfig,
+  type LegendConfig,
 } from './panels/heatmap/heatmapConfig';
 import { useStoreChartData } from './panels/charts/useStoreChartData';
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
@@ -1507,6 +1509,19 @@ function HeatmapSettingsSection({
     if (line.dash === undefined || line.dash.length === 0) delete line.dash;
     setContour({ line });
   };
+
+  // 색표 범례 설정(additive — legend 키만 병합). 기존 필드/렌더 경로 무변경.
+  const legendCfg = cfg.legend;
+  const setLegend = (patch: Partial<LegendConfig>) => {
+    const base: LegendConfig = legendCfg ?? {
+      enabled: false,
+      orientation: 'vertical',
+      position: 'bottom-right',
+      size: 'md',
+      tick_count: DEFAULT_LEGEND_TICK_COUNT,
+    };
+    onConfigChange({ legend: { ...base, ...patch } });
+  };
   // 쉼표 구분 숫자열 → number[](유한만). 비면 undefined.
   const parseNumberList = (text: string): number[] | undefined => {
     const nums = text
@@ -1959,6 +1974,112 @@ function HeatmapSettingsSection({
               />
               {t('dashboard.settings.heatmapContourLabels')}
             </label>
+          </div>
+        )}
+      </div>
+
+      {/* 10) 값→색 색표(colorbar) 범례 — enabled/방향/위치/크기/눈금 개수. additive. */}
+      <div>
+        <label className="mb-1.5 flex items-center gap-2 text-xs font-medium text-(--color-text-muted)">
+          <input
+            type="checkbox"
+            checked={legendCfg?.enabled ?? false}
+            data-testid="heatmap-legend-enabled"
+            onChange={(e) => setLegend({ enabled: e.target.checked })}
+          />
+          {t('dashboard.settings.heatmapLegend')}
+        </label>
+
+        {(legendCfg?.enabled ?? false) && (
+          <div className="mt-2 space-y-2 border-l-2 border-(--color-border-default) pl-2">
+            <div className="grid grid-cols-2 gap-2">
+              {/* 방향(가로/세로). */}
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapLegendOrientation')}
+                </label>
+                <select
+                  value={legendCfg?.orientation ?? 'vertical'}
+                  data-testid="heatmap-legend-orientation"
+                  onChange={(e) =>
+                    setLegend({ orientation: e.target.value as LegendConfig['orientation'] })
+                  }
+                  className={inputCls}
+                >
+                  <option value="vertical">
+                    {t('dashboard.settings.heatmapLegendOrientationVertical')}
+                  </option>
+                  <option value="horizontal">
+                    {t('dashboard.settings.heatmapLegendOrientationHorizontal')}
+                  </option>
+                </select>
+              </div>
+              {/* 위치(4모서리). */}
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapLegendPosition')}
+                </label>
+                <select
+                  value={legendCfg?.position ?? 'bottom-right'}
+                  data-testid="heatmap-legend-position"
+                  onChange={(e) =>
+                    setLegend({ position: e.target.value as LegendConfig['position'] })
+                  }
+                  className={inputCls}
+                >
+                  <option value="top-left">
+                    {t('dashboard.settings.heatmapLegendPositionTopLeft')}
+                  </option>
+                  <option value="top-right">
+                    {t('dashboard.settings.heatmapLegendPositionTopRight')}
+                  </option>
+                  <option value="bottom-left">
+                    {t('dashboard.settings.heatmapLegendPositionBottomLeft')}
+                  </option>
+                  <option value="bottom-right">
+                    {t('dashboard.settings.heatmapLegendPositionBottomRight')}
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {/* 크기(S/M/L). */}
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapLegendSize')}
+                </label>
+                <select
+                  value={legendCfg?.size ?? 'md'}
+                  data-testid="heatmap-legend-size"
+                  onChange={(e) => setLegend({ size: e.target.value as LegendConfig['size'] })}
+                  className={inputCls}
+                >
+                  <option value="sm">{t('dashboard.settings.heatmapLegendSizeSm')}</option>
+                  <option value="md">{t('dashboard.settings.heatmapLegendSizeMd')}</option>
+                  <option value="lg">{t('dashboard.settings.heatmapLegendSizeLg')}</option>
+                </select>
+              </div>
+              {/* 눈금 개수(2..10). */}
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapLegendTickCount')}
+                </label>
+                <input
+                  type="number"
+                  min={2}
+                  max={10}
+                  step={1}
+                  value={String(legendCfg?.tick_count ?? DEFAULT_LEGEND_TICK_COUNT)}
+                  data-testid="heatmap-legend-tick-count"
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n) && n > 0) setLegend({ tick_count: Math.trunc(n) });
+                  }}
+                  className={inputCls}
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>

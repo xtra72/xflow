@@ -11,11 +11,12 @@
 //   - 폴링 실패 시 useStoreChartData 가 직전 시리즈(entries)를 보존한 채 status='error' 만
 //     세팅하므로, 마지막 렌더(온도장)를 파괴하지 않고 오류 배지만 덧띄운다(AC-E3).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Move, Thermometer } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
+import { useUIStore } from '@/stores/uiStore';
 
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 import { useStoreChartData } from '../charts/useStoreChartData';
@@ -24,6 +25,7 @@ import { joinSensorPoints } from './heatmapJoin';
 import { DEFAULT_COLOR_TABLE, interpolateIDW } from './idw';
 import HeatmapCanvas, { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './HeatmapCanvas';
 import ContourLayer from './ContourLayer';
+import HeatmapLegend from './HeatmapLegend';
 import FloorPlanBackground from './FloorPlanBackground';
 import SensorPlacementOverlay, { type PlacedSensor } from './SensorPlacementOverlay';
 import type { NormalizedPos } from './placement';
@@ -52,6 +54,14 @@ export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelPro
   // 배치 편집 모드(런타임 상태, 비영속 — REQ-03/T7). onConfigChange 가 있을 때만 진입 가능.
   const [editing, setEditing] = useState(false);
   const canEdit = typeof onConfigChange === 'function';
+  // 대시보드 편집모드(gear/삭제 버튼과 동일 게이팅). 편집모드일 때만 배치편집 진입 버튼을 노출한다.
+  // 원격 읽기전용 뷰(RemoteDashboardView)는 dashboardEditMode=false 라 자동 숨김(회귀 0).
+  const editMode = useUIStore((s) => s.dashboardEditMode);
+
+  // 편집모드를 벗어나면 진행 중이던 배치편집 상태를 강제 해제한다(오버레이 잔존 방지).
+  useEffect(() => {
+    if (!editMode) setEditing(false);
+  }, [editMode]);
 
   // LineChartPanel isStore 분기 미러링: data_source==='store' + (series 또는 tag_filters 존재).
   const storeSource = config.store_source as StoreSourceConfig | undefined;
@@ -126,8 +136,9 @@ export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelPro
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-2 shadow">
-      {/* 배치 편집 진입/종료 토글(REQ-03/T7). onConfigChange 가 있을 때만 표시 → MVP(콜백 없음) 불변. */}
-      {canEdit && (
+      {/* 배치 편집 진입/종료 토글(REQ-03/T7). onConfigChange 가 있고(콜백 없는 MVP 불변) 대시보드
+          편집모드일 때만 표시 → gear/삭제 버튼과 동일 게이팅. */}
+      {canEdit && editMode && (
         <button
           type="button"
           data-testid="heatmap-edit-toggle"
@@ -196,6 +207,11 @@ export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelPro
               snap={cfg.editor?.snap}
               markerSize={cfg.editor?.marker_size}
             />
+          )}
+          {/* 값→색 색표 범례(additive, 최상단 z-25, pointer-events-none). 편집모드와 무관하게
+              표시(뷰어도 봄). off/미설정 시 마운트 안 함 → 회귀 0. */}
+          {cfg.legend?.enabled && (
+            <HeatmapLegend bounds={bounds} colorTable={colorTable} legend={cfg.legend} />
           )}
         </div>
       )}

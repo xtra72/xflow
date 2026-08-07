@@ -24,6 +24,12 @@ export const DEFAULT_HEATMAP_OPACITY = 0.6;
 export const DEFAULT_FLOOR_PLAN_FIT: 'contain' | 'cover' = 'contain';
 /** 등고선 등치 레벨 개수 기본값(SPEC-003 REQ-05). */
 export const DEFAULT_CONTOUR_LEVEL_COUNT = 5;
+/** 색표(colorbar) 범례 눈금 개수 기본값. */
+export const DEFAULT_LEGEND_TICK_COUNT = 5;
+/** 색표 범례 눈금 개수 하한(단일 라벨 방지). */
+export const MIN_LEGEND_TICK_COUNT = 2;
+/** 색표 범례 눈금 개수 상한(과밀 방지). */
+export const MAX_LEGEND_TICK_COUNT = 10;
 
 /** 센서 배치 좌표(정규화 0..1 권장). */
 export interface SensorPosition {
@@ -100,6 +106,24 @@ export interface ContourConfig {
 }
 
 /**
+ * 값→색 색표(colorbar) 범례 config(additive). 파싱 후 반환되면 enabled/orientation/
+ * position/size/tick_count 가 항상 채워진 형태다. 히트맵과 동일 color_table 을 사용하며
+ * 별도 색 계산은 없다(HeatmapLegend 가 소비). 미설정 시 파서가 undefined 를 반환한다(범례 없음).
+ */
+export interface LegendConfig {
+  /** 범례 표시 토글(기본 false). */
+  enabled: boolean;
+  /** 막대 방향. 기본 'vertical'. */
+  orientation: 'vertical' | 'horizontal';
+  /** 오버레이 모서리 위치. 기본 'bottom-right'. */
+  position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  /** 크기 프리셋. 기본 'md'. */
+  size: 'sm' | 'md' | 'lg';
+  /** 등간 눈금 개수(2..10 clamp). 기본 5. */
+  tick_count: number;
+}
+
+/**
  * 히트맵 패널 config.
  *
  * `store_source` 는 태그 필터로 공간 온도 센서를 동적 바인딩한다(selection_mode:'tag',
@@ -124,6 +148,8 @@ export interface HeatmapPanelConfig {
   editor?: EditorConfig;
   /** 등고선 오버레이(SPEC-003). 미지정 시 undefined(등고선 없음, additive off). */
   contour?: ContourConfig;
+  /** 값→색 색표 범례(additive). 미지정 시 undefined(범례 없음). */
+  legend?: LegendConfig;
 }
 
 /** 유한 숫자인지 확인한다(NaN/Infinity 방어). */
@@ -292,6 +318,35 @@ function parseContour(raw: unknown): ContourConfig | undefined {
   return result;
 }
 
+/**
+ * raw.legend 를 파싱한다(additive). floor_plan/contour 선례와 동일하게 raw 가 객체가 아니면
+ * undefined 를 반환한다(범례 없음). 객체이면 enum 화이트리스트(orientation/position/size)와
+ * tick_count 2..10 clamp 로 기본값을 보정한다(enabled=false, vertical, bottom-right, md, 5).
+ */
+function parseLegend(raw: unknown): LegendConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const l = raw as Record<string, unknown>;
+  // enum 화이트리스트: 미인정 값은 기본값으로 폴백(parseFloorPlan.fit 선례 동일).
+  const orientation: LegendConfig['orientation'] =
+    l.orientation === 'horizontal' ? 'horizontal' : 'vertical';
+  const position: LegendConfig['position'] =
+    l.position === 'top-left' || l.position === 'top-right' || l.position === 'bottom-left'
+      ? l.position
+      : 'bottom-right';
+  const size: LegendConfig['size'] = l.size === 'sm' || l.size === 'lg' ? l.size : 'md';
+  // 눈금 개수: 유한 숫자면 정수화 후 2..10 clamp, 아니면 기본값(5).
+  const tickRaw = isFiniteNumber(l.tick_count)
+    ? Math.trunc(l.tick_count)
+    : DEFAULT_LEGEND_TICK_COUNT;
+  const tick_count =
+    tickRaw < MIN_LEGEND_TICK_COUNT
+      ? MIN_LEGEND_TICK_COUNT
+      : tickRaw > MAX_LEGEND_TICK_COUNT
+        ? MAX_LEGEND_TICK_COUNT
+        : tickRaw;
+  return { enabled: l.enabled === true, orientation, position, size, tick_count };
+}
+
 /** raw.store_source 를 파싱한다. 객체가 아니면 기본 store 소스로 폴백(하위호환). */
 function parseStoreSource(raw: unknown): StoreSourceConfig {
   if (!raw || typeof raw !== 'object') return buildDefaultHeatmapStoreSource();
@@ -318,5 +373,7 @@ export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
     editor: parseEditor(cfg.editor),
     // SPEC-003 신규 필드(additive). 미설정 MVP/002 config 는 undefined(등고선 없음, AC-E2/회귀 0).
     contour: parseContour(cfg.contour),
+    // 색표 범례(additive). 미설정 config 는 undefined(범례 없음, 회귀 0).
+    legend: parseLegend(cfg.legend),
   };
 }

@@ -29,6 +29,7 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import HeatmapPanel from './HeatmapPanel';
+import { useUIStore } from '@/stores/uiStore';
 
 /** 최신값 1개짜리 시리즈 타임라인. */
 function reading(value: number): ChartEntry[] {
@@ -71,6 +72,8 @@ beforeEach(() => {
     booleanSeries: new Set(),
     status: 'idle',
   };
+  // 배치편집 진입 버튼은 대시보드 편집모드에서만 노출된다. 각 테스트 기본은 비편집(false).
+  useUIStore.getState().setDashboardEditMode(false);
 });
 
 describe('HeatmapPanel', () => {
@@ -159,12 +162,40 @@ describe('HeatmapPanel', () => {
     expect(screen.queryByTestId('sensor-placement-overlay')).toBeNull();
   });
 
+  it('편집모드가 아니면(dashboardEditMode=false) onConfigChange 가 있어도 배치편집 버튼을 표시하지 않는다', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    // beforeEach 에서 편집모드 false 로 리셋됨. 콜백은 있으나 편집모드가 아니므로 숨김.
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
+    // 편집모드로 전환하면 버튼이 나타난다.
+    useUIStore.getState().setDashboardEditMode(true);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId('heatmap-edit-toggle').length).toBeGreaterThan(0);
+  });
+
   it('T7: 편집 토글을 누르면 마커 오버레이가 히트맵 위에 마운트된다', () => {
     setStore({
       seriesNames: ['s1'],
       seriesEntries: new Map([['s1', reading(22)]]),
       status: 'connected',
     });
+    useUIStore.getState().setDashboardEditMode(true);
     render(
       <HeatmapPanel
         panelId="p"
@@ -191,6 +222,7 @@ describe('HeatmapPanel', () => {
       ]),
       status: 'connected',
     });
+    useUIStore.getState().setDashboardEditMode(true);
     render(
       <HeatmapPanel
         panelId="p"
@@ -211,6 +243,7 @@ describe('HeatmapPanel', () => {
       seriesEntries: new Map([['s1', reading(22)]]),
       status: 'connected',
     });
+    useUIStore.getState().setDashboardEditMode(true);
     render(
       <HeatmapPanel panelId="p" config={makeConfig({})} onConfigChange={vi.fn()} />,
     );

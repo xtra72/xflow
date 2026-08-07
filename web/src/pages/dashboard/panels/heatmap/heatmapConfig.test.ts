@@ -11,6 +11,7 @@ import {
   DEFAULT_GRID_RESOLUTION,
   DEFAULT_HEATMAP_OPACITY,
   DEFAULT_CONTOUR_LEVEL_COUNT,
+  DEFAULT_LEGEND_TICK_COUNT,
 } from './heatmapConfig';
 
 describe('parseHeatmapConfig', () => {
@@ -261,6 +262,69 @@ describe('parseHeatmapConfig — SPEC-003 contour field', () => {
   it('contour 가 비객체(문자열/숫자)면 undefined(additive off)', () => {
     expect(parseHeatmapConfig({ contour: 'on' }).contour).toBeUndefined();
     expect(parseHeatmapConfig({ contour: 5 }).contour).toBeUndefined();
+  });
+});
+
+// 색표 범례 필드 하위호환 파싱(additive-only).
+describe('parseHeatmapConfig — legend field', () => {
+  it('회귀 0: legend 없는 config 는 legend undefined 로 두고 기존 필드 불변', () => {
+    const cfg = parseHeatmapConfig({
+      data_source: 'store',
+      store_source: buildDefaultHeatmapStoreSource(),
+      sensor_positions: { s1: { x: 0.3, y: 0.7 } },
+      idw: { power: 2, grid_resolution: 32 },
+      contour: { enabled: true },
+    });
+    expect(cfg.legend).toBeUndefined();
+    expect(cfg.sensor_positions).toEqual({ s1: { x: 0.3, y: 0.7 } });
+    expect(cfg.contour).toMatchObject({ enabled: true });
+  });
+
+  it('legend 객체가 있으면 기본값(vertical/bottom-right/md/5, enabled=false)으로 채운다', () => {
+    expect(parseHeatmapConfig({ legend: {} }).legend).toEqual({
+      enabled: false,
+      orientation: 'vertical',
+      position: 'bottom-right',
+      size: 'md',
+      tick_count: DEFAULT_LEGEND_TICK_COUNT,
+    });
+  });
+
+  it('enabled 는 boolean true 일 때만 켜진다', () => {
+    expect(parseHeatmapConfig({ legend: { enabled: true } }).legend?.enabled).toBe(true);
+    expect(parseHeatmapConfig({ legend: { enabled: 'yes' } }).legend?.enabled).toBe(false);
+  });
+
+  it('orientation/position/size 는 화이트리스트 밖이면 기본값으로 폴백', () => {
+    expect(parseHeatmapConfig({ legend: { orientation: 'horizontal' } }).legend?.orientation).toBe(
+      'horizontal',
+    );
+    expect(parseHeatmapConfig({ legend: { orientation: 'diagonal' } }).legend?.orientation).toBe(
+      'vertical',
+    );
+    expect(parseHeatmapConfig({ legend: { position: 'top-left' } }).legend?.position).toBe(
+      'top-left',
+    );
+    expect(parseHeatmapConfig({ legend: { position: 'center' } }).legend?.position).toBe(
+      'bottom-right',
+    );
+    expect(parseHeatmapConfig({ legend: { size: 'lg' } }).legend?.size).toBe('lg');
+    expect(parseHeatmapConfig({ legend: { size: 'xl' } }).legend?.size).toBe('md');
+  });
+
+  it('tick_count 는 정수화 후 2..10 clamp, 비유한은 기본값(5)', () => {
+    expect(parseHeatmapConfig({ legend: { tick_count: 7 } }).legend?.tick_count).toBe(7);
+    expect(parseHeatmapConfig({ legend: { tick_count: 6.8 } }).legend?.tick_count).toBe(6);
+    expect(parseHeatmapConfig({ legend: { tick_count: 1 } }).legend?.tick_count).toBe(2);
+    expect(parseHeatmapConfig({ legend: { tick_count: 99 } }).legend?.tick_count).toBe(10);
+    expect(parseHeatmapConfig({ legend: { tick_count: 'x' } }).legend?.tick_count).toBe(
+      DEFAULT_LEGEND_TICK_COUNT,
+    );
+  });
+
+  it('legend 가 비객체(문자열/숫자)면 undefined(additive off)', () => {
+    expect(parseHeatmapConfig({ legend: 'on' }).legend).toBeUndefined();
+    expect(parseHeatmapConfig({ legend: 5 }).legend).toBeUndefined();
   });
 });
 
