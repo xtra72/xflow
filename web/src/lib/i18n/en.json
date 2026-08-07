@@ -137,13 +137,15 @@
         "modbusDeviceRegisters": "Register map grid for the selected virtual device",
         "modbusBusStats": "Bus statistics mini-chart (reads·writes/min, latency)",
         "modbusSummaryStats": "Summary of connections, clients, devices and errors",
-        "storeLineChart": "Plot a store key or tag history as a time-series line chart"
+        "storeLineChart": "Plot a store key or tag history as a time-series line chart",
+        "heatmap": "IDW-interpolated heatmap (temperature field) of spatial sensors"
       },
       "labels": {
         "propertiesGrid": "Properties grid",
         "multiChannel": "Multi-channel comparison",
         "outdoorControl": "Outdoor monitoring",
-        "storeLineChart": "Store line chart"
+        "storeLineChart": "Store line chart",
+        "heatmap": "Heatmap"
       }
     },
     "addDashboard": "Add New Dashboard",
@@ -616,6 +618,18 @@
       "barChartSettings": "Bar chart settings",
       "pieChartSettings": "Pie chart settings",
       "tableSettings": "Table settings",
+      "heatmap": "Heatmap settings",
+      "heatmapPlaceholder": "Sensor coordinates, bounds, color table and IDW editing are coming soon.",
+      "heatmapSensorPositions": "Sensor coordinates (x, y — 0..1)",
+      "heatmapNoSensors": "No bound sensors. Set the data source tag filter first.",
+      "heatmapUnplacedTitle": "No coordinates — excluded from interpolation",
+      "heatmapValueBounds": "Display bounds (empty = auto)",
+      "heatmapColorTable": "Color table (stops 0..1)",
+      "heatmapColorStopAria": "Color stop {index} color",
+      "heatmapRemoveColorStopAria": "Remove color stop",
+      "heatmapAddColorStop": "Add stop",
+      "heatmapIdwPower": "IDW decay power",
+      "heatmapGridResolution": "Grid resolution",
       "thresholds": "Thresholds",
       "style": "Style",
       "previewExpandAria": "Expand preview",
@@ -817,6 +831,13 @@
         "dragOrderTitle": "Drag to reorder"
       },
       "dataSource": "Data source"
+    },
+    "heatmap": {
+      "stagePlaceholder": "Heatmap rendering coming soon (MVP)",
+      "emptyState": "No sensors to display",
+      "sensorCount": "Placed {placed} / total {total}",
+      "unplaced": "{count} sensor(s) without coordinates (excluded from interpolation)",
+      "error": "Data fetch error — will retry next cycle"
     },
     "chart": {
       "channelNameError": "Invalid channel name. Must start with a letter and contain only letters, digits, hyphens, or underscores (max 64 chars).",

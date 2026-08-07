@@ -49,6 +49,7 @@ import LineChartPanel from './panels/charts/LineChartPanel';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
 import TablePanel from './panels/charts/TablePanel';
+import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import ResourceWidget from './widgets/ResourceWidget';
 
 /** 패널 타입별 아이콘 매핑(플레이스홀더 패널용). */
@@ -264,6 +265,9 @@ export function renderDashboardPanel(
       return <PieChartPanel panelId={panel.id} config={panel.config} />;
     case 'table':
       return <TablePanel panelId={panel.id} config={panel.config} />;
+    // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵 패널.
+    case 'heatmap':
+      return <HeatmapPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     // SPEC-MODBUS-012 M1/M2/M4/M5: MODBUS Gateway 패널 6종(전부 실제 구현).
     // M2: 실제/가상 디바이스 목록. M4: 공유/가상 레지스터 맵 그리드. M5: 버스/종합 통계.
     case 'modbus-real-devices':

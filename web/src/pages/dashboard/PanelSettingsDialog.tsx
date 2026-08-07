@@ -55,7 +55,13 @@ import {
   type YAxisMode,
   type YAxisDataType,
   type YEnumLabel,
+  type StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
+// SPEC-HEATMAP-PANEL-001: 히트맵 설정 섹션(store 태그 + 센서 좌표 + 상하한 + 색상표 + IDW).
+import { parseHeatmapConfig, type ColorStop } from './panels/heatmap/heatmapConfig';
+import { useStoreChartData } from './panels/charts/useStoreChartData';
+import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
+import ColorSwatchButton, { COLOR_PALETTE } from './colorSwatchPalette';
 import {
   ChartChannelSection,
   StoreSourceSection,
@@ -520,6 +526,17 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             {panel.type === 'agent-status' && (
               <CollapsibleSection title={t('dashboard.settings.agent')} defaultOpen={true}>
                 <AgentStatusSettingsSection
+                  panel={panel}
+                  onConfigChange={(c) => handleConfigChange(c)}
+                />
+              </CollapsibleSection>
+            )}
+
+            {/* SPEC-HEATMAP-PANEL-001 (MVP): 히트맵 설정 섹션. STAGE 1 은 자리표시 안내만 렌더한다
+                (전체 에디터 — store 태그/센서 좌표/색상표/IDW — 는 STAGE 2 T7 에서 채운다). */}
+            {panel.type === 'heatmap' && (
+              <CollapsibleSection title={t('dashboard.settings.heatmap')} defaultOpen={true}>
+                <HeatmapSettingsSection
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
@@ -1324,6 +1341,293 @@ function AgentStatusSettingsSection({
           <option value="tile">{t('dashboard.agentStatus.viewModeTile')}</option>
           <option value="diagram">{t('dashboard.agentStatus.viewModeDiagram')}</option>
         </select>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 히트맵 패널 전용 설정 (SPEC-HEATMAP-PANEL-001 T7).
+ *
+ * 5개 편집 블록:
+ *   1) store 태그 필터/에이전트 — 기존 StoreSourceSection 재사용(신규 패턴 미도입).
+ *   2) 센서 좌표(sensor_positions) — 라이브 시리즈별 x/y(0..1) 입력 + 미배치 센서 노출(AC-E2).
+ *   3) value_bounds min/max — 미설정 시 자동(센서값 범위).
+ *   4) color_table — colorSwatchPalette 재사용한 정지점 편집.
+ *   5) IDW power / grid_resolution.
+ *
+ * onConfigChange 는 최상위 얕은 병합이므로 중첩 필드(sensor_positions/color_table/idw)는
+ * 전체 객체를 다시 전달한다.
+ */
+function HeatmapSettingsSection({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  onConfigChange: (config: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const config = panel.config ?? {};
+  const cfg = parseHeatmapConfig(config);
+
+  // 라이브 시리즈 조회(미배치 센서 노출용) — 패널과 동일한 store 폴링을 재사용한다.
+  const storeSource = config.store_source as StoreSourceConfig | undefined;
+  const storeTagActive =
+    storeSource?.selection_mode === 'tag' &&
+    Object.keys(storeSource.tag_filters ?? {}).length > 0;
+  const isStore =
+    config.data_source === 'store' &&
+    ((storeSource?.series?.length ?? 0) > 0 || storeTagActive);
+  const storeResult = useStoreChartData(isStore ? storeSource : undefined, isStore);
+
+  // 좌표 편집은 raw config 를 직접 읽어 부분 입력(한 축만 입력)을 잃지 않는다.
+  // `?? {}` 가 매 렌더 새 객체를 만들지 않도록 useMemo 로 안정화한다.
+  const rawPositions = useMemo(
+    () =>
+      (config.sensor_positions as Record<string, { x?: number; y?: number }> | undefined) ?? {},
+    [config.sensor_positions],
+  );
+  // 라이브 시리즈 ∪ 저장된 좌표 키의 합집합을 편집 대상으로 나열한다.
+  const sensorNames = useMemo(() => {
+    const set = new Set<string>(storeResult.seriesNames);
+    for (const k of Object.keys(rawPositions)) set.add(k);
+    return Array.from(set);
+  }, [storeResult.seriesNames, rawPositions]);
+
+  const setPosition = (name: string, axis: 'x' | 'y', value: number | undefined) => {
+    const next: Record<string, { x?: number; y?: number }> = { ...rawPositions };
+    const cur = { ...(next[name] ?? {}) };
+    if (value === undefined) delete cur[axis];
+    else cur[axis] = value;
+    if (cur.x === undefined && cur.y === undefined) delete next[name];
+    else next[name] = cur;
+    onConfigChange({ sensor_positions: next });
+  };
+
+  // value_bounds — 두 입력 모두 비면 undefined(자동)로 되돌린다.
+  const rawBounds = config.value_bounds as { min?: number; max?: number } | undefined;
+  const setBound = (key: 'min' | 'max', value: number | undefined) => {
+    const merged: { min?: number; max?: number } = { ...(rawBounds ?? {}), [key]: value };
+    const empty = merged.min === undefined && merged.max === undefined;
+    onConfigChange({ value_bounds: empty ? undefined : merged });
+  };
+
+  // color_table — 정지점 배열 편집(빈 배열이면 undefined = 기본 gradient 폴백).
+  const colorTable: ColorStop[] = Array.isArray(config.color_table)
+    ? (config.color_table as ColorStop[])
+    : [];
+  const commitColorTable = (next: ColorStop[]) => {
+    onConfigChange({ color_table: next.length > 0 ? next : undefined });
+  };
+  const addColorStop = () => {
+    const stop = colorTable.length === 0 ? 0 : 1;
+    commitColorTable([...colorTable, { stop, color: COLOR_PALETTE[0]! }]);
+  };
+  const updateColorStop = (idx: number, patch: Partial<ColorStop>) => {
+    commitColorTable(colorTable.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+  const removeColorStop = (idx: number) => {
+    commitColorTable(colorTable.filter((_, i) => i !== idx));
+  };
+
+  // IDW — power / grid_resolution(성능 가드: MIN..MAX clamp).
+  const setIdw = (patch: { power?: number; grid_resolution?: number }) => {
+    onConfigChange({ idw: { ...cfg.idw, ...patch } });
+  };
+
+  const inputCls =
+    'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+
+  return (
+    <div className="space-y-4">
+      {/* 1) store 소스(에이전트 + 태그 필터) — 기존 섹션 재사용. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.dataSource')}
+        </label>
+        <StoreSourceSection panel={panel} onConfigChange={onConfigChange} />
+      </div>
+
+      {/* 2) 센서 좌표(0..1). 라이브 시리즈별 x/y 입력 + 미배치 안내(AC-E2). */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.heatmapSensorPositions')}
+        </label>
+        {sensorNames.length === 0 ? (
+          <p className="text-[11px] text-(--color-text-muted)">
+            {t('dashboard.settings.heatmapNoSensors')}
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {sensorNames.map((name) => {
+              const pos = rawPositions[name];
+              const placed =
+                pos !== undefined &&
+                Number.isFinite(pos.x) &&
+                Number.isFinite(pos.y);
+              return (
+                <div key={name} className="flex items-center gap-1.5">
+                  <span
+                    className={cn(
+                      'min-w-0 flex-1 truncate text-xs',
+                      placed ? 'text-(--color-text-secondary)' : 'text-amber-600 dark:text-amber-400',
+                    )}
+                    title={placed ? name : t('dashboard.settings.heatmapUnplacedTitle')}
+                  >
+                    {name}
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={pos?.x !== undefined ? String(pos.x) : ''}
+                    data-testid={`heatmap-pos-x-${name}`}
+                    placeholder="x"
+                    onChange={(e) =>
+                      setPosition(name, 'x', e.target.value === '' ? undefined : Number(e.target.value))
+                    }
+                    className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={pos?.y !== undefined ? String(pos.y) : ''}
+                    data-testid={`heatmap-pos-y-${name}`}
+                    placeholder="y"
+                    onChange={(e) =>
+                      setPosition(name, 'y', e.target.value === '' ? undefined : Number(e.target.value))
+                    }
+                    className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 3) 표시 상하한(value_bounds). 비우면 자동(센서값 범위). */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.heatmapValueBounds')}
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            value={rawBounds?.min !== undefined ? String(rawBounds.min) : ''}
+            data-testid="heatmap-bounds-min"
+            placeholder={t('dashboard.settings.gaugeSection.min')}
+            onChange={(e) =>
+              setBound('min', e.target.value === '' ? undefined : Number(e.target.value))
+            }
+            className={inputCls}
+          />
+          <span className="shrink-0 text-xs text-(--color-text-muted)">~</span>
+          <input
+            type="number"
+            value={rawBounds?.max !== undefined ? String(rawBounds.max) : ''}
+            data-testid="heatmap-bounds-max"
+            placeholder={t('dashboard.settings.gaugeSection.max')}
+            onChange={(e) =>
+              setBound('max', e.target.value === '' ? undefined : Number(e.target.value))
+            }
+            className={inputCls}
+          />
+        </div>
+      </div>
+
+      {/* 4) 색상표(color_table). 정지점(0..1) + 색상 스와치. 비우면 기본 gradient. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.heatmapColorTable')}
+        </label>
+        <div className="space-y-1.5">
+          {colorTable.map((stop, idx) => (
+            <div key={idx} className="flex items-center gap-1.5">
+              <ColorSwatchButton
+                color={stop.color}
+                onChange={(c) => updateColorStop(idx, { color: c ?? COLOR_PALETTE[0]! })}
+                ariaLabel={t('dashboard.settings.heatmapColorStopAria').replace('{index}', String(idx + 1))}
+              />
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={String(stop.stop)}
+                data-testid={`heatmap-colorstop-${idx}`}
+                onChange={(e) => updateColorStop(idx, { stop: Number(e.target.value) })}
+                className="w-20 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => removeColorStop(idx)}
+                className="shrink-0 rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500"
+                aria-label={t('dashboard.settings.heatmapRemoveColorStopAria')}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addColorStop}
+            data-testid="heatmap-add-colorstop"
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
+          >
+            <Plus className="h-3 w-3" />
+            {t('dashboard.settings.heatmapAddColorStop')}
+          </button>
+        </div>
+      </div>
+
+      {/* 5) IDW 파라미터(power / grid_resolution). */}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.heatmapIdwPower')}
+          </label>
+          <input
+            type="number"
+            min={1}
+            step={0.5}
+            value={String(cfg.idw.power)}
+            data-testid="heatmap-idw-power"
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v) && v > 0) setIdw({ power: v });
+            }}
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.heatmapGridResolution')}
+          </label>
+          <input
+            type="number"
+            min={MIN_GRID_RESOLUTION}
+            max={MAX_GRID_RESOLUTION}
+            step={1}
+            value={String(cfg.idw.grid_resolution)}
+            data-testid="heatmap-idw-grid"
+            onChange={(e) => {
+              const v = Math.trunc(Number(e.target.value));
+              if (Number.isFinite(v) && v > 0) {
+                setIdw({
+                  grid_resolution: Math.max(
+                    MIN_GRID_RESOLUTION,
+                    Math.min(MAX_GRID_RESOLUTION, v),
+                  ),
+                });
+              }
+            }}
+            className={inputCls}
+          />
+        </div>
       </div>
     </div>
   );

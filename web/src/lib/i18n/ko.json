@@ -137,13 +137,15 @@
         "modbusDeviceRegisters": "선택 가상 디바이스의 레지스터 맵 그리드",
         "modbusBusStats": "reads·writes/min, 지연 등 버스 통계 미니차트",
         "modbusSummaryStats": "커넥션·클라이언트·디바이스·오류 종합 통계",
-        "storeLineChart": "스토어 키 또는 태그의 이력을 시계열 라인 차트로 표시"
+        "storeLineChart": "스토어 키 또는 태그의 이력을 시계열 라인 차트로 표시",
+        "heatmap": "공간 온도 센서를 IDW 로 보간한 히트맵(온도장)"
       },
       "labels": {
         "propertiesGrid": "속성 그리드",
         "multiChannel": "다채널 비교",
         "outdoorControl": "실외기 모니터링",
-        "storeLineChart": "Store 라인 차트"
+        "storeLineChart": "Store 라인 차트",
+        "heatmap": "히트맵"
       }
     },
     "addDashboard": "새 대시보드 추가",
@@ -616,6 +618,18 @@
       "barChartSettings": "바 차트 설정",
       "pieChartSettings": "파이 차트 설정",
       "tableSettings": "테이블 설정",
+      "heatmap": "히트맵 설정",
+      "heatmapPlaceholder": "센서 좌표·상하한·색상표·IDW 편집은 곧 제공됩니다.",
+      "heatmapSensorPositions": "센서 좌표 (x, y — 0..1)",
+      "heatmapNoSensors": "바인딩된 센서가 없습니다. 데이터 소스의 태그 필터를 먼저 설정하세요.",
+      "heatmapUnplacedTitle": "좌표 미지정 — 보간에서 제외됩니다",
+      "heatmapValueBounds": "표시 상하한 (비우면 자동)",
+      "heatmapColorTable": "색상표 (정지점 0..1)",
+      "heatmapColorStopAria": "색상 정지점 {index} 색상",
+      "heatmapRemoveColorStopAria": "색상 정지점 삭제",
+      "heatmapAddColorStop": "정지점 추가",
+      "heatmapIdwPower": "IDW 감쇠 지수",
+      "heatmapGridResolution": "격자 해상도",
       "thresholds": "임계값",
       "style": "스타일",
       "previewExpandAria": "미리보기 펼치기",
@@ -817,6 +831,13 @@
         "dragOrderTitle": "드래그하여 순서 변경"
       },
       "dataSource": "데이터 소스"
+    },
+    "heatmap": {
+      "stagePlaceholder": "히트맵 렌더 준비 중 (MVP)",
+      "emptyState": "표시할 센서가 없습니다",
+      "sensorCount": "배치 센서 {placed} / 전체 {total}",
+      "unplaced": "좌표 미지정 센서 {count}개 (보간 제외)",
+      "error": "데이터 조회 오류 — 다음 주기에 재시도합니다"
     },
     "chart": {
       "channelNameError": "유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).",

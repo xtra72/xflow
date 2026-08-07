@@ -173,6 +173,8 @@ const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
     },
     { type: 'bar-chart', icon: BarChart2, labelKey: 'dashboard.panelTypes.barChart', descriptionKey: 'dashboard.addPanel.descriptions.barChart' },
     { type: 'pie-chart', icon: PieChart, labelKey: 'dashboard.panelTypes.pieChart', descriptionKey: 'dashboard.addPanel.descriptions.pieChart' },
+    // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵. 채널 스텝 없이 기본 config 로 추가된다.
+    { type: 'heatmap', icon: Thermometer, labelKey: 'dashboard.addPanel.labels.heatmap', descriptionKey: 'dashboard.addPanel.descriptions.heatmap' },
   ],
   content: [
     { type: 'text', icon: FileText, labelKey: 'dashboard.panelTypes.text', descriptionKey: 'dashboard.addPanel.descriptions.text' },

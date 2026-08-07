@@ -15,6 +15,8 @@ import { persist } from 'zustand/middleware';
 
 import type { DashboardScope, DashboardSnapshot } from '@/types/dashboard';
 import { generateUUID } from '@/lib/utils/uuid';
+// SPEC-HEATMAP-PANEL-001: 히트맵 패널 기본 config 빌더(파서와 기본값 일치 보장).
+import { buildDefaultHeatmapConfig } from '@/pages/dashboard/panels/heatmap/heatmapConfig';
 
 export interface Notification {
   id: string;
@@ -211,7 +213,10 @@ export type PanelType =
   | 'modbus-summary-stats' // 종합 통계 바
   // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널.
   // config.agentId 로 임의 타입의 에이전트 하나에 바인딩되며 관측 전용이다.
-  | 'agent-status';
+  | 'agent-status'
+  // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 센서를 IDW 로 보간해
+  // Canvas 2D 에 렌더하는 히트맵 패널. config 는 불투명 JSON(store_source + sensor_positions).
+  | 'heatmap';
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -324,6 +329,9 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
     // SPEC-DASHBOARD-002: 단일 에이전트 상태·통계 패널(통계 타일 그리드 + 헤더).
     case 'agent-status':
       return { w: 4, h: 5, minW: 3, minH: 3 };
+    // SPEC-HEATMAP-PANEL-001: 히트맵 패널(권장 기본 크기 {w:5,h:4}).
+    case 'heatmap':
+      return { w: 5, h: 4, minW: 3, minH: 3 };
     case 'line-chart':
       // SPEC REQ-M5-05: line-chart {w:6, h:3}
       return { w: 6, h: 3, minW: 3, minH: 2 };
@@ -485,6 +493,9 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태 패널. config 는 agentId 만 필요.
     case 'agent-status':
       return { type, title: '에이전트 상태', config: { agentId: '' } };
+    // SPEC-HEATMAP-PANEL-001: 히트맵 패널. 기본 config 는 store 태그 모드 + 빈 좌표 + 기본 IDW.
+    case 'heatmap':
+      return { type, title: '히트맵', config: buildDefaultHeatmapConfig() };
   }
 }
 
