@@ -164,3 +164,75 @@
 - **좌우 경계 비율 = 옵션 컬럼 폭(optionsWidth)** — design 의 `leftColWidth` 는 좌측 컬럼 폭이나, M1 레이아웃이 옵션 폭(우측 고정)을 제어하므로 그 축을 영속. 전역키 `panelSettings.leftWidth` 는 패널별 `panel-settings-ratio:<panelId>` 로 대체(마이그레이션 아님 — 신규 키).
 - **상한 가드 위치**: 선택 추가 시점(체크박스 onToggle)에서 억제 + 안내. selected_keys 는 M2 additive 필드이며 미리보기 소비는 후속(T10/consumer) — 가드는 선택 집합 크기 자체를 보호.
 - **jsdom 드래그 한계**: `getBoundingClientRect`=0 이라 상하 드래그 기하는 통합 테스트에서 직접 검증 불가 → 비율 훅 단위 테스트 + 좌우 드래그(클램프 결과) + 스플리터 렌더로 커버.
+
+---
+
+## §E.2 Run-phase Evidence — Final Goal 마일스톤 (T8 + T10)
+
+### 범위
+
+- **T8**: heatmap 전용 gradient 색상 프리셋(Viridis/Turbo/Warm/Cool + 기존 기본 = 5종). 옵션 영역(heatmap 전용) 프리셋 선택 + 기존 커스텀 ColorStop 편집. 선택 시 draft `color_table` 반영(M3 draft/debounce 파이프라인 재사용). REQ-10/11, AC-11. heatmap 외 미노출(REQ-12/AC-12).
+- **T10**: 회귀 확정 + AC-01~16 커버리지 매트릭스 + TRUST5/LSP 게이트 확인.
+
+### 파일
+
+**신규**: `web/src/pages/dashboard/panels/heatmap/heatmapColorPresets.ts`(프리셋 상수 + clonePresetStops), 테스트 `heatmapColorPresets.test.ts`(4) + `PanelSettingsDialog.colorPresets.test.tsx`(3).
+**확장**: `PanelSettingsDialog.tsx`(HeatmapSettingsSection color_table 섹션에 프리셋 선택 UI 추가 + import), i18n `ko.json`/`en.json`(`dashboard.settings.heatmapColorPreset`, ko/en 대칭).
+
+### test_results
+
+- `npx tsc --noEmit` → **exit 0**.
+- `npx eslint .` → **44 problems (1 error, 43 warnings)** = baseline, 신규 0.
+- `npx vitest run` → **236 files / 2931 tests 전량 통과**(실패 0).
+- 신규 코드 커버리지(`heatmapColorPresets.ts`): **stmts/branch/funcs/lines 100%**.
+- 회귀 넷 명시 재실행(특성화 + 기존 chart/heatmap 편집 + heatmap 렌더): **11 files / 157 tests 통과**.
+
+### AC-01 ~ AC-16 커버리지 매트릭스
+
+| AC | 요구 | 구현 | 커버 테스트 | 상태 |
+|----|------|------|-------------|------|
+| AC-01 | 3분할 셸 구성 | `PanelSettingsShell`(preview/options/dataSource 3영역, 좌상단/좌하단/우측) | `PanelSettingsDialog.shell.test.tsx` | 충족 |
+| AC-02 | 리사이즈 + 영속 | 좌우(M1 재사용)+상하(M3) 스플리터, 드래그→비율 갱신, 패널키 영속 | `PanelSettingsDialog.resize.test.tsx`(스플리터 렌더·좌우 드래그 영속) + `usePanelSettingsRatio.test.ts`(clamp/영속) | 충족(단, jsdom rect=0 로 상하 드래그 기하·라이브 인접 리사이즈는 직접 검증 불가 — 훅 단위+좌우 드래그로 대체) |
+| AC-03 | 비율 복원 + 손상 폴백 | `usePanelSettingsRatio` load/restore, 손상→기본(throw 없음) | `resize.test.tsx`(복원 500px, 손상→360px no-throw) + `usePanelSettingsRatio.test.ts` | 충족 |
+| AC-04 | Store 선택→config | 체크박스→`selected_keys`(additive) 반영 | `PanelSettingsDataSource.test.tsx` | 충족(config 반영). 미리보기의 selected_keys 소비는 후속 consumer 작업 — additive 미소비(문서화) |
+| AC-05 | TSDB placeholder | Store/TSDB 토글, TSDB=안내 placeholder, config 불변 | `PanelSettingsDataSource.test.tsx`(placeholder + onConfigChange 미호출) | 충족 |
+| AC-06 | 동일 컬럼·렌더 | 공용 `StoreEntryTable` + `STORE_COLUMNS`/`storeEntrySort` | `PanelSettingsDataSource.test.tsx` + `StoreEntryTable.test.tsx` | 충족(가시 컬럼은 key/metric/tags/alias 서브셋 — 동일 정의·비교자·공용 컴포넌트 사용, keyObjects 메타 소스, 문서화) |
+| AC-07 | 행 선택 체크박스 | selection→`selected_keys` add/remove | `PanelSettingsDataSource.test.tsx` | 충족 |
+| AC-08 | 필터/정렬/표시숨김 영속 | `panelStoreTablePrefs`(패널키) + 재진입 복원 | `PanelSettingsDataSource.test.tsx`(숨김/정렬 영속·복원) + `panelStoreTablePrefs.test.ts` | 충족 |
+| AC-09 | actions→Alias | `renderCellExtra` alias 컬럼(패널 설정) / actions 유지(에이전트 상세) | `PanelSettingsDataSource.test.tsx`(Alias 표시·colActions 부재) + `AgentDetailPanel.storeCharacterization.test.tsx`(actions 유지) | 충족 |
+| AC-10 | 빈 store graceful | no-agent/empty 안내(throw 없음) | `PanelSettingsDataSource.test.tsx` | 충족 |
+| AC-11 | 프리셋 제공·적용 | `HEATMAP_COLOR_PRESETS`(5종) 선택 + 커스텀 편집 → draft color_table | `PanelSettingsDialog.colorPresets.test.tsx` + `heatmapColorPresets.test.ts` | 충족 |
+| AC-12 | heatmap 외 미노출 | `HeatmapSettingsSection` heatmap 전용 렌더 | `colorPresets.test.tsx`(bar-chart 미노출) | 충족 |
+| AC-13 | 즉시 갱신(실데이터·디바운스) | `useDebouncedValue`→`previewPanel`(heatmap/line/gauge/modbus 실 store 데이터) | `useDebouncedValue.test.tsx`(디바운스) + previewRenderPanel 배선(코드 검증) | 충족(디바운스 훅 단위 검증 + 배선 코드 검증. 렌더된 미리보기의 end-to-end 갱신 스냅샷은 미어서션 — 통합 수준) |
+| AC-14 | 미확정·저장·롤백 | `useDraftPanelConfig` + 적용/닫기 | `resize.test.tsx`(편집→닫기 미커밋·편집→적용 승격) + `useDraftPanelConfig.test.tsx`(cancel/isDirty) | 충족 |
+| AC-15 | 선택 상한 | `SELECTED_KEYS_LIMIT`(48) + 초과 안내·억제 | `PanelSettingsDataSource.test.tsx`(초과 안내·미호출) + `storeSelectedKeys.test.ts`(isSelectionAtLimit) | 충족 |
+| AC-16 | 회귀 0 | 특성화 + 기존 chart/heatmap 편집 무변경 | 전체 스위트 2931/2931 + 회귀 넷 157/157 | 충족 |
+
+**부분 커버(정직 고지)**: AC-02(상하 드래그 기하·라이브 인접 리사이즈는 jsdom 한계로 직접 미어서션), AC-04(미리보기의 selected_keys 소비 미구현 — config 반영만), AC-13(디바운스 훅+배선 검증, 렌더 미리보기 end-to-end 갱신 스냅샷 미어서션). 나머지 AC 는 명시 테스트로 완전 커버.
+
+### TRUST5 / LSP 게이트
+
+- **Tested**: 신규 코드 커버리지 heatmapColorPresets 100%(전 마일스톤 신규 모듈 ≥85%). 특성화 테스트 통과.
+- **Readable/Unified**: 기존 파일 스타일 일치, eslint 신규 0.
+- **Secured**: localStorage 파싱 방어(ratio/prefs/selected), TSDB placeholder 로 미검증 렌더 차단.
+- **Trackable**: @spec SPEC-PANEL-SETTINGS-001 주석, REQ↔파일 추적.
+- **LSP**: tsc `--noEmit` 0 error/type, eslint 신규 error 0(run 게이트 max_*=0 충족). 신규 npm 의존성 0. 백엔드/불투명 config JSON shape 무변경(color_table/selected_keys 는 additive).
+
+### implementation_divergence (T8)
+
+- **커스텀 ColorStop 편집은 기존 존재** — `HeatmapSettingsSection` 이 이미 color_table 편집기를 보유. T8 은 그 위에 named 프리셋 선택만 additive 추가.
+- **REQ-12 는 구조적으로 충족** — 프리셋 UI 가 `HeatmapSettingsSection` 내부에 있고 이 섹션은 heatmap 에서만 렌더되므로 차트 5종에 자연히 미노출.
+- **프리셋 명칭은 로케일 불변**(Viridis/Turbo/Warm/Cool/Default — 범용 colormap 고유명). 라벨("gradient 프리셋")만 i18n.
+- **default 프리셋은 `DEFAULT_COLOR_TABLE` 재사용**(idw.ts, 중복 방지). 적용 시 `clonePresetStops` 로 복제하여 상수 변형 방지.
+
+---
+
+## SPEC 구현 완료 (SPEC implementation complete)
+
+SPEC-PANEL-SETTINGS-001 의 전 작업(T1~T10) 4개 마일스톤 완료:
+- **M1(Primary)**: T10 특성화 + T5 공용 `StoreEntryTable` 추출 + T1 3분할 셸.
+- **M2(Secondary)**: T6 체크박스·Alias + `selected_keys` additive + T7 필터/정렬/영속 + T4 Store/TSDB 토글.
+- **M3(Tertiary)**: T2/T3 2경계 리사이즈·비율 영속 + T9 draft/committed·디바운스·선택 상한.
+- **M4(Final)**: T8 heatmap 색상 프리셋 + T10 회귀 확정.
+
+최종 상태: tsc 0, eslint 신규 0(baseline 1 error + 43 warnings 유지), vitest 236 files/2931 tests 전량 통과, 신규 코드 커버리지 ≥85%(당 마일스톤 100%), 신규 npm 의존성 0, 백엔드/불투명 config JSON shape 무변경. REQ-01~14 구현 + AC-01~16 커버(부분 3건 정직 고지). 에이전트 상세·기존 차트/heatmap 설정 편집 회귀 0(AC-16).

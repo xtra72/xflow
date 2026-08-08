@@ -624,6 +624,7 @@
       "heatmapUnplacedTitle": "No coordinates — excluded from interpolation",
       "heatmapValueBounds": "Display bounds (empty = auto)",
       "heatmapColorTable": "Color table (stops 0..1)",
+      "heatmapColorPreset": "Gradient preset",
       "heatmapColorStopAria": "Color stop {index} color",
       "heatmapRemoveColorStopAria": "Remove color stop",
       "heatmapAddColorStop": "Add stop",

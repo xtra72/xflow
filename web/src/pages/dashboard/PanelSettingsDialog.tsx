@@ -70,6 +70,10 @@ import { useStoreChartData } from './panels/charts/useStoreChartData';
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
+import {
+  clonePresetStops,
+  HEATMAP_COLOR_PRESETS,
+} from './panels/heatmap/heatmapColorPresets';
 // SPEC-HEATMAP-PANEL-002: 도면 이미지 첨부(data-URL) + 크기 상한 검증.
 import {
   readImageAsDataUrl,
@@ -1573,11 +1577,40 @@ function HeatmapSettingsSection({
         </div>
       </div>
 
-      {/* 4) 색상표(color_table). 정지점(0..1) + 색상 스와치. 비우면 기본 gradient. */}
+      {/* 4) 색상표(color_table). gradient 프리셋 + 정지점(0..1) 색상 스와치. 비우면 기본 gradient. */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.heatmapColorTable')}
         </label>
+        {/* gradient 프리셋 선택(heatmap 전용, T8/REQ-10/11). 선택 시 draft color_table 반영. */}
+        <div className="mb-2" data-testid="heatmap-color-presets">
+          <span className="mb-1 block text-[11px] font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.heatmapColorPreset')}
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {HEATMAP_COLOR_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                data-testid={`heatmap-preset-${preset.id}`}
+                onClick={() => commitColorTable(clonePresetStops(preset))}
+                title={preset.name}
+                className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary)"
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-3 w-8 shrink-0 rounded-sm border border-(--color-border-default)"
+                  style={{
+                    backgroundImage: `linear-gradient(to right, ${preset.stops
+                      .map((s) => `${s.color} ${Math.round(s.stop * 100)}%`)
+                      .join(', ')})`,
+                  }}
+                />
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="space-y-1.5">
           {colorTable.map((stop, idx) => (
             <div key={idx} className="flex items-center gap-1.5">

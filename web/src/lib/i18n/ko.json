@@ -624,6 +624,7 @@
       "heatmapUnplacedTitle": "좌표 미지정 — 보간에서 제외됩니다",
       "heatmapValueBounds": "표시 상하한 (비우면 자동)",
       "heatmapColorTable": "색상표 (정지점 0..1)",
+      "heatmapColorPreset": "gradient 프리셋",
       "heatmapColorStopAria": "색상 정지점 {index} 색상",
       "heatmapRemoveColorStopAria": "색상 정지점 삭제",
       "heatmapAddColorStop": "정지점 추가",
