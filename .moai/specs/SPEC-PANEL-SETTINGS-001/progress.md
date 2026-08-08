@@ -110,3 +110,57 @@
 - **Alias 컬럼은 표시 전용(현재)**: 별칭 편집 배선(series[].alias 연동)은 이번 범위 밖 — 컬럼은 키를 기본 별칭으로 표시. 추가 편집은 후속.
 - **Store/TSDB 토글은 로컬 UI 상태**(config 미기록) — TSDB 는 placeholder 전용이므로 config 를 건드리지 않아 Store 설정 보존(AC-05).
 - **`StoreEntryTable` value 가드**: 메타데이터 파생 행(value 부재) 지원을 위한 방어 가드 추가(공용 컴포넌트 견고성 개선, 에이전트 상세 동작 불변).
+
+---
+
+## §E.2 Run-phase Evidence — Tertiary Goal 마일스톤 (T2 + T3 + T9)
+
+### 범위 (이 마일스톤에서 수행)
+
+- **T2**: 3분할 셸 2경계 드래그 리사이즈 — 좌우(좌측 컬럼↔옵션, M1 스플리터 재사용) + 상하(미리보기↔데이터소스, 신규). 인접 영역 라이브 리사이즈, 최소 크기 클램프·비율 정규화(R4). REQ-02/AC-02.
+- **T3**: 두 경계 비율을 패널별 localStorage 키 `panel-settings-ratio:<panelId>` 로 영속/복원. 손상/부재 → 기본 비율 폴백(throw 없음). REQ-03/AC-03.
+- **T9**: draft/committed 분리(`useDraftPanelConfig`) + 디바운스 미리보기(`useDebouncedValue`, 실 store 데이터 패널 heatmap/line/gauge/modbus) + 선택 상한 가드(SELECTED_KEYS_LIMIT=48, 초과 안내 + 반영 억제). REQ-13/14, AC-13/14/15.
+
+이번 마일스톤 밖(후속): T8(heatmap 색상 프리셋) + T10 회귀 확정.
+
+### 파일 (files_created / files_modified)
+
+**신규**
+- `web/src/pages/dashboard/usePanelSettingsRatio.ts` — 2경계 비율 훅 + 순수 clamp/load/save(패널별 키, 방어적 파싱).
+- `web/src/pages/dashboard/useDraftPanelConfig.ts` — draft/committed 분리 훅(patch/cancel/isDirty, panelId 전환 시에만 재초기화).
+- `web/src/pages/dashboard/useDebouncedValue.ts` — 디바운스 훅(미리보기 재렌더/재조회 억제).
+- 테스트: `usePanelSettingsRatio.test.ts`(8), `useDraftPanelConfig.test.tsx`(4), `useDebouncedValue.test.tsx`(2), `PanelSettingsDialog.resize.test.tsx`(6).
+
+**확장**
+- `web/src/pages/dashboard/PanelSettingsDialog.tsx` — 인라인 draft → `useDraftPanelConfig` 로 이관, `useDebouncedValue` 기반 `previewPanel`(디바운스)로 실데이터 미리보기 분리, 전역키 `panelSettings.leftWidth` → 패널별 `usePanelSettingsRatio`, 상하 경계 드래그 핸들러 추가, 셸에 previewRatio/스플리터 콜백 전달.
+- `PanelSettingsShell`(동 파일) — 상하 스플리터(`panel-settings-preview-splitter`) + previewRatio flex-basis 좌측 컬럼 구조 추가(접힘/데이터소스 부재 시 기존 자연 배치 유지).
+- `web/src/pages/dashboard/PanelSettingsDataSource.tsx` — 선택 상한 가드(초과 안내 배너 + 추가 억제) 배선.
+- `web/src/pages/dashboard/panels/charts/storeSelectedKeys.ts` — `SELECTED_KEYS_LIMIT` + `isSelectionAtLimit` 추가(additive).
+- i18n `ko.json`/`en.json` — `dashboard.settings.previewSplitterAria` + `dataSourceStoreSelectOverLimit`(ko/en 대칭).
+
+### tests_created + 상태
+
+- 훅 단위: `usePanelSettingsRatio`(8, clamp/영속/복원/panelId 재로드), `useDraftPanelConfig`(4, patch/cancel/isDirty/전환 재초기화), `useDebouncedValue`(2, 지연/중간값 스킵).
+- 통합: `PanelSettingsDialog.resize.test.tsx`(6, 2스플리터 렌더·비율 복원·손상 폴백·드래그 영속·draft 누수 없음·적용 승격).
+- 가드: `storeSelectedKeys.test.ts` +2(isSelectionAtLimit), `PanelSettingsDataSource.test.tsx` +2(상한 초과 안내·미만 정상). — **전량 통과**.
+
+### test_results (검증 증거)
+
+- `cd web && npx tsc --noEmit` → **exit 0, 0 type errors**.
+- `cd web && npx eslint .` → **44 problems (1 error, 43 warnings)** = baseline. 신규 발견 0.
+- `cd web && npx vitest run` → **234 files / 2924 tests 전량 통과**(실패 0).
+- 신규 모듈 커버리지(usePanelSettingsRatio/useDraftPanelConfig/useDebouncedValue/storeSelectedKeys): **stmts 96.55% / branch 92.98% / funcs 100% / lines 96.55%** — 목표 ≥85% 충족.
+
+### behavior_preserved (AC-16 회귀 0 증거)
+
+- M1/M2 테스트(shell 3, storeCharacterization 7, StoreEntryTable 7, PanelSettingsDataSource 12, StoreSourceSection/StoreTagMode/ChartPanelSections) 통과 유지.
+- 셸 리사이즈/접기/줌: 기존 좌우 스플리터·collapse·zoom 동작 보존(상하 스플리터는 additive). 접힘/비-차트 패널은 기존 자연 배치 유지.
+- draft/committed: 편집 후 닫기(취소)가 committed 미변경(누수 없음) — 테스트로 검증. 백엔드/config JSON shape 무변경.
+
+### implementation_divergence
+
+- **draft/committed 는 M1부터 이미 존재** — T9 는 이를 `useDraftPanelConfig` 훅으로 형식화(행위 보존)하고 디바운스·선택 가드를 추가. 취소=닫기(onClose)로 draft 폐기(기존 동작) → AC-14 충족.
+- **디바운스 범위 = 실 store 데이터 패널만**(heatmap/line/gauge/modbus). 악센트 미리보기(device/list 등)는 store 데이터 미사용이며 즉시 반영이 상호작용에 유리하여 디바운스 미적용(문서화된 결정).
+- **좌우 경계 비율 = 옵션 컬럼 폭(optionsWidth)** — design 의 `leftColWidth` 는 좌측 컬럼 폭이나, M1 레이아웃이 옵션 폭(우측 고정)을 제어하므로 그 축을 영속. 전역키 `panelSettings.leftWidth` 는 패널별 `panel-settings-ratio:<panelId>` 로 대체(마이그레이션 아님 — 신규 키).
+- **상한 가드 위치**: 선택 추가 시점(체크박스 onToggle)에서 억제 + 안내. selected_keys 는 M2 additive 필드이며 미리보기 소비는 후속(T10/consumer) — 가드는 선택 집합 크기 자체를 보호.
+- **jsdom 드래그 한계**: `getBoundingClientRect`=0 이라 상하 드래그 기하는 통합 테스트에서 직접 검증 불가 → 비율 훅 단위 테스트 + 좌우 드래그(클램프 결과) + 스플리터 렌더로 커버.

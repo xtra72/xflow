@@ -47,7 +47,12 @@ import {
   savePanelStoreTablePrefs,
   type PanelStoreTablePrefs,
 } from './panels/charts/panelStoreTablePrefs';
-import { readSelectedKeys, toggleSelectedKey } from './panels/charts/storeSelectedKeys';
+import {
+  isSelectionAtLimit,
+  readSelectedKeys,
+  SELECTED_KEYS_LIMIT,
+  toggleSelectedKey,
+} from './panels/charts/storeSelectedKeys';
 
 type OnConfig = (config: Record<string, unknown>) => void;
 
@@ -263,6 +268,24 @@ function PanelStoreSelectTable({
   );
 
   const [keyExpanded, setKeyExpanded] = useState(false);
+  // 선택 상한 초과 안내(AC-15). 상한 도달 상태에서 추가 시도 시 표시한다.
+  const [overLimitNotice, setOverLimitNotice] = useState(false);
+
+  const handleToggleSelection = useCallback(
+    (entry: StoreEntry) => {
+      const key = entry.key as string;
+      const willAdd = !selectedKeys.includes(key);
+      if (willAdd && isSelectionAtLimit(selectedKeys)) {
+        // 상한 초과 반영을 억제하고 안내만 표시(미리보기 성능 보호).
+        setOverLimitNotice(true);
+        return;
+      }
+      setOverLimitNotice(false);
+      const next = toggleSelectedKey(selectedKeys, key);
+      onConfigChange({ store_source: { ...(storeSource ?? {}), selected_keys: next } });
+    },
+    [selectedKeys, storeSource, onConfigChange],
+  );
 
   // ColumnSettingsMenu 는 visible 집합을 기대한다(hidden 의 여집합).
   const visibleColumnSet = useMemo(() => {
@@ -284,6 +307,18 @@ function PanelStoreSelectTable({
           t={t}
         />
       </div>
+
+      {overLimitNotice && (
+        <p
+          data-testid="panel-store-select-overlimit"
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300"
+        >
+          {t('dashboard.settings.dataSourceStoreSelectOverLimit').replace(
+            '{limit}',
+            String(SELECTED_KEYS_LIMIT),
+          )}
+        </p>
+      )}
 
       {!hasAgent ? (
         <p className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-4 text-center text-xs text-(--color-text-muted)">
@@ -316,12 +351,7 @@ function PanelStoreSelectTable({
           }}
           selection={{
             isSelected: (e) => selectedKeys.includes(e.key as string),
-            onToggle: (e) => {
-              const next = toggleSelectedKey(selectedKeys, e.key as string);
-              onConfigChange({
-                store_source: { ...(storeSource ?? {}), selected_keys: next },
-              });
-            },
+            onToggle: handleToggleSelection,
           }}
           renderCellExtra={(col, entry) =>
             col === 'alias' ? (

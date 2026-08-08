@@ -156,6 +156,46 @@ describe('AC-10 — 빈 store graceful', () => {
   });
 });
 
+describe('AC-15 — 선택 상한 가드', () => {
+  it('상한 초과 추가 시 안내가 표시되고 config 에 반영되지 않는다', () => {
+    // 50개 키, 이미 48개(상한) 선택된 상태.
+    state.keyObjects = Array.from({ length: 50 }, (_, i) => ({
+      key: `k${i}`,
+      registration: 'auto',
+      data_type: 'float',
+      metric_type: 'm',
+      tags: {},
+    }));
+    const selected = Array.from({ length: 48 }, (_, i) => `k${i}`);
+    const onConfigChange = vi.fn();
+    render(
+      <PanelSettingsDataSource
+        panel={panelWithAgent({ selected_keys: selected })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const select = screen.getByTestId('panel-store-select');
+    const checkboxes = within(select).getAllByLabelText(
+      'agents.detail.store.selectRowAriaLabel',
+    ) as HTMLInputElement[];
+    const unchecked = checkboxes.find((c) => !c.checked)!;
+    fireEvent.click(unchecked);
+    // 안내 표시 + 반영 억제.
+    expect(screen.getByTestId('panel-store-select-overlimit')).toBeInTheDocument();
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('상한 미만에서는 정상적으로 추가되고 안내가 없다', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
+    const select = screen.getByTestId('panel-store-select');
+    const checkboxes = within(select).getAllByLabelText('agents.detail.store.selectRowAriaLabel');
+    fireEvent.click(checkboxes[0]!);
+    expect(screen.queryByTestId('panel-store-select-overlimit')).not.toBeInTheDocument();
+    expect(onConfigChange).toHaveBeenCalled();
+  });
+});
+
 describe('T7/AC-08 — 필터/정렬/표시숨김 영속', () => {
   it('컬럼 숨김이 패널별 localStorage 로 영속되고 재마운트 시 복원된다', () => {
     const { unmount } = render(

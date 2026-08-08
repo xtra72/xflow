@@ -4,7 +4,13 @@
 import { describe, expect, it } from 'vitest';
 
 import type { StoreSourceConfig } from './chartChannelTypes';
-import { isKeySelected, readSelectedKeys, toggleSelectedKey } from './storeSelectedKeys';
+import {
+  isKeySelected,
+  isSelectionAtLimit,
+  readSelectedKeys,
+  SELECTED_KEYS_LIMIT,
+  toggleSelectedKey,
+} from './storeSelectedKeys';
 
 function store(selected?: unknown): StoreSourceConfig {
   return {
@@ -45,5 +51,13 @@ describe('toggleSelectedKey', () => {
     expect(toggleSelectedKey(base, 'a')).toEqual(['b']);
     // 원본 불변.
     expect(base).toEqual(['a', 'b']);
+  });
+});
+
+describe('isSelectionAtLimit (AC-15)', () => {
+  it('상한 미만은 false, 상한 이상은 true', () => {
+    expect(isSelectionAtLimit([])).toBe(false);
+    expect(isSelectionAtLimit(Array.from({ length: SELECTED_KEYS_LIMIT - 1 }, (_, i) => `k${i}`))).toBe(false);
+    expect(isSelectionAtLimit(Array.from({ length: SELECTED_KEYS_LIMIT }, (_, i) => `k${i}`))).toBe(true);
   });
 });

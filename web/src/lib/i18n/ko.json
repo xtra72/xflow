@@ -669,6 +669,7 @@
       "style": "스타일",
       "previewExpandAria": "미리보기 펼치기",
       "splitterAria": "설정/미리보기 너비 조절",
+      "previewSplitterAria": "미리보기/데이터소스 높이 조절",
       "previewLabel": "패널 스타일 미리보기",
       "zoomOutAria": "미리보기 축소",
       "zoomOutTitle": "축소 (Ctrl+휠)",
@@ -872,7 +873,8 @@
       "dataSourceTsdbBody": "TSDB 바인딩은 후속 SPEC 에서 제공됩니다. 현재는 비활성 안내만 표시합니다.",
       "dataSourceStoreSelectTitle": "시리즈 선택 (체크박스)",
       "dataSourceStoreSelectEmpty": "표시할 Store 키가 없습니다.",
-      "dataSourceStoreSelectNoAgent": "먼저 Store 에이전트를 선택하세요."
+      "dataSourceStoreSelectNoAgent": "먼저 Store 에이전트를 선택하세요.",
+      "dataSourceStoreSelectOverLimit": "선택 계열은 최대 {limit}개까지입니다. 미리보기 성능 보호를 위해 초과 선택은 반영되지 않습니다."
     },
     "heatmap": {
       "stagePlaceholder": "히트맵 렌더 준비 중 (MVP)",

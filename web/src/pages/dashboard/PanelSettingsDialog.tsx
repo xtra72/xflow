@@ -1,7 +1,7 @@
 // 패널 상세 설정 다이얼로그.
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
@@ -87,6 +87,9 @@ import {
   TableChartSection,
 } from './ChartPanelSections';
 import { PanelSettingsDataSource } from './PanelSettingsDataSource';
+import { useDraftPanelConfig } from './useDraftPanelConfig';
+import { useDebouncedValue } from './useDebouncedValue';
+import { usePanelSettingsRatio } from './usePanelSettingsRatio';
 import AcControlStyleSection from './AcControlStyleSection';
 import AcControlThresholdsSection from './AcControlThresholdsSection';
 import type { ValueColorConfig } from './panels/acControlColors';
@@ -192,32 +195,22 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
   const storePanel = activePage?.panels.find((p) => p.id === panelId) ?? null;
 
-  // 드래프트: 적용 버튼 전까지 변경을 로컬에 보관
-  // panelId 가 바뀔 때만 초기화 — storePanel.config 변경 시 리셋하지 않음
-  const [draftConfig, setDraftConfig] = useState<Record<string, unknown>>(() => storePanel?.config ?? {});
-  const [draftTitle, setDraftTitle] = useState<string>(() => storePanel?.title ?? '');
-  const prevPanelIdRef = useRef(panelId);
-  useEffect(() => {
-    if (prevPanelIdRef.current !== panelId) {
-      prevPanelIdRef.current = panelId;
-      setDraftConfig(storePanel?.config ?? {});
-      setDraftTitle(storePanel?.title ?? '');
-    }
-  }, [panelId, storePanel?.config, storePanel?.title]);
-
-  const handleConfigChange = useCallback(
-    (patch: Record<string, unknown>) => {
-      setDraftConfig((prev) => ({ ...prev, ...patch }));
-    },
-    [],
+  // draft(편집 중) / committed(저장) 분리 — T9(REQ-14). panelId 전환 시에만 draft 재초기화
+  // (같은 패널에서 외부 committed 변경이 편집 중 draft 를 덮어쓰지 않음 — 기존 동작 보존).
+  const committedConfig = useMemo(() => storePanel?.config ?? {}, [storePanel?.config]);
+  const committedTitle = storePanel?.title ?? '';
+  const { draftConfig, draftTitle, patchConfig, setTitle } = useDraftPanelConfig(
+    committedConfig,
+    committedTitle,
+    panelId ?? '',
   );
 
-  const handleTitleChange = useCallback((title: string) => {
-    setDraftTitle(title);
-  }, []);
+  const handleConfigChange = patchConfig;
+  const handleTitleChange = setTitle;
 
   const handleApply = useCallback(() => {
     if (!storePanel) return;
+    // 저장 = draft → committed 승격.
     updatePanelConfig(storePanel.id, draftConfig);
     updatePanelTitle(storePanel.id, draftTitle);
   }, [storePanel, draftConfig, draftTitle, updatePanelConfig, updatePanelTitle]);
@@ -227,13 +220,25 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     onClose();
   }, [handleApply, onClose]);
 
-  // 드래프트를 반영한 가상 패널 (미리보기 + 설정 컴포넌트용)
+  // 드래프트를 반영한 가상 패널 (옵션/데이터소스 편집 — 즉시 반영).
   const panel = useMemo(
     () =>
       storePanel
         ? { ...storePanel, config: draftConfig, title: draftTitle }
         : null,
     [storePanel, draftConfig, draftTitle],
+  );
+
+  // 라이브 미리보기용 디바운스 config — 실 store 데이터 패널(heatmap/line/gauge/modbus)의
+  // 잦은 편집 재렌더/재조회를 억제한다(T9/AC-13/R3). 옵션 편집은 즉시(panel), 미리보기는
+  // 디바운스(previewPanel)로 분리한다.
+  const debouncedConfig = useDebouncedValue(draftConfig, 200);
+  const previewPanel = useMemo(
+    () =>
+      storePanel
+        ? { ...storePanel, config: debouncedConfig, title: draftTitle }
+        : null,
+    [storePanel, debouncedConfig, draftTitle],
   );
 
   // 악센트 그룹 선택 상태 (좌측 컬럼에 컨트롤 표시용)
@@ -296,40 +301,25 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     [zoomIn, zoomOut],
   );
 
-  // 좌측 컬럼 너비 (px) - 드래그 리사이저로 조절, localStorage 영속
-  const LEFT_MIN = 240;
-  const LEFT_MAX = 800;
-  const [leftWidth, setLeftWidth] = useState<number>(() => {
-    if (typeof window === 'undefined') return 360;
-    const stored = window.localStorage.getItem('panelSettings.leftWidth');
-    const n = stored ? parseInt(stored, 10) : NaN;
-    return Number.isFinite(n) ? Math.max(LEFT_MIN, Math.min(LEFT_MAX, n)) : 360;
-  });
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('panelSettings.leftWidth', String(leftWidth));
-  }, [leftWidth]);
+  // 2경계 비율(옵션 컬럼 폭 + 미리보기 높이 비율) — 패널별 localStorage 영속/복원 (T2/T3).
+  // 손상/부재 값은 기본 비율로 폴백한다(usePanelSettingsRatio 내부, AC-03 edge).
+  const { ratio, setRatio } = usePanelSettingsRatio(panelId ?? '');
+  const leftWidth = ratio.optionsWidth;
+  const previewRatio = ratio.previewRatio;
 
-  // 드래그 상태 — mousemove/mouseup 은 window 에 부착
+  // 좌우(세로) 경계 드래그 — 우측 옵션 컬럼 폭 조절. mousemove/mouseup 은 window 에 부착.
   const [isDragging, setIsDragging] = useState(false);
   useEffect(() => {
     if (!isDragging) return;
     const onMove = (e: MouseEvent) => {
-      // 컬럼 배치: [미리보기 (flex-1)] [splitter] [설정 (leftWidth, 우측 고정폭)]
-      // 설정 컬럼이 우측에 고정되므로 너비는 다이얼로그 우측 가장자리 기준으로 계산한다.
-      //   - 스플리터를 오른쪽으로 드래그 → 마우스 X 증가 → rect.right - clientX 감소
-      //     → leftWidth(=설정 폭) 감소 → 미리보기 영역이 넓어짐 (직관에 일치)
-      //   - 스플리터를 왼쪽으로 드래그 → 설정 폭 증가
+      // [미리보기 (flex-1)] [splitter] [설정 (leftWidth, 우측 고정폭)].
+      // 설정 컬럼이 우측 고정이므로 폭 = 다이얼로그 우측 가장자리 - 마우스 X (setRatio 가 클램프).
       const dialog = document.querySelector(
         '[data-panel-settings-content]',
       ) as HTMLElement | null;
       if (!dialog) return;
       const rect = dialog.getBoundingClientRect();
-      const next = Math.max(
-        LEFT_MIN,
-        Math.min(LEFT_MAX, rect.right - e.clientX),
-      );
-      setLeftWidth(next);
+      setRatio({ optionsWidth: rect.right - e.clientX });
     };
     const onUp = () => setIsDragging(false);
     window.addEventListener('mousemove', onMove);
@@ -342,7 +332,33 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-  }, [isDragging]);
+  }, [isDragging, setRatio]);
+
+  // 상하(가로) 경계 드래그 — 좌측 컬럼 내 미리보기(상단) 높이 비율 조절.
+  const [previewDragging, setPreviewDragging] = useState(false);
+  useEffect(() => {
+    if (!previewDragging) return;
+    const onMove = (e: MouseEvent) => {
+      const region = document.querySelector(
+        '[data-testid="panel-settings-preview"]',
+      ) as HTMLElement | null;
+      if (!region) return;
+      const rect = region.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      setRatio({ previewRatio: (e.clientY - rect.top) / rect.height });
+    };
+    const onUp = () => setPreviewDragging(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [previewDragging, setRatio]);
 
   // 악센트 라벨 키 결정 (값은 i18n 키, 렌더 시 t() 로 변환)
   const accentLabelKeys = panel?.type === 'device' || panel?.type === 'ac-control' || panel?.type === 'hvac-control' || panel?.type === 'properties-grid'
@@ -601,6 +617,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
     </>
   );
+  // 실 store 데이터 패널(heatmap/line/gauge/modbus)은 디바운스된 previewPanel 로 렌더한다.
+  // (panel 은 non-null 로 좁혀졌으므로 previewPanel 부재 시 panel 로 폴백해 항상 non-null.)
+  const previewRenderPanel = previewPanel ?? panel;
   const previewSlot = (
     <>
             {/*
@@ -689,7 +708,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={{ width: `${24 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '1 / 1' }}
                 onWheel={handlePreviewWheel}
               >
-                <GaugeMiniPreview panel={panel} />
+                <GaugeMiniPreview panel={previewRenderPanel} />
               </div>
             )}
             {panel.type === 'line-chart' && (
@@ -698,7 +717,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={{ width: `${42 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '16 / 9' }}
                 onWheel={handlePreviewWheel}
               >
-                <LineChartMiniPreview panel={panel} />
+                <LineChartMiniPreview panel={previewRenderPanel} />
               </div>
             )}
             {/*
@@ -712,7 +731,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
                 onWheel={handlePreviewWheel}
               >
-                <ModbusPanelPreview panel={panel} />
+                <ModbusPanelPreview panel={previewRenderPanel} />
               </div>
             )}
             {/*
@@ -726,7 +745,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
                 onWheel={handlePreviewWheel}
               >
-                <HeatmapPanel panelId={panel.id} title={panel.title} config={panel.config} />
+                <HeatmapPanel panelId={previewRenderPanel.id} title={previewRenderPanel.title} config={previewRenderPanel.config} />
               </div>
             )}
     </>
@@ -806,6 +825,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           leftWidth={leftWidth}
           isDragging={isDragging}
           setIsDragging={setIsDragging}
+          previewRatio={previewRatio}
+          previewSplitterDragging={previewDragging}
+          onPreviewSplitterMouseDown={() => setPreviewDragging(true)}
           previewZoom={previewZoom}
           zoomIn={zoomIn}
           zoomOut={zoomOut}
@@ -4263,11 +4285,12 @@ function LogMiniPreview({
   );
 }
 
-// ---- 3분할 설정 셸 (T1) ----
-// @spec SPEC-PANEL-SETTINGS-001 (REQ-01)
+// ---- 3분할 설정 셸 (T1/T2) ----
+// @spec SPEC-PANEL-SETTINGS-001 (REQ-01/REQ-02)
 // 다이얼로그 본문을 미리보기(좌상단)·데이터소스(좌하단)·옵션(우측) 3영역으로 배치하는 셸.
-// 기존 편집 슬롯(options/preview/dataSource)을 각 영역에 이관하며 편집 로직은 재작성하지
-// 않는다. 리사이즈/비율 영속은 후속 마일스톤(T2/T3)에서 확장한다.
+// 2경계 드래그 리사이즈: 좌우(좌측 컬럼↔옵션) + 상하(미리보기↔데이터소스). 비율 영속은
+// 상위(usePanelSettingsRatio)가 담당하고, 셸은 값(leftWidth/previewRatio)과 드래그 개시
+// 콜백(setIsDragging/onPreviewSplitterMouseDown)만 받는다.
 function PanelSettingsShell({
   options,
   preview,
@@ -4278,6 +4301,9 @@ function PanelSettingsShell({
   leftWidth,
   isDragging,
   setIsDragging,
+  previewRatio,
+  previewSplitterDragging,
+  onPreviewSplitterMouseDown,
   previewZoom,
   zoomIn,
   zoomOut,
@@ -4295,6 +4321,9 @@ function PanelSettingsShell({
   leftWidth: number;
   isDragging: boolean;
   setIsDragging: React.Dispatch<React.SetStateAction<boolean>>;
+  previewRatio: number;
+  previewSplitterDragging: boolean;
+  onPreviewSplitterMouseDown: () => void;
   previewZoom: number;
   zoomIn: () => void;
   zoomOut: () => void;
@@ -4303,6 +4332,8 @@ function PanelSettingsShell({
   previewZoomMax: number;
   t: TranslationFn;
 }) {
+  // 상하 경계는 미리보기 + 데이터소스가 함께 존재할 때만(접힘 아님 + 차트/heatmap) 노출.
+  const showHSplit = !previewCollapsed && dataSourceBelowPreview;
   return (
         <div
           data-panel-settings-content
@@ -4376,13 +4407,23 @@ function PanelSettingsShell({
             Ctrl+휠 로 확대/축소 할 수 있다.
           */}
           {(!previewCollapsed || dataSourceBelowPreview) && (
-          <div data-testid="panel-settings-preview" className="order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start gap-3 overflow-y-auto">
+          <div
+            data-testid="panel-settings-preview"
+            className={cn(
+              'order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start',
+              showHSplit ? 'gap-0 overflow-hidden' : 'gap-3 overflow-y-auto',
+            )}
+          >
             {/*
               프리뷰 영역(툴바 + 미리보기 블록)은 접히면 숨긴다. 차트/히트맵 패널의
               데이터 소스 섹션은 이 아래에 별도로 항상 노출된다(SPEC-WEB-005).
+              상하 경계(showHSplit)일 때 미리보기는 previewRatio 높이를 차지한다.
             */}
             {!previewCollapsed && (
-            <>
+            <div
+              className={cn('flex flex-col gap-3', showHSplit ? 'min-h-0 overflow-y-auto' : 'shrink-0')}
+              style={showHSplit ? { flexBasis: `${previewRatio * 100}%`, flexGrow: 0, flexShrink: 0 } : undefined}
+            >
             <div className="flex shrink-0 items-center justify-between gap-2">
               <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.settings.previewLabel')}</label>
               <div className="flex items-center gap-1">
@@ -4434,10 +4475,39 @@ function PanelSettingsShell({
             </div>
             {preview}
             {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
-            </>
+            </div>
             )}
 
-            {dataSource}
+            {/* 상하(가로) 경계 드래그 리사이저 (미리보기↔데이터소스). */}
+            {showHSplit && (
+              <div
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label={t('dashboard.settings.previewSplitterAria')}
+                data-testid="panel-settings-preview-splitter"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onPreviewSplitterMouseDown();
+                }}
+                className={cn(
+                  'group relative -my-1 flex h-2 shrink-0 cursor-row-resize items-center justify-center',
+                  previewSplitterDragging && 'bg-blue-500/20',
+                )}
+              >
+                <div
+                  className={cn(
+                    'h-0.5 w-12 rounded-full bg-(--color-border-default) transition-colors group-hover:bg-blue-400',
+                    previewSplitterDragging && 'bg-blue-500',
+                  )}
+                />
+              </div>
+            )}
+
+            {dataSource && (
+              <div className={cn(showHSplit ? 'min-h-0 flex-1 overflow-y-auto' : 'shrink-0')}>
+                {dataSource}
+              </div>
+            )}
           </div>
           )}
         </div>

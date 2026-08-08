@@ -8,6 +8,17 @@
 import type { StoreSourceConfig } from './chartChannelTypes';
 
 /**
+ * 선택 계열(체크박스) 상한. 라이브 미리보기 성능 보호를 위한 합리적 상한(수십 개).
+ * @spec SPEC-PANEL-SETTINGS-001 (T9, AC-15)
+ */
+export const SELECTED_KEYS_LIMIT = 48;
+
+/** 현재 선택이 상한에 도달했는지(추가 선택 억제 판정용). 제거 방향은 항상 허용. */
+export function isSelectionAtLimit(current: readonly string[]): boolean {
+  return current.length >= SELECTED_KEYS_LIMIT;
+}
+
+/**
  * store_source.selected_keys 를 방어적으로 파싱한다.
  * 미설정(undefined)/비배열/비문자열 요소는 무시하고, 중복은 제거한다.
  * 반환 순서는 입력 순서를 보존한다(안정적).
