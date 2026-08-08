@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import GridLayout from 'react-grid-layout';
+import { useNavigate } from 'react-router';
 import {
   Pencil,
   RefreshCw,
@@ -48,8 +49,6 @@ import type { FlowInfo } from '@/types/flow';
 
 import { renderDashboardPanel } from './renderDashboardPanel';
 import RemoteDashboardView from './RemoteDashboardView';
-import AddPanelDialog from './AddPanelDialog';
-import PanelSettingsDialog from './PanelSettingsDialog';
 
 /** 그리드 설정 */
 const GRID_MARGIN: [number, number] = [16, 16];
@@ -152,10 +151,8 @@ function LocalDashboardView() {
   // 갱신 주기 드롭다운 (일반 모드 헤더)
   const [refreshDropdownOpen, setRefreshDropdownOpen] = useState(false);
   const refreshDropdownRef = useRef<HTMLDivElement>(null);
-  // 패널 추가 다이얼로그
-  const [addPanelOpen, setAddPanelOpen] = useState(false);
-  // 패널 설정 다이얼로그 (열린 패널 ID)
-  const [settingsPanelId, setSettingsPanelId] = useState<string | null>(null);
+  // 패널 생성/설정: 모달 대신 딥링크 라우트로 이동한다(편집 상태는 uiStore 로 보존).
+  const navigate = useNavigate();
 
   // 컨테이너 너비 측정 (그리드 영역) — 콜백 ref로 조건부 렌더링 대응
   const containerRef = useRef<HTMLDivElement>(null);
@@ -626,7 +623,7 @@ function LocalDashboardView() {
               {/* 패널 추가 (Pencil: aSF19) */}
               <button
                 type="button"
-                onClick={() => setAddPanelOpen(true)}
+                onClick={() => navigate('/panels/new')}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -833,7 +830,7 @@ function LocalDashboardView() {
                       <div className="absolute right-1 top-1 z-10 flex gap-1">
                         <button
                           type="button"
-                          onClick={() => setSettingsPanelId(panel.id)}
+                          onClick={() => navigate(`/panels/${panel.id}/settings`)}
                           className="rounded-full bg-(--color-bg-elevated) p-0.5 text-(--color-text-muted) shadow transition-colors hover:bg-(--color-bg-surface) hover:text-(--color-text-primary)"
                           aria-label={t('dashboard.settings.title')}
                           title={t('dashboard.settings.title')}
@@ -859,18 +856,6 @@ function LocalDashboardView() {
           </div>
         )}
       </div>
-
-      {/* 패널 추가 다이얼로그 */}
-      <AddPanelDialog
-        open={addPanelOpen}
-        onClose={() => setAddPanelOpen(false)}
-      />
-
-      {/* 패널 설정 다이얼로그 */}
-      <PanelSettingsDialog
-        panelId={settingsPanelId}
-        onClose={() => setSettingsPanelId(null)}
-      />
 
     </div>
   );

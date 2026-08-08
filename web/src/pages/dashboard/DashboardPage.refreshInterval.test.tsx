@@ -11,6 +11,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // 데이터 훅 스텁 — 결정적 반환값.
@@ -59,7 +60,12 @@ function renderPage() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   function Wrapper({ children }: PropsWithChildren) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    // DashboardPage 가 useNavigate 를 사용하므로 Router 컨텍스트가 필요하다.
+    return (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
   }
   return render(<DashboardPage />, { wrapper: Wrapper });
 }

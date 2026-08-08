@@ -2,7 +2,7 @@
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
   Legend,
@@ -363,37 +363,39 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [panel, onClose]);
 
-  // 배경 클릭 시 닫기
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
   if (!panel) return null;
 
   // SPEC-WEB-005: 차트 패널이면 데이터 소스 섹션을 좌측 프리뷰 아래에 넓게 배치한다.
   // 프리뷰가 접혀도 데이터 소스 섹션은 좌측 영역에 계속 노출된다.
   const isChartPanel = CHART_PANEL_TYPES.has(panel.type);
 
+  // 모달 → 페이지: 배경 오버레이 제거, AppLayout 콘텐츠 영역을 채우는 전체화면
+  // 페이지 컨테이너로 렌더한다. 내부 2컬럼 레이아웃/스크롤/하단 고정 푸터는 그대로 유지된다.
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={handleBackdropClick}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="panel-settings-dialog-title"
-    >
-      <div className="mx-4 flex h-[min(900px,95vh)] w-full max-w-[min(1400px,95vw)] flex-col rounded-2xl bg-(--color-bg-surface) shadow-xl">
+    <div className="flex h-full w-full flex-col">
+      <div
+        className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)"
+        aria-labelledby="panel-settings-dialog-title"
+      >
         {/* 헤더 */}
         <div className="flex shrink-0 items-center justify-between px-5 pt-4 pb-3">
-          <h2
-            id="panel-settings-dialog-title"
-            className="text-base font-semibold text-(--color-text-primary)"
-          >
-            {t('dashboard.settings.title')}
-          </h2>
+          <div className="flex items-center gap-2">
+            {/* 페이지 뒤로가기: 대시보드로 복귀 */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+              aria-label={t('dashboard.settings.closeAria')}
+            >
+              <ArrowLeft className="h-4.5 w-4.5" />
+            </button>
+            <h2
+              id="panel-settings-dialog-title"
+              className="text-base font-semibold text-(--color-text-primary)"
+            >
+              {t('dashboard.settings.title')}
+            </h2>
+          </div>
           <button
             type="button"
             onClick={onClose}

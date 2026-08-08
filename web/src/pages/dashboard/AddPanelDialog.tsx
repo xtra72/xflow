@@ -3,7 +3,7 @@
 // 'device', 'ac-control', 'hvac-control', 'custom-control' 유형 선택 시
 // 디바이스 목록을 표시하여 개별 디바이스를 선택한다.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   GitBranch,
   Bot,
@@ -247,14 +247,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [open, step, onClose]);
 
-  // 배경 클릭 시 닫기
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
   // 패널 유형 선택 처리
   const handleSelect = (option: PanelOption) => {
     if (option.needsDevice) {
@@ -367,15 +359,14 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
 
   if (!open) return null;
 
+  // 모달 → 페이지: 배경 오버레이 제거, AppLayout 콘텐츠 영역을 채우는 전체화면
+  // 페이지 컨테이너로 렌더한다. 위저드 카드는 가독성을 위해 중앙 정렬한다.
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={handleBackdropClick}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-panel-dialog-title"
-    >
-      <div className="mx-4 w-full max-w-lg rounded-lg bg-(--color-bg-surface) shadow-xl">
+    <div className="flex h-full w-full flex-col overflow-y-auto">
+      <div
+        className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border border-(--color-border-default) bg-(--color-bg-surface)"
+        aria-labelledby="add-panel-dialog-title"
+      >
         {step === 'type' && <TypeStep onSelect={handleSelect} onClose={onClose} />}
         {step === 'device' && (
           <DeviceStep
@@ -489,12 +480,23 @@ function TypeStep({
       {/* 헤더 */}
       <div className="border-b border-(--color-border-default) px-5 pt-4 pb-3">
         <div className="flex items-center justify-between">
-          <h2
-            id="add-panel-dialog-title"
-            className="text-lg font-semibold text-(--color-text-primary)"
-          >
-            {t('dashboard.addPanel.title')}
-          </h2>
+          <div className="flex items-center gap-2">
+            {/* 페이지 뒤로가기: 대시보드로 복귀 */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+              aria-label={t('dashboard.addPanel.backAria')}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <h2
+              id="add-panel-dialog-title"
+              className="text-lg font-semibold text-(--color-text-primary)"
+            >
+              {t('dashboard.addPanel.title')}
+            </h2>
+          </div>
           <button
             type="button"
             onClick={onClose}

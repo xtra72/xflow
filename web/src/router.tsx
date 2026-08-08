@@ -18,6 +18,9 @@ import LoadingSpinner from '@/components/layout/LoadingSpinner';
 // 지연 로딩 페이지 컴포넌트
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'));
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
+// 패널 생성/설정: 기존 모달을 딥링크 라우트로 승격(AppLayout 하위, Header+Sidebar 유지).
+const PanelCreatePage = lazy(() => import('@/pages/dashboard/PanelCreatePage'));
+const PanelSettingsPage = lazy(() => import('@/pages/dashboard/PanelSettingsPage'));
 const FlowListPage = lazy(() => import('@/pages/flows/FlowListPage'));
 const EditorPage = lazy(() => import('@/pages/editor/EditorPage'));
 const MonitoringPage = lazy(() => import('@/pages/monitoring/MonitoringPage'));
@@ -75,6 +78,23 @@ const router = createBrowserRouter([
             element: (
               <SuspenseWrapper>
                 <DashboardPage />
+              </SuspenseWrapper>
+            ),
+          },
+          // 패널 생성/설정 딥링크 (대시보드 전용, 새로고침/북마크로 직접 진입 가능).
+          {
+            path: '/panels/new',
+            element: (
+              <SuspenseWrapper>
+                <PanelCreatePage />
+              </SuspenseWrapper>
+            ),
+          },
+          {
+            path: '/panels/:panelId/settings',
+            element: (
+              <SuspenseWrapper>
+                <PanelSettingsPage />
               </SuspenseWrapper>
             ),
           },
