@@ -17,7 +17,7 @@ import {
 } from 'recharts';
 
 import { cn } from '@/lib/utils/cn';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useStations, useXsfmDevices } from '@/hooks/useStation';
@@ -374,73 +374,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // (CHART_PANEL_TYPES 자체에는 넣지 않는다 — 차트 전용 채널/타입 분기 오염 방지.)
   const dataSourceBelowPreview = isChartPanel || panel.type === 'heatmap';
 
-  // 모달 → 페이지: 배경 오버레이 제거, AppLayout 콘텐츠 영역을 채우는 전체화면
-  // 페이지 컨테이너로 렌더한다. 내부 2컬럼 레이아웃/스크롤/하단 고정 푸터는 그대로 유지된다.
-  return (
-    <div className="flex h-full w-full flex-col">
-      <div
-        className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)"
-        aria-labelledby="panel-settings-dialog-title"
-      >
-        {/* 헤더 */}
-        <div className="flex shrink-0 items-center justify-between px-5 pt-4 pb-3">
-          <div className="flex items-center gap-2">
-            {/* 페이지 뒤로가기: 대시보드로 복귀 */}
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-              aria-label={t('dashboard.settings.closeAria')}
-            >
-              <ArrowLeft className="h-4.5 w-4.5" />
-            </button>
-            <h2
-              id="panel-settings-dialog-title"
-              className="text-base font-semibold text-(--color-text-primary)"
-            >
-              {t('dashboard.settings.title')}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label={t('dashboard.settings.closeAria')}
-          >
-            <X className="h-4.5 w-4.5" />
-          </button>
-        </div>
-
-        <div className="border-t border-(--color-border-default)" />
-
-        {/* 설정 내용 - 2컬럼 레이아웃 (드래그 리사이저)
-         *
-         * 컬럼 배치 (Grafana 패턴):
-         *   [미리보기 (flex-1)] [splitter] [설정 (leftWidth)]
-         * 미리보기를 좌측에 두면 시선이 자연스럽게 미리보기 → 설정으로 흐르고,
-         * 설정 패널은 사이드바처럼 우측에 고정된다.
-         *
-         * CSS flexbox `order` 로 시각적 순서를 제어한다 (JSX 가독성과 분리).
-         *   - 미리보기 / expand 버튼: order-1
-         *   - splitter: order-2
-         *   - 설정: order-3
-         */}
-        <div
-          data-panel-settings-content
-          className="relative flex min-h-0 flex-1 gap-3 px-5 pb-5 pt-4"
-        >
-          <div
-            style={{
-              // 차트/히트맵 패널은 접힘 상태에서도 좌측 데이터 소스 영역이 남으므로
-              // 설정 컬럼을 고정 폭으로 유지한다. 그 외에는 접힘 시 전체 폭.
-              width:
-                previewCollapsed && !dataSourceBelowPreview ? '100%' : `${leftWidth}px`,
-            }}
-            className={cn(
-              'order-3 shrink-0 space-y-0.5 overflow-y-auto pr-1',
-              previewCollapsed && !dataSourceBelowPreview && 'flex-1',
-            )}
-          >
+  // @spec SPEC-PANEL-SETTINGS-001 (T1): 3분할 셸 슬롯 구성.
+  // 기존 옵션/미리보기/데이터소스 편집 서브트리를 셸 영역으로 이관한다(편집 로직 보존).
+  const optionsSlot = (
+    <>
             {/*
               공통: 타이틀 / 디바이스 — "패널 옵션" CollapsibleSection 으로 그룹화 (Grafana 패턴).
               디바이스 필드는 패널 타입별 조건부.
@@ -662,116 +599,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             ) : null}
 
-          </div>
-
-          {/*
-            미리보기 펼치기 버튼: collapsed 시 좌측에 표시 (order-1).
-            ChevronRight 는 "오른쪽으로 펼쳐서 미리보기를 보여준다" 의미.
-          */}
-          {previewCollapsed && (
-            <button
-              type="button"
-              onClick={() => setPreviewCollapsed(false)}
-              data-testid="panel-settings-preview-expand"
-              aria-label={t('dashboard.settings.previewExpandAria')}
-              title={t('dashboard.settings.previewExpandAria')}
-              className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          )}
-
-          {/* 드래그 리사이저 (collapsed 가 아닐 때만) — order-2 */}
-          {!previewCollapsed && (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t('dashboard.settings.splitterAria')}
-              data-testid="panel-settings-splitter"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setIsDragging(true);
-              }}
-              className={cn(
-                'group relative order-2 -mx-1 flex w-2 shrink-0 cursor-col-resize items-center justify-center',
-                isDragging && 'bg-blue-500/20',
-              )}
-            >
-              <div
-                className={cn(
-                  'h-12 w-0.5 rounded-full bg-(--color-border-default) transition-colors',
-                  'group-hover:bg-blue-400',
-                  isDragging && 'bg-blue-500',
-                )}
-              />
-            </div>
-          )}
-
-          {/* 우측 컬럼: 프리뷰 + 악센트 컨트롤 */}
-          {/*
-            justify-center 사용 시, 하단 AccentGroupControls 가 조건부 렌더링되며
-            미리보기 박스가 위/아래로 이동하는 문제가 있어 justify-start 로 변경.
-            미리보기는 항상 같은 위치 (상단) 에 고정되고, 악센트 컨트롤은 그 아래에 추가된다.
-            미리보기 자체는 mx-auto + zoom 으로 가운데 정렬되며 사용자가 ± 버튼이나
-            Ctrl+휠 로 확대/축소 할 수 있다.
-          */}
-          {(!previewCollapsed || dataSourceBelowPreview) && (
-          <div className="order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start gap-3 overflow-y-auto">
-            {/*
-              프리뷰 영역(툴바 + 미리보기 블록)은 접히면 숨긴다. 차트/히트맵 패널의
-              데이터 소스 섹션은 이 아래에 별도로 항상 노출된다(SPEC-WEB-005).
-            */}
-            {!previewCollapsed && (
-            <>
-            <div className="flex shrink-0 items-center justify-between gap-2">
-              <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.settings.previewLabel')}</label>
-              <div className="flex items-center gap-1">
-                {/* 줌 컨트롤 */}
-                <button
-                  type="button"
-                  onClick={zoomOut}
-                  disabled={previewZoom <= PREVIEW_ZOOM_MIN + 1e-6}
-                  data-testid="panel-settings-preview-zoom-out"
-                  aria-label={t('dashboard.settings.zoomOutAria')}
-                  title={t('dashboard.settings.zoomOutTitle')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={zoomReset}
-                  data-testid="panel-settings-preview-zoom-reset"
-                  aria-label={t('dashboard.settings.zoomResetAria')}
-                  title={t('dashboard.settings.zoomResetTitle')}
-                  className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-                >
-                  {Math.round(previewZoom * 100)}%
-                </button>
-                <button
-                  type="button"
-                  onClick={zoomIn}
-                  disabled={previewZoom >= PREVIEW_ZOOM_MAX - 1e-6}
-                  data-testid="panel-settings-preview-zoom-in"
-                  aria-label={t('dashboard.settings.zoomInAria')}
-                  title={t('dashboard.settings.zoomInTitle')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-                <div className="mx-1 h-3 w-px bg-(--color-border-default)" />
-                <button
-                  type="button"
-                  onClick={() => setPreviewCollapsed(true)}
-                  data-testid="panel-settings-preview-collapse"
-                  aria-label={t('dashboard.settings.previewCollapseAria')}
-                  title={t('dashboard.settings.previewCollapseAria')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
+    </>
+  );
+  const previewSlot = (
+    <>
             {/*
               각 미리보기를 패널 유형별 기본 그리드 비율과 일치하는 wrapper 로 감싸서
               크기 비율을 고정한다. mx-auto 로 가운데 정렬되고, previewZoom 으로
@@ -898,28 +729,89 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <HeatmapPanel panelId={panel.id} title={panel.title} config={panel.config} />
               </div>
             )}
-            {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
-            </>
-            )}
+    </>
+  );
+  const dataSourceSlot = dataSourceBelowPreview ? (
+    <div data-testid="panel-settings-data-source" className="shrink-0">
+      <CollapsibleSection title={t('dashboard.settings.dataSource')}>
+        <StoreSourceSection
+          panel={panel}
+          onConfigChange={(c) => handleConfigChange(c)}
+        />
+      </CollapsibleSection>
+    </div>
+  ) : null;
 
-            {/*
-              데이터 소스 섹션(채널/Store 토글 + Store 테이블/필터 + 선택 시리즈) —
-              SPEC-WEB-005: 넓은 좌측 공간을 활용해 프리뷰 아래에 배치한다. 프리뷰가
-              접혀도 차트/히트맵 패널이면 이 섹션은 계속 노출된다.
-            */}
-            {dataSourceBelowPreview && (
-              <div data-testid="panel-settings-data-source" className="shrink-0">
-                <CollapsibleSection title={t('dashboard.settings.dataSource')}>
-                  <StoreSourceSection
-                    panel={panel}
-                    onConfigChange={(c) => handleConfigChange(c)}
-                  />
-                </CollapsibleSection>
-              </div>
-            )}
+
+  // 모달 → 페이지: 배경 오버레이 제거, AppLayout 콘텐츠 영역을 채우는 전체화면
+  // 페이지 컨테이너로 렌더한다. 내부 2컬럼 레이아웃/스크롤/하단 고정 푸터는 그대로 유지된다.
+  return (
+    <div className="flex h-full w-full flex-col">
+      <div
+        className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)"
+        aria-labelledby="panel-settings-dialog-title"
+      >
+        {/* 헤더 */}
+        <div className="flex shrink-0 items-center justify-between px-5 pt-4 pb-3">
+          <div className="flex items-center gap-2">
+            {/* 페이지 뒤로가기: 대시보드로 복귀 */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+              aria-label={t('dashboard.settings.closeAria')}
+            >
+              <ArrowLeft className="h-4.5 w-4.5" />
+            </button>
+            <h2
+              id="panel-settings-dialog-title"
+              className="text-base font-semibold text-(--color-text-primary)"
+            >
+              {t('dashboard.settings.title')}
+            </h2>
           </div>
-          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label={t('dashboard.settings.closeAria')}
+          >
+            <X className="h-4.5 w-4.5" />
+          </button>
         </div>
+
+        <div className="border-t border-(--color-border-default)" />
+
+        {/* 설정 내용 - 2컬럼 레이아웃 (드래그 리사이저)
+         *
+         * 컬럼 배치 (Grafana 패턴):
+         *   [미리보기 (flex-1)] [splitter] [설정 (leftWidth)]
+         * 미리보기를 좌측에 두면 시선이 자연스럽게 미리보기 → 설정으로 흐르고,
+         * 설정 패널은 사이드바처럼 우측에 고정된다.
+         *
+         * CSS flexbox `order` 로 시각적 순서를 제어한다 (JSX 가독성과 분리).
+         *   - 미리보기 / expand 버튼: order-1
+         *   - splitter: order-2
+         *   - 설정: order-3
+         */}
+        <PanelSettingsShell
+          options={optionsSlot}
+          preview={previewSlot}
+          dataSource={dataSourceSlot}
+          previewCollapsed={previewCollapsed}
+          setPreviewCollapsed={setPreviewCollapsed}
+          dataSourceBelowPreview={dataSourceBelowPreview}
+          leftWidth={leftWidth}
+          isDragging={isDragging}
+          setIsDragging={setIsDragging}
+          previewZoom={previewZoom}
+          zoomIn={zoomIn}
+          zoomOut={zoomOut}
+          zoomReset={zoomReset}
+          previewZoomMin={PREVIEW_ZOOM_MIN}
+          previewZoomMax={PREVIEW_ZOOM_MAX}
+          t={t}
+        />
 
         {/* 하단: 적용 / 취소 */}
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
@@ -4366,5 +4258,186 @@ function LogMiniPreview({
         ))}
       </div>
     </div>
+  );
+}
+
+// ---- 3분할 설정 셸 (T1) ----
+// @spec SPEC-PANEL-SETTINGS-001 (REQ-01)
+// 다이얼로그 본문을 미리보기(좌상단)·데이터소스(좌하단)·옵션(우측) 3영역으로 배치하는 셸.
+// 기존 편집 슬롯(options/preview/dataSource)을 각 영역에 이관하며 편집 로직은 재작성하지
+// 않는다. 리사이즈/비율 영속은 후속 마일스톤(T2/T3)에서 확장한다.
+function PanelSettingsShell({
+  options,
+  preview,
+  dataSource,
+  previewCollapsed,
+  setPreviewCollapsed,
+  dataSourceBelowPreview,
+  leftWidth,
+  isDragging,
+  setIsDragging,
+  previewZoom,
+  zoomIn,
+  zoomOut,
+  zoomReset,
+  previewZoomMin: PREVIEW_ZOOM_MIN,
+  previewZoomMax: PREVIEW_ZOOM_MAX,
+  t,
+}: {
+  options: React.ReactNode;
+  preview: React.ReactNode;
+  dataSource: React.ReactNode;
+  previewCollapsed: boolean;
+  setPreviewCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  dataSourceBelowPreview: boolean;
+  leftWidth: number;
+  isDragging: boolean;
+  setIsDragging: React.Dispatch<React.SetStateAction<boolean>>;
+  previewZoom: number;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  zoomReset: () => void;
+  previewZoomMin: number;
+  previewZoomMax: number;
+  t: TranslationFn;
+}) {
+  return (
+        <div
+          data-panel-settings-content
+          className="relative flex min-h-0 flex-1 gap-3 px-5 pb-5 pt-4"
+        >
+          <div
+            data-testid="panel-settings-options"
+            style={{
+              // 차트/히트맵 패널은 접힘 상태에서도 좌측 데이터 소스 영역이 남으므로
+              // 설정 컬럼을 고정 폭으로 유지한다. 그 외에는 접힘 시 전체 폭.
+              width:
+                previewCollapsed && !dataSourceBelowPreview ? '100%' : `${leftWidth}px`,
+            }}
+            className={cn(
+              'order-3 shrink-0 space-y-0.5 overflow-y-auto pr-1',
+              previewCollapsed && !dataSourceBelowPreview && 'flex-1',
+            )}
+          >
+            {options}
+          </div>
+
+          {/*
+            미리보기 펼치기 버튼: collapsed 시 좌측에 표시 (order-1).
+            ChevronRight 는 "오른쪽으로 펼쳐서 미리보기를 보여준다" 의미.
+          */}
+          {previewCollapsed && (
+            <button
+              type="button"
+              onClick={() => setPreviewCollapsed(false)}
+              data-testid="panel-settings-preview-expand"
+              aria-label={t('dashboard.settings.previewExpandAria')}
+              title={t('dashboard.settings.previewExpandAria')}
+              className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          )}
+
+          {/* 드래그 리사이저 (collapsed 가 아닐 때만) — order-2 */}
+          {!previewCollapsed && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('dashboard.settings.splitterAria')}
+              data-testid="panel-settings-splitter"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              className={cn(
+                'group relative order-2 -mx-1 flex w-2 shrink-0 cursor-col-resize items-center justify-center',
+                isDragging && 'bg-blue-500/20',
+              )}
+            >
+              <div
+                className={cn(
+                  'h-12 w-0.5 rounded-full bg-(--color-border-default) transition-colors',
+                  'group-hover:bg-blue-400',
+                  isDragging && 'bg-blue-500',
+                )}
+              />
+            </div>
+          )}
+
+          {/* 우측 컬럼: 프리뷰 + 악센트 컨트롤 */}
+          {/*
+            justify-center 사용 시, 하단 AccentGroupControls 가 조건부 렌더링되며
+            미리보기 박스가 위/아래로 이동하는 문제가 있어 justify-start 로 변경.
+            미리보기는 항상 같은 위치 (상단) 에 고정되고, 악센트 컨트롤은 그 아래에 추가된다.
+            미리보기 자체는 mx-auto + zoom 으로 가운데 정렬되며 사용자가 ± 버튼이나
+            Ctrl+휠 로 확대/축소 할 수 있다.
+          */}
+          {(!previewCollapsed || dataSourceBelowPreview) && (
+          <div data-testid="panel-settings-preview" className="order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start gap-3 overflow-y-auto">
+            {/*
+              프리뷰 영역(툴바 + 미리보기 블록)은 접히면 숨긴다. 차트/히트맵 패널의
+              데이터 소스 섹션은 이 아래에 별도로 항상 노출된다(SPEC-WEB-005).
+            */}
+            {!previewCollapsed && (
+            <>
+            <div className="flex shrink-0 items-center justify-between gap-2">
+              <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.settings.previewLabel')}</label>
+              <div className="flex items-center gap-1">
+                {/* 줌 컨트롤 */}
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  disabled={previewZoom <= PREVIEW_ZOOM_MIN + 1e-6}
+                  data-testid="panel-settings-preview-zoom-out"
+                  aria-label={t('dashboard.settings.zoomOutAria')}
+                  title={t('dashboard.settings.zoomOutTitle')}
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                >
+                  <Minus className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomReset}
+                  data-testid="panel-settings-preview-zoom-reset"
+                  aria-label={t('dashboard.settings.zoomResetAria')}
+                  title={t('dashboard.settings.zoomResetTitle')}
+                  className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                >
+                  {Math.round(previewZoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  disabled={previewZoom >= PREVIEW_ZOOM_MAX - 1e-6}
+                  data-testid="panel-settings-preview-zoom-in"
+                  aria-label={t('dashboard.settings.zoomInAria')}
+                  title={t('dashboard.settings.zoomInTitle')}
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+                <div className="mx-1 h-3 w-px bg-(--color-border-default)" />
+                <button
+                  type="button"
+                  onClick={() => setPreviewCollapsed(true)}
+                  data-testid="panel-settings-preview-collapse"
+                  aria-label={t('dashboard.settings.previewCollapseAria')}
+                  title={t('dashboard.settings.previewCollapseAria')}
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            {preview}
+            {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
+            </>
+            )}
+
+            {dataSource}
+          </div>
+          )}
+        </div>
   );
 }

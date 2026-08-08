@@ -7,7 +7,7 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, ListPlus, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, HardDrive, LineChart, ListPlus, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -118,15 +118,15 @@ import {
   type SortState,
 } from './storeEntrySort';
 import {
-  ColumnHeader,
   ColumnSettingsMenu,
   loadVisibleColumns,
   relevantColumns,
   renderedColumns as computeRenderedColumns,
   saveVisibleColumns,
-  type StoreColumn,
   type StoreColumnId,
 } from './storeColumns';
+import { StoreEntryTable } from './StoreEntryTable';
+import { extractEntryMetricType, extractEntryTags } from './storeEntryHelpers';
 
 interface AgentDetailPanelProps {
   agentId: string;
@@ -2369,445 +2369,6 @@ function TopicStatsTable({
 
 // ---- 저장소 탭 ----
 
-// 모듈 스코프에서는 t()를 호출할 수 없으므로 번역 함수를 인자로 받는다.
-function formatTimeAgo(date: Date, t: TranslationFn): string {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return t('agents.detail.time.secondsAgo').replace('{n}', String(seconds));
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return t('agents.detail.time.minutesAgo').replace('{n}', String(minutes));
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return t('agents.detail.time.hoursAgo').replace('{n}', String(hours));
-  const days = Math.floor(hours / 24);
-  return t('agents.detail.time.daysAgo').replace('{n}', String(days));
-}
-
-/**
- * 엔트리의 `tags` 필드에서 태그 맵을 추출한다.
- * 정적 키가 아닌 동적 키 엔트리는 `tags` 를 가지지 않아 null 을 반환한다.
- *
- * @spec SPEC-STORE-003
- */
-function extractEntryTags(
-  entry: Record<string, unknown>,
-): Record<string, string> | null {
-  const raw = entry.tags;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof v === 'string') out[k] = v;
-  }
-  return Object.keys(out).length > 0 ? out : null;
-}
-
-/**
- * 엔트리의 `metric_type` 필드를 추출한다.
- * 백엔드는 모든 엔트리에 metric_type 을 포함하며(동적 키는 "unknown"),
- * 누락/비문자열인 경우 빈 문자열을 반환해 호출자가 "unknown" 으로 표시하도록 한다.
- *
- * @spec SPEC-STORE-003 v0.4.0
- */
-function extractEntryMetricType(entry: Record<string, unknown>): string {
-  const raw = entry.metric_type;
-  return typeof raw === 'string' ? raw : '';
-}
-
-function StoreEntryRow({
-  entry,
-  columns,
-  keyExpanded,
-  maxHistorySize,
-  agentId,
-  isStatic,
-  onPromote,
-  onRename,
-  onReset,
-  onEditMeta,
-  readOnly = false,
-}: {
-  entry: Record<string, unknown>;
-  /**
-   * 렌더할(보이는) 컬럼 목록. 헤더(thead)와 동일한 단일 출처를 공유하여 숨김 컬럼이
-   * 헤더/본문에서 함께 사라지고, 히스토리 확장 행의 colSpan 이 항상 일치하도록 한다.
-   */
-  columns: readonly StoreColumn[];
-  /**
-   * 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더에서 일괄 제어한다.
-   * true 면 전체 키를, false 면 앞 8자만 표시한다.
-   */
-  keyExpanded: boolean;
-  maxHistorySize: number;
-  agentId: string;
-  /** READ-ONLY(원격 타깃): 변환/초기화/히스토리(exec) 어포던스를 숨긴다. */
-  readOnly?: boolean;
-  /**
-   * 이 엔트리의 키가 정적(설정의 keys 배열에 등록됨)인지 여부.
-   * @spec SPEC-STORE-003
-   */
-  isStatic: boolean;
-  /**
-   * 동적 키를 정적으로 승격할 때 호출되는 핸들러.
-   * 정적 키 행에서는 사용되지 않는다.
-   * @spec SPEC-STORE-003
-   */
-  onPromote: (key: string) => void;
-  /**
-   * 동적 키(그 키의 모든 시리즈)를 새 키로 이동하는 핸들러. 동적 키에서만 노출된다.
-   * @spec SPEC-STORE-004
-   */
-  onRename: (key: string) => void;
-  /**
-   * 행별 초기화 핸들러. 정적/동적 모두에서 노출되며 클릭 시 부모가
-   * 확인 다이얼로그를 띄운다.
-   * @spec SPEC-STORE-003
-   */
-  onReset: (key: string) => void;
-  /**
-   * 타입(metric_type)/태그 편집 핸들러. 정적/동적 모두에서 노출되며 클릭 시
-   * 부모가 편집 다이얼로그를 띄운다.
-   * @spec SPEC-STORE-003 v0.4.0
-   */
-  onEditMeta: (key: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyData, setHistoryData] = useState<Array<{ value: unknown; timestamp: string }> | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const execAgent = useExecAgent();
-
-  const valueStr = typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value);
-  const truncated = valueStr.length > 60;
-  const displayValue = truncated && !expanded ? valueStr.slice(0, 60) + '...' : valueStr;
-
-  const updatedAt = entry.updated_at ? new Date(entry.updated_at as string) : null;
-  const timeAgo = updatedAt ? formatTimeAgo(updatedAt, t) : '-';
-
-  const stateHistoryCount = (entry.history_count as number) || 0;
-  const historyCount = historyData !== null ? historyData.length : stateHistoryCount;
-  // 히스토리 토글은 exec(get_history) 에 의존하므로 원격 READ-ONLY 에서는 비활성.
-  const hasHistory = maxHistorySize > 0 && !readOnly;
-
-  // fetchHistory 는 get_history(exec)로 현재 히스토리를 조회하여 로컬 state 에 반영한다.
-  const fetchHistory = useCallback(() => {
-    setHistoryLoading(true);
-    execAgent.mutate(
-      {
-        id: agentId,
-        req: {
-          command: 'get_history',
-          params: {
-            // @spec SPEC-STORE-004: 히스토리는 인코딩 시리즈 키(storage_key)로 저장되므로
-            // 디코드된 표시용 key 가 아니라 storage_key 로 조회해야 한다(없으면 key 폴백 — 레거시).
-            key: (entry.storage_key as string) || (entry.key as string),
-            // 네임스페이스 라운드트립 버그 수정 (v0.7.0 M14):
-            // entry.namespace="" (빈 문자열)인 경우도 그대로 전송.
-            // || 'default' 는 falsy 체크로 "" 를 "default" 로 강제했는데,
-            // 백엔드의 ForNamespace("") 조회와 불일치 → 히스토리 0개 버그 발생.
-            // ?? '' 를 사용하여 undefined/null 만 기본값으로, "" 는 유지.
-            namespace: (entry.namespace as string) ?? '',
-          },
-        },
-      },
-      {
-        onSuccess: (res) => {
-          const data = res as unknown as Record<string, unknown>;
-          const history = (data?.history as Array<{ value: unknown; timestamp: string }>) ?? [];
-          setHistoryData(history);
-          setHistoryLoading(false);
-        },
-        onError: () => {
-          setHistoryData([]);
-          setHistoryLoading(false);
-        },
-      },
-    );
-  }, [execAgent, agentId, entry.storage_key, entry.key, entry.namespace]);
-
-  const handleRowClick = useCallback(() => {
-    if (!hasHistory) return;
-    setHistoryOpen((open) => !open);
-  }, [hasHistory]);
-
-  // 히스토리가 열려 있는 동안 엔트리가 갱신되면(새로고침으로 값/카운트/갱신시각 변경)
-  // 히스토리를 다시 가져온다. 이전에는 히스토리가 펼칠 때 단 한 번만 로컬 state 에
-  // 캐시되어, 새로고침해도 갱신되지 않고 행을 닫았다 다시 열어야만 반영됐다.
-  useEffect(() => {
-    if (!historyOpen) return;
-    fetchHistory();
-    // entry 의 변경 지표(history_count/updated_at/value)가 바뀔 때만 재조회한다.
-    // 값이 동일하면 deps 가 그대로라 불필요한 재조회가 발생하지 않는다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyOpen, entry.history_count, entry.updated_at, entry.value]);
-
-  // 히스토리 확장 행의 colSpan 은 실제 렌더된 컬럼 개수와 항상 일치한다(단일 출처).
-  const colSpan = columns.length;
-
-  const entryTags = extractEntryTags(entry);
-
-  // 키 컬럼 표시: 키 컬럼 헤더의 전체 확장 토글(keyExpanded)로 일괄 제어한다.
-  // 축약 시 앞 8자만, 확장 시 전체 키를 노출한다(전체 키는 title 로도 유지).
-  const fullKey = entry.key as string;
-  const displayKey =
-    !keyExpanded && fullKey.length > 8 ? fullKey.slice(0, 8) : fullKey;
-
-  // 동적 키의 "정적으로 변환" 버튼 클릭 핸들러.
-  // 행 클릭(히스토리 토글)과 분리하기 위해 이벤트 전파를 막는다.
-  const handlePromoteClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      // @spec SPEC-STORE-004: 승격은 config 정적 키(=사용자 key)에 추가하므로 디코드된
-      // 사용자 key 를 쓴다(히스토리/메타편집의 storage_key 와 다름).
-      onPromote(entry.key as string);
-    },
-    [entry.key, onPromote],
-  );
-
-  // 동적 키 "이름 변경" 버튼 클릭 핸들러. 사용자 관점 key(그 키의 모든 시리즈)를 대상으로 한다.
-  // @spec SPEC-STORE-004
-  const handleRenameClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onRename(entry.key as string);
-    },
-    [entry.key, onRename],
-  );
-
-  // 행별 초기화 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
-  // @spec SPEC-STORE-003
-  const handleResetClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onReset(entry.key as string);
-    },
-    [entry.key, onReset],
-  );
-
-  // 타입/태그 편집 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
-  // @spec SPEC-STORE-003 v0.4.0
-  const handleEditMetaClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      // @spec SPEC-STORE-004: 메타 편집은 인코딩 시리즈 키(storage_key)로 동작해야 한다.
-      onEditMeta((entry.storage_key as string) || (entry.key as string));
-    },
-    [entry.storage_key, entry.key, onEditMeta],
-  );
-
-  // 모든 엔트리가 metric_type 을 갖는다 (동적 키는 "unknown"). 빈 값은 "unknown" 표시.
-  // @spec SPEC-STORE-003 v0.4.0
-  const metricType = extractEntryMetricType(entry);
-  const metricTypeLabel = metricType || 'unknown';
-  const isUnknownMetric = metricTypeLabel === 'unknown';
-
-  // 컬럼 id → 셀 내용 렌더 함수. 헤더/본문이 공유하는 컬럼 목록을 매핑하며,
-  // 각 셀의 JSX(이름/키8자/바인딩 배지/메트릭 배지/값 확장/태그 칩/TTL ∞/히스토리/갱신/액션)를
-  // 여기서 반환한다. td 래퍼(정렬/키)는 아래 map 에서 부여한다.
-  function renderCell(columnId: StoreColumnId): React.ReactNode {
-    switch (columnId) {
-      case 'key':
-        return (
-          <span className="inline-flex items-center gap-1">
-            {hasHistory && (
-              <ChevronRight className={cn('h-3 w-3 text-(--color-text-muted) transition-transform', historyOpen && 'rotate-90')} />
-            )}
-            <span className={keyExpanded ? 'break-all' : 'truncate'} title={fullKey}>
-              {displayKey}
-            </span>
-          </span>
-        );
-      case 'binding':
-        return isStatic ? (
-          <span
-            className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-            title={t('agents.detail.store.staticTooltip')}
-          >
-            <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-            {t('agents.detail.store.static')}
-          </span>
-        ) : (
-          <span
-            className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-            title={t('agents.detail.store.dynamicTooltip')}
-          >
-            {t('agents.detail.store.dynamic')}
-          </span>
-        );
-      case 'metric':
-        return (
-          <span
-            className={cn(
-              'inline-flex max-w-[120px] items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium',
-              isUnknownMetric
-                ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
-            )}
-            title={t('agents.detail.store.metricTypeTooltip').replace('{type}', metricTypeLabel)}
-          >
-            <span className="truncate">{metricTypeLabel}</span>
-          </span>
-        );
-      case 'value':
-        return (
-          <span
-            className={truncated ? 'cursor-pointer hover:text-(--color-text-primary)' : ''}
-            onClick={(e) => {
-              if (truncated) {
-                e.stopPropagation();
-                setExpanded(!expanded);
-              }
-            }}
-          >
-            {displayValue}
-          </span>
-        );
-      case 'namespace':
-        return (entry.namespace as string) || '-';
-      case 'tags':
-        return entryTags ? (
-          <div className="flex flex-wrap gap-1">
-            {Object.entries(entryTags).map(([k, v]) => (
-              <span
-                key={k}
-                className="inline-flex items-center rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-[10px] font-medium text-(--color-text-secondary)"
-              >
-                {k}={v}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span className="text-(--color-text-muted)">-</span>
-        );
-      case 'ttl':
-        return (entry.ttl as string) || '\u221E';
-      case 'history':
-        return historyCount;
-      case 'updated':
-        return timeAgo;
-      case 'actions':
-        // 액션 컬럼 (SPEC-STORE-003): 타입/태그 편집 + 정적으로 변환 + 이름변경 + 초기화.
-        //   동적 키: [편집] [정적으로 변환] [이름변경] [초기화]
-        //   정적 키: [편집] [초기화]
-        return (
-          <span className="inline-flex items-center gap-1">
-            {!readOnly && (
-              <button
-                type="button"
-                onClick={handleEditMetaClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400"
-                title={t('agents.detail.store.editMetaTooltip')}
-                aria-label={t('agents.detail.store.editMetaAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {!readOnly && !isStatic && (
-              <button
-                type="button"
-                onClick={handlePromoteClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                title={t('agents.detail.store.promoteTooltip')}
-                aria-label={t('agents.detail.store.promoteAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {!readOnly && !isStatic && (
-              <button
-                type="button"
-                onClick={handleRenameClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/20 dark:hover:text-amber-400"
-                title={t('agents.detail.store.renameTooltip')}
-                aria-label={t('agents.detail.store.renameAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {!readOnly && (
-              <button
-                type="button"
-                onClick={handleResetClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                title={isStatic ? t('agents.detail.store.resetHistoryTooltip') : t('agents.detail.store.deleteEntryTooltip')}
-                aria-label={t('agents.detail.store.resetAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {readOnly && <span className="text-(--color-text-muted)">-</span>}
-          </span>
-        );
-      default:
-        return null;
-    }
-  }
-
-  // 컬럼별 td 래퍼 클래스. 기존 셀 스타일을 컬럼 id 로 매핑하여 보존한다.
-  function cellClassName(column: StoreColumn): string {
-    switch (column.id) {
-      case 'key':
-        // 폭은 column.widthClass(min-w-[260px])가 관리한다.
-        return 'px-3 py-2 font-mono text-xs text-(--color-text-primary)';
-      case 'binding':
-      case 'metric':
-        return 'px-3 py-2 text-xs';
-      case 'value':
-        return 'px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]';
-      case 'actions':
-        return 'px-3 py-2 text-right text-xs';
-      default:
-        return 'px-3 py-2 text-xs text-(--color-text-muted)';
-    }
-  }
-
-  return (
-    <>
-      <tr
-        className={cn('hover:bg-(--color-bg-secondary)/50', hasHistory && 'cursor-pointer')}
-        onClick={handleRowClick}
-      >
-        {columns.map((column) => (
-          <td
-            key={column.id}
-            className={cn(cellClassName(column), column.widthClass)}
-            title={column.id === 'updated' ? (entry.updated_at as string) : undefined}
-          >
-            {renderCell(column.id)}
-          </td>
-        ))}
-      </tr>
-      {historyOpen && (
-        <tr>
-          <td colSpan={colSpan} className="bg-(--color-bg-secondary)/30 px-6 py-3">
-            {historyLoading ? (
-              <p className="text-xs text-(--color-text-muted)">{t('agents.detail.store.loading')}</p>
-            ) : historyData && historyData.length > 0 ? (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-(--color-text-muted) mb-2">
-                  {t('agents.detail.store.historyTitle').replace('{count}', String(historyData.length))}
-                </p>
-                <div className="space-y-1">
-                  {historyData.map((h, i) => (
-                    <div key={i} className="flex items-baseline gap-3 text-xs">
-                      <span className="text-(--color-text-muted) whitespace-nowrap">
-                        {new Date(h.timestamp).toLocaleString('ko-KR')}
-                      </span>
-                      <span className="font-mono text-(--color-text-secondary)">
-                        {typeof h.value === 'string' ? h.value : JSON.stringify(h.value)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-(--color-text-muted)">{t('agents.detail.store.historyEmpty')}</p>
-            )}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
 /** 저장소 탭의 페이지네이션 옵션 값. */
 const STORE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
@@ -3585,55 +3146,28 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
-                  {/* 헤더/본문이 동일한 orderedColumns 를 매핑 — 숨김 컬럼이 함께 사라진다. */}
-                  {orderedColumns.map((column) => (
-                    <ColumnHeader
-                      key={column.id}
-                      column={column}
-                      sort={sort}
-                      onSort={handleSort}
-                      filter={column.filterColumn ? columnFilters[column.filterColumn] : undefined}
-                      uniqueValues={
-                        column.filterColumn
-                          ? uniqueValuesByColumn.get(column.filterColumn) ?? []
-                          : []
-                      }
-                      onFilterChange={handleColumnFilterChange}
-                      keyExpanded={column.id === 'key' ? keyColumnExpanded : undefined}
-                      onToggleKeyExpanded={
-                        column.id === 'key'
-                          ? () => setKeyColumnExpanded((v) => !v)
-                          : undefined
-                      }
-                      t={t}
-                    />
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-(--color-border-default)">
-                {visibleEntries.map((entry) => (
-                  <StoreEntryRow
-                    key={entry.key as string}
-                    entry={entry}
-                    columns={orderedColumns}
-                    keyExpanded={keyColumnExpanded}
-                    maxHistorySize={maxHistorySize}
-                    agentId={agentId}
-                    isStatic={staticKeyNames.has(entry.key as string)}
-                    onPromote={handleOpenPromote}
-                    onRename={handleOpenRename}
-                    onReset={handleOpenReset}
-                    onEditMeta={handleOpenEditMeta}
-                    readOnly={remote}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* 공용 Store 테이블(단일 소스). @spec SPEC-PANEL-SETTINGS-001 (T5) */}
+          <StoreEntryTable
+            entries={visibleEntries}
+            columns={orderedColumns}
+            sort={sort}
+            onSort={handleSort}
+            columnFilters={columnFilters}
+            onColumnFilterChange={handleColumnFilterChange}
+            uniqueValuesByColumn={uniqueValuesByColumn}
+            keyColumnExpanded={keyColumnExpanded}
+            onToggleKeyExpanded={() => setKeyColumnExpanded((v) => !v)}
+            maxHistorySize={maxHistorySize}
+            staticKeyNames={staticKeyNames}
+            rowActions={{
+              agentId,
+              onPromote: handleOpenPromote,
+              onRename: handleOpenRename,
+              onReset: handleOpenReset,
+              onEditMeta: handleOpenEditMeta,
+              readOnly: remote,
+            }}
+          />
 
           {/* 페이지 네비게이션: 한 페이지에 모두 들어갈 때는 비노출 */}
           {totalPages > 1 && (
