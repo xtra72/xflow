@@ -22,7 +22,6 @@ import {
   Paintbrush,
   Palette as PaletteIcon,
   Save,
-  Info,
   Check,
   Grid3X3,
   ChevronUp,
@@ -754,16 +753,6 @@ function LocalDashboardView() {
         {hasError && (
           <div className="mx-6 mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
             {t('dashboard.loadError')}
-          </div>
-        )}
-
-        {/* 편집 모드 인포 배너 (Pencil: iN5W7) */}
-        {editMode && (
-          <div className="mx-6 mt-4 flex h-9 items-center gap-2 rounded-lg bg-blue-50 px-4 dark:bg-blue-900/20">
-            <Info className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-            <span className="text-[11px] text-blue-500">
-              {t('dashboard.editInfo').replace(/\{cols\}/g, String(gridCols))}
-            </span>
           </div>
         )}
 

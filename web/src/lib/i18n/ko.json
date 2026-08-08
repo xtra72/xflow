@@ -562,7 +562,6 @@
       "custom": "사용자 정의 색상 테마"
     },
     "refreshOption": "{value}초",
-    "editInfo": "{cols}칸 그리드 | 타이틀 바 드래그로 이동 | 우측 하단 모서리로 크기 조절 | 최소 2칸, 최대 {cols}칸",
     "fallbackName": "대시보드",
     "settings": {
       "title": "패널 설정",

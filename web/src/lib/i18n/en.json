@@ -562,7 +562,6 @@
       "custom": "Custom color theme"
     },
     "refreshOption": "{value}s",
-    "editInfo": "{cols}-column grid | drag title bar to move | resize from bottom-right corner | min 2, max {cols} columns",
     "fallbackName": "Dashboard",
     "settings": {
       "title": "Panel settings",
