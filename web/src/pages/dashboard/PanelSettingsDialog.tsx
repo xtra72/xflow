@@ -68,6 +68,8 @@ import {
 } from './panels/heatmap/heatmapConfig';
 import { useStoreChartData } from './panels/charts/useStoreChartData';
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
+// 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
+import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 // SPEC-HEATMAP-PANEL-002: 도면 이미지 첨부(data-URL) + 크기 상한 검증.
 import {
   readImageAsDataUrl,
@@ -368,6 +370,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // SPEC-WEB-005: 차트 패널이면 데이터 소스 섹션을 좌측 프리뷰 아래에 넓게 배치한다.
   // 프리뷰가 접혀도 데이터 소스 섹션은 좌측 영역에 계속 노출된다.
   const isChartPanel = CHART_PANEL_TYPES.has(panel.type);
+  // 히트맵도 store 데이터 소스를 쓰므로 차트 패널과 동일하게 프리뷰 아래 배치/레이아웃을 적용한다.
+  // (CHART_PANEL_TYPES 자체에는 넣지 않는다 — 차트 전용 채널/타입 분기 오염 방지.)
+  const dataSourceBelowPreview = isChartPanel || panel.type === 'heatmap';
 
   // 모달 → 페이지: 배경 오버레이 제거, AppLayout 콘텐츠 영역을 채우는 전체화면
   // 페이지 컨테이너로 렌더한다. 내부 2컬럼 레이아웃/스크롤/하단 고정 푸터는 그대로 유지된다.
@@ -426,14 +431,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
         >
           <div
             style={{
-              // 차트 패널은 접힘 상태에서도 좌측 데이터 소스 영역이 남으므로
+              // 차트/히트맵 패널은 접힘 상태에서도 좌측 데이터 소스 영역이 남으므로
               // 설정 컬럼을 고정 폭으로 유지한다. 그 외에는 접힘 시 전체 폭.
               width:
-                previewCollapsed && !isChartPanel ? '100%' : `${leftWidth}px`,
+                previewCollapsed && !dataSourceBelowPreview ? '100%' : `${leftWidth}px`,
             }}
             className={cn(
               'order-3 shrink-0 space-y-0.5 overflow-y-auto pr-1',
-              previewCollapsed && !isChartPanel && 'flex-1',
+              previewCollapsed && !dataSourceBelowPreview && 'flex-1',
             )}
           >
             {/*
@@ -710,10 +715,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             미리보기 자체는 mx-auto + zoom 으로 가운데 정렬되며 사용자가 ± 버튼이나
             Ctrl+휠 로 확대/축소 할 수 있다.
           */}
-          {(!previewCollapsed || isChartPanel) && (
+          {(!previewCollapsed || dataSourceBelowPreview) && (
           <div className="order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start gap-3 overflow-y-auto">
             {/*
-              프리뷰 영역(툴바 + 미리보기 블록)은 접히면 숨긴다. 차트 패널의
+              프리뷰 영역(툴바 + 미리보기 블록)은 접히면 숨긴다. 차트/히트맵 패널의
               데이터 소스 섹션은 이 아래에 별도로 항상 노출된다(SPEC-WEB-005).
             */}
             {!previewCollapsed && (
@@ -879,6 +884,20 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <ModbusPanelPreview panel={panel} />
               </div>
             )}
+            {/*
+              SPEC-HEATMAP-PANEL: 히트맵 프리뷰. 실제 HeatmapPanel 을 draft config 로 렌더한다.
+              데이터/좌표 미설정 시 패널이 자체 빈상태 안내를 표시하므로 blank 가 되지 않는다.
+              onConfigChange 를 넘기지 않아 프리뷰에서는 배치 편집 토글이 뜨지 않는다(읽기 전용).
+            */}
+            {panel.type === 'heatmap' && (
+              <div
+                className="mx-auto"
+                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                onWheel={handlePreviewWheel}
+              >
+                <HeatmapPanel panelId={panel.id} title={panel.title} config={panel.config} />
+              </div>
+            )}
             {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
             </>
             )}
@@ -886,9 +905,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             {/*
               데이터 소스 섹션(채널/Store 토글 + Store 테이블/필터 + 선택 시리즈) —
               SPEC-WEB-005: 넓은 좌측 공간을 활용해 프리뷰 아래에 배치한다. 프리뷰가
-              접혀도 차트 패널이면 이 섹션은 계속 노출된다.
+              접혀도 차트/히트맵 패널이면 이 섹션은 계속 노출된다.
             */}
-            {isChartPanel && (
+            {dataSourceBelowPreview && (
               <div data-testid="panel-settings-data-source" className="shrink-0">
                 <CollapsibleSection title={t('dashboard.settings.dataSource')}>
                   <StoreSourceSection
@@ -1365,12 +1384,15 @@ function AgentStatusSettingsSection({
 /**
  * 히트맵 패널 전용 설정 (SPEC-HEATMAP-PANEL-001 T7).
  *
- * 5개 편집 블록:
- *   1) store 태그 필터/에이전트 — 기존 StoreSourceSection 재사용(신규 패턴 미도입).
- *   2) 센서 좌표(sensor_positions) — 라이브 시리즈별 x/y(0..1) 입력 + 미배치 센서 노출(AC-E2).
- *   3) value_bounds min/max — 미설정 시 자동(센서값 범위).
- *   4) color_table — colorSwatchPalette 재사용한 정지점 편집.
- *   5) IDW power / grid_resolution.
+ * 히트맵 고유 편집 블록(센서 좌표/상하한/색상표/IDW/도면/등고선/범례):
+ *   - 센서 좌표(sensor_positions) — 라이브 시리즈별 x/y(0..1) 입력 + 미배치 센서 노출(AC-E2).
+ *   - value_bounds min/max — 미설정 시 자동(센서값 범위).
+ *   - color_table — colorSwatchPalette 재사용한 정지점 편집.
+ *   - IDW power / grid_resolution.
+ *
+ * 데이터 소스(store 태그/에이전트) 편집 UI 는 차트 패널과 동일하게 좌측 프리뷰 아래의
+ * 공용 StoreSourceSection 으로 일원화했다(중복 렌더 제거). 여기서는 미배치 센서 노출용으로
+ * store 폴링(storeResult)만 읽기 전용으로 재사용한다.
  *
  * onConfigChange 는 최상위 얕은 병합이므로 중첩 필드(sensor_positions/color_table/idw)는
  * 전체 객체를 다시 전달한다.
@@ -1543,15 +1565,8 @@ function HeatmapSettingsSection({
 
   return (
     <div className="space-y-4">
-      {/* 1) store 소스(에이전트 + 태그 필터) — 기존 섹션 재사용. */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          {t('dashboard.settings.dataSource')}
-        </label>
-        <StoreSourceSection panel={panel} onConfigChange={onConfigChange} />
-      </div>
-
-      {/* 2) 센서 좌표(0..1). 라이브 시리즈별 x/y 입력 + 미배치 안내(AC-E2). */}
+      {/* 센서 좌표(0..1). 라이브 시리즈별 x/y 입력 + 미배치 안내(AC-E2).
+          데이터 소스(store 태그/에이전트)는 좌측 프리뷰 아래 공용 StoreSourceSection 으로 이동했다. */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.heatmapSensorPositions')}
