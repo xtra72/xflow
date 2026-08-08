@@ -865,7 +865,14 @@
         "tagSource": "소스",
         "dragOrderTitle": "드래그하여 순서 변경"
       },
-      "dataSource": "데이터 소스"
+      "dataSource": "데이터 소스",
+      "dataSourceStoreTab": "Store",
+      "dataSourceTsdbTab": "TSDB",
+      "dataSourceTsdbTitle": "TSDB 데이터소스",
+      "dataSourceTsdbBody": "TSDB 바인딩은 후속 SPEC 에서 제공됩니다. 현재는 비활성 안내만 표시합니다.",
+      "dataSourceStoreSelectTitle": "시리즈 선택 (체크박스)",
+      "dataSourceStoreSelectEmpty": "표시할 Store 키가 없습니다.",
+      "dataSourceStoreSelectNoAgent": "먼저 Store 에이전트를 선택하세요."
     },
     "heatmap": {
       "stagePlaceholder": "히트맵 렌더 준비 중 (MVP)",
@@ -1835,6 +1842,9 @@
         "colHistory": "히스토리",
         "colUpdated": "갱신",
         "colActions": "액션",
+        "colAlias": "별칭 (Alias)",
+        "selectRowAriaLabel": "{key} 선택",
+        "selectColumnAriaLabel": "선택",
         "prev": "이전",
         "next": "다음",
         "pageIndicator": "{current} / {total} 페이지",

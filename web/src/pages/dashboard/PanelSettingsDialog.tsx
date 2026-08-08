@@ -80,13 +80,13 @@ import {
 import ColorSwatchButton, { COLOR_PALETTE } from './colorSwatchPalette';
 import {
   ChartChannelSection,
-  StoreSourceSection,
   StatChartSection,
   LineChartSection,
   BarChartSection,
   PieChartSection,
   TableChartSection,
 } from './ChartPanelSections';
+import { PanelSettingsDataSource } from './PanelSettingsDataSource';
 import AcControlStyleSection from './AcControlStyleSection';
 import AcControlThresholdsSection from './AcControlThresholdsSection';
 import type { ValueColorConfig } from './panels/acControlColors';
@@ -734,7 +734,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const dataSourceSlot = dataSourceBelowPreview ? (
     <div data-testid="panel-settings-data-source" className="shrink-0">
       <CollapsibleSection title={t('dashboard.settings.dataSource')}>
-        <StoreSourceSection
+        {/* Store/TSDB 토글 + 기존 편집기 + 공용 StoreEntryTable 선택 surface.
+            @spec SPEC-PANEL-SETTINGS-001 (T4/T6/T7) */}
+        <PanelSettingsDataSource
           panel={panel}
           onConfigChange={(c) => handleConfigChange(c)}
         />

@@ -865,7 +865,14 @@
         "tagSource": "Source",
         "dragOrderTitle": "Drag to reorder"
       },
-      "dataSource": "Data source"
+      "dataSource": "Data source",
+      "dataSourceStoreTab": "Store",
+      "dataSourceTsdbTab": "TSDB",
+      "dataSourceTsdbTitle": "TSDB data source",
+      "dataSourceTsdbBody": "TSDB binding will be provided in a follow-up SPEC. For now only an inactive notice is shown.",
+      "dataSourceStoreSelectTitle": "Series selection (checkboxes)",
+      "dataSourceStoreSelectEmpty": "No Store keys to display.",
+      "dataSourceStoreSelectNoAgent": "Select a Store agent first."
     },
     "heatmap": {
       "stagePlaceholder": "Heatmap rendering coming soon (MVP)",
@@ -1835,6 +1842,9 @@
         "colHistory": "History",
         "colUpdated": "Updated",
         "colActions": "Actions",
+        "colAlias": "Alias Name",
+        "selectRowAriaLabel": "Select {key}",
+        "selectColumnAriaLabel": "Select",
         "prev": "Previous",
         "next": "Next",
         "pageIndicator": "{current} / {total} pages",

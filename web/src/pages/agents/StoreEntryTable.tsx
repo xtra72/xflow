@@ -140,7 +140,11 @@ function StoreEntryRow({
   const [historyLoading, setHistoryLoading] = useState(false);
   const execAgent = useExecAgent();
 
-  const valueStr = typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value);
+  // 라이브 값이 없는 엔트리(예: 패널 설정의 메타데이터 파생 행)도 안전하게 처리한다.
+  // JSON.stringify(undefined) 는 문자열이 아닌 undefined 를 반환하므로 '' 로 폴백한다.
+  // 값이 항상 정의된 에이전트 상세 경로에서는 동작이 불변이다.
+  const valueStr =
+    typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value) ?? '';
   const truncated = valueStr.length > 60;
   const displayValue = truncated && !expanded ? valueStr.slice(0, 60) + '...' : valueStr;
 

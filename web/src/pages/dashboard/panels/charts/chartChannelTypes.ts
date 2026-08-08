@@ -146,6 +146,15 @@ export interface StoreSourceConfig {
   aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
   /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
   refresh_interval_ms?: number;
+  /**
+   * 패널 설정 공용 Store 리스트(StoreEntryTable)의 행 선택 체크박스 결과(선택 계열 키 집합).
+   * @spec SPEC-PANEL-SETTINGS-001 (T6, additive)
+   *
+   * additive-only 확장이다. **미설정(undefined) 시 기존 동작과 완전히 동일**하며(하위호환),
+   * 소비처(useStoreChartData 등)는 이 필드가 있을 때만 선택 계열을 반영하도록 구현한다.
+   * 기존 `series`/`selection_mode`/`tag_filters` 의미는 불변이다.
+   */
+  selected_keys?: string[];
 }
 
 /** 모든 차트 패널이 공유하는 공통 config (REQ-M4-02) */

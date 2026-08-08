@@ -43,7 +43,11 @@ export type StoreColumnId =
   | 'ttl'
   | 'history'
   | 'updated'
-  | 'actions';
+  | 'actions'
+  // @spec SPEC-PANEL-SETTINGS-001 (T6): 패널 설정 컨텍스트 전용 컬럼. 기본 STORE_COLUMNS
+  // 레지스트리에는 포함하지 않으므로(에이전트 상세 무영향), 패널 설정이 컬럼 세트를 직접
+  // 구성하고 셀은 renderCellExtra 로 렌더한다.
+  | 'alias';
 
 /** 컬럼 정의. */
 export interface StoreColumn {
