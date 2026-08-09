@@ -113,9 +113,11 @@ describe('StoreSourceSection 시리즈 선택 방식 토글(SPEC-WEB-005)', () =
     expect(screen.getByTestId('chart-store-selection-mode-tag')).toBeInTheDocument();
   });
 
-  it('기본(미지정) 은 keys 모드 → 키 선택 테이블을 렌더하고 태그 선택기는 없다', () => {
+  it('기본(미지정) 은 keys 모드 → 태그 선택기는 없다(키 선택은 공용 StoreEntryTable 로 외부화)', () => {
     render(<StoreSourceSection panel={makePanel(keysConfig())} onConfigChange={vi.fn()} />);
-    expect(screen.getByTestId('chart-store-key-table')).toBeInTheDocument();
+    // keys 모드에서는 태그 자동 선택기가 없다. 키 선택 체크박스 테이블은 상위
+    // PanelSettingsDataSource 의 공용 StoreEntryTable 로 이동했으므로 여기(StoreSourceSection)
+    // 에는 렌더되지 않는다.
     expect(screen.queryByTestId('chart-store-tag-selection')).toBeNull();
     // keys 토글이 선택 상태다.
     expect(screen.getByTestId('chart-store-selection-mode-keys')).toHaveAttribute(

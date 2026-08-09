@@ -146,15 +146,6 @@ export interface StoreSourceConfig {
   aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
   /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
   refresh_interval_ms?: number;
-  /**
-   * 패널 설정 공용 Store 리스트(StoreEntryTable)의 행 선택 체크박스 결과(선택 계열 키 집합).
-   * @spec SPEC-PANEL-SETTINGS-001 (T6, additive)
-   *
-   * additive-only 확장이다. **미설정(undefined) 시 기존 동작과 완전히 동일**하며(하위호환),
-   * 소비처(useStoreChartData 등)는 이 필드가 있을 때만 선택 계열을 반영하도록 구현한다.
-   * 기존 `series`/`selection_mode`/`tag_filters` 의미는 불변이다.
-   */
-  selected_keys?: string[];
 }
 
 /** 모든 차트 패널이 공유하는 공통 config (REQ-M4-02) */
@@ -248,6 +239,29 @@ export function pickSeriesColor(index: number): string {
   const i = ((Math.trunc(index) % n) + n) % n;
   return SERIES_PALETTE[i]!;
 }
+
+/**
+ * StoreSeriesRef 의 동일성 식별자(key + metric_type + 정렬된 tags). keys 모드에서 선택된
+ * 시리즈를 판정/추가/제거할 때 쓴다. 반환 형식은 `"<key> <metric> <k=v,...>"` 로 고정한다.
+ * @spec SPEC-PANEL-SETTINGS-001 (시리즈 선택 단일화 — 체크박스 ↔ series)
+ */
+export function storeSeriesId(
+  key: string,
+  metric: string,
+  tags: Record<string, string>,
+): string {
+  const tagPart = Object.keys(tags)
+    .sort()
+    .map((k) => `${k}=${tags[k]}`)
+    .join(',');
+  return `${key} ${metric} ${tagPart}`;
+}
+
+/**
+ * 선택 계열(series) 상한. 라이브 미리보기 성능 보호를 위한 합리적 상한(수십 개).
+ * @spec SPEC-PANEL-SETTINGS-001 (AC-15)
+ */
+export const STORE_SERIES_LIMIT = 48;
 
 /**
  * 축 텍스트(레이블/눈금) 폰트 스타일. 미지정 필드는 렌더 측 기본값으로 폴백한다.

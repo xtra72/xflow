@@ -1,16 +1,18 @@
 // PanelSettingsDataSource — Store/TSDB 토글 + 공용 StoreEntryTable 선택 surface 테스트.
 //
-// @spec SPEC-PANEL-SETTINGS-001 (T4/T6/T7)
-//   - AC-04/07: 행 체크박스 → store_source.selected_keys 반영.
+// @spec SPEC-PANEL-SETTINGS-001 (T4/T6/T7 + 시리즈 선택 단일화)
+//   - AC-04/07: 행 체크박스 → store_source.series 반영(StoreKeySelector 와 byte-호환).
 //   - AC-05: TSDB placeholder + Store 설정 파괴 없음.
 //   - AC-06/09: 공용 StoreEntryTable, actions 대신 Alias 컬럼.
 //   - AC-08: 필터/정렬/표시숨김 패널별 localStorage 영속/복원.
 //   - AC-10: 빈 store / 미선택 에이전트 graceful.
+//   - AC-15: 선택 상한(series 개수) 가드.
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PanelConfig } from '@/stores/uiStore';
+import { pickSeriesColor } from './panels/charts/chartChannelTypes';
 
 const state = vi.hoisted(() => ({
   agents: [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }] as Array<{
@@ -129,33 +131,71 @@ describe('T6/AC-06/09 — 공용 테이블 + Alias 컬럼', () => {
   });
 });
 
-describe('T6/AC-07 — 행 체크박스 → selected_keys', () => {
-  it('체크박스 토글이 store_source.selected_keys 로 반영된다', () => {
+describe('T6/AC-07 — 행 체크박스 → series (StoreKeySelector byte-호환)', () => {
+  it('체크박스 토글이 store_source.series 에 byte-호환 항목으로 추가된다', () => {
     const onConfigChange = vi.fn();
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
     const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
     expect(checkboxes.length).toBe(2);
     fireEvent.click(checkboxes[0]!);
+    // 구 StoreKeySelector.onChange 가 만들던 항목과 동일 형태(key/metric_type/tags/data_type/alias/color).
     expect(onConfigChange).toHaveBeenCalledWith({
-      store_source: expect.objectContaining({ selected_keys: ['k1'] }),
+      store_source: expect.objectContaining({
+        series: [
+          {
+            key: 'k1',
+            metric_type: 'temperature',
+            tags: { room: '1' },
+            data_type: 'float',
+            alias: 'k1',
+            color: pickSeriesColor(0),
+          },
+        ],
+      }),
     });
   });
 
-  it('이미 선택된 키는 체크 상태로 렌더되고 토글 시 제거된다', () => {
+  it('태그 없는 키는 tags/metric 이 undefined 로 생략된 항목이 된다', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
+    const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
+    // 두 번째 행 = k2 (humidity, 태그 없음).
+    fireEvent.click(checkboxes[1]!);
+    expect(onConfigChange).toHaveBeenCalledWith({
+      store_source: expect.objectContaining({
+        series: [
+          {
+            key: 'k2',
+            metric_type: 'humidity',
+            tags: undefined,
+            data_type: 'int',
+            alias: 'k2',
+            color: pickSeriesColor(0),
+          },
+        ],
+      }),
+    });
+  });
+
+  it('이미 series 에 있는 행은 체크 상태로 렌더되고 토글 시 series 에서 제거된다', () => {
     const onConfigChange = vi.fn();
     render(
       <PanelSettingsDataSource
-        panel={panelWithAgent({ selected_keys: ['k1'] })}
+        panel={panelWithAgent({
+          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+        })}
         onConfigChange={onConfigChange}
       />,
     );
     const checkboxes = screen.getAllByLabelText(
       'agents.detail.store.selectRowAriaLabel',
     ) as HTMLInputElement[];
+    // k1(첫 행)은 체크, k2 는 미체크.
     expect(checkboxes[0]!.checked).toBe(true);
+    expect(checkboxes[1]!.checked).toBe(false);
     fireEvent.click(checkboxes[0]!);
     expect(onConfigChange).toHaveBeenCalledWith({
-      store_source: expect.objectContaining({ selected_keys: [] }),
+      store_source: expect.objectContaining({ series: [] }),
     });
   });
 });
@@ -178,9 +218,9 @@ describe('AC-10 — 빈 store graceful', () => {
   });
 });
 
-describe('AC-15 — 선택 상한 가드', () => {
-  it('상한 초과 추가 시 안내가 표시되고 config 에 반영되지 않는다', () => {
-    // 50개 키, 이미 48개(상한) 선택된 상태.
+describe('AC-15 — 선택 상한 가드 (series 개수 기준)', () => {
+  it('series 상한 초과 추가 시 안내가 표시되고 config 에 반영되지 않는다', () => {
+    // 50개 키, 이미 48개(상한) series 선택된 상태.
     state.keyObjects = Array.from({ length: 50 }, (_, i) => ({
       key: `k${i}`,
       registration: 'auto',
@@ -188,11 +228,12 @@ describe('AC-15 — 선택 상한 가드', () => {
       metric_type: 'm',
       tags: {},
     }));
-    const selected = Array.from({ length: 48 }, (_, i) => `k${i}`);
+    // series 항목은 seriesId(key,'m',{}) 로 매칭되도록 key/metric_type 만 채워도 충분.
+    const series = Array.from({ length: 48 }, (_, i) => ({ key: `k${i}`, metric_type: 'm' }));
     const onConfigChange = vi.fn();
     render(
       <PanelSettingsDataSource
-        panel={panelWithAgent({ selected_keys: selected })}
+        panel={panelWithAgent({ series })}
         onConfigChange={onConfigChange}
       />,
     );

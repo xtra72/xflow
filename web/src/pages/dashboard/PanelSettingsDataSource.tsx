@@ -39,19 +39,19 @@ import { useStoreKeysWithTags } from '@/services/api/store';
 import type { PanelConfig } from '@/stores/uiStore';
 
 import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
-import type { StoreSourceConfig } from './panels/charts/chartChannelTypes';
+import {
+  pickSeriesColor,
+  storeSeriesId,
+  STORE_SERIES_LIMIT,
+  type StoreSeriesRef,
+  type StoreSourceConfig,
+} from './panels/charts/chartChannelTypes';
 import { StoreSourceSection } from './ChartPanelSections';
 import {
   loadPanelStoreTablePrefs,
   savePanelStoreTablePrefs,
   type PanelStoreTablePrefs,
 } from './panels/charts/panelStoreTablePrefs';
-import {
-  isSelectionAtLimit,
-  readSelectedKeys,
-  SELECTED_KEYS_LIMIT,
-  toggleSelectedKey,
-} from './panels/charts/storeSelectedKeys';
 
 type OnConfig = (config: Record<string, unknown>) => void;
 
@@ -76,6 +76,11 @@ export function PanelSettingsDataSource({
     (panel.config?.data_source as string | undefined) === 'store' ? 'store' : 'channel';
   const [mode, setMode] = useState<'channel' | 'store' | 'tsdb'>(initialMode);
 
+  // 시리즈 선택 방식(keys/tag). 체크박스 선택 테이블은 keys 모드에서만 노출한다
+  // (tag 모드는 tag_filters 동적 바인딩이 단일 선택 수단). @spec SPEC-PANEL-SETTINGS-001
+  const selectionMode =
+    ((panel.config?.store_source as StoreSourceConfig | undefined)?.selection_mode ?? 'keys');
+
   return (
     <div className="space-y-3" data-testid="panel-datasource">
       {/* 단일 데이터소스 토글 + 채널/Store 편집기 + TSDB placeholder(모두 StoreSourceSection 소유). */}
@@ -84,8 +89,8 @@ export function PanelSettingsDataSource({
         onConfigChange={onConfigChange}
         onModeChange={setMode}
       />
-      {/* 공용 StoreEntryTable 선택 surface — Store 모드에서만 노출(체크박스 + Alias). */}
-      {mode === 'store' && (
+      {/* 공용 StoreEntryTable 선택 surface — Store + keys 모드에서만 노출(체크박스 → series). */}
+      {mode === 'store' && selectionMode === 'keys' && (
         <PanelStoreSelectTable panel={panel} onConfigChange={onConfigChange} />
       )}
     </div>
@@ -129,6 +134,7 @@ function PanelStoreSelectTable({
   const keyObjects = useMemo(() => keysData?.keyObjects ?? [], [keysData?.keyObjects]);
 
   // keyObjects(메타데이터) → StoreEntry 파생. 라이브 값(value/namespace/updated)은 없다.
+  // data_type 은 series 항목 구성(StoreKeySelector 와 byte-호환)에 필요하므로 포함한다.
   const allEntries: StoreEntry[] = useMemo(
     () =>
       keyObjects.map((o) => ({
@@ -136,6 +142,7 @@ function PanelStoreSelectTable({
         storage_key: o.key,
         metric_type: o.metric_type,
         tags: o.tags,
+        data_type: o.data_type,
         registration: o.registration,
       })),
     [keyObjects],
@@ -202,7 +209,19 @@ function PanelStoreSelectTable({
     return map;
   }, [allEntries, filterCtx]);
 
-  const selectedKeys = readSelectedKeys(storeSource);
+  // 선택의 단일 소스 오브 트루스는 store_source.series(keys 모드). 체크박스는 이 series 를
+  // StoreKeySelector 와 byte-호환 형태로 추가/제거한다(렌더 경로 불변). @spec SPEC-PANEL-SETTINGS-001
+  const series = useMemo<StoreSeriesRef[]>(() => storeSource?.series ?? [], [storeSource?.series]);
+  const seriesIds = useMemo(
+    () => new Set(series.map((s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}))),
+    [series],
+  );
+  const entryToSeriesId = (entry: StoreEntry): string =>
+    storeSeriesId(
+      entry.key as string,
+      (entry.metric_type as string) ?? '',
+      (entry.tags as Record<string, string>) ?? {},
+    );
 
   const handleSort = useCallback(
     (next: SortState) => persist({ ...prefs, sort: next }),
@@ -238,18 +257,37 @@ function PanelStoreSelectTable({
 
   const handleToggleSelection = useCallback(
     (entry: StoreEntry) => {
-      const key = entry.key as string;
-      const willAdd = !selectedKeys.includes(key);
-      if (willAdd && isSelectionAtLimit(selectedKeys)) {
-        // 상한 초과 반영을 억제하고 안내만 표시(미리보기 성능 보호).
+      const id = entryToSeriesId(entry);
+      if (seriesIds.has(id)) {
+        // 제거: 동일 seriesId 항목을 series 에서 뺀다.
+        setOverLimitNotice(false);
+        const next = series.filter(
+          (s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}) !== id,
+        );
+        onConfigChange({ store_source: { ...(storeSource ?? {}), series: next } });
+        return;
+      }
+      // 추가: 상한 초과 시 억제 + 안내(미리보기 성능 보호, AC-15 — series 개수 기준).
+      if (series.length >= STORE_SERIES_LIMIT) {
         setOverLimitNotice(true);
         return;
       }
       setOverLimitNotice(false);
-      const next = toggleSelectedKey(selectedKeys, key);
-      onConfigChange({ store_source: { ...(storeSource ?? {}), selected_keys: next } });
+      // StoreKeySelector 와 동일한 series 항목 형태(byte-호환)로 추가한다.
+      const nextEntry: StoreSeriesRef = {
+        key: entry.key as string,
+        metric_type: (entry.metric_type as string) || undefined,
+        tags:
+          entry.tags && Object.keys(entry.tags as object).length > 0
+            ? (entry.tags as Record<string, string>)
+            : undefined,
+        data_type: entry.data_type as StoreSeriesRef['data_type'],
+        alias: entry.key as string,
+        color: pickSeriesColor(series.length),
+      };
+      onConfigChange({ store_source: { ...(storeSource ?? {}), series: [...series, nextEntry] } });
     },
-    [selectedKeys, storeSource, onConfigChange],
+    [series, seriesIds, storeSource, onConfigChange],
   );
 
   // ColumnSettingsMenu 는 visible 집합을 기대한다(hidden 의 여집합).
@@ -280,7 +318,7 @@ function PanelStoreSelectTable({
         >
           {t('dashboard.settings.dataSourceStoreSelectOverLimit').replace(
             '{limit}',
-            String(SELECTED_KEYS_LIMIT),
+            String(STORE_SERIES_LIMIT),
           )}
         </p>
       )}
@@ -315,7 +353,7 @@ function PanelStoreSelectTable({
             readOnly: true,
           }}
           selection={{
-            isSelected: (e) => selectedKeys.includes(e.key as string),
+            isSelected: (e) => seriesIds.has(entryToSeriesId(e)),
             onToggle: handleToggleSelection,
           }}
           renderCellExtra={(col, entry) =>

@@ -6,17 +6,12 @@
 // 분기하여 해당 Section 을 렌더링한다.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, ChevronUp, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
 import { useAgents } from '@/hooks/useAgent';
-import {
-  useStoreKeysWithTags,
-  useStoreTagPairs,
-  type DataType,
-  type StoreKeyObject,
-} from '@/services/api/store';
+import { useStoreKeysWithTags, useStoreTagPairs } from '@/services/api/store';
 import { useTranslation } from '@/lib/i18n';
 
 import type {
@@ -40,13 +35,8 @@ import type {
 import { pickSeriesColor } from './panels/charts/chartChannelTypes';
 import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
 import {
-  distinctDataTypes,
-  distinctMetricTypes,
   filterStoreKeyObjects,
   makeTagFilterId,
-  sortStoreKeyObjects,
-  type StoreSortField,
-  type StoreSortState,
 } from './panels/charts/storeSourceFilter';
 import {
   makeAliasToken,
@@ -264,9 +254,6 @@ const STORE_AGG_OPTIONS: { value: StoreSourceConfig['aggregation']; labelKey: st
   { value: 'first', labelKey: 'tsdb.aggFirst' },
   { value: 'last', labelKey: 'tsdb.aggLast' },
 ];
-
-/** data_type 필터 옵션(전체 + 6종). */
-const DATA_TYPE_OPTIONS: DataType[] = ['int', 'float', 'string', 'boolean', 'bytes', 'json'];
 
 /** 기본 Store 소스 설정(처음 store 모드로 전환 시 사용). */
 function defaultStoreSource(): StoreSourceConfig {
@@ -558,14 +545,11 @@ function StoreSourceEditor({
         </div>
       )}
 
-      {/* keys 모드: 키 선택기(4 필터 + 멀티셀렉트) — 해석된 현재 이름으로 조회 */}
-      {isSelected && resolvedAgentName && selectionMode === 'keys' && (
-        <StoreKeySelector
-          agentName={resolvedAgentName}
-          series={storeSource.series}
-          onChange={(series) => onPatch({ series })}
-        />
-      )}
+      {/*
+        keys 모드 키 선택기는 공용 StoreEntryTable(체크박스 "시리즈 선택", PanelSettingsDataSource)
+        로 일원화되어 여기서는 제거했다. 선택 결과(series)는 아래 SelectedSeriesList 가 편집한다.
+        @spec SPEC-PANEL-SETTINGS-001 (시리즈 선택 단일화)
+      */}
 
       {/* keys 모드: 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
       {selectionMode === 'keys' && storeSource.series.length > 0 && (
@@ -1122,338 +1106,6 @@ function SelectedSeriesList({
         );
       })}
     </div>
-  );
-}
-
-/**
- * Store 키 선택기 — 키 이름/metric_type/tag/data_type 4가지 필터 + 멀티셀렉트.
- *
- * 백엔드 keyObjects(useStoreKeysWithTags)에서 메타데이터를 받아 필터링하고,
- * 체크된 키를 store_source.series[] 로 변환한다. 같은 key 가 metric/tags 별 다중
- * 시리즈로 올 수 있으므로, 선택 단위는 (key + metric_type + tags) 조합이다.
- */
-function StoreKeySelector({
-  agentName,
-  series,
-  onChange,
-}: {
-  agentName: string;
-  series: StoreSeriesRef[];
-  onChange: (series: StoreSeriesRef[]) => void;
-}): React.ReactElement {
-  const { t } = useTranslation();
-  const { data, isLoading, isError } = useStoreKeysWithTags(agentName);
-  const keyObjects = useMemo<StoreKeyObject[]>(() => data?.keyObjects ?? [], [data]);
-
-  // 필터 상태(컬럼 헤더에 인라인으로 배치된다).
-  const [search, setSearch] = useState('');
-  const [metricType, setMetricType] = useState('');
-  const [dataType, setDataType] = useState<DataType | ''>('');
-
-  // 정렬 상태: 컬럼별 asc → desc → none 순환.
-  const [sort, setSort] = useState<StoreSortState>(null);
-
-  const metricTypes = useMemo(() => distinctMetricTypes(keyObjects), [keyObjects]);
-  const dataTypes = useMemo(() => distinctDataTypes(keyObjects), [keyObjects]);
-
-  const filtered = useMemo(
-    () =>
-      filterStoreKeyObjects(keyObjects, {
-        search,
-        metricType,
-        dataType: dataType || undefined,
-      }),
-    [keyObjects, search, metricType, dataType],
-  );
-
-  // 정렬 적용(필터 결과를 컬럼 기준으로 정렬). none 이면 원래 순서 보존.
-  const sortedRows = useMemo(
-    () => sortStoreKeyObjects(filtered, sort),
-    [filtered, sort],
-  );
-
-  // 선택 식별: (key + metric_type + tags 직렬화).
-  const seriesId = (key: string, metric: string, tags: Record<string, string>): string => {
-    const tagPart = Object.keys(tags)
-      .sort()
-      .map((k) => `${k}=${tags[k]}`)
-      .join(',');
-    return `${key} ${metric} ${tagPart}`;
-  };
-  const selectedIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of series) {
-      set.add(seriesId(s.key, s.metric_type ?? '', s.tags ?? {}));
-    }
-    return set;
-  }, [series]);
-
-  const toggleKey = (obj: StoreKeyObject): void => {
-    const id = seriesId(obj.key, obj.metric_type ?? '', obj.tags ?? {});
-    if (selectedIds.has(id)) {
-      onChange(
-        series.filter(
-          (s) => seriesId(s.key, s.metric_type ?? '', s.tags ?? {}) !== id,
-        ),
-      );
-    } else {
-      onChange([
-        ...series,
-        {
-          key: obj.key,
-          metric_type: obj.metric_type || undefined,
-          tags: Object.keys(obj.tags ?? {}).length > 0 ? obj.tags : undefined,
-          data_type: obj.data_type,
-          alias: obj.key,
-          // 데이터 소스 선택 시 시리즈 인덱스별로 서로 다른 색을 자동 배정한다.
-          // 사용자는 이후 색상 스와치로 변경할 수 있다.
-          color: pickSeriesColor(series.length),
-        },
-      ]);
-    }
-  };
-
-  // 정렬 토글: 같은 컬럼 재클릭 시 asc → desc → none, 다른 컬럼이면 asc 로 시작.
-  const toggleSort = (field: StoreSortField): void => {
-    setSort((prev) => {
-      if (!prev || prev.field !== field) return { field, order: 'asc' };
-      if (prev.order === 'asc') return { field, order: 'desc' };
-      return null;
-    });
-  };
-
-  // 정렬 방향 표시 아이콘(헤더 클릭 가능 영역에 표시).
-  const sortIndicator = (field: StoreSortField): React.ReactNode => {
-    if (!sort || sort.field !== field) return null;
-    return sort.order === 'asc' ? (
-      <ChevronUp className="h-3 w-3" aria-hidden="true" />
-    ) : (
-      <ChevronDown className="h-3 w-3" aria-hidden="true" />
-    );
-  };
-
-  // 로딩/에러 상태는 테이블 대신 메시지로 일찍 반환한다.
-  if (isLoading) {
-    return (
-      <p className="py-2 text-center text-[11px] text-(--color-text-muted)">
-        {t('dashboard.chart.storeKeysLoading')}
-      </p>
-    );
-  }
-  if (isError) {
-    return (
-      <p className="py-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
-        {t('dashboard.chart.storeKeysError')}
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-2" data-testid="chart-store-key-selector">
-      {/*
-        스토어 아이템(키 후보) 테이블 — 정렬 가능한 컬럼 헤더 + 헤더 내 인라인 필터.
-        컬럼: 선택 / 키 / 메트릭 타입 / 데이터 타입 / 태그.
-        TablePanel 의 테이블 패턴(sticky thead, th/td, divide 보더)을 재사용한다.
-      */}
-      <div className="max-h-72 overflow-auto rounded border border-(--color-border-default)">
-        <table className="w-full text-left text-[11px]" data-testid="chart-store-key-table">
-          <thead className="sticky top-0 z-10 bg-(--color-bg-surface)">
-            {/* 헤더 행 1: 정렬 가능한 컬럼 제목 */}
-            <tr>
-              <th
-                scope="col"
-                className="w-8 border-b border-(--color-border-default) px-2 py-1.5 text-(--color-text-muted)"
-              >
-                <span className="sr-only">{t('dashboard.chart.storeColSelect')}</span>
-              </th>
-              <SortableHeader
-                label={t('dashboard.chart.storeColKey')}
-                field="key"
-                indicator={sortIndicator('key')}
-                onSort={toggleSort}
-              />
-              <SortableHeader
-                label={t('dashboard.chart.storeColMetric')}
-                field="metric_type"
-                indicator={sortIndicator('metric_type')}
-                onSort={toggleSort}
-              />
-              <SortableHeader
-                label={t('dashboard.chart.storeColDataType')}
-                field="data_type"
-                indicator={sortIndicator('data_type')}
-                onSort={toggleSort}
-              />
-              <SortableHeader
-                label={t('dashboard.chart.storeColTags')}
-                field="tags"
-                indicator={sortIndicator('tags')}
-                onSort={toggleSort}
-              />
-            </tr>
-            {/* 헤더 행 2: 컬럼별 인라인 필터 */}
-            <tr>
-              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1" />
-              {/* 키 검색 */}
-              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder={t('dashboard.chart.storeKeySearch')}
-                  aria-label={t('dashboard.chart.storeKeySearch')}
-                  data-testid="chart-store-key-search"
-                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
-                />
-              </th>
-              {/* 메트릭 타입 셀렉터 */}
-              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
-                <select
-                  value={metricType}
-                  onChange={(e) => setMetricType(e.target.value)}
-                  aria-label={t('dashboard.chart.storeColMetric')}
-                  data-testid="chart-store-metric-filter"
-                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
-                >
-                  <option value="">{t('dashboard.chart.storeAllMetrics')}</option>
-                  {metricTypes.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </th>
-              {/* 데이터 타입 셀렉터 */}
-              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
-                <select
-                  value={dataType}
-                  onChange={(e) => setDataType(e.target.value as DataType | '')}
-                  aria-label={t('dashboard.chart.storeColDataType')}
-                  data-testid="chart-store-datatype-filter"
-                  className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
-                >
-                  <option value="">{t('dashboard.chart.storeAllDataTypes')}</option>
-                  {(dataTypes.length > 0 ? dataTypes : DATA_TYPE_OPTIONS).map((dt) => (
-                    <option key={dt} value={dt}>
-                      {dt}
-                    </option>
-                  ))}
-                </select>
-              </th>
-              {/* 태그 컬럼 필터는 공용 StoreEntryTable 의 태그 컬럼 필터로 대체됨(중복 제거). */}
-              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1" />
-            </tr>
-          </thead>
-          <tbody>
-            {sortedRows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={5}
-                  className="px-2 py-3 text-center text-[11px] text-(--color-text-muted)"
-                >
-                  {t('dashboard.chart.storeKeysEmpty')}
-                </td>
-              </tr>
-            ) : (
-              sortedRows.map((obj, i) => {
-                const id = seriesId(obj.key, obj.metric_type ?? '', obj.tags ?? {});
-                const checked = selectedIds.has(id);
-                const tagEntries = Object.entries(obj.tags ?? {});
-                return (
-                  <tr
-                    key={`${id}-${i}`}
-                    data-testid={`chart-store-key-row-${i}`}
-                    onClick={() => toggleKey(obj)}
-                    className="cursor-pointer border-b border-(--color-border-subtle) last:border-b-0 hover:bg-(--color-bg-elevated)"
-                  >
-                    <td className="px-2 py-1 align-middle">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        // 행 클릭과 중복 토글되지 않도록 체크박스 onChange 는 no-op 으로 두고
-                        // 클릭 이벤트 전파만 막는다(행의 onClick 이 단일 토글 소스).
-                        onChange={() => {}}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleKey(obj);
-                        }}
-                        className="h-3 w-3 rounded border-gray-300 text-blue-600"
-                        aria-label={t('dashboard.chart.storeRowSelectAria').replace(
-                          '{key}',
-                          obj.key,
-                        )}
-                        data-testid={`chart-store-key-checkbox-${obj.key}`}
-                      />
-                    </td>
-                    <td className="max-w-0 truncate px-2 py-1 font-mono text-(--color-text-primary)">
-                      {obj.key}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-(--color-text-muted)">
-                      {obj.metric_type || '—'}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-(--color-text-muted)">
-                      {obj.data_type || '—'}
-                    </td>
-                    <td className="px-2 py-1">
-                      {tagEntries.length === 0 ? (
-                        <span className="text-(--color-text-muted)">—</span>
-                      ) : (
-                        // 태그를 항목별 "키: 값" 칩으로 렌더(연결 문자열 아님).
-                        <span className="flex flex-wrap gap-0.5">
-                          {tagEntries.map(([k, v]) => (
-                            <span
-                              key={k}
-                              className="rounded bg-(--color-bg-elevated) px-1 text-[9px] text-(--color-text-muted)"
-                            >
-                              {k}: {v}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-            </tbody>
-          </table>
-        </div>
-
-      {/* 선택 요약 */}
-      <p className="text-[10px] text-(--color-text-muted)">
-        {t('dashboard.chart.storeSelectedCount').replace('{count}', String(series.length))}
-      </p>
-    </div>
-  );
-}
-
-/** 정렬 가능한 컬럼 헤더 셀(클릭 시 정렬 순환 + 방향 인디케이터). */
-function SortableHeader({
-  label,
-  field,
-  indicator,
-  onSort,
-}: {
-  label: string;
-  field: StoreSortField;
-  indicator: React.ReactNode;
-  onSort: (field: StoreSortField) => void;
-}): React.ReactElement {
-  return (
-    <th
-      scope="col"
-      className="border-b border-(--color-border-default) px-2 py-1.5 font-medium text-(--color-text-muted)"
-    >
-      <button
-        type="button"
-        onClick={() => onSort(field)}
-        data-testid={`chart-store-sort-${field}`}
-        className="inline-flex items-center gap-0.5 hover:text-(--color-text-primary)"
-      >
-        {label}
-        {indicator}
-      </button>
-    </th>
   );
 }
 
