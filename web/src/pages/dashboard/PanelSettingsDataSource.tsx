@@ -18,7 +18,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useTranslation } from '@/lib/i18n';
-import { cn } from '@/lib/utils/cn';
 import {
   ColumnSettingsMenu,
   STORE_COLUMNS,
@@ -59,7 +58,11 @@ type OnConfig = (config: Record<string, unknown>) => void;
 /** 패널 설정 컨텍스트는 read-only 이므로 행 액션 핸들러는 no-op 이다(액션 컬럼 미노출). */
 const NOOP = (): void => {};
 
-/** 데이터소스 영역 컨테이너: Store/TSDB 토글 + 영역별 렌더. */
+/**
+ * 데이터소스 영역 컨테이너. 단일 "데이터 소스" 토글([채널 | Store | TSDB])과 각 모드의
+ * 편집기/placeholder 는 `StoreSourceSection` 이 소유한다(중복 헤딩/토글 제거). 여기서는
+ * StoreSourceSection 이 보고하는 모드를 읽어 Store 모드에서만 공용 선택 테이블을 렌더한다.
+ */
 export function PanelSettingsDataSource({
   panel,
   onConfigChange,
@@ -67,61 +70,23 @@ export function PanelSettingsDataSource({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }) {
-  const { t } = useTranslation();
-  // 데이터소스 백엔드 토글(로컬 UI 상태). TSDB 는 본 SPEC 에서 placeholder 만.
-  const [mode, setMode] = useState<'store' | 'tsdb'>('store');
+  // 바인딩 모드의 단일 소스 오브 트루스는 StoreSourceSection. 초기값은 config.data_source
+  // (채널/Store)에서 파생하고(TSDB 는 UI 전용이라 항상 채널/Store 로 시작), 이후 콜백으로 동기화.
+  const initialMode: 'channel' | 'store' | 'tsdb' =
+    (panel.config?.data_source as string | undefined) === 'store' ? 'store' : 'channel';
+  const [mode, setMode] = useState<'channel' | 'store' | 'tsdb'>(initialMode);
 
   return (
     <div className="space-y-3" data-testid="panel-datasource">
-      <div
-        role="tablist"
-        aria-label={t('dashboard.settings.dataSource')}
-        className="inline-flex rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-0.5"
-      >
-        {(['store', 'tsdb'] as const).map((kind) => {
-          const selected = mode === kind;
-          return (
-            <button
-              key={kind}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              data-testid={`panel-datasource-${kind}`}
-              onClick={() => setMode(kind)}
-              className={cn(
-                'rounded px-3 py-1 text-xs font-medium transition-colors',
-                selected
-                  ? 'bg-blue-600 text-white'
-                  : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
-              )}
-            >
-              {kind === 'store'
-                ? t('dashboard.settings.dataSourceStoreTab')
-                : t('dashboard.settings.dataSourceTsdbTab')}
-            </button>
-          );
-        })}
-      </div>
-
-      {mode === 'store' ? (
-        <>
-          {/* 기존 에이전트/시리즈/시간창 편집기 — 로직 보존(회귀 0). */}
-          <StoreSourceSection panel={panel} onConfigChange={onConfigChange} />
-          {/* 공용 StoreEntryTable 선택 surface(체크박스 + Alias). */}
-          <PanelStoreSelectTable panel={panel} onConfigChange={onConfigChange} />
-        </>
-      ) : (
-        <div
-          data-testid="panel-datasource-tsdb-placeholder"
-          className="rounded-md border border-dashed border-(--color-border-default) bg-(--color-bg-elevated) p-4 text-center"
-        >
-          <p className="text-sm font-medium text-(--color-text-secondary)">
-            {t('dashboard.settings.dataSourceTsdbTitle')}
-          </p>
-          <p className="mt-1 text-xs text-(--color-text-muted)">
-            {t('dashboard.settings.dataSourceTsdbBody')}
-          </p>
-        </div>
+      {/* 단일 데이터소스 토글 + 채널/Store 편집기 + TSDB placeholder(모두 StoreSourceSection 소유). */}
+      <StoreSourceSection
+        panel={panel}
+        onConfigChange={onConfigChange}
+        onModeChange={setMode}
+      />
+      {/* 공용 StoreEntryTable 선택 surface — Store 모드에서만 노출(체크박스 + Alias). */}
+      {mode === 'store' && (
+        <PanelStoreSelectTable panel={panel} onConfigChange={onConfigChange} />
       )}
     </div>
   );

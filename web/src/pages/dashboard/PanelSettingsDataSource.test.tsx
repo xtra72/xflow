@@ -61,7 +61,13 @@ function panelWithAgent(extra: Record<string, unknown> = {}): PanelConfig {
 }
 
 function emptyPanel(): PanelConfig {
-  return { id: 'p1', type: 'heatmap', title: 'h', config: {} } as unknown as PanelConfig;
+  // Store 모드지만 에이전트 미선택 — 선택 테이블은 렌더되되 no-agent 안내를 보인다.
+  return {
+    id: 'p1',
+    type: 'heatmap',
+    title: 'h',
+    config: { data_source: 'store' },
+  } as unknown as PanelConfig;
 }
 
 beforeEach(() => {
@@ -73,28 +79,44 @@ beforeEach(() => {
   ];
 });
 
-describe('T4 — Store/TSDB 토글', () => {
-  it('기본 Store 모드는 기존 편집기 + 공용 선택 테이블을 렌더한다', () => {
+describe('T4 — 단일 데이터소스 토글 [채널 | Store | TSDB]', () => {
+  it('데이터 소스 토글은 하나만 존재하고 Store 모드에 공용 선택 테이블을 렌더한다', () => {
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
-    expect(screen.getByTestId('panel-datasource-store')).toHaveAttribute('aria-selected', 'true');
-    // 기존 StoreSourceSection(채널/Store 토글)이 보존된다.
+    // 단일 "데이터 소스" 토글(StoreSourceSection 소유) — 채널/Store/TSDB 3옵션.
+    expect(screen.getByTestId('chart-data-source-channel')).toBeInTheDocument();
     expect(screen.getByTestId('chart-data-source-store')).toBeInTheDocument();
-    // 공용 선택 테이블이 렌더된다.
+    expect(screen.getByTestId('chart-data-source-tsdb')).toBeInTheDocument();
+    // 중복 래퍼 토글/헤딩 제거 확인.
+    expect(screen.queryByTestId('panel-datasource-store')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('panel-datasource-tsdb')).not.toBeInTheDocument();
+    // Store 모드(config.data_source='store') → 공용 선택 테이블 렌더.
     const select = screen.getByTestId('panel-store-select');
     expect(within(select).getByRole('table')).toBeInTheDocument();
   });
 
-  it('TSDB 선택 시 placeholder 만 렌더하고 config 를 건드리지 않는다(AC-05)', () => {
+  it('TSDB 선택 시 placeholder + 선택 테이블 미노출 + Store config 보존(AC-05)', () => {
     const onConfigChange = vi.fn();
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
-    fireEvent.click(screen.getByTestId('panel-datasource-tsdb'));
-    expect(screen.getByTestId('panel-datasource-tsdb-placeholder')).toBeInTheDocument();
-    // 안내 문구 노출 + Store 편집기/테이블 미노출.
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    // 후속 SPEC 안내 placeholder.
+    expect(screen.getByTestId('chart-data-source-tsdb-placeholder')).toBeInTheDocument();
     expect(screen.getByText('dashboard.settings.dataSourceTsdbBody')).toBeInTheDocument();
+    // 선택 테이블 미노출(Store 모드 아님).
     expect(screen.queryByTestId('panel-store-select')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('chart-data-source-store')).not.toBeInTheDocument();
-    // 토글은 로컬 UI 상태 — config 파괴 없음.
+    // TSDB 는 UI 전용 — config 미변경(Store 설정 보존).
     expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('채널 모드에서는 공용 선택 테이블을 렌더하지 않는다', () => {
+    const channelPanel = {
+      id: 'p1',
+      type: 'line-chart',
+      title: 'l',
+      config: { data_source: 'channel' },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={channelPanel} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-data-source-channel')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByTestId('panel-store-select')).not.toBeInTheDocument();
   });
 });
 

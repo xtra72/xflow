@@ -297,11 +297,18 @@ export function StoreSourceSection({
   panel,
   onConfigChange,
   fetchChannels = listChartChannels,
+  onModeChange,
 }: {
   panel: PanelConfig;
   onConfigChange: OnConfig;
   /** 채널 모드 시리즈 편집기에 주입할 활성 채널 조회기(테스트용). */
   fetchChannels?: () => Promise<ChartChannelSummary[]>;
+  /**
+   * 데이터소스 바인딩 모드(채널/Store/TSDB) 변경 콜백. 이 컴포넌트가 모드의 단일 소스 오브
+   * 트루스를 소유하며, 상위(PanelSettingsDataSource)는 Store 모드에서만 선택 테이블을 렌더
+   * 하기 위해 이 값을 읽는다. @spec SPEC-PANEL-SETTINGS-001 (데이터소스 토글 단일화)
+   */
+  onModeChange?: (mode: 'channel' | 'store' | 'tsdb') => void;
 }): React.ReactElement {
   const { t } = useTranslation();
   const config = panel.config ?? {};
@@ -311,7 +318,16 @@ export function StoreSourceSection({
   // 라인 차트 패널은 per-line 스타일 통합 편집(채널/스토어 시리즈 양쪽)을 노출한다.
   const isLineChart = panel.type === 'line-chart';
 
+  // TSDB 는 실동작 없는 UI 전용 모드다. config 에 기록하지 않아 기존 Store 설정을 파괴하지
+  // 않는다(REQ-05/AC-05). 채널/Store 는 기존과 동일하게 config.data_source 로 영속된다.
+  const [tsdbMode, setTsdbMode] = useState(false);
+  const effectiveMode: 'channel' | 'store' | 'tsdb' = tsdbMode ? 'tsdb' : dataSource;
+  useEffect(() => {
+    onModeChange?.(effectiveMode);
+  }, [effectiveMode, onModeChange]);
+
   const setDataSource = (kind: ChartDataSourceKind): void => {
+    setTsdbMode(false);
     if (kind === 'store' && !config.store_source) {
       // 처음 store 로 전환 시 기본 설정을 함께 채운다.
       onConfigChange({ data_source: 'store', store_source: defaultStoreSource() });
@@ -336,8 +352,8 @@ export function StoreSourceSection({
           role="tablist"
           aria-label={t('dashboard.chart.dataSourceLabel')}
         >
-          {(['channel', 'store'] as const).map((kind) => {
-            const selected = dataSource === kind;
+          {(['channel', 'store', 'tsdb'] as const).map((kind) => {
+            const selected = kind === 'tsdb' ? tsdbMode : !tsdbMode && dataSource === kind;
             return (
               <button
                 key={kind}
@@ -345,7 +361,7 @@ export function StoreSourceSection({
                 role="tab"
                 aria-selected={selected}
                 data-testid={`chart-data-source-${kind}`}
-                onClick={() => setDataSource(kind)}
+                onClick={() => (kind === 'tsdb' ? setTsdbMode(true) : setDataSource(kind))}
                 className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
                   selected
                     ? 'bg-blue-600 text-white'
@@ -354,15 +370,32 @@ export function StoreSourceSection({
               >
                 {kind === 'channel'
                   ? t('dashboard.chart.dataSourceChannel')
-                  : t('dashboard.chart.dataSourceStore')}
+                  : kind === 'store'
+                    ? t('dashboard.chart.dataSourceStore')
+                    : t('dashboard.chart.dataSourceTsdb')}
               </button>
             );
           })}
         </div>
       </div>
 
+      {/* TSDB: 실동작 없는 후속 SPEC 안내 placeholder (REQ-05/AC-05). Store 설정은 보존된다. */}
+      {tsdbMode && (
+        <div
+          data-testid="chart-data-source-tsdb-placeholder"
+          className="rounded-md border border-dashed border-(--color-border-default) bg-(--color-bg-elevated) p-4 text-center"
+        >
+          <p className="text-sm font-medium text-(--color-text-secondary)">
+            {t('dashboard.settings.dataSourceTsdbTitle')}
+          </p>
+          <p className="mt-1 text-xs text-(--color-text-muted)">
+            {t('dashboard.settings.dataSourceTsdbBody')}
+          </p>
+        </div>
+      )}
+
       {/* Store 소스 상세 (store 선택 시) */}
-      {dataSource === 'store' && (
+      {!tsdbMode && dataSource === 'store' && (
         <StoreSourceEditor
           storeSource={storeSource}
           onPatch={patchStore}
@@ -375,7 +408,7 @@ export function StoreSourceSection({
         다른 차트 타입은 채널 모드에서 단일 channel_name 을 ChartChannelSection(우측 컬럼)
         으로 편집하므로 여기서는 렌더하지 않는다.
       */}
-      {dataSource === 'channel' && isLineChart && (
+      {!tsdbMode && dataSource === 'channel' && isLineChart && (
         <ChannelSeriesEditor
           panel={panel}
           onConfigChange={onConfigChange}
