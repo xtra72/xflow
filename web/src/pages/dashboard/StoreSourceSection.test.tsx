@@ -193,11 +193,13 @@ describe('StoreSourceSection 후보 키 테이블', () => {
       <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={vi.fn()} />,
     );
     // 헤더 내 필터 컨트롤이 테이블 내부에 존재한다.
+    // (태그 필터는 공용 StoreEntryTable 의 태그 컬럼 필터로 대체되어 여기서 제거됨.)
     const table = screen.getByTestId('chart-store-key-table');
     expect(table.contains(screen.getByTestId('chart-store-key-search'))).toBe(true);
     expect(table.contains(screen.getByTestId('chart-store-metric-filter'))).toBe(true);
     expect(table.contains(screen.getByTestId('chart-store-datatype-filter'))).toBe(true);
-    expect(table.contains(screen.getByTestId('chart-store-tag-filter'))).toBe(true);
+    // 중복 태그 필터 UI 는 더 이상 존재하지 않는다.
+    expect(screen.queryByTestId('chart-store-tag-filter')).toBeNull();
   });
 
   it('키 컬럼 헤더 클릭 시 행이 키 기준으로 정렬된다(asc → desc)', () => {
@@ -236,27 +238,10 @@ describe('StoreSourceSection 후보 키 테이블', () => {
     expect(screen.queryByTestId('chart-store-key-row-1')).toBeNull();
   });
 
-  it('구조화 태그 필터: 태그 키 선택 → 값 칩 토글로 행을 좁힌다', () => {
-    render(
-      <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    // 태그 키 'room' 선택 시 값 칩(1, 2)이 노출된다.
-    fireEvent.change(screen.getByTestId('chart-store-tag-key-select'), {
-      target: { value: 'room' },
-    });
-    const chip1 = screen.getByTestId('chart-store-tag-value-room-1');
-    expect(chip1).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-tag-value-room-2')).toBeInTheDocument();
-
-    // room=1 칩 토글 → room=1 태그를 가진 행만 남는다.
-    fireEvent.click(chip1);
-    expect(screen.getByTestId('chart-store-key-row-0').textContent).toContain(
-      'room:1:temp',
-    );
-    expect(screen.queryByTestId('chart-store-key-row-1')).toBeNull();
-    // 선택된 태그 요약 칩이 "키: 값" 으로 표시된다.
-    expect(screen.getByTestId('chart-store-tag-selected').textContent).toContain('room: 1');
-  });
+  // NOTE: 키 선택기 내 구조화 태그 필터(chart-store-tag-filter)는 공용 StoreEntryTable 의
+  // 태그 컬럼 필터로 대체되어 제거되었다. 태그 컬럼 표시/정렬(chart-store-sort-tags, 태그 칩)은
+  // 위 테스트에서 계속 검증한다. 태그 기반 시리즈 바인딩(selection_mode:'tag')은
+  // StoreTagMode.test.tsx 가 별도로 검증한다(기능 유지).
 
   it('행 체크박스 선택 시 store_source.series[] 에 시리즈가 추가된다', () => {
     const onConfigChange = vi.fn();

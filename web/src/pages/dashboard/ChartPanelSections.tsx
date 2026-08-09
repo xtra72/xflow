@@ -6,7 +6,7 @@
 // 분기하여 해당 Section 을 렌더링한다.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, ChevronUp, GripVertical, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, GripVertical, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
@@ -579,67 +579,73 @@ function StoreSourceEditor({
         />
       )}
 
-      {/* 시간 윈도우 / 인터벌 / 집계 */}
-      <div className="grid grid-cols-2 gap-2">
-        <LabeledField
-          label={t('dashboard.chart.storeTimeWindowSec')}
-          hint={t('dashboard.chart.storeTimeWindowHint')}
-        >
-          <input
-            type="number"
-            min={1}
-            data-testid="chart-store-time-window"
-            value={Math.round(storeSource.time_window_ms / 1000)}
-            onChange={(e) => {
-              const n = parseInt(e.target.value, 10);
-              if (!Number.isNaN(n) && n > 0) onPatch({ time_window_ms: n * 1000 });
-            }}
-            className={inputClass()}
-          />
-        </LabeledField>
-        <LabeledField label={t('dashboard.chart.storeIntervalSec')}>
-          <input
-            type="number"
-            min={1}
-            data-testid="chart-store-interval"
-            value={Math.round(storeSource.interval_ms / 1000)}
-            onChange={(e) => {
-              const n = parseInt(e.target.value, 10);
-              if (!Number.isNaN(n) && n > 0) onPatch({ interval_ms: n * 1000 });
-            }}
-            className={inputClass()}
-          />
-        </LabeledField>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <LabeledField label={t('dashboard.chart.storeAggregation')}>
-          <select
-            value={storeSource.aggregation}
-            data-testid="chart-store-aggregation"
-            onChange={(e) =>
-              onPatch({ aggregation: e.target.value as StoreSourceConfig['aggregation'] })
-            }
-            className={inputClass()}
+      {/* 시간 윈도우 / 인터벌 / 집계 / 새로고침 — 한 줄 배치(좁으면 자동 줄바꿈). */}
+      <div className="flex flex-wrap gap-2">
+        <div className="min-w-[7rem] flex-1">
+          <LabeledField
+            label={t('dashboard.chart.storeTimeWindowSec')}
+            hint={t('dashboard.chart.storeTimeWindowHint')}
           >
-            {STORE_AGG_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {t(opt.labelKey)}
-              </option>
-            ))}
-          </select>
-        </LabeledField>
-        <LabeledField label={t('dashboard.chart.storeRefreshSec')}>
-          <input
-            type="number"
-            min={1}
-            value={Math.round((storeSource.refresh_interval_ms ?? 5000) / 1000)}
-            onChange={(e) => {
-              const n = parseInt(e.target.value, 10);
-              if (!Number.isNaN(n) && n > 0) onPatch({ refresh_interval_ms: n * 1000 });
-            }}
-            className={inputClass()}
-          />
-        </LabeledField>
+            <input
+              type="number"
+              min={1}
+              data-testid="chart-store-time-window"
+              value={Math.round(storeSource.time_window_ms / 1000)}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isNaN(n) && n > 0) onPatch({ time_window_ms: n * 1000 });
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+        </div>
+        <div className="min-w-[6rem] flex-1">
+          <LabeledField label={t('dashboard.chart.storeIntervalSec')}>
+            <input
+              type="number"
+              min={1}
+              data-testid="chart-store-interval"
+              value={Math.round(storeSource.interval_ms / 1000)}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isNaN(n) && n > 0) onPatch({ interval_ms: n * 1000 });
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+        </div>
+        <div className="min-w-[7rem] flex-1">
+          <LabeledField label={t('dashboard.chart.storeAggregation')}>
+            <select
+              value={storeSource.aggregation}
+              data-testid="chart-store-aggregation"
+              onChange={(e) =>
+                onPatch({ aggregation: e.target.value as StoreSourceConfig['aggregation'] })
+              }
+              className={inputClass()}
+            >
+              {STORE_AGG_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {t(opt.labelKey)}
+                </option>
+              ))}
+            </select>
+          </LabeledField>
+        </div>
+        <div className="min-w-[6rem] flex-1">
+          <LabeledField label={t('dashboard.chart.storeRefreshSec')}>
+            <input
+              type="number"
+              min={1}
+              value={Math.round((storeSource.refresh_interval_ms ?? 5000) / 1000)}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isNaN(n) && n > 0) onPatch({ refresh_interval_ms: n * 1000 });
+              }}
+              className={inputClass()}
+            />
+          </LabeledField>
+        </div>
       </div>
     </div>
   );
@@ -1137,7 +1143,6 @@ function StoreKeySelector({
   const [search, setSearch] = useState('');
   const [metricType, setMetricType] = useState('');
   const [dataType, setDataType] = useState<DataType | ''>('');
-  const [tagFilters, setTagFilters] = useState<Set<string>>(() => new Set());
 
   // 정렬 상태: 컬럼별 asc → desc → none 순환.
   const [sort, setSort] = useState<StoreSortState>(null);
@@ -1145,31 +1150,14 @@ function StoreKeySelector({
   const metricTypes = useMemo(() => distinctMetricTypes(keyObjects), [keyObjects]);
   const dataTypes = useMemo(() => distinctDataTypes(keyObjects), [keyObjects]);
 
-  // 사용 가능한 tag 페어(키→값 목록) — keyObjects 의 tags 에서 수집.
-  const tagPairs = useMemo(() => {
-    const map = new Map<string, Set<string>>();
-    for (const obj of keyObjects) {
-      for (const [k, v] of Object.entries(obj.tags ?? {})) {
-        let set = map.get(k);
-        if (!set) {
-          set = new Set();
-          map.set(k, set);
-        }
-        set.add(v);
-      }
-    }
-    return [...map.entries()].map(([k, values]) => ({ key: k, values: [...values].sort() }));
-  }, [keyObjects]);
-
   const filtered = useMemo(
     () =>
       filterStoreKeyObjects(keyObjects, {
         search,
         metricType,
         dataType: dataType || undefined,
-        tagFilters,
       }),
-    [keyObjects, search, metricType, dataType, tagFilters],
+    [keyObjects, search, metricType, dataType],
   );
 
   // 정렬 적용(필터 결과를 컬럼 기준으로 정렬). none 이면 원래 순서 보존.
@@ -1225,16 +1213,6 @@ function StoreKeySelector({
       if (!prev || prev.field !== field) return { field, order: 'asc' };
       if (prev.order === 'asc') return { field, order: 'desc' };
       return null;
-    });
-  };
-
-  const toggleTag = (tagKey: string, value: string): void => {
-    const id = makeTagFilterId(tagKey, value);
-    setTagFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
     });
   };
 
@@ -1356,14 +1334,8 @@ function StoreKeySelector({
                   ))}
                 </select>
               </th>
-              {/* 태그 구조화 필터(키 선택 → 값 칩) */}
-              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1">
-                <TagFilterControl
-                  tagPairs={tagPairs}
-                  selected={tagFilters}
-                  onToggle={toggleTag}
-                />
-              </th>
+              {/* 태그 컬럼 필터는 공용 StoreEntryTable 의 태그 컬럼 필터로 대체됨(중복 제거). */}
+              <th className="border-b border-(--color-border-default) bg-(--color-bg-surface) px-1 py-1" />
             </tr>
           </thead>
           <tbody>
@@ -1476,101 +1448,6 @@ function SortableHeader({
         {indicator}
       </button>
     </th>
-  );
-}
-
-/**
- * 태그 구조화 필터 — 사용자가 태그 키를 고른 뒤 그 키의 값들을 개별 칩으로 토글한다.
- * 내부 필터 식별자(makeTagFilterId)는 "key=value" 로 유지되어 storeSourceFilter
- * 의미를 보존한다("key=value" 텍스트를 직접 입력하지 않고 항목별로 추가한다).
- *
- * @spec SPEC-WEB-005
- */
-function TagFilterControl({
-  tagPairs,
-  selected,
-  onToggle,
-}: {
-  tagPairs: { key: string; values: string[] }[];
-  selected: Set<string>;
-  onToggle: (tagKey: string, value: string) => void;
-}): React.ReactElement {
-  const { t } = useTranslation();
-  // 현재 값 칩을 표시할 태그 키(드롭다운 선택).
-  const [activeKey, setActiveKey] = useState('');
-
-  if (tagPairs.length === 0) {
-    return <span className="text-[9px] text-(--color-text-muted)">—</span>;
-  }
-
-  const active = tagPairs.find((p) => p.key === activeKey);
-
-  return (
-    <div className="space-y-1" data-testid="chart-store-tag-filter">
-      {/* 태그 키 선택 */}
-      <select
-        value={activeKey}
-        onChange={(e) => setActiveKey(e.target.value)}
-        aria-label={t('dashboard.chart.storeTagKeySelect')}
-        data-testid="chart-store-tag-key-select"
-        className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-normal text-(--color-text-primary) outline-none focus:border-blue-500"
-      >
-        <option value="">{t('dashboard.chart.storeTagKeyPlaceholder')}</option>
-        {tagPairs.map((p) => (
-          <option key={p.key} value={p.key}>
-            {p.key}
-          </option>
-        ))}
-      </select>
-      {/* 선택한 태그 키의 값 칩(개별 토글) */}
-      {active && (
-        <div className="flex flex-wrap gap-0.5">
-          {active.values.map((v) => {
-            const id = makeTagFilterId(active.key, v);
-            const on = selected.has(id);
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onToggle(active.key, v)}
-                data-testid={`chart-store-tag-value-${active.key}-${v}`}
-                className={`rounded-full border px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
-                  on
-                    ? 'border-blue-500 bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                    : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
-                }`}
-              >
-                {v}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {/* 선택된 태그 필터 요약 칩("키: 값", 클릭 시 해제) */}
-      {selected.size > 0 && (
-        <div className="flex flex-wrap gap-0.5" data-testid="chart-store-tag-selected">
-          {[...selected].map((id) => {
-            const eq = id.indexOf('=');
-            const k = id.slice(0, eq);
-            const v = id.slice(eq + 1);
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onToggle(k, v)}
-                aria-label={t('dashboard.chart.storeTagRemoveAria')
-                  .replace('{key}', k)
-                  .replace('{value}', v)}
-                className="inline-flex items-center gap-0.5 rounded-full border border-blue-500 bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
-              >
-                {k}: {v}
-                <X className="h-2.5 w-2.5" aria-hidden="true" />
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 
