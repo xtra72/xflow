@@ -340,8 +340,33 @@ export function StoreSourceSection({
     onConfigChange({ store_source: { ...storeSource, ...patch } });
   };
 
+  // 에이전트 선택 파생값 — 에이전트 셀렉트를 데이터소스 토글과 같은 행(Row 1)에 두기 위해
+  // 상위로 이관했다(레이아웃 전용, 동작/데이터 불변). @spec SPEC-WEB-006
+  const { data: agentsResult } = useAgents();
+  const storeAgents = useMemo(
+    () =>
+      (agentsResult?.data ?? []).filter((a: { type: string }) => a.type === 'store'),
+    [agentsResult],
+  );
+  const selectedAgent = useMemo(
+    () =>
+      storeSource.agent_id
+        ? storeAgents.find((a: { id: string }) => a.id === storeSource.agent_id)
+        : storeAgents.find((a: { name: string }) => a.name === storeSource.agent_name),
+    [storeAgents, storeSource.agent_id, storeSource.agent_name],
+  );
+  const selectValue = selectedAgent?.id ?? storeSource.agent_id ?? '';
+  const resolvedAgentName = resolveStoreAgentName(
+    storeSource.agent_id,
+    storeSource.agent_name,
+    agentsResult?.data,
+  );
+  const isSelected = !!storeSource.agent_id || !!storeSource.agent_name;
+
   return (
     <div className="space-y-3">
+      {/* Row 1: 데이터 소스 토글 + 에이전트 선택(스토어 모드) — 한 행 배치(레이블 위). */}
+      <div className="flex flex-wrap items-start gap-3">
       {/* 데이터 소스 토글 */}
       <div>
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
@@ -378,6 +403,46 @@ export function StoreSourceSection({
           })}
         </div>
       </div>
+        {/* Row 1 그룹 B: 에이전트 선택(스토어 모드에서만, 레이블 위). */}
+        {!tsdbMode && dataSource === 'store' && (
+          <div className="min-w-[10rem] flex-1">
+            <LabeledField label={t('dashboard.chart.storeAgent')}>
+              <select
+                data-testid="chart-store-agent-select"
+                value={selectValue}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) {
+                    // 미선택으로 초기화.
+                    patchStore({ agent_id: undefined, agent_name: '', series: [] });
+                    return;
+                  }
+                  const agent = storeAgents.find((a: { id: string }) => a.id === id);
+                  // agent_id(정본)와 agent_name(현재 이름 스냅샷)을 함께 저장, 시리즈 초기화.
+                  patchStore({ agent_id: id, agent_name: agent?.name ?? '', series: [] });
+                }}
+                className={inputClass()}
+              >
+                <option value="">{t('dashboard.chart.storeAgentSelect')}</option>
+                {storeAgents.map((a: { id: string; name: string }) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+                {/* 저장된 에이전트가 목록에 없으면(비활성/삭제 등) 저장된 이름으로 선택 유지 */}
+                {selectValue && !selectedAgent && (
+                  <option value={selectValue}>
+                    {t('dashboard.chart.storeAgentInactive').replace(
+                      '{name}',
+                      storeSource.agent_name || selectValue,
+                    )}
+                  </option>
+                )}
+              </select>
+            </LabeledField>
+          </div>
+        )}
+      </div>
 
       {/* TSDB: 실동작 없는 후속 SPEC 안내 placeholder (REQ-05/AC-05). Store 설정은 보존된다. */}
       {tsdbMode && (
@@ -394,12 +459,14 @@ export function StoreSourceSection({
         </div>
       )}
 
-      {/* Store 소스 상세 (store 선택 시) */}
+      {/* Store 소스 상세 (store 선택 시) — 에이전트 셀렉트는 Row 1 로 이동. */}
       {!tsdbMode && dataSource === 'store' && (
         <StoreSourceEditor
           storeSource={storeSource}
           onPatch={patchStore}
           isLineChart={isLineChart}
+          resolvedAgentName={resolvedAgentName}
+          isSelected={isSelected}
         />
       )}
 
@@ -424,42 +491,20 @@ function StoreSourceEditor({
   storeSource,
   onPatch,
   isLineChart,
+  resolvedAgentName,
+  isSelected,
 }: {
   storeSource: StoreSourceConfig;
   onPatch: (patch: Partial<StoreSourceConfig>) => void;
   isLineChart: boolean;
+  /**
+   * 상위(StoreSourceSection)에서 이관된 에이전트 파생값. 에이전트 셀렉트는 데이터소스
+   * 토글과 같은 행(Row 1)에 배치하기 위해 상위로 이동했다(레이아웃 전용).
+   */
+  resolvedAgentName: string;
+  isSelected: boolean;
 }): React.ReactElement {
   const { t } = useTranslation();
-
-  // Store 에이전트 목록(type === 'store').
-  const { data: agentsResult } = useAgents();
-  const storeAgents = useMemo(
-    () =>
-      (agentsResult?.data ?? []).filter(
-        (a: { type: string }) => a.type === 'store',
-      ),
-    [agentsResult],
-  );
-
-  // SPEC-WEB-006: 셀렉트는 agent id 기준. 저장된 agent_id 로 현재 에이전트를 찾아
-  // 선택값/표시 이름을 해석한다. 구 config(agent_id 부재)는 저장된 이름으로 매칭
-  // 시도해 backfill 이 가능하도록 하고, 못 찾으면 비활성 폴백 옵션을 노출한다.
-  const selectedAgent = useMemo(
-    () =>
-      storeSource.agent_id
-        ? storeAgents.find((a: { id: string }) => a.id === storeSource.agent_id)
-        : storeAgents.find((a: { name: string }) => a.name === storeSource.agent_name),
-    [storeAgents, storeSource.agent_id, storeSource.agent_name],
-  );
-  // 셀렉트 value: 매칭된 에이전트 id > 저장된 agent_id > 없음(비활성 폴백 표기용).
-  const selectValue = selectedAgent?.id ?? storeSource.agent_id ?? '';
-  // 키 선택/시리즈 조회에 사용할 현재 에이전트 이름(해석값).
-  const resolvedAgentName = resolveStoreAgentName(
-    storeSource.agent_id,
-    storeSource.agent_name,
-    agentsResult?.data,
-  );
-  const isSelected = !!storeSource.agent_id || !!storeSource.agent_name;
 
   // 시리즈 선택 방식. 미지정은 'keys'(기존 동작). @spec SPEC-WEB-005
   const selectionMode = storeSource.selection_mode ?? 'keys';
@@ -475,45 +520,6 @@ function StoreSourceEditor({
 
   return (
     <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
-      {/* 에이전트 선택 (value/option 은 agent id 기준, 표시는 이름) */}
-      <LabeledField label={t('dashboard.chart.storeAgent')}>
-        <select
-          data-testid="chart-store-agent-select"
-          value={selectValue}
-          onChange={(e) => {
-            const id = e.target.value;
-            if (!id) {
-              // 미선택으로 초기화.
-              onPatch({ agent_id: undefined, agent_name: '', series: [] });
-              return;
-            }
-            const agent = storeAgents.find((a: { id: string }) => a.id === id);
-            // agent_id(정본)와 agent_name(현재 이름 스냅샷)을 함께 저장, 시리즈 초기화.
-            onPatch({
-              agent_id: id,
-              agent_name: agent?.name ?? '',
-              series: [],
-            });
-          }}
-          className={inputClass()}
-        >
-          <option value="">{t('dashboard.chart.storeAgentSelect')}</option>
-          {storeAgents.map((a: { id: string; name: string }) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-          {/* 저장된 에이전트가 목록에 없으면(비활성/삭제 등) 저장된 이름으로 선택 유지 */}
-          {selectValue && !selectedAgent && (
-            <option value={selectValue}>
-              {t('dashboard.chart.storeAgentInactive').replace(
-                '{name}',
-                storeSource.agent_name || selectValue,
-              )}
-            </option>
-          )}
-        </select>
-      </LabeledField>
 
       {/* 시리즈 선택 방식 토글(키 직접 선택 / 태그로 자동) — 에이전트 선택 후 노출 */}
       {isSelected && resolvedAgentName && (
