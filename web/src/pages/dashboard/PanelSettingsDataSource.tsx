@@ -511,9 +511,10 @@ function PanelStoreSelectTable({
             readOnly: true,
           }}
           selection={{
-            // tag 모드: 매칭 행을 체크 표시. 클릭하면 keys 모드로 전환하며 그 항목을 토글한다
-            // (read-only 아님 — 체크/해제 동작). keys 모드: series 기준 선택 + 명시적 편집.
-            isSelected: isTagMode ? () => true : (e) => seriesIds.has(entryToSeriesId(e)),
+            // 체크 상태는 명시적 선택(series)만 반영한다 — 검색/필터된 행은 기본 미체크.
+            // tag 모드에서도 매칭 행을 자동 체크하지 않는다(모두 체크된 것처럼 보이는 문제 방지).
+            // 클릭 시: tag 모드는 keys 모드로 전환하며 그 항목을 토글, keys 모드는 명시적 편집.
+            isSelected: (e) => seriesIds.has(entryToSeriesId(e)),
             onToggle: isTagMode ? handleToggleFromTag : handleToggleSelection,
           }}
           renderCellExtra={(col, entry) =>

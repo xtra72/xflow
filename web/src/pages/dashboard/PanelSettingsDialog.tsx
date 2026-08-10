@@ -1445,7 +1445,7 @@ function HeatmapSettingsSection({
   const floorImage = cfg.floor_plan?.image;
   const floorFit: 'contain' | 'cover' = cfg.floor_plan?.fit ?? 'contain';
 
-  // 파일 첨부 → data-URL 인코딩 → 2MB 상한 검증(AC-E3). 초과 시 저장하지 않고 경고를 띄운다.
+  // 파일 첨부 → data-URL 인코딩 → 8MB 상한 검증(AC-E3). 초과 시 저장하지 않고 경고를 띄운다.
   const onPickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // 동일 파일 재선택 허용.

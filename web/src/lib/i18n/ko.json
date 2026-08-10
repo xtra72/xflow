@@ -637,7 +637,7 @@
       "heatmapFitContain": "여백 맞춤 (contain)",
       "heatmapFitCover": "꽉 채움 (cover)",
       "heatmapOpacity": "히트맵 불투명도",
-      "heatmapImageTooLarge": "이미지가 2MB 상한을 초과합니다. 크기를 줄여 다시 첨부하세요.",
+      "heatmapImageTooLarge": "이미지가 8MB 상한을 초과합니다. 크기를 줄여 다시 첨부하세요.",
       "heatmapImageReadError": "이미지를 읽지 못했습니다. 다른 파일을 시도하세요.",
       "heatmapEditor": "배치 에디터",
       "heatmapEditHint": "패널의 편집 버튼으로 도면 위에서 센서 마커를 드래그해 배치하세요.",

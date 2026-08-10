@@ -637,7 +637,7 @@
       "heatmapFitContain": "Contain (letterbox)",
       "heatmapFitCover": "Cover (fill)",
       "heatmapOpacity": "Heatmap opacity",
-      "heatmapImageTooLarge": "Image exceeds the 2MB limit. Please resize and attach again.",
+      "heatmapImageTooLarge": "Image exceeds the 8MB limit. Please resize and attach again.",
       "heatmapImageReadError": "Could not read the image. Please try another file.",
       "heatmapEditor": "Placement editor",
       "heatmapEditHint": "Use the panel's edit button to drag sensor markers onto the floor plan.",

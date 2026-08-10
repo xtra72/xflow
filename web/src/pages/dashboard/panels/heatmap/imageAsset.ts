@@ -8,8 +8,8 @@
 //
 // @spec SPEC-HEATMAP-PANEL-002
 
-/** data-URL 임베드 기본 크기 상한(2MB, 오케스트레이터 확정). */
-export const DEFAULT_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+/** data-URL 임베드 기본 크기 상한(8MB). 실제 도면 사진(base64 인플레이션 포함)을 수용하도록 상향. */
+export const DEFAULT_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 /**
  * 크기 상한 초과 오류. 설정 UI(stage 2)가 안정적으로 분기·안내할 수 있도록 `code` 를 노출한다.

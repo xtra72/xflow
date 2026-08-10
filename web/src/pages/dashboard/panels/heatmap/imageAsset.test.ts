@@ -105,8 +105,18 @@ describe('assertImageSizeUnderLimit (AC-E3)', () => {
     }
   });
 
-  it('기본 상한(2MB) 이내의 작은 이미지는 통과한다', () => {
-    expect(DEFAULT_MAX_IMAGE_BYTES).toBe(2 * 1024 * 1024);
+  it('기본 상한(8MB) 이내의 작은 이미지는 통과한다', () => {
+    expect(DEFAULT_MAX_IMAGE_BYTES).toBe(8 * 1024 * 1024);
     expect(() => assertImageSizeUnderLimit('data:image/png;base64,AAAA')).not.toThrow();
+  });
+
+  it('2MB 초과 ~ 8MB 이내(예: ~3MB) 도면 이미지는 기본 상한으로 통과한다(2MB 상한 회귀 방지)', () => {
+    // base64 4문자 → 3바이트. ~3MB 를 만들기 위해 payload 길이를 4MB 문자로 잡는다(=3MB 디코드).
+    const payload = 'A'.repeat(4 * 1024 * 1024);
+    const dataUrl = `data:image/png;base64,${payload}`;
+    const size = dataUrlByteSize(dataUrl);
+    expect(size).toBeGreaterThan(2 * 1024 * 1024); // 과거 상한(2MB)이었다면 차단됐을 크기
+    expect(size).toBeLessThan(DEFAULT_MAX_IMAGE_BYTES);
+    expect(() => assertImageSizeUnderLimit(dataUrl)).not.toThrow();
   });
 });

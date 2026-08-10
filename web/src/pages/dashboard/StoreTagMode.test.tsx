@@ -175,18 +175,45 @@ describe('태그 인 헤더 — 토글 제거 + 태그 컬럼 헤더의 전용 �
       />,
     );
     const select = screen.getByTestId('panel-store-select');
-    // room=1 매칭: room:1:temp, room:1:humidity → 2행. 매칭 = 체크 표시.
+    // room=1 매칭: room:1:temp, room:1:humidity → 2행. 태그 매칭이어도 명시적 선택이 아니면 기본 미체크.
     const checkboxes = within(select).getAllByLabelText(
       'agents.detail.store.selectRowAriaLabel',
     ) as HTMLInputElement[];
     expect(checkboxes.length).toBe(2);
-    expect(checkboxes.every((c) => c.checked)).toBe(true);
+    expect(checkboxes.every((c) => !c.checked)).toBe(true);
     // 클릭 → keys 모드 전환(tag_filters 해제) + 그 항목 토글(제거), 나머지 매칭은 명시적 series 로 유지.
     fireEvent.click(checkboxes[0]!);
     const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
     expect(patch.store_source.selection_mode).toBe('keys');
     expect(patch.store_source.tag_filters).toBeUndefined();
     expect(patch.store_source.series.length).toBe(1);
+  });
+
+  it('tag 모드: 명시적 series 에 있는 행만 체크된다(나머지 매칭 행은 미체크)', () => {
+    render(
+      <PanelSettingsDataSource
+        panel={makePanel({
+          selection_mode: 'tag',
+          tag_filters: { room: '1' },
+          // room=1 매칭 2행 중 temp 만 명시적으로 선택된 상태.
+          series: [
+            {
+              key: 'room:1:temp',
+              metric_type: 'gauge',
+              tags: { room: '1', type: 'temperature' },
+            },
+          ] as StoreSourceConfig['series'],
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const select = screen.getByTestId('panel-store-select');
+    const checkboxes = within(select).getAllByLabelText(
+      'agents.detail.store.selectRowAriaLabel',
+    ) as HTMLInputElement[];
+    expect(checkboxes.length).toBe(2);
+    // 정확히 1행(명시적 선택된 temp)만 체크.
+    expect(checkboxes.filter((c) => c.checked).length).toBe(1);
   });
 
   it('tag 모드 AND 미리보기: room=1 AND type=humidity → 1행', () => {
