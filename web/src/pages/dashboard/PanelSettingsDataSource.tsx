@@ -359,6 +359,48 @@ function PanelStoreSelectTable({
     [series, seriesIds, storeSource, onConfigChange, isHeatmap, sensorPositions],
   );
 
+  // tag 모드에서 체크박스 클릭 → keys 모드로 전환(마지막 액션 우선). 현재 매칭된 행(entries)을
+  // 명시적 series 로 물질화하되 클릭된 항목은 토글(제거)하고, tag_filters 를 해제한다. 히트맵은
+  // 유지된 시리즈에 중앙 좌표를 부여하고 클릭된 좌표는 제거한다. 이로써 tag 모드에서도 체크/
+  // 해제가 동작한다. @spec SPEC-PANEL-SETTINGS-001
+  const handleToggleFromTag = useCallback(
+    (clicked: StoreEntry) => {
+      const clickedId = entryToSeriesId(clicked);
+      const nextSeries: StoreSeriesRef[] = [];
+      const nextPositions: Record<string, { x?: number; y?: number }> = { ...sensorPositions };
+      for (const e of entries) {
+        const k = e.key as string;
+        if (entryToSeriesId(e) === clickedId) {
+          // 클릭된 항목: keys 모드에서 제외(uncheck) + 히트맵 좌표 제거.
+          if (isHeatmap) delete nextPositions[k];
+          continue;
+        }
+        nextSeries.push({
+          key: k,
+          metric_type: (e.metric_type as string) || undefined,
+          tags:
+            e.tags && Object.keys(e.tags as object).length > 0
+              ? (e.tags as Record<string, string>)
+              : undefined,
+          data_type: e.data_type as StoreSeriesRef['data_type'],
+          alias: k,
+          color: pickSeriesColor(nextSeries.length),
+        });
+        if (isHeatmap && nextPositions[k] === undefined) nextPositions[k] = { x: 0.5, y: 0.5 };
+      }
+      const nextStore: Record<string, unknown> = {
+        ...(storeSource ?? {}),
+        series: nextSeries,
+        selection_mode: 'keys',
+        tag_filters: undefined,
+      };
+      const patch: Record<string, unknown> = { store_source: nextStore };
+      if (isHeatmap) patch.sensor_positions = nextPositions;
+      onConfigChange(patch);
+    },
+    [entries, sensorPositions, isHeatmap, storeSource, onConfigChange],
+  );
+
   // 히트맵 전용: 선택된 시리즈의 센서 좌표(x/y, 0..1)를 데이터 소스에서 직접 편집한다.
   // 한 축만 입력해도 잃지 않도록 부분 병합하고, 둘 다 비면 해당 좌표 항목을 제거한다.
   const setSensorPosition = useCallback(
@@ -454,10 +496,10 @@ function PanelStoreSelectTable({
             readOnly: true,
           }}
           selection={{
-            // tag 모드: 모든 행이 바인딩 집합(read-only) → 체크 표시 + 토글 무동작.
-            // keys 모드: series 기준 선택 + 체크박스로 명시적 series 편집.
+            // tag 모드: 매칭 행을 체크 표시. 클릭하면 keys 모드로 전환하며 그 항목을 토글한다
+            // (read-only 아님 — 체크/해제 동작). keys 모드: series 기준 선택 + 명시적 편집.
             isSelected: isTagMode ? () => true : (e) => seriesIds.has(entryToSeriesId(e)),
-            onToggle: isTagMode ? NOOP : handleToggleSelection,
+            onToggle: isTagMode ? handleToggleFromTag : handleToggleSelection,
           }}
           renderCellExtra={(col, entry) =>
             col === 'alias' ? (
@@ -563,7 +605,22 @@ function TagsColumnHeaderFilter({
   t: TranslationFn;
 }): React.ReactElement {
   const [open, setOpen] = useState(false);
+  // 팝오버는 테이블 컨테이너의 overflow 클리핑을 벗어나기 위해 position:fixed 로 버튼
+  // 아래에 앵커링한다(리스트/헤더 경계에 잘리지 않도록). 버튼 rect 를 열 때 계산한다.
+  const [coords, setCoords] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
   const containerRef = useRef<HTMLSpanElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const toggleOpen = (): void => {
+    setOpen((o) => {
+      const next = !o;
+      if (next) {
+        const r = btnRef.current?.getBoundingClientRect();
+        if (r) setCoords({ left: r.left, top: r.bottom + 4 });
+      }
+      return next;
+    });
+  };
 
   // 팝오버 바깥 클릭 시 닫는다(다른 컬럼 필터 팝오버와 동일 동작).
   useEffect(() => {
@@ -582,8 +639,9 @@ function TagsColumnHeaderFilter({
   return (
     <span className="relative inline-flex" ref={containerRef}>
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         aria-haspopup="true"
         aria-expanded={open}
         data-testid="panel-store-tags-header-filter"
@@ -605,7 +663,11 @@ function TagsColumnHeaderFilter({
         )}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg">
+        <div
+          data-testid="panel-store-tags-popover"
+          style={{ position: 'fixed', left: coords.left, top: coords.top }}
+          className="z-50 w-72 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg"
+        >
           <StoreTagSelectionEditor
             agentName={agentName}
             tagFilters={tagFilters}

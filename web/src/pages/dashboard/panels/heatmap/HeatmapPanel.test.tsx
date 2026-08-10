@@ -367,6 +367,53 @@ describe('HeatmapPanel', () => {
     expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
   });
 
+  it('마커 정렬: 현재 바인딩된 시리즈에만 마커를 렌더하고 잔존 좌표는 유령 마커를 만들지 않는다', () => {
+    // tag 모드에서 s1 만 매칭(seriesNames=['s1']). sensor_positions 에 stale(비매칭) 키가 남아 있음.
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 }, stale: { x: 0.1, y: 0.1 } })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    // 바인딩된 s1 은 마커가 있고, 선택에서 빠진 stale 좌표는 마커가 없다(유령 마커 제거).
+    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+    expect(screen.queryByTestId('sensor-marker-stale')).toBeNull();
+  });
+
+  it('keys 모드: 라이브 값이 없어도 config.series 에 있으면 마커를 렌더한다(방금 선택)', () => {
+    // keys 모드 + 라이브 데이터 없음(seriesNames 비어 있음). boundKeys 는 config.series 에서 온다.
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    useUIStore.getState().setDashboardEditMode(false);
+    const config = {
+      data_source: 'store',
+      store_source: {
+        agent_name: 'a',
+        namespace: 'default',
+        selection_mode: 'keys',
+        series: [{ key: 's1', alias: 's1' }],
+        time_window_ms: 1000,
+        interval_ms: 1000,
+        aggregation: 'last',
+      },
+      sensor_positions: { s1: { x: 0.5, y: 0.5 }, stale: { x: 0.2, y: 0.2 } },
+      idw: { power: 2, grid_resolution: 8 },
+    } as Record<string, unknown>;
+    render(
+      <HeatmapPanel panelId="p" config={config} onConfigChange={vi.fn()} forcePlacement />,
+    );
+    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+    // config.series 에 없는 stale 은 마커 없음.
+    expect(screen.queryByTestId('sensor-marker-stale')).toBeNull();
+  });
+
   it('forcePlacement: 드래그 이동이 sensor_positions 를 갱신한다', () => {
     const onConfigChange = vi.fn();
     setStore({

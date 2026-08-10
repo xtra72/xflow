@@ -107,6 +107,15 @@ describe('태그 인 헤더 — 토글 제거 + 태그 컬럼 헤더의 전용 �
     expect(screen.getByTestId('chart-store-tag-select-type')).toBeInTheDocument();
   });
 
+  it('태그 팝오버는 fixed 위치 + 높은 z-index 로 렌더되어 리스트 경계에 가려지지 않는다', () => {
+    render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={vi.fn()} />);
+    openTagHeaderFilter();
+    const popover = screen.getByTestId('panel-store-tags-popover');
+    // overflow 클리핑을 벗어나기 위해 position:fixed + z-50 로 렌더된다.
+    expect(popover.style.position).toBe('fixed');
+    expect(popover.className).toContain('z-50');
+  });
+
   it('헤더 피커에서 태그 값 선택 → tag_filters + selection_mode:tag 저장(구 편집기와 byte-호환)', () => {
     const onConfigChange = vi.fn();
     render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={onConfigChange} />);
@@ -157,7 +166,7 @@ describe('태그 인 헤더 — 토글 제거 + 태그 컬럼 헤더의 전용 �
     expect(patch.store_source.selection_mode).toBe('keys');
   });
 
-  it('tag 모드: AND 매칭 행만 read-only 미리보기(room=1 → 2행, 모두 체크, 클릭 무동작)', () => {
+  it('tag 모드: 매칭 행 체크박스 클릭 시 keys 모드로 전환하고 그 시리즈를 토글한다', () => {
     const onConfigChange = vi.fn();
     render(
       <PanelSettingsDataSource
@@ -166,16 +175,18 @@ describe('태그 인 헤더 — 토글 제거 + 태그 컬럼 헤더의 전용 �
       />,
     );
     const select = screen.getByTestId('panel-store-select');
-    // room=1 매칭: room:1:temp, room:1:humidity → 2행.
+    // room=1 매칭: room:1:temp, room:1:humidity → 2행. 매칭 = 체크 표시.
     const checkboxes = within(select).getAllByLabelText(
       'agents.detail.store.selectRowAriaLabel',
     ) as HTMLInputElement[];
     expect(checkboxes.length).toBe(2);
-    // 바인딩 집합이므로 모두 체크.
     expect(checkboxes.every((c) => c.checked)).toBe(true);
-    // read-only: 클릭해도 config 변경이 발생하지 않는다.
+    // 클릭 → keys 모드 전환(tag_filters 해제) + 그 항목 토글(제거), 나머지 매칭은 명시적 series 로 유지.
     fireEvent.click(checkboxes[0]!);
-    expect(onConfigChange).not.toHaveBeenCalled();
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.selection_mode).toBe('keys');
+    expect(patch.store_source.tag_filters).toBeUndefined();
+    expect(patch.store_source.series.length).toBe(1);
   });
 
   it('tag 모드 AND 미리보기: room=1 AND type=humidity → 1행', () => {

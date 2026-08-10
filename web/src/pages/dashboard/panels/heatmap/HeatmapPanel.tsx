@@ -123,12 +123,25 @@ export default function HeatmapPanel({
   const hasBackground = Boolean(cfg.floor_plan?.image);
   const heatmapLayerStyle = hasBackground ? { opacity: cfg.heatmap_opacity } : undefined;
 
-  // 편집 대상: 좌표가 있는 센서(마커) + 라이브 시리즈지만 좌표 없는 센서(미배치 팔레트).
-  // 마커는 라이브 판독값과 무관하게 좌표를 가진 모든 센서를 표시한다(joinSensorPoints 의 points 는
-  // 판독값이 있어야 하므로 여기선 config 좌표를 직접 사용).
+  // 현재 바인딩된 시리즈 키 집합. 마커/좌표는 "현재 선택된 시리즈"에만 표시해 잔존
+  // sensor_positions(선택에서 빠진 옛 키)로 인한 유령 마커를 막는다(데이터 소스 선택과 정렬).
+  //   - keys 모드: config.series 키(라이브 값이 없어도 방금 선택한 센서 마커 유지 → 드래그 가능).
+  //   - tag 모드: 동적 매칭된 seriesNames.
+  const boundKeys = useMemo(() => {
+    const set = new Set<string>(storeResult.seriesNames);
+    if (storeSource?.selection_mode !== 'tag') {
+      for (const s of storeSource?.series ?? []) set.add(s.alias || s.key);
+    }
+    return set;
+  }, [storeSource?.selection_mode, storeSource?.series, storeResult.seriesNames]);
+  // 편집 대상: 현재 바인딩된 시리즈 중 좌표가 있는 센서(마커). 라이브 판독값과 무관하게
+  // config 좌표를 직접 쓰되(joinSensorPoints 의 points 는 판독값 필요), 바운드 집합으로 거른다.
   const placed: PlacedSensor[] = useMemo(
-    () => Object.entries(cfg.sensor_positions).map(([key, pos]) => ({ key, pos })),
-    [cfg.sensor_positions],
+    () =>
+      Object.entries(cfg.sensor_positions)
+        .filter(([key]) => boundKeys.has(key))
+        .map(([key, pos]) => ({ key, pos })),
+    [cfg.sensor_positions, boundKeys],
   );
 
   // 좌표 갱신(드래그 미리보기 + 드롭). 부분 config 병합으로 sensor_positions 만 쓴다(additive).
