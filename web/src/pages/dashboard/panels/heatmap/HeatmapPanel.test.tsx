@@ -36,19 +36,22 @@ function reading(value: number): ChartEntry[] {
   return [{ timestamp: 1, value }];
 }
 
-/** store 태그 모드 활성 config(isStore=true). sensor_positions + SPEC-002 extras 를 인자로 주입. */
+// 히트맵은 "명시적으로 체크된 series(keys)"만 렌더한다(체크박스 = 단일 진실원). 따라서 테스트
+// config 도 keys 모드 + 명시적 series 로 구성한다. 마커(placed)는 series 키에서 파생되므로,
+// 기본 series 는 배치된 sensor_positions 키에서 유도한다. stale(비선택) 키를 검증하는 테스트는
+// seriesKeys 로 series 를 명시적으로 좁힌다.
 function makeConfig(
   sensorPositions: Record<string, { x: number; y: number }>,
   extras: Record<string, unknown> = {},
+  seriesKeys: string[] = Object.keys(sensorPositions),
 ) {
   return {
     data_source: 'store',
     store_source: {
       agent_name: 'a',
       namespace: 'default',
-      selection_mode: 'tag',
-      tag_filters: { type: 'temperature' },
-      series: [],
+      selection_mode: 'keys',
+      series: seriesKeys.map((k) => ({ key: k, alias: k })),
       time_window_ms: 1000,
       interval_ms: 1000,
       aggregation: 'last',
@@ -368,7 +371,7 @@ describe('HeatmapPanel', () => {
   });
 
   it('마커 정렬: 현재 바인딩된 시리즈에만 마커를 렌더하고 잔존 좌표는 유령 마커를 만들지 않는다', () => {
-    // tag 모드에서 s1 만 매칭(seriesNames=['s1']). sensor_positions 에 stale(비매칭) 키가 남아 있음.
+    // 체크된 series 는 s1 뿐(seriesKeys=['s1']). sensor_positions 에 stale(미선택) 키가 남아 있음.
     setStore({
       seriesNames: ['s1'],
       seriesEntries: new Map([['s1', reading(22)]]),
@@ -378,7 +381,7 @@ describe('HeatmapPanel', () => {
     render(
       <HeatmapPanel
         panelId="p"
-        config={makeConfig({ s1: { x: 0.5, y: 0.5 }, stale: { x: 0.1, y: 0.1 } })}
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 }, stale: { x: 0.1, y: 0.1 } }, {}, ['s1'])}
         onConfigChange={vi.fn()}
         forcePlacement
       />,
@@ -412,6 +415,37 @@ describe('HeatmapPanel', () => {
     expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
     // config.series 에 없는 stale 은 마커 없음.
     expect(screen.queryByTestId('sensor-marker-stale')).toBeNull();
+  });
+
+  it('tag_filters 만 있고 series 가 비면(미체크) 마커/필드 없이 배경만 렌더한다(체크된 series 만 렌더)', () => {
+    // 사용자 요구: 히트맵은 체크박스로 명시 선택된 series 만 렌더한다. tag_filters 는 렌더에
+    // 사용하지 않으므로, series 가 비면 keys 강제 바인딩으로 데이터가 없다(seriesNames []).
+    // sensor_positions 에 태그 매칭 잔존 좌표(indoor)가 있어도 boundKeys 가 비어 마커가 없다.
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'idle' });
+    useUIStore.getState().setDashboardEditMode(false);
+    const config = {
+      data_source: 'store',
+      store_source: {
+        agent_name: 'a',
+        namespace: 'default',
+        selection_mode: 'tag',
+        tag_filters: { type: 'temperature' },
+        series: [],
+        time_window_ms: 1000,
+        interval_ms: 1000,
+        aggregation: 'last',
+      },
+      sensor_positions: { indoor: { x: 0.5, y: 0.5 } },
+      idw: { power: 2, grid_resolution: 8 },
+      floor_plan: { image: 'data:image/png;base64,AAAA' },
+    } as Record<string, unknown>;
+    render(
+      <HeatmapPanel panelId="p" config={config} onConfigChange={vi.fn()} forcePlacement />,
+    );
+    // 배경은 렌더되지만, 미체크(태그 매칭) 시리즈의 마커/필드는 렌더되지 않는다.
+    expect(screen.getByTestId('floor-plan-background')).toBeInTheDocument();
+    expect(screen.queryByTestId('sensor-marker-indoor')).toBeNull();
+    expect(screen.queryByTestId('heatmap-canvas')).toBeNull();
   });
 
   it('도면 배경: 데이터가 없어도 floor_plan.image 가 있으면 배경을 렌더한다(빈상태 안내 대신)', () => {

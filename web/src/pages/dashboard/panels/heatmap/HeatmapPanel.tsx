@@ -74,17 +74,24 @@ export default function HeatmapPanel({
     if (!editMode) setEditing(false);
   }, [editMode]);
 
-  // LineChartPanel isStore 분기 미러링: data_source==='store' + (series 또는 tag_filters 존재).
   const storeSource = config.store_source as StoreSourceConfig | undefined;
-  const storeTagActive =
-    storeSource?.selection_mode === 'tag' &&
-    Object.keys(storeSource.tag_filters ?? {}).length > 0;
+  // 히트맵은 "명시적으로 체크된 series(keys)"만 렌더한다(사용자 요구: 체크박스 = 단일 진실원).
+  // tag_filters 는 렌더 바인딩에 사용하지 않는다 — 태그 헤더 필터는 데이터소스 리스트를 좁히는
+  // 용도일 뿐이며, 태그 매칭(미체크) 시리즈가 필드/마커로 그려지면 안 된다. 따라서 store 데이터
+  // 바인딩을 keys 로 강제하고 tag_filters 를 제거한 파생 소스로 조회한다(line/gauge 등 다른
+  // 패널의 tag 동작은 useStoreChartData 를 그대로 두어 영향받지 않는다).
+  const heatmapStoreSource = useMemo<StoreSourceConfig | undefined>(
+    () =>
+      storeSource
+        ? { ...storeSource, selection_mode: 'keys', tag_filters: undefined }
+        : undefined,
+    [storeSource],
+  );
   const isStore =
-    config.data_source === 'store' &&
-    ((storeSource?.series?.length ?? 0) > 0 || storeTagActive);
+    config.data_source === 'store' && (heatmapStoreSource?.series?.length ?? 0) > 0;
 
   // hook 은 항상 호출(React 규칙). 비활성 경로는 idle 로 유지된다.
-  const storeResult = useStoreChartData(isStore ? storeSource : undefined, isStore);
+  const storeResult = useStoreChartData(isStore ? heatmapStoreSource : undefined, isStore);
 
   // 센서 최신값(시리즈별) 추출 + 좌표 결합(T6). 좌표 미지정 센서는 보간 입력에서 제외(AC-E2).
   const { points, unplacedNames, autoBounds } = useMemo(
@@ -123,17 +130,14 @@ export default function HeatmapPanel({
   const hasBackground = Boolean(cfg.floor_plan?.image);
   const heatmapLayerStyle = hasBackground ? { opacity: cfg.heatmap_opacity } : undefined;
 
-  // 현재 바인딩된 시리즈 키 집합. 마커/좌표는 "현재 선택된 시리즈"에만 표시해 잔존
-  // sensor_positions(선택에서 빠진 옛 키)로 인한 유령 마커를 막는다(데이터 소스 선택과 정렬).
-  //   - keys 모드: config.series 키(라이브 값이 없어도 방금 선택한 센서 마커 유지 → 드래그 가능).
-  //   - tag 모드: 동적 매칭된 seriesNames.
+  // 마커/좌표는 "명시적으로 체크된 series 키"에만 표시한다(체크박스 = 단일 진실원). 라이브 값이
+  // 없어도 방금 선택한 센서 마커를 유지해 드래그 배치가 가능하다. tag 매칭(미체크) 시리즈는
+  // 절대 마커로 그리지 않으며, 잔존 sensor_positions(선택에서 빠진 옛 키)로 인한 유령 마커도 막는다.
   const boundKeys = useMemo(() => {
-    const set = new Set<string>(storeResult.seriesNames);
-    if (storeSource?.selection_mode !== 'tag') {
-      for (const s of storeSource?.series ?? []) set.add(s.alias || s.key);
-    }
+    const set = new Set<string>();
+    for (const s of storeSource?.series ?? []) set.add(s.alias || s.key);
     return set;
-  }, [storeSource?.selection_mode, storeSource?.series, storeResult.seriesNames]);
+  }, [storeSource?.series]);
   // 편집 대상: 현재 바인딩된 시리즈 중 좌표가 있는 센서(마커). 라이브 판독값과 무관하게
   // config 좌표를 직접 쓰되(joinSensorPoints 의 points 는 판독값 필요), 바운드 집합으로 거른다.
   const placed: PlacedSensor[] = useMemo(
