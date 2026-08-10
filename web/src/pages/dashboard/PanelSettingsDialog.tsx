@@ -811,14 +811,22 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             {/*
               SPEC-HEATMAP-PANEL: 히트맵 프리뷰. 실제 HeatmapPanel 을 draft config 로 렌더한다.
               데이터/좌표 미설정 시 패널이 자체 빈상태 안내를 표시하므로 blank 가 되지 않는다.
-              onConfigChange 를 넘기지 않아 프리뷰에서는 배치 편집 토글이 뜨지 않는다(읽기 전용).
+              onConfigChange(draft writer) + forcePlacement 로 프리뷰에서 센서 마커 드래그 배치를
+              활성화한다(대시보드 편집모드에 의존하지 않음). 드래그 → sensor_positions 를 draft 에
+              쓰고 프리뷰가 재렌더된다. @spec SPEC-PANEL-SETTINGS-001 (heatmap 시리즈 위치)
             */}
             {panel.type === 'heatmap' && (
               <div
                 style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
-                <HeatmapPanel panelId={previewRenderPanel.id} title={previewRenderPanel.title} config={previewRenderPanel.config} />
+                <HeatmapPanel
+                  panelId={previewRenderPanel.id}
+                  title={previewRenderPanel.title}
+                  config={previewRenderPanel.config}
+                  onConfigChange={(c) => handleConfigChange(c)}
+                  forcePlacement
+                />
               </div>
             )}
     </div>

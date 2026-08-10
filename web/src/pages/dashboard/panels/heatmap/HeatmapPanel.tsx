@@ -45,9 +45,20 @@ interface HeatmapPanelProps {
    * 동일하게 동작한다(행위 보존, SPEC-002 T7).
    */
   onConfigChange?: (config: Record<string, unknown>) => void;
+  /**
+   * 배치 편집(드래그) 강제 활성화. 설정 다이얼로그 미리보기 전용 — 대시보드 편집모드
+   * (dashboardEditMode)에 의존하지 않고 배치 오버레이를 항상 켠다. 기본 false(대시보드
+   * 경로 불변): 대시보드는 기존 dashboardEditMode + 편집 토글 게이팅을 그대로 사용한다.
+   * @spec SPEC-PANEL-SETTINGS-001 (heatmap 시리즈 위치)
+   */
+  forcePlacement?: boolean;
 }
 
-export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelProps) {
+export default function HeatmapPanel({
+  config,
+  onConfigChange,
+  forcePlacement = false,
+}: HeatmapPanelProps) {
   const { t } = useTranslation();
   const cfg = parseHeatmapConfig(config);
 
@@ -131,14 +142,17 @@ export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelPro
     onConfigChange?.({ sensor_positions: next });
   };
 
+  // 배치 활성 = 런타임 편집 토글(대시보드) OR forcePlacement(설정 미리보기). 후자는
+  // dashboardEditMode 에 의존하지 않는다(설정 다이얼로그에서 드래그 배치 허용).
+  const placementActive = editing || forcePlacement;
   // 편집 중에는 배치 표면(배경/좌표 공간)을 항상 렌더한다(도면/데이터 없어도 배치 가능, AC-E1 편집 경로).
-  const showStack = !isEmpty || editing;
+  const showStack = !isEmpty || placementActive;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-2 shadow">
       {/* 배치 편집 진입/종료 토글(REQ-03/T7). onConfigChange 가 있고(콜백 없는 MVP 불변) 대시보드
           편집모드일 때만 표시 → gear/삭제 버튼과 동일 게이팅. */}
-      {canEdit && editMode && (
+      {canEdit && editMode && !forcePlacement && (
         <button
           type="button"
           data-testid="heatmap-edit-toggle"
@@ -198,7 +212,7 @@ export default function HeatmapPanel({ config, onConfigChange }: HeatmapPanelPro
               contour={cfg.contour}
             />
           )}
-          {editing && (
+          {placementActive && (
             <SensorPlacementOverlay
               placed={placed}
               unplaced={unplacedNames}

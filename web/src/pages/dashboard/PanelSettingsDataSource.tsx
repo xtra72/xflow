@@ -49,6 +49,7 @@ import {
   type StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
 import { makeTagFilterId, matchesTagFilters } from './panels/charts/storeSourceFilter';
+import type { SensorPosition } from './panels/heatmap/heatmapConfig';
 import { StoreSourceSection, StoreTagSelectionEditor } from './ChartPanelSections';
 import {
   loadPanelStoreTablePrefs,
@@ -140,6 +141,15 @@ function PanelStoreSelectTable({
   const { t } = useTranslation();
   const config = panel.config ?? {};
   const storeSource = config.store_source as StoreSourceConfig | undefined;
+
+  // 히트맵 패널: keys 모드 체크박스 선택이 센서 위치(sensor_positions)를 함께 구동한다.
+  // 선택 시 중앙(0.5,0.5) 기본 좌표를 부여하고, 해제 시 좌표 항목을 제거한다(additive —
+  // 다른 패널 타입은 위치 부수효과 없음). @spec SPEC-PANEL-SETTINGS-001 (heatmap 시리즈 위치)
+  const isHeatmap = panel.type === 'heatmap';
+  const sensorPositions = useMemo(
+    () => (config.sensor_positions as Record<string, SensorPosition> | undefined) ?? {},
+    [config.sensor_positions],
+  );
 
   const { data: agentsResult } = useAgents();
   const agentName = resolveStoreAgentName(
@@ -288,13 +298,23 @@ function PanelStoreSelectTable({
   const handleToggleSelection = useCallback(
     (entry: StoreEntry) => {
       const id = entryToSeriesId(entry);
+      const key = entry.key as string;
       if (seriesIds.has(id)) {
         // 제거: 동일 seriesId 항목을 series 에서 뺀다.
         setOverLimitNotice(false);
         const next = series.filter(
           (s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}) !== id,
         );
-        onConfigChange({ store_source: { ...(storeSource ?? {}), series: next } });
+        const patch: Record<string, unknown> = {
+          store_source: { ...(storeSource ?? {}), series: next },
+        };
+        // 히트맵: 선택 해제 시 해당 센서 좌표 항목을 제거한다(있을 때만).
+        if (isHeatmap && sensorPositions[key] !== undefined) {
+          const nextPositions = { ...sensorPositions };
+          delete nextPositions[key];
+          patch.sensor_positions = nextPositions;
+        }
+        onConfigChange(patch);
         return;
       }
       // 추가: 상한 초과 시 억제 + 안내(미리보기 성능 보호, AC-15 — series 개수 기준).
@@ -305,19 +325,26 @@ function PanelStoreSelectTable({
       setOverLimitNotice(false);
       // StoreKeySelector 와 동일한 series 항목 형태(byte-호환)로 추가한다.
       const nextEntry: StoreSeriesRef = {
-        key: entry.key as string,
+        key,
         metric_type: (entry.metric_type as string) || undefined,
         tags:
           entry.tags && Object.keys(entry.tags as object).length > 0
             ? (entry.tags as Record<string, string>)
             : undefined,
         data_type: entry.data_type as StoreSeriesRef['data_type'],
-        alias: entry.key as string,
+        alias: key,
         color: pickSeriesColor(series.length),
       };
-      onConfigChange({ store_source: { ...(storeSource ?? {}), series: [...series, nextEntry] } });
+      const patch: Record<string, unknown> = {
+        store_source: { ...(storeSource ?? {}), series: [...series, nextEntry] },
+      };
+      // 히트맵: 선택 시 좌표가 없으면 중앙(0.5,0.5) 기본 좌표를 부여한다.
+      if (isHeatmap && sensorPositions[key] === undefined) {
+        patch.sensor_positions = { ...sensorPositions, [key]: { x: 0.5, y: 0.5 } };
+      }
+      onConfigChange(patch);
     },
-    [series, seriesIds, storeSource, onConfigChange],
+    [series, seriesIds, storeSource, onConfigChange, isHeatmap, sensorPositions],
   );
 
   // 목록 헤더의 전용 태그 피커 변경 → tag_filters + selection_mode 함축 갱신.

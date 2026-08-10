@@ -139,20 +139,23 @@ describe('T6/AC-07 — 행 체크박스 → series (StoreKeySelector byte-호환
     expect(checkboxes.length).toBe(2);
     fireEvent.click(checkboxes[0]!);
     // 구 StoreKeySelector.onChange 가 만들던 항목과 동일 형태(key/metric_type/tags/data_type/alias/color).
-    expect(onConfigChange).toHaveBeenCalledWith({
-      store_source: expect.objectContaining({
-        series: [
-          {
-            key: 'k1',
-            metric_type: 'temperature',
-            tags: { room: '1' },
-            data_type: 'float',
-            alias: 'k1',
-            color: pickSeriesColor(0),
-          },
-        ],
+    // heatmap 패널이라 sensor_positions 부수효과가 함께 오므로 objectContaining 로 래핑한다.
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store_source: expect.objectContaining({
+          series: [
+            {
+              key: 'k1',
+              metric_type: 'temperature',
+              tags: { room: '1' },
+              data_type: 'float',
+              alias: 'k1',
+              color: pickSeriesColor(0),
+            },
+          ],
+        }),
       }),
-    });
+    );
   });
 
   it('태그 없는 키는 tags/metric 이 undefined 로 생략된 항목이 된다', () => {
@@ -161,20 +164,22 @@ describe('T6/AC-07 — 행 체크박스 → series (StoreKeySelector byte-호환
     const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
     // 두 번째 행 = k2 (humidity, 태그 없음).
     fireEvent.click(checkboxes[1]!);
-    expect(onConfigChange).toHaveBeenCalledWith({
-      store_source: expect.objectContaining({
-        series: [
-          {
-            key: 'k2',
-            metric_type: 'humidity',
-            tags: undefined,
-            data_type: 'int',
-            alias: 'k2',
-            color: pickSeriesColor(0),
-          },
-        ],
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store_source: expect.objectContaining({
+          series: [
+            {
+              key: 'k2',
+              metric_type: 'humidity',
+              tags: undefined,
+              data_type: 'int',
+              alias: 'k2',
+              color: pickSeriesColor(0),
+            },
+          ],
+        }),
       }),
-    });
+    );
   });
 
   it('이미 series 에 있는 행은 체크 상태로 렌더되고 토글 시 series 에서 제거된다', () => {
@@ -317,5 +322,57 @@ describe('T7/AC-08 — 필터/정렬/표시숨김 영속', () => {
     const raw = window.localStorage.getItem('panel-settings.storeTable.p1');
     expect(raw).not.toBeNull();
     expect(JSON.parse(raw!).sort).toEqual({ column: 'key', direction: 'asc' });
+  });
+});
+
+describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions 를 구동 (SPEC-PANEL-SETTINGS-001)', () => {
+  it('heatmap: 시리즈 선택 시 sensor_positions[key] 가 중앙(0.5,0.5)으로 설정된다', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
+    const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
+    fireEvent.click(checkboxes[0]!); // k1 선택
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ sensor_positions: { k1: { x: 0.5, y: 0.5 } } }),
+    );
+  });
+
+  it('heatmap: 시리즈 선택 해제 시 sensor_positions[key] 가 제거된다', () => {
+    const onConfigChange = vi.fn();
+    // 이미 k1 이 series + sensor_positions 에 있는 상태(다른 센서 k2 좌표는 보존).
+    const panel = {
+      id: 'p1',
+      type: 'heatmap',
+      title: 'h',
+      config: {
+        data_source: 'store',
+        store_source: { ...STORE_SOURCE, series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }] },
+        sensor_positions: { k1: { x: 0.2, y: 0.3 }, k2: { x: 0.9, y: 0.9 } },
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const checkboxes = screen.getAllByLabelText(
+      'agents.detail.store.selectRowAriaLabel',
+    ) as HTMLInputElement[];
+    expect(checkboxes[0]!.checked).toBe(true); // k1 체크됨
+    fireEvent.click(checkboxes[0]!); // k1 해제
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ sensor_positions: { k2: { x: 0.9, y: 0.9 } } }),
+    );
+  });
+
+  it('비-heatmap 패널: 선택해도 sensor_positions 부수효과가 없다', () => {
+    const onConfigChange = vi.fn();
+    const linePanel = {
+      id: 'p1',
+      type: 'line-chart',
+      title: 'l',
+      config: { data_source: 'store', store_source: { ...STORE_SOURCE } },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={linePanel} onConfigChange={onConfigChange} />);
+    const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
+    fireEvent.click(checkboxes[0]!);
+    const arg = onConfigChange.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg.sensor_positions).toBeUndefined();
+    expect(arg.store_source).toBeDefined();
   });
 });

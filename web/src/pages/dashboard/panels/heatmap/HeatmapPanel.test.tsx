@@ -321,4 +321,74 @@ describe('HeatmapPanel', () => {
     // 오류 배지가 함께 표시된다.
     expect(screen.getByTestId('heatmap-error')).toBeInTheDocument();
   });
+
+  // SPEC-PANEL-SETTINGS-001: 설정 미리보기 배치 편집(forcePlacement). 대시보드 편집모드에
+  // 의존하지 않고 오버레이를 항상 켜며, 대시보드 경로(forcePlacement 미지정)는 불변이다.
+  it('forcePlacement: dashboardEditMode 없이도 오버레이가 활성화되고 편집 토글은 숨긴다', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    // 대시보드 편집모드 false — 그래도 forcePlacement 로 배치 활성.
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    // 토글 버튼 없이도 오버레이 + 마커가 즉시 나타난다(설정 미리보기 배치).
+    expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
+    expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
+    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+  });
+
+  it('forcePlacement: 드래그 이동이 sensor_positions 를 갱신한다', () => {
+    const onConfigChange = vi.fn();
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+        onConfigChange={onConfigChange}
+        forcePlacement
+      />,
+    );
+    // 마커 핸들 드래그(pointerDown → move) → onPositionChange → sensor_positions 갱신.
+    fireEvent.pointerDown(screen.getByTestId('sensor-marker-handle-s1'));
+    fireEvent.pointerMove(screen.getByTestId('sensor-placement-overlay'), {
+      clientX: 10,
+      clientY: 10,
+    });
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ sensor_positions: expect.objectContaining({ s1: expect.any(Object) }) }),
+    );
+  });
+
+  it('회귀 0: forcePlacement 미지정 대시보드 경로는 편집모드 게이팅을 유지한다', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    // 편집모드 off + forcePlacement 미지정 → 오버레이/토글 모두 없음(기존 동작).
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('sensor-placement-overlay')).toBeNull();
+    expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
+  });
 });

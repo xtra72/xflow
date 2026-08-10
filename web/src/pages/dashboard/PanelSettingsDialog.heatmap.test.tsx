@@ -1,7 +1,8 @@
 // PanelSettingsDialog 히트맵 설정 화면 테스트.
 //
 // 두 가지 회귀 방지를 검증한다:
-//   (a) 히트맵 패널 설정 시 미리보기 영역에 실제 HeatmapPanel 이 렌더된다(데이터 없으면 빈상태 안내).
+//   (a) 히트맵 패널 설정 시 미리보기 영역에 실제 HeatmapPanel 이 렌더되고, forcePlacement 로
+//       배치 오버레이가 활성화된다(설정 미리보기에서 센서 드래그 배치 가능).
 //   (b) 데이터 소스 섹션(panel-settings-data-source)이 차트 패널과 동일하게 프리뷰 아래에 노출된다.
 //
 // store 폴링(useStoreChartData)과 StoreSourceSection 의 네트워크 훅을 정적 값으로 대체해
@@ -63,11 +64,14 @@ beforeEach(() => {
 });
 
 describe('PanelSettingsDialog 히트맵 설정 화면', () => {
-  it('미리보기 영역에 HeatmapPanel 을 렌더한다(데이터 없으면 빈상태 안내)', () => {
+  it('미리보기에 HeatmapPanel 을 렌더하고 forcePlacement 로 배치 오버레이를 활성화한다', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    // HeatmapPanel 의 빈상태 안내가 노출되면 실제 패널이 프리뷰에 렌더된 것이다.
-    expect(screen.getByText('dashboard.heatmap.emptyState')).toBeInTheDocument();
+    // 프리뷰 HeatmapPanel 이 forcePlacement 로 배치 오버레이를 켠다(대시보드 편집모드 false 이지만).
+    // 오버레이가 있으면 실제 HeatmapPanel 이 프리뷰에 렌더되고 드래그 배치가 가능한 것이다.
+    expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
+    // 설정 미리보기에서는 편집 토글 버튼을 노출하지 않는다(항상 배치 활성).
+    expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
   });
 
   it('데이터 소스 섹션을 프리뷰 아래에 노출한다(차트 패널과 동일)', () => {
