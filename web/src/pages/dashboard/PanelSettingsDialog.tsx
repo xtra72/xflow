@@ -624,19 +624,28 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 실 store 데이터 패널(heatmap/line/gauge/modbus)은 디바운스된 previewPanel 로 렌더한다.
   // (panel 은 non-null 로 좁혀졌으므로 previewPanel 부재 시 panel 로 폴백해 항상 non-null.)
   const previewRenderPanel = previewPanel ?? panel;
+  // 미리보기 contain-fit 스타일: zoom=1.0 에서 미리보기 영역(부모 fit 컨테이너)을 가득
+  // 채우되 패널 유형별 종횡비(aspectRatio)를 보존한다. 높이(%)로 크기를 몰고, maxWidth/
+  // maxHeight 100% 가 종횡비 제약을 반대 축으로 전이(transferred size)시켜 넘치는 축을
+  // 비율 유지하며 줄인다. previewZoom(0.5~2.0)이 이 fit 베이스에 곱해진다(±/Ctrl+휠/더블클릭).
+  const previewFitStyle = (aspect: string): React.CSSProperties => ({
+    height: `${100 * previewZoom}%`,
+    maxWidth: '100%',
+    maxHeight: '100%',
+    aspectRatio: aspect,
+  });
   const previewSlot = (
     <>
             {/*
-              각 미리보기를 패널 유형별 기본 그리드 비율과 일치하는 wrapper 로 감싸서
-              크기 비율을 고정한다. mx-auto 로 가운데 정렬되고, previewZoom 으로
-              버튼/Ctrl+휠 확대축소가 가능하다 (인라인 width 가 베이스 max 에 zoom 곱한 값).
-              wheel 핸들러는 패널 유형별 분기 바깥의 wrapper(아래) 가 아니라
-              개별 wrapper 에 부여한다 (Ctrl+휠 으로만 동작하므로 기본 스크롤은 보존).
+              각 미리보기를 패널 유형별 종횡비(aspectRatio) wrapper 로 감싼다. previewFitStyle
+              로 미리보기 영역(부모 fit 컨테이너)을 contain-fit 하여 zoom=1.0 에서 영역을 가득
+              채우고, previewZoom 이 그 위에 곱해진다(±/Ctrl+휠/더블클릭). 가운데 정렬은 부모
+              fit 컨테이너(items-center justify-center)가 담당한다.
+              wheel 핸들러는 개별 wrapper 에 부여한다 (Ctrl+휠 으로만 동작하므로 기본 스크롤 보존).
             */}
             {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control') && (
               <div
-                className="mx-auto"
-                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <NasaMiniPreview
@@ -650,8 +659,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'properties-grid' && (
               <div
-                className="mx-auto"
-                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <GridMiniPreview
@@ -665,8 +673,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {(panel.type === 'flows' || panel.type === 'agents' || panel.type === 'devices') && (
               <div
-                className="mx-auto"
-                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ListMiniPreview
@@ -680,8 +687,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'resource' && (
               <div
-                className="mx-auto"
-                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '4 / 3' }}
+                style={previewFitStyle('4 / 3')}
                 onWheel={handlePreviewWheel}
               >
                 <ResourceMiniPreview
@@ -694,8 +700,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'logs' && (
               <div
-                className="mx-auto"
-                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <LogMiniPreview
@@ -708,8 +713,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'gauge' && (
               <div
-                className="mx-auto"
-                style={{ width: `${24 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '1 / 1' }}
+                style={previewFitStyle('1 / 1')}
                 onWheel={handlePreviewWheel}
               >
                 <GaugeMiniPreview panel={previewRenderPanel} />
@@ -717,8 +721,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'line-chart' && (
               <div
-                className="mx-auto"
-                style={{ width: `${42 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '16 / 9' }}
+                style={previewFitStyle('16 / 9')}
                 onWheel={handlePreviewWheel}
               >
                 <LineChartMiniPreview panel={previewRenderPanel} />
@@ -731,8 +734,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {MODBUS_PANEL_TYPES.has(panel.type) && (
               <div
-                className="mx-auto"
-                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ModbusPanelPreview panel={previewRenderPanel} />
@@ -745,8 +747,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {panel.type === 'heatmap' && (
               <div
-                className="mx-auto"
-                style={{ width: `${28 * previewZoom}rem`, maxWidth: '100%', aspectRatio: '3 / 2' }}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel panelId={previewRenderPanel.id} title={previewRenderPanel.title} config={previewRenderPanel.config} />
@@ -4436,8 +4437,8 @@ function PanelSettingsShell({
             justify-center 사용 시, 하단 AccentGroupControls 가 조건부 렌더링되며
             미리보기 박스가 위/아래로 이동하는 문제가 있어 justify-start 로 변경.
             미리보기는 항상 같은 위치 (상단) 에 고정되고, 악센트 컨트롤은 그 아래에 추가된다.
-            미리보기 자체는 mx-auto + zoom 으로 가운데 정렬되며 사용자가 ± 버튼이나
-            Ctrl+휠 로 확대/축소 할 수 있다.
+            미리보기 자체는 fit 컨테이너가 남은 높이를 채우며 양축 가운데 정렬하고, 사용자가
+            ± 버튼이나 Ctrl+휠 로 확대/축소 할 수 있다.
           */}
           {(!previewCollapsed || dataSourceBelowPreview) && (
           <div
@@ -4454,7 +4455,7 @@ function PanelSettingsShell({
             */}
             {!previewCollapsed && (
             <div
-              className={cn('flex flex-col gap-3', showHSplit ? 'min-h-0 overflow-y-auto' : 'shrink-0')}
+              className={cn('flex flex-col gap-3', showHSplit ? 'min-h-0 overflow-hidden' : 'min-h-0 flex-1')}
               style={showHSplit ? { flexBasis: `${previewRatio * 100}%`, flexGrow: 0, flexShrink: 0 } : undefined}
             >
             <div className="flex shrink-0 items-center justify-between gap-2">
@@ -4506,7 +4507,12 @@ function PanelSettingsShell({
                 </button>
               </div>
             </div>
-            {preview}
+            {/* 미리보기 영역을 가득 채우는 fit 컨테이너: 남은 높이를 차지하고(flex-1)
+                미리보기를 양축 가운데 정렬한다. 자식은 previewFitStyle 로 종횡비를 보존하며
+                영역에 contain-fit 된다(zoom 배율 적용). */}
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+              {preview}
+            </div>
             {/* 악센트 그룹 컨트롤은 좌측 컬럼으로 이동되었음 (스타일 섹션) */}
             </div>
             )}
