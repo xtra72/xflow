@@ -561,6 +561,7 @@ export function ColumnHeader({
   onFilterChange,
   keyExpanded,
   onToggleKeyExpanded,
+  headerSlot,
   t,
 }: {
   column: StoreColumn;
@@ -573,6 +574,11 @@ export function ColumnHeader({
   keyExpanded?: boolean;
   /** 키 컬럼 전체 확장 토글(키 컬럼 헤더에서만 사용). */
   onToggleKeyExpanded?: () => void;
+  /**
+   * 컬럼 헤더에 주입하는 커스텀 필터 어포던스(패널 설정 전용). 예: 태그 컬럼의 전용
+   * AND 태그 피커 팝오버. 미주입 시 헤더는 기존과 동일하게 렌더된다(회귀 0).
+   */
+  headerSlot?: React.ReactNode;
   t: TranslationFn;
 }) {
   const label = t(`agents.detail.store.${column.labelKey}`);
@@ -639,6 +645,8 @@ export function ColumnHeader({
             t={t}
           />
         )}
+        {/* 패널 설정 전용: 컬럼 헤더 커스텀 슬롯(태그 컬럼의 전용 AND 태그 피커). */}
+        {headerSlot}
         {showKeyToggle && (
           <button
             type="button"

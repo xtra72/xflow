@@ -14,10 +14,12 @@
 // 보장한다(additive). Store 엔트리는 useStoreKeysWithTags 의 keyObjects(메타데이터)에서
 // 파생한다 — 선택 surface 이므로 라이브 값 컬럼(value/updated)은 노출하지 않는다.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ListFilter } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
+import { cn } from '@/lib/utils/cn';
 import {
   ColumnSettingsMenu,
   STORE_COLUMNS,
@@ -356,16 +358,6 @@ function PanelStoreSelectTable({
         />
       </div>
 
-      {/* 목록 헤더의 전용 AND 태그 피커(태그 인 헤더). 태그 선택 시 tag_filters 동적 바인딩
-          (selection_mode:'tag'), 모두 지우면 keys 모드로 복귀한다. 에이전트 없으면 미노출. */}
-      {hasAgent && (
-        <StoreTagSelectionEditor
-          agentName={agentName}
-          tagFilters={tagFilters}
-          onChange={handleTagFiltersChange}
-        />
-      )}
-
       {overLimitNotice && (
         <p
           data-testid="panel-store-select-overlimit"
@@ -423,8 +415,92 @@ function PanelStoreSelectTable({
               </span>
             ) : undefined
           }
+          // 태그 컬럼 헤더에 전용 AND 태그 피커 팝오버를 주입한다(태그 인 헤더).
+          columnHeaderSlots={{
+            tags: (
+              <TagsColumnHeaderFilter
+                agentName={agentName}
+                tagFilters={tagFilters}
+                onChange={handleTagFiltersChange}
+                t={t}
+              />
+            ),
+          }}
         />
       )}
     </div>
+  );
+}
+
+/**
+ * 태그 컬럼 헤더의 전용 AND 태그 피커(팝오버). 다른 컬럼 헤더 필터(ColumnFilterButton)와
+ * 동일한 어포던스(ListFilter 버튼 + 활성 점 + 팝오버)로 표시하되, 열면 one-value-per-key /
+ * cross-key-AND 의 StoreTagSelectionEditor 를 띄워 tag_filters(Record<string,string>)를
+ * 구성한다(byte-호환). 컬럼별 OR 필터와의 의미 충돌을 피하려고 tags 컬럼은 이 전용
+ * 컨트롤만 갖는다(기본 ColumnFilterButton 미노출). @spec SPEC-PANEL-SETTINGS-001 (태그 인 헤더)
+ */
+function TagsColumnHeaderFilter({
+  agentName,
+  tagFilters,
+  onChange,
+  t,
+}: {
+  agentName: string;
+  tagFilters: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+  t: TranslationFn;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  // 팝오버 바깥 클릭 시 닫는다(다른 컬럼 필터 팝오버와 동일 동작).
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent): void => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const active = Object.keys(tagFilters).length > 0;
+
+  return (
+    <span className="relative inline-flex" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        data-testid="panel-store-tags-header-filter"
+        className={cn(
+          'inline-flex items-center rounded p-0.5 transition-colors',
+          active
+            ? 'text-blue-600 dark:text-blue-400'
+            : 'text-(--color-text-muted) opacity-50 hover:opacity-100 hover:text-(--color-text-primary)',
+        )}
+        title={t('dashboard.chart.storeTagPickerLabel')}
+        aria-label={t('dashboard.chart.storeTagPickerLabel')}
+      >
+        <ListFilter className="h-3 w-3" aria-hidden="true" />
+        {active && (
+          <span
+            className="ml-0.5 inline-block h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400"
+            aria-hidden="true"
+          />
+        )}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg">
+          <StoreTagSelectionEditor
+            agentName={agentName}
+            tagFilters={tagFilters}
+            onChange={onChange}
+          />
+        </div>
+      )}
+    </span>
   );
 }

@@ -530,6 +530,12 @@ export interface StoreEntryTableProps {
     columnId: StoreColumnId,
     entry: Record<string, unknown>,
   ) => React.ReactNode;
+  /**
+   * 컬럼 헤더별 추가 슬롯(패널 설정 전용). 지정한 컬럼 헤더에 커스텀 필터 어포던스
+   * (예: 태그 컬럼의 전용 AND 태그 피커 팝오버)를 주입한다. 미주입 시 헤더는 기존과
+   * 동일하게 렌더된다(에이전트 상세 무영향, 회귀 0). @spec SPEC-PANEL-SETTINGS-001
+   */
+  columnHeaderSlots?: Partial<Record<StoreColumnId, React.ReactNode>>;
 }
 
 /**
@@ -551,6 +557,7 @@ export function StoreEntryTable({
   rowActions,
   selection,
   renderCellExtra,
+  columnHeaderSlots,
 }: StoreEntryTableProps) {
   const { t } = useTranslation();
 
@@ -584,6 +591,7 @@ export function StoreEntryTable({
                 onToggleKeyExpanded={
                   column.id === 'key' ? onToggleKeyExpanded : undefined
                 }
+                headerSlot={columnHeaderSlots?.[column.id]}
                 t={t}
               />
             ))}
