@@ -1,7 +1,7 @@
 // 패널 상세 설정 다이얼로그.
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
@@ -293,6 +293,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('panelSettings.previewFillMode', previewFillMode);
   }, [previewFillMode]);
+
+  // fit 모드 전용 실측: fit 컨테이너의 실제 px 크기(W×H)를 ResizeObserver 로 재어, 종횡비
+  // 보존 contain 박스를 결정론적으로 계산한다(CSS transferred-size 불확실성 제거). 콜백 ref 로
+  // 마운트/언마운트(접힘 토글) + 영역 리사이즈(경계 드래그)에 자동 재측정된다.
+  const [fitSize, setFitSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const fitRoRef = useRef<ResizeObserver | null>(null);
+  const setFitContainer = useCallback((el: HTMLDivElement | null) => {
+    if (fitRoRef.current) {
+      fitRoRef.current.disconnect();
+      fitRoRef.current = null;
+    }
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = (): void => setFitSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    fitRoRef.current = ro;
+  }, []);
 
   // 미리보기 줌 배율 (0.5 ~ 2.0). 버튼 / Ctrl+휠 / 더블클릭 리셋 으로 조절.
   const PREVIEW_ZOOM_MIN = 0.5;
@@ -653,10 +671,40 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     width: `${100 * previewZoom}%`,
     height: `${100 * previewZoom}%`,
   });
+  // FIT 미리보기(실측 contain): fit 컨테이너 실측(W×H)과 패널 종횡비 r 로 "가장 큰 종횡비
+  // 보존 박스"를 px 로 계산한다(CSS transferred-size 불확실성 제거). W/H>=r → 높이 바운드
+  // (높이 가득 + 좌우 여백), 아니면 폭 바운드(폭 가득 + 상하 여백). previewZoom 곱함.
+  // 측정 불가(0, jsdom/초기)면 CSS previewFitStyle 로 폴백(테스트 안정 + 초기 페인트).
+  const parseAspectRatio = (aspect: string): number => {
+    const parts = aspect.split('/').map((s) => parseFloat(s.trim()));
+    const a = parts[0] ?? NaN;
+    const b = parts[1] ?? NaN;
+    return Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? a / b : 1;
+  };
+  const measuredFitStyle = (aspect: string): React.CSSProperties => {
+    const { w, h } = fitSize;
+    if (w <= 0 || h <= 0) return previewFitStyle(aspect); // 측정 불가 → CSS 폴백
+    const r = parseAspectRatio(aspect);
+    let boxW: number;
+    let boxH: number;
+    if (w / h >= r) {
+      // 영역이 더 넓다 → 높이 바운드: 높이 가득, 폭은 종횡비로 파생(좌우 여백).
+      boxH = h;
+      boxW = h * r;
+    } else {
+      // 영역이 더 좁다 → 폭 바운드: 폭 가득, 높이는 종횡비로 파생(상하 여백).
+      boxW = w;
+      boxH = w / r;
+    }
+    return { width: `${boxW * previewZoom}px`, height: `${boxH * previewZoom}px` };
+  };
   const previewSlot = (
     // fit 컨테이너: 남은 미리보기 영역을 세로로 가득(min-h-0 flex-1) 차지하고 자식을 양축
-    // 가운데 정렬한다. FILL 자식은 100%×100% 로 이 컨테이너를 가로·세로 모두 채운다.
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+    // 가운데 정렬한다. ref 로 실측하여 fit 모드가 종횡비 보존 contain 을 결정론적으로 계산한다.
+    <div
+      ref={setFitContainer}
+      className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+    >
             {/*
               FILL 유형(heatmap/차트/리스트/리소스/로그/modbus)은 previewFillStyle 로 fit 컨테이너를
               가득 채우고(영역 비율은 드래그로 조절), 종횡비가 중요한 미니(게이지/accent)는
@@ -679,7 +727,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'properties-grid' && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <GridMiniPreview
@@ -693,7 +741,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {(panel.type === 'flows' || panel.type === 'agents' || panel.type === 'devices') && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ListMiniPreview
@@ -707,7 +755,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'resource' && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('4 / 3')}
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
                 onWheel={handlePreviewWheel}
               >
                 <ResourceMiniPreview
@@ -720,7 +768,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'logs' && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <LogMiniPreview
@@ -741,7 +789,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'line-chart' && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('16 / 9')}
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('16 / 9')}
                 onWheel={handlePreviewWheel}
               >
                 <LineChartMiniPreview panel={previewRenderPanel} />
@@ -754,7 +802,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {MODBUS_PANEL_TYPES.has(panel.type) && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ModbusPanelPreview panel={previewRenderPanel} />
@@ -767,7 +815,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {panel.type === 'heatmap' && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel panelId={previewRenderPanel.id} title={previewRenderPanel.title} config={previewRenderPanel.config} />
