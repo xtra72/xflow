@@ -822,6 +822,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {panel.type === 'heatmap' && (
               <div
+                // flex 컨테이너로 지정 — HeatmapPanel 의 flex-1 루트가 부모(이 wrapper)의 높이를
+                // 채우려면 부모가 flex 여야 한다. plain block 이면 flex-1 이 no-op 이 되어 패널이
+                // '콘텐츠 높이'로 축소된다 → 데이터 0개일 때 canvas 가 없어 0-height 로 붕괴하고
+                // 배경/마커가 안 보인다("완전히 빈 영역" 버그). 높이는 style(previewFillStyle/
+                // measuredFitStyle)이 제공하고, flex-col 로 flex-1 이 그 높이를 채운다.
+                data-testid="heatmap-preview-wrapper"
+                className="flex min-h-0 flex-col"
                 style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >

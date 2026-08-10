@@ -97,6 +97,13 @@ describe('PanelSettingsDialog 히트맵 설정 화면', () => {
     expect(bg.className).toContain('inset-0');
     expect(bg.className).toContain('h-full');
     expect(bg.className).toContain('w-full');
+
+    // 프리뷰 wrapper 는 flex 컨테이너여야 HeatmapPanel(flex-1)이 높이를 채운다.
+    // (plain block 이면 flex-1 no-op → 데이터 0개일 때 0-height 붕괴 → 배경 안 보임.)
+    const wrapper = screen.getByTestId('heatmap-preview-wrapper');
+    expect(wrapper.className).toContain('flex');
+    expect(wrapper.className).toContain('flex-col');
+    expect(wrapper.className).toContain('min-h-0');
   });
 
   it('데이터 소스 섹션을 프리뷰 아래에 노출한다(차트 패널과 동일)', () => {
