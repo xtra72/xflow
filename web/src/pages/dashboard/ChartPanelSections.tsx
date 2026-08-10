@@ -6,7 +6,7 @@
 // 분기하여 해당 Section 을 렌더링한다.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, GripVertical, Info, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
@@ -352,6 +352,7 @@ export function StoreSourceSection({
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.chart.dataSourceLabel')}
         </label>
+        <div className="flex items-center gap-1.5">
         <div
           className="inline-flex rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-0.5"
           role="tablist"
@@ -381,6 +382,11 @@ export function StoreSourceSection({
               </button>
             );
           })}
+        </div>
+        {/* Store 모드일 때만 조회 설정 정보 "i" 아이콘을 데이터소스 토글 옆에 표시한다. */}
+        {!tsdbMode && dataSource === 'store' && (
+          <StoreInfoPopover storeSource={storeSource} />
+        )}
         </div>
       </div>
         {/* Row 1 그룹 B: 에이전트 선택(스토어 모드에서만, 레이블 위). */}
@@ -474,101 +480,110 @@ function StoreSourceEditor({
   onPatch: (patch: Partial<StoreSourceConfig>) => void;
   isLineChart: boolean;
 }): React.ReactElement {
-  const { t } = useTranslation();
-
-  // 시리즈 선택 방식. 미지정은 'keys'(기존 동작). 태그 모드 전환은 이제 목록 헤더의
-  // 전용 태그 피커(PanelStoreSelectTable)가 tag_filters 존재로 함축한다(별도 keys/tag
-  // 토글 제거). @spec SPEC-WEB-005 / SPEC-PANEL-SETTINGS-001 (태그 인 헤더)
+  // 시리즈 선택 방식. 미지정은 'keys'(기존 동작). 태그 모드 전환은 목록 헤더의 전용 태그
+  // 피커(PanelStoreSelectTable)가 tag_filters 존재로 함축한다(별도 keys/tag 토글 제거).
+  // 시간 윈도우/인터벌/집계/갱신 주기는 인라인 편집 대신 "Store" 옆 정보 말풍선
+  // (StoreInfoPopover)에서 읽기전용으로 표시한다. @spec SPEC-WEB-005 / SPEC-PANEL-SETTINGS-001
   const selectionMode = storeSource.selection_mode ?? 'keys';
+
+  // 편집 대상은 선택된 시리즈의 alias/색상/라인 스타일뿐이다. 표시할 시리즈가 없으면
+  // 빈 박스를 렌더하지 않는다(키 선택 체크박스/태그 피커는 상위 PanelStoreSelectTable).
+  if (!(selectionMode === 'keys' && storeSource.series.length > 0)) {
+    return <></>;
+  }
 
   return (
     <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
-
-      {/*
-        키 선택기(체크박스) + 태그 자동 선택기(목록 헤더의 전용 AND 태그 피커)는 공용
-        StoreEntryTable 을 소비하는 PanelStoreSelectTable(PanelSettingsDataSource)로 일원화됐다.
-        여기서는 선택 결과(series)의 alias/색상/라인 스타일만 편집한다(별도 keys/tag 토글 제거).
-        @spec SPEC-PANEL-SETTINGS-001 (시리즈 선택 단일화 + 태그 인 헤더)
-      */}
-
       {/* keys 모드: 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
-      {selectionMode === 'keys' && storeSource.series.length > 0 && (
-        <SelectedSeriesList
-          series={storeSource.series}
-          onChange={(series) => onPatch({ series })}
-          isLineChart={isLineChart}
-        />
-      )}
-
-      {/* 시간 윈도우 / 인터벌 / 집계 / 새로고침 — 한 줄 배치(좁으면 자동 줄바꿈). */}
-      <div className="flex flex-wrap gap-2">
-        <div className="min-w-[7rem] flex-1">
-          <LabeledField
-            label={t('dashboard.chart.storeTimeWindowSec')}
-            hint={t('dashboard.chart.storeTimeWindowHint')}
-          >
-            <input
-              type="number"
-              min={1}
-              data-testid="chart-store-time-window"
-              value={Math.round(storeSource.time_window_ms / 1000)}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                if (!Number.isNaN(n) && n > 0) onPatch({ time_window_ms: n * 1000 });
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
-        </div>
-        <div className="min-w-[6rem] flex-1">
-          <LabeledField label={t('dashboard.chart.storeIntervalSec')}>
-            <input
-              type="number"
-              min={1}
-              data-testid="chart-store-interval"
-              value={Math.round(storeSource.interval_ms / 1000)}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                if (!Number.isNaN(n) && n > 0) onPatch({ interval_ms: n * 1000 });
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
-        </div>
-        <div className="min-w-[7rem] flex-1">
-          <LabeledField label={t('dashboard.chart.storeAggregation')}>
-            <select
-              value={storeSource.aggregation}
-              data-testid="chart-store-aggregation"
-              onChange={(e) =>
-                onPatch({ aggregation: e.target.value as StoreSourceConfig['aggregation'] })
-              }
-              className={inputClass()}
-            >
-              {STORE_AGG_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {t(opt.labelKey)}
-                </option>
-              ))}
-            </select>
-          </LabeledField>
-        </div>
-        <div className="min-w-[6rem] flex-1">
-          <LabeledField label={t('dashboard.chart.storeRefreshSec')}>
-            <input
-              type="number"
-              min={1}
-              value={Math.round((storeSource.refresh_interval_ms ?? 5000) / 1000)}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                if (!Number.isNaN(n) && n > 0) onPatch({ refresh_interval_ms: n * 1000 });
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
-        </div>
-      </div>
+      <SelectedSeriesList
+        series={storeSource.series}
+        onChange={(series) => onPatch({ series })}
+        isLineChart={isLineChart}
+      />
     </div>
+  );
+}
+
+/**
+ * Store 조회 설정(시간 윈도우 / 인터벌 / 집계 / 갱신 주기)을 읽기전용으로 보여주는 정보
+ * 말풍선. "i" 아이콘 클릭 시 팝오버로 현재 값 + 설명을 표시한다(인라인 편집 대신).
+ * 값은 store_source 설정에서 읽으며 useStoreChartData 가 그대로 소비한다 — 편집 UI 만
+ * 제거하고 설정 값/기본값은 그대로 보존된다. 클릭 아웃사이드로 닫는다(태그 헤더 피커와 동일).
+ * @spec SPEC-PANEL-SETTINGS-001
+ */
+function StoreInfoPopover({
+  storeSource,
+}: {
+  storeSource: StoreSourceConfig;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent): void => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const sec = (ms: number): string =>
+    `${Math.round(ms / 1000)}${t('dashboard.chart.storeInfoSecUnit')}`;
+  const aggLabelKey = STORE_AGG_OPTIONS.find(
+    (o) => o.value === storeSource.aggregation,
+  )?.labelKey;
+  const aggLabel = aggLabelKey ? t(aggLabelKey) : storeSource.aggregation;
+
+  const rows: { label: string; value: string }[] = [
+    { label: t('dashboard.chart.storeInfoTimeWindow'), value: sec(storeSource.time_window_ms) },
+    { label: t('dashboard.chart.storeInfoInterval'), value: sec(storeSource.interval_ms) },
+    { label: t('dashboard.chart.storeInfoAggregation'), value: aggLabel },
+    { label: t('dashboard.chart.storeInfoRefresh'), value: sec(storeSource.refresh_interval_ms ?? 5000) },
+  ];
+
+  return (
+    <span className="relative inline-flex" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        data-testid="chart-store-info-button"
+        className="inline-flex items-center rounded p-0.5 text-(--color-text-muted) opacity-70 transition-colors hover:opacity-100 hover:text-(--color-text-primary)"
+        title={t('dashboard.chart.storeInfoAria')}
+        aria-label={t('dashboard.chart.storeInfoAria')}
+      >
+        <Info className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          data-testid="chart-store-info-popover"
+          className="absolute left-0 top-full z-30 mt-1 w-60 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5 text-left shadow-lg"
+        >
+          <p className="mb-1.5 text-xs font-semibold text-(--color-text-primary)">
+            {t('dashboard.chart.storeInfoTitle')}
+          </p>
+          <dl className="space-y-1">
+            {rows.map((r) => (
+              <div
+                key={r.label}
+                className="flex items-baseline justify-between gap-3 text-[11px]"
+              >
+                <dt className="text-(--color-text-muted)">{r.label}</dt>
+                <dd className="font-mono text-(--color-text-secondary)">{r.value}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 text-[10px] leading-snug text-(--color-text-muted)">
+            {t('dashboard.chart.storeTimeWindowHint')}
+          </p>
+        </div>
+      )}
+    </span>
   );
 }
 

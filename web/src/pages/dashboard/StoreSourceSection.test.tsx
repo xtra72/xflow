@@ -393,3 +393,73 @@ describe('StoreSourceSection agent_id 정본 저장(SPEC-WEB-006)', () => {
     expect(screen.getByRole('option', { name: 'renamed-store' })).toBeInTheDocument();
   });
 });
+
+describe('Store 조회 설정 정보 "i" 말풍선 (SPEC-PANEL-SETTINGS-001)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** store 모드 config — 조회 설정 값 지정(정보 말풍선 표시용). */
+  function infoConfig(): Record<string, unknown> {
+    const store_source: StoreSourceConfig = {
+      agent_id: 'store-uuid-1',
+      agent_name: 'store-1',
+      namespace: 'default',
+      series: [],
+      time_window_ms: 3_600_000, // 3600초
+      interval_ms: 60_000, // 60초
+      aggregation: 'last',
+      refresh_interval_ms: 5_000, // 5초
+    };
+    return { data_source: 'store', store_source };
+  }
+
+  it('인라인 편집 입력(시간 윈도우/인터벌/집계)은 더 이상 렌더되지 않는다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('chart-store-time-window')).toBeNull();
+    expect(screen.queryByTestId('chart-store-interval')).toBeNull();
+    expect(screen.queryByTestId('chart-store-aggregation')).toBeNull();
+  });
+
+  it('Store 모드에서 데이터소스 토글 옆에 "i" 정보 아이콘을 렌더한다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-info-button')).toBeInTheDocument();
+    // Store 토글과 같은 영역에 있다(데이터소스 토글 존재 확인).
+    expect(screen.getByTestId('chart-data-source-store')).toBeInTheDocument();
+  });
+
+  it('채널 모드에서는 "i" 정보 아이콘을 렌더하지 않는다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel({ data_source: 'channel' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('chart-store-info-button')).toBeNull();
+  });
+
+  it('기본(닫힘)에서는 말풍선이 없고, "i" 클릭 시 열린다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('chart-store-info-popover')).toBeNull();
+    fireEvent.click(screen.getByTestId('chart-store-info-button'));
+    expect(screen.getByTestId('chart-store-info-popover')).toBeInTheDocument();
+  });
+
+  it('말풍선은 현재 조회 설정 값 + 설명을 읽기전용으로 표시한다(입력 없음)', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('chart-store-info-button'));
+    const popover = screen.getByTestId('chart-store-info-popover');
+    const text = popover.textContent ?? '';
+    // 값: 3600초 / 60초 / 5초(단위 키는 i18n 스텁이 키를 그대로 반환).
+    expect(text).toContain('3600');
+    expect(text).toContain('60');
+    expect(text).toContain('5');
+    // 집계 라벨(last → tsdb.aggLast, i18n 스텁이 키 반환).
+    expect(text).toContain('tsdb.aggLast');
+    // 설명(기존 hint 키 재사용).
+    expect(text).toContain('dashboard.chart.storeTimeWindowHint');
+    // 읽기전용: 편집 입력/셀렉트가 없다.
+    expect(popover.querySelector('input')).toBeNull();
+    expect(popover.querySelector('select')).toBeNull();
+  });
+});
