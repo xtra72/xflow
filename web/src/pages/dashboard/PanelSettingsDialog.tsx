@@ -1424,12 +1424,15 @@ function HeatmapSettingsSection({
       (config.sensor_positions as Record<string, { x?: number; y?: number }> | undefined) ?? {},
     [config.sensor_positions],
   );
-  // 라이브 시리즈 ∪ 저장된 좌표 키의 합집합을 편집 대상으로 나열한다.
-  const sensorNames = useMemo(() => {
-    const set = new Set<string>(storeResult.seriesNames);
-    for (const k of Object.keys(rawPositions)) set.add(k);
-    return Array.from(set);
-  }, [storeResult.seriesNames, rawPositions]);
+  // 시리즈 리스트(라이브 시리즈)만 좌표 편집 대상으로 나열한다. 리스트에 없는 잔존
+  // 좌표(sensor_positions 에만 남은 키)는 표시하지 않는다(사용자 요청). 리스트에 있으나
+  // 좌표가 없는 시리즈는 그대로 노출되어 배치 가능(미배치 안내 AC-E2 유지). 잔존 좌표
+  // config 항목은 삭제하지 않고 화면에만 숨긴다. 히트맵 렌더도 seriesNames 로 제한된다
+  // (joinSensorPoints)므로 이 목록이 렌더와 일치한다. dedup 은 Set 으로 방어한다.
+  const sensorNames = useMemo(
+    () => Array.from(new Set<string>(storeResult.seriesNames)),
+    [storeResult.seriesNames],
+  );
 
   const setPosition = (name: string, axis: 'x' | 'y', value: number | undefined) => {
     const next: Record<string, { x?: number; y?: number }> = { ...rawPositions };

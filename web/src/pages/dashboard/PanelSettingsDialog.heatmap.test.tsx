@@ -17,6 +17,8 @@ const storeMock = vi.hoisted(() => ({
   panel: { id: 'p1', type: 'heatmap', title: '히트맵', config: {} } as PanelConfig,
   updatePanelConfig: vi.fn(),
   updatePanelTitle: vi.fn(),
+  // 센서 좌표 목록이 라이브 시리즈만 반영하는지 검증하기 위한 주입 가능한 seriesNames.
+  seriesNames: [] as string[],
 }));
 
 vi.mock('@/stores/uiStore', async (importOriginal) => {
@@ -41,7 +43,7 @@ vi.mock('./panels/charts/useStoreChartData', () => ({
     entries: [],
     seriesEntries: new Map(),
     seriesStyles: [],
-    seriesNames: [],
+    seriesNames: storeMock.seriesNames,
     booleanSeries: [],
     status: 'idle',
   }),
@@ -61,6 +63,7 @@ beforeEach(() => {
   storeMock.updatePanelConfig.mockReset();
   storeMock.updatePanelTitle.mockReset();
   storeMock.panel = { id: 'p1', type: 'heatmap', title: '히트맵', config: {} };
+  storeMock.seriesNames = [];
 });
 
 describe('PanelSettingsDialog 히트맵 설정 화면', () => {
@@ -78,5 +81,39 @@ describe('PanelSettingsDialog 히트맵 설정 화면', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
     expect(screen.getByTestId('panel-settings-data-source')).toBeInTheDocument();
+  });
+
+  it('센서 좌표 목록은 시리즈 리스트만 반영하고 잔존 좌표는 표시하지 않는다', () => {
+    // 라이브 시리즈: s1(좌표 있음), s2(좌표 없음). leftover 는 좌표만 남고 시리즈엔 없음.
+    storeMock.seriesNames = ['s1', 's2'];
+    storeMock.panel = {
+      id: 'p1',
+      type: 'heatmap',
+      title: '히트맵',
+      config: {
+        data_source: 'store',
+        store_source: {
+          agent_id: 'store-uuid-1',
+          agent_name: 'store-1',
+          series: [{ key: 's1' }, { key: 's2' }],
+          time_window_ms: 60000,
+          interval_ms: 5000,
+          aggregation: 'last',
+        },
+        sensor_positions: {
+          s1: { x: 0.5, y: 0.5 },
+          leftover: { x: 0.1, y: 0.2 },
+        },
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    // 시리즈 리스트에 있는 s1(좌표 있음)·s2(좌표 없음, 미배치)는 x 입력이 노출된다.
+    expect(screen.getByTestId('heatmap-pos-x-s1')).toBeInTheDocument();
+    expect(screen.getByTestId('heatmap-pos-y-s1')).toBeInTheDocument();
+    expect(screen.getByTestId('heatmap-pos-x-s2')).toBeInTheDocument();
+    // 시리즈 리스트에 없는 잔존 좌표(leftover)는 목록에 나타나지 않는다.
+    expect(screen.queryByTestId('heatmap-pos-x-leftover')).toBeNull();
+    expect(screen.queryByTestId('heatmap-pos-y-leftover')).toBeNull();
   });
 });
