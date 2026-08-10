@@ -634,23 +634,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     maxHeight: '100%',
     aspectRatio: aspect,
   });
-  // 미리보기 fill 스타일: 대시보드에서 임의 비율의 그리드 셀을 가득 채우는 패널
-  // (heatmap / 차트 / 리스트 / 리소스 / 로그 / modbus)은 종횡비 letterbox 없이 미리보기
-  // 영역을 완전히 채운다. zoom=1.0 에서 100%×100%, previewZoom 이 그 위에 곱해진다
-  // (부모 fit 컨테이너가 overflow-hidden + 가운데 정렬이라 zoom>1 은 클리핑된다).
-  const previewFillStyle = (): React.CSSProperties => ({
-    width: `${100 * previewZoom}%`,
-    height: `${100 * previewZoom}%`,
-  });
   const previewSlot = (
     <>
             {/*
-              대시보드에서 임의 비율의 그리드 셀을 채우는 패널(heatmap / 차트 / 리스트 /
-              리소스 / 로그 / modbus)은 previewFillStyle 로 미리보기 영역을 letterbox 없이
-              가득 채운다(zoom=1.0 → 100%×100%). 반대로 종횡비가 중요한 미니(라운드 게이지,
-              작은 accent device/ac/hvac)는 previewFitStyle 로 종횡비를 보존한다. 두 경우 모두
-              previewZoom 이 곱해지고(±/Ctrl+휠/더블클릭), 가운데 정렬은 부모 fit 컨테이너
-              (items-center justify-center)가 담당한다.
+              모든 미리보기는 previewFitStyle 로 fit-by-height 한다: 영역 높이를 채우고
+              width = height × 패널 종횡비(aspectRatio) 로 파생되어, 부모 fit 컨테이너
+              (items-center justify-center)가 좌우 가운데 정렬한다. 미리보기 창이 넓으면
+              width < 영역폭 이 되어 좌우 여백(letterbox)이 생기고, 세로 공간은 가득 찬다.
+              previewZoom 이 이 fit 베이스에 곱해진다(±/Ctrl+휠/더블클릭).
               wheel 핸들러는 개별 wrapper 에 부여한다 (Ctrl+휠 으로만 동작하므로 기본 스크롤 보존).
             */}
             {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control') && (
@@ -669,7 +660,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'properties-grid' && (
               <div
-                style={previewFillStyle()}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <GridMiniPreview
@@ -683,7 +674,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {(panel.type === 'flows' || panel.type === 'agents' || panel.type === 'devices') && (
               <div
-                style={previewFillStyle()}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ListMiniPreview
@@ -697,7 +688,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'resource' && (
               <div
-                style={previewFillStyle()}
+                style={previewFitStyle('4 / 3')}
                 onWheel={handlePreviewWheel}
               >
                 <ResourceMiniPreview
@@ -710,7 +701,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'logs' && (
               <div
-                style={previewFillStyle()}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <LogMiniPreview
@@ -731,7 +722,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'line-chart' && (
               <div
-                style={previewFillStyle()}
+                style={previewFitStyle('16 / 9')}
                 onWheel={handlePreviewWheel}
               >
                 <LineChartMiniPreview panel={previewRenderPanel} />
@@ -744,7 +735,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {MODBUS_PANEL_TYPES.has(panel.type) && (
               <div
-                style={previewFillStyle()}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ModbusPanelPreview panel={previewRenderPanel} />
@@ -757,7 +748,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {panel.type === 'heatmap' && (
               <div
-                style={previewFillStyle()}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel panelId={previewRenderPanel.id} title={previewRenderPanel.title} config={previewRenderPanel.config} />
