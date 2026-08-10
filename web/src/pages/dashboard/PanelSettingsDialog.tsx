@@ -2,7 +2,7 @@
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
   Legend,
@@ -279,6 +279,20 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
       previewCollapsed ? '1' : '0',
     );
   }, [previewCollapsed]);
+
+  // 미리보기 채움 모드: 'fill'(영역을 가로·세로 모두 채움) / 'fit'(종횡비 보존 + 최대 맞춤).
+  // 공간 채우는 패널(heatmap/차트/리스트/리소스/로그/modbus)에만 적용되며, 게이지/accent
+  // 미니는 항상 종횡비를 보존한다. localStorage 로 영속(기본 'fill' = 기존 동작).
+  const [previewFillMode, setPreviewFillMode] = useState<'fill' | 'fit'>(() => {
+    if (typeof window === 'undefined') return 'fill';
+    return window.localStorage.getItem('panelSettings.previewFillMode') === 'fit'
+      ? 'fit'
+      : 'fill';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('panelSettings.previewFillMode', previewFillMode);
+  }, [previewFillMode]);
 
   // 미리보기 줌 배율 (0.5 ~ 2.0). 버튼 / Ctrl+휠 / 더블클릭 리셋 으로 조절.
   const PREVIEW_ZOOM_MIN = 0.5;
@@ -665,7 +679,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'properties-grid' && (
               <div
-                style={previewFillStyle()}
+                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <GridMiniPreview
@@ -679,7 +693,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {(panel.type === 'flows' || panel.type === 'agents' || panel.type === 'devices') && (
               <div
-                style={previewFillStyle()}
+                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ListMiniPreview
@@ -693,7 +707,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'resource' && (
               <div
-                style={previewFillStyle()}
+                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('4 / 3')}
                 onWheel={handlePreviewWheel}
               >
                 <ResourceMiniPreview
@@ -706,7 +720,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'logs' && (
               <div
-                style={previewFillStyle()}
+                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <LogMiniPreview
@@ -727,7 +741,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'line-chart' && (
               <div
-                style={previewFillStyle()}
+                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('16 / 9')}
                 onWheel={handlePreviewWheel}
               >
                 <LineChartMiniPreview panel={previewRenderPanel} />
@@ -740,7 +754,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {MODBUS_PANEL_TYPES.has(panel.type) && (
               <div
-                style={previewFillStyle()}
+                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <ModbusPanelPreview panel={previewRenderPanel} />
@@ -753,7 +767,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {panel.type === 'heatmap' && (
               <div
-                style={previewFillStyle()}
+                style={previewFillMode === 'fill' ? previewFillStyle() : previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel panelId={previewRenderPanel.id} title={previewRenderPanel.title} config={previewRenderPanel.config} />
@@ -832,6 +846,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           dataSource={dataSourceSlot}
           previewCollapsed={previewCollapsed}
           setPreviewCollapsed={setPreviewCollapsed}
+          previewFillMode={previewFillMode}
+          setPreviewFillMode={setPreviewFillMode}
           dataSourceBelowPreview={dataSourceBelowPreview}
           leftWidth={leftWidth}
           isDragging={isDragging}
@@ -4337,6 +4353,8 @@ function PanelSettingsShell({
   dataSource,
   previewCollapsed,
   setPreviewCollapsed,
+  previewFillMode,
+  setPreviewFillMode,
   dataSourceBelowPreview,
   leftWidth,
   isDragging,
@@ -4357,6 +4375,8 @@ function PanelSettingsShell({
   dataSource: React.ReactNode;
   previewCollapsed: boolean;
   setPreviewCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  previewFillMode: 'fill' | 'fit';
+  setPreviewFillMode: React.Dispatch<React.SetStateAction<'fill' | 'fit'>>;
   dataSourceBelowPreview: boolean;
   leftWidth: number;
   isDragging: boolean;
@@ -4501,6 +4521,30 @@ function PanelSettingsShell({
                   className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
                 >
                   <Plus className="h-3 w-3" />
+                </button>
+                <div className="mx-1 h-3 w-px bg-(--color-border-default)" />
+                {/* 채움/맞춤 토글: fill(영역 채움) ↔ fit(종횡비 보존 최대 맞춤). */}
+                <button
+                  type="button"
+                  onClick={() => setPreviewFillMode((m) => (m === 'fill' ? 'fit' : 'fill'))}
+                  data-testid="panel-settings-preview-fill-toggle"
+                  aria-label={
+                    previewFillMode === 'fill'
+                      ? t('dashboard.settings.previewModeFillAria')
+                      : t('dashboard.settings.previewModeFitAria')
+                  }
+                  title={
+                    previewFillMode === 'fill'
+                      ? t('dashboard.settings.previewModeFillAria')
+                      : t('dashboard.settings.previewModeFitAria')
+                  }
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                >
+                  {previewFillMode === 'fill' ? (
+                    <Maximize2 className="h-3 w-3" />
+                  ) : (
+                    <Minimize2 className="h-3 w-3" />
+                  )}
                 </button>
                 <div className="mx-1 h-3 w-px bg-(--color-border-default)" />
                 <button

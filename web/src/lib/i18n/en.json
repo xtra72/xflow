@@ -679,6 +679,8 @@
       "zoomInAria": "Zoom in preview",
       "zoomInTitle": "Zoom in (Ctrl+wheel)",
       "previewCollapseAria": "Collapse preview",
+      "previewModeFillAria": "Fill mode — click for fit (preserve aspect)",
+      "previewModeFitAria": "Fit mode (preserve aspect) — click for fill",
       "apply": "Apply",
       "metricLabels": {
         "cpu": "CPU",

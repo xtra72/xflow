@@ -8,7 +8,7 @@
 //   좌측 컬럼 상단 = 미리보기 / 좌측 컬럼 하단 = 데이터소스 / 우측 = 옵션.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 
@@ -93,5 +93,43 @@ describe('PanelSettingsDialog 3분할 셸 (AC-01)', () => {
     // 좌측 컬럼(미리보기+데이터소스)은 order-1, 우측 옵션 컬럼은 order-3 클래스를 갖는다.
     expect(screen.getByTestId('panel-settings-preview').className).toContain('order-1');
     expect(screen.getByTestId('panel-settings-options').className).toContain('order-3');
+  });
+});
+
+describe('미리보기 채움/맞춤 토글 (fill/fit)', () => {
+  it('툴바에 토글이 있고 기본값은 fill(종횡비 없음)이다', () => {
+    storeMock.panel = { id: 'p1', type: 'heatmap', title: '히트맵', config: {} };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    const toggle = screen.getByTestId('panel-settings-preview-fill-toggle');
+    expect(toggle).toBeInTheDocument();
+    // 기본 fill → aria-label 은 fill 모드(클릭 시 fit). 미리보기 wrapper 는 종횡비 style 이 없다.
+    expect(toggle).toHaveAttribute('aria-label', 'dashboard.settings.previewModeFillAria');
+    const preview = screen.getByTestId('panel-settings-preview');
+    expect(preview.querySelector('[style*="aspect-ratio"]')).toBeNull();
+  });
+
+  it('클릭 시 fit 으로 전환되고 localStorage 에 영속되며 wrapper 가 종횡비를 갖는다', () => {
+    storeMock.panel = { id: 'p1', type: 'heatmap', title: '히트맵', config: {} };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('panel-settings-preview-fill-toggle'));
+    // fit 모드로 전환 → aria-label 변경 + localStorage 영속.
+    expect(screen.getByTestId('panel-settings-preview-fill-toggle')).toHaveAttribute(
+      'aria-label',
+      'dashboard.settings.previewModeFitAria',
+    );
+    expect(window.localStorage.getItem('panelSettings.previewFillMode')).toBe('fit');
+    // fit 모드 → 미리보기 wrapper 가 종횡비(aspect-ratio) style 을 갖는다(fill 과 다름).
+    const preview = screen.getByTestId('panel-settings-preview');
+    expect(preview.querySelector('[style*="aspect-ratio"]')).not.toBeNull();
+  });
+
+  it('영속된 fit 모드를 재마운트 시 복원한다', () => {
+    window.localStorage.setItem('panelSettings.previewFillMode', 'fit');
+    storeMock.panel = { id: 'p1', type: 'heatmap', title: '히트맵', config: {} };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.getByTestId('panel-settings-preview-fill-toggle')).toHaveAttribute(
+      'aria-label',
+      'dashboard.settings.previewModeFitAria',
+    );
   });
 });

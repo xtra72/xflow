@@ -679,6 +679,8 @@
       "zoomInAria": "미리보기 확대",
       "zoomInTitle": "확대 (Ctrl+휠)",
       "previewCollapseAria": "미리보기 접기",
+      "previewModeFillAria": "채우기 모드 — 클릭하면 맞춤(비율 보존)",
+      "previewModeFitAria": "맞춤 모드(비율 보존) — 클릭하면 채우기",
       "apply": "적용",
       "metricLabels": {
         "cpu": "CPU",
