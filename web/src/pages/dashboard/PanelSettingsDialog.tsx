@@ -651,8 +651,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
 
     </>
   );
-  // 실 store 데이터 패널(heatmap/line/gauge/modbus)은 디바운스된 previewPanel 로 렌더한다.
+  // line/gauge/modbus 미리보기는 디바운스된 previewPanel 로 렌더한다(잦은 편집 재조회 억제).
   // (panel 은 non-null 로 좁혀졌으므로 previewPanel 부재 시 panel 로 폴백해 항상 non-null.)
+  // 히트맵은 예외 — 시각 설정(도면 배경/색상/IDW)은 재조회를 트리거하지 않으므로 즉시 draft
+  // config(panel)로 렌더해 도면 배경이 지연 없이 반영된다(아래 heatmap 렌더 블록 참고).
   const previewRenderPanel = previewPanel ?? panel;
   // 종횡비 보존 미리보기(라운드 게이지, 작은 accent device/ac/hvac): 높이를 채우고 폭은
   // 종횡비로 파생한다. previewZoom(0.5~2.0)이 곱해진다(±/Ctrl+휠/더블클릭).
@@ -807,7 +809,12 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </div>
             )}
             {/*
-              SPEC-HEATMAP-PANEL: 히트맵 프리뷰. 실제 HeatmapPanel 을 draft config 로 렌더한다.
+              SPEC-HEATMAP-PANEL: 히트맵 프리뷰. 실제 HeatmapPanel 을 즉시 draft config(panel)로
+              렌더한다 — 도면 배경/색상/IDW 등 시각 설정은 store 재조회를 트리거하지 않으므로
+              debounce 없이 즉시 반영해야 한다(도면 이미지 첨부 즉시 배경 표시). store 데이터
+              재조회는 HeatmapPanel 내부 useStoreChartData 의 pollKey(agent/namespace/window/
+              interval/aggregation/series·tags)로 스로틀되며, 시각 필드는 pollKey 에 포함되지
+              않아 재조회 폭주가 없다(shallow-merge 로 store_source 참조도 안정적).
               데이터/좌표 미설정 시 패널이 자체 빈상태 안내를 표시하므로 blank 가 되지 않는다.
               onConfigChange(draft writer) + forcePlacement 로 프리뷰에서 센서 마커 드래그 배치를
               활성화한다(대시보드 편집모드에 의존하지 않음). 드래그 → sensor_positions 를 draft 에
@@ -819,9 +826,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel
-                  panelId={previewRenderPanel.id}
-                  title={previewRenderPanel.title}
-                  config={previewRenderPanel.config}
+                  panelId={panel.id}
+                  title={panel.title}
+                  config={panel.config}
                   onConfigChange={(c) => handleConfigChange(c)}
                   forcePlacement
                 />

@@ -77,6 +77,28 @@ describe('PanelSettingsDialog 히트맵 설정 화면', () => {
     expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
   });
 
+  it('도면 배경 이미지가 config 에 있으면 데이터 0개여도 프리뷰에 즉시 배경을 렌더한다', () => {
+    // 시각 설정(floor_plan.image)은 debounce 없이 즉시 draft config 로 렌더돼야 한다.
+    // series/데이터가 전혀 없어도(zero data) forcePlacement→showStack 으로 배경이 표시된다.
+    storeMock.panel = {
+      id: 'p1',
+      type: 'heatmap',
+      title: '히트맵',
+      config: {
+        floor_plan: { image: 'data:image/png;base64,AAAA', fit: 'contain' },
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const bg = screen.getByTestId('floor-plan-background') as HTMLImageElement;
+    expect(bg).toBeInTheDocument();
+    expect(bg.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    // 컨테이너를 채우는 배경 레이어 클래스(inset-0 h-full w-full)로 0-height 붕괴를 방지.
+    expect(bg.className).toContain('inset-0');
+    expect(bg.className).toContain('h-full');
+    expect(bg.className).toContain('w-full');
+  });
+
   it('데이터 소스 섹션을 프리뷰 아래에 노출한다(차트 패널과 동일)', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
