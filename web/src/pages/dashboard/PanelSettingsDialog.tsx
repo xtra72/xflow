@@ -1,7 +1,7 @@
 // 패널 상세 설정 다이얼로그.
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
@@ -285,22 +285,6 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const PREVIEW_ZOOM_MAX = 2.0;
   const PREVIEW_ZOOM_STEP = 0.1;
   const [previewZoom, setPreviewZoom] = useState<number>(1.0);
-  // fit 컨테이너의 실측 크기(px). ResizeObserver 로 영역 리사이즈(경계 드래그/창 변경)에
-  // 맞춰 갱신되어 미리보기가 재-fit 된다. 콜백 ref 로 마운트/언마운트(접힘 토글)를 처리한다.
-  const [fitSize, setFitSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-  const fitRoRef = useRef<ResizeObserver | null>(null);
-  const setFitContainer = useCallback((el: HTMLDivElement | null) => {
-    if (fitRoRef.current) {
-      fitRoRef.current.disconnect();
-      fitRoRef.current = null;
-    }
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const measure = (): void => setFitSize({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    fitRoRef.current = ro;
-  }, []);
   const zoomIn = useCallback(
     () => setPreviewZoom((z) => Math.min(PREVIEW_ZOOM_MAX, Math.round((z + PREVIEW_ZOOM_STEP) * 10) / 10)),
     [],
@@ -640,60 +624,34 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 실 store 데이터 패널(heatmap/line/gauge/modbus)은 디바운스된 previewPanel 로 렌더한다.
   // (panel 은 non-null 로 좁혀졌으므로 previewPanel 부재 시 panel 로 폴백해 항상 non-null.)
   const previewRenderPanel = previewPanel ?? panel;
-  // 미리보기 contain-fit 스타일: zoom=1.0 에서 미리보기 영역(부모 fit 컨테이너)을 가득
-  // 채우되 패널 유형별 종횡비(aspectRatio)를 보존한다. 높이(%)로 크기를 몰고, maxWidth/
-  // maxHeight 100% 가 종횡비 제약을 반대 축으로 전이(transferred size)시켜 넘치는 축을
-  // 비율 유지하며 줄인다. previewZoom(0.5~2.0)이 이 fit 베이스에 곱해진다(±/Ctrl+휠/더블클릭).
+  // 종횡비 보존 미리보기(라운드 게이지, 작은 accent device/ac/hvac): 높이를 채우고 폭은
+  // 종횡비로 파생한다. previewZoom(0.5~2.0)이 곱해진다(±/Ctrl+휠/더블클릭).
   const previewFitStyle = (aspect: string): React.CSSProperties => ({
     height: `${100 * previewZoom}%`,
     maxWidth: '100%',
     maxHeight: '100%',
     aspectRatio: aspect,
   });
-  // 측정 기반 contain-fit: fit 컨테이너의 실제 px 크기를 ResizeObserver 로 재어, 패널
-  // 종횡비를 보존하는 "가장 큰 박스"를 계산한다(영역을 최대한 채움 + 종횡비 보존).
-  // 넓은 영역 → 좌우 여백, 세로 긴 영역 → 상하 여백. previewZoom 이 이 베이스에 곱해진다.
-  // 측정 불가(0, jsdom/초기 렌더)면 CSS % 폴백(previewFitStyle)으로 되돌린다(테스트 안정).
-  const parseAspectRatio = (aspect: string): number => {
-    const parts = aspect.split('/').map((s) => parseFloat(s.trim()));
-    const a = parts[0] ?? NaN;
-    const b = parts[1] ?? NaN;
-    return Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? a / b : 1;
-  };
-  const previewBoxStyle = (aspect: string): React.CSSProperties => {
-    const { w, h } = fitSize;
-    if (w <= 0 || h <= 0) return previewFitStyle(aspect); // 측정 불가 → CSS 폴백
-    const r = parseAspectRatio(aspect);
-    let fitW: number;
-    let fitH: number;
-    if (w / h >= r) {
-      // 영역이 더 넓다 → 높이 바운드(높이를 가득, 폭은 종횡비로 파생 → 좌우 여백).
-      fitH = h;
-      fitW = h * r;
-    } else {
-      // 영역이 더 좁다 → 폭 바운드(폭을 가득, 높이는 종횡비로 파생 → 상하 여백).
-      fitW = w;
-      fitH = w / r;
-    }
-    return { width: `${fitW * previewZoom}px`, height: `${fitH * previewZoom}px` };
-  };
+  // FILL 미리보기(heatmap/차트/리스트/리소스/로그/modbus): 종횡비를 무시하고 fit 컨테이너를
+  // 가로·세로 모두 채운다. 영역 비율은 사용자가 경계 드래그(leftWidth/previewRatio)로 조절한다.
+  // zoom=1.0 → 100%×100%. previewZoom 이 곱해진다(±/Ctrl+휠/더블클릭).
+  const previewFillStyle = (): React.CSSProperties => ({
+    width: `${100 * previewZoom}%`,
+    height: `${100 * previewZoom}%`,
+  });
   const previewSlot = (
-    // fit 컨테이너: 남은 미리보기 영역을 채우고(min-h-0 flex-1) 자식을 양축 가운데 정렬한다.
-    // ref 로 실측하여 previewBoxStyle 가 종횡비 보존 + 최대 fill 박스를 계산한다.
-    <div
-      ref={setFitContainer}
-      className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
-    >
+    // fit 컨테이너: 남은 미리보기 영역을 세로로 가득(min-h-0 flex-1) 차지하고 자식을 양축
+    // 가운데 정렬한다. FILL 자식은 100%×100% 로 이 컨테이너를 가로·세로 모두 채운다.
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
             {/*
-              각 미리보기는 previewBoxStyle 로 실측 contain-fit 한다: fit 컨테이너 크기(W×H)와
-              패널 종횡비로 "가장 큰 종횡비 보존 박스"를 계산해 px 로 지정한다. 넓은 영역이면
-              좌우 여백, 세로 긴 영역이면 상하 여백이 생기고 바인딩 축은 가득 찬다. previewZoom
-              이 이 베이스에 곱해진다(±/Ctrl+휠/더블클릭). 측정 불가(jsdom/초기)면 CSS % 폴백.
+              FILL 유형(heatmap/차트/리스트/리소스/로그/modbus)은 previewFillStyle 로 fit 컨테이너를
+              가득 채우고(영역 비율은 드래그로 조절), 종횡비가 중요한 미니(게이지/accent)는
+              previewFitStyle 로 종횡비를 보존한다. previewZoom 이 곱해진다(±/Ctrl+휠/더블클릭).
               wheel 핸들러는 개별 wrapper 에 부여한다 (Ctrl+휠 으로만 동작하므로 기본 스크롤 보존).
             */}
             {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control') && (
               <div
-                style={previewBoxStyle('3 / 2')}
+                style={previewFitStyle('3 / 2')}
                 onWheel={handlePreviewWheel}
               >
                 <NasaMiniPreview
@@ -707,7 +665,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'properties-grid' && (
               <div
-                style={previewBoxStyle('3 / 2')}
+                style={previewFillStyle()}
                 onWheel={handlePreviewWheel}
               >
                 <GridMiniPreview
@@ -721,7 +679,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {(panel.type === 'flows' || panel.type === 'agents' || panel.type === 'devices') && (
               <div
-                style={previewBoxStyle('3 / 2')}
+                style={previewFillStyle()}
                 onWheel={handlePreviewWheel}
               >
                 <ListMiniPreview
@@ -735,7 +693,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'resource' && (
               <div
-                style={previewBoxStyle('4 / 3')}
+                style={previewFillStyle()}
                 onWheel={handlePreviewWheel}
               >
                 <ResourceMiniPreview
@@ -748,7 +706,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'logs' && (
               <div
-                style={previewBoxStyle('3 / 2')}
+                style={previewFillStyle()}
                 onWheel={handlePreviewWheel}
               >
                 <LogMiniPreview
@@ -761,7 +719,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'gauge' && (
               <div
-                style={previewBoxStyle('1 / 1')}
+                style={previewFitStyle('1 / 1')}
                 onWheel={handlePreviewWheel}
               >
                 <GaugeMiniPreview panel={previewRenderPanel} />
@@ -769,7 +727,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'line-chart' && (
               <div
-                style={previewBoxStyle('16 / 9')}
+                style={previewFillStyle()}
                 onWheel={handlePreviewWheel}
               >
                 <LineChartMiniPreview panel={previewRenderPanel} />
@@ -782,7 +740,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {MODBUS_PANEL_TYPES.has(panel.type) && (
               <div
-                style={previewBoxStyle('3 / 2')}
+                style={previewFillStyle()}
                 onWheel={handlePreviewWheel}
               >
                 <ModbusPanelPreview panel={previewRenderPanel} />
@@ -795,7 +753,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {panel.type === 'heatmap' && (
               <div
-                style={previewBoxStyle('3 / 2')}
+                style={previewFillStyle()}
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel panelId={previewRenderPanel.id} title={previewRenderPanel.title} config={previewRenderPanel.config} />
@@ -4492,7 +4450,9 @@ function PanelSettingsShell({
           <div
             data-testid="panel-settings-preview"
             className={cn(
-              'order-1 flex min-w-0 flex-1 flex-col items-stretch justify-start',
+              // min-h-0: 세로 방향으로 자식(미리보기 블록 → fit 컨테이너)이 남은 높이를 온전히
+              // 받도록 한다(누락 시 flex-1/height:100% 체인이 콘텐츠 높이로 붕괴 → 미리보기 짧아짐).
+              'order-1 flex min-h-0 min-w-0 flex-1 flex-col items-stretch justify-start',
               showHSplit ? 'gap-0 overflow-hidden' : 'gap-3 overflow-y-auto',
             )}
           >
