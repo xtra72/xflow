@@ -414,6 +414,23 @@ describe('HeatmapPanel', () => {
     expect(screen.queryByTestId('sensor-marker-stale')).toBeNull();
   });
 
+  it('도면 배경: 데이터가 없어도 floor_plan.image 가 있으면 배경을 렌더한다(빈상태 안내 대신)', () => {
+    // 데이터 0개(seriesNames 비어 있음) + 편집/배치 아님. 도면 이미지만 설정됨.
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({}, { floor_plan: { image: 'data:image/png;base64,AAAA' } })}
+      />,
+    );
+    // 배경 이미지가 렌더되고, 빈상태 안내는 표시되지 않는다.
+    expect(screen.getByTestId('floor-plan-background')).toBeInTheDocument();
+    expect(screen.queryByText('dashboard.heatmap.emptyState')).toBeNull();
+    // 히트맵 canvas 는 데이터가 없으므로 여전히 렌더되지 않는다.
+    expect(screen.queryByTestId('heatmap-canvas')).toBeNull();
+  });
+
   it('forcePlacement: 드래그 이동이 sensor_positions 를 갱신한다', () => {
     const onConfigChange = vi.fn();
     setStore({

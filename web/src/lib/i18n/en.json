@@ -873,6 +873,7 @@
       "dataSourceTsdbTitle": "TSDB data source",
       "dataSourceTsdbBody": "TSDB binding will be provided in a follow-up SPEC. For now only an inactive notice is shown.",
       "dataSourceStoreSelectTitle": "Series selection (checkboxes)",
+      "dataSourceStoreSelectRefresh": "Refresh key list",
       "dataSourceStoreSelectEmpty": "No Store keys to display.",
       "dataSourceStoreSelectNoAgent": "Select a Store agent first.",
       "dataSourceStoreSelectOverLimit": "Up to {limit} series can be selected. Extra selections are not applied, to protect preview performance."

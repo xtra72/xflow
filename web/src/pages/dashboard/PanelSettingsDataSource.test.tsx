@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
     { key: 'k1', registration: 'auto', data_type: 'float', metric_type: 'temperature', tags: { room: '1' } },
     { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
   ] as unknown[],
+  refetchKeys: vi.fn(),
 }));
 
 vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
@@ -38,6 +39,8 @@ vi.mock('@/services/api/store', () => ({
     data: { keys: [], tags: {}, keyObjects: state.keyObjects },
     isLoading: false,
     isError: false,
+    isFetching: false,
+    refetch: state.refetchKeys,
   }),
   useStoreTagPairs: () => ({ data: [], isLoading: false, isError: false }),
 }));
@@ -79,6 +82,17 @@ beforeEach(() => {
     { key: 'k1', registration: 'auto', data_type: 'float', metric_type: 'temperature', tags: { room: '1' } },
     { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
   ];
+  state.refetchKeys.mockReset();
+});
+
+describe('store 키 목록 새로고침', () => {
+  it('새로고침 버튼이 렌더되고 클릭 시 키 목록을 재조회한다', () => {
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const refresh = screen.getByTestId('panel-store-select-refresh');
+    expect(refresh).toBeInTheDocument();
+    fireEvent.click(refresh);
+    expect(state.refetchKeys).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('T4 — 단일 데이터소스 토글 [채널 | Store | TSDB]', () => {

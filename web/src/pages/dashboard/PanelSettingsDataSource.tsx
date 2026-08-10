@@ -15,7 +15,7 @@
 // 파생한다 — 선택 surface 이므로 라이브 값 컬럼(value/updated)은 노출하지 않는다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ListFilter } from 'lucide-react';
+import { ListFilter, RefreshCw } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -159,7 +159,8 @@ function PanelStoreSelectTable({
   );
   const hasAgent = agentName !== '';
 
-  const { data: keysData } = useStoreKeysWithTags(agentName);
+  const { data: keysData, refetch: refetchKeys, isFetching: keysFetching } =
+    useStoreKeysWithTags(agentName);
   const keyObjects = useMemo(() => keysData?.keyObjects ?? [], [keysData?.keyObjects]);
 
   // keyObjects(메타데이터) → StoreEntry 파생. 라이브 값(value/namespace/updated)은 없다.
@@ -446,12 +447,26 @@ function PanelStoreSelectTable({
         <label className="text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.dataSourceStoreSelectTitle')}
         </label>
-        <ColumnSettingsMenu
-          columns={relevantCols}
-          visible={visibleColumnSet}
-          onToggle={handleToggleColumn}
-          t={t}
-        />
+        <div className="flex items-center gap-1">
+          {/* store 키 목록 새로고침 — 새로 추가된 키가 나타나도록 react-query 재조회. */}
+          <button
+            type="button"
+            onClick={() => void refetchKeys()}
+            disabled={!hasAgent || keysFetching}
+            data-testid="panel-store-select-refresh"
+            aria-label={t('dashboard.settings.dataSourceStoreSelectRefresh')}
+            title={t('dashboard.settings.dataSourceStoreSelectRefresh')}
+            className="inline-flex items-center rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', keysFetching && 'animate-spin')} />
+          </button>
+          <ColumnSettingsMenu
+            columns={relevantCols}
+            visible={visibleColumnSet}
+            onToggle={handleToggleColumn}
+            t={t}
+          />
+        </div>
       </div>
 
       {overLimitNotice && (

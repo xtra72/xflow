@@ -55,7 +55,7 @@ describe('parseHeatmapConfig', () => {
       const cfg = parseHeatmapConfig(raw as unknown);
       expect(cfg.sensor_positions).toEqual({});
       expect(cfg.idw.power).toBe(DEFAULT_IDW_POWER);
-      expect(cfg.store_source.selection_mode).toBe('tag');
+      expect(cfg.store_source.selection_mode).toBe('keys');
     },
   );
 
@@ -329,11 +329,12 @@ describe('parseHeatmapConfig — legend field', () => {
 });
 
 describe('buildDefaultHeatmapStoreSource / buildDefaultHeatmapConfig', () => {
-  it('기본 store 소스는 tag 모드 + last 집계다', () => {
+  it('기본 store 소스는 keys 모드(미체크) + last 집계다', () => {
     const src = buildDefaultHeatmapStoreSource();
-    expect(src.selection_mode).toBe('tag');
+    // 신규 패널은 아무 것도 바인딩되지 않은 keys 모드로 시작한다(체크박스 전부 미체크).
+    expect(src.selection_mode).toBe('keys');
     expect(src.aggregation).toBe('last');
-    expect(src.tag_filters).toEqual({});
+    expect(src.tag_filters).toBeUndefined();
     expect(src.series).toEqual([]);
   });
 
@@ -347,7 +348,7 @@ describe('buildDefaultHeatmapStoreSource / buildDefaultHeatmapConfig', () => {
     });
     // 기본 config 는 parseHeatmapConfig 를 통과해도 안정적이어야 한다(round-trip).
     const parsed = parseHeatmapConfig(config);
-    expect(parsed.store_source.selection_mode).toBe('tag');
+    expect(parsed.store_source.selection_mode).toBe('keys');
     expect(parsed.idw.power).toBe(DEFAULT_IDW_POWER);
   });
 });

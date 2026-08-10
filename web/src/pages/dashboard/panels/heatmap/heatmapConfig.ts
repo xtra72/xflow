@@ -126,9 +126,10 @@ export interface LegendConfig {
 /**
  * 히트맵 패널 config.
  *
- * `store_source` 는 태그 필터로 공간 온도 센서를 동적 바인딩한다(selection_mode:'tag',
- * aggregation:'last'). `value_bounds`/`color_table` 미지정은 자동(센서값 범위 + 기본
- * gradient)으로 해석되므로 옵셔널이다. `idw` 는 파싱 시 항상 기본값이 채워진다.
+ * `store_source` 는 store 시리즈를 바인딩한다. 신규 패널 기본은 keys 모드(체크박스 선택,
+ * series:[])이며, 헤더 태그 피커로 태그 자동 바인딩(selection_mode:'tag')에 진입할 수 있다.
+ * `value_bounds`/`color_table` 미지정은 자동(센서값 범위 + 기본 gradient)으로 해석되므로
+ * 옵셔널이다. `idw` 는 파싱 시 항상 기본값이 채워진다.
  */
 export interface HeatmapPanelConfig {
   store_source: StoreSourceConfig;
@@ -157,13 +158,16 @@ function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
-/** 히트맵 패널의 기본 store 소스(태그 자동 확장 + 최신값 집계). */
+/**
+ * 히트맵 패널의 기본 store 소스. 신규 패널은 아무 것도 바인딩되지 않은 keys 모드로 시작해
+ * (selection_mode:'keys', series:[]) 데이터 소스 목록이 전부 미체크 상태가 된다 → 체크박스로
+ * 선택한 시리즈만 표시된다. 태그 모드는 헤더 태그 피커로 언제든 진입할 수 있다(기본 아님).
+ */
 export function buildDefaultHeatmapStoreSource(): StoreSourceConfig {
   return {
     agent_name: '',
     namespace: 'default',
-    selection_mode: 'tag',
-    tag_filters: {},
+    selection_mode: 'keys',
     series: [],
     time_window_ms: 60 * 60 * 1000,
     interval_ms: 60 * 1000,

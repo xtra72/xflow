@@ -158,8 +158,10 @@ export default function HeatmapPanel({
   // 배치 활성 = 런타임 편집 토글(대시보드) OR forcePlacement(설정 미리보기). 후자는
   // dashboardEditMode 에 의존하지 않는다(설정 다이얼로그에서 드래그 배치 허용).
   const placementActive = editing || forcePlacement;
-  // 편집 중에는 배치 표면(배경/좌표 공간)을 항상 렌더한다(도면/데이터 없어도 배치 가능, AC-E1 편집 경로).
-  const showStack = !isEmpty || placementActive;
+  // 스택(배경/좌표 공간) 렌더 조건: 데이터가 있거나, 배치 편집 중이거나, 도면 배경 이미지가
+  // 설정돼 있으면 렌더한다. 도면이 있으면 데이터 0개여도 배경을 보여준다(빈상태 안내로 배경이
+  // 가려지지 않도록). 히트맵 canvas 는 여전히 !isEmpty 일 때만 렌더된다.
+  const showStack = !isEmpty || placementActive || hasBackground;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-2 shadow">
