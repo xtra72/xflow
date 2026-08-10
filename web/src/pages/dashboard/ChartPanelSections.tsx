@@ -33,7 +33,6 @@ import type {
   StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
 import { pickSeriesColor } from './panels/charts/chartChannelTypes';
-import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
 import {
   filterStoreKeyObjects,
   makeTagFilterId,
@@ -343,12 +342,6 @@ export function StoreSourceSection({
     [storeAgents, storeSource.agent_id, storeSource.agent_name],
   );
   const selectValue = selectedAgent?.id ?? storeSource.agent_id ?? '';
-  const resolvedAgentName = resolveStoreAgentName(
-    storeSource.agent_id,
-    storeSource.agent_name,
-    agentsResult?.data,
-  );
-  const isSelected = !!storeSource.agent_id || !!storeSource.agent_name;
 
   return (
     <div className="space-y-3">
@@ -452,8 +445,6 @@ export function StoreSourceSection({
           storeSource={storeSource}
           onPatch={patchStore}
           isLineChart={isLineChart}
-          resolvedAgentName={resolvedAgentName}
-          isSelected={isSelected}
         />
       )}
 
@@ -478,77 +469,26 @@ function StoreSourceEditor({
   storeSource,
   onPatch,
   isLineChart,
-  resolvedAgentName,
-  isSelected,
 }: {
   storeSource: StoreSourceConfig;
   onPatch: (patch: Partial<StoreSourceConfig>) => void;
   isLineChart: boolean;
-  /**
-   * 상위(StoreSourceSection)에서 이관된 에이전트 파생값. 에이전트 셀렉트는 데이터소스
-   * 토글과 같은 행(Row 1)에 배치하기 위해 상위로 이동했다(레이아웃 전용).
-   */
-  resolvedAgentName: string;
-  isSelected: boolean;
 }): React.ReactElement {
   const { t } = useTranslation();
 
-  // 시리즈 선택 방식. 미지정은 'keys'(기존 동작). @spec SPEC-WEB-005
+  // 시리즈 선택 방식. 미지정은 'keys'(기존 동작). 태그 모드 전환은 이제 목록 헤더의
+  // 전용 태그 피커(PanelStoreSelectTable)가 tag_filters 존재로 함축한다(별도 keys/tag
+  // 토글 제거). @spec SPEC-WEB-005 / SPEC-PANEL-SETTINGS-001 (태그 인 헤더)
   const selectionMode = storeSource.selection_mode ?? 'keys';
-  const setSelectionMode = (mode: 'keys' | 'tag'): void => {
-    // 모드 전환 시 반대 모드의 선택 상태를 초기화해 혼선을 막는다.
-    // tag → 동적 해석이므로 series[] 를 비우고, keys → tag_filters 를 제거한다.
-    if (mode === 'tag') {
-      onPatch({ selection_mode: 'tag', series: [] });
-    } else {
-      onPatch({ selection_mode: 'keys', tag_filters: undefined });
-    }
-  };
 
   return (
     <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
 
-      {/* 시리즈 선택 방식 토글(키 직접 선택 / 태그로 자동) — 에이전트 선택 후 노출 */}
-      {isSelected && resolvedAgentName && (
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-            {t('dashboard.chart.storeSelectionModeLabel')}
-          </label>
-          <div
-            className="inline-flex rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-0.5"
-            role="tablist"
-            aria-label={t('dashboard.chart.storeSelectionModeLabel')}
-          >
-            {(['keys', 'tag'] as const).map((mode) => {
-              const selected = selectionMode === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  data-testid={`chart-store-selection-mode-${mode}`}
-                  onClick={() => setSelectionMode(mode)}
-                  className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-                    selected
-                      ? 'bg-blue-600 text-white'
-                      : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
-                  }`}
-                >
-                  {mode === 'keys'
-                    ? t('dashboard.chart.storeSelectionModeKeys')
-                    : t('dashboard.chart.storeSelectionModeTag')}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/*
-        keys 모드 키 선택기는 공용 StoreEntryTable(체크박스 "시리즈 선택", PanelSettingsDataSource)
-        로 일원화되어 여기서는 제거했다. 선택 결과(series)는 아래 SelectedSeriesList 가 편집한다.
-        @spec SPEC-PANEL-SETTINGS-001 (시리즈 선택 단일화)
+        키 선택기(체크박스) + 태그 자동 선택기(목록 헤더의 전용 AND 태그 피커)는 공용
+        StoreEntryTable 을 소비하는 PanelStoreSelectTable(PanelSettingsDataSource)로 일원화됐다.
+        여기서는 선택 결과(series)의 alias/색상/라인 스타일만 편집한다(별도 keys/tag 토글 제거).
+        @spec SPEC-PANEL-SETTINGS-001 (시리즈 선택 단일화 + 태그 인 헤더)
       */}
 
       {/* keys 모드: 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
@@ -557,15 +497,6 @@ function StoreSourceEditor({
           series={storeSource.series}
           onChange={(series) => onPatch({ series })}
           isLineChart={isLineChart}
-        />
-      )}
-
-      {/* tag 모드: 태그 AND 선택기 — tag_filters 매칭 키가 폴링마다 시리즈로 확장된다 */}
-      {isSelected && resolvedAgentName && selectionMode === 'tag' && (
-        <StoreTagSelectionEditor
-          agentName={resolvedAgentName}
-          tagFilters={storeSource.tag_filters ?? {}}
-          onChange={(tagFilters) => onPatch({ tag_filters: tagFilters })}
         />
       )}
 
@@ -654,7 +585,7 @@ function StoreSourceEditor({
  *
  * @spec SPEC-WEB-005
  */
-function StoreTagSelectionEditor({
+export function StoreTagSelectionEditor({
   agentName,
   tagFilters,
   onChange,

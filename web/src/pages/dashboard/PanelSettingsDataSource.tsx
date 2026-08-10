@@ -35,7 +35,7 @@ import {
   type StoreEntry,
 } from '@/pages/agents/storeEntrySort';
 import { StoreEntryTable } from '@/pages/agents/StoreEntryTable';
-import { useStoreKeysWithTags } from '@/services/api/store';
+import { useStoreKeysWithTags, type StoreKeyObject } from '@/services/api/store';
 import type { PanelConfig } from '@/stores/uiStore';
 
 import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
@@ -46,7 +46,8 @@ import {
   type StoreSeriesRef,
   type StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
-import { StoreSourceSection } from './ChartPanelSections';
+import { makeTagFilterId, matchesTagFilters } from './panels/charts/storeSourceFilter';
+import { StoreSourceSection, StoreTagSelectionEditor } from './ChartPanelSections';
 import {
   loadPanelStoreTablePrefs,
   savePanelStoreTablePrefs,
@@ -76,11 +77,6 @@ export function PanelSettingsDataSource({
     (panel.config?.data_source as string | undefined) === 'store' ? 'store' : 'channel';
   const [mode, setMode] = useState<'channel' | 'store' | 'tsdb'>(initialMode);
 
-  // 시리즈 선택 방식(keys/tag). 체크박스 선택 테이블은 keys 모드에서만 노출한다
-  // (tag 모드는 tag_filters 동적 바인딩이 단일 선택 수단). @spec SPEC-PANEL-SETTINGS-001
-  const selectionMode =
-    ((panel.config?.store_source as StoreSourceConfig | undefined)?.selection_mode ?? 'keys');
-
   return (
     <div className="space-y-3" data-testid="panel-datasource">
       {/* 단일 데이터소스 토글 + 채널/Store 편집기 + TSDB placeholder(모두 StoreSourceSection 소유). */}
@@ -89,8 +85,10 @@ export function PanelSettingsDataSource({
         onConfigChange={onConfigChange}
         onModeChange={setMode}
       />
-      {/* 공용 StoreEntryTable 선택 surface — Store + keys 모드에서만 노출(체크박스 → series). */}
-      {mode === 'store' && selectionMode === 'keys' && (
+      {/* 공용 StoreEntryTable 선택 surface — Store 모드에서 항상 노출(목록이 사라지지 않도록).
+          목록 헤더에 전용 AND 태그 피커가 있어, 태그 필터가 있으면 매칭 행을 read-only
+          미리보기로(selection_mode:'tag'), 없으면 체크박스로 series 를 직접 고른다. */}
+      {mode === 'store' && (
         <PanelStoreSelectTable panel={panel} onConfigChange={onConfigChange} />
       )}
     </div>
@@ -104,8 +102,27 @@ function pickColumn(id: StoreColumnId): StoreColumn {
   return col;
 }
 
-/** 패널 설정 컨텍스트에서 노출하는 표시가능(hideable) 메타데이터 컬럼(정렬/필터 대상). */
-const PANEL_FILTER_COLUMNS: readonly FilterColumnId[] = ['key', 'metric', 'tags'];
+/**
+ * 패널 설정 컨텍스트에서 노출하는 표시가능(hideable) 메타데이터 컬럼(정렬/필터 대상).
+ * tags 컬럼은 필터 대상에서 제외한다 — 태그 필터는 목록 헤더의 전용 AND 태그 피커가
+ * 담당하므로(OR 컬럼 필터와의 의미 충돌 방지), 여기서는 key/metric 만 필터한다.
+ */
+const PANEL_FILTER_COLUMNS: readonly FilterColumnId[] = ['key', 'metric'];
+
+/**
+ * StoreKeyObject → StoreEntry(메타데이터 파생). 라이브 값(value/updated)은 없다.
+ * data_type 은 series 항목 구성(StoreKeySelector 와 byte-호환)에 필요하므로 포함한다.
+ */
+function toStoreEntry(o: StoreKeyObject): StoreEntry {
+  return {
+    key: o.key,
+    storage_key: o.key,
+    metric_type: o.metric_type,
+    tags: o.tags,
+    data_type: o.data_type,
+    registration: o.registration,
+  };
+}
 
 /**
  * 공용 StoreEntryTable 을 소비하는 패널 설정 전용 선택 테이블.
@@ -134,17 +151,8 @@ function PanelStoreSelectTable({
   const keyObjects = useMemo(() => keysData?.keyObjects ?? [], [keysData?.keyObjects]);
 
   // keyObjects(메타데이터) → StoreEntry 파생. 라이브 값(value/namespace/updated)은 없다.
-  // data_type 은 series 항목 구성(StoreKeySelector 와 byte-호환)에 필요하므로 포함한다.
   const allEntries: StoreEntry[] = useMemo(
-    () =>
-      keyObjects.map((o) => ({
-        key: o.key,
-        storage_key: o.key,
-        metric_type: o.metric_type,
-        tags: o.tags,
-        data_type: o.data_type,
-        registration: o.registration,
-      })),
+    () => keyObjects.map(toStoreEntry),
     [keyObjects],
   );
 
@@ -182,9 +190,11 @@ function PanelStoreSelectTable({
   );
 
   // 관련(표시가능) 컬럼: key, metric, (tags 있을 때) tags.
+  // tags 컬럼은 표시/숨김만 — 필터(filterColumn)는 제거해 목록 헤더의 전용 AND 태그
+  // 피커가 유일한 태그 컨트롤이 되도록 한다(OR 컬럼 필터와의 의미 충돌 방지).
   const relevantCols = useMemo(() => {
     const base = [pickColumn('key'), pickColumn('metric')];
-    if (showTags) base.push(pickColumn('tags'));
+    if (showTags) base.push({ ...pickColumn('tags'), filterColumn: undefined });
     return base;
   }, [showTags]);
 
@@ -195,11 +205,29 @@ function PanelStoreSelectTable({
     return [...visible, alias];
   }, [relevantCols, hidden]);
 
-  // 필터 → 정렬 파이프라인(공용 순수 함수 재사용).
+  // --- 태그 자동 바인딩(tag 모드) ---
+  // 목록 헤더의 전용 AND 태그 피커가 tag_filters(Record<string,string>)를 구성한다.
+  // tag_filters 가 하나라도 있으면 tag 모드로 함축되어(별도 토글 없음), 매칭 행을
+  // read-only 미리보기로 보여준다. @spec SPEC-PANEL-SETTINGS-001 (태그 인 헤더)
+  const tagFilters = useMemo(
+    () => storeSource?.tag_filters ?? {},
+    [storeSource?.tag_filters],
+  );
+  const tagFilterSet = useMemo(
+    () => new Set(Object.entries(tagFilters).map(([k, v]) => makeTagFilterId(k, v))),
+    [tagFilters],
+  );
+  const isTagMode = tagFilterSet.size > 0;
+
+  // 필터 → 정렬 파이프라인.
+  // tag 모드: AND 매처(storeSourceFilter.matchesTagFilters)로 매칭 행만 — 공용 OR 컬럼
+  // 필터는 우회한다(미리보기 = 실제 바인딩 집합 일치). keys 모드: 기존 컬럼 필터 파이프라인.
   const entries = useMemo(() => {
-    const filtered = applyColumnFilters(allEntries, prefs.filters, filterCtx);
-    return sortEntries(filtered, prefs.sort, { staticKeyNames: new Set<string>() });
-  }, [allEntries, prefs.filters, prefs.sort, filterCtx]);
+    const base = isTagMode
+      ? keyObjects.filter((o) => matchesTagFilters(o, tagFilterSet)).map(toStoreEntry)
+      : applyColumnFilters(allEntries, prefs.filters, filterCtx);
+    return sortEntries(base, prefs.sort, { staticKeyNames: new Set<string>() });
+  }, [isTagMode, keyObjects, tagFilterSet, allEntries, prefs.filters, prefs.sort, filterCtx]);
 
   const uniqueValuesByColumn = useMemo(() => {
     const map = new Map<FilterColumnId, string[]>();
@@ -290,6 +318,23 @@ function PanelStoreSelectTable({
     [series, seriesIds, storeSource, onConfigChange],
   );
 
+  // 목록 헤더의 전용 태그 피커 변경 → tag_filters + selection_mode 함축 갱신.
+  // 태그 값 형태는 구 StoreTagSelectionEditor 와 byte-호환(Record<string,string>, AND).
+  // 태그가 하나라도 있으면 tag 모드, 모두 지우면 keys 모드로 복귀(series 는 보존).
+  const handleTagFiltersChange = useCallback(
+    (nextTagFilters: Record<string, string>) => {
+      const hasTags = Object.keys(nextTagFilters).length > 0;
+      onConfigChange({
+        store_source: {
+          ...(storeSource ?? {}),
+          tag_filters: hasTags ? nextTagFilters : undefined,
+          selection_mode: hasTags ? 'tag' : 'keys',
+        },
+      });
+    },
+    [storeSource, onConfigChange],
+  );
+
   // ColumnSettingsMenu 는 visible 집합을 기대한다(hidden 의 여집합).
   const visibleColumnSet = useMemo(() => {
     const s = new Set<StoreColumnId>();
@@ -310,6 +355,16 @@ function PanelStoreSelectTable({
           t={t}
         />
       </div>
+
+      {/* 목록 헤더의 전용 AND 태그 피커(태그 인 헤더). 태그 선택 시 tag_filters 동적 바인딩
+          (selection_mode:'tag'), 모두 지우면 keys 모드로 복귀한다. 에이전트 없으면 미노출. */}
+      {hasAgent && (
+        <StoreTagSelectionEditor
+          agentName={agentName}
+          tagFilters={tagFilters}
+          onChange={handleTagFiltersChange}
+        />
+      )}
 
       {overLimitNotice && (
         <p
@@ -353,8 +408,10 @@ function PanelStoreSelectTable({
             readOnly: true,
           }}
           selection={{
-            isSelected: (e) => seriesIds.has(entryToSeriesId(e)),
-            onToggle: handleToggleSelection,
+            // tag 모드: 모든 행이 바인딩 집합(read-only) → 체크 표시 + 토글 무동작.
+            // keys 모드: series 기준 선택 + 체크박스로 명시적 series 편집.
+            isSelected: isTagMode ? () => true : (e) => seriesIds.has(entryToSeriesId(e)),
+            onToggle: isTagMode ? NOOP : handleToggleSelection,
           }}
           renderCellExtra={(col, entry) =>
             col === 'alias' ? (
