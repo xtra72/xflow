@@ -55,7 +55,6 @@ import {
   type YAxisMode,
   type YAxisDataType,
   type YEnumLabel,
-  type StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
 // SPEC-HEATMAP-PANEL-001: 히트맵 설정 섹션(store 태그 + 센서 좌표 + 상하한 + 색상표 + IDW).
 import {
@@ -66,7 +65,6 @@ import {
   type ContourConfig,
   type LegendConfig,
 } from './panels/heatmap/heatmapConfig';
-import { useStoreChartData } from './panels/charts/useStoreChartData';
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
@@ -1407,42 +1405,9 @@ function HeatmapSettingsSection({
   const config = panel.config ?? {};
   const cfg = parseHeatmapConfig(config);
 
-  // 라이브 시리즈 조회(미배치 센서 노출용) — 패널과 동일한 store 폴링을 재사용한다.
-  const storeSource = config.store_source as StoreSourceConfig | undefined;
-  const storeTagActive =
-    storeSource?.selection_mode === 'tag' &&
-    Object.keys(storeSource.tag_filters ?? {}).length > 0;
-  const isStore =
-    config.data_source === 'store' &&
-    ((storeSource?.series?.length ?? 0) > 0 || storeTagActive);
-  const storeResult = useStoreChartData(isStore ? storeSource : undefined, isStore);
-
-  // 좌표 편집은 raw config 를 직접 읽어 부분 입력(한 축만 입력)을 잃지 않는다.
-  // `?? {}` 가 매 렌더 새 객체를 만들지 않도록 useMemo 로 안정화한다.
-  const rawPositions = useMemo(
-    () =>
-      (config.sensor_positions as Record<string, { x?: number; y?: number }> | undefined) ?? {},
-    [config.sensor_positions],
-  );
-  // 시리즈 리스트(라이브 시리즈)만 좌표 편집 대상으로 나열한다. 리스트에 없는 잔존
-  // 좌표(sensor_positions 에만 남은 키)는 표시하지 않는다(사용자 요청). 리스트에 있으나
-  // 좌표가 없는 시리즈는 그대로 노출되어 배치 가능(미배치 안내 AC-E2 유지). 잔존 좌표
-  // config 항목은 삭제하지 않고 화면에만 숨긴다. 히트맵 렌더도 seriesNames 로 제한된다
-  // (joinSensorPoints)므로 이 목록이 렌더와 일치한다. dedup 은 Set 으로 방어한다.
-  const sensorNames = useMemo(
-    () => Array.from(new Set<string>(storeResult.seriesNames)),
-    [storeResult.seriesNames],
-  );
-
-  const setPosition = (name: string, axis: 'x' | 'y', value: number | undefined) => {
-    const next: Record<string, { x?: number; y?: number }> = { ...rawPositions };
-    const cur = { ...(next[name] ?? {}) };
-    if (value === undefined) delete cur[axis];
-    else cur[axis] = value;
-    if (cur.x === undefined && cur.y === undefined) delete next[name];
-    else next[name] = cur;
-    onConfigChange({ sensor_positions: next });
-  };
+  // 센서 좌표(sensor_positions x/y) 편집은 데이터 소스의 선택된 시리즈 영역으로 이동했다
+  // (PanelStoreSelectTable + 프리뷰 마커 드래그). 여기(패널 옵션)에서는 시각 옵션만 편집한다.
+  // @spec SPEC-PANEL-SETTINGS-001 (heatmap 시리즈 위치)
 
   // value_bounds — 두 입력 모두 비면 undefined(자동)로 되돌린다.
   const rawBounds = config.value_bounds as { min?: number; max?: number } | undefined;
@@ -1556,78 +1521,14 @@ function HeatmapSettingsSection({
       .filter((n) => Number.isFinite(n));
     return nums.length > 0 ? nums : undefined;
   };
-  // 미배치 센서 수(라이브 시리즈 중 좌표 없는 것) — 편집 안내용.
-  const unplacedCount = storeResult.seriesNames.filter((n) => {
-    const p = rawPositions[n];
-    return !(p !== undefined && Number.isFinite(p.x) && Number.isFinite(p.y));
-  }).length;
 
   const inputCls =
     'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
 
   return (
     <div className="space-y-4">
-      {/* 센서 좌표(0..1). 라이브 시리즈별 x/y 입력 + 미배치 안내(AC-E2).
-          데이터 소스(store 태그/에이전트)는 좌측 프리뷰 아래 공용 StoreSourceSection 으로 이동했다. */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          {t('dashboard.settings.heatmapSensorPositions')}
-        </label>
-        {sensorNames.length === 0 ? (
-          <p className="text-[11px] text-(--color-text-muted)">
-            {t('dashboard.settings.heatmapNoSensors')}
-          </p>
-        ) : (
-          <div className="space-y-1.5">
-            {sensorNames.map((name) => {
-              const pos = rawPositions[name];
-              const placed =
-                pos !== undefined &&
-                Number.isFinite(pos.x) &&
-                Number.isFinite(pos.y);
-              return (
-                <div key={name} className="flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      'min-w-0 flex-1 truncate text-xs',
-                      placed ? 'text-(--color-text-secondary)' : 'text-amber-600 dark:text-amber-400',
-                    )}
-                    title={placed ? name : t('dashboard.settings.heatmapUnplacedTitle')}
-                  >
-                    {name}
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={pos?.x !== undefined ? String(pos.x) : ''}
-                    data-testid={`heatmap-pos-x-${name}`}
-                    placeholder="x"
-                    onChange={(e) =>
-                      setPosition(name, 'x', e.target.value === '' ? undefined : Number(e.target.value))
-                    }
-                    className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={pos?.y !== undefined ? String(pos.y) : ''}
-                    data-testid={`heatmap-pos-y-${name}`}
-                    placeholder="y"
-                    onChange={(e) =>
-                      setPosition(name, 'y', e.target.value === '' ? undefined : Number(e.target.value))
-                    }
-                    className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {/* 센서 좌표(sensor_positions) 편집은 데이터 소스의 선택된 시리즈 영역 + 프리뷰 마커
+          드래그로 이동했다(패널 옵션에서 제거). 여기서는 시각 옵션만 편집한다. */}
 
       {/* 3) 표시 상하한(value_bounds). 비우면 자동(센서값 범위). */}
       <div>
@@ -1871,11 +1772,6 @@ function HeatmapSettingsSection({
         </label>
         <p className="mb-1.5 text-[11px] text-(--color-text-muted)">
           {t('dashboard.settings.heatmapEditHint')}
-          {unplacedCount > 0 && (
-            <span className="ml-1 text-amber-600 dark:text-amber-400">
-              {t('dashboard.settings.heatmapUnplacedCount').replace('{count}', String(unplacedCount))}
-            </span>
-          )}
         </p>
         <div className="grid grid-cols-2 gap-2">
           <div>

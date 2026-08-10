@@ -346,6 +346,27 @@ describe('HeatmapPanel', () => {
     expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
   });
 
+  it('forcePlacement: 라이브 값이 없어도 좌표만 있는 시리즈는 배치 마커를 렌더한다', () => {
+    // 방금 선택된 시리즈: 좌표(중앙)만 있고 라이브 판독값은 아직 없음(seriesEntries 비어 있음).
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map(), // 라이브 값 없음
+      status: 'connected',
+    });
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    // placed 는 cfg.sensor_positions 에서 직접 파생되므로 값 없이도 드래그 마커가 뜬다.
+    expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
+    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+  });
+
   it('forcePlacement: 드래그 이동이 sensor_positions 를 갱신한다', () => {
     const onConfigChange = vi.fn();
     setStore({

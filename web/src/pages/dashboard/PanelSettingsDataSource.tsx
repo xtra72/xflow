@@ -305,14 +305,18 @@ function PanelStoreSelectTable({
         const next = series.filter(
           (s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}) !== id,
         );
-        const patch: Record<string, unknown> = {
-          store_source: { ...(storeSource ?? {}), series: next },
-        };
-        // 히트맵: 선택 해제 시 해당 센서 좌표 항목을 제거한다(있을 때만).
-        if (isHeatmap && sensorPositions[key] !== undefined) {
-          const nextPositions = { ...sensorPositions };
-          delete nextPositions[key];
-          patch.sensor_positions = nextPositions;
+        const nextStore: Record<string, unknown> = { ...(storeSource ?? {}), series: next };
+        const patch: Record<string, unknown> = { store_source: nextStore };
+        // 히트맵: 체크박스 선택은 keys 모드를 강제한다(태그 기본값이 series 렌더를 가리지
+        // 않도록 selection_mode:'keys' + tag_filters 해제). 선택 해제 시 좌표 항목도 제거한다.
+        if (isHeatmap) {
+          nextStore.selection_mode = 'keys';
+          nextStore.tag_filters = undefined;
+          if (sensorPositions[key] !== undefined) {
+            const nextPositions = { ...sensorPositions };
+            delete nextPositions[key];
+            patch.sensor_positions = nextPositions;
+          }
         }
         onConfigChange(patch);
         return;
@@ -335,16 +339,39 @@ function PanelStoreSelectTable({
         alias: key,
         color: pickSeriesColor(series.length),
       };
-      const patch: Record<string, unknown> = {
-        store_source: { ...(storeSource ?? {}), series: [...series, nextEntry] },
+      const nextStore: Record<string, unknown> = {
+        ...(storeSource ?? {}),
+        series: [...series, nextEntry],
       };
-      // 히트맵: 선택 시 좌표가 없으면 중앙(0.5,0.5) 기본 좌표를 부여한다.
-      if (isHeatmap && sensorPositions[key] === undefined) {
-        patch.sensor_positions = { ...sensorPositions, [key]: { x: 0.5, y: 0.5 } };
+      const patch: Record<string, unknown> = { store_source: nextStore };
+      // 히트맵: 체크박스 선택은 keys 모드를 강제한다(selection_mode:'keys' + tag_filters 해제)
+      // → useStoreChartData 가 태그 매칭 대신 선택된 series 만 렌더한다. 좌표가 없으면
+      // 중앙(0.5,0.5) 기본 좌표를 부여한다.
+      if (isHeatmap) {
+        nextStore.selection_mode = 'keys';
+        nextStore.tag_filters = undefined;
+        if (sensorPositions[key] === undefined) {
+          patch.sensor_positions = { ...sensorPositions, [key]: { x: 0.5, y: 0.5 } };
+        }
       }
       onConfigChange(patch);
     },
     [series, seriesIds, storeSource, onConfigChange, isHeatmap, sensorPositions],
+  );
+
+  // 히트맵 전용: 선택된 시리즈의 센서 좌표(x/y, 0..1)를 데이터 소스에서 직접 편집한다.
+  // 한 축만 입력해도 잃지 않도록 부분 병합하고, 둘 다 비면 해당 좌표 항목을 제거한다.
+  const setSensorPosition = useCallback(
+    (key: string, axis: 'x' | 'y', value: number | undefined) => {
+      const cur = { ...((sensorPositions[key] as { x?: number; y?: number } | undefined) ?? {}) };
+      if (value === undefined) delete cur[axis];
+      else cur[axis] = value;
+      const next: Record<string, { x?: number; y?: number }> = { ...sensorPositions };
+      if (cur.x === undefined && cur.y === undefined) delete next[key];
+      else next[key] = cur;
+      onConfigChange({ sensor_positions: next });
+    },
+    [sensorPositions, onConfigChange],
   );
 
   // 목록 헤더의 전용 태그 피커 변경 → tag_filters + selection_mode 함축 갱신.
@@ -454,6 +481,64 @@ function PanelStoreSelectTable({
             ),
           }}
         />
+      )}
+
+      {/* 히트맵 전용: 선택된 시리즈별 센서 좌표(x/y, 0..1) 편집. 위치는 데이터 소스의
+          선택된 소스에 함께 산다(패널 옵션에서 이동). 프리뷰 마커 드래그와 동일한
+          sensor_positions 를 편집한다. @spec SPEC-PANEL-SETTINGS-001 (heatmap 시리즈 위치) */}
+      {isHeatmap && series.length > 0 && (
+        <div className="space-y-1.5" data-testid="panel-store-positions">
+          <label className="block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.heatmapSensorPositions')}
+          </label>
+          {series.map((s) => {
+            const key = s.key;
+            const pos = sensorPositions[key] as { x?: number; y?: number } | undefined;
+            const placed =
+              pos !== undefined && Number.isFinite(pos.x) && Number.isFinite(pos.y);
+            return (
+              <div key={key} className="flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    'min-w-0 flex-1 truncate text-xs',
+                    placed
+                      ? 'text-(--color-text-secondary)'
+                      : 'text-amber-600 dark:text-amber-400',
+                  )}
+                  title={placed ? key : t('dashboard.settings.heatmapUnplacedTitle')}
+                >
+                  {s.alias || key}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={pos?.x !== undefined ? String(pos.x) : ''}
+                  data-testid={`heatmap-pos-x-${key}`}
+                  placeholder="x"
+                  onChange={(e) =>
+                    setSensorPosition(key, 'x', e.target.value === '' ? undefined : Number(e.target.value))
+                  }
+                  className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                />
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={pos?.y !== undefined ? String(pos.y) : ''}
+                  data-testid={`heatmap-pos-y-${key}`}
+                  placeholder="y"
+                  onChange={(e) =>
+                    setSensorPosition(key, 'y', e.target.value === '' ? undefined : Number(e.target.value))
+                  }
+                  className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                />
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

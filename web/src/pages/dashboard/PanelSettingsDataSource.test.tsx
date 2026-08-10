@@ -375,4 +375,41 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
     expect(arg.sensor_positions).toBeUndefined();
     expect(arg.store_source).toBeDefined();
   });
+
+  it('heatmap: 체크박스 선택은 keys 모드를 강제한다(selection_mode:keys + tag_filters 해제)', () => {
+    const onConfigChange = vi.fn();
+    // 히트맵 기본은 tag 모드지만, 체크박스 선택은 keys 모드로 강제되어 선택 series 만 렌더된다.
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
+    const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
+    fireEvent.click(checkboxes[0]!);
+    const arg = onConfigChange.mock.calls[0]![0] as { store_source: Record<string, unknown> };
+    expect(arg.store_source.selection_mode).toBe('keys');
+    expect(arg.store_source.tag_filters).toBeUndefined();
+  });
+
+  it('heatmap: 데이터 소스의 선택된 시리즈에서 x 좌표를 편집하면 sensor_positions 에 반영된다', () => {
+    const onConfigChange = vi.fn();
+    const panel = {
+      id: 'p1',
+      type: 'heatmap',
+      title: 'h',
+      config: {
+        data_source: 'store',
+        store_source: {
+          ...STORE_SOURCE,
+          selection_mode: 'keys',
+          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+        },
+        sensor_positions: { k1: { x: 0.5, y: 0.5 } },
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    // 데이터 소스에 선택 시리즈별 x/y 입력이 노출된다(패널 옵션에서 이동).
+    const xInput = screen.getByTestId('heatmap-pos-x-k1') as HTMLInputElement;
+    expect(xInput).toBeInTheDocument();
+    fireEvent.change(xInput, { target: { value: '0.25' } });
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ sensor_positions: { k1: { x: 0.25, y: 0.5 } } }),
+    );
+  });
 });
