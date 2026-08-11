@@ -153,7 +153,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   split: {
     description: '배열 페이로드를 요소별 N개 메시지로 분리합니다. path 로 지정한 배열을 꺼내 각 요소마다 한 개의 메시지로 팬아웃합니다.',
-    inputDesc: '배열을 담은 메시지. path(페이로드 키 또는 $.-JSONPath)로 배열 위치를 지정합니다.',
+    inputDesc: '배열을 담은 메시지. path(top-level 페이로드 키 또는 메시지 루트 $.-JSONPath)로 배열 위치를 지정합니다.',
     outputDesc: '배열 요소마다 1개씩 생성된 메시지(N개). 입력 배열 순서가 보존되며, correlation id 는 <부모ID>#<인덱스> 로 부여됩니다.',
     configSchema: {
       fields: [
@@ -163,8 +163,8 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           label: '배열 경로',
           required: true,
           description:
-            '분리할 배열의 위치. 평면 top-level 페이로드 키(예: items) 또는 $. 접두 JSONPath(예: $.items[*], $.data.rows)를 사용합니다. 이 경로가 배열로 해석되어야 하며, 각 요소가 개별 메시지로 팬아웃됩니다.',
-          placeholder: '$.items[*]',
+            '분리할 배열의 위치. $. 접두 JSONPath 는 메시지 전체를 루트로 해석합니다(다른 노드와 동일) — 예: $.payload.items[*], $.payload.data.rows, $.metadata.x. 평면 키(예: items)는 top-level 페이로드 키 단축입니다(= msg.payload.items). 이 경로가 배열로 해석되어야 하며, 각 요소가 개별 메시지로 팬아웃됩니다.',
+          placeholder: '$.payload.items[*]',
         },
         {
           name: 'mode',

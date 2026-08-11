@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -85,7 +84,7 @@ var (
 type SplitNode struct {
 	*BaseNode
 
-	path          string // "items" 또는 "$.items[*]"
+	path          string // "items"(payload 단축) 또는 "$.payload.items[*]"(메시지 루트)
 	isJSONPath    bool   // path 가 "$." 로 시작하는지
 	mode          string // auto | payloads | messages
 	shareMetadata bool   // split 메시지에 부모 메타 공유 여부
@@ -104,8 +103,9 @@ var _ Node = (*SplitNode)(nil)
 // NewSplitNode 는 NodeDef 와 옵션으로부터 split 노드를 생성한다.
 //
 // config 키:
-//   - path (string, required): 배열 위치. 평면 top-level 키("items", Payload().Get)
-//     또는 "$." 접두 JSONPath("$.items[*]", Payload().GetPath).
+//   - path (string, required): 배열 위치(메시지 루트). 평면 top-level payload
+//     키 단축("items" = msg.payload.items, Payload().Get) 또는 "$." 접두 메시지
+//     루트 JSONPath("$.payload.items[*]" = msg.payload.items, messageToMap 리졸버).
 //   - mode (enum, optional, default "auto"): auto | payloads | messages.
 //   - share_metadata (bool, optional, default true): 부모 메타 공유 여부.
 //   - scalar_key (string, optional, default "value"): 비객체 요소 래핑 키.
@@ -278,21 +278,25 @@ func (n *SplitNode) Process(_ context.Context, msg message.Message) ([]message.M
 
 	// (4) 요소별 팬아웃
 	results := make([]message.Message, 0, len(arr))
-	for i, elem := range arr {
+	for _, elem := range arr {
 		out := n.buildSplitMessage(msg, elem)
-		// correlation id (REQ-17, SHOULD): <parentID>#<index>
-		out.Metadata().Set(message.MetaKeyCorrelationID, msg.ID()+"#"+strconv.Itoa(i))
 		results = append(results, out)
 	}
 	return results, nil
 }
 
-// extractArray 는 path 에서 배열을 추출한다. "$." 접두면 GetPath, 아니면 Get 을
-// 사용하고, 결과를 []any 로 변환한다. 누락/비슬라이스면 (nil, false)를 반환한다.
+// extractArray 는 path 에서 배열을 추출한다. "$." 접두 JSONPath 는 메시지 루트
+// 리졸버(messageToMap → NewPayload → GetPath, mapping.go:111 과 동일 패턴)로
+// 메시지 전체 기준 해석하고("$.payload.items" = msg.payload.items,
+// "$.metadata.x" = msg.metadata.x), 평면(비-"$.") 키는 하위호환 편의로
+// top-level payload 키 단축(Payload().Get)으로 해석한다. 결과를 []any 로
+// 변환하며, 누락/비슬라이스면 (nil, false)를 반환한다.
 func (n *SplitNode) extractArray(msg message.Message) ([]any, bool) {
 	var raw any
 	if n.isJSONPath {
-		v, err := msg.Payload().GetPath(n.path)
+		// 메시지 루트 리졸버: "$." 경로를 payload 가 아닌 메시지 전체에 루팅한다.
+		// 코드베이스 전역 관례(mapping.go/store_write.go/enrich.go)와 일치한다.
+		v, err := message.NewPayload(messageToMap(msg)).GetPath(n.path)
 		if err != nil {
 			return nil, false
 		}

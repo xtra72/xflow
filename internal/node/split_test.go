@@ -230,7 +230,11 @@ func TestSplit_AC8_Registration(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// AC-9 — JSONPath 경로 지정
+// AC-9 — JSONPath 경로 지정 (message-rooted)
+//
+// 변경(0.2.0): "$." 경로는 메시지 루트로 해석되므로 payload 의 items 배열은
+// "$.payload.items[*]"/"$.payload.items" 로 지정한다(구 payload-rooted
+// "$.items[*]" 는 버그였다 — TestSplit_AC13_* 음성 검증 참조).
 // ---------------------------------------------------------------------------
 
 func TestSplit_AC9_JSONPath(t *testing.T) {
@@ -239,7 +243,7 @@ func TestSplit_AC9_JSONPath(t *testing.T) {
 		map[string]any{"b": 2},
 	}}
 
-	for _, path := range []string{"$.items[*]", "$.items"} {
+	for _, path := range []string{"$.payload.items[*]", "$.payload.items"} {
 		input := newSplitInput(payload, "T", time.Now(), nil)
 		n := mustSplitNode(t, map[string]any{"path": path, "mode": "payloads"})
 		res, err := n.Process(context.Background(), input)
@@ -248,6 +252,82 @@ func TestSplit_AC9_JSONPath(t *testing.T) {
 		assert.Equal(t, 1, payloadGet(t, res[0], "a"), "path=%s", path)
 		assert.Equal(t, 2, payloadGet(t, res[1], "b"), "path=%s", path)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// AC-13 — path 는 메시지 루트 (버그 회귀 방지)
+//
+// "$." 경로는 메시지 전체를 루트로 해석한다(payload 아님):
+//   (a) "$.payload.items[*]" = msg.payload.items → 팬아웃
+//   (b) "$.items[*]" (payload-상대) 는 msg.items 를 찾으므로 미해석 → passthrough
+//       (payload-rooted 가 아님을 증명)
+//   (c) "$.metadata.<key>" = msg.metadata.<key> (메시지 루트 일관성)
+// ---------------------------------------------------------------------------
+
+// AC-13(a): "$.payload.items[*]" 가 payload 의 items 배열을 해석하여 팬아웃한다.
+func TestSplit_AC13a_MessageRooted_PayloadItems(t *testing.T) {
+	input := newSplitInput(map[string]any{"items": []any{
+		map[string]any{"a": 1},
+		map[string]any{"b": 2},
+	}}, "T", time.Now(), nil)
+
+	n := mustSplitNode(t, map[string]any{"path": "$.payload.items[*]", "mode": "payloads"})
+	res, err := n.Process(context.Background(), input)
+	require.NoError(t, err)
+	require.Len(t, res, 2, "$.payload.items = msg.payload.items → 2개 팬아웃")
+	assert.Equal(t, 1, payloadGet(t, res[0], "a"))
+	assert.Equal(t, 2, payloadGet(t, res[1], "b"))
+}
+
+// AC-13(b) 음성 검증: payload-상대 "$.items[*]" 는 메시지 루트에서 msg.items 를
+// 찾으므로 배열을 해석하지 못하고 passthrough(입력 1개) 한다. payload-rooted 였다면
+// payload.items 를 찾아 2개로 팬아웃했을 것이다 — 미해석이 message-rooted 를 증명한다.
+func TestSplit_AC13b_MessageRooted_PayloadRelativePathFails(t *testing.T) {
+	input := newSplitInput(map[string]any{"items": []any{
+		map[string]any{"a": 1},
+		map[string]any{"b": 2},
+	}}, "T", time.Now(), nil)
+
+	n := mustSplitNode(t, map[string]any{"path": "$.items[*]", "mode": "payloads"})
+	res, err := n.Process(context.Background(), input)
+	require.NoError(t, err)
+	require.Len(t, res, 1, "$.items 는 msg.items(존재하지 않음) → passthrough")
+	assert.Equal(t, input.ID(), res[0].ID(), "입력 메시지 그대로 반환")
+}
+
+// AC-13(c): "$.metadata.<key>" 는 msg.metadata.<key> 로 해석된다(메시지 루트 일관성).
+// 메타데이터 값 계약은 string 뿐이라 배열을 담을 수 없으므로, payload 와 metadata 에
+// 같은 키를 두고(payload=배열, metadata=문자열) 판별한다:
+//   - "$.payload.shared" → payload 의 배열 해석 → 2개 팬아웃
+//   - "$.metadata.shared" → metadata 의 문자열 해석(배열 아님) → passthrough
+//
+// 두 결과가 다르므로 "$.metadata.X" 가 payload 가 아닌 metadata 서브트리에 도달함을
+// 증명한다.
+func TestSplit_AC13c_MessageRooted_ReachesMetadata(t *testing.T) {
+	makeInput := func() message.Message {
+		m := newSplitInput(map[string]any{"shared": []any{
+			map[string]any{"a": 1},
+			map[string]any{"b": 2},
+		}}, "T", time.Now(), nil)
+		m.Metadata().Set("shared", "meta-val")
+		return m
+	}
+
+	// payload 서브트리: 배열 → 2개 팬아웃
+	inPayload := makeInput()
+	nPayload := mustSplitNode(t, map[string]any{"path": "$.payload.shared[*]", "mode": "payloads"})
+	resPayload, err := nPayload.Process(context.Background(), inPayload)
+	require.NoError(t, err)
+	require.Len(t, resPayload, 2, "$.payload.shared → payload 배열 해석")
+
+	// metadata 서브트리: 문자열 "meta-val"(배열 아님) → passthrough. 이것이
+	// "$.metadata.shared" 가 metadata 에 도달함(payload 배열이 아님)을 증명한다.
+	inMeta := makeInput()
+	nMeta := mustSplitNode(t, map[string]any{"path": "$.metadata.shared", "mode": "payloads"})
+	resMeta, err := nMeta.Process(context.Background(), inMeta)
+	require.NoError(t, err)
+	require.Len(t, resMeta, 1, "$.metadata.shared = msg.metadata.shared(문자열) → passthrough")
+	assert.Equal(t, inMeta.ID(), resMeta[0].ID(), "입력 메시지 그대로 반환")
 }
 
 // ---------------------------------------------------------------------------
@@ -283,31 +363,6 @@ func TestSplit_AC10_TypeTimestampPreserveAndOverride(t *testing.T) {
 // AC-11 — correlation id (SHOULD)
 // ---------------------------------------------------------------------------
 
-func TestSplit_AC11_CorrelationID(t *testing.T) {
-	input := newSplitInput(map[string]any{"items": []any{
-		map[string]any{"a": 1},
-		map[string]any{"a": 2},
-		map[string]any{"a": 3},
-	}}, "T", time.Now(), nil)
-	pid := input.ID()
-
-	n := mustSplitNode(t, map[string]any{"path": "items", "mode": "payloads"})
-	res, err := n.Process(context.Background(), input)
-	require.NoError(t, err)
-	require.Len(t, res, 3)
-
-	for i, m := range res {
-		cid, ok := m.Metadata().Get(message.MetaKeyCorrelationID)
-		require.True(t, ok, "correlation id 존재")
-		assert.Equal(t, pid+"#"+itoa(i), cid)
-	}
-}
-
-// itoa 는 테스트 로컬 정수 → 문자열 변환 헬퍼이다.
-func itoa(i int) string {
-	return []string{"0", "1", "2", "3", "4"}[i]
-}
-
 // ---------------------------------------------------------------------------
 // AC-12 — share_metadata=false
 // ---------------------------------------------------------------------------
@@ -324,9 +379,6 @@ func TestSplit_AC12_ShareMetadataFalse(t *testing.T) {
 
 	_, hasX := res[0].Metadata().Get("x")
 	assert.False(t, hasX, "부모 메타를 복사하지 않아야 한다")
-	// correlation id 는 예외적으로 설정됨
-	_, hasCID := res[0].Metadata().Get(message.MetaKeyCorrelationID)
-	assert.True(t, hasCID)
 }
 
 // ---------------------------------------------------------------------------

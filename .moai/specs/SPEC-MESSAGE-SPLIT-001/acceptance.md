@@ -50,11 +50,19 @@ Given-When-Then 형식. 모든 시나리오는 `internal/node/split_test.go` 의
 - **When** `registry.Types()`/`registry.Create(def)` 로 `Type:"split"` 노드 생성
 - **Then** `"split"` 이 등록 목록에 존재(category `processing`), `Create` 가 `*SplitNode`(Node 구현)를 반환, `TypeMeta("split")` 존재. (근거: `internal/node/registry.go` `registerBuiltins()` 테이블, `registry_test.go` 등록 검증 패턴과 동일.)
 
-## AC-9 — JSONPath 경로 지정
+## AC-9 — JSONPath 경로 지정 (message-rooted)
 
-- **Given** payload `{"items":[{"a":1},{"b":2}]}`, config `path="$.items[*]"`(또는 `$.items`)
+- **Given** payload `{"items":[{"a":1},{"b":2}]}`, config `path="$.payload.items[*]"`(또는 `$.payload.items`)
 - **When** `Process` 호출
-- **Then** 평면 키 `"items"` 와 동일하게 2개 메시지로 팬아웃(JSONPath 해석 경로가 `Payload().GetPath` 를 사용, `pkg/message/path.go`).
+- **Then** 평면 키 `"items"` 와 동일하게 2개 메시지로 팬아웃한다. `$.` 경로는 **메시지 루트**로 해석되어 `$.payload.items` = `msg.payload.items`(메시지 루트 리졸버 `messageToMap`/`resolveTemplateExpr` 사용, `mapping.go:111` 과 동일 패턴).
+
+## AC-13 — path 는 메시지 루트 (버그 회귀 방지)
+
+- **Given** payload `{"items":[{"a":1},{"b":2}]}` 를 담은 메시지
+- **When** config `path="$.payload.items[*]"` 로 `Process` 호출
+- **Then** payload 의 `items` 배열이 해석되어 **2개** 메시지로 팬아웃한다(`$.payload.items` = `msg.payload.items`).
+- **And (음성 검증)** config `path="$.items[*]"`(payload-상대 경로)는 메시지 루트에서 `msg.items` 를 찾으므로 **배열을 해석하지 못하고**, `on_missing=passthrough`(기본)에 따라 입력 1개를 그대로 반환한다(payload-rooted 아님을 증명).
+- **And** `$.metadata.<key>` 형태의 경로는 `msg.metadata.<key>` 로 해석된다(메시지 루트 일관성).
 
 ## AC-10 — 타임스탬프/타입 보존 및 요소 override
 
@@ -62,21 +70,19 @@ Given-When-Then 형식. 모든 시나리오는 `internal/node/split_test.go` 의
 - **When** `Process` 호출
 - **Then** 메시지 1 은 `Type()==T`, `Timestamp()==ts`(부모 보존); 메시지 2 는 `Type()=="U"`(요소 override). payload 내 epoch-ms 값은 재포맷 없이 그대로.
 
-## AC-11 — correlation id (SHOULD)
+## AC-11 — (폐지 / VOID, v0.3.0) correlation id
 
-- **Given** 부모 `ID()==pid`, 배열 3요소
-- **When** `Process` 호출
-- **Then** (권장) 각 메시지 `_correlationID`(`MetaKeyCorrelationID`) == `pid#0`, `pid#1`, `pid#2`. (SHOULD — 미구현 시 다른 인수 기준은 여전히 통과해야 함.)
+correlation-id 기능은 v0.3.0 에서 **제거**되었다(엔진이 노드 홉마다 `msg.Clone()` 으로 새 UUID 발급 → split-input id 는 일시적 내부 clone id → 안정적·가시적 참조 없음, 사용자 결정). 본 AC 는 폐지되며 검증 대상이 아니다. 다른 AC 는 재번호하지 않는다(AC-12/AC-13 번호 유지). 순서 보존(REQ-17)은 AC-1 에서 검증된다.
 
 ## AC-12 — share_metadata=false
 
 - **Given** `mode="payloads"`, `share_metadata=false`, 부모 메타 `{"x":"1"}`
 - **When** `Process` 호출
-- **Then** split 메시지들은 부모 메타를 복사하지 않음(요소 파생 메타만, payloads 모드에서는 비어 있음 / correlation id 제외).
+- **Then** split 메시지들은 부모 메타를 복사하지 않음(요소 파생 메타만, payloads 모드에서는 비어 있음).
 
 ## 완료 정의 (Definition of Done)
 
-- [ ] AC-1 ~ AC-10 전부 통과(AC-11 은 SHOULD, AC-12 포함).
+- [ ] AC-1 ~ AC-10 전부 통과(AC-11 은 폐지/VOID, AC-12·AC-13 포함).
 - [ ] `go test ./internal/node/...` GREEN.
 - [ ] `internal/node/split.go` 커버리지 ≥ 85%.
 - [ ] `golangci-lint run` 클린(신규 파일 0 findings).
