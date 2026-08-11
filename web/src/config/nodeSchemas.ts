@@ -151,6 +151,71 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
 
+  split: {
+    description: '배열 페이로드를 요소별 N개 메시지로 분리합니다. path 로 지정한 배열을 꺼내 각 요소마다 한 개의 메시지로 팬아웃합니다.',
+    inputDesc: '배열을 담은 메시지. path(페이로드 키 또는 $.-JSONPath)로 배열 위치를 지정합니다.',
+    outputDesc: '배열 요소마다 1개씩 생성된 메시지(N개). 입력 배열 순서가 보존되며, correlation id 는 <부모ID>#<인덱스> 로 부여됩니다.',
+    configSchema: {
+      fields: [
+        {
+          name: 'path',
+          type: 'string',
+          label: '배열 경로',
+          required: true,
+          description:
+            '분리할 배열의 위치. 평면 top-level 페이로드 키(예: items) 또는 $. 접두 JSONPath(예: $.items[*], $.data.rows)를 사용합니다. 이 경로가 배열로 해석되어야 하며, 각 요소가 개별 메시지로 팬아웃됩니다.',
+          placeholder: '$.items[*]',
+        },
+        {
+          name: 'mode',
+          type: 'select',
+          label: '분리 모드',
+          options: ['auto', 'payloads', 'messages'],
+          default: 'auto',
+          description:
+            'auto: 요소별 자동 감지(metadata/payload 키를 가진 map 이면 messages, 아니면 payloads). payloads: 각 요소를 새 메시지의 payload 로 취급하고 부모 메타를 공유합니다. messages: 각 요소를 완전한 메시지 객체({metadata, payload, type?, timestamp?})로 재구성하고 부모 메타에 요소 메타를 병합(요소 우선)합니다.',
+        },
+        {
+          name: 'share_metadata',
+          type: 'boolean',
+          label: '부모 메타데이터 공유',
+          default: true,
+          description: '분리된 각 메시지에 부모 메시지의 메타데이터를 공유합니다.',
+        },
+        {
+          name: 'on_missing',
+          type: 'select',
+          label: '경로 누락/비배열 시',
+          options: ['passthrough', 'error'],
+          default: 'passthrough',
+          description: 'passthrough: path 가 없거나 배열이 아니면 입력 메시지를 그대로 통과. error: 노드 에러를 반환합니다.',
+          advanced: true,
+        },
+        {
+          name: 'on_empty',
+          type: 'select',
+          label: '빈 배열 시',
+          options: ['emit_none', 'passthrough'],
+          default: 'emit_none',
+          description: 'emit_none: 빈 배열이면 0개 메시지를 방출(드랍). passthrough: 입력 메시지를 그대로 통과합니다.',
+          advanced: true,
+        },
+        {
+          name: 'scalar_key',
+          type: 'string',
+          label: '스칼라 래핑 키',
+          default: 'value',
+          description: 'payloads 모드에서 비객체(스칼라) 요소를 payload 로 감쌀 때 사용할 키. 예: 요소 42 는 { value: 42 } 로 래핑됩니다.',
+          advanced: true,
+        },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   transform: {
     description: '메시지 데이터를 변환합니다. select/merge/exclude 파이프라인으로 payload와 metadata를 재구성합니다.',
     inputDesc: '모든 메시지. 파이프라인에서 $.payload.*, $.metadata.* 경로로 참조',

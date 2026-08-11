@@ -152,6 +152,7 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   aggregate: Sigma,
   deduplicate: CopyMinus,
   filter: Filter,
+  split: Split,
   script: Code,
   framer: Layers,
   enrich: Sparkles,

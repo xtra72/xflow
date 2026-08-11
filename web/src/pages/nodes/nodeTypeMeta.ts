@@ -127,6 +127,87 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  split: {
+    description:
+      '배열 페이로드를 요소별 N개 메시지로 분리하는 노드입니다. path 로 지정한 배열을 꺼내 각 요소마다 한 개의 메시지로 팬아웃합니다. 요소가 metadata/payload 키를 가진 객체이면 완전한 메시지로 재구성(messages)하고, 그 외에는 payload 로 취급(payloads)합니다. mode=auto 는 요소별로 자동 감지합니다. 입력 배열 순서는 출력에서 보존됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '배열을 담은 메시지 입력. path 로 배열 위치를 지정합니다.' },
+      { name: 'out', direction: 'output', description: '배열 요소마다 1개씩 생성된 메시지(N개) 출력. correlation id 는 <부모ID>#<인덱스>.' },
+    ],
+    configFields: [
+      {
+        name: 'path',
+        type: 'string',
+        required: true,
+        description: '분리할 배열의 위치. 평면 top-level 페이로드 키(예: items) 또는 $. 접두 JSONPath(예: $.items[*]).',
+      },
+      {
+        name: 'mode',
+        type: 'string',
+        required: false,
+        description: 'auto: 요소별 자동 감지 / payloads: 요소=payload(부모 메타 공유) / messages: 요소=완전한 메시지(부모 메타에 요소 메타 병합).',
+        default: 'auto',
+      },
+      {
+        name: 'share_metadata',
+        type: 'boolean',
+        required: false,
+        description: '분리된 각 메시지에 부모 메타데이터를 공유합니다.',
+        default: 'true',
+      },
+      {
+        name: 'on_missing',
+        type: 'string',
+        required: false,
+        description: 'path 누락/비배열 시: passthrough(입력 그대로 통과) 또는 error(노드 에러).',
+        default: 'passthrough',
+      },
+      {
+        name: 'on_empty',
+        type: 'string',
+        required: false,
+        description: '빈 배열 시: emit_none(0개 방출) 또는 passthrough(입력 그대로 통과).',
+        default: 'emit_none',
+      },
+      {
+        name: 'scalar_key',
+        type: 'string',
+        required: false,
+        description: 'payloads 모드에서 비객체(스칼라) 요소를 감쌀 payload 키.',
+        default: 'value',
+      },
+    ],
+    configExample: {
+      path: '$.items[*]',
+      mode: 'auto',
+      share_metadata: true,
+      on_missing: 'passthrough',
+      on_empty: 'emit_none',
+      scalar_key: 'value',
+    },
+    inputExamples: {
+      'payloads 모드 · 스칼라 배열': {
+        _comment: 'path=$.readings 배열의 각 요소가 scalar_key(value)로 래핑되어 3개 메시지로 분리',
+        payload: { readings: [21.5, 22.0, 22.4] },
+      },
+      'messages 모드 · 객체 배열': {
+        _comment: 'path=$.events 각 요소가 완전한 메시지({metadata, payload})로 재구성',
+        payload: {
+          events: [
+            { metadata: { device_id: 'd1' }, payload: { temp: 25 } },
+            { metadata: { device_id: 'd2' }, payload: { temp: 26 } },
+          ],
+        },
+      },
+    },
+    outputExamples: {
+      'out (payloads 모드 첫 번째 요소)': {
+        _comment: '스칼라 요소가 scalar_key 로 래핑되고 부모 메타 공유',
+        payload: { value: 21.5 },
+      },
+    },
+  },
+
   enrich: {
     description:
       'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화하는 노드입니다. agent 와 device 는 독립 블록으로, 둘 다(또는 하나만) 동시에 보강할 수 있습니다. 각 블록은 id_source 로 얻은 id 를 레지스트리에서 조회하여 type/name 을 얻고, to_metadata 로 해당 메타데이터 그룹을 재수화하거나 to_payload 로 {type,id,name} 객체를 payload 키에 기록합니다. 한 블록은 to_metadata=true 또는 to_payload 값이 있어야 활성화되며, 최소 한 블록이 활성이어야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 그 블록만 원본 그대로 통과합니다(에러 아님, no-op). id 는 소스 값을 항상 보존합니다.',
