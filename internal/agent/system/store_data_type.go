@@ -28,6 +28,15 @@ const MetricTypeUnknown = "unknown"
 // yaml 의 `data_type` 필드와 매핑되며, manual 모드에서는 명시 필수, auto 모드에서는 추론된다.
 type DataType string
 
+// DataTypeAuto 는 store-write config 의 data_type sentinel 이다. 6종 enum 이 아니라
+// "쓰기 값의 Go 타입에서 구체 타입을 추론해 키를 고정하라"는 지시이다.
+// 단일 store-write 노드가 측정별로 서로 다른 값 타입(boolean/int/float 등)을 저장할 때,
+// 고정 리터럴 data_type 은 한 타입만 담을 수 있어 타입 불일치를 유발한다. "auto" 는
+// SetWithMeta 시점에 inferDataType 로 값 타입을 추론해 키별로 올바른 타입을 고정한다.
+// key_template 이 측정별로 다른 키를 만들면 키 단위 타입은 일정하므로, 첫 쓰기의 추론
+// 결과가 그대로 유효하다. 추론 불가(nil/channel/func)면 고정을 생략하고 동적 string 폴백에 맡긴다.
+const DataTypeAuto = "auto"
+
 // @spec SPEC-STORE-003 v0.3.0
 // 6종 DataType enum 상수 정의.
 const (
@@ -130,6 +139,28 @@ func inferDataType(value any) (DataType, error) {
 		}
 		return "", ErrUnsupportedValueType
 	}
+}
+
+// resolveWriteDataType 는 store-write config 의 data_type 값을 실제 쓰기 값에 맞춰
+// 고정할 구체 DataType 으로 해석한다. SetWithMeta 의 타입 고정 경로에서 사용된다.
+//
+//   - DataTypeAuto("auto"): inferDataType 로 값의 Go 타입을 추론한다. 성공 시 (추론타입, true),
+//     추론 불가(nil/channel/func) 시 ("", false) 를 반환하여 호출자가 고정을 생략(동적 string 폴백)하게 한다.
+//   - 그 외(6종 enum 리터럴): (DataType(configured), true) 그대로 반환한다.
+//
+// 빈 문자열은 호출 측(SetWithMeta)에서 이미 걸러지므로 여기 도달하지 않지만, 방어적으로 ("", false) 를 반환한다.
+func resolveWriteDataType(configured string, value any) (DataType, bool) {
+	if configured == "" {
+		return "", false
+	}
+	if configured == DataTypeAuto {
+		inferred, err := inferDataType(value)
+		if err != nil {
+			return "", false
+		}
+		return inferred, true
+	}
+	return DataType(configured), true
 }
 
 // =============================================================================

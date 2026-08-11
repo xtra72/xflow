@@ -157,8 +157,14 @@ func (a *NodeStoreAdapter) SetWithMeta(ctx context.Context, key string, value an
 	seriesKey := EncodeSeriesKey(series)
 
 	// 2) DataType 지정 시 값 쓰기 전에 시리즈 키를 그 타입으로 등록/고정한다.
+	//    - 리터럴 6종 enum: 그대로 고정.
+	//    - "auto"(DataTypeAuto): 쓰기 값의 Go 타입에서 구체 타입을 추론해 고정한다.
+	//      추론 불가(nil/channel/func)면 고정을 생략하고 동적 string 폴백(checkKeyAllowed)에 맡긴다.
+	//      이로써 단일 store-write 노드가 측정별로 서로 다른 값 타입을 각 키에 맞는 타입으로 저장한다.
 	if opts.DataType != "" && ag != nil {
-		ag.SetKeyDataType(seriesKey, DataType(opts.DataType))
+		if dt, ok := resolveWriteDataType(opts.DataType, value); ok {
+			ag.SetKeyDataType(seriesKey, dt)
+		}
 	}
 
 	// 3) 값 쓰기 (일반 경로 — 네임스페이스/검증/coercion 일관 적용). seriesKey 를 키로 사용.

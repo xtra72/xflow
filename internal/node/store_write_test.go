@@ -158,6 +158,42 @@ func TestStoreWriteNode_Configure(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, sw.ttl)
 }
 
+// data_type: "auto" 는 유효값으로 수용된다(노드 레벨 + metrics 항목 양쪽).
+// "auto" 는 쓰기 값 타입을 추론해 키별로 고정하는 sentinel 이다(가변 타입 단일 노드 지원).
+func TestStoreWriteNode_Configure_DataTypeAuto(t *testing.T) {
+	def := flow.NodeDef{ID: "sw-auto", Type: "store-write"}
+	n, err := NewStoreWriteNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"key_template": "{$.metadata.device.name}-{$.metadata.measurement}",
+		"value_key":    "$.payload.value",
+		"data_type":    "auto",
+		"metrics": []any{
+			map[string]any{"metric_type": "$.metadata.measurement", "value_key": "$.payload.value", "data_type": "auto"},
+		},
+	})
+	require.NoError(t, err)
+
+	sw := n.(*StoreWriteNode)
+	assert.Equal(t, "auto", sw.dataType)
+	require.Len(t, sw.metrics, 1)
+	assert.Equal(t, "auto", sw.metrics[0].dataType)
+}
+
+// 6종 enum 도 "auto" 도 아닌 data_type 은 여전히 거부된다.
+func TestStoreWriteNode_Configure_DataTypeInvalid(t *testing.T) {
+	def := flow.NodeDef{ID: "sw-bad", Type: "store-write"}
+	n, err := NewStoreWriteNode(def)
+	require.NoError(t, err)
+
+	err = n.Configure(map[string]any{
+		"key_template": "k",
+		"data_type":    "number",
+	})
+	require.Error(t, err)
+}
+
 func TestStoreWriteNode_Process_BasicSet(t *testing.T) {
 	def := flow.NodeDef{ID: "sw2", Type: "store-write"}
 	n, err := NewStoreWriteNode(def)

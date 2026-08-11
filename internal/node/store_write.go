@@ -334,12 +334,13 @@ func (n *StoreWriteNode) Configure(config map[string]any) error {
 	}
 
 	// data_type (선택): 지정 시 기록되는 키를 그 타입으로 등록한다.
-	// 6종 enum(int/float/string/boolean/bytes/json) 외 값은 거부한다.
+	// 6종 enum(int/float/string/boolean/bytes/json) 또는 "auto"(값 타입 추론)만 허용한다.
+	// "auto" 는 쓰기 값의 Go 타입에서 구체 타입을 추론해 키별로 고정한다(가변 타입 단일 노드 지원).
 	if v, ok := config["data_type"]; ok {
 		if s, ok := v.(string); ok && s != "" {
-			if !validDataTypes[s] {
+			if s != system.DataTypeAuto && !validDataTypes[s] {
 				return fmt.Errorf(
-					"store-write: invalid data_type %q (must be one of: int, float, string, boolean, bytes, json)", s)
+					"store-write: invalid data_type %q (must be one of: int, float, string, boolean, bytes, json, auto)", s)
 			}
 			n.dataType = s
 		}
@@ -571,9 +572,9 @@ func parseMetricSpec(m map[string]any, idx int) (metricSpec, error) {
 			return spec, fmt.Errorf("store-write: metrics[%d].data_type must be a string", idx)
 		}
 		if s != "" {
-			if !validDataTypes[s] {
+			if s != system.DataTypeAuto && !validDataTypes[s] {
 				return spec, fmt.Errorf(
-					"store-write: metrics[%d] invalid data_type %q (must be one of: int, float, string, boolean, bytes, json)", idx, s)
+					"store-write: metrics[%d] invalid data_type %q (must be one of: int, float, string, boolean, bytes, json, auto)", idx, s)
 			}
 			spec.dataType = s
 		}
