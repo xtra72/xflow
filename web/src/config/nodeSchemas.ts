@@ -2232,7 +2232,7 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'metrics_editor',
           label: '메트릭 (다중 값)',
           description:
-            '키 템플릿의 키에 여러 측정값을 metric_type 별 시리즈로 저장합니다. 각 메트릭은 자체 값 키(기본 $.payload.value)·데이터 타입·미세변화 억제(억제 간격/절대 변화/퍼센트 변화)를 가집니다. 같은 키라도 metric_type·태그가 다르면 독립 시리즈로 분류됩니다. 미세변화 억제(dead-band)는 억제 간격이 설정된 메트릭에만 적용되며, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
+            '키 템플릿의 키에 여러 측정값을 metric_type 별 시리즈로 저장합니다. metric_type(종류)은 리터럴(예: temperature) 또는 $. 경로(예: $.metadata.measurement)로 지정 가능 — $. 경로면 메시지마다 종류를 동적으로 해석합니다. 각 메트릭은 자체 값 키(기본 $.payload.value)·데이터 타입·미세변화 억제(억제 간격/절대 변화/퍼센트 변화)를 가집니다. 같은 키라도 metric_type·태그가 다르면 독립 시리즈로 분류됩니다. 미세변화 억제(dead-band)는 억제 간격이 설정된 메트릭에만 적용되며, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
         },
         {
           name: 'ttl',

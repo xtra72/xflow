@@ -173,7 +173,7 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
                     type="text"
                     value={row.metric_type}
                     readOnly={readOnly}
-                    placeholder="temperature"
+                    placeholder="temperature / $.metadata.x"
                     onChange={(e) => handleChange(row.key, 'metric_type', e.target.value)}
                     className={cn(cellInput, 'w-28', readOnly && readOnlyInput)}
                   />
