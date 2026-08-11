@@ -445,14 +445,6 @@ export function StoreSourceSection({
         </div>
       )}
 
-      {/* Store 소스 상세 (store 선택 시) — 에이전트 셀렉트는 Row 1 로 이동. */}
-      {!tsdbMode && dataSource === 'store' && (
-        <StoreSourceEditor
-          storeSource={storeSource}
-          onPatch={patchStore}
-          isLineChart={isLineChart}
-        />
-      )}
 
       {/*
         채널 모드 + 라인 차트: 채널 시리즈 편집기(채널 추가/선택/순서 + per-line 스타일).
@@ -466,40 +458,6 @@ export function StoreSourceSection({
           fetchChannels={fetchChannels}
         />
       )}
-    </div>
-  );
-}
-
-/** Store 소스 상세 편집기(에이전트/키 선택 + 시간/인터벌/집계). */
-function StoreSourceEditor({
-  storeSource,
-  onPatch,
-  isLineChart,
-}: {
-  storeSource: StoreSourceConfig;
-  onPatch: (patch: Partial<StoreSourceConfig>) => void;
-  isLineChart: boolean;
-}): React.ReactElement {
-  // 시리즈 선택 방식. 미지정은 'keys'(기존 동작). 태그 모드 전환은 목록 헤더의 전용 태그
-  // 피커(PanelStoreSelectTable)가 tag_filters 존재로 함축한다(별도 keys/tag 토글 제거).
-  // 시간 윈도우/인터벌/집계/갱신 주기는 인라인 편집 대신 "Store" 옆 정보 말풍선
-  // (StoreInfoPopover)에서 읽기전용으로 표시한다. @spec SPEC-WEB-005 / SPEC-PANEL-SETTINGS-001
-  const selectionMode = storeSource.selection_mode ?? 'keys';
-
-  // 편집 대상은 선택된 시리즈의 alias/색상/라인 스타일뿐이다. 표시할 시리즈가 없으면
-  // 빈 박스를 렌더하지 않는다(키 선택 체크박스/태그 피커는 상위 PanelStoreSelectTable).
-  if (!(selectionMode === 'keys' && storeSource.series.length > 0)) {
-    return <></>;
-  }
-
-  return (
-    <div className="space-y-3 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5">
-      {/* keys 모드: 선택된 시리즈 목록 — alias/색상/(라인 차트 시) 라인 스타일 편집 (SPEC-WEB-005) */}
-      <SelectedSeriesList
-        series={storeSource.series}
-        onChange={(series) => onPatch({ series })}
-        isLineChart={isLineChart}
-      />
     </div>
   );
 }
@@ -709,7 +667,7 @@ interface LineStyleValue {
   display_field?: string;
 }
 
-function LineStyleControls({
+export function LineStyleControls({
   value,
   onPatch,
   testIdPrefix,
@@ -726,13 +684,13 @@ function LineStyleControls({
         onChange={(e) => onPatch({ stroke_style: e.target.value as StrokeStyle })}
         aria-label={t('dashboard.chart.lineStyleAria')}
         data-testid={`${testIdPrefix}-stroke-style`}
-        className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
+        className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1.5 text-sm"
       >
         <option value="solid">{t('dashboard.chart.lineSolid')}</option>
         <option value="dashed">{t('dashboard.chart.lineDashed')}</option>
         <option value="dotted">{t('dashboard.chart.lineDotted')}</option>
       </select>
-      <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
+      <label className="flex items-center gap-1 text-sm text-(--color-text-muted)">
         {t('dashboard.chart.thickness')}
         <input
           type="number"
@@ -744,10 +702,10 @@ function LineStyleControls({
             if (!Number.isNaN(n)) onPatch({ stroke_width: n });
           }}
           data-testid={`${testIdPrefix}-stroke-width`}
-          className="w-12 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1.5 py-1 text-xs"
+          className="w-14 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1.5 text-sm"
         />
       </label>
-      <label className="flex cursor-pointer items-center gap-1 text-xs text-(--color-text-muted)">
+      <label className="flex cursor-pointer items-center gap-1 text-sm text-(--color-text-muted)">
         <input
           type="checkbox"
           checked={value.smooth ?? false}
@@ -764,7 +722,7 @@ function LineStyleControls({
         placeholder={t('dashboard.chart.displayFieldShort')}
         aria-label={t('dashboard.chart.displayFieldAria')}
         data-testid={`${testIdPrefix}-display-field`}
-        className="w-28 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
+        className="w-32 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1.5 text-sm"
       />
     </div>
   );
@@ -776,7 +734,7 @@ function LineStyleControls({
  *
  * @spec SPEC-WEB-005
  */
-function SeriesAliasInput({
+export function SeriesAliasInput({
   index,
   seriesKey,
   alias,
@@ -802,7 +760,7 @@ function SeriesAliasInput({
       placeholder={seriesKey}
       aria-label={t('dashboard.chart.storeSeriesNameAria').replace('{key}', seriesKey)}
       data-testid={`chart-store-series-alias-${index}`}
-      className="w-32 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+      className="w-40 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
     />
   );
 }
@@ -816,7 +774,7 @@ function SeriesAliasInput({
  * - 미리보기는 resolveSeriesAlias(alias, tags) 결과를 보여준다. alias 가 비어있으면
  *   키명으로 폴백(현재 렌더 동작과 동일).
  */
-function SeriesAliasTokens({
+export function SeriesAliasTokens({
   index,
   seriesKey,
   alias,
@@ -870,10 +828,10 @@ function SeriesAliasTokens({
 
   return (
     <div
-      className="flex flex-wrap items-center gap-1 px-1.5 pb-1"
+      className="flex flex-wrap items-center gap-1.5 px-1.5 pb-1"
       data-testid={`chart-store-series-tokens-${index}`}
     >
-      <span className="text-[9px] text-(--color-text-muted)">
+      <span className="text-xs text-(--color-text-muted)">
         {t('dashboard.chart.storeAliasInsertToken')}
       </span>
       {tagKeys.map((k) => (
@@ -882,14 +840,14 @@ function SeriesAliasTokens({
           type="button"
           onClick={() => insertToken(k)}
           data-testid={`chart-store-series-token-${index}-${k}`}
-          className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 font-mono text-[9px] text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+          className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-xs text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
         >
           {makeAliasToken(k)}
         </button>
       ))}
       {/* 미리보기: 라벨(i18n) + 해석값(raw). 값은 별도 노드로 두어 항상 확인 가능. */}
       <span
-        className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-[9px] text-(--color-text-muted)"
+        className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-xs text-(--color-text-muted)"
         data-testid={`chart-store-series-preview-${index}`}
       >
         <span>{t('dashboard.chart.storeAliasPreview')}</span>
@@ -910,147 +868,87 @@ function SeriesAliasTokens({
  *
  * @spec SPEC-WEB-005
  */
-function SelectedSeriesList({
+/**
+ * 단일 선택 시리즈의 인라인 세부 편집기(이름/색상/(라인 차트)선 스타일/(heatmap)위치).
+ *
+ * v0.4.0(REQ-18/20): 별도 SelectedSeriesList 섹션을 제거하고, 선택된 각 시리즈 행의 인라인
+ * 펼침 상세 안에서 이 편집기를 렌더한다. 이름은 편집 가능 텍스트 → `StoreSeriesRef.alias`
+ * draft(범례/미리보기 반영). 색상/선 스타일 → 동일 `StoreSeriesRef`. positionEditor(heatmap
+ * 전용, REQ-21)가 주입되면 같은 펼침 안에 좌표 입력을 함께 렌더한다. 바인딩 모드와 무관하게
+ * 동작한다(keys-모드 게이트 제거, REQ-22 독립성).
+ *
+ * @spec SPEC-PANEL-SETTINGS-001 (REQ-18/19/20/21) / SPEC-WEB-005
+ */
+export function SeriesDetailEditor({
   series,
-  onChange,
+  index,
   isLineChart,
+  onPatch,
+  positionEditor,
 }: {
-  series: StoreSeriesRef[];
-  onChange: (series: StoreSeriesRef[]) => void;
+  series: StoreSeriesRef;
+  index: number;
   isLineChart: boolean;
+  onPatch: (patch: Partial<StoreSeriesRef>) => void;
+  /** heatmap 전용(REQ-21): 같은 펼침 안에 렌더할 센서 좌표(x/y) 편집 노드. */
+  positionEditor?: React.ReactNode;
 }): React.ReactElement {
   const { t } = useTranslation();
-  // 펼친 행 인덱스(라인 스타일 편집용).
-  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
-  // 행별 alias 입력 DOM 참조(토큰 삽입 시 커서 위치 사용).
-  const aliasInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
-
-  // 인덱스 i 의 시리즈에 patch 를 적용한다(불변 갱신).
-  const patchSeries = (i: number, patch: Partial<StoreSeriesRef>): void => {
-    onChange(series.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
-  };
-
-  const removeSeries = (i: number): void => {
-    onChange(series.filter((_, idx) => idx !== i));
-  };
-
-  const toggleExpand = (i: number): void => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
-  };
-
+  const aliasInputRef = useRef<HTMLInputElement | null>(null);
+  // v0.5.0(REQ-18/19 폐지/AC-20/21): 펼침 상세는 시리즈 편집 필드만 — 이름 위 키·종류·태그 설명
+  // 서브라인 없음(테이블 컬럼 + alias 컬럼 키 에코와 중복). 레이아웃: 이름 옆 색상 입력 제거(색상은
+  // 아래 전용 행), (heatmap)좌표는 이름 뒤 2열(이름 | 좌표). 본문 폰트는 text-sm 이상.
   return (
-    <div className="space-y-1.5" data-testid="chart-store-selected-series">
-      <label className="block text-[10px] font-medium text-(--color-text-muted)">
-        {t('dashboard.chart.storeSelectedSeries')}
-      </label>
-      {series.map((s, i) => {
-        const tagStr = Object.entries(s.tags ?? {})
-          .map(([k, v]) => `${k}=${v}`)
-          .join(', ');
-        const isExpanded = expanded.has(i);
-        return (
-          <div
-            key={`${s.key}-${s.metric_type ?? ''}-${i}`}
-            data-testid={`chart-store-series-row-${i}`}
-            className="rounded border border-(--color-border-default) bg-(--color-bg-surface)"
-          >
-            <div className="flex items-center gap-1.5 px-1.5 py-1">
-              {/* 라인 차트: 펼침 토글 */}
-              {isLineChart && (
-                <button
-                  type="button"
-                  onClick={() => toggleExpand(i)}
-                  data-testid={`chart-store-series-expand-${i}`}
-                  aria-label={
-                    isExpanded
-                      ? t('dashboard.chart.collapseAria')
-                      : t('dashboard.chart.expandAria')
-                  }
-                  className="flex items-center text-(--color-text-muted)"
-                >
-                  {isExpanded ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3" />
-                  )}
-                </button>
-              )}
-              {/* 키 + (metric/tags) 식별 표시 */}
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate font-mono text-[11px] text-(--color-text-primary)">
-                  {s.key}
-                </span>
-                {(s.metric_type || tagStr) && (
-                  <span className="truncate text-[9px] text-(--color-text-muted)">
-                    {[s.metric_type, tagStr].filter(Boolean).join(' · ')}
-                  </span>
-                )}
-              </span>
-              {/*
-                표시 이름(alias) 입력 + 태그 토큰 삽입/미리보기 (SPEC-WEB-005).
-                빈 값은 undefined 로 저장(키명 폴백). `{$.tagKey}` 토큰 지원.
-                입력 필드만 인라인에 두고, 토큰 버튼/미리보기는 아래 서브행에 렌더한다.
-              */}
-              <SeriesAliasInput
-                index={i}
-                seriesKey={s.key}
-                alias={s.alias}
-                onAliasChange={(alias) => patchSeries(i, { alias })}
-                inputRef={(el) => {
-                  aliasInputRefs.current[i] = el;
-                }}
-              />
-              {/* 색상 선택(선택) */}
-              <input
-                type="color"
-                value={s.color ?? pickSeriesColor(i)}
-                onChange={(e) => patchSeries(i, { color: e.target.value })}
-                aria-label={t('dashboard.chart.storeSeriesColorAria').replace('{key}', s.key)}
-                data-testid={`chart-store-series-color-${i}`}
-                className="h-5 w-5 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
-              />
-              {/* 제거 */}
-              <button
-                type="button"
-                onClick={() => removeSeries(i)}
-                aria-label={t('dashboard.chart.storeSeriesRemoveAria').replace('{key}', s.key)}
-                data-testid={`chart-store-series-remove-${i}`}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-(--color-text-muted) transition-colors hover:text-red-500"
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
-            </div>
-
-            {/*
-              태그 토큰 삽입 버튼 + 미리보기 서브행 — 태그가 있는 시리즈에만 노출.
-              토큰 클릭 시 입력 커서 위치(없으면 끝)에 `{$.tagKey}` 를 삽입한다.
-            */}
-            <SeriesAliasTokens
-              index={i}
-              seriesKey={s.key}
-              alias={s.alias}
-              tags={s.tags ?? {}}
-              onAliasChange={(alias) => patchSeries(i, { alias })}
-              getInput={() => aliasInputRefs.current[i] ?? null}
-            />
-            {/* 라인 차트: 펼침 시 통합 라인 스타일 편집 */}
-            {isLineChart && isExpanded && (
-              <div className="border-t border-(--color-border-default) px-1.5 py-1.5">
-                <LineStyleControls
-                  value={s}
-                  onPatch={(patch) => patchSeries(i, patch)}
-                  testIdPrefix={`chart-store-series-${i}`}
-                />
-              </div>
-            )}
-          </div>
-        );
-      })}
+    <div className="space-y-2 text-sm" data-testid={`series-detail-${index}`}>
+      {/* 이름(name/alias, 편집 가능 텍스트) | (heatmap)좌표 — 2열 레이아웃(이름 뒤 좌표). */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.seriesDetailsName')}
+          </label>
+          <SeriesAliasInput
+            index={index}
+            seriesKey={series.key}
+            alias={series.alias}
+            onAliasChange={(alias) => onPatch({ alias })}
+            inputRef={(el) => {
+              aliasInputRef.current = el;
+            }}
+          />
+        </div>
+        {positionEditor}
+      </div>
+      {/* 이름 템플릿 토큰(태그가 있는 시리즈). */}
+      <SeriesAliasTokens
+        index={index}
+        seriesKey={series.key}
+        alias={series.alias}
+        tags={series.tags ?? {}}
+        onAliasChange={(alias) => onPatch({ alias })}
+        getInput={() => aliasInputRef.current}
+      />
+      {/* 색상(이름 옆에서 이동한 전용 행 — 모든 패널 타입에서 편집 가능, `color` 불변). */}
+      <div className="flex items-center gap-2">
+        <label className="text-sm font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.seriesDetailsColor')}
+        </label>
+        <input
+          type="color"
+          value={series.color ?? pickSeriesColor(index)}
+          onChange={(e) => onPatch({ color: e.target.value })}
+          aria-label={t('dashboard.chart.storeSeriesColorAria').replace('{key}', series.key)}
+          data-testid={`chart-store-series-color-${index}`}
+          className="h-7 w-9 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+        />
+      </div>
+      {/* 라인 차트: 통합 라인 스타일 편집. */}
+      {isLineChart && (
+        <LineStyleControls
+          value={series}
+          onPatch={(patch) => onPatch(patch)}
+          testIdPrefix={`chart-store-series-${index}`}
+        />
+      )}
     </div>
   );
 }

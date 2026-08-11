@@ -1,12 +1,12 @@
-// 태그 인 헤더 — keys/tag 토글 제거 + 태그 컬럼 헤더의 전용 AND 태그 피커 팝오버 테스트.
+// 표시 필터 통일 + 바인딩 분리(v0.3.0) — 태그 컬럼은 표시(display) 필터 전용이고,
+// 동적 바인딩은 명시적 토글로만 제어된다.
 //
-// @spec SPEC-PANEL-SETTINGS-001 (태그 인 헤더) / SPEC-WEB-005
+// @spec SPEC-PANEL-SETTINGS-001 v0.3.0 (REQ-15 정제 + REQ-22)
 //
-// keys/tag 선택 방식 토글이 제거되고, 태그 컨트롤이 공용 StoreEntryTable 의 "태그" 컬럼
-// 헤더(다른 컬럼 필터와 동일한 어포던스)로 이관됐다. 헤더 필터 버튼을 열면 one-value-per-key
-// / cross-key-AND 피커가 나오고 tag_filters 를 구성한다. tag_filters 존재로 tag 모드가
-// 함축되며(별도 토글 없음), tag 모드에서는 AND 매칭 행이 read-only 미리보기로 표시된다.
-// useAgents/useExecAgent/useStoreKeysWithTags/useStoreTagPairs 를 모킹해 네트워크 없이 렌더한다.
+// v0.2.0 의 "태그 인 헤더 전용 AND 팝오버 → tag_filters + selection_mode 암묵 전환" 모델을
+// 폐기하고, (1) 태그를 포함한 모든 컬럼 필터를 통일된 표시 필터(같은 컬럼 OR·컬럼 간 AND)로
+// 취급하며, (2) selection_mode 는 명시적 "동적 바인딩" 토글이 단독 제어한다(AC-24).
+// useAgents/useExecAgent/useStoreKeysWithTags 를 모킹해 네트워크 없이 렌더한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
@@ -14,12 +14,9 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { PanelConfig } from '@/stores/uiStore';
 import type { StoreSourceConfig } from './panels/charts/chartChannelTypes';
 
-// i18n 스텁 — 키를 그대로 반환하되, 카운트 보간이 필요한 키만 템플릿을 돌려준다.
+// i18n 스텁 — 키를 그대로 반환한다(라벨=키).
 vi.mock('@/lib/i18n', () => ({
-  useTranslation: () => ({
-    t: (k: string) =>
-      k === 'dashboard.chart.storeTagMatchCount' ? '{count} keys matched' : k,
-  }),
+  useTranslation: () => ({ t: (k: string) => k }),
 }));
 
 // store 에이전트 1개 + StoreEntryTable 이 소비하는 useExecAgent.
@@ -30,7 +27,7 @@ vi.mock('@/hooks/useAgent', () => ({
   useExecAgent: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 
-// 키 객체(매칭 계산용) + 태그 페어 목록.
+// 키 객체(태그 표시 필터/매칭 계산용).
 vi.mock('@/services/api/store', () => ({
   useStoreKeysWithTags: () => ({
     data: {
@@ -42,20 +39,15 @@ vi.mock('@/services/api/store', () => ({
     },
     isLoading: false,
     isError: false,
+    isFetching: false,
+    refetch: vi.fn(),
   }),
-  useStoreTagPairs: () => ({
-    data: [
-      { key: 'room', values: ['1', '2'] },
-      { key: 'type', values: ['temperature', 'humidity'] },
-    ],
-    isLoading: false,
-    isError: false,
-  }),
+  useStoreTagPairs: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
 import { PanelSettingsDataSource } from './PanelSettingsDataSource';
 
-/** store 모드 패널 — store_source 오버라이드로 keys/tag 상태를 구성한다. */
+/** store 모드 패널 — store_source 오버라이드로 selection_mode/tag_filters 상태를 구성한다. */
 function makePanel(store_source: Partial<StoreSourceConfig> = {}): PanelConfig {
   const base: StoreSourceConfig = {
     agent_id: 'store-uuid-1',
@@ -75,9 +67,22 @@ function makePanel(store_source: Partial<StoreSourceConfig> = {}): PanelConfig {
   } as unknown as PanelConfig;
 }
 
-/** 태그 컬럼 헤더의 필터 팝오버를 연다(선택기가 나타난다). */
-function openTagHeaderFilter(): void {
-  fireEvent.click(screen.getByTestId('panel-store-tags-header-filter'));
+/** 태그 컬럼의 표준 필터 버튼(ColumnFilterButton)을 연다. */
+function openTagsColumnFilter(): void {
+  fireEvent.click(screen.getByTestId('store-filter-agents.detail.store.colTags'));
+}
+
+/** 그룹 태그 필터 팝오버에서 특정 "k=v" 값 체크박스를 토글한다. */
+function toggleTagValue(pair: string): void {
+  const label = screen.getByTitle(pair).closest('label')!;
+  fireEvent.click(label.querySelector('input')!);
+}
+
+function rowCheckboxes(): HTMLInputElement[] {
+  const select = screen.getByTestId('panel-store-select');
+  return within(select).getAllByLabelText(
+    'agents.detail.store.selectRowAriaLabel',
+  ) as HTMLInputElement[];
 }
 
 beforeEach(() => {
@@ -85,88 +90,72 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('태그 인 헤더 — 토글 제거 + 태그 컬럼 헤더의 전용 피커(SPEC-PANEL-SETTINGS-001)', () => {
-  it('keys/tag 선택 방식 토글은 더 이상 렌더되지 않는다', () => {
+describe('표시 필터 통일 + 바인딩 분리 (SPEC-PANEL-SETTINGS-001 v0.3.0)', () => {
+  it('구 keys/tag 선택 방식 토글은 렌더되지 않는다', () => {
     render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={vi.fn()} />);
     expect(screen.queryByTestId('chart-store-selection-mode-keys')).toBeNull();
     expect(screen.queryByTestId('chart-store-selection-mode-tag')).toBeNull();
+    // 구 전용 태그 팝오버(태그 인 헤더)도 제거됐다.
+    expect(screen.queryByTestId('panel-store-tags-header-filter')).toBeNull();
   });
 
-  it('태그 컨트롤은 테이블의 "태그" 컬럼 헤더 안에 있고, 목록은 항상 노출된다', () => {
+  it('AC-24(a): 신규 패널은 동적 바인딩 토글 OFF, 전체 행 표시', () => {
     render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={vi.fn()} />);
-    // 공용 선택 테이블(목록)이 항상 보인다.
-    expect(screen.getByTestId('panel-store-select')).toBeInTheDocument();
-    // 태그 컨트롤은 별도 블록이 아니라 컬럼 헤더(thead) 안에 있다.
-    const headerFilter = screen.getByTestId('panel-store-tags-header-filter');
-    expect(headerFilter.closest('thead')).not.toBeNull();
-    // 기본(닫힘)에서는 선택기가 숨겨져 있다가, 헤더 필터를 열면 나타난다.
-    expect(screen.queryByTestId('chart-store-tag-selection')).toBeNull();
-    openTagHeaderFilter();
-    expect(screen.getByTestId('chart-store-tag-selection')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-tag-select-room')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-tag-select-type')).toBeInTheDocument();
+    const toggle = screen.getByTestId('chart-dynamic-binding-toggle') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(rowCheckboxes().length).toBe(3);
   });
 
-  it('태그 팝오버는 fixed 위치 + 높은 z-index 로 렌더되어 리스트 경계에 가려지지 않는다', () => {
-    render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={vi.fn()} />);
-    openTagHeaderFilter();
-    const popover = screen.getByTestId('panel-store-tags-popover');
-    // overflow 클리핑을 벗어나기 위해 position:fixed + z-50 로 렌더된다.
-    expect(popover.style.position).toBe('fixed');
-    expect(popover.className).toContain('z-50');
-  });
-
-  it('헤더 피커에서 태그 값 선택 → tag_filters + selection_mode:tag 저장(구 편집기와 byte-호환)', () => {
+  it('AC-24(a) 표시/바인딩 분리: 토글 OFF 에서 태그 필터는 표시 행만 좁히고 selection_mode 를 바꾸지 않는다', () => {
     const onConfigChange = vi.fn();
     render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={onConfigChange} />);
-    openTagHeaderFilter();
-    fireEvent.change(screen.getByTestId('chart-store-tag-select-room'), {
-      target: { value: '1' },
-    });
+    expect(rowCheckboxes().length).toBe(3);
+    openTagsColumnFilter();
+    toggleTagValue('room=1');
+    // 표시 행만 좁혀짐: room=1 매칭 2행.
+    expect(rowCheckboxes().length).toBe(2);
+    // 표시 전용 — config(selection_mode/tag_filters) 미변경.
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('AC-24(b): 동적 바인딩 토글 ON → selection_mode:tag', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={onConfigChange} />);
+    fireEvent.click(screen.getByTestId('chart-dynamic-binding-toggle'));
     const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.selection_mode).toBe('tag');
+  });
+
+  it('AC-24(b): 동적 바인딩 ON 에서 태그 표시 필터 변경 → tag_filters 파생(모드 tag 유지)', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <PanelSettingsDataSource
+        panel={makePanel({ selection_mode: 'tag' })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    openTagsColumnFilter();
+    toggleTagValue('room=1');
+    const patch = onConfigChange.mock.calls.at(-1)![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.selection_mode).toBe('tag');
     expect(patch.store_source.tag_filters).toEqual({ room: '1' });
-    expect(patch.store_source.selection_mode).toBe('tag');
   });
 
-  it('AND 필터: room=1 에 type=humidity 추가 시 두 키가 함께 저장된다', () => {
-    const onConfigChange = vi.fn();
+  it('AC-24(c) 하위호환: 기존 selection_mode:tag 패널은 토글 ON 로드 + tag_filters 기준 표시 시드', () => {
     render(
       <PanelSettingsDataSource
         panel={makePanel({ selection_mode: 'tag', tag_filters: { room: '1' } })}
-        onConfigChange={onConfigChange}
+        onConfigChange={vi.fn()}
       />,
     );
-    openTagHeaderFilter();
-    fireEvent.change(screen.getByTestId('chart-store-tag-select-type'), {
-      target: { value: 'humidity' },
-    });
-    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
-    expect(patch.store_source.tag_filters).toEqual({ room: '1', type: 'humidity' });
-    expect(patch.store_source.selection_mode).toBe('tag');
-  });
-
-  it('활성 상태 표시 + 기존 config 프리-채움; 마지막 태그를 비우면 keys 모드로 복귀', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <PanelSettingsDataSource
-        panel={makePanel({ selection_mode: 'tag', tag_filters: { room: '1' } })}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    openTagHeaderFilter();
-    // 기존 태그가 헤더 피커에 반영돼 있다(프리-채움).
     expect(
-      (screen.getByTestId('chart-store-tag-select-room') as HTMLSelectElement).value,
-    ).toBe('1');
-    fireEvent.change(screen.getByTestId('chart-store-tag-select-room'), {
-      target: { value: '' },
-    });
-    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
-    expect(patch.store_source.tag_filters).toBeUndefined();
-    expect(patch.store_source.selection_mode).toBe('keys');
+      (screen.getByTestId('chart-dynamic-binding-toggle') as HTMLInputElement).checked,
+    ).toBe(true);
+    // 저장된 tag_filters(room=1) 기준으로 표시가 좁혀진다(시드) → 매칭 2행.
+    expect(rowCheckboxes().length).toBe(2);
   });
 
-  it('tag 모드: 매칭 행 체크박스 클릭 시 keys 모드로 전환하고 그 시리즈를 토글한다', () => {
+  it('AC-24(c) 하위호환: 기존 tag 패널 로드만으로 config 를 변경하지 않는다(보존)', () => {
     const onConfigChange = vi.fn();
     render(
       <PanelSettingsDataSource
@@ -174,83 +163,18 @@ describe('태그 인 헤더 — 토글 제거 + 태그 컬럼 헤더의 전용 �
         onConfigChange={onConfigChange}
       />,
     );
-    const select = screen.getByTestId('panel-store-select');
-    // room=1 매칭: room:1:temp, room:1:humidity → 2행. 태그 매칭이어도 명시적 선택이 아니면 기본 미체크.
-    const checkboxes = within(select).getAllByLabelText(
-      'agents.detail.store.selectRowAriaLabel',
-    ) as HTMLInputElement[];
-    expect(checkboxes.length).toBe(2);
-    expect(checkboxes.every((c) => !c.checked)).toBe(true);
-    // 클릭 → keys 모드 전환(tag_filters 해제) + 그 항목 토글(제거), 나머지 매칭은 명시적 series 로 유지.
-    fireEvent.click(checkboxes[0]!);
-    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
-    expect(patch.store_source.selection_mode).toBe('keys');
-    expect(patch.store_source.tag_filters).toBeUndefined();
-    expect(patch.store_source.series.length).toBe(1);
+    expect(onConfigChange).not.toHaveBeenCalled();
   });
 
-  it('tag 모드: 명시적 series 에 있는 행만 체크된다(나머지 매칭 행은 미체크)', () => {
-    render(
-      <PanelSettingsDataSource
-        panel={makePanel({
-          selection_mode: 'tag',
-          tag_filters: { room: '1' },
-          // room=1 매칭 2행 중 temp 만 명시적으로 선택된 상태.
-          series: [
-            {
-              key: 'room:1:temp',
-              metric_type: 'gauge',
-              tags: { room: '1', type: 'temperature' },
-            },
-          ] as StoreSourceConfig['series'],
-        })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    const select = screen.getByTestId('panel-store-select');
-    const checkboxes = within(select).getAllByLabelText(
-      'agents.detail.store.selectRowAriaLabel',
-    ) as HTMLInputElement[];
-    expect(checkboxes.length).toBe(2);
-    // 정확히 1행(명시적 선택된 temp)만 체크.
-    expect(checkboxes.filter((c) => c.checked).length).toBe(1);
-  });
-
-  it('tag 모드 AND 미리보기: room=1 AND type=humidity → 1행', () => {
-    render(
-      <PanelSettingsDataSource
-        panel={makePanel({ selection_mode: 'tag', tag_filters: { room: '1', type: 'humidity' } })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    const select = screen.getByTestId('panel-store-select');
-    const checkboxes = within(select).getAllByLabelText('agents.detail.store.selectRowAriaLabel');
-    expect(checkboxes.length).toBe(1);
-  });
-
-  it('헤더 피커의 라이브 매칭 키 수 미리보기(room=1 → 2)', () => {
-    render(
-      <PanelSettingsDataSource
-        panel={makePanel({ selection_mode: 'tag', tag_filters: { room: '1' } })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    openTagHeaderFilter();
-    expect(screen.getByTestId('chart-store-tag-match-count').textContent).toContain('2');
-  });
-
-  it('keys 모드(태그 필터 없음): 체크박스가 활성이고 클릭 시 series 에 추가된다', () => {
+  it('keys 모드(신규): 체크박스 클릭 → series 추가, selection_mode 미강제', () => {
     const onConfigChange = vi.fn();
     render(<PanelSettingsDataSource panel={makePanel()} onConfigChange={onConfigChange} />);
-    const select = screen.getByTestId('panel-store-select');
-    // 태그 필터 없음 → 전체 3행 노출, 체크박스 활성.
-    const checkboxes = within(select).getAllByLabelText(
-      'agents.detail.store.selectRowAriaLabel',
-    ) as HTMLInputElement[];
+    const checkboxes = rowCheckboxes();
     expect(checkboxes.length).toBe(3);
     expect(checkboxes.every((c) => !c.checked)).toBe(true);
     fireEvent.click(checkboxes[0]!);
     const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
     expect(patch.store_source.series.length).toBe(1);
+    expect(patch.store_source.selection_mode).toBeUndefined();
   });
 });

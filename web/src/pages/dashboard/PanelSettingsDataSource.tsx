@@ -14,8 +14,8 @@
 // 보장한다(additive). Store 엔트리는 useStoreKeysWithTags 의 keyObjects(메타데이터)에서
 // 파생한다 — 선택 surface 이므로 라이브 값 컬럼(value/updated)은 노출하지 않는다.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ListFilter, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -31,6 +31,7 @@ import {
   sortEntries,
   uniqueColumnValues,
   type ColumnFilter,
+  type ColumnFilterMap,
   type FilterColumnId,
   type FilterContext,
   type SortState,
@@ -48,9 +49,13 @@ import {
   type StoreSeriesRef,
   type StoreSourceConfig,
 } from './panels/charts/chartChannelTypes';
-import { makeTagFilterId, matchesTagFilters } from './panels/charts/storeSourceFilter';
+import { makeTagFilterId } from './panels/charts/storeSourceFilter';
+import {
+  matchesColumnValueFilters,
+  splitTagPairsToDimensions,
+} from './panels/charts/storeColumnValueFilter';
 import type { SensorPosition } from './panels/heatmap/heatmapConfig';
-import { StoreSourceSection, StoreTagSelectionEditor } from './ChartPanelSections';
+import { SeriesDetailEditor, StoreSourceSection } from './ChartPanelSections';
 import {
   loadPanelStoreTablePrefs,
   savePanelStoreTablePrefs,
@@ -107,10 +112,11 @@ function pickColumn(id: StoreColumnId): StoreColumn {
 
 /**
  * 패널 설정 컨텍스트에서 노출하는 표시가능(hideable) 메타데이터 컬럼(정렬/필터 대상).
- * tags 컬럼은 필터 대상에서 제외한다 — 태그 필터는 목록 헤더의 전용 AND 태그 피커가
- * 담당하므로(OR 컬럼 필터와의 의미 충돌 방지), 여기서는 key/metric 만 필터한다.
+ * v0.3.0(REQ-15): 태그를 포함한 모든 컬럼 필터(key/name/metric/tag)를 통일된 표시(display)
+ * 필터로 취급한다 — 같은 컬럼 OR, 컬럼 간 AND. 태그 컬럼 필터는 표시 행만 좁히며 단독으로
+ * `selection_mode` 를 전환하지 않는다(동적 바인딩은 REQ-22 토글 전용).
  */
-const PANEL_FILTER_COLUMNS: readonly FilterColumnId[] = ['key', 'metric'];
+const PANEL_FILTER_COLUMNS: readonly FilterColumnId[] = ['key', 'metric', 'tags'];
 
 /**
  * StoreKeyObject → StoreEntry(메타데이터 파생). 라이브 값(value/updated)은 없다.
@@ -125,6 +131,22 @@ function toStoreEntry(o: StoreKeyObject): StoreEntry {
     data_type: o.data_type,
     registration: o.registration,
   };
+}
+
+/**
+ * 동적 바인딩(REQ-22) ON 시, 태그-컬럼 표시 필터의 선택 값("k=v" 집합)에서 바인딩 기준
+ * `tag_filters`(Record<string,string>)를 파생한다. 기존 스키마(키당 단일값)를 유지하므로
+ * 같은 키의 값이 여러 개면 마지막 값이 우선한다(additive only, useStoreChartData 소비 호환).
+ */
+function deriveTagFilters(values: ReadonlySet<string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!values) return out;
+  for (const pair of values) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    out[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return out;
 }
 
 /**
@@ -203,44 +225,88 @@ function PanelStoreSelectTable({
   );
 
   // 관련(표시가능) 컬럼: key, metric, (tags 있을 때) tags.
-  // tags 컬럼은 표시/숨김만 — 필터(filterColumn)는 제거해 목록 헤더의 전용 AND 태그
-  // 피커가 유일한 태그 컨트롤이 되도록 한다(OR 컬럼 필터와의 의미 충돌 방지).
+  // v0.3.0(REQ-15): tags 컬럼은 통일된 표시 필터의 일부로 표준 다중값 필터(ColumnFilterButton
+  // grouped)를 그대로 사용한다(전용 AND 팝오버 제거). 태그 값(k=v) 다중선택은 OR, 컬럼 간 AND.
   const relevantCols = useMemo(() => {
     const base = [pickColumn('key'), pickColumn('metric')];
-    if (showTags) base.push({ ...pickColumn('tags'), filterColumn: undefined });
+    if (showTags) base.push(pickColumn('tags'));
     return base;
   }, [showTags]);
 
-  // 렌더 컬럼: 표시가능 컬럼 중 숨김 제외 + Alias(actions 대체) 컬럼.
+  // 렌더 컬럼 순서: 키(key) · 이름(name/alias) · 메트릭(metric) · 태그(tags). (REQ-17/AC-19)
+  // alias(actions 대체) 컬럼을 key 바로 뒤로 배치한다. key 가 숨겨진 경우에도 나머지 순서
+  // (name · metric · tag)는 유지된다.
   const columns: StoreColumn[] = useMemo(() => {
     const visible = relevantCols.filter((c) => !hidden.has(c.id));
     const alias: StoreColumn = { id: 'alias', labelKey: 'colAlias', hideable: false };
-    return [...visible, alias];
+    const keyCols = visible.filter((c) => c.id === 'key');
+    const rest = visible.filter((c) => c.id !== 'key');
+    return [...keyCols, alias, ...rest];
   }, [relevantCols, hidden]);
 
-  // --- 태그 자동 바인딩(tag 모드) ---
-  // 목록 헤더의 전용 AND 태그 피커가 tag_filters(Record<string,string>)를 구성한다.
-  // tag_filters 가 하나라도 있으면 tag 모드로 함축되어(별도 토글 없음), 매칭 행을
-  // read-only 미리보기로 보여준다. @spec SPEC-PANEL-SETTINGS-001 (태그 인 헤더)
+  // --- 동적 바인딩(REQ-22) + 통일된 표시 필터(REQ-15) ---
+  // v0.3.0: 표시(display)와 바인딩(binding)을 분리한다. selection_mode 는 오직 명시적
+  // "동적 바인딩" 토글로만 제어되며, 태그 컬럼 필터는 표시 행만 좁힌다.
+  //   - OFF(신규 기본, selection_mode !== 'tag'): keys/명시 선택. 컬럼 필터는 표시 전용.
+  //   - ON(selection_mode === 'tag'): poll 시 tag_filters 로 매칭 키 동적 해석. 태그 기준은
+  //     태그-컬럼 표시 필터 값에서 파생한다.
+  const dynamicBinding = storeSource?.selection_mode === 'tag';
   const tagFilters = useMemo(
     () => storeSource?.tag_filters ?? {},
     [storeSource?.tag_filters],
   );
-  const tagFilterSet = useMemo(
-    () => new Set(Object.entries(tagFilters).map(([k, v]) => makeTagFilterId(k, v))),
-    [tagFilters],
-  );
-  const isTagMode = tagFilterSet.size > 0;
 
-  // 필터 → 정렬 파이프라인.
-  // tag 모드: AND 매처(storeSourceFilter.matchesTagFilters)로 매칭 행만 — 공용 OR 컬럼
-  // 필터는 우회한다(미리보기 = 실제 바인딩 집합 일치). keys 모드: 기존 컬럼 필터 파이프라인.
+  // 표시 필터 상태(prefs.filters). 하위호환: 동적 바인딩 ON 인 기존 패널이 로드될 때
+  // 태그 표시 필터가 아직 없으면 저장된 tag_filters(바인딩 기준)를 태그 표시 필터로
+  // 시드하여, 선택 테이블이 바인딩 대상 행만 보여주고 헤더 피커에 현재 기준이 반영되도록 한다.
+  const effectiveFilters = useMemo(() => {
+    const persistedTags = prefs.filters['tags'];
+    const hasPersistedTags =
+      persistedTags !== undefined &&
+      (persistedTags.text.trim() !== '' || persistedTags.values.size > 0);
+    if (dynamicBinding && !hasPersistedTags && Object.keys(tagFilters).length > 0) {
+      const values = new Set(
+        Object.entries(tagFilters).map(([k, v]) => makeTagFilterId(k, v)),
+      );
+      return { ...prefs.filters, tags: { text: '', values } };
+    }
+    return prefs.filters;
+  }, [prefs.filters, dynamicBinding, tagFilters]);
+
+  // 필터 → 정렬 파이프라인. 통일된 표시 필터(같은 차원 OR + 차원 간 AND)로 표시 행만 좁힌다.
+  // v0.5.0(REQ-15/AC-17b): 태그는 **태그 키(종류)별 차원**으로 결합한다 — "태그" 를 하나의
+  // 컬럼으로 뭉쳐 모든 k=v 를 OR 하지 않는다. 일반 컬럼(key/metric)은 기존 파이프라인(텍스트+값,
+  // 같은 컬럼 OR / 컬럼 간 AND)을 유지하고, 태그 컬럼 필터는 태그 키별 차원 매처로 별도 결합한다.
+  // 바인딩 모드와 무관하게 동일 파이프라인을 쓴다(표시/바인딩 분리).
   const entries = useMemo(() => {
-    const base = isTagMode
-      ? keyObjects.filter((o) => matchesTagFilters(o, tagFilterSet)).map(toStoreEntry)
-      : applyColumnFilters(allEntries, prefs.filters, filterCtx);
+    // 1) 비-tags 컬럼 필터(key/metric): 기존 파이프라인(텍스트 부분일치 + 값 OR, 컬럼 간 AND).
+    const nonTagFilters: ColumnFilterMap = {};
+    for (const key of Object.keys(effectiveFilters) as FilterColumnId[]) {
+      if (key !== 'tags') nonTagFilters[key] = effectiveFilters[key];
+    }
+    let base = applyColumnFilters(allEntries, nonTagFilters, filterCtx);
+    // 2) 태그 필터: 태그 키별 차원 AND/OR + (있으면) "k=v" 텍스트 부분일치.
+    const tagsFilter = effectiveFilters['tags'];
+    if (tagsFilter) {
+      const text = tagsFilter.text.trim().toLowerCase();
+      const dims = splitTagPairsToDimensions(tagsFilter.values);
+      const hasDims = Object.keys(dims).length > 0;
+      if (text !== '' || hasDims) {
+        base = base.filter((e) => {
+          const tags = (e.tags as Record<string, string> | undefined) ?? {};
+          if (text !== '') {
+            const joined = Object.entries(tags)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(' ')
+              .toLowerCase();
+            if (!joined.includes(text)) return false;
+          }
+          return matchesColumnValueFilters((dim) => tags[dim], dims);
+        });
+      }
+    }
     return sortEntries(base, prefs.sort, { staticKeyNames: new Set<string>() });
-  }, [isTagMode, keyObjects, tagFilterSet, allEntries, prefs.filters, prefs.sort, filterCtx]);
+  }, [allEntries, effectiveFilters, prefs.sort, filterCtx]);
 
   const uniqueValuesByColumn = useMemo(() => {
     const map = new Map<FilterColumnId, string[]>();
@@ -278,8 +344,15 @@ function PanelStoreSelectTable({
         delete filters[columnId];
       }
       persist({ ...prefs, filters });
+      // 동적 바인딩 ON + 태그 컬럼 필터 변경 → 바인딩 기준 tag_filters 를 태그 표시 필터에서
+      // 재파생한다(표시 필터가 바인딩 기준의 원천). 표시/바인딩 분리이므로 OFF 이면 미갱신. REQ-22
+      if (columnId === 'tags' && storeSource?.selection_mode === 'tag') {
+        onConfigChange({
+          store_source: { ...(storeSource ?? {}), tag_filters: deriveTagFilters(next.values) },
+        });
+      }
     },
-    [persist, prefs],
+    [persist, prefs, storeSource, onConfigChange],
   );
 
   const handleToggleColumn = useCallback(
@@ -292,9 +365,49 @@ function PanelStoreSelectTable({
     [persist, prefs],
   );
 
-  const [keyExpanded, setKeyExpanded] = useState(false);
+  // 선택(체크)된 행의 인라인 펼침 상세(REQ-18/19/20/21) — 기본 접음(빈 집합), 펼친 행만 담는다.
+  // seriesId 기준으로 관리하며, 그룹 트리가 아니라 행별 상태이고 정렬/필터 상태와 독립이다.
+  // 미선택 행은 펼침 대상에서 제외된다(isExpandable = 선택 여부).
+  const [expandedSeriesRows, setExpandedSeriesRows] = useState<Set<string>>(() => new Set());
+  const toggleSeriesRow = useCallback((entry: StoreEntry) => {
+    const id = entryToSeriesId(entry);
+    setExpandedSeriesRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
   // 선택 상한 초과 안내(AC-15). 상한 도달 상태에서 추가 시도 시 표시한다.
   const [overLimitNotice, setOverLimitNotice] = useState(false);
+
+  const isLineChart = panel.type === 'line-chart';
+
+  // 인라인 상세 편집 → 해당 시리즈(store_source.series[idx])에 patch 를 draft 반영한다.
+  // 이름(alias)/색상/선 스타일 → StoreSeriesRef. keys 모드는 명시 series[] 에 직접 영속되고,
+  // tag 모드(동적 바인딩 ON)에서는 현재 선택된 series[] 항목 기준으로 best-effort 반영된다.
+  const patchSeries = useCallback(
+    (idx: number, patch: Partial<StoreSeriesRef>) => {
+      const next = series.map((s, i) => (i === idx ? { ...s, ...patch } : s));
+      onConfigChange({ store_source: { ...(storeSource ?? {}), series: next } });
+    },
+    [series, storeSource, onConfigChange],
+  );
+
+  // 히트맵 전용(REQ-21): 선택 행 인라인 상세 안에서 센서 좌표(x/y, 0..1)를 편집한다.
+  // 한 축만 입력해도 잃지 않도록 부분 병합하고, 둘 다 비면 좌표 항목을 제거한다.
+  const setSensorPosition = useCallback(
+    (key: string, axis: 'x' | 'y', value: number | undefined) => {
+      const cur = { ...((sensorPositions[key] as { x?: number; y?: number } | undefined) ?? {}) };
+      if (value === undefined) delete cur[axis];
+      else cur[axis] = value;
+      const nextPositions: Record<string, { x?: number; y?: number }> = { ...sensorPositions };
+      if (cur.x === undefined && cur.y === undefined) delete nextPositions[key];
+      else nextPositions[key] = cur;
+      onConfigChange({ sensor_positions: nextPositions });
+    },
+    [sensorPositions, onConfigChange],
+  );
 
   const handleToggleSelection = useCallback(
     (entry: StoreEntry) => {
@@ -308,16 +421,12 @@ function PanelStoreSelectTable({
         );
         const nextStore: Record<string, unknown> = { ...(storeSource ?? {}), series: next };
         const patch: Record<string, unknown> = { store_source: nextStore };
-        // 히트맵: 체크박스 선택은 keys 모드를 강제한다(태그 기본값이 series 렌더를 가리지
-        // 않도록 selection_mode:'keys' + tag_filters 해제). 선택 해제 시 좌표 항목도 제거한다.
-        if (isHeatmap) {
-          nextStore.selection_mode = 'keys';
-          nextStore.tag_filters = undefined;
-          if (sensorPositions[key] !== undefined) {
-            const nextPositions = { ...sensorPositions };
-            delete nextPositions[key];
-            patch.sensor_positions = nextPositions;
-          }
+        // 히트맵: 선택 해제 시 해당 좌표 항목도 제거한다. selection_mode/tag_filters 는 건드리지
+        // 않는다 — 바인딩 모드는 동적 바인딩 토글(REQ-22)이 단독 제어한다(표시/바인딩 분리).
+        if (isHeatmap && sensorPositions[key] !== undefined) {
+          const nextPositions = { ...sensorPositions };
+          delete nextPositions[key];
+          patch.sensor_positions = nextPositions;
         }
         onConfigChange(patch);
         return;
@@ -345,93 +454,37 @@ function PanelStoreSelectTable({
         series: [...series, nextEntry],
       };
       const patch: Record<string, unknown> = { store_source: nextStore };
-      // 히트맵: 체크박스 선택은 keys 모드를 강제한다(selection_mode:'keys' + tag_filters 해제)
-      // → useStoreChartData 가 태그 매칭 대신 선택된 series 만 렌더한다. 좌표가 없으면
-      // 중앙(0.5,0.5) 기본 좌표를 부여한다.
-      if (isHeatmap) {
-        nextStore.selection_mode = 'keys';
-        nextStore.tag_filters = undefined;
-        if (sensorPositions[key] === undefined) {
-          patch.sensor_positions = { ...sensorPositions, [key]: { x: 0.5, y: 0.5 } };
-        }
+      // 히트맵: 좌표가 없으면 중앙(0.5,0.5) 기본 좌표를 부여한다. selection_mode/tag_filters 는
+      // 건드리지 않는다(바인딩 모드는 동적 바인딩 토글이 단독 제어 — 표시/바인딩 분리). REQ-22
+      if (isHeatmap && sensorPositions[key] === undefined) {
+        patch.sensor_positions = { ...sensorPositions, [key]: { x: 0.5, y: 0.5 } };
       }
       onConfigChange(patch);
     },
     [series, seriesIds, storeSource, onConfigChange, isHeatmap, sensorPositions],
   );
 
-  // tag 모드에서 체크박스 클릭 → keys 모드로 전환(마지막 액션 우선). 현재 매칭된 행(entries)을
-  // 명시적 series 로 물질화하되 클릭된 항목은 토글(제거)하고, tag_filters 를 해제한다. 히트맵은
-  // 유지된 시리즈에 중앙 좌표를 부여하고 클릭된 좌표는 제거한다. 이로써 tag 모드에서도 체크/
-  // 해제가 동작한다. @spec SPEC-PANEL-SETTINGS-001
-  const handleToggleFromTag = useCallback(
-    (clicked: StoreEntry) => {
-      const clickedId = entryToSeriesId(clicked);
-      const nextSeries: StoreSeriesRef[] = [];
-      const nextPositions: Record<string, { x?: number; y?: number }> = { ...sensorPositions };
-      for (const e of entries) {
-        const k = e.key as string;
-        if (entryToSeriesId(e) === clickedId) {
-          // 클릭된 항목: keys 모드에서 제외(uncheck) + 히트맵 좌표 제거.
-          if (isHeatmap) delete nextPositions[k];
-          continue;
-        }
-        nextSeries.push({
-          key: k,
-          metric_type: (e.metric_type as string) || undefined,
-          tags:
-            e.tags && Object.keys(e.tags as object).length > 0
-              ? (e.tags as Record<string, string>)
-              : undefined,
-          data_type: e.data_type as StoreSeriesRef['data_type'],
-          alias: k,
-          color: pickSeriesColor(nextSeries.length),
+  // 동적 바인딩 토글(REQ-22). ON: selection_mode:'tag' + 현재 태그 표시 필터에서 tag_filters
+  // 파생. OFF: selection_mode:'keys'(명시 체크박스 선택). tag_filters/series 는 보존한다
+  // (additive only — OFF 에서 tag_filters 는 useStoreChartData 가 무시). 표시/바인딩 분리.
+  const handleDynamicBindingToggle = useCallback(
+    (on: boolean) => {
+      if (on) {
+        const tagsFilter = prefs.filters['tags'];
+        onConfigChange({
+          store_source: {
+            ...(storeSource ?? {}),
+            selection_mode: 'tag',
+            tag_filters: deriveTagFilters(tagsFilter?.values),
+          },
         });
-        if (isHeatmap && nextPositions[k] === undefined) nextPositions[k] = { x: 0.5, y: 0.5 };
+      } else {
+        onConfigChange({
+          store_source: { ...(storeSource ?? {}), selection_mode: 'keys' },
+        });
       }
-      const nextStore: Record<string, unknown> = {
-        ...(storeSource ?? {}),
-        series: nextSeries,
-        selection_mode: 'keys',
-        tag_filters: undefined,
-      };
-      const patch: Record<string, unknown> = { store_source: nextStore };
-      if (isHeatmap) patch.sensor_positions = nextPositions;
-      onConfigChange(patch);
     },
-    [entries, sensorPositions, isHeatmap, storeSource, onConfigChange],
-  );
-
-  // 히트맵 전용: 선택된 시리즈의 센서 좌표(x/y, 0..1)를 데이터 소스에서 직접 편집한다.
-  // 한 축만 입력해도 잃지 않도록 부분 병합하고, 둘 다 비면 해당 좌표 항목을 제거한다.
-  const setSensorPosition = useCallback(
-    (key: string, axis: 'x' | 'y', value: number | undefined) => {
-      const cur = { ...((sensorPositions[key] as { x?: number; y?: number } | undefined) ?? {}) };
-      if (value === undefined) delete cur[axis];
-      else cur[axis] = value;
-      const next: Record<string, { x?: number; y?: number }> = { ...sensorPositions };
-      if (cur.x === undefined && cur.y === undefined) delete next[key];
-      else next[key] = cur;
-      onConfigChange({ sensor_positions: next });
-    },
-    [sensorPositions, onConfigChange],
-  );
-
-  // 목록 헤더의 전용 태그 피커 변경 → tag_filters + selection_mode 함축 갱신.
-  // 태그 값 형태는 구 StoreTagSelectionEditor 와 byte-호환(Record<string,string>, AND).
-  // 태그가 하나라도 있으면 tag 모드, 모두 지우면 keys 모드로 복귀(series 는 보존).
-  const handleTagFiltersChange = useCallback(
-    (nextTagFilters: Record<string, string>) => {
-      const hasTags = Object.keys(nextTagFilters).length > 0;
-      onConfigChange({
-        store_source: {
-          ...(storeSource ?? {}),
-          tag_filters: hasTags ? nextTagFilters : undefined,
-          selection_mode: hasTags ? 'tag' : 'keys',
-        },
-      });
-    },
-    [storeSource, onConfigChange],
+    [prefs.filters, storeSource, onConfigChange],
   );
 
   // ColumnSettingsMenu 는 visible 집합을 기대한다(hidden 의 여집합).
@@ -447,7 +500,23 @@ function PanelStoreSelectTable({
         <label className="text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.dataSourceStoreSelectTitle')}
         </label>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          {/* 동적 바인딩 토글(REQ-22) — 표시 필터와 분리된 명시적 바인딩 모드 제어.
+              OFF(기본)=keys/명시 선택, ON=tag/poll 동적 해석(태그 표시 필터에서 기준 파생). */}
+          <label
+            className="flex cursor-pointer items-center gap-1 text-[11px] text-(--color-text-muted)"
+            title={t('dashboard.settings.dynamicBindingHint')}
+          >
+            <input
+              type="checkbox"
+              data-testid="chart-dynamic-binding-toggle"
+              checked={dynamicBinding}
+              onChange={(e) => handleDynamicBindingToggle(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            {t('dashboard.settings.dynamicBindingLabel')}
+          </label>
+          <div className="flex items-center gap-1">
           {/* store 키 목록 새로고침 — 새로 추가된 키가 나타나도록 react-query 재조회. */}
           <button
             type="button"
@@ -466,6 +535,7 @@ function PanelStoreSelectTable({
             onToggle={handleToggleColumn}
             t={t}
           />
+          </div>
         </div>
       </div>
 
@@ -495,11 +565,41 @@ function PanelStoreSelectTable({
           columns={columns}
           sort={prefs.sort}
           onSort={handleSort}
-          columnFilters={prefs.filters}
+          columnFilters={effectiveFilters}
           onColumnFilterChange={handleColumnFilterChange}
           uniqueValuesByColumn={uniqueValuesByColumn}
-          keyColumnExpanded={keyExpanded}
-          onToggleKeyExpanded={() => setKeyExpanded((v) => !v)}
+          rowExpansion={{
+            // 선택(체크)된 행만 펼침 가능. 바인딩 모드와 무관하게 접근 가능(REQ-22 독립성).
+            isExpandable: (e) => seriesIds.has(entryToSeriesId(e as StoreEntry)),
+            isExpanded: (e) => expandedSeriesRows.has(entryToSeriesId(e as StoreEntry)),
+            onToggle: (e) => toggleSeriesRow(e as StoreEntry),
+            renderDetail: (e) => {
+              const id = entryToSeriesId(e as StoreEntry);
+              const idx = series.findIndex(
+                (s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}) === id,
+              );
+              const s = series[idx];
+              if (!s) return null;
+              return (
+                <SeriesDetailEditor
+                  series={s}
+                  index={idx}
+                  isLineChart={isLineChart}
+                  onPatch={(patch) => patchSeries(idx, patch)}
+                  positionEditor={
+                    isHeatmap ? (
+                      <SensorPositionInputs
+                        seriesKey={s.key}
+                        pos={sensorPositions[s.key] as { x?: number; y?: number } | undefined}
+                        onChange={setSensorPosition}
+                        t={t}
+                      />
+                    ) : undefined
+                  }
+                />
+              );
+            },
+          }}
           maxHistorySize={0}
           staticKeyNames={new Set<string>()}
           rowActions={{
@@ -512,10 +612,10 @@ function PanelStoreSelectTable({
           }}
           selection={{
             // 체크 상태는 명시적 선택(series)만 반영한다 — 검색/필터된 행은 기본 미체크.
-            // tag 모드에서도 매칭 행을 자동 체크하지 않는다(모두 체크된 것처럼 보이는 문제 방지).
-            // 클릭 시: tag 모드는 keys 모드로 전환하며 그 항목을 토글, keys 모드는 명시적 편집.
+            // 바인딩 모드와 무관하게 체크박스는 명시적 keys 선택(series)을 편집한다. 동적 바인딩
+            // ON 이면 이 series 는 useStoreChartData 에서 무시되나 편집 상태로 보존된다.
             isSelected: (e) => seriesIds.has(entryToSeriesId(e)),
-            onToggle: isTagMode ? handleToggleFromTag : handleToggleSelection,
+            onToggle: handleToggleSelection,
           }}
           renderCellExtra={(col, entry) =>
             col === 'alias' ? (
@@ -527,170 +627,64 @@ function PanelStoreSelectTable({
               </span>
             ) : undefined
           }
-          // 태그 컬럼 헤더에 전용 AND 태그 피커 팝오버를 주입한다(태그 인 헤더).
-          columnHeaderSlots={{
-            tags: (
-              <TagsColumnHeaderFilter
-                agentName={agentName}
-                tagFilters={tagFilters}
-                onChange={handleTagFiltersChange}
-                t={t}
-              />
-            ),
-          }}
         />
-      )}
-
-      {/* 히트맵 전용: 선택된 시리즈별 센서 좌표(x/y, 0..1) 편집. 위치는 데이터 소스의
-          선택된 소스에 함께 산다(패널 옵션에서 이동). 프리뷰 마커 드래그와 동일한
-          sensor_positions 를 편집한다. @spec SPEC-PANEL-SETTINGS-001 (heatmap 시리즈 위치) */}
-      {isHeatmap && series.length > 0 && (
-        <div className="space-y-1.5" data-testid="panel-store-positions">
-          <label className="block text-xs font-medium text-(--color-text-muted)">
-            {t('dashboard.settings.heatmapSensorPositions')}
-          </label>
-          {series.map((s) => {
-            const key = s.key;
-            const pos = sensorPositions[key] as { x?: number; y?: number } | undefined;
-            const placed =
-              pos !== undefined && Number.isFinite(pos.x) && Number.isFinite(pos.y);
-            return (
-              <div key={key} className="flex items-center gap-1.5">
-                <span
-                  className={cn(
-                    'min-w-0 flex-1 truncate text-xs',
-                    placed
-                      ? 'text-(--color-text-secondary)'
-                      : 'text-amber-600 dark:text-amber-400',
-                  )}
-                  title={placed ? key : t('dashboard.settings.heatmapUnplacedTitle')}
-                >
-                  {s.alias || key}
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={pos?.x !== undefined ? String(pos.x) : ''}
-                  data-testid={`heatmap-pos-x-${key}`}
-                  placeholder="x"
-                  onChange={(e) =>
-                    setSensorPosition(key, 'x', e.target.value === '' ? undefined : Number(e.target.value))
-                  }
-                  className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-                />
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={pos?.y !== undefined ? String(pos.y) : ''}
-                  data-testid={`heatmap-pos-y-${key}`}
-                  placeholder="y"
-                  onChange={(e) =>
-                    setSensorPosition(key, 'y', e.target.value === '' ? undefined : Number(e.target.value))
-                  }
-                  className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-                />
-              </div>
-            );
-          })}
-        </div>
       )}
     </div>
   );
 }
 
 /**
- * 태그 컬럼 헤더의 전용 AND 태그 피커(팝오버). 다른 컬럼 헤더 필터(ColumnFilterButton)와
- * 동일한 어포던스(ListFilter 버튼 + 활성 점 + 팝오버)로 표시하되, 열면 one-value-per-key /
- * cross-key-AND 의 StoreTagSelectionEditor 를 띄워 tag_filters(Record<string,string>)를
- * 구성한다(byte-호환). 컬럼별 OR 필터와의 의미 충돌을 피하려고 tags 컬럼은 이 전용
- * 컨트롤만 갖는다(기본 ColumnFilterButton 미노출). @spec SPEC-PANEL-SETTINGS-001 (태그 인 헤더)
+ * heatmap 전용(REQ-21): 선택 행 인라인 상세 안에서 편집하는 센서 좌표(x/y, 0..1) 입력.
+ * 프리뷰 마커 드래그와 동일한 sensor_positions 를 편집한다(별도 heatmap 영역에서 이동).
+ * @spec SPEC-PANEL-SETTINGS-001 (REQ-21)
  */
-function TagsColumnHeaderFilter({
-  agentName,
-  tagFilters,
+function SensorPositionInputs({
+  seriesKey,
+  pos,
   onChange,
   t,
 }: {
-  agentName: string;
-  tagFilters: Record<string, string>;
-  onChange: (next: Record<string, string>) => void;
+  seriesKey: string;
+  pos: { x?: number; y?: number } | undefined;
+  onChange: (key: string, axis: 'x' | 'y', value: number | undefined) => void;
   t: TranslationFn;
 }): React.ReactElement {
-  const [open, setOpen] = useState(false);
-  // 팝오버는 테이블 컨테이너의 overflow 클리핑을 벗어나기 위해 position:fixed 로 버튼
-  // 아래에 앵커링한다(리스트/헤더 경계에 잘리지 않도록). 버튼 rect 를 열 때 계산한다.
-  const [coords, setCoords] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
-  const containerRef = useRef<HTMLSpanElement>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-
-  const toggleOpen = (): void => {
-    setOpen((o) => {
-      const next = !o;
-      if (next) {
-        const r = btnRef.current?.getBoundingClientRect();
-        if (r) setCoords({ left: r.left, top: r.bottom + 4 });
-      }
-      return next;
-    });
-  };
-
-  // 팝오버 바깥 클릭 시 닫는다(다른 컬럼 필터 팝오버와 동일 동작).
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent): void => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const active = Object.keys(tagFilters).length > 0;
-
+  const inputClass =
+    'w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500';
   return (
-    <span className="relative inline-flex" ref={containerRef}>
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={toggleOpen}
-        aria-haspopup="true"
-        aria-expanded={open}
-        data-testid="panel-store-tags-header-filter"
-        className={cn(
-          'inline-flex items-center rounded p-0.5 transition-colors',
-          active
-            ? 'text-blue-600 dark:text-blue-400'
-            : 'text-(--color-text-muted) opacity-50 hover:opacity-100 hover:text-(--color-text-primary)',
-        )}
-        title={t('dashboard.chart.storeTagPickerLabel')}
-        aria-label={t('dashboard.chart.storeTagPickerLabel')}
-      >
-        <ListFilter className="h-3 w-3" aria-hidden="true" />
-        {active && (
-          <span
-            className="ml-0.5 inline-block h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400"
-            aria-hidden="true"
-          />
-        )}
-      </button>
-      {open && (
-        <div
-          data-testid="panel-store-tags-popover"
-          style={{ position: 'fixed', left: coords.left, top: coords.top }}
-          className="z-50 w-72 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg"
-        >
-          <StoreTagSelectionEditor
-            agentName={agentName}
-            tagFilters={tagFilters}
-            onChange={onChange}
-          />
-        </div>
-      )}
-    </span>
+    <div className="flex items-center gap-2" data-testid={`series-position-${seriesKey}`}>
+      <label className="text-sm font-medium text-(--color-text-muted)">
+        {t('dashboard.settings.seriesDetailsPositionX')}
+      </label>
+      <input
+        type="number"
+        min={0}
+        max={1}
+        step={0.05}
+        value={pos?.x !== undefined ? String(pos.x) : ''}
+        data-testid={`heatmap-pos-x-${seriesKey}`}
+        placeholder="x"
+        onChange={(e) =>
+          onChange(seriesKey, 'x', e.target.value === '' ? undefined : Number(e.target.value))
+        }
+        className={inputClass}
+      />
+      <label className="text-sm font-medium text-(--color-text-muted)">
+        {t('dashboard.settings.seriesDetailsPositionY')}
+      </label>
+      <input
+        type="number"
+        min={0}
+        max={1}
+        step={0.05}
+        value={pos?.y !== undefined ? String(pos.y) : ''}
+        data-testid={`heatmap-pos-y-${seriesKey}`}
+        placeholder="y"
+        onChange={(e) =>
+          onChange(seriesKey, 'y', e.target.value === '' ? undefined : Number(e.target.value))
+        }
+        className={inputClass}
+      />
+    </div>
   );
 }

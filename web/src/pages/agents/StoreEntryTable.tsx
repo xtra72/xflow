@@ -73,6 +73,7 @@ function StoreEntryRow({
   onEditMeta,
   readOnly = false,
   selection,
+  rowDetail,
   renderCellExtra,
 }: {
   entry: Record<string, unknown>;
@@ -123,6 +124,19 @@ function StoreEntryRow({
    * (에이전트 상세 동작 불변). @spec SPEC-PANEL-SETTINGS-001 (후속 T6/T7)
    */
   selection?: { selected: boolean; onToggle: () => void };
+  /**
+   * 선택(체크)된 행의 인라인 펼침 상세(패널 설정 전용, REQ-18/19/20/21). 미주입 시 어떤
+   * 행도 펼치지 않는다(에이전트 상세 동작 불변). `expandable` 인 행(=선택된 행)만 키 셀에
+   * 펼침 셰브론을 노출하고, `expanded` 이면 그 행 아래 colSpan 상세 행에 `content` 를 렌더한다.
+   * 상세에는 키 전체 상세 + 시리즈 이름/색상/선 스타일/(heatmap)위치 편집이 함께 들어간다.
+   * @spec SPEC-PANEL-SETTINGS-001 (REQ-18/19/20/21)
+   */
+  rowDetail?: {
+    expandable: boolean;
+    expanded: boolean;
+    onToggle: () => void;
+    content: React.ReactNode;
+  };
   /**
    * 컨텍스트별 셀 오버라이드(예: 패널 설정의 Alias Name 컬럼). 기본 컬럼 세트가
    * 처리하지 않는 컬럼 id 에 대해 호출된다. 미주입 시 미처리 컬럼은 null 을 렌더한다.
@@ -214,8 +228,9 @@ function StoreEntryRow({
 
   const entryTags = extractEntryTags(entry);
 
-  // 키 컬럼 표시: 키 컬럼 헤더의 전체 확장 토글(keyExpanded)로 일괄 제어한다.
-  // 축약 시 앞 8자만, 확장 시 전체 키를 노출한다(전체 키는 title 로도 유지).
+  // 키 컬럼 표시: 키 컬럼 헤더의 전체 확장 토글(keyExpanded, 에이전트 상세)로 제어한다.
+  // 패널 설정은 keyExpanded 를 쓰지 않고 선택 행 인라인 펼침(rowDetail) 안에서 키 전체
+  // 상세를 노출하므로, 셀은 항상 축약(앞 8자)으로 두고 전체 키는 title 로 유지한다.
   const fullKey = entry.key as string;
   const displayKey =
     !keyExpanded && fullKey.length > 8 ? fullKey.slice(0, 8) : fullKey;
@@ -285,6 +300,34 @@ function StoreEntryRow({
           <span className="inline-flex items-center gap-1">
             {hasHistory && (
               <ChevronRight className={cn('h-3 w-3 text-(--color-text-muted) transition-transform', historyOpen && 'rotate-90')} />
+            )}
+            {/* 선택(체크)된 행의 인라인 펼침 셰브론(패널 설정, REQ-18/19). 선택된 행에만
+                노출하며, 클릭 시 그 행 아래 상세(키 전체 상세 + 시리즈 편집)를 토글한다. */}
+            {rowDetail?.expandable && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  rowDetail.onToggle();
+                }}
+                aria-expanded={rowDetail.expanded}
+                aria-label={t(
+                  rowDetail.expanded
+                    ? 'agents.detail.store.keyRowCollapseAriaLabel'
+                    : 'agents.detail.store.keyRowExpandAriaLabel',
+                )}
+                title={t(
+                  rowDetail.expanded
+                    ? 'agents.detail.store.keyRowCollapseAriaLabel'
+                    : 'agents.detail.store.keyRowExpandAriaLabel',
+                )}
+                className="inline-flex items-center rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
+              >
+                <ChevronRight
+                  className={cn('h-3 w-3 transition-transform', rowDetail.expanded && 'rotate-90')}
+                  aria-hidden="true"
+                />
+              </button>
             )}
             <span className={keyExpanded ? 'break-all' : 'truncate'} title={fullKey}>
               {displayKey}
@@ -462,6 +505,18 @@ function StoreEntryRow({
           </td>
         ))}
       </tr>
+      {/* 선택 행 인라인 펼침 상세(REQ-18/19/20/21) — 키 전체 상세 + 시리즈 편집을 한 행에. */}
+      {rowDetail?.expanded && (
+        <tr>
+          <td
+            colSpan={colSpan}
+            className="bg-(--color-bg-secondary)/30 px-6 py-3"
+            data-testid={`store-row-detail-${fullKey}`}
+          >
+            {rowDetail.content}
+          </td>
+        </tr>
+      )}
       {historyOpen && (
         <tr>
           <td colSpan={colSpan} className="bg-(--color-bg-secondary)/30 px-6 py-3">
@@ -511,9 +566,12 @@ export interface StoreEntryTableProps {
   onColumnFilterChange: (columnId: FilterColumnId, next: ColumnFilter) => void;
   /** 필터 가능한 컬럼별 고유 값 목록(필터 드롭다운 옵션). */
   uniqueValuesByColumn: ReadonlyMap<FilterColumnId, readonly string[]>;
-  /** 키 컬럼 전체 확장 상태 + 헤더 토글. */
-  keyColumnExpanded: boolean;
-  onToggleKeyExpanded: () => void;
+  /**
+   * 키 컬럼 전체 확장 상태 + 헤더 토글(에이전트 상세). 패널 설정은 대신 `keyRowExpansion`
+   * (행별 접기/펼치기)을 주입하며 이 두 값을 생략한다(헤더 일괄 토글 미노출).
+   */
+  keyColumnExpanded?: boolean;
+  onToggleKeyExpanded?: () => void;
   maxHistorySize: number;
   /** 정적 키 이름 집합(행별 정적/동적 판정 O(1)). */
   staticKeyNames: ReadonlySet<string>;
@@ -523,6 +581,18 @@ export interface StoreEntryTableProps {
    * 행 선택 컨텍스트(패널 설정 전용, 후속 T6/T7). 미주입 시 선행 체크박스 컬럼 미표시.
    */
   selection?: StoreEntrySelectionContext;
+  /**
+   * 선택(체크)된 행의 인라인 펼침 상세(패널 설정 전용, REQ-18/19/20/21). 미주입 시 어떤 행도
+   * 펼치지 않는다(에이전트 상세 불변). `isExpandable` 인 행(=선택된 행)만 펼침 셰브론을
+   * 노출하고, 펼치면 `renderDetail(entry)` 가 그 행 아래 colSpan 상세로 렌더된다.
+   * @spec SPEC-PANEL-SETTINGS-001 (REQ-18/19/20/21)
+   */
+  rowExpansion?: {
+    isExpandable: (entry: Record<string, unknown>) => boolean;
+    isExpanded: (entry: Record<string, unknown>) => boolean;
+    onToggle: (entry: Record<string, unknown>) => void;
+    renderDetail: (entry: Record<string, unknown>) => React.ReactNode;
+  };
   /**
    * 컨텍스트별 셀 오버라이드(패널 설정의 Alias 등, 후속 T6/T7). 미주입 시 기본 셀만.
    */
@@ -556,6 +626,7 @@ export function StoreEntryTable({
   staticKeyNames,
   rowActions,
   selection,
+  rowExpansion,
   renderCellExtra,
   columnHeaderSlots,
 }: StoreEntryTableProps) {
@@ -587,7 +658,7 @@ export function StoreEntryTable({
                     : []
                 }
                 onFilterChange={onColumnFilterChange}
-                keyExpanded={column.id === 'key' ? keyColumnExpanded : undefined}
+                keyExpanded={column.id === 'key' ? keyColumnExpanded ?? false : undefined}
                 onToggleKeyExpanded={
                   column.id === 'key' ? onToggleKeyExpanded : undefined
                 }
@@ -603,7 +674,7 @@ export function StoreEntryTable({
               key={entry.key as string}
               entry={entry}
               columns={columns}
-              keyExpanded={keyColumnExpanded}
+              keyExpanded={keyColumnExpanded ?? false}
               maxHistorySize={maxHistorySize}
               agentId={rowActions.agentId}
               isStatic={staticKeyNames.has(entry.key as string)}
@@ -617,6 +688,16 @@ export function StoreEntryTable({
                   ? {
                       selected: selection.isSelected(entry),
                       onToggle: () => selection.onToggle(entry),
+                    }
+                  : undefined
+              }
+              rowDetail={
+                rowExpansion
+                  ? {
+                      expandable: rowExpansion.isExpandable(entry),
+                      expanded: rowExpansion.isExpanded(entry),
+                      onToggle: () => rowExpansion.onToggle(entry),
+                      content: rowExpansion.renderDetail(entry),
                     }
                   : undefined
               }

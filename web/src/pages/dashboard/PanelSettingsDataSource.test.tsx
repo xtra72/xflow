@@ -314,18 +314,30 @@ describe('T7/AC-08 — 필터/정렬/표시숨김 영속', () => {
     expect(within(table).getByText('agents.detail.store.colKey')).toBeInTheDocument();
   });
 
-  it('키 컬럼 전체 확장 토글이 동작한다(축약↔전체 키)', () => {
+  it('선택 행만 펼침 가능 + 펼침 상세는 편집 필드만(키 설명 서브라인 없음, REQ-19 폐지/AC-21)', () => {
+    // 긴 키(선택됨) + 짧은 키(미선택)를 함께 둔다. 선택 상태는 store_source.series 로 반영.
     state.keyObjects = [
       { key: 'very-long-key-abcdefgh', registration: 'auto', data_type: 'float', metric_type: 'm', tags: {} },
+      { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
     ];
-    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    render(
+      <PanelSettingsDataSource
+        panel={panelWithAgent({
+          series: [{ key: 'very-long-key-abcdefgh', metric_type: 'm', alias: 'very-long-key-abcdefgh' }],
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
     const select = screen.getByTestId('panel-store-select');
-    // 축약: 키 컬럼은 앞 8자만 표시(Alias 컬럼은 전체 키를 표시하므로 축약 텍스트로 구분).
-    expect(within(select).getByText('very-lon')).toBeInTheDocument();
-    fireEvent.click(within(select).getByLabelText('agents.detail.store.keyExpandColumnAriaLabel'));
-    // 확장: 축약 텍스트가 사라지고 전체 키가 표시된다.
-    expect(within(select).queryByText('very-lon')).not.toBeInTheDocument();
-    expect(within(select).getAllByText('very-long-key-abcdefgh').length).toBeGreaterThanOrEqual(1);
+    // 선택된 행 1개만 펼침 셰브론을 갖는다(미선택 k2 는 없음).
+    expect(
+      within(select).getAllByLabelText('agents.detail.store.keyRowExpandAriaLabel'),
+    ).toHaveLength(1);
+    fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
+    const detail = within(select).getByTestId('store-row-detail-very-long-key-abcdefgh');
+    // 편집 필드만: 이름 입력이 존재하고, 이름 위 키·종류·태그 설명 서브라인은 존재하지 않는다.
+    expect(within(detail).getByTestId('chart-store-series-alias-0')).toBeInTheDocument();
+    expect(within(detail).queryByTestId('series-detail-key-0')).toBeNull();
   });
 
   it('정렬 상태가 패널별 localStorage 로 영속된다', () => {
@@ -390,15 +402,17 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
     expect(arg.store_source).toBeDefined();
   });
 
-  it('heatmap: 체크박스 선택은 keys 모드를 강제한다(selection_mode:keys + tag_filters 해제)', () => {
+  it('heatmap: 체크박스 선택은 selection_mode/tag_filters 를 건드리지 않는다(표시/바인딩 분리, REQ-22)', () => {
     const onConfigChange = vi.fn();
-    // 히트맵 기본은 tag 모드지만, 체크박스 선택은 keys 모드로 강제되어 선택 series 만 렌더된다.
+    // v0.3.0: 바인딩 모드는 동적 바인딩 토글이 단독 제어한다. 체크박스는 series(명시 keys 선택)만
+    // 편집하며 selection_mode 를 강제하지 않는다.
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
     const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
     fireEvent.click(checkboxes[0]!);
     const arg = onConfigChange.mock.calls[0]![0] as { store_source: Record<string, unknown> };
-    expect(arg.store_source.selection_mode).toBe('keys');
-    expect(arg.store_source.tag_filters).toBeUndefined();
+    // selection_mode 미강제(패널이 미설정이면 그대로 undefined), tag_filters 도 미변경.
+    expect(arg.store_source.selection_mode).toBeUndefined();
+    expect(arg.store_source.series).toHaveLength(1);
   });
 
   it('heatmap: 데이터 소스의 선택된 시리즈에서 x 좌표를 편집하면 sensor_positions 에 반영된다', () => {
@@ -418,12 +432,217 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
       },
     } as unknown as PanelConfig;
     render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
-    // 데이터 소스에 선택 시리즈별 x/y 입력이 노출된다(패널 옵션에서 이동).
-    const xInput = screen.getByTestId('heatmap-pos-x-k1') as HTMLInputElement;
+    const select = screen.getByTestId('panel-store-select');
+    // 선택된 k1 행을 펼쳐야 인라인 상세의 x/y 입력에 접근할 수 있다(v0.4.0 행 펼침).
+    fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
+    const xInput = within(select).getByTestId('heatmap-pos-x-k1') as HTMLInputElement;
     expect(xInput).toBeInTheDocument();
     fireEvent.change(xInput, { target: { value: '0.25' } });
     expect(onConfigChange).toHaveBeenCalledWith(
       expect.objectContaining({ sensor_positions: { k1: { x: 0.25, y: 0.5 } } }),
     );
+  });
+});
+
+describe('REQ-17/AC-19 — 컬럼 순서 key · name · metric · tag', () => {
+  it('선택 테이블 컬럼이 키 · 이름 · 메트릭 · 태그 순으로 배치된다', () => {
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent ?? '');
+    const idx = (needle: string) => headers.findIndex((h) => h.includes(needle));
+    const key = idx('colKey');
+    const name = idx('colAlias'); // colAlias 라벨이 "이름"으로 표기됨(REQ-16)
+    const metric = idx('colMetric');
+    const tags = idx('colTags');
+    expect(key).toBeGreaterThanOrEqual(0);
+    expect(key).toBeLessThan(name);
+    expect(name).toBeLessThan(metric);
+    expect(metric).toBeLessThan(tags);
+  });
+});
+
+describe('REQ-15/AC-17b — 태그 키(종류)별 표시 필터(OR 내/AND 간)', () => {
+  function checkTagValue(pair: string): void {
+    fireEvent.click(screen.getByTitle(pair).closest('label')!.querySelector('input')!);
+  }
+
+  it('device_id∈{A,B} AND type=report → S1,S2 만 표시(태그 키별 차원)', () => {
+    state.keyObjects = [
+      { key: 's1', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'A', type: 'report' } },
+      { key: 's2', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'B', type: 'report' } },
+      { key: 's3', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'C', type: 'report' } },
+      { key: 's4', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'A', type: 'command' } },
+    ];
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const select = screen.getByTestId('panel-store-select');
+    const rows = () => within(select).getAllByLabelText('agents.detail.store.selectRowAriaLabel');
+    expect(rows()).toHaveLength(4);
+    // 태그 컬럼 필터 열기 → device_id A,B (같은 태그 키 OR) + type report (다른 태그 키 AND).
+    fireEvent.click(within(select).getByTestId('store-filter-agents.detail.store.colTags'));
+    checkTagValue('device_id=A');
+    checkTagValue('device_id=B');
+    checkTagValue('type=report');
+    // 결과: s1, s2 만. (s3=device_id C 제외, s4=type command 제외)
+    expect(rows()).toHaveLength(2);
+  });
+});
+
+describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => {
+  function heatmapWithSeries(): PanelConfig {
+    return {
+      id: 'p1',
+      type: 'heatmap',
+      title: 'h',
+      config: {
+        data_source: 'store',
+        store_source: {
+          ...STORE_SOURCE,
+          selection_mode: 'keys',
+          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+        },
+        sensor_positions: { k1: { x: 0.5, y: 0.5 } },
+      },
+    } as unknown as PanelConfig;
+  }
+
+  it('AC-20/AC-22 — 편집은 선택 행 인라인 펼침에서만; 별도 SelectedSeriesList 섹션 부재', () => {
+    render(<PanelSettingsDataSource panel={heatmapWithSeries()} onConfigChange={vi.fn()} />);
+    const select = screen.getByTestId('panel-store-select');
+    // 별도 그룹/섹션(SelectedSeriesList) + 구 좌표 블록이 존재하지 않는다.
+    expect(screen.queryByTestId('chart-store-selected-series')).toBeNull();
+    expect(screen.queryByTestId('panel-store-positions')).toBeNull();
+    // 선택된 k1 행을 펼치면 그 행 인라인 상세에 이름/색상/좌표 편집이 함께 들어있다.
+    fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
+    const detail = within(select).getByTestId('store-row-detail-k1');
+    expect(within(detail).getByTestId('series-detail-0')).toBeInTheDocument();
+    expect(within(detail).getByTestId('chart-store-series-alias-0')).toBeInTheDocument();
+    expect(within(detail).getByTestId('chart-store-series-color-0')).toBeInTheDocument();
+    expect(within(detail).getByTestId('heatmap-pos-x-k1')).toBeInTheDocument();
+    expect(within(detail).getByTestId('heatmap-pos-y-k1')).toBeInTheDocument();
+  });
+
+  it('AC-20(레이아웃) — 색상은 이름 옆이 아닌 전용 색상 행에서 편집 가능(color 보존)', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={heatmapWithSeries()} onConfigChange={onConfigChange} />);
+    const select = screen.getByTestId('panel-store-select');
+    fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
+    const detail = within(select).getByTestId('store-row-detail-k1');
+    // 색상 전용 행 라벨 + 색상 입력이 존재하고, 편집 시 series[i].color 로 반영된다.
+    expect(within(detail).getByText('dashboard.settings.seriesDetailsColor')).toBeInTheDocument();
+    fireEvent.change(within(detail).getByTestId('chart-store-series-color-0'), {
+      target: { value: '#123456' },
+    });
+    const patch = onConfigChange.mock.calls.at(-1)![0] as {
+      store_source: { series: Array<{ color?: string }> };
+    };
+    expect(patch.store_source.series[0]!.color).toBe('#123456');
+  });
+
+  it('AC-20 — 미선택 행은 펼침이 없다', () => {
+    // k1 만 선택. k2 는 미선택 → 펼침 셰브론이 하나만 존재한다.
+    render(<PanelSettingsDataSource panel={heatmapWithSeries()} onConfigChange={vi.fn()} />);
+    const select = screen.getByTestId('panel-store-select');
+    expect(
+      within(select).getAllByLabelText('agents.detail.store.keyRowExpandAriaLabel'),
+    ).toHaveLength(1);
+  });
+
+  it('AC-23 (Edge) — 비-heatmap 패널: 인라인 상세에 센서 좌표 필드가 없다', () => {
+    const linePanel = {
+      id: 'p1',
+      type: 'line-chart',
+      title: 'l',
+      config: {
+        data_source: 'store',
+        store_source: {
+          ...STORE_SOURCE,
+          selection_mode: 'keys',
+          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+        },
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={linePanel} onConfigChange={vi.fn()} />);
+    const select = screen.getByTestId('panel-store-select');
+    fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
+    const detail = within(select).getByTestId('store-row-detail-k1');
+    expect(within(detail).getByTestId('series-detail-0')).toBeInTheDocument();
+    expect(within(detail).queryByTestId('heatmap-pos-x-k1')).toBeNull();
+  });
+
+  it('AC-24(d) — 세부 편집은 바인딩 모드(ON/OFF)와 무관하게 접근·편집 가능하다', () => {
+    // 동적 바인딩 ON(tag 모드)이라도 선택된 series 행은 펼쳐서 이름을 편집할 수 있다.
+    const onConfigChange = vi.fn();
+    const panel = {
+      id: 'p1',
+      type: 'line-chart',
+      title: 'l',
+      config: {
+        data_source: 'store',
+        store_source: {
+          ...STORE_SOURCE,
+          selection_mode: 'tag',
+          tag_filters: { room: '1' },
+          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+        },
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const select = screen.getByTestId('panel-store-select');
+    fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
+    const aliasInput = within(select).getByTestId('chart-store-series-alias-0');
+    fireEvent.change(aliasInput, { target: { value: 'Room 1' } });
+    const patch = onConfigChange.mock.calls.at(-1)![0] as { store_source: { series: Array<{ alias?: string }> } };
+    expect(patch.store_source.series[0]!.alias).toBe('Room 1');
+  });
+});
+
+describe('REQ-22/AC-24 — 명시적 동적 바인딩 토글 + 표시/바인딩 분리', () => {
+  it('(a) 신규 패널: 동적 바인딩 토글 OFF, selection_mode 미설정(keys/명시 선택)', () => {
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const toggle = screen.getByTestId('chart-dynamic-binding-toggle') as HTMLInputElement;
+    expect(toggle).toBeInTheDocument();
+    expect(toggle.checked).toBe(false);
+  });
+
+  it('(b) 토글 ON → selection_mode:tag 로 전환된다', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
+    fireEvent.click(screen.getByTestId('chart-dynamic-binding-toggle'));
+    const arg = onConfigChange.mock.calls[0]![0] as { store_source: Record<string, unknown> };
+    expect(arg.store_source.selection_mode).toBe('tag');
+  });
+
+  it('(b) 토글 OFF(다시 끄기) → selection_mode:keys, tag_filters 는 보존(additive)', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <PanelSettingsDataSource
+        panel={panelWithAgent({ selection_mode: 'tag', tag_filters: { room: '1' } })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const toggle = screen.getByTestId('chart-dynamic-binding-toggle') as HTMLInputElement;
+    expect(toggle.checked).toBe(true); // 하위호환 로드: tag 모드 → ON
+    fireEvent.click(toggle);
+    const arg = onConfigChange.mock.calls[0]![0] as { store_source: Record<string, unknown> };
+    expect(arg.store_source.selection_mode).toBe('keys');
+    // tag_filters 필드는 제거되지 않는다(additive only).
+    expect(arg.store_source.tag_filters).toEqual({ room: '1' });
+  });
+
+  it('(c) 하위호환: 기존 selection_mode:tag 패널은 토글 ON 으로 로드되고 마운트 시 config 를 변경하지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <PanelSettingsDataSource
+        panel={panelWithAgent({ selection_mode: 'tag', tag_filters: { room: '1' } })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    expect(
+      (screen.getByTestId('chart-dynamic-binding-toggle') as HTMLInputElement).checked,
+    ).toBe(true);
+    // 로드만으로 tag_filters/selection_mode 를 건드리지 않는다(보존).
+    expect(onConfigChange).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,7 @@
 // QueryClientProvider 없이 렌더한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 
@@ -52,9 +52,27 @@ vi.mock('./panels/charts/useStoreChartData', () => ({
 // StoreSourceSection 의 네트워크 훅(에이전트/키 목록) — 정적 값으로 대체.
 vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({ data: { data: [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }] } }),
+  useExecAgent: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('@/services/api/store', () => ({
-  useStoreKeysWithTags: () => ({ data: { keyObjects: [] }, isLoading: false, isError: false }),
+  // 선택 테이블 행은 keyObjects 에서 파생된다. v0.4.0: 좌표 편집이 행 인라인 펼침 안에 있으므로
+  // 선택된 시리즈 키가 목록 행으로 표시되어야 펼침·좌표 편집이 가능하다.
+  useStoreKeysWithTags: () => ({
+    data: {
+      // metric_type/tags 는 config 의 series({key})와 seriesId 가 일치하도록 비운다.
+      keyObjects: storeMock.seriesNames.map((key) => ({
+        key,
+        registration: 'auto',
+        data_type: 'float',
+        tags: {},
+      })),
+    },
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    refetch: vi.fn(),
+  }),
+  useStoreTagPairs: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
 import PanelSettingsDialog from './PanelSettingsDialog';
@@ -137,11 +155,15 @@ describe('PanelSettingsDialog 히트맵 설정 화면', () => {
     } as unknown as PanelConfig;
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    // 시리즈 리스트에 있는 s1(좌표 있음)·s2(좌표 없음, 미배치)는 x 입력이 노출된다.
+    // v0.4.0: 좌표는 선택 행 인라인 펼침 안에서 편집한다. 선택된 s1·s2 행을 펼친다.
+    const expandButtons = screen.getAllByLabelText('agents.detail.store.keyRowExpandAriaLabel');
+    expandButtons.forEach((btn) => fireEvent.click(btn));
+
+    // 선택 시리즈 s1(좌표 있음)·s2(좌표 없음, 미배치)는 펼침 상세에 x 입력이 노출된다.
     expect(screen.getByTestId('heatmap-pos-x-s1')).toBeInTheDocument();
     expect(screen.getByTestId('heatmap-pos-y-s1')).toBeInTheDocument();
     expect(screen.getByTestId('heatmap-pos-x-s2')).toBeInTheDocument();
-    // 시리즈 리스트에 없는 잔존 좌표(leftover)는 목록에 나타나지 않는다.
+    // 시리즈 리스트에 없는 잔존 좌표(leftover)는 선택/펼침 대상이 아니므로 나타나지 않는다.
     expect(screen.queryByTestId('heatmap-pos-x-leftover')).toBeNull();
     expect(screen.queryByTestId('heatmap-pos-y-leftover')).toBeNull();
   });

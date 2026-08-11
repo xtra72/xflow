@@ -876,7 +876,15 @@
       "dataSourceStoreSelectRefresh": "Refresh key list",
       "dataSourceStoreSelectEmpty": "No Store keys to display.",
       "dataSourceStoreSelectNoAgent": "Select a Store agent first.",
-      "dataSourceStoreSelectOverLimit": "Up to {limit} series can be selected. Extra selections are not applied, to protect preview performance."
+      "dataSourceStoreSelectOverLimit": "Up to {limit} series can be selected. Extra selections are not applied, to protect preview performance.",
+      "seriesDetailsTitle": "Series details",
+      "seriesDetailsName": "Name",
+      "seriesDetailsColor": "Color",
+      "seriesDetailsNamePlaceholder": "Name (defaults to key)",
+      "seriesDetailsPositionX": "x",
+      "seriesDetailsPositionY": "y",
+      "dynamicBindingLabel": "Dynamic binding",
+      "dynamicBindingHint": "When on, matching keys are resolved dynamically from tag filters at poll time. When off, only checked series are bound and column filters are display-only."
     },
     "heatmap": {
       "stagePlaceholder": "Heatmap rendering coming soon (MVP)",
@@ -1836,8 +1844,10 @@
         "colHistory": "History",
         "colUpdated": "Updated",
         "colActions": "Actions",
-        "colAlias": "Alias Name",
+        "colAlias": "Name",
         "selectRowAriaLabel": "Select {key}",
+        "keyRowExpandAriaLabel": "Expand key detail",
+        "keyRowCollapseAriaLabel": "Collapse key detail",
         "selectColumnAriaLabel": "Select",
         "prev": "Previous",
         "next": "Next",

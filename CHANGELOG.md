@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### 개선 — 패널 설정 데이터 소스 시리즈 선택 UI (표시 필터 · 인라인 세부 정보 · 동적 바인딩 분리)
+
+- **패널 설정(SPEC-PANEL-SETTINGS-001)의 데이터 소스 시리즈 선택 UX 를 개선 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0, config JSON shape 무변경)**
+
+  3분할 셸 재설계(M1~M5) 위에 데이터 소스 시리즈 선택 경험을 다듬었다(M6, REQ-15~22). 컬럼 필터를 **표시(display) 필터**로 통일하고, 시리즈 편집 지점을 선택 행의 **인라인 펼침 세부 정보** 단일 지점으로 통합했으며, "동적 바인딩"을 표시 필터와 **명시적으로 분리된 토글**로 노출했다. 모든 변경은 additive 이며 기존 `selection_mode`/`tag_filters`/`color` config 의미는 불변이다(하위호환: 기존 `selection_mode:'tag'` 저장 패널은 동적 바인딩 토글 ON + `tag_filters` 보존으로 로드).
+
+  - **통일된 표시 필터(REQ-15)**: 선택 테이블의 모든 컬럼 필터(key/name/metric/tag)를 표시 필터로 일반화 — **같은 컬럼 내 다중 값 OR, 서로 다른 컬럼 간 AND**. 태그는 단일 컬럼이 아니라 **태그 키(종류)별** 로 처리 — 같은 태그 키 내 다중 값 OR, 서로 다른 태그 키 간 AND(예: `device_id ∈ {A,B}` AND `type ∈ {report}`). 신규 순수 매처 `storeColumnValueFilter.ts`.
+  - **이름 편집 · 컬럼 순서(REQ-16/17)**: 사용자 표기 "별칭"→"이름"(저장 필드 `alias` 유지). 선택 테이블 컬럼 순서를 **key · 이름 · metric · tag** 로 재배치.
+  - **행 펼침 세부 정보(REQ-18/20/21)**: "시리즈별 세부 정보"(이름 편집 · 색상 · 선 스타일 · (heatmap)좌표)를 별도 `SelectedSeriesList` 그룹이 아니라 **선택된(체크된) 각 시리즈 행의 인라인 펼침/접힘 상세**로 제공(단일 편집 지점). heatmap 센서 좌표(x/y)를 이름 뒤 2열 레이아웃으로 세부 정보에 통합. 미선택 행은 상세 없음.
+  - **키 설명 라인 제거(REQ-19 폐지/superseded)**: 펼침 상세의 키·종류·태그 설명 서브라인이 테이블 컬럼 + alias 컬럼 키 에코와 중복되어 제거 — 키는 키 컬럼 + alias 컬럼 mono 에코로만 노출.
+  - **동적 바인딩 토글(REQ-22)**: 명시적 "동적 바인딩" 토글을 표시 필터와 분리하여 신설(신규 패널 기본 OFF=명시 선택, ON=poll 시 태그 기준 동적 해석 `selection_mode:'tag'` + `tag_filters`). 세부 정보 편집은 토글/`selection_mode` 와 완전 독립.
+  - **필터 팝오버 잘림 수정 · 폰트 확대**: 컬럼 필터 팝오버가 컨테이너 경계에서 잘리던 문제를 viewport-clamped fixed positioning 으로 수정. 세부 정보 영역 폰트를 본문(sm) 수준으로 확대.
+  - **품질**: REQ-15~22 구현(REQ-19 폐지, 재번호 없음). 회귀 프론트 236 files / 2956 tests 전량 통과, `tsc -b` exit 0, build exit 0. 신규 순수 매처 `storeColumnValueFilter.ts` 는 design.md 파일 계획에 포함(비계획 스코프 0). 신규 npm 의존성 0, 백엔드/불투명 config JSON shape 무변경.
+  - **관련**: SPEC-PANEL-SETTINGS-001 v0.5.0(구현 진행 중, M1~M6, Tier L). M6 = REQ-15~22. 잔여: `tag_filters` 는 `Record<string,string>` 유지(다중값-per-키는 표시 필터 상태 관심사, 동적 바인딩 파생은 기존 best-effort last-value).
+
 ### 추가 — 히트맵 패널 등고선(marching squares) 오버레이
 
 - **히트맵 패널(SPEC-HEATMAP-PANEL-001 MVP)에 등고선(contour lines / iso-lines, marching squares) 오버레이를 가산 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0)**

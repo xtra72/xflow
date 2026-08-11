@@ -317,7 +317,25 @@ export function ColumnFilterButton({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   useClickOutside(containerRef, open, () => setOpen(false));
+
+  // 팝오버가 테이블의 overflow(가로 스크롤) 영역에 잘리지 않도록 position:fixed 로 버튼 아래에
+  // 앵커링하고 뷰포트 안으로 클램프한다(오른쪽 끝 컬럼에서도 전체가 보이도록). SPEC-PANEL-SETTINGS-001
+  const popoverWidth = grouped ? 320 : 224; // w-80 / w-56 상당 px.
+  const [coords, setCoords] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const toggleOpen = (): void => {
+    setOpen((o) => {
+      const next = !o;
+      if (next && btnRef.current) {
+        const r = btnRef.current.getBoundingClientRect();
+        const vw = typeof window !== 'undefined' ? window.innerWidth : popoverWidth + 16;
+        const left = Math.max(8, Math.min(r.left, vw - popoverWidth - 8));
+        setCoords({ left, top: r.bottom + 4 });
+      }
+      return next;
+    });
+  };
 
   const current = filter ?? emptyColumnFilter();
   const active = isColumnFilterActive(filter);
@@ -373,8 +391,9 @@ export function ColumnFilterButton({
   return (
     <span className="relative inline-flex" ref={containerRef}>
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         aria-haspopup="true"
         aria-expanded={open}
         data-testid={`store-filter-${label}`}
@@ -397,11 +416,8 @@ export function ColumnFilterButton({
       </button>
       {open && (
         <div
-          className={cn(
-            'absolute left-0 top-full z-30 mt-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg',
-            // 태그처럼 "키=값" 이 긴 그룹 모드는 전체 값이 보이도록 폭을 넓힌다.
-            grouped ? 'w-80' : 'w-56',
-          )}
+          style={{ position: 'fixed', left: coords.left, top: coords.top, width: popoverWidth }}
+          className="z-50 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg"
         >
           <div className="relative mb-2">
             <input

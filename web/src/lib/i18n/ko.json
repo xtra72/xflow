@@ -876,7 +876,15 @@
       "dataSourceStoreSelectRefresh": "키 목록 새로고침",
       "dataSourceStoreSelectEmpty": "표시할 Store 키가 없습니다.",
       "dataSourceStoreSelectNoAgent": "먼저 Store 에이전트를 선택하세요.",
-      "dataSourceStoreSelectOverLimit": "선택 계열은 최대 {limit}개까지입니다. 미리보기 성능 보호를 위해 초과 선택은 반영되지 않습니다."
+      "dataSourceStoreSelectOverLimit": "선택 계열은 최대 {limit}개까지입니다. 미리보기 성능 보호를 위해 초과 선택은 반영되지 않습니다.",
+      "seriesDetailsTitle": "시리즈별 세부 정보",
+      "seriesDetailsName": "이름",
+      "seriesDetailsColor": "색상",
+      "seriesDetailsNamePlaceholder": "이름 (미입력 시 키)",
+      "seriesDetailsPositionX": "x",
+      "seriesDetailsPositionY": "y",
+      "dynamicBindingLabel": "동적 바인딩",
+      "dynamicBindingHint": "켜면 poll 시점에 태그 필터 기준으로 매칭 키를 동적으로 바인딩합니다. 끄면 체크한 시리즈만 바인딩되고, 컬럼 필터는 표시 전용입니다."
     },
     "heatmap": {
       "stagePlaceholder": "히트맵 렌더 준비 중 (MVP)",
@@ -1836,8 +1844,10 @@
         "colHistory": "히스토리",
         "colUpdated": "갱신",
         "colActions": "액션",
-        "colAlias": "별칭 (Alias)",
+        "colAlias": "이름",
         "selectRowAriaLabel": "{key} 선택",
+        "keyRowExpandAriaLabel": "키 상세 펼치기",
+        "keyRowCollapseAriaLabel": "키 상세 접기",
         "selectColumnAriaLabel": "선택",
         "prev": "이전",
         "next": "다음",

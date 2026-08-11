@@ -236,3 +236,60 @@ SPEC-PANEL-SETTINGS-001 의 전 작업(T1~T10) 4개 마일스톤 완료:
 - **M4(Final)**: T8 heatmap 색상 프리셋 + T10 회귀 확정.
 
 최종 상태: tsc 0, eslint 신규 0(baseline 1 error + 43 warnings 유지), vitest 236 files/2931 tests 전량 통과, 신규 코드 커버리지 ≥85%(당 마일스톤 100%), 신규 npm 의존성 0, 백엔드/불투명 config JSON shape 무변경. REQ-01~14 구현 + AC-01~16 커버(부분 3건 정직 고지). 에이전트 상세·기존 차트/heatmap 설정 편집 회귀 0(AC-16).
+
+---
+
+## Post-verification fix — 데이터소스 토글 단일화 (dual-heading UX bug)
+
+브라우저 검증에서 데이터소스 영역에 "데이터 소스" 섹션이 중복 노출(내 outer Store/TSDB tablist + `StoreSourceSection` 자체 채널/Store 토글 → "Store" 2회)되는 UX 버그 발견(M2 divergence #1 표면화). 사용자 승인 수정 = 단일 토글.
+
+- **StoreSourceSection**(`ChartPanelSections.tsx`): 기존 [채널 | Store] 토글을 **[채널 | Store | TSDB]** 3옵션으로 확장(단일 "데이터 소스" 헤딩). 채널/Store 는 기존과 동일하게 `config.data_source` 로 영속(byte-identical). **TSDB 는 UI 전용 모드**(config 미기록)로 후속 SPEC 안내 placeholder 만 렌더 → 기존 Store 설정 보존(REQ-05/AC-05). `onModeChange` 콜백으로 모드의 단일 소스 오브 트루스를 상위에 보고.
+- **PanelSettingsDataSource.tsx**: 신규 outer Store/TSDB tablist + placeholder + `mode` state **제거**. `StoreSourceSection` 을 `onModeChange` 와 함께 렌더하고, **Store 모드에서만** `PanelStoreSelectTable`(체크박스+Alias) 노출. 채널/TSDB 모드에서는 선택 테이블 미노출.
+- **i18n**: `dashboard.chart.dataSourceTsdb`(토글 라벨) 추가(ko/en). 미사용 `dashboard.settings.dataSourceStoreTab`/`dataSourceTsdbTab` 은 참조 0 확인 후 제거(placeholder 텍스트 `dataSourceTsdbTitle`/`Body` 는 StoreSourceSection 이 재사용, 유지).
+- **테스트**: `PanelSettingsDataSource.test.tsx` T4 describe 를 단일 토글로 재작성(중복 래퍼 부재 검증 + TSDB→placeholder+테이블 미노출+config 보존 + 채널 모드 테이블 미노출). `emptyPanel` 을 Store 모드(에이전트 미선택)로 조정.
+- **검증**: tsc 0, eslint 44(1 error, 43 warnings = baseline, 신규 0), vitest **236 files / 2932 tests 전량 통과**. 채널/Store 바인딩 + StoreSourceSection/StoreTagMode/ChartPanelSections + 에이전트 상세 회귀 0(AC-16). 신규 npm 의존성 0, config JSON shape 무변경(TSDB 는 config 미기록).
+
+**결과: 단일 "데이터 소스" 헤딩 + [채널 | Store | TSDB] 토글.** "Store" 중복 헤딩/토글 제거 완료.
+
+---
+
+## §E.2 Run-phase Evidence — M6 마일스톤 (데이터 소스 시리즈 선택 UI 개선, REQ-15~22)
+
+### 범위 (이 마일스톤에서 수행)
+
+M1~M5(3분할 셸·공용 Store 리스트·색상 프리셋·리사이즈/영속·라이브 미리보기) 위에 데이터 소스 시리즈 선택 UX 를 개선(SPEC v0.5.0, REQ-15~22).
+
+- **REQ-15**: 통일된 표시 필터 — 같은 컬럼 다중값 OR, 다른 컬럼 AND. 태그는 태그 키(종류)별로 — 같은 키 다중값 OR, 다른 키 간 AND.
+- **REQ-16/17**: 사용자 표기 "별칭"→"이름"(필드 `alias` 유지) + 컬럼 순서 key·이름·metric·tag.
+- **REQ-18/20/21**: 시리즈별 세부 정보 = 선택된(체크된) 행의 인라인 펼침/접힘(이름 편집·색상·선스타일·(heatmap)좌표 2열). 별도 `SelectedSeriesList` 그룹 제거(단일 편집 지점 = 행 펼침). heatmap 센서 좌표 세부 정보 통합.
+- **REQ-19(폐지/superseded)**: 펼침 안 키·종류·태그 설명 라인 제거(컬럼/alias 에코 중복) — 재번호 없음.
+- **REQ-22**: 명시적 "동적 바인딩" 토글(표시 필터와 분리, 기존 tag 모드 default ON 하위호환).
+- 필터 팝오버 잘림 수정(viewport-clamped fixed positioning) + 세부 정보 폰트 확대.
+
+### 파일 (files_created / files_modified)
+
+**신규(files_created)**
+- `web/src/pages/dashboard/panels/charts/storeColumnValueFilter.ts` — 통일된 표시 필터 순수 매처(같은 컬럼 OR·컬럼 간 AND·태그 키별 OR/AND). design.md 파일 계획에 포함.
+- `web/src/pages/dashboard/panels/charts/storeColumnValueFilter.test.ts` — 매처 단위 테스트.
+
+**확장(files_modified)**
+- `web/src/lib/i18n/{en,ko}.json` — "이름" 표기·세부 정보·동적 바인딩 토글 라벨(ko/en 대칭).
+- `web/src/pages/agents/{StoreEntryTable,storeColumns}.tsx` — 컬럼 순서 재배치 + 표시 필터/인라인 세부 정보 배선.
+- `web/src/pages/dashboard/{ChartPanelSections,PanelSettingsDataSource}.tsx` — 행 펼침 세부 정보(이름 편집·색상·선스타일·(heatmap)좌표) 통합, `SelectedSeriesList` 그룹 제거, 동적 바인딩 토글 분리, 팝오버 fixed positioning·폰트 확대.
+- 테스트 확장: `PanelSettingsDataSource.test.tsx`, `PanelSettingsDialog.heatmap.test.tsx`, `StoreSourceSection.test.tsx`, `StoreTagMode.test.tsx`.
+
+### test_results (검증 증거)
+
+- `Test Files 236 passed (236) / Tests 2956 passed (2956)` — 전량 통과(실패 0).
+- `tsc -b` → **exit 0** (0 type errors).
+- `build` → **exit 0**.
+
+### implementation_divergence (계획 대비 실제)
+
+- 구현은 SPEC v0.5.0 요구그룹(REQ-15~22, REQ-19 폐지)을 추적. 비계획 스코프 0.
+- 신규 `storeColumnValueFilter.ts` 는 design.md 파일 계획에 이미 포함된 순수 매처 — 신규 추상화 계층 아님.
+- `tag_filters` 는 `Record<string,string>` 유지 — 다중값-per-키는 표시 필터 상태 관심사이며, 동적 바인딩 파생은 기존 best-effort last-value(SPEC v0.5.0 §HISTORY 명시). `PANEL_FILTER_COLUMNS` 는 그룹 필터 UI 용으로 여전히 tag 를 열거하고, 태그 키별 시맨틱은 매처 배선에 위치.
+
+### sync 상태
+
+- CHANGELOG.md M6 항목 추가, spec.md frontmatter status **draft → in-progress**(updated 2026-08-11), 본 §E.2 M6 증거 기록, 동기화 리포트 `.moai/reports/sync-report-panel-settings-m6-001.md` 작성 완료.
