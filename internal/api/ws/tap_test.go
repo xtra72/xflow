@@ -145,7 +145,7 @@ func TestTapObserver_TappedNodeBroadcasts(t *testing.T) {
 // TestTapObserver_EgressSlimsGroupsByDefault 는 expander 미설정(기본) 시 node.output
 // egress 메타데이터의 agent / device 그룹이 id-only 로 슬림화됨을 검증한다
 // (message-slim-metadata). group 형태는 유지되고 type/name 만 wire 에서 제거된다.
-func TestTapObserver_EgressSlimsGroupsByDefault(t *testing.T) {
+func TestTapObserver_EgressPreservesFullGroupsByDefault(t *testing.T) {
 	reg := NewTapRegistry()
 	bc := &countingBroadcaster{}
 	obs := NewTapObserver(reg, bc)
@@ -161,12 +161,13 @@ func TestTapObserver_EgressSlimsGroupsByDefault(t *testing.T) {
 	np := payload.(NodeOutputPayload)
 	md := np.Message["metadata"].(map[string]any)
 
+	// egress 슬림화 제거: agent/device 그룹은 type/name 까지 full 로 유지된다.
 	agent := md["agent"].(map[string]string)
-	assert.Equal(t, map[string]string{"id": "a-1"}, agent, "agent 그룹은 id-only 슬림")
+	assert.Equal(t, map[string]string{"type": "serial", "id": "a-1", "name": "reader"}, agent, "agent 그룹은 full 유지")
 	device := md["device"].(map[string]string)
-	assert.Equal(t, map[string]string{"id": "d-1"}, device, "device 그룹은 id-only 슬림")
+	assert.Equal(t, map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"}, device, "device 그룹은 full 유지")
 
-	// 원본 메시지는 변형되지 않아야 한다(내부 흐름 무영향).
+	// 원본 메시지도 변형되지 않아야 한다(egress 는 DTO 복사본 위에서만 동작).
 	origAgent, _ := msg.Metadata().GetGroup("agent")
 	assert.Equal(t, "serial", origAgent["type"], "원본 agent 그룹은 full 유지")
 }

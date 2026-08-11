@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestSlimGroupsToID 는 SlimGroupsToID 가 agent/device 그룹을 id-only 로 축소하고,
-// 그 외는 보존하며, 원본을 변형하지 않고, 멱등임을 검증한다(표 기반).
+// TestSlimGroupsToID 는 egress 슬림화 제거 후 동작을 검증한다: 모든 그룹(agent/device
+// 포함)을 full 로 그대로 전달하고, 그 외 키도 보존하며, 원본을 변형하지 않고 멱등이다.
 func TestSlimGroupsToID(t *testing.T) {
 	tests := []struct {
 		name string
@@ -14,37 +14,40 @@ func TestSlimGroupsToID(t *testing.T) {
 		want map[string]any
 	}{
 		{
-			name: "full agent and device groups reduced to id-only",
+			name: "full agent and device groups pass through unchanged",
 			in: map[string]any{
 				"agent":   map[string]string{"type": "serial", "id": "a-1", "name": "reader"},
 				"device":  map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"},
 				"flatKey": "flatVal",
 			},
 			want: map[string]any{
-				"agent":   map[string]string{"id": "a-1"},
-				"device":  map[string]string{"id": "d-1"},
+				"agent":   map[string]string{"type": "serial", "id": "a-1", "name": "reader"},
+				"device":  map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"},
 				"flatKey": "flatVal",
 			},
 		},
 		{
-			name: "agent group missing id is dropped (no empty group)",
+			name: "group without id is preserved full (no longer dropped)",
 			in: map[string]any{
 				"agent":  map[string]string{"type": "serial", "name": "reader"},
 				"device": map[string]string{"type": "HVACR.IDU", "id": "d-1"},
 			},
 			want: map[string]any{
-				"device": map[string]string{"id": "d-1"},
+				"agent":  map[string]string{"type": "serial", "name": "reader"},
+				"device": map[string]string{"type": "HVACR.IDU", "id": "d-1"},
 			},
 		},
 		{
-			name: "agent group empty id is dropped",
+			name: "group with empty id is preserved full (no longer dropped)",
 			in: map[string]any{
 				"agent": map[string]string{"id": "", "type": "serial"},
 			},
-			want: map[string]any{},
+			want: map[string]any{
+				"agent": map[string]string{"id": "", "type": "serial"},
+			},
 		},
 		{
-			name: "no agent/device groups passes through unchanged",
+			name: "custom groups and flat keys pass through unchanged",
 			in: map[string]any{
 				"k1":     "v1",
 				"k2":     "v2",
@@ -57,7 +60,7 @@ func TestSlimGroupsToID(t *testing.T) {
 			},
 		},
 		{
-			name: "already slim is idempotent",
+			name: "already id-only groups stay id-only (idempotent shape)",
 			in: map[string]any{
 				"agent":  map[string]string{"id": "a-1"},
 				"device": map[string]string{"id": "d-1"},
@@ -158,72 +161,52 @@ func deepCopyRaw(src map[string]any) map[string]any {
 	return dst
 }
 
-// TestSlimGroupsToID_KeepMarkerPreservesGroup 는 버그 재현/수정 검증이다:
-// enrich 노드가 설정한 _slimKeep 마커에 나열된 그룹은 슬림되지 않고 type/name 을
-// 유지해야 하며, 마커 자체는 egress 출력에서 제거되어야 한다.
-//
-// 수정 전: SlimGroupsToID 가 마커를 무시하고 device 를 id-only 로 축소 → 실패.
-func TestSlimGroupsToID_KeepMarkerPreservesGroup(t *testing.T) {
+// TestSlimGroupsToID_FullGroupsPreserved 는 슬림화 제거 후 agent/device 그룹이
+// type/name 까지 full 로 egress 출력에 유지됨을 검증한다(마커 없이도).
+func TestSlimGroupsToID_FullGroupsPreserved(t *testing.T) {
 	in := map[string]any{
-		"agent":         map[string]string{"type": "serial", "id": "a-1", "name": "reader"},
-		"device":        map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"},
-		MetaKeySlimKeep: "device", // device 만 보존 대상
-		"flatKey":       "flatVal",
+		"agent":   map[string]string{"type": "serial", "id": "a-1", "name": "reader"},
+		"device":  map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"},
+		"flatKey": "flatVal",
 	}
 	got := SlimGroupsToID(in)
 
-	// device 는 full 로 보존
 	device, ok := got["device"].(map[string]string)
-	if !ok {
-		t.Fatalf("device 그룹이 없다: %#v", got["device"])
+	if !ok || device["type"] != "HVACR.IDU" || device["name"] != "room1" || device["id"] != "d-1" {
+		t.Errorf("device 는 full 로 유지되어야 한다: %#v", got["device"])
 	}
-	if device["type"] != "HVACR.IDU" || device["name"] != "room1" || device["id"] != "d-1" {
-		t.Errorf("보존 대상 device 는 full 이어야 한다: %#v", device)
-	}
-
-	// agent 는 마커에 없으므로 여전히 슬림
 	agent, ok := got["agent"].(map[string]string)
-	if !ok {
-		t.Fatalf("agent 그룹이 없다: %#v", got["agent"])
+	if !ok || agent["type"] != "serial" || agent["name"] != "reader" || agent["id"] != "a-1" {
+		t.Errorf("agent 는 full 로 유지되어야 한다: %#v", got["agent"])
 	}
-	if _, hasType := agent["type"]; hasType {
-		t.Errorf("비보존 agent 는 id-only 로 슬림되어야 한다: %#v", agent)
-	}
-	if agent["id"] != "a-1" {
-		t.Errorf("agent.id 는 보존: %#v", agent)
-	}
-
-	// 마커 자체는 egress 출력에서 제거되어야 한다
-	if _, leaked := got[MetaKeySlimKeep]; leaked {
-		t.Errorf("_slimKeep 마커가 egress 출력에 누출되었다: %#v", got)
-	}
-
-	// flat 키는 그대로
 	if got["flatKey"] != "flatVal" {
 		t.Errorf("flatKey = %v", got["flatKey"])
 	}
 }
 
-// TestSlimGroupsToID_KeepMarkerMultipleGroups 는 두 그룹 모두 보존 대상일 때
-// 둘 다 full 로 유지되고 마커가 제거됨을 검증한다.
-func TestSlimGroupsToID_KeepMarkerMultipleGroups(t *testing.T) {
+// TestSlimGroupsToID_MarkerStripped 는 _slimKeep 내부 마커가 egress 출력에서
+// 항상 제거됨을 검증한다(슬림화 유무와 무관, 마커 누출 방지). 그룹은 full 유지.
+func TestSlimGroupsToID_MarkerStripped(t *testing.T) {
 	in := map[string]any{
 		"agent":         map[string]string{"type": "serial", "id": "a-1", "name": "reader"},
 		"device":        map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"},
 		MetaKeySlimKeep: "agent,device",
+		"flatKey":       "flatVal",
 	}
 	got := SlimGroupsToID(in)
 
-	agent := got["agent"].(map[string]string)
-	device := got["device"].(map[string]string)
-	if agent["type"] != "serial" || agent["name"] != "reader" {
-		t.Errorf("agent 보존 실패: %#v", agent)
-	}
-	if device["type"] != "HVACR.IDU" || device["name"] != "room1" {
-		t.Errorf("device 보존 실패: %#v", device)
-	}
 	if _, leaked := got[MetaKeySlimKeep]; leaked {
-		t.Errorf("마커 누출: %#v", got)
+		t.Errorf("_slimKeep 마커가 egress 출력에 누출되었다: %#v", got)
+	}
+	// 마커 유무와 무관하게 그룹은 full 로 유지된다.
+	if a := got["agent"].(map[string]string); a["name"] != "reader" {
+		t.Errorf("agent 보존 실패: %#v", a)
+	}
+	if d := got["device"].(map[string]string); d["name"] != "room1" {
+		t.Errorf("device 보존 실패: %#v", d)
+	}
+	if got["flatKey"] != "flatVal" {
+		t.Errorf("flatKey 보존 실패: %#v", got)
 	}
 }
 

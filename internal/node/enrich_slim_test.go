@@ -68,10 +68,10 @@ func TestEnrichThenTapEgress_KeepsEnrichedGroup(t *testing.T) {
 	}
 }
 
-// TestEnrichPayloadOnly_DoesNotPreserve 는 to_payload 만(to_metadata 없이) 사용하는
-// enrich 는 _slimKeep 마커를 설정하지 않으며, (원래 그룹이 있었다면) egress 에서 여전히
-// 슬림됨을 검증한다.
-func TestEnrichPayloadOnly_DoesNotPreserve(t *testing.T) {
+// TestEnrichPayloadOnly_NoMarker_GroupFullAtEgress 는 to_payload 만(to_metadata 없이)
+// 사용하는 enrich 가 _slimKeep 마커를 설정하지 않음을 검증한다. egress 슬림화 제거 후
+// 에는 마커 유무와 무관하게 device 그룹이 egress 에서 full 로 유지된다.
+func TestEnrichPayloadOnly_NoMarker_GroupFullAtEgress(t *testing.T) {
 	n := newEnrichNode(t, deviceBlock(map[string]any{"to_payload": "device_info"}))
 	// device={id:d-1} 그룹을 가진 메시지에 payload-only enrich.
 	out, err := n.Process(context.Background(), deviceGroupMsg("d-1"))
@@ -80,19 +80,20 @@ func TestEnrichPayloadOnly_DoesNotPreserve(t *testing.T) {
 	}
 	enriched := out[0]
 
-	// 마커가 설정되지 않아야 한다.
+	// 마커가 설정되지 않아야 한다(to_metadata 아님).
 	if keep, ok := enriched.Metadata().Get(message.MetaKeySlimKeep); ok && keep != "" {
 		t.Errorf("payload-only enrich 는 _slimKeep 를 설정하면 안 된다: %q", keep)
 	}
 
-	// payload 에는 {type,id,name} 이 기록되지만, metadata device 그룹은 egress 에서 슬림.
+	// egress 슬림화 제거: 마커가 없어도 device 그룹은 egress 에서 그대로(원본) 유지된다.
+	// deviceGroupMsg("d-1") 는 device={id:d-1} 만 가지므로 그 형태 그대로 통과한다.
 	md := slimEgressMetadata(enriched)
 	device, ok := md["device"].(map[string]string)
 	if !ok {
 		t.Fatalf("device 그룹이 없다: %#v", md["device"])
 	}
-	if _, hasType := device["type"]; hasType {
-		t.Errorf("payload-only enrich 의 device 그룹은 egress 에서 여전히 슬림되어야 한다: %#v", device)
+	if device["id"] != "d-1" {
+		t.Errorf("device.id 는 보존되어야 한다: %#v", device)
 	}
 }
 
@@ -138,16 +139,14 @@ func TestEnrichLookupFails_ButPreservesExistingGroup(t *testing.T) {
 	}
 }
 
-// TestNonEnriched_StillSlimmed 는 enrich 를 거치지 않은 메시지는 종전처럼 슬림됨을 검증한다.
-func TestNonEnriched_StillSlimmed(t *testing.T) {
+// TestNonEnriched_GroupFullAtEgress 는 egress 슬림화 제거 후, enrich 를 거치지 않은
+// 메시지의 device 그룹도 egress 에서 type/name 까지 full 로 유지됨을 검증한다.
+func TestNonEnriched_GroupFullAtEgress(t *testing.T) {
 	msg := message.New(message.WithID("m1"))
 	msg.Metadata().SetGroup("device", map[string]string{"type": "HVACR.IDU", "id": "d-1", "name": "room1"})
 	md := slimEgressMetadata(msg)
 	device := md["device"].(map[string]string)
-	if _, hasType := device["type"]; hasType {
-		t.Errorf("비-enrich 메시지의 device 는 id-only 로 슬림되어야 한다: %#v", device)
-	}
-	if device["id"] != "d-1" {
-		t.Errorf("id 는 보존: %#v", device)
+	if device["type"] != "HVACR.IDU" || device["name"] != "room1" || device["id"] != "d-1" {
+		t.Errorf("비-enrich 메시지의 device 도 egress 에서 full 로 유지되어야 한다: %#v", device)
 	}
 }

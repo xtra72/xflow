@@ -15,7 +15,7 @@ import (
 // nested group metadata 가 외부 스토리지 egress 정책에 따라 id-only 로 슬림화된 뒤
 // "{group}.id" 평면 태그로 펼쳐지는지 검증한다 (message-slim-metadata).
 // type/name 은 레지스트리의 정규 데이터이므로 스토리지에 중복 기록하지 않는다.
-func TestInfluxDBWriteNode_DefaultTags_SlimsGroupsToID(t *testing.T) {
+func TestInfluxDBWriteNode_DefaultTags_PreservesFullGroups(t *testing.T) {
 	var captured influxdbWriteData
 	mock := &mockInfluxDBAgent{
 		processFunc: func(data []byte) ([]byte, error) {
@@ -43,9 +43,7 @@ func TestInfluxDBWriteNode_DefaultTags_SlimsGroupsToID(t *testing.T) {
 
 	// flat 키는 그대로
 	assert.Equal(t, "server-01", captured.Tags["host"])
-	// group 은 id-only 슬림 후 "{group}.id" 태그로만 flatten
+	// group 은 full 로 "{group}.{field}" 태그로 flatten (egress 슬림화 제거 후).
 	assert.Equal(t, "node-1", captured.Tags["agent.id"], "agent group 의 id 가 agent.id 태그로 flatten 되어야 한다")
-	// type/name 은 스토리지 egress 에서 제거되어 태그로 기록되지 않는다.
-	_, hasType := captured.Tags["agent.type"]
-	assert.False(t, hasType, "스토리지 egress 슬림 후 agent.type 태그는 기록되지 않아야 한다")
+	assert.Equal(t, "serial", captured.Tags["agent.type"], "egress 후 agent.type 태그도 full 로 기록되어야 한다")
 }
