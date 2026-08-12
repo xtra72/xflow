@@ -41,7 +41,12 @@ type ChirpStackAgent struct {
 	*lifecycle.BaseLifecycle
 
 	agentConfig agent.AgentConfig
-	csConfig    ChirpStackConfig
+
+	// csConfig 는 파싱된 ChirpStack 설정 스냅샷이다. Configure 가 런타임에 통째로
+	// 교체하고 수신 콜백 / watchdog goroutine 이 락 없이 읽으므로 atomic.Pointer 로
+	// 보관한다. a.mu 와 무관한 경로이므로 REQ-FROZEN-B(락 보유 중 재-lock 금지)에
+	// 영향을 주지 않는다. 읽기는 반드시 cs() 접근자를 사용한다.
+	csConfig atomic.Pointer[ChirpStackConfig]
 
 	client   mqtt.Client
 	recvCh   chan []byte
@@ -104,7 +109,6 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 
 	a := &ChirpStackAgent{
 		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("chirpstack")),
-		csConfig:      cc,
 		recvCh:        make(chan []byte, cc.BufferSize),
 		done:          make(chan struct{}),
 		devices:       make(map[string]*deviceState),
@@ -113,12 +117,22 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
 	}
+	a.csConfig.Store(&cc)
 
 	if err := a.Init(config); err != nil {
 		releaseAgentName(config.Name, config.ID)
 		return nil, err
 	}
 	return a, nil
+}
+
+// cs 는 현재 ChirpStack 설정 스냅샷을 반환한다.
+//
+// 반환된 포인터가 가리키는 값은 절대 변경하지 않는다 — Configure 는 새 값을 통째로
+// Store 하여 교체한다(copy-on-write). 락을 잡지 않으므로 어떤 락 보유 구간에서도
+// 안전하게 호출할 수 있다.
+func (a *ChirpStackAgent) cs() *ChirpStackConfig {
+	return a.csConfig.Load()
 }
 
 // Init 은 에이전트를 초기화하고, 활성화 상태이면 MQTT 브로커에 연결/구독한다.
@@ -129,6 +143,8 @@ func (a *ChirpStackAgent) Init(config agent.AgentConfig) error {
 
 	// 재시작 경로에서 stopped 가드를 해제한다 (mqtt_agent.go 관례).
 	a.stopped.Store(false)
+	// 재시작 경로에서 Stop 이 close 한 done 채널을 새로 만든다 (Stop→Start hot-spin 방지).
+	a.resetDoneIfClosed()
 
 	a.mu.Lock()
 	a.agentConfig = config
@@ -137,9 +153,10 @@ func (a *ChirpStackAgent) Init(config agent.AgentConfig) error {
 	// 비활성화 게이트: disabled 에이전트도 List API 노출을 위해 생성되나 연결하지
 	// 않는다. lifecycle 은 StateCreated 에 머문다.
 	if !config.IsEnabled() {
+		cc := a.cs()
 		a.logger.Info("chirpstack: 비활성화 상태로 생성됨 — 연결 건너뜀",
-			"broker", a.csConfig.Broker,
-			"client_id", a.csConfig.ClientID,
+			"broker", cc.Broker,
+			"client_id", cc.ClientID,
 		)
 		return nil
 	}
@@ -167,35 +184,38 @@ func (a *ChirpStackAgent) Init(config agent.AgentConfig) error {
 // AutoReconnect 시 초기 연결 실패를 치명적으로 보지 않고 degraded 로 진행한다
 // (죽은 브로커가 플로우 시작을 막지 않게 함).
 func (a *ChirpStackAgent) connect() error {
+	// 클라이언트 구성 전체가 하나의 일관된 설정 세대를 보도록 1회 스냅샷한다.
+	cc := a.cs()
+
 	opts := mqtt.NewClientOptions().
-		AddBroker(a.csConfig.Broker).
-		SetClientID(a.csConfig.ClientID).
-		SetKeepAlive(time.Duration(a.csConfig.KeepAliveSec) * time.Second).
-		SetAutoReconnect(a.csConfig.AutoReconnect).
-		SetCleanSession(a.csConfig.CleanSession).
-		SetConnectTimeout(time.Duration(a.csConfig.ConnectTimeoutSec) * time.Second).
+		AddBroker(cc.Broker).
+		SetClientID(cc.ClientID).
+		SetKeepAlive(time.Duration(cc.KeepAliveSec) * time.Second).
+		SetAutoReconnect(cc.AutoReconnect).
+		SetCleanSession(cc.CleanSession).
+		SetConnectTimeout(time.Duration(cc.ConnectTimeoutSec) * time.Second).
 		SetOrderMatters(false)
 
-	if a.csConfig.AutoReconnect {
+	if cc.AutoReconnect {
 		opts.SetConnectRetry(true)
-		opts.SetConnectRetryInterval(time.Duration(a.csConfig.ConnectTimeoutSec) * time.Second)
+		opts.SetConnectRetryInterval(time.Duration(cc.ConnectTimeoutSec) * time.Second)
 	}
-	if a.csConfig.Username != "" {
-		opts.SetUsername(a.csConfig.Username)
+	if cc.Username != "" {
+		opts.SetUsername(cc.Username)
 	}
-	if a.csConfig.Password != "" {
-		opts.SetPassword(a.csConfig.Password)
+	if cc.Password != "" {
+		opts.SetPassword(cc.Password)
 	}
 
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
 		a.logger.Info("chirpstack: 브로커에 연결됨",
-			"broker", a.csConfig.Broker,
-			"client_id", a.csConfig.ClientID,
+			"broker", cc.Broker,
+			"client_id", cc.ClientID,
 		)
 		a.subscribe(c)
 	})
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
-		a.logger.Warn("chirpstack: 연결 끊김", "broker", a.csConfig.Broker, "error", err)
+		a.logger.Warn("chirpstack: 연결 끊김", "broker", cc.Broker, "error", err)
 	})
 	opts.SetDefaultPublishHandler(a.messageHandler)
 
@@ -208,11 +228,11 @@ func (a *ChirpStackAgent) connect() error {
 	a.mu.Unlock()
 
 	token := client.Connect()
-	connected := token.WaitTimeout(time.Duration(a.csConfig.ConnectTimeoutSec)*time.Second) && token.Error() == nil
+	connected := token.WaitTimeout(time.Duration(cc.ConnectTimeoutSec)*time.Second) && token.Error() == nil
 	if !connected {
-		if a.csConfig.AutoReconnect {
+		if cc.AutoReconnect {
 			a.logger.Warn("chirpstack: 초기 연결 실패 — 백그라운드 재연결로 진행(degraded)",
-				"broker", a.csConfig.Broker, "error", token.Error(),
+				"broker", cc.Broker, "error", token.Error(),
 			)
 			return nil
 		}
@@ -220,7 +240,7 @@ func (a *ChirpStackAgent) connect() error {
 		if token.Error() != nil {
 			return fmt.Errorf("chirpstack init: 연결 실패: %w", token.Error())
 		}
-		return fmt.Errorf("chirpstack init: 연결 타임아웃 (%s)", a.csConfig.Broker)
+		return fmt.Errorf("chirpstack init: 연결 타임아웃 (%s)", cc.Broker)
 	}
 	return nil
 }
@@ -234,22 +254,24 @@ func (a *ChirpStackAgent) subscribe(c mqtt.Client) {
 		return
 	}
 
+	cc := a.cs()
+
 	a.topicsMu.Lock()
-	if len(a.subscribedTopics) == 0 && len(a.csConfig.Topics) > 0 {
-		a.subscribedTopics = make([]string, len(a.csConfig.Topics))
-		copy(a.subscribedTopics, a.csConfig.Topics)
+	if len(a.subscribedTopics) == 0 && len(cc.Topics) > 0 {
+		a.subscribedTopics = make([]string, len(cc.Topics))
+		copy(a.subscribedTopics, cc.Topics)
 	}
 	topics := make([]string, len(a.subscribedTopics))
 	copy(topics, a.subscribedTopics)
 	a.topicsMu.Unlock()
 
 	for _, topic := range topics {
-		token := c.Subscribe(topic, a.csConfig.QoS, nil)
+		token := c.Subscribe(topic, cc.QoS, nil)
 		token.Wait()
 		if token.Error() != nil {
 			a.logger.Error("chirpstack: 토픽 구독 실패", "topic", topic, "error", token.Error())
 		} else {
-			a.logger.Info("chirpstack: 토픽 구독 완료", "topic", topic, "qos", a.csConfig.QoS)
+			a.logger.Info("chirpstack: 토픽 구독 완료", "topic", topic, "qos", cc.QoS)
 		}
 	}
 }
@@ -275,7 +297,9 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 	a.upsertDevice(up)
 
 	// comm-state fold: 활성화 시 last-seen 갱신 + online 전이 change emit (M5, REQ-M5-02).
-	if a.csConfig.EmitCommState {
+	// 매 업링크마다 현재 스냅샷을 읽으므로 Configure 의 emit_comm_state 토글이 이 게이트에는
+	// 즉시 반영된다 (watchdog 기동/정지는 재시작 필요 — Configure 주석 참조).
+	if a.cs().EmitCommState {
 		a.onUplinkCommState(up)
 	}
 
@@ -305,14 +329,45 @@ func (a *ChirpStackAgent) enqueue(data []byte, topic string) {
 }
 
 // ReceiveMessage 는 수신 채널에서 메시지를 가져온다 (agent.MessageReceiver).
+//
+// done 은 재시작 경로(Init)에서 교체되므로 select 전에 a.mu 하에서 1회 캡처한다.
+// 진행 중인 수신은 자신이 캡처한 세대의 done 만 관찰한다.
 func (a *ChirpStackAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
+	a.mu.RLock()
+	done := a.done
+	a.mu.RUnlock()
+
 	select {
 	case data := <-a.recvCh:
 		return data, nil
-	case <-a.done:
+	case <-done:
 		return nil, fmt.Errorf("chirpstack: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// resetDoneIfClosed 는 이미 close 된 done 채널을 새 채널로 교체한다 (Init 재시작 경로).
+//
+// Stop 이 close 한 done 을 그대로 두고 Start 하면 ReceiveMessage 의 `case <-done`
+// 이 영구히 ready 상태가 되어, recvCh 가 잠시라도 비어 있을 때마다 즉시 에러를
+// 반환한다. 노드 수신 루프는 그 에러로 블로킹 없이 재시도하며 CPU 코어 하나를
+// 태운다(hot-spin).
+//
+// "이미 close 된 경우에만" 교체하는 것이 핵심이다 — 열려 있는 done 을 교체하면
+// 그 채널에서 대기 중인 in-flight ReceiveMessage 가 깨어날 수단을 잃는다. 또한
+// Stop 이 아닌 경로에서는 no-op 이므로, 의도적으로 정지된 에이전트를 되살리지도
+// 않는다(부활은 오직 Start→Init 경로에서만 일어난다).
+func (a *ChirpStackAgent) resetDoneIfClosed() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	select {
+	case <-a.done:
+		a.done = make(chan struct{})
+		a.doneOnce = sync.Once{}
+	default:
+		// 아직 열려 있음 — 진행 중인 수신을 보존한다.
 	}
 }
 
@@ -359,7 +414,7 @@ func (a *ChirpStackAgent) Stop(_ context.Context) error {
 
 	if a.client != nil {
 		if a.client.IsConnected() {
-			for _, topic := range a.csConfig.Topics {
+			for _, topic := range a.cs().Topics {
 				token := a.client.Unsubscribe(topic)
 				token.Wait()
 			}
@@ -367,7 +422,10 @@ func (a *ChirpStackAgent) Stop(_ context.Context) error {
 		a.client.Disconnect(250)
 	}
 
+	// done / doneOnce 는 재시작 경로(resetDoneIfClosed)가 교체하므로 a.mu 하에서 다룬다.
+	a.mu.Lock()
 	a.doneOnce.Do(func() { close(a.done) })
+	a.mu.Unlock()
 
 	// 버퍼 드레인.
 	for {
@@ -405,14 +463,75 @@ func (a *ChirpStackAgent) Process(_ []byte) ([]byte, error) {
 }
 
 // Configure 는 에이전트 설정을 업데이트한다.
+//
+// agentConfig 뿐 아니라 파싱된 csConfig 도 함께 교체한다 — 이전에는 csConfig 가 생성
+// 시점에 1회만 파싱되어, UI 에서 저장한 ChirpStack 노브 변경이 조용히 무시되었다.
+//
+// 런타임 반영 범위(의도적 한계, 재시작 필요):
+//   - emit_comm_state 의 per-uplink fold 게이트는 즉시 반영된다(handleUplink 가 매
+//     업링크마다 현재 스냅샷을 읽는다).
+//   - comm-state watchdog(watchLoop / reportLoop)은 Init 에서만 기동되므로 런타임
+//     토글로 기동/정지되지 않는다. 따라서 false→true 토글 시 staleness 기반 offline
+//     판정과 주기 report 는 에이전트를 재시작해야 동작한다.
+//   - broker / topics / qos 등 트랜스포트 노브는 이미 열린 MQTT 연결에 반영되지
+//     않는다. 저장만 되고 다음 연결에서 적용된다.
+//
+// 위 한계에 해당하는 변경은 경고 로그로 사용자에게 알린다(조용한 무시 금지).
 func (a *ChirpStackAgent) Configure(config agent.AgentConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("chirpstack configure: %w", err)
 	}
+
+	// 파싱 실패 시 이전 csConfig 를 그대로 유지하고 에러를 반환한다 — 절반만 갱신된
+	// 상태(agentConfig 는 새 값 / csConfig 는 옛 값)를 만들지 않는다.
+	cc, err := parseChirpStackConfigStrict(config)
+	if err != nil {
+		return fmt.Errorf("chirpstack configure: %w", err)
+	}
+
+	prev := a.cs()
+
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
+
+	a.csConfig.Store(&cc)
+
+	// REQ-FROZEN-B: a.mu 를 보유하지 않은 상태에서 로깅한다.
+	a.logRestartRequiredChanges(prev, &cc)
 	return nil
+}
+
+// logRestartRequiredChanges 는 저장은 되었으나 런타임에 즉시 반영되지 않는 설정
+// 변경을 경고로 알린다 (Configure 주석의 "런타임 반영 범위" 참조).
+func (a *ChirpStackAgent) logRestartRequiredChanges(prev, next *ChirpStackConfig) {
+	if prev == nil || a.logger == nil {
+		return
+	}
+
+	if prev.EmitCommState != next.EmitCommState {
+		a.logger.Warn("chirpstack: emit_comm_state 변경 저장됨 — 업링크 fold 는 즉시 반영되나 "+
+			"staleness watchdog / 주기 report 는 에이전트 재시작 후 반영됩니다",
+			"from", prev.EmitCommState, "to", next.EmitCommState)
+	}
+	if prev.Broker != next.Broker || prev.ClientID != next.ClientID || !equalStringSlice(prev.Topics, next.Topics) {
+		a.logger.Warn("chirpstack: 트랜스포트 설정 변경 저장됨 — 기존 MQTT 연결에는 반영되지 않으며 "+
+			"에이전트 재시작이 필요합니다",
+			"broker", next.Broker, "client_id", next.ClientID, "topics", next.Topics)
+	}
+}
+
+// equalStringSlice 는 두 문자열 슬라이스가 순서까지 동일한지 비교한다.
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TransportConnected 는 실제 Paho 클라이언트의 연결 여부를 반환한다
@@ -494,19 +613,21 @@ func (a *ChirpStackAgent) Stats() agent.StatsSnapshot {
 
 // State 는 타입별 런타임 상태를 반환한다 (agent.StatefulAgent).
 func (a *ChirpStackAgent) State() map[string]any {
+	cc := a.cs()
+
 	a.topicsMu.RLock()
 	topics := make([]string, len(a.subscribedTopics))
 	copy(topics, a.subscribedTopics)
 	a.topicsMu.RUnlock()
 	if len(topics) == 0 {
-		topics = append(topics, a.csConfig.Topics...)
+		topics = append(topics, cc.Topics...)
 	}
 
 	return map[string]any{
-		"broker":    a.csConfig.Broker,
-		"client_id": a.csConfig.ClientID,
+		"broker":    cc.Broker,
+		"client_id": cc.ClientID,
 		"connected": a.TransportConnected(),
-		"qos":       a.csConfig.QoS,
+		"qos":       cc.QoS,
 		"topics":    topics,
 	}
 }

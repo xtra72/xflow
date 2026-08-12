@@ -24,7 +24,7 @@ type commEntry struct {
 //
 // context 는 에이전트 생명주기에 종속되며 stopCommWatchdog 이 취소한다 (REQ-M6-03).
 func (a *ChirpStackAgent) startCommWatchdog() {
-	if !a.csConfig.EmitCommState {
+	if !a.cs().EmitCommState {
 		return
 	}
 	a.mu.Lock()
@@ -69,7 +69,7 @@ func (a *ChirpStackAgent) watchLoop(ctx context.Context) {
 	defer a.wdWg.Done()
 
 	// tick 은 offline_threshold 의 절반(최소 1s)으로, 임계 초과를 적시에 감지한다.
-	interval := a.csConfig.OfflineThreshold / 2
+	interval := a.cs().OfflineThreshold / 2
 	if interval <= 0 {
 		interval = time.Second
 	}
@@ -94,7 +94,7 @@ func (a *ChirpStackAgent) watchLoop(ctx context.Context) {
 func (a *ChirpStackAgent) reportLoop(ctx context.Context) {
 	defer a.wdWg.Done()
 
-	interval := a.csConfig.CommReportInterval
+	interval := a.cs().CommReportInterval
 	if interval <= 0 {
 		return // 주기 report off — goroutine 즉시 종료.
 	}
@@ -147,7 +147,7 @@ func (a *ChirpStackAgent) onUplinkCommState(up *uplink) {
 // device_state.change 를 emit 한다 (REQ-M5-03). emit 은 락 해제 후 수행한다.
 func (a *ChirpStackAgent) checkStaleness() {
 	nowMs := time.Now().UnixMilli()
-	thresholdMs := a.csConfig.OfflineThreshold.Milliseconds()
+	thresholdMs := a.cs().OfflineThreshold.Milliseconds()
 
 	var toEmit []deviceStateRecord
 	a.commMu.Lock()

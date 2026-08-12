@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -34,6 +35,11 @@ type ChirpStackInNode struct {
 	agent     agent.Agent
 	receiver  agent.MessageReceiver
 
+	// agentName 은 initAgent 에서 1회 pre-capture 한다 — 방출 경로에서 매번
+	// a.Name() 을 호출하면 HVAC 락 함정(재귀 RLock)에 노출되기 때문이다.
+	// 에이전트 재시작 시 인스턴스가 교체되므로 Reinit 에서 재캡처한다.
+	agentName string
+
 	sourceCh chan message.Message
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -43,6 +49,9 @@ type ChirpStackInNode struct {
 var (
 	_ Node       = (*ChirpStackInNode)(nil)
 	_ SourceNode = (*ChirpStackInNode)(nil)
+	// AgentReinitializer 미구현은 엔진의 노드 재초기화 루프에서 조용히 건너뛰어져
+	// 에이전트 재시작 후 노드가 영구 무음이 된다. 컴파일 타임에 고정한다.
+	_ AgentReinitializer = (*ChirpStackInNode)(nil)
 )
 
 // NewChirpStackInNode 는 ChirpStackInNode 팩토리 함수이다.
@@ -98,6 +107,9 @@ func (n *ChirpStackInNode) AgentRef() flow.AgentRef {
 }
 
 // initAgent 는 AgentResolver 로 에이전트를 resolve 하고 MessageReceiver 를 확인한다.
+//
+// agent / receiver / agentName 은 Reinit 이 런타임에 교체하므로(수신 루프가 동시에
+// 읽음) 반드시 n.mu 하에서 기록한다.
 func (n *ChirpStackInNode) initAgent(ctx context.Context) error {
 	if n.resolver == nil {
 		return fmt.Errorf("chirpstack-in: AgentResolver 미주입")
@@ -110,16 +122,25 @@ func (n *ChirpStackInNode) initAgent(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("chirpstack-in: agent resolve 실패: %w", err)
 	}
-	n.transport = transport
 
+	var resolved agent.Agent
 	if accessor, ok := transport.(AgentAccessor); ok {
-		n.agent = accessor.UnderlyingAgent()
+		resolved = accessor.UnderlyingAgent()
 	}
-	recv, ok := n.agent.(agent.MessageReceiver)
+	recv, ok := resolved.(agent.MessageReceiver)
 	if !ok {
 		return fmt.Errorf("chirpstack-in: 에이전트가 MessageReceiver 를 구현하지 않음")
 	}
+
+	// HVAC 락 함정 회피: Name() 은 n.mu 를 잡기 전에 1회 호출한다.
+	agentName := resolved.Name()
+
+	n.mu.Lock()
+	n.transport = transport
+	n.agent = resolved
 	n.receiver = recv
+	n.agentName = agentName
+	n.mu.Unlock()
 	return nil
 }
 
@@ -137,32 +158,48 @@ func (n *ChirpStackInNode) Init(ctx context.Context) error {
 
 // receiveLoop 는 에이전트로부터 per-measurement 레코드를 수신하여 message 로 빌드해
 // sourceCh 에 전달한다.
+//
+// agent / receiver / agentName / stopCh 는 루프 시작 시 1회 캡처한다. 특히 stopCh 은
+// 반드시 "이 루프 세대(generation)"의 채널이어야 한다 — Reinit 이 stopCh 을 새 채널로
+// 교체하므로, 매 반복마다 n.stopCh 을 다시 읽으면 구 루프가 새(열린) 채널을 보고
+// 종료하지 못해 누수 + 이중 소비가 발생한다.
 func (n *ChirpStackInNode) receiveLoop() {
 	n.mu.RLock()
 	a := n.agent
+	recv := n.receiver
 	opts := n.emitMetadata
+	agentName := n.agentName
+	stopCh := n.stopCh
 	n.mu.RUnlock()
 
-	// HVAC 락 함정 회피: agentName 을 루프 밖에서 1회 캡처(락 보유 중 self-name
-	// 재조회 금지).
-	var agentName string
-	if a != nil {
-		agentName = a.Name()
-	}
+	var throttle receiveFailureThrottle
 
 	for {
 		select {
-		case <-n.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		data, err := n.receiver.ReceiveMessage(ctx)
+		ctx, cancel := context.WithTimeout(context.Background(), chirpStackReceiveTimeout)
+		data, err := recv.ReceiveMessage(ctx)
 		cancel()
 		if err != nil || data == nil {
+			// 무음 실패 방지: 에이전트 교체 등으로 수신이 영구 실패해도 진단 로그가
+			// 전혀 남지 않던 결함을 rate-limited Warn 으로 보완한다. 정상 유휴 경로인
+			// 5초 타임아웃은 실패로 계상하지 않는다.
+			if count, emit := throttle.note(err, time.Now()); emit {
+				if lg := n.Logger(); lg != nil {
+					lg.Warn("chirpstack-in: 수신 실패 지속",
+						"node_id", n.ID(),
+						"consecutive_failures", count,
+						"error", err,
+					)
+				}
+			}
 			continue
 		}
+		throttle.reset()
 
 		msg, ok := buildChirpStackMessage(data, n.ID(), a, agentName, opts)
 		if !ok {
@@ -171,10 +208,48 @@ func (n *ChirpStackInNode) receiveLoop() {
 
 		select {
 		case n.sourceCh <- msg:
-		case <-n.stopCh:
+		case <-stopCh:
 			return
 		}
 	}
+}
+
+// chirpStackReceiveTimeout 은 1회 수신 대기 상한이다. 초과 시 반환되는
+// context.DeadlineExceeded 는 "유휴"이며 실패가 아니다.
+const chirpStackReceiveTimeout = 5 * time.Second
+
+// chirpStackReceiveWarnInterval 은 수신 실패 경고의 최소 방출 간격이다.
+// 실패 시 수신이 즉시 반환되어 루프가 빠르게 회전할 수 있으므로 반드시 rate-limit 한다.
+const chirpStackReceiveWarnInterval = 5 * time.Second
+
+// receiveFailureThrottle 는 receiveLoop 의 수신 실패 경고를 rate-limit 한다.
+// 단일 receiveLoop goroutine 에서만 접근하므로 락이 필요 없다.
+type receiveFailureThrottle struct {
+	consecutive int
+	lastWarnAt  time.Time
+}
+
+// note 는 수신 결과를 1건 기록하고 (연속 실패 횟수, 경고 방출 여부) 를 반환한다.
+//
+//   - context.DeadlineExceeded 는 정상 유휴 경로이므로 실패로 계상하지 않고 경고도
+//     내지 않는다(그대로 두면 5초마다 로그가 범람한다).
+//   - 그 외 실패는 첫 발생 시 즉시 1회, 이후에는 chirpStackReceiveWarnInterval 마다
+//     1회만 경고한다.
+func (t *receiveFailureThrottle) note(err error, now time.Time) (int, bool) {
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		return 0, false
+	}
+	t.consecutive++
+	if t.lastWarnAt.IsZero() || now.Sub(t.lastWarnAt) >= chirpStackReceiveWarnInterval {
+		t.lastWarnAt = now
+		return t.consecutive, true
+	}
+	return t.consecutive, false
+}
+
+// reset 은 수신 성공 시 연속 실패 카운터를 초기화한다.
+func (t *receiveFailureThrottle) reset() {
+	t.consecutive = 0
 }
 
 // buildChirpStackMessage 는 에이전트가 emit 한 per-measurement 레코드(JSON)를 flow
@@ -313,8 +388,48 @@ func (n *ChirpStackInNode) SourceCh() <-chan message.Message {
 
 // Shutdown 은 노드를 종료한다.
 func (n *ChirpStackInNode) Shutdown(_ context.Context) error {
+	n.stopCurrentLoop()
+	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
+}
+
+// stopCurrentLoop 은 현재 세대의 receiveLoop 에 종료를 신호한다.
+// stopCh / stopOnce 는 Reinit 이 교체하므로 반드시 n.mu 하에서 다룬다.
+func (n *ChirpStackInNode) stopCurrentLoop() {
+	n.mu.Lock()
 	n.stopOnce.Do(func() {
 		close(n.stopCh)
 	})
-	return n.BaseNode.TransitionTo(lifecycle.StateStopping)
+	n.mu.Unlock()
+}
+
+// Reinit 은 에이전트 재시작(새 인스턴스로 교체) 후 노드를 재초기화한다
+// (MQTTSubNode.Reinit 관용구 미러링).
+//
+// 이 노드는 수신 goroutine 을 소유하므로 순서가 중요하다:
+// 기존 receiveLoop 종료 → agent/transport/receiver/agentName 재해석 →
+// stopCh / stopOnce 재생성 → 새 receiveLoop 기동.
+// stopCh 을 재생성하지 않으면 새 루프가 첫 select 에서 즉시 종료된다(구 stopCh 은
+// 이미 close 된 상태).
+//
+// 본 메서드가 없으면 Engine.ReinitNodesForAgent 가 이 노드를 조용히 건너뛰어,
+// 에이전트 재시작 후 노드가 구 인스턴스의 닫힌 채널만 바라보며 영구 무음이 된다.
+func (n *ChirpStackInNode) Reinit(ctx context.Context) error {
+	// 1. 기존 수신 루프 종료 (구 루프는 자신이 캡처한 stopCh 을 관찰한다).
+	n.stopCurrentLoop()
+
+	// 2. agent / transport / receiver / agentName 재해석.
+	//    실패 시 새 루프를 띄우지 않고 에러를 전파한다(엔진이 로그로 기록).
+	if err := n.initAgent(ctx); err != nil {
+		return err
+	}
+
+	// 3. 새 세대의 stopCh / stopOnce 로 교체.
+	n.mu.Lock()
+	n.stopCh = make(chan struct{})
+	n.stopOnce = sync.Once{}
+	n.mu.Unlock()
+
+	// 4. 새 receiveLoop 기동.
+	go n.receiveLoop()
+	return nil
 }

@@ -59,8 +59,8 @@ func (a *ChirpStackAgent) CommStateRecordJSON(devEui, trigger string) ([]byte, e
 // 에서 이 값을 확인해 1회 경고를 남긴다(전제조건 공개 — REQ-M3-01 의 "comm 맵에서
 // 방출" 문구는 그대로 유지된다).
 //
-// csConfig 는 생성 시 1회 설정되고 이후 변경되지 않으므로 락 없이 읽는다
+// csConfig 는 Configure 가 런타임에 교체할 수 있으므로 cs() 스냅샷으로 읽는다
 // (handleUplink 의 기존 관용구와 동일).
 func (a *ChirpStackAgent) CommStateEnabled() bool {
-	return a.csConfig.EmitCommState
+	return a.cs().EmitCommState
 }

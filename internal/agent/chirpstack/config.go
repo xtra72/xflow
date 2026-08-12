@@ -1,6 +1,7 @@
 package chirpstack
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -114,6 +115,87 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 	}
 
 	return cc
+}
+
+// parseChirpStackConfigStrict 는 런타임 재설정(Configure) 경로용 파서이다.
+//
+// parseChirpStackConfig 는 타입이 어긋난 옵션을 조용히 무시하고 기본값을 남긴다.
+// 생성 경로에서는 그 관용(lenient) 동작을 그대로 보존하지만, 런타임 재설정에서는
+// 사용자가 방금 저장한 값이 조용히 사라지는 것이 곧 결함이므로 에러로 거부한다.
+// 호출자는 에러 시 이전 설정을 유지해야 한다.
+func parseChirpStackConfigStrict(cfg agent.AgentConfig) (ChirpStackConfig, error) {
+	if err := validateChirpStackOptions(cfg.Transport.Options); err != nil {
+		return ChirpStackConfig{}, err
+	}
+	return parseChirpStackConfig(cfg), nil
+}
+
+// validateChirpStackOptions 는 Transport.Options 의 ChirpStack 노브 타입/범위를 검증한다.
+// 키가 없으면 통과한다(기본값 사용).
+func validateChirpStackOptions(opts map[string]any) error {
+	if opts == nil {
+		return nil
+	}
+
+	for _, key := range []string{"broker", "client_id", "username", "password"} {
+		if v, ok := opts[key]; ok {
+			if _, ok := v.(string); !ok {
+				return fmt.Errorf("%s 는 문자열이어야 합니다 (got %T)", key, v)
+			}
+		}
+	}
+	for _, key := range []string{"auto_reconnect", "clean_session", "emit_comm_state"} {
+		if v, ok := opts[key]; ok {
+			if _, ok := v.(bool); !ok {
+				return fmt.Errorf("%s 는 불리언이어야 합니다 (got %T)", key, v)
+			}
+		}
+	}
+	for _, key := range []string{"keep_alive_sec", "buffer_size", "connect_timeout_sec"} {
+		if v, ok := opts[key]; ok && !isNumeric(v) {
+			return fmt.Errorf("%s 는 숫자여야 합니다 (got %T)", key, v)
+		}
+	}
+	if v, ok := opts["qos"]; ok {
+		if !isNumeric(v) {
+			return fmt.Errorf("qos 는 숫자여야 합니다 (got %T)", v)
+		}
+		if n := toInt(v); n < 0 || n > 2 {
+			return fmt.Errorf("qos 는 0/1/2 여야 합니다 (got %d)", n)
+		}
+	}
+	if v, ok := opts["topics"]; ok {
+		if len(toStringSlice(v)) == 0 {
+			return fmt.Errorf("topics 는 비어 있지 않은 문자열 목록이어야 합니다 (got %T)", v)
+		}
+	}
+	for _, key := range []string{"comm_report_interval", "offline_threshold"} {
+		v, ok := opts[key]
+		if !ok {
+			continue
+		}
+		if isNumeric(v) {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("%s 는 숫자(초) 또는 duration 문자열이어야 합니다 (got %T)", key, v)
+		}
+		if _, err := time.ParseDuration(s); err != nil {
+			return fmt.Errorf("%s duration 파싱 실패 (%q): %w", key, s, err)
+		}
+	}
+	return nil
+}
+
+// isNumeric 은 toInt / toDuration 이 숫자로 해석할 수 있는 타입인지 판별한다.
+func isNumeric(v any) bool {
+	switch v.(type) {
+	case int, int64, float64, byte:
+		return true
+	default:
+		return false
+	}
 }
 
 // toDuration 은 인터페이스 값을 time.Duration 으로 변환한다.
