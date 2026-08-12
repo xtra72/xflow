@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 추가 — ChirpStack LoRaWAN 에이전트 (`chirpstack` 에이전트 + `chirpstack-in` 노드)
+
+- **ChirpStack LoRaWAN Network Server 의 MQTT 업링크를 수신하여 측정값별로 팬아웃하는 신규 에이전트/노드 추가 (SPEC-CHIRPSTACK-001, Tier L)**
+
+  ChirpStack 가 발행하는 MQTT 업링크(토픽 `application/#`)를 구독해 `deviceInfo`/`object`/`rxInfo`/`time` 을 디코드하고, 업링크 `object` 필드를 **측정값 1개당 메시지 1개**(`type="event"`, top-level `timestamp`=업링크 `time`, `payload={value}`, `metadata.measurement`/`device`/`tags`)로 팬아웃한다. 이는 기존 Lua `script`+`split` 파이프라인을 대체하며, 다운스트림 read path(`$.payload.value`, `$.metadata.measurement`, `$.metadata.device.*`, `$.metadata.tags.*`, `$.timestamp`)를 그대로 보존한다(REQ-FROZEN-02). `devEui` 기준 디바이스 자동 생성/조회(UUID v4)와 `deviceName`/`tags` 메타데이터 지속화를 수행하고, 선택적으로 comm-state(`device_state.<trigger>`, online/rssi/snr/last_seen 을 device_state 스트림에 fold)를 방출한다.
+
+  - **신규 패키지**: `internal/agent/chirpstack/` (`agent.go`, `config.go`, `decode.go`, `message.go`, `provider.go`, `watchdog.go`, `registration.go` + 테스트 + `testdata/packet.json`). 기존 `system/mqtt_agent.go` 트랜스포트·`device_id_repo`·`device/registry` 재사용.
+  - **신규 노드**: `internal/node/chirpstack.go` (`chirpstack-in` SourceNode) — 수신 전용, store/influx 소비자에 직결. 노드 device 그룹 승격(dedup) 활용으로 에이전트는 `unit_id`(=devEui)만 방출.
+  - **신규 타입**: 에이전트 `chirpstack`, 노드 `chirpstack-in`. Wiring 3곳: `cmd/xflowd/main.go`(RegisterChirpStackTypes + import), `internal/node/registry.go`(chirpstack-in 등록), `pkg/flow/validate.go`(`agentRefRequiredTypes`).
+  - **분기(Divergence, as-implemented — spec.md § Implementation Notes IN-1~4)**: (1) flow-validation 경로는 존재하지 않는 `internal/flow/validate.go` 가 아니라 실제 `pkg/flow/validate.go` 의 `agentRefRequiredTypes`(존재성 화이트리스트 아님·agent_ref 검증 목적). (2) tags 지속화는 `DeviceMetadata.Labels map[string]string`(ChirpStack tags 가 map 이므로 `Tags []string` 아님); 메시지 `metadata.tags` verbatim pass-through 불변. (3) comm-state `state` 그룹은 `payload` 에 typed 값(online:bool/rssi:int/snr:float/last_seen_ms:int64), 노드가 `msg.Type()`=`device_state.<trigger>` 계층형 설정. (4) rxInfo 디코딩은 M5(comm-state) 소속, device_state 는 기존 recvCh 에 `record` 판별자로 접힌 단일 전송(folded stream).
+  - **품질**: M1~M6 구현(커밋 `eb0339f9`/`6bb3a965`/`ca024d1d`/`bc08f3ce`/`b26a8850`/`88807142`). 신규 코드 커버리지 89.4%(목표 85% 초과), TRUST 5 PASS(Critical 0), go build/vet/gofmt 클린·신규 코드 lint 0, REQ-FROZEN-01~04 준수, 무회귀. Gaps: 라이브 ChirpStack 브로커 스모크 테스트는 이연(packet.json 픽스처 기반 테이블 주도 테스트로 대체).
+  - **관련**: SPEC-CHIRPSTACK-001 v0.1.0(구현 완료, Tier L). 관련 SPEC: SPEC-DEVICE-001, SPEC-DEVICE-IDENTITY-001(Phase D). 적용에는 `bin/xflowd` 재빌드·재시작 + flow config 의 기존 Lua `script`+`split` 단계를 `chirpstack-in` 노드로 교체 필요.
+
 ### 추가 — store-write `data_type: "auto"` 값 기반 타입 추론 (SPEC-STORE-003 v0.3.1)
 
 - **store-write 노드 config 의 `data_type` 에 `"auto"` sentinel 을 추가 (additive, non-breaking, 기존 빈 data_type 의 string 동작 보존)**

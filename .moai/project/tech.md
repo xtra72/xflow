@@ -355,7 +355,7 @@ Agent는 Transport Interface(통신 인터페이스)와 Protocol Definition(프�
 
 - **Transport Interface**: Serial(RS-485/RS-232), TCP, UDP 등 통신 인터페이스 추상화
 - **Protocol Definition**: 사용자 설정 기반 바이트 파싱 엔진 (메시지 포맷, 필드, 체크섬 정의)
-- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC, MODBUS/TCP, ThingsBoard Gateway MQTT(`thingplus-gateway`, `v1/gateway/*` 다중화 게이트웨이 — 기존 Eclipse Paho 재사용, 신규 의존성 없음) (사전 정의된 프로토콜)
+- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC, MODBUS/TCP, ThingsBoard Gateway MQTT(`thingplus-gateway`, `v1/gateway/*` 다중화 게이트웨이 — 기존 Eclipse Paho 재사용, 신규 의존성 없음), ChirpStack LoRaWAN(`chirpstack` 에이전트 + `chirpstack-in` 노드 — ChirpStack MQTT 업링크 `application/#` 수신 → 측정값별 팬아웃, 기존 Eclipse Paho 재사용, 신규 의존성 없음) (사전 정의된 프로토콜)
 - **커스텀 Agent**: Samsung NASA 등 사용자 정의 프로토콜 (YAML 설정 기반)
 - Agent 프레임워크: 독립 생명주기, 다중 플로우 공유, 참조 카운팅 기반 관리
 - 커넥션 풀링: Agent가 연결을 유지하여 플로우 재배포 시에도 연결 단절 없음

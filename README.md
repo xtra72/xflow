@@ -291,6 +291,16 @@ Bridge 노드를 통한 MQTT 토픽 동적 구독 관리 시스템이다. Subscr
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
 
+### internal/agent/chirpstack + internal/node - ChirpStack LoRaWAN Agent (SPEC-CHIRPSTACK-001)
+
+ChirpStack LoRaWAN Network Server의 MQTT 업링크(토픽 `application/#`)를 수신하여 측정값별로 팬아웃하는 에이전트(`chirpstack`) + 수신 노드(`chirpstack-in`)이다. 업링크 `object` 필드를 측정값 1개당 메시지 1개(`type="event"`, `payload={value}`, `metadata.measurement`/`device`/`tags`)로 팬아웃하여 기존 Lua `script`+`split` 파이프라인을 대체하며, 다운스트림 read path를 그대로 보존한다. `devEui` 기준 디바이스 자동 생성(UUID v4) + 메타데이터 지속화, 선택적 comm-state(`device_state.<trigger>`, online/rssi/snr/last_seen를 device_state 스트림에 fold)를 지원한다. `system/mqtt_agent.go` 트랜스포트를 재사용하며, 에이전트는 `unit_id`(=devEui)만 방출하고 노드의 device 그룹 승격(dedup)으로 디바이스 식별을 처리한다.
+
+- 신규 타입: 에이전트 `chirpstack`, 노드 `chirpstack-in`
+- 커버리지: 89.4% (신규 코드, 목표 85% 초과)
+- TRUST 5: PASS (Critical 0)
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음
+
 ### internal/node - Filter 조건식 파서 (SPEC-FILTER-001)
 
 FilterNode에 문자열 기반 조건식 파서를 추가하여, YAML 플로우 정의에서 `condition: "$.payload.temperature >= 30"` 형태로 직접 조건식을 작성할 수 있다. 렉서(Tokenizer), 재귀 하강 파서(Recursive Descent Parser), AST 평가기(Evaluator)를 포함하며, 기존 Go 함수 타입 조건식과 완전 호환된다.
