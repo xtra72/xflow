@@ -69,14 +69,8 @@ func TestChirpStackAgent_DeviceAutoCreateAndUID(t *testing.T) {
 	if d.Name() != "WS301-180806" {
 		t.Errorf("Name() = %q, want WS301-180806", d.Name())
 	}
-	// UID 는 랜덤 UUID 가 아니라 devEui 자신이다 — device_id 를 devEui 로 고정하는
-	// 변경 이전에는 이 자리에서 uuid.Parse(d.UID()) 성공을 요구했다. 그 기대가 곧
-	// 옛 계약이었으므로, 계약 변경을 이 단언에 그대로 기록한다.
-	if d.UID() != fixtureDevEui {
-		t.Errorf("UID() = %q, want devEui %q", d.UID(), fixtureDevEui)
-	}
-	if _, err := uuid.Parse(d.UID()); err == nil {
-		t.Errorf("UID() = %q 가 UUID 로 파싱된다 — devEui 여야 한다", d.UID())
+	if _, err := uuid.Parse(d.UID()); err != nil {
+		t.Errorf("UID() = %q, not a UUID: %v", d.UID(), err)
 	}
 	if d.ID() != d.UID() {
 		t.Errorf("ID()=%q != UID()=%q", d.ID(), d.UID())

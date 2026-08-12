@@ -310,11 +310,47 @@ func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName
 		payload["unit_id"] = rec.UnitID
 	}
 	promoteDevIDWithUUID(msg, payload, agentName, opts)
+	// unit_id 는 chirpstack 에서 곧 devEui 이다 — 승격이 payload 에서 지운 값을
+	// device 그룹에 디바이스 정보(dev_eui)로 되살린다.
+	setChirpStackDevEui(msg, opts, rec.UnitID)
 
 	for k, v := range payload {
 		msg.Payload().Set(k, v)
 	}
 	return msg, true
+}
+
+// setChirpStackDevEui 는 device 그룹에 chirpstack 고유 키 dev_eui 를 덧붙인다.
+//
+// 왜 필요한가: 노드는 레코드의 unit_id(=devEui)를 promoteDevIDWithUUID 로 소비해
+// device 그룹의 id(UUID)로 바꾸고 payload 에서 제거한다. 그 결과 devEui 자체는
+// 메시지 어디에서도 읽을 수 없다. device_id 는 UUID 여야 하는 플랫폼 불변식이므로
+// (SPEC-DEVICE-IDENTITY-001 Phase D), devEui 는 id 를 대체하는 대신 별도 키로 싣는다.
+//
+// 왜 여기(chirpstack 로컬)인가: mergeDeviceGroup / promoteDevIDWithUUID 는 7개 노드
+// 파일 31개 호출부가 공유하는 전역 규약이라 시그니처/동작을 넓히면 blast radius 가
+// 그만큼 커진다. 본 헬퍼는 공유 헬퍼를 전혀 건드리지 않고 공개 metadata API 만으로
+// 같은 그룹에 키 하나를 더한다 — 다른 프로듀서(HVACR/modbus/serial…)의 출력은
+// 한 바이트도 변하지 않는다.
+//
+// 호출 순서(중요): 반드시 promoteDevIDWithUUID 이후에 호출한다. 그 헬퍼는 내부에서
+// mergeDeviceGroup 을 여러 번 호출하지만, mergeDeviceGroup 은 기존 그룹을 읽어
+// 병합하므로(전체 치환 아님) 이후 호출이 있어도 dev_eui 는 보존된다. 그럼에도
+// 승격 이후로 고정해 두어 순서 의존을 남기지 않는다.
+//
+// opts.Device 게이팅: device 그룹 emit 자체가 꺼져 있으면 no-op 이다. 게이팅하지
+// 않으면 device 그룹이 없어야 할 설정에서 dev_eui 하나 때문에 그룹이 생겨 모양이
+// 바뀐다 (mergeDeviceGroup 과 동일한 규율).
+func setChirpStackDevEui(msg message.Message, opts MetadataEmitOptions, devEui string) {
+	if !opts.Device || devEui == "" {
+		return
+	}
+	fields, _ := msg.Metadata().GetGroup("device")
+	if fields == nil {
+		fields = make(map[string]string, 4)
+	}
+	fields["dev_eui"] = devEui
+	msg.Metadata().SetGroup("device", fields)
 }
 
 // chirpStackRecordCombined 는 combined(측정치 통합) 레코드의 판별자 값이다
@@ -365,6 +401,7 @@ func buildChirpStackCombinedMessage(data []byte, nodeID string, a agent.Agent, a
 		payload["unit_id"] = rec.UnitID
 	}
 	promoteDevIDWithUUID(msg, payload, agentName, opts)
+	setChirpStackDevEui(msg, opts, rec.UnitID) // per-measurement 경로와 동일.
 
 	for k, v := range payload {
 		msg.Payload().Set(k, v)
@@ -424,6 +461,7 @@ func buildChirpStackDeviceStateMessage(data []byte, nodeID string, a agent.Agent
 	}
 	emitAgentGroup(msg, a, opts)
 	promoteDevIDWithUUID(msg, payload, agentName, opts)
+	setChirpStackDevEui(msg, opts, rec.UnitID) // event 경로와 동일.
 
 	for k, v := range payload {
 		msg.Payload().Set(k, v)

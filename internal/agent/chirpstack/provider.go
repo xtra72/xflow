@@ -2,7 +2,6 @@ package chirpstack
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -43,15 +42,6 @@ type deviceState struct {
 
 	// measurements 는 디바이스가 마지막으로 보고한 스칼라 measurement 값 캐시이다.
 	measurements map[string]any
-
-	// deviceIDRegistered 는 이 devEui 를 device_id 로 저장소에 등록하는 시도가
-	// 종결되었는지를 나타낸다 (registerDeviceIDIfNeeded 참조).
-	//
-	// 등록 자체는 idempotent 하지만 저장소 I/O(파일 재기록)이므로 매 업링크마다
-	// 반복하면 hot path 에 불필요한 쓰기가 실린다. 이 플래그로 디바이스당 1회만
-	// 수행한다. 값 타입(bool)이므로 clone() 의 `cp := *d` 로 그대로 복사되며,
-	// listDevices 스냅샷/어댑터는 이 플래그를 읽지 않는다(내부 상태).
-	deviceIDRegistered bool
 }
 
 // clone 은 tags/measurements 맵을 포함해 깊은 복사한다 (roster 스냅샷용).
@@ -144,8 +134,8 @@ func deviceOnline(lastSeen time.Time, threshold time.Duration) bool {
 // upsertDevice 는 업링크의 디바이스를 devEui 키로 자동 생성/갱신하고, 시스템 UID
 // 발급 및 런타임 DeviceInfo 등록을 수행한다 (REQ-M4-01/02/04).
 //
-//   - SetDeviceID(agentName, devEui, devEui): device_id 를 devEui 로 고정(최초 1회).
-//   - ResolveDeviceID(agentName, devEui): device_id 조회 (저장소 미설정 시 "" — graceful).
+//   - ResolveDeviceID(agentName, devEui): 시스템 UID(UUID v4) 발급/조회
+//     (저장소 미설정 시 "" — graceful).
 //   - SetDeviceInfo(agentName, devEui, {DeviceType=deviceProfileName, Label=deviceName}).
 //   - 로스터 upsert: deviceName/tags 지속화(Device.Metadata 로 노출).
 //
@@ -160,12 +150,14 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	// measurement 캐시용 스칼라 키 선별/정렬도 락 밖에서 수행한다 (락 보유 구간 최소화).
 	mkeys := scalarMeasurementKeys(up.Object)
 
-	// device_id 를 devEui 로 고정한다. 반드시 아래 ResolveDeviceID 보다 먼저 수행한다 —
-	// 순서가 뒤바뀌면 GetOrCreate 가 버려질 UUID 를 한 번 생성/영속했다가 곧바로
-	// 덮어쓰게 된다. 저장소 I/O 이므로 어떤 락도 보유하지 않은 채 호출한다(REQ-FROZEN-B).
-	markRegistered := a.registerDeviceIDIfNeeded(agentName, devEui)
-
-	// device_id 조회(위에서 devEui 로 고정됨) + 런타임 device_type/label 등록.
+	// 시스템 UID 발급/조회 + 런타임 device_type/label 등록.
+	//
+	// device_id 는 저장소가 발급하는 UUID v4 이며 에이전트가 프로토콜 식별자(devEui)로
+	// 덮어쓰지 않는다 — UUID 형식은 API 경계에서 강제되는 플랫폼 불변식이다
+	// (SPEC-DEVICE-IDENTITY-001 Phase D, device.ClassifyDeviceRef). devEui 는 id 가
+	// 아니라 디바이스 정보(dev_eui)로 노출한다(properties 참조).
+	//
+	// 저장소 I/O 이므로 어떤 락도 보유하지 않은 채 호출한다(REQ-FROZEN-B).
 	_ = agent.ResolveDeviceID(context.Background(), agentName, devEui)
 	agent.SetDeviceInfo(agentName, devEui, agent.DeviceInfo{
 		DeviceType: up.DeviceInfo.DeviceProfileName,
@@ -177,9 +169,6 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	if !ok {
 		d = &deviceState{devEui: devEui}
 		a.devices[devEui] = d
-	}
-	if markRegistered {
-		d.deviceIDRegistered = true
 	}
 	d.deviceName = up.DeviceInfo.DeviceName
 	d.deviceProfileName = up.DeviceInfo.DeviceProfileName
@@ -193,57 +182,6 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	// 최신 measurement 캐시 병합 (online 은 lastSeen 에서 파생하므로 저장하지 않는다).
 	d.mergeMeasurements(up.Object, mkeys)
 	a.devicesMu.Unlock()
-}
-
-// registerDeviceIDIfNeeded 는 (agentName, devEui) 의 device_id 를 devEui 자신으로
-// 등록하고, 로스터에 "등록 종결" 플래그를 세워야 하는지를 반환한다.
-//
-// 왜 devEui 를 device_id 로 쓰는가: LoRaWAN devEui 는 이미 전역 고유한 디바이스
-// 식별자이므로, 별도의 랜덤 UUID 를 하나 더 두면 다운스트림(대시보드/TSDB)에서
-// 물리 디바이스를 지목할 때 매핑 테이블을 거쳐야 한다. 저장소에 devEui 를 지정
-// device_id 로 심어 두면 이후 ResolveDeviceID 가 그대로 devEui 를 반환하므로,
-// promoteDevIDWithUUID 를 비롯한 하류 소비자는 한 줄도 바뀌지 않는다(samsung 선례
-// 와 동일한 seeding 방식).
-//
-// 락 규율(REQ-FROZEN-B): SetDeviceID 는 저장소 락을 잡는 I/O 이므로 devicesMu /
-// commMu / a.mu 중 어느 것도 보유하지 않은 채 호출한다. 플래그 읽기와 쓰기는
-// 서로 다른 짧은 임계 구역으로 분리되어 있고, 쓰기는 호출자(upsertDevice)의 기존
-// 잠금 구간에 접힌다.
-//
-// 반환값 규약:
-//   - 성공: true (재시도 불필요).
-//   - ErrDeviceIDConflict: true. 같은 devEui 가 다른 (agent, unit) 에 이미 배정된
-//     영구 조건이므로 재시도해도 결과가 같다. 매 업링크마다 저장소 I/O 와 경고
-//     로그를 반복하지 않도록 종결 처리한다. 업링크는 실패시키지 않으며
-//     ResolveDeviceID 가 기존 값을 그대로 반환해 측정 스트림은 계속 흐른다.
-//   - 그 외 오류(예: 파일 영속 실패): false. 일시적일 수 있으므로 다음 업링크에서
-//     다시 시도한다.
-//
-// 저장소 미설정(nil)이면 SetDeviceID 가 no-op(nil)이므로 true 가 되어, 매 업링크마다
-// 무의미한 호출을 반복하지 않는다.
-func (a *ChirpStackAgent) registerDeviceIDIfNeeded(agentName, devEui string) bool {
-	a.devicesMu.RLock()
-	d, ok := a.devices[devEui]
-	done := ok && d.deviceIDRegistered
-	a.devicesMu.RUnlock()
-	if done {
-		return false
-	}
-
-	err := agent.SetDeviceID(context.Background(), agentName, devEui, devEui)
-	switch {
-	case err == nil:
-		return true
-	case errors.Is(err, agent.ErrDeviceIDConflict):
-		a.logger.Warn("chirpstack: devEui 를 device_id 로 등록 실패 — 이미 다른 디바이스에 배정됨. "+
-			"기존 device_id 를 유지하며 업링크 처리는 계속한다",
-			"devEui", devEui, "agent", agentName, "error", err)
-		return true
-	default:
-		a.logger.Warn("chirpstack: devEui 를 device_id 로 등록 실패 — 다음 업링크에서 재시도한다",
-			"devEui", devEui, "agent", agentName, "error", err)
-		return false
-	}
 }
 
 // DownlinkTarget 은 devEui 의 다운링크 대상(캐시된 applicationId + deviceProfileName)을
@@ -431,8 +369,14 @@ func (a *chirpDeviceAdapter) State() device.DeviceState {
 	}
 }
 
-// properties 는 protocol 고유 속성 맵을 만든다: 링크 품질(rssi/snr/gateway_id) +
-// 최신 measurement 캐시.
+// properties 는 protocol 고유 속성 맵을 만든다: devEui + 링크 품질(rssi/snr/gateway_id)
+// + 최신 measurement 캐시.
+//
+// dev_eui 는 항상 존재한다(무조건 키): devEui 는 로스터 엔트리의 키 자체이므로 이
+// 디바이스가 존재하는 한 반드시 알려져 있다. rssi/snr/gateway_id 와 달리 "미상"
+// 상태가 없으므로 emit_comm_state 노브나 comm 엔트리 유무에 게이팅하지 않는다.
+// device_id 는 UUID v4 이고(플랫폼 불변식) devEui 는 그와 별개의 프로토콜 고유
+// 식별자이므로, id 를 덮어쓰는 대신 여기 디바이스 정보로 노출한다.
 //
 // 노출 경로 선택 근거: device.DeviceState 는 이미 범용 Properties map[string]any 를
 // 갖고 있으므로 공유 구조체를 확장하지 않는다 — 다른 프로바이더(xsfm/century/lg/
@@ -449,18 +393,16 @@ func (a *chirpDeviceAdapter) State() device.DeviceState {
 // 넘기지 않고 다시 복사한다 — 어댑터는 여러 번 State() 호출에 재사용될 수 있으므로,
 // 호출자가 받은 맵을 변조해도 다음 호출 결과가 오염되지 않아야 한다.
 func (a *chirpDeviceAdapter) properties() map[string]any {
-	var props map[string]any
+	props := make(map[string]any, 5)
+	if a.snap.devEui != "" {
+		props["dev_eui"] = a.snap.devEui
+	}
 	if a.comm != nil {
-		props = map[string]any{
-			"rssi":       a.comm.rssi,
-			"snr":        a.comm.snr,
-			"gateway_id": a.comm.gatewayID,
-		}
+		props["rssi"] = a.comm.rssi
+		props["snr"] = a.comm.snr
+		props["gateway_id"] = a.comm.gatewayID
 	}
 	if len(a.snap.measurements) > 0 {
-		if props == nil {
-			props = make(map[string]any, 1)
-		}
 		m := make(map[string]any, len(a.snap.measurements))
 		for k, v := range a.snap.measurements {
 			m[k] = v

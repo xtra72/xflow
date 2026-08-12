@@ -45,9 +45,11 @@ type uplink struct {
 //
 // devEui 는 여기서 단 한 번 소문자로 정규화한다(normalizeDevEui). 디코드 직후를
 // 정규화 지점으로 택한 이유는 devEui 가 이 이후 (a) 로스터 맵 키, (b) comm 맵 키,
-// (c) emit 레코드의 unit_id, (d) device_id 등록 값 으로 갈라져 쓰이기 때문이다.
-// 갈라진 뒤에 각각 정규화하면 한 곳만 누락돼도 동일 물리 디바이스가 두 개의
-// device_id 로 쪼개진다 — 유일한 상류 지점에서 정규화해 그 실패 양상을 원천 차단한다.
+// (c) emit 레코드의 unit_id, (d) 디바이스 정보 dev_eui 로 갈라져 쓰이기 때문이다.
+// 이 값들은 모두 device_id 조회 키(ResolveDeviceID 의 unitID)와 같은 문자열이어야
+// 하므로, 갈라진 뒤에 각각 정규화하면 한 곳만 누락돼도 동일 물리 디바이스가 두 개의
+// device_id 를 발급받아 쪼개진다 — 유일한 상류 지점에서 정규화해 그 실패 양상을
+// 원천 차단한다.
 func decodeUplink(raw []byte) (*uplink, error) {
 	var up uplink
 	if err := json.Unmarshal(raw, &up); err != nil {
