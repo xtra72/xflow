@@ -15,14 +15,22 @@ type uplinkDeviceInfo struct {
 	Tags              map[string]string `json:"tags"`
 }
 
+// uplinkRxInfo 는 업링크 rxInfo[] 항목 중 comm-state(best-gateway) 산출에 쓰는
+// 게이트웨이 수신 품질 필드만 담는다 (M5, REQ-M5-05).
+type uplinkRxInfo struct {
+	GatewayID string  `json:"gatewayId"`
+	RSSI      int     `json:"rssi"`
+	SNR       float64 `json:"snr"`
+}
+
 // uplink 는 ChirpStack LoRaWAN 업링크 이벤트의 디코드 대상 필드이다.
 //
-// rxInfo(게이트웨이 rssi/snr) 는 comm-state(best-gateway) 산출에만 쓰이므로
-// M5(comm-state) 범위이며 본 마일스톤에서는 디코드하지 않는다.
+// rxInfo(게이트웨이 rssi/snr) 는 comm-state(best-gateway) 산출에 쓰인다 (M5).
 type uplink struct {
 	Time       string           `json:"time"`
 	DeviceInfo uplinkDeviceInfo `json:"deviceInfo"`
 	Object     map[string]any   `json:"object"`
+	RxInfo     []uplinkRxInfo   `json:"rxInfo"`
 }
 
 // decodeUplink 는 원시 ChirpStack 업링크 JSON 을 디코드한다 (REQ-M3-01).
@@ -38,4 +46,18 @@ func decodeUplink(raw []byte) (*uplink, error) {
 		return nil, errors.New("chirpstack decode: missing deviceInfo.devEui")
 	}
 	return &up, nil
+}
+
+// bestGateway 는 rxInfo[] 중 최대 rssi 게이트웨이의 rssi/snr/gatewayId 를 반환한다
+// (REQ-M5-05). rxInfo 가 비어 있으면 ok=false.
+//
+// 최대 rssi 를 "최적" 대표 게이트웨이로 본다(신호 세기 우선). 동률이면 먼저 나온
+// 항목을 유지한다(> 비교이므로 갱신하지 않음 → 결정적).
+func bestGateway(rx []uplinkRxInfo) (rssi int, snr float64, gatewayID string, ok bool) {
+	for i := range rx {
+		if !ok || rx[i].RSSI > rssi {
+			rssi, snr, gatewayID, ok = rx[i].RSSI, rx[i].SNR, rx[i].GatewayID, true
+		}
+	}
+	return rssi, snr, gatewayID, ok
 }

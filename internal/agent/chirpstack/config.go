@@ -1,6 +1,8 @@
 package chirpstack
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
 )
@@ -14,7 +16,7 @@ const defaultChirpStackTopic = "application/#"
 //
 // system/mqtt_agent.go 의 MQTTConfig 트랜스포트 서브셋을 미러링한다(발행 노브 제외).
 // comm-state 노브(emit_comm_state / comm_report_interval / offline_threshold)는
-// M5(comm-state) 범위이므로 본 마일스톤에서는 포함하지 않는다.
+// M5(comm-state) 범위에서 추가된다.
 type ChirpStackConfig struct {
 	Broker            string   // MQTT 브로커 주소
 	ClientID          string   // MQTT 클라이언트 식별자
@@ -27,7 +29,16 @@ type ChirpStackConfig struct {
 	CleanSession      bool     // 클린 세션 여부
 	BufferSize        int      // 수신 버퍼 크기
 	ConnectTimeoutSec int      // 연결 타임아웃(초)
+
+	// M5 comm-state 노브 (REQ-FROZEN-03, REQ-M5-01/03/04).
+	EmitCommState      bool          // device_state emit 게이트 (기본 false)
+	CommReportInterval time.Duration // 주기 report 간격 (0=off, change 는 유지)
+	OfflineThreshold   time.Duration // staleness→offline 임계 (기본 300s)
 }
+
+// defaultOfflineThreshold 는 업링크 staleness→offline 판정의 보수적 기본 임계이다.
+// LoRaWAN 클래스 A 디바이스 업링크 주기가 디바이스마다 상이하므로 넉넉히 잡는다.
+const defaultOfflineThreshold = 300 * time.Second
 
 // parseChirpStackConfig 는 AgentConfig 에서 ChirpStackConfig 를 파싱한다.
 // parseMQTTConfig 관용구(기본값 세팅 + Transport.Options 타입 어서션 오버라이드)를
@@ -43,6 +54,7 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 		CleanSession:      true,
 		BufferSize:        1024,
 		ConnectTimeoutSec: 10,
+		OfflineThreshold:  defaultOfflineThreshold,
 	}
 
 	opts := cfg.Transport.Options
@@ -88,7 +100,45 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 		cc.ConnectTimeoutSec = toInt(v)
 	}
 
+	// M5 comm-state 노브.
+	if v, ok := opts["emit_comm_state"].(bool); ok {
+		cc.EmitCommState = v
+	}
+	if v, ok := opts["comm_report_interval"]; ok {
+		cc.CommReportInterval = toDuration(v)
+	}
+	if v, ok := opts["offline_threshold"]; ok {
+		if d := toDuration(v); d > 0 {
+			cc.OfflineThreshold = d
+		}
+	}
+
 	return cc
+}
+
+// toDuration 은 인터페이스 값을 time.Duration 으로 변환한다.
+//
+//   - 숫자(int/int64/float64/byte)는 "초" 단위로 해석한다 (JSON 숫자는 float64).
+//   - 문자열은 time.ParseDuration 으로 해석하고, 실패 시 0 을 반환한다.
+//   - 그 외 타입은 0.
+func toDuration(v any) time.Duration {
+	switch n := v.(type) {
+	case int:
+		return time.Duration(n) * time.Second
+	case int64:
+		return time.Duration(n) * time.Second
+	case float64:
+		return time.Duration(n) * time.Second
+	case byte:
+		return time.Duration(n) * time.Second
+	case string:
+		if d, err := time.ParseDuration(n); err == nil {
+			return d
+		}
+		return 0
+	default:
+		return 0
+	}
 }
 
 // toInt 는 인터페이스 값을 int 로 변환한다 (JSON unmarshal 시 숫자는 float64).

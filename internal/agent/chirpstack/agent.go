@@ -48,6 +48,16 @@ type ChirpStackAgent struct {
 	devices   map[string]*deviceState
 	devicesMu sync.RWMutex
 
+	// comm 은 devEui 키 comm-state 추적 맵이다 (M5, REQ-M5-02/03). 로스터(devices)와
+	// 분리해 comm-state watchdog 이 online/last-seen 을 독립적으로 관리한다.
+	comm   map[string]*commEntry
+	commMu sync.Mutex
+
+	// watchdog goroutine 수명 제어 (REQ-M6-03: context 취소로 종료 보장).
+	wdCancel  context.CancelFunc
+	wdWg      sync.WaitGroup
+	wdStarted bool // a.mu 보호
+
 	stats  *agent.AgentStats
 	logger *slog.Logger
 
@@ -82,6 +92,7 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 		recvCh:        make(chan []byte, cc.BufferSize),
 		done:          make(chan struct{}),
 		devices:       make(map[string]*deviceState),
+		comm:          make(map[string]*commEntry),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
@@ -126,6 +137,9 @@ func (a *ChirpStackAgent) Init(config agent.AgentConfig) error {
 	if err := a.TransitionTo(lifecycle.StateRunning); err != nil {
 		return fmt.Errorf("chirpstack init: %w", err)
 	}
+
+	// comm-state watchdog 시작 (활성화 + emit_comm_state 시에만) (M5, REQ-M5-03/04).
+	a.startCommWatchdog()
 
 	a.mu.Lock()
 	a.startedAt = time.Now()
@@ -237,6 +251,11 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 	// 디바이스 자동 생성/갱신 + UID 발급 + 런타임 info 등록 (M4, REQ-M4-01/02/04).
 	a.upsertDevice(up)
 
+	// comm-state fold: 활성화 시 last-seen 갱신 + online 전이 change emit (M5, REQ-M5-02).
+	if a.csConfig.EmitCommState {
+		a.onUplinkCommState(up)
+	}
+
 	records := buildMeasurementRecords(up, a.logger)
 	for i := range records {
 		b, err := json.Marshal(records[i])
@@ -301,6 +320,9 @@ func (a *ChirpStackAgent) Start(_ context.Context) error {
 // Stop 이후 Paho 재연결에 의한 세션 부활을 막는다.
 func (a *ChirpStackAgent) Stop(_ context.Context) error {
 	a.stopped.Store(true)
+
+	// comm-state watchdog goroutine 종료 (context 취소 + 대기) (M5, REQ-M6-03).
+	a.stopCommWatchdog()
 
 	// Created(비활성화 생성) / Stopped 는 Stopping 전이가 invalid 하므로 건너뛴다.
 	// 그래도 done close / 버퍼 드레인 / 이름 해제는 항상 수행한다.

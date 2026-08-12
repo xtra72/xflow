@@ -184,6 +184,16 @@ func (n *ChirpStackInNode) receiveLoop() {
 // $.payload.value, $.metadata.measurement, $.metadata.tags.*, 그리고 노드가
 // unit_id 를 승격한 $.metadata.device.{id,name}.
 func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName string, opts MetadataEmitOptions) (message.Message, bool) {
+	// 판별자 peek: record=="device_state" 면 comm-state fold 메시지로 빌드한다
+	// (REQ-FROZEN-03). measurementRecord 는 record 를 비워 두므로 event 로 취급.
+	var disc struct {
+		Record string `json:"record"`
+	}
+	_ = json.Unmarshal(data, &disc)
+	if disc.Record == "device_state" {
+		return buildChirpStackDeviceStateMessage(data, nodeID, a, agentName, opts)
+	}
+
 	var rec struct {
 		Measurement string            `json:"measurement"`
 		Value       any               `json:"value"`
@@ -228,6 +238,68 @@ func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName
 	}
 	return msg, true
 }
+
+// buildChirpStackDeviceStateMessage 는 comm-state fold 레코드(JSON)를 flow message 로
+// 빌드한다 (REQ-FROZEN-03). 별도 device_connection 타입 없이 device_state 스트림으로
+// 접힌다.
+//
+// 계약:
+//   - msg.Type = "device_state.<trigger>" (applyDeviceStateMessageType 승격).
+//   - payload.state = {online, rssi, snr, gateway_id, last_seen_ms}.
+//   - payload.last_seen_ms = int64 UnixMilli (top-level).
+//   - unit_id(=devEui) → device 그룹(UUID/name/type) 승격 (event 경로와 동일).
+func buildChirpStackDeviceStateMessage(data []byte, nodeID string, a agent.Agent, agentName string, opts MetadataEmitOptions) (message.Message, bool) {
+	var rec struct {
+		Trigger    string `json:"trigger"`
+		UnitID     string `json:"unit_id"`
+		TimeMs     int64  `json:"time_ms"`
+		LastSeenMs int64  `json:"last_seen_ms"`
+		State      struct {
+			Online     bool    `json:"online"`
+			RSSI       int     `json:"rssi"`
+			SNR        float64 `json:"snr"`
+			GatewayID  string  `json:"gateway_id"`
+			LastSeenMs int64   `json:"last_seen_ms"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, false
+	}
+
+	msg := message.New()
+	if rec.TimeMs > 0 {
+		msg.SetTimestamp(time.UnixMilli(rec.TimeMs))
+	}
+
+	payload := map[string]any{
+		"trigger":      rec.Trigger, // applyDeviceStateMessageType 가 소비 → msg.Type 승격.
+		"unit_id":      rec.UnitID,  // promoteDevIDWithUUID 가 device 그룹으로 승격.
+		"last_seen_ms": rec.LastSeenMs,
+		"state": map[string]any{
+			"online":       rec.State.Online,
+			"rssi":         rec.State.RSSI,
+			"snr":          rec.State.SNR,
+			"gateway_id":   rec.State.GatewayID,
+			"last_seen_ms": rec.State.LastSeenMs,
+		},
+	}
+
+	// trigger → msg.Type("device_state.<trigger>"); payload 에서 trigger 제거.
+	applyDeviceStateMessageType(msg, payload, commTriggerReport)
+	if opts.NodeID {
+		msg.Metadata().Set("node_id", nodeID)
+	}
+	emitAgentGroup(msg, a, opts)
+	promoteDevIDWithUUID(msg, payload, agentName, opts)
+
+	for k, v := range payload {
+		msg.Payload().Set(k, v)
+	}
+	return msg, true
+}
+
+// commTriggerReport 는 trigger 미지정 시 device_state 메시지의 기본 sub-type 이다.
+const commTriggerReport = "report"
 
 // Process 는 SourceNode 이므로 입력 메시지를 그대로 통과시킨다.
 func (n *ChirpStackInNode) Process(_ context.Context, msg message.Message) ([]message.Message, error) {

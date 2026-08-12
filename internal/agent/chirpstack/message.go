@@ -6,6 +6,65 @@ import (
 	"time"
 )
 
+// recordKindDeviceState 는 device_state 레코드의 판별자(discriminator) 값이다.
+// 노드(buildChirpStackMessage)는 record 필드로 event/device_state 를 구분한다.
+// measurementRecord 는 record 를 비워 두므로(omitempty) 노드는 event 로 취급한다.
+const recordKindDeviceState = "device_state"
+
+// comm-state 트리거 종류 (REQ-FROZEN-03). Century 관례(change/report)를 따른다.
+const (
+	commTriggerChange = "change"
+	commTriggerReport = "report"
+)
+
+// commStateGroup 은 device_state 이벤트의 nested state 그룹이다 (REQ-FROZEN-03).
+//
+// online:bool, rssi:int, snr:float, gateway_id:string, last_seen_ms:int64(UnixMilli).
+type commStateGroup struct {
+	Online     bool    `json:"online"`
+	RSSI       int     `json:"rssi"`
+	SNR        float64 `json:"snr"`
+	GatewayID  string  `json:"gateway_id"`
+	LastSeenMs int64   `json:"last_seen_ms"`
+}
+
+// deviceStateRecord 는 comm-state fold 스트림의 device_state 중간 레코드이다
+// (REQ-FROZEN-03). 노드는 이 레코드를 소비해 type="device_state.<trigger>" 메시지로
+// 빌드한다(별도 device_connection 타입 금지).
+//
+//   - Record: 항상 "device_state" (판별자).
+//   - Trigger: "change" | "report" → 노드가 msg.Type 계층 값으로 승격.
+//   - UnitID(=devEui): 노드가 promoteDevIDWithUUID 로 device 그룹(UUID/name/type) 승격.
+//   - TimeMs/LastSeenMs: int64 UnixMilli (프로젝트 epoch 규약).
+type deviceStateRecord struct {
+	Record     string         `json:"record"`
+	Trigger    string         `json:"trigger"`
+	UnitID     string         `json:"unit_id"`
+	TimeMs     int64          `json:"time_ms"`
+	LastSeenMs int64          `json:"last_seen_ms"`
+	State      commStateGroup `json:"state"`
+}
+
+// buildDeviceStateRecord 는 comm-state 스냅샷으로부터 device_state 레코드를 만든다.
+// last_seen 은 top-level timestamp 소스(TimeMs)와 state 그룹 양쪽에 노출한다
+// (Century 관례: state 내부 중복 노출).
+func buildDeviceStateRecord(devEui, trigger string, e commEntry) deviceStateRecord {
+	return deviceStateRecord{
+		Record:     recordKindDeviceState,
+		Trigger:    trigger,
+		UnitID:     devEui,
+		TimeMs:     e.lastSeenMs,
+		LastSeenMs: e.lastSeenMs,
+		State: commStateGroup{
+			Online:     e.online,
+			RSSI:       e.rssi,
+			SNR:        e.snr,
+			GatewayID:  e.gatewayID,
+			LastSeenMs: e.lastSeenMs,
+		},
+	}
+}
+
 // measurementRecord 는 에이전트가 노드로 전달하는 measurement 당 1개 중간 레코드이다.
 //
 // 노드(internal/node/chirpstack.go)는 이 레코드를 소비하여 flow message 로 빌드한다:
