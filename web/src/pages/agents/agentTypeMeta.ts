@@ -354,6 +354,36 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
+  'chirpstack': {
+    description:
+      'ChirpStack LoRaWAN Network Server 의 MQTT integration 이벤트를 패시브로 수신하는 에이전트(SPEC-CHIRPSTACK-001). ChirpStack 이 application/<id>/device/<devEui>/event/<type> 토픽으로 발행하는 업링크 이벤트를 구독하여, 업링크 payload 의 object(디코딩된 센서 값)를 측정치별로 fan-out 합니다. 디바이스는 devEui 기준으로 자동 생성되며, MQTT 트랜스포트 서브셋(broker/topics/qos/재연결)만 설정합니다. 선택적으로 comm-state(device_state 이벤트)를 발행해 업링크 staleness 기반 online/offline 을 판정합니다(emit_comm_state 게이트). transport.Write() 는 호출하지 않는 수신 전용 에이전트입니다.',
+    configFields: [
+      { name: 'broker', type: 'string', required: true, description: 'MQTT 브로커 주소 (예: tcp://localhost:1883)', default: 'tcp://localhost:1883' },
+      { name: 'client_id', type: 'string', required: false, description: '빈 값이면 자동 생성 (xflow-chirpstack-<uuid>)' },
+      { name: 'username', type: 'string', required: false, description: 'MQTT 사용자명' },
+      { name: 'password', type: 'string', required: false, description: 'MQTT 비밀번호' },
+      { name: 'topics', type: 'string', required: false, description: '구독 토픽 (쉼표 구분, ChirpStack application 이벤트)', default: 'application/#' },
+      { name: 'qos', type: 'select', required: false, description: '메시지 전달 보증 레벨 (0/1/2)', default: '1' },
+      { name: 'keep_alive_sec', type: 'number', required: false, description: 'Keep Alive 간격 (초)', default: '60' },
+      { name: 'auto_reconnect', type: 'boolean', required: false, description: '연결 끊김 시 자동 재연결', default: 'true' },
+      { name: 'clean_session', type: 'boolean', required: false, description: '클린 세션 모드', default: 'true' },
+      { name: 'buffer_size', type: 'number', required: false, description: '수신 메시지 버퍼 크기', default: '1024' },
+      { name: 'connect_timeout_sec', type: 'number', required: false, description: '연결 타임아웃 (초)', default: '10' },
+      { name: 'emit_comm_state', type: 'boolean', required: false, description: 'device_state 이벤트 발행 게이트 (comm-state)', default: 'false' },
+      { name: 'comm_report_interval', type: 'string', required: false, description: 'comm-state 주기 report 간격 (예: 60s, 0 이면 주기 report off, change 는 유지)' },
+      { name: 'offline_threshold', type: 'string', required: false, description: '마지막 업링크 후 이 시간 경과 시 offline 판정', default: '300s' },
+    ],
+    configExample: {
+      broker: 'tcp://localhost:1883',
+      topics: 'application/#',
+      qos: '1',
+      auto_reconnect: true,
+      buffer_size: 1024,
+      emit_comm_state: false,
+      offline_threshold: '300s',
+    },
+  },
+
   xsfm: {
     description:
       '지하철 역사 설비 관리 에이전트(SPEC-XSFM-001). thingplus MQTT 트랜스포트 셸과 samsung 로스터/관측 상태 모델을 결합합니다. transport_mode 로 direct(에이전트가 브로커를 직접 소유) / port(외부 노드가 I/O 담당) 두 모드를 선택하며, payload_mapping 으로 설정 주도 페이로드 시임(power/fan_speed/online 필드 매핑)을 정의합니다. 2축 제어(set_power / set_fan_speed 1·2·3)를 지원하고, 관측 기반 emit("확인된 값만 전송")로 상태를 방출합니다. 역사(station)→호선(line) 레지스트리로 위치 계층을 해석합니다.',

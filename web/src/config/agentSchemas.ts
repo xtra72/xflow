@@ -19,6 +19,7 @@ export const AGENT_TYPES = [
   { value: 'lg_hvacr02', label: 'LG HVACR-02 Capture' },
   { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
   { value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' },
+  { value: 'chirpstack', label: 'ChirpStack LoRaWAN (passive)' },
   { value: 'xsfm', label: 'Subway Facilities Manager' },
   { value: 'store', label: 'Store' },
   { value: 'serial', label: 'Serial' },
@@ -43,6 +44,33 @@ const MQTT_FIELDS: ConfigField[] = [
   { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256 },
   { name: 'max_pub_topics', type: 'number', label: '발행 토픽 최대 추적 수', default: 100, description: '초과 시 가장 오래된 토픽 삭제' },
+];
+
+// ──────────────────────────────────────────────────────────────────────────
+// ChirpStack LoRaWAN (SPEC-CHIRPSTACK-001, passive MQTT receiver)
+// ChirpStack MQTT integration 이벤트를 패시브로 수신하는 에이전트.
+// MQTT_FIELDS 의 트랜스포트 서브셋을 미러링하며(발행 노브 제외), 백엔드
+// ChirpStackConfig 의 Transport.Options 키와 1:1 매핑된다
+// (internal/agent/chirpstack/config.go). comm-state 노브
+// (emit_comm_state / comm_report_interval / offline_threshold)는 M5 범위.
+// 필드에 section 이 없으므로 DynamicForm(flat) 으로 렌더링된다(mqtt-client 와 동일).
+// ──────────────────────────────────────────────────────────────────────────
+const CHIRPSTACK_FIELDS: ConfigField[] = [
+  { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883)' },
+  { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성' },
+  { name: 'username', type: 'string', label: '사용자명', sensitive: true },
+  { name: 'password', type: 'string', label: '비밀번호', sensitive: true },
+  { name: 'topics', type: 'string', label: '구독 토픽', default: 'application/#', description: '쉼표로 구분, ChirpStack application 이벤트 (예: application/#)' },
+  { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1', description: '메시지 전달 보증 레벨' },
+  { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },
+  { name: 'auto_reconnect', type: 'boolean', label: '자동 재연결', default: true },
+  { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
+  { name: 'buffer_size', type: 'number', label: '수신 버퍼 크기', default: 1024 },
+  { name: 'connect_timeout_sec', type: 'number', label: '연결 타임아웃(초)', default: 10 },
+  // comm-state 노브 (M5, REQ-FROZEN-03 / REQ-M5-01/03/04).
+  { name: 'emit_comm_state', type: 'boolean', label: 'comm-state 발행', default: false, description: 'device_state 이벤트 발행 게이트' },
+  { name: 'comm_report_interval', type: 'string', label: 'comm-state 주기 report 간격', description: '예: 60s, 0 이면 주기 report off (change 는 유지)' },
+  { name: 'offline_threshold', type: 'string', label: 'offline 임계', default: '300s', description: '마지막 업링크 후 이 시간 경과 시 offline 판정' },
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -653,6 +681,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'lg_hvacr02': LG_HVACR02_FIELDS,
   'lg_hvacr01': LG_HVACR01_FIELDS,
   'century_hvacr01': CENTURY_HVACR01_FIELDS,
+  'chirpstack': CHIRPSTACK_FIELDS,
   'xsfm': XSFM_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
