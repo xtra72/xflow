@@ -5,7 +5,12 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
+  NODE_SCHEMAS,
   computePortsForNode,
   getConfigSchema,
   getDefaultPorts,
@@ -448,5 +453,144 @@ describe('samsung-hvacr01 통합 노드 mirror-message 포트 (SPEC-HVACR-SYNC-0
       expect(names).not.toContain('mirror-in');
       expect(names).not.toContain('mirror-out');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NODE_SCHEMAS 완전성 회귀 테스트
+//
+// nodeSchemas.ts 는 프론트엔드에서만 관리되는 수기 레지스트리이고, 백엔드
+// /nodes 엔드포인트는 config 스키마를 내려주지 않는다(=폼을 자동 생성할 수
+// 없다). 따라서 Go 레지스트리에 노드 타입이 추가되어도 여기에 항목을 추가하지
+// 않으면 설정 폼이 통째로 사라지고, getRequiredFieldErrors 가 빈 배열을 반환해
+// 필수 필드 검증(배너 / Apply 가드)까지 조용히 무력화된다.
+//
+// 기대 타입 목록을 이 파일에 하드코딩하면 그 목록 자체가 똑같이 썩으므로,
+// internal/node/registry.go 의 builtins 슬라이스를 테스트 실행 시점에 직접
+// 읽어 파싱한다.
+// ---------------------------------------------------------------------------
+
+const REGISTRY_GO_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../internal/node/registry.go',
+);
+
+/**
+ * internal/node/registry.go 의 `builtins := []struct{...}{...}` 리터럴에서
+ * 등록되는 노드 타입 문자열을 추출한다.
+ *
+ * 각 원소는 `{"type-name", Factory, "category", "description"}` 형태이므로
+ * 여는 중괄호 직후의 첫 문자열 리터럴만 취한다. deprecated `_` 별칭은 별도
+ * 맵(deprecatedHVACAliases)에 있으므로 여기 포함되지 않는다 — 별칭은
+ * normalizeNodeType 으로 canonical 키에 해석되며 기존 테스트가 이미 보증한다.
+ */
+function parseGoBuiltinNodeTypes(): string[] {
+  const src = readFileSync(REGISTRY_GO_PATH, 'utf8');
+
+  const declIdx = src.indexOf('builtins := []struct');
+  if (declIdx === -1) {
+    throw new Error(
+      `registry.go 에서 'builtins := []struct' 선언을 찾지 못했습니다 (${REGISTRY_GO_PATH}). ` +
+        '백엔드 레지스트리 구조가 바뀌었다면 이 파서를 갱신해야 합니다.',
+    );
+  }
+  // 필드 선언부를 닫고 리터럴 본문이 시작되는 `}{` 이후부터,
+  // 슬라이스를 닫는 첫 `\n\t}\n` 직전까지가 원소 목록이다.
+  const bodyStart = src.indexOf('}{', declIdx);
+  const bodyEnd = src.indexOf('\n\t}\n', bodyStart);
+  if (bodyStart === -1 || bodyEnd === -1) {
+    throw new Error(
+      `registry.go 의 builtins 리터럴 본문 경계를 찾지 못했습니다 (${REGISTRY_GO_PATH}).`,
+    );
+  }
+  const body = src.slice(bodyStart + 2, bodyEnd);
+
+  const types: string[] = [];
+  for (const m of body.matchAll(/^\s*\{"([^"]+)",/gm)) {
+    const typeName = m[1];
+    if (typeName) types.push(typeName);
+  }
+  if (types.length === 0) {
+    throw new Error(`registry.go 의 builtins 에서 노드 타입을 하나도 파싱하지 못했습니다.`);
+  }
+  return types;
+}
+
+/**
+ * NODE_SCHEMAS 에 정적 항목이 없어도 되는 타입.
+ *
+ * bridge 는 연결된 에이전트 타입에 따라 getBridgeConfigFields 로 스키마를
+ * 동적 생성하므로(getNodeSchema 의 bridge 분기) 정적 항목을 두지 않는다.
+ */
+const DYNAMIC_SCHEMA_TYPES = new Set(['bridge']);
+
+/**
+ * defaultPorts 가 비어 있어도 되는 타입.
+ *
+ * flow-node 는 참조 플로우를 선택하기 전에는 핸들이 결정되지 않으며,
+ * computePortsForNode 가 flow_id 해결 후 input_ports/output_ports 로 포트를
+ * 파생한다(SPEC-SUBFLOW-001 REQ-SUBFLOW-C02).
+ */
+const DYNAMIC_PORT_TYPES = new Set(['flow-node']);
+
+describe('NODE_SCHEMAS 완전성 — Go 레지스트리(builtins)와의 정렬', () => {
+  const goTypes = parseGoBuiltinNodeTypes();
+
+  it('registry.go 를 실제로 읽어 builtins 타입 목록을 파싱한다 (하드코딩 아님)', () => {
+    // 파서가 조용히 빈/축소된 목록으로 퇴화하면 완전성 검사가 무의미해지므로
+    // 최소 규모와 대표 타입 존재를 함께 확인한다.
+    expect(goTypes.length).toBeGreaterThan(40);
+    expect(goTypes).toContain('filter');
+    expect(goTypes).toContain('mqtt-subscriber');
+    expect(new Set(goTypes).size).toBe(goTypes.length);
+  });
+
+  it('모든 빌트인 노드 타입이 NODE_SCHEMAS 키를 갖는다 (bridge 만 예외)', () => {
+    const missing = goTypes.filter(
+      (t) => !DYNAMIC_SCHEMA_TYPES.has(t) && !(t in NODE_SCHEMAS),
+    );
+    expect(
+      missing,
+      `NODE_SCHEMAS 에 항목이 없는 빌트인 노드 타입: ${missing.join(', ')}. ` +
+        '설정 폼과 필수 필드 검증이 통째로 누락되므로 nodeSchemas.ts 에 항목을 추가해야 합니다.',
+    ).toEqual([]);
+  });
+
+  it('chirpstack 3종이 NODE_SCHEMAS 에 등록되어 있다 (회귀 방지)', () => {
+    for (const t of ['chirpstack-in', 'chirpstack-control', 'chirpstack-status']) {
+      expect(goTypes, `${t} 는 Go 레지스트리에 있어야 함`).toContain(t);
+      expect(NODE_SCHEMAS[t], `${t} 스키마가 있어야 함`).toBeDefined();
+    }
+  });
+
+  it('bridge 는 정적 항목 없이 동적 스키마로 해석된다 (문서화된 예외)', () => {
+    expect(NODE_SCHEMAS.bridge).toBeUndefined();
+    expect(getNodeSchema('bridge')?.configSchema.fields.length).toBeGreaterThan(0);
+    expect(getDefaultPorts('bridge').length).toBeGreaterThan(0);
+  });
+
+  it('모든 NODE_SCHEMAS 항목은 포트를 1개 이상 선언한다 (flow-node 만 예외)', () => {
+    const portless = Object.entries(NODE_SCHEMAS)
+      .filter(([type, schema]) => !DYNAMIC_PORT_TYPES.has(type) && schema.defaultPorts.length === 0)
+      .map(([type]) => type);
+    expect(
+      portless,
+      `defaultPorts 가 비어 있는 노드 타입: ${portless.join(', ')}. ` +
+        '포트가 없으면 캔버스에서 연결할 수 없습니다.',
+    ).toEqual([]);
+  });
+
+  it('agent_ref 필드를 노출하는 항목은 모두 required: true 로 표시한다', () => {
+    const notRequired = Object.entries(NODE_SCHEMAS)
+      .filter(([, schema]) => {
+        const field = schema.configSchema.fields.find((f) => f.name === 'agent_ref');
+        return field !== undefined && field.required !== true;
+      })
+      .map(([type]) => type);
+    expect(
+      notRequired,
+      `agent_ref 가 required 로 표시되지 않은 노드 타입: ${notRequired.join(', ')}. ` +
+        '백엔드 Configure() 가 빈 agent_ref 를 거부하므로 배포 시점에야 실패합니다.',
+    ).toEqual([]);
   });
 });

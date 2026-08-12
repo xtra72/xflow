@@ -36,12 +36,15 @@ import {
   Plug,
   Puzzle,
   Radio,
+  RadioReceiver,
   Replace,
   Route,
   ScrollText,
+  SendHorizontal,
   ShieldAlert,
   Shuffle,
   Sigma,
+  SignalHigh,
   SlidersHorizontal,
   Sparkles,
   Split,
@@ -111,6 +114,12 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'serial-out': Plug,
   'tcp-in': Network,
   'tcp-out': Network,
+  // ChirpStack(LoRaWAN): 무선 계열이지만 MQTT(Antenna/Radio)와 구분되게 배정.
+  // 업링크 수신 = RadioReceiver, 다운링크 송신 = SendHorizontal,
+  // 통신 상태(rssi/snr/online) 조회 = SignalHigh.
+  'chirpstack-in': RadioReceiver,
+  'chirpstack-control': SendHorizontal,
+  'chirpstack-status': SignalHigh,
   // 브리지 → 범용 결선
   bridge: Cable,
 

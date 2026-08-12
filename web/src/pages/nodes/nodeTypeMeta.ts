@@ -1701,6 +1701,191 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  'chirpstack-in': {
+    description:
+      'ChirpStack LoRaWAN 업링크를 수신하는 소스 노드입니다. 에이전트가 measurement 당 1개로 fan-out 한 레코드를 그대로 플로우 메시지로 방출하므로, 하류에서 별도의 분해(split) 없이 store/influx 소비자에 직접 연결할 수 있습니다. 에이전트에 emit_comm_state 가 켜져 있으면 통신 상태 변화 시 device_state.* 메시지도 같은 출력 포트로 방출됩니다.',
+    ports: [
+      { name: 'out', direction: 'output', description: 'measurement 당 1건의 업링크 메시지 출력 (통신 상태 변화 시 device_state.* 메시지 포함)' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 ChirpStack 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'emit_node_id',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 emit 한 flow 노드 UUID 를 포함합니다.',
+        default: 'false',
+      },
+      {
+        name: 'emit_agent',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 agent:{type,id} 그룹을 포함합니다.',
+        default: 'true',
+      },
+      {
+        name: 'emit_device',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 device:{type,id} 그룹을 포함합니다 (unit_id=devEui 승격).',
+        default: 'true',
+      },
+    ],
+    configExample: {
+      agent_ref: 'chirpstack-lora',
+    },
+    outputExamples: {
+      out: {
+        type: 'event',
+        timestamp: 1765000000000,
+        payload: { value: 23.4 },
+        metadata: {
+          measurement: 'temperature',
+          tags: { application_name: 'site-a', device_profile_name: 'Milesight WS301' },
+          device: { id: 'a1b2c3d4e5f60718', name: 'ws301-office-01' },
+          agent: { type: 'chirpstack', id: 'agent-cs-1' },
+        },
+      },
+      'out (device_state)': {
+        _comment: '에이전트 emit_comm_state=true 일 때 통신 상태 변화 시 같은 포트로 방출',
+        type: 'device_state.report',
+        payload: {
+          last_seen_ms: 1765000000000,
+          state: { online: true, rssi: -87, snr: 8.5, gateway_id: 'gw-0001', last_seen_ms: 1765000000000 },
+        },
+        metadata: { device: { id: 'a1b2c3d4e5f60718' }, agent: { type: 'chirpstack', id: 'agent-cs-1' } },
+      },
+    },
+  },
+
+  'chirpstack-control': {
+    description:
+      'ChirpStack LoRaWAN 다운링크를 전송하는 제어 노드입니다. 입력 payload 의 command 를 대상 디바이스의 deviceProfile 코덱으로 인코딩하여 application/{applicationId}/device/{devEui}/command/down 토픽에 발행합니다. 대상 디바이스는 설정이 아니라 입력 메시지의 unit_id 로 지정되므로 노드 1개가 N개 디바이스를 담당합니다. 전제조건: applicationId 는 해당 devEui 의 최초 업링크에서 캐시되므로 최초 업링크 수신 이후에만 제어가 가능합니다. 등록된 deviceProfile 코덱만 허용되며(v1: Milesight WS301 — reboot / set_report_interval / query_device_status), 미등록 프로파일이나 알 수 없는 명령은 발행 없이 에러 포트로 전달됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '다운링크 명령 입력 (unit_id + command + params)' },
+      { name: 'out', direction: 'output', description: '발행 완료 후 원본 메시지를 type=response 로 패스스루 (chirpstack_command / chirpstack_downlink_topic 메타데이터 추가)' },
+      { name: 'error', direction: 'error', description: '미등록 코덱, 알 수 없는 command, applicationId 미캐시, 발행 실패 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '다운링크를 발행할 ChirpStack 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'emit_node_id',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 emit 한 flow 노드 UUID 를 포함합니다.',
+        default: 'false',
+      },
+      {
+        name: 'emit_agent',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 agent:{type,id} 그룹을 포함합니다.',
+        default: 'true',
+      },
+    ],
+    configExample: {
+      agent_ref: 'chirpstack-lora',
+    },
+    inputExamples: {
+      in: {
+        payload: {
+          unit_id: 'a1b2c3d4e5f60718',
+          command: 'set_report_interval',
+          params: { interval: 1200 },
+        },
+      },
+    },
+    outputExamples: {
+      out: {
+        type: 'response',
+        payload: { unit_id: 'a1b2c3d4e5f60718', command: 'set_report_interval', params: { interval: 1200 } },
+        metadata: {
+          chirpstack_command: 'set_report_interval',
+          chirpstack_downlink_topic: 'application/12/device/a1b2c3d4e5f60718/command/down',
+          agent: { type: 'chirpstack', id: 'agent-cs-1' },
+        },
+      },
+    },
+  },
+
+  'chirpstack-status': {
+    description:
+      'ChirpStack 에이전트에 캐시된 마지막 통신 상태를 조회하는 읽기 전용 노드입니다. 입력 payload 의 unit_id(devEui)에 해당하는 캐시 항목을 읽어 입력 1건당 상태 메시지 1건을 방출하며, MQTT 발행도 온디맨드 폴링도 하지 않습니다. 전제조건: 대상 에이전트의 emit_comm_state 가 켜져 있어야 합니다. 꺼져 있으면 통신 상태 캐시가 채워지지 않아 항상 offline/unknown 이 방출됩니다(Init 시 1회 경고). 캐시에 항목이 없는 디바이스는 online=false 로 방출되며 online=true 를 조기 보고하지 않습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '조회 트리거 입력 (unit_id 로 대상 devEui 지정)' },
+      { name: 'out', direction: 'output', description: '캐시된 통신 상태를 type=device_state.* 메시지로 출력' },
+      { name: 'error', direction: 'error', description: 'unit_id 누락, 에이전트 미초기화, 상태 메시지 빌드 실패 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '통신 상태를 조회할 ChirpStack 에이전트의 이름 또는 ID입니다 (에이전트의 emit_comm_state 활성 필요).',
+      },
+      {
+        name: 'emit_node_id',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 emit 한 flow 노드 UUID 를 포함합니다.',
+        default: 'false',
+      },
+      {
+        name: 'emit_agent',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 agent:{type,id} 그룹을 포함합니다.',
+        default: 'true',
+      },
+      {
+        name: 'emit_device',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 device:{type,id} 그룹을 포함합니다 (unit_id=devEui 승격).',
+        default: 'true',
+      },
+    ],
+    configExample: {
+      agent_ref: 'chirpstack-lora',
+    },
+    inputExamples: {
+      in: {
+        payload: { unit_id: 'a1b2c3d4e5f60718' },
+      },
+    },
+    outputExamples: {
+      out: {
+        type: 'device_state.report',
+        payload: {
+          last_seen_ms: 1765000000000,
+          state: { online: true, rssi: -87, snr: 8.5, gateway_id: 'gw-0001', last_seen_ms: 1765000000000 },
+        },
+        metadata: {
+          device: { id: 'a1b2c3d4e5f60718', name: 'ws301-office-01' },
+          agent: { type: 'chirpstack', id: 'agent-cs-1' },
+        },
+      },
+      'out (캐시 없음)': {
+        _comment: '캐시에 항목이 없는 devEui — offline/unknown 으로 방출 (online=true 조기 보고 없음)',
+        type: 'device_state.report',
+        payload: {
+          last_seen_ms: 0,
+          state: { online: false, rssi: 0, snr: 0, gateway_id: '', last_seen_ms: 0 },
+        },
+      },
+    },
+  },
+
   'chart-emitter': {
     description:
       '입력 메시지를 WebSocket 차트 채널로 발행하고 링버퍼에 보관합니다. 대시보드의 차트 패널(Stat/Line/Bar/Pie/Table)이 이 채널을 구독해 실시간 데이터를 표시합니다. 두 가지 입력 모드를 지원합니다: 단일 엔트리(실시간 append) 와 배치(entries_field 설정 시 배열 분해). 필터/집계/정렬은 filter, aggregate, mapping 등 기존 노드와 조합해 앞단에 배치합니다. 종단 노드이므로 출력 포트가 없습니다.',

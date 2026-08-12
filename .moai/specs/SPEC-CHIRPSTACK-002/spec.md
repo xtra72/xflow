@@ -82,6 +82,12 @@ tags: [chirpstack, lorawan, downlink, control, status, node, codec, milesight-ws
 - REQ-M4-01 (Ubiquitous): The system **shall** register `chirpstack-control` and `chirpstack-status` node types in `internal/node/registry.go` (near `:99`, category `"io"`, `chirpstack-in` 등록 라인 인접).
 - REQ-M4-02 (Ubiquitous): The system **shall** add both `chirpstack-control` and `chirpstack-status` to `pkg/flow/validate.go:139` `agentRefRequiredTypes` (agent_ref 필수 검증 활성화; mqtt-subscriber/publisher 패턴).
 - REQ-M4-03 (Ubiquitous): The frontend node palette **shall** surface both nodes automatically via the `/nodes` endpoint — web 편집 불필요.
+
+  > **[post-sync 정정 — 이 요구사항은 부분적으로 틀렸다]** 팔레트 *목록* 노출은 실제로 `/nodes` 로 자동 처리되지만, 노드 *설정 폼* 은 자동 생성되지 않는다. `/nodes` 응답(`internal/api/handler/node.go:18-24` `NodeTypeInfo`)은 `{type, category, description, source}` 4필드뿐이고 config 스키마를 전달하지 않으므로, 설정 폼은 프론트엔드 수기 레지스트리 `web/src/config/nodeSchemas.ts` 가 단독으로 구동한다. 두 표면을 하나로 묶어 "web 편집 불필요"로 결론낸 것이 오판단이다.
+  >
+  > 근거로 삼았던 선례("`chirpstack-in` 이 web 항목 없이 이미 동작 중")도 정상 동작이 아니라 SPEC-CHIRPSTACK-001 이 남긴 동일 결함이었다. 실제 피해: `agent_ref` 입력 컨트롤 부재, `getRequiredFieldErrors` 가 `if (!schema) return []` 로 빠져 필수 필드 경고 배너·적용 버튼 가드 미작동(무효 노드가 경고 없이 저장되어 배포 시점에 실패), `getDefaultPorts` 의 `[in, out]` 폴백으로 소스 노드에 불필요한 `in` 포트 부여 및 control/status 의 `error` 포트 누락.
+  >
+  > 해소: `nodeSchemas.ts`(3종 엔트리), `nodeIcon.ts`(전용 아이콘 3), `nodeTypeMeta.ts`(상세 메타 3) 추가 + `nodeSchemas.test.ts` 에 registry↔스키마 완전성 회귀 테스트(Go `registry.go` 를 테스트 시점에 파싱, 하드코딩 목록 아님) 추가. `chirpstack-in` 의 선재 결함도 함께 복구했다. REQ-M4-04(에이전트 `CHIRPSTACK_FIELDS` 무변경)는 별개 표면이므로 **여전히 준수**된다.
 - REQ-M4-04 (Unwanted): The system **shall not** add new config.go knobs and **shall not** change web `CHIRPSTACK_FIELDS`. `applicationId` 는 에이전트의 디바이스별 캐시에서 읽고, `fPort` 는 코덱이 결정하며, `confirmed` 는 기본값 false 이다.
 
 ### M5 — 테스트 + 품질 게이트
@@ -200,3 +206,9 @@ ChirpStack v4 소스 대조로 확정: `api/proto/integration/integration.proto`
 - acceptance.md: Given-When-Then(AC-1~AC-5) + TRUST 5 + DoD.
 - 선행 SPEC: SPEC-CHIRPSTACK-001 (completed, 수신 에이전트 기반).
 - 관련 SPEC: SPEC-DEVICE-001(통합 레지스트리), SPEC-DEVICE-IDENTITY-001(Phase D, ID==UID==UUID v4) — SPEC-001 계약과 동일 승계.
+
+### IN-10. 노드 설정 UI 부재 결함 (post-sync 발견 및 복구)
+
+sync 완료 후 사용자가 "ChirpStack status/control/in 노드 설정 UI 없음" 을 보고하여 발견되었다. 원인·피해·해소는 REQ-M4-03 의 `[post-sync 정정]` 블록 참조.
+
+핵심 교훈: **팔레트 노출과 설정 폼은 별개 표면이다.** 백엔드 `/nodes` 는 스키마를 내려주지 않으므로, 신규 노드 타입을 등록할 때는 `internal/node/registry.go` 등록만으로 부족하고 `web/src/config/nodeSchemas.ts` 엔트리가 반드시 함께 필요하다. 이 이중 관리 구조 자체가 근본 원인이며, 근본 해결(`/nodes` 응답에 `config_schema` 탑재, 59개 노드 스키마의 Go 이관)은 범위가 커 별도 SPEC 으로 남긴다. 그 사이의 재발 방지는 완전성 회귀 테스트가 담당한다.

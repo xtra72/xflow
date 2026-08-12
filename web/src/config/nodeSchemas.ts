@@ -99,8 +99,14 @@ const BRIDGE_DEFAULT_PORTS: PortDef[] = [
   { name: 'out', direction: 'output' },
 ];
 
-/** 노드 타입별 설정 스키마 레지스트리 */
-const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
+/**
+ * 노드 타입별 설정 스키마 레지스트리.
+ *
+ * 백엔드 registry.go 의 builtins 목록과 1:1 로 맞춰야 한다(완전성 테스트가 보증).
+ * 예외는 `bridge` 뿐이며, 연결된 에이전트 타입에 따라 getBridgeConfigFields 로
+ * 동적 생성되므로 이 맵에 정적 항목을 두지 않는다.
+ */
+export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
 
   // --- Processing ---
   deduplicate: {
@@ -1911,6 +1917,96 @@ const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     defaultPorts: [
       { name: 'in', direction: 'input' },
       { name: 'out', direction: 'output' },
+    ],
+  },
+
+  // --- ChirpStack LoRaWAN --- (SPEC-CHIRPSTACK-001 / SPEC-CHIRPSTACK-002)
+  // 3종 모두 노출 필드는 agent_ref(필수) + emit_metadata 평탄 토글뿐이다.
+  // 버퍼 크기(chirpStackDefaultBufferSize=256) / 다운링크 QoS(0) 는 백엔드 상수이며
+  // 대상 디바이스·명령은 설정이 아니라 입력 메시지 payload 의 런타임 값이다.
+  'chirpstack-in': {
+    description:
+      'ChirpStack LoRaWAN 업링크를 수신합니다. 에이전트가 measurement 당 1개로 fan-out 한 레코드를 그대로 메시지로 방출하는 소스 노드입니다. 에이전트에 emit_comm_state 가 켜져 있으면 통신 상태 변화 시 device_state.* 메시지도 함께 방출합니다.',
+    inputDesc: '없음 (소스 노드). 에이전트가 구독한 업링크에서 자동 수신',
+    outputDesc:
+      'payload: {value} (measurement 값 1건). metadata: measurement + tags.* (에이전트 태그 verbatim) + device:{id,name} 그룹 (unit_id=devEui 승격, 기본) + agent:{type,id} 그룹 (기본) + node_id (옵션). timestamp 는 업링크 시각. 하류 참조 경로: $.payload.value, $.metadata.measurement, $.metadata.device.*, $.metadata.tags.*, $.timestamp. 통신 상태 변화 시에는 type=device_state.* 메시지(payload.state={online,rssi,snr,gateway_id,last_seen_ms})가 같은 포트로 방출됩니다.',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['chirpstack'],
+          description: '연결할 ChirpStack 에이전트를 선택합니다',
+        },
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
+  'chirpstack-control': {
+    description:
+      'ChirpStack LoRaWAN 다운링크를 전송합니다. 입력 payload 의 명령을 대상 디바이스의 deviceProfile 코덱으로 인코딩하여 application/{applicationId}/device/{devEui}/command/down 토픽으로 발행합니다. 전제조건: 해당 devEui 의 applicationId 는 최초 업링크에서 캐시되므로, 최초 업링크를 수신한 이후에만 제어할 수 있습니다. 등록된 deviceProfile 코덱만 허용되며(v1: Milesight WS301 — reboot / set_report_interval / query_device_status), 미등록 프로파일이나 알 수 없는 명령은 발행 없이 에러로 거부됩니다. 노드 1개가 N개 디바이스를 담당합니다.',
+    inputDesc:
+      'payload: {unit_id (폴백 device_id) = 대상 devEui, command = 명령 이름, params (선택, 명령 인자 객체), confirmed (선택, 기본 false)}. unit_id/device_id 는 metadata 폴백도 지원합니다.',
+    outputDesc:
+      '원본 메시지 패스스루 (type=response). metadata: chirpstack_command (발행한 명령 이름) + chirpstack_downlink_topic (발행 토픽) + agent:{type,id} 그룹 (기본) + node_id (옵션)',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['chirpstack'],
+          description: '다운링크를 발행할 ChirpStack 에이전트를 선택합니다',
+        },
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+      { name: 'error', direction: 'error' },
+    ],
+  },
+
+  'chirpstack-status': {
+    description:
+      'ChirpStack 에이전트에 캐시된 마지막 통신 상태를 조회합니다. 입력 payload 의 unit_id(devEui)에 해당하는 캐시 항목을 읽기만 하며 MQTT 발행도 폴링도 하지 않습니다. 전제조건: 대상 에이전트의 emit_comm_state 가 켜져 있어야 합니다. 꺼져 있으면 통신 상태 캐시가 채워지지 않아 항상 offline/unknown 이 방출됩니다. 캐시에 항목이 없는 디바이스도 online=false 로 방출됩니다(조기 online 보고 없음).',
+    inputDesc:
+      'payload: {unit_id (폴백 device_id) = 조회할 devEui}. unit_id/device_id 는 metadata 폴백도 지원합니다. 입력/트리거 1건당 상태 메시지 1건을 방출합니다.',
+    outputDesc:
+      'type=device_state.* . payload: {state: {online, rssi, snr, gateway_id, last_seen_ms}, last_seen_ms}. metadata: device:{id,name} 그룹 (unit_id=devEui 승격, 기본) + agent:{type,id} 그룹 (기본) + node_id (옵션)',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['chirpstack'],
+          description: '통신 상태를 조회할 ChirpStack 에이전트를 선택합니다 (에이전트의 emit_comm_state 활성 필요)',
+        },
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'in', direction: 'input' },
+      { name: 'out', direction: 'output' },
+      { name: 'error', direction: 'error' },
     ],
   },
 
