@@ -1,0 +1,9 @@
+{
+  "captured_at": "2026-08-12",
+  "spec": "SPEC-CHIRPSTACK-002",
+  "tool": "go build + go vet + golangci-lint",
+  "build_errors": 0,
+  "type_errors": 0,
+  "lint_findings_pre_existing": "3",
+  "note": "Pre-implementation baseline. Known pre-existing lint: unused in deduplicate.go/flow_node.go/modbus_common.go (chirpstack-unrelated). Run-phase must not regress build/vet from 0."
+}
