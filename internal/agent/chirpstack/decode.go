@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // uplinkDeviceInfo 는 ChirpStack 업링크의 deviceInfo 하위 필드 중 본 에이전트가
@@ -41,6 +42,12 @@ type uplink struct {
 //
 // 방어적 파싱: JSON 오류 또는 devEui 누락은 에러로 반환한다. devEui 는 device_id
 // 키잉(REQ-M4-01)에 필수이므로 없으면 처리를 진행할 수 없다.
+//
+// devEui 는 여기서 단 한 번 소문자로 정규화한다(normalizeDevEui). 디코드 직후를
+// 정규화 지점으로 택한 이유는 devEui 가 이 이후 (a) 로스터 맵 키, (b) comm 맵 키,
+// (c) emit 레코드의 unit_id, (d) device_id 등록 값 으로 갈라져 쓰이기 때문이다.
+// 갈라진 뒤에 각각 정규화하면 한 곳만 누락돼도 동일 물리 디바이스가 두 개의
+// device_id 로 쪼개진다 — 유일한 상류 지점에서 정규화해 그 실패 양상을 원천 차단한다.
 func decodeUplink(raw []byte) (*uplink, error) {
 	var up uplink
 	if err := json.Unmarshal(raw, &up); err != nil {
@@ -49,7 +56,18 @@ func decodeUplink(raw []byte) (*uplink, error) {
 	if up.DeviceInfo.DevEui == "" {
 		return nil, errors.New("chirpstack decode: missing deviceInfo.devEui")
 	}
+	up.DeviceInfo.DevEui = normalizeDevEui(up.DeviceInfo.DevEui)
 	return &up, nil
+}
+
+// normalizeDevEui 는 devEui 를 소문자 hex 로 정규화한다.
+//
+// 소문자를 정본으로 택한 근거: ChirpStack 은 EUI64 를 소문자 hex 로 직렬화하며
+// 실제 캡처 픽스처(testdata/packet.json)의 devEui 도 "24e124141d180806" 로 소문자다.
+// 즉 소문자는 현행 동작을 그대로 보존하는 선택이고(정상 경로에서 무변화), 대문자
+// 변형이 섞여 들어오는 경우에만 동일 디바이스로 접힌다.
+func normalizeDevEui(devEui string) string {
+	return strings.ToLower(devEui)
 }
 
 // bestGateway 는 rxInfo[] 중 최대 rssi 게이트웨이의 rssi/snr/gatewayId 를 반환한다

@@ -2,6 +2,7 @@ package chirpstack
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -42,6 +43,15 @@ type deviceState struct {
 
 	// measurements 는 디바이스가 마지막으로 보고한 스칼라 measurement 값 캐시이다.
 	measurements map[string]any
+
+	// deviceIDRegistered 는 이 devEui 를 device_id 로 저장소에 등록하는 시도가
+	// 종결되었는지를 나타낸다 (registerDeviceIDIfNeeded 참조).
+	//
+	// 등록 자체는 idempotent 하지만 저장소 I/O(파일 재기록)이므로 매 업링크마다
+	// 반복하면 hot path 에 불필요한 쓰기가 실린다. 이 플래그로 디바이스당 1회만
+	// 수행한다. 값 타입(bool)이므로 clone() 의 `cp := *d` 로 그대로 복사되며,
+	// listDevices 스냅샷/어댑터는 이 플래그를 읽지 않는다(내부 상태).
+	deviceIDRegistered bool
 }
 
 // clone 은 tags/measurements 맵을 포함해 깊은 복사한다 (roster 스냅샷용).
@@ -134,7 +144,8 @@ func deviceOnline(lastSeen time.Time, threshold time.Duration) bool {
 // upsertDevice 는 업링크의 디바이스를 devEui 키로 자동 생성/갱신하고, 시스템 UID
 // 발급 및 런타임 DeviceInfo 등록을 수행한다 (REQ-M4-01/02/04).
 //
-//   - ResolveDeviceID(agentName, devEui): UUID v4 발급/조회 (저장소 미설정 시 "" — graceful).
+//   - SetDeviceID(agentName, devEui, devEui): device_id 를 devEui 로 고정(최초 1회).
+//   - ResolveDeviceID(agentName, devEui): device_id 조회 (저장소 미설정 시 "" — graceful).
 //   - SetDeviceInfo(agentName, devEui, {DeviceType=deviceProfileName, Label=deviceName}).
 //   - 로스터 upsert: deviceName/tags 지속화(Device.Metadata 로 노출).
 //
@@ -149,7 +160,12 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	// measurement 캐시용 스칼라 키 선별/정렬도 락 밖에서 수행한다 (락 보유 구간 최소화).
 	mkeys := scalarMeasurementKeys(up.Object)
 
-	// UID 발급(존재 시 재사용) + 런타임 device_type/label 등록.
+	// device_id 를 devEui 로 고정한다. 반드시 아래 ResolveDeviceID 보다 먼저 수행한다 —
+	// 순서가 뒤바뀌면 GetOrCreate 가 버려질 UUID 를 한 번 생성/영속했다가 곧바로
+	// 덮어쓰게 된다. 저장소 I/O 이므로 어떤 락도 보유하지 않은 채 호출한다(REQ-FROZEN-B).
+	markRegistered := a.registerDeviceIDIfNeeded(agentName, devEui)
+
+	// device_id 조회(위에서 devEui 로 고정됨) + 런타임 device_type/label 등록.
 	_ = agent.ResolveDeviceID(context.Background(), agentName, devEui)
 	agent.SetDeviceInfo(agentName, devEui, agent.DeviceInfo{
 		DeviceType: up.DeviceInfo.DeviceProfileName,
@@ -161,6 +177,9 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	if !ok {
 		d = &deviceState{devEui: devEui}
 		a.devices[devEui] = d
+	}
+	if markRegistered {
+		d.deviceIDRegistered = true
 	}
 	d.deviceName = up.DeviceInfo.DeviceName
 	d.deviceProfileName = up.DeviceInfo.DeviceProfileName
@@ -174,6 +193,57 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	// 최신 measurement 캐시 병합 (online 은 lastSeen 에서 파생하므로 저장하지 않는다).
 	d.mergeMeasurements(up.Object, mkeys)
 	a.devicesMu.Unlock()
+}
+
+// registerDeviceIDIfNeeded 는 (agentName, devEui) 의 device_id 를 devEui 자신으로
+// 등록하고, 로스터에 "등록 종결" 플래그를 세워야 하는지를 반환한다.
+//
+// 왜 devEui 를 device_id 로 쓰는가: LoRaWAN devEui 는 이미 전역 고유한 디바이스
+// 식별자이므로, 별도의 랜덤 UUID 를 하나 더 두면 다운스트림(대시보드/TSDB)에서
+// 물리 디바이스를 지목할 때 매핑 테이블을 거쳐야 한다. 저장소에 devEui 를 지정
+// device_id 로 심어 두면 이후 ResolveDeviceID 가 그대로 devEui 를 반환하므로,
+// promoteDevIDWithUUID 를 비롯한 하류 소비자는 한 줄도 바뀌지 않는다(samsung 선례
+// 와 동일한 seeding 방식).
+//
+// 락 규율(REQ-FROZEN-B): SetDeviceID 는 저장소 락을 잡는 I/O 이므로 devicesMu /
+// commMu / a.mu 중 어느 것도 보유하지 않은 채 호출한다. 플래그 읽기와 쓰기는
+// 서로 다른 짧은 임계 구역으로 분리되어 있고, 쓰기는 호출자(upsertDevice)의 기존
+// 잠금 구간에 접힌다.
+//
+// 반환값 규약:
+//   - 성공: true (재시도 불필요).
+//   - ErrDeviceIDConflict: true. 같은 devEui 가 다른 (agent, unit) 에 이미 배정된
+//     영구 조건이므로 재시도해도 결과가 같다. 매 업링크마다 저장소 I/O 와 경고
+//     로그를 반복하지 않도록 종결 처리한다. 업링크는 실패시키지 않으며
+//     ResolveDeviceID 가 기존 값을 그대로 반환해 측정 스트림은 계속 흐른다.
+//   - 그 외 오류(예: 파일 영속 실패): false. 일시적일 수 있으므로 다음 업링크에서
+//     다시 시도한다.
+//
+// 저장소 미설정(nil)이면 SetDeviceID 가 no-op(nil)이므로 true 가 되어, 매 업링크마다
+// 무의미한 호출을 반복하지 않는다.
+func (a *ChirpStackAgent) registerDeviceIDIfNeeded(agentName, devEui string) bool {
+	a.devicesMu.RLock()
+	d, ok := a.devices[devEui]
+	done := ok && d.deviceIDRegistered
+	a.devicesMu.RUnlock()
+	if done {
+		return false
+	}
+
+	err := agent.SetDeviceID(context.Background(), agentName, devEui, devEui)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, agent.ErrDeviceIDConflict):
+		a.logger.Warn("chirpstack: devEui 를 device_id 로 등록 실패 — 이미 다른 디바이스에 배정됨. "+
+			"기존 device_id 를 유지하며 업링크 처리는 계속한다",
+			"devEui", devEui, "agent", agentName, "error", err)
+		return true
+	default:
+		a.logger.Warn("chirpstack: devEui 를 device_id 로 등록 실패 — 다음 업링크에서 재시도한다",
+			"devEui", devEui, "agent", agentName, "error", err)
+		return false
+	}
 }
 
 // DownlinkTarget 은 devEui 의 다운링크 대상(캐시된 applicationId + deviceProfileName)을
