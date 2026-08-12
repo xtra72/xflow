@@ -350,9 +350,88 @@ export function formatPropertyValue(
     return String(value);
   }
   if (typeof value === 'boolean') return value ? 'ON' : 'OFF';
+  // 중첩 객체/배열은 String() 이 "[object Object]" 를 만들므로 compact JSON 으로 폴백한다.
+  // (예: chirpstack 의 measurements 처럼 예상치 못한 중첩 값이 들어오는 경우)
+  // 측정치는 expandMeasurementEntries 로 개별 항목으로 펼치는 것이 우선이며, 이 분기는
+  // 그 경로를 타지 않는 모든 위치(이력 테이블 셀 등)를 위한 방어적 폴백이다.
+  if (typeof value === 'object') return stringifyUnknownObject(value);
   const str = String(value);
   // 운전 모드, 풍량 등 enum 값을 한국어로 변환
   return ENUM_LABELS[str] ?? str;
+}
+
+/** 객체 폴백 표시 최대 길이. 초과분은 말줄임한다(그리드 셀/표 셀 레이아웃 보호). */
+const OBJECT_FALLBACK_MAX_LEN = 80;
+
+/**
+ * 알 수 없는 객체/배열을 compact JSON 문자열로 변환한다.
+ * 순환 참조 등으로 직렬화가 실패하면 타입 표기로 폴백한다(예외를 던지지 않는다).
+ */
+function stringifyUnknownObject(value: object): string {
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return Array.isArray(value) ? '[…]' : '{…}';
+  }
+  // JSON.stringify 는 undefined/함수 등에서 undefined 를 반환할 수 있다.
+  if (json === undefined) return '-';
+  if (json.length <= OBJECT_FALLBACK_MAX_LEN) return json;
+  return `${json.slice(0, OBJECT_FALLBACK_MAX_LEN)}…`;
+}
+
+/** 속성 그리드에 표시할 단일 항목. measurements 는 측정치별로 펼쳐진다. */
+export interface PropertyEntry {
+  /** React key 용 고유 식별자 (measurements 전개 항목은 "measurements.<이름>"). */
+  id: string;
+  /** 라벨/포맷 조회에 사용할 키 (측정치 이름 또는 원본 속성 키). */
+  key: string;
+  value: unknown;
+  /** 측정치별 갱신 시각(epoch ms). 값이 없거나 형식이 다르면 undefined. */
+  timeMs?: number;
+}
+
+/** measurements 하위 값이 {value, time_ms} 형태인지 판별한다. */
+function isMeasurementRecord(v: unknown): v is { value: unknown; time_ms?: unknown } {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && 'value' in v;
+}
+
+/**
+ * 속성 엔트리 목록에서 `measurements` 를 측정치별 개별 항목으로 펼친다.
+ *
+ * chirpstack 디바이스 로스터는 측정치를 다음 형태로 내보낸다:
+ *   measurements: { temperature: { value: 29.8, time_ms: 1786491121129 }, ... }
+ * 이를 하나의 불투명한 카드가 아니라 측정치별 카드로 렌더하기 위한 순수 변환이며,
+ * DeviceDetailPanel(GenericPropertiesGrid)과 대시보드 PropertiesGridPanel 이 공유한다.
+ *
+ * 예외 상황 처리:
+ *   - measurements 없음 → 원본 그대로
+ *   - measurements 가 빈 객체 → 항목 0개 (빈 카드/[object Object] 를 만들지 않음)
+ *   - measurements 가 객체가 아님(문자열 등) → 원본 항목 그대로 유지
+ *   - 하위 값이 {value, time_ms} 가 아닌 단순 스칼라 → 값만 사용하고 시각은 생략
+ */
+export function expandMeasurementEntries(entries: [string, unknown][]): PropertyEntry[] {
+  const out: PropertyEntry[] = [];
+  for (const [key, value] of entries) {
+    if (key !== 'measurements' || typeof value !== 'object' || value === null || Array.isArray(value)) {
+      out.push({ id: key, key, value });
+      continue;
+    }
+    for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
+      if (isMeasurementRecord(raw)) {
+        out.push({
+          id: `measurements.${name}`,
+          key: name,
+          value: raw.value,
+          timeMs: typeof raw.time_ms === 'number' ? raw.time_ms : undefined,
+        });
+      } else {
+        // 구형 데이터/타 프로바이더: 시각 없이 값만 있는 형태.
+        out.push({ id: `measurements.${name}`, key: name, value: raw });
+      }
+    }
+  }
+  return out;
 }
 
 export function sortProperties<T>(entries: [string, T][]): [string, T][] {

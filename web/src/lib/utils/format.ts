@@ -53,6 +53,52 @@ export function formatDate(
 }
 
 /**
+ * epoch milliseconds → 사람이 읽는 로컬 시간 문자열 (예: "2026. 08. 13. 14:32:01").
+ * 유효하지 않은 값(0/음수/NaN)은 '-' 를 반환한다.
+ *
+ * 정확한 시각이 필요한 곳(이력 테이블 등)에서 사용한다. 신선도 표시처럼 "지금으로부터
+ * 얼마나 지났는가" 가 중요한 곳은 formatRelativeEpochMs 를 사용한다.
+ */
+export function formatEpochMs(ms: number): string {
+  if (!ms || ms <= 0) return '-';
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '-';
+  return d.toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+/**
+ * epoch milliseconds → 상대 시간 문자열 (예: "3분 전", "방금").
+ * 유효하지 않은 값은 '-' 를 반환한다.
+ *
+ * 측정치 카드처럼 좁은 공간에서 신선도를 나타낼 때 사용한다. 절대 시각은
+ * formatEpochMs 로 title 속성에 함께 제공하는 것을 권장한다.
+ */
+export function formatRelativeEpochMs(ms: number, now: number = Date.now()): string {
+  if (!ms || ms <= 0) return '-';
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '-';
+
+  const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' });
+  const diffSec = Math.round((ms - now) / 1000);
+
+  for (const [unit, seconds] of RELATIVE_UNITS) {
+    if (Math.abs(diffSec) >= seconds) {
+      return rtf.format(Math.round(diffSec / seconds), unit);
+    }
+  }
+  // 1초 미만은 '방금' (Intl 의 "0초 전" 보다 자연스럽다).
+  return '방금';
+}
+
+/**
  * Format a byte count into a human-readable string (e.g. "1.5 KB", "2.3 MB").
  */
 export function formatBytes(bytes: number, decimals = 1): string {

@@ -205,6 +205,10 @@ func (n *ChirpStackControlNode) Process(_ context.Context, msg message.Message) 
 	out.Metadata().Set("chirpstack_command", cmdName)
 	out.Metadata().Set("chirpstack_downlink_topic", topic)
 	emitAgentGroup(out, a, opts)
+	// 그룹 조립 이후 마지막에 축소한다 (detail OFF 일 때만 동작). 패스스루 clone 이
+	// 상류에서 물려받은 device 그룹도 동일하게 축소 대상이다 — 한 메시지 안에서
+	// agent 는 축소되고 device 는 상세인 혼종 출력을 만들지 않기 위함이다.
+	reduceChirpStackIdentityGroups(out, opts)
 	out.SetType("response")
 
 	return []message.Message{out}, nil

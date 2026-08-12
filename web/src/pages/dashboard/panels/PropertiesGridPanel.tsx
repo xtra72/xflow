@@ -9,7 +9,8 @@ import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel, sortProperties, formatPropertyValue } from '@/lib/utils/deviceLabels';
+import { getPropertyLabel, sortProperties, formatPropertyValue, expandMeasurementEntries } from '@/lib/utils/deviceLabels';
+import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
 
 interface PropertiesGridPanelProps {
   panelId: string;
@@ -112,12 +113,15 @@ export default function PropertiesGridPanel({
   // 전원 OFF 시 운전 계열 속성은 정규화된 기본값이라 실제 값이 아니므로 '-' 로 표시.
   const powerOff = properties['power'] === false;
 
-  // 표시할 속성 필터링 (visibleProperties가 비어있으면 전체 표시)
-  let entries = sortProperties(Object.entries(properties));
+  // 표시할 속성 필터링 (visibleProperties가 비어있으면 전체 표시).
+  // 필터는 원본 속성 키 기준이므로 'measurements' 를 선택하면 측정치 전체가 표시된다.
+  let filtered = sortProperties(Object.entries(properties));
   if (visibleProperties.length > 0) {
     const allowed = new Set(visibleProperties);
-    entries = entries.filter(([key]) => allowed.has(key));
+    filtered = filtered.filter(([key]) => allowed.has(key));
   }
+  // measurements 는 측정치별 개별 카드로 펼친다(측정치마다 갱신 시각이 다르다).
+  const entries = expandMeasurementEntries(filtered);
 
   const colClass =
     gridCols === 1 ? 'grid-cols-1'
@@ -157,9 +161,9 @@ export default function PropertiesGridPanel({
       {/* 속성 그리드 */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn('grid gap-3', colClass)}>
-          {entries.map(([key, value]) => (
+          {entries.map(({ id, key, value, timeMs }) => (
             <div
-              key={key}
+              key={id}
               className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
               style={acColor('borders') ? { borderColor: `${acColor('borders')}30` } : undefined}
             >
@@ -169,6 +173,13 @@ export default function PropertiesGridPanel({
               <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
                 {formatPropertyValue(key, value, { powerOff })}
               </p>
+              {/* 측정치별 갱신 시각. 값과 경쟁하지 않도록 작고 흐리게, 상대 시간으로 표시하고
+                  정확한 시각은 title(hover)로 제공한다. */}
+              {timeMs !== undefined && (
+                <p className="mt-0.5 text-[10px] text-(--color-text-muted)" title={formatEpochMs(timeMs)}>
+                  {formatRelativeEpochMs(timeMs)}
+                </p>
+              )}
             </div>
           ))}
         </div>

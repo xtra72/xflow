@@ -34,7 +34,8 @@ import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
+import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName, expandMeasurementEntries } from '@/lib/utils/deviceLabels';
+import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
 import { normalizeAcMode, normalizeFanSpeed } from '@/pages/dashboard/panels/acControlTypes';
 import { APIError } from '@/types/api';
 import type { CommandSpec, DeviceHistoryEntry, ParamSpec } from '@/types/device';
@@ -160,22 +161,6 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
 
 /** limit 선택 옵션 (서버가 max 로 clamp 하므로 상한 초과는 안전). */
 const HISTORY_LIMIT_OPTIONS = [50, 100, 200] as const;
-
-/** epoch milliseconds → 사람이 읽는 로컬 시간 문자열. */
-function formatTimestamp(ms: number): string {
-  if (!ms || ms <= 0) return '-';
-  const d = new Date(ms);
-  if (isNaN(d.getTime())) return '-';
-  return d.toLocaleString('ko-KR', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-}
 
 function DeviceHistorySection({
   deviceId,
@@ -312,7 +297,7 @@ function HistoryRow({
       <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
         <span className="inline-flex items-center gap-1">
           <Clock className="h-3 w-3 text-gray-400" />
-          {formatTimestamp(entry.timestamp)}
+          {formatEpochMs(entry.timestamp)}
         </span>
       </td>
       <td className="whitespace-nowrap px-3 py-2">
@@ -337,7 +322,7 @@ function HistoryRow({
         </td>
       ))}
       <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
-        {formatTimestamp(entry.last_seen)}
+        {formatEpochMs(entry.last_seen)}
       </td>
     </tr>
   );
@@ -653,7 +638,8 @@ function GenericPropertiesGrid({
     if (typeof val === 'string') return val;
     return accentColor;
   };
-  const entries = sortProperties(Object.entries(properties));
+  // measurements 는 측정치별 개별 카드로 펼친다(측정치마다 갱신 시각이 다르다).
+  const entries = expandMeasurementEntries(sortProperties(Object.entries(properties)));
   // 전원 OFF 시 운전 계열 속성(모드/온도/풍량/스윙)은 정규화된 기본값이라 실제 값이
   // 아니므로 '-' 로 표시한다(formatPropertyValue 의 powerOff 옵션).
   const powerOff = properties['power'] === false;
@@ -662,9 +648,9 @@ function GenericPropertiesGrid({
     <div className={compact ? 'px-4 py-3' : ''}>
       {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">{t('devices.detail.stateProperties')}</h4>}
       <div className={cn('grid gap-3', compact ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5')}>
-        {entries.map(([key, value]) => (
+        {entries.map(({ id, key, value, timeMs }) => (
           <div
-            key={key}
+            key={id}
             className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
             style={acColor('borders') ? { borderColor: `${acColor('borders')}30` } : undefined}
           >
@@ -674,6 +660,13 @@ function GenericPropertiesGrid({
             <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
               {formatPropertyValue(key, value, { powerOff })}
             </p>
+            {/* 측정치별 갱신 시각. 값과 경쟁하지 않도록 작고 흐리게, 상대 시간으로 표시하고
+                정확한 시각은 title(hover)로 제공한다. */}
+            {timeMs !== undefined && (
+              <p className="mt-0.5 text-[10px] text-(--color-text-muted)" title={formatEpochMs(timeMs)}>
+                {formatRelativeEpochMs(timeMs)}
+              </p>
+            )}
           </div>
         ))}
       </div>

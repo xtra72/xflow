@@ -2,7 +2,15 @@
 
 export { cn } from './cn';
 export { downloadJSON } from './download';
-export { formatBytes, formatDate, formatDuration, formatNumber, formatPercent } from './format';
+export {
+  formatBytes,
+  formatDate,
+  formatDuration,
+  formatEpochMs,
+  formatNumber,
+  formatPercent,
+  formatRelativeEpochMs,
+} from './format';
 export {
   parseImportFile,
   validateFlowImport,

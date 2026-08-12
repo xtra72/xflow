@@ -313,6 +313,8 @@ func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName
 	// unit_id 는 chirpstack 에서 곧 devEui 이다 — 승격이 payload 에서 지운 값을
 	// device 그룹에 디바이스 정보(dev_eui)로 되살린다.
 	setChirpStackDevEui(msg, opts, rec.UnitID)
+	// 모든 그룹 조립 이후 마지막에 축소한다 (detail OFF 일 때만 동작).
+	reduceChirpStackIdentityGroups(msg, opts)
 
 	for k, v := range payload {
 		msg.Payload().Set(k, v)
@@ -351,6 +353,58 @@ func setChirpStackDevEui(msg message.Message, opts MetadataEmitOptions, devEui s
 	}
 	fields["dev_eui"] = devEui
 	msg.Metadata().SetGroup("device", fields)
+}
+
+// reduceChirpStackIdentityGroups 는 "상세 정보(detail)" 토글이 OFF 일 때 agent /
+// device 그룹을 각각 id 하나로 축소한다 (name / type / dev_eui 제거).
+//
+// 왜 필요한가: 두 그룹은 노드가 조립하므로(에이전트는 {measurement,value,unit_id,
+// time_ms,tags} 만 방출) 축소 지점도 노드여야 한다. 다운스트림(store/influx)이 식별자만
+// 필요한 배포에서 매 메시지마다 name/type/dev_eui 를 싣는 비용을 없앤다.
+//
+// 왜 여기(chirpstack 로컬)인가: setChirpStackDevEui 와 동일한 규율이다. 공유 헬퍼
+// (emitAgentGroup / SetAgentGroupIfAllowed / mergeDeviceGroup / promoteDevIDWithUUID)
+// 는 12개 노드 파일 수십 개 호출부가 공유하는 전역 규약이라 동작을 넓히면 blast radius 가
+// 그만큼 커진다. 본 헬퍼는 공유 헬퍼를 전혀 건드리지 않고 공개 metadata API 만으로
+// 이미 조립된 그룹을 다시 쓴다 — 다른 프로듀서(HVACR/modbus/serial…)의 출력은
+// 한 바이트도 변하지 않는다.
+//
+// 호출 순서(중요): 반드시 모든 그룹 조립(emitAgentGroup / promoteDevIDWithUUID /
+// setChirpStackDevEui) 이후 마지막에 호출한다. 이후에 그룹을 다시 채우면 축소가 무효화된다.
+//
+// 축소 대상은 agent / device 그룹뿐이다. measurement / tags / timestamp / payload 는
+// frozen 계약(SPEC-CHIRPSTACK-002 REQ-FROZEN-A, SPEC-CHIRPSTACK-001 REQ-FROZEN-02)
+// 이므로 건드리지 않는다.
+//
+// 그룹 토글과의 상호작용: opts.Agent / opts.Device 가 OFF 면 애초에 그룹이 없으므로
+// reduceMetadataGroupToID 가 no-op 이다 — 빈 그룹을 새로 만들지 않는다.
+func reduceChirpStackIdentityGroups(msg message.Message, opts MetadataEmitOptions) {
+	if msg == nil || opts.Detail {
+		return
+	}
+	reduceMetadataGroupToID(msg, "agent")
+	reduceMetadataGroupToID(msg, "device")
+}
+
+// reduceMetadataGroupToID 는 metadata 그룹을 id 키 하나만 남기고 축소한다.
+//
+// 정책:
+//   - 그룹이 없으면 no-op (빈 그룹을 만들지 않는다).
+//   - id 가 있으면 {id} 로 치환.
+//   - id 가 없으면(UUID 미해석 디바이스 등) 그룹 전체를 제거한다. detail OFF 의 계약은
+//     "id 만 emit" 인데 id 가 없으면 emit 할 것이 없다. {} 나 {dev_eui} 같은 잔여
+//     그룹을 남기면 계약이 깨지고 다운스트림이 식별자 없는 그룹을 파싱하게 된다.
+func reduceMetadataGroupToID(msg message.Message, key string) {
+	fields, ok := msg.Metadata().GetGroup(key)
+	if !ok || len(fields) == 0 {
+		return
+	}
+	id := fields["id"]
+	if id == "" {
+		msg.Metadata().Remove(key)
+		return
+	}
+	msg.Metadata().SetGroup(key, map[string]string{"id": id})
 }
 
 // chirpStackRecordCombined 는 combined(측정치 통합) 레코드의 판별자 값이다
@@ -402,6 +456,7 @@ func buildChirpStackCombinedMessage(data []byte, nodeID string, a agent.Agent, a
 	}
 	promoteDevIDWithUUID(msg, payload, agentName, opts)
 	setChirpStackDevEui(msg, opts, rec.UnitID) // per-measurement 경로와 동일.
+	reduceChirpStackIdentityGroups(msg, opts)  // per-measurement 경로와 동일.
 
 	for k, v := range payload {
 		msg.Payload().Set(k, v)
@@ -462,6 +517,7 @@ func buildChirpStackDeviceStateMessage(data []byte, nodeID string, a agent.Agent
 	emitAgentGroup(msg, a, opts)
 	promoteDevIDWithUUID(msg, payload, agentName, opts)
 	setChirpStackDevEui(msg, opts, rec.UnitID) // event 경로와 동일.
+	reduceChirpStackIdentityGroups(msg, opts)  // event 경로와 동일.
 
 	for k, v := range payload {
 		msg.Payload().Set(k, v)

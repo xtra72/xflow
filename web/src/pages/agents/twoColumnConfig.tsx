@@ -28,6 +28,17 @@ export const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: s
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
   },
+  // chirpstack 은 MQTT 기반 에이전트이므로 mqtt-client 선례를 따르고, 연결 의미가
+  // 명확한 노브(auto_reconnect / clean_session)를 좌측(연결)에 추가한다.
+  // 우측(운영) = topics / qos / buffer_size / measurement_emit_mode / comm-state 3종.
+  chirpstack: {
+    left: new Set([
+      'broker', 'client_id', 'username', 'password',
+      'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect', 'clean_session',
+    ]),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
   'modbus-client': {
     left: new Set(['mode', 'read_mode', 'reconnect_interval', 'request_timeout', 'max_retries']),
     leftLabelKey: 'agents.detail.config.transport',

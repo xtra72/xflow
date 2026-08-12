@@ -52,16 +52,29 @@ type MetadataEmitOptions struct {
 	Agent bool `json:"agent"`
 	// Device 는 device:{type,id} 그룹 emit 여부. 기본 ON (parse 시 default true).
 	Device bool `json:"device"`
+	// Detail 은 agent / device 그룹의 "상세 정보" emit 여부. 기본 ON (parse 시 default true).
+	//
+	// OFF 면 두 그룹은 id 하나로 축소된다 (agent.id / device.id 만; name / type /
+	// dev_eui 제거). Agent / Device 와 마찬가지로 zero-value 가 false 이므로 기본 ON 은
+	// PARSE 시점(parseEmitMetadata / DefaultEmitOptions)에서 강제한다.
+	//
+	// 적용 범위: 축소는 chirpstack 노드 로컬이다(reduceChirpStackIdentityGroups).
+	// 공유 헬퍼(emitAgentGroup / mergeDeviceGroup / promoteDevIDWithUUID)는 이 값을
+	// 읽지 않으므로 다른 노드 타입의 출력은 영향을 받지 않는다.
+	Detail bool `json:"detail"`
 }
 
-// DefaultEmitOptions 는 P3 기본 emit 정책을 반환한다: Agent / Device 그룹은 ON,
-// 그 외 flat 옵션(NodeID/DeviceType/Name/NodeSource)은 OFF.
+// DefaultEmitOptions 는 P3 기본 emit 정책을 반환한다: Agent / Device 그룹과 Detail 은
+// ON, 그 외 flat 옵션(NodeID/DeviceType/Name/NodeSource)은 OFF.
 //
 // 사용처: emit-options 를 별도 config 로 파싱하지 않는 노드(serial_io / mqtt /
 // modbus / tcp_io 등)가 그룹 emit 기본값을 얻기 위해 사용. parseEmitMetadata 도
 // 동일한 기본값을 적용한다.
+//
+// Detail 을 여기서 true 로 두는 것이 중요하다 — zero-value(false)로 새면 위 노드들의
+// metadata 가 의도치 않게 축소된 것으로 해석될 수 있다.
 func DefaultEmitOptions() MetadataEmitOptions {
-	return MetadataEmitOptions{Agent: true, Device: true}
+	return MetadataEmitOptions{Agent: true, Device: true, Detail: true}
 }
 
 // IsAllowed 는 주어진 metadata key 가 현재 옵션에서 허용되는지 반환한다.
@@ -172,8 +185,12 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 	// P3: Agent / Device 그룹은 기본 ON. 명시 비활성화(false) 가 없으면 true.
 	// bool zero-value 가 false 이므로 여기서 기본값을 강제한다. 기존 flat 옵션
 	// (NodeID/DeviceType/Name/NodeSource) 은 default OFF 정책 유지 — 손대지 않는다.
+	//
+	// Detail(상세 정보) 도 동일한 default-true 취급을 받는다. 기본값을 ON 으로 두어야
+	// 기존 배포의 metadata 모양이 그대로 유지된다 (absent = 오늘과 동일).
 	out.Agent = true
 	out.Device = true
+	out.Detail = true
 
 	if raw, ok := config["emit_metadata"]; ok {
 		if m, ok := raw.(map[string]any); ok {
@@ -195,6 +212,9 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 			if v, ok := m["device"].(bool); ok {
 				out.Device = v
 			}
+			if v, ok := m["detail"].(bool); ok {
+				out.Detail = v
+			}
 		}
 	}
 	if v, ok := config["emit_node_id"].(bool); ok {
@@ -214,5 +234,8 @@ func parseEmitMetadata(config map[string]any, out *MetadataEmitOptions) {
 	}
 	if v, ok := config["emit_device"].(bool); ok {
 		out.Device = v
+	}
+	if v, ok := config["emit_detail"].(bool); ok {
+		out.Detail = v
 	}
 }

@@ -200,6 +200,10 @@ func (n *ChirpStackStatusNode) Process(_ context.Context, msg message.Message) (
 		return nil, fmt.Errorf("chirpstack-status: %w", err)
 	}
 
+	// 메시지 조립은 전적으로 수신 경로와 동일한 빌더에 위임한다. agent / device 그룹
+	// 조립도 detail 축소(reduceChirpStackIdentityGroups)도 빌더 안에서 끝나므로
+	// 여기서 축소를 다시 호출하지 않는다 — 중복 호출은 no-op 이지만 축소 지점을
+	// 두 곳으로 늘려 순서 의존을 만든다.
 	out, ok := buildChirpStackDeviceStateMessage(data, n.ID(), a, agentName, opts)
 	if !ok {
 		return nil, fmt.Errorf("chirpstack-status: devEui=%s 의 device_state 메시지 빌드 실패", devEui)

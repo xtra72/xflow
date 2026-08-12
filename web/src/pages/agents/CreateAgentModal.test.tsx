@@ -94,6 +94,37 @@ describe('CreateAgentModal 2열 레이아웃 분기', () => {
     expect((columns[0] as HTMLElement).textContent).not.toContain('상태 확인 요청 활성');
   });
 
+  it('chirpstack 은 넓은 모달 + 연결|운영 2열 그리드로 렌더한다', () => {
+    render(<CreateAgentModal open onClose={vi.fn()} />);
+    selectType('chirpstack');
+
+    const container = getModalContainer();
+    expect(container.className).toContain('max-w-4xl');
+
+    const grid = container.querySelector('.grid.grid-cols-2');
+    expect(grid).not.toBeNull();
+    const columns = grid!.querySelectorAll(':scope > div');
+    expect(columns.length).toBe(2);
+
+    // 좌(연결): 브로커 주소. 우(운영): 구독 토픽.
+    expect((columns[0] as HTMLElement).textContent).toContain('브로커 주소');
+    expect((columns[1] as HTMLElement).textContent).toContain('구독 토픽');
+    expect((columns[0] as HTMLElement).textContent).not.toContain('구독 토픽');
+  });
+
+  it('chirpstack 좌측(연결) 컬럼은 연결 노브만, 운영 노브는 우측에 둔다', () => {
+    const entry = TWO_COL_CONFIG['chirpstack'];
+    expect(entry).toBeDefined();
+    const left = entry!.left;
+    for (const k of ['broker', 'client_id', 'username', 'password', 'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect', 'clean_session']) {
+      expect(left.has(k), `연결 컬럼 누락: ${k}`).toBe(true);
+    }
+    // 운영 필드는 "left 에 없는 전부" 규칙으로 우측에 배치된다.
+    for (const k of ['topics', 'qos', 'buffer_size', 'emit_comm_state', 'comm_report_interval', 'offline_threshold', 'measurement_emit_mode']) {
+      expect(left.has(k), `운영 필드가 연결 컬럼에 잘못 포함: ${k}`).toBe(false);
+    }
+  });
+
   it('samsung_hvacr01 좌측(연결) 컬럼 집합에 MQTT 보안 필드가 포함된다', () => {
     const entry = TWO_COL_CONFIG['samsung_hvacr01'];
     expect(entry).toBeDefined();

@@ -1929,7 +1929,7 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
       'ChirpStack LoRaWAN 업링크를 수신합니다. 에이전트가 measurement 당 1개로 fan-out 한 레코드를 그대로 메시지로 방출하는 소스 노드입니다. 에이전트에 emit_comm_state 가 켜져 있으면 통신 상태 변화 시 device_state.* 메시지도 함께 방출합니다.',
     inputDesc: '없음 (소스 노드). 에이전트가 구독한 업링크에서 자동 수신',
     outputDesc:
-      'payload: {value} (measurement 값 1건). metadata: measurement + tags.* (에이전트 태그 verbatim) + device:{id,name} 그룹 (unit_id=devEui 승격, 기본) + agent:{type,id} 그룹 (기본) + node_id (옵션). timestamp 는 업링크 시각. 하류 참조 경로: $.payload.value, $.metadata.measurement, $.metadata.device.*, $.metadata.tags.*, $.timestamp. 통신 상태 변화 시에는 type=device_state.* 메시지(payload.state={online,rssi,snr,gateway_id,last_seen_ms})가 같은 포트로 방출됩니다.',
+      'payload: {value} (measurement 값 1건). metadata: measurement + tags.* (에이전트 태그 verbatim) + device:{id,name,type,dev_eui} 그룹 (unit_id=devEui 승격, 기본) + agent:{type,id,name} 그룹 (기본) + node_id (옵션). 상세 정보 토글을 끄면 두 그룹은 device:{id} / agent:{id} 로 축소되며 measurement, tags, timestamp, payload 는 그대로입니다. timestamp 는 업링크 시각. 하류 참조 경로: $.payload.value, $.metadata.measurement, $.metadata.device.*, $.metadata.tags.*, $.timestamp. 통신 상태 변화 시에는 type=device_state.* 메시지(payload.state={online,rssi,snr,gateway_id,last_seen_ms})가 같은 포트로 방출됩니다.',
     configSchema: {
       fields: [
         {
@@ -1944,6 +1944,8 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
         { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        // 상세 정보(detail): OFF 시 agent / device 그룹을 id 하나로 축소한다. 축소 대상은 두 그룹뿐이며 measurement / tags / timestamp / payload 는 영향받지 않는다.
+        { name: 'emit_detail', type: 'boolean', label: '메타데이터: 상세 정보', default: true, description: 'OFF 로 두면 agent / device 그룹이 agent.id / device.id 만 남습니다 (name / type / dev_eui 제외). measurement, tags, timestamp, payload 는 그대로 유지됩니다 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1957,7 +1959,7 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     inputDesc:
       'payload: {unit_id (폴백 device_id) = 대상 devEui, command = 명령 이름, params (선택, 명령 인자 객체), confirmed (선택, 기본 false)}. unit_id/device_id 는 metadata 폴백도 지원합니다.',
     outputDesc:
-      '원본 메시지 패스스루 (type=response). metadata: chirpstack_command (발행한 명령 이름) + chirpstack_downlink_topic (발행 토픽) + agent:{type,id} 그룹 (기본) + node_id (옵션)',
+      '원본 메시지 패스스루 (type=response). metadata: chirpstack_command (발행한 명령 이름) + chirpstack_downlink_topic (발행 토픽) + agent:{type,id,name} 그룹 (기본) + node_id (옵션). 상세 정보 토글을 끄면 agent 그룹(및 패스스루로 물려받은 device 그룹)은 id 만 남습니다',
     configSchema: {
       fields: [
         {
@@ -1971,6 +1973,8 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
         // P3: agent 그룹은 기본 ON. 토글 OFF 시에만 emit_agent=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
         { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        // 상세 정보(detail): OFF 시 agent / device 그룹을 id 하나로 축소한다 (패스스루로 물려받은 device 그룹 포함).
+        { name: 'emit_detail', type: 'boolean', label: '메타데이터: 상세 정보', default: true, description: 'OFF 로 두면 agent / device 그룹이 agent.id / device.id 만 남습니다 (name / type / dev_eui 제외). chirpstack_command, chirpstack_downlink_topic, payload 는 그대로 유지됩니다 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
@@ -1986,7 +1990,7 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     inputDesc:
       'payload: {unit_id (폴백 device_id) = 조회할 devEui}. unit_id/device_id 는 metadata 폴백도 지원합니다. 입력/트리거 1건당 상태 메시지 1건을 방출합니다.',
     outputDesc:
-      'type=device_state.* . payload: {state: {online, rssi, snr, gateway_id, last_seen_ms}, last_seen_ms}. metadata: device:{id,name} 그룹 (unit_id=devEui 승격, 기본) + agent:{type,id} 그룹 (기본) + node_id (옵션)',
+      'type=device_state.* . payload: {state: {online, rssi, snr, gateway_id, last_seen_ms}, last_seen_ms}. metadata: device:{id,name,type,dev_eui} 그룹 (unit_id=devEui 승격, 기본) + agent:{type,id,name} 그룹 (기본) + node_id (옵션). 상세 정보 토글을 끄면 두 그룹은 device:{id} / agent:{id} 로 축소되며 payload.state 와 timestamp 는 그대로입니다',
     configSchema: {
       fields: [
         {
@@ -2001,6 +2005,8 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
         // P3: agent / device 그룹은 기본 ON. 토글 OFF 시에만 emit_agent/emit_device=false 가 직렬화되어 백엔드가 비활성화한다 (absent=ON).
         { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
         { name: 'emit_device', type: 'boolean', label: '메타데이터: device 그룹', default: true, description: '메시지 metadata 에 device:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        // 상세 정보(detail): OFF 시 agent / device 그룹을 id 하나로 축소한다. payload.state 는 영향받지 않는다.
+        { name: 'emit_detail', type: 'boolean', label: '메타데이터: 상세 정보', default: true, description: 'OFF 로 두면 agent / device 그룹이 agent.id / device.id 만 남습니다 (name / type / dev_eui 제외). payload.state 와 timestamp 는 그대로 유지됩니다 (기본 ON)', advanced: true },
       ],
     },
     defaultPorts: [
