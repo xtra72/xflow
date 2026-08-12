@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/agent/century"
+	"github.com/xtra/xflow/internal/agent/chirpstack"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/modbusserver"
@@ -389,6 +390,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	if err := century.RegisterHvacr01Types(agentMgr); err != nil {
 		return fmt.Errorf("Century HVACR-01 agent type registration failed: %w", err)
+	}
+	if err := chirpstack.RegisterChirpStackTypes(agentMgr); err != nil {
+		return fmt.Errorf("ChirpStack LoRaWAN agent type registration failed: %w", err)
 	}
 	if err := xsfm.RegisterXSFMTypes(agentMgr); err != nil {
 		return fmt.Errorf("XSFM agent type registration failed: %w", err)
