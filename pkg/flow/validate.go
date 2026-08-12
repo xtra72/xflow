@@ -148,7 +148,9 @@ var agentRefRequiredTypes = map[string]struct{}{
 	"mqtt-subscriber": {},
 	"mqtt-publisher":  {},
 	// ChirpStack LoRaWAN 노드 (agent_ref 필수 — mqtt-subscriber 패턴)
-	"chirpstack-in": {},
+	"chirpstack-in":      {},
+	"chirpstack-control": {},
+	"chirpstack-status":  {},
 	// MODBUS command-set 노드 (agent_ref 필수)
 	"modbus-write":   {},
 	"modbus-read":    {},

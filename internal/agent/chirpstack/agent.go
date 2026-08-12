@@ -1,12 +1,20 @@
 // Package chirpstack 는 ChirpStack LoRaWAN Network Server 가 발행하는 MQTT 업링크를
-// 수신하여 measurement 당 1개 메시지로 fan-out 하는 수신 전용 에이전트를 제공한다
-// (SPEC-CHIRPSTACK-001).
+// 수신하여 measurement 당 1개 메시지로 fan-out 하는 에이전트를 제공한다
+// (SPEC-CHIRPSTACK-001), 그리고 LoRaWAN 다운링크(제어) 발행 경로를 제공한다
+// (SPEC-CHIRPSTACK-002).
+//
+// SPEC-CHIRPSTACK-001 은 본 에이전트를 "수신 전용"으로 정의하며 발행 경로를 의도적으로
+// 배제했다. SPEC-CHIRPSTACK-002 REQ-M1-02 가 그 배제를 명시적으로 역전한다 — 수신 계약
+// (REQ-FROZEN-A)은 그대로 보존되며, 발행은 추가된 능력이다(회귀 아님).
 //
 // 2계층 설계:
 //   - 에이전트(본 패키지): MQTT 연결/구독/수신, 업링크 디코드, per-measurement
-//     레코드 생성, 디바이스 자동 생성/메타데이터 노출.
+//     레코드 생성, 디바이스 자동 생성/메타데이터 노출, 다운링크 발행 프리미티브
+//     (publish.go) + deviceProfile 별 다운링크 코덱(codec.go).
 //   - 노드(internal/node/chirpstack.go): 수신 전용 SourceNode. 에이전트가 emit 한
 //     per-measurement 레코드를 소비해 flow message 로 빌드하고 device 그룹을 승격.
+//   - 노드(internal/node/chirpstack_control.go): typed command 를 코덱으로 인코딩해
+//     다운링크 토픽으로 발행하는 제어 노드.
 package chirpstack
 
 import (
@@ -23,8 +31,12 @@ import (
 	"github.com/xtra/xflow/pkg/lifecycle"
 )
 
-// ChirpStackAgent 는 ChirpStack LoRaWAN 업링크를 수신하는 수신 전용 에이전트이다.
-// 발행 경로(MessagePublisher)는 구현하지 않는다.
+// ChirpStackAgent 는 ChirpStack LoRaWAN 업링크를 수신하고, 다운링크(제어) 명령을
+// 발행하는 에이전트이다.
+//
+// SPEC-CHIRPSTACK-001 은 "발행 경로(MessagePublisher)는 구현하지 않는다" 로 발행을
+// 의도적으로 배제했으나, SPEC-CHIRPSTACK-002 REQ-M1-02 가 이 배제를 명시적으로
+// 역전하여 PublishMessage(publish.go)를 구현한다. 수신 계약은 변경되지 않는다.
 type ChirpStackAgent struct {
 	*lifecycle.BaseLifecycle
 
@@ -67,11 +79,15 @@ type ChirpStackAgent struct {
 }
 
 // 컴파일 타임 인터페이스 체크.
+//
+// MessagePublisher 는 SPEC-CHIRPSTACK-002 REQ-M1-02 로 추가되었다 — SPEC-CHIRPSTACK-001
+// 의 발행 경로 배제를 역전한 기계적 신호이며, 회귀가 아니다(publish.go 구현).
 var (
 	_ agent.Agent            = (*ChirpStackAgent)(nil)
 	_ agent.MessageReceiver  = (*ChirpStackAgent)(nil)
 	_ agent.TransportChecker = (*ChirpStackAgent)(nil)
 	_ agent.StatefulAgent    = (*ChirpStackAgent)(nil)
+	_ agent.MessagePublisher = (*ChirpStackAgent)(nil)
 )
 
 // NewChirpStackAgent 는 ChirpStackAgent 팩토리 함수이다.
@@ -183,8 +199,15 @@ func (a *ChirpStackAgent) connect() error {
 	})
 	opts.SetDefaultPublishHandler(a.messageHandler)
 
-	a.client = mqtt.NewClient(opts)
-	token := a.client.Connect()
+	// a.client 는 노드 goroutine 의 발행 경로(PublishMessage)와 TransportConnected 가
+	// a.mu.RLock 으로 읽으므로, 대입도 a.mu 하에서 수행한다 (SPEC-CHIRPSTACK-002:
+	// 발행 경로 추가로 넓어진 데이터 레이스 차단 — 동작 보존 최소 수정).
+	client := mqtt.NewClient(opts)
+	a.mu.Lock()
+	a.client = client
+	a.mu.Unlock()
+
+	token := client.Connect()
 	connected := token.WaitTimeout(time.Duration(a.csConfig.ConnectTimeoutSec)*time.Second) && token.Error() == nil
 	if !connected {
 		if a.csConfig.AutoReconnect {
@@ -375,7 +398,8 @@ func (a *ChirpStackAgent) Resume(_ context.Context) error {
 	return a.TransitionTo(lifecycle.StateRunning)
 }
 
-// Process 는 사용하지 않는다 (수신 전용, 발행 경로 없음).
+// Process 는 사용하지 않는다. 다운링크 발행은 PublishMessage 인터페이스를 사용한다
+// (SPEC-CHIRPSTACK-002 REQ-M1-02 — SPEC-CHIRPSTACK-001 의 "발행 경로 없음" 배제 역전).
 func (a *ChirpStackAgent) Process(_ []byte) ([]byte, error) {
 	return nil, nil
 }

@@ -91,9 +91,14 @@ func TestChirpStackAgent_StateSnapshot(t *testing.T) {
 }
 
 // TestChirpStackAgent_EnabledInterfaceAssertions 는 선택 인터페이스 구현을 보증한다.
+//
+// MessagePublisher 는 SPEC-CHIRPSTACK-002 REQ-M1-02 로 추가되었다 —
+// SPEC-CHIRPSTACK-001 의 "수신 전용(발행 경로 미구현)" 배제를 의도적으로 역전한 것이며
+// 회귀가 아니다.
 func TestChirpStackAgent_EnabledInterfaceAssertions(t *testing.T) {
 	a := newRunningTestAgent(t, "iface-cs")
 	var _ agent.MessageReceiver = a
 	var _ agent.TransportChecker = a
 	var _ agent.StatefulAgent = a
+	var _ agent.MessagePublisher = a
 }

@@ -8,10 +8,14 @@ import (
 
 // uplinkDeviceInfo 는 ChirpStack 업링크의 deviceInfo 하위 필드 중 본 에이전트가
 // 사용하는 항목만 담는다.
+//
+// ApplicationID 는 다운링크 토픽(application/{applicationId}/device/{devEui}/command/down)
+// 구성에 필요하다 (SPEC-CHIRPSTACK-002 REQ-M2-05).
 type uplinkDeviceInfo struct {
 	DevEui            string            `json:"devEui"`
 	DeviceName        string            `json:"deviceName"`
 	DeviceProfileName string            `json:"deviceProfileName"`
+	ApplicationID     string            `json:"applicationId"`
 	Tags              map[string]string `json:"tags"`
 }
 

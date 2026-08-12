@@ -10,10 +10,17 @@ import (
 )
 
 // deviceState 는 devEui 로 키잉되는 자동 생성 디바이스의 런타임 스냅샷이다.
+//
+// applicationID 는 다운링크 토픽 구성에 필요한 ChirpStack applicationId 캐시이다
+// (SPEC-CHIRPSTACK-002 REQ-M2-05). comm 맵이 아닌 로스터(devices)에 캐시하는 이유:
+// upsertDevice 는 모든 업링크마다 실행되는 반면 comm 맵 갱신은 emit_comm_state 노브
+// 뒤에 게이팅되므로, comm 맵에 캐시하면 제어 경로가 그 노브에 숨은 의존을 갖게 된다
+// (REQ-M4-04 의 "새 노브 없음" 취지에 반함).
 type deviceState struct {
 	devEui            string
 	deviceName        string
 	deviceProfileName string
+	applicationID     string
 	tags              map[string]string
 	lastSeen          time.Time
 	online            bool
@@ -61,10 +68,37 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	}
 	d.deviceName = up.DeviceInfo.DeviceName
 	d.deviceProfileName = up.DeviceInfo.DeviceProfileName
+	// applicationId 캐시: 다운링크 토픽 구성의 유일한 소스이다 (REQ-M2-05).
+	// 업링크가 값을 비워 보내면 기존 캐시를 지우지 않는다.
+	if up.DeviceInfo.ApplicationID != "" {
+		d.applicationID = up.DeviceInfo.ApplicationID
+	}
 	d.tags = up.DeviceInfo.Tags
 	d.lastSeen = time.Now()
 	d.online = true
 	a.devicesMu.Unlock()
+}
+
+// DownlinkTarget 은 devEui 의 다운링크 대상(캐시된 applicationId + deviceProfileName)을
+// 조회한다 (REQ-M2-05, R5 순서 제약).
+//
+// 최초 업링크가 applicationId 를 캐시하기 전에는 ok=false 이며, 이때 호출자는 다운링크
+// 토픽을 구성할 수 없으므로 발행하지 않아야 한다.
+//
+// HVAC 락 함정 회피(REQ-FROZEN-B): devicesMu 보유 구간에서 a.Name() 등 a.mu 를 다시
+// 잡는 메서드를 호출하지 않는다 — devicesMu → a.mu 락 순서 엣지를 새로 만들지 않는다.
+func (a *ChirpStackAgent) DownlinkTarget(devEui string) (applicationID, deviceProfileName string, ok bool) {
+	if devEui == "" {
+		return "", "", false
+	}
+	a.devicesMu.RLock()
+	defer a.devicesMu.RUnlock()
+
+	d, exists := a.devices[devEui]
+	if !exists || d.applicationID == "" {
+		return "", "", false
+	}
+	return d.applicationID, d.deviceProfileName, true
 }
 
 // listDevices 는 로스터의 디바이스 스냅샷(깊은 복사)을 반환한다.

@@ -19,18 +19,56 @@ func (fakeToken) Done() <-chan struct{} {
 }
 func (fakeToken) Error() error { return nil }
 
-// fakeClient 는 subscribe 로직 검증용 최소 mqtt.Client 구현이다.
+// fakeErrToken 은 즉시 완료되지만 에러를 반환하는 mqtt.Token 이다 (발행 실패 경로 검증용).
+type fakeErrToken struct{ err error }
+
+func (t fakeErrToken) Wait() bool                     { return true }
+func (t fakeErrToken) WaitTimeout(time.Duration) bool { return true }
+func (t fakeErrToken) Done() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+func (t fakeErrToken) Error() error { return t.err }
+
+// publishedMessage 는 fakeClient 가 기록한 발행 1건이다 (SPEC-CHIRPSTACK-002 M1/M2:
+// 발행 0건/1건 및 정확한 토픽·QoS·retained·페이로드 검증에 사용된다).
+type publishedMessage struct {
+	topic    string
+	qos      byte
+	retained bool
+	payload  []byte
+}
+
+// fakeClient 는 subscribe/publish 로직 검증용 최소 mqtt.Client 구현이다.
 type fakeClient struct {
 	subscribed   []string
 	disconnected bool
 	connected    bool
+
+	// published 는 Publish 호출 기록이다. publishErr 이 설정되면 실패 토큰을 반환한다.
+	published  []publishedMessage
+	publishErr error
 }
 
 func (c *fakeClient) IsConnected() bool      { return c.connected }
 func (c *fakeClient) IsConnectionOpen() bool { return c.connected }
 func (c *fakeClient) Connect() mqtt.Token    { return fakeToken{} }
 func (c *fakeClient) Disconnect(uint)        { c.disconnected = true }
-func (c *fakeClient) Publish(string, byte, bool, interface{}) mqtt.Token {
+func (c *fakeClient) Publish(topic string, qos byte, retained bool, payload interface{}) mqtt.Token {
+	var b []byte
+	switch v := payload.(type) {
+	case []byte:
+		b = append([]byte(nil), v...)
+	case string:
+		b = []byte(v)
+	}
+	c.published = append(c.published, publishedMessage{
+		topic: topic, qos: qos, retained: retained, payload: b,
+	})
+	if c.publishErr != nil {
+		return fakeErrToken{err: c.publishErr}
+	}
 	return fakeToken{}
 }
 func (c *fakeClient) Subscribe(topic string, _ byte, _ mqtt.MessageHandler) mqtt.Token {

@@ -97,6 +97,8 @@ func (r *Registry) registerBuiltins() {
 		{"mqtt-subscriber", NewMQTTSubNode, "io", "MQTT 토픽 구독 및 메시지 수신"},
 		{"mqtt-publisher", NewMQTTPublisherNode, "io", "MQTT 토픽으로 메시지 발행"},
 		{"chirpstack-in", NewChirpStackInNode, "io", "ChirpStack LoRaWAN 업링크 수신 (measurement 당 1개 메시지 fan-out)"},
+		{"chirpstack-control", NewChirpStackControlNode, "io", "ChirpStack LoRaWAN 다운링크 제어 (deviceProfile 코덱 인코딩; 최초 업링크 이후에만 제어 가능)"},
+		{"chirpstack-status", NewChirpStackStatusNode, "io", "ChirpStack LoRaWAN 캐시 통신 상태 조회 (에이전트 emit_comm_state=true 필요; 발행/폴 없음)"},
 		{"modbus-write", NewModbusWriteNode, "modbus", "MODBUS command-set 기반 레지스터 쓰기"},
 		{"modbus-read", NewModbusReadNode, "modbus", "MODBUS command-set 기반 레지스터 읽기"},
 		{"modbus-control", NewModbusControlNode, "modbus", "MODBUS 에이전트 lifecycle/디바이스/설정 제어"},
