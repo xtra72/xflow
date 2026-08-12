@@ -1,6 +1,7 @@
 package chirpstack
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,25 @@ import (
 // ChirpStack MQTT integration 은 application/<id>/device/<devEui>/event/<type>
 // 형태로 발행하므로 "application/#" 로 전 애플리케이션 이벤트를 포괄한다.
 const defaultChirpStackTopic = "application/#"
+
+// measurement 방출 모드 (measurement_emit_mode).
+//
+//   - per_measurement(기본): 업링크 1건 → measurement 당 1개 메시지 fan-out.
+//     REQ-FROZEN-01/02 의 동결된 기본 경로이며 절대 변경되지 않는다.
+//   - combined: 업링크 1건 → 모든 measurement 를 payload 최상위 flat 키로 담은
+//     메시지 1개. opt-in 이며 기본 경로에 영향을 주지 않는다.
+const (
+	measurementEmitModePerMeasurement = "per_measurement"
+	measurementEmitModeCombined       = "combined"
+)
+
+// ErrInvalidMeasurementEmitMode 는 measurement_emit_mode 가 per_measurement/combined
+// 이외일 때 반환된다.
+//
+// xsfm 의 ErrInvalidStateEmitMode 검증 규율과 동형이다 — 조용한 폴백 대신 설정 오타를
+// 조기에 드러낸다. 사용자가 combined 를 의도하고 오타를 냈는데 조용히 per_measurement
+// 로 돌아가면 "왜 여전히 2개가 오지" 를 디버깅할 단서가 전혀 남지 않는다.
+var ErrInvalidMeasurementEmitMode = errors.New("chirpstack: invalid measurement_emit_mode (must be 'per_measurement' or 'combined')")
 
 // ChirpStackConfig 는 ChirpStack 에이전트의 트랜스포트 설정이다.
 //
@@ -35,6 +55,10 @@ type ChirpStackConfig struct {
 	EmitCommState      bool          // device_state emit 게이트 (기본 false)
 	CommReportInterval time.Duration // 주기 report 간격 (0=off, change 는 유지)
 	OfflineThreshold   time.Duration // staleness→offline 임계 (기본 300s)
+
+	// MeasurementEmitMode 는 업링크 1건을 몇 개의 메시지로 방출할지 결정한다.
+	// "per_measurement"(기본, 동결 경로) | "combined"(opt-in).
+	MeasurementEmitMode string
 }
 
 // defaultOfflineThreshold 는 업링크 staleness→offline 판정의 보수적 기본 임계이다.
@@ -46,16 +70,17 @@ const defaultOfflineThreshold = 300 * time.Second
 // 재사용한다.
 func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 	cc := ChirpStackConfig{
-		Broker:            "tcp://localhost:1883",
-		ClientID:          "xflow-chirpstack-" + uuid.New().String(),
-		Topics:            []string{defaultChirpStackTopic},
-		QoS:               1,
-		KeepAliveSec:      60,
-		AutoReconnect:     true,
-		CleanSession:      true,
-		BufferSize:        1024,
-		ConnectTimeoutSec: 10,
-		OfflineThreshold:  defaultOfflineThreshold,
+		Broker:              "tcp://localhost:1883",
+		ClientID:            "xflow-chirpstack-" + uuid.New().String(),
+		Topics:              []string{defaultChirpStackTopic},
+		QoS:                 1,
+		KeepAliveSec:        60,
+		AutoReconnect:       true,
+		CleanSession:        true,
+		BufferSize:          1024,
+		ConnectTimeoutSec:   10,
+		OfflineThreshold:    defaultOfflineThreshold,
+		MeasurementEmitMode: measurementEmitModePerMeasurement,
 	}
 
 	opts := cfg.Transport.Options
@@ -114,7 +139,38 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 		}
 	}
 
+	// measurement_emit_mode: 유효값만 반영한다. 무효값은 호출자가
+	// validateMeasurementEmitMode 로 이미 거부했거나(생성/재설정 경로) 거부할 것이므로
+	// 여기서는 기본값(per_measurement)을 유지한다.
+	if v, ok := opts["measurement_emit_mode"].(string); ok {
+		switch v {
+		case measurementEmitModePerMeasurement, measurementEmitModeCombined:
+			cc.MeasurementEmitMode = v
+		}
+	}
+
 	return cc
+}
+
+// validateMeasurementEmitMode 는 measurement_emit_mode 옵션의 타입/enum 을 검증한다.
+//
+// 키가 없거나 빈 문자열이면 "미지정"으로 보아 기본값(per_measurement)을 허용한다.
+// 그 외 무효값은 ErrInvalidMeasurementEmitMode 로 거부한다(조용한 폴백 금지).
+func validateMeasurementEmitMode(opts map[string]any) error {
+	v, ok := opts["measurement_emit_mode"]
+	if !ok {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("%w: 문자열이어야 합니다 (got %T)", ErrInvalidMeasurementEmitMode, v)
+	}
+	switch s {
+	case "", measurementEmitModePerMeasurement, measurementEmitModeCombined:
+		return nil
+	default:
+		return fmt.Errorf("%w: got %q", ErrInvalidMeasurementEmitMode, s)
+	}
 }
 
 // parseChirpStackConfigStrict 는 런타임 재설정(Configure) 경로용 파서이다.
@@ -185,7 +241,7 @@ func validateChirpStackOptions(opts map[string]any) error {
 			return fmt.Errorf("%s duration 파싱 실패 (%q): %w", key, s, err)
 		}
 	}
-	return nil
+	return validateMeasurementEmitMode(opts)
 }
 
 // isNumeric 은 toInt / toDuration 이 숫자로 해석할 수 있는 타입인지 판별한다.

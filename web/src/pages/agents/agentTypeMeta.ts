@@ -369,6 +369,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'clean_session', type: 'boolean', required: false, description: '클린 세션 모드', default: 'true' },
       { name: 'buffer_size', type: 'number', required: false, description: '수신 메시지 버퍼 크기', default: '1024' },
       { name: 'connect_timeout_sec', type: 'number', required: false, description: '연결 타임아웃 (초)', default: '10' },
+      { name: 'measurement_emit_mode', type: 'select', required: false, description: '측정치 방출 모드. per_measurement: 측정치마다 메시지 1개(payload.value + metadata.measurement). combined: 업링크 1건을 메시지 1개로 합침(payload 최상위에 측정치 이름별 값, metadata.measurement 없음)', default: 'per_measurement' },
       { name: 'emit_comm_state', type: 'boolean', required: false, description: 'device_state 이벤트 발행 게이트 (comm-state)', default: 'false' },
       { name: 'comm_report_interval', type: 'string', required: false, description: 'comm-state 주기 report 간격 (예: 60s, 0 이면 주기 report off, change 는 유지)' },
       { name: 'offline_threshold', type: 'string', required: false, description: '마지막 업링크 후 이 시간 경과 시 offline 판정', default: '300s' },

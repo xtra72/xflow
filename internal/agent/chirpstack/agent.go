@@ -101,6 +101,13 @@ var (
 // (agentName, devEui) 로 키잉되므로, 이름 충돌은 조용히 덮어쓰지 않고
 // ErrNameCollision 으로 거부한다.
 func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
+	// measurement_emit_mode 는 생성 경로에서도 무효값을 거부한다 — 오타가 조용히
+	// per_measurement 로 폴백하면 "combined 를 켰는데 왜 그대로지" 를 진단할 단서가
+	// 사라진다. 기존(동결) 노브의 관용적 파싱 동작은 그대로 보존한다.
+	if err := validateMeasurementEmitMode(config.Transport.Options); err != nil {
+		return nil, err
+	}
+
 	if err := claimAgentName(config.Name, config.ID); err != nil {
 		return nil, err
 	}
@@ -303,6 +310,13 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 		a.onUplinkCommState(up)
 	}
 
+	// measurement_emit_mode 스냅샷을 매 업링크마다 읽으므로 Configure 의 모드 전환이
+	// 즉시 반영된다 (emit_comm_state 게이트와 동일한 규약).
+	if a.cs().MeasurementEmitMode == measurementEmitModeCombined {
+		a.emitCombinedRecord(up, topic)
+		return
+	}
+
 	records := buildMeasurementRecords(up, a.logger)
 	for i := range records {
 		b, err := json.Marshal(records[i])
@@ -313,6 +327,24 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 		}
 		a.enqueue(b, topic)
 	}
+}
+
+// emitCombinedRecord 는 업링크 1건을 combined 레코드 1개로 접어 수신 채널에 넣는다
+// (measurement_emit_mode="combined").
+//
+// 스칼라 measurement 가 없으면 아무것도 방출하지 않는다(빈 payload 메시지 금지).
+func (a *ChirpStackAgent) emitCombinedRecord(up *uplink, topic string) {
+	rec, ok := buildCombinedMeasurementRecord(up, a.logger)
+	if !ok {
+		return
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		a.stats.IncrExternalMessagesErrored()
+		a.logger.Warn("chirpstack: combined 레코드 직렬화 실패", "devEui", rec.UnitID, "error", err)
+		return
+	}
+	a.enqueue(b, topic)
 }
 
 // enqueue 는 바이트를 수신 채널에 넣고 통계를 갱신한다. 버퍼가 가득 차면 드롭한다.

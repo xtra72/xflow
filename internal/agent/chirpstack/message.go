@@ -11,6 +11,10 @@ import (
 // measurementRecord 는 record 를 비워 두므로(omitempty) 노드는 event 로 취급한다.
 const recordKindDeviceState = "device_state"
 
+// recordKindMeasurements 는 combined(측정치 통합) 레코드의 판별자 값이다.
+// 별도 채널을 만들지 않고 기존 record peek 관례(recordKindDeviceState)를 그대로 확장한다.
+const recordKindMeasurements = "measurements"
+
 // comm-state 트리거 종류 (REQ-FROZEN-03). Century 관례(change/report)를 따른다.
 const (
 	commTriggerChange = "change"
@@ -79,6 +83,65 @@ type measurementRecord struct {
 	UnitID      string            `json:"unit_id"`
 	TimeMs      int64             `json:"time_ms"`
 	Tags        map[string]string `json:"tags,omitempty"`
+}
+
+// combinedMeasurementRecord 는 업링크 1건의 모든 스칼라 measurement 를 하나로 담는
+// 레코드이다 (measurement_emit_mode="combined" opt-in 경로).
+//
+// measurementRecord 와의 차이는 Values(flat map) 하나뿐이다 — unit_id / time_ms /
+// tags 는 동일한 의미/값을 갖는다. 노드는 Record 판별자를 보고
+// buildChirpStackCombinedMessage 로 분기하여 Values 를 payload 최상위 flat 키로 편다
+// (코드베이스 지배적 관례: flattenStateToPayload 계열). measurement 가 하나로 특정되지
+// 않으므로 metadata.measurement 는 방출하지 않는다.
+type combinedMeasurementRecord struct {
+	Record string            `json:"record"`
+	Values map[string]any    `json:"values"`
+	UnitID string            `json:"unit_id"`
+	TimeMs int64             `json:"time_ms"`
+	Tags   map[string]string `json:"tags,omitempty"`
+}
+
+// buildCombinedMeasurementRecord 는 업링크의 object 를 단일 combined 레코드로 접는다.
+//
+// per-measurement 경로(buildMeasurementRecords)와 동일한 규칙을 공유한다:
+//   - 스칼라 값만 담는다. 비스칼라(중첩 객체/배열)는 동일 경고 로그와 함께 skip.
+//   - 결정성을 위해 measurement 키를 정렬해 순회한다(경고 로그 순서 고정).
+//   - top-level timestamp / unit_id / tags(verbatim) 는 per-measurement 와 동일.
+//
+// 스칼라 measurement 가 하나도 없으면 ok=false 를 반환한다 — 빈 payload 메시지를
+// 방출하지 않는다(다운스트림에 의미 없는 이벤트를 흘리지 않음).
+func buildCombinedMeasurementRecord(up *uplink, logger *slog.Logger) (combinedMeasurementRecord, bool) {
+	devEui := up.DeviceInfo.DevEui
+
+	keys := make([]string, 0, len(up.Object))
+	for k := range up.Object {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	values := make(map[string]any, len(keys))
+	for _, k := range keys {
+		v := up.Object[k]
+		if !isScalar(v) {
+			if logger != nil {
+				logger.Warn("chirpstack: 비스칼라 measurement skip",
+					"measurement", k, "devEui", devEui)
+			}
+			continue
+		}
+		values[k] = v
+	}
+	if len(values) == 0 {
+		return combinedMeasurementRecord{}, false
+	}
+
+	return combinedMeasurementRecord{
+		Record: recordKindMeasurements,
+		Values: values,
+		UnitID: devEui,
+		TimeMs: parseUplinkTimeMs(up.Time),
+		Tags:   up.DeviceInfo.Tags,
+	}, true
 }
 
 // isScalar 는 값이 스칼라(문자열/숫자/불리언 등)인지 판정한다.

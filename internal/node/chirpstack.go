@@ -265,8 +265,11 @@ func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName
 		Record string `json:"record"`
 	}
 	_ = json.Unmarshal(data, &disc)
-	if disc.Record == "device_state" {
+	switch disc.Record {
+	case "device_state":
 		return buildChirpStackDeviceStateMessage(data, nodeID, a, agentName, opts)
+	case chirpStackRecordCombined:
+		return buildChirpStackCombinedMessage(data, nodeID, a, agentName, opts)
 	}
 
 	var rec struct {
@@ -302,6 +305,61 @@ func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName
 	payload := make(map[string]any, 2)
 	if rec.Value != nil {
 		payload["value"] = rec.Value
+	}
+	if rec.UnitID != "" {
+		payload["unit_id"] = rec.UnitID
+	}
+	promoteDevIDWithUUID(msg, payload, agentName, opts)
+
+	for k, v := range payload {
+		msg.Payload().Set(k, v)
+	}
+	return msg, true
+}
+
+// chirpStackRecordCombined 는 combined(측정치 통합) 레코드의 판별자 값이다
+// (에이전트: recordKindMeasurements). measurement_emit_mode="combined" opt-in 경로에서만
+// 나타나며, 기본(per_measurement) 경로의 레코드는 record 를 비워 두므로 영향이 없다.
+const chirpStackRecordCombined = "measurements"
+
+// buildChirpStackCombinedMessage 는 combined 레코드(JSON)를 flow message 로 빌드한다
+// (measurement_emit_mode="combined").
+//
+// per-measurement 경로와의 유일한 차이는 payload 모양이다:
+//   - payload = 모든 measurement 를 최상위 flat 키로 편 map (payload.value 없음).
+//   - metadata.measurement 없음 (단일 measurement 로 특정되지 않으므로).
+//
+// 그 외 계약은 per-measurement 경로와 동일하다: type="event", timestamp(UnixMilli),
+// metadata.tags(verbatim), metadata.device.*(unit_id 승격), agent 그룹.
+func buildChirpStackCombinedMessage(data []byte, nodeID string, a agent.Agent, agentName string, opts MetadataEmitOptions) (message.Message, bool) {
+	var rec struct {
+		Values map[string]any    `json:"values"`
+		UnitID string            `json:"unit_id"`
+		TimeMs int64             `json:"time_ms"`
+		Tags   map[string]string `json:"tags"`
+	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, false
+	}
+
+	msg := message.New()
+	msg.SetType("event")
+	if rec.TimeMs > 0 {
+		msg.SetTimestamp(time.UnixMilli(rec.TimeMs))
+	}
+	// tags verbatim pass-through (REQ-FROZEN-04) — per-measurement 경로와 동일.
+	if len(rec.Tags) > 0 {
+		msg.Metadata().SetGroup("tags", rec.Tags)
+	}
+	if opts.NodeID {
+		msg.Metadata().Set("node_id", nodeID)
+	}
+	emitAgentGroup(msg, a, opts)
+
+	// payload = measurement flat 키 + unit_id(승격 후 제거).
+	payload := make(map[string]any, len(rec.Values)+1)
+	for k, v := range rec.Values {
+		payload[k] = v
 	}
 	if rec.UnitID != "" {
 		payload["unit_id"] = rec.UnitID

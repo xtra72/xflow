@@ -67,6 +67,16 @@ const CHIRPSTACK_FIELDS: ConfigField[] = [
   { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
   { name: 'buffer_size', type: 'number', label: '수신 버퍼 크기', default: 1024 },
   { name: 'connect_timeout_sec', type: 'number', label: '연결 타임아웃(초)', default: 10 },
+  // 측정치 방출 모드 (opt-in). 기본값은 현행 동작(측정치별 fan-out)과 동일하다.
+  {
+    name: 'measurement_emit_mode',
+    type: 'select',
+    label: '측정치 방출 모드',
+    options: ['per_measurement', 'combined'],
+    default: 'per_measurement',
+    description:
+      'per_measurement: 업링크 1건의 측정치마다 메시지 1개를 만듭니다 (예: 온도/습도 → 메시지 2개, payload.value 에 값 1개, metadata.measurement 에 측정치 이름). combined: 업링크 1건을 메시지 1개로 합칩니다 (예: 온도/습도 → 메시지 1개, payload 에 {"temperature": 29.8, "humidity": 55.2} 형태로 모든 측정치, metadata.measurement 없음). 시간/디바이스/태그는 두 모드가 동일합니다.',
+  },
   // comm-state 노브 (M5, REQ-FROZEN-03 / REQ-M5-01/03/04).
   { name: 'emit_comm_state', type: 'boolean', label: 'comm-state 발행', default: false, description: 'device_state 이벤트 발행 게이트' },
   { name: 'comm_report_interval', type: 'string', label: 'comm-state 주기 report 간격', description: '예: 60s, 0 이면 주기 report off (change 는 유지)' },

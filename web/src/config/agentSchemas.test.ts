@@ -136,3 +136,47 @@ describe('samsung_hvacr01 미러 동기화 스키마 (SPEC-HVACR-SYNC-001)', () 
     expect(pw.sensitive).toBe(true);
   });
 });
+
+// chirpstack 측정치 방출 모드 — opt-in combined 노브.
+//
+// 백엔드 Transport.Options 키(internal/agent/chirpstack/config.go 의
+// measurement_emit_mode)와 1:1 매핑되어야 하며, 기본값은 현행 동작(측정치별 fan-out)과
+// 바이트 동일해야 한다(무회귀, REQ-FROZEN-01/02).
+describe('chirpstack 측정치 방출 모드 스키마', () => {
+  const chirpField = (name: string): ConfigField | undefined =>
+    getAgentConfigSchema('chirpstack')?.fields.find((f) => f.name === name);
+
+  it('measurement_emit_mode 가 select 위젯으로 노출된다', () => {
+    const mode = chirpField('measurement_emit_mode');
+    expect(mode).toBeDefined();
+    expect(mode!.type).toBe('select');
+  });
+
+  it('enum 은 per_measurement/combined 이며 기본값은 per_measurement 이다', () => {
+    const mode = chirpField('measurement_emit_mode')!;
+    expect(mode.options).toEqual(['per_measurement', 'combined']);
+    expect(mode.default).toBe('per_measurement');
+  });
+
+  it('기본값이 현행 동작과 동일하다(측정치별 fan-out — 무회귀)', () => {
+    const defaults = getAgentConfigDefaults('chirpstack');
+    expect(defaults.measurement_emit_mode).toBe('per_measurement');
+  });
+
+  it('설명이 두 모드의 결과를 각각 명시한다', () => {
+    const desc = chirpField('measurement_emit_mode')!.description ?? '';
+    expect(desc).toContain('per_measurement');
+    expect(desc).toContain('combined');
+  });
+
+  it('기존 chirpstack 노브는 그대로 유지된다(필드 제거/이름 변경 없음)', () => {
+    for (const key of [
+      'broker', 'client_id', 'username', 'password', 'topics', 'qos',
+      'keep_alive_sec', 'auto_reconnect', 'clean_session', 'buffer_size',
+      'connect_timeout_sec', 'emit_comm_state', 'comm_report_interval',
+      'offline_threshold',
+    ]) {
+      expect(chirpField(key), `누락된 chirpstack 필드: ${key}`).toBeDefined();
+    }
+  });
+});
