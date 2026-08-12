@@ -6,6 +6,28 @@
 
 ## [Unreleased]
 
+### 추가 — store-write `data_type: "auto"` 값 기반 타입 추론 (SPEC-STORE-003 v0.3.1)
+
+- **store-write 노드 config 의 `data_type` 에 `"auto"` sentinel 을 추가 (additive, non-breaking, 기존 빈 data_type 의 string 동작 보존)**
+
+  단일 store-write 노드가 `key_template` 로 측정별 키를 만들며 boolean/int/float 등 **가변 타입 측정값**(예: 온도=float, 모드=int, 전원=boolean)을 저장할 때, 고정 리터럴 `data_type`(예: `float`)은 한 타입만 담을 수 있어 boolean 값에서 `ErrTypeMismatch`("store: value type does not match registered data_type")가 발생했다. `"auto"` 는 쓰기 값의 Go 타입을 M7 추론 매핑으로 판별해 **키별로** 구체 타입을 고정한다. 키 단위 타입은 일정하므로 첫 쓰기 추론이 올바른 타입을 보장하며, 스위치 노드 없이 단일 노드로 이종 측정값을 정확한 타입으로 저장한다.
+
+  - **system**: `DataTypeAuto` sentinel + `resolveWriteDataType` 헬퍼(추론/폴백), `SetWithMeta` 의 "auto" 추론 경로. 추론 불가(`nil`/channel/func) 시 타입 고정을 생략하고 동적 string 폴백에 맡긴다(새 실패 모드 없음).
+  - **node**: store-write `Configure` / `parseMetricSpec` 가 `"auto"` 를 유효값으로 수용(노드 레벨 + `metrics[].data_type`).
+  - **품질**: 특성 테스트(boolean/int/float/mixed/nil) + 노드 config 수용 테스트 추가. build/test/vet/gofmt/golangci-lint 클린.
+  - **관련**: SPEC-STORE-003 v0.3.1(M7 확장). 적용에는 flow config `metrics[].data_type: "auto"` 설정 + 데몬 재시작 필요(스토어의 stale 타입 등록은 메모리에만 존재).
+
+### 변경 — egress 메타데이터 슬림화 제거 (full 그룹 전달)
+
+- **egress(WS tap / egress 노드 / influxdb-write)에서 agent·device 그룹을 id-only 로 축소하던 `SlimGroupsToID` 의 슬림 로직을 제거 (full 그룹 전달)**
+
+  클라이언트·스토리지·대시보드가 `device.name` / `agent.type` 등을 직접 필요로 하는 경우가 많아, egress 는 이제 `type/id/name` 전체(full)를 그대로 내보낸다. 내부 노드 간 흐름은 종전과 동일(항상 full)하며, 함수는 슬림화만 중단하고 내부 제어 마커 `_slimKeep` 제거 책임은 유지한다. 호출처(tap.go/egress_metadata.go/influxdb_write.go)는 변경하지 않도록 함수 이름을 보존했다(최소 변경 범위). enrich 의 `_slimKeep` 설정과 ws expand opt-in 기계는 무해하게 잔존한다.
+
+  - **pkg/message**: `slim.go` 의 `slimGroupKeys`/`parseSlimKeep` 삭제, full pass-through(+마커 제거)로 변경.
+  - **품질**: 슬림 단언 테스트 6종(slim/expand/enrich_slim/debug_group/influxdb_write_group/tap)을 full 보존 단언으로 전환. build/test/vet/gofmt/golangci-lint 클린.
+  - **주의(트레이드오프)**: wire 페이로드 크기 증가, influxdb-write 태그에 `agent.type`/`device.name` 등 추가 → 태그 카디널리티 증가 가능. 적용에는 `bin/xflowd` 재빌드·재시작 필요(Go 코드 변경).
+  - **관련**: 정식 SPEC 없는 `message-slim-metadata` 기능의 동작 역전. SPEC 문서 대상 없음(CHANGELOG 기록).
+
 ### 개선 — 패널 설정 데이터 소스 시리즈 선택 UI (표시 필터 · 인라인 세부 정보 · 동적 바인딩 분리)
 
 - **패널 설정(SPEC-PANEL-SETTINGS-001)의 데이터 소스 시리즈 선택 UX 를 개선 (Non-breaking, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0, config JSON shape 무변경)**
