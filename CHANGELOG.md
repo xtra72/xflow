@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### 추가 — ChirpStack status/control 노드 (`chirpstack-control` + `chirpstack-status`)
+
+- **ChirpStack LoRaWAN 다운링크(제어)와 캐시 통신 상태 조회를 Flow 노드로 노출하는 신규 노드 2종 추가 (SPEC-CHIRPSTACK-002, Tier M)**
+
+  SPEC-CHIRPSTACK-001 의 수신 전용 에이전트 위에 **다운링크 발행 경로**를 추가한다. `chirpstack-control` 은 입력 메시지의 typed command(payload `unit_id`/`command`/`params`/선택 `confirmed`)를 deviceProfile 별 코덱으로 인코딩해 `application/{applicationId}/device/{devEui}/command/down` 토픽에 `{devEui, confirmed, fPort, data(base64)}` 로 발행한다. `chirpstack-status` 는 에이전트 comm 맵의 마지막 캐시 상태를 `buildChirpStackDeviceStateMessage` shape 로 방출하며 **MQTT 발행 0건 / 온디맨드 폴 0건**(파일에 발행 인터페이스 참조도 타이머도 없어 구조적으로 보장)이다. 두 노드 모두 노드 1개 인스턴스가 N 개 디바이스를 담당한다(대상은 설정이 아니라 입력 메시지로 지정).
+
+  - **의도적 역전(회귀 아님)**: SPEC-CHIRPSTACK-001 은 본 에이전트를 "수신 전용"으로 정의하며 발행 경로(`MessagePublisher`)를 의도적으로 배제했다. SPEC-CHIRPSTACK-002 REQ-M1-02 가 그 배제를 명시적으로 역전한다 — `agent.go` 의 배제 선언 3곳(패키지 doc / 타입 doc / `Process` doc)을 전부 갱신하고 `var _ agent.MessagePublisher` 어서션을 추가했다. 수신 계약(REQ-FROZEN-A)은 그대로 보존된다.
+  - **신규 파일**: `internal/agent/chirpstack/` 에 `publish.go`(발행 프리미티브, `mqtt_agent.go:609` 가드 미러) · `codec.go`(per-deviceProfile 코덱 레지스트리) · `codec_ws301.go`(Milesight WS301 seed 코덱) · `downlink.go`(토픽/페이로드 순수 함수) · `commstate_query.go`(캐시 조회 접근자), `internal/node/` 에 `chirpstack_control.go` · `chirpstack_status.go` (+ 각 테스트). 총 13 신규 / 11 수정.
+  - **WS301 코덱 바이트**: 공식 Milesight WS301 User Guide V1.4(2026-04-22) 대조 검증 — 다운링크 fPort **85**(p.31), TLV `0xFF <cmd> <value...>` + 파라미터 **리틀엔디언**(p.29), reboot `ff 10 ff`, 보고 주기 `ff 03 <lo> <hi>` UINT16 LE 초(Ch.6 p.31-32), 유효 범위 60~64800초(ToolBox 범위 p.17 + 공식 encoder). WS301 은 자석식 도어 컨택 센서로 부저 하드웨어가 없어 부저/알람 명령은 제공하지 않는다. `ff 28 ff`(query device status)는 공식 encoder 에만 있고 User Guide 미등재이므로 `@MX:DEBT` 표기.
+  - **분기(Divergence, as-implemented — spec.md § Implementation Notes IN-1~9)**: (1) `applicationId` 는 comm 맵이 아니라 `devices` 맵에 캐시 — comm 맵 갱신이 `emit_comm_state` 게이트에 종속되어 제어 경로가 숨은 의존성을 갖는 것을 피함. (2) REQ-M1-03(Optional)은 `SendDownlink` 에이전트 메서드 없이 패키지 레벨 순수 함수 + 노드의 `PublishMessage` 직접 호출로 충족(thin-adapter). (3) **R6 신규 식별**: comm 맵은 `emit_comm_state`(기본 false)가 켜져야만 채워지므로 노브가 꺼진 에이전트의 status 노드는 항상 offline/unknown 을 방출 — registry 설명·Go doc 명시 + `Init` 경고 1회로 공개(하드 실패 없음). (4) base64 는 `StdEncoding`(ChirpStack v4 pbjson 대조); 파서가 `ignore_unknown_fields` 라 필드명 오타가 무음 실패하므로 필드명을 골든 벡터로 고정. (5) `connect()` 의 `a.client` 대입을 `a.mu` 하로 이동(발행 경로 추가로 선재 비동기화 쓰기가 실제 레이스가 됨).
+  - **Wiring**: `internal/node/registry.go`(category `io`, `chirpstack-in` 인접) + `pkg/flow/validate.go` `agentRefRequiredTypes`. 노드 타입 수 **71 → 73**(59 canonical + 14 alias) — 하드코딩 단언 3곳(`internal/api/service/node_adapter_test.go`, `internal/node/registry_test.go`, `internal/node/mqtt_test.go`) 갱신. `web/` 및 `config.go` 무변경(REQ-M4-04), 팔레트는 `/nodes` 로 자동 노출.
+  - **품질**: 커밋 `d5d0089d`. 신규 소스 7개 파일 커버리지 **93.43%**(256/274, 목표 85% 초과), AC-1~AC-5 전량 테스트 커버, `go test -race` 클린, 스코프 build/vet/lint 클린(신규 lint 0), SPEC-001 characterization 무회귀(`chirpstack_test.go` / `comm_state_test.go` 무변경). **Gaps**: 실브로커/실기기 E2E 미수행 — 모든 발행 단언은 테스트 더블 기준이다. 저장소 전체 `go vet ./...` 는 `internal/schedulelog/observer_test.go` 의 선재 결함(커밋 `8881d9c7` 유입, 본 SPEC 무관)으로 RED 이므로 무회귀 판정은 delta 기준이다.
+  - **관련**: SPEC-CHIRPSTACK-002 v1.0.0(구현 완료, Tier M). 선행 SPEC-CHIRPSTACK-001. 적용에는 `bin/xflowd` 재빌드·재시작 필요이며, `chirpstack-status` 사용 시 대상 에이전트의 `emit_comm_state: true` 설정이 전제조건이다.
+
 ### 추가 — ChirpStack LoRaWAN 에이전트 (`chirpstack` 에이전트 + `chirpstack-in` 노드)
 
 - **ChirpStack LoRaWAN Network Server 의 MQTT 업링크를 수신하여 측정값별로 팬아웃하는 신규 에이전트/노드 추가 (SPEC-CHIRPSTACK-001, Tier L)**

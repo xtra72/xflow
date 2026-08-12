@@ -27,12 +27,12 @@ var ws301Downlink = struct {
 	// FPort 는 다운링크 application port 이다 (User Guide V1.4 p.31 기본값 85).
 	FPort uint8
 
-	// Reboot 는 디바이스 재부팅 명령이다 (User Guide V1.4 p.31: ff 10 ff).
+	// Reboot 는 디바이스 재부팅 명령이다 (User Guide V1.4 Ch.6 p.31-32: ff 10 ff).
 	// 후행 0xff 는 피연산자가 아니라 고정 페이로드 바이트이다.
 	Reboot []byte
 
 	// ReportIntervalPrefix 는 보고 주기 설정 TLV 프리픽스이다
-	// (User Guide V1.4 p.31: ff 03 <lo> <hi>, UINT16 리틀엔디언, 단위 초).
+	// (User Guide V1.4 Ch.6 p.31-32: ff 03 <lo> <hi>, UINT16 리틀엔디언, 단위 초).
 	// 예: ff03b004 → 0x04b0 = 1200s = 20분.
 	ReportIntervalPrefix []byte
 
@@ -50,8 +50,12 @@ var ws301Downlink = struct {
 	QueryDeviceStatus:    []byte{0xff, 0x28, 0xff},
 }
 
-// WS301 보고 주기 유효 범위(초). 공식 encoder 와 동일하게 범위를 검증한다
-// (User Guide V1.4 p.31: 60 ~ 64800 초).
+// WS301 보고 주기 유효 범위(초). 공식 encoder(ws301-encoder.js)와 동일하게 검증한다.
+//
+// 근거: User Guide V1.4 는 다운링크 명령 표 자체에 범위를 명시하지 않고, ToolBox UI
+// 기준으로 "Range: 1 - 1080 mins"(p.17)를 기재한다 — 60 ~ 64800 초와 정확히 일치한다.
+// 공식 encoder 도 동일 범위를 검증한다. 범위 밖 값에 대한 디바이스 측 실제 거부 동작은
+// 미검증이다.
 const (
 	ws301ReportIntervalMinSec = 60
 	ws301ReportIntervalMaxSec = 64800

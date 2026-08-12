@@ -301,6 +301,17 @@ ChirpStack LoRaWAN Network Server의 MQTT 업링크(토픽 `application/#`)를 �
 - Race Detector: 이상 없음
 - Go Vet: 이상 없음
 
+### internal/agent/chirpstack + internal/node - ChirpStack status/control 노드 (SPEC-CHIRPSTACK-002)
+
+SPEC-CHIRPSTACK-001의 수신 전용 에이전트 위에 LoRaWAN **다운링크(제어)**와 **캐시 통신 상태 조회**를 Flow 노드로 노출한다. `chirpstack-control`은 입력 메시지의 typed command(payload `unit_id`/`command`/`params`/선택 `confirmed`)를 deviceProfile별 코덱으로 인코딩하여 `application/{applicationId}/device/{devEui}/command/down` 토픽에 `{devEui, confirmed, fPort, data(base64)}`로 발행한다. `chirpstack-status`는 에이전트 comm 맵의 마지막 캐시 상태를 방출하며 MQTT 발행 0건 / 온디맨드 폴 0건이다. 두 노드 모두 대상 디바이스를 설정이 아니라 입력 메시지로 지정하므로 노드 1개 인스턴스가 N개 디바이스를 담당한다. v1 코덱은 Milesight WS301(User Guide V1.4 대조 검증: fPort 85, reboot `ff10ff`, 보고 주기 `ff03<lo><hi>` UINT16 LE 60~64800초)이며, 미등록 deviceProfile·미지 command·`applicationId` 미캐시는 error + 발행 0건으로 거부한다.
+
+- 신규 타입: 노드 `chirpstack-control`, `chirpstack-status` (노드 타입 수 71 → 73)
+- 전제조건: `chirpstack-status`는 대상 에이전트의 `emit_comm_state: true` 필요 (꺼져 있으면 항상 offline/unknown 방출, Init에서 경고 1회)
+- 커버리지: 93.43% (신규 코드, 목표 85% 초과)
+- Race Detector: 이상 없음
+- Go Vet: 이상 없음 (스코프 기준)
+- 한계: 실브로커/실기기 E2E 미수행 — 발행 단언은 테스트 더블 기준
+
 ### internal/node - Filter 조건식 파서 (SPEC-FILTER-001)
 
 FilterNode에 문자열 기반 조건식 파서를 추가하여, YAML 플로우 정의에서 `condition: "$.payload.temperature >= 30"` 형태로 직접 조건식을 작성할 수 있다. 렉서(Tokenizer), 재귀 하강 파서(Recursive Descent Parser), AST 평가기(Evaluator)를 포함하며, 기존 Go 함수 타입 조건식과 완전 호환된다.
