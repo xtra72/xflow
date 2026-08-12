@@ -715,15 +715,16 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 	assert.Equal(t, "builtin", meta.Source)
 }
 
-// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 70개인지 확인한다.
+// TestMQTTRegistry_TotalBuiltins 는 빌트인 노드 타입이 71개인지 확인한다.
 //
 // 65개(구 modbus 3종 제거 후)에서 command-set 노드 modbus-write / modbus-read /
 // modbus-control 3종 + modbus-remap 1종(SPEC-MODBUS-007)을 추가하여 69개.
 // SPEC-MESSAGE-SPLIT-001 에서 split 노드 1종 추가하여 70개.
+// SPEC-CHIRPSTACK-001 에서 chirpstack-in 노드 1종 추가하여 71개.
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 70, len(types))
+	assert.Equal(t, 71, len(types))
 }
 
 // ===========================================================================

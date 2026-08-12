@@ -11,6 +11,7 @@ package chirpstack
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -211,14 +212,33 @@ func (a *ChirpStackAgent) subscribe(c mqtt.Client) {
 	}
 }
 
-// messageHandler 는 MQTT 업링크 수신 콜백이다.
-//
-// M2: 원시 업링크 바이트를 수신 채널로 전달한다. M3 에서 디코드/fan-out 으로
-// 대체된다.
+// messageHandler 는 MQTT 업링크 수신 콜백이다. 업링크를 디코드/fan-out 한다.
 func (a *ChirpStackAgent) messageHandler(_ mqtt.Client, msg mqtt.Message) {
-	data := make([]byte, len(msg.Payload()))
-	copy(data, msg.Payload())
-	a.enqueue(data, msg.Topic())
+	a.handleUplink(msg.Payload(), msg.Topic())
+}
+
+// handleUplink 는 원시 업링크를 디코드하여 measurement 당 1개 레코드로 fan-out 하고
+// 각 레코드(JSON)를 수신 채널에 넣는다 (REQ-M3-01/02/05).
+//
+// 노드는 이 레코드를 소비해 flow message 로 빌드하고 device 그룹을 승격한다.
+func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
+	up, err := decodeUplink(raw)
+	if err != nil {
+		a.stats.IncrExternalMessagesErrored()
+		a.logger.Warn("chirpstack: 업링크 디코드 실패", "topic", topic, "error", err)
+		return
+	}
+
+	records := buildMeasurementRecords(up, a.logger)
+	for i := range records {
+		b, err := json.Marshal(records[i])
+		if err != nil {
+			a.stats.IncrExternalMessagesErrored()
+			a.logger.Warn("chirpstack: 레코드 직렬화 실패", "measurement", records[i].Measurement, "error", err)
+			continue
+		}
+		a.enqueue(b, topic)
+	}
 }
 
 // enqueue 는 바이트를 수신 채널에 넣고 통계를 갱신한다. 버퍼가 가득 차면 드롭한다.

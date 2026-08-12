@@ -96,6 +96,7 @@ func (r *Registry) registerBuiltins() {
 		{"xsfm", NewXsfmNode, "io", "설비 상태 + 제어 통합"},
 		{"mqtt-subscriber", NewMQTTSubNode, "io", "MQTT 토픽 구독 및 메시지 수신"},
 		{"mqtt-publisher", NewMQTTPublisherNode, "io", "MQTT 토픽으로 메시지 발행"},
+		{"chirpstack-in", NewChirpStackInNode, "io", "ChirpStack LoRaWAN 업링크 수신 (measurement 당 1개 메시지 fan-out)"},
 		{"modbus-write", NewModbusWriteNode, "modbus", "MODBUS command-set 기반 레지스터 쓰기"},
 		{"modbus-read", NewModbusReadNode, "modbus", "MODBUS command-set 기반 레지스터 읽기"},
 		{"modbus-control", NewModbusControlNode, "modbus", "MODBUS 에이전트 lifecycle/디바이스/설정 제어"},
