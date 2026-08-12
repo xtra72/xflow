@@ -44,6 +44,10 @@ type ChirpStackAgent struct {
 	subscribedTopics []string
 	topicsMu         sync.RWMutex
 
+	// devices 는 devEui 키 자동 생성 디바이스 로스터이다 (M4, REQ-M4-01).
+	devices   map[string]*deviceState
+	devicesMu sync.RWMutex
+
 	stats  *agent.AgentStats
 	logger *slog.Logger
 
@@ -77,6 +81,7 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 		csConfig:      cc,
 		recvCh:        make(chan []byte, cc.BufferSize),
 		done:          make(chan struct{}),
+		devices:       make(map[string]*deviceState),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
@@ -228,6 +233,9 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 		a.logger.Warn("chirpstack: 업링크 디코드 실패", "topic", topic, "error", err)
 		return
 	}
+
+	// 디바이스 자동 생성/갱신 + UID 발급 + 런타임 info 등록 (M4, REQ-M4-01/02/04).
+	a.upsertDevice(up)
 
 	records := buildMeasurementRecords(up, a.logger)
 	for i := range records {
