@@ -63,6 +63,90 @@ func TestBuildChirpStackMessage_BadJSON(t *testing.T) {
 	}
 }
 
+// TestBuildChirpStackMessage_DeviceState 는 device_state 판별자 레코드가
+// device_state.<trigger> 메시지(state 그룹 포함)로 빌드되는지 검증한다
+// (REQ-FROZEN-03, AC-5a). device 그룹(UUID) 승격은 repo 통합 테스트 몫이며 본
+// 테스트는 type/state/last_seen_ms 계약 경로를 검증한다.
+func TestBuildChirpStackMessage_DeviceState(t *testing.T) {
+	wantTS := time.Date(2026, 8, 11, 23, 32, 1, 129_000_000, time.UTC)
+	rec := map[string]any{
+		"record":       "device_state",
+		"trigger":      "change",
+		"unit_id":      "24e124141d180806",
+		"time_ms":      wantTS.UnixMilli(),
+		"last_seen_ms": wantTS.UnixMilli(),
+		"state": map[string]any{
+			"online":       true,
+			"rssi":         -57,
+			"snr":          13.5,
+			"gateway_id":   "24e124fffef79304",
+			"last_seen_ms": wantTS.UnixMilli(),
+		},
+	}
+	data, _ := json.Marshal(rec)
+
+	msg, ok := buildChirpStackMessage(data, "node-1", nil, "", DefaultEmitOptions())
+	if !ok {
+		t.Fatal("buildChirpStackMessage returned ok=false")
+	}
+	if msg.Type() != "device_state.change" {
+		t.Errorf("type = %q, want device_state.change", msg.Type())
+	}
+	if !msg.Timestamp().Equal(wantTS) {
+		t.Errorf("timestamp = %v, want %v", msg.Timestamp().UTC(), wantTS)
+	}
+	// trigger 는 msg.Type 으로 승격되며 payload 에서 제거된다.
+	if _, ok := msg.Payload().Get("trigger"); ok {
+		t.Error("payload.trigger should be removed after type promotion")
+	}
+	// unit_id 는 device 그룹 승격 과정에서 payload 에서 제거된다.
+	if _, ok := msg.Payload().Get("unit_id"); ok {
+		t.Error("payload.unit_id should be removed")
+	}
+	if v, _ := msg.Payload().Get("last_seen_ms"); v == nil {
+		t.Error("payload.last_seen_ms missing")
+	}
+	stateRaw, ok := msg.Payload().Get("state")
+	if !ok {
+		t.Fatal("payload.state missing")
+	}
+	state, ok := stateRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("payload.state type = %T, want map", stateRaw)
+	}
+	if state["online"] != true {
+		t.Errorf("state.online = %v, want true", state["online"])
+	}
+	if state["rssi"] != -57 {
+		t.Errorf("state.rssi = %v, want -57", state["rssi"])
+	}
+	if state["snr"] != 13.5 {
+		t.Errorf("state.snr = %v, want 13.5", state["snr"])
+	}
+	if state["gateway_id"] != "24e124fffef79304" {
+		t.Errorf("state.gateway_id = %v", state["gateway_id"])
+	}
+}
+
+// TestBuildChirpStackMessage_DeviceStateReportDefault 는 trigger 누락 시 기본
+// sub-type(report)으로 승격되는지 검증한다.
+func TestBuildChirpStackMessage_DeviceStateReportDefault(t *testing.T) {
+	rec := map[string]any{
+		"record":  "device_state",
+		"unit_id": "eui",
+		"time_ms": int64(1),
+		"state":   map[string]any{"online": false},
+	}
+	data, _ := json.Marshal(rec)
+	msg, ok := buildChirpStackMessage(data, "n", nil, "", DefaultEmitOptions())
+	if !ok {
+		t.Fatal("ok=false")
+	}
+	if msg.Type() != "device_state.report" {
+		t.Errorf("type = %q, want device_state.report (default)", msg.Type())
+	}
+}
+
 // TestChirpStackInNode_RegisteredAndFactory 는 chirpstack-in 이 노드 레지스트리에
 // 등록되고 팩토리가 SourceNode 를 생성하는지 검증한다 (REQ-M3-06, AC-8).
 func TestChirpStackInNode_RegisteredAndFactory(t *testing.T) {
