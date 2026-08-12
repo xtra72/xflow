@@ -96,6 +96,33 @@ func csRawUplink(t *testing.T, obj map[string]any) []byte {
 	return b
 }
 
+// csMeasSample 은 properties["measurements"][key] 의 {value, time_ms} 쌍을 꺼낸다.
+// 외부 테스트 패키지(chirpstack_test)용 헬퍼이며, 내부 패키지의 measSample 과 같은
+// 모양을 관측한다.
+func csMeasSample(t *testing.T, props map[string]any, key string) (any, int64) {
+	t.Helper()
+	m, ok := props["measurements"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties[measurements] = %#v, want map[string]any", props["measurements"])
+	}
+	obj, ok := m[key].(map[string]any)
+	if !ok {
+		t.Fatalf("measurements[%s] = %#v, want map[string]any{value,time_ms}", key, m[key])
+	}
+	ts, ok := obj["time_ms"].(int64)
+	if !ok {
+		t.Fatalf("measurements[%s].time_ms = %#v (%T), want int64", key, obj["time_ms"], obj["time_ms"])
+	}
+	return obj["value"], ts
+}
+
+// csMeasValue 는 measurements[key].value 만 꺼낸다.
+func csMeasValue(t *testing.T, props map[string]any, key string) any {
+	t.Helper()
+	v, _ := csMeasSample(t, props, key)
+	return v
+}
+
 // inventoryItems 는 레지스트리에 프로바이더를 등록하고 inventory(source=devices)
 // 노드를 1회 구동해 항목 목록을 반환한다.
 func inventoryItems(t *testing.T, agentName string, p device.DeviceProvider) []map[string]any {
@@ -157,8 +184,8 @@ func TestInventoryNode_ChirpStackDeviceEmission(t *testing.T) {
 	if st.Properties["rssi"] != -57 {
 		t.Errorf("properties[rssi] = %v, want -57", st.Properties["rssi"])
 	}
-	if m, ok := st.Properties["measurements"].(map[string]any); !ok || m["temperature"] != 29.8 {
-		t.Errorf("properties[measurements] = %v, want temperature 29.8", st.Properties["measurements"])
+	if got := csMeasValue(t, st.Properties, "temperature"); got != 29.8 {
+		t.Errorf("properties.measurements.temperature.value = %v, want 29.8", got)
 	}
 
 	// (2) inventory 노드 경계: 실제 방출 메시지의 항목을 관측한다.
@@ -198,8 +225,32 @@ func TestInventoryNode_ChirpStackDeviceEmission(t *testing.T) {
 	if props["gateway_id"] != "24e124fffef79304" || props["snr"] != 13.5 {
 		t.Errorf("item.state.properties 링크 품질 불일치: %v", props)
 	}
-	if m, ok := props["measurements"].(map[string]any); !ok || m["humidity"] != 55.2 {
-		t.Errorf("item.state.properties.measurements 불일치: %v", props["measurements"])
+	if got := csMeasValue(t, props, "humidity"); got != 55.2 {
+		t.Errorf("item.state.properties.measurements.humidity.value = %v, want 55.2", got)
+	}
+	// dev_eui 는 state.properties 가 아니라 metadata.labels 로 옮겼다.
+	if v, ok := props["dev_eui"]; ok {
+		t.Errorf("item.state.properties.dev_eui 존재(=%v) — metadata.labels 로 이동했다", v)
+	}
+	meta, ok := item["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("item[metadata] = %#v, want map", item["metadata"])
+	}
+	if meta["location"] != "실습실" {
+		t.Errorf("item.metadata.location = %v, want 실습실 (location 태그 승격)", meta["location"])
+	}
+	labels, ok := meta["labels"].(map[string]string)
+	if !ok {
+		t.Fatalf("item.metadata.labels = %#v, want map[string]string", meta["labels"])
+	}
+	if labels["dev_eui"] != csDevEui {
+		t.Errorf("item.metadata.labels.dev_eui = %v, want %q", labels["dev_eui"], csDevEui)
+	}
+	if _, ok := labels["location"]; ok {
+		t.Errorf("item.metadata.labels.location 잔존 — 승격은 이동이다: %v", labels)
+	}
+	if labels["spot"] != "앞문" {
+		t.Errorf("item.metadata.labels.spot = %v, want 앞문 (승격 대상이 아닌 태그는 남는다)", labels["spot"])
 	}
 }
 
@@ -234,7 +285,7 @@ func TestInventoryNode_ChirpStackStaleDeviceIsOffline(t *testing.T) {
 	if !ok {
 		t.Fatalf("item.state.properties = %#v, want map", state["properties"])
 	}
-	if m, ok := props["measurements"].(map[string]any); !ok || m["temperature"] != 1.0 {
+	if got := csMeasValue(t, props, "temperature"); got != 1.0 {
 		t.Errorf("offline 디바이스의 measurements 캐시가 유실되었다: %v", props["measurements"])
 	}
 	// emit_comm_state=false 이므로 링크 품질 키는 부재여야 한다 (FEAT-B).

@@ -275,9 +275,9 @@ func TestFlowMessage_DeviceStateCarriesUuidAndDevEui(t *testing.T) {
 	}
 }
 
-// TestInventory_DevEuiAlwaysPresent 는 dev_eui 가 DeviceState.Properties 에 항상
-// 실리는지를 emit_comm_state 양쪽 설정에서 검증하고, inventory 노드가 실제로 방출하는
-// 디바이스 정보 JSON 을 관측한다.
+// TestInventory_DevEuiAlwaysPresent 는 dev_eui 가 Metadata().Labels 에 항상 실리고
+// DeviceState.Properties 에서는 사라졌는지를 emit_comm_state 양쪽 설정에서 검증하고,
+// inventory 노드가 실제로 방출하는 디바이스 정보 JSON 을 관측한다.
 //
 // emit_comm_state=false 를 함께 도는 이유: rssi/snr/gateway_id 는 그 노브 뒤에
 // 게이팅되지만 dev_eui 는 게이팅되지 않는다는 것이 본 변경의 계약이다.
@@ -294,10 +294,14 @@ func TestInventory_DevEuiAlwaysPresent(t *testing.T) {
 			a := newDevEuiE2EAgent(t, agentName, map[string]any{"emit_comm_state": tc.emitCommState})
 			a.HandleUplinkForTest(csRawUplink(t, map[string]any{"temperature": 29.8}), "application/x")
 
-			// (1) 프로바이더 경계.
-			props := a.DeviceProvider().Devices()[0].State().Properties
-			if props["dev_eui"] != csDevEui {
-				t.Errorf("properties[dev_eui] = %v, want %q", props["dev_eui"], csDevEui)
+			// (1) 프로바이더 경계 — dev_eui 는 metadata.labels, properties 에는 부재.
+			dev := a.DeviceProvider().Devices()[0]
+			if got := dev.Metadata().Labels["dev_eui"]; got != csDevEui {
+				t.Errorf("Metadata().Labels[dev_eui] = %v, want %q", got, csDevEui)
+			}
+			props := dev.State().Properties
+			if v, ok := props["dev_eui"]; ok {
+				t.Errorf("properties[dev_eui] 존재(=%v) — metadata.labels 로 이동했다", v)
 			}
 			if _, hasRSSI := props["rssi"]; hasRSSI != tc.emitCommState {
 				t.Errorf("properties[rssi] 존재=%v, want %v (링크 품질만 노브에 게이팅된다)",
@@ -324,14 +328,88 @@ func TestInventory_DevEuiAlwaysPresent(t *testing.T) {
 			if !ok {
 				t.Fatalf("item.state.properties = %#v, want map", st["properties"])
 			}
-			if itemProps["dev_eui"] != csDevEui {
-				t.Errorf("item.state.properties.dev_eui = %v, want %q", itemProps["dev_eui"], csDevEui)
+			if v, ok := itemProps["dev_eui"]; ok {
+				t.Errorf("item.state.properties.dev_eui 존재(=%v) — metadata.labels 로 이동했다", v)
+			}
+			itemMeta, ok := item["metadata"].(map[string]any)
+			if !ok {
+				t.Fatalf("item[metadata] = %#v, want map", item["metadata"])
+			}
+			itemLabels, ok := itemMeta["labels"].(map[string]string)
+			if !ok {
+				t.Fatalf("item.metadata.labels = %#v, want map[string]string", itemMeta["labels"])
+			}
+			if itemLabels["dev_eui"] != csDevEui {
+				t.Errorf("item.metadata.labels.dev_eui = %v, want %q", itemLabels["dev_eui"], csDevEui)
 			}
 			// id 는 UUID 계약을 유지한다 (inventory 항목 경계).
 			if id, _ := item["id"].(string); !csUUIDv4Re.MatchString(id) {
 				t.Errorf("item[id] = %v, want UUID v4", item["id"])
 			}
 		})
+	}
+}
+
+// TestFrozenTagSurface_FlowMessageUnaffectedByRosterPromotion 은 로스터 쪽 태그 승격
+// (group/location → 전용 필드)이 동결된 flow message 태그 표면을 건드리지 않는지 관측한다.
+//
+// 동결 계약(REQ-FROZEN-A / REQ-FROZEN-02): $.metadata.tags.* 는 ChirpStack 태그를
+// 대소문자·키 이름 그대로 verbatim 통과시킨다. 본 변경은 device roster / DeviceProvider
+// 출력에만 적용되므로, 같은 업링크가 만드는 두 표면이 의도대로 서로 다르게 보여야 한다:
+//
+//	flow message : tags.location / tags.group 이 그대로 있다 (승격 없음).
+//	device roster: location/group 이 전용 필드로 빠지고 Labels 에는 없다.
+func TestFrozenTagSurface_FlowMessageUnaffectedByRosterPromotion(t *testing.T) {
+	const agentName = "cs-frozen-tags"
+	a := newDevEuiE2EAgent(t, agentName, nil)
+	src := startChirpStackInNode(t, a, agentName)
+
+	raw, err := json.Marshal(map[string]any{
+		"time": "2026-08-11T23:32:01.129+00:00",
+		"deviceInfo": map[string]any{
+			"devEui":            csDevEui,
+			"deviceName":        "WS301-180806",
+			"deviceProfileName": "WS301",
+			"applicationId":     "96b4d719-f23f-40aa-9f94-a0f2d0354342",
+			"tags":              map[string]any{"location": "실습실", "group": "3층", "spot": "앞문"},
+		},
+		"object": map[string]any{"temperature": 21.5},
+	})
+	if err != nil {
+		t.Fatalf("marshal uplink: %v", err)
+	}
+	a.HandleUplinkForTest(raw, "application/x")
+
+	// (1) flow message 표면 — verbatim 통과가 보존되어야 한다.
+	msg := readMessage(t, src)
+	logMetadata(t, "flow message (태그 동결 표면 회귀)", msg)
+	assertDeviceGroup(t, msg) // metadata.device.dev_eui 는 그대로 남는다.
+
+	tags, ok := msg.Metadata().GetGroup("tags")
+	if !ok {
+		t.Fatal("metadata.tags 그룹이 없다 — 동결 표면이 사라졌다")
+	}
+	for k, want := range map[string]string{"location": "실습실", "group": "3층", "spot": "앞문"} {
+		if tags[k] != want {
+			t.Errorf("metadata.tags[%s] = %q, want %q (verbatim 통과 동결)", k, tags[k], want)
+		}
+	}
+	if len(tags) != 3 {
+		t.Errorf("metadata.tags = %v, want 3개 태그 그대로 (승격/제거가 새면 안 된다)", tags)
+	}
+
+	// (2) roster 표면 — 승격이 여기에만 적용된다.
+	md := a.DeviceProvider().Devices()[0].Metadata()
+	if md.Location != "실습실" || md.Group != "3층" {
+		t.Errorf("roster Metadata: Location=%q Group=%q, want 실습실/3층", md.Location, md.Group)
+	}
+	for _, k := range []string{"location", "group"} {
+		if v, ok := md.Labels[k]; ok {
+			t.Errorf("roster Labels[%s] 잔존(=%q) — 승격은 이동이다", k, v)
+		}
+	}
+	if md.Labels["spot"] != "앞문" || md.Labels["dev_eui"] != csDevEui {
+		t.Errorf("roster Labels = %v, want {spot, dev_eui}", md.Labels)
 	}
 }
 
@@ -362,7 +440,7 @@ func TestInventory_DevEuiIsLowercased(t *testing.T) {
 	if len(devs) != 1 {
 		t.Fatalf("Devices() len = %d, want 1", len(devs))
 	}
-	if got := devs[0].State().Properties["dev_eui"]; got != csDevEui {
-		t.Errorf("properties[dev_eui] = %v, want 소문자 %q", got, csDevEui)
+	if got := devs[0].Metadata().Labels["dev_eui"]; got != csDevEui {
+		t.Errorf("Metadata().Labels[dev_eui] = %v, want 소문자 %q", got, csDevEui)
 	}
 }

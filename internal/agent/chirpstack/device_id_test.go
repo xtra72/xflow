@@ -194,9 +194,9 @@ func TestDevEui_CaseNormalized(t *testing.T) {
 		t.Errorf("레코드 unit_id = %q, want 소문자 %q", events[0].UnitID, fixtureDevEui)
 	}
 
-	// (3) dev_eui 속성.
-	if got := a.DeviceProvider().Devices()[0].State().Properties["dev_eui"]; got != fixtureDevEui {
-		t.Errorf("properties[dev_eui] = %v, want 소문자 %q", got, fixtureDevEui)
+	// (3) dev_eui 라벨 (metadata.labels — 런타임 상태가 아니라 디바이스 식별 정보).
+	if got := a.DeviceProvider().Devices()[0].Metadata().Labels[labelKeyDevEui]; got != fixtureDevEui {
+		t.Errorf("Metadata().Labels[dev_eui] = %v, want 소문자 %q", got, fixtureDevEui)
 	}
 
 	// 대소문자가 섞여 들어와도 디바이스는 하나로 접힌다.
@@ -246,8 +246,7 @@ func TestDeviceID_ConcurrentUplinksAreRaceFree(t *testing.T) {
 			t.Errorf("UUID %q 가 두 디바이스에 중복 배정됐다", d.UID())
 		}
 		seenUUID[d.UID()] = true
-		eui, _ := d.State().Properties["dev_eui"].(string)
-		seenEui[eui] = true
+		seenEui[d.Metadata().Labels[labelKeyDevEui]] = true
 	}
 	for _, eui := range euis {
 		if want := strings.ToLower(eui); !seenEui[want] {

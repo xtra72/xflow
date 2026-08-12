@@ -209,6 +209,9 @@ func rawUplinkWithObject(t *testing.T, obj map[string]any) []byte {
 			"deviceName":        "WS301-180806",
 			"deviceProfileName": "WS301",
 			"applicationId":     "96b4d719-f23f-40aa-9f94-a0f2d0354342",
+			// group/location 은 전용 필드로 승격되고 point 는 Labels 에 남는다
+			// (Metadata 승격 경로를 measurement/동시성 테스트에서도 함께 구동한다).
+			"tags": map[string]any{"location": "실습실", "group": "3층", "point": "앞문"},
 		},
 		"object": obj,
 		"rxInfo": []any{
@@ -223,6 +226,7 @@ func rawUplinkWithObject(t *testing.T, obj map[string]any) []byte {
 }
 
 // measurementsOf 는 첫 디바이스의 state.properties["measurements"] 를 반환한다.
+// 각 항목은 {value, time_ms} 객체이다.
 func measurementsOf(t *testing.T, a *ChirpStackAgent) map[string]any {
 	t.Helper()
 	props := deviceProps(t, a)
@@ -231,6 +235,27 @@ func measurementsOf(t *testing.T, a *ChirpStackAgent) map[string]any {
 		t.Fatalf("properties[measurements] = %v (%T), want map[string]any", props["measurements"], props["measurements"])
 	}
 	return m
+}
+
+// measSample 은 measurements[key] 의 {value, time_ms} 쌍을 꺼낸다.
+func measSample(t *testing.T, m map[string]any, key string) (any, int64) {
+	t.Helper()
+	obj, ok := m[key].(map[string]any)
+	if !ok {
+		t.Fatalf("measurements[%s] = %#v, want map[string]any{value,time_ms}", key, m[key])
+	}
+	ts, ok := obj["time_ms"].(int64)
+	if !ok {
+		t.Fatalf("measurements[%s].time_ms = %#v (%T), want int64", key, obj["time_ms"], obj["time_ms"])
+	}
+	return obj["value"], ts
+}
+
+// measValue 는 measurements[key].value 만 꺼낸다.
+func measValue(t *testing.T, m map[string]any, key string) any {
+	t.Helper()
+	v, _ := measSample(t, m, key)
+	return v
 }
 
 // TestMeasurementCache_MergeSemantics 는 새 업링크가 실어온 키만 갱신하고 나머지 키는
@@ -260,9 +285,9 @@ func TestMeasurementCache_MergeSemantics(t *testing.T) {
 		t.Fatalf("measurements = %v, want %d keys", m, len(want))
 	}
 	for k, wantV := range want {
-		got, ok := m[k].(float64)
+		got, ok := measValue(t, m, k).(float64)
 		if !ok || got != wantV {
-			t.Errorf("measurements[%s] = %v (%T), want %v", k, m[k], m[k], wantV)
+			t.Errorf("measurements[%s].value = %v (%T), want %v", k, m[k], m[k], wantV)
 		}
 	}
 }
@@ -290,7 +315,7 @@ func TestMeasurementCache_SkipsNonScalar(t *testing.T) {
 			t.Errorf("measurements[%s] 존재(=%v) — 비스칼라는 skip 되어야 한다", k, v)
 		}
 	}
-	if m["magnet"] != "close" || m["ok"] != true {
+	if measValue(t, m, "magnet") != "close" || measValue(t, m, "ok") != true {
 		t.Errorf("스칼라 값 손실: %v", m)
 	}
 }
@@ -303,15 +328,26 @@ func TestMeasurementCache_DeepCopy(t *testing.T) {
 
 	a.handleUplink(rawUplinkWithObject(t, map[string]any{"temperature": 21.5}), "application/x")
 
-	// 1차 조회 결과를 변조한다.
+	// 1차 조회 결과를 두 깊이 모두에서 변조한다: 바깥 맵(키 추가/치환)과 measurement
+	// 하나의 안쪽 {value,time_ms} 객체. 안쪽이 별칭이면 여기서 로스터가 오염된다.
 	first := measurementsOf(t, a)
-	first["temperature"] = 999.0
+	inner, ok := first["temperature"].(map[string]any)
+	if !ok {
+		t.Fatalf("measurements[temperature] = %#v, want map[string]any", first["temperature"])
+	}
+	inner["value"] = 999.0
+	inner["time_ms"] = int64(1)
+	first["temperature"] = "clobbered"
 	first["injected"] = "poison"
 
 	// 2차 조회는 변조의 영향을 받지 않아야 한다.
 	second := measurementsOf(t, a)
-	if got := second["temperature"]; got != 21.5 {
-		t.Errorf("measurements[temperature] = %v, want 21.5 — 반환 맵 변조가 로스터를 오염시켰다", got)
+	gotVal, gotTime := measSample(t, second, "temperature")
+	if gotVal != 21.5 {
+		t.Errorf("measurements[temperature].value = %v, want 21.5 — 반환 구조 변조가 로스터를 오염시켰다", gotVal)
+	}
+	if gotTime == 1 {
+		t.Error("measurements[temperature].time_ms 가 변조값(1) — 안쪽 객체가 별칭이다")
 	}
 	if _, ok := second["injected"]; ok {
 		t.Error("주입된 키가 로스터에 반영되었다 — 얕은 복사")
@@ -319,11 +355,11 @@ func TestMeasurementCache_DeepCopy(t *testing.T) {
 
 	// 로스터 내부 맵을 직접 확인한다 (스냅샷이 아니라 원본).
 	a.devicesMu.RLock()
-	rosterVal := a.devices[fixtureDevEui].measurements["temperature"]
+	rosterSample := a.devices[fixtureDevEui].measurements["temperature"]
 	_, poisoned := a.devices[fixtureDevEui].measurements["injected"]
 	a.devicesMu.RUnlock()
-	if rosterVal != 21.5 || poisoned {
-		t.Errorf("로스터 원본 오염: temperature=%v injected=%v", rosterVal, poisoned)
+	if rosterSample.value != 21.5 || rosterSample.timeMs == 1 || poisoned {
+		t.Errorf("로스터 원본 오염: temperature=%+v injected=%v", rosterSample, poisoned)
 	}
 }
 
@@ -360,8 +396,8 @@ func TestMeasurementCache_KeyCap(t *testing.T) {
 	}), "application/x")
 
 	m2 := measurementsOf(t, a)
-	if got := m2["k000"]; got != 777.0 {
-		t.Errorf("measurements[k000] = %v, want 777 — 기존 키 갱신은 허용되어야 한다", got)
+	if got := measValue(t, m2, "k000"); got != 777.0 {
+		t.Errorf("measurements[k000].value = %v, want 777 — 기존 키 갱신은 허용되어야 한다", got)
 	}
 	if _, ok := m2["brand_new"]; ok {
 		t.Error("brand_new 가 존재 — 상한 도달 후 새 키는 무시되어야 한다")
@@ -466,9 +502,19 @@ func TestRoster_ConcurrentUplinksAndReads(t *testing.T) {
 					}
 					if m, ok := st.Properties["measurements"].(map[string]any); ok {
 						for k, v := range m {
-							_, _ = k, v
+							_ = k
+							// 안쪽 {value,time_ms} 객체까지 순회한다 — 중첩 맵이
+							// 별칭이면 여기서 -race 가 잡는다.
+							if inner, ok := v.(map[string]any); ok {
+								for ik, iv := range inner {
+									_, _ = ik, iv
+								}
+							}
 						}
 					}
+					// Metadata 도 함께 읽는다 (Group/Location/Labels 승격 경로).
+					md := d.Metadata()
+					_, _, _ = md.Group, md.Location, md.Labels[labelKeyDevEui]
 					_, _ = p.Device(d.UID())
 				}
 				_ = a.listDevices()

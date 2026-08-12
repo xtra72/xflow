@@ -119,12 +119,24 @@ func TestChirpStackAgent_MetadataPersistence(t *testing.T) {
 		t.Errorf("DeviceInfo = %+v, want {WS301, WS301-180806}", info)
 	}
 
-	// 메타데이터: Name + tags→Labels(verbatim).
+	// 메타데이터: Name + tags 승격(location→Location) + 잔여 tags→Labels.
+	//
+	// 픽스처 태그는 {location, point, spot} 이므로 location 만 전용 필드로 빠지고
+	// point/spot 은 Labels 에 남는다. group 태그는 없으므로 Group 은 빈 문자열이다.
 	meta := a.DeviceProvider().Devices()[0].Metadata()
 	if meta.Name != "WS301-180806" {
 		t.Errorf("Metadata.Name = %q", meta.Name)
 	}
-	if meta.Labels["location"] != "실습실" || meta.Labels["point"] != "앞문" || meta.Labels["spot"] != "앞문" {
+	if meta.Location != "실습실" {
+		t.Errorf("Metadata.Location = %q, want 실습실 (location 태그 승격)", meta.Location)
+	}
+	if meta.Group != "" {
+		t.Errorf("Metadata.Group = %q, want \"\" (group 태그 없음 — 값을 지어내지 않는다)", meta.Group)
+	}
+	if _, ok := meta.Labels["location"]; ok {
+		t.Errorf("Labels[location] 잔존 — 승격은 복사가 아니라 이동이다: %v", meta.Labels)
+	}
+	if meta.Labels["point"] != "앞문" || meta.Labels["spot"] != "앞문" {
 		t.Errorf("Metadata.Labels tags mismatch: %v", meta.Labels)
 	}
 }
