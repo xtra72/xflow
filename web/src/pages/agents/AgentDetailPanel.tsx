@@ -88,6 +88,9 @@ import {
 } from '@/components/property/EditKeyMetaDialog';
 import RenameKeyDialog from '@/components/property/RenameKeyDialog';
 import SelectStaticKeyDialog from '@/components/property/SelectStaticKeyDialog';
+// 공용 SortableHeader 의 SortState 는 storeEntrySort 의 동명 타입(column 기반)과
+// 충돌하므로 별칭으로 가져온다.
+import SortableHeader, { type SortState as HeaderSortState } from '@/components/common/SortableHeader';
 import DeviceDetailPanel from '@/pages/devices/DeviceDetailPanel';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
 import { ReportToggleSwitch } from '@/pages/devices/ReportToggleSwitch';
@@ -3645,6 +3648,27 @@ function sourceVariant(source: string): { labelKey: string | null; rawLabel: str
   }
 }
 
+// 디바이스 탭 정렬용 문자열 비교자.
+// 이 배포의 디바이스 이름은 한글이 많다(예: 실습실, 사무실 밖). raw `<`/`>` 나
+// 로케일 미지정 localeCompare 는 한글 순서가 어긋나므로 로케일을 명시한다.
+//   - 'ko-KR': 한글 자모 순서(가나다) 보장.
+//   - numeric: true: "실습실2" < "실습실10" 자연 정렬(문자열 비교면 10 이 2 앞에 온다).
+//   - sensitivity: 'base': 대소문자/악센트 무시(ID 열 hex 표기 대비, 기존
+//     DeviceListPage 의 toLowerCase() 비교와 동일한 결과).
+// Intl.Collator 인스턴스를 모듈 스코프에 캐시한다 —
+// localeCompare(b, 'ko-KR', {...}) 와 동작은 같고 행마다 옵션 객체를 만들지 않는다.
+const deviceTextCollator = new Intl.Collator('ko-KR', { numeric: true, sensitivity: 'base' });
+
+// 정렬 키가 비어 있는 행(이름/타입 미지정)의 위치를 결정한다.
+// 정책: 빈 값은 정렬 방향과 무관하게 항상 마지막 (asc/desc 어느 쪽에서도 뒤로 모임).
+// 반환값 null 이면 둘 다 비어 있어 상위 비교로 위임(= tiebreak).
+function emptyLastOrder(a: string, b: string): number | null {
+  if (a === b) return null; // 둘 다 '' 인 경우 포함
+  if (!a) return 1;
+  if (!b) return -1;
+  return null;
+}
+
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
   // SPEC-REMOTE-001 M8 (그룹 J): 디바이스 탭은 exec(list_devices/add/remove)
   // 기반이라 원격 READ 프록시 매핑이 제한적이다. 원격 타깃은 안내만 표시한다.
@@ -3714,6 +3738,21 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, agent?.name]);
+
+  // 정렬 상태(클라이언트 사이드). 기본: 이름(colName) 오름차순.
+  // XsfmDevicesTab / ChirpstackGatewaysTab 과 동일한 로컬 state 방식이므로
+  // 데이터 refetch(useDevicesRealtime 갱신) 후에도 정렬은 유지되고,
+  // 탭 전환 시에는 DevicesTab 이 언마운트되어 기본값으로 되돌아간다.
+  const [sort, setSort] = useState<HeaderSortState>({ field: 'name', direction: 'asc' });
+
+  // 같은 필드 재클릭이면 방향 토글, 다른 필드면 asc 로 시작(공용 SortableHeader 규약).
+  function handleSort(field: string) {
+    setSort((prev) =>
+      prev.field === field
+        ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { field, direction: 'asc' },
+    );
+  }
 
   // 추가 폼 상태
   const [showAddForm, setShowAddForm] = useState(false);
@@ -3900,6 +3939,43 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     return sourceMap[spaced] ?? sourceMap[addr] ?? '';
   }
 
+  // 정렬 키는 "화면에 실제로 보이는 값" 기준이다(렌더 셀과 1:1).
+  // 이름 열은 셀과 동일하게 name 이 비면 addressLabel 로 폴백하므로,
+  // 이름 미지정 디바이스도 사용자가 보는 문자열대로 정렬된다.
+  function sortKey(d: { id: string; uid?: string; name: string; type: string }): string {
+    switch (sort.field) {
+      case 'name':
+        return d.name || deviceAddressLabel(d);
+      case 'id':
+        return deviceAddressLabel(d);
+      case 'type':
+        return getDeviceTypeLabel(d.type); // 타입 미지정이면 '' → 빈 값 정책 적용
+      default:
+        return '';
+    }
+  }
+
+  // 정렬은 페이지 슬라이스가 아닌 전체 목록에 적용한다(이 탭은 페이지네이션이 없어
+  // devices 전체가 곧 렌더 대상이다). 원본 배열은 불변 — 복사 후 정렬.
+  const sortedDevices = [...devices].sort((a, b) => {
+    const dir = sort.direction === 'asc' ? 1 : -1;
+    if (sort.field === 'connection') {
+      // asc = 온라인 우선(연결된 디바이스를 먼저 보는 것이 기본 관심사).
+      if (a.online !== b.online) return (a.online ? -1 : 1) * dir;
+    } else {
+      const ka = sortKey(a);
+      const kb = sortKey(b);
+      // 빈 값은 방향과 무관하게 항상 마지막 — asc/desc 에서 뒤섞이지 않는다.
+      const empty = emptyLastOrder(ka, kb);
+      if (empty !== null) return empty;
+      const c = deviceTextCollator.compare(ka, kb);
+      if (c !== 0) return c * dir;
+    }
+    // 결정적 tiebreak: 동률이면 항상 디바이스 식별자 오름차순(방향 무관).
+    // 렌더 key(uid ?? id)와 동일한 값이라 리렌더 간 순서가 흔들리지 않는다.
+    return deviceTextCollator.compare(a.uid ?? a.id, b.uid ?? b.id);
+  });
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-3">
@@ -4050,16 +4126,20 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-(--color-border-default) text-left text-xs text-(--color-text-muted)">
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colName')}</th>
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colId')}</th>
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colType')}</th>
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colConnection')}</th>
+                <SortableHeader label={t('agents.detail.devices.colName')} field="name" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                <SortableHeader label={t('agents.detail.devices.colId')} field="id" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                <SortableHeader label={t('agents.detail.devices.colType')} field="type" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                <SortableHeader label={t('agents.detail.devices.colConnection')} field="connection" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                {/* '등록' 컬럼은 정렬 비대상 — DeviceListPage 와 동일 정책이며,
+                    이 값(getSource)은 별도 exec(list_devices) 응답이 늦게 도착해
+                    정렬 대상으로 삼으면 로드 직후 행 순서가 흔들린다. */}
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colSource')}</th>
+                {/* 액션(상태 전송 토글 + 삭제) 컬럼 — 정렬 비대상 빈 헤더. */}
                 {canManageDevices && <th className="pb-2 font-medium" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
-              {devices.map((d) => {
+              {sortedDevices.map((d) => {
                 const source = getSource(d);
                 const variant = sourceVariant(source);
                 const isManual = variant?.manual ?? false;
