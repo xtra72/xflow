@@ -279,8 +279,10 @@ func TestFlowMessage_DeviceStateCarriesUuidAndDevEui(t *testing.T) {
 // DeviceState.Properties 에서는 사라졌는지를 emit_comm_state 양쪽 설정에서 검증하고,
 // inventory 노드가 실제로 방출하는 디바이스 정보 JSON 을 관측한다.
 //
-// emit_comm_state=false 를 함께 도는 이유: rssi/snr/gateway_id 는 그 노브 뒤에
-// 게이팅되지만 dev_eui 는 게이팅되지 않는다는 것이 본 변경의 계약이다.
+// emit_comm_state 양쪽을 도는 이유: dev_eui 도, 게이트웨이 링크도 그 노브에
+// 게이팅되지 않는다는 것이 계약이다. (rssi/snr/gateway_id 스칼라는 노브 뒤에
+// 게이팅되어 있었으나 SPEC-CHIRPSTACK-003 F-4 에서 gateways 배열로 대체되며
+// 제거되었다 — properties 주석 참조.)
 func TestInventory_DevEuiAlwaysPresent(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -303,9 +305,13 @@ func TestInventory_DevEuiAlwaysPresent(t *testing.T) {
 			if v, ok := props["dev_eui"]; ok {
 				t.Errorf("properties[dev_eui] 존재(=%v) — metadata.labels 로 이동했다", v)
 			}
-			if _, hasRSSI := props["rssi"]; hasRSSI != tc.emitCommState {
-				t.Errorf("properties[rssi] 존재=%v, want %v (링크 품질만 노브에 게이팅된다)",
-					hasRSSI, tc.emitCommState)
+			if _, hasRSSI := props["rssi"]; hasRSSI {
+				t.Error("properties[rssi] 존재 — gateways 배열로 대체되어 제거되었다")
+			}
+			// 링크 정보는 노브와 무관하게 gateways 배열로 실린다.
+			if got := len(csGateways(t, props)); got != 2 {
+				t.Errorf("properties[gateways] 수 = %d, want 2 (emit_comm_state=%v 와 무관)",
+					got, tc.emitCommState)
 			}
 
 			// (2) inventory 노드 경계 — 실제 방출 JSON 을 관측한다.

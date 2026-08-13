@@ -102,7 +102,11 @@ func TestRosterOnline_ZeroThresholdFallsBackToDefault(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// FEAT-B: rssi / snr / gateway_id 를 state.properties 로 노출
+// state.properties 공용 헬퍼
+//
+// FEAT-B(rssi/snr/gateway_id 스칼라 노출)의 검증은 여기서 제거되었다 — 세 스칼라는
+// SPEC-CHIRPSTACK-003 F-4 에서 gateways 배열로 대체되었고, 제거/대체의 before-after
+// 검증은 device_gateways_test.go 가 담당한다(properties 주석 참조).
 // ---------------------------------------------------------------------------
 
 // newCommStateAgent 는 emit_comm_state=true 인 러닝 테스트 에이전트를 만든다.
@@ -132,66 +136,42 @@ func deviceProps(t *testing.T, a *ChirpStackAgent) map[string]any {
 	return devs[0].State().Properties
 }
 
-// TestStateProperties_CommFieldsPresent 는 emit_comm_state 활성 + comm 엔트리 존재 시
-// rssi/snr/gateway_id 가 정확한 값으로 노출되는지 검증한다 (FEAT-B).
+// TestStateProperties_FixtureShape 는 실제 픽스처 업링크 1건이 만드는 properties 의
+// 최상위 키 집합을 고정한다 (제거된 FEAT-B 스칼라 3개의 자리를 gateways 가 대체).
 //
-// 픽스처 rxInfo 는 게이트웨이 2개이며 bestGateway 는 최대 rssi 를 택한다
-// (-57dBm / snr 13.5 / 24e124fffef79304).
-func TestStateProperties_CommFieldsPresent(t *testing.T) {
+// 픽스처 rxInfo 는 게이트웨이 2개이므로, 이전 스칼라 표현이라면 bestGateway 가 고른
+// 1개(-57dBm / 24e124fffef79304)만 남았을 자리에 이제 2건이 모두 실린다.
+func TestStateProperties_FixtureShape(t *testing.T) {
 	withMemDeviceIDRepo(t)
-	a := newCommStateAgent(t, "props-on")
-
-	a.handleUplink(loadRawUplink(t), "application/x")
-
-	props := deviceProps(t, a)
-	if got, ok := props["rssi"].(int); !ok || got != -57 {
-		t.Errorf("properties[rssi] = %v (%T), want -57 (int)", props["rssi"], props["rssi"])
-	}
-	if got, ok := props["snr"].(float64); !ok || got != 13.5 {
-		t.Errorf("properties[snr] = %v (%T), want 13.5 (float64)", props["snr"], props["snr"])
-	}
-	if got, ok := props["gateway_id"].(string); !ok || got != "24e124fffef79304" {
-		t.Errorf("properties[gateway_id] = %v, want 24e124fffef79304", props["gateway_id"])
-	}
-}
-
-// TestStateProperties_CommFieldsAbsentWhenDisabled 는 emit_comm_state 가 꺼져 있으면
-// rssi/snr/gateway_id 키가 zero-value 가 아니라 아예 부재인지 검증한다 (FEAT-B).
-//
-// rssi:0 은 "미상"과 "실제 0dBm"을 구분할 수 없는 데이터 품질 함정이므로, 부재는
-// 반드시 키 부재로 표현되어야 한다.
-func TestStateProperties_CommFieldsAbsentWhenDisabled(t *testing.T) {
-	withMemDeviceIDRepo(t)
-	a := newRunningTestAgent(t, "props-off") // emit_comm_state 기본값 false.
+	a := newCommStateAgent(t, "props-shape")
 
 	a.handleUplink(loadRawUplink(t), "application/x")
 
 	props := deviceProps(t, a)
 	for _, key := range []string{"rssi", "snr", "gateway_id"} {
 		if v, ok := props[key]; ok {
-			t.Errorf("properties[%s] 존재(=%v) — emit_comm_state=false 이면 부재여야 한다", key, v)
+			t.Errorf("properties[%s] 존재(=%v) — gateways 배열로 대체되어 제거되었다", key, v)
 		}
 	}
-}
-
-// TestStateProperties_CommFieldsAbsentWithoutEntry 는 emit_comm_state 가 켜져 있어도
-// 해당 디바이스의 comm 엔트리가 아직 없으면 키가 부재인지 검증한다 (FEAT-B).
-func TestStateProperties_CommFieldsAbsentWithoutEntry(t *testing.T) {
-	withMemDeviceIDRepo(t)
-	a := newCommStateAgent(t, "props-noentry")
-
-	a.handleUplink(loadRawUplink(t), "application/x")
-
-	// comm 엔트리만 제거한다 (로스터는 유지) — "엔트리 부재" 상황 재현.
-	a.commMu.Lock()
-	delete(a.comm, fixtureDevEui)
-	a.commMu.Unlock()
-
-	props := deviceProps(t, a)
-	for _, key := range []string{"rssi", "snr", "gateway_id"} {
-		if v, ok := props[key]; ok {
-			t.Errorf("properties[%s] 존재(=%v) — comm 엔트리 부재 시 키도 부재여야 한다", key, v)
-		}
+	gws, ok := props["gateways"].([]deviceGatewayView)
+	if !ok {
+		t.Fatalf("properties[gateways] = %#v, want []deviceGatewayView", props["gateways"])
+	}
+	if len(gws) != 2 {
+		t.Fatalf("gateways 수 = %d, want 2 (픽스처 rxInfo 게이트웨이 전량)", len(gws))
+	}
+	if gws[0].GatewayID != "24e124fffef5dccc" || gws[1].GatewayID != "24e124fffef79304" {
+		t.Errorf("gateways = %s/%s, want 24e124fffef5dccc/24e124fffef79304 (gateway_id 오름차순)",
+			gws[0].GatewayID, gws[1].GatewayID)
+	}
+	// 이전 스칼라가 담던 best-gateway 값은 여전히 조회 가능하다 — 다만 이제
+	// "버려지지 않은 나머지 게이트웨이"와 나란히 있다.
+	if gws[1].RSSI != -57 || gws[1].SNR != 13.5 {
+		t.Errorf("24e124fffef79304 = {rssi:%d snr:%v}, want {-57 13.5}", gws[1].RSSI, gws[1].SNR)
+	}
+	if gws[0].RSSI != -113 || gws[0].SNR != -9.5 {
+		t.Errorf("24e124fffef5dccc = {rssi:%d snr:%v}, want {-113 -9.5} (스칼라 시절 버려지던 링크)",
+			gws[0].RSSI, gws[0].SNR)
 	}
 }
 

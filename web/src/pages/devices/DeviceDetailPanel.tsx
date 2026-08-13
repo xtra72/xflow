@@ -18,6 +18,7 @@ import {
   Play,
   Plus,
   Power,
+  RadioTower,
   RefreshCw,
   Snowflake,
   Tag,
@@ -34,8 +35,8 @@ import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName, expandMeasurementEntries } from '@/lib/utils/deviceLabels';
-import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
+import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName, expandMeasurementEntries, excludeDedicatedSectionKeys, extractGatewayLinks, type DeviceGatewayLink } from '@/lib/utils/deviceLabels';
+import { formatEpochMs, formatFrequencyHz, formatRelativeEpochMs, formatSnr } from '@/lib/utils/format';
 import { normalizeAcMode, normalizeFanSpeed } from '@/pages/dashboard/panels/acControlTypes';
 import { APIError } from '@/types/api';
 import type { CommandSpec, DeviceHistoryEntry, ParamSpec } from '@/types/device';
@@ -639,7 +640,11 @@ function GenericPropertiesGrid({
     return accentColor;
   };
   // measurements 는 측정치별 개별 카드로 펼친다(측정치마다 갱신 시각이 다르다).
-  const entries = expandMeasurementEntries(sortProperties(Object.entries(properties)));
+  // gateways 는 전용 섹션(DeviceGatewaysSection)이 렌더하므로 그리드에서 제외한다.
+  const entries = expandMeasurementEntries(
+    excludeDedicatedSectionKeys(sortProperties(Object.entries(properties))),
+  );
+  const gatewayLinks = extractGatewayLinks(properties);
   // 전원 OFF 시 운전 계열 속성(모드/온도/풍량/스윙)은 정규화된 기본값이라 실제 값이
   // 아니므로 '-' 로 표시한다(formatPropertyValue 의 powerOff 옵션).
   const powerOff = properties['power'] === false;
@@ -669,6 +674,135 @@ function GenericPropertiesGrid({
             )}
           </div>
         ))}
+      </div>
+
+      {/* 게이트웨이 링크는 일반 속성이 아니라 (디바이스, 게이트웨이) 쌍의 목록이므로
+          key/value 그리드가 아닌 전용 섹션으로 분리한다. */}
+      {gatewayLinks && <DeviceGatewaysSection links={gatewayLinks} />}
+    </div>
+  );
+}
+
+// ---- 게이트웨이 링크 섹션 (chirpstack) ----
+
+/**
+ * 이 디바이스를 수신한 게이트웨이 목록.
+ *
+ * 하나의 업링크를 여러 게이트웨이가 동시에 수신하므로 RSSI/SNR/채널은 (디바이스,
+ * 게이트웨이) 쌍에 귀속된다 — 링크가 여러 건인 것이 정상이며 예외 상황이 아니다.
+ * 5개 이상의 정렬된 숫자 컬럼을 나란히 비교해야 하므로 카드가 아닌 표로 렌더한다.
+ *
+ * 정렬: 백엔드가 준 `gateway_id` 오름차순을 그대로 유지한다. RSSI 는 업링크마다
+ * 요동쳐 신호 세기로 정렬하면 폴링마다 행이 뒤바뀌어 특정 게이트웨이를 눈으로
+ * 추적할 수 없다. 대신 최고 RSSI 링크에 배지를 달아 "가장 잘 잡히는 게이트웨이"를
+ * 정렬을 흔들지 않고 표시한다.
+ *
+ * 표기 주의: `channel` 은 수신 게이트웨이의 concentrator IF 채널 인덱스로
+ * 게이트웨이 로컬 하드웨어 값이다. 주파수가 아니며 게이트웨이 간 비교할 수 없다.
+ * 라벨/도움말은 에이전트 게이트웨이 탭과 같은 i18n 키를 공유해 표기를 일치시킨다.
+ */
+function DeviceGatewaysSection({ links }: { links: DeviceGatewayLink[] }) {
+  const { t } = useTranslation();
+
+  // 최고 신호 링크. 동률이면 먼저 나온(=gateway_id 가 작은) 링크가 유지된다.
+  const bestGatewayId =
+    links.length > 1
+      ? links.reduce((best, l) => (l.rssi > best.rssi ? l : best)).gateway_id
+      : undefined;
+
+  return (
+    <div className="mt-6 border-t border-(--color-border-default) pt-4">
+      <h4 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-(--color-text-primary)">
+        <RadioTower className="h-4 w-4" />
+        {t('devices.detail.gatewaysTitle')}
+        <span className="font-normal text-xs text-(--color-text-muted)">
+          {t('agents.detail.gateways.count').replace('{count}', String(links.length))}
+        </span>
+      </h4>
+
+      <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+        <table className="min-w-full text-sm">
+          <thead className="bg-(--color-bg-elevated)">
+            <tr className="text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+              <th className="whitespace-nowrap px-3 py-2">
+                {t('agents.detail.gateways.gatewayId')}
+              </th>
+              <th className="whitespace-nowrap px-3 py-2">{t('agents.detail.gateways.rssi')}</th>
+              <th className="whitespace-nowrap px-3 py-2">{t('agents.detail.gateways.snr')}</th>
+              {/* channel 은 게이트웨이 로컬 IF 인덱스다 — 주파수 컬럼과 반드시 분리한다. */}
+              <th
+                className="whitespace-nowrap px-3 py-2"
+                title={t('agents.detail.gateways.channelHelp')}
+              >
+                {t('agents.detail.gateways.channel')}
+              </th>
+              <th
+                className="whitespace-nowrap px-3 py-2"
+                title={t('agents.detail.gateways.frequencyHelp')}
+              >
+                {t('agents.detail.gateways.frequency')}
+              </th>
+              <th className="whitespace-nowrap px-3 py-2">
+                {t('agents.detail.gateways.lastSeen')}
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+            {links.map((link) => (
+              <tr
+                key={link.gateway_id}
+                className={cn(
+                  'hover:bg-(--color-bg-elevated)',
+                  // stale 링크는 흐리게 처리해 live 링크와 시각적으로 구분한다.
+                  // 흐림만으로는 신호가 약하므로 아래 배지로 텍스트 단서를 함께 준다.
+                  link.stale && 'opacity-60',
+                )}
+              >
+                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-(--color-text-primary)">
+                  <span className="inline-flex items-center gap-1.5">
+                    {link.gateway_id}
+                    {link.stale && (
+                      <span className="rounded-full bg-gray-100 px-1.5 py-0.5 font-sans text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                        {t('agents.detail.gateways.stale')}
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)">
+                  <span className="inline-flex items-center gap-1.5">
+                    {link.rssi}
+                    {link.gateway_id === bestGatewayId && (
+                      <span
+                        className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                        title={t('devices.detail.gatewaysBestSignalHelp')}
+                      >
+                        {t('devices.detail.gatewaysBestSignal')}
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)">
+                  {formatSnr(link.snr)}
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)"
+                  title={t('agents.detail.gateways.channelHelp')}
+                >
+                  {link.channel}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)">
+                  {formatFrequencyHz(link.frequency_hz)}
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)"
+                  title={formatEpochMs(link.last_seen_ms)}
+                >
+                  {formatRelativeEpochMs(link.last_seen_ms)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

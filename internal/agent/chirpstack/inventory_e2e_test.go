@@ -123,6 +123,40 @@ func csMeasValue(t *testing.T, props map[string]any, key string) any {
 	return v
 }
 
+// csGateways 는 properties["gateways"] 를 JSON 왕복으로 관측한다
+// (SPEC-CHIRPSTACK-003 F-4).
+//
+// 항목 타입이 chirpstack 패키지의 비공개 구조체이므로 외부 테스트 패키지에서는
+// 타입 단언이 불가능하다. 이는 결함이 아니라 실제 소비 경로와 동일한 관측 방식이다
+// — API/노드 경계는 이 값을 JSON 으로 직렬화해 내보낸다.
+func csGateways(t *testing.T, props map[string]any) []map[string]any {
+	t.Helper()
+	raw, ok := props["gateways"]
+	if !ok {
+		t.Fatalf("properties[gateways] 부재: %v", props)
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal gateways: %v", err)
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal gateways: %v", err)
+	}
+	return out
+}
+
+// csGatewayByID 는 게이트웨이 링크를 gateway_id 로 색인한다.
+func csGatewayByID(t *testing.T, props map[string]any) map[string]map[string]any {
+	t.Helper()
+	out := map[string]map[string]any{}
+	for _, g := range csGateways(t, props) {
+		id, _ := g["gateway_id"].(string)
+		out[id] = g
+	}
+	return out
+}
+
 // inventoryItems 는 레지스트리에 프로바이더를 등록하고 inventory(source=devices)
 // 노드를 1회 구동해 항목 목록을 반환한다.
 func inventoryItems(t *testing.T, agentName string, p device.DeviceProvider) []map[string]any {
@@ -163,7 +197,8 @@ func inventoryItems(t *testing.T, agentName string, p device.DeviceProvider) []m
 //
 // 경계 검증 포인트:
 //   - online 은 lastSeen 파생값이다 (FIX-A).
-//   - state.properties 에 rssi/snr/gateway_id 가 실린다 (FEAT-B).
+//   - state.properties 에 gateways 배열이 실린다 (SPEC-CHIRPSTACK-003 F-4).
+//     rssi/snr/gateway_id 스칼라는 그 배열로 대체되어 제거되었다.
 //   - state.properties.measurements 에 최신 측정값이 실린다 (FEAT-C).
 func TestInventoryNode_ChirpStackDeviceEmission(t *testing.T) {
 	a := newE2EAgent(t, "cs-inv", map[string]any{"emit_comm_state": true})
@@ -181,8 +216,18 @@ func TestInventoryNode_ChirpStackDeviceEmission(t *testing.T) {
 	if !st.Online {
 		t.Error("State().Online = false 직후 업링크, want true")
 	}
-	if st.Properties["rssi"] != -57 {
-		t.Errorf("properties[rssi] = %v, want -57", st.Properties["rssi"])
+	// 픽스처 rxInfo 는 게이트웨이 2개다. 제거된 rssi 스칼라는 그중 최대 RSSI 1건만
+	// 담았지만, gateways 는 두 링크를 모두 싣는다.
+	stGws := csGatewayByID(t, st.Properties)
+	if len(stGws) != 2 {
+		t.Fatalf("properties[gateways] 수 = %d, want 2", len(stGws))
+	}
+	if stGws["24e124fffef79304"]["rssi"] != float64(-57) {
+		t.Errorf("gateways[24e124fffef79304].rssi = %v, want -57", stGws["24e124fffef79304"]["rssi"])
+	}
+	if stGws["24e124fffef5dccc"]["rssi"] != float64(-113) {
+		t.Errorf("gateways[24e124fffef5dccc].rssi = %v, want -113 (스칼라 시절 버려지던 링크)",
+			stGws["24e124fffef5dccc"]["rssi"])
 	}
 	if got := csMeasValue(t, st.Properties, "temperature"); got != 29.8 {
 		t.Errorf("properties.measurements.temperature.value = %v, want 29.8", got)
@@ -222,8 +267,21 @@ func TestInventoryNode_ChirpStackDeviceEmission(t *testing.T) {
 	if !ok {
 		t.Fatalf("item.state.properties = %#v, want map", itemState["properties"])
 	}
-	if props["gateway_id"] != "24e124fffef79304" || props["snr"] != 13.5 {
-		t.Errorf("item.state.properties 링크 품질 불일치: %v", props)
+	// 링크 품질은 gateways 배열로 실린다 (스칼라 rssi/snr/gateway_id 는 제거되었다).
+	itemGws := csGatewayByID(t, props)
+	if len(itemGws) != 2 {
+		t.Fatalf("item.state.properties.gateways 수 = %d, want 2: %v", len(itemGws), props["gateways"])
+	}
+	if itemGws["24e124fffef79304"]["snr"] != 13.5 {
+		t.Errorf("gateways[24e124fffef79304].snr = %v, want 13.5", itemGws["24e124fffef79304"]["snr"])
+	}
+	if itemGws["24e124fffef5dccc"]["snr"] != -9.5 {
+		t.Errorf("gateways[24e124fffef5dccc].snr = %v, want -9.5", itemGws["24e124fffef5dccc"]["snr"])
+	}
+	for _, k := range []string{"rssi", "snr", "gateway_id"} {
+		if v, ok := props[k]; ok {
+			t.Errorf("item.state.properties[%s] 존재(=%v) — gateways 배열로 대체되어 제거되었다", k, v)
+		}
 	}
 	if got := csMeasValue(t, props, "humidity"); got != 55.2 {
 		t.Errorf("item.state.properties.measurements.humidity.value = %v, want 55.2", got)
@@ -288,10 +346,26 @@ func TestInventoryNode_ChirpStackStaleDeviceIsOffline(t *testing.T) {
 	if got := csMeasValue(t, props, "temperature"); got != 1.0 {
 		t.Errorf("offline 디바이스의 measurements 캐시가 유실되었다: %v", props["measurements"])
 	}
-	// emit_comm_state=false 이므로 링크 품질 키는 부재여야 한다 (FEAT-B).
+	// comm 파생 스칼라는 제거되었으므로 어떤 노브 상태에서도 부재이다.
 	for _, k := range []string{"rssi", "snr", "gateway_id"} {
 		if v, ok := props[k]; ok {
-			t.Errorf("properties[%s] 존재(=%v) — emit_comm_state=false 이면 부재여야 한다", k, v)
+			t.Errorf("properties[%s] 존재(=%v) — gateways 배열로 대체되어 제거되었다", k, v)
+		}
+	}
+	// 반면 gateways 는 emit_comm_state=false(이 에이전트의 기본값)에서도 채워진다 —
+	// 제거된 스칼라가 서비스할 수 없던 바로 그 조건이다 (SPEC-CHIRPSTACK-003 F-4).
+	// offline 디바이스라도 마지막으로 알려진 링크는 유지되며 stale=true 로 표시된다.
+	gws := csGateways(t, props)
+	if len(gws) != 2 {
+		t.Fatalf("properties[gateways] 수 = %d, want 2 — emit_comm_state 와 무관해야 한다: %v", len(gws), gws)
+	}
+	if gws[0]["gateway_id"] != "24e124fffef5dccc" || gws[1]["gateway_id"] != "24e124fffef79304" {
+		t.Errorf("gateways 순서 = %v/%v, want gateway_id 오름차순",
+			gws[0]["gateway_id"], gws[1]["gateway_id"])
+	}
+	for _, g := range gws {
+		if g["stale"] != true {
+			t.Errorf("gateways[%v].stale = %v, want true (임계 초과 침묵)", g["gateway_id"], g["stale"])
 		}
 	}
 }

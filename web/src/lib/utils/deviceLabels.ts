@@ -434,6 +434,106 @@ export function expandMeasurementEntries(entries: [string, unknown][]): Property
   return out;
 }
 
+// ---- 게이트웨이 링크(chirpstack `gateways`) ----
+
+/**
+ * 이 디바이스를 수신한 게이트웨이 1건 — **디바이스 축(device axis)** 엔트리.
+ *
+ * 백엔드는 게이트웨이 로스터를 두 축으로 노출한다:
+ *   - 게이트웨이 축: `list_gateways` → ChirpstackGateway.devices[] (게이트웨이 아래 디바이스)
+ *   - 디바이스 축: device `state.properties.gateways[]` (디바이스 아래 게이트웨이) ← 이 타입
+ *
+ * 8개 필드의 JSON 태그가 같지만 `ChirpstackGatewayDevice` 와 타입을 공유하지 않는다.
+ * 그쪽은 디바이스 신원(dev_eui/device_id/device_name/device_profile_name)을 갖고 이쪽은
+ * 갖지 않으며, 두 페이로드는 서로 다른 백엔드 경로에서 독립적으로 진화한다.
+ * `Omit<ChirpstackGatewayDevice, ...>` 로 파생하면 게이트웨이 축에 필드가 하나
+ * 추가될 때 디바이스 축 타입이 조용히 따라 바뀌어 실제 와이어와 어긋난다.
+ * (표시 포맷은 lib/utils/format.ts 의 공용 포맷터로 통일해 표기 불일치를 막는다.)
+ */
+export interface DeviceGatewayLink {
+  gateway_id: string;
+  /** 이 게이트웨이가 수신한 신호 세기(dBm). */
+  rssi: number;
+  /** 이 게이트웨이가 수신한 SNR(dB). 와이어 값은 고정 소수가 아니다. */
+  snr: number;
+  /**
+   * 수신 게이트웨이의 concentrator IF 채널 인덱스 — **게이트웨이 로컬 하드웨어 값**이다.
+   * 주파수가 아니며 게이트웨이 간 비교할 수 없다. 실제 RF 주파수는 `frequency_hz`.
+   */
+  channel: number;
+  /** 프레임 레벨 RF 주파수(Hz). 업링크에 txInfo 가 없으면 0 일 수 있다. */
+  frequency_hz: number;
+  spreading_factor: number;
+  bandwidth: number;
+  /** epoch milliseconds. */
+  last_seen_ms: number;
+  /** 서버가 호출 시점에 파생한 값. 클라이언트에서 재계산하지 않는다. */
+  stale: boolean;
+}
+
+/**
+ * 전용 섹션이 따로 렌더하므로 일반 key/value 그리드에서 제외할 속성 키.
+ * 제외하지 않으면 객체 폴백(stringifyUnknownObject)을 타 JSON 덩어리로 표시된다.
+ */
+const DEDICATED_SECTION_KEYS = new Set<string>(['gateways']);
+
+/** 전용 섹션이 담당하는 키를 속성 엔트리 목록에서 제거한다. */
+export function excludeDedicatedSectionKeys<T>(entries: [string, T][]): [string, T][] {
+  return entries.filter(([key]) => !DEDICATED_SECTION_KEYS.has(key));
+}
+
+/**
+ * 숫자 필드 정규화. 값이 없거나 숫자가 아니면 0 으로 떨어뜨린다.
+ *
+ * 백엔드 설계상 `channel`/`frequency_hz`/`spreading_factor`/`bandwidth` 의 0 은
+ * "없음"과 "실제 0" 을 구분하지 않는다(proto3 value-type 파싱). 여기서도 같은 규칙을
+ * 적용해 렌더 계층이 undefined/NaN 을 따로 다루지 않도록 한다.
+ */
+function numOrZero(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+/** 알 수 없는 값 1건을 게이트웨이 링크로 정규화한다. gateway_id 가 없으면 버린다. */
+function toGatewayLink(v: unknown): DeviceGatewayLink | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.gateway_id !== 'string' || o.gateway_id === '') return null;
+  return {
+    gateway_id: o.gateway_id,
+    rssi: numOrZero(o.rssi),
+    snr: numOrZero(o.snr),
+    channel: numOrZero(o.channel),
+    frequency_hz: numOrZero(o.frequency_hz),
+    spreading_factor: numOrZero(o.spreading_factor),
+    bandwidth: numOrZero(o.bandwidth),
+    last_seen_ms: numOrZero(o.last_seen_ms),
+    stale: o.stale === true,
+  };
+}
+
+/**
+ * 디바이스 상태 속성에서 게이트웨이 링크 목록을 추출한다.
+ *
+ * 아직 어느 게이트웨이에서도 수신되지 않은 디바이스는 `gateways` 키 자체가 없다
+ * (빈 배열이 아니다). 표시할 링크가 하나도 없으면 `undefined` 를 반환해 호출부가
+ * 빈 껍데기 섹션을 만들지 않도록 한다.
+ *
+ * 백엔드는 `gateway_id` 오름차순으로 결정적 정렬해 내려주며 그 순서를 유지한다
+ * (신호 세기 정렬은 업링크마다 행이 뒤바뀌어 특정 게이트웨이를 추적할 수 없다).
+ */
+export function extractGatewayLinks(
+  properties: Record<string, unknown>,
+): DeviceGatewayLink[] | undefined {
+  const raw = properties['gateways'];
+  if (!Array.isArray(raw)) return undefined;
+  const links: DeviceGatewayLink[] = [];
+  for (const item of raw) {
+    const link = toGatewayLink(item);
+    if (link) links.push(link);
+  }
+  return links.length > 0 ? links : undefined;
+}
+
 export function sortProperties<T>(entries: [string, T][]): [string, T][] {
   return entries.slice().sort((a, b) => {
     const ia = PROPERTY_ORDER.indexOf(a[0]);

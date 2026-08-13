@@ -340,54 +340,30 @@ type ChirpStackDeviceProvider struct {
 
 var _ device.DeviceProvider = (*ChirpStackDeviceProvider)(nil)
 
-// deviceAdapters 는 로스터 스냅샷과 comm 스냅샷을 병합해 어댑터 목록을 만든다.
+// deviceAdapters 는 로스터 스냅샷으로 어댑터 목록을 만든다.
 //
-// 락 규율(REQ-FROZEN-B) — devicesMu 와 commMu 를 절대 중첩하지 않는다:
+// 락 규율(REQ-FROZEN-B):
 //
 //	(1) 락 보유 전에 agentName(a.mu) 과 offline 임계(atomic)를 선캡처한다.
 //	    → 락 보유 중 a.Name() 재-lock 을 유발하지 않는다 (v0.18.6 HVAC 재귀 RLock 트랩).
 //	(2) devicesMu 를 잡아 로스터를 깊은 복사하고 즉시 해제한다 (listDevices).
-//	(3) commMu 를 잡아 comm 엔트리를 값 복사하고 즉시 해제한다 (commSnapshots).
-//	(4) 병합은 어떤 락도 보유하지 않은 채 수행한다.
+//	(3) 어댑터 조립은 어떤 락도 보유하지 않은 채 수행한다.
 //
-// 두 락이 동시에 보유되는 지점이 없으므로 둘 사이에 락 순서 엣지 자체가 생기지 않는다
-// (watchdog 의 "락 해제 후 emit" 규율과 동형).
+// commMu 는 이 경로에 더 이상 관여하지 않는다: 링크 품질을 comm 맵의 best-gateway
+// 스칼라가 아니라 로스터의 링크 캐시(deviceState.links)에서 읽도록 바뀌었기 때문이다
+// (properties 주석 참조). 결과적으로 devicesMu ↔ commMu 락 순서 엣지가 생길 여지
+// 자체가 사라졌다 — 이전에는 "두 락을 순차로만 잡는다"는 규율으로 회피하던 것을,
+// 이제는 한쪽 락을 아예 잡지 않아 구조적으로 배제한다.
 func (p *ChirpStackDeviceProvider) deviceAdapters() []*chirpDeviceAdapter {
 	a := p.agent
 	agentName := a.Name()                // (1) 락 보유 전 캡처.
 	threshold := a.cs().OfflineThreshold // atomic 스냅샷 — 락 없음.
 
-	snaps := a.listDevices()   // (2) devicesMu 획득 → 복사 → 해제.
-	comms := a.commSnapshots() // (3) commMu 획득 → 복사 → 해제.
+	snaps := a.listDevices() // (2) devicesMu 획득 → 복사 → 해제.
 
-	out := make([]*chirpDeviceAdapter, 0, len(snaps)) // (4) 락 밖 병합.
+	out := make([]*chirpDeviceAdapter, 0, len(snaps)) // (3) 락 밖 조립.
 	for i := range snaps {
-		var ce *commEntry
-		if e, ok := comms[snaps[i].devEui]; ok {
-			cp := e // 값 복사본의 주소 — comm 맵 내부 포인터를 노출하지 않는다.
-			ce = &cp
-		}
-		out = append(out, newChirpDeviceAdapter(agentName, snaps[i], threshold, ce))
-	}
-	return out
-}
-
-// commSnapshots 는 comm 맵 전체를 값 복사 맵으로 반환한다 (commMu 만 사용).
-//
-// CommSnapshot(단건)의 전량 조회 형태이며, 동일한 규율을 따른다: commMu 보유 구간에서
-// a.Name() 등 a.mu 를 다시 잡는 메서드를 호출하지 않고, 내부 포인터(*commEntry)도
-// 노출하지 않는다.
-//
-// emit_comm_state=false 이면 comm 맵이 아예 채워지지 않으므로 빈 맵이 반환된다 —
-// 호출자에게는 "엔트리 부재"로 자연스럽게 나타난다(별도 게이트 불필요).
-func (a *ChirpStackAgent) commSnapshots() map[string]commEntry {
-	a.commMu.Lock()
-	defer a.commMu.Unlock()
-	out := make(map[string]commEntry, len(a.comm))
-	for devEui, e := range a.comm {
-		if e != nil {
-			out[devEui] = *e
-		}
+		out = append(out, newChirpDeviceAdapter(agentName, snaps[i], threshold))
 	}
 	return out
 }
@@ -417,24 +393,25 @@ func (p *ChirpStackDeviceProvider) Device(id string) (device.Device, error) {
 
 // chirpDeviceAdapter 는 deviceState 를 device.Device 로 노출한다.
 //
-// offlineThreshold 는 online 파생(deviceOnline)에 쓰는 설정 스냅샷이고, comm 은 링크
-// 품질(rssi/snr/gateway_id) 스냅샷이다. comm 은 nil 일 수 있으며 nil 은 "정보 없음"을
-// 뜻한다 — zero-value 로 채우지 않는다.
+// offlineThreshold 는 설정 스냅샷이며 두 곳에 쓰인다: online 파생(deviceOnline)과
+// 게이트웨이 링크의 stale 파생(linkStale). 둘 다 저장된 불리언이 아니라 조회 시점
+// 파생값이므로 굳지 않는다.
+//
+// comm 엔트리 스냅샷 필드는 제거되었다 — 링크 품질을 comm 맵이 아니라 로스터의
+// 링크 캐시에서 읽게 되면서 유일한 소비자가 사라졌기 때문이다(properties 주석 참조).
 type chirpDeviceAdapter struct {
 	agentName        string
 	snap             deviceState
 	offlineThreshold time.Duration
-	comm             *commEntry
 }
 
 var _ device.Device = (*chirpDeviceAdapter)(nil)
 
-func newChirpDeviceAdapter(agentName string, snap deviceState, offlineThreshold time.Duration, comm *commEntry) *chirpDeviceAdapter {
+func newChirpDeviceAdapter(agentName string, snap deviceState, offlineThreshold time.Duration) *chirpDeviceAdapter {
 	return &chirpDeviceAdapter{
 		agentName:        agentName,
 		snap:             snap,
 		offlineThreshold: offlineThreshold,
-		comm:             comm,
 	}
 }
 
@@ -478,8 +455,27 @@ func (a *chirpDeviceAdapter) State() device.DeviceState {
 	}
 }
 
-// properties 는 protocol 고유 속성 맵을 만든다: 링크 품질(rssi/snr/gateway_id)
+// properties 는 protocol 고유 속성 맵을 만든다: 게이트웨이 링크 목록(gateways)
 // + 최신 measurement 캐시.
+//
+// rssi / snr / gateway_id 스칼라 3개가 여기서 **제거되고** gateways 배열로 대체되었다
+// (SPEC-CHIRPSTACK-003 F-4 — v1 에서 Non-Goal 로 미룬 디바이스 측 역방향 뷰).
+// 회귀가 아니라 순증(net improvement)이며, 이유는 두 가지다:
+//
+//	(1) **게이트웨이 전량을 본다.** 제거된 세 스칼라는 comm 맵(a.comm)에서 왔고, comm
+//	    맵은 bestGateway 가 고른 **최대 RSSI 게이트웨이 1개**만 담는다. 하나의 업링크를
+//	    여러 게이트웨이가 동시에 수신하는 것이 LoRaWAN 의 정상 동작이므로(A1), 스칼라
+//	    표현은 나머지 게이트웨이의 링크를 구조적으로 버리고 있었다. gateways 는 그
+//	    디바이스를 들은 게이트웨이를 하나도 빠짐없이 싣는다.
+//	(2) **노브에 종속되지 않는다.** comm 맵 갱신은 emit_comm_state(기본 false) 게이트
+//	    뒤에 있어, 기본 설정 에이전트에서는 세 스칼라가 애초에 **부재**였다. 반면 링크
+//	    캐시(deviceState.links)는 upsertDevice 가 모든 업링크마다 무조건 채우므로
+//	    (REQ-M2-01), gateways 는 그 노브가 꺼져 있어도 값을 낸다. 즉 스칼라가 있던
+//	    자리를 뺏은 것이 아니라, 스칼라가 아무것도 못 주던 기본 구성에 데이터를 준다.
+//
+// SPEC-002 의 chirpstack-status 방출 shape(payload.state.{rssi,snr,gateway_id})는
+// **별개의 표면**이며 그대로 남는다(REQ-FROZEN-C). 본 변경은 로스터/프로바이더
+// 표면만 건드린다 — comm 맵도, bestGateway 도, flow message 계약도 손대지 않는다.
 //
 // dev_eui 는 여기 없다(의도적): devEui 는 변하지 않는 디바이스 식별 정보이지 런타임
 // 상태가 아니므로 Metadata().Labels 로 옮겼다(Metadata 참조). flow message 의
@@ -493,24 +489,29 @@ func (a *chirpDeviceAdapter) State() device.DeviceState {
 // measurement 에는 쓰지 않는다(문자열인 dev_eui 는 반대로 Labels 가 맞다).
 // inventory 노드는 state.properties 를 이미 그대로 직렬화한다.
 //
-// 부재 표현(중요): comm 엔트리가 없으면(emit_comm_state=false 이거나 아직 미수신)
-// rssi/snr/gateway_id 키를 아예 넣지 않는다. rssi:0 은 "미상"과 "실제 0dBm"을 구분할
-// 수 없는 데이터 품질 함정이므로 zero-value 로 채우지 않는다.
+// 부재 표현(중요): 링크가 하나도 없으면(아직 rxInfo 있는 업링크를 못 받았거나 모든
+// rxInfo 항목에 gatewayId 가 없으면) gateways 키를 **아예 넣지 않는다** — 빈 배열을
+// 흘리지 않는다. measurements 와 동일한 규약이며, 이유도 같다: 빈 배열은 "게이트웨이가
+// 하나도 없다"는 적극적 사실처럼 읽히지만 실제 의미는 "아직 모른다"이다. 키 부재는
+// 소비자가 두 상태를 헷갈릴 여지를 없앤다.
+// (같은 이유로 스칼라 시절에도 rssi:0 같은 zero-value 채움은 금지였다 — "미상"과
+// "실제 0dBm"을 구분할 수 없기 때문이다.)
 //
 // measurements 는 키 충돌(예: "rssi" 라는 이름의 measurement)을 피하려고 중첩 맵으로
 // 네임스페이스한다. 캐시가 비어 있으면 키 자체를 생략한다. measurement 하나는
 // {value, time_ms} 객체이다 — 병합 캐시라 키마다 신선도가 다르기 때문이다
 // (measurementSample 주석 참조).
 //
-// 깊은 복사: 스냅샷의 맵을 그대로 넘기지 않고, 바깥 맵과 measurement 당 안쪽 맵을
-// 모두 새로 만든다. 어댑터는 여러 번 State() 호출에 재사용될 수 있으므로, 호출자가
-// 받은 구조를 어느 깊이에서 변조하든 다음 호출 결과가 오염되지 않아야 한다.
+// 깊은 복사: 스냅샷의 맵을 그대로 넘기지 않고, 바깥 맵과 measurement 당 안쪽 맵,
+// 그리고 gateways 슬라이스를 모두 새로 만든다. 어댑터는 여러 번 State() 호출에
+// 재사용될 수 있으므로, 호출자가 받은 구조를 어느 깊이에서 변조하든 다음 호출 결과가
+// 오염되지 않아야 한다. gateways 항목은 스칼라 필드만 갖는 값 구조체이므로 슬라이스를
+// 새로 만드는 것만으로 별칭이 끊긴다(deviceGatewayViews 참조).
 func (a *chirpDeviceAdapter) properties() map[string]any {
-	props := make(map[string]any, 4)
-	if a.comm != nil {
-		props["rssi"] = a.comm.rssi
-		props["snr"] = a.comm.snr
-		props["gateway_id"] = a.comm.gatewayID
+	props := make(map[string]any, 2)
+	// 게이트웨이 링크: stale 은 저장값이 아니라 여기서 파생한다(linkStale).
+	if gws := deviceGatewayViews(a.snap.links, time.Now().UnixMilli(), a.offlineThreshold); len(gws) > 0 {
+		props["gateways"] = gws
 	}
 	if len(a.snap.measurements) > 0 {
 		m := make(map[string]any, len(a.snap.measurements))

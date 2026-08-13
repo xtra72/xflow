@@ -25,31 +25,19 @@ import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
+// RF 값 포맷터는 디바이스 상세의 게이트웨이 섹션과 공유한다(표기 불일치 방지).
+import {
+  formatBandwidthHz,
+  formatEpochMs,
+  formatFrequencyHz,
+  formatRelativeEpochMs,
+  formatSnr,
+} from '@/lib/utils/format';
 
 import TablePagination from './TablePagination';
 
 /** 게이트웨이 행 헤더 컬럼 수(확장 아이콘 + ID + 디바이스 수 + 마지막 수신). */
 const GATEWAY_COLSPAN = 4;
-
-/** Hz → 사람이 읽는 주파수 문자열. 922100000 → "922.1 MHz". 0/음수/NaN 은 '-'. */
-function formatFrequencyHz(hz: number): string {
-  if (!hz || hz <= 0 || !Number.isFinite(hz)) return '-';
-  // 소수 셋째 자리까지 유지하되 후행 0 은 제거한다(922.1 / 868.325).
-  return `${Number((hz / 1_000_000).toFixed(3))} MHz`;
-}
-
-/** 대역폭 Hz → kHz 문자열. 125000 → "125 kHz". */
-function formatBandwidthHz(hz: number): string {
-  if (!hz || hz <= 0 || !Number.isFinite(hz)) return '-';
-  return `${Number((hz / 1000).toFixed(1))} kHz`;
-}
-
-/** SNR 표시. 와이어 값은 고정 소수가 아니므로(9.25 / 12) 최대 2자리로 다듬고 후행 0 을 제거한다. */
-function formatSnr(snr: number): string {
-  if (!Number.isFinite(snr)) return '-';
-  return String(Number(snr.toFixed(2)));
-}
 
 export default function ChirpstackGatewaysTab({ agentId }: { agentId: string }) {
   const { t } = useTranslation();

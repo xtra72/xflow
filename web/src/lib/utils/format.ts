@@ -98,6 +98,30 @@ export function formatRelativeEpochMs(ms: number, now: number = Date.now()): str
   return '방금';
 }
 
+// ---- LoRaWAN 링크 품질 표시 포맷터 ----
+//
+// 에이전트 게이트웨이 탭(ChirpstackGatewaysTab)과 디바이스 상세의 게이트웨이 섹션이
+// 같은 와이어 값을 서로 다르게 표기하는 일이 없도록 두 화면이 공유한다.
+
+/** Hz → 사람이 읽는 주파수 문자열. 922100000 → "922.1 MHz". 0/음수/NaN 은 '-'. */
+export function formatFrequencyHz(hz: number): string {
+  if (!hz || hz <= 0 || !Number.isFinite(hz)) return '-';
+  // 소수 셋째 자리까지 유지하되 후행 0 은 제거한다(922.1 / 868.325).
+  return `${Number((hz / 1_000_000).toFixed(3))} MHz`;
+}
+
+/** 대역폭 Hz → kHz 문자열. 125000 → "125 kHz". */
+export function formatBandwidthHz(hz: number): string {
+  if (!hz || hz <= 0 || !Number.isFinite(hz)) return '-';
+  return `${Number((hz / 1000).toFixed(1))} kHz`;
+}
+
+/** SNR 표시. 와이어 값은 고정 소수가 아니므로(9.25 / 12) 최대 2자리로 다듬고 후행 0 을 제거한다. */
+export function formatSnr(snr: number): string {
+  if (!Number.isFinite(snr)) return '-';
+  return String(Number(snr.toFixed(2)));
+}
+
 /**
  * Format a byte count into a human-readable string (e.g. "1.5 KB", "2.3 MB").
  */

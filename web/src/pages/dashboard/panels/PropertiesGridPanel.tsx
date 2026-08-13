@@ -9,7 +9,7 @@ import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel, sortProperties, formatPropertyValue, expandMeasurementEntries } from '@/lib/utils/deviceLabels';
+import { getPropertyLabel, sortProperties, formatPropertyValue, expandMeasurementEntries, excludeDedicatedSectionKeys } from '@/lib/utils/deviceLabels';
 import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
 
 interface PropertiesGridPanelProps {
@@ -115,7 +115,13 @@ export default function PropertiesGridPanel({
 
   // 표시할 속성 필터링 (visibleProperties가 비어있으면 전체 표시).
   // 필터는 원본 속성 키 기준이므로 'measurements' 를 선택하면 측정치 전체가 표시된다.
-  let filtered = sortProperties(Object.entries(properties));
+  //
+  // gateways 는 여기서 제외한다. 이 패널은 사용자가 컬럼 수와 표시 항목을 고르는
+  // "key/value 카드 N열" 그리드라, (디바이스, 게이트웨이) 쌍 여러 건짜리 표를 끼워 넣으면
+  // 사용자가 지정한 레이아웃이 깨진다. 제외하지 않으면 객체 폴백으로 JSON 덩어리가
+  // 표시되므로 제외 자체는 필수다. 링크별 상세는 디바이스 상세 패널의 게이트웨이
+  // 섹션과 에이전트 게이트웨이 탭에서 본다.
+  let filtered = excludeDedicatedSectionKeys(sortProperties(Object.entries(properties)));
   if (visibleProperties.length > 0) {
     const allowed = new Set(visibleProperties);
     filtered = filtered.filter(([key]) => allowed.has(key));

@@ -181,6 +181,75 @@ func linkStale(nowMs, lastSeenMs int64, threshold time.Duration) bool {
 	return nowMs-lastSeenMs > threshold.Milliseconds()
 }
 
+// deviceGatewayView 는 **디바이스 측 역방향 뷰**의 게이트웨이 링크 1건이다
+// (SPEC-CHIRPSTACK-003 F-4 — v1 에서 Non-Goal 로 미룬 항목).
+//
+// list_gateways 가 (게이트웨이 → 디바이스[]) 방향이라면 이쪽은 (디바이스 →
+// 게이트웨이[]) 방향이며, 같은 링크 샘플을 반대 축에서 본 것이다. 그래서 링크
+// 지표 필드의 이름과 JSON 태그는 gatewayLinkView 와 **한 글자도 다르지 않게**
+// 유지한다 — 프론트엔드가 두 표면에서 같은 타입을 재사용할 수 있어야 하고, 두
+// 표면이 같은 값을 다른 이름으로 부르면 조용히 갈라지기 때문이다.
+//
+// 두 뷰의 차이는 식별 축뿐이다:
+//   - gatewayLinkView: 게이트웨이 아래에 붙으므로 디바이스 식별 필드를 갖는다
+//     (dev_eui/device_id/device_name/device_profile_name).
+//   - deviceGatewayView: 디바이스 아래에 붙으므로 게이트웨이 식별 필드를 갖는다
+//     (gateway_id).
+//
+// 구조체를 그대로 재사용하지 않고 별도로 둔 이유가 여기에 있다 — 한쪽에서만
+// 의미가 있는 식별 필드를 공유하면 반대쪽에서 항상 빈 값이 실려 나간다.
+//
+// stale 은 저장 필드가 아니라 조회 시점 파생값이다(linkStale) — gatewayLinkView 와
+// 동일 규약.
+type deviceGatewayView struct {
+	GatewayID       string  `json:"gateway_id"`
+	RSSI            int     `json:"rssi"`
+	SNR             float64 `json:"snr"`
+	Channel         uint32  `json:"channel"`
+	FrequencyHz     uint64  `json:"frequency_hz"`
+	SpreadingFactor uint32  `json:"spreading_factor"`
+	Bandwidth       uint32  `json:"bandwidth"`
+	LastSeenMs      int64   `json:"last_seen_ms"`
+	Stale           bool    `json:"stale"`
+}
+
+// deviceGatewayViews 는 디바이스 1대의 링크 캐시를 게이트웨이 뷰 슬라이스로 만든다.
+//
+// 정렬 키는 **gateway_id 오름차순**이다 (list_gateways 의 REQ-M3-03 과 동일 선택).
+// 이유는 결정성이다: gatewayId 는 맵의 키라 컬렉션 안에서 유일하므로 전순서가
+// 성립하고, 상태가 바뀌지 않으면 반복 호출이 바이트 동일한 출력을 낸다.
+// rssi 내림차순(+ gatewayId 타이브레이크)도 전순서이긴 하지만, 신호 세기는 업링크
+// 마다 흔들리므로 상태가 "사실상 그대로"인데도 행 순서가 계속 뒤바뀐다 — 목록
+// 표시와 diff 양쪽에 나쁘다. 세기순 정렬이 필요하면 표시 계층에서 하면 된다.
+//
+// 입력 맵은 호출자가 이미 락 밖에서 확보한 스냅샷 사본이며(deviceState.clone),
+// 반환 슬라이스는 매 호출마다 새로 만든 값 복사본이다 — 반환 구조를 호출자가
+// 어떻게 변조하든 로스터나 다음 호출 결과가 오염되지 않는다.
+//
+// links 가 비어 있으면 nil 을 반환한다. 호출자는 이 경우 키 자체를 생략한다
+// (properties 주석의 부재 표현 규약 참조).
+func deviceGatewayViews(links map[string]gatewayLink, nowMs int64, threshold time.Duration) []deviceGatewayView {
+	if len(links) == 0 {
+		return nil
+	}
+	out := make([]deviceGatewayView, 0, len(links))
+	for _, l := range links {
+		out = append(out, deviceGatewayView{
+			GatewayID:       l.gatewayID,
+			RSSI:            l.rssi,
+			SNR:             l.snr,
+			Channel:         l.channel,
+			FrequencyHz:     l.frequencyHz,
+			SpreadingFactor: l.spreadingFactor,
+			Bandwidth:       l.bandwidth,
+			LastSeenMs:      l.lastSeenMs,
+			Stale:           linkStale(nowMs, l.lastSeenMs, threshold),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GatewayID < out[j].GatewayID })
+	return out
+}
+
 // gatewayLinkView 는 list_gateways 응답의 디바이스 링크 1건이다 (REQ-M3-02).
 //
 // 필드 순서가 곧 JSON 키 순서이므로, 정렬만 결정적이면 응답 전체가 바이트 동일해진다

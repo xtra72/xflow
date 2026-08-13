@@ -71,6 +71,27 @@ func newGatewayTestAgent(t *testing.T, name string, opts map[string]any) *ChirpS
 	return a
 }
 
+// commEntrySnapshot 은 comm 맵 전체를 값 복사해 관측한다(테스트 관찰용).
+//
+// 동명의 프로덕션 헬퍼(commSnapshots)는 chirpDeviceAdapter 가 comm 파생 스칼라
+// (rssi/snr/gateway_id)를 더 이상 노출하지 않게 되면서 호출자가 사라져 제거되었다
+// (SPEC-CHIRPSTACK-003 F-4, properties 주석 참조). 반면 "comm 맵은 종전 그대로"라는
+// 무회귀 관측(REQ-FROZEN-C)은 계속 필요하므로 관측 코드만 테스트 쪽에 남긴다.
+//
+// 락 규율은 원본과 동일하다: commMu 보유 구간에서 a.Name() 등 a.mu 를 다시 잡는
+// 메서드를 호출하지 않고, 내부 포인터(*commEntry)도 노출하지 않는다.
+func commEntrySnapshot(a *ChirpStackAgent) map[string]commEntry {
+	a.commMu.Lock()
+	defer a.commMu.Unlock()
+	out := make(map[string]commEntry, len(a.comm))
+	for devEui, e := range a.comm {
+		if e != nil {
+			out[devEui] = *e
+		}
+	}
+	return out
+}
+
 // deviceLinks 는 로스터의 링크 캐시 사본을 반환한다(테스트 관찰용).
 func deviceLinks(t *testing.T, a *ChirpStackAgent, devEui string) map[string]gatewayLink {
 	t.Helper()
@@ -145,7 +166,7 @@ func TestBestGateway_UnchangedByMultiGatewayLinks(t *testing.T) {
 	})
 	a.handleUplink(raw, "application/x")
 
-	snaps := a.commSnapshots()
+	snaps := commEntrySnapshot(a)
 	e, ok := snaps["aabb0002"]
 	if !ok {
 		t.Fatal("comm 엔트리 없음")
@@ -297,7 +318,7 @@ func TestListGateways_FilledWhenCommStateDisabled(t *testing.T) {
 	a.handleUplink(raw, "application/x")
 
 	// comm 맵은 비어 있어야 한다(노브 off).
-	if got := len(a.commSnapshots()); got != 0 {
+	if got := len(commEntrySnapshot(a)); got != 0 {
 		t.Errorf("comm 스냅샷 수 = %d, want 0 (emit_comm_state=false)", got)
 	}
 	// 그럼에도 게이트웨이 로스터는 채워져야 한다.
