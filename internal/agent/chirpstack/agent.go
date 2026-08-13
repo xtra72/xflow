@@ -94,12 +94,18 @@ type ChirpStackAgent struct {
 //
 // MessagePublisher 는 SPEC-CHIRPSTACK-002 REQ-M1-02 로 추가되었다 — SPEC-CHIRPSTACK-001
 // 의 발행 경로 배제를 역전한 기계적 신호이며, 회귀가 아니다(publish.go 구현).
+//
+// BufferInfoProvider 는 선택 인터페이스이므로 구현이 사라져도 컴파일은 통과한다 —
+// 대신 통계에서 버퍼 사용량이 조용히 0 으로 사라진다. 그 침묵은 실제로 비용을 치른
+// 적이 있다(recvCh 를 아무도 드레인하지 않아 적체되던 결함이, 버퍼 사용량이 보고되지
+// 않았기에 오래 보이지 않았다). 아래 단언이 그 침묵을 컴파일 에러로 바꾼다.
 var (
-	_ agent.Agent            = (*ChirpStackAgent)(nil)
-	_ agent.MessageReceiver  = (*ChirpStackAgent)(nil)
-	_ agent.TransportChecker = (*ChirpStackAgent)(nil)
-	_ agent.StatefulAgent    = (*ChirpStackAgent)(nil)
-	_ agent.MessagePublisher = (*ChirpStackAgent)(nil)
+	_ agent.Agent              = (*ChirpStackAgent)(nil)
+	_ agent.MessageReceiver    = (*ChirpStackAgent)(nil)
+	_ agent.TransportChecker   = (*ChirpStackAgent)(nil)
+	_ agent.StatefulAgent      = (*ChirpStackAgent)(nil)
+	_ agent.MessagePublisher   = (*ChirpStackAgent)(nil)
+	_ agent.BufferInfoProvider = (*ChirpStackAgent)(nil)
 )
 
 // NewChirpStackAgent 는 ChirpStackAgent 팩토리 함수이다.
@@ -378,12 +384,31 @@ func (a *ChirpStackAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 
 	select {
 	case data := <-a.recvCh:
+		// 내부 발신 경계: 여기가 메시지를 노드에 실제로 넘기는 유일한 지점이다.
+		// 이 카운트가 없으면 "노드로 전달된 건수" 가 구조적으로 항상 0 이 되어,
+		// 브로커에서 받기만 하고 노드로는 못 넘기는 상태(적체/미드레인)를 통계로
+		// 구분할 수 없다. 실패 분기(done / ctx)는 전달이 아니므로 계상하지 않는다.
+		a.stats.IncrInternalMessagesSent()
 		return data, nil
 	case <-done:
 		return nil, fmt.Errorf("chirpstack: stopped")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// BufferInfo 는 수신 채널(recvCh)의 적체량과 용량을 반환한다
+// (agent.BufferInfoProvider, system/mqtt_agent.go 패턴).
+//
+// WHY: 버퍼 사용량이 보고되지 않으면 "브로커에서는 들어오는데 노드가 드레인하지 않아
+// 계속 쌓이는" 상태가 관측되지 않는다. 이 프로젝트에서 실제로 그 침묵 때문에 결함이
+// 오래 보이지 않은 적이 있다 — pending/capacity 는 진단의 1차 신호이다.
+//
+// 락 없음: recvCh 는 생성자에서 1회 할당된 뒤 어디서도 재할당되지 않으므로(Configure
+// 도 교체하지 않는다) 필드 읽기에 경합이 없고, 채널의 len/cap 은 런타임이 안전하게
+// 처리한다. 수신 핫패스에 락/할당을 추가하지 않기 위한 의도적 선택이다.
+func (a *ChirpStackAgent) BufferInfo() (int, int) {
+	return len(a.recvCh), cap(a.recvCh)
 }
 
 // resetDoneIfClosed 는 이미 close 된 done 채널을 새 채널로 교체한다 (Init 재시작 경로).
@@ -692,8 +717,14 @@ func (a *ChirpStackAgent) Info() agent.AgentInfo {
 }
 
 // Stats 는 통계 스냅샷을 반환한다.
+//
+// 버퍼 사용량은 AgentStats 가 아니라 채널에서 직접 읽으므로(순간값) 스냅샷 시점에
+// 덧붙인다 — system/mqtt_agent.go 와 동일한 관례이며, REST DTO(AgentStatsInfo.Buffer)
+// 가 이 두 필드를 그대로 읽는다.
 func (a *ChirpStackAgent) Stats() agent.StatsSnapshot {
-	return a.stats.Snapshot()
+	s := a.stats.Snapshot()
+	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
+	return s
 }
 
 // State 는 타입별 런타임 상태를 반환한다 (agent.StatefulAgent).
