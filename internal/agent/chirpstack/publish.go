@@ -28,6 +28,14 @@ func (a *ChirpStackAgent) PublishMessage(topic string, qos byte, retained bool, 
 		return fmt.Errorf("chirpstack: 발행 토픽이 지정되지 않음")
 	}
 
+	// 여기까지 온 호출은 노드 → 에이전트 방향의 내부 트래픽이다(제어 노드가
+	// 다운링크 명령을 넘긴 것). ReceiveMessage 의 InternalMessagesSent 와 짝을
+	// 이루는 반대 축이며, External(에이전트 ↔ 브로커)과는 별개로 계상한다.
+	//
+	// 가드를 모두 통과한 뒤에 세는 이유: 중지/미연결/빈 토픽으로 거부된 명령은
+	// 에이전트가 처리를 수락한 적이 없으므로 "수신"으로 계상하면 안 된다.
+	a.stats.IncrInternalMessagesReceived()
+
 	token := client.Publish(topic, qos, retained, payload)
 	token.Wait()
 	if token.Error() != nil {

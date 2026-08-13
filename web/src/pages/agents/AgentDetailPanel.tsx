@@ -44,6 +44,7 @@ import {
   STORE_DATA_FIELDS,
   STORE_OPERATION_FIELDS,
 } from '@/config/agentSchemas';
+import type { AgentStatsInfo } from '@/types/agent';
 import type { ConfigSchema, ConfigSection } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
@@ -373,6 +374,91 @@ function formatStatsBytes(n: number | undefined | null): string {
   return `${n} B`;
 }
 
+/**
+ * 메시지 버퍼 사용률 색상 임계값 — 표시 전용 휴리스틱이다.
+ *
+ * 주의: 아래 두 비율은 시스템 계약이 아니다. 백엔드에 대응하는 임계값 설정도, 알람 정책도,
+ * 드롭이 시작되는 지점을 정의한 명세도 없다. 순전히 "버퍼가 차오르는 중"임을 눈에 띄게 하려고
+ * 임의로 고른 표시용 값이므로, 이 숫자를 근거로 동작을 분기하거나 백엔드와 맞추려 하지 말 것.
+ */
+const BUFFER_WARN_RATIO = 0.8;
+const BUFFER_CRITICAL_RATIO = 0.95;
+
+type BufferLevel = 'normal' | 'warning' | 'critical';
+
+function bufferLevel(ratio: number): BufferLevel {
+  if (ratio >= BUFFER_CRITICAL_RATIO) return 'critical';
+  if (ratio >= BUFFER_WARN_RATIO) return 'warning';
+  return 'normal';
+}
+
+const BUFFER_LEVEL_COLOR: Record<BufferLevel, string> = {
+  normal: 'var(--color-status-info)',
+  warning: 'var(--color-status-warning)',
+  critical: 'var(--color-status-error)',
+};
+
+/**
+ * 메시지 버퍼 사용률 카드 (BufferInfoProvider 구현 에이전트 전용).
+ *
+ * "버퍼 없음" 판정 기준: 필드 존재 여부가 아니라 capacity <= 0 이다.
+ * 상세 통계 응답(GET /agents/{id}/stats)은 buffer 객체를 항상 채워 보내고
+ * (handler.BufferStatsInfo 의 pending/capacity 에는 omitempty 가 없다),
+ * BufferInfoProvider 미구현 에이전트도 0/0 으로 내려온다. 따라서 옵셔널 체크만으로는
+ * "0 / 0", "NaN%" 타일을 막을 수 없어 용량 자체를 게이트로 삼는다.
+ */
+function BufferUtilizationCard({ stats, t }: { stats: AgentStatsInfo; t: TranslationFn }) {
+  const capacity = stats.buffer?.capacity ?? stats.buffer_capacity ?? 0;
+  const pending = stats.buffer?.pending ?? stats.buffer_pending ?? 0;
+
+  // 버퍼가 없는 에이전트: 타일 자체를 그리지 않는다.
+  if (!Number.isFinite(capacity) || capacity <= 0) return null;
+
+  const ratio = Math.min(Math.max(pending / capacity, 0), 1);
+  const percent = ratio * 100;
+  const level = bufferLevel(ratio);
+  const color = BUFFER_LEVEL_COLOR[level];
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.buffer')}</p>
+      <div
+        className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3"
+        data-testid="agent-buffer-card"
+        data-buffer-level={level}
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.bufferUsage')}</p>
+          <p className="font-mono text-xs text-(--color-text-secondary)" data-testid="agent-buffer-raw">
+            {pending.toLocaleString()} / {capacity.toLocaleString()}
+          </p>
+        </div>
+        <p className="mt-1 text-lg font-semibold" style={{ color }} data-testid="agent-buffer-percent">
+          {percent.toFixed(1)}%
+        </p>
+        <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-(--color-bg-sunken)">
+          <div
+            data-testid="agent-buffer-bar"
+            role="progressbar"
+            aria-label={t('agents.detail.stats.bufferUsage')}
+            aria-valuemin={0}
+            aria-valuemax={capacity}
+            aria-valuenow={pending}
+            aria-valuetext={`${percent.toFixed(1)}%`}
+            className="h-full rounded-full transition-[width]"
+            style={{ width: `${percent}%`, backgroundColor: color }}
+          />
+        </div>
+        {level !== 'normal' && (
+          <p className="mt-2 text-xs font-medium" style={{ color }} data-testid="agent-buffer-alert">
+            {t('agents.detail.stats.bufferNearFull')}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StatsTab({ agentId }: { agentId: string }) {
   // SPEC-REMOTE-001 M8 (그룹 J): 라이브 통계는 타깃에 따라 로컬 폴링 또는 원격
   // SSE 스트림(+폴백 폴링)으로 취득한다.
@@ -464,6 +550,9 @@ function StatsTab({ agentId }: { agentId: string }) {
           <StatCard label={t('agents.detail.stats.avgLatency')} value={stats.avg_processing_latency || '-'} />
         </div>
       </div>
+
+      {/* 메시지 버퍼 사용률 (BufferInfoProvider 구현 에이전트만 렌더) */}
+      <BufferUtilizationCard stats={stats} t={t} />
 
       {/* 바이트 통계 */}
       <div>

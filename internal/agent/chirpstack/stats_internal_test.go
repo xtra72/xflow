@@ -271,3 +271,54 @@ func TestReceiveMessage_ConcurrentEnqueueReceive(t *testing.T) {
 		t.Errorf("InternalMessagesSent = %d, want %d", s.InternalMessagesSent, received)
 	}
 }
+
+// TestPublishMessage_IncrementsInternalReceived 는 제어 노드가 다운링크 명령을
+// 넘길 때 "노드 → 에이전트" 내부 수신 카운터가 증가하는지 검증한다.
+//
+// ReceiveMessage 의 InternalMessagesSent 와 짝을 이루는 반대 축이다. 이 카운터가
+// 없으면 제어 노드 트래픽이 통계에서 완전히 보이지 않는다.
+func TestPublishMessage_IncrementsInternalReceived(t *testing.T) {
+	a := newStatsTestAgent(t, "cs-pub-internal", 0)
+	fc := &fakeClient{connected: true}
+	setTestClient(a, fc)
+
+	if err := a.PublishMessage("application/app/device/dev/command/down", 0, false, []byte("x")); err != nil {
+		t.Fatalf("PublishMessage: %v", err)
+	}
+
+	snap := a.stats.Snapshot()
+	if snap.InternalMessagesReceived != 1 {
+		t.Errorf("InternalMessagesReceived = %d, want 1", snap.InternalMessagesReceived)
+	}
+	// External 축은 별개로 계상되어야 한다 (에이전트 → 브로커).
+	if snap.ExternalMessagesSent != 1 {
+		t.Errorf("ExternalMessagesSent = %d, want 1 (축 분리 위반)", snap.ExternalMessagesSent)
+	}
+}
+
+// TestPublishMessage_RejectedCommandDoesNotCount 는 가드에 걸려 거부된 명령이
+// "수신" 으로 계상되지 않는지 검증한다 — 에이전트가 처리를 수락한 적이 없기 때문이다.
+func TestPublishMessage_RejectedCommandDoesNotCount(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(a *ChirpStackAgent)
+		topic string
+	}{
+		{"미연결", func(a *ChirpStackAgent) { setTestClient(a, &fakeClient{connected: false}) }, "t"},
+		{"nil 클라이언트", func(a *ChirpStackAgent) {}, "t"},
+		{"빈 토픽", func(a *ChirpStackAgent) { setTestClient(a, &fakeClient{connected: true}) }, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newStatsTestAgent(t, "cs-pub-reject-"+tc.name, 0)
+			tc.setup(a)
+
+			if err := a.PublishMessage(tc.topic, 0, false, []byte("x")); err == nil {
+				t.Fatal("PublishMessage 가 에러를 반환해야 한다")
+			}
+			if got := a.stats.Snapshot().InternalMessagesReceived; got != 0 {
+				t.Errorf("InternalMessagesReceived = %d, want 0 (거부된 명령은 수신 아님)", got)
+			}
+		})
+	}
+}
