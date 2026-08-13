@@ -11,6 +11,9 @@
 // 컴파일 시 erase 되어 런타임 순환 의존을 만들지 않는다(store.ts 는 chartChannelTypes 를
 // import 하지 않는다).
 import type { DataType } from '@/services/api/store';
+// 표시 라벨 포맷은 매트릭스 컬럼명과 같은 곳(seriesLabels)에서 온다 — 같은 시리즈가 화면마다
+// 다른 표기를 갖지 않도록 두 번째 포맷터를 만들지 않는다. 순수 모듈이라 순환 의존이 없다.
+import { seriesRefDisplayName } from '@/services/api/seriesLabels';
 
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
 export interface ChartEntry {
@@ -255,6 +258,35 @@ export function storeSeriesId(
     .map((k) => `${k}=${tags[k]}`)
     .join(',');
   return `${key} ${metric} ${tagPart}`;
+}
+
+/**
+ * StoreSeriesRef 의 **표시 라벨**(사람이 읽는 이름). `storeSeriesId` 의 표시 짝이다.
+ *
+ * 결함 배경: 시리즈의 동일성은 (key, metric_type, tags) 인데 표시에는 key 만 쓰여서, 한 key 를
+ * metric/tags 로 나눠 갖는 형제 시리즈들이 목록·마커에서 **같은 글자**로 보였다. 좌표/매칭은
+ * 이미 동일성 키로 분리되어 있었으므로(SPEC-HEATMAP-PANEL-001 재키잉) 남은 것은 표기뿐이며,
+ * 이 함수가 그 표기를 한 곳으로 모은다.
+ *
+ * 규칙:
+ *   - 사용자가 붙인 이름(alias)이 있으면 그 이름이 항상 이긴다.
+ *   - 그 외에는 매트릭스 컬럼과 동일한 서술 표기(`key · metric{k=v}`)를 쓴다. metric/tags 가
+ *     없으면 자연히 `key` 하나로 줄어든다(구분자 잔여물 없음).
+ *
+ * `alias === key` 를 "사용자가 붙인 이름 없음"으로 보는 이유: 시리즈 생성 시 `alias: key` 가
+ * 기본값으로 기록되어 왔기 때문에, alias 존재 여부만으로는 기본값과 사용자 입력을 구분할 수
+ * 없다. 이미 저장된 패널도 고쳐지도록 기본값과 같은 값이면 서술 표기로 폴백한다. 비용: 사용자가
+ * 굳이 key 와 똑같은 이름을 직접 입력해도 서술 표기가 나온다(그 표기는 key 로 시작하므로
+ * 의도에서 크게 벗어나지 않는다).
+ *
+ * 매칭·동일성에는 절대 쓰지 않는다 — 이름을 바꿔도 좌표/선택이 끊기면 안 된다.
+ */
+export function storeSeriesLabel(
+  ref: Pick<StoreSeriesRef, 'key' | 'metric_type' | 'tags' | 'alias'>,
+): string {
+  const alias = ref.alias?.trim() ?? '';
+  if (alias !== '' && alias !== ref.key) return alias;
+  return seriesRefDisplayName(ref.key, ref.metric_type, ref.tags);
 }
 
 /**

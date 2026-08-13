@@ -11,6 +11,7 @@ import {
   makeSeriesId,
   parseSeriesLabels,
   seriesDisplayName,
+  seriesRefDisplayName,
   seriesSignature,
 } from './seriesLabels';
 
@@ -153,5 +154,41 @@ describe('seriesDisplayName', () => {
   it('withLabel=true 이지만 라벨이 비어있으면 key 만', () => {
     expect(seriesDisplayName('sensor', undefined, true)).toBe('sensor');
     expect(seriesDisplayName('sensor', {}, true)).toBe('sensor');
+  });
+});
+
+describe('seriesRefDisplayName', () => {
+  it('metric + tags 를 매트릭스 컬럼과 같은 표기로 만든다', () => {
+    expect(seriesRefDisplayName('sensor', 'temp', { room: '1' })).toBe(
+      'sensor · temp{room=1}',
+    );
+    // 같은 시리즈를 컬럼명 경로로 만들어도 글자가 같아야 한다(표기 단일화).
+    expect(seriesRefDisplayName('sensor', 'temp', { room: '1' })).toBe(
+      seriesDisplayName('sensor', { [METRIC_LABEL_KEY]: 'temp', room: '1' }, true),
+    );
+  });
+
+  it('metric 만 / tags 만 있어도 각각 표기된다', () => {
+    expect(seriesRefDisplayName('sensor', 'temp', undefined)).toBe('sensor · temp');
+    expect(seriesRefDisplayName('sensor', undefined, { room: '1' })).toBe(
+      'sensor · {room=1}',
+    );
+  });
+
+  it('metric/tags 가 없으면 key 만 — 구분자나 후행 공백이 남지 않는다', () => {
+    for (const label of [
+      seriesRefDisplayName('sensor', undefined, undefined),
+      seriesRefDisplayName('sensor', '', {}),
+    ]) {
+      expect(label).toBe('sensor');
+      expect(label).not.toContain('·');
+      expect(label).toBe(label.trim());
+    }
+  });
+
+  it('태그 삽입 순서가 달라도 같은 표기다(정렬 직렬화)', () => {
+    expect(seriesRefDisplayName('s', 'm', { b: '2', a: '1' })).toBe(
+      seriesRefDisplayName('s', 'm', { a: '1', b: '2' }),
+    );
   });
 });

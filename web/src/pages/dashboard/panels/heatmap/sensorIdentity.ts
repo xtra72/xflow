@@ -15,7 +15,11 @@
 //
 // @spec SPEC-HEATMAP-PANEL-001 (센서 동일성 재키잉)
 
-import { storeSeriesId, type StoreSeriesRef } from '../charts/chartChannelTypes';
+import {
+  storeSeriesId,
+  storeSeriesLabel,
+  type StoreSeriesRef,
+} from '../charts/chartChannelTypes';
 import type { SensorPosition } from './heatmapConfig';
 
 /** 동일성 키 계산에 필요한 최소 시리즈 형상. */
@@ -33,12 +37,19 @@ export function heatmapSensorId(ref: IdentityRef): string {
 }
 
 /**
- * 마커/칩에 표시할 사람이 읽는 라벨. alias 가 있으면 alias, 없으면 key.
- * 표시 전용이며 매칭에는 절대 쓰지 않는다(이름 변경이 배치를 깨뜨리지 않도록).
+ * 마커/칩에 표시할 사람이 읽는 라벨.
+ *
+ * 사용자가 붙인 이름(alias)이 있으면 그 이름, 없으면 시리즈를 실제로 구분하는 서술 표기
+ * (`key · metric{k=v}`)를 쓴다 — key 만 쓰면 한 key 를 metric/tags 로 나눠 갖는 형제 센서들이
+ * 마커에서 같은 글자로 보여 어느 점이 어느 센서인지 알 수 없다(보고된 결함).
+ *
+ * 규칙 자체는 설정 목록과 공유한다(`storeSeriesLabel`) — 같은 센서가 목록과 마커에서 서로
+ * 다르게 불리면 안 된다. 표시 전용이며 매칭에는 절대 쓰지 않는다(이름을 바꿔도 배치 유지).
  */
-export function sensorSeriesLabel(ref: Pick<StoreSeriesRef, 'key' | 'alias'>): string {
-  const alias = ref.alias?.trim();
-  return alias !== undefined && alias !== '' ? alias : ref.key;
+export function sensorSeriesLabel(
+  ref: Pick<StoreSeriesRef, 'key' | 'metric_type' | 'tags' | 'alias'>,
+): string {
+  return storeSeriesLabel(ref);
 }
 
 /** `migrateSensorPositions` 결과. */

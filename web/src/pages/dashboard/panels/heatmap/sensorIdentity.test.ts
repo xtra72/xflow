@@ -57,10 +57,34 @@ describe('heatmapSensorId', () => {
 });
 
 describe('sensorSeriesLabel', () => {
-  it('alias 가 있으면 alias, 없거나 공백이면 key 를 쓴다', () => {
+  it('사용자가 붙인 이름(alias)이 있으면 그 이름을 쓴다', () => {
     expect(sensorSeriesLabel({ key: 'k', alias: '거실' })).toBe('거실');
+  });
+
+  it('metric/tags 가 없으면 key 하나 — 공백/구분자 잔여물이 없다', () => {
     expect(sensorSeriesLabel({ key: 'k', alias: '   ' })).toBe('k');
     expect(sensorSeriesLabel({ key: 'k' })).toBe('k');
+  });
+
+  it('한 key 를 공유하는 형제 센서는 서로 다른 라벨로 구분된다(표시 결함 수정)', () => {
+    // 좌표/매칭은 이미 동일성 키로 분리돼 있었지만 화면에는 key 만 찍혀, 서로 다른 센서가
+    // 한 좌표를 공유하는 것처럼 보였다. 라벨도 동일성 3요소를 반영해야 구분된다.
+    const a = sensorSeriesLabel(ref('temp', 'temperature', { room: '1' }, 'temp'));
+    const b = sensorSeriesLabel(ref('temp', 'temperature', { room: '2' }, 'temp'));
+    expect(a).not.toBe(b);
+    expect(a).toBe('temp · temperature{room=1}');
+    expect(b).toBe('temp · temperature{room=2}');
+  });
+
+  it('사용자가 이름을 바꾼 센서는 그 이름을 유지한다(서술 표기로 덮어쓰지 않음)', () => {
+    expect(sensorSeriesLabel(ref('temp', 'temperature', { room: '1' }, '거실'))).toBe('거실');
+  });
+
+  it('라벨이 달라져도 동일성 키(좌표 매칭 기준)는 그대로다', () => {
+    const r = ref('temp', 'temperature', { room: '1' }, 'temp');
+    const renamed = { ...r, alias: '거실' };
+    expect(sensorSeriesLabel(r)).not.toBe(sensorSeriesLabel(renamed));
+    expect(heatmapSensorId(r)).toBe(heatmapSensorId(renamed));
   });
 });
 

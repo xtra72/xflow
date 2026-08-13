@@ -97,6 +97,27 @@ export function makeSeriesId(
 }
 
 /**
+ * (key + metric_type + tags) 로부터 사람이 읽는 시리즈 표시 이름을 만든다.
+ *
+ * `makeSeriesId` 와 같은 입력(시리즈 동일성 3요소)을 받되, 기계용 식별자가 아니라
+ * 매트릭스 컬럼과 **같은 표기**(`key · metric{k=v, ...}`)를 돌려준다. 시리즈 선택 UI 나
+ * 히트맵 마커처럼 ref(key/metric_type/tags)만 가진 자리에서, 컬럼명과 다른 두 번째 표기를
+ * 만들지 않도록 `seriesDisplayName` 에 위임한다.
+ *
+ * metric 과 tags 가 모두 없으면 라벨이 빈 문자열이 되어 `key` 만 반환된다 — 구분자(`·`)가
+ * 매달린 채 남지 않는다(`storeSeriesId` 의 기계용 형식과 달리 후행 공백도 없다).
+ */
+export function seriesRefDisplayName(
+  key: string,
+  metric: string | undefined,
+  tags: Record<string, string> | undefined,
+): string {
+  const labels: Record<string, string> = { ...(tags ?? {}) };
+  if (metric) labels[METRIC_LABEL_KEY] = metric;
+  return seriesDisplayName(key, labels, true);
+}
+
+/**
  * metric/tags 를 사람이 읽기 좋은 라벨 문자열로 포맷한다.
  *
  * 형식 규칙:

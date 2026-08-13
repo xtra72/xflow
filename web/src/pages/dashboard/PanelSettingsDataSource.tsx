@@ -45,6 +45,7 @@ import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
 import {
   pickSeriesColor,
   storeSeriesId,
+  storeSeriesLabel,
   STORE_SERIES_LIMIT,
   type StoreSeriesRef,
   type StoreSourceConfig,
@@ -320,10 +321,17 @@ function PanelStoreSelectTable({
   // 선택의 단일 소스 오브 트루스는 store_source.series(keys 모드). 체크박스는 이 series 를
   // StoreKeySelector 와 byte-호환 형태로 추가/제거한다(렌더 경로 불변). @spec SPEC-PANEL-SETTINGS-001
   const series = useMemo<StoreSeriesRef[]>(() => storeSource?.series ?? [], [storeSource?.series]);
-  const seriesIds = useMemo(
-    () => new Set(series.map((s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}))),
-    [series],
-  );
+  // 동일성 키 → 선택된 시리즈. 체크 판정(seriesIds)과 이름 셀(사용자 alias 우선)이 같은 색인을
+  // 공유한다. 같은 동일성 키가 둘 이상 있으면 앞 항목이 선택 판정의 기준이므로 앞 항목을 남긴다.
+  const seriesById = useMemo(() => {
+    const map = new Map<string, StoreSeriesRef>();
+    for (const s of series) {
+      const id = storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {});
+      if (!map.has(id)) map.set(id, s);
+    }
+    return map;
+  }, [series]);
+  const seriesIds = useMemo(() => new Set(seriesById.keys()), [seriesById]);
 
   // 센서 좌표는 store key 가 아니라 **시리즈 동일성 키**로 키잉된다. 한 key 가 metric/tags 별
   // 다중 시리즈로 나뉘므로 key 키잉은 형제끼리 좌표를 공유하게 만들고, 하나를 해제하면 아직
@@ -633,16 +641,30 @@ function PanelStoreSelectTable({
             isSelected: (e) => seriesIds.has(entryToSeriesId(e)),
             onToggle: handleToggleSelection,
           }}
-          renderCellExtra={(col, entry) =>
-            col === 'alias' ? (
+          renderCellExtra={(col, entry) => {
+            if (col !== 'alias') return undefined;
+            // 이름 셀은 시리즈를 **실제로 구분하는** 표기를 보인다. key 만 찍으면 한 key 를
+            // metric/tags 로 나눠 갖는 형제 행들이 같은 글자로 보여 어느 행이 어느 센서인지
+            // 알 수 없다(보고된 결함). 선택된 행은 사용자가 붙인 이름이 있으면 그 이름을
+            // 쓰고(마커와 동일 규칙), 미선택 행은 ref 가 없으므로 엔트리 메타데이터로 만든다.
+            const e = entry as StoreEntry;
+            const label = storeSeriesLabel(
+              seriesById.get(entryToSeriesId(e)) ?? {
+                key: e.key as string,
+                metric_type: (e.metric_type as string) || undefined,
+                tags: e.tags as Record<string, string> | undefined,
+              },
+            );
+            // 행이 좁으므로 잘라 쓰되 전체 값은 title 로 남긴다(레이아웃 파괴 방지).
+            return (
               <span
-                className="font-mono text-xs text-(--color-text-secondary)"
-                title={entry.key as string}
+                className="block max-w-[220px] truncate font-mono text-xs text-(--color-text-secondary)"
+                title={label}
               >
-                {entry.key as string}
+                {label}
               </span>
-            ) : undefined
-          }
+            );
+          }}
         />
       )}
     </div>

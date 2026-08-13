@@ -9,6 +9,8 @@ import {
   getByPath,
   pickSeriesColor,
   resolveAxisFont,
+  storeSeriesId,
+  storeSeriesLabel,
   SERIES_PALETTE,
   DEFAULT_AXIS_FONT,
   type ChartEntry,
@@ -164,5 +166,57 @@ describe('resolveAxisFont', () => {
       fill: '#ff0000',
       fontWeight: 'bold',
     });
+  });
+});
+
+// 시리즈 표시 라벨(storeSeriesLabel) — 표시 결함 수정.
+//
+// 결함: 시리즈 동일성은 (key, metric_type, tags) 인데 표시에는 key 만 쓰여서, 한 key 를
+// metric/tags 로 나눠 갖는 형제 시리즈들이 목록·마커에서 같은 글자로 보였다(구분 불가).
+describe('storeSeriesLabel', () => {
+  it('key 를 공유해도 metric/tags 가 다르면 서로 다른 라벨이 된다(핵심 결함)', () => {
+    const a = storeSeriesLabel({ key: 'temp', metric_type: 'temperature', tags: { room: '1' } });
+    const b = storeSeriesLabel({ key: 'temp', metric_type: 'temperature', tags: { room: '2' } });
+    const c = storeSeriesLabel({ key: 'temp', metric_type: 'humidity', tags: { room: '1' } });
+    expect(a).toBe('temp · temperature{room=1}');
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+
+  it('사용자가 붙인 이름(alias)이 서술 표기를 이긴다', () => {
+    expect(
+      storeSeriesLabel({ key: 'temp', metric_type: 'temperature', tags: { room: '1' }, alias: '거실' }),
+    ).toBe('거실');
+  });
+
+  it('alias === key 는 생성 시 기본값이므로 사용자 이름으로 보지 않는다(서술 표기 폴백)', () => {
+    // 기존에 저장된 패널은 전부 alias=key 상태다 — 이 분기가 없으면 결함이 그대로 남는다.
+    expect(
+      storeSeriesLabel({ key: 'temp', metric_type: 'temperature', tags: { room: '1' }, alias: 'temp' }),
+    ).toBe('temp · temperature{room=1}');
+  });
+
+  it('빈/공백 alias 도 사용자 이름이 아니다', () => {
+    expect(storeSeriesLabel({ key: 'temp', metric_type: 'm', alias: '   ' })).toBe('temp · m');
+    expect(storeSeriesLabel({ key: 'temp', metric_type: 'm', alias: '' })).toBe('temp · m');
+    expect(storeSeriesLabel({ key: 'temp', metric_type: 'm' })).toBe('temp · m');
+  });
+
+  it('metric/tags 가 없는 시리즈는 key 하나로 깔끔히 줄어든다(구분자 잔여물 없음)', () => {
+    const label = storeSeriesLabel({ key: 'plain' });
+    expect(label).toBe('plain');
+    expect(label).not.toContain('·');
+    // storeSeriesId 의 기계용 형식과 달리 후행 공백이 없다.
+    expect(storeSeriesId('plain', '', {})).not.toBe(label);
+    expect(label).toBe(label.trim());
+  });
+
+  it('라벨은 동일성에 관여하지 않는다 — 이름을 바꿔도 키는 그대로다', () => {
+    const ref = { key: 'temp', metric_type: 'm', tags: { a: '1' } };
+    expect(storeSeriesId(ref.key, ref.metric_type, ref.tags)).toBe(
+      storeSeriesId(ref.key, ref.metric_type, ref.tags),
+    );
+    expect(storeSeriesLabel({ ...ref, alias: '거실' })).not.toBe(
+      storeSeriesLabel({ ...ref, alias: '안방' }),
+    );
   });
 });

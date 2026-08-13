@@ -151,7 +151,9 @@ export default function HeatmapPanel({
   // 절대 마커로 그리지 않으며, 잔존 sensor_positions(선택에서 빠진 옛 키)로 인한 유령 마커도 막는다.
   // 기준은 동일성 키다 — alias 기준이면 이름을 바꾼 순간 마커가 사라진다.
   const boundIds = useMemo(() => new Set(refs.map((ref) => heatmapSensorId(ref))), [refs]);
-  // 동일성 키 → 표시 라벨(alias || key). 마커/칩 텍스트 전용이며 매칭에는 쓰지 않는다.
+  // 동일성 키 → 표시 라벨. 사용자가 붙인 이름이 있으면 그 이름, 없으면 시리즈를 구분하는
+  // 서술 표기(`key · metric{k=v}`)다 — key 만 쓰면 한 key 를 공유하는 형제 센서들의 마커가
+  // 같은 글자로 찍혀 서로 구분되지 않는다. 마커/칩 텍스트 전용이며 매칭에는 쓰지 않는다.
   const sensorLabels = useMemo(() => {
     const map: Record<string, string> = {};
     for (const ref of refs) map[heatmapSensorId(ref)] = sensorSeriesLabel(ref);

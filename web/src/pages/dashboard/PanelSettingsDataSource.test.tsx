@@ -626,6 +626,116 @@ describe('한 key 를 공유하는 형제 시리즈의 센서 좌표 독립성',
   });
 });
 
+// ---------------------------------------------------------------------------
+// 표시 결함(회귀 방지): 시리즈 동일성은 (key, metric_type, tags) 인데 이름 셀에는 key 만
+// 찍혀, 서로 다른 센서 N 개가 목록에서 같은 글자로 보였다(→ 한 좌표를 공유하는 것처럼 보임).
+// 좌표/매칭은 이미 동일성 키로 분리돼 있으므로 이 블록은 **표기**만 검증한다.
+// ---------------------------------------------------------------------------
+describe('이름 컬럼 — 시리즈를 구분하는 표기', () => {
+  const DUP_A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } };
+  const DUP_B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } };
+
+  beforeEach(() => {
+    state.keyObjects = [
+      { ...DUP_A, registration: 'auto', data_type: 'float' },
+      { ...DUP_B, registration: 'auto', data_type: 'float' },
+    ];
+  });
+
+  function heatmapPanel(config: Record<string, unknown> = {}): PanelConfig {
+    return {
+      id: 'p1',
+      type: 'heatmap',
+      title: 'h',
+      config: { data_source: 'store', store_source: { ...STORE_SOURCE }, ...config },
+    } as unknown as PanelConfig;
+  }
+
+  it('한 key 를 공유하는 형제 행이 서로 다른 이름으로 표시된다(보고된 결함)', () => {
+    render(<PanelSettingsDataSource panel={heatmapPanel()} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).getByText('dup · temperature{room=A}')).toBeInTheDocument();
+    expect(within(table).getByText('dup · temperature{room=B}')).toBeInTheDocument();
+    // 'dup' 단독 표기는 두 행의 **키 컬럼**에만 남는다(행당 1개). 이름 컬럼까지 key 를 찍던
+    // 예전에는 4개였고, 그래서 두 센서가 같은 것처럼 보였다.
+    expect(within(table).getAllByText('dup')).toHaveLength(2);
+  });
+
+  it('사용자가 붙인 이름(alias)이 서술 표기를 이긴다', () => {
+    const panel = heatmapPanel({
+      store_source: {
+        ...STORE_SOURCE,
+        selection_mode: 'keys',
+        series: [{ ...DUP_A, alias: '거실' }],
+      },
+    });
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).getByText('거실')).toBeInTheDocument();
+    expect(within(table).queryByText('dup · temperature{room=A}')).toBeNull();
+    // 이름을 붙이지 않은 형제는 서술 표기를 유지한다.
+    expect(within(table).getByText('dup · temperature{room=B}')).toBeInTheDocument();
+  });
+
+  it('생성 시 기본값(alias=key)은 사용자 이름이 아니므로 서술 표기로 폴백한다', () => {
+    // 이미 저장된 패널은 전부 이 상태다 — 이 분기가 없으면 기존 패널에서 결함이 그대로 남는다.
+    const panel = heatmapPanel({
+      store_source: {
+        ...STORE_SOURCE,
+        selection_mode: 'keys',
+        series: [
+          { ...DUP_A, alias: 'dup' },
+          { ...DUP_B, alias: 'dup' },
+        ],
+      },
+    });
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).getByText('dup · temperature{room=A}')).toBeInTheDocument();
+    expect(within(table).getByText('dup · temperature{room=B}')).toBeInTheDocument();
+  });
+
+  it('metric/tags 가 없는 시리즈는 key 하나로 표시된다(구분자/후행 공백 없음)', () => {
+    state.keyObjects = [{ key: 'plain', registration: 'auto', data_type: 'float', tags: {} }];
+    render(<PanelSettingsDataSource panel={heatmapPanel()} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    // 키 컬럼 + 이름 컬럼 두 곳에 같은 글자가 나온다(이름 셀이 key 로 깔끔히 줄어든 상태).
+    const cells = within(table).getAllByText('plain');
+    expect(cells).toHaveLength(2);
+    for (const cell of cells) expect(cell.textContent).toBe('plain');
+  });
+
+  it('긴 이름은 잘라 표시하고 전체 값은 title 로 남긴다(좁은 행 레이아웃 보호)', () => {
+    state.keyObjects = [
+      {
+        key: 'very-long-store-key-name-abcdefgh',
+        registration: 'auto',
+        data_type: 'float',
+        metric_type: 'temperature',
+        tags: { room: 'A', floor: '3' },
+      },
+    ];
+    render(<PanelSettingsDataSource panel={heatmapPanel()} onConfigChange={vi.fn()} />);
+    const full = 'very-long-store-key-name-abcdefgh · temperature{floor=3, room=A}';
+    const cell = within(screen.getByTestId('panel-store-select')).getByTitle(full);
+    expect(cell).toHaveTextContent(full);
+    expect(cell.className).toContain('truncate');
+    expect(cell.className).toContain('max-w-[220px]');
+  });
+
+  it('비-heatmap 패널(라인 차트)도 같은 표기를 쓴다 — 화면마다 다른 이름이 되지 않는다', () => {
+    const linePanel = {
+      id: 'p1',
+      type: 'line-chart',
+      title: 'l',
+      config: { data_source: 'store', store_source: { ...STORE_SOURCE } },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={linePanel} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).getByText('dup · temperature{room=A}')).toBeInTheDocument();
+  });
+});
+
 describe('REQ-17/AC-19 — 컬럼 순서 key · name · metric · tag', () => {
   it('선택 테이블 컬럼이 키 · 이름 · 메트릭 · 태그 순으로 배치된다', () => {
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);

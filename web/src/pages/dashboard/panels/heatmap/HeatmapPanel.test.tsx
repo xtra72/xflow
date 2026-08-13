@@ -701,6 +701,124 @@ describe('HeatmapPanel', () => {
     expect(screen.getByTestId(`sensor-marker-${id}`)).toBeInTheDocument();
   });
 
+  // -------------------------------------------------------------------------
+  // 표시 결함: 좌표/매칭은 동일성으로 분리됐지만 라벨은 key 만 찍혀, 서로 다른 센서가
+  // 한 좌표를 공유하는 것처럼 보였다. 마커/칩 텍스트가 시리즈를 실제로 구분해야 한다.
+  // -------------------------------------------------------------------------
+
+  it('한 key 를 공유하는 형제 센서의 마커 라벨이 서로 구분된다(보고된 표시 결함)', () => {
+    const idA = heatmapSensorId(DUP_A);
+    const idB = heatmapSensorId(DUP_B);
+    setStore({
+      seriesNames: [idA, idB],
+      seriesEntries: new Map([
+        [idA, reading(20)],
+        [idB, reading(26)],
+      ]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        // 생성 시 기본값 그대로(alias=key) — 예전에는 두 마커가 똑같이 'dup' 으로 찍혔다.
+        config={storeConfig(
+          [
+            { ...DUP_A, alias: 'dup' },
+            { ...DUP_B, alias: 'dup' },
+          ],
+          { [idA]: { x: 0.2, y: 0.2 }, [idB]: { x: 0.8, y: 0.8 } },
+        )}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    expect(screen.getByText('dup · temperature{room=A}')).toBeInTheDocument();
+    expect(screen.getByText('dup · temperature{room=B}')).toBeInTheDocument();
+    // 구분 불가였던 옛 표기('dup' 단독)는 더 이상 나타나지 않는다.
+    expect(screen.queryByText('dup')).toBeNull();
+  });
+
+  it('사용자가 이름을 바꾼 센서는 그 이름을, 나머지 형제는 서술 표기를 유지한다', () => {
+    const idA = heatmapSensorId(DUP_A);
+    const idB = heatmapSensorId(DUP_B);
+    setStore({
+      seriesNames: [idA, idB],
+      seriesEntries: new Map([
+        [idA, reading(20)],
+        [idB, reading(26)],
+      ]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={storeConfig(
+          [
+            { ...DUP_A, alias: '거실' }, // 사용자가 붙인 이름.
+            { ...DUP_B, alias: 'dup' }, // 생성 시 기본값.
+          ],
+          { [idA]: { x: 0.2, y: 0.2 }, [idB]: { x: 0.8, y: 0.8 } },
+        )}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    expect(screen.getByText('거실')).toBeInTheDocument();
+    expect(screen.getByText('dup · temperature{room=B}')).toBeInTheDocument();
+  });
+
+  it('미배치 팔레트 칩도 형제 센서를 구분해 보여준다', () => {
+    const idA = heatmapSensorId(DUP_A);
+    const idB = heatmapSensorId(DUP_B);
+    setStore({
+      seriesNames: [idA, idB],
+      seriesEntries: new Map([
+        [idA, reading(20)],
+        [idB, reading(26)],
+      ]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        // 좌표 없음 → 둘 다 미배치 팔레트 칩으로 나열된다.
+        config={storeConfig(
+          [
+            { ...DUP_A, alias: 'dup' },
+            { ...DUP_B, alias: 'dup' },
+          ],
+          {},
+        )}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    const palette = screen.getByTestId('sensor-unplaced-palette');
+    expect(palette).toHaveTextContent('dup · temperature{room=A}');
+    expect(palette).toHaveTextContent('dup · temperature{room=B}');
+  });
+
+  it('metric/tags 가 없는 센서는 key 하나로 깔끔히 표시된다(구분자/후행 공백 없음)', () => {
+    // storeSeriesId 는 이 경우 후행 공백이 남는 기계용 문자열을 만든다 — 라벨은 그걸 물려받지 않는다.
+    const id = sid('plain');
+    setStore({
+      seriesNames: [id],
+      seriesEntries: new Map([[id, reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={storeConfig([{ key: 'plain', alias: 'plain' }], { [id]: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    const label = screen.getByText('plain');
+    expect(label).toBeInTheDocument();
+    expect(label.textContent).toBe('plain');
+  });
+
   it('회귀 0: forcePlacement 미지정 대시보드 경로는 편집모드 게이팅을 유지한다', () => {
     setStore({
       seriesNames: ['s1'],

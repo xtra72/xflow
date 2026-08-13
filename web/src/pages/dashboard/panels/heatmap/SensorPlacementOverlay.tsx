@@ -135,8 +135,12 @@ export default function SensorPlacementOverlay({
           >
             <X className="h-2.5 w-2.5" />
           </button>
-          {/* 센서명 라벨. */}
-          <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-black/60 px-1 py-0.5 text-[10px] text-white">
+          {/* 센서명 라벨. 시리즈를 구분하는 서술 표기(`key · metric{k=v}`)는 길어질 수 있으므로
+              잘라서 그림을 덮지 않게 하고, 전체 값은 title 로 남긴다. */}
+          <span
+            title={labelOf(key)}
+            className="pointer-events-none absolute left-1/2 top-full mt-1 max-w-[160px] -translate-x-1/2 truncate rounded bg-black/60 px-1 py-0.5 text-[10px] text-white"
+          >
             {labelOf(key)}
           </span>
         </div>
@@ -157,8 +161,9 @@ export default function SensorPlacementOverlay({
               type="button"
               data-testid={`sensor-unplaced-${key}`}
               aria-label={t('dashboard.heatmap.editPlaceAria').replace('{key}', labelOf(key))}
+              title={labelOf(key)}
               onPointerDown={startDrag(key)}
-              className="cursor-grab touch-none rounded border border-white/40 bg-white/10 px-1.5 py-0.5 text-[10px] text-white active:cursor-grabbing"
+              className="max-w-[180px] cursor-grab touch-none truncate rounded border border-white/40 bg-white/10 px-1.5 py-0.5 text-[10px] text-white active:cursor-grabbing"
             >
               {labelOf(key)}
             </button>
