@@ -3424,6 +3424,7 @@
       "changeAbsolute": "변화(절대)",
       "changePercent": "변화(%)",
       "auto": "(자동)",
+      "unset": "(미지정 — 문자열로 저장)",
       "empty": "메트릭이 없습니다. \"메트릭 추가\"로 측정값을 추가하세요.",
       "add": "메트릭 추가",
       "deleteAria": "삭제"

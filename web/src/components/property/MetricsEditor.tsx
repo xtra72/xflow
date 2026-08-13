@@ -9,7 +9,12 @@ import { Plus, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 
-const DATA_TYPES = ['', 'int', 'float', 'string', 'boolean', 'bytes', 'json'] as const;
+// 'auto' 는 백엔드 sentinel 로, 첫 쓰기 값에서 타입을 추론해 시리즈에 고정한다.
+// '' 는 data_type 을 아예 전송하지 않는 레거시 동작이며, 그 경우 store 가 해당
+// 시리즈를 "동적 = string" 정책으로 등록해 숫자도 문자열로 저장한다
+// (internal/agent/system/store.go 의 미등록 키 자동 등록 + stringifyValue).
+// 즉 '' 는 auto 가 아니라 "문자열 저장" 이므로 라벨을 분리한다.
+const DATA_TYPES = ['auto', '', 'int', 'float', 'string', 'boolean', 'bytes', 'json'] as const;
 
 // ---- 내부 행 타입 (모든 필드 문자열로 보관; 직렬화 시 숫자 변환) ----
 
@@ -108,7 +113,9 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
       key: nextKey(),
       metric_type: '',
       value_key: '',
-      data_type: '',
+      // 신규 행 기본값은 auto — '' 로 두면 store 가 동적 string 으로 등록해
+      // 숫자 측정값이 문자열로 저장되고 차트/집계에서 전부 제외된다.
+      data_type: 'auto',
       min_interval: '',
       min_change: '',
       min_change_percent: '',
@@ -197,7 +204,7 @@ export function MetricsEditor({ value, onChange, readOnly }: MetricsEditorProps)
                   >
                     {DATA_TYPES.map((dt) => (
                       <option key={dt} value={dt}>
-                        {dt === '' ? t('property.metrics.auto') : dt}
+                        {dt === '' ? t('property.metrics.unset') : dt === 'auto' ? t('property.metrics.auto') : dt}
                       </option>
                     ))}
                   </select>

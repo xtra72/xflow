@@ -3424,6 +3424,7 @@
       "changeAbsolute": "Change (absolute)",
       "changePercent": "Change (%)",
       "auto": "(auto)",
+      "unset": "(unset — stored as string)",
       "empty": "No metrics. Use \"Add metric\" to add a measurement.",
       "add": "Add metric",
       "deleteAria": "Delete"
