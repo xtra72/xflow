@@ -7,9 +7,15 @@
 // 배제했다. SPEC-CHIRPSTACK-002 REQ-M1-02 가 그 배제를 명시적으로 역전한다 — 수신 계약
 // (REQ-FROZEN-A)은 그대로 보존되며, 발행은 추가된 능력이다(회귀 아님).
 //
+// SPEC-CHIRPSTACK-003 REQ-M3-01 은 같은 규율로 **Process 표면의 배제를 역전**한다:
+// SPEC-001/002 가 "Process 는 사용하지 않는다" 로 비워 두었던 자리에 조회 전용
+// exec 커맨드 디스패처(list_gateways)를 둔다. 다운링크 발행은 여전히 PublishMessage
+// 이며 Process 는 발행하지 않는다 — 회귀가 아니라 추가된 조회 능력이다(Process 주석 참조).
+//
 // 2계층 설계:
 //   - 에이전트(본 패키지): MQTT 연결/구독/수신, 업링크 디코드, per-measurement
-//     레코드 생성, 디바이스 자동 생성/메타데이터 노출, 다운링크 발행 프리미티브
+//     레코드 생성, 디바이스 자동 생성/메타데이터 노출, (device, gateway) 링크 캐시 +
+//     파생 게이트웨이 로스터(gateways.go), 다운링크 발행 프리미티브
 //     (publish.go) + deviceProfile 별 다운링크 코덱(codec.go).
 //   - 노드(internal/node/chirpstack.go): 수신 전용 SourceNode. 에이전트가 emit 한
 //     per-measurement 레코드를 소비해 flow message 로 빌드하고 device 그룹을 승격.
@@ -20,6 +26,7 @@ package chirpstack
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -488,10 +495,56 @@ func (a *ChirpStackAgent) Resume(_ context.Context) error {
 	return a.TransitionTo(lifecycle.StateRunning)
 }
 
-// Process 는 사용하지 않는다. 다운링크 발행은 PublishMessage 인터페이스를 사용한다
-// (SPEC-CHIRPSTACK-002 REQ-M1-02 — SPEC-CHIRPSTACK-001 의 "발행 경로 없음" 배제 역전).
-func (a *ChirpStackAgent) Process(_ []byte) ([]byte, error) {
-	return nil, nil
+// ErrInvalidCommand 는 Process 디스패처가 알 수 없는 커맨드를 거부할 때 반환하는
+// sentinel 이다 (SPEC-CHIRPSTACK-003 REQ-M3-01, xsfm 디스패처 관용구 미러).
+//
+// 종전 no-op 의 `return nil, nil` 은 오타 커맨드를 성공으로 보이게 만들었다 — 조용한
+// nil 대신 명시적 에러로 거부해 호출자가 실패를 인지하게 한다.
+var ErrInvalidCommand = errors.New("chirpstack: invalid command")
+
+// Process 는 조회 전용 exec 커맨드를 디스패치한다 (SPEC-CHIRPSTACK-003 REQ-M3-01).
+//
+// # 의도적 배제의 역전 기록 (REQ-M3-01)
+//
+// 종전 이 함수는 **의도적 no-op** 이었다 — 주석 원문: "Process 는 사용하지 않는다.
+// 다운링크 발행은 PublishMessage 인터페이스를 사용한다 (SPEC-CHIRPSTACK-002
+// REQ-M1-02 — SPEC-CHIRPSTACK-001 의 '발행 경로 없음' 배제 역전)."
+// SPEC-CHIRPSTACK-003 REQ-M3-01 이 그 배제를 **명시적으로 역전**한다.
+//
+// WHY: 게이트웨이 로스터는 관리 UI 관심사이지 플로우 런타임 관심사가 아니므로, 신규
+// Flow 노드 타입이 아니라 기존 exec 표면(POST /agents/{id}/exec → ag.Process)으로
+// 노출한다. State() 확장은 거부했다 — 에이전트 LIST 페이지가 모든 에이전트를
+// detail=summary 로 질의하므로 게이트웨이 목록이 모든 LIST 응답을 비대하게 만든다
+// (REQ-M3-05).
+//
+// IMPACT: 이 기록이 없으면 후속 리뷰어가 no-op 의 소멸을 SPEC-001/002 대비 **회귀**로
+// 오독한다. SPEC-002 REQ-M1-02 가 발행 경로 역전을 기록한 것과 동일한 규율이다.
+//
+// # 보존되는 것 (회귀 아님)
+//
+//   - 다운링크 발행 경로는 **변경되지 않는다**: 여전히 PublishMessage(publish.go)를
+//     사용하며 본 디스패처는 발행을 수행하지 않는다.
+//   - 수신 계약(REQ-FROZEN-A)과 SPEC-002 status/control 노출면(REQ-FROZEN-C)도 무변경.
+//
+// # 부작용 없음 (REQ-M3-04)
+//
+// list_gateways 는 인메모리 캐시의 순수 조회이다 — MQTT publish 0건, on-demand poll
+// 0건, 저장소 write 0건. 저장소 영속화 분기(agent_adapter.go)는
+// add_device/remove_device/set_device 에만 걸리므로 조회 커맨드는 저장 경로에 닿지 않는다.
+func (a *ChirpStackAgent) Process(data []byte) ([]byte, error) {
+	var req struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("chirpstack process: invalid JSON: %w", err)
+	}
+
+	switch req.Command {
+	case "list_gateways":
+		return json.Marshal(listGatewaysResponse{Gateways: a.listGateways()})
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrInvalidCommand, req.Command)
+	}
 }
 
 // Configure 는 에이전트 설정을 업데이트한다.

@@ -85,12 +85,24 @@ type deviceState struct {
 	// measurements 는 디바이스가 마지막으로 보고한 스칼라 measurement 캐시이다.
 	// 값 하나가 아니라 (값, 갱신 시각) 쌍을 담는다 — measurementSample 주석 참조.
 	measurements map[string]measurementSample
+
+	// links 는 gatewayId 키 (device, gateway) 링크 캐시이다
+	// (SPEC-CHIRPSTACK-003 REQ-M2-01/02). comm 맵이 아니라 로스터에 두는 이유는
+	// applicationID / measurements 와 동일하다 — upsertDevice 는 모든 업링크마다
+	// 무조건 실행되지만 comm 맵 갱신은 emit_comm_state(기본 false) 게이트 뒤에
+	// 있으므로, comm 맵에 두면 그 노브가 꺼진 에이전트에서 게이트웨이 조회가
+	// 조용히 빈 결과를 낸다.
+	//
+	// 게이트웨이 로스터는 이 맵을 질의 시점에 역인덱싱해 파생한다 — 두 번째 권위
+	// 맵을 두지 않으므로 두 표면이 갈라질 수 없고, 신규 mutex/락 순서 엣지도
+	// 생기지 않는다 (REQ-M2-04, REQ-FROZEN-B).
+	links map[string]gatewayLink
 }
 
-// clone 은 tags/measurements 맵을 포함해 깊은 복사한다 (roster 스냅샷용).
+// clone 은 tags/measurements/links 맵을 포함해 깊은 복사한다 (roster 스냅샷용).
 //
 // 얕은 복사이면 호출자가 락 보호 상태 내부를 가리키는 참조를 받게 되어 데이터 레이스가
-// 된다 — listDevices 의 "깊은 복사" 계약은 두 맵 모두에 적용된다.
+// 된다 — listDevices 의 "깊은 복사" 계약은 세 맵 모두에 적용된다.
 func (d *deviceState) clone() deviceState {
 	cp := *d
 	if d.tags != nil {
@@ -106,6 +118,15 @@ func (d *deviceState) clone() deviceState {
 		cp.measurements = make(map[string]measurementSample, len(d.measurements))
 		for k, v := range d.measurements {
 			cp.measurements[k] = v
+		}
+	}
+	if d.links != nil {
+		// gatewayLink 은 스칼라 필드만 갖는 값 타입이므로 대입만으로 복사된다 —
+		// 내부 참조가 없어 재귀 복사가 필요하지 않다. 다만 맵 자체는 반드시 새로
+		// 만들어야 한다(공유하면 호출자가 devicesMu 보호 상태를 직접 가리킨다).
+		cp.links = make(map[string]gatewayLink, len(d.links))
+		for k, v := range d.links {
+			cp.links[k] = v
 		}
 	}
 	return cp
@@ -218,6 +239,13 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 		timeMs = now.UnixMilli()
 	}
 
+	// (device, gateway) 링크 샘플 산출도 락 밖에서 수행한다 (REQ-M2-06):
+	// rxInfo 전량을 gatewayId 로 키잉하고 프레임 레벨 txInfo 를 부착한 뒤
+	// gatewayId 오름차순으로 정렬한다 — cap 도달 시 어떤 신규 게이트웨이가
+	// 입장하는지가 rxInfo 배열 순서에 좌우되지 않도록 만드는 지점이다
+	// (scalarMeasurementKeys 가 measurement 키에 대해 하는 것과 동형).
+	links := buildGatewayLinks(up, timeMs)
+
 	// 예약 라벨 키 충돌 경고: 사용자 ChirpStack 태그가 dev_eui 라는 이름을 쓰면
 	// Metadata().Labels 에서 에이전트 값이 덮어쓴다(Metadata 참조). 조용히 삼키지 않고
 	// 디바이스를 지목해 알린다. 읽기(Metadata) 경로가 아니라 여기(수집 경로)에서 내는
@@ -258,6 +286,10 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	d.lastSeen = now
 	// 최신 measurement 캐시 병합 (online 은 lastSeen 에서 파생하므로 저장하지 않는다).
 	d.mergeMeasurements(up.Object, mkeys, timeMs)
+	// (device, gateway) 링크 캐시 병합 (SPEC-CHIRPSTACK-003 REQ-M2-01/02/03).
+	// links 는 락 밖에서 미리 만들어 정렬한 값 슬라이스이므로, 락 보유 구간은
+	// 맵 갱신뿐이다.
+	d.mergeGatewayLinks(links)
 	a.devicesMu.Unlock()
 }
 

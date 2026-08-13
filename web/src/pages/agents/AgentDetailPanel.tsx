@@ -98,6 +98,7 @@ import {
 } from '@/services/api/monitorService';
 import { useUIStore } from '@/stores/uiStore';
 
+import ChirpstackGatewaysTab from './ChirpstackGatewaysTab';
 import XsfmDevicesTab from './XsfmDevicesTab';
 import XsfmStationsTab from './XsfmStationsTab';
 import XsfmGroupsTab from './XsfmGroupsTab';
@@ -139,7 +140,7 @@ interface AgentDetailPanelProps {
   agentName?: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'clients' | 'series' | 'management' | 'stations' | 'lines' | 'groups';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'clients' | 'series' | 'management' | 'stations' | 'lines' | 'groups' | 'gateways';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -197,6 +198,12 @@ const HAS_LINES_TAB = new Set<string>(['xsfm']);
  */
 const HAS_GROUPS_TAB = new Set<string>(['xsfm']);
 
+/**
+ * 게이트웨이(gateway) 탭을 표시하는 에이전트 타입 (SPEC-CHIRPSTACK-003 M4).
+ * chirpstack 에이전트만 업링크에서 파생된 게이트웨이 로스터 탭을 노출한다.
+ */
+const HAS_GATEWAYS_TAB = new Set<string>(['chirpstack']);
+
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
   const showDevices = !NO_DEVICES_TAB.has(agentType);
@@ -209,6 +216,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
   const showStations = HAS_STATIONS_TAB.has(agentType);
   const showLines = HAS_LINES_TAB.has(agentType);
   const showGroups = HAS_GROUPS_TAB.has(agentType);
+  const showGateways = HAS_GATEWAYS_TAB.has(agentType);
 
   // TSDB 에이전트는 기본 탭을 '시리즈', Store 에이전트는 '저장소',
   // 그 외에는 '통계' 를 기본 탭으로 선택한다.
@@ -232,6 +240,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
         {showStations && <TabButton label={t('agents.detail.tabs.stations')} active={tab === 'stations'} onClick={() => setTab('stations')} />}
         {showLines && <TabButton label={t('agents.detail.tabs.lines')} active={tab === 'lines'} onClick={() => setTab('lines')} />}
         {showGroups && <TabButton label={t('agents.detail.tabs.groups')} active={tab === 'groups'} onClick={() => setTab('groups')} />}
+        {showGateways && <TabButton label={t('agents.detail.tabs.gateways')} active={tab === 'gateways'} onClick={() => setTab('gateways')} />}
       </div>
 
       {/* 탭 컨텐츠 */}
@@ -249,6 +258,7 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
       {tab === 'stations' && showStations && <XsfmStationsTab agentId={agentId} />}
       {tab === 'lines' && showLines && <XsfmLinesTab agentId={agentId} />}
       {tab === 'groups' && showGroups && <XsfmGroupsTab agentId={agentId} />}
+      {tab === 'gateways' && showGateways && <ChirpstackGatewaysTab agentId={agentId} />}
     </div>
   );
 }

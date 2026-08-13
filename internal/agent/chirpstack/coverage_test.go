@@ -2,6 +2,7 @@ package chirpstack
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/xtra/xflow/internal/agent"
@@ -10,11 +11,23 @@ import (
 
 // TestChirpStackAgent_Accessors 는 상태 무관 접근자(Process/Configure/Health/
 // Info/Stats)의 기본 동작을 검증한다.
+//
+// Process 계약 역전(SPEC-CHIRPSTACK-003 REQ-M3-01): 이 테스트는 종전 `Process =
+// (nil, nil) — 수신 전용` 을 고정하고 있었다. SPEC-CHIRPSTACK-003 이 그 의도적
+// no-op 을 조회 전용 커맨드 디스패처로 역전하므로, 기대값을 "무음 nil" 에서
+// "미지 커맨드는 ErrInvalidCommand" 로 갱신한다. 이는 회귀가 아니라 SPEC 이 요구한
+// 계약 변경이다(agent.go Process 주석의 역전 기록 참조). 디스패처 전체 계약은
+// gateways_test.go 의 TestProcess_* 가 검증한다.
 func TestChirpStackAgent_Accessors(t *testing.T) {
 	a := newRunningTestAgent(t, "acc-cs")
 
-	if out, err := a.Process([]byte("ignored")); out != nil || err != nil {
-		t.Errorf("Process = (%v,%v), want (nil,nil) — 수신 전용", out, err)
+	// 유효하지 않은 JSON → 파싱 에러(무음 nil 아님).
+	if out, err := a.Process([]byte("ignored")); out != nil || err == nil {
+		t.Errorf("Process(비-JSON) = (%v,%v), want (nil, 에러)", out, err)
+	}
+	// 유효 JSON + 미지 커맨드 → ErrInvalidCommand.
+	if out, err := a.Process([]byte(`{"command":"nope"}`)); out != nil || !errors.Is(err, ErrInvalidCommand) {
+		t.Errorf("Process(미지 커맨드) = (%v,%v), want (nil, ErrInvalidCommand)", out, err)
 	}
 	if err := a.Configure(newTestConfig("acc-cs-id", "acc-cs")); err != nil {
 		t.Errorf("Configure: %v", err)

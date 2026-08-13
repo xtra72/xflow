@@ -20,22 +20,68 @@ type uplinkDeviceInfo struct {
 	Tags              map[string]string `json:"tags"`
 }
 
-// uplinkRxInfo 는 업링크 rxInfo[] 항목 중 comm-state(best-gateway) 산출에 쓰는
-// 게이트웨이 수신 품질 필드만 담는다 (M5, REQ-M5-05).
+// uplinkRxInfo 는 업링크 rxInfo[] 항목 중 comm-state(best-gateway) 산출과
+// (device, gateway) 링크 캐시에 쓰는 게이트웨이 수신 품질 필드를 담는다
+// (M5 REQ-M5-05, SPEC-CHIRPSTACK-003 REQ-M1-01/02).
+//
+// Channel 은 **값 타입 uint32** 여야 한다 (REQ-M1-02, A5). proto3 JSON 매핑은
+// 기본값 필드를 생략하므로 `channel: 0` 인 게이트웨이는 JSON 에서 키 자체가
+// 사라진다. Go encoding/json 이 값 타입 uint32 로 언마샬하면 키 부재가 자동으로
+// 0 이 되어 "정당한 채널 0" 과 일치한다. *uint32 / sql.NullInt* 등 nullable
+// 표현을 쓰면 부재가 "미상" 으로 갈라져, 채널 0 게이트웨이가 전부 unknown 으로
+// 오독된다.
+//
+// 그 결과 **"channel 키 부재" 와 "channel: 0 명시" 는 구분 불가능하다** — 이는
+// 의도된 성질이며(둘 다 채널 0 을 뜻한다), 두 경우를 구분해야 하는 소비자는
+// 이 타입으로는 구분할 수 없다.
+//
+// Channel 의 의미(A4): **수신 게이트웨이의 concentrator IF 채널 인덱스**이며
+// (Semtech packet_forwarder 의 rxpk.chan 대응) 게이트웨이 로컬 하드웨어 값이다.
+// 게이트웨이 A 의 channel 3 과 게이트웨이 B 의 channel 3 은 같은 주파수를 뜻하지
+// 않는다. 실제 RF 주파수는 프레임 레벨 txInfo.frequency 이다 — 소비자/UI 는
+// channel 을 주파수로 제시해서는 안 된다.
 type uplinkRxInfo struct {
 	GatewayID string  `json:"gatewayId"`
 	RSSI      int     `json:"rssi"`
 	SNR       float64 `json:"snr"`
+	Channel   uint32  `json:"channel"`
+}
+
+// uplinkLoRaModulation 은 txInfo.modulation.lora 하위 필드 중 링크 해석에 쓰는
+// 변조 파라미터이다 (REQ-M1-04). codeRate 는 v1 에서 소비하지 않는다.
+type uplinkLoRaModulation struct {
+	SpreadingFactor uint32 `json:"spreadingFactor"`
+	Bandwidth       uint32 `json:"bandwidth"`
+}
+
+// uplinkModulation 은 txInfo.modulation 이다. LoRa 이외의 변조(FSK 등)는 v1 에서
+// 소비하지 않으며, 그 경우 LoRa 필드는 0 으로 남는다.
+type uplinkModulation struct {
+	LoRa uplinkLoRaModulation `json:"lora"`
+}
+
+// uplinkTxInfo 는 업링크의 **프레임 레벨** 송신 파라미터이다 (REQ-M1-04).
+//
+// rxInfo[] 는 게이트웨이별(수신측)이지만 txInfo 는 프레임당 1개이므로, 하나의
+// 업링크에서 파생한 모든 링크 샘플은 동일한 frequency/SF/bandwidth 를 갖는다.
+// Frequency 는 Hz 단위이며, channel(게이트웨이 로컬 IF 인덱스)을 해석 가능하게
+// 만드는 유일한 값이다 (A4).
+type uplinkTxInfo struct {
+	Frequency  uint64           `json:"frequency"`
+	Modulation uplinkModulation `json:"modulation"`
 }
 
 // uplink 는 ChirpStack LoRaWAN 업링크 이벤트의 디코드 대상 필드이다.
 //
-// rxInfo(게이트웨이 rssi/snr) 는 comm-state(best-gateway) 산출에 쓰인다 (M5).
+// rxInfo(게이트웨이 rssi/snr) 는 comm-state(best-gateway) 산출에 쓰이고(M5),
+// rxInfo 전량 + txInfo 는 (device, gateway) 링크 캐시에 쓰인다
+// (SPEC-CHIRPSTACK-003 M1/M2).
 type uplink struct {
 	Time       string           `json:"time"`
 	DeviceInfo uplinkDeviceInfo `json:"deviceInfo"`
 	Object     map[string]any   `json:"object"`
 	RxInfo     []uplinkRxInfo   `json:"rxInfo"`
+	TxInfo     uplinkTxInfo     `json:"txInfo"`
 }
 
 // decodeUplink 는 원시 ChirpStack 업링크 JSON 을 디코드한다 (REQ-M3-01).
