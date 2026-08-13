@@ -29,11 +29,30 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import HeatmapPanel from './HeatmapPanel';
+import { heatmapSensorId } from './sensorIdentity';
 import { useUIStore } from '@/stores/uiStore';
 
 /** 최신값 1개짜리 시리즈 타임라인. */
 function reading(value: number): ChartEntry[] {
   return [{ timestamp: 1, value }];
+}
+
+/**
+ * 좌표/마커의 키 공간은 **시리즈 동일성 키**다. 이 파일의 테스트 config 는 metric/tags 가 없는
+ * 시리즈만 쓰므로 key 만으로 동일성 키를 만든다. (raw key 로 적힌 sensor_positions 는 읽는
+ * 시점에 이 키로 이관된다 — 하위호환 마이그레이션.)
+ */
+function sid(key: string): string {
+  return heatmapSensorId({ key });
+}
+
+/**
+ * data-testid 조회용 정규화. Testing Library 는 DOM 속성값을 trim + 공백 축약한 뒤 매처와
+ * 비교하므로, metric/tags 가 빈 시리즈의 동일성 키(뒤에 공백이 붙는다)를 그대로 넣으면
+ * 조회가 어긋난다. 실제 쓰기 키(config)는 항상 정규화하지 않은 `sid()` 를 쓴다.
+ */
+function tid(sensorId: string): string {
+  return sensorId.trim().replace(/\s+/g, ' ');
 }
 
 // 히트맵은 "명시적으로 체크된 series(keys)"만 렌더한다(체크박스 = 단일 진실원). 따라서 테스트
@@ -212,7 +231,7 @@ describe('HeatmapPanel', () => {
     // 진입 후 오버레이 + canvas 공존(폴링/렌더 비파괴, R3).
     expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
     expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
-    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-marker-${tid(sid('s1'))}`)).toBeInTheDocument();
   });
 
   it('AC-04: 편집 모드에서 마커 제거는 해당 센서 좌표만 config 에서 삭제한다', () => {
@@ -234,9 +253,11 @@ describe('HeatmapPanel', () => {
       />,
     );
     fireEvent.click(screen.getByTestId('heatmap-edit-toggle'));
-    fireEvent.click(screen.getByTestId('sensor-remove-s1'));
+    fireEvent.click(screen.getByTestId(`sensor-remove-${tid(sid('s1'))}`));
     // s1 좌표만 삭제되고 s2 는 보존된다.
-    expect(onConfigChange).toHaveBeenCalledWith({ sensor_positions: { s2: { x: 0.8, y: 0.8 } } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      sensor_positions: { [sid('s2')]: { x: 0.8, y: 0.8 } },
+    });
   });
 
   it('AC-E1(편집 경로): 도면/데이터가 없어도 편집 진입 시 오버레이가 마운트된다', () => {
@@ -255,7 +276,7 @@ describe('HeatmapPanel', () => {
     fireEvent.click(screen.getByTestId('heatmap-edit-toggle'));
     // 진입 후: 오버레이 + 미배치 팔레트(s1)가 나타난다.
     expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
-    expect(screen.getByTestId('sensor-unplaced-s1')).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-unplaced-${tid(sid('s1'))}`)).toBeInTheDocument();
   });
 
   // SPEC-HEATMAP-PANEL-003 T4: 등고선 오버레이 마운트(additive, contour off 시 무영향).
@@ -346,7 +367,7 @@ describe('HeatmapPanel', () => {
     // 토글 버튼 없이도 오버레이 + 마커가 즉시 나타난다(설정 미리보기 배치).
     expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
     expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
-    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-marker-${tid(sid('s1'))}`)).toBeInTheDocument();
   });
 
   it('forcePlacement: 라이브 값이 없어도 좌표만 있는 시리즈는 배치 마커를 렌더한다', () => {
@@ -367,7 +388,7 @@ describe('HeatmapPanel', () => {
     );
     // placed 는 cfg.sensor_positions 에서 직접 파생되므로 값 없이도 드래그 마커가 뜬다.
     expect(screen.getByTestId('sensor-placement-overlay')).toBeInTheDocument();
-    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-marker-${tid(sid('s1'))}`)).toBeInTheDocument();
   });
 
   it('마커 정렬: 현재 바인딩된 시리즈에만 마커를 렌더하고 잔존 좌표는 유령 마커를 만들지 않는다', () => {
@@ -387,8 +408,8 @@ describe('HeatmapPanel', () => {
       />,
     );
     // 바인딩된 s1 은 마커가 있고, 선택에서 빠진 stale 좌표는 마커가 없다(유령 마커 제거).
-    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
-    expect(screen.queryByTestId('sensor-marker-stale')).toBeNull();
+    expect(screen.getByTestId(`sensor-marker-${tid(sid('s1'))}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`sensor-marker-${tid(sid('stale'))}`)).toBeNull();
   });
 
   it('keys 모드: 라이브 값이 없어도 config.series 에 있으면 마커를 렌더한다(방금 선택)', () => {
@@ -412,9 +433,9 @@ describe('HeatmapPanel', () => {
     render(
       <HeatmapPanel panelId="p" config={config} onConfigChange={vi.fn()} forcePlacement />,
     );
-    expect(screen.getByTestId('sensor-marker-s1')).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-marker-${tid(sid('s1'))}`)).toBeInTheDocument();
     // config.series 에 없는 stale 은 마커 없음.
-    expect(screen.queryByTestId('sensor-marker-stale')).toBeNull();
+    expect(screen.queryByTestId(`sensor-marker-${tid(sid('stale'))}`)).toBeNull();
   });
 
   it('tag_filters 만 있고 series 가 비면(미체크) 마커/필드 없이 배경만 렌더한다(체크된 series 만 렌더)', () => {
@@ -444,7 +465,7 @@ describe('HeatmapPanel', () => {
     );
     // 배경은 렌더되지만, 미체크(태그 매칭) 시리즈의 마커/필드는 렌더되지 않는다.
     expect(screen.getByTestId('floor-plan-background')).toBeInTheDocument();
-    expect(screen.queryByTestId('sensor-marker-indoor')).toBeNull();
+    expect(screen.queryByTestId(`sensor-marker-${tid(sid('indoor'))}`)).toBeNull();
     expect(screen.queryByTestId('heatmap-canvas')).toBeNull();
   });
 
@@ -482,14 +503,202 @@ describe('HeatmapPanel', () => {
       />,
     );
     // 마커 핸들 드래그(pointerDown → move) → onPositionChange → sensor_positions 갱신.
-    fireEvent.pointerDown(screen.getByTestId('sensor-marker-handle-s1'));
+    fireEvent.pointerDown(screen.getByTestId(`sensor-marker-handle-${tid(sid('s1'))}`));
     fireEvent.pointerMove(screen.getByTestId('sensor-placement-overlay'), {
       clientX: 10,
       clientY: 10,
     });
     expect(onConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({ sensor_positions: expect.objectContaining({ s1: expect.any(Object) }) }),
+      expect.objectContaining({
+        sensor_positions: expect.objectContaining({ [sid('s1')]: expect.any(Object) }),
+      }),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // 센서 동일성 재키잉(결함 수정) — 좌표/마커 매칭이 store key 나 사용자 편집 이름(alias)이
+  // 아니라 시리즈 동일성 키를 따른다.
+  // -------------------------------------------------------------------------
+
+  /** 같은 key('dup')를 room 태그로 나눠 쓰는 형제 시리즈. */
+  const DUP_A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } };
+  const DUP_B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } };
+
+  function storeConfig(
+    series: Array<Record<string, unknown>>,
+    sensorPositions: Record<string, { x: number; y: number }>,
+    extras: Record<string, unknown> = {},
+  ) {
+    return {
+      data_source: 'store',
+      store_source: {
+        agent_name: 'a',
+        namespace: 'default',
+        selection_mode: 'keys',
+        series,
+        time_window_ms: 1000,
+        interval_ms: 1000,
+        aggregation: 'last',
+      },
+      sensor_positions: sensorPositions,
+      idw: { power: 2, grid_resolution: 8 },
+      ...extras,
+    } as Record<string, unknown>;
+  }
+
+  it('한 key 를 공유하는 형제 시리즈가 각자의 좌표로 독립 배치된다', () => {
+    const idA = heatmapSensorId(DUP_A);
+    const idB = heatmapSensorId(DUP_B);
+    // 실제 훅은 히트맵이 넘긴 파생 alias(=동일성 키)로 시리즈를 키잉해 돌려준다.
+    setStore({
+      seriesNames: [idA, idB],
+      seriesEntries: new Map([
+        [idA, reading(20)],
+        [idB, reading(26)],
+      ]),
+      status: 'connected',
+    });
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={storeConfig(
+          [
+            { ...DUP_A, alias: 'dup' },
+            { ...DUP_B, alias: 'dup' }, // 기본 alias 는 둘 다 key → 이름으로는 구분 불가.
+          ],
+          { [idA]: { x: 0.2, y: 0.2 }, [idB]: { x: 0.8, y: 0.8 } },
+        )}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    // 두 형제가 각각의 마커를 갖는다(예전에는 좌표 한 칸을 공유해 하나로 합쳐졌다).
+    expect(screen.getByTestId(`sensor-marker-${idA}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-marker-${idB}`)).toBeInTheDocument();
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+  });
+
+  it('형제 중 하나가 선택 해제되어도 남은 형제는 배치를 유지하고 계속 렌더된다(보고된 결함)', () => {
+    // A 는 해제되어 series 에서 빠졌고 좌표도 지워진 상태. B 는 그대로 체크 + 배치되어 있다.
+    // 예전 key 키잉에서는 A 해제가 공유 항목을 지워 B 까지 미배치가 됐다(→ 아무것도 안 그려짐).
+    //
+    // 훅이 시리즈를 **표시 이름**('dup')으로 키잉해 돌려주는 상황을 일부러 흉내낸다. 좌표는
+    // 동일성 키로 저장돼 있으므로, 이름으로 매칭했다면 어긋나 미배치가 된다. 패널은 컬럼 순서를
+    // config.series 와 인덱스로 짝지어 동일성 키로 옮기므로 이름과 무관하게 결합된다.
+    const idB = heatmapSensorId(DUP_B);
+    setStore({
+      seriesNames: ['dup'],
+      seriesEntries: new Map([['dup', reading(26)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={storeConfig([{ ...DUP_B, alias: 'dup' }], { [idB]: { x: 0.8, y: 0.8 } })}
+      />,
+    );
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.queryByTestId('heatmap-unplaced-hint')).toBeNull();
+  });
+
+  it('이름(alias) 변경은 배치를 유지한다 — 매칭이 표시 이름에 의존하지 않는다', () => {
+    const id = heatmapSensorId(DUP_A);
+    setStore({
+      seriesNames: [id],
+      seriesEntries: new Map([[id, reading(22)]]),
+      status: 'connected',
+    });
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        // alias 를 사용자가 '거실'로 바꾼 상태. 좌표는 동일성 키로 남아 있다.
+        config={storeConfig([{ ...DUP_A, alias: '거실' }], { [id]: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    // 온도장 + 마커가 모두 유지되고,
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-marker-${id}`)).toBeInTheDocument();
+    // 마커 라벨은 바뀐 이름을 보여준다(표시와 매칭의 분리).
+    expect(screen.getByText('거실')).toBeInTheDocument();
+  });
+
+  it('진단성: 도면 배경이 있어도 미배치 센서 수를 노출한다(그림은 가리지 않음)', () => {
+    // 판독값은 오는데 좌표가 없어 아무것도 그려지지 않는 상태 + 도면 배경.
+    // 예전에는 showStack 분기 때문에 안내/카운트가 전혀 렌더되지 않아 원인 추적이 어려웠다.
+    const id = heatmapSensorId(DUP_A);
+    setStore({
+      seriesNames: [id],
+      seriesEntries: new Map([[id, reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={storeConfig([{ ...DUP_A, alias: 'dup' }], {}, {
+          floor_plan: { image: 'data:image/png;base64,AAAA' },
+        })}
+      />,
+    );
+    // 배경은 그대로 렌더되고,
+    expect(screen.getByTestId('floor-plan-background')).toBeInTheDocument();
+    expect(screen.queryByTestId('heatmap-canvas')).toBeNull();
+    // 미배치 카운트가 보인다 — 가리지 않도록 pointer-events-none 인 작은 배지.
+    const hint = screen.getByTestId('heatmap-unplaced-hint');
+    expect(hint).toBeInTheDocument();
+    expect(hint.className).toContain('pointer-events-none');
+    expect(hint.className).toContain('absolute');
+  });
+
+  it('진단성: 일부만 배치된 경우에도(온도장이 그려지는 중) 미배치 카운트를 노출한다', () => {
+    const idA = heatmapSensorId(DUP_A);
+    const idB = heatmapSensorId(DUP_B);
+    setStore({
+      seriesNames: [idA, idB],
+      seriesEntries: new Map([
+        [idA, reading(20)],
+        [idB, reading(26)],
+      ]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={storeConfig(
+          [
+            { ...DUP_A, alias: 'A' },
+            { ...DUP_B, alias: 'B' },
+          ],
+          { [idA]: { x: 0.2, y: 0.2 } }, // B 는 미배치.
+        )}
+      />,
+    );
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.getByTestId('heatmap-unplaced-hint')).toBeInTheDocument();
+  });
+
+  it('하위호환: raw key 로 저장된 좌표는 렌더 시점에 동일성 키로 이관되어 그대로 그려진다', () => {
+    const id = heatmapSensorId(DUP_A);
+    setStore({
+      seriesNames: [id],
+      seriesEntries: new Map([[id, reading(22)]]),
+      status: 'connected',
+    });
+    useUIStore.getState().setDashboardEditMode(false);
+    render(
+      <HeatmapPanel
+        panelId="p"
+        // 옛 스키마: store key 로 키잉된 좌표.
+        config={storeConfig([{ ...DUP_A, alias: 'dup' }], { dup: { x: 0.5, y: 0.5 } })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    expect(screen.getByTestId('heatmap-canvas')).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-marker-${id}`)).toBeInTheDocument();
   });
 
   it('회귀 0: forcePlacement 미지정 대시보드 경로는 편집모드 게이팅을 유지한다', () => {

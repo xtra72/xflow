@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils/cn';
 
 import { toNormalized, applySnap, type NormalizedPos } from './placement';
 
-/** 배치된 센서(키 + 정규화 좌표). */
+/** 배치된 센서(센서 동일성 키 + 정규화 좌표). */
 export interface PlacedSensor {
   key: string;
   pos: NormalizedPos;
@@ -30,6 +30,11 @@ interface SensorPlacementOverlayProps {
   placed: PlacedSensor[];
   /** 좌표가 없는 미배치 센서 키 목록(팔레트에 표시). */
   unplaced: string[];
+  /**
+   * 센서 키 → 사람이 읽는 표시 라벨(선택). 좌표를 키잉하는 동일성 키는 기계용 문자열이므로
+   * 마커/칩 텍스트는 이 맵으로 치환한다. 미제공/미등록 키는 키 자체를 표시한다(하위호환).
+   */
+  labels?: Record<string, string>;
   /** 좌표 갱신(드래그 미리보기 + 드롭 시 clamp 저장). */
   onPositionChange: (key: string, pos: NormalizedPos) => void;
   /** 마커 제거(해당 센서 좌표 항목만 삭제, 센서 자체는 store 유지). */
@@ -47,6 +52,7 @@ const DEFAULT_MARKER_SIZE = 16;
 export default function SensorPlacementOverlay({
   placed,
   unplaced,
+  labels,
   onPositionChange,
   onRemove,
   snap,
@@ -56,6 +62,9 @@ export default function SensorPlacementOverlay({
   const overlayRef = useRef<HTMLDivElement>(null);
   // 드래그 중인 센서 키(배치/미배치 공통). null 이면 유휴.
   const [dragKey, setDragKey] = useState<string | null>(null);
+
+  /** 표시 라벨(없으면 키 자체). 쓰기 키와 표시 텍스트를 분리한다. */
+  const labelOf = (key: string): string => labels?.[key] ?? key;
 
   /** 포인터 client 좌표 → 오버레이 rect 기준 정규화 좌표(스냅 적용). rect 없으면 null. */
   function resolvePos(clientX: number, clientY: number): NormalizedPos | null {
@@ -107,7 +116,7 @@ export default function SensorPlacementOverlay({
           <button
             type="button"
             data-testid={`sensor-marker-handle-${key}`}
-            aria-label={t('dashboard.heatmap.editMarkerAria').replace('{key}', key)}
+            aria-label={t('dashboard.heatmap.editMarkerAria').replace('{key}', labelOf(key))}
             onPointerDown={startDrag(key)}
             className={cn(
               'block cursor-grab rounded-full border-2 border-white bg-blue-600 shadow ring-1 ring-black/20 active:cursor-grabbing dark:bg-blue-500',
@@ -119,7 +128,7 @@ export default function SensorPlacementOverlay({
           <button
             type="button"
             data-testid={`sensor-remove-${key}`}
-            aria-label={t('dashboard.heatmap.editRemoveAria').replace('{key}', key)}
+            aria-label={t('dashboard.heatmap.editRemoveAria').replace('{key}', labelOf(key))}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => onRemove(key)}
             className="absolute -right-2 -top-2 rounded-full bg-red-500/90 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
@@ -128,7 +137,7 @@ export default function SensorPlacementOverlay({
           </button>
           {/* 센서명 라벨. */}
           <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-black/60 px-1 py-0.5 text-[10px] text-white">
-            {key}
+            {labelOf(key)}
           </span>
         </div>
       ))}
@@ -147,11 +156,11 @@ export default function SensorPlacementOverlay({
               key={key}
               type="button"
               data-testid={`sensor-unplaced-${key}`}
-              aria-label={t('dashboard.heatmap.editPlaceAria').replace('{key}', key)}
+              aria-label={t('dashboard.heatmap.editPlaceAria').replace('{key}', labelOf(key))}
               onPointerDown={startDrag(key)}
               className="cursor-grab touch-none rounded border border-white/40 bg-white/10 px-1.5 py-0.5 text-[10px] text-white active:cursor-grabbing"
             >
-              {key}
+              {labelOf(key)}
             </button>
           ))}
         </div>

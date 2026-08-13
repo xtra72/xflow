@@ -18,10 +18,11 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 
-import type { StoreSourceConfig } from '../charts/chartChannelTypes';
+import type { StoreSeriesRef, StoreSourceConfig } from '../charts/chartChannelTypes';
 import { useStoreChartData } from '../charts/useStoreChartData';
 import { parseHeatmapConfig } from './heatmapConfig';
-import { joinSensorPoints } from './heatmapJoin';
+import { joinSensorPoints, resolveSensorSeries } from './heatmapJoin';
+import { heatmapSensorId, sensorSeriesLabel } from './sensorIdentity';
 import { DEFAULT_COLOR_TABLE, interpolateIDW } from './idw';
 import HeatmapCanvas, { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './HeatmapCanvas';
 import ContourLayer from './ContourLayer';
@@ -80,12 +81,26 @@ export default function HeatmapPanel({
   // 용도일 뿐이며, 태그 매칭(미체크) 시리즈가 필드/마커로 그려지면 안 된다. 따라서 store 데이터
   // 바인딩을 keys 로 강제하고 tag_filters 를 제거한 파생 소스로 조회한다(line/gauge 등 다른
   // 패널의 tag 동작은 useStoreChartData 를 그대로 두어 영향받지 않는다).
+  // 체크된 시리즈(단일 진실원). 손상 config 방어로 배열이 아니면 빈 배열.
+  const refs = useMemo<StoreSeriesRef[]>(
+    () => (Array.isArray(storeSource?.series) ? storeSource.series : []),
+    [storeSource],
+  );
+  // 조회용 파생 소스에서 alias 를 **센서 동일성 키**로 치환한다. 한 store key 를 공유하는
+  // 형제 시리즈들이 기본 alias(=key)를 공유하면 useStoreChartData 가 같은 표시 이름으로
+  // 타임라인을 병합해 센서별 판독값이 뭉개진다. 동일성 키는 시리즈마다 고유하므로 병합이
+  // 없고, 좌표 맵과 같은 키 공간이 되어 매칭이 이름(편집 가능)에 의존하지 않는다.
   const heatmapStoreSource = useMemo<StoreSourceConfig | undefined>(
     () =>
       storeSource
-        ? { ...storeSource, selection_mode: 'keys', tag_filters: undefined }
+        ? {
+            ...storeSource,
+            selection_mode: 'keys',
+            tag_filters: undefined,
+            series: refs.map((ref) => ({ ...ref, alias: heatmapSensorId(ref) })),
+          }
         : undefined,
-    [storeSource],
+    [storeSource, refs],
   );
   const isStore =
     config.data_source === 'store' && (heatmapStoreSource?.series?.length ?? 0) > 0;
@@ -93,15 +108,16 @@ export default function HeatmapPanel({
   // hook 은 항상 호출(React 규칙). 비활성 경로는 idle 로 유지된다.
   const storeResult = useStoreChartData(isStore ? heatmapStoreSource : undefined, isStore);
 
+  // 조회 결과(표시 이름 공간) → 센서 동일성 키 공간. 좌표/마커와 같은 공간에서만 결합한다.
+  const resolved = useMemo(
+    () => resolveSensorSeries(storeResult.seriesNames, storeResult.seriesEntries, refs),
+    [storeResult.seriesNames, storeResult.seriesEntries, refs],
+  );
+
   // 센서 최신값(시리즈별) 추출 + 좌표 결합(T6). 좌표 미지정 센서는 보간 입력에서 제외(AC-E2).
   const { points, unplacedNames, autoBounds } = useMemo(
-    () =>
-      joinSensorPoints(
-        storeResult.seriesNames,
-        storeResult.seriesEntries,
-        cfg.sensor_positions,
-      ),
-    [storeResult.seriesNames, storeResult.seriesEntries, cfg.sensor_positions],
+    () => joinSensorPoints(resolved.ids, resolved.entriesById, cfg.sensor_positions),
+    [resolved, cfg.sensor_positions],
   );
 
   // 상하한: config 지정값 우선, 미지정 시 자동(센서값 범위), 그마저 없으면 0..1(REQ-05).
@@ -130,22 +146,25 @@ export default function HeatmapPanel({
   const hasBackground = Boolean(cfg.floor_plan?.image);
   const heatmapLayerStyle = hasBackground ? { opacity: cfg.heatmap_opacity } : undefined;
 
-  // 마커/좌표는 "명시적으로 체크된 series 키"에만 표시한다(체크박스 = 단일 진실원). 라이브 값이
+  // 마커/좌표는 "명시적으로 체크된 series"에만 표시한다(체크박스 = 단일 진실원). 라이브 값이
   // 없어도 방금 선택한 센서 마커를 유지해 드래그 배치가 가능하다. tag 매칭(미체크) 시리즈는
   // 절대 마커로 그리지 않으며, 잔존 sensor_positions(선택에서 빠진 옛 키)로 인한 유령 마커도 막는다.
-  const boundKeys = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of storeSource?.series ?? []) set.add(s.alias || s.key);
-    return set;
-  }, [storeSource?.series]);
+  // 기준은 동일성 키다 — alias 기준이면 이름을 바꾼 순간 마커가 사라진다.
+  const boundIds = useMemo(() => new Set(refs.map((ref) => heatmapSensorId(ref))), [refs]);
+  // 동일성 키 → 표시 라벨(alias || key). 마커/칩 텍스트 전용이며 매칭에는 쓰지 않는다.
+  const sensorLabels = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const ref of refs) map[heatmapSensorId(ref)] = sensorSeriesLabel(ref);
+    return map;
+  }, [refs]);
   // 편집 대상: 현재 바인딩된 시리즈 중 좌표가 있는 센서(마커). 라이브 판독값과 무관하게
   // config 좌표를 직접 쓰되(joinSensorPoints 의 points 는 판독값 필요), 바운드 집합으로 거른다.
   const placed: PlacedSensor[] = useMemo(
     () =>
       Object.entries(cfg.sensor_positions)
-        .filter(([key]) => boundKeys.has(key))
-        .map(([key, pos]) => ({ key, pos })),
-    [cfg.sensor_positions, boundKeys],
+        .filter(([id]) => boundIds.has(id))
+        .map(([id, pos]) => ({ key: id, pos })),
+    [cfg.sensor_positions, boundIds],
   );
 
   // 좌표 갱신(드래그 미리보기 + 드롭). 부분 config 병합으로 sensor_positions 만 쓴다(additive).
@@ -235,11 +254,26 @@ export default function HeatmapPanel({
             <SensorPlacementOverlay
               placed={placed}
               unplaced={unplacedNames}
+              labels={sensorLabels}
               onPositionChange={handlePositionChange}
               onRemove={handleRemove}
               snap={cfg.editor?.snap}
               markerSize={cfg.editor?.marker_size}
             />
+          )}
+          {/* 진단용 미배치 배지(비가림). 스택이 렌더되는 경로(특히 도면 배경이 붙은 경우)에서는
+              "미배치 N" 안내가 빈 상태 분기에만 있어 영영 표시되지 않았다 → 판독값은 오는데
+              좌표가 없어 아무것도 안 그려지는 히트맵이 "그냥 조용한 히트맵"처럼 보였고, 이것이
+              이 결함의 진단을 어렵게 만든 원인이다. 배경 유무와 무관하게 카운트를 노출하되,
+              그림을 가리지 않도록 작은 모서리 배지 + pointer-events-none 으로 둔다. 배치 편집
+              중에는 미배치 팔레트가 같은 정보를 더 잘 보여주므로 생략한다. */}
+          {!placementActive && unplacedNames.length > 0 && (
+            <span
+              data-testid="heatmap-unplaced-hint"
+              className="pointer-events-none absolute bottom-2 left-2 z-30 max-w-[70%] rounded-md bg-(--color-bg-elevated) px-2 py-1 text-[10px] leading-tight text-(--color-text-muted) shadow"
+            >
+              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedNames.length))}
+            </span>
           )}
           {/* 값→색 색표 범례(additive, 최상단 z-25, pointer-events-none). 편집모드와 무관하게
               표시(뷰어도 봄). off/미설정 시 마운트 안 함 → 회귀 0. */}

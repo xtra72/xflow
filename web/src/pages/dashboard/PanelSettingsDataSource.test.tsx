@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { pickSeriesColor } from './panels/charts/chartChannelTypes';
+import { heatmapSensorId } from './panels/heatmap/sensorIdentity';
 
 const state = vi.hoisted(() => ({
   agents: [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }] as Array<{
@@ -46,6 +47,12 @@ vi.mock('@/services/api/store', () => ({
 }));
 
 import { PanelSettingsDataSource } from './PanelSettingsDataSource';
+
+/**
+ * 히트맵 센서 좌표(sensor_positions)의 키 공간 = 시리즈 동일성 키(key + metric + 정렬 tags).
+ * store key 하나로 키잉하면 같은 key 의 형제 시리즈가 좌표를 공유해버린다(이 결함의 원인).
+ */
+const SID_K1 = heatmapSensorId({ key: 'k1', metric_type: 'temperature', tags: { room: '1' } });
 
 const STORE_SOURCE = {
   agent_id: 'store-uuid-1',
@@ -358,7 +365,7 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
     const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
     fireEvent.click(checkboxes[0]!); // k1 선택
     expect(onConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({ sensor_positions: { k1: { x: 0.5, y: 0.5 } } }),
+      expect.objectContaining({ sensor_positions: { [SID_K1]: { x: 0.5, y: 0.5 } } }),
     );
   });
 
@@ -435,12 +442,187 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
     const select = screen.getByTestId('panel-store-select');
     // 선택된 k1 행을 펼쳐야 인라인 상세의 x/y 입력에 접근할 수 있다(v0.4.0 행 펼침).
     fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
-    const xInput = within(select).getByTestId('heatmap-pos-x-k1') as HTMLInputElement;
+    const xInput = within(select).getByTestId(`heatmap-pos-x-${SID_K1}`) as HTMLInputElement;
     expect(xInput).toBeInTheDocument();
     fireEvent.change(xInput, { target: { value: '0.25' } });
     expect(onConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({ sensor_positions: { k1: { x: 0.25, y: 0.5 } } }),
+      expect.objectContaining({ sensor_positions: { [SID_K1]: { x: 0.25, y: 0.5 } } }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 결함(회귀 방지): 한 store key 를 metric/tags 로 나눠 쓰는 형제 시리즈.
+// 백엔드 GET /keys 는 같은 key 에 대해 시리즈 행을 여러 개 돌려주므로, 좌표를 key 로 키잉하면
+// 형제끼리 좌표 한 칸을 공유하게 되고(같이 움직임) 하나를 해제하면 아직 체크된 형제의 좌표까지
+// 지워져 히트맵이 통째로 비었다("히트맵 시리즈값 적용 안됨"). 좌표 키는 시리즈 동일성 키다.
+// ---------------------------------------------------------------------------
+describe('한 key 를 공유하는 형제 시리즈의 센서 좌표 독립성', () => {
+  /** 같은 key('dup')를 room 태그로 나눠 쓰는 두 시리즈. */
+  const DUP_A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } };
+  const DUP_B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } };
+  const SID_A = heatmapSensorId(DUP_A);
+  const SID_B = heatmapSensorId(DUP_B);
+
+  beforeEach(() => {
+    state.keyObjects = [
+      { ...DUP_A, registration: 'auto', data_type: 'float' },
+      { ...DUP_B, registration: 'auto', data_type: 'float' },
+    ];
+  });
+
+  function heatmapPanel(config: Record<string, unknown>): PanelConfig {
+    return {
+      id: 'p1',
+      type: 'heatmap',
+      title: 'h',
+      config: { data_source: 'store', ...config },
+    } as unknown as PanelConfig;
+  }
+
+  it('둘 다 체크하면 서로 다른 좌표 항목을 갖는다(좌표 공유 없음)', () => {
+    const onConfigChange = vi.fn();
+    // A 는 이미 체크 + 배치된 상태. 여기서 B 를 추가로 체크한다.
+    const panel = heatmapPanel({
+      store_source: { ...STORE_SOURCE, selection_mode: 'keys', series: [{ ...DUP_A, alias: 'dup' }] },
+      sensor_positions: { [SID_A]: { x: 0.2, y: 0.2 } },
+    });
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const checkboxes = screen.getAllByLabelText(
+      'agents.detail.store.selectRowAriaLabel',
+    ) as HTMLInputElement[];
+    expect(checkboxes[0]!.checked).toBe(true); // A
+    expect(checkboxes[1]!.checked).toBe(false); // B(같은 key 지만 별개 시리즈)
+    fireEvent.click(checkboxes[1]!);
+    // A 의 좌표는 그대로, B 는 자기 몫의 기본 좌표를 새로 받는다.
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sensor_positions: { [SID_A]: { x: 0.2, y: 0.2 }, [SID_B]: { x: 0.5, y: 0.5 } },
+      }),
+    );
+  });
+
+  it('한쪽 좌표를 옮겨도 다른 쪽은 움직이지 않는다(입력이 같은 값을 가리키지 않음)', () => {
+    const onConfigChange = vi.fn();
+    const panel = heatmapPanel({
+      store_source: {
+        ...STORE_SOURCE,
+        selection_mode: 'keys',
+        series: [
+          { ...DUP_A, alias: 'A' },
+          { ...DUP_B, alias: 'B' },
+        ],
+      },
+      sensor_positions: { [SID_A]: { x: 0.2, y: 0.2 }, [SID_B]: { x: 0.8, y: 0.8 } },
+    });
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const select = screen.getByTestId('panel-store-select');
+    // 두 행 모두 펼쳐 각자의 x/y 입력을 노출한다.
+    within(select)
+      .getAllByLabelText('agents.detail.store.keyRowExpandAriaLabel')
+      .forEach((btn) => fireEvent.click(btn));
+    const xA = within(select).getByTestId(`heatmap-pos-x-${SID_A}`) as HTMLInputElement;
+    const xB = within(select).getByTestId(`heatmap-pos-x-${SID_B}`) as HTMLInputElement;
+    // 각 입력은 자기 시리즈의 값을 보여준다(공유 시 둘 다 같은 값이 보였다).
+    expect(xA.value).toBe('0.2');
+    expect(xB.value).toBe('0.8');
+    fireEvent.change(xA, { target: { value: '0.1' } });
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sensor_positions: { [SID_A]: { x: 0.1, y: 0.2 }, [SID_B]: { x: 0.8, y: 0.8 } },
+      }),
+    );
+  });
+
+  it('보고된 결함: 한쪽을 체크 해제해도 다른 쪽 좌표가 남는다(해제가 형제 좌표를 지우지 않는다)', () => {
+    // 이 테스트가 결함의 핵심이다. 수정 전 코드는 `sensor_positions[key]` 를 지웠으므로 두
+    // 시리즈가 공유하던 유일한 항목이 사라지고 → 남은 B 가 미배치 → points 0개 → 히트맵이
+    // 아무것도 그리지 않았다.
+    const onConfigChange = vi.fn();
+    const panel = heatmapPanel({
+      store_source: {
+        ...STORE_SOURCE,
+        selection_mode: 'keys',
+        series: [
+          { ...DUP_A, alias: 'A' },
+          { ...DUP_B, alias: 'B' },
+        ],
+      },
+      sensor_positions: { [SID_A]: { x: 0.2, y: 0.2 }, [SID_B]: { x: 0.8, y: 0.8 } },
+    });
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const checkboxes = screen.getAllByLabelText(
+      'agents.detail.store.selectRowAriaLabel',
+    ) as HTMLInputElement[];
+    fireEvent.click(checkboxes[0]!); // A 해제
+    const patch = onConfigChange.mock.calls.at(-1)![0] as {
+      store_source: { series: Array<{ tags?: Record<string, string> }> };
+      sensor_positions?: Record<string, unknown>;
+    };
+    // A 만 선택에서 빠지고,
+    expect(patch.store_source.series).toHaveLength(1);
+    expect(patch.store_source.series[0]!.tags).toEqual({ room: 'B' });
+    // B 의 좌표는 온전히 남는다(= 히트맵이 계속 렌더된다).
+    // (수정 전 코드는 좌표 패치를 아예 내지 않거나 공유 항목을 지워 B 가 미배치가 됐다.
+    //  ?? {} 로 널세이프하게 읽어 TypeError 대신 기대값 불일치로 실패하게 한다.)
+    const nextPositions = patch.sensor_positions ?? {};
+    expect(nextPositions[SID_B]).toEqual({ x: 0.8, y: 0.8 });
+    expect(nextPositions[SID_A]).toBeUndefined();
+  });
+
+  it('하위호환: raw key 로 저장된 옛 좌표는 읽는 시점에 동일성 키로 이관된다(모호하면 첫 시리즈)', () => {
+    const onConfigChange = vi.fn();
+    const panel = heatmapPanel({
+      store_source: {
+        ...STORE_SOURCE,
+        selection_mode: 'keys',
+        series: [
+          { ...DUP_A, alias: 'A' },
+          { ...DUP_B, alias: 'B' },
+        ],
+      },
+      // 옛 스키마: key 하나로 키잉된 좌표(어느 형제 것인지 정보 없음).
+      sensor_positions: { dup: { x: 0.3, y: 0.4 } },
+    });
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const select = screen.getByTestId('panel-store-select');
+    within(select)
+      .getAllByLabelText('agents.detail.store.keyRowExpandAriaLabel')
+      .forEach((btn) => fireEvent.click(btn));
+    // 모호 → config.series 순서상 첫 시리즈(A)로 결정적으로 귀속. B 는 미배치(빈 입력).
+    expect((within(select).getByTestId(`heatmap-pos-x-${SID_A}`) as HTMLInputElement).value).toBe(
+      '0.3',
+    );
+    expect((within(select).getByTestId(`heatmap-pos-x-${SID_B}`) as HTMLInputElement).value).toBe(
+      '',
+    );
+  });
+
+  it('이름(alias) 변경은 좌표 키에 영향을 주지 않는다', () => {
+    const onConfigChange = vi.fn();
+    const panel = heatmapPanel({
+      store_source: {
+        ...STORE_SOURCE,
+        selection_mode: 'keys',
+        series: [{ ...DUP_A, alias: '거실' }],
+      },
+      sensor_positions: { [SID_A]: { x: 0.2, y: 0.2 } },
+    });
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const select = screen.getByTestId('panel-store-select');
+    fireEvent.click(
+      within(select).getAllByLabelText('agents.detail.store.keyRowExpandAriaLabel')[0]!,
+    );
+    // 이름을 바꿔도 좌표 입력은 같은 항목(0.2)을 계속 가리킨다.
+    fireEvent.change(within(select).getByTestId('chart-store-series-alias-0'), {
+      target: { value: '안방' },
+    });
+    expect((within(select).getByTestId(`heatmap-pos-x-${SID_A}`) as HTMLInputElement).value).toBe(
+      '0.2',
+    );
+    const patch = onConfigChange.mock.calls.at(-1)![0] as Record<string, unknown>;
+    // 이름 변경 패치는 좌표를 건드리지 않는다.
+    expect(patch.sensor_positions).toBeUndefined();
   });
 });
 
@@ -519,8 +701,8 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
     expect(within(detail).getByTestId('series-detail-0')).toBeInTheDocument();
     expect(within(detail).getByTestId('chart-store-series-alias-0')).toBeInTheDocument();
     expect(within(detail).getByTestId('chart-store-series-color-0')).toBeInTheDocument();
-    expect(within(detail).getByTestId('heatmap-pos-x-k1')).toBeInTheDocument();
-    expect(within(detail).getByTestId('heatmap-pos-y-k1')).toBeInTheDocument();
+    expect(within(detail).getByTestId(`heatmap-pos-x-${SID_K1}`)).toBeInTheDocument();
+    expect(within(detail).getByTestId(`heatmap-pos-y-${SID_K1}`)).toBeInTheDocument();
   });
 
   it('AC-20(레이아웃) — 색상은 이름 옆이 아닌 전용 색상 행에서 편집 가능(color 보존)', () => {
@@ -568,7 +750,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
     fireEvent.click(within(select).getByLabelText('agents.detail.store.keyRowExpandAriaLabel'));
     const detail = within(select).getByTestId('store-row-detail-k1');
     expect(within(detail).getByTestId('series-detail-0')).toBeInTheDocument();
-    expect(within(detail).queryByTestId('heatmap-pos-x-k1')).toBeNull();
+    expect(within(detail).queryByTestId(`heatmap-pos-x-${SID_K1}`)).toBeNull();
   });
 
   it('AC-24(d) — 세부 편집은 바인딩 모드(ON/OFF)와 무관하게 접근·편집 가능하다', () => {

@@ -13,6 +13,7 @@
 // @spec SPEC-HEATMAP-PANEL-001
 
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
+import { migrateSensorPositions } from './sensorIdentity';
 
 /** IDW 거리 감쇠 지수 기본값(REQ-05). */
 export const DEFAULT_IDW_POWER = 2;
@@ -365,9 +366,15 @@ function parseStoreSource(raw: unknown): StoreSourceConfig {
  */
 export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
   const cfg = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const store_source = parseStoreSource(cfg.store_source);
   return {
-    store_source: parseStoreSource(cfg.store_source),
-    sensor_positions: parseSensorPositions(cfg.sensor_positions),
+    store_source,
+    // 좌표는 시리즈 동일성 키로 키잉된다. raw key 로 저장된 기존 패널은 읽는 시점에 이관한다
+    // (파괴적 쓰기 없음 — 사용자가 좌표/선택을 편집할 때 이관된 맵이 자연스럽게 영속된다).
+    sensor_positions: migrateSensorPositions(
+      parseSensorPositions(cfg.sensor_positions),
+      store_source.series,
+    ).positions,
     value_bounds: parseValueBounds(cfg.value_bounds),
     color_table: parseColorTable(cfg.color_table),
     idw: parseIdw(cfg.idw),

@@ -3,13 +3,59 @@
 
 import { describe, it, expect } from 'vitest';
 
-import type { ChartEntry } from '../charts/chartChannelTypes';
-import { latestFiniteValue, joinSensorPoints } from './heatmapJoin';
+import type { ChartEntry, StoreSeriesRef } from '../charts/chartChannelTypes';
+import { latestFiniteValue, joinSensorPoints, resolveSensorSeries } from './heatmapJoin';
+import { heatmapSensorId } from './sensorIdentity';
 
 /** 타임라인 생성 헬퍼(값 배열 → ChartEntry[]). */
 function series(values: unknown[]): ChartEntry[] {
   return values.map((value, i) => ({ timestamp: i, value }));
 }
+
+describe('resolveSensorSeries — 조회 이름 공간 → 센서 동일성 키 공간', () => {
+  const A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } } as StoreSeriesRef;
+  const B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } } as StoreSeriesRef;
+
+  it('컬럼과 config.series 가 1:1 이면 인덱스로 짝지어 동일성 키를 붙인다', () => {
+    // 훅이 어떤 표시 이름을 쓰든(여기서는 둘 다 기본 alias 'dup') 인덱스로 결합한다.
+    const r = resolveSensorSeries(
+      ['dup', 'dup#2'],
+      new Map([
+        ['dup', series([20])],
+        ['dup#2', series([26])],
+      ]),
+      [A, B],
+    );
+    expect(r.aligned).toBe(true);
+    expect(r.ids).toEqual([heatmapSensorId(A), heatmapSensorId(B)]);
+    // 형제의 타임라인이 서로 섞이지 않는다.
+    expect(latestFiniteValue(r.entriesById.get(heatmapSensorId(A)))).toBe(20);
+    expect(latestFiniteValue(r.entriesById.get(heatmapSensorId(B)))).toBe(26);
+  });
+
+  it('타임라인이 없는 시리즈도 동일성 키는 부여된다(미배치/미판독 구분은 join 이 담당)', () => {
+    const r = resolveSensorSeries(['dup'], new Map(), [A]);
+    expect(r.ids).toEqual([heatmapSensorId(A)]);
+    expect(r.entriesById.size).toBe(0);
+  });
+
+  it('정렬 불가(한 key 가 다중 컬럼으로 확장)면 조회 이름 공간을 그대로 통과시킨다', () => {
+    // 컬럼 2개 vs 요청 시리즈 1개 → 인덱스 짝짓기가 불가능하므로 이름을 그대로 쓴다.
+    const r = resolveSensorSeries(
+      ['dup · temperature{room=A}', 'dup · temperature{room=B}'],
+      new Map([['dup · temperature{room=A}', series([20])]]),
+      [A],
+    );
+    expect(r.aligned).toBe(false);
+    expect(r.ids).toEqual(['dup · temperature{room=A}', 'dup · temperature{room=B}']);
+    // 동일성 키와 맞지 않으므로 좌표 매칭은 실패한다(전부 미배치로 graceful degrade).
+    const join = joinSensorPoints(r.ids, r.entriesById, {
+      [heatmapSensorId(A)]: { x: 0.5, y: 0.5 },
+    });
+    expect(join.points).toEqual([]);
+    expect(join.unplacedNames).toEqual(['dup · temperature{room=A}']);
+  });
+});
 
 describe('latestFiniteValue', () => {
   it('마지막 유한 숫자값을 반환한다', () => {

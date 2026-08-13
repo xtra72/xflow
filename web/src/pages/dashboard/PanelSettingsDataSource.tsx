@@ -55,6 +55,7 @@ import {
   splitTagPairsToDimensions,
 } from './panels/charts/storeColumnValueFilter';
 import type { SensorPosition } from './panels/heatmap/heatmapConfig';
+import { migrateSensorPositions } from './panels/heatmap/sensorIdentity';
 import { SeriesDetailEditor, StoreSourceSection } from './ChartPanelSections';
 import {
   loadPanelStoreTablePrefs,
@@ -168,7 +169,7 @@ function PanelStoreSelectTable({
   // 선택 시 중앙(0.5,0.5) 기본 좌표를 부여하고, 해제 시 좌표 항목을 제거한다(additive —
   // 다른 패널 타입은 위치 부수효과 없음). @spec SPEC-PANEL-SETTINGS-001 (heatmap 시리즈 위치)
   const isHeatmap = panel.type === 'heatmap';
-  const sensorPositions = useMemo(
+  const rawSensorPositions = useMemo(
     () => (config.sensor_positions as Record<string, SensorPosition> | undefined) ?? {},
     [config.sensor_positions],
   );
@@ -323,6 +324,15 @@ function PanelStoreSelectTable({
     () => new Set(series.map((s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}))),
     [series],
   );
+
+  // 센서 좌표는 store key 가 아니라 **시리즈 동일성 키**로 키잉된다. 한 key 가 metric/tags 별
+  // 다중 시리즈로 나뉘므로 key 키잉은 형제끼리 좌표를 공유하게 만들고, 하나를 해제하면 아직
+  // 체크된 형제의 좌표까지 지워져 히트맵이 비어버렸다. 기존 패널(raw key 키잉)은 읽는 시점에
+  // 이관하고, 이후 편집(선택/좌표)이 이관된 맵을 그대로 저장해 자연스럽게 영속된다.
+  const sensorPositions = useMemo(
+    () => (isHeatmap ? migrateSensorPositions(rawSensorPositions, series).positions : rawSensorPositions),
+    [isHeatmap, rawSensorPositions, series],
+  );
   const entryToSeriesId = (entry: StoreEntry): string =>
     storeSeriesId(
       entry.key as string,
@@ -396,14 +406,17 @@ function PanelStoreSelectTable({
 
   // 히트맵 전용(REQ-21): 선택 행 인라인 상세 안에서 센서 좌표(x/y, 0..1)를 편집한다.
   // 한 축만 입력해도 잃지 않도록 부분 병합하고, 둘 다 비면 좌표 항목을 제거한다.
+  // 키는 시리즈 동일성 키다 — 같은 store key 를 공유하는 형제 시리즈가 서로 독립된 좌표를 갖는다.
   const setSensorPosition = useCallback(
-    (key: string, axis: 'x' | 'y', value: number | undefined) => {
-      const cur = { ...((sensorPositions[key] as { x?: number; y?: number } | undefined) ?? {}) };
+    (sensorId: string, axis: 'x' | 'y', value: number | undefined) => {
+      const cur = {
+        ...((sensorPositions[sensorId] as { x?: number; y?: number } | undefined) ?? {}),
+      };
       if (value === undefined) delete cur[axis];
       else cur[axis] = value;
       const nextPositions: Record<string, { x?: number; y?: number }> = { ...sensorPositions };
-      if (cur.x === undefined && cur.y === undefined) delete nextPositions[key];
-      else nextPositions[key] = cur;
+      if (cur.x === undefined && cur.y === undefined) delete nextPositions[sensorId];
+      else nextPositions[sensorId] = cur;
       onConfigChange({ sensor_positions: nextPositions });
     },
     [sensorPositions, onConfigChange],
@@ -421,11 +434,13 @@ function PanelStoreSelectTable({
         );
         const nextStore: Record<string, unknown> = { ...(storeSource ?? {}), series: next };
         const patch: Record<string, unknown> = { store_source: nextStore };
-        // 히트맵: 선택 해제 시 해당 좌표 항목도 제거한다. selection_mode/tag_filters 는 건드리지
-        // 않는다 — 바인딩 모드는 동적 바인딩 토글(REQ-22)이 단독 제어한다(표시/바인딩 분리).
-        if (isHeatmap && sensorPositions[key] !== undefined) {
+        // 히트맵: 선택 해제 시 **그 시리즈의** 좌표 항목만 제거한다(동일성 키 기준). key 기준이면
+        // 같은 key 를 공유하는 아직 체크된 형제의 좌표까지 지워져 히트맵이 비어버린다(이 결함의
+        // 직접 증상). selection_mode/tag_filters 는 건드리지 않는다 — 바인딩 모드는 동적 바인딩
+        // 토글(REQ-22)이 단독 제어한다(표시/바인딩 분리).
+        if (isHeatmap && sensorPositions[id] !== undefined) {
           const nextPositions = { ...sensorPositions };
-          delete nextPositions[key];
+          delete nextPositions[id];
           patch.sensor_positions = nextPositions;
         }
         onConfigChange(patch);
@@ -454,10 +469,11 @@ function PanelStoreSelectTable({
         series: [...series, nextEntry],
       };
       const patch: Record<string, unknown> = { store_source: nextStore };
-      // 히트맵: 좌표가 없으면 중앙(0.5,0.5) 기본 좌표를 부여한다. selection_mode/tag_filters 는
-      // 건드리지 않는다(바인딩 모드는 동적 바인딩 토글이 단독 제어 — 표시/바인딩 분리). REQ-22
-      if (isHeatmap && sensorPositions[key] === undefined) {
-        patch.sensor_positions = { ...sensorPositions, [key]: { x: 0.5, y: 0.5 } };
+      // 히트맵: 좌표가 없으면 중앙(0.5,0.5) 기본 좌표를 부여한다(동일성 키 기준 — 같은 key 의
+      // 형제 시리즈끼리 좌표를 공유하지 않는다). selection_mode/tag_filters 는 건드리지 않는다
+      // (바인딩 모드는 동적 바인딩 토글이 단독 제어 — 표시/바인딩 분리). REQ-22
+      if (isHeatmap && sensorPositions[id] === undefined) {
+        patch.sensor_positions = { ...sensorPositions, [id]: { x: 0.5, y: 0.5 } };
       }
       onConfigChange(patch);
     },
@@ -589,8 +605,8 @@ function PanelStoreSelectTable({
                   positionEditor={
                     isHeatmap ? (
                       <SensorPositionInputs
-                        seriesKey={s.key}
-                        pos={sensorPositions[s.key] as { x?: number; y?: number } | undefined}
+                        sensorId={id}
+                        pos={sensorPositions[id] as { x?: number; y?: number } | undefined}
                         onChange={setSensorPosition}
                         t={t}
                       />
@@ -636,23 +652,25 @@ function PanelStoreSelectTable({
 /**
  * heatmap 전용(REQ-21): 선택 행 인라인 상세 안에서 편집하는 센서 좌표(x/y, 0..1) 입력.
  * 프리뷰 마커 드래그와 동일한 sensor_positions 를 편집한다(별도 heatmap 영역에서 이동).
+ * 키는 시리즈 동일성 키(`storeSeriesId`)다 — store key 를 공유하는 형제 시리즈가 각자의
+ * 좌표 입력을 갖도록(예전에는 같은 값을 가리켜 함께 움직였다).
  * @spec SPEC-PANEL-SETTINGS-001 (REQ-21)
  */
 function SensorPositionInputs({
-  seriesKey,
+  sensorId,
   pos,
   onChange,
   t,
 }: {
-  seriesKey: string;
+  sensorId: string;
   pos: { x?: number; y?: number } | undefined;
-  onChange: (key: string, axis: 'x' | 'y', value: number | undefined) => void;
+  onChange: (sensorId: string, axis: 'x' | 'y', value: number | undefined) => void;
   t: TranslationFn;
 }): React.ReactElement {
   const inputClass =
     'w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500';
   return (
-    <div className="flex items-center gap-2" data-testid={`series-position-${seriesKey}`}>
+    <div className="flex items-center gap-2" data-testid={`series-position-${sensorId}`}>
       <label className="text-sm font-medium text-(--color-text-muted)">
         {t('dashboard.settings.seriesDetailsPositionX')}
       </label>
@@ -662,10 +680,10 @@ function SensorPositionInputs({
         max={1}
         step={0.05}
         value={pos?.x !== undefined ? String(pos.x) : ''}
-        data-testid={`heatmap-pos-x-${seriesKey}`}
+        data-testid={`heatmap-pos-x-${sensorId}`}
         placeholder="x"
         onChange={(e) =>
-          onChange(seriesKey, 'x', e.target.value === '' ? undefined : Number(e.target.value))
+          onChange(sensorId, 'x', e.target.value === '' ? undefined : Number(e.target.value))
         }
         className={inputClass}
       />
@@ -678,10 +696,10 @@ function SensorPositionInputs({
         max={1}
         step={0.05}
         value={pos?.y !== undefined ? String(pos.y) : ''}
-        data-testid={`heatmap-pos-y-${seriesKey}`}
+        data-testid={`heatmap-pos-y-${sensorId}`}
         placeholder="y"
         onChange={(e) =>
-          onChange(seriesKey, 'y', e.target.value === '' ? undefined : Number(e.target.value))
+          onChange(sensorId, 'y', e.target.value === '' ? undefined : Number(e.target.value))
         }
         className={inputClass}
       />
