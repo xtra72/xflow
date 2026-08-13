@@ -13,7 +13,7 @@
 // 단일 확장(DeviceListPage 관용구)이 아니라 XsfmStationsTab 의 다중 확장을 따른다.
 
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Info, RadioTower } from 'lucide-react';
+import { ChevronDown, ChevronRight, RadioTower } from 'lucide-react';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
 import {
@@ -131,10 +131,6 @@ export default function ChirpstackGatewaysTab({ agentId }: { agentId: string }) 
             {t('agents.detail.gateways.count').replace('{count}', String(gateways.length))}
           </span>
         </div>
-        <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-(--color-text-muted)">
-          <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          <span>{t('agents.detail.gateways.rosterHint')}</span>
-        </p>
       </div>
 
       <TablePagination

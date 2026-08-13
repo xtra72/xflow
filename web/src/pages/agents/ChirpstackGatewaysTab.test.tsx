@@ -230,9 +230,4 @@ describe('ChirpstackGatewaysTab 빈 상태', () => {
     await waitFor(() => expect(screen.getByText('수신된 게이트웨이가 없습니다.')).toBeTruthy());
   });
 
-  it('목록이 채워진 경우에도 로스터 불완전성 힌트를 노출한다', async () => {
-    renderTab();
-    await waitFor(() => expect(screen.getByText('gwA')).toBeTruthy());
-    expect(screen.getByText(/업링크에서 추론된 것이라 완전하지 않습니다/)).toBeTruthy();
-  });
 });

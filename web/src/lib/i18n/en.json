@@ -1473,7 +1473,6 @@
         "loading": "Loading gateways...",
         "noGateways": "No gateways have been seen yet.",
         "rosterLimitation": "The gateway roster is inferred from received uplinks only. A gateway whose devices are all silent does not appear, and a gateway that covers no device is never discovered at all. Uplinks also carry no gateway name or location, so gateways are shown by their EUI64 hex ID. Do not read this list as the complete set of deployed gateways.",
-        "rosterHint": "This roster is inferred from uplinks and is therefore incomplete — silent gateways are missing, and names/locations cannot be obtained from uplinks, so only hex IDs are shown.",
         "remoteUnavailable": "The gateway roster is not available for remote nodes. Check it on that node directly.",
         "gatewayId": "Gateway ID",
         "deviceCount": "Devices",
