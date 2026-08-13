@@ -33,7 +33,7 @@ import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
 import { useTranslation } from '@/lib/i18n';
-import { useDashboardSync } from '@/hooks/useDashboardSync';
+import { useDashboardSyncStatus } from '@/contexts/DashboardSyncContext';
 import { isRemoteTarget, LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { getMetrics } from '@/services/api/monitorService';
 import { useAuthStore } from '@/stores/authStore';
@@ -94,8 +94,10 @@ function LocalDashboardView() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 훅.
-  const { pendingSync } = useDashboardSync();
+  // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 상태(읽기 전용).
+  // 실제 동기화 훅(useDashboardSync)은 AppLayout 이 호출한다 — 패널 추가/설정
+  // 라우트로 이동해도 구독이 끊기지 않아야 하기 때문(AppLayout 주석 참조).
+  const { pendingSync } = useDashboardSyncStatus();
 
   // SPEC-DASHBOARD-001 v0.2.0: 활성 스코프 (탭) + 사용자 역할.
   const activeDashboardScope = useUIStore((s) => s.activeDashboardScope);

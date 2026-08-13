@@ -9,7 +9,12 @@
 // @spec SPEC-WEB-006 v0.1.0 (M1, M11)
 
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
+import {
+  createBrowserRouter,
+  Navigate,
+  RouterProvider,
+  type RouteObject,
+} from 'react-router';
 
 import AppLayout from '@/components/layout/AppLayout';
 import AuthGuard from '@/components/layout/AuthGuard';
@@ -55,8 +60,20 @@ function SuspenseWrapper({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<LoadingSpinner />}>{children}</Suspense>;
 }
 
-/** 앱 라우트 정의 */
-const router = createBrowserRouter([
+/**
+ * 앱 라우트 정의.
+ *
+ * 배열로 분리해 export 하는 이유: 테스트가 `createMemoryRouter(appRoutes)` 로
+ * 실제 라우트 트리(부모-자식 중첩 관계 포함)를 그대로 마운트할 수 있어야 한다.
+ * 특히 `/`, `/panels/new`, `/panels/:panelId/settings` 가 AppLayout 의 형제
+ * 자식이라는 사실이 대시보드 동기화 동작에 영향을 준다(AppLayout 주석 참조).
+ *
+ * react-refresh 경고 억제 사유: 라우트 테이블은 컴포넌트가 아니지만 이 파일이
+ * 유일한 소유자이고, 라우트 정의가 바뀌면 어차피 라우터 전체가 재마운트되므로
+ * fast refresh 세분화의 이점이 없다.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export const appRoutes: RouteObject[] = [
   // 인증 불필요 - 로그인 페이지
   {
     path: '/login',
@@ -259,7 +276,9 @@ const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+const router = createBrowserRouter(appRoutes);
 
 /**
  * 앱 라우터 컴포넌트.

@@ -78,8 +78,18 @@ function getSnapshotForScope(scope: Scope): DashboardSnapshot | null {
 /**
  * 대시보드 서버 snapshot 과 클라이언트 메모리 상태를 양방향 동기화하는 훅.
  *
- * App 루트(예: DashboardPage 또는 AppLayout) 에서 단 한 번만 호출해야 한다.
- * 여러 곳에서 호출하면 부팅 GET 과 PUT 이 중복 발생할 수 있다.
+ * 호출 위치는 `AppLayout` 단 한 곳이다 (SPEC-DASHBOARD-001 v0.2.0).
+ * 상태를 읽기만 하는 화면은 `useDashboardSyncStatus()` (DashboardSyncContext) 를 쓴다.
+ *
+ * - 여러 곳에서 호출하면 부팅 GET 과 PUT 이 중복 발생한다.
+ * - 라우트 컴포넌트(예: DashboardPage) 에서 호출하면 형제 라우트(`/panels/new`)로
+ *   이동할 때 언마운트되어 저장 PUT 이 유실되고, 복귀 시 부팅 GET 이 로컬 변경을
+ *   덮어쓴다.
+ *
+ * 부팅 GET 은 훅 인스턴스당 1회(`bootedRef`)다 — 즉 앱 셸이 마운트될 때 한 번만
+ * 실행되며, 라우트 전환으로는 재실행되지 않는다. 스코프 전환(공유 ↔ 내 대시보드)
+ * 도 재요청을 유발하지 않는다: 부팅 시 두 스코프 snapshot 을 모두 받아두고
+ * `setActiveDashboardScope` 가 해당 payload 를 legacy 필드로 투영한다.
  */
 export function useDashboardSync(): DashboardSyncStatus {
   const { t } = useTranslation();

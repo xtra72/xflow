@@ -4,9 +4,13 @@
 //   - 일반(읽기) 모드 헤더에 갱신 주기 셀렉터가 렌더되고 현재 값(초)을 표시한다.
 //   - 항목 선택 시 store 의 setDashboardRefreshInterval 이 호출되어 값이 반영된다.
 //
-// 무거운 데이터 훅(useFlows/useWebSocket/useDashboardSync)과 GridLayout/패널 렌더러는
+// 무거운 데이터 훅(useFlows/useWebSocket)과 GridLayout/패널 렌더러는
 // 스텁으로 대체하고, UI store 는 영속 싱글톤(useUIStore)을 실제로 사용한다
 // (RemoteDashboardView.test.tsx 패턴 동일).
+//
+// 동기화 훅(useDashboardSync)은 DashboardPage 가 아니라 AppLayout 이 호출하므로
+// 여기서 스텁할 필요가 없다 — Provider 부재 시 DashboardSyncContext 기본값
+// (pendingSync=false)이 사용된다.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -18,9 +22,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/hooks', () => ({
   useFlows: () => ({ data: { data: [] }, isLoading: false, error: null }),
   useWebSocket: () => ({ state: 'connected', client: null }),
-}));
-vi.mock('@/hooks/useDashboardSync', () => ({
-  useDashboardSync: () => ({ pendingSync: false }),
 }));
 vi.mock('@/services/api/monitorService', () => ({
   getMetrics: vi.fn().mockResolvedValue(null),
