@@ -28,7 +28,7 @@ func TestBuildMeasurementRecords_SingleScalar(t *testing.T) {
 		t.Fatalf("decodeUplink: %v", err)
 	}
 
-	recs := buildMeasurementRecords(up, silentLogger())
+	recs := buildMeasurementRecords(up, parseUplinkTimeMs(up.Time), silentLogger())
 	if len(recs) != 1 {
 		t.Fatalf("len(records) = %d, want 1", len(recs))
 	}
@@ -68,7 +68,7 @@ func TestBuildMeasurementRecords_MultiFanout(t *testing.T) {
 		},
 	}
 
-	recs := buildMeasurementRecords(up, silentLogger())
+	recs := buildMeasurementRecords(up, parseUplinkTimeMs(up.Time), silentLogger())
 	if len(recs) != 4 {
 		t.Fatalf("len(records) = %d, want 4", len(recs))
 	}
@@ -107,7 +107,7 @@ func TestBuildMeasurementRecords_NonScalarSkip(t *testing.T) {
 		},
 	}
 
-	recs := buildMeasurementRecords(up, silentLogger())
+	recs := buildMeasurementRecords(up, parseUplinkTimeMs(up.Time), silentLogger())
 	if len(recs) != 1 {
 		t.Fatalf("len(records) = %d, want 1 (only scalar sibling)", len(recs))
 	}

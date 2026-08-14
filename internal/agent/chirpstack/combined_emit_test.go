@@ -242,7 +242,7 @@ func TestBuildCombinedMeasurementRecord_NonScalarSkip(t *testing.T) {
 		},
 	}
 
-	rec, ok := buildCombinedMeasurementRecord(up, silentLogger())
+	rec, ok := buildCombinedMeasurementRecord(up, parseUplinkTimeMs(up.Time), silentLogger())
 	if !ok {
 		t.Fatal("ok = false, want true (스칼라 형제 존재)")
 	}
@@ -277,7 +277,7 @@ func TestEmitMode_Combined_ZeroScalarEmitsNothing(t *testing.T) {
 	}
 
 	// object 자체가 비어 있는 경우도 동일하다.
-	if _, ok := buildCombinedMeasurementRecord(&uplink{DeviceInfo: uplinkDeviceInfo{DevEui: "e"}}, silentLogger()); ok {
+	if _, ok := buildCombinedMeasurementRecord(&uplink{DeviceInfo: uplinkDeviceInfo{DevEui: "e"}}, 0, silentLogger()); ok {
 		t.Error("빈 object 는 ok=false 여야 한다")
 	}
 }

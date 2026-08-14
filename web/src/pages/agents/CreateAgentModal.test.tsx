@@ -120,7 +120,7 @@ describe('CreateAgentModal 2열 레이아웃 분기', () => {
       expect(left.has(k), `연결 컬럼 누락: ${k}`).toBe(true);
     }
     // 운영 필드는 "left 에 없는 전부" 규칙으로 우측에 배치된다.
-    for (const k of ['topics', 'qos', 'buffer_size', 'emit_comm_state', 'comm_report_interval', 'offline_threshold', 'measurement_emit_mode']) {
+    for (const k of ['topics', 'qos', 'buffer_size', 'emit_comm_state', 'comm_report_interval', 'offline_threshold', 'measurement_emit_mode', 'timestamp_source']) {
       expect(left.has(k), `운영 필드가 연결 컬럼에 잘못 포함: ${k}`).toBe(false);
     }
   });

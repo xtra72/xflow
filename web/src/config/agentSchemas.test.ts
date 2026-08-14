@@ -180,3 +180,37 @@ describe('chirpstack 측정치 방출 모드 스키마', () => {
     }
   });
 });
+
+// chirpstack 타임스탬프 소스 — opt-in server(수신 시각) 노브.
+//
+// 백엔드 Transport.Options 키(internal/agent/chirpstack/config.go 의 timestamp_source)와
+// 1:1 매핑되어야 하며, 기본값은 현행 동작(업링크 time 필드)과 바이트 동일해야 한다
+// (무회귀, REQ-FROZEN-02 / REQ-FROZEN-A).
+describe('chirpstack 타임스탬프 소스 스키마', () => {
+  const chirpField = (name: string): ConfigField | undefined =>
+    getAgentConfigSchema('chirpstack')?.fields.find((f) => f.name === name);
+
+  it('timestamp_source 가 select 위젯으로 노출된다', () => {
+    const src = chirpField('timestamp_source');
+    expect(src).toBeDefined();
+    expect(src!.type).toBe('select');
+  });
+
+  it('enum 은 uplink/server 이며 기본값은 uplink 이다', () => {
+    const src = chirpField('timestamp_source')!;
+    expect(src.options).toEqual(['uplink', 'server']);
+    expect(src.default).toBe('uplink');
+  });
+
+  it('기본값이 현행 동작과 동일하다(업링크 time 필드 — 무회귀)', () => {
+    const defaults = getAgentConfigDefaults('chirpstack');
+    expect(defaults.timestamp_source).toBe('uplink');
+  });
+
+  it('설명이 두 값의 의미와 server 선택 이유(시계 오차)를 명시한다', () => {
+    const desc = chirpField('timestamp_source')!.description ?? '';
+    expect(desc).toContain('uplink');
+    expect(desc).toContain('server');
+    expect(desc).toContain('시계');
+  });
+});

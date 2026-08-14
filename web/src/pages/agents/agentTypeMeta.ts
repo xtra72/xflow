@@ -370,6 +370,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       { name: 'buffer_size', type: 'number', required: false, description: '수신 메시지 버퍼 크기', default: '1024' },
       { name: 'connect_timeout_sec', type: 'number', required: false, description: '연결 타임아웃 (초)', default: '10' },
       { name: 'measurement_emit_mode', type: 'select', required: false, description: '측정치 방출 모드. per_measurement: 측정치마다 메시지 1개(payload.value + metadata.measurement). combined: 업링크 1건을 메시지 1개로 합침(payload 최상위에 측정치 이름별 값, metadata.measurement 없음)', default: 'per_measurement' },
+      { name: 'timestamp_source', type: 'select', required: false, description: '메시지 타임스탬프 소스. uplink: 업링크 payload 의 time 값(디바이스/게이트웨이 시각). server: 서버가 업링크를 받은 시각. 장비 시계가 틀어져 순서가 어긋날 때 server 를 쓴다(업링크 1건의 모든 측정치가 동일 수신 시각을 공유)', default: 'uplink' },
       { name: 'emit_comm_state', type: 'boolean', required: false, description: 'device_state 이벤트 발행 게이트 (comm-state)', default: 'false' },
       { name: 'comm_report_interval', type: 'string', required: false, description: 'comm-state 주기 report 간격 (예: 60s, 0 이면 주기 report off, change 는 유지)' },
       { name: 'offline_threshold', type: 'string', required: false, description: '마지막 업링크 후 이 시간 경과 시 offline 판정', default: '300s' },

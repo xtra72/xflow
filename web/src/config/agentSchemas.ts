@@ -77,6 +77,16 @@ const CHIRPSTACK_FIELDS: ConfigField[] = [
     description:
       'per_measurement: 업링크 1건의 측정치마다 메시지 1개를 만듭니다 (예: 온도/습도 → 메시지 2개, payload.value 에 값 1개, metadata.measurement 에 측정치 이름). combined: 업링크 1건을 메시지 1개로 합칩니다 (예: 온도/습도 → 메시지 1개, payload 에 {"temperature": 29.8, "humidity": 55.2} 형태로 모든 측정치, metadata.measurement 없음). 시간/디바이스/태그는 두 모드가 동일합니다.',
   },
+  // 타임스탬프 소스 (opt-in). 기본값은 현행 동작(업링크 time 필드)과 동일하다.
+  {
+    name: 'timestamp_source',
+    type: 'select',
+    label: '타임스탬프 소스',
+    options: ['uplink', 'server'],
+    default: 'uplink',
+    description:
+      'uplink: 업링크에 실려 온 time 값(디바이스/게이트웨이가 찍은 시각)을 메시지 시간으로 씁니다. server: 서버가 업링크를 받은 시각을 메시지 시간으로 씁니다. 디바이스나 게이트웨이의 시계가 틀어져 있거나 서로 어긋나 데이터 순서가 뒤죽박죽이면 server 를 선택하세요. 업링크 1건에서 나온 모든 측정치는 동일한 수신 시각을 공유합니다.',
+  },
   // comm-state 노브 (M5, REQ-FROZEN-03 / REQ-M5-01/03/04).
   { name: 'emit_comm_state', type: 'boolean', label: 'comm-state 발행', default: false, description: 'device_state 이벤트 발행 게이트' },
   { name: 'comm_report_interval', type: 'string', label: 'comm-state 주기 report 간격', description: '예: 60s, 0 이면 주기 report off (change 는 유지)' },

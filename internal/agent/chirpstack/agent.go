@@ -120,6 +120,12 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 	if err := validateMeasurementEmitMode(config.Transport.Options); err != nil {
 		return nil, err
 	}
+	// timestamp_source 도 같은 이유로 생성 경로에서 무효값을 거부한다 — 오타가 조용히
+	// uplink 로 폴백하면 "server 를 켰는데 왜 여전히 장비 시계 시각이지" 를 진단할
+	// 단서가 사라진다.
+	if err := validateTimestampSource(config.Transport.Options); err != nil {
+		return nil, err
+	}
 
 	if err := claimAgentName(config.Name, config.ID); err != nil {
 		return nil, err
@@ -313,8 +319,19 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 		return
 	}
 
+	// 타임스탬프 확정 지점 — 업링크 1건당 정확히 한 번.
+	//
+	// receivedAt(수신 시각)은 여기서 1회만 캡처한다. server 모드에서 각 레코드가 각자
+	// time.Now() 를 부르면 같은 업링크에서 나온 측정치들이 마이크로초씩 다른 시각을
+	// 갖게 되고, flow message 와 로스터 캐시의 시각도 어긋난다.
+	//
+	// timestamp_source 스냅샷을 매 업링크마다 읽으므로 Configure 의 모드 전환이 즉시
+	// 반영된다 (emit_comm_state / measurement_emit_mode 게이트와 동일한 규약).
+	receivedAt := time.Now()
+	timeMs := resolveUplinkTimeMs(up, a.cs().TimestampSource, receivedAt)
+
 	// 디바이스 자동 생성/갱신 + UID 발급 + 런타임 info 등록 (M4, REQ-M4-01/02/04).
-	a.upsertDevice(up)
+	a.upsertDevice(up, timeMs)
 
 	// comm-state fold: 활성화 시 last-seen 갱신 + online 전이 change emit (M5, REQ-M5-02).
 	// 매 업링크마다 현재 스냅샷을 읽으므로 Configure 의 emit_comm_state 토글이 이 게이트에는
@@ -326,11 +343,11 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 	// measurement_emit_mode 스냅샷을 매 업링크마다 읽으므로 Configure 의 모드 전환이
 	// 즉시 반영된다 (emit_comm_state 게이트와 동일한 규약).
 	if a.cs().MeasurementEmitMode == measurementEmitModeCombined {
-		a.emitCombinedRecord(up, topic)
+		a.emitCombinedRecord(up, timeMs, topic)
 		return
 	}
 
-	records := buildMeasurementRecords(up, a.logger)
+	records := buildMeasurementRecords(up, timeMs, a.logger)
 	for i := range records {
 		b, err := json.Marshal(records[i])
 		if err != nil {
@@ -346,8 +363,8 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 // (measurement_emit_mode="combined").
 //
 // 스칼라 measurement 가 없으면 아무것도 방출하지 않는다(빈 payload 메시지 금지).
-func (a *ChirpStackAgent) emitCombinedRecord(up *uplink, topic string) {
-	rec, ok := buildCombinedMeasurementRecord(up, a.logger)
+func (a *ChirpStackAgent) emitCombinedRecord(up *uplink, timeMs int64, topic string) {
+	rec, ok := buildCombinedMeasurementRecord(up, timeMs, a.logger)
 	if !ok {
 		return
 	}

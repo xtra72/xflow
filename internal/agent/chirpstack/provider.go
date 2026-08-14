@@ -210,8 +210,12 @@ func deviceOnline(lastSeen time.Time, threshold time.Duration) bool {
 //   - SetDeviceInfo(agentName, devEui, {DeviceType=deviceProfileName, Label=deviceName}).
 //   - 로스터 upsert: deviceName/tags 지속화(Device.Metadata 로 노출).
 //
+// timeMs 는 호출자(handleUplink)가 업링크 1건마다 1회 확정한 타임스탬프이다
+// (resolveUplinkTimeMs 참조) — emit 경로와 동일한 값을 받으므로 두 표면이 어긋날 수
+// 없다.
+//
 // HVAC 락 함정 회피: agentName 은 devicesMu 획득 전에 1회 캡처한다.
-func (a *ChirpStackAgent) upsertDevice(up *uplink) {
+func (a *ChirpStackAgent) upsertDevice(up *uplink, timeMs int64) {
 	devEui := up.DeviceInfo.DevEui
 	if devEui == "" {
 		return
@@ -224,17 +228,17 @@ func (a *ChirpStackAgent) upsertDevice(up *uplink) {
 	now := time.Now()
 
 	// measurement 갱신 시각은 emit 경로(buildMeasurementRecords /
-	// buildCombinedMeasurementRecord)와 동일한 parseUplinkTimeMs 로 업링크에서 파생한다.
-	// time.Now() 를 쓰면 같은 업링크가 만든 flow message 의 $.timestamp 와 로스터의
+	// buildCombinedMeasurementRecord)가 쓰는 것과 문자 그대로 동일한 값을 인자로 받는다.
+	// 여기서 다시 파생하면 같은 업링크가 만든 flow message 의 $.timestamp 와 로스터의
 	// time_ms 가 어긋나, 두 표면을 대조하는 소비자가 두 개의 서로 다른 "측정 시각"을
 	// 보게 된다.
 	//
-	// 폴백(업링크 time 이 없거나 RFC3339 파싱 실패 → parseUplinkTimeMs 가 0):
+	// 폴백(uplink 모드에서 업링크 time 이 없거나 RFC3339 파싱 실패 → timeMs 가 0):
 	// 수신 시각(now)을 쓴다. 0 을 그대로 두면 모든 측정치가 1970 으로 보여 신선도
 	// 비교라는 이 필드의 목적 자체가 무너진다. 수신 시각은 flow message 와도 어긋나지
 	// 않는다 — 노드는 time_ms<=0 이면 timestamp 를 세팅하지 않고 message.New() 의
 	// 기본값(수신 시각)을 쓰므로(buildChirpStackMessage), 양쪽 모두 수신 시각이 된다.
-	timeMs := parseUplinkTimeMs(up.Time)
+	// server 모드에서는 timeMs 가 항상 양수이므로 이 폴백은 무동작이다.
 	if timeMs <= 0 {
 		timeMs = now.UnixMilli()
 	}

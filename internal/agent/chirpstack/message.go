@@ -108,9 +108,12 @@ type combinedMeasurementRecord struct {
 //   - 결정성을 위해 measurement 키를 정렬해 순회한다(경고 로그 순서 고정).
 //   - top-level timestamp / unit_id / tags(verbatim) 는 per-measurement 와 동일.
 //
+// timeMs 는 호출자(handleUplink)가 업링크 1건마다 1회 확정한 타임스탬프이다 —
+// 이 함수가 직접 설정을 읽어 파생하지 않는다(resolveUplinkTimeMs 주석 참조).
+//
 // 스칼라 measurement 가 하나도 없으면 ok=false 를 반환한다 — 빈 payload 메시지를
 // 방출하지 않는다(다운스트림에 의미 없는 이벤트를 흘리지 않음).
-func buildCombinedMeasurementRecord(up *uplink, logger *slog.Logger) (combinedMeasurementRecord, bool) {
+func buildCombinedMeasurementRecord(up *uplink, timeMs int64, logger *slog.Logger) (combinedMeasurementRecord, bool) {
 	devEui := up.DeviceInfo.DevEui
 
 	keys := make([]string, 0, len(up.Object))
@@ -139,7 +142,7 @@ func buildCombinedMeasurementRecord(up *uplink, logger *slog.Logger) (combinedMe
 		Record: recordKindMeasurements,
 		Values: values,
 		UnitID: devEui,
-		TimeMs: parseUplinkTimeMs(up.Time),
+		TimeMs: timeMs,
 		Tags:   up.DeviceInfo.Tags,
 	}, true
 }
@@ -168,14 +171,39 @@ func parseUplinkTimeMs(s string) int64 {
 	return t.UnixMilli()
 }
 
+// resolveUplinkTimeMs 는 timestamp_source 설정에 따라 업링크 1건의 타임스탬프를 확정한다.
+//
+// 이 함수는 업링크 처리 경로에서 단 한 번만 호출되며(handleUplink), 그 결과가 그
+// 업링크에서 파생되는 모든 레코드(per-measurement / combined / 로스터 measurement
+// 캐시)에 그대로 전달된다. 각 빌더가 설정을 따로 읽어 각자 파생하면 세 표면이 서로
+// 어긋날 수 있고(특히 server 모드에서는 호출 시점마다 마이크로초가 달라진다), 그
+// 불일치는 "flow message 의 시각과 캐시의 시각이 다르다" 는 형태로 소비자에게 드러난다.
+// 단일 확정 지점이 그 어긋남을 구조적으로 불가능하게 만든다.
+//
+//   - server: receivedAt(업링크를 처리하기 시작한 서버 시각)의 UnixMilli.
+//     게이트웨이/디바이스 시계가 틀어져 있어도 서버 기준의 일관된 순서를 얻는다.
+//   - uplink(기본) 및 그 외 모든 값: 기존 동작 그대로 parseUplinkTimeMs(up.Time).
+//     업링크 time 이 없거나 파싱에 실패하면 0 을 반환하며, 0 의 의미(다운스트림이
+//     "타임스탬프 없음" 으로 보아 메시지 생성 시각으로 폴백)까지 동결 경로와 동일하다 —
+//     여기서 receivedAt 으로 폴백하면 REQ-FROZEN-02 / REQ-FROZEN-A 의 $.timestamp
+//     계약이 바뀐다.
+func resolveUplinkTimeMs(up *uplink, source string, receivedAt time.Time) int64 {
+	if source == timestampSourceServer {
+		return receivedAt.UnixMilli()
+	}
+	return parseUplinkTimeMs(up.Time)
+}
+
 // buildMeasurementRecords 는 업링크의 object 를 measurement 당 1개 레코드로 fan-out
 // 한다 (REQ-FROZEN-01, REQ-M3-02).
 //
 //   - 스칼라 값만 방출한다. 비스칼라(중첩 객체/배열)는 skip + 경고 로그(REQ-M3-05).
 //   - 결정성을 위해 measurement 키를 정렬한다.
 //   - 모든 레코드는 동일 top-level timestamp / unit_id / tags(verbatim) 를 공유한다.
-func buildMeasurementRecords(up *uplink, logger *slog.Logger) []measurementRecord {
-	timeMs := parseUplinkTimeMs(up.Time)
+//
+// timeMs 는 호출자(handleUplink)가 업링크 1건마다 1회 확정한 타임스탬프이다
+// (resolveUplinkTimeMs 주석 참조).
+func buildMeasurementRecords(up *uplink, timeMs int64, logger *slog.Logger) []measurementRecord {
 	devEui := up.DeviceInfo.DevEui
 	tags := up.DeviceInfo.Tags
 

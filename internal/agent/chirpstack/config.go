@@ -33,6 +33,24 @@ const (
 // 로 돌아가면 "왜 여전히 2개가 오지" 를 디버깅할 단서가 전혀 남지 않는다.
 var ErrInvalidMeasurementEmitMode = errors.New("chirpstack: invalid measurement_emit_mode (must be 'per_measurement' or 'combined')")
 
+// 타임스탬프 소스 (timestamp_source).
+//
+//   - uplink(기본): 업링크 payload 의 time 필드(RFC3339)를 메시지 타임스탬프로 쓴다.
+//     REQ-FROZEN-02 / REQ-FROZEN-A 의 동결된 기본 경로이며 절대 변경되지 않는다.
+//   - server: 업링크를 수신한 서버 시각을 메시지 타임스탬프로 쓴다. 게이트웨이/디바이스
+//     시계가 틀어져 있어도 서버 기준의 일관된 순서를 얻는 opt-in 경로이다.
+const (
+	timestampSourceUplink = "uplink"
+	timestampSourceServer = "server"
+)
+
+// ErrInvalidTimestampSource 는 timestamp_source 가 uplink/server 이외일 때 반환된다.
+//
+// ErrInvalidMeasurementEmitMode 와 동일한 검증 규율이다 — 조용한 폴백 대신 설정 오타를
+// 조기에 드러낸다. server 를 의도한 오타가 조용히 uplink 로 돌아가면 "왜 여전히 장비
+// 시계 시각이 찍히지" 를 진단할 단서가 전혀 남지 않는다.
+var ErrInvalidTimestampSource = errors.New("chirpstack: invalid timestamp_source (must be 'uplink' or 'server')")
+
 // ChirpStackConfig 는 ChirpStack 에이전트의 트랜스포트 설정이다.
 //
 // system/mqtt_agent.go 의 MQTTConfig 트랜스포트 서브셋을 미러링한다(발행 노브 제외).
@@ -59,6 +77,10 @@ type ChirpStackConfig struct {
 	// MeasurementEmitMode 는 업링크 1건을 몇 개의 메시지로 방출할지 결정한다.
 	// "per_measurement"(기본, 동결 경로) | "combined"(opt-in).
 	MeasurementEmitMode string
+
+	// TimestampSource 는 메시지 타임스탬프를 어디에서 가져올지 결정한다.
+	// "uplink"(기본, 동결 경로: payload 의 time 필드) | "server"(opt-in: 수신 시각).
+	TimestampSource string
 }
 
 // defaultOfflineThreshold 는 업링크 staleness→offline 판정의 보수적 기본 임계이다.
@@ -81,6 +103,7 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 		ConnectTimeoutSec:   10,
 		OfflineThreshold:    defaultOfflineThreshold,
 		MeasurementEmitMode: measurementEmitModePerMeasurement,
+		TimestampSource:     timestampSourceUplink,
 	}
 
 	opts := cfg.Transport.Options
@@ -149,6 +172,16 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 		}
 	}
 
+	// timestamp_source: measurement_emit_mode 와 동일한 규약 — 유효값만 반영하고
+	// 무효값은 호출자(validateTimestampSource)가 이미 거부했거나 거부할 것이므로
+	// 여기서는 기본값(uplink)을 유지한다.
+	if v, ok := opts["timestamp_source"].(string); ok {
+		switch v {
+		case timestampSourceUplink, timestampSourceServer:
+			cc.TimestampSource = v
+		}
+	}
+
 	return cc
 }
 
@@ -170,6 +203,28 @@ func validateMeasurementEmitMode(opts map[string]any) error {
 		return nil
 	default:
 		return fmt.Errorf("%w: got %q", ErrInvalidMeasurementEmitMode, s)
+	}
+}
+
+// validateTimestampSource 는 timestamp_source 옵션의 타입/enum 을 검증한다.
+//
+// validateMeasurementEmitMode 와 동형이다: 키가 없거나 빈 문자열이면 "미지정"으로 보아
+// 기본값(uplink)을 허용하고, 그 외 무효값은 ErrInvalidTimestampSource 로 거부한다
+// (조용한 폴백 금지).
+func validateTimestampSource(opts map[string]any) error {
+	v, ok := opts["timestamp_source"]
+	if !ok {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("%w: 문자열이어야 합니다 (got %T)", ErrInvalidTimestampSource, v)
+	}
+	switch s {
+	case "", timestampSourceUplink, timestampSourceServer:
+		return nil
+	default:
+		return fmt.Errorf("%w: got %q", ErrInvalidTimestampSource, s)
 	}
 }
 
@@ -241,7 +296,10 @@ func validateChirpStackOptions(opts map[string]any) error {
 			return fmt.Errorf("%s duration 파싱 실패 (%q): %w", key, s, err)
 		}
 	}
-	return validateMeasurementEmitMode(opts)
+	if err := validateMeasurementEmitMode(opts); err != nil {
+		return err
+	}
+	return validateTimestampSource(opts)
 }
 
 // isNumeric 은 toInt / toDuration 이 숫자로 해석할 수 있는 타입인지 판별한다.
