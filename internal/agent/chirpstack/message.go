@@ -77,12 +77,17 @@ func buildDeviceStateRecord(devEui, trigger string, e commEntry) deviceStateReco
 //   - metadata.measurement=Measurement, metadata.tags=Tags(verbatim group)
 //
 // TimeMs 는 프로젝트 규약(payload epoch = int64 UnixMilli)을 따른다.
+//
+// Radio 는 emit_radio(기본 false) opt-in 시에만 채워지는 **신규 형제 그룹**이다
+// (radio.go 참조). 포인터 + omitempty 이므로 꺼져 있으면 키 자체가 사라져 레코드
+// JSON 이 오늘과 바이트 동일하다 — 위 동결 계약(REQ-FROZEN-01/02/04)은 무변경이다.
 type measurementRecord struct {
 	Measurement string            `json:"measurement"`
 	Value       any               `json:"value"`
 	UnitID      string            `json:"unit_id"`
 	TimeMs      int64             `json:"time_ms"`
 	Tags        map[string]string `json:"tags,omitempty"`
+	Radio       *radioGroup       `json:"radio,omitempty"`
 }
 
 // combinedMeasurementRecord 는 업링크 1건의 모든 스칼라 measurement 를 하나로 담는
@@ -93,12 +98,18 @@ type measurementRecord struct {
 // buildChirpStackCombinedMessage 로 분기하여 Values 를 payload 최상위 flat 키로 편다
 // (코드베이스 지배적 관례: flattenStateToPayload 계열). measurement 가 하나로 특정되지
 // 않으므로 metadata.measurement 는 방출하지 않는다.
+//
+// Radio 는 per-measurement 경로와 동일한 신규 형제 그룹이다 (emit_radio opt-in).
+// combined 모드에서 특히 중요한 성질: radio 는 Values 와 **분리된 필드**이므로
+// 노드가 Values 를 payload 최상위로 펼 때 섞이지 않는다. "rssi" 라는 이름의 센서가
+// 있더라도 radio 의 rssi 와 충돌하지 않는다(둘은 서로 다른 키 아래에 있다).
 type combinedMeasurementRecord struct {
 	Record string            `json:"record"`
 	Values map[string]any    `json:"values"`
 	UnitID string            `json:"unit_id"`
 	TimeMs int64             `json:"time_ms"`
 	Tags   map[string]string `json:"tags,omitempty"`
+	Radio  *radioGroup       `json:"radio,omitempty"`
 }
 
 // buildCombinedMeasurementRecord 는 업링크의 object 를 단일 combined 레코드로 접는다.

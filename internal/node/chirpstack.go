@@ -270,14 +270,17 @@ func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName
 		return buildChirpStackDeviceStateMessage(data, nodeID, a, agentName, opts)
 	case chirpStackRecordCombined:
 		return buildChirpStackCombinedMessage(data, nodeID, a, agentName, opts)
+	case chirpStackRecordMeasurementReport:
+		return buildChirpStackMeasurementReportMessage(data, nodeID, a, agentName, opts)
 	}
 
 	var rec struct {
-		Measurement string            `json:"measurement"`
-		Value       any               `json:"value"`
-		UnitID      string            `json:"unit_id"`
-		TimeMs      int64             `json:"time_ms"`
-		Tags        map[string]string `json:"tags"`
+		Measurement string                 `json:"measurement"`
+		Value       any                    `json:"value"`
+		UnitID      string                 `json:"unit_id"`
+		TimeMs      int64                  `json:"time_ms"`
+		Tags        map[string]string      `json:"tags"`
+		Radio       *chirpStackRadioRecord `json:"radio"`
 	}
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, false
@@ -309,6 +312,7 @@ func buildChirpStackMessage(data []byte, nodeID string, a agent.Agent, agentName
 	if rec.UnitID != "" {
 		payload["unit_id"] = rec.UnitID
 	}
+	setChirpStackRadio(payload, rec.Radio)
 	promoteDevIDWithUUID(msg, payload, agentName, opts)
 	// unit_id 는 chirpstack 에서 곧 devEui 이다 — 승격이 payload 에서 지운 값을
 	// device 그룹에 디바이스 정보(dev_eui)로 되살린다.
@@ -423,10 +427,11 @@ const chirpStackRecordCombined = "measurements"
 // metadata.tags(verbatim), metadata.device.*(unit_id 승격), agent 그룹.
 func buildChirpStackCombinedMessage(data []byte, nodeID string, a agent.Agent, agentName string, opts MetadataEmitOptions) (message.Message, bool) {
 	var rec struct {
-		Values map[string]any    `json:"values"`
-		UnitID string            `json:"unit_id"`
-		TimeMs int64             `json:"time_ms"`
-		Tags   map[string]string `json:"tags"`
+		Values map[string]any         `json:"values"`
+		UnitID string                 `json:"unit_id"`
+		TimeMs int64                  `json:"time_ms"`
+		Tags   map[string]string      `json:"tags"`
+		Radio  *chirpStackRadioRecord `json:"radio"`
 	}
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, false
@@ -454,9 +459,258 @@ func buildChirpStackCombinedMessage(data []byte, nodeID string, a agent.Agent, a
 	if rec.UnitID != "" {
 		payload["unit_id"] = rec.UnitID
 	}
+	// radio 는 Values 를 편 **뒤에** 별도 키로 얹는다. 레코드에서 이미 Values 와
+	// 분리되어 있으므로, "rssi" 라는 이름의 센서가 있어도 payload["rssi"] 는 그
+	// 센서 값이고 무선 품질은 payload["radio"] 아래에 있어 서로 덮어쓰지 않는다.
+	setChirpStackRadio(payload, rec.Radio)
 	promoteDevIDWithUUID(msg, payload, agentName, opts)
 	setChirpStackDevEui(msg, opts, rec.UnitID) // per-measurement 경로와 동일.
 	reduceChirpStackIdentityGroups(msg, opts)  // per-measurement 경로와 동일.
+
+	for k, v := range payload {
+		msg.Payload().Set(k, v)
+	}
+	return msg, true
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 무선 품질(radio) — event 경로 공유 헬퍼 (에이전트 emit_radio opt-in).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// chirpStackRadioGateway 는 event 레코드 radio.gateways[] 항목의 노드측 표현이다.
+//
+// channel 은 수신 게이트웨이의 concentrator IF 인덱스이며 **주파수가 아니다**.
+// 값 타입 uint32 이므로 proto3 가 생략한 channel:0 이 0 으로 보존된다("미상" 아님).
+type chirpStackRadioGateway struct {
+	GatewayID string  `json:"gateway_id"`
+	RSSI      int     `json:"rssi"`
+	SNR       float64 `json:"snr"`
+	Channel   uint32  `json:"channel"`
+}
+
+// chirpStackRadioRecord 는 event 레코드의 radio 그룹이다 (에이전트: radioGroup).
+type chirpStackRadioRecord struct {
+	Gateways []chirpStackRadioGateway `json:"gateways"`
+	Count    int                      `json:"count"`
+}
+
+// setChirpStackRadio 는 무선 품질 그룹을 payload 의 radio 키에 얹는다.
+//
+// # metadata 가 아니라 payload 인 이유 (요청 shape 로부터의 유일한 이탈)
+//
+// 원 설계는 $.metadata.radio 였으나 **메타데이터의 값 계약이 그것을 허용하지 않는다**:
+// message.Metadata 는 값으로 string 또는 map[string]string **둘만** 저장한다
+// (pkg/message/metadata.go 의 "값 계약" 주석). 게이트웨이 배열은 물론이고 숫자
+// rssi/snr/channel 조차 문자열로 접지 않고서는 담을 수 없다. 문자열로 접으면
+// (a) 다운스트림이 숫자를 쓰려면 매번 재파싱해야 하고, (b) 배열은 JSON 문자열을
+// 통째로 문자열 필드에 넣는 이중 인코딩이 되어 계약이라 부를 수 없는 모양이 된다.
+//
+// payload 는 map[string]any 라 중첩/숫자를 손실 없이 담는다. 게다가 이 에이전트의
+// 기존 관례와도 일치한다 — device_state 경로는 이미 rssi/snr/gateway_id 를
+// payload.state 아래에 싣는다(buildChirpStackDeviceStateMessage).
+//
+// **원 요구의 실질은 보존된다.** "flat payload 에 넣지 말라" 는 요구의 근거는
+// "rssi 라는 이름의 센서와 충돌하면 안 된다" 였고, radio 라는 단일 키 아래로
+// 네임스페이스하면 그 충돌은 구조적으로 불가능하다: combined 모드에서 센서 이름은
+// payload 최상위 flat 키가 되고 무선 품질은 payload["radio"] 안에만 존재한다.
+// (payload 최상위에 radio 라는 이름의 센서가 있는 경우에만 충돌하며, 이는 rssi 와
+// 달리 LoRaWAN 디코더가 만들어 내는 이름이 아니다.)
+//
+// nil(=에이전트가 emit_radio 를 끔, 또는 rxInfo 부재) 이면 **키를 만들지 않는다** —
+// 빈 객체를 흘리지 않는다. 기본 설정에서 payload 가 오늘과 바이트 동일해지는 지점이다.
+func setChirpStackRadio(payload map[string]any, radio *chirpStackRadioRecord) {
+	if payload == nil || radio == nil || len(radio.Gateways) == 0 {
+		return
+	}
+	// 에이전트가 gateway_id 오름차순으로 정렬해 보내므로 순서를 그대로 보존한다
+	// (노드가 재정렬하면 두 표면의 순서 규약이 갈라진다).
+	gws := make([]any, 0, len(radio.Gateways))
+	for _, g := range radio.Gateways {
+		gws = append(gws, map[string]any{
+			"gateway_id": g.GatewayID,
+			"rssi":       g.RSSI,
+			"snr":        g.SNR,
+			"channel":    g.Channel,
+		})
+	}
+	payload["radio"] = map[string]any{
+		"gateways": gws,
+		"count":    radio.Count,
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 주기 집계 리포트 (measurement_report → msg.Type "measurement.report").
+// ─────────────────────────────────────────────────────────────────────────────
+
+// chirpStackRecordMeasurementReport 는 주기 집계 리포트 레코드의 판별자 값이다
+// (에이전트: recordKindMeasurementReport).
+//
+// device_state 의 report **트리거**와 이름이 겹쳐 보이지만 전혀 다른 것이다:
+// device_state.report 는 마지막 스냅샷의 재방출이고, measurement.report 는 윈도
+// 구간의 min/max/avg/count 집계이다. 그래서 판별자와 메시지 타입을 모두 분리했고,
+// 기존 세 분기(device_state / measurements / 빈 문자열=event)는 건드리지 않는다.
+const chirpStackRecordMeasurementReport = "measurement_report"
+
+// chirpStackMeasurementReportType 은 집계 리포트 메시지의 타입이다.
+const chirpStackMeasurementReportType = "measurement.report"
+
+// chirpStackAggRecord 는 집계 통계 1건이다 (에이전트: aggView).
+//
+// Min/Max/Avg 가 포인터인 이유는 "비숫자 스칼라라 숫자 통계가 없음"과 "값이 0"을
+// 구분하기 위해서이다. 키가 없으면 nil 이 되고, 노드는 그 키를 payload 에 만들지
+// 않는다 — 0 을 지어내지 않는다.
+type chirpStackAggRecord struct {
+	Min   *float64 `json:"min"`
+	Max   *float64 `json:"max"`
+	Avg   *float64 `json:"avg"`
+	Count int64    `json:"count"`
+}
+
+// toMap 은 집계 통계를 payload 표현으로 바꾼다. 부재한 숫자 통계는 키를 만들지 않는다.
+func (s chirpStackAggRecord) toMap() map[string]any {
+	m := make(map[string]any, 4)
+	m["count"] = s.Count
+	if s.Min != nil {
+		m["min"] = *s.Min
+	}
+	if s.Max != nil {
+		m["max"] = *s.Max
+	}
+	if s.Avg != nil {
+		m["avg"] = *s.Avg
+	}
+	return m
+}
+
+// chirpStackRadioAggRecord 는 리포트의 게이트웨이별 무선 품질 집계 1건이다.
+type chirpStackRadioAggRecord struct {
+	GatewayID string              `json:"gateway_id"`
+	RSSI      chirpStackAggRecord `json:"rssi"`
+	SNR       chirpStackAggRecord `json:"snr"`
+}
+
+// buildChirpStackMeasurementReportMessage 는 주기 집계 리포트 레코드(JSON)를 flow
+// message 로 빌드한다.
+//
+// # 방출되는 읽기 경로 (outputDesc)
+//
+// 공통:
+//
+//	$.type                      = "measurement.report"
+//	$.timestamp                 = 윈도 종료 시각 (UnixMilli(time_ms))
+//	$.payload.uplinks           = 윈도 구간 업링크 수신 건수 (int64)
+//	$.payload.gateways          = 윈도 구간 관측된 서로 다른 게이트웨이 수 (int)
+//	$.payload.window_start_ms   = 윈도 시작 (int64 UnixMilli)
+//	$.payload.window_end_ms     = 윈도 종료 (int64 UnixMilli)
+//	$.payload.radio[]           = [{gateway_id, rssi:{min,max,avg,count}, snr:{...}}]
+//	                              gateway_id 오름차순 (에이전트 정렬 순서 보존)
+//	$.metadata.device.{id,name,type,dev_eui}  = unit_id(devEui) 승격 결과
+//	$.metadata.agent.*          = emitAgentGroup (기존 규약)
+//	$.metadata.tags.*           = 태그 verbatim (기존 규약)
+//	$.metadata.node_id          = opts.NodeID 시
+//
+// report_emit_mode = per_measurement (기본):
+//
+//	$.metadata.measurement      = measurement 이름
+//	$.payload.count             = 해당 measurement 의 윈도 내 샘플 수 (int64)
+//	$.payload.{min,max,avg}     = 숫자 통계 (float64). 비숫자 스칼라만 관측된
+//	                              measurement 는 이 세 키가 **없다**.
+//
+// report_emit_mode = combined:
+//
+//	$.payload.measurements.<이름>.{count,min,max,avg}
+//	(metadata.measurement 없음 — 단일 measurement 로 특정되지 않는다)
+//
+// # payload 모양 선택 근거
+//
+// per_measurement 가 통계를 payload 최상위 flat 키로 펴는 것은 event 경로의
+// per_measurement 가 $.payload.value 를 최상위에 두는 것과 같은 논리이다 — 그 모드의
+// 존재 이유가 "메시지 1건 = measurement 1개" 이기 때문이다.
+//
+// combined 은 flat 이 아니라 measurements 아래로 네임스페이스한다. event 의 combined
+// 은 flat 이지만 리포트에는 uplinks/gateways/window_* 라는 고정 키가 함께 있어서,
+// flat 으로 펴면 그 이름을 가진 센서가 서로 덮어쓴다. 네임스페이스가 그 충돌을
+// 구조적으로 제거한다.
+//
+// # radio 모양이 event 와 다른 이유
+//
+// event 의 $.payload.radio 는 {gateways:[...], count:N} 객체이고 리포트의
+// $.payload.radio 는 배열이다. 리포트는 게이트웨이 수를 이미 $.payload.gateways 로
+// 싣고 있어 count 를 한 번 더 담으면 같은 사실이 두 곳에 존재하게 된다. 두 표면은
+// 애초에 서로 다른 $.type 이므로 같은 스키마로 소비되지 않는다.
+func buildChirpStackMeasurementReportMessage(data []byte, nodeID string, a agent.Agent, agentName string, opts MetadataEmitOptions) (message.Message, bool) {
+	var rec struct {
+		Measurement   string                         `json:"measurement"`
+		Stats         *chirpStackAggRecord           `json:"stats"`
+		Measurements  map[string]chirpStackAggRecord `json:"measurements"`
+		Radio         []chirpStackRadioAggRecord     `json:"radio"`
+		Uplinks       int64                          `json:"uplinks"`
+		Gateways      int                            `json:"gateways"`
+		UnitID        string                         `json:"unit_id"`
+		TimeMs        int64                          `json:"time_ms"`
+		WindowStartMs int64                          `json:"window_start_ms"`
+		WindowEndMs   int64                          `json:"window_end_ms"`
+		Tags          map[string]string              `json:"tags"`
+	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, false
+	}
+
+	msg := message.New()
+	msg.SetType(chirpStackMeasurementReportType)
+	if rec.TimeMs > 0 {
+		msg.SetTimestamp(time.UnixMilli(rec.TimeMs))
+	}
+	// per_measurement 모드에서만 measurement 가 특정된다 (event 경로와 동일 규약).
+	if rec.Measurement != "" {
+		msg.Metadata().Set("measurement", rec.Measurement)
+	}
+	// tags verbatim pass-through — event 경로와 동일.
+	if len(rec.Tags) > 0 {
+		msg.Metadata().SetGroup("tags", rec.Tags)
+	}
+	if opts.NodeID {
+		msg.Metadata().Set("node_id", nodeID)
+	}
+	emitAgentGroup(msg, a, opts)
+
+	payload := make(map[string]any, 8)
+	payload["uplinks"] = rec.Uplinks
+	payload["gateways"] = rec.Gateways
+	payload["window_start_ms"] = rec.WindowStartMs
+	payload["window_end_ms"] = rec.WindowEndMs
+
+	if len(rec.Measurements) > 0 {
+		values := make(map[string]any, len(rec.Measurements))
+		for k, s := range rec.Measurements {
+			values[k] = s.toMap()
+		}
+		payload["measurements"] = values
+	} else if rec.Stats != nil {
+		for k, v := range rec.Stats.toMap() {
+			payload[k] = v
+		}
+	}
+
+	if len(rec.Radio) > 0 {
+		radio := make([]any, 0, len(rec.Radio))
+		for _, g := range rec.Radio {
+			radio = append(radio, map[string]any{
+				"gateway_id": g.GatewayID,
+				"rssi":       g.RSSI.toMap(),
+				"snr":        g.SNR.toMap(),
+			})
+		}
+		payload["radio"] = radio
+	}
+
+	if rec.UnitID != "" {
+		payload["unit_id"] = rec.UnitID
+	}
+	promoteDevIDWithUUID(msg, payload, agentName, opts)
+	setChirpStackDevEui(msg, opts, rec.UnitID) // event 경로와 동일.
+	reduceChirpStackIdentityGroups(msg, opts)  // event 경로와 동일.
 
 	for k, v := range payload {
 		msg.Payload().Set(k, v)

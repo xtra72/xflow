@@ -82,6 +82,28 @@ type ChirpStackAgent struct {
 	wdWg      sync.WaitGroup
 	wdStarted bool // a.mu 보호
 
+	// reports 는 devEui 키 **주기 집계 리포트** 누적 맵이다 (report.go).
+	//
+	// comm 맵과도, 로스터(devices)와도 분리한다 — comm 맵은 "최신 스냅샷 1건" 이라
+	// 집계를 담을 수 없고, 로스터에 얹으면 emit_report 가 꺼진 배포에서도 devicesMu
+	// 보유 구간이 길어진다. 별도 맵 + 별도 mutex 가 두 기존 표면을 전혀 건드리지 않는
+	// 유일한 배치이다.
+	//
+	// 락 규율(REQ-FROZEN-B): reportsMu 는 devicesMu / commMu / a.mu 와 **절대
+	// 중첩하지 않는다**. 이 맵을 만지는 두 경로(onUplinkReport /
+	// emitMeasurementReports)는 나머지 락을 하나도 잡지 않으므로 락 순서 엣지 자체가
+	// 생기지 않는다.
+	reports   map[string]*deviceWindow
+	reportsMu sync.Mutex
+	// reportWindowStartMs 는 현재 집계 윈도의 시작 시각이다 (reportsMu 보호).
+	reportWindowStartMs int64
+
+	// 집계 리포트 goroutine 수명 제어. comm watchdog(wd*)과 별도인 이유는 두 기능의
+	// 수명이 독립이기 때문이다 — 한쪽만 켠 배포에서 다른 쪽 goroutine 이 생기면 안 된다.
+	mrCancel  context.CancelFunc
+	mrWg      sync.WaitGroup
+	mrStarted bool // a.mu 보호
+
 	stats  *agent.AgentStats
 	logger *slog.Logger
 
@@ -126,6 +148,12 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 	if err := validateTimestampSource(config.Transport.Options); err != nil {
 		return nil, err
 	}
+	// report_emit_mode 도 동일한 규율로 생성 경로에서 무효값을 거부한다 — 오타가
+	// 조용히 per_measurement 로 폴백하면 "combined 를 켰는데 왜 measurement 마다 오지"
+	// 를 진단할 단서가 사라진다.
+	if err := validateReportEmitMode(config.Transport.Options); err != nil {
+		return nil, err
+	}
 
 	if err := claimAgentName(config.Name, config.ID); err != nil {
 		return nil, err
@@ -139,6 +167,7 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 		done:          make(chan struct{}),
 		devices:       make(map[string]*deviceState),
 		comm:          make(map[string]*commEntry),
+		reports:       make(map[string]*deviceWindow),
 		stats:         agent.NewAgentStats(),
 		logger:        agent.ResolveLogger(config),
 		createdAt:     time.Now(),
@@ -199,6 +228,10 @@ func (a *ChirpStackAgent) Init(config agent.AgentConfig) error {
 
 	// comm-state watchdog 시작 (활성화 + emit_comm_state 시에만) (M5, REQ-M5-03/04).
 	a.startCommWatchdog()
+
+	// 집계 리포트 루프 시작 (활성화 + emit_report + report_interval>0 시에만).
+	// comm watchdog 과 동일한 기동 지점/규약이며 수명만 독립이다 (report.go).
+	a.startMeasurementReporter()
 
 	a.mu.Lock()
 	a.startedAt = time.Now()
@@ -340,15 +373,36 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 		a.onUplinkCommState(up)
 	}
 
+	// 집계 리포트 누적 (emit_report opt-in). comm-state fold 와 동일한 게이트 규약이며,
+	// 방출은 여기가 아니라 report_interval tick(measurementReportLoop)에서 일어난다.
+	if a.cs().EmitReport {
+		a.onUplinkReport(up, timeMs)
+	}
+
+	// 무선 품질 그룹 (emit_radio opt-in). 업링크 1건당 정확히 한 번만 산출해 그 업링크가
+	// 만드는 모든 레코드가 **동일한 인스턴스**를 공유한다 — per_measurement 모드에서
+	// measurement 마다 rxInfo 를 다시 순회하면 같은 값을 N 번 재계산할 뿐이다.
+	//
+	// 꺼져 있으면 nil 이고, nil 은 레코드의 omitempty 포인터 필드에 그대로 들어가
+	// radio 키 자체가 사라진다 — 기본 설정의 출력이 오늘과 바이트 동일해지는 지점이다.
+	var radio *radioGroup
+	if a.cs().EmitRadio {
+		radio = buildRadioGroup(up, timeMs)
+	}
+
 	// measurement_emit_mode 스냅샷을 매 업링크마다 읽으므로 Configure 의 모드 전환이
 	// 즉시 반영된다 (emit_comm_state 게이트와 동일한 규약).
 	if a.cs().MeasurementEmitMode == measurementEmitModeCombined {
-		a.emitCombinedRecord(up, timeMs, topic)
+		a.emitCombinedRecord(up, timeMs, topic, radio)
 		return
 	}
 
 	records := buildMeasurementRecords(up, timeMs, a.logger)
 	for i := range records {
+		// radio 부착은 빌더 시그니처를 넓히지 않고 여기서 한다 — buildMeasurementRecords
+		// 는 동결 경로의 핵심 빌더이고 기존 호출부/테스트가 그 시그니처에 고정되어 있다.
+		// 순수 추가 필드이므로 빌드 후 대입으로 충분하다.
+		records[i].Radio = radio
 		b, err := json.Marshal(records[i])
 		if err != nil {
 			a.stats.IncrExternalMessagesErrored()
@@ -363,11 +417,16 @@ func (a *ChirpStackAgent) handleUplink(raw []byte, topic string) {
 // (measurement_emit_mode="combined").
 //
 // 스칼라 measurement 가 없으면 아무것도 방출하지 않는다(빈 payload 메시지 금지).
-func (a *ChirpStackAgent) emitCombinedRecord(up *uplink, timeMs int64, topic string) {
+//
+// radio 는 호출자가 업링크 1건당 1회 산출한 무선 품질 그룹이며(emit_radio 꺼짐 시
+// nil), Values 와 분리된 필드로 실린다 — 노드가 Values 를 payload 최상위로 펼 때
+// 섞이지 않으므로 "rssi" 라는 이름의 센서가 있어도 충돌하지 않는다.
+func (a *ChirpStackAgent) emitCombinedRecord(up *uplink, timeMs int64, topic string, radio *radioGroup) {
 	rec, ok := buildCombinedMeasurementRecord(up, timeMs, a.logger)
 	if !ok {
 		return
 	}
+	rec.Radio = radio
 	b, err := json.Marshal(rec)
 	if err != nil {
 		a.stats.IncrExternalMessagesErrored()
@@ -482,6 +541,9 @@ func (a *ChirpStackAgent) Stop(_ context.Context) error {
 
 	// comm-state watchdog goroutine 종료 (context 취소 + 대기) (M5, REQ-M6-03).
 	a.stopCommWatchdog()
+
+	// 집계 리포트 goroutine 종료 (동일 규약 — 누수 금지).
+	a.stopMeasurementReporter()
 
 	// Created(비활성화 생성) / Stopped 는 Stopping 전이가 invalid 하므로 건너뛴다.
 	// 그래도 done close / 버퍼 드레인 / 이름 해제는 항상 수행한다.
@@ -600,6 +662,12 @@ func (a *ChirpStackAgent) Process(data []byte) ([]byte, error) {
 //   - comm-state watchdog(watchLoop / reportLoop)은 Init 에서만 기동되므로 런타임
 //     토글로 기동/정지되지 않는다. 따라서 false→true 토글 시 staleness 기반 offline
 //     판정과 주기 report 는 에이전트를 재시작해야 동작한다.
+//   - 집계 리포트 루프(measurementReportLoop)도 **정확히 같은 한계**를 갖는다:
+//     emit_radio 와 emit_report 의 per-uplink 게이트는 즉시 반영되지만
+//     (handleUplink 가 매 업링크마다 현재 스냅샷을 읽는다), report_interval tick
+//     goroutine 의 기동/정지는 재시작이 필요하다. 이는 comm watchdog 이 이미 갖고
+//     있던 선재 제약을 그대로 따른 것이며 본 변경이 새로 도입하거나 악화시킨 것이
+//     아니다(해소도 하지 않는다 — 본 범위 밖).
 //   - broker / topics / qos 등 트랜스포트 노브는 이미 열린 MQTT 연결에 반영되지
 //     않는다. 저장만 되고 다음 연결에서 적용된다.
 //
@@ -640,6 +708,11 @@ func (a *ChirpStackAgent) logRestartRequiredChanges(prev, next *ChirpStackConfig
 		a.logger.Warn("chirpstack: emit_comm_state 변경 저장됨 — 업링크 fold 는 즉시 반영되나 "+
 			"staleness watchdog / 주기 report 는 에이전트 재시작 후 반영됩니다",
 			"from", prev.EmitCommState, "to", next.EmitCommState)
+	}
+	if prev.EmitReport != next.EmitReport || prev.ReportInterval != next.ReportInterval {
+		a.logger.Warn("chirpstack: 집계 리포트 설정 변경 저장됨 — 업링크 누적 게이트는 즉시 반영되나 "+
+			"report_interval tick 루프는 에이전트 재시작 후 반영됩니다",
+			"emit_report", next.EmitReport, "report_interval", next.ReportInterval)
 	}
 	if prev.Broker != next.Broker || prev.ClientID != next.ClientID || !equalStringSlice(prev.Topics, next.Topics) {
 		a.logger.Warn("chirpstack: 트랜스포트 설정 변경 저장됨 — 기존 MQTT 연결에는 반영되지 않으며 "+

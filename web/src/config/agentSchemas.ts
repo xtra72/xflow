@@ -87,9 +87,43 @@ const CHIRPSTACK_FIELDS: ConfigField[] = [
     description:
       'uplink: 업링크에 실려 온 time 값(디바이스/게이트웨이가 찍은 시각)을 메시지 시간으로 씁니다. server: 서버가 업링크를 받은 시각을 메시지 시간으로 씁니다. 디바이스나 게이트웨이의 시계가 틀어져 있거나 서로 어긋나 데이터 순서가 뒤죽박죽이면 server 를 선택하세요. 업링크 1건에서 나온 모든 측정치는 동일한 수신 시각을 공유합니다.',
   },
+  // 무선 품질(radio) 그룹 (opt-in). 기본 false 에서는 payload 에 radio 키 자체가 없다.
+  {
+    name: 'emit_radio',
+    type: 'boolean',
+    label: '무선 품질(radio) 포함',
+    default: false,
+    description:
+      'event 메시지 payload 에 radio 그룹(payload.radio.gateways[] = {gateway_id, rssi, snr, channel}, payload.radio.count)을 함께 싣습니다. 업링크를 수신한 게이트웨이를 최적 1대로 접지 않고 전량 배열로 담으므로 메시지 크기가 게이트웨이 수에 비례해 커집니다. 게다가 측정치 방출 모드가 per_measurement 이면 같은 배열이 측정치마다 반복됩니다 (측정치 5개 × 게이트웨이 3대 = 한 업링크에서 무선 정보가 15번 직렬화). 그래서 기본은 꺼짐이며, 무선 품질이 실제로 필요한 배포에서만 켜세요. 끄면 payload 에 radio 키가 아예 생기지 않습니다.',
+  },
+  // 주기 집계 리포트 노브 (opt-in). comm-state 의 device_state.report 와는 다른 메시지다.
+  {
+    name: 'emit_report',
+    type: 'boolean',
+    label: '집계 리포트 발행',
+    default: false,
+    description:
+      '주기 집계 리포트를 별도 메시지 타입(measurement.report)으로 방출합니다. 리포트 1건에는 집계 구간의 측정치별 min/max/avg/count, 게이트웨이별 rssi·snr 의 min/max/avg/count, 그리고 구간 업링크 수신 건수(uplinks)와 관측된 게이트웨이 수(gateways)가 담깁니다. event 메시지를 대체하지 않습니다 — event 와 리포트는 서로 독립적으로 계속 흐릅니다. comm-state 의 device_state.report(마지막 값 재방출)와는 이름만 비슷할 뿐 완전히 다른 메시지입니다.',
+  },
+  {
+    name: 'report_interval',
+    type: 'string',
+    label: '집계 리포트 주기',
+    description:
+      'measurement.report 의 집계 윈도 길이 (Go duration, 예: 60s, 5m). 0 또는 빈 값이면 집계 리포트 비활성. 변경하면 에이전트를 재시작해야 반영됩니다 — tick 루프가 Init 시점에 기동되기 때문이며, comm-state 주기 report 간격과 동일한 제약입니다. comm-state 의 device_state.report 주기가 아니라 집계(measurement.report) 주기입니다.',
+  },
+  {
+    name: 'report_emit_mode',
+    type: 'select',
+    label: '집계 리포트 방출 모드',
+    options: ['per_measurement', 'combined'],
+    default: 'per_measurement',
+    description:
+      'per_measurement: 측정치마다 리포트 메시지 1개를 만듭니다 (payload 에 count/min/max/avg, metadata.measurement 에 측정치 이름). combined: 디바이스마다 리포트 메시지 1개로 합칩니다 (payload.measurements 에 {"temperature": {count, min, max, avg}, ...} 형태로 모든 측정치, metadata.measurement 없음). 측정치 방출 모드(measurement_emit_mode)와는 독립된 축이므로 event 는 per_measurement, 리포트는 combined 처럼 서로 다르게 고를 수 있습니다.',
+  },
   // comm-state 노브 (M5, REQ-FROZEN-03 / REQ-M5-01/03/04).
   { name: 'emit_comm_state', type: 'boolean', label: 'comm-state 발행', default: false, description: 'device_state 이벤트 발행 게이트' },
-  { name: 'comm_report_interval', type: 'string', label: 'comm-state 주기 report 간격', description: '예: 60s, 0 이면 주기 report off (change 는 유지)' },
+  { name: 'comm_report_interval', type: 'string', label: 'comm-state 주기 report 간격', description: '예: 60s, 0 이면 주기 report off (change 는 유지). comm-state 마지막 값을 그대로 재방출하는 device_state.report 의 주기이며, 집계 리포트 주기(report_interval)와는 무관합니다.' },
   { name: 'offline_threshold', type: 'string', label: 'offline 임계', default: '300s', description: '마지막 업링크 후 이 시간 경과 시 offline 판정' },
 ];
 

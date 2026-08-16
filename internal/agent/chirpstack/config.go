@@ -53,6 +53,14 @@ const (
 // 시계 시각이 찍히지" 를 진단할 단서가 전혀 남지 않는다.
 var ErrInvalidTimestampSource = errors.New("chirpstack: invalid timestamp_source (must be 'uplink' or 'server')")
 
+// ErrInvalidReportEmitMode 는 report_emit_mode 가 per_measurement/combined 이외일 때
+// 반환된다.
+//
+// ErrInvalidMeasurementEmitMode 와 동일한 검증 규율이며, 생성 경로와 Configure 경로
+// 양쪽에서 발화한다 — 조용한 폴백은 "combined 로 켰는데 왜 measurement 마다 오지" 를
+// 진단할 단서를 모두 지워 버린다.
+var ErrInvalidReportEmitMode = errors.New("chirpstack: invalid report_emit_mode (must be 'per_measurement' or 'combined')")
+
 // ChirpStackConfig 는 ChirpStack 에이전트의 트랜스포트 설정이다.
 //
 // system/mqtt_agent.go 의 MQTTConfig 트랜스포트 서브셋을 미러링한다(발행 노브 제외).
@@ -83,6 +91,32 @@ type ChirpStackConfig struct {
 	// TimestampSource 는 메시지 타임스탬프를 어디에서 가져올지 결정한다.
 	// "uplink"(기본, 동결 경로: payload 의 time 필드) | "server"(opt-in: 수신 시각).
 	TimestampSource string
+
+	// EmitRadio 는 event 메시지에 무선 품질 그룹(radio)을 실을지 결정한다.
+	//
+	// 기본 false 인 이유(emit_comm_state 가 세운 선례와 동일한 규율):
+	//   - 메시지 크기가 **게이트웨이 수에 비례해 곱해진다**. 하나의 업링크를 3대가
+	//     들으면 radio 배열이 3개 항목을 갖는다.
+	//   - per_measurement 모드에서는 그 비용이 **measurement 마다 반복된다**.
+	//     measurement 5개 × 게이트웨이 3대 = 같은 무선 정보가 한 업링크에서 15번
+	//     직렬화된다.
+	// 무선 품질이 필요한 배포는 명시적으로 켜고, 나머지는 오늘의 크기를 유지한다.
+	EmitRadio bool
+
+	// EmitReport 는 주기 집계 리포트(measurement_report) 방출 게이트이다 (기본 false).
+	// device_state.report(comm_report_interval)와는 완전히 다른 메시지이다 — report.go
+	// 상단 주석 참조.
+	EmitReport bool
+
+	// ReportInterval 은 집계 윈도 길이이다 (0=off). reportLoop 과 동일하게 0 이하이면
+	// goroutine 이 즉시 종료한다.
+	ReportInterval time.Duration
+
+	// ReportEmitMode 는 리포트를 measurement 당 1개로 fan-out 할지, 디바이스당 1개로
+	// 접을지 결정한다. MeasurementEmitMode 와 **독립된 축**이다 — event 와 report 의
+	// 모양을 서로 다르게 고를 수 있어야 한다는 요구가 실재한다.
+	// "per_measurement"(기본) | "combined".
+	ReportEmitMode string
 }
 
 // defaultOfflineThreshold 는 업링크 staleness→offline 판정의 보수적 기본 임계이다.
@@ -124,6 +158,7 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 		OfflineThreshold:    defaultOfflineThreshold,
 		MeasurementEmitMode: measurementEmitModePerMeasurement,
 		TimestampSource:     timestampSourceUplink,
+		ReportEmitMode:      reportEmitModePerMeasurement,
 	}
 
 	opts := cfg.Transport.Options
@@ -203,6 +238,32 @@ func parseChirpStackConfig(cfg agent.AgentConfig) ChirpStackConfig {
 		}
 	}
 
+	// 무선 품질 / 집계 리포트 노브. 숫자/duration 노브는 기존 공유 강제변환 계층
+	// (coerceDuration)을 그대로 쓴다 — 파서와 검증기의 허용 집합이 갈라지는 것을
+	// 구조적으로 막기 위해서이며, 두 번째 "받아들일 수 있는 값" 판정을 만들지 않는다
+	// (isNumeric 이 삭제된 이유, 아래 공유 강제변환 계층 주석 참조).
+	if v, ok := opts["emit_radio"].(bool); ok {
+		cc.EmitRadio = v
+	}
+	if v, ok := opts["emit_report"].(bool); ok {
+		cc.EmitReport = v
+	}
+	if v, ok := opts["report_interval"]; ok {
+		if d, ok := coerceDuration(v); ok {
+			cc.ReportInterval = d
+		}
+	}
+
+	// report_emit_mode: measurement_emit_mode 와 동일한 규약 — 유효값만 반영하고
+	// 무효값은 호출자(validateReportEmitMode)가 이미 거부했거나 거부할 것이므로
+	// 여기서는 기본값(per_measurement)을 유지한다.
+	if v, ok := opts["report_emit_mode"].(string); ok {
+		switch v {
+		case reportEmitModePerMeasurement, reportEmitModeCombined:
+			cc.ReportEmitMode = v
+		}
+	}
+
 	// timestamp_source: measurement_emit_mode 와 동일한 규약 — 유효값만 반영하고
 	// 무효값은 호출자(validateTimestampSource)가 이미 거부했거나 거부할 것이므로
 	// 여기서는 기본값(uplink)을 유지한다.
@@ -259,6 +320,32 @@ func validateTimestampSource(opts map[string]any) error {
 	}
 }
 
+// validateReportEmitMode 는 report_emit_mode 옵션의 타입/enum 을 검증한다.
+//
+// validateMeasurementEmitMode 와 동형이다: 키가 없거나 빈 문자열이면 "미지정"으로 보아
+// 기본값(per_measurement)을 허용하고, 그 외 무효값은 ErrInvalidReportEmitMode 로
+// 거부한다(조용한 폴백 금지).
+//
+// 호출 지점이 두 곳인 것도 동형이다 — NewChirpStackAgent(생성 경로)와
+// validateChirpStackOptions(Configure 경로). 한쪽만 검증하면 "만들 수는 있는데 저장은
+// 안 되는"(또는 그 반대) 비대칭이 생긴다.
+func validateReportEmitMode(opts map[string]any) error {
+	v, ok := opts["report_emit_mode"]
+	if !ok {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("%w: 문자열이어야 합니다 (got %T)", ErrInvalidReportEmitMode, v)
+	}
+	switch s {
+	case "", reportEmitModePerMeasurement, reportEmitModeCombined:
+		return nil
+	default:
+		return fmt.Errorf("%w: got %q", ErrInvalidReportEmitMode, s)
+	}
+}
+
 // parseChirpStackConfigStrict 는 런타임 재설정(Configure) 경로용 파서이다.
 //
 // parseChirpStackConfig 는 강제변환에 실패한 옵션을 조용히 무시하고 기본값을 남긴다.
@@ -298,7 +385,7 @@ func validateChirpStackOptions(opts map[string]any) error {
 			}
 		}
 	}
-	for _, key := range []string{"auto_reconnect", "clean_session", "emit_comm_state"} {
+	for _, key := range []string{"auto_reconnect", "clean_session", "emit_comm_state", "emit_radio", "emit_report"} {
 		if v, ok := opts[key]; ok {
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s 는 불리언이어야 합니다 (got %T)", key, v)
@@ -332,7 +419,7 @@ func validateChirpStackOptions(opts map[string]any) error {
 			return fmt.Errorf("topics 는 비어 있지 않은 문자열 목록 또는 쉼표로 구분한 문자열이어야 합니다 (got %T: %v)", v, v)
 		}
 	}
-	for _, key := range []string{"comm_report_interval", "offline_threshold"} {
+	for _, key := range []string{"comm_report_interval", "offline_threshold", "report_interval"} {
 		v, ok := opts[key]
 		if !ok || isUnspecified(v) {
 			continue
@@ -344,7 +431,10 @@ func validateChirpStackOptions(opts map[string]any) error {
 	if err := validateMeasurementEmitMode(opts); err != nil {
 		return err
 	}
-	return validateTimestampSource(opts)
+	if err := validateTimestampSource(opts); err != nil {
+		return err
+	}
+	return validateReportEmitMode(opts)
 }
 
 // ── 공유 강제변환(coercion) 계층 ──────────────────────────────────────────────
