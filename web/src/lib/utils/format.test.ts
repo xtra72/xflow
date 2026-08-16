@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { formatEpochMs, formatRelativeEpochMs } from './format';
+import { formatEpochMs, formatModulation, formatRelativeEpochMs } from './format';
 
 describe('formatEpochMs', () => {
   it('유효한 epoch ms 를 로컬 시간 문자열로 변환한다', () => {
@@ -43,5 +43,25 @@ describe('formatRelativeEpochMs', () => {
     expect(formatRelativeEpochMs(0, now)).toBe('-');
     expect(formatRelativeEpochMs(-1, now)).toBe('-');
     expect(formatRelativeEpochMs(NaN, now)).toBe('-');
+  });
+});
+
+describe('formatModulation', () => {
+  it('SF 와 대역폭을 함께 표기한다', () => {
+    expect(formatModulation(7, 125_000)).toBe('SF7 / 125 kHz');
+    expect(formatModulation(12, 250_000)).toBe('SF12 / 250 kHz');
+  });
+
+  it('대역폭이 없으면(txInfo 누락) SF 만 표기한다', () => {
+    expect(formatModulation(7, 0)).toBe('SF7');
+  });
+
+  it('SF 가 없으면 대역폭만 표기한다', () => {
+    expect(formatModulation(0, 125_000)).toBe('125 kHz');
+  });
+
+  it('둘 다 없으면 "-" 를 반환한다', () => {
+    expect(formatModulation(0, 0)).toBe('-');
+    expect(formatModulation(NaN, NaN)).toBe('-');
   });
 });

@@ -123,6 +123,23 @@ export function formatSnr(snr: number): string {
 }
 
 /**
+ * LoRaWAN 변조 표기. `SF7 / 125 kHz` 형태로 확산 계수와 대역폭을 함께 보여준다.
+ *
+ * SF 와 BW 는 항상 쌍으로 읽어야 의미가 있다(같은 SF 라도 대역폭이 다르면 데이터
+ * 레이트가 다르다). 두 값을 따로 두면 화면마다 조합 표기가 갈리므로 포맷터로 고정한다.
+ *
+ * 두 값 모두 없으면(0/음수/NaN) '-' 를 반환한다. 한쪽만 있으면 있는 쪽만 표기한다 —
+ * 업링크에 txInfo 가 없어 대역폭이 0 으로 내려오는 경우가 실제로 있기 때문이다.
+ */
+export function formatModulation(spreadingFactor: number, bandwidthHz: number): string {
+  const hasSf = Number.isFinite(spreadingFactor) && spreadingFactor > 0;
+  const bw = formatBandwidthHz(bandwidthHz);
+  if (!hasSf) return bw;
+  if (bw === '-') return `SF${spreadingFactor}`;
+  return `SF${spreadingFactor} / ${bw}`;
+}
+
+/**
  * Format a byte count into a human-readable string (e.g. "1.5 KB", "2.3 MB").
  */
 export function formatBytes(bytes: number, decimals = 1): string {

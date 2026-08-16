@@ -27,9 +27,9 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 // RF 값 포맷터는 디바이스 상세의 게이트웨이 섹션과 공유한다(표기 불일치 방지).
 import {
-  formatBandwidthHz,
   formatEpochMs,
   formatFrequencyHz,
+  formatModulation,
   formatRelativeEpochMs,
   formatSnr,
 } from '@/lib/utils/format';
@@ -305,7 +305,7 @@ function GatewayRow({
                           {formatFrequencyHz(d.frequency_hz)}
                         </td>
                         <td className="px-2 py-1.5 text-(--color-text-muted)">
-                          {`SF${d.spreading_factor} / ${formatBandwidthHz(d.bandwidth)}`}
+                          {formatModulation(d.spreading_factor, d.bandwidth)}
                         </td>
                         <td
                           className="px-2 py-1.5 text-(--color-text-muted)"
