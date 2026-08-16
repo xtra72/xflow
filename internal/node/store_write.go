@@ -753,8 +753,45 @@ func (n *StoreWriteNode) resolveValue(path string, msg message.Message) (any, er
 // data_type / metric_type / tags 중 하나라도 설정됐고 store 가 StoreMetaWriter 를 만족하면
 // SetWithMeta 를 사용하여 메타데이터를 함께 적용한다. 그 외에는 기존 Set/SetWithTTL 경로로 폴백한다 (하위 호환).
 func (n *StoreWriteNode) writeOne(ctx context.Context, key string, value any, metric, dataType string, tags map[string]string) error {
+	// useMeta 판정은 **기본값 적용 전**의 설정값으로 한다 (아래 기본값 주석의 (2) 참조).
 	useMeta := dataType != "" || metric != "" || len(tags) > 0
 	if mw, ok := n.store.(StoreMetaWriter); ok && useMeta {
+		// [선행 결정의 역전] data_type 미지정의 기본값을 "auto"(DataTypeAuto) 로 승격한다.
+		//
+		// WHY: 49884cb8 이 DataTypeAuto sentinel 을 도입할 때 "기존 빈 data_type 의 string
+		//   동작은 보존(비회귀)" 을 의도적으로 선택했다. 그러나 그 결과 data_type 을 설정하지
+		//   않은 기존 플로우는 store 의 "동적 = string" 정책(agent/system/store.go
+		//   checkKeyAllowed)으로 키가 data_type=string 으로 자동 등록되고, stringifyValue 가
+		//   쓰기 시점에 값을 문자열로 바꾼다 — float64(29.8) → "29.8". 그러면 store 기반
+		//   차트가 전부 빈 화면이 된다(프론트 storeChartValue 와 백엔드 집계 toFloat64 가
+		//   문자열 값을 정상적으로 거부하기 때문). 사용자가 모든 노드를 일일이 편집하지 않고도
+		//   이 플로우들이 복구되도록 기본값을 auto 로 올린다.
+		//
+		// IMPACT (회귀가 아니라 기본값 승격이며, 사라진 동작은 아래가 전부이다):
+		//   - 숫자/불리언 값은 이제 숫자/불리언 시리즈로 등록·저장된다(이전: 문자열).
+		//   - 문자열 값은 auto 추론 결과도 string 이므로 동작이 동일하다(비숫자 시리즈 안전).
+		//   - 명시 data_type(6종 enum 및 명시 "auto")의 의미는 전혀 바뀌지 않는다.
+		//   - 이미 "동적 string" 으로 등록된 기존 시리즈는 다음 쓰기에서 추론 타입으로
+		//     덮어써진다(SetKeyDataType 의 동적 string 갱신 정책). 단 과거 히스토리에 남은
+		//     문자열 값은 소급 변환되지 않는다.
+		//   - 위험: auto 는 **첫 쓰기 값**으로 타입을 고정하므로, 첫 값이 Go int 인 시리즈는
+		//     int 로 고정되고 이후 비정수 float 쓰기가 ErrTypeMismatch 로 거부된다.
+		//     (JSON 을 거친 값은 모두 float64 이므로 이 경로에서는 발생하지 않는다.)
+		//     store_write_default_datatype_test.go 가 이 동작을 명시적으로 고정한다.
+		//
+		// WHERE: 파싱 시점(Configure/parseMetricSpec)이 아니라 **쓰기 호출 지점**에 둔다.
+		//   (1) Configure 는 "명시적 빈 문자열" 과 "키 자체가 없음" 을 구분하지 않으므로
+		//       (둘 다 s != "" 검사에서 걸러진다) 파싱 시점에는 구분할 정보 자체가 없다.
+		//   (2) 더 중요하게, 파싱 시점에 n.dataType 을 채우면 위 useMeta 판정이 항상 참이 되어,
+		//       메타가 전혀 없던 노드까지 bare key 경로에서 시리즈 인코딩 키
+		//       ("unknown||key", EncodeSeriesKey) 경로로 옮겨간다. 이는 저장 키가 바뀌는
+		//       변경이라 같은 키를 읽는 store-read 노드와 기존 저장 데이터가 끊긴다.
+		//       따라서 기본값은 이미 메타 경로에 들어온 쓰기에만 적용한다.
+		//   결과적으로 legacy 단일 키와 metrics[] 양쪽 타깃이 모두 이 한 곳을 지나므로,
+		//   실효 data_type 은 여전히 한 지점에서만 결정된다.
+		if dataType == "" {
+			dataType = system.DataTypeAuto
+		}
 		opts := system.StoreWriteMeta{
 			DataType:   dataType,
 			MetricType: metric,
