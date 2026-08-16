@@ -152,18 +152,38 @@ func TestChirpStackAgent_StartFromCreatedAndStopped(t *testing.T) {
 }
 
 // TestToIntAndToStringSlice 는 설정 파싱 헬퍼의 타입 분기를 커버한다.
+//
+// 이전 toInt/toStringSlice 는 실패를 각각 0 과 "일부만 담긴 목록" 으로 뭉갰다.
+// 이제 coerceInt/coerceStringSlice 가 (값, ok) 를 돌려 실패를 명시하므로 ok 를 함께
+// 고정한다. 특히 []any{"a", 1, "b"} 는 이전에 1 을 조용히 버리고 ["a","b"] 를
+// 돌려주었으나, 그 부분 성공(조용한 누락)이 이번 결함의 근원 형태라 이제 거부한다.
 func TestToIntAndToStringSlice(t *testing.T) {
-	if toInt(5) != 5 || toInt(int64(5)) != 5 || toInt(byte(5)) != 5 || toInt(5.9) != 5 || toInt("x") != 0 {
-		t.Error("toInt 타입 분기 실패")
+	intCases := []struct {
+		in     any
+		want   int
+		wantOK bool
+	}{
+		{5, 5, true},
+		{int64(5), 5, true},
+		{byte(5), 5, true},
+		{5.9, 5, true},
+		{"5", 5, true}, // 숫자 문자열 허용(web UI 의 select 위젯이 보내는 형태).
+		{"x", 0, false},
 	}
-	if got := toStringSlice([]string{"a"}); len(got) != 1 || got[0] != "a" {
-		t.Errorf("toStringSlice([]string) = %v", got)
+	for _, c := range intCases {
+		if got, ok := coerceInt(c.in); got != c.want || ok != c.wantOK {
+			t.Errorf("coerceInt(%#v) = (%d,%v), want (%d,%v)", c.in, got, ok, c.want, c.wantOK)
+		}
 	}
-	if got := toStringSlice([]any{"a", 1, "b"}); len(got) != 2 {
-		t.Errorf("toStringSlice([]any) = %v, want 2 strings", got)
+
+	if got, ok := coerceStringSlice([]string{"a"}); !ok || len(got) != 1 || got[0] != "a" {
+		t.Errorf("coerceStringSlice([]string) = (%v,%v)", got, ok)
 	}
-	if toStringSlice(42) != nil {
-		t.Error("toStringSlice(non-slice) should be nil")
+	if got, ok := coerceStringSlice([]any{"a", 1, "b"}); ok {
+		t.Errorf("coerceStringSlice([]any{문자열 아닌 원소 포함}) = (%v,%v), want ok=false", got, ok)
+	}
+	if got, ok := coerceStringSlice(42); ok || got != nil {
+		t.Errorf("coerceStringSlice(non-slice) = (%v,%v), want (nil,false)", got, ok)
 	}
 }
 

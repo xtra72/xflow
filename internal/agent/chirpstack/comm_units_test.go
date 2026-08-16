@@ -72,23 +72,31 @@ func TestParseChirpStackConfig_CommKnobs(t *testing.T) {
 	}
 }
 
-// TestToDuration 은 toDuration 타입 분기를 커버한다.
+// TestToDuration 은 duration 강제변환의 타입 분기를 커버한다.
+//
+// 이전 toDuration 은 실패를 0 으로 뭉갰다. 이제 coerceDuration 이 (값, ok) 를 돌려
+// 실패를 명시하므로, 기대값에 ok 를 함께 고정한다. 파서/검증기 양쪽이 이 ok 를
+// 공유하는 것이 qos 비대칭 결함의 재발 방지 장치이다.
 func TestToDuration(t *testing.T) {
 	cases := []struct {
-		in   any
-		want time.Duration
+		in     any
+		want   time.Duration
+		wantOK bool
 	}{
-		{5, 5 * time.Second},
-		{int64(7), 7 * time.Second},
-		{float64(9), 9 * time.Second},
-		{byte(3), 3 * time.Second},
-		{"1500ms", 1500 * time.Millisecond},
-		{"not-a-duration", 0},
-		{[]int{1}, 0}, // 미지원 타입.
+		{5, 5 * time.Second, true},
+		{int64(7), 7 * time.Second, true},
+		{float64(9), 9 * time.Second, true},
+		{byte(3), 3 * time.Second, true},
+		{"1500ms", 1500 * time.Millisecond, true},
+		// 숫자 문자열은 숫자 분기와 동일하게 "초" 로 읽는다(신규 허용).
+		{"7", 7 * time.Second, true},
+		{"not-a-duration", 0, false},
+		{[]int{1}, 0, false}, // 미지원 타입.
 	}
 	for _, c := range cases {
-		if got := toDuration(c.in); got != c.want {
-			t.Errorf("toDuration(%v) = %v, want %v", c.in, got, c.want)
+		got, ok := coerceDuration(c.in)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("coerceDuration(%v) = (%v,%v), want (%v,%v)", c.in, got, ok, c.want, c.wantOK)
 		}
 	}
 }
