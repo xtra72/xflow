@@ -411,6 +411,14 @@ type chirpDeviceAdapter struct {
 
 var _ device.Device = (*chirpDeviceAdapter)(nil)
 
+// 이력 힌트 인터페이스는 **선택적**이라 레코더가 타입 단언으로 찾는다 — 시그니처가
+// 어긋나면 컴파일이 아니라 런타임에 조용히 폴백해 버린다. 정적 단언으로 그 실패 모드를
+// 컴파일 에러로 끌어올린다.
+var (
+	_ device.HistoryComparable = (*chirpDeviceAdapter)(nil)
+	_ device.HistoryEventTimed = (*chirpDeviceAdapter)(nil)
+)
+
 func newChirpDeviceAdapter(agentName string, snap deviceState, offlineThreshold time.Duration) *chirpDeviceAdapter {
 	return &chirpDeviceAdapter{
 		agentName:        agentName,
@@ -525,6 +533,65 @@ func (a *chirpDeviceAdapter) properties() map[string]any {
 		props["measurements"] = m
 	}
 	return props
+}
+
+// HistoryComparisonProperties 는 디바이스 이력의 **변화 감지 전용 비교 표면**을
+// 반환한다 (device.HistoryComparable).
+//
+// properties() 와 딱 하나가 다르다: gateways[].stale 을 false 로 중립화한다. stale 은
+// 저장값이 아니라 time.Now() 와 offline 임계에서 조회 시점에 파생되는 값이므로
+// (linkStale), 업링크가 하나도 없어도 임계 경과 순간 스스로 true 로 뒤집힌다. 그
+// 뒤집힘을 "변화"로 세면 디바이스가 한 일이 전혀 없는데도 이력 엔트리가 생긴다.
+//
+// 중요 — payload 에서 제거하는 것이 아니다: 저장/직렬화되는 properties 는 여전히
+// properties() 전체이고 stale 도 그대로 실려 나간다(UI 의 staleness 표시 유지).
+// 이 맵은 오직 직전 기록과의 비교에만 쓰인다.
+//
+// 반환 맵은 매 호출 새로 만들어진다 — properties() 가 바깥 맵/안쪽 맵/gateways
+// 슬라이스를 모두 새로 만들므로(properties 주석의 깊은 복사 규약), 여기서 슬라이스
+// 항목을 변조해도 로스터나 다음 호출 결과가 오염되지 않는다.
+func (a *chirpDeviceAdapter) HistoryComparisonProperties() (map[string]any, bool) {
+	props := a.properties()
+	if gws, ok := props["gateways"].([]deviceGatewayView); ok {
+		for i := range gws {
+			gws[i].Stale = false // 조회 시각 파생값 — 비교에서 중립화.
+		}
+	}
+	return props, true
+}
+
+// HistoryEventTimeMs 는 properties 가 싣고 있는 **가장 최근 업링크 파생 시각**을
+// 반환한다 (device.HistoryEventTimed).
+//
+// 이력 레코더는 주기 샘플러라 기본 엔트리 시각이 10초 격자에 정렬된다 — 실제 수신
+// 시각이 아니다. 반면 measurements[k].timeMs 와 links[g].lastSeenMs 는 둘 다 업링크에서
+// 파생한 시각이므로(upsertDevice / buildGatewayLinks), 그 최댓값이 "이 properties 가
+// 대표하는 시점"에 가장 가깝다.
+//
+// 두 소스를 모두 보는 이유: 디코딩된 object 가 없는 업링크는 measurements 를 갱신하지
+// 않고 링크만 갱신한다. measurements 만 보면 그런 디바이스는 이벤트 시각을 영영 얻지
+// 못한다.
+//
+// 단조성: 두 캐시 모두 병합 의미이고 cap 축출은 **최고령** 항목만 제거하므로 최댓값은
+// 뒤로 가지 않는다(HistoryEventTimed 의 단조 비감소 계약 충족).
+//
+// 아직 어떤 시각도 모르면 (0, false) 를 반환하고 레코더는 샘플 시각으로 폴백한다.
+func (a *chirpDeviceAdapter) HistoryEventTimeMs() (int64, bool) {
+	var newest int64
+	for _, s := range a.snap.measurements {
+		if s.timeMs > newest {
+			newest = s.timeMs
+		}
+	}
+	for _, l := range a.snap.links {
+		if l.lastSeenMs > newest {
+			newest = l.lastSeenMs
+		}
+	}
+	if newest <= 0 {
+		return 0, false
+	}
+	return newest, true
 }
 
 // Metadata 는 사용자 정의 메타데이터를 반환한다: Name(deviceName) + Group/Location
