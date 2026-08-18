@@ -3839,6 +3839,65 @@
     "run": "Run"
   },
   "admin": {
-    "comingSoon": "This page is not available yet."
+    "permissionRequired": "Permission required",
+    "users": {
+      "create": "Add User",
+      "createTitle": "New User",
+      "username": "Username",
+      "password": "Password",
+      "passwordHint": "At least 8 characters",
+      "role": "Role",
+      "rolePlaceholder": "Select a role",
+      "rolesUnavailable": "Role list unavailable — enter the role name directly.",
+      "roleColumnAria": "Change role",
+      "createdAt": "Created",
+      "updatedAt": "Updated",
+      "submit": "Create",
+      "empty": "No users yet.",
+      "resetPassword": "Reset password",
+      "newPassword": "New password",
+      "deleteTitle": "Delete User",
+      "deleteConfirm": "Delete user {username}. This cannot be undone.",
+      "created": "User created.",
+      "deleted": "User deleted.",
+      "roleChanged": "Role changed.",
+      "passwordReset": "Password reset."
+    },
+    "roles": {
+      "create": "Add Role",
+      "createTitle": "New Role",
+      "editTitle": "Edit Role",
+      "edit": "Edit",
+      "name": "Name",
+      "description": "Description",
+      "descriptionImmutable": "The description cannot be changed after creation.",
+      "builtin": "Built-in",
+      "builtinBadge": "Built-in",
+      "builtinReason": "Built-in roles cannot be edited or deleted.",
+      "permissionCount": "Permissions",
+      "permissions": "Permissions",
+      "resource": "Resource",
+      "empty": "No roles yet.",
+      "catalogError": "Could not load the permission catalog.",
+      "deleteTitle": "Delete Role",
+      "deleteConfirm": "Delete role {name}. This cannot be undone.",
+      "created": "Role created.",
+      "updated": "Role updated.",
+      "deleted": "Role deleted."
+    },
+    "errors": {
+      "LAST_ADMIN_USER": "This is the last user holding admin permissions. Create another administrator first, then try again.",
+      "SELF_DELETION": "You cannot delete the account you are signed in with.",
+      "USER_EXISTS": "That username already exists.",
+      "BUILTIN_ROLE_IMMUTABLE": "Built-in roles cannot be edited or deleted.",
+      "ADMIN_ROLE_IMMUTABLE": "The name and permissions of the admin role cannot be changed.",
+      "ROLE_IN_USE": "Users still hold this role, so it cannot be deleted. Change their role first.",
+      "ROLE_EXISTS": "That role name already exists.",
+      "badRequest": "Invalid input. Passwords need at least 8 characters, and a role name must be 1-32 lowercase letters, digits, or hyphens.",
+      "forbidden": "You do not have permission to perform this action.",
+      "notFound": "Target not found. It may have already been deleted.",
+      "conflict": "This action cannot be performed in the current state.",
+      "unknown": "The request could not be completed. Please try again shortly."
+    }
   }
 }
