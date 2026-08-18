@@ -21,6 +21,7 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import type { AgentSummaryStat } from '@/types/agent';
 
 import AgentStatusDiagram from './AgentStatusDiagram';
+import { usePanelTitleVisible } from '../panelChromeContext';
 
 interface AgentStatusPanelProps {
   panelId: string;
@@ -74,6 +75,7 @@ export default function AgentStatusPanel({
   onTitleChange: _onTitleChange,
 }: AgentStatusPanelProps) {
   const { t } = useTranslation();
+  const showTitle = usePanelTitleVisible();
   const agentId = (config.agentId as string | undefined) ?? '';
 
   // 타깃(로컬|원격)에 따라 데이터 소스가 전환된다. useTargetContext 미설정 시 로컬.
@@ -97,10 +99,12 @@ export default function AgentStatusPanel({
   if (stats.isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-        <div className="mb-3 flex shrink-0 items-center gap-2">
-          <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="mb-3 flex shrink-0 items-center gap-2">
+            <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600" />
         </div>
@@ -138,6 +142,7 @@ export default function AgentStatusPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
       {/* 헤더: name · type + 상태 배지 */}
+      {showTitle && (
       <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
@@ -161,6 +166,7 @@ export default function AgentStatusPanel({
           </span>
         )}
       </div>
+      )}
 
       {/* 본문: 상태/통계 타일 */}
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">

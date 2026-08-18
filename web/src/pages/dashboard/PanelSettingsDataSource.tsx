@@ -15,7 +15,7 @@
 // 파생한다 — 선택 surface 이므로 라이브 값 컬럼(value/updated)은 노출하지 않는다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { Eraser, RefreshCw } from 'lucide-react';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -135,6 +135,32 @@ function toStoreEntry(o: StoreKeyObject): StoreEntry {
   };
 }
 
+/** 선택 시리즈(StoreSeriesRef) → 시리즈 동일성 키. 좌표 맵/체크 판정과 같은 키 공간이다. */
+function seriesRefId(s: StoreSeriesRef): string {
+  return storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {});
+}
+
+/**
+ * 선택돼 있으나 스토어 키 목록에 더 이상 존재하지 않는 시리즈를 표 행(StoreEntry)으로 합성한다.
+ *
+ * 왜 필요한가: 체크박스와 해제 경로는 **행 위에만** 존재하는데, 행은 라이브 스토어 목록에서
+ * 파생된다. 스토어에서 키가 사라지면 행이 사라지고, 행이 사라지면 체크를 풀 수단이 함께
+ * 사라져 잔존 선택이 config 에 영구히 남는다(히트맵에서는 판독값 없는 유령 마커로 보인다).
+ * 선택 상태 자체에서 행을 합성해 그 출구를 되돌려준다.
+ *
+ * 라이브 값 컬럼은 원래 이 표에 없고(toStoreEntry 동일), registration 도 스토어에 없는
+ * 항목이므로 채우지 않는다 — 합성 행은 오로지 "해제할 수 있는 행"으로서만 존재한다.
+ */
+function staleSeriesToEntry(s: StoreSeriesRef): StoreEntry {
+  return {
+    key: s.key,
+    storage_key: s.key,
+    metric_type: s.metric_type,
+    tags: s.tags,
+    data_type: s.data_type,
+  };
+}
+
 /**
  * 동적 바인딩(REQ-22) ON 시, 태그-컬럼 표시 필터의 선택 값("k=v" 집합)에서 바인딩 기준
  * `tag_filters`(Record<string,string>)를 파생한다. 기존 스키마(키당 단일값)를 유지하므로
@@ -183,8 +209,12 @@ function PanelStoreSelectTable({
   );
   const hasAgent = agentName !== '';
 
-  const { data: keysData, refetch: refetchKeys, isFetching: keysFetching } =
-    useStoreKeysWithTags(agentName);
+  const {
+    data: keysData,
+    refetch: refetchKeys,
+    isFetching: keysFetching,
+    isSuccess: keysLoaded,
+  } = useStoreKeysWithTags(agentName);
   const keyObjects = useMemo(() => keysData?.keyObjects ?? [], [keysData?.keyObjects]);
 
   // keyObjects(메타데이터) → StoreEntry 파생. 라이브 값(value/namespace/updated)은 없다.
@@ -348,6 +378,27 @@ function PanelStoreSelectTable({
       (entry.tags as Record<string, string>) ?? {},
     );
 
+  // --- 유령 선택(스토어에서 사라진 선택 시리즈) 회수 ---
+  // 판정은 키 목록 조회가 **성공한 뒤에만** 한다. 로딩/실패 중에는 allEntries 가 비어 모든
+  // 선택이 stale 로 보이므로, 그 상태에서 배지를 띄우거나 일괄 정리를 열어주면 멀쩡한 시리즈를
+  // 지우게 된다(fetching 중에도 react-query 는 직전 data 를 유지하므로 isSuccess 로 충분하다).
+  const liveSeriesIds = useMemo(
+    () => new Set(allEntries.map((e) => entryToSeriesId(e))),
+    [allEntries],
+  );
+  const staleSeries = useMemo(
+    () =>
+      hasAgent && keysLoaded ? series.filter((s) => !liveSeriesIds.has(seriesRefId(s))) : [],
+    [hasAgent, keysLoaded, series, liveSeriesIds],
+  );
+  const staleIds = useMemo(() => new Set(staleSeries.map(seriesRefId)), [staleSeries]);
+  // 합성 행은 컬럼 필터/정렬 파이프라인을 통과시키지 않고 목록 맨 위에 고정한다 — 필터에 걸려
+  // 다시 사라지면 "해제할 행이 없다"는 원래 문제로 되돌아간다.
+  const rows = useMemo(
+    () => (staleSeries.length > 0 ? [...staleSeries.map(staleSeriesToEntry), ...entries] : entries),
+    [staleSeries, entries],
+  );
+
   const handleSort = useCallback(
     (next: SortState) => persist({ ...prefs, sort: next }),
     [persist, prefs],
@@ -488,6 +539,30 @@ function PanelStoreSelectTable({
     [series, seriesIds, storeSource, onConfigChange, isHeatmap, sensorPositions],
   );
 
+  // 유령 선택 일괄 정리: 스토어에 없는 선택 시리즈를 series[] 에서 모두 빼고, 히트맵이면 그
+  // 좌표 항목까지 함께 지운다(개별 해제 경로 handleToggleSelection 과 동일한 부수효과 규약).
+  // staleSeries 가 비면 버튼 자체를 렌더하지 않으므로 여기서는 방어만 한다.
+  const handleCleanupStale = useCallback(() => {
+    if (staleIds.size === 0) return;
+    setOverLimitNotice(false);
+    const next = series.filter((s) => !staleIds.has(seriesRefId(s)));
+    const patch: Record<string, unknown> = {
+      store_source: { ...(storeSource ?? {}), series: next },
+    };
+    if (isHeatmap) {
+      const nextPositions = { ...sensorPositions };
+      let removed = false;
+      for (const id of staleIds) {
+        if (nextPositions[id] !== undefined) {
+          delete nextPositions[id];
+          removed = true;
+        }
+      }
+      if (removed) patch.sensor_positions = nextPositions;
+    }
+    onConfigChange(patch);
+  }, [staleIds, series, storeSource, isHeatmap, sensorPositions, onConfigChange]);
+
   // 동적 바인딩 토글(REQ-22). ON: selection_mode:'tag' + 현재 태그 표시 필터에서 tag_filters
   // 파생. OFF: selection_mode:'keys'(명시 체크박스 선택). tag_filters/series 는 보존한다
   // (additive only — OFF 에서 tag_filters 는 useStoreChartData 가 무시). 표시/바인딩 분리.
@@ -541,6 +616,23 @@ function PanelStoreSelectTable({
             {t('dashboard.settings.dynamicBindingLabel')}
           </label>
           <div className="flex items-center gap-1">
+          {/* 유령 선택 일괄 정리 — 스토어에서 사라진 선택 시리즈가 있을 때만 노출한다. */}
+          {staleSeries.length > 0 && (
+            <button
+              type="button"
+              onClick={handleCleanupStale}
+              data-testid="panel-store-select-cleanup-stale"
+              aria-label={t('dashboard.settings.dataSourceStoreSelectCleanupStale')}
+              title={t('dashboard.settings.dataSourceStoreSelectCleanupStale').replace(
+                '{count}',
+                String(staleSeries.length),
+              )}
+              className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-amber-700 transition-colors hover:bg-(--color-bg-hover) dark:text-amber-300"
+            >
+              <Eraser className="h-3.5 w-3.5" />
+              {String(staleSeries.length)}
+            </button>
+          )}
           {/* store 키 목록 새로고침 — 새로 추가된 키가 나타나도록 react-query 재조회. */}
           <button
             type="button"
@@ -579,13 +671,13 @@ function PanelStoreSelectTable({
         <p className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-4 text-center text-xs text-(--color-text-muted)">
           {t('dashboard.settings.dataSourceStoreSelectNoAgent')}
         </p>
-      ) : entries.length === 0 ? (
+      ) : rows.length === 0 ? (
         <p className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-4 text-center text-xs text-(--color-text-muted)">
           {t('dashboard.settings.dataSourceStoreSelectEmpty')}
         </p>
       ) : (
         <StoreEntryTable
-          entries={entries}
+          entries={rows}
           columns={columns}
           sort={prefs.sort}
           onSort={handleSort}
@@ -656,12 +748,25 @@ function PanelStoreSelectTable({
               },
             );
             // 행이 좁으므로 잘라 쓰되 전체 값은 title 로 남긴다(레이아웃 파괴 방지).
+            // 합성된 유령 행은 배지로 구분한다 — 배지가 없으면 스토어에 살아있는 행과 구별되지
+            // 않아, 사용자가 "왜 값이 안 오지" 를 계속 데이터 문제로 오해하게 된다.
+            const isStale = staleIds.has(entryToSeriesId(e));
             return (
-              <span
-                className="block max-w-[220px] truncate font-mono text-xs text-(--color-text-secondary)"
-                title={label}
-              >
-                {label}
+              <span className="flex max-w-[300px] items-center gap-1">
+                <span
+                  className="block max-w-[220px] truncate font-mono text-xs text-(--color-text-secondary)"
+                  title={label}
+                >
+                  {label}
+                </span>
+                {isStale && (
+                  <span
+                    data-testid="panel-store-select-stale-badge"
+                    className="shrink-0 rounded bg-amber-100 px-1 py-px text-[10px] leading-tight text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                  >
+                    {t('dashboard.settings.dataSourceStoreSelectStale')}
+                  </span>
+                )}
               </span>
             );
           }}

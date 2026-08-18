@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
     { key: 'k1', registration: 'auto', data_type: 'float', metric_type: 'temperature', tags: { room: '1' } },
     { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
   ] as unknown[],
+  keysLoaded: true,
   refetchKeys: vi.fn(),
 }));
 
@@ -41,6 +42,8 @@ vi.mock('@/services/api/store', () => ({
     isLoading: false,
     isError: false,
     isFetching: false,
+    // 유령 선택(스토어에서 사라진 시리즈) 판정은 조회 성공 후에만 이뤄진다.
+    isSuccess: state.keysLoaded,
     refetch: state.refetchKeys,
   }),
   useStoreTagPairs: () => ({ data: [], isLoading: false, isError: false }),
@@ -89,6 +92,7 @@ beforeEach(() => {
     { key: 'k1', registration: 'auto', data_type: 'float', metric_type: 'temperature', tags: { room: '1' } },
     { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
   ];
+  state.keysLoaded = true;
   state.refetchKeys.mockReset();
 });
 
@@ -936,5 +940,106 @@ describe('REQ-22/AC-24 — 명시적 동적 바인딩 토글 + 표시/바인딩 
     ).toBe(true);
     // 로드만으로 tag_filters/selection_mode 를 건드리지 않는다(보존).
     expect(onConfigChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('유령 선택 — 스토어에서 사라진 선택 시리즈 회수', () => {
+  /** 스토어 목록에 없는 키를 선택 상태로만 들고 있는 패널(보고된 결함 상황). */
+  function panelWithStale(): PanelConfig {
+    return panelWithAgent({
+      series: [
+        { key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' },
+        { key: 'gone', metric_type: 'temperature', tags: { room: '9' }, alias: '옛 센서' },
+      ],
+    });
+  }
+  const SID_GONE = heatmapSensorId({
+    key: 'gone',
+    metric_type: 'temperature',
+    tags: { room: '9' },
+  });
+
+  it('스토어에 없는 선택 시리즈도 행으로 나타난다 — 행이 없으면 체크를 풀 수단이 없다', () => {
+    render(<PanelSettingsDataSource panel={panelWithStale()} onConfigChange={vi.fn()} />);
+    const select = screen.getByTestId('panel-store-select');
+    // 합성 행 + stale 배지.
+    expect(within(select).getAllByTestId('panel-store-select-stale-badge')).toHaveLength(1);
+    // 살아있는 선택(k1)에는 배지가 붙지 않는다.
+    expect(within(select).getByText('옛 센서')).toBeInTheDocument();
+  });
+
+  it('합성 행의 체크를 풀면 series 와 좌표에서 함께 제거된다', () => {
+    const onConfigChange = vi.fn();
+    const panel = {
+      id: 'p1',
+      type: 'heatmap',
+      title: 'h',
+      config: {
+        data_source: 'store',
+        store_source: {
+          ...STORE_SOURCE,
+          series: [
+            { key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' },
+            { key: 'gone', metric_type: 'temperature', tags: { room: '9' }, alias: '옛 센서' },
+          ],
+        },
+        sensor_positions: { [SID_K1]: { x: 0.2, y: 0.2 }, [SID_GONE]: { x: 0.8, y: 0.8 } },
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDataSource panel={panel} onConfigChange={onConfigChange} />);
+    const select = screen.getByTestId('panel-store-select');
+    // 합성 행은 목록 맨 위에 고정되므로 첫 행 체크박스가 유령 선택이다.
+    const checkboxes = within(select).getAllByRole('checkbox');
+    fireEvent.click(checkboxes[1]!); // [0] 은 동적 바인딩 토글.
+    const patch = onConfigChange.mock.calls.at(-1)![0] as {
+      store_source: { series: Array<{ key: string }> };
+      sensor_positions: Record<string, unknown>;
+    };
+    expect(patch.store_source.series.map((s) => s.key)).toEqual(['k1']);
+    expect(patch.sensor_positions[SID_GONE]).toBeUndefined();
+    // 살아있는 선택의 좌표는 건드리지 않는다.
+    expect(patch.sensor_positions[SID_K1]).toEqual({ x: 0.2, y: 0.2 });
+  });
+
+  it('일괄 정리 버튼이 유령 선택을 한 번에 제거한다', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={panelWithStale()} onConfigChange={onConfigChange} />);
+    fireEvent.click(screen.getByTestId('panel-store-select-cleanup-stale'));
+    const patch = onConfigChange.mock.calls.at(-1)![0] as {
+      store_source: { series: Array<{ key: string }> };
+    };
+    expect(patch.store_source.series.map((s) => s.key)).toEqual(['k1']);
+  });
+
+  it('유령 선택이 없으면 정리 버튼도 배지도 없다(회귀 0)', () => {
+    render(
+      <PanelSettingsDataSource
+        panel={panelWithAgent({
+          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('panel-store-select-cleanup-stale')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('panel-store-select-stale-badge')).not.toBeInTheDocument();
+  });
+
+  it('키 목록 조회 전(미성공)에는 stale 로 단정하지 않는다 — 멀쩡한 선택을 지우지 않는다', () => {
+    state.keysLoaded = false;
+    state.keyObjects = [];
+    render(<PanelSettingsDataSource panel={panelWithStale()} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('panel-store-select-cleanup-stale')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('panel-store-select-stale-badge')).not.toBeInTheDocument();
+  });
+
+  it('컬럼 필터가 걸려 있어도 합성 행은 사라지지 않는다(해제 경로 보존)', () => {
+    // key 컬럼 필터를 저장해 두고 렌더 → 필터는 라이브 행만 좁히고 합성 행은 고정된다.
+    window.localStorage.setItem(
+      'moai.panel.p1.storeTablePrefs',
+      JSON.stringify({ sort: null, filters: { key: { text: 'zzz', values: [] } }, hidden: [] }),
+    );
+    render(<PanelSettingsDataSource panel={panelWithStale()} onConfigChange={vi.fn()} />);
+    const select = screen.getByTestId('panel-store-select');
+    expect(within(select).getAllByTestId('panel-store-select-stale-badge')).toHaveLength(1);
   });
 });

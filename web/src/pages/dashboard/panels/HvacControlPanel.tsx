@@ -23,6 +23,7 @@ import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
+import { usePanelTitleVisible } from '../panelChromeContext';
 
 interface HvacControlPanelProps {
   panelId: string;
@@ -113,6 +114,7 @@ export default function HvacControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: HvacControlPanelProps) {
+  const showTitle = usePanelTitleVisible();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
 
@@ -157,10 +159,12 @@ export default function HvacControlPanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-        <div className="mb-2 flex shrink-0 items-center gap-2">
-          <Wind className="h-4 w-4 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <Wind className="h-4 w-4 text-(--color-text-muted)" />
+            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-default) border-t-blue-600" />
         </div>
@@ -184,10 +188,13 @@ export default function HvacControlPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-lg bg-(--color-bg-surface) p-4 shadow">
       {/* 1) 헤더: 아이콘 + 제목 + 상태 뱃지 + 전원 버튼 */}
       <div className="flex shrink-0 items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Wind className="h-4 w-4 text-(--color-text-secondary)" />
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
-        </div>
+        {/* 우측에 전원 버튼이 함께 있으므로 타이틀 묶음만 숨긴다(제어 유실 방지). */}
+        {showTitle && (
+          <div className="flex items-center gap-2">
+            <Wind className="h-4 w-4 text-(--color-text-secondary)" />
+            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <span
             className={cn(

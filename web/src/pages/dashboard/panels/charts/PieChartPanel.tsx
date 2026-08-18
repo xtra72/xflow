@@ -20,6 +20,7 @@ import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { aggregateByLabel } from './chartChannelUtils';
 import { useChartChannel } from './useChartChannel';
 import { useStoreChartData } from './useStoreChartData';
+import { usePanelTitleVisible } from '../../panelChromeContext';
 
 interface PieChartPanelProps {
   panelId: string;
@@ -55,6 +56,7 @@ function parseConfig(config: Record<string, unknown>): PiePanelConfig {
 }
 
 export default function PieChartPanel({ panelId: _panelId, title, config }: PieChartPanelProps) {
+  const showTitle = usePanelTitleVisible();
   const cfg = parseConfig(config);
   // SPEC-WEB-005: data_source 에 따라 Store 소스 또는 채널 소스를 사용한다(공존).
   const storeSource = config.store_source as StoreSourceConfig | undefined;
@@ -91,12 +93,14 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
         <ConnectionStatusIcon status={status} />
       </div>
 
-      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
-        <PieChartIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
-          {title || cfg.channel_name || '채널 미지정'}
-        </span>
-      </div>
+      {showTitle && (
+        <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+          <PieChartIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+            {title || cfg.channel_name || '채널 미지정'}
+          </span>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1" data-testid="pie-chart-container">
         <ResponsiveContainer width="100%" height="100%">

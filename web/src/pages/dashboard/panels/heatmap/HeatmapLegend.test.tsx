@@ -5,7 +5,7 @@
 // 컴포넌트 레벨에서 커버한다.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, cleanup, within } from '@testing-library/react';
+import { render, cleanup, within, fireEvent } from '@testing-library/react';
 
 // i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
 vi.mock('@/lib/i18n', () => ({
@@ -130,5 +130,147 @@ describe('HeatmapLegend — 견고성', () => {
     const bar = getByTestId('heatmap-legend').querySelector('div')!;
     // 기본 gradient 의 첫 색(#2166ac)이 포함된다.
     expect(bar.style.background).toContain('#2166ac');
+  });
+});
+
+describe('HeatmapLegend — 드래그 이동(편집모드 한정)', () => {
+  // jsdom 에는 PointerEvent 가 없어 fireEvent.pointerX 가 좌표 없는 일반 Event 로 폴백한다.
+  // MouseEvent 기반 대역을 등록해 clientX/clientY 가 실제로 전달되게 한다.
+  class FakePointerEvent extends MouseEvent {
+    pointerId = 1;
+  }
+  (globalThis as unknown as { PointerEvent: typeof MouseEvent }).PointerEvent =
+    FakePointerEvent as unknown as typeof MouseEvent;
+
+  /**
+   * jsdom 은 레이아웃을 계산하지 않아 getBoundingClientRect 가 전부 0 이다. 부모(컨테이너)와
+   * 범례 자신의 rect 를 주입해 정규화 변환만 검증한다(픽셀 렌더는 브라우저 책임).
+   */
+  function withRects(container: HTMLElement, legend: HTMLElement) {
+    const parent = legend.parentElement!;
+    vi.spyOn(parent, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 200,
+      height: 100,
+      right: 200,
+      bottom: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    vi.spyOn(legend, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 20,
+      height: 20,
+      right: 20,
+      bottom: 20,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    void container;
+  }
+
+  /** jsdom 에 없는 PointerEvent capture API 를 no-op 으로 채운다. */
+  function stubPointerCapture(el: HTMLElement) {
+    (el as unknown as { setPointerCapture: (id: number) => void }).setPointerCapture = () => {};
+    (el as unknown as { hasPointerCapture: (id: number) => boolean }).hasPointerCapture = () => false;
+    (el as unknown as { releasePointerCapture: (id: number) => void }).releasePointerCapture =
+      () => {};
+  }
+
+  it('draggable=false(뷰어)에서는 pointer-events-none 이 유지된다 — 아래 레이어 클릭 보존', () => {
+    const onOffsetChange = vi.fn();
+    const { getByTestId } = render(
+      <div>
+        <HeatmapLegend
+          bounds={{ min: 0, max: 10 }}
+          colorTable={TABLE}
+          legend={legendCfg()}
+          onOffsetChange={onOffsetChange}
+        />
+      </div>,
+    );
+    const el = getByTestId('heatmap-legend');
+    expect(el.className).toContain('pointer-events-none');
+    stubPointerCapture(el);
+    fireEvent.pointerDown(el, { clientX: 10, clientY: 10 });
+    expect(onOffsetChange).not.toHaveBeenCalled();
+  });
+
+  it('draggable=true 이면 포인터 이벤트를 받고 드래그가 정규화 좌표를 저장한다', () => {
+    const onOffsetChange = vi.fn();
+    const { container, getByTestId } = render(
+      <div>
+        <HeatmapLegend
+          bounds={{ min: 0, max: 10 }}
+          colorTable={TABLE}
+          legend={legendCfg()}
+          draggable
+          onOffsetChange={onOffsetChange}
+        />
+      </div>,
+    );
+    const el = getByTestId('heatmap-legend');
+    expect(el.className).toContain('pointer-events-auto');
+    withRects(container, el);
+    stubPointerCapture(el);
+    // 좌상단(0,0)을 잡고 (100,50)으로 끈다 → 200x100 컨테이너에서 (0.5, 0.5).
+    fireEvent.pointerDown(el, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 100, clientY: 50 });
+    expect(onOffsetChange).toHaveBeenLastCalledWith({ x: 0.5, y: 0.5 });
+  });
+
+  it('컨테이너 밖으로 끌어도 범례가 안에 남도록 clamp 된다', () => {
+    const onOffsetChange = vi.fn();
+    const { container, getByTestId } = render(
+      <div>
+        <HeatmapLegend
+          bounds={{ min: 0, max: 10 }}
+          colorTable={TABLE}
+          legend={legendCfg()}
+          draggable
+          onOffsetChange={onOffsetChange}
+        />
+      </div>,
+    );
+    const el = getByTestId('heatmap-legend');
+    withRects(container, el);
+    stubPointerCapture(el);
+    fireEvent.pointerDown(el, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 9999, clientY: 9999 });
+    // 범례 20x20 / 컨테이너 200x100 → 상한 x=(200-20)/200=0.9, y=(100-20)/100=0.8.
+    expect(onOffsetChange).toHaveBeenLastCalledWith({ x: 0.9, y: 0.8 });
+  });
+
+  it('offset 이 설정되면 모서리 프리셋 대신 % 좌표로 배치한다', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ position: 'bottom-right', offset: { x: 0.25, y: 0.75 } })}
+      />,
+    );
+    const el = getByTestId('heatmap-legend');
+    expect(el.style.left).toBe('25%');
+    expect(el.style.top).toBe('75%');
+    // 모서리 프리셋 클래스는 붙지 않는다(둘이 겹치면 배치가 어긋난다).
+    expect(el.className).not.toContain('bottom-2');
+  });
+
+  it('offset 미설정(기본)이면 기존 모서리 프리셋 그대로다(회귀 0)', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ position: 'top-left' })}
+      />,
+    );
+    const el = getByTestId('heatmap-legend');
+    expect(el.className).toContain('top-2');
+    expect(el.className).toContain('left-2');
+    expect(el.style.left).toBe('');
   });
 });

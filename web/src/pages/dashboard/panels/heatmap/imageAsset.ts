@@ -83,3 +83,29 @@ export function readImageAsDataUrl(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * data-URL 이미지의 원본 크기(naturalWidth/Height)를 읽는다.
+ *
+ * 기준 도면의 종횡비가 패널 스테이지 비율을 정하므로(stage.ts), 첨부 시점에 원본 크기를 config
+ * 에 저장해 두면 첫 페인트부터 정확한 비율로 그려진다. 디코드에 실패하거나 Image 가 없는 환경
+ * (jsdom 등)에서는 **빈 객체**를 반환한다 — 크기를 못 구한 것은 오류가 아니라 "저장할 값이
+ * 없음" 이고, 패널이 렌더 시점에 실측으로 폴백한다. 그래서 이 함수는 reject 하지 않는다.
+ */
+export function readImageNaturalSize(
+  dataUrl: string,
+): Promise<{ natural_width?: number; natural_height?: number }> {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined') {
+      resolve({});
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const { naturalWidth: w, naturalHeight: h } = img;
+      resolve(w > 0 && h > 0 ? { natural_width: w, natural_height: h } : {});
+    };
+    img.onerror = () => resolve({});
+    img.src = dataUrl;
+  });
+}

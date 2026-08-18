@@ -558,6 +558,14 @@ interface UIState {
   dashboardEditMode: boolean;
   /** 대시보드 그리드 칼럼 수 */
   dashboardGridCols: number;
+  /**
+   * 대시보드 그리드 컨테이너의 실측 폭(px, 비영속·비동기화).
+   *
+   * 셀 한 변을 이 폭에서 파생하므로(gridGeometry.gridCellSize) 패널 설정 화면이 "이 패널이
+   * 대시보드에서 실제로 몇 대 몇인지"를 계산할 수 있다. 대시보드를 한 번도 열지 않았으면 0 이며
+   * 호출부는 마진 무시 근사로 폴백한다.
+   */
+  dashboardGridWidth: number;
   /** 대시보드 그리드 라인 표시 여부 */
   dashboardShowGridLines: boolean;
   /** 디바이스 그리드 레이아웃 (deviceId -> layout) */
@@ -618,6 +626,8 @@ interface UIActions {
   // 활성 대시보드 레이아웃 관리
   setDashboardLayout: (layout: DashboardLayoutItem[]) => void;
   resetDashboardLayout: () => void;
+  /** 그리드 컨테이너 실측 폭 게시(대시보드 → 설정 화면). 같은 값이면 no-op. */
+  setDashboardGridWidth: (width: number) => void;
 
   // 디바이스 그리드
   setDeviceGridLayout: (layout: Record<string, DashboardLayoutItem>) => void;
@@ -782,6 +792,7 @@ export const useUIStore = create<UIState & UIActions>()(
       activeDashboardId: 'default',
       dashboardEditMode: false,
       dashboardGridCols: 10,
+      dashboardGridWidth: 0,
       dashboardShowGridLines: true,
       deviceGridLayout: {},
       deviceGridEditMode: false,
@@ -997,6 +1008,11 @@ export const useUIStore = create<UIState & UIActions>()(
           }));
           return mirrorLegacyToActiveSnapshot(state, patch);
         }),
+
+      // 그리드 실측 폭 게시. ResizeObserver 가 매 프레임 부르므로 동일 값이면 set 을 건너뛴다
+      // (불필요한 구독자 재렌더 방지 — 이 값은 대시보드 렌더 경로에서도 읽힌다).
+      setDashboardGridWidth: (width) =>
+        set((state) => (state.dashboardGridWidth === width ? {} : { dashboardGridWidth: width })),
 
       // 디바이스 그리드
       setDeviceGridLayout: (layout) =>

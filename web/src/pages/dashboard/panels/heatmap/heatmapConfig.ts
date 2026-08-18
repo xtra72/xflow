@@ -14,6 +14,7 @@
 
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 import { migrateSensorPositions } from './sensorIdentity';
+import type { StageFit } from './stage';
 
 /** IDW 거리 감쇠 지수 기본값(REQ-05). */
 export const DEFAULT_IDW_POWER = 2;
@@ -70,6 +71,51 @@ export interface FloorPlanConfig {
   natural_height?: number;
 }
 
+/**
+ * 도면 이미지 레이어(다중 이미지). 단일 `floor_plan` 의 상위 호환 형태로, 파서가 구 config 를
+ * 이 배열로 이관한다(구 단일 이미지 = 스테이지를 가득 채우는 레이어 1장).
+ *
+ * 좌표계: x/y/w/h 는 **스테이지 정규화 박스**(0..1)다 — 첫 레이어(기준 도면)가 스테이지의
+ * 종횡비를 정하고 기본 박스 {0,0,1,1} 로 스테이지를 정확히 채운다. 나머지 레이어는 그 위에
+ * 임의 위치/크기로 얹힌다(부분 확대도, 구역 표시 등).
+ */
+export interface FloorPlanLayer {
+  /**
+   * 자산 id(내용 SHA-256). 신규 첨부는 이 경로를 쓴다 — 이미지 바이트는 별도 자산 API 에
+   * 저장되고 config 에는 id 만 남으므로 대시보드 snapshot 이 256KB 상한에 걸리지 않는다.
+   */
+  asset_id?: string;
+  /**
+   * 레거시 인라인 data-URL. 자산 분리 이전에 저장된 패널이 여기에 이미지를 통째로 들고 있다.
+   * 읽기 전용 하위호환 경로이며 신규 첨부는 사용하지 않는다 — 이 필드가 채워진 패널은
+   * 대시보드 저장이 실패할 수 있다(그것이 자산 분리의 이유).
+   */
+  image?: string;
+  /** 스테이지 정규화 좌상단 x(0..1). 기본 0. */
+  x: number;
+  /** 스테이지 정규화 좌상단 y(0..1). 기본 0. */
+  y: number;
+  /** 스테이지 정규화 폭(0 초과 1 이하). 기본 1. */
+  w: number;
+  /** 스테이지 정규화 높이(0 초과 1 이하). 기본 1. */
+  h: number;
+  /** 레이어 불투명도(0..1). 기본 1. */
+  opacity: number;
+  /**
+   * 박스 안에서의 이미지 맞춤. 기본 contain.
+   *   - contain: 비율 유지 + 박스 안에 전부 보이게(여백 생김)
+   *   - cover:   비율 유지 + 박스를 덮음(넘치는 부분이 잘림)
+   *   - fill:    비율 무시 + 박스에 정확히 맞춤(잘리지 않고 늘거나 줄어듦)
+   * 박스 폭을 줄였을 때 "잘리지 않고 이미지가 줄어들기" 를 원하면 fill 이다 — cover 는 정의상
+   * 비율을 지키므로 좁아진 축을 채우려 반대 축이 넘치고, 그 넘친 부분이 잘린다.
+   */
+  fit: 'contain' | 'cover' | 'fill';
+  /** 원본 폭(종횡비 산출용, 선택). 첫 레이어의 값이 스테이지 종횡비를 정한다. */
+  natural_width?: number;
+  /** 원본 높이(종횡비 산출용, 선택). */
+  natural_height?: number;
+}
+
 /** 배치 에디터 옵션(SPEC-002 REQ-05, additive). 편집 활성 여부는 런타임 상태(비영속). */
 export interface EditorConfig {
   /** 그리드 스냅 간격(정규화 0..1 단위, 선택). */
@@ -116,12 +162,19 @@ export interface LegendConfig {
   enabled: boolean;
   /** 막대 방향. 기본 'vertical'. */
   orientation: 'vertical' | 'horizontal';
-  /** 오버레이 모서리 위치. 기본 'bottom-right'. */
+  /** 오버레이 모서리 위치. 기본 'bottom-right'. `offset` 이 있으면 그쪽이 우선한다. */
   position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
   /** 크기 프리셋. 기본 'md'. */
   size: 'sm' | 'md' | 'lg';
   /** 등간 눈금 개수(2..10 clamp). 기본 5. */
   tick_count: number;
+  /**
+   * 드래그로 옮긴 자유 위치(범례 좌상단의 정규화 좌표 0..1, sensor_positions 와 같은 좌표계).
+   * 설정되면 `position` 모서리 프리셋 대신 이 좌표로 배치한다 — 리사이즈/도면 교체에 불변.
+   * 미설정(기본)이면 기존 모서리 배치와 바이트 동일하다. 설정 다이얼로그에서 모서리를 다시
+   * 고르면 제거되어 프리셋으로 되돌아간다.
+   */
+  offset?: SensorPosition;
 }
 
 /**
@@ -142,8 +195,29 @@ export interface HeatmapPanelConfig {
   color_table?: ColorStop[];
   /** IDW 파라미터(항상 기본값 보정). */
   idw: IdwParams;
-  /** 도면 이미지 배경(SPEC-002). 미첨부/무효 시 undefined(배경 없음, AC-E1). */
+  /** 도면 이미지 배경(SPEC-002, 단일). 다중 이미지의 하위호환 입력으로만 남는다. */
   floor_plan?: FloorPlanConfig;
+  /**
+   * 도면 이미지 레이어 목록. 파서가 항상 배열로 채운다(빈 배열 = 배경 없음). 구 `floor_plan`
+   * 단일 이미지는 읽는 시점에 레이어 1장으로 이관된다 — 파괴적 쓰기는 없고, 사용자가 도면을
+   * 편집할 때 이관된 배열이 자연스럽게 영속된다(sensor_positions 이관 선례와 동일).
+   */
+  floor_plans: FloorPlanLayer[];
+  /**
+   * sensor_positions 좌표가 어느 공간에 저장돼 있는지. 'stage'(신규)는 기준 도면 박스 기준,
+   * 미지정(레거시)은 패널 컨테이너 기준이다. 레거시 좌표는 렌더 시점에 실측 rect 로 스테이지
+   * 공간으로 환산해 **보이던 위치를 그대로 보존**하고, 사용자가 좌표를 편집할 때 'stage' 로
+   * 승격돼 영속된다.
+   */
+  sensor_space?: 'container' | 'stage';
+  /**
+   * 스테이지를 패널 본문에 맞추는 방식(additive, 기본 'contain').
+   *
+   * 'contain' 은 도면 종횡비를 지켜 레터박스 여백을 남기고, 'cover' 는 여백 대신 가장자리를
+   * 자르며, 'stretch' 는 여백 대신 도면을 늘린다. 좌표는 세 모드 모두 스테이지 정규화라 마커는
+   * 도면 위 같은 지점에 붙는다(stage.ts StageFit 참조).
+   */
+  stage_fit?: StageFit;
   /** 도면 위 히트맵 합성 불투명도(0..1). 항상 기본값(0.6) 보정 — idw 와 동일 패턴. */
   heatmap_opacity: number;
   /** 배치 에디터 옵션(SPEC-002). 미지정/무효 시 undefined. */
@@ -264,6 +338,77 @@ function parseFloorPlan(raw: unknown): FloorPlanConfig | undefined {
   return result;
 }
 
+/** 0 초과 1 이하로 정규화한다(레이어 폭/높이 — 0 크기 레이어 방지). */
+function clampSize(v: unknown, fallback: number): number {
+  if (!isFiniteNumber(v) || v <= 0) return fallback;
+  return v > 1 ? 1 : v;
+}
+
+/**
+ * raw 레이어 1건을 파싱한다. image(비어 있지 않은 문자열)가 없으면 null(그 레이어는 버린다).
+ * 박스/불투명도는 결측·손상 시 기본값(스테이지 가득, 불투명)으로 보정한다.
+ */
+function parseFloorPlanLayer(raw: unknown): FloorPlanLayer | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const l = raw as Record<string, unknown>;
+  const assetId = typeof l.asset_id === 'string' && l.asset_id.trim() !== '' ? l.asset_id : undefined;
+  const image = typeof l.image === 'string' && l.image.trim() !== '' ? l.image : undefined;
+  // 둘 중 하나는 있어야 그릴 것이 있다. 둘 다 있으면 asset_id 가 우선하되 image 도 보존한다
+  // (자산 조회 실패 시 레거시 인라인 이미지로 그릴 수 있다).
+  if (!assetId && !image) return null;
+  const layer: FloorPlanLayer = {
+    ...(assetId !== undefined ? { asset_id: assetId } : {}),
+    ...(image !== undefined ? { image } : {}),
+    x: isFiniteNumber(l.x) ? clamp01(l.x) : 0,
+    y: isFiniteNumber(l.y) ? clamp01(l.y) : 0,
+    w: clampSize(l.w, 1),
+    h: clampSize(l.h, 1),
+    opacity: isFiniteNumber(l.opacity) ? clamp01(l.opacity) : 1,
+    // enum 화이트리스트: 미인정 값은 기본값(contain)으로 폴백.
+    fit: l.fit === 'cover' || l.fit === 'fill' ? l.fit : DEFAULT_FLOOR_PLAN_FIT,
+  };
+  if (isFiniteNumber(l.natural_width) && l.natural_width > 0) {
+    layer.natural_width = l.natural_width;
+  }
+  if (isFiniteNumber(l.natural_height) && l.natural_height > 0) {
+    layer.natural_height = l.natural_height;
+  }
+  return layer;
+}
+
+/**
+ * raw.floor_plans(배열) 를 파싱하고, 없으면 구 단일 `floor_plan` 을 레이어 1장으로 이관한다.
+ * 둘 다 없으면 빈 배열(배경 없음, AC-E1 유지).
+ */
+function parseFloorPlans(rawLayers: unknown, single: FloorPlanConfig | undefined): FloorPlanLayer[] {
+  if (Array.isArray(rawLayers)) {
+    const out: FloorPlanLayer[] = [];
+    for (const item of rawLayers) {
+      const layer = parseFloorPlanLayer(item);
+      if (layer) out.push(layer);
+    }
+    // 빈 배열로 파싱됐어도 배열이 명시돼 있으면 그 뜻(배경 없음)을 존중한다 — 구 단일 이미지로
+    // 되살아나면 "이미지를 다 지웠는데 옛 도면이 돌아온다".
+    return out;
+  }
+  if (single?.image) {
+    return [
+      {
+        image: single.image,
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1,
+        opacity: 1,
+        fit: single.fit ?? DEFAULT_FLOOR_PLAN_FIT,
+        ...(single.natural_width !== undefined ? { natural_width: single.natural_width } : {}),
+        ...(single.natural_height !== undefined ? { natural_height: single.natural_height } : {}),
+      },
+    ];
+  }
+  return [];
+}
+
 /** raw.heatmap_opacity 를 파싱한다. 유한 숫자면 0..1 clamp, 아니면 기본값(0.6). */
 function parseHeatmapOpacity(raw: unknown): number {
   return isFiniteNumber(raw) ? clamp01(raw) : DEFAULT_HEATMAP_OPACITY;
@@ -349,7 +494,22 @@ function parseLegend(raw: unknown): LegendConfig | undefined {
       : tickRaw > MAX_LEGEND_TICK_COUNT
         ? MAX_LEGEND_TICK_COUNT
         : tickRaw;
-  return { enabled: l.enabled === true, orientation, position, size, tick_count };
+  const result: LegendConfig = {
+    enabled: l.enabled === true,
+    orientation,
+    position,
+    size,
+    tick_count,
+  };
+  // 자유 위치: x/y 가 모두 유한 숫자일 때만 인정하고 0..1 로 clamp 한다(좌표 손상 시 프리셋 폴백).
+  const off = l.offset;
+  if (off && typeof off === 'object') {
+    const o = off as Record<string, unknown>;
+    if (isFiniteNumber(o.x) && isFiniteNumber(o.y)) {
+      result.offset = { x: clamp01(o.x), y: clamp01(o.y) };
+    }
+  }
+  return result;
 }
 
 /** raw.store_source 를 파싱한다. 객체가 아니면 기본 store 소스로 폴백(하위호환). */
@@ -367,6 +527,7 @@ function parseStoreSource(raw: unknown): StoreSourceConfig {
 export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
   const cfg = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const store_source = parseStoreSource(cfg.store_source);
+  const floor_plan = parseFloorPlan(cfg.floor_plan);
   return {
     store_source,
     // 좌표는 시리즈 동일성 키로 키잉된다. raw key 로 저장된 기존 패널은 읽는 시점에 이관한다
@@ -379,7 +540,14 @@ export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
     color_table: parseColorTable(cfg.color_table),
     idw: parseIdw(cfg.idw),
     // SPEC-002 신규 필드(additive). MVP 시절 config(필드 없음)는 기본값으로 채워진다(AC-E5).
-    floor_plan: parseFloorPlan(cfg.floor_plan),
+    floor_plan,
+    // 다중 이미지(additive). 구 단일 floor_plan 은 레이어 1장으로 읽는 시점에 이관된다.
+    floor_plans: parseFloorPlans(cfg.floor_plans, floor_plan),
+    // 좌표 공간: 명시적으로 'stage' 일 때만 신규 공간. 미지정/손상은 레거시(컨테이너)로 본다.
+    sensor_space: cfg.sensor_space === 'stage' ? 'stage' : undefined,
+    // 스테이지 맞춤(additive). enum 화이트리스트 — 미인정 값은 기본 contain 으로 폴백해
+    // 미설정 config 와 동일하게 동작한다(parseFloorPlan.fit 선례 동일, 회귀 0).
+    stage_fit: cfg.stage_fit === 'cover' || cfg.stage_fit === 'stretch' ? cfg.stage_fit : undefined,
     heatmap_opacity: parseHeatmapOpacity(cfg.heatmap_opacity),
     editor: parseEditor(cfg.editor),
     // SPEC-003 신규 필드(additive). 미설정 MVP/002 config 는 undefined(등고선 없음, AC-E2/회귀 0).

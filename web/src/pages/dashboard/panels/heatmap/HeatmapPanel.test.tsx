@@ -29,6 +29,7 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import HeatmapPanel from './HeatmapPanel';
+import { PanelChromeProvider } from '../../panelChromeContext';
 import { heatmapSensorId } from './sensorIdentity';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -254,8 +255,9 @@ describe('HeatmapPanel', () => {
     );
     fireEvent.click(screen.getByTestId('heatmap-edit-toggle'));
     fireEvent.click(screen.getByTestId(`sensor-remove-${tid(sid('s1'))}`));
-    // s1 좌표만 삭제되고 s2 는 보존된다.
+    // s1 좌표만 삭제되고 s2 는 보존된다. 좌표를 쓰면 공간이 'stage' 로 승격된다(스테이지 도입).
     expect(onConfigChange).toHaveBeenCalledWith({
+      sensor_space: 'stage',
       sensor_positions: { [sid('s2')]: { x: 0.8, y: 0.8 } },
     });
   });
@@ -836,5 +838,190 @@ describe('HeatmapPanel', () => {
     );
     expect(screen.queryByTestId('sensor-placement-overlay')).toBeNull();
     expect(screen.queryByTestId('heatmap-edit-toggle')).toBeNull();
+  });
+});
+
+describe('HeatmapPanel — 스테이지(기준 도면 종횡비 박스)', () => {
+  it('스택이 렌더되면 모든 레이어를 담는 스테이지가 존재한다', () => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel panelId="p" config={makeConfig({ s1: { x: 0.5, y: 0.5 } })} />,
+    );
+    const stage = screen.getByTestId('heatmap-stage');
+    expect(stage).toBeInTheDocument();
+    // 도면/히트맵/마커가 같은 좌표 공간을 공유하도록 스테이지 안에 들어간다.
+    expect(stage.querySelector('[data-testid="heatmap-canvas"]')).not.toBeNull();
+  });
+
+  it('다중 도면 레이어를 모두 스테이지 안에 렌더한다', () => {
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig(
+          {},
+          {
+            floor_plans: [
+              { image: 'data:image/png;base64,AAAA' },
+              { image: 'data:image/png;base64,BBBB', x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
+            ],
+          },
+        )}
+      />,
+    );
+    const stage = screen.getByTestId('heatmap-stage');
+    expect(stage.querySelector('[data-testid="floor-plan-background"]')).not.toBeNull();
+    const overlay = stage.querySelector('[data-testid="floor-plan-layer-1"]') as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+    expect(overlay!.style.left).toBe('50%');
+    expect(overlay!.style.width).toBe('50%');
+  });
+});
+
+// stage_fit: 레터박스 여백을 없애는 두 대안(잘림/왜곡). 좌표는 세 모드 모두 스테이지 정규화라
+// 마커는 도면 위 같은 지점에 붙는다 — 달라지는 것은 스테이지 박스뿐이다.
+describe('HeatmapPanel — stage_fit', () => {
+  /** 본문 실측을 고정한다(jsdom 은 rect 가 0 이라 스테이지가 컨테이너 폴백을 탄다). */
+  function withBodyRect(width: number, height: number) {
+    return vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ width, height, top: 0, left: 0, right: width, bottom: height, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+  }
+
+  /** 1:1 도면(200×200) — 400×200 본문과 종횡비가 어긋나 여백/잘림이 관찰된다. */
+  const squarePlan = (stage_fit?: string) =>
+    makeConfig(
+      { s1: { x: 0.5, y: 0.5 } },
+      {
+        sensor_space: 'stage',
+        floor_plans: [
+          { image: 'data:image/png;base64,AAAA', natural_width: 200, natural_height: 200 },
+        ],
+        ...(stage_fit ? { stage_fit } : {}),
+      },
+    );
+
+  beforeEach(() => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+  });
+
+  it('기본(contain)은 도면 비율을 지키고 좌우 여백을 남긴다', () => {
+    const spy = withBodyRect(400, 200);
+    try {
+      render(<HeatmapPanel panelId="p" config={squarePlan()} />);
+      const stage = screen.getByTestId('heatmap-stage');
+      expect(stage.style.width).toBe('200px');
+      expect(stage.style.height).toBe('200px');
+      expect(stage.style.left).toBe('100px');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('cover 는 본문을 여백 없이 덮고 넘치는 쪽이 잘린다(음수 top)', () => {
+    const spy = withBodyRect(400, 200);
+    try {
+      render(<HeatmapPanel panelId="p" config={squarePlan('cover')} />);
+      const stage = screen.getByTestId('heatmap-stage');
+      expect(stage.style.width).toBe('400px');
+      expect(stage.style.height).toBe('400px');
+      expect(stage.style.top).toBe('-100px');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('stretch 는 본문을 그대로 쓰고 도면을 fill 로 늘린다', () => {
+    const spy = withBodyRect(400, 200);
+    try {
+      render(<HeatmapPanel panelId="p" config={squarePlan('stretch')} />);
+      const stage = screen.getByTestId('heatmap-stage');
+      expect(stage.style.width).toBe('400px');
+      expect(stage.style.height).toBe('200px');
+      // 이미지가 자기 fit(contain)을 유지하면 이미지 안에서 여백이 되살아난다.
+      const bg = screen.getByTestId('floor-plan-background') as HTMLImageElement;
+      expect(bg.style.objectFit).toBe('fill');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('cover 로 잘려도 본문이 잘라내므로 패널 밖으로 새지 않는다', () => {
+    const spy = withBodyRect(400, 200);
+    try {
+      const { container } = render(<HeatmapPanel panelId="p" config={squarePlan('cover')} />);
+      const body = container.querySelector('[data-testid="heatmap-stage"]')!.parentElement!;
+      expect(body.className).toContain('overflow-hidden');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// 타이틀 바: 히트맵은 지금까지 제목을 렌더하지 않은 유일한 패널이었다. 다른 패널과 동형의
+// 헤더를 신설하고 공통 옵션(showTitle)으로 끌 수 있다.
+describe('HeatmapPanel — 타이틀 바', () => {
+  beforeEach(() => {
+    setStore({
+      seriesNames: ['s1'],
+      seriesEntries: new Map([['s1', reading(22)]]),
+      status: 'connected',
+    });
+  });
+
+  it('제목이 있으면 타이틀 바를 그린다(기본 표시)', () => {
+    render(
+      <HeatmapPanel panelId="p" title="1층 온도" config={makeConfig({ s1: { x: 0.5, y: 0.5 } })} />,
+    );
+    expect(screen.getByTestId('heatmap-title').textContent).toContain('1층 온도');
+  });
+
+  it('showTitle=false 면 타이틀 바를 그리지 않는다', () => {
+    render(
+      <PanelChromeProvider config={{ showTitle: false }}>
+        <HeatmapPanel panelId="p" title="1층 온도" config={makeConfig({ s1: { x: 0.5, y: 0.5 } })} />
+      </PanelChromeProvider>,
+    );
+    expect(screen.queryByTestId('heatmap-title')).toBeNull();
+  });
+
+  it('제목이 비어 있으면 표시 옵션과 무관하게 그리지 않는다(도면 영역을 잠식하지 않음)', () => {
+    render(<HeatmapPanel panelId="p" config={makeConfig({ s1: { x: 0.5, y: 0.5 } })} />);
+    expect(screen.queryByTestId('heatmap-title')).toBeNull();
+  });
+
+  it('배치 편집 토글은 타이틀 바가 있으면 그 아래로 내려간다(제목 가림 방지)', () => {
+    useUIStore.getState().setDashboardEditMode(true);
+    try {
+      const { rerender } = render(
+        <HeatmapPanel
+          panelId="p"
+          title="1층 온도"
+          config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect(screen.getByTestId('heatmap-edit-toggle').className).toContain('top-9');
+
+      // 제목이 없으면 헤더가 없으므로 원래 위치(top-2)를 그대로 쓴다.
+      rerender(
+        <HeatmapPanel
+          panelId="p"
+          config={makeConfig({ s1: { x: 0.5, y: 0.5 } })}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect(screen.getByTestId('heatmap-edit-toggle').className).toContain('top-2');
+    } finally {
+      useUIStore.getState().setDashboardEditMode(false);
+    }
   });
 });

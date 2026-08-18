@@ -14,6 +14,7 @@ import SortableHeader, { type SortState } from '@/components/common/SortableHead
 import { useDevicesRealtime } from '@/hooks/useDevice';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTranslation } from '@/lib/i18n';
+import { usePanelTitleVisible } from '../panelChromeContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
@@ -64,6 +65,7 @@ export default function DevicePanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: DevicePanelProps) {
+  const showTitle = usePanelTitleVisible();
   const { t } = useTranslation();
   // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
   // 소스로 쓴다(useDevicesTarget). 로컬은 기존 useDevicesRealtime 그대로(회귀 없음).
@@ -166,17 +168,19 @@ export default function DevicePanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
-      <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <HardDrive className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <h3
-            className="truncate text-lg font-semibold text-(--color-text-primary)"
-            style={acColor('header') ? { color: acColor('header')! } : undefined}
-          >
-            {panelTitle}
-          </h3>
+      {showTitle && (
+        <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <HardDrive className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+            <h3
+              className="truncate text-lg font-semibold text-(--color-text-primary)"
+              style={acColor('header') ? { color: acColor('header')! } : undefined}
+            >
+              {panelTitle}
+            </h3>
+          </div>
         </div>
-      </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-8">

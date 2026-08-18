@@ -15,6 +15,7 @@ import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
 import { toNumber } from './charts/chartChannelUtils';
 import { useChartChannel } from './charts/useChartChannel';
 import { resolveStoreAgentName } from './charts/storeAgentResolve';
+import { usePanelTitleVisible } from '../panelChromeContext';
 
 // ---- 타입 정의 ----
 
@@ -695,6 +696,7 @@ export default function GaugePanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: GaugePanelProps) {
+  const showTitle = usePanelTitleVisible();
   // chart-emitter 바인딩이 있으면 실시간 구독
   const chartSource = pickChartEmitterSource(config);
   const { entries, status } = useChartChannel(chartSource?.channelName, { maxPoints: 1 });
@@ -758,10 +760,12 @@ export default function GaugePanel({
         </div>
       )}
       {/* 헤더 */}
-      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
-        <GaugeIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-        <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
-      </div>
+      {showTitle && (
+        <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+          <GaugeIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+        </div>
+      )}
       {/* 게이지 SVG */}
       <div className="flex min-h-0 flex-1 items-center justify-center">
         {renderGauge()}

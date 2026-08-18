@@ -19,6 +19,7 @@ import {
 } from './chartChannelUtils';
 import { useChartChannel } from './useChartChannel';
 import { useStoreChartData } from './useStoreChartData';
+import { usePanelTitleVisible } from '../../panelChromeContext';
 
 interface StatPanelProps {
   panelId: string;
@@ -40,6 +41,7 @@ function parseConfig(config: Record<string, unknown>): StatPanelConfig {
 }
 
 export default function StatPanel({ panelId: _panelId, title, config }: StatPanelProps) {
+  const showTitle = usePanelTitleVisible();
   const cfg = parseConfig(config);
   // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서, 그 외에는 기존 채널에서
   // 데이터를 가져온다. 두 훅 모두 항상 호출하고(React 규칙) 비활성 쪽은 idle 로 유지한다.
@@ -109,12 +111,14 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
       </div>
 
       {/* 헤더: 아이콘 + 타이틀 */}
-      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
-        <Hash className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
-          {title || cfg.channel_name || '채널 미지정'}
-        </span>
-      </div>
+      {showTitle && (
+        <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+          <Hash className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+            {title || cfg.channel_name || '채널 미지정'}
+          </span>
+        </div>
+      )}
 
       {/* 값 영역 */}
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center">

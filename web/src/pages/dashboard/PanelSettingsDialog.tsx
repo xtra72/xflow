@@ -2,7 +2,7 @@
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpDown, Check, ChevronLeft, ChevronRight, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
   Legend,
@@ -63,6 +63,7 @@ import {
   DEFAULT_LEGEND_TICK_COUNT,
   type ColorStop,
   type ContourConfig,
+  type FloorPlanLayer,
   type LegendConfig,
 } from './panels/heatmap/heatmapConfig';
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
@@ -75,10 +76,16 @@ import {
 // SPEC-HEATMAP-PANEL-002: 도면 이미지 첨부(data-URL) + 크기 상한 검증.
 import {
   readImageAsDataUrl,
+  readImageNaturalSize,
   assertImageSizeUnderLimit,
   DEFAULT_MAX_IMAGE_BYTES,
   ImageSizeLimitError,
 } from './panels/heatmap/imageAsset';
+import { uploadDashboardAsset } from '@/services/api/dashboardAssetService';
+import { useFloorPlanSources } from './panels/heatmap/useFloorPlanSources';
+import { useFloorPlanAspect } from './panels/heatmap/useFloorPlanAspect';
+import { gridCellSize, gridHeightForAspect, panelPixelAspect } from './gridGeometry';
+import { PanelChromeProvider } from './panelChromeContext';
 import ColorSwatchButton, { COLOR_PALETTE } from './colorSwatchPalette';
 import {
   ChartChannelSection,
@@ -196,6 +203,15 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
 
   const storePanel = activePage?.panels.find((p) => p.id === panelId) ?? null;
+
+  // 이 패널이 대시보드에서 실제로 갖는 픽셀 종횡비. fit 미리보기가 이 비율을 쓰면 미리보기의
+  // 여백(히트맵 레터박스)이 대시보드에서 보게 될 여백과 같아진다 — 하드코딩된 3:2 로는 원리적으로
+  // 확인할 수 없던 부분이다. 그리드 폭 미측정(대시보드 미방문) 시 gridGeometry 가 근사로 폴백한다.
+  const gridCols = useUIStore((s) => s.dashboardGridCols);
+  const gridWidth = useUIStore((s) => s.dashboardGridWidth);
+  const layoutItem = activePage?.layout.find((l) => l.i === panelId) ?? null;
+  const gridCell = gridCellSize(gridWidth, gridCols);
+  const panelAspect = panelPixelAspect(layoutItem?.w ?? 0, layoutItem?.h ?? 0, gridCell);
 
   // draft(편집 중) / committed(저장) 분리 — T9(REQ-14). panelId 전환 시에만 draft 재초기화
   // (같은 패널에서 외부 committed 변경이 편집 중 draft 를 덮어쓰지 않음 — 기존 동작 보존).
@@ -435,6 +451,19 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             <CollapsibleSection title={t('dashboard.settings.panelOptions')}>
               <div className="space-y-3">
                 <TitleSection panel={panel} onTitleChange={(v) => handleTitleChange(v)} />
+                {/* 타이틀 바 표시(모든 패널 공통). 기본 표시 — 명시적으로 끌 때만 config 에 남긴다. */}
+                <label className="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+                  <input
+                    type="checkbox"
+                    data-testid="panel-show-title"
+                    checked={panel.config?.showTitle !== false}
+                    onChange={(e) =>
+                      handleConfigChange({ showTitle: e.target.checked ? undefined : false })
+                    }
+                    className="h-3.5 w-3.5 accent-blue-600"
+                  />
+                  {t('dashboard.settings.showTitleBar')}
+                </label>
                 {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control' || panel.type === 'properties-grid') && (
                   <DeviceSection
                     panel={panel}
@@ -701,6 +730,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const previewSlot = (
     // fit 컨테이너: 남은 미리보기 영역을 세로로 가득(min-h-0 flex-1) 차지하고 자식을 양축
     // 가운데 정렬한다. ref 로 실측하여 fit 모드가 종횡비 보존 contain 을 결정론적으로 계산한다.
+    // 크롬 옵션은 draft config 로 전파해 타이틀 바 토글이 미리보기에 즉시 반영되게 한다.
+    <PanelChromeProvider config={panel.config}>
     <div
       ref={setFitContainer}
       className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
@@ -829,7 +860,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 // measuredFitStyle)이 제공하고, flex-col 로 flex-1 이 그 높이를 채운다.
                 data-testid="heatmap-preview-wrapper"
                 className="flex min-h-0 flex-col"
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
+                // fit 모드는 **이 패널의 실제 대시보드 비율**로 그린다(레이아웃 미상이면 3:2 폴백).
+                // 히트맵은 도면 종횡비로 스테이지를 레터박스하므로(stage.ts), 미리보기 비율이
+                // 실제와 다르면 여백이 얼마나 생길지 확인할 방법이 없다.
+                style={
+                  previewFillMode === 'fill'
+                    ? previewFillStyle()
+                    : measuredFitStyle(panelAspect !== undefined ? `${panelAspect} / 1` : '3 / 2')
+                }
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel
@@ -842,6 +880,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </div>
             )}
     </div>
+    </PanelChromeProvider>
   );
   const dataSourceSlot = dataSourceBelowPreview ? (
     <div data-testid="panel-settings-data-source" className="shrink-0">
@@ -1454,12 +1493,92 @@ function HeatmapSettingsSection({
     onConfigChange({ idw: { ...cfg.idw, ...patch } });
   };
 
-  // SPEC-002: 도면 이미지(data-URL) / 불투명도 / fit / 에디터 옵션.
+  // SPEC-002: 도면 이미지(data-URL) / 불투명도 / fit / 에디터 옵션. 다중 레이어로 확장됐다.
   const [imgWarning, setImgWarning] = useState<string | null>(null);
-  const floorImage = cfg.floor_plan?.image;
-  const floorFit: 'contain' | 'cover' = cfg.floor_plan?.fit ?? 'contain';
+  const layers = cfg.floor_plans;
+  // 썸네일도 패널과 같은 해석 경로를 쓴다(자산 id → data-URL, 레거시 인라인 이미지는 그대로).
+  const layerSources = useFloorPlanSources(layers);
+
+  // "도면 비율에 맞추기" — 패널 높이(그리드 단위)를 기준 도면 종횡비에 맞춰 레터박스 여백을
+  // 원인부터 없앤다. 레이아웃은 패널 config 가 아니라 대시보드 레이아웃 상태이므로 draft 를 거치지
+  // 않고 즉시 반영된다(저장/취소 버튼과 무관 — 버튼 title 로 명시).
+  const gridCols = useUIStore((s) => s.dashboardGridCols);
+  const gridWidth = useUIStore((s) => s.dashboardGridWidth);
+  const layout = useUIStore(
+    (s) => s.dashboardPages.find((p) => p.id === s.activeDashboardId)?.layout,
+  );
+  const setDashboardLayout = useUIStore((s) => s.setDashboardLayout);
+  const baseAspect = useFloorPlanAspect(layers[0], layerSources[0]);
+  const layoutItem = layout?.find((l) => l.i === panel.id);
+  const targetH =
+    baseAspect !== undefined && layoutItem
+      ? gridHeightForAspect(
+          layoutItem.w,
+          baseAspect,
+          gridCellSize(gridWidth, gridCols),
+          layoutItem.minH ?? 1,
+        )
+      : undefined;
+  const canMatchRatio = layoutItem !== undefined && targetH !== undefined && targetH !== layoutItem.h;
+  const matchPlanRatio = () => {
+    if (!layout || !layoutItem || targetH === undefined) return;
+    setDashboardLayout(layout.map((l) => (l.i === panel.id ? { ...l, h: targetH } : l)));
+  };
+
+  /**
+   * 레이어 배열을 통째로 쓴다. 구 단일 `floor_plan` 도 함께 지워 두 표현이 공존하지 않게 한다 —
+   * 남겨두면 파서가 배열을 우선하므로 조용히 무시되는 죽은 필드가 config 에 계속 남는다.
+   */
+  const commitLayers = (next: FloorPlanLayer[]) => {
+    onConfigChange({ floor_plans: next, floor_plan: undefined });
+  };
+  const patchLayer = (idx: number, patch: Partial<FloorPlanLayer>) => {
+    commitLayers(layers.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  };
+  const removeLayer = (idx: number) => {
+    setImgWarning(null);
+    commitLayers(layers.filter((_, i) => i !== idx));
+  };
+  /** 레이어 순서 이동(그리기 순서 = 배열 순서, 뒤가 위). 범위를 벗어나면 no-op. */
+  const moveLayer = (idx: number, delta: number) => {
+    const to = idx + delta;
+    if (to < 0 || to >= layers.length) return;
+    const next = [...layers];
+    const [moved] = next.splice(idx, 1);
+    next.splice(to, 0, moved!);
+    commitLayers(next);
+  };
+
+  // 자산 분리 이전에 저장된 인라인 이미지 레이어. 이 상태의 패널은 대시보드 snapshot 이
+  // 256KB 를 넘겨 **저장 자체가 실패**하므로, 사용자가 명시적으로 옮길 수 있게 노출한다.
+  // 자동으로 옮기지 않는 이유: 설정 화면을 여는 것만으로 config 를 고쳐 쓰면 사용자가
+  // 의도하지 않은 변경이 draft 에 섞인다.
+  const inlineLayerCount = layers.filter((l) => !l.asset_id && l.image).length;
+  const [migrating, setMigrating] = useState(false);
+  const migrateInlineLayers = async () => {
+    setImgWarning(null);
+    setMigrating(true);
+    try {
+      const next = await Promise.all(
+        layers.map(async (l) => {
+          if (l.asset_id || !l.image) return l;
+          const asset = await uploadDashboardAsset(l.image);
+          // image 는 제거한다 — 남겨두면 snapshot 크기가 그대로라 저장이 여전히 실패한다.
+          const { image: _dropped, ...rest } = l;
+          return { ...rest, asset_id: asset.id };
+        }),
+      );
+      commitLayers(next);
+    } catch {
+      setImgWarning(t('dashboard.settings.heatmapImageReadError'));
+    } finally {
+      setMigrating(false);
+    }
+  };
 
   // 파일 첨부 → data-URL 인코딩 → 8MB 상한 검증(AC-E3). 초과 시 저장하지 않고 경고를 띄운다.
+  // 원본 크기(natural_*)를 함께 저장한다 — 기준 레이어의 종횡비가 패널 스테이지 비율을 정하므로
+  // 첫 페인트부터 정확하려면 config 에 있어야 한다(없으면 패널이 이미지를 로드해 실측한다).
   const onPickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // 동일 파일 재선택 허용.
@@ -1468,7 +1587,21 @@ function HeatmapSettingsSection({
     try {
       const dataUrl = await readImageAsDataUrl(file);
       assertImageSizeUnderLimit(dataUrl, DEFAULT_MAX_IMAGE_BYTES);
-      onConfigChange({ floor_plan: { image: dataUrl, fit: floorFit } });
+      const natural = await readImageNaturalSize(dataUrl);
+      // 이미지 바이트는 자산 API 로 올리고 config 에는 id 만 남긴다. data-URL 을 config 에
+      // 박으면 대시보드 snapshot(256KB 상한)을 넘겨 저장 자체가 실패한다.
+      const asset = await uploadDashboardAsset(dataUrl);
+      const layer: FloorPlanLayer = {
+        asset_id: asset.id,
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1,
+        opacity: 1,
+        fit: 'contain',
+        ...natural,
+      };
+      commitLayers([...layers, layer]);
     } catch (err) {
       setImgWarning(
         err instanceof ImageSizeLimitError
@@ -1476,14 +1609,6 @@ function HeatmapSettingsSection({
           : t('dashboard.settings.heatmapImageReadError'),
       );
     }
-  };
-  // 이미지 제거: floor_plan 을 비워 배경만 제거(다른 히트맵 설정은 보존, REQ-02).
-  const removeImage = () => {
-    setImgWarning(null);
-    onConfigChange({ floor_plan: undefined });
-  };
-  const setFit = (fit: 'contain' | 'cover') => {
-    if (floorImage) onConfigChange({ floor_plan: { image: floorImage, fit } });
   };
   const setOpacity = (v: number) => onConfigChange({ heatmap_opacity: v });
   // 에디터 옵션(snap/marker_size). 둘 다 비면 editor 를 undefined 로 되돌린다.
@@ -1699,54 +1824,233 @@ function HeatmapSettingsSection({
         <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.heatmapFloorPlan')}
         </label>
-        {floorImage ? (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              {/* 미리보기 썸네일. */}
-              <img
-                src={floorImage}
-                alt=""
-                data-testid="heatmap-floorplan-preview"
-                className="h-14 w-20 rounded border border-(--color-border-default) object-cover"
-              />
-              <button
-                type="button"
-                data-testid="heatmap-floorplan-remove"
-                onClick={removeImage}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+        {/* 레이어 목록: 배열 순서가 곧 그리기 순서(위 항목이 아래에 깔림). 첫 항목이 기준 도면
+            이며 패널 스테이지의 종횡비를 정한다 — 그래서 순서 이동이 단순 z-order 이상의 의미를
+            갖고, 안내 문구로 명시한다. */}
+        {layers.length > 0 && (
+          <ul className="mb-1.5 space-y-1.5" data-testid="heatmap-floorplan-layers">
+            {layers.map((layer, idx) => (
+              <li
+                key={idx}
+                data-testid={`heatmap-floorplan-layer-${idx}`}
+                className="rounded-md border border-(--color-border-default) p-1.5"
               >
-                <Trash2 className="h-3 w-3" />
-                {t('dashboard.settings.heatmapRemoveImage')}
-              </button>
-            </div>
-            {/* fit 선택(contain/cover) — 이미지가 있을 때만. */}
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-(--color-text-muted)">
-                {t('dashboard.settings.heatmapFit')}
-              </span>
-              <select
-                value={floorFit}
-                data-testid="heatmap-floorplan-fit"
-                onChange={(e) => setFit(e.target.value === 'cover' ? 'cover' : 'contain')}
-                className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-              >
-                <option value="contain">{t('dashboard.settings.heatmapFitContain')}</option>
-                <option value="cover">{t('dashboard.settings.heatmapFitCover')}</option>
-              </select>
-            </div>
+                <div className="flex items-center gap-2">
+                  <img
+                    src={layerSources[idx] || undefined}
+                    alt=""
+                    data-testid={idx === 0 ? 'heatmap-floorplan-preview' : `heatmap-floorplan-preview-${idx}`}
+                    className="h-14 w-20 shrink-0 rounded border border-(--color-border-default) object-cover"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-[11px] font-medium text-(--color-text-secondary)">
+                      {idx === 0
+                        ? t('dashboard.settings.heatmapLayerBase')
+                        : t('dashboard.settings.heatmapLayerNth').replace('{n}', String(idx + 1))}
+                    </span>
+                    {/* fit(박스 안 맞춤). 기준 레이어는 스테이지와 종횡비가 같아 사실상 무의미하지만
+                        일관성을 위해 동일하게 노출한다. */}
+                    <select
+                      value={layer.fit}
+                      data-testid={`heatmap-floorplan-fit-${idx}`}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        patchLayer(idx, {
+                          fit: v === 'cover' || v === 'fill' ? v : 'contain',
+                        });
+                      }}
+                      className="mt-1 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                    >
+                      <option value="contain">{t('dashboard.settings.heatmapFitContain')}</option>
+                      <option value="fill">{t('dashboard.settings.heatmapFitFill')}</option>
+                      <option value="cover">{t('dashboard.settings.heatmapFitCover')}</option>
+                    </select>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-0.5">
+                    <button
+                      type="button"
+                      data-testid={`heatmap-floorplan-up-${idx}`}
+                      aria-label={t('dashboard.settings.heatmapLayerMoveUp')}
+                      title={t('dashboard.settings.heatmapLayerMoveUp')}
+                      disabled={idx === 0}
+                      onClick={() => moveLayer(idx, -1)}
+                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) disabled:opacity-30"
+                    >
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`heatmap-floorplan-down-${idx}`}
+                      aria-label={t('dashboard.settings.heatmapLayerMoveDown')}
+                      title={t('dashboard.settings.heatmapLayerMoveDown')}
+                      disabled={idx === layers.length - 1}
+                      onClick={() => moveLayer(idx, 1)}
+                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) disabled:opacity-30"
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={idx === 0 ? 'heatmap-floorplan-remove' : `heatmap-floorplan-remove-${idx}`}
+                      aria-label={t('dashboard.settings.heatmapRemoveImage')}
+                      title={t('dashboard.settings.heatmapRemoveImage')}
+                      onClick={() => removeLayer(idx)}
+                      className="rounded p-0.5 text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                {/* 위치/크기(스테이지 정규화 0..1) + 불투명도. 기준 도면 위 어디에 얼마만큼
+                    얹을지를 숫자로 지정한다. 기본 {0,0,1,1} 이 스테이지를 가득 채운다. */}
+                <div className="mt-1.5 grid grid-cols-5 gap-1">
+                  {(['x', 'y', 'w', 'h'] as const).map((axis) => (
+                    <label key={axis} className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-(--color-text-muted)">
+                        {t(`dashboard.settings.heatmapLayer${axis.toUpperCase()}`)}
+                      </span>
+                      <input
+                        type="number"
+                        min={axis === 'w' || axis === 'h' ? 0.01 : 0}
+                        max={1}
+                        step={0.05}
+                        value={String(layer[axis])}
+                        data-testid={`heatmap-floorplan-${axis}-${idx}`}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (!Number.isFinite(v)) return;
+                          patchLayer(idx, { [axis]: v } as Partial<FloorPlanLayer>);
+                        }}
+                        className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                      />
+                    </label>
+                  ))}
+                  <label className="flex flex-col gap-0.5">
+                    <span className="text-[10px] text-(--color-text-muted)">
+                      {t('dashboard.settings.heatmapLayerOpacity')}
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={String(layer.opacity)}
+                      data-testid={`heatmap-floorplan-opacity-${idx}`}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
+                        patchLayer(idx, { opacity: v });
+                      }}
+                      className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                    />
+                  </label>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-2 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)">
+          <Plus className="h-3 w-3" />
+          {layers.length === 0
+            ? t('dashboard.settings.heatmapAttachImage')
+            : t('dashboard.settings.heatmapAddLayer')}
+          <input
+            type="file"
+            accept="image/*"
+            data-testid="heatmap-floorplan-input"
+            onChange={onPickImage}
+            className="hidden"
+          />
+        </label>
+        {layers.length > 0 && (
+          <p className="mt-1 text-[11px] text-(--color-text-muted)">
+            {t('dashboard.settings.heatmapLayerHint')}
+          </p>
+        )}
+        {/* 스테이지 맞춤: 여백(contain) / 잘림(cover) / 왜곡(stretch) 중 무엇을 감수할지.
+            아래 "도면 비율에 맞추기"가 여백을 원인부터 없애는 길이고, 이건 패널 크기를 그대로 둔 채
+            여백만 없애는 길이다. cover 는 잘린 영역의 센서를 배치 편집에서 잡을 수 없다. */}
+        {layers.length > 0 && (
+          <div className="mt-1.5">
+            <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+              {t('dashboard.settings.heatmapStageFit')}
+            </label>
+            <select
+              value={cfg.stage_fit ?? 'contain'}
+              data-testid="heatmap-stage-fit"
+              onChange={(e) => {
+                const v = e.target.value;
+                // 기본값(contain)은 undefined 로 지워 config 에 죽은 필드를 남기지 않는다.
+                onConfigChange({ stage_fit: v === 'cover' || v === 'stretch' ? v : undefined });
+              }}
+              className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+            >
+              <option value="contain">{t('dashboard.settings.heatmapStageFitContain')}</option>
+              <option value="cover">{t('dashboard.settings.heatmapStageFitCover')}</option>
+              <option value="stretch">{t('dashboard.settings.heatmapStageFitStretch')}</option>
+            </select>
+            <p data-testid="heatmap-stage-fit-hint" className="mt-1 text-[11px] text-(--color-text-muted)">
+              {t(
+                cfg.stage_fit === 'cover'
+                  ? 'dashboard.settings.heatmapStageFitCoverHint'
+                  : cfg.stage_fit === 'stretch'
+                    ? 'dashboard.settings.heatmapStageFitStretchHint'
+                    : 'dashboard.settings.heatmapStageFitContainHint',
+              )}
+            </p>
           </div>
-        ) : (
-          <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-2 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)">
-            <Plus className="h-3 w-3" />
-            {t('dashboard.settings.heatmapAttachImage')}
-            <input
-              type="file"
-              accept="image/*"
-              data-testid="heatmap-floorplan-input"
-              onChange={onPickImage}
-              className="hidden"
-            />
-          </label>
+        )}
+        {/* 패널 크기 ↔ 도면 종횡비 정렬. 스테이지가 도면 비율로 레터박스되므로(stage.ts) 둘이
+            어긋난 만큼이 그대로 좌우/상하 여백이 된다. 그리드는 정수 단위라 반올림 후 여백은
+            "한 칸 이내"로 남는다. */}
+        {layers.length > 0 && layoutItem && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2" data-testid="heatmap-match-ratio-row">
+            <button
+              type="button"
+              data-testid="heatmap-match-ratio"
+              disabled={!canMatchRatio}
+              title={t('dashboard.settings.heatmapMatchPanelRatioTitle')}
+              onClick={matchPlanRatio}
+              className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-40"
+            >
+              {t('dashboard.settings.heatmapMatchPanelRatio')}
+            </button>
+            <span data-testid="heatmap-match-ratio-hint" className="text-[11px] text-(--color-text-muted)">
+              {t(
+                targetH === undefined
+                  ? 'dashboard.settings.heatmapMatchPanelRatioUnknown'
+                  : canMatchRatio
+                    ? 'dashboard.settings.heatmapMatchPanelRatioHint'
+                    : 'dashboard.settings.heatmapMatchPanelRatioDone',
+              )
+                .replace('{w}', String(layoutItem.w))
+                .replace('{h}', String(layoutItem.h))
+                .replace('{targetH}', String(targetH ?? layoutItem.h))}
+            </span>
+          </div>
+        )}
+        {/* 인라인 이미지 이관 안내 — 이 상태에서는 대시보드 저장이 413 으로 실패한다. */}
+        {inlineLayerCount > 0 && (
+          <div
+            data-testid="heatmap-floorplan-inline-warning"
+            className="mt-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            <p>
+              {t('dashboard.settings.heatmapInlineImageWarning').replace(
+                '{count}',
+                String(inlineLayerCount),
+              )}
+            </p>
+            <button
+              type="button"
+              data-testid="heatmap-floorplan-migrate"
+              disabled={migrating}
+              onClick={() => void migrateInlineLayers()}
+              className="mt-1 inline-flex items-center gap-1 rounded-md border border-amber-400 px-2 py-1 font-medium transition-colors hover:bg-amber-100 disabled:opacity-50 dark:hover:bg-amber-900/40"
+            >
+              {t('dashboard.settings.heatmapMigrateInlineImage')}
+            </button>
+          </div>
         )}
         {imgWarning && (
           <p
@@ -1981,7 +2285,12 @@ function HeatmapSettingsSection({
                   value={legendCfg?.position ?? 'bottom-right'}
                   data-testid="heatmap-legend-position"
                   onChange={(e) =>
-                    setLegend({ position: e.target.value as LegendConfig['position'] })
+                    // 모서리를 다시 고르면 드래그로 저장된 자유 위치(offset)를 버린다 — 남겨두면
+                    // offset 이 우선하므로 select 를 바꿔도 범례가 움직이지 않아 고장으로 보인다.
+                    setLegend({
+                      position: e.target.value as LegendConfig['position'],
+                      offset: undefined,
+                    })
                   }
                   className={inputCls}
                 >

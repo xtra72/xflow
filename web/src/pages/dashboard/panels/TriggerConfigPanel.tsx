@@ -20,6 +20,7 @@ import { getFlow, updateFlow } from '@/services/api/flowService';
 import { useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
 import { cn } from '@/lib/utils/cn';
+import { usePanelTitleVisible } from '../panelChromeContext';
 import {
   buildFullTriggerConfig,
   detectConflict,
@@ -60,6 +61,7 @@ export default function TriggerConfigPanel({
   onConfigChange,
   onTitleChange: _onTitleChange,
 }: TriggerConfigPanelProps) {
+  const showTitle = usePanelTitleVisible();
   const flowId = typeof config.flowId === 'string' ? config.flowId : '';
   const nodeId = typeof config.nodeId === 'string' ? config.nodeId : '';
   const catalog = readCatalog(config);
@@ -288,6 +290,7 @@ export default function TriggerConfigPanel({
   return (
     <div className={cardCls} data-testid="trigger-config-panel">
       {/* 헤더: 타이틀 + running/stopped 배지 */}
+      {showTitle && (
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <AlarmClock className="h-5 w-5 text-blue-500" />
@@ -309,6 +312,7 @@ export default function TriggerConfigPanel({
           </span>
         )}
       </div>
+      )}
 
       {/* not-running 안내(persist-only 모드) */}
       {!isRunning && (

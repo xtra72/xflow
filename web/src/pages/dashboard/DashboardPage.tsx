@@ -46,11 +46,13 @@ import {
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
+import DragHandle from './DragHandle';
+import { GRID_MARGIN_PX } from './gridGeometry';
 import { renderDashboardPanel } from './renderDashboardPanel';
 import RemoteDashboardView from './RemoteDashboardView';
 
-/** 그리드 설정 */
-const GRID_MARGIN: [number, number] = [16, 16];
+/** 그리드 설정. 마진은 gridGeometry 와 공유한다 — 패널 설정 화면이 같은 식으로 종횡비를 역산한다. */
+const GRID_MARGIN: [number, number] = [GRID_MARGIN_PX, GRID_MARGIN_PX];
 
 /**
  * 대시보드 페이지 — 로컬/원격 디스패처 (SPEC-REMOTE-001 M10, 그룹 L, REQ-L09/L10).
@@ -134,6 +136,7 @@ function LocalDashboardView() {
   const setGridCols = useUIStore((s) => s.setDashboardGridCols);
   const showGridLines = useUIStore((s) => s.dashboardShowGridLines);
   const setShowGridLines = useUIStore((s) => s.setDashboardShowGridLines);
+  const setGridWidth = useUIStore((s) => s.setDashboardGridWidth);
   const refreshMs = refreshInterval * 1000;
 
   // 대시보드 드롭다운 열기/닫기
@@ -188,6 +191,12 @@ function LocalDashboardView() {
       }
     };
   }, []);
+
+  // 실측 폭을 store 에 게시한다 — 패널 설정 화면(다른 라우트)은 그리드를 렌더하지 않으므로
+  // 스스로 잴 수 없고, 이 값 없이는 "이 패널이 실제로 몇 대 몇인지"를 알 수 없다.
+  useEffect(() => {
+    setGridWidth(containerWidth);
+  }, [containerWidth, setGridWidth]);
 
   // 칼럼 폭에 맞춘 동적 행 높이 (정사각형 셀)
   const gridRowHeight = containerWidth > 0
@@ -818,7 +827,7 @@ function LocalDashboardView() {
                   >
                     {editMode && <DragHandle />}
                     {editMode && (
-                      <div className="absolute right-1 top-1 z-10 flex gap-1">
+                      <div className="absolute right-1 top-1 z-20 flex gap-1">
                         <button
                           type="button"
                           onClick={() => navigate(`/panels/${panel.id}/settings`)}
@@ -852,15 +861,3 @@ function LocalDashboardView() {
   );
 }
 
-/** 편집 모드 드래그 핸들 */
-function DragHandle() {
-  return (
-    <div className="dashboard-drag-handle flex h-6 cursor-grab items-center justify-center rounded-t-lg bg-(--color-bg-elevated)/80 active:cursor-grabbing">
-      <div className="flex gap-1">
-        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
-        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
-        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
-      </div>
-    </div>
-  );
-}

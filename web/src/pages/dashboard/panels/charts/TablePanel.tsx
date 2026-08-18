@@ -22,6 +22,7 @@ import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { formatTimestamp } from './chartChannelUtils';
 import { useChartChannel } from './useChartChannel';
 import { useStoreChartData } from './useStoreChartData';
+import { usePanelTitleVisible } from '../../panelChromeContext';
 
 interface TablePanelProps {
   panelId: string;
@@ -91,6 +92,7 @@ function sortEntries(entries: ChartEntry[], sort: SortState): ChartEntry[] {
 }
 
 export default function TablePanel({ panelId: _panelId, title, config }: TablePanelProps) {
+  const showTitle = usePanelTitleVisible();
   const cfg = parseConfig(config);
 
   // SPEC-WEB-005: data_source 에 따라 Store 소스 또는 채널 소스를 사용한다(공존).
@@ -137,12 +139,14 @@ export default function TablePanel({ panelId: _panelId, title, config }: TablePa
         <ConnectionStatusIcon status={status} />
       </div>
 
-      <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
-        <TableIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-        <span className="truncate text-sm font-semibold text-(--color-text-primary)">
-          {title || cfg.channel_name || '채널 미지정'}
-        </span>
-      </div>
+      {showTitle && (
+        <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
+          <TableIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+            {title || cfg.channel_name || '채널 미지정'}
+          </span>
+        </div>
+      )}
       <div className="mb-2 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
         {entries.length}건
       </div>

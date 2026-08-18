@@ -30,6 +30,7 @@ import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
+import { usePanelTitleVisible } from '../panelChromeContext';
 import {
   readControlButtonColorConfig,
   readFanLevelColorConfig,
@@ -121,6 +122,7 @@ export default function AcControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: AcControlPanelProps) {
+  const showTitle = usePanelTitleVisible();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 레거시: 단일 currentValueColor 만 지정하던 시절의 호환 경로.
@@ -184,10 +186,12 @@ export default function AcControlPanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
-        <div className="mb-2 flex shrink-0 items-center gap-2">
-          <Snowflake className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <Snowflake className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+            <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-default) border-t-blue-600" />
         </div>
@@ -216,10 +220,13 @@ export default function AcControlPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
       {/* ---- 헤더: 아이콘+타이틀 | 상태뱃지+전원버튼 ---- */}
       <div className="flex shrink-0 items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <Snowflake className="h-5 w-5 text-blue-500" />
-          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
-        </div>
+        {/* 우측에 전원 버튼이 함께 있으므로 타이틀 묶음만 숨긴다(제어 유실 방지). */}
+        {showTitle && (
+          <div className="flex items-center gap-2.5">
+            <Snowflake className="h-5 w-5 text-blue-500" />
+            <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {isPassive && (
             <span title={t('dashboard.panel.monitorOnly')}><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label={t('dashboard.panel.monitorOnly')} /></span>

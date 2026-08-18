@@ -31,6 +31,7 @@ import {
   StatTiles,
   type DeviceLabelMode,
 } from './facilityShared';
+import { usePanelTitleVisible } from '../panelChromeContext';
 
 /** type 배지 색상(custom 파랑 · station 초록 · line 보라) — 그룹 탭과 동일 팔레트. */
 const TYPE_BADGE: Record<Group['type'], string> = {
@@ -177,13 +178,16 @@ function Shell({
   badge?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const showTitle = usePanelTitleVisible();
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-lg bg-(--color-bg-surface) p-4 shadow">
-      <div className="flex shrink-0 items-baseline justify-between gap-2">
-        <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
-        {/* 우상단 식별자: 그룹 type 배지(없으면 레이어 아이콘 폴백 — notConfigured/로딩 등). */}
-        {badge ?? <Layers className="h-4 w-4 shrink-0 text-(--color-text-muted)" aria-hidden="true" />}
-      </div>
+      {showTitle && (
+        <div className="flex shrink-0 items-baseline justify-between gap-2">
+          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          {/* 우상단 식별자: 그룹 type 배지(없으면 레이어 아이콘 폴백 — notConfigured/로딩 등). */}
+          {badge ?? <Layers className="h-4 w-4 shrink-0 text-(--color-text-muted)" aria-hidden="true" />}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">{children}</div>
     </div>
   );

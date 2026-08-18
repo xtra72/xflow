@@ -6,7 +6,9 @@
 import type { ReactNode } from 'react';
 import { Server } from 'lucide-react';
 
-/** 패널 카드 프레임 + 헤더. */
+import { usePanelTitleVisible } from '../../panelChromeContext';
+
+/** 패널 카드 프레임 + 헤더. 헤더는 패널 옵션(타이틀 바 표시)에 따라 생략된다. */
 export function ModbusPanelFrame({
   title,
   icon,
@@ -16,12 +18,16 @@ export function ModbusPanelFrame({
   icon?: ReactNode;
   children: ReactNode;
 }) {
+  // 6종 패널이 이 프레임을 34곳에서 호출한다 — 여기서 한 번 읽으면 호출부는 손대지 않아도 된다.
+  const showTitle = usePanelTitleVisible();
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-      <div className="mb-3 flex shrink-0 items-center gap-2">
-        {icon ?? <Server className="h-4 w-4 shrink-0 text-(--color-text-muted)" />}
-        <h3 className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</h3>
-      </div>
+      {showTitle && (
+        <div className="mb-3 flex shrink-0 items-center gap-2">
+          {icon ?? <Server className="h-4 w-4 shrink-0 text-(--color-text-muted)" />}
+          <h3 className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</h3>
+        </div>
+      )}
       {children}
     </div>
   );

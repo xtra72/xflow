@@ -9,6 +9,7 @@ import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
+import { usePanelTitleVisible } from '../panelChromeContext';
 
 import { StatePropertiesSection } from '@/pages/devices/DeviceDetailPanel';
 
@@ -28,6 +29,7 @@ export default function SingleDevicePanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: SingleDevicePanelProps) {
+  const showTitle = usePanelTitleVisible();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   const panelColor = config.panelColor as string | undefined;
@@ -55,12 +57,14 @@ export default function SingleDevicePanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-        <div className="mb-2 flex shrink-0 items-center justify-between">
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
-          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
-            <Moon className="h-3.5 w-3.5" aria-label={t('dashboard.panel.loadingAria')} />
-          </span>
-        </div>
+        {showTitle && (
+          <div className="mb-2 flex shrink-0 items-center justify-between">
+            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
+              <Moon className="h-3.5 w-3.5" aria-label={t('dashboard.panel.loadingAria')} />
+            </span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div
             className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600"
@@ -93,6 +97,7 @@ export default function SingleDevicePanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
       {/* 헤더: 이름 + 상태 배지 */}
+      {showTitle && (
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <span
@@ -114,6 +119,7 @@ export default function SingleDevicePanel({
             : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
         </span>
       </div>
+      )}
 
       {/* 제어 UI (full mode) */}
       {hasProperties ? (

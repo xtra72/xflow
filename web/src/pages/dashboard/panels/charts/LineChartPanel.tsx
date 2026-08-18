@@ -50,6 +50,7 @@ import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
 import { useStoreChartData } from './useStoreChartData';
+import { usePanelTitleVisible } from '../../panelChromeContext';
 
 interface LineChartPanelProps {
   panelId: string;
@@ -333,6 +334,7 @@ function CustomLegend({
 }
 
 export default function LineChartPanel({ panelId: _panelId, title, config }: LineChartPanelProps) {
+  const showTitle = usePanelTitleVisible();
   const { t } = useTranslation();
   const cfg = parseConfig(config);
   // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서 시리즈를 가져온다(공존).
@@ -783,6 +785,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         <ConnectionStatusIcon status={status} />
       </div>
 
+      {showTitle && (
       <div className="mb-2 flex shrink-0 items-center gap-2 pr-24">
         <TrendingUp className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
         <span className="truncate text-sm font-semibold text-(--color-text-primary)">
@@ -794,6 +797,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
             : cfg.channel_name || t('dashboard.settings.preview.channelUnset'))}
         </span>
       </div>
+      )}
 
       {/* 채널 상태는 범례(Legend)에 통합 — 별도 배지 불필요 */}
 

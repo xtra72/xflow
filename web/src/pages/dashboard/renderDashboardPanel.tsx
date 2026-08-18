@@ -51,6 +51,7 @@ import PieChartPanel from './panels/charts/PieChartPanel';
 import TablePanel from './panels/charts/TablePanel';
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import ResourceWidget from './widgets/ResourceWidget';
+import { PanelChromeProvider } from './panelChromeContext';
 
 /** 패널 타입별 아이콘 매핑(플레이스홀더 패널용). */
 const PANEL_TYPE_ICONS: Partial<Record<PanelType, React.ReactNode>> = {
@@ -80,6 +81,23 @@ export interface PanelChangeHandlers {
  * @param handlers - config/title 변경 콜백(읽기 전용 뷰는 no-op 전달).
  */
 export function renderDashboardPanel(
+  panel: PanelConfig,
+  flowsList: FlowInfo[],
+  metricsData: Record<string, unknown> | undefined,
+  refreshMs: number,
+  handlers: (panelId: string) => PanelChangeHandlers,
+): React.ReactNode {
+  // 크롬 옵션(타이틀 바 표시 여부)은 context 로 전파한다 — 패널마다 config 를 받는 방식이 달라
+  // prop 으로 꿰면 28종 호출부를 모두 고쳐야 한다(panelChromeContext 참조).
+  return (
+    <PanelChromeProvider config={panel.config}>
+      {renderPanelBody(panel, flowsList, metricsData, refreshMs, handlers)}
+    </PanelChromeProvider>
+  );
+}
+
+/** 패널 타입별 본체 렌더(크롬 래핑 이전). */
+function renderPanelBody(
   panel: PanelConfig,
   flowsList: FlowInfo[],
   metricsData: Record<string, unknown> | undefined,

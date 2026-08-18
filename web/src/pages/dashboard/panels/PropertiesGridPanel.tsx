@@ -11,6 +11,7 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, sortProperties, formatPropertyValue, expandMeasurementEntries, excludeDedicatedSectionKeys } from '@/lib/utils/deviceLabels';
 import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
+import { usePanelTitleVisible } from '../panelChromeContext';
 
 interface PropertiesGridPanelProps {
   panelId: string;
@@ -27,6 +28,7 @@ export default function PropertiesGridPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: PropertiesGridPanelProps) {
+  const showTitle = usePanelTitleVisible();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   const gridCols = (config.gridCols as number | undefined) ?? 3;
@@ -63,10 +65,12 @@ export default function PropertiesGridPanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-        <div className="mb-2 flex shrink-0 items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-gray-300" />
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-gray-300" />
+            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div
             className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600"
@@ -90,6 +94,7 @@ export default function PropertiesGridPanel({
   if (!properties || Object.keys(properties).length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
+        {showTitle && (
         <div className="mb-3 flex shrink-0 items-center justify-between">
           <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
           <span className={cn(
@@ -103,6 +108,7 @@ export default function PropertiesGridPanel({
               : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
           </span>
         </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.noProperties')}</p>
         </div>
@@ -140,6 +146,7 @@ export default function PropertiesGridPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
       {/* 헤더 */}
+      {showTitle && (
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <span
@@ -163,6 +170,7 @@ export default function PropertiesGridPanel({
             : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
         </span>
       </div>
+      )}
 
       {/* 속성 그리드 */}
       <div className="min-h-0 flex-1 overflow-y-auto">

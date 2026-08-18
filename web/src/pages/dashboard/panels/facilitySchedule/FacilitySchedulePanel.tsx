@@ -22,6 +22,7 @@ import { useXsfmDevices } from '@/hooks/useStation';
 import { cn } from '@/lib/utils/cn';
 import { useScheduleDualWrite } from './useScheduleDualWrite';
 import FacilityRuleModal from './FacilityRuleModal';
+import { usePanelTitleVisible } from '../../panelChromeContext';
 import {
   buildScheduleFromDraft,
   emptyDraft,
@@ -59,6 +60,7 @@ export default function FacilitySchedulePanel({
   onConfigChange,
   onTitleChange: _onTitleChange,
 }: FacilitySchedulePanelProps) {
+  const showTitle = usePanelTitleVisible();
   const flowId = typeof config.flowId === 'string' ? config.flowId : '';
   const nodeId = typeof config.nodeId === 'string' ? config.nodeId : '';
   const agentId = typeof config.agentId === 'string' ? config.agentId : '';
@@ -176,10 +178,13 @@ export default function FacilitySchedulePanel({
     <div className={cardCls} data-testid="facility-schedule-panel">
       {/* 헤더 */}
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CalendarClock className="h-5 w-5 text-blue-500" />
-          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
-        </div>
+        {/* 우측에 규칙 추가 버튼이 함께 있으므로 타이틀 묶음만 숨긴다. */}
+        {showTitle && (
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-5 w-5 text-blue-500" />
+            <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {isRunning ? (
             <span
