@@ -436,3 +436,54 @@ func TestListRoles_EmptyTable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, roles)
 }
+
+// @SPEC:SPEC-AUTH-005 (M1) — 빌트인 역할 시드의 자기 복구 경계.
+//
+// 부팅 시드는 admin 만 코드 정의로 되맞춘다. editor/viewer 의 권한 집합은
+// 관리자의 소유물이므로(서버가 수정을 허용한다) 부팅이 덮어쓰지 않는다.
+// 이 경계가 무너지면 둘 중 하나가 깨진다 — admin 이 축소된 채 방치되거나,
+// 관리자의 editor/viewer 수정이 재시작 때 조용히 사라진다.
+func TestSeedBuiltinRoles_ReconcilesAdminOnly(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	// 1) admin 축소 → 부팅 시드가 전체 권한으로 복구한다.
+	require.NoError(t, UpdateRolePermissions(ctx, db, "admin", []string{"agent.read"}))
+	// 2) viewer 축소 → 부팅 시드가 그대로 둔다(관리자의 의도된 수정으로 본다).
+	require.NoError(t, UpdateRolePermissions(ctx, db, "viewer", []string{"agent.read"}))
+
+	require.NoError(t, seedBuiltinRoles(ctx, db))
+
+	adminPerms, err := ListRolePermissions(ctx, db, "admin")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, rbac.Permissions(), adminPerms,
+		"admin 이 코드 정의로 복구되지 않았다")
+
+	viewerPerms, err := ListRolePermissions(ctx, db, "viewer")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"agent.read"}, viewerPerms,
+		"viewer 의 관리자 수정이 부팅 시드에 덮어써졌다")
+}
+
+// TestSeedBuiltinRoles_PrunesStaleAdminPermission 는 카탈로그에서 사라진 권한 키가
+// admin 에 남아 있으면 제거됨을 확인한다(더하기만 하던 이전 동작의 결함).
+func TestSeedBuiltinRoles_PrunesStaleAdminPermission(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	// UpdateRolePermissions 는 카탈로그 검증을 통과시키지 않으므로 직접 주입한다.
+	var adminID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT id FROM roles WHERE name = 'admin'`).Scan(&adminID))
+	_, err := db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, 'ghost.read')`,
+		adminID)
+	require.NoError(t, err)
+
+	require.NoError(t, seedBuiltinRoles(ctx, db))
+
+	perms, lerr := ListRolePermissions(ctx, db, "admin")
+	require.NoError(t, lerr)
+	assert.NotContains(t, perms, "ghost.read", "카탈로그에 없는 권한이 남았다")
+	assert.ElementsMatch(t, rbac.Permissions(), perms)
+}

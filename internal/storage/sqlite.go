@@ -278,11 +278,16 @@ func seedBuiltinRoles(ctx context.Context, db *sql.DB) error {
 
 	now := time.Now().UnixMilli()
 	for _, role := range rbac.BuiltinRoles() {
-		if _, err := tx.ExecContext(ctx, `
+		res, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO roles(name, description, builtin, created_at, updated_at)
 			VALUES (?, ?, 1, ?, ?)
-		`, role.Name, role.Description, now, now); err != nil {
+		`, role.Name, role.Description, now, now)
+		if err != nil {
 			return fmt.Errorf("seed role %q: %w", role.Name, err)
+		}
+		created, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("rows affected for role %q: %w", role.Name, err)
 		}
 
 		var roleID int64
@@ -291,11 +296,27 @@ func seedBuiltinRoles(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("resolve seeded role id %q: %w", role.Name, err)
 		}
 
-		for _, perm := range role.Permissions {
-			if _, err := tx.ExecContext(ctx, `
-				INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
-			`, roleID, perm); err != nil {
-				return fmt.Errorf("seed permission %q for role %q: %w", perm, role.Name, err)
+		// 신규 생성한 역할에만 권한을 시드한다. 이미 존재하던 역할의 권한 집합은
+		// 관리자의 소유물이며(spec.md §2.1 — 서버가 editor/viewer 의 권한 수정을
+		// 허용한다), 부팅마다 덮어쓰면 관리자의 수정이 재시작 때 조용히 사라진다.
+		if created == 1 {
+			for _, perm := range role.Permissions {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+				`, roleID, perm); err != nil {
+					return fmt.Errorf("seed permission %q for role %q: %w", perm, role.Name, err)
+				}
+			}
+			continue
+		}
+
+		// 예외: admin 은 항상 카탈로그 전체 권한을 보유해야 한다(spec.md §2.4 UB1-4).
+		// 관리자도 수정할 수 없는 불변식이므로 부팅 시 코드 정의로 되맞춘다. 이 자동
+		// 복구가 없으면 어떤 이유로든 축소된 admin 이 스스로 회복하지 못하고, 관리
+		// 권한을 가진 사용자가 조용히 기능을 잃는다.
+		if role.Name == rbac.RoleAdmin {
+			if err := reconcileRolePermissions(ctx, tx, roleID, role.Permissions); err != nil {
+				return fmt.Errorf("reconcile role %q: %w", role.Name, err)
 			}
 		}
 	}
@@ -305,6 +326,42 @@ func seedBuiltinRoles(ctx context.Context, db *sql.DB) error {
 	}
 	return nil
 }
+
+// reconcileRolePermissions 는 role_id 의 권한 집합을 want 와 정확히 일치시킨다.
+// 누락분은 추가하고 카탈로그에 없는 잔여분은 제거한다. 매 부팅 전량 삭제·재삽입을
+// 피하기 위해 차집합만 건드린다.
+func reconcileRolePermissions(ctx context.Context, tx *sql.Tx, roleID int64, want []string) error {
+	for _, perm := range want {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+		`, roleID, perm); err != nil {
+			return fmt.Errorf("add permission %q: %w", perm, err)
+		}
+	}
+
+	if len(want) == 0 {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM role_permissions WHERE role_id = ?`, roleID); err != nil {
+			return fmt.Errorf("clear permissions: %w", err)
+		}
+		return nil
+	}
+
+	args := make([]any, 0, len(want)+1)
+	args = append(args, roleID)
+	placeholders := make([]string, len(want))
+	for i, perm := range want {
+		placeholders[i] = "?"
+		args = append(args, perm)
+	}
+	query := `DELETE FROM role_permissions WHERE role_id = ? AND permission NOT IN (` +
+		strings.Join(placeholders, ",") + `)`
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("prune permissions: %w", err)
+	}
+	return nil
+}
+
 
 // OpenSQLiteDB 는 SQLite 데이터베이스를 WAL 모드로 열고, dashboards / users 스키마를
 // 멱등하게 마이그레이션한다. 호출자가 *sql.DB 의 수명을 책임진다 (Close 필요).
