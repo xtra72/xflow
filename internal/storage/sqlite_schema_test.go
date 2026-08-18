@@ -120,15 +120,31 @@ func TestSQLiteRepository_UsersUniqueUsername(t *testing.T) {
 	assert.Contains(t, err.Error(), "UNIQUE")
 }
 
-// TestSQLiteRepository_UsersRoleCheckConstraint 는 users.role CHECK 제약을 검증한다.
-func TestSQLiteRepository_UsersRoleCheckConstraint(t *testing.T) {
+// TestSQLiteRepository_UsersRoleAcceptsCustomRole 는 users.role 이 커스텀 역할을
+// 허용하는지 검증한다.
+//
+// @SPEC:SPEC-AUTH-005 (M2, spec.md §4.2)
+// 본 테스트는 v0.2.0 의 TestSQLiteRepository_UsersRoleCheckConstraint 를 대체한다.
+// 당시에는 role 이 CHECK (role IN ('admin','editor','viewer')) 로 제한되어 잘못된
+// role 삽입이 실패해야 했으나, SPEC-AUTH-005 가 관리자 정의 커스텀 역할을 도입하며
+// 해당 제약을 의도적으로 제거했다. 따라서 기대 동작이 "거부" 에서 "허용" 으로
+// 반전된다 (회귀가 아니라 SPEC 이 명령한 계약 변경).
+//
+// 카탈로그에 없는 역할 이름을 사용자에게 부여하는 것을 막는 책임은 스키마가 아니라
+// 상위 API 계층(M6) 으로 이동한다.
+func TestSQLiteRepository_UsersRoleAcceptsCustomRole(t *testing.T) {
 	repo := setupSQLiteRepo(t)
 	ctx := context.Background()
 
 	_, err := repo.db.ExecContext(ctx,
-		`INSERT INTO users(username, password_hash, role, created_at, updated_at) VALUES('bob', 'hash', 'superuser', 1, 1)`,
+		`INSERT INTO users(username, password_hash, role, created_at, updated_at) VALUES('bob', 'hash', 'operator', 1, 1)`,
 	)
-	require.Error(t, err, "잘못된 role 은 CHECK 제약 위반이어야 한다")
+	require.NoError(t, err, "커스텀 역할은 저장될 수 있어야 한다")
+
+	var role string
+	require.NoError(t, repo.db.QueryRowContext(ctx,
+		`SELECT role FROM users WHERE username = 'bob'`).Scan(&role))
+	assert.Equal(t, "operator", role)
 }
 
 // TestOpenSQLiteDB 는 OpenSQLiteDB 헬퍼가 WAL 모드를 활성화하고 스키마를 멱등하게

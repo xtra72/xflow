@@ -125,6 +125,62 @@ func UpdatePasswordHash(ctx context.Context, db *sql.DB, username, newHash strin
 	return nil
 }
 
+// UpdateUserRole 은 username 의 role 과 updated_at 을 갱신한다.
+// 사용자가 없으면 ErrUserNotFound.
+//
+// @SPEC:SPEC-AUTH-005 (M3)
+// 역할 존재 여부 검증과 잠금 방지 불변식(UB1) 은 상위 API 계층의 책임이다.
+func UpdateUserRole(ctx context.Context, db *sql.DB, username, role string) error {
+	now := time.Now().UnixMilli()
+	res, err := db.ExecContext(ctx, `
+		UPDATE users SET role = ?, updated_at = ? WHERE username = ?
+	`, role, now, username)
+	if err != nil {
+		return fmt.Errorf("update user role %q: %w", username, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// DeleteUser 는 username 의 사용자를 삭제한다. 없으면 ErrUserNotFound.
+//
+// @SPEC:SPEC-AUTH-005 (M3)
+// 마지막 관리자 삭제·자기 자신 삭제 차단(UB1) 은 상위 API 계층의 책임이다.
+func DeleteUser(ctx context.Context, db *sql.DB, username string) error {
+	res, err := db.ExecContext(ctx, `DELETE FROM users WHERE username = ?`, username)
+	if err != nil {
+		return fmt.Errorf("delete user %q: %w", username, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// CountUsersByRole 는 특정 역할을 보유한 사용자 수를 반환한다.
+//
+// @SPEC:SPEC-AUTH-005 (M3)
+// 잠금 방지 불변식(UB1) 판정에 사용된다: 마지막 admin 삭제·강등 차단,
+// 사용자가 배정된 역할의 삭제 차단.
+func CountUsersByRole(ctx context.Context, db *sql.DB, role string) (int64, error) {
+	var n int64
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE role = ?`, role).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count users by role %q: %w", role, err)
+	}
+	return n, nil
+}
+
 // CountUsers 는 users 테이블의 총 row 수를 반환한다 (마이그레이션 트리거 판정용).
 func CountUsers(ctx context.Context, db *sql.DB) (int64, error) {
 	var n int64
