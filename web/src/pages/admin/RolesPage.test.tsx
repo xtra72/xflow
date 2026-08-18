@@ -162,31 +162,70 @@ describe('RolesPage 목록 (AC-04)', () => {
   });
 });
 
-describe('RolesPage 빌트인 역할 보호 (AC-04)', () => {
-  it.each(['admin', 'editor', 'viewer'])(
-    '%s 행은 수정·삭제 컨트롤이 비활성이고 사유가 표시된다',
+// 빌트인 보호 범위는 서버 계약(internal/api/handler/role.go)을 그대로 비춘다.
+// SPEC-AUTH-006 acceptance.md AC-04 의 문구는 "빌트인 역할 행은 수정·삭제 컨트롤이
+// 비활성" 이지만, SPEC-AUTH-005 §2.4(UB1)가 실제로 금지하는 것은 (3) 빌트인 역할의
+// 삭제와 (4) admin 역할의 권한 수정뿐이고 서버도 그렇게 구현되어 있다. AC-04 문구를
+// 문자 그대로 따르면 신규 설치처럼 커스텀 역할이 없는 환경에서 편집 가능한 역할이
+// 하나도 없어져 역할 관리 화면이 사실상 동작하지 않는다. 서버 계약을 따른다.
+describe('RolesPage 빌트인 역할 보호 (AC-04, 서버 계약 기준)', () => {
+  it('admin 행은 수정·삭제가 모두 비활성이고 사유가 표시된다', async () => {
+    renderPage();
+    await waitForList();
+
+    const row = screen.getByTestId('admin-role-row-admin');
+    const edit = within(row).getByRole('button', { name: '수정 admin' });
+    const remove = within(row).getByRole('button', { name: '삭제 admin' });
+
+    expect(edit).toBeDisabled();
+    expect(edit).toHaveAttribute('aria-disabled', 'true');
+    expect(edit).toHaveAttribute(
+      'title',
+      'admin 역할은 항상 전체 권한을 보유하므로 수정할 수 없습니다.',
+    );
+    expect(remove).toBeDisabled();
+    expect(
+      within(row).getByText(
+        'admin 역할은 항상 전체 권한을 보유하므로 수정할 수 없습니다.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it.each(['editor', 'viewer'])(
+    '%s 행은 권한 수정이 가능하고 삭제만 비활성이다',
     async (name) => {
       renderPage();
       await waitForList();
 
       const row = screen.getByTestId(`admin-role-row-${name}`);
-      const edit = within(row).getByRole('button', { name: `수정 ${name}` });
-      const remove = within(row).getByRole('button', { name: `삭제 ${name}` });
+      // 서버는 editor/viewer 의 권한 수정을 허용한다.
+      expect(within(row).getByRole('button', { name: `수정 ${name}` })).toBeEnabled();
 
-      for (const button of [edit, remove]) {
-        expect(button).toBeDisabled();
-        expect(button).toHaveAttribute('aria-disabled', 'true');
-        expect(button).toHaveAttribute(
-          'title',
-          '빌트인 역할은 수정하거나 삭제할 수 없습니다.',
-        );
-      }
-      // 사유는 툴팁만이 아니라 화면에도 남긴다.
+      const remove = within(row).getByRole('button', { name: `삭제 ${name}` });
+      expect(remove).toBeDisabled();
+      expect(remove).toHaveAttribute('aria-disabled', 'true');
+      expect(remove).toHaveAttribute('title', '빌트인 역할은 삭제할 수 없습니다.');
       expect(
-        within(row).getByText('빌트인 역할은 수정하거나 삭제할 수 없습니다.'),
+        within(row).getByText('빌트인 역할은 삭제할 수 없습니다.'),
       ).toBeInTheDocument();
     },
   );
+
+  it('빌트인 역할을 편집하면 이름 입력이 잠긴다 — 서버가 이름 변경을 거부한다', async () => {
+    renderPage();
+    await waitForList();
+
+    const row = screen.getByTestId('admin-role-row-editor');
+    fireEvent.click(within(row).getByRole('button', { name: '수정 editor' }));
+
+    const nameInput = await screen.findByDisplayValue('editor');
+    expect(nameInput).toHaveAttribute('readonly');
+    expect(
+      screen.getByText(
+        '빌트인 역할의 이름은 변경할 수 없습니다. 권한만 수정할 수 있습니다.',
+      ),
+    ).toBeInTheDocument();
+  });
 
   it('커스텀 역할은 수정·삭제가 활성이다', async () => {
     renderPage();

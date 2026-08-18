@@ -158,14 +158,32 @@ export default function RolesPage(): React.JSX.Element {
   }
 
   const permissionTitle = t('admin.permissionRequired');
-  const builtinReason = t('admin.roles.builtinReason');
 
-  /** 빌트인 여부와 권한을 함께 본 비활성 사유. 없으면 undefined. */
-  function disabledReason(role: RoleResponse, allowed: boolean): string | undefined {
-    if (role.builtin) return builtinReason;
-    if (!allowed) return permissionTitle;
+  // 서버 계약(internal/api/handler/role.go)을 그대로 비춘다. 빌트인이라고 전부
+  // 막으면 신규 설치처럼 커스텀 역할이 없는 환경에서 편집 가능한 역할이 하나도
+  // 없어진다. 서버가 실제로 거부하는 것은 셋뿐이다.
+  //   - admin 역할의 수정 전체        (ADMIN_ROLE_IMMUTABLE)
+  //   - 빌트인 역할의 이름 변경        (BUILTIN_ROLE_IMMUTABLE)
+  //   - 빌트인 역할의 삭제            (BUILTIN_ROLE_IMMUTABLE)
+  // editor / viewer 의 권한 수정은 허용된다.
+  const isAdminRole = (role: RoleResponse): boolean => role.name === 'admin';
+
+  /** 수정 불가 사유. 수정 가능하면 undefined. */
+  function editDisabledReason(role: RoleResponse): string | undefined {
+    if (isAdminRole(role)) return t('admin.roles.adminImmutableReason');
+    if (!canUpdate) return permissionTitle;
     return undefined;
   }
+
+  /** 삭제 불가 사유. 삭제 가능하면 undefined. */
+  function deleteDisabledReason(role: RoleResponse): string | undefined {
+    if (role.builtin) return t('admin.roles.builtinDeleteReason');
+    if (!canDelete) return permissionTitle;
+    return undefined;
+  }
+
+  // 빌트인 역할 편집 시 이름은 잠근다 — 서버가 이름 변경을 거부한다.
+  const nameLocked = editor?.mode === 'edit' && editor.original.builtin === true;
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-6" data-testid="admin-roles-page">
@@ -256,9 +274,9 @@ export default function RolesPage(): React.JSX.Element {
                     <button
                       type="button"
                       onClick={() => openEdit(role)}
-                      disabled={role.builtin || !canUpdate}
-                      aria-disabled={role.builtin || !canUpdate}
-                      title={disabledReason(role, canUpdate) ?? t('admin.roles.edit')}
+                      disabled={editDisabledReason(role) !== undefined}
+                      aria-disabled={editDisabledReason(role) !== undefined}
+                      title={editDisabledReason(role) ?? t('admin.roles.edit')}
                       aria-label={`${t('admin.roles.edit')} ${role.name}`}
                       className="rounded p-1.5 text-(--color-text-muted) hover:bg-(--color-bg-secondary) disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -270,9 +288,9 @@ export default function RolesPage(): React.JSX.Element {
                         setActionError(null);
                         setDeleteTarget(role);
                       }}
-                      disabled={role.builtin || !canDelete}
-                      aria-disabled={role.builtin || !canDelete}
-                      title={disabledReason(role, canDelete) ?? t('common.delete')}
+                      disabled={deleteDisabledReason(role) !== undefined}
+                      aria-disabled={deleteDisabledReason(role) !== undefined}
+                      title={deleteDisabledReason(role) ?? t('common.delete')}
                       aria-label={`${t('common.delete')} ${role.name}`}
                       className="rounded p-1.5 text-red-500 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -281,7 +299,9 @@ export default function RolesPage(): React.JSX.Element {
                   </div>
                   {role.builtin && (
                     <p className="mt-0.5 text-xs text-(--color-text-muted)">
-                      {builtinReason}
+                      {isAdminRole(role)
+                        ? t('admin.roles.adminImmutableReason')
+                        : t('admin.roles.builtinDeleteReason')}
                     </p>
                   )}
                 </td>
@@ -306,12 +326,23 @@ export default function RolesPage(): React.JSX.Element {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span className="text-(--color-text-muted)">{t('admin.roles.name')}</span>
+              {/* 빌트인 역할의 이름은 users.role 및 코드 상수와 결합되어 있어
+                  서버가 변경을 거부한다(BUILTIN_ROLE_IMMUTABLE). 입력을 열어 두면
+                  사용자가 값을 바꾸고 저장 시점에야 409 를 받는다. */}
               <input
                 className={INPUT_CLASS}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                readOnly={nameLocked}
+                aria-readonly={nameLocked}
+                title={nameLocked ? t('admin.roles.builtinNameLocked') : undefined}
                 required
               />
+              {nameLocked && (
+                <p className="text-xs text-(--color-text-muted)">
+                  {t('admin.roles.builtinNameLocked')}
+                </p>
+              )}
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-(--color-text-muted)">

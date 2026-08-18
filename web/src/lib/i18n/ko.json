@@ -3884,7 +3884,10 @@
       "deleteConfirm": "{name} 역할을 삭제합니다. 되돌릴 수 없습니다.",
       "created": "역할을 생성했습니다.",
       "updated": "역할을 수정했습니다.",
-      "deleted": "역할을 삭제했습니다."
+      "deleted": "역할을 삭제했습니다.",
+      "adminImmutableReason": "admin 역할은 항상 전체 권한을 보유하므로 수정할 수 없습니다.",
+      "builtinDeleteReason": "빌트인 역할은 삭제할 수 없습니다.",
+      "builtinNameLocked": "빌트인 역할의 이름은 변경할 수 없습니다. 권한만 수정할 수 있습니다."
     },
     "errors": {
       "LAST_ADMIN_USER": "관리 권한을 가진 마지막 사용자입니다. 다른 관리자를 먼저 만든 뒤 다시 시도하세요.",

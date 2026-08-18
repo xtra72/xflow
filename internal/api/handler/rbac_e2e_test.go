@@ -479,6 +479,56 @@ func TestAC09_LockoutPreventionInvariants(t *testing.T) {
 
 // --- AC-10: 인증 비활성 회귀 없음 ---
 
+// TestBuiltinRoleEditableScope 는 빌트인 역할 보호의 **경계**를 고정한다.
+//
+// spec.md §2.4(UB1)가 금지하는 것은 (3) 빌트인 역할의 삭제와 (4) admin 역할의
+// 권한 수정뿐이다. editor / viewer 의 권한 수정은 허용된다. 웹 UI 의 역할 편집
+// 게이팅이 이 경계에 의존하므로(빌트인이라고 전부 막으면 신규 설치에서 편집
+// 가능한 역할이 하나도 없어진다), 서버 계약을 테스트로 잠근다.
+func TestBuiltinRoleEditableScope(t *testing.T) {
+	t.Run("editor 권한 수정은 허용된다", func(t *testing.T) {
+		env := newRBACEnv(t)
+		adminToken := env.token("admin", rbac.RoleAdmin)
+
+		perms := []string{"agent.read", "device.read"}
+		rec := env.do(http.MethodPut, "/api/v1/roles/editor",
+			dto.UpdateRoleRequest{Permissions: &perms}, adminToken)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		row, err := storage.GetRoleByName(context.Background(), env.db, rbac.RoleEditor)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, perms, row.Permissions)
+	})
+
+	t.Run("viewer 권한 수정은 허용된다", func(t *testing.T) {
+		env := newRBACEnv(t)
+		adminToken := env.token("admin", rbac.RoleAdmin)
+
+		perms := []string{"agent.read"}
+		rec := env.do(http.MethodPut, "/api/v1/roles/viewer",
+			dto.UpdateRoleRequest{Permissions: &perms}, adminToken)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		row, err := storage.GetRoleByName(context.Background(), env.db, rbac.RoleViewer)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, perms, row.Permissions)
+	})
+
+	t.Run("빌트인 역할 이름 변경은 409", func(t *testing.T) {
+		env := newRBACEnv(t)
+		adminToken := env.token("admin", rbac.RoleAdmin)
+
+		newName := "editor-renamed"
+		rec := env.do(http.MethodPut, "/api/v1/roles/editor",
+			dto.UpdateRoleRequest{Name: &newName}, adminToken)
+		assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+		assert.Equal(t, "BUILTIN_ROLE_IMMUTABLE", errorCode(t, rec))
+
+		_, err := storage.GetRoleByName(context.Background(), env.db, rbac.RoleEditor)
+		assert.NoError(t, err, "거부되었는데 역할 이름이 바뀌었다")
+	})
+}
+
 func TestAC10_NoAuthorizationWhenAuthDisabled(t *testing.T) {
 	env := newRBACEnvWithAuth(t, false)
 

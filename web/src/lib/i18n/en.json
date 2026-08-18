@@ -3884,7 +3884,10 @@
       "deleteConfirm": "Delete role {name}. This cannot be undone.",
       "created": "Role created.",
       "updated": "Role updated.",
-      "deleted": "Role deleted."
+      "deleted": "Role deleted.",
+      "adminImmutableReason": "The admin role always holds every permission and cannot be modified.",
+      "builtinDeleteReason": "Built-in roles cannot be deleted.",
+      "builtinNameLocked": "A built-in role cannot be renamed. Only its permissions can be changed."
     },
     "errors": {
       "LAST_ADMIN_USER": "This is the last user holding admin permissions. Create another administrator first, then try again.",
