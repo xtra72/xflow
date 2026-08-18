@@ -24,7 +24,9 @@
     "nodeManagement": "Node Management",
     "enrollmentManagement": "Enrollment",
     "groupManagement": "Group Management",
-    "releaseStore": "Release Store"
+    "releaseStore": "Release Store",
+    "users": "Users",
+    "roles": "Roles"
   },
   "auth": {
     "login": "Login",
@@ -49,7 +51,9 @@
     "passwordTooShort": "Password must be at least 4 characters",
     "passwordChanged": "Password changed successfully",
     "passwordChangeError": "Failed to change password",
-    "currentPasswordWrong": "Current password is incorrect"
+    "currentPasswordWrong": "Current password is incorrect",
+    "permissionDenied": "You do not have permission to access this page. Ask an administrator for access.",
+    "permissionUnavailable": "Could not load your permissions. Please try again shortly."
   },
   "dashboard": {
     "title": "Dashboard",
@@ -3833,5 +3837,8 @@
     "running": "Running…",
     "rerun": "Re-run",
     "run": "Run"
+  },
+  "admin": {
+    "comingSoon": "This page is not available yet."
   }
 }

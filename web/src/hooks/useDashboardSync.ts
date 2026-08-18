@@ -31,6 +31,7 @@ import {
   putSharedDashboard,
 } from '@/services/api/dashboardService';
 import { useTranslation } from '@/lib/i18n';
+import { hasPermissionOf } from '@/hooks/usePermission';
 import { useAuthStore } from '@/stores/authStore';
 import {
   buildDefaultSnapshot,
@@ -335,10 +336,21 @@ export function useDashboardSync(): DashboardSyncStatus {
           applyServerSnapshot('mine', mine);
         }
 
-        // (3) 활성 스코프 결정 — sessionStorage > 역할 기반 기본값.
+        // (3) 활성 스코프 결정 — sessionStorage > 권한 기반 기본값.
+        //
+        // SPEC-AUTH-006 AC-10: 기존 `role === 'admin'` 비교를 권한 키로 바꾼다.
+        //   이 분기는 접근 차단이 아니라 "처음 열 때 어느 스코프를 보여줄지"의
+        //   기본값이며 사용자는 언제든 스코프를 전환할 수 있다. 다만 역할 이름
+        //   열거는 커스텀 역할에서 성립하지 않으므로(어떤 커스텀 역할도 공유
+        //   대시보드를 기본값으로 가질 수 없다) 함께 걷어낸다.
+        //
+        //   키 선택: 원래 의도는 "이 사용자가 관리자인가"이지 "대시보드를
+        //   편집할 수 있는가"가 아니다. dashboard.update 로 바꾸면 editor 도
+        //   해당돼 기존 기본값(mine)이 뒤집힌다 — 의도된 동작이 아니다.
+        //   빌트인 역할 중 사용자·역할 관리 권한은 admin 만 가지므로, 관리자
+        //   여부의 대리 지표로 user.read / role.read 를 쓴다. 세 빌트인 역할의
+        //   기존 기본값이 그대로 보존되고 관리형 커스텀 역할도 함께 잡힌다.
         const sessionScope = readActiveScopeFromSession();
-        const user = useAuthStore.getState().user;
-        const role = user?.role;
         const mineSnap = useUIStore.getState().mineSnapshot;
         const mineHasContent =
           mineSnap !== null && mineSnap.version > 0;
@@ -346,7 +358,10 @@ export function useDashboardSync(): DashboardSyncStatus {
         let initialScope: 'shared' | 'mine';
         if (sessionScope === 'shared' || sessionScope === 'mine') {
           initialScope = sessionScope;
-        } else if (role === 'admin') {
+        } else if (
+          hasPermissionOf('user.read') ||
+          hasPermissionOf('role.read')
+        ) {
           initialScope = 'shared';
         } else if (mineHasContent) {
           initialScope = 'mine';

@@ -27,7 +27,7 @@ import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import { SystemVersionCard } from '@/components/system/SystemVersionCard';
 import { UpdateDialog } from '@/components/system/UpdateDialog';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermission } from '@/hooks/usePermission';
 import { useTranslation } from '@/lib/i18n';
 import { mapUpdateError } from '@/lib/errors/updaterErrorMapper';
 import { useSystemVersion, useUpdateCheck } from '@/services/api/systemUpdate';
@@ -43,12 +43,14 @@ export function SystemStatusPage() {
   const checkMutation = useUpdateCheck();
   const queryClient = useQueryClient();
   const addNotification = useUIStore((s) => s.addNotification);
-  const { user, authEnabled } = useAuth();
-  // admin role 판단:
-  //   - authEnabled=false (dev 모드 단일 사용자) → admin 으로 간주.
-  //   - 그 외에는 user.role === 'admin' 인 경우만 true.
+  const { hasPermission } = usePermission();
+  // SPEC-AUTH-006 AC-10: 역할 이름 비교 → 권한 키 판정.
+  //   이 플래그가 여는 컨트롤은 업데이트 채널 변경(ChannelChangeDialog)뿐이며
+  //   시스템 설정 변경에 해당하므로 system.update 로 판정한다.
+  //   authEnabled=false / 구버전 서버 폴백은 usePermission 이 흡수한다 —
+  //   기존 `!authEnabled || ...` 를 손으로 적던 부분이 여기서 사라진다.
   // 본 판단은 UI 노출 제어용이며, 실제 권한 검증은 백엔드가 수행한다.
-  const isAdmin = !authEnabled || user?.role === 'admin';
+  const canChangeChannel = hasPermission('system.update');
   // Phase D: UpdateDialog 의 open 상태를 페이지에서 관리한다.
   const [updateOpen, setUpdateOpen] = useState(false);
   // Phase C (SPEC-UPDATE-002 M8): ChannelChangeDialog 의 open 상태.
@@ -110,8 +112,10 @@ export function SystemStatusPage() {
           // Phase D: update_available=true 일 때 SystemVersionCard 가
           // "업데이트 시작" 버튼을 노출하도록 핸들러 주입.
           onUpdate={() => setUpdateOpen(true)}
-          // Phase C (SPEC-UPDATE-002 M8): admin 사용자에게 채널 클릭 진입점 노출.
-          isAdmin={isAdmin}
+          // Phase C (SPEC-UPDATE-002 M8): 채널 변경 권한 보유자에게 클릭 진입점
+          //   노출. 카드의 prop 이름(isAdmin)은 SPEC-UPDATE-002 의 계약이라
+          //   유지하고, 판정만 권한 키 기반으로 바꾼다.
+          isAdmin={canChangeChannel}
           onChannelClick={() => setChannelOpen(true)}
         />
       ) : null}

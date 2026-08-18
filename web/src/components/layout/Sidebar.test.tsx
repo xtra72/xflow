@@ -15,6 +15,19 @@ import type { User, UserRole } from '@/types/auth';
 const useAuthMock = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/useAuth', () => ({ useAuth: useAuthMock }));
 
+// ---- usePermission mock ----
+// SPEC-AUTH-006 M3: 게이팅이 역할 이름이 아니라 권한 키로 판정한다.
+// 기본은 전원 허용이고, 권한 부족 상황은 각 테스트가 denied 에 키를 넣어 만든다.
+const permissionMock = vi.hoisted(() => ({ denied: new Set<string>() }));
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: () => ({
+    hasPermission: (key: string) => !permissionMock.denied.has(key),
+    hasAnyPermission: (keys: readonly string[]) =>
+      keys.some((key) => !permissionMock.denied.has(key)),
+    isPermissionUnavailable: false,
+  }),
+}));
+
 // ---- useRemoteMode mock ----
 const useRemoteModeMock = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/useRemote', () => ({ useRemoteMode: useRemoteModeMock }));
@@ -66,6 +79,7 @@ beforeEach(() => {
   useAuthMock.mockReset();
   useRemoteModeMock.mockReset();
   sidebarCollapsedMock.value = false;
+  permissionMock.denied = new Set<string>();
   useAuthMock.mockReturnValue({ user: makeUser('admin') });
   useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
 });
@@ -114,7 +128,10 @@ describe('Sidebar — 원격 관리 그룹 게이팅', () => {
     expect(screen.queryByText('원격 관리')).not.toBeInTheDocument();
   });
 
-  it('server 모드여도 비-admin 사용자에게는 원격 관리 그룹을 숨긴다', () => {
+  it('server 모드여도 remote.read 권한이 없으면 원격 관리 그룹을 숨긴다', () => {
+    // SPEC-AUTH-006 M3: 판정 기준이 역할 이름에서 권한 키로 바뀌었다.
+    // 커스텀 역할이 생기면 'viewer' 같은 이름 열거는 성립하지 않는다.
+    permissionMock.denied = new Set(['remote.read']);
     useAuthMock.mockReturnValue({ user: makeUser('viewer') });
     renderSidebar();
     expect(screen.queryByText('원격 관리')).not.toBeInTheDocument();

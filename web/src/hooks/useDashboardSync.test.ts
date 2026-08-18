@@ -194,6 +194,29 @@ function resetStoreState(): void {
 // Tests
 // ─────────────────────────────────────────────────────────────────────
 
+/**
+ * 역할별 권한 집합 (SPEC-AUTH-006).
+ *
+ * 활성 스코프 기본값은 역할 이름이 아니라 관리 권한(user.read/role.read) 보유
+ * 여부로 결정되므로, 테스트도 역할에 대응하는 권한을 함께 주입해야 한다.
+ * 서버 빌트인 역할 정의(internal/rbac/catalog.go)에서 이 스위트에 필요한
+ * 키만 추린 축약본이다 — 관리 리소스는 admin 만 가진다.
+ */
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  admin: ['dashboard.read', 'dashboard.update', 'user.read', 'role.read'],
+  editor: ['dashboard.read', 'dashboard.update'],
+  viewer: ['dashboard.read'],
+};
+
+/** 인증 store 에 사용자와 그 역할의 권한 집합을 함께 주입한다. */
+function setAuthUser(name: string, role: string): void {
+  useAuthStore.setState({
+    user: { name, role },
+    permissions: new Set(ROLE_PERMISSIONS[role] ?? []),
+    permissionStatus: 'loaded',
+  });
+}
+
 beforeEach(() => {
   resetStorage();
   getSharedDashboardMock.mockReset();
@@ -202,12 +225,12 @@ beforeEach(() => {
   putMyDashboardMock.mockReset();
   // 인증 store 초기화 — admin 기본.
   useAuthStore.setState({
-    user: { name: 'tester', role: 'admin' },
     tokens: null,
     isAuthenticated: true,
     isLoading: false,
     authEnabled: true,
   });
+  setAuthUser('tester', 'admin');
 });
 
 afterEach(() => {
@@ -258,7 +281,7 @@ describe('useDashboardSync — boot phase', () => {
     getMyDashboardMock.mockResolvedValue(null);
 
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'admin', role: 'admin' } });
+    setAuthUser('admin', 'admin');
 
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -271,7 +294,7 @@ describe('useDashboardSync — boot phase', () => {
     getMyDashboardMock.mockResolvedValue(null);
 
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'tom', role: 'viewer' } });
+    setAuthUser('tom', 'viewer');
 
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -284,7 +307,7 @@ describe('useDashboardSync — boot phase', () => {
     getMyDashboardMock.mockResolvedValue(makeSnapshot({ scope: 'user', version: 2, owner: 'ed' }));
 
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'ed', role: 'editor' } });
+    setAuthUser('ed', 'editor');
 
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -300,7 +323,7 @@ describe('useDashboardSync — boot phase', () => {
     testSessionStorage.setItem('xflow-ui:active-dashboard-scope', 'mine');
 
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'a', role: 'admin' } });
+    setAuthUser('a', 'admin');
 
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -427,7 +450,7 @@ describe('useDashboardSync — 403 on shared PUT (AC-4)', () => {
     putSharedDashboardMock.mockRejectedValue(new DashboardForbiddenError());
 
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'ed', role: 'editor' } });
+    setAuthUser('ed', 'editor');
 
     const { result } = renderHook(() => useDashboardSync());
     await vi.waitFor(() => expect(result.current.isLoading).toBe(false));

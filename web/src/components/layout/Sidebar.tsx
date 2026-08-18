@@ -1,6 +1,10 @@
 // 사이드바 네비게이션 컴포넌트.
-// 메뉴 항목, 접기/펼치기 토글, RBAC 기반 메뉴 필터링을 제공한다.
+// 메뉴 항목, 접기/펼치기 토글, 권한 기반 메뉴 필터링을 제공한다.
 // 그룹 메뉴(하위 항목 포함)를 지원한다.
+//
+// SPEC-AUTH-006 S1 (M3.1, M3.2): 역할 이름 열거(`roles: ['admin']`)를 권한 키
+//   (`permission: 'remote.read'`)로 교체했다. 커스텀 역할이 생기면 역할 이름
+//   열거는 유지할 수 없다 — 커스텀 역할이 어떤 메뉴에도 접근하지 못한다.
 
 import { useState } from 'react';
 import {
@@ -18,18 +22,19 @@ import {
   Network,
   Package,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   UserPlus,
+  Users,
   Workflow,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router';
 
-import { useAuth } from '@/hooks/useAuth';
+import { usePermission } from '@/hooks/usePermission';
 import { useRemoteMode } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
-import type { UserRole } from '@/types/auth';
 
 /** 네비게이션 메뉴 항목 정의 */
 interface NavItem {
@@ -39,8 +44,8 @@ interface NavItem {
   path: string;
   /** lucide-react 아이콘 컴포넌트 */
   icon: React.ComponentType<{ className?: string }>;
-  /** 접근 가능한 역할 목록. 미지정 시 모든 역할 허용. */
-  roles?: UserRole[];
+  /** 필요 권한 키(`<resource>.<action>`). 미지정 시 인증만으로 접근 가능. */
+  permission?: string;
 }
 
 /** 그룹 메뉴 정의 (하위 항목 포함) */
@@ -51,8 +56,8 @@ interface NavGroup {
   icon: React.ComponentType<{ className?: string }>;
   /** 하위 메뉴 항목 */
   children: NavItem[];
-  /** 접근 가능한 역할 목록. 미지정 시 모든 역할 허용. */
-  roles?: UserRole[];
+  /** 필요 권한 키. 미지정 시 인증만으로 접근 가능. */
+  permission?: string;
 }
 
 type NavEntry = NavItem | NavGroup;
@@ -62,7 +67,13 @@ function isNavGroup(entry: NavEntry): entry is NavGroup {
   return 'children' in entry;
 }
 
-/** 메뉴 항목 목록 */
+/**
+ * 메뉴 항목 목록.
+ *
+ * 권한 매핑은 SPEC-AUTH-006 spec.md §2.3 표를 그대로 옮긴 것이다.
+ * 대시보드는 인증만 요구하므로 permission 을 지정하지 않는다 — 권한이 0개인
+ * 사용자도 빈 사이드바가 아니라 대시보드 항목은 남는다.
+ */
 const NAV_ENTRIES: NavEntry[] = [
   {
     labelKey: 'nav.dashboard',
@@ -73,29 +84,34 @@ const NAV_ENTRIES: NavEntry[] = [
     labelKey: 'nav.flows',
     path: '/flows',
     icon: Workflow,
+    permission: 'flow.read',
   },
   {
     labelKey: 'nav.agents',
     path: '/agents',
     icon: Bot,
+    permission: 'agent.read',
   },
   {
     labelKey: 'nav.devices',
     path: '/devices',
     icon: HardDrive,
+    permission: 'device.read',
   },
   {
     labelKey: 'nav.monitoring',
     path: '/monitoring',
     icon: Monitor,
+    permission: 'monitoring.read',
   },
-  // SPEC-SCHEDULE-VIEW-001 M5: 스케줄 뷰(전체 인증 사용자, RD-5 — role 게이팅 없음).
+  // SPEC-SCHEDULE-VIEW-001 M5: 스케줄 뷰.
   {
     labelKey: 'nav.schedules',
     path: '/schedules',
     icon: CalendarClock,
+    permission: 'schedule.read',
   },
-  // 참고 그룹 메뉴
+  // 참고 그룹 메뉴 — 노드 타입 / 에이전트 타입 카탈로그.
   {
     labelKey: 'nav.reference',
     icon: BookOpen,
@@ -104,52 +120,69 @@ const NAV_ENTRIES: NavEntry[] = [
         labelKey: 'nav.nodes',
         path: '/nodes',
         icon: Blocks,
+        permission: 'node.read',
       },
       {
         labelKey: 'nav.agentTypes',
         path: '/agent-types',
         icon: Bot,
+        permission: 'node.read',
       },
     ],
   },
-  // SPEC-REMOTE-001 M9 (그룹 K, REQ-K11): admin 전용 원격 관리 그룹.
+  // SPEC-REMOTE-001 M9 (그룹 K, REQ-K11): 원격 관리 그룹.
   //   노드 관리(운영) + 등록 관리(온보딩) — 기존 관리 노드 + 원격 노드 제어 대체.
+  //   원격 하위 화면은 세분 게이팅 없이 `remote.*` 단일 키로만 다룬다
+  //   (spec.md §1.3 비범위) — 서버 라우트도 조회는 remote.read 로 통일돼 있다.
   {
     labelKey: 'nav.remote',
     icon: Network,
-    roles: ['admin'],
+    permission: 'remote.read',
     children: [
       {
         labelKey: 'nav.nodeManagement',
         path: '/admin/remote',
         icon: SlidersHorizontal,
-        roles: ['admin'],
+        permission: 'remote.read',
       },
       {
         labelKey: 'nav.groupManagement',
         path: '/admin/remote/groups',
         icon: Layers,
-        roles: ['admin'],
+        permission: 'remote.read',
       },
       {
         labelKey: 'nav.enrollmentManagement',
         path: '/admin/remote/enrollment',
         icon: UserPlus,
-        roles: ['admin'],
+        permission: 'remote.read',
       },
       {
         labelKey: 'nav.releaseStore',
         path: '/admin/remote/releases',
         icon: Package,
-        roles: ['admin'],
+        permission: 'remote.read',
       },
     ],
+  },
+  // SPEC-AUTH-006 M3.2: 사용자/역할 관리 메뉴. 페이지 구현은 M2 가 채운다.
+  {
+    labelKey: 'nav.users',
+    path: '/admin/users',
+    icon: Users,
+    permission: 'user.read',
+  },
+  {
+    labelKey: 'nav.roles',
+    path: '/admin/roles',
+    icon: ShieldCheck,
+    permission: 'role.read',
   },
   {
     labelKey: 'nav.settings',
     path: '/settings',
     icon: Settings,
-    roles: ['admin'],
+    permission: 'system.read',
   },
 ];
 
@@ -162,7 +195,7 @@ const REMOTE_GROUP_LABEL_KEY = 'nav.remote';
 
 export default function Sidebar() {
   const { t } = useTranslation();
-  const { user } = useAuth();
+  const { hasPermission } = usePermission();
   // 원격 관리 그룹은 server 모드에서만 노출한다. 로딩 중/비 server 모드면 숨긴다.
   const { data: remoteMode } = useRemoteMode();
   const isRemoteServer = remoteMode?.mode === 'server';
@@ -192,22 +225,20 @@ export default function Sidebar() {
     });
   };
 
-  /** 역할 기반 필터링 */
-  const hasAccess = (roles?: UserRole[]) => {
-    if (!roles) return true;
-    return user?.role ? roles.includes(user.role) : false;
-  };
+  /** 권한 기반 필터링. permission 미지정 항목은 인증만으로 접근 가능하다. */
+  const hasAccess = (permission?: string) =>
+    permission ? hasPermission(permission) : true;
 
-  // 사용자 역할에 따른 메뉴 필터링
+  // 사용자 권한에 따른 메뉴 필터링
   const filteredEntries = NAV_ENTRIES.filter((entry) => {
-    if (!hasAccess(entry.roles)) return false;
-    // 원격 관리 그룹은 admin 권한 + server 모드를 모두 충족할 때만 노출한다.
+    if (!hasAccess(entry.permission)) return false;
+    // 원격 관리 그룹은 remote.read 권한 + server 모드를 모두 충족할 때만 노출한다.
     if (isNavGroup(entry) && entry.labelKey === REMOTE_GROUP_LABEL_KEY && !isRemoteServer) {
       return false;
     }
-    // 그룹의 경우 접근 가능한 하위 항목이 하나라도 있으면 표시
+    // 그룹의 경우 접근 가능한 하위 항목이 하나라도 있으면 표시 (기존 동작 유지)
     if (isNavGroup(entry)) {
-      return entry.children.some((child) => hasAccess(child.roles));
+      return entry.children.some((child) => hasAccess(child.permission));
     }
     return true;
   });
@@ -241,7 +272,6 @@ export default function Sidebar() {
                 onToggle={() => toggleGroup(entry.labelKey)}
                 collapsed={sidebarCollapsed}
                 t={t}
-                userRole={user?.role}
               />
             );
           }
@@ -303,13 +333,13 @@ interface NavGroupItemProps {
   onToggle: () => void;
   collapsed: boolean;
   t: (key: string) => string;
-  userRole?: UserRole;
 }
 
 /** 그룹 메뉴 (접기/펼치기 가능한 하위 항목 포함) */
-function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGroupItemProps) {
+function NavGroupItem({ group, isOpen, onToggle, collapsed, t }: NavGroupItemProps) {
   const Icon = group.icon;
   const location = useLocation();
+  const { hasPermission } = usePermission();
 
   // 하위 항목 중 활성인 것이 있는지 확인
   const hasActiveChild = group.children.some(
@@ -317,10 +347,9 @@ function NavGroupItem({ group, isOpen, onToggle, collapsed, t, userRole }: NavGr
   );
 
   // 접근 가능한 하위 항목만 필터링
-  const visibleChildren = group.children.filter((child) => {
-    if (!child.roles) return true;
-    return userRole ? child.roles.includes(userRole) : false;
-  });
+  const visibleChildren = group.children.filter((child) =>
+    child.permission ? hasPermission(child.permission) : true,
+  );
 
   // 사이드바가 접힌 상태에서는 그룹의 각 하위 항목을 개별 아이콘으로 렌더한다
   // (접힘에서도 모든 항목 접근 가능 — 예: 노드 관리/등록 관리).

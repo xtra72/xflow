@@ -47,6 +47,19 @@ vi.mock('@/hooks/useAuth', () => ({
   useAuth: useAuthMock,
 }));
 
+// ---- usePermission mock ----
+// SPEC-AUTH-006 M3: 편집 컨트롤 게이팅이 role==='admin' 에서 'remote.update'
+// 권한 키 판정으로 바뀌었다. 기본은 전원 허용이며, 권한 부족은 denied 로 만든다.
+const permissionMock = vi.hoisted(() => ({ denied: new Set<string>() }));
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: () => ({
+    hasPermission: (key: string) => !permissionMock.denied.has(key),
+    hasAnyPermission: (keys: readonly string[]) =>
+      keys.some((key) => !permissionMock.denied.has(key)),
+    isPermissionUnavailable: false,
+  }),
+}));
+
 import { NodeDisplayResolutionSection } from './NodeDisplayResolutionSection';
 
 function detail(o: Partial<NodeDetail> = {}): NodeDetail {
@@ -91,6 +104,7 @@ beforeEach(() => {
   addNotificationMock.mockReset();
   setPendingRef.value = false;
   clearPendingRef.value = false;
+  permissionMock.denied = new Set<string>();
   // 기본은 admin(컨트롤 노출).
   useAuthMock.mockReset().mockReturnValue({ user: { role: 'admin' }, authEnabled: true });
 });
@@ -277,8 +291,10 @@ describe('NodeDisplayResolutionSection — 오버라이드 해제(CLEAR)', () =>
   });
 });
 
-describe('NodeDisplayResolutionSection — admin 게이팅', () => {
-  it('비-admin 은 SET/CLEAR 컨트롤을 숨기고 읽기 표시만 남긴다', () => {
+describe('NodeDisplayResolutionSection — 권한 게이팅', () => {
+  it('remote.update 권한이 없으면 SET/CLEAR 컨트롤을 숨기고 읽기 표시만 남긴다', () => {
+    // SPEC-AUTH-006 M3: 판정 기준이 역할 이름에서 권한 키로 바뀌었다.
+    permissionMock.denied = new Set(['remote.update']);
     useAuthMock.mockReturnValue({ user: { role: 'viewer' }, authEnabled: true });
     renderSection(
       detail({ display_override_width: 800, display_override_height: 480 }),

@@ -23,6 +23,7 @@ import {
 
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
+import { usePermission } from '@/hooks/usePermission';
 import { useTheme } from '@/hooks/useTheme';
 import {
   setLogLevel,
@@ -422,9 +423,9 @@ function ProfileTab() {
 // 시스템 탭
 // ============================================================
 
-/** 시스템 탭: 로그 레벨 변경, API 서버 정보 표시. viewer 역할 비활성화. */
+/** 시스템 탭: 로그 레벨 변경, API 서버 정보 표시. 쓰기 권한 없으면 비활성화. */
 function SystemTab() {
-  const user = useAuthStore((s) => s.user);
+  const { hasPermission } = usePermission();
   const addNotification = useUIStore((s) => s.addNotification);
   const { t } = useTranslation();
   const [logLevel, setLogLevelState] = useState<string>('info');
@@ -444,7 +445,11 @@ function SystemTab() {
       });
   }, []);
 
-  const isViewer = user?.role === 'viewer';
+  // SPEC-AUTH-006 AC-10: 역할 이름 비교 → 권한 키 판정.
+  //   이 플래그는 로그 레벨·로그 출력 방식 등 시스템 설정 변경 컨트롤을
+  //   비활성화하는 데만 쓰이므로 system.update 미보유로 판정한다.
+  //   변수명을 isViewer 로 두면 커스텀 역할에서 뜻이 어긋나므로 함께 바꾼다.
+  const isReadOnly = !hasPermission('system.update');
   // API client(client.ts)는 상대경로 `/api/v1`를 사용하므로 백엔드는 브라우저가
   // 접속한 origin과 동일하다. window.location.origin을 그대로 표시하면 HTTP/HTTPS
   // 프로토콜도 현재 접속 상태를 정확히 반영한다(별도 변환 불필요).
@@ -483,8 +488,8 @@ function SystemTab() {
 
   return (
     <div className="space-y-6">
-      {/* RBAC 경고 배너 */}
-      {isViewer && (
+      {/* 권한 부족 경고 배너 */}
+      {isReadOnly && (
         <div
           role="alert"
           className="flex items-center gap-2 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400"
@@ -517,7 +522,7 @@ function SystemTab() {
             id="log-level"
             value={logLevel}
             onChange={(e) => handleLogLevelChange(e.target.value)}
-            disabled={isViewer || isUpdating}
+            disabled={isReadOnly || isUpdating}
             className={cn(
               inputClass,
               'appearance-none bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%236b7280%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.22%208.22a.75.75%200%20011.06%200L10%2011.94l3.72-3.72a.75.75%200%20111.06%201.06l-4.25%204.25a.75.75%200%2001-1.06%200L5.22%209.28a.75.75%200%20010-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E")] bg-[length:1.25rem] bg-[right_0.5rem_center] bg-no-repeat pr-8',
@@ -543,7 +548,7 @@ function SystemTab() {
             id="log-style"
             value={logStyle}
             onChange={(e) => handleLogStyleChange(e.target.value as LogStyle)}
-            disabled={isViewer || isStyleUpdating}
+            disabled={isReadOnly || isStyleUpdating}
             className={cn(
               inputClass,
               'appearance-none bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%236b7280%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.22%208.22a.75.75%200%20011.06%200L10%2011.94l3.72-3.72a.75.75%200%20111.06%201.06l-4.25%204.25a.75.75%200%2001-1.06%200L5.22%209.28a.75.75%200%20010-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E")] bg-[length:1.25rem] bg-[right_0.5rem_center] bg-no-repeat pr-8',
@@ -560,10 +565,12 @@ function SystemTab() {
       </div>
 
       {/* 컴포넌트별 로그 레벨 오버라이드 카드 */}
-      <ComponentLogLevelOverrides isViewer={isViewer} addNotification={addNotification} />
+      {/* isViewer prop 이름은 두 카드의 기존 계약이라 유지하고, 판정만 권한 키
+          기반(isReadOnly)으로 바꿔 전달한다. */}
+      <ComponentLogLevelOverrides isViewer={isReadOnly} addNotification={addNotification} />
 
-      {/* 스케줄 로그 저장 방식 카드 (admin 전용, viewer 비활성화) */}
-      <ScheduleLogStorageCard isViewer={isViewer} />
+      {/* 스케줄 로그 저장 방식 카드 (시스템 설정 쓰기 권한 없으면 비활성화) */}
+      <ScheduleLogStorageCard isViewer={isReadOnly} />
 
       {/* API 서버 정보 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">

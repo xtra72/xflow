@@ -24,7 +24,9 @@
     "nodeManagement": "노드 관리",
     "enrollmentManagement": "등록 관리",
     "groupManagement": "그룹 관리",
-    "releaseStore": "릴리스 저장소"
+    "releaseStore": "릴리스 저장소",
+    "users": "사용자 관리",
+    "roles": "역할 관리"
   },
   "auth": {
     "login": "로그인",
@@ -49,7 +51,9 @@
     "passwordTooShort": "비밀번호는 4자 이상이어야 합니다",
     "passwordChanged": "비밀번호가 변경되었습니다",
     "passwordChangeError": "비밀번호 변경에 실패했습니다",
-    "currentPasswordWrong": "현재 비밀번호가 올바르지 않습니다"
+    "currentPasswordWrong": "현재 비밀번호가 올바르지 않습니다",
+    "permissionDenied": "이 화면에 접근할 권한이 없습니다. 관리자에게 권한을 요청하세요.",
+    "permissionUnavailable": "권한 정보를 불러오지 못했습니다. 잠시 후 다시 시도하세요."
   },
   "dashboard": {
     "title": "대시보드",
@@ -3833,5 +3837,8 @@
     "running": "실행 중…",
     "rerun": "다시 실행",
     "run": "실행"
+  },
+  "admin": {
+    "comingSoon": "이 화면은 준비 중입니다."
   }
 }
