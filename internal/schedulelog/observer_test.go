@@ -39,7 +39,7 @@ func (f *fakeScheduleLogRepo) Append(_ context.Context, rec storage.ScheduleLogR
 	return nil
 }
 
-func (f *fakeScheduleLogRepo) List(_ context.Context, _ storage.ScheduleLogFilter, _, _ int) ([]storage.ScheduleLogRecord, error) {
+func (f *fakeScheduleLogRepo) List(_ context.Context, _ storage.ScheduleLogFilter, _, _ int, _ string) ([]storage.ScheduleLogRecord, error) {
 	return f.records(), nil
 }
 
