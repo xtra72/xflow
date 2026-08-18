@@ -28,6 +28,12 @@ func TestPermissions_MatchesSpecTable(t *testing.T) {
 		"system.read", "system.update",
 		"user.read", "user.create", "user.update", "user.delete",
 		"role.read", "role.create", "role.update", "role.delete",
+		// SPEC-AUTH-006 E2: 메뉴 노출 축. 데이터 접근과 분리된 키다 —
+		// 대시보드 패널이 agent/device/flow 를 읽으므로 read 는 줘야 하는데,
+		// 같은 키로 메뉴까지 판정하면 "대시보드만 보이는 역할" 이 불가능해진다.
+		"nav.flow", "nav.agent", "nav.device", "nav.monitoring",
+		"nav.schedule", "nav.node", "nav.remote", "nav.system",
+		"nav.user", "nav.role",
 	}
 	sort.Strings(want)
 
@@ -92,16 +98,24 @@ func TestBuiltinRoles_Viewer(t *testing.T) {
 	viewer := builtinByName(t, RoleViewer)
 
 	for _, p := range viewer {
-		assert.Truef(t, strings.HasSuffix(p, "."+ActionRead), "viewer 는 read 만 보유해야 한다: %q", p)
-		assert.NotContainsf(t, []string{"user.read", "role.read"}, p,
-			"viewer 는 관리 리소스 read 를 보유하면 안 된다: %q", p)
+		isNav := strings.HasPrefix(p, ResourceNav+".")
+		assert.Truef(t, isNav || strings.HasSuffix(p, "."+ActionRead),
+			"viewer 는 read 와 메뉴 키만 보유해야 한다: %q", p)
+		assert.NotContainsf(t, []string{"user.read", "role.read", "nav.user", "nav.role"}, p,
+			"viewer 는 관리 리소스의 read·메뉴를 보유하면 안 된다: %q", p)
 	}
 
 	assert.Contains(t, viewer, "agent.read")
 	assert.Contains(t, viewer, "system.read")
 	assert.NotContains(t, viewer, "user.read")
 	assert.NotContains(t, viewer, "role.read")
-	assert.Len(t, viewer, 10, "viewer = 관리 리소스를 제외한 전 리소스 read")
+
+	// 메뉴 축: 읽을 수 있는 리소스의 메뉴는 기본 부여, 관리 메뉴는 제외.
+	assert.Contains(t, viewer, "nav.agent")
+	assert.NotContains(t, viewer, "nav.user")
+	assert.NotContains(t, viewer, "nav.role")
+
+	assert.Len(t, viewer, 18, "viewer = 관리 제외 전 리소스 read(10) + 관리 제외 메뉴(8)")
 }
 
 // TestBuiltinRoles_Editor 는 editor 권한 집합을 spec.md §2.1 editor 행과 대조한다.

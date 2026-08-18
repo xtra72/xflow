@@ -39,6 +39,16 @@ interface AuthGuardProps {
    *   <AuthGuard requirePermission="user.read" />
    */
   requirePermission?: string;
+  /**
+   * 메뉴 노출 키(`nav.<menu>`) — SPEC-AUTH-006 E2.
+   *
+   * 지정하면 `requirePermission` 대신 메뉴 축으로 판정한다. 메뉴가 숨겨진 페이지는
+   * 주소창 직접 진입도 막아 메뉴와 라우트를 일관되게 유지한다.
+   *
+   * 역할이 `nav.*` 를 하나도 보유하지 않으면 canSeeMenu 가 `requirePermission`
+   * 으로 폴백하므로 기존 배포의 접근 권한이 좁아지지 않는다.
+   */
+  requireMenu?: string;
 }
 
 /**
@@ -49,9 +59,10 @@ interface AuthGuardProps {
  */
 export default function AuthGuard({
   requirePermission,
+  requireMenu,
 }: AuthGuardProps = {}): React.JSX.Element {
   const { isAuthenticated, authEnabled, isLoading, initialize } = useAuth();
-  const { hasPermission, isPermissionUnavailable } = usePermission();
+  const { hasPermission, canSeeMenu, isPermissionUnavailable } = usePermission();
   const { t } = useTranslation();
   const addNotification = useUIStore((s) => s.addNotification);
   const location = useLocation();
@@ -66,8 +77,10 @@ export default function AuthGuard({
     authEnabled === true &&
     !isLoading &&
     isAuthenticated &&
-    requirePermission !== undefined &&
-    !hasPermission(requirePermission);
+    (requireMenu !== undefined || requirePermission !== undefined) &&
+    (requireMenu !== undefined
+      ? !canSeeMenu(requireMenu, requirePermission)
+      : !hasPermission(requirePermission as string));
 
   // UB1.2: 안내는 1회만 띄우고 재시도 루프를 만들지 않는다.
   // 권한 조회 실패와 권한 부족은 사용자에게 다른 안내를 준다 — 전자는 재시도가

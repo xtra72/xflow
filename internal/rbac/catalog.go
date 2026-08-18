@@ -36,6 +36,13 @@ const (
 	ResourceSystem     = "system"
 	ResourceUser       = "user"
 	ResourceRole       = "role"
+	// ResourceNav 는 데이터 접근이 아니라 **메뉴 노출**을 판정하는 리소스이다
+	// (SPEC-AUTH-006 E2). 액션 자리에 메뉴 식별자가 온다: nav.agent, nav.flow ...
+	//
+	// 메뉴와 데이터를 같은 키로 판정하면 "대시보드만 보이는 역할" 을 만들 수 없다 —
+	// 대시보드 패널이 에이전트·장치·플로우를 읽으므로 read 를 줘야 하는데, 그러면
+	// 해당 메뉴가 따라 보인다. 두 축을 분리해 read 는 주되 메뉴는 감출 수 있게 한다.
+	ResourceNav = "nav"
 )
 
 // 빌트인 역할 이름 상수. 기존 users.role 값과 정확히 일치하므로 사용자 데이터
@@ -79,6 +86,14 @@ var resourceActions = []struct {
 	{ResourceUser, []string{ActionRead, ActionCreate, ActionUpdate, ActionDelete}},
 	// 역할 관리
 	{ResourceRole, []string{ActionRead, ActionCreate, ActionUpdate, ActionDelete}},
+	// 메뉴 노출 (액션 자리 = 메뉴 식별자, 대응 데이터 리소스와 이름이 같다).
+	// 대시보드는 인증만으로 보이므로 키가 없다 — 권한 0개 사용자도 빈 사이드바를
+	// 보지 않아야 한다(SPEC-AUTH-006 §2.3).
+	{ResourceNav, []string{
+		ResourceFlow, ResourceAgent, ResourceDevice, ResourceMonitoring,
+		ResourceSchedule, ResourceNode, ResourceRemote, ResourceSystem,
+		ResourceUser, ResourceRole,
+	}},
 }
 
 // managementResources 는 사용자·역할 관리 리소스이다.
@@ -135,6 +150,16 @@ func init() {
 
 			// admin = 카탈로그 전체.
 			adminPermissions = append(adminPermissions, key)
+
+			// nav.<menu> 는 대응 데이터 리소스를 읽을 수 있는 역할에 기본 부여한다.
+			// 관리 메뉴(user/role)는 editor/viewer 에서 제외한다.
+			if ra.Resource == ResourceNav {
+				if !managementResources[action] {
+					viewerPermissions = append(viewerPermissions, key)
+					editorPermissions = append(editorPermissions, key)
+				}
+				continue
+			}
 
 			isReadable := action == ActionRead && !managementResources[ra.Resource]
 			if isReadable {

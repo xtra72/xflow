@@ -53,6 +53,18 @@ export interface PermissionApi {
   /** 나열한 권한 중 하나라도 보유하는지 여부. 빈 배열은 false. */
   hasAnyPermission: (keys: readonly string[]) => boolean;
   /**
+   * 메뉴 노출 판정 (SPEC-AUTH-006 E2).
+   *
+   * 메뉴 축(`nav.*`)과 데이터 축(`<resource>.read`)은 분리되어 있다 — 대시보드
+   * 패널이 에이전트·장치·플로우를 읽으므로 read 는 줘야 하는데, 같은 키로 메뉴까지
+   * 판정하면 "대시보드만 보이는 역할" 을 만들 수 없기 때문이다.
+   *
+   * 하위 호환: 역할에 `nav.*` 키가 **하나도 없으면** 메뉴 축이 도입되기 전의 역할로
+   * 보고 데이터 키로 판정한다. 이 폴백이 없으면 기존 배포가 업그레이드 직후 모든
+   * 메뉴를 잃는다. 관리자가 `nav.*` 를 하나라도 부여하면 그때부터 메뉴 축이 적용된다.
+   */
+  canSeeMenu: (navKey: string, dataKey?: string) => boolean;
+  /**
    * 권한 조회에 실패한 상태인지 여부.
    *
    * 이 값이 true 면 모든 판정이 false 이므로, 호출부는 "권한 없음" 대신
@@ -86,9 +98,28 @@ export function usePermission(): PermissionApi {
     [snapshot],
   );
 
+  // 역할이 메뉴 축을 사용하는지 판정한다. 폴백 분기의 유일한 근거다.
+  const usesMenuAxis = useMemo(() => {
+    if (permissionStatus !== 'loaded') return false;
+    for (const key of permissions) {
+      if (key.startsWith('nav.')) return true;
+    }
+    return false;
+  }, [permissions, permissionStatus]);
+
+  const canSeeMenu = useCallback(
+    (navKey: string, dataKey?: string) => {
+      if (usesMenuAxis) return resolve(snapshot, navKey);
+      // 메뉴 축 이전 역할 — 데이터 키로 판정한다(기존 동작 유지).
+      return dataKey === undefined ? true : resolve(snapshot, dataKey);
+    },
+    [snapshot, usesMenuAxis],
+  );
+
   return {
     hasPermission,
     hasAnyPermission,
+    canSeeMenu,
     isPermissionUnavailable:
       authEnabled !== false && permissionStatus === 'error',
   };

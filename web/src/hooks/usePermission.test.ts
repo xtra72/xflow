@@ -330,3 +330,54 @@ describe('로그아웃', () => {
     expect(useAuthStore.getState().permissionStatus).toBe('unknown');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// 메뉴 축 (SPEC-AUTH-006 E2)
+//
+// 메뉴 노출과 데이터 읽기를 분리한 이유는 "대시보드만 보이는 역할" 때문이다.
+// 대시보드 패널이 에이전트·장치·플로우를 읽으므로 read 는 줘야 하는데, 같은 키로
+// 메뉴까지 판정하면 그 역할을 만들 수 없다.
+// ─────────────────────────────────────────────────────────────────────
+
+/** 스토어를 지정한 권한 상태로 세팅한다. */
+function seedPermissions(perms: string[], authEnabled: boolean | null = true) {
+  useAuthStore.setState({
+    user: makeUser(),
+    tokens: TOKENS,
+    isAuthenticated: true,
+    isLoading: false,
+    authEnabled,
+    permissions: new Set(perms),
+    permissionStatus: 'loaded',
+  });
+}
+
+describe('usePermission — 메뉴 축', () => {
+  it('nav.* 보유 역할은 메뉴 축으로 판정한다 — read 가 있어도 nav 가 없으면 숨긴다', () => {
+    seedPermissions([
+      'agent.read', 'flow.read', 'device.read', 'dashboard.read',
+      'nav.monitoring',
+    ]);
+    const { result } = renderHook(() => usePermission());
+
+    // 데이터는 읽을 수 있어야 대시보드 패널이 동작한다.
+    expect(result.current.hasPermission('agent.read')).toBe(true);
+    // 그러나 nav.agent 가 없으므로 에이전트 메뉴는 숨긴다.
+    expect(result.current.canSeeMenu('nav.agent', 'agent.read')).toBe(false);
+    expect(result.current.canSeeMenu('nav.monitoring', 'monitoring.read')).toBe(true);
+  });
+
+  it('nav.* 가 하나도 없는 역할은 데이터 키로 폴백한다 — 기존 배포 회귀 방지', () => {
+    seedPermissions(['agent.read', 'flow.read']);
+    const { result } = renderHook(() => usePermission());
+
+    expect(result.current.canSeeMenu('nav.agent', 'agent.read')).toBe(true);
+    expect(result.current.canSeeMenu('nav.device', 'device.read')).toBe(false);
+  });
+
+  it('인증 비활성이면 메뉴 판정도 전원 허용이다', () => {
+    seedPermissions([], false);
+    const { result } = renderHook(() => usePermission());
+    expect(result.current.canSeeMenu('nav.agent', 'agent.read')).toBe(true);
+  });
+});

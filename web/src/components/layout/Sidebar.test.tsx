@@ -24,6 +24,11 @@ vi.mock('@/hooks/usePermission', () => ({
     hasPermission: (key: string) => !permissionMock.denied.has(key),
     hasAnyPermission: (keys: readonly string[]) =>
       keys.some((key) => !permissionMock.denied.has(key)),
+    // SPEC-AUTH-006 E2: 메뉴 축. 본 스위트는 데이터 키 기준으로 시나리오를 세우므로
+    // 실제 훅의 하위 호환 폴백(역할에 nav.* 가 없으면 데이터 키로 판정)과 동일하게
+    // 동작시킨다. 메뉴 축 자체의 판정은 usePermission.test.ts 가 검증한다.
+    canSeeMenu: (navKey: string, dataKey?: string) =>
+      !permissionMock.denied.has(dataKey ?? navKey),
     isPermissionUnavailable: false,
   }),
 }));

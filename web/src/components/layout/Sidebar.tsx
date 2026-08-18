@@ -44,8 +44,17 @@ interface NavItem {
   path: string;
   /** lucide-react 아이콘 컴포넌트 */
   icon: React.ComponentType<{ className?: string }>;
-  /** 필요 권한 키(`<resource>.<action>`). 미지정 시 인증만으로 접근 가능. */
+  /**
+   * 데이터 권한 키(`<resource>.<action>`). 메뉴 축 도입 이전 역할의 폴백 판정에
+   * 쓰인다. 미지정 시 인증만으로 접근 가능.
+   */
   permission?: string;
+  /**
+   * 메뉴 노출 키(`nav.<menu>`) — SPEC-AUTH-006 E2.
+   * 역할이 `nav.*` 를 하나라도 보유하면 이 키로 판정하고, 하나도 없으면
+   * `permission` 으로 폴백한다(기존 배포 회귀 방지).
+   */
+  navPermission?: string;
 }
 
 /** 그룹 메뉴 정의 (하위 항목 포함) */
@@ -56,8 +65,10 @@ interface NavGroup {
   icon: React.ComponentType<{ className?: string }>;
   /** 하위 메뉴 항목 */
   children: NavItem[];
-  /** 필요 권한 키. 미지정 시 인증만으로 접근 가능. */
+  /** 데이터 권한 키(폴백용). 미지정 시 인증만으로 접근 가능. */
   permission?: string;
+  /** 메뉴 노출 키(`nav.<menu>`) — SPEC-AUTH-006 E2. */
+  navPermission?: string;
 }
 
 type NavEntry = NavItem | NavGroup;
@@ -85,24 +96,32 @@ const NAV_ENTRIES: NavEntry[] = [
     path: '/flows',
     icon: Workflow,
     permission: 'flow.read',
+
+    navPermission: 'nav.flow',
   },
   {
     labelKey: 'nav.agents',
     path: '/agents',
     icon: Bot,
     permission: 'agent.read',
+
+    navPermission: 'nav.agent',
   },
   {
     labelKey: 'nav.devices',
     path: '/devices',
     icon: HardDrive,
     permission: 'device.read',
+
+    navPermission: 'nav.device',
   },
   {
     labelKey: 'nav.monitoring',
     path: '/monitoring',
     icon: Monitor,
     permission: 'monitoring.read',
+
+    navPermission: 'nav.monitoring',
   },
   // SPEC-SCHEDULE-VIEW-001 M5: 스케줄 뷰.
   {
@@ -110,6 +129,8 @@ const NAV_ENTRIES: NavEntry[] = [
     path: '/schedules',
     icon: CalendarClock,
     permission: 'schedule.read',
+
+    navPermission: 'nav.schedule',
   },
   // 참고 그룹 메뉴 — 노드 타입 / 에이전트 타입 카탈로그.
   {
@@ -121,12 +142,16 @@ const NAV_ENTRIES: NavEntry[] = [
         path: '/nodes',
         icon: Blocks,
         permission: 'node.read',
+
+        navPermission: 'nav.node',
       },
       {
         labelKey: 'nav.agentTypes',
         path: '/agent-types',
         icon: Bot,
         permission: 'node.read',
+
+        navPermission: 'nav.node',
       },
     ],
   },
@@ -138,30 +163,40 @@ const NAV_ENTRIES: NavEntry[] = [
     labelKey: 'nav.remote',
     icon: Network,
     permission: 'remote.read',
+
+    navPermission: 'nav.remote',
     children: [
       {
         labelKey: 'nav.nodeManagement',
         path: '/admin/remote',
         icon: SlidersHorizontal,
         permission: 'remote.read',
+
+        navPermission: 'nav.remote',
       },
       {
         labelKey: 'nav.groupManagement',
         path: '/admin/remote/groups',
         icon: Layers,
         permission: 'remote.read',
+
+        navPermission: 'nav.remote',
       },
       {
         labelKey: 'nav.enrollmentManagement',
         path: '/admin/remote/enrollment',
         icon: UserPlus,
         permission: 'remote.read',
+
+        navPermission: 'nav.remote',
       },
       {
         labelKey: 'nav.releaseStore',
         path: '/admin/remote/releases',
         icon: Package,
         permission: 'remote.read',
+
+        navPermission: 'nav.remote',
       },
     ],
   },
@@ -171,18 +206,24 @@ const NAV_ENTRIES: NavEntry[] = [
     path: '/admin/users',
     icon: Users,
     permission: 'user.read',
+
+    navPermission: 'nav.user',
   },
   {
     labelKey: 'nav.roles',
     path: '/admin/roles',
     icon: ShieldCheck,
     permission: 'role.read',
+
+    navPermission: 'nav.role',
   },
   {
     labelKey: 'nav.settings',
     path: '/settings',
     icon: Settings,
     permission: 'system.read',
+
+    navPermission: 'nav.system',
   },
 ];
 
@@ -195,7 +236,7 @@ const REMOTE_GROUP_LABEL_KEY = 'nav.remote';
 
 export default function Sidebar() {
   const { t } = useTranslation();
-  const { hasPermission } = usePermission();
+  const { canSeeMenu } = usePermission();
   // 원격 관리 그룹은 server 모드에서만 노출한다. 로딩 중/비 server 모드면 숨긴다.
   const { data: remoteMode } = useRemoteMode();
   const isRemoteServer = remoteMode?.mode === 'server';
@@ -226,19 +267,25 @@ export default function Sidebar() {
   };
 
   /** 권한 기반 필터링. permission 미지정 항목은 인증만으로 접근 가능하다. */
-  const hasAccess = (permission?: string) =>
-    permission ? hasPermission(permission) : true;
+  // 메뉴 축으로 판정한다. 역할이 nav.* 를 하나도 갖지 않으면 canSeeMenu 가
+  // 데이터 키로 폴백하므로 기존 배포의 메뉴가 사라지지 않는다.
+  const hasAccess = (entry: { permission?: string; navPermission?: string }) =>
+    entry.navPermission
+      ? canSeeMenu(entry.navPermission, entry.permission)
+      : entry.permission
+        ? canSeeMenu(entry.permission, entry.permission)
+        : true;
 
   // 사용자 권한에 따른 메뉴 필터링
   const filteredEntries = NAV_ENTRIES.filter((entry) => {
-    if (!hasAccess(entry.permission)) return false;
+    if (!hasAccess(entry)) return false;
     // 원격 관리 그룹은 remote.read 권한 + server 모드를 모두 충족할 때만 노출한다.
     if (isNavGroup(entry) && entry.labelKey === REMOTE_GROUP_LABEL_KEY && !isRemoteServer) {
       return false;
     }
     // 그룹의 경우 접근 가능한 하위 항목이 하나라도 있으면 표시 (기존 동작 유지)
     if (isNavGroup(entry)) {
-      return entry.children.some((child) => hasAccess(child.permission));
+      return entry.children.some((child) => hasAccess(child));
     }
     return true;
   });
@@ -339,16 +386,20 @@ interface NavGroupItemProps {
 function NavGroupItem({ group, isOpen, onToggle, collapsed, t }: NavGroupItemProps) {
   const Icon = group.icon;
   const location = useLocation();
-  const { hasPermission } = usePermission();
+  const { canSeeMenu } = usePermission();
 
   // 하위 항목 중 활성인 것이 있는지 확인
   const hasActiveChild = group.children.some(
     (child) => location.pathname === child.path,
   );
 
-  // 접근 가능한 하위 항목만 필터링
+  // 접근 가능한 하위 항목만 필터링 (상위 필터와 동일한 메뉴 축 판정)
   const visibleChildren = group.children.filter((child) =>
-    child.permission ? hasPermission(child.permission) : true,
+    child.navPermission
+      ? canSeeMenu(child.navPermission, child.permission)
+      : child.permission
+        ? canSeeMenu(child.permission, child.permission)
+        : true,
   );
 
   // 사이드바가 접힌 상태에서는 그룹의 각 하위 항목을 개별 아이콘으로 렌더한다

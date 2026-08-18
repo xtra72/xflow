@@ -192,7 +192,7 @@ export const appRoutes: RouteObject[] = [
           },
           // SPEC-AUTH-006 §2.3: 설정 = system.read.
           {
-            element: <AuthGuard requirePermission="system.read" />,
+            element: <AuthGuard requireMenu="nav.system" requirePermission="system.read" />,
             children: [
               {
                 path: '/settings',
@@ -214,7 +214,7 @@ export const appRoutes: RouteObject[] = [
             children: [
               // SPEC-WEB-006 (M1, M11): 시스템 상태 — 시스템 설정 조회 권한.
               {
-                element: <AuthGuard requirePermission="system.read" />,
+                element: <AuthGuard requireMenu="nav.system" requirePermission="system.read" />,
                 children: [
                   {
                     path: 'system',
@@ -230,7 +230,7 @@ export const appRoutes: RouteObject[] = [
               //   하위 세분 권한은 범위 밖이므로 remote.read 단일 키로 묶는다
               //   (spec.md §1.3) — 서버 조회 라우트도 remote.read 로 통일돼 있다.
               {
-                element: <AuthGuard requirePermission="remote.read" />,
+                element: <AuthGuard requireMenu="nav.remote" requirePermission="remote.read" />,
                 children: [
                   // REQ-K11/K12: 노드 관리(운영). 디렉토리 뷰(그룹 트리 + 그룹
                   //   배정) + 노드 대시보드(시스템 정보 + 운영 요약 +
@@ -303,7 +303,7 @@ export const appRoutes: RouteObject[] = [
               },
               // SPEC-AUTH-006 §2.3 (M3.4): 사용자 관리 — user.read.
               {
-                element: <AuthGuard requirePermission="user.read" />,
+                element: <AuthGuard requireMenu="nav.user" requirePermission="user.read" />,
                 children: [
                   {
                     path: 'users',
@@ -317,7 +317,7 @@ export const appRoutes: RouteObject[] = [
               },
               // SPEC-AUTH-006 §2.3 (M3.4): 역할 관리 — role.read.
               {
-                element: <AuthGuard requirePermission="role.read" />,
+                element: <AuthGuard requireMenu="nav.role" requirePermission="role.read" />,
                 children: [
                   {
                     path: 'roles',
