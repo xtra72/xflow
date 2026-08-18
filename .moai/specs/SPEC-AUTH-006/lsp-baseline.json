@@ -1,0 +1,57 @@
+{
+  "spec_id": "SPEC-AUTH-006",
+  "captured_at": "2026-08-18",
+  "captured_by": "/moai plan (Phase 2.5)",
+  "scope_root": ["web/src/"],
+  "tools": {
+    "typescript": {
+      "command": "cd web && npx tsc --noEmit",
+      "exit_code": 0,
+      "type_error_count": 0,
+      "log_path": "/tmp/spec-auth-006-tsc.log",
+      "notes": "깨끗한 기준선 — SPEC 작성 시점에 타입 오류 0건."
+    },
+    "eslint": {
+      "command": "cd web && npx eslint src",
+      "exit_code": 0,
+      "error_count": 0,
+      "warning_count": 44,
+      "notes": "오류 0건, 경고 44건(react-hooks/exhaustive-deps, react-refresh/only-export-components 계열의 선존재 항목). run 단계는 오류 0건 유지 + 경고 증가 억제를 목표로 한다."
+    },
+    "vitest": {
+      "command": "cd web && npx vitest run",
+      "test_files": 253,
+      "tests": 3262,
+      "failures": 0,
+      "notes": "SPEC 작성 시점 전체 통과."
+    }
+  },
+  "regression_policy": {
+    "source": ".moai/config/sections/quality.yaml lsp_quality_gates.run",
+    "max_new_errors": 0,
+    "max_new_type_errors": 0,
+    "max_new_lint_errors": 0,
+    "allow_regression": false,
+    "interpretation": "/moai run SPEC-AUTH-006 는 타입 오류 0건과 ESLint 오류 0건을 유지해야 한다. 경고 44건은 기준선이며 증가하지 않아야 한다."
+  },
+  "impact_scope": [
+    "web/src/types/auth.ts",
+    "web/src/stores/authStore.ts",
+    "web/src/hooks/usePermission.ts (신규)",
+    "web/src/services/api/userService.ts (신규)",
+    "web/src/pages/admin/UsersPage.tsx (신규)",
+    "web/src/pages/admin/RolesPage.tsx (신규)",
+    "web/src/components/layout/Sidebar.tsx",
+    "web/src/components/layout/AuthGuard.tsx",
+    "web/src/components/common/PermissionButton.tsx (신규)",
+    "web/src/router.tsx",
+    "web/src/pages/{agents,devices,flows}/",
+    "web/src/lib/i18n/{ko,en}.json"
+  ],
+  "cross_spec_dependencies": {
+    "spec_auth_005": {
+      "status": "draft — 선행 필요",
+      "integration_gate": "/auth/me 응답의 permissions 배열이 제공되어야 AC-01/AC-03~AC-07 통합 검증이 가능하다. 미완료 상태에서는 폴백(전원 허용) 경로만 검증된다."
+    }
+  }
+}

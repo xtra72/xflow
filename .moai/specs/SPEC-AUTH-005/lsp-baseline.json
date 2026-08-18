@@ -1,0 +1,43 @@
+{
+  "spec_id": "SPEC-AUTH-005",
+  "captured_at": "2026-08-18",
+  "captured_by": "/moai plan (Phase 2.5)",
+  "scope_root": ["internal/auth/", "internal/api/", "internal/storage/", "cmd/xflowd/"],
+  "tools": {
+    "go_vet": {
+      "command": "cd /Users/xtra/Projects/xflow && go vet ./...",
+      "exit_code": 1,
+      "error_count": 1,
+      "log_path": "/tmp/spec-auth-005-govet.log",
+      "pre_existing_errors": [
+        {
+          "package": "github.com/xtra/xflow/internal/schedulelog",
+          "file": "internal/schedulelog/observer_test.go",
+          "line": 30,
+          "message": "*fakeScheduleLogRepo does not implement storage.ScheduleLogRepository (wrong type for method List) — have List(ctx, filter, int, int), want List(ctx, filter, int, int, string)"
+        }
+      ],
+      "notes": "SPEC-AUTH-005 영향 범위(internal/auth, internal/api, internal/storage, cmd/xflowd) 밖의 선존재 결함. 테스트 페이크가 리포지토리 인터페이스 시그니처 변경을 따라가지 못한 것으로, 본 SPEC 과 무관하다. run 단계 회귀 비교는 이 1건을 기준선으로 삼는다."
+      }
+  },
+  "regression_policy": {
+    "source": ".moai/config/sections/quality.yaml lsp_quality_gates.run",
+    "max_new_errors": 0,
+    "max_new_vet_errors": 0,
+    "allow_regression": false,
+    "interpretation": "/moai run SPEC-AUTH-005 는 새로운 go vet 오류를 유발해서는 안 된다. 선존재 1건(internal/schedulelog)은 범위 밖이며 별도 정리 대상이다."
+  },
+  "impact_scope": [
+    "internal/auth/rbac.go (신규)",
+    "internal/storage/roles_sqlite.go (신규)",
+    "internal/storage/users_sqlite.go",
+    "internal/storage/sqlite.go",
+    "internal/api/middleware.go",
+    "internal/api/handler/user.go (신규)",
+    "internal/api/handler/role.go (신규)",
+    "internal/api/handler/auth.go",
+    "internal/api/dto/auth.go",
+    "internal/api/handler/{agent,device,flow}.go (RegisterRoutes 권한 부착)",
+    "cmd/xflowd/main.go"
+  ]
+}
