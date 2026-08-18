@@ -265,7 +265,116 @@ func migrateRolesSchema(ctx context.Context, db *sql.DB) error {
 	)`); err != nil {
 		return fmt.Errorf("create role_permissions table: %w", err)
 	}
-	return seedBuiltinRoles(ctx, db)
+	// nav_migrated: 이 역할이 메뉴 축(nav.*) 으로 한 번 이관되었는지 표시한다.
+	//
+	// 이 표시가 없으면 "nav.* 를 하나도 안 가진 역할" 이 두 가지를 동시에 뜻하게 된다 —
+	// (1) 메뉴 축 도입 이전 역할, (2) 관리자가 모든 메뉴를 의도적으로 끈 역할.
+	// 둘을 키 개수로 구분하려 하면 후자가 불가능해진다(끄면 전자로 오인되어 폴백).
+	// 명시적 표시를 두어 "전부 끄기" 가 실제로 동작하게 한다.
+	if err := addColumnIfMissing(ctx, db, "roles", "nav_migrated",
+		`ALTER TABLE roles ADD COLUMN nav_migrated INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+
+	if err := seedBuiltinRoles(ctx, db); err != nil {
+		return err
+	}
+	return migrateRoleNavPermissions(ctx, db)
+}
+
+// addColumnIfMissing 은 컬럼이 없을 때만 ALTER 를 수행한다 (멱등).
+func addColumnIfMissing(ctx context.Context, db *sql.DB, table, column, ddl string) error {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan %s column: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate %s columns: %w", table, err)
+	}
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+// migrateRoleNavPermissions 는 메뉴 축 도입 이전 역할에 nav.* 를 1회 부여한다.
+//
+// 부여 기준은 그 역할이 이미 보유한 데이터 read 권한이다 — agent.read 를 가진
+// 역할은 nav.agent 를 받는다. 이관 전후로 보이는 메뉴가 동일하므로 업그레이드가
+// 사용자에게 보이지 않는다.
+//
+// 1회성이다. 이관을 마치면 nav_migrated=1 로 표시하고 다시 건드리지 않으므로,
+// 이후 관리자가 nav.* 를 전부 제거하면 그 상태가 그대로 유지된다.
+func migrateRoleNavPermissions(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM roles WHERE nav_migrated = 0`)
+	if err != nil {
+		return fmt.Errorf("list unmigrated roles: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan role id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate unmigrated roles: %w", err)
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin nav migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, id := range ids {
+		existing, err := listPermissionsByRoleIDTx(ctx, tx, id)
+		if err != nil {
+			return fmt.Errorf("read permissions of role %d: %w", id, err)
+		}
+		held := make(map[string]struct{}, len(existing))
+		for _, p := range existing {
+			held[p] = struct{}{}
+		}
+		for _, navKey := range rbac.NavPermissions() {
+			menu := strings.TrimPrefix(navKey, rbac.ResourceNav+".")
+			if _, ok := held[menu+"."+rbac.ActionRead]; !ok {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+			`, id, navKey); err != nil {
+				return fmt.Errorf("grant %q to role %d: %w", navKey, id, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE roles SET nav_migrated = 1 WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("mark role %d migrated: %w", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit nav migration: %w", err)
+	}
+	return nil
 }
 
 // seedBuiltinRoles 는 빌트인 역할과 권한을 멱등하게 시드한다 (builtin = 1).
@@ -279,8 +388,8 @@ func seedBuiltinRoles(ctx context.Context, db *sql.DB) error {
 	now := time.Now().UnixMilli()
 	for _, role := range rbac.BuiltinRoles() {
 		res, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO roles(name, description, builtin, created_at, updated_at)
-			VALUES (?, ?, 1, ?, ?)
+			INSERT OR IGNORE INTO roles(name, description, builtin, nav_migrated, created_at, updated_at)
+			VALUES (?, ?, 1, 1, ?, ?)
 		`, role.Name, role.Description, now, now)
 		if err != nil {
 			return fmt.Errorf("seed role %q: %w", role.Name, err)

@@ -11,7 +11,10 @@
 // 표의 파일 경로를 유지한다.
 package rbac
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // 권한 액션 상수 (spec.md §2.1).
 const (
@@ -183,6 +186,18 @@ type BuiltinRole struct {
 	Name        string
 	Description string
 	Permissions []string
+}
+
+// NavPermissions 는 메뉴 노출 키(nav.*) 만 사전순으로 반환한다.
+// 메뉴 축 이관 마이그레이션이 "어떤 nav 키가 존재하는가" 를 이 함수로 얻는다.
+func NavPermissions() []string {
+	out := make([]string, 0, 12)
+	for _, key := range allPermissions {
+		if strings.HasPrefix(key, ResourceNav+".") {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 // Permissions 는 카탈로그 전체 권한 키를 사전순으로 정렬해 반환한다.

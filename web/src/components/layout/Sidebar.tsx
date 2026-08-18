@@ -267,14 +267,10 @@ export default function Sidebar() {
   };
 
   /** 권한 기반 필터링. permission 미지정 항목은 인증만으로 접근 가능하다. */
-  // 메뉴 축으로 판정한다. 역할이 nav.* 를 하나도 갖지 않으면 canSeeMenu 가
-  // 데이터 키로 폴백하므로 기존 배포의 메뉴가 사라지지 않는다.
-  const hasAccess = (entry: { permission?: string; navPermission?: string }) =>
-    entry.navPermission
-      ? canSeeMenu(entry.navPermission, entry.permission)
-      : entry.permission
-        ? canSeeMenu(entry.permission, entry.permission)
-        : true;
+  // 메뉴 노출은 nav.* 만 본다. 데이터 권한(permission)은 판정에 쓰지 않는다 —
+  // 대시보드가 읽어야 하는 데이터와 메뉴 노출은 별개 축이기 때문이다.
+  const hasAccess = (entry: { navPermission?: string }) =>
+    entry.navPermission ? canSeeMenu(entry.navPermission) : true;
 
   // 사용자 권한에 따른 메뉴 필터링
   const filteredEntries = NAV_ENTRIES.filter((entry) => {
@@ -395,11 +391,7 @@ function NavGroupItem({ group, isOpen, onToggle, collapsed, t }: NavGroupItemPro
 
   // 접근 가능한 하위 항목만 필터링 (상위 필터와 동일한 메뉴 축 판정)
   const visibleChildren = group.children.filter((child) =>
-    child.navPermission
-      ? canSeeMenu(child.navPermission, child.permission)
-      : child.permission
-        ? canSeeMenu(child.permission, child.permission)
-        : true,
+    child.navPermission ? canSeeMenu(child.navPermission) : true,
   );
 
   // 사이드바가 접힌 상태에서는 그룹의 각 하위 항목을 개별 아이콘으로 렌더한다

@@ -141,6 +141,31 @@ func ListRolePermissions(ctx context.Context, db *sql.DB, name string) ([]string
 	return listPermissionsByRoleID(ctx, db, roleID)
 }
 
+// listPermissionsByRoleIDTx 는 listPermissionsByRoleID 의 트랜잭션 판이다.
+// 마이그레이션이 같은 트랜잭션 안에서 기존 권한을 읽어야 하므로 분리했다.
+func listPermissionsByRoleIDTx(ctx context.Context, tx *sql.Tx, roleID int64) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT permission FROM role_permissions WHERE role_id = ? ORDER BY permission ASC
+	`, roleID)
+	if err != nil {
+		return nil, fmt.Errorf("list permissions of role %d: %w", roleID, err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan permission: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate permissions: %w", err)
+	}
+	return out, nil
+}
+
 // listPermissionsByRoleID 는 role_id 로 권한 목록을 사전순으로 조회한다.
 func listPermissionsByRoleID(ctx context.Context, db *sql.DB, roleID int64) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
@@ -195,8 +220,8 @@ func InsertRole(ctx context.Context, db *sql.DB, name, description string, permi
 
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO roles(name, description, builtin, created_at, updated_at)
-		VALUES (?, ?, 0, ?, ?)
+		INSERT INTO roles(name, description, builtin, nav_migrated, created_at, updated_at)
+		VALUES (?, ?, 0, 1, ?, ?)
 	`, name, description, now, now)
 	if err != nil {
 		return fmt.Errorf("insert role %q: %w", name, err)

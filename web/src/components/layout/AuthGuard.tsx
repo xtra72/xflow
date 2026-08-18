@@ -45,8 +45,8 @@ interface AuthGuardProps {
    * 지정하면 `requirePermission` 대신 메뉴 축으로 판정한다. 메뉴가 숨겨진 페이지는
    * 주소창 직접 진입도 막아 메뉴와 라우트를 일관되게 유지한다.
    *
-   * 역할이 `nav.*` 를 하나도 보유하지 않으면 canSeeMenu 가 `requirePermission`
-   * 으로 폴백하므로 기존 배포의 접근 권한이 좁아지지 않는다.
+   * `requirePermission` 은 이 값이 없을 때만 쓰인다(메뉴와 무관한 라우트).
+   * 기존 역할은 서버 마이그레이션이 nav.* 를 채우므로 접근 권한이 좁아지지 않는다.
    */
   requireMenu?: string;
 }
@@ -79,7 +79,7 @@ export default function AuthGuard({
     isAuthenticated &&
     (requireMenu !== undefined || requirePermission !== undefined) &&
     (requireMenu !== undefined
-      ? !canSeeMenu(requireMenu, requirePermission)
+      ? !canSeeMenu(requireMenu)
       : !hasPermission(requirePermission as string));
 
   // UB1.2: 안내는 1회만 띄우고 재시도 루프를 만들지 않는다.

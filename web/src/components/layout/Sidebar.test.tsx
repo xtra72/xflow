@@ -24,11 +24,8 @@ vi.mock('@/hooks/usePermission', () => ({
     hasPermission: (key: string) => !permissionMock.denied.has(key),
     hasAnyPermission: (keys: readonly string[]) =>
       keys.some((key) => !permissionMock.denied.has(key)),
-    // SPEC-AUTH-006 E2: 메뉴 축. 본 스위트는 데이터 키 기준으로 시나리오를 세우므로
-    // 실제 훅의 하위 호환 폴백(역할에 nav.* 가 없으면 데이터 키로 판정)과 동일하게
-    // 동작시킨다. 메뉴 축 자체의 판정은 usePermission.test.ts 가 검증한다.
-    canSeeMenu: (navKey: string, dataKey?: string) =>
-      !permissionMock.denied.has(dataKey ?? navKey),
+    // SPEC-AUTH-006 E2: 메뉴 노출은 nav.* 만 본다.
+    canSeeMenu: (navKey: string) => !permissionMock.denied.has(navKey),
     isPermissionUnavailable: false,
   }),
 }));
@@ -133,10 +130,10 @@ describe('Sidebar — 원격 관리 그룹 게이팅', () => {
     expect(screen.queryByText('원격 관리')).not.toBeInTheDocument();
   });
 
-  it('server 모드여도 remote.read 권한이 없으면 원격 관리 그룹을 숨긴다', () => {
+  it('server 모드여도 nav.remote 가 없으면 원격 관리 그룹을 숨긴다', () => {
     // SPEC-AUTH-006 M3: 판정 기준이 역할 이름에서 권한 키로 바뀌었다.
     // 커스텀 역할이 생기면 'viewer' 같은 이름 열거는 성립하지 않는다.
-    permissionMock.denied = new Set(['remote.read']);
+    permissionMock.denied = new Set(['nav.remote']);
     useAuthMock.mockReturnValue({ user: makeUser('viewer') });
     renderSidebar();
     expect(screen.queryByText('원격 관리')).not.toBeInTheDocument();

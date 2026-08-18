@@ -363,21 +363,24 @@ describe('usePermission — 메뉴 축', () => {
     // 데이터는 읽을 수 있어야 대시보드 패널이 동작한다.
     expect(result.current.hasPermission('agent.read')).toBe(true);
     // 그러나 nav.agent 가 없으므로 에이전트 메뉴는 숨긴다.
-    expect(result.current.canSeeMenu('nav.agent', 'agent.read')).toBe(false);
-    expect(result.current.canSeeMenu('nav.monitoring', 'monitoring.read')).toBe(true);
+    expect(result.current.canSeeMenu('nav.agent')).toBe(false);
+    expect(result.current.canSeeMenu('nav.monitoring')).toBe(true);
   });
 
-  it('nav.* 가 하나도 없는 역할은 데이터 키로 폴백한다 — 기존 배포 회귀 방지', () => {
-    seedPermissions(['agent.read', 'flow.read']);
+  it('nav.* 를 전부 끄면 메뉴가 실제로 전부 숨는다 — 데이터 read 가 있어도', () => {
+    // 이것이 "대시보드 전용 역할" 의 정의다. 키 개수로 축 사용 여부를 추론하면
+    // 이 상태가 "이관 이전 역할" 로 오인되어 메뉴가 도로 보인다.
+    seedPermissions(['agent.read', 'flow.read', 'device.read', 'dashboard.read']);
     const { result } = renderHook(() => usePermission());
 
-    expect(result.current.canSeeMenu('nav.agent', 'agent.read')).toBe(true);
-    expect(result.current.canSeeMenu('nav.device', 'device.read')).toBe(false);
+    expect(result.current.hasPermission('agent.read')).toBe(true);
+    expect(result.current.canSeeMenu('nav.agent')).toBe(false);
+    expect(result.current.canSeeMenu('nav.flow')).toBe(false);
   });
 
   it('인증 비활성이면 메뉴 판정도 전원 허용이다', () => {
     seedPermissions([], false);
     const { result } = renderHook(() => usePermission());
-    expect(result.current.canSeeMenu('nav.agent', 'agent.read')).toBe(true);
+    expect(result.current.canSeeMenu('nav.agent')).toBe(true);
   });
 });

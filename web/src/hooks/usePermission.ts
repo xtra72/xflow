@@ -59,11 +59,12 @@ export interface PermissionApi {
    * 패널이 에이전트·장치·플로우를 읽으므로 read 는 줘야 하는데, 같은 키로 메뉴까지
    * 판정하면 "대시보드만 보이는 역할" 을 만들 수 없기 때문이다.
    *
-   * 하위 호환: 역할에 `nav.*` 키가 **하나도 없으면** 메뉴 축이 도입되기 전의 역할로
-   * 보고 데이터 키로 판정한다. 이 폴백이 없으면 기존 배포가 업그레이드 직후 모든
-   * 메뉴를 잃는다. 관리자가 `nav.*` 를 하나라도 부여하면 그때부터 메뉴 축이 적용된다.
+   * `nav.*` 가 유일한 기준이다. "nav 키를 하나라도 가졌는가" 같은 추론은 하지
+   * 않는다 — 추론하면 관리자가 모든 메뉴를 끄는 순간 "이관 이전 역할" 로 오인되어
+   * 메뉴가 도로 보인다. 기존 역할은 서버 마이그레이션이 보유한 read 에 맞춰
+   * nav.* 를 1회 채우므로 업그레이드 시 보이는 메뉴가 변하지 않는다.
    */
-  canSeeMenu: (navKey: string, dataKey?: string) => boolean;
+  canSeeMenu: (navKey: string) => boolean;
   /**
    * 권한 조회에 실패한 상태인지 여부.
    *
@@ -98,22 +99,11 @@ export function usePermission(): PermissionApi {
     [snapshot],
   );
 
-  // 역할이 메뉴 축을 사용하는지 판정한다. 폴백 분기의 유일한 근거다.
-  const usesMenuAxis = useMemo(() => {
-    if (permissionStatus !== 'loaded') return false;
-    for (const key of permissions) {
-      if (key.startsWith('nav.')) return true;
-    }
-    return false;
-  }, [permissions, permissionStatus]);
-
+  // 메뉴 판정도 일반 권한 판정과 같은 폴백 규칙을 탄다 — 인증 비활성·구버전 서버는
+  // 전원 허용, 조회 실패는 거부. 그 위에 추가 추론은 없다.
   const canSeeMenu = useCallback(
-    (navKey: string, dataKey?: string) => {
-      if (usesMenuAxis) return resolve(snapshot, navKey);
-      // 메뉴 축 이전 역할 — 데이터 키로 판정한다(기존 동작 유지).
-      return dataKey === undefined ? true : resolve(snapshot, dataKey);
-    },
-    [snapshot, usesMenuAxis],
+    (navKey: string) => resolve(snapshot, navKey),
+    [snapshot],
   );
 
   return {

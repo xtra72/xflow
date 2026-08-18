@@ -487,3 +487,56 @@ func TestSeedBuiltinRoles_PrunesStaleAdminPermission(t *testing.T) {
 	assert.NotContains(t, perms, "ghost.read", "카탈로그에 없는 권한이 남았다")
 	assert.ElementsMatch(t, rbac.Permissions(), perms)
 }
+
+// TestMigrateRoleNavPermissions_OneTime 는 메뉴 축 이관이 1회성임을 고정한다.
+//
+// 이관이 매 부팅 반복되면 "관리자가 모든 메뉴를 껐다" 는 상태를 만들 수 없다 —
+// 껐다가 재부팅하면 read 기준으로 다시 채워지기 때문이다. nav_migrated 표시로
+// 1회만 수행하고, 이후 관리자의 결정을 그대로 둔다.
+func TestMigrateRoleNavPermissions_OneTime(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	// 메뉴 축 이전 역할을 재현한다 — read 는 있고 nav 는 없으며 미이관 상태다.
+	require.NoError(t, InsertRole(ctx, db, "legacy", "", []string{"agent.read", "flow.read"}))
+	_, err := db.ExecContext(ctx, `UPDATE roles SET nav_migrated = 0 WHERE name = 'legacy'`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		DELETE FROM role_permissions
+		WHERE role_id = (SELECT id FROM roles WHERE name = 'legacy')
+		  AND permission LIKE 'nav.%'`)
+	require.NoError(t, err)
+
+	// 1회차 — 보유한 read 에 맞춰 nav 를 채운다(보이는 메뉴가 변하지 않는다).
+	require.NoError(t, migrateRoleNavPermissions(ctx, db))
+	perms, err := ListRolePermissions(ctx, db, "legacy")
+	require.NoError(t, err)
+	assert.Contains(t, perms, "nav.agent")
+	assert.Contains(t, perms, "nav.flow")
+	assert.NotContains(t, perms, "nav.device", "보유하지 않은 read 의 메뉴까지 주면 안 된다")
+
+	// 관리자가 모든 메뉴를 끈다.
+	require.NoError(t, UpdateRolePermissions(ctx, db, "legacy",
+		[]string{"agent.read", "flow.read"}))
+
+	// 2회차 — 다시 채우지 않는다. 이것이 "대시보드 전용 역할" 이 성립하는 조건이다.
+	require.NoError(t, migrateRoleNavPermissions(ctx, db))
+	after, err := ListRolePermissions(ctx, db, "legacy")
+	require.NoError(t, err)
+	assert.NotContains(t, after, "nav.agent", "이관이 반복되어 관리자의 설정이 되돌아갔다")
+	assert.ElementsMatch(t, []string{"agent.read", "flow.read"}, after)
+}
+
+// TestInsertRole_IsNotNavMigrationTarget 은 새로 만든 역할이 이관 대상이 아님을
+// 확인한다. 관리자가 nav 없이 만든 역할에 시스템이 nav 를 주입하면 안 된다.
+func TestInsertRole_IsNotNavMigrationTarget(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	require.NoError(t, InsertRole(ctx, db, "kiosk", "", []string{"agent.read", "dashboard.read"}))
+	require.NoError(t, migrateRoleNavPermissions(ctx, db))
+
+	perms, err := ListRolePermissions(ctx, db, "kiosk")
+	require.NoError(t, err)
+	assert.NotContains(t, perms, "nav.agent", "신규 역할에 nav 가 주입되었다")
+}
