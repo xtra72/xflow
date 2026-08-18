@@ -3,6 +3,12 @@
 // 제공한다. 로컬 타깃은 기존 동작과 동일하며, 원격 타깃은 라이프사이클을 그룹 D
 // 명령으로, 삭제를 M7 편집 경로로 라우팅한다. 노드가 지원하지 않는 enable/disable
 // 은 원격에서 비활성+안내 툴팁으로 표시한다(가짜 동작 금지).
+//
+// SPEC-AUTH-006 E1 (M4): 각 컨트롤에 권한 키를 부착한다. 라이프사이클(시작·중지·
+// 재시작·enable·disable)은 agent.execute 한 키로 묶이고, 삭제는 agent.delete,
+// 내보내기는 읽기 성격이라 agent.read 다(서버의 GET /agents/{id}/export 도 같은
+// 키로 보호된다). 권한 판정은 기존 원격 게이팅과 합성된다 — 어느 한쪽이라도
+// 막으면 비활성이다.
 
 import { Download, Play, Power, PowerOff, RotateCcw, Square, Trash2 } from 'lucide-react';
 
@@ -15,6 +21,7 @@ import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTranslation } from '@/lib/i18n';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { useTargetContext } from '@/lib/remote/TargetContext';
+import PermissionButton from '@/components/common/PermissionButton';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAgent } from '@/services/api/agentService';
 import { useUIStore } from '@/stores/uiStore';
@@ -148,83 +155,90 @@ export default function AgentActionButtons({ agent, onAction }: AgentActionButto
   return (
     <div className="flex items-center justify-end gap-1">
       {/* 시작 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="agent.execute"
         title={start.title}
         disabled={isRunning || actions.pending.start || start.disabled}
         onClick={handleStart}
         className={cn(btnBase, 'hover:bg-green-50 dark:hover:bg-green-900/20')}
       >
         <Play className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* 중지 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="agent.execute"
         title={stop.title}
         disabled={!isRunning || actions.pending.stop || stop.disabled}
         onClick={handleStop}
         className={cn(btnBase, 'hover:bg-yellow-50 dark:hover:bg-yellow-900/20')}
       >
         <Square className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* 재시작 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="agent.execute"
         title={restart.title}
         disabled={actions.pending.restart || restart.disabled}
         onClick={handleRestart}
         className={cn(btnBase, 'hover:bg-blue-50 dark:hover:bg-blue-900/20')}
       >
         <RotateCcw className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* Enable/Disable 토글 (원격 미지원 — 비활성). 로컬은 SPEC-AGENT-005 동작. */}
       {isEnabled ? (
-        <button
+        <PermissionButton
           type="button"
+          permission="agent.execute"
           title={disable.title}
           disabled={enableAgentLocal.isPending || disable.disabled}
           onClick={handleDisable}
           className={cn(btnBase, 'hover:bg-gray-100 dark:hover:bg-gray-800')}
         >
           <PowerOff className="h-4 w-4" />
-        </button>
+        </PermissionButton>
       ) : (
-        <button
+        <PermissionButton
           type="button"
+          permission="agent.execute"
           title={enable.title}
           disabled={enableAgentLocal.isPending || enable.disabled}
           onClick={handleEnable}
           className={cn(btnBase, 'hover:bg-emerald-50 dark:hover:bg-emerald-900/20')}
         >
           <Power className="h-4 w-4" />
-        </button>
+        </PermissionButton>
       )}
 
       {/* 내보내기 (로컬 전용) */}
       {!remote && (
-        <button
+        <PermissionButton
           type="button"
+          permission="agent.read"
           title={t('agents.action.export')}
           onClick={handleExport}
           className={cn(btnBase, 'hover:bg-(--color-bg-elevated)')}
         >
           <Download className="h-4 w-4" />
-        </button>
+        </PermissionButton>
       )}
 
       {/* 삭제 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="agent.delete"
         title={del.title}
         disabled={actions.pending.delete || del.disabled}
         onClick={handleDelete}
         className={cn(btnBase, 'hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400')}
       >
         <Trash2 className="h-4 w-4" />
-      </button>
+      </PermissionButton>
     </div>
   );
 }

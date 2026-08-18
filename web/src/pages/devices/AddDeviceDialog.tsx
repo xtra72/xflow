@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, X } from 'lucide-react';
 
 import { useAgents, useExecAgent } from '@/hooks/useAgent';
+import PermissionButton from '@/components/common/PermissionButton';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
@@ -457,14 +458,15 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           >
             {t('common.cancel')}
           </button>
-          <button
+          <PermissionButton
+            permission="device.create"
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
           >
             {execAgent.isPending ? t('devices.add.submitting') : t('devices.add.submit')}
-          </button>
+          </PermissionButton>
         </div>
       </div>
     </>

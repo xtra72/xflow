@@ -2309,7 +2309,8 @@
       "range": "{start}-{end} of {total}",
       "prev": "Previous page",
       "next": "Next page"
-    }
+    },
+    "permissionRequired": "You do not have permission"
   },
   "status": {
     "running": "Running",

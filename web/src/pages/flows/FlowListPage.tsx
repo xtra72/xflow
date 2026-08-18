@@ -26,6 +26,7 @@ import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
 import { useFlowsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
+import PermissionButton from '@/components/common/PermissionButton';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { TargetProvider } from '@/lib/remote/TargetContext';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
@@ -328,27 +329,30 @@ export default function FlowListPage({
         <div className="flex items-center gap-2">
           {showLocalWrites && (
             <>
-              <button
+              <PermissionButton
                 type="button"
+                permission="flow.create"
                 onClick={() => setImportDialogOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Upload className="h-4 w-4" />
                 {t('common.import')}
-              </button>
-              <button
+              </PermissionButton>
+              <PermissionButton
                 type="button"
+                permission="flow.read"
                 onClick={handleExportAll}
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Download className="h-4 w-4" />
                 {t('common.exportAll')}
-              </button>
+              </PermissionButton>
             </>
           )}
           {/* 생성: 로컬은 모달, 원격은 시각 편집기 신규 라우트(노드 채번 — REQ-I08). */}
-          <button
+          <PermissionButton
             type="button"
+            permission="flow.create"
             disabled={remote && !gating.nodeReady}
             title={remote && !gating.nodeReady ? t('remote.edit.createGateHint') : undefined}
             onClick={() => {
@@ -362,7 +366,7 @@ export default function FlowListPage({
           >
             <Plus className="h-4 w-4" />
             {t('flows.newFlow')}
-          </button>
+          </PermissionButton>
         </div>
       </div>
 
@@ -384,8 +388,9 @@ export default function FlowListPage({
               : t('flows.noSearchResults')}
           </p>
           {allFlows.length === 0 && (showLocalWrites || gating.nodeReady) && (
-            <button
+            <PermissionButton
               type="button"
+              permission="flow.create"
               onClick={() => {
                 if (remote && isRemoteTarget(target)) {
                   navigate(`/admin/remote/nodes/${target.instanceId}/flows/new`);
@@ -397,7 +402,7 @@ export default function FlowListPage({
             >
               <Plus className="h-4 w-4" />
               {t('flows.newFlow')}
-            </button>
+            </PermissionButton>
           )}
         </div>
       ) : (

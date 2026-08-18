@@ -42,6 +42,8 @@ import AgentActionButtons from './AgentActionButtons';
 import AgentDetailPanel from './AgentDetailPanel';
 import AgentEnabledBadge from './AgentEnabledBadge';
 import AgentSearchFilter from './AgentSearchFilter';
+import PermissionButton from '@/components/common/PermissionButton';
+
 import CreateAgentModal from './CreateAgentModal';
 
 /** 페이지 크기 옵션 */
@@ -326,8 +328,9 @@ export default function AgentListPage({
             </>
           )}
           {/* 생성: 로컬은 모달, 원격은 원격 에이전트 편집 다이얼로그(create 명령). */}
-          <button
+          <PermissionButton
             type="button"
+            permission="agent.create"
             disabled={remote && !gating.nodeReady}
             title={remote && !gating.nodeReady ? t('remote.edit.createGateHint') : undefined}
             onClick={() => (remote ? setRemoteCreateOpen(true) : setModalOpen(true))}
@@ -335,7 +338,7 @@ export default function AgentListPage({
           >
             <Plus className="h-4 w-4" />
             {t('agents.newAgent')}
-          </button>
+          </PermissionButton>
         </div>
       </div>
 
@@ -357,14 +360,15 @@ export default function AgentListPage({
               : t('agents.noSearchResults')}
           </p>
           {allAgents.length === 0 && (showLocalWrites || gating.nodeReady) && (
-            <button
+            <PermissionButton
               type="button"
+              permission="agent.create"
               onClick={() => (remote ? setRemoteCreateOpen(true) : setModalOpen(true))}
               className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
               {t('agents.newAgent')}
-            </button>
+            </PermissionButton>
           )}
         </div>
       ) : (

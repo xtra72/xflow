@@ -3,6 +3,10 @@
 // 제공한다. 로컬 타깃은 기존 동작과 동일하며, 원격 타깃은 동일 어포던스를 그룹 D
 // 명령/M7 편집 경로로 라우팅한다(노드 미지원 액션은 비활성+안내 툴팁).
 
+//
+// SPEC-AUTH-006 E1 (M4): spec.md §2.4 표는 배포/배포 해제를 열거하지 않으나,
+// §2.1 이 flow 의 execute 를 "배포/시작/정지" 로 정의하므로 둘 다 flow.execute
+// 다. 내보내기는 읽기 성격이라 flow.read, 삭제는 flow.delete 다.
 import { Cable, Download, Play, RotateCcw, Square, Trash2, Unplug } from 'lucide-react';
 
 import { useFlowActionsTarget, type FlowAction } from '@/hooks/useResourceActions';
@@ -10,6 +14,7 @@ import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTranslation } from '@/lib/i18n';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { useTargetContext } from '@/lib/remote/TargetContext';
+import PermissionButton from '@/components/common/PermissionButton';
 import { cn } from '@/lib/utils/cn';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportFlow } from '@/services/api/flowService';
@@ -127,82 +132,89 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
   return (
     <div className="inline-flex items-center gap-1">
       {/* 시작 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="flow.execute"
         title={start.title}
         disabled={!canStart || actions.pending.start || start.disabled}
         onClick={handleStart}
         className={cn(btnBase, 'hover:bg-green-50 dark:hover:bg-green-900/20')}
       >
         <Play className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* 중지 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="flow.execute"
         title={stop.title}
         disabled={!canStop || actions.pending.stop || stop.disabled}
         onClick={handleStop}
         className={cn(btnBase, 'hover:bg-yellow-50 dark:hover:bg-yellow-900/20')}
       >
         <Square className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* 재시작 (원격 미지원 — 비활성) */}
-      <button
+      <PermissionButton
         type="button"
+        permission="flow.execute"
         title={restart.title}
         disabled={!canRestart || actions.pending.restart || restart.disabled}
         onClick={handleRestart}
         className={cn(btnBase, 'hover:bg-blue-50 dark:hover:bg-blue-900/20')}
       >
         <RotateCcw className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* 배포 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="flow.execute"
         title={deploy.title}
         disabled={!canDeploy || actions.pending.deploy || deploy.disabled}
         onClick={handleDeploy}
         className={cn(btnBase, 'hover:bg-purple-50 dark:hover:bg-purple-900/20')}
       >
         <Cable className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* 배포 해제 (원격 미지원 — 비활성) */}
-      <button
+      <PermissionButton
         type="button"
+        permission="flow.execute"
         title={undeploy.title}
         disabled={!canUndeploy || actions.pending.undeploy || undeploy.disabled}
         onClick={handleUndeploy}
         className={cn(btnBase, 'hover:bg-orange-50 dark:hover:bg-orange-900/20')}
       >
         <Unplug className="h-4 w-4" />
-      </button>
+      </PermissionButton>
 
       {/* 내보내기 (로컬 전용 — 원격 미러는 redaction 정의만 보유) */}
       {!remote && (
-        <button
+        <PermissionButton
           type="button"
+          permission="flow.read"
           title={t('flows.action.export')}
           onClick={handleExport}
           className={cn(btnBase, 'hover:bg-(--color-bg-elevated)')}
         >
           <Download className="h-4 w-4" />
-        </button>
+        </PermissionButton>
       )}
 
       {/* 삭제 */}
-      <button
+      <PermissionButton
         type="button"
+        permission="flow.delete"
         title={del.title}
         disabled={!canDelete || actions.pending.delete || del.disabled}
         onClick={handleDelete}
         className={cn(btnBase, 'hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400')}
       >
         <Trash2 className="h-4 w-4" />
-      </button>
+      </PermissionButton>
     </div>
   );
 }

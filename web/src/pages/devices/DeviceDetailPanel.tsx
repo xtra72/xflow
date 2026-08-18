@@ -33,6 +33,8 @@ import {
 
 import { useDeviceHistory, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
+import PermissionButton from '@/components/common/PermissionButton';
+import { usePermission } from '@/hooks/usePermission';
 import { useTranslation } from '@/lib/i18n';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { useTargetContext } from '@/lib/remote/TargetContext';
@@ -114,14 +116,15 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
         {/* 원격 타깃은 READ-ONLY(REQ-J03) — 편집/명령은 디바이스 페이지의 그룹 D
             경로에서만 수행하므로 편집 버튼을 숨긴다. */}
         {!editing && !remote && (
-          <button
+          <PermissionButton
             type="button"
+            permission="device.update"
             onClick={() => setEditing(true)}
             className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
           >
             <Edit2 className="h-3 w-3" />
             {t('devices.detail.editDevice')}
-          </button>
+          </PermissionButton>
         )}
       </div>
 
@@ -719,7 +722,10 @@ const LGAP_FAN_LABELS: Record<string, string> = {
 function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentElements }: { properties: Record<string, unknown>; compact?: boolean; deviceId?: string; accentColor?: string; accentElements?: Record<string, string | boolean> }) {
   const { t } = useTranslation();
   const executeMutation = useExecuteCommand();
-  const interactive = !!deviceId;
+  const { hasPermission } = usePermission();
+  // SPEC-AUTH-006 E1 (M4): 제어 위젯 12개가 이 게이트를 공유하므로 권한을 여기서
+  // 합성한다. 버튼마다 따로 붙이면 이 2000줄 파일에서 누락이 생긴다.
+  const interactive = !!deviceId && hasPermission('device.execute');
 
   const serverPower = properties['power'] as boolean | undefined;
   // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
@@ -1269,15 +1275,16 @@ function CommandControl({
   if (params.length === 0) {
     return (
       <CommandRow label={getCommandLabel(command.name)} description={command.description}>
-        <button
+        <PermissionButton
           type="button"
+          permission="device.execute"
           onClick={() => execute()}
           disabled={isPending || disabled}
           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
         >
           {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
           {t('devices.detail.execute')}
-        </button>
+        </PermissionButton>
       </CommandRow>
     );
   }
@@ -1599,15 +1606,16 @@ function MultiParamCommandControl({
         ))}
       </div>
       <div className="flex items-center gap-2">
-        <button
+        <PermissionButton
           type="button"
+          permission="device.execute"
           onClick={handleSubmit}
           disabled={executeMutation.isPending}
           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
           {executeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
           {t('devices.detail.execute')}
-        </button>
+        </PermissionButton>
         {result && (
           <span className={cn('text-xs', result.success ? 'text-green-600' : 'text-red-600')}>
             {result.success ? t('devices.detail.done') : result.error}
@@ -2007,15 +2015,16 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
 
           {/* 저장/취소 버튼 */}
           <div className="flex items-center gap-2">
-            <button
+            <PermissionButton
               type="button"
+              permission="device.update"
               onClick={handleSave}
               disabled={updateMutation.isPending}
               className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               {updateMutation.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
               {t('devices.detail.save')}
-            </button>
+            </PermissionButton>
             <button
               type="button"
               onClick={() => onEditChange(false)}

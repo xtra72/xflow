@@ -2309,7 +2309,8 @@
       "range": "총 {total}건 중 {start}-{end}건",
       "prev": "이전 페이지",
       "next": "다음 페이지"
-    }
+    },
+    "permissionRequired": "권한이 필요합니다"
   },
   "status": {
     "running": "실행 중",

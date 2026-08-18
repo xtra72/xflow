@@ -28,6 +28,7 @@ import { useDeleteDevice, useSetDeviceReport } from '@/hooks/useDevice';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
+import PermissionButton from '@/components/common/PermissionButton';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { TargetProvider } from '@/lib/remote/TargetContext';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
@@ -461,14 +462,15 @@ export default function DeviceListPage({
           onChange={setColumns}
         />
         {showLocalWrites && (
-          <button
+          <PermissionButton
             type="button"
+            permission="device.create"
             onClick={() => setShowAddDialog(true)}
             className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             <Plus className="h-4 w-4" />
             {t('devices.addDevice')}
-          </button>
+          </PermissionButton>
         )}
       </div>
 
@@ -494,14 +496,15 @@ export default function DeviceListPage({
               : t('devices.noSearchResults')}
           </p>
           {devices.length === 0 && showLocalWrites && (
-            <button
+            <PermissionButton
               type="button"
+              permission="device.create"
               onClick={() => setShowAddDialog(true)}
               className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
               {t('devices.addDevice')}
-            </button>
+            </PermissionButton>
           )}
         </div>
       ) : (
