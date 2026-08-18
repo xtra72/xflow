@@ -56,8 +56,9 @@ func NewScheduleLogHandler(repo storage.ScheduleLogRepository) *ScheduleLogHandl
 // 동일한 인증 그룹에 등록하되 requireAdmin 을 호출하지 않으므로 인증된 전체 사용자가
 // 접근한다(RD-5, AC-17). DELETE 도 동일하게 admin 게이팅 없이 전체 사용자에게 열린다.
 func (h *ScheduleLogHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/schedules/logs", h.Logs)
-	g.DELETE("/schedules/logs", h.Clear)
+	// @SPEC:SPEC-AUTH-005 (M5) — schedule.* 권한 부착.
+	g.GETPerm("/schedules/logs", "schedule.read", h.Logs)
+	g.DELETEPerm("/schedules/logs", "schedule.delete", h.Clear)
 }
 
 // Logs 는 스케줄 실행 로그를 정렬 방향(order)에 따라 반환한다(기본 최신순). GET /schedules/logs

@@ -34,7 +34,9 @@ func NewChartHandler(logger *slog.Logger) *ChartHandler {
 
 // RegisterRoutes 는 chart 관련 라우트를 등록한다.
 func (h *ChartHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/charts/channels", h.ListChannels)
+	// @SPEC:SPEC-AUTH-005 (M5) — 차트 채널은 대시보드 패널의 데이터 소스 목록이므로
+	// dashboard.read 로 매핑한다 (카탈로그에 chart 리소스가 없다).
+	g.GETPerm("/charts/channels", "dashboard.read", h.ListChannels)
 }
 
 // chartChannelsResponse 는 채널 목록 응답 데이터 구조이다.

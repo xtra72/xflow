@@ -145,12 +145,15 @@ func NewRemoteEnrollmentHandler(preReg PreRegistrationService, tokens Enrollment
 
 // RegisterRoutes 는 수동 enrollment 라우트를 그룹에 등록한다.
 func (h *RemoteEnrollmentHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/remote/nodes", h.CreateNode)
-	g.DELETE("/remote/nodes/{instance_id}", h.DeleteNode)
+	// @SPEC:SPEC-AUTH-005 (M5) — 원격 하위 API 는 remote.* 단일 키로만 다룬다
+	// (spec.md §1.3 비범위: 원격 노드 하위 API 의 세분 권한). 조회는 remote.read,
+	// 그 외 모든 변경·명령은 remote.update 이다.
+	g.POSTPerm("/remote/nodes", "remote.update", h.CreateNode)
+	g.DELETEPerm("/remote/nodes/{instance_id}", "remote.update", h.DeleteNode)
 
-	g.POST("/remote/enrollment-tokens", h.CreateToken)
-	g.GET("/remote/enrollment-tokens", h.ListTokens)
-	g.DELETE("/remote/enrollment-tokens/{id}", h.RevokeToken)
+	g.POSTPerm("/remote/enrollment-tokens", "remote.update", h.CreateToken)
+	g.GETPerm("/remote/enrollment-tokens", "remote.read", h.ListTokens)
+	g.DELETEPerm("/remote/enrollment-tokens/{id}", "remote.update", h.RevokeToken)
 }
 
 // preRegisterRequest 는 사전 등록 노드 생성 요청 본문이다.

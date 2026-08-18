@@ -33,8 +33,10 @@ func NewRemoteConfigHandler(cfg config.Config, logger *slog.Logger) *RemoteConfi
 //	GET /system/remote-config
 //	PUT /system/remote-config
 func (h *RemoteConfigHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/system/remote-config", h.Get)
-	g.PUT("/system/remote-config", h.Put)
+	// @SPEC:SPEC-AUTH-005 (M5) — /system/* 하위의 서버 설정이므로 system.* 이다
+	// (원격 "노드" 관리가 아니라 이 서버의 원격 클라이언트 설정이다).
+	g.GETPerm("/system/remote-config", "system.read", h.Get)
+	g.PUTPerm("/system/remote-config", "system.update", h.Put)
 }
 
 // remoteConfigKeys 는 UI 필드 ↔ config 키 매핑이다. restartRequiredKeys 로 재시작 필요 여부를 표시한다.

@@ -143,36 +143,38 @@ func (h *RemoteAdminHandler) recordAudit(ctx api.Context, instanceID, action, re
 
 // RegisterRoutes 는 관리 노드 admin 라우트를 그룹에 등록한다.
 func (h *RemoteAdminHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/remote/nodes", h.ListNodes)
-	g.GET("/remote/nodes/pending", h.ListPending)
-	g.POST("/remote/nodes/{instance_id}/approve", h.Approve)
-	g.POST("/remote/nodes/{instance_id}/reject", h.Reject)
-	g.POST("/remote/nodes/{instance_id}/revoke", h.Revoke)
-	g.POST("/remote/nodes/{instance_id}/command", h.Command)
+	// @SPEC:SPEC-AUTH-005 (M5) — 원격 하위 API 는 remote.* 단일 키로만 다룬다
+	// (spec.md §1.3 비범위). 조회는 remote.read, 그 외 모든 변경·명령은 remote.update.
+	g.GETPerm("/remote/nodes", "remote.read", h.ListNodes)
+	g.GETPerm("/remote/nodes/pending", "remote.read", h.ListPending)
+	g.POSTPerm("/remote/nodes/{instance_id}/approve", "remote.update", h.Approve)
+	g.POSTPerm("/remote/nodes/{instance_id}/reject", "remote.update", h.Reject)
+	g.POSTPerm("/remote/nodes/{instance_id}/revoke", "remote.update", h.Revoke)
+	g.POSTPerm("/remote/nodes/{instance_id}/command", "remote.update", h.Command)
 
 	// 인벤토리 미러 목록(M4, REQ-E05/E06). 노드별 + 통합(전 노드) 엔드포인트.
-	g.GET("/remote/nodes/{instance_id}/flows", h.NodeFlows)
-	g.GET("/remote/nodes/{instance_id}/agents", h.NodeAgents)
-	g.GET("/remote/nodes/{instance_id}/devices", h.NodeDevices)
-	g.GET("/remote/flows", h.AllFlows)
-	g.GET("/remote/agents", h.AllAgents)
-	g.GET("/remote/devices", h.AllDevices)
+	g.GETPerm("/remote/nodes/{instance_id}/flows", "remote.read", h.NodeFlows)
+	g.GETPerm("/remote/nodes/{instance_id}/agents", "remote.read", h.NodeAgents)
+	g.GETPerm("/remote/nodes/{instance_id}/devices", "remote.read", h.NodeDevices)
+	g.GETPerm("/remote/flows", "remote.read", h.AllFlows)
+	g.GETPerm("/remote/agents", "remote.read", h.AllAgents)
+	g.GETPerm("/remote/devices", "remote.read", h.AllDevices)
 
 	// 원격 변경 감사 로그 조회(M6, REQ-F05). admin-gated, 선택적 instance_id 필터 +
 	// limit/offset 페이지네이션. 감사 영속 관측성을 제공한다.
-	g.GET("/remote/audit", h.Audit)
+	g.GETPerm("/remote/audit", "remote.read", h.Audit)
 
 	// 버전 관리(Phase 1): 노드 버전 이력 조회 + 관리자 수동 목표 버전 GET/PUT.
-	g.GET("/remote/nodes/{instance_id}/version-history", h.VersionHistory)
-	g.GET("/remote/target-version", h.GetTargetVersion)
-	g.PUT("/remote/target-version", h.PutTargetVersion)
+	g.GETPerm("/remote/nodes/{instance_id}/version-history", "remote.read", h.VersionHistory)
+	g.GETPerm("/remote/target-version", "remote.read", h.GetTargetVersion)
+	g.PUTPerm("/remote/target-version", "remote.update", h.PutTargetVersion)
 
 	// 업데이트 소스(GitHub/자체 호스팅) — 서버 저장, 필요시 변경. 원격 업데이트 명령에 주입된다.
-	g.GET("/remote/update-source", h.GetUpdateSource)
-	g.PUT("/remote/update-source", h.PutUpdateSource)
+	g.GETPerm("/remote/update-source", "remote.read", h.GetUpdateSource)
+	g.PUTPerm("/remote/update-source", "remote.update", h.PutUpdateSource)
 
 	// 버전 관리 Phase 2: 노드 자가 업데이트 명령(system/update 디스패치).
-	g.POST("/remote/nodes/{instance_id}/update", h.UpdateNode)
+	g.POSTPerm("/remote/nodes/{instance_id}/update", "remote.update", h.UpdateNode)
 }
 
 // requireAdmin 은 admin 권한을 강제한다. node/viewer/editor 등은 403(REQ-F04).

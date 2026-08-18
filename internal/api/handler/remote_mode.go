@@ -43,7 +43,9 @@ func NewRemoteModeHandler(mode string) *RemoteModeHandler {
 
 // RegisterRoutes 는 모드 조회 라우트를 그룹에 등록한다.
 func (h *RemoteModeHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/remote/mode", h.Mode)
+	// @SPEC:SPEC-AUTH-005 (M5) — 원격 하위 API 는 remote.* 단일 키로만 다룬다
+	// (spec.md §1.3 비범위: 원격 노드 하위 API 의 세분 권한).
+	g.GETPerm("/remote/mode", "remote.read", h.Mode)
 }
 
 // Mode 는 구성된 원격 관리 모드를 반환한다. GET /remote/mode

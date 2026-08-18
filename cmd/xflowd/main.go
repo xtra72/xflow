@@ -734,6 +734,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 	serverOpts = append(serverOpts, api.WithBasicAuth(jwtSvc))
 
+	// 7.3a. 인가(RBAC) 초기화 — 역할→권한 캐시 (@SPEC:SPEC-AUTH-005 M4).
+	//
+	// 권한은 토큰이 아니라 요청 시점에 역할 이름으로 조회되므로, 역할 권한을 수정하면
+	// 토큰 재발급 없이 다음 요청부터 즉시 반영된다. 캐시 무효화는 역할 쓰기 경로
+	// (RoleHandler) 단일 지점에서 수행한다.
+	permResolver := auth.NewSQLPermissionResolver(authDashboardDB)
+	permCache := auth.NewPermissionCache(permResolver).WithUserRoles(permResolver)
+	serverOpts = append(serverOpts, api.WithAuthorizer(permCache))
+
 	logger.Info("기본 인증 활성화",
 		"yaml_migration_path", credYAMLPath,
 		"token_expiry", serverCfg.BasicAuth.TokenExpiry,
@@ -895,9 +904,18 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// 인증 핸들러 (basic_auth 활성화 시)
 		if serverCfg.BasicAuth.Enabled && credentialsMgr != nil && server.JWTService() != nil {
-			authHandler := handler.NewAuthHandler(credentialsMgr, server.JWTService(), obs.Loggers.NewLogger("api.handler.auth").Logger())
+			authHandler := handler.NewAuthHandler(credentialsMgr, server.JWTService(), obs.Loggers.NewLogger("api.handler.auth").Logger()).
+				WithPermissions(permCache) // @SPEC:SPEC-AUTH-005 (M6) — /auth/me 의 permissions
 			authHandler.RegisterRoutes(g)
 		}
+
+		// @SPEC:SPEC-AUTH-005 (M6) — 사용자·역할 관리 API.
+		// 웹 UI 없이 API 만으로 사용자·역할 운영이 완결되어야 하므로 인증 활성화 여부와
+		// 무관하게 항상 등록한다 (인증 비활성 시 권한 검사는 패스스루된다).
+		handler.NewUserHandler(authDashboardDB, permCache,
+			obs.Loggers.NewLogger("api.handler.user").Logger()).RegisterRoutes(g)
+		handler.NewRoleHandler(authDashboardDB, permCache,
+			obs.Loggers.NewLogger("api.handler.role").Logger()).RegisterRoutes(g)
 
 		flowHandler.RegisterRoutes(g)
 		agentHandler.RegisterRoutes(g)

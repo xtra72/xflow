@@ -42,8 +42,9 @@ func NewNodeHandler(registry NodeRegistry, logger *slog.Logger) *NodeHandler {
 
 // RegisterRoutes 는 노드 타입 관련 라우트를 등록한다.
 func (h *NodeHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/nodes", h.List)
-	g.GET("/nodes/{type}", h.Get)
+	// @SPEC:SPEC-AUTH-005 (M5) — node 는 카탈로그 조회 전용이라 read 만 존재한다.
+	g.GETPerm("/nodes", "node.read", h.List)
+	g.GETPerm("/nodes/{type}", "node.read", h.Get)
 }
 
 // List 는 등록된 모든 노드 타입 목록을 반환한다.

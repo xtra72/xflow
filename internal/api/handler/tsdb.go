@@ -57,12 +57,14 @@ func NewTSDBHandler(db tsdb.TSDB, logger *slog.Logger, opts ...TSDBHandlerOption
 //	GET    /tsdb/stats              -> Stats
 //	DELETE /tsdb/series/{key}       -> DeleteSeries
 func (h *TSDBHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/tsdb/write", h.Write)
-	g.POST("/tsdb/query", h.Query)
-	g.GET("/tsdb/series", h.ListSeries)
-	g.GET("/tsdb/series/{key}/latest", h.Latest)
-	g.GET("/tsdb/stats", h.Stats)
-	g.DELETE("/tsdb/series/{key}", h.DeleteSeries)
+	// @SPEC:SPEC-AUTH-005 (M5) — 카탈로그에 tsdb 리소스가 없어 시계열 데이터 저장소로
+	// 가장 가까운 store.* 로 매핑한다 (read/update 2종이므로 삭제도 update).
+	g.POSTPerm("/tsdb/write", "store.update", h.Write)
+	g.POSTPerm("/tsdb/query", "store.read", h.Query)
+	g.GETPerm("/tsdb/series", "store.read", h.ListSeries)
+	g.GETPerm("/tsdb/series/{key}/latest", "store.read", h.Latest)
+	g.GETPerm("/tsdb/stats", "store.read", h.Stats)
+	g.DELETEPerm("/tsdb/series/{key}", "store.update", h.DeleteSeries)
 }
 
 // Write 는 TSDB에 데이터 포인트를 기록한다.

@@ -99,13 +99,16 @@ func NewMonitorHandler(monitor MonitorManager, logger *slog.Logger) *MonitorHand
 //	GET    /monitor/logstyle               -> GetLogStyle
 //	PUT    /monitor/logstyle               -> SetLogStyle
 func (h *MonitorHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/monitor/metrics", h.Metrics)
-	g.GET("/monitor/loglevel", h.ListLogLevels)
-	g.PUT("/monitor/loglevel", h.SetLogLevel)
-	g.PUT("/monitor/loglevel/{component}", h.SetComponentLogLevel)
-	g.DELETE("/monitor/loglevel/{component}", h.ResetComponentLogLevel)
-	g.GET("/monitor/logstyle", h.GetLogStyle)
-	g.PUT("/monitor/logstyle", h.SetLogStyle)
+	// @SPEC:SPEC-AUTH-005 (M5) — 조회는 monitoring.read.
+	// 카탈로그의 monitoring 은 read 만 정의되어 있으므로(spec.md §2.1) 로그 레벨·스타일
+	// 변경처럼 서버 동작을 바꾸는 쓰기는 system.update 로 매핑한다.
+	g.GETPerm("/monitor/metrics", "monitoring.read", h.Metrics)
+	g.GETPerm("/monitor/loglevel", "monitoring.read", h.ListLogLevels)
+	g.PUTPerm("/monitor/loglevel", "system.update", h.SetLogLevel)
+	g.PUTPerm("/monitor/loglevel/{component}", "system.update", h.SetComponentLogLevel)
+	g.DELETEPerm("/monitor/loglevel/{component}", "system.update", h.ResetComponentLogLevel)
+	g.GETPerm("/monitor/logstyle", "monitoring.read", h.GetLogStyle)
+	g.PUTPerm("/monitor/logstyle", "system.update", h.SetLogStyle)
 }
 
 // Metrics 는 시스템 메트릭을 반환한다.

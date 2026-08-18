@@ -48,3 +48,16 @@ type UserInfoResponse struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
 }
+
+// MeResponse 는 GET /api/v1/auth/me 응답 DTO 이다.
+//
+// @SPEC:SPEC-AUTH-005 (M6, acceptance.md AC-06)
+// UserInfoResponse 를 임베드하여 기존 필드(username, role)의 위치·형식을 그대로
+// 유지하고 permissions 배열만 뒤에 덧붙인다. LoginResponse 는 UserInfoResponse 를
+// 계속 사용하므로 로그인 응답은 바이트 단위로 동일하다 (인증 흐름 무변경).
+//
+// 웹 UI 가 이 값으로 메뉴·버튼을 게이팅한다 (SPEC-AUTH-006).
+type MeResponse struct {
+	UserInfoResponse
+	Permissions []string `json:"permissions"`
+}

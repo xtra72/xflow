@@ -53,12 +53,14 @@ func NewInfluxDBManagementHandler(agents AgentLookup, logger *slog.Logger) *Infl
 
 // RegisterRoutes 는 InfluxDB 관리 라우트를 등록한다.
 func (h *InfluxDBManagementHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/influxdb/{agent_name}/buckets", h.ListBuckets)
-	g.POST("/influxdb/{agent_name}/buckets", h.CreateBucket)
-	g.DELETE("/influxdb/{agent_name}/buckets/{bucket}", h.DeleteBucket)
-	g.POST("/influxdb/{agent_name}/buckets/{bucket}/truncate", h.TruncateBucket)
-	g.GET("/influxdb/{agent_name}/measurements", h.ListMeasurements)
-	g.DELETE("/influxdb/{agent_name}/measurements/{name}", h.DeleteMeasurement)
+	// @SPEC:SPEC-AUTH-005 (M5) — 카탈로그에 influxdb 리소스가 없어 store.* 로 매핑한다.
+	// store 는 read/update 2종이므로 bucket/measurement 삭제도 update 이다.
+	g.GETPerm("/influxdb/{agent_name}/buckets", "store.read", h.ListBuckets)
+	g.POSTPerm("/influxdb/{agent_name}/buckets", "store.update", h.CreateBucket)
+	g.DELETEPerm("/influxdb/{agent_name}/buckets/{bucket}", "store.update", h.DeleteBucket)
+	g.POSTPerm("/influxdb/{agent_name}/buckets/{bucket}/truncate", "store.update", h.TruncateBucket)
+	g.GETPerm("/influxdb/{agent_name}/measurements", "store.read", h.ListMeasurements)
+	g.DELETEPerm("/influxdb/{agent_name}/measurements/{name}", "store.update", h.DeleteMeasurement)
 }
 
 // resolveManager 는 agent_name 으로 에이전트를 조회하고 influxManager 로 검증한다.

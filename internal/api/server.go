@@ -44,6 +44,7 @@ type Server struct {
 	startedAt      time.Time
 	authEnabled    bool
 	jwtSvc         *auth.JWTService
+	authorizer     Authorizer
 }
 
 // ServerOption 은 Server 구성을 위한 함수 옵션이다.
@@ -79,6 +80,17 @@ func WithBasicAuth(jwtSvc *auth.JWTService) ServerOption {
 	return func(s *Server) {
 		s.authEnabled = true
 		s.jwtSvc = jwtSvc
+	}
+}
+
+// WithAuthorizer 는 서버에 인가 판정기를 주입한다.
+//
+// @SPEC:SPEC-AUTH-005 (M4)
+// WithBasicAuth 와 대칭이다. 주입되지 않으면 RequirePermission 은 패스스루하므로,
+// 인가를 강제하려면 basic_auth 활성화와 함께 반드시 주입해야 한다.
+func WithAuthorizer(authorizer Authorizer) ServerOption {
+	return func(s *Server) {
+		s.authorizer = authorizer
 	}
 }
 
@@ -138,6 +150,11 @@ func (s *Server) SetupRoutes() {
 
 	// 인증 미들웨어 (basic_auth.enabled=false 이면 패스스루)
 	s.router.Use(Auth(s.authEnabled, s.jwtSvc))
+
+	// 인가 설정 주입 미들웨어 (@SPEC:SPEC-AUTH-005 M4).
+	// Auth 와 동일한 활성화 플래그를 공유하며, Auth 직후에 등록하여 컨텍스트의 역할이
+	// 채워진 상태에서 라우트별 RequirePermission 이 동작하게 한다.
+	s.router.Use(Authorization(s.authEnabled, s.authorizer, s.logger))
 
 	// 헬스/레디 엔드포인트
 	s.router.GET("/health", s.healthCheck)

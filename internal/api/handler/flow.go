@@ -205,30 +205,34 @@ func NewFlowHandler(flows FlowManager, logger *slog.Logger, opts ...FlowHandlerO
 //	PUT    /flows/{id}/config  -> Configure
 //	GET    /flows/{id}/status  -> Status
 func (h *FlowHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/flows", h.List)
+	// @SPEC:SPEC-AUTH-005 (M5) — flow.* 권한 부착.
+	// deploy/start/stop/undeploy/restart 는 execute, 구성 변경(config·node configure)은
+	// update, 조회는 read 이다.
+	g.GETPerm("/flows", "flow.read", h.List)
 	// /flows/export 는 /flows/{id} 보다 먼저 등록하여 라우트 충돌을 방지한다
-	g.GET("/flows/export", h.ExportAll)
-	g.GET("/flows/{id}", h.Get)
-	g.GET("/flows/{id}/export", h.Export)
-	g.POST("/flows", h.Create)
-	g.PUT("/flows/{id}", h.Update)
-	g.DELETE("/flows/{id}", h.Delete)
-	g.POST("/flows/{id}/deploy", h.Deploy)
-	g.POST("/flows/{id}/start", h.Start)
-	g.POST("/flows/{id}/stop", h.Stop)
-	g.POST("/flows/{id}/undeploy", h.Undeploy)
-	g.POST("/flows/{id}/restart", h.Restart)
-	g.PUT("/flows/{id}/config", h.Configure)
-	g.GET("/flows/{id}/status", h.Status)
-	g.GET("/flows/{id}/nodes", h.ListNodes)
-	g.GET("/flows/{id}/subflow-stats", h.SubflowStats)
-	g.GET("/flows/{id}/nodes/{nodeID}", h.GetNode)
-	g.POST("/flows/{id}/nodes/{nodeID}/configure", h.ConfigureNode)
+	g.GETPerm("/flows/export", "flow.read", h.ExportAll)
+	g.GETPerm("/flows/{id}", "flow.read", h.Get)
+	g.GETPerm("/flows/{id}/export", "flow.read", h.Export)
+	g.POSTPerm("/flows", "flow.create", h.Create)
+	g.PUTPerm("/flows/{id}", "flow.update", h.Update)
+	g.DELETEPerm("/flows/{id}", "flow.delete", h.Delete)
+	g.POSTPerm("/flows/{id}/deploy", "flow.execute", h.Deploy)
+	g.POSTPerm("/flows/{id}/start", "flow.execute", h.Start)
+	g.POSTPerm("/flows/{id}/stop", "flow.execute", h.Stop)
+	g.POSTPerm("/flows/{id}/undeploy", "flow.execute", h.Undeploy)
+	g.POSTPerm("/flows/{id}/restart", "flow.execute", h.Restart)
+	g.PUTPerm("/flows/{id}/config", "flow.update", h.Configure)
+	g.GETPerm("/flows/{id}/status", "flow.read", h.Status)
+	g.GETPerm("/flows/{id}/nodes", "flow.read", h.ListNodes)
+	g.GETPerm("/flows/{id}/subflow-stats", "flow.read", h.SubflowStats)
+	g.GETPerm("/flows/{id}/nodes/{nodeID}", "flow.read", h.GetNode)
+	g.POSTPerm("/flows/{id}/nodes/{nodeID}/configure", "flow.update", h.ConfigureNode)
 
 	// 노드 출력 tap 라우트는 TapController 가 주입된 경우에만 등록한다.
+	// tap 활성화는 실행 중 플로우의 런타임 관측 조작이므로 execute 로 분류한다.
 	if h.taps != nil {
-		g.POST("/flows/{id}/nodes/{nodeID}/tap", h.TapNode)
-		g.GET("/flows/{id}/taps", h.ListTaps)
+		g.POSTPerm("/flows/{id}/nodes/{nodeID}/tap", "flow.execute", h.TapNode)
+		g.GETPerm("/flows/{id}/taps", "flow.read", h.ListTaps)
 	}
 }
 

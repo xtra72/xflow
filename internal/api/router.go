@@ -58,12 +58,28 @@ type Context interface {
 	Path() string
 }
 
+// RouteRecord 는 등록된 라우트 1건의 메타데이터이다.
+//
+// @SPEC:SPEC-AUTH-005 (M5)
+// MiddlewareFunc 는 익명 클로저라 부착된 미들웨어가 어떤 권한을 요구하는지 사후에
+// 들여다볼 수 없다. 권한 부착 누락(= 보안 구멍)을 자동 검증하려면(acceptance.md AC-08)
+// 등록 시점에 권한 키를 함께 기록해야 한다.
+type RouteRecord struct {
+	// Method 는 HTTP 메서드이다.
+	Method string
+	// Pattern 은 그룹 prefix 를 포함한 전체 경로이다 (예: /api/v1/agents/{id}).
+	Pattern string
+	// Permission 은 라우트가 요구하는 권한 키이다. 빈 문자열이면 미부착이다.
+	Permission string
+}
+
 // Router 는 라우트 등록과 요청 디스패칭을 관리한다.
 type Router struct {
 	mux         *http.ServeMux
 	middlewares []MiddlewareFunc
 	prefix      string
 	routeCount  int
+	routes      []RouteRecord
 }
 
 // NewRouter 는 새 Router를 생성한다.
@@ -89,27 +105,27 @@ func (r *Router) Group(prefix string, mw ...MiddlewareFunc) *RouteGroup {
 
 // GET 는 GET 라우트를 등록한다.
 func (r *Router) GET(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	r.addRoute("GET", path, handler, mw...)
+	r.addRoute("GET", path, "", handler, mw...)
 }
 
 // POST 는 POST 라우트를 등록한다.
 func (r *Router) POST(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	r.addRoute("POST", path, handler, mw...)
+	r.addRoute("POST", path, "", handler, mw...)
 }
 
 // PUT 는 PUT 라우트를 등록한다.
 func (r *Router) PUT(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	r.addRoute("PUT", path, handler, mw...)
+	r.addRoute("PUT", path, "", handler, mw...)
 }
 
 // PATCH 는 PATCH 라우트를 등록한다(부분 갱신 — @SPEC:SPEC-REMOTE-001 M7 원격 자원 수정).
 func (r *Router) PATCH(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	r.addRoute("PATCH", path, handler, mw...)
+	r.addRoute("PATCH", path, "", handler, mw...)
 }
 
 // DELETE 는 DELETE 라우트를 등록한다.
 func (r *Router) DELETE(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	r.addRoute("DELETE", path, handler, mw...)
+	r.addRoute("DELETE", path, "", handler, mw...)
 }
 
 // HandleFunc 는 raw http.HandlerFunc를 직접 등록한다.
@@ -130,15 +146,28 @@ func (r *Router) RouteCount() int {
 	return r.routeCount
 }
 
+// Routes 는 등록된 라우트 메타데이터 목록의 복사본을 반환한다.
+//
+// @SPEC:SPEC-AUTH-005 (M5, acceptance.md AC-08)
+// 권한 부착 커버리지 검사가 본 목록을 전수 대조한다. RegisterRawHandler /
+// Router.HandleFunc 로 등록되는 raw 핸들러는 Context 래퍼와 미들웨어 체인을
+// 통째로 우회하므로(자체 JWT 검증) 본 목록에 포함되지 않는다.
+func (r *Router) Routes() []RouteRecord {
+	return append([]RouteRecord(nil), r.routes...)
+}
+
 // addRoute 는 메서드, 경로, 핸들러를 ServeMux에 등록한다.
-func (r *Router) addRoute(method, path string, handler HandlerFunc, mw ...MiddlewareFunc) {
+// permission 이 비어있지 않으면 RouteRecord 에 함께 기록된다 (권한 미들웨어 부착은
+// 호출자 책임 — RouteGroup 의 *Perm 계열 메서드가 수행한다).
+func (r *Router) addRoute(method, path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	// 미들웨어 체인 구성: 글로벌 -> 라우트별
 	chain := make([]MiddlewareFunc, 0, len(r.middlewares)+len(mw))
 	chain = append(chain, r.middlewares...)
 	chain = append(chain, mw...)
 
 	wrapped := applyMiddleware(handler, chain)
-	pattern := method + " " + r.prefix + path
+	fullPath := r.prefix + path
+	pattern := method + " " + fullPath
 
 	r.mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
 		ctx := newHTTPContext(w, req)
@@ -147,6 +176,7 @@ func (r *Router) addRoute(method, path string, handler HandlerFunc, mw ...Middle
 		}
 	})
 	r.routeCount++
+	r.routes = append(r.routes, RouteRecord{Method: method, Pattern: fullPath, Permission: permission})
 }
 
 // RouteGroup 은 공유 접두사와 미들웨어를 가진 라우트 그룹이다.
@@ -170,33 +200,77 @@ func (g *RouteGroup) Group(prefix string, mw ...MiddlewareFunc) *RouteGroup {
 	}
 }
 
-// GET 는 GET 라우트를 그룹에 등록한다.
+// GET 는 GET 라우트를 그룹에 등록한다 (권한 미부착 — 공개/인증 전용 라우트).
 func (g *RouteGroup) GET(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	g.addRoute("GET", path, handler, mw...)
+	g.addRoute("GET", path, "", handler, mw...)
 }
 
-// POST 는 POST 라우트를 그룹에 등록한다.
+// POST 는 POST 라우트를 그룹에 등록한다 (권한 미부착).
 func (g *RouteGroup) POST(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	g.addRoute("POST", path, handler, mw...)
+	g.addRoute("POST", path, "", handler, mw...)
 }
 
-// PUT 는 PUT 라우트를 그룹에 등록한다.
+// PUT 는 PUT 라우트를 그룹에 등록한다 (권한 미부착).
 func (g *RouteGroup) PUT(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	g.addRoute("PUT", path, handler, mw...)
+	g.addRoute("PUT", path, "", handler, mw...)
 }
 
 // PATCH 는 PATCH 라우트를 그룹에 등록한다(부분 갱신 — @SPEC:SPEC-REMOTE-001 M7).
 func (g *RouteGroup) PATCH(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	g.addRoute("PATCH", path, handler, mw...)
+	g.addRoute("PATCH", path, "", handler, mw...)
 }
 
-// DELETE 는 DELETE 라우트를 그룹에 등록한다.
+// DELETE 는 DELETE 라우트를 그룹에 등록한다 (권한 미부착).
 func (g *RouteGroup) DELETE(path string, handler HandlerFunc, mw ...MiddlewareFunc) {
-	g.addRoute("DELETE", path, handler, mw...)
+	g.addRoute("DELETE", path, "", handler, mw...)
+}
+
+// @SPEC:SPEC-AUTH-005 (M5) — 권한 인지 라우트 등록.
+//
+// *Perm 계열은 두 가지를 한 번에 수행한다.
+//  1. RequirePermission(perm) 을 라우트별 미들웨어로 부착한다 (실제 인가 강제).
+//  2. 권한 키를 RouteRecord 에 기록한다 (커버리지 검사 대상, AC-08).
+//
+// 두 동작을 분리하면 한쪽만 갱신되는 drift 가 생기므로 단일 호출로 묶는다.
+// 권한이 필요 없는 라우트는 기존 GET/POST/... 를 그대로 사용하고, 커버리지 검사의
+// 명시적 allowlist 에 사유와 함께 등재한다.
+
+// GETPerm 은 권한을 요구하는 GET 라우트를 등록한다.
+func (g *RouteGroup) GETPerm(path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	g.addPermRoute("GET", path, permission, handler, mw...)
+}
+
+// POSTPerm 은 권한을 요구하는 POST 라우트를 등록한다.
+func (g *RouteGroup) POSTPerm(path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	g.addPermRoute("POST", path, permission, handler, mw...)
+}
+
+// PUTPerm 은 권한을 요구하는 PUT 라우트를 등록한다.
+func (g *RouteGroup) PUTPerm(path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	g.addPermRoute("PUT", path, permission, handler, mw...)
+}
+
+// PATCHPerm 은 권한을 요구하는 PATCH 라우트를 등록한다.
+func (g *RouteGroup) PATCHPerm(path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	g.addPermRoute("PATCH", path, permission, handler, mw...)
+}
+
+// DELETEPerm 은 권한을 요구하는 DELETE 라우트를 등록한다.
+func (g *RouteGroup) DELETEPerm(path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	g.addPermRoute("DELETE", path, permission, handler, mw...)
+}
+
+// addPermRoute 는 권한 미들웨어를 부착하고 권한 키를 기록한다.
+// 권한 미들웨어는 라우트별 미들웨어의 가장 앞에 두어 핸들러 진입 전에 검사되게 한다.
+func (g *RouteGroup) addPermRoute(method, path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
+	withPerm := make([]MiddlewareFunc, 0, len(mw)+1)
+	withPerm = append(withPerm, RequirePermission(permission))
+	withPerm = append(withPerm, mw...)
+	g.addRoute(method, path, permission, handler, withPerm...)
 }
 
 // addRoute 는 그룹의 라우트를 등록한다.
-func (g *RouteGroup) addRoute(method, path string, handler HandlerFunc, mw ...MiddlewareFunc) {
+func (g *RouteGroup) addRoute(method, path, permission string, handler HandlerFunc, mw ...MiddlewareFunc) {
 	// 미들웨어 체인: 글로벌 -> 그룹 -> 라우트별
 	chain := make([]MiddlewareFunc, 0, len(g.router.middlewares)+len(g.middlewares)+len(mw))
 	chain = append(chain, g.router.middlewares...)
@@ -204,7 +278,8 @@ func (g *RouteGroup) addRoute(method, path string, handler HandlerFunc, mw ...Mi
 	chain = append(chain, mw...)
 
 	wrapped := applyMiddleware(handler, chain)
-	pattern := method + " " + g.prefix + path
+	fullPath := g.prefix + path
+	pattern := method + " " + fullPath
 
 	g.router.mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
 		ctx := newHTTPContext(w, req)
@@ -213,6 +288,11 @@ func (g *RouteGroup) addRoute(method, path string, handler HandlerFunc, mw ...Mi
 		}
 	})
 	g.router.routeCount++
+	g.router.routes = append(g.router.routes, RouteRecord{
+		Method:     method,
+		Pattern:    fullPath,
+		Permission: permission,
+	})
 }
 
 // applyMiddleware 는 핸들러에 미들웨어 체인을 적용한다.

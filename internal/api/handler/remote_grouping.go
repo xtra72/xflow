@@ -163,21 +163,24 @@ func (h *RemoteGroupingHandler) WithReleases(releases *storage.ReleaseRepository
 
 // RegisterRoutes 는 그룹핑 + 상세 라우트를 그룹에 등록한다(remote_admin 의 라우트와 공존).
 func (h *RemoteGroupingHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.PUT("/remote/nodes/{instance_id}/group", h.SetGroup)
-	g.DELETE("/remote/nodes/{instance_id}/group", h.ClearGroup)
-	g.GET("/remote/groups", h.ListGroups)
-	g.GET("/remote/nodes/{instance_id}", h.NodeDetail)
+	// @SPEC:SPEC-AUTH-005 (M5) — 원격 하위 API 는 remote.* 단일 키로만 다룬다
+	// (spec.md §1.3 비범위: 원격 노드 하위 API 의 세분 권한). 조회는 remote.read,
+	// 그 외 모든 변경·명령은 remote.update 이다.
+	g.PUTPerm("/remote/nodes/{instance_id}/group", "remote.update", h.SetGroup)
+	g.DELETEPerm("/remote/nodes/{instance_id}/group", "remote.update", h.ClearGroup)
+	g.GETPerm("/remote/groups", "remote.read", h.ListGroups)
+	g.GETPerm("/remote/nodes/{instance_id}", "remote.read", h.NodeDetail)
 	// v1.6(M11 확장) 노드 해상도 서버-측 오버라이드(관리자 전용). group 라우트와 동일한
 	// 2-세그먼트 패턴이라 GET .../{id}(단일 세그먼트)·.../flows 등과 충돌하지 않는다.
-	g.PUT("/remote/nodes/{instance_id}/display", h.SetDisplayOverride)
-	g.DELETE("/remote/nodes/{instance_id}/display", h.ClearDisplayOverride)
+	g.PUTPerm("/remote/nodes/{instance_id}/display", "remote.update", h.SetDisplayOverride)
+	g.DELETEPerm("/remote/nodes/{instance_id}/display", "remote.update", h.ClearDisplayOverride)
 
 	// 그룹 관리(일괄): 이름변경/삭제 + 그룹 단위 업데이트/명령. {group_name} 단일 세그먼트는
 	// 리터럴 GET /remote/groups 와 충돌하지 않는다.
-	g.PUT("/remote/groups/{group_name}", h.RenameGroup)
-	g.DELETE("/remote/groups/{group_name}", h.DeleteGroup)
-	g.POST("/remote/groups/{group_name}/update", h.UpdateGroup)
-	g.POST("/remote/groups/{group_name}/command", h.CommandGroup)
+	g.PUTPerm("/remote/groups/{group_name}", "remote.update", h.RenameGroup)
+	g.DELETEPerm("/remote/groups/{group_name}", "remote.update", h.DeleteGroup)
+	g.POSTPerm("/remote/groups/{group_name}/update", "remote.update", h.UpdateGroup)
+	g.POSTPerm("/remote/groups/{group_name}/command", "remote.update", h.CommandGroup)
 }
 
 // renameGroupRequest 는 그룹 이름변경 요청 본문이다(PUT /remote/groups/{name}).

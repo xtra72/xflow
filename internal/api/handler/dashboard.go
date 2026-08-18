@@ -71,11 +71,20 @@ func NewDashboardHandler(repo storage.DashboardRepository, jwtSvc *auth.JWTServi
 //	DELETE /dashboards/mine    - JWT username 으로 owner 결정
 func (h *DashboardHandler) RegisterRoutes(g *api.RouteGroup) {
 	// /shared: GET 은 인증된 모든 사용자, PUT/DELETE 는 admin 전용 (핸들러 레벨 검증).
-	g.GET("/dashboards/shared", h.getShared)
-	g.PUT("/dashboards/shared", h.putShared)
-	g.DELETE("/dashboards/shared", h.deleteShared)
+	//
+	// @SPEC:SPEC-AUTH-005 (M5) — dashboard.* 권한을 추가로 부착한다. 카탈로그에
+	// dashboard.delete 가 없으므로(read/update 2종) DELETE 도 update 로 매핑한다.
+	// 기존 핸들러 레벨 admin 검증은 그대로 유지되므로 실질 접근 범위는 좁아지기만 한다.
+	g.GETPerm("/dashboards/shared", "dashboard.read", h.getShared)
+	g.PUTPerm("/dashboards/shared", "dashboard.update", h.putShared)
+	g.DELETEPerm("/dashboards/shared", "dashboard.update", h.deleteShared)
 
 	// /mine: 모두 인증된 사용자 (본인 owner).
+	//
+	// @SPEC:SPEC-AUTH-005 (M5) — 권한 미부착(커버리지 allowlist 등재). 본인 소유
+	// 리소스이며 핸들러가 owner 를 ctx.UserID() 로 고정하므로 타 사용자 데이터에
+	// 접근할 수 없다. dashboard.update 를 요구하면 viewer 가 자기 레이아웃조차 저장하지
+	// 못하는 회귀가 발생하는데, 이는 SPEC 이 요구하지 않는 부작용이다.
 	g.GET("/dashboards/mine", h.getMine)
 	g.PUT("/dashboards/mine", h.putMine)
 	g.DELETE("/dashboards/mine", h.deleteMine)

@@ -162,19 +162,23 @@ func NewStoreQueryHandler(agents AgentLookup, logger *slog.Logger) *StoreQueryHa
 
 // RegisterRoutes 는 Store 쿼리 라우트를 등록한다.
 func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/store/{agent_name}/query", h.Query)
-	g.GET("/store/{agent_name}/keys", h.ListKeys)
+	// @SPEC:SPEC-AUTH-005 (M5) — store.* 권한 부착.
+	// 카탈로그의 store 는 read/update 2종이므로(spec.md §2.1) 조회는 read,
+	// 나머지 변경(meta 설정·reset·rename)은 모두 update 로 매핑한다.
+	// query 는 POST 이지만 조회이므로 read 이다.
+	g.POSTPerm("/store/{agent_name}/query", "store.read", h.Query)
+	g.GETPerm("/store/{agent_name}/keys", "store.read", h.ListKeys)
 	// @spec SPEC-STORE-003 v0.4.0: 임의 엔트리(동적 포함)의 metric_type/tags 설정.
-	g.PUT("/store/{agent_name}/keys/{key}/meta", h.SetKeyMeta)
+	g.PUTPerm("/store/{agent_name}/keys/{key}/meta", "store.update", h.SetKeyMeta)
 	// @spec SPEC-STORE-003
-	g.GET("/store/{agent_name}/tags", h.ListTags)
+	g.GETPerm("/store/{agent_name}/tags", "store.read", h.ListTags)
 	// @spec SPEC-STORE-003: reset 엔드포인트.
 	//   DELETE /store/{agent_name}/keys/{key} → 단일 키 reset (정책 분기)
 	//   DELETE /store/{agent_name}/keys       → 전체 키 reset (벌크)
-	g.DELETE("/store/{agent_name}/keys/{key}", h.ResetKey)
-	g.DELETE("/store/{agent_name}/keys", h.ResetAll)
+	g.DELETEPerm("/store/{agent_name}/keys/{key}", "store.update", h.ResetKey)
+	g.DELETEPerm("/store/{agent_name}/keys", "store.update", h.ResetAll)
 	// 키(그 키의 모든 시리즈) 이름 변경. body: {"new_key": "..."}
-	g.POST("/store/{agent_name}/keys/{key}/rename", h.RenameKey)
+	g.POSTPerm("/store/{agent_name}/keys/{key}/rename", "store.update", h.RenameKey)
 }
 
 // storeQueryRequest 는 REQ-M3-01 요청 바디 형식이다.

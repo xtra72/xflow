@@ -44,7 +44,9 @@ func NewInfluxDBQueryHandler(agents AgentLookup, logger *slog.Logger) *InfluxDBQ
 
 // RegisterRoutes 는 InfluxDB 쿼리 라우트를 등록한다.
 func (h *InfluxDBQueryHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/influxdb/{agent_name}/query", h.Query)
+	// @SPEC:SPEC-AUTH-005 (M5) — 카탈로그에 influxdb 리소스가 없어 데이터 저장소로
+	// 가장 가까운 store.* 로 매핑한다. query 는 조회이므로 read 이다.
+	g.POSTPerm("/influxdb/{agent_name}/query", "store.read", h.Query)
 }
 
 // influxDBQueryRequest 는 REQ-M3-02 요청 바디 형식이다.

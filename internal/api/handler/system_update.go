@@ -920,13 +920,16 @@ func NewSystemHandler(svc *UpdateService, logger *slog.Logger) *SystemHandler {
 // @SPEC:SPEC-UPDATE-002 v0.1.0 (M6, M7)
 // 채널 라우트는 핸들러 레벨에서 admin 권한을 확인한다 (PUT 만).
 func (h *SystemHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/system/version", h.GetVersion)
-	g.POST("/system/update/check", h.PostCheck)
-	g.POST("/system/update/apply", h.PostApply)
-	g.POST("/system/update/rollback", h.PostRollback)
-	g.GET("/system/update/status", h.GetStatus)
-	g.GET("/system/update/channel", h.GetChannel)
-	g.PUT("/system/update/channel", h.PutChannel)
+	// @SPEC:SPEC-AUTH-005 (M5) — system.* 권한 부착.
+	// check 는 POST 이지만 사용 가능한 버전을 조회할 뿐 서버 상태를 바꾸지 않으므로
+	// read 이다. 실제 상태를 바꾸는 apply/rollback/channel 변경만 update 이다.
+	g.GETPerm("/system/version", "system.read", h.GetVersion)
+	g.POSTPerm("/system/update/check", "system.read", h.PostCheck)
+	g.POSTPerm("/system/update/apply", "system.update", h.PostApply)
+	g.POSTPerm("/system/update/rollback", "system.update", h.PostRollback)
+	g.GETPerm("/system/update/status", "system.read", h.GetStatus)
+	g.GETPerm("/system/update/channel", "system.read", h.GetChannel)
+	g.PUTPerm("/system/update/channel", "system.update", h.PutChannel)
 }
 
 // GetVersion 은 현재 바이너리 메타데이터 + 마지막 check 결과를 반환한다.

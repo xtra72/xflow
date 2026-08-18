@@ -212,22 +212,24 @@ func NewAgentHandler(agents AgentManager, logger *slog.Logger, opts ...AgentHand
 //	PUT    /agents/{id}/config   -> Configure
 //	GET    /agents/{id}/stats    -> Stats
 func (h *AgentHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/agents", h.List)
+	// @SPEC:SPEC-AUTH-005 (M5) — agent.* 권한 부착 (plan.md §M5 매핑 원칙).
+	g.GETPerm("/agents", "agent.read", h.List)
 	// /agents/export 는 /agents/{id} 보다 먼저 등록하여 라우트 충돌을 방지한다
-	g.GET("/agents/export", h.ExportAll)
-	g.GET("/agents/{id}", h.Get)
-	g.GET("/agents/{id}/export", h.Export)
-	g.POST("/agents", h.Create)
-	g.PUT("/agents/{id}", h.Update)
-	g.DELETE("/agents/{id}", h.Delete)
-	g.POST("/agents/{id}/start", h.Start)
-	g.POST("/agents/{id}/stop", h.Stop)
-	g.POST("/agents/{id}/restart", h.Restart)
-	g.POST("/agents/{id}/enable", h.Enable)
-	g.POST("/agents/{id}/disable", h.Disable)
-	g.PUT("/agents/{id}/config", h.Configure)
-	g.GET("/agents/{id}/stats", h.Stats)
-	g.POST("/agents/{id}/exec", h.Exec)
+	g.GETPerm("/agents/export", "agent.read", h.ExportAll)
+	g.GETPerm("/agents/{id}", "agent.read", h.Get)
+	g.GETPerm("/agents/{id}/export", "agent.read", h.Export)
+	g.POSTPerm("/agents", "agent.create", h.Create)
+	g.PUTPerm("/agents/{id}", "agent.update", h.Update)
+	g.DELETEPerm("/agents/{id}", "agent.delete", h.Delete)
+	g.POSTPerm("/agents/{id}/start", "agent.execute", h.Start)
+	g.POSTPerm("/agents/{id}/stop", "agent.execute", h.Stop)
+	g.POSTPerm("/agents/{id}/restart", "agent.execute", h.Restart)
+	g.POSTPerm("/agents/{id}/enable", "agent.execute", h.Enable)
+	g.POSTPerm("/agents/{id}/disable", "agent.execute", h.Disable)
+	g.PUTPerm("/agents/{id}/config", "agent.update", h.Configure)
+	g.GETPerm("/agents/{id}/stats", "agent.read", h.Stats)
+	// exec 은 에이전트에 임의 제어 명령을 보내므로 execute 로 분류한다.
+	g.POSTPerm("/agents/{id}/exec", "agent.execute", h.Exec)
 }
 
 // List 는 페이지네이션을 적용하여 에이전트 목록을 반환한다.

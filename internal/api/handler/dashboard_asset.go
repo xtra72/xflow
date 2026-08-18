@@ -63,8 +63,10 @@ func NewDashboardAssetHandler(repo storage.DashboardAssetRepository, logger *slo
 //	POST /dashboard-assets      - 업로드(내용 해시 id 반환, 멱등)
 //	GET  /dashboard-assets/{id} - 조회(data-URL)
 func (h *DashboardAssetHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/dashboard-assets", h.upload)
-	g.GET("/dashboard-assets/{id}", h.get)
+	// @SPEC:SPEC-AUTH-005 (M5) — 대시보드 자산(도면 이미지 등)은 대시보드 리소스의
+	// 일부이므로 dashboard.* 로 매핑한다.
+	g.POSTPerm("/dashboard-assets", "dashboard.update", h.upload)
+	g.GETPerm("/dashboard-assets/{id}", "dashboard.read", h.get)
 }
 
 // assetUploadRequest 는 업로드 요청 본문이다. data_url 은 `data:<mime>;base64,<payload>`.

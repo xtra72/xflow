@@ -50,8 +50,10 @@ type scheduleLogConfigUpdate struct {
 //	GET /system/schedule-log-config
 //	PUT /system/schedule-log-config
 func (h *ScheduleLogConfigHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/system/schedule-log-config", h.Get)
-	g.PUT("/system/schedule-log-config", h.Put)
+	// @SPEC:SPEC-AUTH-005 (M5) — /system/* 하위 설정이므로 system.* 로 매핑한다
+	// (스케줄 로그 "데이터" 가 아니라 서버 저장소 백엔드 "설정" 이다).
+	g.GETPerm("/system/schedule-log-config", "system.read", h.Get)
+	g.PUTPerm("/system/schedule-log-config", "system.update", h.Put)
 }
 
 // Get 은 현재 스케줄 로그 저장소 타입을 반환한다(빈 값이면 "sqlite"). admin 전용.
