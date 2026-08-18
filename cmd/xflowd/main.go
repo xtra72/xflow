@@ -868,6 +868,18 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("api.handler.dashboard").Logger(),
 	)
 
+	// 대시보드 자산(도면 이미지 등) 저장소 — snapshot 과 분리해 보관한다.
+	// snapshot PUT 은 256KB 상한이 있어 이미지를 config 에 data-URL 로 박으면 대시보드
+	// 저장 자체가 실패한다. 자산을 별도 행으로 빼고 snapshot 에는 id 만 남긴다.
+	dashboardAssetRepo, err := storage.NewDashboardAssetSQLiteRepository(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("dashboard 자산 저장소 초기화 실패: %w", err)
+	}
+	dashboardAssetHandler := handler.NewDashboardAssetHandler(
+		dashboardAssetRepo,
+		obs.Loggers.NewLogger("api.handler.dashboard_asset").Logger(),
+	)
+
 	// 9.5. 전역 설정(settings) API 핸들러 등록.
 	// 디바이스 컬럼 구성 등 "전역 1벌" UI/서버 설정을 영속화한다. 공유 xflow.db
 	// 핸들(authDashboardDB)을 재사용해 별도 파일 핸들을 늘리지 않는다(WAL 공존, ASM-007).
@@ -910,6 +922,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// SPEC-DASHBOARD-001 v0.2.0 M-8: 대시보드 라우트 (shared / mine).
 		dashboardHandler.RegisterRoutes(g)
+		dashboardAssetHandler.RegisterRoutes(g)
 
 		// 전역 설정 라우트 (GET/PUT /settings/{key}) — 디바이스 컬럼 구성 등.
 		settingsHandler.RegisterRoutes(g)
