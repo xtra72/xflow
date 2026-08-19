@@ -801,22 +801,8 @@ function LocalDashboardView() {
           </div>
         )}
 
-        {/* 편집 불가 안내 + 완화책 (spec.md §2.6 / AC-16).
-            비활성 컨트롤의 툴팁만으로는 "왜" 와 "어떻게 풀지" 가 전달되지 않는다.
-            권한은 요청 시점에 조회되므로(SPEC-AUTH-005 §4.3) 관리자가 역할에
-            권한을 더하면 **기존 토큰 그대로** 즉시 풀린다 — 재로그인을 안내하면
-            사용자가 불필요한 절차를 밟는다. */}
-        {!activeAccess.canEdit && (
-          <div
-            role="status"
-            data-testid="dashboard-readonly-notice"
-            className="mx-6 mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
-          >
-            <span className="font-medium">{t('dashboard.gate.readOnlyBadge')}</span>
-            {' — '}
-            {t('dashboard.gate.mitigation')}
-          </div>
-        )}
+        {/* 편집 불가 상시 안내 배너는 두지 않는다(사용자 요청).
+            사유는 비활성 컨트롤의 툴팁(dashboard.gate.*Denied)이 계속 전달한다. */}
 
         {/* 로딩 스켈레톤 */}
         {isLoading && !flowsData && !metrics ? (

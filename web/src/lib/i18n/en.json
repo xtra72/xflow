@@ -543,7 +543,6 @@
       "deleteDenied": "You do not have permission to delete this dashboard",
       "createDenied": "You do not have permission to create dashboards",
       "visibilityFailed": "Could not change the sharing scope",
-      "readOnlyBadge": "Read-only",
       "mitigation": "Ask an administrator for dashboard edit permission. Once granted it takes effect right away — no need to sign in again.",
       "createFailed": "Could not create the dashboard",
       "renameFailed": "Could not rename the dashboard",

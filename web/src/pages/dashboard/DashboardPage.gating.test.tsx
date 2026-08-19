@@ -169,23 +169,22 @@ describe('DashboardPage — 편집 게이팅 (can_edit)', () => {
     expect(screen.getByTestId('dashboard-edit-mode')).toBeEnabled();
   });
 
-  it('can_edit=false 면 완화책 안내를 표시한다(재로그인을 요구하지 않는다)', () => {
+  it('편집 불가여도 상시 안내 배너를 표시하지 않는다', () => {
     seedDashboards([makeDashboard({ can_edit: false })]);
     renderPage();
 
-    const notice = screen.getByTestId('dashboard-readonly-notice');
-    expect(notice).toHaveTextContent('읽기 전용');
-    // AC-16: "관리자에게 대시보드 편집 권한을 요청하세요" 취지.
-    expect(notice).toHaveTextContent('관리자에게 대시보드 편집 권한을 요청하세요');
-    // 권한은 요청 시점 조회이므로 재로그인 안내를 하면 안 된다(SPEC-AUTH-005 §4.3).
-    expect(notice).toHaveTextContent('다시 로그인하지 않아도');
+    expect(screen.queryByTestId('dashboard-readonly-notice')).toBeNull();
   });
 
-  it('can_edit=true 면 완화책 안내를 표시하지 않는다', () => {
-    seedDashboards([makeDashboard({ can_edit: true })]);
+  it('배너가 없어도 편집 버튼 툴팁이 사유를 전달한다', () => {
+    // 배너를 걷어낸 뒤 사유 전달 수단이 통째로 사라지지 않았는지 지킨다.
+    seedDashboards([makeDashboard({ can_edit: false })]);
     renderPage();
 
-    expect(screen.queryByTestId('dashboard-readonly-notice')).toBeNull();
+    expect(screen.getByTestId('dashboard-edit-mode')).toHaveAttribute(
+      'title',
+      '이 대시보드를 편집할 권한이 없습니다',
+    );
   });
 });
 

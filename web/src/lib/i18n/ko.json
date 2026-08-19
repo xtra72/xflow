@@ -543,7 +543,6 @@
       "deleteDenied": "이 대시보드를 삭제할 권한이 없습니다",
       "createDenied": "대시보드를 생성할 권한이 없습니다",
       "visibilityFailed": "공개범위를 변경하지 못했습니다",
-      "readOnlyBadge": "읽기 전용",
       "mitigation": "관리자에게 대시보드 편집 권한을 요청하세요. 권한이 부여되면 다시 로그인하지 않아도 바로 적용됩니다.",
       "createFailed": "대시보드를 생성하지 못했습니다",
       "renameFailed": "대시보드 이름을 변경하지 못했습니다",
