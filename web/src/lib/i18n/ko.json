@@ -536,8 +536,19 @@
       "mine": "내 대시보드",
       "mineAria": "내 대시보드",
       "readOnly": "읽기 전용 (admin 만 편집)",
-      "adminOnly": "관리자만 편집 가능",
       "syncing": "동기화 중…"
+    },
+    "gate": {
+      "editDenied": "이 대시보드를 편집할 권한이 없습니다",
+      "grantDenied": "이 대시보드의 공개 설정을 변경할 권한이 없습니다",
+      "deleteDenied": "이 대시보드를 삭제할 권한이 없습니다",
+      "createDenied": "대시보드를 생성할 권한이 없습니다",
+      "readOnlyBadge": "읽기 전용",
+      "mitigation": "관리자에게 대시보드 편집 권한을 요청하세요. 권한이 부여되면 다시 로그인하지 않아도 바로 적용됩니다.",
+      "createFailed": "대시보드를 생성하지 못했습니다",
+      "renameFailed": "대시보드 이름을 변경하지 못했습니다",
+      "defaultFailed": "기본 대시보드를 변경하지 못했습니다",
+      "deleteFailed": "대시보드를 삭제하지 못했습니다"
     },
     "header": {
       "newDashboardName": "새 대시보드",

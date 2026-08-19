@@ -11,8 +11,7 @@
 //
 // @spec SPEC-WEB-006 v0.1.0 (M4)
 
-import { useEffect, useRef, useState } from 'react';
-import { Pencil, Plus, Trash2, Star } from 'lucide-react';
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
@@ -22,11 +21,10 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { cn } from '@/lib/utils/cn';
 import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { useSystemVersion } from '@/services/api/systemUpdate';
-import { useUIStore } from '@/stores/uiStore';
 import { ThemeSelector } from '@/components/theme/ThemeSelector';
 import { ThemeEditorModal } from '@/components/theme/ThemeEditorModal';
 import { UpdateAvailableBadge } from '@/components/system/UpdateAvailableBadge';
-import CreateDashboardDialog from '@/pages/dashboard/CreateDashboardDialog';
+import HeaderDashboardControls from './HeaderDashboardControls';
 import type { ConnectionState } from '@/services/ws/wsClient';
 
 /**
@@ -108,70 +106,9 @@ export default function Header() {
       )}`
     : null;
 
-  // 대시보드 관리 상태
+  // 대시보드 관리 컨트롤은 HeaderDashboardControls 로 분리했다
+  // (SPEC-DASHBOARD-004 M6 6.5) — 목록 API 축 렌더 + 항목별 인가 게이팅.
   const isDashboardRoute = location.pathname === '/';
-  const dashboardPages = useUIStore((s) => s.dashboardPages);
-  const activeDashboardId = useUIStore((s) => s.activeDashboardId);
-  const setActiveDashboard = useUIStore((s) => s.setActiveDashboard);
-  const removeDashboardPage = useUIStore((s) => s.removeDashboardPage);
-  const setDefaultDashboardPage = useUIStore((s) => s.setDefaultDashboardPage);
-  const renameDashboardPage = useUIStore((s) => s.renameDashboardPage);
-
-  const activePage = isDashboardRoute
-    ? dashboardPages.find((p) => p.id === activeDashboardId)
-    : undefined;
-  const isOnlyPage = dashboardPages.length <= 1;
-  const isDefaultPage = activePage?.isDefault ?? false;
-
-  const [createOpen, setCreateOpen] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [renameName, setRenameName] = useState('');
-  const renameInputRef = useRef<HTMLInputElement>(null);
-
-  // 이름 편집 모드 활성화 시 포커스
-  useEffect(() => {
-    if (renaming) {
-      requestAnimationFrame(() => {
-        renameInputRef.current?.focus();
-        renameInputRef.current?.select();
-      });
-    }
-  }, [renaming]);
-
-  /** 이름 편집 시작 */
-  const handleStartRename = () => {
-    setRenameName(activePage?.name ?? '');
-    setRenaming(true);
-  };
-
-  /** 이름 편집 확정 */
-  const handleConfirmRename = () => {
-    const trimmed = renameName.trim();
-    if (trimmed && trimmed !== activePage?.name) {
-      renameDashboardPage(activeDashboardId, trimmed);
-    }
-    setRenaming(false);
-  };
-
-  /** 이름 편집 키보드 핸들러 */
-  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleConfirmRename();
-    } else if (e.key === 'Escape') {
-      setRenaming(false);
-    }
-  };
-
-  /** 대시보드 삭제 */
-  const handleDelete = () => {
-    if (isOnlyPage) return;
-    const confirmed = window.confirm(
-      t('header.dashboard.deleteConfirm').replace('{name}', activePage?.name ?? ''),
-    );
-    if (confirmed) {
-      removeDashboardPage(activeDashboardId);
-    }
-  };
 
   // 현재 라우트에서 페이지 제목 결정. 원격 노드 컨텍스트에서는 노드 이름을
   // 우선 사용한다(폴백 'XFlow' 가 사이드바 브랜드와 중복되지 않도록).
@@ -185,87 +122,7 @@ export default function Header() {
     <header className="flex h-(--header-height) shrink-0 items-center justify-between border-b border-(--color-border-default) bg-(--color-bg-surface) px-6">
       {/* 좌측: 페이지 제목 또는 대시보드 관리 */}
       {isDashboardRoute ? (
-        <div className="flex items-center gap-2">
-          {/* 대시보드 선택 / 이름 편집 */}
-          {renaming ? (
-            <input
-              ref={renameInputRef}
-              type="text"
-              value={renameName}
-              onChange={(e) => setRenameName(e.target.value)}
-              onBlur={handleConfirmRename}
-              onKeyDown={handleRenameKeyDown}
-              className="rounded-md border border-blue-500 bg-(--color-bg-surface) px-2 py-1 text-sm font-semibold text-(--color-text-primary) outline-none ring-1 ring-blue-500"
-              aria-label={t('header.dashboard.renameAria')}
-            />
-          ) : (
-            <select
-              value={activeDashboardId}
-              onChange={(e) => setActiveDashboard(e.target.value)}
-              className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm font-semibold text-(--color-text-primary)"
-              aria-label={t('header.dashboard.selectAria')}
-            >
-              {dashboardPages.map((page) => (
-                <option key={page.id} value={page.id}>
-                  {page.isDefault ? `\u2605 ${page.name}` : page.name}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {/* 이름 편집 */}
-          <button
-            type="button"
-            onClick={handleStartRename}
-            disabled={renaming}
-            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-40"
-            aria-label={t('header.dashboard.renameAria')}
-            title={t('header.dashboard.renameAria')}
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-
-          {/* 대시보드 추가 */}
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
-            aria-label={t('header.dashboard.add')}
-            title={t('header.dashboard.add')}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-
-          {/* 대시보드 삭제 */}
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={isOnlyPage}
-            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={t('header.dashboard.delete')}
-            title={t('header.dashboard.delete')}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-
-          {/* 기본 대시보드 설정 */}
-          <button
-            type="button"
-            onClick={() => !isDefaultPage && setDefaultDashboardPage(activeDashboardId)}
-            disabled={isDefaultPage}
-            className={cn(
-              'rounded-md p-1 transition-colors',
-              isDefaultPage
-                ? 'text-yellow-500 dark:text-yellow-400'
-                : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)',
-              'disabled:cursor-not-allowed disabled:opacity-40',
-            )}
-            aria-label={t('header.dashboard.setDefault')}
-            title={t('header.dashboard.setDefault')}
-          >
-            <Star className={cn('h-3.5 w-3.5', isDefaultPage && 'fill-current')} />
-          </button>
-        </div>
+        <HeaderDashboardControls />
       ) : (
         <h1 className="text-lg font-semibold text-(--color-text-primary)">{pageTitle}</h1>
       )}
@@ -303,14 +160,6 @@ export default function Header() {
             Header 는 대시보드 라우트에서 null 을 반환하므로, 메뉴가 대시보드
             하나만 남은 사용자에게는 로그아웃 경로가 사라지기 때문이다. */}
       </div>
-      {/* 대시보드 생성 다이얼로그 */}
-      {isDashboardRoute && (
-        <CreateDashboardDialog
-          open={createOpen}
-          onClose={() => setCreateOpen(false)}
-        />
-      )}
-
     </header>
   );
 }

@@ -80,8 +80,11 @@ function stateFingerprint(activeUid: string, layout: unknown): string {
 /**
  * 폴백 대상 대시보드를 고른다 — `is_default` 우선, 없으면 첫 항목 (spec.md §2.13 UB1 #11).
  * 접근 가능한 대시보드가 0장이면 빈 문자열.
+ *
+ * M6 의 삭제·403 복구도 이 함수를 재사용한다 — 폴백 규칙이 두 곳에 생기면
+ * 한쪽만 갱신되어 "어떤 경로로 잃었는지" 에 따라 착지점이 달라진다.
  */
-function pickFallbackUid(list: Dashboard[]): string {
+export function pickFallbackUid(list: Dashboard[]): string {
   return list.find((d) => d.is_default)?.uid ?? list[0]?.uid ?? '';
 }
 

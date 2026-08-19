@@ -26,12 +26,14 @@ import {
   Grid3X3,
   ChevronUp,
   Clock,
+  Trash2,
 } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
+import { usePermission } from '@/hooks/usePermission';
 import { useTranslation } from '@/lib/i18n';
 import { useDashboardSyncStatus } from '@/contexts/DashboardSyncContext';
 import { isRemoteTarget, LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
@@ -45,8 +47,11 @@ import {
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
+import { dashboardAccessByUid } from './dashboardAccess';
 import DragHandle from './DragHandle';
 import { GRID_MARGIN_PX } from './gridGeometry';
+import { useCreateDashboard } from './useCreateDashboard';
+import { useDashboardMutations } from './useDashboardMutations';
 import { renderDashboardPanel } from './renderDashboardPanel';
 import RemoteDashboardView from './RemoteDashboardView';
 
@@ -100,14 +105,30 @@ function LocalDashboardView() {
   // 라우트로 이동해도 구독이 끊기지 않아야 하기 때문(AppLayout 주석 참조).
   const { pendingSync } = useDashboardSyncStatus();
 
-  // SPEC-DASHBOARD-004 M5: 스코프 축이 사라져 `activeReadOnly` 가 성립하지 않는다.
-  // 서버가 대시보드마다 실어 보내는 can_edit 을 그대로 쓴다(spec.md §2.3).
-  // 목록이 아직 도착하지 않았거나 항목이 없으면 비활성화하지 않는다 — 서버가
-  // 최종 판정을 하므로(403) 여기서 선제 차단하면 부팅 중 화면이 잠긴다.
-  // 사유 툴팁·완화책 안내 등 게이팅 UX 는 M6 범위다.
-  const activeReadOnly = useUIStore(
-    (s) => s.dashboards.find((d) => d.uid === s.activeDashboardId)?.can_edit === false,
+  // SPEC-DASHBOARD-004 M6: 대시보드 단위 인가 판정 (spec.md §2.11 S2).
+  //
+  // 목록 응답이 항목마다 실어 보내는 can_edit / can_grant / can_delete 를 그대로
+  // 읽는다 — 판정 규칙(§2.2)은 서버가 소유하고 프론트는 재구현하지 않는다.
+  // 컨트롤은 **숨기지 않고 비활성 + 사유 툴팁**으로 둔다(SPEC-AUTH-006 §4.2):
+  // 사라진 버튼은 "기능이 없다"로 읽히지만, 비활성 버튼은 관리자에게 권한을
+  // 요청할 여지를 남긴다.
+  const dashboards = useUIStore((s) => s.dashboards);
+  const accessOf = useCallback(
+    (uid: string) => dashboardAccessByUid(dashboards, uid),
+    [dashboards],
   );
+
+  // 생성은 대시보드 단위가 아니라 **전역 권한** 판정이다(spec.md §2.7 E1).
+  // 아직 존재하지 않는 대시보드에는 can_* 를 붙일 대상이 없기 때문이다.
+  // 역할 이름 비교(isAdmin)는 쓰지 않는다(spec.md §2.14 #2).
+  const { hasPermission } = usePermission();
+  const canCreate = hasPermission('dashboard.create');
+  const { create: createDashboardOnServer, isCreating } = useCreateDashboard();
+
+  // 이름 변경·기본 지정·삭제는 서버에 반영해야 영속된다 — `name` 과 `is_default`
+  // 는 컬럼이 되었고 본문 PUT 은 `{ payload }` 만 보내므로, 로컬 스토어만 바꾸면
+  // 사용자가 새로고침에서 변경을 잃는다.
+  const { rename, setDefault, remove: removeDashboard } = useDashboardMutations();
 
   // UI store
   const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
@@ -116,12 +137,11 @@ function LocalDashboardView() {
   const dashboardPages = useUIStore((s) => s.dashboardPages);
   const activeDashboardId = useUIStore((s) => s.activeDashboardId);
   const setActiveDashboard = useUIStore((s) => s.setActiveDashboard);
-  const addDashboardPage = useUIStore((s) => s.addDashboardPage);
-  const setDefaultDashboardPage = useUIStore((s) => s.setDefaultDashboardPage);
-  const renameDashboardPage = useUIStore((s) => s.renameDashboardPage);
   const activePage = useUIStore((s) =>
     s.dashboardPages.find((p) => p.id === s.activeDashboardId),
   );
+  // 활성 대시보드의 판정 — 레이아웃 편집·패널 추가/삭제의 게이트다.
+  const activeAccess = accessOf(activeDashboardId);
   const layout = activePage?.layout ?? [];
   const panels = activePage?.panels ?? [];
   const setLayout = useUIStore((s) => s.setDashboardLayout);
@@ -307,13 +327,26 @@ function LocalDashboardView() {
     setEditingName(currentName);
   };
 
-  /** 인라인 이름 편집 완료 */
+  /** 인라인 이름 편집 완료 — 서버 PATCH{name} 으로 영속한다.
+   *
+   * 편집 시작 후 목록 재조회로 권한을 잃는 경우가 있으므로 확정 시점에 다시
+   * 판정한다. 서버가 거부하면 훅이 낙관적 반영을 되돌리고 사유를 알린다. */
   const finishRename = () => {
-    if (editingPageId && editingName.trim()) {
-      renameDashboardPage(editingPageId, editingName.trim());
+    if (editingPageId && editingName.trim() && accessOf(editingPageId).canEdit) {
+      void rename(editingPageId, editingName.trim());
     }
     setEditingPageId(null);
     setEditingName('');
+  };
+
+  /** 대시보드 삭제 — 되돌릴 수 없으므로 확인을 받고 서버에 요청한다. */
+  const handleDeleteDashboard = (uid: string, name: string) => {
+    if (!accessOf(uid).canDelete) return;
+    const confirmed = window.confirm(
+      t('header.dashboard.deleteConfirm').replace('{name}', name),
+    );
+    if (!confirmed) return;
+    void removeDashboard(uid);
   };
 
   /** 패널 타입에 따라 적절한 위젯 컴포넌트를 렌더링(공유 렌더러 재사용 — REQ-L09). */
@@ -361,7 +394,11 @@ function LocalDashboardView() {
             {dashboardDropdownOpen && (
               <div className="absolute left-0 top-full z-50 mt-1 w-[220px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg">
                 <div className="flex flex-col gap-0.5 p-1.5">
-                  {dashboardPages.map((page) => (
+                  {dashboardPages.map((page) => {
+                    // 행마다 그 대시보드의 판정을 쓴다 — 활성 대시보드 하나로
+                    // 목록 전체를 잠그면 편집 가능한 대시보드까지 함께 잠긴다.
+                    const rowAccess = accessOf(page.id);
+                    return (
                     <div
                       key={page.id}
                       className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-(--color-bg-elevated) ${
@@ -390,48 +427,80 @@ function LocalDashboardView() {
                           {page.name}
                         </button>
                       )}
+                      {/* 기본 지정은 서버가 PATCH{is_default} 를 grant 인가로
+                          검사한다(spec.md §2.3) — can_grant 로 게이팅한다. */}
                       <button
                         type="button"
-                        onClick={() => setDefaultDashboardPage(page.id)}
-                        disabled={activeReadOnly}
-                        aria-disabled={activeReadOnly}
+                        onClick={() => void setDefault(page.id)}
+                        disabled={!rowAccess.canGrant}
+                        aria-disabled={!rowAccess.canGrant}
+                        data-testid={`dashboard-set-default-${page.id}`}
                         className={`shrink-0 p-0.5 transition-colors ${
-                          activeReadOnly
+                          !rowAccess.canGrant
                             ? 'cursor-not-allowed opacity-40'
                             : page.isDefault
                             ? 'text-yellow-500'
                             : 'text-(--color-text-muted) hover:text-yellow-400'
                         }`}
-                        title={activeReadOnly ? t('dashboard.scope.adminOnly') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
+                        title={!rowAccess.canGrant ? t('dashboard.gate.grantDenied') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
                       >
                         <Star className={`h-3.5 w-3.5 ${page.isDefault ? 'fill-current' : ''}`} />
                       </button>
+                      {/* 이름 변경은 서버가 PATCH{name} 를 edit 인가로
+                          검사한다(spec.md §2.3) — can_edit 으로 게이팅한다. */}
                       <button
                         type="button"
                         onClick={() => startRename(page.id, page.name)}
-                        disabled={activeReadOnly}
-                        aria-disabled={activeReadOnly}
+                        disabled={!rowAccess.canEdit}
+                        aria-disabled={!rowAccess.canEdit}
+                        data-testid={`dashboard-rename-${page.id}`}
                         className={`shrink-0 p-0.5 transition-colors ${
-                          activeReadOnly
+                          !rowAccess.canEdit
                             ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                             : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                         }`}
-                        title={activeReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.header.rename')}
+                        title={!rowAccess.canEdit ? t('dashboard.gate.editDenied') : t('dashboard.header.rename')}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
+                      {/* 삭제는 서버가 DELETE 를 delete 인가로 검사한다
+                          (spec.md §2.3) — can_delete 로 게이팅한다. 활성
+                          대시보드를 지우면 M5 의 폴백 사슬이 착지점을 정한다. */}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteDashboard(page.id, page.name)}
+                        disabled={!rowAccess.canDelete}
+                        aria-disabled={!rowAccess.canDelete}
+                        data-testid={`dashboard-delete-${page.id}`}
+                        className={`shrink-0 p-0.5 transition-colors ${
+                          !rowAccess.canDelete
+                            ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
+                            : 'text-(--color-text-muted) hover:text-red-500'
+                        }`}
+                        title={!rowAccess.canDelete ? t('dashboard.gate.deleteDenied') : t('header.dashboard.delete')}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="border-t border-(--color-border-default)">
+                  {/* 생성은 전역 dashboard.create 판정이다(spec.md §2.7 E1).
+                      로컬 스토어가 아니라 서버 POST 로 만들고 서버가 발급한
+                      uid 를 그대로 쓴다 — uid 를 지어내면 서버 행과 어긋난다. */}
                   <button
                     type="button"
-                    onClick={() => { addDashboardPage(t('dashboard.header.newDashboardName')); setDashboardDropdownOpen(false); }}
-                    disabled={activeReadOnly}
-                    aria-disabled={activeReadOnly}
-                    title={activeReadOnly ? t('dashboard.scope.adminOnly') : undefined}
+                    onClick={() => {
+                      void createDashboardOnServer(t('dashboard.header.newDashboardName'));
+                      setDashboardDropdownOpen(false);
+                    }}
+                    disabled={!canCreate || isCreating}
+                    aria-disabled={!canCreate || isCreating}
+                    data-testid="dashboard-add"
+                    title={canCreate ? undefined : t('dashboard.gate.createDenied')}
                     className={`flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm transition-colors ${
-                      activeReadOnly
+                      !canCreate || isCreating
                         ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                         : 'text-blue-600 hover:bg-(--color-bg-elevated) dark:text-blue-400'
                     }`}
@@ -589,11 +658,17 @@ function LocalDashboardView() {
                 )}
               </div>
 
-              {/* 패널 추가 (Pencil: aSF19) */}
+              {/* 패널 추가 (Pencil: aSF19) — 편집 모드 진입 후 권한을 잃는
+                  경우(목록 재조회로 can_edit 이 false 로 바뀜)가 있으므로
+                  여기서도 판정한다(spec.md §2.11 은 패널 추가를 명시한다). */}
               <button
                 type="button"
                 onClick={() => navigate('/panels/new')}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
+                disabled={!activeAccess.canEdit}
+                aria-disabled={!activeAccess.canEdit}
+                data-testid="dashboard-add-panel"
+                title={activeAccess.canEdit ? undefined : t('dashboard.gate.editDenied')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default) disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Plus className="h-3.5 w-3.5" />
                 {t('dashboard.addPanel')}
@@ -695,15 +770,17 @@ function LocalDashboardView() {
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
 
-                {/* 편집 모드 진입 — 편집 권한이 없으면 비활성화 (spec.md §2.11) */}
+                {/* 레이아웃 편집 진입 — 활성 대시보드의 can_edit 게이트
+                    (spec.md §2.11 S2). 숨기지 않고 비활성 + 사유 툴팁이다. */}
                 <button
                   type="button"
                   onClick={() => setEditMode(true)}
-                  disabled={activeReadOnly}
-                  aria-disabled={activeReadOnly}
-                  title={activeReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.editLayout')}
+                  disabled={!activeAccess.canEdit}
+                  aria-disabled={!activeAccess.canEdit}
+                  data-testid="dashboard-edit-mode"
+                  title={activeAccess.canEdit ? t('dashboard.editLayout') : t('dashboard.gate.editDenied')}
                   className={`transition-colors ${
-                    activeReadOnly
+                    !activeAccess.canEdit
                       ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                       : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                   }`}
@@ -723,6 +800,23 @@ function LocalDashboardView() {
         {hasError && (
           <div className="mx-6 mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
             {t('dashboard.loadError')}
+          </div>
+        )}
+
+        {/* 편집 불가 안내 + 완화책 (spec.md §2.6 / AC-16).
+            비활성 컨트롤의 툴팁만으로는 "왜" 와 "어떻게 풀지" 가 전달되지 않는다.
+            권한은 요청 시점에 조회되므로(SPEC-AUTH-005 §4.3) 관리자가 역할에
+            권한을 더하면 **기존 토큰 그대로** 즉시 풀린다 — 재로그인을 안내하면
+            사용자가 불필요한 절차를 밟는다. */}
+        {!activeAccess.canEdit && (
+          <div
+            role="status"
+            data-testid="dashboard-readonly-notice"
+            className="mx-6 mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            <span className="font-medium">{t('dashboard.gate.readOnlyBadge')}</span>
+            {' — '}
+            {t('dashboard.gate.mitigation')}
           </div>
         )}
 
@@ -767,11 +861,13 @@ function LocalDashboardView() {
                 containerPadding: [0, 0],
               }}
               dragConfig={{
-                enabled: editMode,
+                // 레이아웃 편집도 can_edit 게이트를 탄다(spec.md §2.11) —
+                // 편집 중 권한을 잃으면 드래그가 즉시 멈춰야 한다.
+                enabled: editMode && activeAccess.canEdit,
                 handle: '.dashboard-drag-handle',
               }}
               resizeConfig={{
-                enabled: editMode,
+                enabled: editMode && activeAccess.canEdit,
                 handles: ['se'],
               }}
               onLayoutChange={(newLayout) => handleLayoutChange(newLayout as DashboardLayoutItem[])}
@@ -799,9 +895,11 @@ function LocalDashboardView() {
                         <button
                           type="button"
                           onClick={() => removePanel(panel.id)}
-                          className="rounded-full bg-red-500 p-0.5 text-white shadow transition-colors hover:bg-red-600"
+                          disabled={!activeAccess.canEdit}
+                          aria-disabled={!activeAccess.canEdit}
+                          className="rounded-full bg-red-500 p-0.5 text-white shadow transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
                           aria-label={t('dashboard.settings.deletePanelAria')}
-                          title={t('dashboard.settings.deletePanelAria')}
+                          title={activeAccess.canEdit ? t('dashboard.settings.deletePanelAria') : t('dashboard.gate.editDenied')}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>

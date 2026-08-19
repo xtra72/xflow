@@ -536,8 +536,19 @@
       "mine": "My Dashboard",
       "mineAria": "My dashboard",
       "readOnly": "Read-only (admin can edit)",
-      "adminOnly": "Only admins can edit",
       "syncing": "Syncing…"
+    },
+    "gate": {
+      "editDenied": "You do not have permission to edit this dashboard",
+      "grantDenied": "You do not have permission to change this dashboard's sharing settings",
+      "deleteDenied": "You do not have permission to delete this dashboard",
+      "createDenied": "You do not have permission to create dashboards",
+      "readOnlyBadge": "Read-only",
+      "mitigation": "Ask an administrator for dashboard edit permission. Once granted it takes effect right away \u2014 no need to sign in again.",
+      "createFailed": "Could not create the dashboard",
+      "renameFailed": "Could not rename the dashboard",
+      "defaultFailed": "Could not change the default dashboard",
+      "deleteFailed": "Could not delete the dashboard"
     },
     "header": {
       "newDashboardName": "New Dashboard",
