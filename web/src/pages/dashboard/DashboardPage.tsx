@@ -667,7 +667,9 @@ function LocalDashboardView() {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default) disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Plus className="h-3.5 w-3.5" />
-                {t('dashboard.addPanel')}
+                {/* dashboard.addPanel 은 하위 키를 가진 네임스페이스 객체이므로
+                    그대로 넘기면 번역이 잡히지 않고 키 문자열이 그대로 노출된다. */}
+                {t('dashboard.addPanel.title')}
               </button>
 
               {/* 취소 (Pencil: m5m4p) */}
