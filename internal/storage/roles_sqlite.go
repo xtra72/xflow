@@ -220,8 +220,8 @@ func InsertRole(ctx context.Context, db *sql.DB, name, description string, permi
 
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO roles(name, description, builtin, nav_migrated, created_at, updated_at)
-		VALUES (?, ?, 0, 1, ?, ?)
+		INSERT INTO roles(name, description, builtin, nav_migrated, dashboard_migrated, created_at, updated_at)
+		VALUES (?, ?, 0, 1, 1, ?, ?)
 	`, name, description, now, now)
 	if err != nil {
 		return fmt.Errorf("insert role %q: %w", name, err)

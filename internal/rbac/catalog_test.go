@@ -19,7 +19,7 @@ func TestPermissions_MatchesSpecTable(t *testing.T) {
 		"agent.read", "agent.create", "agent.update", "agent.delete", "agent.execute",
 		"device.read", "device.create", "device.update", "device.delete", "device.execute",
 		"flow.read", "flow.create", "flow.update", "flow.delete", "flow.execute",
-		"dashboard.read", "dashboard.update",
+		"dashboard.read", "dashboard.create", "dashboard.update", "dashboard.delete",
 		"node.read",
 		"schedule.read", "schedule.create", "schedule.update", "schedule.delete",
 		"monitoring.read",
@@ -31,9 +31,11 @@ func TestPermissions_MatchesSpecTable(t *testing.T) {
 		// SPEC-AUTH-006 E2: 메뉴 노출 축. 데이터 접근과 분리된 키다 —
 		// 대시보드 패널이 agent/device/flow 를 읽으므로 read 는 줘야 하는데,
 		// 같은 키로 메뉴까지 판정하면 "대시보드만 보이는 역할" 이 불가능해진다.
+		// nav.dashboard 는 '대시보드 관리' 메뉴 전용이다(SPEC-DASHBOARD-004 §2.5).
+		// 대시보드를 보는 사이드바 항목은 여전히 무권한이다.
 		"nav.flow", "nav.agent", "nav.device", "nav.monitoring",
 		"nav.schedule", "nav.node", "nav.remote", "nav.system",
-		"nav.user", "nav.role",
+		"nav.user", "nav.role", "nav.dashboard",
 	}
 	sort.Strings(want)
 
@@ -64,7 +66,9 @@ func TestIsValidPermission(t *testing.T) {
 		{"agent", false},
 		{"AGENT.READ", false},
 		{"node.create", false}, // node 는 read 만 정의됨
-		{"dashboard.delete", false},
+		{"dashboard.delete", true},
+		{"nav.dashboard", true},
+		{"dashboard.execute", false}, // dashboard 는 execute 를 정의하지 않는다
 		{"monitoring.update", false},
 	}
 	for _, tc := range tests {
@@ -115,7 +119,8 @@ func TestBuiltinRoles_Viewer(t *testing.T) {
 	assert.NotContains(t, viewer, "nav.user")
 	assert.NotContains(t, viewer, "nav.role")
 
-	assert.Len(t, viewer, 18, "viewer = 관리 제외 전 리소스 read(10) + 관리 제외 메뉴(8)")
+	// 메뉴 11종 중 viewer 는 관리 메뉴(user/role) 와 대시보드 관리 메뉴를 제외한 8종.
+	assert.Len(t, viewer, 18, "viewer = 관리 제외 전 리소스 read(10) + 메뉴(8)")
 }
 
 // TestBuiltinRoles_Editor 는 editor 권한 집합을 spec.md §2.1 editor 행과 대조한다.
@@ -218,4 +223,70 @@ func builtinByName(t *testing.T, name string) []string {
 	}
 	t.Fatalf("빌트인 역할 %q 를 찾을 수 없다", name)
 	return nil
+}
+
+// TestBuiltinRoles_DashboardPermissions 는 대시보드 엔티티 도입으로 추가된 키 3종의
+// 빌트인 역할 부여를 spec.md §2.5 표와 대조한다 (acceptance.md AC-09).
+//
+// admin=전량, editor=create+nav(삭제 제외), viewer=미부여. viewer 가 nav.dashboard 를
+// 얻으면 아무것도 할 수 없는 빈 관리 화면만 보게 되므로 파생에서 제외된다.
+func TestBuiltinRoles_DashboardPermissions(t *testing.T) {
+	tests := []struct {
+		role       string
+		wantHave   []string
+		wantAbsent []string
+	}{
+		{
+			role:     RoleAdmin,
+			wantHave: []string{"dashboard.create", "dashboard.delete", "nav.dashboard"},
+		},
+		{
+			role:       RoleEditor,
+			wantHave:   []string{"dashboard.create", "nav.dashboard"},
+			wantAbsent: []string{"dashboard.delete"},
+		},
+		{
+			role:       RoleViewer,
+			wantAbsent: []string{"dashboard.create", "dashboard.delete", "nav.dashboard"},
+		},
+	}
+	for _, tc := range tests {
+		perms := builtinByName(t, tc.role)
+		for _, p := range tc.wantHave {
+			assert.Containsf(t, perms, p, "%s 는 %q 를 보유해야 한다", tc.role, p)
+		}
+		for _, p := range tc.wantAbsent {
+			assert.NotContainsf(t, perms, p, "%s 는 %q 를 보유하면 안 된다", tc.role, p)
+		}
+	}
+}
+
+// TestPermissions_ContainsDashboardEntityKeys 는 카탈로그에 신규 키 3종이 존재하는지
+// 직접 확인한다. 이 키들이 없으면 이후 마일스톤의 라우트 권한 부착이 카탈로그
+// 검증에서 거부된다 (plan.md M1 배치 근거).
+func TestPermissions_ContainsDashboardEntityKeys(t *testing.T) {
+	all := Permissions()
+	for _, key := range []string{"dashboard.create", "dashboard.delete", "nav.dashboard"} {
+		assert.Containsf(t, all, key, "카탈로그에 %q 가 없다", key)
+		assert.Truef(t, IsValidPermission(key), "IsValidPermission(%q) 가 false 다", key)
+	}
+}
+
+// TestBuiltinRoles_ViewerExcludesDashboardNavOnly 는 viewer 의 nav 제외가
+// 대시보드 관리 메뉴에만 적용되고 다른 메뉴 파생은 그대로임을 고정한다.
+// 제외 규칙이 넓어지면 viewer 의 사이드바가 조용히 비어 간다.
+func TestBuiltinRoles_ViewerExcludesDashboardNavOnly(t *testing.T) {
+	viewer := builtinByName(t, RoleViewer)
+
+	assert.NotContains(t, viewer, "nav.dashboard")
+	// 대시보드 조회 자체는 유지된다 — 데이터 축과 메뉴 축은 별개다.
+	assert.Contains(t, viewer, "dashboard.read")
+
+	for _, key := range NavPermissions() {
+		menu := strings.TrimPrefix(key, ResourceNav+".")
+		if menu == ResourceUser || menu == ResourceRole || menu == ResourceDashboard {
+			continue
+		}
+		assert.Containsf(t, viewer, key, "viewer 가 메뉴 %q 를 잃었다", key)
+	}
 }

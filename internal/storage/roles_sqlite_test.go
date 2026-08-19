@@ -540,3 +540,186 @@ func TestInsertRole_IsNotNavMigrationTarget(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, perms, "nav.agent", "신규 역할에 nav 가 주입되었다")
 }
+
+// @SPEC:SPEC-DASHBOARD-004 (M1, spec.md §2.5, acceptance.md AC-09)
+
+// makeLegacyDashboardRole 는 대시보드 엔티티 도입 이전 역할을 재현한다 —
+// 지정한 권한만 보유하고 신규 키는 없으며 미이관 상태다.
+func makeLegacyDashboardRole(t *testing.T, ctx context.Context, db *sql.DB, name string, perms []string) {
+	t.Helper()
+	require.NoError(t, InsertRole(ctx, db, name, "", perms))
+	_, err := db.ExecContext(ctx,
+		`UPDATE roles SET dashboard_migrated = 0 WHERE name = ?`, name)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		DELETE FROM role_permissions
+		WHERE role_id = (SELECT id FROM roles WHERE name = ?)
+		  AND permission IN ('dashboard.create', 'dashboard.delete', 'nav.dashboard')`, name)
+	require.NoError(t, err)
+}
+
+// dashboardMigratedFlag 는 역할의 이관 표시값을 읽는다.
+func dashboardMigratedFlag(t *testing.T, ctx context.Context, db *sql.DB, name string) int {
+	t.Helper()
+	var flag int
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT dashboard_migrated FROM roles WHERE name = ?`, name).Scan(&flag))
+	return flag
+}
+
+// TestMigrateRoleDashboardPermissions_GrantsToEditableRole 는 read + update 를
+// 모두 보유한 역할이 create 와 nav.dashboard 를 받고 delete 는 받지 않음을 고정한다.
+//
+// delete 를 함께 주면 이관이 사용자 몰래 삭제 권한을 늘린다 — spec.md §2.5 가
+// 명시적으로 금지하는 동작이다.
+func TestMigrateRoleDashboardPermissions_GrantsToEditableRole(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	makeLegacyDashboardRole(t, ctx, db, "legacy-editor",
+		[]string{"dashboard.read", "dashboard.update", "agent.read"})
+
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+
+	perms, err := ListRolePermissions(ctx, db, "legacy-editor")
+	require.NoError(t, err)
+	assert.Contains(t, perms, "dashboard.create", "편집 가능 역할이 create 를 받지 못했다")
+	assert.Contains(t, perms, "nav.dashboard", "편집 가능 역할이 관리 메뉴를 받지 못했다")
+	assert.NotContains(t, perms, "dashboard.delete", "이관이 삭제 권한을 조용히 늘렸다")
+	assert.Equal(t, 1, dashboardMigratedFlag(t, ctx, db, "legacy-editor"))
+}
+
+// TestMigrateRoleDashboardPermissions_SkipsReadOnlyRole 는 read 만 보유한 역할이
+// 아무것도 받지 않음을 고정한다. viewer 계열 역할이 여기에 해당한다.
+func TestMigrateRoleDashboardPermissions_SkipsReadOnlyRole(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	makeLegacyDashboardRole(t, ctx, db, "legacy-viewer",
+		[]string{"dashboard.read", "agent.read"})
+	// update 만 보유한 경계 케이스도 함께 확인한다 (둘 다 있어야 한다는 AND 조건).
+	makeLegacyDashboardRole(t, ctx, db, "legacy-odd",
+		[]string{"dashboard.update", "agent.read"})
+
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+
+	for _, name := range []string{"legacy-viewer", "legacy-odd"} {
+		perms, err := ListRolePermissions(ctx, db, name)
+		require.NoError(t, err)
+		assert.NotContainsf(t, perms, "dashboard.create", "%s 가 create 를 받았다", name)
+		assert.NotContainsf(t, perms, "dashboard.delete", "%s 가 delete 를 받았다", name)
+		assert.NotContainsf(t, perms, "nav.dashboard", "%s 가 관리 메뉴를 받았다", name)
+		assert.Equalf(t, 1, dashboardMigratedFlag(t, ctx, db, name),
+			"%s 가 이관 완료로 표시되지 않아 다음 부팅에 재시도된다", name)
+	}
+}
+
+// TestMigrateRoleDashboardPermissions_Idempotent 는 3회 연속 실행이 행을 늘리지
+// 않고, 이관 표시가 한 번만 세워지며, 이후 관리자의 제거가 유지됨을 고정한다.
+//
+// 이관이 반복되면 "대시보드 관리 메뉴를 끈 역할" 을 만들 수 없다 — 껐다가
+// 재부팅하면 다시 채워지기 때문이다 (migrateRoleNavPermissions 와 같은 이유).
+func TestMigrateRoleDashboardPermissions_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	makeLegacyDashboardRole(t, ctx, db, "legacy-editor",
+		[]string{"dashboard.read", "dashboard.update"})
+
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+	first, err := ListRolePermissions(ctx, db, "legacy-editor")
+	require.NoError(t, err)
+
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+
+	after, err := ListRolePermissions(ctx, db, "legacy-editor")
+	require.NoError(t, err)
+	assert.Equal(t, first, after, "재실행이 권한 집합을 바꿨다")
+
+	// 중복 행이 생기지 않았는지 직접 확인한다 (복합 PK 가 있어도 계약으로 고정).
+	var rowCount int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM role_permissions
+		WHERE role_id = (SELECT id FROM roles WHERE name = 'legacy-editor')
+	`).Scan(&rowCount))
+	assert.Equal(t, len(after), rowCount, "권한 행이 중복 삽입되었다")
+	assert.Equal(t, 1, dashboardMigratedFlag(t, ctx, db, "legacy-editor"))
+
+	// 관리자가 관리 메뉴를 끈다 → 재실행이 되돌리지 않아야 한다.
+	require.NoError(t, UpdateRolePermissions(ctx, db, "legacy-editor",
+		[]string{"dashboard.read", "dashboard.update", "dashboard.create"}))
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+
+	final, err := ListRolePermissions(ctx, db, "legacy-editor")
+	require.NoError(t, err)
+	assert.NotContains(t, final, "nav.dashboard", "이관이 반복되어 관리자의 설정이 되돌아갔다")
+}
+
+// TestInsertRole_IsNotDashboardMigrationTarget 은 새로 만든 역할이 이관 대상이
+// 아님을 확인한다. 관리자가 create 없이 만든 역할에 시스템이 create 를 주입하면
+// 안 된다 (TestInsertRole_IsNotNavMigrationTarget 와 같은 경계).
+func TestInsertRole_IsNotDashboardMigrationTarget(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	require.NoError(t, InsertRole(ctx, db, "kiosk", "",
+		[]string{"dashboard.read", "dashboard.update"}))
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+
+	perms, err := ListRolePermissions(ctx, db, "kiosk")
+	require.NoError(t, err)
+	assert.NotContains(t, perms, "dashboard.create", "신규 역할에 create 가 주입되었다")
+	assert.NotContains(t, perms, "nav.dashboard", "신규 역할에 관리 메뉴가 주입되었다")
+}
+
+// TestMigrateRoleDashboardPermissions_BuiltinRolesMatchSeed 는 이관이 빌트인 시드와
+// 충돌하지 않음을 고정한다 (spec.md §2.5 표, acceptance.md AC-09).
+//
+// 신규 설치는 시드가 곧바로 코드 정의를 채우고, 업그레이드는 시드(admin 되맞춤) 후
+// 이관이 editor 만 끌어올린다. 두 경로의 결과가 같아야 한다.
+func TestMigrateRoleDashboardPermissions_BuiltinRolesMatchSeed(t *testing.T) {
+	ctx := context.Background()
+	db, _ := setupRolesDB(t)
+
+	// 신규 설치 경로 — OpenSQLiteDB 가 이미 시드 + 이관을 마쳤다.
+	assertBuiltinDashboardMatrix(t, ctx, db)
+
+	// 업그레이드 경로 재현 — 신규 키를 걷어내고 미이관 상태로 되돌린다.
+	_, err := db.ExecContext(ctx, `
+		DELETE FROM role_permissions
+		WHERE permission IN ('dashboard.create', 'dashboard.delete', 'nav.dashboard')`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `UPDATE roles SET dashboard_migrated = 0`)
+	require.NoError(t, err)
+
+	require.NoError(t, seedBuiltinRoles(ctx, db))
+	require.NoError(t, migrateRoleDashboardPermissions(ctx, db))
+
+	assertBuiltinDashboardMatrix(t, ctx, db)
+}
+
+// assertBuiltinDashboardMatrix 는 빌트인 역할 3종의 신규 키 보유를 spec.md §2.5
+// 표와 대조한다.
+func assertBuiltinDashboardMatrix(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	tests := []struct {
+		role       string
+		wantHave   []string
+		wantAbsent []string
+	}{
+		{role: "admin", wantHave: []string{"dashboard.create", "dashboard.delete", "nav.dashboard"}},
+		{role: "editor", wantHave: []string{"dashboard.create", "nav.dashboard"}, wantAbsent: []string{"dashboard.delete"}},
+		{role: "viewer", wantAbsent: []string{"dashboard.create", "dashboard.delete", "nav.dashboard"}},
+	}
+	for _, tc := range tests {
+		perms, err := ListRolePermissions(ctx, db, tc.role)
+		require.NoError(t, err)
+		for _, p := range tc.wantHave {
+			assert.Containsf(t, perms, p, "%s 는 %q 를 보유해야 한다", tc.role, p)
+		}
+		for _, p := range tc.wantAbsent {
+			assert.NotContainsf(t, perms, p, "%s 는 %q 를 보유하면 안 된다", tc.role, p)
+		}
+	}
+}

@@ -72,8 +72,8 @@ var resourceActions = []struct {
 	{ResourceDevice, []string{ActionRead, ActionCreate, ActionUpdate, ActionDelete, ActionExecute}},
 	// execute = 배포/시작/정지
 	{ResourceFlow, []string{ActionRead, ActionCreate, ActionUpdate, ActionDelete, ActionExecute}},
-	// 패널 레이아웃 저장
-	{ResourceDashboard, []string{ActionRead, ActionUpdate}},
+	// 대시보드 엔티티 CRUD (create/delete 는 SPEC-DASHBOARD-004 §2.5)
+	{ResourceDashboard, []string{ActionRead, ActionCreate, ActionUpdate, ActionDelete}},
 	// 노드 타입 카탈로그
 	{ResourceNode, []string{ActionRead}},
 	{ResourceSchedule, []string{ActionRead, ActionCreate, ActionUpdate, ActionDelete}},
@@ -90,12 +90,14 @@ var resourceActions = []struct {
 	// 역할 관리
 	{ResourceRole, []string{ActionRead, ActionCreate, ActionUpdate, ActionDelete}},
 	// 메뉴 노출 (액션 자리 = 메뉴 식별자, 대응 데이터 리소스와 이름이 같다).
-	// 대시보드는 인증만으로 보이므로 키가 없다 — 권한 0개 사용자도 빈 사이드바를
-	// 보지 않아야 한다(SPEC-AUTH-006 §2.3).
+	//
+	// nav.dashboard 는 '대시보드 관리' 메뉴 전용이다(SPEC-DASHBOARD-004 §2.5).
+	// 대시보드를 *보는* 사이드바 항목은 여전히 권한을 요구하지 않는다 — 권한 0개
+	// 사용자도 빈 사이드바를 보지 않아야 한다(SPEC-AUTH-006 §2.3).
 	{ResourceNav, []string{
 		ResourceFlow, ResourceAgent, ResourceDevice, ResourceMonitoring,
 		ResourceSchedule, ResourceNode, ResourceRemote, ResourceSystem,
-		ResourceUser, ResourceRole,
+		ResourceUser, ResourceRole, ResourceDashboard,
 	}},
 }
 
@@ -109,6 +111,16 @@ var resourceActions = []struct {
 var managementResources = map[string]bool{
 	ResourceUser: true,
 	ResourceRole: true,
+}
+
+// viewerExcludedNavMenus 는 파생 규칙(대응 데이터 read 보유 역할에 nav.<menu> 부여)
+// 에서 viewer 만 제외되는 메뉴이다 (SPEC-DASHBOARD-004 §2.5).
+//
+// viewer 는 dashboard.read 를 보유하므로 파생을 그대로 적용하면 nav.dashboard 를
+// 얻는다. 그러나 viewer 는 생성·편집·삭제를 전혀 할 수 없어 아무것도 못 하는 빈
+// 관리 화면만 보게 된다. 관리 메뉴는 관리 능력이 있는 역할에만 노출한다.
+var viewerExcludedNavMenus = map[string]bool{
+	ResourceDashboard: true,
 }
 
 // editorWritableResources 는 editor 가 쓰기 액션을 수행할 수 있는 리소스이다
@@ -158,7 +170,9 @@ func init() {
 			// 관리 메뉴(user/role)는 editor/viewer 에서 제외한다.
 			if ra.Resource == ResourceNav {
 				if !managementResources[action] {
-					viewerPermissions = append(viewerPermissions, key)
+					if !viewerExcludedNavMenus[action] {
+						viewerPermissions = append(viewerPermissions, key)
+					}
 					editorPermissions = append(editorPermissions, key)
 				}
 				continue

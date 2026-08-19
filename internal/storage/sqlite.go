@@ -275,11 +275,24 @@ func migrateRolesSchema(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE roles ADD COLUMN nav_migrated INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
+	// dashboard_migrated: 이 역할이 대시보드 엔티티 축으로 한 번 이관되었는지 표시한다.
+	//
+	// nav_migrated 를 재사용할 수 없다. 기존 역할은 이미 nav_migrated = 1 로
+	// 표시되어 있어 migrateRoleNavPermissions 가 재실행되지 않으므로, 같은 표시를
+	// 공유하면 대시보드 이관이 아예 일어나지 않는다. 이관 단위가 다르면 표시도
+	// 따로 둔다 (spec.md §4.6).
+	if err := addColumnIfMissing(ctx, db, "roles", "dashboard_migrated",
+		`ALTER TABLE roles ADD COLUMN dashboard_migrated INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
 
 	if err := seedBuiltinRoles(ctx, db); err != nil {
 		return err
 	}
-	return migrateRoleNavPermissions(ctx, db)
+	if err := migrateRoleNavPermissions(ctx, db); err != nil {
+		return err
+	}
+	return migrateRoleDashboardPermissions(ctx, db)
 }
 
 // addColumnIfMissing 은 컬럼이 없을 때만 ALTER 를 수행한다 (멱등).
@@ -377,6 +390,88 @@ func migrateRoleNavPermissions(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// migrateRoleDashboardPermissions 는 대시보드 엔티티 도입 이전 역할에
+// dashboard.create 와 nav.dashboard 를 1회 부여한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M1, spec.md §2.5, acceptance.md AC-09)
+//
+// 부여 기준은 그 역할이 이미 보유한 대시보드 편집 능력이다 — dashboard.read 와
+// dashboard.update 를 **모두** 가진 역할은 이관 전에도 대시보드를 만들고 고칠 수
+// 있었다. 그 능력을 신규 키로 옮겨 주면 이관 전후로 할 수 있는 일이 같아지므로
+// 업그레이드가 사용자에게 보이지 않는다 (migrateRoleNavPermissions 와 같은 취지).
+//
+// dashboard.delete 는 부여하지 않는다. 삭제 권한을 조용히 늘리는 것은 "보이지 않는
+// 업그레이드" 의 범위를 벗어난다 — 관리자가 역할 관리 화면에서 명시적으로 준다.
+//
+// 1회성이다. 이관을 마치면 dashboard_migrated = 1 로 표시하고 다시 건드리지 않으므로,
+// 이후 관리자가 해당 키를 제거하면 그 상태가 그대로 유지된다.
+func migrateRoleDashboardPermissions(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM roles WHERE dashboard_migrated = 0`)
+	if err != nil {
+		return fmt.Errorf("list dashboard-unmigrated roles: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan role id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate dashboard-unmigrated roles: %w", err)
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return nil
+	}
+
+	granted := []string{
+		rbac.ResourceDashboard + "." + rbac.ActionCreate,
+		rbac.ResourceNav + "." + rbac.ResourceDashboard,
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin dashboard migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, id := range ids {
+		existing, err := listPermissionsByRoleIDTx(ctx, tx, id)
+		if err != nil {
+			return fmt.Errorf("read permissions of role %d: %w", id, err)
+		}
+		held := make(map[string]struct{}, len(existing))
+		for _, p := range existing {
+			held[p] = struct{}{}
+		}
+		_, hasRead := held[rbac.ResourceDashboard+"."+rbac.ActionRead]
+		_, hasUpdate := held[rbac.ResourceDashboard+"."+rbac.ActionUpdate]
+		if hasRead && hasUpdate {
+			for _, perm := range granted {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+				`, id, perm); err != nil {
+					return fmt.Errorf("grant %q to role %d: %w", perm, id, err)
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE roles SET dashboard_migrated = 1 WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("mark role %d dashboard-migrated: %w", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit dashboard migration: %w", err)
+	}
+	return nil
+}
+
 // seedBuiltinRoles 는 빌트인 역할과 권한을 멱등하게 시드한다 (builtin = 1).
 func seedBuiltinRoles(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
@@ -388,8 +483,8 @@ func seedBuiltinRoles(ctx context.Context, db *sql.DB) error {
 	now := time.Now().UnixMilli()
 	for _, role := range rbac.BuiltinRoles() {
 		res, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO roles(name, description, builtin, nav_migrated, created_at, updated_at)
-			VALUES (?, ?, 1, 1, ?, ?)
+			INSERT OR IGNORE INTO roles(name, description, builtin, nav_migrated, dashboard_migrated, created_at, updated_at)
+			VALUES (?, ?, 1, 1, 1, ?, ?)
 		`, role.Name, role.Description, now, now)
 		if err != nil {
 			return fmt.Errorf("seed role %q: %w", role.Name, err)
