@@ -1100,7 +1100,8 @@
     },
     "sync": {
       "migrationToast": "With this update (v0.2.0), dashboard configuration is now stored on the server. Your existing local configuration will be reset. Administrators should reconfigure shared dashboards.",
-      "forbiddenShared": "You do not have permission to edit the shared dashboard.",
+      "forbiddenDashboard": "You do not have permission to edit this dashboard. Ask an administrator to grant dashboard edit permission.",
+      "dashboardRemoved": "The dashboard was deleted or is no longer accessible; switched to another dashboard.",
       "conflictResolved": "Changes from another browser were detected and synchronized.",
       "networkError": "Failed to save the dashboard. Please try again shortly."
     }

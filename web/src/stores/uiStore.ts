@@ -1,19 +1,22 @@
 // UI 상태 관리 - 선택적 localStorage 영속화 포함.
 //
-// SPEC-DASHBOARD-001 v0.2.0:
-// - 대시보드 구성(`dashboardPages`, `activeDashboardId`, 그리드 설정,
-//   `deviceGridLayout`) 은 더 이상 localStorage 에 영속화되지 않으며,
-//   `sharedSnapshot` / `mineSnapshot` 두 슬롯에서 서버 snapshot 으로 관리된다.
-// - 기존 컴포넌트가 직접 접근하는 legacy 필드(`dashboardPages` 등) 는
-//   읽기 호환을 위해 상태로 유지하되, 활성 스코프(`activeDashboardScope`)
-//   의 snapshot.payload 와 mutation 시 동기 갱신된다.
-// - v0.2.0 첫 부팅 시 1회만 기존 localStorage 의 대시보드 키들을 제거하고
-//   useDashboardSync 가 토스트로 안내한다 (`migrationToastPendingFlag()` 참조).
+// SPEC-DASHBOARD-004 (M5):
+// - 서버 상태 축은 **`dashboards: Dashboard[]` 하나**다. 구 모델의 스코프 2슬롯
+//   (공유 스냅샷 · 개인 스냅샷과 그 활성 스코프 키)은 제거되었다 — 대시보드가 1급
+//   엔티티가 되면서 "공유 묶음 / 내 묶음" 이라는 축 자체가 사라졌다
+//   (spec.md §2.14 UB2 #1).
+// - `dashboards` 는 목록 API 가 주는 **메타**(uid·name·version·can_edit 등)만 담는다.
+//   본문(패널·레이아웃)은 `dashboardPages` 가 uid 를 키로 들고 있으며, 활성 대시보드
+//   1장을 GET 할 때 채워진다. 두 배열은 `setDashboards` 가 uid 기준으로 정렬을 맞춘다.
+// - `activeDashboardId` 는 이제 **활성 대시보드의 uid** 다. 서버의
+//   `/dashboard-state.active_dashboard_uid` 와 대응한다.
+// - 대시보드 구성은 localStorage 에 영속화되지 않는다. v0.2.0 첫 부팅 시 1회만 기존
+//   localStorage 의 대시보드 키들을 제거하고 useDashboardSync 가 토스트로 안내한다.
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import type { DashboardScope, DashboardSnapshot } from '@/types/dashboard';
+import type { Dashboard, DashboardContent, DashboardDetail } from '@/types/dashboard';
 import { generateUUID } from '@/lib/utils/uuid';
 // SPEC-HEATMAP-PANEL-001: 히트맵 패널 기본 config 빌더(파서와 기본값 일치 보장).
 import { buildDefaultHeatmapConfig } from '@/pages/dashboard/panels/heatmap/heatmapConfig';
@@ -47,9 +50,6 @@ const LEGACY_DASHBOARD_KEYS: readonly string[] = [
 
 /** v0.2 첫 부팅에서 마이그레이션이 실제로 수행되었음을 useDashboardSync 에 알리는 모듈 플래그. */
 let migrationToastPending = false;
-
-/** 활성 스코프 sessionStorage 키 (탭 새로고침 시 유지). */
-const ACTIVE_SCOPE_SESSION_KEY = 'xflow-ui:active-dashboard-scope';
 
 /**
  * v0.2 블랭크-슬레이트 마이그레이션을 시도한다.
@@ -116,32 +116,6 @@ export function consumeMigrationToastFlag(): boolean {
     return true;
   }
   return false;
-}
-
-/** 활성 스코프를 sessionStorage 에서 읽는다. 없거나 잘못된 값이면 null. */
-export function readActiveScopeFromSession(): DashboardScope | 'shared' | 'mine' | null {
-  if (typeof globalThis === 'undefined' || typeof globalThis.sessionStorage === 'undefined') {
-    return null;
-  }
-  try {
-    const v = globalThis.sessionStorage.getItem(ACTIVE_SCOPE_SESSION_KEY);
-    if (v === 'shared' || v === 'mine') return v;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** 활성 스코프를 sessionStorage 에 기록한다. */
-function writeActiveScopeToSession(scope: 'shared' | 'mine'): void {
-  if (typeof globalThis === 'undefined' || typeof globalThis.sessionStorage === 'undefined') {
-    return;
-  }
-  try {
-    globalThis.sessionStorage.setItem(ACTIVE_SCOPE_SESSION_KEY, scope);
-  } catch {
-    // 무시
-  }
 }
 
 // 모듈 로드 시 1회 마이그레이션 실행 (테스트 환경에서 localStorage 가 없으면 no-op).
@@ -550,9 +524,14 @@ interface UIState {
    * (SPEC-REMOTE-001 M11.4). 'fixed' 는 노드 해상도 고정 캔버스를 사용한다.
    */
   remoteDashboardRenderMode: RemoteDashboardRenderMode;
-  /** 멀티-대시보드 페이지 목록 — 활성 스코프 snapshot.payload 와 동기. */
+  /**
+   * 대시보드 본문 목록 — `dashboards` 와 uid 기준으로 1:1 대응한다.
+   *
+   * `panels` / `layout` 은 그 대시보드를 GET 하기 전까지 빈 배열이다. 목록 API 는
+   * payload 를 주지 않기 때문이다(spec.md §2.3).
+   */
   dashboardPages: DashboardPageConfig[];
-  /** 현재 활성 대시보드 페이지 ID — 활성 스코프 snapshot.payload 와 동기. */
+  /** 활성 대시보드의 uid. 접근 가능한 대시보드가 0장이면 빈 문자열. */
   activeDashboardId: string;
   /** 대시보드 편집 모드 (비영속) */
   dashboardEditMode: boolean;
@@ -584,14 +563,15 @@ interface UIState {
   flowDisplaySettings: Record<string, FlowDisplaySettings>;
   notifications: Notification[];
 
-  // ---- SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 슬롯 ----
+  // ---- SPEC-DASHBOARD-004: 서버 상태 단일 축 ----
 
-  /** 공유(global) 대시보드 snapshot. 부팅 GET 404 시 version=0 의 기본 snapshot. */
-  sharedSnapshot: DashboardSnapshot | null;
-  /** 본인(user) 대시보드 snapshot. */
-  mineSnapshot: DashboardSnapshot | null;
-  /** 활성 스코프. UI 탭 ("공유" / "내 대시보드") 와 1:1. */
-  activeDashboardScope: 'shared' | 'mine';
+  /**
+   * 요청자가 접근 가능한 대시보드 메타 목록 (`GET /api/v1/dashboards`).
+   *
+   * 인가 판정(`can_edit` 등)은 서버가 실어 보낸 값을 그대로 쓴다 — 프론트에서
+   * 재계산하면 규칙이 두 곳에 생겨 한쪽만 갱신된다(spec.md §2.3).
+   */
+  dashboards: Dashboard[];
 }
 
 interface UIActions {
@@ -646,118 +626,73 @@ interface UIActions {
   dismissNotification: (id: string) => void;
   clearNotifications: () => void;
 
-  // ---- SPEC-DASHBOARD-001 v0.2.0: snapshot 슬롯 액션 ----
+  // ---- SPEC-DASHBOARD-004: 대시보드 단일 축 액션 ----
 
   /**
-   * 공유(global) snapshot 을 교체한다. 활성 스코프가 'shared' 이면 legacy 필드
-   * (dashboardPages 등) 도 함께 sync 된다.
+   * 목록 API 결과로 대시보드 축을 교체한다.
    *
-   * @param opts.fromServer 서버 응답으로 인한 적용임을 표시 (useDashboardSync 가 사용).
+   * 이미 본문을 받아둔 대시보드의 `panels` / `layout` 은 uid 기준으로 보존한다 —
+   * 목록 재조회(권한 상실·삭제 복구)가 편집 중인 본문을 지워서는 안 된다.
+   * 목록에서 사라진 대시보드는 본문도 함께 버린다.
    */
-  setSharedSnapshot: (snapshot: DashboardSnapshot | null, opts?: { fromServer?: boolean }) => void;
+  setDashboards: (dashboards: Dashboard[]) => void;
 
-  /** 본인(user) snapshot 을 교체한다. 활성 스코프가 'mine' 이면 legacy 필드 sync. */
-  setMineSnapshot: (snapshot: DashboardSnapshot | null, opts?: { fromServer?: boolean }) => void;
+  /**
+   * 단건 조회·저장 응답을 반영한다 (메타 + 본문).
+   *
+   * 활성 대시보드이면 그 대시보드의 그리드 설정 3종도 함께 적용한다 — 그리드 설정은
+   * 대시보드마다 다르므로(spec.md §2.1) 전환 시 이전 값이 남아서는 안 된다.
+   */
+  applyDashboardDetail: (detail: DashboardDetail) => void;
 
-  /** 활성 스코프를 변경한다 — 해당 snapshot.payload 를 legacy 필드로 복사. sessionStorage 영속. */
-  setActiveDashboardScope: (scope: 'shared' | 'mine') => void;
+  /**
+   * 저장 응답의 메타(특히 `version`)만 반영한다.
+   *
+   * 본문을 함께 덮지 않는 이유: PUT 이 비행 중일 때 사용자가 가한 변경을 서버
+   * 에코가 되돌려버리기 때문이다. 보낸 본문은 이미 로컬에 있으므로 되받을 필요가 없다.
+   */
+  applyDashboardMeta: (meta: Dashboard) => void;
 }
 
 let notificationCounter = 0;
 
-/** snapshot.payload 를 legacy state 필드 형태로 투영한다 (snapshot → legacy sync). */
-function projectPayloadToLegacy(payload: import('@/types/dashboard').DashboardPayload): Partial<UIState> {
-  return {
-    dashboardPages: payload.dashboardPages,
-    activeDashboardId: payload.activeDashboardId,
-    dashboardGridCols: payload.dashboardGridCols,
-    dashboardShowGridLines: payload.dashboardShowGridLines,
-    dashboardRefreshInterval: payload.dashboardRefreshInterval,
-    deviceGridLayout: payload.deviceGridLayout,
-  };
-}
-
-/** 현재 store 상태에서 활성 페이로드(서버 PUT 형태) 를 모은다 (legacy → payload). */
-export function collectActivePayload(
-  state: UIState,
-): import('@/types/dashboard').DashboardPayload {
-  return {
-    dashboardPages: state.dashboardPages,
-    activeDashboardId: state.activeDashboardId,
-    dashboardGridCols: state.dashboardGridCols,
-    dashboardShowGridLines: state.dashboardShowGridLines,
-    dashboardRefreshInterval: state.dashboardRefreshInterval,
-    deviceGridLayout: state.deviceGridLayout,
-  };
-}
-
-/** 활성 스코프의 snapshot 을 반환한다 (없으면 null). */
-export function getActiveSnapshot(state: UIState): DashboardSnapshot | null {
-  return state.activeDashboardScope === 'shared' ? state.sharedSnapshot : state.mineSnapshot;
-}
-
-/** 활성 스코프의 dashboardPages 를 반환 (snapshot 우선, fallback: state.dashboardPages, 최후: DEFAULT). */
-export function getActiveDashboardPages(state: UIState): DashboardPageConfig[] {
-  const snap = getActiveSnapshot(state);
-  if (snap) return snap.payload.dashboardPages;
-  if (state.dashboardPages.length > 0) return state.dashboardPages;
-  return [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }];
-}
-
-/** 빌트인 기본 페이로드 (서버 GET 404 시 fallback 용). */
-export function buildDefaultDashboardPayload(): import('@/types/dashboard').DashboardPayload {
-  return {
-    dashboardPages: [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }],
-    activeDashboardId: 'default',
-    dashboardGridCols: 10,
-    dashboardShowGridLines: true,
-    dashboardRefreshInterval: 10,
-    deviceGridLayout: {},
-  };
-}
-
-/** 빌트인 기본 snapshot (version=0 = "서버에 아직 없음" 의 marker). */
-export function buildDefaultSnapshot(
-  scope: 'global' | 'user',
-  owner: string | null,
-): DashboardSnapshot {
-  return {
-    scope,
-    owner,
-    version: 0,
-    updatedAt: 0,
-    payload: buildDefaultDashboardPayload(),
-  };
-}
+/** 대시보드 그리드 설정 기본값 — 서버 payload 가 값을 생략했을 때 쓴다. */
+const DEFAULT_GRID_COLS = 10;
+const DEFAULT_SHOW_GRID_LINES = true;
+const DEFAULT_REFRESH_INTERVAL = 10;
 
 /**
- * legacy 필드 변경 (`dashboardPages` 등) 을 활성 스코프 snapshot.payload 로 mirror 한다.
+ * 활성 대시보드 1장의 본문(서버 PUT 형태)을 모은다.
  *
- * - 활성 snapshot 이 없으면 빌트인 기본값을 기반으로 새 snapshot (version=0) 을 만든다.
- * - version/updatedAt 은 그대로 둔다 — 서버 PUT 응답으로 갱신될 예정.
+ * 구 모델의 `collectActivePayload` 를 대체한다 — 전송 단위가 "묶음 전체" 에서
+ * "대시보드 1장" 으로 바뀌었으므로 `dashboardPages` 배열도, 사용자 UI 상태
+ * (`activeDashboardId` · `deviceGridLayout`) 도 여기에 포함되지 않는다(spec.md §2.1).
+ * 활성 대시보드가 없으면 null.
  */
-function mirrorLegacyToActiveSnapshot(
-  prev: UIState,
-  patch: Partial<UIState>,
-): Partial<UIState> {
-  // mutation 결과를 적용한 가상 state 를 만들어 payload 를 추출한다.
-  const merged: UIState = { ...prev, ...patch };
-  const payload = collectActivePayload(merged);
-  const active = merged.activeDashboardScope;
+export function collectActiveDashboardContent(state: UIState): DashboardContent | null {
+  const page = state.dashboardPages.find((p) => p.id === state.activeDashboardId);
+  if (!page) return null;
+  return {
+    panels: page.panels,
+    layout: page.layout,
+    gridCols: state.dashboardGridCols,
+    showGridLines: state.dashboardShowGridLines,
+    refreshInterval: state.dashboardRefreshInterval,
+  };
+}
 
-  if (active === 'shared') {
-    const base = merged.sharedSnapshot ?? buildDefaultSnapshot('global', null);
-    return {
-      ...patch,
-      sharedSnapshot: { ...base, payload },
-    };
-  } else {
-    const base = merged.mineSnapshot ?? buildDefaultSnapshot('user', null);
-    return {
-      ...patch,
-      mineSnapshot: { ...base, payload },
-    };
-  }
+/** 대시보드 메타에서 본문 페이지 항목을 만든다(기존 본문이 있으면 승계). */
+function toDashboardPage(
+  meta: Pick<Dashboard, 'uid' | 'name' | 'is_default'>,
+  prev?: DashboardPageConfig,
+): DashboardPageConfig {
+  return {
+    id: meta.uid,
+    name: meta.name,
+    isDefault: meta.is_default,
+    panels: prev?.panels ?? [],
+    layout: prev?.layout ?? [],
+  };
 }
 
 /** 활성 대시보드 페이지를 찾는 헬퍼 */
@@ -801,10 +736,10 @@ export const useUIStore = create<UIState & UIActions>()(
       flowDisplaySettings: {},
       notifications: [],
 
-      // v0.2.0: snapshot 슬롯 — sessionStorage 우선, 없으면 'shared' 기본.
-      sharedSnapshot: null,
-      mineSnapshot: null,
-      activeDashboardScope: (readActiveScopeFromSession() ?? 'shared') as 'shared' | 'mine',
+      // SPEC-DASHBOARD-004: 서버 목록이 도착하기 전까지는 빈 축이다. 위의 기본
+      // dashboardPages 1장은 부팅 전 렌더용 자리표시자이며, setDashboards 가
+      // 목록으로 통째로 교체한다.
+      dashboards: [],
 
       // ---- Actions ----
 
@@ -827,7 +762,7 @@ export const useUIStore = create<UIState & UIActions>()(
 
       // 대시보드 전역 설정
       setDashboardRefreshInterval: (seconds) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { dashboardRefreshInterval: seconds })),
+        set({ dashboardRefreshInterval: seconds }),
 
       setDashboardEditMode: (on) =>
         set({ dashboardEditMode: on }),
@@ -836,14 +771,10 @@ export const useUIStore = create<UIState & UIActions>()(
         set({ remoteDashboardRenderMode: mode }),
 
       setDashboardGridCols: (cols) =>
-        set((state) =>
-          mirrorLegacyToActiveSnapshot(state, {
-            dashboardGridCols: Math.max(4, Math.min(100, cols)),
-          }),
-        ),
+        set({ dashboardGridCols: Math.max(4, Math.min(100, cols)) }),
 
       setDashboardShowGridLines: (show) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { dashboardShowGridLines: show })),
+        set({ dashboardShowGridLines: show }),
 
       // 대시보드 페이지 CRUD
 
@@ -856,10 +787,10 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: [],
             layout: [],
           };
-          return mirrorLegacyToActiveSnapshot(state, {
+          return {
             dashboardPages: [...state.dashboardPages, newPage],
             activeDashboardId: newPage.id,
-          });
+          };
         }),
 
       removeDashboardPage: (pageId) =>
@@ -884,33 +815,29 @@ export const useUIStore = create<UIState & UIActions>()(
             newActiveId = defaultPage ? defaultPage.id : pages[0]!.id;
           }
 
-          return mirrorLegacyToActiveSnapshot(state, {
+          return {
             dashboardPages: pages,
             activeDashboardId: newActiveId,
-          });
+          };
         }),
 
       renameDashboardPage: (pageId, name) =>
-        set((state) =>
-          mirrorLegacyToActiveSnapshot(state, {
-            dashboardPages: state.dashboardPages.map((p) =>
-              p.id === pageId ? { ...p, name } : p,
-            ),
-          }),
-        ),
+        set((state) => ({
+          dashboardPages: state.dashboardPages.map((p) =>
+            p.id === pageId ? { ...p, name } : p,
+          ),
+        })),
 
       setDefaultDashboardPage: (pageId) =>
-        set((state) =>
-          mirrorLegacyToActiveSnapshot(state, {
-            dashboardPages: state.dashboardPages.map((p) => ({
-              ...p,
-              isDefault: p.id === pageId,
-            })),
-          }),
-        ),
+        set((state) => ({
+          dashboardPages: state.dashboardPages.map((p) => ({
+            ...p,
+            isDefault: p.id === pageId,
+          })),
+        })),
 
       setActiveDashboard: (pageId) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { activeDashboardId: pageId })),
+        set({ activeDashboardId: pageId }),
 
       // 패널 CRUD (활성 대시보드 대상)
 
@@ -931,7 +858,7 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: [...page.panels, newPanel],
             layout: [...page.layout, newLayoutItem],
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       addPanelWithConfig: (type, config, title) =>
@@ -956,7 +883,7 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: [...page.panels, newPanel],
             layout: [...page.layout, newLayoutItem],
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       removePanel: (panelId) =>
@@ -966,7 +893,7 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: page.panels.filter((p) => p.id !== panelId),
             layout: page.layout.filter((l) => l.i !== panelId),
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       updatePanelConfig: (panelId, config) =>
@@ -977,7 +904,7 @@ export const useUIStore = create<UIState & UIActions>()(
               p.id === panelId ? { ...p, config: { ...p.config, ...config } } : p,
             ),
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       updatePanelTitle: (panelId, title) =>
@@ -988,7 +915,7 @@ export const useUIStore = create<UIState & UIActions>()(
               p.id === panelId ? { ...p, title } : p,
             ),
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       // 활성 대시보드 레이아웃
@@ -996,7 +923,7 @@ export const useUIStore = create<UIState & UIActions>()(
       setDashboardLayout: (layout) =>
         set((state) => {
           const patch = updateActivePage(state, (page) => ({ ...page, layout }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       resetDashboardLayout: () =>
@@ -1006,7 +933,7 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: [...DEFAULT_PANELS],
             layout: [...DEFAULT_DASHBOARD_LAYOUT],
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       // 그리드 실측 폭 게시. ResizeObserver 가 매 프레임 부르므로 동일 값이면 set 을 건너뛴다
@@ -1016,13 +943,13 @@ export const useUIStore = create<UIState & UIActions>()(
 
       // 디바이스 그리드
       setDeviceGridLayout: (layout) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { deviceGridLayout: layout })),
+        set({ deviceGridLayout: layout }),
 
       setDeviceGridEditMode: (on) =>
         set({ deviceGridEditMode: on }),
 
       resetDeviceGridLayout: () =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { deviceGridLayout: {} })),
+        set({ deviceGridLayout: {} }),
 
       // 플로우 에디터: 그리드 스냅 (v0.18.4)
       setEditorSnapToGrid: (on) =>
@@ -1068,32 +995,55 @@ export const useUIStore = create<UIState & UIActions>()(
       clearNotifications: () =>
         set({ notifications: [] }),
 
-      // ---- SPEC-DASHBOARD-001 v0.2.0: snapshot 액션 ----
+      // ---- SPEC-DASHBOARD-004: 대시보드 단일 축 액션 ----
 
-      setSharedSnapshot: (snapshot, _opts) =>
+      setDashboards: (dashboards) =>
         set((state) => {
-          const next: Partial<UIState> = { sharedSnapshot: snapshot };
-          if (state.activeDashboardScope === 'shared' && snapshot) {
-            Object.assign(next, projectPayloadToLegacy(snapshot.payload));
-          }
-          return next as UIState;
+          const prevByUid = new Map(state.dashboardPages.map((page) => [page.id, page]));
+          return {
+            dashboards,
+            dashboardPages: dashboards.map((d) => toDashboardPage(d, prevByUid.get(d.uid))),
+          };
         }),
 
-      setMineSnapshot: (snapshot, _opts) =>
-        set((state) => {
-          const next: Partial<UIState> = { mineSnapshot: snapshot };
-          if (state.activeDashboardScope === 'mine' && snapshot) {
-            Object.assign(next, projectPayloadToLegacy(snapshot.payload));
-          }
-          return next as UIState;
-        }),
+      applyDashboardMeta: (meta) =>
+        set((state) => ({
+          dashboards: state.dashboards.some((d) => d.uid === meta.uid)
+            ? state.dashboards.map((d) => (d.uid === meta.uid ? meta : d))
+            : [...state.dashboards, meta],
+          dashboardPages: state.dashboardPages.map((p) =>
+            p.id === meta.uid ? { ...p, name: meta.name, isDefault: meta.is_default } : p,
+          ),
+        })),
 
-      setActiveDashboardScope: (scope) =>
+      applyDashboardDetail: (detail) =>
         set((state) => {
-          writeActiveScopeToSession(scope);
-          const target = scope === 'shared' ? state.sharedSnapshot : state.mineSnapshot;
-          const legacy = target ? projectPayloadToLegacy(target.payload) : {};
-          return { activeDashboardScope: scope, ...legacy } as Partial<UIState> as UIState;
+          // payload 를 뺀 메타만 축에 남긴다 — 본문은 dashboardPages 가 소유한다.
+          const { payload, ...meta } = detail;
+          const exists = state.dashboards.some((d) => d.uid === meta.uid);
+          const dashboards = exists
+            ? state.dashboards.map((d) => (d.uid === meta.uid ? meta : d))
+            : [...state.dashboards, meta];
+
+          const page: DashboardPageConfig = {
+            id: meta.uid,
+            name: meta.name,
+            isDefault: meta.is_default,
+            panels: payload?.panels ?? [],
+            layout: payload?.layout ?? [],
+          };
+          const hasPage = state.dashboardPages.some((p) => p.id === meta.uid);
+          const dashboardPages = hasPage
+            ? state.dashboardPages.map((p) => (p.id === meta.uid ? page : p))
+            : [...state.dashboardPages, page];
+
+          const next: Partial<UIState> = { dashboards, dashboardPages };
+          if (state.activeDashboardId === meta.uid) {
+            next.dashboardGridCols = payload?.gridCols ?? DEFAULT_GRID_COLS;
+            next.dashboardShowGridLines = payload?.showGridLines ?? DEFAULT_SHOW_GRID_LINES;
+            next.dashboardRefreshInterval = payload?.refreshInterval ?? DEFAULT_REFRESH_INTERVAL;
+          }
+          return next;
         }),
     }),
     {
@@ -1196,12 +1146,12 @@ export const useUIStore = create<UIState & UIActions>()(
 
         return state as unknown as UIState & UIActions;
       },
-      // SPEC-DASHBOARD-001 v0.2.0: 대시보드 관련 키 6 개를 partialize 에서 제외.
-      //   - dashboardPages, activeDashboardId
+      // 대시보드 관련 키는 partialize 에서 제외한다.
+      //   - dashboardPages, dashboards (서버 목록 + 본문)
       //   - dashboardGridCols, dashboardShowGridLines, dashboardRefreshInterval
-      //   - deviceGridLayout
-      // 위 값들은 서버 snapshot (`sharedSnapshot` / `mineSnapshot`) 으로 관리되며
-      // 활성 스코프에서 derive 된다. 기기별 환경설정만 영속.
+      //     (대시보드 payload 에 속한다 — spec.md §2.1)
+      //   - activeDashboardId, deviceGridLayout (서버 /dashboard-state 소유)
+      // 기기별 환경설정만 영속한다.
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,

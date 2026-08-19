@@ -21,23 +21,28 @@
 //     실제 다이얼로그가 하는 것과 동일한 호출(`addPanel(type); onClose();`)이다.
 //   - Header / Sidebar / 시스템 버전 폴링 / 대시보드 데이터 훅: 앱 크롬 및 무관 데이터.
 //
-// @spec SPEC-DASHBOARD-001 v0.2.0
+// SPEC-DASHBOARD-004 M5: 네트워크 경계가 스코프 2슬롯에서 대시보드 1급 엔티티
+// (목록 + 단건 + /dashboard-state)로 바뀌었다. 검증 대상(라우트 왕복에서 변경이
+// 유지되고 저장 PUT 이 발사되는가)은 동일하다.
+//
+// @spec SPEC-DASHBOARD-004 v0.1.0
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DashboardPayload, DashboardSnapshot } from '@/types/dashboard';
+import type { Dashboard, DashboardContent, DashboardDetail } from '@/types/dashboard';
 
 // ─────────────────────────────────────────────────────────────────────
 // Mocks — 네트워크 경계(dashboardService)와 무관한 주변 모듈만.
 // ─────────────────────────────────────────────────────────────────────
 
-const getSharedDashboardMock = vi.hoisted(() => vi.fn());
-const getMyDashboardMock = vi.hoisted(() => vi.fn());
-const putSharedDashboardMock = vi.hoisted(() => vi.fn());
-const putMyDashboardMock = vi.hoisted(() => vi.fn());
+const listDashboardsMock = vi.hoisted(() => vi.fn());
+const getDashboardMock = vi.hoisted(() => vi.fn());
+const updateDashboardMock = vi.hoisted(() => vi.fn());
+const getStateMock = vi.hoisted(() => vi.fn());
+const putStateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/dashboardService', async () => {
   const actual = await vi.importActual<typeof import('@/services/api/dashboardService')>(
@@ -45,10 +50,11 @@ vi.mock('@/services/api/dashboardService', async () => {
   );
   return {
     ...actual,
-    getSharedDashboard: getSharedDashboardMock,
-    getMyDashboard: getMyDashboardMock,
-    putSharedDashboard: putSharedDashboardMock,
-    putMyDashboard: putMyDashboardMock,
+    listDashboards: listDashboardsMock,
+    getDashboard: getDashboardMock,
+    updateDashboard: updateDashboardMock,
+    getState: getStateMock,
+    putState: putStateMock,
   };
 });
 
@@ -138,31 +144,39 @@ import { useUIStore } from '@/stores/uiStore';
 // Helpers
 // ─────────────────────────────────────────────────────────────────────
 
-/** 서버가 돌려주는 shared snapshot (패널 목록만 파라미터화). */
-function makeSnapshot(
+const DASH_UID = 'dash-1';
+
+/** 서버가 돌려주는 대시보드 메타. */
+function makeMeta(version = 1): Dashboard {
+  return {
+    uid: DASH_UID,
+    name: 'P1',
+    owner: 'tester',
+    visibility: 'private',
+    is_default: true,
+    sort_order: 0,
+    version,
+    created_at: 1000,
+    updated_at: 1000,
+    can_edit: true,
+    can_delete: true,
+    can_grant: true,
+  };
+}
+
+/** 서버가 돌려주는 대시보드 단건 (패널 목록만 파라미터화). */
+function makeDetail(
   panels: { id: string; type: string; title: string }[] = [],
   version = 1,
-): DashboardSnapshot {
+): DashboardDetail {
   return {
-    scope: 'global',
-    owner: null,
-    version,
-    updatedAt: 1000,
+    ...makeMeta(version),
     payload: {
-      dashboardPages: [
-        {
-          id: 'page-1',
-          name: 'P1',
-          isDefault: true,
-          panels: panels as never,
-          layout: [],
-        },
-      ],
-      activeDashboardId: 'page-1',
-      dashboardGridCols: 10,
-      dashboardShowGridLines: true,
-      dashboardRefreshInterval: 10,
-      deviceGridLayout: {},
+      panels: panels as never,
+      layout: [],
+      gridCols: 10,
+      showGridLines: true,
+      refreshInterval: 10,
     },
   };
 }
@@ -188,28 +202,42 @@ function renderApp(initialPath = '/') {
   return router;
 }
 
-/** 부팅 GET 이 store 에 반영될 때까지 대기 + 대시보드 렌더 대기. */
+/** 부팅 조회가 store 에 반영될 때까지 대기 + 대시보드 렌더 대기. */
 async function waitForBoot(version = 1): Promise<void> {
-  await waitFor(() =>
-    expect(useUIStore.getState().sharedSnapshot?.version).toBe(version),
-  );
+  await waitFor(() => {
+    const state = useUIStore.getState();
+    expect(state.activeDashboardId).toBe(DASH_UID);
+    expect(state.dashboards[0]?.version).toBe(version);
+  });
   await screen.findByTestId('dashboard-root');
 }
 
 beforeEach(() => {
-  getSharedDashboardMock.mockReset();
-  getMyDashboardMock.mockReset();
-  putSharedDashboardMock.mockReset();
-  putMyDashboardMock.mockReset();
+  listDashboardsMock.mockReset();
+  getDashboardMock.mockReset();
+  updateDashboardMock.mockReset();
+  getStateMock.mockReset();
+  putStateMock.mockReset();
 
-  // 부팅 GET 기본값: shared 는 서버 snapshot, mine 은 404(null).
-  getSharedDashboardMock.mockResolvedValue(makeSnapshot());
-  getMyDashboardMock.mockResolvedValue(null);
-  // PUT 기본값: 받은 payload 를 그대로 승인하고 version 을 올린다.
-  putSharedDashboardMock.mockImplementation(async (payload: DashboardPayload) => ({
-    ...makeSnapshot([], 2),
-    payload,
-  }));
+  // 부팅 조회 기본값: 대시보드 1장 + 그것을 활성으로 기억한 UI 상태.
+  listDashboardsMock.mockResolvedValue([makeMeta()]);
+  getDashboardMock.mockResolvedValue(makeDetail());
+  getStateMock.mockResolvedValue({
+    active_dashboard_uid: DASH_UID,
+    device_grid_layout: {},
+    version: 1,
+    updated_at: 1000,
+  });
+  putStateMock.mockResolvedValue({
+    active_dashboard_uid: DASH_UID,
+    device_grid_layout: {},
+    version: 2,
+    updated_at: 2000,
+  });
+  // PUT 기본값: 받은 본문을 그대로 승인하고 version 을 올린다.
+  updateDashboardMock.mockImplementation(
+    async (_uid: string, payload: DashboardContent) => ({ ...makeDetail([], 2), payload }),
+  );
 
   useAuthStore.setState({
     user: { name: 'tester', role: 'admin' },
@@ -222,9 +250,7 @@ beforeEach(() => {
   // 실제 store 싱글톤 초기화 (모킹하지 않는다 — 덮어쓰기 여부가 검증 대상).
   useUIStore.setState((state) => ({
     ...state,
-    sharedSnapshot: null,
-    mineSnapshot: null,
-    activeDashboardScope: 'shared',
+    dashboards: [],
     notifications: [],
     dashboardEditMode: false,
     dashboardPages: [
@@ -264,20 +290,20 @@ describe('패널 추가 라우트 왕복 (/ → /panels/new → /)', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/'));
 
     // (1) 저장 PUT 이 발사되어야 한다 — 500 ms debounce.
-    await waitFor(() => expect(putSharedDashboardMock).toHaveBeenCalledTimes(1), {
+    await waitFor(() => expect(updateDashboardMock).toHaveBeenCalledTimes(1), {
       timeout: 3000,
     });
-    const sentPayload = putSharedDashboardMock.mock.calls[0]![0] as DashboardPayload;
-    expect(
-      sentPayload.dashboardPages.flatMap((p) => p.panels).some((p) => p.type === 'text'),
-    ).toBe(true);
+    // 활성 대시보드 1장에만 PUT 한다.
+    expect(updateDashboardMock.mock.calls[0]![0]).toBe(DASH_UID);
+    const sentContent = updateDashboardMock.mock.calls[0]![1] as DashboardContent;
+    expect(sentContent.panels.some((p) => p.type === 'text')).toBe(true);
 
     // (2) 복귀 후에도 패널이 살아있어야 한다 — 재부팅 GET 이 덮어쓰면 사라진다.
     expect(activePanels().some((p) => p.type === 'text')).toBe(true);
 
-    // (3) 부팅 GET 은 앱 셸 마운트당 1회 — 라우트 전환으로 재실행되지 않는다.
-    expect(getSharedDashboardMock).toHaveBeenCalledTimes(1);
-    expect(getMyDashboardMock).toHaveBeenCalledTimes(1);
+    // (3) 부팅 목록 조회는 앱 셸 마운트당 1회 — 라우트 전환으로 재실행되지 않는다.
+    expect(listDashboardsMock).toHaveBeenCalledTimes(1);
+    expect(getDashboardMock).toHaveBeenCalledTimes(1);
   });
 
   it('라우트를 여러 번 왕복해도 부팅 GET 은 1회만 실행된다', async () => {
@@ -292,17 +318,17 @@ describe('패널 추가 라우트 왕복 (/ → /panels/new → /)', () => {
     }
     await screen.findByTestId('dashboard-root');
 
-    expect(getSharedDashboardMock).toHaveBeenCalledTimes(1);
-    expect(getMyDashboardMock).toHaveBeenCalledTimes(1);
+    expect(listDashboardsMock).toHaveBeenCalledTimes(1);
+    expect(getDashboardMock).toHaveBeenCalledTimes(1);
   });
 
   it('pendingSync 가 대시보드까지 전달된다 (동기화 인디케이터)', async () => {
     // PUT 을 보류시켜 pendingSync=true 상태를 관측 가능하게 만든다.
-    let resolvePut: ((snapshot: DashboardSnapshot) => void) | null = null;
-    putSharedDashboardMock.mockImplementation(
-      (payload: DashboardPayload) =>
-        new Promise<DashboardSnapshot>((resolve) => {
-          resolvePut = () => resolve({ ...makeSnapshot([], 2), payload });
+    let resolvePut: (() => void) | null = null;
+    updateDashboardMock.mockImplementation(
+      (_uid: string, payload: DashboardContent) =>
+        new Promise<DashboardDetail>((resolve) => {
+          resolvePut = () => resolve({ ...makeDetail([], 2), payload });
         }),
     );
 
@@ -324,7 +350,7 @@ describe('패널 추가 라우트 왕복 (/ → /panels/new → /)', () => {
 
     // PUT 완료 후 인디케이터가 사라진다.
     await waitFor(() => expect(resolvePut).not.toBeNull(), { timeout: 3000 });
-    resolvePut!({} as DashboardSnapshot);
+    resolvePut!();
     await waitFor(() =>
       expect(screen.queryByText('dashboard.scope.syncing')).toBeNull(),
     );
@@ -333,9 +359,9 @@ describe('패널 추가 라우트 왕복 (/ → /panels/new → /)', () => {
 
 describe('패널 설정 라우트 왕복 (/ → /panels/:panelId/settings → /)', () => {
   it('변경한 패널 제목이 유지되고 서버 PUT 이 발사된다', async () => {
-    // 서버 snapshot 에 패널 1개가 있는 상태로 부팅.
-    getSharedDashboardMock.mockResolvedValue(
-      makeSnapshot([{ id: 'p1', type: 'text', title: 'before' }]),
+    // 서버 대시보드에 패널 1개가 있는 상태로 부팅.
+    getDashboardMock.mockResolvedValue(
+      makeDetail([{ id: 'p1', type: 'text', title: 'before' }]),
     );
 
     const router = renderApp('/');
@@ -350,17 +376,13 @@ describe('패널 설정 라우트 왕복 (/ → /panels/:panelId/settings → /)
     fireEvent.click(await screen.findByText('rename-panel'));
     await waitFor(() => expect(router.state.location.pathname).toBe('/'));
 
-    await waitFor(() => expect(putSharedDashboardMock).toHaveBeenCalledTimes(1), {
+    await waitFor(() => expect(updateDashboardMock).toHaveBeenCalledTimes(1), {
       timeout: 3000,
     });
-    const sentPayload = putSharedDashboardMock.mock.calls[0]![0] as DashboardPayload;
-    expect(
-      sentPayload.dashboardPages
-        .flatMap((p) => p.panels)
-        .some((p) => p.title === 'renamed-panel'),
-    ).toBe(true);
+    const sentContent = updateDashboardMock.mock.calls[0]![1] as DashboardContent;
+    expect(sentContent.panels.some((p) => p.title === 'renamed-panel')).toBe(true);
 
     expect(activePanels()[0]?.title).toBe('renamed-panel');
-    expect(getSharedDashboardMock).toHaveBeenCalledTimes(1);
+    expect(listDashboardsMock).toHaveBeenCalledTimes(1);
   });
 });

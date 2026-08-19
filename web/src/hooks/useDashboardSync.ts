@@ -1,61 +1,65 @@
-// SPEC-DASHBOARD-001 v0.2.0 — 대시보드 snapshot 동기화 훅.
+// SPEC-DASHBOARD-004 (M5) — 대시보드 동기화 훅.
+//
+// 구 모델(SPEC-DASHBOARD-001)의 스코프 2슬롯 동기화를 **대시보드 단위**로 재구성한
+// 것이다. 전송 단위가 "묶음 전체" 에서 "대시보드 1장" 으로 바뀌면서, A 를 편집하는
+// 동안 B 의 내용이 함께 전송되어 타인의 변경을 덮어쓰던 문제가 사라진다(spec.md §2.8).
 //
 // 책임:
-// 1. 마운트 시점에 1회 마이그레이션 토스트(`consumeMigrationToastFlag`) 노출.
-// 2. `Promise.all([getShared, getMine])` 병렬 호출로 두 snapshot 을 store 에 채움.
-//    404 → 빌트인 기본 snapshot (version=0) 으로 메모리 상태 초기화.
-// 3. 활성 스코프의 snapshot.payload 변경을 감지(JSON content fingerprint) 하여
-//    500ms debounce 후 해당 스코프 엔드포인트로 PUT.
-// 4. PUT 응답:
-//    - 200: 새 snapshot 적용 + lastSyncedPayload fingerprint 갱신.
-//    - 403 (shared only): 토스트 1회, 재시도 안 함 (lastSynced 를 현재 fingerprint 로
-//      덮어써 무한 PUT 루프 방지).
-//    - 409: 서버 snapshot 적용 + 1회 재PUT (If-Match: server.version). 두 번째 409
-//      발생 시 서버 snapshot 강제 적용 + 토스트.
-//    - 기타 (네트워크/500): 토스트 + 다음 변경 시 재시도 (lastSynced 는 변경 없음).
-// 5. in-flight PUT 동안 추가 변경은 큐잉 — 응답 수신 후 한 번 더 PUT (동시 PUT 금지).
+//  1. 마운트 시 1회 마이그레이션 토스트(`consumeMigrationToastFlag`).
+//  2. 부팅 시 `GET /dashboards` **1회** + `GET /dashboard-state` 1회.
+//     구 모델의 `Promise.all([getShared, getMine])` 스코프 이중 조회는 제거되었다
+//     (spec.md §2.14 UB2 #1).
+//  3. 활성 대시보드가 정해지면 그 1장만 `GET /dashboards/{uid}` 로 본문을 받는다.
+//     활성 대시보드가 바뀔 때마다 다시 받는다 — 그리드 설정 3종이 대시보드마다
+//     다르므로(spec.md §2.1) 캐시된 본문만으로는 전환 후 상태를 복원할 수 없다.
+//  4. 활성 대시보드의 본문이 바뀌면 500ms debounce 후 `PUT /dashboards/{uid}`.
+//     활성이 아닌 대시보드로는 PUT 하지 않는다.
+//  5. 활성 uid · deviceGridLayout 변경은 `PUT /dashboard-state` 로 따로 저장한다.
 //
-// @spec SPEC-DASHBOARD-001 v0.2.0
+// 구 모델에서 그대로 승계한 것(키만 스코프 → uid 로 바뀐다):
+//  - 500ms debounce
+//  - fingerprint 기반 spurious PUT 방지
+//  - 단일 비행(single-flight) + 큐잉
+//  - 409 → 1회 재PUT, 두 번째 409 면 서버 상태 강제 적용
+//
+// @spec SPEC-DASHBOARD-004 v0.1.0 (§2.8 E2, §2.13 UB1 #11, §2.14 UB2)
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  ConflictResult,
   DashboardForbiddenError,
+  DashboardNotFoundError,
   DashboardServerError,
   DashboardUnauthorizedError,
-  PutResult,
-  getMyDashboard,
-  getSharedDashboard,
-  putMyDashboard,
-  putSharedDashboard,
+  getDashboard,
+  getState,
+  listDashboards,
+  putState,
+  updateDashboard,
+  type ConflictResult,
+  type DashboardPutResult,
 } from '@/services/api/dashboardService';
 import { useTranslation } from '@/lib/i18n';
-import { hasPermissionOf } from '@/hooks/usePermission';
-import { useAuthStore } from '@/stores/authStore';
 import {
-  buildDefaultSnapshot,
-  collectActivePayload,
+  collectActiveDashboardContent,
   consumeMigrationToastFlag,
-  readActiveScopeFromSession,
   useUIStore,
 } from '@/stores/uiStore';
-import type { DashboardPayload, DashboardSnapshot } from '@/types/dashboard';
+import type { Dashboard, DashboardContent, DashboardDetail } from '@/types/dashboard';
 
-/** 500 ms — SPEC ASM-005. */
+/** 500 ms — SPEC-DASHBOARD-001 ASM-005 승계. */
 const DEBOUNCE_MS = 500;
 
-// 토스트 메시지 i18n 키 (SPEC §비고). 모듈 스코프 상수에는 키만 저장하고
-// 실제 문자열은 훅 내부에서 t(key) 로 해석한다.
-/** 마이그레이션 안내 토스트 메시지 키. */
+// 토스트 메시지 i18n 키. 모듈 스코프에는 키만 두고 실제 문자열은 t(key) 로 해석한다.
 const MIGRATION_TOAST_KEY = 'dashboard.sync.migrationToast';
-const FORBIDDEN_SHARED_TOAST_KEY = 'dashboard.sync.forbiddenShared';
+const FORBIDDEN_TOAST_KEY = 'dashboard.sync.forbiddenDashboard';
+const REMOVED_TOAST_KEY = 'dashboard.sync.dashboardRemoved';
 const CONFLICT_RESOLVED_TOAST_KEY = 'dashboard.sync.conflictResolved';
 const NETWORK_ERROR_TOAST_KEY = 'dashboard.sync.networkError';
 
 /** useDashboardSync 반환값 — DashboardPage 가 UI 인디케이터에 사용. */
 export interface DashboardSyncStatus {
-  /** 부팅 GET shared+mine 진행 중 여부. */
+  /** 부팅 조회(목록 + UI 상태 + 활성 대시보드 본문) 진행 중 여부. */
   isLoading: boolean;
   /** 마지막 발생한 치명적 에러 (null = 정상). */
   error: Error | null;
@@ -63,34 +67,34 @@ export interface DashboardSyncStatus {
   pendingSync: boolean;
 }
 
-type Scope = 'shared' | 'mine';
-
-/** payload 의 content fingerprint — 동일 payload 의 spurious PUT 방지용. */
-function fingerprint(payload: DashboardPayload): string {
-  return JSON.stringify(payload);
+/** 대시보드 본문의 content fingerprint — 동일 내용의 spurious PUT 방지용. */
+function fingerprint(content: DashboardContent): string {
+  return JSON.stringify(content);
 }
 
-/** 활성 스코프의 snapshot 을 store 에서 읽는다 (selector 외부 호출용). */
-function getSnapshotForScope(scope: Scope): DashboardSnapshot | null {
-  const state = useUIStore.getState();
-  return scope === 'shared' ? state.sharedSnapshot : state.mineSnapshot;
+/** 사용자 UI 상태의 fingerprint. */
+function stateFingerprint(activeUid: string, layout: unknown): string {
+  return JSON.stringify({ activeUid, layout });
 }
 
 /**
- * 대시보드 서버 snapshot 과 클라이언트 메모리 상태를 양방향 동기화하는 훅.
+ * 폴백 대상 대시보드를 고른다 — `is_default` 우선, 없으면 첫 항목 (spec.md §2.13 UB1 #11).
+ * 접근 가능한 대시보드가 0장이면 빈 문자열.
+ */
+function pickFallbackUid(list: Dashboard[]): string {
+  return list.find((d) => d.is_default)?.uid ?? list[0]?.uid ?? '';
+}
+
+/**
+ * 대시보드 서버 상태와 클라이언트 메모리 상태를 동기화하는 훅.
  *
- * 호출 위치는 `AppLayout` 단 한 곳이다 (SPEC-DASHBOARD-001 v0.2.0).
- * 상태를 읽기만 하는 화면은 `useDashboardSyncStatus()` (DashboardSyncContext) 를 쓴다.
+ * 호출 위치는 `AppLayout` 단 한 곳이다. 상태를 읽기만 하는 화면은
+ * `useDashboardSyncStatus()` (DashboardSyncContext) 를 쓴다.
  *
- * - 여러 곳에서 호출하면 부팅 GET 과 PUT 이 중복 발생한다.
- * - 라우트 컴포넌트(예: DashboardPage) 에서 호출하면 형제 라우트(`/panels/new`)로
- *   이동할 때 언마운트되어 저장 PUT 이 유실되고, 복귀 시 부팅 GET 이 로컬 변경을
+ * - 여러 곳에서 호출하면 부팅 조회와 PUT 이 중복 발생한다.
+ * - 라우트 컴포넌트(예: DashboardPage)에서 호출하면 형제 라우트(`/panels/new`)로
+ *   이동할 때 언마운트되어 저장 PUT 이 유실되고, 복귀 시 부팅 조회가 로컬 변경을
  *   덮어쓴다.
- *
- * 부팅 GET 은 훅 인스턴스당 1회(`bootedRef`)다 — 즉 앱 셸이 마운트될 때 한 번만
- * 실행되며, 라우트 전환으로는 재실행되지 않는다. 스코프 전환(공유 ↔ 내 대시보드)
- * 도 재요청을 유발하지 않는다: 부팅 시 두 스코프 snapshot 을 모두 받아두고
- * `setActiveDashboardScope` 가 해당 payload 를 legacy 필드로 투영한다.
  */
 export function useDashboardSync(): DashboardSyncStatus {
   const { t } = useTranslation();
@@ -99,28 +103,40 @@ export function useDashboardSync(): DashboardSyncStatus {
   const [pendingSync, setPendingSync] = useState(false);
 
   const addNotification = useUIStore((s) => s.addNotification);
-  const setSharedSnapshot = useUIStore((s) => s.setSharedSnapshot);
-  const setMineSnapshot = useUIStore((s) => s.setMineSnapshot);
-  const setActiveDashboardScope = useUIStore((s) => s.setActiveDashboardScope);
+  const setDashboards = useUIStore((s) => s.setDashboards);
+  const applyDashboardDetail = useUIStore((s) => s.applyDashboardDetail);
+  const applyDashboardMeta = useUIStore((s) => s.applyDashboardMeta);
+  const setActiveDashboard = useUIStore((s) => s.setActiveDashboard);
+  const setDeviceGridLayout = useUIStore((s) => s.setDeviceGridLayout);
+  const activeUid = useUIStore((s) => s.activeDashboardId);
+
   // 자체 초기화 1회 가드.
   const bootedRef = useRef(false);
-  // 스코프별 "마지막으로 서버에 보낸/받은 fingerprint" 를 추적해
-  // 같은 내용에 대한 spurious PUT 을 방지한다.
-  const lastSyncedFingerprintRef = useRef<Record<Scope, string | null>>({
-    shared: null,
-    mine: null,
-  });
-  // debounce 타이머 (스코프별).
-  const debounceTimerRef = useRef<Record<Scope, ReturnType<typeof setTimeout> | null>>({
-    shared: null,
-    mine: null,
-  });
-  // 진행 중 PUT 표시 (동시 PUT 금지) — 큐가 있는 경우 응답 후 한 번 더 발사.
-  const inFlightRef = useRef<Record<Scope, boolean>>({ shared: false, mine: false });
-  const queuedRef = useRef<Record<Scope, boolean>>({ shared: false, mine: false });
+  // uid 별 "마지막으로 서버에 보낸/받은 fingerprint".
+  const lastSyncedFingerprintRef = useRef<Record<string, string>>({});
+  // uid 별 debounce 타이머.
+  const debounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
+  // uid 별 진행 중 PUT 표시 (동시 PUT 금지) — 큐가 있으면 응답 후 한 번 더 발사.
+  const inFlightRef = useRef<Record<string, boolean>>({});
+  const queuedRef = useRef<Record<string, boolean>>({});
+  // uid 별 "보내야 할 최신 본문". debounce 만료 시점의 store 를 다시 읽지 않는다 —
+  // 그 사이 활성 대시보드가 바뀌었으면 남의 본문을 남의 uid 로 보내게 된다.
+  const pendingContentRef = useRef<Record<string, DashboardContent>>({});
+  // uid 별 403 토스트 1회 제한.
+  const forbiddenToastShownRef = useRef<Record<string, boolean>>({});
 
-  // 활성 스코프 외 forbidden 토스트는 1회만.
-  const forbiddenToastShownRef = useRef(false);
+  // 사용자 UI 상태(/dashboard-state) 동기화용.
+  const stateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStateFingerprintRef = useRef<string | null>(null);
+
+  // 목록 재조회(권한 상실·삭제 복구) 중복 실행 방지 — 무한 재시도 금지(AC-21).
+  const recoveringRef = useRef(false);
+  // 마지막으로 본문을 받아온 uid. 전환 시에만 다시 받는다.
+  const loadedUidRef = useRef<string | null>(null);
+  // 서버 응답을 store 에 적용하는 동안 구독의 본문 분기를 억제한다.
+  // 적용은 동기이므로 구독이 fingerprint 갱신 **이전에** 발화하며, 억제하지 않으면
+  // 방금 저장한 내용을 곧바로 다시 PUT 한다.
+  const applyingRef = useRef(false);
 
   // 마운트 해제 가드.
   const mountedRef = useRef(true);
@@ -132,126 +148,184 @@ export function useDashboardSync(): DashboardSyncStatus {
     [addNotification],
   );
 
-  /** 서버 응답으로 받은 snapshot 을 store 에 반영 + fingerprint 동기. */
-  const applyServerSnapshot = useCallback(
-    (scope: Scope, snapshot: DashboardSnapshot): void => {
-      lastSyncedFingerprintRef.current[scope] = fingerprint(snapshot.payload);
-      if (scope === 'shared') {
-        setSharedSnapshot(snapshot, { fromServer: true });
-      } else {
-        setMineSnapshot(snapshot, { fromServer: true });
+  /** 서버 본문 응답을 store 에 반영하고 fingerprint 를 맞춘다. */
+  const applyServerDetail = useCallback(
+    (detail: DashboardDetail): void => {
+      applyingRef.current = true;
+      try {
+        applyDashboardDetail(detail);
+      } finally {
+        applyingRef.current = false;
+      }
+      // 적용 결과를 store 에서 다시 읽어 fingerprint 를 만든다. 서버 payload 가
+      // 그리드 설정을 생략했을 때 store 의 기본값 보정과 어긋나면 즉시 spurious
+      // PUT 이 발생하므로, "적용 후 상태" 를 기준으로 삼아야 한다.
+      const state = useUIStore.getState();
+      if (state.activeDashboardId === detail.uid) {
+        const content = collectActiveDashboardContent(state);
+        if (content) lastSyncedFingerprintRef.current[detail.uid] = fingerprint(content);
       }
     },
-    [setSharedSnapshot, setMineSnapshot],
+    [applyDashboardDetail],
   );
 
-  /** 404 응답 처리 — 빌트인 기본 snapshot (version=0) 으로 메모리 초기화. */
-  const applyDefaultForScope = useCallback(
-    (scope: Scope): void => {
-      const owner =
-        scope === 'mine' ? (useAuthStore.getState().user?.name ?? null) : null;
-      const defaultSnap = buildDefaultSnapshot(scope === 'shared' ? 'global' : 'user', owner);
-      // 404 fallback 도 lastSynced 를 갱신해 spurious PUT 을 방지한다.
-      // (첫 변경 시점에 사용자가 명시적으로 mutate 하면 fingerprint 가 바뀌어 PUT 된다.)
-      lastSyncedFingerprintRef.current[scope] = fingerprint(defaultSnap.payload);
-      if (scope === 'shared') {
-        setSharedSnapshot(defaultSnap, { fromServer: true });
-      } else {
-        setMineSnapshot(defaultSnap, { fromServer: true });
+  /**
+   * 접근을 잃은 대시보드에서 복구한다 (spec.md §2.13 UB1 #11, AC-21).
+   *
+   * 목록을 **1회** 재조회하고, 대상이 목록에서 사라졌으면 `is_default` → 첫 항목
+   * 순으로 전환한다. 재시도하지 않는다 — 재시도하면 삭제된 대시보드에 대해
+   * 무한 루프가 된다.
+   */
+  const recoverFromAccessLoss = useCallback(
+    async (uid: string, kind: 'forbidden' | 'removed'): Promise<void> => {
+      if (recoveringRef.current) return;
+      recoveringRef.current = true;
+      try {
+        const list = await listDashboards();
+        if (!mountedRef.current) return;
+        setDashboards(list);
+
+        if (list.some((d) => d.uid === uid)) {
+          // 대시보드는 남아 있고 편집 권한만 잃었다 — 읽기 전용으로 두고 안내한다.
+          if (kind === 'forbidden' && !forbiddenToastShownRef.current[uid]) {
+            forbiddenToastShownRef.current[uid] = true;
+            showToast('warning', t(FORBIDDEN_TOAST_KEY));
+          }
+          return;
+        }
+
+        // 목록에서 사라졌다 — 폴백. 접근 가능한 대시보드가 0장이면 빈 문자열이며
+        // 화면은 빈 상태를 표시한다(재시도하지 않는다).
+        const fallback = pickFallbackUid(list);
+        if (useUIStore.getState().activeDashboardId === uid) {
+          setActiveDashboard(fallback);
+          showToast('warning', t(REMOVED_TOAST_KEY));
+        }
+      } catch {
+        // 재조회 실패는 그대로 둔다. 다음 사용자 조작에서 다시 시도된다.
+      } finally {
+        recoveringRef.current = false;
       }
     },
-    [setSharedSnapshot, setMineSnapshot],
+    [setDashboards, setActiveDashboard, showToast, t],
+  );
+
+  /** 활성 대시보드 1장의 본문을 받아 적용한다. */
+  const loadActiveDetail = useCallback(
+    async (uid: string): Promise<void> => {
+      loadedUidRef.current = uid;
+      try {
+        const detail = await getDashboard(uid);
+        if (!mountedRef.current) return;
+        if (detail === null) {
+          // 조회 시점에 이미 없어진 대시보드 — 목록을 다시 받아 폴백한다.
+          void recoverFromAccessLoss(uid, 'removed');
+          return;
+        }
+        applyServerDetail(detail);
+      } catch (err) {
+        if (err instanceof DashboardForbiddenError) {
+          void recoverFromAccessLoss(uid, 'forbidden');
+          return;
+        }
+        if (err instanceof DashboardUnauthorizedError) {
+          // 401 은 interceptor 의 refresh 흐름에 위임한다.
+          return;
+        }
+        if (mountedRef.current && err instanceof Error) setError(err);
+      }
+    },
+    [applyServerDetail, recoverFromAccessLoss],
   );
 
   /**
    * 실제 PUT 을 수행한다. 동시 PUT 금지 — in-flight 가 있으면 queue 표시만.
    *
-   * @param scope 'shared' | 'mine'
-   * @param payload 전송할 페이로드
+   * @param uid     대상 대시보드 uid
+   * @param content 전송할 본문
    * @param ifMatch If-Match 헤더 값 (0 또는 undefined 면 헤더 생략)
-   * @param retried 이미 409 한 번 재시도 했는가?
+   * @param retried 이미 409 로 한 번 재시도 했는가?
    */
   const performPut = useCallback(
     async (
-      scope: Scope,
-      payload: DashboardPayload,
+      uid: string,
+      content: DashboardContent,
       ifMatch: number | undefined,
       retried: boolean,
     ): Promise<void> => {
-      if (inFlightRef.current[scope]) {
-        queuedRef.current[scope] = true;
+      if (inFlightRef.current[uid]) {
+        queuedRef.current[uid] = true;
         return;
       }
 
-      inFlightRef.current[scope] = true;
+      inFlightRef.current[uid] = true;
       if (mountedRef.current) setPendingSync(true);
 
-      const putFn = scope === 'shared' ? putSharedDashboard : putMyDashboard;
-      const fp = fingerprint(payload);
+      const fp = fingerprint(content);
 
       try {
-        const result: PutResult = await putFn(payload, ifMatch);
+        const result: DashboardPutResult = await updateDashboard(uid, content, ifMatch);
+
         if ('conflict' in result && result.conflict) {
-          // 409 — 서버 snapshot 적용 + 사용자 변경 재시도 (SPEC AC-10).
           const conflict = result as ConflictResult;
 
           if (retried) {
             // 두 번째 409 — 무한 루프 방지, 서버 상태로 강제 동기.
-            applyServerSnapshot(scope, conflict.serverSnapshot);
+            applyServerDetail(conflict.serverDashboard);
             showToast('warning', t(CONFLICT_RESOLVED_TOAST_KEY));
+          } else if (fp !== fingerprint(conflict.serverDashboard.payload)) {
+            // 1차 409 — 서버의 새 version 으로 사용자의 원래 본문을 1회 재시도.
+            inFlightRef.current[uid] = false;
+            if (mountedRef.current) setPendingSync(false);
+            await performPut(uid, content, conflict.serverDashboard.version, true);
+            return;
           } else {
-            // 1차 409: 사용자가 보내려던 payload 는 `payload` 인자에 그대로 있다.
-            // 서버 snapshot 의 메타데이터(version) 만 받아 If-Match 를 갱신하고 1회 재시도.
-            // 서버측 최신 payload 와 user payload 가 동일하면 재시도 불필요.
-            if (fingerprint(payload) !== fingerprint(conflict.serverSnapshot.payload)) {
-              inFlightRef.current[scope] = false;
-              if (mountedRef.current) setPendingSync(false);
-              // 재PUT — 사용자의 원래 payload 를 서버의 새 version 으로 재시도.
-              await performPut(scope, payload, conflict.serverSnapshot.version, true);
-              return;
-            } else {
-              // 동일한 payload — 단순히 server snapshot 으로 동기.
-              applyServerSnapshot(scope, conflict.serverSnapshot);
-            }
+            // 서버 본문과 동일 — 재시도 없이 서버 상태로 동기.
+            applyServerDetail(conflict.serverDashboard);
           }
         } else {
-          // 200 — 정상 적용.
-          applyServerSnapshot(scope, result as DashboardSnapshot);
+          // 200 — 메타(version)만 반영한다. 본문을 서버 응답으로 덮으면 in-flight
+          // 동안 사용자가 가한 변경이 조용히 사라진다.
+          const { payload: _payload, ...meta } = result as DashboardDetail;
+          lastSyncedFingerprintRef.current[uid] = fp;
+          applyingRef.current = true;
+          try {
+            applyDashboardMeta(meta);
+          } finally {
+            applyingRef.current = false;
+          }
         }
       } catch (err) {
-        // CRITICAL: 모든 비-성공/비-409 에러 경로에서 lastSynced 를 현재 fingerprint 로
-        // 갱신해야 한다. 갱신하지 않으면 showToast → addNotification → store 변경 →
-        // subscribe 재발화 → schedulePut → 또 PUT → 또 401/500 → ... 무한 루프가 발생.
+        // CRITICAL: 모든 비-성공 경로에서 lastSynced 를 방금 보낸 fingerprint 로
+        // 갱신해야 한다. 갱신하지 않으면 showToast → addNotification → store 변경
+        // → subscribe 재발화 → schedulePut → 또 PUT → 또 실패 … 무한 루프가 된다.
         // 사용자가 새로 변경하면 fingerprint 가 다시 바뀌어 의도된 PUT 이 트리거된다.
-        lastSyncedFingerprintRef.current[scope] = fp;
+        lastSyncedFingerprintRef.current[uid] = fp;
 
         if (err instanceof DashboardForbiddenError) {
-          // 403 — shared PUT 시 admin 아님. 토스트 1회 노출.
-          if (scope === 'shared' && !forbiddenToastShownRef.current) {
-            forbiddenToastShownRef.current = true;
-            showToast('warning', t(FORBIDDEN_SHARED_TOAST_KEY));
-          }
+          // 편집 권한 상실 — 재시도하지 않고 목록을 재조회한다(spec.md §2.8).
+          void recoverFromAccessLoss(uid, 'forbidden');
+        } else if (err instanceof DashboardNotFoundError) {
+          // 타 세션에서 삭제됨 — 목록 1회 재조회 후 폴백(AC-21).
+          void recoverFromAccessLoss(uid, 'removed');
         } else if (err instanceof DashboardUnauthorizedError) {
-          // 401 — interceptor (`interceptors.ts`) 가 refresh 흐름을 처리하므로
-          // 여기서는 별도 redirect 하지 않는다. 에러만 보관.
+          // 401 — interceptor 가 refresh 흐름을 처리하므로 여기서는 보관만.
           if (mountedRef.current) setError(err);
         } else if (err instanceof DashboardServerError || err instanceof Error) {
           showToast('error', t(NETWORK_ERROR_TOAST_KEY));
           if (mountedRef.current) setError(err);
         }
       } finally {
-        inFlightRef.current[scope] = false;
-        // 큐가 있으면 한 번 더 발사 (변경이 in-flight 동안 누적된 경우).
+        inFlightRef.current[uid] = false;
+        // 큐가 있으면 한 번 더 발사 (in-flight 동안 변경이 누적된 경우).
         let dispatchedFromQueue = false;
-        if (queuedRef.current[scope] && mountedRef.current) {
-          queuedRef.current[scope] = false;
-          const latestPayload = collectActivePayload(useUIStore.getState());
-          const latestFp = fingerprint(latestPayload);
-          if (latestFp !== lastSyncedFingerprintRef.current[scope]) {
-            const snap = getSnapshotForScope(scope);
-            const v = snap?.version ?? 0;
-            // 비동기 재호출 — 큐 처리.
-            void performPut(scope, latestPayload, v > 0 ? v : undefined, false);
+        if (queuedRef.current[uid] && mountedRef.current) {
+          queuedRef.current[uid] = false;
+          const latest = pendingContentRef.current[uid];
+          if (latest && fingerprint(latest) !== lastSyncedFingerprintRef.current[uid]) {
+            const version =
+              useUIStore.getState().dashboards.find((d) => d.uid === uid)?.version ?? 0;
+            void performPut(uid, latest, version > 0 ? version : undefined, false);
             dispatchedFromQueue = true;
           }
         }
@@ -260,38 +334,60 @@ export function useDashboardSync(): DashboardSyncStatus {
         }
       }
     },
-    [applyServerSnapshot, showToast, t],
+    [applyServerDetail, applyDashboardMeta, recoverFromAccessLoss, showToast, t],
   );
+
+  /** 예약된 PUT 을 취소한다 (내용이 기준선으로 되돌아온 경우). */
+  const cancelPendingPut = useCallback((uid: string): void => {
+    const timer = debounceTimerRef.current[uid];
+    if (timer) {
+      clearTimeout(timer);
+      debounceTimerRef.current[uid] = null;
+    }
+    delete pendingContentRef.current[uid];
+    queuedRef.current[uid] = false;
+    if (!inFlightRef.current[uid] && mountedRef.current) setPendingSync(false);
+  }, []);
 
   /** 변경 감지 시 debounce 후 PUT 을 예약한다. */
   const schedulePut = useCallback(
-    (scope: Scope): void => {
-      const existing = debounceTimerRef.current[scope];
-      if (existing) {
-        clearTimeout(existing);
-      }
+    (uid: string): void => {
+      const existing = debounceTimerRef.current[uid];
+      if (existing) clearTimeout(existing);
       if (mountedRef.current) setPendingSync(true);
-      debounceTimerRef.current[scope] = setTimeout(() => {
-        debounceTimerRef.current[scope] = null;
-        const state = useUIStore.getState();
-        // 스코프가 도중에 바뀌었어도 그 스코프에 대해 PUT 한다 — 사용자의 의도된 변경.
-        const payload = scope === state.activeDashboardScope
-          ? collectActivePayload(state)
-          : null;
-        if (!payload) {
+
+      debounceTimerRef.current[uid] = setTimeout(() => {
+        debounceTimerRef.current[uid] = null;
+        const content = pendingContentRef.current[uid];
+        if (!content) {
           if (mountedRef.current) setPendingSync(false);
           return;
         }
-        const snap = scope === 'shared' ? state.sharedSnapshot : state.mineSnapshot;
-        const version = snap?.version ?? 0;
-        void performPut(scope, payload, version > 0 ? version : undefined, false);
+        const version = useUIStore.getState().dashboards.find((d) => d.uid === uid)?.version ?? 0;
+        void performPut(uid, content, version > 0 ? version : undefined, false);
       }, DEBOUNCE_MS);
     },
     [performPut],
   );
 
+  /** 사용자 UI 상태(/dashboard-state) 를 debounce 후 저장한다. */
+  const scheduleStatePut = useCallback((): void => {
+    if (stateTimerRef.current) clearTimeout(stateTimerRef.current);
+    stateTimerRef.current = setTimeout(() => {
+      stateTimerRef.current = null;
+      const state = useUIStore.getState();
+      const fp = stateFingerprint(state.activeDashboardId, state.deviceGridLayout);
+      // 실패해도 재시도하지 않는다 — UI 상태는 다음 조작에서 다시 저장된다.
+      lastStateFingerprintRef.current = fp;
+      void putState({
+        active_dashboard_uid: state.activeDashboardId,
+        device_grid_layout: state.deviceGridLayout,
+      }).catch(() => undefined);
+    }, DEBOUNCE_MS);
+  }, []);
+
   // ─────────────────────────────────────────────────────────────────────
-  // 마운트 시 1회: 마이그레이션 토스트 + 부팅 GET shared+mine
+  // 마운트 시 1회: 마이그레이션 토스트 + 부팅 조회
   // ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -299,78 +395,58 @@ export function useDashboardSync(): DashboardSyncStatus {
     if (bootedRef.current) return;
     bootedRef.current = true;
 
-    // (1) 마이그레이션 토스트 (v0.2 첫 부팅 1회 한정 — uiStore 모듈 로드 시 LS 정리 완료).
+    // (1) 마이그레이션 토스트 (v0.2 첫 부팅 1회 한정).
     if (consumeMigrationToastFlag()) {
-      // info 로 표시 (안내 성격). 사용자가 이미 토스트를 본 뒤에는 LS 플래그가 있어 다시 안 뜸.
       addNotification({ type: 'info', message: t(MIGRATION_TOAST_KEY) });
     }
 
-    // (2) 병렬 GET. 인증되지 않은 경우 호출은 401 을 받고 interceptor 가 처리한다.
     void (async () => {
       try {
-        const [shared, mine] = await Promise.all([
-          getSharedDashboard().catch((err): null | Error => err instanceof Error ? err : null),
-          getMyDashboard().catch((err): null | Error => err instanceof Error ? err : null),
+        // (2) 목록 1회 + UI 상태 1회. 서로 다른 리소스이므로 병렬로 받는다.
+        //     구 모델의 스코프 이중 조회(shared + mine)와는 무관하다.
+        const [list, serverState] = await Promise.all([
+          listDashboards().catch((err: unknown) => (err instanceof Error ? err : null)),
+          getState().catch(() => null),
         ]);
 
-        // shared 결과 처리.
-        if (shared instanceof Error) {
-          if (!(shared instanceof DashboardUnauthorizedError) && mountedRef.current) {
-            setError(shared);
+        if (!mountedRef.current) return;
+
+        if (list instanceof Error || list === null) {
+          if (list instanceof Error && !(list instanceof DashboardUnauthorizedError)) {
+            setError(list);
           }
-          // unauthorized 인 경우 굳이 default 로 채우지 않음 — 로그인 후 재초기화 흐름에 위임.
-        } else if (shared === null) {
-          applyDefaultForScope('shared');
-        } else {
-          applyServerSnapshot('shared', shared);
+          return;
         }
 
-        // mine 결과 처리.
-        if (mine instanceof Error) {
-          if (!(mine instanceof DashboardUnauthorizedError) && mountedRef.current) {
-            setError(mine);
-          }
-        } else if (mine === null) {
-          applyDefaultForScope('mine');
-        } else {
-          applyServerSnapshot('mine', mine);
+        setDashboards(list);
+        if (serverState) {
+          setDeviceGridLayout(serverState.device_grid_layout ?? {});
         }
 
-        // (3) 활성 스코프 결정 — sessionStorage > 권한 기반 기본값.
-        //
-        // SPEC-AUTH-006 AC-10: 기존 `role === 'admin'` 비교를 권한 키로 바꾼다.
-        //   이 분기는 접근 차단이 아니라 "처음 열 때 어느 스코프를 보여줄지"의
-        //   기본값이며 사용자는 언제든 스코프를 전환할 수 있다. 다만 역할 이름
-        //   열거는 커스텀 역할에서 성립하지 않으므로(어떤 커스텀 역할도 공유
-        //   대시보드를 기본값으로 가질 수 없다) 함께 걷어낸다.
-        //
-        //   키 선택: 원래 의도는 "이 사용자가 관리자인가"이지 "대시보드를
-        //   편집할 수 있는가"가 아니다. dashboard.update 로 바꾸면 editor 도
-        //   해당돼 기존 기본값(mine)이 뒤집힌다 — 의도된 동작이 아니다.
-        //   빌트인 역할 중 사용자·역할 관리 권한은 admin 만 가지므로, 관리자
-        //   여부의 대리 지표로 user.read / role.read 를 쓴다. 세 빌트인 역할의
-        //   기존 기본값이 그대로 보존되고 관리형 커스텀 역할도 함께 잡힌다.
-        const sessionScope = readActiveScopeFromSession();
-        const mineSnap = useUIStore.getState().mineSnapshot;
-        const mineHasContent =
-          mineSnap !== null && mineSnap.version > 0;
+        // (3) 활성 대시보드 결정 — 서버가 기억한 uid 우선, 없거나 접근 불가면
+        //     is_default → 첫 항목 순으로 폴백한다(spec.md §2.13 UB1 #11).
+        const remembered = serverState?.active_dashboard_uid ?? '';
+        const resolved = list.some((d) => d.uid === remembered)
+          ? remembered
+          : pickFallbackUid(list);
+        setActiveDashboard(resolved);
 
-        let initialScope: 'shared' | 'mine';
-        if (sessionScope === 'shared' || sessionScope === 'mine') {
-          initialScope = sessionScope;
-        } else if (
-          hasPermissionOf('user.read') ||
-          hasPermissionOf('role.read')
-        ) {
-          initialScope = 'shared';
-        } else if (mineHasContent) {
-          initialScope = 'mine';
-        } else {
-          initialScope = 'shared';
+        lastStateFingerprintRef.current = stateFingerprint(
+          resolved,
+          useUIStore.getState().deviceGridLayout,
+        );
+
+        // (4) 서버가 기억한 값과 다르면 정정 저장한다(AC-21).
+        if (serverState && resolved !== serverState.active_dashboard_uid) {
+          void putState({
+            active_dashboard_uid: resolved,
+            device_grid_layout: useUIStore.getState().deviceGridLayout,
+          }).catch(() => undefined);
         }
-        // 현재 store 값과 다르면 갱신 (legacy 필드도 함께 sync 됨).
-        if (useUIStore.getState().activeDashboardScope !== initialScope) {
-          setActiveDashboardScope(initialScope);
+
+        // (5) 활성 대시보드 1장의 본문을 받는다.
+        if (resolved) {
+          await loadActiveDetail(resolved);
         }
       } finally {
         if (mountedRef.current) setIsLoading(false);
@@ -384,43 +460,68 @@ export function useDashboardSync(): DashboardSyncStatus {
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────
-  // store 변경 구독 — 활성 스코프의 snapshot.payload 가 fingerprint 와 다르면 PUT 스케줄
+  // 활성 대시보드 전환 — 그 1장의 본문을 다시 받는다.
+  // ─────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (isLoading || !activeUid) return;
+    if (loadedUidRef.current === activeUid) return;
+    void loadActiveDetail(activeUid);
+  }, [activeUid, isLoading, loadActiveDetail]);
+
+  // ─────────────────────────────────────────────────────────────────────
+  // store 변경 구독 — 활성 대시보드 본문 / 사용자 UI 상태
   // ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const unsubscribe = useUIStore.subscribe((state, prev) => {
-      // 부팅 GET 완료 전에는 PUT 하지 않는다.
+      // 부팅 조회 완료 전에는 저장하지 않는다.
       if (isLoading) return;
 
-      const activeScope = state.activeDashboardScope;
-      const snap = activeScope === 'shared' ? state.sharedSnapshot : state.mineSnapshot;
-      if (!snap) return;
+      // (a) 사용자 UI 상태 — 활성 uid / 디바이스 그리드 레이아웃.
+      const stateFp = stateFingerprint(state.activeDashboardId, state.deviceGridLayout);
+      if (stateFp !== lastStateFingerprintRef.current) {
+        scheduleStatePut();
+      }
 
-      const currentFp = fingerprint(snap.payload);
-      const lastFp = lastSyncedFingerprintRef.current[activeScope];
-      if (lastFp === currentFp) return;
+      // (b) 활성 대시보드 본문. 서버 응답 적용 중에는 건너뛴다.
+      if (applyingRef.current) return;
+      const uid = state.activeDashboardId;
+      if (!uid) return;
+      // 방금 활성이 바뀐 경우는 변경이 아니다 — 전환 이펙트가 본문을 다시 받는다.
+      if (prev.activeDashboardId !== uid) return;
 
-      // 활성 스코프가 방금 바뀌었을 경우 (탭 전환), 새 스코프의 payload 는 PUT 하지 않는다.
-      // 이는 prev.activeDashboardScope 와 비교하여 식별한다.
-      if (prev.activeDashboardScope !== activeScope) {
-        // 탭 전환은 변경이 아니므로 fingerprint 만 갱신해 spurious PUT 방지.
-        lastSyncedFingerprintRef.current[activeScope] = currentFp;
+      const content = collectActiveDashboardContent(state);
+      if (!content) return;
+      const fp = fingerprint(content);
+
+      const baseline = lastSyncedFingerprintRef.current[uid];
+      // 서버 본문을 아직 받지 못한 대시보드는 저장하지 않는다. 기준선이 없으면
+      // "사용자의 변경" 과 "아직 비어 있는 자리표시자" 를 구분할 수 없어, 폴백 직후
+      // 빈 본문을 새 대시보드에 덮어쓰게 된다.
+      if (baseline === undefined) return;
+
+      if (baseline === fp) {
+        // 내용이 기준선으로 되돌아왔다 — 예약된 PUT 을 취소한다.
+        cancelPendingPut(uid);
         return;
       }
 
-      schedulePut(activeScope);
+      pendingContentRef.current[uid] = content;
+      schedulePut(uid);
     });
     return unsubscribe;
-  }, [isLoading, schedulePut]);
+  }, [isLoading, schedulePut, scheduleStatePut, cancelPendingPut]);
 
   // 언마운트 시 진행 중 타이머 정리.
   useEffect(() => {
-    // ref 값은 effect 본문 진입 시 캡처하여 cleanup 에서 안전하게 사용한다.
     const timersRef = debounceTimerRef;
+    const stateRef = stateTimerRef;
     return () => {
-      const timers = timersRef.current;
-      if (timers.shared) clearTimeout(timers.shared);
-      if (timers.mine) clearTimeout(timers.mine);
+      for (const timer of Object.values(timersRef.current)) {
+        if (timer) clearTimeout(timer);
+      }
+      if (stateRef.current) clearTimeout(stateRef.current);
     };
   }, []);
 

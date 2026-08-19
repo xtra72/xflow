@@ -36,7 +36,6 @@ import { useTranslation } from '@/lib/i18n';
 import { useDashboardSyncStatus } from '@/contexts/DashboardSyncContext';
 import { isRemoteTarget, LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { getMetrics } from '@/services/api/monitorService';
-import { useAuthStore } from '@/stores/authStore';
 import {
   useUIStore,
   type DashboardLayoutItem,
@@ -101,12 +100,14 @@ function LocalDashboardView() {
   // 라우트로 이동해도 구독이 끊기지 않아야 하기 때문(AppLayout 주석 참조).
   const { pendingSync } = useDashboardSyncStatus();
 
-  // SPEC-DASHBOARD-001 v0.2.0: 활성 스코프 (탭) + 사용자 역할.
-  const activeDashboardScope = useUIStore((s) => s.activeDashboardScope);
-  const userRole = useAuthStore((s) => s.user?.role);
-  const isAdmin = userRole === 'admin';
-  /** 공유 탭이면서 admin 이 아닌 경우 편집 컨트롤 사전 비활성화 (AC-4 UX). */
-  const sharedReadOnly = activeDashboardScope === 'shared' && !isAdmin;
+  // SPEC-DASHBOARD-004 M5: 스코프 축이 사라져 `activeReadOnly` 가 성립하지 않는다.
+  // 서버가 대시보드마다 실어 보내는 can_edit 을 그대로 쓴다(spec.md §2.3).
+  // 목록이 아직 도착하지 않았거나 항목이 없으면 비활성화하지 않는다 — 서버가
+  // 최종 판정을 하므로(403) 여기서 선제 차단하면 부팅 중 화면이 잠긴다.
+  // 사유 툴팁·완화책 안내 등 게이팅 UX 는 M6 범위다.
+  const activeReadOnly = useUIStore(
+    (s) => s.dashboards.find((d) => d.uid === s.activeDashboardId)?.can_edit === false,
+  );
 
   // UI store
   const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
@@ -392,30 +393,30 @@ function LocalDashboardView() {
                       <button
                         type="button"
                         onClick={() => setDefaultDashboardPage(page.id)}
-                        disabled={sharedReadOnly}
-                        aria-disabled={sharedReadOnly}
+                        disabled={activeReadOnly}
+                        aria-disabled={activeReadOnly}
                         className={`shrink-0 p-0.5 transition-colors ${
-                          sharedReadOnly
+                          activeReadOnly
                             ? 'cursor-not-allowed opacity-40'
                             : page.isDefault
                             ? 'text-yellow-500'
                             : 'text-(--color-text-muted) hover:text-yellow-400'
                         }`}
-                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
+                        title={activeReadOnly ? t('dashboard.scope.adminOnly') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
                       >
                         <Star className={`h-3.5 w-3.5 ${page.isDefault ? 'fill-current' : ''}`} />
                       </button>
                       <button
                         type="button"
                         onClick={() => startRename(page.id, page.name)}
-                        disabled={sharedReadOnly}
-                        aria-disabled={sharedReadOnly}
+                        disabled={activeReadOnly}
+                        aria-disabled={activeReadOnly}
                         className={`shrink-0 p-0.5 transition-colors ${
-                          sharedReadOnly
+                          activeReadOnly
                             ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                             : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                         }`}
-                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.header.rename')}
+                        title={activeReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.header.rename')}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
@@ -426,11 +427,11 @@ function LocalDashboardView() {
                   <button
                     type="button"
                     onClick={() => { addDashboardPage(t('dashboard.header.newDashboardName')); setDashboardDropdownOpen(false); }}
-                    disabled={sharedReadOnly}
-                    aria-disabled={sharedReadOnly}
-                    title={sharedReadOnly ? t('dashboard.scope.adminOnly') : undefined}
+                    disabled={activeReadOnly}
+                    aria-disabled={activeReadOnly}
+                    title={activeReadOnly ? t('dashboard.scope.adminOnly') : undefined}
                     className={`flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm transition-colors ${
-                      sharedReadOnly
+                      activeReadOnly
                         ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                         : 'text-blue-600 hover:bg-(--color-bg-elevated) dark:text-blue-400'
                     }`}
@@ -694,15 +695,15 @@ function LocalDashboardView() {
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
 
-                {/* 편집 모드 진입 — sharedReadOnly 면 비활성화 (AC-4) */}
+                {/* 편집 모드 진입 — 편집 권한이 없으면 비활성화 (spec.md §2.11) */}
                 <button
                   type="button"
                   onClick={() => setEditMode(true)}
-                  disabled={sharedReadOnly}
-                  aria-disabled={sharedReadOnly}
-                  title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.editLayout')}
+                  disabled={activeReadOnly}
+                  aria-disabled={activeReadOnly}
+                  title={activeReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.editLayout')}
                   className={`transition-colors ${
-                    sharedReadOnly
+                    activeReadOnly
                       ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                       : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                   }`}
