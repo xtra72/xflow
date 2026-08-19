@@ -33,7 +33,7 @@ import {
   patchDashboard,
 } from '@/services/api/dashboardService';
 import { useUIStore } from '@/stores/uiStore';
-import type { Dashboard } from '@/types/dashboard';
+import type { Dashboard, DashboardVisibility } from '@/types/dashboard';
 
 /** `useDashboardMutations()` 반환값. 각 동작은 성공 여부를 돌려준다. */
 export interface DashboardMutationsApi {
@@ -41,6 +41,8 @@ export interface DashboardMutationsApi {
   rename: (uid: string, name: string) => Promise<boolean>;
   /** 기본 대시보드 지정 → `PATCH {is_default}` (grant 인가). */
   setDefault: (uid: string) => Promise<boolean>;
+  /** 공개범위 변경 → `PATCH {visibility}` (grant 인가). */
+  setVisibility: (uid: string, visibility: DashboardVisibility) => Promise<boolean>;
   /** 삭제 → `DELETE` (delete 인가). */
   remove: (uid: string) => Promise<boolean>;
   /** 요청 진행 중 여부. */
@@ -175,6 +177,27 @@ export function useDashboardMutations(): DashboardMutationsApi {
   );
 
   /**
+   * 공개범위 변경 — `PATCH {visibility}` 는 grant 인가다(spec.md §2.3 라우트 표).
+   *
+   * 이름 변경·기본 지정과 같은 낙관적 경로를 탄다. 별도 경로를 만들지 않는 이유는
+   * 실패 시 되돌리기·403 재조회 정책이 세 변경에서 동일해야 하기 때문이다.
+   */
+  const setVisibility = useCallback(
+    async (uid: string, visibility: DashboardVisibility): Promise<boolean> => {
+      const previous = metaOf(uid);
+      if (!previous || previous.visibility === visibility) return false;
+      return patchOptimistic(
+        uid,
+        { ...previous, visibility },
+        { visibility },
+        'dashboard.gate.grantDenied',
+        'dashboard.gate.visibilityFailed',
+      );
+    },
+    [metaOf, patchOptimistic],
+  );
+
+  /**
    * 삭제 — 응답을 받은 뒤에 지운다(낙관적 삭제 금지, 위 주석 참조).
    *
    * 성공하면 목록에서 제거하고, 지운 것이 활성 대시보드였으면 M5 의 폴백 사슬로
@@ -211,5 +234,5 @@ export function useDashboardMutations(): DashboardMutationsApi {
     [metaOf, notify, refreshAccess, setActiveDashboard, setDashboards],
   );
 
-  return { rename, setDefault, remove, isMutating };
+  return { rename, setDefault, setVisibility, remove, isMutating };
 }

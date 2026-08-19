@@ -18,17 +18,25 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: useAuthMock }));
 // ---- usePermission mock ----
 // SPEC-AUTH-006 M3: 게이팅이 역할 이름이 아니라 권한 키로 판정한다.
 // 기본은 전원 허용이고, 권한 부족 상황은 각 테스트가 denied 에 키를 넣어 만든다.
-const permissionMock = vi.hoisted(() => ({ denied: new Set<string>() }));
-vi.mock('@/hooks/usePermission', () => ({
-  usePermission: () => ({
-    hasPermission: (key: string) => !permissionMock.denied.has(key),
-    hasAnyPermission: (keys: readonly string[]) =>
-      keys.some((key) => !permissionMock.denied.has(key)),
-    // SPEC-AUTH-006 E2: 메뉴 노출은 nav.* 만 본다.
-    canSeeMenu: (navKey: string) => !permissionMock.denied.has(navKey),
-    isPermissionUnavailable: false,
-  }),
+// `denyAll` 은 권한이 **하나도 없는** 사용자를 표현한다. 부정 목록만으로는
+// "카탈로그에 있는 모든 키를 나열했는가" 에 의존하게 되어, 키가 늘어나면 조용히
+// 허용으로 바뀐다. SPEC-DASHBOARD-004 AC-10 의 회귀 가드가 이 상태를 요구한다.
+const permissionMock = vi.hoisted(() => ({
+  denied: new Set<string>(),
+  denyAll: false,
 }));
+vi.mock('@/hooks/usePermission', () => {
+  const allow = (key: string) => !permissionMock.denyAll && !permissionMock.denied.has(key);
+  return {
+    usePermission: () => ({
+      hasPermission: allow,
+      hasAnyPermission: (keys: readonly string[]) => keys.some(allow),
+      // SPEC-AUTH-006 E2: 메뉴 노출은 nav.* 만 본다.
+      canSeeMenu: allow,
+      isPermissionUnavailable: false,
+    }),
+  };
+});
 
 // ---- useRemoteMode mock ----
 const useRemoteModeMock = vi.hoisted(() => vi.fn());
@@ -82,6 +90,7 @@ beforeEach(() => {
   useRemoteModeMock.mockReset();
   sidebarCollapsedMock.value = false;
   permissionMock.denied = new Set<string>();
+  permissionMock.denyAll = false;
   useAuthMock.mockReturnValue({ user: makeUser('admin') });
   useRemoteModeMock.mockReturnValue({ data: { mode: 'server' } });
 });
@@ -167,5 +176,41 @@ describe('Sidebar — 하위 항목 활성 하이라이트', () => {
       'aria-current',
       'page',
     );
+  });
+});
+
+describe('Sidebar — 대시보드 관리 메뉴 (SPEC-DASHBOARD-004 AC-10)', () => {
+  it('nav.dashboard 가 없으면 대시보드 관리 항목을 노출하지 않는다', () => {
+    permissionMock.denied = new Set(['nav.dashboard']);
+    renderSidebar();
+    expect(
+      screen.queryByRole('link', { name: '대시보드 관리' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('nav.dashboard 가 있으면 대시보드 관리 항목을 노출한다', () => {
+    renderSidebar();
+    const link = screen.getByRole('link', { name: '대시보드 관리' });
+    expect(link).toHaveAttribute('href', '/dashboards/admin');
+  });
+
+  // spec.md §2.5 회귀 가드 — 대시보드를 *보는* 것은 인증만 요구한다.
+  // 기존 대시보드 항목에 permission/navPermission 이 붙는 순간 권한 0개 사용자가
+  // 빈 사이드바를 보게 되고, 그것이 catalog.go 가 금지한 상태다.
+  it('권한이 0개인 사용자에게도 대시보드(보기) 항목은 남는다', () => {
+    permissionMock.denyAll = true;
+    renderSidebar();
+    const link = screen.getByRole('link', { name: '대시보드' });
+    expect(link).toHaveAttribute('href', '/');
+    // 같은 사용자에게 관리 항목은 보이지 않는다 — 두 항목은 서로 다른 축이다.
+    expect(
+      screen.queryByRole('link', { name: '대시보드 관리' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('권한이 0개여도 사이드바가 비지 않는다 — 링크가 최소 1개 남는다', () => {
+    permissionMock.denyAll = true;
+    renderSidebar();
+    expect(screen.getAllByRole('link').length).toBeGreaterThanOrEqual(1);
   });
 });

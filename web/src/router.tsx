@@ -63,6 +63,10 @@ const ReleaseStorePage = lazy(() => import('@/pages/remote/ReleaseStorePage'));
 // SPEC-AUTH-006 M3.4: 사용자/역할 관리. 현재는 자리표시자이며 M2 가 실제 화면
 //   (목록·등록·권한 행렬)으로 대체한다. 라우트를 지금 등록해 두면 M2 는 페이지
 //   구현만 채우면 된다.
+// SPEC-DASHBOARD-004 M7 7.4: 대시보드 관리 화면. 메뉴와 동일한 `nav.dashboard`
+//   축으로 가드한다 — 메뉴만 숨기고 라우트를 열어두면 주소창 직접 진입으로
+//   화면에 도달한다(acceptance.md AC-10).
+const DashboardAdminPage = lazy(() => import('@/pages/dashboard/DashboardAdminPage'));
 const AdminUsersPage = lazy(() => import('@/pages/admin/UsersPage'));
 const AdminRolesPage = lazy(() => import('@/pages/admin/RolesPage'));
 
@@ -125,6 +129,22 @@ export const appRoutes: RouteObject[] = [
                 <PanelSettingsPage />
               </SuspenseWrapper>
             ),
+          },
+          // SPEC-DASHBOARD-004 M7 7.4: 대시보드 관리(목록·생성·이름변경·삭제·
+          //   공개범위·권한 부여). `nav.dashboard` 미보유 시 대시보드로
+          //   리다이렉트되고 안내가 표시된다(AC-10).
+          {
+            element: <AuthGuard requireMenu="nav.dashboard" />,
+            children: [
+              {
+                path: '/dashboards/admin',
+                element: (
+                  <SuspenseWrapper>
+                    <DashboardAdminPage />
+                  </SuspenseWrapper>
+                ),
+              },
+            ],
           },
           {
             path: '/flows',

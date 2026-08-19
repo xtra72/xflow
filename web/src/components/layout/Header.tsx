@@ -1,6 +1,6 @@
 // 헤더 컴포넌트.
 // 페이지 제목, 사용자 정보, WebSocket 연결 상태, 테마 선택, 로그아웃을 표시한다.
-// 대시보드 라우트('/')에서는 대시보드 선택/관리 컨트롤을 표시한다.
+// 대시보드 라우트('/')에서는 DashboardPage 가 자체 헤더를 렌더하므로 null 을 반환한다.
 // 디바이스 라우트('/devices')에서는 디바이스 추가 버튼을 표시한다.
 //
 // SPEC-WEB-006 v0.1.0 (M4): 우측 액션에 UpdateAvailableBadge 통합.
@@ -24,7 +24,6 @@ import { useSystemVersion } from '@/services/api/systemUpdate';
 import { ThemeSelector } from '@/components/theme/ThemeSelector';
 import { ThemeEditorModal } from '@/components/theme/ThemeEditorModal';
 import { UpdateAvailableBadge } from '@/components/system/UpdateAvailableBadge';
-import HeaderDashboardControls from './HeaderDashboardControls';
 import type { ConnectionState } from '@/services/ws/wsClient';
 
 /**
@@ -106,8 +105,8 @@ export default function Header() {
       )}`
     : null;
 
-  // 대시보드 관리 컨트롤은 HeaderDashboardControls 로 분리했다
-  // (SPEC-DASHBOARD-004 M6 6.5) — 목록 API 축 렌더 + 항목별 인가 게이팅.
+  // 대시보드 라우트 여부. 대시보드 관리 컨트롤은 이 헤더가 아니라 DashboardPage 의
+  // 자체 헤더와 대시보드 관리 화면(SPEC-DASHBOARD-004 M7)이 제공한다.
   const isDashboardRoute = location.pathname === '/';
 
   // 현재 라우트에서 페이지 제목 결정. 원격 노드 컨텍스트에서는 노드 이름을
@@ -120,12 +119,8 @@ export default function Header() {
 
   return (
     <header className="flex h-(--header-height) shrink-0 items-center justify-between border-b border-(--color-border-default) bg-(--color-bg-surface) px-6">
-      {/* 좌측: 페이지 제목 또는 대시보드 관리 */}
-      {isDashboardRoute ? (
-        <HeaderDashboardControls />
-      ) : (
-        <h1 className="text-lg font-semibold text-(--color-text-primary)">{pageTitle}</h1>
-      )}
+      {/* 좌측: 페이지 제목 (대시보드 라우트는 위에서 이미 null 로 반환된다) */}
+      <h1 className="text-lg font-semibold text-(--color-text-primary)">{pageTitle}</h1>
 
       {/* 우측 액션 영역 */}
       <div className="flex items-center gap-4">
