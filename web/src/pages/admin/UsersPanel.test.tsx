@@ -190,6 +190,10 @@ describe('UsersPanel 등록 폼 (AC-03)', () => {
       within(form).getByPlaceholderText('8자 이상'),
       { target: { value: 'secret-password' } },
     );
+    // 확인란이 추가되었다 — 일치해야 요청이 나간다.
+    fireEvent.change(within(form).getByLabelText('비밀번호 확인'), {
+      target: { value: 'secret-password' },
+    });
     fireEvent.change(within(form).getByRole('combobox'), { target: { value: 'operator' } });
     fireEvent.click(within(form).getByRole('button', { name: '등록' }));
 
@@ -211,6 +215,9 @@ describe('UsersPanel 등록 폼 (AC-03)', () => {
     const form = screen.getByTestId('admin-users-create-form');
     fireEvent.change(within(form).getByRole('textbox'), { target: { value: 'admin' } });
     fireEvent.change(within(form).getByPlaceholderText('8자 이상'), {
+      target: { value: 'secret-password' },
+    });
+    fireEvent.change(within(form).getByLabelText('비밀번호 확인'), {
       target: { value: 'secret-password' },
     });
     fireEvent.change(within(form).getByRole('combobox'), { target: { value: 'admin' } });
@@ -272,9 +279,12 @@ describe('UsersPanel 역할 변경·비밀번호 재설정 (AC-03)', () => {
     expect(getUsers).toHaveBeenCalledTimes(1);
   });
 
-  it('비밀번호 재설정이 400 이면 검증 규칙을 안내한다 (8자 미만)', async () => {
+  // 8자 미만은 이제 클라이언트가 먼저 막으므로(아래 '클라이언트 검증' describe)
+  // 이 테스트는 클라이언트 검사를 통과한 입력에 대한 서버 400 매핑만 본다.
+  // 클라이언트 검사는 왕복을 아낄 뿐 서버 검증을 대신하지 않는다.
+  it('비밀번호 재설정이 400 이면 검증 규칙을 안내한다 (서버 거부)', async () => {
     resetUserPassword.mockRejectedValue(
-      new APIError('BAD_REQUEST', 'password 는 최소 8자', 400),
+      new APIError('BAD_REQUEST', 'password 규칙 위반', 400),
     );
     renderPage();
     await waitForList();
@@ -285,7 +295,12 @@ describe('UsersPanel 역할 변경·비밀번호 재설정 (AC-03)', () => {
       }),
     );
     const dialog = screen.getByRole('dialog');
-    fireEvent.change(dialog.querySelectorAll('input')[0]!, { target: { value: 'short' } });
+    fireEvent.change(within(dialog).getByLabelText('새 비밀번호'), {
+      target: { value: 'long-enough-password' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('비밀번호 확인'), {
+      target: { value: 'long-enough-password' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: '확인' }));
 
     expect(await screen.findByTestId('admin-action-error')).toHaveTextContent(
@@ -302,11 +317,17 @@ describe('UsersPanel 역할 변경·비밀번호 재설정 (AC-03)', () => {
     fireEvent.click(within(row).getByRole('button', { name: /비밀번호 재설정/ }));
 
     const dialog = screen.getByRole('dialog');
-    // 입력란은 새 비밀번호 하나뿐이다.
-    const inputs = dialog.querySelectorAll('input');
-    expect(inputs).toHaveLength(1);
+    // 입력란은 새 비밀번호와 그 확인 둘뿐이다 — 현재 비밀번호를 묻지 않는다.
+    // (확인란 추가로 1개에서 2개가 되었고, '현재 비밀번호'는 여전히 없다.)
+    expect(dialog.querySelectorAll('input')).toHaveLength(2);
+    expect(within(dialog).queryByLabelText('현재 비밀번호')).not.toBeInTheDocument();
 
-    fireEvent.change(inputs[0]!, { target: { value: 'new-password-1' } });
+    fireEvent.change(within(dialog).getByLabelText('새 비밀번호'), {
+      target: { value: 'new-password-1' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('비밀번호 확인'), {
+      target: { value: 'new-password-1' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: '확인' }));
 
     await waitFor(() =>
@@ -529,5 +550,206 @@ describe('UsersPanel 자기 자신 행의 삭제 컨트롤', () => {
         name: /삭제 admin/,
       }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('UsersPanel 비밀번호 확인란과 클라이언트 검증', () => {
+  /** 등록 폼을 열고 반환한다. */
+  async function openCreateForm(): Promise<HTMLElement> {
+    renderPage();
+    await waitForList();
+    fireEvent.click(screen.getByRole('button', { name: /사용자 등록/ }));
+    return screen.getByTestId('admin-users-create-form');
+  }
+
+  /** 재설정 다이얼로그를 열고 반환한다. */
+  async function openResetDialog(): Promise<HTMLElement> {
+    renderPage();
+    await waitForList();
+    fireEvent.click(
+      within(screen.getByTestId('admin-user-row-alice')).getByRole('button', {
+        name: /비밀번호 재설정/,
+      }),
+    );
+    return screen.getByRole('dialog');
+  }
+
+  it('등록: 확인란이 다르면 요청을 보내지 않고 사유를 알린다', async () => {
+    const form = await openCreateForm();
+
+    fireEvent.change(within(form).getByRole('textbox'), { target: { value: 'carol' } });
+    fireEvent.change(within(form).getByPlaceholderText('8자 이상'), {
+      target: { value: 'secret-password' },
+    });
+    fireEvent.change(within(form).getByLabelText('비밀번호 확인'), {
+      target: { value: 'secret-passwordX' },
+    });
+    fireEvent.change(within(form).getByRole('combobox'), { target: { value: 'operator' } });
+    fireEvent.click(within(form).getByRole('button', { name: '등록' }));
+
+    expect(
+      await screen.findByTestId('admin-users-create-validation-error'),
+    ).toHaveTextContent('비밀번호가 일치하지 않습니다.');
+    // 요청 자체가 나가지 않아야 한다.
+    expect(createUser).not.toHaveBeenCalled();
+    // 서버 오류 자리와 구분된다 — 아직 서버는 아무 말도 하지 않았다.
+    expect(screen.queryByTestId('admin-action-error')).not.toBeInTheDocument();
+    // 폼은 열린 채 남아 사용자가 바로 고칠 수 있다.
+    expect(screen.getByTestId('admin-users-create-form')).toBeInTheDocument();
+  });
+
+  it('등록: 확인란이 일치하면 평소대로 등록을 요청한다', async () => {
+    createUser.mockResolvedValue(USERS[1]);
+    const form = await openCreateForm();
+
+    fireEvent.change(within(form).getByRole('textbox'), { target: { value: 'carol' } });
+    fireEvent.change(within(form).getByPlaceholderText('8자 이상'), {
+      target: { value: 'secret-password' },
+    });
+    fireEvent.change(within(form).getByLabelText('비밀번호 확인'), {
+      target: { value: 'secret-password' },
+    });
+    fireEvent.change(within(form).getByRole('combobox'), { target: { value: 'operator' } });
+    fireEvent.click(within(form).getByRole('button', { name: '등록' }));
+
+    await waitFor(() =>
+      expect(createUser).toHaveBeenCalledWith({
+        username: 'carol',
+        password: 'secret-password',
+        role: 'operator',
+      }),
+    );
+    expect(
+      screen.queryByTestId('admin-users-create-validation-error'),
+    ).not.toBeInTheDocument();
+  });
+
+  // 서버(internal/api/handler/user.go)의 minPasswordLength = 8 을 그대로 옮긴 규칙.
+  it('등록: 8자 미만이면 서버 왕복 없이 막는다', async () => {
+    const form = await openCreateForm();
+
+    fireEvent.change(within(form).getByRole('textbox'), { target: { value: 'carol' } });
+    fireEvent.change(within(form).getByPlaceholderText('8자 이상'), {
+      target: { value: 'short' },
+    });
+    fireEvent.change(within(form).getByLabelText('비밀번호 확인'), {
+      target: { value: 'short' },
+    });
+    fireEvent.change(within(form).getByRole('combobox'), { target: { value: 'operator' } });
+    fireEvent.click(within(form).getByRole('button', { name: '등록' }));
+
+    expect(
+      await screen.findByTestId('admin-users-create-validation-error'),
+    ).toHaveTextContent('비밀번호는 8자 이상이어야 합니다.');
+    expect(createUser).not.toHaveBeenCalled();
+  });
+
+  it('재설정: 확인란이 다르면 요청을 보내지 않고 사유를 알린다', async () => {
+    const dialog = await openResetDialog();
+
+    fireEvent.change(within(dialog).getByLabelText('새 비밀번호'), {
+      target: { value: 'new-password-1' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('비밀번호 확인'), {
+      target: { value: 'new-password-2' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '확인' }));
+
+    expect(
+      await screen.findByTestId('admin-users-reset-validation-error'),
+    ).toHaveTextContent('비밀번호가 일치하지 않습니다.');
+    expect(resetUserPassword).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('admin-action-error')).not.toBeInTheDocument();
+    // 다이얼로그는 닫히지 않는다.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('재설정: 확인란이 일치하면 평소대로 재설정을 요청한다', async () => {
+    resetUserPassword.mockResolvedValue(undefined);
+    const dialog = await openResetDialog();
+
+    fireEvent.change(within(dialog).getByLabelText('새 비밀번호'), {
+      target: { value: 'new-password-1' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('비밀번호 확인'), {
+      target: { value: 'new-password-1' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '확인' }));
+
+    await waitFor(() =>
+      expect(resetUserPassword).toHaveBeenCalledWith('alice', {
+        password: 'new-password-1',
+      }),
+    );
+  });
+
+  it('재설정: 8자 미만이면 서버 왕복 없이 막는다', async () => {
+    const dialog = await openResetDialog();
+
+    fireEvent.change(within(dialog).getByLabelText('새 비밀번호'), {
+      target: { value: 'short' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('비밀번호 확인'), {
+      target: { value: 'short' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '확인' }));
+
+    expect(
+      await screen.findByTestId('admin-users-reset-validation-error'),
+    ).toHaveTextContent('비밀번호는 8자 이상이어야 합니다.');
+    expect(resetUserPassword).not.toHaveBeenCalled();
+  });
+});
+
+describe('UsersPanel 표시 토글', () => {
+  it('등록 폼의 비밀번호와 확인란 토글이 서로 독립이다', async () => {
+    renderPage();
+    await waitForList();
+    fireEvent.click(screen.getByRole('button', { name: /사용자 등록/ }));
+    const form = screen.getByTestId('admin-users-create-form');
+
+    const password = within(form).getByPlaceholderText('8자 이상');
+    const confirm = within(form).getByLabelText('비밀번호 확인');
+
+    fireEvent.click(within(form).getByRole('button', { name: '비밀번호 표시 비밀번호' }));
+    expect(password).toHaveAttribute('type', 'text');
+    // 한쪽만 드러나야 한다.
+    expect(confirm).toHaveAttribute('type', 'password');
+  });
+
+  it('재설정 다이얼로그를 닫았다 다시 열면 표시 상태가 초기화된다', async () => {
+    renderPage();
+    await waitForList();
+
+    const openDialog = () =>
+      fireEvent.click(
+        within(screen.getByTestId('admin-user-row-alice')).getByRole('button', {
+          name: /비밀번호 재설정/,
+        }),
+      );
+
+    openDialog();
+    let dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('새 비밀번호'), {
+      target: { value: 'new-password-1' },
+    });
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '비밀번호 표시 새 비밀번호' }),
+    );
+    expect(within(dialog).getByLabelText('새 비밀번호')).toHaveAttribute('type', 'text');
+
+    // 취소로 닫는다.
+    fireEvent.click(within(dialog).getByRole('button', { name: '취소' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // 다시 연다 — 이전 세션에서 드러낸 상태가 따라오면 비밀번호가 그대로 노출된다.
+    openDialog();
+    dialog = screen.getByRole('dialog');
+    const reopened = within(dialog).getByLabelText('새 비밀번호');
+    expect(reopened).toHaveAttribute('type', 'password');
+    expect(reopened).toHaveValue('');
+    expect(
+      within(dialog).getByRole('button', { name: '비밀번호 표시 새 비밀번호' }),
+    ).toHaveAttribute('aria-pressed', 'false');
   });
 });

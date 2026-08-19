@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 
+import PasswordField from '@/components/common/PasswordField';
 import { useTranslation } from '@/lib/i18n';
 import { changePassword } from '@/services/api/authService';
 
@@ -12,8 +13,26 @@ interface ChangePasswordDialogProps {
   onClose: () => void;
 }
 
-/** 최소 비밀번호 길이 */
+/**
+ * 최소 비밀번호 길이.
+ *
+ * 본인 비밀번호 변경 경로(PUT /auth/password)의 서버 하한을 그대로 옮긴 값이다 —
+ * internal/auth/password.go 의 HashPassword 가 4자 미만을 ErrPasswordTooShort 로
+ * 거부한다.
+ *
+ * 관리자 경로(사용자 등록·비밀번호 재설정, UsersPanel)의 하한은 8자로 다르다.
+ * internal/api/handler/user.go 가 `minPasswordLength = 8` 로 더 엄격하게 검사하며,
+ * 그 주석이 밝히듯 자기 변경 경로의 정책은 일부러 건드리지 않은 것이다. 서버가
+ * 비대칭이므로 클라이언트도 비대칭을 유지한다 — 여기서 8자로 올리면 서버가
+ * 받아들이는 비밀번호를 화면이 거부하게 된다.
+ */
 const MIN_PASSWORD_LENGTH = 4;
+
+/** 세 입력이 공유하는 클래스. 하나만 바뀌어 어긋나는 일이 없도록 한 곳에 둔다. */
+const INPUT_CLASS =
+  'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-surface) ' +
+  'px-3 py-2 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none ' +
+  'focus:ring-1 focus:ring-blue-500 disabled:opacity-50';
 
 /**
  * 비밀번호 변경 모달 다이얼로그.
@@ -136,15 +155,15 @@ export default function ChangePasswordDialog({ open, onClose }: ChangePasswordDi
             >
               {t('auth.currentPassword')}
             </label>
-            <input
+            <PasswordField
               id="current-password"
-              type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               disabled={isSubmitting}
               autoComplete="current-password"
+              fieldLabel={t('auth.currentPassword')}
               required
-              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+              className={INPUT_CLASS}
             />
           </div>
 
@@ -156,16 +175,16 @@ export default function ChangePasswordDialog({ open, onClose }: ChangePasswordDi
             >
               {t('auth.newPassword')}
             </label>
-            <input
+            <PasswordField
               id="new-password"
-              type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               disabled={isSubmitting}
               autoComplete="new-password"
+              fieldLabel={t('auth.newPassword')}
               required
               minLength={MIN_PASSWORD_LENGTH}
-              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+              className={INPUT_CLASS}
             />
           </div>
 
@@ -177,16 +196,16 @@ export default function ChangePasswordDialog({ open, onClose }: ChangePasswordDi
             >
               {t('auth.confirmPassword')}
             </label>
-            <input
+            <PasswordField
               id="confirm-password"
-              type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               disabled={isSubmitting}
               autoComplete="new-password"
+              fieldLabel={t('auth.confirmPassword')}
               required
               minLength={MIN_PASSWORD_LENGTH}
-              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+              className={INPUT_CLASS}
             />
           </div>
 

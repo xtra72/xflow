@@ -29,6 +29,7 @@ import {
 } from '@/hooks/useUserAdmin';
 import { usePermission } from '@/hooks/usePermission';
 import PermissionButton from '@/components/common/PermissionButton';
+import PasswordField from '@/components/common/PasswordField';
 import type { UserResponse } from '@/services/api/userService';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -45,6 +46,20 @@ const TH_CLASS =
   'px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-(--color-text-muted)';
 
 const TD_CLASS = 'px-3 py-2 text-sm text-(--color-text-primary)';
+
+/**
+ * 관리자 경로(사용자 등록·비밀번호 재설정)의 최소 비밀번호 길이.
+ *
+ * 서버 값을 그대로 옮긴 것이다 — internal/api/handler/user.go 의
+ * `minPasswordLength = 8` 이 Create 와 ResetPassword 양쪽에서 검사된다.
+ *
+ * 본인 비밀번호 변경(PUT /auth/password, ChangePasswordDialog)의 하한은 4자로
+ * 다르다. 서버가 의도적으로 비대칭이기 때문이다: 관리자 경로만 8자로 조이고
+ * 기존 자기 변경 경로의 정책은 건드리지 않는다(user.go 주석). 클라이언트가
+ * 임의로 양쪽을 8자로 통일하면 서버가 받아들이는 비밀번호를 화면이 거부하게
+ * 되므로, 여기서도 같은 비대칭을 유지한다.
+ */
+const MIN_ADMIN_PASSWORD_LENGTH = 8;
 
 /** 삭제·비밀번호 재설정 확인 대화상자 상태. 둘은 동시에 열리지 않는다. */
 type DialogState =
@@ -78,9 +93,18 @@ export default function UsersPanel(): React.JSX.Element {
   const [createOpen, setCreateOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
   const [newRole, setNewRole] = useState('');
   const [dialog, setDialog] = useState<DialogState>(null);
   const [dialogPassword, setDialogPassword] = useState('');
+  const [dialogPasswordConfirm, setDialogPasswordConfirm] = useState('');
+
+  // 클라이언트 유효성 검사 실패는 서버 거부(actionError, admin-action-error)와
+  // 별도의 자리에 표시한다. 둘을 한 곳에 합치면 "서버가 거부했다"와 "아직 보내지도
+  // 않았다"가 구분되지 않는다 — 후자는 사용자가 폼에서 바로 고칠 수 있는 문제다.
+  // 등록 폼과 재설정 다이얼로그는 동시에 열려 있을 수 있어 상태도 따로 둔다.
+  const [createValidationError, setCreateValidationError] = useState<string | null>(null);
+  const [resetValidationError, setResetValidationError] = useState<string | null>(null);
 
   /** 빌트인 3종 + 커스텀 역할 이름. 조회 실패 시 빈 배열이다. */
   const roleNames = useMemo(
@@ -103,12 +127,28 @@ export default function UsersPanel(): React.JSX.Element {
     setCreateOpen(false);
     setNewUsername('');
     setNewPassword('');
+    setNewPasswordConfirm('');
     setNewRole('');
+    setCreateValidationError(null);
   }
 
   function closeDialog(): void {
     setDialog(null);
     setDialogPassword('');
+    setDialogPasswordConfirm('');
+    setResetValidationError(null);
+  }
+
+  /**
+   * 서버로 보내기 전 비밀번호를 검사한다. 통과하면 null, 아니면 안내 문구 키.
+   *
+   * 서버 규칙(8자 이상)을 그대로 옮긴 것이라 여기서 막힌 입력은 서버도 400 으로
+   * 거부한다 — 왕복을 아끼는 것이지 서버 검사를 대신하는 것이 아니다.
+   */
+  function passwordProblemKey(password: string, confirm: string): string | null {
+    if (password.length < MIN_ADMIN_PASSWORD_LENGTH) return 'admin.users.passwordTooShort';
+    if (password !== confirm) return 'admin.users.passwordMismatch';
+    return null;
   }
 
   async function handleCreate(e: React.FormEvent): Promise<void> {
@@ -116,6 +156,14 @@ export default function UsersPanel(): React.JSX.Element {
     const username = newUsername.trim();
     const role = newRole.trim();
     if (!username || !newPassword || !role) return;
+
+    // 확인란 불일치·길이 미달이면 요청 자체를 보내지 않는다.
+    const problem = passwordProblemKey(newPassword, newPasswordConfirm);
+    if (problem) {
+      setCreateValidationError(t(problem));
+      return;
+    }
+    setCreateValidationError(null);
 
     try {
       await createUser.mutateAsync({ username, password: newPassword, role });
@@ -140,6 +188,13 @@ export default function UsersPanel(): React.JSX.Element {
   async function handleResetPassword(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (dialog?.kind !== 'reset' || !dialogPassword) return;
+
+    const problem = passwordProblemKey(dialogPassword, dialogPasswordConfirm);
+    if (problem) {
+      setResetValidationError(t(problem));
+      return;
+    }
+    setResetValidationError(null);
 
     try {
       await resetPassword.mutateAsync({
@@ -216,7 +271,8 @@ export default function UsersPanel(): React.JSX.Element {
           <h2 className="text-sm font-semibold text-(--color-text-primary)">
             {t('admin.users.createTitle')}
           </h2>
-          <div className="grid gap-3 sm:grid-cols-3">
+          {/* 확인란이 늘면서 네 칸이 되었다 — 3열이면 마지막 줄에 한 칸만 남는다. */}
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span className="text-(--color-text-muted)">{t('admin.users.username')}</span>
               <input
@@ -228,12 +284,28 @@ export default function UsersPanel(): React.JSX.Element {
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-(--color-text-muted)">{t('admin.users.password')}</span>
-              <input
-                type="password"
+              <PasswordField
                 className={INPUT_CLASS}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder={t('admin.users.passwordHint')}
+                autoComplete="new-password"
+                minLength={MIN_ADMIN_PASSWORD_LENGTH}
+                fieldLabel={t('admin.users.password')}
+                required
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-(--color-text-muted)">
+                {t('admin.users.confirmPassword')}
+              </span>
+              <PasswordField
+                className={INPUT_CLASS}
+                value={newPasswordConfirm}
+                onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                autoComplete="new-password"
+                minLength={MIN_ADMIN_PASSWORD_LENGTH}
+                fieldLabel={t('admin.users.confirmPassword')}
                 required
               />
             </label>
@@ -268,6 +340,15 @@ export default function UsersPanel(): React.JSX.Element {
           {rolesUnavailable && (
             <p className="text-xs text-(--color-text-muted)">
               {t('admin.users.rolesUnavailable')}
+            </p>
+          )}
+          {createValidationError && (
+            <p
+              role="alert"
+              data-testid="admin-users-create-validation-error"
+              className="text-sm text-red-600 dark:text-red-400"
+            >
+              {createValidationError}
             </p>
           )}
           <div className="flex justify-end gap-2">
@@ -416,15 +497,40 @@ export default function UsersPanel(): React.JSX.Element {
             </h2>
             <label className="block space-y-1 text-sm">
               <span className="text-(--color-text-muted)">{t('admin.users.newPassword')}</span>
-              <input
-                type="password"
+              <PasswordField
                 className={INPUT_CLASS}
                 value={dialogPassword}
                 onChange={(e) => setDialogPassword(e.target.value)}
                 placeholder={t('admin.users.passwordHint')}
+                autoComplete="new-password"
+                minLength={MIN_ADMIN_PASSWORD_LENGTH}
+                fieldLabel={t('admin.users.newPassword')}
                 required
               />
             </label>
+            <label className="block space-y-1 text-sm">
+              <span className="text-(--color-text-muted)">
+                {t('admin.users.confirmPassword')}
+              </span>
+              <PasswordField
+                className={INPUT_CLASS}
+                value={dialogPasswordConfirm}
+                onChange={(e) => setDialogPasswordConfirm(e.target.value)}
+                autoComplete="new-password"
+                minLength={MIN_ADMIN_PASSWORD_LENGTH}
+                fieldLabel={t('admin.users.confirmPassword')}
+                required
+              />
+            </label>
+            {resetValidationError && (
+              <p
+                role="alert"
+                data-testid="admin-users-reset-validation-error"
+                className="text-sm text-red-600 dark:text-red-400"
+              >
+                {resetValidationError}
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
