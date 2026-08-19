@@ -60,11 +60,10 @@ const EnrollmentManagementPage = lazy(
 );
 // 릴리스 저장소(관리 서버 호스팅 프로그램 이미지): 아키텍처별 xflowd 이미지 관리.
 const ReleaseStorePage = lazy(() => import('@/pages/remote/ReleaseStorePage'));
-// SPEC-AUTH-006 M3.4: 사용자/역할 관리. 현재는 자리표시자이며 M2 가 실제 화면
-//   (목록·등록·권한 행렬)으로 대체한다. 라우트를 지금 등록해 두면 M2 는 페이지
-//   구현만 채우면 된다.
-const AdminUsersPage = lazy(() => import('@/pages/admin/UsersPage'));
-const AdminRolesPage = lazy(() => import('@/pages/admin/RolesPage'));
+// SPEC-AUTH-006 M3.4: 사용자 관리. 역할 관리는 별도 화면이 아니라 이 화면의
+//   '역할' 탭이다(`/admin/users?tab=roles`). 구 `/admin/roles` 는 북마크 보존용
+//   리다이렉트로만 남는다.
+const AdminUserManagementPage = lazy(() => import('@/pages/admin/UserManagementPage'));
 
 /** Suspense 래퍼 - 지연 로딩 중 로딩 스피너를 표시한다 */
 function SuspenseWrapper({ children }: { children: React.ReactNode }) {
@@ -306,6 +305,7 @@ export const appRoutes: RouteObject[] = [
                 ],
               },
               // SPEC-AUTH-006 §2.3 (M3.4): 사용자 관리 — user.read.
+              //   역할 관리는 이 화면의 '역할' 탭이며 노출은 nav.role 이 가른다.
               {
                 element: <AuthGuard requireMenu="nav.user" requirePermission="user.read" />,
                 children: [
@@ -313,23 +313,23 @@ export const appRoutes: RouteObject[] = [
                     path: 'users',
                     element: (
                       <SuspenseWrapper>
-                        <AdminUsersPage />
+                        <AdminUserManagementPage />
                       </SuspenseWrapper>
                     ),
                   },
                 ],
               },
-              // SPEC-AUTH-006 §2.3 (M3.4): 역할 관리 — role.read.
+              // 구 역할 관리 화면 딥링크 보존 — /admin/roles → 사용자 관리의
+              //   역할 탭으로 리다이렉트(북마크 보존). `/admin/remote/control`
+              //   → `/admin/remote` 와 같은 방식이다. 기존 게이트(nav.role +
+              //   role.read)는 그대로 두어, 역할을 볼 수 없는 사용자가 이 경로로
+              //   우회 진입하지 않게 한다.
               {
                 element: <AuthGuard requireMenu="nav.role" requirePermission="role.read" />,
                 children: [
                   {
                     path: 'roles',
-                    element: (
-                      <SuspenseWrapper>
-                        <AdminRolesPage />
-                      </SuspenseWrapper>
-                    ),
+                    element: <Navigate to="/admin/users?tab=roles" replace />,
                   },
                 ],
               },

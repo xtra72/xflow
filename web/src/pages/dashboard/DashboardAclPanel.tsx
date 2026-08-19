@@ -100,7 +100,7 @@ export default function DashboardAclPanel({
   const [errorText, setErrorText] = useState<string | null>(null);
 
   // 대상 후보 목록. 목록 조회 권한이 없으면 서버가 403 이므로 아예 조회하지 않고
-  // 이름 직접 입력으로 낮춘다(UsersPage 의 역할 선택지와 동일한 처리).
+  // 이름 직접 입력으로 낮춘다(UsersPanel 의 역할 선택지와 동일한 처리).
   const canReadUsers = hasPermission('user.read');
   const canReadRoles = hasPermission('role.read');
   const usersQuery = useAdminUsers(canReadUsers);

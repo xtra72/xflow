@@ -117,3 +117,27 @@ describe('Header — 로컬/기타 경로 제목(회귀 방지)', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('플로우');
   });
 });
+
+// 사용자 관리 화면은 본문에서 제목을 걷어냈다. 제목이 앱 헤더에서 실제로
+// 그려지는지 여기서 확인하지 않으면 "어디에도 제목이 없는" 회귀가 통과한다.
+describe('Header — 사용자 관리 제목', () => {
+  it('/admin/users 에서 "사용자 관리"를 제목으로 표시한다', () => {
+    renderHeader('/admin/users');
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveTextContent('사용자 관리');
+    // 폴백으로 떨어지지 않는다.
+    expect(heading).not.toHaveTextContent('XFlow');
+  });
+
+  it('역할 탭(`?tab=roles`)에서도 같은 제목을 유지한다 — 제목은 경로로 정해진다', () => {
+    renderHeader('/admin/users?tab=roles');
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('사용자 관리');
+  });
+
+  it('Header 는 이 경로에서 null 을 반환하지 않는다 (대시보드 경로만 숨긴다)', () => {
+    const { container } = renderHeader('/admin/users');
+    expect(container.querySelector('header')).not.toBeNull();
+  });
+});

@@ -25,8 +25,7 @@
     "enrollmentManagement": "Enrollment",
     "groupManagement": "Group Management",
     "releaseStore": "Release Store",
-    "users": "Users",
-    "roles": "Roles"
+    "users": "Users"
   },
   "auth": {
     "login": "Login",
@@ -3907,6 +3906,9 @@
   },
   "admin": {
     "permissionRequired": "Permission required",
+    "tabUsers": "Users",
+    "tabRoles": "Roles",
+    "tabsLabel": "User management tabs",
     "users": {
       "create": "Add User",
       "createTitle": "New User",

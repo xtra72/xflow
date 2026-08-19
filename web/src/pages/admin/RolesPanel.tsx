@@ -1,4 +1,7 @@
-// 역할 관리 화면 (SPEC-AUTH-006 M2.3 — U2, AC-04).
+// 역할 목록 패널 (SPEC-AUTH-006 M2.3 — U2, AC-04).
+//
+// 사용자 관리 화면(UserManagementPage)의 '역할' 탭 본문이다. 제목은 앱 헤더가,
+// 탭 노출 판정(nav.role)은 상위 화면이 담당한다 — 이 패널은 본문만 그린다.
 //
 // 목록(이름·설명·빌트인 여부·권한 개수)과 생성·수정 폼을 제공한다. 권한 선택은
 // 리소스×액션 행렬 체크박스이며, 축은 `GET /permissions` 카탈로그에서 파생한다.
@@ -24,6 +27,7 @@ import {
   useUpdateRole,
 } from '@/hooks/useUserAdmin';
 import { usePermission } from '@/hooks/usePermission';
+import PermissionButton from '@/components/common/PermissionButton';
 import type { RoleResponse, UpdateRoleRequest } from '@/services/api/userService';
 import { useUIStore } from '@/stores/uiStore';
 import { useTranslation } from '@/lib/i18n';
@@ -46,12 +50,11 @@ type EditorState =
   | { mode: 'edit'; original: RoleResponse }
   | null;
 
-export default function RolesPage(): React.JSX.Element {
+export default function RolesPanel(): React.JSX.Element {
   const { t } = useTranslation();
   const { hasPermission } = usePermission();
   const addNotification = useUIStore((s) => s.addNotification);
 
-  const canCreate = hasPermission('role.create');
   const canUpdate = hasPermission('role.update');
   const canDelete = hasPermission('role.delete');
 
@@ -186,23 +189,20 @@ export default function RolesPage(): React.JSX.Element {
   const nameLocked = editor?.mode === 'edit' && editor.original.builtin === true;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-6" data-testid="admin-roles-page">
-      <header className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-          {t('nav.roles')}
-        </h1>
-        <button
+    <div className="space-y-4" data-testid="admin-roles-panel">
+      {/* 액션 행. 사용자 탭의 등록 버튼과 같은 배치·레이아웃을 쓴다. */}
+      <div className="flex items-center justify-end">
+        <PermissionButton
           type="button"
+          permission="role.create"
+          deniedTitle={permissionTitle}
           onClick={openCreate}
-          disabled={!canCreate}
-          aria-disabled={!canCreate}
-          title={canCreate ? undefined : permissionTitle}
-          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
         >
           <Plus className="h-4 w-4" />
           {t('admin.roles.create')}
-        </button>
-      </header>
+        </PermissionButton>
+      </div>
 
       {actionError && (
         <div

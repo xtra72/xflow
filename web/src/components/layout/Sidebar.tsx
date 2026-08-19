@@ -22,7 +22,6 @@ import {
   Network,
   Package,
   Settings,
-  ShieldCheck,
   SlidersHorizontal,
   UserPlus,
   Users,
@@ -208,7 +207,8 @@ const NAV_ENTRIES: NavEntry[] = [
       },
     ],
   },
-  // SPEC-AUTH-006 M3.2: 사용자/역할 관리 메뉴. 페이지 구현은 M2 가 채운다.
+  // SPEC-AUTH-006 M3.2: 사용자 관리 메뉴. 역할 관리는 별도 메뉴가 아니라
+  // 이 화면의 '역할' 탭이며, 탭 노출은 nav.role 이 가른다.
   {
     labelKey: 'nav.users',
     path: '/admin/users',
@@ -216,14 +216,6 @@ const NAV_ENTRIES: NavEntry[] = [
     permission: 'user.read',
 
     navPermission: 'nav.user',
-  },
-  {
-    labelKey: 'nav.roles',
-    path: '/admin/roles',
-    icon: ShieldCheck,
-    permission: 'role.read',
-
-    navPermission: 'nav.role',
   },
   {
     labelKey: 'nav.settings',

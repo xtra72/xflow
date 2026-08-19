@@ -47,6 +47,8 @@ const PAGE_TITLE_KEYS: Record<string, string> = {
   '/agent-types': 'nav.agentTypes',
   '/monitoring': 'nav.monitoring',
   '/settings': 'nav.settings',
+  // 사용자 관리(역할 탭 포함). 본문에서 제목을 걷어냈으므로 여기서만 그린다.
+  '/admin/users': 'nav.users',
 };
 
 /** WebSocket 연결 상태에 따른 표시 색상 */

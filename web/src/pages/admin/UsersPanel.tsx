@@ -1,6 +1,8 @@
-// 사용자 관리 화면 (SPEC-AUTH-006 M2.2 — U2, AC-03).
+// 사용자 목록 패널 (SPEC-AUTH-006 M2.2 — U2, AC-03).
 //
 // 목록·등록·역할 변경(인라인)·비밀번호 재설정·삭제를 한 화면에서 처리한다.
+// 화면 제목은 앱 헤더(components/layout/Header.tsx)가 그리고, 탭 전환은 상위
+// UserManagementPage 가 담당한다 — 이 패널은 본문만 그린다.
 //
 // 표시하지 않는 것: 비밀번호 해시. 서버 DTO(dto.UserResponse)가 애초에 내려주지
 // 않으므로 컬럼 자체가 없다 (AC-03).
@@ -26,7 +28,9 @@ import {
   useUpdateUserRole,
 } from '@/hooks/useUserAdmin';
 import { usePermission } from '@/hooks/usePermission';
+import PermissionButton from '@/components/common/PermissionButton';
 import type { UserResponse } from '@/services/api/userService';
+import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useTranslation } from '@/lib/i18n';
 import { formatEpochMs } from '@/lib/utils/format';
@@ -48,12 +52,14 @@ type DialogState =
   | { kind: 'delete'; username: string }
   | null;
 
-export default function UsersPage(): React.JSX.Element {
+export default function UsersPanel(): React.JSX.Element {
   const { t } = useTranslation();
   const { hasPermission } = usePermission();
   const addNotification = useUIStore((s) => s.addNotification);
+  // 자기 자신 행에서 삭제 컨트롤을 빼기 위한 현재 로그인 계정.
+  // authStore 의 User.name 이 서버 DTO 의 username 에 대응한다(authService 매핑).
+  const currentUsername = useAuthStore((s) => s.user?.name ?? null);
 
-  const canCreate = hasPermission('user.create');
   const canUpdate = hasPermission('user.update');
   const canDelete = hasPermission('user.delete');
   // 역할 선택지는 GET /roles 에서 온다. role.read 가 없으면 서버가 403 이므로
@@ -171,26 +177,24 @@ export default function UsersPage(): React.JSX.Element {
   const permissionTitle = t('admin.permissionRequired');
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-6" data-testid="admin-users-page">
-      <header className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-          {t('nav.users')}
-        </h1>
-        <button
+    <div className="space-y-4" data-testid="admin-users-panel">
+      {/* 액션 행. 플로우/디바이스 등록 버튼과 같은 배치(우측 정렬)·같은 버튼
+          레이아웃을 쓴다 — 화면마다 등록 버튼이 다르게 보이지 않도록. */}
+      <div className="flex items-center justify-end">
+        <PermissionButton
           type="button"
+          permission="user.create"
+          deniedTitle={permissionTitle}
           onClick={() => {
             setActionError(null);
             setCreateOpen((open) => !open);
           }}
-          disabled={!canCreate}
-          aria-disabled={!canCreate}
-          title={canCreate ? undefined : permissionTitle}
-          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
         >
           <UserPlus className="h-4 w-4" />
           {t('admin.users.create')}
-        </button>
-      </header>
+        </PermissionButton>
+      </div>
 
       {actionError && (
         <div
@@ -363,20 +367,31 @@ export default function UsersPage(): React.JSX.Element {
                     >
                       <KeyRound className="h-4 w-4" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActionError(null);
-                        setDialog({ kind: 'delete', username: user.username });
-                      }}
-                      disabled={!canDelete}
-                      aria-disabled={!canDelete}
-                      title={canDelete ? t('common.delete') : permissionTitle}
-                      aria-label={`${t('common.delete')} ${user.username}`}
-                      className="rounded p-1.5 text-red-500 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {/* 자기 자신 행에는 삭제 컨트롤을 아예 렌더하지 않는다.
+                        이 프로젝트의 기본 규칙은 "숨기지 말고 비활성 + 사유"
+                        (PermissionButton)지만, 자기 자신 삭제는 권한을 더 받아도
+                        절대 성공할 수 없는 동작이다(서버가 409 SELF_DELETION 으로
+                        항상 거부한다 — internal/api/handler/user.go). 요청할 여지가
+                        없는 동작을 비활성 버튼으로 남기면 "권한만 있으면 되는 일"로
+                        읽히므로 제거가 맞다. 이 한 곳만의 의도적 예외이며,
+                        비활성 버튼으로 되돌리지 말 것. 서버 가드는 그대로 유지되며
+                        실제 강제는 계속 서버가 한다. */}
+                    {user.username !== currentUsername && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActionError(null);
+                          setDialog({ kind: 'delete', username: user.username });
+                        }}
+                        disabled={!canDelete}
+                        aria-disabled={!canDelete}
+                        title={canDelete ? t('common.delete') : permissionTitle}
+                        aria-label={`${t('common.delete')} ${user.username}`}
+                        className="rounded p-1.5 text-red-500 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

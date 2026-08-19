@@ -1,4 +1,8 @@
-// 사용자 관리 화면 테스트 (SPEC-AUTH-006 M2.2 — AC-03).
+// 사용자 목록 패널 테스트 (SPEC-AUTH-006 M2.2 — AC-03).
+//
+// 사용자 관리 화면이 사용자/역할 두 탭 컨테이너가 되면서 본문이 패널
+// (UsersPanel)로 분리되었다. 기존 검증은 전부 옮겨 왔고, 레이아웃 변경
+// (제목 이관·전체 폭·PermissionButton·자기 자신 행 삭제 제거) 케이스를 더했다.
 //
 // 서비스 계층(userService)만 스텁하고 훅·페이지는 실제 코드를 그대로 돌린다.
 // i18n 도 실제 Provider 를 쓰므로, 키가 로케일에 없으면 t() 가 키 문자열을
@@ -13,7 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '@/lib/i18n';
 import { APIError } from '@/types/api';
 import type { RoleResponse, UserResponse } from '@/services/api/userService';
-import UsersPage from './UsersPage';
+import { useAuthStore } from '@/stores/authStore';
+import UsersPanel from './UsersPanel';
 
 // ---- 서비스 스텁 ----
 
@@ -50,6 +55,7 @@ vi.mock('@/hooks/usePermission', () => ({
     hasPermission: (key: string) => granted.keys.has(key),
     hasAnyPermission: (keys: readonly string[]) =>
       keys.some((k) => granted.keys.has(k)),
+    canSeeMenu: (key: string) => granted.keys.has(key),
     isPermissionUnavailable: false,
   }),
 }));
@@ -79,7 +85,7 @@ function renderPage() {
   return render(
     <I18nProvider>
       <QueryClientProvider client={client}>
-        <UsersPage />
+        <UsersPanel />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -95,9 +101,16 @@ beforeEach(() => {
   grant('user.read', 'user.create', 'user.update', 'user.delete', 'role.read');
   getUsers.mockResolvedValue(USERS);
   getRoles.mockResolvedValue(ROLES);
+  // 기본은 '로그인 계정 정보 없음'. 자기 자신 행 판정을 보는 테스트만 지정한다.
+  useAuthStore.setState({ user: null });
 });
 
-describe('UsersPage 목록 (AC-03)', () => {
+/** 로그인 계정을 지정한다. authStore 의 User.name 이 서버의 username 이다. */
+function signInAs(username: string): void {
+  useAuthStore.setState({ user: { name: username, role: 'admin' } });
+}
+
+describe('UsersPanel 목록 (AC-03)', () => {
   it('username·역할·생성일·수정일을 표시한다', async () => {
     renderPage();
     await waitForList();
@@ -149,7 +162,7 @@ describe('UsersPage 목록 (AC-03)', () => {
   });
 });
 
-describe('UsersPage 등록 폼 (AC-03)', () => {
+describe('UsersPanel 등록 폼 (AC-03)', () => {
   it('역할 선택지를 GET /roles 결과(빌트인 3종 + 커스텀)로 채운다', async () => {
     renderPage();
     await waitForList();
@@ -224,7 +237,7 @@ describe('UsersPage 등록 폼 (AC-03)', () => {
   });
 });
 
-describe('UsersPage 역할 변경·비밀번호 재설정 (AC-03)', () => {
+describe('UsersPanel 역할 변경·비밀번호 재설정 (AC-03)', () => {
   it('인라인 역할 변경을 서버에 반영한다', async () => {
     updateUserRole.mockResolvedValue({ ...USERS[1], role: 'viewer' });
     renderPage();
@@ -304,7 +317,7 @@ describe('UsersPage 역할 변경·비밀번호 재설정 (AC-03)', () => {
   });
 });
 
-describe('UsersPage 삭제와 409 잠금 방지 (AC-03)', () => {
+describe('UsersPanel 삭제와 409 잠금 방지 (AC-03)', () => {
   it('마지막 관리자 삭제가 409 로 거부되면 원인을 안내하고 목록은 변하지 않는다', async () => {
     deleteUser.mockRejectedValue(
       new APIError('LAST_ADMIN_USER', '관리 권한을 보유한 마지막 사용자', 409),
@@ -328,7 +341,11 @@ describe('UsersPage 삭제와 409 잠금 방지 (AC-03)', () => {
     expect(getUsers).toHaveBeenCalledTimes(1);
   });
 
-  it('자기 자신 삭제(409 SELF_DELETION)도 원인을 구분해 안내한다', async () => {
+  // 자기 자신 행에는 삭제 컨트롤이 없지만(아래 레이아웃 describe 참조), 서버는
+  // 여전히 409 SELF_DELETION 을 돌려줄 수 있다(다른 세션에서의 계정 전환 등).
+  // 오류 매핑은 그대로 유지되어야 한다 — 컨트롤 제거는 UI 어포던스일 뿐이고
+  // 실제 강제는 계속 서버가 한다.
+  it('409 SELF_DELETION 응답도 원인을 구분해 안내한다', async () => {
     deleteUser.mockRejectedValue(new APIError('SELF_DELETION', '자기 자신', 409));
     renderPage();
     await waitForList();
@@ -383,7 +400,7 @@ describe('UsersPage 삭제와 409 잠금 방지 (AC-03)', () => {
   });
 });
 
-describe('UsersPage 권한 게이팅', () => {
+describe('UsersPanel 권한 게이팅', () => {
   it('user.create 가 없으면 등록 버튼을 비활성하고 사유를 노출한다', async () => {
     grant('user.read', 'role.read');
     renderPage();
@@ -393,6 +410,17 @@ describe('UsersPage 권한 게이팅', () => {
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
     expect(button).toHaveAttribute('title', '권한이 필요합니다');
+  });
+
+  it('등록 버튼은 PermissionButton 계약을 따른다 — 권한 없으면 클릭도 먹히지 않는다', async () => {
+    grant('user.read', 'role.read');
+    renderPage();
+    await waitForList();
+
+    // PermissionButton 은 권한이 없으면 onClick 자체를 붙이지 않는다.
+    // disabled 를 우회한 합성 클릭에도 폼이 열리지 않아야 한다.
+    fireEvent.click(screen.getByRole('button', { name: /사용자 등록/ }));
+    expect(screen.queryByTestId('admin-users-create-form')).not.toBeInTheDocument();
   });
 
   it('user.update / user.delete 가 없으면 역할 변경·재설정·삭제가 비활성이다', async () => {
@@ -407,7 +435,7 @@ describe('UsersPage 권한 게이팅', () => {
   });
 });
 
-describe('UsersPage 조회 실패', () => {
+describe('UsersPanel 조회 실패', () => {
   it('403 이면 권한 부족을 사용자 언어로 안내한다 (AC-08)', async () => {
     getUsers.mockRejectedValue(new APIError('FORBIDDEN', 'forbidden', 403));
     renderPage();
@@ -417,5 +445,89 @@ describe('UsersPage 조회 실패', () => {
     ).toBeInTheDocument();
     // 자동 재시도 없음 — 한 번만 호출된다.
     await waitFor(() => expect(getUsers).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('UsersPanel 레이아웃', () => {
+  it('본문에는 화면 제목을 그리지 않는다 — 앱 헤더가 표시한다', async () => {
+    renderPage();
+    await waitForList();
+
+    // 제목이 본문에도 있으면 헤더와 중복된다.
+    expect(screen.queryByRole('heading', { name: '사용자 관리' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+  });
+
+  it('목록 영역에 최대 폭 제약이 없다 — 페이지 전체 폭을 쓴다', async () => {
+    const { container } = renderPage();
+    await waitForList();
+
+    const root = screen.getByTestId('admin-users-panel');
+    expect(root.className).not.toMatch(/max-w-/);
+    expect(root.className).not.toMatch(/mx-auto/);
+    // 목록까지 이르는 어떤 조상에도 폭 제약이 없어야 한다.
+    for (const el of container.querySelectorAll('div')) {
+      expect(el.className).not.toMatch(/max-w-(?:sm|md|lg|xl|\d)/);
+    }
+  });
+
+  it('등록 버튼은 플로우 등록 버튼과 같은 레이아웃 클래스를 쓴다', async () => {
+    renderPage();
+    await waitForList();
+
+    const button = screen.getByRole('button', { name: /사용자 등록/ });
+    // FlowListPage 의 생성 버튼과 동일한 형상(px-4 py-2 + 다크 변형).
+    for (const cls of ['px-4', 'py-2', 'bg-blue-600', 'dark:bg-blue-500', 'transition-colors']) {
+      expect(button.className).toContain(cls);
+    }
+  });
+});
+
+describe('UsersPanel 자기 자신 행의 삭제 컨트롤', () => {
+  it('로그인한 계정 행에는 삭제 컨트롤이 없고, 다른 계정 행에는 있다', async () => {
+    signInAs('admin');
+    renderPage();
+    await waitForList();
+
+    const own = screen.getByTestId('admin-user-row-admin');
+    const other = screen.getByTestId('admin-user-row-alice');
+
+    // 비활성이 아니라 아예 존재하지 않는다 — 권한을 더 받아도 성공할 수 없는
+    // 동작이라 요청할 여지를 남기지 않는다(서버도 409 로 항상 거부한다).
+    expect(within(own).queryByRole('button', { name: /삭제 admin/ })).not.toBeInTheDocument();
+    expect(within(other).getByRole('button', { name: /삭제 alice/ })).toBeInTheDocument();
+
+    // 비밀번호 재설정은 자기 자신 행에도 남는다 — 성공 가능한 동작이다.
+    expect(
+      within(own).getByRole('button', { name: /비밀번호 재설정/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('로그인 계정이 바뀌면 삭제 컨트롤이 사라지는 행도 따라 바뀐다', async () => {
+    signInAs('alice');
+    renderPage();
+    await waitForList();
+
+    expect(
+      within(screen.getByTestId('admin-user-row-alice')).queryByRole('button', {
+        name: /삭제 alice/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('admin-user-row-admin')).getByRole('button', {
+        name: /삭제 admin/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('로그인 계정 정보가 없으면 어떤 행도 삭제 컨트롤을 잃지 않는다', async () => {
+    renderPage();
+    await waitForList();
+
+    expect(
+      within(screen.getByTestId('admin-user-row-admin')).getByRole('button', {
+        name: /삭제 admin/,
+      }),
+    ).toBeInTheDocument();
   });
 });

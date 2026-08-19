@@ -25,8 +25,7 @@
     "enrollmentManagement": "등록 관리",
     "groupManagement": "그룹 관리",
     "releaseStore": "릴리스 저장소",
-    "users": "사용자 관리",
-    "roles": "역할 관리"
+    "users": "사용자 관리"
   },
   "auth": {
     "login": "로그인",
@@ -3907,6 +3906,9 @@
   },
   "admin": {
     "permissionRequired": "권한이 필요합니다",
+    "tabUsers": "사용자",
+    "tabRoles": "역할",
+    "tabsLabel": "사용자 관리 탭",
     "users": {
       "create": "사용자 등록",
       "createTitle": "새 사용자 등록",

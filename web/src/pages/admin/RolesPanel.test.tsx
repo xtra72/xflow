@@ -1,4 +1,8 @@
-// 역할 관리 화면 테스트 (SPEC-AUTH-006 M2.3 — AC-04).
+// 역할 목록 패널 테스트 (SPEC-AUTH-006 M2.3 — AC-04).
+//
+// 역할 관리가 사용자 관리 화면의 '역할' 탭으로 옮겨지면서 화면(RolesPage)이
+// 패널(RolesPanel)이 되었다. 검증 대상은 그대로이므로 케이스를 전부 옮겨 왔다 —
+// 목록·빌트인 보호·권한 행렬·생성·수정·삭제·게이팅·조회 실패.
 //
 // 서비스 계층만 스텁하고 훅·페이지·행렬 변환은 실제 코드를 돌린다. i18n 도 실제
 // Provider 를 사용하므로 누락된 키는 렌더 문자열에서 즉시 드러난다.
@@ -12,7 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '@/lib/i18n';
 import { APIError } from '@/types/api';
 import type { RoleResponse } from '@/services/api/userService';
-import RolesPage from './RolesPage';
+import RolesPanel from './RolesPanel';
 
 // ---- 서비스 스텁 ----
 
@@ -37,6 +41,7 @@ vi.mock('@/hooks/usePermission', () => ({
   usePermission: () => ({
     hasPermission: (key: string) => granted.keys.has(key),
     hasAnyPermission: (keys: readonly string[]) => keys.some((k) => granted.keys.has(k)),
+    canSeeMenu: (key: string) => granted.keys.has(key),
     isPermissionUnavailable: false,
   }),
 }));
@@ -104,7 +109,7 @@ function renderPage() {
   return render(
     <I18nProvider>
       <QueryClientProvider client={client}>
-        <RolesPage />
+        <RolesPanel />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -128,7 +133,7 @@ beforeEach(() => {
   getPermissionCatalog.mockResolvedValue(CATALOG);
 });
 
-describe('RolesPage 목록 (AC-04)', () => {
+describe('RolesPanel 목록 (AC-04)', () => {
   it('이름·설명·빌트인 여부·권한 개수를 표시한다', async () => {
     renderPage();
     await waitForList();
@@ -168,7 +173,7 @@ describe('RolesPage 목록 (AC-04)', () => {
 // 삭제와 (4) admin 역할의 권한 수정뿐이고 서버도 그렇게 구현되어 있다. AC-04 문구를
 // 문자 그대로 따르면 신규 설치처럼 커스텀 역할이 없는 환경에서 편집 가능한 역할이
 // 하나도 없어져 역할 관리 화면이 사실상 동작하지 않는다. 서버 계약을 따른다.
-describe('RolesPage 빌트인 역할 보호 (AC-04, 서버 계약 기준)', () => {
+describe('RolesPanel 빌트인 역할 보호 (AC-04, 서버 계약 기준)', () => {
   it('admin 행은 수정·삭제가 모두 비활성이고 사유가 표시된다', async () => {
     renderPage();
     await waitForList();
@@ -237,7 +242,7 @@ describe('RolesPage 빌트인 역할 보호 (AC-04, 서버 계약 기준)', () =
   });
 });
 
-describe('RolesPage 권한 행렬 (AC-04)', () => {
+describe('RolesPanel 권한 행렬 (AC-04)', () => {
   it('리소스×액션 축을 카탈로그에서 파생한다', async () => {
     renderPage();
     await waitForList();
@@ -310,7 +315,7 @@ describe('RolesPage 권한 행렬 (AC-04)', () => {
   });
 });
 
-describe('RolesPage 생성 (AC-04)', () => {
+describe('RolesPanel 생성 (AC-04)', () => {
   it('체크한 권한만 생성 요청에 담는다', async () => {
     createRole.mockResolvedValue(ROLES[3]);
     renderPage();
@@ -372,7 +377,7 @@ describe('RolesPage 생성 (AC-04)', () => {
   });
 });
 
-describe('RolesPage 수정 (AC-04)', () => {
+describe('RolesPanel 수정 (AC-04)', () => {
   it('기존 권한을 체크 상태로 불러온다', async () => {
     renderPage();
     await waitForList();
@@ -435,7 +440,7 @@ describe('RolesPage 수정 (AC-04)', () => {
   });
 });
 
-describe('RolesPage 삭제 (AC-04)', () => {
+describe('RolesPanel 삭제 (AC-04)', () => {
   it('409 ROLE_IN_USE 거부 시 원인을 안내하고 목록은 변하지 않는다', async () => {
     deleteRole.mockRejectedValue(new APIError('ROLE_IN_USE', '사용 중', 409));
     renderPage();
@@ -482,7 +487,7 @@ describe('RolesPage 삭제 (AC-04)', () => {
   });
 });
 
-describe('RolesPage 권한 게이팅', () => {
+describe('RolesPanel 권한 게이팅', () => {
   it('role.create 가 없으면 생성 버튼을 비활성하고 사유를 노출한다', async () => {
     grant('role.read');
     renderPage();
@@ -508,7 +513,7 @@ describe('RolesPage 권한 게이팅', () => {
   });
 });
 
-describe('RolesPage 조회 실패', () => {
+describe('RolesPanel 조회 실패', () => {
   it('403 이면 권한 부족을 사용자 언어로 안내하고 재시도하지 않는다 (AC-08)', async () => {
     getRoles.mockRejectedValue(new APIError('FORBIDDEN', 'forbidden', 403));
     renderPage();
