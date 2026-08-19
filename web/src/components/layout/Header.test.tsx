@@ -141,3 +141,41 @@ describe('Header — 사용자 관리 제목', () => {
     expect(container.querySelector('header')).not.toBeNull();
   });
 });
+
+// 원격 관리 하위 4개 화면도 본문에서 제목을 걷어냈다. 사용자 관리와 같은 이유로
+// 앱 헤더가 실제로 제목을 그리는지 여기서 못 박는다.
+describe('Header — 원격 관리 하위 화면 제목', () => {
+  const CASES: ReadonlyArray<readonly [path: string, title: string]> = [
+    ['/admin/remote', '노드 관리'],
+    ['/admin/remote/groups', '그룹 관리'],
+    ['/admin/remote/enrollment', '등록 관리'],
+    ['/admin/remote/releases', '릴리스 저장소'],
+  ];
+
+  it.each(CASES)('%s 에서 "%s"를 제목으로 표시한다', (path, title) => {
+    renderHeader(path);
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveTextContent(title);
+    // 폴백으로 떨어지지 않는다.
+    expect(heading).not.toHaveTextContent('XFlow');
+  });
+
+  it('원격 노드 동적 경로는 노드 이름 제목을 유지한다(정확 일치이므로 "노드 관리"로 새지 않는다)', () => {
+    useRemoteNodeDetailMock.mockReturnValue({ data: { hostname: 'gw-9' } });
+    renderHeader('/admin/remote/nodes/inst-9/flows/flow-1/edit');
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveTextContent('원격 · gw-9');
+    expect(heading).not.toHaveTextContent('노드 관리');
+  });
+
+  it('원격 노드 상세 경로도 마찬가지다 — 정적 매핑을 타지 않는다', () => {
+    useRemoteNodeDetailMock.mockReturnValue({ data: { hostname: 'edge-3' } });
+    renderHeader('/admin/remote/nodes/inst-3/system');
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveTextContent('원격 · edge-3');
+    expect(heading).not.toHaveTextContent('노드 관리');
+  });
+});

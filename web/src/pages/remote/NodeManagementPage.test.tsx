@@ -298,3 +298,45 @@ describe('NodeManagementPage — 모드 게이팅', () => {
     expect(useManagedNodesMock).toHaveBeenCalledWith(undefined, false);
   });
 });
+
+// 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS)로 옮겼다. 본문이 제목을 다시 그리면
+// 화면에 같은 제목이 두 번 나오므로 회귀를 여기서 막는다.
+// (i18n 은 이 파일에서 identity mock 이라 키 문자열이 그대로 렌더된다.)
+describe('NodeManagementPage — 본문 제목 제거', () => {
+  it('비-server 모드에서 자체 제목(h1)을 그리지 않고 설명만 남긴다', () => {
+    useRemoteModeMock.mockReturnValue({ data: { mode: 'client' } });
+    renderPage();
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.queryByText('remote.nodeManagement.title')).toBeNull();
+    expect(screen.getByTestId('node-management-header')).toHaveTextContent(
+      'remote.nodeManagement.subtitle',
+    );
+  });
+
+  it('로딩 상태에서도 자체 제목을 그리지 않는다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage();
+
+    expect(screen.getByTestId('node-management-loading')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+
+  it('관리자 뷰(server + 로드 완료)에도 자체 제목이 없다', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: [node({ instance_id: 'a' })],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderPage();
+
+    expect(screen.getByTestId('manager-view')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+});

@@ -2957,7 +2957,6 @@
       "save": "저장"
     },
     "nodeManagement": {
-      "title": "노드 관리",
       "subtitle": "관리 노드를 그룹별로 탐색하고, 노드를 선택해 시스템 정보·운영 요약과 플로우·에이전트·디바이스를 제어합니다."
     },
     "managerView": {
@@ -2967,7 +2966,6 @@
       "exit": "나가기"
     },
     "enrollmentManagement": {
-      "title": "등록 관리",
       "subtitle": "노드 등록 요청을 승인·거부·폐기하고, enrollment 토큰을 발급·관리합니다.",
       "nodesHeading": "노드 등록 관리"
     },
@@ -3132,7 +3130,6 @@
       "saveFailed": "업데이트 소스 저장에 실패했습니다"
     },
     "groupManagement": {
-      "title": "그룹 관리",
       "subtitle": "노드를 그룹으로 구성하고 좌측 트리에서 선택해 관리합니다.",
       "tree": "그룹 트리",
       "ungrouped": "미분류",
@@ -3145,7 +3142,6 @@
       "notServer": "원격 관리(server 모드)에서만 사용할 수 있습니다."
     },
     "releaseStore": {
-      "title": "릴리스 저장소",
       "subtitle": "아키텍처별 xflowd 이미지를 이 관리 서버에 저장합니다. 업데이트 소스를 이 서버로 지정한 노드는 자기 아키텍처에 맞는 이미지를 자동으로 내려받습니다.",
       "newVersion": "새 버전",
       "versionLabel": "버전",

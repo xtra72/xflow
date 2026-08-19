@@ -2957,7 +2957,6 @@
       "save": "Save"
     },
     "nodeManagement": {
-      "title": "Node Management",
       "subtitle": "Browse managed nodes by group, then select a node to view system info, operational summary, and control its flows, agents, and devices."
     },
     "managerView": {
@@ -2967,7 +2966,6 @@
       "exit": "Exit"
     },
     "enrollmentManagement": {
-      "title": "Enrollment",
       "subtitle": "Approve, reject, or revoke node enrollment requests and issue enrollment tokens.",
       "nodesHeading": "Node Enrollment"
     },
@@ -3132,7 +3130,6 @@
       "saveFailed": "Failed to save update source"
     },
     "releaseStore": {
-      "title": "Release Store",
       "subtitle": "Store per-architecture xflowd images on this management server. Nodes pointed at this server auto-download the image for their architecture.",
       "newVersion": "New version",
       "versionLabel": "Version",
@@ -3171,7 +3168,6 @@
       "loadError": "Failed to load releases"
     },
     "groupManagement": {
-      "title": "Group Management",
       "subtitle": "Organize nodes into groups; select from the left tree to manage.",
       "tree": "Group tree",
       "ungrouped": "Unclassified",

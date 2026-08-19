@@ -28,17 +28,17 @@ type Selection =
   | { kind: 'node'; id: string }
   | { kind: 'create' };
 
+// 페이지 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS)가 그린다. 여기 남은 설명
+// 밴드는 아래 2분할(트리 | 상세) 영역과 맞닿으므로 구분선(border-b)은 유지한다 —
+// 선을 빼면 설명 문구가 좌측 트리 첫 항목에 붙어 보인다.
 function PageHeader(): React.JSX.Element {
   const { t } = useTranslation();
   return (
-    <header className="border-b border-(--color-border-default) px-6 py-3">
-      <h1 className="text-lg font-semibold text-(--color-text-primary)">
-        {t('remote.groupManagement.title')}
-      </h1>
+    <div className="border-b border-(--color-border-default) px-6 py-3">
       <p className="text-xs text-(--color-text-muted)">
         {t('remote.groupManagement.subtitle')}
       </p>
-    </header>
+    </div>
   );
 }
 

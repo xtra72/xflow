@@ -49,6 +49,14 @@ const PAGE_TITLE_KEYS: Record<string, string> = {
   '/settings': 'nav.settings',
   // 사용자 관리(역할 탭 포함). 본문에서 제목을 걷어냈으므로 여기서만 그린다.
   '/admin/users': 'nav.users',
+  // 원격 관리 하위 4개 화면. 위와 같은 이유로 본문 제목을 걷어내고 여기서만 그린다.
+  // derivePageTitle 은 정확 일치만 하므로 동적 경로
+  // (/admin/remote/nodes/:instanceId/...)는 여기에 걸리지 않고 노드 이름 제목을
+  // 그대로 쓴다.
+  '/admin/remote': 'nav.nodeManagement',
+  '/admin/remote/groups': 'nav.groupManagement',
+  '/admin/remote/enrollment': 'nav.enrollmentManagement',
+  '/admin/remote/releases': 'nav.releaseStore',
 };
 
 /** WebSocket 연결 상태에 따른 표시 색상 */

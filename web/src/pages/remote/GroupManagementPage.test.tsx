@@ -106,3 +106,23 @@ describe('GroupManagementPage', () => {
     expect(screen.getByTestId('control-stub').getAttribute('data-group')).toBe('');
   });
 });
+
+// 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS)로 옮겼다. 설명 밴드는 남긴다.
+describe('GroupManagementPage — 본문 제목 제거', () => {
+  it('자체 제목(h1)을 그리지 않고 설명만 남긴다', () => {
+    renderPage();
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '그룹 관리' })).toBeNull();
+    expect(
+      screen.getByText('노드를 그룹으로 구성하고 좌측 트리에서 선택해 관리합니다.'),
+    ).toBeInTheDocument();
+  });
+
+  it('비-server 모드에서도 자체 제목이 없다', () => {
+    modeRef.value = { mode: 'client' };
+    renderPage();
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+});

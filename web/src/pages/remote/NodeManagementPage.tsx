@@ -254,18 +254,16 @@ export default function NodeManagementPage(): React.JSX.Element {
   );
 }
 
-// ---- 페이지 헤더(비-server/로딩/에러 상태 전용) ----
+// ---- 페이지 설명(비-server/로딩/에러 상태 전용) ----
+//
+// 페이지 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS)가 그린다. 여기 남은 것은
+// 제목이 아니라 설명이므로 헤더 래퍼 없이 문단 하나로 둔다.
 
 function PageHeader(): React.JSX.Element {
   const { t } = useTranslation();
   return (
-    <header data-testid="node-management-header">
-      <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-        {t('remote.nodeManagement.title')}
-      </h1>
-      <p className="mt-1 text-sm text-(--color-text-muted)">
-        {t('remote.nodeManagement.subtitle')}
-      </p>
-    </header>
+    <p data-testid="node-management-header" className="text-sm text-(--color-text-muted)">
+      {t('remote.nodeManagement.subtitle')}
+    </p>
   );
 }
