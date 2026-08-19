@@ -5,7 +5,6 @@
   },
   "nav": {
     "dashboard": "대시보드",
-    "dashboardAdmin": "대시보드 관리",
     "flows": "플로우",
     "monitoring": "모니터링",
     "settings": "설정",
@@ -552,28 +551,18 @@
       "defaultFailed": "기본 대시보드를 변경하지 못했습니다",
       "deleteFailed": "대시보드를 삭제하지 못했습니다"
     },
-    "admin": {
-      "title": "대시보드 관리",
-      "description": "대시보드를 만들고 이름·공개범위를 바꾸고 대상별 권한을 부여합니다.",
-      "create": "대시보드 생성",
-      "createTitle": "새 대시보드",
-      "nameLabel": "이름",
-      "namePlaceholder": "대시보드 이름",
-      "submit": "생성",
+    "manage": {
+      "heading": "대시보드 관리",
       "empty": "접근 가능한 대시보드가 없습니다",
-      "owner": "소유자",
-      "ownerless": "(없음)",
-      "visibility": "공개범위",
-      "visibilityAria": "공개범위 변경",
-      "updatedAt": "수정",
-      "defaultBadge": "기본",
-      "renameStart": "이름 변경",
+      "rename": "이름 변경",
       "renameInputAria": "대시보드 이름 편집",
       "renameSave": "이름 저장",
       "renameCancel": "이름 편집 취소",
+      "visibilityAria": "공개범위 변경",
       "manageAcl": "권한 부여",
       "deleteTitle": "대시보드 삭제",
-      "deleteConfirm": "'{name}' 대시보드를 삭제합니다. 되돌릴 수 없습니다."
+      "deleteConfirm": "'{name}' 대시보드를 삭제합니다. 되돌릴 수 없습니다.",
+      "create": "새 대시보드 만들기"
     },
     "visibilityLabel": {
       "private": "비공개",

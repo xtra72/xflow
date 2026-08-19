@@ -48,6 +48,7 @@ import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
 import { dashboardAccessByUid } from './dashboardAccess';
+import DashboardSettingsSelector from './DashboardSettingsSelector';
 import DragHandle from './DragHandle';
 import { GRID_MARGIN_PX } from './gridGeometry';
 import { useCreateDashboard } from './useCreateDashboard';
@@ -369,15 +370,10 @@ function LocalDashboardView() {
       {/* ── 헤더 바 (Pencil: 56px, 흰색, border-bottom) ── */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-(--color-border-default) bg-(--color-bg-surface) px-6">
         {editMode ? (
-          /* ── 편집 모드 헤더 좌측: 타이틀 + 앰버 뱃지 ── */
-          <div className="flex items-center gap-3">
-            <span className="text-base font-semibold text-(--color-text-primary)">
-              {activePageName}
-            </span>
-            <span className="inline-flex items-center rounded-md bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-500 dark:bg-amber-900/30 dark:text-amber-400">
-              {t('dashboard.editMode')}
-            </span>
-          </div>
+          /* ── 편집 모드 헤더 좌측: 대시보드 셀렉터 + 관리 컨트롤 + 앰버 뱃지 ──
+             별도 '대시보드 관리' 화면을 없애고 관리 기능을 이 안으로 옮겼다.
+             목록은 볼 수 있는 대시보드 **전부**(비활성 포함)를 싣는다. */
+          <DashboardSettingsSelector activeName={activePageName} />
         ) : (
           /* ── 일반 모드 헤더 좌측: 대시보드 셀렉터 ── */
           <div className="relative" ref={dropdownRef}>

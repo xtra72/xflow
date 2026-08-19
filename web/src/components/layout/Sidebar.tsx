@@ -18,7 +18,6 @@ import {
   HardDrive,
   Layers,
   LayoutDashboard,
-  LayoutList,
   Monitor,
   Network,
   Package,
@@ -93,21 +92,13 @@ const NAV_ENTRIES: NavEntry[] = [
     path: '/',
     icon: LayoutDashboard,
   },
-  // SPEC-DASHBOARD-004 M7 7.3: 대시보드 관리 메뉴.
-  //   `nav.dashboard` 는 **이 관리 항목에만** 건다. 바로 위 대시보드 항목은
-  //   permission/navPermission 미지정 상태를 유지한다 — 대시보드를 *보는* 것은
-  //   인증만 요구하며, 여기에 키를 걸면 권한 0개 사용자가 빈 사이드바를 보게 되어
-  //   catalog.go 가 명시한 원칙을 위반한다(spec.md §2.5).
+  // SPEC-DASHBOARD-004 (M7 재작업): '대시보드 관리' 항목은 제거했다.
+  //   관리 기능은 대시보드 편집(설정) 모드의 셀렉터 안으로 들어갔고, 그 어포던스의
+  //   노출을 `nav.dashboard` 가 계속 게이팅한다(카탈로그 키는 그대로 재사용).
   //
-  //   데이터 권한(`permission`)은 지정하지 않는다. 메뉴 노출 판정은 `nav.*` 만
-  //   보므로(SPEC-AUTH-006 E2, 커밋 c26079c9) 여기에 데이터 키를 적으면 존재하지
-  //   않는 폴백이 있는 것처럼 읽힌다.
-  {
-    labelKey: 'nav.dashboardAdmin',
-    path: '/dashboards/admin',
-    icon: LayoutList,
-    navPermission: 'nav.dashboard',
-  },
+  //   바로 위 대시보드 항목은 permission/navPermission 미지정 상태를 유지한다 —
+  //   대시보드를 *보는* 것은 인증만 요구하며, 여기에 키를 걸면 권한 0개 사용자가
+  //   빈 사이드바를 보게 되어 catalog.go 가 명시한 원칙을 위반한다(spec.md §2.5).
   {
     labelKey: 'nav.flows',
     path: '/flows',

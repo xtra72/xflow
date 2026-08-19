@@ -401,3 +401,50 @@ describe('DashboardPage — 컨트롤이 서버에 반영된다 (영속성 회�
     expect(deleteDashboardMock).not.toHaveBeenCalled();
   });
 });
+
+// 설정(편집) 모드의 대시보드 관리 표면 (SPEC-DASHBOARD-004, M7 재작업).
+//
+// 별도 '대시보드 관리' 화면이 사라졌으므로, 관리 진입점이 실제로 **편집 모드 안에**
+// 있는지는 DashboardPage 수준에서 확인해야 한다. 컨트롤 단위 계약은
+// DashboardSettingsSelector.test.tsx 가 맡는다 — 여기서는 배선만 고정한다.
+describe('DashboardPage — 설정 모드 대시보드 셀렉터', () => {
+  /** 편집 모드로 진입한 뒤 셀렉터 목록을 연다. */
+  function openSettingsList() {
+    useUIStore.getState().setDashboardEditMode(true);
+    renderPage();
+    fireEvent.click(screen.getByTestId('dashboard-settings-selector-toggle'));
+  }
+
+  it('편집 모드에서 셀렉터가 렌더되고 편집 모드 뱃지가 남는다', () => {
+    seedDashboards([makeDashboard({ uid: 'd1', name: '운영 대시보드' })]);
+    openSettingsList();
+
+    expect(screen.getByTestId('dashboard-settings-list')).toBeInTheDocument();
+    expect(screen.getByText('편집 모드')).toBeInTheDocument();
+  });
+
+  it('활성이 아닌 대시보드도 목록에 나오고 선택하면 전환된다', () => {
+    seedDashboards(
+      [
+        makeDashboard({ uid: 'd1', name: '운영 대시보드' }),
+        makeDashboard({ uid: 'd2', name: '개인 대시보드' }),
+      ],
+      'd1',
+    );
+    openSettingsList();
+
+    expect(screen.getByTestId('dashboard-settings-row-d2')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('dashboard-settings-select-d2'));
+    expect(useUIStore.getState().activeDashboardId).toBe('d2');
+  });
+
+  it('일반 모드에서는 셀렉터가 렌더되지 않는다 (기존 드롭다운이 담당)', () => {
+    seedDashboards([makeDashboard({ uid: 'd1' })]);
+    useUIStore.getState().setDashboardEditMode(false);
+    renderPage();
+
+    expect(
+      screen.queryByTestId('dashboard-settings-selector-toggle'),
+    ).not.toBeInTheDocument();
+  });
+});

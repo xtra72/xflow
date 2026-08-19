@@ -1,7 +1,9 @@
 // 대시보드 권한 부여 패널 + 검증기 테스트 (SPEC-DASHBOARD-004 M7 7.2).
 //
-// 파일 이름이 `DashboardAdminPage.*` 인 이유: plan.md 가 규정한 검증 명령
-// `npm test -- Sidebar DashboardAdminPage` 가 이 파일도 함께 돌리도록 하기 위해서다.
+// 파일 이름은 원래 `DashboardAdminPage.acl.test.tsx` 였다. 별도 관리 화면이
+// 사라지고(M7 재작업) 이 패널이 편집 모드 셀렉터의 다이얼로그로 옮겨가면서,
+// 실제 검증 대상인 `DashboardAclPanel` 이름으로 되돌렸다. 검증 내용은 그대로다 —
+// 패널의 계약은 호출부가 바뀌어도 변하지 않는다.
 //
 // 두 축을 검증한다.
 //   1) 검증기(dashboardAclValidation) — acceptance.md AC-17 의 9행이 각각 **서로

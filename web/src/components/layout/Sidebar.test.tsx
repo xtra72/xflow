@@ -179,19 +179,16 @@ describe('Sidebar — 하위 항목 활성 하이라이트', () => {
   });
 });
 
-describe('Sidebar — 대시보드 관리 메뉴 (SPEC-DASHBOARD-004 AC-10)', () => {
-  it('nav.dashboard 가 없으면 대시보드 관리 항목을 노출하지 않는다', () => {
-    permissionMock.denied = new Set(['nav.dashboard']);
+describe('Sidebar — 대시보드 메뉴 (SPEC-DASHBOARD-004)', () => {
+  // 별도 '대시보드 관리' 항목은 제거되었다(M7 재작업). 관리 어포던스는 대시보드
+  // 편집(설정) 모드 안으로 들어갔고 `nav.dashboard` 가 거기서 노출을 판정한다
+  // (DashboardSettingsSelector.test.tsx). 사이드바에는 그 항목이 다시 생기면
+  // 안 된다 — 두 곳에 관리 진입점이 생기면 게이팅 판정 사본이 둘이 된다.
+  it('대시보드 관리 항목은 사이드바에 존재하지 않는다', () => {
     renderSidebar();
     expect(
       screen.queryByRole('link', { name: '대시보드 관리' }),
     ).not.toBeInTheDocument();
-  });
-
-  it('nav.dashboard 가 있으면 대시보드 관리 항목을 노출한다', () => {
-    renderSidebar();
-    const link = screen.getByRole('link', { name: '대시보드 관리' });
-    expect(link).toHaveAttribute('href', '/dashboards/admin');
   });
 
   // spec.md §2.5 회귀 가드 — 대시보드를 *보는* 것은 인증만 요구한다.
@@ -202,10 +199,14 @@ describe('Sidebar — 대시보드 관리 메뉴 (SPEC-DASHBOARD-004 AC-10)', ()
     renderSidebar();
     const link = screen.getByRole('link', { name: '대시보드' });
     expect(link).toHaveAttribute('href', '/');
-    // 같은 사용자에게 관리 항목은 보이지 않는다 — 두 항목은 서로 다른 축이다.
-    expect(
-      screen.queryByRole('link', { name: '대시보드 관리' }),
-    ).not.toBeInTheDocument();
+  });
+
+  // nav.dashboard 를 거부해도 보기 항목은 영향을 받지 않는다 — 보기 항목에는
+  // 애초에 키가 붙어 있지 않다. 두 축이 섞이지 않았음을 고정한다.
+  it('nav.dashboard 가 없어도 대시보드(보기) 항목은 남는다', () => {
+    permissionMock.denied = new Set(['nav.dashboard']);
+    renderSidebar();
+    expect(screen.getByRole('link', { name: '대시보드' })).toHaveAttribute('href', '/');
   });
 
   it('권한이 0개여도 사이드바가 비지 않는다 — 링크가 최소 1개 남는다', () => {
