@@ -2,8 +2,10 @@
 //
 // 라인(line)은 1급 엔티티로, 백엔드 라인 레지스트리가 SSOT 이다. `Line{Code, Name, Order}`
 // 이며 group id 의 `line:<code>` 로 사용된다. 코드는 통일 포맷 `^[a-z0-9][a-z0-9_-]*$` 를
-// 만족해야 한다(RD-6). 모든 명령은 표준 exec 계약 `execAgent(id, { command, params })` 로
-// 전송하며(useStation.ts / useGroups.ts 패턴 미러), 인자는 params 아래에 중첩한다.
+// 만족해야 한다(RD-6). 쓰기 명령(add/remove_line)은 표준 exec 계약
+// `execAgent(id, { command, params })` 로, 읽기 전용인 list_lines 는
+// `queryAgent(id, { command })` 로 전송한다(useStation.ts / useGroups.ts 패턴 미러).
+// 인자는 params 아래에 중첩한다.
 //
 // 명령 API(백엔드 확정, M1~M5 완료):
 //   - add_line    { code, name, order? } → { status, ... }  (upsert, code 포맷 검증)
@@ -60,7 +62,7 @@ export function useLines(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: linesKey(agentId),
     queryFn: async () => {
-      const res = await agentService.execAgent(agentId, { command: 'list_lines' });
+      const res = await agentService.queryAgent(agentId, { command: 'list_lines' });
       const lines = (res as unknown as { lines?: Line[] }).lines ?? [];
       // Order 오름차순(동률은 code tiebreak)으로 방어적 정렬.
       return [...lines].sort((a, b) => a.order - b.order || a.code.localeCompare(b.code));

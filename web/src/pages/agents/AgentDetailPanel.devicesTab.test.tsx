@@ -81,16 +81,21 @@ vi.mock('@/hooks/useDetailTargets', () => ({
   useAgentStatsTarget: () => ({ data: undefined, isLoading: false, error: null }),
 }));
 
-const execMutate = vi.hoisted(() =>
+// list_devices 는 읽기 전용이라 useQueryAgent(POST /agents/{id}/query) 경로로 나간다.
+// 주소 맵을 채우는 응답은 이 스파이가 돌려준다.
+const queryMutate = vi.hoisted(() =>
   vi.fn((_args: unknown, opts?: { onSuccess?: (res: unknown) => void }) => {
     opts?.onSuccess?.({ data: ADDRESS_ITEMS });
   }),
 );
+// 쓰기(add_device 등) 경로. 이 테스트는 정렬만 보므로 호출되지 않는다.
+const execMutate = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useAgent', () => ({
   useAgent: () => ({ data: AGENT, isLoading: false }),
   useConfigureAgent: () => ({ isPending: false, isError: false, mutateAsync: vi.fn() }),
   useExecAgent: () => ({ isPending: false, mutate: execMutate }),
+  useQueryAgent: () => ({ isPending: false, mutate: queryMutate }),
 }));
 
 vi.mock('@/hooks/useRemote', () => ({

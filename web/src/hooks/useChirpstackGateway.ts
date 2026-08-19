@@ -1,12 +1,15 @@
 // React Query hook for the ChirpStack gateway roster (SPEC-CHIRPSTACK-003 M4).
 //
-// 백엔드 exec 계약: `POST /agents/{id}/exec` 에 `{command: "list_gateways"}` 를 보내면
+// 백엔드 조회 계약: `POST /agents/{id}/query` 에 `{command: "list_gateways"}` 를 보내면
 //   { "gateways": [ { gateway_id, device_count, last_seen_ms, devices: [...] } ] }
 // 를 반환한다. xsfm 로스터와 달리 `status` 엔벨로프가 없으므로 `res.gateways` 를
 // 직접 읽는다. 빈 로스터는 `{"gateways":[]}` 이며 null 이 아니지만, 키 자체가 없는
 // 응답에 대비해 `?? []` 로 방어한다(useStations 의 누락 배열 정규화 관용구와 동일).
 //
-// 로컬 에이전트 로스터는 SSE 푸시가 아닌 exec 폴링으로 갱신한다(SSE 는 원격 프록시 전용).
+// 읽기 전용이므로 exec(`agent.execute`)가 아니라 query(`agent.read`)로 보낸다 — 조회 권한만
+// 가진 역할도 로스터를 볼 수 있어야 한다.
+//
+// 로컬 에이전트 로스터는 SSE 푸시가 아닌 폴링으로 갱신한다(SSE 는 원격 프록시 전용).
 
 import { useQuery } from '@tanstack/react-query';
 
@@ -73,7 +76,7 @@ export function useGateways(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: gatewaysKey(agentId),
     queryFn: async () => {
-      const res = await agentService.execAgent(agentId, { command: 'list_gateways' });
+      const res = await agentService.queryAgent(agentId, { command: 'list_gateways' });
       const gateways = (res as unknown as { gateways?: ChirpstackGateway[] }).gateways ?? [];
       // devices 누락 방어(디바이스 0건 게이트웨이는 이론상 발생하지 않지만 렌더가 깨지지 않도록).
       return gateways.map((g) => ({ ...g, devices: g.devices ?? [] }));

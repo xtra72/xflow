@@ -26,15 +26,27 @@ let currentAgent: AgentInfo;
 // listResponse 는 exec list_devices 가 반환할 응답(백엔드 F1 형상 { data: [...] })이다.
 let listResponse: { data: unknown[] };
 
-// exec 명령 스파이. list_devices 는 목록을, 그 외는 성공을 즉시 콜백한다(refetch 유발).
+// exec(쓰기) 명령 스파이. add/update/remove_device 는 성공을 즉시 콜백한다(refetch 유발).
 const execMutate = vi.hoisted(() =>
   vi.fn(
     (
-      vars: { id: string; req: { command: string; params?: Record<string, unknown> } },
+      _vars: { id: string; req: { command: string; params?: Record<string, unknown> } },
       opts?: { onSuccess?: (res: unknown) => void; onError?: (e: unknown) => void },
     ) => {
-      if (vars.req.command === 'list_devices') opts?.onSuccess?.(listResponse);
-      else opts?.onSuccess?.({});
+      opts?.onSuccess?.({});
+    },
+  ),
+);
+
+// query(읽기) 명령 스파이. list_devices 는 읽기 전용이라 useQueryAgent 경로로 나간다
+// (POST /agents/{id}/query — agent.read 만 필요).
+const queryMutate = vi.hoisted(() =>
+  vi.fn(
+    (
+      _vars: { id: string; req: { command: string; params?: Record<string, unknown> } },
+      opts?: { onSuccess?: (res: unknown) => void; onError?: (e: unknown) => void },
+    ) => {
+      opts?.onSuccess?.(listResponse);
     },
   ),
 );
@@ -48,6 +60,7 @@ vi.mock('@/hooks/useAgent', () => ({
   useAgent: () => ({ data: currentAgent, isLoading: false }),
   useConfigureAgent: () => ({ isPending: false, isError: false, mutateAsync: vi.fn() }),
   useExecAgent: () => ({ isPending: false, mutate: execMutate }),
+  useQueryAgent: () => ({ isPending: false, mutate: queryMutate }),
 }));
 
 vi.mock('@/hooks/useDevice', () => ({
@@ -111,9 +124,15 @@ const openConfigTab = () =>
 const openDevicesTab = () =>
   fireEvent.click(screen.getByRole('button', { name: 'agents.detail.tabs.devices' }));
 
-/** exec 명령별 마지막 호출 인자를 반환한다. */
+/** exec(쓰기) 명령별 마지막 호출 인자를 반환한다. */
 function lastExecCall(command: string) {
   const calls = execMutate.mock.calls.filter((c) => c[0].req.command === command);
+  return calls.length ? calls[calls.length - 1]![0] : undefined;
+}
+
+/** query(읽기) 명령별 마지막 호출 인자를 반환한다. */
+function lastQueryCall(command: string) {
+  const calls = queryMutate.mock.calls.filter((c) => c[0].req.command === command);
   return calls.length ? calls[calls.length - 1]![0] : undefined;
 }
 
@@ -203,7 +222,9 @@ describe('M4 / AC-06,07 — 장치 탭 modbus-client 전용 섹션', () => {
     openDevicesTab();
     await act(async () => {});
 
-    expect(lastExecCall('list_devices')).toBeDefined();
+    // 읽기 전용 목록 조회는 exec 가 아니라 query 로 나가야 한다.
+    expect(lastQueryCall('list_devices')).toBeDefined();
+    expect(lastExecCall('list_devices')).toBeUndefined();
     expect(screen.getByText('agents.detail.devices.modbusSectionTitle')).toBeInTheDocument();
     expect(screen.getByText('dev-1')).toBeInTheDocument();
   });

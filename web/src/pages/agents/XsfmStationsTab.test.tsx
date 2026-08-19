@@ -15,7 +15,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '@/lib/i18n';
 
 const execAgentMock = vi.hoisted(() => vi.fn());
-vi.mock('@/services/api/agentService', () => ({ execAgent: execAgentMock }));
+// list_devices / list_stations 는 읽기 전용이라 queryAgent(POST /agents/{id}/query)로 나간다.
+// 쓰기(add_station / remove_device ...)만 execAgent 로 남는다.
+const queryAgentMock = vi.hoisted(() => vi.fn());
+vi.mock('@/services/api/agentService', () => ({
+  execAgent: execAgentMock,
+  queryAgent: queryAgentMock,
+}));
 
 import XsfmStationsTab from './XsfmStationsTab';
 
@@ -27,7 +33,9 @@ const STATIONS = [
 
 beforeEach(() => {
   execAgentMock.mockReset();
-  execAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
+  queryAgentMock.mockReset();
+  execAgentMock.mockResolvedValue({ status: 'ok' });
+  queryAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
     if (arg.command === 'list_stations') return Promise.resolve({ status: 'ok', stations: STATIONS });
     return Promise.resolve({ status: 'ok' });
   });
@@ -157,7 +165,7 @@ describe('XsfmStationsTab 페이지네이션', () => {
   }));
 
   function mockMany() {
-    execAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
+    queryAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
       if (arg.command === 'list_stations') return Promise.resolve({ status: 'ok', stations: MANY });
       return Promise.resolve({ status: 'ok' });
     });

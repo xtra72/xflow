@@ -10,9 +10,12 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const execAgentMock = vi.hoisted(() => vi.fn());
+// 읽기 전용 명령은 queryAgent(POST /agents/{id}/query)로 나간다 — exec 와 별도 스파이.
+const queryAgentMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/agentService', () => ({
   execAgent: execAgentMock,
+  queryAgent: queryAgentMock,
 }));
 
 import {
@@ -31,6 +34,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   execAgentMock.mockReset();
+  queryAgentMock.mockReset();
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -38,7 +42,7 @@ beforeEach(() => {
 
 describe('useLines', () => {
   it('list_lines 응답의 lines 를 파싱한다 (AC-1.1)', async () => {
-    execAgentMock.mockResolvedValueOnce({
+    queryAgentMock.mockResolvedValueOnce({
       status: 'ok',
       lines: [{ code: 'line_2', name: '2호선', order: 1 }],
     });
@@ -46,13 +50,13 @@ describe('useLines', () => {
     const { result } = renderHook(() => useLines('agent-1'), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(execAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_lines' });
+    expect(queryAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_lines' });
     expect(result.current.data).toHaveLength(1);
     expect(result.current.data?.[0]).toEqual({ code: 'line_2', name: '2호선', order: 1 });
   });
 
   it('lines 를 Order 오름차순으로 방어적 정렬한다 (AC-1.3)', async () => {
-    execAgentMock.mockResolvedValueOnce({
+    queryAgentMock.mockResolvedValueOnce({
       status: 'ok',
       lines: [
         { code: 'line_2', name: '2호선', order: 2 },
@@ -67,7 +71,7 @@ describe('useLines', () => {
   });
 
   it('lines 누락 시 빈 배열을 반환한다(빈 라인 레지스트리, AC-1.5)', async () => {
-    execAgentMock.mockResolvedValueOnce({ status: 'ok' });
+    queryAgentMock.mockResolvedValueOnce({ status: 'ok' });
 
     const { result } = renderHook(() => useLines('agent-1'), { wrapper });
 

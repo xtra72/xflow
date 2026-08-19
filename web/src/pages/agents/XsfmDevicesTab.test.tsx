@@ -16,7 +16,13 @@ import { I18nProvider } from '@/lib/i18n';
 import type { AirDevice } from '@/hooks/useStation';
 
 const execAgentMock = vi.hoisted(() => vi.fn());
-vi.mock('@/services/api/agentService', () => ({ execAgent: execAgentMock }));
+// list_devices / list_stations 는 읽기 전용이라 queryAgent(POST /agents/{id}/query)로 나간다.
+// 쓰기(add_station / remove_device ...)만 execAgent 로 남는다.
+const queryAgentMock = vi.hoisted(() => vi.fn());
+vi.mock('@/services/api/agentService', () => ({
+  execAgent: execAgentMock,
+  queryAgent: queryAgentMock,
+}));
 
 import XsfmDevicesTab from './XsfmDevicesTab';
 
@@ -32,7 +38,9 @@ const STATIONS = [
 
 beforeEach(() => {
   execAgentMock.mockReset();
-  execAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
+  queryAgentMock.mockReset();
+  execAgentMock.mockResolvedValue({ status: 'ok' });
+  queryAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
     if (arg.command === 'list_devices') return Promise.resolve({ status: 'ok', devices: DEVICES });
     if (arg.command === 'list_stations') return Promise.resolve({ status: 'ok', stations: STATIONS });
     return Promise.resolve({ status: 'ok' });
@@ -122,7 +130,7 @@ describe('XsfmDevicesTab 페이지네이션', () => {
   }));
 
   function mockMany() {
-    execAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
+    queryAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
       if (arg.command === 'list_devices') return Promise.resolve({ status: 'ok', devices: MANY });
       if (arg.command === 'list_stations') return Promise.resolve({ status: 'ok', stations: STATIONS });
       return Promise.resolve({ status: 'ok' });

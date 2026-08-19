@@ -9,9 +9,12 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const execAgentMock = vi.hoisted(() => vi.fn());
+// 읽기 전용 명령은 queryAgent(POST /agents/{id}/query)로 나간다 — exec 와 별도 스파이.
+const queryAgentMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/agentService', () => ({
   execAgent: execAgentMock,
+  queryAgent: queryAgentMock,
 }));
 
 import {
@@ -31,6 +34,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   execAgentMock.mockReset();
+  queryAgentMock.mockReset();
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -38,7 +42,7 @@ beforeEach(() => {
 
 describe('useGroups', () => {
   it('list_groups 응답을 그룹 배열로 반환하고 members/member_count 를 정규화한다', async () => {
-    execAgentMock.mockResolvedValueOnce({
+    queryAgentMock.mockResolvedValueOnce({
       status: 'ok',
       groups: [
         { id: 'station:ST-1', name: '강남역', type: 'station', member_count: 2, members: ['d1', 'd2'] },
@@ -51,7 +55,7 @@ describe('useGroups', () => {
     const { result } = renderHook(() => useGroups('agent-1'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(execAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_groups' });
+    expect(queryAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_groups' });
     const groups = result.current.data as Group[];
     expect(groups).toHaveLength(3);
     expect(groups[1]).toMatchObject({ id: 'custom:floor2', member_count: 1, members: ['d3'] });
@@ -59,7 +63,7 @@ describe('useGroups', () => {
   });
 
   it('빈 응답이면 빈 배열을 반환한다', async () => {
-    execAgentMock.mockResolvedValueOnce({ status: 'ok' });
+    queryAgentMock.mockResolvedValueOnce({ status: 'ok' });
     const { result } = renderHook(() => useGroups('agent-1'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([]);

@@ -11,7 +11,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, HardDrive, LineChart, ListPlu
 
 import { useQueryClient } from '@tanstack/react-query';
 
-import { useAgent, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
+import { useAgent, useConfigureAgent, useExecAgent, useQueryAgent } from '@/hooks/useAgent';
 import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
 import { useDeleteDevice, useDevicesRealtime, useSetDeviceReport } from '@/hooks/useDevice';
 import { useUpdateRemoteAgent } from '@/hooks/useRemote';
@@ -1456,7 +1456,8 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const configureAgent = useConfigureAgent();
   const queryClient = useQueryClient();
   const addNotification = useUIStore((s) => s.addNotification);
-  const execAgent = useExecAgent();
+  // 읽기 전용 조회(list_devices / get_device_status)만 수행하므로 query 경로를 쓴다.
+  const queryAgent = useQueryAgent();
 
   // ── config.devices 편집(단일 소스). 저장 시 PUT /agents/{id}/config → 백엔드가
   //    config 를 영속화하고 modbus-gateway 를 재시작해 DeviceManager 를 재빌드한다.
@@ -1530,7 +1531,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
   const fetchLiveDevices = useCallback(() => {
-    execAgent.mutate(
+    queryAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {
@@ -1540,7 +1541,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         onError: () => setLiveDevices([]),
       },
     );
-  }, [agentId, execAgent]);
+  }, [agentId, queryAgent]);
 
   useEffect(() => {
     fetchLiveDevices();
@@ -1574,7 +1575,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
       }
       setSelectedUnitId(unitId);
       setIsLoadingDetail(true);
-      execAgent.mutate(
+      queryAgent.mutate(
         { id: agentId, req: { command: 'get_device_status', params: { unit_id: unitId } } },
         {
           onSuccess: (res) => {
@@ -1589,7 +1590,7 @@ function ModbusDevicesSection({ agentId }: { agentId: string }) {
         },
       );
     },
-    [agentId, selectedUnitId, execAgent],
+    [agentId, selectedUnitId, queryAgent],
   );
 
   if (isLoading) {
@@ -1786,6 +1787,8 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
   const { data: agent } = useAgent(agentId);
   const execAgent = useExecAgent();
+  // 목록 조회(list_devices)는 읽기 전용이라 query 경로로 분리한다.
+  const queryAgent = useQueryAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
   const [devices, setDevices] = useState<ModbusClientListDevice[]>([]);
@@ -1799,7 +1802,7 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
 
   const fetchDevices = useCallback(() => {
     setIsLoading(true);
-    execAgent.mutate(
+    queryAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {
@@ -1815,7 +1818,7 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
         },
       },
     );
-  }, [agentId, execAgent, addNotification, t]);
+  }, [agentId, queryAgent, addNotification, t]);
 
   useEffect(() => {
     fetchDevices();
@@ -1949,7 +1952,7 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
           <button
             type="button"
             onClick={fetchDevices}
-            disabled={execAgent.isPending}
+            disabled={queryAgent.isPending}
             className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -3453,7 +3456,7 @@ function SessionsTab({ agentId }: { agentId: string }) {
 
     const fetchSessions = async () => {
       try {
-        const res = await agentService.execAgent(agentId, { command: 'list_connections' });
+        const res = await agentService.queryAgent(agentId, { command: 'list_connections' });
         if (cancelled) return;
         // API envelope unwrap 결과에 따라 connections가 직접 또는 result 내부에 있을 수 있음
         const raw = res as unknown as Record<string, unknown>;
@@ -3603,7 +3606,7 @@ function ClientsTab({ agentId }: { agentId: string }) {
 
     const fetchClients = async () => {
       try {
-        const res = await agentService.execAgent(agentId, { command: 'list_clients' });
+        const res = await agentService.queryAgent(agentId, { command: 'list_clients' });
         if (cancelled) return;
         // envelope unwrap: clients 가 직접 또는 result 내부에 위치할 수 있음.
         const raw = res as unknown as Record<string, unknown>;
@@ -3774,6 +3777,8 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // 클릭 시 상세 패널 expand. 동시 1개만 펼침.
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const execAgent = useExecAgent();
+  // 소스/주소 맵 구성을 위한 list_devices 는 읽기 전용이라 query 경로로 분리한다.
+  const queryAgent = useQueryAgent();
   const deleteDevice = useDeleteDevice();
   const setDeviceReport = useSetDeviceReport();
   const addNotification = useUIStore((s) => s.addNotification);
@@ -3805,7 +3810,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const [addressMap, setAddressMap] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!canManageDevices || !agent) return;
-    execAgent.mutate(
+    queryAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {

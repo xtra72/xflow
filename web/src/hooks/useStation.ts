@@ -1,12 +1,15 @@
 // React Query hooks for xsfm station / place / device management.
 //
 // SPEC-XSFM-001 Wave 2 (frontend).
-// 모든 명령은 표준 exec 계약 `execAgent(id, { command, params })` 로 전송한다.
+// 쓰기 명령은 표준 exec 계약 `execAgent(id, { command, params })` 로, 읽기 전용인
+// list_stations / list_devices 는 `queryAgent(id, { command })` 로 전송한다.
+// 두 엔드포인트는 요청/응답 형태가 같고 필요 권한만 다르다(exec=agent.execute,
+// query=agent.read) — 조회 전용 역할이 로스터를 볼 수 있게 하기 위한 분리다.
 // 명령 인자는 `params` 아래에 중첩한다(samsung/modbus 와 동일 — HTTP /exec 핸들러가
 // {command, params} 만 에이전트로 전달하며, xsfm 백엔드가 params 로부터 내부
 // 구조체 필드를 backfill 한다).
 //
-// 응답 형태(execAgent 는 API 엔벨로프를 벗겨 Process 결과를 그대로 반환):
+// 응답 형태(exec/query 모두 API 엔벨로프를 벗겨 Process 결과를 그대로 반환):
 //   - list_stations → { status, stations: [{ station, line, display_name, order, places: [...] }] }
 //   - list_devices  → { status, devices:  [{ device_id, name, group_id, station, place, index, online, power, fan_speed, source }] }
 
@@ -121,7 +124,7 @@ export function useStations(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: stationsKey(agentId),
     queryFn: async () => {
-      const res = await agentService.execAgent(agentId, { command: 'list_stations' });
+      const res = await agentService.queryAgent(agentId, { command: 'list_stations' });
       const stations = (res as unknown as { stations?: AirStation[] }).stations ?? [];
       // places 누락 방어(빈 역사) + station_number 누락/빈값 정규화(표시 코드가 항상 string 이도록).
       return stations.map((s) => ({ ...s, station_number: s.station_number ?? '', places: s.places ?? [] }));
@@ -355,7 +358,7 @@ export function useXsfmDevices(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: devicesKey(agentId),
     queryFn: async () => {
-      const res = await agentService.execAgent(agentId, { command: 'list_devices' });
+      const res = await agentService.queryAgent(agentId, { command: 'list_devices' });
       return (res as unknown as { devices?: AirDevice[] }).devices ?? [];
     },
     enabled: !!agentId,

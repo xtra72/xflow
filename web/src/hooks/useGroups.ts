@@ -2,8 +2,10 @@
 //
 // 그룹(group)은 1급 엔티티로, 백엔드 그룹 레지스트리가 SSOT 이다. id 는 타입 접두사 인코딩
 // (`custom:<name|uuid>` / `station:<code>` / `line:<code>`)을 사용하며, type 접두사로 편집 가능
-// 여부(custom 만 편집)를 판별한다. 모든 명령은 표준 exec 계약 `execAgent(id, { command, params })`
-// 로 전송하며(useStation.ts 의 add_station 패턴 미러), 인자는 params 아래에 중첩한다.
+// 여부(custom 만 편집)를 판별한다. 쓰기 명령(add/remove/set_group)은 표준 exec 계약
+// `execAgent(id, { command, params })` 로, 읽기 전용인 list_groups 는
+// `queryAgent(id, { command })` 로 전송한다(요청/응답 형태는 동일하고 필요 권한만 다르다).
+// 인자는 params 아래에 중첩한다(useStation.ts 의 add_station 패턴 미러).
 //
 // 명령 API(백엔드 확정):
 //   - add_group    { name, members? }            → { status, group_id }  (type=custom 생성)
@@ -58,7 +60,7 @@ export function useGroups(agentId: string, refetchInterval?: number) {
   return useQuery({
     queryKey: groupsKey(agentId),
     queryFn: async () => {
-      const res = await agentService.execAgent(agentId, { command: 'list_groups' });
+      const res = await agentService.queryAgent(agentId, { command: 'list_groups' });
       const groups = (res as unknown as { groups?: Group[] }).groups ?? [];
       // members 누락 방어(빈 그룹) + member_count 정합(백엔드 미제공 시 members 길이로 폴백)
       // + code 누락 방어(구 백엔드 호환 시 '').

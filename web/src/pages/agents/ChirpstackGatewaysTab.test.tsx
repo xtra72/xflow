@@ -11,7 +11,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '@/lib/i18n';
 
 const execAgentMock = vi.hoisted(() => vi.fn());
-vi.mock('@/services/api/agentService', () => ({ execAgent: execAgentMock }));
+// list_gateways 는 읽기 전용이라 queryAgent(POST /agents/{id}/query)로 나간다.
+const queryAgentMock = vi.hoisted(() => vi.fn());
+vi.mock('@/services/api/agentService', () => ({
+  execAgent: execAgentMock,
+  queryAgent: queryAgentMock,
+}));
 
 import ChirpstackGatewaysTab from './ChirpstackGatewaysTab';
 
@@ -81,7 +86,7 @@ const GATEWAYS = [
 ];
 
 function mockGateways(gateways: unknown) {
-  execAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
+  queryAgentMock.mockImplementation((_id: string, arg: { command: string }) => {
     if (arg.command === 'list_gateways') return Promise.resolve({ gateways });
     return Promise.resolve({});
   });
@@ -89,6 +94,7 @@ function mockGateways(gateways: unknown) {
 
 beforeEach(() => {
   execAgentMock.mockReset();
+  queryAgentMock.mockReset();
   mockGateways(GATEWAYS);
 });
 
@@ -123,7 +129,9 @@ describe('ChirpstackGatewaysTab 로스터 렌더', () => {
     expect(screen.getByText('gwB')).toBeTruthy();
     expect(screen.getByText('게이트웨이 2개')).toBeTruthy();
 
-    const listCalls = execAgentMock.mock.calls.filter((c) => c[1]?.command === 'list_gateways');
+    const listCalls = queryAgentMock.mock.calls.filter((c) => c[1]?.command === 'list_gateways');
+    // 조회는 exec 로 새면 안 된다(읽기 전용 역할이 403 을 받는 경로).
+    expect(execAgentMock).not.toHaveBeenCalled();
     expect(listCalls.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -224,7 +232,7 @@ describe('ChirpstackGatewaysTab 빈 상태', () => {
   });
 
   it('gateways 키가 없는 응답도 빈 상태로 안전하게 처리한다', async () => {
-    execAgentMock.mockImplementation(() => Promise.resolve({}));
+    queryAgentMock.mockImplementation(() => Promise.resolve({}));
     renderTab();
 
     await waitFor(() => expect(screen.getByText('수신된 게이트웨이가 없습니다.')).toBeTruthy());

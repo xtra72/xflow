@@ -1,15 +1,18 @@
 // SPEC-MODBUS-012 M2: MODBUS Gateway 대시보드 패널 공용 데이터 계층.
 //
-// modbus-gateway 에이전트의 exec 명령(list_devices / get_device_status ...)을
+// modbus-gateway 에이전트의 읽기 전용 명령(list_devices / get_device_status ...)을
 // 폴링으로 조회하는 React Query 훅과 응답 형상 타입, envelope 언랩 헬퍼를 제공한다.
 // 6종 패널이 공유하며(관측 전용), 폴링 주기는 대시보드 공통 설정을 따른다.
+//
+// 전부 읽기 전용이므로 exec(`agent.execute`)가 아니라 query(`agent.read`)로 보낸다 —
+// 조회 권한만 가진 역할이 패널을 열었을 때 403 으로 빈 화면이 되지 않게 한다.
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
-import { execAgent } from '@/services/api/agentService';
+import { queryAgent } from '@/services/api/agentService';
 import { useUIStore } from '@/stores/uiStore';
 
 // ---- 응답 형상 타입 (백엔드 agent.go processListDevices/processGetDeviceStatus 대응) ----
@@ -140,7 +143,7 @@ export function useModbusListDevices(
   const refetchInterval = useRefreshMs();
   const q = useQuery({
     queryKey: ['modbus', agentId, 'list_devices'],
-    queryFn: () => execAgent(agentId, { command: 'list_devices' }),
+    queryFn: () => queryAgent(agentId, { command: 'list_devices' }),
     enabled: enabled && agentId.length > 0,
     refetchInterval,
   });
@@ -158,7 +161,7 @@ export function useModbusDeviceStatus(
   const q = useQuery({
     queryKey: ['modbus', agentId, 'get_device_status', unitId],
     queryFn: () =>
-      execAgent(agentId, { command: 'get_device_status', params: { unit_id: unitId } }),
+      queryAgent(agentId, { command: 'get_device_status', params: { unit_id: unitId } }),
     enabled: enabled && agentId.length > 0,
     refetchInterval,
   });
@@ -180,7 +183,7 @@ export function useModbusRegisterMap(
   const refetchInterval = useRefreshMs();
   const q = useQuery({
     queryKey: ['modbus', agentId, 'get_map', unitId],
-    queryFn: () => execAgent(agentId, { command: 'get_map', params: { unit_id: unitId } }),
+    queryFn: () => queryAgent(agentId, { command: 'get_map', params: { unit_id: unitId } }),
     enabled: enabled && agentId.length > 0,
     refetchInterval,
   });
@@ -196,7 +199,7 @@ export function useModbusStatus(
   const refetchInterval = useRefreshMs();
   const q = useQuery({
     queryKey: ['modbus', agentId, 'get_status'],
-    queryFn: () => execAgent(agentId, { command: 'get_status' }),
+    queryFn: () => queryAgent(agentId, { command: 'get_status' }),
     enabled: enabled && agentId.length > 0,
     refetchInterval,
   });
@@ -213,7 +216,7 @@ export function useModbusListClients(
   const refetchInterval = useRefreshMs();
   const q = useQuery({
     queryKey: ['modbus', agentId, 'list_clients'],
-    queryFn: () => execAgent(agentId, { command: 'list_clients' }),
+    queryFn: () => queryAgent(agentId, { command: 'list_clients' }),
     enabled: enabled && agentId.length > 0,
     refetchInterval,
   });

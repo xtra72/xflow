@@ -10,9 +10,12 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const execAgentMock = vi.hoisted(() => vi.fn());
+// 읽기 전용 명령은 queryAgent(POST /agents/{id}/query)로 나간다 — exec 와 별도 스파이.
+const queryAgentMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/agentService', () => ({
   execAgent: execAgentMock,
+  queryAgent: queryAgentMock,
 }));
 
 import {
@@ -42,6 +45,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   execAgentMock.mockReset();
+  queryAgentMock.mockReset();
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -49,7 +53,7 @@ beforeEach(() => {
 
 describe('useStations', () => {
   it('list_stations 응답의 stations 를 파싱하고 places 누락을 방어한다', async () => {
-    execAgentMock.mockResolvedValueOnce({
+    queryAgentMock.mockResolvedValueOnce({
       status: 'ok',
       stations: [
         { station: 'ST-1', line: '2호선', display_name: '시청', order: 1, places: [{ place: 'p1', display_name: '승강장', order: 1 }] },
@@ -60,14 +64,14 @@ describe('useStations', () => {
     const { result } = renderHook(() => useStations('agent-1'), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(execAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_stations' });
+    expect(queryAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_stations' });
     expect(result.current.data).toHaveLength(2);
     expect(result.current.data?.[0]?.places).toHaveLength(1);
     expect(result.current.data?.[1]?.places).toEqual([]);
   });
 
   it('list_stations 응답의 station_number 를 파싱하고 누락/빈값은 빈 문자열로 정규화한다', async () => {
-    execAgentMock.mockResolvedValueOnce({
+    queryAgentMock.mockResolvedValueOnce({
       status: 'ok',
       stations: [
         // 역번호 있음.
@@ -154,7 +158,7 @@ describe('useAddPlace / useRemovePlace', () => {
 
 describe('xsfm devices', () => {
   it('list_devices 응답의 devices 를 파싱한다', async () => {
-    execAgentMock.mockResolvedValueOnce({
+    queryAgentMock.mockResolvedValueOnce({
       status: 'ok',
       devices: [
         { device_id: 'ap-101', name: '대합실', group_id: '', station: 'ST-1', place: 'p1', index: 1, online: true, power: false, fan_speed: 0, source: 'bridge' },
@@ -164,7 +168,7 @@ describe('xsfm devices', () => {
     const { result } = renderHook(() => useXsfmDevices('agent-1'), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(execAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_devices' });
+    expect(queryAgentMock).toHaveBeenCalledWith('agent-1', { command: 'list_devices' });
     expect(result.current.data?.[0]?.device_id).toBe('ap-101');
   });
 
