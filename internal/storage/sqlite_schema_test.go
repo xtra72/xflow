@@ -15,13 +15,20 @@ import (
 // 본 파일은 dashboards / users 테이블 자동 생성 + 부분 유니크 인덱스 동작 검증.
 
 // TestSQLiteRepository_CreatesDashboardAndUsersTables 는 NewSQLiteRepository 가
-// dashboards, users 테이블과 dashboards_scope_owner_uidx 인덱스를 자동 생성하는지
-// 검증한다 (UR-001, UR-006).
+// 부팅 스키마를 자동 생성하는지 검증한다 (UR-001, UR-006).
+//
+// @SPEC:SPEC-DASHBOARD-004 (M3)
+// 대시보드 엔티티 이관 이후 dashboards 는 1급 엔티티 스키마다. 따라서 구
+// (scope, owner) 부분 유니크 인덱스는 더 이상 부팅 경로에서 만들어지지 않으며,
+// 신규 테이블 3종 + 마커 테이블이 함께 생성된다.
 func TestSQLiteRepository_CreatesDashboardAndUsersTables(t *testing.T) {
 	repo := setupSQLiteRepo(t)
 	ctx := context.Background()
 
-	tables := []string{"flows", "dashboards", "users"}
+	tables := []string{
+		"flows", "users", "dashboards",
+		"dashboard_acl", "dashboard_user_state", "schema_markers",
+	}
 	for _, name := range tables {
 		var got string
 		err := repo.db.QueryRowContext(ctx,
@@ -31,14 +38,36 @@ func TestSQLiteRepository_CreatesDashboardAndUsersTables(t *testing.T) {
 		assert.Equal(t, name, got)
 	}
 
-	// 부분 유니크 인덱스 존재 검증
+	// 신규 dashboards 는 uid 기반이며 scope 컬럼을 갖지 않는다.
+	legacy, err := hasLegacyDashboardSchema(ctx, repo.db)
+	require.NoError(t, err)
+	assert.False(t, legacy, "부팅 경로가 만드는 dashboards 는 신규 스키마여야 한다")
+
+	// 구 (scope, owner) 부분 유니크 인덱스는 부팅 경로에서 만들어지지 않는다.
 	var idxName string
-	err := repo.db.QueryRowContext(ctx,
+	err = repo.db.QueryRowContext(ctx,
 		`SELECT name FROM sqlite_master WHERE type='index' AND name=?`,
 		"dashboards_scope_owner_uidx",
 	).Scan(&idxName)
-	require.NoError(t, err, "dashboards_scope_owner_uidx 인덱스가 생성되어야 한다")
-	assert.Equal(t, "dashboards_scope_owner_uidx", idxName)
+	assert.ErrorIs(t, err, sql.ErrNoRows, "구 부분 유니크 인덱스는 남아 있으면 안 된다")
+}
+
+// setupLegacyDashboardDB 는 구 (scope, owner) 스냅샷 스키마만 가진 원시 DB 를 연다.
+//
+// 부팅 경로(NewSQLiteRepository / OpenSQLiteDB)는 SPEC-DASHBOARD-004 이관 이후
+// 신규 스키마를 만들므로, 구 스키마의 제약을 검증하는 테스트는 테이블을 직접
+// 만들어 쓴다.
+func setupLegacyDashboardDB(t *testing.T) *sql.DB {
+	t.Helper()
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	_, err = db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
+	require.NoError(t, err)
+	require.NoError(t, ensureLegacySnapshotTable(ctx, db, "dashboards"))
+	return db
 }
 
 // TestSQLiteRepository_DashboardPartialUniqueIndex 는 (scope, COALESCE(owner,”))
@@ -49,36 +78,36 @@ func TestSQLiteRepository_CreatesDashboardAndUsersTables(t *testing.T) {
 //	(user, 'bob')     → 허용 (alice 와 공존)
 //	(global, NULL)    → 두 번째 시도는 UNIQUE 위반 (단일 공유 row 강제)
 func TestSQLiteRepository_DashboardPartialUniqueIndex(t *testing.T) {
-	repo := setupSQLiteRepo(t)
+	db := setupLegacyDashboardDB(t)
 	ctx := context.Background()
 
 	// 1. (global, NULL) 1회 삽입
-	_, err := repo.db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('global', NULL, 1, 1, '{}')`,
 	)
 	require.NoError(t, err, "global+NULL 첫 삽입은 성공해야 한다")
 
 	// 2. (user, 'alice') 삽입 (global 과 공존)
-	_, err = repo.db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('user', 'alice', 1, 2, '{}')`,
 	)
 	require.NoError(t, err, "user+alice 는 global+NULL 과 공존 가능해야 한다")
 
 	// 3. (user, 'bob') 삽입 (alice 와 공존)
-	_, err = repo.db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('user', 'bob', 1, 3, '{}')`,
 	)
 	require.NoError(t, err, "user+bob 은 user+alice 와 공존 가능해야 한다")
 
 	// 4. (global, NULL) 두 번째 삽입은 UNIQUE 위반
-	_, err = repo.db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('global', NULL, 2, 4, '{}')`,
 	)
 	require.Error(t, err, "global+NULL 중복 삽입은 UNIQUE 위반이어야 한다")
 	assert.Contains(t, err.Error(), "UNIQUE")
 
 	// 5. (user, 'alice') 두 번째 삽입도 UNIQUE 위반
-	_, err = repo.db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('user', 'alice', 2, 5, '{}')`,
 	)
 	require.Error(t, err, "user+alice 중복 삽입은 UNIQUE 위반이어야 한다")
@@ -86,7 +115,7 @@ func TestSQLiteRepository_DashboardPartialUniqueIndex(t *testing.T) {
 
 	// 6. 총 row 수 검증: 3 개 (global+NULL, user+alice, user+bob)
 	var count int
-	err = repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboards`).Scan(&count)
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboards`).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 3, count, "총 3개 row 가 존재해야 한다")
 }
@@ -94,13 +123,14 @@ func TestSQLiteRepository_DashboardPartialUniqueIndex(t *testing.T) {
 // TestSQLiteRepository_ScopeCheckConstraint 는 scope CHECK 제약을 검증한다.
 // 'global' / 'user' 외 값은 거부되어야 한다.
 func TestSQLiteRepository_ScopeCheckConstraint(t *testing.T) {
-	repo := setupSQLiteRepo(t)
+	db := setupLegacyDashboardDB(t)
 	ctx := context.Background()
 
-	_, err := repo.db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO dashboards(scope, owner, version, updated_at, payload) VALUES('team', 'team-x', 1, 1, '{}')`,
 	)
 	require.Error(t, err, "scope='team' 은 CHECK 제약 위반이어야 한다")
+	assert.Contains(t, err.Error(), "CHECK")
 }
 
 // TestSQLiteRepository_UsersUniqueUsername 는 users.username UNIQUE 제약을 검증한다.

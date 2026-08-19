@@ -230,7 +230,7 @@ func TestDashboardSQLite_GlobalOwnerStoredAsNULL(t *testing.T) {
 
 	var ownerNull bool
 	err = repo.db.QueryRowContext(ctx,
-		`SELECT owner IS NULL FROM dashboards WHERE scope='global'`,
+		`SELECT owner IS NULL FROM `+repo.table+` WHERE scope='global'`,
 	).Scan(&ownerNull)
 	require.NoError(t, err)
 	assert.True(t, ownerNull, "global scope 의 owner 컬럼은 NULL 로 저장")

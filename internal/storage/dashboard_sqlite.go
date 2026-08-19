@@ -23,6 +23,14 @@ var _ DashboardSnapshotRepository = (*DashboardSQLiteRepository)(nil)
 // UPSERT 가 race-free 하다.
 type DashboardSQLiteRepository struct {
 	db *sql.DB
+
+	// table 은 이 저장소가 읽고 쓰는 레거시 스냅샷 테이블 이름이다.
+	//
+	// @SPEC:SPEC-DASHBOARD-004 (M3)
+	// 대시보드 엔티티 이관 이후에는 "dashboards" 가 신규 1급 엔티티 테이블의
+	// 이름이므로 레거시 저장소는 다른 이름을 쓴다(legacySnapshotTableName).
+	// 보존 원본 dashboard_snapshots_v1 은 이 저장소가 건드리지 않는다.
+	table string
 }
 
 // NewDashboardSQLiteRepository 는 이미 열린 *sql.DB 를 받아 dashboards 스키마를
@@ -33,10 +41,14 @@ func NewDashboardSQLiteRepository(ctx context.Context, db *sql.DB) (*DashboardSQ
 	if db == nil {
 		return nil, fmt.Errorf("dashboard sqlite: db must not be nil")
 	}
-	if err := migrateDashboardSchema(ctx, db); err != nil {
+	table, err := legacySnapshotTableName(ctx, db)
+	if err != nil {
 		return nil, err
 	}
-	return &DashboardSQLiteRepository{db: db}, nil
+	if err := ensureLegacySnapshotTable(ctx, db, table); err != nil {
+		return nil, err
+	}
+	return &DashboardSQLiteRepository{db: db, table: table}, nil
 }
 
 // Get 은 (scope, owner) 의 단일 snapshot 을 조회한다.
@@ -46,7 +58,7 @@ func NewDashboardSQLiteRepository(ctx context.Context, db *sql.DB) (*DashboardSQ
 func (r *DashboardSQLiteRepository) Get(ctx context.Context, scope, owner string) (*DashboardSnapshot, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT scope, COALESCE(owner, ''), version, updated_at, payload
-		FROM dashboards
+		FROM `+r.table+`
 		WHERE scope = ? AND COALESCE(owner, '') = ?
 	`, scope, owner)
 
@@ -94,7 +106,7 @@ func (r *DashboardSQLiteRepository) Put(
 	var currentID int64
 	var currentVersion int64
 	err = tx.QueryRowContext(ctx, `
-		SELECT id, version FROM dashboards WHERE scope = ? AND COALESCE(owner, '') = ?
+		SELECT id, version FROM `+r.table+` WHERE scope = ? AND COALESCE(owner, '') = ?
 	`, scope, owner).Scan(&currentID, &currentVersion)
 
 	exists := true
@@ -126,7 +138,7 @@ func (r *DashboardSQLiteRepository) Put(
 
 	if exists {
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE dashboards
+			UPDATE `+r.table+`
 			SET version = ?, updated_at = ?, payload = ?
 			WHERE id = ?
 		`, newVersion, newUpdatedAt, payload, currentID); err != nil {
@@ -134,7 +146,7 @@ func (r *DashboardSQLiteRepository) Put(
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO dashboards(scope, owner, version, updated_at, payload)
+			INSERT INTO `+r.table+`(scope, owner, version, updated_at, payload)
 			VALUES (?, ?, ?, ?, ?)
 		`, scope, dbOwner, newVersion, newUpdatedAt, payload); err != nil {
 			return nil, fmt.Errorf("dashboard sqlite put: insert: %w", err)
@@ -164,7 +176,7 @@ func (r *DashboardSQLiteRepository) Put(
 // 핸들러는 GET 으로 사전 존재 확인을 하지 않아도 안전하다.
 func (r *DashboardSQLiteRepository) Delete(ctx context.Context, scope, owner string) error {
 	if _, err := r.db.ExecContext(ctx, `
-		DELETE FROM dashboards WHERE scope = ? AND COALESCE(owner, '') = ?
+		DELETE FROM `+r.table+` WHERE scope = ? AND COALESCE(owner, '') = ?
 	`, scope, owner); err != nil {
 		return fmt.Errorf("dashboard sqlite delete: %w", err)
 	}
