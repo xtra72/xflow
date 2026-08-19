@@ -12,182 +12,6 @@ import (
 )
 
 // 컴파일 타임 인터페이스 구현 검증.
-var _ DashboardSnapshotRepository = (*DashboardSQLiteRepository)(nil)
-
-// @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-5)
-// DashboardSQLiteRepository 는 레거시 dashboards 스키마 기반의 DashboardSnapshotRepository
-// 구현체이다.
-//
-// 동시성: 모든 메서드는 *sql.DB 의 내부 풀과 트랜잭션 + WAL 모드 (ASM-007) 에
-// 의존한다. Put 은 BEGIN IMMEDIATE 로 write lock 을 즉시 획득하여 If-Match 검증과
-// UPSERT 가 race-free 하다.
-type DashboardSQLiteRepository struct {
-	db *sql.DB
-
-	// table 은 이 저장소가 읽고 쓰는 레거시 스냅샷 테이블 이름이다.
-	//
-	// @SPEC:SPEC-DASHBOARD-004 (M3)
-	// 대시보드 엔티티 이관 이후에는 "dashboards" 가 신규 1급 엔티티 테이블의
-	// 이름이므로 레거시 저장소는 다른 이름을 쓴다(legacySnapshotTableName).
-	// 보존 원본 dashboard_snapshots_v1 은 이 저장소가 건드리지 않는다.
-	table string
-}
-
-// NewDashboardSQLiteRepository 는 이미 열린 *sql.DB 를 받아 dashboards 스키마를
-// 멱등하게 보장한 뒤 저장소를 반환한다.
-//
-// db 의 수명은 호출자가 관리한다 (Close 책임은 main.go).
-func NewDashboardSQLiteRepository(ctx context.Context, db *sql.DB) (*DashboardSQLiteRepository, error) {
-	if db == nil {
-		return nil, fmt.Errorf("dashboard sqlite: db must not be nil")
-	}
-	table, err := legacySnapshotTableName(ctx, db)
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureLegacySnapshotTable(ctx, db, table); err != nil {
-		return nil, err
-	}
-	return &DashboardSQLiteRepository{db: db, table: table}, nil
-}
-
-// Get 은 (scope, owner) 의 단일 snapshot 을 조회한다.
-//
-// owner="" 인 경우 DB 상 NULL 과 매칭되어야 하므로 COALESCE(owner,”) 표현식으로 비교한다.
-// 이는 dashboards_scope_owner_uidx 부분 유니크 인덱스를 그대로 활용한다.
-func (r *DashboardSQLiteRepository) Get(ctx context.Context, scope, owner string) (*DashboardSnapshot, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT scope, COALESCE(owner, ''), version, updated_at, payload
-		FROM `+r.table+`
-		WHERE scope = ? AND COALESCE(owner, '') = ?
-	`, scope, owner)
-
-	var snap DashboardSnapshot
-	if err := row.Scan(&snap.Scope, &snap.Owner, &snap.Version, &snap.UpdatedAt, &snap.Payload); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrDashboardNotFound
-		}
-		return nil, fmt.Errorf("dashboard sqlite get: %w", err)
-	}
-	return &snap, nil
-}
-
-// Put 은 If-Match 검증 후 snapshot 을 저장한다.
-//
-// 트랜잭션 내에서 SELECT (현재 version 확인) → INSERT/UPDATE 순서로 처리한다.
-// expectedVersion 값에 따라 다음 분기:
-//   - < 0      : unconditional (단순 UPSERT)
-//   - >= 0     : SELECT 한 현재 version 과 비교, 불일치 시 ErrDashboardVersionMismatch.
-//
-// 새 version = old.version + 1, updated_at = time.Now().UnixMilli() 으로 서버가 부여한다.
-//
-// owner="" 인 경우 NULL 로 저장하여 부분 유니크 인덱스 (COALESCE(owner,”)) 의
-// 빈 문자열 정규화와 호환된다.
-func (r *DashboardSQLiteRepository) Put(
-	ctx context.Context,
-	scope, owner string,
-	payload []byte,
-	expectedVersion int64,
-) (*DashboardSnapshot, error) {
-	// BEGIN IMMEDIATE 로 write lock 을 즉시 획득 (deferred lock 시 race 가능).
-	// 표준 sql 인터페이스는 IMMEDIATE 옵션을 직접 노출하지 않으므로 BeginTx 로 충분.
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("dashboard sqlite put: begin tx: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	// 1) 현재 row 확인
-	var currentID int64
-	var currentVersion int64
-	err = tx.QueryRowContext(ctx, `
-		SELECT id, version FROM `+r.table+` WHERE scope = ? AND COALESCE(owner, '') = ?
-	`, scope, owner).Scan(&currentID, &currentVersion)
-
-	exists := true
-	if errors.Is(err, sql.ErrNoRows) {
-		exists = false
-		currentVersion = 0
-		err = nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("dashboard sqlite put: select: %w", err)
-	}
-
-	// 2) If-Match 검증 (expectedVersion >= 0 인 경우만)
-	if expectedVersion >= 0 && currentVersion != expectedVersion {
-		// 트랜잭션 롤백되어 상태 미변경. 호출자는 후속 Get 으로 latest 를 받아 응답 body 에 포함.
-		return nil, ErrDashboardVersionMismatch
-	}
-
-	// 3) 새 version / updated_at 부여
-	newVersion := currentVersion + 1
-	newUpdatedAt := time.Now().UnixMilli()
-
-	// 4) INSERT 또는 UPDATE
-	//    owner=="" 는 DB 상 NULL 로 저장 (부분 유니크 인덱스 호환).
-	var dbOwner sql.NullString
-	if owner != "" {
-		dbOwner = sql.NullString{String: owner, Valid: true}
-	}
-
-	if exists {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE `+r.table+`
-			SET version = ?, updated_at = ?, payload = ?
-			WHERE id = ?
-		`, newVersion, newUpdatedAt, payload, currentID); err != nil {
-			return nil, fmt.Errorf("dashboard sqlite put: update: %w", err)
-		}
-	} else {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO `+r.table+`(scope, owner, version, updated_at, payload)
-			VALUES (?, ?, ?, ?, ?)
-		`, scope, dbOwner, newVersion, newUpdatedAt, payload); err != nil {
-			return nil, fmt.Errorf("dashboard sqlite put: insert: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("dashboard sqlite put: commit: %w", err)
-	}
-	committed = true
-
-	return &DashboardSnapshot{
-		Scope:     scope,
-		Owner:     owner,
-		Version:   newVersion,
-		UpdatedAt: newUpdatedAt,
-		Payload:   payload,
-	}, nil
-}
-
-// Delete 는 (scope, owner) snapshot 을 삭제한다. 존재하지 않으면 멱등하게 nil 반환.
-//
-// 명시적 ErrDashboardNotFound 반환 대신 멱등 동작을 선택한 이유:
-//   - 핸들러 레이어가 DELETE → 204 No Content 응답을 단순화할 수 있다.
-//   - 다중 클라이언트 환경에서 race 로 인한 "이미 삭제됨" 오류를 사용자에게 노출하지 않는다.
-//
-// 핸들러는 GET 으로 사전 존재 확인을 하지 않아도 안전하다.
-func (r *DashboardSQLiteRepository) Delete(ctx context.Context, scope, owner string) error {
-	if _, err := r.db.ExecContext(ctx, `
-		DELETE FROM `+r.table+` WHERE scope = ? AND COALESCE(owner, '') = ?
-	`, scope, owner); err != nil {
-		return fmt.Errorf("dashboard sqlite delete: %w", err)
-	}
-	return nil
-}
-
-// -----------------------------------------------------------------------------
-// 대시보드 1급 엔티티 저장소 (SPEC-DASHBOARD-004)
-// -----------------------------------------------------------------------------
-
-// 컴파일 타임 인터페이스 구현 검증.
 var _ DashboardRepository = (*DashboardEntitySQLiteRepository)(nil)
 
 // dashboardColumns 는 SELECT 시 payload 를 제외한 컬럼 목록이다.
@@ -198,7 +22,7 @@ const dashboardColumns = `id, uid, name, owner, visibility, is_default, sort_ord
 // DashboardEntitySQLiteRepository 는 신규 dashboards 스키마 기반의
 // DashboardRepository 구현체이다.
 //
-// 동시성: 레거시 구현과 동일하게 *sql.DB 풀 + 트랜잭션 + WAL 모드(ASM-007)에
+// 동시성: *sql.DB 풀 + 트랜잭션 + WAL 모드(ASM-007)에
 // 의존한다. Create / Update / Delete 는 단일 트랜잭션에서 존재 확인과 변경을
 // 수행하므로 If-Match 검증과 uid 중복 검사가 race-free 하다.
 type DashboardEntitySQLiteRepository struct {
@@ -287,6 +111,18 @@ func (r *DashboardEntitySQLiteRepository) Get(ctx context.Context, uid string) (
 // UNIQUE 제약을 드라이버 오류 문자열로 식별하지 않는 이유는, 문자열 형식이
 // 드라이버 구현 세부사항이라 버전 변경에 취약하기 때문이다. 제약 자체는 최종
 // 방어선으로 그대로 남는다.
+//
+// sort_order 는 **소유자별 시퀀스**로 서버가 부여한다(입력값 무시).
+// 같은 소유자의 기존 최댓값 + 1 이며, 그 소유자의 첫 대시보드는 0 이다.
+//
+// 소유자별인 이유: M3 이관(insertMigratedDashboards)이 스냅샷 1건의
+// dashboardPages 배열 인덱스를 그대로 sort_order 로 넣으므로, 전역 스냅샷의
+// 페이지들이 0..N-1 을, 각 사용자의 페이지들이 각각 0..M-1 을 갖는다. 이관 데이터에서
+// 이미 소유자별 시퀀스이므로 전역 max+1 을 쓰면 두 규칙이 섞인다.
+//
+// 조회와 삽입이 같은 트랜잭션 안에 있어야 두 요청이 같은 max 를 읽고 같은
+// sort_order 를 부여하는 경합이 생기지 않는다 — 핸들러에서 read-then-write 로
+// 구현하면 그 경합을 막을 수 없다.
 func (r *DashboardEntitySQLiteRepository) Create(ctx context.Context, d Dashboard) (*Dashboard, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -308,11 +144,19 @@ func (r *DashboardEntitySQLiteRepository) Create(ctx context.Context, d Dashboar
 		return nil, fmt.Errorf("dashboard entity sqlite create: probe uid: %w", err)
 	}
 
+	// 소유자별 sort_order 시퀀스. 행이 없으면 COALESCE 가 -1 을 주어 첫 대시보드는 0 이 된다.
+	var nextSortOrder int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM dashboards WHERE owner = ?`,
+		d.Owner).Scan(&nextSortOrder); err != nil {
+		return nil, fmt.Errorf("dashboard entity sqlite create: next sort_order: %w", err)
+	}
+
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO dashboards(uid, name, owner, visibility, is_default, sort_order, version, created_at, updated_at, payload)
 		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-	`, d.UID, d.Name, d.Owner, d.Visibility, boolToInt(d.IsDefault), d.SortOrder, now, now, d.Payload)
+	`, d.UID, d.Name, d.Owner, d.Visibility, boolToInt(d.IsDefault), nextSortOrder, now, now, d.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard entity sqlite create: insert: %w", err)
 	}
@@ -328,6 +172,7 @@ func (r *DashboardEntitySQLiteRepository) Create(ctx context.Context, d Dashboar
 
 	created := d
 	created.ID = id
+	created.SortOrder = nextSortOrder
 	created.Version = 1
 	created.CreatedAt = now
 	created.UpdatedAt = now

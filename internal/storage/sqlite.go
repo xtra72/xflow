@@ -82,80 +82,17 @@ func NewSQLiteRepository(ctx context.Context, dbPath string) (*SQLiteRepository,
 	return &SQLiteRepository{db: db}, nil
 }
 
-// dashboardSnapshotsLegacyTable 은 대시보드 엔티티 이관(M3) 이후 레거시 스냅샷
-// 저장소가 사용하는 테이블 이름이다.
+// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §2.3, §4.4)
+// 레거시 (scope, owner) 스냅샷 스키마는 더 이상 운영 경로에서 생성·사용되지 않는다.
 //
-// @SPEC:SPEC-DASHBOARD-004 (M3, spec.md §2.4)
+// M3 는 구 dashboards 를 dashboard_snapshots_v1 로 개명하면서, 아직 남아 있던
+// 레거시 묶음 쓰기 경로가 신규 테이블 이름과 충돌하지 않도록 별도 테이블
+// (dashboard_snapshots_legacy)로 우회시켰다. M4 가 그 쓰기 경로를 제거했으므로
+// 우회 자체가 불필요해졌다 — 읽기 전용 호환 shim 은 신규 모델에서 응답을 합성한다.
 //
-// 이관은 구 dashboards 를 dashboard_snapshots_v1 로 개명하고 그 이름을 신규 1급
-// 엔티티 테이블에 넘긴다. 그래서 레거시 저장소가 쓰던 이름이 사라진다.
-//
-// 보존 원본(dashboard_snapshots_v1)을 재사용하지 **않는** 이유: 그 테이블은 이관이
-// 잘못되었을 때의 복구 원본이며(spec.md §2.4 4단계), 레거시 PUT 이 그 위에 쓰면
-// 복구 원본이 사라진다. 레거시 묶음 쓰기 경로는 M4 에서 제거되므로(spec.md §2.3),
-// 그때까지는 별도의 빈 테이블을 쓰고 보존 원본은 읽기조차 하지 않는다.
-const dashboardSnapshotsLegacyTable = "dashboard_snapshots_legacy"
-
-// legacySnapshotTableName 은 레거시 (scope, owner) 스냅샷 저장소가 사용할 테이블
-// 이름을 결정한다.
-//
-//	dashboards 없음        → "dashboards"                  (이관 이전 / 원시 DB)
-//	dashboards 가 구 스키마 → "dashboards"                  (이관 이전)
-//	dashboards 가 신 스키마 → "dashboard_snapshots_legacy"  (이관 이후)
-func legacySnapshotTableName(ctx context.Context, db *sql.DB) (string, error) {
-	legacy, err := hasLegacyDashboardSchema(ctx, db)
-	if err != nil {
-		return "", err
-	}
-	if legacy {
-		return dashboardsTable, nil
-	}
-	exists, err := tableExists(ctx, db, dashboardsTable)
-	if err != nil {
-		return "", err
-	}
-	if !exists {
-		return dashboardsTable, nil
-	}
-	return dashboardSnapshotsLegacyTable, nil
-}
-
-// migrateDashboardSchema 는 레거시 스냅샷 테이블과 (scope, owner) 부분 유니크
-// 인덱스를 멱등하게 생성한다. modernc.org/sqlite 환경에서 COALESCE(owner, ”) 기반
-// 표현식 인덱스는 정상 동작한다 (SPEC-DASHBOARD-001 v0.2.0 Risk Mitigation).
-//
-// 테이블 이름은 legacySnapshotTableName 이 결정한다 — 대시보드 엔티티 이관 이후에는
-// "dashboards" 가 신규 스키마의 것이므로 그 이름을 쓸 수 없다.
-func migrateDashboardSchema(ctx context.Context, db *sql.DB) error {
-	table, err := legacySnapshotTableName(ctx, db)
-	if err != nil {
-		return err
-	}
-	return ensureLegacySnapshotTable(ctx, db, table)
-}
-
-// ensureLegacySnapshotTable 은 지정한 이름으로 레거시 스냅샷 스키마를 멱등하게
-// 생성한다.
-func ensureLegacySnapshotTable(ctx context.Context, db *sql.DB, table string) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		scope      TEXT    NOT NULL CHECK (scope IN ('global', 'user')),
-		owner      TEXT,
-		version    INTEGER NOT NULL DEFAULT 0,
-		updated_at INTEGER NOT NULL,
-		payload    TEXT    NOT NULL
-	)`); err != nil {
-		return fmt.Errorf("create %s table: %w", table, err)
-	}
-
-	// (scope, COALESCE(owner, '')) 부분 유니크: scope=global+NULL 은 빈 문자열로
-	// 정규화되어 단일 row 만 허용되고, scope=user+owner 별로 1개씩 허용된다.
-	if _, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS `+table+`_scope_owner_uidx
-		ON `+table+`(scope, COALESCE(owner, ''))`); err != nil {
-		return fmt.Errorf("create %s index: %w", table, err)
-	}
-	return nil
-}
+// 이미 dashboard_snapshots_legacy 가 만들어진 DB 는 그대로 둔다. 빈 테이블이며
+// 어떤 경로도 참조하지 않는다. DROP 하지 않는 이유는 보존 원본과 같다 — 스키마
+// 삭제는 되돌릴 수 없고 얻는 것이 없다.
 
 // migrateSchemaMarkersSchema 는 schema_markers 테이블을 멱등하게 생성한다.
 //

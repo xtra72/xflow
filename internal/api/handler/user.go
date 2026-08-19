@@ -54,6 +54,24 @@ var (
 		Code:     "USER_EXISTS",
 		Message:  "이미 존재하는 사용자입니다",
 	}
+	// ErrLastDashboardDeleter 는 dashboard.delete 보유자가 0 이 되는 삭제·강등을
+	// 거부한다 (@SPEC:SPEC-DASHBOARD-004 spec.md §2.13 UB1 #6, acceptance.md AC-19).
+	//
+	// 0 이 되면 아무도 대시보드를 정리할 수 없는 상태가 되고, 그 상태는 역할 편집으로
+	// 만 빠져나올 수 있다 — 관리 API 접근 자체가 남아 있어도 대시보드는 영구히
+	// 방치된다. ErrLastAdminUser 와 별도 코드로 두어 원인이 응답에서 식별된다.
+	ErrLastDashboardDeleter = &api.APIError{
+		HTTPCode: http.StatusConflict,
+		Code:     "LAST_DASHBOARD_DELETER",
+		Message:  "대시보드 삭제 권한을 보유한 마지막 사용자는 삭제하거나 강등할 수 없습니다",
+	}
+	// ErrDashboardOwnershipTransferUnavailable 은 소유권 승계 대상이 없어 대시보드가
+	// 고아가 되는 사용자 삭제를 거부한다 (spec.md §2.13 UB1 #7, acceptance.md AC-20).
+	ErrDashboardOwnershipTransferUnavailable = &api.APIError{
+		HTTPCode: http.StatusConflict,
+		Code:     "DASHBOARD_OWNERSHIP_TRANSFER_UNAVAILABLE",
+		Message:  "삭제 대상이 소유한 대시보드를 승계할 관리자를 결정할 수 없습니다",
+	}
 )
 
 // minPasswordLength 는 사용자 등록·재설정 시 요구되는 최소 비밀번호 길이이다
@@ -67,6 +85,9 @@ const minPasswordLength = 8
 const (
 	permUserDelete = "user.delete"
 	permRoleUpdate = "role.update"
+	// permDashboardDelete 는 대시보드 정리 권한이다
+	// (@SPEC:SPEC-DASHBOARD-004 spec.md §2.13 UB1 #6).
+	permDashboardDelete = "dashboard.delete"
 )
 
 // UserHandler 는 사용자 관리 API 핸들러이다.
@@ -286,6 +307,15 @@ func (h *UserHandler) Delete(ctx api.Context) error {
 		return ErrSelfDeletion
 	}
 
+	// @SPEC:SPEC-DASHBOARD-004 (spec.md §2.13 UB1 #7, acceptance.md AC-20)
+	// 소유자가 사라져 대시보드가 고아가 되는 상태를 만들지 않는다. 승계 대상은
+	// 삭제를 실행한 관리자다(spec.md §6 가정 5 — 다른 사용자로의 지정 승계는 범위 밖).
+	// 승계가 불가능하면 삭제 자체를 409 로 거부한다 — 대시보드를 조용히 잃는 것보다
+	// 삭제를 막는 편이 복구 가능하다.
+	if err := h.transferDashboardOwnership(ctx, username); err != nil {
+		return err
+	}
+
 	if err := storage.DeleteUser(ctx.Context(), h.db, username); err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
 			return api.ErrNotFound.WithMessage("사용자를 찾을 수 없습니다")
@@ -351,7 +381,7 @@ func (h *UserHandler) guardAdminCapacity(ctx context.Context, deleted, changed, 
 		return m, nil
 	}
 
-	userDeleteHolders, roleUpdateHolders := 0, 0
+	userDeleteHolders, roleUpdateHolders, dashboardDeleteHolders := 0, 0, 0
 	for _, u := range users {
 		if u.Username == deleted {
 			continue
@@ -371,10 +401,56 @@ func (h *UserHandler) guardAdminCapacity(ctx context.Context, deleted, changed, 
 		if granted[permRoleUpdate] {
 			roleUpdateHolders++
 		}
+		if granted[permDashboardDelete] {
+			dashboardDeleteHolders++
+		}
 	}
 
 	if userDeleteHolders == 0 || roleUpdateHolders == 0 {
 		return ErrLastAdminUser
+	}
+	// @SPEC:SPEC-DASHBOARD-004 (spec.md §2.13 UB1 #6, acceptance.md AC-19)
+	// 관리 API 접근이 남아 있어도 대시보드 정리 권한이 0 이면 대시보드는 영구히
+	// 방치된다. 따라서 별도 불변식으로 검사하고 별도 코드로 거부한다.
+	if dashboardDeleteHolders == 0 {
+		return ErrLastDashboardDeleter
+	}
+	return nil
+}
+
+// transferDashboardOwnership 은 삭제 대상이 소유한 대시보드를 삭제 실행자에게
+// 승계하고, 삭제 대상을 향하던 ACL 행(`user:<username>`)을 제거한다 (UB1 #7).
+//
+// 소유 대시보드가 0장이면 승계 대상 검증 없이 통과한다 — 승계할 것이 없는데
+// 삭제를 막으면 인증 비활성 배포나 스크립트 삭제 경로가 이유 없이 실패한다.
+// 다만 `user:<username>` ACL 잔여 행은 그 경우에도 정리한다.
+func (h *UserHandler) transferDashboardOwnership(ctx api.Context, username string) error {
+	owned, err := storage.CountDashboardsByOwner(ctx.Context(), h.db, username)
+	if err != nil {
+		h.logger.Error("대시보드 소유 수 조회 실패", "username", username, "error", err)
+		return api.ErrInternalServer.WithMessage("대시보드 소유 수 조회 실패")
+	}
+
+	actor := ctx.UserID()
+	if owned > 0 {
+		// 승계 대상은 삭제를 실행한 관리자다. 실행자를 알 수 없거나(인증 비활성이
+		// 아닌데 컨텍스트가 비어 있음) 실행자 자신이 삭제 대상이면 승계가 성립하지 않는다.
+		if actor == "" || actor == username {
+			return ErrDashboardOwnershipTransferUnavailable
+		}
+		if _, err := storage.GetUserByUsername(ctx.Context(), h.db, actor); err != nil {
+			// 실행자가 users 에 없으면(원격 노드 토큰 등) 승계 대상이 될 수 없다.
+			return ErrDashboardOwnershipTransferUnavailable
+		}
+	}
+
+	moved, err := storage.TransferDashboardOwnership(ctx.Context(), h.db, username, actor)
+	if err != nil {
+		h.logger.Error("대시보드 소유권 승계 실패", "from", username, "to", actor, "error", err)
+		return api.ErrInternalServer.WithMessage("대시보드 소유권 승계 실패")
+	}
+	if moved > 0 {
+		h.logger.Info("대시보드 소유권 승계", "from", username, "to", actor, "count", moved)
 	}
 	return nil
 }

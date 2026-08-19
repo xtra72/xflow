@@ -170,6 +170,11 @@ func (h *RoleHandler) Update(ctx api.Context) error {
 		if bad := firstInvalidPermission(*req.Permissions); bad != "" {
 			return api.ErrBadRequest.WithMessage("정의되지 않은 권한 키입니다: " + bad)
 		}
+		// @SPEC:SPEC-DASHBOARD-004 (spec.md §2.13 UB1 #6, acceptance.md AC-19)
+		// 이 변경으로 dashboard.delete 보유자가 0 이 되면 거부한다.
+		if err := h.guardDashboardDeleteCapacity(ctx, name, *req.Permissions); err != nil {
+			return err
+		}
 		err := storage.UpdateRolePermissions(ctx.Context(), h.db, name, *req.Permissions)
 		switch {
 		case errors.Is(err, storage.ErrRoleNotFound):
@@ -261,6 +266,13 @@ func (h *RoleHandler) Delete(ctx api.Context) error {
 	}
 	h.invalidate(name)
 
+	// @SPEC:SPEC-DASHBOARD-004 (M4) — 삭제된 역할을 대상으로 하던 ACL 잔여 행 정리.
+	// 판정에서는 매치되지 않아 무해하지만, 같은 이름의 역할이 다시 만들어지면
+	// 의도치 않게 권한이 되살아난다. 실패해도 역할 삭제 자체는 되돌리지 않는다.
+	if err := storage.DeleteDashboardACLByRole(ctx.Context(), h.db, name); err != nil {
+		h.logger.Warn("삭제된 역할의 대시보드 ACL 정리 실패", "role", name, "error", err)
+	}
+
 	h.logger.Info("역할 삭제", "role", name, "actor", ctx.UserID())
 	return ctx.NoContent(http.StatusNoContent)
 }
@@ -271,6 +283,72 @@ func (h *RoleHandler) Catalog(ctx api.Context) error {
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(dto.PermissionCatalogResponse{
 		Permissions: rbac.Permissions(),
 	}))
+}
+
+// guardDashboardDeleteCapacity 는 role 의 권한 집합을 newPermissions 로 바꿨을 때
+// 시스템 전체에서 dashboard.delete 보유자가 남는지 검사한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (spec.md §2.13 UB1 #6, acceptance.md AC-19)
+//
+// 0 이 되면 아무도 대시보드를 정리할 수 없다. admin 역할은 이미 수정 자체가
+// 거부되므로(ErrAdminRoleImmutable) 본 검사는 커스텀·빌트인 editor/viewer 경로에서
+// 동작한다. 사용자가 한 명도 없는 초기 상태는 잠금이 성립하지 않으므로 통과시킨다.
+func (h *RoleHandler) guardDashboardDeleteCapacity(ctx api.Context, role string, newPermissions []string) error {
+	if h.perms == nil {
+		// 인가가 비활성인 배포에서는 잠금 상태 자체가 성립하지 않는다.
+		return nil
+	}
+
+	users, err := storage.ListUsers(ctx.Context(), h.db)
+	if err != nil {
+		h.logger.Error("사용자 목록 조회 실패", "error", err)
+		return api.ErrInternalServer.WithMessage("사용자 목록 조회 실패")
+	}
+	if len(users) == 0 {
+		return nil
+	}
+
+	newHolds := false
+	for _, p := range newPermissions {
+		if p == permDashboardDelete {
+			newHolds = true
+			break
+		}
+	}
+
+	cache := make(map[string]bool, 4)
+	holders := 0
+	for _, u := range users {
+		if u.Role == role {
+			if newHolds {
+				holders++
+			}
+			continue
+		}
+		granted, ok := cache[u.Role]
+		if !ok {
+			perms, err := h.perms.Permissions(ctx.Context(), u.Role)
+			if err != nil {
+				h.logger.Error("역할 권한 조회 실패", "role", u.Role, "error", err)
+				return api.ErrInternalServer.WithMessage("역할 권한 조회 실패")
+			}
+			for _, p := range perms {
+				if p == permDashboardDelete {
+					granted = true
+					break
+				}
+			}
+			cache[u.Role] = granted
+		}
+		if granted {
+			holders++
+		}
+	}
+
+	if holders == 0 {
+		return ErrLastDashboardDeleter
+	}
+	return nil
 }
 
 // invalidate 는 단일 역할의 권한 캐시를 무효화한다 (주입되지 않았으면 no-op).

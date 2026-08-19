@@ -65,7 +65,10 @@ type DashboardRepository interface {
 
 	// Create 는 새 대시보드를 생성하고 서버가 부여한 값이 채워진 행을 반환한다.
 	//
-	// 서버 부여: ID, Version(=1), CreatedAt, UpdatedAt. 입력의 해당 필드는 무시된다.
+	// 서버 부여: ID, SortOrder, Version(=1), CreatedAt, UpdatedAt. 입력의 해당
+	// 필드는 무시된다. SortOrder 는 **소유자별** 시퀀스(같은 owner 의 최댓값 + 1,
+	// 첫 대시보드는 0)이며, 조회와 삽입이 한 트랜잭션 안에서 수행되어 동시 생성 시
+	// 같은 값이 중복 부여되지 않는다.
 	// uid 가 이미 존재하면 ErrDashboardUIDExists.
 	Create(ctx context.Context, d Dashboard) (*Dashboard, error)
 
@@ -89,41 +92,16 @@ type DashboardRepository interface {
 // 레거시 스냅샷 모델 (SPEC-DASHBOARD-001) — 호환 shim 과 원격 프록시 전용
 // -----------------------------------------------------------------------------
 
-// @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-4)
-// DashboardSnapshotRepository 는 공유/개인 대시보드 snapshot 의 영속 저장소
-// 인터페이스이다.
+// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §4.4)
+// 구 (scope, owner) 2행 모델의 저장소 인터페이스와 SQLite 구현은 제거되었다.
+// 남은 것은 응답 형상(DashboardSnapshot)뿐이며, 읽기 전용 호환 shim 과 원격 노드
+// 프록시가 신규 1급 엔티티 모델에서 이 형상을 **합성**해 쓴다
+// (internal/api/handler/dashboard_shim.go).
 //
-// @SPEC:SPEC-DASHBOARD-004 (M2)
-// 본 인터페이스는 SPEC-DASHBOARD-004 이전의 (scope, owner) 2행 모델이며,
-// 이름만 DashboardRepository 에서 변경되었다(신규 엔티티 모델이 그 이름을 쓴다).
-// 읽기 전용 호환 shim 과 원격 노드 프록시가 레거시 응답 형상을 유지해야 하므로
-// 제거하지 않는다(spec.md §4.4).
-//
-// (scope, owner) 의미:
-//   - scope="global", owner=""        → 공유 대시보드 (단일 row, DB 상 owner 컬럼 NULL)
-//   - scope="user",   owner=<username> → 특정 사용자 개인 대시보드
-//
-// 핸들러 레이어가 URL (/shared vs /mine) 과 JWT Claims.Username 으로부터 적절한
-// (scope, owner) 쌍을 결정하여 저장소를 호출한다. 클라이언트는 (scope, owner) 를
-// 직접 지정할 수 없다 (UB-003 owner spoofing 차단).
-type DashboardSnapshotRepository interface {
-	// Get 은 (scope, owner) 의 단일 snapshot 을 조회한다. 없으면 ErrDashboardNotFound.
-	Get(ctx context.Context, scope, owner string) (*DashboardSnapshot, error)
-
-	// Put 은 snapshot 을 저장하고 새 version 을 부여한다 (server-assigned).
-	//
-	// expectedVersion 의 의미:
-	//   - < 0 (예: -1)            : unconditional (If-Match 헤더 없음)
-	//   - >= 0                    : If-Match 검증. 현재 저장된 version 과 다르면
-	//                               ErrDashboardVersionMismatch 반환 (서버 상태 미변경).
-	//   - 새 row (snapshot 부재)   : 현재 version 은 0 으로 간주됨.
-	//
-	// Put 성공 시 새 version = old.version + 1, updated_at = time.Now().UnixMilli().
-	Put(ctx context.Context, scope, owner string, payload []byte, expectedVersion int64) (*DashboardSnapshot, error)
-
-	// Delete 는 snapshot 을 삭제한다. 존재하지 않더라도 nil 을 반환한다 (멱등).
-	Delete(ctx context.Context, scope, owner string) error
-}
+// 저장소를 남기지 않는 이유: 묶음 단위 쓰기는 새 모델에서 "어느 대시보드의 어느
+// version 에 대한 쓰기인가" 를 결정할 수 없어 낙관적 동시성이 성립하지 않는다
+// (spec.md §2.3). 읽기 전용 경로만 남기면 저장소가 아니라 변환으로 충분하다.
+// 보존 원본 dashboard_snapshots_v1 은 복구용이므로 어떤 경로에서도 읽고 쓰지 않는다.
 
 // DashboardSnapshot 은 단일 (scope, owner) 의 영속 상태를 표현한다.
 //

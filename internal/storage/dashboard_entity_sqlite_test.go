@@ -98,7 +98,7 @@ func TestMigrateDashboardSchemaV2_RejectsLegacySchema(t *testing.T) {
 	ctx := context.Background()
 	db := openEntityDB(t)
 
-	require.NoError(t, migrateDashboardSchema(ctx, db), "레거시 스키마 생성 실패")
+	require.NoError(t, seedLegacyDashboardSchema(ctx, db), "레거시 스키마 생성 실패")
 
 	err := migrateDashboardSchemaV2(ctx, db)
 	require.Error(t, err, "구 스키마 위에서는 오류를 반환해야 한다")
@@ -214,14 +214,19 @@ func TestDashboardEntity_List(t *testing.T) {
 
 	assert.Empty(t, mustList(t, repo, false), "빈 저장소의 목록은 비어 있다")
 
-	d3 := newDashboard("D3", "edi", "shared")
-	d3.SortOrder = 2
-	d1 := newDashboard("D1", "edi", "private")
-	d1.SortOrder = 1
-	d2 := newDashboard("D2", "root", "acl")
-	d2.SortOrder = 1
-	for _, d := range []Dashboard{d3, d1, d2} {
+	// sort_order 는 Create 가 소유자별로 부여하므로(입력값 무시), 정렬 검증에 필요한
+	// 값은 Update 로 명시한다 — Update 는 여전히 SortOrder 를 받는다.
+	for _, d := range []Dashboard{
+		newDashboard("D3", "edi", "shared"),
+		newDashboard("D1", "edi", "private"),
+		newDashboard("D2", "root", "acl"),
+	} {
 		_, err := repo.Create(ctx, d)
+		require.NoError(t, err)
+	}
+	for uid, order := range map[string]int64{"D1": 1, "D2": 1, "D3": 2} {
+		o := order
+		_, err := repo.Update(ctx, uid, DashboardUpdate{SortOrder: &o}, -1)
 		require.NoError(t, err)
 	}
 
@@ -553,4 +558,101 @@ func TestEntityRepositories_NilDB(t *testing.T) {
 	assert.Error(t, err)
 	_, err = NewDashboardUserStateSQLiteRepository(ctx, nil)
 	assert.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// sort_order 소유자별 시퀀스 (SPEC-DASHBOARD-004 M4)
+// ---------------------------------------------------------------------------
+
+// TestDashboardEntity_Create_AssignsPerOwnerSortOrder 는 생성 시 sort_order 가
+// 소유자별로 증가하고, 소유자끼리는 독립임을 검증한다.
+//
+// uid 는 서버가 UUID 로 발급하므로, sort_order 가 전부 0 이면 목록 순서가 uid 순으로
+// 떨어져 새로 만든 대시보드끼리 임의로 뒤섞인다 — 사용자에게 보이는 결함이다.
+func TestDashboardEntity_Create_AssignsPerOwnerSortOrder(t *testing.T) {
+	ctx := context.Background()
+	_, repo, _, _ := setupEntityRepo(t)
+
+	t.Run("같은 소유자는 증가한다", func(t *testing.T) {
+		first, err := repo.Create(ctx, newDashboard("A1", "edi", "private"))
+		require.NoError(t, err)
+		second, err := repo.Create(ctx, newDashboard("A2", "edi", "private"))
+		require.NoError(t, err)
+		third, err := repo.Create(ctx, newDashboard("A3", "edi", "private"))
+		require.NoError(t, err)
+
+		assert.EqualValues(t, 0, first.SortOrder, "그 소유자의 첫 대시보드는 0")
+		assert.EqualValues(t, 1, second.SortOrder)
+		assert.EqualValues(t, 2, third.SortOrder)
+
+		// 반환값뿐 아니라 저장된 행도 같아야 한다.
+		stored, err := repo.Get(ctx, "A2")
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, stored.SortOrder)
+	})
+
+	t.Run("소유자끼리는 독립이다", func(t *testing.T) {
+		// edi 는 이미 0,1,2 를 썼다. root 는 자기 시퀀스를 0 부터 시작한다.
+		rootFirst, err := repo.Create(ctx, newDashboard("B1", "root", "shared"))
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, rootFirst.SortOrder,
+			"다른 소유자의 값이 시퀀스에 섞이면 안 된다")
+
+		rootSecond, err := repo.Create(ctx, newDashboard("B2", "root", "shared"))
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, rootSecond.SortOrder)
+
+		// 그 사이에 edi 가 하나 더 만들어도 edi 시퀀스만 이어진다.
+		ediNext, err := repo.Create(ctx, newDashboard("A4", "edi", "private"))
+		require.NoError(t, err)
+		assert.EqualValues(t, 3, ediNext.SortOrder)
+	})
+
+	t.Run("입력의 SortOrder 는 무시된다", func(t *testing.T) {
+		d := newDashboard("C1", "ops", "private")
+		d.SortOrder = 99
+		created, err := repo.Create(ctx, d)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, created.SortOrder, "서버가 부여한다")
+	})
+}
+
+// TestDashboardEntity_Create_ContinuesAfterMigratedSortOrder 는 이관으로 이미
+// sort_order 를 가진 소유자의 다음 생성이 그 최댓값 뒤에서 이어짐을 검증한다.
+//
+// M3 이관(insertMigratedDashboards)은 dashboardPages 배열 인덱스를 sort_order 로
+// 넣으므로 이관 직후 사용자는 0..M-1 을 갖는다. 새 대시보드가 0 부터 다시 시작하면
+// 이관된 대시보드와 순서가 충돌한다.
+func TestDashboardEntity_Create_ContinuesAfterMigratedSortOrder(t *testing.T) {
+	ctx := context.Background()
+	db, repo, _, _ := setupEntityRepo(t)
+
+	// 이관이 남긴 것과 같은 모양의 행을 직접 넣는다 (0,1,2 = 배열 인덱스).
+	for i, uid := range []string{"M0", "M1", "M2"} {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO dashboards(uid, name, owner, visibility, is_default, sort_order, version, created_at, updated_at, payload)
+			VALUES (?, ?, 'alice', 'private', 0, ?, 1, 1000, 1000, '{"panels":[],"layout":[]}')
+		`, uid, "이관된 "+uid, int64(i))
+		require.NoError(t, err)
+	}
+
+	created, err := repo.Create(ctx, newDashboard("NEW", "alice", "private"))
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, created.SortOrder,
+		"이관된 최댓값(2) 다음에서 이어져야 한다")
+
+	// 다른 소유자는 여전히 0 부터 시작한다.
+	other, err := repo.Create(ctx, newDashboard("OTHER", "bob", "private"))
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, other.SortOrder)
+
+	// 목록은 alice 의 이관 3장 뒤에 새 대시보드가 온다.
+	list := mustList(t, repo, false)
+	var aliceOrder []string
+	for _, d := range list {
+		if d.Owner == "alice" {
+			aliceOrder = append(aliceOrder, d.UID)
+		}
+	}
+	assert.Equal(t, []string{"M0", "M1", "M2", "NEW"}, aliceOrder)
 }

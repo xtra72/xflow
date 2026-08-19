@@ -37,7 +37,7 @@ func newLegacyDB(t *testing.T) (*sql.DB, string) {
 	_, err = db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
 	require.NoError(t, err, "WAL 모드 설정 실패")
 	require.NoError(t, migrateUsersSchema(ctx, db), "users 스키마 생성 실패")
-	require.NoError(t, ensureLegacySnapshotTable(ctx, db, "dashboards"), "레거시 스키마 생성 실패")
+	require.NoError(t, seedLegacyDashboardTable(ctx, db, dashboardsTable), "레거시 스키마 생성 실패")
 	return db, dbPath
 }
 
@@ -510,7 +510,7 @@ func TestMigrateDashboardEntities_NoUsersTable(t *testing.T) {
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
-	require.NoError(t, ensureLegacySnapshotTable(ctx, db, "dashboards"))
+	require.NoError(t, seedLegacyDashboardTable(ctx, db, dashboardsTable))
 	insertLegacySnapshot(t, db, "dashboards", "global", "", 1000, legacyPayload("g1", "", "g1"))
 
 	require.NoError(t, migrateDashboardEntities(ctx, db))
@@ -571,7 +571,7 @@ func TestMigrateDashboardEntities_TransactionRollback(t *testing.T) {
 	insertUser(t, db, "root", "admin")
 
 	// 이미 개명이 끝난 상태를 직접 구성한다 (구 테이블은 보존 원본 이름으로 존재).
-	require.NoError(t, ensureLegacySnapshotTable(ctx, db, dashboardSnapshotsV1Table))
+	require.NoError(t, seedLegacyDashboardTable(ctx, db, dashboardSnapshotsV1Table))
 	insertLegacySnapshot(t, db, dashboardSnapshotsV1Table, "global", "", 1000, legacyPayload("g1", "", "g1", "g2"))
 	insertLegacySnapshot(t, db, dashboardSnapshotsV1Table, "user", "alice", 2000, legacyPayload("a1", "", "a1"))
 
@@ -713,7 +713,7 @@ func TestMigrateDashboardEntities_RefusesWhenBothTablesExist(t *testing.T) {
 	ctx := context.Background()
 	db, _ := newLegacyDB(t)
 	insertLegacySnapshot(t, db, "dashboards", "global", "", 1000, legacyPayload("g1", "", "g1"))
-	require.NoError(t, ensureLegacySnapshotTable(ctx, db, dashboardSnapshotsV1Table))
+	require.NoError(t, seedLegacyDashboardTable(ctx, db, dashboardSnapshotsV1Table))
 	insertLegacySnapshot(t, db, dashboardSnapshotsV1Table, "global", "", 500, legacyPayload("old", "", "old"))
 
 	err := migrateDashboardEntities(ctx, db)
@@ -733,7 +733,7 @@ func TestOpenSQLiteDB_MigratesDashboardEntities(t *testing.T) {
 	seed, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	require.NoError(t, migrateUsersSchema(ctx, seed))
-	require.NoError(t, ensureLegacySnapshotTable(ctx, seed, "dashboards"))
+	require.NoError(t, seedLegacyDashboardTable(ctx, seed, dashboardsTable))
 	insertUser(t, seed, "root", "admin")
 	insertLegacySnapshot(t, seed, "dashboards", "global", "", 1000, legacyPayload("g1", "", "g1", "g2"))
 	insertLegacySnapshot(t, seed, "dashboards", "user", "alice", 2000, legacyPayload("a1", "", "a1"))
@@ -757,19 +757,22 @@ func TestOpenSQLiteDB_MigratesDashboardEntities(t *testing.T) {
 		require.NoError(t, reopened.Close())
 	}
 
-	// 4) 레거시 스냅샷 저장소는 보존 원본을 건드리지 않는다.
+	// 4) 보존 원본은 어떤 부팅 경로에서도 변하지 않는다.
+	//
+	// @SPEC:SPEC-DASHBOARD-004 (M4) — 레거시 스냅샷 저장소가 제거되었으므로 이제
+	// 보존 원본에 쓰는 코드 경로 자체가 없다. 그래도 부팅을 반복해도 행 수가 그대로
+	// 인지 고정한다 — 보존 원본은 이관이 잘못되었을 때의 유일한 복구 원본이다.
 	reopened, err := OpenSQLiteDB(ctx, dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { reopened.Close() })
-	legacyRepo, err := NewDashboardSQLiteRepository(ctx, reopened)
-	require.NoError(t, err, "레거시 저장소 생성이 부팅을 막으면 안 된다")
-	assert.Equal(t, dashboardSnapshotsLegacyTable, legacyRepo.table,
-		"레거시 저장소는 보존 원본(dashboard_snapshots_v1)을 쓰면 안 된다")
-
-	_, err = legacyRepo.Put(ctx, "global", "", []byte(`{"dashboardPages":[]}`), -1)
-	require.NoError(t, err)
 	assert.EqualValues(t, 2, countRows(t, reopened, dashboardSnapshotsV1Table),
-		"레거시 쓰기가 보존 원본을 변경하면 안 된다")
+		"보존 원본(dashboard_snapshots_v1)은 변경되면 안 된다")
+
+	entityRepo, err := NewDashboardEntitySQLiteRepository(ctx, reopened)
+	require.NoError(t, err, "신규 저장소 생성이 부팅을 막으면 안 된다")
+	items, err := entityRepo.List(ctx, false)
+	require.NoError(t, err)
+	assert.Len(t, items, 3, "이관된 대시보드는 신규 저장소로 조회된다")
 }
 
 // ---------------------------------------------------------------------------

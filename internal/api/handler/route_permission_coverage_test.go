@@ -43,11 +43,17 @@ var permissionAllowlist = map[string]string{
 	"GET /api/v1/permissions": "권한 키 카탈로그 — spec.md §2.2 에서 '인증만' 으로 명시",
 
 	// 본인 소유 대시보드 — 핸들러가 owner 를 ctx.UserID() 로 고정하므로 타 사용자
-	// 데이터에 접근할 수 없다. dashboard.update 를 요구하면 viewer 가 자기 레이아웃조차
-	// 저장하지 못하는 회귀가 발생하며, 이는 SPEC 이 요구하지 않는 부작용이다.
-	"GET /api/v1/dashboards/mine":    "본인 소유 리소스 — 핸들러가 owner 를 세션 사용자로 고정",
-	"PUT /api/v1/dashboards/mine":    "본인 소유 리소스 — 핸들러가 owner 를 세션 사용자로 고정",
-	"DELETE /api/v1/dashboards/mine": "본인 소유 리소스 — 핸들러가 owner 를 세션 사용자로 고정",
+	// 데이터에 접근할 수 없다.
+	//
+	// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §2.3, acceptance.md AC-13)
+	// PUT · DELETE /dashboards/mine 은 라우트가 제거되었으므로 항목도 함께 사라졌다
+	// (묶음 단위 쓰기는 낙관적 동시성이 성립하지 않는다). GET 만 읽기 전용 shim 으로
+	// 남으며, 권한 미부착 사유는 그대로다.
+	"GET /api/v1/dashboards/mine": "본인 소유 리소스 — 핸들러가 owner 를 세션 사용자로 고정",
+
+	// @SPEC:SPEC-DASHBOARD-004 (M4, acceptance.md AC-13)
+	"GET /api/v1/dashboard-state": "본인 소유 UI 상태 — 핸들러가 username 을 세션 사용자로 고정",
+	"PUT /api/v1/dashboard-state": "본인 소유 UI 상태 — 핸들러가 username 을 세션 사용자로 고정",
 }
 
 // buildProductionRoutes 는 cmd/xflowd/main.go 가 등록하는 모든 RouteGroup 핸들러를

@@ -864,18 +864,38 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// storage.schedule_log.type 을 config 오버라이드 레이어에 영속화한다(재시작 후 적용).
 	scheduleLogConfigHandler := handler.NewScheduleLogConfigHandler(cfg, obs.Loggers.NewLogger("api.handler.schedule_log_config").Logger())
 
-	// 9.4. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
-	// Dashboard API 핸들러 등록 — 공유/개인 snapshot 영속화.
+	// 9.4. @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §2.3)
+	// Dashboard API 핸들러 등록 — 대시보드 1급 엔티티 CRUD + ACL + 사용자 UI 상태.
 	// authDashboardDB 는 7.2 에서 열린 공유 *sql.DB (credentials 와 공유).
-	dashboardRepo, err := storage.NewDashboardSQLiteRepository(context.Background(), authDashboardDB)
+	//
+	// 구 (scope, owner) 스냅샷 저장소는 제거되었다. 레거시 응답 형상이 필요한
+	// 경로(읽기 전용 shim, 원격 노드 프록시)는 신규 모델에서 합성한다
+	// (handler.SynthesizeDashboardSnapshot / handler.NewDashboardSnapshotShim).
+	dashboardRepo, err := storage.NewDashboardEntitySQLiteRepository(context.Background(), authDashboardDB)
 	if err != nil {
 		return fmt.Errorf("dashboard 저장소 초기화 실패: %w", err)
 	}
+	dashboardACLRepo, err := storage.NewDashboardACLSQLiteRepository(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("dashboard ACL 저장소 초기화 실패: %w", err)
+	}
+	dashboardStateRepo, err := storage.NewDashboardUserStateSQLiteRepository(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("dashboard UI 상태 저장소 초기화 실패: %w", err)
+	}
 	dashboardHandler := handler.NewDashboardHandler(
 		dashboardRepo,
+		dashboardACLRepo,
+		dashboardStateRepo,
 		server.JWTService(),
 		obs.Loggers.NewLogger("api.handler.dashboard").Logger(),
-	)
+	).
+		// 권한은 토큰이 아니라 요청 시점에 조회한다(SPEC-AUTH-005 §4.3) — 역할 변경이
+		// 기존 토큰에도 즉시 반영되어야 한다(acceptance.md AC-07/AC-16).
+		WithPermissions(permCache).
+		WithAuthEnabled(serverCfg.BasicAuth.Enabled).
+		// ACL subject(user:/role:)의 실재 검증에 사용한다(acceptance.md AC-17).
+		WithSubjectDB(authDashboardDB)
 
 	// 대시보드 자산(도면 이미지 등) 저장소 — snapshot 과 분리해 보관한다.
 	// snapshot PUT 은 256KB 상한이 있어 이미지를 config 에 data-URL 로 박으면 대시보드
@@ -1335,7 +1355,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// M10(그룹 L): 대시보드 config(get_shared/get_mine) + 시스템 메트릭(monitor.metrics)
 		// read 소스를 바인딩한다(REQ-L01/L05). 로컬 /dashboards·/monitor/metrics 와 동일
 		// 인스턴스를 재사용하여 노드-로컬 권위(A17)·동형 응답을 보장한다. READ-ONLY(REQ-J03).
-		querySource.dashboard = dashboardRepo
+		//
+		// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §4.4) — 구 (scope, owner) 저장소가
+		// 제거되었으므로, 신규 1급 엔티티 모델에서 레거시 스냅샷을 합성하는 shim 을
+		// 바인딩한다. 원격 프록시가 소비하는 응답 형상은 그대로다.
+		querySource.dashboard = handler.NewDashboardSnapshotShim(dashboardRepo)
 		querySource.metrics = monitorMgr
 		streamSource := newRemoteStreamSource(agentSvc, deviceRegistry, seriesReader, 0)
 		// M10(그룹 L): 차트(chart.chart)는 in-process 차트 채널 레지스트리를 직접 탭하고

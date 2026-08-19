@@ -66,7 +66,7 @@ func setupLegacyDashboardDB(t *testing.T) *sql.DB {
 
 	_, err = db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
 	require.NoError(t, err)
-	require.NoError(t, ensureLegacySnapshotTable(ctx, db, "dashboards"))
+	require.NoError(t, seedLegacyDashboardTable(ctx, db, dashboardsTable))
 	return db
 }
 
@@ -229,7 +229,7 @@ func TestMigrateDashboardSchema_ModerncCompatibility(t *testing.T) {
 	_, err = db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
 	require.NoError(t, err)
 
-	require.NoError(t, migrateDashboardSchema(ctx, db))
+	require.NoError(t, seedLegacyDashboardSchema(ctx, db))
 
 	// COALESCE(owner,'') 인덱스가 실제 query 에서 사용되는지 EXPLAIN QUERY PLAN 으로 확인
 	rows, err := db.QueryContext(ctx,
