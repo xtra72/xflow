@@ -103,7 +103,6 @@ function LocalDashboardView() {
 
   // SPEC-DASHBOARD-001 v0.2.0: 활성 스코프 (탭) + 사용자 역할.
   const activeDashboardScope = useUIStore((s) => s.activeDashboardScope);
-  const setActiveDashboardScope = useUIStore((s) => s.setActiveDashboardScope);
   const userRole = useAuthStore((s) => s.user?.role);
   const isAdmin = userRole === 'admin';
   /** 공유 탭이면서 admin 이 아닌 경우 편집 컨트롤 사전 비활성화 (AC-4 UX). */
@@ -329,62 +328,10 @@ function LocalDashboardView() {
   const activePageName = activePage?.name ?? t('dashboard.fallbackName');
 
   return (
-    <div className="-m-6 flex flex-1 flex-col" ref={containerRef}>
-      {/* SPEC-DASHBOARD-001 v0.2.0: 공유/내 대시보드 탭 토글 (헤더 위) */}
-      <div
-        role="tablist"
-        aria-label={t('dashboard.scope.aria')}
-        className="flex h-9 shrink-0 items-center gap-1 border-b border-(--color-border-default) bg-(--color-bg-surface) px-6"
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeDashboardScope === 'shared'}
-          aria-label={t('dashboard.scope.sharedAria')}
-          onClick={() => setActiveDashboardScope('shared')}
-          className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
-            activeDashboardScope === 'shared'
-              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
-          }`}
-        >
-          {t('dashboard.scope.shared')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeDashboardScope === 'mine'}
-          aria-label={t('dashboard.scope.mineAria')}
-          onClick={() => setActiveDashboardScope('mine')}
-          className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
-            activeDashboardScope === 'mine'
-              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
-          }`}
-        >
-          {t('dashboard.scope.mine')}
-        </button>
-        {/* 동기화 인디케이터 + 읽기 전용 뱃지 */}
-        <div className="ml-auto flex items-center gap-3">
-          {sharedReadOnly && (
-            <span
-              className="text-[11px] text-(--color-text-muted)"
-              title={t('dashboard.scope.adminOnly')}
-            >
-              {t('dashboard.scope.readOnly')}
-            </span>
-          )}
-          {pendingSync && (
-            <span
-              className="text-[11px] text-(--color-text-muted)"
-              aria-live="polite"
-            >
-              {t('dashboard.scope.syncing')}
-            </span>
-          )}
-        </div>
-      </div>
-
+    <div className="-m-6 flex flex-1 flex-col" ref={containerRef} data-testid="dashboard-root">
+      {/* 공유/내 대시보드 스코프 바는 제거했다(SPEC-AUTH-006 후속) —
+          대시보드 관리는 별도 메뉴로 분리 예정이다. 같은 행에 있던 저장 상태
+          표시는 아래 헤더 바 우측으로 옮겨 정보가 사라지지 않게 했다. */}
       {/* ── 헤더 바 (Pencil: 56px, 흰색, border-bottom) ── */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-(--color-border-default) bg-(--color-bg-surface) px-6">
         {editMode ? (
@@ -499,6 +446,17 @@ function LocalDashboardView() {
 
         {/* 헤더 우측 */}
         <div className="flex items-center gap-2">
+          {/* 저장 진행 표시 — 스코프 바가 사라지면서 이리로 옮겼다. 레이아웃
+              변경이 저장 중인지 사용자가 알 수 있어야 한다. */}
+          {pendingSync && (
+            <span
+              className="text-[11px] text-(--color-text-muted)"
+              aria-live="polite"
+              data-testid="dashboard-syncing"
+            >
+              {t('dashboard.scope.syncing')}
+            </span>
+          )}
           {editMode ? (
             /* ── 편집 모드 우측: 테마 + 패널추가 + 취소 + 저장 ── */
             <>

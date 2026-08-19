@@ -193,7 +193,7 @@ async function waitForBoot(version = 1): Promise<void> {
   await waitFor(() =>
     expect(useUIStore.getState().sharedSnapshot?.version).toBe(version),
   );
-  await screen.findByRole('tablist', { name: 'dashboard.scope.aria' });
+  await screen.findByTestId('dashboard-root');
 }
 
 beforeEach(() => {
@@ -290,7 +290,7 @@ describe('패널 추가 라우트 왕복 (/ → /panels/new → /)', () => {
         expect(router.state.location.pathname).toBe(path);
       });
     }
-    await screen.findByRole('tablist', { name: 'dashboard.scope.aria' });
+    await screen.findByTestId('dashboard-root');
 
     expect(getSharedDashboardMock).toHaveBeenCalledTimes(1);
     expect(getMyDashboardMock).toHaveBeenCalledTimes(1);

@@ -53,7 +53,8 @@
     "passwordChangeError": "Failed to change password",
     "currentPasswordWrong": "Current password is incorrect",
     "permissionDenied": "You do not have permission to access this page. Ask an administrator for access.",
-    "permissionUnavailable": "Could not load your permissions. Please try again shortly."
+    "permissionUnavailable": "Could not load your permissions. Please try again shortly.",
+    "userMenu": "User menu"
   },
   "dashboard": {
     "title": "Dashboard",

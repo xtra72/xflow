@@ -34,6 +34,7 @@ import { usePermission } from '@/hooks/usePermission';
 import { useRemoteMode } from '@/hooks/useRemote';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
+import SidebarUserMenu from '@/components/layout/SidebarUserMenu';
 import { useUIStore } from '@/stores/uiStore';
 
 /** 네비게이션 메뉴 항목 정의 */
@@ -348,6 +349,10 @@ export default function Sidebar() {
 
       {/* 접기/펼치기 토글 버튼 */}
       <div className="border-t border-(--color-border-default) p-2">
+        {/* 사용자 메뉴 — 대시보드만 남은 사용자도 로그아웃할 수 있어야 하므로
+            항상 렌더되는 사이드바 하단에 둔다(SPEC-AUTH-006). */}
+        <SidebarUserMenu collapsed={sidebarCollapsed} />
+
         <button
           type="button"
           onClick={toggleSidebar}

@@ -53,7 +53,8 @@
     "passwordChangeError": "비밀번호 변경에 실패했습니다",
     "currentPasswordWrong": "현재 비밀번호가 올바르지 않습니다",
     "permissionDenied": "이 화면에 접근할 권한이 없습니다. 관리자에게 권한을 요청하세요.",
-    "permissionUnavailable": "권한 정보를 불러오지 못했습니다. 잠시 후 다시 시도하세요."
+    "permissionUnavailable": "권한 정보를 불러오지 못했습니다. 잠시 후 다시 시도하세요.",
+    "userMenu": "사용자 메뉴"
   },
   "dashboard": {
     "title": "대시보드",
