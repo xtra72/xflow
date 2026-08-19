@@ -3946,6 +3946,8 @@
       "permissionCount": "Permissions",
       "permissions": "Permissions",
       "resource": "Resource",
+      "navMenus": "Menu visibility",
+      "navMenusHint": "Menu visibility is separate from data permissions. A role can read data without the matching menu appearing.",
       "empty": "No roles yet.",
       "catalogError": "Could not load the permission catalog.",
       "deleteTitle": "Delete Role",

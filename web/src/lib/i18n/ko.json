@@ -3946,6 +3946,8 @@
       "permissionCount": "권한 개수",
       "permissions": "권한",
       "resource": "리소스",
+      "navMenus": "메뉴 노출",
+      "navMenusHint": "메뉴 노출은 데이터 권한과 별개입니다. 데이터를 읽을 수 있어도 메뉴는 감출 수 있습니다.",
       "empty": "등록된 역할이 없습니다.",
       "catalogError": "권한 카탈로그를 불러오지 못했습니다.",
       "deleteTitle": "역할 삭제",

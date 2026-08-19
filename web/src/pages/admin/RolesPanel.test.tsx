@@ -55,6 +55,10 @@ function grant(...keys: string[]): void {
 /**
  * 서버 카탈로그(internal/rbac/catalog.go)의 축소판.
  * agent 는 5개 액션 전부, dashboard 는 read/update, node 는 read 만 갖는다.
+ *
+ * `nav.*` 는 메뉴 노출 축이다 — 서버는 데이터 권한과 한 배열로 내려주고, 화면이
+ * 두 구획으로 나눠 그린다. 실서버 응답과 같은 형태여야 축 분리를 검증할 수 있어
+ * 픽스처에도 함께 담는다.
  */
 const CATALOG = [
   'agent.create',
@@ -64,6 +68,9 @@ const CATALOG = [
   'agent.update',
   'dashboard.read',
   'dashboard.update',
+  'nav.agent',
+  'nav.dashboard',
+  'nav.flow',
   'node.read',
 ];
 
@@ -258,6 +265,22 @@ describe('RolesPanel 권한 행렬 (AC-04)', () => {
     expect(screen.getByTestId('matrix-row-node')).toBeInTheDocument();
   });
 
+  it('메뉴 노출(nav)을 행렬 행으로 그리지 않는다 — 메뉴 이름이 액션 열이 되면 안 된다', async () => {
+    renderPage();
+    await waitForList();
+    const form = await openCreateForm();
+
+    expect(screen.queryByTestId('matrix-row-nav')).not.toBeInTheDocument();
+
+    // 메뉴 이름이 액션 열로 승격되지 않았는지 열 머리글로 직접 확인한다.
+    const headers = within(form)
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent);
+    expect(headers).toHaveLength(6); // 리소스 + CRUD 5
+    expect(headers).not.toContain('flow');
+    expect(headers).not.toContain('dashboard');
+  });
+
   it('해당 리소스에 없는 액션 셀은 비운다 — 비활성 체크박스를 그리지 않는다', async () => {
     renderPage();
     await waitForList();
@@ -280,11 +303,13 @@ describe('RolesPanel 권한 행렬 (AC-04)', () => {
     expect(screen.getByTestId('matrix-cell-dashboard-delete')).toBeEmptyDOMElement();
   });
 
-  it('카탈로그에 있는 조합만 체크박스가 되고 전체 개수가 카탈로그와 일치한다', async () => {
+  it('카탈로그에 있는 조합만 체크박스가 되고 두 구획 합계가 카탈로그와 일치한다', async () => {
     renderPage();
     await waitForList();
     const form = await openCreateForm();
 
+    // 행렬(데이터 권한) + 메뉴 체크리스트 = 카탈로그 전체. 어느 한 축이 통째로
+    // 빠지거나 중복 렌더되면 여기서 어긋난다.
     expect(within(form).getAllByRole('checkbox')).toHaveLength(CATALOG.length);
   });
 
@@ -312,6 +337,95 @@ describe('RolesPanel 권한 행렬 (AC-04)', () => {
       await screen.findByText('권한 카탈로그를 불러오지 못했습니다.'),
     ).toBeInTheDocument();
     expect(screen.queryByTestId('permission-matrix')).not.toBeInTheDocument();
+  });
+});
+
+// 메뉴 노출 축은 데이터 권한과 독립적으로 부여되어야 한다
+// (internal/rbac/catalog.go 의 ResourceNav 주석). 화면도 같은 분리를 반영한다.
+describe('RolesPanel 메뉴 노출 구획 (nav.*)', () => {
+  it('카탈로그의 nav.* 만 항목으로 그린다 (하드코딩 목록이 아니다)', async () => {
+    renderPage();
+    await waitForList();
+    await openCreateForm();
+
+    const section = screen.getByTestId('nav-menu-section');
+    const labels = within(section)
+      .getAllByRole('checkbox')
+      .map((box) => box.getAttribute('aria-label'));
+
+    expect(labels).toEqual(['nav.agent', 'nav.dashboard', 'nav.flow']);
+  });
+
+  it('서버가 추가한 새 메뉴 키는 화면 수정 없이 나타난다', async () => {
+    getPermissionCatalog.mockResolvedValue([...CATALOG, 'nav.foo']);
+    renderPage();
+    await waitForList();
+    await openCreateForm();
+
+    const section = screen.getByTestId('nav-menu-section');
+    expect(within(section).getByLabelText('nav.foo')).toBeInTheDocument();
+    expect(within(section).getByTestId('nav-menu-item-foo')).toHaveTextContent('foo');
+  });
+
+  it('메뉴 체크는 데이터 권한과 같은 집합에 담겨 함께 제출된다', async () => {
+    createRole.mockResolvedValue(ROLES[3]);
+    renderPage();
+    await waitForList();
+    const form = await openCreateForm();
+
+    fireEvent.change(within(form).getAllByRole('textbox')[0]!, {
+      target: { value: 'auditor' },
+    });
+    fireEvent.click(screen.getByLabelText('agent.read')); // 행렬(데이터 축)
+    fireEvent.click(screen.getByLabelText('nav.flow')); // 체크리스트(메뉴 축)
+    fireEvent.click(within(form).getByRole('button', { name: '저장' }));
+
+    await waitFor(() => expect(createRole).toHaveBeenCalledTimes(1));
+    expect([...createRole.mock.calls[0]![0].permissions].sort()).toEqual([
+      'agent.read',
+      'nav.flow',
+    ]);
+  });
+
+  it('메뉴 체크를 해제하면 요청에서 빠진다', async () => {
+    createRole.mockResolvedValue(ROLES[3]);
+    renderPage();
+    await waitForList();
+    const form = await openCreateForm();
+
+    fireEvent.change(within(form).getAllByRole('textbox')[0]!, {
+      target: { value: 'auditor' },
+    });
+    fireEvent.click(screen.getByLabelText('nav.flow'));
+    fireEvent.click(screen.getByLabelText('nav.agent'));
+    fireEvent.click(screen.getByLabelText('nav.flow')); // 해제
+    fireEvent.click(within(form).getByRole('button', { name: '저장' }));
+
+    await waitFor(() => expect(createRole).toHaveBeenCalledTimes(1));
+    expect(createRole.mock.calls[0]![0].permissions).toEqual(['nav.agent']);
+  });
+
+  it('기존 역할의 메뉴 권한을 체크 상태로 불러온다', async () => {
+    getRoles.mockResolvedValue([
+      { ...ROLES[3]!, permissions: ['agent.read', 'nav.agent'] },
+    ]);
+    renderPage();
+    await waitForList();
+
+    fireEvent.click(screen.getByRole('button', { name: '수정 operator' }));
+    await screen.findByTestId('permission-matrix');
+
+    expect(screen.getByLabelText('nav.agent')).toBeChecked();
+    expect(screen.getByLabelText('nav.flow')).not.toBeChecked();
+  });
+
+  it('카탈로그에 nav 키가 없으면 구획 자체를 그리지 않는다', async () => {
+    getPermissionCatalog.mockResolvedValue(['agent.read', 'node.read']);
+    renderPage();
+    await waitForList();
+    await openCreateForm();
+
+    expect(screen.queryByTestId('nav-menu-section')).not.toBeInTheDocument();
   });
 });
 
