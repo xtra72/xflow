@@ -847,3 +847,119 @@ func TestEmptyObjectIfNull(t *testing.T) {
 	assert.JSONEq(t, `{}`, string(emptyObjectIfNull(json.RawMessage(`null`))))
 	assert.JSONEq(t, `{"a":1}`, string(emptyObjectIfNull(json.RawMessage(`{"a":1}`))))
 }
+
+// ---------------------------------------------------------------------------
+// is_default 정규화 (acceptance.md 엣지 케이스)
+// ---------------------------------------------------------------------------
+
+// legacyPayloadWithDefaults 는 지정한 인덱스들에 isDefault=true 를 준 구 payload 를
+// 만든다. 구 모델은 이 값을 클라이언트 스토어가 관리했으므로 두 장이 동시에 true 인
+// 스냅샷이 실제로 존재할 수 있다.
+func legacyPayloadWithDefaults(activeID string, defaultIdx map[int]bool, pageIDs ...string) string {
+	pages := make([]string, 0, len(pageIDs))
+	for i, id := range pageIDs {
+		pages = append(pages, fmt.Sprintf(
+			`{"id":%q,"name":"페이지 %s","isDefault":%t,"panels":[],"layout":[]}`,
+			id, id, defaultIdx[i]))
+	}
+	return fmt.Sprintf(
+		`{"dashboardPages":[%s],"activeDashboardId":%q,"dashboardGridCols":10,`+
+			`"dashboardShowGridLines":true,"dashboardRefreshInterval":30,"deviceGridLayout":{}}`,
+		joinComma(pages), activeID)
+}
+
+// defaultUIDsByOwner 는 소유자별 is_default 대시보드 uid 목록을 반환한다.
+func defaultUIDsByOwner(t *testing.T, db *sql.DB) map[string][]string {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(),
+		`SELECT owner, uid FROM dashboards WHERE is_default != 0 ORDER BY owner, sort_order`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	out := map[string][]string{}
+	for rows.Next() {
+		var owner, uid string
+		require.NoError(t, rows.Scan(&owner, &uid))
+		out[owner] = append(out[owner], uid)
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// TestMigrateDashboardEntities_NormalizesMultipleDefaults 는 한 스냅샷에 기본이
+// 2장 이상이면 **마지막 것만** 남음을 검증한다.
+//
+// acceptance.md: "is_default 가 2장 이상에 설정됨 → 마지막 것만 유지하고 나머지는
+// 0으로 정규화". 그대로 옮기면 이관 직후부터 불변식이 깨진 상태로 시작한다.
+func TestMigrateDashboardEntities_NormalizesMultipleDefaults(t *testing.T) {
+	ctx := context.Background()
+	db, _ := newLegacyDB(t)
+	require.NoError(t, migrateUsersSchema(ctx, db))
+	insertUser(t, db, "root", "admin")
+
+	// 개인 스냅샷: 3장 중 0번과 2번이 기본 → 마지막(2번, a3)만 남아야 한다.
+	insertLegacySnapshot(t, db, "dashboards", "user", "alice", 2000,
+		legacyPayloadWithDefaults("a1", map[int]bool{0: true, 2: true}, "a1", "a2", "a3"))
+	// 전역 스냅샷: 3장 전부 기본 → 마지막(g3)만 남아야 한다.
+	insertLegacySnapshot(t, db, "dashboards", "global", "", 1000,
+		legacyPayloadWithDefaults("g1", map[int]bool{0: true, 1: true, 2: true}, "g1", "g2", "g3"))
+
+	require.NoError(t, migrateDashboardEntities(ctx, db))
+
+	byOwner := defaultUIDsByOwner(t, db)
+	assert.Equal(t, []string{"a3"}, byOwner["alice"], "마지막 기본만 유지")
+	assert.Equal(t, []string{"g3"}, byOwner["root"], "전역 스냅샷도 마지막 기본만 유지")
+}
+
+// TestMigrateDashboardEntities_NoDefaultStaysNone 은 원본에 기본이 없으면 이관이
+// 기본을 지어내지 않음을 검증한다.
+func TestMigrateDashboardEntities_NoDefaultStaysNone(t *testing.T) {
+	ctx := context.Background()
+	db, _ := newLegacyDB(t)
+	require.NoError(t, migrateUsersSchema(ctx, db))
+	insertUser(t, db, "root", "admin")
+
+	insertLegacySnapshot(t, db, "dashboards", "user", "alice", 2000,
+		legacyPayloadWithDefaults("a1", map[int]bool{}, "a1", "a2"))
+
+	require.NoError(t, migrateDashboardEntities(ctx, db))
+
+	assert.Empty(t, defaultUIDsByOwner(t, db), "원본에 없던 기본을 이관이 만들면 안 된다")
+	assert.EqualValues(t, 2, countRows(t, db, "dashboards"), "대시보드 자체는 보존된다")
+}
+
+// TestMigrateDashboardEntities_AtMostOneDefaultPerOwner 는 이관 전체가 끝난 뒤
+// 소유자당 기본 대시보드가 최대 1장이라는 불변식을 검증한다.
+//
+// 여러 스냅샷을 섞어 넣어, 스냅샷 단위 정규화가 소유자 단위 불변식으로 이어지는지
+// (스냅샷 1건 = 소유자 1명) 확인한다.
+func TestMigrateDashboardEntities_AtMostOneDefaultPerOwner(t *testing.T) {
+	ctx := context.Background()
+	db, _ := newLegacyDB(t)
+	require.NoError(t, migrateUsersSchema(ctx, db))
+	insertUser(t, db, "root", "admin")
+
+	insertLegacySnapshot(t, db, "dashboards", "global", "", 1000,
+		legacyPayloadWithDefaults("g1", map[int]bool{0: true, 1: true}, "g1", "g2"))
+	insertLegacySnapshot(t, db, "dashboards", "user", "alice", 2000,
+		legacyPayloadWithDefaults("a1", map[int]bool{0: true, 1: true, 2: true}, "a1", "a2", "a3"))
+	insertLegacySnapshot(t, db, "dashboards", "user", "bob", 3000,
+		legacyPayloadWithDefaults("b1", map[int]bool{1: true}, "b1", "b2"))
+
+	require.NoError(t, migrateDashboardEntities(ctx, db))
+
+	// SQL 로도 직접 확인한다 — 헬퍼 버그로 불변식이 가려지지 않도록.
+	var maxDefaults int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(n), 0) FROM (
+			SELECT COUNT(*) AS n FROM dashboards WHERE is_default != 0 GROUP BY owner
+		)
+	`).Scan(&maxDefaults))
+	assert.LessOrEqual(t, maxDefaults, int64(1),
+		"어떤 소유자도 기본 대시보드를 2장 이상 가질 수 없다")
+
+	byOwner := defaultUIDsByOwner(t, db)
+	assert.Equal(t, []string{"g2"}, byOwner["root"])
+	assert.Equal(t, []string{"a3"}, byOwner["alice"])
+	assert.Equal(t, []string{"b2"}, byOwner["bob"])
+}

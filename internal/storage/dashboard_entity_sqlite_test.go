@@ -656,3 +656,129 @@ func TestDashboardEntity_Create_ContinuesAfterMigratedSortOrder(t *testing.T) {
 	}
 	assert.Equal(t, []string{"M0", "M1", "M2", "NEW"}, aliceOrder)
 }
+
+// ---------------------------------------------------------------------------
+// is_default 소유자별 정규화 (SPEC-DASHBOARD-004, acceptance.md 엣지 케이스)
+// ---------------------------------------------------------------------------
+
+// isDefaultUIDs 는 owner 소유 대시보드 중 is_default 인 uid 목록을 반환한다.
+func isDefaultUIDs(t *testing.T, repo *DashboardEntitySQLiteRepository, owner string) []string {
+	t.Helper()
+	var out []string
+	for _, d := range mustList(t, repo, false) {
+		if d.Owner == owner && d.IsDefault {
+			out = append(out, d.UID)
+		}
+	}
+	return out
+}
+
+// TestDashboardEntity_Update_NormalizesIsDefaultPerOwner 는 기본 대시보드 지정이
+// 같은 소유자의 기존 기본을 해제하고, 다른 소유자에게는 영향을 주지 않음을 검증한다.
+//
+// acceptance.md: "is_default 가 2장 이상에 설정됨 → 마지막 것만 유지하고 나머지는
+// 0으로 정규화". 정규화 범위가 소유자인 이유는 Update 의 주석 참조 — 전역이면 한
+// 사용자의 지정이 다른 사용자의 기본을 조용히 해제한다.
+func TestDashboardEntity_Update_NormalizesIsDefaultPerOwner(t *testing.T) {
+	ctx := context.Background()
+	_, repo, _, _ := setupEntityRepo(t)
+
+	for _, d := range []Dashboard{
+		newDashboard("E1", "edi", "private"),
+		newDashboard("E2", "edi", "private"),
+		newDashboard("E3", "edi", "private"),
+		newDashboard("R1", "root", "private"),
+	} {
+		_, err := repo.Create(ctx, d)
+		require.NoError(t, err)
+	}
+
+	yes := true
+	setDefault := func(uid string) *Dashboard {
+		t.Helper()
+		d, err := repo.Update(ctx, uid, DashboardUpdate{IsDefault: &yes}, -1)
+		require.NoError(t, err)
+		return d
+	}
+
+	// 다른 소유자(root)가 먼저 자기 기본을 지정해 둔다.
+	setDefault("R1")
+	require.Equal(t, []string{"R1"}, isDefaultUIDs(t, repo, "root"))
+
+	// edi 의 첫 지정.
+	first := setDefault("E1")
+	assert.True(t, first.IsDefault)
+	assert.Equal(t, []string{"E1"}, isDefaultUIDs(t, repo, "edi"))
+
+	// 두 번째 지정이 첫 번째를 해제한다 — "마지막 것만 유지".
+	second := setDefault("E2")
+	assert.True(t, second.IsDefault)
+	assert.Equal(t, []string{"E2"}, isDefaultUIDs(t, repo, "edi"),
+		"같은 소유자의 이전 기본은 해제되어야 한다")
+
+	// 세 번째도 마찬가지.
+	setDefault("E3")
+	assert.Equal(t, []string{"E3"}, isDefaultUIDs(t, repo, "edi"))
+
+	// 다른 소유자의 기본은 그대로다.
+	assert.Equal(t, []string{"R1"}, isDefaultUIDs(t, repo, "root"),
+		"타 소유자의 기본 대시보드가 해제되면 안 된다")
+
+	// 해제된 행의 version 은 오르지 않는다 — 무관한 클라이언트의 If-Match 를
+	// 깨뜨리지 않기 위함이다(Update 주석 참조).
+	e1, err := repo.Get(ctx, "E1")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, e1.Version, "E1 은 자기 지정(1→2) 이후 더 오르지 않는다")
+	assert.False(t, e1.IsDefault)
+}
+
+// TestDashboardEntity_Update_IsDefaultFalseDoesNotNormalize 는 기본 해제(false)가
+// 다른 행을 건드리지 않음을 검증한다. 정규화는 "올릴 때" 만 필요하다.
+func TestDashboardEntity_Update_IsDefaultFalseDoesNotNormalize(t *testing.T) {
+	ctx := context.Background()
+	_, repo, _, _ := setupEntityRepo(t)
+
+	for _, uid := range []string{"F1", "F2"} {
+		_, err := repo.Create(ctx, newDashboard(uid, "edi", "private"))
+		require.NoError(t, err)
+	}
+	yes, no := true, false
+	_, err := repo.Update(ctx, "F1", DashboardUpdate{IsDefault: &yes}, -1)
+	require.NoError(t, err)
+
+	// F2 를 명시적으로 false 로 두어도 F1 의 기본이 유지된다.
+	_, err = repo.Update(ctx, "F2", DashboardUpdate{IsDefault: &no}, -1)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"F1"}, isDefaultUIDs(t, repo, "edi"))
+}
+
+// TestDashboardEntity_Update_NormalizesAgainstNewOwner 는 소유권 이전과 기본 지정이
+// 함께 오면 **새 소유자** 기준으로 정규화됨을 검증한다.
+func TestDashboardEntity_Update_NormalizesAgainstNewOwner(t *testing.T) {
+	ctx := context.Background()
+	_, repo, _, _ := setupEntityRepo(t)
+
+	for _, d := range []Dashboard{
+		newDashboard("G1", "root", "private"), // root 의 기존 기본
+		newDashboard("G2", "edi", "private"),  // edi 의 기존 기본
+		newDashboard("G3", "edi", "private"),  // 이전 대상
+	} {
+		_, err := repo.Create(ctx, d)
+		require.NoError(t, err)
+	}
+	yes := true
+	_, err := repo.Update(ctx, "G1", DashboardUpdate{IsDefault: &yes}, -1)
+	require.NoError(t, err)
+	_, err = repo.Update(ctx, "G2", DashboardUpdate{IsDefault: &yes}, -1)
+	require.NoError(t, err)
+
+	// G3 을 root 에게 넘기면서 동시에 기본으로 지정한다.
+	newOwner := "root"
+	_, err = repo.Update(ctx, "G3", DashboardUpdate{Owner: &newOwner, IsDefault: &yes}, -1)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"G3"}, isDefaultUIDs(t, repo, "root"),
+		"새 소유자(root) 쪽의 기존 기본이 해제되어야 한다")
+	assert.Equal(t, []string{"G2"}, isDefaultUIDs(t, repo, "edi"),
+		"옛 소유자(edi) 의 기본은 건드리지 않는다")
+}

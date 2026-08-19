@@ -477,6 +477,16 @@ func decodeLegacySnapshotPayload(snap legacyDashboardSnapshotRow) (legacyDashboa
 // 삽입하고, 원본 페이지 id → 확정 uid 매핑을 반환한다.
 //
 // uidSuffix 가 비어 있지 않으면 uid 충돌 시 "-<uidSuffix>" 를 붙인다.
+//
+// is_default 는 **스냅샷 안에서 마지막 하나만** 남긴다(acceptance.md 엣지 케이스
+// "is_default 가 2장 이상에 설정됨 → 마지막 것만 유지하고 나머지는 0으로 정규화").
+// 구 모델은 이 값을 클라이언트 스토어가 관리해 두 장이 동시에 true 인 스냅샷이
+// 존재할 수 있는데, 그대로 옮기면 이관 직후부터 불변식이 깨진 상태로 시작한다.
+//
+// 스냅샷 1건 = 소유자 1명이므로 스냅샷 범위 정규화가 곧 소유자 범위 정규화다
+// (전역 스냅샷은 최초 admin 1명, 개인 스냅샷은 그 사용자 1명). 정규화를 전역으로
+// 하면 한 사용자의 기본 대시보드가 다른 사용자의 것을 해제하게 되어 틀린다 —
+// Update 경로의 소유자 범위 정규화와 같은 이유다.
 func insertMigratedDashboards(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -497,6 +507,15 @@ func insertMigratedDashboards(
 		ts = time.Now().UnixMilli()
 	}
 
+	// 마지막으로 isDefault=true 인 페이지의 인덱스. 없으면 -1 이라 어느 행도 기본이
+	// 되지 않는다(원본에 기본이 없었다는 사실을 이관이 지어내지 않는다).
+	lastDefaultIdx := -1
+	for idx, page := range payload.DashboardPages {
+		if page.IsDefault {
+			lastDefaultIdx = idx
+		}
+	}
+
 	for idx, page := range payload.DashboardPages {
 		uid := allocateDashboardUID(page.ID, uidSuffix, used)
 		remap[page.ID] = uid
@@ -509,7 +528,7 @@ func insertMigratedDashboards(
 		}
 
 		isDefault := int64(0)
-		if page.IsDefault {
+		if idx == lastDefaultIdx {
 			isDefault = 1
 		}
 

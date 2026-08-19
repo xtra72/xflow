@@ -26,6 +26,10 @@ func routeKey(method, pattern string) string { return method + " " + pattern }
 //
 // 여기에 등재하지 않은 권한 미부착 라우트는 테스트 실패로 드러난다. 새 라우트를
 // 무심코 등재하지 않도록, 각 항목은 "왜 권한이 필요 없는가" 를 한 줄로 남긴다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M8) — SPEC 종료 시점에 전 항목을 재감사했다. 신규
+// 라우트 표 기준으로 무효가 된 항목은 0 건이며, 이는 아래
+// TestPermissionAllowlistHasNoStaleEntries 가 매 실행마다 재확인한다.
 var permissionAllowlist = map[string]string{
 	// 인증 자체를 수행하는 경로 — 토큰이 없는 상태에서 호출되므로 권한 검사 대상이 아니다.
 	// (api.Auth 의 exemptPaths 와 대응한다.)
@@ -42,16 +46,19 @@ var permissionAllowlist = map[string]string{
 	// 권한 카탈로그는 코드 상수이므로 비밀이 아니며, 역할 편집 UI 렌더링에 필요하다.
 	"GET /api/v1/permissions": "권한 키 카탈로그 — spec.md §2.2 에서 '인증만' 으로 명시",
 
-	// 본인 소유 대시보드 — 핸들러가 owner 를 ctx.UserID() 로 고정하므로 타 사용자
-	// 데이터에 접근할 수 없다.
+	// 본인 소유 대시보드 묶음 조회 — 읽기 전용 호환 shim.
+	// 핸들러가 owner 를 ctx.UserID() 로 고정하므로 타 사용자 데이터에 접근할 수 없다.
 	//
-	// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §2.3, acceptance.md AC-13)
-	// PUT · DELETE /dashboards/mine 은 라우트가 제거되었으므로 항목도 함께 사라졌다
-	// (묶음 단위 쓰기는 낙관적 동시성이 성립하지 않는다). GET 만 읽기 전용 shim 으로
-	// 남으며, 권한 미부착 사유는 그대로다.
+	// @SPEC:SPEC-DASHBOARD-004 (spec.md §2.3, §4.4, acceptance.md AC-12/AC-13)
+	// GET 만 남는다. 묶음 단위 쓰기(PUT · DELETE)는 "어느 대시보드의 어느 version 에
+	// 대한 쓰기인가" 를 결정할 수 없어 낙관적 동시성이 성립하지 않으므로 라우트 자체를
+	// 등록하지 않는다 — 따라서 allowlist 항목도 없다. 미등록 상태는
+	// dashboard_test.go 의 404 검증이 고정한다.
 	"GET /api/v1/dashboards/mine": "본인 소유 리소스 — 핸들러가 owner 를 세션 사용자로 고정",
 
-	// @SPEC:SPEC-DASHBOARD-004 (M4, acceptance.md AC-13)
+	// @SPEC:SPEC-DASHBOARD-004 (spec.md §2.3, acceptance.md AC-13)
+	// 대시보드 본문과 분리된 사용자별 UI 상태. /dashboards/{uid} 경로 매칭과 충돌하지
+	// 않도록 최상위 경로에 두며, 핸들러가 본인 것만 읽고 쓴다.
 	"GET /api/v1/dashboard-state": "본인 소유 UI 상태 — 핸들러가 username 을 세션 사용자로 고정",
 	"PUT /api/v1/dashboard-state": "본인 소유 UI 상태 — 핸들러가 username 을 세션 사용자로 고정",
 }

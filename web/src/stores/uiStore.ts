@@ -589,11 +589,12 @@ interface UIActions {
   setDashboardGridCols: (cols: number) => void;
   setDashboardShowGridLines: (show: boolean) => void;
 
-  // 대시보드 페이지 CRUD
-  addDashboardPage: (name: string) => void;
-  removeDashboardPage: (pageId: string) => void;
-  renameDashboardPage: (pageId: string, name: string) => void;
-  setDefaultDashboardPage: (pageId: string) => void;
+  // 대시보드 활성 전환.
+  // SPEC-DASHBOARD-004 M8: 구 모델의 페이지 CRUD 4종
+  // (addDashboardPage / removeDashboardPage / renameDashboardPage /
+  //  setDefaultDashboardPage)은 서버 API 로 대체되어 호출자가 사라졌으므로 제거했다.
+  // 생성·삭제·이름변경·기본지정은 이제 useCreateDashboard / useDashboardMutations 가
+  // 서버 왕복 후 setDashboards · applyDashboardDetail 로 반영한다.
   setActiveDashboard: (pageId: string) => void;
 
   // 패널 CRUD (활성 대시보드 대상)
@@ -776,65 +777,7 @@ export const useUIStore = create<UIState & UIActions>()(
       setDashboardShowGridLines: (show) =>
         set({ dashboardShowGridLines: show }),
 
-      // 대시보드 페이지 CRUD
-
-      addDashboardPage: (name) =>
-        set((state) => {
-          const newPage: DashboardPageConfig = {
-            id: generateUUID(),
-            name,
-            isDefault: false,
-            panels: [],
-            layout: [],
-          };
-          return {
-            dashboardPages: [...state.dashboardPages, newPage],
-            activeDashboardId: newPage.id,
-          };
-        }),
-
-      removeDashboardPage: (pageId) =>
-        set((state) => {
-          // 페이지가 1개뿐이면 삭제 차단
-          if (state.dashboardPages.length <= 1) return state;
-
-          const target = state.dashboardPages.find((p) => p.id === pageId);
-          if (!target) return state;
-
-          let pages = state.dashboardPages.filter((p) => p.id !== pageId);
-
-          // 기본 페이지를 삭제한 경우 다른 페이지를 기본으로 설정
-          if (target.isDefault && pages.length > 0) {
-            pages = pages.map((p, idx) => (idx === 0 ? { ...p, isDefault: true } : p));
-          }
-
-          // 활성 페이지를 삭제한 경우 기본 페이지로 전환
-          let newActiveId = state.activeDashboardId;
-          if (pageId === state.activeDashboardId) {
-            const defaultPage = pages.find((p) => p.isDefault);
-            newActiveId = defaultPage ? defaultPage.id : pages[0]!.id;
-          }
-
-          return {
-            dashboardPages: pages,
-            activeDashboardId: newActiveId,
-          };
-        }),
-
-      renameDashboardPage: (pageId, name) =>
-        set((state) => ({
-          dashboardPages: state.dashboardPages.map((p) =>
-            p.id === pageId ? { ...p, name } : p,
-          ),
-        })),
-
-      setDefaultDashboardPage: (pageId) =>
-        set((state) => ({
-          dashboardPages: state.dashboardPages.map((p) => ({
-            ...p,
-            isDefault: p.id === pageId,
-          })),
-        })),
+      // 대시보드 활성 전환
 
       setActiveDashboard: (pageId) =>
         set({ activeDashboardId: pageId }),

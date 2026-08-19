@@ -6,6 +6,34 @@
 
 ## [Unreleased]
 
+### 변경 — 대시보드 1급 엔티티화와 대시보드 단위 접근 제어 (SPEC-DASHBOARD-004)
+
+- **대시보드를 "공유 묶음 / 내 묶음" 2슬롯 스냅샷에서 개별 1급 엔티티로 승격하고, 대시보드 단위 소유권·공개범위·ACL 을 도입한다 (SPEC-DASHBOARD-004, Tier L, breaking)**
+
+  구 모델은 대시보드 N 장을 `scope='global'` / `scope='user'` 스냅샷 1건에 통째로 담아 저장했다. 이 구조는 (1) 대시보드 1장 단위의 권한 부여가 불가능하고 (2) 묶음 단위 쓰기라 "어느 대시보드의 어느 version 에 대한 쓰기인가" 를 결정할 수 없어 낙관적 동시성이 성립하지 않았다. 본 SPEC 은 `dashboards` 테이블을 1행=1대시보드로 재정의하고 `dashboard_acl` · `dashboard_user_state` 를 신설해, 대시보드마다 `owner` · `visibility(private|shared|acl)` · `is_default` · `version` 을 갖게 한다. 접근 판정은 신규 `internal/dashboardacl` 이 (전역 RBAC 권한) × (소유권) × (ACL 레벨) 로 수행한다.
+
+  - **수용된 회귀(의도적) — viewer 가 소유한 `private` 대시보드가 읽기 전용이 된다**: 마이그레이션 이후 `viewer` 역할 사용자는 자기 개인 대시보드를 **조회만** 할 수 있고 편집·생성은 불가하다. **데이터는 삭제하지 않는다** — 이관된 대시보드는 그대로 남아 있고 계속 보인다. 원인은 둘이다. (1) 모든 생성이 `dashboard.create` 를 요구하는데 `viewer` 는 이를 보유하지 않는다. (2) spec.md §2.2 의 **전역 권한 상한(ceiling)** 규칙에 따라 소유자라도 `dashboard.update` 없이는 자기 대시보드를 편집할 수 없으며, ACL 은 상한을 올리지 못한다. `viewer` 는 둘 다 없다.
+    **완화책**: 관리자가 역할 관리 화면(`/admin/roles`)에서 `viewer` 역할에 `dashboard.create` 와 `dashboard.update` 를 부여하면 해제된다. 권한은 **요청 시점에 조회**되므로(SPEC-AUTH-005 §4.3) 사용자의 **기존 토큰 그대로 즉시 적용**된다 — 재로그인도 토큰 재발급도 필요 없다. 편집이 막힌 대시보드에서 UI 가 이 완화책을 안내한다.
+  - **권한 3종 신설**: `dashboard.create` · `dashboard.delete` · `nav.dashboard`. 빌트인 역할은 `admin`=3종 전부, `editor`=`create`+`nav`, `viewer`=없음. 기존 역할 이관은 `dashboard.read` 와 `dashboard.update` 를 **모두** 보유한 역할에만 `dashboard.create`+`nav.dashboard` 를 1회 부여하며, `dashboard.delete` 는 이관으로 부여하지 않는다(삭제 권한을 조용히 늘리지 않는다). `nav.dashboard` 는 '대시보드 관리' 메뉴에만 걸리며 대시보드를 *보는* 것은 종전대로 인증만 요구한다.
+  - **데이터 이관**: 구 스냅샷을 `dashboard_snapshots_v1` 로 보존한 뒤 그 안의 `dashboardPages` 각 원소를 신규 `dashboards` 1행으로 1회 이관한다. 멱등 판정은 **행 수가 아니라 `schema_markers` 마커 행 존재 여부**로 한다(행 수로 판정하면 관리자가 의도적으로 비운 상태가 재부팅마다 되살아난다). 이관 전 `VACUUM INTO` 로 `<db>.pre-dashboard004` 백업을 만들며 백업 실패 시 이관을 중단한다. 4단계 전체가 단일 트랜잭션이고 `dashboard_snapshots_v1` 은 어떤 경로에서도 DROP 하지 않는다. `activeDashboardId` · `deviceGridLayout` 은 `dashboard_user_state` 로 분리 보존한다.
+  - **잠금 방지**: 시스템 전체에서 `dashboard.delete` 보유자가 0명이 되는 역할 강등·사용자 삭제·역할 권한 제거는 409 로 거부한다. 소유자가 삭제되면 대시보드 소유권은 삭제를 실행한 관리자에게 승계된다.
+  - **원격 프록시 무변경(호환 shim)**: 원격 노드는 본 SPEC 미적용 버전이 혼재할 수 있으므로 `GET /dashboards/{shared,mine}` 의 응답 형상을 바꿀 수 없다. 저장소를 갈아엎는 대신 신규 모델에서 레거시 `DashboardSnapshot` 을 **합성**하는 읽기 전용 shim 을 두어, 원격 경로 3개 파일(`internal/api/handler/remote_query.go`, `cmd/xflowd/remote_query.go`, `web/src/services/api/remoteService.ts`)을 무변경으로 남겼다. 쓰기(`PUT`/`DELETE /dashboards/{shared,mine}`)는 합성하지 않으며 라우트 미등록으로 404 다.
+  - **프론트엔드 단일 축 전환**: 스코프 이중 동기화(`Promise.all([getShared, getMine])`)를 걷어내고 '접근 가능한 대시보드 목록' 단일 축으로 전환했다. `activeDashboardScope` · `sharedReadOnly` · `sharedSnapshot` · `mineSnapshot` 은 제거되었고, 컨트롤 게이팅은 역할 이름 비교(`isAdmin`)가 아니라 대시보드별 `can_edit` / `can_delete` / `can_grant` 로 판정한다. 신규 '대시보드 관리' 화면(`/dashboards/admin`)과 ACL 패널을 추가했다.
+
+  - **`is_default` 소유자별 정규화**: acceptance.md 엣지 케이스 표의 "`is_default` 가 2장 이상에 설정됨 → 마지막 것만 유지하고 나머지는 0으로 정규화" 를 PATCH·이관 양쪽에 구현했다. `PATCH /dashboards/{uid}` 로 기본을 지정하면 **같은 소유자**의 다른 대시보드에서 동일 트랜잭션 내에 플래그를 해제하고, 이관은 스냅샷마다 마지막 `isDefault` 1장만 남긴다. 정규화 범위를 전역이 아니라 소유자별로 둔 이유는, 전역이면 한 사용자가 자기 기본을 지정할 때 타 사용자의 기본이 조용히 해제되기 때문이다(`sort_order` 와 동일한 축이며, 스냅샷 1건이 소유자 1명에 대응하는 이관 형상과도 맞는다). 강등된 행은 `version` 을 올리지 않는다 — `is_default` 는 `payload` 밖 컬럼이라 lost update 가 성립하지 않는 반면, 올리면 다른 탭의 무관한 `PUT` 이 허위 409 로 실패한다.
+
+  #### 문서화된 갭(알려진 제약 — 조용히 넘기지 않는다)
+
+  1. **AC-12 의 예약어 400 분기는 API 로 도달할 수 없다.** acceptance.md AC-12 는 `uid` 가 `shared`/`mine`/`state` 인 대시보드 생성 시 400 을 규정하지만, spec.md §2.13 UB1 #4 는 요청 본문의 `uid` 를 **전면 무시**할 것을 요구한다. 구현은 UB1 #4 를 따른다 — `uid` 는 서버가 생성하므로 클라이언트가 예약어를 제시할 방법 자체가 없고, 따라서 400 분기는 API 를 통해 도달 불가능하다. 예약어가 테이블에 들어갈 경로는 막혀 있다(발급기가 예약어를 뽑으면 재추첨하고, 이관은 예약어를 가진 레거시 페이지의 uid 를 재배치한다).
+  2. **CLI 에는 대시보드 쓰기 경로가 없다.** `xflow dashboard {shared,mine} set` 은 본 SPEC 이 삭제한 라우트를 대상으로 했으므로 함께 제거되었다. CLI 에는 `dashboard {shared,mine} get` 만 남는다. 신규 대시보드 단위 쓰기 API 는 후속 SPEC 이 커맨드를 추가하기 전까지 **HTTP 로만** 접근 가능하다.
+  3. **선재 테스트 플레이크 — `internal/agent/*` 부하 민감 경합(본 SPEC 무관, 회귀 아님)**: `go test -count=1 -p 2 ./...` 를 돌리면 `internal/agent/serial` · `internal/agent/century` 에서 **매 실행마다 다른 테스트 1건**이 실패한다. 관측된 것만 `TestSerialAgent_WriteNotStarved`(2회), `TestHvacr01Agent_TCPClient_AC_G8_NoWriteInvariant`, `TestAgent_ProcessDrain_SkipsACKFrames` 이며, 사전에 알려진 `TestAgent_KeepaliveFiresDespiteFrequentChanges`(century) 와 `TestServer_DispatchGroupUpdate_PerArchTargetVersion`(remote) 도 같은 부류다. 따라서 이는 특정 테스트 몇 건이 아니라 **패키지 단위의 타이밍 경합 군집**으로 보는 편이 정확하다. 각 실패 테스트는 단독 실행 시 5/5 통과하며, 세 패키지 모두 본 브랜치에서 **diff 0** 이다.
+     **귀속 근거**: 본 SPEC 의 변경분을 stash 한 트리에서 전체 스위트를 돌려도 동일하게 실패했다(그 실행에서는 `century` 가 실패). 실패 대상이 실행마다 바뀌고 SPEC 변경 유무와 무관하므로 회귀가 아니다. 반대로 본 SPEC 이 소유한 4개 패키지(`internal/api/handler` · `internal/storage` · `internal/rbac` · `internal/dashboardacl`)는 관측한 **4회 실행 전부에서 통과**했다. 이 플레이크 군집은 별도 후속 과제로 남긴다.
+
+  4. **AC-15 의 잔여 참조 grep 게이트는 두 파일을 건너뛴다(선재, 본 SPEC 무관).** acceptance.md AC-15 가 규정한 `grep -rn "activeDashboardScope\|sharedReadOnly" web/src` 는 `web/src/pages/editor/EditorPage.tsx` 와 `web/src/pages/agents/StoreEntryTable.tsx` 를 **경고 없이** 검사 대상에서 제외한다. 두 파일이 `.join('\0')` 로 리터럴 NUL 바이트를 담고 있어 grep 이 바이너리로 분류하기 때문이다. `grep -a` 로 재확인한 결과 두 파일에 잔여 참조는 실제로 없으므로 **AC-15 는 성립한다**. 다만 게이트 명령 자체가 불건전하여, 향후 이 두 파일에 잔여 참조가 생기면 조용히 통과한다. 확실히 하려면 `grep -a` 를 쓸 것.
+
+  - **품질**: M1~M8 구현(커밋 `a88eb1b8`/`9b30cc3d`/`a0dcfc0a`/`22bdc9b7`/`ad67da31`/`584e5005`/`ff5d8997` + M8). 59 파일 변경(신규 25 / 수정 33). 프론트 회귀 **269 files / 3487 tests 전량 통과**, `npx tsc --noEmit` 오류 0, `npm run build` 성공, `go build ./...` · `go vet ./...` 클린. 잔여 참조 게이트 `grep -rn "activeDashboardScope\|sharedReadOnly" web/src` 무매치. **Gaps**: 실행 중인 서버를 상대로 한 end-to-end HTTP 검증(AC-03~AC-08, AC-16, AC-18~AC-21)은 수행되지 않았다 — 해당 인수 조건은 단위·통합 테스트 수준에서만 확인되었다.
+  - **관련**: SPEC-DASHBOARD-004 v0.1.0(Tier L). 선행/관련 SPEC: SPEC-DASHBOARD-001, SPEC-AUTH-005, SPEC-AUTH-006, SPEC-ASSET-001. 적용에는 `bin/xflowd` 재빌드·재시작이 필요하며, 최초 기동 시 대시보드 데이터 이관이 1회 자동 수행된다(백업본 `<db>.pre-dashboard004` 생성).
+
 ### 추가 — ChirpStack status/control 노드 (`chirpstack-control` + `chirpstack-status`)
 
 - **ChirpStack LoRaWAN 다운링크(제어)와 캐시 통신 상태 조회를 Flow 노드로 노출하는 신규 노드 2종 추가 (SPEC-CHIRPSTACK-002, Tier M)**

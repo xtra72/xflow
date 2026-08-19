@@ -183,6 +183,20 @@ func (r *DashboardEntitySQLiteRepository) Create(ctx context.Context, d Dashboar
 //
 // expectedVersion >= 0 이고 현재 version 과 다르면 ErrDashboardVersionMismatch 를
 // 반환하며 트랜잭션이 롤백되어 서버 상태는 변하지 않는다(spec.md §2.13 #10).
+//
+// IsDefault 를 true 로 올리면 **같은 소유자의 다른 대시보드** 의 is_default 를 0 으로
+// 내린다(acceptance.md 엣지 케이스 "is_default 가 2장 이상에 설정됨 → 마지막 것만
+// 유지하고 나머지는 0으로 정규화"). 이 요청이 "마지막 것" 이므로 이 행만 남는다.
+//
+// **소유자 범위인 이유**: acceptance.md 는 정규화 범위를 명시하지 않지만, 전역
+// 범위로 하면 한 사용자가 자기 기본 대시보드를 지정하는 순간 다른 사용자의 기본
+// 대시보드가 조용히 해제된다 — 명백히 틀렸다. sort_order 와 같은 축이며, 이관
+// 경로도 스냅샷 1건 = 소유자 1명이므로 같은 모양이다.
+//
+// 내려가는 행들의 version / updated_at 은 **올리지 않는다.** version 은 그 행의
+// 본문·메타를 편집하는 클라이언트의 낙관적 동시성 토큰인데, 여기서 올리면 다른 탭의
+// 진행 중인 저장이 무관한 이유로 409 를 받는다. is_default 는 payload 밖의 컬럼이라
+// 덮어쓰기 손실도 발생하지 않는다.
 func (r *DashboardEntitySQLiteRepository) Update(
 	ctx context.Context,
 	uid string,
@@ -201,8 +215,10 @@ func (r *DashboardEntitySQLiteRepository) Update(
 	}()
 
 	var id, currentVersion int64
+	var currentOwner string
 	err = tx.QueryRowContext(ctx,
-		`SELECT id, version FROM dashboards WHERE uid = ?`, uid).Scan(&id, &currentVersion)
+		`SELECT id, version, owner FROM dashboards WHERE uid = ?`, uid).
+		Scan(&id, &currentVersion, &currentOwner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrDashboardNotFound
 	}
@@ -249,6 +265,23 @@ func (r *DashboardEntitySQLiteRepository) Update(
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE dashboards SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
 		return nil, fmt.Errorf("dashboard entity sqlite update: exec: %w", err)
+	}
+
+	// 기본 대시보드 정규화 — 같은 트랜잭션 안에서 수행해야 "둘 다 기본" 인 중간
+	// 상태가 다른 요청에 관측되지 않는다.
+	//
+	// 소유권 이전(upd.Owner)이 함께 오면 **새 소유자** 기준으로 정규화한다. 옮겨간
+	// 대시보드가 새 소유자의 기본이 되는 것이므로, 정리 대상도 새 소유자 쪽이다.
+	if upd.IsDefault != nil && *upd.IsDefault {
+		normalizeOwner := currentOwner
+		if upd.Owner != nil {
+			normalizeOwner = *upd.Owner
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE dashboards SET is_default = 0 WHERE owner = ? AND id != ? AND is_default != 0`,
+			normalizeOwner, id); err != nil {
+			return nil, fmt.Errorf("dashboard entity sqlite update: normalize is_default: %w", err)
+		}
 	}
 
 	var d Dashboard

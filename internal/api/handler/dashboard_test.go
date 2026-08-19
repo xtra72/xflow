@@ -1067,6 +1067,42 @@ func TestDashboardList_SortOrderIsPerOwner(t *testing.T) {
 	assert.EqualValues(t, 1, byName["edi B"])
 }
 
+// TestDashboardPatch_NormalizesIsDefaultPerOwner 는 PATCH 로 기본 대시보드를
+// 지정하면 같은 소유자의 이전 기본이 해제되고, 다른 소유자는 영향받지 않음을
+// API 계층에서 고정한다 (acceptance.md 엣지 케이스).
+func TestDashboardPatch_NormalizesIsDefaultPerOwner(t *testing.T) {
+	env := newDashboardEnv(t, true)
+
+	a := env.create(t, "root", "root A", "private")
+	b := env.create(t, "root", "root B", "private")
+	other := env.create(t, "edi", "edi A", "private")
+
+	setDefault := func(uid, user string) {
+		t.Helper()
+		rec := env.do(t, http.MethodPatch, "/api/v1/dashboards/"+uid, user, jsonBody(`{"is_default":true}`))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	setDefault(other, "edi")
+	setDefault(a, "root")
+	setDefault(b, "root")
+
+	// root 목록에는 기본이 정확히 1장(B)만 있어야 한다.
+	rec := env.do(t, http.MethodGet, "/api/v1/dashboards", "root", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var list []dto.DashboardMeta
+	decodeEnvelope(t, rec, &list)
+
+	defaults := map[string][]string{}
+	for _, it := range list {
+		if it.IsDefault {
+			defaults[it.Owner] = append(defaults[it.Owner], it.UID)
+		}
+	}
+	assert.Equal(t, []string{b}, defaults["root"], "같은 소유자의 이전 기본은 해제된다")
+	assert.Equal(t, []string{other}, defaults["edi"], "타 소유자의 기본은 유지된다")
+}
+
 // -----------------------------------------------------------------------------
 // helpers
 // -----------------------------------------------------------------------------
