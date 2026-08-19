@@ -153,8 +153,8 @@ func TestNewAgentHandler(t *testing.T) {
 
 func TestAgentHandler_RegisterRoutes(t *testing.T) {
 	router := setupAgentRouter(&mockAgentManager{})
-	// 15개 라우트 등록 확인 (기존 13 + Enable + Disable: SPEC-AGENT-005)
-	assert.Equal(t, 15, router.RouteCount())
+	// 16개 라우트 등록 확인 (기존 13 + Enable + Disable: SPEC-AGENT-005, + Query)
+	assert.Equal(t, 16, router.RouteCount())
 }
 
 // --- List 테스트 ---
@@ -986,4 +986,154 @@ func TestAgentHandler_AgentInfoSerialization_EnabledFalseIncluded(t *testing.T) 
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"enabled":false`, "Enabled=false 일 때도 필드가 포함되어야 함")
+}
+
+// --- Query 테스트 (읽기 전용 커맨드 화이트리스트) ---
+
+// queryReadCommands 는 대시보드 패널이 조회에 사용하는 읽기 전용 커맨드 전체이다.
+// queryReadOnlyCommands 화이트리스트와 1:1 로 대응해야 한다.
+var queryReadCommands = []string{
+	"list_devices", "list_clients", "list_stations", "list_lines", "list_groups",
+	"list_gateways", "list_connections", "get_status", "get_map", "get_device_status",
+}
+
+// queryWriteCommands 는 상태를 변경하므로 /query 로는 절대 통과해서는 안 되는 커맨드이다.
+var queryWriteCommands = []string{
+	"add_device", "add_group", "add_line", "add_place", "add_station",
+	"remove_device", "remove_group", "remove_line", "remove_place", "remove_station",
+	"set_device", "set_fan_speed", "set_group", "set_multiple", "set_power",
+}
+
+// TestAgentHandler_QueryAllowlistIsExplicit 는 화이트리스트의 내용을 고정한다.
+//
+// 항목 추가는 권한 결정이므로 조용히 늘어나서는 안 된다. 이 단언이 깨진다는 것은
+// 누군가 /query 로 열리는 커맨드 집합을 바꿨다는 뜻이며, 리뷰 대상이라는 신호이다.
+func TestAgentHandler_QueryAllowlistIsExplicit(t *testing.T) {
+	got := make([]string, 0, len(queryReadOnlyCommands))
+	for cmd := range queryReadOnlyCommands {
+		got = append(got, cmd)
+	}
+	assert.ElementsMatch(t, queryReadCommands, got)
+}
+
+// TestAgentHandler_QueryAcceptsEveryReadCommand 는 읽기 커맨드 10종이 모두 에이전트에
+// 도달함을 검증한다.
+func TestAgentHandler_QueryAcceptsEveryReadCommand(t *testing.T) {
+	for _, cmd := range queryReadCommands {
+		t.Run(cmd, func(t *testing.T) {
+			var gotCommand string
+			mock := &mockAgentManager{
+				execAgentFn: func(_ context.Context, id string, data []byte) (json.RawMessage, error) {
+					assert.Equal(t, "agent-1", id)
+					var req dto.AgentExecRequest
+					require.NoError(t, json.Unmarshal(data, &req))
+					gotCommand = req.Command
+					return json.RawMessage(`{"items":[]}`), nil
+				},
+			}
+			router := setupAgentRouter(mock)
+
+			rec := doRequest(t, router, http.MethodPost, "/api/v1/agents/agent-1/query",
+				strings.NewReader(`{"command":"`+cmd+`"}`))
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.Equal(t, cmd, gotCommand, "커맨드가 에이전트에 전달되지 않았다")
+		})
+	}
+}
+
+// TestAgentHandler_QueryRejectsUnlistedCommand 는 미등재 커맨드가 400 으로 거부되고
+// 에이전트가 호출되지 않음을 검증한다.
+//
+// 상태 코드만 확인하면 "에이전트가 실행된 뒤 응답만 400 으로 덮인" 경우를 놓친다.
+// 따라서 ExecAgent 호출 자체가 0 회임을 단언한다.
+func TestAgentHandler_QueryRejectsUnlistedCommand(t *testing.T) {
+	unlisted := append([]string{}, queryWriteCommands...)
+	unlisted = append(unlisted,
+		"",                  // 빈 커맨드
+		"list_dir",          // 접두사만 읽기처럼 보이는 미등재 커맨드
+		"list_peers",        // 위와 동일
+		"totally_bogus_cmd", // 알 수 없는 커맨드
+		"LIST_DEVICES",      // 대소문자 우회 시도
+		"list_devices ",     // 공백 패딩 우회 시도
+	)
+
+	for _, cmd := range unlisted {
+		t.Run("거부: "+cmd, func(t *testing.T) {
+			execCalls := 0
+			mock := &mockAgentManager{
+				execAgentFn: func(_ context.Context, _ string, _ []byte) (json.RawMessage, error) {
+					execCalls++
+					return json.RawMessage(`{"ok":true}`), nil
+				},
+			}
+			router := setupAgentRouter(mock)
+
+			body, err := json.Marshal(dto.AgentExecRequest{Command: cmd})
+			require.NoError(t, err)
+			rec := doRequest(t, router, http.MethodPost, "/api/v1/agents/agent-1/query",
+				strings.NewReader(string(body)))
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			assert.Zero(t, execCalls, "거부된 커맨드가 에이전트까지 전달되었다")
+		})
+	}
+}
+
+// TestAgentHandler_ExecStillAcceptsWriteCommands 는 /exec 의 수용 커맨드 집합이
+// 좁아지지 않았음을 검증한다 (화이트리스트가 /exec 에 새어 들어가지 않는다).
+func TestAgentHandler_ExecStillAcceptsWriteCommands(t *testing.T) {
+	for _, cmd := range queryWriteCommands {
+		t.Run(cmd, func(t *testing.T) {
+			called := false
+			mock := &mockAgentManager{
+				execAgentFn: func(_ context.Context, _ string, _ []byte) (json.RawMessage, error) {
+					called = true
+					return json.RawMessage(`{"ok":true}`), nil
+				},
+			}
+			router := setupAgentRouter(mock)
+
+			rec := doRequest(t, router, http.MethodPost, "/api/v1/agents/agent-1/exec",
+				strings.NewReader(`{"command":"`+cmd+`"}`))
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.True(t, called, "/exec 이 쓰기 커맨드를 에이전트로 전달하지 않았다")
+		})
+	}
+}
+
+// TestAgentHandler_QueryAndExecShareResponseShape 는 동일한 읽기 커맨드에 대해 두
+// 엔드포인트의 응답이 바이트 단위로 같음을 검증한다.
+//
+// 프론트가 읽기 커맨드를 /exec 에서 /query 로 옮길 때 응답 파싱을 바꿀 필요가
+// 없어야 한다는 계약이다.
+func TestAgentHandler_QueryAndExecShareResponseShape(t *testing.T) {
+	newMock := func(seen *[]byte) *mockAgentManager {
+		return &mockAgentManager{
+			execAgentFn: func(_ context.Context, _ string, data []byte) (json.RawMessage, error) {
+				*seen = append([]byte(nil), data...)
+				return json.RawMessage(`{"stations":[{"id":"s1"}],"total":1}`), nil
+			},
+		}
+	}
+
+	body := `{"command":"list_stations","params":{"line":"L1"}}`
+
+	var execPayload []byte
+	execRec := doRequest(t, setupAgentRouter(newMock(&execPayload)),
+		http.MethodPost, "/api/v1/agents/agent-1/exec", strings.NewReader(body))
+
+	var queryPayload []byte
+	queryRec := doRequest(t, setupAgentRouter(newMock(&queryPayload)),
+		http.MethodPost, "/api/v1/agents/agent-1/query", strings.NewReader(body))
+
+	// 에이전트에 전달되는 요청 바이트가 같다 (동일 DTO · 동일 직렬화 경로).
+	assert.Equal(t, string(execPayload), string(queryPayload))
+
+	// 응답 상태·헤더·본문이 모두 같다 (동일 엔벨로프).
+	assert.Equal(t, execRec.Code, queryRec.Code)
+	assert.Equal(t, execRec.Header().Get("Content-Type"), queryRec.Header().Get("Content-Type"))
+	assert.Equal(t, execRec.Body.String(), queryRec.Body.String())
+	assert.Contains(t, queryRec.Body.String(), `"stations"`)
 }

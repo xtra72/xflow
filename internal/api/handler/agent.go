@@ -193,6 +193,31 @@ func NewAgentHandler(agents AgentManager, logger *slog.Logger, opts ...AgentHand
 	return h
 }
 
+// queryReadOnlyCommands 는 POST /agents/{id}/query 가 수용하는 읽기 전용 커맨드의
+// 명시적 화이트리스트이다.
+//
+// 접두사 규칙("list_"/"get_" 으로 시작하면 읽기)으로 대체하지 않는다. 접두사 판정은
+// 앞으로 추가될 임의의 커맨드에 자동으로 읽기 권한을 부여하며, 이름만 그렇게 붙은
+// 상태 변경 커맨드까지 통과시킨다. 실제로 에이전트에는 파일시스템을 훑는 list_dir,
+// 원격 피어를 나열하는 list_peers 처럼 이 엔드포인트의 의도와 무관한 커맨드가 이미
+// 존재한다 — 무엇을 열지는 이름 규칙이 아니라 이 표가 결정해야 한다.
+//
+// 이 표에 항목을 추가하는 것은 형식 정리가 아니라 권한 결정이다. 추가 전에 해당
+// 커맨드가 에이전트 상태·외부 장비·저장소를 변경하지 않음을 확인하라. 상태를 바꾸는
+// 커맨드는 agent.execute 를 요구하는 POST /agents/{id}/exec 로 보내야 한다.
+var queryReadOnlyCommands = map[string]bool{
+	"list_devices":      true,
+	"list_clients":      true,
+	"list_stations":     true,
+	"list_lines":        true,
+	"list_groups":       true,
+	"list_gateways":     true,
+	"list_connections":  true,
+	"get_status":        true,
+	"get_map":           true,
+	"get_device_status": true,
+}
+
 // RegisterRoutes 는 에이전트 라우트를 등록한다.
 //
 // Routes:
@@ -211,6 +236,8 @@ func NewAgentHandler(agents AgentManager, logger *slog.Logger, opts ...AgentHand
 //	POST   /agents/{id}/disable  -> Disable (SPEC-AGENT-005)
 //	PUT    /agents/{id}/config   -> Configure
 //	GET    /agents/{id}/stats    -> Stats
+//	POST   /agents/{id}/exec     -> Exec  (임의 커맨드, agent.execute)
+//	POST   /agents/{id}/query    -> Query (읽기 전용 커맨드, agent.read)
 func (h *AgentHandler) RegisterRoutes(g *api.RouteGroup) {
 	// @SPEC:SPEC-AUTH-005 (M5) — agent.* 권한 부착 (plan.md §M5 매핑 원칙).
 	g.GETPerm("/agents", "agent.read", h.List)
@@ -230,6 +257,11 @@ func (h *AgentHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GETPerm("/agents/{id}/stats", "agent.read", h.Stats)
 	// exec 은 에이전트에 임의 제어 명령을 보내므로 execute 로 분류한다.
 	g.POSTPerm("/agents/{id}/exec", "agent.execute", h.Exec)
+	// query 는 queryReadOnlyCommands 에 등재된 읽기 전용 명령만 수용하므로 read 로
+	// 분류한다. 대시보드 패널 같은 조회 전용 호출자가 agent.execute 없이 데이터를
+	// 얻게 하는 것이 목적이다. 경로 마지막 세그먼트가 리터럴이므로 형제 라우트
+	// (/exec, /start, /stats ...)와 서로 가리지 않는다.
+	g.POSTPerm("/agents/{id}/query", "agent.read", h.Query)
 }
 
 // List 는 페이지네이션을 적용하여 에이전트 목록을 반환한다.
@@ -480,7 +512,25 @@ func (h *AgentHandler) Stats(ctx api.Context) error {
 
 // Exec 는 에이전트에 Process 커맨드를 전송한다.
 // POST /agents/{id}/exec
+//
+// 커맨드를 제한하지 않는다(allowed=nil). agent.execute 권한이 이 엔드포인트의 경계이다.
 func (h *AgentHandler) Exec(ctx api.Context) error {
+	return h.dispatchCommand(ctx, nil)
+}
+
+// Query 는 에이전트에 읽기 전용 커맨드를 전송한다.
+// POST /agents/{id}/query
+//
+// Exec 과 동일한 실행 경로·요청 DTO·응답 엔벨로프를 사용하므로, 읽기 커맨드를 두
+// 엔드포인트 사이에서 옮겨도 호출자가 보는 응답 형상은 같다. 차이는 단 하나,
+// queryReadOnlyCommands 에 등재된 커맨드만 수용한다는 것이다.
+func (h *AgentHandler) Query(ctx api.Context) error {
+	return h.dispatchCommand(ctx, queryReadOnlyCommands)
+}
+
+// dispatchCommand 는 Exec 과 Query 가 공유하는 단일 실행 경로이다.
+// allowed 가 nil 이 아니면 등재된 커맨드만 에이전트로 전달한다.
+func (h *AgentHandler) dispatchCommand(ctx api.Context, allowed map[string]bool) error {
 	id := ctx.Param("id")
 	if id == "" {
 		return api.ErrBadRequest.WithMessage("agent id is required")
@@ -493,6 +543,12 @@ func (h *AgentHandler) Exec(ctx api.Context) error {
 
 	if req.Command == "" {
 		return api.ErrBadRequest.WithMessage("command is required")
+	}
+
+	// 미등재 커맨드는 에이전트에 전달하지 않고 여기서 끊는다.
+	if allowed != nil && !allowed[req.Command] {
+		return api.ErrBadRequest.WithMessage(
+			"command is not allowed on the read-only query endpoint: " + req.Command)
 	}
 
 	data, err := json.Marshal(req)

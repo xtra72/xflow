@@ -704,3 +704,50 @@ func TestPermissionCatalogRequiresAuthOnly(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized,
 		env.do(http.MethodGet, "/api/v1/permissions", nil, "").Code)
 }
+
+// --- agent.read 전용 호출자의 query/exec 분리 ---
+
+// TestAgentQuerySeparatesReadFromExecute 는 agent.read 만 가진 호출자가
+// POST /agents/{id}/query 로는 조회에 성공하고 POST /agents/{id}/exec 로는 여전히
+// 403 을 받음을 검증한다.
+//
+// 대시보드 패널이 조회 데이터를 얻기 위해 agent.execute 를 요구하던 문제의 수정이며,
+// /exec 이 함께 느슨해지지 않았다는 것이 이 테스트의 핵심이다.
+func TestAgentQuerySeparatesReadFromExecute(t *testing.T) {
+	env := newRBACEnv(t)
+	adminToken := env.token("admin", rbac.RoleAdmin)
+
+	// agent.read 하나만 가진 역할 — viewer 보다 좁게 잡아 다른 권한의 영향을 배제한다.
+	require.Equal(t, http.StatusCreated, env.do(http.MethodPost, "/api/v1/roles", dto.CreateRoleRequest{
+		Name:        "panel-reader",
+		Description: "대시보드 조회 전용",
+		Permissions: []string{"agent.read"},
+	}, adminToken).Code)
+	readerToken := env.token("panel-user", "panel-reader")
+
+	// 읽기 커맨드는 /query 로 통과한다.
+	for _, cmd := range queryReadCommands {
+		rec := env.do(http.MethodPost, "/api/v1/agents/a1/query",
+			dto.AgentExecRequest{Command: cmd}, readerToken)
+		assert.Equal(t, http.StatusOK, rec.Code, "%s → %s", cmd, rec.Body.String())
+	}
+
+	// 같은 커맨드·같은 호출자라도 /exec 은 agent.execute 를 요구하므로 403 이다.
+	execRec := env.do(http.MethodPost, "/api/v1/agents/a1/exec",
+		dto.AgentExecRequest{Command: "list_stations"}, readerToken)
+	require.Equal(t, http.StatusForbidden, execRec.Code, execRec.Body.String())
+	assert.Equal(t, "FORBIDDEN", errorCode(t, execRec))
+	// 403 본문은 부족한 권한 키를 노출하지 않는다 (AC-07 과 동일한 규약).
+	assert.NotContains(t, execRec.Body.String(), "agent.")
+
+	// 쓰기 커맨드는 /query 로도 통과하지 못한다 (권한이 아니라 화이트리스트가 막는다).
+	writeRec := env.do(http.MethodPost, "/api/v1/agents/a1/query",
+		dto.AgentExecRequest{Command: "set_power"}, readerToken)
+	assert.Equal(t, http.StatusBadRequest, writeRec.Code, writeRec.Body.String())
+
+	// 상태 변경 계열 라우트는 그대로 403 을 유지한다.
+	for _, path := range []string{"start", "stop", "restart"} {
+		rec := env.do(http.MethodPost, "/api/v1/agents/a1/"+path, map[string]any{}, readerToken)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "%s → %s", path, rec.Body.String())
+	}
+}
