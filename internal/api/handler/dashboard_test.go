@@ -39,7 +39,7 @@ import (
 // -----------------------------------------------------------------------------
 
 // setupDashboardRouter 는 DashboardHandler 가 등록된 라우터 + repo 를 반환한다.
-func setupDashboardRouter(t *testing.T) (*api.Router, storage.DashboardRepository) {
+func setupDashboardRouter(t *testing.T) (*api.Router, storage.DashboardSnapshotRepository) {
 	t.Helper()
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "dashboard.db")

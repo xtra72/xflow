@@ -39,7 +39,7 @@ const maxDashboardPayloadBytes = 256 * 1024
 // 만들지 않는다. 대신 ctx.UserID() 가 빈 문자열이면 인증 컨텍스트가 누락된 것으로
 // 간주하여 방어적으로 401 을 반환한다.
 type DashboardHandler struct {
-	repo   storage.DashboardRepository
+	repo   storage.DashboardSnapshotRepository
 	jwtSvc *auth.JWTService // nil 허용 (테스트용)
 	logger *slog.Logger
 }
@@ -48,7 +48,7 @@ type DashboardHandler struct {
 //
 // jwtSvc 는 향후 추가 검증 (예: 토큰 재검증) 에 사용될 수 있다. 현재 구현은 미들웨어
 // 가 주입한 ctx.UserID() / ctx.UserRole() 만 사용한다.
-func NewDashboardHandler(repo storage.DashboardRepository, jwtSvc *auth.JWTService, logger *slog.Logger) *DashboardHandler {
+func NewDashboardHandler(repo storage.DashboardSnapshotRepository, jwtSvc *auth.JWTService, logger *slog.Logger) *DashboardHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}

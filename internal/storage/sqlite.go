@@ -106,6 +106,136 @@ func migrateDashboardSchema(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// migrateSchemaMarkersSchema 는 schema_markers 테이블을 멱등하게 생성한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M2, spec.md §2.4)
+//
+// 마커 행의 **존재 여부**가 1회성 DB 전역 이관의 판정 기준이 된다. 행 수로
+// 판정하면 "이관 안 됨" 과 "관리자가 의도적으로 비운 상태" 를 구분할 수 없어,
+// 삭제한 대시보드가 재기동마다 되살아난다.
+//
+// roles.nav_migrated 는 역할별 1회 이관이라 컬럼이 맞고, 대시보드 엔티티 이관은
+// DB 전역 1회이므로 행이 맞다. 두 패턴의 혼용이 아니라 이관 단위에 맞춘 선택이다
+// (spec.md §4.6).
+func migrateSchemaMarkersSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_markers (
+		key        TEXT PRIMARY KEY,
+		value      TEXT    NOT NULL,
+		applied_at INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create schema_markers table: %w", err)
+	}
+	return nil
+}
+
+// migrateDashboardSchemaV2 는 대시보드 1급 엔티티 모델의 테이블 3종
+// (dashboards / dashboard_acl / dashboard_user_state) 과 schema_markers 를
+// 멱등하게 생성한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M2, spec.md §2.1)
+//
+// **본 함수는 데이터를 이관하지 않는다.** 구 스키마 → 신 스키마 데이터 이관은
+// M3(migrateDashboardEntities)의 책임이며 롤백 불가 지점이므로 분리되어 있다.
+// 그래서 본 함수는 부팅 경로(NewSQLiteRepository / OpenSQLiteDB)에서 호출되지
+// 않는다 — 신규 저장소 생성자와 M3 이관 절차만 호출한다.
+//
+// 선행 조건: dashboards 테이블이 구 스키마(scope 컬럼 보유)로 존재하면 안 된다.
+// CREATE TABLE IF NOT EXISTS 는 이미 존재하는 테이블에 대해 조용히 no-op 이므로,
+// 구 스키마 위에서 호출하면 신규 컬럼이 없는 채로 성공한 것처럼 보이고 이후 모든
+// 질의가 런타임에 깨진다. 그 조용한 실패를 명시적 오류로 바꾼다. M3 는 RENAME 을
+// 먼저 수행하므로 이 검사를 통과한다.
+func migrateDashboardSchemaV2(ctx context.Context, db *sql.DB) error {
+	legacy, err := hasLegacyDashboardSchema(ctx, db)
+	if err != nil {
+		return err
+	}
+	if legacy {
+		return fmt.Errorf("migrate dashboard schema v2: dashboards table still uses the legacy (scope, owner) schema; " +
+			"run the dashboard entity migration first")
+	}
+
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboards (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		uid        TEXT    NOT NULL UNIQUE,
+		name       TEXT    NOT NULL,
+		owner      TEXT    NOT NULL,
+		visibility TEXT    NOT NULL CHECK (visibility IN ('private', 'shared', 'acl')),
+		is_default INTEGER NOT NULL DEFAULT 0,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		version    INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		payload    TEXT    NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create dashboards table (v2): %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS dashboards_owner_idx ON dashboards(owner)`); err != nil {
+		return fmt.Errorf("create dashboards owner index: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS dashboards_visibility_idx ON dashboards(visibility)`); err != nil {
+		return fmt.Errorf("create dashboards visibility index: %w", err)
+	}
+
+	// ON DELETE CASCADE 는 PRAGMA foreign_keys=ON 일 때만 동작한다. 본 프로젝트는
+	// 해당 PRAGMA 를 켜지 않으므로, 대시보드 삭제 시 ACL 정리는 저장소 계층이
+	// 같은 트랜잭션에서 명시적으로 수행한다(dashboard_sqlite.go Delete).
+	// 제약을 그대로 두는 이유는 스키마가 의도를 표현하고, 향후 PRAGMA 를 켜면
+	// 그대로 유효해지기 때문이다.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboard_acl (
+		dashboard_id INTEGER NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+		subject      TEXT    NOT NULL,
+		level        TEXT    NOT NULL CHECK (level IN ('view', 'edit')),
+		granted_by   TEXT    NOT NULL,
+		granted_at   INTEGER NOT NULL,
+		PRIMARY KEY (dashboard_id, subject)
+	)`); err != nil {
+		return fmt.Errorf("create dashboard_acl table: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS dashboard_acl_subject_idx ON dashboard_acl(subject)`); err != nil {
+		return fmt.Errorf("create dashboard_acl subject index: %w", err)
+	}
+
+	// activeDashboardId 와 deviceGridLayout 은 개별 대시보드에 속하지 않는
+	// 사용자 UI 상태이므로 별도 테이블로 분리한다(spec.md §2.1).
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboard_user_state (
+		username             TEXT    PRIMARY KEY,
+		active_dashboard_uid TEXT    NOT NULL DEFAULT '',
+		device_grid_layout   TEXT    NOT NULL DEFAULT '{}',
+		version              INTEGER NOT NULL DEFAULT 0,
+		updated_at           INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create dashboard_user_state table: %w", err)
+	}
+
+	return migrateSchemaMarkersSchema(ctx, db)
+}
+
+// hasLegacyDashboardSchema 는 dashboards 테이블이 구 스키마(scope 컬럼 보유)인지
+// 판정한다. 테이블 자체가 없으면 false 이다.
+func hasLegacyDashboardSchema(ctx context.Context, db *sql.DB) (bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info('dashboards')`)
+	if err != nil {
+		return false, fmt.Errorf("inspect dashboards columns: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, fmt.Errorf("scan dashboards column: %w", err)
+		}
+		if name == "scope" {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate dashboards columns: %w", err)
+	}
+	return false, nil
+}
+
 // usersTableBody 는 users 테이블의 컬럼 정의이다 (CREATE TABLE 이후 부분).
 //
 // @SPEC:SPEC-AUTH-005 (M2)
