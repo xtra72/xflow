@@ -141,32 +141,22 @@ beforeEach(() => {
 });
 
 describe('DashboardPage — 편집 게이팅 (can_edit)', () => {
-  it('can_edit=false 면 레이아웃 편집 버튼이 렌더되되 비활성이다(숨기지 않는다)', () => {
+  it('can_edit=false 면 레이아웃 편집 버튼을 숨긴다', () => {
+    // 프로젝트 기본 규칙은 "숨기지 말고 비활성"(spec.md §2.11)이지만,
+    // 이 버튼만 사용자 요청으로 예외 처리한다.
     seedDashboards([makeDashboard({ can_edit: false })]);
     renderPage();
 
-    const editButton = screen.getByTestId('dashboard-edit-mode');
-    // 존재한다 — 숨김이 아니라 비활성이어야 한다.
-    expect(editButton).toBeInTheDocument();
-    expect(editButton).toBeDisabled();
-    expect(editButton).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByTestId('dashboard-edit-mode')).toBeNull();
   });
 
-  it('can_edit=false 면 편집 버튼에 사유 툴팁이 붙는다', () => {
-    seedDashboards([makeDashboard({ can_edit: false })]);
-    renderPage();
-
-    expect(screen.getByTestId('dashboard-edit-mode')).toHaveAttribute(
-      'title',
-      '이 대시보드를 편집할 권한이 없습니다',
-    );
-  });
-
-  it('can_edit=true 면 편집 버튼이 활성이다', () => {
+  it('can_edit=true 면 편집 버튼이 렌더되고 활성이다', () => {
     seedDashboards([makeDashboard({ can_edit: true })]);
     renderPage();
 
-    expect(screen.getByTestId('dashboard-edit-mode')).toBeEnabled();
+    const editButton = screen.getByTestId('dashboard-edit-mode');
+    expect(editButton).toBeInTheDocument();
+    expect(editButton).toBeEnabled();
   });
 
   it('편집 불가여도 상시 안내 배너를 표시하지 않는다', () => {
@@ -174,17 +164,6 @@ describe('DashboardPage — 편집 게이팅 (can_edit)', () => {
     renderPage();
 
     expect(screen.queryByTestId('dashboard-readonly-notice')).toBeNull();
-  });
-
-  it('배너가 없어도 편집 버튼 툴팁이 사유를 전달한다', () => {
-    // 배너를 걷어낸 뒤 사유 전달 수단이 통째로 사라지지 않았는지 지킨다.
-    seedDashboards([makeDashboard({ can_edit: false })]);
-    renderPage();
-
-    expect(screen.getByTestId('dashboard-edit-mode')).toHaveAttribute(
-      'title',
-      '이 대시보드를 편집할 권한이 없습니다',
-    );
   });
 });
 
@@ -297,8 +276,8 @@ describe('DashboardPage — 생성 게이팅 (AC-03)', () => {
     renderPage();
     openDashboardDropdown();
 
-    // 편집은 막히지만 생성은 열려 있다.
-    expect(screen.getByTestId('dashboard-edit-mode')).toBeDisabled();
+    // 편집 버튼은 숨겨지지만 생성은 열려 있다.
+    expect(screen.queryByTestId('dashboard-edit-mode')).toBeNull();
     expect(screen.getByTestId('dashboard-add')).toBeEnabled();
   });
 });

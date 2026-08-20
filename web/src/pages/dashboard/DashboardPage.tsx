@@ -768,24 +768,22 @@ function LocalDashboardView() {
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
 
-                {/* 레이아웃 편집 진입 — 활성 대시보드의 can_edit 게이트
-                    (spec.md §2.11 S2). 숨기지 않고 비활성 + 사유 툴팁이다. */}
-                <button
-                  type="button"
-                  onClick={() => setEditMode(true)}
-                  disabled={!activeAccess.canEdit}
-                  aria-disabled={!activeAccess.canEdit}
-                  data-testid="dashboard-edit-mode"
-                  title={activeAccess.canEdit ? t('dashboard.editLayout') : t('dashboard.gate.editDenied')}
-                  className={`transition-colors ${
-                    !activeAccess.canEdit
-                      ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
-                      : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
-                  }`}
-                  aria-label={t('dashboard.editLayout')}
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
+                {/* 레이아웃 편집 진입 — 읽기 전용 대시보드에서는 아예 숨긴다(사용자 요청).
+                    프로젝트 기본 규칙은 "숨기지 말고 비활성"(spec.md §2.11 S2)이지만,
+                    이 버튼만 예외로 둔다. 서버의 can_edit 판정은 그대로이며 숨김은
+                    표시 결정일 뿐이다 — 편집 시도는 여전히 서버가 막는다. */}
+                {activeAccess.canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => setEditMode(true)}
+                    data-testid="dashboard-edit-mode"
+                    title={t('dashboard.editLayout')}
+                    className="text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
+                    aria-label={t('dashboard.editLayout')}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </>
           )}
