@@ -163,6 +163,57 @@ export interface StoreSourceConfig {
   refresh_interval_ms?: number;
 }
 
+/**
+ * Store 소스의 **조회 창 기본값**(시간창 · 버킷 · 집계 · 폴링 주기) 단일 정본.
+ * @spec SPEC-CHART-002 §2.8 [E2] 1항
+ *
+ * 두 곳이 같은 값을 써야 한다.
+ *
+ *   1. `ChartPanelSections.tsx` 의 `defaultStoreSource()` — 사용자가 데이터 소스를
+ *      처음 Store 로 토글할 때.
+ *   2. `gaugeLegacyBinding.ts` 의 `buildGaugeStoreMigrationPatch()` — 게이지 레거시
+ *      바인딩을 이관할 때(spec 이 "기본값(`defaultStoreSource()`)" 이라고 못박았다).
+ *
+ * 값을 각자 복제하면 한쪽만 바뀔 때 이관 결과가 조용히 어긋난다. 그렇다고
+ * `defaultStoreSource()` 를 직접 import 하면 순수 모듈인 `gaugeLegacyBinding.ts` 가
+ * React 트리를 끌어와 단위 테스트가 무거워진다. 그래서 **양쪽이 이미 import 하는
+ * 의존성 없는 타입 모듈**인 여기에 값만 올린다.
+ */
+export const DEFAULT_STORE_SOURCE_WINDOW = {
+  time_window_ms: 60 * 60 * 1000, // 지난 1시간
+  interval_ms: 60 * 1000, // 1분 버킷
+  aggregation: 'average',
+  refresh_interval_ms: 5000,
+} as const satisfies Pick<
+  StoreSourceConfig,
+  'time_window_ms' | 'interval_ms' | 'aggregation' | 'refresh_interval_ms'
+>;
+
+/**
+ * 윈도우 단위 **구간 대표값** 함수. @spec SPEC-CHART-002 §2.2
+ *
+ * 한 시리즈의 시간 윈도우 타임라인 전체를 숫자 1개로 접는다. 계산 규칙은
+ * `seriesReduce.ts` 의 `reduceSeries` 가 단일 정본으로 소유한다.
+ *
+ * `'first'` 는 사용자 선택지로 노출하지 않는다 — `delta`(= last − first)의 내부
+ * 입력으로만 쓴다. `StoreSourceConfig.aggregation` 의 `'first'` 는 **다른 축**의
+ * 값이며 이것과 무관하다(아래 두 축 구분 참조).
+ */
+export type SeriesReduceFunc = 'max' | 'avg' | 'min' | 'last' | 'sum' | 'count' | 'delta';
+
+/**
+ * 구간 대표값 선택기를 노출하는 패널 타입 집합. @spec SPEC-CHART-002 §2.3
+ *
+ * `line-chart` · `table` · `heatmap` 은 같은 `StoreSourceSection` 을 쓰지만
+ * 선택기가 노출되지 않으며 `series_reduce` 를 읽지도 않는다(UB1-10).
+ */
+export const REDUCE_PANEL_TYPES: ReadonlySet<string> = new Set([
+  'stat',
+  'gauge',
+  'bar-chart',
+  'pie-chart',
+]);
+
 /** 모든 차트 패널이 공유하는 공통 config (REQ-M4-02) */
 export interface ChartPanelConfigBase {
   channel_name: string;
@@ -177,6 +228,46 @@ export interface ChartPanelConfigBase {
   data_source?: ChartDataSourceKind;
   /** Store 소스 설정(data_source === 'store' 일 때 사용). @spec SPEC-WEB-005 */
   store_source?: StoreSourceConfig;
+  /**
+   * 윈도우 단위 구간 대표값. @spec SPEC-CHART-002 §2.1 [U1]
+   *
+   * **`store_source.aggregation` 과는 서로 다른 축이며 절대 겸용하지 않는다.**
+   *
+   * | 축 | 필드 | 적용 시점 | 결과 형상 |
+   * |----|------|-----------|-----------|
+   * | 버킷 집계 | `store_source.aggregation` | 조회 시점(서버) | 시리즈당 `interval_ms` 버킷마다 값 1개 → **타임라인** |
+   * | 윈도우 대표값 | `series_reduce` (이 필드) | 렌더 시점(클라이언트 순수 계산) | 시리즈당 **숫자 1개** |
+   *
+   * 두 축은 순차 합성된다:
+   *   `원시 표본 → (aggregation) → 버킷 타임라인 → (series_reduce) → 대표값 1개`.
+   * 예) `aggregation:'average'` + `series_reduce:'max'` = "1분 평균들의 구간 최댓값"
+   * 이며, `aggregation:'max'` + `series_reduce:'max'`("구간 최댓값")와 결과가 다르다.
+   *
+   * `store_source` **블록 밖**에 두는 이유: `store_source` 는 `useStoreChartData`
+   * 의 `pollKey` 소재지이고 pollKey 는 "재조회가 필요한가" 를 판정한다. 대표값은
+   * 조회 파라미터가 아니라 표현 파라미터이므로, 같은 블록에 두면 대표값 변경이
+   * 불필요한 재조회를 유발하거나(포함 시) 한 블록 안에서 필드별 취급이 갈린다
+   * (제외 시). 블록을 나누면 "조회 축은 store_source, 표현 축은 패널 config" 가
+   * 타입 수준에서 드러난다(§4.1).
+   *
+   * **미지정(부재) = 레거시 렌더 경로**다(§2.9 [S1]). 기본값을 정의하지 않는다 —
+   * 부재를 `'last'` 로 해석하면 저장된 config 를 건드리지 않고도 기존 패널 외형이
+   * 바뀐다. `data_source !== 'store'` 인 경우에도 읽지 않는다(§2.10 [S2]).
+   */
+  series_reduce?: SeriesReduceFunc;
+  /**
+   * 다중 출력(타일/게이지/막대/조각)의 표시 개수 상한. @spec SPEC-CHART-002 §2.4 [U4]
+   *
+   * 미지정이면 `DEFAULT_MULTI_OUTPUT_LIMIT`(= 12, `SeriesTileGrid.tsx` 소유)를 쓴다.
+   * 상한을 넘는 출력은 순서상 뒤에서부터 잘리고 `+K` 표기로 잘린 개수를 알린다.
+   *
+   * 시리즈 **선택** 상한(`STORE_SERIES_LIMIT` = 48)과는 다른 축이다 — 선택 상한은
+   * 조회 부하를, 이 상한은 가독성을 보호한다(§4.6). 48개를 조회하되 12개만 그리는
+   * 상태는 정상이다.
+   *
+   * `series_reduce` 부재(레거시) 경로에서는 읽지 않는다.
+   */
+  multi_output_limit?: number;
 }
 
 // --- 차트 타입별 config (SPEC-CHART-001 §4.2.2) ---
