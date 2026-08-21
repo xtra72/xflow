@@ -47,8 +47,8 @@ func TestStoreReader_ReturnsKeysSnapshot(t *testing.T) {
 	storeAg := &fakeStoreAgent{
 		name: "store1",
 		snapshot: map[string]system.StaticKeyMeta{
-			"b_key": {DataType: system.DataType("float"), MetricType: "temperature", Source: system.RegistrationSource("manual")},
-			"a_key": {DataType: system.DataType("int"), MetricType: "count", Source: system.RegistrationSource("auto"), Tags: map[string]string{"room": "1"}},
+			"b_key": {DataType: system.DataType("float"), Field: "temperature", Source: system.RegistrationSource("manual")},
+			"a_key": {DataType: system.DataType("int"), Field: "count", Source: system.RegistrationSource("auto"), Tags: map[string]string{"room": "1"}},
 		},
 	}
 	reader := newAgentManagerStoreReader(&fakeAgentMgrLister{agents: []agent.Agent{storeAg}})

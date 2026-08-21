@@ -20,14 +20,14 @@ func TestStoreReadNode_Configure(t *testing.T) {
 	require.NoError(t, err)
 
 	err = n.Configure(map[string]any{
-		"key_template": "{device}:{metric}",
+		"key_template": "{device}:{field}",
 		"namespace":    "devices",
 		"output_key":   "cached_value",
 	})
 	require.NoError(t, err)
 
 	sr := n.(*StoreReadNode)
-	assert.Equal(t, "{device}:{metric}", sr.keyTemplate)
+	assert.Equal(t, "{device}:{field}", sr.keyTemplate)
 	assert.Equal(t, "devices", sr.namespace)
 	assert.Equal(t, "cached_value", sr.outputKey)
 	assert.Equal(t, ReadModeLatest, sr.readMode, "기본 read_mode 는 latest 이어야 한다")

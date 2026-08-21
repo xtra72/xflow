@@ -23,7 +23,7 @@ var tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // nodeStoreProvider 는 노드에서 Store 인스턴스에 접근하기 위한 인터페이스이다.
 // UserStoreAgent 가 이 인터페이스를 구현하며,
-// store-write, store-read 노드가 AgentResolver → AgentAccessor → nodeStoreProvider
+// storage-write, store-read 노드가 AgentResolver → AgentAccessor → nodeStoreProvider
 // 경로로 Store에 접근한다.
 // 순환 의존을 방지하기 위해 any를 반환하고, 노드 측에서 StoreWriter/StoreReader로 타입 단언한다.
 type nodeStoreProvider interface {
@@ -34,7 +34,7 @@ type nodeStoreProvider interface {
 // 내부적으로 StoreAgent를 감싸며, agent.Agent 인터페이스를 구현하여
 // agent.Manager에 등록될 수 있다.
 //
-// store-write, store-read 노드가 AgentResolver를 통해 이 에이전트를 찾아
+// storage-write, store-read 노드가 AgentResolver를 통해 이 에이전트를 찾아
 // StoreForNamespace() 메서드로 네임스페이스별 Store 인스턴스에 접근한다.
 type UserStoreAgent struct {
 	*lifecycle.BaseLifecycle
@@ -55,8 +55,8 @@ var _ nodeStoreProvider = (*UserStoreAgent)(nil)
 // parseStoreConfig 는 AgentConfig.Transport.Options에서 StoreOption 목록을 파싱한다.
 //
 // @spec SPEC-STORE-003 v0.3.0: 반환 옵션에는 registration_type 과 keys (정적 키 + DataType +
-// MetricType + Tags) 가 포함된다. 해당 필드가 없으면 기본값(RegistrationAuto, staticKeys=nil)이
-// 유지된다. 파싱 실패(중복 키, 태그 key 형식 위반, data_type/metric_type/registration_type
+// Field + Tags) 가 포함된다. 해당 필드가 없으면 기본값(RegistrationAuto, staticKeys=nil)이
+// 유지된다. 파싱 실패(중복 키, 태그 key 형식 위반, data_type/field/registration_type
 // enum 위반, 타입 오류) 시 에러를 반환한다.
 //
 // v0.2.0 의 `allow_dynamic_keys` 필드는 제거되었으며 (clean rename, no shim),
@@ -144,7 +144,7 @@ func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 	opts = append(opts, WithRegistrationType(registrationType))
 
 	// @spec SPEC-STORE-003 v0.3.0
-	// keys ([]map) 정적 키 목록 + 메타데이터 (data_type, metric_type, tags).
+	// keys ([]map) 정적 키 목록 + 메타데이터 (data_type, field, tags).
 	// manual 모드에서는 각 엔트리의 data_type 명시가 필수이다.
 	if raw, ok := options["keys"]; ok {
 		staticKeys, err := parseStaticKeysRaw(raw, registrationType)
@@ -165,7 +165,7 @@ func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 //	{
 //	  "key":         string (required, non-empty, unique),
 //	  "data_type":   string (manual 모드 필수, auto 모드 optional; 6종 enum),
-//	  "metric_type": string (optional; ^[a-zA-Z0-9_-]+$, default "unknown"),
+//	  "field": string (optional; ^[a-zA-Z0-9_-]+$, default "unknown"),
 //	  "tags":        map[string]any (optional; tag key ^[a-zA-Z0-9_-]+$, value string),
 //	}.
 //
@@ -176,7 +176,7 @@ func parseStoreConfig(cfg agent.AgentConfig) ([]StoreOption, error) {
 //   - 중복 key → ErrDuplicateStaticKey
 //   - manual 모드에서 data_type 누락 → ErrInvalidDataType
 //   - data_type enum 위반 → ErrInvalidDataType
-//   - metric_type 정규식 위반 → ErrInvalidMetricType
+//   - field 정규식 위반 → ErrInvalidField
 //   - 태그 key 가 tagKeyPattern 위반 → ErrInvalidTagKey
 //   - 태그 value 가 string 이 아니면 → 명시적 에러
 //
@@ -248,23 +248,23 @@ func parseStaticKeysRaw(raw any, registrationType RegistrationType) (map[string]
 		}
 		// auto 모드 + data_type 미명시: 빈 DataType 으로 두고 첫 쓰기 시 inferDataType 으로 결정 (Phase C).
 
-		// --- metric_type (optional, default "unknown") ---
-		var metricType string
-		if mtRaw, hasMT := entry["metric_type"]; hasMT {
+		// --- field (optional, default "unknown") ---
+		var field string
+		if mtRaw, hasMT := entry["field"]; hasMT {
 			mtStr, ok := mtRaw.(string)
 			if !ok {
 				return nil, fmt.Errorf(
-					"store config: keys[%q].metric_type must be string, got %T", key, mtRaw,
+					"store config: keys[%q].field must be string, got %T", key, mtRaw,
 				)
 			}
-			normalized, err := validateMetricType(mtStr)
+			normalized, err := validateField(mtStr)
 			if err != nil {
-				return nil, fmt.Errorf("%w: key=%q metric_type=%q", ErrInvalidMetricType, key, mtStr)
+				return nil, fmt.Errorf("%w: key=%q field=%q", ErrInvalidField, key, mtStr)
 			}
-			metricType = normalized
+			field = normalized
 		} else {
-			// 미지정 시 default "unknown" (validateMetricType("") 와 동일 결과).
-			metricType = "unknown"
+			// 미지정 시 default "unknown" (validateField("") 와 동일 결과).
+			field = "unknown"
 		}
 
 		// --- tags (optional; key 정규식 + value string 검증) ---
@@ -274,10 +274,10 @@ func parseStaticKeysRaw(raw any, registrationType RegistrationType) (map[string]
 		}
 
 		result[key] = StaticKeyMeta{
-			DataType:   dataType,
-			MetricType: metricType,
-			Tags:       tags,
-			Source:     SourceManual, // yaml 정의 키는 모두 manual 등록.
+			DataType: dataType,
+			Field:    field,
+			Tags:     tags,
+			Source:   SourceManual, // yaml 정의 키는 모두 manual 등록.
 		}
 	}
 	return result, nil
@@ -351,7 +351,7 @@ func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
 }
 
 // NodeStoreForNamespace 는 지정된 네임스페이스의 NodeStoreAdapter를 반환한다.
-// store-write, store-read 노드가 이 메서드를 통해 Store에 접근한다.
+// storage-write, store-read 노드가 이 메서드를 통해 Store에 접근한다.
 // 반환된 *NodeStoreAdapter는 node.StoreWriter + node.StoreReader를 모두 만족한다.
 // 순환 의존을 방지하기 위해 any를 반환한다.
 //
@@ -362,7 +362,7 @@ func NewUserStoreAgent(config agent.AgentConfig) (agent.Agent, error) {
 // 모든 쓰기/읽기가 실패하는 회귀가 발생한다.
 func (a *UserStoreAgent) NodeStoreForNamespace(namespace string) any {
 	// 빈 네임스페이스는 읽기 경로(QueryHistory/ListStoreKeys 등)와 동일하게
-	// defaultStoreNamespace 로 정규화한다. 이렇게 하지 않으면 store-write 노드가
+	// defaultStoreNamespace 로 정규화한다. 이렇게 하지 않으면 storage-write 노드가
 	// namespace="" 로 쓴 값(":key")을 API 쿼리(""→"default" 기본값, "default:key")가
 	// 찾지 못해, 등록된 키인데도 "store: key not found" 가 발생한다.
 	if namespace == "" {
@@ -375,7 +375,7 @@ func (a *UserStoreAgent) NodeStoreForNamespace(namespace string) any {
 		return a.inner.ForNamespace(namespace)
 	}
 	// agent resolver: data_type/tags 메타 설정에 필요한 현재 *StoreAgent(inner) 를 반환.
-	// store-write 노드의 SetWithMeta 경로에서 사용된다. 에이전트 재시작에 안전하도록
+	// storage-write 노드의 SetWithMeta 경로에서 사용된다. 에이전트 재시작에 안전하도록
 	// 호출 시점의 inner 를 lazy 하게 돌려준다.
 	agentResolver := func() *StoreAgent {
 		a.mu.RLock()
@@ -710,10 +710,10 @@ func (a *UserStoreAgent) State() map[string]any {
 		rawKey, _ := key.(string)
 		ns := item.namespace
 		// 네임스페이스 접두사를 제거한 저장 키(= 시리즈 인코딩 키, 또는 레거시 bare 키).
-		// @spec SPEC-STORE-004: 레지스트리/저장 키는 EncodeSeriesKey("metric|tags|key") 로
+		// @spec SPEC-STORE-004: 레지스트리/저장 키는 EncodeSeriesKey("field|tags|key") 로
 		// 키잉되므로, 메타 조회는 이 인코딩 키로 하고, 표시용 key 는 디코드된 사용자 key 로 한다.
 		encodedKey := strings.TrimPrefix(rawKey, ns+":")
-		userKey := decodeStorageKeyToSeries(encodedKey).Key
+		userKey := decodeStorageKeyToSeries(encodedKey).Measurement
 
 		entry := map[string]any{
 			"key": userKey,
@@ -729,21 +729,21 @@ func (a *UserStoreAgent) State() map[string]any {
 			"history_count": len(item.history),
 		}
 
-		// @spec SPEC-STORE-003 v0.4.0: 모든 엔트리(정적 + 동적)에 metric_type 과 tags 를 노출한다.
+		// @spec SPEC-STORE-003 v0.4.0: 모든 엔트리(정적 + 동적)에 field 과 tags 를 노출한다.
 		// @spec SPEC-STORE-004: 메타 조회는 인코딩 시리즈 키(encodedKey)로 한다(staticKeys 는
 		// 인코딩 키로 키잉됨). 표시용 key 는 위에서 디코드한 사용자 key(userKey)이므로,
-		// 같은 key 의 서로 다른 metric/tags 시리즈는 각각의 행으로 metric_type/tags 가 노출된다.
-		metricType := MetricTypeUnknown
+		// 같은 key 의 서로 다른 field/tags 시리즈는 각각의 행으로 field/tags 가 노출된다.
+		field := FieldUnknown
 		tagsCopy := map[string]string{}
 		if meta, ok := inner.config.staticKeys[encodedKey]; ok {
-			if meta.MetricType != "" {
-				metricType = meta.MetricType
+			if meta.Field != "" {
+				field = meta.Field
 			}
 			for tk, tv := range meta.Tags {
 				tagsCopy[tk] = tv
 			}
 		}
-		entry["metric_type"] = metricType
+		entry["field"] = field
 		entry["tags"] = tagsCopy
 
 		if item.expiresAt.IsZero() {

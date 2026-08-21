@@ -6,7 +6,7 @@
 // 까지 풀스택 흐름을 따라가며 SPEC v0.3.0 시나리오 1~10 의 핵심 동작을 회귀 검출 anchor 로 보존한다.
 //
 // 단위 테스트 (store_data_type_test.go), 마이그레이션 테스트 (store_static_keys_test.go),
-// 등록 테스트 (store_registration_test.go), metric 테스트 (store_metric_type_test.go) 와
+// 등록 테스트 (store_registration_test.go), field 테스트 (store_field_test.go) 와
 // 내용이 일부 중복되지만, 본 파일의 가치는 "여러 layer 가 한 흐름으로 정상 결합되는지"
 // 를 단일 시나리오로 검증하는 것이다.
 package system
@@ -36,10 +36,10 @@ func TestV3_Scenario1_NormalFlow(t *testing.T) {
 				"registration_type": "auto",
 				"keys": []any{
 					map[string]any{
-						"key":         "indoor:1:room_temp",
-						"data_type":   "float",
-						"metric_type": "temperature",
-						"tags":        map[string]any{"room": "1"},
+						"key":       "indoor:1:room_temp",
+						"data_type": "float",
+						"field":     "temperature",
+						"tags":      map[string]any{"room": "1"},
 					},
 				},
 			},
@@ -75,7 +75,7 @@ func TestV3_Scenario1_NormalFlow(t *testing.T) {
 	snap := u.StaticKeysSnapshot()
 	meta := snap["indoor:1:room_temp"]
 	assert.Equal(t, DataTypeFloat, meta.DataType)
-	assert.Equal(t, "temperature", meta.MetricType)
+	assert.Equal(t, "temperature", meta.Field)
 	assert.Equal(t, SourceManual, meta.Source)
 	assert.Equal(t, "1", meta.Tags["room"])
 }
@@ -96,10 +96,10 @@ func TestV3_Scenario3_AutoModeAndCoexistence(t *testing.T) {
 				"registration_type": "auto",
 				"keys": []any{
 					map[string]any{
-						"key":         "indoor:1:room_temp",
-						"data_type":   "float",
-						"metric_type": "temperature",
-						"tags":        map[string]any{"room": "1"},
+						"key":       "indoor:1:room_temp",
+						"data_type": "float",
+						"field":     "temperature",
+						"tags":      map[string]any{"room": "1"},
 					},
 				},
 			},
@@ -120,14 +120,14 @@ func TestV3_Scenario3_AutoModeAndCoexistence(t *testing.T) {
 	// Manual 키 보존.
 	manual := snap["indoor:1:room_temp"]
 	assert.Equal(t, SourceManual, manual.Source)
-	assert.Equal(t, "temperature", manual.MetricType)
+	assert.Equal(t, "temperature", manual.Field)
 	assert.Equal(t, "1", manual.Tags["room"])
 
 	// Auto 키 default. @spec v0.4.0: 동적 키는 항상 data_type=string.
 	auto := snap["outdoor:temperature"]
 	assert.Equal(t, SourceAuto, auto.Source)
 	assert.Equal(t, DataTypeString, auto.DataType, "동적 키는 data_type=string")
-	assert.Equal(t, "unknown", auto.MetricType)
+	assert.Equal(t, "unknown", auto.Field)
 	assert.Empty(t, auto.Tags)
 }
 
@@ -149,10 +149,10 @@ func TestV3_Scenario7_ManualModeStrictType(t *testing.T) {
 				"max_history_size":  10,
 				"keys": []any{
 					map[string]any{
-						"key":         "indoor:1:room_temp",
-						"data_type":   "float",
-						"metric_type": "temperature",
-						"tags":        map[string]any{"room": "1"},
+						"key":       "indoor:1:room_temp",
+						"data_type": "float",
+						"field":     "temperature",
+						"tags":      map[string]any{"room": "1"},
 					},
 				},
 			},
@@ -211,7 +211,7 @@ func TestV3_Scenario8_AutoModeDynamicString(t *testing.T) {
 	require.Contains(t, snap, "sensor1")
 	assert.Equal(t, DataTypeString, snap["sensor1"].DataType)
 	assert.Equal(t, SourceAuto, snap["sensor1"].Source)
-	assert.Equal(t, "unknown", snap["sensor1"].MetricType)
+	assert.Equal(t, "unknown", snap["sensor1"].Field)
 
 	entry, err := store.Get(context.Background(), "sensor1")
 	require.NoError(t, err)
@@ -230,17 +230,17 @@ func TestV3_Scenario8_AutoModeDynamicString(t *testing.T) {
 }
 
 // =============================================================================
-// Scenario 9: metric_type default + 필터 (M8, M9)
+// Scenario 9: field default + 필터 (M8, M9)
 // =============================================================================
 
 // @spec SPEC-STORE-003 v0.3.0 / Scenario 9
-// TestV3_Scenario9_MetricTypeFilter 는 yaml 에 다양한 metric_type 을 정의한 뒤
+// TestV3_Scenario9_FieldFilter 는 yaml 에 다양한 field 을 정의한 뒤
 // StaticKeysSnapshot 으로 메타가 정확히 노출되는지 검증한다 (handler 필터는 별도
 // store_query_listkeys_filters_test.go 에서 검증).
 //
-// 본 테스트의 가치는 yaml → parser → staticKeys 경로의 metric_type 보존을 통합
+// 본 테스트의 가치는 yaml → parser → staticKeys 경로의 field 보존을 통합
 // 시점에서 한 번 더 확인하는 것이다.
-func TestV3_Scenario9_MetricTypeFilter(t *testing.T) {
+func TestV3_Scenario9_FieldFilter(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID: "s1", Name: "store-a", Type: "store",
 		Transport: agent.TransportConfig{
@@ -249,19 +249,19 @@ func TestV3_Scenario9_MetricTypeFilter(t *testing.T) {
 				"registration_type": "manual",
 				"keys": []any{
 					map[string]any{
-						"key":         "k1",
-						"data_type":   "float",
-						"metric_type": "temperature",
+						"key":       "k1",
+						"data_type": "float",
+						"field":     "temperature",
 					},
 					map[string]any{
 						"key":       "k2",
 						"data_type": "float",
-						// metric_type 누락 → default "unknown"
+						// field 누락 → default "unknown"
 					},
 					map[string]any{
-						"key":         "k3",
-						"data_type":   "float",
-						"metric_type": "humidity",
+						"key":       "k3",
+						"data_type": "float",
+						"field":     "humidity",
 					},
 				},
 			},
@@ -275,10 +275,10 @@ func TestV3_Scenario9_MetricTypeFilter(t *testing.T) {
 	snap := u.StaticKeysSnapshot()
 	require.Len(t, snap, 3)
 
-	// metric_type 정확 보존 + default 적용 확인.
-	assert.Equal(t, "temperature", snap["k1"].MetricType)
-	assert.Equal(t, "unknown", snap["k2"].MetricType, "yaml 누락 시 default 'unknown'")
-	assert.Equal(t, "humidity", snap["k3"].MetricType)
+	// field 정확 보존 + default 적용 확인.
+	assert.Equal(t, "temperature", snap["k1"].Field)
+	assert.Equal(t, "unknown", snap["k2"].Field, "yaml 누락 시 default 'unknown'")
+	assert.Equal(t, "humidity", snap["k3"].Field)
 }
 
 // =============================================================================

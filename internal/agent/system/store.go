@@ -440,7 +440,7 @@ func (s *StoreAgent) StaticTagsFor(key string) map[string]string {
 // @spec SPEC-STORE-003 v0.3.0
 // StaticKeyMetaFor 는 사용자 관점 key 의 전체 메타데이터(StaticKeyMeta) 복사본을 반환한다.
 // key 가 정적 키 목록에 없으면 (zero value, false) 를 반환한다.
-// API 응답 구성(Phase D) 에서 data_type / metric_type / source 까지 노출할 때 사용된다.
+// API 응답 구성(Phase D) 에서 data_type / field / source 까지 노출할 때 사용된다.
 //
 // 반환된 StaticKeyMeta 의 Tags 는 깊은 복사본이며, 호출자가 수정해도 내부 상태에 영향이 없다.
 func (s *StoreAgent) StaticKeyMetaFor(key string) (StaticKeyMeta, bool) {
@@ -456,10 +456,10 @@ func (s *StoreAgent) StaticKeyMetaFor(key string) (StaticKeyMeta, bool) {
 		tagsCopy[tk] = tv
 	}
 	return StaticKeyMeta{
-		DataType:   meta.DataType,
-		MetricType: meta.MetricType,
-		Tags:       tagsCopy,
-		Source:     meta.Source,
+		DataType: meta.DataType,
+		Field:    meta.Field,
+		Tags:     tagsCopy,
+		Source:   meta.Source,
 	}, true
 }
 
@@ -498,10 +498,10 @@ func (s *StoreAgent) SetStaticKeys(keys map[string]StaticKeyMeta) {
 			tagCopy[tk] = tv
 		}
 		cloned[k] = StaticKeyMeta{
-			DataType:   meta.DataType,
-			MetricType: meta.MetricType,
-			Tags:       tagCopy,
-			Source:     meta.Source,
+			DataType: meta.DataType,
+			Field:    meta.Field,
+			Tags:     tagCopy,
+			Source:   meta.Source,
 		}
 	}
 	s.config.staticKeys = cloned
@@ -518,7 +518,7 @@ func (s *StoreAgent) RemoveStaticKey(key string) {
 }
 
 // MoveStaticKeyMeta 는 레지스트리에서 oldKey 의 메타(StaticKeyMeta)를 newKey 로 이동한다.
-// DataType/MetricType/Tags/Source 를 그대로 보존한다. oldKey 가 미등록이면 no-op(false 반환).
+// DataType/Field/Tags/Source 를 그대로 보존한다. oldKey 가 미등록이면 no-op(false 반환).
 // 값/히스토리 이동은 Store.Rename 이, 충돌 사전검사는 상위 RenameKey 가 담당한다.
 func (s *StoreAgent) MoveStaticKeyMeta(oldKey, newKey string) bool {
 	s.mu.Lock()
@@ -536,25 +536,25 @@ func (s *StoreAgent) MoveStaticKeyMeta(oldKey, newKey string) bool {
 }
 
 // @spec SPEC-STORE-003 v0.4.0
-// SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 metric_type 과 tags 를 설정한다.
+// SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 field 과 tags 를 설정한다.
 // 사용자가 Web UI 등에서 동적으로 등록된 키에도 타입/태그를 나중에 부여할 수 있게 한다.
 //
 // 동작:
-//   - key 가 이미 staticKeys 에 있으면 metric_type/tags 만 갱신하고 DataType/Source 는 보존한다
+//   - key 가 이미 staticKeys 에 있으면 field/tags 만 갱신하고 DataType/Source 는 보존한다
 //     (정적 키의 명시 data_type, 동적 키의 string data_type 모두 보존 — PRESERVE).
 //   - key 가 미등록이면 동적 string 키(DataType=string, Source=auto)로 신규 등록한 뒤 메타를 적용한다.
 //     이로써 아직 값이 쓰여지지 않은 키에도 사전에 타입/태그를 지정할 수 있다.
 //
-// 입력 검증(metric_type 정규식, tags key/value)은 호출자(핸들러) 책임이며, 본 메서드는
-// 전달된 값을 신뢰하고 깊은 복사하여 저장한다. metricType 이 빈 문자열이면 "unknown" 으로 normalize 한다.
+// 입력 검증(field 정규식, tags key/value)은 호출자(핸들러) 책임이며, 본 메서드는
+// 전달된 값을 신뢰하고 깊은 복사하여 저장한다. field 이 빈 문자열이면 "unknown" 으로 normalize 한다.
 //
 // 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 값(value/ttl/history)에는 영향을 주지 않는다.
-func (s *StoreAgent) SetKeyMeta(key string, metricType string, tags map[string]string) {
+func (s *StoreAgent) SetKeyMeta(key string, field string, tags map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if metricType == "" {
-		metricType = MetricTypeUnknown
+	if field == "" {
+		field = FieldUnknown
 	}
 	tagsCopy := make(map[string]string, len(tags))
 	for tk, tv := range tags {
@@ -566,8 +566,8 @@ func (s *StoreAgent) SetKeyMeta(key string, metricType string, tags map[string]s
 	}
 
 	if existing, ok := s.config.staticKeys[key]; ok {
-		// 기존 메타 보존(DataType/Source) + metric_type/tags 갱신.
-		existing.MetricType = metricType
+		// 기존 메타 보존(DataType/Source) + field/tags 갱신.
+		existing.Field = field
 		existing.Tags = tagsCopy
 		s.config.staticKeys[key] = existing
 		return
@@ -575,16 +575,16 @@ func (s *StoreAgent) SetKeyMeta(key string, metricType string, tags map[string]s
 
 	// 미등록 키: 동적 string 키로 신규 등록.
 	s.config.staticKeys[key] = StaticKeyMeta{
-		DataType:   DataTypeString,
-		MetricType: metricType,
-		Tags:       tagsCopy,
-		Source:     SourceAuto,
+		DataType: DataTypeString,
+		Field:    field,
+		Tags:     tagsCopy,
+		Source:   SourceAuto,
 	}
 }
 
-// @spec SPEC-STORE-003 (store-write 노드 data_type/tags 지정)
+// @spec SPEC-STORE-003 (storage-write 노드 data_type/tags 지정)
 // SetKeyDataType 은 지정된 key 를 명시 data_type 으로 등록/갱신한다.
-// store-write 노드가 config 의 data_type 을 통해 동적 키를 특정 타입으로 고정(pin)할 때 사용한다.
+// storage-write 노드가 config 의 data_type 을 통해 동적 키를 특정 타입으로 고정(pin)할 때 사용한다.
 //
 // data_type 적용 정책 (PRESERVE 우선):
 //   - 미등록 키: 지정 dataType + Source=auto 로 신규 등록한다. 이후 쓰기는 해당 타입으로 검증된다.
@@ -594,7 +594,7 @@ func (s *StoreAgent) SetKeyMeta(key string, metricType string, tags map[string]s
 //   - 정적/명시 data_type 키(Source=manual 또는 non-dynamic): DataType/Source 를 보존한다.
 //     yaml 로 선언된 타입 계약을 노드 설정이 침범하지 못하도록 한다 (PRESERVE).
 //
-// metric_type 은 이 메서드의 범위가 아니다. 기존 키의 metric_type 은 보존되고,
+// field 은 이 메서드의 범위가 아니다. 기존 키의 field 은 보존되고,
 // 신규 등록 키에는 "unknown" 이 부여된다.
 //
 // 동시 호출에 안전하며, 내부 VolatileStore 에 저장된 값(value/ttl/history)에는 영향을 주지 않는다.
@@ -624,10 +624,10 @@ func (s *StoreAgent) SetKeyDataType(key string, dataType DataType) {
 	// 미등록 키: 지정 data_type 으로 신규 등록한다. 런타임 등록이므로 Source=auto.
 	// (명시 타입이어도 출처는 런타임 자동이며, 타입 검증은 DataType 으로 동작한다.)
 	s.config.staticKeys[key] = StaticKeyMeta{
-		DataType:   dataType,
-		MetricType: MetricTypeUnknown,
-		Tags:       map[string]string{},
-		Source:     SourceAuto,
+		DataType: dataType,
+		Field:    FieldUnknown,
+		Tags:     map[string]string{},
+		Source:   SourceAuto,
 	}
 }
 
@@ -650,10 +650,10 @@ func (s *StoreAgent) StaticKeysSnapshot() map[string]StaticKeyMeta {
 			tagsCopy[tk] = tv
 		}
 		out[k] = StaticKeyMeta{
-			DataType:   meta.DataType,
-			MetricType: meta.MetricType,
-			Tags:       tagsCopy,
-			Source:     meta.Source,
+			DataType: meta.DataType,
+			Field:    meta.Field,
+			Tags:     tagsCopy,
+			Source:   meta.Source,
 		}
 	}
 	return out
@@ -925,15 +925,15 @@ func (as *agentStore) checkKeyAllowed(key string, value any) error {
 		return nil
 	}
 
-	// 자동 등록 수행: 항상 data_type=string, metric_type=unknown, 빈 태그, SourceAuto.
+	// 자동 등록 수행: 항상 data_type=string, field=unknown, 빈 태그, SourceAuto.
 	if as.agent.config.staticKeys == nil {
 		as.agent.config.staticKeys = make(map[string]StaticKeyMeta)
 	}
 	as.agent.config.staticKeys[key] = StaticKeyMeta{
-		DataType:   DataTypeString,
-		MetricType: MetricTypeUnknown,
-		Tags:       map[string]string{},
-		Source:     SourceAuto,
+		DataType: DataTypeString,
+		Field:    FieldUnknown,
+		Tags:     map[string]string{},
+		Source:   SourceAuto,
 	}
 	return nil
 }

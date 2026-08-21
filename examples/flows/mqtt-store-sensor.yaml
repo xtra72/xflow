@@ -1,7 +1,7 @@
 # mqtt-store-sensor.yaml
 # MQTT 센서 데이터를 수신하여 키-값 저장소에 저장하고, 저장된 값을 조회하는 플로우
 #
-# 구성: MQTT 수신 → 필드 추출 → store-write (센서별 저장) → store-read (검증 조회) → 콘솔 출력
+# 구성: MQTT 수신 → 필드 추출 → storage-write (센서별 저장) → store-read (검증 조회) → 콘솔 출력
 #                                                                                    ↘ 에러 로깅
 #
 # 입력 메시지 형식 (ChirpStack MQTT payload):
@@ -95,35 +95,26 @@ nodes:
     errors:
       - "error"
 
-  # ── 3단계: 센서 데이터 저장 (다중 메트릭) ──
-  # key_template으로 복합 키를 생성한다: "{location}:{device_id}" → "factory-A/line-3:a840..."
-  # metrics: 같은 키에 temperature/humidity 를 metric_type 별 시리즈로 각각 저장한다.
-  #   각 메트릭은 자체 value_key / data_type / 미세변화 억제(dead-band)를 갖는다.
-  # ttl/tags 는 모든 메트릭에 공유 적용된다.
-  #
-  # dead-band(미세변화 억제): 센서의 미세 흔들림으로 인한 과도한 데이터 생성을 막는다.
-  #   - min_interval: 최대 억제 구간. 이 시간이 지나면 변화가 없어도 1건 강제 저장(heartbeat).
-  #   - min_change: 절대 변화 임계값. 직전 저장값과의 차이가 이 값 이하이면 저장 생략.
-  #   - min_change_percent: 상대(%) 임계값(min_change와 함께 쓰면 둘 중 하나만 초과해도 저장).
-  #   분류는 저장소와 동일하게 key + metric_type + tags 시리즈별로 독립 적용된다.
-  #   메트릭에 min_interval 을 생략하면 그 메트릭은 항상 저장된다(하위호환).
+  # ── 3단계: 센서 데이터 저장 ──
+  # storage-write 는 메시지 구조를 그대로 기록 규약으로 삼는다:
+  #   payload   → 측정값 (키 = 측정 종류, 값 = 측정값). 여기서는 temperature / humidity.
+  #   metadata  → 태그 (그룹은 "device.id" 형태의 평면 태그로 펼쳐진다)
+  #   timestamp → 기록 시각
+  # measurement 로 복합 키를 만든다: "{location}:{device_id}" → "factory-A/line-3:a840..."
+  # 백엔드는 agent_ref 의 에이전트 타입으로 결정되므로, 이 설정 그대로 influxdb
+  # 에이전트를 물리면 같은 데이터가 시계열 DB 로 간다.
   - name: "store-sensor-value"
-    type: "store-write"
+    type: "storage-write"
     config:
-      key_template: "{location}:{device_id}"
+      # fields 모드: payload 의 키/값(temperature, humidity)이 이 measurement 아래
+      # 측정값으로 기록된다. 태그는 metadata, 기록 시각은 메시지 timestamp 가 쓰인다.
+      measurement: "{location}:{device_id}"
       namespace: "sensors"
       ttl: "1h"
-      metrics:
-        - metric_type: "temperature"
-          value_key: "$.payload.temperature"
-          data_type: "float"
-          min_interval: "30s"
-          min_change: 0.5
-        - metric_type: "humidity"
-          value_key: "$.payload.humidity"
-          data_type: "float"
-          min_interval: "1m"
-          min_change: 2
+      # location / device_id 는 키 템플릿용 식별자이므로 측정값에서 제외한다.
+      exclude_keys:
+        - "location"
+        - "device_id"
     inputs:
       - "in"
     outputs:

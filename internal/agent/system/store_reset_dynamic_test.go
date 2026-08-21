@@ -29,12 +29,12 @@ func newAutoUserStoreAgentWithManualKey(t *testing.T) *UserStoreAgent {
 }
 
 // writeDynamicSeries 는 동적(auto) 시리즈를 하나 써서 그 저장 키를 반환한다.
-func writeDynamicSeries(t *testing.T, u *UserStoreAgent, key, metric string) string {
+func writeDynamicSeries(t *testing.T, u *UserStoreAgent, key, field string) string {
 	t.Helper()
 	raw := u.NodeStoreForNamespace("")
 	adapter := raw.(*NodeStoreAdapter)
-	require.NoError(t, adapter.SetWithMeta(context.Background(), key, "1", StoreWriteMeta{MetricType: metric}))
-	return EncodeSeriesKey(SeriesID{Key: key, MetricType: metric}.Normalize())
+	require.NoError(t, adapter.SetWithMeta(context.Background(), key, "1", StoreWriteMeta{Field: field}))
+	return EncodeSeriesKey(SeriesID{Measurement: key, Field: field}.Normalize())
 }
 
 // TestIsStaticKey_OnlyManualIsStatic 는 IsStaticKey 가 Source=manual 만 정적으로
@@ -64,8 +64,8 @@ func TestDeleteEntry_RemovesDynamicRegistryMeta(t *testing.T) {
 }
 
 // TestState_EntryKeyIsDecodedUserKey 는 State() 의 엔트리 key 가 인코딩 시리즈 키
-// (metric|tags|key)가 아니라 디코드된 사용자 key 임을 검증한다(저장소 탭 키 컬럼 표시).
-// 회귀(수정 전): displayKey 가 인코딩 키 그대로라 "metric|key" 가 노출됐다.
+// (field|tags|key)가 아니라 디코드된 사용자 key 임을 검증한다(저장소 탭 키 컬럼 표시).
+// 회귀(수정 전): displayKey 가 인코딩 키 그대로라 "field|key" 가 노출됐다.
 func TestState_EntryKeyIsDecodedUserKey(t *testing.T) {
 	u := newAutoUserStoreAgentWithManualKey(t)
 	_ = writeDynamicSeries(t, u, "dev.temp", "current_temperature")
@@ -78,9 +78,9 @@ func TestState_EntryKeyIsDecodedUserKey(t *testing.T) {
 	for _, e := range entries {
 		if e["key"] == "dev.temp" {
 			found = true
-			assert.Equal(t, "current_temperature", e["metric_type"], "metric 은 별도 필드로 노출")
+			assert.Equal(t, "current_temperature", e["field"], "field 은 별도 필드로 노출")
 		}
-		// 인코딩 키(metric|...|key)가 그대로 노출되면 안 된다.
+		// 인코딩 키(field|...|key)가 그대로 노출되면 안 된다.
 		k, _ := e["key"].(string)
 		assert.NotContains(t, k, "|", "엔트리 key 에 시리즈 인코딩 구분자가 없어야 한다(디코드된 사용자 key)")
 	}
@@ -88,18 +88,18 @@ func TestState_EntryKeyIsDecodedUserKey(t *testing.T) {
 }
 
 // TestIsStaticKey_ExplicitDataTypeStillDynamic 는 명시 data_type(float/int/boolean)으로
-// store-write 된 런타임 키가 여전히 동적(IsStaticKey=false)임을 검증한다.
+// storage-write 된 런타임 키가 여전히 동적(IsStaticKey=false)임을 검증한다.
 // 회귀(수정 전): SetKeyDataType 가 명시 타입 신규 키를 Source=manual 로 등록해 정적 취급
 // → 전체 초기화에서 보존되어 자동 등록 키가 남았다.
 func TestIsStaticKey_ExplicitDataTypeStillDynamic(t *testing.T) {
 	u := newAutoUserStoreAgentWithManualKey(t)
 	raw := u.NodeStoreForNamespace("")
 	adapter := raw.(*NodeStoreAdapter)
-	// store-write 노드와 동일: data_type 명시 + metric (HVAC current_temperature=float).
+	// storage-write 노드와 동일: data_type 명시 + field (HVAC current_temperature=float).
 	require.NoError(t, adapter.SetWithMeta(context.Background(), "dev.temp", 21.5,
-		StoreWriteMeta{DataType: "float", MetricType: "current_temperature"}))
+		StoreWriteMeta{DataType: "float", Field: "current_temperature"}))
 
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "dev.temp", MetricType: "current_temperature"}.Normalize())
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "dev.temp", Field: "current_temperature"}.Normalize())
 	meta, ok := u.inner.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok)
 	assert.Equal(t, SourceAuto, meta.Source, "명시 data_type 이어도 런타임 등록 키는 Source=auto")
@@ -111,7 +111,7 @@ func TestIsStaticKey_ExplicitDataTypeStillDynamic(t *testing.T) {
 func TestState_StorageKeyIsEncoded(t *testing.T) {
 	u := newAutoUserStoreAgentWithManualKey(t)
 	_ = writeDynamicSeries(t, u, "dev.temp", "current_temperature")
-	wantStorage := EncodeSeriesKey(SeriesID{Key: "dev.temp", MetricType: "current_temperature"}.Normalize())
+	wantStorage := EncodeSeriesKey(SeriesID{Measurement: "dev.temp", Field: "current_temperature"}.Normalize())
 
 	st := u.State()
 	entries, _ := st["entries"].([]map[string]any)

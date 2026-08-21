@@ -35,8 +35,8 @@ func WithoutBuiltins() RegistryOption {
 // mqtt-subscriber, mqtt-publisher, lgap-status, lgap-control, lgap,
 // lgcp-status, lgcp-control, lgcp, lg-hvacr01-status, lg-hvacr01-control, lg-hvacr01,
 // lg-hvacr02-status, lg-hvacr02-control, lg-hvacr02, century-hvacr01-status, century-hvacr01-control, century-hvacr01,
-// tsdb-write, tsdb-query, influxdb-write, influxdb-read, influxdb-query,
-// store-write, store-read, serial-in, serial-out, tcp-in, tcp-out,
+// tsdb-write, tsdb-query, storage-write, influxdb-read, influxdb-query,
+// store-read, serial-in, serial-out, tcp-in, tcp-out,
 // framer, deduplicate, trigger, chart-emitter, inventory, select-field, flow-node)을 자동 등록한다.
 //
 // DEPRECATED: HVAC 노드 타입의 기존 `_` 식별자(samsung_hvacr01, lg_hvacr01,
@@ -119,10 +119,9 @@ func (r *Registry) registerBuiltins() {
 		{"century-hvacr01", NewCenturyHvacr01Node, "io", "Century HVACR-01 상태 조회 + 제어 통합 (emit_raw_frames 옵션 지원)"},
 		{"tsdb-write", NewTSDBWriteNode, "storage", "메시지를 시계열 DB에 기록"},
 		{"tsdb-query", NewTSDBQueryNode, "storage", "시계열 DB에서 데이터를 조회"},
-		{"influxdb-write", NewInfluxDBWriteNode, "storage", "메시지를 InfluxDB에 기록"},
+		{"storage-write", NewStorageWriteNode, "storage", "메시지를 스토리지(키-값 저장소 / 시계열 DB)에 기록 — 백엔드는 agent_ref 로 결정"},
 		{"influxdb-read", NewInfluxDBReadNode, "storage", "InfluxDB에서 주기적으로 데이터 조회"},
 		{"influxdb-query", NewInfluxDBQueryNode, "storage", "입력 메시지 기반 InfluxDB 쿼리 실행"},
-		{"store-write", NewStoreWriteNode, "storage", "메시지 데이터를 키-값 저장소에 기록"},
 		{"store-read", NewStoreReadNode, "storage", "키-값 저장소에서 데이터를 조회"},
 		{"serial-in", NewSerialInNode, "io", "시리얼 포트에서 데이터 수신"},
 		{"serial-out", NewSerialOutNode, "io", "시리얼 포트로 데이터 전송"},

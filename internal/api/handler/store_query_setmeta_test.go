@@ -1,6 +1,6 @@
 // @spec SPEC-STORE-003 v0.4.0
 //
-// 본 파일은 PUT /store/{name}/keys/{key}/meta (임의 엔트리의 metric_type/tags 설정)
+// 본 파일은 PUT /store/{name}/keys/{key}/meta (임의 엔트리의 field/tags 설정)
 // 핸들러를 검증한다. 동적 키 포함 모든 엔트리에 타입/태그를 부여할 수 있다.
 package handler
 
@@ -20,12 +20,12 @@ import (
 // setFn 으로 호출 인자를 캡처하거나 에러를 주입할 수 있다.
 type fakeKeyMetaSetter struct {
 	*fakeAgentCommon
-	setFn func(key, metricType string, tags map[string]string) error
+	setFn func(key, field string, tags map[string]string) error
 }
 
-func (f *fakeKeyMetaSetter) SetKeyMeta(key, metricType string, tags map[string]string) error {
+func (f *fakeKeyMetaSetter) SetKeyMeta(key, field string, tags map[string]string) error {
 	if f.setFn != nil {
-		return f.setFn(key, metricType, tags)
+		return f.setFn(key, field, tags)
 	}
 	return nil
 }
@@ -34,9 +34,9 @@ func (f *fakeKeyMetaSetter) SetKeyMeta(key, metricType string, tags map[string]s
 type setMetaResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
-		Key        string            `json:"key"`
-		MetricType string            `json:"metric_type"`
-		Tags       map[string]string `json:"tags"`
+		Key   string            `json:"key"`
+		Field string            `json:"field"`
+		Tags  map[string]string `json:"tags"`
 	} `json:"data"`
 }
 
@@ -54,8 +54,8 @@ func TestStoreQueryHandler_SetKeyMeta_성공(t *testing.T) {
 	var gotTags map[string]string
 	fake := &fakeKeyMetaSetter{
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
-		setFn: func(key, metricType string, tags map[string]string) error {
-			gotKey, gotMetric, gotTags = key, metricType, tags
+		setFn: func(key, field string, tags map[string]string) error {
+			gotKey, gotMetric, gotTags = key, field, tags
 			return nil
 		},
 	}
@@ -63,7 +63,7 @@ func TestStoreQueryHandler_SetKeyMeta_성공(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/store/store-a/keys/outdoor:humidity/meta",
-		strings.NewReader(`{"metric_type":"humidity","tags":{"room":"kitchen"}}`))
+		strings.NewReader(`{"field":"humidity","tags":{"room":"kitchen"}}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
@@ -72,7 +72,7 @@ func TestStoreQueryHandler_SetKeyMeta_성공(t *testing.T) {
 	resp := decodeSetMeta(t, rec)
 	assert.True(t, resp.Success)
 	assert.Equal(t, "outdoor:humidity", resp.Data.Key)
-	assert.Equal(t, "humidity", resp.Data.MetricType)
+	assert.Equal(t, "humidity", resp.Data.Field)
 	assert.Equal(t, "kitchen", resp.Data.Tags["room"])
 
 	// setter 가 디코드된 인자로 호출되었는지 검증.
@@ -81,9 +81,9 @@ func TestStoreQueryHandler_SetKeyMeta_성공(t *testing.T) {
 	assert.Equal(t, "kitchen", gotTags["room"])
 }
 
-// TestStoreQueryHandler_SetKeyMeta_빈metric_type_unknown 은 metric_type 생략 시
+// TestStoreQueryHandler_SetKeyMeta_빈field_unknown 은 field 생략 시
 // 응답이 "unknown" 으로 normalize 됨을 검증한다.
-func TestStoreQueryHandler_SetKeyMeta_빈metric_type_unknown(t *testing.T) {
+func TestStoreQueryHandler_SetKeyMeta_빈field_unknown(t *testing.T) {
 	fake := &fakeKeyMetaSetter{fakeAgentCommon: newFakeAgent("s1", "store-a", "store")}
 	router := setupStoreQueryRouter(t, fake)
 
@@ -96,24 +96,24 @@ func TestStoreQueryHandler_SetKeyMeta_빈metric_type_unknown(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeSetMeta(t, rec)
-	assert.Equal(t, "unknown", resp.Data.MetricType)
+	assert.Equal(t, "unknown", resp.Data.Field)
 	assert.NotNil(t, resp.Data.Tags, "tags 는 null 이 아닌 빈 객체")
 }
 
-// TestStoreQueryHandler_SetKeyMeta_잘못된metric_type_400 은 setter 가
-// ErrInvalidMetricType 을 반환하면 400 으로 매핑됨을 검증한다.
-func TestStoreQueryHandler_SetKeyMeta_잘못된metric_type_400(t *testing.T) {
+// TestStoreQueryHandler_SetKeyMeta_잘못된field_400 은 setter 가
+// ErrInvalidField 을 반환하면 400 으로 매핑됨을 검증한다.
+func TestStoreQueryHandler_SetKeyMeta_잘못된field_400(t *testing.T) {
 	fake := &fakeKeyMetaSetter{
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		setFn: func(_, _ string, _ map[string]string) error {
-			return system.ErrInvalidMetricType
+			return system.ErrInvalidField
 		},
 	}
 	router := setupStoreQueryRouter(t, fake)
 
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/store/store-a/keys/k/meta",
-		strings.NewReader(`{"metric_type":"bad type!"}`))
+		strings.NewReader(`{"field":"bad type!"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
@@ -148,7 +148,7 @@ func TestStoreQueryHandler_SetKeyMeta_에이전트없음_404(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/store/ghost/keys/k/meta",
-		strings.NewReader(`{"metric_type":"gauge"}`))
+		strings.NewReader(`{"field":"gauge"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
@@ -165,7 +165,7 @@ func TestStoreQueryHandler_SetKeyMeta_스토어아님_400(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/store/store-a/keys/k/meta",
-		strings.NewReader(`{"metric_type":"gauge"}`))
+		strings.NewReader(`{"field":"gauge"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
@@ -174,33 +174,33 @@ func TestStoreQueryHandler_SetKeyMeta_스토어아님_400(t *testing.T) {
 }
 
 // TestStoreQueryHandler_ListKeys_동적키_필터 는 동적(SourceAuto, string) 키가
-// GET /keys 의 metric_type / tag 필터 대상에 포함됨을 검증한다 (M3).
-// SetKeyMeta 로 동적 키에 metric_type/tags 를 부여하면 필터로 조회 가능하다.
+// GET /keys 의 field / tag 필터 대상에 포함됨을 검증한다 (M3).
+// SetKeyMeta 로 동적 키에 field/tags 를 부여하면 필터로 조회 가능하다.
 func TestStoreQueryHandler_ListKeys_동적키_필터(t *testing.T) {
 	ag := &fakeKeyMetaLister{
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
-			// 동적 키: SetKeyMeta 로 metric_type/tags 가 부여된 상태.
+			// 동적 키: SetKeyMeta 로 field/tags 가 부여된 상태.
 			"runtime:power": {
-				DataType:   system.DataTypeString,
-				MetricType: "power",
-				Tags:       map[string]string{"phase": "a"},
-				Source:     system.SourceAuto,
+				DataType: system.DataTypeString,
+				Field:    "power",
+				Tags:     map[string]string{"phase": "a"},
+				Source:   system.SourceAuto,
 			},
 			// 동적 키: 기본값(unknown, 빈 태그).
 			"runtime:misc": {
-				DataType:   system.DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{},
-				Source:     system.SourceAuto,
+				DataType: system.DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{},
+				Source:   system.SourceAuto,
 			},
 		},
 	}
 	router := setupStoreQueryRouter(t, ag)
 
-	// metric_type 필터로 동적 키 조회.
+	// field 필터로 동적 키 조회.
 	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/store/store-a/keys?metric_type=power", nil)
+		"/api/v1/store/store-a/keys?field=power", nil)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
@@ -248,7 +248,7 @@ func TestStoreQueryHandler_SetKeyMeta_콜론키_디코딩(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/store/store-a/keys/indoor%3A1%3Aroom_temp/meta",
-		strings.NewReader(`{"metric_type":"temperature"}`))
+		strings.NewReader(`{"field":"temperature"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)

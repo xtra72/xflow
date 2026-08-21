@@ -55,7 +55,7 @@ func NewLazyNodeStoreAdapter(resolver func() Store) *NodeStoreAdapter {
 
 // NewLazyNodeStoreAdapterWithAgent 는 NewLazyNodeStoreAdapter 에 더해 메타데이터
 // (data_type/tags) 설정을 위한 agentResolver 와 namespace 를 함께 받는다.
-// store-write 노드의 data_type/tags 지정 기능(SetWithMeta)을 활성화하려면 이 생성자를 사용한다.
+// storage-write 노드의 data_type/tags 지정 기능(SetWithMeta)을 활성화하려면 이 생성자를 사용한다.
 //
 // agentResolver 는 nil 을 반환해서는 안 되며, resolver 와 동일한 동시성 보장 아래에서
 // 현재 유효한 *StoreAgent 를 돌려주어야 한다.
@@ -84,11 +84,11 @@ type StoreWriteMeta struct {
 	// DataType 은 빈 문자열이 아니면 키를 그 data_type 으로 등록/고정한다.
 	// 6종 enum(int/float/string/boolean/bytes/json) 검증은 호출자(노드 Configure)의 책임이다.
 	DataType string
-	// MetricType 은 빈 문자열이 아니면 키의 metric_type 으로 적용한다.
-	// 빈 문자열이면 기존 metric_type(또는 unknown)을 보존한다 — metric_type 변경 안 함.
+	// Field 은 빈 문자열이 아니면 키의 field 으로 적용한다.
+	// 빈 문자열이면 기존 field(또는 unknown)을 보존한다 — field 변경 안 함.
 	// 정규식 ^[a-zA-Z0-9_-]+$ 검증은 호출자(노드 Configure/Process)의 책임이며,
 	// 본 어댑터는 전달된 값을 신뢰하고 SetKeyMeta 로 적용한다.
-	MetricType string
+	Field string
 	// Tags 는 비어있지 않으면 키에 태그를 부여한다.
 	Tags map[string]string
 	// TTL 은 0 보다 크면 값 쓰기에 TTL 을 적용한다.
@@ -96,18 +96,18 @@ type StoreWriteMeta struct {
 }
 
 // @spec SPEC-STORE-004
-// SetWithMeta 는 data_type / metric_type / tags 를 지정하여 값을 기록한다 (node.StoreMetaWriter 구현).
+// SetWithMeta 는 data_type / field / tags 를 지정하여 값을 기록한다 (node.StoreMetaWriter 구현).
 //
-// M2(쓰기 경로 시리즈화): metric_type/tags 는 더 이상 "키 메타 덮어쓰기"가 아니라
-// **시리즈 식별자 구성**에 사용된다. (key, metric_type, sorted(tags)) 를 SeriesID 로 정규화·
+// M2(쓰기 경로 시리즈화): field/tags 는 더 이상 "키 메타 덮어쓰기"가 아니라
+// **시리즈 식별자 구성**에 사용된다. (key, field, sorted(tags)) 를 SeriesID 로 정규화·
 // 인코딩하여 그 인코딩 문자열을 저장/레지스트리 키로 쓴다. 즉:
-//   - 같은 key + 다른 metric_type → 다른 시리즈 키 → 독립 시리즈 (N1/E2/AC-1).
+//   - 같은 key + 다른 field → 다른 시리즈 키 → 독립 시리즈 (N1/E2/AC-1).
 //   - 같은 key + 다른 tags(정규화 후) → 다른 시리즈 키 → 독립 시리즈 (N2/E3/AC-2).
 //   - tags 순서만 다름 → 같은 시리즈 키(인코딩이 정렬) → 동일 시리즈 갱신 (U2/AC-3).
 //   - data_type 만 다름 → 같은 시리즈 키(data_type 은 식별 차원 아님) → 동일 시리즈 (U3/N3/AC-4).
 //   - 메타 미지정 → 기본 시리즈 (key, "unknown", {}) (AC-16).
 //
-// 레이어 경계: node 패키지는 시리즈 개념을 모른다. 노드는 StoreWriteMeta(metric/tags) 만
+// 레이어 경계: node 패키지는 시리즈 개념을 모른다. 노드는 StoreWriteMeta(field/tags) 만
 // 전달하고, 시리즈 인코딩/라우팅은 system 계층(본 어댑터) 의 책임이다.
 //
 // 처리 순서 (네임스페이스 일관성 보존):
@@ -116,9 +116,9 @@ type StoreWriteMeta struct {
 //  3. 값 쓰기 → 일반 Set/SetWithTTL 경로(NamespacedStore)에 seriesKey 를 사용자 key 로 넘긴다.
 //     NamespacedStore 가 네임스페이스 접두사·gatekeeper 검증·coercion 을 일관되게 처리한다.
 //     최종 VolatileStore 키 = namespace + ":" + seriesKey (prefix 바깥, 시리즈 인코딩 안쪽).
-//  4. metric_type + tags 를 SetKeyMeta(seriesKey) 로 적용한다. seriesKey 는 이미 metric/tags 를
+//  4. field + tags 를 SetKeyMeta(seriesKey) 로 적용한다. seriesKey 는 이미 field/tags 를
 //     식별 차원으로 흡수했으므로, 여기서는 GET /keys 응답·필터를 위한 메타 라벨로 함께 저장한다.
-//     - SeriesID 정규화 결과(metric=unknown 보정, tags 깊은 복사)를 그대로 적용한다.
+//     - SeriesID 정규화 결과(field=unknown 보정, tags 깊은 복사)를 그대로 적용한다.
 //
 // agentResolver 가 없으면(NewNodeStoreAdapter 등으로 생성된 경우) 메타/시리즈 적용을 건너뛰고
 // 일반 쓰기(bare key)로 폴백하여 하위 호환을 보장한다.
@@ -151,16 +151,16 @@ func (a *NodeStoreAdapter) SetWithMeta(ctx context.Context, key string, value an
 		}
 	}
 
-	// 1) SeriesID 구성·정규화·인코딩. metric/tags 가 식별 차원이 된다.
+	// 1) SeriesID 구성·정규화·인코딩. field/tags 가 식별 차원이 된다.
 	//    이후 모든 키 연산(등록/쓰기/메타)은 이 인코딩 키를 사용자 key 로 사용한다.
-	series := SeriesID{Key: key, MetricType: opts.MetricType, Tags: opts.Tags}.Normalize()
+	series := SeriesID{Measurement: key, Field: opts.Field, Tags: opts.Tags}.Normalize()
 	seriesKey := EncodeSeriesKey(series)
 
 	// 2) DataType 지정 시 값 쓰기 전에 시리즈 키를 그 타입으로 등록/고정한다.
 	//    - 리터럴 6종 enum: 그대로 고정.
 	//    - "auto"(DataTypeAuto): 쓰기 값의 Go 타입에서 구체 타입을 추론해 고정한다.
 	//      추론 불가(nil/channel/func)면 고정을 생략하고 동적 string 폴백(checkKeyAllowed)에 맡긴다.
-	//      이로써 단일 store-write 노드가 측정별로 서로 다른 값 타입을 각 키에 맞는 타입으로 저장한다.
+	//      이로써 단일 storage-write 노드가 측정별로 서로 다른 값 타입을 각 키에 맞는 타입으로 저장한다.
 	if opts.DataType != "" && ag != nil {
 		if dt, ok := resolveWriteDataType(opts.DataType, value); ok {
 			ag.SetKeyDataType(seriesKey, dt)
@@ -172,21 +172,21 @@ func (a *NodeStoreAdapter) SetWithMeta(ctx context.Context, key string, value an
 		return err
 	}
 
-	// 4) 시리즈 메타(metric_type + tags) 라벨 적용. 정규화된 값(unknown 보정·깊은 복사)을 쓴다.
+	// 4) 시리즈 메타(field + tags) 라벨 적용. 정규화된 값(unknown 보정·깊은 복사)을 쓴다.
 	//    GET /keys 시리즈 행과 조회 filter 가 이 메타를 사용한다.
 	if ag != nil {
-		ag.SetKeyMeta(seriesKey, series.MetricType, series.Tags)
+		ag.SetKeyMeta(seriesKey, series.Field, series.Tags)
 	}
 
 	return nil
 }
 
 // @spec SPEC-STORE-004
-// GetSeries 는 (key, metric_type, tags) 시리즈의 현재값을 조회한다.
-// 시리즈 인코딩 키로 라우팅하여 단일 시리즈의 값을 가져온다. metric 빈 값/ nil tags 는
+// GetSeries 는 (key, field, tags) 시리즈의 현재값을 조회한다.
+// 시리즈 인코딩 키로 라우팅하여 단일 시리즈의 값을 가져온다. field 빈 값/ nil tags 는
 // 기본 시리즈로 정규화된다. 키가 없으면 (nil, false, nil) 을 반환한다.
-func (a *NodeStoreAdapter) GetSeries(ctx context.Context, key, metricType string, tags map[string]string) (any, bool, error) {
-	seriesKey := EncodeSeriesKey(SeriesID{Key: key, MetricType: metricType, Tags: tags})
+func (a *NodeStoreAdapter) GetSeries(ctx context.Context, key, field string, tags map[string]string) (any, bool, error) {
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: key, Field: field, Tags: tags})
 	return a.Get(ctx, seriesKey)
 }
 

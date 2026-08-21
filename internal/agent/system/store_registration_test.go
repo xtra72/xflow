@@ -83,10 +83,10 @@ func TestRegistration_ManualMode_RejectsUnregisteredKey(t *testing.T) {
 		"registration_type": "manual",
 		"keys": []any{
 			map[string]any{
-				"key":         "indoor:1:room_temp",
-				"data_type":   "float",
-				"metric_type": "temperature",
-				"tags":        map[string]any{"room": "1"},
+				"key":       "indoor:1:room_temp",
+				"data_type": "float",
+				"field":     "temperature",
+				"tags":      map[string]any{"room": "1"},
 			},
 		},
 	}
@@ -170,7 +170,7 @@ func TestRegistration_ManualMode_AllSourceManual(t *testing.T) {
 
 // @spec SPEC-STORE-003 v0.3.0 / Scenario 3 / M6 / M7
 // TestRegistration_AutoMode_RegistersNewKey 는 auto 모드에서 미등록 키 첫 쓰기 시
-// Source=SourceAuto, MetricType="unknown", Tags={} 로 등록됨을 검증한다.
+// Source=SourceAuto, Field="unknown", Tags={} 로 등록됨을 검증한다.
 func TestRegistration_AutoMode_RegistersNewKey(t *testing.T) {
 	options := map[string]any{
 		"registration_type": "auto",
@@ -186,24 +186,24 @@ func TestRegistration_AutoMode_RegistersNewKey(t *testing.T) {
 	assert.Equal(t, SourceAuto, meta.Source, "Source 는 SourceAuto")
 	// @spec v0.4.0: 동적 키는 추론 없이 항상 data_type=string.
 	assert.Equal(t, DataTypeString, meta.DataType, "data_type 은 string")
-	assert.Equal(t, "unknown", meta.MetricType, "metric_type default 는 'unknown'")
+	assert.Equal(t, "unknown", meta.Field, "field default 는 'unknown'")
 	require.NotNil(t, meta.Tags, "Tags 는 nil 이 아닌 빈 맵")
 	assert.Empty(t, meta.Tags, "auto 등록 키의 Tags 는 빈 맵")
 }
 
 // @spec SPEC-STORE-003 v0.3.0 / Scenario 3 / M6 state-driven
 // TestRegistration_AutoMode_PreservesManualKeyMetadata 는 auto 모드에서 yaml 에 명시된
-// manual 키의 메타데이터(Source=SourceManual, 명시한 metric_type, tags) 가 보존되며,
+// manual 키의 메타데이터(Source=SourceManual, 명시한 field, tags) 가 보존되며,
 // auto 등록된 키와 동시에 staticKeys 에 공존함을 검증한다.
 func TestRegistration_AutoMode_PreservesManualKeyMetadata(t *testing.T) {
 	options := map[string]any{
 		"registration_type": "auto",
 		"keys": []any{
 			map[string]any{
-				"key":         "indoor:1:room_temp",
-				"data_type":   "float",
-				"metric_type": "temperature",
-				"tags":        map[string]any{"room": "1"},
+				"key":       "indoor:1:room_temp",
+				"data_type": "float",
+				"field":     "temperature",
+				"tags":      map[string]any{"room": "1"},
 			},
 		},
 	}
@@ -220,14 +220,14 @@ func TestRegistration_AutoMode_PreservesManualKeyMetadata(t *testing.T) {
 	manual := snap["indoor:1:room_temp"]
 	assert.Equal(t, SourceManual, manual.Source, "yaml 정의 키는 Source=SourceManual")
 	assert.Equal(t, DataTypeFloat, manual.DataType)
-	assert.Equal(t, "temperature", manual.MetricType)
+	assert.Equal(t, "temperature", manual.Field)
 	assert.Equal(t, "1", manual.Tags["room"])
 
 	// Auto 키 메타. @spec v0.4.0: 동적 키는 항상 data_type=string.
 	auto := snap["outdoor:temperature"]
 	assert.Equal(t, SourceAuto, auto.Source, "자동 등록 키는 Source=SourceAuto")
 	assert.Equal(t, DataTypeString, auto.DataType, "동적 키는 data_type=string")
-	assert.Equal(t, "unknown", auto.MetricType)
+	assert.Equal(t, "unknown", auto.Field)
 	assert.Empty(t, auto.Tags)
 }
 
@@ -256,7 +256,7 @@ func TestRegistration_DynamicKeyCoercedToString(t *testing.T) {
 	assert.Equal(t, DataTypeString, snap["sensor1"].DataType,
 		"동적 키는 data_type=string 으로 등록")
 	assert.Equal(t, SourceAuto, snap["sensor1"].Source)
-	assert.Equal(t, "unknown", snap["sensor1"].MetricType)
+	assert.Equal(t, "unknown", snap["sensor1"].Field)
 
 	entry, err := store.Get(context.Background(), "sensor1")
 	require.NoError(t, err)

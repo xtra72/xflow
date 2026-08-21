@@ -29,7 +29,7 @@ type storeConfig struct {
 	// nil 또는 빈 맵이면 정적 키 정의가 없는 것으로 간주된다.
 	//
 	// v0.2.0 의 `map[string]map[string]string` (key → tags) 모델을
-	// `map[string]StaticKeyMeta` (key → DataType + MetricType + Tags + Source) 로 진화시켰다.
+	// `map[string]StaticKeyMeta` (key → DataType + Field + Tags + Source) 로 진화시켰다.
 	staticKeys map[string]StaticKeyMeta
 
 	// keyTag 는 자동 요소 생성(SetWithMeta) 시 키로 사용할 태그 이름이다.
@@ -127,7 +127,7 @@ func WithRegistrationType(rt RegistrationType) StoreOption {
 // nil 이거나 빈 맵이면 정적 키 정의가 없는 상태가 된다.
 //
 // v0.3.0 진화: value 가 v0.2.0 의 `map[string]string` (tags 단독) 에서
-// `StaticKeyMeta` (DataType + MetricType + Tags + Source) 로 변경되었다.
+// `StaticKeyMeta` (DataType + Field + Tags + Source) 로 변경되었다.
 //
 // @spec SPEC-STORE-003 v0.3.0
 func WithStaticKeys(keys map[string]StaticKeyMeta) StoreOption {

@@ -1,12 +1,12 @@
 // @spec SPEC-STORE-003 v0.3.0
 //
 // 본 파일은 v0.2.0 의 ListKeys 핸들러 테스트를 v0.3.0 객체 배열 응답
-// (`keys: [{key, registration, data_type, metric_type, tags}, ...]`) 으로 마이그레이션한 결과이다.
+// (`keys: [{key, registration, data_type, field, tags}, ...]`) 으로 마이그레이션한 결과이다.
 // v0.2.0 의 검증된 동작 (목록 정상 반환, nil/빈배열, 정적키 태그 포함, 다중 ?tag= 필터, 잘못된
 // 형식 거부) 은 그대로 보존되며, 응답 형상만 v0.3.0 envelope (StoreKeysListResponse) 로
 // 진화한다.
 //
-// 또한 v0.3.0 신규 필터 (?data_type=, ?metric_type=, ?registration=) 은 Phase F 의 별도
+// 또한 v0.3.0 신규 필터 (?data_type=, ?field=, ?registration=) 은 Phase F 의 별도
 // 추가 테스트에서 다룬다 (본 파일은 Phase E 마이그레이션 범위로 제한).
 
 package handler
@@ -24,7 +24,7 @@ import (
 
 // @spec SPEC-STORE-003 v0.3.0
 // listKeysResponse 는 v0.3.0 응답 envelope 의 디코더이다.
-// data: { count: int, keys: [{key, registration, data_type, metric_type, tags}, ...] }.
+// data: { count: int, keys: [{key, registration, data_type, field, tags}, ...] }.
 type listKeysResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
@@ -77,10 +77,10 @@ func (f *fakeKeyMetaLister) StaticKeysSnapshot() map[string]system.StaticKeyMeta
 			tagsCopy[tk] = tv
 		}
 		out[k] = system.StaticKeyMeta{
-			DataType:   meta.DataType,
-			MetricType: meta.MetricType,
-			Tags:       tagsCopy,
-			Source:     meta.Source,
+			DataType: meta.DataType,
+			Field:    meta.Field,
+			Tags:     tagsCopy,
+			Source:   meta.Source,
 		}
 	}
 	return out
@@ -106,29 +106,29 @@ func (f *fakeKeyMetaLister) LiveSeriesKeys() map[string]struct{} {
 // @spec SPEC-STORE-003 v0.3.0
 // v0.2.0 와 동일 의도 (Scenario 1 정상 동작): 정적 키가 있으면 응답에 객체 배열로 노출된다.
 // v0.3.0 진화: 응답이 string 배열이 아니라 객체 배열로 변경되었으며, registration/data_type/
-// metric_type/tags 가 함께 노출된다. namespace/pattern 쿼리 파라미터는 v0.3.0 응답에 영향을
+// field/tags 가 함께 노출된다. namespace/pattern 쿼리 파라미터는 v0.3.0 응답에 영향을
 // 주지 않는다 (StaticKeysSnapshot 만 사용).
 func TestStoreQueryHandler_ListKeys_성공(t *testing.T) {
 	agentFake := &fakeKeyMetaLister{
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"a": {
-				DataType:   system.DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{},
+				Source:   system.SourceManual,
 			},
 			"b": {
-				DataType:   system.DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{},
+				Source:   system.SourceManual,
 			},
 			"c": {
-				DataType:   system.DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{},
+				Source:   system.SourceManual,
 			},
 		},
 	}
@@ -153,7 +153,7 @@ func TestStoreQueryHandler_ListKeys_성공(t *testing.T) {
 	for _, k := range resp.Data.Keys {
 		assert.Equal(t, "manual", k.Registration)
 		assert.Equal(t, "string", k.DataType)
-		assert.Equal(t, "unknown", k.MetricType)
+		assert.Equal(t, "unknown", k.Field)
 		assert.NotNil(t, k.Tags, "tags 는 nil 이 아닌 빈 객체여야 한다 (M9)")
 	}
 }
@@ -165,19 +165,19 @@ func TestStoreQueryHandler_ListKeys_필터_데이터없는시리즈제외(t *tes
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"m-empty": { // manual(bare 정적 정의) + 실데이터 없음: 제외.
-				DataType: system.DataTypeBoolean, MetricType: "power",
+				DataType: system.DataTypeBoolean, Field: "power",
 				Tags: map[string]string{}, Source: system.SourceManual,
 			},
 			"m-live": { // manual + 실데이터 있음: 노출.
-				DataType: system.DataTypeBoolean, MetricType: "power",
+				DataType: system.DataTypeBoolean, Field: "power",
 				Tags: map[string]string{}, Source: system.SourceManual,
 			},
 			"a-live": { // auto + 실데이터 있음: 노출.
-				DataType: system.DataTypeBoolean, MetricType: "power",
+				DataType: system.DataTypeBoolean, Field: "power",
 				Tags: map[string]string{}, Source: system.SourceAuto,
 			},
 			"a-phantom": { // auto + 실데이터 없음: 유령 → 제외.
-				DataType: system.DataTypeBoolean, MetricType: "power",
+				DataType: system.DataTypeBoolean, Field: "power",
 				Tags: map[string]string{}, Source: system.SourceAuto,
 			},
 		},
@@ -229,28 +229,28 @@ func TestStoreQueryHandler_ListKeys_정적키없음_빈배열(t *testing.T) {
 // v0.3.0 진화:
 //   - top-level "tags" map → keys[].tags 객체로 이동.
 //   - 동적/자동 등록 키도 keys 배열에 항상 등장 (v0.2.0 의 "tags 생략" 동작과 다름).
-//   - 각 객체에 registration/data_type/metric_type 가 추가 노출.
+//   - 각 객체에 registration/data_type/field 가 추가 노출.
 func TestStoreQueryHandler_ListKeys_정적키_태그_포함(t *testing.T) {
 	ag := &fakeKeyMetaLister{
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"indoor:1:room_temp": {
-				DataType:   system.DataTypeFloat,
-				MetricType: "temperature",
-				Tags:       map[string]string{"room": "1", "type": "temperature"},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeFloat,
+				Field:    "temperature",
+				Tags:     map[string]string{"room": "1", "type": "temperature"},
+				Source:   system.SourceManual,
 			},
 			"outdoor:temperature": {
-				DataType:   system.DataTypeFloat,
-				MetricType: "temperature",
-				Tags:       map[string]string{"location": "outside", "type": "temperature"},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeFloat,
+				Field:    "temperature",
+				Tags:     map[string]string{"location": "outside", "type": "temperature"},
+				Source:   system.SourceManual,
 			},
 			"dynamic_key": {
-				DataType:   system.DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{},
-				Source:     system.SourceAuto,
+				DataType: system.DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{},
+				Source:   system.SourceAuto,
 			},
 		},
 	}
@@ -277,7 +277,7 @@ func TestStoreQueryHandler_ListKeys_정적키_태그_포함(t *testing.T) {
 	require.NotNil(t, indoor)
 	assert.Equal(t, "manual", indoor.Registration)
 	assert.Equal(t, "float", indoor.DataType)
-	assert.Equal(t, "temperature", indoor.MetricType)
+	assert.Equal(t, "temperature", indoor.Field)
 	assert.Equal(t, "1", indoor.Tags["room"])
 	assert.Equal(t, "temperature", indoor.Tags["type"])
 
@@ -290,7 +290,7 @@ func TestStoreQueryHandler_ListKeys_정적키_태그_포함(t *testing.T) {
 	require.NotNil(t, dyn)
 	assert.Equal(t, "auto", dyn.Registration)
 	assert.Equal(t, "string", dyn.DataType)
-	assert.Equal(t, "unknown", dyn.MetricType)
+	assert.Equal(t, "unknown", dyn.Field)
 	assert.NotNil(t, dyn.Tags)
 	assert.Empty(t, dyn.Tags)
 }
@@ -306,22 +306,22 @@ func TestStoreQueryHandler_ListKeys_태그필터_단일_매칭(t *testing.T) {
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"indoor:1:room_temp": {
-				DataType:   system.DataTypeFloat,
-				MetricType: "temperature",
-				Tags:       map[string]string{"room": "1", "type": "temperature"},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeFloat,
+				Field:    "temperature",
+				Tags:     map[string]string{"room": "1", "type": "temperature"},
+				Source:   system.SourceManual,
 			},
 			"indoor:2:room_temp": {
-				DataType:   system.DataTypeFloat,
-				MetricType: "temperature",
-				Tags:       map[string]string{"room": "2", "type": "temperature"},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeFloat,
+				Field:    "temperature",
+				Tags:     map[string]string{"room": "2", "type": "temperature"},
+				Source:   system.SourceManual,
 			},
 			"outdoor:temperature": {
-				DataType:   system.DataTypeFloat,
-				MetricType: "temperature",
-				Tags:       map[string]string{"location": "outside", "type": "temperature"},
-				Source:     system.SourceManual,
+				DataType: system.DataTypeFloat,
+				Field:    "temperature",
+				Tags:     map[string]string{"location": "outside", "type": "temperature"},
+				Source:   system.SourceManual,
 			},
 		},
 	}
@@ -346,17 +346,17 @@ func TestStoreQueryHandler_ListKeys_태그필터_다중_AND_매칭(t *testing.T)
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"indoor:1:room_temp": {
-				DataType: system.DataTypeFloat, MetricType: "temperature",
+				DataType: system.DataTypeFloat, Field: "temperature",
 				Tags:   map[string]string{"room": "1", "type": "temperature"},
 				Source: system.SourceManual,
 			},
 			"indoor:2:room_temp": {
-				DataType: system.DataTypeFloat, MetricType: "temperature",
+				DataType: system.DataTypeFloat, Field: "temperature",
 				Tags:   map[string]string{"room": "2", "type": "temperature"},
 				Source: system.SourceManual,
 			},
 			"outdoor:temperature": {
-				DataType: system.DataTypeFloat, MetricType: "temperature",
+				DataType: system.DataTypeFloat, Field: "temperature",
 				Tags:   map[string]string{"location": "outside", "type": "temperature"},
 				Source: system.SourceManual,
 			},
@@ -383,7 +383,7 @@ func TestStoreQueryHandler_ListKeys_태그필터_매칭없음_빈결과(t *testi
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"indoor:1:room_temp": {
-				DataType: system.DataTypeFloat, MetricType: "temperature",
+				DataType: system.DataTypeFloat, Field: "temperature",
 				Tags:   map[string]string{"room": "1"},
 				Source: system.SourceManual,
 			},
@@ -427,7 +427,7 @@ func TestStoreQueryHandler_ListKeys_태그필터_value내콜론_허용(t *testin
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"url_key": {
-				DataType: system.DataTypeString, MetricType: "unknown",
+				DataType: system.DataTypeString, Field: "unknown",
 				Tags:   map[string]string{"scheme": "https://example"},
 				Source: system.SourceManual,
 			},

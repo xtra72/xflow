@@ -1,6 +1,6 @@
 // @spec SPEC-STORE-003 v0.4.0
 //
-// store_meta_mutate_test.go 는 SetKeyMeta (임의 엔트리의 metric_type/tags 설정) 와
+// store_meta_mutate_test.go 는 SetKeyMeta (임의 엔트리의 field/tags 설정) 와
 // 동적 string 정책 관련 system 계층 동작을 검증한다.
 package system
 
@@ -33,7 +33,7 @@ func newAutoStoreAgent(t *testing.T) *UserStoreAgent {
 }
 
 // TestSetKeyMeta_DynamicKey_AssignsMetricAndTags 는 런타임에 자동 등록된 동적 키에
-// SetKeyMeta 로 metric_type 과 tags 를 부여할 수 있고, data_type=string / Source=auto 는
+// SetKeyMeta 로 field 과 tags 를 부여할 수 있고, data_type=string / Source=auto 는
 // 보존됨을 검증한다 (M2: 동적 키에도 타입/태그 지정 가능).
 func TestSetKeyMeta_DynamicKey_AssignsMetricAndTags(t *testing.T) {
 	a := newAutoStoreAgent(t)
@@ -43,10 +43,10 @@ func TestSetKeyMeta_DynamicKey_AssignsMetricAndTags(t *testing.T) {
 	store := a.inner.ForNamespace("default")
 	require.NoError(t, store.Set(ctx, "outdoor:humidity", 55))
 
-	// 등록 직후: metric_type=unknown, tags={}.
+	// 등록 직후: field=unknown, tags={}.
 	snap := a.StaticKeysSnapshot()
 	require.Contains(t, snap, "outdoor:humidity")
-	assert.Equal(t, "unknown", snap["outdoor:humidity"].MetricType)
+	assert.Equal(t, "unknown", snap["outdoor:humidity"].Field)
 	assert.Empty(t, snap["outdoor:humidity"].Tags)
 
 	// SetKeyMeta 로 타입/태그 부여.
@@ -55,7 +55,7 @@ func TestSetKeyMeta_DynamicKey_AssignsMetricAndTags(t *testing.T) {
 
 	snap = a.StaticKeysSnapshot()
 	meta := snap["outdoor:humidity"]
-	assert.Equal(t, "humidity", meta.MetricType, "metric_type 갱신")
+	assert.Equal(t, "humidity", meta.Field, "field 갱신")
 	assert.Equal(t, "kitchen", meta.Tags["room"], "tags 갱신")
 	assert.Equal(t, DataTypeString, meta.DataType, "동적 키 data_type=string 보존")
 	assert.Equal(t, SourceAuto, meta.Source, "Source=auto 보존")
@@ -74,12 +74,12 @@ func TestSetKeyMeta_UnregisteredKey_RegistersDynamicString(t *testing.T) {
 	meta := snap["future:key"]
 	assert.Equal(t, DataTypeString, meta.DataType)
 	assert.Equal(t, SourceAuto, meta.Source)
-	assert.Equal(t, "power", meta.MetricType)
+	assert.Equal(t, "power", meta.Field)
 	assert.Equal(t, "a", meta.Tags["phase"])
 }
 
 // TestSetKeyMeta_StaticKey_PreservesDataType 는 yaml 로 정의된 정적 키(명시 data_type)에
-// SetKeyMeta 를 적용해도 DataType/Source 가 보존되고 metric_type/tags 만 갱신됨을 검증한다
+// SetKeyMeta 를 적용해도 DataType/Source 가 보존되고 field/tags 만 갱신됨을 검증한다
 // (PRESERVE: 정적 키의 명시 data_type 보존).
 func TestSetKeyMeta_StaticKey_PreservesDataType(t *testing.T) {
 	a := newStaticKeysAgent(t, false) // manual 모드: indoor:1:room_temp = float
@@ -91,28 +91,28 @@ func TestSetKeyMeta_StaticKey_PreservesDataType(t *testing.T) {
 	meta := snap["indoor:1:room_temp"]
 	assert.Equal(t, DataTypeFloat, meta.DataType, "정적 키 명시 data_type 보존")
 	assert.Equal(t, SourceManual, meta.Source, "Source=manual 보존")
-	assert.Equal(t, "celsius", meta.MetricType, "metric_type 갱신")
+	assert.Equal(t, "celsius", meta.Field, "field 갱신")
 	assert.Equal(t, "2", meta.Tags["floor"], "tags 갱신")
 }
 
-// TestSetKeyMeta_EmptyMetricType_NormalizesToUnknown 은 빈 metric_type 이 "unknown" 으로
+// TestSetKeyMeta_EmptyField_NormalizesToUnknown 은 빈 field 이 "unknown" 으로
 // normalize 됨을 검증한다.
-func TestSetKeyMeta_EmptyMetricType_NormalizesToUnknown(t *testing.T) {
+func TestSetKeyMeta_EmptyField_NormalizesToUnknown(t *testing.T) {
 	a := newAutoStoreAgent(t)
 
 	require.NoError(t, a.SetKeyMeta("k", "", nil))
 	snap := a.StaticKeysSnapshot()
-	assert.Equal(t, "unknown", snap["k"].MetricType)
+	assert.Equal(t, "unknown", snap["k"].Field)
 }
 
-// TestSetKeyMeta_InvalidMetricType_Rejected 는 정규식 위반 metric_type 이
-// ErrInvalidMetricType 으로 거부됨을 검증한다.
-func TestSetKeyMeta_InvalidMetricType_Rejected(t *testing.T) {
+// TestSetKeyMeta_InvalidField_Rejected 는 정규식 위반 field 이
+// ErrInvalidField 으로 거부됨을 검증한다.
+func TestSetKeyMeta_InvalidField_Rejected(t *testing.T) {
 	a := newAutoStoreAgent(t)
 
 	err := a.SetKeyMeta("k", "bad type!", nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidMetricType)
+	assert.ErrorIs(t, err, ErrInvalidField)
 
 	// 거부 시 등록되지 않아야 한다.
 	snap := a.StaticKeysSnapshot()

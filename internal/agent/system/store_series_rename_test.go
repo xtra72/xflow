@@ -24,17 +24,17 @@ func TestRenameKey_MovesAllSeriesWithValueMetaAndHistory(t *testing.T) {
 	ctx := context.Background()
 	u, adapter := newRenameFixture(t)
 
-	// oldkey 아래 두 시리즈(metric 다름) 생성 + 히스토리 축적.
-	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(21), StoreWriteMeta{MetricType: "temp", DataType: "float"}))
-	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(22), StoreWriteMeta{MetricType: "temp", DataType: "float"}))
-	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(40), StoreWriteMeta{MetricType: "humidity", DataType: "float"}))
+	// oldkey 아래 두 시리즈(field 다름) 생성 + 히스토리 축적.
+	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(21), StoreWriteMeta{Field: "temp", DataType: "float"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(22), StoreWriteMeta{Field: "temp", DataType: "float"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(40), StoreWriteMeta{Field: "humidity", DataType: "float"}))
 
 	moved, err := u.RenameKey(ctx, "default", "oldkey", "newkey")
 	require.NoError(t, err)
 	assert.Equal(t, 2, moved, "두 시리즈(temp, humidity)가 이동")
 
 	// 새 키 시리즈가 등록되어 있고 값/메타 보존.
-	newTemp := EncodeSeriesKey(SeriesID{Key: "newkey", MetricType: "temp"})
+	newTemp := EncodeSeriesKey(SeriesID{Measurement: "newkey", Field: "temp"})
 	meta, ok := u.inner.StaticKeyMetaFor(newTemp)
 	require.True(t, ok, "새 키 시리즈 메타 존재")
 	assert.Equal(t, DataType("float"), meta.DataType, "data_type 보존")
@@ -50,7 +50,7 @@ func TestRenameKey_MovesAllSeriesWithValueMetaAndHistory(t *testing.T) {
 	assert.NotEmpty(t, hist, "히스토리 보존")
 
 	// 기존 키 시리즈는 사라짐.
-	oldTemp := EncodeSeriesKey(SeriesID{Key: "oldkey", MetricType: "temp"})
+	oldTemp := EncodeSeriesKey(SeriesID{Measurement: "oldkey", Field: "temp"})
 	_, ok = u.inner.StaticKeyMetaFor(oldTemp)
 	assert.False(t, ok, "기존 키 메타 제거")
 	has, _ := u.inner.ForNamespace("default").Has(ctx, oldTemp)
@@ -63,15 +63,15 @@ func TestRenameKey_RejectsWhenDestinationExists(t *testing.T) {
 	ctx := context.Background()
 	u, adapter := newRenameFixture(t)
 
-	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(1), StoreWriteMeta{MetricType: "temp", DataType: "float"}))
-	require.NoError(t, adapter.SetWithMeta(ctx, "newkey", float64(9), StoreWriteMeta{MetricType: "temp", DataType: "float"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "oldkey", float64(1), StoreWriteMeta{Field: "temp", DataType: "float"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "newkey", float64(9), StoreWriteMeta{Field: "temp", DataType: "float"}))
 
 	moved, err := u.RenameKey(ctx, "default", "oldkey", "newkey")
 	require.ErrorIs(t, err, ErrKeyExists)
 	assert.Equal(t, 0, moved)
 
 	// 기존 키는 그대로 남아있어야 한다(변경 없음).
-	oldTemp := EncodeSeriesKey(SeriesID{Key: "oldkey", MetricType: "temp"})
+	oldTemp := EncodeSeriesKey(SeriesID{Measurement: "oldkey", Field: "temp"})
 	_, ok := u.inner.StaticKeyMetaFor(oldTemp)
 	assert.True(t, ok, "거부 시 기존 키 보존")
 }

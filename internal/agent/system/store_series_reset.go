@@ -11,19 +11,19 @@ import (
 //
 // M2 이후 저장 키와 레지스트리(staticKeys)는 EncodeSeriesKey 인코딩으로 키잉되므로,
 // 사용자 관점 key 에 대한 reset 은 "그 key 아래의 시리즈들" 을 식별하여 시리즈 단위로
-// 처리해야 한다(E8). 본 파일은 (namespace, key, metricFilter, tagsFilter) 로 대상 시리즈를
+// 처리해야 한다(E8). 본 파일은 (namespace, key, fieldFilter, tagsFilter) 로 대상 시리즈를
 // 좁혀 정적/동적 정책을 시리즈 단위로 적용하는 ResetSeries 와, IsStaticKey 의 사용자 관점
 // 보조 의미를 제공한다.
 
 // ResetSeries 는 (namespace, key) 아래 필터에 일치하는 모든 시리즈를 reset 한다 (E8/AC-15).
 //
 // 식별자(필터) 의미 — QuerySeries 의 seriesMatchesFilter 와 동일 규칙:
-//   - metricFilter 와 tagsFilter 가 모두 비어있으면 해당 key 의 **모든 시리즈**가 대상이다.
-//     이것이 "식별자 누락 시 정책" 의 확정 결정이다: 사용자가 metric/tags 없이 "이 key 삭제"
-//     를 요청하면, 그 key 의 전 시리즈(모든 metric/tags 조합)를 reset 한다. 이는 시리즈
+//   - fieldFilter 와 tagsFilter 가 모두 비어있으면 해당 key 의 **모든 시리즈**가 대상이다.
+//     이것이 "식별자 누락 시 정책" 의 확정 결정이다: 사용자가 field/tags 없이 "이 key 삭제"
+//     를 요청하면, 그 key 의 전 시리즈(모든 field/tags 조합)를 reset 한다. 이는 시리즈
 //     도입 이전의 "key 1개 = 아이템 1개" 시절 사용자 직관("이 키를 지운다")을 보존한다.
-//   - metricFilter 만 주어지면 그 metric 의 모든 tags 조합 시리즈가 대상이다(부분집합).
-//   - metricFilter + tagsFilter 가 주어지면 더 좁혀 일치하는 단일/부분집합 시리즈가 대상이다.
+//   - fieldFilter 만 주어지면 그 field 의 모든 tags 조합 시리즈가 대상이다(부분집합).
+//   - fieldFilter + tagsFilter 가 주어지면 더 좁혀 일치하는 단일/부분집합 시리즈가 대상이다.
 //
 // 시리즈별 정책 (현재 reset 정책을 시리즈 단위로 보존):
 //   - 정적 시리즈(레지스트리에 등록된 키, IsStaticKey 의 직접 조회 적중) → ClearHistory
@@ -38,7 +38,7 @@ import (
 // namespace 빈 값은 "default" 로 정규화된다.
 func (a *UserStoreAgent) ResetSeries(
 	ctx context.Context,
-	namespace, key, metricFilter string,
+	namespace, key, fieldFilter string,
 	tagsFilter map[string]string,
 ) (historyCleared, entriesDeleted int, err error) {
 	if namespace == "" {
@@ -62,7 +62,7 @@ func (a *UserStoreAgent) ResetSeries(
 
 	for _, rawKey := range rawKeys {
 		sid := decodeStorageKeyToSeries(rawKey)
-		if !seriesMatchesFilter(sid, key, metricFilter, tagsFilter) {
+		if !seriesMatchesFilter(sid, key, fieldFilter, tagsFilter) {
 			continue
 		}
 

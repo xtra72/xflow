@@ -195,7 +195,7 @@ func (nb *xsfmNodeBase) AgentRef() flow.AgentRef {
 //
 // 두 개의 서로 다른 관심사를 가진다 (REQ-XSFM-001-06-01, -05-01):
 //   - 텔레메트리 출력(SourceNode): 에이전트가 방출하는 device_state_changed 등을
-//     ReceiveMessage 로 drain 하여 SourceCh 로 하류(influxdb-write 등)에 전달한다.
+//     ReceiveMessage 로 drain 하여 SourceCh 로 하류(storage-write 등)에 전달한다.
 //   - 상태 입력 포트(Process): port 모드에서 상류 mqtt-in 의 device-STATE 메시지를 받아
 //     에이전트의 FeedState 로 주입한다. direct 모드에서는 에이전트가 자체 구독으로
 //     상태를 받으므로 입력 포트는 사용되지 않는다.

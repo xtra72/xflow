@@ -249,7 +249,7 @@ func TestQueryBridge_AgentStore(t *testing.T) {
 	store := &fakeQueryStoreReader{resp: &handler.StoreKeysListResponse{
 		Count: 1,
 		Keys: []handler.StoreKeyResponse{
-			{Key: "temp", Registration: "manual", DataType: "float", MetricType: "temperature", Tags: map[string]string{}},
+			{Key: "temp", Registration: "manual", DataType: "float", Field: "temperature", Tags: map[string]string{}},
 		},
 	}}
 	bridge := newRemoteQuerySource(&fakeQueryFlowReader{}, agents, &fakeQueryDeviceReader{}, store, &fakeQuerySeriesReader{})

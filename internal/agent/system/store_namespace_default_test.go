@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNodeStoreForNamespace_EmptyMatchesQueryDefault 는 store-write 노드가 빈
+// TestNodeStoreForNamespace_EmptyMatchesQueryDefault 는 storage-write 노드가 빈
 // 네임스페이스("")로 쓴 값을 API 쿼리 경로(빈 네임스페이스 → "default" 기본값)에서
 // 조회할 수 있는지 검증한다.
 //
@@ -19,7 +19,7 @@ func TestNodeStoreForNamespace_EmptyMatchesQueryDefault(t *testing.T) {
 	ctx := context.Background()
 	ua := newTestRestartableUserStoreAgent(t)
 
-	// store-write 노드(namespace="")처럼 빈 네임스페이스로 adapter 획득 후 쓰기.
+	// storage-write 노드(namespace="")처럼 빈 네임스페이스로 adapter 획득 후 쓰기.
 	raw := ua.NodeStoreForNamespace("")
 	adapter, ok := raw.(*NodeStoreAdapter)
 	require.True(t, ok, "NodeStoreForNamespace 는 *NodeStoreAdapter 를 반환해야 한다")

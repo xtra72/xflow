@@ -1,12 +1,12 @@
 // @spec SPEC-STORE-003 v0.3.0
 //
-// store_query_listkeys_filters_test.go — M9 신규 필터 축 (?data_type=, ?metric_type=,
+// store_query_listkeys_filters_test.go — M9 신규 필터 축 (?data_type=, ?field=,
 // ?registration=) 과 ?tag= 의 AND 결합을 검증하는 Phase F 테스트.
 //
 // 본 파일은 store_query_listkeys_test.go (Phase E 마이그레이션, ?tag= 만 다룸) 의
 // 빈틈을 메우며 Scenario 9, 10 + Edge Case Checklist v0.3.0 신규 항목들을 다룬다.
 //
-//   - Scenario 9: metric_type 필터 + default unknown 표시
+//   - Scenario 9: field 필터 + default unknown 표시
 //   - Scenario 10: 객체 배열 응답 + multi-filter AND
 //   - Edge cases: 필터 enum 외 값 → 빈 결과 (not 400),
 //     빈 필터 값 → no-filter passthrough (실제 구현 정책),
@@ -42,10 +42,10 @@ func buildKeyMeta(
 		tags = map[string]string{}
 	}
 	return system.StaticKeyMeta{
-		DataType:   dt,
-		MetricType: mt,
-		Tags:       tags,
-		Source:     source,
+		DataType: dt,
+		Field:    mt,
+		Tags:     tags,
+		Source:   source,
 	}
 }
 
@@ -77,10 +77,10 @@ func doListKeysGET(t *testing.T, ag *fakeKeyMetaLister, queryString string) list
 	return decodeListKeys(t, rec)
 }
 
-// makeMixedKeysFixture 는 4축 (data_type, metric_type, registration, tags) 모두
+// makeMixedKeysFixture 는 4축 (data_type, field, registration, tags) 모두
 // 다양한 8개 키를 가진 fixture 를 생성한다. AND 결합 / 단축 필터 테스트의 공통 입력이다.
 //
-//	key             | data_type | metric_type | registration | tags
+//	key             | data_type | field | registration | tags
 //	----------------|-----------|-------------|--------------|---------------
 //	indoor:1:temp   | float     | temperature | manual       | {room: "1"}
 //	indoor:2:temp   | float     | temperature | manual       | {room: "2"}
@@ -152,15 +152,15 @@ func TestListKeys_Filter_DataType_NoMatches(t *testing.T) {
 }
 
 // =============================================================================
-// B. ?metric_type= 필터 (M8 / M9)
+// B. ?field= 필터 (M8 / M9)
 // =============================================================================
 
 // @spec SPEC-STORE-003 v0.3.0 / M9 / Scenario 9
-// TestListKeys_Filter_MetricType_Single 은 ?metric_type=temperature 가 해당
-// metric_type 키만 반환하고 default unknown 키는 제외함을 검증한다.
-func TestListKeys_Filter_MetricType_Single(t *testing.T) {
+// TestListKeys_Filter_Field_Single 은 ?field=temperature 가 해당
+// field 키만 반환하고 default unknown 키는 제외함을 검증한다.
+func TestListKeys_Filter_Field_Single(t *testing.T) {
 	ag := makeMetaListerWithKeys(makeMixedKeysFixture())
-	resp := doListKeysGET(t, ag, "metric_type=temperature")
+	resp := doListKeysGET(t, ag, "field=temperature")
 
 	expected := []string{"indoor:1:temp", "indoor:2:temp"}
 	got := make([]string, 0, len(resp.Data.Keys))
@@ -170,18 +170,18 @@ func TestListKeys_Filter_MetricType_Single(t *testing.T) {
 	assert.Equal(t, expected, got)
 	assert.Equal(t, 2, resp.Data.Count)
 
-	// 모든 응답 객체의 metric_type 은 "temperature" 여야 한다.
+	// 모든 응답 객체의 field 은 "temperature" 여야 한다.
 	for _, k := range resp.Data.Keys {
-		assert.Equal(t, "temperature", k.MetricType)
+		assert.Equal(t, "temperature", k.Field)
 	}
 }
 
 // @spec SPEC-STORE-003 v0.3.0 / M9 / Scenario 9
-// TestListKeys_Filter_MetricType_DefaultUnknownIncluded 는 ?metric_type=unknown 으로
+// TestListKeys_Filter_Field_DefaultUnknownIncluded 는 ?field=unknown 으로
 // default 적용된 (auto 등록 또는 yaml 누락) 키만 필터링되는지 검증한다.
-func TestListKeys_Filter_MetricType_DefaultUnknownIncluded(t *testing.T) {
+func TestListKeys_Filter_Field_DefaultUnknownIncluded(t *testing.T) {
 	ag := makeMetaListerWithKeys(makeMixedKeysFixture())
-	resp := doListKeysGET(t, ag, "metric_type=unknown")
+	resp := doListKeysGET(t, ag, "field=unknown")
 
 	// fixture 의 unknown 키는 auto_int, auto_float, auto_string 3개.
 	expected := []string{"auto_float", "auto_int", "auto_string"}
@@ -233,14 +233,14 @@ func TestListKeys_Filter_Registration_Auto(t *testing.T) {
 
 // @spec SPEC-STORE-003 v0.3.0 / M9 / Scenario 10
 // TestListKeys_Filter_AND_All4Axes 는 모든 4개 축 (registration, data_type,
-// metric_type, tag) 이 동시 적용될 때 모든 조건을 만족하는 키만 반환됨을 검증한다.
+// field, tag) 이 동시 적용될 때 모든 조건을 만족하는 키만 반환됨을 검증한다.
 //
-// fixture 에서 registration=manual + data_type=float + metric_type=temperature + tag=room:1
+// fixture 에서 registration=manual + data_type=float + field=temperature + tag=room:1
 // 을 동시 만족하는 키는 indoor:1:temp 단 하나이다.
 func TestListKeys_Filter_AND_All4Axes(t *testing.T) {
 	ag := makeMetaListerWithKeys(makeMixedKeysFixture())
 	resp := doListKeysGET(t, ag,
-		"registration=manual&data_type=float&metric_type=temperature&tag=room:1")
+		"registration=manual&data_type=float&field=temperature&tag=room:1")
 
 	require.Equal(t, 1, resp.Data.Count, "모든 4 조건 만족 키는 정확히 1개")
 	require.Len(t, resp.Data.Keys, 1)
@@ -248,7 +248,7 @@ func TestListKeys_Filter_AND_All4Axes(t *testing.T) {
 	assert.Equal(t, "indoor:1:temp", k.Key)
 	assert.Equal(t, "manual", k.Registration)
 	assert.Equal(t, "float", k.DataType)
-	assert.Equal(t, "temperature", k.MetricType)
+	assert.Equal(t, "temperature", k.Field)
 	assert.Equal(t, "1", k.Tags["room"])
 }
 
@@ -276,7 +276,7 @@ func TestListKeys_Filter_NoMatches_Empty(t *testing.T) {
 	})
 	router := setupStoreQueryRouter(t, ag)
 	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/store/store-a/keys?metric_type=nonexistent", nil)
+		"/api/v1/store/store-a/keys?field=nonexistent", nil)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 
@@ -323,7 +323,7 @@ func TestListKeys_Sorting_AlphabeticalAscending(t *testing.T) {
 // TestListKeys_AutoRegistered_AppearWithDefaults 는 auto 등록 키가 응답에 다음
 // default 값으로 노출됨을 검증한다.
 //   - registration: "auto"
-//   - metric_type:  "unknown"
+//   - field:  "unknown"
 //   - tags:         {} (빈 객체, null 아님)
 func TestListKeys_AutoRegistered_AppearWithDefaults(t *testing.T) {
 	ag := makeMetaListerWithKeys(map[string]system.StaticKeyMeta{
@@ -337,7 +337,7 @@ func TestListKeys_AutoRegistered_AppearWithDefaults(t *testing.T) {
 	assert.Equal(t, "auto_key", k.Key)
 	assert.Equal(t, "auto", k.Registration)
 	assert.Equal(t, "int", k.DataType)
-	assert.Equal(t, "unknown", k.MetricType)
+	assert.Equal(t, "unknown", k.Field)
 	require.NotNil(t, k.Tags, "Tags 는 nil 이 아닌 빈 객체")
 	assert.Empty(t, k.Tags)
 }
@@ -358,10 +358,10 @@ func TestListKeys_TagsAlwaysObjectNotNull(t *testing.T) {
 		fakeAgentCommon: newFakeAgent("s1", "store-a", "store"),
 		staticKeys: map[string]system.StaticKeyMeta{
 			"k_nil_tags": {
-				DataType:   system.DataTypeFloat,
-				MetricType: "unknown",
-				Tags:       nil, // 명시적 nil
-				Source:     system.SourceAuto,
+				DataType: system.DataTypeFloat,
+				Field:    "unknown",
+				Tags:     nil, // 명시적 nil
+				Source:   system.SourceAuto,
 			},
 		},
 	}
@@ -384,15 +384,15 @@ func TestListKeys_TagsAlwaysObjectNotNull(t *testing.T) {
 // =============================================================================
 
 // @spec SPEC-STORE-003 v0.3.0 / M9 (구현 정책 vs SPEC 차이)
-// TestListKeys_FilterPresentEmptyValue_NoFilter 은 ?metric_type= (URL 파라미터가
+// TestListKeys_FilterPresentEmptyValue_NoFilter 은 ?field= (URL 파라미터가
 // 존재하지만 값이 빈 문자열) 인 경우 핸들러가 이를 "필터 미적용" 으로 처리함을 검증한다.
 //
 // SPEC M9 의 state-driven 절은 "IF 필터 값이 빈 문자열이면 빈 결과를 반환한다" 라고
 // 명시하지만, Phase D 의 실제 구현은 keyFilter struct 의 빈 문자열을 no-op 으로 정의했다
 // (store_query.go keyFilter 주석 참조). 본 테스트는 실제 구현 동작을 명시적으로 문서화한다.
 //
-// 동작 근거: staticKeys 의 MetricType 은 항상 normalize (auto: "unknown", manual yaml:
-// validateMetricType 으로 보정) 되어 빈 문자열이 될 수 없으므로, 빈 필터 값은 모든 키에
+// 동작 근거: staticKeys 의 Field 은 항상 normalize (auto: "unknown", manual yaml:
+// validateField 으로 보정) 되어 빈 문자열이 될 수 없으므로, 빈 필터 값은 모든 키에
 // 대해 false 가 될 수 없고 "필터 적용 안 함" 으로 처리해도 동작상 차이가 없다.
 //
 // 향후 SPEC 수정으로 SPEC 와 구현이 일치할 가능성이 있다. 본 테스트는 실제 동작을
@@ -400,10 +400,10 @@ func TestListKeys_TagsAlwaysObjectNotNull(t *testing.T) {
 func TestListKeys_FilterPresentEmptyValue_NoFilter(t *testing.T) {
 	ag := makeMetaListerWithKeys(makeMixedKeysFixture())
 
-	// ?metric_type= (값 비움) → 모든 키 반환 (8개).
-	resp := doListKeysGET(t, ag, "metric_type=")
+	// ?field= (값 비움) → 모든 키 반환 (8개).
+	resp := doListKeysGET(t, ag, "field=")
 	assert.Equal(t, 8, resp.Data.Count,
-		"빈 metric_type 필터는 no-op 으로 처리되어 모든 키 반환 (Phase D 구현 정책)")
+		"빈 field 필터는 no-op 으로 처리되어 모든 키 반환 (Phase D 구현 정책)")
 
 	// ?data_type= (값 비움) 도 동일.
 	resp = doListKeysGET(t, ag, "data_type=")
@@ -422,7 +422,7 @@ func TestListKeys_FilterPresentEmptyValue_NoFilter(t *testing.T) {
 
 // @spec SPEC-STORE-003 v0.3.0 / M9 / Scenario 10
 // TestListKeys_AllFiveFieldsPresent 는 응답의 모든 키 객체가 5개 필드 (key,
-// registration, data_type, metric_type, tags) 를 항상 포함함을 raw JSON 수준에서
+// registration, data_type, field, tags) 를 항상 포함함을 raw JSON 수준에서
 // 검증한다 ("모든 객체는 5개 필드를 항상 포함한다, 빈 tags 라도 {}로 명시").
 func TestListKeys_AllFiveFieldsPresent(t *testing.T) {
 	ag := makeMetaListerWithKeys(map[string]system.StaticKeyMeta{
@@ -449,7 +449,7 @@ func TestListKeys_AllFiveFieldsPresent(t *testing.T) {
 	require.Len(t, raw.Data.Keys, 2)
 
 	// 각 객체에 5개 필드가 모두 존재해야 한다.
-	requiredFields := []string{"key", "registration", "data_type", "metric_type", "tags"}
+	requiredFields := []string{"key", "registration", "data_type", "field", "tags"}
 	for i, obj := range raw.Data.Keys {
 		for _, f := range requiredFields {
 			_, exists := obj[f]
@@ -480,11 +480,11 @@ func TestListKeys_Filter_AND_RegistrationDataType(t *testing.T) {
 }
 
 // @spec SPEC-STORE-003 v0.3.0 / M9 / Scenario 10 보조
-// TestListKeys_Filter_AND_MetricTypeRegistration 는 metric_type + registration 조합도
+// TestListKeys_Filter_AND_FieldRegistration 는 field + registration 조합도
 // AND 로 결합됨을 검증한다.
-func TestListKeys_Filter_AND_MetricTypeRegistration(t *testing.T) {
+func TestListKeys_Filter_AND_FieldRegistration(t *testing.T) {
 	ag := makeMetaListerWithKeys(makeMixedKeysFixture())
-	resp := doListKeysGET(t, ag, "metric_type=count&registration=manual")
+	resp := doListKeysGET(t, ag, "field=count&registration=manual")
 
 	// fixture 에서 count + manual 는 count_a, count_b.
 	assert.Equal(t, 2, resp.Data.Count)

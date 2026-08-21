@@ -79,7 +79,7 @@ type StoreReadNode struct {
 	store           StoreReader
 	resolver        AgentResolver  // AgentResolver (생성 시 옵션에서 추출)
 	agentRef        *flow.AgentRef // Store 에이전트 참조
-	keyTemplate     string         // 키 템플릿 (예: "{device}:{metric}")
+	keyTemplate     string         // 키 템플릿 (예: "{device}:{field}")
 	namespace       string         // Store 네임스페이스
 	outputKey       string         // 조회 결과를 저장할 payload 키 (기본값: "store_value")
 	includeMetadata bool           // 메타데이터를 함께 조회할지 여부 (기본값: false)

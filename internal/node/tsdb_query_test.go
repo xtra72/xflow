@@ -129,14 +129,14 @@ func TestTSDBQueryNode_Process_Aggregation(t *testing.T) {
 	// 테스트 데이터 기록: 10, 20, 30 -> avg = 20
 	values := []float64{10.0, 20.0, 30.0}
 	for _, v := range values {
-		err := db.Write("metric", nil, map[string]any{"value": v})
+		err := db.Write("field", nil, map[string]any{"value": v})
 		require.NoError(t, err)
 		time.Sleep(1 * time.Millisecond)
 	}
 
 	err = n.Configure(map[string]any{
 		"_tsdb":       db,
-		"measurement": "metric",
+		"measurement": "field",
 		"time_range":  "1h",
 		"aggregation": "avg",
 		"field":       "value",

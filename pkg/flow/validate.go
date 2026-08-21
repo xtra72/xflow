@@ -139,9 +139,8 @@ func validateDuplicateNodeNames(nodes []NodeDef) []ValidationError {
 var agentRefRequiredTypes = map[string]struct{}{
 	"bridge":          {},
 	"store-read":      {},
-	"store-write":     {},
+	"storage-write":   {},
 	"influxdb-read":   {},
-	"influxdb-write":  {},
 	"influxdb-query":  {},
 	"tsdb-write":      {},
 	"tsdb-query":      {},

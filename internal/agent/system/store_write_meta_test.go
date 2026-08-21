@@ -1,4 +1,4 @@
-// store_write_meta_test.go 는 store-write 노드의 data_type/tags 지정 기능을 뒷받침하는
+// store_write_meta_test.go 는 storage-write 노드의 data_type/tags 지정 기능을 뒷받침하는
 // system 계층 동작을 검증한다:
 //   - StoreAgent.SetKeyDataType 의 data_type 등록/보존 정책
 //   - NodeStoreAdapter.SetWithMeta 의 통합 동작 (등록 → 값 쓰기 → 태그)
@@ -29,7 +29,7 @@ func TestSetKeyDataType_Unregistered_NonString_RegistersAuto(t *testing.T) {
 	meta := snap["temp"]
 	assert.Equal(t, DataTypeFloat, meta.DataType)
 	assert.Equal(t, SourceAuto, meta.Source, "런타임 등록 키는 명시 타입이어도 Source=auto")
-	assert.Equal(t, "unknown", meta.MetricType)
+	assert.Equal(t, "unknown", meta.Field)
 }
 
 // 미등록 키에 string data_type 을 지정하면 동적 string 정책(Source=auto)을 따른다.
@@ -63,14 +63,14 @@ func TestSetKeyDataType_DynamicString_Overwritten(t *testing.T) {
 
 // PRESERVE: yaml 정적 키(명시 data_type)는 SetKeyDataType 으로도 보존된다.
 func TestSetKeyDataType_StaticKey_Preserved(t *testing.T) {
-	a := newStaticKeysAgent(t, false) // manual: indoor:1:room_temp = float, metric_type=temperature
+	a := newStaticKeysAgent(t, false) // manual: indoor:1:room_temp = float, field=temperature
 
 	a.inner.SetKeyDataType("indoor:1:room_temp", DataTypeInt) // 침범 시도
 
 	meta := a.StaticKeysSnapshot()["indoor:1:room_temp"]
 	assert.Equal(t, DataTypeFloat, meta.DataType, "정적 키 data_type 은 보존되어야 한다")
 	assert.Equal(t, SourceManual, meta.Source)
-	assert.Equal(t, "temperature", meta.MetricType, "정적 키 metric_type 보존")
+	assert.Equal(t, "temperature", meta.Field, "정적 키 field 보존")
 }
 
 // --- NodeStoreAdapter.SetWithMeta 통합 ---
@@ -85,7 +85,7 @@ func TestNodeStoreAdapter_SetWithMeta_DataType(t *testing.T) {
 	require.NoError(t, err)
 
 	// @spec SPEC-STORE-004: 기본 시리즈 (temp, "unknown", {}) 로 라우팅된다.
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "temp"})
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "temp"})
 	meta := a.StaticKeysSnapshot()[seriesKey]
 	assert.Equal(t, DataTypeFloat, meta.DataType)
 
@@ -96,7 +96,7 @@ func TestNodeStoreAdapter_SetWithMeta_DataType(t *testing.T) {
 	assert.Equal(t, 21.5, val, "float 값이 string 으로 변환되지 않아야 한다")
 }
 
-// tags 지정 쓰기: 엔트리(키)에 태그가 부여되고 metric_type 은 unknown 으로 유지된다.
+// tags 지정 쓰기: 엔트리(키)에 태그가 부여되고 field 은 unknown 으로 유지된다.
 func TestNodeStoreAdapter_SetWithMeta_Tags(t *testing.T) {
 	a := newAutoStoreAgent(t)
 	ctx := context.Background()
@@ -108,10 +108,10 @@ func TestNodeStoreAdapter_SetWithMeta_Tags(t *testing.T) {
 	require.NoError(t, err)
 
 	// @spec SPEC-STORE-004: 시리즈 (hum, "unknown", {room:kitchen}) 로 라우팅된다.
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "hum", Tags: map[string]string{"room": "kitchen"}})
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "hum", Tags: map[string]string{"room": "kitchen"}})
 	meta := a.StaticKeysSnapshot()[seriesKey]
 	assert.Equal(t, "kitchen", meta.Tags["room"], "태그가 부여되어야 한다")
-	assert.Equal(t, "unknown", meta.MetricType, "tags 부여가 metric_type 을 망가뜨리지 않아야 한다")
+	assert.Equal(t, "unknown", meta.Field, "tags 부여가 field 을 망가뜨리지 않아야 한다")
 }
 
 // data_type + tags + TTL 조합 쓰기.
@@ -128,7 +128,7 @@ func TestNodeStoreAdapter_SetWithMeta_DataType_Tags_TTL(t *testing.T) {
 	require.NoError(t, err)
 
 	// @spec SPEC-STORE-004: 시리즈 (co2, "unknown", {unit:ppm}) 로 라우팅된다.
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "co2", Tags: map[string]string{"unit": "ppm"}})
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "co2", Tags: map[string]string{"unit": "ppm"}})
 	meta := a.StaticKeysSnapshot()[seriesKey]
 	assert.Equal(t, DataTypeInt, meta.DataType)
 	assert.Equal(t, "ppm", meta.Tags["unit"])

@@ -20,8 +20,8 @@ import (
 //
 // 본 테스트는 다음을 보존(characterize)한다:
 //   - PersistentStore 는 시리즈 인코딩 키를 byte-perfect 로 저장/조회/삭제한다 (불투명 키 계약).
-//   - namespace prefix + 시리즈 인코딩 결합 키(`namespace:metric|tags|key`)도 동일하게 처리.
-//   - 서로 다른 시리즈(같은 key, 다른 metric/tags) 는 서로 다른 영속 키로 독립 보관된다.
+//   - namespace prefix + 시리즈 인코딩 결합 키(`namespace:field|tags|key`)도 동일하게 처리.
+//   - 서로 다른 시리즈(같은 key, 다른 field/tags) 는 서로 다른 영속 키로 독립 보관된다.
 //   - 동일 시리즈(tags 순서만 다름) 는 같은 영속 키로 정합되어 동일 엔트리를 갱신한다.
 //
 // 이로써 "영속 백엔드는 시리즈를 모르는 채 string 키만 다룬다" 는 SPEC §영속 백엔드 영향의
@@ -37,12 +37,12 @@ func TestPersistentStore_SeriesEncodedKey_OpaqueRoundTrip(t *testing.T) {
 
 	// SetWithMeta 가 산출하는 것과 동일한 시리즈 인코딩 키.
 	seriesKey := EncodeSeriesKey(SeriesID{
-		Key:        "room",
-		MetricType: "temperature",
-		Tags:       map[string]string{"area": "a"},
+		Measurement: "room",
+		Field:       "temperature",
+		Tags:        map[string]string{"area": "a"},
 	})
 	require.Equal(t, "temperature|area=a|room", seriesKey,
-		"시리즈 인코딩 형식(metric|tags|key)이 기대와 일치해야 한다")
+		"시리즈 인코딩 형식(field|tags|key)이 기대와 일치해야 한다")
 
 	// 영속 저장/조회 — 키는 불투명 string 으로 취급된다.
 	require.NoError(t, store.Set(ctx, seriesKey, 22.5))
@@ -64,14 +64,14 @@ func TestPersistentStore_SeriesEncodedKey_OpaqueRoundTrip(t *testing.T) {
 }
 
 // TestPersistentStore_NamespacedSeriesKey 는 namespace prefix 와 시리즈 인코딩이 결합된
-// 최종 키(`namespace:metric|tags|key`)도 영속 계층이 불투명하게 처리하는지 확인한다.
+// 최종 키(`namespace:field|tags|key`)도 영속 계층이 불투명하게 처리하는지 확인한다.
 func TestPersistentStore_NamespacedSeriesKey(t *testing.T) {
 	t.Parallel()
 
 	store, _ := newTestPersistentStore()
 	ctx := context.Background()
 
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "sensor", MetricType: "humidity"})
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "sensor", Field: "humidity"})
 	// NamespacedStore 는 prefix 를 시리즈 인코딩 바깥에 붙인다 (A2): namespace + ":" + seriesKey.
 	finalKey := "default:" + seriesKey
 
@@ -81,7 +81,7 @@ func TestPersistentStore_NamespacedSeriesKey(t *testing.T) {
 	assert.EqualValues(t, 55, toInt(got.Value))
 }
 
-// TestPersistentStore_DistinctSeriesAreIndependent 는 같은 key 라도 metric/tags 가 다른
+// TestPersistentStore_DistinctSeriesAreIndependent 는 같은 key 라도 field/tags 가 다른
 // 시리즈가 영속 계층에서 서로 독립된 키로 보관되어 덮어쓰지 않음을 확인한다 (N1/N2 영속 정합).
 func TestPersistentStore_DistinctSeriesAreIndependent(t *testing.T) {
 	t.Parallel()
@@ -89,9 +89,9 @@ func TestPersistentStore_DistinctSeriesAreIndependent(t *testing.T) {
 	store, _ := newTestPersistentStore()
 	ctx := context.Background()
 
-	tempKey := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
-	humKey := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "humidity"})
-	require.NotEqual(t, tempKey, humKey, "다른 metric_type 은 다른 시리즈 키여야 한다")
+	tempKey := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "temperature"})
+	humKey := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "humidity"})
+	require.NotEqual(t, tempKey, humKey, "다른 field 은 다른 시리즈 키여야 한다")
 
 	require.NoError(t, store.Set(ctx, tempKey, 22))
 	require.NoError(t, store.Set(ctx, humKey, 55))
@@ -114,8 +114,8 @@ func TestPersistentStore_TagOrderInvariantKey(t *testing.T) {
 	store, repo := newTestPersistentStore()
 	ctx := context.Background()
 
-	key1 := EncodeSeriesKey(SeriesID{Key: "t", MetricType: "temp", Tags: map[string]string{"room": "1", "floor": "2"}})
-	key2 := EncodeSeriesKey(SeriesID{Key: "t", MetricType: "temp", Tags: map[string]string{"floor": "2", "room": "1"}})
+	key1 := EncodeSeriesKey(SeriesID{Measurement: "t", Field: "temp", Tags: map[string]string{"room": "1", "floor": "2"}})
+	key2 := EncodeSeriesKey(SeriesID{Measurement: "t", Field: "temp", Tags: map[string]string{"floor": "2", "room": "1"}})
 	require.Equal(t, key1, key2, "tags 순서가 달라도 동일 시리즈 키여야 한다")
 
 	require.NoError(t, store.Set(ctx, key1, 20))

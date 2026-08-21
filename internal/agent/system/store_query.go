@@ -184,7 +184,7 @@ func (a *UserStoreAgent) IsStaticKey(key string) bool {
 		if meta.Source != SourceManual {
 			continue
 		}
-		if regKey == key || decodeStorageKeyToSeries(regKey).Key == key {
+		if regKey == key || decodeStorageKeyToSeries(regKey).Measurement == key {
 			return true
 		}
 	}

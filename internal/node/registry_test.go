@@ -34,7 +34,7 @@ func dummyFactory(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 func TestNewRegistry_기본생성_빌트인포함(t *testing.T) {
 	r := NewRegistry()
 
-	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "output", "deadletter", "samsung-hvacr01-status", "samsung-hvacr01-control", "samsung-hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-write", "modbus-read", "modbus-control", "lgap-status", "lgap-control", "lgap", "lg-hvacr02-status", "lg-hvacr02-control", "lg-hvacr02", "tsdb-write", "tsdb-query", "store-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
+	builtins := []string{"filter", "transform", "switch", "bridge", "script", "catch", "aggregate", "mapping", "output", "deadletter", "samsung-hvacr01-status", "samsung-hvacr01-control", "samsung-hvacr01", "mqtt-subscriber", "mqtt-publisher", "modbus-write", "modbus-read", "modbus-control", "lgap-status", "lgap-control", "lgap", "lg-hvacr02-status", "lg-hvacr02-control", "lg-hvacr02", "tsdb-write", "tsdb-query", "storage-write", "store-read", "serial-in", "serial-out", "tcp-in", "tcp-out", "framer"}
 	for _, typ := range builtins {
 		assert.True(t, r.Has(typ), "빌트인 타입 %q가 등록되어 있어야 한다", typ)
 	}
@@ -172,7 +172,7 @@ func TestRegistry_TypeMeta_빌트인(t *testing.T) {
 		"lg-hvacr02":              {"io", "LG HVACR-02 (LG ICP-02) 상태 조회 + 제어 통합", "builtin"},
 		"tsdb-write":              {"storage", "메시지를 시계열 DB에 기록", "builtin"},
 		"tsdb-query":              {"storage", "시계열 DB에서 데이터를 조회", "builtin"},
-		"store-write":             {"storage", "메시지 데이터를 키-값 저장소에 기록", "builtin"},
+		"storage-write":           {"storage", "메시지를 스토리지(키-값 저장소 / 시계열 DB)에 기록 — 백엔드는 agent_ref 로 결정", "builtin"},
 		"store-read":              {"storage", "키-값 저장소에서 데이터를 조회", "builtin"},
 		"serial-in":               {"io", "시리얼 포트에서 데이터 수신", "builtin"},
 		"serial-out":              {"io", "시리얼 포트로 데이터 전송", "builtin"},
@@ -287,7 +287,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 73) // 59 canonical builtins (modbus-write/modbus-read/modbus-control/modbus-remap + split + chirpstack-in/-control/-status 추가) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
+	assert.Len(t, metas, 72) // 58 canonical builtins (store-write + influxdb-write 를 storage-write 하나로 통합) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

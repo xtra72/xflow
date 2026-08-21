@@ -12,8 +12,8 @@ import (
 // 스토어 식별자이다. 따라서 사용자가 키 이름을 변경할 수 있도록 지원한다. 예: 디바이스
 // name 변경으로 새 시리즈가 생겼을 때, 기존 시리즈를 새 이름으로 옮겨 정리할 수 있다.
 
-// RenameKey 는 (namespace, oldKey) 아래의 모든 시리즈(metric/tags 조합 전체)를 newKey 로
-// 이동한다. 각 시리즈의 값 + 히스토리 + 레지스트리 메타(DataType/MetricType/Tags/Source)를
+// RenameKey 는 (namespace, oldKey) 아래의 모든 시리즈(field/tags 조합 전체)를 newKey 로
+// 이동한다. 각 시리즈의 값 + 히스토리 + 레지스트리 메타(DataType/Field/Tags/Source)를
 // 보존한다.
 //
 // 정책:
@@ -58,10 +58,10 @@ func (a *UserStoreAgent) RenameKey(
 	var pairs []movePair
 	for _, rawKey := range rawKeys {
 		sid := decodeStorageKeyToSeries(rawKey)
-		if sid.Key != oldKey {
+		if sid.Measurement != oldKey {
 			continue
 		}
-		newRaw := EncodeSeriesKey(SeriesID{Key: newKey, MetricType: sid.MetricType, Tags: sid.Tags})
+		newRaw := EncodeSeriesKey(SeriesID{Measurement: newKey, Field: sid.Field, Tags: sid.Tags})
 		pairs = append(pairs, movePair{oldRaw: rawKey, newRaw: newRaw})
 	}
 	if len(pairs) == 0 {

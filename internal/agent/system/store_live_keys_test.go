@@ -18,11 +18,11 @@ func TestLiveSeriesKeys_ReflectsStoredData(t *testing.T) {
 	adapter := NewLazyNodeStoreAdapterWithAgent(storeResolver, agentResolver, "default")
 
 	require.NoError(t, adapter.SetWithMeta(ctx, "dev1", true, StoreWriteMeta{
-		MetricType: "power", DataType: "boolean", Tags: map[string]string{"name": "indoor-1"},
+		Field: "power", DataType: "boolean", Tags: map[string]string{"name": "indoor-1"},
 	}))
 
 	seriesKey := EncodeSeriesKey(SeriesID{
-		Key: "dev1", MetricType: "power", Tags: map[string]string{"name": "indoor-1"},
+		Measurement: "dev1", Field: "power", Tags: map[string]string{"name": "indoor-1"},
 	})
 
 	live := u.inner.LiveSeriesKeys()
@@ -30,7 +30,7 @@ func TestLiveSeriesKeys_ReflectsStoredData(t *testing.T) {
 	assert.True(t, ok, "저장된 시리즈는 LiveSeriesKeys 에 포함")
 
 	// 존재하지 않는(유령) 시리즈 키는 포함되지 않는다.
-	phantom := EncodeSeriesKey(SeriesID{Key: "dev1", MetricType: "power"})
+	phantom := EncodeSeriesKey(SeriesID{Measurement: "dev1", Field: "power"})
 	_, ok = live[phantom]
 	assert.False(t, ok, "실데이터 없는 시리즈는 LiveSeriesKeys 에 없음")
 }
@@ -47,9 +47,9 @@ func TestLiveSeriesKeys_ExcludesPhantom(t *testing.T) {
 
 	// bare 시리즈(태그 없음) 쓰기 → 레지스트리 + 데이터 생성.
 	require.NoError(t, adapter.SetWithMeta(ctx, "dev", true, StoreWriteMeta{
-		MetricType: "power", DataType: "boolean",
+		Field: "power", DataType: "boolean",
 	}))
-	bareKey := EncodeSeriesKey(SeriesID{Key: "dev", MetricType: "power"})
+	bareKey := EncodeSeriesKey(SeriesID{Measurement: "dev", Field: "power"})
 
 	// 데이터만 삭제(레지스트리는 유지) → 유령 상태 재현(과거 만료/삭제 시 레지스트리 미정리).
 	require.NoError(t, u.inner.ForNamespace("default").Delete(ctx, bareKey))
