@@ -18,6 +18,7 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 
+import { normalizeStoreSeriesAlias } from '../charts/chartChannelTypes';
 import type { StoreSeriesRef, StoreSourceConfig } from '../charts/chartChannelTypes';
 import { useStoreChartData } from '../charts/useStoreChartData';
 import { parseHeatmapConfig } from './heatmapConfig';
@@ -28,9 +29,15 @@ import HeatmapCanvas, { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './Heatm
 import ContourLayer from './ContourLayer';
 import HeatmapLegend from './HeatmapLegend';
 import FloorPlanBackground from './FloorPlanBackground';
+import FloorPlanTransformOverlay from './FloorPlanTransformOverlay';
 import SensorPlacementOverlay, { type PlacedSensor } from './SensorPlacementOverlay';
 import type { NormalizedPos } from './placement';
-import { computeStageBox, migratePositionsToStage } from './stage';
+import {
+  applyStageTransform,
+  computeStageBox,
+  migratePositionsToStage,
+  stageToContainer,
+} from './stage';
 import { useFloorPlanAspect } from './useFloorPlanAspect';
 import { useFloorPlanSources } from './useFloorPlanSources';
 import { usePanelTitleVisible } from '../../panelChromeContext';
@@ -88,8 +95,11 @@ export default function HeatmapPanel({
   // 바인딩을 keys 로 강제하고 tag_filters 를 제거한 파생 소스로 조회한다(line/gauge 등 다른
   // 패널의 tag 동작은 useStoreChartData 를 그대로 두어 영향받지 않는다).
   // 체크된 시리즈(단일 진실원). 손상 config 방어로 배열이 아니면 빈 배열.
+  // legacy 기본 alias(=key)를 "이름 없음" 으로 되돌린 뒤 사용한다. 그대로 두면 사용자가
+  // 붙인 이름과 구분되지 않아, 형제 센서가 모두 같은 이름(=key)으로 보인다.
   const refs = useMemo<StoreSeriesRef[]>(
-    () => (Array.isArray(storeSource?.series) ? storeSource.series : []),
+    () =>
+      normalizeStoreSeriesAlias(Array.isArray(storeSource?.series) ? storeSource.series : []),
     [storeSource],
   );
   // 조회용 파생 소스에서 alias 를 **센서 동일성 키**로 치환한다. 한 store key 를 공유하는
@@ -143,9 +153,16 @@ export default function HeatmapPanel({
   const baseLayer = cfg.floor_plans[0];
   const baseAspect = useFloorPlanAspect(baseLayer, floorPlanSources[0]);
   // stage_fit: 여백(contain, 기본) / 잘림(cover) / 왜곡(stretch) 중 무엇을 감수할지의 선택.
+  // fit 으로 기본 박스를 구한 뒤 사용자가 직접 옮기고 키운 변형을 얹는다. 마커는 스테이지
+  // 정규화 좌표라 변형을 따로 반영할 필요 없이 도면 위 같은 지점에 그대로 붙어 따라온다.
   const stage = useMemo(
-    () => computeStageBox(bodySize.width, bodySize.height, baseAspect, cfg.stage_fit),
-    [bodySize.width, bodySize.height, baseAspect, cfg.stage_fit],
+    () =>
+      applyStageTransform(
+        computeStageBox(bodySize.width, bodySize.height, baseAspect, cfg.stage_fit),
+        cfg.stage_transform,
+        bodySize,
+      ),
+    [bodySize, baseAspect, cfg.stage_fit, cfg.stage_transform],
   );
 
   // 레거시 좌표(컨테이너 기준) → 스테이지 기준 환산. 실측 rect 로 환산하므로 **보이던 위치가
@@ -204,9 +221,10 @@ export default function HeatmapPanel({
   // 같은 글자로 찍혀 서로 구분되지 않는다. 마커/칩 텍스트 전용이며 매칭에는 쓰지 않는다.
   const sensorLabels = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const ref of refs) map[heatmapSensorId(ref)] = sensorSeriesLabel(ref);
+    for (const ref of refs)
+      map[heatmapSensorId(ref)] = sensorSeriesLabel(ref, storeSource?.series_name_format);
     return map;
-  }, [refs]);
+  }, [refs, storeSource?.series_name_format]);
   // 편집 대상: 현재 바인딩된 시리즈 중 좌표가 있는 센서(마커). 라이브 판독값과 무관하게
   // config 좌표를 직접 쓰되(joinSensorPoints 의 points 는 판독값 필요), 바운드 집합으로 거른다.
   const placed: PlacedSensor[] = useMemo(
@@ -236,9 +254,19 @@ export default function HeatmapPanel({
     writePositions(next);
   };
   // 범례 드래그 이동 → legend.offset 만 부분 갱신한다(다른 legend 필드 보존).
+  // 범례는 이제 패널 본문 기준이다. 표식(offset_space)이 없는 구 config 는 스테이지 좌표이므로
+  // 실측 스테이지로 환산해 **보이던 위치를 보존**한다(마커의 sensor_space 이관과 같은 방식).
+  const legendInPanelSpace = useMemo(() => {
+    const lg = cfg.legend;
+    if (!lg?.offset || lg.offset_space === 'panel') return lg;
+    if (!(stage.width > 0) || !(bodySize.width > 0)) return lg;
+    return { ...lg, offset: stageToContainer(lg.offset, bodySize, stage) };
+  }, [cfg.legend, stage, bodySize]);
+
   const handleLegendOffsetChange = (offset: NormalizedPos) => {
     if (!cfg.legend) return;
-    onConfigChange?.({ legend: { ...cfg.legend, offset } });
+    // 새 좌표는 패널 공간이다 — 표식을 함께 남겨 다음 렌더에서 다시 환산되지 않게 한다.
+    onConfigChange?.({ legend: { ...cfg.legend, offset, offset_space: 'panel' } });
   };
 
   // 배치 활성 = 런타임 편집 토글(대시보드) OR forcePlacement(설정 미리보기). 후자는
@@ -368,20 +396,33 @@ export default function HeatmapPanel({
               {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedNames.length))}
             </span>
           )}
-          {/* 값→색 색표 범례(additive, 최상단 z-25, pointer-events-none). 편집모드와 무관하게
-              표시(뷰어도 봄). off/미설정 시 마운트 안 함 → 회귀 0. */}
-          {cfg.legend?.enabled && (
+        </div>
+          {/* 도면 직접 배치 — 배치 편집 중에만. 스테이지 바깥에 두어야 도면을 패널 밖까지
+              끌어낼 수 있다(스테이지 안이면 자기 자신에 잘린다). 마커는 스테이지 정규화
+              좌표라 변형을 따라 자동으로 함께 움직인다. */}
+          {placementActive && canEdit && hasBackground && (
+            <FloorPlanTransformOverlay
+              stage={stage}
+              container={bodySize}
+              transform={cfg.stage_transform}
+              onChange={(next) => onConfigChange?.({ stage_transform: next })}
+              onReset={() => onConfigChange?.({ stage_transform: undefined })}
+            />
+          )}
+          {/* 값→색 색표 범례 — 스테이지(도면 박스) 바깥, 패널 본문에 둔다. 스테이지 안에 두면
+              overflow-hidden 에 잘려 도면 밖으로 내보낼 수 없었다(보고된 제약). 본문 기준이므로
+              도면 여백/잘림과 무관하게 패널 어디에나 놓을 수 있다. */}
+          {cfg.legend?.enabled && legendInPanelSpace && (
             <HeatmapLegend
               bounds={bounds}
               colorTable={colorTable}
-              legend={cfg.legend}
+              legend={legendInPanelSpace}
               // 드래그는 배치 편집 중(대시보드 편집모드 토글 또는 설정 미리보기)에만 허용한다 —
               // 센서 마커 배치와 동일한 게이팅이라 뷰어 동작은 그대로다.
               draggable={placementActive && canEdit}
               onOffsetChange={handleLegendOffsetChange}
             />
           )}
-        </div>
         </div>
       )}
 

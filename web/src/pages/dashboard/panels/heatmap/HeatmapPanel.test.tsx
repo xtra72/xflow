@@ -523,8 +523,8 @@ describe('HeatmapPanel', () => {
   // -------------------------------------------------------------------------
 
   /** 같은 key('dup')를 room 태그로 나눠 쓰는 형제 시리즈. */
-  const DUP_A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } };
-  const DUP_B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } };
+  const DUP_A = { key: 'dup', field: 'temperature', tags: { room: 'A' } };
+  const DUP_B = { key: 'dup', field: 'temperature', tags: { room: 'B' } };
 
   function storeConfig(
     series: Array<Record<string, unknown>>,

@@ -935,7 +935,9 @@
         "tagTimestamp": "Time",
         "tagLevels": "Level",
         "tagSource": "Source",
-        "dragOrderTitle": "Drag to reorder"
+        "dragOrderTitle": "Drag to reorder",
+        "seriesCount": "{count} series",
+        "panelArea": "Panel area"
       },
       "dataSource": "Data source",
       "dataSourceTsdbTitle": "TSDB data source",
@@ -994,7 +996,8 @@
       "editRemoveAria": "Remove sensor {key} coordinates",
       "editPlaceAria": "Place sensor {key} on floor plan",
       "editUnplacedHint": "Unplaced sensors — drag onto the plan",
-      "legendAria": "Value color legend ({min} ~ {max})"
+      "legendAria": "Value color legend ({min} ~ {max})",
+      "transformReset": "Reset placement"
     },
     "chart": {
       "channelNameError": "Invalid channel name. Must start with a letter and contain only letters, digits, hyphens, or underscores (max 64 chars).",
@@ -1150,12 +1153,14 @@
       "storeSeriesNameAria": "Display name for {key}",
       "storeSeriesColorAria": "Color for {key}",
       "storeSeriesRemoveAria": "Remove {key}",
-      "storeAliasInsertToken": "Insert tag:",
+      "storeAliasInsertToken": "Insert token:",
       "storeAliasPreview": "Preview:",
       "storeTagPickerLabel": "Tag filter (AND)",
       "storeTagAnyValue": "(any)",
       "storeTagMatchCount": "{count} keys matched",
-      "storeTagNone": "No tags available. Use key selection instead."
+      "storeTagNone": "No tags available. Use key selection instead.",
+      "storeSeriesNameFormat": "Series name format",
+      "storeSeriesNameFormatPlaceholder": "Empty = default (e.g. {$.measurement}/{$.field})"
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"
@@ -1952,7 +1957,7 @@
         "viewData": "View Data",
         "bulkReset": "Reset All",
         "refresh": "Refresh",
-        "searchPlaceholder": "Search key / metric / tag",
+        "searchPlaceholder": "Search measurement / field / tags",
         "searchAriaLabel": "Search store keys",
         "clearSearch": "Clear search",
         "metricType": "Metric Type",
@@ -1961,9 +1966,9 @@
         "emptyNoData": "No data stored",
         "emptyNoFilterMatch": "No items match the selected filters",
         "emptyNoTagMatch": "No items match the selected tags",
-        "colKey": "Key",
+        "colKey": "Measurement",
         "colBinding": "Binding",
-        "colMetric": "Metric",
+        "colField": "Field",
         "colValue": "Value",
         "colNamespace": "Namespace",
         "colTags": "Tags",
@@ -2265,7 +2270,7 @@
     "selectSeries": "Select Series",
     "series": "Series",
     "seriesCount": "{count} series",
-    "metric": "Metric",
+    "field": "Field",
     "metricType": "Metric Type",
     "tags": "Tags",
     "dataType": "Data Type",
@@ -2736,7 +2741,7 @@
       "typeMismatchPrefixWithType": "Key '{key}' (registered type: {type}): ",
       "unsupportedValueType": "Unsupported value type (nil, channels, and functions cannot be stored).",
       "invalidDataType": "Invalid data_type value. Allowed values: int, float, string, boolean, bytes, json.",
-      "invalidMetricType": "Invalid metric_type format. Only letters, digits, underscores (_), and hyphens (-) are allowed.",
+      "invalidField": "Invalid field format (letters, digits, underscore, hyphen only)",
       "unknown": "An error occurred: {message}"
     }
   },
@@ -3524,19 +3529,6 @@
         "invalidSourceUnitId": "Invalid source unit ID (non-negative integer)"
       }
     },
-    "metrics": {
-      "metric": "Metric",
-      "valueKey": "Value key ($.)",
-      "type": "Type",
-      "suppressInterval": "Suppress interval",
-      "changeAbsolute": "Change (absolute)",
-      "changePercent": "Change (%)",
-      "auto": "(auto)",
-      "unset": "(unset — stored as string)",
-      "empty": "No metrics. Use \"Add metric\" to add a measurement.",
-      "add": "Add metric",
-      "deleteAria": "Delete"
-    },
     "typedMap": {
       "key": "Key",
       "type": "Type",
@@ -3565,16 +3557,16 @@
     },
     "meta": {
       "key": "Key",
-      "metricTypeOptional": "Metric type (optional)",
-      "metricTypePlaceholder": "unknown",
+      "fieldNameOptional": "Field (optional)",
+      "fieldNamePlaceholder": "unknown",
       "closeAria": "Close",
       "tagInputCheck": "Please check the tag inputs",
-      "metricTypeFormatCheck": "Please check the metric_type format",
+      "fieldNameFormatCheck": "Check the field format",
       "dataTypeSelectPrompt": "Please select a data_type"
     },
     "editMeta": {
       "title": "Edit type / tags",
-      "metricTypeHelp": "Label for metric classification (e.g. gauge, counter). Leave empty to use \"unknown\".",
+      "fieldNameHelp": "Field name (e.g. value, temperature). Left empty it is treated as \"unknown\".",
       "tagsLoadedHelp": "Existing tags were loaded. Saving after adding/removing replaces all tags.",
       "saving": "Saving...",
       "save": "Save",
@@ -3585,7 +3577,7 @@
       "dataTypeLabel": "Data type",
       "dataTypeHelp": "Select the value's serialization format. After registration, writes with a different type will be rejected.",
       "dataTypeSelectPlaceholder": "Select...",
-      "metricTypeHelp": "Label for metric classification (e.g. gauge, counter). Leave empty and the backend uses \"unknown\".",
+      "fieldNameHelp": "Field name (e.g. value, temperature). Left empty the backend treats it as \"unknown\".",
       "tagsHelp": "Adding tags enables filtering and grouping. You can also convert without tags.",
       "converting": "Converting...",
       "convert": "Convert",
@@ -3607,14 +3599,14 @@
     "store": {
       "key": "Key",
       "dataType": "Data type",
-      "metricType": "Metric type",
+      "fieldName": "Field",
       "tags": "Tags",
       "empty": "No static keys",
       "duplicateKey": "Duplicate key",
       "dataTypeSelectRequired": "Select (required)",
       "dataTypeSelect": "Select",
       "keyAria": "Store key",
-      "metricTypePlaceholder": "unknown",
+      "fieldNamePlaceholder": "unknown",
       "deleteRowAria": "Delete row",
       "addRow": "Add row",
       "tagsEmpty": "No tags",
@@ -3657,7 +3649,7 @@
     },
     "metadataChips": {
       "dataTypeTitle": "Data type: {type}",
-      "metricTypeTitle": "Metric type: {type}",
+      "fieldNameTitle": "Field: {type}",
       "metricUnknownTitle": "Metric type unspecified (auto-registered at runtime)",
       "autoTitle": "Key auto-registered at runtime",
       "autoAria": "Auto-registered",

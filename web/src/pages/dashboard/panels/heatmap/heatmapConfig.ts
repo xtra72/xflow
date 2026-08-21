@@ -14,7 +14,7 @@
 
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 import { migrateSensorPositions } from './sensorIdentity';
-import type { StageFit } from './stage';
+import type { StageFit, StageTransform } from './stage';
 
 /** IDW 거리 감쇠 지수 기본값(REQ-05). */
 export const DEFAULT_IDW_POWER = 2;
@@ -175,6 +175,15 @@ export interface LegendConfig {
    * 고르면 제거되어 프리셋으로 되돌아간다.
    */
   offset?: SensorPosition;
+  /**
+   * `offset` 이 어느 공간의 정규화 좌표인지. 'panel' 이면 패널 본문 기준이다.
+   *
+   * 과거 범례는 스테이지(도면 박스) 안에 그려져 offset 도 스테이지 기준이었고, 그래서
+   * 도면 밖으로 내보낼 수 없었다. 지금은 패널 본문에 그려 도면과 무관하게 배치한다.
+   * 마커의 `sensor_space` 와 같은 방식으로, 이 표식이 없는 구 config 는 렌더 시점에
+   * 스테이지 → 패널 좌표로 환산해 **보이던 위치를 그대로 보존**한다.
+   */
+  offset_space?: 'panel';
 }
 
 /**
@@ -218,6 +227,11 @@ export interface HeatmapPanelConfig {
    * 도면 위 같은 지점에 붙는다(stage.ts StageFit 참조).
    */
   stage_fit?: StageFit;
+  /**
+   * 사용자가 도면을 직접 옮기고 키운 결과(additive). 스테이지 박스에 적용되며, 마커는
+   * 스테이지 정규화 좌표라 자동으로 따라온다(stage.ts applyStageTransform 참조).
+   */
+  stage_transform?: StageTransform;
   /** 도면 위 히트맵 합성 불투명도(0..1). 항상 기본값(0.6) 보정 — idw 와 동일 패턴. */
   heatmap_opacity: number;
   /** 배치 에디터 옵션(SPEC-002). 미지정/무효 시 undefined. */
@@ -507,6 +521,8 @@ function parseLegend(raw: unknown): LegendConfig | undefined {
     const o = off as Record<string, unknown>;
     if (isFiniteNumber(o.x) && isFiniteNumber(o.y)) {
       result.offset = { x: clamp01(o.x), y: clamp01(o.y) };
+      // 표식이 있을 때만 패널 공간으로 본다. 없으면 구 스테이지 좌표 → 렌더 시점 환산 대상.
+      if (l.offset_space === 'panel') result.offset_space = 'panel';
     }
   }
   return result;
@@ -548,6 +564,8 @@ export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
     // 스테이지 맞춤(additive). enum 화이트리스트 — 미인정 값은 기본 contain 으로 폴백해
     // 미설정 config 와 동일하게 동작한다(parseFloorPlan.fit 선례 동일, 회귀 0).
     stage_fit: cfg.stage_fit === 'cover' || cfg.stage_fit === 'stretch' ? cfg.stage_fit : undefined,
+    // 도면 직접 배치(additive). 손상/항등 값은 undefined 로 떨어져 기존 동작과 같아진다.
+    stage_transform: parseStageTransform(cfg.stage_transform),
     heatmap_opacity: parseHeatmapOpacity(cfg.heatmap_opacity),
     editor: parseEditor(cfg.editor),
     // SPEC-003 신규 필드(additive). 미설정 MVP/002 config 는 undefined(등고선 없음, AC-E2/회귀 0).
@@ -555,4 +573,21 @@ export function parseHeatmapConfig(raw: unknown): HeatmapPanelConfig {
     // 색표 범례(additive). 미설정 config 는 undefined(범례 없음, 회귀 0).
     legend: parseLegend(cfg.legend),
   };
+}
+
+/**
+ * stage_transform 파싱. 유한한 수만 인정하고, 배율은 양수만 받는다.
+ * 결과가 항등(이동 0, 배율 1)이면 undefined 를 반환해 config 에 죽은 필드를 남기지 않는다.
+ */
+function parseStageTransform(raw: unknown): StageTransform | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const t = raw as Record<string, unknown>;
+  const num = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  const offset_x = num(t.offset_x) ?? 0;
+  const offset_y = num(t.offset_y) ?? 0;
+  const rawScale = num(t.scale);
+  const scale = rawScale !== undefined && rawScale > 0 ? rawScale : 1;
+  if (offset_x === 0 && offset_y === 0 && scale === 1) return undefined;
+  return { offset_x, offset_y, scale };
 }

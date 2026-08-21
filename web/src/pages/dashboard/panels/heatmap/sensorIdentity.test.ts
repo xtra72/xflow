@@ -12,15 +12,15 @@ import { heatmapSensorId, migrateSensorPositions, sensorSeriesLabel } from './se
 /** 테스트 가독성용 시리즈 생성기. */
 function ref(
   key: string,
-  metric?: string,
+  field?: string,
   tags?: Record<string, string>,
   alias?: string,
 ): StoreSeriesRef {
-  return { key, metric_type: metric, tags, alias } as StoreSeriesRef;
+  return { key, field: field, tags, alias } as StoreSeriesRef;
 }
 
 describe('heatmapSensorId', () => {
-  it('같은 key 라도 metric/tags 가 다르면 서로 다른 동일성 키를 만든다', () => {
+  it('같은 key 라도 field/tags 가 다르면 서로 다른 동일성 키를 만든다', () => {
     const a = heatmapSensorId(ref('temp', 'temperature', { room: '1' }));
     const b = heatmapSensorId(ref('temp', 'temperature', { room: '2' }));
     const c = heatmapSensorId(ref('temp', 'humidity', { room: '1' }));
@@ -35,7 +35,7 @@ describe('heatmapSensorId', () => {
     expect(a).toBe(b);
   });
 
-  it('metric/tags 미지정은 빈 값으로 정규화되어 재현 가능하다(리로드 안정성)', () => {
+  it('field/tags 미지정은 빈 값으로 정규화되어 재현 가능하다(리로드 안정성)', () => {
     expect(heatmapSensorId(ref('t'))).toBe(heatmapSensorId(ref('t', undefined, {})));
     expect(heatmapSensorId(ref('t', '', {}))).toBe(heatmapSensorId(ref('t')));
   });
@@ -61,7 +61,7 @@ describe('sensorSeriesLabel', () => {
     expect(sensorSeriesLabel({ key: 'k', alias: '거실' })).toBe('거실');
   });
 
-  it('metric/tags 가 없으면 key 하나 — 공백/구분자 잔여물이 없다', () => {
+  it('field/tags 가 없으면 key 하나 — 공백/구분자 잔여물이 없다', () => {
     expect(sensorSeriesLabel({ key: 'k', alias: '   ' })).toBe('k');
     expect(sensorSeriesLabel({ key: 'k' })).toBe('k');
   });
@@ -69,8 +69,9 @@ describe('sensorSeriesLabel', () => {
   it('한 key 를 공유하는 형제 센서는 서로 다른 라벨로 구분된다(표시 결함 수정)', () => {
     // 좌표/매칭은 이미 동일성 키로 분리돼 있었지만 화면에는 key 만 찍혀, 서로 다른 센서가
     // 한 좌표를 공유하는 것처럼 보였다. 라벨도 동일성 3요소를 반영해야 구분된다.
-    const a = sensorSeriesLabel(ref('temp', 'temperature', { room: '1' }, 'temp'));
-    const b = sensorSeriesLabel(ref('temp', 'temperature', { room: '2' }, 'temp'));
+    // alias 는 정규화(normalizeStoreSeriesAlias)에서 legacy 기본값이 걷힌 상태로 들어온다.
+    const a = sensorSeriesLabel(ref('temp', 'temperature', { room: '1' }));
+    const b = sensorSeriesLabel(ref('temp', 'temperature', { room: '2' }));
     expect(a).not.toBe(b);
     expect(a).toBe('temp · temperature{room=1}');
     expect(b).toBe('temp · temperature{room=2}');

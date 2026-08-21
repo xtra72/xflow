@@ -935,7 +935,9 @@
         "tagTimestamp": "시간",
         "tagLevels": "레벨",
         "tagSource": "소스",
-        "dragOrderTitle": "드래그하여 순서 변경"
+        "dragOrderTitle": "드래그하여 순서 변경",
+        "seriesCount": "시리즈 {count}개",
+        "panelArea": "패널 영역"
       },
       "dataSource": "데이터 소스",
       "dataSourceTsdbTitle": "TSDB 데이터소스",
@@ -994,7 +996,8 @@
       "editRemoveAria": "센서 {key} 좌표 제거",
       "editPlaceAria": "센서 {key} 도면 위에 배치",
       "editUnplacedHint": "미배치 센서 — 도면 위로 드래그",
-      "legendAria": "값 색상 범례 ({min} ~ {max})"
+      "legendAria": "값 색상 범례 ({min} ~ {max})",
+      "transformReset": "배치 초기화"
     },
     "chart": {
       "channelNameError": "유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).",
@@ -1150,12 +1153,14 @@
       "storeSeriesNameAria": "{key} 표시 이름",
       "storeSeriesColorAria": "{key} 색상",
       "storeSeriesRemoveAria": "{key} 제거",
-      "storeAliasInsertToken": "태그 삽입:",
+      "storeAliasInsertToken": "토큰 삽입:",
       "storeAliasPreview": "미리보기:",
       "storeTagPickerLabel": "태그 필터 (AND)",
       "storeTagAnyValue": "(전체)",
       "storeTagMatchCount": "{count}개 키 매칭",
-      "storeTagNone": "사용 가능한 태그가 없습니다. 키를 직접 선택하세요."
+      "storeTagNone": "사용 가능한 태그가 없습니다. 키를 직접 선택하세요.",
+      "storeSeriesNameFormat": "시리즈 이름 형식",
+      "storeSeriesNameFormatPlaceholder": "비우면 기본 표기 (예: {$.measurement}/{$.field})"
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"
@@ -1952,7 +1957,7 @@
         "viewData": "데이터 보기",
         "bulkReset": "전체 초기화",
         "refresh": "새로고침",
-        "searchPlaceholder": "키 / 메트릭 / 태그 검색",
+        "searchPlaceholder": "Measurement / 필드 / 태그 검색",
         "searchAriaLabel": "저장소 키 검색",
         "clearSearch": "검색어 지우기",
         "metricType": "메트릭 타입",
@@ -1961,9 +1966,9 @@
         "emptyNoData": "저장된 데이터가 없습니다",
         "emptyNoFilterMatch": "선택한 필터와 일치하는 항목이 없습니다",
         "emptyNoTagMatch": "선택한 태그와 일치하는 항목이 없습니다",
-        "colKey": "키",
+        "colKey": "Measurement",
         "colBinding": "바인딩",
-        "colMetric": "메트릭",
+        "colField": "필드",
         "colValue": "값",
         "colNamespace": "네임스페이스",
         "colTags": "태그",
@@ -2265,7 +2270,7 @@
     "selectSeries": "시리즈 선택",
     "series": "시리즈",
     "seriesCount": "{count}개 시리즈",
-    "metric": "메트릭",
+    "field": "필드",
     "metricType": "메트릭 타입",
     "tags": "태그",
     "dataType": "데이터 타입",
@@ -2736,7 +2741,7 @@
       "typeMismatchPrefixWithType": "키 '{key}' (등록 타입: {type}) 의 ",
       "unsupportedValueType": "지원하지 않는 값 타입입니다 (nil, 채널, 함수는 저장할 수 없습니다).",
       "invalidDataType": "data_type 값이 잘못되었습니다. 허용 값: int, float, string, boolean, bytes, json.",
-      "invalidMetricType": "metric_type 형식이 잘못되었습니다. 영문, 숫자, 언더스코어(_), 하이픈(-)만 사용 가능합니다.",
+      "invalidField": "field 형식이 올바르지 않습니다 (영문/숫자/밑줄/하이픈만 사용)",
       "unknown": "오류가 발생했습니다: {message}"
     }
   },
@@ -3524,19 +3529,6 @@
         "invalidSourceUnitId": "소스 유닛 ID가 올바르지 않음 (0 이상 정수)"
       }
     },
-    "metrics": {
-      "metric": "메트릭",
-      "valueKey": "값 키 ($.)",
-      "type": "타입",
-      "suppressInterval": "억제 간격",
-      "changeAbsolute": "변화(절대)",
-      "changePercent": "변화(%)",
-      "auto": "(자동)",
-      "unset": "(미지정 — 문자열로 저장)",
-      "empty": "메트릭이 없습니다. \"메트릭 추가\"로 측정값을 추가하세요.",
-      "add": "메트릭 추가",
-      "deleteAria": "삭제"
-    },
     "typedMap": {
       "key": "키",
       "type": "타입",
@@ -3565,16 +3557,16 @@
     },
     "meta": {
       "key": "키",
-      "metricTypeOptional": "메트릭 타입 (선택)",
-      "metricTypePlaceholder": "unknown",
+      "fieldNameOptional": "필드 (선택)",
+      "fieldNamePlaceholder": "unknown",
       "closeAria": "닫기",
       "tagInputCheck": "태그 입력을 확인해주세요",
-      "metricTypeFormatCheck": "metric_type 형식을 확인해주세요",
+      "fieldNameFormatCheck": "필드 형식을 확인해주세요",
       "dataTypeSelectPrompt": "data_type 을 선택해주세요"
     },
     "editMeta": {
       "title": "타입 / 태그 편집",
-      "metricTypeHelp": "지표 분류용 라벨 (예: gauge, counter). 비워두면 \"unknown\" 으로 처리됩니다.",
+      "fieldNameHelp": "측정값 이름 (예: value, temperature). 비워두면 \"unknown\" 으로 처리됩니다.",
       "tagsLoadedHelp": "기존 태그를 불러왔습니다. 추가/삭제 후 저장하면 태그 전체가 교체됩니다.",
       "saving": "저장 중...",
       "save": "저장",
@@ -3585,7 +3577,7 @@
       "dataTypeLabel": "데이터 타입",
       "dataTypeHelp": "값의 직렬화 형식을 선택하세요. 등록 후에는 다른 타입으로 쓰기를 시도하면 거절됩니다.",
       "dataTypeSelectPlaceholder": "선택하세요",
-      "metricTypeHelp": "지표 분류용 라벨 (예: gauge, counter). 비워두면 백엔드가 \"unknown\" 으로 처리합니다.",
+      "fieldNameHelp": "측정값 이름 (예: value, temperature). 비워두면 백엔드가 \"unknown\" 으로 처리합니다.",
       "tagsHelp": "태그를 추가하면 필터링과 그룹화에 사용할 수 있습니다. 태그 없이 변환할 수도 있습니다.",
       "converting": "변환 중...",
       "convert": "변환",
@@ -3607,14 +3599,14 @@
     "store": {
       "key": "키",
       "dataType": "데이터 타입",
-      "metricType": "메트릭 타입",
+      "fieldName": "필드",
       "tags": "태그",
       "empty": "정적 키가 없습니다",
       "duplicateKey": "중복된 키입니다",
       "dataTypeSelectRequired": "선택 (필수)",
       "dataTypeSelect": "선택",
       "keyAria": "Store 키",
-      "metricTypePlaceholder": "unknown",
+      "fieldNamePlaceholder": "unknown",
       "deleteRowAria": "행 삭제",
       "addRow": "행 추가",
       "tagsEmpty": "태그 없음",
@@ -3657,7 +3649,7 @@
     },
     "metadataChips": {
       "dataTypeTitle": "데이터 타입: {type}",
-      "metricTypeTitle": "메트릭 타입: {type}",
+      "fieldNameTitle": "필드: {type}",
       "metricUnknownTitle": "메트릭 타입 미지정 (런타임 자동 등록)",
       "autoTitle": "런타임에 자동 등록된 키",
       "autoAria": "자동 등록",

@@ -73,6 +73,7 @@ vi.mock('./panels/charts/useStoreChartData', () => ({
 // StoreSourceSection 의 네트워크 훅(에이전트/키 목록) — 정적 값으로 대체.
 vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({ data: { data: [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }] } }),
+  useAgent: () => ({ data: undefined }),
   useExecAgent: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('@/services/api/store', () => ({
@@ -80,7 +81,7 @@ vi.mock('@/services/api/store', () => ({
   // 선택된 시리즈 키가 목록 행으로 표시되어야 펼침·좌표 편집이 가능하다.
   useStoreKeysWithTags: () => ({
     data: {
-      // metric_type/tags 는 config 의 series({key})와 seriesId 가 일치하도록 비운다.
+      // field/tags 는 config 의 series({key})와 seriesId 가 일치하도록 비운다.
       keyObjects: storeMock.seriesNames.map((key) => ({
         key,
         registration: 'auto',
@@ -424,5 +425,38 @@ describe('타이틀 바 표시 옵션', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
     expect(screen.getByTestId('panel-show-title')).not.toBeChecked();
     expect(screen.queryByTestId('heatmap-title')).toBeNull();
+  });
+});
+
+describe('미리보기 패널 영역 표시', () => {
+  it('채움(fill) 모드에서는 실제 패널 비율을 점선으로 겹쳐 보여준다', () => {
+    // 실제 패널 비율을 알아야 그릴 수 있으므로 레이아웃을 준다.
+    storeMock.layout = [{ i: 'p1', x: 0, y: 0, w: 6, h: 4 }];
+    window.localStorage.setItem('panelSettings.previewFillMode', 'fill');
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.getByTestId('panel-area-outline')).toBeInTheDocument();
+  });
+
+  it('맞춤(fit) 모드는 미리보기 자체가 실제 비율이라 오버레이를 그리지 않는다', () => {
+    storeMock.layout = [{ i: 'p1', x: 0, y: 0, w: 6, h: 4 }];
+    window.localStorage.setItem('panelSettings.previewFillMode', 'fit');
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.queryByTestId('panel-area-outline')).not.toBeInTheDocument();
+  });
+
+  it('오버레이는 포인터 이벤트를 받지 않아 마커 배치를 막지 않는다', () => {
+    storeMock.layout = [{ i: 'p1', x: 0, y: 0, w: 6, h: 4 }];
+    window.localStorage.setItem('panelSettings.previewFillMode', 'fill');
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.getByTestId('panel-area-outline').className).toContain('pointer-events-none');
+  });
+});
+
+describe('미리보기 패널 영역 — 레이아웃 미상', () => {
+  it('실제 비율을 모르면(대시보드 미방문) 잘못된 경계를 그리지 않는다', () => {
+    storeMock.layout = [];
+    window.localStorage.setItem('panelSettings.previewFillMode', 'fill');
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.queryByTestId('panel-area-outline')).not.toBeInTheDocument();
   });
 });

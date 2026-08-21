@@ -1,7 +1,7 @@
 // 히트맵 센서 동일성(identity) 키 + 하위호환 마이그레이션.
 //
 // 배경(결함): 히트맵의 센서 좌표(`sensor_positions`)와 마커 매칭은 원래 store **key** 하나로
-// 키잉되어 있었다. 그러나 시리즈의 동일성은 `storeSeriesId(key, metric_type, tags)` 이고,
+// 키잉되어 있었다. 그러나 시리즈의 동일성은 `storeSeriesId(key, field, tags)` 이고,
 // 백엔드 `GET /keys` 는 같은 key 에 대해 metric/tags 조합마다 별도의 시리즈 행을 돌려준다.
 // 따라서 한 key 를 공유하는 N 개의 시리즈가:
 //   1) 같은 좌표 한 칸을 공유하고(하나를 옮기면 전부 따라 움직임),
@@ -23,7 +23,7 @@ import {
 import type { SensorPosition } from './heatmapConfig';
 
 /** 동일성 키 계산에 필요한 최소 시리즈 형상. */
-type IdentityRef = Pick<StoreSeriesRef, 'key' | 'metric_type' | 'tags'>;
+type IdentityRef = Pick<StoreSeriesRef, 'key' | 'field' | 'tags'>;
 
 /**
  * 센서(시리즈) 동일성 키. `sensor_positions` 의 맵 키이자 마커/배치 매칭 기준이다.
@@ -33,7 +33,7 @@ type IdentityRef = Pick<StoreSeriesRef, 'key' | 'metric_type' | 'tags'>;
  * 같은 태그 집합이면 항상 같은 문자열이 나온다(삽입 순서 무관).
  */
 export function heatmapSensorId(ref: IdentityRef): string {
-  return storeSeriesId(ref.key, ref.metric_type ?? '', ref.tags ?? {});
+  return storeSeriesId(ref.key, ref.field ?? '', ref.tags ?? {});
 }
 
 /**
@@ -47,9 +47,10 @@ export function heatmapSensorId(ref: IdentityRef): string {
  * 다르게 불리면 안 된다. 표시 전용이며 매칭에는 절대 쓰지 않는다(이름을 바꿔도 배치 유지).
  */
 export function sensorSeriesLabel(
-  ref: Pick<StoreSeriesRef, 'key' | 'metric_type' | 'tags' | 'alias'>,
+  ref: Pick<StoreSeriesRef, 'key' | 'field' | 'tags' | 'alias'>,
+  nameFormat?: string,
 ): string {
-  return storeSeriesLabel(ref);
+  return storeSeriesLabel(ref, nameFormat);
 }
 
 /** `migrateSensorPositions` 결과. */

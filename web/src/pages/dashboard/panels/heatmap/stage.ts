@@ -98,3 +98,73 @@ export function migratePositionsToStage(
   }
   return out;
 }
+
+/**
+ * 사용자가 도면을 직접 옮기고 키운 결과(스테이지 변형).
+ *
+ * 스테이지는 도면과 같은 종횡비를 가지므로 "도면을 옮긴다 = 스테이지를 옮긴다" 이다. 마커
+ * 좌표는 스테이지 정규화(0..1)라서, 변형을 스테이지 박스에만 적용하면 마커는 도면 위 같은
+ * 지점에 그대로 붙어 따라온다 — 좌표를 다시 계산할 필요가 없다.
+ *
+ *   - offset_x / offset_y: 컨테이너 크기 대비 비율 이동(-1..1). 컨테이너가 커지거나 작아져도
+ *     같은 상대 위치를 유지하도록 픽셀이 아니라 비율로 저장한다.
+ *   - scale: 배율(> 0). 1 이면 변형 없음.
+ */
+export interface StageTransform {
+  offset_x?: number;
+  offset_y?: number;
+  scale?: number;
+}
+
+/** 변형이 실질적으로 없는지(항등) 판정한다. */
+export function isIdentityTransform(tr: StageTransform | undefined): boolean {
+  if (!tr) return true;
+  const { offset_x = 0, offset_y = 0, scale = 1 } = tr;
+  return offset_x === 0 && offset_y === 0 && scale === 1;
+}
+
+/**
+ * fit 으로 구한 스테이지 박스에 사용자 변형을 적용한다.
+ *
+ * 배율은 **박스 중심을 기준**으로 적용한다 — 좌상단 기준이면 크기를 키울 때 도면이 한쪽으로
+ * 쏠려 "가운데를 키운다" 는 직관과 어긋난다. 이동은 컨테이너 크기 대비 비율이므로 컨테이너
+ * 픽셀을 함께 받는다.
+ *
+ * 변형이 항등이거나 박스가 비어 있으면 입력을 그대로 돌려준다(기존 동작 보존).
+ */
+export function applyStageTransform(
+  box: StageBox,
+  transform: StageTransform | undefined,
+  container: { width: number; height: number },
+): StageBox {
+  if (isIdentityTransform(transform) || !(box.width > 0) || !(box.height > 0)) return box;
+  const { offset_x = 0, offset_y = 0, scale = 1 } = transform!;
+  const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const width = box.width * s;
+  const height = box.height * s;
+  return {
+    // 중심 고정 배율 + 컨테이너 비율 이동.
+    left: box.left - (width - box.width) / 2 + offset_x * container.width,
+    top: box.top - (height - box.height) / 2 + offset_y * container.height,
+    width,
+    height,
+  };
+}
+
+/**
+ * 스테이지 정규화 좌표 → 컨테이너(패널 본문) 정규화 좌표.
+ *
+ * `containerToStage` 의 역변환이다. 스테이지 안에 그리던 오버레이(색표 범례)를 패널 본문으로
+ * 옮길 때, 저장된 스테이지 좌표를 **보이던 픽셀 위치 그대로** 패널 좌표로 환산하는 데 쓴다.
+ * 스테이지가 컨테이너와 같으면 항등이다.
+ */
+export function stageToContainer(
+  pos: SensorPosition,
+  container: { width: number; height: number },
+  stage: StageBox,
+): SensorPosition {
+  if (!(container.width > 0) || !(container.height > 0)) return pos;
+  const px = stage.left + pos.x * stage.width;
+  const py = stage.top + pos.y * stage.height;
+  return { x: clamp01(px / container.width), y: clamp01(py / container.height) };
+}

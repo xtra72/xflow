@@ -6,7 +6,13 @@
 
 import { describe, it, expect } from 'vitest';
 
-import { computeStageBox, containerToStage, migratePositionsToStage } from './stage';
+import {
+  applyStageTransform,
+  computeStageBox,
+  containerToStage,
+  isIdentityTransform,
+  migratePositionsToStage,
+} from './stage';
 
 describe('computeStageBox', () => {
   it('종횡비가 없으면(도면 없음) 컨테이너 전체가 스테이지다 — 기존 동작 보존', () => {
@@ -138,5 +144,61 @@ describe('computeStageBox — fit 모드', () => {
 
   it('컨테이너가 0 이면 모드와 무관하게 빈 박스다', () => {
     expect(computeStageBox(0, 200, 1, 'cover')).toEqual({ left: 0, top: 0, width: 0, height: 0 });
+  });
+});
+
+describe('applyStageTransform — 도면 직접 배치', () => {
+  const container = { width: 400, height: 300 };
+  const box = { left: 0, top: 37.5, width: 400, height: 225 };
+
+  it('항등 변형은 입력을 그대로 돌려준다', () => {
+    expect(applyStageTransform(box, undefined, container)).toBe(box);
+    expect(applyStageTransform(box, { offset_x: 0, offset_y: 0, scale: 1 }, container)).toBe(box);
+  });
+
+  it('배율은 박스 중심을 고정하고 키운다', () => {
+    const out = applyStageTransform(box, { scale: 2 }, container);
+    expect(out.width).toBe(800);
+    expect(out.height).toBe(450);
+    // 중심 보존: 좌상단이 늘어난 만큼의 절반씩 뒤로 밀린다.
+    expect(out.left).toBe(box.left - 200);
+    expect(out.top).toBe(box.top - 112.5);
+  });
+
+  it('이동은 컨테이너 크기 대비 비율로 적용된다', () => {
+    const out = applyStageTransform(box, { offset_x: 0.25, offset_y: -0.5 }, container);
+    expect(out.left).toBe(box.left + 100);
+    expect(out.top).toBe(box.top - 150);
+    expect(out.width).toBe(box.width);
+  });
+
+  it('이동과 배율을 함께 적용한다', () => {
+    const out = applyStageTransform(box, { offset_x: 0.1, scale: 2 }, container);
+    expect(out.width).toBe(800);
+    expect(out.left).toBe(box.left - 200 + 40);
+  });
+
+  it('배율이 0 이하/비유한이면 1 로 폴백한다(스테이지 붕괴 방지)', () => {
+    expect(applyStageTransform(box, { scale: 0, offset_x: 0.1 }, container).width).toBe(400);
+    expect(applyStageTransform(box, { scale: -2, offset_x: 0.1 }, container).width).toBe(400);
+    expect(applyStageTransform(box, { scale: NaN, offset_x: 0.1 }, container).width).toBe(400);
+  });
+
+  it('빈 박스에는 적용하지 않는다', () => {
+    const empty = { left: 0, top: 0, width: 0, height: 0 };
+    expect(applyStageTransform(empty, { scale: 2 }, container)).toBe(empty);
+  });
+});
+
+describe('isIdentityTransform', () => {
+  it('미지정/기본값은 항등이다', () => {
+    expect(isIdentityTransform(undefined)).toBe(true);
+    expect(isIdentityTransform({})).toBe(true);
+    expect(isIdentityTransform({ offset_x: 0, offset_y: 0, scale: 1 })).toBe(true);
+  });
+
+  it('하나라도 다르면 항등이 아니다', () => {
+    expect(isIdentityTransform({ scale: 1.5 })).toBe(false);
+    expect(isIdentityTransform({ offset_x: 0.1 })).toBe(false);
   });
 });

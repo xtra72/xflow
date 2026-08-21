@@ -13,8 +13,8 @@ function series(values: unknown[]): ChartEntry[] {
 }
 
 describe('resolveSensorSeries — 조회 이름 공간 → 센서 동일성 키 공간', () => {
-  const A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } } as StoreSeriesRef;
-  const B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } } as StoreSeriesRef;
+  const A = { key: 'dup', field: 'temperature', tags: { room: 'A' } } as StoreSeriesRef;
+  const B = { key: 'dup', field: 'temperature', tags: { room: 'B' } } as StoreSeriesRef;
 
   it('컬럼과 config.series 가 1:1 이면 인덱스로 짝지어 동일성 키를 붙인다', () => {
     // 훅이 어떤 표시 이름을 쓰든(여기서는 둘 다 기본 alias 'dup') 인덱스로 결합한다.
