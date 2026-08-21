@@ -144,3 +144,107 @@ describe('StatPanel', () => {
     expect(screen.getByTestId('chart-status-icon')).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `series_reduce` 도입 이전의 StatPanel 레거시 렌더 경로를 잠근다.
+// spec.md §2.9 [S1]: `series_reduce` 부재 = 레거시 경로. 아래 테스트는 M3 이후에도
+// 전부 GREEN 이어야 하며, 하나라도 RED 가 되면 하위 호환 위반이다.
+// ---------------------------------------------------------------------------
+describe('StatPanel 특성화 (SPEC-CHART-002 M2)', () => {
+  beforeEach(() => {
+    mockResult.current = {
+      entries: [],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+  });
+
+  it('CH-01: 평탄화 타임라인의 마지막 entry 값 1개만 표시한다', () => {
+    mockResult.current.entries = [
+      { timestamp: 1, value: 10 },
+      { timestamp: 2, value: 20 },
+      { timestamp: 3, value: 33 },
+    ];
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+
+    // 출력은 단 하나의 값 슬롯이다(타일 배열 아님).
+    expect(screen.getAllByTestId('stat-value')).toHaveLength(1);
+    // 값은 entries[entries.length - 1] 이다 — 최댓값(33 이 우연히 최댓값이 아니도록
+    // 중간에 더 큰 값이 없음을 감안해도, 규칙은 "마지막"이지 "최대"가 아니다).
+    expect(screen.getByTestId('stat-value').textContent).toContain('33');
+  });
+
+  it('CH-01: entries 가 비면 값 자리에 — 를 표시하고 delta 줄이 없다', () => {
+    mockResult.current.entries = [];
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c' }} />);
+    expect(screen.getByTestId('stat-value').textContent).toContain('—');
+    expect(screen.queryByTestId('stat-delta')).toBeNull();
+  });
+
+  it('CH-02: 직전 entry 대비 delta 와 화살표 3종(↑/↓/→)을 표시한다', () => {
+    // ↑ 증가
+    mockResult.current.entries = [
+      { timestamp: 1, value: 10 },
+      { timestamp: 2, value: 14 },
+    ];
+    const up = render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.getByTestId('stat-delta').textContent).toContain('↑');
+    expect(screen.getByTestId('stat-delta').textContent).toContain('+4');
+    up.unmount();
+
+    // ↓ 감소 (부호 그대로, + 접두사 없음)
+    mockResult.current.entries = [
+      { timestamp: 1, value: 10 },
+      { timestamp: 2, value: 4 },
+    ];
+    const down = render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.getByTestId('stat-delta').textContent).toContain('↓');
+    expect(screen.getByTestId('stat-delta').textContent).toContain('-6');
+    down.unmount();
+
+    // → 변화 없음. delta 가 0 이면 텍스트는 '+0' 이다(0 도 표시된다).
+    mockResult.current.entries = [
+      { timestamp: 1, value: 7 },
+      { timestamp: 2, value: 7 },
+    ];
+    const flat = render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.getByTestId('stat-delta').textContent).toContain('→');
+    expect(screen.getByTestId('stat-delta').textContent).toContain('0');
+    flat.unmount();
+
+    // 표본이 1개면 delta 를 계산할 수 없어 줄 자체가 렌더되지 않는다.
+    mockResult.current.entries = [{ timestamp: 1, value: 7 }];
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.queryByTestId('stat-delta')).toBeNull();
+  });
+
+  it('CH-03: threshold_color_rules 가 값 숫자 색을 결정한다(값 이하 최대 min 규칙)', () => {
+    const rules = [
+      { min: 0, color: 'rgb(16, 185, 129)' },
+      { min: 80, color: 'rgb(239, 68, 68)' },
+    ];
+    // 80 미만 → min:0 규칙
+    mockResult.current.entries = [{ timestamp: 1, value: 79 }];
+    const low = render(
+      <StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0, threshold_color_rules: rules }} />,
+    );
+    expect(screen.getByTestId('stat-value').getAttribute('style')).toContain('rgb(16, 185, 129)');
+    low.unmount();
+
+    // 80 이상 → min:80 규칙
+    mockResult.current.entries = [{ timestamp: 1, value: 80 }];
+    const high = render(
+      <StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0, threshold_color_rules: rules }} />,
+    );
+    expect(screen.getByTestId('stat-value').getAttribute('style')).toContain('rgb(239, 68, 68)');
+    high.unmount();
+
+    // 규칙이 없으면 inline color 를 붙이지 않는다(기본 텍스트 색 유지).
+    mockResult.current.entries = [{ timestamp: 1, value: 80 }];
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.getByTestId('stat-value').getAttribute('style')).toBeNull();
+  });
+});
