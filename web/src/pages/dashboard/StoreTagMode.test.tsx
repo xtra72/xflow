@@ -24,6 +24,7 @@ vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({
     data: { data: [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }] },
   }),
+  useAgent: () => ({ data: undefined }),
   useExecAgent: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 
@@ -32,9 +33,9 @@ vi.mock('@/services/api/store', () => ({
   useStoreKeysWithTags: () => ({
     data: {
       keyObjects: [
-        { key: 'room:1:temp', registration: 'auto', data_type: 'float', metric_type: 'gauge', tags: { room: '1', type: 'temperature' } },
-        { key: 'room:1:humidity', registration: 'auto', data_type: 'float', metric_type: 'gauge', tags: { room: '1', type: 'humidity' } },
-        { key: 'room:2:temp', registration: 'auto', data_type: 'float', metric_type: 'gauge', tags: { room: '2', type: 'temperature' } },
+        { key: 'room:1:temp', registration: 'auto', data_type: 'float', field: 'gauge', tags: { room: '1', type: 'temperature' } },
+        { key: 'room:1:humidity', registration: 'auto', data_type: 'float', field: 'gauge', tags: { room: '1', type: 'humidity' } },
+        { key: 'room:2:temp', registration: 'auto', data_type: 'float', field: 'gauge', tags: { room: '2', type: 'temperature' } },
       ],
     },
     isLoading: false,

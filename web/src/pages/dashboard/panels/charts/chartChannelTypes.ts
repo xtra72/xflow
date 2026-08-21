@@ -15,6 +15,8 @@ import type { DataType } from '@/services/api/store';
 // 다른 표기를 갖지 않도록 두 번째 포맷터를 만들지 않는다. 순수 모듈이라 순환 의존이 없다.
 import { seriesRefDisplayName } from '@/services/api/seriesLabels';
 
+import { resolveSeriesAlias, type AliasContext } from './aliasTemplate';
+
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
 export interface ChartEntry {
   /** epoch milliseconds (int64) */
@@ -49,7 +51,7 @@ export type ChartDataSourceKind = 'channel' | 'store';
 /**
  * Store 소스에서 조회할 단일 시리즈 참조.
  *
- * `key` 는 Store 키 이름이고, `metric_type`/`tags` 가 지정되면 해당 key 의
+ * `key` 는 Store 키 이름이고, `field`/`tags` 가 지정되면 해당 key 의
  * 특정 시리즈(저장소 기준 분류)로 좁혀 조회한다. 미지정이면 그 key 의 모든
  * 시리즈를 조회한다. `alias`/`color` 는 표시 전용이다.
  *
@@ -58,8 +60,8 @@ export type ChartDataSourceKind = 'channel' | 'store';
 export interface StoreSeriesRef {
   /** Store 키 이름. */
   key: string;
-  /** 시리즈별 선택 시 metric_type 필터(선택). */
-  metric_type?: string;
+  /** 시리즈별 선택 시 field 필터(선택). */
+  field?: string;
   /** 시리즈별 선택 시 tag 필터(선택). */
   tags?: Record<string, string>;
   /** 키 데이터 타입(표시/필터 메타데이터). */
@@ -118,6 +120,16 @@ export interface StoreSourceConfig {
   agent_name: string;
   /** Store 네임스페이스(미지정 시 'default'). */
   namespace?: string;
+  /**
+   * 이름을 지정하지 않은 시리즈의 표시 이름 형식(템플릿). @spec SPEC-WEB-005
+   *
+   * `{$.measurement}` / `{$.field}` / `{$.tags.NAME}` 토큰과 리터럴을 섞어 쓴다
+   * (aliasTemplate 과 같은 문법). 시리즈에 이름(alias)을 직접 입력하면 그 이름이
+   * 항상 이기고, 이 형식은 이름이 비어 있는 시리즈에만 적용된다.
+   *
+   * 미지정이면 내장 서술 표기(`measurement · field{k=v}`)로 폴백한다.
+   */
+  series_name_format?: string;
   /**
    * 시리즈 선택 방식. @spec SPEC-WEB-005
    *
@@ -244,7 +256,7 @@ export function pickSeriesColor(index: number): string {
 }
 
 /**
- * StoreSeriesRef 의 동일성 식별자(key + metric_type + 정렬된 tags). keys 모드에서 선택된
+ * StoreSeriesRef 의 동일성 식별자(key + field + 정렬된 tags). keys 모드에서 선택된
  * 시리즈를 판정/추가/제거할 때 쓴다. 반환 형식은 `"<key> <metric> <k=v,...>"` 로 고정한다.
  * @spec SPEC-PANEL-SETTINGS-001 (시리즈 선택 단일화 — 체크박스 ↔ series)
  */
@@ -263,7 +275,7 @@ export function storeSeriesId(
 /**
  * StoreSeriesRef 의 **표시 라벨**(사람이 읽는 이름). `storeSeriesId` 의 표시 짝이다.
  *
- * 결함 배경: 시리즈의 동일성은 (key, metric_type, tags) 인데 표시에는 key 만 쓰여서, 한 key 를
+ * 결함 배경: 시리즈의 동일성은 (key, field, tags) 인데 표시에는 key 만 쓰여서, 한 key 를
  * metric/tags 로 나눠 갖는 형제 시리즈들이 목록·마커에서 **같은 글자**로 보였다. 좌표/매칭은
  * 이미 동일성 키로 분리되어 있었으므로(SPEC-HEATMAP-PANEL-001 재키잉) 남은 것은 표기뿐이며,
  * 이 함수가 그 표기를 한 곳으로 모은다.
@@ -273,20 +285,54 @@ export function storeSeriesId(
  *   - 그 외에는 매트릭스 컬럼과 동일한 서술 표기(`key · metric{k=v}`)를 쓴다. metric/tags 가
  *     없으면 자연히 `key` 하나로 줄어든다(구분자 잔여물 없음).
  *
- * `alias === key` 를 "사용자가 붙인 이름 없음"으로 보는 이유: 시리즈 생성 시 `alias: key` 가
- * 기본값으로 기록되어 왔기 때문에, alias 존재 여부만으로는 기본값과 사용자 입력을 구분할 수
- * 없다. 이미 저장된 패널도 고쳐지도록 기본값과 같은 값이면 서술 표기로 폴백한다. 비용: 사용자가
- * 굳이 key 와 똑같은 이름을 직접 입력해도 서술 표기가 나온다(그 표기는 key 로 시작하므로
- * 의도에서 크게 벗어나지 않는다).
+ * 과거에는 `alias === key` 를 "이름 없음"으로 취급했다. 시리즈 생성 시 `alias: key` 를
+ * 기본값으로 기록했기 때문에 alias 존재만으로는 기본값과 사용자 입력을 구분할 수 없었다.
+ * 그 대가로 사용자가 measurement 와 똑같은 이름을 **직접 입력해도** 무시되어, 설정의 이름
+ * 입력·미리보기(이름 그대로)와 목록의 표시 이름(서술 표기)이 갈리는 결함이 있었다.
+ * 이제 생성 시 alias 를 비워 두고(기본값 제거), 읽는 시점에 legacy 기본값을 걷어내므로
+ * (normalizeStoreSeriesAlias) alias 존재 = 사용자 입력이 되어 이 예외가 필요 없다.
  *
  * 매칭·동일성에는 절대 쓰지 않는다 — 이름을 바꿔도 좌표/선택이 끊기면 안 된다.
  */
 export function storeSeriesLabel(
-  ref: Pick<StoreSeriesRef, 'key' | 'metric_type' | 'tags' | 'alias'>,
+  ref: Pick<StoreSeriesRef, 'key' | 'field' | 'tags' | 'alias'>,
+  nameFormat?: string,
 ): string {
+  const ctx = aliasContextOf(ref);
+  // 1) 시리즈에 직접 붙인 이름이 항상 이긴다. 토큰을 쓴 이름도 해석한다.
   const alias = ref.alias?.trim() ?? '';
-  if (alias !== '' && alias !== ref.key) return alias;
-  return seriesRefDisplayName(ref.key, ref.metric_type, ref.tags);
+  if (alias !== '') return resolveSeriesAlias(alias, ctx);
+  // 2) 패널이 지정한 이름 형식. 해석 결과가 비면(참조 토큰이 전부 빈 값) 폴백한다.
+  const fmt = nameFormat?.trim() ?? '';
+  if (fmt !== '') {
+    const resolved = resolveSeriesAlias(fmt, ctx).trim();
+    if (resolved !== '') return resolved;
+  }
+  // 3) 내장 서술 표기.
+  return seriesRefDisplayName(ref.key, ref.field, ref.tags);
+}
+
+/** 시리즈 참조를 이름 템플릿 해석 컨텍스트로 변환한다(표시 경로 공통). */
+export function aliasContextOf(
+  ref: Pick<StoreSeriesRef, 'key' | 'field' | 'tags'>,
+): AliasContext {
+  return { measurement: ref.key, field: ref.field, tags: ref.tags ?? {} };
+}
+
+/**
+ * 저장된 시리즈에서 legacy 기본 alias(`alias === key`)를 "이름 없음"으로 되돌린다.
+ *
+ * 과거 생성 경로가 `alias: key` 를 기본값으로 기록했기 때문에, 그 값을 그대로 두면
+ * 사용자 입력과 구분할 수 없다. 읽는 시점에 한 번 걷어내면 이후로는 alias 존재 여부가
+ * 곧 "사용자가 이름을 붙였는가" 가 된다(설정 화면의 이름 입력·미리보기와 목록 표시가 일치).
+ *
+ * config 를 저장하지는 않는다 — 표시·편집용 정규화이며, 사용자가 이름을 입력하면 그때
+ * 정상 값으로 기록된다.
+ */
+export function normalizeStoreSeriesAlias(series: readonly StoreSeriesRef[]): StoreSeriesRef[] {
+  return series.map((s) =>
+    s.alias !== undefined && s.alias.trim() === s.key ? { ...s, alias: undefined } : s,
+  );
 }
 
 /**

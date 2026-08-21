@@ -27,9 +27,8 @@ import type {
 } from '@/services/api/seriesDataSource';
 import { fetchStoreKeys, storeSeriesDataSource } from '@/services/api/store';
 import { useAgents } from '@/hooks/useAgent';
-import { resolveSeriesAlias } from './aliasTemplate';
 import { resolveStoreAgentName } from './storeAgentResolve';
-import { pickSeriesColor } from './chartChannelTypes';
+import { pickSeriesColor, storeSeriesLabel } from './chartChannelTypes';
 import type {
   ChartConnectionStatus,
   ChartEntry,
@@ -122,18 +121,19 @@ const defaultResolveKeys: ResolveKeysFn = (agentName, tagFilters, signal) =>
 /**
  * tag 모드에서 해석된 키 목록을 `series[]` 로 확장한 effective config 를 만든다.
  *
- * 각 키는 하나의 시리즈가 되며(별칭 = 키명), 인덱스 기준으로 기본 팔레트 색을 배정한다
+ * 각 키는 하나의 시리즈가 되며(별칭 미지정 → 컬럼명 폴백), 인덱스 기준으로 기본 팔레트 색을 배정한다
  * (사용자 지정 색은 tag 모드에 없으므로 항상 자동 배정). 집계/시간/인터벌/네임스페이스는
- * 원본 config 를 그대로 물려받고, `series[]` 만 동적으로 교체한다. metric_type/tags 는
+ * 원본 config 를 그대로 물려받고, `series[]` 만 동적으로 교체한다. field/tags 는
  * 부여하지 않으므로 각 키의 모든 시리즈가 조회된다(태그에 걸린 키 전체를 라인으로).
  */
 export function tagResolvedConfig(
   config: StoreSourceConfig,
   resolvedKeys: string[],
 ): StoreSourceConfig {
+  // alias 는 부여하지 않는다 — 비면 컬럼명(=key)으로 폴백하므로 표시 결과는 같고,
+  // "사용자가 붙인 이름" 과 기본값이 뒤섞이지 않는다.
   const series: StoreSeriesRef[] = resolvedKeys.map((key, i) => ({
     key,
-    alias: key,
     color: pickSeriesColor(i),
   }));
   return { ...config, series };
@@ -143,7 +143,7 @@ export function tagResolvedConfig(
  * config.series 를 SeriesMatrixQuery 의 keys/seriesFilters 로 변환한다.
  *
  * - keys: 각 시리즈의 key.
- * - seriesFilters: metric_type/tags 중 하나라도 있으면 SeriesSelectorFilter 를 만들고,
+ * - seriesFilters: field/tags 중 하나라도 있으면 SeriesSelectorFilter 를 만들고,
  *   둘 다 없으면 undefined(해당 key 의 모든 시리즈 조회).
  *   필터가 하나도 없으면 seriesFilters 자체를 생략한다(기존 동작 보존).
  */
@@ -157,10 +157,10 @@ function buildKeysAndFilters(config: StoreSourceConfig): {
   for (const ref of config.series) {
     keys.push(ref.key);
     const hasTags = ref.tags && Object.keys(ref.tags).length > 0;
-    if (ref.metric_type || hasTags) {
+    if (ref.field || hasTags) {
       anyFilter = true;
       filters.push({
-        metricType: ref.metric_type,
+        fieldName: ref.field,
         tags: hasTags ? ref.tags : undefined,
       });
     } else {
@@ -196,12 +196,11 @@ export function matrixToEntries(
 
   const seriesNames: string[] = matrix.columns.map((colName, j) => {
     const ref = aligned ? config.series[j] : undefined;
-    // SPEC-WEB-005: alias 의 `{$.tagKey}` 토큰을 시리즈 태그 값으로 치환한다.
-    // 토큰 없는 plain alias 는 그대로 유지된다(하위 호환). 빈 alias 는 컬럼명 폴백.
-    if (ref?.alias && ref.alias.trim() !== '') {
-      return resolveSeriesAlias(ref.alias, ref.tags ?? {});
-    }
-    return colName;
+    if (!ref) return colName;
+    // 표시 이름은 storeSeriesLabel 한 곳에서 결정한다 — 데이터 소스 목록·히트맵 마커와
+    // 같은 규칙을 쓰지 않으면 "설정한 이름과 출력이 다르다" 는 불일치가 생긴다.
+    //   이름(alias) 직접 입력 → 패널의 시리즈 이름 형식 → 내장 서술 표기.
+    return storeSeriesLabel(ref, config.series_name_format);
   });
 
   matrix.columns.forEach((_colName, j) => {
@@ -321,7 +320,7 @@ export function useStoreChartData(
             // alias(시리즈 표시 이름)도 포함해, 별칭 편집 시 재구독→재변환으로 범례
             // 이름이 반영되게 한다. seriesName 은 조회 시점에 alias 로 확정되므로,
             // alias 를 pollKey 에서 빼면 편집이 반영되지 않는다(범례 이름 안바뀜 버그).
-            return `${s.key}|${s.metric_type ?? ''}|${tagPart}|${s.alias ?? ''}`;
+            return `${s.key}|${s.field ?? ''}|${tagPart}|${s.alias ?? ''}`;
           })
           .join('');
     }

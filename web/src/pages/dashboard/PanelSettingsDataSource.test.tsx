@@ -22,17 +22,20 @@ const state = vi.hoisted(() => ({
     type: string;
   }>,
   keyObjects: [
-    { key: 'k1', registration: 'auto', data_type: 'float', metric_type: 'temperature', tags: { room: '1' } },
-    { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
+    { key: 'k1', registration: 'auto', data_type: 'float', field: 'temperature', tags: { room: '1' } },
+    { key: 'k2', registration: 'auto', data_type: 'int', field: 'humidity', tags: {} },
   ] as unknown[],
   keysLoaded: true,
   refetchKeys: vi.fn(),
+  // 현재 값 컬럼의 소스 — 에이전트 상태 스냅샷의 라이브 엔트리.
+  agentEntries: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 
 vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({ data: { data: state.agents } }),
+  useAgent: () => ({ data: { state: { entries: state.agentEntries } } }),
   useExecAgent: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 
@@ -55,7 +58,7 @@ import { PanelSettingsDataSource } from './PanelSettingsDataSource';
  * 히트맵 센서 좌표(sensor_positions)의 키 공간 = 시리즈 동일성 키(key + metric + 정렬 tags).
  * store key 하나로 키잉하면 같은 key 의 형제 시리즈가 좌표를 공유해버린다(이 결함의 원인).
  */
-const SID_K1 = heatmapSensorId({ key: 'k1', metric_type: 'temperature', tags: { room: '1' } });
+const SID_K1 = heatmapSensorId({ key: 'k1', field: 'temperature', tags: { room: '1' } });
 
 const STORE_SOURCE = {
   agent_id: 'store-uuid-1',
@@ -89,10 +92,11 @@ beforeEach(() => {
   window.localStorage.clear();
   state.agents = [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }];
   state.keyObjects = [
-    { key: 'k1', registration: 'auto', data_type: 'float', metric_type: 'temperature', tags: { room: '1' } },
-    { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
+    { key: 'k1', registration: 'auto', data_type: 'float', field: 'temperature', tags: { room: '1' } },
+    { key: 'k2', registration: 'auto', data_type: 'int', field: 'humidity', tags: {} },
   ];
   state.keysLoaded = true;
+  state.agentEntries = [];
   state.refetchKeys.mockReset();
 });
 
@@ -163,7 +167,8 @@ describe('T6/AC-07 — 행 체크박스 → series (StoreKeySelector byte-호환
     const checkboxes = screen.getAllByLabelText('agents.detail.store.selectRowAriaLabel');
     expect(checkboxes.length).toBe(2);
     fireEvent.click(checkboxes[0]!);
-    // 구 StoreKeySelector.onChange 가 만들던 항목과 동일 형태(key/metric_type/tags/data_type/alias/color).
+    // 구 StoreKeySelector.onChange 가 만들던 항목과 동일 형태(key/field/tags/data_type/color).
+    // alias 는 부여하지 않는다 — 기본값으로 key 를 넣으면 사용자가 붙인 이름과 구분되지 않는다.
     // heatmap 패널이라 sensor_positions 부수효과가 함께 오므로 objectContaining 로 래핑한다.
     expect(onConfigChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -171,10 +176,9 @@ describe('T6/AC-07 — 행 체크박스 → series (StoreKeySelector byte-호환
           series: [
             {
               key: 'k1',
-              metric_type: 'temperature',
+              field: 'temperature',
               tags: { room: '1' },
               data_type: 'float',
-              alias: 'k1',
               color: pickSeriesColor(0),
             },
           ],
@@ -195,10 +199,9 @@ describe('T6/AC-07 — 행 체크박스 → series (StoreKeySelector byte-호환
           series: [
             {
               key: 'k2',
-              metric_type: 'humidity',
+              field: 'humidity',
               tags: undefined,
               data_type: 'int',
-              alias: 'k2',
               color: pickSeriesColor(0),
             },
           ],
@@ -212,7 +215,7 @@ describe('T6/AC-07 — 행 체크박스 → series (StoreKeySelector byte-호환
     render(
       <PanelSettingsDataSource
         panel={panelWithAgent({
-          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+          series: [{ key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' }],
         })}
         onConfigChange={onConfigChange}
       />,
@@ -255,11 +258,11 @@ describe('AC-15 — 선택 상한 가드 (series 개수 기준)', () => {
       key: `k${i}`,
       registration: 'auto',
       data_type: 'float',
-      metric_type: 'm',
+      field: 'm',
       tags: {},
     }));
-    // series 항목은 seriesId(key,'m',{}) 로 매칭되도록 key/metric_type 만 채워도 충분.
-    const series = Array.from({ length: 48 }, (_, i) => ({ key: `k${i}`, metric_type: 'm' }));
+    // series 항목은 seriesId(key,'m',{}) 로 매칭되도록 key/field 만 채워도 충분.
+    const series = Array.from({ length: 48 }, (_, i) => ({ key: `k${i}`, field: 'm' }));
     const onConfigChange = vi.fn();
     render(
       <PanelSettingsDataSource
@@ -296,31 +299,31 @@ describe('T7/AC-08 — 필터/정렬/표시숨김 영속', () => {
     );
     const select = () => screen.getByTestId('panel-store-select');
     expect(
-      within(within(select()).getByRole('table')).getByText('agents.detail.store.colMetric'),
+      within(within(select()).getByRole('table')).getByText('agents.detail.store.colValue'),
     ).toBeInTheDocument();
 
-    // 컬럼 설정 메뉴에서 metric 숨김.
+    // 컬럼 설정 메뉴에서 현재 값 컬럼 숨김.
     fireEvent.click(within(select()).getByTestId('store-columns-settings'));
     const menu = within(select()).getByRole('menu');
-    const metricLabel = within(menu)
-      .getByText('agents.detail.store.colMetric')
+    const valueLabel = within(menu)
+      .getByText('agents.detail.store.colValue')
       .closest('label')!;
-    fireEvent.click(metricLabel.querySelector('input[type="checkbox"]')!);
+    fireEvent.click(valueLabel.querySelector('input[type="checkbox"]')!);
 
     expect(
-      within(within(select()).getByRole('table')).queryByText('agents.detail.store.colMetric'),
+      within(within(select()).getByRole('table')).queryByText('agents.detail.store.colValue'),
     ).not.toBeInTheDocument();
     // localStorage 에 hidden 영속.
     const raw = window.localStorage.getItem('panel-settings.storeTable.p1');
     expect(raw).not.toBeNull();
-    expect(JSON.parse(raw!).hidden).toContain('metric');
+    expect(JSON.parse(raw!).hidden).toContain('value');
 
     // 재마운트 → 숨김 복원.
     unmount();
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
     const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
     expect(
-      within(table).queryByText('agents.detail.store.colMetric'),
+      within(table).queryByText('agents.detail.store.colValue'),
     ).not.toBeInTheDocument();
     expect(within(table).getByText('agents.detail.store.colKey')).toBeInTheDocument();
   });
@@ -328,13 +331,13 @@ describe('T7/AC-08 — 필터/정렬/표시숨김 영속', () => {
   it('선택 행만 펼침 가능 + 펼침 상세는 편집 필드만(키 설명 서브라인 없음, REQ-19 폐지/AC-21)', () => {
     // 긴 키(선택됨) + 짧은 키(미선택)를 함께 둔다. 선택 상태는 store_source.series 로 반영.
     state.keyObjects = [
-      { key: 'very-long-key-abcdefgh', registration: 'auto', data_type: 'float', metric_type: 'm', tags: {} },
-      { key: 'k2', registration: 'auto', data_type: 'int', metric_type: 'humidity', tags: {} },
+      { key: 'very-long-key-abcdefgh', registration: 'auto', data_type: 'float', field: 'm', tags: {} },
+      { key: 'k2', registration: 'auto', data_type: 'int', field: 'humidity', tags: {} },
     ];
     render(
       <PanelSettingsDataSource
         panel={panelWithAgent({
-          series: [{ key: 'very-long-key-abcdefgh', metric_type: 'm', alias: 'very-long-key-abcdefgh' }],
+          series: [{ key: 'very-long-key-abcdefgh', field: 'm', alias: 'very-long-key-abcdefgh' }],
         })}
         onConfigChange={vi.fn()}
       />,
@@ -382,7 +385,7 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
       title: 'h',
       config: {
         data_source: 'store',
-        store_source: { ...STORE_SOURCE, series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }] },
+        store_source: { ...STORE_SOURCE, series: [{ key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' }] },
         sensor_positions: { k1: { x: 0.2, y: 0.3 }, k2: { x: 0.9, y: 0.9 } },
       },
     } as unknown as PanelConfig;
@@ -437,7 +440,7 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
         store_source: {
           ...STORE_SOURCE,
           selection_mode: 'keys',
-          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+          series: [{ key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' }],
         },
         sensor_positions: { k1: { x: 0.5, y: 0.5 } },
       },
@@ -463,8 +466,8 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
 // ---------------------------------------------------------------------------
 describe('한 key 를 공유하는 형제 시리즈의 센서 좌표 독립성', () => {
   /** 같은 key('dup')를 room 태그로 나눠 쓰는 두 시리즈. */
-  const DUP_A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } };
-  const DUP_B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } };
+  const DUP_A = { key: 'dup', field: 'temperature', tags: { room: 'A' } };
+  const DUP_B = { key: 'dup', field: 'temperature', tags: { room: 'B' } };
   const SID_A = heatmapSensorId(DUP_A);
   const SID_B = heatmapSensorId(DUP_B);
 
@@ -631,13 +634,13 @@ describe('한 key 를 공유하는 형제 시리즈의 센서 좌표 독립성',
 });
 
 // ---------------------------------------------------------------------------
-// 표시 결함(회귀 방지): 시리즈 동일성은 (key, metric_type, tags) 인데 이름 셀에는 key 만
+// 표시 결함(회귀 방지): 시리즈 동일성은 (key, field, tags) 인데 이름 셀에는 key 만
 // 찍혀, 서로 다른 센서 N 개가 목록에서 같은 글자로 보였다(→ 한 좌표를 공유하는 것처럼 보임).
 // 좌표/매칭은 이미 동일성 키로 분리돼 있으므로 이 블록은 **표기**만 검증한다.
 // ---------------------------------------------------------------------------
 describe('이름 컬럼 — 시리즈를 구분하는 표기', () => {
-  const DUP_A = { key: 'dup', metric_type: 'temperature', tags: { room: 'A' } };
-  const DUP_B = { key: 'dup', metric_type: 'temperature', tags: { room: 'B' } };
+  const DUP_A = { key: 'dup', field: 'temperature', tags: { room: 'A' } };
+  const DUP_B = { key: 'dup', field: 'temperature', tags: { room: 'B' } };
 
   beforeEach(() => {
     state.keyObjects = [
@@ -715,7 +718,7 @@ describe('이름 컬럼 — 시리즈를 구분하는 표기', () => {
         key: 'very-long-store-key-name-abcdefgh',
         registration: 'auto',
         data_type: 'float',
-        metric_type: 'temperature',
+        field: 'temperature',
         tags: { room: 'A', floor: '3' },
       },
     ];
@@ -740,8 +743,8 @@ describe('이름 컬럼 — 시리즈를 구분하는 표기', () => {
   });
 });
 
-describe('REQ-17/AC-19 — 컬럼 순서 key · name · metric · tag', () => {
-  it('선택 테이블 컬럼이 키 · 이름 · 메트릭 · 태그 순으로 배치된다', () => {
+describe('REQ-17/AC-19 — 컬럼 순서 key · name · value · tag', () => {
+  it('선택 테이블 컬럼이 키 · 이름 · 현재 값 · 태그 순으로 배치된다', () => {
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
     const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
     const headers = within(table)
@@ -750,12 +753,58 @@ describe('REQ-17/AC-19 — 컬럼 순서 key · name · metric · tag', () => {
     const idx = (needle: string) => headers.findIndex((h) => h.includes(needle));
     const key = idx('colKey');
     const name = idx('colAlias'); // colAlias 라벨이 "이름"으로 표기됨(REQ-16)
-    const metric = idx('colMetric');
+    const value = idx('colValue');
     const tags = idx('colTags');
     expect(key).toBeGreaterThanOrEqual(0);
     expect(key).toBeLessThan(name);
-    expect(name).toBeLessThan(metric);
-    expect(metric).toBeLessThan(tags);
+    expect(name).toBeLessThan(value);
+    expect(value).toBeLessThan(tags);
+    // 필드 전용 컬럼은 제거됐다(이름 셀이 key+metric+tags 를 합쳐 보여준다).
+    expect(idx('colField')).toBe(-1);
+  });
+});
+
+describe('키 컬럼 — 잘림 없이 전체 표시', () => {
+  it('8자를 넘는 키도 앞부분만 잘리지 않고 전체가 렌더된다', () => {
+    const longKey = 'device-1e6dc10e-3894-420f';
+    state.keyObjects = [
+      { key: longKey, registration: 'auto', data_type: 'float', field: 'temperature', tags: {} },
+    ];
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).getByText(longKey)).toBeInTheDocument();
+    // 축약형(앞 8자)이 단독 텍스트로 남아 있으면 안 된다.
+    expect(within(table).queryByText('device-1')).not.toBeInTheDocument();
+  });
+});
+
+describe('현재 값 컬럼 — 에이전트 상태 스냅샷 조인', () => {
+  it('시리즈 동일성(key+metric+tags)이 일치하는 라이브 값을 행에 표시한다', () => {
+    state.agentEntries = [
+      { key: 'k1', field: 'temperature', tags: { room: '1' }, value: 23.5 },
+      { key: 'k2', field: 'humidity', tags: {}, value: 60 },
+    ];
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).getByText('23.5')).toBeInTheDocument();
+    expect(within(table).getByText('60')).toBeInTheDocument();
+  });
+
+  it('같은 키라도 metric/tags 가 다른 라이브 엔트리의 값을 섞지 않는다', () => {
+    // k1 은 temperature{room=1} 인데, 스냅샷에는 다른 시리즈(humidity)만 있다.
+    state.agentEntries = [
+      { key: 'k1', field: 'humidity', tags: { room: '1' }, value: 99 },
+    ];
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).queryByText('99')).not.toBeInTheDocument();
+  });
+
+  it('라이브 값이 없어도 행은 정상 렌더된다(메타데이터 전용 행)', () => {
+    state.agentEntries = [];
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    const table = within(screen.getByTestId('panel-store-select')).getByRole('table');
+    expect(within(table).getByText('agents.detail.store.colValue')).toBeInTheDocument();
   });
 });
 
@@ -766,10 +815,10 @@ describe('REQ-15/AC-17b — 태그 키(종류)별 표시 필터(OR 내/AND 간)'
 
   it('device_id∈{A,B} AND type=report → S1,S2 만 표시(태그 키별 차원)', () => {
     state.keyObjects = [
-      { key: 's1', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'A', type: 'report' } },
-      { key: 's2', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'B', type: 'report' } },
-      { key: 's3', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'C', type: 'report' } },
-      { key: 's4', registration: 'auto', data_type: 'float', metric_type: 'm', tags: { device_id: 'A', type: 'command' } },
+      { key: 's1', registration: 'auto', data_type: 'float', field: 'm', tags: { device_id: 'A', type: 'report' } },
+      { key: 's2', registration: 'auto', data_type: 'float', field: 'm', tags: { device_id: 'B', type: 'report' } },
+      { key: 's3', registration: 'auto', data_type: 'float', field: 'm', tags: { device_id: 'C', type: 'report' } },
+      { key: 's4', registration: 'auto', data_type: 'float', field: 'm', tags: { device_id: 'A', type: 'command' } },
     ];
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
     const select = screen.getByTestId('panel-store-select');
@@ -796,7 +845,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
         store_source: {
           ...STORE_SOURCE,
           selection_mode: 'keys',
-          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+          series: [{ key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' }],
         },
         sensor_positions: { k1: { x: 0.5, y: 0.5 } },
       },
@@ -855,7 +904,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
         store_source: {
           ...STORE_SOURCE,
           selection_mode: 'keys',
-          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+          series: [{ key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' }],
         },
       },
     } as unknown as PanelConfig;
@@ -880,7 +929,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
           ...STORE_SOURCE,
           selection_mode: 'tag',
           tag_filters: { room: '1' },
-          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+          series: [{ key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' }],
         },
       },
     } as unknown as PanelConfig;
@@ -948,14 +997,14 @@ describe('유령 선택 — 스토어에서 사라진 선택 시리즈 회수', 
   function panelWithStale(): PanelConfig {
     return panelWithAgent({
       series: [
-        { key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' },
-        { key: 'gone', metric_type: 'temperature', tags: { room: '9' }, alias: '옛 센서' },
+        { key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' },
+        { key: 'gone', field: 'temperature', tags: { room: '9' }, alias: '옛 센서' },
       ],
     });
   }
   const SID_GONE = heatmapSensorId({
     key: 'gone',
-    metric_type: 'temperature',
+    field: 'temperature',
     tags: { room: '9' },
   });
 
@@ -979,8 +1028,8 @@ describe('유령 선택 — 스토어에서 사라진 선택 시리즈 회수', 
         store_source: {
           ...STORE_SOURCE,
           series: [
-            { key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' },
-            { key: 'gone', metric_type: 'temperature', tags: { room: '9' }, alias: '옛 센서' },
+            { key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' },
+            { key: 'gone', field: 'temperature', tags: { room: '9' }, alias: '옛 센서' },
           ],
         },
         sensor_positions: { [SID_K1]: { x: 0.2, y: 0.2 }, [SID_GONE]: { x: 0.8, y: 0.8 } },
@@ -1015,7 +1064,7 @@ describe('유령 선택 — 스토어에서 사라진 선택 시리즈 회수', 
     render(
       <PanelSettingsDataSource
         panel={panelWithAgent({
-          series: [{ key: 'k1', metric_type: 'temperature', tags: { room: '1' }, alias: 'k1' }],
+          series: [{ key: 'k1', field: 'temperature', tags: { room: '1' }, alias: 'k1' }],
         })}
         onConfigChange={vi.fn()}
       />,

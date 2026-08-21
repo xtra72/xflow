@@ -44,6 +44,7 @@ vi.mock('./panels/charts/useStoreChartData', () => ({
 
 vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({ data: { data: [] } }),
+  useAgent: () => ({ data: undefined }),
   useExecAgent: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('@/services/api/store', () => ({

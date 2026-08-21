@@ -34,21 +34,21 @@ vi.mock('@/services/api/store', () => ({
           key: 'room:1:temp',
           registration: 'manual',
           data_type: 'float',
-          metric_type: 'gauge',
+          field: 'gauge',
           tags: { room: '1' },
         },
         {
           key: 'room:2:humidity',
           registration: 'manual',
           data_type: 'int',
-          metric_type: 'counter',
+          field: 'counter',
           tags: { room: '2' },
         },
         {
           key: 'system:status',
           registration: 'auto',
           data_type: 'string',
-          metric_type: 'state',
+          field: 'state',
           tags: {},
         },
       ],
@@ -69,7 +69,7 @@ function storeConfig(seriesOverride?: Partial<StoreSourceConfig['series'][number
   const store_source: StoreSourceConfig = {
     agent_name: 'store-1',
     namespace: 'default',
-    series: [{ key: 'room:1:temp', metric_type: 'gauge', tags: { room: '1' }, ...seriesOverride }],
+    series: [{ key: 'room:1:temp', field: 'gauge', tags: { room: '1' }, ...seriesOverride }],
     time_window_ms: 60_000,
     interval_ms: 10_000,
     aggregation: 'average',
@@ -239,5 +239,53 @@ describe('Store 조회 설정 정보 "i" 말풍선 (SPEC-PANEL-SETTINGS-001)', (
     // 읽기전용: 편집 입력/셀렉트가 없다.
     expect(popover.querySelector('input')).toBeNull();
     expect(popover.querySelector('select')).toBeNull();
+  });
+});
+
+describe('시리즈 이름 형식 (패널 옵션)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Store 모드에서 이름 형식 입력을 노출한다', () => {
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-series-name-format')).toBeInTheDocument();
+  });
+
+  it('선택된 시리즈 기준 토큰 버튼을 제공한다', () => {
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+    expect(
+      screen.getByTestId('chart-store-series-name-format-token-measurement'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-series-name-format-token-field')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-series-name-format-token-room')).toBeInTheDocument();
+  });
+
+  it('입력값이 store_source.series_name_format 로 저장된다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-series-name-format-input'), {
+      target: { value: '{$.measurement}/{$.field}' },
+    });
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store_source: expect.objectContaining({
+          series_name_format: '{$.measurement}/{$.field}',
+        }),
+      }),
+    );
+  });
+
+  it('공백만 입력하면 undefined 로 저장되어 기본 표기로 돌아간다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-series-name-format-input'), {
+      target: { value: '   ' },
+    });
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store_source: expect.objectContaining({ series_name_format: undefined }),
+      }),
+    );
   });
 });

@@ -27,7 +27,7 @@ const PREFIX = 'panel-settings.storeTable.';
 
 const VALID_SORT_COLUMNS: readonly SortColumn[] = [
   'key',
-  'metric',
+  'field',
   'value',
   'namespace',
   'binding',

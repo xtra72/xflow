@@ -38,6 +38,7 @@ import {
   type YThreshold,
   type YAxisMode,
 } from './chartChannelTypes';
+import { ChartLegend } from './ChartLegend';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import {
   computeNiceTimeTicks,
@@ -227,110 +228,6 @@ function filterWithLeftAnchor(
 interface NormalizedChannel {
   ref: ChannelRefConfig;
   state: ChannelState;
-}
-
-function CustomLegend({
-  seriesKeys,
-  seriesColors,
-  channelStates,
-  isMultiMode,
-  legendCfg,
-  chartData,
-  formatValue,
-}: {
-  seriesKeys: string[];
-  seriesColors: string[];
-  channelStates: NormalizedChannel[];
-  isMultiMode: boolean;
-  legendCfg: LegendConfig;
-  chartData: Array<Record<string, unknown>>;
-  /** 시리즈 마지막값 표시 포맷터. enum/boolean 은 라벨로, 그 외는 숫자로 표기한다. */
-  formatValue: (key: string, value: number) => string;
-}): React.ReactElement | null {
-  const isVert = legendCfg.position === 'left' || legendCfg.position === 'right';
-  const showName = legendCfg.show_name !== false;
-  const showLine = legendCfg.show_line !== false;
-  const showLastValue = legendCfg.show_last_value === true;
-
-  // 각 시리즈별 마지막 유효 값 (역순 탐색)
-  // Hooks 규칙 준수: 조건부 early-return 보다 먼저 호출한다.
-  const lastValues = useMemo(() => {
-    if (!showLastValue || chartData.length === 0) return {};
-    const result: Record<string, number | undefined> = {};
-    for (const key of seriesKeys) {
-      for (let i = chartData.length - 1; i >= 0; i--) {
-        const v = chartData[i]![key as keyof (typeof chartData)[0]];
-        if (typeof v === 'number' && Number.isFinite(v)) {
-          result[key] = v;
-          break;
-        }
-      }
-    }
-    return result;
-  }, [showLastValue, chartData, seriesKeys]);
-
-  if (seriesKeys.length === 0) return null;
-
-  return (
-    <div
-      className={cn(
-        'flex shrink-0 text-[11px]',
-        isVert
-          ? 'min-w-fit flex-col justify-center gap-y-1 border-l border-(--color-border-default) py-2 pl-3 pr-2'
-          : 'flex-wrap justify-center gap-x-4 gap-y-1 border-t border-(--color-border-default) py-1.5 px-2',
-      )}
-      data-testid="line-chart-legend"
-    >
-      {seriesKeys.map((key, i) => {
-        const baseKey = key.includes('::') ? key.split('::')[0]! : key;
-        const chState = isMultiMode
-          ? channelStates.find((c) => (c.ref.alias ?? c.ref.name) === baseKey)
-          : channelStates[0];
-        const st = chState?.state.status ?? 'idle';
-        const statusDot =
-          st === 'connected'
-            ? 'bg-emerald-400'
-            : st === 'error'
-              ? 'bg-rose-400'
-              : 'bg-gray-400';
-        const lastVal = lastValues[key];
-        const lastStr = lastVal !== undefined ? formatValue(key, lastVal) : '—';
-        return (
-          <span
-            key={key}
-            data-testid={`line-chart-channel-status-${chState?.ref.name ?? key}`}
-            data-status={st}
-            className={cn(
-              'inline-flex items-center gap-1',
-              isVert && showLastValue && 'w-full',
-            )}
-          >
-            {showLine && (
-              <span
-                className="inline-block h-0.5 w-3 shrink-0 rounded-full"
-                style={{ backgroundColor: seriesColors[i] }}
-              />
-            )}
-            {showName && (
-              <span className="shrink-0 whitespace-nowrap text-(--color-text-primary)">{key}</span>
-            )}
-            {showLastValue && (
-              <span className={cn(
-                'shrink-0 whitespace-nowrap font-mono text-[10px] text-(--color-text-muted)',
-                isVert && 'ml-auto text-right',
-              )}>
-                {lastStr}
-              </span>
-            )}
-            <span
-              className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusDot}`}
-              title={st}
-            />
-          </span>
-        );
-      })}
-    </div>
-  );
 }
 
 export default function LineChartPanel({ panelId: _panelId, title, config }: LineChartPanelProps) {
@@ -984,7 +881,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         </div>
 
         {/* 범례 — recharts 바깥, CSS flex로 배치 */}
-        <CustomLegend
+        <ChartLegend
           seriesKeys={seriesKeys}
           seriesColors={seriesKeys.map((key, i) => {
             if (isStore) {
@@ -1008,7 +905,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           chartData={chartData}
           // 범례 마지막값도 축/툴팁과 동일하게 표시한다.
           // enum 축이면 라벨로, boolean 시리즈면 true/false, 그 외는 소수 1자리.
-          formatValue={(key, v) => {
+          formatValue={(key: string, v: number) => {
             if (enumMode) return formatEnumValue(v, enumMap);
             if (booleanKeys.has(key)) return v === 1 ? 'true' : v === 0 ? 'false' : String(v);
             return v.toFixed(1);

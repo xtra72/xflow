@@ -366,13 +366,13 @@ describe('useStoreChartData', () => {
     expect(queryFn).toHaveBeenCalledTimes(callsAfterUnmount);
   });
 
-  it('시리즈에 metric_type/tags 가 있으면 seriesFilters 를 전송한다', async () => {
+  it('시리즈에 field/tags 가 있으면 seriesFilters 를 전송한다', async () => {
     const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue(sampleMatrix);
     renderHook(() =>
       useStoreChartData(
         makeConfig({
           series: [
-            { key: 'room:temp', metric_type: 'gauge', tags: { room: '1' } },
+            { key: 'room:temp', field: 'gauge', tags: { room: '1' } },
           ],
         }),
         true,
@@ -381,7 +381,7 @@ describe('useStoreChartData', () => {
     );
     const params = queryFn.mock.calls[0]![1];
     expect(params.seriesFilters).toEqual([
-      { metricType: 'gauge', tags: { room: '1' } },
+      { fieldName: 'gauge', tags: { room: '1' } },
     ]);
     // 즉시 쿼리가 resolve 되며 발생하는 상태 업데이트를 flush 한다(act 경고 제거).
     await flushMicrotasks();

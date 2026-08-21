@@ -16,17 +16,17 @@ function obj(o: Partial<StoreKeyObject> & { key: string }): StoreKeyObject {
   return {
     registration: 'manual',
     data_type: 'float',
-    metric_type: 'gauge',
+    field: 'gauge',
     tags: {},
     ...o,
   };
 }
 
 const objects: StoreKeyObject[] = [
-  obj({ key: 'room:1:temp', metric_type: 'gauge', data_type: 'float', tags: { room: '1', type: 'temperature' } }),
-  obj({ key: 'room:2:temp', metric_type: 'gauge', data_type: 'float', tags: { room: '2', type: 'temperature' } }),
-  obj({ key: 'room:1:humidity', metric_type: 'counter', data_type: 'int', tags: { room: '1', type: 'humidity' } }),
-  obj({ key: 'system:status', metric_type: 'state', data_type: 'string', tags: {} }),
+  obj({ key: 'room:1:temp', field: 'gauge', data_type: 'float', tags: { room: '1', type: 'temperature' } }),
+  obj({ key: 'room:2:temp', field: 'gauge', data_type: 'float', tags: { room: '2', type: 'temperature' } }),
+  obj({ key: 'room:1:humidity', field: 'counter', data_type: 'int', tags: { room: '1', type: 'humidity' } }),
+  obj({ key: 'system:status', field: 'state', data_type: 'string', tags: {} }),
 ];
 
 describe('filterStoreKeyObjects', () => {
@@ -39,8 +39,8 @@ describe('filterStoreKeyObjects', () => {
     expect(r.map((o) => o.key)).toEqual(['room:1:temp', 'room:2:temp']);
   });
 
-  it('metric_type 정확 일치 필터', () => {
-    const r = filterStoreKeyObjects(objects, { metricType: 'counter' });
+  it('field 정확 일치 필터', () => {
+    const r = filterStoreKeyObjects(objects, { fieldName: 'counter' });
     expect(r.map((o) => o.key)).toEqual(['room:1:humidity']);
   });
 
@@ -71,7 +71,7 @@ describe('filterStoreKeyObjects', () => {
   it('모든 필터를 AND 로 결합한다', () => {
     const r = filterStoreKeyObjects(objects, {
       search: 'room',
-      metricType: 'gauge',
+      fieldName: 'gauge',
       dataType: 'float',
       tagFilters: new Set([makeTagFilterId('room', '1')]),
     });
@@ -91,7 +91,7 @@ describe('matchesTagFilters', () => {
 });
 
 describe('distinctMetricTypes / distinctDataTypes', () => {
-  it('distinct + 정렬된 metric_type 목록', () => {
+  it('distinct + 정렬된 field 목록', () => {
     expect(distinctMetricTypes(objects)).toEqual(['counter', 'gauge', 'state']);
   });
   it('distinct + 정렬된 data_type 목록', () => {
@@ -121,9 +121,9 @@ describe('sortStoreKeyObjects', () => {
     ]);
   });
 
-  it('metric_type 기준 정렬', () => {
-    const asc = sortStoreKeyObjects(objects, { field: 'metric_type', order: 'asc' });
-    expect(asc.map((o) => o.metric_type)).toEqual([
+  it('field 기준 정렬', () => {
+    const asc = sortStoreKeyObjects(objects, { field: 'field', order: 'asc' });
+    expect(asc.map((o) => o.field)).toEqual([
       'counter',
       'gauge',
       'gauge',

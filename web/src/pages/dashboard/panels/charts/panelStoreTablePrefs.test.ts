@@ -45,13 +45,13 @@ describe('panelStoreTablePrefs — load 방어', () => {
 describe('panelStoreTablePrefs — save/load 왕복', () => {
   it('sort/filters(Set)/hidden 을 왕복 보존한다', () => {
     savePanelStoreTablePrefs('p1', {
-      sort: { column: 'metric', direction: 'desc' },
+      sort: { column: 'field', direction: 'desc' },
       filters: { key: { text: 'abc', values: new Set(['x', 'y']) } },
-      hidden: ['metric'],
+      hidden: ['field'],
     });
     const loaded = loadPanelStoreTablePrefs('p1');
-    expect(loaded.sort).toEqual({ column: 'metric', direction: 'desc' });
-    expect(loaded.hidden).toEqual(['metric']);
+    expect(loaded.sort).toEqual({ column: 'field', direction: 'desc' });
+    expect(loaded.hidden).toEqual(['field']);
     expect(loaded.filters.key?.text).toBe('abc');
     expect(loaded.filters.key?.values).toBeInstanceOf(Set);
     expect(Array.from(loaded.filters.key!.values).sort()).toEqual(['x', 'y']);

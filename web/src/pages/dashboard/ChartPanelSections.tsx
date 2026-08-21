@@ -38,6 +38,7 @@ import {
   makeTagFilterId,
 } from './panels/charts/storeSourceFilter';
 import {
+  availableAliasTokens,
   makeAliasToken,
   resolveSeriesAlias,
 } from './panels/charts/aliasTemplate';
@@ -271,7 +272,7 @@ function defaultStoreSource(): StoreSourceConfig {
  * 차트 패널 공통 데이터 소스 섹션.
  *
  * - 데이터 소스 토글(채널 / Store)을 제공한다.
- * - store 선택 시: Store 에이전트 선택 → 키 필터(이름/metric_type/tag/data_type)
+ * - store 선택 시: Store 에이전트 선택 → 키 필터(이름/field/tag/data_type)
  *   → 키 멀티셀렉트로 store_source.series[] 를 채운다.
  * - 시간 윈도우 / 인터벌 / 집계 입력을 제공한다(tsdb 모달 컨트롤과 형상 일치).
  *
@@ -430,6 +431,15 @@ export function StoreSourceSection({
         )}
       </div>
 
+      {/* Store 모드: 이름을 지정하지 않은 시리즈의 표시 이름 형식(패널 단위 기본값). */}
+      {!tsdbMode && dataSource === 'store' && (
+        <SeriesNameFormatField
+          value={storeSource.series_name_format}
+          onChange={(series_name_format) => patchStore({ series_name_format })}
+          sample={storeSource.series?.[0]}
+        />
+      )}
+
       {/* TSDB: 실동작 없는 후속 SPEC 안내 placeholder (REQ-05/AC-05). Store 설정은 보존된다. */}
       {tsdbMode && (
         <div
@@ -458,6 +468,86 @@ export function StoreSourceSection({
           fetchChannels={fetchChannels}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * 시리즈 이름 형식(패널 단위 기본값) 편집 필드.
+ *
+ * 이름(alias)을 직접 입력하지 않은 시리즈의 표시 이름을 이 템플릿으로 만든다. 토큰 문법은
+ * 시리즈별 이름 입력과 동일하며(`{$.measurement}` / `{$.field}` / `{$.tags.NAME}`),
+ * 비워 두면 내장 서술 표기(`measurement · field{k=v}`)를 쓴다.
+ *
+ * 미리보기는 선택된 첫 시리즈로 해석해 보여준다 — 선택 전에는 형식만 보인다.
+ */
+function SeriesNameFormatField({
+  value,
+  onChange,
+  sample,
+}: {
+  value: string | undefined;
+  onChange: (next: string | undefined) => void;
+  sample: StoreSeriesRef | undefined;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const ctx = sample
+    ? { measurement: sample.key, field: sample.field, tags: sample.tags ?? {} }
+    : undefined;
+  const tokenPaths = ctx ? availableAliasTokens(ctx) : [];
+
+  const insertToken = (path: string): void => {
+    const token = makeAliasToken(path);
+    const current = value ?? '';
+    const el = inputRef.current;
+    let next: string;
+    if (el && el.selectionStart != null && el.selectionEnd != null) {
+      next = current.slice(0, el.selectionStart) + token + current.slice(el.selectionEnd);
+    } else {
+      next = current + token;
+    }
+    onChange(next.trim() === '' ? undefined : next);
+  };
+
+  const preview =
+    value && value.trim() !== '' && ctx ? resolveSeriesAlias(value, ctx) : undefined;
+
+  return (
+    <div className="space-y-1" data-testid="chart-store-series-name-format">
+      <LabeledField label={t('dashboard.chart.storeSeriesNameFormat')}>
+        <input
+          type="text"
+          value={value ?? ''}
+          ref={inputRef}
+          placeholder={t('dashboard.chart.storeSeriesNameFormatPlaceholder')}
+          onChange={(e) => onChange(e.target.value.trim() === '' ? undefined : e.target.value)}
+          className={inputClass()}
+          data-testid="chart-store-series-name-format-input"
+        />
+      </LabeledField>
+      <div className="flex flex-wrap items-center gap-1.5 px-0.5">
+        <span className="text-xs text-(--color-text-muted)">
+          {t('dashboard.chart.storeAliasInsertToken')}
+        </span>
+        {tokenPaths.map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => insertToken(k)}
+            data-testid={`chart-store-series-name-format-token-${k}`}
+            className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-xs text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+          >
+            {makeAliasToken(k)}
+          </button>
+        ))}
+        {preview !== undefined && (
+          <span className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-xs text-(--color-text-muted)">
+            <span>{t('dashboard.chart.storeAliasPreview')}</span>
+            <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -766,17 +856,19 @@ export function SeriesAliasInput({
 }
 
 /**
- * 시리즈 alias 태그 토큰 삽입 버튼 + 실시간 미리보기 서브행 (SPEC-WEB-005).
+ * 시리즈 이름 토큰 삽입 버튼 + 실시간 미리보기 서브행 (SPEC-WEB-005).
  *
- * - 태그가 있는 시리즈에만 노출된다(채널 시리즈/태그 없는 시리즈는 plain 텍스트 유지).
- * - 각 태그 키마다 `{$.key}` 삽입 버튼을 제공하고, 클릭 시 입력 커서 위치(없으면 끝)에
- *   토큰을 삽입한다.
- * - 미리보기는 resolveSeriesAlias(alias, tags) 결과를 보여준다. alias 가 비어있으면
- *   키명으로 폴백(현재 렌더 동작과 동일).
+ * - 시리즈 키 / field / 각 태그마다 `{$.…}` 삽입 버튼을 제공하고, 클릭 시
+ *   입력 커서 위치(없으면 끝)에 토큰을 삽입한다. 사용자는 토큰과 리터럴 문자열을
+ *   섞어 표시 이름을 조립한다(예: "[{$.tags.room}] {$.measurement}/{$.metric}").
+ * - 삽입 가능한 토큰이 하나도 없으면(키/필드/태그가 모두 없음) 노출하지 않는다.
+ * - 미리보기는 resolveSeriesAlias 결과를 보여준다. alias 가 비어있으면 키명으로
+ *   폴백(현재 렌더 동작과 동일).
  */
 export function SeriesAliasTokens({
   index,
   seriesKey,
+  fieldName,
   alias,
   tags,
   onAliasChange,
@@ -784,18 +876,20 @@ export function SeriesAliasTokens({
 }: {
   index: number;
   seriesKey: string;
+  fieldName?: string;
   alias: string | undefined;
   tags: Record<string, string>;
   onAliasChange: (alias: string | undefined) => void;
   getInput: () => HTMLInputElement | null;
 }): React.ReactElement | null {
   const { t } = useTranslation();
-  const tagKeys = Object.keys(tags);
-  if (tagKeys.length === 0) return null;
+  const aliasCtx = { measurement: seriesKey, metric: fieldName, tags };
+  const tokenPaths = availableAliasTokens(aliasCtx);
+  if (tokenPaths.length === 0) return null;
 
   // 커서 위치(없으면 끝)에 토큰을 삽입한다.
-  const insertToken = (tagKey: string): void => {
-    const token = makeAliasToken(tagKey);
+  const insertToken = (tokenPath: string): void => {
+    const token = makeAliasToken(tokenPath);
     const current = alias ?? '';
     const el = getInput();
     let next: string;
@@ -824,7 +918,7 @@ export function SeriesAliasTokens({
 
   // 미리보기: alias 비어있으면 키명 폴백(렌더 동작과 일치).
   const preview =
-    alias && alias.trim() !== '' ? resolveSeriesAlias(alias, tags) : seriesKey;
+    alias && alias.trim() !== '' ? resolveSeriesAlias(alias, aliasCtx) : seriesKey;
 
   return (
     <div
@@ -834,7 +928,7 @@ export function SeriesAliasTokens({
       <span className="text-xs text-(--color-text-muted)">
         {t('dashboard.chart.storeAliasInsertToken')}
       </span>
-      {tagKeys.map((k) => (
+      {tokenPaths.map((k) => (
         <button
           key={k}
           type="button"
@@ -918,10 +1012,11 @@ export function SeriesDetailEditor({
         </div>
         {positionEditor}
       </div>
-      {/* 이름 템플릿 토큰(태그가 있는 시리즈). */}
+      {/* 이름 템플릿 토큰(키 / field / 태그). */}
       <SeriesAliasTokens
         index={index}
         seriesKey={series.key}
+        fieldName={series.field}
         alias={series.alias}
         tags={series.tags ?? {}}
         onAliasChange={(alias) => onPatch({ alias })}

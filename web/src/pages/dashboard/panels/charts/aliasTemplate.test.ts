@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   ALIAS_TOKEN_REGEX,
+  availableAliasTokens,
   extractAliasTokens,
   makeAliasToken,
   resolveSeriesAlias,
@@ -70,12 +71,85 @@ describe('extractAliasTokens', () => {
 });
 
 describe('makeAliasToken / ALIAS_TOKEN_REGEX', () => {
-  it('makeAliasToken 은 {$.key} 형태를 만든다', () => {
+  it('makeAliasToken 은 {$.measurement} 형태를 만든다', () => {
     expect(makeAliasToken('room')).toBe('{$.room}');
   });
   it('정규식 소스가 태그 키 문자셋을 매칭한다', () => {
     const re = new RegExp(ALIAS_TOKEN_REGEX.source, 'g');
     const m = re.exec('{$.room}');
     expect(m?.[1]).toBe('room');
+  });
+});
+
+// --- 키 / field 토큰 (시리즈 이름 조립) ---
+
+describe('resolveSeriesAlias — 키/필드 토큰', () => {
+  const ctx = {
+    measurement: 'dev-1',
+    field: 'temperature',
+    tags: { name: 'TempSensor', type: 'inside', room: '1' },
+  };
+
+  it('{$.measurement} 를 시리즈 키로 치환한다', () => {
+    expect(resolveSeriesAlias('{$.measurement}', ctx)).toBe('dev-1');
+  });
+
+  it('{$.field} 를 field 으로 치환한다', () => {
+    expect(resolveSeriesAlias('{$.field}', ctx)).toBe('temperature');
+  });
+
+  it('{$.tags.NAME} 명시 형식으로 태그를 가리킨다', () => {
+    expect(resolveSeriesAlias('{$.tags.room}', ctx)).toBe('1');
+  });
+
+  it('키·필드·태그·리터럴을 섞어 이름을 조립한다', () => {
+    expect(resolveSeriesAlias('[{$.tags.room}] {$.measurement}/{$.field}', ctx)).toBe(
+      '[1] dev-1/temperature',
+    );
+  });
+
+  it('키/필드이 없으면 빈 문자열로 치환한다', () => {
+    expect(resolveSeriesAlias('{$.measurement}-{$.field}', { tags: {} })).toBe('-');
+  });
+
+  it('태그 맵만 넘기는 기존 호출 형태를 그대로 지원한다', () => {
+    expect(resolveSeriesAlias('{$.name}', tags)).toBe('TempSensor');
+  });
+
+  it('key/field 이름의 태그는 단축 형식이 예약어에 가려지고 명시 형식으로 접근한다', () => {
+    const shadowed = { measurement: 'dev-1', tags: { measurement: 'TAG-KEY' } };
+    expect(resolveSeriesAlias('{$.measurement}', shadowed)).toBe('dev-1');
+    expect(resolveSeriesAlias('{$.tags.measurement}', shadowed)).toBe('TAG-KEY');
+  });
+});
+
+describe('availableAliasTokens', () => {
+  it('measurement·field 를 먼저, 이어서 태그 토큰을 나열한다', () => {
+    expect(
+      availableAliasTokens({ measurement: 'dev-1', field: 'temperature', tags: { room: '1' } }),
+    ).toEqual(['measurement', 'field', 'room']);
+  });
+
+  it('없는 값의 토큰은 제외한다', () => {
+    expect(availableAliasTokens({ measurement: 'dev-1', tags: {} })).toEqual(['measurement']);
+    expect(availableAliasTokens({})).toEqual([]);
+  });
+
+  it('예약어와 겹치는 태그는 명시 형식으로 노출한다', () => {
+    expect(availableAliasTokens({ measurement: 'dev-1', tags: { measurement: 'x', room: '1' } })).toEqual([
+      'measurement',
+      'tags.measurement',
+      'room',
+    ]);
+  });
+});
+
+describe('extractAliasTokens — 경로 토큰', () => {
+  it('예약어와 명시 태그 경로를 원문 그대로 반환한다', () => {
+    expect(extractAliasTokens('{$.measurement}/{$.field} [{$.tags.room}]')).toEqual([
+      'measurement',
+      'field',
+      'tags.room',
+    ]);
   });
 });

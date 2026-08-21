@@ -1,11 +1,10 @@
 // 패널 상세 설정 다이얼로그.
-// 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/메트릭 가시성, 타입별 설정)을 관리한다.
+// 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/필드 가시성, 타입별 설정)을 관리한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ReferenceArea,
@@ -51,11 +50,15 @@ import {
   THRESHOLD_DEFAULT_COLORS,
   type AxisFontStyle,
   type ChannelRefConfig,
+  type StoreSourceConfig,
   type YThreshold,
   type YAxisMode,
   type YAxisDataType,
   type YEnumLabel,
+  type LegendConfig as ChartLegendConfig,
 } from './panels/charts/chartChannelTypes';
+import { ChartLegend } from './panels/charts/ChartLegend';
+import { buildPreviewSeries } from './panels/charts/previewSeries';
 // SPEC-HEATMAP-PANEL-001: 히트맵 설정 섹션(store 태그 + 센서 좌표 + 상하한 + 색상표 + IDW).
 import {
   parseHeatmapConfig,
@@ -69,6 +72,7 @@ import {
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
+import LineChartPanel from './panels/charts/LineChartPanel';
 import {
   clonePresetStops,
   HEATMAP_COLOR_PRESETS,
@@ -685,6 +689,18 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 히트맵은 예외 — 시각 설정(도면 배경/색상/IDW)은 재조회를 트리거하지 않으므로 즉시 draft
   // config(panel)로 렌더해 도면 배경이 지연 없이 반영된다(아래 heatmap 렌더 블록 참고).
   const previewRenderPanel = previewPanel ?? panel;
+  // Store 라인 차트에서 실제 데이터 미리보기를 쓸지 판정한다. 시리즈가 하나도 선택되지
+  // 않았거나 채널 모드면 실제 패널은 빈 상태만 보여주므로, 스타일을 확인할 수 있는
+  // 합성 미니 프리뷰를 유지한다.
+  const previewStoreSource = previewRenderPanel.config?.store_source as
+    | { series?: unknown[]; selection_mode?: string; tag_filters?: Record<string, string> }
+    | undefined;
+  const isStoreLinePreview =
+    previewRenderPanel.type === 'line-chart' &&
+    previewRenderPanel.config?.data_source === 'store' &&
+    ((previewStoreSource?.series?.length ?? 0) > 0 ||
+      (previewStoreSource?.selection_mode === 'tag' &&
+        Object.keys(previewStoreSource.tag_filters ?? {}).length > 0));
   // 종횡비 보존 미리보기(라운드 게이지, 작은 accent device/ac/hvac): 높이를 채우고 폭은
   // 종횡비로 파생한다. previewZoom(0.5~2.0)이 곱해진다(±/Ctrl+휠/더블클릭).
   const previewFitStyle = (aspect: string): React.CSSProperties => ({
@@ -820,10 +836,27 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'line-chart' && (
               <div
+                // 실제 LineChartPanel 을 렌더할 때 높이를 물려주려면 flex 컨테이너여야 한다
+                // (패널 루트가 flex-1 로 부모 높이를 채운다). 미니 프리뷰는 자체 h-full 이라
+                // 두 경로 모두 안전하다.
+                className="flex min-h-0 flex-col"
+                data-testid="line-chart-preview-wrapper"
                 style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('16 / 9')}
                 onWheel={handlePreviewWheel}
               >
-                <LineChartMiniPreview panel={previewRenderPanel} />
+                {isStoreLinePreview ? (
+                  // Store 모드 + 시리즈 선택됨: 합성 데이터가 아니라 **실제 패널**을 draft
+                  // config 로 렌더한다. 실제 조회 결과·축·범례·옵션이 그대로 보인다
+                  // (히트맵 미리보기와 같은 방식). 시리즈 미선택/채널 모드는 기존 미니
+                  // 프리뷰가 스타일 확인용 합성 데이터를 그린다.
+                  <LineChartPanel
+                    panelId={previewRenderPanel.id}
+                    title={previewRenderPanel.title}
+                    config={previewRenderPanel.config ?? {}}
+                  />
+                ) : (
+                  <LineChartMiniPreview panel={previewRenderPanel} />
+                )}
               </div>
             )}
             {/*
@@ -859,7 +892,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 // 배경/마커가 안 보인다("완전히 빈 영역" 버그). 높이는 style(previewFillStyle/
                 // measuredFitStyle)이 제공하고, flex-col 로 flex-1 이 그 높이를 채운다.
                 data-testid="heatmap-preview-wrapper"
-                className="flex min-h-0 flex-col"
+                className="relative flex min-h-0 flex-col"
                 // fit 모드는 **이 패널의 실제 대시보드 비율**로 그린다(레이아웃 미상이면 3:2 폴백).
                 // 히트맵은 도면 종횡비로 스테이지를 레터박스하므로(stage.ts), 미리보기 비율이
                 // 실제와 다르면 여백이 얼마나 생길지 확인할 방법이 없다.
@@ -877,6 +910,12 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   onConfigChange={(c) => handleConfigChange(c)}
                   forcePlacement
                 />
+                {/* 실제 대시보드에서 이 패널이 차지할 영역을 점선으로 표시한다. 채움(fill)
+                    모드는 미리보기 영역을 가로·세로로 모두 채우므로 실제 비율과 다르고,
+                    그 상태에서는 도면이 대시보드에서 어디까지 보일지 알 수 없다. */}
+                {panelAspect !== undefined && previewFillMode === 'fill' && (
+                  <PanelAreaOutline aspect={panelAspect} />
+                )}
               </div>
             )}
     </div>
@@ -1119,7 +1158,7 @@ function ColumnsSection<T extends string>({
   );
 }
 
-/** 리소스 패널 전용 설정 (메트릭 + 그리드 열 수) */
+/** 리소스 패널 전용 설정 (필드 + 그리드 열 수) */
 function ResourceSection({
   panel,
   onConfigChange,
@@ -3955,27 +3994,32 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
   const rawThresholds = config.y_thresholds as YThreshold[] | undefined;
   const thresholds = useMemo(() => rawThresholds ?? [], [rawThresholds]);
   const channelName = (config.channel_name as string | undefined) ?? '';
-  const legendCfg = (config.legend as Record<string, unknown> | undefined) ?? {};
-  const legendPos = (legendCfg.position as string | undefined) ?? 'bottom';
+  const legendCfg = (config.legend as ChartLegendConfig | undefined) ?? {};
+  const legendPos = legendCfg.position ?? 'bottom';
+  const isLegendVert = legendPos === 'left' || legendPos === 'right';
 
-  const series = useMemo(() => {
-    if (isMultiMode) {
-      return channels.map((c, i) => ({
-        key: c.alias ?? (c.name || t('dashboard.settings.preview.channelFallback').replace('{index}', String(i + 1))),
-        color: c.color ?? PREVIEW_FALLBACK_PALETTE[i % PREVIEW_FALLBACK_PALETTE.length]!,
-        smooth: c.smooth ?? globalSmooth,
-        strokeWidth: c.stroke_width ?? 2,
-        strokeDasharray: c.stroke_style ? STROKE_DASHARRAY[c.stroke_style] : '',
-      }));
-    }
-    return [{
-      key: channelName || t('dashboard.settings.preview.sample'),
-      color: PREVIEW_FALLBACK_PALETTE[0]!,
-      smooth: globalSmooth,
-      strokeWidth: 2,
-      strokeDasharray: '',
-    }];
-  }, [isMultiMode, channels, channelName, globalSmooth, t]);
+  // 미리보기 시리즈 산출은 순수 함수(buildPreviewSeries)에 위임한다 — store 모드에서
+  // 선택된 시리즈와 패널의 시리즈 이름 형식을 실제 렌더와 같은 규칙으로 반영한다.
+  const isStoreMode = (config.data_source as string | undefined) === 'store';
+  const storeSource = config.store_source as StoreSourceConfig | undefined;
+  const storeSeriesCount = storeSource?.series?.length ?? 0;
+
+  const series = useMemo(
+    () =>
+      buildPreviewSeries({
+        dataSource: config.data_source as string | undefined,
+        storeSource,
+        channels,
+        channelName,
+        globalSmooth,
+        strokeDasharray: STROKE_DASHARRAY,
+        palette: PREVIEW_FALLBACK_PALETTE,
+        sampleName: t('dashboard.settings.preview.sample'),
+        channelFallbackName: (i) =>
+          t('dashboard.settings.preview.channelFallback').replace('{index}', String(i)),
+      }),
+    [config.data_source, storeSource, channels, channelName, globalSmooth, t],
+  );
 
   const data = useMemo(() => {
     const points = 30;
@@ -4024,10 +4068,21 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
           {t('dashboard.settings.preview.label')}
         </span>
         <span className="text-[10px] text-(--color-text-muted)">
-          {isMultiMode ? t('dashboard.settings.preview.channelCount').replace('{count}', String(channels.length)) : channelName || t('dashboard.settings.preview.channelUnset')}
+          {isStoreMode
+            ? t('dashboard.settings.preview.seriesCount').replace('{count}', String(storeSeriesCount))
+            : isMultiMode
+              ? t('dashboard.settings.preview.channelCount').replace('{count}', String(channels.length))
+              : channelName || t('dashboard.settings.preview.channelUnset')}
         </span>
       </div>
-      <div className="min-h-0 flex-1">
+      <div
+        className={cn(
+          'flex min-h-0 flex-1',
+          isLegendVert ? 'flex-row' : 'flex-col',
+          legendPos === 'left' ? 'flex-row-reverse' : '',
+        )}
+      >
+        <div className="min-h-0 min-w-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 16, left: yAxisLabel ? 16 : 0, bottom: xLabel ? 20 : 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -4064,14 +4119,6 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
                   : undefined
               }
             />
-            {series.length > 1 && (
-              <Legend
-                wrapperStyle={{ fontSize: '0.7rem' }}
-                verticalAlign={legendPos === 'left' || legendPos === 'right' ? 'middle' : 'bottom'}
-                align={legendPos === 'left' ? 'left' : legendPos === 'right' ? 'right' : 'center'}
-                layout={legendPos === 'left' || legendPos === 'right' ? 'vertical' : 'horizontal'}
-              />
-            )}
             {thresholds.map((t, i) => {
               const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
               return (
@@ -4104,6 +4151,47 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
             ))}
           </LineChart>
         </ResponsiveContainer>
+        </div>
+        {/* 범례 — 실제 패널과 같은 컴포넌트/배치. recharts 내장 Legend 를 쓰면 구분선·여백과
+            범례 옵션(이름/선/마지막 값)이 실제 렌더와 달라진다. */}
+        <ChartLegend
+          seriesKeys={series.map((s) => s.key)}
+          seriesColors={series.map((s) => s.color)}
+          isMultiMode={isMultiMode}
+          legendCfg={legendCfg}
+          chartData={data}
+          formatValue={(_key, v) => (enumMode ? formatEnumValue(v, enumMap) : v.toFixed(1))}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 미리보기 위에 "실제 대시보드에서 이 패널이 차지할 영역"을 점선 사각형으로 겹쳐 보여준다.
+ *
+ * 왜 필요한가: 채움(fill) 모드는 미리보기 영역을 가로·세로 모두 채우므로 대시보드에서의
+ * 실제 종횡비와 다르다. 히트맵은 도면 종횡비로 스테이지를 레터박스하므로(stage.ts), 실제
+ * 비율을 모르면 대시보드에서 도면이 어디까지 보이고 여백이 얼마나 생길지 확인할 방법이 없다.
+ * 맞춤(fit) 모드는 미리보기 자체가 실제 비율이므로 이 오버레이를 그리지 않는다.
+ *
+ * 순수 표시용이다 — 포인터 이벤트를 받지 않아 마커 드래그 배치를 방해하지 않는다.
+ */
+function PanelAreaOutline({ aspect }: { aspect: number }): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div
+      data-testid="panel-area-outline"
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 flex items-center justify-center"
+    >
+      <div
+        className="relative max-h-full max-w-full border border-dashed border-blue-400/70"
+        style={{ aspectRatio: `${aspect} / 1`, width: '100%', height: '100%' }}
+      >
+        <span className="absolute right-0 top-0 bg-blue-400/80 px-1 py-px text-[9px] leading-tight text-white">
+          {t('dashboard.settings.preview.panelArea')}
+        </span>
       </div>
     </div>
   );
@@ -4519,7 +4607,7 @@ function ResourceMiniPreview({
         </span>
       </div>
       <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 메트릭 카드 - 각 카드가 독립 악센트 그룹 */}
+      {/* 필드 카드 - 각 카드가 독립 악센트 그룹 */}
       <div className="grid grid-cols-2 gap-2 p-3">
         {metrics.map((m) => {
           const cardColor = effectiveColor(m.key) ?? m.defaultColor;

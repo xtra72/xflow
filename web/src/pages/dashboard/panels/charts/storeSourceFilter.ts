@@ -2,7 +2,7 @@
 //
 // 설정 UI(StoreSourceSection)에서 StoreKeyObject 목록을 4가지 기준으로 필터링한다:
 //   - key 이름 검색(부분 일치, 대소문자 무시)
-//   - metric_type 정확 일치
+//   - field 정확 일치
 //   - data_type 정확 일치
 //   - tag 필터("tagKey=tagValue" 형태, 선택된 모든 페어를 AND 로 적용)
 //
@@ -16,8 +16,8 @@ import type { DataType, StoreKeyObject } from '@/services/api/store';
 export interface StoreKeyFilter {
   /** key 이름 부분 검색(대소문자 무시). 빈 문자열이면 미적용. */
   search?: string;
-  /** metric_type 정확 일치. 빈/undefined 면 미적용. */
-  metricType?: string;
+  /** field 정확 일치. 빈/undefined 면 미적용. */
+  fieldName?: string;
   /** data_type 정확 일치. undefined 면 미적용. */
   dataType?: DataType;
   /** 선택된 "tagKey=tagValue" 집합. 모든 항목을 AND 로 적용. 비어있으면 미적용. */
@@ -72,24 +72,24 @@ export function filterStoreKeyObjects(
   filter: StoreKeyFilter,
 ): StoreKeyObject[] {
   const search = (filter.search ?? '').trim().toLowerCase();
-  const metricType = filter.metricType ?? '';
+  const fieldName = filter.fieldName ?? '';
   const dataType = filter.dataType;
   const tagFilters = filter.tagFilters ?? new Set<string>();
 
   return objects.filter((obj) => {
     if (search && !obj.key.toLowerCase().includes(search)) return false;
-    if (metricType && obj.metric_type !== metricType) return false;
+    if (fieldName && obj.field !== fieldName) return false;
     if (dataType && obj.data_type !== dataType) return false;
     if (!matchesTagFilters(obj, tagFilters)) return false;
     return true;
   });
 }
 
-/** 키 객체 배열에서 등장하는 distinct metric_type 목록(정렬). */
+/** 키 객체 배열에서 등장하는 distinct field 목록(정렬). */
 export function distinctMetricTypes(objects: StoreKeyObject[]): string[] {
   const set = new Set<string>();
   for (const o of objects) {
-    if (o.metric_type) set.add(o.metric_type);
+    if (o.field) set.add(o.field);
   }
   return [...set].sort();
 }
@@ -106,7 +106,7 @@ export function distinctDataTypes(objects: StoreKeyObject[]): DataType[] {
 // ---- 정렬 (Store 키 테이블 컬럼) ----
 
 /** 스토어 키 테이블의 정렬 대상 필드. */
-export type StoreSortField = 'key' | 'metric_type' | 'data_type' | 'tags';
+export type StoreSortField = 'key' | 'field' | 'data_type' | 'tags';
 
 /** 정렬 상태(필드 + 방향). null 이면 정렬 없음. */
 export type StoreSortState =
@@ -118,8 +118,8 @@ function sortValue(obj: StoreKeyObject, field: StoreSortField): string {
   switch (field) {
     case 'key':
       return obj.key;
-    case 'metric_type':
-      return obj.metric_type ?? '';
+    case 'field':
+      return obj.field ?? '';
     case 'data_type':
       return obj.data_type ?? '';
     case 'tags':

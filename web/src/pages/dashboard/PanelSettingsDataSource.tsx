@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Eraser, RefreshCw } from 'lucide-react';
 
-import { useAgents } from '@/hooks/useAgent';
+import { useAgent, useAgents } from '@/hooks/useAgent';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import {
@@ -45,6 +45,7 @@ import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
 import {
   pickSeriesColor,
   storeSeriesId,
+  normalizeStoreSeriesAlias,
   storeSeriesLabel,
   STORE_SERIES_LIMIT,
   type StoreSeriesRef,
@@ -118,7 +119,7 @@ function pickColumn(id: StoreColumnId): StoreColumn {
  * 필터로 취급한다 — 같은 컬럼 OR, 컬럼 간 AND. 태그 컬럼 필터는 표시 행만 좁히며 단독으로
  * `selection_mode` 를 전환하지 않는다(동적 바인딩은 REQ-22 토글 전용).
  */
-const PANEL_FILTER_COLUMNS: readonly FilterColumnId[] = ['key', 'metric', 'tags'];
+const PANEL_FILTER_COLUMNS: readonly FilterColumnId[] = ['key', 'value', 'tags'];
 
 /**
  * StoreKeyObject → StoreEntry(메타데이터 파생). 라이브 값(value/updated)은 없다.
@@ -128,7 +129,7 @@ function toStoreEntry(o: StoreKeyObject): StoreEntry {
   return {
     key: o.key,
     storage_key: o.key,
-    metric_type: o.metric_type,
+    field: o.field,
     tags: o.tags,
     data_type: o.data_type,
     registration: o.registration,
@@ -137,7 +138,7 @@ function toStoreEntry(o: StoreKeyObject): StoreEntry {
 
 /** 선택 시리즈(StoreSeriesRef) → 시리즈 동일성 키. 좌표 맵/체크 판정과 같은 키 공간이다. */
 function seriesRefId(s: StoreSeriesRef): string {
-  return storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {});
+  return storeSeriesId(s.key, s.field ?? '', s.tags ?? {});
 }
 
 /**
@@ -155,7 +156,7 @@ function staleSeriesToEntry(s: StoreSeriesRef): StoreEntry {
   return {
     key: s.key,
     storage_key: s.key,
-    metric_type: s.metric_type,
+    field: s.field,
     tags: s.tags,
     data_type: s.data_type,
   };
@@ -209,6 +210,17 @@ function PanelStoreSelectTable({
   );
   const hasAgent = agentName !== '';
 
+  // 현재 값 컬럼의 소스. 스토어 키 목록(useStoreKeysWithTags)은 메타데이터만 주므로
+  // 라이브 값은 에이전트 상태 스냅샷(state.entries)에서 가져온다 — 에이전트 상세
+  // 스토어 탭과 같은 출처다. 별도 폴링 루프를 두지 않고 시리즈 목록과 동일한 React
+  // Query 갱신 트리거(마운트/포커스/무효화)를 공유하므로, 시리즈가 갱신될 때 값도 함께
+  // 갱신된다.
+  const agentId = useMemo(
+    () => (agentsResult?.data ?? []).find((a) => a.name === agentName)?.id ?? '',
+    [agentsResult?.data, agentName],
+  );
+  const { data: agentFull } = useAgent(agentId, 'full');
+
   const {
     data: keysData,
     refetch: refetchKeys,
@@ -217,10 +229,36 @@ function PanelStoreSelectTable({
   } = useStoreKeysWithTags(agentName);
   const keyObjects = useMemo(() => keysData?.keyObjects ?? [], [keysData?.keyObjects]);
 
-  // keyObjects(메타데이터) → StoreEntry 파생. 라이브 값(value/namespace/updated)은 없다.
+  // 에이전트 상태의 라이브 엔트리를 시리즈 동일성 키로 색인한다(현재 값 조인용).
+  const liveValueById = useMemo(() => {
+    const state = agentFull?.state as { entries?: StoreEntry[] } | undefined;
+    const map = new Map<string, unknown>();
+    for (const e of state?.entries ?? []) {
+      if (typeof e.key !== 'string') continue;
+      map.set(
+        storeSeriesId(
+          e.key,
+          (e.field as string) ?? '',
+          (e.tags as Record<string, string> | undefined) ?? {},
+        ),
+        e.value,
+      );
+    }
+    return map;
+  }, [agentFull?.state]);
+
+  // keyObjects(메타데이터) → StoreEntry 파생 + 라이브 값 병합.
+  // 값이 아직 없는 시리즈는 value 미설정으로 남는다(표는 빈 셀로 안전하게 렌더한다).
   const allEntries: StoreEntry[] = useMemo(
-    () => keyObjects.map(toStoreEntry),
-    [keyObjects],
+    () =>
+      keyObjects.map((o) => {
+        const entry = toStoreEntry(o);
+        const value = liveValueById.get(
+          storeSeriesId(o.key, o.field ?? '', o.tags ?? {}),
+        );
+        return value === undefined ? entry : { ...entry, value };
+      }),
+    [keyObjects, liveValueById],
   );
 
   // --- 필터/정렬/표시숨김 상태(패널별 localStorage 영속) ---
@@ -256,18 +294,20 @@ function PanelStoreSelectTable({
     [allEntries],
   );
 
-  // 관련(표시가능) 컬럼: key, metric, (tags 있을 때) tags.
+  // 관련(표시가능) 컬럼: key, value, (tags 있을 때) tags.
+  // metric 컬럼은 제외한다 — 시리즈를 구분하는 표기는 이름(alias) 셀이 key+metric+tags 를
+  // 합쳐 이미 보여주므로 전용 컬럼은 같은 정보를 두 번 차지한다.
   // v0.3.0(REQ-15): tags 컬럼은 통일된 표시 필터의 일부로 표준 다중값 필터(ColumnFilterButton
   // grouped)를 그대로 사용한다(전용 AND 팝오버 제거). 태그 값(k=v) 다중선택은 OR, 컬럼 간 AND.
   const relevantCols = useMemo(() => {
-    const base = [pickColumn('key'), pickColumn('metric')];
+    const base = [pickColumn('key'), pickColumn('value')];
     if (showTags) base.push(pickColumn('tags'));
     return base;
   }, [showTags]);
 
-  // 렌더 컬럼 순서: 키(key) · 이름(name/alias) · 메트릭(metric) · 태그(tags). (REQ-17/AC-19)
+  // 렌더 컬럼 순서: 키(key) · 이름(name/alias) · 현재 값(value) · 태그(tags). (REQ-17/AC-19)
   // alias(actions 대체) 컬럼을 key 바로 뒤로 배치한다. key 가 숨겨진 경우에도 나머지 순서
-  // (name · metric · tag)는 유지된다.
+  // (name · value · tag)는 유지된다.
   const columns: StoreColumn[] = useMemo(() => {
     const visible = relevantCols.filter((c) => !hidden.has(c.id));
     const alias: StoreColumn = { id: 'alias', labelKey: 'colAlias', hideable: false };
@@ -350,13 +390,16 @@ function PanelStoreSelectTable({
 
   // 선택의 단일 소스 오브 트루스는 store_source.series(keys 모드). 체크박스는 이 series 를
   // StoreKeySelector 와 byte-호환 형태로 추가/제거한다(렌더 경로 불변). @spec SPEC-PANEL-SETTINGS-001
-  const series = useMemo<StoreSeriesRef[]>(() => storeSource?.series ?? [], [storeSource?.series]);
+  const series = useMemo<StoreSeriesRef[]>(
+    () => normalizeStoreSeriesAlias(storeSource?.series ?? []),
+    [storeSource?.series],
+  );
   // 동일성 키 → 선택된 시리즈. 체크 판정(seriesIds)과 이름 셀(사용자 alias 우선)이 같은 색인을
   // 공유한다. 같은 동일성 키가 둘 이상 있으면 앞 항목이 선택 판정의 기준이므로 앞 항목을 남긴다.
   const seriesById = useMemo(() => {
     const map = new Map<string, StoreSeriesRef>();
     for (const s of series) {
-      const id = storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {});
+      const id = storeSeriesId(s.key, s.field ?? '', s.tags ?? {});
       if (!map.has(id)) map.set(id, s);
     }
     return map;
@@ -374,7 +417,7 @@ function PanelStoreSelectTable({
   const entryToSeriesId = (entry: StoreEntry): string =>
     storeSeriesId(
       entry.key as string,
-      (entry.metric_type as string) ?? '',
+      (entry.field as string) ?? '',
       (entry.tags as Record<string, string>) ?? {},
     );
 
@@ -489,7 +532,7 @@ function PanelStoreSelectTable({
         // 제거: 동일 seriesId 항목을 series 에서 뺀다.
         setOverLimitNotice(false);
         const next = series.filter(
-          (s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}) !== id,
+          (s) => storeSeriesId(s.key, s.field ?? '', s.tags ?? {}) !== id,
         );
         const nextStore: Record<string, unknown> = { ...(storeSource ?? {}), series: next };
         const patch: Record<string, unknown> = { store_source: nextStore };
@@ -514,13 +557,14 @@ function PanelStoreSelectTable({
       // StoreKeySelector 와 동일한 series 항목 형태(byte-호환)로 추가한다.
       const nextEntry: StoreSeriesRef = {
         key,
-        metric_type: (entry.metric_type as string) || undefined,
+        field: (entry.field as string) || undefined,
         tags:
           entry.tags && Object.keys(entry.tags as object).length > 0
             ? (entry.tags as Record<string, string>)
             : undefined,
         data_type: entry.data_type as StoreSeriesRef['data_type'],
-        alias: key,
+        // alias 는 비워 둔다. 기본값으로 key 를 넣으면 사용자가 직접 붙인 이름과
+        // 구분할 수 없어, measurement 와 같은 이름을 입력했을 때 무시된다.
         color: pickSeriesColor(series.length),
       };
       const nextStore: Record<string, unknown> = {
@@ -679,6 +723,7 @@ function PanelStoreSelectTable({
         <StoreEntryTable
           entries={rows}
           columns={columns}
+
           sort={prefs.sort}
           onSort={handleSort}
           columnFilters={effectiveFilters}
@@ -692,7 +737,7 @@ function PanelStoreSelectTable({
             renderDetail: (e) => {
               const id = entryToSeriesId(e as StoreEntry);
               const idx = series.findIndex(
-                (s) => storeSeriesId(s.key, s.metric_type ?? '', s.tags ?? {}) === id,
+                (s) => storeSeriesId(s.key, s.field ?? '', s.tags ?? {}) === id,
               );
               const s = series[idx];
               if (!s) return null;
@@ -743,9 +788,10 @@ function PanelStoreSelectTable({
             const label = storeSeriesLabel(
               seriesById.get(entryToSeriesId(e)) ?? {
                 key: e.key as string,
-                metric_type: (e.metric_type as string) || undefined,
+                field: (e.field as string) || undefined,
                 tags: e.tags as Record<string, string> | undefined,
               },
+              storeSource?.series_name_format,
             );
             // 행이 좁으므로 잘라 쓰되 전체 값은 title 로 남긴다(레이아웃 파괴 방지).
             // 합성된 유령 행은 배지로 구분한다 — 배지가 없으면 스토어에 살아있는 행과 구별되지

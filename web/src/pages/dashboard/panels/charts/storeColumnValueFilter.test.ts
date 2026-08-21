@@ -12,21 +12,21 @@ import {
   type ColumnValueFilters,
 } from './storeColumnValueFilter';
 
-/** AC-17 예시 행: metric 컬럼 + tag `floor` 컬럼. */
+/** AC-17 예시 행: field 컬럼 + tag `floor` 컬럼. */
 interface Row {
-  metric: string;
+  field: string;
   floor: string;
 }
 
-const R1: Row = { metric: 'temp', floor: '1F' };
-const R2: Row = { metric: 'humidity', floor: '1F' };
-const R3: Row = { metric: 'co2', floor: '1F' };
-const R4: Row = { metric: 'temp', floor: '2F' };
+const R1: Row = { field: 'temp', floor: '1F' };
+const R2: Row = { field: 'humidity', floor: '1F' };
+const R3: Row = { field: 'co2', floor: '1F' };
+const R4: Row = { field: 'temp', floor: '2F' };
 const ROWS: Row[] = [R1, R2, R3, R4];
 
 /** 행 → (columnId → 셀 값) 추출기. floor 는 태그 키를 컬럼으로 취급한다. */
 const getter = (row: Row) => (col: string): string | undefined => {
-  if (col === 'metric') return row.metric;
+  if (col === 'field') return row.field;
   if (col === 'floor') return row.floor;
   return undefined;
 };
@@ -36,39 +36,39 @@ function filterRows(rows: Row[], filters: ColumnValueFilters): Row[] {
 }
 
 describe('matchesColumnValueFilters — AC-17', () => {
-  it('metric∈{temp,humidity} AND floor=1F → R1, R2 만 통과', () => {
+  it('field∈{temp,humidity} AND floor=1F → R1, R2 만 통과', () => {
     const filters: ColumnValueFilters = {
-      metric: new Set(['temp', 'humidity']),
+      field: new Set(['temp', 'humidity']),
       floor: new Set(['1F']),
     };
     const result = filterRows(ROWS, filters);
     expect(result).toEqual([R1, R2]);
-    // R3(metric=co2)은 metric OR 집합 불충족, R4(floor=2F)는 floor AND 조건 불충족.
+    // R3(field=co2)은 field OR 집합 불충족, R4(floor=2F)는 floor AND 조건 불충족.
     expect(result).not.toContain(R3);
     expect(result).not.toContain(R4);
   });
 
-  it('(Edge) metric=temp 만 설정하고 floor 필터를 비우면 R1, R4 (floor 는 AND 제외)', () => {
+  it('(Edge) field=temp 만 설정하고 floor 필터를 비우면 R1, R4 (floor 는 AND 제외)', () => {
     const filters: ColumnValueFilters = {
-      metric: new Set(['temp']),
+      field: new Set(['temp']),
       floor: new Set<string>(), // 빈 집합 → AND 결합에서 제외(항상 통과).
     };
     expect(filterRows(ROWS, filters)).toEqual([R1, R4]);
   });
 
-  it('(Edge) metric=temp 만 설정하고 floor 키 자체가 없어도 R1, R4', () => {
-    const filters: ColumnValueFilters = { metric: new Set(['temp']) };
+  it('(Edge) field=temp 만 설정하고 floor 키 자체가 없어도 R1, R4', () => {
+    const filters: ColumnValueFilters = { field: new Set(['temp']) };
     expect(filterRows(ROWS, filters)).toEqual([R1, R4]);
   });
 
   it('(하위호환) 필터를 하나도 설정하지 않으면 전체 행이 통과한다', () => {
     expect(filterRows(ROWS, {})).toEqual(ROWS);
-    expect(filterRows(ROWS, { metric: new Set(), floor: new Set() })).toEqual(ROWS);
+    expect(filterRows(ROWS, { field: new Set(), floor: new Set() })).toEqual(ROWS);
   });
 
-  it('같은 컬럼 다중값은 OR — floor∈{1F,2F} 는 metric=temp 와 결합해 R1, R4', () => {
+  it('같은 컬럼 다중값은 OR — floor∈{1F,2F} 는 field=temp 와 결합해 R1, R4', () => {
     const filters: ColumnValueFilters = {
-      metric: new Set(['temp']),
+      field: new Set(['temp']),
       floor: new Set(['1F', '2F']),
     };
     expect(filterRows(ROWS, filters)).toEqual([R1, R4]);
@@ -120,11 +120,11 @@ describe('splitTagPairsToDimensions + 태그 키별 차원 매처 — AC-17b', (
 
 describe('hasActiveColumnValueFilters', () => {
   it('활성 값 집합이 있으면 true', () => {
-    expect(hasActiveColumnValueFilters({ metric: new Set(['temp']) })).toBe(true);
+    expect(hasActiveColumnValueFilters({ field: new Set(['temp']) })).toBe(true);
   });
   it('모두 비어있으면 false', () => {
     expect(hasActiveColumnValueFilters({})).toBe(false);
-    expect(hasActiveColumnValueFilters({ metric: new Set(), floor: new Set() })).toBe(false);
+    expect(hasActiveColumnValueFilters({ field: new Set(), floor: new Set() })).toBe(false);
   });
 });
 
