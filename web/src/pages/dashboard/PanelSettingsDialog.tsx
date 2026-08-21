@@ -2,7 +2,7 @@
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/필드 가시성, 타입별 설정)을 관리한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
@@ -26,6 +26,14 @@ import { useFlows } from '@/hooks/useFlow';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
 import { listStoreKeys } from '@/services/api/storeService';
 import { resolveStoreAgentName } from './panels/charts/storeAgentResolve';
+import {
+  buildGaugeStoreMigrationPatch,
+  findMigratableGaugeStoreBinding,
+  gaugeValueSourceFlags,
+  resolveGaugeMigrationState,
+  resolveGaugeValueSource,
+  type GaugeMigrationState,
+} from './panels/charts/gaugeLegacyBinding';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
 // SPEC-MODBUS-012: MODBUS Gateway 패널 설정 섹션 + 프리뷰(설정 다이얼로그 내 실제 패널 렌더).
 import { useModbusListDevices, formatUnitLabel } from './panels/modbus/useModbusData';
@@ -73,6 +81,7 @@ import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/Heatm
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
+import StatPanel from './panels/charts/StatPanel';
 import {
   clonePresetStops,
   HEATMAP_COLOR_PRESETS,
@@ -442,7 +451,12 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const isChartPanel = CHART_PANEL_TYPES.has(panel.type);
   // 히트맵도 store 데이터 소스를 쓰므로 차트 패널과 동일하게 프리뷰 아래 배치/레이아웃을 적용한다.
   // (CHART_PANEL_TYPES 자체에는 넣지 않는다 — 차트 전용 채널/타입 분기 오염 방지.)
-  const dataSourceBelowPreview = isChartPanel || panel.type === 'heatmap';
+  //
+  // SPEC-CHART-002 §2.3 [U3] (M4.1): 게이지도 공용 Store 데이터 소스 surface 를 받는다.
+  // heatmap 과 같은 이유로 CHART_PANEL_TYPES 에는 **넣지 않는다** — 그 집합은 데이터소스
+  // 노출 외에 차트 전용 채널/타입 분기를 구동하며 게이지는 그 분기의 대상이 아니다(UB1-9).
+  const dataSourceBelowPreview =
+    isChartPanel || panel.type === 'heatmap' || panel.type === 'gauge';
 
   // @spec SPEC-PANEL-SETTINGS-001 (T1): 3분할 셸 슬롯 구성.
   // 기존 옵션/미리보기/데이터소스 편집 서브트리를 셸 영역으로 이관한다(편집 로직 보존).
@@ -701,6 +715,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     ((previewStoreSource?.series?.length ?? 0) > 0 ||
       (previewStoreSource?.selection_mode === 'tag' &&
         Object.keys(previewStoreSource.tag_filters ?? {}).length > 0));
+  // SPEC-CHART-002 M6.3 — stat / gauge 도 같은 선례를 따른다: 신규 경로가 실제로 값을 낼 수
+  // 있을 때만 **실제 패널**을 draft config 로 렌더하고, 그 밖에는 기존 미리보기를 유지한다.
+  // 판정 규칙은 각 패널이 스스로 쓰는 규칙과 같아야 한다 — 미리보기와 실제 렌더가 서로 다른
+  // 조건으로 갈리면 "설정 화면에서는 보이는데 대시보드에서는 안 보인다" 가 된다.
+  const previewChartConfig = previewRenderPanel.config ?? {};
+  // stat: `StatPanel` 의 활성 조건과 동일(keys 모드 시리즈 1개 이상 + series_reduce 지정).
+  // 레거시 경로(series_reduce 부재)에는 stat 전용 미니 프리뷰가 없으므로 미리보기도 없다 —
+  // 이 SPEC 이 신설하는 것은 신규 경로의 미리보기뿐이다.
+  const isStoreStatPreview =
+    previewRenderPanel.type === 'stat' &&
+    previewChartConfig.data_source === 'store' &&
+    (previewStoreSource?.series?.length ?? 0) > 0 &&
+    previewChartConfig.series_reduce !== undefined;
+  // gauge: 값 소스 판정의 단일 정본(`resolveGaugeValueSource`)을 그대로 쓴다. 레거시 경로가
+  // 이기는 동안에는 합성 샘플값 미니 프리뷰가 그대로 남는다(레거시는 실제 값이 없을 수 있다).
+  const isStoreGaugePreview =
+    previewRenderPanel.type === 'gauge' &&
+    resolveGaugeValueSource(gaugeValueSourceFlags(previewChartConfig)) === 'store-source';
   // 종횡비 보존 미리보기(라운드 게이지, 작은 accent device/ac/hvac): 높이를 채우고 폭은
   // 종횡비로 파생한다. previewZoom(0.5~2.0)이 곱해진다(±/Ctrl+휠/더블클릭).
   const previewFitStyle = (aspect: string): React.CSSProperties => ({
@@ -828,10 +860,50 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
             {panel.type === 'gauge' && (
               <div
-                style={previewFitStyle('1 / 1')}
+                // Store 실데이터 경로에서는 실제 GaugePanel 이 게이지 배열을 그리므로 세로를
+                // 채울 flex 컨테이너가 필요하다(라인 차트 프리뷰와 같은 이유). 미니 프리뷰는
+                // 자체 h-full 이라 두 경로 모두 안전하다.
+                className="flex min-h-0 flex-col"
+                data-testid="gauge-preview-wrapper"
+                style={
+                  isStoreGaugePreview && previewFillMode === 'fill'
+                    ? previewFillStyle()
+                    : previewFitStyle('1 / 1')
+                }
                 onWheel={handlePreviewWheel}
               >
-                <GaugeMiniPreview panel={previewRenderPanel} />
+                {isStoreGaugePreview ? (
+                  // Store 소스 + 대표값 지정: 합성 샘플값이 아니라 **실제 패널**을 draft
+                  // config 로 렌더한다(§2.11 [O1] / M6.3, 라인 차트 isStoreLinePreview 선례).
+                  <GaugePanel
+                    panelId={previewRenderPanel.id}
+                    title={previewRenderPanel.title}
+                    config={previewRenderPanel.config ?? {}}
+                    onConfigChange={() => {}}
+                    onTitleChange={() => {}}
+                  />
+                ) : (
+                  <GaugeMiniPreview panel={previewRenderPanel} />
+                )}
+              </div>
+            )}
+            {/*
+              SPEC-CHART-002 M6.3 — stat 라이브 미리보기. stat 에는 미니 프리뷰가 없었으므로
+              신규 경로(Store + 대표값)에서만 실제 StatPanel 을 draft config 로 렌더한다.
+              레거시 경로는 종전대로 미리보기 없음이며, 이 변경은 순수 추가다.
+            */}
+            {isStoreStatPreview && (
+              <div
+                className="flex min-h-0 flex-col"
+                data-testid="stat-preview-wrapper"
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
+                onWheel={handlePreviewWheel}
+              >
+                <StatPanel
+                  panelId={previewRenderPanel.id}
+                  title={previewRenderPanel.title}
+                  config={previewRenderPanel.config ?? {}}
+                />
               </div>
             )}
             {panel.type === 'line-chart' && (
@@ -3314,6 +3386,16 @@ function AccentGroupControls({
   );
 }
 
+/**
+ * 이관 액션 상태 → 안내 문구 i18n 키. 3상태가 모두 채워졌음을 타입으로 강제한다.
+ * @spec SPEC-CHART-002 §2.8 [E2]
+ */
+const MIGRATE_HINT_KEYS: Record<GaugeMigrationState, string> = {
+  available: 'dashboard.settings.gaugeSection.migrateToStoreHint',
+  'already-migrated': 'dashboard.settings.gaugeSection.migrateToStoreDone',
+  unavailable: 'dashboard.settings.gaugeSection.migrateToStoreDisabled',
+};
+
 /** 게이지 패널 전용 설정 섹션 */
 function GaugeSection({
   panel,
@@ -3329,6 +3411,16 @@ function GaugeSection({
   const max = (config.max as number) ?? 100;
   const unit = (config.unit as string) ?? '%';
   const dataSources = (config.dataSources as DataSourceBinding[]) ?? [{ sourceType: 'resource', resource: 'cpu' }];
+  // 이관 액션 상태(3상태) — `available` / `already-migrated` / `unavailable`.
+  // `available` 은 `config.dataSources[]` 에 첫 유효 store 항목(에이전트 + 키가 모두
+  // 있는 것)이 있을 때다(§2.8 [E2] 마지막 문단 / AC-20). 이관 후에는 레거시가 보존되어
+  // 그 항목이 계속 남으므로, "이미 이관됨" 을 먼저 판정해 재실행으로 사용자의
+  // `store_source` 손질이 기본값에 덮어써지는 것을 막는다(resolveGaugeMigrationState 주석).
+  // `dataSources` 지역 변수가 아니라 config 를 그대로 넘기는 이유: 위 기본값 대입은
+  // 편집 UI 용 폴백이며 이관 판정은 **실제 저장된** config 만 봐야 한다.
+  const migrationState = resolveGaugeMigrationState(config);
+  const migratableStoreBinding =
+    migrationState === 'available' ? findMigratableGaugeStoreBinding(config) : undefined;
   const colorMode = (config.colorMode as 'individual' | 'continuous') ?? 'individual';
   const colorTheme = (config.colorTheme as string) ?? 'green-red';
   const thresholds = (config.thresholds as { name: string; color: string; from: number; to: number }[]) ?? [
@@ -3610,6 +3702,43 @@ function GaugeSection({
               {t('dashboard.settings.gaugeSection.addSource')}
             </button>
           )}
+          {/*
+            D-1. 레거시 바인딩 → 공용 Store 데이터 소스 이관 액션.
+            @spec SPEC-CHART-002 §2.8 [E2] / M5.4 / AC-20
+
+            **비파괴**다 — patch 에 `dataSources` 키가 없으므로 얕은 병합(patchConfig)이
+            기존 바인딩을 그대로 남긴다. 그것이 되돌리기의 근거다: 데이터 소스 토글을
+            `channel` 로 되돌리면 §2.9 [S1] 에 따라 레거시 경로가 즉시 다시 유효해진다.
+
+            자동 재작성 경로는 없다 — 이관은 이 사용자 조작 핸들러에서만 일어난다.
+          */}
+          <div className="mt-1 border-t border-(--color-border-default) pt-2">
+            <button
+              type="button"
+              disabled={!migratableStoreBinding}
+              onClick={() => {
+                if (!migratableStoreBinding) return;
+                onConfigChange(buildGaugeStoreMigrationPatch(migratableStoreBinding));
+              }}
+              data-testid="gauge-migrate-to-store"
+              data-migration-state={migrationState}
+              className={cn(
+                'flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                migratableStoreBinding
+                  ? 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20'
+                  : 'cursor-not-allowed text-(--color-text-muted) opacity-60',
+              )}
+            >
+              <ArrowRightLeft className="h-3 w-3" />
+              {t('dashboard.settings.gaugeSection.migrateToStore')}
+            </button>
+            <p
+              data-testid="gauge-migrate-to-store-hint"
+              className="mt-1 text-[11px] leading-snug text-(--color-text-muted)"
+            >
+              {t(MIGRATE_HINT_KEYS[migrationState])}
+            </p>
+          </div>
         </div>
       </div>
 

@@ -2,18 +2,40 @@
 // 7가지 게이지 타입을 SVG로 렌더링한다.
 // simple(도넛), half(반원), multi-ring(동심원), needle(원형 니들),
 // needle-rainbow(레인보우), vertical-bar(세로 바), half-rainbow(5단계 등급).
+//
+// SPEC-CHART-002 M4: 다른 차트 패널과 동일한 공용 Store 데이터 소스(`store_source`)를
+// 읽는 **신규 경로**가 추가되었다. 신규 경로는 `data_source === 'store'` + store_source
+// 활성 + `series_reduce` 지정이 모두 성립할 때만 진입하며(§2.9 [S1]), 그 외에는 기존
+// `config.dataSources[]` 레거시 경로가 한 픽셀도 바뀌지 않는다.
+//
+// SPEC-CHART-002 M5: 두 경로의 **우선순위 판정**을 `charts/gaugeLegacyBinding.ts` 의
+// 순수 함수(`resolveGaugeValueSource`)로 옮겼다. 이 컴포넌트는 판정 결과로 경로를 고를
+// 뿐 조건식을 갖지 않는다 — 값 해석 경로가 7지점에 분산되어 있어 조건을 인라인으로
+// 두면 조용한 회귀를 만들기 때문이다(plan.md §4). 판정 진리표 7행은
+// `gaugeLegacyBinding.test.ts` 가 전수로 잠근다.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import { Gauge as GaugeIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils/cn';
 import { post } from '@/services/api/client';
 import { useAgents } from '@/hooks/useAgent';
 
-import { getByPath } from './charts/chartChannelTypes';
+import {
+  getByPath,
+  type SeriesReduceFunc,
+  type StoreSourceConfig,
+} from './charts/chartChannelTypes';
 import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
 import { toNumber } from './charts/chartChannelUtils';
+import {
+  gaugeValueSourceFlags,
+  resolveGaugeValueSource,
+} from './charts/gaugeLegacyBinding';
+import { reduceAllSeries, type ReducedSeries } from './charts/seriesReduce';
+import { SeriesTileGrid } from './charts/SeriesTileGrid';
 import { useChartChannel } from './charts/useChartChannel';
+import { useStoreChartData } from './charts/useStoreChartData';
 import { resolveStoreAgentName } from './charts/storeAgentResolve';
 import { usePanelTitleVisible } from '../panelChromeContext';
 
@@ -686,6 +708,97 @@ function HalfRainbowGauge({ value, min, max, thresholds, hasValue }: ReturnType<
   );
 }
 
+// ---- 게이지 타입 디스패치 ----
+
+/**
+ * 게이지 타입별 렌더러 선택. 단일 출력(레거시)과 다중 출력(M4)이 **같은** 디스패치를
+ * 공유하도록 컴포넌트 밖으로 끌어냈다 — 두 벌로 나뉘면 게이지 타입이 하나 늘 때마다
+ * 한쪽만 고치는 사고가 난다.
+ */
+function renderGaugeByType(
+  parsed: ReturnType<typeof parseConfig>,
+  hasValue: boolean,
+): ReactElement {
+  switch (parsed.gaugeType) {
+    case 'simple':
+      return <SimpleGauge {...parsed} hasValue={hasValue} />;
+    case 'half':
+      return <HalfGauge {...parsed} hasValue={hasValue} />;
+    case 'multi-ring':
+      return <MultiRingGauge {...parsed} hasValue={hasValue} />;
+    case 'needle':
+      return <NeedleGauge {...parsed} hasValue={hasValue} />;
+    case 'needle-rainbow':
+      return <NeedleRainbowGauge {...parsed} hasValue={hasValue} />;
+    case 'vertical-bar':
+      return <VerticalBarGauge {...parsed} hasValue={hasValue} />;
+    case 'half-rainbow':
+      return <HalfRainbowGauge {...parsed} hasValue={hasValue} />;
+    default:
+      return <SimpleGauge {...parsed} hasValue={hasValue} />;
+  }
+}
+
+/**
+ * 게이지 타입별 종횡비(각 렌더러의 `viewBox` 와 동일).
+ *
+ * 그리드 칸은 높이가 내용으로 결정되는데 게이지 SVG 는 `h-full` 이므로, 감싸는 상자에
+ * 종횡비를 주지 않으면 높이가 0 으로 접힌다. 단일 출력 경로는 부모가 `flex-1` 로 높이를
+ * 주므로 이 문제가 없다 — 다중 출력에서만 필요하다.
+ */
+const GAUGE_TILE_ASPECT: Record<GaugeType, string> = {
+  simple: '200 / 200',
+  half: '240 / 140',
+  'multi-ring': '200 / 200',
+  needle: '200 / 200',
+  'needle-rainbow': '220 / 210',
+  'vertical-bar': '140 / 210',
+  'half-rainbow': '240 / 150',
+};
+
+/**
+ * 다중 출력 게이지 1개 — 게이지 + 시리즈 이름 캡션.
+ *
+ * 색상 축 분리(§2.6): **호(arc) 색은 기존 `thresholds` 가 계속 소유**하고 시리즈 색은
+ * 캡션 라벨에만 적용한다. 그래서 `base`(패널 공통 min/max/unit/thresholds/gaugeType)를
+ * 그대로 넘기고 `value` 만 시리즈 대표값으로 갈아 끼운다.
+ *
+ * 대표값이 없으면(`undefined`) 슬롯은 유지하고 값 자리에 `--` 를 표시한다(§2.4) —
+ * 각 렌더러가 `hasValue={false}` 에서 이미 그렇게 그린다.
+ */
+function GaugeTile({
+  item,
+  base,
+}: {
+  item: ReducedSeries;
+  base: ReturnType<typeof parseConfig>;
+}): ReactElement {
+  const hasValue = item.value !== undefined && Number.isFinite(item.value);
+  const parsed = hasValue ? { ...base, value: item.value! } : base;
+  return (
+    <>
+      <div
+        data-testid="gauge-tile-chart"
+        className="max-h-full w-full min-w-0"
+        style={{ aspectRatio: GAUGE_TILE_ASPECT[base.gaugeType] ?? '1 / 1' }}
+      >
+        {renderGaugeByType(parsed, hasValue)}
+      </div>
+      <span
+        data-testid="gauge-tile-caption"
+        title={item.name}
+        className={cn(
+          'w-full truncate text-center text-xs font-medium',
+          !item.color && 'text-(--color-text-muted)',
+        )}
+        style={item.color ? { color: item.color } : undefined}
+      >
+        {item.name}
+      </span>
+    </>
+  );
+}
+
 // ---- 메인 컴포넌트 ----
 
 /** 게이지 차트 패널 */
@@ -697,13 +810,39 @@ export default function GaugePanel({
   onTitleChange: _onTitleChange,
 }: GaugePanelProps) {
   const showTitle = usePanelTitleVisible();
-  // chart-emitter 바인딩이 있으면 실시간 구독
-  const chartSource = pickChartEmitterSource(config);
+
+  // ---- SPEC-CHART-002 M5: 값 소스 판정 ----
+  //
+  // 판정 자체는 순수 함수가 소유한다(`charts/gaugeLegacyBinding.ts`). 여기서는 결과로
+  // 경로를 고르기만 한다. `'store-source'` 는 세 조건의 논리곱이 성립할 때만 나온다 —
+  //   1) `data_source === 'store'`   — 사용자가 토글로 명시한 상태
+  //   2) `store_source` 활성          — keys 모드 시리즈 ≥ 1 또는 tag 모드 태그 ≥ 1
+  //   3) `series_reduce` 지정         — 부재는 "기본값 last" 가 아니라 레거시 경로다
+  // 즉 **신규 경로가 실제로 값을 낼 수 있을 때만** 레거시를 밀어낸다(§2.9 [S1] / §4.5).
+  const chartStoreSource = config.store_source as StoreSourceConfig | undefined;
+  const seriesReduce = config.series_reduce as SeriesReduceFunc | undefined;
+  const isStoreSourcePath =
+    resolveGaugeValueSource(gaugeValueSourceFlags(config)) === 'store-source';
+
+  // ---- 두 경로의 훅 배선 ----
+  //
+  // 세 훅 모두 조건 없이 항상 호출하고, 진 쪽을 `undefined` 인자로 idle 에 둔다
+  // (React 훅 규칙 — `LineChartPanel` / stat / bar / pie 와 같은 형태). idle 경로에서는
+  // 구독도 폴링도 일어나지 않으므로, store-source 가 이긴 게이지는 레거시
+  // `mode:'latest'` 5초 폴링을 더 이상 발생시키지 않는다.
+  //
+  // 레거시 계산 코드는 **삭제하지 않는다** — 판정이 `'legacy'` 인 순간 그대로 되살아나며
+  // 그것이 이관의 되돌리기 경로다(§4.5). 특성화 CH-11~CH-18 이 이 가지를 계속 지킨다.
+  const chartSource = isStoreSourcePath ? undefined : pickChartEmitterSource(config);
   const { entries, status } = useChartChannel(chartSource?.channelName, { maxPoints: 1 });
 
-  // store 바인딩이 있으면 폴링 구독
-  const storeSource = pickStoreSource(config);
+  const storeSource = isStoreSourcePath ? undefined : pickStoreSource(config);
   const storeValue = useStoreLatestValue(storeSource);
+
+  const storeChart = useStoreChartData(
+    isStoreSourcePath ? chartStoreSource : undefined,
+    isStoreSourcePath,
+  );
 
   // chart-emitter 최신 값
   const chartLiveValue = (() => {
@@ -716,7 +855,16 @@ export default function GaugePanel({
     return Number.isFinite(n) ? n : undefined;
   })();
 
-  // 우선순위: chart-emitter > store > static
+  // 레거시 경로 안의 우선순위: chart-emitter > store > static.
+  //
+  // 주의 — 이것은 **값** 우선순위이지 **바인딩** 우선순위가 아니다(특성화 CH-15). 채널이
+  // 바인딩되어 있어도 그 채널이 값을 못 내면(entries 0 / 비수치) 조용히 레거시 store 값이
+  // 이긴다. spec.md §1.2.4 의 "우선순위 chart-emitter > store > static" 문구는 바인딩
+  // 우선순위처럼 읽히지만 실제 동작은 값 우선순위다. M5 는 이 규칙을 바꾸지 않는다.
+  //
+  // store-source 경로가 이긴 경우 위의 두 레거시 훅이 idle 이므로 두 값 모두 undefined 가
+  // 되고, `hasBinding` 은 false 가 된다. 렌더 분기가 그 경우 `hasValue` 를 강제로 false 로
+  // 넘기므로(아래 renderGaugeByType 호출) 표시 결과는 M4 와 동일하다.
   const liveValue = chartLiveValue ?? storeValue;
   const hasBinding = !!chartSource || !!storeSource;
 
@@ -725,40 +873,47 @@ export default function GaugePanel({
   const parsed = liveValue !== undefined
     ? { ...parsedBase, value: liveValue }
     : parsedBase;
-  const { gaugeType } = parsed;
 
-  const renderGauge = () => {
-    switch (gaugeType) {
-      case 'simple':
-        return <SimpleGauge {...parsed} hasValue={hasValue} />;
-      case 'half':
-        return <HalfGauge {...parsed} hasValue={hasValue} />;
-      case 'multi-ring':
-        return <MultiRingGauge {...parsed} hasValue={hasValue} />;
-      case 'needle':
-        return <NeedleGauge {...parsed} hasValue={hasValue} />;
-      case 'needle-rainbow':
-        return <NeedleRainbowGauge {...parsed} hasValue={hasValue} />;
-      case 'vertical-bar':
-        return <VerticalBarGauge {...parsed} hasValue={hasValue} />;
-      case 'half-rainbow':
-        return <HalfRainbowGauge {...parsed} hasValue={hasValue} />;
-      default:
-        return <SimpleGauge {...parsed} hasValue={hasValue} />;
-    }
-  };
+  // 시리즈 순서 그대로 대표값 1개씩. 재조회 없이 렌더 시점에만 계산된다(§2.7 [E1]).
+  const reduced = useMemo<ReducedSeries[] | null>(
+    () =>
+      isStoreSourcePath && seriesReduce !== undefined
+        ? reduceAllSeries(
+            storeChart.seriesEntries,
+            storeChart.seriesNames,
+            storeChart.seriesStyles,
+            seriesReduce,
+          )
+        : null,
+    [
+      isStoreSourcePath,
+      seriesReduce,
+      storeChart.seriesEntries,
+      storeChart.seriesNames,
+      storeChart.seriesStyles,
+    ],
+  );
+  const showGauges = reduced !== null && reduced.length > 0;
 
   return (
     <div className={cn(
       'relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4',
       'ring-1 ring-(--color-border-default)',
     )}>
-      {/* chart-emitter 구독 중일 때만 연결 상태 아이콘 표시 */}
-      {chartSource && (
+      {/*
+        연결 상태 아이콘. Store 데이터 소스 경로에서는 조회 상태를 노출한다(M4.6).
+        레거시 경로의 규칙은 그대로다 — chart-emitter 구독 중일 때만 표시하고 레거시
+        store 폴링에는 표시하지 않는다(특성화 CH-17 이 잠근 동작).
+      */}
+      {isStoreSourcePath ? (
+        <div className="absolute right-3 top-3 z-10">
+          <ConnectionStatusIcon status={storeChart.status} />
+        </div>
+      ) : chartSource ? (
         <div className="absolute right-3 top-3 z-10">
           <ConnectionStatusIcon status={status} />
         </div>
-      )}
+      ) : null}
       {/* 헤더 */}
       {showTitle && (
         <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
@@ -767,9 +922,25 @@ export default function GaugePanel({
         </div>
       )}
       {/* 게이지 SVG */}
-      <div className="flex min-h-0 flex-1 items-center justify-center">
-        {renderGauge()}
-      </div>
+      {showGauges ? (
+        <div
+          data-testid="gauge-tiles"
+          className="flex min-h-0 flex-1 flex-col justify-center overflow-hidden"
+        >
+          <SeriesTileGrid
+            items={reduced}
+            limit={config.multi_output_limit as number | undefined}
+            itemKey={(item, i) => `${i}:${item.name}`}
+            renderItem={(item) => <GaugeTile item={item} base={parsedBase} />}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          {/* Store 경로인데 시리즈가 0개면 신규 경로의 빈 상태(`--`)를 보여준다(§2.4).
+              레거시 값으로 몰래 되돌아가지 않는다. */}
+          {renderGaugeByType(parsed, isStoreSourcePath ? false : hasValue)}
+        </div>
+      )}
     </div>
   );
 }

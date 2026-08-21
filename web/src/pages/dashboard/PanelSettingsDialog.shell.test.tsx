@@ -8,7 +8,7 @@
 //   좌측 컬럼 상단 = 미리보기 / 좌측 컬럼 하단 = 데이터소스 / 우측 = 옵션.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 
@@ -46,6 +46,18 @@ vi.mock('./panels/charts/useStoreChartData', () => ({
 
 vi.mock('@/hooks/useAgent', () => ({
   useAgents: () => ({ data: { data: [{ id: 'store-uuid-1', name: 'store-1', type: 'store' }] } }),
+  // PanelStoreSelectTable(공용 시리즈 선택 테이블)이 상세 조회에 사용한다.
+  // @spec SPEC-CHART-002 M2 — Store 모드 config 로 렌더하는 특성화 테스트에 필요.
+  useAgent: () => ({ data: undefined }),
+}));
+
+// GaugeSection(게이지 설정 섹션)은 플로우 목록을 React Query 로 조회한다.
+// QueryClient 없이 렌더하기 위해 빈 결과로 모킹한다.
+// @spec SPEC-CHART-002 M2 — CH-19(gauge 기준선) 렌더에 필요.
+// chart-emitter 채널 목록(@/services/api/charts)은 조회 실패 시 빈 목록을 유지하는
+// 경로가 이미 있어 모킹하지 않는다(모킹하면 기존 테스트에 act 경고가 생긴다).
+vi.mock('@/hooks/useFlow', () => ({
+  useFlows: () => ({ data: { data: [] } }),
 }));
 vi.mock('@/services/api/store', () => ({
   useStoreKeysWithTags: () => ({ data: { keyObjects: [] }, isLoading: false, isError: false }),
@@ -131,5 +143,92 @@ describe('미리보기 채움/맞춤 토글 (fill/fit)', () => {
       'aria-label',
       'dashboard.settings.previewModeFitAria',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-002 M2 — 설정 화면 특성화 (DDD PRESERVE).
+//
+// **[M4 에서 CH-19 를 의도적으로 반전했다 — 삭제하지 않고 기대값만 뒤집었다]**
+//
+// CH-19 는 원래 "gauge 는 데이터소스 섹션을 렌더하지 **않는다**" 는 변경 전 기준선이었다.
+// M4.1 이 `dataSourceBelowPreview` 조건에 `panel.type === 'gauge'` 를 추가하면서
+// (spec.md §2.3 [U3] — 게이지도 라인 차트와 동일한 Store 소스 선택 surface 를 갖는다)
+// 그 기준선은 설계상 거짓이 되었다. 이는 하위 호환 위반이 아니라 이 SPEC 이 명시적으로
+// 요구한 변경이며, CH-19 는 본 SPEC 전체에서 반전이 허용된 **유일한** 특성화다
+// (plan.md §3 각주). CH-01~CH-18 · CH-20 은 그대로 GREEN 을 유지해야 한다.
+//
+// 반전된 기대값은 AC-08(공용 데이터 소스 surface 렌더)과 같은 사실을 가리킨다.
+// ---------------------------------------------------------------------------
+
+/** 대표값 선택기가 붙을 자리를 식별하는 후보(테스트 ID + i18n 라벨 키). */
+const REDUCE_SELECTOR_TESTID = 'chart-series-reduce';
+const REDUCE_LABEL_KEY = 'dashboard.chart.seriesReduce';
+
+/** Store 모드 config — 대표값 선택기가 노출될 수 있는 유일한 조건(spec.md §2.10). */
+const STORE_CONFIG = {
+  data_source: 'store',
+  store_source: {
+    agent_id: 'store-uuid-1',
+    agent_name: 'store-1',
+    namespace: 'default',
+    selection_mode: 'keys',
+    series: [{ key: 'k1' }],
+    time_window_ms: 3_600_000,
+    interval_ms: 60_000,
+    aggregation: 'average',
+  },
+};
+
+describe('PanelSettingsDialog 특성화 (SPEC-CHART-002 M2)', () => {
+  it('CH-19 [M4 반전]: gauge 는 공용 데이터소스 섹션을 렌더한다', async () => {
+    // 반전 전(M2 기준선): dataSourceBelowPreview =
+    //   isChartPanel(CHART_PANEL_TYPES) || panel.type === 'heatmap'
+    // 이라 gauge 가 두 조건 어디에도 걸리지 않아 섹션이 없었다(spec.md §1.2.1).
+    // 반전 후(M4.1): 조건에 `|| panel.type === 'gauge'` 가 추가되어 섹션이 존재한다.
+    // `CHART_PANEL_TYPES` 자체는 불변이다(UB1-9) — heatmap 과 같은 노출 방식이다.
+    storeMock.panel = { id: 'p1', type: 'gauge', title: '게이지', config: {} };
+    // GaugeSection 이 마운트 시 채널 목록을 비동기 조회하므로 act 로 감싸 flush 한다.
+    await act(async () => {
+      render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    });
+
+    expect(screen.getByTestId('panel-settings-preview')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-settings-options')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-settings-data-source')).toBeInTheDocument();
+  });
+
+  it('CH-19 [M4 반전]: gauge 는 Store 모드에서 데이터소스 섹션 + 대표값 선택기를 갖는다', async () => {
+    // 반전 전: 설정이 저장될 수는 있어도(불투명 JSON) 편집 surface 가 없었다.
+    // 반전 후: 섹션이 렌더되고, gauge 가 REDUCE_PANEL_TYPES 에 속하므로 Store 모드에서
+    // 대표값 선택기까지 노출된다(spec.md §2.3 / AC-08 · AC-09).
+    storeMock.panel = { id: 'p1', type: 'gauge', title: '게이지', config: { ...STORE_CONFIG } };
+    await act(async () => {
+      render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    });
+
+    expect(screen.getByTestId('panel-settings-data-source')).toBeInTheDocument();
+    expect(screen.getByTestId(REDUCE_SELECTOR_TESTID)).toBeInTheDocument();
+    expect(screen.getByText(REDUCE_LABEL_KEY)).toBeInTheDocument();
+  });
+
+  it('CH-20: line-chart / table / heatmap 은 Store 모드에서도 대표값 선택기를 갖지 않는다', async () => {
+    // spec.md §2.3 / UB1-10: REDUCE_PANEL_TYPES 는 stat/gauge/bar-chart/pie-chart 뿐이며
+    // 이 3종은 같은 StoreSourceSection 을 써도 선택기가 노출되지 않아야 한다.
+    for (const type of ['line-chart', 'table', 'heatmap'] as const) {
+      storeMock.panel = { id: 'p1', type, title: type, config: { ...STORE_CONFIG } };
+      // 공용 시리즈 선택 테이블이 마운트 시 비동기 상태를 갱신하므로 flush 한다.
+      let view!: ReturnType<typeof render>;
+      await act(async () => {
+        view = render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+      });
+
+      // 데이터소스 섹션 자체는 존재한다(= 선택기가 있었다면 여기 보였을 것이다).
+      expect(screen.getByTestId('panel-settings-data-source')).toBeInTheDocument();
+      expect(screen.queryByTestId(REDUCE_SELECTOR_TESTID)).toBeNull();
+      expect(screen.queryByText(REDUCE_LABEL_KEY)).toBeNull();
+
+      view.unmount();
+    }
   });
 });
