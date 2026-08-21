@@ -6,6 +6,41 @@
 
 ## [Unreleased]
 
+### 변경 — storage-write 통합과 Store measurement/field 모델 (breaking)
+
+- **`store-write` 와 `influxdb-write` 를 `storage-write` 하나로 통합한다 (breaking)**
+
+  두 노드는 같은 일(메시지를 스토리지에 기록)을 하면서 설정 어휘가 완전히 달라, 저장 대상을 바꾸려면 노드를 갈아끼우고 config 를 처음부터 다시 써야 했다. 통합 후에는 백엔드를 `agent_ref` 가 가리키는 **에이전트 타입**으로 결정하므로(`store` → 키-값 저장소, `influxdb` → 시계열 DB), 설정을 그대로 둔 채 에이전트만 바꾸면 저장 대상이 바뀐다.
+
+  - **기록 규약이 메시지 구조를 따른다**: `msg.payload` 키/값 = 측정값, `msg.metadata` = 태그, `msg.timestamp` = 기록 시각. 경로를 일일이 매핑하던 `values[]`/`field_mappings`/`tag_mappings`/`timestamp_key` 가 모두 사라졌다.
+  - **payload 키 배치만 고른다**: `fields`(기본, 모든 키를 한 measurement 아래 필드로) / `split`(키마다 별도 measurement). split 모드에서 값이 오브젝트면 오브젝트의 키를 필드로 펼친다 — 통째로 `value` 에 넣으면 JSON 문자열로 뭉개져 집계·차트가 쓸 수 없다.
+  - **제거된 기능(의도적)**: 미세변화 억제(`min_interval`/`min_change`/`min_change_percent`)와 스냅샷 우회를 제거했다. 샘플링이 필요하면 앞단 `deduplicate`/`aggregate` 노드가 담당한다. `data_type` 도 제거되어 항상 `auto`(값 타입 추론)로 기록한다 — 타입을 넘기지 않으면 store 가 "동적 = string" 정책으로 등록해 숫자 측정값까지 문자열로 저장하고, 그러면 차트와 집계가 그 시리즈를 통째로 버린다.
+  - **클린 컷**: 옛 노드 타입과 옛 config 키에 호환 별칭을 두지 않았다. 저장된 플로우가 0건임을 확인하고 진행했다.
+  - **`tsdb-write` 는 범위 밖**이며, 조회 노드(`store-read` / `influxdb-read` / `influxdb-query`)는 무변경이다.
+
+- **Store 의 식별 어휘를 `(key, metric_type, tags)` → `(measurement, field, tags)` 로 바꾼다 (breaking)**
+
+  Store 의 `key`/`metric_type` 과 InfluxDB 의 `measurement`/`field` 는 같은 축을 다른 이름으로 부르고 있었다. 위 노드 통합과 어휘를 맞춘다.
+
+  - **저장된 데이터는 그대로 읽힌다**: 시리즈 키 인코딩 순서를 바꾸지 않았다(`metric|tags|key` → `field|tags|measurement`, 바이트 배치 동일). 예전 `metric=temperature, key=dev-1` 은 새 모델의 `field=temperature, measurement=dev-1` 에 정확히 대응하므로 **데이터 이관 작업이 없다.** 제약된 문자집합 필드를 앞에, 임의 문자열을 뒤에 두는 단사성 논증도 유지된다.
+  - **표면 변경**: JSON/API/쿼리 파라미터 `metric_type` → `field`, 시리즈 라벨 `__metric__` → `__field__`, `ErrInvalidMetricType` → `ErrInvalidField`. UI 는 키 컬럼 → **Measurement**, 메트릭 컬럼 → **필드**.
+  - 마이그레이션 가이드: [docs/migration/storage-write-unification.md](docs/migration/storage-write-unification.md)
+
+### 수정 — 패널 설정의 표시 이름·미리보기 불일치
+
+- **시리즈 표시 이름 규칙을 한 곳(`storeSeriesLabel`)으로 모았다.** 데이터 소스 목록·차트 범례·히트맵 마커·설정 미리보기가 서로 다른 규칙을 써서 "설정한 이름과 출력이 다르다" 는 결함이 반복됐다. 규칙은 `직접 입력한 이름 → 패널의 시리즈 이름 형식 → 내장 서술 표기` 하나다.
+  - 과거에는 `alias === key` 를 "생성 시 기본값" 으로 보고 무시했는데, 그 탓에 measurement 와 같은 이름을 **직접 입력해도** 반영되지 않았다. 생성 시 alias 기본값을 없애고 읽는 시점에 legacy 기본값을 걷어내(`normalizeStoreSeriesAlias`) 이 예외를 제거했다.
+- **시리즈 이름 형식(`series_name_format`) 패널 옵션 신설.** 이름을 지정하지 않은 시리즈의 표시 이름을 `{$.measurement}` / `{$.field}` / `{$.tags.NAME}` 토큰과 리터럴 조합으로 지정한다. 토큰 삽입 버튼과 미리보기를 함께 제공한다.
+- **미리보기가 실제 설정을 반영한다.** store 라인 차트 미리보기는 합성 사인파 대신 **선택된 시리즈로 실제 패널을 렌더**한다(시리즈 미선택·채널 모드는 스타일 확인용 합성 미리보기 유지). 범례는 recharts 내장 대신 실제 패널과 **같은 컴포넌트**(`ChartLegend`)를 써서, 차트-범례 구분선·여백과 범례 옵션(이름/선/마지막 값 표시)이 실제 렌더와 일치한다.
+- **데이터 소스 표 정리**: 키 8자 축약 제거(전체 표시), 메트릭 전용 컬럼 제거(이름 셀이 이미 합쳐 보여줌), 현재 값 컬럼 추가(에이전트 상태 스냅샷을 시리즈 동일성으로 조인).
+
+### 수정 — 히트맵 도면 배치
+
+- **색표 범례가 도면을 벗어날 수 있다.** 범례가 스테이지(도면 박스) 안에 있어 `overflow-hidden` 에 잘렸다. 패널 본문으로 옮겨 도면 여백·잘림과 무관하게 배치한다. 구 config 의 범례 좌표는 렌더 시점에 스테이지→패널 공간으로 환산해 **보이던 위치를 보존**한다(`legend.offset_space` 표식, 마커의 `sensor_space` 와 같은 방식).
+- **도면 직접 배치 신설.** 배치 편집 중 아웃라인을 끌어 이동하고 모서리 핸들로 크기를 조절한다(`stage_transform`). 이동은 컨테이너 대비 비율, 배율은 중심 고정이며 0.1~10 으로 제한한다. 센서 마커는 스테이지 정규화 좌표라 **좌표 재계산 없이 도면을 따라 움직인다.**
+- **미리보기에 패널 영역 표시.** 채움(fill) 모드에서 실제 대시보드 패널 비율을 점선으로 겹쳐 보여준다. 맞춤(fit) 모드와 레이아웃 미상 상태에서는 그리지 않는다(틀린 경계를 보여주지 않기 위해).
+
+
 ### 변경 — 대시보드 1급 엔티티화와 대시보드 단위 접근 제어 (SPEC-DASHBOARD-004)
 
 - **대시보드를 "공유 묶음 / 내 묶음" 2슬롯 스냅샷에서 개별 1급 엔티티로 승격하고, 대시보드 단위 소유권·공개범위·ACL 을 도입한다 (SPEC-DASHBOARD-004, Tier L, breaking)**
