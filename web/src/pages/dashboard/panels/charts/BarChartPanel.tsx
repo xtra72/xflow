@@ -2,6 +2,10 @@
 // 두 모드:
 //  - category: label_field 별 최신 값을 막대로 표시
 //  - time_bin: bin_sec 간격으로 시간 bin 별 집계 (count/sum/avg)
+//
+// SPEC-CHART-002: Store 모드 + `series_reduce` 지정 시에는 **시리즈당 막대 1개**를 그리는
+// 다중 출력 경로로 갈린다. 이때 `mode` · `label_field` · `agg_func` 는 무시된다(§2.9 [S1]).
+// 분기는 아래 `derived` useMemo 진입부 한 곳뿐이며 레거시 계산은 else 가지에 그대로 남는다.
 
 import { useMemo } from 'react';
 import { BarChart3 } from 'lucide-react';
@@ -9,6 +13,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -17,7 +22,9 @@ import {
 
 import {
   getByPath,
+  pickSeriesColor,
   type BarChartPanelConfig,
+  type ChartEntry,
   type StoreSourceConfig,
 } from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
@@ -26,8 +33,10 @@ import {
   formatTimeShort,
   toNumber,
 } from './chartChannelUtils';
+import { reduceAllSeries } from './seriesReduce';
+import { applyMultiOutputLimit, MultiOutputTruncationNotice } from './SeriesTileGrid';
 import { useChartChannel } from './useChartChannel';
-import { useStoreChartData } from './useStoreChartData';
+import { useStoreChartData, type StoreSeriesStyle } from './useStoreChartData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
 
 interface BarChartPanelProps {
@@ -38,6 +47,11 @@ interface BarChartPanelProps {
 
 const DEFAULT_MAX_POINTS = 20;
 
+/** 시리즈 축이 없는 경로(채널 모드)에서 쓰는 빈 기본값 — 매 렌더 새 객체를 만들지 않는다. */
+const EMPTY_SERIES_ENTRIES: ReadonlyMap<string, ChartEntry[]> = new Map();
+const EMPTY_SERIES_STYLES: ReadonlyMap<string, StoreSeriesStyle> = new Map();
+const EMPTY_SERIES_NAMES: readonly string[] = [];
+
 function parseConfig(config: Record<string, unknown>): BarChartPanelConfig {
   return {
     channel_name: (config.channel_name as string) ?? '',
@@ -47,7 +61,17 @@ function parseConfig(config: Record<string, unknown>): BarChartPanelConfig {
     bin_sec: (config.bin_sec as number) ?? 60,
     agg_func: (config.agg_func as BarChartPanelConfig['agg_func']) ?? 'avg',
     max_points: (config.max_points as number) ?? DEFAULT_MAX_POINTS,
+    // SPEC-CHART-002 — 유무가 곧 렌더 경로 스위치다. 기본값을 채우지 않는다.
+    series_reduce: config.series_reduce as BarChartPanelConfig['series_reduce'],
+    multi_output_limit: config.multi_output_limit as number | undefined,
   };
+}
+
+/** 차트에 그려지는 막대 1개. `fill` 은 다중 출력 경로에서만 채워진다. */
+interface BarRow {
+  label: string;
+  value: number;
+  fill?: string;
 }
 
 /** category 모드: label_field 값별 최신 값 추출 */
@@ -85,7 +109,32 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
     ? storeRes
     : channelRes;
 
-  const chartData = useMemo(() => {
+  // 시리즈 축은 Store 경로에만 존재한다.
+  const seriesEntries = storeRes.seriesEntries ?? EMPTY_SERIES_ENTRIES;
+  const seriesNames = storeRes.seriesNames ?? EMPTY_SERIES_NAMES;
+  const seriesStyles = storeRes.seriesStyles ?? EMPTY_SERIES_STYLES;
+
+  // SPEC-CHART-002 §2.9 [S1] — 데이터 파생의 유일한 분기점.
+  const isReduceMode = isStore && cfg.series_reduce !== undefined;
+
+  const derived = useMemo<{ rows: BarRow[]; truncated: number; reduce: boolean }>(() => {
+    if (isReduceMode && cfg.series_reduce !== undefined) {
+      // 다중 출력: 카테고리 = 시리즈 표시 이름, 채움색 = 시리즈 색 ?? 팔레트(§2.6).
+      // 팔레트 인덱스는 **필터 전** 시리즈 순서를 쓴다 — 값 없는 시리즈가 생략되었다고
+      // 나머지 막대의 색이 밀려나면 폴링마다 색이 바뀐다.
+      const bars: BarRow[] = [];
+      reduceAllSeries(seriesEntries, seriesNames, seriesStyles, cfg.series_reduce).forEach(
+        (r, i) => {
+          // 대표값이 없는 시리즈는 막대를 생략한다 — 값 없는 막대는 0 과 구분되지 않는다.
+          if (r.value === undefined) return;
+          bars.push({ label: r.name, value: r.value, fill: r.color ?? pickSeriesColor(i) });
+        },
+      );
+      const { visible, truncated } = applyMultiOutputLimit(bars, cfg.multi_output_limit);
+      return { rows: visible, truncated, reduce: true };
+    }
+
+    // --- 레거시 경로(변경 금지 — 특성화 CH-05~CH-07 이 지킨다) ---
     const displayField = cfg.display_field ?? 'value';
     if (cfg.mode === 'time_bin') {
       const out = aggregateByTimeBin(
@@ -96,12 +145,36 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
       );
       const max = cfg.max_points ?? DEFAULT_MAX_POINTS;
       const trimmed = out.length > max ? out.slice(-max) : out;
-      return trimmed.map((b) => ({ label: formatTimeShort(b.binStart), value: b.value }));
+      return {
+        rows: trimmed.map((b) => ({ label: formatTimeShort(b.binStart), value: b.value })),
+        truncated: 0,
+        reduce: false,
+      };
     }
     const cat = buildCategoryData(entries, cfg.label_field ?? 'labels.name', displayField);
     const max = cfg.max_points ?? DEFAULT_MAX_POINTS;
-    return cat.length > max ? cat.slice(-max) : cat;
-  }, [entries, cfg.mode, cfg.display_field, cfg.label_field, cfg.bin_sec, cfg.agg_func, cfg.max_points]);
+    return {
+      rows: cat.length > max ? cat.slice(-max) : cat,
+      truncated: 0,
+      reduce: false,
+    };
+  }, [
+    isReduceMode,
+    cfg.series_reduce,
+    cfg.multi_output_limit,
+    seriesEntries,
+    seriesNames,
+    seriesStyles,
+    entries,
+    cfg.mode,
+    cfg.display_field,
+    cfg.label_field,
+    cfg.bin_sec,
+    cfg.agg_func,
+    cfg.max_points,
+  ]);
+
+  const chartData = derived.rows;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-1 ring-(--color-border-default)">
@@ -118,7 +191,8 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
         </div>
       )}
       <div className="mb-2 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
-        {cfg.channel_name || '채널 미지정'} · {cfg.mode}
+        {cfg.channel_name || '채널 미지정'} ·{' '}
+        {derived.reduce ? cfg.series_reduce : cfg.mode}
       </div>
 
       <div className="min-h-0 flex-1" data-testid="bar-chart-container">
@@ -128,10 +202,25 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
             <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#9ca3af" />
             <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" width={50} />
             <Tooltip contentStyle={{ fontSize: '0.75rem' }} />
-            <Bar dataKey="value" fill="#3b82f6" isAnimationActive={false} />
+            {/*
+              레거시 경로는 기존 하드코딩 채움색을 그대로 쓴다(CH-07). 다중 출력 경로에서만
+              시리즈별 Cell 로 대체한다 — 두 축(값 색 / 시리즈 색)이 섞이지 않도록 Bar 레벨
+              fill 은 아예 비운다.
+            */}
+            <Bar
+              dataKey="value"
+              fill={derived.reduce ? undefined : '#3b82f6'}
+              isAnimationActive={false}
+            >
+              {derived.reduce
+                ? chartData.map((row, i) => <Cell key={i} fill={row.fill} />)
+                : null}
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
+
+      <MultiOutputTruncationNotice truncated={derived.truncated} />
 
       {(status === 'closed' || status === 'error') && (
         <div

@@ -11,14 +11,27 @@ vi.mock('@/lib/i18n', () => {
     'dashboard.chart.channelOption': '{name} — flow {flow} ({count} subs)',
     'dashboard.chart.channelInactive': '{name} — (현재 선택, 비활성)',
     'dashboard.chart.channelInactiveShort': '{name} — (비활성)',
+    // SPEC-CHART-002 M6.1/M6.2 — 보간 슬롯을 가진 안내 문구.
+    'dashboard.chart.seriesReduceCombo':
+      "현재 조합: {interval} 버킷을 '{agg}' 로 집계한 뒤, 구간 전체를 '{reduce}' 로 접습니다.",
+    'dashboard.chart.seriesReduceBooleanHint':
+      '불리언 시리즈가 선택되어 있습니다 — 이 대표값은 {meaning} 을(를) 뜻합니다.',
+    'dashboard.chart.storeInfoSecUnit': '초',
   };
   return {
     useTranslation: () => ({ t: (k: string) => templates[k] ?? k }),
   };
 });
 
+// StoreSourceSection 은 store 에이전트 목록을 조회한다. QueryClient 없이 렌더 가능하도록
+// 빈 목록으로 모킹한다(목록이 비면 저장된 agent_name 이 그대로 쓰인다 — SPEC-WEB-006).
+vi.mock('@/hooks/useAgent', () => ({
+  useAgents: () => ({ data: { data: [] } }),
+}));
+
 import {
   ChartChannelSection,
+  StoreSourceSection,
   StatChartSection,
   LineChartSection,
   ChannelSeriesEditor,
@@ -697,5 +710,314 @@ describe('TableChartSection (REQ-M4-08)', () => {
     );
     const delBtn = screen.getByLabelText('dashboard.chart.deleteColumnAria') as HTMLButtonElement;
     expect(delBtn.disabled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-002 M3.5 / M3.6 — 구간 대표값 선택기.
+//
+// 노출 조건은 두 개의 AND 다: Store 모드(§2.10 [S2]) × REDUCE_PANEL_TYPES(§2.3 [U3]).
+// 특성화 CH-20 이 반대 방향(line-chart/table/heatmap 미노출)을 이미 잠그고 있으므로,
+// 여기서는 노출되는 쪽과 선택지 구성/편집 결과를 잠근다.
+// ---------------------------------------------------------------------------
+
+const REDUCE_TESTID = 'chart-series-reduce';
+
+/** Store 모드 config — 선택기가 노출될 수 있는 유일한 조건. */
+function storeModeConfig(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    data_source: 'store',
+    store_source: {
+      agent_name: 'store-1',
+      namespace: 'default',
+      selection_mode: 'keys',
+      series: [{ key: 'k1' }],
+      time_window_ms: 3_600_000,
+      interval_ms: 60_000,
+      aggregation: 'average',
+    },
+    ...extra,
+  };
+}
+
+describe('대표값 선택기 (SPEC-CHART-002 U3)', () => {
+  it('stat/gauge/bar-chart/pie-chart + Store 모드에서 노출된다', () => {
+    for (const type of ['stat', 'gauge', 'bar-chart', 'pie-chart'] as const) {
+      const view = render(
+        <StoreSourceSection panel={makePanel(type, storeModeConfig())} onConfigChange={vi.fn()} />,
+      );
+      expect(screen.getByTestId(REDUCE_TESTID)).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it('line-chart/table/heatmap 에서는 노출되지 않는다', () => {
+    for (const type of ['line-chart', 'table', 'heatmap'] as const) {
+      const view = render(
+        <StoreSourceSection panel={makePanel(type, storeModeConfig())} onConfigChange={vi.fn()} />,
+      );
+      expect(screen.queryByTestId(REDUCE_TESTID)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it('채널 모드에서는 노출되지 않는다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel('stat', { data_source: 'channel', channel_name: 'c1' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId(REDUCE_TESTID)).toBeNull();
+  });
+
+  it('선택지는 max/avg/min/last/sum/count/delta 7개이며 first 는 없다', () => {
+    render(
+      <StoreSourceSection panel={makePanel('stat', storeModeConfig())} onConfigChange={vi.fn()} />,
+    );
+    const select = screen.getByTestId(REDUCE_TESTID) as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    // 첫 항목은 "미지정"(빈 값) — 부재가 곧 레거시 경로이기 때문이다(§2.9).
+    expect(values).toEqual(['', 'max', 'avg', 'min', 'last', 'sum', 'count', 'delta']);
+    expect(values).not.toContain('first');
+    expect(select.value).toBe('');
+  });
+
+  it('선택하면 series_reduce 를 기록하고 미지정으로 되돌리면 undefined 로 지운다', () => {
+    const onConfigChange = vi.fn();
+    const view = render(
+      <StoreSourceSection panel={makePanel('stat', storeModeConfig())} onConfigChange={onConfigChange} />,
+    );
+    fireEvent.change(screen.getByTestId(REDUCE_TESTID), { target: { value: 'avg' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ series_reduce: 'avg' });
+    view.unmount();
+
+    const onConfigChange2 = vi.fn();
+    render(
+      <StoreSourceSection
+        panel={makePanel('stat', storeModeConfig({ series_reduce: 'avg' }))}
+        onConfigChange={onConfigChange2}
+      />,
+    );
+    fireEvent.change(screen.getByTestId(REDUCE_TESTID), { target: { value: '' } });
+    expect(onConfigChange2).toHaveBeenCalledWith({ series_reduce: undefined });
+  });
+
+  it('pie-chart + 음수 가능 대표값(delta/min/sum) 조합에 경고를 표시한다', () => {
+    for (const fn of ['delta', 'min', 'sum'] as const) {
+      const view = render(
+        <StoreSourceSection
+          panel={makePanel('pie-chart', storeModeConfig({ series_reduce: fn }))}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect(screen.getByTestId('chart-series-reduce-pie-warning')).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it('pie-chart 라도 음수가 나지 않는 대표값에는 경고가 없고, 같은 조합이라도 bar 는 경고하지 않는다', () => {
+    const view = render(
+      <StoreSourceSection
+        panel={makePanel('pie-chart', storeModeConfig({ series_reduce: 'max' }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('chart-series-reduce-pie-warning')).toBeNull();
+    view.unmount();
+
+    render(
+      <StoreSourceSection
+        panel={makePanel('bar-chart', storeModeConfig({ series_reduce: 'delta' }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('chart-series-reduce-pie-warning')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-002 M6.1 / M6.2 — 대표값 선택기의 안내 문구 두 종.
+//
+// 6.1 조합 설명: `store_source.aggregation`(버킷 집계) × `series_reduce`(윈도우 대표값)는
+//     서로 다른 축인데(§2.1 [U1]) 두 셀렉트가 같은 화면에 있어 가장 혼동하기 쉽다.
+// 6.2 불리언 안내: 계산에는 분기가 없지만(1/0 정규화) 읽는 의미가 전혀 다르다(§2.2 표).
+// ---------------------------------------------------------------------------
+
+const COMBO_TESTID = 'chart-series-reduce-combo';
+const BOOLEAN_TESTID = 'chart-series-reduce-boolean-hint';
+
+/** Store 모드 config — store_source 를 부분 재정의할 수 있게 한 변형. */
+function storeModeConfigWith(
+  store: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const base = storeModeConfig() as {
+    store_source: Record<string, unknown>;
+  } & Record<string, unknown>;
+  return { ...base, store_source: { ...base.store_source, ...store }, ...extra };
+}
+
+describe('대표값 조합 설명 (SPEC-CHART-002 M6.1)', () => {
+  it('대표값 미지정이면 조합 설명을 표시하지 않는다', () => {
+    render(
+      <StoreSourceSection panel={makePanel('stat', storeModeConfig())} onConfigChange={vi.fn()} />,
+    );
+    expect(screen.queryByTestId(COMBO_TESTID)).toBeNull();
+  });
+
+  it('대표값을 고르면 집계 · 버킷 간격 · 대표값을 한 줄로 설명한다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel('stat', storeModeConfig({ series_reduce: 'max' }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const line = screen.getByTestId(COMBO_TESTID);
+    // aggregation:'average' + interval_ms:60_000 + series_reduce:'max'
+    expect(line).toHaveTextContent('60초');
+    expect(line).toHaveTextContent('tsdb.aggAverage');
+    expect(line).toHaveTextContent('dashboard.chart.seriesReduceMax');
+    // 보간 슬롯이 남아 있으면 치환에 실패한 것이다.
+    expect(line.textContent).not.toContain('{');
+  });
+
+  it('집계나 대표값을 바꾸면 설명도 함께 바뀐다(두 축이 각각 반영된다)', () => {
+    const view = render(
+      <StoreSourceSection
+        panel={makePanel(
+          'stat',
+          storeModeConfigWith({ aggregation: 'max', interval_ms: 5_000 }, { series_reduce: 'avg' }),
+        )}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const line = screen.getByTestId(COMBO_TESTID);
+    expect(line).toHaveTextContent('5초');
+    expect(line).toHaveTextContent('tsdb.aggMax');
+    expect(line).toHaveTextContent('dashboard.chart.seriesReduceAvg');
+    view.unmount();
+  });
+
+  it('대표값 대상 4종 패널 모두에서 설명이 나온다', () => {
+    for (const type of ['stat', 'gauge', 'bar-chart', 'pie-chart'] as const) {
+      const view = render(
+        <StoreSourceSection
+          panel={makePanel(type, storeModeConfig({ series_reduce: 'last' }))}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect(screen.getByTestId(COMBO_TESTID)).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+});
+
+describe('불리언 시리즈 안내 (SPEC-CHART-002 M6.2)', () => {
+  it('불리언 시리즈가 없으면 안내하지 않는다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel('stat', storeModeConfig({ series_reduce: 'avg' }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId(BOOLEAN_TESTID)).toBeNull();
+  });
+
+  it('불리언 시리즈가 있어도 대표값 미지정이면 안내하지 않는다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel(
+          'stat',
+          storeModeConfigWith({ series: [{ key: 'b1', data_type: 'boolean' }] }),
+        )}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId(BOOLEAN_TESTID)).toBeNull();
+  });
+
+  it('불리언 시리즈 + 대표값 선택 시 해당 대표값의 불리언 의미를 안내한다', () => {
+    const view = render(
+      <StoreSourceSection
+        panel={makePanel(
+          'stat',
+          storeModeConfigWith(
+            { series: [{ key: 'b1', data_type: 'boolean' }] },
+            { series_reduce: 'avg' },
+          ),
+        )}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const hint = screen.getByTestId(BOOLEAN_TESTID);
+    expect(hint).toHaveTextContent('dashboard.chart.seriesReduceBoolAvg');
+    expect(hint.textContent).not.toContain('{');
+    view.unmount();
+  });
+
+  it('7종 대표값 각각에 서로 다른 불리언 의미 문구가 대응된다', () => {
+    const seen = new Set<string>();
+    for (const fn of ['max', 'avg', 'min', 'last', 'sum', 'count', 'delta'] as const) {
+      const view = render(
+        <StoreSourceSection
+          panel={makePanel(
+            'stat',
+            storeModeConfigWith(
+              { series: [{ key: 'b1', data_type: 'boolean' }] },
+              { series_reduce: fn },
+            ),
+          )}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      const text = screen.getByTestId(BOOLEAN_TESTID).textContent ?? '';
+      expect(text).not.toBe('');
+      seen.add(text);
+      view.unmount();
+    }
+    expect(seen.size).toBe(7);
+  });
+
+  it('수치 시리즈와 섞여 있어도 불리언이 하나라도 있으면 안내한다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel(
+          'stat',
+          storeModeConfigWith(
+            {
+              series: [
+                { key: 'n1', data_type: 'float' },
+                { key: 'b1', data_type: 'boolean' },
+              ],
+            },
+            { series_reduce: 'sum' },
+          ),
+        )}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId(BOOLEAN_TESTID)).toHaveTextContent(
+      'dashboard.chart.seriesReduceBoolSum',
+    );
+  });
+
+  it('tag 모드는 설정 시점에 data_type 을 알 수 없으므로 안내하지 않는다', () => {
+    // 추측해서 틀린 안내를 하는 것보다 침묵이 낫다 — 키는 폴링 시점에 해석된다.
+    render(
+      <StoreSourceSection
+        panel={makePanel(
+          'stat',
+          storeModeConfigWith(
+            { selection_mode: 'tag', tag_filters: { room: '1' }, series: [] },
+            { series_reduce: 'max' },
+          ),
+        )}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId(BOOLEAN_TESTID)).toBeNull();
+    // 조합 설명은 tag 모드에서도 유효하다(두 축은 선택 방식과 무관하다).
+    expect(screen.getByTestId(COMBO_TESTID)).toBeInTheDocument();
   });
 });

@@ -31,8 +31,14 @@ import type {
   ChartDataSourceKind,
   StoreSeriesRef,
   StoreSourceConfig,
+  SeriesReduceFunc,
 } from './panels/charts/chartChannelTypes';
-import { pickSeriesColor } from './panels/charts/chartChannelTypes';
+import {
+  DEFAULT_STORE_SOURCE_WINDOW,
+  pickSeriesColor,
+  REDUCE_PANEL_TYPES,
+} from './panels/charts/chartChannelTypes';
+import { SERIES_REDUCE_FUNCS } from './panels/charts/seriesReduce';
 import {
   filterStoreKeyObjects,
   makeTagFilterId,
@@ -255,16 +261,20 @@ const STORE_AGG_OPTIONS: { value: StoreSourceConfig['aggregation']; labelKey: st
   { value: 'last', labelKey: 'tsdb.aggLast' },
 ];
 
-/** 기본 Store 소스 설정(처음 store 모드로 전환 시 사용). */
+/**
+ * 기본 Store 소스 설정(처음 store 모드로 전환 시 사용).
+ *
+ * 조회 창 기본값(시간창/버킷/집계/폴링)은 `DEFAULT_STORE_SOURCE_WINDOW` 가 단일
+ * 정본이다 — 게이지 레거시 이관(`buildGaugeStoreMigrationPatch`)이 spec §2.8 [E2] 1항에
+ * 따라 **같은 값**을 써야 하는데, 두 곳에 복제해 두면 한쪽만 바뀔 때 이관 결과가 조용히
+ * 어긋난다.
+ */
 function defaultStoreSource(): StoreSourceConfig {
   return {
     agent_name: '',
     namespace: 'default',
     series: [],
-    time_window_ms: 60 * 60 * 1000, // 지난 1시간
-    interval_ms: 60 * 1000, // 1분 버킷
-    aggregation: 'average',
-    refresh_interval_ms: 5000,
+    ...DEFAULT_STORE_SOURCE_WINDOW,
   };
 }
 
@@ -440,6 +450,20 @@ export function StoreSourceSection({
         />
       )}
 
+      {/*
+        Store 모드 + 대표값 대상 패널(stat/gauge/bar-chart/pie-chart)에서만 구간 대표값
+        선택기를 노출한다. line-chart/table/heatmap 은 같은 섹션을 쓰지만 선택기가 없다
+        (§2.3 / UB1-10). 채널 모드에서도 노출하지 않는다(§2.10 [S2]).
+      */}
+      {!tsdbMode && dataSource === 'store' && REDUCE_PANEL_TYPES.has(panel.type) && (
+        <SeriesReduceField
+          panelType={panel.type}
+          storeSource={storeSource}
+          value={config.series_reduce as SeriesReduceFunc | undefined}
+          onChange={(series_reduce) => onConfigChange({ series_reduce })}
+        />
+      )}
+
       {/* TSDB: 실동작 없는 후속 SPEC 안내 placeholder (REQ-05/AC-05). Store 설정은 보존된다. */}
       {tsdbMode && (
         <div
@@ -467,6 +491,154 @@ export function StoreSourceSection({
           onConfigChange={onConfigChange}
           fetchChannels={fetchChannels}
         />
+      )}
+    </div>
+  );
+}
+
+/** 대표값 → i18n 라벨 키. 7종 유니온이 모두 채워졌음을 타입으로 강제한다. */
+const REDUCE_LABEL_KEYS: Record<SeriesReduceFunc, string> = {
+  max: 'dashboard.chart.seriesReduceMax',
+  avg: 'dashboard.chart.seriesReduceAvg',
+  min: 'dashboard.chart.seriesReduceMin',
+  last: 'dashboard.chart.seriesReduceLast',
+  sum: 'dashboard.chart.seriesReduceSum',
+  count: 'dashboard.chart.seriesReduceCount',
+  delta: 'dashboard.chart.seriesReduceDelta',
+};
+
+/**
+ * 음수가 나올 수 있는 대표값. 파이 차트와 조합하면 해당 시리즈 조각이 생략되므로
+ * 설정 시점에 경고한다(§4.4 / M3.6). `max`/`avg`/`last` 도 원본이 음수면 음수가 될 수
+ * 있지만, 이 셋은 "센서 값 그대로" 이므로 사용자가 이미 부호를 알고 고른다. 반면
+ * `delta`(변화량) · `min` · `sum` 은 양수 데이터에서도 음수가 나올 수 있어 놀라움이 크다.
+ */
+const NEGATIVE_CAPABLE_REDUCES: ReadonlySet<SeriesReduceFunc> = new Set<SeriesReduceFunc>([
+  'delta',
+  'min',
+  'sum',
+]);
+
+/**
+ * 불리언 시리즈에서 각 대표값이 무엇을 뜻하는지 (spec.md §2.2 불리언 표).
+ *
+ * Store 변환 시점에 `true`/`false` 는 이미 `1`/`0` 으로 정규화되므로 계산에는 분기가
+ * 없지만, **읽는 사람에게는 의미가 전혀 다르다** — 온도 시리즈의 `avg` 는 평균 온도지만
+ * 불리언 시리즈의 `avg` 는 duty ratio 다. 숫자만 보고는 구분할 수 없으므로 선택 시점에
+ * 안내한다(M6.2).
+ */
+const BOOLEAN_MEANING_KEYS: Record<SeriesReduceFunc, string> = {
+  max: 'dashboard.chart.seriesReduceBoolMax',
+  avg: 'dashboard.chart.seriesReduceBoolAvg',
+  min: 'dashboard.chart.seriesReduceBoolMin',
+  last: 'dashboard.chart.seriesReduceBoolLast',
+  sum: 'dashboard.chart.seriesReduceBoolSum',
+  count: 'dashboard.chart.seriesReduceBoolCount',
+  delta: 'dashboard.chart.seriesReduceBoolDelta',
+};
+
+/**
+ * 구간 대표값 선택기 (SPEC-CHART-002 §2.3 [U3]).
+ *
+ * **미지정**은 "기본값 last" 가 아니라 레거시 렌더 경로를 뜻하므로 빈 값 선택지를 첫
+ * 항목으로 둔다(§2.9 [S1]). 선택을 지우면 `series_reduce` 를 `undefined` 로 되돌려
+ * 저장된 패널이 예전 모습으로 정확히 복귀한다.
+ *
+ * 사용자 선택지에 `first` 는 없다 — `delta` 의 내부 입력일 뿐이다(§2.2).
+ *
+ * 대표값이 선택되면 **현재 조합 설명 한 줄**(M6.1)을 함께 보여준다. `store_source.
+ * aggregation`(버킷 집계)과 `series_reduce`(윈도우 대표값)는 서로 다른 축인데(§2.1 [U1])
+ * 두 셀렉트가 같은 화면에 나란히 있어 사용자가 가장 혼동하기 쉬운 지점이다 — 그래서
+ * 순서(집계 → 대표값)를 문장으로 못박는다.
+ */
+function SeriesReduceField({
+  panelType,
+  storeSource,
+  value,
+  onChange,
+}: {
+  panelType: string;
+  storeSource: StoreSourceConfig;
+  value: SeriesReduceFunc | undefined;
+  onChange: (next: SeriesReduceFunc | undefined) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const showPieWarning =
+    panelType === 'pie-chart' && value !== undefined && NEGATIVE_CAPABLE_REDUCES.has(value);
+
+  // 조합 설명(M6.1) — 버킷 집계 라벨 · 버킷 간격 · 대표값 라벨을 한 문장으로 합친다.
+  // 간격 표기는 store 정보 팝오버(`sec()`)와 같은 규칙을 쓴다 — 같은 값이 화면마다 다른
+  // 표기를 갖지 않도록.
+  const aggLabelKey = STORE_AGG_OPTIONS.find((o) => o.value === storeSource.aggregation)?.labelKey;
+  const comboText =
+    value === undefined
+      ? undefined
+      : t('dashboard.chart.seriesReduceCombo')
+          .replace('{agg}', aggLabelKey ? t(aggLabelKey) : String(storeSource.aggregation))
+          .replace(
+            '{interval}',
+            `${Math.round((storeSource.interval_ms ?? 0) / 1000)}${t('dashboard.chart.storeInfoSecUnit')}`,
+          )
+          .replace('{reduce}', t(REDUCE_LABEL_KEYS[value]));
+
+  // 불리언 안내(M6.2) — `keys` 모드에서 선택된 시리즈의 메타데이터로만 판정한다.
+  // `tag` 모드는 폴링 시점에 키가 해석되어 설정 화면에서 data_type 을 알 수 없으므로
+  // 안내하지 않는다(추측해서 틀린 안내를 하는 것보다 침묵이 낫다).
+  const hasBooleanSeries = (storeSource.series ?? []).some((sr) => sr.data_type === 'boolean');
+  const booleanText =
+    value !== undefined && hasBooleanSeries
+      ? t('dashboard.chart.seriesReduceBooleanHint').replace(
+          '{meaning}',
+          t(BOOLEAN_MEANING_KEYS[value]),
+        )
+      : undefined;
+
+  return (
+    <div className="space-y-1">
+      <LabeledField
+        label={t('dashboard.chart.seriesReduce')}
+        hint={value === undefined ? t('dashboard.chart.seriesReduceNoneHint') : undefined}
+      >
+        <select
+          data-testid="chart-series-reduce"
+          value={value ?? ''}
+          onChange={(e) => {
+            const next = e.target.value;
+            onChange(next === '' ? undefined : (next as SeriesReduceFunc));
+          }}
+          className={inputClass()}
+        >
+          <option value="">{t('dashboard.chart.seriesReduceNone')}</option>
+          {SERIES_REDUCE_FUNCS.map((fn) => (
+            <option key={fn} value={fn}>
+              {t(REDUCE_LABEL_KEYS[fn])}
+            </option>
+          ))}
+        </select>
+      </LabeledField>
+      {comboText !== undefined && (
+        <p
+          data-testid="chart-series-reduce-combo"
+          className="text-[11px] leading-snug text-(--color-text-muted)"
+        >
+          {comboText}
+        </p>
+      )}
+      {booleanText !== undefined && (
+        <p
+          data-testid="chart-series-reduce-boolean-hint"
+          className="text-[11px] leading-snug text-(--color-text-muted)"
+        >
+          {booleanText}
+        </p>
+      )}
+      {showPieWarning && (
+        <p
+          data-testid="chart-series-reduce-pie-warning"
+          className="rounded-md bg-amber-50 px-2 py-1.5 text-[11px] leading-snug text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+        >
+          {t('dashboard.chart.pieNegativeReduceWarning')}
+        </p>
       )}
     </div>
   );
